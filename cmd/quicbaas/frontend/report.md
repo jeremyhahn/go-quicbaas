@@ -91,7 +91,7 @@ Registered lines are in `pkg/api/rest/routes.go` unless another file is named.
 | sessionStore.ts:731 | orchestrator.getSessionConversation | GET `orch/sessions/{id}/history` (`rest.ts:1211`) | :510 | served |
 | sessionStore.ts:775 | orchestrator.subscribeSession | GET `orch/sessions/{id}/events` | :509 | served |
 | SessionDetail.svelte:210; SpawnDialog:195; PromptComposer:87 | orchestrator.promptSession | POST `orch/sessions/{id}/prompt` | :511 | served |
-| SessionDetail.svelte:173 | orchestrator.rotateSessionAccount | POST `orch/sessions/{id}/rotate-account` | :512 | pending (501 path when no rotation service not yet checked) |
+| SessionDetail.svelte:173 | orchestrator.rotateSessionAccount | POST `orch/sessions/{id}/rotate-account` | :512 | not-configured when the agent service has no rotation service (`RotationServiceFrom` fails → 501, `handlers_orchestrator.go:332-334`); served otherwise |
 | JobsView:106; FleetNodeDetailView:63; orchestrator store:927,1105 | orchestrator.listJobs / listJobsPage | GET `orch/jobs` | :498 | served |
 | StartJobDialog.svelte:112 | orchestrator.startJob | POST `orch/jobs` | :499 | served |
 | JobsView:183; JobDetailView:357 | orchestrator.cancelJob | DELETE `orch/jobs/{id}` | :500 | served |
@@ -150,7 +150,7 @@ Registered lines are in `pkg/api/rest/routes.go` unless another file is named.
 | IAMView:547 | iam.createTenant | POST `/api/v1/tenants` | `routes_iam.go:100` | served |
 | IAMView:581 / :601 | iam.updateTenant / deleteTenant | PUT / DELETE `/api/v1/tenants/{id}` | `routes_iam.go:102/103` | served |
 | IAMView:318; providers.ts:385 / IAMView:435 | iam.listUsers / createUser | GET / POST `/api/v1/tenants/{t}/users` | `routes_iam.go:117/118` | served |
-| IAMView:485 / :822 | iam.updateUser / deleteUser | PUT / DELETE `/api/v1/tenants/{t}/users/{u}` | pending | pending |
+| IAMView:485 / :822 | iam.updateUser / deleteUser | PUT / DELETE `/api/v1/tenants/{t}/users/{u}` | `routes_iam.go:120/121` | served |
 | IAMView:522 | iam.assignRoleToUser | POST `…/users/{u}/roles` | `routes_iam.go:122` | served |
 | IAMView:363; providers.ts:417 / IAMView:632 | iam.listRoles / createRole | GET / POST `…/roles` | `routes_iam.go:187/188` | served |
 | IAMView:713 | iam.reconcileRoles | POST `…/roles/reconcile` | `routes_iam.go:189` | served |
@@ -168,11 +168,70 @@ Registered lines are in `pkg/api/rest/routes.go` unless another file is named.
 | TenantBarrierView:272 | tenantBarrierUnseal | POST `…/barrier/unseal` | `routes_iam.go:110` | served |
 | TenantBarrierView:279 | tenantBarrierSeal | POST `…/barrier/seal` | `routes_iam.go:112` | served |
 
-### Remaining families
+### Data services
 
-Rows for data, vectors, timeseries, objects, RAG, embeddings, messaging,
-scheduler, KMS, DEK, secrets, dynamic secrets, CA, trust, crypto, SSH, cluster,
-barrier, tenant barrier, ceremony and bootstrap: **incomplete** (being added).
+| Control (file:line) | SDK method | HTTP + route | Registered | Status |
+|---|---|---|---|---|
+| KVStoreView:70 | data.kvList | GET `/api/v1/kv/{type}/` | :442 | served |
+| KVStoreView:122,166 | data.kvPut | POST/PUT `/api/v1/kv/{type}/{key}` | :445/:446 | served |
+| KVStoreView:186 | data.kvDelete | DELETE `/api/v1/kv/{type}/{key}` | :443 | served |
+| VectorsView:54 / :106 | vectors.listNamespaces / createNamespace | GET / POST `/api/v1/vector/namespaces` (`rest.ts:1597,1612`) | :666/:667 | served |
+| VectorsView:133 | vectors.deleteNamespace | DELETE `/api/v1/vector/namespaces/{ns}` (`rest.ts:1624`) | :668 | served |
+| VectorsView:169 | vectors.searchSimilar | POST `…/{ns}/search/similar` (`rest.ts:1635`) | :669-683 | served |
+| TimeSeriesView:56 | timeseries.listMetrics | GET `/api/v1/timeseries/metrics` | :647 | not-configured without build tag `timeseries` (`timeseries_handlers_noop.go:1` `!timeseries` → 501 at :57) |
+| TimeSeriesView:100 | timeseries.query | POST `/api/v1/timeseries/query` | :648 | not-configured without build tag `timeseries` (`timeseries_handlers_noop.go:37`) |
+| TimeSeriesView:162 | timeseries.write | POST `/api/v1/timeseries/write` | :652 | not-configured without build tag `timeseries` (`timeseries_handlers_noop.go:27`) |
+| TimeSeriesView:190 | timeseries.deleteSeries | DELETE `/api/v1/timeseries/series` | :651 | not-configured without build tag `timeseries` (`timeseries_handlers_noop.go:42`) |
+| ObjectsView:65 / :129 / :151 / :177 | objects.list / put / get / delete | `/api/v1/objects/…` | :775-780 | served |
+| ObjectsView:194; SystemDashboard:112,139,202,305; FleetList:123 | connection.getAddress / getTransport | none (client-local) | — | served (no request) |
+| RAGView:58 / :194 | rag.query / buildContext | POST `/api/v1/rag/query` / `context` (`rest.ts:2200,2208`) | `handlers_rag.go:691-696` | served |
+| RAGView:139 / :154 / :169 | rag.listDocuments / deleteDocument / reindexDocument | `/api/v1/rag/documents…`, `reindex` | `handlers_rag.go:691-696` | served |
+| EmbeddingsView:65 / :141 | embeddings.listProviders / generate | GET `/api/v1/embedding/providers`, POST `generate` | :381/:380 | served |
+| EmbeddingsView:169 / :184 | embeddings.setProviderStatus / setDefaultProvider | PUT `providers/{name}` / `providers/default` | :383/:382 | served |
+| MessagingView:54 / :104 / :132 / :182 | messaging.listChannels / createChannel / deleteChannel / publish | `/api/v1/messaging/channels…`, `publish/{channel}` | :447-453 | not-configured when no messaging service is wired (`handlers_messaging.go:238-240` → 501 `MessagingServiceNotConfiguredError`); served otherwise |
+| SchedulerView:54; SystemDashboard:291; providers.ts:458 | scheduler.listJobs | GET `/api/v1/scheduler/jobs` | :563 | served |
+| SchedulerView:127 / :157 / :258 | scheduler.createJob / deleteJob / updateJob | POST / DELETE / PUT | :564/:565/:567 | served |
+| SchedulerView:179 / :201 / :204 | scheduler.triggerJob / resumeJob / pauseJob | POST `…/{id}/trigger` / `resume` / `pause` | :572/:571/:570 | served |
+| ClusterDashboard:77; SystemDashboard:435 | cluster.status | GET `/api/v1/cluster/status` (`rest.ts:4774`) | :364 | served |
+
+### Security
+
+| Control (file:line) | SDK method | HTTP + route | Registered | Status |
+|---|---|---|---|---|
+| KMSView:188; SystemDashboard:277; providers.ts:125 / KMSView:222 | kms.listKeys / createKey | GET / POST `/api/v1/kms/keys` | :418/:419 | served |
+| KMSView:98 / :244 / :263 | kms.setDefaultKey / rotateKey / deleteKey | `/api/v1/kms/keys/{name}…` | :424/:432/:422 | served |
+| KMSView:130 / :149 | kms.listKeyVersions / updateKeyStatus | GET `versions` / PUT `status` | :439/:438 | served |
+| DEKView:95,153,183,213,237,273,294,325,373,388,408 | dek.list / create / status / rotate / setDefault / setSafety / clearSafety / delete / get / startReencryption / reencryptionProgress | `/api/v1/kms/deks[/…]` (`dek.ts:228-263`) | :410-416 | served |
+| SecretsView:99; providers.ts:71 | secrets.listSecrets | GET `/api/v1/secrets?limit` (`rest.ts:3622`) | :617 | served |
+| SecretsView:135,158,224; providers.ts:93,106 | secrets.store / get / delete | POST / GET / DELETE `/api/v1/secrets/{path}` | :618-621 | served |
+| SecretsView:179 | secrets.rotateSecret | PUT/POST `/api/v1/secrets/{path}?action=rotate` (`rest.ts:3686`) | :618-621 | served |
+| SecretsView:206 | secrets.listVersions | GET `/api/v1/secrets-versions/{path}` | :615 | served |
+| DynamicSecretsView:101 / :183 / :212 | dynamicSecrets.listRoles / createRole / deleteRole | `/api/v1/secrets/dynamic/roles…` | :626-629 | served |
+| DynamicSecretsView:132 / :282 / :307 | dynamicSecrets.listLeases / renewLease / revokeLease | `/api/v1/secrets/dynamic/leases…` | :623-625 | served |
+| DynamicSecretsView:246 | dynamicSecrets.generateCredential | POST `…/credentials` | :622 | served |
+| CertificatesView:103 / :360 | ca.caInfo / getCABundle | GET `/api/v1/certificate/ca/info` / `ca/bundle` | :340/:339 | served |
+| CertificatesView:137; providers.ts:198 | ca.listCertificates | GET `ca/list` | :341 | served |
+| CertificatesView:225 / :265 / :292 / :318 | ca.issue / signCSR / revoke / verify | POST `issue` / `sign-csr` / `revoke` / `verify` | :345/:347/:346/:349 | served |
+| CertificatesView:341; providers.ts:223 | ca.isRevoked | GET `/api/v1/xkms/ca/revoked/{serial}` | :693 | served |
+| CertificatesView:374 | ca.generateCRL | POST `/api/v1/xkms/ca/crl` | :690 | served |
+| TrustView:50 / :98 / :129 | trust.crossSignedRootPool / autoImportAIA / publishDANE | `/api/v1/trust/…` | :656/:655/:657 | served |
+| CryptoView:96,121,151,179,209,229,255 | crypto.encrypt / decrypt / sign / verify / hash / random / dataKey | `/api/v1/crypto/…` | :367-376 | served |
+| SSHKeysView:121; providers.ts:159 / :159 | ssh.keys.listScoped / deleteScoped | GET / DELETE `/api/v1/ssh/keys/{scope}/{owner}/…` | :640-641/:639 | served |
+| GenerateKeyModal:102 / ImportKeyModal:142 | ssh.keys.create / import_ | POST `/api/v1/ssh/keys` / `keys/import` | :637/:638 | served |
+| DeployFleetNodeDialog:85 | sshKeys.list | GET `/api/v1/ssh/keys` | :636 | served |
+| KnownHostsPanel:90 / :134 / :161 | ssh.knownHosts.list / add / remove | GET / POST / DELETE `/api/v1/ssh/known-hosts` | :643/:644/:645 | served |
+
+### Barrier, ceremony, bootstrap (standalone clients)
+
+| Control (file:line) | SDK method | HTTP + route | Registered | Status |
+|---|---|---|---|---|
+| BarrierView:137 | barrier.status | GET `/api/v1/barrier/status` | :325 | served |
+| BarrierView:141 | barrier.initializeShamir | POST `/api/v1/barrier/shamir/initialize` | :322 | served |
+| BarrierView:153 | barrier.unsealWithShare | POST `/api/v1/barrier/shamir/unseal-share` | :323 | served |
+| CeremonyView:124 | ceremony.claimCertComplete | POST `/api/v1/init/claim-cert/complete` | :398 | not-configured before `quicbaasd init` (same gate as the officers fetch) |
+| CeremonyView:141 | ceremony.claimShareComplete | POST `/api/v1/init/officer-share/complete` | :402 | not-configured before init |
+| CeremonyView:154 | ceremony.enrollExternalOfficer | POST `/api/v1/init/enroll-external-officer` | :399 | not-configured before init |
+| BootstrapView:100 / :103 / :106 / :113 | bootstrap.spki / dane / noise / auto | `/api/v1/bootstrap/…` | :330-333 | served |
 
 ## Suspected gaps
 
@@ -187,7 +246,9 @@ barrier, tenant barrier, ceremony and bootstrap: **incomplete** (being added).
 | Ceremony officers | confirmed `not-configured` before init | `CeremonyView.svelte:100` maps 503 to the notice at :335 |
 | Tenant barrier routes | cleared | all five calls registered at `routes_iam.go:109-113` |
 | deployFleetNode | confirmed `not-configured` off Wails | every non-Wails transport throws `DeployNotSupportedError` (`rest.ts:1179`) |
-| rotateSessionAccount, messaging 501s, timeseries no-op build | pending | — |
+| rotateSessionAccount | confirmed `not-configured` without a rotation service | `handlers_orchestrator.go:332-334` returns 501 |
+| Messaging | confirmed `not-configured` without a messaging service | `handlers_messaging.go:238-240` returns 501 |
+| Time series | confirmed `not-configured` without build tag `timeseries` | `timeseries_handlers_noop.go:1` (`rest && !timeseries`) stubs every handler with 501 |
 
 ## Transports
 
@@ -202,7 +263,10 @@ Proposed rows; none filed.
 3. **Connection view: replace the ComingSoon placeholder with a connection-settings view.** Caller: sidebar "Connection" `MainApp.svelte:277`. Needs: a client-side view over the SDK's transport/address settings; no server route.
 4. **Ceremony view: explain the pre-init state without a 503 round trip.** Caller: `CeremonyView.svelte:87`. Needs: nothing server-side; the 503 before `quicbaasd init` is by design. Record only.
 5. **Deploy dialog: hide or explain Deploy when the transport is not Wails.** Caller: `DeployFleetNodeDialog.svelte:150`. Needs: a UI-side transport check (capability gating, #2576); no server route.
-6. **Audit rows still pending** (user update/delete, rotateSessionAccount, the remaining families, transports, distinct-method count). Needs: this audit to continue.
+6. **Sessions: explain account rotation when the server has no rotation service.** Caller: `SessionDetail.svelte:173`. Needs: the view to show the 501 as "not configured" (capability gating, #2576).
+7. **Messaging view: show "not configured" when the server has no messaging service.** Callers: `MessagingView.svelte:54,104,132,182`. Needs: capability gating (#2576).
+8. **Time series view: show "not enabled" on a build without the `timeseries` tag.** Callers: `TimeSeriesView.svelte:56,100,162,190`. Needs: capability gating (#2576).
+9. **Distinct SDK method count and transport sections.** Needs: this audit to continue.
 
 ## Audit progress
 
