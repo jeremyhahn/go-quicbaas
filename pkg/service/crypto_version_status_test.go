@@ -268,6 +268,79 @@ func TestCryptoService_Decrypt_VersionStatusReadErrorFailsClosed(t *testing.T) {
 	requireStatusUnavailable(t, f, v1)
 }
 
+type failingPutKVStore struct {
+	*mockKVStoreForKMS
+	putErr error
+}
+
+func (s *failingPutKVStore) Put(ctx context.Context, key string, value []byte) error {
+	if s.putErr != nil {
+		return s.putErr
+	}
+	return s.mockKVStoreForKMS.Put(ctx, key, value)
+}
+
+func newFailingPutKVStore(t *testing.T, scoped string) *failingPutKVStore {
+	t.Helper()
+	enabled, err := json.Marshal(&persistedVersionStatus{Status: string(KeyStatusEnabled)})
+	require.NoError(t, err)
+	return &failingPutKVStore{
+		mockKVStoreForKMS: &mockKVStoreForKMS{data: map[string][]byte{versionStatusKey(scoped, 1): enabled}},
+		putErr:            stderrors.New("raft: no leader"),
+	}
+}
+
+func requireV1Refused(t *testing.T, f *versionedCryptoFixture, v1 []byte) {
+	t.Helper()
+	before := f.decrypt.Load()
+	_, err := f.svc.Decrypt(systemTenantCtx(), &DecryptRequest{KeyID: versionStatusKeyID, Ciphertext: v1})
+	requireKeyDisabled(t, err)
+	_, err = f.svc.DecryptBatch(systemTenantCtx(), &DecryptBatchRequest{
+		KeyID: versionStatusKeyID,
+		Items: []BatchDecryptItem{{Ciphertext: v1}},
+	})
+	requireKeyDisabled(t, err)
+	require.Equal(t, before, f.decrypt.Load(), "a version whose disable is pending never reaches the crypto manager")
+}
+
+func TestKMSUpdateKeyStatus_FailedDisableWriteFailsClosed(t *testing.T) {
+	f := newVersionedCryptoFixture(t)
+	store := newFailingPutKVStore(t, f.scoped)
+	f.kmsSvc.SetKVStore(store)
+	v1 := f.encrypt(t, "sealed under v1")
+
+	req := &UpdateKeyStatusRequest{KeyID: versionStatusKeyID, Version: 1, Status: KeyStatusDisabled}
+	_, err := f.kmsSvc.UpdateKeyStatus(systemTenantCtx(), req)
+	require.Error(t, err, "a disable that is not persisted is reported to the caller")
+	var qbErr *errors.QBError
+	require.True(t, stderrors.As(err, &qbErr), "want QBError, got %v", err)
+	require.Equal(t, errors.ErrStorage, qbErr.Code)
+	requireV1Refused(t, f, v1)
+
+	store.putErr = nil
+	_, err = f.kmsSvc.UpdateKeyStatus(systemTenantCtx(), req)
+	require.NoError(t, err, "a retry persists the pending disable")
+	data, err := store.Get(systemTenantCtx(), versionStatusKey(f.scoped, 1))
+	require.NoError(t, err)
+	var ps persistedVersionStatus
+	require.NoError(t, json.Unmarshal(data, &ps))
+	require.Equal(t, string(KeyStatusDisabled), ps.Status)
+	requireV1Refused(t, f, v1)
+
+	t.Run("grace period disable", func(t *testing.T) {
+		g := newVersionedCryptoFixture(t)
+		g.kmsSvc.SetKVStore(newFailingPutKVStore(t, g.scoped))
+		gv1 := g.encrypt(t, "sealed under v1")
+
+		_, err := g.kmsSvc.disableKeyVersion(systemTenantCtx(), g.scoped, 1)
+		require.Error(t, err)
+		before := g.decrypt.Load()
+		_, err = g.svc.Decrypt(systemTenantCtx(), &DecryptRequest{KeyID: versionStatusKeyID, Ciphertext: gv1})
+		requireKeyDisabled(t, err)
+		require.Equal(t, before, g.decrypt.Load())
+	})
+}
+
 func TestCryptoService_Decrypt_VersionStatusUndecodableFailsClosed(t *testing.T) {
 	f := newVersionedCryptoFixture(t)
 	v1 := f.encrypt(t, "sealed under v1")

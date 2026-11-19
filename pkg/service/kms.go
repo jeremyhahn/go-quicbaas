@@ -216,6 +216,9 @@ type kmsServiceImpl struct {
 type versionStatusInfo struct {
 	Status     KeyStatus
 	DisabledAt *time.Time
+	// Pending marks a disable this node has not yet persisted to the KVStore.
+	// It outranks the persisted status until a write succeeds.
+	Pending bool
 }
 
 // kmsMetrics holds Prometheus metrics for KMS operations.
@@ -2402,6 +2405,17 @@ func (k *kmsServiceImpl) lookupVersionStatus(ctx context.Context, keyID string, 
 
 	cacheKey := fmt.Sprintf("%s:%d", keyID, version)
 
+	// A disable this node could not persist outranks the persisted status:
+	// that record is the stale one the failed write meant to replace.
+	if k.versionDisablePending(keyID, version) {
+		if info, ok := k.versionStatus.Load(cacheKey); ok {
+			if vsi, ok := info.(*versionStatusInfo); ok {
+				return KeyStatusDisabled, vsi.DisabledAt, nil
+			}
+		}
+		return KeyStatusDisabled, nil, nil
+	}
+
 	// The replicated KVStore is authoritative: it carries writes made on any node.
 	if k.kvStore != nil {
 		data, err := k.kvStore.Get(ctx, versionStatusKey(keyID, version))
@@ -2420,7 +2434,7 @@ func (k *kmsServiceImpl) lookupVersionStatus(ctx context.Context, keyID string, 
 				disabledAt = &t
 			}
 			// Populate local cache to avoid repeated lookups
-			k.versionStatus.Store(cacheKey, &versionStatusInfo{
+			k.cacheReadVersionStatus(cacheKey, &versionStatusInfo{
 				Status:     status,
 				DisabledAt: disabledAt,
 			})
@@ -2437,7 +2451,7 @@ func (k *kmsServiceImpl) lookupVersionStatus(ctx context.Context, keyID string, 
 		}
 		if completedAt, found := versions[version]; found {
 			// Populate local cache
-			k.versionStatus.Store(cacheKey, &versionStatusInfo{
+			k.cacheReadVersionStatus(cacheKey, &versionStatusInfo{
 				Status:     KeyStatusDisabled,
 				DisabledAt: &completedAt,
 			})
@@ -2468,35 +2482,77 @@ type persistedVersionStatus struct {
 
 // setVersionStatus stores the status of a specific key version.
 // Updates both the local cache and persistent KVStore (if available).
-func (k *kmsServiceImpl) setVersionStatus(keyID string, version uint64, status KeyStatus, disabledAt *time.Time) {
+func (k *kmsServiceImpl) setVersionStatus(keyID string, version uint64, status KeyStatus, disabledAt *time.Time) error {
 	cacheKey := fmt.Sprintf("%s:%d", keyID, version)
+	if k.kvStore == nil {
+		k.versionStatus.Store(cacheKey, &versionStatusInfo{
+			Status:     status,
+			DisabledAt: disabledAt,
+		})
+		return nil
+	}
+
+	// A disable takes effect on this node before the write and stays pending
+	// until the write succeeds, so a failed write never lets the stale
+	// persisted status re-enable the version. Any other status is cached only
+	// once it is persisted.
+	disabling := status == KeyStatusDisabled
+	if disabling {
+		k.versionStatus.Store(cacheKey, &versionStatusInfo{
+			Status:     status,
+			DisabledAt: disabledAt,
+			Pending:    true,
+		})
+	}
+
+	// Persist to Raft-replicated KVStore for cross-node visibility
+	var ts int64
+	if disabledAt != nil {
+		ts = disabledAt.UnixNano()
+	}
+	data, err := json.Marshal(&persistedVersionStatus{
+		Status:     string(status),
+		DisabledAt: ts,
+	})
+	if err != nil {
+		return WrapError(err, errors.ErrStorage, "kms.setVersionStatus", "failed to persist key version status")
+	}
+	putCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if putErr := k.kvStore.Put(putCtx, versionStatusKey(keyID, version), data); putErr != nil {
+		return WrapError(putErr, errors.ErrStorage, "kms.setVersionStatus", "failed to persist key version status")
+	}
 	k.versionStatus.Store(cacheKey, &versionStatusInfo{
 		Status:     status,
 		DisabledAt: disabledAt,
 	})
+	return nil
+}
 
-	// Persist to Raft-replicated KVStore for cross-node visibility
-	if k.kvStore != nil {
-		var ts int64
-		if disabledAt != nil {
-			ts = disabledAt.UnixNano()
+// versionDisablePending reports whether this node holds a disable of
+// keyID's version that it has not yet persisted.
+func (k *kmsServiceImpl) versionDisablePending(keyID string, version uint64) bool {
+	info, ok := k.versionStatus.Load(fmt.Sprintf("%s:%d", keyID, version))
+	if !ok {
+		return false
+	}
+	vsi, ok := info.(*versionStatusInfo)
+	return ok && vsi.Pending
+}
+
+// cacheReadVersionStatus caches a status read from a replicated source unless
+// the entry holds a pending disable, which a read must never replace.
+func (k *kmsServiceImpl) cacheReadVersionStatus(cacheKey string, info *versionStatusInfo) {
+	for {
+		old, loaded := k.versionStatus.LoadOrStore(cacheKey, info)
+		if !loaded {
+			return
 		}
-		data, err := json.Marshal(&persistedVersionStatus{
-			Status:     string(status),
-			DisabledAt: ts,
-		})
-		if err == nil {
-			putCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			if putErr := k.kvStore.Put(putCtx, versionStatusKey(keyID, version), data); putErr != nil {
-				if k.logger != nil {
-					k.logger.WithFields(map[string]interface{}{
-						"key_id":  keyID,
-						"version": version,
-						"error":   putErr.Error(),
-					}).Warn("Failed to persist version status to KVStore")
-				}
-			}
+		if vsi, ok := old.(*versionStatusInfo); ok && vsi.Pending {
+			return
+		}
+		if k.versionStatus.CompareAndSwap(cacheKey, old, info) {
+			return
 		}
 	}
 }
@@ -2520,7 +2576,8 @@ func (k *kmsServiceImpl) disableKeyVersion(ctx context.Context, keyID string, ve
 		oldStatus = KeyStatusEnabled
 	}
 
-	if oldStatus == KeyStatusDisabled {
+	// A pending disable is not yet persisted: fall through so this call writes it.
+	if oldStatus == KeyStatusDisabled && !k.versionDisablePending(keyID, version) {
 		return &UpdateKeyStatusResponse{
 			KeyID:     keyID,
 			Version:   version,
@@ -2532,7 +2589,9 @@ func (k *kmsServiceImpl) disableKeyVersion(ctx context.Context, keyID string, ve
 	}
 
 	now := time.Now()
-	k.setVersionStatus(keyID, version, KeyStatusDisabled, &now)
+	if err := k.setVersionStatus(keyID, version, KeyStatusDisabled, &now); err != nil {
+		return nil, err
+	}
 
 	if k.metrics != nil {
 		k.metrics.statusUpdatesTotal.With(string(oldStatus), string(KeyStatusDisabled)).Inc()
@@ -2615,8 +2674,9 @@ func (k *kmsServiceImpl) UpdateKeyStatus(ctx context.Context, req *UpdateKeyStat
 		}
 	}
 
-	// Check if status is already the same
-	if oldStatus == req.Status {
+	// Check if status is already the same. A pending disable is not yet
+	// persisted, so a request for any status goes on to write it.
+	if oldStatus == req.Status && (req.Version == 0 || !k.versionDisablePending(scopedKeyID, req.Version)) {
 		// No change needed, return current state
 		return &UpdateKeyStatusResponse{
 			KeyID:     req.KeyID,
@@ -2637,7 +2697,12 @@ func (k *kmsServiceImpl) UpdateKeyStatus(ctx context.Context, req *UpdateKeyStat
 		if req.Status == KeyStatusDisabled {
 			disabledAt = &now
 		}
-		k.setVersionStatus(scopedKeyID, req.Version, req.Status, disabledAt)
+		if err := k.setVersionStatus(scopedKeyID, req.Version, req.Status, disabledAt); err != nil {
+			if k.metrics != nil {
+				k.metrics.errorsByType.With("storage_error", "update_key_status").Inc()
+			}
+			return nil, err
+		}
 	} else {
 		// Call appropriate KMS manager method for whole-key status updates
 		// This is used when no specific version is targeted
