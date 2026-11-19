@@ -695,6 +695,9 @@ func (kb *XKMSBackend) conflictingVersionKeys(ctx context.Context, keyID string)
 // listXKMSKeys is go-xkms's key listing; a package variable so tests can make it fail.
 var listXKMSKeys = xkms.ListKeys
 
+// deleteXKMSKey is go-xkms's key deletion; a package variable so tests can make it fail.
+var deleteXKMSKey = xkms.DeleteKey
+
 // listStoredKeyIDs returns the QuicBaaS key IDs go-xkms stores under this backend whose ID starts with prefix.
 // It never consults the metadata cache, and returns go-xkms's listing error unchanged.
 func (kb *XKMSBackend) listStoredKeyIDs(ctx context.Context, prefix string) (map[string]struct{}, error) {
@@ -800,15 +803,37 @@ func (kb *XKMSBackend) DeleteKey(ctx context.Context, keyID string) error {
 	// Delete every rotated version first. A version left behind would
 	// outlive its base and, once the base is gone, refuseVersionName would
 	// no longer hide it: it would read as an ordinary key without a policy.
-	// Versions are contiguous from 2, so the first one go-xkms does not have
-	// ends the walk. The cached meta.Version is not used: after a restart
-	// the uncached metadata reads Version 1.
+	// The versions are enumerated from go-xkms's stored listing, not walked
+	// up from 2, so a gap left by an earlier partial failure does not end
+	// the search. They are deleted highest first, so a partial failure
+	// leaves a contiguous v2..vk that GetKeyMetadata's version walk still
+	// reads. The cached meta.Version is not used: after a restart the
+	// uncached metadata may not know every version.
 	algorithm := ""
 	if meta != nil {
 		algorithm = meta.Algorithm
 	}
-	for v := 2; ; v++ {
-		versionedID := kb.buildVersionedKeyID(keyID, v)
+	stored, err := kb.listStoredKeyIDs(ctx, keyID+"_v")
+	if err != nil {
+		return err
+	}
+	type storedVersion struct {
+		id string
+		n  int
+	}
+	versions := make([]storedVersion, 0, len(stored))
+	for id := range stored {
+		var n int
+		if _, scanErr := fmt.Sscanf(strings.TrimPrefix(id, keyID+"_v"), "%d", &n); scanErr != nil || n < 2 {
+			continue
+		}
+		if id == kb.buildVersionedKeyID(keyID, n) {
+			versions = append(versions, storedVersion{id: id, n: n})
+		}
+	}
+	sort.Slice(versions, func(i, j int) bool { return versions[i].n > versions[j].n })
+	for _, sv := range versions {
+		versionedID := sv.id
 		var versionAttrs *kctypes.KeyAttributes
 		if algorithm != "" {
 			versionAttrs, err = kb.algorithmToKeyAttributes(versionedID, algorithm)
@@ -827,11 +852,11 @@ func (kb *XKMSBackend) DeleteKey(ctx context.Context, keyID string) error {
 				SymmetricAlgorithm: kctypes.SymmetricAES256GCM,
 			}
 		}
-		if err := xkms.DeleteKey(ctx, versionAttrs); err != nil {
+		if err := deleteXKMSKey(ctx, versionAttrs); err != nil {
 			// The go-xkms backend reports a missing key with its own
 			// sentinel, which pkg/xkms passes through untranslated.
 			if stderrors.Is(err, xkms.ErrKeyNotFound) || stderrors.Is(err, kctypes.ErrBackendKeyNotFound) {
-				break
+				continue
 			}
 			return api.NewKeyDeletionError("XKMSBackend.DeleteKey", err)
 		}
@@ -857,7 +882,7 @@ func (kb *XKMSBackend) DeleteKey(ctx context.Context, keyID string) error {
 	}
 
 	// Delete from go-xkms using attributes
-	if err := xkms.DeleteKey(ctx, attrs); err != nil {
+	if err := deleteXKMSKey(ctx, attrs); err != nil {
 		if stderrors.Is(err, xkms.ErrKeyNotFound) {
 			return ErrKeyNotFound
 		}
@@ -868,7 +893,7 @@ func (kb *XKMSBackend) DeleteKey(ctx context.Context, keyID string) error {
 			KeyType:            kctypes.KeyTypeEncryption,
 			SymmetricAlgorithm: kctypes.SymmetricAES256GCM,
 		}
-		if err2 := xkms.DeleteKey(ctx, defaultAttrs); err2 != nil {
+		if err2 := deleteXKMSKey(ctx, defaultAttrs); err2 != nil {
 			if stderrors.Is(err2, xkms.ErrKeyNotFound) {
 				return ErrKeyNotFound
 			}

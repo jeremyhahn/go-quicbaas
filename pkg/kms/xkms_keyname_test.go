@@ -428,3 +428,70 @@ func TestXKMSBackend_VersionRecoveryFailsClosedOnListingError(t *testing.T) {
 	_, err = restarted.Encrypt(ctx, "rv-closed-k", []byte("p"), nil)
 	require.Error(t, err)
 }
+
+// TestXKMSBackend_DeleteRotatedKeyRetryAfterPartialFailure: a DeleteKey that
+// fails part-way through a rotated key's versions leaves the key usable, and
+// a retry deletes every version and the base, so no version outlives it.
+func TestXKMSBackend_DeleteRotatedKeyRetryAfterPartialFailure(t *testing.T) {
+	for _, keyID := range []string{"del-sys-k", "tenant/del-alice/k"} {
+		t.Run(keyID, func(t *testing.T) {
+			cleanup := initXKMSForTest(t)
+			defer cleanup()
+			ctx := context.Background()
+
+			backend := newKeyNameTestBackend(t)
+			createKeyNameTestKey(t, backend, keyID)
+			for i := 0; i < 2; i++ {
+				_, err := backend.RotateKey(ctx, keyID)
+				require.NoError(t, err)
+			}
+
+			v3Name, err := xkmsKeyName(keyID + "_v3")
+			require.NoError(t, err)
+			orig := deleteXKMSKey
+			t.Cleanup(func() { deleteXKMSKey = orig })
+			failed := false
+			deleteXKMSKey = func(ctx context.Context, attrs *xkmssdk.KeyAttributes) error {
+				if !failed && attrs != nil && attrs.CN == v3Name {
+					failed = true
+					return errors.New("xkms: storage unavailable")
+				}
+				return orig(ctx, attrs)
+			}
+
+			require.Error(t, backend.DeleteKey(ctx, keyID))
+			assertKeyRoundTrips(t, backend, keyID)
+
+			deleteXKMSKey = orig
+			require.NoError(t, backend.DeleteKey(ctx, keyID))
+
+			left, err := newKeyNameTestBackend(t).listStoredKeyIDs(ctx, keyID)
+			require.NoError(t, err)
+			assert.Empty(t, left, "a retried DeleteKey leaves no version behind")
+		})
+	}
+
+	t.Run("gap", func(t *testing.T) {
+		cleanup := initXKMSForTest(t)
+		defer cleanup()
+		ctx := context.Background()
+		const keyID = "del-gap-k"
+
+		backend := newKeyNameTestBackend(t)
+		createKeyNameTestKey(t, backend, keyID)
+		for i := 0; i < 2; i++ {
+			_, err := backend.RotateKey(ctx, keyID)
+			require.NoError(t, err)
+		}
+		meta, err := backend.GetKeyMetadata(ctx, keyID)
+		require.NoError(t, err)
+		attrs, err := backend.algorithmToKeyAttributes(keyID+"_v2", meta.Algorithm)
+		require.NoError(t, err)
+		require.NoError(t, deleteXKMSKey(ctx, attrs))
+
+		require.NoError(t, backend.DeleteKey(ctx, keyID))
+		left, err := newKeyNameTestBackend(t).listStoredKeyIDs(ctx, keyID)
+		require.NoError(t, err)
+		assert.Empty(t, left, "a gap in the versions does not stop DeleteKey")
+	})
+}
