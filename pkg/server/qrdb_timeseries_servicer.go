@@ -2,9 +2,13 @@ package server
 
 import (
 	"context"
+	"sync/atomic"
 	"time"
 
 	"github.com/jeremyhahn/go-qrdb/pkg/consistency"
+	qrdbserver "github.com/jeremyhahn/go-qrdb/pkg/server"
+	qrdbservice "github.com/jeremyhahn/go-qrdb/pkg/service"
+	"github.com/jeremyhahn/go-qrdb/pkg/tenant"
 	"github.com/jeremyhahn/go-qrdb/pkg/timeseries"
 )
 
@@ -12,56 +16,119 @@ import (
 // QRDBUserServiceUnavailableError.
 const qrdbTimeSeriesSurface = "timeseries"
 
-// GetQRDBTimeSeriesServicer returns the embedded qrdb node's time-series
-// servicer, or nil while the node is absent or its services are not built
-// (before Unseal on the seal-enabled boot path).
-func (s *Server) GetQRDBTimeSeriesServicer() timeseries.TimeSeriesServicer {
-	node := s.getQRDBNode()
-	if node == nil {
-		return nil
-	}
-	svcs := node.Services()
-	if svcs == nil {
-		return nil
-	}
-	if svcs.TimeSeries == nil {
-		return nil
-	}
-	return svcs.TimeSeries
+// qrdbScopedRegistry is one go-qrdb server's per-(tenant, database) service
+// registry, remembered with the server it was built from.
+type qrdbScopedRegistry struct {
+	srv *qrdbserver.Server
+	reg qrdbservice.Registry
 }
 
-// QRDBTimeSeriesServicer returns a time-series servicer that resolves the
-// node's servicer on every call, for the embedded transport composer. A
-// servicer captured before Unseal would be nil for the life of the process.
+// qrdbScopedRegistryHolder holds the embedded node's scoped service registry.
+// go-qrdb's (*server.Server).ServiceRegistry builds a fresh registry on every
+// call and asks callers that resolve repeatedly to hold one, so the holder
+// caches it per go-qrdb server and rebuilds it when the node's server changes
+// (a restart or an Unseal). It is go-qrdb's own nodeServiceRegistry pattern
+// (sdk/go node/embedded_registry.go), which is unexported there.
+//
+// The registry is the only time-series source: a shared-shard tenant is
+// served through a namespaced, quota-checked servicer, exactly as go-qrdb's
+// own transports do. The node's raw Services().TimeSeries, which serves the
+// shared shard unscoped, is never used.
+type qrdbScopedRegistryHolder struct {
+	s   *Server
+	cur atomic.Pointer[qrdbScopedRegistry]
+}
+
+// current returns the cached registry of the node's current go-qrdb server.
+// It fails closed with QRDBUserServiceUnavailableError{Surface: "timeseries"}
+// while the node is absent, sealed (no server yet) or has no database
+// registry.
+func (h *qrdbScopedRegistryHolder) current() (qrdbservice.Registry, error) {
+	unavailable := &QRDBUserServiceUnavailableError{Surface: qrdbTimeSeriesSurface}
+	if h == nil || h.s == nil {
+		return nil, unavailable
+	}
+	node := h.s.getQRDBNode()
+	if node == nil {
+		return nil, unavailable
+	}
+	srv := node.Server()
+	if srv == nil {
+		return nil, unavailable
+	}
+	if cached := h.cur.Load(); cached != nil && cached.srv == srv {
+		return cached.reg, nil
+	}
+	reg := srv.ServiceRegistry()
+	if reg == nil {
+		return nil, unavailable
+	}
+	h.cur.Store(&qrdbScopedRegistry{srv: srv, reg: reg})
+	return reg, nil
+}
+
+// timeSeriesService resolves the time-series servicer of one (tenant,
+// database) scope through the registry.
+func (h *qrdbScopedRegistryHolder) timeSeriesService(tenantID, db string) (timeseries.TimeSeriesServicer, error) {
+	reg, err := h.current()
+	if err != nil {
+		return nil, err
+	}
+	svc, err := reg.TimeSeriesService(tenantID, db)
+	if err != nil {
+		return nil, err
+	}
+	if svc == nil {
+		return nil, &QRDBUserServiceUnavailableError{Surface: qrdbTimeSeriesSurface}
+	}
+	return svc, nil
+}
+
+// qrdbTimeSeriesUnscopedError is returned by the time-series methods that
+// carry no context (GetRetentionPolicy, ListMetrics): with no context there
+// is no tenant or database to scope the call to, so it is refused rather
+// than served from the shared shard. go-qrdb's embedded scoped adapter
+// refuses the same two methods.
+type qrdbTimeSeriesUnscopedError struct {
+	// Method names the refused method.
+	Method string
+}
+
+func (e *qrdbTimeSeriesUnscopedError) Error() string {
+	return "timeseries: " + e.Method + " carries no context, so no tenant and database scope can be resolved; use its context-carrying form"
+}
+
+// QRDBTimeSeriesServicer returns a time-series servicer for the embedded
+// transport composer. It resolves the caller's (tenant, database) scope from
+// each call's context through the node's scoped service registry, so a
+// servicer captured before Unseal comes online once the node is unsealed.
 func (s *Server) QRDBTimeSeriesServicer() timeseries.TimeSeriesServicer {
 	return newQRDBTimeSeriesServicerProxy(s)
 }
 
-// qrdbTimeSeriesServicerProxy resolves the time-series servicer per call and
-// fails closed with QRDBUserServiceUnavailableError{Surface: "timeseries"}
-// while the node is absent or sealed.
+// qrdbTimeSeriesServicerProxy resolves the scoped time-series servicer per
+// call from the call's context (go-qrdb tenant.FromContext and
+// tenant.DatabaseFromContext). It fails closed with
+// QRDBUserServiceUnavailableError{Surface: "timeseries"} while the node is
+// absent or sealed, and with qrdbTimeSeriesUnscopedError for the methods that
+// carry no context.
 type qrdbTimeSeriesServicerProxy struct {
-	resolve func() timeseries.TimeSeriesServicer
+	registry *qrdbScopedRegistryHolder
 }
 
 var _ timeseries.TimeSeriesServicer = (*qrdbTimeSeriesServicerProxy)(nil)
 
 func newQRDBTimeSeriesServicerProxy(s *Server) *qrdbTimeSeriesServicerProxy {
-	return &qrdbTimeSeriesServicerProxy{resolve: s.GetQRDBTimeSeriesServicer}
+	return &qrdbTimeSeriesServicerProxy{registry: &qrdbScopedRegistryHolder{s: s}}
 }
 
-func (p *qrdbTimeSeriesServicerProxy) servicer() (timeseries.TimeSeriesServicer, error) {
-	if p.resolve != nil {
-		if svc := p.resolve(); svc != nil {
-			return svc, nil
-		}
-	}
-	return nil, &QRDBUserServiceUnavailableError{Surface: qrdbTimeSeriesSurface}
+func (p *qrdbTimeSeriesServicerProxy) servicer(ctx context.Context) (timeseries.TimeSeriesServicer, error) {
+	return p.registry.timeSeriesService(tenant.FromContext(ctx), tenant.DatabaseFromContext(ctx))
 }
 
 // Write implements timeseries.TimeSeriesServicer.
 func (p *qrdbTimeSeriesServicerProxy) Write(ctx context.Context, metric string, value float64, timestamp time.Time, tags map[string]string) error {
-	svc, err := p.servicer()
+	svc, err := p.servicer(ctx)
 	if err != nil {
 		return err
 	}
@@ -70,7 +137,7 @@ func (p *qrdbTimeSeriesServicerProxy) Write(ctx context.Context, metric string, 
 
 // WriteBatch implements timeseries.TimeSeriesServicer.
 func (p *qrdbTimeSeriesServicerProxy) WriteBatch(ctx context.Context, points []timeseries.DataPoint) error {
-	svc, err := p.servicer()
+	svc, err := p.servicer(ctx)
 	if err != nil {
 		return err
 	}
@@ -79,7 +146,7 @@ func (p *qrdbTimeSeriesServicerProxy) WriteBatch(ctx context.Context, points []t
 
 // Query implements timeseries.TimeSeriesServicer.
 func (p *qrdbTimeSeriesServicerProxy) Query(ctx context.Context, metric string, start, end time.Time, opts ...timeseries.TSQueryOption) ([]timeseries.DataPoint, error) {
-	svc, err := p.servicer()
+	svc, err := p.servicer(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -88,7 +155,7 @@ func (p *qrdbTimeSeriesServicerProxy) Query(ctx context.Context, metric string, 
 
 // QueryWithConsistency implements timeseries.TimeSeriesServicer.
 func (p *qrdbTimeSeriesServicerProxy) QueryWithConsistency(ctx context.Context, metric string, start, end time.Time, ropts consistency.ReadOptions, opts ...timeseries.TSQueryOption) ([]timeseries.DataPoint, error) {
-	svc, err := p.servicer()
+	svc, err := p.servicer(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +164,7 @@ func (p *qrdbTimeSeriesServicerProxy) QueryWithConsistency(ctx context.Context, 
 
 // Aggregate implements timeseries.TimeSeriesServicer.
 func (p *qrdbTimeSeriesServicerProxy) Aggregate(ctx context.Context, metric string, start, end time.Time, fn timeseries.AggFunc, interval time.Duration) ([]timeseries.AggResult, error) {
-	svc, err := p.servicer()
+	svc, err := p.servicer(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -106,7 +173,7 @@ func (p *qrdbTimeSeriesServicerProxy) Aggregate(ctx context.Context, metric stri
 
 // AggregateWithConsistency implements timeseries.TimeSeriesServicer.
 func (p *qrdbTimeSeriesServicerProxy) AggregateWithConsistency(ctx context.Context, metric string, start, end time.Time, fn timeseries.AggFunc, interval time.Duration, ropts consistency.ReadOptions) ([]timeseries.AggResult, error) {
-	svc, err := p.servicer()
+	svc, err := p.servicer(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -115,7 +182,7 @@ func (p *qrdbTimeSeriesServicerProxy) AggregateWithConsistency(ctx context.Conte
 
 // WritePoint implements timeseries.TimeSeriesServicer.
 func (p *qrdbTimeSeriesServicerProxy) WritePoint(ctx context.Context, point *timeseries.DataPoint) error {
-	svc, err := p.servicer()
+	svc, err := p.servicer(ctx)
 	if err != nil {
 		return err
 	}
@@ -124,7 +191,7 @@ func (p *qrdbTimeSeriesServicerProxy) WritePoint(ctx context.Context, point *tim
 
 // QueryRich implements timeseries.TimeSeriesServicer.
 func (p *qrdbTimeSeriesServicerProxy) QueryRich(ctx context.Context, req *timeseries.QueryRequest) (*timeseries.QueryResult, error) {
-	svc, err := p.servicer()
+	svc, err := p.servicer(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -133,7 +200,7 @@ func (p *qrdbTimeSeriesServicerProxy) QueryRich(ctx context.Context, req *timese
 
 // QueryRichWithConsistency implements timeseries.TimeSeriesServicer.
 func (p *qrdbTimeSeriesServicerProxy) QueryRichWithConsistency(ctx context.Context, req *timeseries.QueryRequest, ropts consistency.ReadOptions) (*timeseries.QueryResult, error) {
-	svc, err := p.servicer()
+	svc, err := p.servicer(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -142,43 +209,39 @@ func (p *qrdbTimeSeriesServicerProxy) QueryRichWithConsistency(ctx context.Conte
 
 // DeleteSeries implements timeseries.TimeSeriesServicer.
 func (p *qrdbTimeSeriesServicerProxy) DeleteSeries(ctx context.Context, req *timeseries.DeleteRequest) error {
-	svc, err := p.servicer()
+	svc, err := p.servicer(ctx)
 	if err != nil {
 		return err
 	}
 	return svc.DeleteSeries(ctx, req)
 }
 
-// GetRetentionPolicy implements timeseries.TimeSeriesServicer.
-func (p *qrdbTimeSeriesServicerProxy) GetRetentionPolicy(metric string) (*timeseries.RetentionPolicy, error) {
-	svc, err := p.servicer()
-	if err != nil {
-		return nil, err
-	}
-	return svc.GetRetentionPolicy(metric)
+// GetRetentionPolicy implements timeseries.TimeSeriesServicer. It carries no
+// context, so it always fails closed with qrdbTimeSeriesUnscopedError; the
+// qrdb.v1 TSGetRetention RPC reads the policy through the scoped registry.
+func (p *qrdbTimeSeriesServicerProxy) GetRetentionPolicy(string) (*timeseries.RetentionPolicy, error) {
+	return nil, &qrdbTimeSeriesUnscopedError{Method: "GetRetentionPolicy"}
 }
 
 // SetRetentionPolicy implements timeseries.TimeSeriesServicer.
 func (p *qrdbTimeSeriesServicerProxy) SetRetentionPolicy(ctx context.Context, metric string, policy *timeseries.RetentionPolicy) error {
-	svc, err := p.servicer()
+	svc, err := p.servicer(ctx)
 	if err != nil {
 		return err
 	}
 	return svc.SetRetentionPolicy(ctx, metric, policy)
 }
 
-// ListMetrics implements timeseries.TimeSeriesServicer.
-func (p *qrdbTimeSeriesServicerProxy) ListMetrics(prefix string, limit int) ([]string, error) {
-	svc, err := p.servicer()
-	if err != nil {
-		return nil, err
-	}
-	return svc.ListMetrics(prefix, limit)
+// ListMetrics implements timeseries.TimeSeriesServicer. It carries no
+// context, so it always fails closed with qrdbTimeSeriesUnscopedError; use
+// ListMetricsWithConsistency.
+func (p *qrdbTimeSeriesServicerProxy) ListMetrics(string, int) ([]string, error) {
+	return nil, &qrdbTimeSeriesUnscopedError{Method: "ListMetrics"}
 }
 
 // ListMetricsWithConsistency implements timeseries.TimeSeriesServicer.
 func (p *qrdbTimeSeriesServicerProxy) ListMetricsWithConsistency(ctx context.Context, prefix string, limit int, ropts consistency.ReadOptions) ([]string, error) {
-	svc, err := p.servicer()
+	svc, err := p.servicer(ctx)
 	if err != nil {
 		return nil, err
 	}

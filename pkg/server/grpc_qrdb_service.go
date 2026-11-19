@@ -17,6 +17,7 @@ import (
 	ggrpc "google.golang.org/grpc"
 
 	qrdbgrpc "github.com/jeremyhahn/go-qrdb/pkg/api/grpc"
+	qrdbservice "github.com/jeremyhahn/go-qrdb/pkg/service"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	grpcapi "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
@@ -90,15 +91,90 @@ func (s *Server) buildQRDBRegisterOptions() []qrdbsdk.GRPCRegisterOption {
 		// instead of being captured as nil at registration time.
 		qrdbsdk.WithRegisterUserService(newQRDBUserServicerProxy(s)),
 		qrdbsdk.WithRegisterUserAuthFactorService(newQRDBUserAuthFactorServicerProxy(s)),
-		// The time-series proxy backs the qrdb.v1 time-series RPCs that the
-		// SDK's Search().QRDBTimeSeries() calls. It resolves the node's
-		// servicer PER CALL for the same reason as the user proxies: the
-		// node's Services().TimeSeries is nil until Unseal on the
-		// seal-enabled boot path.
-		qrdbgrpc.WithRegisterTimeSeries(newQRDBTimeSeriesServicerProxy(s)),
+		// The time-series registry backs the qrdb.v1 time-series RPCs that
+		// the SDK's Search().QRDBTimeSeries() calls. go-qrdb's handler
+		// resolves each RPC's servicer per (tenant, database) through it, as
+		// go-qrdb's own transports do, so one tenant never reads or
+		// overwrites another's metrics or retention. It resolves the node's
+		// registry PER CALL for the same reason as the user proxies: the
+		// node has no server until Unseal on the seal-enabled boot path.
+		qrdbgrpc.WithRegisterServiceRegistry(newQRDBTimeSeriesRegistry(s)),
 	)
 
 	return opts
+}
+
+// qrdbTimeSeriesRegistry is the go-qrdb service.Registry the broker's qrdb.v1
+// gRPC and Unix surface resolves its data-plane RPCs through. It serves the
+// time-series family only: TimeSeriesService delegates to the embedded node's
+// cached scoped registry, which wraps a shared-shard tenant in a namespaced,
+// quota-checked servicer. Every other family answers
+// qrdbgrpc.ServiceNotConfiguredError, which is what those RPCs answered when
+// no servicer was registered for them.
+type qrdbTimeSeriesRegistry struct {
+	holder *qrdbScopedRegistryHolder
+}
+
+var _ qrdbservice.Registry = (*qrdbTimeSeriesRegistry)(nil)
+
+func newQRDBTimeSeriesRegistry(s *Server) *qrdbTimeSeriesRegistry {
+	return &qrdbTimeSeriesRegistry{holder: &qrdbScopedRegistryHolder{s: s}}
+}
+
+func (r *qrdbTimeSeriesRegistry) TimeSeriesService(tenantID, db string) (qrdbservice.TimeSeriesServicer, error) {
+	return r.holder.timeSeriesService(tenantID, db)
+}
+
+func (r *qrdbTimeSeriesRegistry) KVService(string, string) (qrdbservice.KVServicer, error) {
+	return nil, &qrdbgrpc.ServiceNotConfiguredError{Service: "kv"}
+}
+
+func (r *qrdbTimeSeriesRegistry) MVCCService(string, string) (qrdbservice.MVCCKVServicer, error) {
+	return nil, &qrdbgrpc.ServiceNotConfiguredError{Service: "mvcc"}
+}
+
+func (r *qrdbTimeSeriesRegistry) WatchService(string, string) (qrdbservice.WatchServicer, error) {
+	return nil, &qrdbgrpc.ServiceNotConfiguredError{Service: "watch"}
+}
+
+func (r *qrdbTimeSeriesRegistry) LeaseService(string, string) (qrdbservice.LeaseServicer, error) {
+	return nil, &qrdbgrpc.ServiceNotConfiguredError{Service: "lease"}
+}
+
+func (r *qrdbTimeSeriesRegistry) IndexService(string, string) (qrdbservice.IndexServicer, error) {
+	return nil, &qrdbgrpc.ServiceNotConfiguredError{Service: "index"}
+}
+
+func (r *qrdbTimeSeriesRegistry) VectorService(string, string) (qrdbservice.VectorServicer, error) {
+	return nil, &qrdbgrpc.ServiceNotConfiguredError{Service: "vector"}
+}
+
+func (r *qrdbTimeSeriesRegistry) TransactionService(string, string) (qrdbservice.TransactionServicer, error) {
+	return nil, &qrdbgrpc.ServiceNotConfiguredError{Service: "transaction"}
+}
+
+func (r *qrdbTimeSeriesRegistry) BatchService(string, string) (qrdbservice.BatchServicer, error) {
+	return nil, &qrdbgrpc.ServiceNotConfiguredError{Service: "batch"}
+}
+
+func (r *qrdbTimeSeriesRegistry) TableService(string, string) (qrdbservice.TableServicer, error) {
+	return nil, &qrdbgrpc.ServiceNotConfiguredError{Service: "table"}
+}
+
+func (r *qrdbTimeSeriesRegistry) SequenceService(string, string) (qrdbservice.SequenceServicer, error) {
+	return nil, &qrdbgrpc.ServiceNotConfiguredError{Service: "sequence"}
+}
+
+func (r *qrdbTimeSeriesRegistry) PrivilegeService(string, string) (qrdbservice.PrivilegeServicer, error) {
+	return nil, &qrdbgrpc.ServiceNotConfiguredError{Service: "privilege"}
+}
+
+func (r *qrdbTimeSeriesRegistry) CollectionService(string, string) (qrdbservice.CollectionServicer, error) {
+	return nil, &qrdbgrpc.ServiceNotConfiguredError{Service: "collection"}
+}
+
+func (r *qrdbTimeSeriesRegistry) LockService(string, string) (qrdbservice.LockServicer, error) {
+	return nil, &qrdbgrpc.ServiceNotConfiguredError{Service: "lock"}
 }
 
 // qrdbSealSOPINInterceptor guards the qrdb.v1 BarrierSeal, BarrierRekey and
