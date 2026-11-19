@@ -539,7 +539,9 @@ func (s *Storage) GetJobsDueForExecution(ctx context.Context, before time.Time, 
 	// a full page of one cannot starve the others. The tenant list is sorted
 	// so its order does not depend on the store's iteration order.
 	slices.Sort(tenants)
-	namespaces := append(tenants, systemDueNamespace)
+	namespaces := make([]string, 0, len(tenants)+1)
+	namespaces = append(namespaces, tenants...)
+	namespaces = append(namespaces, systemDueNamespace)
 	start := int((s.tenantCursor.Add(1) - 1) % uint64(len(namespaces)))
 	dueJobs := make([]*scheduler.Job, 0)
 	for i := range namespaces {
