@@ -33,8 +33,8 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/rest"
 )
 
-// e2eHTTPClient is a package-level HTTP client configured for self-signed TLS certs.
-var e2eHTTPClient = newInsecureHTTPClient(30 * time.Second)
+// e2eHTTPClient is a package-level HTTP client that calls as the tenant operator.
+var e2eHTTPClient = newDeferredTenantOperatorRESTClient(30 * time.Second)
 
 // e2eCleanup sends a cleanup request, with body as JSON when it is non-nil,
 // and fails the test if the request cannot be sent.

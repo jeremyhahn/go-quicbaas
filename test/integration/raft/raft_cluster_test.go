@@ -113,9 +113,11 @@ func TestRaftClusterLeaderElection(t *testing.T) {
 	endpoints := helpers.GetClusterEndpoints()
 	tlsCfg2, tlsErr2 := helpers.IntegrationTLSConfig()
 	require.NoError(t, tlsErr2, "load integration TLS config")
+	// ClusterStatus requires admin:status, which the Operator role holds.
 	conn, err := grpc.DialContext(ctx, endpoints[0],
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg2)),
 		grpc.WithBlock(),
+		grpc.WithPerRPCCredentials(helpers.TenantOperatorGRPCCredentials(t)),
 	)
 	require.NoError(t, err)
 	defer conn.Close()

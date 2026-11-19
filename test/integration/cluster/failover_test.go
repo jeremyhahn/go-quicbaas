@@ -32,8 +32,8 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
-// failoverHTTPClient is a package-level HTTP client configured for self-signed TLS certs.
-var failoverHTTPClient = newInsecureHTTPClient(30 * time.Second)
+// failoverHTTPClient is a package-level HTTP client that calls as the tenant operator.
+var failoverHTTPClient = newDeferredTenantOperatorRESTClient(30 * time.Second)
 
 // TestDataConsistencyAcrossNodes validates that data remains consistent after writes
 func TestDataConsistencyAcrossNodes(t *testing.T) {
@@ -453,7 +453,7 @@ func writeEntity(nodeURL, entityType string, entityID uint64, data map[string]in
 	}
 	done := make(chan result, 1)
 	go func() {
-		cl := newInsecureHTTPClient(35 * time.Second)
+		cl := newDeferredTenantOperatorRESTClient(35 * time.Second)
 		resp, err := cl.Post(apiURL, "application/json", bytes.NewReader(payloadBytes))
 		if err != nil {
 			done <- result{err: err}

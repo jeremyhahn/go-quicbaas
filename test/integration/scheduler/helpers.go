@@ -32,7 +32,6 @@ import (
 	grpcclient "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
-	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
 // Note: Scheduler gRPC client methods are not yet implemented.
@@ -162,7 +161,7 @@ type SchedulerRESTClient struct {
 func NewSchedulerRESTClient(baseURL string) *SchedulerRESTClient {
 	return &SchedulerRESTClient{
 		baseURL:    baseURL,
-		httpClient: helpers.NewHTTPClient(30 * time.Second),
+		httpClient: newOperatorHTTPClient(30 * time.Second),
 	}
 }
 

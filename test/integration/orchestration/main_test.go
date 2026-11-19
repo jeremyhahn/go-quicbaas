@@ -75,7 +75,14 @@ func TestMain(m *testing.M) {
 	env.ollamaAvailable = true
 	fmt.Printf("Ollama service is available at %s (model: %s)\n", env.ollamaURL, env.ollamaModel)
 
-	os.Exit(m.Run())
+	code := m.Run()
+
+	// The tenant of the suite's tenant operator outlives every test, so no
+	// t.Cleanup can delete it.
+	if err := helpers.ReleaseDataPlaneTenants(); err != nil {
+		fmt.Fprintf(os.Stderr, "release data-plane tenants: %v\n", err)
+	}
+	os.Exit(code)
 }
 
 // waitForService polls the given URL until it responds with HTTP 200 or times out.

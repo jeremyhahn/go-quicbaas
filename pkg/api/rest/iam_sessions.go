@@ -50,15 +50,13 @@ type CreateSessionRequest struct {
 
 // CreateSession handles POST /api/v1/tenants/{tenant_id}/users/{user_id}/sessions - Create a new session.
 func (h *IAMHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -200,15 +198,13 @@ func (h *IAMHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 
 // ListUserSessions handles GET /api/v1/tenants/{tenant_id}/users/{user_id}/sessions - List sessions for a user.
 func (h *IAMHandler) ListUserSessions(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -304,15 +300,13 @@ func (h *IAMHandler) ListUserSessions(w http.ResponseWriter, r *http.Request) {
 // authorization are enforced by the authz middleware chain on the
 // /api/v1/tenants surface (PEP-mapped to users:update).
 func (h *IAMHandler) RevokeAllUserSessions(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}

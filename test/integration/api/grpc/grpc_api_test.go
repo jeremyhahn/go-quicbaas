@@ -359,7 +359,11 @@ func TestGRPCClusterStatus(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	conn := setupGRPCConnection(t, ctx)
+	// ClusterStatus needs admin:status. The data-plane role of
+	// setupGRPCConnection does not hold it; the tenant operator's Operator
+	// role does.
+	conn := helpers.MustSetupGRPCConnectionToEndpoint(t, ctx, helpers.GetClusterEndpoints()[0],
+		grpc.WithPerRPCCredentials(helpers.TenantOperatorGRPCCredentials(t)))
 	defer conn.Close()
 
 	client := pb.NewQuicBaaSClient(conn)

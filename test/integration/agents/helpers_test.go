@@ -86,9 +86,16 @@ func (e *HTTPResponseError) Unwrap() error {
 	return ErrHTTPResponse
 }
 
-// newTLSClient creates an HTTP client with TLS skip verify and the given timeout.
-func newTLSClient(timeout time.Duration) *http.Client {
-	return helpers.NewHTTPClient(timeout)
+// newOperatorClient creates an HTTP client that presents the tenant operator's
+// bearer. Every route these helpers reach is a gated orchestrator route, and
+// the tenant operator is the narrowest test principal holding the
+// orchestrator verbs.
+func newOperatorClient(ctx context.Context, method, url string, timeout time.Duration) (*http.Client, error) {
+	client, err := helpers.TenantOperatorHTTPClient(ctx, timeout)
+	if err != nil {
+		return nil, &HTTPRequestError{URL: url, Method: method, Cause: err}
+	}
+	return client, nil
 }
 
 // postJSON sends an HTTP POST request with a JSON body and returns the response.
@@ -105,7 +112,10 @@ func postJSON(ctx context.Context, url string, body interface{}) (*http.Response
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	client := newTLSClient(30 * time.Second)
+	client, clientErr := newOperatorClient(ctx, http.MethodPost, url, 30*time.Second)
+	if clientErr != nil {
+		return nil, clientErr
+	}
 	resp, doErr := client.Do(req)
 	if doErr != nil {
 		return nil, &HTTPRequestError{URL: url, Method: "POST", Cause: doErr}
@@ -123,7 +133,10 @@ func getJSON(ctx context.Context, url string, result interface{}) (*http.Respons
 	}
 	req.Header.Set("Accept", "application/json")
 
-	client := newTLSClient(30 * time.Second)
+	client, clientErr := newOperatorClient(ctx, http.MethodGet, url, 30*time.Second)
+	if clientErr != nil {
+		return nil, clientErr
+	}
 	resp, doErr := client.Do(req)
 	if doErr != nil {
 		return nil, &HTTPRequestError{URL: url, Method: "GET", Cause: doErr}
@@ -152,7 +165,10 @@ func deleteJSON(ctx context.Context, url string) (*http.Response, error) {
 	}
 	req.Header.Set("Accept", "application/json")
 
-	client := newTLSClient(30 * time.Second)
+	client, clientErr := newOperatorClient(ctx, http.MethodDelete, url, 30*time.Second)
+	if clientErr != nil {
+		return nil, clientErr
+	}
 	resp, doErr := client.Do(req)
 	if doErr != nil {
 		return nil, &HTTPRequestError{URL: url, Method: "DELETE", Cause: doErr}

@@ -154,3 +154,21 @@ func ContextForTarget(ctx context.Context, op, requested string) (context.Contex
 	}
 	return WithTenant(ctx, tenantID), tenantID, nil
 }
+
+// AdminTarget is ContextForTarget for the system admin's IAM administration
+// routes only (go-quicbaas#2212). A system-tenant caller that names a tenant
+// acts in that tenant: the returned context binds requested with WithTenant.
+// Every other caller resolves exactly as ContextForTarget does, so a tenant
+// caller names only itself and an unbound context is refused. Target itself
+// keeps the #1150 rule, no cross-tenant lift through a request field or
+// header, for every other caller.
+func AdminTarget(ctx context.Context, op, requested string) (context.Context, string, error) {
+	caller, err := FromContext(ctx, op)
+	if err != nil {
+		return ctx, "", err
+	}
+	if IsSystem(caller) && requested != "" {
+		return WithTenant(ctx, requested), requested, nil
+	}
+	return ContextForTarget(ctx, op, requested)
+}

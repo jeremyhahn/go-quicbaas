@@ -46,7 +46,7 @@ COPY sdk/go/go.mod sdk/go/go.sum ./sdk/go/
 RUN --mount=type=secret,id=gomodauth \
     set -eu; \
     if [ -f /run/secrets/gomodauth ]; then . /run/secrets/gomodauth; fi; \
-    GONOSUMCHECK='*' go mod download
+    go mod download
 
 # Copy source code
 COPY . .
@@ -58,7 +58,7 @@ ARG DATE
 ARG BUILD_TAGS
 
 # Build static CLI binary using downloaded dependencies
-RUN CGO_ENABLED=0 GOOS=linux GONOSUMCHECK='*' go build -mod=mod -tags "${BUILD_TAGS}" -buildvcs=false \
+RUN CGO_ENABLED=0 GOOS=linux go build -mod=mod -tags "${BUILD_TAGS}" -buildvcs=false \
     -ldflags="-w -s -X github.com/jeremyhahn/go-quicbaas/pkg/version.Version=${VERSION} -X github.com/jeremyhahn/go-quicbaas/pkg/version.BuildTime=${DATE} -X github.com/jeremyhahn/go-quicbaas/pkg/version.GitCommit=${COMMIT}" \
     -o quicbaas ./cmd/quicbaas
 

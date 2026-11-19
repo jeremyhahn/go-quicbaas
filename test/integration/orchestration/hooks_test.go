@@ -179,7 +179,9 @@ func TestE2E_HookReceiver_InvalidPayload(t *testing.T) {
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")
 
-	client := helpers.NewHTTPClient(10 * time.Second)
+	// The tenant operator's bearer takes the request past the gate, so the
+	// 4xx below is the handler's answer to the payload and not a 401.
+	client := helpers.NewTenantOperatorHTTPClient(t, 10*time.Second)
 	resp, err := client.Do(req)
 	require.NoError(t, err, "POST with empty body should complete")
 	defer resp.Body.Close()

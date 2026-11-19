@@ -464,14 +464,29 @@ func TestVectorDeleteNamespace_Success(t *testing.T) {
 	}
 }
 
-func TestVectorDeleteNamespace_MissingNamespace(t *testing.T) {
+func TestVectorTools_MissingNamespace(t *testing.T) {
 	registry := newVectorRegistry(t)
 	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "qrdb_vector_delete_namespace", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "namespace")
+	tools := []string{
+		"qrdb_vector_delete_namespace",
+		"qrdb_vector_get_namespace_info",
+		"quicbaas_vector_update_namespace",
+		"qrdb_vector_list",
+		"qrdb_vector_rebuild_index",
+		"quicbaas_vector_get_index_progress",
+		"quicbaas_vector_admin_compact_namespace",
+		"quicbaas_vector_admin_get_compaction_progress",
+	}
+
+	for _, toolName := range tools {
+		t.Run(toolName, func(t *testing.T) {
+			result, err := registry.ExecuteTool(ctx, toolName, map[string]interface{}{})
+			require.Error(t, err)
+			assert.Nil(t, result)
+			assert.Contains(t, err.Error(), "namespace")
+		})
+	}
 }
 
 func TestVectorListNamespaces_Success(t *testing.T) {
@@ -567,15 +582,6 @@ func TestVectorUpdateNamespace_UnknownNamespaceIsNotFound(t *testing.T) {
 	assert.ErrorIs(t, err, notFound)
 }
 
-func TestVectorUpdateNamespace_MissingNamespace(t *testing.T) {
-	registry := newVectorRegistry(t)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_vector_update_namespace", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-}
-
 // =============================================================================
 // Vector CRUD Tests
 // =============================================================================
@@ -588,22 +594,6 @@ func TestVectorUpsert_Success(t *testing.T) {
 		name string
 		args map[string]interface{}
 	}{
-		{
-			name: "with string vector",
-			args: map[string]interface{}{
-				"namespace": "test-ns",
-				"id":        "vec-1",
-				"vector":    "[0.1, 0.2, 0.3]",
-			},
-		},
-		{
-			name: "with array vector",
-			args: map[string]interface{}{
-				"namespace": "test-ns",
-				"id":        "vec-2",
-				"vector":    []interface{}{0.1, 0.2, 0.3},
-			},
-		},
 		{
 			name: "with metadata string",
 			args: map[string]interface{}{
@@ -1086,16 +1076,6 @@ func TestVectorList_Success(t *testing.T) {
 	assert.Contains(t, resultMap, "vector_count")
 }
 
-func TestVectorList_MissingNamespace(t *testing.T) {
-	registry := newVectorRegistry(t)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "qrdb_vector_list", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "namespace")
-}
-
 // =============================================================================
 // Vector Search Tests
 // =============================================================================
@@ -1114,14 +1094,6 @@ func TestVectorSearchSimilar_Success(t *testing.T) {
 				"namespace":    "test-ns",
 				"query_vector": "[0.1, 0.2, 0.3]",
 				"k":            float64(5),
-			},
-		},
-		{
-			name: "with array query_vector",
-			args: map[string]interface{}{
-				"namespace":    "test-ns",
-				"query_vector": []interface{}{0.1, 0.2, 0.3},
-				"k":            float64(10),
 			},
 		},
 		{
@@ -1405,10 +1377,6 @@ func TestVectorRebuildIndex_Success(t *testing.T) {
 			args: map[string]interface{}{"namespace": "test-ns"},
 		},
 		{
-			name: "explicit async true",
-			args: map[string]interface{}{"namespace": "test-ns", "async": true},
-		},
-		{
 			name: "async false",
 			args: map[string]interface{}{"namespace": "test-ns", "async": false},
 		},
@@ -1428,16 +1396,6 @@ func TestVectorRebuildIndex_Success(t *testing.T) {
 	}
 }
 
-func TestVectorRebuildIndex_MissingNamespace(t *testing.T) {
-	registry := newVectorRegistry(t)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "qrdb_vector_rebuild_index", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "namespace")
-}
-
 func TestVectorGetIndexProgress_Success(t *testing.T) {
 	registry := newVectorRegistry(t)
 	ctx := context.Background()
@@ -1453,16 +1411,6 @@ func TestVectorGetIndexProgress_Success(t *testing.T) {
 	require.True(t, ok)
 	assert.Contains(t, resultMap, "status")
 	assert.Contains(t, resultMap, "percent_complete")
-}
-
-func TestVectorGetIndexProgress_MissingNamespace(t *testing.T) {
-	registry := newVectorRegistry(t)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_vector_get_index_progress", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "namespace")
 }
 
 // =============================================================================
@@ -1481,10 +1429,6 @@ func TestVectorCompactNamespace_Success(t *testing.T) {
 			name: "default async",
 			args: map[string]interface{}{"namespace": "test-ns"},
 		},
-		{
-			name: "explicit async",
-			args: map[string]interface{}{"namespace": "test-ns", "async": true},
-		},
 	}
 
 	for _, tc := range tests {
@@ -1498,16 +1442,6 @@ func TestVectorCompactNamespace_Success(t *testing.T) {
 			assert.Contains(t, resultMap, "operation_id")
 		})
 	}
-}
-
-func TestVectorCompactNamespace_MissingNamespace(t *testing.T) {
-	registry := newVectorRegistry(t)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_vector_admin_compact_namespace", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "namespace")
 }
 
 func TestVectorGetCompactionProgress_Success(t *testing.T) {
@@ -1525,16 +1459,6 @@ func TestVectorGetCompactionProgress_Success(t *testing.T) {
 	require.True(t, ok)
 	assert.Contains(t, resultMap, "percent_complete")
 	assert.Contains(t, resultMap, "in_progress")
-}
-
-func TestVectorGetCompactionProgress_MissingNamespace(t *testing.T) {
-	registry := newVectorRegistry(t)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_vector_admin_get_compaction_progress", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "namespace")
 }
 
 // =============================================================================

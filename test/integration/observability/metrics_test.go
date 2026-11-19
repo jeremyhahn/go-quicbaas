@@ -26,10 +26,10 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
-// metricsHTTPClient is a package-level HTTP client configured for self-signed TLS certs.
-var metricsHTTPClient = helpers.NewHTTPClient(30 * time.Second)
-
 func TestREST_MetricsExposeRoutingCounter(t *testing.T) {
+	// The metrics scrape route admits any authenticated identity and the
+	// entity read requires kv:get: the data-plane principal holds no more.
+	metricsHTTPClient := helpers.NewDataPlaneHTTPClient(t, 30*time.Second)
 	base := os.Getenv("QUICBAAS_NODE1_URL")
 	if base == "" {
 		base = "https://test-node1:8080"

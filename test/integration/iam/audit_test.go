@@ -17,7 +17,10 @@
 package iam_test
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"testing"
 	"time"
@@ -66,20 +69,34 @@ type AuditQueryResponse struct {
 	Offset int                  `json:"offset"`
 }
 
-// setupTenantForAuditTests creates a test tenant.
-func setupTenantForAuditTests(t *testing.T, cluster *testCluster) string {
+// setupTenantForAuditTests creates a test tenant and returns it with a view
+// of cluster that calls as the tenant's auditor. Creating a tenant is a
+// system-tenant route (tenants:create), so it is sent as the fixture system
+// admin. The audit queries that follow are not: the audit routes answer only
+// for the caller's own tenant (iam.ResolveRequestTenant) and check
+// audit:query / audit:read, so they go through the returned view, a user of
+// the tenant bound to go-qrdb's built-in Auditor role (asTenantAuditor).
+// Setting the auditor up writes audit events of its own, including a
+// user_management one; this waits until that one is visible, so a test that
+// counts its own events from auditBaseline does not count it.
+func setupTenantForAuditTests(t *testing.T, cluster *testCluster) (string, *testCluster) {
+	t.Helper()
 	tenantID := generateUniqueTenantID()
 	createTenantReq := map[string]interface{}{
 		"id":   tenantID,
 		"name": "Audit Test Tenant",
 	}
-	require.NoError(t, cluster.postJSON("/api/v1/tenants", createTenantReq, nil))
-	return tenantID
+	require.NoError(t, cluster.asSystemAdmin().postJSON("/api/v1/tenants", createTenantReq, nil))
+	auditor := cluster.asTenantAuditor(t, tenantID)
+	waitForAuditEvents(t, auditor,
+		fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&event_type=user_management", tenantID), 1)
+	return tenantID, auditor
 }
 
-// cleanupAuditTests cleans up test resources.
+// cleanupAuditTests cleans up test resources. Deleting a tenant is a
+// system-tenant route (tenants:delete), sent as the fixture system admin.
 func cleanupAuditTests(cluster *testCluster, tenantID string) {
-	cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	cluster.asSystemAdmin().deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
 }
 
 // waitForAuditEvents polls the audit query endpoint until at least min events
@@ -104,18 +121,28 @@ func waitForAuditEvents(t *testing.T, cluster *testCluster, path string, min int
 	return resp
 }
 
+// auditBaseline returns the number of audit events visible at path now: the
+// count a test adds its own expected events to before it waits for them,
+// since the auditor's own setup events are already in the tenant's chain.
+func auditBaseline(t *testing.T, auditor *testCluster, path string) int {
+	t.Helper()
+	var resp AuditQueryResponse
+	require.NoError(t, auditor.getJSON(path, &resp), "audit baseline at %s", path)
+	return resp.Total
+}
+
 // TestAuditEventQuery tests querying audit events for a tenant.
 func TestAuditEventQuery(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForAuditTests(t, cluster)
+	tenantID, auditor := setupTenantForAuditTests(t, cluster)
 	defer cleanupAuditTests(cluster, tenantID)
 
 	// Query audit events for the tenant. The tenant creation just performed
 	// must generate at least one audit event; the write is async (LogAsync),
 	// so poll until it becomes visible.
-	resp := waitForAuditEvents(t, cluster,
+	resp := waitForAuditEvents(t, auditor,
 		fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s", tenantID), 1)
 	assert.Equal(t, 100, resp.Limit, "Default limit should be 100")
 	assert.Equal(t, 0, resp.Offset, "Default offset should be 0")
@@ -138,8 +165,11 @@ func TestAuditEventQueryWithFilters(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForAuditTests(t, cluster)
+	tenantID, auditor := setupTenantForAuditTests(t, cluster)
 	defer cleanupAuditTests(cluster, tenantID)
+
+	userEvents := fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&event_type=user_management", tenantID)
+	before := auditBaseline(t, auditor, userEvents)
 
 	// Create a user to generate more audit events
 	email := generateUniqueEmail()
@@ -151,28 +181,29 @@ func TestAuditEventQueryWithFilters(t *testing.T) {
 	var user struct {
 		ID string `json:"id"`
 	}
-	err := cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), createUserReq, &user)
+	// The user create acts in the test's tenant as the system admin
+	// (tenant lift, pkg/api/rest/tenant_target.go).
+	err := cluster.asSystemAdmin().postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), createUserReq, &user)
 	require.NoError(t, err)
 
 	// Wait for the user creation event to become queryable
-	waitForAuditEvents(t, cluster,
-		fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&event_type=user_management", tenantID), 1)
+	waitForAuditEvents(t, auditor, userEvents, before+1)
 
 	// Test filtering by event type
 	var typeResp AuditQueryResponse
-	err = cluster.getJSON(fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&event_type=user_management", tenantID), &typeResp)
+	err = auditor.getJSON(fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&event_type=user_management", tenantID), &typeResp)
 	require.NoError(t, err, "Should query by event type")
 	assert.Greater(t, typeResp.Total, 0, "Should find user_management events")
 
 	// Test filtering by category
 	var categoryResp AuditQueryResponse
-	err = cluster.getJSON(fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&category=administration", tenantID), &categoryResp)
+	err = auditor.getJSON(fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&category=administration", tenantID), &categoryResp)
 	require.NoError(t, err, "Should query by category")
 	assert.Greater(t, categoryResp.Total, 0, "Should find administration events")
 
 	// Test filtering by outcome
 	var outcomeResp AuditQueryResponse
-	err = cluster.getJSON(fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&outcome=success", tenantID), &outcomeResp)
+	err = auditor.getJSON(fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&outcome=success", tenantID), &outcomeResp)
 	require.NoError(t, err, "Should query by outcome")
 	assert.Greater(t, outcomeResp.Total, 0, "Should find success events")
 
@@ -183,7 +214,7 @@ func TestAuditEventQueryWithFilters(t *testing.T) {
 
 	// Test filtering by resource_id
 	var resourceResp AuditQueryResponse
-	err = cluster.getJSON(fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&resource_id=%s", tenantID, user.ID), &resourceResp)
+	err = auditor.getJSON(fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&resource_id=%s", tenantID, user.ID), &resourceResp)
 	require.NoError(t, err, "Should query by resource_id")
 	if resourceResp.Total > 0 {
 		for _, event := range resourceResp.Events {
@@ -199,8 +230,11 @@ func TestAuditEventQueryPagination(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForAuditTests(t, cluster)
+	tenantID, auditor := setupTenantForAuditTests(t, cluster)
 	defer cleanupAuditTests(cluster, tenantID)
+
+	userEvents := fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&event_type=user_management", tenantID)
+	before := auditBaseline(t, auditor, userEvents)
 
 	// Create multiple users to generate multiple audit events
 	for i := 0; i < 5; i++ {
@@ -210,24 +244,25 @@ func TestAuditEventQueryPagination(t *testing.T) {
 			"username": generateUniqueUsername(),
 			"name":     fmt.Sprintf("Pagination Test User %d", i),
 		}
-		err := cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), createUserReq, nil)
+		// The user create acts in the test's tenant as the system admin
+		// (tenant lift, pkg/api/rest/tenant_target.go).
+		err := cluster.asSystemAdmin().postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), createUserReq, nil)
 		require.NoError(t, err)
 	}
 
 	// Wait for the five user creation events to become queryable
-	waitForAuditEvents(t, cluster,
-		fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&event_type=user_management", tenantID), 5)
+	waitForAuditEvents(t, auditor, userEvents, before+5)
 
 	// Test with limit
 	var limitResp AuditQueryResponse
-	err := cluster.getJSON(fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&limit=3", tenantID), &limitResp)
+	err := auditor.getJSON(fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&limit=3", tenantID), &limitResp)
 	require.NoError(t, err, "Should query with limit")
 	assert.LessOrEqual(t, len(limitResp.Events), 3, "Should respect limit parameter")
 	assert.Equal(t, 3, limitResp.Limit, "Limit should be set correctly")
 
 	// Test with offset
 	var offsetResp AuditQueryResponse
-	err = cluster.getJSON(fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&limit=3&offset=2", tenantID), &offsetResp)
+	err = auditor.getJSON(fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&limit=3&offset=2", tenantID), &offsetResp)
 	require.NoError(t, err, "Should query with offset")
 	assert.Equal(t, 2, offsetResp.Offset, "Offset should be set correctly")
 
@@ -242,11 +277,16 @@ func TestAuditEventQueryTimeRange(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForAuditTests(t, cluster)
+	tenantID, auditor := setupTenantForAuditTests(t, cluster)
 	defer cleanupAuditTests(cluster, tenantID)
 
-	// Record the time before creating a user
-	beforeCreate := time.Now().Add(-1 * time.Second).UTC()
+	userEvents := fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&event_type=user_management", tenantID)
+	before := auditBaseline(t, auditor, userEvents)
+
+	// Record the time before creating a user, in whole seconds: event
+	// timestamps are RFC3339, so one in the same second must not compare
+	// before it.
+	beforeCreate := time.Now().Add(-1 * time.Second).UTC().Truncate(time.Second)
 
 	// Create a user to generate audit events
 	email := generateUniqueEmail()
@@ -255,12 +295,13 @@ func TestAuditEventQueryTimeRange(t *testing.T) {
 		"username": generateUniqueUsername(),
 		"name":     "Time Range Test User",
 	}
-	err := cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), createUserReq, nil)
+	// The user create acts in the test's tenant as the system admin
+	// (tenant lift, pkg/api/rest/tenant_target.go).
+	err := cluster.asSystemAdmin().postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), createUserReq, nil)
 	require.NoError(t, err)
 
 	// Wait for the user creation event to become queryable
-	waitForAuditEvents(t, cluster,
-		fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&event_type=user_management", tenantID), 1)
+	waitForAuditEvents(t, auditor, userEvents, before+1)
 
 	afterCreate := time.Now().Add(1 * time.Second).UTC()
 
@@ -268,7 +309,7 @@ func TestAuditEventQueryTimeRange(t *testing.T) {
 	var resp AuditQueryResponse
 	startTimeParam := url.QueryEscape(beforeCreate.Format(time.RFC3339))
 	endTimeParam := url.QueryEscape(afterCreate.Format(time.RFC3339))
-	err = cluster.getJSON(fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&start_time=%s&end_time=%s",
+	err = auditor.getJSON(fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&start_time=%s&end_time=%s",
 		tenantID, startTimeParam, endTimeParam), &resp)
 	require.NoError(t, err, "Should query with time range")
 
@@ -290,7 +331,7 @@ func TestAuditEventQueryTimeRange(t *testing.T) {
 	veryOldParam := url.QueryEscape(veryOldTime.Format(time.RFC3339))
 	beforeParam := url.QueryEscape(beforeCreate.Add(-10 * time.Minute).Format(time.RFC3339))
 	var oldResp AuditQueryResponse
-	err = cluster.getJSON(fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&start_time=%s&end_time=%s",
+	err = auditor.getJSON(fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&start_time=%s&end_time=%s",
 		tenantID, veryOldParam, beforeParam), &oldResp)
 	require.NoError(t, err, "Should query old time range")
 	// Should find very few or no events
@@ -302,7 +343,7 @@ func TestAuditEventGet(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForAuditTests(t, cluster)
+	tenantID, auditor := setupTenantForAuditTests(t, cluster)
 	defer cleanupAuditTests(cluster, tenantID)
 
 	// Query events to get an event ID. Audit writes flow through
@@ -310,14 +351,14 @@ func TestAuditEventGet(t *testing.T) {
 	// so the tenant-creation event is only EVENTUALLY queryable — poll
 	// instead of racing the async writer (same contract as
 	// TestAuditEventQuery / waitForAuditEvents).
-	listResp := waitForAuditEvents(t, cluster,
+	listResp := waitForAuditEvents(t, auditor,
 		fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&limit=1", tenantID), 1)
 
 	eventID := listResp.Events[0].ID
 
 	// Get the specific event
 	var event AuditEventResponse
-	err := cluster.getJSON(fmt.Sprintf("/api/v1/iam/audit/%s?tenant_id=%s", eventID, tenantID), &event)
+	err := auditor.getJSON(fmt.Sprintf("/api/v1/iam/audit/%s?tenant_id=%s", eventID, tenantID), &event)
 	require.NoError(t, err, "Should get specific audit event")
 
 	// Verify the event details
@@ -335,12 +376,12 @@ func TestAuditEventGetNotFound(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForAuditTests(t, cluster)
+	tenantID, auditor := setupTenantForAuditTests(t, cluster)
 	defer cleanupAuditTests(cluster, tenantID)
 
 	// Try to get a non-existent event
 	var event AuditEventResponse
-	err := cluster.getJSON(fmt.Sprintf("/api/v1/iam/audit/nonexistent-id?tenant_id=%s", tenantID), &event)
+	err := auditor.getJSON(fmt.Sprintf("/api/v1/iam/audit/nonexistent-id?tenant_id=%s", tenantID), &event)
 	assert.Error(t, err, "Should fail to get non-existent event")
 	assert.Contains(t, err.Error(), "404", "Should return 404 status")
 }
@@ -350,8 +391,11 @@ func TestAuditEventDelete(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForAuditTests(t, cluster)
+	tenantID, auditor := setupTenantForAuditTests(t, cluster)
 	defer cleanupAuditTests(cluster, tenantID)
+
+	userEvents := fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&event_type=user_management", tenantID)
+	before := auditBaseline(t, auditor, userEvents)
 
 	// Create some users to generate audit events
 	for i := 0; i < 3; i++ {
@@ -361,38 +405,118 @@ func TestAuditEventDelete(t *testing.T) {
 			"username": generateUniqueUsername(),
 			"name":     fmt.Sprintf("Delete Test User %d", i),
 		}
-		err := cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), createUserReq, nil)
+		// The user create acts in the test's tenant as the system admin
+		// (tenant lift, pkg/api/rest/tenant_target.go).
+		err := cluster.asSystemAdmin().postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), createUserReq, nil)
 		require.NoError(t, err)
 	}
 
 	// Wait for the three user creation events to become queryable
-	waitForAuditEvents(t, cluster,
-		fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&event_type=user_management", tenantID), 3)
+	waitForAuditEvents(t, auditor, userEvents, before+3)
 
-	// Get initial count of events
+	// Read every event in the tenant's chain before the delete. The limit
+	// is the endpoint's maximum so the ID set is the whole chain.
+	allEvents := fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&limit=1000", tenantID)
 	var beforeResp AuditQueryResponse
-	err := cluster.getJSON(fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s", tenantID), &beforeResp)
-	require.NoError(t, err, "Should query events before delete")
-	initialCount := beforeResp.Total
+	require.NoError(t, auditor.getJSON(allEvents, &beforeResp), "Should query events before delete")
+	require.Len(t, beforeResp.Events, beforeResp.Total, "the before read should hold the whole chain")
+	require.NotEmpty(t, beforeResp.Events, "the chain should hold the user creation events")
 
-	// Delete events older than a future timestamp (should delete all)
+	// Send the audit delete the API serves: DELETE /api/v1/iam/audit with a
+	// future cut-off, which names every event in the chain.
 	futureTime := time.Now().Add(1 * time.Hour).UTC()
-	beforeParam := url.QueryEscape(futureTime.Format(time.RFC3339))
-	var deleteResp map[string]interface{}
-	err = cluster.getJSON(fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&before=%s", tenantID, beforeParam), &deleteResp)
+	deletePath := fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&before=%s",
+		tenantID, url.QueryEscape(futureTime.Format(time.RFC3339)))
 
-	// If the delete endpoint is properly implemented, we should make a DELETE request
-	// For now, let's test the endpoint exists and handles the request
-	// Note: The actual deletion would need a deleteJSON call with query params
+	// The auditor holds no audit:delete grant and is refused.
+	refusedResp, err := auditor.doHTTPRequest(http.MethodDelete, deletePath, nil)
+	require.NoError(t, err, "Should send the auditor's audit delete")
+	refusedBody, _ := io.ReadAll(refusedResp.Body)
+	refusedResp.Body.Close()
+	require.Equal(t, http.StatusForbidden, refusedResp.StatusCode,
+		"an auditor without audit:delete should be refused: %s", refusedBody)
 
-	// Query events after attempting delete to verify functionality
-	// (This test validates the endpoint exists and can be called)
+	// The first-boot super_admin holds audit:delete (pkg/server/iam_init.go),
+	// but its assignment is scoped to the system tenant, and the delete is
+	// tenant-scoped to the caller's own tenant (iam.ResolveRequestTenant)
+	// BEFORE the permission check. So the server refuses it on tenant scope:
+	// no principal can reach another tenant's audit chain, and the
+	// survival check below holds against both refusals.
+	superResp, err := cluster.asSystemAdmin().doHTTPRequest(http.MethodDelete, deletePath, nil)
+	require.NoError(t, err, "Should send the super_admin's audit delete")
+	superBody, _ := io.ReadAll(superResp.Body)
+	superResp.Body.Close()
+	require.Equal(t, http.StatusForbidden, superResp.StatusCode,
+		"the super_admin's delete of another tenant's chain should be refused: %s", superBody)
+	assert.Contains(t, string(superBody), "may not access tenant "+tenantID,
+		"the super_admin should be refused on tenant scope, not on permission")
+
+	// Every event read before the delete is still in the chain after it.
+	// The count may grow: each authorized request, these reads and the
+	// delete included, appends its authorization decision to the chain.
 	var afterResp AuditQueryResponse
-	err = cluster.getJSON(fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s", tenantID), &afterResp)
-	require.NoError(t, err, "Should query events after delete attempt")
+	require.NoError(t, auditor.getJSON(allEvents, &afterResp), "Should query events after delete")
+	afterIDs := make(map[string]bool, len(afterResp.Events))
+	for _, ev := range afterResp.Events {
+		afterIDs[ev.ID] = true
+	}
+	for _, ev := range beforeResp.Events {
+		assert.True(t, afterIDs[ev.ID], "audit event %s should survive the delete", ev.ID)
+	}
+	assert.GreaterOrEqual(t, afterResp.Total, beforeResp.Total, "the audit delete should not reduce the event count")
 
-	// The count should remain the same or be less depending on whether delete was executed
-	assert.GreaterOrEqual(t, initialCount, afterResp.Total, "Event count should not increase")
+	// The authorized path: the first-boot super_admin deletes from its OWN
+	// (system) tenant's chain. With no tenant_id the delete resolves to the
+	// caller's tenant (iam.ResolveRequestTenant), and the super_admin's
+	// system-scoped assignment holds audit:delete, so the server runs the
+	// delete. The chain is append-only, so it erases nothing.
+	systemAdmin := cluster.asSystemAdmin()
+	// Events at or before the cut-off are already written, so the set read
+	// with it is stable while the chain grows with these requests.
+	readCutoff := time.Now().Add(-time.Second).UTC().Truncate(time.Second)
+	systemBefore := systemAuditEventIDs(t, systemAdmin, readCutoff)
+	require.NotEmpty(t, systemBefore, "the system chain should hold events before the delete")
+
+	systemDeletePath := "/api/v1/iam/audit?before=" + url.QueryEscape(futureTime.Format(time.RFC3339))
+	systemResp, err := systemAdmin.doHTTPRequest(http.MethodDelete, systemDeletePath, nil)
+	require.NoError(t, err, "Should send the super_admin's system-chain audit delete")
+	systemBody, _ := io.ReadAll(systemResp.Body)
+	systemResp.Body.Close()
+	require.Equal(t, http.StatusOK, systemResp.StatusCode,
+		"the super_admin's delete of its own chain should be authorized: %s", systemBody)
+	var systemDeleted struct {
+		DeletedCount *int `json:"deleted_count"`
+	}
+	require.NoError(t, json.Unmarshal(systemBody, &systemDeleted), "system audit delete response")
+	require.NotNil(t, systemDeleted.DeletedCount,
+		"the audit delete response should carry deleted_count: %s", systemBody)
+	assert.Zero(t, *systemDeleted.DeletedCount, "the append-only audit chain should delete nothing")
+
+	systemAfter := systemAuditEventIDs(t, systemAdmin, readCutoff)
+	for id := range systemBefore {
+		assert.True(t, systemAfter[id], "system audit event %s should survive the delete", id)
+	}
+}
+
+// systemAuditEventIDs reads, page by page, the IDs of every event in the
+// caller's own (system) tenant chain up to cutoff. The cut-off is in the
+// past, so the set does not move between pages or between reads.
+func systemAuditEventIDs(t *testing.T, systemAdmin *testCluster, cutoff time.Time) map[string]bool {
+	t.Helper()
+	const pageSize = 1000
+	ids := make(map[string]bool)
+	for offset := 0; ; offset += pageSize {
+		path := fmt.Sprintf("/api/v1/iam/audit?end_time=%s&limit=%d&offset=%d",
+			url.QueryEscape(cutoff.Format(time.RFC3339)), pageSize, offset)
+		var page AuditQueryResponse
+		require.NoError(t, systemAdmin.getJSON(path, &page), "Should query the system audit chain")
+		for _, ev := range page.Events {
+			ids[ev.ID] = true
+		}
+		if len(page.Events) < pageSize || offset+pageSize >= page.Total {
+			return ids
+		}
+	}
 }
 
 // TestAuditEventTenantIsolation tests that audit events are properly isolated between tenants.
@@ -400,17 +524,15 @@ func TestAuditEventTenantIsolation(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	// Create two separate tenants
-	tenant1ID := setupTenantForAuditTests(t, cluster)
+	// Create two separate tenants, each with its own auditor
+	tenant1ID, auditor1 := setupTenantForAuditTests(t, cluster)
 	defer cleanupAuditTests(cluster, tenant1ID)
 
-	tenant2ID := generateUniqueTenantID()
-	createTenant2Req := map[string]interface{}{
-		"id":   tenant2ID,
-		"name": "Isolation Test Tenant 2",
-	}
-	require.NoError(t, cluster.postJSON("/api/v1/tenants", createTenant2Req, nil))
+	tenant2ID, auditor2 := setupTenantForAuditTests(t, cluster)
 	defer cleanupAuditTests(cluster, tenant2ID)
+
+	tenant1UserEvents := fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&event_type=user_management", tenant1ID)
+	before := auditBaseline(t, auditor1, tenant1UserEvents)
 
 	// Create a user in tenant1
 	email := generateUniqueEmail()
@@ -422,33 +544,38 @@ func TestAuditEventTenantIsolation(t *testing.T) {
 	var user1 struct {
 		ID string `json:"id"`
 	}
-	err := cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenant1ID), createUserReq, &user1)
+	// The user create acts in the test's tenant as the system admin
+	// (tenant lift, pkg/api/rest/tenant_target.go).
+	err := cluster.asSystemAdmin().postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenant1ID), createUserReq, &user1)
 	require.NoError(t, err)
 
 	// Wait for the tenant1 user creation and the tenant2 creation events to become queryable
-	waitForAuditEvents(t, cluster,
-		fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&event_type=user_management", tenant1ID), 1)
-	waitForAuditEvents(t, cluster, fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s", tenant2ID), 1)
+	waitForAuditEvents(t, auditor1, tenant1UserEvents, before+1)
+	waitForAuditEvents(t, auditor2, fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s", tenant2ID), 1)
 
 	// Query audit events for tenant1
 	var tenant1Resp AuditQueryResponse
-	err = cluster.getJSON(fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s", tenant1ID), &tenant1Resp)
+	err = auditor1.getJSON(fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s", tenant1ID), &tenant1Resp)
 	require.NoError(t, err, "Should query tenant1 events")
 	tenant1EventCount := tenant1Resp.Total
 
 	// Query audit events for tenant2
 	var tenant2Resp AuditQueryResponse
-	err = cluster.getJSON(fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s", tenant2ID), &tenant2Resp)
+	err = auditor2.getJSON(fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s", tenant2ID), &tenant2Resp)
 	require.NoError(t, err, "Should query tenant2 events")
 	tenant2EventCount := tenant2Resp.Total
 
-	// Tenant1 should have more events (tenant creation + user creation)
+	// Both tenants carry the same setup events (tenant creation and their
+	// auditor's); tenant1 also has its extra user's creation
 	assert.Greater(t, tenant1EventCount, tenant2EventCount,
 		"Tenant1 should have more events than tenant2")
 
-	// Tenant2 should only have its own tenant creation event
-	assert.Equal(t, 1, tenant2EventCount,
-		"Tenant2 should only have tenant creation event")
+	// An auditor of one tenant cannot read another tenant's chain: the
+	// request is rejected before it reaches storage (iam.ResolveRequestTenant)
+	var crossResp AuditQueryResponse
+	err = auditor1.getJSON(fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s", tenant2ID), &crossResp)
+	require.Error(t, err, "Tenant1's auditor should not read tenant2's events")
+	assert.Contains(t, err.Error(), "403", "Should return 403 Forbidden")
 
 	// Verify all tenant1 events belong to tenant1
 	for _, event := range tenant1Resp.Events {
@@ -468,7 +595,7 @@ func TestAuditEventGeneration(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForAuditTests(t, cluster)
+	tenantID, auditor := setupTenantForAuditTests(t, cluster)
 	defer cleanupAuditTests(cluster, tenantID)
 
 	tests := []struct {
@@ -485,20 +612,11 @@ func TestAuditEventGeneration(t *testing.T) {
 					"username": generateUniqueUsername(),
 					"name":     "Event Gen Test User",
 				}
-				return cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), createUserReq, nil)
+				// The user create acts in the test's tenant as the system admin
+				// (tenant lift, pkg/api/rest/tenant_target.go).
+				return cluster.asSystemAdmin().postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), createUserReq, nil)
 			},
 			expectedEvent: "user_management",
-		},
-		{
-			name: "Group Creation",
-			operation: func() error {
-				createGroupReq := map[string]interface{}{
-					"name":        fmt.Sprintf("test-group-%d", time.Now().UnixNano()),
-					"description": "Test group for audit events",
-				}
-				return cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/groups", tenantID), createGroupReq, nil)
-			},
-			expectedEvent: "group_management",
 		},
 		{
 			name: "Role Creation",
@@ -507,7 +625,9 @@ func TestAuditEventGeneration(t *testing.T) {
 					"name":        fmt.Sprintf("test-role-%d", time.Now().UnixNano()),
 					"description": "Test role for audit events",
 				}
-				return cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/roles", tenantID), createRoleReq, nil)
+				// The role create acts in the test's tenant as the system admin
+				// (tenant lift, pkg/api/rest/tenant_target.go).
+				return cluster.asSystemAdmin().postJSON(fmt.Sprintf("/api/v1/tenants/%s/roles", tenantID), createRoleReq, nil)
 			},
 			expectedEvent: "role_management",
 		},
@@ -517,7 +637,7 @@ func TestAuditEventGeneration(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Get event count before operation
 			var beforeResp AuditQueryResponse
-			err := cluster.getJSON(fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s", tenantID), &beforeResp)
+			err := auditor.getJSON(fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s", tenantID), &beforeResp)
 			require.NoError(t, err)
 			beforeCount := beforeResp.Total
 
@@ -526,12 +646,12 @@ func TestAuditEventGeneration(t *testing.T) {
 			require.NoError(t, err, "Operation should succeed")
 
 			// Wait for the operation's audit event to become queryable
-			waitForAuditEvents(t, cluster,
+			waitForAuditEvents(t, auditor,
 				fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s", tenantID), beforeCount+1)
 
 			// Get event count after operation
 			var afterResp AuditQueryResponse
-			err = cluster.getJSON(fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s", tenantID), &afterResp)
+			err = auditor.getJSON(fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s", tenantID), &afterResp)
 			require.NoError(t, err)
 
 			// Should have at least one more event
@@ -540,7 +660,7 @@ func TestAuditEventGeneration(t *testing.T) {
 
 			// Check if the expected event type exists
 			var eventTypeResp AuditQueryResponse
-			err = cluster.getJSON(fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&event_type=%s",
+			err = auditor.getJSON(fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&event_type=%s",
 				tenantID, tt.expectedEvent), &eventTypeResp)
 			require.NoError(t, err)
 			assert.Greater(t, eventTypeResp.Total, 0,
@@ -549,17 +669,21 @@ func TestAuditEventGeneration(t *testing.T) {
 	}
 }
 
-// TestAuditEventMissingTenantID tests that requests without tenant_id are rejected.
+// TestAuditEventMissingTenantID tests that a query without tenant_id answers
+// for the caller's own tenant (iam.ResolveRequestTenant defaults to it).
 func TestAuditEventMissingTenantID(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	var resp AuditQueryResponse
+	tenantID, auditor := setupTenantForAuditTests(t, cluster)
+	defer cleanupAuditTests(cluster, tenantID)
 
-	// Try to query without tenant_id
-	err := cluster.getJSON("/api/v1/iam/audit", &resp)
-	assert.Error(t, err, "Should fail without tenant_id")
-	assert.Contains(t, err.Error(), "400", "Should return 400 Bad Request")
+	// Query without tenant_id
+	resp := waitForAuditEvents(t, auditor, "/api/v1/iam/audit", 1)
+	for _, event := range resp.Events {
+		assert.Equal(t, tenantID, event.TenantID,
+			"Events without tenant_id should belong to the caller's tenant")
+	}
 }
 
 // TestAuditEventInvalidTimeFormat tests handling of invalid time format parameters.
@@ -567,13 +691,13 @@ func TestAuditEventInvalidTimeFormat(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForAuditTests(t, cluster)
+	tenantID, auditor := setupTenantForAuditTests(t, cluster)
 	defer cleanupAuditTests(cluster, tenantID)
 
 	// The handler should gracefully handle invalid time formats by ignoring
 	// them: the query must still succeed and return the tenant-creation
 	// event. The audit write is async (LogAsync), so poll until visible.
-	resp := waitForAuditEvents(t, cluster,
+	resp := waitForAuditEvents(t, auditor,
 		fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&start_time=invalid-time", tenantID), 1)
 	assert.Greater(t, resp.Total, 0, "Should still return events")
 }
@@ -583,12 +707,12 @@ func TestAuditEventLargeLimit(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForAuditTests(t, cluster)
+	tenantID, auditor := setupTenantForAuditTests(t, cluster)
 	defer cleanupAuditTests(cluster, tenantID)
 
 	// Try to query with a very large limit
 	var resp AuditQueryResponse
-	err := cluster.getJSON(fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&limit=999999", tenantID), &resp)
+	err := auditor.getJSON(fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&limit=999999", tenantID), &resp)
 	require.NoError(t, err, "Should query with large limit")
 
 	// Limit should be capped at maximum (1000)

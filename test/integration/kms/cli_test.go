@@ -24,12 +24,16 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	clitoken "github.com/jeremyhahn/go-quicbaas/pkg/cli"
+	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
 // =============================================================================
@@ -87,6 +91,10 @@ type cliTestContext struct {
 	address   string
 	timeout   time.Duration
 	outputFmt string
+
+	// home is the session home of this context: the CLI reads its bearer
+	// only from $HOME/.quicbaas/token.
+	home string
 }
 
 // newCLITestContext creates a new CLI test context.
@@ -98,7 +106,34 @@ func newCLITestContext(t *testing.T, protocol, address string) *cliTestContext {
 		address:   address,
 		timeout:   30 * time.Second,
 		outputFmt: "json",
+		home:      t.TempDir(),
 	}
+}
+
+// sessionEnv logs the fixture's system admin in (PIV, memoized in helpers
+// until the token expires), writes the bearer to the context's session home
+// and returns the environment the CLI process needs to present it.
+//
+// The system admin is the suite's interim principal for these commands: the
+// tests ran with no credential before. A narrower tenant session for the KMS
+// commands is planned.
+func (c *cliTestContext) sessionEnv() []string {
+	c.t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	bearer, expiresAt, err := helpers.AuthPIVSession(ctx, getRESTEndpoints()[0], "", "", "")
+	require.NoError(c.t, err, "PIV login for the CLI bearer failed")
+
+	tokenPath := filepath.Join(c.home, ".quicbaas", "token")
+	require.NoError(c.t, clitoken.SaveToken(tokenPath, &clitoken.TokenData{
+		AccessToken: bearer,
+		ExpiresAt:   expiresAt,
+		TokenType:   "Bearer",
+	}), "persist the CLI bearer")
+
+	return append(os.Environ(), "HOME="+c.home)
 }
 
 // run executes a CLI command with the configured protocol and address.
@@ -114,10 +149,13 @@ func (c *cliTestContext) run(args ...string) (string, error) {
 	}
 	fullArgs = append(fullArgs, args...)
 
+	env := c.sessionEnv()
+
 	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, c.binary, fullArgs...)
+	cmd.Env = env
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -151,10 +189,13 @@ func (c *cliTestContext) runExpectError(args ...string) (string, error) {
 	}
 	fullArgs = append(fullArgs, args...)
 
+	env := c.sessionEnv()
+
 	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, c.binary, fullArgs...)
+	cmd.Env = env
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

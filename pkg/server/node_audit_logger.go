@@ -15,6 +15,10 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
@@ -207,6 +211,12 @@ func (e *AuditEventNotFoundError) Error() string {
 	return "audit: event " + e.EventID + " not found"
 }
 
+// Is reports true for iam.ErrAuditEventNotFound, so callers that map the
+// IAM sentinel (the REST audit handler's 404) match the node chain's error.
+func (e *AuditEventNotFoundError) Is(target error) bool {
+	return target == iam.ErrAuditEventNotFound
+}
+
 // --- iam.AuditEvent <-> qrdbsdk.NodeAuditEvent conversion (P3 Option B) ---
 
 // toNodeAuditEvent projects an iam.AuditEvent onto the node chain's fixed
@@ -318,7 +328,7 @@ func fromNodeAuditEvent(ne *qrdbsdk.NodeAuditEvent) *iam.AuditEvent {
 		id = ne.RequestID
 	}
 	if id == "" {
-		id = uuid.New().String()
+		id = nodeAuditContentID(ne)
 	}
 
 	details := map[string]interface{}{}
@@ -377,6 +387,24 @@ func fromNodeAuditEvent(ne *qrdbsdk.NodeAuditEvent) *iam.AuditEvent {
 		ImpersonationSessionID: attrStr("impersonation_session_id"),
 		CorrelationID:          ne.RequestID,
 	}
+}
+
+// nodeAuditContentID derives the ID of a chain event that carries neither an
+// iam_id nor a request ID (qrdb's authorization decision logger stamps
+// neither) from the event's own recorded content. The chain is append-only,
+// so the same event reads back with the same content, and so the same ID, on
+// every read: a listed event stays fetchable by GetEvent and recognizable
+// across reads. encoding/json sorts map keys, so the encoding is canonical.
+func nodeAuditContentID(ne *qrdbsdk.NodeAuditEvent) string {
+	encoded, err := json.Marshal(ne)
+	if err != nil {
+		// Attributes decoded from the chain are always JSON values; an
+		// in-process value json cannot encode still prints deterministically
+		// (fmt sorts map keys).
+		encoded = []byte(fmt.Sprintf("%+v", *ne))
+	}
+	sum := sha256.Sum256(encoded)
+	return "chain-" + hex.EncodeToString(sum[:16])
 }
 
 // toNodeAuditFilter translates the tenant/time-range portion of an

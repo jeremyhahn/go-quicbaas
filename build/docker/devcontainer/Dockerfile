@@ -62,7 +62,7 @@ COPY sdk/go/go.mod sdk/go/go.sum sdk/go/
 RUN --mount=type=secret,id=gomodauth \
     set -eu; \
     if [ -f /run/secrets/gomodauth ]; then set -a; . /run/secrets/gomodauth; set +a; fi; \
-    GOPROXY="${GO_BUILD_PROXY:+${GO_BUILD_PROXY%/}|}https://proxy.golang.org|direct"; export GOPROXY; \
+    GOPROXY="${GO_BUILD_PROXY:+${GO_BUILD_PROXY%/}|}https://proxy.golang.org"; export GOPROXY; \
     go mod download; \
     (cd sdk/go && go mod download); \
     chmod -R a+rX /opt/go
@@ -88,7 +88,7 @@ RUN set -eu; \
     pin() { v="$(sed -n "s/^$1 := //p" /tmp/toolchain.mk)"; \
         [ -n "$v" ] || { echo "$1 missing from pkg/version/toolchain.mk" >&2; exit 1; }; \
         printf '%s' "$v"; }; \
-    GOPROXY="${GO_BUILD_PROXY:+${GO_BUILD_PROXY%/}|}https://proxy.golang.org|direct"; export GOPROXY; \
+    GOPROXY="${GO_BUILD_PROXY:+${GO_BUILD_PROXY%/}|}https://proxy.golang.org"; export GOPROXY; \
     go install "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(pin GOLANGCI_VERSION)"; \
     go install "golang.org/x/vuln/cmd/govulncheck@$(pin GOVULNCHECK_VERSION)"; \
     go install "github.com/rhysd/actionlint/cmd/actionlint@$(pin ACTIONLINT_VERSION)"; \

@@ -27,7 +27,7 @@ on:
   workflow_dispatch:
 
 env:
-  GO_VERSION: '1.27.3'
+  GO_VERSION: '1.27.4'
 
 jobs:
   # The whole root module under fips140=only, dealt over two shards by `make
@@ -68,6 +68,7 @@ jobs:
   # output. The skip-files entry keeps the secret scanner off the committed
   # test TLS material in pkg/server/certs.
   trivy:
+    timeout-minutes: 60
     name: Trivy
     runs-on: ubuntu-latest
     permissions:

@@ -169,7 +169,9 @@ func findRepoRoot() (string, error) {
 
 // PortBundle holds every port the daemon needs to bring up the requested
 // transport. Each field is unique per subtest. Zero indicates "the
-// transport is disabled for this combination".
+// transport is disabled for this combination". QUIC is the one port that is
+// not its own: quicbaasd serves QUIC as REST over HTTP/3 on the UDP side of
+// the REST port, so on the QUIC row it equals REST.
 //
 // Unix socket transport replaces tcpListener-based ports with a tempdir-
 // rooted socket path that lives until t.Cleanup removes the data dir.
@@ -218,7 +220,12 @@ func allocPortBundle(t *testing.T, transport string, dataDir string) PortBundle 
 	case "grpc":
 		bundle.GRPC = netport.MustReserveOne(t)
 	case "quic":
-		bundle.QUIC = netport.MustReserveOne(t)
+		// quicbaasd starts no QUIC listener of its own: it serves QUIC as
+		// REST over HTTP/3 on the REST port (pkg/server
+		// TestBuildQRDBConfig_NoNativeQUICListener), and no config key gives
+		// QUIC a port. The QUIC row is therefore the UDP side of the port
+		// REST already reserved, which netport proved free on UDP too.
+		bundle.QUIC = bundle.REST
 	case "mcp":
 		bundle.MCP = netport.MustReserveOne(t)
 	default:
@@ -641,8 +648,9 @@ func startDaemonWithConfig(
 
 	// Build the env-var override set that turns each transport on/off
 	// at the listener layer. The CLI flag set covers REST + gRPC + unix;
-	// QUIC and MCP have no CLI flags so we drive them through the
-	// canonical env-var contract (pkg/config/loader.go applyEnvironmentOverrides).
+	// MCP has no CLI flag so we drive it through its env-var binding
+	// (cmd/quicbaasd/main.go bindEnvVars). QUIC has no switch at all: the
+	// daemon reads no server.quic key, and HTTP/3 comes up with REST.
 	env := []string{
 		// HOME isolates xkms key material under the data dir.
 		"HOME=" + dataDir,
@@ -658,14 +666,6 @@ func startDaemonWithConfig(
 			"QUICBAAS_SEAL_STRATEGY=passphrase",
 			"QUICBAAS_SEAL_PASSPHRASE="+matrixPassphrase,
 		)
-	}
-	if transport == "quic" {
-		env = append(env,
-			"QUICBAAS_SERVER_QUIC_ENABLED=true",
-			fmt.Sprintf("QUICBAAS_SERVER_QUIC_PORT=%d", ports.QUIC),
-		)
-	} else {
-		env = append(env, "QUICBAAS_SERVER_QUIC_ENABLED=false")
 	}
 	if transport == "mcp" {
 		env = append(env,

@@ -53,9 +53,15 @@ func (a *restAdapter) Name() string {
 	return "REST"
 }
 
-// Setup initializes the REST client.
+// Setup builds the HTTP client that sends the tenant operator's bearer on
+// every request. The Operator role holds the messaging permissions the
+// /api/v1/messaging routes require.
 func (a *restAdapter) Setup(ctx context.Context) error {
-	// REST client doesn't require explicit setup
+	client, err := helpers.TenantOperatorHTTPClient(ctx, 30*time.Second)
+	if err != nil {
+		return err
+	}
+	a.httpClient = client
 	return nil
 }
 

@@ -41,6 +41,9 @@ func TestMsgCreateChannel_Success(t *testing.T) {
 			"buffer_size": float64(256), "max_history": float64(100),
 			"persistent": "true", "ttl": "24h",
 		}},
+		{"with max subscribers", map[string]interface{}{
+			"name": "events", "max_subscribers": float64(100),
+		}},
 	}
 
 	for _, tc := range tests {
@@ -52,33 +55,27 @@ func TestMsgCreateChannel_Success(t *testing.T) {
 	}
 }
 
-func TestMsgCreateChannel_MissingName(t *testing.T) {
+func TestMsgCreateChannel_Errors(t *testing.T) {
 	registry := newMessagingRegistry(t)
 	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_msg_create_channel", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "name is required")
-}
-
-func TestMsgCreateChannel_ServiceError(t *testing.T) {
-	svc := &extendedMockService{
-		messagingSvc: &mockMessagingService{
-			createFunc: func(ctx context.Context, name string, opts ...messaging.CreateChannelOption) (*messaging.Channel, error) {
-				return nil, &dberrors.MessageError{Message: "channel already exists"}
-			},
-		},
+	tests := []struct {
+		name        string
+		args        map[string]interface{}
+		errContains string
+	}{
+		{"missing name", map[string]interface{}{}, "name is required"},
+		{"invalid ttl", map[string]interface{}{"name": "events", "ttl": "invalid-duration"}, "invalid ttl format"},
 	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_msg_create_channel", map[string]interface{}{
-		"name": "existing",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := registry.ExecuteTool(ctx, "quicbaas_msg_create_channel", tc.args)
+			require.Error(t, err)
+			assert.Nil(t, result)
+			assert.Contains(t, err.Error(), tc.errContains)
+		})
+	}
 }
 
 func TestMsgDeleteChannel_Success(t *testing.T) {
@@ -138,23 +135,6 @@ func TestMsgListChannels_Success(t *testing.T) {
 	require.True(t, ok)
 	assert.Contains(t, resultMap, "channels")
 	assert.Contains(t, resultMap, "count")
-}
-
-func TestMsgListChannels_ServiceError(t *testing.T) {
-	svc := &extendedMockService{
-		messagingSvc: &mockMessagingService{
-			listFunc: func(ctx context.Context) ([]*messaging.Channel, error) {
-				return nil, &dberrors.MessageError{Message: "internal error"}
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_msg_list_channels", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
 }
 
 func TestMsgSubscribe_Success(t *testing.T) {
@@ -262,19 +242,6 @@ func TestMsgPublish_Errors(t *testing.T) {
 			assert.Contains(t, err.Error(), tc.errContains)
 		})
 	}
-}
-
-func TestMsgPublishDelta_Success(t *testing.T) {
-	registry := newMessagingRegistry(t)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_msg_publish_delta", map[string]interface{}{
-		"channel":   "events",
-		"old_state": `{"count":1}`,
-		"new_state": `{"count":2}`,
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
 }
 
 func TestMsgPublishDelta_Errors(t *testing.T) {
@@ -386,34 +353,101 @@ func TestMsgDedupStats_MissingChannel(t *testing.T) {
 	assert.Contains(t, err.Error(), "channel is required")
 }
 
-func TestMsgServiceNotAvailable(t *testing.T) {
-	svc := &extendedMockService{}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
+// TestToolFamily_ServiceNotConfigured checks that a tool fails when the
+// service behind its family is not configured.
+func TestToolFamily_ServiceNotConfigured(t *testing.T) {
+	log, err := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
+	require.NoError(t, err)
+	registry := NewToolRegistry(&extendedMockService{}, log)
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_msg_create_channel", map[string]interface{}{
-		"name": "events",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "not configured")
+	tests := []struct {
+		name        string
+		tool        string
+		args        map[string]interface{}
+		errContains string
+	}{
+		{"messaging", "quicbaas_msg_create_channel", map[string]interface{}{"name": "events"}, "not configured"},
+		{"embedding", "quicbaas_embedding_generate", map[string]interface{}{"text": "test"}, "embedding service not configured"},
+		{"ollama", "quicbaas_ollama_embed", map[string]interface{}{"text": "test"}, "ollama service not configured"},
+		{"parameter", "quicbaas_parameter_get", map[string]interface{}{"path": "/app/config"}, "parameter store service not configured"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := registry.ExecuteTool(context.Background(), tc.tool, tc.args)
+			require.Error(t, err)
+			assert.Nil(t, result)
+			assert.Contains(t, err.Error(), tc.errContains)
+		})
+	}
 }
 
-func TestIsMsgTool(t *testing.T) {
-	msgTools := []string{
-		"quicbaas_msg_create_channel", "quicbaas_msg_delete_channel",
-		"quicbaas_msg_get_channel", "quicbaas_msg_list_channels",
-		"quicbaas_msg_subscribe", "quicbaas_msg_unsubscribe",
-		"quicbaas_msg_publish", "quicbaas_msg_publish_delta",
-		"quicbaas_msg_stats", "quicbaas_msg_channel_stats", "quicbaas_msg_dedup_stats",
-		"quicbaas_msg_watch_channel",
+// TestIsToolFamily checks that each family predicate accepts every tool of
+// its family and rejects other names.
+func TestIsToolFamily(t *testing.T) {
+	tests := []struct {
+		name     string
+		isFamily func(string) bool
+		tools    []string
+		others   []string
+	}{
+		{
+			name:     "messaging",
+			isFamily: isMsgTool,
+			tools: []string{
+				"quicbaas_msg_create_channel", "quicbaas_msg_delete_channel",
+				"quicbaas_msg_get_channel", "quicbaas_msg_list_channels",
+				"quicbaas_msg_subscribe", "quicbaas_msg_unsubscribe",
+				"quicbaas_msg_publish", "quicbaas_msg_publish_delta",
+				"quicbaas_msg_stats", "quicbaas_msg_channel_stats", "quicbaas_msg_dedup_stats",
+				"quicbaas_msg_watch_channel",
+			},
+			others: []string{"qrdb_put", ""},
+		},
+		{
+			name:     "ollama",
+			isFamily: isOllamaTool,
+			tools: []string{
+				"quicbaas_ollama_embed", "quicbaas_ollama_embed_batch",
+				"quicbaas_ollama_model_list", "quicbaas_ollama_model_info",
+				"quicbaas_ollama_health",
+			},
+			others: []string{"quicbaas_embedding_generate", "qrdb_put", ""},
+		},
+		{
+			name:     "parameter",
+			isFamily: isParameterTool,
+			tools: []string{
+				"quicbaas_parameter_get", "quicbaas_parameter_set",
+				"quicbaas_parameter_delete", "quicbaas_parameter_list",
+				"quicbaas_parameter_batch_get", "quicbaas_parameter_batch_set",
+				"quicbaas_parameter_batch_delete", "quicbaas_parameter_search",
+			},
+			others: []string{"quicbaas_ollama_embed", "qrdb_put", ""},
+		},
+		{
+			name:     "embedding",
+			isFamily: isEmbeddingTool,
+			tools: []string{
+				"quicbaas_embedding_generate", "quicbaas_embedding_batch",
+				"quicbaas_embedding_list_providers", "quicbaas_embedding_get_provider",
+				"quicbaas_embedding_set_default", "quicbaas_embedding_cache_stats",
+				"quicbaas_embedding_cache_clear",
+			},
+			others: []string{"quicbaas_ollama_embed", "qrdb_put", ""},
+		},
 	}
-	for _, name := range msgTools {
-		assert.True(t, isMsgTool(name))
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, tool := range tc.tools {
+				assert.True(t, tc.isFamily(tool), "expected %s in the %s family", tool, tc.name)
+			}
+			for _, other := range tc.others {
+				assert.False(t, tc.isFamily(other), "expected %q outside the %s family", other, tc.name)
+			}
+		})
 	}
-	assert.False(t, isMsgTool("qrdb_put"))
-	assert.False(t, isMsgTool(""))
 }
 
 // nilStatsMessagingService is a messaging service that returns nil stats.
@@ -429,203 +463,253 @@ func (m *nilStatsMessagingService) GetStats() *messaging.Stats {
 // Messaging Service Error Path Tests
 // =============================================================================
 
-func TestHandleMsgDeleteChannel_ServiceError(t *testing.T) {
-	expectedErr := errors.New("channel not found")
-	svc := &extendedMockService{
-		messagingSvc: &mockMessagingService{
-			deleteFunc: func(ctx context.Context, name string) error {
-				return expectedErr
+// TestMsgTools_ServiceError checks that each messaging tool wraps a service
+// failure in its operation error and returns no result.
+func TestMsgTools_ServiceError(t *testing.T) {
+	svcErr := errors.New("service failure")
+	tests := []struct {
+		name        string
+		tool        string
+		svc         *mockMessagingService
+		args        map[string]interface{}
+		errContains string
+	}{
+		{
+			name: "create channel",
+			tool: "quicbaas_msg_create_channel",
+			svc: &mockMessagingService{
+				createFunc: func(ctx context.Context, name string, opts ...messaging.CreateChannelOption) (*messaging.Channel, error) {
+					return nil, &dberrors.MessageError{Message: "channel already exists"}
+				},
 			},
+			args:        map[string]interface{}{"name": "existing"},
+			errContains: "create channel failed",
+		},
+		{
+			name: "delete channel",
+			tool: "quicbaas_msg_delete_channel",
+			svc: &mockMessagingService{
+				deleteFunc: func(ctx context.Context, name string) error {
+					return svcErr
+				},
+			},
+			args:        map[string]interface{}{"name": "nonexistent"},
+			errContains: "delete channel failed",
+		},
+		{
+			name: "get channel",
+			tool: "quicbaas_msg_get_channel",
+			svc: &mockMessagingService{
+				getFunc: func(ctx context.Context, name string) (*messaging.Channel, error) {
+					return nil, svcErr
+				},
+			},
+			args:        map[string]interface{}{"name": "nonexistent"},
+			errContains: "get channel failed",
+		},
+		{
+			name: "list channels",
+			tool: "quicbaas_msg_list_channels",
+			svc: &mockMessagingService{
+				listFunc: func(ctx context.Context) ([]*messaging.Channel, error) {
+					return nil, &dberrors.MessageError{Message: "internal error"}
+				},
+			},
+			args:        map[string]interface{}{},
+			errContains: "list channels failed",
+		},
+		{
+			name: "subscribe",
+			tool: "quicbaas_msg_subscribe",
+			svc: &mockMessagingService{
+				subscribeFunc: func(ctx context.Context, channel string, opts ...messaging.SubscribeOption) (*messaging.Subscription, error) {
+					return nil, svcErr
+				},
+			},
+			args:        map[string]interface{}{"channel": "nonexistent"},
+			errContains: "subscribe failed",
+		},
+		{
+			name: "unsubscribe",
+			tool: "quicbaas_msg_unsubscribe",
+			svc: &mockMessagingService{
+				unsubFunc: func(ctx context.Context, subscriptionID string) error {
+					return svcErr
+				},
+			},
+			args:        map[string]interface{}{"subscription_id": "invalid-sub"},
+			errContains: "unsubscribe failed",
+		},
+		{
+			name: "publish",
+			tool: "quicbaas_msg_publish",
+			svc: &mockMessagingService{
+				publishFunc: func(ctx context.Context, channel string, payload interface{}, opts ...messaging.PublishOption) (*messaging.PublishResult, error) {
+					return nil, svcErr
+				},
+			},
+			args:        map[string]interface{}{"channel": "events", "payload": "test message"},
+			errContains: "publish failed",
+		},
+		{
+			name: "publish delta",
+			tool: "quicbaas_msg_publish_delta",
+			svc: &mockMessagingService{
+				pubDeltaFunc: func(ctx context.Context, channel string, old, new interface{}, opts ...messaging.PublishOption) (*messaging.PublishResult, error) {
+					return nil, svcErr
+				},
+			},
+			args: map[string]interface{}{
+				"channel":   "events",
+				"old_state": `{"count":1}`,
+				"new_state": `{"count":2}`,
+			},
+			errContains: "publish delta failed",
 		},
 	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_msg_delete_channel", map[string]interface{}{
-		"name": "nonexistent",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "delete channel failed")
-}
-
-func TestHandleMsgGetChannel_ServiceError(t *testing.T) {
-	expectedErr := errors.New("channel not found")
-	svc := &extendedMockService{
-		messagingSvc: &mockMessagingService{
-			getFunc: func(ctx context.Context, name string) (*messaging.Channel, error) {
-				return nil, expectedErr
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_msg_get_channel", map[string]interface{}{
-		"name": "nonexistent",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "get channel failed")
-}
-
-func TestHandleMsgUnsubscribe_ServiceError(t *testing.T) {
-	expectedErr := errors.New("subscription not found")
-	svc := &extendedMockService{
-		messagingSvc: &mockMessagingService{
-			unsubFunc: func(ctx context.Context, subscriptionID string) error {
-				return expectedErr
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_msg_unsubscribe", map[string]interface{}{
-		"subscription_id": "invalid-sub",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "unsubscribe failed")
-}
-
-func TestHandleMsgSubscribe_ServiceError(t *testing.T) {
-	expectedErr := errors.New("channel does not exist")
-	svc := &extendedMockService{
-		messagingSvc: &mockMessagingService{
-			subscribeFunc: func(ctx context.Context, channel string, opts ...messaging.SubscribeOption) (*messaging.Subscription, error) {
-				return nil, expectedErr
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_msg_subscribe", map[string]interface{}{
-		"channel": "nonexistent",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "subscribe failed")
-}
-
-func TestHandleMsgPublish_ServiceError(t *testing.T) {
-	expectedErr := errors.New("publish quota exceeded")
-	svc := &extendedMockService{
-		messagingSvc: &mockMessagingService{
-			publishFunc: func(ctx context.Context, channel string, payload interface{}, opts ...messaging.PublishOption) (*messaging.PublishResult, error) {
-				return nil, expectedErr
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_msg_publish", map[string]interface{}{
-		"channel": "events",
-		"payload": "test message",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "publish failed")
-}
-
-func TestHandleMsgPublishDelta_ServiceError(t *testing.T) {
-	expectedErr := errors.New("delta publish failed")
-	svc := &extendedMockService{
-		messagingSvc: &mockMessagingService{
-			pubDeltaFunc: func(ctx context.Context, channel string, old, new interface{}, opts ...messaging.PublishOption) (*messaging.PublishResult, error) {
-				return nil, expectedErr
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_msg_publish_delta", map[string]interface{}{
-		"channel":   "events",
-		"old_state": `{"count":1}`,
-		"new_state": `{"count":2}`,
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "publish delta failed")
-}
-
-func TestHandleMsgCreateChannel_InvalidTTL(t *testing.T) {
-	svc := &extendedMockService{
-		messagingSvc: &mockMessagingService{},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_msg_create_channel", map[string]interface{}{
-		"name": "events",
-		"ttl":  "invalid-duration",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "invalid ttl format")
-}
-
-func TestExecuteMsgTool_UnknownTool(t *testing.T) {
-	svc := &extendedMockService{
-		messagingSvc: &mockMessagingService{},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.executeMsgTool(ctx, "quicbaas_msg_unknown_tool", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "unknown tool: quicbaas_msg_unknown_tool")
-}
-
-func TestHandleMsgCreateChannel_WithMaxSubscribers(t *testing.T) {
-	svc := &extendedMockService{
-		messagingSvc: &mockMessagingService{},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_msg_create_channel", map[string]interface{}{
-		"name":            "events",
-		"max_subscribers": float64(100),
-	})
+	log, err := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
 	require.NoError(t, err)
-	require.NotNil(t, result)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			registry := NewToolRegistry(&extendedMockService{messagingSvc: tc.svc}, log)
+			result, err := registry.ExecuteTool(context.Background(), tc.tool, tc.args)
+			require.Error(t, err)
+			assert.Nil(t, result)
+			assert.Contains(t, err.Error(), tc.errContains)
+		})
+	}
+}
+
+// TestExecuteToolFamily_UnknownTool checks that each tool family's executor
+// rejects a tool name it does not route.
+func TestExecuteToolFamily_UnknownTool(t *testing.T) {
+	svc := &extendedMockService{
+		messagingSvc: &mockMessagingService{},
+		embeddingSvc: &mockEmbeddingService{},
+		ollamaSvc:    &mockOllamaService{},
+		parameterSvc: &mockParameterStoreService{},
+	}
+	log, err := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
+	require.NoError(t, err)
+	registry := NewToolRegistry(svc, log)
+
+	type executor func(context.Context, string, map[string]interface{}) (interface{}, error)
+	tests := []struct {
+		name    string
+		execute executor
+		tool    string
+	}{
+		{"messaging", registry.executeMsgTool, "quicbaas_msg_unknown_tool"},
+		{"embedding", registry.executeEmbeddingTool, "quicbaas_embedding_unknown"},
+		{"ollama", registry.executeOllamaTool, "quicbaas_ollama_unknown"},
+		{"parameter", registry.executeParameterTool, "quicbaas_parameter_unknown"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := tc.execute(context.Background(), tc.tool, map[string]interface{}{})
+			require.Error(t, err)
+			assert.Nil(t, result)
+			assert.Contains(t, err.Error(), "unknown tool: "+tc.tool)
+		})
+	}
 }
 
 // =============================================================================
 // Embedding Service Error Path Tests
 // =============================================================================
 
-func TestHandleEmbeddingListProviders_ServiceError(t *testing.T) {
-	expectedErr := errors.New("provider list unavailable")
-	svc := &extendedMockService{
-		embeddingSvc: &mockEmbeddingService{
-			listProvidersFunc: func(ctx context.Context, req *service.ListProvidersRequest) (*service.ListProvidersResponse, error) {
-				return nil, expectedErr
+// TestEmbeddingTools_ServiceError checks that each embedding tool wraps a
+// service failure in its operation error and returns no result.
+func TestEmbeddingTools_ServiceError(t *testing.T) {
+	svcErr := errors.New("service failure")
+	tests := []struct {
+		name        string
+		tool        string
+		svc         *mockEmbeddingService
+		args        map[string]interface{}
+		errContains string
+	}{
+		{
+			name: "list providers",
+			tool: "quicbaas_embedding_list_providers",
+			svc: &mockEmbeddingService{
+				listProvidersFunc: func(ctx context.Context, req *service.ListProvidersRequest) (*service.ListProvidersResponse, error) {
+					return nil, svcErr
+				},
 			},
+			args:        map[string]interface{}{},
+			errContains: "list providers failed",
+		},
+		{
+			name: "get provider",
+			tool: "quicbaas_embedding_get_provider",
+			svc: &mockEmbeddingService{
+				getProviderFunc: func(ctx context.Context, req *service.GetProviderInfoRequest) (*service.GetProviderInfoResponse, error) {
+					return nil, svcErr
+				},
+			},
+			args:        map[string]interface{}{"provider": "nonexistent"},
+			errContains: "get provider info failed",
+		},
+		{
+			name: "set default",
+			tool: "quicbaas_embedding_set_default",
+			svc: &mockEmbeddingService{
+				setDefaultFunc: func(ctx context.Context, req *service.SetDefaultProviderRequest) (*service.SetDefaultProviderResponse, error) {
+					return nil, svcErr
+				},
+			},
+			args:        map[string]interface{}{"provider": "invalid"},
+			errContains: "set default provider failed",
+		},
+		{
+			name: "cache clear",
+			tool: "quicbaas_embedding_cache_clear",
+			svc: &mockEmbeddingService{
+				cacheClearFunc: func(ctx context.Context, req *service.ClearEmbeddingCacheRequest) (*service.ClearEmbeddingCacheResponse, error) {
+					return nil, svcErr
+				},
+			},
+			args:        map[string]interface{}{},
+			errContains: "clear cache failed",
+		},
+		{
+			name: "generate",
+			tool: "quicbaas_embedding_generate",
+			svc: &mockEmbeddingService{
+				generateFunc: func(ctx context.Context, req *service.GenerateEmbeddingRequest) (*service.GenerateEmbeddingResponse, error) {
+					return nil, svcErr
+				},
+			},
+			args:        map[string]interface{}{"text": "test text"},
+			errContains: "generate embedding failed",
+		},
+		{
+			name: "batch",
+			tool: "quicbaas_embedding_batch",
+			svc: &mockEmbeddingService{
+				batchFunc: func(ctx context.Context, req *service.BatchGenerateEmbeddingsRequest) (*service.BatchGenerateEmbeddingsResponse, error) {
+					return nil, svcErr
+				},
+			},
+			args:        map[string]interface{}{"items": `[{"text":"hello"}]`},
+			errContains: "batch generate embeddings failed",
 		},
 	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_embedding_list_providers", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "list providers failed")
+	log, err := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
+	require.NoError(t, err)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			registry := NewToolRegistry(&extendedMockService{embeddingSvc: tc.svc}, log)
+			result, err := registry.ExecuteTool(context.Background(), tc.tool, tc.args)
+			require.Error(t, err)
+			assert.Nil(t, result)
+			assert.Contains(t, err.Error(), tc.errContains)
+		})
+	}
 }
 
 func TestHandleEmbeddingListProviders_WithRateLimitAndError(t *testing.T) {
@@ -662,27 +746,6 @@ func TestHandleEmbeddingListProviders_WithRateLimitAndError(t *testing.T) {
 	assert.Equal(t, "previous connection timeout", providers[0]["last_error"])
 }
 
-func TestHandleEmbeddingGetProvider_ServiceError(t *testing.T) {
-	expectedErr := errors.New("provider not found")
-	svc := &extendedMockService{
-		embeddingSvc: &mockEmbeddingService{
-			getProviderFunc: func(ctx context.Context, req *service.GetProviderInfoRequest) (*service.GetProviderInfoResponse, error) {
-				return nil, expectedErr
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_embedding_get_provider", map[string]interface{}{
-		"provider": "nonexistent",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "get provider info failed")
-}
-
 func TestHandleEmbeddingGetProvider_WithExtendedInfo(t *testing.T) {
 	now := time.Now()
 	svc := &extendedMockService{
@@ -716,27 +779,6 @@ func TestHandleEmbeddingGetProvider_WithExtendedInfo(t *testing.T) {
 	assert.Equal(t, 60, resultMap["rate_limit_per_minute"])
 	assert.Equal(t, "connection reset", resultMap["last_error"])
 	assert.Contains(t, resultMap, "last_error_time")
-}
-
-func TestHandleEmbeddingSetDefault_ServiceError(t *testing.T) {
-	expectedErr := errors.New("invalid provider")
-	svc := &extendedMockService{
-		embeddingSvc: &mockEmbeddingService{
-			setDefaultFunc: func(ctx context.Context, req *service.SetDefaultProviderRequest) (*service.SetDefaultProviderResponse, error) {
-				return nil, expectedErr
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_embedding_set_default", map[string]interface{}{
-		"provider": "invalid",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "set default provider failed")
 }
 
 func TestHandleEmbeddingCacheStats_WithOptionalFields(t *testing.T) {
@@ -800,67 +842,6 @@ func TestHandleEmbeddingCacheClear_WithProviderFilter(t *testing.T) {
 	assert.Equal(t, "ollama", resultMap["provider"])
 }
 
-func TestHandleEmbeddingCacheClear_ServiceError(t *testing.T) {
-	expectedErr := errors.New("cache clear failed")
-	svc := &extendedMockService{
-		embeddingSvc: &mockEmbeddingService{
-			cacheClearFunc: func(ctx context.Context, req *service.ClearEmbeddingCacheRequest) (*service.ClearEmbeddingCacheResponse, error) {
-				return nil, expectedErr
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_embedding_cache_clear", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "clear cache failed")
-}
-
-func TestHandleEmbeddingGenerate_ServiceError(t *testing.T) {
-	expectedErr := errors.New("embedding generation failed")
-	svc := &extendedMockService{
-		embeddingSvc: &mockEmbeddingService{
-			generateFunc: func(ctx context.Context, req *service.GenerateEmbeddingRequest) (*service.GenerateEmbeddingResponse, error) {
-				return nil, expectedErr
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_embedding_generate", map[string]interface{}{
-		"text": "test text",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "generate embedding failed")
-}
-
-func TestHandleEmbeddingBatch_ServiceError(t *testing.T) {
-	expectedErr := errors.New("batch embedding failed")
-	svc := &extendedMockService{
-		embeddingSvc: &mockEmbeddingService{
-			batchFunc: func(ctx context.Context, req *service.BatchGenerateEmbeddingsRequest) (*service.BatchGenerateEmbeddingsResponse, error) {
-				return nil, expectedErr
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_embedding_batch", map[string]interface{}{
-		"items": `[{"text":"hello"}]`,
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "batch generate embeddings failed")
-}
-
 func TestHandleEmbeddingBatch_WithResultError(t *testing.T) {
 	svc := &extendedMockService{
 		embeddingSvc: &mockEmbeddingService{
@@ -904,57 +885,78 @@ func TestHandleEmbeddingBatch_WithResultError(t *testing.T) {
 	assert.Equal(t, 1, resultMap["error_count"])
 }
 
-func TestExecuteEmbeddingTool_UnknownTool(t *testing.T) {
-	svc := &extendedMockService{
-		embeddingSvc: &mockEmbeddingService{},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.executeEmbeddingTool(ctx, "quicbaas_embedding_unknown", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "unknown tool: quicbaas_embedding_unknown")
-}
-
-func TestEmbeddingServiceNotConfigured(t *testing.T) {
-	svc := &extendedMockService{}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_embedding_generate", map[string]interface{}{
-		"text": "test",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "embedding service not configured")
-}
-
 // =============================================================================
 // Ollama Service Error Path Tests
 // =============================================================================
 
-func TestHandleOllamaModelInfo_ServiceError(t *testing.T) {
-	expectedErr := errors.New("model not found")
-	svc := &extendedMockService{
-		ollamaSvc: &mockOllamaService{
-			getModelFunc: func(ctx context.Context, req *service.OllamaGetModelInfoRequest) (*service.OllamaGetModelInfoResponse, error) {
-				return nil, expectedErr
+// TestOllamaTools_ServiceError checks that each ollama tool wraps a service
+// failure in its operation error and returns no result.
+func TestOllamaTools_ServiceError(t *testing.T) {
+	svcErr := errors.New("service failure")
+	tests := []struct {
+		name        string
+		tool        string
+		svc         *mockOllamaService
+		args        map[string]interface{}
+		errContains string
+	}{
+		{
+			name: "model info",
+			tool: "quicbaas_ollama_model_info",
+			svc: &mockOllamaService{
+				getModelFunc: func(ctx context.Context, req *service.OllamaGetModelInfoRequest) (*service.OllamaGetModelInfoResponse, error) {
+					return nil, svcErr
+				},
 			},
+			args:        map[string]interface{}{"model": "nonexistent-model"},
+			errContains: "get model info failed",
+		},
+		{
+			name: "embed",
+			tool: "quicbaas_ollama_embed",
+			svc: &mockOllamaService{
+				embedFunc: func(ctx context.Context, req *service.OllamaEmbedRequest) (*service.OllamaEmbedResponse, error) {
+					return nil, svcErr
+				},
+			},
+			args:        map[string]interface{}{"text": "test"},
+			errContains: "embed failed",
+		},
+		{
+			name: "embed batch",
+			tool: "quicbaas_ollama_embed_batch",
+			svc: &mockOllamaService{
+				embedBatchFunc: func(ctx context.Context, req *service.OllamaEmbedBatchRequest) (*service.OllamaEmbedBatchResponse, error) {
+					return nil, svcErr
+				},
+			},
+			args:        map[string]interface{}{"texts": `["hello","world"]`},
+			errContains: "embed batch failed",
+		},
+		{
+			name: "model list",
+			tool: "quicbaas_ollama_model_list",
+			svc: &mockOllamaService{
+				listModelsFunc: func(ctx context.Context, req *service.OllamaListModelsRequest) (*service.OllamaListModelsResponse, error) {
+					return nil, svcErr
+				},
+			},
+			args:        map[string]interface{}{},
+			errContains: "list models failed",
 		},
 	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_ollama_model_info", map[string]interface{}{
-		"model": "nonexistent-model",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "get model info failed")
+	log, err := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
+	require.NoError(t, err)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			registry := NewToolRegistry(&extendedMockService{ollamaSvc: tc.svc}, log)
+			result, err := registry.ExecuteTool(context.Background(), tc.tool, tc.args)
+			require.Error(t, err)
+			assert.Nil(t, result)
+			assert.Contains(t, err.Error(), tc.errContains)
+		})
+	}
 }
 
 func TestHandleOllamaHealth_ServiceError(t *testing.T) {
@@ -1004,119 +1006,111 @@ func TestHandleOllamaHealth_WithErrorResponse(t *testing.T) {
 	assert.Equal(t, "service degraded", resultMap["error"])
 }
 
-func TestHandleOllamaEmbed_ServiceError(t *testing.T) {
-	expectedErr := errors.New("embed failed")
-	svc := &extendedMockService{
-		ollamaSvc: &mockOllamaService{
-			embedFunc: func(ctx context.Context, req *service.OllamaEmbedRequest) (*service.OllamaEmbedResponse, error) {
-				return nil, expectedErr
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_ollama_embed", map[string]interface{}{
-		"text": "test",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "embed failed")
-}
-
-func TestHandleOllamaEmbedBatch_ServiceError(t *testing.T) {
-	expectedErr := errors.New("batch embed failed")
-	svc := &extendedMockService{
-		ollamaSvc: &mockOllamaService{
-			embedBatchFunc: func(ctx context.Context, req *service.OllamaEmbedBatchRequest) (*service.OllamaEmbedBatchResponse, error) {
-				return nil, expectedErr
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_ollama_embed_batch", map[string]interface{}{
-		"texts": `["hello","world"]`,
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "embed batch failed")
-}
-
-func TestHandleOllamaModelList_ServiceError(t *testing.T) {
-	expectedErr := errors.New("list models failed")
-	svc := &extendedMockService{
-		ollamaSvc: &mockOllamaService{
-			listModelsFunc: func(ctx context.Context, req *service.OllamaListModelsRequest) (*service.OllamaListModelsResponse, error) {
-				return nil, expectedErr
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_ollama_model_list", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "list models failed")
-}
-
-func TestExecuteOllamaTool_UnknownTool(t *testing.T) {
-	svc := &extendedMockService{
-		ollamaSvc: &mockOllamaService{},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.executeOllamaTool(ctx, "quicbaas_ollama_unknown", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "unknown tool: quicbaas_ollama_unknown")
-}
-
-func TestOllamaServiceNotConfigured(t *testing.T) {
-	svc := &extendedMockService{}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_ollama_embed", map[string]interface{}{
-		"text": "test",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "ollama service not configured")
-}
-
 // =============================================================================
 // Parameter Store Error Path Tests
 // =============================================================================
 
-func TestHandleParameterSet_ServiceError(t *testing.T) {
-	expectedErr := errors.New("parameter set failed")
-	svc := &extendedMockService{
-		parameterSvc: &mockParameterStoreService{
-			setFunc: func(ctx context.Context, req *interfaces.SetParameterRequest) (*interfaces.SetParameterResponse, error) {
-				return nil, expectedErr
+// TestParameterTools_ServiceError checks that each parameter tool wraps a
+// service failure in its operation error and returns no result.
+func TestParameterTools_ServiceError(t *testing.T) {
+	svcErr := errors.New("service failure")
+	tests := []struct {
+		name        string
+		tool        string
+		svc         *mockParameterStoreService
+		args        map[string]interface{}
+		errContains string
+	}{
+		{
+			name: "set",
+			tool: "quicbaas_parameter_set",
+			svc: &mockParameterStoreService{
+				setFunc: func(ctx context.Context, req *interfaces.SetParameterRequest) (*interfaces.SetParameterResponse, error) {
+					return nil, svcErr
+				},
 			},
+			args:        map[string]interface{}{"path": "/app/config", "value": "test"},
+			errContains: "set parameter failed",
+		},
+		{
+			name: "delete",
+			tool: "quicbaas_parameter_delete",
+			svc: &mockParameterStoreService{
+				deleteFunc: func(ctx context.Context, req *interfaces.DeleteParameterRequest) (*interfaces.DeleteParameterResponse, error) {
+					return nil, svcErr
+				},
+			},
+			args:        map[string]interface{}{"path": "/app/config"},
+			errContains: "delete parameter failed",
+		},
+		{
+			name: "list",
+			tool: "quicbaas_parameter_list",
+			svc: &mockParameterStoreService{
+				listFunc: func(ctx context.Context, req *interfaces.ListParametersRequest) (*interfaces.ListParametersResponse, error) {
+					return nil, svcErr
+				},
+			},
+			args:        map[string]interface{}{"prefix": "/app"},
+			errContains: "list parameters failed",
+		},
+		{
+			name: "batch get",
+			tool: "quicbaas_parameter_batch_get",
+			svc: &mockParameterStoreService{
+				getMultiFunc: func(ctx context.Context, req *interfaces.GetParametersRequest) (*interfaces.GetParametersResponse, error) {
+					return nil, svcErr
+				},
+			},
+			args:        map[string]interface{}{"paths": `["/app/config1","/app/config2"]`},
+			errContains: "batch get parameters failed",
+		},
+		{
+			name: "batch set",
+			tool: "quicbaas_parameter_batch_set",
+			svc: &mockParameterStoreService{
+				setMultiFunc: func(ctx context.Context, req *interfaces.SetParametersRequest) (*interfaces.SetParametersResponse, error) {
+					return nil, svcErr
+				},
+			},
+			args:        map[string]interface{}{"parameters": `[{"path":"/app/config","value":"test"}]`},
+			errContains: "batch set parameters failed",
+		},
+		{
+			name: "batch delete",
+			tool: "quicbaas_parameter_batch_delete",
+			svc: &mockParameterStoreService{
+				delMultiFunc: func(ctx context.Context, req *interfaces.DeleteParametersRequest) (*interfaces.DeleteParametersResponse, error) {
+					return nil, svcErr
+				},
+			},
+			args:        map[string]interface{}{"paths": `["/app/config1","/app/config2"]`},
+			errContains: "batch delete parameters failed",
+		},
+		{
+			name: "search",
+			tool: "quicbaas_parameter_search",
+			svc: &mockParameterStoreService{
+				searchFunc: func(ctx context.Context, req *interfaces.SearchByTagsRequest) (*interfaces.SearchByTagsResponse, error) {
+					return nil, svcErr
+				},
+			},
+			args:        map[string]interface{}{"tags": `{"env":"prod"}`},
+			errContains: "search parameters failed",
 		},
 	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_parameter_set", map[string]interface{}{
-		"path":  "/app/config",
-		"value": "test",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "set parameter failed")
+	log, err := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
+	require.NoError(t, err)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			registry := NewToolRegistry(&extendedMockService{parameterSvc: tc.svc}, log)
+			result, err := registry.ExecuteTool(context.Background(), tc.tool, tc.args)
+			require.Error(t, err)
+			assert.Nil(t, result)
+			assert.Contains(t, err.Error(), tc.errContains)
+		})
+	}
 }
 
 func TestHandleParameterSet_InvalidTagsJSON(t *testing.T) {
@@ -1135,48 +1129,6 @@ func TestHandleParameterSet_InvalidTagsJSON(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "invalid tags JSON")
-}
-
-func TestHandleParameterDelete_ServiceError(t *testing.T) {
-	expectedErr := errors.New("parameter delete failed")
-	svc := &extendedMockService{
-		parameterSvc: &mockParameterStoreService{
-			deleteFunc: func(ctx context.Context, req *interfaces.DeleteParameterRequest) (*interfaces.DeleteParameterResponse, error) {
-				return nil, expectedErr
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_parameter_delete", map[string]interface{}{
-		"path": "/app/config",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "delete parameter failed")
-}
-
-func TestHandleParameterList_ServiceError(t *testing.T) {
-	expectedErr := errors.New("list parameters failed")
-	svc := &extendedMockService{
-		parameterSvc: &mockParameterStoreService{
-			listFunc: func(ctx context.Context, req *interfaces.ListParametersRequest) (*interfaces.ListParametersResponse, error) {
-				return nil, expectedErr
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_parameter_list", map[string]interface{}{
-		"prefix": "/app",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "list parameters failed")
 }
 
 func TestHandleParameterList_WithOptionalFields(t *testing.T) {
@@ -1212,27 +1164,6 @@ func TestHandleParameterList_WithOptionalFields(t *testing.T) {
 	assert.NotNil(t, resultMap["total_count"])
 }
 
-func TestHandleParameterBatchGet_ServiceError(t *testing.T) {
-	expectedErr := errors.New("batch get failed")
-	svc := &extendedMockService{
-		parameterSvc: &mockParameterStoreService{
-			getMultiFunc: func(ctx context.Context, req *interfaces.GetParametersRequest) (*interfaces.GetParametersResponse, error) {
-				return nil, expectedErr
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_parameter_batch_get", map[string]interface{}{
-		"paths": `["/app/config1","/app/config2"]`,
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "batch get parameters failed")
-}
-
 func TestHandleParameterBatchGet_WithErrors(t *testing.T) {
 	svc := &extendedMockService{
 		parameterSvc: &mockParameterStoreService{
@@ -1259,27 +1190,6 @@ func TestHandleParameterBatchGet_WithErrors(t *testing.T) {
 
 	resultMap := result.(map[string]interface{})
 	assert.Contains(t, resultMap, "errors")
-}
-
-func TestHandleParameterBatchSet_ServiceError(t *testing.T) {
-	expectedErr := errors.New("batch set failed")
-	svc := &extendedMockService{
-		parameterSvc: &mockParameterStoreService{
-			setMultiFunc: func(ctx context.Context, req *interfaces.SetParametersRequest) (*interfaces.SetParametersResponse, error) {
-				return nil, expectedErr
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_parameter_batch_set", map[string]interface{}{
-		"parameters": `[{"path":"/app/config","value":"test"}]`,
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "batch set parameters failed")
 }
 
 func TestHandleParameterBatchSet_WithResultError(t *testing.T) {
@@ -1314,27 +1224,6 @@ func TestHandleParameterBatchSet_WithResultError(t *testing.T) {
 	resultMap := result.(map[string]interface{})
 	results := resultMap["results"].([]map[string]interface{})
 	assert.Equal(t, "validation failed", results[1]["error"])
-}
-
-func TestHandleParameterBatchDelete_ServiceError(t *testing.T) {
-	expectedErr := errors.New("batch delete failed")
-	svc := &extendedMockService{
-		parameterSvc: &mockParameterStoreService{
-			delMultiFunc: func(ctx context.Context, req *interfaces.DeleteParametersRequest) (*interfaces.DeleteParametersResponse, error) {
-				return nil, expectedErr
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_parameter_batch_delete", map[string]interface{}{
-		"paths": `["/app/config1","/app/config2"]`,
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "batch delete parameters failed")
 }
 
 func TestHandleParameterBatchDelete_WithResultError(t *testing.T) {
@@ -1372,27 +1261,6 @@ func TestHandleParameterBatchDelete_WithResultError(t *testing.T) {
 	assert.Equal(t, "protected parameter", results[1]["error"])
 }
 
-func TestHandleParameterSearch_ServiceError(t *testing.T) {
-	expectedErr := errors.New("search failed")
-	svc := &extendedMockService{
-		parameterSvc: &mockParameterStoreService{
-			searchFunc: func(ctx context.Context, req *interfaces.SearchByTagsRequest) (*interfaces.SearchByTagsResponse, error) {
-				return nil, expectedErr
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_parameter_search", map[string]interface{}{
-		"tags": `{"env":"prod"}`,
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "search parameters failed")
-}
-
 func TestHandleParameterSearch_WithOptionalFields(t *testing.T) {
 	svc := &extendedMockService{
 		parameterSvc: &mockParameterStoreService{
@@ -1421,34 +1289,6 @@ func TestHandleParameterSearch_WithOptionalFields(t *testing.T) {
 	resultMap := result.(map[string]interface{})
 	assert.Equal(t, true, resultMap["has_more"])
 	assert.Equal(t, "search-cursor", resultMap["next_cursor"])
-}
-
-func TestExecuteParameterTool_UnknownTool(t *testing.T) {
-	svc := &extendedMockService{
-		parameterSvc: &mockParameterStoreService{},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.executeParameterTool(ctx, "quicbaas_parameter_unknown", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "unknown tool: quicbaas_parameter_unknown")
-}
-
-func TestParameterServiceNotConfigured(t *testing.T) {
-	svc := &extendedMockService{}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_parameter_get", map[string]interface{}{
-		"path": "/app/config",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "parameter store service not configured")
 }
 
 // =============================================================================
@@ -1607,62 +1447,3 @@ func TestFormatParameterValue_MinimalFields(t *testing.T) {
 // =============================================================================
 // Tool Identification Tests
 // =============================================================================
-
-func TestIsOllamaTool_Coverage(t *testing.T) {
-	ollamaTools := []string{
-		"quicbaas_ollama_embed",
-		"quicbaas_ollama_embed_batch",
-		"quicbaas_ollama_model_list",
-		"quicbaas_ollama_model_info",
-		"quicbaas_ollama_health",
-	}
-
-	for _, name := range ollamaTools {
-		assert.True(t, isOllamaTool(name), "expected %s to be ollama tool", name)
-	}
-
-	assert.False(t, isOllamaTool("quicbaas_embedding_generate"))
-	assert.False(t, isOllamaTool("qrdb_put"))
-	assert.False(t, isOllamaTool(""))
-}
-
-func TestIsParameterTool_Coverage(t *testing.T) {
-	paramTools := []string{
-		"quicbaas_parameter_get",
-		"quicbaas_parameter_set",
-		"quicbaas_parameter_delete",
-		"quicbaas_parameter_list",
-		"quicbaas_parameter_batch_get",
-		"quicbaas_parameter_batch_set",
-		"quicbaas_parameter_batch_delete",
-		"quicbaas_parameter_search",
-	}
-
-	for _, name := range paramTools {
-		assert.True(t, isParameterTool(name), "expected %s to be parameter tool", name)
-	}
-
-	assert.False(t, isParameterTool("quicbaas_ollama_embed"))
-	assert.False(t, isParameterTool("qrdb_put"))
-	assert.False(t, isParameterTool(""))
-}
-
-func TestIsEmbeddingTool_Coverage(t *testing.T) {
-	embeddingTools := []string{
-		"quicbaas_embedding_generate",
-		"quicbaas_embedding_batch",
-		"quicbaas_embedding_list_providers",
-		"quicbaas_embedding_get_provider",
-		"quicbaas_embedding_set_default",
-		"quicbaas_embedding_cache_stats",
-		"quicbaas_embedding_cache_clear",
-	}
-
-	for _, name := range embeddingTools {
-		assert.True(t, isEmbeddingTool(name), "expected %s to be embedding tool", name)
-	}
-
-	assert.False(t, isEmbeddingTool("quicbaas_ollama_embed"))
-	assert.False(t, isEmbeddingTool("qrdb_put"))
-	assert.False(t, isEmbeddingTool(""))
-}

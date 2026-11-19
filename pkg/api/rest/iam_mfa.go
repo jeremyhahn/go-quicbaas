@@ -121,14 +121,13 @@ func (h *IAMHandler) getMFAManager(ctx context.Context) (MFAManager, error) {
 // BeginMFAEnrollment handles POST /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/enroll
 // Begins the MFA enrollment process for a user.
 func (h *IAMHandler) BeginMFAEnrollment(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -185,7 +184,6 @@ func (h *IAMHandler) BeginMFAEnrollment(w http.ResponseWriter, r *http.Request) 
 // CompleteMFAEnrollment handles POST /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/verify
 // Completes the MFA enrollment by verifying the code.
 func (h *IAMHandler) CompleteMFAEnrollment(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
 	tenantID := chi.URLParam(r, "tenant_id")
 	userIDParam := chi.URLParam(r, "user_id")
 
@@ -194,7 +192,7 @@ func (h *IAMHandler) CompleteMFAEnrollment(w http.ResponseWriter, r *http.Reques
 			NewIAMAPIError(ErrBadRequest, "tenant ID and user ID are required"))
 		return
 	}
-	callerTenant, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, callerTenant, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -234,7 +232,6 @@ func (h *IAMHandler) CompleteMFAEnrollment(w http.ResponseWriter, r *http.Reques
 // CancelMFAEnrollment handles DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/enroll/{enrollment_id}
 // Cancels a pending MFA enrollment.
 func (h *IAMHandler) CancelMFAEnrollment(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
 	tenantID := chi.URLParam(r, "tenant_id")
 	userIDParam := chi.URLParam(r, "user_id")
 	enrollmentID := chi.URLParam(r, "enrollment_id")
@@ -244,7 +241,7 @@ func (h *IAMHandler) CancelMFAEnrollment(w http.ResponseWriter, r *http.Request)
 			NewIAMAPIError(ErrBadRequest, "tenant ID, user ID, and enrollment ID are required"))
 		return
 	}
-	callerTenant, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, callerTenant, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -271,7 +268,6 @@ func (h *IAMHandler) CancelMFAEnrollment(w http.ResponseWriter, r *http.Request)
 // GetMFAStatus handles GET /api/v1/tenants/{tenant_id}/users/{user_id}/mfa
 // Returns the MFA status for a user.
 func (h *IAMHandler) GetMFAStatus(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
 	tenantID := chi.URLParam(r, "tenant_id")
 	userIDParam := chi.URLParam(r, "user_id")
 
@@ -280,7 +276,7 @@ func (h *IAMHandler) GetMFAStatus(w http.ResponseWriter, r *http.Request) {
 			NewIAMAPIError(ErrBadRequest, "tenant ID and user ID are required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -321,7 +317,6 @@ func (h *IAMHandler) GetMFAStatus(w http.ResponseWriter, r *http.Request) {
 // DisableMFA handles DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/mfa
 // Disables MFA for a user.
 func (h *IAMHandler) DisableMFA(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
 	tenantID := chi.URLParam(r, "tenant_id")
 	userIDParam := chi.URLParam(r, "user_id")
 
@@ -330,7 +325,7 @@ func (h *IAMHandler) DisableMFA(w http.ResponseWriter, r *http.Request) {
 			NewIAMAPIError(ErrBadRequest, "tenant ID and user ID are required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -357,7 +352,6 @@ func (h *IAMHandler) DisableMFA(w http.ResponseWriter, r *http.Request) {
 // BeginMFAChallenge handles POST /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/challenge
 // Begins an MFA challenge for authentication.
 func (h *IAMHandler) BeginMFAChallenge(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
 	tenantID := chi.URLParam(r, "tenant_id")
 	userIDParam := chi.URLParam(r, "user_id")
 
@@ -366,7 +360,7 @@ func (h *IAMHandler) BeginMFAChallenge(w http.ResponseWriter, r *http.Request) {
 			NewIAMAPIError(ErrBadRequest, "tenant ID and user ID are required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -411,7 +405,6 @@ func (h *IAMHandler) BeginMFAChallenge(w http.ResponseWriter, r *http.Request) {
 // VerifyMFAChallenge handles POST /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/verify-challenge
 // Verifies an MFA challenge.
 func (h *IAMHandler) VerifyMFAChallenge(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
 	tenantID := chi.URLParam(r, "tenant_id")
 	userIDParam := chi.URLParam(r, "user_id")
 
@@ -420,7 +413,7 @@ func (h *IAMHandler) VerifyMFAChallenge(w http.ResponseWriter, r *http.Request) 
 			NewIAMAPIError(ErrBadRequest, "tenant ID and user ID are required"))
 		return
 	}
-	callerTenant, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, callerTenant, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -465,7 +458,6 @@ func (h *IAMHandler) VerifyMFAChallenge(w http.ResponseWriter, r *http.Request) 
 // GenerateBackupCodes handles POST /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/backup-codes
 // Generates new backup codes for a user (regenerates if already exist).
 func (h *IAMHandler) GenerateBackupCodes(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
 	tenantID := chi.URLParam(r, "tenant_id")
 	userIDParam := chi.URLParam(r, "user_id")
 
@@ -474,7 +466,7 @@ func (h *IAMHandler) GenerateBackupCodes(w http.ResponseWriter, r *http.Request)
 			NewIAMAPIError(ErrBadRequest, "tenant ID and user ID are required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -504,7 +496,6 @@ func (h *IAMHandler) GenerateBackupCodes(w http.ResponseWriter, r *http.Request)
 // GetBackupCodeStatus handles GET /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/backup-codes
 // Returns the status of backup codes for a user.
 func (h *IAMHandler) GetBackupCodeStatus(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
 	tenantID := chi.URLParam(r, "tenant_id")
 	userIDParam := chi.URLParam(r, "user_id")
 
@@ -513,7 +504,7 @@ func (h *IAMHandler) GetBackupCodeStatus(w http.ResponseWriter, r *http.Request)
 			NewIAMAPIError(ErrBadRequest, "tenant ID and user ID are required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}

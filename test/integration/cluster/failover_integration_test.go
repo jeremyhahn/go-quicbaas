@@ -72,6 +72,7 @@ func TestFailoverScenarios(t *testing.T) {
 		tlsCfg := requireTLSConfig(t)
 		conn, err := grpc.DialContext(ctx, endpoints[0],
 			grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
+			withTenantOperator(t),
 			grpc.WithBlock(),
 		)
 		require.NoError(t, err)
@@ -158,6 +159,7 @@ func TestFailoverScenarios(t *testing.T) {
 		tlsCfg := requireTLSConfig(t)
 		conn, err := grpc.DialContext(ctx, endpoints[0],
 			grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
+			withTenantOperator(t),
 			grpc.WithBlock(),
 		)
 		require.NoError(t, err)

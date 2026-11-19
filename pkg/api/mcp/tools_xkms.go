@@ -30,6 +30,7 @@ import (
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
+	dbxkms "github.com/jeremyhahn/go-quicbaas/pkg/xkms"
 )
 
 // xkmsToolPrefix is the prefix used for all xkms-compatible MCP tool names.
@@ -1055,8 +1056,22 @@ func (r *ToolRegistry) handleXKMSRotateKey(ctx context.Context, args map[string]
 	if backend := getString(args, "backend"); backend != "" {
 		kid = backend + ":::" + keyID
 	}
-
-	privKey, err := xkmssdk.ServiceRotateKey(ctx, kid)
+	// Platform OIDC signing keys rotate only through their signing key
+	// manager, which serialises rotations across the nodes sharing them.
+	delegate, err := dbxkms.HostedRotationDelegate(kid)
+	if err != nil {
+		return nil, err
+	}
+	var privKey crypto.PrivateKey
+	if delegate != nil {
+		// The delegate's errors are typed (a busy or fenced rotation lease,
+		// a tenant with no dedicated key) and reach the caller as they are.
+		if privKey, err = delegate(ctx, kid); err != nil {
+			return nil, err
+		}
+	} else {
+		privKey, err = xkmssdk.ServiceRotateKey(ctx, kid)
+	}
 	if err != nil {
 		return nil, &XKMSOperationError{Operation: "rotateKey", Cause: err}
 	}
@@ -1891,8 +1906,8 @@ func (r *ToolRegistry) handleXKMSPIVExportCert(ctx context.Context, args map[str
 // Unlike REST and QUIC — where the authentication ceremony is pre-auth
 // because WebAuthn IS the authentication — the MCP surface keeps ALL four
 // verbs behind authorization: widening the unauthenticated MCP tool surface
-// is an owner decision (see the quicbaas_login_begin / quicbaas_login_finish
-// precedent in authz_qrdb_unmapped.go). Authenticated callers can still
+// is an access-control decision (publicTools in authz.go holds only the
+// documented health tools). Authenticated callers can still
 // drive the full ceremony (e.g. step-up verification of an enrolled factor).
 
 // fido2TenantFromArgs resolves the tenant scope for a FIDO2 ceremony tool

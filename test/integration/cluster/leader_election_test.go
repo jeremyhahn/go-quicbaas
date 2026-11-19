@@ -28,8 +28,8 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
-// leaderHTTPClient is a package-level HTTP client configured for self-signed TLS certs.
-var leaderHTTPClient = newInsecureHTTPClient(30 * time.Second)
+// leaderHTTPClient is a package-level HTTP client that calls as the tenant operator.
+var leaderHTTPClient = newDeferredTenantOperatorRESTClient(30 * time.Second)
 
 // TestLeaderElection validates that a leader is elected in a multi-node cluster
 // Note: In a multi-shard cluster, each shard can have a different leader, and the

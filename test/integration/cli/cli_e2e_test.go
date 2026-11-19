@@ -73,16 +73,28 @@ func runCommand(ctx context.Context, binary string, args ...string) (string, err
 
 // runCommandAs is runCommand under the tenant admin's session when admin is
 // not nil: the command presents the tenant admin's certificate and bearer.
+//
+// With a nil admin the command runs as the system admin, from the system
+// admin's session home, like every default-mode runner command. The system
+// admin is the suite's interim principal; narrower sessions per command group
+// are planned (see TestRunner.Authenticate). A login that fails is returned
+// as the command's error: the command does not go out with no credential.
 func runCommandAs(ctx context.Context, admin *tenantAdminSession, binary string, args ...string) (string, error) {
 	fullArgs := append([]string{"--tls-ca", integrationCAPath}, args...)
 	fullArgs = defaultGRPCTransport(fullArgs)
+	var env []string
 	if admin != nil {
 		fullArgs = append(fullArgs, admin.args()...)
+		env = admin.env()
+	} else {
+		systemAdminEnv, err := systemAdminSessionEnv()
+		if err != nil {
+			return "", err
+		}
+		env = systemAdminEnv
 	}
 	cmd := exec.CommandContext(ctx, binary, fullArgs...)
-	if admin != nil {
-		cmd.Env = admin.env()
-	}
+	cmd.Env = env
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

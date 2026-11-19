@@ -158,6 +158,42 @@ func TestContextForTarget_BindsTheResolvedTenant(t *testing.T) {
 	assert.Equal(t, caller, ctx)
 }
 
+func TestAdminTarget_SystemCallerActsInTheNamedTenant(t *testing.T) {
+	ctx, tenantID, err := AdminTarget(WithSystem(context.Background()), "op", "acme")
+	require.NoError(t, err)
+	assert.Equal(t, "acme", tenantID)
+	bound, err := FromContext(ctx, "op")
+	require.NoError(t, err)
+	assert.Equal(t, "acme", bound)
+}
+
+func TestAdminTarget_SystemCallerNamingNothingStaysSystem(t *testing.T) {
+	ctx, tenantID, err := AdminTarget(WithSystem(context.Background()), "op", "")
+	require.NoError(t, err)
+	assert.Equal(t, SystemTenantID, tenantID)
+	bound, err := FromContext(ctx, "op")
+	require.NoError(t, err)
+	assert.Equal(t, SystemTenantID, bound)
+}
+
+func TestAdminTarget_TenantCallerNamesOnlyItself(t *testing.T) {
+	caller := WithTenant(context.Background(), "acme")
+	ctx, tenantID, err := AdminTarget(caller, "op", "other")
+	cross := requireForbidden[*CrossTenantError](t, err)
+	assert.Equal(t, "acme", cross.CallerTenant)
+	assert.Equal(t, "other", cross.TargetTenant)
+	assert.Empty(t, tenantID)
+	assert.Equal(t, caller, ctx)
+}
+
+func TestAdminTarget_RefusesAnUnboundCallerWhateverItNames(t *testing.T) {
+	for _, requested := range []string{"", "acme", SystemTenantID} {
+		_, tenantID, err := AdminTarget(context.Background(), "op", requested)
+		requireForbidden[*MissingTenantError](t, err)
+		assert.Empty(t, tenantID)
+	}
+}
+
 // TestErrorMessages_NameTheOperationAndTenants keeps the refusals diagnosable.
 func TestErrorMessages_NameTheOperationAndTenants(t *testing.T) {
 	assert.Contains(t, (&MissingTenantError{Operation: "kms"}).Error(), "kms")

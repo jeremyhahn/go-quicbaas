@@ -51,7 +51,7 @@ func testPins() Pins {
 	return Pins{Go: "1.27.1", Golangci: "v2.14.0", Gosec: "v2.29.0", Govulncheck: "v1.8.0", Gopls: "v0.23.0", Serena: "v1.7.0",
 		Actionlint: "v1.7.12", Shellcheck: "v0.11.0", ShellcheckSHA256X86_64: "8c3b", ShellcheckSHA256Aarch64: "12b3",
 		Opencode: "v1.18.35", OpencodeSHA256X86_64: "1ce4", OpencodeSHA256Aarch64: "abf3",
-		Gh: "v2.103.3", GhSHA256X86_64: "b8b8", GhSHA256Aarch64: "c9c9",
+		GH: "v2.103.3", GHSHA256X86_64: "9a9a", GHSHA256Aarch64: "8b8b",
 		Protoc: "36.2", ProtocSHA256X86_64: "aaaa", ProtocSHA256Aarch64: "bbbb",
 		ProtocGenGo: "v1.36.12", ProtocGenGoGRPC: "v1.6.2",
 		ToolDependencyFloors: "golang.org/x/mod@v0.41.0", SerenaDependencyFloors: "urllib3>=2.8.0",
@@ -123,7 +123,7 @@ func TestBuild_BuildArgsCarryEveryInput(t *testing.T) {
 		"ACTIONLINT_VERSION":        "v1.7.12", "SHELLCHECK_VERSION": "v0.11.0",
 		"SHELLCHECK_SHA256_X86_64": "8c3b", "SHELLCHECK_SHA256_AARCH64": "12b3",
 		"OPENCODE_VERSION": "v1.18.35", "OPENCODE_SHA256_X86_64": "1ce4", "OPENCODE_SHA256_AARCH64": "abf3",
-		"GH_VERSION": "v2.103.3", "GH_SHA256_X86_64": "b8b8", "GH_SHA256_AARCH64": "c9c9",
+		"GH_VERSION": "v2.103.3", "GH_SHA256_X86_64": "9a9a", "GH_SHA256_AARCH64": "8b8b",
 		"PROTOC_VERSION": "36.2", "PROTOC_SHA256_X86_64": "aaaa", "PROTOC_SHA256_AARCH64": "bbbb",
 		"PROTOC_GEN_GO_VERSION": "v1.36.12", "PROTOC_GEN_GO_GRPC_VERSION": "v1.6.2",
 		"NODE_VERSION": "v26.10.0", "NODE_SHA256_X86_64": "cccc", "NODE_SHA256_AARCH64": "dddd", "NPM_VERSION": "12.2.0",
@@ -314,6 +314,51 @@ func TestDockerfile_OnlyClaudeCodeRunsAnInstallScript(t *testing.T) {
 	}
 }
 
+// The image is immutable and runs Claude Code as `agent`, which cannot write
+// the root-owned npm prefix, so the self-updater can only fail (#2548). The
+// final stage must turn it off; Claude Code moves only with versions.lock.
+func TestDockerfile_FinalStageDisablesTheClaudeCodeAutoupdater(t *testing.T) {
+	lines := strings.Split(string(Dockerfile), "\n")
+	last := -1
+	for i, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "FROM ") {
+			last = i
+		}
+	}
+	if last < 0 {
+		t.Fatal("the Dockerfile has no FROM instruction")
+	}
+	found := false
+	inEnv := false
+	for _, line := range lines[last+1:] {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "ENV ") {
+			inEnv = true
+		}
+		if inEnv {
+			for _, field := range strings.Fields(strings.TrimSuffix(trimmed, `\`)) {
+				if field == "DISABLE_AUTOUPDATER=1" {
+					found = true
+				}
+			}
+		}
+		inEnv = inEnv && strings.HasSuffix(trimmed, `\`)
+	}
+	if !found {
+		t.Error("the final stage has no ENV DISABLE_AUTOUPDATER=1: Claude Code's self-updater cannot write the root-owned npm prefix")
+	}
+}
+
+func TestProbes_ToolchainProbeAssertsTheAutoupdaterIsDisabled(t *testing.T) {
+	want := `[ "${DISABLE_AUTOUPDATER:-}" = 1 ]`
+	if !strings.Contains(toolchainProbe, want) {
+		t.Errorf("the toolchain probe does not check %s", want)
+	}
+}
+
 func TestToolchainPins_AreTheRepositorysPins(t *testing.T) {
 	pins, err := ToolchainPins()
 	if err != nil {
@@ -335,14 +380,13 @@ func TestPins_ValidateNamesWhatIsMissing(t *testing.T) {
 	err := Pins{}.Validate()
 	if !errors.As(err, &missing) || len(missing.Missing) != 49 ||
 		!strings.Contains(err.Error(), "GOPLS_VERSION") || !strings.Contains(err.Error(), "SHELLCHECK_SHA256_AARCH64") ||
-		!strings.Contains(err.Error(), "OPENCODE_SHA256_AARCH64") || !strings.Contains(err.Error(), "GO_TOOL_DEPENDENCY_FLOORS") ||
+		!strings.Contains(err.Error(), "OPENCODE_SHA256_AARCH64") || !strings.Contains(err.Error(), "GH_SHA256_AARCH64") || !strings.Contains(err.Error(), "GO_TOOL_DEPENDENCY_FLOORS") ||
 		!strings.Contains(err.Error(), "SERENA_DEPENDENCY_FLOORS") || !strings.Contains(err.Error(), "PROTOC_VERSION") ||
 		!strings.Contains(err.Error(), "PROTOC_SHA256_AARCH64") || !strings.Contains(err.Error(), "PROTOC_GEN_GO_GRPC_VERSION") ||
 		!strings.Contains(err.Error(), "NODE_SHA256_AARCH64") || !strings.Contains(err.Error(), "UV_VERSION") ||
 		!strings.Contains(err.Error(), "TYPESCRIPT_LANGUAGE_SERVER_VERSION") || !strings.Contains(err.Error(), "CLANGD_SHA256_X86_64") ||
 		!strings.Contains(err.Error(), "MARKSMAN_SHA256_AARCH64") || !strings.Contains(err.Error(), "NPM_BUNDLED_DEPENDENCY_FLOORS") ||
-		!strings.Contains(err.Error(), "OPENJDK_MAJOR") || !strings.Contains(err.Error(), "KOTLIN_LSP_SHA256_AARCH64") ||
-		!strings.Contains(err.Error(), "GH_VERSION") || !strings.Contains(err.Error(), "GH_SHA256_AARCH64") {
+		!strings.Contains(err.Error(), "OPENJDK_MAJOR") || !strings.Contains(err.Error(), "KOTLIN_LSP_SHA256_AARCH64") {
 		t.Fatalf("Validate() = %v, want all forty-nine pins named", err)
 	}
 }
@@ -350,7 +394,7 @@ func TestPins_ValidateNamesWhatIsMissing(t *testing.T) {
 func TestBuild_LabelsRecordToolVersionsNotTarballDigests(t *testing.T) {
 	labels := testBuild().Labels()
 	if labels[LabelActionlintVersion] != "v1.7.12" || labels[LabelShellcheckVersion] != "v0.11.0" ||
-		labels[LabelOpencodeVersion] != "v1.18.35" || labels[LabelGhVersion] != "v2.103.3" {
+		labels[LabelOpencodeVersion] != "v1.18.35" || labels[LabelGHVersion] != "v2.103.3" {
 		t.Fatalf("labels = %v, want actionlint, shellcheck, opencode and gh versions recorded", labels)
 	}
 	if labels[LabelProtocVersion] != "36.2" || labels[LabelProtocGenGoVersion] != "v1.36.12" ||
@@ -368,7 +412,7 @@ func TestBuild_LabelsRecordToolVersionsNotTarballDigests(t *testing.T) {
 	for key, value := range labels {
 		switch value {
 		case "8c3b", "12b3", "1ce4", "abf3", "aaaa", "bbbb", "cccc", "dddd", "eeee", "ffff",
-			"a1a1", "b2b2", "c3c3", "d4d4", "e5e5", "f6f6", "a7a7", "b8b8", "c9c9", "golang.org/x/mod@v0.41.0", "urllib3>=2.8.0":
+			"a1a1", "b2b2", "c3c3", "d4d4", "e5e5", "f6f6", "a7a7", "9a9a", "8b8b", "golang.org/x/mod@v0.41.0", "urllib3>=2.8.0":
 			t.Fatalf("label %q=%q: a tarball digest or dependency floor is a build input, not a label", key, value)
 		}
 	}

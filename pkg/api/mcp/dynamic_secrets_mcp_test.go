@@ -249,101 +249,85 @@ func TestDynamicSecretsIsDynamicSecretsTool(t *testing.T) {
 	}
 }
 
-func TestDynamicSecretsCreateRoleToolSchema(t *testing.T) {
-	tool := DynamicSecretsCreateRoleTool
+func TestDynamicSecretsToolSchemas(t *testing.T) {
+	tests := []struct {
+		name     string
+		tool     Tool
+		toolName string
+		required []string
+		props    []string
+	}{
+		{
+			name:     "create role",
+			tool:     DynamicSecretsCreateRoleTool,
+			toolName: "quicbaas_dynamic_secrets_create_role",
+			required: []string{"name", "generator_type", "default_ttl", "max_ttl"},
+			props:    []string{"name", "generator_type", "config", "default_ttl", "max_ttl"},
+		},
+		{
+			name:     "get role",
+			tool:     DynamicSecretsGetRoleTool,
+			toolName: "quicbaas_dynamic_secrets_get_role",
+			required: []string{"name"},
+			props:    []string{"name"},
+		},
+		{
+			name:     "list roles",
+			tool:     DynamicSecretsListRolesTool,
+			toolName: "quicbaas_dynamic_secrets_list_roles",
+			props:    []string{"prefix"},
+		},
+		{
+			name:     "delete role",
+			tool:     DynamicSecretsDeleteRoleTool,
+			toolName: "quicbaas_dynamic_secrets_delete_role",
+			required: []string{"name"},
+			props:    []string{"name"},
+		},
+		{
+			name:     "generate",
+			tool:     DynamicSecretsGenerateTool,
+			toolName: "quicbaas_dynamic_secrets_generate",
+			required: []string{"role_name"},
+			props:    []string{"role_name", "ttl"},
+		},
+		{
+			name:     "renew lease",
+			tool:     DynamicSecretsRenewLeaseTool,
+			toolName: "quicbaas_dynamic_secrets_renew_lease",
+			required: []string{"lease_id"},
+			props:    []string{"lease_id", "increment"},
+		},
+		{
+			name:     "revoke lease",
+			tool:     DynamicSecretsRevokeLeaseTool,
+			toolName: "quicbaas_dynamic_secrets_revoke_lease",
+			required: []string{"lease_id"},
+			props:    []string{"lease_id"},
+		},
+		{
+			name:     "list leases",
+			tool:     DynamicSecretsListLeasesTool,
+			toolName: "quicbaas_dynamic_secrets_list_leases",
+			props:    []string{"prefix"},
+		},
+	}
 
-	assert.Equal(t, "quicbaas_dynamic_secrets_create_role", tool.Name)
-	assert.Equal(t, "object", tool.InputSchema.Type)
-	assert.Contains(t, tool.InputSchema.Required, "name")
-	assert.Contains(t, tool.InputSchema.Required, "generator_type")
-	assert.Contains(t, tool.InputSchema.Required, "default_ttl")
-	assert.Contains(t, tool.InputSchema.Required, "max_ttl")
-
-	props := tool.InputSchema.Properties
-	assert.Contains(t, props, "name")
-	assert.Contains(t, props, "generator_type")
-	assert.Contains(t, props, "config")
-	assert.Contains(t, props, "default_ttl")
-	assert.Contains(t, props, "max_ttl")
-}
-
-func TestDynamicSecretsGetRoleToolSchema(t *testing.T) {
-	tool := DynamicSecretsGetRoleTool
-
-	assert.Equal(t, "quicbaas_dynamic_secrets_get_role", tool.Name)
-	assert.Equal(t, "object", tool.InputSchema.Type)
-	assert.Contains(t, tool.InputSchema.Required, "name")
-
-	props := tool.InputSchema.Properties
-	assert.Contains(t, props, "name")
-}
-
-func TestDynamicSecretsListRolesToolSchema(t *testing.T) {
-	tool := DynamicSecretsListRolesTool
-
-	assert.Equal(t, "quicbaas_dynamic_secrets_list_roles", tool.Name)
-	assert.Equal(t, "object", tool.InputSchema.Type)
-	assert.Empty(t, tool.InputSchema.Required)
-
-	props := tool.InputSchema.Properties
-	assert.Contains(t, props, "prefix")
-}
-
-func TestDynamicSecretsDeleteRoleToolSchema(t *testing.T) {
-	tool := DynamicSecretsDeleteRoleTool
-
-	assert.Equal(t, "quicbaas_dynamic_secrets_delete_role", tool.Name)
-	assert.Equal(t, "object", tool.InputSchema.Type)
-	assert.Contains(t, tool.InputSchema.Required, "name")
-
-	props := tool.InputSchema.Properties
-	assert.Contains(t, props, "name")
-}
-
-func TestDynamicSecretsGenerateToolSchema(t *testing.T) {
-	tool := DynamicSecretsGenerateTool
-
-	assert.Equal(t, "quicbaas_dynamic_secrets_generate", tool.Name)
-	assert.Equal(t, "object", tool.InputSchema.Type)
-	assert.Contains(t, tool.InputSchema.Required, "role_name")
-
-	props := tool.InputSchema.Properties
-	assert.Contains(t, props, "role_name")
-	assert.Contains(t, props, "ttl")
-}
-
-func TestDynamicSecretsRenewLeaseToolSchema(t *testing.T) {
-	tool := DynamicSecretsRenewLeaseTool
-
-	assert.Equal(t, "quicbaas_dynamic_secrets_renew_lease", tool.Name)
-	assert.Equal(t, "object", tool.InputSchema.Type)
-	assert.Contains(t, tool.InputSchema.Required, "lease_id")
-
-	props := tool.InputSchema.Properties
-	assert.Contains(t, props, "lease_id")
-	assert.Contains(t, props, "increment")
-}
-
-func TestDynamicSecretsRevokeLeaseToolSchema(t *testing.T) {
-	tool := DynamicSecretsRevokeLeaseTool
-
-	assert.Equal(t, "quicbaas_dynamic_secrets_revoke_lease", tool.Name)
-	assert.Equal(t, "object", tool.InputSchema.Type)
-	assert.Contains(t, tool.InputSchema.Required, "lease_id")
-
-	props := tool.InputSchema.Properties
-	assert.Contains(t, props, "lease_id")
-}
-
-func TestDynamicSecretsListLeasesToolSchema(t *testing.T) {
-	tool := DynamicSecretsListLeasesTool
-
-	assert.Equal(t, "quicbaas_dynamic_secrets_list_leases", tool.Name)
-	assert.Equal(t, "object", tool.InputSchema.Type)
-	assert.Empty(t, tool.InputSchema.Required)
-
-	props := tool.InputSchema.Properties
-	assert.Contains(t, props, "prefix")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.toolName, tt.tool.Name)
+			assert.Equal(t, "object", tt.tool.InputSchema.Type)
+			if len(tt.required) == 0 {
+				assert.Empty(t, tt.tool.InputSchema.Required)
+			}
+			for _, field := range tt.required {
+				assert.Contains(t, tt.tool.InputSchema.Required, field)
+			}
+			for _, prop := range tt.props {
+				assert.Contains(t, tt.tool.InputSchema.Properties, prop)
+			}
+		})
+	}
 }
 
 // =============================================================================
@@ -475,415 +459,170 @@ func TestDynamicSecretsCreateRoleSuccess(t *testing.T) {
 	mockDS.AssertExpectations(t)
 }
 
-func TestDynamicSecretsCreateRoleMissingName(t *testing.T) {
-	log := createDynamicSecretsTestLogger(t)
-	mockDS := NewMockDynamicSecretsService()
-	mockSvc := newTestQuicBaaSWithDynamicSecrets(mockDS)
-	registry := NewToolRegistry(mockSvc, log)
-
-	args := map[string]interface{}{
-		"generator_type": "postgres",
-		"default_ttl":    "1h",
-		"max_ttl":        "24h",
-	}
-
-	result, err := registry.ExecuteTool(context.Background(), "quicbaas_dynamic_secrets_create_role", args)
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "name is required")
-}
-
-func TestDynamicSecretsCreateRoleMissingGeneratorType(t *testing.T) {
-	log := createDynamicSecretsTestLogger(t)
-	mockDS := NewMockDynamicSecretsService()
-	mockSvc := newTestQuicBaaSWithDynamicSecrets(mockDS)
-	registry := NewToolRegistry(mockSvc, log)
-
-	args := map[string]interface{}{
-		"name":        "db-role",
-		"default_ttl": "1h",
-		"max_ttl":     "24h",
-	}
-
-	result, err := registry.ExecuteTool(context.Background(), "quicbaas_dynamic_secrets_create_role", args)
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "generator_type is required")
-}
-
-func TestDynamicSecretsCreateRoleMissingDefaultTTL(t *testing.T) {
-	log := createDynamicSecretsTestLogger(t)
-	mockDS := NewMockDynamicSecretsService()
-	mockSvc := newTestQuicBaaSWithDynamicSecrets(mockDS)
-	registry := NewToolRegistry(mockSvc, log)
-
-	args := map[string]interface{}{
-		"name":           "db-role",
-		"generator_type": "postgres",
-		"max_ttl":        "24h",
-	}
-
-	result, err := registry.ExecuteTool(context.Background(), "quicbaas_dynamic_secrets_create_role", args)
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "default_ttl is required")
-}
-
-func TestDynamicSecretsCreateRoleMissingMaxTTL(t *testing.T) {
-	log := createDynamicSecretsTestLogger(t)
-	mockDS := NewMockDynamicSecretsService()
-	mockSvc := newTestQuicBaaSWithDynamicSecrets(mockDS)
-	registry := NewToolRegistry(mockSvc, log)
-
-	args := map[string]interface{}{
-		"name":           "db-role",
-		"generator_type": "postgres",
-		"default_ttl":    "1h",
-	}
-
-	result, err := registry.ExecuteTool(context.Background(), "quicbaas_dynamic_secrets_create_role", args)
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "max_ttl is required")
-}
-
-func TestDynamicSecretsCreateRoleInvalidDefaultTTL(t *testing.T) {
-	log := createDynamicSecretsTestLogger(t)
-	mockDS := NewMockDynamicSecretsService()
-	mockSvc := newTestQuicBaaSWithDynamicSecrets(mockDS)
-	registry := NewToolRegistry(mockSvc, log)
-
-	args := map[string]interface{}{
-		"name":           "db-role",
-		"generator_type": "postgres",
-		"default_ttl":    "invalid",
-		"max_ttl":        "24h",
-	}
-
-	result, err := registry.ExecuteTool(context.Background(), "quicbaas_dynamic_secrets_create_role", args)
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "invalid default_ttl format")
-}
-
-func TestDynamicSecretsCreateRoleInvalidMaxTTL(t *testing.T) {
-	log := createDynamicSecretsTestLogger(t)
-	mockDS := NewMockDynamicSecretsService()
-	mockSvc := newTestQuicBaaSWithDynamicSecrets(mockDS)
-	registry := NewToolRegistry(mockSvc, log)
-
-	args := map[string]interface{}{
-		"name":           "db-role",
-		"generator_type": "postgres",
-		"default_ttl":    "1h",
-		"max_ttl":        "invalid",
-	}
-
-	result, err := registry.ExecuteTool(context.Background(), "quicbaas_dynamic_secrets_create_role", args)
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "invalid max_ttl format")
-}
-
-func TestDynamicSecretsCreateRoleInvalidConfig(t *testing.T) {
-	log := createDynamicSecretsTestLogger(t)
-	mockDS := NewMockDynamicSecretsService()
-	mockSvc := newTestQuicBaaSWithDynamicSecrets(mockDS)
-	registry := NewToolRegistry(mockSvc, log)
-
-	args := map[string]interface{}{
-		"name":           "db-role",
-		"generator_type": "postgres",
-		"config":         "not-valid-json",
-		"default_ttl":    "1h",
-		"max_ttl":        "24h",
-	}
-
-	result, err := registry.ExecuteTool(context.Background(), "quicbaas_dynamic_secrets_create_role", args)
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "invalid config JSON")
-}
-
-func TestDynamicSecretsCreateRoleServiceError(t *testing.T) {
-	log := createDynamicSecretsTestLogger(t)
-	mockDS := NewMockDynamicSecretsService()
-
-	mockDS.On("CreateRole", mock.Anything, mock.Anything).Return(nil, errors.New("role already exists"))
-
-	mockSvc := newTestQuicBaaSWithDynamicSecrets(mockDS)
-	registry := NewToolRegistry(mockSvc, log)
-
-	args := map[string]interface{}{
-		"name":           "db-role",
-		"generator_type": "postgres",
-		"default_ttl":    "1h",
-		"max_ttl":        "24h",
-	}
-
-	result, err := registry.ExecuteTool(context.Background(), "quicbaas_dynamic_secrets_create_role", args)
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "create role failed")
-
-	mockDS.AssertExpectations(t)
-}
-
 // =============================================================================
 // Get Role Tests
 // =============================================================================
 
-func TestDynamicSecretsGetRoleSuccess(t *testing.T) {
-	log := createDynamicSecretsTestLogger(t)
-	mockDS := NewMockDynamicSecretsService()
-
-	testRole := createTestRole("db-role", "postgres")
-
-	mockDS.On("GetRole", mock.Anything, mock.MatchedBy(func(req *service.GetRoleRequest) bool {
-		return req.Name == "db-role"
-	})).Return(&service.GetRoleResponse{
-		Role: testRole,
-	}, nil)
-
-	mockSvc := newTestQuicBaaSWithDynamicSecrets(mockDS)
-	registry := NewToolRegistry(mockSvc, log)
-
-	args := map[string]interface{}{
-		"name": "db-role",
-	}
-
-	result, err := registry.ExecuteTool(context.Background(), "quicbaas_dynamic_secrets_get_role", args)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-
-	resultMap, ok := result.(map[string]interface{})
-	require.True(t, ok, "result should be a map")
-
-	roleData, ok := resultMap["role"].(map[string]interface{})
-	require.True(t, ok, "role should be a map")
-	assert.Equal(t, "db-role", roleData["name"])
-	assert.Equal(t, "postgres", roleData["generator_type"])
-
-	mockDS.AssertExpectations(t)
+// dynamicSecretsToolCase is one row of a per-tool table: a row with
+// errorContains expects the tool to fail with that message, any other row
+// expects a result map, which check inspects when set.
+type dynamicSecretsToolCase struct {
+	name          string
+	args          map[string]interface{}
+	setupMock     func(*MockDynamicSecretsService)
+	errorContains string
+	check         func(*testing.T, map[string]interface{})
 }
 
-func TestDynamicSecretsGetRoleMissingName(t *testing.T) {
-	log := createDynamicSecretsTestLogger(t)
-	mockDS := NewMockDynamicSecretsService()
-	mockSvc := newTestQuicBaaSWithDynamicSecrets(mockDS)
-	registry := NewToolRegistry(mockSvc, log)
+func runDynamicSecretsToolCases(t *testing.T, toolName string, tests []dynamicSecretsToolCase) {
+	t.Helper()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			log := createDynamicSecretsTestLogger(t)
+			mockDS := NewMockDynamicSecretsService()
+			if tt.setupMock != nil {
+				tt.setupMock(mockDS)
+			}
+			registry := NewToolRegistry(newTestQuicBaaSWithDynamicSecrets(mockDS), log)
 
-	args := map[string]interface{}{}
+			result, err := registry.ExecuteTool(context.Background(), toolName, tt.args)
 
-	result, err := registry.ExecuteTool(context.Background(), "quicbaas_dynamic_secrets_get_role", args)
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "name is required")
+			if tt.errorContains != "" {
+				require.Error(t, err)
+				assert.Nil(t, result)
+				assert.Contains(t, err.Error(), tt.errorContains)
+			} else {
+				require.NoError(t, err)
+				resultMap, ok := result.(map[string]interface{})
+				require.True(t, ok, "result should be a map")
+				if tt.check != nil {
+					tt.check(t, resultMap)
+				}
+			}
+
+			mockDS.AssertExpectations(t)
+		})
+	}
 }
 
-func TestDynamicSecretsGetRoleNotFound(t *testing.T) {
-	log := createDynamicSecretsTestLogger(t)
-	mockDS := NewMockDynamicSecretsService()
-
-	mockDS.On("GetRole", mock.Anything, mock.Anything).Return(nil, errors.New("role not found"))
-
-	mockSvc := newTestQuicBaaSWithDynamicSecrets(mockDS)
-	registry := NewToolRegistry(mockSvc, log)
-
-	args := map[string]interface{}{
-		"name": "nonexistent-role",
-	}
-
-	result, err := registry.ExecuteTool(context.Background(), "quicbaas_dynamic_secrets_get_role", args)
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "get role failed")
-
-	mockDS.AssertExpectations(t)
+func TestDynamicSecretsGetRole(t *testing.T) {
+	runDynamicSecretsToolCases(t, "quicbaas_dynamic_secrets_get_role", []dynamicSecretsToolCase{
+		{
+			name: "success",
+			args: map[string]interface{}{"name": "db-role"},
+			setupMock: func(m *MockDynamicSecretsService) {
+				m.On("GetRole", mock.Anything, mock.MatchedBy(func(req *service.GetRoleRequest) bool {
+					return req.Name == "db-role"
+				})).Return(&service.GetRoleResponse{
+					Role: createTestRole("db-role", "postgres"),
+				}, nil)
+			},
+			check: func(t *testing.T, resultMap map[string]interface{}) {
+				roleData, ok := resultMap["role"].(map[string]interface{})
+				require.True(t, ok, "role should be a map")
+				assert.Equal(t, "db-role", roleData["name"])
+				assert.Equal(t, "postgres", roleData["generator_type"])
+			},
+		},
+		{
+			name:          "missing name",
+			args:          map[string]interface{}{},
+			errorContains: "name is required",
+		},
+		{
+			name: "role not found",
+			args: map[string]interface{}{"name": "nonexistent-role"},
+			setupMock: func(m *MockDynamicSecretsService) {
+				m.On("GetRole", mock.Anything, mock.Anything).Return(nil, errors.New("role not found"))
+			},
+			errorContains: "get role failed",
+		},
+	})
 }
 
 // =============================================================================
 // List Roles Tests
 // =============================================================================
 
-func TestDynamicSecretsListRolesSuccess(t *testing.T) {
-	log := createDynamicSecretsTestLogger(t)
-	mockDS := NewMockDynamicSecretsService()
-
-	roles := []*credentials.Role{
-		createTestRole("postgres-role", "postgres"),
-		createTestRole("mysql-role", "mysql"),
-	}
-
-	mockDS.On("ListRoles", mock.Anything, mock.Anything).Return(&service.ListRolesResponse{
-		Roles: roles,
-		Count: 2,
-	}, nil)
-
-	mockSvc := newTestQuicBaaSWithDynamicSecrets(mockDS)
-	registry := NewToolRegistry(mockSvc, log)
-
-	args := map[string]interface{}{}
-
-	result, err := registry.ExecuteTool(context.Background(), "quicbaas_dynamic_secrets_list_roles", args)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-
-	resultMap, ok := result.(map[string]interface{})
-	require.True(t, ok, "result should be a map")
-
-	rolesData, ok := resultMap["roles"].([]map[string]interface{})
-	require.True(t, ok, "roles should be a slice")
-	assert.Len(t, rolesData, 2)
-	assert.Equal(t, 2, resultMap["count"])
-
-	mockDS.AssertExpectations(t)
-}
-
-func TestDynamicSecretsListRolesWithPrefix(t *testing.T) {
-	log := createDynamicSecretsTestLogger(t)
-	mockDS := NewMockDynamicSecretsService()
-
-	roles := []*credentials.Role{
-		createTestRole("db-postgres", "postgres"),
-	}
-
-	mockDS.On("ListRoles", mock.Anything, mock.MatchedBy(func(req *service.ListRolesRequest) bool {
-		return req.Prefix == "db-"
-	})).Return(&service.ListRolesResponse{
-		Roles: roles,
-		Count: 1,
-	}, nil)
-
-	mockSvc := newTestQuicBaaSWithDynamicSecrets(mockDS)
-	registry := NewToolRegistry(mockSvc, log)
-
-	args := map[string]interface{}{
-		"prefix": "db-",
-	}
-
-	result, err := registry.ExecuteTool(context.Background(), "quicbaas_dynamic_secrets_list_roles", args)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-
-	resultMap, ok := result.(map[string]interface{})
-	require.True(t, ok, "result should be a map")
-	assert.Equal(t, 1, resultMap["count"])
-
-	mockDS.AssertExpectations(t)
-}
-
-func TestDynamicSecretsListRolesEmpty(t *testing.T) {
-	log := createDynamicSecretsTestLogger(t)
-	mockDS := NewMockDynamicSecretsService()
-
-	mockDS.On("ListRoles", mock.Anything, mock.Anything).Return(&service.ListRolesResponse{
-		Roles: []*credentials.Role{},
-		Count: 0,
-	}, nil)
-
-	mockSvc := newTestQuicBaaSWithDynamicSecrets(mockDS)
-	registry := NewToolRegistry(mockSvc, log)
-
-	args := map[string]interface{}{}
-
-	result, err := registry.ExecuteTool(context.Background(), "quicbaas_dynamic_secrets_list_roles", args)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-
-	resultMap, ok := result.(map[string]interface{})
-	require.True(t, ok, "result should be a map")
-	assert.Equal(t, 0, resultMap["count"])
-
-	mockDS.AssertExpectations(t)
-}
-
-func TestDynamicSecretsListRolesServiceError(t *testing.T) {
-	log := createDynamicSecretsTestLogger(t)
-	mockDS := NewMockDynamicSecretsService()
-
-	mockDS.On("ListRoles", mock.Anything, mock.Anything).Return(nil, errors.New("internal error"))
-
-	mockSvc := newTestQuicBaaSWithDynamicSecrets(mockDS)
-	registry := NewToolRegistry(mockSvc, log)
-
-	args := map[string]interface{}{}
-
-	result, err := registry.ExecuteTool(context.Background(), "quicbaas_dynamic_secrets_list_roles", args)
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "list roles failed")
-
-	mockDS.AssertExpectations(t)
+func TestDynamicSecretsListRoles(t *testing.T) {
+	runDynamicSecretsToolCases(t, "quicbaas_dynamic_secrets_list_roles", []dynamicSecretsToolCase{
+		{
+			name: "success",
+			args: map[string]interface{}{},
+			setupMock: func(m *MockDynamicSecretsService) {
+				m.On("ListRoles", mock.Anything, mock.Anything).Return(&service.ListRolesResponse{
+					Roles: []*credentials.Role{
+						createTestRole("postgres-role", "postgres"),
+						createTestRole("mysql-role", "mysql"),
+					},
+					Count: 2,
+				}, nil)
+			},
+			check: func(t *testing.T, resultMap map[string]interface{}) {
+				rolesData, ok := resultMap["roles"].([]map[string]interface{})
+				require.True(t, ok, "roles should be a slice")
+				assert.Len(t, rolesData, 2)
+				assert.Equal(t, 2, resultMap["count"])
+			},
+		},
+		{
+			name: "prefix is passed to the service",
+			args: map[string]interface{}{"prefix": "db-"},
+			setupMock: func(m *MockDynamicSecretsService) {
+				m.On("ListRoles", mock.Anything, mock.MatchedBy(func(req *service.ListRolesRequest) bool {
+					return req.Prefix == "db-"
+				})).Return(&service.ListRolesResponse{
+					Roles: []*credentials.Role{createTestRole("db-postgres", "postgres")},
+					Count: 1,
+				}, nil)
+			},
+			check: func(t *testing.T, resultMap map[string]interface{}) {
+				assert.Equal(t, 1, resultMap["count"])
+			},
+		},
+		{
+			name: "service error",
+			args: map[string]interface{}{},
+			setupMock: func(m *MockDynamicSecretsService) {
+				m.On("ListRoles", mock.Anything, mock.Anything).Return(nil, errors.New("internal error"))
+			},
+			errorContains: "list roles failed",
+		},
+	})
 }
 
 // =============================================================================
 // Delete Role Tests
 // =============================================================================
 
-func TestDynamicSecretsDeleteRoleSuccess(t *testing.T) {
-	log := createDynamicSecretsTestLogger(t)
-	mockDS := NewMockDynamicSecretsService()
-
-	now := time.Now()
-
-	mockDS.On("DeleteRole", mock.Anything, mock.MatchedBy(func(req *service.DeleteRoleRequest) bool {
-		return req.Name == "db-role"
-	})).Return(&service.DeleteRoleResponse{
-		DeletedAt: now,
-	}, nil)
-
-	mockSvc := newTestQuicBaaSWithDynamicSecrets(mockDS)
-	registry := NewToolRegistry(mockSvc, log)
-
-	args := map[string]interface{}{
-		"name": "db-role",
-	}
-
-	result, err := registry.ExecuteTool(context.Background(), "quicbaas_dynamic_secrets_delete_role", args)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-
-	resultMap, ok := result.(map[string]interface{})
-	require.True(t, ok, "result should be a map")
-	assert.NotEmpty(t, resultMap["deleted_at"])
-
-	mockDS.AssertExpectations(t)
-}
-
-func TestDynamicSecretsDeleteRoleMissingName(t *testing.T) {
-	log := createDynamicSecretsTestLogger(t)
-	mockDS := NewMockDynamicSecretsService()
-	mockSvc := newTestQuicBaaSWithDynamicSecrets(mockDS)
-	registry := NewToolRegistry(mockSvc, log)
-
-	args := map[string]interface{}{}
-
-	result, err := registry.ExecuteTool(context.Background(), "quicbaas_dynamic_secrets_delete_role", args)
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "name is required")
-}
-
-func TestDynamicSecretsDeleteRoleNotFound(t *testing.T) {
-	log := createDynamicSecretsTestLogger(t)
-	mockDS := NewMockDynamicSecretsService()
-
-	mockDS.On("DeleteRole", mock.Anything, mock.Anything).Return(nil, errors.New("role not found"))
-
-	mockSvc := newTestQuicBaaSWithDynamicSecrets(mockDS)
-	registry := NewToolRegistry(mockSvc, log)
-
-	args := map[string]interface{}{
-		"name": "nonexistent-role",
-	}
-
-	result, err := registry.ExecuteTool(context.Background(), "quicbaas_dynamic_secrets_delete_role", args)
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "delete role failed")
-
-	mockDS.AssertExpectations(t)
+func TestDynamicSecretsDeleteRole(t *testing.T) {
+	runDynamicSecretsToolCases(t, "quicbaas_dynamic_secrets_delete_role", []dynamicSecretsToolCase{
+		{
+			name: "success",
+			args: map[string]interface{}{"name": "db-role"},
+			setupMock: func(m *MockDynamicSecretsService) {
+				m.On("DeleteRole", mock.Anything, mock.MatchedBy(func(req *service.DeleteRoleRequest) bool {
+					return req.Name == "db-role"
+				})).Return(&service.DeleteRoleResponse{DeletedAt: time.Now()}, nil)
+			},
+			check: func(t *testing.T, resultMap map[string]interface{}) {
+				assert.NotEmpty(t, resultMap["deleted_at"])
+			},
+		},
+		{
+			name:          "missing name",
+			args:          map[string]interface{}{},
+			errorContains: "name is required",
+		},
+		{
+			name: "role not found",
+			args: map[string]interface{}{"name": "nonexistent-role"},
+			setupMock: func(m *MockDynamicSecretsService) {
+				m.On("DeleteRole", mock.Anything, mock.Anything).Return(nil, errors.New("role not found"))
+			},
+			errorContains: "delete role failed",
+		},
+	})
 }
 
 // =============================================================================
@@ -931,432 +670,172 @@ func TestDynamicSecretsGenerateSuccess(t *testing.T) {
 	mockDS.AssertExpectations(t)
 }
 
-func TestDynamicSecretsGenerateWithTTL(t *testing.T) {
-	log := createDynamicSecretsTestLogger(t)
-	mockDS := NewMockDynamicSecretsService()
-
-	testCred := createTestCredential("cred-123", "database", "lease-456")
-	testLease := createTestLease("lease-456", "credentials/db-role/cred-123")
-
-	mockDS.On("GenerateCredential", mock.Anything, mock.MatchedBy(func(req *service.GenerateCredentialRequest) bool {
-		return req.RoleName == "db-role" && req.TTL == 30*time.Minute
-	})).Return(&service.GenerateCredentialResponse{
-		Credential: testCred,
-		Lease:      testLease,
-		LeaseID:    "lease-456",
-	}, nil)
-
-	mockSvc := newTestQuicBaaSWithDynamicSecrets(mockDS)
-	registry := NewToolRegistry(mockSvc, log)
-
-	args := map[string]interface{}{
-		"role_name": "db-role",
-		"ttl":       "30m",
-	}
-
-	result, err := registry.ExecuteTool(context.Background(), "quicbaas_dynamic_secrets_generate", args)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-
-	mockDS.AssertExpectations(t)
-}
-
-func TestDynamicSecretsGenerateMissingRoleName(t *testing.T) {
-	log := createDynamicSecretsTestLogger(t)
-	mockDS := NewMockDynamicSecretsService()
-	mockSvc := newTestQuicBaaSWithDynamicSecrets(mockDS)
-	registry := NewToolRegistry(mockSvc, log)
-
-	args := map[string]interface{}{}
-
-	result, err := registry.ExecuteTool(context.Background(), "quicbaas_dynamic_secrets_generate", args)
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "role_name is required")
-}
-
-func TestDynamicSecretsGenerateInvalidTTL(t *testing.T) {
-	log := createDynamicSecretsTestLogger(t)
-	mockDS := NewMockDynamicSecretsService()
-	mockSvc := newTestQuicBaaSWithDynamicSecrets(mockDS)
-	registry := NewToolRegistry(mockSvc, log)
-
-	args := map[string]interface{}{
-		"role_name": "db-role",
-		"ttl":       "invalid",
-	}
-
-	result, err := registry.ExecuteTool(context.Background(), "quicbaas_dynamic_secrets_generate", args)
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "invalid ttl format")
-}
-
-func TestDynamicSecretsGenerateRoleNotFound(t *testing.T) {
-	log := createDynamicSecretsTestLogger(t)
-	mockDS := NewMockDynamicSecretsService()
-
-	mockDS.On("GenerateCredential", mock.Anything, mock.Anything).Return(nil, errors.New("role not found"))
-
-	mockSvc := newTestQuicBaaSWithDynamicSecrets(mockDS)
-	registry := NewToolRegistry(mockSvc, log)
-
-	args := map[string]interface{}{
-		"role_name": "nonexistent-role",
-	}
-
-	result, err := registry.ExecuteTool(context.Background(), "quicbaas_dynamic_secrets_generate", args)
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "generate credential failed")
-
-	mockDS.AssertExpectations(t)
-}
-
 // =============================================================================
 // Renew Lease Tests
 // =============================================================================
 
-func TestDynamicSecretsRenewLeaseSuccess(t *testing.T) {
-	log := createDynamicSecretsTestLogger(t)
-	mockDS := NewMockDynamicSecretsService()
-
-	renewedLease := createTestLease("lease-456", "credentials/db-role/cred-123")
-	renewedLease.RenewCount = 1
-	now := time.Now()
-
-	mockDS.On("RenewLease", mock.Anything, mock.MatchedBy(func(req *service.RenewLeaseRequest) bool {
-		return req.LeaseID == "lease-456"
-	})).Return(&service.RenewLeaseResponse{
-		Lease:     renewedLease,
-		RenewedAt: now,
-	}, nil)
-
-	mockSvc := newTestQuicBaaSWithDynamicSecrets(mockDS)
-	registry := NewToolRegistry(mockSvc, log)
-
-	args := map[string]interface{}{
-		"lease_id": "lease-456",
-	}
-
-	result, err := registry.ExecuteTool(context.Background(), "quicbaas_dynamic_secrets_renew_lease", args)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-
-	resultMap, ok := result.(map[string]interface{})
-	require.True(t, ok, "result should be a map")
-	assert.NotEmpty(t, resultMap["renewed_at"])
-
-	leaseData, ok := resultMap["lease"].(map[string]interface{})
-	require.True(t, ok, "lease should be a map")
-	assert.Equal(t, "lease-456", leaseData["lease_id"])
-	assert.Equal(t, 1, leaseData["renew_count"])
-
-	mockDS.AssertExpectations(t)
-}
-
-func TestDynamicSecretsRenewLeaseWithIncrement(t *testing.T) {
-	log := createDynamicSecretsTestLogger(t)
-	mockDS := NewMockDynamicSecretsService()
-
-	renewedLease := createTestLease("lease-456", "credentials/db-role/cred-123")
-	now := time.Now()
-
-	mockDS.On("RenewLease", mock.Anything, mock.MatchedBy(func(req *service.RenewLeaseRequest) bool {
-		return req.LeaseID == "lease-456" && req.Increment == 30*time.Minute
-	})).Return(&service.RenewLeaseResponse{
-		Lease:     renewedLease,
-		RenewedAt: now,
-	}, nil)
-
-	mockSvc := newTestQuicBaaSWithDynamicSecrets(mockDS)
-	registry := NewToolRegistry(mockSvc, log)
-
-	args := map[string]interface{}{
-		"lease_id":  "lease-456",
-		"increment": "30m",
-	}
-
-	result, err := registry.ExecuteTool(context.Background(), "quicbaas_dynamic_secrets_renew_lease", args)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-
-	mockDS.AssertExpectations(t)
-}
-
-func TestDynamicSecretsRenewLeaseMissingLeaseID(t *testing.T) {
-	log := createDynamicSecretsTestLogger(t)
-	mockDS := NewMockDynamicSecretsService()
-	mockSvc := newTestQuicBaaSWithDynamicSecrets(mockDS)
-	registry := NewToolRegistry(mockSvc, log)
-
-	args := map[string]interface{}{}
-
-	result, err := registry.ExecuteTool(context.Background(), "quicbaas_dynamic_secrets_renew_lease", args)
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "lease_id is required")
-}
-
-func TestDynamicSecretsRenewLeaseInvalidIncrement(t *testing.T) {
-	log := createDynamicSecretsTestLogger(t)
-	mockDS := NewMockDynamicSecretsService()
-	mockSvc := newTestQuicBaaSWithDynamicSecrets(mockDS)
-	registry := NewToolRegistry(mockSvc, log)
-
-	args := map[string]interface{}{
-		"lease_id":  "lease-456",
-		"increment": "invalid",
-	}
-
-	result, err := registry.ExecuteTool(context.Background(), "quicbaas_dynamic_secrets_renew_lease", args)
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "invalid increment format")
-}
-
-func TestDynamicSecretsRenewLeaseNotFound(t *testing.T) {
-	log := createDynamicSecretsTestLogger(t)
-	mockDS := NewMockDynamicSecretsService()
-
-	mockDS.On("RenewLease", mock.Anything, mock.Anything).Return(nil, errors.New("lease not found"))
-
-	mockSvc := newTestQuicBaaSWithDynamicSecrets(mockDS)
-	registry := NewToolRegistry(mockSvc, log)
-
-	args := map[string]interface{}{
-		"lease_id": "nonexistent-lease",
-	}
-
-	result, err := registry.ExecuteTool(context.Background(), "quicbaas_dynamic_secrets_renew_lease", args)
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "renew lease failed")
-
-	mockDS.AssertExpectations(t)
+func TestDynamicSecretsRenewLease(t *testing.T) {
+	runDynamicSecretsToolCases(t, "quicbaas_dynamic_secrets_renew_lease", []dynamicSecretsToolCase{
+		{
+			name: "success",
+			args: map[string]interface{}{"lease_id": "lease-456"},
+			setupMock: func(m *MockDynamicSecretsService) {
+				renewedLease := createTestLease("lease-456", "credentials/db-role/cred-123")
+				renewedLease.RenewCount = 1
+				m.On("RenewLease", mock.Anything, mock.MatchedBy(func(req *service.RenewLeaseRequest) bool {
+					return req.LeaseID == "lease-456"
+				})).Return(&service.RenewLeaseResponse{
+					Lease:     renewedLease,
+					RenewedAt: time.Now(),
+				}, nil)
+			},
+			check: func(t *testing.T, resultMap map[string]interface{}) {
+				assert.NotEmpty(t, resultMap["renewed_at"])
+				leaseData, ok := resultMap["lease"].(map[string]interface{})
+				require.True(t, ok, "lease should be a map")
+				assert.Equal(t, "lease-456", leaseData["lease_id"])
+				assert.Equal(t, 1, leaseData["renew_count"])
+			},
+		},
+		{
+			name: "increment is passed to the service",
+			args: map[string]interface{}{"lease_id": "lease-456", "increment": "30m"},
+			setupMock: func(m *MockDynamicSecretsService) {
+				m.On("RenewLease", mock.Anything, mock.MatchedBy(func(req *service.RenewLeaseRequest) bool {
+					return req.LeaseID == "lease-456" && req.Increment == 30*time.Minute
+				})).Return(&service.RenewLeaseResponse{
+					Lease:     createTestLease("lease-456", "credentials/db-role/cred-123"),
+					RenewedAt: time.Now(),
+				}, nil)
+			},
+		},
+		{
+			name:          "missing lease_id",
+			args:          map[string]interface{}{},
+			errorContains: "lease_id is required",
+		},
+		{
+			name:          "invalid increment",
+			args:          map[string]interface{}{"lease_id": "lease-456", "increment": "invalid"},
+			errorContains: "invalid increment format",
+		},
+		{
+			name: "lease not found",
+			args: map[string]interface{}{"lease_id": "nonexistent-lease"},
+			setupMock: func(m *MockDynamicSecretsService) {
+				m.On("RenewLease", mock.Anything, mock.Anything).Return(nil, errors.New("lease not found"))
+			},
+			errorContains: "renew lease failed",
+		},
+	})
 }
 
 // =============================================================================
 // Revoke Lease Tests
 // =============================================================================
 
-func TestDynamicSecretsRevokeLeaseSuccess(t *testing.T) {
-	log := createDynamicSecretsTestLogger(t)
-	mockDS := NewMockDynamicSecretsService()
-
-	now := time.Now()
-
-	mockDS.On("RevokeLease", mock.Anything, mock.MatchedBy(func(req *service.RevokeLeaseRequest) bool {
-		return req.LeaseID == "lease-456"
-	})).Return(&service.RevokeLeaseResponse{
-		RevokedAt: now,
-	}, nil)
-
-	mockSvc := newTestQuicBaaSWithDynamicSecrets(mockDS)
-	registry := NewToolRegistry(mockSvc, log)
-
-	args := map[string]interface{}{
-		"lease_id": "lease-456",
-	}
-
-	result, err := registry.ExecuteTool(context.Background(), "quicbaas_dynamic_secrets_revoke_lease", args)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-
-	resultMap, ok := result.(map[string]interface{})
-	require.True(t, ok, "result should be a map")
-	assert.NotEmpty(t, resultMap["revoked_at"])
-
-	mockDS.AssertExpectations(t)
-}
-
-func TestDynamicSecretsRevokeLeaseMissingLeaseID(t *testing.T) {
-	log := createDynamicSecretsTestLogger(t)
-	mockDS := NewMockDynamicSecretsService()
-	mockSvc := newTestQuicBaaSWithDynamicSecrets(mockDS)
-	registry := NewToolRegistry(mockSvc, log)
-
-	args := map[string]interface{}{}
-
-	result, err := registry.ExecuteTool(context.Background(), "quicbaas_dynamic_secrets_revoke_lease", args)
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "lease_id is required")
-}
-
-func TestDynamicSecretsRevokeLeaseNotFound(t *testing.T) {
-	log := createDynamicSecretsTestLogger(t)
-	mockDS := NewMockDynamicSecretsService()
-
-	mockDS.On("RevokeLease", mock.Anything, mock.Anything).Return(nil, errors.New("lease not found"))
-
-	mockSvc := newTestQuicBaaSWithDynamicSecrets(mockDS)
-	registry := NewToolRegistry(mockSvc, log)
-
-	args := map[string]interface{}{
-		"lease_id": "nonexistent-lease",
-	}
-
-	result, err := registry.ExecuteTool(context.Background(), "quicbaas_dynamic_secrets_revoke_lease", args)
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "revoke lease failed")
-
-	mockDS.AssertExpectations(t)
+func TestDynamicSecretsRevokeLease(t *testing.T) {
+	runDynamicSecretsToolCases(t, "quicbaas_dynamic_secrets_revoke_lease", []dynamicSecretsToolCase{
+		{
+			name: "success",
+			args: map[string]interface{}{"lease_id": "lease-456"},
+			setupMock: func(m *MockDynamicSecretsService) {
+				m.On("RevokeLease", mock.Anything, mock.MatchedBy(func(req *service.RevokeLeaseRequest) bool {
+					return req.LeaseID == "lease-456"
+				})).Return(&service.RevokeLeaseResponse{RevokedAt: time.Now()}, nil)
+			},
+			check: func(t *testing.T, resultMap map[string]interface{}) {
+				assert.NotEmpty(t, resultMap["revoked_at"])
+			},
+		},
+		{
+			name:          "missing lease_id",
+			args:          map[string]interface{}{},
+			errorContains: "lease_id is required",
+		},
+		{
+			name: "lease not found",
+			args: map[string]interface{}{"lease_id": "nonexistent-lease"},
+			setupMock: func(m *MockDynamicSecretsService) {
+				m.On("RevokeLease", mock.Anything, mock.Anything).Return(nil, errors.New("lease not found"))
+			},
+			errorContains: "revoke lease failed",
+		},
+	})
 }
 
 // =============================================================================
 // List Leases Tests
 // =============================================================================
 
-func TestDynamicSecretsListLeasesSuccess(t *testing.T) {
-	log := createDynamicSecretsTestLogger(t)
-	mockDS := NewMockDynamicSecretsService()
-
-	leases := []*lease.Lease{
-		createTestLease("lease-1", "credentials/role-1/cred-1"),
-		createTestLease("lease-2", "credentials/role-2/cred-2"),
-	}
-
-	mockDS.On("ListLeases", mock.Anything, mock.Anything).Return(&service.ListLeasesResponse{
-		Leases: leases,
-		Count:  2,
-	}, nil)
-
-	mockSvc := newTestQuicBaaSWithDynamicSecrets(mockDS)
-	registry := NewToolRegistry(mockSvc, log)
-
-	args := map[string]interface{}{}
-
-	result, err := registry.ExecuteTool(context.Background(), "quicbaas_dynamic_secrets_list_leases", args)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-
-	resultMap, ok := result.(map[string]interface{})
-	require.True(t, ok, "result should be a map")
-
-	leasesData, ok := resultMap["leases"].([]map[string]interface{})
-	require.True(t, ok, "leases should be a slice")
-	assert.Len(t, leasesData, 2)
-	assert.Equal(t, 2, resultMap["count"])
-
-	mockDS.AssertExpectations(t)
-}
-
-func TestDynamicSecretsListLeasesWithPrefix(t *testing.T) {
-	log := createDynamicSecretsTestLogger(t)
-	mockDS := NewMockDynamicSecretsService()
-
-	leases := []*lease.Lease{
-		createTestLease("lease-1", "credentials/postgres/cred-1"),
-	}
-
-	mockDS.On("ListLeases", mock.Anything, mock.MatchedBy(func(req *service.ListLeasesRequest) bool {
-		return req.Prefix == "credentials/postgres"
-	})).Return(&service.ListLeasesResponse{
-		Leases: leases,
-		Count:  1,
-	}, nil)
-
-	mockSvc := newTestQuicBaaSWithDynamicSecrets(mockDS)
-	registry := NewToolRegistry(mockSvc, log)
-
-	args := map[string]interface{}{
-		"prefix": "credentials/postgres",
-	}
-
-	result, err := registry.ExecuteTool(context.Background(), "quicbaas_dynamic_secrets_list_leases", args)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-
-	resultMap, ok := result.(map[string]interface{})
-	require.True(t, ok, "result should be a map")
-	assert.Equal(t, 1, resultMap["count"])
-
-	mockDS.AssertExpectations(t)
-}
-
-func TestDynamicSecretsListLeasesEmpty(t *testing.T) {
-	log := createDynamicSecretsTestLogger(t)
-	mockDS := NewMockDynamicSecretsService()
-
-	mockDS.On("ListLeases", mock.Anything, mock.Anything).Return(&service.ListLeasesResponse{
-		Leases: []*lease.Lease{},
-		Count:  0,
-	}, nil)
-
-	mockSvc := newTestQuicBaaSWithDynamicSecrets(mockDS)
-	registry := NewToolRegistry(mockSvc, log)
-
-	args := map[string]interface{}{}
-
-	result, err := registry.ExecuteTool(context.Background(), "quicbaas_dynamic_secrets_list_leases", args)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-
-	resultMap, ok := result.(map[string]interface{})
-	require.True(t, ok, "result should be a map")
-	assert.Equal(t, 0, resultMap["count"])
-
-	mockDS.AssertExpectations(t)
-}
-
-func TestDynamicSecretsListLeasesServiceError(t *testing.T) {
-	log := createDynamicSecretsTestLogger(t)
-	mockDS := NewMockDynamicSecretsService()
-
-	mockDS.On("ListLeases", mock.Anything, mock.Anything).Return(nil, errors.New("internal error"))
-
-	mockSvc := newTestQuicBaaSWithDynamicSecrets(mockDS)
-	registry := NewToolRegistry(mockSvc, log)
-
-	args := map[string]interface{}{}
-
-	result, err := registry.ExecuteTool(context.Background(), "quicbaas_dynamic_secrets_list_leases", args)
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "list leases failed")
-
-	mockDS.AssertExpectations(t)
-}
-
-func TestDynamicSecretsListLeasesWithMetadata(t *testing.T) {
-	log := createDynamicSecretsTestLogger(t)
-	mockDS := NewMockDynamicSecretsService()
-
-	leaseWithMeta := createTestLease("lease-1", "credentials/role-1/cred-1")
-	leaseWithMeta.Metadata = map[string]string{
-		"role":          "test-role",
-		"credential_id": "cred-1",
-	}
-
-	mockDS.On("ListLeases", mock.Anything, mock.Anything).Return(&service.ListLeasesResponse{
-		Leases: []*lease.Lease{leaseWithMeta},
-		Count:  1,
-	}, nil)
-
-	mockSvc := newTestQuicBaaSWithDynamicSecrets(mockDS)
-	registry := NewToolRegistry(mockSvc, log)
-
-	args := map[string]interface{}{}
-
-	result, err := registry.ExecuteTool(context.Background(), "quicbaas_dynamic_secrets_list_leases", args)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-
-	resultMap, ok := result.(map[string]interface{})
-	require.True(t, ok, "result should be a map")
-
-	leasesData, ok := resultMap["leases"].([]map[string]interface{})
-	require.True(t, ok, "leases should be a slice")
-	assert.Len(t, leasesData, 1)
-
-	// Verify metadata is included
-	metadata, ok := leasesData[0]["metadata"].(map[string]string)
-	require.True(t, ok, "metadata should be a map")
-	assert.Equal(t, "test-role", metadata["role"])
-
-	mockDS.AssertExpectations(t)
+func TestDynamicSecretsListLeases(t *testing.T) {
+	runDynamicSecretsToolCases(t, "quicbaas_dynamic_secrets_list_leases", []dynamicSecretsToolCase{
+		{
+			name: "success",
+			args: map[string]interface{}{},
+			setupMock: func(m *MockDynamicSecretsService) {
+				m.On("ListLeases", mock.Anything, mock.Anything).Return(&service.ListLeasesResponse{
+					Leases: []*lease.Lease{
+						createTestLease("lease-1", "credentials/role-1/cred-1"),
+						createTestLease("lease-2", "credentials/role-2/cred-2"),
+					},
+					Count: 2,
+				}, nil)
+			},
+			check: func(t *testing.T, resultMap map[string]interface{}) {
+				leasesData, ok := resultMap["leases"].([]map[string]interface{})
+				require.True(t, ok, "leases should be a slice")
+				assert.Len(t, leasesData, 2)
+				assert.Equal(t, 2, resultMap["count"])
+			},
+		},
+		{
+			name: "prefix is passed to the service",
+			args: map[string]interface{}{"prefix": "credentials/postgres"},
+			setupMock: func(m *MockDynamicSecretsService) {
+				m.On("ListLeases", mock.Anything, mock.MatchedBy(func(req *service.ListLeasesRequest) bool {
+					return req.Prefix == "credentials/postgres"
+				})).Return(&service.ListLeasesResponse{
+					Leases: []*lease.Lease{createTestLease("lease-1", "credentials/postgres/cred-1")},
+					Count:  1,
+				}, nil)
+			},
+			check: func(t *testing.T, resultMap map[string]interface{}) {
+				assert.Equal(t, 1, resultMap["count"])
+			},
+		},
+		{
+			name: "lease metadata is included",
+			args: map[string]interface{}{},
+			setupMock: func(m *MockDynamicSecretsService) {
+				leaseWithMeta := createTestLease("lease-1", "credentials/role-1/cred-1")
+				leaseWithMeta.Metadata = map[string]string{
+					"role":          "test-role",
+					"credential_id": "cred-1",
+				}
+				m.On("ListLeases", mock.Anything, mock.Anything).Return(&service.ListLeasesResponse{
+					Leases: []*lease.Lease{leaseWithMeta},
+					Count:  1,
+				}, nil)
+			},
+			check: func(t *testing.T, resultMap map[string]interface{}) {
+				leasesData, ok := resultMap["leases"].([]map[string]interface{})
+				require.True(t, ok, "leases should be a slice")
+				require.Len(t, leasesData, 1)
+				metadata, ok := leasesData[0]["metadata"].(map[string]string)
+				require.True(t, ok, "metadata should be a map")
+				assert.Equal(t, "test-role", metadata["role"])
+			},
+		},
+		{
+			name: "service error",
+			args: map[string]interface{}{},
+			setupMock: func(m *MockDynamicSecretsService) {
+				m.On("ListLeases", mock.Anything, mock.Anything).Return(nil, errors.New("internal error"))
+			},
+			errorContains: "list leases failed",
+		},
+	})
 }
 
 // =============================================================================
@@ -1422,23 +901,6 @@ func TestDynamicSecretsCreateRoleTableDriven(t *testing.T) {
 		errorContains string
 	}{
 		{
-			name: "success with all parameters",
-			args: map[string]interface{}{
-				"name":           "full-role",
-				"generator_type": "postgres",
-				"config":         `{"key":"value"}`,
-				"default_ttl":    "1h",
-				"max_ttl":        "24h",
-			},
-			setupMock: func(m *MockDynamicSecretsService) {
-				m.On("CreateRole", mock.Anything, mock.Anything).Return(&service.CreateRoleResponse{
-					Role:      createTestRole("full-role", "postgres"),
-					CreatedAt: time.Now(),
-				}, nil)
-			},
-			expectError: false,
-		},
-		{
 			name: "success without optional config",
 			args: map[string]interface{}{
 				"name":           "minimal-role",
@@ -1487,6 +949,40 @@ func TestDynamicSecretsCreateRoleTableDriven(t *testing.T) {
 			setupMock:     func(m *MockDynamicSecretsService) {},
 			expectError:   true,
 			errorContains: "invalid default_ttl format",
+		},
+		{
+			name: "missing default_ttl",
+			args: map[string]interface{}{
+				"name":           "test-role",
+				"generator_type": "postgres",
+				"max_ttl":        "24h",
+			},
+			setupMock:     func(m *MockDynamicSecretsService) {},
+			expectError:   true,
+			errorContains: "default_ttl is required",
+		},
+		{
+			name: "missing max_ttl",
+			args: map[string]interface{}{
+				"name":           "test-role",
+				"generator_type": "postgres",
+				"default_ttl":    "1h",
+			},
+			setupMock:     func(m *MockDynamicSecretsService) {},
+			expectError:   true,
+			errorContains: "max_ttl is required",
+		},
+		{
+			name: "invalid max_ttl",
+			args: map[string]interface{}{
+				"name":           "test-role",
+				"generator_type": "postgres",
+				"default_ttl":    "1h",
+				"max_ttl":        "not-a-duration",
+			},
+			setupMock:     func(m *MockDynamicSecretsService) {},
+			expectError:   true,
+			errorContains: "invalid max_ttl format",
 		},
 		{
 			name: "invalid config JSON",

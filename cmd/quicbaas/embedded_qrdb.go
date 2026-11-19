@@ -86,9 +86,12 @@ func buildEmbeddedQRDBServicers(es *embeddedServer) (quicbaas.QRDBEmbeddedServic
 		servicers.UserAuthFactor = uafSvc
 	}
 
-	// Wire the node's TenantServicer so the SDK's TenantMgmt() and the
+	// Wire the server's tenant servicer so the SDK's TenantMgmt() and the
 	// per-tenant barrier verbs dispatch against the node's canonical tenant
-	// service. The node's own SDK client does not register a tenant servicer
+	// service. The servicer is the hooked unseal router: an embedded tenant
+	// unseal tells the unseal observers, which reload the tenant's stored
+	// policies, and is refused for a caller that is not bound to that
+	// tenant. The node's own SDK client does not register a tenant servicer
 	// on its embedded transport, so it must be wired here explicitly.
 	if tenantSvc := es.server.GetQRDBTenantServicer(); tenantSvc != nil {
 		servicers.Tenant = tenantSvc

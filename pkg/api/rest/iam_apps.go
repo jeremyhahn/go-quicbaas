@@ -30,15 +30,13 @@ import (
 
 // ListApps handles GET /api/v1/tenants/{tenant_id}/apps - List OAuth applications in a tenant.
 func (h *IAMHandler) ListApps(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -104,15 +102,13 @@ func (h *IAMHandler) ListApps(w http.ResponseWriter, r *http.Request) {
 
 // RegisterApp handles POST /api/v1/tenants/{tenant_id}/apps - Register a new OAuth application.
 func (h *IAMHandler) RegisterApp(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -199,15 +195,13 @@ func (h *IAMHandler) RegisterApp(w http.ResponseWriter, r *http.Request) {
 
 // GetApp handles GET /api/v1/tenants/{tenant_id}/apps/{client_id} - Get a specific OAuth application.
 func (h *IAMHandler) GetApp(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	callerTenant, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, callerTenant, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -252,15 +246,13 @@ func (h *IAMHandler) GetApp(w http.ResponseWriter, r *http.Request) {
 
 // UpdateApp handles PUT /api/v1/tenants/{tenant_id}/apps/{client_id} - Update an OAuth application.
 func (h *IAMHandler) UpdateApp(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	callerTenant, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, callerTenant, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -324,15 +316,13 @@ func (h *IAMHandler) UpdateApp(w http.ResponseWriter, r *http.Request) {
 
 // DeleteApp handles DELETE /api/v1/tenants/{tenant_id}/apps/{client_id} - Delete an OAuth application.
 func (h *IAMHandler) DeleteApp(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	callerTenant, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, callerTenant, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -376,15 +366,13 @@ func (h *IAMHandler) DeleteApp(w http.ResponseWriter, r *http.Request) {
 
 // RotateSecret handles POST /api/v1/tenants/{tenant_id}/apps/{client_id}/rotate-secret - Rotate OAuth application client secret.
 func (h *IAMHandler) RotateSecret(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	callerTenant, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, callerTenant, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}

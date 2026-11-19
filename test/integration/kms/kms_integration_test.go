@@ -50,7 +50,7 @@ func TestKMSKeyGeneration(t *testing.T) {
 
 	tlsCfg, err := helpers.IntegrationTLSConfig()
 	require.NoError(t, err, "load integration TLS config")
-	client, err := grpcclient.NewClient(serverAddr, grpcclient.WithTLSConfig(tlsCfg))
+	client, err := grpcclient.NewClient(serverAddr, grpcclient.WithTLSConfig(tlsCfg), kmsGRPCAuth(t))
 	require.NoError(t, err, "gRPC server must be available at %s", serverAddr)
 	defer client.Close()
 
@@ -172,7 +172,7 @@ func TestKMSKeyRetrieval(t *testing.T) {
 
 	tlsCfg, err := helpers.IntegrationTLSConfig()
 	require.NoError(t, err, "load integration TLS config")
-	client, err := grpcclient.NewClient(serverAddr, grpcclient.WithTLSConfig(tlsCfg))
+	client, err := grpcclient.NewClient(serverAddr, grpcclient.WithTLSConfig(tlsCfg), kmsGRPCAuth(t))
 	require.NoError(t, err, "gRPC server must be available at %s", serverAddr)
 	defer client.Close()
 
@@ -246,7 +246,7 @@ func TestKMSKeyListing(t *testing.T) {
 
 	tlsCfg, err := helpers.IntegrationTLSConfig()
 	require.NoError(t, err, "load integration TLS config")
-	client, err := grpcclient.NewClient(serverAddr, grpcclient.WithTLSConfig(tlsCfg))
+	client, err := grpcclient.NewClient(serverAddr, grpcclient.WithTLSConfig(tlsCfg), kmsGRPCAuth(t))
 	require.NoError(t, err, "gRPC server must be available at %s", serverAddr)
 	defer client.Close()
 
@@ -324,7 +324,7 @@ func TestKMSKeyRotation(t *testing.T) {
 
 	tlsCfg, err := helpers.IntegrationTLSConfig()
 	require.NoError(t, err, "load integration TLS config")
-	client, err := grpcclient.NewClient(serverAddr, grpcclient.WithTLSConfig(tlsCfg))
+	client, err := grpcclient.NewClient(serverAddr, grpcclient.WithTLSConfig(tlsCfg), kmsGRPCAuth(t))
 	require.NoError(t, err, "gRPC server must be available at %s", serverAddr)
 	defer client.Close()
 
@@ -393,7 +393,7 @@ func TestKMSKeyDeletion(t *testing.T) {
 
 	tlsCfg, err := helpers.IntegrationTLSConfig()
 	require.NoError(t, err, "load integration TLS config")
-	client, err := grpcclient.NewClient(serverAddr, grpcclient.WithTLSConfig(tlsCfg))
+	client, err := grpcclient.NewClient(serverAddr, grpcclient.WithTLSConfig(tlsCfg), kmsGRPCAuth(t))
 	require.NoError(t, err, "gRPC server must be available at %s", serverAddr)
 	defer client.Close()
 
@@ -475,7 +475,7 @@ func TestKMSEncryptionDecryption(t *testing.T) {
 
 	tlsCfg, err := helpers.IntegrationTLSConfig()
 	require.NoError(t, err, "load integration TLS config")
-	client, err := grpcclient.NewClient(serverAddr, grpcclient.WithTLSConfig(tlsCfg))
+	client, err := grpcclient.NewClient(serverAddr, grpcclient.WithTLSConfig(tlsCfg), kmsGRPCAuth(t))
 	require.NoError(t, err, "gRPC server must be available at %s", serverAddr)
 	defer client.Close()
 
@@ -607,7 +607,7 @@ func TestKMSKeyImport(t *testing.T) {
 
 	tlsCfg, err := helpers.IntegrationTLSConfig()
 	require.NoError(t, err, "load integration TLS config")
-	client, err := grpcclient.NewClient(serverAddr, grpcclient.WithTLSConfig(tlsCfg))
+	client, err := grpcclient.NewClient(serverAddr, grpcclient.WithTLSConfig(tlsCfg), kmsGRPCAuth(t))
 	require.NoError(t, err, "gRPC server must be available at %s", serverAddr)
 	defer client.Close()
 
@@ -692,7 +692,7 @@ func TestKMSKeyMetadata(t *testing.T) {
 
 	tlsCfg, err := helpers.IntegrationTLSConfig()
 	require.NoError(t, err, "load integration TLS config")
-	client, err := grpcclient.NewClient(serverAddr, grpcclient.WithTLSConfig(tlsCfg))
+	client, err := grpcclient.NewClient(serverAddr, grpcclient.WithTLSConfig(tlsCfg), kmsGRPCAuth(t))
 	require.NoError(t, err, "gRPC server must be available at %s", serverAddr)
 	defer client.Close()
 
@@ -757,7 +757,7 @@ func TestKMSKeyVersioning(t *testing.T) {
 
 	tlsCfg, err := helpers.IntegrationTLSConfig()
 	require.NoError(t, err, "load integration TLS config")
-	client, err := grpcclient.NewClient(serverAddr, grpcclient.WithTLSConfig(tlsCfg))
+	client, err := grpcclient.NewClient(serverAddr, grpcclient.WithTLSConfig(tlsCfg), kmsGRPCAuth(t))
 	require.NoError(t, err, "gRPC server must be available at %s", serverAddr)
 	defer client.Close()
 
@@ -846,7 +846,7 @@ func TestKMSErrorConditions(t *testing.T) {
 
 	tlsCfg, err := helpers.IntegrationTLSConfig()
 	require.NoError(t, err, "load integration TLS config")
-	client, err := grpcclient.NewClient(serverAddr, grpcclient.WithTLSConfig(tlsCfg))
+	client, err := grpcclient.NewClient(serverAddr, grpcclient.WithTLSConfig(tlsCfg), kmsGRPCAuth(t))
 	require.NoError(t, err, "gRPC server must be available at %s", serverAddr)
 	defer client.Close()
 
@@ -941,7 +941,7 @@ func TestKMSConcurrentOperations(t *testing.T) {
 
 	tlsCfg, err := helpers.IntegrationTLSConfig()
 	require.NoError(t, err, "load integration TLS config")
-	client, err := grpcclient.NewClient(serverAddr, grpcclient.WithTLSConfig(tlsCfg))
+	client, err := grpcclient.NewClient(serverAddr, grpcclient.WithTLSConfig(tlsCfg), kmsGRPCAuth(t))
 	require.NoError(t, err, "gRPC server must be available at %s", serverAddr)
 	defer client.Close()
 
@@ -1079,7 +1079,7 @@ func TestKMSDataKeyGeneration(t *testing.T) {
 
 	tlsCfg, err := helpers.IntegrationTLSConfig()
 	require.NoError(t, err, "load integration TLS config")
-	client, err := grpcclient.NewClient(serverAddr, grpcclient.WithTLSConfig(tlsCfg))
+	client, err := grpcclient.NewClient(serverAddr, grpcclient.WithTLSConfig(tlsCfg), kmsGRPCAuth(t))
 	require.NoError(t, err, "gRPC server must be available at %s", serverAddr)
 	defer client.Close()
 
@@ -1181,7 +1181,7 @@ func TestKMSClusterConsistency(t *testing.T) {
 	// Connect to first node
 	tlsCfg, err := helpers.IntegrationTLSConfig()
 	require.NoError(t, err, "load integration TLS config")
-	client1, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg))
+	client1, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg), kmsGRPCAuth(t))
 	require.NoError(t, err, "gRPC node 1 must be available at %s", endpoints[0])
 	defer client1.Close()
 
@@ -1189,7 +1189,7 @@ func TestKMSClusterConsistency(t *testing.T) {
 	requireKMSAvailable(t, client1, ctx)
 
 	// Connect to second node
-	client2, err := grpcclient.NewClient(endpoints[1], grpcclient.WithTLSConfig(tlsCfg))
+	client2, err := grpcclient.NewClient(endpoints[1], grpcclient.WithTLSConfig(tlsCfg), kmsGRPCAuth(t))
 	require.NoError(t, err, "gRPC node 2 must be available at %s", endpoints[1])
 	defer client2.Close()
 
@@ -1290,7 +1290,7 @@ func TestKMSLargeDataEncryption(t *testing.T) {
 
 	tlsCfg, err := helpers.IntegrationTLSConfig()
 	require.NoError(t, err, "load integration TLS config")
-	client, err := grpcclient.NewClient(serverAddr, grpcclient.WithTLSConfig(tlsCfg))
+	client, err := grpcclient.NewClient(serverAddr, grpcclient.WithTLSConfig(tlsCfg), kmsGRPCAuth(t))
 	require.NoError(t, err, "gRPC server must be available at %s", serverAddr)
 	defer client.Close()
 
@@ -1361,7 +1361,7 @@ func TestKMSKeyUsageTracking(t *testing.T) {
 
 	tlsCfg, err := helpers.IntegrationTLSConfig()
 	require.NoError(t, err, "load integration TLS config")
-	client, err := grpcclient.NewClient(serverAddr, grpcclient.WithTLSConfig(tlsCfg))
+	client, err := grpcclient.NewClient(serverAddr, grpcclient.WithTLSConfig(tlsCfg), kmsGRPCAuth(t))
 	require.NoError(t, err, "gRPC server must be available at %s", serverAddr)
 	defer client.Close()
 
@@ -1417,7 +1417,7 @@ func TestKMSHexEncodedCiphertext(t *testing.T) {
 
 	tlsCfg, err := helpers.IntegrationTLSConfig()
 	require.NoError(t, err, "load integration TLS config")
-	client, err := grpcclient.NewClient(serverAddr, grpcclient.WithTLSConfig(tlsCfg))
+	client, err := grpcclient.NewClient(serverAddr, grpcclient.WithTLSConfig(tlsCfg), kmsGRPCAuth(t))
 	require.NoError(t, err, "gRPC server must be available at %s", serverAddr)
 	defer client.Close()
 

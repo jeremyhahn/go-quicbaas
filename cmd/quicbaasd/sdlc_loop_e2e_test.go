@@ -1065,7 +1065,7 @@ func readSpawnWorkspaceSpec(req *orchestration.SpawnRequest) (orchestration.Work
 // startFactoryNode boots a node with the engine and the module on fast
 // cadences over dataDir. reapTTL is orchestration.reap_lease_ttl; nodeID
 // names the node on its leases.
-func startFactoryNode(t *testing.T, dataDir string, init bool, reapTTL time.Duration, nodeID uint64) *server.Server {
+func startFactoryNode(t *testing.T, dataDir string, init bool, reapTTL time.Duration, nodeID uint64, opts ...server.ServerOption) *server.Server {
 	t.Helper()
 	requireTestTrustDomain(t)
 	f := &inlineInitFlags{
@@ -1101,7 +1101,7 @@ func startFactoryNode(t *testing.T, dataDir string, init bool, reapTTL time.Dura
 	cfg.SDLC.VerificationCommands = []string{"test -f WORK.md"}
 	cfg.SDLC.Surfacing.RetryInterval = 10 * time.Millisecond
 
-	srv, err := server.NewServer(cfg, server.WithSealPassphrase([]byte(f.secret)))
+	srv, err := server.NewServer(cfg, append([]server.ServerOption{server.WithSealPassphrase([]byte(f.secret))}, opts...)...)
 	require.NoError(t, err)
 	require.NoError(t, srv.Start())
 	require.NotNil(t, srv.SDLCService(), "the sdlc module did not start")
@@ -1415,7 +1415,15 @@ func factoryCtx() context.Context {
 	return orchestration.ContextWithTenant(tenantctx.WithTenant(context.Background(), loopE2ETenant), loopE2ETenant)
 }
 
-// awaitJob waits for one job to reach a terminal state and returns it.
+// awaitJob waits for the delivery job, the one the sdlc runner drives, to
+// reach a terminal state and returns it.
+//
+// THE RUNNER IS PART OF THE QUESTION. A node that starts with a project
+// already bound runs its backstop boot pass, and that pass starts a triage job
+// which finds nothing to judge and completes within milliseconds. A wait for
+// any job in the wanted state returns on that one while the delivery is still
+// initializing, and the caller then reads a forge the delivery has not
+// touched yet.
 func awaitJob(t *testing.T, srv *server.Server, want orchestration.JobState) *orchestration.JobStatus {
 	t.Helper()
 	var found *orchestration.JobStatus
@@ -1425,13 +1433,13 @@ func awaitJob(t *testing.T, srv *server.Server, want orchestration.JobState) *or
 			return false
 		}
 		for _, job := range jobs {
-			if job.State == want {
+			if job.State == want && job.Runner == sdlc.JobRunnerName {
 				found = job
 				return true
 			}
 		}
 		return false
-	}, 90*time.Second, 50*time.Millisecond, "no job reached %s", want)
+	}, 90*time.Second, 50*time.Millisecond, "no %s job reached %s", sdlc.JobRunnerName, want)
 	return found
 }
 
@@ -1643,13 +1651,19 @@ func TestSDLCRunner_AKilledWorkerResumesAndFinishesTheSameBranch(t *testing.T) {
 	// sockets root outlives the daemon and nothing else would ever remove it.
 	orphan := plantKilledSigningSession(t, factorySocketsRoot(t))
 
-	successor := startFactoryNode(t, dataDir, false, 2*time.Second, 1)
+	// The successor resumes the interrupted job inside Start, so its backend
+	// is registered in the hook Start runs just before recovery: registered
+	// after Start, the resumed attempt could spawn first, find no backend and
+	// escalate (go-quicbaas#2512).
+	resumed := newE2EBackend()
+	successor := startFactoryNode(t, dataDir, false, 2*time.Second, 1,
+		server.WithBeforeJobRecovery(func(s *server.Server) error {
+			registerFactoryProject(t, s, resumed, repo)
+			return nil
+		}))
 	t.Cleanup(func() { _ = successor.Shutdown(context.Background()) })
 	require.NoDirExists(t, orphan,
 		"the session a killed daemon left survived the successor's startup: %s", orphan)
-
-	resumed := newE2EBackend()
-	registerFactoryProject(t, successor, resumed, repo)
 
 	awaitJob(t, successor, orchestration.JobStateCompleted)
 	prs := loopForge.pullRequests()

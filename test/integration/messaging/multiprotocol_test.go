@@ -44,6 +44,12 @@ func TestMain(m *testing.M) {
 
 	code := m.Run()
 
+	// The tenant of the suite's tenant operator outlives every test, so no
+	// t.Cleanup can delete it.
+	if err := helpers.ReleaseDataPlaneTenants(); err != nil {
+		fmt.Fprintf(os.Stderr, "release data-plane tenants: %v\n", err)
+	}
+
 	// Cleanup
 	if srv != nil {
 		helpers.TeardownEmbeddedServer(srv)
@@ -150,7 +156,7 @@ func TestMessagingMultiProtocol(t *testing.T) {
 	}
 
 	t.Run("gRPC", func(t *testing.T) {
-		testMessagingProtocol(t, ctx, newGRPCAdapter())
+		testMessagingProtocol(t, ctx, newGRPCAdapter(t))
 	})
 
 	t.Run("REST", func(t *testing.T) {
@@ -158,7 +164,7 @@ func TestMessagingMultiProtocol(t *testing.T) {
 	})
 
 	t.Run("UnixSocket", func(t *testing.T) {
-		testMessagingProtocol(t, ctx, newUnixSocketAdapter())
+		testMessagingProtocol(t, ctx, newUnixSocketAdapter(t))
 	})
 }
 
@@ -824,7 +830,7 @@ func TestMessagingChannelLifecycle(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	adapter := newGRPCAdapter()
+	adapter := newGRPCAdapter(t)
 	err := adapter.Setup(ctx)
 	require.NoError(t, err, "gRPC server must be available")
 	defer adapter.Teardown()
@@ -897,7 +903,7 @@ func TestMessagingSubscriptionLifecycle(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	adapter := newGRPCAdapter()
+	adapter := newGRPCAdapter(t)
 	err := adapter.Setup(ctx)
 	require.NoError(t, err, "gRPC server must be available")
 	defer adapter.Teardown()

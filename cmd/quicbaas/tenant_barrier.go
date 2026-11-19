@@ -46,9 +46,11 @@ import (
 	"github.com/spf13/cobra"
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/cli"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -314,6 +316,16 @@ Example:
 	return cmd
 }
 
+// tenantBarrierActingContext returns the parent context of a tenant barrier
+// unseal: it names the --tenant the operator acts for. On the embedded
+// transport, which has no authenticator, that is the tenant the in-process
+// caller acts for, and the server's tenant binding still refuses every other
+// tenant. Over a network transport the binding never leaves the process: the
+// server takes the caller's tenant from the credential.
+func tenantBarrierActingContext() context.Context {
+	return tenantctx.WithTenant(context.Background(), tenantBarrierTenantID)
+}
+
 // runTenantBarrierUnsealCommand executes 'quicbaas iam tenant barrier unseal'.
 func runTenantBarrierUnsealCommand(cmd *cobra.Command, _ []string) error {
 	if err := requireTenantID("tenant.barrier.unseal"); err != nil {
@@ -335,7 +347,7 @@ func runTenantBarrierUnsealCommand(cmd *cobra.Command, _ []string) error {
 		return formatError(err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
+	ctx, cancel := context.WithTimeout(tenantBarrierActingContext(), globalTimeout)
 	defer cancel()
 
 	// Key is []byte, so the protected slice crosses directly: the passphrase
@@ -380,11 +392,13 @@ accumulated in memory and discarded once the quorum completes, so a later
 unseal requires fresh submissions.
 
 Example:
-  quicbaas iam tenant barrier unseal-share --tenant acme --share "$SHARE"`,
+  printf '%s' "$SHARE" | quicbaas iam tenant barrier unseal-share --tenant acme --share-stdin`,
 		RunE: runTenantBarrierUnsealShareCommand,
 	}
 	cmd.Flags().StringVar(&tenantBarrierShare, "share", "",
-		"One Shamir share (required)")
+		"One Shamir share (visible in the process list; prefer --share-stdin)")
+	cmd.Flags().Bool(shareStdinFlag, false,
+		"Read the share from standard input (preferred: keeps it out of the process list and the shell history)")
 	return cmd
 }
 
@@ -393,9 +407,14 @@ func runTenantBarrierUnsealShareCommand(cmd *cobra.Command, _ []string) error {
 	if err := requireTenantID("tenant.barrier.unseal-share"); err != nil {
 		return err
 	}
-	if tenantBarrierShare == "" {
+	share, err := resolveTenantBarrierShare(cmd, "tenant.barrier.unseal-share")
+	if err != nil {
+		return formatError(err)
+	}
+	defer share.Destroy()
+	if share.Size() == 0 {
 		return errors.Newf(errors.ErrInvalidInput, "tenant.barrier.unseal-share",
-			"--share is required")
+			"a share is required (supply it on stdin with --share-stdin, or on argv with --share)")
 	}
 
 	client, err := tenantBarrierClientFactory()
@@ -403,17 +422,43 @@ func runTenantBarrierUnsealShareCommand(cmd *cobra.Command, _ []string) error {
 		return formatError(err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
+	ctx, cancel := context.WithTimeout(tenantBarrierActingContext(), globalTimeout)
 	defer cancel()
 
 	progress, err := client.TenantBarrierUnsealShare(ctx, &qrdbtransport.TenantBarrierUnsealShareRequest{
 		TenantID: tenantBarrierTenantID,
-		Share:    tenantBarrierShare,
+		//secure:unwiped injected-interface the go-qrdb TenantBarrierUnsealShareRequest.Share field is a string, so the copy is unwipeable (#237).
+		Share: string(share.Bytes()), //secure:unborrowed injected-interface the protected share is opened only for the unseal-share call.
 	})
 	if err != nil {
 		return formatError(err)
 	}
 	return formatTenantBarrierProgress(progress, tenantBarrierOutputFmt, cmd.OutOrStdout())
+}
+
+// shareStdinFlag selects the standard-input path for the one share
+// 'tenant barrier unseal-share' submits.
+const shareStdinFlag = "share-stdin"
+
+// resolveTenantBarrierShare returns the share from --share-stdin or, failing
+// that, --share. Both at once is refused. The returned Buffer belongs to the
+// caller, which must Destroy it; a nil Buffer means no share was supplied.
+func resolveTenantBarrierShare(cmd *cobra.Command, op string) (*secure.Buffer, error) {
+	fromStdin, err := cmd.Flags().GetBool(shareStdinFlag)
+	if err != nil {
+		fromStdin = false // a bare command in a unit test has no stdin path
+	}
+	if fromStdin {
+		if tenantBarrierShare != "" {
+			return nil, errors.Newf(errors.ErrInvalidInput, op,
+				"use one of --share-stdin or --share, not both")
+		}
+		return readPassphrase(cmd.InOrStdin(), op, passphraseReadTimeout())
+	}
+	if tenantBarrierShare != "" {
+		return protectExposedPassphrase(tenantBarrierShare, op)
+	}
+	return nil, nil
 }
 
 // =============================================================================

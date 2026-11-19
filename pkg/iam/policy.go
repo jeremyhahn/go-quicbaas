@@ -331,10 +331,13 @@ func (e *PolicyEngine) syncABAC(ctx context.Context) error {
 // as every CRUD mutation does. It is the composition root's hook for the
 // initial load at startup (post-unseal, once the IAM policy store is
 // readable) so the live decorator reflects every previously stored policy
-// before the first request is evaluated. Nil-safe.
+// before the first request is evaluated, and for the reload after a tenant
+// is unsealed. It holds the write lock from the scan to the store, so a
+// reload never overlaps another reload or a policy mutation and an older
+// scan cannot be stored over a newer one. Nil-safe.
 func (e *PolicyEngine) SyncABAC(ctx context.Context) error {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	return e.syncABAC(ctx)
 }
 

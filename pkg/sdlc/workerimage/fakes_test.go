@@ -43,7 +43,7 @@ func testPins() softwarefactoryworker.Pins {
 		SerenaDependencyFloors: "urllib3>=2.8.0",
 		Actionlint:             "v1.7.12", Shellcheck: "v0.11.0", ShellcheckSHA256X86_64: "8c3b", ShellcheckSHA256Aarch64: "12b3",
 		Opencode: "v1.18.32", OpencodeSHA256X86_64: "1ce4", OpencodeSHA256Aarch64: "abf3",
-		Gh: "v2.103.3", GhSHA256X86_64: "b8b8", GhSHA256Aarch64: "c9c9",
+		GH: "v2.103.3", GHSHA256X86_64: "9a9a", GHSHA256Aarch64: "8b8b",
 		Protoc: "21.12", ProtocSHA256X86_64: "aaaa", ProtocSHA256Aarch64: "bbbb",
 		ProtocGenGo: "v1.36.12", ProtocGenGoGRPC: "v1.6.1",
 		Node: "v26.10.0", NodeSHA256X86_64: "cccc", NodeSHA256Aarch64: "dddd", Npm: "12.2.0",
@@ -86,17 +86,21 @@ func labelsFor(claude, codex string) map[string]string {
 
 // fakeEngine is an image store in memory.
 type fakeEngine struct {
-	mu        sync.Mutex
-	images    map[string]*orchestration.ImageInfo
-	builds    []*orchestration.ImageBuildSpec
-	runs      []*orchestration.ImageRunSpec
-	tags      [][2]string
-	pushes    []string
-	pushAuth  []*orchestration.RegistryAuth
-	failProbe string
-	buildErr  error
-	pushErr   error
-	inspectFn func(ref string) (*orchestration.ImageInfo, error)
+	mu     sync.Mutex
+	images map[string]*orchestration.ImageInfo
+	builds []*orchestration.ImageBuildSpec
+	runs   []*orchestration.ImageRunSpec
+	tags   [][2]string
+	pushes []string
+	// released records each ReleaseImage ID, and pushesAtRelease how many
+	// pushes had run when it was released.
+	released        []string
+	pushesAtRelease []int
+	pushAuth        []*orchestration.RegistryAuth
+	failProbe       string
+	buildErr        error
+	pushErr         error
+	inspectFn       func(ref string) (*orchestration.ImageInfo, error)
 
 	// builtLabels overrides the labels a build produces.
 	builtLabels map[string]string
@@ -128,6 +132,13 @@ func (e *fakeEngine) BuildImage(_ context.Context, spec *orchestration.ImageBuil
 		e.hold(tag, id, labels)
 	}
 	return id, nil
+}
+
+func (e *fakeEngine) ReleaseImage(_ context.Context, id string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.released = append(e.released, id)
+	e.pushesAtRelease = append(e.pushesAtRelease, len(e.pushes))
 }
 
 func (e *fakeEngine) InspectImage(_ context.Context, ref string) (*orchestration.ImageInfo, error) {

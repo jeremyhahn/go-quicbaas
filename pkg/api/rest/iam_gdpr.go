@@ -32,15 +32,13 @@ import (
 
 // GrantConsent handles POST /api/v1/tenants/{tenant_id}/users/{user_id}/consents - Grant consent.
 func (h *IAMHandler) GrantConsent(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -129,15 +127,13 @@ func (h *IAMHandler) GrantConsent(w http.ResponseWriter, r *http.Request) {
 
 // ListUserConsents handles GET /api/v1/tenants/{tenant_id}/users/{user_id}/consents - List user consents.
 func (h *IAMHandler) ListUserConsents(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -181,15 +177,13 @@ func (h *IAMHandler) ListUserConsents(w http.ResponseWriter, r *http.Request) {
 
 // GetConsent handles GET /api/v1/tenants/{tenant_id}/users/{user_id}/consents/{purpose} - Get specific consent.
 func (h *IAMHandler) GetConsent(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -239,15 +233,13 @@ func (h *IAMHandler) GetConsent(w http.ResponseWriter, r *http.Request) {
 
 // WithdrawConsent handles PUT /api/v1/tenants/{tenant_id}/users/{user_id}/consents/{purpose}/withdraw - Withdraw consent.
 func (h *IAMHandler) WithdrawConsent(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -321,15 +313,13 @@ func (h *IAMHandler) WithdrawConsent(w http.ResponseWriter, r *http.Request) {
 
 // RequestDataExport handles POST /api/v1/tenants/{tenant_id}/users/{user_id}/export - Request data export.
 func (h *IAMHandler) RequestDataExport(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -411,15 +401,13 @@ func (h *IAMHandler) RequestDataExport(w http.ResponseWriter, r *http.Request) {
 
 // GetExportStatus handles GET /api/v1/tenants/{tenant_id}/users/{user_id}/export/{export_id} - Get export status.
 func (h *IAMHandler) GetExportStatus(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -478,15 +466,13 @@ func (h *IAMHandler) GetExportStatus(w http.ResponseWriter, r *http.Request) {
 
 // DownloadExport handles GET /api/v1/tenants/{tenant_id}/users/{user_id}/export/{export_id}/download - Download export.
 func (h *IAMHandler) DownloadExport(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -574,15 +560,13 @@ func (h *IAMHandler) DownloadExport(w http.ResponseWriter, r *http.Request) {
 
 // RequestDeletion handles POST /api/v1/tenants/{tenant_id}/users/{user_id}/deletion - Request data deletion.
 func (h *IAMHandler) RequestDeletion(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -660,15 +644,13 @@ func (h *IAMHandler) RequestDeletion(w http.ResponseWriter, r *http.Request) {
 
 // GetDeletionStatus handles GET /api/v1/tenants/{tenant_id}/users/{user_id}/deletion/{deletion_id} - Get deletion status.
 func (h *IAMHandler) GetDeletionStatus(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -725,15 +707,13 @@ func (h *IAMHandler) GetDeletionStatus(w http.ResponseWriter, r *http.Request) {
 
 // CancelDeletion handles DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/deletion/{deletion_id} - Cancel deletion.
 func (h *IAMHandler) CancelDeletion(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}

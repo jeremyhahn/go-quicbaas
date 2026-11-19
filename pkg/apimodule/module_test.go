@@ -155,9 +155,11 @@ func TestModule_LifecycleNoOps(t *testing.T) {
 // all seven broker capability services, the five quicbaas-native broker
 // data-plane services (ParameterStore, DynamicSecretsService,
 // ObjectStorageService, ObjectStorageAdmin, OllamaService), PromptService,
-// and SecretsManagement (the one genuinely quicbaas-native xkms-wire service —
-// KeyManagement/DEKManagement/Crypto/CertificateService/TrustService/
-// AttestationService/PIVService moved to go-xkms's own ServiceModule, Phase 3
+// SecretsManagement, KeyManagement plus DEKManagement (quicbaas-native
+// because the pinned go-xkms serves no DEK surface and no quicbaas.kms.v1
+// name), and AttestationService (quicbaas-native because the pinned go-xkms
+// serves no Verifier RPCs — Crypto/CertificateService/TrustService/
+// PIVService moved to go-xkms's own ServiceModule, Phase 3
 // of the login-plane plan; see module.go's package doc and
 // TestModule_RegisterGRPC_ExcludesXKMSCanonicalSurface), each with a method
 // set identical to its generated service descriptor — the same wire surface
@@ -189,6 +191,11 @@ func TestModule_RegisterGRPC_RegistersFullGRPCSurface(t *testing.T) {
 		&pb.ObjectStorageAdmin_ServiceDesc,
 		&pb.OllamaService_ServiceDesc,
 		&pb.SecretsManagement_ServiceDesc,
+		&pb.KeyManagement_ServiceDesc,
+		&pb.DEKManagement_ServiceDesc,
+		&pb.AttestationService_ServiceDesc,
+		&pb.VectorDB_ServiceDesc,
+		&pb.VectorAdmin_ServiceDesc,
 		&pb.PromptService_ServiceDesc,
 		&pb.AgentCatalogService_ServiceDesc,
 		&pb.SDLCService_ServiceDesc,
@@ -197,7 +204,7 @@ func TestModule_RegisterGRPC_RegistersFullGRPCSurface(t *testing.T) {
 		&iampb.SessionService_ServiceDesc,
 	}
 	info := server.GetServiceInfo()
-	require.Len(t, info, len(generated), "exactly the twenty-two quicbaas-native and broker services must be registered")
+	require.Len(t, info, len(generated), "exactly the twenty-seven quicbaas-native and broker services must be registered")
 
 	for _, desc := range generated {
 		svcInfo, ok := info[desc.ServiceName]
@@ -239,8 +246,6 @@ func TestModule_RegisterGRPC_ExcludesProxyPlanes(t *testing.T) {
 		pb.Barrier_ServiceDesc.ServiceName,
 		pb.TenantBarrier_ServiceDesc.ServiceName,
 		pb.Ceremony_ServiceDesc.ServiceName,
-		pb.VectorDB_ServiceDesc.ServiceName,
-		pb.VectorAdmin_ServiceDesc.ServiceName,
 	}
 	for _, name := range excluded {
 		_, ok := info[name]
@@ -249,17 +254,20 @@ func TestModule_RegisterGRPC_ExcludesProxyPlanes(t *testing.T) {
 	}
 }
 
-// TestModule_RegisterGRPC_ExcludesXKMSCanonicalSurface proves KeyManagement,
-// DEKManagement, Crypto, CertificateService, TrustService, AttestationService,
-// and PIVService stay OFF the quicbaas module's surface (Phase 3 of the
+// TestModule_RegisterGRPC_ExcludesXKMSCanonicalSurface proves Crypto,
+// CertificateService, TrustService, and PIVService stay
+// OFF the quicbaas module's surface (Phase 3 of the
 // login-plane plan, corrective to the prior design documented in
 // module.go's package doc): they were quicbaas.v1 wrappers over the SAME
 // composed go-xkms library go-xkms's OWN ServiceModule ("xkms") now serves
 // as its canonical xkms.v1 KeystoreService surface on this same unified
 // server — registering both would double-register a redundant proto
 // surface, exactly the failure mode go-qrdb's route/service-collision guard
-// exists to catch. SecretsManagement is deliberately absent from this
-// exclusion list: it is genuinely quicbaas-native (see
+// exists to catch. SecretsManagement, KeyManagement, DEKManagement, and
+// AttestationService are deliberately absent from this exclusion list: they
+// are quicbaas-native on the node, KeyManagement and DEKManagement because
+// the pinned go-xkms serves no DEK surface and no quicbaas.kms.v1 name, and
+// AttestationService because it serves no Verifier RPCs (see
 // TestModule_RegisterGRPC_RegistersFullGRPCSurface).
 func TestModule_RegisterGRPC_ExcludesXKMSCanonicalSurface(t *testing.T) {
 	m, err := NewModule(func() service.QuicBaaS { return nil }, testLogger(t))
@@ -270,12 +278,9 @@ func TestModule_RegisterGRPC_ExcludesXKMSCanonicalSurface(t *testing.T) {
 	info := server.GetServiceInfo()
 
 	excluded := []string{
-		pb.KeyManagement_ServiceDesc.ServiceName,
-		pb.DEKManagement_ServiceDesc.ServiceName,
 		pb.Crypto_ServiceDesc.ServiceName,
 		pb.CertificateService_ServiceDesc.ServiceName,
 		pb.TrustService_ServiceDesc.ServiceName,
-		pb.AttestationService_ServiceDesc.ServiceName,
 		pb.PIVService_ServiceDesc.ServiceName,
 	}
 	for _, name := range excluded {

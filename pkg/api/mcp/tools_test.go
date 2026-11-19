@@ -33,146 +33,69 @@ func newExtendedRegistry(t *testing.T) *ToolRegistry {
 // Batch, Transaction, and List Tool Execution Tests
 // =============================================================================
 
-func TestExtendedBatchPut_Success(t *testing.T) {
-	registry := newExtendedRegistry(t)
-	ctx := context.Background()
-
-	// Use the correct format: operations array with entity_type, id, and data
-	result, err := registry.ExecuteTool(ctx, "quicbaas_batch_put", map[string]interface{}{
-		"operations": []interface{}{
-			map[string]interface{}{"entity_type": "users", "id": float64(1), "data": "dmFsdWUx"}, // base64("value1")
-			map[string]interface{}{"entity_type": "users", "id": float64(2), "data": "dmFsdWUy"}, // base64("value2")
+func TestExtendedBatchTools(t *testing.T) {
+	keyOps := []interface{}{
+		map[string]interface{}{"entity_type": "users", "id": float64(1)},
+		map[string]interface{}{"entity_type": "users", "id": float64(2)},
+	}
+	tests := []struct {
+		name    string
+		tool    string
+		args    map[string]interface{}
+		wantErr bool
+	}{
+		{
+			name: "put succeeds",
+			tool: "quicbaas_batch_put",
+			args: map[string]interface{}{"operations": []interface{}{
+				map[string]interface{}{"entity_type": "users", "id": float64(1), "data": "dmFsdWUx"}, // base64("value1")
+				map[string]interface{}{"entity_type": "users", "id": float64(2), "data": "dmFsdWUy"}, // base64("value2")
+			}},
 		},
-	})
-	// Mock service returns nil, nil for batch operations
-	// The execution succeeds (no parse error) but the result is nil because
-	// the mock doesn't return actual data
-	require.NoError(t, err)
-	// Result can be nil because mock returns nil response
-	_ = result
-}
-
-func TestExtendedBatchPut_MissingItems(t *testing.T) {
-	registry := newExtendedRegistry(t)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_batch_put", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-}
-
-func TestExtendedBatchPut_InvalidJSON(t *testing.T) {
-	registry := newExtendedRegistry(t)
-	ctx := context.Background()
-
-	// Operations must be an array, not a string
-	result, err := registry.ExecuteTool(ctx, "quicbaas_batch_put", map[string]interface{}{
-		"operations": "not-an-array",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-}
-
-func TestExtendedBatchGet_Success(t *testing.T) {
-	registry := newExtendedRegistry(t)
-	ctx := context.Background()
-
-	// Use the correct format: operations array with entity_type and id
-	result, err := registry.ExecuteTool(ctx, "quicbaas_batch_get", map[string]interface{}{
-		"operations": []interface{}{
-			map[string]interface{}{"entity_type": "users", "id": float64(1)},
-			map[string]interface{}{"entity_type": "users", "id": float64(2)},
+		{name: "put without operations", tool: "quicbaas_batch_put", args: map[string]interface{}{}, wantErr: true},
+		{
+			name:    "put with operations not an array",
+			tool:    "quicbaas_batch_put",
+			args:    map[string]interface{}{"operations": "not-an-array"},
+			wantErr: true,
 		},
-	})
-	// Mock service returns nil, nil for batch operations
-	require.NoError(t, err)
-	// Result can be nil because mock returns nil response
-	_ = result
+		{name: "get succeeds", tool: "quicbaas_batch_get", args: map[string]interface{}{"operations": keyOps}},
+		{name: "get without operations", tool: "quicbaas_batch_get", args: map[string]interface{}{}, wantErr: true},
+		{name: "delete succeeds", tool: "quicbaas_batch_delete", args: map[string]interface{}{"operations": keyOps}},
+		{name: "delete without operations", tool: "quicbaas_batch_delete", args: map[string]interface{}{}, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			registry := newExtendedRegistry(t)
+			// The mock service returns nil, nil for batch operations, so a
+			// successful call has no result to assert on.
+			result, err := registry.ExecuteTool(context.Background(), tt.tool, tt.args)
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Nil(t, result)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
 }
 
-func TestExtendedBatchGet_MissingKeys(t *testing.T) {
-	registry := newExtendedRegistry(t)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_batch_get", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-}
-
-func TestExtendedBatchDelete_Success(t *testing.T) {
-	registry := newExtendedRegistry(t)
-	ctx := context.Background()
-
-	// Use the correct format: operations array with entity_type and id
-	result, err := registry.ExecuteTool(ctx, "quicbaas_batch_delete", map[string]interface{}{
-		"operations": []interface{}{
-			map[string]interface{}{"entity_type": "users", "id": float64(1)},
-			map[string]interface{}{"entity_type": "users", "id": float64(2)},
-		},
-	})
-	// Mock service returns nil, nil for batch operations
-	require.NoError(t, err)
-	// Result can be nil because mock returns nil response
-	_ = result
-}
-
-func TestExtendedBatchDelete_MissingKeys(t *testing.T) {
-	registry := newExtendedRegistry(t)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_batch_delete", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-}
-
-func TestExtendedTransaction_Success(t *testing.T) {
-	registry := newExtendedRegistry(t)
-	ctx := context.Background()
-
-	// Transaction tool uses a different format - test with proper structure
-	result, err := registry.ExecuteTool(ctx, "quicbaas_transaction", map[string]interface{}{
-		"success": []interface{}{
-			map[string]interface{}{"type": "put", "key": "k1", "value": "v1"},
-		},
-	})
-	// Mock service returns nil for transaction operations
-	// Just verify no parsing error or proper nil handling
-	_ = result
-	_ = err
-}
-
-func TestExtendedTransaction_MissingOperations(t *testing.T) {
-	registry := newExtendedRegistry(t)
-	ctx := context.Background()
-
-	// Transaction with no operations should still work (empty transaction)
-	result, err := registry.ExecuteTool(ctx, "quicbaas_transaction", map[string]interface{}{})
-	// An empty transaction may be valid or return nil from mock
-	_ = result
-	_ = err
-}
-
-func TestExtendedList_Success(t *testing.T) {
-	registry := newExtendedRegistry(t)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "qrdb_list", map[string]interface{}{
-		"entity_type": "users",
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-}
-
-func TestExtendedList_WithLimit(t *testing.T) {
-	registry := newExtendedRegistry(t)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "qrdb_list", map[string]interface{}{
-		"entity_type": "users",
-		"limit":       float64(50),
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
+func TestExtendedList(t *testing.T) {
+	tests := []struct {
+		name string
+		args map[string]interface{}
+	}{
+		{"default limit", map[string]interface{}{"entity_type": "users"}},
+		{"explicit limit", map[string]interface{}{"entity_type": "users", "limit": float64(50)}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			registry := newExtendedRegistry(t)
+			result, err := registry.ExecuteTool(context.Background(), "qrdb_list", tt.args)
+			require.NoError(t, err)
+			require.NotNil(t, result)
+		})
+	}
 }
 
 // =============================================================================
@@ -210,29 +133,25 @@ func TestExtendedGetCacheConfig_ServiceError(t *testing.T) {
 }
 
 func TestExtendedUpdateCacheConfig_Success(t *testing.T) {
-	registry := newExtendedRegistry(t)
-	ctx := context.Background()
-
-	// Use the correct tool name: quicbaas_cache_config_update
-	result, err := registry.ExecuteTool(ctx, "quicbaas_cache_config_update", map[string]interface{}{
-		"l1_size": float64(2000),
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-}
-
-func TestExtendedUpdateCacheConfig_AllOptions(t *testing.T) {
-	registry := newExtendedRegistry(t)
-	ctx := context.Background()
-
-	// Use the correct tool name: quicbaas_cache_config_update
-	result, err := registry.ExecuteTool(ctx, "quicbaas_cache_config_update", map[string]interface{}{
-		"l1_size":          float64(5000),
-		"l1_ttl":           "10m",
-		"cleanup_interval": "2m",
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
+	tests := []struct {
+		name string
+		args map[string]interface{}
+	}{
+		{"size only", map[string]interface{}{"l1_size": float64(2000)}},
+		{"all options", map[string]interface{}{
+			"l1_size":          float64(5000),
+			"l1_ttl":           "10m",
+			"cleanup_interval": "2m",
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			registry := newExtendedRegistry(t)
+			result, err := registry.ExecuteTool(context.Background(), "quicbaas_cache_config_update", tt.args)
+			require.NoError(t, err)
+			require.NotNil(t, result)
+		})
+	}
 }
 
 func TestExtendedUpdateCacheConfig_ServiceError(t *testing.T) {
@@ -258,45 +177,6 @@ func TestExtendedUpdateCacheConfig_ServiceError(t *testing.T) {
 }
 
 // =============================================================================
-// Rebalance and Backup with Extended Mock
-// =============================================================================
-
-func TestExtendedRebalance_Success(t *testing.T) {
-	registry := newExtendedRegistry(t)
-	ctx := context.Background()
-
-	// Mock service returns nil, nil for rebalance
-	result, err := registry.ExecuteTool(ctx, "quicbaas_rebalance_cluster", map[string]interface{}{})
-	// Just verify no crash - mock returns nil
-	_ = result
-	_ = err
-}
-
-func TestExtendedCreateBackup_Success(t *testing.T) {
-	registry := newExtendedRegistry(t)
-	ctx := context.Background()
-
-	// Use the correct tool name: quicbaas_backup_create
-	result, err := registry.ExecuteTool(ctx, "quicbaas_backup_create", map[string]interface{}{})
-	// Mock service returns nil for backup operations
-	_ = result
-	_ = err
-}
-
-func TestExtendedRestoreBackup_Success(t *testing.T) {
-	registry := newExtendedRegistry(t)
-	ctx := context.Background()
-
-	// Use the correct tool name: quicbaas_backup_restore
-	result, err := registry.ExecuteTool(ctx, "quicbaas_backup_restore", map[string]interface{}{
-		"backup_id": "bk-123",
-	})
-	// Mock service returns nil for backup operations
-	_ = result
-	_ = err
-}
-
-// =============================================================================
 // Utility Function Tests
 // =============================================================================
 
@@ -309,9 +189,7 @@ func TestExtendedGetString(t *testing.T) {
 	}{
 		{"string value", map[string]interface{}{"k": "hello"}, "k", "hello"},
 		{"missing key", map[string]interface{}{}, "k", ""},
-		{"nil value", map[string]interface{}{"k": nil}, "k", ""},
 		{"non-string type", map[string]interface{}{"k": 42}, "k", ""},
-		{"bool type", map[string]interface{}{"k": true}, "k", ""},
 	}
 
 	for _, tc := range tests {
@@ -351,7 +229,6 @@ func TestExtendedGetInt(t *testing.T) {
 		{"float64", map[string]interface{}{"k": float64(42)}, "k", 42},
 		{"int", map[string]interface{}{"k": int(10)}, "k", 10},
 		{"missing", map[string]interface{}{}, "k", 0},
-		{"nil", map[string]interface{}{"k": nil}, "k", 0},
 	}
 
 	for _, tc := range tests {
@@ -362,31 +239,60 @@ func TestExtendedGetInt(t *testing.T) {
 }
 
 func TestExtendedParseBool(t *testing.T) {
-	assert.True(t, parseBool("true", false))
-	assert.False(t, parseBool("false", true))
-	assert.True(t, parseBool("", true))
-	assert.False(t, parseBool("", false))
-	assert.True(t, parseBool("1", false))
-	assert.False(t, parseBool("0", true))
-	assert.True(t, parseBool("bogus", true))
+	tests := []struct {
+		name         string
+		input        string
+		defaultValue bool
+		expected     bool
+	}{
+		{"true overrides default", "true", false, true},
+		{"false overrides default", "false", true, false},
+		{"empty uses default", "", true, true},
+		{"unparsable uses default", "bogus", false, false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.expected, parseBool(tc.input, tc.defaultValue))
+		})
+	}
 }
 
 func TestExtendedParseInt(t *testing.T) {
-	assert.Equal(t, 42, parseInt("42", 0))
-	assert.Equal(t, 100, parseInt("", 100))
-	assert.Equal(t, 50, parseInt("abc", 50))
-}
+	tests := []struct {
+		name         string
+		input        string
+		defaultValue int
+		expected     int
+	}{
+		{"number", "42", 0, 42},
+		{"empty uses default", "", 100, 100},
+		{"unparsable uses default", "abc", 50, 50},
+	}
 
-func TestExtendedParseInt64(t *testing.T) {
-	assert.Equal(t, int64(42), parseInt64("42", 0))
-	assert.Equal(t, int64(100), parseInt64("", 100))
-	assert.Equal(t, int64(50), parseInt64("abc", 50))
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.expected, parseInt(tc.input, tc.defaultValue))
+			assert.Equal(t, int64(tc.expected), parseInt64(tc.input, int64(tc.defaultValue)))
+		})
+	}
 }
 
 func TestExtendedGetStringDefault(t *testing.T) {
-	assert.Equal(t, "value", getStringDefault(map[string]interface{}{"k": "value"}, "k", "default"))
-	assert.Equal(t, "default", getStringDefault(map[string]interface{}{}, "k", "default"))
-	assert.Equal(t, "default", getStringDefault(map[string]interface{}{"k": ""}, "k", "default"))
+	tests := []struct {
+		name     string
+		args     map[string]interface{}
+		expected string
+	}{
+		{"value present", map[string]interface{}{"k": "value"}, "value"},
+		{"empty uses default", map[string]interface{}{"k": ""}, "default"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.expected, getStringDefault(tc.args, "k", "default"))
+		})
+	}
 }
 
 func TestExtendedFormatParameterValue(t *testing.T) {

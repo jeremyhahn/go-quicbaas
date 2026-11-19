@@ -39,6 +39,18 @@ func authTestClient() *http.Client {
 	return helpers.NewHTTPClient(15 * time.Second)
 }
 
+// appRegistrarClient returns the client that registers the OAuth2 application.
+// POST /api/v1/tenants/{tenant_id}/apps/ needs tenants:create, a
+// platform-operator permission that only the system tenant's admin can
+// exercise, so the registration is sent as the fixture system admin. Every
+// other request of this file keeps authTestClient: the token grant is the
+// login ceremony, and the orchestrator calls present the minted bearer or, on
+// the negative path, none.
+func appRegistrarClient(t *testing.T) *http.Client {
+	t.Helper()
+	return helpers.NewSystemAdminHTTPClient(t, 15*time.Second)
+}
+
 // oauth2Credentials holds the client credentials minted for an OAuth2
 // service-account application.
 type oauth2Credentials struct {
@@ -164,7 +176,7 @@ func TestE2E_AgentAuth_OAuth2(t *testing.T) {
 	client := authTestClient()
 	tenantID := getEnvOrDefault("QUICBAAS_TEST_TENANT_ID", "default")
 
-	creds := registerOAuth2App(ctx, t, client, tenantID)
+	creds := registerOAuth2App(ctx, t, appRegistrarClient(t), tenantID)
 	accessToken := mintClientCredentialsToken(ctx, t, client, creds)
 
 	// Use the minted token against a protected orchestrator endpoint. The
@@ -260,7 +272,7 @@ func TestE2E_AgentAuth_ForbiddenDenied(t *testing.T) {
 
 	// Obtain a valid-but-unprivileged credential: a client_credentials token
 	// for an app with no RBAC roles.
-	creds := registerOAuth2App(ctx, t, client, tenantID)
+	creds := registerOAuth2App(ctx, t, appRegistrarClient(t), tenantID)
 	accessToken := mintClientCredentialsToken(ctx, t, client, creds)
 
 	// A protected, privileged orchestrator endpoint. spawn is a write action on
