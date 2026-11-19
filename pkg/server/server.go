@@ -768,7 +768,13 @@ type Server struct {
 	// State tracking
 	mu      sync.RWMutex
 	started bool
-	closed  bool
+	// ready is set, under mu, only when initialize returns successfully,
+	// after every component (storage, the service facade, IAM, gRPC and
+	// REST) is composed. started is raised on initialize's entry as its
+	// re-entry guard; ready is the readiness signal IsStarted reports
+	// (#2555).
+	ready  bool
+	closed bool
 
 	// initWG is held for the duration of initialize() (Storage -> ... ->
 	// REST, including initializeIAMComponents). Shutdown waits on it before
@@ -1188,6 +1194,10 @@ func (s *Server) initialize() error {
 	} else {
 		s.logger.Info("Running in embedded mode - access via Server.Service()")
 	}
+
+	s.mu.Lock()
+	s.ready = true
+	s.mu.Unlock()
 
 	return nil
 }
@@ -1750,11 +1760,14 @@ func (s *Server) TriggerShutdown() {
 	})
 }
 
-// IsStarted returns true if the server has been started.
+// IsStarted reports whether the server is fully composed: it returns true
+// only once initialize has finished successfully (storage, the service
+// facade, IAM, gRPC and REST are all up). It is false while initialize is
+// still composing the server, so callers can use it as the readiness signal.
 func (s *Server) IsStarted() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.started
+	return s.ready
 }
 
 // IsClosed returns true if the server has been closed.
