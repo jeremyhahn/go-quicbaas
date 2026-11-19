@@ -75,6 +75,21 @@ const sdkLivenessTimeout = 10 * time.Second
 func verifySDKLivenessOverTransport(t *testing.T, transport string, ports PortBundle, dataDir, adminToken string) {
 	t.Helper()
 
+	if transport == "mcp" {
+		// MCP has no anonymous session: an initialize without a bearer is
+		// refused with 401 before the authenticated liveness call below.
+		tlsCfg, err := loadDaemonCATLSConfig(dataDir)
+		if err != nil {
+			t.Fatalf("load daemon CA for transport \"mcp\": %v", err)
+		}
+		probeCtx, probeCancel := context.WithTimeout(context.Background(), sdkLivenessTimeout)
+		probeErr := probeSealedMCPInitialize(probeCtx, fmt.Sprintf("https://127.0.0.1:%d/mcp", ports.MCP), tlsCfg)
+		probeCancel()
+		if probeErr != nil {
+			t.Fatalf("anonymous MCP initialize: %v", probeErr)
+		}
+	}
+
 	client, err := newSDKClient(transport, ports, dataDir, adminToken)
 	if err != nil {
 		t.Fatalf("construct SDK client for transport %q: %v", transport, err)
