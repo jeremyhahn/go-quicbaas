@@ -17,9 +17,13 @@ package helpers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
+	"slices"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -100,12 +104,8 @@ func enrollDataPlanePrincipal(ctx context.Context, baseURL string) (*enrolledPri
 		return nil, &PrincipalAuthError{Principal: dataPlanePrincipalName, Step: "provision tenant", TenantID: tenantID, Cause: err}
 	}
 
-	role := map[string]interface{}{
-		"id":          dataplane.RoleID,
-		"name":        dataplane.RoleID,
-		"permissions": dataplane.Permissions,
-	}
-	if _, err := postJSON(ctx, baseURL+"/api/v1/tenants/"+tenantID+"/roles", systemBearer, role); err != nil {
+	roleID, err := ensureDataPlaneRole(ctx, baseURL, tenantID, systemBearer)
+	if err != nil {
 		return nil, &PrincipalAuthError{Principal: dataPlanePrincipalName, Step: "create role", TenantID: tenantID, Cause: err}
 	}
 
@@ -114,10 +114,77 @@ func enrollDataPlanePrincipal(ctx context.Context, baseURL string) (*enrolledPri
 		return nil, &PrincipalAuthError{Principal: dataPlanePrincipalName, Step: "enroll PIV user", TenantID: tenantID, Cause: err}
 	}
 
-	binding := map[string]interface{}{"role_id": dataplane.RoleID}
+	binding := map[string]interface{}{"role_id": roleID}
 	if _, err := postJSON(ctx, baseURL+"/api/v1/tenants/"+tenantID+"/users/"+userID+"/roles", systemBearer, binding); err != nil {
 		return nil, &PrincipalAuthError{Principal: dataPlanePrincipalName, Step: "bind role to user " + userID, TenantID: tenantID, Cause: err}
 	}
 
 	return &enrolledPrincipal{tenantID: tenantID, certPEM: certPEM, keyPEM: keyPEM}, nil
+}
+
+// DataPlaneRoleMismatchError reports that the role id the data-plane
+// principal needs already names a role that is not the data-plane role of its
+// tenant, so reusing it would bind the principal to the wrong grant.
+type DataPlaneRoleMismatchError struct {
+	// RoleID is the id that already exists.
+	RoleID string
+
+	// TenantID is the tenant the role was wanted in.
+	TenantID string
+
+	// OwnerTenantID is the tenant the existing role belongs to.
+	OwnerTenantID string
+
+	// Permissions are the existing role's permissions.
+	Permissions []string
+}
+
+func (e *DataPlaneRoleMismatchError) Error() string {
+	return "role " + e.RoleID + " already exists in tenant " + e.OwnerTenantID +
+		" with permissions [" + strings.Join(e.Permissions, " ") + "], want tenant " +
+		e.TenantID + " with [" + strings.Join(dataplane.Permissions, " ") + "]"
+}
+
+// ensureDataPlaneRole creates the data-plane role in tenantID and returns its
+// id. A 409 means the id is already claimed: the existing role is reused when
+// it is this tenant's role holding exactly dataplane.Permissions (an earlier
+// attempt that created it before failing a later step), and refused otherwise.
+func ensureDataPlaneRole(ctx context.Context, baseURL, tenantID, bearer string) (string, error) {
+	roleID := dataplane.TenantRoleID(tenantID)
+	role := map[string]interface{}{
+		"id":          roleID,
+		"name":        dataplane.RoleID,
+		"permissions": dataplane.Permissions,
+	}
+	rolesURL := baseURL + "/api/v1/tenants/" + tenantID + "/roles"
+	_, err := postJSON(ctx, rolesURL, bearer, role)
+	var status *AuthBadStatusError
+	if err == nil || !errors.As(err, &status) || status.Status != http.StatusConflict {
+		return roleID, err
+	}
+
+	body, gerr := getJSON(ctx, rolesURL+"/"+url.PathEscape(roleID), bearer)
+	if gerr != nil {
+		return "", errors.Join(err, gerr)
+	}
+	var existing struct {
+		TenantID    string   `json:"tenant_id"`
+		Permissions []string `json:"permissions"`
+	}
+	if uerr := json.Unmarshal(body, &existing); uerr != nil {
+		return "", &AuthError{Op: "decode role", URL: rolesURL + "/" + roleID, Cause: uerr}
+	}
+	want := slices.Clone(dataplane.Permissions)
+	got := slices.Clone(existing.Permissions)
+	slices.Sort(want)
+	slices.Sort(got)
+	if existing.TenantID != tenantID || !slices.Equal(got, want) {
+		return "", &DataPlaneRoleMismatchError{
+			RoleID:        roleID,
+			TenantID:      tenantID,
+			OwnerTenantID: existing.TenantID,
+			Permissions:   existing.Permissions,
+		}
+	}
+	return roleID, nil
 }

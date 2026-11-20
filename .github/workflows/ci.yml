@@ -1,14 +1,38 @@
-# ci-template: v1.34.1 (customized)
+# ci-template: v1.34.1 + v1.42 hermetic gate + v1.43 hosted first + v1.46 runner rule (customized)
+# v1.43 hosted first (Tenant Agent rulings 833 and 834; the owner's 11-07
+# ruling that GitHub-hosted runners are the default): every job runs on the
+# standard GitHub-hosted ubuntu-latest runner, free on this public
+# repository, and so does integration.yml. This workflow was written for a
+# hosted runner (below: 4 vCPU, 16 GB, the disk freed before an image build).
+# Larger hosted runners are not used.
+# v1.46 runner rule: a job leaves ubuntu-latest only for a measured reason,
+# and its runs-on line then names a self-hosted label and carries a waiver
+# comment that names the reason's category:
+# `# self-hosted: hardware: <reason>` (the job needs specific hardware) or
+# `# self-hosted: oversize: <reason>` (it needs more than a standard runner's
+# 4 vCPU, 16 GB memory, about 14 GB free disk, or 6 hours). `credential:` is
+# only for the Codex review job in code-review.yml. No ci.yml job carries a
+# waiver today; test/buildgates TestCIRunsHostedFirst holds the rule.
+# v1.42 hermetic gate only (owner ruling 742 (1), Tenant Agent ruling 754): the
+# CI Gate's outcome depends only on the tree under test. `make deps-check`,
+# `make security` (gosec, govulncheck, go mod verify, trivy fs) and the trivy
+# image scan of the integration image read the module proxy and advisory
+# databases, so they turned main red with no change to the tree and every PR
+# inherited it. They leave this workflow on every event and run in
+# .github/workflows/scans.yml, on workflow_dispatch on main (no schedule:
+# TestNoWorkflowRunsOnASchedule pins the 2026-10-11 ruling below). `make
+# gosec` reads only the tree and now runs in the lint job on every event but
+# a docs-only PR. Nothing else of v1.35 to v1.42 is taken yet: the v1.35
+# Signatures job, v1.36 host-local caches and in-toolchain-image.sh v6, v1.37
+# timeouts, v1.38 release label, v1.39/v1.40 scoped deps-check and v1.41
+# PR/main parity are the full catch-up, still to come.
 # CUSTOMIZE (go-quicbaas): v1.22.2 through v1.34.1 adopted in one CI-file PR.
 # The jobs are the template's preflight, publish-images, lint, image,
 # lint-gates and ci-gate, with go-quicbaas's own unit, coverage, unit-passes
 # and integration jobs beside them. What differs from the template, and why:
-#   - Runners: a push to main and a same-repository pull request run on the
-#     self-hosted pools, the Docker jobs on bigdisk-docker and the others on
-#     bigdisk; a fork pull request runs on ubuntu-latest (the routing
-#     expression on each runs-on line). The unit, coverage and unit-passes
-#     jobs run their make target natively under setup-go on the bigdisk pool
-#     (GO_VERSION below) and in the toolchain image on a hosted runner.
+#   - Runners: every job, on every event, runs on ubuntu-latest, with no
+#     routing expression on its runs-on line. The unit, coverage and
+#     unit-passes jobs run their make target in the toolchain image.
 #   - No `schedule:` trigger and no soak job. No workflow here schedules
 #     itself (owner ruling 2026-10-11, test/buildgates): the nightly full
 #     tier is a workflow_dispatch on main and nightly.yml. Soak loops the
@@ -18,7 +42,7 @@
 #     template's full-tier `if:` and a `full` check line.
 #   - The integration image keeps its per-run name (IT_IMAGE) with no lease,
 #     no content hash and no Alpine index sum (v1.23, v1.25, v1.29): every
-#     job runs on a single-use runner (a hosted VM or a bigdisk-docker guest),
+#     job runs on a single-use runner (a hosted VM),
 #     so no other job can reap its image, and the image is Debian, not
 #     Alpine. scripts/apk-index-sum.sh and `make it-image` are not carried.
 #   - The docs-only decision stays scripts/docs-only.sh (DS-3161), whose
@@ -709,10 +733,9 @@ jobs:
   # are its storage seam (OBJSTORE_SEAMS). Test files are exempt.
   preflight:
     name: Preflight [changed files, schedule guard, architecture gates]
-    # Same-repo pull requests and pushes to main run on the self-hosted
-    # bigdisk pool; a fork pull request stays on ubuntu-latest. The job needs
-    # only bash, git, grep and sed, and the checkout keeps no credentials.
-    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}
+    # v1.43: GitHub-hosted. The job needs only bash, git, grep and sed, and
+    # the checkout keeps no credentials.
+    runs-on: ubuntu-latest
     # v1.26: a draft PR runs no CI; every job that needs this one skips with it.
     if: ${{ !github.event.pull_request.draft }}
     timeout-minutes: 10       # v1.34: the three jobs had 5 each
@@ -888,7 +911,7 @@ jobs:
   # registry; a skipped job takes no runner.
   publish-images:
     name: Publish CI images
-    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'release' }}
+    runs-on: ubuntu-latest
     if: ${{ github.server_url != 'https://github.com' && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     timeout-minutes: 60       # CUSTOMIZE: ceil(1.5 x a cold toolchain build's p95)
     env:
@@ -927,9 +950,12 @@ jobs:
   # alone, so they run beside build and the unit jobs. The PR tier runs
   # `make gosec` here; the full tier runs gosec in the image job's
   # `make security`, so it runs once per event. It runs on a docs-only PR.
+  # v1.42 (ruling 742 (1)): `make gosec` runs here on every event but a
+  # docs-only PR, and deps-check left this job for scans.yml, so every step
+  # reads only the tree.
   lint:
-    name: Lint [lint, gosec, deps-check, build tags]
-    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk-docker"]') || 'ubuntu-latest' }}
+    name: Lint [lint, gosec, build tags]
+    runs-on: ubuntu-latest
     needs: preflight   # v1.34
     if: ${{ !github.event.pull_request.draft && needs.preflight.outputs.verdict == 'run' }}
     timeout-minutes: 90       # CUSTOMIZE: a cold toolchain image build, then the lint stages
@@ -977,6 +1003,8 @@ jobs:
       # v1.30 (fix 1): the registry cache first. A miss, or an unreachable
       # registry, falls through to the local build below.
       - name: Pull the toolchain image from the registry cache
+        env:
+          CI_IMAGE_REGISTRY: ${{ vars.CI_IMAGE_REGISTRY }}
         run: scripts/ci-image-cache.sh pull || true
 
       # v1.30: the toolchain image alone (`make docker-build-toolchain`,
@@ -987,6 +1015,35 @@ jobs:
           make docker-build-toolchain MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env"
           rm -f "$RUNNER_TEMP/gomodauth.env"
           echo "TOOLCHAIN_IMAGE=$(make -s toolchain-image)" >> "$GITHUB_ENV"
+
+      # #2503: on a push to main, a miss pushes the built toolchain image to
+      # CI_IMAGE_REGISTRY, logged in from the CI_IMAGE_REGISTRY_* secrets
+      # (token on stdin); with no user or token it skips the login and pushes
+      # anonymously (default DOCKER_CONFIG). No CI_IMAGE_REGISTRY: a notice
+      # and no push. Pull requests only pull.
+      - name: Push the toolchain image to the registry cache
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        env:
+          CI_IMAGE_REGISTRY: ${{ vars.CI_IMAGE_REGISTRY }}
+          CI_IMAGE_REGISTRY_USER: ${{ secrets.CI_IMAGE_REGISTRY_USER }}
+          CI_IMAGE_REGISTRY_TOKEN: ${{ secrets.CI_IMAGE_REGISTRY_TOKEN }}
+        run: |
+          if [ -z "$CI_IMAGE_REGISTRY" ]; then
+            echo "::notice::CI_IMAGE_REGISTRY is empty; no push to the registry cache"
+            exit 0
+          fi
+          if [ -z "$CI_IMAGE_REGISTRY_USER" ] || [ -z "$CI_IMAGE_REGISTRY_TOKEN" ]; then
+            echo "::notice::CI_IMAGE_REGISTRY_USER or CI_IMAGE_REGISTRY_TOKEN is empty; pushing to the registry cache without a login"
+            scripts/ci-image-cache.sh push || true
+            exit 0
+          fi
+          cfg=$(mktemp -d "$RUNNER_TEMP/ci-image-docker.XXXXXX")
+          trap 'rm -rf "$cfg"' EXIT
+          if ! printf '%s' "$CI_IMAGE_REGISTRY_TOKEN" | DOCKER_CONFIG=$cfg docker login "$CI_IMAGE_REGISTRY" -u "$CI_IMAGE_REGISTRY_USER" --password-stdin >/dev/null 2>&1; then
+            echo "::notice::login to the registry cache failed; no push"
+            exit 0
+          fi
+          CI_IMAGE_DOCKER_CONFIG=$cfg scripts/ci-image-cache.sh push || true
 
       # v1.22: bound this repo's cache volumes. It never fails the job.
       - name: Trim the CI caches
@@ -1105,20 +1162,16 @@ jobs:
         run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "GO_BUILD_TAGS='$GO_BUILD_TAGS' sh scripts/assert-build-tags.sh"
 
       # v1.30 (fix 5): gosec on the PR tier, through the developers' target,
-      # with no network. On the full tier make security runs it in the image job.
-      - name: make gosec (PR tier)
-        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.CI_FULL_TIER != 'true' && needs.preflight.outputs.docs_only != 'true' }}
+      # with no network. v1.42 (ruling 742 (1)): make security left the image
+      # job, so gosec runs here on every event but a docs-only PR. It reads
+      # only the tree, so the gate stays hermetic.
+      - name: make gosec
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && needs.preflight.outputs.docs_only != 'true' }}
         run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make gosec GO_BUILD_TAGS='$GO_BUILD_TAGS'"
 
-      # Fails when a library, first-party or third-party, is behind its latest
-      # release without devops.md §9's documented reason (ci-standard.md §1).
-      # v1.28: a lint-class gate of seconds on the PR tier, every event, a
-      # docs-only PR included.
-      - name: make deps-check
-        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' }}
-        env:
-          IN_IMAGE_NETWORK: bridge
-        run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" make deps-check
+      # v1.42 (ruling 742 (1)): `make deps-check` left this job. It reads the
+      # module proxy, so its answer changes with no change to the tree;
+      # scans.yml runs it on dispatch on main. The Makefile keeps the target.
 
       - name: Tear down
         if: always()
@@ -1141,7 +1194,8 @@ jobs:
   #
   # v1.23: build and the SDK tests are the PR tier and run on every event.
   # security and trivy image are full tier only (env.CI_FULL_TIER): main
-  # after every merge, a dispatch on main, ci:full.
+  # after every merge, a dispatch on main, ci:full. v1.42 (ruling 742 (1)):
+  # security and trivy image run in scans.yml, not here.
   #
   # v1.22: every stage mounts the build and golangci-lint cache volumes, and a
   # bridge stage the module cache volume, from the runner's Docker host
@@ -1162,8 +1216,8 @@ jobs:
   # PR, and CI Gate reads that skip as passed. The unit-test stage is the
   # unit, unit-passes and coverage jobs below.
   image:
-    name: Devcontainer image [build, SDK tests, security, trivy image]
-    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk-docker"]') || 'ubuntu-latest' }}
+    name: Devcontainer image [build, SDK tests]
+    runs-on: ubuntu-latest
     needs: preflight   # v1.24; v1.29.3; v1.34
     # v1.30: on every event only on `run` (not `refused`, not `proven`), and
     # never on a docs-only PR.
@@ -1224,6 +1278,8 @@ jobs:
       # v1.30 (fix 1): the toolchain image from the registry cache first, so
       # make docker-build builds the integration image alone.
       - name: Pull the toolchain image from the registry cache
+        env:
+          CI_IMAGE_REGISTRY: ${{ vars.CI_IMAGE_REGISTRY }}
         run: scripts/ci-image-cache.sh pull || true
 
       - name: Build the devcontainer images
@@ -1232,6 +1288,35 @@ jobs:
           make docker-build MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env" IT_IMAGE="$IT_IMAGE"
           rm -f "$RUNNER_TEMP/gomodauth.env"
           echo "TOOLCHAIN_IMAGE=$(make -s toolchain-image)" >> "$GITHUB_ENV"
+
+      # #2503: on a push to main, a miss pushes the built toolchain image to
+      # CI_IMAGE_REGISTRY, logged in from the CI_IMAGE_REGISTRY_* secrets
+      # (token on stdin); with no user or token it skips the login and pushes
+      # anonymously (default DOCKER_CONFIG). No CI_IMAGE_REGISTRY: a notice
+      # and no push. Pull requests only pull.
+      - name: Push the toolchain image to the registry cache
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        env:
+          CI_IMAGE_REGISTRY: ${{ vars.CI_IMAGE_REGISTRY }}
+          CI_IMAGE_REGISTRY_USER: ${{ secrets.CI_IMAGE_REGISTRY_USER }}
+          CI_IMAGE_REGISTRY_TOKEN: ${{ secrets.CI_IMAGE_REGISTRY_TOKEN }}
+        run: |
+          if [ -z "$CI_IMAGE_REGISTRY" ]; then
+            echo "::notice::CI_IMAGE_REGISTRY is empty; no push to the registry cache"
+            exit 0
+          fi
+          if [ -z "$CI_IMAGE_REGISTRY_USER" ] || [ -z "$CI_IMAGE_REGISTRY_TOKEN" ]; then
+            echo "::notice::CI_IMAGE_REGISTRY_USER or CI_IMAGE_REGISTRY_TOKEN is empty; pushing to the registry cache without a login"
+            scripts/ci-image-cache.sh push || true
+            exit 0
+          fi
+          cfg=$(mktemp -d "$RUNNER_TEMP/ci-image-docker.XXXXXX")
+          trap 'rm -rf "$cfg"' EXIT
+          if ! printf '%s' "$CI_IMAGE_REGISTRY_TOKEN" | DOCKER_CONFIG=$cfg docker login "$CI_IMAGE_REGISTRY" -u "$CI_IMAGE_REGISTRY_USER" --password-stdin >/dev/null 2>&1; then
+            echo "::notice::login to the registry cache failed; no push"
+            exit 0
+          fi
+          CI_IMAGE_DOCKER_CONFIG=$cfg scripts/ci-image-cache.sh push || true
 
       # v1.22: bound this repo's cache volumes on the host before the stages
       # add to them (ci-standard.md §6). It never fails the job.
@@ -1254,33 +1339,16 @@ jobs:
         if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' }}
         run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make test-sdk-ts test-frontend test-sdk-js"
 
-      # make security: gosec, govulncheck, go mod verify (devops.md §8), with
-      # trivy fs per the phase (§8a). The target owns gosec's flags and its
-      # memory bounds (GOMEMLIMIT, GOMAXPROCS, -concurrency; v1.6 to v1.8) and
-      # reports a kill by signal as a kill, not a finding. v1.23: full tier.
-      - name: make security
-        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.CI_FULL_TIER == 'true' }}
-        env:
-          IN_IMAGE_NETWORK: bridge
-        run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make security GO_BUILD_TAGS='$GO_BUILD_TAGS'"
-
-      # The integration image is gated before any push to either registry
-      # (devops.md §8): --ignore-unfixed (v1.19) and --skip-dirs /opt/go/mod
-      # (v1.20). trivy fs and make security never take --ignore-unfixed.
-      # A PR builds no image for a registry, so the scan is full tier (v1.23).
-      - name: trivy image (integration image)
-        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.CI_FULL_TIER == 'true' }}
-        env:
-          IN_IMAGE_NETWORK: bridge
-        run: |
-          docker save -o it-image.tar "$IT_IMAGE"
-          scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" \
-            trivy image --input it-image.tar --ignore-unfixed --skip-dirs /opt/go/mod --severity CRITICAL,HIGH --exit-code 1
+      # v1.42 (ruling 742 (1)): `make security` (gosec, govulncheck, go mod
+      # verify, trivy fs) and `trivy image (integration image)` left this job.
+      # Both read an advisory database that changes with no change to the
+      # tree. scans.yml runs them on dispatch on main and opens or updates
+      # ONE issue on a finding; gosec runs in the lint job on every event.
 
       - name: Tear down
         if: always()
         run: |
-          rm -f "$RUNNER_TEMP/gomodauth.env" it-image.tar
+          rm -f "$RUNNER_TEMP/gomodauth.env"
           docker image rm "$IT_IMAGE" || true
 
   # The -race unit run with coverage, dealt over UNIT_SHARDS shards. `make
@@ -1301,13 +1369,10 @@ jobs:
   # guards.
   unit:
     name: Unit tests -race (shard ${{ matrix.shard }})
-    # Same-repo pull requests and pushes to main run on the self-hosted
-    # bigdisk pool; a fork pull request stays on ubuntu-latest. The pool is
-    # a single-use container with no Docker, no sudo and no apt, so there the
-    # job runs its make target natively under setup-go (the steps guarded
-    # `runner.environment == 'self-hosted'`); on a GitHub-hosted runner it
-    # builds the toolchain image and runs the target in it, as before.
-    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}
+    # Every shard, on every event, runs on the standard hosted runner: it
+    # builds the toolchain image and runs the target in it (header: v1.46
+    # runner rule).
+    runs-on: ubuntu-latest
     timeout-minutes: 150      # CUSTOMIZE: a shard is expected to take about an hour
     needs: [preflight]   # v1.34
     if: ${{ needs.preflight.outputs.verdict == 'run' && needs.preflight.outputs.docs_only != 'true' }}
@@ -1316,6 +1381,7 @@ jobs:
       matrix:
         shard: [0, 1, 2, 3]   # CUSTOMIZE: 0..UNIT_SHARDS-1
     env:
+      GOFLAGS: -mod=readonly   # ruling 869: modules are never rewritten on the pool
       DOCS_ONLY: ${{ needs.preflight.outputs.docs_only }}
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ github.event_name == 'push' && 'main' || 'pr' }}
@@ -1340,12 +1406,6 @@ jobs:
 
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         if: runner.environment == 'github-hosted'
-
-      - name: Check out (bigdisk pool)
-        if: runner.environment == 'self-hosted'
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          persist-credentials: false
 
       - name: Validate the merge result, not the head alone
         run: .github/scripts/ci-merge-base.sh "${{ github.event_name }}" "${{ github.base_ref }}" "${{ github.event.pull_request.base.sha }}"
@@ -1373,30 +1433,6 @@ jobs:
             "make coverage-shard SHARD=$SHARD SHARDS=$UNIT_SHARDS RACE_TIMEOUT=$RACE_TIMEOUT GO_BUILD_TAGS='$GO_BUILD_TAGS' 1>&2 && cat coverage/$profile" \
             > "$profile"
 
-      # The pool has no toolchain image, so Go comes from setup-go, at the
-      # image's version (GO_VERSION above). No other tool is installed: every
-      # target this job runs needs only go, git, make and a POSIX shell.
-      - name: Set up Go (bigdisk pool)
-        if: ${{ runner.environment == 'self-hosted' && env.DOCS_ONLY != 'true' }}
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
-        with:
-          go-version: ${{ env.GO_VERSION }}
-
-      # The same target natively. It writes coverage/<profile>; the upload
-      # below reads the profile at the top level, where the hosted step puts it.
-      - name: make coverage-shard (bigdisk pool, native)
-        if: ${{ !cancelled() && runner.environment == 'self-hosted' && env.DOCS_ONLY != 'true' }}
-        # The toolchain image's module settings (Dockerfile ENV), except that
-        # modules come from proxy.golang.org instead of the image's offline cache.
-        env:
-          GOFLAGS: -mod=readonly
-          GOWORK: 'off'
-          GOPROXY: https://proxy.golang.org
-        run: |
-          profile="coverage-shard-$SHARD-of-$UNIT_SHARDS.out"
-          make coverage-shard SHARD="$SHARD" SHARDS="$UNIT_SHARDS" RACE_TIMEOUT="$RACE_TIMEOUT" GO_BUILD_TAGS="$GO_BUILD_TAGS"
-          cp "coverage/$profile" "$profile"
-
       - name: Upload the shard's coverage profile
         if: ${{ !cancelled() && (env.TOOLCHAIN_IMAGE != '' || runner.environment == 'self-hosted') && env.DOCS_ONLY != 'true' }}
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
@@ -1417,13 +1453,11 @@ jobs:
   # leaves this job skipped and CI Gate fails on it.
   coverage:
     name: Coverage gate [merged unit shards]
-    # Same-repo pull requests and pushes to main run on the self-hosted
-    # bigdisk pool; a fork pull request stays on ubuntu-latest. The pool is
-    # a single-use container with no Docker, no sudo and no apt, so there the
-    # job runs its make target natively under setup-go (the steps guarded
-    # `runner.environment == 'self-hosted'`); on a GitHub-hosted runner it
-    # builds the toolchain image and runs the target in it, as before.
-    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}
+    # v1.43: GitHub-hosted. The steps guarded `runner.environment ==
+    # 'self-hosted'` (setup-go and a native make) serve a self-hosted runner
+    # if the job is ever split onto the bigdisk pool as unit is; here the
+    # job builds the toolchain image and runs the target in it.
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     needs: [preflight, unit]   # v1.34
     if: ${{ needs.preflight.outputs.verdict == 'run' && needs.preflight.outputs.docs_only != 'true' }}
@@ -1496,16 +1530,18 @@ jobs:
         if: ${{ runner.environment == 'self-hosted' && env.DOCS_ONLY != 'true' }}
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
+          cache: ${{ runner.environment != 'self-hosted' }}
           go-version: ${{ env.GO_VERSION }}
 
       - name: make coverage-merge (the threshold; bigdisk pool, native)
         if: ${{ !cancelled() && runner.environment == 'self-hosted' && env.DOCS_ONLY != 'true' }}
         # The toolchain image's module settings (Dockerfile ENV), except that
-        # modules come from proxy.golang.org instead of the image's offline cache.
+        # modules come from the pool's module proxy (the runner's GOPROXY, the LAN
+        # proxy first) instead of the image's offline cache: a public GOPROXY here
+        # sends every module download over the WAN (ruling 862).
         env:
           GOFLAGS: -mod=readonly
           GOWORK: 'off'
-          GOPROXY: https://proxy.golang.org
         run: make coverage-merge SHARDS="$UNIT_SHARDS" COVERAGE_THRESHOLD="$COVERAGE_THRESHOLD"
 
       - name: Tear down
@@ -1518,13 +1554,11 @@ jobs:
   # one job holds them; they used to share the unsharded run's hour with it.
   unit-passes:
     name: Unit tests [checks, Go SDK, tag passes, tooling]
-    # Same-repo pull requests and pushes to main run on the self-hosted
-    # bigdisk pool; a fork pull request stays on ubuntu-latest. The pool is
-    # a single-use container with no Docker, no sudo and no apt, so there the
-    # job runs its make target natively under setup-go (the steps guarded
-    # `runner.environment == 'self-hosted'`); on a GitHub-hosted runner it
-    # builds the toolchain image and runs the target in it, as before.
-    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}
+    # v1.43: GitHub-hosted. The steps guarded `runner.environment ==
+    # 'self-hosted'` (setup-go and a native make) serve a self-hosted runner
+    # if the job is ever split onto the bigdisk pool as unit is; here the
+    # job builds the toolchain image and runs the target in it.
+    runs-on: ubuntu-latest
     timeout-minutes: 180
     needs: [preflight]   # v1.34
     if: ${{ needs.preflight.outputs.verdict == 'run' && needs.preflight.outputs.docs_only != 'true' }}
@@ -1588,21 +1622,39 @@ jobs:
         if: ${{ runner.environment == 'self-hosted' && env.DOCS_ONLY != 'true' }}
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
+          cache: ${{ runner.environment != 'self-hosted' }}
           go-version: ${{ env.GO_VERSION }}
+
+      # A per-job TMPDIR (go-xkms #2183): the runner's _work/_temp made t.TempDir
+      # Unix socket paths overflow sun_path, and runner units on one host share
+      # /tmp, so each job takes its own /tmp/XXXXXX and removes it in its last step.
+      # GOTMPDIR too: the pool sets it to _work/_temp, and Go 1.27's t.TempDir
+      # uses GOTMPDIR whenever it is set, ahead of TMPDIR.
+      - name: Per-job short TMPDIR (native)
+        if: ${{ runner.environment == 'self-hosted' }}
+        run: |
+          d="$(mktemp -d /tmp/XXXXXX)"
+          echo "TMPDIR=$d" >> "$GITHUB_ENV"
+          echo "GOTMPDIR=$d" >> "$GITHUB_ENV"
 
       - name: make coverage-passes (bigdisk pool, native)
         if: ${{ !cancelled() && runner.environment == 'self-hosted' && env.DOCS_ONLY != 'true' }}
         # The toolchain image's module settings (Dockerfile ENV), except that
-        # modules come from proxy.golang.org instead of the image's offline cache.
+        # modules come from the pool's module proxy (the runner's GOPROXY, the LAN
+        # proxy first) instead of the image's offline cache: a public GOPROXY here
+        # sends every module download over the WAN (ruling 862).
         env:
           GOFLAGS: -mod=readonly
           GOWORK: 'off'
-          GOPROXY: https://proxy.golang.org
         run: make coverage-passes GO_BUILD_TAGS="$GO_BUILD_TAGS"
 
       - name: Tear down
         if: always()
         run: rm -f "$RUNNER_TEMP/gomodauth.env"
+
+      - name: Remove the per-job TMPDIR (native)
+        if: ${{ always() && runner.environment == 'self-hosted' }}
+        run: case "$TMPDIR" in /tmp/??????) rm -rf "$TMPDIR" ;; esac
 
   # v1.27 (Company Agent m1192 (6), item 27): a repository's `make lint-gates`
   # (its own gates beside `make lint`: script, workflow, generated-code and
@@ -1621,7 +1673,7 @@ jobs:
   # and the job; the gates after it run on the next push.
   lint-gates:
     name: Lint Gates [toolchain image]
-    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk-docker"]') || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     needs: preflight     # v1.29.3; v1.30; v1.34
     # v1.26: never on a draft. v1.29.3: on a schedule run, only on the
     # schedule guard's `run`. v1.30: only on `run` on every event, and on a PR
@@ -1687,6 +1739,8 @@ jobs:
       # integration image.
       - name: Pull the toolchain image from the registry cache
         if: ${{ steps.probe.outputs.has_target == 'true' }}
+        env:
+          CI_IMAGE_REGISTRY: ${{ vars.CI_IMAGE_REGISTRY }}
         run: scripts/ci-image-cache.sh pull || true
 
       - name: Build the toolchain image
@@ -1696,6 +1750,35 @@ jobs:
           make docker-build-toolchain MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env"
           rm -f "$RUNNER_TEMP/gomodauth.env"
           echo "TOOLCHAIN_IMAGE=$(make -s toolchain-image)" >> "$GITHUB_ENV"
+
+      # #2503: on a push to main, a miss pushes the built toolchain image to
+      # CI_IMAGE_REGISTRY, logged in from the CI_IMAGE_REGISTRY_* secrets
+      # (token on stdin); with no user or token it skips the login and pushes
+      # anonymously (default DOCKER_CONFIG). No CI_IMAGE_REGISTRY: a notice
+      # and no push. Pull requests only pull.
+      - name: Push the toolchain image to the registry cache
+        if: ${{ steps.probe.outputs.has_target == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        env:
+          CI_IMAGE_REGISTRY: ${{ vars.CI_IMAGE_REGISTRY }}
+          CI_IMAGE_REGISTRY_USER: ${{ secrets.CI_IMAGE_REGISTRY_USER }}
+          CI_IMAGE_REGISTRY_TOKEN: ${{ secrets.CI_IMAGE_REGISTRY_TOKEN }}
+        run: |
+          if [ -z "$CI_IMAGE_REGISTRY" ]; then
+            echo "::notice::CI_IMAGE_REGISTRY is empty; no push to the registry cache"
+            exit 0
+          fi
+          if [ -z "$CI_IMAGE_REGISTRY_USER" ] || [ -z "$CI_IMAGE_REGISTRY_TOKEN" ]; then
+            echo "::notice::CI_IMAGE_REGISTRY_USER or CI_IMAGE_REGISTRY_TOKEN is empty; pushing to the registry cache without a login"
+            scripts/ci-image-cache.sh push || true
+            exit 0
+          fi
+          cfg=$(mktemp -d "$RUNNER_TEMP/ci-image-docker.XXXXXX")
+          trap 'rm -rf "$cfg"' EXIT
+          if ! printf '%s' "$CI_IMAGE_REGISTRY_TOKEN" | DOCKER_CONFIG=$cfg docker login "$CI_IMAGE_REGISTRY" -u "$CI_IMAGE_REGISTRY_USER" --password-stdin >/dev/null 2>&1; then
+            echo "::notice::login to the registry cache failed; no push"
+            exit 0
+          fi
+          CI_IMAGE_DOCKER_CONFIG=$cfg scripts/ci-image-cache.sh push || true
 
       # v1.22: bound this repo's cache volumes (as in the image job). It never
       # fails the job and keeps every volume a container mounts.
@@ -1720,7 +1803,7 @@ jobs:
   # first (v1.18) and keeps its own teardown last under `if: always()`.
   integration:
     name: Integration [integration image]
-    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk-docker"]') || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     # CUSTOMIZE (go-quicbaas): the suite runs on every non-docs pull request
     # and does not gate yet (row #1700, header note). v1.26: never on a
     # draft; v1.30: only on the guard's `run`. When it gates, it takes the
@@ -1814,10 +1897,9 @@ jobs:
   # nightly.yml (v1.9, devops.md §8a: the alpha regime).
   ci-gate:
     name: CI Gate
-    # CA m2475 (2h): the gate runs on the self-hosted bigdisk pool (main pushes
-    # and same-repo PRs), so it never waits in the hosted queue and always
-    # reports; it needs no Docker. Fork PRs stay on ubuntu-latest.
-    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}
+    # v1.43: GitHub-hosted, like every job but the unit split; it needs no
+    # Docker.
+    runs-on: ubuntu-latest
     # v1.29.3: on a schedule run the schedule guard decides; every other
     # event runs the gate.
     if: ${{ always() && (github.event_name != 'schedule' || needs.preflight.outputs.verdict != 'busy') }}

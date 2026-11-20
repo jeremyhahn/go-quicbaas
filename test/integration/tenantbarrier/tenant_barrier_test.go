@@ -438,7 +438,7 @@ func TestTenantBarrier_Shamir(t *testing.T) {
 // Mechanism: helpers.AuthTenantAdmin mints an ephemeral ECDSA P-256 client
 // certificate carrying a tenant-scoped SPIFFE URI SAN, enrolls a tenant-admin
 // user via the PIV invite flow, assigns the tenant_admin admin role, then calls
-// POST /api/v1/auth/login/piv to obtain a tenant-scoped bearer.
+// POST /api/v1/iam/login/piv to obtain a tenant-scoped bearer.
 func TestTenantBarrier_CrossTenantDenied(t *testing.T) {
 	adminToken := adminBearer(t)
 	ts := fmt.Sprintf("%d", time.Now().UnixNano())
