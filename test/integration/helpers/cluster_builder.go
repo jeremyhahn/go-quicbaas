@@ -19,13 +19,26 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
+	"testing"
 	"time"
 
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
 )
 
+// nodeStatusTimeout bounds one node's Cluster().Status call in FindLeader, so
+// a node that does not answer cannot use up the time of the nodes after it.
+// A caller polling FindLeader gives each poll this bound times the number
+// of nodes.
+const nodeStatusTimeout = 5 * time.Second
+
 // ClusterBuilder provides a fluent API for building test cluster configurations.
 type ClusterBuilder struct {
+	// authToken, when set, is the bearer every node client sends in place
+	// of the one bearerSource supplies.
+	authToken string
+	// bearerSource supplies the bearer Build sends when authToken is unset.
+	bearerSource   func(ctx context.Context) (string, error)
 	endpoints      []string
 	timeout        time.Duration
 	retries        int
@@ -34,9 +47,14 @@ type ClusterBuilder struct {
 	healthInterval time.Duration
 }
 
-// NewClusterBuilder creates a new ClusterBuilder with default values.
+// NewClusterBuilder creates a new ClusterBuilder with default values. Its
+// clients carry the tenant operator's bearer for the first REST endpoint's
+// cluster unless WithAuthToken sets another.
 func NewClusterBuilder() *ClusterBuilder {
 	return &ClusterBuilder{
+		bearerSource: func(ctx context.Context) (string, error) {
+			return tenantOperatorAuth.bearer(ctx, GetRESTEndpoints()[0])
+		},
 		endpoints:      GetClusterEndpoints(),
 		timeout:        30 * time.Second,
 		retries:        3,
@@ -64,6 +82,20 @@ func (cb *ClusterBuilder) WithRetries(retries int) *ClusterBuilder {
 	return cb
 }
 
+// WithAuthToken has every node client send token as its bearer, overriding
+// the tenant operator's bearer Build sends by default.
+func (cb *ClusterBuilder) WithAuthToken(token string) *ClusterBuilder {
+	cb.authToken = token
+	return cb
+}
+
+// TenantOperatorBearer returns the tenant operator's bearer for the first
+// REST endpoint's cluster, as IsStandaloneMode sends it, or fails the test.
+func TenantOperatorBearer(t *testing.T) string {
+	t.Helper()
+	return tenantOperatorAuth.mustBearer(t, GetRESTEndpoints()[0])
+}
+
 // WithHealthCheck sets health check parameters.
 func (cb *ClusterBuilder) WithHealthCheck(timeout, interval time.Duration) *ClusterBuilder {
 	cb.healthTimeout = timeout
@@ -71,8 +103,28 @@ func (cb *ClusterBuilder) WithHealthCheck(timeout, interval time.Duration) *Clus
 	return cb
 }
 
-// Build creates a TestCluster with the configured settings.
+// resolveAuthToken returns the bearer Build sends: the one WithAuthToken set,
+// or else the one bearerSource supplies.
+func (cb *ClusterBuilder) resolveAuthToken(ctx context.Context) (string, error) {
+	if cb.authToken != "" {
+		return cb.authToken, nil
+	}
+	token, err := cb.bearerSource(ctx)
+	if err != nil {
+		return "", fmt.Errorf("tenant operator bearer: %w", err)
+	}
+	return token, nil
+}
+
+// Build creates a TestCluster with the configured settings. Every node client
+// carries the bearer resolveAuthToken returns; if it cannot get one, Build
+// fails before it connects to any node.
 func (cb *ClusterBuilder) Build(ctx context.Context) (*TestCluster, error) {
+	token, err := cb.resolveAuthToken(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	cluster := &TestCluster{
 		Endpoints:      cb.endpoints,
 		Nodes:          make([]*TestNode, len(cb.endpoints)),
@@ -82,9 +134,11 @@ func (cb *ClusterBuilder) Build(ctx context.Context) (*TestCluster, error) {
 		healthInterval: cb.healthInterval,
 	}
 
+	opts := []quicbaas.Option{quicbaas.WithAuthToken(token)}
+
 	// Connect to all nodes
 	for i, endpoint := range cb.endpoints {
-		client, err := connectToNode(ctx, endpoint, cb.timeout, cb.retries, cb.retryBackoff)
+		client, err := connectToNode(ctx, endpoint, cb.timeout, cb.retries, cb.retryBackoff, opts...)
 		if err != nil {
 			// Clean up any successful connections
 			cluster.Close()
@@ -142,57 +196,84 @@ func (tc *TestCluster) Close() error {
 // It queries Members from cluster status to find which node is the leader,
 // then returns that node and its client.
 func (tc *TestCluster) FindLeader(ctx context.Context) (*TestNode, quicbaas.Client, error) {
+	// reasons records, for each node, why it did not name a leader, so the
+	// final error says what each node answered instead of only "no leader".
+	reasons := make([]string, 0, len(tc.Clients))
 	for i, client := range tc.Clients {
-		status, err := client.Cluster().Status(ctx)
+		name := fmt.Sprintf("node%d", i+1)
+		if i < len(tc.Nodes) && tc.Nodes[i] != nil {
+			name = fmt.Sprintf("node%d", tc.Nodes[i].ID)
+		}
+
+		// Each node gets its own bound, so one that does not answer leaves
+		// the rest of ctx to the nodes after it.
+		nodeCtx, cancel := context.WithTimeout(ctx, nodeStatusTimeout)
+		status, err := client.Cluster().Status(nodeCtx)
+		cancel()
 		if err != nil {
+			reasons = append(reasons, fmt.Sprintf("%s: %v", name, err))
+			continue
+		}
+		if status == nil {
+			reasons = append(reasons, fmt.Sprintf("%s: nil status", name))
 			continue
 		}
 
 		// Check Members for leader information
+		leaderMarked := false
 		for _, member := range status.Members {
-			if member.IsLeader {
-				// Parse member ID to uint64
-				memberID, err := strconv.ParseUint(member.ID, 10, 64)
-				if err != nil {
-					continue
-				}
+			if !member.IsLeader {
+				continue
+			}
+			leaderMarked = true
+			// Parse member ID to uint64
+			memberID, err := strconv.ParseUint(member.ID, 10, 64)
+			if err != nil {
+				reasons = append(reasons, fmt.Sprintf("%s: leader member ID %q: %v", name, member.ID, err))
+				continue
+			}
 
-				// Find the matching node and client
-				for j, n := range tc.Nodes {
-					if n.ID == memberID {
-						tc.Nodes[j].IsLeader = true
-						return tc.Nodes[j], tc.Clients[j], nil
-					}
+			// Find the matching node and client
+			for j, n := range tc.Nodes {
+				if n.ID == memberID {
+					tc.Nodes[j].IsLeader = true
+					return tc.Nodes[j], tc.Clients[j], nil
 				}
 			}
+			reasons = append(reasons, fmt.Sprintf("%s: leader member %d is not a test node", name, memberID))
 		}
 
 		// Fallback: check if LeaderID is set directly on the response
 		if status.LeaderID != "" {
 			leaderID, err := strconv.ParseUint(status.LeaderID, 10, 64)
-			if err == nil {
-				for j, n := range tc.Nodes {
-					if n.ID == leaderID {
-						tc.Nodes[j].IsLeader = true
-						return tc.Nodes[j], tc.Clients[j], nil
-					}
+			if err != nil {
+				reasons = append(reasons, fmt.Sprintf("%s: leader ID %q: %v", name, status.LeaderID, err))
+				continue
+			}
+			for j, n := range tc.Nodes {
+				if n.ID == leaderID {
+					tc.Nodes[j].IsLeader = true
+					return tc.Nodes[j], tc.Clients[j], nil
 				}
 			}
+			reasons = append(reasons, fmt.Sprintf("%s: leader ID %d is not a test node", name, leaderID))
+			continue
 		}
 
-		// If we got a valid status but no leader info, continue to next node
-		if len(status.Members) == 0 {
-			_ = i // avoid unused variable
-			continue
+		switch {
+		case len(status.Members) == 0:
+			reasons = append(reasons, fmt.Sprintf("%s: no members", name))
+		case !leaderMarked:
+			reasons = append(reasons, fmt.Sprintf("%s: no member marked leader (%d members)", name, len(status.Members)))
 		}
 	}
 
-	return nil, nil, fmt.Errorf("no leader found in cluster")
+	return nil, nil, fmt.Errorf("no leader found in cluster: %s", strings.Join(reasons, "; "))
 }
 
 // connectToNode establishes a connection to a node using the SDK. The client
-// carries no credential of its own: a caller whose calls are gated passes
-// quicbaas.WithAuthToken with one of this package's principals in opts.
+// carries no credential of its own: the caller passes quicbaas.WithAuthToken
+// in opts, as Build does with the bearer it resolves.
 func connectToNode(ctx context.Context, endpoint string, timeout time.Duration, retries int, retryBackoff time.Duration, opts ...quicbaas.Option) (quicbaas.Client, error) {
 	var client quicbaas.Client
 	var err error

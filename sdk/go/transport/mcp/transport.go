@@ -221,8 +221,10 @@ func (t *Transport) requestWithRetry(ctx context.Context, service, method string
 		if attempt > 0 {
 			select {
 			case <-ctx.Done():
+				// Name the attempt that led to this wait: without it the
+				// caller sees only the cancellation, not why it retried.
 				return nil, errors.Wrap(ctx.Err(), errors.CodeCanceled, "mcp.Request",
-					"request canceled during retry")
+					canceledDuringRetryMessage(lastErr))
 			case <-time.After(backoff):
 				backoff = minDuration(backoff*2, t.cfg.MaxRetryBackoff)
 			}
@@ -235,12 +237,24 @@ func (t *Transport) requestWithRetry(ctx context.Context, service, method string
 
 		lastErr = err
 
-		if !errors.IsRetryable(err) {
+		// A failure after the caller's context is done cannot succeed on
+		// retry; return it as classified (canceled or timeout) instead of
+		// masking a deadline as "canceled during retry".
+		if !errors.IsRetryable(err) || ctx.Err() != nil {
 			return nil, err
 		}
 	}
 
 	return nil, lastErr
+}
+
+// canceledDuringRetryMessage is the message of the error returned when the
+// context ends while waiting to retry; it names the last attempt's error.
+func canceledDuringRetryMessage(lastErr error) string {
+	if lastErr == nil {
+		return "request canceled during retry"
+	}
+	return "request canceled during retry; last attempt: " + lastErr.Error()
 }
 
 // doRequest executes a single MCP request via JSON-RPC.
@@ -887,11 +901,11 @@ func (t *Transport) connect(ctx context.Context) error {
 	}
 
 	if err := mcpClient.Start(ctx); err != nil {
-		return &InitializationError{
+		return t.classifyInitError(&InitializationError{
 			Op:      "mcp.initialize",
 			Message: "failed to start MCP session",
 			Err:     err,
-		}
+		})
 	}
 
 	initReq := mcp.InitializeRequest{
@@ -905,11 +919,11 @@ func (t *Transport) connect(ctx context.Context) error {
 	result, err := mcpClient.Initialize(ctx, initReq)
 	if err != nil {
 		_ = mcpClient.Close()
-		return &InitializationError{
+		return t.classifyInitError(&InitializationError{
 			Op:      "mcp.initialize",
 			Message: "failed to initialize MCP session",
 			Err:     err,
-		}
+		})
 	}
 
 	t.serverInfo = &serverInfo{Name: result.ServerInfo.Name, Version: result.ServerInfo.Version}
@@ -917,6 +931,19 @@ func (t *Transport) connect(ctx context.Context) error {
 	t.lastHealth.Store(time.Now().UnixNano())
 
 	return nil
+}
+
+// classifyInitError returns a session-setup failure caused by the caller's
+// context being canceled or past its deadline as a CodeCanceled or
+// CodeTimeout QBError, the way convertHTTPError does for tool calls, so
+// errors.IsCanceled and errors.IsTimeout hold however far the request got.
+// The QBError wraps initErr, so errors.As still finds the
+// *InitializationError. Any other failure is returned unchanged.
+func (t *Transport) classifyInitError(initErr *InitializationError) error {
+	if stderrors.Is(initErr.Err, context.Canceled) || stderrors.Is(initErr.Err, context.DeadlineExceeded) {
+		return t.convertHTTPError(initErr, initErr.Op)
+	}
+	return initErr
 }
 
 // ensureRawTransport lazily constructs and starts the independent MCP
