@@ -235,7 +235,10 @@ func (t *Transport) requestWithRetry(ctx context.Context, service, method string
 
 		lastErr = err
 
-		if !errors.IsRetryable(err) {
+		// A failure after the caller's context is done cannot succeed on
+		// retry; return it as classified (canceled or timeout) instead of
+		// masking a deadline as "canceled during retry".
+		if !errors.IsRetryable(err) || ctx.Err() != nil {
 			return nil, err
 		}
 	}
@@ -853,11 +856,11 @@ func (t *Transport) connect(ctx context.Context) error {
 	}
 
 	if err := mcpClient.Start(ctx); err != nil {
-		return &InitializationError{
+		return t.classifyInitError(&InitializationError{
 			Op:      "mcp.initialize",
 			Message: "failed to start MCP session",
 			Err:     err,
-		}
+		})
 	}
 
 	initReq := mcp.InitializeRequest{
@@ -871,11 +874,11 @@ func (t *Transport) connect(ctx context.Context) error {
 	result, err := mcpClient.Initialize(ctx, initReq)
 	if err != nil {
 		_ = mcpClient.Close()
-		return &InitializationError{
+		return t.classifyInitError(&InitializationError{
 			Op:      "mcp.initialize",
 			Message: "failed to initialize MCP session",
 			Err:     err,
-		}
+		})
 	}
 
 	t.serverInfo = &serverInfo{Name: result.ServerInfo.Name, Version: result.ServerInfo.Version}
@@ -883,6 +886,19 @@ func (t *Transport) connect(ctx context.Context) error {
 	t.lastHealth.Store(time.Now().UnixNano())
 
 	return nil
+}
+
+// classifyInitError returns a session-setup failure caused by the caller's
+// context being canceled or past its deadline as a CodeCanceled or
+// CodeTimeout QBError, the way convertHTTPError does for tool calls, so
+// errors.IsCanceled and errors.IsTimeout hold however far the request got.
+// The QBError wraps initErr, so errors.As still finds the
+// *InitializationError. Any other failure is returned unchanged.
+func (t *Transport) classifyInitError(initErr *InitializationError) error {
+	if stderrors.Is(initErr.Err, context.Canceled) || stderrors.Is(initErr.Err, context.DeadlineExceeded) {
+		return t.convertHTTPError(initErr, initErr.Op)
+	}
+	return initErr
 }
 
 // ensureRawTransport lazily constructs and starts the independent MCP

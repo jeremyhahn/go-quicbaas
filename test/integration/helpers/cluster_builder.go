@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
@@ -142,52 +143,75 @@ func (tc *TestCluster) Close() error {
 // It queries Members from cluster status to find which node is the leader,
 // then returns that node and its client.
 func (tc *TestCluster) FindLeader(ctx context.Context) (*TestNode, quicbaas.Client, error) {
+	// reasons records, for each node, why it did not name a leader, so the
+	// final error says what each node answered instead of only "no leader".
+	reasons := make([]string, 0, len(tc.Clients))
 	for i, client := range tc.Clients {
+		name := fmt.Sprintf("node%d", i+1)
+		if i < len(tc.Nodes) && tc.Nodes[i] != nil {
+			name = fmt.Sprintf("node%d", tc.Nodes[i].ID)
+		}
+
 		status, err := client.Cluster().Status(ctx)
 		if err != nil {
+			reasons = append(reasons, fmt.Sprintf("%s: %v", name, err))
+			continue
+		}
+		if status == nil {
+			reasons = append(reasons, fmt.Sprintf("%s: nil status", name))
 			continue
 		}
 
 		// Check Members for leader information
+		leaderMarked := false
 		for _, member := range status.Members {
-			if member.IsLeader {
-				// Parse member ID to uint64
-				memberID, err := strconv.ParseUint(member.ID, 10, 64)
-				if err != nil {
-					continue
-				}
+			if !member.IsLeader {
+				continue
+			}
+			leaderMarked = true
+			// Parse member ID to uint64
+			memberID, err := strconv.ParseUint(member.ID, 10, 64)
+			if err != nil {
+				reasons = append(reasons, fmt.Sprintf("%s: leader member ID %q: %v", name, member.ID, err))
+				continue
+			}
 
-				// Find the matching node and client
-				for j, n := range tc.Nodes {
-					if n.ID == memberID {
-						tc.Nodes[j].IsLeader = true
-						return tc.Nodes[j], tc.Clients[j], nil
-					}
+			// Find the matching node and client
+			for j, n := range tc.Nodes {
+				if n.ID == memberID {
+					tc.Nodes[j].IsLeader = true
+					return tc.Nodes[j], tc.Clients[j], nil
 				}
 			}
+			reasons = append(reasons, fmt.Sprintf("%s: leader member %d is not a test node", name, memberID))
 		}
 
 		// Fallback: check if LeaderID is set directly on the response
 		if status.LeaderID != "" {
 			leaderID, err := strconv.ParseUint(status.LeaderID, 10, 64)
-			if err == nil {
-				for j, n := range tc.Nodes {
-					if n.ID == leaderID {
-						tc.Nodes[j].IsLeader = true
-						return tc.Nodes[j], tc.Clients[j], nil
-					}
+			if err != nil {
+				reasons = append(reasons, fmt.Sprintf("%s: leader ID %q: %v", name, status.LeaderID, err))
+				continue
+			}
+			for j, n := range tc.Nodes {
+				if n.ID == leaderID {
+					tc.Nodes[j].IsLeader = true
+					return tc.Nodes[j], tc.Clients[j], nil
 				}
 			}
+			reasons = append(reasons, fmt.Sprintf("%s: leader ID %d is not a test node", name, leaderID))
+			continue
 		}
 
-		// If we got a valid status but no leader info, continue to next node
-		if len(status.Members) == 0 {
-			_ = i // avoid unused variable
-			continue
+		switch {
+		case len(status.Members) == 0:
+			reasons = append(reasons, fmt.Sprintf("%s: no members", name))
+		case !leaderMarked:
+			reasons = append(reasons, fmt.Sprintf("%s: no member marked leader (%d members)", name, len(status.Members)))
 		}
 	}
 
-	return nil, nil, fmt.Errorf("no leader found in cluster")
+	return nil, nil, fmt.Errorf("no leader found in cluster: %s", strings.Join(reasons, "; "))
 }
 
 // connectToNode establishes a connection to a node using the SDK. The client
