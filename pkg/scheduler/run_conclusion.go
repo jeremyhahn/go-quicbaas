@@ -82,7 +82,11 @@ func (s *SchedulerEngine) concludeOwnRun(ctx context.Context, job *Job) bool {
 	if !ok {
 		return true
 	}
-	run := v.(RunConclusion)
+	run, ok := v.(RunConclusion)
+	if !ok {
+		s.logError("Job %d: started run is a %T, not a RunConclusion; its outcome is dropped", job.ID, v)
+		return false
+	}
 	won, err := s.concluder.ConcludeRun(ctx, &run)
 	if err != nil {
 		s.storageErrors.Add(1)

@@ -1440,10 +1440,12 @@ func (s *SchedulerEngine) executeJob(ctx context.Context, job *Job, claimedFirin
 		return
 	}
 	s.noteRunStarted(job)
+	var waiter *remoteWaiter
 	if remote {
 		// A remote worker runs this job: the execution waits for the
 		// result it reports (see remote_handler.go).
-		handler = s.remoteHandler(s.openRemoteRun(job))
+		waiter = s.openRemoteRun(job)
+		handler = s.remoteHandler(waiter)
 	}
 	lock.Unlock()
 
@@ -1500,7 +1502,9 @@ func (s *SchedulerEngine) executeJob(ctx context.Context, job *Job, claimedFirin
 		result *JobResult
 		err    error
 	}) {
-		if execCtx.Err() == context.DeadlineExceeded {
+		// A remote result accepted before the deadline is the run's
+		// outcome, even when it is read after the deadline passed.
+		if execCtx.Err() == context.DeadlineExceeded && (waiter == nil || !waiter.delivered()) {
 			s.handleJobTimeout(ctx, job, exec, timeout)
 			return
 		}
@@ -1510,6 +1514,15 @@ func (s *SchedulerEngine) executeJob(ctx context.Context, job *Job, claimedFirin
 	// Wait for result or timeout
 	select {
 	case <-execCtx.Done():
+		// End a remote run's wait here, before any outcome is recorded:
+		// left to the handler goroutine, a worker's result could still be
+		// accepted after the timeout was recorded, and then be lost. When
+		// close loses, the worker's result was accepted first and is the
+		// outcome; the handler returns it at once.
+		if waiter != nil && !waiter.close() {
+			recordResult(<-resultCh)
+			return
+		}
 		switch execCtx.Err() {
 		case context.DeadlineExceeded:
 			s.handleJobTimeout(ctx, job, exec, timeout)

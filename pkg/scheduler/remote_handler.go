@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"sync"
@@ -96,9 +97,10 @@ type remoteOutcome struct {
 type remoteWaiter struct {
 	ref RemoteRunRef
 
-	mu      sync.Mutex
-	closed  bool
-	outcome chan remoteOutcome // buffered 1
+	mu       sync.Mutex
+	closed   bool
+	accepted bool               // a result was delivered (set with closed)
+	outcome  chan remoteOutcome // buffered 1
 }
 
 // deliver hands the waiting execution its result, reporting false when the
@@ -110,6 +112,7 @@ func (w *remoteWaiter) deliver(o remoteOutcome) bool {
 		return false
 	}
 	w.closed = true
+	w.accepted = true
 	w.outcome <- o
 	return true
 }
@@ -123,6 +126,14 @@ func (w *remoteWaiter) close() bool {
 	}
 	w.closed = true
 	return true
+}
+
+// delivered reports whether the wait ended with a result rather than by
+// close.
+func (w *remoteWaiter) delivered() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.accepted
 }
 
 func runRefOf(job *Job) RemoteRunRef {
@@ -149,6 +160,9 @@ func (s *SchedulerEngine) openRemoteRun(job *Job) *remoteWaiter {
 // remoteHandler is the JobHandler of a remote run: it waits for the worker's
 // result until the execution's context ends (the job's timeout, or the
 // engine stopping), and then returns what the existing outcome paths record.
+// executeJob also ends the wait itself, before it records a timeout or an
+// interruption, so a result is never accepted after the run's outcome was
+// decided; this goroutine's own close is then a no-op.
 func (s *SchedulerEngine) remoteHandler(w *remoteWaiter) JobHandler {
 	return func(ctx context.Context, _ *Job) (*JobResult, error) {
 		defer s.remoteRuns.CompareAndDelete(w.ref.JobID, w)
@@ -203,7 +217,10 @@ func (s *SchedulerEngine) ListRemoteRuns(ctx context.Context, tenantID string, h
 func (s *SchedulerEngine) CompleteRemoteRun(ctx context.Context, ref RemoteRunRef, result *JobResult, runErr error) error {
 	outcome := remoteOutcome{result: result, err: runErr}
 	if v, ok := s.remoteRuns.Load(ref.JobID); ok {
-		w := v.(*remoteWaiter)
+		w, ok := v.(*remoteWaiter)
+		if !ok {
+			return fmt.Errorf("scheduler: open remote run of job %d is a %T, not a *remoteWaiter", ref.JobID, v)
+		}
 		if w.ref.same(ref) {
 			if w.deliver(outcome) {
 				return nil
@@ -240,7 +257,12 @@ func (s *SchedulerEngine) completeRemoteRunElsewhere(ctx context.Context, ref Re
 	lock := s.jobLock(job.ID)
 	lock.Lock()
 	if v, ok := s.startedRuns.Load(job.ID); ok {
-		if started := v.(RunConclusion); started.Firing.Equal(ref.Firing) && started.StartedAt.Equal(ref.StartedAt) {
+		started, ok := v.(RunConclusion)
+		if !ok {
+			lock.Unlock()
+			return fmt.Errorf("scheduler: started run of job %d is a %T, not a RunConclusion", job.ID, v)
+		}
+		if started.Firing.Equal(ref.Firing) && started.StartedAt.Equal(ref.StartedAt) {
 			lock.Unlock()
 			return RemoteRunNotOpenError{Ref: ref, Reason: "the run already ended"}
 		}
