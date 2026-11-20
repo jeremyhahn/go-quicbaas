@@ -26,7 +26,6 @@ import (
 	qrdbgrpc "github.com/jeremyhahn/go-qrdb/pkg/api/grpc"
 	qrdbrest "github.com/jeremyhahn/go-qrdb/pkg/api/rest"
 	qrdbserver "github.com/jeremyhahn/go-qrdb/pkg/server"
-	qrdbservice "github.com/jeremyhahn/go-qrdb/pkg/service"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 	xkmslib "github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -1393,42 +1392,10 @@ func buildRaftMTLSConfig(cfg *config.Config) (*qrdbnode.RaftMTLSConfig, error) {
 func newNodeBackedShardedClient(node *qrdbnode.Node) *ShardedClient {
 	embeddedCfg := &config.QRDBConfig{Transport: config.QRDBTransportEmbedded}
 	return &ShardedClient{
-		factory:         newTransportFactory(embeddedCfg, nil, nil),
-		nodeClient:      node.Client(),
-		nodeOwned:       true,
-		serviceRegistry: nodeServiceRegistryProvider(node),
+		factory:    newTransportFactory(embeddedCfg, nil, nil),
+		nodeClient: node.Client(),
+		nodeOwned:  true,
 	}
-}
-
-// nodeServiceRegistryProvider returns a provider of the node's
-// tenant/database service registry. The provider resolves node.Server() on
-// every call, so a node that is sealed when the client is built (no server
-// yet) yields a registry once it is unsealed; until then it returns nil and
-// the kv service fails closed instead of using the shared client.
-func nodeServiceRegistryProvider(node *qrdbnode.Node) func() qrdbservice.Registry {
-	return func() qrdbservice.Registry {
-		if node == nil {
-			return nil
-		}
-		srv := node.Server()
-		if srv == nil {
-			return nil
-		}
-		reg := srv.ServiceRegistry()
-		if reg == nil {
-			return nil
-		}
-		return reg
-	}
-}
-
-// ServiceRegistryProvider returns the qrdb service registry provider held by
-// a node-backed client, or nil when the client is not node-backed.
-func (c *ShardedClient) ServiceRegistryProvider() func() qrdbservice.Registry {
-	if c == nil {
-		return nil
-	}
-	return c.serviceRegistry
 }
 
 // standaloneQRDBDataDir returns the effective data directory that the

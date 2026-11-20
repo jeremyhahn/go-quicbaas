@@ -35,7 +35,6 @@ import (
 	"crypto/x509"
 	"time"
 
-	qrdbservice "github.com/jeremyhahn/go-qrdb/pkg/service"
 	qrdbsecret "github.com/jeremyhahn/go-qrdb/sdk/go/secret"
 	xkmsssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 
@@ -1764,15 +1763,6 @@ type ServiceBuilder interface {
 	// WithQRDBClient sets the qrdb SDK client for core KV operations
 	WithQRDBClient(client interface{}) ServiceBuilder
 
-	// WithQRDBServiceRegistry routes the kv service's Put, Get, Delete and
-	// List through go-qrdb's tenant/database service registry, which picks
-	// the tenant's isolation backend and checks its barrier and quotas. The
-	// provider is called per operation until it returns a non-nil registry,
-	// which is then cached; while it returns nil (the node is sealed) those
-	// operations fail with ErrUnavailable and never fall back to the shared
-	// qrdb client. A nil provider leaves them on the shared qrdb client.
-	WithQRDBServiceRegistry(provider func() qrdbservice.Registry) ServiceBuilder
-
 	// WithOllamaService sets the Ollama AI service for model inference
 	WithOllamaService(ollamaService OllamaService) ServiceBuilder
 
@@ -1831,7 +1821,6 @@ type serviceBuilder struct {
 	messagingService          messaging.Service
 	embeddingManager          interfaces.EmbeddingManager
 	qrdbClient                interface{}
-	qrdbServiceRegistry       func() qrdbservice.Registry
 	ollamaService             OllamaService
 	sshClient                 xkmsssh.Client
 }
@@ -1978,11 +1967,6 @@ func (b *serviceBuilder) WithEmbeddingManager(embeddingManager interfaces.Embedd
 
 func (b *serviceBuilder) WithQRDBClient(client interface{}) ServiceBuilder {
 	b.qrdbClient = client
-	return b
-}
-
-func (b *serviceBuilder) WithQRDBServiceRegistry(provider func() qrdbservice.Registry) ServiceBuilder {
-	b.qrdbServiceRegistry = provider
 	return b
 }
 

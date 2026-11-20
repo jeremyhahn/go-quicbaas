@@ -17,7 +17,6 @@ import (
 	"sync"
 	"sync/atomic"
 
-	qrdbservice "github.com/jeremyhahn/go-qrdb/pkg/service"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
@@ -92,10 +91,6 @@ type ShardedClient struct {
 	// nodeOwned marks that nodeClient is owned by the qrdb node, not this
 	// ShardedClient — Close must not call nodeClient.Close().
 	nodeOwned bool
-	// serviceRegistry provides the qrdb node server's tenant/database service
-	// registry, resolved per call (nil while the node has no running
-	// server). Set on every node-backed client; nil otherwise.
-	serviceRegistry func() qrdbservice.Registry
 
 	closed atomic.Bool
 }
