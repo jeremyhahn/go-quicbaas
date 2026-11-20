@@ -330,6 +330,12 @@ func (s *securityService) Barrier() (QRDBBarrierClient, error) {
 
 // Ceremony returns the QRDB CeremonyClient. The QRDB transport is
 // lazily initialized on first call (delegated to client.qrdbClient).
+//
+// Over MCP, Ceremony, and likewise Credentials, SealStore, TenantMgmt,
+// CustodianGroup and Share, still use go-qrdb's MCP sub-client, which carries
+// no platform bearer, so a node whose /mcp gate requires one refuses its
+// initialize with 401. Only Barrier rides the SDK's own MCP transport; moving
+// the rest is tracked on go-quicbaas#2556.
 func (s *securityService) Ceremony() (QRDBCeremonyClient, error) {
 	qrdbClient, err := s.c.qrdbClient()
 	if err != nil {
