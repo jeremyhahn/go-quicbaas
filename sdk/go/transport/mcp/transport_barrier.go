@@ -489,13 +489,14 @@ func (t *Transport) RecoveryShareClaimComplete(ctx context.Context, req *qrdbtra
 
 // BarrierEnableEncryption migrates an unencrypted barrier to a keyed strategy
 // through qrdb's qrdb_barrier_enable_encryption tool. An empty TenantID targets
-// the system barrier. The migration runs asynchronously on the node; poll
-// BarrierStatus for completion.
+// the system barrier; a set TenantID is sent as tenant_id to the same tool,
+// which serves both scopes. The node starts the migration in the background
+// and answers migration_started after its acceptance window, so the migration
+// outlives this request; poll BarrierStatus for completion.
 func (t *Transport) BarrierEnableEncryption(ctx context.Context, req *qrdbtransport.BarrierEnableEncryptionRequest) (*qrdbtransport.BarrierEnableEncryptionResponse, error) {
 	if req == nil {
 		return nil, errors.NewInvalidInput("mcp.BarrierEnableEncryption", "request is required")
 	}
-	tool := "qrdb_barrier_enable_encryption"
 	args := map[string]interface{}{
 		"strategy":         req.Strategy,
 		"mechanism":        req.Mechanism,
@@ -504,13 +505,13 @@ func (t *Transport) BarrierEnableEncryption(ctx context.Context, req *qrdbtransp
 		"shamir_threshold": req.ShamirThreshold,
 		"shamir_total":     req.ShamirTotal,
 	}
-	// The system tool ignores tenant_id, so a tenant request must go to the
-	// tenant tool or it would migrate the system barrier.
+	// One tool serves both scopes: tenant_id names the tenant barrier. The
+	// node's native handler runs the migration asynchronously, so a long
+	// tenant migration is not tied to this request's context.
 	if req.TenantID != "" {
-		tool = "qrdb_tenant_barrier_enable_encryption"
 		args["tenant_id"] = req.TenantID
 	}
-	raw, err := t.callBarrier(ctx, tool, args)
+	raw, err := t.callBarrier(ctx, "qrdb_barrier_enable_encryption", args)
 	if err != nil {
 		return nil, err
 	}

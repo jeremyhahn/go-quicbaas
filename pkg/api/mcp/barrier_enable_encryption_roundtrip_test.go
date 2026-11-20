@@ -85,7 +85,7 @@ func TestBarrierEnableEncryptionRoundTrip_SystemRequestReachesSystemTool(t *test
 	assert.Equal(t, []byte("correct horse battery staple"), fake.gotEnableEncSecret)
 }
 
-func TestBarrierEnableEncryptionRoundTrip_TenantRequestReachesTenantToolOnly(t *testing.T) {
+func TestBarrierEnableEncryptionRoundTrip_TenantRequestCarriesTenantID(t *testing.T) {
 	fake := &fakeBarrierService{}
 	tr, reached := enableEncryptionRoundTrip(t, fake)
 
@@ -98,9 +98,9 @@ func TestBarrierEnableEncryptionRoundTrip_TenantRequestReachesTenantToolOnly(t *
 	require.NoError(t, err)
 
 	assert.Equal(t, "encryption enabled", resp.Status)
-	assert.Equal(t, []string{tenantEnableEncryptionTool}, reached(),
-		"a tenant request must never reach the system tool")
-	assert.Equal(t, "t1", fake.gotEnableEncTenantID)
+	assert.Equal(t, []string{systemEnableEncryptionTool}, reached(),
+		"a tenant request goes to the one enable-encryption tool the node serves asynchronously")
+	assert.Equal(t, "t1", fake.gotEnableEncTenantID, "the tool must migrate the tenant barrier named by tenant_id")
 	assert.Equal(t, qrdbsdk.StrategyID("shamir"), fake.gotEnableEncOpts.TargetStrategy)
 	assert.Equal(t, qrdbsdk.MechanismSwap, fake.gotEnableEncOpts.Mechanism)
 	assert.Equal(t, qrdbsdk.AvailabilityOnline, fake.gotEnableEncOpts.Availability)

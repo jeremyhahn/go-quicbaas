@@ -370,10 +370,14 @@ func (r *ToolRegistry) registerBarrierTools() {
 
 	r.addTool(ToolDefinition{
 		Name:        "qrdb_barrier_enable_encryption",
-		Description: "Migrate the system barrier from the none strategy to a keyed at-rest encryption strategy. This is a one-way, in-place migration that requires the embedded qrdb node.",
+		Description: "Migrate the system barrier, or the tenant barrier named by tenant_id, from the none strategy to a keyed at-rest encryption strategy. This is a one-way, in-place migration that requires the embedded qrdb node.",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Tenant whose barrier to migrate. Omit to migrate the system barrier.",
+				},
 				"strategy": map[string]interface{}{
 					"type":        "string",
 					"description": "Target sealing strategy: passphrase or shamir.",
@@ -843,11 +847,17 @@ func executeBarrierEnableEncryption(ctx context.Context, svc service.BarrierServ
 		return nil, err
 	}
 	defer opts.Credentials.Secret.Destroy()
-	// tenantID="" routes to the system barrier scope inside EnableEncryption.
-	if err := svc.EnableEncryption(ctx, "", opts); err != nil {
+	// tenant_id names a tenant barrier, as on go-qrdb's native tool; an empty
+	// tenantID routes to the system barrier scope inside EnableEncryption.
+	tenantID := getString(args, "tenant_id")
+	if err := svc.EnableEncryption(ctx, tenantID, opts); err != nil {
 		return nil, err
 	}
-	return map[string]interface{}{"status": "encryption enabled"}, nil
+	result := map[string]interface{}{"status": "encryption enabled"}
+	if tenantID != "" {
+		result["tenant_id"] = tenantID
+	}
+	return result, nil
 }
 
 // executeBarrierTenantEnableEncryption implements

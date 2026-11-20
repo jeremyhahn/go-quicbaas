@@ -67,7 +67,7 @@ func TestBarrierEnableEncryption_EncodesQRDBToolArguments(t *testing.T) {
 				ShamirThreshold: 2,
 				ShamirTotal:     3,
 			},
-			wantTool: "qrdb_tenant_barrier_enable_encryption",
+			wantTool: "qrdb_barrier_enable_encryption",
 			noArgs:   []string{"target_strategy"},
 			wantArgs: map[string]interface{}{
 				"tenant_id":        "acme",
