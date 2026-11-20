@@ -147,6 +147,23 @@ func TestToolErrorCode(t *testing.T) {
 		{name: "wrong shape", structured: map[string]interface{}{"code": "forbidden"}, want: JSONRPCInternalError},
 		{name: "not an object", structured: []int{1, 2}, want: JSONRPCInternalError},
 		{name: "unencodable", structured: make(chan int), want: JSONRPCInternalError},
+		{
+			name: "nested permission denied",
+			structured: map[string]interface{}{"error": map[string]interface{}{
+				"code": float64(MCPPermissionDenied), "status": "PERMISSION_DENIED", "message": "permission denied", "tool": "qrdb_barrier_status",
+			}},
+			want: MCPPermissionDenied,
+		},
+		{
+			name: "nested unavailable",
+			structured: map[string]interface{}{"error": map[string]interface{}{
+				"code": float64(MCPServiceUnavailable), "status": "UNAVAILABLE", "message": "barrier is sealed",
+			}},
+			want: MCPServiceUnavailable,
+		},
+		{name: "nested zero code", structured: map[string]interface{}{"error": map[string]interface{}{"code": 0}}, want: JSONRPCInternalError},
+		{name: "nested string code", structured: map[string]interface{}{"error": map[string]interface{}{"code": "denied"}}, want: JSONRPCInternalError},
+		{name: "error not an object", structured: map[string]interface{}{"error": "permission denied"}, want: JSONRPCInternalError},
 	}
 
 	for _, tc := range tests {
