@@ -485,9 +485,11 @@ func (a *SchedulerAdapter) GetCompletedGracePeriodVersions(ctx context.Context, 
 		Limit:   100,
 	}
 	// A tenant's grace jobs are filed in its own namespace (see RotateKey).
-	if tenantID, ok := tenantctx.Lookup(ctx); ok {
-		query.OwnerID = schedulerEngineTenant(tenantID)
+	ownerID, err := schedulerTenantResolveID(ctx, "grace_period.completed", "")
+	if err != nil {
+		return nil, err
 	}
+	query.OwnerID = ownerID
 
 	jobs, _, err := a.scheduler.ListJobsWithCursor(ctx, query)
 	if err != nil {
