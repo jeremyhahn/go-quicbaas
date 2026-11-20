@@ -182,6 +182,41 @@ type fakeAgents struct {
 	// host is where the sessions run: it provisions each spawn's named
 	// workspace and reports where (go-quicbaas#981).
 	host executingHost
+
+	// policy is the operator's lifecycle policy this service carries, as the
+	// daemon's agent service does: a job run resolves its guard from it
+	// (orchestration.JobLifecyclePolicyProvider, go-quicbaas#727).
+	policy orchestration.JobLifecyclePolicy
+}
+
+// JobLifecyclePolicy implements orchestration.JobLifecyclePolicyProvider.
+func (f *fakeAgents) JobLifecyclePolicy() orchestration.JobLifecyclePolicy {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.policy
+}
+
+func (f *fakeAgents) setLifecyclePolicy(p orchestration.JobLifecyclePolicy) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.policy = p
+}
+
+// lifecyclePolicyCarrier is a test agent service that carries the operator's
+// lifecycle policy. A job run reads its guard from the agent service and from
+// no config field (go-quicbaas#727), so a rig hands the guard over here.
+type lifecyclePolicyCarrier interface {
+	setLifecyclePolicy(orchestration.JobLifecyclePolicy)
+}
+
+// withLifecyclePolicy hands agents the policy guard admits. An agent service
+// that carries no policy is a test's own choice: its run is guarded by the
+// zero policy, which refuses every command.
+func withLifecyclePolicy(agents orchestration.AgentService, guard orchestration.ExecutionGuard) orchestration.AgentService {
+	if carrier, ok := agents.(lifecyclePolicyCarrier); ok {
+		carrier.setLifecyclePolicy(orchestration.JobLifecyclePolicy{Guard: guard})
+	}
+	return agents
 }
 
 func (f *fakeAgents) SpawnSession(_ context.Context, req *orchestration.SpawnSessionRequest) (*orchestration.SpawnSessionResponse, error) {
@@ -682,9 +717,8 @@ func (r *runnerRig) buildJob(t *testing.T, resumed *orchestration.JobStatus, sta
 		Workflow:   r.workflow,
 		StartState: start,
 		Resumed:    resumed,
-		Agents:     agents,
+		Agents:     withLifecyclePolicy(agents, guard),
 		Logger:     logger.NewAdapter(base),
-		Policy:     &orchestration.JobLifecyclePolicy{Guard: guard},
 		AuditFn: func(eventType, details string) {
 			r.auditMu.Lock()
 			r.audits = append(r.audits, orchestration.JobAuditEvent{Type: eventType, Details: details})

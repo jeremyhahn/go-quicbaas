@@ -90,9 +90,8 @@ func (r *preflightRig) run() error {
 		Config:     &orchestration.JobConfig{TenantID: testTenant, ProjectID: testProject, Attempt: 1},
 		Project:    project,
 		StartState: orchestration.JobStateInitializing,
-		Agents:     r.agents,
+		Agents:     withLifecyclePolicy(r.agents, r.guard),
 		Logger:     logger.NewAdapter(base),
-		Policy:     &orchestration.JobLifecyclePolicy{Guard: r.guard},
 		AuditFn: func(eventType, details string) {
 			r.auditMu.Lock()
 			r.audits = append(r.audits, orchestration.JobAuditEvent{Type: eventType, Details: details})
