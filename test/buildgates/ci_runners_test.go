@@ -14,12 +14,16 @@
 package buildgates
 
 import (
+	"encoding/json"
+	"maps"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -253,4 +257,480 @@ func replaceJobRunner(t *testing.T, body, job, runsOn string) string {
 	i := strings.Index(body[start:], "    runs-on: ") + start
 	end := strings.Index(body[i:], "\n") + i
 	return body[:i] + "    runs-on: " + runsOn + body[end:]
+}
+
+// jobRunners is every ci.yml job's exact runs-on: the hosted-only jobs, the
+// jobs that build or run images (the Docker overflow class) and CI Gate.
+var jobRunners = map[string]string{
+	"preflight":      hostedRunner,
+	"publish-images": hostedRunner,
+	"unit":           hostedRunner,
+	"coverage":       hostedRunner,
+	"unit-passes":    hostedRunner,
+	"lint":           overflowRunnerDocker,
+	"image":          overflowRunnerDocker,
+	"lint-gates":     overflowRunnerDocker,
+	"integration":    overflowRunnerDocker,
+	"ci-gate":        overflowRunnerGate,
+}
+
+// jobRunnerProblems lists each ci.yml job whose runs-on is not its jobRunners
+// value, each job missing from the table, and each table job missing from
+// ci.yml.
+func jobRunnerProblems(body []byte) []string {
+	jobs, problem := runnerJobs(body)
+	if problem != "" {
+		return []string{problem}
+	}
+	var problems []string
+	seen := map[string]bool{}
+	for _, j := range jobs {
+		seen[j.name] = true
+		want, ok := jobRunners[j.name]
+		switch {
+		case !ok:
+			problems = append(problems, "job "+j.name+" is not in the runs-on table")
+		case j.runsOn == nil:
+			problems = append(problems, "job "+j.name+" has no runs-on; want "+strconv.Quote(want))
+		case j.runsOn.Kind != yaml.ScalarNode || j.runsOn.Value != want:
+			problems = append(problems, "job "+j.name+" runs on "+strconv.Quote(j.runsOn.Value)+"; want "+strconv.Quote(want))
+		}
+	}
+	for _, name := range slices.Sorted(maps.Keys(jobRunners)) {
+		if !seen[name] {
+			problems = append(problems, "the runs-on table's job "+name+" is not in ci.yml")
+		}
+	}
+	return problems
+}
+
+// TestCIJobRunners: each job runs on exactly its class's runs-on.
+func TestCIJobRunners(t *testing.T) {
+	for _, p := range jobRunnerProblems(readCI(t)) {
+		t.Error(p)
+	}
+}
+
+// TestCIJobRunners_Mutations: the per-job check catches a job moved to
+// another class.
+func TestCIJobRunners_Mutations(t *testing.T) {
+	body := string(readCI(t))
+	for _, c := range []struct{ job, runsOn, want string }{
+		{"lint", hostedRunner, "job lint runs on \"ubuntu-latest\""},
+		{"image", overflowRunnerGate, "job image runs on"},
+		{"ci-gate", overflowRunnerDocker, "job ci-gate runs on"},
+		{"coverage", overflowRunnerDocker, "job coverage runs on"},
+	} {
+		t.Run(c.job, func(t *testing.T) {
+			mutated := replaceJobRunner(t, body, c.job, c.runsOn)
+			if mutated == body {
+				t.Fatal("the mutation changed nothing")
+			}
+			p := jobRunnerProblems([]byte(mutated))
+			if !slices.ContainsFunc(p, func(s string) bool { return strings.Contains(s, c.want) }) {
+				t.Fatalf("want a problem containing %q, got %v", c.want, p)
+			}
+		})
+	}
+	if p := jobRunnerProblems([]byte(strings.Replace(body, "\n  unit-passes:\n", "\n  unit-passes-renamed:\n", 1))); !slices.ContainsFunc(p, func(s string) bool {
+		return strings.Contains(s, "unit-passes-renamed is not in the runs-on table")
+	}) || !slices.ContainsFunc(p, func(s string) bool { return strings.Contains(s, "job unit-passes is not in ci.yml") }) {
+		t.Errorf("a renamed job: want both the unknown and the missing job reported, got %v", p)
+	}
+}
+
+// inImageMemoryExpr is IN_IMAGE_MEMORY on every job that runs a stage in the
+// toolchain image: the 8g cap everywhere but a GitHub-hosted runner, keyed on
+// the preflight runner_docker output (the runner context is not available in
+// jobs.<id>.env).
+const inImageMemoryExpr = `${{ (github.server_url != 'https://github.com' || needs.preflight.outputs.runner_docker != '"ubuntu-latest"') && '8g' || 'none' }}`
+
+var inImageMemoryJobs = []string{"lint", "image", "lint-gates", "integration"}
+
+// ciJobNode is ci.yml's job <name>, or nil.
+func ciJobNode(body []byte, name string) *yaml.Node {
+	var doc yaml.Node
+	if yaml.Unmarshal(body, &doc) != nil || len(doc.Content) == 0 {
+		return nil
+	}
+	return mapValue(mapValue(doc.Content[0], "jobs"), name)
+}
+
+func inImageMemoryProblems(body []byte) []string {
+	var problems []string
+	for _, name := range inImageMemoryJobs {
+		j := ciJobNode(body, name)
+		if j == nil {
+			problems = append(problems, "ci.yml has no job "+name)
+			continue
+		}
+		switch v := mapValue(mapValue(j, "env"), "IN_IMAGE_MEMORY"); {
+		case v == nil:
+			problems = append(problems, "job "+name+" sets no env.IN_IMAGE_MEMORY")
+		case v.Value != inImageMemoryExpr:
+			problems = append(problems, "job "+name+" sets IN_IMAGE_MEMORY to "+strconv.Quote(v.Value)+"; want "+strconv.Quote(inImageMemoryExpr)+" (8g on every runner that is not GitHub-hosted)")
+		}
+	}
+	return problems
+}
+
+// TestCIInImageMemory: an overflow stage on a Dell keeps the 8g cap.
+func TestCIInImageMemory(t *testing.T) {
+	for _, p := range inImageMemoryProblems(readCI(t)) {
+		t.Error(p)
+	}
+}
+
+// TestCIInImageMemory_Mutations: the server-only expression, which leaves an
+// overflow stage on a Dell uncapped, is reported.
+func TestCIInImageMemory_Mutations(t *testing.T) {
+	body := string(readCI(t))
+	const old = `${{ github.server_url != 'https://github.com' && '8g' || 'none' }}`
+	for _, job := range inImageMemoryJobs {
+		t.Run(job, func(t *testing.T) {
+			start := strings.Index(body, "\n  "+job+":\n")
+			if start < 0 {
+				t.Fatalf("ci.yml has no job %s", job)
+			}
+			i := strings.Index(body[start:], "      IN_IMAGE_MEMORY: ")
+			if i < 0 {
+				t.Fatalf("job %s has no IN_IMAGE_MEMORY line", job)
+			}
+			i += start
+			end := strings.Index(body[i:], "\n") + i
+			mutated := body[:i] + "      IN_IMAGE_MEMORY: " + old + body[end:]
+			if mutated == body {
+				t.Fatal("the mutation changed nothing")
+			}
+			p := inImageMemoryProblems([]byte(mutated))
+			if len(p) != 1 || !strings.Contains(p[0], "job "+job+" sets IN_IMAGE_MEMORY") {
+				t.Fatalf("want one problem for job %s, got %v", job, p)
+			}
+		})
+	}
+}
+
+// selectorStepName is the preflight step that picks hosted or overflow.
+const selectorStepName = "Hosted or overflow runner (ruling 1024)"
+
+// selectorStep is the selector step's env and run body.
+func selectorStep(t *testing.T) (map[string]string, string) {
+	t.Helper()
+	steps := mapValue(ciJobNode(readCI(t), "preflight"), "steps")
+	if steps == nil {
+		t.Fatal("ci.yml's preflight job has no steps")
+	}
+	for _, s := range steps.Content {
+		if n := mapValue(s, "name"); n == nil || n.Value != selectorStepName {
+			continue
+		}
+		env := map[string]string{}
+		if e := mapValue(s, "env"); e != nil {
+			for i := 0; i+1 < len(e.Content); i += 2 {
+				env[e.Content[i].Value] = e.Content[i+1].Value
+			}
+		}
+		run := mapValue(s, "run")
+		if run == nil || run.Value == "" {
+			t.Fatalf("step %q has no run body", selectorStepName)
+		}
+		return env, run.Value
+	}
+	t.Fatalf("ci.yml's preflight job has no step %q", selectorStepName)
+	return nil, ""
+}
+
+// fakeCurl answers each URL from $FAKE_CURL_DIR: <key>.body goes to the -o
+// file and <key>.code is printed for -w, where <key> is the URL with every
+// character that is not a letter or digit made `_`. An unknown URL is a 404.
+// Every URL is appended to $FAKE_CURL_CALLS. -H and its value are ignored.
+const fakeCurl = `#!/usr/bin/env bash
+out= url=
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -o) out=$2; shift 2 ;;
+    -w|-H|--max-time) shift 2 ;;
+    *) url=$1; shift ;;
+  esac
+done
+printf '%s\n' "$url" >> "$FAKE_CURL_CALLS"
+f="$FAKE_CURL_DIR/${url//[^A-Za-z0-9]/_}"
+if [ -f "$f.code" ]; then
+  cp "$f.body" "$out"
+  printf '%s' "$(< "$f.code")"
+else
+  : > "$out"
+  printf 404
+fi
+`
+
+func fixtureKey(url string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 128 && (r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9') {
+			return r
+		}
+		return '_'
+	}, url)
+}
+
+type apiReply struct {
+	code int
+	body string
+}
+
+// apiFixture is the Actions API the selector sees: URL → reply.
+type apiFixture map[string]apiReply
+
+const selectAPI = "https://api.github.com/repos/o/r/actions"
+
+func runsURL(status string, page int) string {
+	return selectAPI + "/runs?status=" + status + "&per_page=100&page=" + strconv.Itoa(page)
+}
+
+func jobsURL(run, page int) string {
+	return selectAPI + "/runs/" + strconv.Itoa(run) + "/jobs?filter=latest&per_page=100&page=" + strconv.Itoa(page)
+}
+
+// list sets url's reply to a 200 page of <key> items of a listing of total.
+func (f apiFixture) list(t *testing.T, url, key string, total int, items []any) {
+	t.Helper()
+	if items == nil {
+		items = []any{}
+	}
+	b, err := json.Marshal(map[string]any{"total_count": total, key: items})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f[url] = apiReply{200, string(b)}
+}
+
+// selJob is one job of the listing, created age ago.
+func selJob(run int, status string, age time.Duration, labels ...string) map[string]any {
+	return map[string]any{
+		"run_id":     run,
+		"status":     status,
+		"labels":     labels,
+		"created_at": time.Now().UTC().Add(-age).Format(time.RFC3339),
+	}
+}
+
+func repeatJob(n int, j map[string]any) []map[string]any {
+	out := make([]map[string]any, n)
+	for i := range out {
+		out[i] = j
+	}
+	return out
+}
+
+// loadFixture: no queued run, and one in-progress run per run_id of jobs.
+func loadFixture(t *testing.T, jobs ...map[string]any) apiFixture {
+	t.Helper()
+	f := apiFixture{}
+	f.list(t, runsURL("queued", 1), "workflow_runs", 0, nil)
+	byRun := map[int][]any{}
+	for _, j := range jobs {
+		byRun[j["run_id"].(int)] = append(byRun[j["run_id"].(int)], j)
+	}
+	if len(byRun) == 0 {
+		byRun[1] = nil
+	}
+	var runs []any
+	for _, id := range slices.Sorted(maps.Keys(byRun)) {
+		runs = append(runs, map[string]any{"id": id})
+		f.list(t, jobsURL(id, 1), "jobs", len(byRun[id]), byRun[id])
+	}
+	f.list(t, runsURL("in_progress", 1), "workflow_runs", len(runs), runs)
+	return f
+}
+
+type selectRun struct {
+	output, stdout string
+	calls          []string
+}
+
+// runSelector runs the selector step's script with env against the fixture.
+func runSelector(t *testing.T, env map[string]string, fix apiFixture) selectRun {
+	t.Helper()
+	for _, tool := range []string{"bash", "jq"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Fatalf("the selector script needs %s: %v", tool, err)
+		}
+	}
+	stepEnv, run := selectorStep(t)
+	dir := t.TempDir()
+	binDir, fixDir := filepath.Join(dir, "bin"), filepath.Join(dir, "api")
+	for _, d := range []string{binDir, fixDir, filepath.Join(dir, "tmp")} {
+		if err := os.Mkdir(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write := func(path, body string, mode os.FileMode) {
+		if err := os.WriteFile(path, []byte(body), mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(filepath.Join(binDir, "curl"), fakeCurl, 0o755)
+	for url, r := range fix {
+		k := filepath.Join(fixDir, fixtureKey(url))
+		write(k+".body", r.body, 0o644)
+		write(k+".code", strconv.Itoa(r.code), 0o644)
+	}
+	script, output, calls := filepath.Join(dir, "select.sh"), filepath.Join(dir, "output"), filepath.Join(dir, "calls")
+	write(script, run, 0o644)
+	write(output, "", 0o644)
+	cmdEnv := []string{
+		"PATH=" + binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"GITHUB_OUTPUT=" + output,
+		"RUNNER_TEMP=" + filepath.Join(dir, "tmp"),
+		"FAKE_CURL_DIR=" + fixDir,
+		"FAKE_CURL_CALLS=" + calls,
+	}
+	for _, k := range slices.Sorted(maps.Keys(stepEnv)) {
+		v, ok := env[k]
+		if !ok {
+			t.Fatalf("step %q reads env %s, which the test does not set", selectorStepName, k)
+		}
+		cmdEnv = append(cmdEnv, k+"="+v)
+	}
+	cmd := exec.Command("bash", script)
+	cmd.Dir = dir
+	cmd.Env = cmdEnv
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("the selector script failed: %v\n%s", err, out)
+	}
+	o, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := selectRun{output: string(o), stdout: string(out)}
+	if c, err := os.ReadFile(calls); err == nil {
+		r.calls = strings.Fields(string(c))
+	}
+	return r
+}
+
+// TestRunnerSelect runs the selector step's script against a fake Actions API.
+func TestRunnerSelect(t *testing.T) {
+	const (
+		limit  = 12
+		runID  = 1000
+		hosted = "ubuntu-latest"
+	)
+	hostedOut := "runner=\"ubuntu-latest\"\nrunner_docker=\"ubuntu-latest\"\n"
+	overflowOut := "runner=[\"self-hosted\",\"linux\",\"x64\",\"bigdisk\"]\nrunner_docker=[\"self-hosted\",\"linux\",\"x64\",\"bigdisk-docker\"]\n"
+	running := func(n int) []map[string]any { return repeatJob(n, selJob(1, "in_progress", time.Minute, hosted)) }
+	baseEnv := map[string]string{
+		"SERVER": "https://github.com", "API": selectAPI, "RUN_ID": strconv.Itoa(runID), "JOB_TOKEN": "job-token",
+		"LIMIT": strconv.Itoa(limit), "GRACE": "60", "EVENT": "push", "REPO": "o/r", "HEAD_REPO": "",
+	}
+
+	// 150 in-progress runs over two pages; only run 150, on page 2, has the
+	// LIMIT hosted jobs.
+	paged := apiFixture{}
+	paged.list(t, runsURL("queued", 1), "workflow_runs", 0, nil)
+	var page1, page2 []any
+	for id := 1; id <= 150; id++ {
+		var jobs []any
+		if id == 150 {
+			for range limit {
+				jobs = append(jobs, selJob(150, "in_progress", time.Minute, hosted))
+			}
+		}
+		paged.list(t, jobsURL(id, 1), "jobs", len(jobs), jobs)
+		if id <= 100 {
+			page1 = append(page1, map[string]any{"id": id})
+		} else {
+			page2 = append(page2, map[string]any{"id": id})
+		}
+	}
+	paged.list(t, runsURL("in_progress", 1), "workflow_runs", 150, page1)
+	paged.list(t, runsURL("in_progress", 2), "workflow_runs", 150, page2)
+
+	short := apiFixture{}
+	short.list(t, runsURL("queued", 1), "workflow_runs", 0, nil)
+	short.list(t, runsURL("in_progress", 1), "workflow_runs", 150, page1)
+	short.list(t, runsURL("in_progress", 2), "workflow_runs", 150, nil)
+
+	notOK := loadFixture(t, running(limit)...)
+	notOK[runsURL("queued", 1)] = apiReply{502, ""}
+	noTotal := loadFixture(t, running(limit)...)
+	noTotal[runsURL("queued", 1)] = apiReply{200, `{"workflow_runs":[]}`}
+
+	for _, c := range []struct {
+		name     string
+		env      map[string]string
+		fix      apiFixture
+		overflow bool
+		warning  string // a ::warning:: line contains it; "" for no warning
+		notice   string // a ::notice:: line contains it
+		call     string // a called URL contains it
+		noCall   bool
+	}{
+		{name: "in progress below LIMIT", fix: loadFixture(t, running(limit-1)...)},
+		{name: "in progress at LIMIT", fix: loadFixture(t, running(limit)...), overflow: true, notice: "12 hosted jobs in progress, HOSTED_JOBS_PER_REPO=12"},
+		{name: "another run's job queued GRACE", fix: loadFixture(t, selJob(7, "queued", 61*time.Second, hosted)), overflow: true, notice: "1 hosted job(s) queued 60s or more"},
+		{name: "another run's job queued less than GRACE", fix: loadFixture(t, selJob(7, "queued", 10*time.Second, hosted))},
+		{name: "this run's own job queued long", fix: loadFixture(t, selJob(runID, "queued", time.Hour, hosted))},
+		{name: "self-hosted jobs are not counted", fix: loadFixture(t, append(running(2), repeatJob(limit+1, selJob(3, "in_progress", time.Minute, "self-hosted", "linux", "x64", "bigdisk"))...)...)},
+		{name: "a run list over two pages", fix: paged, overflow: true, call: "page=2"},
+		{name: "a run list short of its total_count", fix: short, warning: "100 of 150 entries"},
+		{name: "a reply that is not 200", fix: notOK, warning: "/runs?status=queued: 502"},
+		{name: "a 200 with no total_count", fix: noTotal, warning: "200 with no total_count"},
+		{name: "LIMIT not a number", env: map[string]string{"LIMIT": "twelve"}, fix: loadFixture(t, running(limit)...), warning: "HOSTED_JOBS_PER_REPO='twelve'", noCall: true},
+		{name: "not github.com", env: map[string]string{"SERVER": "https://gitea.example"}, fix: loadFixture(t, running(limit)...), noCall: true},
+		{name: "a fork pull request at overflow load", env: map[string]string{"EVENT": "pull_request", "HEAD_REPO": "someone/r"}, fix: loadFixture(t, running(limit)...), notice: "a pull request from someone/r;", noCall: true},
+		{name: "a deleted fork's pull request at overflow load", env: map[string]string{"EVENT": "pull_request", "HEAD_REPO": ""}, fix: loadFixture(t, running(limit)...), notice: "a pull request from a deleted fork;", noCall: true},
+		{name: "a same-repository pull request at overflow load", env: map[string]string{"EVENT": "pull_request", "HEAD_REPO": "o/r"}, fix: loadFixture(t, running(limit)...), overflow: true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			env := maps.Clone(baseEnv)
+			maps.Copy(env, c.env)
+			r := runSelector(t, env, c.fix)
+			want := hostedOut
+			if c.overflow {
+				want = overflowOut
+			}
+			if r.output != want {
+				t.Errorf("GITHUB_OUTPUT = %q; want %q\n%s", r.output, want, r.stdout)
+			}
+			lines := strings.Split(r.stdout, "\n")
+			hasLine := func(prefix, text string) bool {
+				return slices.ContainsFunc(lines, func(l string) bool { return strings.HasPrefix(l, prefix) && strings.Contains(l, text) })
+			}
+			if c.warning == "" && hasLine("::warning::", "") {
+				t.Errorf("want no ::warning, got\n%s", r.stdout)
+			}
+			if c.warning != "" && !hasLine("::warning::", c.warning) {
+				t.Errorf("want a ::warning containing %q, got\n%s", c.warning, r.stdout)
+			}
+			if c.notice != "" && !hasLine("::notice::", c.notice) {
+				t.Errorf("want a ::notice containing %q, got\n%s", c.notice, r.stdout)
+			}
+			if c.noCall && len(r.calls) != 0 {
+				t.Errorf("want no API call, got %v", r.calls)
+			}
+			if !c.noCall && len(r.calls) == 0 {
+				t.Errorf("want API calls, got none")
+			}
+			if c.call != "" && !slices.ContainsFunc(r.calls, func(u string) bool { return strings.Contains(u, c.call) }) {
+				t.Errorf("want a call containing %q, got %v", c.call, r.calls)
+			}
+		})
+	}
+}
+
+// TestRunnerSelect_ForkEnv: the selector reads where the pull request comes
+// from out of the event, not out of anything the pull request controls.
+func TestRunnerSelect_ForkEnv(t *testing.T) {
+	env, _ := selectorStep(t)
+	for k, want := range map[string]string{
+		"EVENT":     "${{ github.event_name }}",
+		"REPO":      "${{ github.repository }}",
+		"HEAD_REPO": "${{ github.event.pull_request.head.repo.full_name }}",
+	} {
+		if env[k] != want {
+			t.Errorf("step %q env %s = %q; want %q", selectorStepName, k, env[k], want)
+		}
+	}
 }

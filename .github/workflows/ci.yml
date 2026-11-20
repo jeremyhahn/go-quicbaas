@@ -31,6 +31,7 @@
 # `Hosted or overflow runner` with its `runner` and `runner_docker` outputs,
 # and the template's runs-on expressions on lint, image, lint-gates and
 # integration (runner_docker) and on ci-gate (runner). Nothing else of v1.48.
+# Fork pull requests always take the hosted default, and IN_IMAGE_MEMORY keeps the 8g cap on the overflow runners (go-quicbaas, not in the template).
 # CUSTOMIZE (go-quicbaas): v1.22.2 through v1.34.1 adopted in one CI-file PR.
 # The jobs are the template's preflight, publish-images, lint, image,
 # lint-gates and ci-gate, with go-quicbaas's own unit, coverage, unit-passes
@@ -901,6 +902,8 @@ jobs:
       # of the run takes it. Off github.com it makes no call, and each job's
       # runs-on keeps its forge label (bigdisk, ci-gate) as before v1.48. It
       # runs before the checkout, beside no repository code.
+      # CUSTOMIZE (go-quicbaas): a pull request from a fork always takes the
+      # hosted default, with a ::notice and no API call.
       - name: Hosted or overflow runner (ruling 1024)
         id: runner
         env:
@@ -910,6 +913,9 @@ jobs:
           JOB_TOKEN: ${{ github.token }}
           LIMIT: ${{ env.HOSTED_JOBS_PER_REPO }}
           GRACE: ${{ env.HOSTED_QUEUE_GRACE_SECONDS }}
+          EVENT: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
         run: |
           set -uo pipefail
           HOSTED='"ubuntu-latest"'
@@ -926,6 +932,15 @@ jobs:
           }
           if [ "$SERVER" != https://github.com ]; then
             echo "not github.com: each job keeps its forge label (bigdisk, ci-gate); no selection"
+            emit "$HOSTED" "$HOSTED"
+            exit 0
+          fi
+          # CUSTOMIZE (go-quicbaas): a pull request from a fork stays on the
+          # hosted default. Its jobs run the fork's own scripts and Makefile
+          # recipes with Docker access, and the Dells are shared, not
+          # disposable. An empty HEAD_REPO (a deleted fork) counts as a fork.
+          if [ "$EVENT" = pull_request ] && [ "$HEAD_REPO" != "$REPO" ]; then
+            echo "::notice::runner selection: a pull request from ${HEAD_REPO:-a deleted fork}; every job of this run takes the GitHub-hosted default, ubuntu-latest, since PR code from a fork never runs on the self-hosted Dells"
             emit "$HOSTED" "$HOSTED"
             exit 0
           fi
@@ -1091,8 +1106,8 @@ jobs:
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
       CI_IMAGE_NAMESPACE: ${{ vars.CI_IMAGE_NAMESPACE }}
-      # gpu-host's 8g sidecar cap (#2200, ruling 289); no cap on GitHub-hosted runners.
-      IN_IMAGE_MEMORY: ${{ github.server_url != 'https://github.com' && '8g' || 'none' }}
+      # gpu-host's and the Dells' 8g sidecar cap (#2200); no cap only on a GitHub-hosted runner (the preflight runner_docker output is "ubuntu-latest").
+      IN_IMAGE_MEMORY: ${{ (github.server_url != 'https://github.com' || needs.preflight.outputs.runner_docker != '"ubuntu-latest"') && '8g' || 'none' }}
     steps:
       # No credential reaches a job. A runner that injects a git credential
       # through GIT_CONFIG_* stops the job here, before any later step can
@@ -1354,8 +1369,8 @@ jobs:
     env:
       CI_IMAGE_NAMESPACE: ${{ vars.CI_IMAGE_NAMESPACE }}   # v1.30
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
-      # gpu-host's 8g sidecar cap (#2200, ruling 289); no cap on GitHub-hosted runners.
-      IN_IMAGE_MEMORY: ${{ github.server_url != 'https://github.com' && '8g' || 'none' }}
+      # gpu-host's and the Dells' 8g sidecar cap (#2200); no cap only on a GitHub-hosted runner (the preflight runner_docker output is "ubuntu-latest").
+      IN_IMAGE_MEMORY: ${{ (github.server_url != 'https://github.com' || needs.preflight.outputs.runner_docker != '"ubuntu-latest"') && '8g' || 'none' }}
       # v1.22: the cache volumes' trust class. Only a push to main writes the
       # caches main's build reads; every other event, pull requests included,
       # gets the `pr` set (ci-standard.md §6).
@@ -1813,8 +1828,8 @@ jobs:
       # v1.22: the cache volumes' trust class (as in the image job).
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
       CI_IMAGE_NAMESPACE: ${{ vars.CI_IMAGE_NAMESPACE }}   # v1.30
-      # gpu-host's 8g sidecar cap (#2200, ruling 289); no cap on GitHub-hosted runners.
-      IN_IMAGE_MEMORY: ${{ github.server_url != 'https://github.com' && '8g' || 'none' }}
+      # gpu-host's and the Dells' 8g sidecar cap (#2200); no cap only on a GitHub-hosted runner (the preflight runner_docker output is "ubuntu-latest").
+      IN_IMAGE_MEMORY: ${{ (github.server_url != 'https://github.com' || needs.preflight.outputs.runner_docker != '"ubuntu-latest"') && '8g' || 'none' }}
     steps:
       # No credential reaches a job. A runner that injects a git credential
       # through GIT_CONFIG_* stops the job here, before any later step can
@@ -1941,8 +1956,8 @@ jobs:
     if: ${{ !github.event.pull_request.draft && needs.preflight.outputs.verdict == 'run' && needs.preflight.outputs.docs_only != 'true' }}
     env:
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
-      # gpu-host's 8g sidecar cap (#2200, ruling 289); no cap on GitHub-hosted runners.
-      IN_IMAGE_MEMORY: ${{ github.server_url != 'https://github.com' && '8g' || 'none' }}
+      # gpu-host's and the Dells' 8g sidecar cap (#2200); no cap only on a GitHub-hosted runner (the preflight runner_docker output is "ubuntu-latest").
+      IN_IMAGE_MEMORY: ${{ (github.server_url != 'https://github.com' || needs.preflight.outputs.runner_docker != '"ubuntu-latest"') && '8g' || 'none' }}
       IT_PROJECT: ${{ github.event.repository.name }}-ci-${{ github.run_id }}-${{ github.run_attempt }}
       IT_IMAGE: ${{ github.event.repository.name }}-ci-it:${{ github.run_id }}-${{ github.run_attempt }}
     steps:
