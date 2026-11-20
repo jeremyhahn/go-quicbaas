@@ -497,7 +497,7 @@ func (t *Transport) BarrierEnableEncryption(ctx context.Context, req *qrdbtransp
 	}
 	tool := "qrdb_barrier_enable_encryption"
 	args := map[string]interface{}{
-		"target_strategy":  req.Strategy,
+		"strategy":         req.Strategy,
 		"mechanism":        req.Mechanism,
 		"availability":     req.Availability,
 		"passphrase":       secretArg(req.Passphrase),
