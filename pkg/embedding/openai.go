@@ -85,3 +85,6 @@ func (p *OpenAIProvider) Name() string { return "openai" }
 
 // Close releases resources held by the underlying HTTP client.
 func (p *OpenAIProvider) Close() error { return p.inner.Close() }
+
+// QRDBProvider returns the wrapped go-qrdb provider.
+func (p *OpenAIProvider) QRDBProvider() qrdbsdk.EmbeddingProvider { return p.inner }

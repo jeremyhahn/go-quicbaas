@@ -85,3 +85,6 @@ func (p *VoyageProvider) Name() string { return "voyage" }
 
 // Close releases resources held by the underlying HTTP client.
 func (p *VoyageProvider) Close() error { return p.inner.Close() }
+
+// QRDBProvider returns the wrapped go-qrdb provider.
+func (p *VoyageProvider) QRDBProvider() qrdbsdk.EmbeddingProvider { return p.inner }

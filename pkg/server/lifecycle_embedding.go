@@ -452,8 +452,13 @@ var _ qrdbservice.EmbeddingProvider = (*qrdbEmbeddingProvider)(nil)
 // configured one, embeds with the configured model. Another model is passed
 // to a provider that implements embedding.ModelEmbedder; a provider bound to
 // its configured model refuses it with an InvalidInputError rather than
-// answer with the configured model's vectors.
+// answer with the configured model's vectors. A provider that wraps a go-qrdb
+// provider (embedding.QRDBUpstream) is called through it, so the result
+// carries the upstream's token usage.
 func (a *qrdbEmbeddingProvider) Embed(ctx context.Context, texts []string, model string) (*qrdbservice.EmbeddingResult, error) {
+	if up, ok := a.p.(embedding.QRDBUpstream); ok {
+		return a.embedUpstream(ctx, up.QRDBProvider(), texts, model)
+	}
 	if model == "" || model == a.model {
 		vecs, err := a.p.EmbedBatch(ctx, texts)
 		if err != nil {
@@ -473,6 +478,32 @@ func (a *qrdbEmbeddingProvider) Embed(ctx context.Context, texts []string, model
 		used = model
 	}
 	return &qrdbservice.EmbeddingResult{Embeddings: vecs, Model: used}, nil
+}
+
+// embedUpstream embeds texts with the go-qrdb provider a quicbaas provider
+// wraps and maps its embeddings, model and token usage into the service
+// result. An empty model, or the configured one, embeds with the provider's
+// configured model.
+func (a *qrdbEmbeddingProvider) embedUpstream(ctx context.Context, up qrdbsdk.EmbeddingProvider, texts []string, model string) (*qrdbservice.EmbeddingResult, error) {
+	want := model
+	if want == a.model {
+		want = ""
+	}
+	res, err := up.Embed(ctx, texts, want)
+	if err != nil {
+		return nil, err
+	}
+	out := &qrdbservice.EmbeddingResult{Embeddings: res.Embeddings, Model: res.Model}
+	if out.Model == "" {
+		out.Model = model
+		if out.Model == "" {
+			out.Model = a.model
+		}
+	}
+	if res.Usage != nil {
+		out.Usage = &qrdbservice.UsageInfo{PromptTokens: res.Usage.PromptTokens, TotalTokens: res.Usage.TotalTokens}
+	}
+	return out, nil
 }
 
 // Models reports the single model the wrapped provider is configured with.

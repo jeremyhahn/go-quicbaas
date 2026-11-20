@@ -103,3 +103,6 @@ func (p *LMStudioProvider) Name() string { return "lmstudio" }
 
 // Close releases resources held by the underlying HTTP client.
 func (p *LMStudioProvider) Close() error { return p.inner.Close() }
+
+// QRDBProvider returns the wrapped go-qrdb provider.
+func (p *LMStudioProvider) QRDBProvider() qrdbsdk.EmbeddingProvider { return p.inner }

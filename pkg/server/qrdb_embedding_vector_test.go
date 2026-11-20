@@ -25,7 +25,9 @@ import (
 	"sync"
 	"testing"
 
+	qrdbembedding "github.com/jeremyhahn/go-qrdb/pkg/embedding"
 	qrdbservice "github.com/jeremyhahn/go-qrdb/pkg/service"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -241,6 +243,65 @@ func TestQRDBEmbeddingProvider_ModelWithoutPerCallSupport(t *testing.T) {
 	var invalid *api.InvalidInputError
 	require.True(t, errors.As(err, &invalid), "want *api.InvalidInputError, got %T", err)
 	assert.Equal(t, 2, fake.calls, "the provider must not be called for another model")
+}
+
+// upstreamEmbedder is a go-qrdb embedding provider double: it answers with
+// fixed vectors, the model it was asked for (or its default), a fixed token
+// usage, and a fixed model list.
+type upstreamEmbedder struct {
+	usage  qrdbembedding.UsageInfo
+	models []qrdbsdk.EmbeddingModelInfo
+}
+
+func (u *upstreamEmbedder) Embed(_ context.Context, texts []string, model string) (*qrdbsdk.EmbeddingResult, error) {
+	if model == "" {
+		model = "m"
+	}
+	vecs := make([][]float32, len(texts))
+	for i := range texts {
+		vecs[i] = []float32{1, 2, 3}
+	}
+	usage := u.usage
+	return &qrdbsdk.EmbeddingResult{Embeddings: vecs, Model: model, Usage: &usage}, nil
+}
+
+func (u *upstreamEmbedder) Models(_ context.Context) ([]qrdbsdk.EmbeddingModelInfo, error) {
+	return u.models, nil
+}
+
+func (u *upstreamEmbedder) Dimensions() int { return 3 }
+func (u *upstreamEmbedder) Name() string    { return "upstream" }
+func (u *upstreamEmbedder) Close() error    { return nil }
+
+// upstreamBackedProvider is a quicbaas provider that wraps a go-qrdb provider,
+// as the openai, ollama, lmstudio and voyage wrappers do.
+type upstreamBackedProvider struct {
+	singleModelProvider
+	up *upstreamEmbedder
+}
+
+func (p *upstreamBackedProvider) QRDBProvider() qrdbsdk.EmbeddingProvider { return p.up }
+
+var _ embedding.QRDBUpstream = (*upstreamBackedProvider)(nil)
+
+func TestQRDBEmbeddingProvider_CarriesUsage(t *testing.T) {
+	up := &upstreamEmbedder{usage: qrdbembedding.UsageInfo{PromptTokens: 7, TotalTokens: 9}}
+	a := &qrdbEmbeddingProvider{p: &upstreamBackedProvider{up: up}, model: "m"}
+	ctx := context.Background()
+
+	for _, model := range []string{"", "m", "other"} {
+		res, err := a.Embed(ctx, []string{"a", "b"}, model)
+		require.NoError(t, err, "model %q", model)
+		require.Len(t, res.Embeddings, 2)
+		require.NotNil(t, res.Usage, "model %q: the upstream's usage must be carried", model)
+		assert.Equal(t, 7, res.Usage.PromptTokens, "model %q", model)
+		assert.Equal(t, 9, res.Usage.TotalTokens, "model %q", model)
+		if model == "other" {
+			assert.Equal(t, "other", res.Model)
+		} else {
+			assert.Equal(t, "m", res.Model)
+		}
+	}
 }
 
 var _ embedding.Provider = (*singleModelProvider)(nil)

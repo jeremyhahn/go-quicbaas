@@ -106,3 +106,6 @@ func (p *OllamaProvider) Name() string { return "ollama" }
 
 // Close releases resources held by the underlying HTTP client.
 func (p *OllamaProvider) Close() error { return p.inner.Close() }
+
+// QRDBProvider returns the wrapped go-qrdb provider.
+func (p *OllamaProvider) QRDBProvider() qrdbsdk.EmbeddingProvider { return p.inner }
