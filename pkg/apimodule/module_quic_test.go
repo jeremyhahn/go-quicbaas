@@ -74,12 +74,20 @@ func TestModule_RegisterQUIC_RegistersTheGRPCSurface(t *testing.T) {
 	assert.Len(t, quicSurface, quicRegistrationCount())
 	grpcSurface := registeredSurface(viaGRPC)
 	for _, entry := range grpcRegistrations {
-		if entry.grpcOnly {
-			assert.NotContains(t, quicSurface, entry.desc.ServiceName, "grpcOnly services stay off QUIC")
+		if entry.grpcOnly || entry.unixOnly {
+			assert.NotContains(t, quicSurface, entry.desc.ServiceName, "grpcOnly and unixOnly services stay off QUIC")
 			delete(grpcSurface, entry.desc.ServiceName)
 		}
 	}
 	assert.Equal(t, grpcSurface, quicSurface)
+	for _, desc := range []*grpc.ServiceDesc{
+		&pb.Crypto_ServiceDesc,
+		&pb.CertificateService_ServiceDesc,
+		&pb.TrustService_ServiceDesc,
+		&pb.PIVService_ServiceDesc,
+	} {
+		assert.NotContains(t, quicSurface, desc.ServiceName, "the legacy xkms wrappers are never QUIC-registered")
+	}
 }
 
 // TestModule_RegisterQUIC_ProjectedCallIsLateBound drives a registered unary

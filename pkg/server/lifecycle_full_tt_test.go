@@ -41,6 +41,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
 
+	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	iampb "github.com/jeremyhahn/go-quicbaas/api/proto/iam"
 	restapi "github.com/jeremyhahn/go-quicbaas/pkg/api/rest"
 	"github.com/jeremyhahn/go-quicbaas/pkg/backup"
@@ -180,6 +181,44 @@ func TestServer_TT_NetworkGRPC_UnixSocketServesIAM(t *testing.T) {
 	_, err = client.GetInvite(ctx, &iampb.GetInviteRequest{Token: "bogus-invite-token"})
 	assert.Equal(t, codes.InvalidArgument, status.Code(err),
 		"GetInvite must reach the handler on the socket: %v", err)
+}
+
+// TestServer_TT_NetworkGRPC_UnixSocketServesLegacyXKMSWrappers asserts the
+// node serves the Unix SDK's legacy Crypto, CertificateService, TrustService
+// and PIVService wire names on its Unix socket: an unauthenticated call is
+// refused Unauthenticated when the capability is composed, Unavailable when
+// it is not, and never Unimplemented.
+func TestServer_TT_NetworkGRPC_UnixSocketServesLegacyXKMSWrappers(t *testing.T) {
+	socket := shortTTUnixSocketPath(t)
+	srv := startTTNetworkNodeUnixAuthz(t, socket)
+	conn := dialTTNodeUnix(t, srv, socket)
+
+	expect := func(name string, enabled bool) codes.Code {
+		if enabled {
+			t.Logf("%s: capability composed, expecting Unauthenticated", name)
+			return codes.Unauthenticated
+		}
+		t.Logf("%s: capability not composed, expecting Unavailable", name)
+		return codes.Unavailable
+	}
+	svc := srv.quicBaaSService
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	_, err := pb.NewCryptoClient(conn).Encrypt(ctx, &pb.CryptoEncryptRequest{})
+	assert.Equal(t, expect("Crypto", svc.Crypto() != nil), status.Code(err), "Crypto/Encrypt: %v", err)
+
+	_, err = pb.NewCertificateServiceClient(conn).GetCACertificate(ctx, &pb.GetCACertificateRequest{})
+	assert.Equal(t, expect("CertificateService", svc.Certificate() != nil), status.Code(err),
+		"CertificateService/GetCACertificate: %v", err)
+
+	_, err = pb.NewTrustServiceClient(conn).CrossSignedRootPool(ctx, &pb.CrossSignedRootPoolRequest{})
+	assert.Equal(t, expect("TrustService", svc.Trust() != nil), status.Code(err),
+		"TrustService/CrossSignedRootPool: %v", err)
+
+	_, err = pb.NewPIVServiceClient(conn).ListPIVSlots(ctx, &pb.PIVListSlotsRequest{})
+	assert.Equal(t, expect("PIVService", true), status.Code(err), "PIVService/ListPIVSlots: %v", err)
 }
 
 // TestServer_TT_NetworkGRPC_UnixSocketModes pins that the node's socket keeps
