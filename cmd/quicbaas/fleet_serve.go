@@ -394,6 +394,11 @@ func buildFleetRuntime(cfg *fleet.Config, backends map[string]orchestration.Agen
 	if rtErr != nil {
 		return nil, rtErr
 	}
+	// A runtime that cannot give the sandbox network this agent is configured
+	// for would refuse every spawn, so the agent ends here, before it enrols.
+	if netErr := fleet.CheckContainerRuntimeNetwork(containerRuntime, cfg.EffectiveSandboxNetwork()); netErr != nil {
+		return nil, netErr
+	}
 	// A BACKEND THAT RUNS ITS OWN CONTAINERS NEEDS THE RUNTIME TOO, and this
 	// is the only place it exists. The CLI backends are handed one by
 	// fleet.Runtime when it spawns them; the openvino backend is not a CLI --

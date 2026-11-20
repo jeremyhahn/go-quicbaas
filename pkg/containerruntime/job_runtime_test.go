@@ -489,6 +489,20 @@ func TestJobRuntime_RunWithNamedVolume(t *testing.T) {
 	require.NoError(t, jr.Remove(t.Context(), id))
 }
 
+func TestJobRuntime_SupportsOnlyNetworkNone(t *testing.T) {
+	jr, _ := newTestJobRuntime(t)
+
+	assert.True(t, jr.SupportsSandboxNetwork(orchestration.SandboxNetworkNone))
+	for _, network := range []orchestration.SandboxNetwork{
+		orchestration.SandboxNetworkBridge,
+		orchestration.SandboxNetworkHost,
+		orchestration.SandboxNetwork("custom"),
+		"",
+	} {
+		assert.False(t, jr.SupportsSandboxNetwork(network), "network %q", network)
+	}
+}
+
 func TestJobRuntime_RunInteractive_ContextEndKillsAndRemoves(t *testing.T) {
 	jr, doubles := newTestJobRuntime(t)
 	ctx, cancel := context.WithCancel(t.Context())

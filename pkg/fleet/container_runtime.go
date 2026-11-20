@@ -67,6 +67,32 @@ var ErrInProcessRuntimeUnavailable = errors.New("agent: the in-process container
 // directory to keep its state in.
 var ErrInProcessRuntimeNoRoot = errors.New("agent: the in-process container runtime needs a state directory")
 
+// ErrContainerRuntimeNetworkUnsupported reports a container runtime that
+// cannot give a sandbox the network this agent is configured to give it.
+// The agent refuses to start rather than enrol and then refuse every spawn.
+var ErrContainerRuntimeNetworkUnsupported = errors.New("agent: the container runtime cannot give the sandbox network")
+
+// SandboxNetworkSupporter is implemented by a container runtime that can give
+// a sandbox only some networks. A runtime without it is taken to give any.
+type SandboxNetworkSupporter interface {
+	SupportsSandboxNetwork(network orchestration.SandboxNetwork) bool
+}
+
+// CheckContainerRuntimeNetwork reports whether rt can give a sandbox network.
+// A nil runtime, or one that does not implement SandboxNetworkSupporter,
+// passes; otherwise a network rt cannot give is an error wrapping
+// ErrContainerRuntimeNetworkUnsupported that names the network.
+func CheckContainerRuntimeNetwork(rt orchestration.ContainerRuntime, network orchestration.SandboxNetwork) error {
+	if rt == nil {
+		return nil
+	}
+	supporter, ok := rt.(SandboxNetworkSupporter)
+	if !ok || supporter.SupportsSandboxNetwork(network) {
+		return nil
+	}
+	return fmt.Errorf("%w: --sandbox-network %q", ErrContainerRuntimeNetworkUnsupported, string(network))
+}
+
 // withInProcess returns factory with the registered in-process runtime bound
 // to root, or factory unchanged when none is registered.
 func (factory containerRuntimeFactory) withInProcess(root string) containerRuntimeFactory {

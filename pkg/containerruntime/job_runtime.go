@@ -315,6 +315,14 @@ func (j *JobRuntime) IsAvailable() bool {
 	return j != nil && j.runtime != nil && j.runtime.IsInitialized() && !j.runtime.closed.Load()
 }
 
+// SupportsSandboxNetwork reports whether a sandbox can be given network:
+// this runtime gives a container the "none" network and nothing else (see
+// ErrNetworkUnsupported), so an agent configured for any other sandbox
+// network refuses to start rather than refuse every spawn.
+func (*JobRuntime) SupportsSandboxNetwork(network orchestration.SandboxNetwork) bool {
+	return network == orchestration.SandboxNetworkNone
+}
+
 // Pull fetches an image into the runtime's storage, honouring the signature
 // policy and a digest pin.
 func (j *JobRuntime) Pull(ctx context.Context, image string) error {
