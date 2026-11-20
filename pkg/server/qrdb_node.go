@@ -21,7 +21,10 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 
+	qrdbgrpc "github.com/jeremyhahn/go-qrdb/pkg/api/grpc"
+	qrdbrest "github.com/jeremyhahn/go-qrdb/pkg/api/rest"
 	qrdbserver "github.com/jeremyhahn/go-qrdb/pkg/server"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
@@ -30,6 +33,7 @@ import (
 
 	mcpapi "github.com/jeremyhahn/go-quicbaas/pkg/api/mcp"
 	restapi "github.com/jeremyhahn/go-quicbaas/pkg/api/rest"
+	"github.com/jeremyhahn/go-quicbaas/pkg/api/sealedwindow"
 	"github.com/jeremyhahn/go-quicbaas/pkg/apimodule"
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/routing"
@@ -625,7 +629,7 @@ func (s *Server) newQRDBAuditSink() qrdbsdk.NodeAuditLogger {
 	return qrdbsdk.NewAuditRingBuffer(defaultQRDBAuditRingCapacity)
 }
 
-func (s *Server) unifiedModuleServerOptions(serverOpts []qrdbsdk.ServerOption) ([]qrdbsdk.ServerOption, error) {
+func (s *Server) unifiedModuleServerOptions(serverOpts []qrdbsdk.ServerOption, sealEnabled bool) ([]qrdbsdk.ServerOption, error) {
 	// The ONE audit plane (P5.2): every capability module (quicbaas's own
 	// and go-xkms's) and, over the site-by-site migration, quicbaas's own
 	// IAM/OIDC/federation/orchestration/PIV-login/introspection auditing
@@ -645,6 +649,7 @@ func (s *Server) unifiedModuleServerOptions(serverOpts []qrdbsdk.ServerOption) (
 	// service, never GetQRDBTenantServicer, which returns the router.
 	s.tenantUnsealRouter = newTenantUnsealRouter(s.rawQRDBTenantServicer, s.buildTenantBarrierService)
 	serverOpts = append(serverOpts, qrdbserver.WithTenantService(s.tenantUnsealRouter))
+	serverOpts = append(serverOpts, s.nodeBarrierServerOptions(sealEnabled)...)
 
 	module, err := s.newQuicBaaSModule()
 	if err != nil {
@@ -754,6 +759,93 @@ func (s *Server) unifiedModuleServerOptions(serverOpts []qrdbsdk.ServerOption) (
 		serverOpts = append(serverOpts, qrdbsdk.WithServerTLS(s.unifiedServerTLSConfig()))
 	}
 	return serverOpts, nil
+}
+
+// nodeBarrierServerOptions chooses the qrdb.v1 barrier service the node's
+// REST, gRPC, QUIC, Unix and MCP servers carry. With the seal enabled
+// go-qrdb registers the node's own barrier servicer, which reads the
+// transport caller's thumbprint for officer share claims, so nothing is
+// overridden. With the seal disabled the node has no barrier servicer, so
+// the proxy serves the direct servicer published on s.barrierServicer
+// (go-quicbaas #2488). The proxy brings the data-plane barrier's sealed
+// window with it: the sealed-window probe makes the native transports
+// answer data RPCs Unavailable once that barrier is sealed, as the
+// node's own servicer does with the seal enabled. The probe also installs
+// go-qrdb's outer REST sealed-window gate with its default allowlist, which
+// admits /v1/barrier/* but not the composed /api/v1/barrier/* routes, so the
+// composed list is merged into that default before the options are returned.
+func (s *Server) nodeBarrierServerOptions(sealEnabled bool) []qrdbsdk.ServerOption {
+	if sealEnabled {
+		return nil
+	}
+	installComposedRESTSealedAllowlist()
+	installComposedGRPCSealedAllowlist()
+	// startService builds and publishes the persistent data-plane barrier
+	// only after the native listeners are up. Until it does, the probe fails
+	// closed: on a restart the data dir may already hold an initialized,
+	// sealed barrier that nothing has loaded yet.
+	if s.config != nil && s.config.Storage.DataDir != "" {
+		s.dataPlaneBarrierPending.Store(true)
+	}
+	return []qrdbsdk.ServerOption{
+		qrdbserver.WithBarrierService(newQRDBBarrierServicerProxy(s)),
+		qrdbserver.WithSealedWindowProbe(s.SealedWindowProbe()),
+	}
+}
+
+// composedRESTSealedAllowlistOnce guards installComposedRESTSealedAllowlist.
+var composedRESTSealedAllowlistOnce sync.Once
+
+// installComposedRESTSealedAllowlist widens go-qrdb's default REST
+// sealed-window allowlist (qrdbrest.SealedWindowAllowlist, used by the outer
+// gate the sealed-window probe installs, which is given a nil allowlist) to
+// the de-duplicated union of its entries and the composed go-quicbaas list
+// (sealedwindow.RESTAllowlist), so the /api/v1/barrier/* routes stay
+// reachable while the data-plane barrier is sealed. It runs once per process.
+func installComposedRESTSealedAllowlist() {
+	composedRESTSealedAllowlistOnce.Do(func() {
+		current := qrdbrest.SealedWindowAllowlist
+		composed := sealedwindow.RESTAllowlist()
+		merged := make([]string, 0, len(current)+len(composed))
+		seen := make(map[string]struct{}, len(current)+len(composed))
+		for _, list := range [][]string{current, composed} {
+			for _, entry := range list {
+				if _, ok := seen[entry]; ok {
+					continue
+				}
+				seen[entry] = struct{}{}
+				merged = append(merged, entry)
+			}
+		}
+		qrdbrest.SealedWindowAllowlist = merged
+	})
+}
+
+// composedGRPCSealedAllowlistOnce guards installComposedGRPCSealedAllowlist.
+var composedGRPCSealedAllowlistOnce sync.Once
+
+// installComposedGRPCSealedAllowlist widens go-qrdb's native gRPC sealed-window
+// allowlist, which names only qrdb.v1.QRDBService methods, with the composed
+// quicbaas full methods (sealedwindow.GRPCFullMethodAllowlist), so the quicbaas
+// liveness and unseal-flow RPCs stay reachable while the data-plane barrier is
+// sealed. It runs once per process.
+func installComposedGRPCSealedAllowlist() {
+	composedGRPCSealedAllowlistOnce.Do(func() {
+		current := qrdbgrpc.SealedWindowAllowlist
+		composed := sealedwindow.GRPCFullMethodAllowlist()
+		merged := make([]string, 0, len(current)+len(composed))
+		seen := make(map[string]struct{}, len(current)+len(composed))
+		for _, list := range [][]string{current, composed} {
+			for _, entry := range list {
+				if _, ok := seen[entry]; ok {
+					continue
+				}
+				seen[entry] = struct{}{}
+				merged = append(merged, entry)
+			}
+		}
+		qrdbgrpc.SealedWindowAllowlist = merged
+	})
 }
 
 // newQuicBaaSModule builds the quicbaas ServiceModule the unified server
@@ -880,7 +972,7 @@ func (s *Server) initStandaloneQRDBNode() error {
 	s.pinBackend = pinBackend
 
 	// Register the quicbaas ServiceModule (and unified TLS when enabled).
-	serverOpts, err = s.unifiedModuleServerOptions(serverOpts)
+	serverOpts, err = s.unifiedModuleServerOptions(serverOpts, qcfg.Seal.Enabled)
 	if err != nil {
 		return err
 	}
@@ -1098,7 +1190,7 @@ func (s *Server) initClusteredQRDBNode() error {
 	s.pinBackend = pinBackend
 
 	// Register the quicbaas ServiceModule (and unified TLS when enabled).
-	serverOpts, err = s.unifiedModuleServerOptions(serverOpts)
+	serverOpts, err = s.unifiedModuleServerOptions(serverOpts, qcfg.Seal.Enabled)
 	if err != nil {
 		return err
 	}

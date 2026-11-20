@@ -17,6 +17,7 @@ package mcp
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -45,10 +46,21 @@ func TestHandleMsgChannelStats_ChannelFigures(t *testing.T) {
 	}
 
 	reg := &ToolRegistry{service: &mockService{}, logger: log}
-	result, err := reg.handleMsgChannelStats(ctx, ps, map[string]interface{}{"channel": "orders"})
-	require.NoError(t, err)
-	stats, ok := result.(map[string]interface{})
-	require.True(t, ok, "result is %T, want a map", result)
+	// Publish returns once the hub has queued the message, and the hub
+	// counts it on its own loop, so the count is read until it arrives.
+	var stats map[string]interface{}
+	require.Eventually(t, func() bool {
+		result, err := reg.handleMsgChannelStats(ctx, ps, map[string]interface{}{"channel": "orders"})
+		if !assert.NoError(t, err) {
+			return false
+		}
+		got, ok := result.(map[string]interface{})
+		if !assert.True(t, ok, "result is %T, want a map", result) {
+			return false
+		}
+		stats = got
+		return stats["messages_published"] == int64(2)
+	}, 5*time.Second, 10*time.Millisecond, "messages_published never reached 2")
 	assert.Equal(t, "orders", stats["name"])
 	assert.Equal(t, int64(0), stats["subscribers"])
 	assert.Equal(t, int64(2), stats["messages_published"])

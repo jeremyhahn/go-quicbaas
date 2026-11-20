@@ -39,7 +39,7 @@ type mountPolicyFixture struct {
 func newMountPolicyFixture(t *testing.T) mountPolicyFixture {
 	t.Helper()
 
-	base := t.TempDir()
+	base := shortSocketDir(t)
 	projectsRoot := filepath.Join(base, "projects")
 	allowedRoot := filepath.Join(base, "shared")
 
@@ -178,7 +178,7 @@ func TestMountPolicy_SymlinkEscapeDenied(t *testing.T) {
 func TestMountPolicy_SymlinkedRootStillMatches(t *testing.T) {
 	t.Parallel()
 
-	base := t.TempDir()
+	base := shortSocketDir(t)
 	real := filepath.Join(base, "real")
 	workspace := filepath.Join(real, "tenant-a", "proj-1", workspaceDirName)
 	if err := os.MkdirAll(workspace, 0o700); err != nil {
@@ -321,15 +321,7 @@ type socketsRootFixture struct {
 func newSocketsRootFixture(t *testing.T) socketsRootFixture {
 	t.Helper()
 	base := newMountPolicyFixture(t)
-	// A unix socket address must fit the kernel's sun_path field, and
-	// t.TempDir() carries $TMPDIR and the test's name, so the root the socket
-	// is bound under is a short directory of its own.
-	short, err := os.MkdirTemp("/tmp", "mp")
-	if err != nil {
-		t.Fatalf("sockets root: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(short) })
-	root := filepath.Join(short, "s")
+	root := filepath.Join(shortSocketDir(t), "s")
 	if err := os.Mkdir(root, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -442,7 +434,7 @@ func TestMountPolicy_TheSocketsRootGrantIsOnlyTheSocket(t *testing.T) {
 // deny every signing agent it starts.
 func TestMountPolicy_SymlinkedSocketsRootStillMatches(t *testing.T) {
 	f := newSocketsRootFixture(t)
-	link := filepath.Join(t.TempDir(), "link")
+	link := filepath.Join(shortSocketDir(t), "link")
 	if err := os.Symlink(f.root, link); err != nil {
 		t.Fatal(err)
 	}

@@ -121,6 +121,27 @@ func TestRefresh_PublishesThenBindsTheDigestPinnedReference(t *testing.T) {
 	}
 }
 
+// A refresh pass releases the candidate's ID once it has pushed it, so the
+// engine's reference keeping the built image can go.
+func TestRefresh_ReleasesTheCandidateIDAfterItsPush(t *testing.T) {
+	cfg := testConfig()
+	cfg.Registry = "198.51.100.50:3000/jeremyhahn/software-factory-worker"
+	cfg.Credential = fakeCredential{}
+	h := newHarness(t, cfg)
+
+	report := h.r.Refresh(t.Context(), TriggerManual)
+
+	if report.Outcome != OutcomePromoted || report.ImageID == "" {
+		t.Fatalf("outcome = %s, image %q (%s)", report.Outcome, report.ImageID, report.Error)
+	}
+	if !slices.Equal(h.engine.released, []string{report.ImageID}) {
+		t.Fatalf("released = %v, want the candidate %s once", h.engine.released, report.ImageID)
+	}
+	if h.engine.pushesAtRelease[0] != len(h.engine.pushes) || len(h.engine.pushes) == 0 {
+		t.Fatalf("the candidate was released after %d of %d pushes", h.engine.pushesAtRelease[0], len(h.engine.pushes))
+	}
+}
+
 func TestRefresh_ARegistryReferenceIsManagedToo(t *testing.T) {
 	cfg := testConfig()
 	cfg.Registry = "reg.example:3000/o/worker"
@@ -189,6 +210,43 @@ func TestRefresh_ReusesACorrectlyLabelledCandidate(t *testing.T) {
 	if report.Outcome != OutcomePromoted {
 		t.Fatalf("outcome = %s (%s)", report.Outcome, report.Error)
 	}
+	if len(h.engine.released) != 0 {
+		t.Fatalf("released = %v, want nothing: the pass took no reference on a reused candidate", h.engine.released)
+	}
+}
+
+// builtCandidateID is the ID the fake engine gives the candidate a pass builds.
+const builtCandidateID = "sha256:built-" + candidateTag
+
+func TestRefresh_ReleasesABuiltCandidateALaterStepRefuses(t *testing.T) {
+	h := newHarness(t, testConfig())
+	h.engine.failProbe = softwarefactoryworker.Probes()[3].Name
+
+	report := h.r.Refresh(t.Context(), TriggerManual)
+
+	if len(h.engine.builds) != 1 || report.ImageID != builtCandidateID {
+		t.Fatalf("builds=%d id=%q, want the candidate built", len(h.engine.builds), report.ImageID)
+	}
+	assertUnchanged(t, h, report)
+	if !slices.Equal(h.engine.released, []string{builtCandidateID}) {
+		t.Fatalf("released = %v, want the built candidate %s once", h.engine.released, builtCandidateID)
+	}
+}
+
+func TestRefresh_NeverReleasesAReusedCandidateALaterStepRefuses(t *testing.T) {
+	h := newHarness(t, testConfig())
+	h.engine.hold(candidateTag, "sha256:earlier-build", labelsFor("2.1.280", "0.156.0"))
+	h.smoker.fail = map[string]bool{"codex": true}
+
+	report := h.r.Refresh(t.Context(), TriggerManual)
+
+	if len(h.engine.builds) != 0 || report.ImageID != "sha256:earlier-build" {
+		t.Fatalf("builds=%d id=%q, want the held candidate reused", len(h.engine.builds), report.ImageID)
+	}
+	assertUnchanged(t, h, report)
+	if len(h.engine.released) != 0 {
+		t.Fatalf("released = %v, want nothing: the pass took no reference on a reused candidate", h.engine.released)
+	}
 }
 
 // assertUnchanged fails when a failed pass touched a binding or published.
@@ -214,18 +272,22 @@ func TestRefresh_FailuresLeaveBindingsAlone(t *testing.T) {
 		cfg   func(*Config)
 		setup func(*harness)
 		want  error
+		// released, when set, is exactly what the pass must release: a
+		// candidate it built and a gate then refused.
+		released []string
 	}{
 		"registry unavailable": {setup: func(h *harness) { h.versions.err = errFake }, want: errFake},
 		"build fails":          {setup: func(h *harness) { h.engine.buildErr = errFake }, want: errFake},
 		"a probe fails": {setup: func(h *harness) {
 			h.engine.failProbe = softwarefactoryworker.Probes()[3].Name
 		}, want: ErrGate},
-		"a smoke fails":    {setup: func(h *harness) { h.smoker.fail = map[string]bool{"codex": true} }, want: ErrGate},
-		"labels are wrong": {setup: func(h *harness) { h.engine.builtLabels = labelsFor("2.1.280", "0.1.0") }, want: ErrGate},
+		"a smoke fails": {setup: func(h *harness) { h.smoker.fail = map[string]bool{"codex": true} }, want: ErrGate},
+		"labels are wrong": {setup: func(h *harness) { h.engine.builtLabels = labelsFor("2.1.280", "0.1.0") }, want: ErrGate,
+			released: []string{builtCandidateID}},
 		"no languages label": {setup: func(h *harness) {
 			h.engine.builtLabels = labelsFor("2.1.280", "0.156.0")
 			delete(h.engine.builtLabels, softwarefactoryworker.LabelLanguages)
-		}, want: ErrGate},
+		}, want: ErrGate, released: []string{builtCandidateID}},
 		"inspect is broken":     {setup: func(h *harness) { h.engine.inspectFn = brokenInspect }, want: errFake},
 		"push fails":            {cfg: withRegistry, setup: func(h *harness) { h.engine.pushErr = errFake }, want: errFake},
 		"credential unreadable": {cfg: withCredentialError, want: errFake},
@@ -242,6 +304,9 @@ func TestRefresh_FailuresLeaveBindingsAlone(t *testing.T) {
 			}
 			report := h.r.Refresh(t.Context(), TriggerManual)
 			assertUnchanged(t, h, report)
+			if tc.released != nil && !slices.Equal(h.engine.released, tc.released) {
+				t.Fatalf("released = %v, want %v", h.engine.released, tc.released)
+			}
 		})
 	}
 }
