@@ -25,9 +25,7 @@ import (
 	"sync"
 	"testing"
 
-	qrdbembedding "github.com/jeremyhahn/go-qrdb/pkg/embedding"
 	qrdbservice "github.com/jeremyhahn/go-qrdb/pkg/service"
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -121,10 +119,11 @@ func TestQRDBEmbedding_ProviderServesGoQRDBEmbed(t *testing.T) {
 	assert.Equal(t, "m", models.Models[0].Name)
 }
 
-// TestQRDBEmbedding_ProviderHonoursRequestedModel checks that a go-qrdb
-// embedding request naming a model reaches the provider with that model, not
-// the configured default.
-func TestQRDBEmbedding_ProviderHonoursRequestedModel(t *testing.T) {
+// TestQRDBEmbedding_ProviderRefusesAnotherModel checks that a quicbaas node
+// serves a provider with its configured model only: a go-qrdb embedding
+// request naming another model is refused and never reaches the provider,
+// while the configured model is served.
+func TestQRDBEmbedding_ProviderRefusesAnotherModel(t *testing.T) {
 	var (
 		mu     sync.Mutex
 		models []string
@@ -195,15 +194,16 @@ func TestQRDBEmbedding_ProviderHonoursRequestedModel(t *testing.T) {
 
 	ctx := context.Background()
 	const large = "text-embedding-3-large"
-	resp, err := svc.Embed(ctx, &qrdbservice.EmbedRequest{Texts: []string{"hi"}, Model: large})
-	require.NoError(t, err)
-	assert.Equal(t, []string{large}, recorded())
-	assert.Equal(t, large, resp.Model)
+	_, err = svc.Embed(ctx, &qrdbservice.EmbedRequest{Texts: []string{"hi"}, Model: large})
+	require.Error(t, err, "Embed with a model other than the configured one must be refused")
+	_, err = svc.BatchEmbed(ctx, &qrdbservice.BatchEmbedRequest{Texts: []string{"hi"}, Model: large})
+	require.Error(t, err, "BatchEmbed with a model other than the configured one must be refused")
+	assert.NotContains(t, recorded(), large, "the provider must not be called with a model other than the configured one")
 
-	batch, err := svc.BatchEmbed(ctx, &qrdbservice.BatchEmbedRequest{Texts: []string{"hi"}, Model: large})
+	resp, err := svc.Embed(ctx, &qrdbservice.EmbedRequest{Texts: []string{"hi"}, Model: "m"})
 	require.NoError(t, err)
-	assert.Equal(t, []string{large, large}, recorded())
-	assert.Equal(t, large, batch.Model)
+	assert.Equal(t, []string{"m"}, recorded())
+	assert.Equal(t, "m", resp.Model)
 }
 
 // singleModelProvider is an embedding.Provider without per-call model
@@ -253,80 +253,6 @@ func TestQRDBEmbeddingProvider_ModelWithoutPerCallSupport(t *testing.T) {
 	var invalid *api.InvalidInputError
 	require.True(t, errors.As(err, &invalid), "want *api.InvalidInputError, got %T", err)
 	assert.Equal(t, 2, fake.calls, "the provider must not be called for another model")
-}
-
-// upstreamEmbedder is a go-qrdb embedding provider double: it answers with
-// fixed vectors, the model it was asked for (or its default), a fixed token
-// usage, and a fixed model list.
-type upstreamEmbedder struct {
-	usage  qrdbembedding.UsageInfo
-	models []qrdbsdk.EmbeddingModelInfo
-}
-
-func (u *upstreamEmbedder) Embed(_ context.Context, texts []string, model string) (*qrdbsdk.EmbeddingResult, error) {
-	if model == "" {
-		model = "m"
-	}
-	vecs := make([][]float32, len(texts))
-	for i := range texts {
-		vecs[i] = []float32{1, 2, 3}
-	}
-	usage := u.usage
-	return &qrdbsdk.EmbeddingResult{Embeddings: vecs, Model: model, Usage: &usage}, nil
-}
-
-func (u *upstreamEmbedder) Models(_ context.Context) ([]qrdbsdk.EmbeddingModelInfo, error) {
-	return u.models, nil
-}
-
-func (u *upstreamEmbedder) Dimensions() int { return 3 }
-func (u *upstreamEmbedder) Name() string    { return "upstream" }
-func (u *upstreamEmbedder) Close() error    { return nil }
-
-// upstreamBackedProvider is a quicbaas provider that wraps a go-qrdb provider,
-// as the openai, ollama, lmstudio and voyage wrappers do.
-type upstreamBackedProvider struct {
-	singleModelProvider
-	up *upstreamEmbedder
-}
-
-func (p *upstreamBackedProvider) QRDBProvider() qrdbsdk.EmbeddingProvider { return p.up }
-
-var _ embedding.QRDBUpstream = (*upstreamBackedProvider)(nil)
-
-func TestQRDBEmbeddingProvider_CarriesUsage(t *testing.T) {
-	up := &upstreamEmbedder{usage: qrdbembedding.UsageInfo{PromptTokens: 7, TotalTokens: 9}}
-	a := &qrdbEmbeddingProvider{p: &upstreamBackedProvider{up: up}, model: "m"}
-	ctx := context.Background()
-
-	for _, model := range []string{"", "m", "other"} {
-		res, err := a.Embed(ctx, []string{"a", "b"}, model)
-		require.NoError(t, err, "model %q", model)
-		require.Len(t, res.Embeddings, 2)
-		require.NotNil(t, res.Usage, "model %q: the upstream's usage must be carried", model)
-		assert.Equal(t, 7, res.Usage.PromptTokens, "model %q", model)
-		assert.Equal(t, 9, res.Usage.TotalTokens, "model %q", model)
-		if model == "other" {
-			assert.Equal(t, "other", res.Model)
-		} else {
-			assert.Equal(t, "m", res.Model)
-		}
-	}
-}
-
-func TestQRDBEmbeddingProvider_ListsUpstreamModels(t *testing.T) {
-	up := &upstreamEmbedder{models: []qrdbsdk.EmbeddingModelInfo{
-		{Name: "small", Dimensions: 384, MaxTokens: 512},
-		{Name: "large", Dimensions: 1024, MaxTokens: 8192},
-	}}
-	a := &qrdbEmbeddingProvider{p: &upstreamBackedProvider{up: up}, model: "m"}
-
-	models, err := a.Models(context.Background())
-	require.NoError(t, err)
-	assert.Equal(t, []qrdbservice.ModelInfo{
-		{Name: "small", Dimensions: 384, MaxTokens: 512},
-		{Name: "large", Dimensions: 1024, MaxTokens: 8192},
-	}, models)
 }
 
 var _ embedding.Provider = (*singleModelProvider)(nil)
