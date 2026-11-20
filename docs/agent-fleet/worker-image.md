@@ -106,7 +106,9 @@ publishes, and fails naming every pin that is behind:
 
 - every `*_VERSION` in `pkg/version/toolchain.mk`;
 - each module in `GO_TOOL_DEPENDENCY_FLOORS`;
-- the Makefile's `CLAUDE_CODE_VERSION` and `CODEX_VERSION`.
+- `CLAUDE_CODE_VERSION` and `CODEX_VERSION` in
+  `deployments/agents/software-factory-worker/versions.lock`, which the
+  Makefile reads.
 
 The upstreams are the Go module proxy, go.dev, nodejs.org, the npm registry,
 rubygems.org and GitHub releases. A pin that has no source in the script fails
@@ -165,6 +167,64 @@ The **content tag** is `<quicbaas-version>-cc<claude-code>-cx<codex>`, e.g.
 always produce the same name, a newer CLI always a new one, and **a previous
 tag is never overwritten** — it stays on the host (and in the registry) for
 rollback. `make build-worker-image` uses the same scheme.
+
+## Nightly publish to ghcr.io
+
+The `worker-image` workflow (`.github/workflows/worker-image.yml`) builds and
+publishes the image itself in its `build-publish` job. It runs nightly at
+03:00 UTC (`0 3 * * *`) and on any dispatch, which has no inputs.
+
+- **Versions (lock).** The build reads every version from the repository,
+  never from "latest": Claude Code, Codex and the Gemini CLI from
+  `deployments/agents/software-factory-worker/versions.lock` (`KEY=VALUE`
+  lines), and Go, `gh` and the rest of the toolchain, with their tarball
+  SHA-256s, from `pkg/version/toolchain.mk`. A version moves only by a PR to
+  one of those files; `make check-worker-toolchain-currency` reports when one
+  is behind. The Debian base packages are upgraded (`apt-get upgrade`) on every
+  build.
+- **Runner.** `ubuntu-latest` for now. When the `bigdisk-docker` pool is live,
+  the one commented line above `runs-on:` switches the job to
+  `[self-hosted, linux, x64, bigdisk-docker]`; the plain `bigdisk` pool has no
+  Docker daemon and cannot run it.
+- **Tag.** The content tag above plus the UTC build date,
+  `<VERSION>-cc<claude-code>-cx<codex>-n<YYYYMMDD>`, pushed to
+  `ghcr.io/<owner>/quicbaas-software-factory-worker`, so each night publishes
+  a freshly built image. When that tag is already published (a rerun the same
+  day) the job builds and pushes nothing and reports the existing digest: a
+  tag is never overwritten. A lookup that fails for any
+  reason other than "not found" stops the job before the build, so nothing is
+  pushed.
+- **Scan.** Two Trivy secret scans run first, one of the built image and one
+  of each of its layer tarballs (`docker save`, every layer extracted on its
+  own); a secret of any severity fails the job. The image scan also covers the
+  image config, and the config JSON is scanned with the layers. Then
+  `make push-worker-image`'s own vulnerability gate runs: a fixable CRITICAL
+  or HIGH finding fails the job. All three run before anything is tagged or
+  pushed.
+- **Dev caches.** A published image never goes through the dev caches. The job
+  fails before the build if any `DEVCACHE_*` variable is set, and passes both
+  `DEVCACHE_GOPROXY` and `DEVCACHE_NPM_REGISTRY` empty.
+- **Credentials.** The job's own `GITHUB_TOKEN` with `packages: write` and
+  `contents: read` only; no personal token and no repository secret.
+- **Digest.** The image is published by digest: the digest
+  `make push-worker-image` prints is captured and every run records it three
+  ways: a `WORKER-IMAGE-DIGEST <repo>:<tag>@<digest> published=<true|false>`
+  log line, the run's job summary, and the `worker-image-digest` artifact
+  (kept 90 days). Each also carries five `name=<version> integrity=<sha512>`
+  lines, for `claude-code`, `claude-code-linux-x64`, `codex`,
+  `codex-linux-x64` and `gemini-cli`, and the `go` and `gh` versions. The
+  integrity values are the registry's `dist.integrity` for the locked
+  versions; the build does not yet check what it installs against them. A
+  second job, `post-digest`, needs `build-publish`, holds no permission, checks
+  the digest is a `sha256:` digest that the reference names, and posts it to
+  the run summary and as its `digest` and `ref` outputs.
+- **Visibility.** The `quicbaas-software-factory-worker` package is private (a
+  first container publish is private by default), and it must stay private.
+  Every run checks with an anonymous lookup of the digest and fails if that
+  lookup succeeds. Before the push, an anonymous token and tag lookup refuses
+  to publish when the package can be read without credentials; after the
+  push, the anonymous digest lookup checks it again.
+- **`current`.** This workflow does not move it.
 
 ## Local mode and the fleet
 
@@ -305,16 +365,16 @@ queued is refused (409 / `Aborted`); a node without the loop answers 503 /
 ## By hand
 
 ```
-make build-worker-image                               # CLAUDE_CODE_VERSION / CODEX_VERSION pins in the Makefile
+make build-worker-image                               # CLAUDE_CODE_VERSION / CODEX_VERSION pins in versions.lock
 make build-worker-image CLAUDE_CODE_VERSION=2.1.293   # a newer CLI by hand
 make test-worker-image                                # the gate's probes, via ./deployments/agents/software-factory-worker/probe
 make push-worker-image WORKER_IMAGE_REGISTRY=<host>/<owner>/software-factory-worker   # scan, push, print the reference
 ```
 
-This repository's own factory images (the worker and its go-xkms variant) are
-published by `.github/workflows/worker-image.yml` under
-`<registry>/<agent>/<image>`, the namespace of the repository's agent
-identity, and pushed with that identity's token, never the owner's account.
+This repository's own worker image is published by
+`.github/workflows/worker-image.yml` to
+`ghcr.io/<owner>/quicbaas-software-factory-worker` to a private package with
+the workflow's `GITHUB_TOKEN`.
 
 `push-worker-image` runs `trivy image --severity CRITICAL,HIGH --ignore-unfixed
 --exit-code 1 <image>` first, blocking (devops.md §8): a fixable CRITICAL or HIGH
