@@ -1625,19 +1625,6 @@ test-fips-conformance: ## Run the FIPS conformance pass (GODEBUG=fips140=only)
 	@echo "$(YELLOW)  fips140=only. The fix is upstream; adding the package here would$(NC)"
 	@echo "$(YELLOW)  report a go-xkms defect as a quicbaas one.$(NC)"
 
-# FIPS_PKGS is the scope of the full fips140=only unit run (nightly.yml): the
-# whole root module, untagged. It is not test-fips-conformance's curated
-# subset: packages that reach an unapproved algorithm fail here.
-FIPS_PKGS ?= ./...
-FIPS_TIMEOUT := 15m
-
-.PHONY: test-fips-shard
-test-fips-shard: ## Run shard SHARD of SHARDS of the full unit suite under GODEBUG=fips140=only
-	@$(call go_packages,$(FIPS_PKGS),/proto$$); \
-	$(call shard_packages,); \
-	printf "$(BLUE)FIPS shard $(SHARD) of $(SHARDS): %s packages$(NC)\n" "$$(printf '%s\n' "$$pkgs" | wc -l)"; \
-	$(FIPS_ONLY_ENV) $(GOTEST) -count=1 -timeout=$(FIPS_TIMEOUT) $$pkgs
-
 .PHONY: test-unit
 test-unit: test ## Alias for test (unit tests only)
 	@# This is now an alias for the test target which already excludes integration tests
@@ -3482,18 +3469,6 @@ coverage-merge: ## Join the SHARDS coverage-shard profiles and fail below COVER_
 .PHONY: coverage-passes
 coverage-passes: $(TEST_CHECKS) ## The test stage beside the coverage shards: the TEST_CHECKS validations, the Go SDK, the minimal/standard/lean tag passes, the tooling tests and the worker image package tests
 	@$(MAKE) --no-print-directory $(COVERAGE_PASSES)
-
-# shard-packages prints shard SHARD of SHARDS of SHARD_PKGS under the tags
-# SHARD_TAGS, one import path per line, for a workflow that runs go test
-# itself (batch.yml's race-full). It deals packages as coverage-shard does.
-SHARD_PKGS ?= $(COVER_PKGS)
-SHARD_TAGS ?= $(TEST_TAGS)
-
-.PHONY: shard-packages
-shard-packages: ## Print shard SHARD of SHARDS of SHARD_PKGS (tags SHARD_TAGS), one package per line
-	@$(call go_packages,-tags '$(SHARD_TAGS)' $(SHARD_PKGS),/proto$$); \
-	$(call shard_packages,-tags '$(SHARD_TAGS)'); \
-	printf '%s\n' "$$pkgs"
 
 # ==============================================================================
 # Coverage Gate (hard threshold — mirrors go-qrdb's COVER_MIN / check-coverage)

@@ -30,21 +30,11 @@ env:
   GO_VERSION: '1.27.4'
 
 jobs:
-  # The whole root module under fips140=only, dealt over two shards by `make
-  # test-fips-shard` (the deal ci.yml's unit shards use). It is a plain run,
-  # no -race and no tags, far lighter than ci.yml's race shards; two shards
-  # keep each well inside its 45 minutes on a 4-core runner. It stays here,
-  # out of the merge gate, while it is known-red (see the header); the green
-  # curated subset is `make test-fips-conformance`.
   fips:
-    name: FIPS (shard ${{ matrix.shard }}/2)
+    name: FIPS
     runs-on: ubuntu-latest
     # needs: none -- nightly runs standalone; build health is ci.yml's job.
-    timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [0, 1]
+    timeout-minutes: 30
     env:
       GOFIPS140: latest
       GODEBUG: fips140=only
@@ -56,11 +46,10 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
 
       - name: Build all packages (FIPS mode)
-        if: matrix.shard == 0
         run: go build ./...
 
       - name: Unit tests (FIPS mode)
-        run: make test-fips-shard SHARD=${{ matrix.shard }} SHARDS=2
+        run: go test -count=1 -timeout=900s ./...
 
   # trivy fs -- dependency CVEs and leaked secrets in the tree (devops.md §8).
   # Scoping mirrors the `trivy` target in the Makefile; keep the two identical.
