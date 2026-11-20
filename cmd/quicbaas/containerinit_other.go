@@ -23,5 +23,5 @@ func runContainerInit() bool {
 }
 
 // registerInProcessContainerRuntime registers nothing: without linux and cgo
-// there is no in-process runtime, and the "libcontainer" selector says so.
+// there is no in-process runtime, and resolving it says so.
 func registerInProcessContainerRuntime() {}

@@ -48,9 +48,16 @@ type InProcessContainerRuntime func(root string, logger interfaces.Logger) (orch
 // itself: quicbaasd links this package and must stay CGO_ENABLED=0.
 var inProcessContainerRuntime atomic.Pointer[InProcessContainerRuntime]
 
-// SetInProcessContainerRuntime registers the in-process runtime the
-// "libcontainer" selector resolves to; "auto" never takes it. Only the fleet node agent,
-// built for linux with cgo, registers one; nil unregisters it.
+// containerRuntimeInProcess keys the in-process runtime (pkg/containerruntime:
+// runc libcontainer in this process, with no runtime binary and no daemon
+// socket) in the resolver table. It is not a --container-runtime value:
+// Config.Validate rejects it, and "auto" never takes the in-process runtime.
+const containerRuntimeInProcess ContainerRuntimeSelector = "libcontainer"
+
+// SetInProcessContainerRuntime registers the agent's in-process runtime. No
+// --container-runtime value selects it yet, and "auto" never takes it. Only
+// the fleet node agent, built for linux with cgo, registers one; nil
+// unregisters it.
 func SetInProcessContainerRuntime(build InProcessContainerRuntime) {
 	if build == nil {
 		inProcessContainerRuntime.Store(nil)
@@ -59,8 +66,8 @@ func SetInProcessContainerRuntime(build InProcessContainerRuntime) {
 	inProcessContainerRuntime.Store(&build)
 }
 
-// ErrInProcessRuntimeUnavailable reports the "libcontainer" selector on a
-// binary without the in-process runtime: not the agent, or not linux with cgo.
+// ErrInProcessRuntimeUnavailable reports the in-process runtime resolved on a
+// binary without one: not the agent, or not linux with cgo.
 var ErrInProcessRuntimeUnavailable = errors.New("agent: the in-process container runtime is not built into this binary")
 
 // ErrInProcessRuntimeNoRoot reports an in-process runtime asked for with no
@@ -135,12 +142,10 @@ var execContainerRuntimeFactory = containerRuntimeFactory{
 //     is not usable on this host the daemon degrades to no runtime, logging why:
 //     under sandbox policy "preferred" or "opt-in" that is a serviceable daemon,
 //     and under "required" NewRuntime refuses to start on the operator's behalf.
-//   - "libcontainer" is the in-process runtime. A binary without one, or one
-//     that cannot start here, is an error: the operator asked for it by name.
 //   - "auto" (and the empty selector) take the first engine detection finds,
 //     and resolve to no runtime when the host has none. They never take the
-//     in-process runtime, which is opt-in by name until it has networking
-//     and seccomp/AppArmor confinement.
+//     in-process runtime, which has no networking or seccomp/AppArmor
+//     confinement yet; no --container-runtime value selects it.
 //   - "none" resolves to no runtime without probing anything.
 //
 // ResolveContainerRuntime resolves without a state directory, so its
@@ -169,10 +174,11 @@ type containerRuntimeResolver func(logger interfaces.Logger, factory containerRu
 
 // containerRuntimeResolvers dispatches a selector to its resolver in constant
 // time. Every value Config.Validate accepts has an entry here; a selector that
-// is missing is by construction one Validate rejected.
+// is missing is by construction one Validate rejected. The in-process entry
+// is the one Validate does not accept.
 var containerRuntimeResolvers = map[ContainerRuntimeSelector]containerRuntimeResolver{
 	ContainerRuntimeNone:      resolveNoContainerRuntime,
-	ContainerRuntimeInProcess: resolveInProcessContainerRuntime,
+	containerRuntimeInProcess: resolveInProcessContainerRuntime,
 	ContainerRuntimeAuto:      resolveDetectedContainerRuntime,
 	ContainerRuntimeDocker:    resolveNamedContainerRuntime(orchestration.RuntimeDocker),
 	ContainerRuntimePodman:    resolveNamedContainerRuntime(orchestration.RuntimePodman),
@@ -207,8 +213,8 @@ func resolveNoContainerRuntime(logger interfaces.Logger, _ containerRuntimeFacto
 // none found is a runtime-less daemon rather than a failure.
 //
 // It never takes the in-process runtime: that one has no container networking
-// and no seccomp or AppArmor confinement yet, so an operator opts into it by
-// naming "libcontainer".
+// and no seccomp or AppArmor confinement yet, so no --container-runtime value
+// selects it.
 func resolveDetectedContainerRuntime(logger interfaces.Logger, factory containerRuntimeFactory) (orchestration.ContainerRuntime, error) {
 	rt, err := factory.detect(logger)
 	if err != nil {
@@ -219,8 +225,8 @@ func resolveDetectedContainerRuntime(logger interfaces.Logger, factory container
 	return rt, nil
 }
 
-// resolveInProcessContainerRuntime is the "libcontainer" selector: the
-// in-process runtime, or an error naming why there is none.
+// resolveInProcessContainerRuntime resolves the in-process runtime, or an
+// error naming why there is none.
 func resolveInProcessContainerRuntime(logger interfaces.Logger, factory containerRuntimeFactory) (orchestration.ContainerRuntime, error) {
 	if factory.inProcess == nil {
 		return nil, ErrInProcessRuntimeUnavailable

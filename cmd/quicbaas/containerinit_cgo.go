@@ -25,7 +25,7 @@ import (
 )
 
 // registerInProcessContainerRuntime makes pkg/containerruntime the runtime
-// the agent's "libcontainer" selector resolves to ("auto" never takes it). It lives here,
+// the agent registers (no --container-runtime value selects it yet, and "auto" never takes it). It lives here,
 // in the agent's main package, because quicbaasd links pkg/fleet too and
 // must never link the runtime.
 func registerInProcessContainerRuntime() {

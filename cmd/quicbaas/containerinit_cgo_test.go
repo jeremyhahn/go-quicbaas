@@ -30,13 +30,13 @@ import (
 // selector then resolves to it under the agent's own root: a JobRuntime when
 // this host lets it start, never "not built into this binary".
 func TestRegisterInProcessContainerRuntime_LibcontainerResolvesToTheJobRuntime(t *testing.T) {
-	_, err := fleet.ResolveContainerRuntimeIn(fleet.ContainerRuntimeInProcess, t.TempDir(), newFleetServeLogger())
+	_, err := fleet.ResolveContainerRuntimeIn(fleet.ContainerRuntimeSelector("libcontainer"), t.TempDir(), newFleetServeLogger())
 	require.ErrorIs(t, err, fleet.ErrInProcessRuntimeUnavailable, "nothing is registered before main registers it")
 
 	registerInProcessContainerRuntime()
 	t.Cleanup(func() { fleet.SetInProcessContainerRuntime(nil) })
 
-	rt, err := fleet.ResolveContainerRuntimeIn(fleet.ContainerRuntimeInProcess, t.TempDir(), newFleetServeLogger())
+	rt, err := fleet.ResolveContainerRuntimeIn(fleet.ContainerRuntimeSelector("libcontainer"), t.TempDir(), newFleetServeLogger())
 	if err != nil {
 		assert.False(t, errors.Is(err, fleet.ErrInProcessRuntimeUnavailable), "registered, yet: %v", err)
 		t.Skipf("the in-process runtime cannot start on this host: %v", err)

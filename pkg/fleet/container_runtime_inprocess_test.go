@@ -48,7 +48,7 @@ func registerInProcess(t *testing.T, buildErr error) *[]string {
 func TestResolveContainerRuntimeIn_LibcontainerWithoutTheRuntimeIsRefused(t *testing.T) {
 	SetInProcessContainerRuntime(nil)
 
-	rt, err := ResolveContainerRuntimeIn(ContainerRuntimeInProcess, t.TempDir(), newSignalLogger(t, ""))
+	rt, err := ResolveContainerRuntimeIn(containerRuntimeInProcess, t.TempDir(), newSignalLogger(t, ""))
 	if !errors.Is(err, ErrInProcessRuntimeUnavailable) {
 		t.Fatalf("expected ErrInProcessRuntimeUnavailable, got %v", err)
 	}
@@ -61,7 +61,7 @@ func TestResolveContainerRuntimeIn_LibcontainerBuildsUnderTheAgentsRoot(t *testi
 	roots := registerInProcess(t, nil)
 	root := t.TempDir()
 
-	rt, err := ResolveContainerRuntimeIn(ContainerRuntimeInProcess, root, newSignalLogger(t, ""))
+	rt, err := ResolveContainerRuntimeIn(containerRuntimeInProcess, root, newSignalLogger(t, ""))
 	if err != nil {
 		t.Fatalf("ResolveContainerRuntimeIn(libcontainer): %v", err)
 	}
@@ -78,7 +78,7 @@ func TestResolveContainerRuntimeIn_LibcontainerThatCannotStartIsAnError(t *testi
 	errNoStart := errors.New("cannot start here")
 	registerInProcess(t, errNoStart)
 
-	if _, err := ResolveContainerRuntimeIn(ContainerRuntimeInProcess, t.TempDir(), newSignalLogger(t, "")); !errors.Is(err, errNoStart) {
+	if _, err := ResolveContainerRuntimeIn(containerRuntimeInProcess, t.TempDir(), newSignalLogger(t, "")); !errors.Is(err, errNoStart) {
 		t.Fatalf("expected the start failure, got %v", err)
 	}
 }
@@ -86,7 +86,7 @@ func TestResolveContainerRuntimeIn_LibcontainerThatCannotStartIsAnError(t *testi
 func TestResolveContainerRuntimeIn_LibcontainerNeedsARoot(t *testing.T) {
 	roots := registerInProcess(t, nil)
 
-	if _, err := ResolveContainerRuntimeIn(ContainerRuntimeInProcess, "", newSignalLogger(t, "")); !errors.Is(err, ErrInProcessRuntimeNoRoot) {
+	if _, err := ResolveContainerRuntimeIn(containerRuntimeInProcess, "", newSignalLogger(t, "")); !errors.Is(err, ErrInProcessRuntimeNoRoot) {
 		t.Fatalf("expected ErrInProcessRuntimeNoRoot, got %v", err)
 	}
 	if len(*roots) != 0 {
@@ -99,7 +99,7 @@ func TestResolveContainerRuntimeIn_LibcontainerNeedsARoot(t *testing.T) {
 func TestResolveContainerRuntime_NeverBuildsTheInProcessRuntime(t *testing.T) {
 	roots := registerInProcess(t, nil)
 
-	if _, err := ResolveContainerRuntime(ContainerRuntimeInProcess, newSignalLogger(t, "")); !errors.Is(err, ErrInProcessRuntimeUnavailable) {
+	if _, err := ResolveContainerRuntime(containerRuntimeInProcess, newSignalLogger(t, "")); !errors.Is(err, ErrInProcessRuntimeUnavailable) {
 		t.Fatalf("expected ErrInProcessRuntimeUnavailable, got %v", err)
 	}
 	if len(*roots) != 0 {
@@ -141,10 +141,10 @@ func TestResolveContainerRuntime_AutoWithTheInProcessRuntimeUnstartable(t *testi
 	}
 }
 
-func TestConfigValidate_AcceptsTheLibcontainerSelector(t *testing.T) {
+func TestConfigValidate_RejectsTheLibcontainerSelector(t *testing.T) {
 	cfg := newTestConfig(t)
-	cfg.ContainerRuntime = ContainerRuntimeInProcess
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("Validate(libcontainer): %v", err)
+	cfg.ContainerRuntime = ContainerRuntimeSelector("libcontainer")
+	if err := cfg.Validate(); !errors.Is(err, ErrConfigUnknownRuntime) {
+		t.Fatalf("Validate(libcontainer) = %v, want ErrConfigUnknownRuntime: no --container-runtime value selects the in-process runtime", err)
 	}
 }
