@@ -26,6 +26,7 @@ package server
 import (
 	"context"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
@@ -57,6 +58,19 @@ func shortTTUnixSocketPath(t *testing.T) string {
 	return filepath.Join(dir, "g.sock")
 }
 
+// requireNodeServesUnixSocket asserts the network-mode ownership of
+// server.unix.socket: the embedded node's Unix listener serves it (behind the
+// node's authentication middleware), and quicbaas's own grpcServer does not
+// bind it.
+func requireNodeServesUnixSocket(t *testing.T, srv *Server, socket string) {
+	t.Helper()
+	require.Nil(t, srv.grpcUnixListener,
+		"quicbaas's own gRPC Unix listener must not bind the socket the node serves")
+	conn, err := net.Dial("unix", socket)
+	require.NoError(t, err, "the embedded node must be listening on server.unix.socket")
+	_ = conn.Close()
+}
+
 // TestServer_InitializeAndShutdown_TT_NetworkGRPC drives a non-embedded
 // initialize so the real gRPC listener body executes and binds, then a graceful
 // Shutdown.
@@ -73,11 +87,12 @@ func TestServer_InitializeAndShutdown_TT_NetworkGRPC(t *testing.T) {
 	saveAndRestoreSeams(t)
 	srv := withTempServer(t)
 	srv.config.Server.Embedded = false
-	srv.config.Server.Unix.Socket = shortTTUnixSocketPath(t)
+	socket := shortTTUnixSocketPath(t)
+	srv.config.Server.Unix.Socket = socket
 
 	require.NoError(t, srv.initialize(), "network initialize must succeed")
 	require.NotNil(t, srv.grpcServer, "gRPC server must be constructed in network mode")
-	require.NotNil(t, srv.grpcUnixListener, "gRPC Unix-socket listener must be bound in network mode")
+	requireNodeServesUnixSocket(t, srv, socket)
 
 	grpcHealth := srv.GetHealthChecker().CheckGRPC()
 	assert.Equal(t, HealthStatusHealthy, grpcHealth.Status,
@@ -148,7 +163,8 @@ func TestServer_InitializeAndShutdown_TT_FullStackNetworkGRPC(t *testing.T) {
 	saveAndRestoreSeams(t)
 	srv := withTempServer(t)
 	srv.config.Server.Embedded = false
-	srv.config.Server.Unix.Socket = shortTTUnixSocketPath(t)
+	socket := shortTTUnixSocketPath(t)
+	srv.config.Server.Unix.Socket = socket
 
 	srv.config.ObjectStorage.Enabled = true
 	srv.config.KMS.Enabled = true
@@ -164,7 +180,7 @@ func TestServer_InitializeAndShutdown_TT_FullStackNetworkGRPC(t *testing.T) {
 	require.NoError(t, srv.initialize(), "full-stack network initialize must succeed")
 	require.NotNil(t, srv.embeddedFleetNodeState, "embedded agent must be started")
 	require.NotNil(t, srv.grpcServer, "gRPC server must be constructed in network mode")
-	require.NotNil(t, srv.grpcUnixListener, "gRPC Unix-socket listener must be bound")
+	requireNodeServesUnixSocket(t, srv, socket)
 	require.NotNil(t, srv.catalogManager)
 	require.NotNil(t, srv.backupManager)
 	require.NotNil(t, srv.messagingService)
