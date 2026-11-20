@@ -108,7 +108,6 @@ GET /api/v1/barrier/recovery/status
 GET /api/v1/barrier/status
 GET /api/v1/cache/config
 GET /api/v1/cache/stats
-GET /api/v1/capabilities
 GET /api/v1/certificate/ca
 GET /api/v1/certificate/ca/bundle
 GET /api/v1/certificate/ca/info
@@ -226,6 +225,7 @@ GET /api/v1/secrets/*
 GET /api/v1/secrets/dynamic/leases
 GET /api/v1/secrets/dynamic/roles
 GET /api/v1/secrets/dynamic/roles/{name}
+GET /api/v1/server/capabilities
 GET /api/v1/ssh/authorized/keys
 GET /api/v1/ssh/authorized/keys/{scope}/{owner}/{name}
 GET /api/v1/ssh/keys

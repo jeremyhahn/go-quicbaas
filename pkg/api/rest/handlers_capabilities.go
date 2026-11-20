@@ -21,7 +21,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/capabilities"
 )
 
-// HandleCapabilities handles GET /api/v1/capabilities: the report of which
+// HandleCapabilities handles GET /api/v1/server/capabilities: the report of which
 // subsystems this server serves and has configured. Any authenticated caller
 // may read it (RouteAuthSession); it carries no configured value.
 func (s *Server) HandleCapabilities(w http.ResponseWriter, r *http.Request) {

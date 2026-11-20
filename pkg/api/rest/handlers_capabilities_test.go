@@ -43,7 +43,7 @@ var capabilityReasons = map[string]bool{
 // getCapabilities calls HandleCapabilities and decodes the report.
 func getCapabilities(t *testing.T, s *Server) capabilities.Report {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/capabilities", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/server/capabilities", nil)
 	rec := httptest.NewRecorder()
 	s.HandleCapabilities(rec, req)
 	if rec.Code != http.StatusOK {
@@ -171,19 +171,19 @@ func TestCapabilities_FullyWired(t *testing.T) {
 func TestCapabilities_RefusesUnauthenticated(t *testing.T) {
 	var found bool
 	for _, spec := range Routes() {
-		if spec.Method != http.MethodGet || spec.Pattern != "/api/v1/capabilities" {
+		if spec.Method != http.MethodGet || spec.Pattern != "/api/v1/server/capabilities" {
 			continue
 		}
 		found = true
 		if spec.Auth != RouteAuthSession {
-			t.Errorf("GET /api/v1/capabilities auth = %v, want RouteAuthSession (authenticated, no permission)", spec.Auth)
+			t.Errorf("GET /api/v1/server/capabilities auth = %v, want RouteAuthSession (authenticated, no permission)", spec.Auth)
 		}
 		if spec.Resource != "" || spec.Action != "" {
-			t.Errorf("GET /api/v1/capabilities permission = %s:%s, want none", spec.Resource, spec.Action)
+			t.Errorf("GET /api/v1/server/capabilities permission = %s:%s, want none", spec.Resource, spec.Action)
 		}
 	}
 	if !found {
-		t.Fatal("Routes() has no GET /api/v1/capabilities")
+		t.Fatal("Routes() has no GET /api/v1/server/capabilities")
 	}
 }
 

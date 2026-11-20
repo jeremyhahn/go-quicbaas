@@ -810,17 +810,17 @@ func refuseQueryPaging(service, method string, req interface{}) error {
 	return nil
 }
 
-// mapClusterMethod maps Cluster service methods to REST endpoints.
 // mapCapabilitiesMethod maps Capabilities service methods to REST endpoints.
 func (t *Transport) mapCapabilitiesMethod(method string) (string, string) {
 	switch method {
 	case "Get":
-		return "/api/v1/capabilities", http.MethodGet
+		return "/api/v1/server/capabilities", http.MethodGet
 	default:
-		return "/api/v1/capabilities/" + method, http.MethodPost
+		return "/api/v1/server/capabilities/" + method, http.MethodPost
 	}
 }
 
+// mapClusterMethod maps Cluster service methods to REST endpoints.
 func (t *Transport) mapClusterMethod(method string) (string, string) {
 	switch method {
 	case "Status":

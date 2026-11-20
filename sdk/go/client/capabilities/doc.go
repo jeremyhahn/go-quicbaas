@@ -16,7 +16,7 @@
 // the service those handlers use wired), with the setting or build tag that
 // enables each one it does not, and the SDK families it serves.
 //
-// The report is served on every transport: GET /api/v1/capabilities on REST
+// The report is served on every transport: GET /api/v1/server/capabilities on REST
 // and QUIC, the quicbaas_capabilities tool on MCP, GetCapabilities on gRPC
 // and Unix, and in process on Embedded. Any authenticated caller may read it.
 package capabilities
