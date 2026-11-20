@@ -83,13 +83,13 @@ type ImageTagError struct {
 	Source string
 	Target string
 
-	// EngineMessage is the engine's stderr with credential-shaped text
-	// redacted, whitespace collapsed and the length bounded
-	// (redactLimitSignal). It IS rendered: a tag prints only the engine's
-	// reason, and a tag failure whose reason is withheld cannot be diagnosed
-	// (#1801, "114 bytes of output withheld"). The raw bytes stay on the
-	// CommandError cause.
-	EngineMessage string
+	// Reason is the engine's refusal classified into a fixed phrase
+	// (classifyTagFailure), or empty when it matches none. It IS rendered:
+	// a tag failure whose reason is withheld cannot be diagnosed (#1801,
+	// "114 bytes of output withheld"). No engine text is rendered, since
+	// stderr can carry any credential shape; the raw bytes stay on the
+	// CommandError cause, whose Output is never rendered.
+	Reason string
 
 	Cause error
 }
@@ -97,8 +97,8 @@ type ImageTagError struct {
 // Error implements the error interface.
 func (e *ImageTagError) Error() string {
 	msg := withCause(ErrImageTag.Error()+": "+e.Source+" -> "+e.Target, e.Cause)
-	if e.EngineMessage != "" {
-		msg += ": " + e.EngineMessage
+	if e.Reason != "" {
+		msg += ": " + e.Reason
 	}
 	return msg
 }
