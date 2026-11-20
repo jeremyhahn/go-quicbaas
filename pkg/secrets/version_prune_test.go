@@ -2,6 +2,7 @@ package secrets
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -243,6 +244,74 @@ func TestKVBackend_PruneKeepsTheCreationTimeAndBoundsListing(t *testing.T) {
 	assert.Zero(t, removed)
 }
 
+// TestPruneVersions_BoundsTheHistory holds every backend to the KV
+// backend's retention: after many writes each followed by a prune, the
+// history is the creation tombstone plus the retained versions, not an
+// emptied slot for every version ever written.
+func TestPruneVersions_BoundsTheHistory(t *testing.T) {
+	t.Parallel()
+	backends := pruneBackends(t)
+	encKV := newGuardedMockKV()
+	backends["encrypted"] = newGuardedEncryptedBackend(t, encKV, newTestMockSecretsEncryptor())
+	for name, b := range backends {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			const path = "app/rotated"
+
+			require.NoError(t, b.Store(ctx, path, map[string][]byte{"k": []byte("v1")}, nil))
+			first, err := b.ListVersions(ctx, path)
+			require.NoError(t, err)
+			require.Len(t, first, 1)
+			created := first[0].CreatedAt
+
+			const writes = 200
+			for i := 2; i <= writes; i++ {
+				require.NoError(t, b.Store(ctx, path, map[string][]byte{"k": []byte(fmt.Sprintf("v%d", i))}, nil))
+				_, err := b.PruneVersions(ctx, path, 1)
+				require.NoError(t, err)
+			}
+
+			versions, err := b.ListVersions(ctx, path)
+			require.NoError(t, err)
+			require.Len(t, versions, 2, "the creation tombstone and the retained version")
+			assert.Equal(t, 1, versions[0].Version)
+			assert.True(t, versions[0].Deleted, "version 1 is pruned to a tombstone")
+			assert.True(t, created.Equal(versions[0].CreatedAt), "the first write's time survives retention")
+			assert.Equal(t, writes, versions[1].Version)
+			assert.False(t, versions[1].Deleted)
+
+			if name == "encrypted" {
+				raw, err := encKV.Get(ctx, secretKey(path))
+				require.NoError(t, err)
+				var record secretVersions
+				require.NoError(t, json.Unmarshal(raw, &record))
+				assert.LessOrEqual(t, len(record.Versions), 2, "the stored record holds the tombstone and the retained version")
+			}
+
+			for _, v := range []int{1, 150} {
+				data, _, err := b.GetVersion(ctx, path, v)
+				require.Error(t, err, "version %d was pruned", v)
+				assert.Nil(t, data)
+			}
+			data, _, err := b.Get(ctx, path)
+			require.NoError(t, err)
+			assert.Equal(t, fmt.Sprintf("v%d", writes), string(data["k"]))
+			require.Error(t, b.Rollback(ctx, path, 1), "a tombstone is no rollback target")
+
+			removed, err := b.PruneVersions(ctx, path, 1)
+			require.NoError(t, err)
+			assert.Zero(t, removed, "the tombstone never counts")
+
+			require.NoError(t, b.Store(ctx, path, map[string][]byte{"k": []byte("v201")}, nil))
+			assert.Equal(t, []int{writes, writes + 1}, liveVersions(t, b, path))
+			_, err = b.PruneVersions(ctx, path, 1)
+			require.NoError(t, err)
+			assert.Equal(t, []int{writes + 1}, liveVersions(t, b, path))
+		})
+	}
+}
+
 // TestPruneVersions_RefusesAStoreWithoutCAS: a prune on a store that cannot
 // arbitrate it could delete or overwrite another instance's acknowledged
 // write, so it is refused and the history is untouched.
@@ -374,7 +443,9 @@ func TestEncryptedBackend_StaleWriterCannotRestoreAPrunedVersion(t *testing.T) {
 			require.NoError(t, err)
 			switch name {
 			case "store", "rollback":
-				assert.Len(t, versions, 4, "the write landed on the pruned history")
+				// The creation tombstone, the retained version 3 and the new 4.
+				require.Len(t, versions, 3, "the write landed on the pruned history")
+				assert.Equal(t, []int{1, 3, 4}, []int{versions[0].Version, versions[1].Version, versions[2].Version})
 			case "delete":
 				_, _, err := writer.Get(ctx, "app/s")
 				require.ErrorIs(t, err, ErrSecretDeleted, "the delete landed on the pruned history")

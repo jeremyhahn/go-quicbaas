@@ -384,13 +384,6 @@ func TestSecretsService_ListVersionsMarksPrunedVersionsDeleted(t *testing.T) {
 			}
 			require.Contains(t, byVersion, uint64(3))
 			require.Nil(t, byVersion[3].DeletedAt, "the current version is available")
-			if name == "memory" {
-				for _, v := range []uint64{1, 2} {
-					require.Contains(t, byVersion, v)
-					require.NotNil(t, byVersion[v].DeletedAt, "pruned version %d is listed as deleted", v)
-				}
-				return
-			}
 			for v, sv := range byVersion {
 				if v != 3 {
 					require.NotNil(t, sv.DeletedAt, "pruned version %d is listed as deleted", v)

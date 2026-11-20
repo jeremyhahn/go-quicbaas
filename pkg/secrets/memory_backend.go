@@ -36,6 +36,26 @@ type MemoryBackend struct {
 type secretStore struct {
 	versions []*SecretEntry
 	deleted  bool
+	// latest is the last version number issued in this lifetime. Pruning
+	// drops versions from versions, so a version number is not a slice
+	// position.
+	latest int
+}
+
+// find returns the entry numbered version, or nil when it was dropped.
+func (s *secretStore) find(version int) *SecretEntry {
+	for _, e := range s.versions {
+		if e.Version == version {
+			return e
+		}
+	}
+	return nil
+}
+
+// isMemoryTombstone reports whether e is a pruned version: destroyed and
+// holding no payload.
+func isMemoryTombstone(e *SecretEntry) bool {
+	return e.Deleted && e.Data == nil && e.Metadata == nil
 }
 
 // NewMemoryBackend creates a new in-memory secrets backend.
@@ -88,14 +108,14 @@ func (mb *MemoryBackend) storeVersion(ctx context.Context, path string, expected
 		current, deleted := 0, false
 		s, ok := mb.secrets[path]
 		if ok {
-			current, deleted = len(s.versions), s.deleted
+			current, deleted = s.latest, s.deleted
 		}
 		if current != expected.Version || deleted {
 			return 0, staleReadError(*expected, current, deleted, false)
 		}
 		// Destroy restarts the count: the record at the number must be the
 		// one read, not a recreation's.
-		if last := s.versions[current-1]; last.Deleted || !expected.holds(last.Data, last.Metadata) {
+		if last := s.versions[len(s.versions)-1]; last.Deleted || !expected.holds(last.Data, last.Metadata) {
 			return 0, staleReadError(*expected, current, false, true)
 		}
 	}
@@ -127,7 +147,7 @@ func (mb *MemoryBackend) storeVersion(ctx context.Context, path string, expected
 	}
 
 	// Create new version
-	newVersion := len(store.versions) + 1
+	newVersion := store.latest + 1
 	entry := &SecretEntry{
 		Path:      path,
 		Data:      dataCopy,
@@ -140,14 +160,18 @@ func (mb *MemoryBackend) storeVersion(ctx context.Context, path string, expected
 	}
 
 	store.versions = append(store.versions, entry)
+	store.latest = newVersion
 	store.deleted = false
 
 	return newVersion, nil
 }
 
 // PruneVersions destroys every version of path older than its newest keep
-// version numbers. Version numbers are slice positions here, so a pruned
-// version keeps its slot, emptied of data and metadata and marked destroyed.
+// live versions. The earliest version is kept as a tombstone (data and
+// metadata dropped, CreatedAt kept) so the secret's creation time survives;
+// every other pruned version is removed, so the history stays at keep live
+// versions plus that tombstone. The store tracks the latest version number
+// separately, so numbering continues past the removed versions.
 func (mb *MemoryBackend) PruneVersions(ctx context.Context, path string, keep int) (int, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
@@ -166,23 +190,47 @@ func (mb *MemoryBackend) PruneVersions(ctx context.Context, path string, keep in
 	if !exists || len(store.versions) == 0 {
 		return 0, ErrSecretNotFound
 	}
-	pruned := 0
-	now := time.Now()
-	for i := 0; i < len(store.versions)-keep; i++ {
-		entry := store.versions[i]
-		if entry.Deleted && entry.Data == nil && entry.Metadata == nil {
+	// The newest keep live entries are retained; a tombstone never counts
+	// toward keep. cut is the index of the oldest retained entry.
+	all := store.versions
+	cut, live := -1, 0
+	for i := len(all) - 1; i >= 0; i-- {
+		if isMemoryTombstone(all[i]) {
 			continue
 		}
-		entry.Deleted = true
-		entry.Data = nil
-		entry.Metadata = nil
-		entry.UpdatedAt = now
-		if entry.DeletedAt == nil {
+		live++
+		if live == keep {
+			cut = i
+			break
+		}
+	}
+	if cut <= 0 {
+		return 0, nil
+	}
+	// The earliest entry becomes the creation tombstone; every other entry
+	// below the retained set is dropped. An existing tombstone never counts.
+	pruned := 0
+	now := time.Now()
+	first := all[0]
+	if !isMemoryTombstone(first) {
+		first.Deleted = true
+		first.Data = nil
+		first.Metadata = nil
+		first.UpdatedAt = now
+		if first.DeletedAt == nil {
 			deletedAt := now
-			entry.DeletedAt = &deletedAt
+			first.DeletedAt = &deletedAt
 		}
 		pruned++
 	}
+	for _, entry := range all[1:cut] {
+		if !isMemoryTombstone(entry) {
+			pruned++
+		}
+	}
+	kept := make([]*SecretEntry, 0, 1+len(all)-cut)
+	kept = append(kept, first)
+	store.versions = append(kept, all[cut:]...)
 	return pruned, nil
 }
 
@@ -241,12 +289,12 @@ func (mb *MemoryBackend) GetVersion(ctx context.Context, path string, version in
 		return nil, nil, ErrSecretNotFound
 	}
 
-	if version < 1 || version > len(store.versions) {
+	if version < 1 || version > store.latest {
 		return nil, nil, ErrVersionNotFound
 	}
 
-	entry := store.versions[version-1]
-	if entry.Deleted {
+	entry := store.find(version)
+	if entry == nil || entry.Deleted {
 		return nil, nil, ErrVersionDestroyed
 	}
 
@@ -383,18 +431,18 @@ func (mb *MemoryBackend) Rollback(ctx context.Context, path string, version int)
 		return ErrSecretNotFound
 	}
 
-	if version < 1 || version > len(store.versions) {
+	if version < 1 || version > store.latest {
 		return ErrVersionNotFound
 	}
 
-	oldEntry := store.versions[version-1]
-	if oldEntry.Deleted {
+	oldEntry := store.find(version)
+	if oldEntry == nil || oldEntry.Deleted {
 		return ErrVersionDestroyed
 	}
 
 	// Create a new version with the old entry's data
 	now := time.Now()
-	newVersion := len(store.versions) + 1
+	newVersion := store.latest + 1
 	newEntry := &SecretEntry{
 		Path:      path,
 		Data:      copyData(oldEntry.Data),
@@ -407,6 +455,7 @@ func (mb *MemoryBackend) Rollback(ctx context.Context, path string, version int)
 	}
 
 	store.versions = append(store.versions, newEntry)
+	store.latest = newVersion
 	store.deleted = false
 
 	return nil

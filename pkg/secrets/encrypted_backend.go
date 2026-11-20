@@ -158,6 +158,38 @@ type encryptedEntry struct {
 type secretVersions struct {
 	Versions []*encryptedEntry `json:"versions"`
 	Deleted  bool              `json:"deleted"`
+	// Latest is the last version number issued in this lifetime. Pruning
+	// drops versions from Versions, so a version number is not a list
+	// position; a record written before Latest existed has 0 here and its
+	// version numbers are list positions.
+	Latest int `json:"latest,omitempty"`
+}
+
+// latest returns the last version number issued in this lifetime.
+func (v *secretVersions) latest() int {
+	if v == nil {
+		return 0
+	}
+	if v.Latest > 0 {
+		return v.Latest
+	}
+	return len(v.Versions)
+}
+
+// find returns the entry numbered version, or nil when it was dropped.
+func (v *secretVersions) find(version int) *encryptedEntry {
+	for _, e := range v.Versions {
+		if e.Version == version {
+			return e
+		}
+	}
+	return nil
+}
+
+// isPrunedTombstone reports whether e is a pruned version: destroyed and
+// holding no payload.
+func (e *encryptedEntry) isPrunedTombstone() bool {
+	return e.Deleted && e.Ciphertext == nil && e.Metadata == nil
 }
 
 // NewEncryptedBackend creates a new encrypted secrets backend.
@@ -368,7 +400,7 @@ func (eb *EncryptedBackend) storeVersion(ctx context.Context, path string, expec
 
 		// Create new encrypted entry with all fields from blob
 		now := time.Now()
-		newVersion := len(versions.Versions) + 1
+		newVersion := versions.latest() + 1
 		entry := &encryptedEntry{
 			KeyIdentifier: blob.KeyIdentifier,
 			KeyVersion:    blob.KeyVersion,
@@ -386,6 +418,7 @@ func (eb *EncryptedBackend) storeVersion(ctx context.Context, path string, expec
 		}
 
 		versions.Versions = append(versions.Versions, entry)
+		versions.Latest = newVersion
 		versions.Deleted = false
 
 		// Save to storage
@@ -420,9 +453,12 @@ func (eb *EncryptedBackend) storeVersion(ctx context.Context, path string, expec
 }
 
 // PruneVersions destroys every version of path older than its newest keep
-// version numbers. Version numbers are list positions here, so a pruned
-// version keeps its slot, emptied of ciphertext, nonce, tag, AAD and metadata
-// and marked destroyed. On a store with compare-and-swap the rewrite holds
+// live versions. The earliest version is kept as a tombstone (ciphertext,
+// nonce, tag, AAD and metadata dropped, CreatedAt kept) so the secret's
+// creation time survives; every other pruned version is removed from the
+// record, which stays at keep live versions plus that tombstone. The record
+// tracks the latest version number separately, so numbering continues past
+// the removed versions. On a store with compare-and-swap the rewrite holds
 // only while the record is the one read: a write that lands in between wins,
 // and the prune stores nothing and reports nothing pruned (the next write
 // prunes again).
@@ -444,27 +480,58 @@ func (eb *EncryptedBackend) PruneVersions(ctx context.Context, path string, keep
 	if err != nil {
 		return 0, err
 	}
-	pruned := 0
-	now := time.Now()
-	for i := 0; i < len(versions.Versions)-keep; i++ {
-		entry := versions.Versions[i]
-		if entry.Deleted && entry.Ciphertext == nil && entry.Metadata == nil {
+	// The newest keep live entries are retained; a tombstone is no rollback
+	// target, so it never counts toward keep. cut is the index of the
+	// oldest retained entry.
+	all := versions.Versions
+	cut, live := -1, 0
+	for i := len(all) - 1; i >= 0; i-- {
+		if all[i].isPrunedTombstone() {
 			continue
 		}
-		entry.Deleted = true
-		entry.Nonce = nil
-		entry.Ciphertext = nil
-		entry.Tag = nil
-		entry.AAD = nil
-		entry.Metadata = nil
-		if entry.DeletedAt == nil {
-			entry.DeletedAt = &now
+		live++
+		if live == keep {
+			cut = i
+			break
+		}
+	}
+	if cut <= 0 {
+		return 0, nil
+	}
+	// THE EARLIEST ENTRY IS THE SECRET'S CREATION TIME: it is pruned to a
+	// tombstone (payload dropped, CreatedAt kept) so a listing's created_at
+	// stays the first write's time. Every other entry below the retained set
+	// is dropped outright, so the history stays at keep live versions plus
+	// one tombstone. An existing tombstone never counts as pruned.
+	pruned := 0
+	now := time.Now()
+	first := all[0]
+	if !first.isPrunedTombstone() {
+		first.Deleted = true
+		first.Nonce = nil
+		first.Ciphertext = nil
+		first.Tag = nil
+		first.AAD = nil
+		first.Metadata = nil
+		if first.DeletedAt == nil {
+			first.DeletedAt = &now
 		}
 		pruned++
 	}
-	if pruned == 0 {
+	for _, entry := range all[1:cut] {
+		if !entry.isPrunedTombstone() {
+			pruned++
+		}
+	}
+	if pruned == 0 && cut == 1 {
 		return 0, nil
 	}
+	// Latest is fixed before the slice shrinks, so a record written before
+	// Latest existed keeps its numbering.
+	versions.Latest = versions.latest()
+	kept := make([]*encryptedEntry, 0, 1+len(all)-cut)
+	kept = append(kept, first)
+	versions.Versions = append(kept, all[cut:]...)
 
 	// Publication is a compare-and-swap of the exact history this prune
 	// read. eb.mu is per instance: another instance on the same store can
@@ -550,12 +617,12 @@ func (eb *EncryptedBackend) GetVersion(ctx context.Context, path string, version
 		return nil, nil, err
 	}
 
-	if version < 1 || version > len(versions.Versions) {
+	if version < 1 || version > versions.latest() {
 		return nil, nil, ErrVersionNotFound
 	}
 
-	entry := versions.Versions[version-1]
-	if entry.Deleted {
+	entry := versions.find(version)
+	if entry == nil || entry.Deleted {
 		return nil, nil, ErrVersionDestroyed
 	}
 
@@ -719,18 +786,18 @@ func (eb *EncryptedBackend) Rollback(ctx context.Context, path string, version i
 			return err
 		}
 
-		if version < 1 || version > len(versions.Versions) {
+		if version < 1 || version > versions.latest() {
 			return ErrVersionNotFound
 		}
 
-		oldEntry := versions.Versions[version-1]
-		if oldEntry.Deleted {
+		oldEntry := versions.find(version)
+		if oldEntry == nil || oldEntry.Deleted {
 			return ErrVersionDestroyed
 		}
 
 		// Create a new version that copies the old entry's encryption fields
 		now := time.Now()
-		newVersion := len(versions.Versions) + 1
+		newVersion := versions.latest() + 1
 		newEntry := &encryptedEntry{
 			KeyIdentifier: oldEntry.KeyIdentifier,
 			KeyVersion:    oldEntry.KeyVersion,
@@ -748,6 +815,7 @@ func (eb *EncryptedBackend) Rollback(ctx context.Context, path string, version i
 		}
 
 		versions.Versions = append(versions.Versions, newEntry)
+		versions.Latest = newVersion
 		versions.Deleted = false
 
 		// Published against the history read: a version another instance
@@ -857,8 +925,8 @@ func (eb *EncryptedBackend) checkReadVersion(ctx context.Context, versions *secr
 	if versions == nil || len(versions.Versions) == 0 {
 		return staleReadError(expected, 0, false, false)
 	}
-	current := len(versions.Versions)
-	last := versions.Versions[current-1]
+	current := versions.latest()
+	last := versions.Versions[len(versions.Versions)-1]
 	if current != expected.Version || versions.Deleted || last.Deleted {
 		return staleReadError(expected, current, versions.Deleted || last.Deleted, false)
 	}
