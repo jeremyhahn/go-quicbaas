@@ -395,7 +395,7 @@ func (r *Runtime) resolveVolumes(config *ContainerConfig) (*ContainerConfig, err
 			return nil, fmt.Errorf("%w: %q", ErrInvalidVolumeName, m.Source)
 		}
 		dir := filepath.Join(r.config.VolumePath, m.Source)
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		if err := os.MkdirAll(dir, 0o750); err != nil {
 			return nil, &RuntimeError{Operation: "create volume", Err: err}
 		}
 		m.Type = "bind"
