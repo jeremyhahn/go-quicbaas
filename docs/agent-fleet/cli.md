@@ -46,7 +46,7 @@ quicbaas fleet serve \
 | `--config` | | Daemon config file (the `node:` schema of the node spec). Precedence: flag defaults < file < flags set. |
 | `--bind` | `127.0.0.1:9091` | Runtime gRPC listen address. |
 | `--backends` | `acp,ollama` | Backends served; see [user.md](user.md#the-node-spec). |
-| `--container-runtime` | `auto` | `auto`, `docker`, `podman` or `none`. |
+| `--container-runtime` | `auto` | `auto`, `libcontainer`, `docker`, `podman` or `none`. |
 | sandbox flags | | Policy, network and image options; reference in [engineering.md](engineering.md#sandbox). |
 | backend URL and model flags | | Per-backend endpoints and default models. |
 | `--image-map`, `--image-registry`, `--auto-pull` | | Worker image selection and pulling. |

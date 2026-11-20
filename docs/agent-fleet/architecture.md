@@ -160,9 +160,11 @@ per-container metrics, with their tests. It was moved from go-trusted-platform
   it with `fleet.SetInProcessContainerRuntime`; `pkg/fleet` never imports
   the package, because `quicbaasd` links `pkg/fleet`. `--container-runtime
   libcontainer` selects it, and is an error on a binary without it or a host
-  where it cannot start. `auto` takes it when it starts and otherwise falls
-  back to a detected engine through `ExecContainerRuntime`, which is removed
-  in a later slice of row #1682. Its state lives under
+  where it cannot start. `auto` never takes it: it probes Docker, then
+  Podman, through `ExecContainerRuntime` (removed in a later slice of row
+  #1682), because the in-process runtime has no container networking and no
+  seccomp or AppArmor confinement yet. It is selected only by
+  `--container-runtime libcontainer`. Its state lives under
   `<work-dir>/containers`, and the work-dir lock keeps a second agent off
   that directory.
 - **FIPS is unaffected.** `TestFIPSModuleUnaffectedByTheRuntime` re-executes
