@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/batch"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/cluster"
 	healthclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/health"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/timeseries"
@@ -111,6 +112,39 @@ func handleBatchDelete(ctx context.Context, svc service.QuicBaaS, req interface{
 		return nil, NewInvalidRequestTypeError("quicbaas.Batch", "Delete", "*service.BatchDeleteRequest", typeNameOf(req))
 	}
 	return svc.BatchDelete(ctx, r)
+}
+
+// batchExecuteOpTypes maps the SDK batch operation types to the service ones.
+// A type missing here maps to the zero BatchExecuteOpType, which the service
+// refuses as an invalid operation.
+var batchExecuteOpTypes = map[batch.OpType]service.BatchExecuteOpType{
+	batch.OpPut:    service.BatchExecutePut,
+	batch.OpDelete: service.BatchExecuteDelete,
+}
+
+func handleBatchExecute(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	r, ok := req.(*batch.BatchRequest)
+	if !ok || r == nil {
+		return nil, NewInvalidRequestTypeError("quicbaas.Batch", "Execute", "*batch.BatchRequest", typeNameOf(req))
+	}
+	ops := make([]*service.BatchExecuteOperation, len(r.Operations))
+	for i, op := range r.Operations {
+		ops[i] = &service.BatchExecuteOperation{
+			Type:       batchExecuteOpTypes[op.Type],
+			EntityType: op.EntityType,
+			Key:        op.Key,
+			Value:      op.Value,
+		}
+	}
+	resp, err := svc.BatchExecute(ctx, &service.BatchExecuteRequest{Operations: ops})
+	if err != nil {
+		return nil, err
+	}
+	results := make([]batch.BatchResult, len(resp.Results))
+	for i, result := range resp.Results {
+		results[i] = batch.BatchResult{Success: result.Succeeded}
+	}
+	return &batch.BatchResponse{Results: results}, nil
 }
 
 // =============================================================================

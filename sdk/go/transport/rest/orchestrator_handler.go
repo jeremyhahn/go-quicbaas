@@ -63,6 +63,7 @@ func (h *orchestratorHandler) handleRequest(ctx context.Context, service, method
 		"CloseSession":           h.handleCloseSession,
 		"RotateSessionAccount":   h.handleRotateSessionAccount,
 		"ListSessions":           h.handleListSessions,
+		"GetSessionHistory":      h.handleGetSessionHistory,
 		"GetSessionConversation": h.handleGetSessionConversation,
 		"GetSpendReport":         h.handleGetSpendReport,
 		"GetTenantSpendPolicy":   h.handleGetTenantSpendPolicy,
@@ -230,6 +231,59 @@ func (h *orchestratorHandler) handleSessionStatus(ctx context.Context, req inter
 		return nil, err
 	}
 	return wire.Response(), nil
+}
+
+// sessionHistoryWire is the page the server's session-events handler returns
+// in its JSON history mode (Accept: application/json, follow=false).
+type sessionHistoryWire struct {
+	Events  []sseSessionEventEnvelope `json:"events"`
+	NextSeq uint64                    `json:"next_seq"`
+}
+
+// handleGetSessionHistory handles the GetSessionHistory request, which maps to
+// GET /api/v1/orchestrator/sessions/{id}/events in its JSON history mode.
+// FromSequence 0 starts at the first event. NextSeq is the server's: 0 when no
+// event follows the page, including when the last page is exactly full.
+func (h *orchestratorHandler) handleGetSessionHistory(ctx context.Context, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.GetSessionHistoryRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("orchestrator.GetSessionHistory", "invalid request type")
+	}
+	if sdkReq.SessionID == "" {
+		return nil, errors.NewInvalidInput("orchestrator.GetSessionHistory", "session_id is required")
+	}
+	params := neturl.Values{}
+	params.Set("follow", "false")
+	if sdkReq.TenantID != "" {
+		params.Set("tenant_id", sdkReq.TenantID)
+	}
+	if sdkReq.FromSequence > 0 {
+		params.Set("from", strconv.FormatUint(sdkReq.FromSequence, 10))
+	}
+	if sdkReq.Limit > 0 {
+		params.Set("limit", strconv.Itoa(sdkReq.Limit))
+	}
+	path := "/api/v1/orchestrator/sessions/" + neturl.PathEscape(sdkReq.SessionID) + "/events?" + params.Encode()
+
+	var wire sessionHistoryWire
+	if err := h.transport.doJSONRequest(ctx, http.MethodGet, path, nil, &wire); err != nil {
+		return nil, err
+	}
+	out := &orchestrator.GetSessionHistoryResponse{
+		Events:  make([]*orchestrator.SessionEventEnvelope, 0, len(wire.Events)),
+		NextSeq: wire.NextSeq,
+	}
+	for _, ev := range wire.Events {
+		out.Events = append(out.Events, &orchestrator.SessionEventEnvelope{
+			SessionID:   ev.SessionID,
+			TenantID:    ev.TenantID,
+			Sequence:    ev.Sequence,
+			Timestamp:   ev.Timestamp,
+			PayloadJSON: ev.PayloadJSON,
+			FromReplay:  ev.FromReplay,
+		})
+	}
+	return out, nil
 }
 
 // handleGetSessionConversation handles the GetSessionConversation request,

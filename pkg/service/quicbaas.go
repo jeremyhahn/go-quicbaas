@@ -1900,6 +1900,144 @@ func (b *batchService) BatchDelete(ctx context.Context, req *BatchDeleteRequest)
 	return resp, nil
 }
 
+// batchExecuteOpTypes maps a BatchExecuteOpType to the qrdb operation it
+// commits as.
+var batchExecuteOpTypes = map[BatchExecuteOpType]qrdbtransport.OpType{
+	BatchExecutePut:    qrdbtransport.OpPut,
+	BatchExecuteDelete: qrdbtransport.OpDelete,
+}
+
+// BatchExecute commits a mixed batch of puts and deletes as one qrdb atomic
+// batch, so every operation lands at a single revision. Unlike
+// BatchPut and BatchDelete the batch is never split into sub-batches: a
+// split would commit at several revisions and break all-or-nothing.
+func (b *batchService) BatchExecute(ctx context.Context, req *BatchExecuteRequest) (*BatchExecuteResponse, error) {
+	start := time.Now()
+	if b.svc.metrics != nil {
+		b.svc.metrics.activeRequests.Inc()
+		defer func() {
+			b.svc.metrics.activeRequests.Dec()
+			b.svc.metrics.requestDuration.With("BatchExecute").Observe(time.Since(start).Seconds())
+		}()
+	}
+
+	ops, err := b.batchExecuteOps(ctx, req)
+	if err != nil {
+		if b.svc.metrics != nil {
+			b.svc.metrics.requestsTotal.With("BatchExecute", "invalid").Inc()
+		}
+		return nil, err
+	}
+
+	shardID := req.ShardID
+	if shardID == 0 {
+		shardID = 1
+	}
+	client, err := b.svc.qrdbForShard(shardID)
+	if err != nil {
+		return nil, b.batchExecuteFailure(err)
+	}
+	result, err := client.Batch().ExecuteBatch(ctx, ops)
+	if err != nil {
+		return nil, b.batchExecuteFailure(err)
+	}
+
+	// The batch committed atomically: drop every key it wrote or deleted
+	// from the cache, as kvService.Put and Delete do.
+	if b.svc.cacheManager != nil {
+		for _, op := range ops {
+			_ = b.svc.cacheManager.Delete(context.Background(), string(op.Key))
+		}
+	}
+
+	if b.svc.metrics != nil {
+		b.svc.metrics.requestsTotal.With("BatchExecute", "success").Inc()
+	}
+	return batchExecuteResponse(result, len(ops)), nil
+}
+
+// batchExecuteFailure counts and wraps a BatchExecute commit failure.
+func (b *batchService) batchExecuteFailure(err error) error {
+	if b.svc.metrics != nil {
+		b.svc.metrics.requestsTotal.With("BatchExecute", "error").Inc()
+		b.svc.metrics.errorsByType.With("raft_error").Inc()
+	}
+	return &errors.QBError{
+		Code: errors.ErrRaft,
+		Op:   "service.BatchExecute",
+		Err:  err,
+	}
+}
+
+// batchExecuteOps validates a BatchExecuteRequest and builds its qrdb
+// operations, each key placed in its entity type's keyspace.
+func (b *batchService) batchExecuteOps(ctx context.Context, req *BatchExecuteRequest) ([]qrdbtransport.Op, error) {
+	if req == nil {
+		return nil, &errors.QBError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.BatchExecute",
+			Err:  &api.NilInputError{Name: "request"},
+		}
+	}
+	if len(req.Operations) == 0 {
+		return nil, &errors.QBError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.BatchExecute",
+			Err:  &api.EmptyCollectionError{Field: "batch"},
+		}
+	}
+
+	ops := make([]qrdbtransport.Op, len(req.Operations))
+	for i, op := range req.Operations {
+		if op == nil {
+			return nil, batchExecuteItemError(i, "operation is required")
+		}
+		opType, ok := batchExecuteOpTypes[op.Type]
+		if !ok {
+			return nil, batchExecuteItemError(i, "unknown operation type")
+		}
+		if op.Key == "" {
+			return nil, batchExecuteItemError(i, "key is required")
+		}
+		prefix, err := b.svc.keyspaceResolver.BuildPrefix(ctx, op.EntityType)
+		if err != nil {
+			return nil, &errors.QBError{
+				Code: errors.ErrInvalidInput,
+				Op:   "service.BatchExecute",
+				Err:  &api.OperationFailedError{Operation: "validate entity type " + op.EntityType, Cause: err},
+			}
+		}
+		ops[i] = qrdbtransport.Op{
+			Type: opType,
+			Key:  append(prefix, op.Key...),
+		}
+		if opType == qrdbtransport.OpPut {
+			ops[i].Value = op.Value
+		}
+	}
+	return ops, nil
+}
+
+// batchExecuteItemError refuses the operation at index of a BatchExecute.
+func batchExecuteItemError(index int, message string) error {
+	return &errors.QBError{
+		Code: errors.ErrInvalidInput,
+		Op:   "service.BatchExecute",
+		Err:  &api.BatchItemValidationError{Index: index, Message: message},
+	}
+}
+
+// batchExecuteResponse converts the qrdb batch result into one result per
+// requested operation.
+func batchExecuteResponse(result *qrdbtransport.BatchResponse, count int) *BatchExecuteResponse {
+	resp := &BatchExecuteResponse{Results: make([]*BatchExecuteResult, count)}
+	for i := range resp.Results {
+		succeeded := result != nil && i < len(result.Responses) && result.Responses[i].Succeeded
+		resp.Results[i] = &BatchExecuteResult{Succeeded: succeeded}
+	}
+	return resp
+}
+
 // =============================================================================
 // Transaction Service Implementation
 // =============================================================================
@@ -4601,6 +4739,11 @@ func (s *quicBaaS) BatchGet(ctx context.Context, req *BatchGetRequest) (*BatchGe
 
 func (s *quicBaaS) BatchDelete(ctx context.Context, req *BatchDeleteRequest) (*BatchDeleteResponse, error) {
 	return s.batchService.BatchDelete(ctx, req)
+}
+
+// BatchExecute delegates to the batch service.
+func (s *quicBaaS) BatchExecute(ctx context.Context, req *BatchExecuteRequest) (*BatchExecuteResponse, error) {
+	return s.batchService.BatchExecute(ctx, req)
 }
 
 func (s *quicBaaS) Transaction(ctx context.Context, req *TransactionRequest) (*TransactionResponse, error) {

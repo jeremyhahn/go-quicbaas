@@ -114,6 +114,7 @@ type mockQuicBaaS struct {
 	batchPutFunc          func(ctx context.Context, req *service.BatchPutRequest) (*service.BatchPutResponse, error)
 	batchGetFunc          func(ctx context.Context, req *service.BatchGetRequest) (*service.BatchGetResponse, error)
 	batchDeleteFunc       func(ctx context.Context, req *service.BatchDeleteRequest) (*service.BatchDeleteResponse, error)
+	batchExecuteFunc      func(ctx context.Context, req *service.BatchExecuteRequest) (*service.BatchExecuteResponse, error)
 	transactionFunc       func(ctx context.Context, req *service.TransactionRequest) (*service.TransactionResponse, error)
 	healthFunc            func(ctx context.Context, req *service.HealthRequest) (*service.HealthResponse, error)
 	livenessFunc          func(ctx context.Context, req *service.LivenessRequest) (*service.LivenessResponse, error)
@@ -197,6 +198,13 @@ func (m *mockQuicBaaS) BatchDelete(ctx context.Context, req *service.BatchDelete
 		return m.batchDeleteFunc(ctx, req)
 	}
 	return &service.BatchDeleteResponse{}, nil
+}
+
+func (m *mockQuicBaaS) BatchExecute(ctx context.Context, req *service.BatchExecuteRequest) (*service.BatchExecuteResponse, error) {
+	if m.batchExecuteFunc != nil {
+		return m.batchExecuteFunc(ctx, req)
+	}
+	return &service.BatchExecuteResponse{}, nil
 }
 
 // Transaction operations

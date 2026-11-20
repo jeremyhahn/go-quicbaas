@@ -1056,6 +1056,7 @@ func (s *Server) BatchPut(ctx context.Context, req *pb.BatchPutRequest) (*pb.Bat
 			Data:        putReq.Data,
 			Consistency: protoToServiceConsistency(putReq.Consistency),
 			WriteMode:   extractWriteMode(ctx),
+			ShardID:     putReq.ShardId,
 		})
 	}
 
@@ -1121,6 +1122,7 @@ func (s *Server) BatchGet(ctx context.Context, req *pb.BatchGetRequest) (*pb.Bat
 			ID:          getReq.Id,
 			Consistency: protoToServiceConsistency(getReq.Consistency),
 			TimeoutMs:   5000, // Default timeout
+			ShardID:     getReq.ShardId,
 		})
 	}
 
@@ -1180,6 +1182,7 @@ func (s *Server) BatchDelete(ctx context.Context, req *pb.BatchDeleteRequest) (*
 			EntityType:  delReq.EntityType,
 			ID:          delReq.Id,
 			Consistency: protoToServiceConsistency(delReq.Consistency),
+			ShardID:     delReq.ShardId,
 		})
 	}
 

@@ -398,6 +398,16 @@ type BatchService interface {
 	//   - BatchDeleteResponse: Contains responses for each operation
 	//   - error: ErrInvalidInput, ErrTimeout, ErrRaft
 	BatchDelete(ctx context.Context, req *BatchDeleteRequest) (*BatchDeleteResponse, error)
+
+	// BatchExecute commits a mixed batch of puts and deletes atomically, as
+	// one Raft proposal at a single revision.
+	// Parameters:
+	//   - ctx: Request context with timeout and metadata
+	//   - req: Batch of put and delete operations
+	// Returns:
+	//   - BatchExecuteResponse: One result per operation
+	//   - error: ErrInvalidInput, ErrForbidden, ErrRaft
+	BatchExecute(ctx context.Context, req *BatchExecuteRequest) (*BatchExecuteResponse, error)
 }
 
 // =============================================================================
@@ -1039,6 +1049,41 @@ type (
 		Responses []*DeleteResponse
 		Timestamp int64
 	}
+	// BatchExecuteRequest is a mixed batch of puts and deletes committed
+	// together as one atomic Raft proposal on ShardID (shard 1 when zero).
+	BatchExecuteRequest struct {
+		Operations []*BatchExecuteOperation
+		ShardID    uint64
+	}
+	// BatchExecuteOperation is one put or delete in a BatchExecuteRequest.
+	// Key names the entry within the keyspace of EntityType.
+	BatchExecuteOperation struct {
+		Type       BatchExecuteOpType
+		EntityType string
+		Key        string
+		Value      []byte
+	}
+	// BatchExecuteResponse carries one result per operation, in request
+	// order.
+	BatchExecuteResponse struct {
+		Results []*BatchExecuteResult
+	}
+	// BatchExecuteResult is the outcome of one BatchExecuteOperation.
+	BatchExecuteResult struct {
+		Succeeded bool
+	}
+)
+
+// BatchExecuteOpType names the kind of a BatchExecuteOperation. The zero
+// value is not a valid operation, so an unset type is refused rather than
+// read as a put.
+type BatchExecuteOpType int
+
+const (
+	// BatchExecutePut writes Value at Key.
+	BatchExecutePut BatchExecuteOpType = iota + 1
+	// BatchExecuteDelete removes Key.
+	BatchExecuteDelete
 )
 
 // =============================================================================

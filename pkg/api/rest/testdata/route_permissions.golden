@@ -362,6 +362,7 @@ POST /api/v1/barrier/shamir/unseal-share permission barrier:unseal-share
 POST /api/v1/barrier/shamir/unseal-shares permission barrier:unseal-share
 POST /api/v1/barrier/unseal permission tenant_barrier:unseal
 POST /api/v1/batch/delete permission batch:execute
+POST /api/v1/batch/execute permission batch:execute
 POST /api/v1/batch/get permission batch:execute
 POST /api/v1/batch/put permission batch:execute
 POST /api/v1/bootstrap/auto permission trust:write
