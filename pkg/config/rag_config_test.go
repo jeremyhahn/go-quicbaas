@@ -463,6 +463,30 @@ func TestRankingConfig_Validate(t *testing.T) {
 			},
 			wantErr: true,
 		},
+		{
+			name: "negative rrf_k",
+			config: RankingConfig{
+				Strategy:      "hybrid",
+				BM25K1:        1.2,
+				BM25B:         0.75,
+				VectorWeight:  0.7,
+				KeywordWeight: 0.3,
+				RRFK:          -1,
+			},
+			wantErr: true,
+		},
+		{
+			name: "omitted rrf_k",
+			config: RankingConfig{
+				Strategy:      "hybrid",
+				BM25K1:        1.2,
+				BM25B:         0.75,
+				VectorWeight:  0.7,
+				KeywordWeight: 0.3,
+				RRFK:          0,
+			},
+			wantErr: false,
+		},
 	}
 
 	for _, tt := range tests {
