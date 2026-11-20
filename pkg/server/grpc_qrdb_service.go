@@ -72,18 +72,21 @@ func (s *Server) buildQRDBRegisterOptions() []qrdbsdk.GRPCRegisterOption {
 		opts = append(opts, qrdbsdk.WithRegisterCeremonyService(cs))
 	}
 
-	if bs := s.qrdbBarrierServicer(); bs != nil {
-		opts = append(opts, qrdbsdk.WithRegisterBarrierService(bs))
-	}
-
-	// User + UserAuthFactor services back the qrdb SDK's
-	// Security().Auth().Factors() surface: resolveSubjectUserID reads the
-	// user store and factor enrollment writes the UserAuthFactor store the
-	// unified-login ceremony resolves against. The proxies resolve the
-	// embedded node servicer PER CALL (see qrdb_user_servicers.go) so the
-	// surface comes online after Unseal on the seal-enabled boot path
-	// instead of being captured as nil at registration time.
 	opts = append(opts,
+		// The barrier proxy resolves s.qrdbBarrierServicer() PER CALL (see
+		// qrdb_barrier_servicer_proxy.go): the node's TCP gRPC server registers
+		// before the qrdb client, bootstrap ceremony client or sealed-window
+		// services are wired, so a servicer captured here would be nil. Until one
+		// is wired the proxy answers Unimplemented "barrier service is not
+		// configured", as an unregistered barrier did.
+		qrdbsdk.WithRegisterBarrierService(newQRDBBarrierServicerProxy(s)),
+		// User + UserAuthFactor services back the qrdb SDK's
+		// Security().Auth().Factors() surface: resolveSubjectUserID reads the
+		// user store and factor enrollment writes the UserAuthFactor store the
+		// unified-login ceremony resolves against. The proxies resolve the
+		// embedded node servicer PER CALL (see qrdb_user_servicers.go) so the
+		// surface comes online after Unseal on the seal-enabled boot path
+		// instead of being captured as nil at registration time.
 		qrdbsdk.WithRegisterUserService(newQRDBUserServicerProxy(s)),
 		qrdbsdk.WithRegisterUserAuthFactorService(newQRDBUserAuthFactorServicerProxy(s)),
 	)
@@ -91,7 +94,8 @@ func (s *Server) buildQRDBRegisterOptions() []qrdbsdk.GRPCRegisterOption {
 	return opts
 }
 
-// qrdbSealSOPINInterceptor guards the qrdb.v1 BarrierSeal registered by
+// qrdbSealSOPINInterceptor guards the qrdb.v1 BarrierSeal, BarrierRekey and
+// BarrierRecoveryGenerate registered by
 // registerQRDBService with the SO PIN backend the BarrierService facade
 // verifies against. The qrdb SDK's register options take no PIN backend,
 // so the guard sits on the gRPC server chain, which the Unix socket shares.

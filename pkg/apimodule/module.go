@@ -74,9 +74,13 @@
 // authz chain as every other service here; their permissions were already in
 // this module's derived set, because kms.proto also declares
 // SecretsManagement (module_grants.go reads options per proto file).
+// AttestationService is mounted beside KeyManagement/DEKManagement because the
+// pinned go-xkms serves only KeystoreService.AttestKey and none of the
+// Verifier RPCs (endorsements, reference values, AppraiseQuote) the CLI calls
+// by the quicbaas.attestation.v1 name.
 //
-// Crypto, CertificateService, TrustService, AttestationService, and
-// PIVService are DELIBERATELY NOT registered here
+// Crypto, CertificateService, TrustService, and PIVService are DELIBERATELY
+// NOT registered here
 // (Phase 3 of the login-plane plan, corrective to the prior design): they
 // were quicbaas.v1 wrappers over the SAME composed go-xkms library
 // (xkms.Get(), see pkg/server/qrdb_node.go's xkmsModule composition) that
@@ -390,6 +394,7 @@ type grpcServers struct {
 	secretsManagement  pb.SecretsManagementServer
 	keyManagement      pb.KeyManagementServer
 	dekManagement      pb.DEKManagementServer
+	attestation        pb.AttestationServiceServer
 	vectorDB           pb.VectorDBServer
 	vectorAdmin        pb.VectorAdminServer
 	prompt             pb.PromptServiceServer
@@ -471,6 +476,7 @@ var grpcRegistrations = []grpcRegistration{
 	{desc: &pb.SecretsManagement_ServiceDesc, capability: "secrets-management", pick: func(s *grpcServers) any { return s.secretsManagement }},
 	{desc: &pb.KeyManagement_ServiceDesc, capability: "key-management", pick: func(s *grpcServers) any { return s.keyManagement }},
 	{desc: &pb.DEKManagement_ServiceDesc, capability: "dek-management", pick: func(s *grpcServers) any { return s.dekManagement }},
+	{desc: &pb.AttestationService_ServiceDesc, capability: "attestation", pick: func(s *grpcServers) any { return s.attestation }},
 	{desc: &pb.VectorDB_ServiceDesc, capability: "vector", pick: func(s *grpcServers) any { return s.vectorDB }},
 	{desc: &pb.VectorAdmin_ServiceDesc, capability: "vector-admin", pick: func(s *grpcServers) any { return s.vectorAdmin }},
 	{desc: &pb.PromptService_ServiceDesc, capability: "prompt", pick: func(s *grpcServers) any { return s.prompt }},
@@ -682,8 +688,7 @@ func (m *Module) bind() (*grpcServers, error) {
 	// capability services above, with the SAME nil-gating
 	// pkg/server/lifecycle.go applies on the legacy transport.
 	//
-	// Crypto, CertificateService, TrustService, AttestationService, and
-	// PIVService are deliberately NOT bound here: see the package doc comment
+	// Crypto, CertificateService, TrustService, and PIVService are deliberately NOT bound here: see the package doc comment
 	// (Phase 3 of the login-plane plan) — go-xkms's own ServiceModule now
 	// serves that canonical surface on this same unified server, and
 	// quicbaas's legacy gRPC transport is unaffected.
@@ -702,6 +707,13 @@ func (m *Module) bind() (*grpcServers, error) {
 		if kmsSvc != nil {
 			built.dekManagement = grpcapi.NewDEKServer(kmsSvc, m.log)
 		}
+	}
+
+	// AttestationService is quicbaas-native for the same reason (package doc):
+	// the pinned go-xkms serves no Verifier RPCs, and *grpcapi.Server carries
+	// the handlers (pkg/api/grpc/server_attestation.go).
+	if svc.Attestation() != nil {
+		built.attestation = facade
 	}
 
 	// VectorDB and VectorAdmin are quicbaas-native here: go-qrdb registers no

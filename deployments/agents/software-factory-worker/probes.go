@@ -207,6 +207,7 @@ pkg-config --exists webkit2gtk-4.1 || { echo "webkit2gtk-4.1 dev headers missing
 case "$(npm config get omit)" in dev*) echo "npm omits devDependencies: NODE_ENV must not be production"; exit 1;; esac
 node -e "process.exit(typeof localStorage === 'undefined' ? 0 : 1)" || { echo "node defines a global localStorage that shadows jsdom's: NODE_OPTIONS must carry --no-experimental-webstorage"; exit 1; }
 claude --version | grep -qF "$EXPECTED_CLAUDE_CODE_VERSION" || { echo "claude is not $EXPECTED_CLAUDE_CODE_VERSION: $(claude --version)"; exit 1; }
+[ "${DISABLE_AUTOUPDATER:-}" = 1 ] || { echo "DISABLE_AUTOUPDATER is not 1: '${DISABLE_AUTOUPDATER:-}'"; exit 1; }
 codex --version | grep -qF "$EXPECTED_CODEX_VERSION" || { echo "codex is not $EXPECTED_CODEX_VERSION: $(codex --version)"; exit 1; }
 gemini --version | grep -qF "$EXPECTED_GEMINI_CLI_VERSION" || { echo "gemini is not $EXPECTED_GEMINI_CLI_VERSION: $(gemini --version)"; exit 1; }
 opencode --version | grep -qxF "$EXPECTED_OPENCODE_VERSION" || { echo "opencode is not the pinned $EXPECTED_OPENCODE_VERSION: $(opencode --version)"; exit 1; }
