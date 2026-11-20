@@ -166,11 +166,12 @@ func (mb *MemoryBackend) storeVersion(ctx context.Context, path string, expected
 	return newVersion, nil
 }
 
-// PruneVersions destroys every version of path older than its newest keep
-// live versions. The earliest version is kept as a tombstone (data and
-// metadata dropped, CreatedAt kept) so the secret's creation time survives;
-// every other pruned version is removed, so the history stays at keep live
-// versions plus that tombstone. The store tracks the latest version number
+// PruneVersions destroys every version of path except the newest keep
+// versions that can be rolled back to, plus the latest entry. The earliest
+// version is kept as a tombstone (data and metadata dropped, CreatedAt kept)
+// so the secret's creation time survives; every other pruned version is
+// removed, so the history stays at keep live versions plus the latest entry
+// and that tombstone. The store tracks the latest version number
 // separately, so numbering continues past the removed versions.
 func (mb *MemoryBackend) PruneVersions(ctx context.Context, path string, keep int) (int, error) {
 	if err := ctx.Err(); err != nil {
@@ -190,29 +191,26 @@ func (mb *MemoryBackend) PruneVersions(ctx context.Context, path string, keep in
 	if !exists || len(store.versions) == 0 {
 		return 0, ErrSecretNotFound
 	}
-	// The newest keep live entries are retained; a tombstone never counts
-	// toward keep. cut is the index of the oldest retained entry.
+	// Retained: the newest keep entries that can be rolled back to, and the
+	// latest entry. A soft-deleted entry keeps its payload, but GetVersion and
+	// Rollback refuse it, so it never counts toward keep. The earliest entry,
+	// when not retained, becomes the creation tombstone; every other entry is
+	// dropped, so the history stays at keep live versions plus the latest
+	// entry and that tombstone.
 	all := store.versions
-	cut, live := -1, 0
-	for i := len(all) - 1; i >= 0; i-- {
-		if isMemoryTombstone(all[i]) {
-			continue
-		}
-		live++
-		if live == keep {
-			cut = i
-			break
+	last := len(all) - 1
+	retain := make([]bool, len(all))
+	retain[last] = true
+	for i, live := last, 0; i >= 0 && live < keep; i-- {
+		if !all[i].Deleted {
+			retain[i] = true
+			live++
 		}
 	}
-	if cut <= 0 {
-		return 0, nil
-	}
-	// The earliest entry becomes the creation tombstone; every other entry
-	// below the retained set is dropped. An existing tombstone never counts.
-	pruned := 0
+	pruned, dropped := 0, 0
 	now := time.Now()
 	first := all[0]
-	if !isMemoryTombstone(first) {
+	if !retain[0] && !isMemoryTombstone(first) {
 		first.Deleted = true
 		first.Data = nil
 		first.Metadata = nil
@@ -223,14 +221,21 @@ func (mb *MemoryBackend) PruneVersions(ctx context.Context, path string, keep in
 		}
 		pruned++
 	}
-	for _, entry := range all[1:cut] {
-		if !isMemoryTombstone(entry) {
+	kept := make([]*SecretEntry, 0, len(all))
+	kept = append(kept, first)
+	for i := 1; i < len(all); i++ {
+		if retain[i] {
+			kept = append(kept, all[i])
+			continue
+		}
+		dropped++
+		if !isMemoryTombstone(all[i]) {
 			pruned++
 		}
 	}
-	kept := make([]*SecretEntry, 0, 1+len(all)-cut)
-	kept = append(kept, first)
-	kept = append(kept, all[cut:]...)
+	if pruned == 0 && dropped == 0 {
+		return 0, nil
+	}
 	store.versions = kept
 	return pruned, nil
 }

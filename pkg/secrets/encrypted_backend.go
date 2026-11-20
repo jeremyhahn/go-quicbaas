@@ -480,33 +480,29 @@ func (eb *EncryptedBackend) PruneVersions(ctx context.Context, path string, keep
 	if err != nil {
 		return 0, err
 	}
-	// The newest keep live entries are retained; a tombstone is no rollback
-	// target, so it never counts toward keep. cut is the index of the
-	// oldest retained entry.
+	// Retained: the newest keep entries that can be rolled back to, and the
+	// latest entry. A soft-deleted entry keeps its payload, but GetVersion and
+	// Rollback refuse it, so it never counts toward keep.
 	all := versions.Versions
-	cut, live := -1, 0
-	for i := len(all) - 1; i >= 0; i-- {
-		if all[i].isPrunedTombstone() {
-			continue
-		}
-		live++
-		if live == keep {
-			cut = i
-			break
+	last := len(all) - 1
+	retain := make([]bool, len(all))
+	retain[last] = true
+	for i, live := last, 0; i >= 0 && live < keep; i-- {
+		if !all[i].Deleted {
+			retain[i] = true
+			live++
 		}
 	}
-	if cut <= 0 {
-		return 0, nil
-	}
-	// THE EARLIEST ENTRY IS THE SECRET'S CREATION TIME: it is pruned to a
-	// tombstone (payload dropped, CreatedAt kept) so a listing's created_at
-	// stays the first write's time. Every other entry below the retained set
-	// is dropped outright, so the history stays at keep live versions plus
-	// one tombstone. An existing tombstone never counts as pruned.
-	pruned := 0
+	// THE EARLIEST ENTRY IS THE SECRET'S CREATION TIME: when not retained it
+	// is pruned to a tombstone (payload dropped, CreatedAt kept) so a
+	// listing's created_at stays the first write's time. Every other entry
+	// not retained is dropped outright, so the history stays at keep live
+	// versions plus the latest entry and one tombstone. An existing
+	// tombstone never counts as pruned.
+	pruned, dropped := 0, 0
 	now := time.Now()
 	first := all[0]
-	if !first.isPrunedTombstone() {
+	if !retain[0] && !first.isPrunedTombstone() {
 		first.Deleted = true
 		first.Nonce = nil
 		first.Ciphertext = nil
@@ -518,20 +514,24 @@ func (eb *EncryptedBackend) PruneVersions(ctx context.Context, path string, keep
 		}
 		pruned++
 	}
-	for _, entry := range all[1:cut] {
-		if !entry.isPrunedTombstone() {
+	kept := make([]*encryptedEntry, 0, len(all))
+	kept = append(kept, first)
+	for i := 1; i < len(all); i++ {
+		if retain[i] {
+			kept = append(kept, all[i])
+			continue
+		}
+		dropped++
+		if !all[i].isPrunedTombstone() {
 			pruned++
 		}
 	}
-	if pruned == 0 && cut == 1 {
+	if pruned == 0 && dropped == 0 {
 		return 0, nil
 	}
 	// Latest is fixed before the slice shrinks, so a record written before
 	// Latest existed keeps its numbering.
 	versions.Latest = versions.latest()
-	kept := make([]*encryptedEntry, 0, 1+len(all)-cut)
-	kept = append(kept, first)
-	kept = append(kept, all[cut:]...)
 	versions.Versions = kept
 
 	// Publication is a compare-and-swap of the exact history this prune

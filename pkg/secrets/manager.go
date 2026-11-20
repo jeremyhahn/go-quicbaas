@@ -654,7 +654,7 @@ func (m *Manager) Rollback(ctx context.Context, path string, version int) error 
 	}
 
 	if err := m.backend.Rollback(ctx, path, version); err != nil {
-		if stderrors.Is(err, ErrSecretNotFound) || stderrors.Is(err, ErrVersionNotFound) {
+		if stderrors.Is(err, ErrSecretNotFound) || stderrors.Is(err, ErrVersionNotFound) || stderrors.Is(err, ErrVersionDestroyed) {
 			return &errors.QBError{
 				Code: errors.ErrNotFound,
 				Op:   "Manager.Rollback",

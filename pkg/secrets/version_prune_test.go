@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -616,4 +617,65 @@ func TestManager_NoMaxVersionsKeepsEveryVersion(t *testing.T) {
 		require.NoError(t, m.Store(ctx, "app/s", map[string][]byte{"k": []byte(fmt.Sprintf("v%d", i))}, nil))
 	}
 	assert.Equal(t, []int{1, 2, 3, 4}, liveVersions(t, b, "app/s"))
+}
+
+func TestPruneVersions_SoftDeletedVersionDoesNotCountTowardKeep(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	for name, b := range pruneBackends(t) {
+		if name == "kv" {
+			continue // KV's Delete marks only the pointer, so its v2 stays a rollback target.
+		}
+		t.Run(name, func(t *testing.T) {
+			require.NoError(t, b.Store(ctx, "app/s", map[string][]byte{"k": []byte("v1")}, nil))
+			require.NoError(t, b.Store(ctx, "app/s", map[string][]byte{"k": []byte("v2")}, nil))
+			require.NoError(t, b.Delete(ctx, "app/s"))
+			require.NoError(t, b.Store(ctx, "app/s", map[string][]byte{"k": []byte("v3")}, nil))
+
+			_, err := b.PruneVersions(ctx, "app/s", 2)
+			require.NoError(t, err)
+			assert.Equal(t, []int{1, 3}, liveVersions(t, b, "app/s"))
+
+			data, _, err := b.GetVersion(ctx, "app/s", 1)
+			require.NoError(t, err)
+			assert.Equal(t, []byte("v1"), data["k"])
+			require.NoError(t, b.Rollback(ctx, "app/s", 1))
+			data, _, err = b.Get(ctx, "app/s")
+			require.NoError(t, err)
+			assert.Equal(t, []byte("v1"), data["k"])
+
+			// Repeated delete cycles keep the history bounded: keep live
+			// versions, the latest entry and the creation tombstone.
+			for i := 0; i < 10; i++ {
+				require.NoError(t, b.Delete(ctx, "app/s"))
+				require.NoError(t, b.Store(ctx, "app/s", map[string][]byte{"k": []byte(fmt.Sprintf("c%d", i))}, nil))
+				_, err := b.PruneVersions(ctx, "app/s", 2)
+				require.NoError(t, err)
+			}
+			versions, err := b.ListVersions(ctx, "app/s")
+			require.NoError(t, err)
+			assert.LessOrEqual(t, len(versions), 4)
+		})
+	}
+}
+
+func TestManager_RollbackToAPrunedVersionIsNotFound(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	for name, b := range pruneBackends(t) {
+		t.Run(name, func(t *testing.T) {
+			m, err := NewManager(&ManagerOptions{Backend: b, MaxVersions: 1})
+			require.NoError(t, err)
+			require.NoError(t, m.Store(ctx, "app/s", map[string][]byte{"k": []byte("v1")}, nil))
+			require.NoError(t, m.Store(ctx, "app/s", map[string][]byte{"k": []byte("v2")}, nil))
+
+			err = m.Rollback(ctx, "app/s", 1)
+			require.Error(t, err)
+			assert.Equal(t, qberrors.ErrNotFound, qberrors.Code(err), "%v", err)
+
+			data, _, err := m.Get(ctx, "app/s")
+			require.NoError(t, err)
+			assert.Equal(t, []byte("v2"), data["k"])
+		})
+	}
 }
