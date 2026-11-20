@@ -259,8 +259,9 @@ func TestSessionDialValidatesRequest(t *testing.T) {
 			}
 		})
 	}
-	//nolint:staticcheck // a nil context is the case under test
-	_, err := NewClient(&dialTransport{}).Session().Dial(nil, ok)
+	// A nil context is the case under test; a typed nil keeps vet quiet.
+	var nilCtx context.Context
+	_, err := NewClient(&dialTransport{}).Session().Dial(nilCtx, ok)
 	if errors.Code(err) != errors.CodeInvalidInput {
 		t.Fatalf("nil context: err = %v, want InvalidInput", err)
 	}

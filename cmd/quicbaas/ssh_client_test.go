@@ -174,18 +174,25 @@ func TestBuildCLISSHClient_PropagatesFactoryError(t *testing.T) {
 }
 
 // =============================================================================
-// Session / Console are refused on every remote transport
+// Session().Dial is served from the caller's process; Console stays local
 // =============================================================================
 
-func TestSDKSSHClient_SessionAndConsoleAreUnimplemented(t *testing.T) {
-	tr := &recordingSSHTransport{}
+// TestSDKSSHClient_SessionDialIsServedAndConsoleIsLocal: Dial is no longer
+// refused. It resolves the key's public half over the SDK transport as a
+// QuicBaaS SSH request before it dials, so a transport error is Dial's
+// error. Console still needs a byte stream no transport carries.
+func TestSDKSSHClient_SessionDialIsServedAndConsoleIsLocal(t *testing.T) {
+	keyErr := stderrors.New("key unavailable")
+	tr := &recordingSSHTransport{err: keyErr}
 	client := quicbaas.NewClientWithTransport(tr).Security().SSH()
 
 	_, err := client.Session().Dial(context.Background(), sshSDK.SessionDialRequest{
 		KeyScope: "user", KeyOwner: "alice", KeyName: "laptop", Host: "example.com", User: "root",
 	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "local capability")
+	require.ErrorIs(t, err, keyErr)
+	assert.NotContains(t, err.Error(), "local capability")
+	assert.Equal(t, sshSDK.ServiceName, tr.service)
+	assert.Equal(t, sshSDK.MethodExportPublicKey, tr.method)
 
 	_, err = client.Console(context.Background(), sshSDK.ConsoleConnectRequest{
 		KeyScope: "user", KeyOwner: "alice", KeyName: "laptop", Host: "example.com", User: "root",
