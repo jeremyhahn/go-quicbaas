@@ -129,7 +129,7 @@ func newAttestationEndorsementCommand() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE:  runAttestationEndorsementPut,
 	}
-	put.Flags().StringVar(&attestationKind, "kind", "", "ak-root or reference-signer (required)")
+	put.Flags().StringVar(&attestationKind, "kind", "", "ak-root, reference-signer, image-signer or manifest-signer (required)")
 	put.Flags().StringVar(&attestationCertFile, "certificate", "", "PEM CA certificate file")
 	put.Flags().StringVar(&attestationKeyFile, "public-key", "", "PEM public key file (reference-signer only)")
 
