@@ -34,7 +34,20 @@ type Manifest struct {
 	Role string `json:"role"`
 	// Placement constrains the nodes the service may run on.
 	Placement Placement `json:"placement"`
+	// Class is the privilege class the service runs in. Empty means
+	// standard. The broker class is refused until its grants exist.
+	Class Class `json:"class,omitempty"`
 }
+
+// Class is a service's privilege class.
+type Class string
+
+const (
+	// ClassStandard is the default class: an unprivileged tenant service.
+	ClassStandard Class = "standard"
+	// ClassBroker is the privileged broker class.
+	ClassBroker Class = "broker"
+)
 
 // Image pins the service's image.
 type Image struct {
@@ -104,6 +117,8 @@ func (m *Manifest) Validate() error {
 		return &ManifestError{Field: "resources.milli_cpu", Reason: "must be positive"}
 	case m.Resources.MemoryBytes <= 0:
 		return &ManifestError{Field: "resources.memory_bytes", Reason: "must be positive"}
+	case m.Class != "" && m.Class != ClassStandard && m.Class != ClassBroker:
+		return &ManifestError{Field: "class", Reason: "must be standard or broker"}
 	}
 	if err := validateDigest(m.Image.Digest); err != nil {
 		return err

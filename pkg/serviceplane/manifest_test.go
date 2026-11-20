@@ -28,6 +28,7 @@ func TestManifest_Validate(t *testing.T) {
 		{"resources.memory_bytes", func(m *Manifest) { m.Resources.MemoryBytes = -1 }},
 		{"role", func(m *Manifest) { m.Role = "superuser" }},
 		{"role", func(m *Manifest) { m.Role = "so" }},
+		{"class", func(m *Manifest) { m.Class = "privileged" }},
 		{"volumes.name", func(m *Manifest) { m.Volumes = append(m.Volumes, m.Volumes[0]) }},
 		{"volumes.mount_path", func(m *Manifest) { m.Volumes[0].MountPath = "data" }},
 		{"volumes.size_bytes", func(m *Manifest) { m.Volumes[0].SizeBytes = 0 }},

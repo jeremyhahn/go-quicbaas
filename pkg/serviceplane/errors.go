@@ -9,6 +9,9 @@ import (
 var (
 	// ErrInvalidManifest marks a manifest that fails validation.
 	ErrInvalidManifest = errors.New("serviceplane: invalid manifest")
+	// ErrBrokerClass marks a broker-class manifest, refused until the broker
+	// grants exist.
+	ErrBrokerClass = errors.New("serviceplane: the broker privilege class has no grants yet")
 	// ErrSignature marks a manifest whose signature does not verify.
 	ErrSignature = errors.New("serviceplane: manifest signature does not verify")
 	// ErrNotFound marks a service that is not deployed.

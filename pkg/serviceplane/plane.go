@@ -261,6 +261,9 @@ func (p *Plane) verify(verb Verb, tenant string, sm *SignedManifest) (*Manifest,
 	if tenant == "" || m.Tenant != tenant {
 		return nil, &ServiceError{Op: string(verb), Tenant: tenant, Name: m.Name, Sentinel: ErrTenant}
 	}
+	if m.Class == ClassBroker {
+		return nil, &ServiceError{Op: string(verb), Tenant: tenant, Name: m.Name, Sentinel: ErrBrokerClass}
+	}
 	return m, nil
 }
 
