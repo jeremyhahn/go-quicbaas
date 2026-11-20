@@ -754,6 +754,8 @@ RUN set -eux; \
 # no longer bundles the package, so a stale floor cannot outlive the npm
 # release that fixed it; and when a floor is more than a patch release of
 # npm's copy, so npm keeps the major and minor its own dependents declared.
+# An empty NPM_BUNDLED_DEPENDENCY_FLOORS means npm bundles no copy that needs
+# a floor.
 # The language-server install that follows is the proof npm still works.
 ARG NPM_VERSION
 ARG NPM_BUNDLED_DEPENDENCY_FLOORS
@@ -764,7 +766,7 @@ ARG BASH_LANGUAGE_SERVER_VERSION
 ARG YAML_LANGUAGE_SERVER_VERSION
 ARG DEVCACHE_NPM_REGISTRY
 RUN set -eux; \
-    for pin in NPM_VERSION NPM_BUNDLED_DEPENDENCY_FLOORS PYRIGHT_VERSION TYPESCRIPT_VERSION TYPESCRIPT_LANGUAGE_SERVER_VERSION BASH_LANGUAGE_SERVER_VERSION YAML_LANGUAGE_SERVER_VERSION; do \
+    for pin in NPM_VERSION PYRIGHT_VERSION TYPESCRIPT_VERSION TYPESCRIPT_LANGUAGE_SERVER_VERSION BASH_LANGUAGE_SERVER_VERSION YAML_LANGUAGE_SERVER_VERSION; do \
         if [ -z "$(printenv "$pin")" ]; then \
             echo "$pin is a required build argument. Build with 'make build-worker-image', which passes the repository's pins." >&2; \
             exit 1; \
