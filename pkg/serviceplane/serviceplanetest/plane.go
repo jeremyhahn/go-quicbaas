@@ -10,13 +10,13 @@ package serviceplanetest
 import (
 	"context"
 	"crypto/ed25519"
-	"crypto/rand"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/kvstore"
 	"github.com/jeremyhahn/go-quicbaas/pkg/serviceplane"
+	dbxkms "github.com/jeremyhahn/go-quicbaas/pkg/xkms"
 )
 
 // KeyID names the harness key in the plane's keyring.
@@ -99,10 +99,15 @@ type Runtime struct {
 // NewRuntime makes a runtime with a fresh key.
 func NewRuntime(t testing.TB) *Runtime {
 	t.Helper()
-	pub, key, err := ed25519.GenerateKey(rand.Reader)
+	signer, _, err := dbxkms.GenerateRequesterKey(dbxkms.KeyAlgorithmEd25519)
 	if err != nil {
 		t.Fatal(err)
 	}
+	key, ok := signer.(ed25519.PrivateKey)
+	if !ok {
+		t.Fatalf("requester key is %T, want ed25519.PrivateKey", signer)
+	}
+	pub := key.Public().(ed25519.PublicKey)
 	return &Runtime{
 		Launcher: &Launcher{},
 		Grants:   Grants(),

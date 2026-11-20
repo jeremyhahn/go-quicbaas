@@ -32,11 +32,7 @@ package grants
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -52,6 +48,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/registry"
 	"github.com/jeremyhahn/go-quicbaas/pkg/serviceplane"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
+	dbxkms "github.com/jeremyhahn/go-quicbaas/pkg/xkms"
 )
 
 // reasonCessation is RFC 5280 CRLReason cessationOfOperation, the reason an
@@ -221,18 +218,22 @@ func (g *Certificate) Revoke(ctx context.Context, m *serviceplane.Manifest, ref 
 	return withdraw(tenantCtx(ctx, m), g.CA, g.Secrets, tlsPath(m), serviceplane.GrantCertificate, ref)
 }
 
-// issue makes a P-256 key and a CSR, has the CA sign it and keeps the
-// certificate and key at path. It answers the hex serial.
+// issue makes a P-256 key with the audited requester-key generator (the
+// launcher holds the key, so it cannot stay in a go-xkms keystore), has
+// go-xkms build the CSR and the CA sign it, and keeps the certificate and
+// key at path. It answers the hex serial.
 func issue(ctx context.Context, ca CA, store SecretStore, path, cn string, opts *xkmssdk.TrustedCASignOptions) (string, error) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	key, _, err := dbxkms.GenerateRequesterKey(dbxkms.KeyAlgorithmECDSAP256)
 	if err != nil {
 		return "", err
 	}
-	csr, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{Subject: pkix.Name{CommonName: cn}}, key)
+	csrPEM, err := xkmssdk.CreateCSRWithKey(&xkmssdk.TrustedCACertificateRequest{
+		Subject: xkmssdk.TrustedCASubject{CommonName: cn},
+	}, key)
 	if err != nil {
 		return "", err
 	}
-	cert, err := ca.SignCSR(ctx, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csr}), opts)
+	cert, err := ca.SignCSR(ctx, csrPEM, opts)
 	if err != nil {
 		return "", err
 	}
