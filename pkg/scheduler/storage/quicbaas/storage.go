@@ -19,6 +19,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -401,16 +403,27 @@ func (s *Storage) ListJobs(ctx context.Context, query *scheduler.JobQuery) ([]*s
 	return jobs, nextCursor, nil
 }
 
-// GetJobsDueForExecution returns jobs that need to run.
+// GetJobsDueForExecution returns jobs that need to run. The scan covers the
+// system namespace and then every tenant's namespace, under one limit.
 func (s *Storage) GetJobsDueForExecution(ctx context.Context, before time.Time, limit int) ([]*scheduler.Job, error) {
 	if limit <= 0 {
 		limit = 100
 	}
 
-	// Scan system jobs prefix for pending jobs
 	dueJobs := make([]*scheduler.Job, 0)
 
-	err := s.kv.Scan(ctx, SystemJobsPrefix, func(key string, value []byte) error {
+	visit := func(key string, value []byte) error {
+		// Keep only job records: the marker must open a namespace segment
+		// ("__sys:" or "t:{tenant}:") and be followed by a decimal job ID,
+		// so execution records and a tenant's own keys are skipped.
+		i := strings.LastIndex(key, jobKeyMarker)
+		if i <= 0 || key[i-1] != ':' {
+			return nil
+		}
+		if _, err := strconv.ParseUint(key[i+len(jobKeyMarker):], 10, 64); err != nil {
+			return nil
+		}
+
 		var job scheduler.Job
 		if err := json.Unmarshal(value, &job); err != nil {
 			// Skip malformed entries
@@ -430,10 +443,16 @@ func (s *Storage) GetJobsDueForExecution(ctx context.Context, before time.Time, 
 		}
 
 		return nil
-	})
+	}
 
-	if err != nil && !errors.Is(err, ErrLimitReached) {
+	if err := s.kv.Scan(ctx, SystemJobsPrefix, visit); err != nil && !errors.Is(err, ErrLimitReached) {
 		return nil, &scheduler.ErrStorageError{Op: "GetJobsDueForExecution.scan", Cause: err}
+	}
+
+	if len(dueJobs) < limit {
+		if err := s.kv.Scan(ctx, tenantKeyPrefix, visit); err != nil && !errors.Is(err, ErrLimitReached) {
+			return nil, &scheduler.ErrStorageError{Op: "GetJobsDueForExecution.scan", Cause: err}
+		}
 	}
 
 	return dueJobs, nil
