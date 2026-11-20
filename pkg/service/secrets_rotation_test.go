@@ -405,3 +405,48 @@ func TestSecretsRotationWriteContext(t *testing.T) {
 	require.True(t, ok)
 	assert.True(t, tenantctx.IsSystem(system))
 }
+
+// A policy read back carries its stored retention, so a read-then-save keeps
+// it and the rotations that follow prune to it.
+func TestSecretsService_RotationPolicyRoundTripKeepsRetention(t *testing.T) {
+	t.Parallel()
+	svc, mgr := newRotationTestService(t)
+	acme := tenantctx.WithTenant(context.Background(), "acme")
+	start := time.Now().UTC().Truncate(time.Second)
+	storeWithPolicy(t, svc, acme, "db/kept", &SecretRotationPolicy{
+		Enabled: true, Interval: time.Hour, NextRotation: start.Add(time.Hour), RetainVersions: 2,
+	})
+
+	got, err := svc.GetRotationPolicy(acme, &GetRotationPolicyRequest{SecretID: "db/kept"})
+	require.NoError(t, err)
+	assert.Equal(t, 2, got.Policy.RetainVersions, "the read returns the stored retention")
+
+	// Read, change the interval and deadline, save the policy back.
+	updated := *got.Policy
+	updated.Interval = 2 * time.Hour
+	updated.NextRotation = start.Add(-time.Minute)
+	_, err = svc.SetRotationPolicy(acme, &SetRotationPolicyRequest{SecretID: "db/kept", Policy: &updated})
+	require.NoError(t, err)
+
+	got, err = svc.GetRotationPolicy(acme, &GetRotationPolicyRequest{SecretID: "db/kept"})
+	require.NoError(t, err)
+	assert.Equal(t, 2, got.Policy.RetainVersions, "a read-then-save keeps the retention")
+	assert.Equal(t, 2*time.Hour, got.Policy.Interval)
+
+	const path = "tenant/acme/db/kept"
+	sysCtx := secretsRotationWriteContext(auth.NewSystemContext(context.Background()), path)
+	for i := 0; i < 5; i++ {
+		data, meta, err := mgr.Get(context.Background(), path)
+		require.NoError(t, err)
+		require.NoError(t, svc.rotateDueSecret(sysCtx, path, data, meta, start.Add(time.Duration(i)*2*time.Hour)), "rotation %d", i+1)
+	}
+	versions, err := mgr.ListVersions(context.Background(), path)
+	require.NoError(t, err)
+	var live []int
+	for _, v := range versions {
+		if !v.Deleted {
+			live = append(live, v.Version)
+		}
+	}
+	assert.Len(t, live, 3, "rotations keep the retained versions plus the current one")
+}

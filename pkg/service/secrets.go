@@ -1356,6 +1356,11 @@ func (s *secretsService) GetRotationPolicy(ctx context.Context, req *GetRotation
 			policy.NextRotation = t
 		}
 	}
+	if retain, ok := metadata[secretRotationRetainKey]; ok {
+		if n, err := strconv.Atoi(retain); err == nil && n >= 0 {
+			policy.RetainVersions = n
+		}
+	}
 
 	// Return the original (unscoped) secret ID to callers
 	return &GetRotationPolicyResponse{
