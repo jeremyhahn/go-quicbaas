@@ -2,9 +2,11 @@ package service
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 
+	qrdblock "github.com/jeremyhahn/go-qrdb/pkg/lock"
 	qrdbservice "github.com/jeremyhahn/go-qrdb/pkg/service"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -188,4 +190,163 @@ func TestKVRegistry_ProviderReturnsNil_FailsClosed(t *testing.T) {
 	}
 	assert.Equal(t, 4, reg.kv.calls)
 	assert.Empty(t, shared.capturedPutKey())
+}
+
+// memScope is one (tenant, db) keyspace that a memRegistry's KV and batch
+// servicers share, so a batch write is visible to a later KV read.
+type memScope struct {
+	mu   sync.Mutex
+	data map[string][]byte
+}
+
+func (s *memScope) keys() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]string, 0, len(s.data))
+	for k := range s.data {
+		out = append(out, k)
+	}
+	return out
+}
+
+// memKV is a KVServicer over a memScope.
+type memKV struct {
+	qrdbservice.KVServicer
+	scope *memScope
+}
+
+func (m *memKV) Put(_ context.Context, key string, value []byte) error {
+	m.scope.mu.Lock()
+	defer m.scope.mu.Unlock()
+	m.scope.data[key] = append([]byte(nil), value...)
+	return nil
+}
+
+func (m *memKV) Get(_ context.Context, key string) ([]byte, error) {
+	m.scope.mu.Lock()
+	defer m.scope.mu.Unlock()
+	v, ok := m.scope.data[key]
+	if !ok {
+		return nil, &qrdbservice.KeyNotFoundError{Key: key}
+	}
+	return v, nil
+}
+
+func (m *memKV) Delete(_ context.Context, key string) error {
+	m.scope.mu.Lock()
+	defer m.scope.mu.Unlock()
+	delete(m.scope.data, key)
+	return nil
+}
+
+func (m *memKV) Scan(_ context.Context, prefix string) (map[string][]byte, error) {
+	m.scope.mu.Lock()
+	defer m.scope.mu.Unlock()
+	out := make(map[string][]byte)
+	for k, v := range m.scope.data {
+		if strings.HasPrefix(k, prefix) {
+			out[k] = v
+		}
+	}
+	return out, nil
+}
+
+// memBatch is a BatchServicer over a memScope.
+type memBatch struct {
+	qrdbservice.BatchServicer
+	scope *memScope
+}
+
+func (m *memBatch) Execute(_ context.Context, ops []qrdbservice.Op) ([]qrdbservice.OpResponse, error) {
+	m.scope.mu.Lock()
+	defer m.scope.mu.Unlock()
+	for _, op := range ops {
+		switch op.Type {
+		case qrdblock.OpPut:
+			m.scope.data[string(op.Key)] = append([]byte(nil), op.Value...)
+		case qrdblock.OpDelete:
+			delete(m.scope.data, string(op.Key))
+		}
+	}
+	return make([]qrdbservice.OpResponse, len(ops)), nil
+}
+
+// memRegistry resolves every scope to one memScope.
+type memRegistry struct {
+	qrdbservice.Registry
+	scope *memScope
+}
+
+func newMemRegistry() *memRegistry {
+	return &memRegistry{scope: &memScope{data: map[string][]byte{}}}
+}
+
+func (r *memRegistry) KVService(_, _ string) (qrdbservice.KVServicer, error) {
+	return &memKV{scope: r.scope}, nil
+}
+
+func (r *memRegistry) BatchService(_, _ string) (qrdbservice.BatchServicer, error) {
+	return &memBatch{scope: r.scope}, nil
+}
+
+// newMemRegistryService builds a service whose registry provider returns
+// whatever *current points at when it is called.
+func newMemRegistryService(t *testing.T, current *qrdbservice.Registry) QuicBaaS {
+	t.Helper()
+	shared := newSvcBoostMockQRDBProviderWithGet([]byte(`{}`), nil)
+	var mu sync.Mutex
+	svc := createTestService(t,
+		withQRDBClientProvider(shared),
+		withQRDBServiceRegistryProvider(func() qrdbservice.Registry {
+			mu.Lock()
+			defer mu.Unlock()
+			return *current
+		}))
+	t.Cleanup(func() { _ = svc.Close() })
+	return svc
+}
+
+func TestKVRegistry_BatchPutThenGetSameScope(t *testing.T) {
+	ctx := tenantctx.WithTenant(context.Background(), "acme-corp")
+	var reg qrdbservice.Registry = newMemRegistry()
+	svc := newMemRegistryService(t, &reg)
+
+	_, err := svc.BatchPut(ctx, &BatchPutRequest{Requests: []*PutRequest{
+		{EntityType: "User", ID: 42, Data: []byte(`{"name":"a"}`)},
+	}})
+	require.NoError(t, err)
+
+	resp, err := svc.Get(ctx, &GetRequest{EntityType: "User", ID: 42})
+	require.NoError(t, err, "an entity written by BatchPut must be readable by Get in the same scope")
+	require.NotNil(t, resp)
+}
+
+func TestKVRegistry_PutThenBatchDeleteRemoves(t *testing.T) {
+	ctx := tenantctx.WithTenant(context.Background(), "acme-corp")
+	var reg qrdbservice.Registry = newMemRegistry()
+	svc := newMemRegistryService(t, &reg)
+
+	_, err := svc.Put(ctx, &PutRequest{EntityType: "User", ID: 42, Data: []byte(`{}`)})
+	require.NoError(t, err)
+	_, err = svc.BatchDelete(ctx, &BatchDeleteRequest{Requests: []*DeleteRequest{
+		{EntityType: "User", ID: 42},
+	}})
+	require.NoError(t, err)
+
+	_, err = svc.Get(ctx, &GetRequest{EntityType: "User", ID: 42})
+	require.Error(t, err, "BatchDelete must remove the entity Put wrote")
+	assert.Equal(t, errors.ErrNotFound, errors.Code(err), "%v", err)
+}
+
+func TestKVRegistry_ListEntityTypesSeesScopedWrites(t *testing.T) {
+	ctx := tenantctx.WithTenant(context.Background(), "acme-corp")
+	var reg qrdbservice.Registry = newMemRegistry()
+	svc := newMemRegistryService(t, &reg)
+
+	_, err := svc.Put(ctx, &PutRequest{EntityType: "Gadget", ID: 7, Data: []byte(`{}`)})
+	require.NoError(t, err)
+
+	resp, err := svc.ListEntityTypes(ctx, &ListEntityTypesRequest{})
+	require.NoError(t, err)
+	assert.Contains(t, resp.EntityTypes, "Gadget")
 }
