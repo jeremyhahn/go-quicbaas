@@ -32,16 +32,27 @@ import (
 // and Unix clients call.
 const qrdbBarrierSealMethod = "/qrdb.v1.QRDBService/BarrierSeal"
 
-// soPINRequest is satisfied by the qrdb.v1 BarrierSealRequest message,
-// which carries the SO PIN in its so_pin field.
+// qrdbSOPINGuardedMethods are the qrdb.v1 barrier RPCs that need the
+// Security Officer PIN: seal, rekey and recovery-key generation, the same
+// operations the BarrierService facade gates on it.
+var qrdbSOPINGuardedMethods = map[string]struct{}{
+	qrdbBarrierSealMethod:                          {},
+	"/qrdb.v1.QRDBService/BarrierRekey":            {},
+	"/qrdb.v1.QRDBService/BarrierRecoveryGenerate": {},
+}
+
+// soPINRequest is satisfied by the qrdb.v1 BarrierSealRequest,
+// BarrierRekeyRequest and BarrierRecoveryGenerateRequest messages, which
+// carry the SO PIN in their so_pin field.
 type soPINRequest interface {
 	GetSoPin() string
 }
 
-// UnaryBarrierSealSOPINInterceptor gates the canonical qrdb.v1 BarrierSeal
-// on the Security Officer PIN. The qrdb.v1 registration takes no PIN backend
-// through the qrdb SDK, so without this guard gRPC and Unix callers could
-// seal without the PIN REST and MCP require.
+// UnaryBarrierSealSOPINInterceptor gates the canonical qrdb.v1 BarrierSeal,
+// BarrierRekey and BarrierRecoveryGenerate on the Security Officer PIN. The
+// qrdb.v1 registration takes no PIN backend through the qrdb SDK, so without
+// this guard gRPC and Unix callers could seal, rekey or generate recovery
+// keys without the PIN REST and MCP require.
 //
 // The PIN is read from the x-qrdb-so-pin metadata entry the SDK clients
 // send, falling back to the request's so_pin field, and is verified through
@@ -50,7 +61,7 @@ type soPINRequest interface {
 // logged.
 func UnaryBarrierSealSOPINInterceptor(backend qrdbsdk.PINBackend) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-		if info.FullMethod != qrdbBarrierSealMethod {
+		if _, guarded := qrdbSOPINGuardedMethods[info.FullMethod]; !guarded {
 			return handler(ctx, req)
 		}
 		soPIN := []byte(incomingSealSOPIN(ctx, req))
@@ -63,7 +74,7 @@ func UnaryBarrierSealSOPINInterceptor(backend qrdbsdk.PINBackend) grpc.UnaryServ
 	}
 }
 
-// incomingSealSOPIN returns the SO PIN a seal call presents: the first
+// incomingSealSOPIN returns the SO PIN a guarded call presents: the first
 // x-qrdb-so-pin metadata value, else the request's so_pin field.
 func incomingSealSOPIN(ctx context.Context, req any) string {
 	if md, ok := metadata.FromIncomingContext(ctx); ok {
