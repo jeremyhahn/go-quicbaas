@@ -73,7 +73,7 @@ func TestJobRuntime_ContainerIDValidation(t *testing.T) {
 
 func TestJobRuntime_RunRejectsUnpinnedAtPinnedLevel(t *testing.T) {
 	jr, doubles := newTestJobRuntime(t)
-	spec := &orchestration.ContainerSpec{Image: "alpine:latest", TrustLevel: orchestration.TrustLevelPinned}
+	spec := &orchestration.ContainerSpec{Network: "none", Image: "alpine:latest", TrustLevel: orchestration.TrustLevelPinned}
 
 	_, err := jr.Run(t.Context(), spec)
 	require.ErrorIs(t, err, orchestration.ErrImageNotPinned)
@@ -87,7 +87,7 @@ func TestJobRuntime_VerifyPinnedImage(t *testing.T) {
 		jr, doubles := newTestJobRuntime(t)
 		doubles.images.pullDigests = []string{testImageDigest}
 
-		id, err := jr.Run(t.Context(), &orchestration.ContainerSpec{Image: "alpine@" + testImageDigest})
+		id, err := jr.Run(t.Context(), &orchestration.ContainerSpec{Network: "none", Image: "alpine@" + testImageDigest})
 		require.NoError(t, err)
 		assert.NotEmpty(t, id)
 		assert.Equal(t, []string{"alpine@" + testImageDigest}, doubles.images.pulls)
@@ -98,7 +98,7 @@ func TestJobRuntime_VerifyPinnedImage(t *testing.T) {
 		const other = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 		doubles.images.images["alpine@"+testImageDigest] = testImageRecord("alpine", []string{other})
 
-		_, err := jr.Run(t.Context(), &orchestration.ContainerSpec{Image: "alpine@" + testImageDigest})
+		_, err := jr.Run(t.Context(), &orchestration.ContainerSpec{Network: "none", Image: "alpine@" + testImageDigest})
 		var mismatch *orchestration.ImageDigestMismatchError
 		require.ErrorAs(t, err, &mismatch)
 		assert.Equal(t, other, mismatch.Actual)
@@ -112,13 +112,13 @@ func TestJobRuntime_Lifecycle(t *testing.T) {
 	require.True(t, jr.IsAvailable())
 
 	id, err := jr.Run(ctx, &orchestration.ContainerSpec{
+		Network:     "none",
 		Image:       "alpine:latest",
 		Command:     []string{"sleep"},
 		Args:        []string{"60"},
 		Env:         map[string]string{"B": "2", "A": "1"},
 		MemoryBytes: 64 << 20,
 		PidsLimit:   32,
-		Ports:       []string{"127.0.0.1:8080:80/udp"},
 	})
 	require.NoError(t, err)
 	assert.Empty(t, doubles.images.pulls, "a stored image is not pulled again")
@@ -157,7 +157,7 @@ func TestJobRuntime_RunFailures(t *testing.T) {
 		jr, doubles := newTestJobRuntime(t)
 		doubles.images.pullErr = errTestBackend
 
-		_, err := jr.Run(t.Context(), &orchestration.ContainerSpec{Image: "busybox:latest"})
+		_, err := jr.Run(t.Context(), &orchestration.ContainerSpec{Network: "none", Image: "busybox:latest"})
 		var pullErr *orchestration.ContainerImagePullError
 		require.ErrorAs(t, err, &pullErr)
 		require.ErrorIs(t, err, errTestBackend)
@@ -167,7 +167,7 @@ func TestJobRuntime_RunFailures(t *testing.T) {
 		jr, doubles := newTestJobRuntime(t)
 		doubles.engine.startErr = errTestBackend
 
-		_, err := jr.Run(t.Context(), &orchestration.ContainerSpec{Image: "alpine:latest"})
+		_, err := jr.Run(t.Context(), &orchestration.ContainerSpec{Network: "none", Image: "alpine:latest"})
 		var startErr *orchestration.ContainerStartError
 		require.ErrorAs(t, err, &startErr)
 		require.ErrorIs(t, err, errTestBackend)
@@ -176,14 +176,14 @@ func TestJobRuntime_RunFailures(t *testing.T) {
 
 	t.Run("UnsupportedFieldsAreRefused", func(t *testing.T) {
 		jr, _ := newTestJobRuntime(t)
-		_, err := jr.Run(t.Context(), &orchestration.ContainerSpec{Image: "alpine:latest", GPUEnabled: true})
+		_, err := jr.Run(t.Context(), &orchestration.ContainerSpec{Network: "none", Image: "alpine:latest", GPUEnabled: true})
 		requireInputValidation(t, err, "gpu_enabled")
 		require.ErrorContains(t, err, ErrJobSpecUnsupported.Error())
 	})
 
 	t.Run("BadPortIsRefused", func(t *testing.T) {
 		jr, _ := newTestJobRuntime(t)
-		_, err := jr.Run(t.Context(), &orchestration.ContainerSpec{Image: "alpine:latest", Ports: []string{"80"}})
+		_, err := jr.Run(t.Context(), &orchestration.ContainerSpec{Network: "none", Image: "alpine:latest", Ports: []string{"80"}})
 		requireInputValidation(t, err, "")
 	})
 
@@ -198,6 +198,7 @@ func TestJobRuntime_RunFailures(t *testing.T) {
 func TestJobRuntime_RunAppliesUlimits(t *testing.T) {
 	jr, doubles := newTestJobRuntime(t)
 	id, err := jr.Run(t.Context(), &orchestration.ContainerSpec{
+		Network: "none",
 		Image:   "alpine:latest",
 		Ulimits: []orchestration.ContainerUlimit{{Name: "nofile", Soft: 1024, Hard: 4096}},
 	})
@@ -210,12 +211,42 @@ func TestJobRuntime_RunAppliesUlimits(t *testing.T) {
 		{Name: "nofile", Soft: -1, Hard: 1},
 	} {
 		_, err := jr.Run(t.Context(), &orchestration.ContainerSpec{
+			Network: "none",
 			Image:   "alpine:latest",
 			Ulimits: []orchestration.ContainerUlimit{bad},
 		})
 		var validErr *orchestration.InputValidationError
 		require.ErrorAs(t, err, &validErr, "%+v", bad)
 	}
+}
+
+func TestJobRuntime_RefusesUnsupportedNetwork(t *testing.T) {
+	for _, network := range []string{"bridge", "host", "", "jobs-net"} {
+		t.Run("network="+network, func(t *testing.T) {
+			jr, doubles := newTestJobRuntime(t)
+			_, err := jr.Run(t.Context(), &orchestration.ContainerSpec{Network: network, Image: "alpine:latest"})
+			require.ErrorIs(t, err, ErrNetworkUnsupported)
+			assert.Empty(t, doubles.engine.created, "no container is created")
+		})
+	}
+}
+
+func TestJobRuntime_RefusesPublishedPorts(t *testing.T) {
+	jr, doubles := newTestJobRuntime(t)
+	_, err := jr.Run(t.Context(), &orchestration.ContainerSpec{
+		Network: "none",
+		Image:   "alpine:latest",
+		Ports:   []string{"127.0.0.1:8080:80/udp"},
+	})
+	require.ErrorIs(t, err, ErrNetworkUnsupported)
+	assert.Empty(t, doubles.engine.created, "no container is created")
+}
+
+func TestJobRuntime_NetworkNoneRuns(t *testing.T) {
+	jr, doubles := newTestJobRuntime(t)
+	id, err := jr.Run(t.Context(), &orchestration.ContainerSpec{Network: "none", Image: "alpine:latest"})
+	require.NoError(t, err)
+	assert.Contains(t, doubles.engine.created, id)
 }
 
 func TestParsePortMapping(t *testing.T) {
@@ -235,7 +266,7 @@ func TestParsePortMapping(t *testing.T) {
 
 func startJob(t *testing.T, jr *JobRuntime) string {
 	t.Helper()
-	id, err := jr.Run(t.Context(), &orchestration.ContainerSpec{Image: "alpine:latest", WorkDir: "/srv"})
+	id, err := jr.Run(t.Context(), &orchestration.ContainerSpec{Network: "none", Image: "alpine:latest", WorkDir: "/srv"})
 	require.NoError(t, err)
 	return id
 }
@@ -366,8 +397,9 @@ func TestJobRuntime_RunInteractive_StreamsStdoutAndReportsExit(t *testing.T) {
 	doubles.engine.initResult = &fakeResult{stdout: "{\"jsonrpc\":\"2.0\"}\n", stderr: "noise", exitCode: 7}
 
 	proc, err := jr.RunInteractive(t.Context(), &orchestration.ContainerSpec{
-		Image: "alpine:latest",
-		Env:   map[string]string{"TOKEN": "secret"},
+		Network: "none",
+		Image:   "alpine:latest",
+		Env:     map[string]string{"TOKEN": "secret"},
 	})
 	require.NoError(t, err)
 	assert.NotEmpty(t, proc.ContainerID)
@@ -396,7 +428,7 @@ func TestJobRuntime_RunInteractive_ContextEndKillsAndRemoves(t *testing.T) {
 	jr, doubles := newTestJobRuntime(t)
 	ctx, cancel := context.WithCancel(t.Context())
 
-	proc, err := jr.RunInteractive(ctx, &orchestration.ContainerSpec{Image: "alpine:latest"})
+	proc, err := jr.RunInteractive(ctx, &orchestration.ContainerSpec{Network: "none", Image: "alpine:latest"})
 	require.NoError(t, err)
 	running, err := jr.IsRunning(t.Context(), proc.ContainerID)
 	require.NoError(t, err)
@@ -419,7 +451,7 @@ func TestJobRuntime_RunInteractive_StartFailure(t *testing.T) {
 	jr, doubles := newTestJobRuntime(t)
 	doubles.engine.startErr = errTestBackend
 
-	proc, err := jr.RunInteractive(t.Context(), &orchestration.ContainerSpec{Image: "alpine:latest"})
+	proc, err := jr.RunInteractive(t.Context(), &orchestration.ContainerSpec{Network: "none", Image: "alpine:latest"})
 	assert.Nil(t, proc)
 	var startErr *orchestration.ContainerStartError
 	require.ErrorAs(t, err, &startErr)

@@ -19,6 +19,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"maps"
 	"slices"
@@ -40,6 +41,14 @@ const jobNamePrefix = "quicbaas-job-"
 // runtime cannot honour yet. It is refused rather than dropped, so a job never
 // runs with less isolation or fewer devices than it asked for.
 var ErrJobSpecUnsupported = errors.New("containerruntime: container spec field not supported")
+
+// ErrNetworkUnsupported refuses a job whose network the in-process runtime
+// cannot give it. The runtime gives every container an isolated network
+// namespace with no interface, route, DNS or port forward, which is the
+// "none" network and nothing else: a job asking for any other network, or
+// for published ports, is refused before its container is created rather
+// than run without the network it asked for.
+var ErrNetworkUnsupported = errors.New("containerruntime: only the \"none\" network is supported")
 
 // JobRuntime runs orchestration jobs on the in-process Runtime: it implements
 // orchestration.ContainerRuntime, the interface the fleet node agent launches
@@ -384,6 +393,12 @@ func jobContainerConfig(spec *orchestration.ContainerSpec) (*ContainerConfig, er
 	}
 	if err := config.Validate(); err != nil {
 		return nil, &orchestration.InputValidationError{Field: "spec", Message: err.Error()}
+	}
+	if spec.Network != "none" {
+		return nil, fmt.Errorf("%w: job asks for network %q", ErrNetworkUnsupported, spec.Network)
+	}
+	if len(spec.Ports) > 0 {
+		return nil, fmt.Errorf("%w: job asks to publish ports %q", ErrNetworkUnsupported, spec.Ports)
 	}
 	return config, nil
 }
