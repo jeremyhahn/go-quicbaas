@@ -1110,6 +1110,14 @@ func DeleteKey(ctx context.Context, keyID string) error
 
 Provides secrets management operations.
 
+`client.Secrets()` returns the client of a connected `Client`. A consumer that
+owns its own `quicbaas.Transport` builds the same client with
+`quicbaas.NewSecretsClient(t)` (nil for a nil transport). Every request and
+response type, including `EnsureSecretRequest`, `EnsureSecretResponse` and
+`SecretStatus` (`SecretStatusEnabled`, `SecretStatusDisabled`,
+`SecretStatusDeleted`), is named from the root package, so no generated
+`api/proto` type is needed.
+
 ### Store
 
 Stores a secret.
@@ -1188,6 +1196,56 @@ Deletes a secret.
 
 ```go
 func Delete(ctx context.Context, path string) error
+```
+
+---
+
+## DEKClient
+
+Provides Data Encryption Key (DEK) management: lifecycle, rotation, AEAD
+safety limits and re-encryption.
+
+`client.Security().DEK()` returns the client of a connected `Client`. A
+consumer that owns its own `quicbaas.Transport` builds the same client with
+`quicbaas.NewDEKClient(t)` (nil for a nil transport). Every request and
+response type is named from the root package, so no generated `api/proto`
+type is needed.
+
+| Method | Description |
+|--------|-------------|
+| `CreateDEK(ctx, *CreateDEKSDKRequest) (*CreateDEKSDKResponse, error)` | Creates a DEK at a path |
+| `GetDEK(ctx, path string) (*DEKInfo, error)` | Returns a DEK's metadata |
+| `ListDEKs(ctx, *ListDEKsSDKRequest) (*ListDEKsSDKResponse, error)` | Lists DEKs under an optional path prefix |
+| `RotateDEK(ctx, *RotateDEKSDKRequest) (*RotateDEKSDKResponse, error)` | Creates a new version of a DEK |
+| `DeleteDEK(ctx, *DeleteDEKSDKRequest) (*DeleteDEKSDKResponse, error)` | Removes a DEK (force or migration required) |
+| `GetDEKStatus(ctx, path string) (*DEKStatusResponse, error)` | Returns a DEK's status, including AEAD usage |
+| `SetDefaultDEK(ctx, path string) (*SetDefaultDEKResponse, error)` | Marks a DEK as the default for its path level |
+| `SetDEKSafety(ctx, *SetDEKSafetyRequest) error` | Sets a DEK's AEAD safety limits |
+| `ClearDEKSafety(ctx, path string) error` | Removes a DEK's custom AEAD safety limits |
+| `StartReencryption(ctx, *StartReencryptionRequest) (*StartReencryptionResponse, error)` | Starts background re-encryption to a new DEK version |
+| `GetReencryptionProgress(ctx, *GetReencryptionProgressRequest) (*ReencryptionProgressResponse, error)` | Returns re-encryption progress (`ReencryptionProgress`) |
+
+**Example:**
+
+```go
+// Over a connected client.
+deks := client.Security().DEK()
+
+// Or over a transport the consumer owns.
+deks = quicbaas.NewDEKClient(t)
+
+resp, err := deks.CreateDEK(ctx, &quicbaas.CreateDEKSDKRequest{
+    Path:      "tenants/acme/orders",
+    Algorithm: "AES-256-GCM",
+})
+if err != nil {
+    return err
+}
+err = deks.SetDEKSafety(ctx, &quicbaas.SetDEKSafetyRequest{
+    Path:           resp.DEK.Path,
+    MaxOperations:  1 << 32,
+    WarningPercent: 80,
+})
 ```
 
 ---
