@@ -149,16 +149,16 @@ type quicBaaS struct {
 	qrdbClient QRDBClientProvider
 
 	// qrdbServiceRegistry, when set, supplies go-qrdb's tenant/database
-	// service registry, whose tenant-scoped KVServicer the kv service's Put,
-	// Get, Delete and List write through, so a tenant's isolation backend,
-	// barrier and quotas apply. Nil keeps those operations on qrdbClient.
-	// When set but the provider returns nil (the node is sealed), those
-	// operations fail closed; see kvService.dataPlane.
+	// service registry, whose tenant-scoped KVServicer and BatchServicer the
+	// kv service's Put, Get, Delete, List and ListEntityTypes and the batch
+	// service's BatchPut and BatchDelete go through, so a tenant's isolation
+	// backend, barrier and quotas apply. Nil keeps those operations on
+	// qrdbClient. The provider is called on every operation and its answer
+	// is never cached: go-qrdb replaces its server (and so its registry)
+	// during a system encryption migration, and returns nil while sealed or
+	// recycling, in which case those operations fail closed; see
+	// kvService.dataPlane.
 	qrdbServiceRegistry func() qrdbservice.Registry
-	// qrdbRegistryMu guards qrdbRegistryCached, the first non-nil registry
-	// qrdbServiceRegistry returned.
-	qrdbRegistryMu     sync.Mutex
-	qrdbRegistryCached qrdbservice.Registry
 
 	// KVStore provider for DAO factory
 	kvStoreProvider func(shardID uint64) interfaces.KVStore

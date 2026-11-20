@@ -55,22 +55,19 @@ var errKVRegistryUnavailable = stderrors.New("qrdb service registry unavailable:
 
 // kvServiceRegistry returns the qrdb service registry the kv service routes
 // through and whether a provider is configured at all. The provider is
-// called per operation until it returns a non-nil registry; that registry is
-// cached for every later operation.
+// called on every operation and its current answer is returned, never a
+// cached one: go-qrdb replaces its server, and with it the registry, during
+// a system encryption migration, and a provider that returns nil (sealed or
+// recycling) must make the operation fail closed rather than reach a
+// stopped service graph.
 func (s *quicBaaS) kvServiceRegistry() (qrdbservice.Registry, bool) {
 	if s.qrdbServiceRegistry == nil {
 		return nil, false
-	}
-	s.qrdbRegistryMu.Lock()
-	defer s.qrdbRegistryMu.Unlock()
-	if s.qrdbRegistryCached != nil {
-		return s.qrdbRegistryCached, true
 	}
 	reg := s.qrdbServiceRegistry()
 	if isNilInterface(reg) {
 		return nil, true
 	}
-	s.qrdbRegistryCached = reg
 	return reg, true
 }
 

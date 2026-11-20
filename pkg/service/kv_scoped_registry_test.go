@@ -147,7 +147,7 @@ func TestKVRegistry_ProviderSet_AllOpsReachScopedKV(t *testing.T) {
 	assert.Equal(t, ref.capturedScanKey(), reg.kv.scanPrefix)
 	assert.Equal(t, []string{"acme-corp", "acme-corp", "acme-corp", "acme-corp"}, reg.tenants)
 	assert.Equal(t, []string{"", "", "", ""}, reg.dbs)
-	assert.Equal(t, 1, providerCalls, "the first non-nil registry is cached")
+	assert.Equal(t, 4, providerCalls, "the provider is consulted on every operation")
 
 	assert.Empty(t, shared.capturedPutKey(), "the shared client must not be written")
 	assert.Empty(t, shared.capturedGetKey())
@@ -349,4 +349,41 @@ func TestKVRegistry_ListEntityTypesSeesScopedWrites(t *testing.T) {
 	resp, err := svc.ListEntityTypes(ctx, &ListEntityTypesRequest{})
 	require.NoError(t, err)
 	assert.Contains(t, resp.EntityTypes, "Gadget")
+}
+
+func TestKVRegistry_ProviderReplacement_UsesNewRegistry(t *testing.T) {
+	ctx := tenantctx.WithTenant(context.Background(), "acme-corp")
+	regA, regB := newMemRegistry(), newMemRegistry()
+	var reg qrdbservice.Registry = regA
+	svc := newMemRegistryService(t, &reg)
+
+	_, err := svc.Put(ctx, &PutRequest{EntityType: "User", ID: 1, Data: []byte(`{}`)})
+	require.NoError(t, err)
+	require.Len(t, regA.scope.keys(), 1)
+
+	// go-qrdb replaced its server: the provider now returns B.
+	reg = regB
+	_, err = svc.Put(ctx, &PutRequest{EntityType: "User", ID: 2, Data: []byte(`{}`)})
+	require.NoError(t, err)
+
+	assert.Len(t, regA.scope.keys(), 1, "a Put after the switch must not land in the old registry")
+	assert.Len(t, regB.scope.keys(), 1, "a Put after the switch must land in the new registry")
+}
+
+func TestKVRegistry_ProviderGoesNil_FailsClosedAgain(t *testing.T) {
+	ctx := tenantctx.WithTenant(context.Background(), "acme-corp")
+	regA := newMemRegistry()
+	var reg qrdbservice.Registry = regA
+	svc := newMemRegistryService(t, &reg)
+
+	_, err := svc.Put(ctx, &PutRequest{EntityType: "User", ID: 1, Data: []byte(`{}`)})
+	require.NoError(t, err)
+	_, err = svc.Get(ctx, &GetRequest{EntityType: "User", ID: 1})
+	require.NoError(t, err)
+
+	// The registry is being recycled: the provider returns nil.
+	reg = nil
+	_, err = svc.Get(ctx, &GetRequest{EntityType: "User", ID: 1})
+	require.Error(t, err, "a nil registry must fail closed, not reuse the old one")
+	assert.Equal(t, errors.ErrUnavailable, errors.Code(err), "%v", err)
 }
