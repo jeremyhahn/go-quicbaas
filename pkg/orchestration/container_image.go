@@ -16,6 +16,8 @@ package orchestration
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
@@ -195,6 +197,7 @@ func (r *ExecContainerRuntime) BuildImage(ctx context.Context, spec *ImageBuildS
 	if err := validateImageBuildSpec(spec); err != nil {
 		return "", err
 	}
+	r.retryPendingRefs(ctx)
 	workDir, err := os.MkdirTemp("", "quicbaas-image-build-")
 	if err != nil {
 		return "", &ImageBuildError{Tags: spec.Tags, Cause: err}
@@ -209,8 +212,22 @@ func (r *ExecContainerRuntime) BuildImage(ctx context.Context, spec *ImageBuildS
 		return "", &ImageBuildError{Tags: spec.Tags, Cause: err}
 	}
 	iidFile := filepath.Join(workDir, "iid")
+	buildRef, err := newBuildRef()
+	if err != nil {
+		return "", &ImageBuildError{Tags: spec.Tags, Cause: err}
+	}
+	// The engine can apply buildRef and still fail the command (cancelled
+	// after export, an iidfile it could not write), so the cleanup is
+	// registered before the build runs, and runs on every return that has
+	// not already removed it.
+	buildRefRemoved := false
+	defer func() {
+		if !buildRefRemoved {
+			r.removeBuildRef(ctx, buildRef)
+		}
+	}()
 
-	args := buildImageArgs(spec, iidFile, contextDir)
+	args := buildImageArgs(spec, iidFile, contextDir, buildRef)
 	r.logger.Infof("container build: %s %s", r.command, strings.Join(spec.Tags, " "))
 	result, err := r.imageRunner()(ctx, r.command, imageCommand{Args: args, Stdin: spec.Dockerfile})
 	if err != nil {
@@ -233,13 +250,151 @@ func (r *ExecContainerRuntime) BuildImage(ctx context.Context, spec *ImageBuildS
 	// the engine's: under docker's containerd image store BuildKit writes the
 	// config digest while the daemon keys the image by its manifest digest,
 	// so `docker tag <iid> ...` answers "No such image" (#1801). The ID this
-	// function returns is the one the engine resolves, read back from the
-	// tag the build just applied.
-	info, err := r.InspectImage(ctx, spec.Tags[0])
+	// function returns is the one the engine resolves, read back from a tag
+	// only this build applied.
+	info, err := r.InspectImage(ctx, buildRef)
 	if err != nil {
 		return "", &ImageBuildError{Tags: spec.Tags, Cause: err}
 	}
+	// Before buildRef can be removed, the image gets a reference named by its
+	// own ID. Any process sharing the engine (another daemon building the
+	// same tag) may move the spec's tags to another image at any moment, but
+	// no one can point idRef at another image: it names this one by content.
+	// So buildRef is never the image's last reference, and `image rm` only
+	// untags it.
+	// The reference is this build's own (a nonce in its repository), so
+	// releasing it never removes the reference of another build, in this
+	// runtime or another process, that returned the same image.
+	nonce, err := newBuildNonce()
+	if err != nil {
+		return "", &ImageBuildError{Tags: spec.Tags, Cause: err}
+	}
+	idRef, err := buildIDRef(nonce, info.ID)
+	if err != nil {
+		return "", &ImageBuildError{Tags: spec.Tags, Cause: err}
+	}
+	if err := r.TagImage(ctx, buildRef, idRef); err != nil {
+		// The engine may have applied idRef before the command failed
+		// (cancelled after the tag landed), so it is removed all the same.
+		r.dropIDRef(ctx, idRef)
+		return "", &ImageBuildError{Tags: spec.Tags, Cause: err}
+	}
+	for _, tag := range spec.Tags {
+		if err := r.TagImage(ctx, buildRef, tag); err != nil {
+			// The build failed and returns no ID: nothing needs the image.
+			r.dropIDRef(ctx, idRef)
+			return "", &ImageBuildError{Tags: spec.Tags, Cause: err}
+		}
+	}
+	r.removeBuildRef(ctx, buildRef)
+	buildRefRemoved = true
+	r.keepIDRef(info.ID, idRef)
 	return info.ID, nil
+}
+
+// keepIDRef records a returned build's own idRef under the image ID. It stays
+// while the caller uses the ID (another process may have moved the requested
+// tags, leaving idRef the image's last reference), until a ReleaseImage of
+// the ID removes it. It is never released
+// by checking the tags first: a tag can move between the check and the
+// removal, deleting the image the caller holds.
+func (r *ExecContainerRuntime) keepIDRef(id, idRef string) {
+	r.keptMu.Lock()
+	defer r.keptMu.Unlock()
+	if r.keptIDRefs == nil {
+		r.keptIDRefs = make(map[string][]string)
+	}
+	r.keptIDRefs[id] = append(r.keptIDRefs[id], idRef)
+}
+
+// dropIDRef removes one build-ID reference this runtime applied. A removal
+// the engine refused is queued in pendingRefs and retried by the next
+// BuildImage or ReleaseImage, so a transient failure does not retain the
+// image for ever.
+func (r *ExecContainerRuntime) dropIDRef(ctx context.Context, idRef string) {
+	if err := r.removeRef(ctx, idRef, "build-ID tag"); err != nil {
+		r.keptMu.Lock()
+		r.pendingRefs = append(r.pendingRefs, idRef)
+		r.keptMu.Unlock()
+	}
+}
+
+// retryPendingRefs retries every queued build-ID reference removal, keeping
+// only those that fail again. A reference the engine no longer has counts as
+// removed.
+func (r *ExecContainerRuntime) retryPendingRefs(ctx context.Context) {
+	r.keptMu.Lock()
+	pending := r.pendingRefs
+	r.pendingRefs = nil
+	r.keptMu.Unlock()
+	var failed []string
+	for _, ref := range pending {
+		if err := r.removeRef(ctx, ref, "build-ID tag"); err != nil {
+			failed = append(failed, ref)
+		}
+	}
+	if len(failed) > 0 {
+		r.keptMu.Lock()
+		r.pendingRefs = append(r.pendingRefs, failed...)
+		r.keptMu.Unlock()
+	}
+}
+
+// ReleaseImage tells the runtime the caller is done with an ID BuildImage
+// returned. Each release removes exactly one build-ID reference one of this
+// runtime's builds applied to the ID, never another build's or another
+// process's; an image no other reference names is deleted with it. An ID this runtime holds no reference for, or one that is
+// not a digest, is a no-op.
+func (r *ExecContainerRuntime) ReleaseImage(ctx context.Context, id string) {
+	r.retryPendingRefs(ctx)
+	r.keptMu.Lock()
+	refs := r.keptIDRefs[id]
+	if len(refs) == 0 {
+		r.keptMu.Unlock()
+		return
+	}
+	// Oldest first: any of the refs is one of this runtime's own, and each
+	// release takes exactly one.
+	idRef := refs[0]
+	if len(refs) == 1 {
+		delete(r.keptIDRefs, id)
+	} else {
+		r.keptIDRefs[id] = refs[1:]
+	}
+	r.keptMu.Unlock()
+	r.dropIDRef(ctx, idRef)
+}
+
+// buildIDRepository is the repository of the reference that names a built
+// image by its own ID, so it can only ever point at that image (see
+// BuildImage).
+const buildIDRepository = "quicbaas-build-id"
+
+// buildIDPattern is the hex of a sha256 image ID, the tag of a buildIDRef.
+var buildIDPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+// errImageIDNotDigest reports an engine that named its built image by
+// something other than a sha256 digest, which no reference can be named by.
+var errImageIDNotDigest = errors.New("the engine named the built image by something other than a sha256 digest")
+
+// buildIDRef returns quicbaas-build-id/<nonce>:<64 hex characters> for an
+// image ID of the form sha256:<hex> (docker) or <hex> (podman).
+func buildIDRef(nonce, id string) (string, error) {
+	digest := strings.TrimPrefix(id, "sha256:")
+	if !buildIDPattern.MatchString(digest) {
+		return "", errImageIDNotDigest
+	}
+	return buildIDRepository + "/" + nonce + ":" + digest, nil
+}
+
+// newBuildNonce returns 8 random bytes in lowercase hex: the part of a
+// build-ID reference that makes it this build's own.
+func newBuildNonce() (string, error) {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b[:]), nil
 }
 
 // errImageBuildNoID reports an engine that succeeded without naming the image
@@ -266,14 +421,15 @@ func validateImageBuildSpec(spec *ImageBuildSpec) error {
 
 // buildImageArgs is the build's argv, in a stable order so two builds of one
 // spec are the same invocation.
-func buildImageArgs(spec *ImageBuildSpec, iidFile, contextDir string) []string {
+func buildImageArgs(spec *ImageBuildSpec, iidFile, contextDir, buildRef string) []string {
 	args := []string{"build", "--file", "-", "--iidfile", iidFile}
 	if spec.Pull {
 		args = append(args, "--pull")
 	}
-	for _, tag := range spec.Tags {
-		args = append(args, "--tag", tag)
-	}
+	// Only the build's private tag: the spec's tags are applied after the
+	// build has pinned its image by ID, so a concurrent build moving them
+	// cannot leave the private tag as the image's last reference.
+	args = append(args, "--tag", buildRef)
 	for _, key := range sortedKeys(spec.BuildArgs) {
 		args = append(args, "--build-arg", key+"="+spec.BuildArgs[key])
 	}
@@ -281,6 +437,57 @@ func buildImageArgs(spec *ImageBuildSpec, iidFile, contextDir string) []string {
 		args = append(args, "--label", key+"="+spec.Labels[key])
 	}
 	return append(args, contextDir)
+}
+
+// buildTempRepository is the repository of the reference each build applies
+// to its image alone, so the build can read back the ID it produced.
+const buildTempRepository = "quicbaas-build-tmp"
+
+// newBuildRef returns a reference unique to one build:
+// quicbaas-build-tmp:<32 lowercase hex characters from crypto/rand>.
+func newBuildRef() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return buildTempRepository + ":" + hex.EncodeToString(b[:]), nil
+}
+
+// removeBuildRef untags the temporary reference a build applied. On success
+// the image keeps the reference BuildImage named it by its ID, so the
+// removal only untags; on a failed build the image may go with it, which is
+// what an untagged failed build should do. Its context is its own, bounded
+// by oneShotCleanupTimeout, so it runs after the caller's is cancelled. A
+// failure is logged and queued for retry; it never fails the build.
+func (r *ExecContainerRuntime) removeBuildRef(parent context.Context, ref string) {
+	if err := r.removeRef(parent, ref, "temporary tag"); err != nil {
+		// removeRef has logged it; the next build or ReleaseImage retries it.
+		r.keptMu.Lock()
+		r.pendingRefs = append(r.pendingRefs, ref)
+		r.keptMu.Unlock()
+	}
+}
+
+// removeRef untags ref, a reference this package applied; what names it in
+// the log. A reference already gone is not an error.
+func (r *ExecContainerRuntime) removeRef(parent context.Context, ref, what string) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), oneShotCleanupTimeout)
+	defer cancel()
+	result, err := r.imageRunner()(ctx, r.command, imageCommand{Args: []string{"image", "rm", ref}})
+	switch {
+	case err != nil:
+		r.logger.Warnf("container build: remove %s %s: %v", what, ref, err)
+		return err
+	case result.ExitCode != 0 && isImageNotFoundOutput(result.Stderr):
+		// A build that failed before it tagged, or a tag already removed.
+		return nil
+	case result.ExitCode != 0:
+		// The engine's text is not logged: stderr can carry credentials.
+		r.logger.Warnf("container build: remove %s %s exited %d (%d bytes of output withheld)",
+			what, ref, result.ExitCode, len(result.Stderr))
+		return &CommandError{Command: r.command, Op: "image rm"}
+	}
+	return nil
 }
 
 // InspectImage reports a local image's ID, labels and repository digests. An
@@ -340,6 +547,29 @@ func isImageNotFoundOutput(stderr string) bool {
 	return strings.Contains(lower, "no such image") || strings.Contains(lower, "image not known")
 }
 
+// tagFailureReasons maps a lower-cased fragment of an engine's tag refusal
+// to the fixed phrase ImageTagError renders, in match order.
+var tagFailureReasons = []struct{ fragment, reason string }{
+	{"no such image", "no such image"},
+	{"image not known", "no such image"},
+	{"invalid reference format", "invalid reference format"},
+	{"permission denied", "permission denied"},
+	{"cannot connect to the docker daemon", "engine unreachable"},
+	{"connection refused", "engine unreachable"},
+}
+
+// classifyTagFailure returns the fixed phrase for the engine's stderr, or ""
+// when none matches. It never returns engine text.
+func classifyTagFailure(stderr string) string {
+	lower := strings.ToLower(stderr)
+	for _, c := range tagFailureReasons {
+		if strings.Contains(lower, c.fragment) {
+			return c.reason
+		}
+	}
+	return ""
+}
+
 // TagImage adds target as a reference to the image source names.
 func (r *ExecContainerRuntime) TagImage(ctx context.Context, source, target string) error {
 	if strings.TrimSpace(source) == "" {
@@ -356,8 +586,8 @@ func (r *ExecContainerRuntime) TagImage(ctx context.Context, source, target stri
 		stderr := strings.TrimSpace(result.Stderr)
 		return &ImageTagError{
 			Source: source, Target: target,
-			EngineMessage: redactLimitSignal(stderr),
-			Cause:         &CommandError{Command: r.command, Op: "tag", Output: stderr},
+			Reason: classifyTagFailure(stderr),
+			Cause:  &CommandError{Command: r.command, Op: "tag", Output: stderr},
 		}
 	}
 	return nil

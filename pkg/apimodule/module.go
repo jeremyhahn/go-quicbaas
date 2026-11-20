@@ -74,6 +74,10 @@
 // authz chain as every other service here; their permissions were already in
 // this module's derived set, because kms.proto also declares
 // SecretsManagement (module_grants.go reads options per proto file).
+// AttestationService is mounted beside KeyManagement/DEKManagement because the
+// pinned go-xkms serves only KeystoreService.AttestKey and none of the
+// Verifier RPCs (endorsements, reference values, AppraiseQuote) the CLI calls
+// by the quicbaas.attestation.v1 name.
 //
 // Crypto (quicbaas.kms.v1.Crypto, built with NewCryptoServer and gated on
 // the facade's Crypto(), as lifecycle.go does) is mounted for the same

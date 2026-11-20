@@ -283,7 +283,8 @@ as the way off argv; `recovery recover` was the odd one out until
 [#227](https://github.com/jeremyhahn/go-quicbaas/issues/227). The PIN
 flags have no stdin path yet
 ([#226](https://github.com/jeremyhahn/go-quicbaas/issues/226)), and
-`iam tenant barrier unseal-share` submits a single share and is still argv-only.
+`iam tenant barrier unseal-share`, which submits a single share, reads it from
+standard input with `--share-stdin`.
 
 ---
 

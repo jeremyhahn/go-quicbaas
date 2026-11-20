@@ -858,8 +858,7 @@ func NewQUICClient(endpoint, authToken string) (*QUICClient, error) {
 	if err != nil {
 		return nil, &qberrors.WrappedMessageError{Message: "load integration TLS config", Cause: err}
 	}
-	// ALPN is left for the QUIC transport to default to "h3", the only
-	// protocol the node's QUIC listener serves.
+	tlsCfg = helpers.QUICTLSConfig(tlsCfg)
 	cfg := &transport.Config{
 		Address:         endpoint,
 		Timeout:         30 * time.Second,

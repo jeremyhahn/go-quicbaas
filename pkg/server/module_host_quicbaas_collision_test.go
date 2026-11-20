@@ -48,7 +48,7 @@ func TestUnifiedModuleServerOptions_HostModuleCollidingWithQuicBaaSFails(t *test
 		},
 	}))
 
-	opts, err := srv.unifiedModuleServerOptions(nil)
+	opts, err := srv.unifiedModuleServerOptions(nil, false)
 	require.Error(t, err, "a host module may not claim a route quicbaas already serves")
 	assert.Nil(t, opts)
 
@@ -68,7 +68,7 @@ func TestUnifiedModuleServerOptions_HostModuleWithOwnPrefixComposes(t *testing.T
 	srv := newModuleHostTestServer(t,
 		WithModule(newHostTestModule("trusted-platform", "/api/v1/trusted-platform/devices")))
 
-	opts, err := srv.unifiedModuleServerOptions(nil)
+	opts, err := srv.unifiedModuleServerOptions(nil, false)
 	require.NoError(t, err)
 	assert.NotEmpty(t, opts)
 }

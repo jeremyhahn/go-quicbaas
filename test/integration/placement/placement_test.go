@@ -111,8 +111,8 @@ func transports(t *testing.T, bearer string) map[string]func() (quicbaas.Client,
 			return quicbaas.NewClient(first(helpers.GetClusterEndpoints(), "gRPC"), quicbaas.WithTLSConfig(tlsCfg), auth, timeout)
 		},
 		"QUIC": func() (quicbaas.Client, error) {
-			// The QUIC transport offers ALPN "h3", the only one the node's listener serves.
-			return quicbaas.NewClient(first(helpers.GetQUICEndpoints(), "QUIC"), quicbaas.WithQUIC(), quicbaas.WithTLSConfig(tlsCfg.Clone()), auth, timeout)
+			quicCfg := helpers.QUICTLSConfig(tlsCfg)
+			return quicbaas.NewClient(first(helpers.GetQUICEndpoints(), "QUIC"), quicbaas.WithQUIC(), quicbaas.WithTLSConfig(quicCfg), auth, timeout)
 		},
 		"Unix": func() (quicbaas.Client, error) {
 			socket := helpers.GetUnixSocketPath()
