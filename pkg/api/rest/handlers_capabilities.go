@@ -29,9 +29,12 @@ func (s *Server) HandleCapabilities(w http.ResponseWriter, r *http.Request) {
 }
 
 // Capabilities builds this server's capabilities report, probing the CA
-// handlers the REST server holds.
+// handlers the REST server holds and the time series and RAG handlers its
+// build tags compile.
 func (s *Server) Capabilities() capabilities.Report {
 	return capabilities.Build(s.service, capabilities.Probes{
 		CertificateAuthority: func() bool { return s.caHandlers() != nil },
+		TimeSeriesServed:     capabilities.TimeSeriesServed,
+		RAGServed:            capabilities.RAGServed,
 	})
 }

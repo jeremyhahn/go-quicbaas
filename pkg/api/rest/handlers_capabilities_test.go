@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/capabilities"
@@ -38,6 +39,7 @@ var capabilityReasons = map[string]bool{
 	"no xkms certificate authority is configured":                 true,
 	"no vector service is wired":                                  true,
 	"no scheduler service is wired":                               true,
+	"set timeseries.enabled to wire time series storage":          true,
 }
 
 // getCapabilities calls HandleCapabilities and decodes the report.
@@ -92,19 +94,35 @@ func wireAll(t *testing.T, s *Server, m *testutil.MockQuicBaaS) {
 	s.SetCertificateAuthority(testca.New(t, "capabilities-ca"))
 }
 
-func TestCapabilities_TimeSeriesUnservedWithoutBuildTag(t *testing.T) {
+func TestCapabilities_TimeSeriesServedByTagConfiguredByStorage(t *testing.T) {
 	server, m, cleanup := setupMockServer(t)
 	defer cleanup()
 	wireAll(t, server, m)
 
 	report := getCapabilities(t, server)
-	if capabilities.TimeSeriesServed {
-		requireConfigured(t, report, "timeseries")
-		return
+	sub := report.Subsystems["timeseries"]
+	if sub.Served != capabilities.TimeSeriesServed {
+		t.Errorf("timeseries: served = %v, want %v (the timeseries build tag)", sub.Served, capabilities.TimeSeriesServed)
 	}
+	// The mock facade wires no time series storage.
 	requireUnconfigured(t, report, "timeseries")
-	if report.Subsystems["timeseries"].Served {
-		t.Error("timeseries: served = true in a binary built without the timeseries tag")
+	wantReason := capabilities.ReasonTimeSeriesTag
+	if capabilities.TimeSeriesServed {
+		wantReason = capabilities.ReasonNoTimeSeriesStorage
+	}
+	if sub.Reason != wantReason {
+		t.Errorf("timeseries: reason = %q, want %q", sub.Reason, wantReason)
+	}
+}
+
+func TestCapabilities_RAGFamilyFollowsBuildTag(t *testing.T) {
+	server, m, cleanup := setupMockServer(t)
+	defer cleanup()
+	wireAll(t, server, m)
+
+	report := getCapabilities(t, server)
+	if got := slices.Contains(report.Families, capabilities.FamilyRAG); got != capabilities.RAGServed {
+		t.Errorf("families lists %q = %v, want %v (the rag build tag)", capabilities.FamilyRAG, got, capabilities.RAGServed)
 	}
 }
 

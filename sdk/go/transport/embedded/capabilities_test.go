@@ -34,7 +34,7 @@ func TestTransport_CapabilitiesGet(t *testing.T) {
 	report, err := capabilities.NewClient(tr).Get(context.Background())
 	require.NoError(t, err)
 
-	want := servercaps.Build(mock, servercaps.Probes{})
+	want := servercaps.Build(mock, servercaps.Probes{TimeSeriesServed: true})
 	require.Len(t, report.Subsystems, len(want.Subsystems))
 	for name, sub := range want.Subsystems {
 		got := report.Subsystems[name]
@@ -48,4 +48,14 @@ func TestTransport_CapabilitiesGet(t *testing.T) {
 	xkms := report.Subsystems[servercaps.SubsystemXKMSCA]
 	assert.False(t, xkms.Configured)
 	assert.NotEmpty(t, xkms.Reason)
+
+	// The embedded transport always compiles its time series handlers; the
+	// mock facade wires no time series storage.
+	ts := report.Subsystems[servercaps.SubsystemTimeSeries]
+	assert.True(t, ts.Served)
+	assert.False(t, ts.Configured)
+	assert.Equal(t, servercaps.ReasonNoTimeSeriesStorage, ts.Reason)
+
+	// The embedded transport has no RAG handlers.
+	assert.NotContains(t, report.Families, servercaps.FamilyRAG)
 }

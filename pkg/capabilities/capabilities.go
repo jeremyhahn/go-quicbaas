@@ -40,14 +40,19 @@ const (
 // Reasons a subsystem is not served or not configured. The set is fixed: a
 // reason names a setting or build tag, never a value.
 const (
-	ReasonTimeSeriesTag      = "build with -tags timeseries"
-	ReasonNoMessaging        = "no messaging service is wired"
-	ReasonNoAgent            = "no agent service is wired"
-	ReasonNoSessionRotation  = "the agent service does not support session account rotation"
-	ReasonNoCertificateAuthn = "no xkms certificate authority is configured"
-	ReasonNoVector           = "no vector service is wired"
-	ReasonNoScheduler        = "no scheduler service is wired"
+	ReasonTimeSeriesTag       = "build with -tags timeseries"
+	ReasonNoMessaging         = "no messaging service is wired"
+	ReasonNoAgent             = "no agent service is wired"
+	ReasonNoSessionRotation   = "the agent service does not support session account rotation"
+	ReasonNoCertificateAuthn  = "no xkms certificate authority is configured"
+	ReasonNoVector            = "no vector service is wired"
+	ReasonNoScheduler         = "no scheduler service is wired"
+	ReasonNoTimeSeriesStorage = "set timeseries.enabled to wire time series storage"
 )
+
+// FamilyRAG is the SDK family of the RAG handlers, listed only by a transport
+// that serves them.
+const FamilyRAG = "rag"
 
 // Subsystem is one subsystem's entry in the report.
 type Subsystem struct {
@@ -69,11 +74,19 @@ type Report struct {
 }
 
 // Probes carries the state that lives on a transport server rather than on
-// the service facade. A nil probe reports the state as not configured.
+// the service facade. A nil probe reports the state as not configured, and a
+// false field reports the handlers as not served.
 type Probes struct {
 	// CertificateAuthority reports whether an xkms certificate authority is
 	// wired (on REST, the server's CA handlers are set).
 	CertificateAuthority func() bool
+	// TimeSeriesServed is true when this transport compiles the time series
+	// handlers: on REST and QUIC the constant TimeSeriesServed (-tags
+	// timeseries); the embedded transport's are always compiled.
+	TimeSeriesServed bool
+	// RAGServed is true when this transport serves the RAG family: on REST
+	// the constant RAGServed (-tags rag); the embedded transport has none.
+	RAGServed bool
 }
 
 // baseFamilies are the SDK families every server serves, whatever its build
@@ -83,7 +96,7 @@ var baseFamilies = []string{
 	"cache", "certificate", "cluster", "crypto", "dek", "dynamicsecrets",
 	"embedding", "health", "iam", "kms", "kv", "objectstorage",
 	"objectstorageadmin", "objecttransfer", "ollama", "operations",
-	"orchestrator", "parameterstore", "project", "prompt", "query", "rag",
+	"orchestrator", "parameterstore", "project", "prompt", "query",
 	"rbac", "registry", "sdlc", "secrets", "spend", "ssh", "transaction",
 	"trust",
 }
@@ -93,7 +106,7 @@ var baseFamilies = []string{
 func Build(svc service.QuicBaaS, probes Probes) Report {
 	report := Report{Subsystems: map[string]Subsystem{}}
 
-	report.Subsystems[SubsystemTimeSeries] = timeSeries()
+	report.Subsystems[SubsystemTimeSeries] = timeSeries(svc, probes.TimeSeriesServed)
 	report.Subsystems[SubsystemMessaging] = wired(svc != nil && svc.Messaging() != nil, ReasonNoMessaging)
 	report.Subsystems[SubsystemSessionRotation] = sessionRotation(svc)
 	report.Subsystems[SubsystemXKMSCA] = wired(probes.CertificateAuthority != nil && probes.CertificateAuthority(), ReasonNoCertificateAuthn)
@@ -105,6 +118,9 @@ func Build(svc service.QuicBaaS, probes Probes) Report {
 		if report.Subsystems[name].Served {
 			report.Families = append(report.Families, name)
 		}
+	}
+	if probes.RAGServed {
+		report.Families = append(report.Families, FamilyRAG)
 	}
 	return report
 }
@@ -118,13 +134,18 @@ func wired(ok bool, reason string) Subsystem {
 	return Subsystem{Served: true, Reason: reason}
 }
 
-// timeSeries reports the time series subsystem from the build tag: its REST
-// handlers are compiled in only with -tags timeseries.
-func timeSeries() Subsystem {
-	if TimeSeriesServed {
-		return Subsystem{Served: true, Configured: true}
+// timeSeries reports the time series subsystem: served when the transport
+// compiles its handlers, configured when the facade has time series storage,
+// which every time series method checks before answering ErrNotImplemented.
+func timeSeries(svc service.QuicBaaS, served bool) Subsystem {
+	if !served {
+		return Subsystem{Reason: ReasonTimeSeriesTag}
 	}
-	return Subsystem{Reason: ReasonTimeSeriesTag}
+	probe, ok := svc.(interface{ TimeSeriesStorageConfigured() bool })
+	if !ok || !probe.TimeSeriesStorageConfigured() {
+		return Subsystem{Served: true, Reason: ReasonNoTimeSeriesStorage}
+	}
+	return Subsystem{Served: true, Configured: true}
 }
 
 // sessionRotation makes the check the rotate handlers make:

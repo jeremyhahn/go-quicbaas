@@ -694,13 +694,14 @@ func NewFactory(svc service.QuicBaaS) *Factory {
 
 // handleCapabilitiesGet answers quicbaas.Capabilities/Get with the report
 // capabilities.Build makes from the embedded service, the same report every
-// network transport serves. An embedded caller runs no transport server, so
-// the report carries no transport probes.
+// network transport serves. This transport always compiles its time series
+// handlers, has no RAG handlers, and runs no transport server, so it has no
+// CA probe.
 func handleCapabilitiesGet(_ context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	if _, ok := req.(*sdkcapabilities.GetRequest); !ok {
 		return nil, NewInvalidRequestTypeError(sdkcapabilities.ServiceName, sdkcapabilities.MethodGet, "*capabilities.GetRequest", typeNameOf(req))
 	}
-	report := capabilities.Build(svc, capabilities.Probes{})
+	report := capabilities.Build(svc, capabilities.Probes{TimeSeriesServed: true})
 	return &report, nil
 }
 

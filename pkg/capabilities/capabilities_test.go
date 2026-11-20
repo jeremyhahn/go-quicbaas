@@ -14,6 +14,7 @@
 package capabilities
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil"
@@ -29,13 +30,56 @@ func TestCapabilitiesBuild_NilServiceReportsEveryServiceUnconfigured(t *testing.
 	}
 }
 
-func TestCapabilitiesBuild_TimeSeriesFollowsBuildTag(t *testing.T) {
-	sub := Build(nil, Probes{}).Subsystems[SubsystemTimeSeries]
-	if sub.Served != TimeSeriesServed || sub.Configured != TimeSeriesServed {
-		t.Errorf("timeseries = %+v, want served and configured = %v", sub, TimeSeriesServed)
+// tsStorageService is a facade that reports whether its time series storage
+// is wired.
+type tsStorageService struct {
+	*testutil.MockQuicBaaS
+	wired bool
+}
+
+func (s tsStorageService) TimeSeriesStorageConfigured() bool { return s.wired }
+
+func TestCapabilitiesBuild_TimeSeriesUnservedWithoutProbe(t *testing.T) {
+	report := Build(nil, Probes{})
+	sub := report.Subsystems[SubsystemTimeSeries]
+	if sub.Served || sub.Configured || sub.Reason != ReasonTimeSeriesTag {
+		t.Errorf("timeseries = %+v, want not served, not configured, reason %q", sub, ReasonTimeSeriesTag)
 	}
-	if !TimeSeriesServed && sub.Reason != ReasonTimeSeriesTag {
-		t.Errorf("timeseries reason = %q, want %q", sub.Reason, ReasonTimeSeriesTag)
+	if slices.Contains(report.Families, SubsystemTimeSeries) {
+		t.Errorf("families = %v, want no %q", report.Families, SubsystemTimeSeries)
+	}
+}
+
+func TestCapabilitiesBuild_TimeSeriesServedButStorageUnwired(t *testing.T) {
+	for _, wired := range []bool{false, true} {
+		m := testutil.NewMockQuicBaaS()
+		m.On("Messaging").Return(nil)
+		report := Build(tsStorageService{m, wired}, Probes{TimeSeriesServed: true})
+		sub := report.Subsystems[SubsystemTimeSeries]
+		wantReason := ""
+		if !wired {
+			wantReason = ReasonNoTimeSeriesStorage
+		}
+		if !sub.Served || sub.Configured != wired || sub.Reason != wantReason {
+			t.Errorf("wired=%v: timeseries = %+v, want served, configured %v, reason %q", wired, sub, wired, wantReason)
+		}
+		if !slices.Contains(report.Families, SubsystemTimeSeries) {
+			t.Errorf("wired=%v: families = %v, want %q", wired, report.Families, SubsystemTimeSeries)
+		}
+	}
+
+	sub := Build(nil, Probes{TimeSeriesServed: true}).Subsystems[SubsystemTimeSeries]
+	if !sub.Served || sub.Configured || sub.Reason != ReasonNoTimeSeriesStorage {
+		t.Errorf("nil service: timeseries = %+v, want served, not configured, reason %q", sub, ReasonNoTimeSeriesStorage)
+	}
+}
+
+func TestCapabilitiesBuild_RAGFamilyFollowsProbe(t *testing.T) {
+	if families := Build(nil, Probes{}).Families; slices.Contains(families, FamilyRAG) {
+		t.Errorf("families = %v, want no %q without the probe", families, FamilyRAG)
+	}
+	if families := Build(nil, Probes{RAGServed: true}).Families; !slices.Contains(families, FamilyRAG) {
+		t.Errorf("families = %v, want %q with the probe", families, FamilyRAG)
 	}
 }
 
