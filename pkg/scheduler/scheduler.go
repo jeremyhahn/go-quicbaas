@@ -1424,6 +1424,7 @@ func (s *SchedulerEngine) executeJob(ctx context.Context, job *Job, claimedFirin
 		JobID:     job.ID,
 		Status:    JobStatusRunning,
 		StartedAt: time.Now(),
+		TenantID:  JobTenantID(job),
 	}
 
 	// Determine timeout

@@ -483,9 +483,9 @@ func (s *Storage) SaveExecution(ctx context.Context, exec *scheduler.JobExecutio
 		return &scheduler.ErrStorageError{Op: "SaveExecution.marshal", Cause: err}
 	}
 
-	// Determine tenant ID from job ownership if we need to store in tenant keyspace
-	// For now, store in system keyspace
-	key := keyForExecution(exec, "")
+	// The execution is stored in its job's namespace ("" is the system
+	// keyspace), where GetExecutions reads the job's history.
+	key := keyForExecution(exec, exec.TenantID)
 
 	if err := s.kv.Put(ctx, key, data); err != nil {
 		return &scheduler.ErrStorageError{Op: "SaveExecution.put", Cause: err}
