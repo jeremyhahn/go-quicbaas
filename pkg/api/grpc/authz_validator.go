@@ -15,6 +15,7 @@ package grpc
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 
 	"google.golang.org/grpc/codes"
@@ -65,6 +66,19 @@ type GRPCValidatorAuthenticator interface {
 
 // Compile-time check that the SDK validator satisfies the authenticated seam.
 var _ GRPCValidatorAuthenticator = (*platformtoken.Validator)(nil)
+
+// GRPCVerifiedCertificateAuthorizer is the OPTIONAL certificate path of the
+// gRPC PEP seam. A caller that sends no bearer but whose TLS handshake
+// verified its client certificate chain against the configured client CA is
+// authorized by that certificate: AuthorizeVerifiedCertificate maps the leaf
+// to its principal and checks requiredPerm (the colon "resource:action"),
+// returning the same error types as Authorize so validatorGRPCStatus maps
+// them. Fail closed: an authorizer without this method refuses every
+// bearer-less caller, certificate or not, and a certificate that is present
+// but not chain-verified is never offered to it.
+type GRPCVerifiedCertificateAuthorizer interface {
+	AuthorizeVerifiedCertificate(ctx context.Context, leaf *x509.Certificate, requiredPerm string) (*platformtoken.AuthorizedContext, error)
+}
 
 // validatorGRPCStatus maps a platform-token authorization error to a gRPC status
 // error, fail-closed:
