@@ -2642,6 +2642,13 @@ func (s *Server) quicbaasServesUnixSocket() bool {
 	return s.config.Server.Unix.Socket != "" && !s.config.NetworkServing()
 }
 
+// nodeServesUnixSocket reports whether the embedded qrdb node serves
+// server.unix.socket: a socket is configured and the node's network
+// transports serve (buildQRDBConfig turns the node's Unix protocol on).
+func (s *Server) nodeServesUnixSocket() bool {
+	return s.config.Server.Unix.Socket != "" && s.config.NetworkServing()
+}
+
 // startUnixSocketListener creates and starts a Unix domain socket listener.
 func (s *Server) startUnixSocketListener(grpcServer *ggrpc.Server) error {
 	socketPath := s.config.Server.Unix.Socket

@@ -155,6 +155,23 @@ func TestServer_TT_NetworkGRPC_UnixSocketServesIAM(t *testing.T) {
 	assert.NotEqual(t, codes.Unauthenticated, status.Code(err), "GetInvite must be public on the socket: %v", err)
 }
 
+// TestServer_TT_NetworkGRPC_UnixSocketModes pins that the node's socket keeps
+// the legacy listener's modes: the socket 0660 and a directory the node has
+// to create 0750.
+func TestServer_TT_NetworkGRPC_UnixSocketModes(t *testing.T) {
+	dir := filepath.Join(filepath.Dir(shortTTUnixSocketPath(t)), "sub")
+	socket := filepath.Join(dir, "g.sock")
+	startTTNetworkNodeUnix(t, socket)
+
+	info, err := os.Stat(socket)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o660), info.Mode().Perm(), "socket mode")
+
+	info, err = os.Stat(dir)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o750), info.Mode().Perm(), "socket directory mode")
+}
+
 // TestServer_InitializeAndShutdown_TT_WithObjectStorageAndKMS brings up the
 // catalog/backend/worker stack plus KMS and backup, then exercises the
 // reverse-order teardown of every one of those managers in Shutdown.

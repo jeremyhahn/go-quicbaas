@@ -762,6 +762,17 @@ func (s *Server) unifiedModuleServerOptions(serverOpts []qrdbsdk.ServerOption, s
 		}
 	}
 
+	// The node's Unix socket keeps the legacy listener's modes: its
+	// directory is created 0750 before the node is built, and the
+	// unixSocketModeModule's Start hook sets the socket 0660 after every
+	// server start, recycles included.
+	if s.nodeServesUnixSocket() {
+		if err := prepareNodeUnixSocketDir(s.config.Server.Unix.Socket); err != nil {
+			return nil, &QRDBNodeError{Stage: "prepare unix socket directory", Cause: err}
+		}
+		serverOpts = append(serverOpts, qrdbsdk.WithModule(&unixSocketModeModule{socket: s.config.Server.Unix.Socket}))
+	}
+
 	// Unified API server TLS: qrdb's transports are TLS-only and take their
 	// material from the WithServerTLS option, not from the daemon config.
 	if s.config.NetworkServing() {
