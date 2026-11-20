@@ -18,6 +18,9 @@ package iam_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -170,6 +173,74 @@ func (c *iamCLITestContext) actAsTenantAdmin() {
 	c.certPath = certPath
 	c.keyPath = keyPath
 	c.home = home
+}
+
+// seedTenantAdminSession records a session for the tenant administrator
+// through the REST session endpoint (the session manager), as the
+// administrator itself (its certificate and bearer), and returns the
+// session's id. The PIV login that issued the bearer records no session, so
+// the CLI session verbs have nothing to list until one is seeded.
+//
+// own=true seeds the bearer's own session: its id is the bearer's sid claim
+// and its token_hash the hex SHA-256 of the bearer. own=false seeds another
+// session of the same user, with its own id and token hash. Both expire with
+// the bearer.
+func (c *iamCLITestContext) seedTenantAdminSession(own bool) string {
+	t := c.t
+	t.Helper()
+	require.NotEmpty(t, c.home, "seedTenantAdminSession needs actAsTenantAdmin first")
+
+	token, err := clitoken.LoadToken(filepath.Join(c.home, ".quicbaas", "token"))
+	require.NoError(t, err, "load the tenant admin bearer")
+	bearer := token.AccessToken
+
+	// Read the claims the way the CLI's keep-current does: the JWT payload,
+	// base64url without padding.
+	parts := strings.Split(bearer, ".")
+	require.Len(t, parts, 3, "the tenant admin bearer is a JWT")
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	require.NoError(t, err, "decode the bearer's claims")
+	var claims map[string]interface{}
+	require.NoError(t, json.Unmarshal(payload, &claims), "parse the bearer's claims")
+	userID, _ := claims["uid"].(string)
+	require.NotEmpty(t, userID, "the bearer carries the user id (uid)")
+	sid, _ := claims["sid"].(string)
+	if sid == "" {
+		sid, _ = claims["session_id"].(string)
+	}
+	require.NotEmpty(t, sid, "the bearer carries its session id (sid)")
+
+	sessionID := sid
+	tokenSum := sha256.Sum256([]byte(bearer))
+	if !own {
+		sessionID = fmt.Sprintf("cli-seed-%d", time.Now().UnixNano())
+		tokenSum = sha256.Sum256([]byte(bearer + ":" + sessionID))
+	}
+
+	body, err := json.Marshal(map[string]string{
+		"id":         sessionID,
+		"token_hash": hex.EncodeToString(tokenSum[:]),
+		"expires_at": token.ExpiresAt.UTC().Format(time.RFC3339),
+	})
+	require.NoError(t, err)
+
+	client, err := helpers.PIVMTLSClient(c.certPath, c.keyPath, "")
+	require.NoError(t, err, "tenant admin mTLS client")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	url := fmt.Sprintf("%s/api/v1/tenants/%s/users/%s/sessions", getRESTEndpointForCLI(), c.tenantID, userID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+bearer)
+
+	resp, err := client.Do(req)
+	require.NoError(t, err, "POST %s", url)
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	require.Equal(t, http.StatusCreated, resp.StatusCode, "seed tenant admin session: %s", respBody)
+	return sessionID
 }
 
 // command builds the CLI command for args, with the global flags and, when
@@ -469,18 +540,6 @@ func isExpectedNotFoundError(err error) bool {
 		strings.Contains(errStr, "does not exist")
 }
 
-// isExpectedNoSessionError checks if an error is expected when no session
-// token exists (e.g., for --keep-current flag).
-func isExpectedNoSessionError(err error) bool {
-	if err == nil {
-		return false
-	}
-	errStr := err.Error()
-	return strings.Contains(errStr, "no such file or directory") ||
-		strings.Contains(errStr, "no current session found") ||
-		strings.Contains(errStr, "failed to get current session ID")
-}
-
 // =============================================================================
 // Session CLI Tests
 // =============================================================================
@@ -501,6 +560,7 @@ func TestCLISessionList(t *testing.T) {
 	// administrator) acts in its own tenant, and lists its own sessions.
 	cli := newIAMCLITenantAdminContext(t, proto.name, proto.address)
 	tenantID := cli.tenantID
+	cli.seedTenantAdminSession(true)
 
 	t.Run("list-sessions", func(t *testing.T) {
 		output, err := cli.run("iam", "session", "list", "--tenant", tenantID)
@@ -535,6 +595,7 @@ func TestCLISessionGet(t *testing.T) {
 	// administrator) acts in its own tenant.
 	cli := newIAMCLITenantAdminContext(t, proto.name, proto.address)
 	tenantID := cli.tenantID
+	cli.seedTenantAdminSession(true)
 
 	// get-session lists the caller's own sessions, then gets the first one
 	// by its id: the get must succeed and return that session in the tenant.
@@ -606,17 +667,21 @@ func TestCLISessionRevokeAllKeepCurrent(t *testing.T) {
 	cli := newIAMCLITenantAdminContext(t, proto.name, proto.address)
 	tenantID := cli.tenantID
 
+	// The caller's own session (the bearer's sid) and one other session of
+	// the same user; keep-current must revoke only the other.
+	cli.seedTenantAdminSession(true)
+	cli.seedTenantAdminSession(false)
+
 	t.Run("revoke-all-keep-current", func(t *testing.T) {
 		output, err := cli.run("iam", "session", "revoke-all", "--tenant", tenantID, "--keep-current", "--yes")
-		// The --keep-current flag requires an existing session token to determine
-		// which session to keep. Without an authenticated session (no token file),
-		// this error is expected.
-		if isExpectedNoSessionError(err) {
-			t.Log("No current session token (expected in test environment without login)")
-			return
-		}
 		require.NoError(t, err, "session revoke-all with keep-current should succeed")
 		t.Logf("Revoke-all keep-current output: %s", output)
+
+		listOutput, listErr := cli.run("iam", "session", "list", "--tenant", tenantID)
+		require.NoError(t, listErr, "session list should succeed")
+		var sessions []cliSession
+		require.NoError(t, cli.unmarshalJSON(listOutput, &sessions), "session list prints a JSON array")
+		require.Len(t, sessions, 1, "keep-current leaves exactly the caller's own session")
 	})
 }
 
