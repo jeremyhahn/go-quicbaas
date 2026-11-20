@@ -58,10 +58,15 @@ func roundTripWorking(search *service.SearchSimilarRequest) roundTripBackends {
 			},
 		},
 		vector: &mocks.MockVectorService{
+			// The vector service returns the cosine distance as Distance and
+			// Score; ragservice reads the metric to turn it into a similarity.
+			GetNamespaceInfoFunc: func(context.Context, *service.GetNamespaceInfoRequest) (*service.GetNamespaceInfoResponse, error) {
+				return &service.GetNamespaceInfoResponse{DistanceMetric: "COSINE"}, nil
+			},
 			SearchSimilarFunc: func(_ context.Context, r *service.SearchSimilarRequest) (*service.SearchSimilarResponse, error) {
 				*search = *r
 				return &service.SearchSimilarResponse{Results: []*service.VectorSearchResult{
-					{ID: 7, Score: 0.94, Metadata: map[string]interface{}{
+					{ID: 7, Distance: 0.06, Score: 0.06, Metadata: map[string]interface{}{
 						"content": "type Pool struct{}", "file_path": "db/pool.go", "start_line": float64(23), "end_line": float64(45),
 					}},
 				}}, nil
@@ -104,11 +109,10 @@ func TestRAGHandler_RoundTrip_QueryMinScore(t *testing.T) {
 		req     rag.QueryRequest
 		wireSet bool
 		wire    float32
-		search  float32
 	}{
-		{"set", rag.QueryRequest{MinScore: 0.5}, true, 0.5, 0.5},
-		{"explicit zero", rag.QueryRequest{MinScore: 0, MinScoreSet: true}, true, 0, 0},
-		{"omitted", rag.QueryRequest{}, false, 0, ragservice.DefaultMinScore},
+		{"set", rag.QueryRequest{MinScore: 0.5}, true, 0.5},
+		{"explicit zero", rag.QueryRequest{MinScore: 0, MinScoreSet: true}, true, 0},
+		{"omitted", rag.QueryRequest{}, false, 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -127,7 +131,9 @@ func TestRAGHandler_RoundTrip_QueryMinScore(t *testing.T) {
 			} else {
 				assert.Nil(t, (*wire).MinScore, "an omitted min_score arrived set")
 			}
-			assert.Equal(t, tt.search, search.MinScore)
+			// ragservice applies the similarity threshold itself; the
+			// backend's distance filter is always off.
+			assert.Equal(t, float32(0), search.MinScore)
 			assert.Equal(t, 4, search.K)
 
 			resp := out.(*rag.QueryResponse)

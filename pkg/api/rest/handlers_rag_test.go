@@ -39,6 +39,16 @@ type mockVectorServiceForRAG struct {
 	mock.Mock
 }
 
+// newCosineVectorServiceForRAG returns the vector mock for a cosine
+// namespace: ragservice reads the namespace's metric before searching to turn
+// the distances SearchSimilar returns into similarities.
+func newCosineVectorServiceForRAG() *mockVectorServiceForRAG {
+	m := &mockVectorServiceForRAG{}
+	m.On("GetNamespaceInfo", mock.Anything, mock.Anything).
+		Return(&service.GetNamespaceInfoResponse{DistanceMetric: "COSINE"}, nil).Maybe()
+	return m
+}
+
 func (m *mockVectorServiceForRAG) CreateNamespace(ctx context.Context, req *service.CreateNamespaceRequest) (*service.CreateNamespaceResponse, error) {
 	args := m.Called(ctx, req)
 	if args.Get(0) == nil {
@@ -277,12 +287,13 @@ func TestHandleRAGQuery_Success(t *testing.T) {
 	mockDB := testutil.NewMockQuicBaaS()
 
 	// Set up vector service mock
-	vectorSvc := &mockVectorServiceForRAG{}
+	vectorSvc := newCosineVectorServiceForRAG()
 	vectorSvc.On("SearchSimilar", mock.Anything, mock.Anything).Return(&service.SearchSimilarResponse{
 		Results: []*service.VectorSearchResult{
 			{
-				ID:    1,
-				Score: 0.95,
+				ID:       1,
+				Distance: 0.05, // cosine distance: similarity 0.95
+				Score:    0.05,
 				Metadata: map[string]interface{}{
 					"content":    "func main() { fmt.Println(\"hello\") }",
 					"file_path":  "main.go",
@@ -458,7 +469,7 @@ func TestHandleRAGQuery_VectorNotConfigured(t *testing.T) {
 func TestHandleRAGQuery_EmbeddingError(t *testing.T) {
 	mockDB := testutil.NewMockQuicBaaS()
 
-	vectorSvc := &mockVectorServiceForRAG{}
+	vectorSvc := newCosineVectorServiceForRAG()
 	ollamaSvc := &mockOllamaServiceForRAG{isAvailable: true}
 	ollamaSvc.On("Embed", mock.Anything, mock.Anything).Return(nil, errors.New("embedding generation failed"))
 
@@ -487,7 +498,7 @@ func TestHandleRAGQuery_EmbeddingError(t *testing.T) {
 func TestHandleRAGQuery_SearchError(t *testing.T) {
 	mockDB := testutil.NewMockQuicBaaS()
 
-	vectorSvc := &mockVectorServiceForRAG{}
+	vectorSvc := newCosineVectorServiceForRAG()
 	vectorSvc.On("SearchSimilar", mock.Anything, mock.Anything).Return(nil, errors.New("search failed"))
 
 	ollamaSvc := &mockOllamaServiceForRAG{isAvailable: true}
@@ -523,12 +534,13 @@ func TestHandleRAGQuery_SearchError(t *testing.T) {
 func TestHandleRAGQuery_WithCitations(t *testing.T) {
 	mockDB := testutil.NewMockQuicBaaS()
 
-	vectorSvc := &mockVectorServiceForRAG{}
+	vectorSvc := newCosineVectorServiceForRAG()
 	vectorSvc.On("SearchSimilar", mock.Anything, mock.Anything).Return(&service.SearchSimilarResponse{
 		Results: []*service.VectorSearchResult{
 			{
-				ID:    1,
-				Score: 0.95,
+				ID:       1,
+				Distance: 0.05, // cosine distance: similarity 0.95
+				Score:    0.05,
 				Metadata: map[string]interface{}{
 					"content":    "func main() {}",
 					"file_path":  "main.go",
@@ -585,12 +597,13 @@ func TestHandleRAGQuery_WithCitations(t *testing.T) {
 func TestHandleRAGQuery_WithModel(t *testing.T) {
 	mockDB := testutil.NewMockQuicBaaS()
 
-	vectorSvc := &mockVectorServiceForRAG{}
+	vectorSvc := newCosineVectorServiceForRAG()
 	vectorSvc.On("SearchSimilar", mock.Anything, mock.Anything).Return(&service.SearchSimilarResponse{
 		Results: []*service.VectorSearchResult{
 			{
-				ID:    1,
-				Score: 0.95,
+				ID:       1,
+				Distance: 0.05, // cosine distance: similarity 0.95
+				Score:    0.05,
 				Metadata: map[string]interface{}{
 					"content": "func main() {}",
 				},
@@ -634,30 +647,37 @@ func TestHandleRAGQuery_WithModel(t *testing.T) {
 }
 
 // TestHandleRAGQuery_MinScoreReachesSearchSimilar decodes min_score into the
-// request's pointer and checks the threshold SearchSimilar receives: an
+// request's pointer and checks the similarity threshold the query applies: an
 // omitted min_score takes the 0.7 default, an explicit 0 disables the filter,
-// and any other value is used as sent.
+// and any other value is used as sent. SearchSimilar always gets MinScore 0.
 func TestHandleRAGQuery_MinScoreReachesSearchSimilar(t *testing.T) {
+	// Two cosine hits: distance 0.1 is similarity 0.9, distance 0.5 is 0.5.
+	// The backend's distance filter is always off (MinScore 0); ragservice
+	// drops the hits whose similarity is below min_score.
 	cases := []struct {
 		name string
 		body string
-		want float32
+		kept int
 	}{
-		{name: "omitted", body: `{"query":"q","namespace":"docs"}`, want: 0.7},
-		{name: "explicit zero", body: `{"query":"q","namespace":"docs","min_score":0}`, want: 0},
-		{name: "explicit 0.42", body: `{"query":"q","namespace":"docs","min_score":0.42}`, want: 0.42},
+		{name: "omitted", body: `{"query":"q","namespace":"docs"}`, kept: 1},
+		{name: "explicit zero", body: `{"query":"q","namespace":"docs","min_score":0}`, kept: 2},
+		{name: "explicit 0.42", body: `{"query":"q","namespace":"docs","min_score":0.42}`, kept: 2},
+		{name: "explicit 0.6", body: `{"query":"q","namespace":"docs","min_score":0.6}`, kept: 1},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			var got float32
 			calls := 0
-			vectorSvc := &mockVectorServiceForRAG{}
+			vectorSvc := newCosineVectorServiceForRAG()
 			vectorSvc.On("SearchSimilar", mock.Anything, mock.Anything).
 				Run(func(args mock.Arguments) {
 					calls++
 					got = args.Get(1).(*service.SearchSimilarRequest).MinScore
 				}).
-				Return(&service.SearchSimilarResponse{}, nil)
+				Return(&service.SearchSimilarResponse{Results: []*service.VectorSearchResult{
+					{ID: 1, Distance: 0.1, Score: 0.1, Metadata: map[string]interface{}{"content": "near"}},
+					{ID: 2, Distance: 0.5, Score: 0.5, Metadata: map[string]interface{}{"content": "far"}},
+				}}, nil)
 
 			embedResp := &service.OllamaEmbedResponse{Embedding: []float32{0.1, 0.2, 0.3}, Dimensions: 3}
 			ollamaSvc := &mockOllamaServiceForRAG{isAvailable: true}
@@ -681,8 +701,15 @@ func TestHandleRAGQuery_MinScoreReachesSearchSimilar(t *testing.T) {
 			if calls != 1 {
 				t.Fatalf("SearchSimilar called %d times, want 1", calls)
 			}
-			if got != tc.want {
-				t.Errorf("SearchSimilar MinScore = %v, want %v", got, tc.want)
+			if got != 0 {
+				t.Errorf("SearchSimilar MinScore = %v, want 0 (ragservice applies the similarity threshold)", got)
+			}
+			var resp RAGQueryResponse
+			if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("failed to decode response: %v", err)
+			}
+			if resp.ResultCount != tc.kept {
+				t.Errorf("result_count = %d, want %d", resp.ResultCount, tc.kept)
 			}
 		})
 	}
@@ -1113,7 +1140,7 @@ func TestGetIntFromInterfaceMap(t *testing.T) {
 func TestHandleRAGListDocuments(t *testing.T) {
 	t.Run("list documents successfully", func(t *testing.T) {
 		mockDB := testutil.NewMockQuicBaaS()
-		vectorSvc := &mockVectorServiceForRAG{}
+		vectorSvc := newCosineVectorServiceForRAG()
 		vectorSvc.On("ListVectors", mock.Anything, mock.Anything).Return(&service.ListVectorsResponse{
 			Vectors: []*service.VectorData{
 				{
@@ -1154,7 +1181,7 @@ func TestHandleRAGListDocuments(t *testing.T) {
 func TestHandleRAGGetDocument(t *testing.T) {
 	t.Run("get document by id successfully", func(t *testing.T) {
 		mockDB := testutil.NewMockQuicBaaS()
-		vectorSvc := &mockVectorServiceForRAG{}
+		vectorSvc := newCosineVectorServiceForRAG()
 		vectorSvc.On("GetVector", mock.Anything, mock.MatchedBy(func(req *service.GetVectorRequest) bool {
 			return req.ID == 42 && req.Namespace == "default"
 		})).Return(&service.GetVectorResponse{
@@ -1201,7 +1228,7 @@ func TestHandleRAGGetDocument(t *testing.T) {
 func TestHandleRAGDeleteDocument(t *testing.T) {
 	t.Run("delete document successfully", func(t *testing.T) {
 		mockDB := testutil.NewMockQuicBaaS()
-		vectorSvc := &mockVectorServiceForRAG{}
+		vectorSvc := newCosineVectorServiceForRAG()
 		vectorSvc.On("DeleteVector", mock.Anything, mock.MatchedBy(func(req *service.DeleteVectorRequest) bool {
 			return req.ID == 7
 		})).Return(&service.DeleteVectorResponse{Success: true}, nil)

@@ -49,13 +49,18 @@ func ragBackends(search *service.SearchSimilarRequest) *ragMock {
 			},
 		},
 		vector: &mocks.MockVectorService{
+			// The vector service returns the cosine distance as Distance and
+			// Score; ragservice reads the metric to turn it into a similarity.
+			GetNamespaceInfoFunc: func(context.Context, *service.GetNamespaceInfoRequest) (*service.GetNamespaceInfoResponse, error) {
+				return &service.GetNamespaceInfoResponse{DistanceMetric: "COSINE"}, nil
+			},
 			SearchSimilarFunc: func(_ context.Context, r *service.SearchSimilarRequest) (*service.SearchSimilarResponse, error) {
 				*search = *r
 				return &service.SearchSimilarResponse{Results: []*service.VectorSearchResult{
-					{ID: 7, Score: 0.94, Metadata: map[string]interface{}{
+					{ID: 7, Distance: 0.06, Score: 0.06, Metadata: map[string]interface{}{
 						"content": "type Pool struct{}", "file_path": "db/pool.go", "start_line": float64(23), "end_line": float64(45),
 					}},
-					{ID: 9, Score: 0.81, Metadata: map[string]interface{}{
+					{ID: 9, Distance: 0.19, Score: 0.19, Metadata: map[string]interface{}{
 						"content": "func Open() {}", "file_path": "db/open.go", "start_line": 3, "end_line": 8,
 					}},
 				}}, nil
@@ -85,7 +90,7 @@ func TestEmbeddedRAG_QueryIsTheSharedQuery(t *testing.T) {
 	got, ok := out.(*rag.QueryResponse)
 	require.True(t, ok)
 	assert.Equal(t, 4, search.K)
-	assert.Equal(t, float32(0.5), search.MinScore)
+	assert.Equal(t, float32(0), search.MinScore, "ragservice applies the similarity threshold, not the backend")
 
 	want, err := ragservice.Query(context.Background(), m, ragservice.QueryRequest{
 		Query: "connection pooling", Namespace: "code", TopK: 4, MinScore: 0.5,

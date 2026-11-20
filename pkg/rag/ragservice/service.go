@@ -27,6 +27,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/api"
 	ragctx "github.com/jeremyhahn/go-quicbaas/pkg/rag/context"
@@ -94,7 +95,9 @@ type Response struct {
 }
 
 // Query embeds the query, searches the namespace for similar vectors and
-// assembles the hits into context.
+// assembles the hits into context. MinScore is a similarity in the
+// namespace's metric (see similarityFromDistance): hits below it are dropped
+// and each kept hit is scored by its similarity.
 //
 // Errors are typed so each transport maps them the same way: a missing query
 // or namespace is invalid input, a missing Ollama or vector service is
@@ -129,11 +132,18 @@ func Query(ctx context.Context, b Backends, req QueryRequest) (*Response, error)
 	if vector == nil {
 		return nil, api.NewServiceNotConfiguredError("vector")
 	}
+	info, err := vector.GetNamespaceInfo(ctx, &service.GetNamespaceInfoRequest{Namespace: req.Namespace})
+	if err != nil {
+		return nil, api.NewOperationFailedError("vector namespace info", err)
+	}
+	// The vector service filters and scores by distance, so its MinScore is
+	// a maximum distance. The threshold here is a similarity: search with the
+	// backend's filter off and apply it to the similarity below.
 	found, err := vector.SearchSimilar(ctx, &service.SearchSimilarRequest{
 		Namespace:       req.Namespace,
 		QueryVector:     embedding,
 		K:               topK,
-		MinScore:        minScore,
+		MinScore:        0,
 		IncludeMetadata: true,
 		IncludeVectors:  false,
 	})
@@ -141,13 +151,19 @@ func Query(ctx context.Context, b Backends, req QueryRequest) (*Response, error)
 		return nil, api.NewOperationFailedError("vector search", err)
 	}
 
-	results := make([]ragctx.Result, len(found.Results))
-	for i, hit := range found.Results {
-		results[i] = ragctx.Result{
+	// Hits come in ascending distance, which is descending similarity for
+	// every metric similarityFromDistance maps; the order is kept.
+	results := make([]ragctx.Result, 0, len(found.Results))
+	for _, hit := range found.Results {
+		sim := similarityFromDistance(info.DistanceMetric, hit.Distance)
+		if minScore > 0 && sim < minScore {
+			continue
+		}
+		results = append(results, ragctx.Result{
 			ID:          fmt.Sprintf("%d", hit.ID),
 			Content:     anyString(hit.Metadata, "content"),
-			VectorScore: hit.Score,
-			FusionScore: hit.Score,
+			VectorScore: sim,
+			FusionScore: sim,
 			Metadata: ragctx.Metadata{
 				FilePath:  anyString(hit.Metadata, "file_path"),
 				FileName:  anyString(hit.Metadata, "file_name"),
@@ -155,9 +171,26 @@ func Query(ctx context.Context, b Backends, req QueryRequest) (*Response, error)
 				StartLine: anyInt(hit.Metadata, "start_line"),
 				EndLine:   anyInt(hit.Metadata, "end_line"),
 			},
-		}
+		})
 	}
 	return assemble(results, req.MaxTokens, req.Template, req.IncludeCitations, ragctx.TruncationSmart)
+}
+
+// similarityFromDistance turns a vector-service distance into a similarity
+// (higher is better) for the namespace's metric, compared case-insensitively:
+// cosine distance is 1 - cos, so the similarity is 1 - d; dot_product
+// distance is -dot, so the similarity is -d; anything else is L2 (Euclidean),
+// mapped to 1 / (1 + d). It mirrors the metric switch in
+// vectorService.ensureIndex, which builds the index those distances come from.
+func similarityFromDistance(metric string, d float32) float32 {
+	switch strings.ToLower(metric) {
+	case "cosine":
+		return 1 - d
+	case "dot_product":
+		return -d
+	default:
+		return 1 / (1 + d)
+	}
 }
 
 // BuildContext assembles context from caller-supplied results. An empty
