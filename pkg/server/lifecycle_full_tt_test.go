@@ -112,13 +112,16 @@ func TestServer_InitializeAndShutdown_TT_NetworkGRPC(t *testing.T) {
 // startTTNetworkNodeUnix initialises a network-serving server whose embedded
 // node serves socket over the CA-backed TLS, and shuts it down when the test
 // ends.
-func startTTNetworkNodeUnix(t *testing.T, socket string) *Server {
+func startTTNetworkNodeUnix(t *testing.T, socket string, opts ...func(*Server)) *Server {
 	t.Helper()
 	saveAndRestoreSeams(t)
 	srv := withTempServer(t)
 	srv.config.Server.Embedded = false
 	srv.config.Security.TLSEnabled = true
 	srv.config.Server.Unix.Socket = socket
+	for _, opt := range opts {
+		opt(srv)
+	}
 	require.NoError(t, srv.initialize(), "network initialize must succeed")
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -129,15 +132,21 @@ func startTTNetworkNodeUnix(t *testing.T, socket string) *Server {
 	return srv
 }
 
-// TestServer_TT_NetworkGRPC_UnixSocketServesIAM pins that IAMService, which
-// the legacy Unix listener served, stays on the socket when the node serves
-// it: an authenticated RPC is refused by the node's authentication, not
-// answered Unimplemented, and the public GetInvite reaches the handler.
-func TestServer_TT_NetworkGRPC_UnixSocketServesIAM(t *testing.T) {
-	socket := shortTTUnixSocketPath(t)
-	srv := startTTNetworkNodeUnix(t, socket)
+// withRequireAuthz turns on Security.RequireAuthz before initialize, so the
+// node's interceptor chain enforces authentication and authorization.
+func withRequireAuthz(srv *Server) { srv.config.Security.RequireAuthz = true }
 
-	// The node's Unix server speaks verified TLS 1.3 with srv's certificate.
+// startTTNetworkNodeUnixAuthz is startTTNetworkNodeUnix with
+// Security.RequireAuthz on.
+func startTTNetworkNodeUnixAuthz(t *testing.T, socket string) *Server {
+	t.Helper()
+	return startTTNetworkNodeUnix(t, socket, withRequireAuthz)
+}
+
+// dialTTNodeUnix dials the node's Unix socket over verified TLS 1.3 with
+// srv's CA bundle, without credentials.
+func dialTTNodeUnix(t *testing.T, srv *Server, socket string) *ggrpc.ClientConn {
+	t.Helper()
 	bundle, err := srv.xkmsCA.CABundle()
 	require.NoError(t, err)
 	roots := x509.NewCertPool()
@@ -146,17 +155,31 @@ func TestServer_TT_NetworkGRPC_UnixSocketServesIAM(t *testing.T) {
 	conn, err := ggrpc.NewClient("unix://"+socket, ggrpc.WithTransportCredentials(credentials.NewTLS(clientTLS)))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = conn.Close() })
-	client := iampb.NewIAMServiceClient(conn)
+	return conn
+}
+
+// TestServer_TT_NetworkGRPC_UnixSocketServesIAM pins that IAMService, which
+// the legacy Unix listener served, stays on the socket when the node serves
+// it: an authenticated RPC is refused by the node's authentication, not
+// answered Unimplemented, and the public GetInvite reaches the handler.
+func TestServer_TT_NetworkGRPC_UnixSocketServesIAM(t *testing.T) {
+	socket := shortTTUnixSocketPath(t)
+	srv := startTTNetworkNodeUnixAuthz(t, socket)
+
+	// The node's Unix server speaks verified TLS 1.3 with srv's certificate.
+	client := iampb.NewIAMServiceClient(dialTTNodeUnix(t, srv, socket))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	_, err = client.ListWebAuthnCredentials(ctx, &iampb.ListWebAuthnCredentialsRequest{})
-	require.Error(t, err, "an unauthenticated ListWebAuthnCredentials must be refused")
-	assert.NotEqual(t, codes.Unimplemented, status.Code(err), "IAMService must be served on the socket: %v", err)
+	_, err := client.ListWebAuthnCredentials(ctx, &iampb.ListWebAuthnCredentialsRequest{})
+	assert.Equal(t, codes.Unauthenticated, status.Code(err),
+		"an unauthenticated ListWebAuthnCredentials must be refused Unauthenticated: %v", err)
 
+	// GetInvite is public: with no TenantId it reaches the handler, whose
+	// tenant check answers InvalidArgument.
 	_, err = client.GetInvite(ctx, &iampb.GetInviteRequest{Token: "bogus-invite-token"})
-	assert.NotEqual(t, codes.Unimplemented, status.Code(err), "GetInvite must be served on the socket: %v", err)
-	assert.NotEqual(t, codes.Unauthenticated, status.Code(err), "GetInvite must be public on the socket: %v", err)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err),
+		"GetInvite must reach the handler on the socket: %v", err)
 }
 
 // TestServer_TT_NetworkGRPC_UnixSocketModes pins that the node's socket keeps
