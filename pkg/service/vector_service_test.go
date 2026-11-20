@@ -2541,3 +2541,47 @@ func TestGetCompactionProgress_TenantNamespace(t *testing.T) {
 	_, err = svc.GetCompactionProgress(other, &GetCompactionProgressRequest{OperationID: "op1"})
 	require.Error(t, err)
 }
+
+func TestGetRebuildProgress_JobOfAnotherNamespaceIsNotFound(t *testing.T) {
+	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
+	job := &RebuildJobState{JobID: "jn", Namespace: vectorTenantScopedNamespace("acme-corp", "test-ns"), InProgress: true, StartedAt: time.Now()}
+	svc.jobMu.Lock()
+	svc.rebuildJobs["jn"] = job
+	svc.jobMu.Unlock()
+
+	acme := tenantctx.WithTenant(context.Background(), "acme-corp")
+	_, err := svc.GetRebuildProgress(acme, &GetRebuildProgressRequest{JobID: "jn", Namespace: "other-ns"})
+	require.Error(t, err, "a job of another namespace was returned")
+
+	resp, err := svc.GetRebuildProgress(acme, &GetRebuildProgressRequest{JobID: "jn", Namespace: "test-ns"})
+	require.NoError(t, err)
+	assert.Equal(t, "jn", resp.JobID)
+	assert.Equal(t, "test-ns", resp.Namespace)
+
+	resp, err = svc.GetRebuildProgress(acme, &GetRebuildProgressRequest{JobID: "jn"})
+	require.NoError(t, err)
+	assert.Equal(t, "jn", resp.JobID)
+	assert.Equal(t, "test-ns", resp.Namespace)
+}
+
+func TestGetCompactionProgress_OperationOfAnotherNamespaceIsNotFound(t *testing.T) {
+	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
+	job := &CompactionJobState{OperationID: "on", Namespace: vectorTenantScopedNamespace("acme-corp", "test-ns"), InProgress: true, StartedAt: time.Now()}
+	svc.jobMu.Lock()
+	svc.compactionJobs["on"] = job
+	svc.jobMu.Unlock()
+
+	acme := tenantctx.WithTenant(context.Background(), "acme-corp")
+	_, err := svc.GetCompactionProgress(acme, &GetCompactionProgressRequest{OperationID: "on", Namespace: "other-ns"})
+	require.Error(t, err, "an operation of another namespace was returned")
+
+	resp, err := svc.GetCompactionProgress(acme, &GetCompactionProgressRequest{OperationID: "on", Namespace: "test-ns"})
+	require.NoError(t, err)
+	assert.Equal(t, "on", resp.OperationID)
+	assert.Equal(t, "test-ns", resp.Namespace)
+
+	resp, err = svc.GetCompactionProgress(acme, &GetCompactionProgressRequest{OperationID: "on"})
+	require.NoError(t, err)
+	assert.Equal(t, "on", resp.OperationID)
+	assert.Equal(t, "test-ns", resp.Namespace)
+}

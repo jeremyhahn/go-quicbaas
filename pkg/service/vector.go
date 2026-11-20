@@ -1565,11 +1565,15 @@ func (v *vectorService) GetRebuildProgress(ctx context.Context, req *GetRebuildP
 
 	v.jobMu.RLock()
 	if req.JobID != "" {
-		// Find by job ID; a job of another tenant is reported as not found
+		// Find by job ID; a job of another tenant, or of another namespace
+		// when one is requested, is reported as not found
 		job, found = v.rebuildJobs[req.JobID]
 		if found {
 			job.mu.RLock()
 			if !strings.HasPrefix(job.Namespace, vectorTenantScopedNamespace(tenantID, "")) {
+				found = false
+			}
+			if req.Namespace != "" && job.Namespace != scoped {
 				found = false
 			}
 			job.mu.RUnlock()
@@ -2474,12 +2478,16 @@ func (v *vectorService) GetCompactionProgress(ctx context.Context, req *GetCompa
 	defer v.jobMu.RUnlock()
 
 	// If operation ID provided, look for specific job; a job of another
-	// tenant is reported as not found.
+	// tenant, or of another namespace when one is requested, is reported
+	// as not found.
 	if req.OperationID != "" {
 		job, exists := v.compactionJobs[req.OperationID]
 		if exists {
 			job.mu.RLock()
 			exists = strings.HasPrefix(job.Namespace, tenantPrefix)
+			if req.Namespace != "" && job.Namespace != scoped {
+				exists = false
+			}
 			job.mu.RUnlock()
 		}
 		if !exists {
