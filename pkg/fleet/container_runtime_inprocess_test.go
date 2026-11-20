@@ -45,10 +45,10 @@ func registerInProcess(t *testing.T, buildErr error) *[]string {
 	return &roots
 }
 
-func TestResolveContainerRuntimeIn_LibcontainerWithoutTheRuntimeIsRefused(t *testing.T) {
+func TestResolveContainerRuntime_InProcessWithoutTheRuntimeIsRefused(t *testing.T) {
 	SetInProcessContainerRuntime(nil)
 
-	rt, err := ResolveContainerRuntimeIn(containerRuntimeInProcess, t.TempDir(), newSignalLogger(t, ""))
+	rt, err := resolveContainerRuntime(containerRuntimeInProcess, newSignalLogger(t, ""), execContainerRuntimeFactory.withInProcess(t.TempDir()))
 	if !errors.Is(err, ErrInProcessRuntimeUnavailable) {
 		t.Fatalf("expected ErrInProcessRuntimeUnavailable, got %v", err)
 	}
@@ -57,13 +57,13 @@ func TestResolveContainerRuntimeIn_LibcontainerWithoutTheRuntimeIsRefused(t *tes
 	}
 }
 
-func TestResolveContainerRuntimeIn_LibcontainerBuildsUnderTheAgentsRoot(t *testing.T) {
+func TestResolveContainerRuntime_InProcessBuildsUnderTheAgentsRoot(t *testing.T) {
 	roots := registerInProcess(t, nil)
 	root := t.TempDir()
 
-	rt, err := ResolveContainerRuntimeIn(containerRuntimeInProcess, root, newSignalLogger(t, ""))
+	rt, err := resolveContainerRuntime(containerRuntimeInProcess, newSignalLogger(t, ""), execContainerRuntimeFactory.withInProcess(root))
 	if err != nil {
-		t.Fatalf("ResolveContainerRuntimeIn(libcontainer): %v", err)
+		t.Fatalf("resolveContainerRuntime(libcontainer): %v", err)
 	}
 	got, ok := rt.(*inProcessRuntime)
 	if !ok {
@@ -74,19 +74,19 @@ func TestResolveContainerRuntimeIn_LibcontainerBuildsUnderTheAgentsRoot(t *testi
 	}
 }
 
-func TestResolveContainerRuntimeIn_LibcontainerThatCannotStartIsAnError(t *testing.T) {
+func TestResolveContainerRuntime_InProcessThatCannotStartIsAnError(t *testing.T) {
 	errNoStart := errors.New("cannot start here")
 	registerInProcess(t, errNoStart)
 
-	if _, err := ResolveContainerRuntimeIn(containerRuntimeInProcess, t.TempDir(), newSignalLogger(t, "")); !errors.Is(err, errNoStart) {
+	if _, err := resolveContainerRuntime(containerRuntimeInProcess, newSignalLogger(t, ""), execContainerRuntimeFactory.withInProcess(t.TempDir())); !errors.Is(err, errNoStart) {
 		t.Fatalf("expected the start failure, got %v", err)
 	}
 }
 
-func TestResolveContainerRuntimeIn_LibcontainerNeedsARoot(t *testing.T) {
+func TestResolveContainerRuntime_InProcessNeedsARoot(t *testing.T) {
 	roots := registerInProcess(t, nil)
 
-	if _, err := ResolveContainerRuntimeIn(containerRuntimeInProcess, "", newSignalLogger(t, "")); !errors.Is(err, ErrInProcessRuntimeNoRoot) {
+	if _, err := resolveContainerRuntime(containerRuntimeInProcess, newSignalLogger(t, ""), execContainerRuntimeFactory.withInProcess("")); !errors.Is(err, ErrInProcessRuntimeNoRoot) {
 		t.Fatalf("expected ErrInProcessRuntimeNoRoot, got %v", err)
 	}
 	if len(*roots) != 0 {
@@ -94,14 +94,25 @@ func TestResolveContainerRuntimeIn_LibcontainerNeedsARoot(t *testing.T) {
 	}
 }
 
-// ResolveContainerRuntime has no state directory to give the in-process
-// runtime, so even with one registered it never builds one.
-func TestResolveContainerRuntime_NeverBuildsTheInProcessRuntime(t *testing.T) {
+// No exported resolver takes the in-process runtime's key, even with the
+// runtime registered: they refuse it as Config.Validate does.
+func TestResolveContainerRuntime_ExportedCallsRefuseTheLibcontainerSelector(t *testing.T) {
 	roots := registerInProcess(t, nil)
-
-	if _, err := ResolveContainerRuntime(containerRuntimeInProcess, newSignalLogger(t, "")); !errors.Is(err, ErrInProcessRuntimeUnavailable) {
-		t.Fatalf("expected ErrInProcessRuntimeUnavailable, got %v", err)
+	assertRefused := func(name string, rt orchestration.ContainerRuntime, err error) {
+		t.Helper()
+		if rt != nil {
+			t.Fatalf("%s: expected no runtime, got %T", name, rt)
+		}
+		var detail *SentinelDetailError
+		if !errors.Is(err, ErrConfigUnknownRuntime) || !errors.As(err, &detail) || detail.Detail != `"libcontainer"` {
+			t.Fatalf("%s: expected ErrConfigUnknownRuntime for \"libcontainer\", got %v", name, err)
+		}
 	}
+
+	rt, err := ResolveContainerRuntimeIn(containerRuntimeInProcess, t.TempDir(), newSignalLogger(t, ""))
+	assertRefused("ResolveContainerRuntimeIn", rt, err)
+	rt, err = ResolveContainerRuntime(containerRuntimeInProcess, newSignalLogger(t, ""))
+	assertRefused("ResolveContainerRuntime", rt, err)
 	if len(*roots) != 0 {
 		t.Fatalf("built an in-process runtime under %v", *roots)
 	}

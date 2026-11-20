@@ -83,18 +83,64 @@ func TestRefresh_PromotesAStaleImageInLocalMode(t *testing.T) {
 
 func TestRefresh_SmokesEveryAgentThePromotionWouldRunPlusTheDefaultModel(t *testing.T) {
 	h := newHarness(t, testConfig())
-	h.r.Refresh(t.Context(), TriggerManual)
+	report := h.r.Refresh(t.Context(), TriggerManual)
+	if report.ImageID == "" {
+		t.Fatalf("report = %+v, want the built image ID", report)
+	}
 
 	var got []string
 	for _, req := range h.smoker.requests {
 		got = append(got, req.Backend+"/"+req.Model)
-		if req.Image != candidateTag || req.Host != "agent-04" || req.TenantID != "acme" || req.ProjectID != "p1" {
+		if req.Image != report.ImageID || req.Host != "agent-04" || req.TenantID != "acme" || req.ProjectID != "p1" {
 			t.Fatalf("smoke request = %+v", req)
 		}
 	}
 	want := []string{"claude/claude-opus-5-5", "codex/gpt-5.5"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("smokes = %v, want %v (the default model is not repeated)", got, want)
+	}
+}
+
+// smokerFunc adapts a function to Smoker.
+type smokerFunc func(ctx context.Context, req SmokeRequest) (string, error)
+
+func (f smokerFunc) Smoke(ctx context.Context, req SmokeRequest) (string, error) { return f(ctx, req) }
+
+// The smoke session runs on the agent's engine, which may hold a different
+// image under the candidate's tag (or pull one); only the built ID names
+// exactly the build the probes passed.
+func TestRefresh_SmokesTheBuiltImageIDNotTheTag(t *testing.T) {
+	h := newHarness(t, testConfig())
+	smoking := false
+	h.engine.inspectFn = func(ref string) (*orchestration.ImageInfo, error) {
+		info, ok := h.engine.images[ref]
+		if !ok {
+			return nil, &orchestration.ImageNotFoundError{Image: ref}
+		}
+		if ref == candidateTag && smoking {
+			return &orchestration.ImageInfo{ID: "sha256:someone-else", Labels: info.Labels}, nil
+		}
+		return info, nil
+	}
+	h.r.deps.Smoker = smokerFunc(func(ctx context.Context, req SmokeRequest) (string, error) {
+		smoking = true
+		defer func() { smoking = false }()
+		return h.smoker.Smoke(ctx, req)
+	})
+
+	report := h.r.Refresh(t.Context(), TriggerManual)
+
+	builtID := "sha256:built-" + candidateTag
+	if len(h.smoker.requests) == 0 {
+		t.Fatalf("no smokes ran: %+v", report)
+	}
+	for _, req := range h.smoker.requests {
+		if req.Image != builtID {
+			t.Fatalf("smoke image = %q, want the built ID %q (never the tag %q or sha256:someone-else)", req.Image, builtID, candidateTag)
+		}
+	}
+	if report.Outcome != OutcomePromoted {
+		t.Fatalf("outcome = %q (%s), want promoted", report.Outcome, report.Error)
 	}
 }
 

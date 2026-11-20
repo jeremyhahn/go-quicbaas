@@ -15,7 +15,6 @@ package main
 
 import (
 	"errors"
-	"strings"
 	"testing"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/fleet"
@@ -46,41 +45,20 @@ func registerNoneOnlyRuntime(t *testing.T) {
 	t.Cleanup(func() { fleet.SetInProcessContainerRuntime(nil) })
 }
 
-func TestBuildFleetRuntime_InProcessRuntimeOnBridgeNetworkIsRefused(t *testing.T) {
+// The agent resolves its runtime without validating its configuration first,
+// so the resolver itself must refuse the in-process runtime's key, even with
+// that runtime registered.
+func TestBuildFleetRuntime_LibcontainerSelectorIsRefused(t *testing.T) {
 	registerNoneOnlyRuntime(t)
 	backends := map[string]orchestration.AgentBackend{"stub": &serveStubBackend{}}
-
-	for _, network := range []string{"", "bridge"} {
-		t.Run("network "+network, func(t *testing.T) {
-			cfg := serveRuntimeConfig(fleet.ContainerRuntimeSelector("libcontainer"), orchestration.SandboxPolicyOptIn, t.TempDir())
-			cfg.SandboxNetwork = network
-
-			rt, err := buildFleetRuntime(cfg, backends, newCaptureLogger())
-			if rt != nil {
-				t.Fatal("an agent whose runtime cannot give the sandbox network must not start")
-			}
-			if !errors.Is(err, fleet.ErrContainerRuntimeNetworkUnsupported) {
-				t.Fatalf("want ErrContainerRuntimeNetworkUnsupported, got %v", err)
-			}
-			if !strings.Contains(err.Error(), "bridge") {
-				t.Fatalf("the error must name the network, got %v", err)
-			}
-		})
-	}
-}
-
-func TestBuildFleetRuntime_InProcessRuntimeOnNetworkNoneStarts(t *testing.T) {
-	registerNoneOnlyRuntime(t)
-	backends := map[string]orchestration.AgentBackend{"stub": &serveStubBackend{}}
-
 	cfg := serveRuntimeConfig(fleet.ContainerRuntimeSelector("libcontainer"), orchestration.SandboxPolicyOptIn, t.TempDir())
 	cfg.SandboxNetwork = "none"
 
 	rt, err := buildFleetRuntime(cfg, backends, newCaptureLogger())
-	if err != nil {
-		t.Fatalf("buildFleetRuntime: %v", err)
+	if rt != nil {
+		t.Fatal("no --container-runtime value may select the in-process runtime")
 	}
-	if !rt.SandboxResolver().HasContainerRuntime() {
-		t.Fatal("the in-process runtime must reach the agent")
+	if !errors.Is(err, fleet.ErrConfigUnknownRuntime) {
+		t.Fatalf("want ErrConfigUnknownRuntime, got %v", err)
 	}
 }

@@ -44,7 +44,9 @@ import (
 //     at its own start).
 //   - The gate's smoke is an orchestrator session on a tenant's pooled
 //     credential, which only the control plane can spawn; building elsewhere
-//     would split one pass across two hosts with no shared engine.
+//     would split one pass across two hosts with no shared engine. The smoke
+//     names the candidate by its image ID, so only an agent whose engine
+//     holds the build can pass it.
 //   - Distribution to the rest of the fleet is the REGISTRY's job, not a
 //     build's: with sdlc.worker_image.registry set, the promoted image is
 //     pushed and bound by digest, and every agent running with --auto-pull

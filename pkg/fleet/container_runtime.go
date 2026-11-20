@@ -50,12 +50,15 @@ var inProcessContainerRuntime atomic.Pointer[InProcessContainerRuntime]
 
 // containerRuntimeInProcess keys the in-process runtime (pkg/containerruntime:
 // runc libcontainer in this process, with no runtime binary and no daemon
-// socket) in the resolver table. It is not a --container-runtime value:
-// Config.Validate rejects it, and "auto" never takes the in-process runtime.
+// socket) in the resolver table. It is not a --container-runtime value and no
+// exported call takes it: Config.Validate, ResolveContainerRuntime and
+// ResolveContainerRuntimeIn refuse it, and "auto" never takes the in-process
+// runtime.
 const containerRuntimeInProcess ContainerRuntimeSelector = "libcontainer"
 
 // SetInProcessContainerRuntime registers the agent's in-process runtime. No
-// --container-runtime value selects it yet, and "auto" never takes it. Only
+// --container-runtime value selects it yet, no exported resolver takes its
+// key, and "auto" never takes it. Only
 // the fleet node agent, built for linux with cgo, registers one; nil
 // unregisters it.
 func SetInProcessContainerRuntime(build InProcessContainerRuntime) {
@@ -158,15 +161,35 @@ var execContainerRuntimeFactory = containerRuntimeFactory{
 //
 // An unknown selector is a typed error: it is a misconfiguration, and guessing
 // on the operator's behalf is how a daemon ends up sandboxing nothing.
+//
+// It refuses the in-process runtime's key as Config.Validate does: no
+// exported call takes it.
 func ResolveContainerRuntime(selector ContainerRuntimeSelector, logger interfaces.Logger) (orchestration.ContainerRuntime, error) {
+	if err := refuseInProcessSelector(selector); err != nil {
+		return nil, err
+	}
 	return resolveContainerRuntime(selector, logger, execContainerRuntimeFactory)
 }
 
 // ResolveContainerRuntimeIn is ResolveContainerRuntime with root as the
 // in-process runtime's state directory. root must belong to this agent alone:
-// two runtimes never share one.
+// two runtimes never share one. Like ResolveContainerRuntime, it refuses the
+// in-process runtime's key: no exported call takes it.
 func ResolveContainerRuntimeIn(selector ContainerRuntimeSelector, root string, logger interfaces.Logger) (orchestration.ContainerRuntime, error) {
+	if err := refuseInProcessSelector(selector); err != nil {
+		return nil, err
+	}
 	return resolveContainerRuntime(selector, logger, execContainerRuntimeFactory.withInProcess(root))
+}
+
+// refuseInProcessSelector gives the error Config.Validate gives for the
+// in-process runtime's key, so a caller that resolves without validating
+// cannot select that runtime either.
+func refuseInProcessSelector(selector ContainerRuntimeSelector) error {
+	if selector == containerRuntimeInProcess {
+		return &SentinelDetailError{Sentinel: ErrConfigUnknownRuntime, Detail: fmt.Sprintf("%q", selector)}
+	}
+	return nil
 }
 
 // containerRuntimeResolver builds the runtime for one selector value.

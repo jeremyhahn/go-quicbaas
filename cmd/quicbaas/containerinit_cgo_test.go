@@ -16,7 +16,6 @@
 package main
 
 import (
-	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -29,16 +28,16 @@ import (
 // The agent's main registers the in-process runtime, and the "libcontainer"
 // selector then resolves to it under the agent's own root: a JobRuntime when
 // this host lets it start, never "not built into this binary".
-func TestRegisterInProcessContainerRuntime_LibcontainerResolvesToTheJobRuntime(t *testing.T) {
-	_, err := fleet.ResolveContainerRuntimeIn(fleet.ContainerRuntimeSelector("libcontainer"), t.TempDir(), newFleetServeLogger())
-	require.ErrorIs(t, err, fleet.ErrInProcessRuntimeUnavailable, "nothing is registered before main registers it")
-
+func TestRegisterInProcessContainerRuntime_BuildsTheJobRuntimeButNoSelectorTakesIt(t *testing.T) {
 	registerInProcessContainerRuntime()
 	t.Cleanup(func() { fleet.SetInProcessContainerRuntime(nil) })
 
 	rt, err := fleet.ResolveContainerRuntimeIn(fleet.ContainerRuntimeSelector("libcontainer"), t.TempDir(), newFleetServeLogger())
+	require.ErrorIs(t, err, fleet.ErrConfigUnknownRuntime, "no exported resolver takes the in-process runtime's key")
+	assert.Nil(t, rt)
+
+	rt, err = newInProcessContainerRuntime(t.TempDir(), newFleetServeLogger())
 	if err != nil {
-		assert.False(t, errors.Is(err, fleet.ErrInProcessRuntimeUnavailable), "registered, yet: %v", err)
 		t.Skipf("the in-process runtime cannot start on this host: %v", err)
 	}
 	assert.IsType(t, &containerruntime.JobRuntime{}, rt)

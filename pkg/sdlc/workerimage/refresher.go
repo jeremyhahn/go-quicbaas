@@ -778,8 +778,9 @@ func (r *Refresher) smokePlan(staleUses []imageUse) []smokeTarget {
 	return plan
 }
 
-// gate runs the probes against exactly imageID and the smokes against its tag,
-// then proves the tag still names the gated build.
+// gate runs the probes and the smokes against exactly imageID, then proves the
+// tag still names the gated build, because local mode repoints Agents to the
+// tag.
 func (r *Refresher) gate(ctx context.Context, report *Report, build softwarefactoryworker.Build,
 	imageID, localRef string, staleUses []imageUse) error {
 	probes, err := RunProbes(ctx, r.deps.Engine, imageID, build)
@@ -794,7 +795,7 @@ func (r *Refresher) gate(ctx context.Context, report *Report, build softwarefact
 	var failed []string
 	for _, target := range r.smokePlan(staleUses) {
 		name := target.use.Backend + "/" + cmp.Or(target.model, "(backend default)")
-		reply, err := r.smoke(ctx, target, localRef)
+		reply, err := r.smoke(ctx, target, imageID)
 		result := CheckResult{Name: name, Passed: err == nil, Detail: tail(reply)}
 		if err != nil {
 			result.Detail = tail(err.Error())
@@ -806,8 +807,10 @@ func (r *Refresher) gate(ctx context.Context, report *Report, build softwarefact
 		return &GateError{Image: localRef, Failed: failed}
 	}
 
-	// The smokes spawned by TAG; the probes ran by ID. They are the same build
-	// only if nothing retagged the candidate while the gate ran.
+	// The probes and the smokes ran by ID: the smoke session runs on the
+	// agent's engine, which could pull a substitute for a tag it does not
+	// hold, but cannot pull an image ID. Local mode repoints the Agents to the
+	// tag, so the tag must still name the gated build at promotion.
 	after, err := r.deps.Engine.InspectImage(ctx, localRef)
 	if err != nil {
 		return err
@@ -818,7 +821,8 @@ func (r *Refresher) gate(ctx context.Context, report *Report, build softwarefact
 	return nil
 }
 
-// smoke runs one smoke on the agent that holds the candidate.
+// smoke runs one smoke of the candidate image ID on the agent's host. Only an
+// agent whose engine holds the build can spawn it.
 func (r *Refresher) smoke(ctx context.Context, target smokeTarget, image string) (string, error) {
 	host := r.cfg.SmokeHost
 	if host == "" {
