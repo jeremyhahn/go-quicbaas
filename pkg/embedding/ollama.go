@@ -46,7 +46,6 @@ func DefaultOllamaConfig() OllamaConfig {
 //
 // Compile-time assertion that OllamaProvider satisfies Provider.
 var _ Provider = (*OllamaProvider)(nil)
-var _ ModelEmbedder = (*OllamaProvider)(nil)
 
 // OllamaProvider is a thin wrapper around qrdbsdk.OllamaEmbeddingProvider that
 // exposes the single-text Embed API used in go-quicbaas.
@@ -84,17 +83,6 @@ func (p *OllamaProvider) EmbedBatch(ctx context.Context, texts []string) ([][]fl
 	return result.Embeddings, nil
 }
 
-// EmbedBatchWithModel generates embeddings for multiple texts with the named
-// model, or the configured model when model is empty, and returns the model
-// that produced them.
-func (p *OllamaProvider) EmbedBatchWithModel(ctx context.Context, texts []string, model string) ([][]float32, string, error) {
-	result, err := p.inner.Embed(ctx, texts, model)
-	if err != nil {
-		return nil, "", err
-	}
-	return result.Embeddings, result.Model, nil
-}
-
 // Dimensions returns the embedding vector dimensionality.
 func (p *OllamaProvider) Dimensions() int { return p.inner.Dimensions() }
 
@@ -106,6 +94,3 @@ func (p *OllamaProvider) Name() string { return "ollama" }
 
 // Close releases resources held by the underlying HTTP client.
 func (p *OllamaProvider) Close() error { return p.inner.Close() }
-
-// QRDBProvider returns the wrapped go-qrdb provider.
-func (p *OllamaProvider) QRDBProvider() qrdbsdk.EmbeddingProvider { return p.inner }

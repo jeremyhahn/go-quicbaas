@@ -26,7 +26,6 @@ import (
 //
 // Compile-time assertion that VoyageProvider satisfies Provider.
 var _ Provider = (*VoyageProvider)(nil)
-var _ ModelEmbedder = (*VoyageProvider)(nil)
 
 // VoyageProvider wraps qrdbsdk.VoyageEmbeddingProvider with the single-text Embed API.
 type VoyageProvider struct {
@@ -63,17 +62,6 @@ func (p *VoyageProvider) EmbedBatch(ctx context.Context, texts []string) ([][]fl
 	return result.Embeddings, nil
 }
 
-// EmbedBatchWithModel generates embeddings for multiple texts with the named
-// model, or the configured model when model is empty, and returns the model
-// that produced them.
-func (p *VoyageProvider) EmbedBatchWithModel(ctx context.Context, texts []string, model string) ([][]float32, string, error) {
-	result, err := p.inner.Embed(ctx, texts, model)
-	if err != nil {
-		return nil, "", err
-	}
-	return result.Embeddings, result.Model, nil
-}
-
 // Dimensions returns the embedding vector dimensionality.
 func (p *VoyageProvider) Dimensions() int { return p.inner.Dimensions() }
 
@@ -85,6 +73,3 @@ func (p *VoyageProvider) Name() string { return "voyage" }
 
 // Close releases resources held by the underlying HTTP client.
 func (p *VoyageProvider) Close() error { return p.inner.Close() }
-
-// QRDBProvider returns the wrapped go-qrdb provider.
-func (p *VoyageProvider) QRDBProvider() qrdbsdk.EmbeddingProvider { return p.inner }

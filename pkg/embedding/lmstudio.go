@@ -44,7 +44,6 @@ func DefaultLMStudioConfig() LMStudioConfig {
 //
 // Compile-time assertion that LMStudioProvider satisfies Provider.
 var _ Provider = (*LMStudioProvider)(nil)
-var _ ModelEmbedder = (*LMStudioProvider)(nil)
 
 // LMStudioProvider wraps qrdbsdk.LMStudioEmbeddingProvider with the single-text Embed API.
 type LMStudioProvider struct {
@@ -81,17 +80,6 @@ func (p *LMStudioProvider) EmbedBatch(ctx context.Context, texts []string) ([][]
 	return result.Embeddings, nil
 }
 
-// EmbedBatchWithModel generates embeddings for multiple texts with the named
-// model, or the configured model when model is empty, and returns the model
-// that produced them.
-func (p *LMStudioProvider) EmbedBatchWithModel(ctx context.Context, texts []string, model string) ([][]float32, string, error) {
-	result, err := p.inner.Embed(ctx, texts, model)
-	if err != nil {
-		return nil, "", err
-	}
-	return result.Embeddings, result.Model, nil
-}
-
 // Dimensions returns the embedding vector dimensionality.
 func (p *LMStudioProvider) Dimensions() int { return p.inner.Dimensions() }
 
@@ -103,6 +91,3 @@ func (p *LMStudioProvider) Name() string { return "lmstudio" }
 
 // Close releases resources held by the underlying HTTP client.
 func (p *LMStudioProvider) Close() error { return p.inner.Close() }
-
-// QRDBProvider returns the wrapped go-qrdb provider.
-func (p *LMStudioProvider) QRDBProvider() qrdbsdk.EmbeddingProvider { return p.inner }

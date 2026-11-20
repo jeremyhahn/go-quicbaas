@@ -67,7 +67,7 @@ resp, err := ec.Embed(ctx, &quicbaas.QRDBEmbedRequest{Texts: []string{"hello"}, 
 
 | Method | What it does |
 |---|---|
-| `Embed` | Embeds one or more texts with a provider and model (empty = the service defaults). |
+| `Embed` | Embeds one or more texts with a provider and model (empty = the service defaults). A quicbaas node serves each provider with its configured model only and refuses another model as invalid input. |
 | `BatchEmbed` | Splits a long text list into provider sub-batches (`BatchSize`, default 256) and returns the vectors in input order. |
 | `ListEmbeddingModels` | Lists a provider's embedding models (empty provider = the default). |
 
