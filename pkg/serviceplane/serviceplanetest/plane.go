@@ -107,7 +107,10 @@ func NewRuntime(t testing.TB) *Runtime {
 	if !ok {
 		t.Fatalf("requester key is %T, want ed25519.PrivateKey", signer)
 	}
-	pub := key.Public().(ed25519.PublicKey)
+	pub, ok := key.Public().(ed25519.PublicKey)
+	if !ok {
+		t.Fatalf("requester public key is %T, want ed25519.PublicKey", key.Public())
+	}
 	return &Runtime{
 		Launcher: &Launcher{},
 		Grants:   Grants(),
