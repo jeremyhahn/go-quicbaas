@@ -270,8 +270,21 @@ func (k *kmsServiceImpl) SetScheduler(scheduler KMSScheduler) {
 // SetKVStore sets the persistent KVStore for version status replication.
 // When set, version status is persisted to the Raft-replicated KVStore,
 // making it visible across all nodes in the cluster.
+//
+// The same store is the durable key registry of every backend that keeps
+// one (the xkms backend's key owner and version records).
 func (k *kmsServiceImpl) SetKVStore(kv interfaces.KVStore) {
 	k.kvStore = kv
+	if k.backendRegistry == nil {
+		return
+	}
+	for _, info := range k.backendRegistry.ListWithBackends() {
+		if r, ok := info.Backend.(interface {
+			SetKeyRegistry(interfaces.KVStore)
+		}); ok {
+			r.SetKeyRegistry(kv)
+		}
+	}
 }
 
 // initMetrics initializes Prometheus metrics for KMS operations.

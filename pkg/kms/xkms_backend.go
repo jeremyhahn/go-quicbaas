@@ -37,6 +37,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
 	"github.com/jeremyhahn/go-quicbaas/pkg/xkms"
@@ -59,6 +60,21 @@ type XKMSBackend struct {
 	logger      interfaces.Logger
 	metadata    map[string]*KeyMetadata // cached metadata
 	mu          sync.RWMutex
+
+	// registry is the durable key registry (guarded by mu): owner records map
+	// a stored encoded name to the tenant key ID it was created for, and
+	// version records hold each key's highest rotated version. With no
+	// registry (unit tests), encoded names resolve by decoding alone and
+	// versions are inferred from the contiguous stored run keyID_v2..vN.
+	registry interfaces.KVStore
+}
+
+// SetKeyRegistry sets the durable key registry that records key owners and
+// rotated versions.
+func (kb *XKMSBackend) SetKeyRegistry(kv interfaces.KVStore) {
+	kb.mu.Lock()
+	kb.registry = kv
+	kb.mu.Unlock()
 }
 
 // XKMSBackendConfig configures the XKMSBackend.
@@ -210,6 +226,9 @@ func (kb *XKMSBackend) CreateKey(ctx context.Context, attrs *kctypes.KeyAttribut
 	if err != nil {
 		return nil, err
 	}
+	if err := kb.refuseCollidingName(ctx, keyID, name); err != nil {
+		return nil, err
+	}
 	backendAttrs := *attrs
 	backendAttrs.CN = name
 
@@ -235,6 +254,12 @@ func (kb *XKMSBackend) CreateKey(ctx context.Context, attrs *kctypes.KeyAttribut
 		if err != nil {
 			return nil, api.NewAsymmetricKeyGenerationError("XKMSBackend.CreateKey", err)
 		}
+	}
+
+	// A key whose owner is not recorded would not resolve: remove it.
+	if err := kb.recordOwner(ctx, keyID, name); err != nil {
+		_ = deleteXKMSKey(ctx, attrs)
+		return nil, err
 	}
 
 	// Build metadata
@@ -301,8 +326,18 @@ func (kb *XKMSBackend) ImportKey(ctx context.Context, keyID string, material []b
 		kind = "asymmetric"
 	}
 
+	if err := kb.refuseCollidingName(ctx, keyID, attrs.CN); err != nil {
+		return nil, err
+	}
+
 	if err := xkms.ImportKeyMaterial(ctx, string(kb.backendType), attrs, material); err != nil {
 		return nil, api.NewKeyImportError("XKMSBackend.ImportKey", kind, err)
+	}
+
+	// A key whose owner is not recorded would not resolve: remove it.
+	if err := kb.recordOwner(ctx, keyID, attrs.CN); err != nil {
+		_ = deleteXKMSKey(ctx, attrs)
+		return nil, err
 	}
 
 	// Build metadata
@@ -354,6 +389,11 @@ func (kb *XKMSBackend) GetKeyMetadata(ctx context.Context, keyID string) (*KeyMe
 
 	name, err := xkmsKeyName(keyID)
 	if err != nil {
+		return nil, err
+	}
+
+	// An encoded name resolves to keyID only through keyID's owner record.
+	if err := kb.refuseUnownedName(ctx, keyID, name); err != nil {
 		return nil, err
 	}
 
@@ -421,14 +461,15 @@ func (kb *XKMSBackend) GetKeyMetadata(ctx context.Context, keyID string) (*KeyMe
 		}
 	}
 
-	// The current version is the last of the contiguous rotated versions keyID_v2, keyID_v3, ... that go-xkms stores.
-	// Walk up from 2 rather than take the largest suffix: an ordinary key such as report_v2026 is not a version of report.
-	// A listing that fails leaves the version unknown, so nothing is cached and the caller sees the error.
-	stored, err := kb.listStoredKeyIDs(ctx, keyID+"_v")
+	// The current version is the one recorded at rotation (with a registry),
+	// else the last of the contiguous rotated versions keyID_v2, keyID_v3, ...
+	// that go-xkms stores: an ordinary key such as report_v2026 is not a
+	// version of report. A failed read leaves the version unknown, so nothing
+	// is cached and the caller sees the error.
+	version, err := kb.storedVersion(ctx, keyID)
 	if err != nil {
 		return nil, err
 	}
-	version := kb.highestContiguousVersion(stored, keyID)
 
 	// Key exists but we don't have metadata - create minimal metadata
 	meta := &KeyMetadata{
@@ -579,6 +620,15 @@ func (kb *XKMSBackend) RotateKey(ctx context.Context, keyID string) (*KeyMetadat
 		}
 	}
 
+	// Record the new version. An unrecorded version is not one of keyID's
+	// versions, so on failure it is removed and the rotation fails.
+	if reg := kb.keyRegistry(); reg != nil {
+		if err := reg.Put(ctx, kb.versionRecordKey(keyID), []byte(strconv.Itoa(newVersion))); err != nil {
+			_ = deleteXKMSKey(ctx, attrs)
+			return nil, fmt.Errorf("xkms key registry: record version %d of %q: %w", newVersion, keyID, err)
+		}
+	}
+
 	// Update cached metadata
 	kb.mu.Lock()
 	defer kb.mu.Unlock()
@@ -661,13 +711,14 @@ func (kb *XKMSBackend) refuseVersionName(ctx context.Context, keyID string) erro
 		// Fail closed: the lookup could not tell whether base is a key.
 		return err
 	}
-	// Only base's contiguous rotated run base_v2..base_vk is rotation output;
-	// a name above it is an independent key that predates version names.
-	stored, err := kb.listStoredKeyIDs(ctx, base+"_v")
+	// Only base's versions base_v2..base_vk are rotation output (recorded at
+	// rotation with a registry, else the contiguous stored run); a name above
+	// them is an independent key.
+	current, err := kb.storedVersion(ctx, base)
 	if err != nil {
 		return err
 	}
-	if n <= kb.highestContiguousVersion(stored, base) {
+	if n <= current {
 		return ErrKeyNotFound
 	}
 	return nil
@@ -685,6 +736,124 @@ func (kb *XKMSBackend) highestContiguousVersion(stored map[string]struct{}, keyI
 		}
 		version++
 	}
+}
+
+// keyRegistry returns the durable key registry, or nil when none is set.
+func (kb *XKMSBackend) keyRegistry() interfaces.KVStore {
+	kb.mu.RLock()
+	defer kb.mu.RUnlock()
+	return kb.registry
+}
+
+// ownerRecordKey is the registry key mapping a stored xkms name to the
+// quicbaas key ID it was created for.
+func (kb *XKMSBackend) ownerRecordKey(name string) string {
+	return fmt.Sprintf("kms:xkms:owner:%s:%s", kb.backendType, name)
+}
+
+// versionRecordKey is the registry key holding keyID's highest rotated
+// version, in decimal.
+func (kb *XKMSBackend) versionRecordKey(keyID string) string {
+	return fmt.Sprintf("kms:xkms:version:%s:%s", kb.backendType, keyID)
+}
+
+// readRegistryRecord reads a registry record; ok is false when it is absent.
+func readRegistryRecord(ctx context.Context, reg interfaces.KVStore, key string) (string, bool, error) {
+	data, err := reg.Get(ctx, key)
+	if err != nil {
+		if qberrors.IsNotFound(err) {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("xkms key registry: read %q: %w", key, err)
+	}
+	if len(data) == 0 {
+		return "", false, nil
+	}
+	return string(data), true, nil
+}
+
+// refuseUnownedName fails with ErrKeyNotFound when, with a registry set,
+// keyID is stored under an encoded name whose owner record does not name
+// keyID: such a stored key (a system key that happens to carry the encoded
+// name) is not keyID's.
+func (kb *XKMSBackend) refuseUnownedName(ctx context.Context, keyID, name string) error {
+	reg := kb.keyRegistry()
+	if reg == nil || name == keyID {
+		return nil
+	}
+	owner, ok, err := readRegistryRecord(ctx, reg, kb.ownerRecordKey(name))
+	if err != nil {
+		return err
+	}
+	if !ok || owner != keyID {
+		return ErrKeyNotFound
+	}
+	return nil
+}
+
+// refuseCollidingName refuses, with a registry set, to create or import
+// keyID when its encoded name is already stored without an owner record for
+// keyID: the stored key belongs to someone else.
+func (kb *XKMSBackend) refuseCollidingName(ctx context.Context, keyID, name string) error {
+	reg := kb.keyRegistry()
+	if reg == nil || name == keyID {
+		return nil
+	}
+	stored, err := kb.listStoredKeyIDs(ctx, keyID)
+	if err != nil {
+		return err
+	}
+	if _, ok := stored[keyID]; !ok {
+		return nil
+	}
+	owner, ok, err := readRegistryRecord(ctx, reg, kb.ownerRecordKey(name))
+	if err != nil {
+		return err
+	}
+	if !ok || owner != keyID {
+		return fmt.Errorf("%w: key ID %q: its stored name %q is held by another key",
+			kctypes.ErrBackendFileAlreadyExists, keyID, name)
+	}
+	return nil
+}
+
+// recordOwner writes, with a registry set, the owner record of keyID's
+// encoded name. A "/"-free ID is stored under its own name and has none.
+func (kb *XKMSBackend) recordOwner(ctx context.Context, keyID, name string) error {
+	reg := kb.keyRegistry()
+	if reg == nil || name == keyID {
+		return nil
+	}
+	if err := reg.Put(ctx, kb.ownerRecordKey(name), []byte(keyID)); err != nil {
+		return fmt.Errorf("xkms key registry: record owner of %q: %w", keyID, err)
+	}
+	return nil
+}
+
+// storedVersion is keyID's highest version held in go-xkms. With a registry
+// it is the version recorded at rotation (1 when none is recorded), so a
+// stored name that only looks like a version is never adopted. Without one,
+// it is the contiguous stored run keyID_v2..vN.
+func (kb *XKMSBackend) storedVersion(ctx context.Context, keyID string) (int, error) {
+	if reg := kb.keyRegistry(); reg != nil {
+		v, ok, err := readRegistryRecord(ctx, reg, kb.versionRecordKey(keyID))
+		if err != nil {
+			return 0, err
+		}
+		if !ok {
+			return 1, nil
+		}
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			return 0, fmt.Errorf("xkms key registry: version record of %q is not a positive integer: %q", keyID, v)
+		}
+		return n, nil
+	}
+	stored, err := kb.listStoredKeyIDs(ctx, keyID+"_v")
+	if err != nil {
+		return 0, err
+	}
+	return kb.highestContiguousVersion(stored, keyID), nil
 }
 
 // refuseHidingName refuses to create keyID when an ordinary key already
@@ -839,10 +1008,10 @@ func (kb *XKMSBackend) DeleteKey(ctx context.Context, keyID string) error {
 	// Delete every rotated version first. A version left behind would
 	// outlive its base and, once the base is gone, refuseVersionName would
 	// no longer hide it: it would read as an ordinary key without a policy.
-	// The versions are the contiguous run v2..vk read from go-xkms's stored
-	// listing; the cached meta.Version is not used, since after a restart
-	// the uncached metadata may not know every version. A <keyID>_v<N>
-	// outside the run (an independent key, or a version stranded by an
+	// The versions are v2..vk, k recorded at rotation (with a registry) or
+	// else the contiguous run read from go-xkms's stored listing; the cached
+	// meta.Version is not used, since after a restart the uncached metadata
+	// may not know every version. A <keyID>_v<N> outside them (an independent key, or a version stranded by an
 	// out-of-band gap) is kept as an ordinary key. The run is deleted
 	// highest first, so a partial failure leaves a contiguous v2..vj that
 	// GetKeyMetadata's version walk and a retry still read.
@@ -850,11 +1019,11 @@ func (kb *XKMSBackend) DeleteKey(ctx context.Context, keyID string) error {
 	if meta != nil {
 		algorithm = meta.Algorithm
 	}
-	stored, err := kb.listStoredKeyIDs(ctx, keyID+"_v")
+	current, err := kb.storedVersion(ctx, keyID)
 	if err != nil {
 		return err
 	}
-	for n := kb.highestContiguousVersion(stored, keyID); n >= 2; n-- {
+	for n := current; n >= 2; n-- {
 		versionedID := kb.buildVersionedKeyID(keyID, n)
 		var versionAttrs *kctypes.KeyAttributes
 		if algorithm != "" {
@@ -920,6 +1089,19 @@ func (kb *XKMSBackend) DeleteKey(ctx context.Context, keyID string) error {
 				return ErrKeyNotFound
 			}
 			return api.NewKeyDeletionError("XKMSBackend.DeleteKey", err)
+		}
+	}
+
+	// The key and its versions are gone: drop their registry records, version
+	// first, so a failure leaves at worst an owner record for a missing key.
+	if reg := kb.keyRegistry(); reg != nil {
+		if err := reg.Delete(ctx, kb.versionRecordKey(keyID)); err != nil && !qberrors.IsNotFound(err) {
+			return fmt.Errorf("xkms key registry: delete version record of %q: %w", keyID, err)
+		}
+		if name != keyID {
+			if err := reg.Delete(ctx, kb.ownerRecordKey(name)); err != nil && !qberrors.IsNotFound(err) {
+				return fmt.Errorf("xkms key registry: delete owner record of %q: %w", keyID, err)
+			}
 		}
 	}
 
@@ -1158,15 +1340,24 @@ func (kb *XKMSBackend) Decrypt(ctx context.Context, keyID string, ciphertext, aa
 		return nil, api.NewCiphertextDeserializationError("XKMSBackend.Decrypt", err)
 	}
 	version := conv.ClampUint64ToInt(parsedVersion)
-	if version > meta.Version {
+
+	// GetKeyMetadata returns the shared cached pointer, which RotateKey
+	// mutates under kb.mu: copy the version and algorithm once under the
+	// read lock, as Encrypt does.
+	kb.mu.RLock()
+	cachedVersion := meta.Version
+	algorithm := meta.Algorithm
+	kb.mu.RUnlock()
+
+	if version > cachedVersion {
 		// Above the cached version: accept it only inside keyID's stored
-		// rotated run (this node's cache may be stale), never an independent
+		// versions (this node's cache may be stale), never an independent
 		// key that happens to be named keyID_v<N>.
-		stored, err := kb.listStoredKeyIDs(ctx, keyID+"_v")
+		current, err := kb.storedVersion(ctx, keyID)
 		if err != nil {
 			return nil, api.NewKeyMetadataRetrievalError("XKMSBackend.Decrypt", err)
 		}
-		if version > kb.highestContiguousVersion(stored, keyID) {
+		if version > current {
 			return nil, api.NewCiphertextDeserializationError("XKMSBackend.Decrypt", ErrInvalidCiphertextKeyVersion)
 		}
 	}
@@ -1183,7 +1374,7 @@ func (kb *XKMSBackend) Decrypt(ctx context.Context, keyID string, ciphertext, aa
 
 	// Build the full key ID with algorithm info for go-xkms
 	// Format: "backend:type:algo:keyname"
-	kid, err := kb.buildFullKeyID(actualKeyID, meta.Algorithm)
+	kid, err := kb.buildFullKeyID(actualKeyID, algorithm)
 	if err != nil {
 		return nil, err
 	}
