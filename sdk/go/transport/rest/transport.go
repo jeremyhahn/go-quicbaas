@@ -140,6 +140,8 @@ func New(cfg *transport.Config, opts ...Option) (*Transport, error) {
 			t.baseTransport = httpTransport
 		}
 		c.Transport = qrdbtransport.SOPINRoundTripper(secretHopRoundTripper{base: base}, "rest", qrdbtransport.ConfiguredHost(t.baseURL))
+		// Tenant verbs refuse plaintext and cross-host redirects; the caller's policy decides the rest.
+		c.CheckRedirect = tenantRedirectPolicy(c.CheckRedirect)
 		t.client = &c
 	}
 
@@ -258,6 +260,8 @@ func (t *Transport) buildHTTPClient() (*http.Client, error) {
 	return &http.Client{
 		Transport: qrdbtransport.SOPINRoundTripper(secretHopRoundTripper{base: httpTransport}, "rest", qrdbtransport.ConfiguredHost(t.baseURL)),
 		Timeout:   timeout,
+		// Tenant verbs refuse plaintext and cross-host redirects; others keep net/http's default.
+		CheckRedirect: tenantRedirectPolicy(nil),
 	}, nil
 }
 

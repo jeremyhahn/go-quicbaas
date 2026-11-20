@@ -3,6 +3,8 @@ package rest
 import (
 	"context"
 	"encoding/json"
+	stderrors "errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -33,6 +35,12 @@ import (
 // cannot add an Authorization header and reached protected routes
 // anonymously. Tenant CRUD stays on the embedded go-qrdb client.
 //
+// Because they carry that bearer, the barrier verbs never follow a redirect
+// to a non-https URL or to a host:port other than the one the request was
+// sent to: the transport's client refuses such a hop before the bearer is
+// sent and the verb fails with a CodeForbidden error wrapping
+// ErrInsecureRedirect. A same-host https redirect is still followed.
+//
 // Each overridden verb keeps the HTTP method, path, request body and
 // response handling of the matching method in go-qrdb sdk/go transport/rest.
 // The embedded go-qrdb client serves every verb not overridden here.
@@ -50,6 +58,44 @@ func (t *Transport) Tenants(inner qrdbtransport.TenantClient) *TenantClient {
 }
 
 const tenantClientOp = "rest.TenantClient"
+
+// ErrInsecureRedirect is wrapped by the error a bearer-carrying tenant verb
+// returns when it refuses a redirect to a non-https URL or to a host:port
+// other than the one the request was sent to. It is a plain error, not a
+// QBError, so errors.Is matches it alone and never the secret-hop refusals.
+var ErrInsecureRedirect = stderrors.New("rest: refusing a redirect that would carry the bearer over plaintext or to another host")
+
+// tenantBearerHopKey marks a request context as a tenant barrier verb whose
+// redirects tenantRedirectPolicy checks.
+type tenantBearerHopKey struct{}
+
+// withTenantBearerHop marks ctx for tenantRedirectPolicy.
+func withTenantBearerHop(ctx context.Context) context.Context {
+	return context.WithValue(ctx, tenantBearerHopKey{}, true)
+}
+
+// tenantRedirectPolicy wraps an http.Client CheckRedirect (prev, nil for
+// net/http's default of stopping after 10 redirects). For a request marked
+// by withTenantBearerHop whose first hop carried an Authorization header,
+// it refuses a redirect to a non-https URL or to a host:port other than the
+// first hop's with ErrInsecureRedirect; every other redirect goes to prev.
+func tenantRedirectPolicy(prev func(*http.Request, []*http.Request) error) func(*http.Request, []*http.Request) error {
+	return func(req *http.Request, via []*http.Request) error {
+		if marked, _ := req.Context().Value(tenantBearerHopKey{}).(bool); marked && len(via) > 0 &&
+			via[0].Header.Get("Authorization") != "" {
+			if req.URL.Scheme != "https" || req.URL.Host != via[0].URL.Host {
+				return fmt.Errorf("%w: %s", ErrInsecureRedirect, req.URL.Redacted())
+			}
+		}
+		if prev != nil {
+			return prev(req, via)
+		}
+		if len(via) >= 10 {
+			return stderrors.New("stopped after 10 redirects")
+		}
+		return nil
+	}
+}
 
 // tenantPath returns /v1/tenants/{id}/barrier<suffix>, refusing a nil
 // request (isNil) or an empty tenant id before anything is sent.
@@ -86,8 +132,11 @@ func (c *TenantClient) doTenantRequest(ctx context.Context, verb, method, path s
 		}
 		body = data
 	}
-	resp, err := c.t.doRawRequest(ctx, method, path, body, nil)
+	resp, err := c.t.doRawRequest(withTenantBearerHop(ctx), method, path, body, nil)
 	if err != nil {
+		if stderrors.Is(err, ErrInsecureRedirect) {
+			return nil, errors.Wrap(err, errors.CodeForbidden, tenantClientOp, verb+": refused an insecure redirect")
+		}
 		return nil, err
 	}
 	for _, status := range allowed {

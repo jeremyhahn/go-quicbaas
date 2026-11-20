@@ -3,6 +3,7 @@ package rest
 import (
 	"context"
 	"encoding/json"
+	stderrors "errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -393,6 +395,125 @@ func TestTenantClient_RefusesUnexpectedStatus(t *testing.T) {
 		t.Run("302-supplied-no-follow/"+verb, func(t *testing.T) {
 			state.answer(http.StatusFound, reply, "/v1/elsewhere")
 			tenantWireServerRefusal(t, call(context.Background()), http.StatusFound)
+		})
+	}
+}
+
+// tenantRedirectTransports mirrors newTLSTransports with the platform bearer
+// set on both the built and the supplied transport.
+func tenantRedirectTransports(t *testing.T, srv *httptest.Server) map[string]*Transport {
+	t.Helper()
+	cfg := trustServer(srv)
+	built, err := New(&transport.Config{Address: srv.URL, TLSConfig: cfg, MaxRetries: 0}, WithAuthToken("tok-2558"))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	supplied, err := New(&transport.Config{Address: srv.URL, MaxRetries: 0},
+		WithHTTPClient(&http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{TLSClientConfig: cfg}}),
+		WithAuthToken("tok-2558"))
+	if err != nil {
+		t.Fatalf("New WithHTTPClient: %v", err)
+	}
+	t.Cleanup(func() { _ = built.Close(); _ = supplied.Close() })
+	return map[string]*Transport{"built": built, "supplied": supplied}
+}
+
+// tenantRedirectTarget answers every request with a sealed status and
+// records whether any request arrived with an Authorization header.
+func tenantRedirectTarget(sawBearer *atomic.Bool) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "" {
+			sawBearer.Store(true)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"tenant_id":"t1","sealed":true}`)
+	})
+}
+
+// tenantRedirectOrigin is a TLS server that 307s the tenant barrier status
+// and seal paths to target(origin)+path+suffix and serves the rest with next.
+func tenantRedirectOrigin(t *testing.T, target func(*httptest.Server) string, suffix string, next http.Handler) *httptest.Server {
+	t.Helper()
+	var srv *httptest.Server
+	srv = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/tenants/t1/barrier/status", "/v1/tenants/t1/barrier/seal":
+			http.Redirect(w, r, target(srv)+r.URL.Path+suffix, http.StatusTemporaryRedirect)
+			return
+		}
+		next.ServeHTTP(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestTenantClient_BearerRedirects pins that a bearer-carrying tenant verb
+// never follows a redirect to plaintext http or to another host:port: the
+// call fails with ErrInsecureRedirect (CodeForbidden) and the bearer never
+// reaches the target. A same-host https redirect is still followed.
+func TestTenantClient_BearerRedirects(t *testing.T) {
+	rows := []struct {
+		name   string
+		refuse bool
+		origin func(t *testing.T, saw *atomic.Bool) *httptest.Server
+	}{
+		{"https to http downgrade", true, func(t *testing.T, saw *atomic.Bool) *httptest.Server {
+			plain := httptest.NewServer(tenantRedirectTarget(saw))
+			t.Cleanup(plain.Close)
+			return tenantRedirectOrigin(t, func(*httptest.Server) string { return plain.URL }, "", http.NotFoundHandler())
+		}},
+		{"https to another host", true, func(t *testing.T, saw *atomic.Bool) *httptest.Server {
+			other := httptest.NewTLSServer(tenantRedirectTarget(saw))
+			t.Cleanup(other.Close)
+			return tenantRedirectOrigin(t, func(*httptest.Server) string { return other.URL }, "", http.NotFoundHandler())
+		}},
+		{"same-host https", false, func(t *testing.T, saw *atomic.Bool) *httptest.Server {
+			return tenantRedirectOrigin(t, func(s *httptest.Server) string { return s.URL }, "-moved", tenantRedirectTarget(saw))
+		}},
+	}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			var saw atomic.Bool
+			origin := row.origin(t, &saw)
+			for name, tr := range tenantRedirectTransports(t, origin) {
+				tc := tr.Tenants(nil)
+				verbs := map[string]func(context.Context) error{
+					"Status": func(ctx context.Context) error {
+						st, err := tc.TenantBarrierStatus(ctx, &qrdbtransport.TenantBarrierStatusRequest{TenantID: "t1"})
+						if err == nil && !st.Sealed {
+							t.Errorf("Status: sealed = false, want true")
+						}
+						return err
+					},
+					"Seal": func(ctx context.Context) error {
+						return tc.TenantBarrierSeal(ctx, &qrdbtransport.TenantBarrierSealRequest{TenantID: "t1"})
+					},
+				}
+				for verb, call := range verbs {
+					t.Run(name+"/"+verb, func(t *testing.T) {
+						saw.Store(false)
+						err := call(context.Background())
+						if !row.refuse {
+							if err != nil {
+								t.Fatalf("same-host redirect: %v", err)
+							}
+							if !saw.Load() {
+								t.Fatalf("same-host target got no bearer")
+							}
+							return
+						}
+						if !stderrors.Is(err, ErrInsecureRedirect) {
+							t.Errorf("err = %v, want ErrInsecureRedirect", err)
+						}
+						if got := errors.Code(err); got != errors.CodeForbidden {
+							t.Errorf("code = %v, want CodeForbidden", got)
+						}
+						if saw.Load() {
+							t.Errorf("redirect target received the bearer")
+						}
+					})
+				}
+			}
 		})
 	}
 }
