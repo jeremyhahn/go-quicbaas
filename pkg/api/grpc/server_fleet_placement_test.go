@@ -21,8 +21,11 @@ import (
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
+	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
+	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
@@ -176,5 +179,155 @@ func TestFleetPlacementSpecProtoRoundTrip(t *testing.T) {
 	}
 	if n := reflect.TypeOf(orchestration.DriftReport{}).NumField(); n != 8 {
 		t.Fatalf("DriftReport has %d fields; map the new one in server_fleet_placement.go and this count", n)
+	}
+}
+
+// newFleetPlacementConsentGRPCServer returns a server whose fleet placement
+// service has a consent ledger bound, and the ledger.
+func newFleetPlacementConsentGRPCServer(t *testing.T) (*OrchestratorServer, orchestration.ConsentLedger) {
+	t.Helper()
+	srv := newFleetPlacementGRPCServer(t)
+	ledger, err := orchestration.NewConsentLedger(orchestration.NewMemoryTaskKV())
+	if err != nil {
+		t.Fatalf("NewConsentLedger: %v", err)
+	}
+	svc, err := srv.fleetPlacementSvc()
+	if err != nil {
+		t.Fatalf("fleetPlacementSvc: %v", err)
+	}
+	svc.(service.FleetPlacementConsentBinder).BindFleetPlacementConsent(ledger)
+	return srv, ledger
+}
+
+func raiseFleetPlacementConsentGRPC(t *testing.T, ledger orchestration.ConsentLedger, workID string) *orchestration.PlacementConsentRequest {
+	t.Helper()
+	req, err := ledger.Raise(orchestration.ContextWithTenant(context.Background(), "acme"), "acme", orchestration.ConsentMove{
+		SpecName: "agents", SpecGeneration: 1, Class: "agent", WorkID: workID, SourceHost: "h1",
+	})
+	if err != nil {
+		t.Fatalf("Raise: %v", err)
+	}
+	return req
+}
+
+func fleetPlacementConsentGRPCSubject(id string) context.Context {
+	ctx := tenantctx.WithTenant(context.Background(), "acme")
+	if id == "" {
+		return ctx
+	}
+	return auth.SubjectIntoContext(ctx, interfaces.Subject{ID: id, TenantID: "acme", Authenticated: true})
+}
+
+func TestFleetPlacementConsentOverGRPC(t *testing.T) {
+	srv, ledger := newFleetPlacementConsentGRPCServer(t)
+	first := raiseFleetPlacementConsentGRPC(t, ledger, "s1")
+	raiseFleetPlacementConsentGRPC(t, ledger, "s2")
+	alice := fleetPlacementConsentGRPCSubject("alice")
+
+	listed, err := srv.ListFleetPlacementConsents(alice, &pb.ListFleetPlacementConsentsRequest{State: "pending"})
+	if err != nil {
+		t.Fatalf("ListFleetPlacementConsents: %v", err)
+	}
+	if listed.GetCount() != 2 || len(listed.GetRequests()) != 2 {
+		t.Fatalf("listed = %v, want two pending requests", listed)
+	}
+	got := listed.GetRequests()[0]
+	if got.GetMove().GetSpecName() != "agents" || got.GetState() != "pending" || got.GetRaisedAt() == nil || got.GetAnsweredAt() != nil {
+		t.Fatalf("listed request = %v, want a pending move of agents", got)
+	}
+
+	answered, err := srv.AnswerFleetPlacementConsent(alice, &pb.AnswerFleetPlacementConsentRequest{
+		TenantId: "acme", Id: first.ID, State: "granted", Reason: "window",
+	})
+	if err != nil {
+		t.Fatalf("AnswerFleetPlacementConsent: %v", err)
+	}
+	if answered.GetState() != "granted" || answered.GetBy() != "alice" || answered.GetReason() != "window" || answered.GetAnsweredAt() == nil {
+		t.Fatalf("answered = %v, want granted by alice", answered)
+	}
+	granted, err := srv.ListFleetPlacementConsents(alice, &pb.ListFleetPlacementConsentsRequest{TenantId: "acme", State: "granted"})
+	if err != nil || granted.GetCount() != 1 || granted.GetRequests()[0].GetId() != first.ID {
+		t.Fatalf("granted = %v, %v; want only %s", granted, err, first.ID)
+	}
+}
+
+func TestFleetPlacementConsentOverGRPCRefuses(t *testing.T) {
+	srv, ledger := newFleetPlacementConsentGRPCServer(t)
+	req := raiseFleetPlacementConsentGRPC(t, ledger, "s1")
+	alice := fleetPlacementConsentGRPCSubject("alice")
+	bare := NewOrchestratorServer(&grpcTestAgentService{}, createOrchestratorGRPCTestLogger())
+	answer := func(ctx context.Context, s *OrchestratorServer, tenant, id, state string) error {
+		_, err := s.AnswerFleetPlacementConsent(ctx, &pb.AnswerFleetPlacementConsentRequest{TenantId: tenant, Id: id, State: state})
+		return err
+	}
+
+	cases := []struct {
+		name string
+		call func() error
+		want codes.Code
+	}{
+		{"answer with no subject", func() error { return answer(fleetPlacementConsentGRPCSubject(""), srv, "", req.ID, "granted") }, codes.PermissionDenied},
+		{"answer in another tenant", func() error { return answer(alice, srv, "other", req.ID, "granted") }, codes.PermissionDenied},
+		{"list another tenant", func() error {
+			_, err := srv.ListFleetPlacementConsents(alice, &pb.ListFleetPlacementConsentsRequest{TenantId: "other"})
+			return err
+		}, codes.PermissionDenied},
+		{"answer unknown", func() error { return answer(alice, srv, "", "unknown", "granted") }, codes.NotFound},
+		{"answer maybe", func() error { return answer(alice, srv, "", req.ID, "maybe") }, codes.InvalidArgument},
+		{"list bogus", func() error {
+			_, err := srv.ListFleetPlacementConsents(alice, &pb.ListFleetPlacementConsentsRequest{State: "bogus"})
+			return err
+		}, codes.InvalidArgument},
+		{"answer", func() error { return answer(alice, srv, "", req.ID, "granted") }, codes.OK},
+		{"second answer", func() error { return answer(alice, srv, "", req.ID, "refused") }, codes.AlreadyExists},
+		{"no service", func() error { return answer(alice, bare, "", req.ID, "granted") }, codes.Unavailable},
+		{"no ledger", func() error {
+			_, err := newFleetPlacementGRPCServer(t).ListFleetPlacementConsents(alice, &pb.ListFleetPlacementConsentsRequest{})
+			return err
+		}, codes.Unavailable},
+	}
+	for _, tc := range cases {
+		if got := status.Code(tc.call()); got != tc.want {
+			t.Errorf("%s = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestFleetPlacementConsentProtoRoundTrip(t *testing.T) {
+	in := &orchestration.PlacementConsentRequest{
+		ID: "id", TenantID: "acme",
+		Move:  orchestration.ConsentMove{SpecName: "agents", SpecGeneration: 3, Class: "agent", WorkID: "s1", SourceHost: "h1"},
+		State: orchestration.ConsentRefused, By: "alice", Reason: "not now",
+		RaisedAt:   time.Date(2026, 11, 14, 0, 0, 0, 0, time.UTC),
+		AnsweredAt: time.Date(2026, 11, 15, 0, 0, 0, 0, time.UTC),
+	}
+	raw, err := proto.Marshal(fleetPlacementConsentToProto(in))
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var out pb.FleetPlacementConsentRequest
+	if err := proto.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	back := &orchestration.PlacementConsentRequest{
+		ID: out.GetId(), TenantID: out.GetTenantId(),
+		Move: orchestration.ConsentMove{
+			SpecName: out.GetMove().GetSpecName(), SpecGeneration: out.GetMove().GetSpecGeneration(),
+			Class: out.GetMove().GetClass(), WorkID: out.GetMove().GetWorkId(), SourceHost: out.GetMove().GetSourceHost(),
+		},
+		State: orchestration.ConsentState(out.GetState()), By: out.GetBy(), Reason: out.GetReason(),
+		RaisedAt: out.GetRaisedAt().AsTime(), AnsweredAt: out.GetAnsweredAt().AsTime(),
+	}
+	if !reflect.DeepEqual(in, back) {
+		t.Fatalf("round trip:\n got %+v\nwant %+v", back, in)
+	}
+	if fleetPlacementConsentToProto(nil) != nil {
+		t.Fatal("a nil request maps to a non-nil message")
+	}
+	if n := reflect.TypeOf(orchestration.PlacementConsentRequest{}).NumField(); n != 8 {
+		t.Fatalf("PlacementConsentRequest has %d fields; map the new one in server_fleet_placement.go and this count", n)
+	}
+	if n := reflect.TypeOf(orchestration.ConsentMove{}).NumField(); n != 5 {
+		t.Fatalf("ConsentMove has %d fields; map the new one in server_fleet_placement.go and this count", n)
 	}
 }

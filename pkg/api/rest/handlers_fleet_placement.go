@@ -147,3 +147,54 @@ func (s *Server) HandleGetFleetPlacementDrift(w http.ResponseWriter, r *http.Req
 	}
 	RespondJSON(w, r, http.StatusOK, report)
 }
+
+// ListFleetPlacementConsentsRESTResponse is the body of GET
+// /api/v1/fleet/placement-consents.
+type ListFleetPlacementConsentsRESTResponse struct {
+	Requests []*orchestration.PlacementConsentRequest `json:"requests"`
+	Count    int                                      `json:"count"`
+}
+
+// AnswerFleetPlacementConsentRESTRequest is the body of POST
+// /api/v1/fleet/placement-consents/{id}/answer. It has no answerer: the
+// answer is recorded as the authenticated subject's.
+type AnswerFleetPlacementConsentRESTRequest struct {
+	State  orchestration.ConsentState `json:"state"`
+	Reason string                     `json:"reason,omitempty"`
+}
+
+// HandleListFleetPlacementConsents lists the tenant's per-move placement
+// consent requests, all of them or those in the query's state.
+func (s *Server) HandleListFleetPlacementConsents(w http.ResponseWriter, r *http.Request) {
+	svc, ok := s.fleetPlacementSvc(w, r)
+	if !ok {
+		return
+	}
+	query := r.URL.Query()
+	requests, err := svc.ListConsentRequests(r.Context(), query.Get("tenant_id"), orchestration.ConsentState(query.Get("state")))
+	if err != nil {
+		s.respondPlacementError(w, r, err)
+		return
+	}
+	RespondJSON(w, r, http.StatusOK, ListFleetPlacementConsentsRESTResponse{Requests: requests, Count: len(requests)})
+}
+
+// HandleAnswerFleetPlacementConsent grants or refuses one pending placement
+// consent request as the authenticated subject.
+func (s *Server) HandleAnswerFleetPlacementConsent(w http.ResponseWriter, r *http.Request) {
+	svc, ok := s.fleetPlacementSvc(w, r)
+	if !ok {
+		return
+	}
+	var body AnswerFleetPlacementConsentRESTRequest
+	if !decodePlacementBody(w, r, &body) {
+		return
+	}
+	answered, err := svc.AnswerConsent(r.Context(), r.URL.Query().Get("tenant_id"), chi.URLParam(r, "id"),
+		orchestration.ConsentAnswer{State: body.State, Reason: body.Reason})
+	if err != nil {
+		s.respondPlacementError(w, r, err)
+		return
+	}
+	RespondJSON(w, r, http.StatusOK, answered)
+}

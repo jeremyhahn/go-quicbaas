@@ -26,6 +26,8 @@ tenant header. Responses are JSON.
 | `PUT /api/v1/fleet/placements/{name}` | `placement:manage` | declare a placement spec |
 | `DELETE /api/v1/fleet/placements/{name}` | `placement:manage` | withdraw a placement spec |
 | `GET /api/v1/fleet/placements/{name}/drift` | `placement:read` | the spec's drift report |
+| `GET /api/v1/fleet/placement-consents` | `placement:read` | list per-move consent requests (`tenant_id`, `state`) |
+| `POST /api/v1/fleet/placement-consents/{id}/answer` | `placement:consent` | grant or refuse a pending consent request |
 
 ### List
 
@@ -129,6 +131,14 @@ answers `{ "specs": [ ... ], "count": 1 }`.
 | 412 | The drift report cannot be complete; the message names what to fix |
 | 503 | The server has no fleet placement service |
 
+Consent requests: an answer's body is
+`{"state":"granted"|"refused","reason":"..."}` and carries no answerer field;
+the answer is recorded as the authenticated subject's. The list answers
+`{ "requests": [ ... ], "count": n }`. The answer route answers 400 for an
+invalid state, 403 with no subject or for another tenant, 404 for no such
+request, 409 for a request already answered, 412 for an incoherent request
+and 503 when the server has no fleet placement service.
+
 ### Worker image
 
 `GET /api/v1/sdlc/worker-image` and `POST /api/v1/sdlc/worker-image/refresh`;
@@ -150,10 +160,13 @@ see [worker-image.md](worker-image.md).
 | `quicbaas_fleet_placement_get`, `quicbaas_fleet_placement_list` | `placement:read` |
 | `quicbaas_fleet_placement_withdraw` | `placement:manage` |
 | `quicbaas_fleet_placement_drift` | `placement:read` |
+| `quicbaas_fleet_placement_consent_list` | `placement:read` |
+| `quicbaas_fleet_placement_consent_answer` | `placement:consent` |
 
 The placement tools take `tenant_id` (optional, as on REST) and `name`;
-declare also takes `spec`, the REST body. Their results are the REST
-responses.
+declare also takes `spec`, the REST body. The consent list takes `tenant_id`
+and `state`, and the answer `tenant_id`, `id`, `state` and `reason`. Their
+results are the REST responses.
 
 `quicbaas_fleet_list` takes the same `status`, `backend` (membership), `host`
 and `node_type` filters as `GET /api/v1/fleet`, paged per
@@ -165,9 +178,11 @@ and `node_type` filters as `GET /api/v1/fleet`, paged per
 `GetFleetNode`, `ListFleetNodes`, `RemoveFleetNode`, `FleetNodeHeartbeat`,
 `ListBackendModels`, and `PushEvents` (the node's event stream), plus the
 placement specs: `DeclareFleetPlacementSpec`, `GetFleetPlacementSpec`,
-`ListFleetPlacementSpecs`, `WithdrawFleetPlacementSpec` and
-`GetFleetPlacementDrift`, with the REST routes' permissions. A stale
-generation is `ALREADY_EXISTS`, an incomplete report `FAILED_PRECONDITION`,
+`ListFleetPlacementSpecs`, `WithdrawFleetPlacementSpec`,
+`GetFleetPlacementDrift`, `ListFleetPlacementConsents` and
+`AnswerFleetPlacementConsent`, with the REST routes' permissions. A stale
+generation and a second answer are `ALREADY_EXISTS`, an incomplete report
+`FAILED_PRECONDITION`,
 and a server without the service `UNAVAILABLE`. `ProjectService`
 (`api/proto/project.proto`): `GrantFleetNodeRole`, `RevokeFleetNodeRole`.
 

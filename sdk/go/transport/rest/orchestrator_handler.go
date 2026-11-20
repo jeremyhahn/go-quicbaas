@@ -103,11 +103,13 @@ func (h *orchestratorHandler) handleRequest(ctx context.Context, service, method
 		"GetCostSettings":        h.handleGetCostSettings,
 		"SetCostSettings":        h.handleSetCostSettings,
 
-		"DeclareFleetPlacementSpec":  h.handleDeclareFleetPlacementSpec,
-		"GetFleetPlacementSpec":      h.handleGetFleetPlacementSpec,
-		"ListFleetPlacementSpecs":    h.handleListFleetPlacementSpecs,
-		"WithdrawFleetPlacementSpec": h.handleWithdrawFleetPlacementSpec,
-		"GetFleetPlacementDrift":     h.handleGetFleetPlacementDrift,
+		"DeclareFleetPlacementSpec":   h.handleDeclareFleetPlacementSpec,
+		"GetFleetPlacementSpec":       h.handleGetFleetPlacementSpec,
+		"ListFleetPlacementSpecs":     h.handleListFleetPlacementSpecs,
+		"WithdrawFleetPlacementSpec":  h.handleWithdrawFleetPlacementSpec,
+		"GetFleetPlacementDrift":      h.handleGetFleetPlacementDrift,
+		"ListFleetPlacementConsents":  h.handleListFleetPlacementConsents,
+		"AnswerFleetPlacementConsent": h.handleAnswerFleetPlacementConsent,
 	}
 
 	handler, ok := handlers[method]

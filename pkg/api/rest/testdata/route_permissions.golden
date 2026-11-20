@@ -168,6 +168,7 @@ GET /api/v1/ollama/health permission ollama:health
 GET /api/v1/ollama/models permission ollama:model_list
 GET /api/v1/ollama/models/{model} permission ollama:model_info
 GET /api/v1/fleet permission orchestrator:status
+GET /api/v1/fleet/placement-consents permission placement:read
 GET /api/v1/fleet/placements permission placement:read
 GET /api/v1/fleet/placements/{name} permission placement:read
 GET /api/v1/fleet/placements/{name}/drift permission placement:read
@@ -454,6 +455,7 @@ POST /api/v1/objects/batch/get permission objstore:batch
 POST /api/v1/ollama/embed permission ollama:embed
 POST /api/v1/ollama/embed/batch permission ollama:embed
 POST /api/v1/fleet permission orchestrator:agent_register
+POST /api/v1/fleet/placement-consents/{id}/answer permission placement:consent
 POST /api/v1/fleet/{nodeID}/disable permission orchestrator:agent_remove
 POST /api/v1/fleet/{nodeID}/enable permission orchestrator:agent_register
 POST /api/v1/fleet/{nodeID}/heartbeat permission orchestrator:agent_heartbeat

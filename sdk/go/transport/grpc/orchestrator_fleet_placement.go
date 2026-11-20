@@ -118,6 +118,41 @@ func handleOrchestratorGetFleetPlacementDrift(ctx context.Context, conn *grpc.Cl
 	return fleetPlacementDriftFromProto(resp), nil
 }
 
+func handleOrchestratorListFleetPlacementConsents(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error) {
+	const op = "grpc.orchestrator.ListFleetPlacementConsents"
+	r, ok := req.(*orchestrator.ListFleetPlacementConsentsRequest)
+	if !ok || r == nil {
+		return nil, errors.NewInvalidInput(op, "invalid request type")
+	}
+	resp, err := pb.NewOrchestratorServiceClient(conn).ListFleetPlacementConsents(ctx,
+		&pb.ListFleetPlacementConsentsRequest{TenantId: r.TenantID, State: r.State})
+	if err != nil {
+		return nil, convertGRPCError(err, op)
+	}
+	out := &orchestrator.ListFleetPlacementConsentsResponse{
+		Requests: make([]*orchestrator.FleetPlacementConsentRequest, 0, len(resp.GetRequests())),
+		Count:    int(resp.GetCount()),
+	}
+	for _, c := range resp.GetRequests() {
+		out.Requests = append(out.Requests, fleetPlacementConsentFromProto(c))
+	}
+	return out, nil
+}
+
+func handleOrchestratorAnswerFleetPlacementConsent(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error) {
+	const op = "grpc.orchestrator.AnswerFleetPlacementConsent"
+	r, ok := req.(*orchestrator.AnswerFleetPlacementConsentRequest)
+	if !ok || r == nil {
+		return nil, errors.NewInvalidInput(op, "invalid request type")
+	}
+	resp, err := pb.NewOrchestratorServiceClient(conn).AnswerFleetPlacementConsent(ctx,
+		&pb.AnswerFleetPlacementConsentRequest{TenantId: r.TenantID, Id: r.ID, State: r.State, Reason: r.Reason})
+	if err != nil {
+		return nil, convertGRPCError(err, op)
+	}
+	return fleetPlacementConsentFromProto(resp), nil
+}
+
 func fleetPlacementSpecToProto(in *orchestrator.FleetPlacementSpec) *pb.FleetPlacementSpec {
 	if in == nil {
 		return nil
@@ -198,6 +233,32 @@ func fleetPlacementDriftFromProto(in *pb.FleetPlacementDrift) *orchestrator.Flee
 				Destinations: f.GetRemedy().GetDestinations(),
 			},
 		})
+	}
+	return out
+}
+
+// fleetPlacementConsentFromProto maps a consent request off the wire. An
+// unset timestamp stays the zero time.
+func fleetPlacementConsentFromProto(in *pb.FleetPlacementConsentRequest) *orchestrator.FleetPlacementConsentRequest {
+	out := &orchestrator.FleetPlacementConsentRequest{
+		ID:       in.GetId(),
+		TenantID: in.GetTenantId(),
+		Move: orchestrator.FleetPlacementConsentMove{
+			SpecName:       in.GetMove().GetSpecName(),
+			SpecGeneration: in.GetMove().GetSpecGeneration(),
+			Class:          in.GetMove().GetClass(),
+			WorkID:         in.GetMove().GetWorkId(),
+			SourceHost:     in.GetMove().GetSourceHost(),
+		},
+		State:  in.GetState(),
+		By:     in.GetBy(),
+		Reason: in.GetReason(),
+	}
+	if in.GetRaisedAt() != nil {
+		out.RaisedAt = in.GetRaisedAt().AsTime()
+	}
+	if in.GetAnsweredAt() != nil {
+		out.AnsweredAt = in.GetAnsweredAt().AsTime()
 	}
 	return out
 }

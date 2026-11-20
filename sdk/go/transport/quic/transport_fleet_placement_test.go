@@ -42,6 +42,10 @@ func TestRequest_FleetPlacementOverHTTP3(t *testing.T) {
 			_, _ = w.Write([]byte(`{"name":"agents","withdrawn":true}`))
 		case r.URL.Path == "/api/v1/fleet/placements/agents/drift":
 			_, _ = w.Write([]byte(`{"spec":"agents","observed_work":1,"findings":[{"kind":"host_not_admitted","host":"h2","remedy":{"action":"move","destinations":["h1"]}}]}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/fleet/placement-consents":
+			_, _ = w.Write([]byte(`{"requests":[{"id":"c1","tenant_id":"t1","move":{"spec_name":"agents","work_id":"s1"},"state":"pending"}],"count":1}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/fleet/placement-consents/c1/answer":
+			_, _ = w.Write([]byte(`{"id":"c1","tenant_id":"t1","state":"granted","by":"alice"}`))
 		default:
 			_, _ = w.Write([]byte(`{"tenant_id":"t1","name":"agents","role":"agent","hosts":["h1"],"generation":1}`))
 		}
@@ -81,4 +85,19 @@ func TestRequest_FleetPlacementOverHTTP3(t *testing.T) {
 
 	assert.True(t, call("WithdrawFleetPlacementSpec", &orchestratorclient.FleetPlacementSpecRequest{TenantID: "t1", Name: "agents"}).(*orchestratorclient.WithdrawFleetPlacementSpecResponse).Withdrawn)
 	assert.Equal(t, http.MethodDelete, (<-hits).method)
+
+	consents := call("ListFleetPlacementConsents", &orchestratorclient.ListFleetPlacementConsentsRequest{TenantID: "t1", State: "pending"}).(*orchestratorclient.ListFleetPlacementConsentsResponse)
+	require.Len(t, consents.Requests, 1)
+	assert.Equal(t, "s1", consents.Requests[0].Move.WorkID)
+	got = <-hits
+	assert.Equal(t, http.MethodGet, got.method)
+	assert.Equal(t, "/api/v1/fleet/placement-consents", got.path)
+
+	answered := call("AnswerFleetPlacementConsent", &orchestratorclient.AnswerFleetPlacementConsentRequest{TenantID: "t1", ID: "c1", State: "granted"}).(*orchestratorclient.FleetPlacementConsentRequest)
+	assert.Equal(t, "alice", answered.By)
+	got = <-hits
+	assert.Equal(t, http.MethodPost, got.method)
+	assert.Equal(t, "/api/v1/fleet/placement-consents/c1/answer", got.path)
+	assert.Contains(t, got.body, `"state":"granted"`)
+	assert.NotContains(t, got.body, `"by"`)
 }

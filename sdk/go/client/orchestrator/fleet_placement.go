@@ -110,6 +110,52 @@ type WithdrawFleetPlacementSpecResponse struct {
 	Withdrawn bool   `json:"withdrawn"`
 }
 
+// FleetPlacementConsentMove is the one move a consent request asks about:
+// a piece of work of a class, under a spec generation, leaving a host.
+type FleetPlacementConsentMove struct {
+	SpecName       string `json:"spec_name"`
+	SpecGeneration uint64 `json:"spec_generation"`
+	Class          string `json:"class"`
+	WorkID         string `json:"work_id"`
+	SourceHost     string `json:"source_host"`
+}
+
+// FleetPlacementConsentRequest is a per-move consent request and its answer.
+// State is pending, granted, refused or incoherent; By is the authenticated
+// subject that answered it.
+type FleetPlacementConsentRequest struct {
+	ID         string                    `json:"id"`
+	TenantID   string                    `json:"tenant_id"`
+	Move       FleetPlacementConsentMove `json:"move"`
+	State      string                    `json:"state"`
+	By         string                    `json:"by,omitempty"`
+	Reason     string                    `json:"reason,omitempty"`
+	RaisedAt   time.Time                 `json:"raised_at"`
+	AnsweredAt time.Time                 `json:"answered_at,omitempty"`
+}
+
+// ListFleetPlacementConsentsRequest lists a tenant's consent requests,
+// optionally only those in one state.
+type ListFleetPlacementConsentsRequest struct {
+	TenantID string `json:"tenant_id,omitempty"`
+	State    string `json:"state,omitempty"`
+}
+
+// ListFleetPlacementConsentsResponse holds a tenant's consent requests.
+type ListFleetPlacementConsentsResponse struct {
+	Requests []*FleetPlacementConsentRequest `json:"requests"`
+	Count    int                             `json:"count"`
+}
+
+// AnswerFleetPlacementConsentRequest grants or refuses a pending consent
+// request. It names no answerer: the answer is the authenticated caller's.
+type AnswerFleetPlacementConsentRequest struct {
+	TenantID string `json:"tenant_id,omitempty"`
+	ID       string `json:"id"`
+	State    string `json:"state"`
+	Reason   string `json:"reason,omitempty"`
+}
+
 // DeclareFleetPlacementSpec creates or replaces a spec.
 func (c *client) DeclareFleetPlacementSpec(ctx context.Context, req *DeclareFleetPlacementSpecRequest) (*FleetPlacementSpec, error) {
 	const method = "DeclareFleetPlacementSpec"
@@ -156,6 +202,29 @@ func (c *client) GetFleetPlacementDrift(ctx context.Context, req *FleetPlacement
 		return nil, err
 	}
 	return fleetPlacementCall[FleetPlacementDrift](ctx, c, method, req)
+}
+
+// ListFleetPlacementConsents lists a tenant's per-move consent requests.
+func (c *client) ListFleetPlacementConsents(ctx context.Context, req *ListFleetPlacementConsentsRequest) (*ListFleetPlacementConsentsResponse, error) {
+	if req == nil {
+		req = &ListFleetPlacementConsentsRequest{}
+	}
+	return fleetPlacementCall[ListFleetPlacementConsentsResponse](ctx, c, "ListFleetPlacementConsents", req)
+}
+
+// AnswerFleetPlacementConsent grants or refuses a pending consent request.
+func (c *client) AnswerFleetPlacementConsent(ctx context.Context, req *AnswerFleetPlacementConsentRequest) (*FleetPlacementConsentRequest, error) {
+	const method = "AnswerFleetPlacementConsent"
+	if req == nil {
+		return nil, errors.NewInvalidInput("orchestrator."+method, "request is required")
+	}
+	if req.ID == "" {
+		return nil, errors.NewInvalidInput("orchestrator."+method, "consent request id is required")
+	}
+	if req.State != "granted" && req.State != "refused" {
+		return nil, errors.NewInvalidInput("orchestrator."+method, "state must be granted or refused")
+	}
+	return fleetPlacementCall[FleetPlacementConsentRequest](ctx, c, method, req)
 }
 
 func requireFleetPlacementName(method string, req *FleetPlacementSpecRequest) error {

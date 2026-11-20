@@ -40,6 +40,18 @@ func TestFleetPlacement_VerbsReachTheTransport(t *testing.T) {
 	if _, err := NewClient(okTransport(t, "GetFleetPlacementDrift", &FleetPlacementDrift{})).GetFleetPlacementDrift(ctx, named); err != nil {
 		t.Fatalf("Drift: %v", err)
 	}
+	if _, err := NewClient(okTransport(t, "ListFleetPlacementConsents", &ListFleetPlacementConsentsResponse{})).
+		ListFleetPlacementConsents(ctx, nil); err != nil {
+		t.Fatalf("ListConsents: %v", err)
+	}
+	if _, err := NewClient(okTransport(t, "AnswerFleetPlacementConsent", &FleetPlacementConsentRequest{})).
+		AnswerFleetPlacementConsent(ctx, &AnswerFleetPlacementConsentRequest{ID: "c1", State: "granted"}); err != nil {
+		t.Fatalf("AnswerConsent granted: %v", err)
+	}
+	if _, err := NewClient(okTransport(t, "AnswerFleetPlacementConsent", &FleetPlacementConsentRequest{})).
+		AnswerFleetPlacementConsent(ctx, &AnswerFleetPlacementConsentRequest{ID: "c1", State: "refused"}); err != nil {
+		t.Fatalf("AnswerConsent refused: %v", err)
+	}
 }
 
 func TestFleetPlacement_RefusesBeforeTheTransport(t *testing.T) {
@@ -53,8 +65,13 @@ func TestFleetPlacement_RefusesBeforeTheTransport(t *testing.T) {
 	_, cases["get no name"] = c.GetFleetPlacementSpec(ctx, &FleetPlacementSpecRequest{})
 	_, cases["withdraw nil"] = c.WithdrawFleetPlacementSpec(ctx, nil)
 	_, cases["drift no name"] = c.GetFleetPlacementDrift(ctx, &FleetPlacementSpecRequest{})
+	_, cases["answer nil"] = c.AnswerFleetPlacementConsent(ctx, nil)
+	_, cases["answer no id"] = c.AnswerFleetPlacementConsent(ctx, &AnswerFleetPlacementConsentRequest{State: "granted"})
+	_, cases["answer pending"] = c.AnswerFleetPlacementConsent(ctx, &AnswerFleetPlacementConsentRequest{ID: "c1", State: "pending"})
+	_, cases["answer maybe"] = c.AnswerFleetPlacementConsent(ctx, &AnswerFleetPlacementConsentRequest{ID: "c1", State: "maybe"})
 	var nilCtx context.Context
 	_, cases["nil context"] = c.ListFleetPlacementSpecs(nilCtx, nil)
+	_, cases["consents nil context"] = c.ListFleetPlacementConsents(nilCtx, nil)
 	for name, err := range cases {
 		if !errors.IsInvalidInput(err) {
 			t.Errorf("%s = %v, want invalid input", name, err)

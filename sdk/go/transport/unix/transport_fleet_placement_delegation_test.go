@@ -38,6 +38,10 @@ func TestTransport_FleetPlacement_Delegates(t *testing.T) {
 		"ListFleetPlacementSpecs":    &orchestratorclient.ListFleetPlacementSpecsRequest{TenantID: "t1"},
 		"WithdrawFleetPlacementSpec": named,
 		"GetFleetPlacementDrift":     named,
+		"ListFleetPlacementConsents": &orchestratorclient.ListFleetPlacementConsentsRequest{TenantID: "t1", State: "pending"},
+		"AnswerFleetPlacementConsent": &orchestratorclient.AnswerFleetPlacementConsentRequest{
+			TenantID: "t1", ID: "c1", State: "granted",
+		},
 	} {
 		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 		_, err := tr.Request(ctx, "quicbaas.Orchestrator", method, req)

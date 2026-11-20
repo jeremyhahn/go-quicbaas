@@ -307,6 +307,19 @@ service OrchestratorService {
     rpc GetFleetPlacementDrift(FleetPlacementSpecRequest) returns (FleetPlacementDrift) {
         option (qrdb.v1.permission) = "placement:read";
     }
+
+    // ListFleetPlacementConsents lists the tenant's per-move placement
+    // consent requests.
+    rpc ListFleetPlacementConsents(ListFleetPlacementConsentsRequest) returns (ListFleetPlacementConsentsResponse) {
+        option (qrdb.v1.permission) = "placement:read";
+    }
+
+    // AnswerFleetPlacementConsent grants or refuses one pending consent
+    // request as the authenticated subject. An answered request is
+    // ALREADY_EXISTS: an answer is final.
+    rpc AnswerFleetPlacementConsent(AnswerFleetPlacementConsentRequest) returns (FleetPlacementConsentRequest) {
+        option (qrdb.v1.permission) = "placement:consent";
+    }
 }
 
 // =============================================================================
@@ -2633,4 +2646,50 @@ message FleetPlacementDrift {
     int64 observed_work = 6;
     repeated string admissible_hosts = 7;
     repeated FleetPlacementFinding findings = 8;
+}
+
+// FleetPlacementConsentMove names one move that needs a person's consent:
+// the work, the host it would leave, and the spec generation that asks.
+message FleetPlacementConsentMove {
+    string spec_name = 1;
+    uint64 spec_generation = 2;
+    string class = 3;
+    string work_id = 4;
+    string source_host = 5;
+}
+
+// FleetPlacementConsentRequest is one per-move consent request. state is
+// pending, granted or refused, or incoherent for a stored request that does
+// not describe its own id. by, reason and answered_at are set by the answer.
+message FleetPlacementConsentRequest {
+    string id = 1;
+    string tenant_id = 2;
+    FleetPlacementConsentMove move = 3;
+    string state = 4;
+    string by = 5;
+    string reason = 6;
+    google.protobuf.Timestamp raised_at = 7;
+    google.protobuf.Timestamp answered_at = 8;
+}
+
+// ListFleetPlacementConsentsRequest lists the tenant's consent requests in
+// state, or all of them when state is empty.
+message ListFleetPlacementConsentsRequest {
+    string tenant_id = 1;
+    string state = 2;
+}
+
+message ListFleetPlacementConsentsResponse {
+    repeated FleetPlacementConsentRequest requests = 1;
+    int32 count = 2;
+}
+
+// AnswerFleetPlacementConsentRequest grants or refuses one pending request.
+// It names no answerer: the answer is recorded as the authenticated
+// subject's.
+message AnswerFleetPlacementConsentRequest {
+    string tenant_id = 1;
+    string id = 2;
+    string state = 3;
+    string reason = 4;
 }

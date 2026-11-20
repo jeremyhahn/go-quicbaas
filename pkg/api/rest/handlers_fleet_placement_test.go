@@ -27,6 +27,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
+	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
@@ -205,5 +207,130 @@ func TestFleetPlacementREST_UnavailableWithoutTheService(t *testing.T) {
 			w := callFleetPlacement(t, h, http.MethodPut, "/x", "x", map[string]any{"role": "agent", "hosts": []string{"h1"}})
 			assert.Equalf(t, http.StatusServiceUnavailable, w.Code, "%s %s: %s", label, name, w.Body.String())
 		}
+	}
+}
+
+// setupFleetPlacementConsentServer returns a server whose fleet placement
+// service has a consent ledger bound, and the ledger.
+func setupFleetPlacementConsentServer(t *testing.T) (*Server, orchestration.ConsentLedger) {
+	t.Helper()
+	s, _ := setupFleetPlacementServer(t)
+	ledger, err := orchestration.NewConsentLedger(orchestration.NewMemoryTaskKV())
+	require.NoError(t, err)
+	binder, ok := s.service.(*mockQuicBaaSWithFleetPlacement).fleetPlacement.(service.FleetPlacementConsentBinder)
+	require.True(t, ok)
+	binder.BindFleetPlacementConsent(ledger)
+	return s, ledger
+}
+
+func raiseFleetPlacementConsentREST(t *testing.T, ledger orchestration.ConsentLedger, workID string) *orchestration.PlacementConsentRequest {
+	t.Helper()
+	req, err := ledger.Raise(orchestration.ContextWithTenant(context.Background(), "acme"), "acme", orchestration.ConsentMove{
+		SpecName: "agents", SpecGeneration: 1, Class: "agent", WorkID: workID, SourceHost: "h1",
+	})
+	require.NoError(t, err)
+	return req
+}
+
+// callFleetPlacementConsent calls a consent handler in tenant acme as
+// subject (none when empty), with id as the {id} path parameter.
+func callFleetPlacementConsent(t *testing.T, h http.HandlerFunc, method, target, subject, id string, body any) *httptest.ResponseRecorder {
+	t.Helper()
+	raw, isRaw := body.([]byte)
+	if body != nil && !isRaw {
+		var err error
+		raw, err = json.Marshal(body)
+		require.NoError(t, err)
+	}
+	req := httptest.NewRequest(method, target, bytes.NewReader(raw))
+	ctx := tenantctx.WithTenant(req.Context(), "acme")
+	if subject != "" {
+		ctx = auth.SubjectIntoContext(ctx, interfaces.Subject{ID: subject, TenantID: "acme", Authenticated: true})
+	}
+	if id != "" {
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("id", id)
+		ctx = context.WithValue(ctx, chi.RouteCtxKey, rctx)
+	}
+	w := httptest.NewRecorder()
+	h(w, req.WithContext(ctx))
+	return w
+}
+
+func TestFleetPlacementREST_ConsentListAndAnswer(t *testing.T) {
+	s, ledger := setupFleetPlacementConsentServer(t)
+	first := raiseFleetPlacementConsentREST(t, ledger, "s1")
+	raiseFleetPlacementConsentREST(t, ledger, "s2")
+
+	w := callFleetPlacementConsent(t, s.HandleListFleetPlacementConsents, http.MethodGet, "/x?state=pending", "alice", "", nil)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var listed ListFleetPlacementConsentsRESTResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &listed))
+	assert.Equal(t, 2, listed.Count)
+	require.Len(t, listed.Requests, 2)
+
+	w = callFleetPlacementConsent(t, s.HandleAnswerFleetPlacementConsent, http.MethodPost, "/x?tenant_id=acme", "alice", first.ID,
+		map[string]any{"state": "granted", "reason": "window", "by": "mallory"})
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var answered orchestration.PlacementConsentRequest
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &answered))
+	assert.Equal(t, orchestration.ConsentGranted, answered.State)
+	assert.Equal(t, "alice", answered.By, "the answer is the subject's, never the body's")
+	assert.Equal(t, "window", answered.Reason)
+
+	w = callFleetPlacementConsent(t, s.HandleListFleetPlacementConsents, http.MethodGet, "/x?state=granted&tenant_id=acme", "alice", "", nil)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &listed))
+	require.Equal(t, 1, listed.Count)
+	assert.Equal(t, first.ID, listed.Requests[0].ID)
+	assert.Equal(t, "alice", listed.Requests[0].By)
+
+	w = callFleetPlacementConsent(t, s.HandleListFleetPlacementConsents, http.MethodGet, "/x?state=refused", "alice", "", nil)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.JSONEq(t, `{"requests":[],"count":0}`, w.Body.String())
+}
+
+func TestFleetPlacementREST_ConsentErrors(t *testing.T) {
+	s, ledger := setupFleetPlacementConsentServer(t)
+	req := raiseFleetPlacementConsentREST(t, ledger, "s1")
+	grant := map[string]any{"state": "granted"}
+
+	cases := []struct {
+		name    string
+		h       http.HandlerFunc
+		method  string
+		target  string
+		subject string
+		id      string
+		body    any
+		want    int
+	}{
+		{"list bogus state", s.HandleListFleetPlacementConsents, http.MethodGet, "/x?state=bogus", "alice", "", nil, http.StatusBadRequest},
+		{"answer maybe", s.HandleAnswerFleetPlacementConsent, http.MethodPost, "/x", "alice", req.ID, map[string]any{"state": "maybe"}, http.StatusBadRequest},
+		{"answer with no subject", s.HandleAnswerFleetPlacementConsent, http.MethodPost, "/x", "", req.ID, grant, http.StatusForbidden},
+		{"answer in another tenant", s.HandleAnswerFleetPlacementConsent, http.MethodPost, "/x?tenant_id=other", "alice", req.ID, grant, http.StatusForbidden},
+		{"list in another tenant", s.HandleListFleetPlacementConsents, http.MethodGet, "/x?tenant_id=other", "alice", "", nil, http.StatusForbidden},
+		{"answer unknown", s.HandleAnswerFleetPlacementConsent, http.MethodPost, "/x", "alice", "unknown", grant, http.StatusNotFound},
+		{"answer", s.HandleAnswerFleetPlacementConsent, http.MethodPost, "/x", "alice", req.ID, grant, http.StatusOK},
+		{"second answer", s.HandleAnswerFleetPlacementConsent, http.MethodPost, "/x", "alice", req.ID, map[string]any{"state": "refused"}, http.StatusConflict},
+	}
+	for _, tc := range cases {
+		w := callFleetPlacementConsent(t, tc.h, tc.method, tc.target, tc.subject, tc.id, tc.body)
+		assert.Equalf(t, tc.want, w.Code, "%s: %s", tc.name, w.Body.String())
+	}
+
+	// A non-JSON body is a bad request.
+	w := callFleetPlacementConsent(t, s.HandleAnswerFleetPlacementConsent, http.MethodPost, "/x", "alice", req.ID, []byte("{"))
+	assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+
+	noProvider, _, cleanup := setupMockServer(t)
+	t.Cleanup(cleanup)
+	noProvider.service = testutil.NewMockQuicBaaS()
+	unbound, _ := setupFleetPlacementServer(t)
+	for label, srv := range map[string]*Server{"no provider": noProvider, "no ledger": unbound} {
+		w := callFleetPlacementConsent(t, srv.HandleListFleetPlacementConsents, http.MethodGet, "/x", "alice", "", nil)
+		assert.Equalf(t, http.StatusServiceUnavailable, w.Code, "%s list: %s", label, w.Body.String())
+		w = callFleetPlacementConsent(t, srv.HandleAnswerFleetPlacementConsent, http.MethodPost, "/x", "alice", "x", grant)
+		assert.Equalf(t, http.StatusServiceUnavailable, w.Code, "%s answer: %s", label, w.Body.String())
 	}
 }

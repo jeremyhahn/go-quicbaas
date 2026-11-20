@@ -19,6 +19,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
+	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	orchestratorSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/orchestrator"
@@ -69,7 +71,18 @@ func newFleetPlacementClient(t *testing.T) orchestratorSDK.Client {
 	if err != nil {
 		t.Fatalf("NewDriftReporter: %v", err)
 	}
-	tr, err := New(&fleetPlacementMock{mockQuicBaaS: &mockQuicBaaS{}, fleetPlacement: service.NewFleetPlacementService(specs, drift)})
+	fp := service.NewFleetPlacementService(specs, drift)
+	ledger, err := orchestration.NewConsentLedger(orchestration.NewMemoryTaskKV())
+	if err != nil {
+		t.Fatalf("NewConsentLedger: %v", err)
+	}
+	fp.(service.FleetPlacementConsentBinder).BindFleetPlacementConsent(ledger)
+	if _, err := ledger.Raise(orchestration.ContextWithTenant(ctx, "acme"), "acme", orchestration.ConsentMove{
+		SpecName: "agents", SpecGeneration: 1, Class: "agent", WorkID: "s1", SourceHost: "h2",
+	}); err != nil {
+		t.Fatalf("Raise: %v", err)
+	}
+	tr, err := New(&fleetPlacementMock{mockQuicBaaS: &mockQuicBaaS{}, fleetPlacement: fp})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -127,6 +140,50 @@ func TestEmbeddedFleetPlacement_UnavailableWithoutTheService(t *testing.T) {
 	if _, err := client.ListFleetPlacementSpecs(acme, nil); err == nil {
 		t.Fatal("ListFleetPlacementSpecs without the service succeeded")
 	}
+	if _, err := client.ListFleetPlacementConsents(acme, nil); err == nil {
+		t.Fatal("ListFleetPlacementConsents without the service succeeded")
+	}
+	if _, err := client.AnswerFleetPlacementConsent(acme, &orchestratorSDK.AnswerFleetPlacementConsentRequest{ID: "c1", State: "granted"}); err == nil {
+		t.Fatal("AnswerFleetPlacementConsent without the service succeeded")
+	}
+}
+
+func TestEmbeddedFleetPlacement_ConsentListAndAnswer(t *testing.T) {
+	client := newFleetPlacementClient(t)
+	acme := transport.ContextWithTenant(context.Background(), "acme")
+
+	pending, err := client.ListFleetPlacementConsents(acme, &orchestratorSDK.ListFleetPlacementConsentsRequest{State: "pending"})
+	if err != nil || pending.Count != 1 || len(pending.Requests) != 1 {
+		t.Fatalf("ListFleetPlacementConsents = %+v, %v, want the one pending request", pending, err)
+	}
+	raised := pending.Requests[0]
+	if raised.TenantID != "acme" || raised.Move.WorkID != "s1" || raised.Move.SourceHost != "h2" || raised.RaisedAt.IsZero() {
+		t.Fatalf("raised = %+v", raised)
+	}
+	if _, err := client.AnswerFleetPlacementConsent(acme, &orchestratorSDK.AnswerFleetPlacementConsentRequest{
+		ID: raised.ID, State: "granted",
+	}); err == nil {
+		t.Fatal("an answer with no subject succeeded")
+	}
+	alice := auth.SubjectIntoContext(acme, interfaces.Subject{ID: "alice", TenantID: "acme", Authenticated: true})
+	answered, err := client.AnswerFleetPlacementConsent(alice, &orchestratorSDK.AnswerFleetPlacementConsentRequest{
+		ID: raised.ID, State: "granted", Reason: "fine",
+	})
+	if err != nil {
+		t.Fatalf("AnswerFleetPlacementConsent: %v", err)
+	}
+	if answered.By != "alice" || answered.State != "granted" || answered.Reason != "fine" || answered.AnsweredAt.IsZero() {
+		t.Fatalf("answered = %+v, want granted by alice", answered)
+	}
+	if _, err := client.AnswerFleetPlacementConsent(alice, &orchestratorSDK.AnswerFleetPlacementConsentRequest{
+		ID: raised.ID, State: "refused",
+	}); err == nil {
+		t.Fatal("a second answer succeeded")
+	}
+	empty, err := client.ListFleetPlacementConsents(acme, &orchestratorSDK.ListFleetPlacementConsentsRequest{State: "pending"})
+	if err != nil || empty.Count != 0 || empty.Requests == nil {
+		t.Fatalf("pending after answer = %+v, %v, want an empty non-nil list", empty, err)
+	}
 }
 
 // The SDK and server types share their JSON form: a fully populated server
@@ -169,5 +226,24 @@ func TestEmbeddedFleetPlacement_TypesRoundTrip(t *testing.T) {
 	}
 	if !reflect.DeepEqual(report, backReport) {
 		t.Fatalf("report round trip:\n got %+v\nwant %+v", backReport, report)
+	}
+
+	consent := &orchestration.PlacementConsentRequest{
+		ID: "c1", TenantID: "acme",
+		Move:  orchestration.ConsentMove{SpecName: "n", SpecGeneration: 7, Class: "r", WorkID: "s1", SourceHost: "h2"},
+		State: orchestration.ConsentRefused, By: "alice", Reason: "not now",
+		RaisedAt:   time.Date(2026, 11, 14, 0, 0, 0, 0, time.UTC),
+		AnsweredAt: time.Date(2026, 11, 15, 0, 0, 0, 0, time.UTC),
+	}
+	sdkConsent, err := convertFleetPlacement[orchestratorSDK.FleetPlacementConsentRequest](consent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backConsent, err := convertFleetPlacement[orchestration.PlacementConsentRequest](sdkConsent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(consent, backConsent) {
+		t.Fatalf("consent round trip:\n got %+v\nwant %+v", backConsent, consent)
 	}
 }

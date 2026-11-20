@@ -93,11 +93,13 @@ var orchestratorMethodTools = map[string]string{
 	"SetCostSettings": "quicbaas_orchestrator_cost_settings_set",
 
 	// Fleet placement specs (go-quicbaas#1681).
-	"DeclareFleetPlacementSpec":  "quicbaas_fleet_placement_declare",
-	"GetFleetPlacementSpec":      "quicbaas_fleet_placement_get",
-	"ListFleetPlacementSpecs":    "quicbaas_fleet_placement_list",
-	"WithdrawFleetPlacementSpec": "quicbaas_fleet_placement_withdraw",
-	"GetFleetPlacementDrift":     "quicbaas_fleet_placement_drift",
+	"DeclareFleetPlacementSpec":   "quicbaas_fleet_placement_declare",
+	"GetFleetPlacementSpec":       "quicbaas_fleet_placement_get",
+	"ListFleetPlacementSpecs":     "quicbaas_fleet_placement_list",
+	"WithdrawFleetPlacementSpec":  "quicbaas_fleet_placement_withdraw",
+	"GetFleetPlacementDrift":      "quicbaas_fleet_placement_drift",
+	"ListFleetPlacementConsents":  "quicbaas_fleet_placement_consent_list",
+	"AnswerFleetPlacementConsent": "quicbaas_fleet_placement_consent_answer",
 
 	// The heartbeat tool is named after the fleet, not the RPC.
 	"FleetNodeHeartbeat": "quicbaas_fleet_heartbeat",
@@ -141,11 +143,13 @@ var orchestratorMCPTransforms = map[string]orchestratorMCPTransform{
 	"GetCostSettings": decodeMCPCostSettings,
 	"SetCostSettings": decodeMCPCostSettings,
 
-	"DeclareFleetPlacementSpec":  decodeMCPPlacement[orchestrator.FleetPlacementSpec],
-	"GetFleetPlacementSpec":      decodeMCPPlacement[orchestrator.FleetPlacementSpec],
-	"ListFleetPlacementSpecs":    decodeMCPPlacement[orchestrator.ListFleetPlacementSpecsResponse],
-	"WithdrawFleetPlacementSpec": decodeMCPPlacement[orchestrator.WithdrawFleetPlacementSpecResponse],
-	"GetFleetPlacementDrift":     decodeMCPPlacement[orchestrator.FleetPlacementDrift],
+	"DeclareFleetPlacementSpec":   decodeMCPPlacement[orchestrator.FleetPlacementSpec],
+	"GetFleetPlacementSpec":       decodeMCPPlacement[orchestrator.FleetPlacementSpec],
+	"ListFleetPlacementSpecs":     decodeMCPPlacement[orchestrator.ListFleetPlacementSpecsResponse],
+	"WithdrawFleetPlacementSpec":  decodeMCPPlacement[orchestrator.WithdrawFleetPlacementSpecResponse],
+	"GetFleetPlacementDrift":      decodeMCPPlacement[orchestrator.FleetPlacementDrift],
+	"ListFleetPlacementConsents":  decodeMCPPlacement[orchestrator.ListFleetPlacementConsentsResponse],
+	"AnswerFleetPlacementConsent": decodeMCPPlacement[orchestrator.FleetPlacementConsentRequest],
 
 	"FleetNodeHeartbeat": decodeMCPFleetNodeHeartbeat,
 	"GetFleetNode":       decodeMCPGetFleetNode,

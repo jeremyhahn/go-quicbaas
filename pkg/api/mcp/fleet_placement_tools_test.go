@@ -19,7 +19,9 @@ import (
 	"context"
 	"testing"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -69,8 +71,41 @@ func newFleetPlacementRegistry(t *testing.T) *ToolRegistry {
 	if err != nil {
 		t.Fatalf("NewDriftReporter: %v", err)
 	}
+	svc := service.NewFleetPlacementService(specs, drift)
+	ledger, err := orchestration.NewConsentLedger(orchestration.NewMemoryTaskKV())
+	if err != nil {
+		t.Fatalf("NewConsentLedger: %v", err)
+	}
+	svc.(service.FleetPlacementConsentBinder).BindFleetPlacementConsent(ledger)
+	if _, err := ledger.Raise(orchestration.ContextWithTenant(ctx, "acme"), "acme", orchestration.ConsentMove{
+		SpecName: "agents", SpecGeneration: 1, Class: "agent", WorkID: "s1", SourceHost: "h2",
+	}); err != nil {
+		t.Fatalf("Raise: %v", err)
+	}
 	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	return NewToolRegistry(&fleetPlacementMockQuicBaaS{svc: service.NewFleetPlacementService(specs, drift)}, log)
+	return NewToolRegistry(&fleetPlacementMockQuicBaaS{svc: svc}, log)
+}
+
+// fleetPlacementConsentID returns the one pending consent request the
+// registry was built with.
+func fleetPlacementConsentID(t *testing.T, reg *ToolRegistry) string {
+	t.Helper()
+	out, err := reg.executeFleetPlacementTool(tenantctx.WithTenant(context.Background(), "acme"),
+		"quicbaas_fleet_placement_consent_list", map[string]interface{}{"state": "pending"})
+	if err != nil {
+		t.Fatalf("consent list: %v", err)
+	}
+	listed := out.(map[string]interface{})
+	requests := listed["requests"].([]*orchestration.PlacementConsentRequest)
+	if listed["count"] != 1 || len(requests) != 1 {
+		t.Fatalf("consent list = %v, want the one pending request", listed)
+	}
+	return requests[0].ID
+}
+
+// asAlice returns the acme context carrying the authenticated subject alice.
+func asAlice(ctx context.Context) context.Context {
+	return auth.SubjectIntoContext(ctx, interfaces.Subject{ID: "alice", TenantID: "acme", Authenticated: true})
 }
 
 func TestFleetPlacementTools(t *testing.T) {
@@ -116,6 +151,22 @@ func TestFleetPlacementTools(t *testing.T) {
 	if _, err = call("quicbaas_fleet_placement_get", map[string]interface{}{"name": "agents"}); !dberrors.IsNotFound(err) {
 		t.Fatalf("get after withdraw = %v, want not found", err)
 	}
+
+	id := fleetPlacementConsentID(t, reg)
+	out, err = reg.executeFleetPlacementTool(asAlice(acme), "quicbaas_fleet_placement_consent_answer", map[string]interface{}{
+		"id": id, "state": "granted", "reason": "fine", "by": "mallory",
+	})
+	if err != nil {
+		t.Fatalf("consent answer: %v", err)
+	}
+	if answered := out.(*orchestration.PlacementConsentRequest); answered.ID != id || answered.By != "alice" ||
+		answered.State != orchestration.ConsentGranted || answered.Reason != "fine" {
+		t.Fatalf("consent answer = %+v, want granted by alice", answered)
+	}
+	if out, err = call("quicbaas_fleet_placement_consent_list", map[string]interface{}{"state": "pending"}); err != nil ||
+		out.(map[string]interface{})["count"] != 0 {
+		t.Fatalf("pending after answer = %v, %v, want none", out, err)
+	}
 }
 
 func TestFleetPlacementToolsRefuse(t *testing.T) {
@@ -143,6 +194,32 @@ func TestFleetPlacementToolsRefuse(t *testing.T) {
 		}
 	}
 
+	id := fleetPlacementConsentID(t, reg)
+	alice := asAlice(acme)
+	answer := "quicbaas_fleet_placement_consent_answer"
+	consentCases := []struct {
+		name string
+		ctx  context.Context
+		tool string
+		args map[string]interface{}
+	}{
+		{"answer with an invalid state", alice, answer, map[string]interface{}{"id": id, "state": "maybe"}},
+		{"answer an unknown request", alice, answer, map[string]interface{}{"id": "absent", "state": "granted"}},
+		{"answer with no subject", acme, answer, map[string]interface{}{"id": id, "state": "granted"}},
+		{"consents of another tenant", alice, "quicbaas_fleet_placement_consent_list", map[string]interface{}{"tenant_id": "other"}},
+	}
+	for _, tc := range consentCases {
+		if _, err := reg.executeFleetPlacementTool(tc.ctx, tc.tool, tc.args); err == nil {
+			t.Errorf("%s: want an error", tc.name)
+		}
+	}
+	if _, err := reg.executeFleetPlacementTool(alice, answer, map[string]interface{}{"id": id, "state": "refused"}); err != nil {
+		t.Fatalf("first answer: %v", err)
+	}
+	if _, err := reg.executeFleetPlacementTool(alice, answer, map[string]interface{}{"id": id, "state": "granted"}); err == nil {
+		t.Error("second answer: want an error")
+	}
+
 	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
 	bare := NewToolRegistry(&mockService{}, log)
 	if _, err := bare.executeFleetPlacementTool(acme, "quicbaas_fleet_placement_list", nil); err == nil {
@@ -157,9 +234,19 @@ func TestFleetPlacementToolsListedAndAuthorized(t *testing.T) {
 		listed[tool.Name] = true
 	}
 	for _, name := range []string{"quicbaas_fleet_placement_declare", "quicbaas_fleet_placement_get",
-		"quicbaas_fleet_placement_list", "quicbaas_fleet_placement_withdraw", "quicbaas_fleet_placement_drift"} {
+		"quicbaas_fleet_placement_list", "quicbaas_fleet_placement_withdraw", "quicbaas_fleet_placement_drift",
+		"quicbaas_fleet_placement_consent_list", "quicbaas_fleet_placement_consent_answer"} {
 		if !listed[name] || !isFleetPlacementTool(name) {
 			t.Errorf("%s: listed %v, dispatched %v", name, listed[name], isFleetPlacementTool(name))
+		}
+	}
+	for name, want := range map[string][2]string{
+		"quicbaas_fleet_placement_consent_list":   {"placement", "read"},
+		"quicbaas_fleet_placement_consent_answer": {"placement", "consent"},
+	} {
+		resource, action, ok := getToolQRDBPermission(name)
+		if !ok || resource != want[0] || action != want[1] {
+			t.Errorf("%s: permission %s:%s (mapped %v), want %s:%s", name, resource, action, ok, want[0], want[1])
 		}
 	}
 }

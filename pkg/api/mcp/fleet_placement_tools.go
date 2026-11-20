@@ -60,12 +60,35 @@ func (r *ToolRegistry) registerFleetPlacementTools() {
 		Description: "Report a placement spec's role work against the hosts it admits. Read-only: drift is never acted on.",
 		InputSchema: named(nil),
 	})
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_fleet_placement_consent_list",
+		Description: "List a tenant's per-move placement consent requests, optionally in one state (pending, granted, refused, incoherent).",
+		InputSchema: map[string]interface{}{"type": "object", "properties": map[string]interface{}{
+			"tenant_id": map[string]interface{}{"type": "string", "description": "Tenant; empty is the caller's"},
+			"state":     map[string]interface{}{"type": "string", "description": "pending, granted, refused or incoherent; empty is every state"},
+		}},
+	})
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_fleet_placement_consent_answer",
+		Description: "Grant or refuse a pending placement consent request. The answer is recorded as the authenticated caller's.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{"type": "string", "description": "Tenant; empty is the caller's"},
+				"id":        map[string]interface{}{"type": "string", "description": "Consent request id"},
+				"state":     map[string]interface{}{"type": "string", "description": "granted or refused"},
+				"reason":    map[string]interface{}{"type": "string", "description": "Why, for the record"},
+			},
+			"required": []string{"id", "state"},
+		},
+	})
 }
 
 func isFleetPlacementTool(name string) bool {
 	switch name {
 	case "quicbaas_fleet_placement_declare", "quicbaas_fleet_placement_get", "quicbaas_fleet_placement_list",
-		"quicbaas_fleet_placement_withdraw", "quicbaas_fleet_placement_drift":
+		"quicbaas_fleet_placement_withdraw", "quicbaas_fleet_placement_drift",
+		"quicbaas_fleet_placement_consent_list", "quicbaas_fleet_placement_consent_answer":
 		return true
 	}
 	return false
@@ -100,6 +123,17 @@ func (r *ToolRegistry) executeFleetPlacementTool(ctx context.Context, name strin
 		return map[string]interface{}{"name": spec, "withdrawn": true}, nil
 	case "quicbaas_fleet_placement_drift":
 		return svc.GetPlacementDrift(ctx, tenant, spec)
+	case "quicbaas_fleet_placement_consent_list":
+		requests, err := svc.ListConsentRequests(ctx, tenant, orchestration.ConsentState(getString(args, "state")))
+		if err != nil {
+			return nil, err
+		}
+		return map[string]interface{}{"requests": requests, "count": len(requests)}, nil
+	case "quicbaas_fleet_placement_consent_answer":
+		return svc.AnswerConsent(ctx, tenant, getString(args, "id"), orchestration.ConsentAnswer{
+			State:  orchestration.ConsentState(getString(args, "state")),
+			Reason: getString(args, "reason"),
+		})
 	}
 	return nil, api.NewUnknownToolError(name)
 }

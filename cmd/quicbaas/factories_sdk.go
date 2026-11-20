@@ -856,6 +856,14 @@ func (c *sdkOrchestratorClient) GetFleetPlacementDrift(ctx context.Context, req 
 	return c.sdk.Orchestrator().GetFleetPlacementDrift(ctx, req)
 }
 
+func (c *sdkOrchestratorClient) ListFleetPlacementConsents(ctx context.Context, req *orchestratorSDK.ListFleetPlacementConsentsRequest) (*orchestratorSDK.ListFleetPlacementConsentsResponse, error) {
+	return c.sdk.Orchestrator().ListFleetPlacementConsents(ctx, req)
+}
+
+func (c *sdkOrchestratorClient) AnswerFleetPlacementConsent(ctx context.Context, req *orchestratorSDK.AnswerFleetPlacementConsentRequest) (*orchestratorSDK.FleetPlacementConsentRequest, error) {
+	return c.sdk.Orchestrator().AnswerFleetPlacementConsent(ctx, req)
+}
+
 func (c *sdkOrchestratorClient) GetCostSettings(ctx context.Context, req *orchestratorSDK.GetCostSettingsRequest) (*orchestratorSDK.CostSettings, error) {
 	return c.sdk.Orchestrator().GetCostSettings(ctx, req)
 }

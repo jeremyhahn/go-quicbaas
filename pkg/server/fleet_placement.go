@@ -60,6 +60,13 @@ func bindFleetPlacement(svc any, kv interfaces.KVStore, registry orchestration.F
 	if err != nil {
 		return err
 	}
+	consents, err := orchestration.NewConsentLedger(kv)
+	if err != nil {
+		return err
+	}
 	binder.BindFleetPlacement(specs, drift)
+	if consentBinder, ok := provider.FleetPlacement().(service.FleetPlacementConsentBinder); ok {
+		consentBinder.BindFleetPlacementConsent(consents)
+	}
 	return nil
 }

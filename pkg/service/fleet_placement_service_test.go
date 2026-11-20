@@ -16,9 +16,12 @@ package service
 import (
 	"context"
 	stderrors "errors"
+	"sort"
 	"testing"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
@@ -200,6 +203,20 @@ func TestFleetPlacementService_ClassifiesFailures(t *testing.T) {
 	}
 	_, err = svc.GetPlacementDrift(acme, "", "reviews")
 	wantFleetPlacementCode(t, "drift over unnameable work", err, errors.ErrPreconditionFailed)
+
+	for _, tc := range []struct {
+		name string
+		err  error
+		want errors.ErrorCode
+	}{
+		{"consent invalid", &orchestration.ConsentInvalidError{Field: "state", Reason: "is not an answer"}, errors.ErrInvalidInput},
+		{"consent not found", &orchestration.ConsentNotFoundError{TenantID: "acme", RequestID: "r"}, errors.ErrNotFound},
+		{"consent not pending", &orchestration.ConsentNotPendingError{TenantID: "acme", RequestID: "r", State: orchestration.ConsentGranted}, errors.ErrConflict},
+		{"consent stale", &orchestration.ConsentStaleError{TenantID: "acme", RequestID: "r"}, errors.ErrConflict},
+		{"consent incoherent", &orchestration.ConsentIncoherentError{TenantID: "acme", RequestID: "r"}, errors.ErrPreconditionFailed},
+	} {
+		wantFleetPlacementCode(t, tc.name, classifyFleetPlacementError("AnswerConsent", tc.err), tc.want)
+	}
 }
 
 // A service the server has not bound answers unavailable, never an empty
@@ -220,5 +237,143 @@ func TestFleetPlacementService_UnboundIsUnavailable(t *testing.T) {
 	provider, ok := any(&quicBaaS{fleetPlacementService: svc}).(FleetPlacementProvider)
 	if !ok || provider.FleetPlacement() != svc {
 		t.Fatal("quicBaaS does not provide its fleet placement service")
+	}
+}
+
+// newConsentFleetPlacement returns a bound fleet placement service whose
+// consent ledger is bound too, and the ledger itself, so a test raises
+// requests the way the actuator will.
+func newConsentFleetPlacement(t *testing.T) (FleetPlacementService, orchestration.ConsentLedger) {
+	t.Helper()
+	svc, _ := newBoundFleetPlacement(t)
+	ledger, err := orchestration.NewConsentLedger(orchestration.NewMemoryTaskKV())
+	if err != nil {
+		t.Fatalf("NewConsentLedger: %v", err)
+	}
+	binder, ok := svc.(FleetPlacementConsentBinder)
+	if !ok {
+		t.Fatal("the fleet placement service does not bind a consent ledger")
+	}
+	binder.BindFleetPlacementConsent(ledger)
+	return svc, ledger
+}
+
+func raiseFleetPlacementConsent(t *testing.T, ledger orchestration.ConsentLedger, workID string) *orchestration.PlacementConsentRequest {
+	t.Helper()
+	ctx := orchestration.ContextWithTenant(context.Background(), "acme")
+	req, err := ledger.Raise(ctx, "acme", orchestration.ConsentMove{
+		SpecName: "reviews", SpecGeneration: 1, Class: "review", WorkID: workID, SourceHost: "h1",
+	})
+	if err != nil {
+		t.Fatalf("Raise(%s): %v", workID, err)
+	}
+	return req
+}
+
+func fleetPlacementConsentSubject(id string, authenticated bool) context.Context {
+	ctx := tenantctx.WithTenant(context.Background(), "acme")
+	return auth.SubjectIntoContext(ctx, interfaces.Subject{ID: id, TenantID: "acme", Authenticated: authenticated})
+}
+
+func TestFleetPlacementService_ConsentListAndAnswer(t *testing.T) {
+	t.Parallel()
+	svc, ledger := newConsentFleetPlacement(t)
+	first := raiseFleetPlacementConsent(t, ledger, "s1")
+	second := raiseFleetPlacementConsent(t, ledger, "s2")
+	ids := []string{first.ID, second.ID}
+	sort.Strings(ids)
+	alice := fleetPlacementConsentSubject("alice", true)
+
+	pending, err := svc.ListConsentRequests(alice, "", orchestration.ConsentPending)
+	if err != nil {
+		t.Fatalf("ListConsentRequests(pending): %v", err)
+	}
+	if len(pending) != 2 || pending[0].ID != ids[0] || pending[1].ID != ids[1] {
+		t.Fatalf("pending = %v, want %v in id order", pending, ids)
+	}
+	for _, req := range pending {
+		if req.State != orchestration.ConsentPending {
+			t.Fatalf("request %s state = %s, want pending", req.ID, req.State)
+		}
+	}
+
+	answered, err := svc.AnswerConsent(alice, "acme", first.ID, orchestration.ConsentAnswer{
+		State: orchestration.ConsentGranted, By: "mallory", Reason: "maintenance window",
+	})
+	if err != nil {
+		t.Fatalf("AnswerConsent: %v", err)
+	}
+	if answered.State != orchestration.ConsentGranted || answered.By != "alice" || answered.Reason != "maintenance window" {
+		t.Fatalf("answered = %+v, want granted by alice", answered)
+	}
+	stored, err := ledger.Get(orchestration.ContextWithTenant(context.Background(), "acme"), "acme", first.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if stored.By != "alice" {
+		t.Fatalf("stored By = %q, want alice (never the body's)", stored.By)
+	}
+
+	granted, err := svc.ListConsentRequests(alice, "", orchestration.ConsentGranted)
+	if err != nil || len(granted) != 1 || granted[0].ID != first.ID {
+		t.Fatalf("granted = %v, %v; want only %s", granted, err, first.ID)
+	}
+	pending, err = svc.ListConsentRequests(alice, "", orchestration.ConsentPending)
+	if err != nil || len(pending) != 1 || pending[0].ID != second.ID {
+		t.Fatalf("pending = %v, %v; want only %s", pending, err, second.ID)
+	}
+	all, err := svc.ListConsentRequests(alice, "", "")
+	if err != nil || len(all) != 2 {
+		t.Fatalf("all = %v, %v; want both", all, err)
+	}
+	refused, err := svc.ListConsentRequests(alice, "", orchestration.ConsentRefused)
+	if err != nil || refused == nil || len(refused) != 0 {
+		t.Fatalf("refused = %#v, %v; want an empty, non-nil slice", refused, err)
+	}
+}
+
+func TestFleetPlacementService_ConsentRefuses(t *testing.T) {
+	t.Parallel()
+	svc, ledger := newConsentFleetPlacement(t)
+	req := raiseFleetPlacementConsent(t, ledger, "s1")
+	grant := orchestration.ConsentAnswer{State: orchestration.ConsentGranted}
+	alice := fleetPlacementConsentSubject("alice", true)
+
+	_, err := svc.AnswerConsent(tenantctx.WithTenant(context.Background(), "acme"), "", req.ID, grant)
+	wantFleetPlacementCode(t, "answer with no subject", err, errors.ErrForbidden)
+	_, err = svc.AnswerConsent(fleetPlacementConsentSubject("eve", false), "", req.ID, grant)
+	wantFleetPlacementCode(t, "answer by an unauthenticated subject", err, errors.ErrForbidden)
+	stored, err := ledger.Get(orchestration.ContextWithTenant(context.Background(), "acme"), "acme", req.ID)
+	if err != nil || stored.State != orchestration.ConsentPending {
+		t.Fatalf("after refused answers = %+v, %v; want pending", stored, err)
+	}
+
+	_, err = svc.AnswerConsent(alice, "globex", req.ID, grant)
+	wantFleetPlacementCode(t, "answer in another tenant", err, errors.ErrForbidden)
+	_, err = svc.ListConsentRequests(alice, "globex", "")
+	wantFleetPlacementCode(t, "list in another tenant", err, errors.ErrForbidden)
+	_, err = svc.AnswerConsent(alice, "", "unknown", grant)
+	wantFleetPlacementCode(t, "answer unknown", err, errors.ErrNotFound)
+	_, err = svc.AnswerConsent(alice, "", req.ID, orchestration.ConsentAnswer{State: "maybe"})
+	wantFleetPlacementCode(t, "answer maybe", err, errors.ErrInvalidInput)
+	_, err = svc.ListConsentRequests(alice, "", "bogus")
+	wantFleetPlacementCode(t, "list bogus", err, errors.ErrInvalidInput)
+
+	if _, err := svc.AnswerConsent(alice, "", req.ID, grant); err != nil {
+		t.Fatalf("AnswerConsent: %v", err)
+	}
+	_, err = svc.AnswerConsent(alice, "", req.ID, orchestration.ConsentAnswer{State: orchestration.ConsentRefused})
+	wantFleetPlacementCode(t, "second answer", err, errors.ErrConflict)
+
+	unbound, _ := newBoundFleetPlacement(t)
+	_, err = unbound.ListConsentRequests(alice, "", "")
+	wantFleetPlacementCode(t, "list on an unbound ledger", err, errors.ErrUnavailable)
+	if !stderrors.Is(err, ErrFleetPlacementConsentUnbound) {
+		t.Fatalf("list on an unbound ledger = %v, want ErrFleetPlacementConsentUnbound", err)
+	}
+	_, err = unbound.AnswerConsent(alice, "", req.ID, grant)
+	wantFleetPlacementCode(t, "answer on an unbound ledger", err, errors.ErrUnavailable)
+	if _, err := unbound.ListPlacementSpecs(alice, ""); err != nil {
+		t.Fatalf("ListPlacementSpecs with no ledger bound: %v", err)
 	}
 }

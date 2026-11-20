@@ -258,6 +258,10 @@ type Client interface {
 	// GetFleetPlacementDrift reports where a spec's role work runs against
 	// the hosts the spec admits. Read-only.
 	GetFleetPlacementDrift(ctx context.Context, req *FleetPlacementSpecRequest) (*FleetPlacementDrift, error)
+	// ListFleetPlacementConsents lists a tenant's per-move consent requests.
+	ListFleetPlacementConsents(ctx context.Context, req *ListFleetPlacementConsentsRequest) (*ListFleetPlacementConsentsResponse, error)
+	// AnswerFleetPlacementConsent grants or refuses a pending consent request.
+	AnswerFleetPlacementConsent(ctx context.Context, req *AnswerFleetPlacementConsentRequest) (*FleetPlacementConsentRequest, error)
 }
 
 // GetSessionHistoryRequest pages through historical session events.

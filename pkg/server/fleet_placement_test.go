@@ -70,6 +70,9 @@ func TestBindFleetPlacement(t *testing.T) {
 	if _, err := svc.ListPlacementSpecs(acme, ""); !stderrors.Is(err, service.ErrFleetPlacementUnbound) {
 		t.Fatalf("list before bind = %v, want ErrFleetPlacementUnbound", err)
 	}
+	if _, err := svc.ListConsentRequests(acme, "", ""); !stderrors.Is(err, service.ErrFleetPlacementConsentUnbound) {
+		t.Fatalf("consent list before bind = %v, want ErrFleetPlacementConsentUnbound", err)
+	}
 	if err := bindFleetPlacement(fleetPlacementFacade{svc}, orchestration.NewMemoryTaskKV(), registry, sessions); err != nil {
 		t.Fatalf("bindFleetPlacement: %v", err)
 	}
@@ -82,5 +85,12 @@ func TestBindFleetPlacement(t *testing.T) {
 	}
 	if report.ObservedWork != 2 || len(report.Findings) != 1 || report.Findings[0].WorkID != "s2" {
 		t.Fatalf("report = %+v, want two sessions observed and s2 off the admitted hosts", report)
+	}
+	consents, err := svc.ListConsentRequests(acme, "", "")
+	if err != nil {
+		t.Fatalf("ListConsentRequests after bind: %v", err)
+	}
+	if consents == nil || len(consents) != 0 {
+		t.Fatalf("consents = %#v, want an empty list", consents)
 	}
 }

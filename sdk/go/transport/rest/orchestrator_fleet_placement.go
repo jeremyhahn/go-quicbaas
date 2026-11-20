@@ -97,3 +97,49 @@ func (h *orchestratorHandler) handleGetFleetPlacementDrift(ctx context.Context, 
 	}
 	return &resp, nil
 }
+
+func (h *orchestratorHandler) handleListFleetPlacementConsents(ctx context.Context, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.ListFleetPlacementConsentsRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("orchestrator.ListFleetPlacementConsents", "invalid request type")
+	}
+	path := "/api/v1/fleet/placement-consents"
+	query := neturl.Values{}
+	if sdkReq.TenantID != "" {
+		query.Set("tenant_id", sdkReq.TenantID)
+	}
+	if sdkReq.State != "" {
+		query.Set("state", sdkReq.State)
+	}
+	if len(query) > 0 {
+		path += "?" + query.Encode()
+	}
+	var resp orchestrator.ListFleetPlacementConsentsResponse
+	if err := h.transport.doJSONRequest(ctx, http.MethodGet, path, nil, &resp); err != nil {
+		return nil, err
+	}
+	if resp.Requests == nil {
+		resp.Requests = []*orchestrator.FleetPlacementConsentRequest{}
+	}
+	return &resp, nil
+}
+
+func (h *orchestratorHandler) handleAnswerFleetPlacementConsent(ctx context.Context, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.AnswerFleetPlacementConsentRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("orchestrator.AnswerFleetPlacementConsent", "invalid request type")
+	}
+	path := "/api/v1/fleet/placement-consents/" + neturl.PathEscape(sdkReq.ID) + "/answer"
+	if sdkReq.TenantID != "" {
+		path += "?tenant_id=" + neturl.QueryEscape(sdkReq.TenantID)
+	}
+	body := struct {
+		State  string `json:"state"`
+		Reason string `json:"reason,omitempty"`
+	}{State: sdkReq.State, Reason: sdkReq.Reason}
+	var resp orchestrator.FleetPlacementConsentRequest
+	if err := h.transport.doJSONRequest(ctx, http.MethodPost, path, body, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}

@@ -24,11 +24,13 @@ import (
 func TestFleetPlacementToolNames(t *testing.T) {
 	tr := &Transport{}
 	for method, want := range map[string]string{
-		"DeclareFleetPlacementSpec":  "quicbaas_fleet_placement_declare",
-		"GetFleetPlacementSpec":      "quicbaas_fleet_placement_get",
-		"ListFleetPlacementSpecs":    "quicbaas_fleet_placement_list",
-		"WithdrawFleetPlacementSpec": "quicbaas_fleet_placement_withdraw",
-		"GetFleetPlacementDrift":     "quicbaas_fleet_placement_drift",
+		"DeclareFleetPlacementSpec":   "quicbaas_fleet_placement_declare",
+		"GetFleetPlacementSpec":       "quicbaas_fleet_placement_get",
+		"ListFleetPlacementSpecs":     "quicbaas_fleet_placement_list",
+		"WithdrawFleetPlacementSpec":  "quicbaas_fleet_placement_withdraw",
+		"GetFleetPlacementDrift":      "quicbaas_fleet_placement_drift",
+		"ListFleetPlacementConsents":  "quicbaas_fleet_placement_consent_list",
+		"AnswerFleetPlacementConsent": "quicbaas_fleet_placement_consent_answer",
 	} {
 		if got := tr.mapToToolName("quicbaas.Orchestrator", method); got != want {
 			t.Errorf("mapToToolName(%s) = %q, want %q", method, got, want)
@@ -40,8 +42,8 @@ func TestFleetPlacementToolNames(t *testing.T) {
 }
 
 // TestDecodeMCPFleetPlacement decodes the JSON the server's tools marshal
-// (orchestration.PlacementSpec and DriftReport, and the list and withdraw
-// envelopes).
+// (orchestration.PlacementSpec, DriftReport and PlacementConsentRequest, and
+// the spec list, withdraw and consent list envelopes).
 func TestDecodeMCPFleetPlacement(t *testing.T) {
 	decode := func(method, raw string) interface{} {
 		t.Helper()
@@ -69,7 +71,18 @@ func TestDecodeMCPFleetPlacement(t *testing.T) {
 	if report.ObservedWork != 1 || len(report.Findings) != 1 || report.Findings[0].Remedy.Destinations[0] != "h1" {
 		t.Fatalf("drift = %+v", report)
 	}
+	consents := decode("ListFleetPlacementConsents", `{"requests":[{"id":"c1","tenant_id":"acme","move":{"spec_name":"agents","spec_generation":2,"class":"agent","work_id":"s1","source_host":"h2"},"state":"pending","raised_at":"2026-11-01T10:00:00Z"}],"count":1}`).(*orchestrator.ListFleetPlacementConsentsResponse)
+	if consents.Count != 1 || consents.Requests[0].ID != "c1" || consents.Requests[0].Move.SpecGeneration != 2 || consents.Requests[0].Move.SourceHost != "h2" {
+		t.Fatalf("consents = %+v", consents)
+	}
+	answered := decode("AnswerFleetPlacementConsent", `{"id":"c1","tenant_id":"acme","move":{"spec_name":"agents","spec_generation":2,"class":"agent","work_id":"s1","source_host":"h2"},"state":"granted","by":"alice","reason":"ok","raised_at":"2026-11-01T10:00:00Z","answered_at":"2026-11-01T10:05:00Z"}`).(*orchestrator.FleetPlacementConsentRequest)
+	if answered.State != "granted" || answered.By != "alice" || answered.Reason != "ok" || answered.AnsweredAt.IsZero() {
+		t.Fatalf("answered = %+v", answered)
+	}
 	if _, err := orchestratorMCPTransforms["GetFleetPlacementDrift"]([]byte(`{`)); err == nil {
 		t.Fatal("an undecodable result must be a failure, not an empty report")
+	}
+	if _, err := orchestratorMCPTransforms["AnswerFleetPlacementConsent"]([]byte(`{`)); err == nil {
+		t.Fatal("an undecodable answer must be a failure, not an empty request")
 	}
 }

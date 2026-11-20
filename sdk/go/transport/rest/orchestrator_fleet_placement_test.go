@@ -35,6 +35,10 @@ func TestOrchestratorREST_FleetPlacementRoutes(t *testing.T) {
 		got = append(got, seen{r.Method, r.URL.RequestURI(), string(body)})
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/fleet/placement-consents":
+			_, _ = io.WriteString(w, `{"requests":[{"id":"c1","tenant_id":"acme","move":{"spec_name":"agents","spec_generation":2,"work_id":"s1"},"state":"pending","raised_at":"2026-11-14T00:00:00Z"}],"count":1}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/fleet/placement-consents/c 1/answer":
+			_, _ = io.WriteString(w, `{"id":"c 1","tenant_id":"acme","state":"granted","by":"alice","reason":"fine"}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/fleet/placements":
 			_, _ = io.WriteString(w, `{"specs":[{"name":"agents","role":"agent"}],"count":1}`)
 		case r.URL.Path == "/api/v1/fleet/placements/agents/drift":
@@ -77,6 +81,20 @@ func TestOrchestratorREST_FleetPlacementRoutes(t *testing.T) {
 	if !sdkerrors.IsNotFound(err) {
 		t.Fatalf("Get absent = %v, want not found", err)
 	}
+	consents, err := client.ListFleetPlacementConsents(ctx, &orchestrator.ListFleetPlacementConsentsRequest{TenantID: "acme", State: "pending"})
+	if err != nil || consents.Count != 1 || consents.Requests[0].ID != "c1" || consents.Requests[0].Move.SpecGeneration != 2 ||
+		consents.Requests[0].RaisedAt.IsZero() {
+		t.Fatalf("ListConsents = %+v, %v", consents, err)
+	}
+	if _, err := client.ListFleetPlacementConsents(ctx, nil); err != nil {
+		t.Fatalf("ListConsents nil: %v", err)
+	}
+	answered, err := client.AnswerFleetPlacementConsent(ctx, &orchestrator.AnswerFleetPlacementConsentRequest{
+		TenantID: "acme", ID: "c 1", State: "granted", Reason: "fine",
+	})
+	if err != nil || answered.By != "alice" || answered.State != "granted" {
+		t.Fatalf("AnswerConsent = %+v, %v", answered, err)
+	}
 
 	want := []seen{
 		{http.MethodPut, "/api/v1/fleet/placements/agents?tenant_id=acme", ""},
@@ -85,6 +103,9 @@ func TestOrchestratorREST_FleetPlacementRoutes(t *testing.T) {
 		{http.MethodGet, "/api/v1/fleet/placements/agents/drift", ""},
 		{http.MethodDelete, "/api/v1/fleet/placements/agents", ""},
 		{http.MethodGet, "/api/v1/fleet/placements/absent", ""},
+		{http.MethodGet, "/api/v1/fleet/placement-consents?state=pending&tenant_id=acme", ""},
+		{http.MethodGet, "/api/v1/fleet/placement-consents", ""},
+		{http.MethodPost, "/api/v1/fleet/placement-consents/c%201/answer?tenant_id=acme", ""},
 	}
 	if len(got) < len(want) {
 		t.Fatalf("requests = %+v, want %d", got, len(want))
@@ -97,5 +118,10 @@ func TestOrchestratorREST_FleetPlacementRoutes(t *testing.T) {
 	var body map[string]any
 	if err := json.Unmarshal([]byte(got[0].body), &body); err != nil || body["role"] != "agent" || body["name"] != "agents" {
 		t.Fatalf("declare body = %s (%v), want the spec", got[0].body, err)
+	}
+	var answer map[string]any
+	if err := json.Unmarshal([]byte(got[len(want)-1].body), &answer); err != nil || answer["state"] != "granted" ||
+		answer["reason"] != "fine" || len(answer) != 2 {
+		t.Fatalf("answer body = %s (%v), want only state and reason", got[len(want)-1].body, err)
 	}
 }

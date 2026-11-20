@@ -158,3 +158,49 @@ func handleOrchestratorGetFleetPlacementDrift(ctx context.Context, svc service.Q
 	}
 	return convertFleetPlacement[orchestratorSDK.FleetPlacementDrift](report)
 }
+
+func handleOrchestratorListFleetPlacementConsents(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	const method = "ListFleetPlacementConsents"
+	r, ok := req.(*orchestratorSDK.ListFleetPlacementConsentsRequest)
+	if !ok {
+		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", method,
+			"*orchestrator.ListFleetPlacementConsentsRequest", typeNameOf(req))
+	}
+	fp, err := fleetPlacementOf(svc, method)
+	if err != nil {
+		return nil, err
+	}
+	requests, err := fp.ListConsentRequests(ctx, r.TenantID, orchestration.ConsentState(r.State))
+	if err != nil {
+		return nil, err
+	}
+	converted, err := convertFleetPlacement[[]*orchestratorSDK.FleetPlacementConsentRequest](requests)
+	if err != nil {
+		return nil, err
+	}
+	out := *converted
+	if out == nil {
+		out = []*orchestratorSDK.FleetPlacementConsentRequest{}
+	}
+	return &orchestratorSDK.ListFleetPlacementConsentsResponse{Requests: out, Count: len(out)}, nil
+}
+
+func handleOrchestratorAnswerFleetPlacementConsent(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	const method = "AnswerFleetPlacementConsent"
+	r, ok := req.(*orchestratorSDK.AnswerFleetPlacementConsentRequest)
+	if !ok {
+		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", method,
+			"*orchestrator.AnswerFleetPlacementConsentRequest", typeNameOf(req))
+	}
+	fp, err := fleetPlacementOf(svc, method)
+	if err != nil {
+		return nil, err
+	}
+	answered, err := fp.AnswerConsent(ctx, r.TenantID, r.ID, orchestration.ConsentAnswer{
+		State: orchestration.ConsentState(r.State), Reason: r.Reason,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return convertFleetPlacement[orchestratorSDK.FleetPlacementConsentRequest](answered)
+}

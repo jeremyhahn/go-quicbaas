@@ -25,59 +25,61 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	OrchestratorService_SpawnSession_FullMethodName               = "/quicbaas.orchestrator.v1.OrchestratorService/SpawnSession"
-	OrchestratorService_PromptSession_FullMethodName              = "/quicbaas.orchestrator.v1.OrchestratorService/PromptSession"
-	OrchestratorService_SessionStatus_FullMethodName              = "/quicbaas.orchestrator.v1.OrchestratorService/SessionStatus"
-	OrchestratorService_CloseSession_FullMethodName               = "/quicbaas.orchestrator.v1.OrchestratorService/CloseSession"
-	OrchestratorService_ListSessions_FullMethodName               = "/quicbaas.orchestrator.v1.OrchestratorService/ListSessions"
-	OrchestratorService_RotateSessionAccount_FullMethodName       = "/quicbaas.orchestrator.v1.OrchestratorService/RotateSessionAccount"
-	OrchestratorService_CreateTask_FullMethodName                 = "/quicbaas.orchestrator.v1.OrchestratorService/CreateTask"
-	OrchestratorService_GetTask_FullMethodName                    = "/quicbaas.orchestrator.v1.OrchestratorService/GetTask"
-	OrchestratorService_ListTasks_FullMethodName                  = "/quicbaas.orchestrator.v1.OrchestratorService/ListTasks"
-	OrchestratorService_ClaimTask_FullMethodName                  = "/quicbaas.orchestrator.v1.OrchestratorService/ClaimTask"
-	OrchestratorService_CompleteTask_FullMethodName               = "/quicbaas.orchestrator.v1.OrchestratorService/CompleteTask"
-	OrchestratorService_BlockTask_FullMethodName                  = "/quicbaas.orchestrator.v1.OrchestratorService/BlockTask"
-	OrchestratorService_ReadmitTask_FullMethodName                = "/quicbaas.orchestrator.v1.OrchestratorService/ReadmitTask"
-	OrchestratorService_DeleteTask_FullMethodName                 = "/quicbaas.orchestrator.v1.OrchestratorService/DeleteTask"
-	OrchestratorService_DecomposeTask_FullMethodName              = "/quicbaas.orchestrator.v1.OrchestratorService/DecomposeTask"
-	OrchestratorService_StartJob_FullMethodName                   = "/quicbaas.orchestrator.v1.OrchestratorService/StartJob"
-	OrchestratorService_GetJobStatus_FullMethodName               = "/quicbaas.orchestrator.v1.OrchestratorService/GetJobStatus"
-	OrchestratorService_CancelJob_FullMethodName                  = "/quicbaas.orchestrator.v1.OrchestratorService/CancelJob"
-	OrchestratorService_ListJobs_FullMethodName                   = "/quicbaas.orchestrator.v1.OrchestratorService/ListJobs"
-	OrchestratorService_SubscribeJobEvents_FullMethodName         = "/quicbaas.orchestrator.v1.OrchestratorService/SubscribeJobEvents"
-	OrchestratorService_ListBackends_FullMethodName               = "/quicbaas.orchestrator.v1.OrchestratorService/ListBackends"
-	OrchestratorService_ListRunners_FullMethodName                = "/quicbaas.orchestrator.v1.OrchestratorService/ListRunners"
-	OrchestratorService_ListWorkflows_FullMethodName              = "/quicbaas.orchestrator.v1.OrchestratorService/ListWorkflows"
-	OrchestratorService_CreateWorkflow_FullMethodName             = "/quicbaas.orchestrator.v1.OrchestratorService/CreateWorkflow"
-	OrchestratorService_GetWorkflow_FullMethodName                = "/quicbaas.orchestrator.v1.OrchestratorService/GetWorkflow"
-	OrchestratorService_UpdateWorkflow_FullMethodName             = "/quicbaas.orchestrator.v1.OrchestratorService/UpdateWorkflow"
-	OrchestratorService_DeleteWorkflow_FullMethodName             = "/quicbaas.orchestrator.v1.OrchestratorService/DeleteWorkflow"
-	OrchestratorService_Health_FullMethodName                     = "/quicbaas.orchestrator.v1.OrchestratorService/Health"
-	OrchestratorService_RegisterFleetNode_FullMethodName          = "/quicbaas.orchestrator.v1.OrchestratorService/RegisterFleetNode"
-	OrchestratorService_GetFleetNode_FullMethodName               = "/quicbaas.orchestrator.v1.OrchestratorService/GetFleetNode"
-	OrchestratorService_ListFleetNodes_FullMethodName             = "/quicbaas.orchestrator.v1.OrchestratorService/ListFleetNodes"
-	OrchestratorService_RemoveFleetNode_FullMethodName            = "/quicbaas.orchestrator.v1.OrchestratorService/RemoveFleetNode"
-	OrchestratorService_FleetNodeHeartbeat_FullMethodName         = "/quicbaas.orchestrator.v1.OrchestratorService/FleetNodeHeartbeat"
-	OrchestratorService_ListBackendModels_FullMethodName          = "/quicbaas.orchestrator.v1.OrchestratorService/ListBackendModels"
-	OrchestratorService_PushEvents_FullMethodName                 = "/quicbaas.orchestrator.v1.OrchestratorService/PushEvents"
-	OrchestratorService_SubscribeSessionEvents_FullMethodName     = "/quicbaas.orchestrator.v1.OrchestratorService/SubscribeSessionEvents"
-	OrchestratorService_GetSessionConversation_FullMethodName     = "/quicbaas.orchestrator.v1.OrchestratorService/GetSessionConversation"
-	OrchestratorService_GetSpendReport_FullMethodName             = "/quicbaas.orchestrator.v1.OrchestratorService/GetSpendReport"
-	OrchestratorService_GetTenantSpendPolicy_FullMethodName       = "/quicbaas.orchestrator.v1.OrchestratorService/GetTenantSpendPolicy"
-	OrchestratorService_SetTenantSpendPolicy_FullMethodName       = "/quicbaas.orchestrator.v1.OrchestratorService/SetTenantSpendPolicy"
-	OrchestratorService_Inference_FullMethodName                  = "/quicbaas.orchestrator.v1.OrchestratorService/Inference"
-	OrchestratorService_InferenceStream_FullMethodName            = "/quicbaas.orchestrator.v1.OrchestratorService/InferenceStream"
-	OrchestratorService_SpawnChildJob_FullMethodName              = "/quicbaas.orchestrator.v1.OrchestratorService/SpawnChildJob"
-	OrchestratorService_SubmitTaskArtifacts_FullMethodName        = "/quicbaas.orchestrator.v1.OrchestratorService/SubmitTaskArtifacts"
-	OrchestratorService_ListTaskArtifacts_FullMethodName          = "/quicbaas.orchestrator.v1.OrchestratorService/ListTaskArtifacts"
-	OrchestratorService_GetTaskArtifact_FullMethodName            = "/quicbaas.orchestrator.v1.OrchestratorService/GetTaskArtifact"
-	OrchestratorService_GetCostSettings_FullMethodName            = "/quicbaas.orchestrator.v1.OrchestratorService/GetCostSettings"
-	OrchestratorService_SetCostSettings_FullMethodName            = "/quicbaas.orchestrator.v1.OrchestratorService/SetCostSettings"
-	OrchestratorService_DeclareFleetPlacementSpec_FullMethodName  = "/quicbaas.orchestrator.v1.OrchestratorService/DeclareFleetPlacementSpec"
-	OrchestratorService_GetFleetPlacementSpec_FullMethodName      = "/quicbaas.orchestrator.v1.OrchestratorService/GetFleetPlacementSpec"
-	OrchestratorService_ListFleetPlacementSpecs_FullMethodName    = "/quicbaas.orchestrator.v1.OrchestratorService/ListFleetPlacementSpecs"
-	OrchestratorService_WithdrawFleetPlacementSpec_FullMethodName = "/quicbaas.orchestrator.v1.OrchestratorService/WithdrawFleetPlacementSpec"
-	OrchestratorService_GetFleetPlacementDrift_FullMethodName     = "/quicbaas.orchestrator.v1.OrchestratorService/GetFleetPlacementDrift"
+	OrchestratorService_SpawnSession_FullMethodName                = "/quicbaas.orchestrator.v1.OrchestratorService/SpawnSession"
+	OrchestratorService_PromptSession_FullMethodName               = "/quicbaas.orchestrator.v1.OrchestratorService/PromptSession"
+	OrchestratorService_SessionStatus_FullMethodName               = "/quicbaas.orchestrator.v1.OrchestratorService/SessionStatus"
+	OrchestratorService_CloseSession_FullMethodName                = "/quicbaas.orchestrator.v1.OrchestratorService/CloseSession"
+	OrchestratorService_ListSessions_FullMethodName                = "/quicbaas.orchestrator.v1.OrchestratorService/ListSessions"
+	OrchestratorService_RotateSessionAccount_FullMethodName        = "/quicbaas.orchestrator.v1.OrchestratorService/RotateSessionAccount"
+	OrchestratorService_CreateTask_FullMethodName                  = "/quicbaas.orchestrator.v1.OrchestratorService/CreateTask"
+	OrchestratorService_GetTask_FullMethodName                     = "/quicbaas.orchestrator.v1.OrchestratorService/GetTask"
+	OrchestratorService_ListTasks_FullMethodName                   = "/quicbaas.orchestrator.v1.OrchestratorService/ListTasks"
+	OrchestratorService_ClaimTask_FullMethodName                   = "/quicbaas.orchestrator.v1.OrchestratorService/ClaimTask"
+	OrchestratorService_CompleteTask_FullMethodName                = "/quicbaas.orchestrator.v1.OrchestratorService/CompleteTask"
+	OrchestratorService_BlockTask_FullMethodName                   = "/quicbaas.orchestrator.v1.OrchestratorService/BlockTask"
+	OrchestratorService_ReadmitTask_FullMethodName                 = "/quicbaas.orchestrator.v1.OrchestratorService/ReadmitTask"
+	OrchestratorService_DeleteTask_FullMethodName                  = "/quicbaas.orchestrator.v1.OrchestratorService/DeleteTask"
+	OrchestratorService_DecomposeTask_FullMethodName               = "/quicbaas.orchestrator.v1.OrchestratorService/DecomposeTask"
+	OrchestratorService_StartJob_FullMethodName                    = "/quicbaas.orchestrator.v1.OrchestratorService/StartJob"
+	OrchestratorService_GetJobStatus_FullMethodName                = "/quicbaas.orchestrator.v1.OrchestratorService/GetJobStatus"
+	OrchestratorService_CancelJob_FullMethodName                   = "/quicbaas.orchestrator.v1.OrchestratorService/CancelJob"
+	OrchestratorService_ListJobs_FullMethodName                    = "/quicbaas.orchestrator.v1.OrchestratorService/ListJobs"
+	OrchestratorService_SubscribeJobEvents_FullMethodName          = "/quicbaas.orchestrator.v1.OrchestratorService/SubscribeJobEvents"
+	OrchestratorService_ListBackends_FullMethodName                = "/quicbaas.orchestrator.v1.OrchestratorService/ListBackends"
+	OrchestratorService_ListRunners_FullMethodName                 = "/quicbaas.orchestrator.v1.OrchestratorService/ListRunners"
+	OrchestratorService_ListWorkflows_FullMethodName               = "/quicbaas.orchestrator.v1.OrchestratorService/ListWorkflows"
+	OrchestratorService_CreateWorkflow_FullMethodName              = "/quicbaas.orchestrator.v1.OrchestratorService/CreateWorkflow"
+	OrchestratorService_GetWorkflow_FullMethodName                 = "/quicbaas.orchestrator.v1.OrchestratorService/GetWorkflow"
+	OrchestratorService_UpdateWorkflow_FullMethodName              = "/quicbaas.orchestrator.v1.OrchestratorService/UpdateWorkflow"
+	OrchestratorService_DeleteWorkflow_FullMethodName              = "/quicbaas.orchestrator.v1.OrchestratorService/DeleteWorkflow"
+	OrchestratorService_Health_FullMethodName                      = "/quicbaas.orchestrator.v1.OrchestratorService/Health"
+	OrchestratorService_RegisterFleetNode_FullMethodName           = "/quicbaas.orchestrator.v1.OrchestratorService/RegisterFleetNode"
+	OrchestratorService_GetFleetNode_FullMethodName                = "/quicbaas.orchestrator.v1.OrchestratorService/GetFleetNode"
+	OrchestratorService_ListFleetNodes_FullMethodName              = "/quicbaas.orchestrator.v1.OrchestratorService/ListFleetNodes"
+	OrchestratorService_RemoveFleetNode_FullMethodName             = "/quicbaas.orchestrator.v1.OrchestratorService/RemoveFleetNode"
+	OrchestratorService_FleetNodeHeartbeat_FullMethodName          = "/quicbaas.orchestrator.v1.OrchestratorService/FleetNodeHeartbeat"
+	OrchestratorService_ListBackendModels_FullMethodName           = "/quicbaas.orchestrator.v1.OrchestratorService/ListBackendModels"
+	OrchestratorService_PushEvents_FullMethodName                  = "/quicbaas.orchestrator.v1.OrchestratorService/PushEvents"
+	OrchestratorService_SubscribeSessionEvents_FullMethodName      = "/quicbaas.orchestrator.v1.OrchestratorService/SubscribeSessionEvents"
+	OrchestratorService_GetSessionConversation_FullMethodName      = "/quicbaas.orchestrator.v1.OrchestratorService/GetSessionConversation"
+	OrchestratorService_GetSpendReport_FullMethodName              = "/quicbaas.orchestrator.v1.OrchestratorService/GetSpendReport"
+	OrchestratorService_GetTenantSpendPolicy_FullMethodName        = "/quicbaas.orchestrator.v1.OrchestratorService/GetTenantSpendPolicy"
+	OrchestratorService_SetTenantSpendPolicy_FullMethodName        = "/quicbaas.orchestrator.v1.OrchestratorService/SetTenantSpendPolicy"
+	OrchestratorService_Inference_FullMethodName                   = "/quicbaas.orchestrator.v1.OrchestratorService/Inference"
+	OrchestratorService_InferenceStream_FullMethodName             = "/quicbaas.orchestrator.v1.OrchestratorService/InferenceStream"
+	OrchestratorService_SpawnChildJob_FullMethodName               = "/quicbaas.orchestrator.v1.OrchestratorService/SpawnChildJob"
+	OrchestratorService_SubmitTaskArtifacts_FullMethodName         = "/quicbaas.orchestrator.v1.OrchestratorService/SubmitTaskArtifacts"
+	OrchestratorService_ListTaskArtifacts_FullMethodName           = "/quicbaas.orchestrator.v1.OrchestratorService/ListTaskArtifacts"
+	OrchestratorService_GetTaskArtifact_FullMethodName             = "/quicbaas.orchestrator.v1.OrchestratorService/GetTaskArtifact"
+	OrchestratorService_GetCostSettings_FullMethodName             = "/quicbaas.orchestrator.v1.OrchestratorService/GetCostSettings"
+	OrchestratorService_SetCostSettings_FullMethodName             = "/quicbaas.orchestrator.v1.OrchestratorService/SetCostSettings"
+	OrchestratorService_DeclareFleetPlacementSpec_FullMethodName   = "/quicbaas.orchestrator.v1.OrchestratorService/DeclareFleetPlacementSpec"
+	OrchestratorService_GetFleetPlacementSpec_FullMethodName       = "/quicbaas.orchestrator.v1.OrchestratorService/GetFleetPlacementSpec"
+	OrchestratorService_ListFleetPlacementSpecs_FullMethodName     = "/quicbaas.orchestrator.v1.OrchestratorService/ListFleetPlacementSpecs"
+	OrchestratorService_WithdrawFleetPlacementSpec_FullMethodName  = "/quicbaas.orchestrator.v1.OrchestratorService/WithdrawFleetPlacementSpec"
+	OrchestratorService_GetFleetPlacementDrift_FullMethodName      = "/quicbaas.orchestrator.v1.OrchestratorService/GetFleetPlacementDrift"
+	OrchestratorService_ListFleetPlacementConsents_FullMethodName  = "/quicbaas.orchestrator.v1.OrchestratorService/ListFleetPlacementConsents"
+	OrchestratorService_AnswerFleetPlacementConsent_FullMethodName = "/quicbaas.orchestrator.v1.OrchestratorService/AnswerFleetPlacementConsent"
 )
 
 // OrchestratorServiceClient is the client API for OrchestratorService service.
@@ -229,6 +231,13 @@ type OrchestratorServiceClient interface {
 	// GetFleetPlacementDrift reports the spec's role work against the hosts
 	// it admits. A report that cannot be complete is FAILED_PRECONDITION.
 	GetFleetPlacementDrift(ctx context.Context, in *FleetPlacementSpecRequest, opts ...grpc.CallOption) (*FleetPlacementDrift, error)
+	// ListFleetPlacementConsents lists the tenant's per-move placement
+	// consent requests.
+	ListFleetPlacementConsents(ctx context.Context, in *ListFleetPlacementConsentsRequest, opts ...grpc.CallOption) (*ListFleetPlacementConsentsResponse, error)
+	// AnswerFleetPlacementConsent grants or refuses one pending consent
+	// request as the authenticated subject. An answered request is
+	// ALREADY_EXISTS: an answer is final.
+	AnswerFleetPlacementConsent(ctx context.Context, in *AnswerFleetPlacementConsentRequest, opts ...grpc.CallOption) (*FleetPlacementConsentRequest, error)
 }
 
 type orchestratorServiceClient struct {
@@ -799,6 +808,26 @@ func (c *orchestratorServiceClient) GetFleetPlacementDrift(ctx context.Context, 
 	return out, nil
 }
 
+func (c *orchestratorServiceClient) ListFleetPlacementConsents(ctx context.Context, in *ListFleetPlacementConsentsRequest, opts ...grpc.CallOption) (*ListFleetPlacementConsentsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListFleetPlacementConsentsResponse)
+	err := c.cc.Invoke(ctx, OrchestratorService_ListFleetPlacementConsents_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *orchestratorServiceClient) AnswerFleetPlacementConsent(ctx context.Context, in *AnswerFleetPlacementConsentRequest, opts ...grpc.CallOption) (*FleetPlacementConsentRequest, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FleetPlacementConsentRequest)
+	err := c.cc.Invoke(ctx, OrchestratorService_AnswerFleetPlacementConsent_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // OrchestratorServiceServer is the server API for OrchestratorService service.
 // All implementations should embed UnimplementedOrchestratorServiceServer
 // for forward compatibility.
@@ -948,6 +977,13 @@ type OrchestratorServiceServer interface {
 	// GetFleetPlacementDrift reports the spec's role work against the hosts
 	// it admits. A report that cannot be complete is FAILED_PRECONDITION.
 	GetFleetPlacementDrift(context.Context, *FleetPlacementSpecRequest) (*FleetPlacementDrift, error)
+	// ListFleetPlacementConsents lists the tenant's per-move placement
+	// consent requests.
+	ListFleetPlacementConsents(context.Context, *ListFleetPlacementConsentsRequest) (*ListFleetPlacementConsentsResponse, error)
+	// AnswerFleetPlacementConsent grants or refuses one pending consent
+	// request as the authenticated subject. An answered request is
+	// ALREADY_EXISTS: an answer is final.
+	AnswerFleetPlacementConsent(context.Context, *AnswerFleetPlacementConsentRequest) (*FleetPlacementConsentRequest, error)
 }
 
 // UnimplementedOrchestratorServiceServer should be embedded to have
@@ -1115,6 +1151,12 @@ func (UnimplementedOrchestratorServiceServer) WithdrawFleetPlacementSpec(context
 }
 func (UnimplementedOrchestratorServiceServer) GetFleetPlacementDrift(context.Context, *FleetPlacementSpecRequest) (*FleetPlacementDrift, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetFleetPlacementDrift not implemented")
+}
+func (UnimplementedOrchestratorServiceServer) ListFleetPlacementConsents(context.Context, *ListFleetPlacementConsentsRequest) (*ListFleetPlacementConsentsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListFleetPlacementConsents not implemented")
+}
+func (UnimplementedOrchestratorServiceServer) AnswerFleetPlacementConsent(context.Context, *AnswerFleetPlacementConsentRequest) (*FleetPlacementConsentRequest, error) {
+	return nil, status.Error(codes.Unimplemented, "method AnswerFleetPlacementConsent not implemented")
 }
 func (UnimplementedOrchestratorServiceServer) testEmbeddedByValue() {}
 
@@ -2058,6 +2100,42 @@ func _OrchestratorService_GetFleetPlacementDrift_Handler(srv interface{}, ctx co
 	return interceptor(ctx, in, info, handler)
 }
 
+func _OrchestratorService_ListFleetPlacementConsents_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListFleetPlacementConsentsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrchestratorServiceServer).ListFleetPlacementConsents(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrchestratorService_ListFleetPlacementConsents_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrchestratorServiceServer).ListFleetPlacementConsents(ctx, req.(*ListFleetPlacementConsentsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OrchestratorService_AnswerFleetPlacementConsent_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AnswerFleetPlacementConsentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrchestratorServiceServer).AnswerFleetPlacementConsent(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrchestratorService_AnswerFleetPlacementConsent_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrchestratorServiceServer).AnswerFleetPlacementConsent(ctx, req.(*AnswerFleetPlacementConsentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // OrchestratorService_ServiceDesc is the grpc.ServiceDesc for OrchestratorService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -2260,6 +2338,14 @@ var OrchestratorService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetFleetPlacementDrift",
 			Handler:    _OrchestratorService_GetFleetPlacementDrift_Handler,
+		},
+		{
+			MethodName: "ListFleetPlacementConsents",
+			Handler:    _OrchestratorService_ListFleetPlacementConsents_Handler,
+		},
+		{
+			MethodName: "AnswerFleetPlacementConsent",
+			Handler:    _OrchestratorService_AnswerFleetPlacementConsent_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

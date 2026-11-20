@@ -119,6 +119,72 @@ func (s *OrchestratorServer) GetFleetPlacementDrift(ctx context.Context, req *pb
 	return fleetPlacementDriftToProto(report), nil
 }
 
+// ListFleetPlacementConsents lists the tenant's per-move placement consent
+// requests, all of them or those in the request's state.
+func (s *OrchestratorServer) ListFleetPlacementConsents(ctx context.Context, req *pb.ListFleetPlacementConsentsRequest) (*pb.ListFleetPlacementConsentsResponse, error) {
+	svc, err := s.fleetPlacementSvc()
+	if err != nil {
+		return nil, err
+	}
+	requests, err := svc.ListConsentRequests(ctx, req.GetTenantId(), orchestration.ConsentState(req.GetState()))
+	if err != nil {
+		return nil, ToGRPCError(err)
+	}
+	out := &pb.ListFleetPlacementConsentsResponse{
+		Requests: make([]*pb.FleetPlacementConsentRequest, 0, len(requests)),
+	}
+	for _, r := range requests {
+		out.Requests = append(out.Requests, fleetPlacementConsentToProto(r))
+	}
+	out.Count = pageInt32(len(out.Requests))
+	return out, nil
+}
+
+// AnswerFleetPlacementConsent grants or refuses one pending consent request
+// as the authenticated subject. The request names no answerer.
+func (s *OrchestratorServer) AnswerFleetPlacementConsent(ctx context.Context, req *pb.AnswerFleetPlacementConsentRequest) (*pb.FleetPlacementConsentRequest, error) {
+	svc, err := s.fleetPlacementSvc()
+	if err != nil {
+		return nil, err
+	}
+	answered, err := svc.AnswerConsent(ctx, req.GetTenantId(), req.GetId(), orchestration.ConsentAnswer{
+		State: orchestration.ConsentState(req.GetState()), Reason: req.GetReason(),
+	})
+	if err != nil {
+		return nil, ToGRPCError(err)
+	}
+	return fleetPlacementConsentToProto(answered), nil
+}
+
+// fleetPlacementConsentToProto maps a consent request to its message. A zero
+// time is left unset.
+func fleetPlacementConsentToProto(in *orchestration.PlacementConsentRequest) *pb.FleetPlacementConsentRequest {
+	if in == nil {
+		return nil
+	}
+	out := &pb.FleetPlacementConsentRequest{
+		Id:       in.ID,
+		TenantId: in.TenantID,
+		Move: &pb.FleetPlacementConsentMove{
+			SpecName:       in.Move.SpecName,
+			SpecGeneration: in.Move.SpecGeneration,
+			Class:          in.Move.Class,
+			WorkId:         in.Move.WorkID,
+			SourceHost:     in.Move.SourceHost,
+		},
+		State:  string(in.State),
+		By:     in.By,
+		Reason: in.Reason,
+	}
+	if !in.RaisedAt.IsZero() {
+		out.RaisedAt = timestamppb.New(in.RaisedAt)
+	}
+	if !in.AnsweredAt.IsZero() {
+		out.AnsweredAt = timestamppb.New(in.AnsweredAt)
+	}
+	return out
+}
+
 func fleetPlacementSpecFromProto(in *pb.FleetPlacementSpec) *orchestration.PlacementSpec {
 	out := &orchestration.PlacementSpec{
 		TenantID:             in.GetTenantId(),

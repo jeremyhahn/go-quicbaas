@@ -29,6 +29,7 @@ import (
 	stderrors "errors"
 	"sync"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
@@ -43,6 +44,13 @@ type FleetPlacementService interface {
 	ListPlacementSpecs(ctx context.Context, tenantID string) ([]*orchestration.PlacementSpec, error)
 	WithdrawPlacementSpec(ctx context.Context, tenantID, name string) error
 	GetPlacementDrift(ctx context.Context, tenantID, name string) (*orchestration.DriftReport, error)
+	// ListConsentRequests returns the tenant's per-move consent requests in
+	// state (all of them when state is empty), ordered by id. It never
+	// returns a nil slice.
+	ListConsentRequests(ctx context.Context, tenantID string, state orchestration.ConsentState) ([]*orchestration.PlacementConsentRequest, error)
+	// AnswerConsent grants or refuses one pending consent request. The
+	// answer's By is the authenticated principal, whatever the caller passed.
+	AnswerConsent(ctx context.Context, tenantID, requestID string, answer orchestration.ConsentAnswer) (*orchestration.PlacementConsentRequest, error)
 }
 
 // FleetPlacementProvider is implemented by a QuicBaaS that serves fleet
@@ -64,10 +72,22 @@ type FleetPlacementBinder interface {
 	BindFleetPlacement(specs orchestration.PlacementStore, drift *orchestration.DriftReporter)
 }
 
+// ErrFleetPlacementConsentUnbound is returned by the consent verbs of a fleet
+// placement service the server has not bound to a consent ledger yet. The
+// spec verbs do not depend on it.
+var ErrFleetPlacementConsentUnbound = stderrors.New("fleet placement: not bound to a consent ledger")
+
+// FleetPlacementConsentBinder binds a fleet placement service to the ledger
+// of per-move consent requests.
+type FleetPlacementConsentBinder interface {
+	BindFleetPlacementConsent(ledger orchestration.ConsentLedger)
+}
+
 type fleetPlacementService struct {
-	mu    sync.RWMutex
-	specs orchestration.PlacementStore
-	drift *orchestration.DriftReporter
+	mu       sync.RWMutex
+	specs    orchestration.PlacementStore
+	drift    *orchestration.DriftReporter
+	consents orchestration.ConsentLedger
 }
 
 // NewFleetPlacementService returns a fleet placement service. With nil
@@ -177,6 +197,69 @@ func (s *fleetPlacementService) GetPlacementDrift(ctx context.Context, tenantID,
 	return report, classifyFleetPlacementError(op, err)
 }
 
+// BindFleetPlacementConsent implements FleetPlacementConsentBinder.
+func (s *fleetPlacementService) BindFleetPlacementConsent(ledger orchestration.ConsentLedger) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.consents = ledger
+}
+
+// beginConsent resolves the tenant and the bound ledger for one consent
+// verb, binding the tenant to the context as begin does.
+func (s *fleetPlacementService) beginConsent(ctx context.Context, op, requested string) (context.Context, string, orchestration.ConsentLedger, error) {
+	tenantID, err := tenantctx.Target(ctx, "fleet_placement."+op, requested)
+	if err != nil {
+		return ctx, "", nil, err
+	}
+	s.mu.RLock()
+	ledger := s.consents
+	s.mu.RUnlock()
+	if ledger == nil {
+		return ctx, "", nil, &errors.QBError{Code: errors.ErrUnavailable, Op: "FleetPlacementService." + op, Err: ErrFleetPlacementConsentUnbound}
+	}
+	if orchestration.TenantFromContext(ctx) == "" {
+		ctx = orchestration.ContextWithTenant(ctx, tenantID)
+	}
+	return ctx, tenantID, ledger, nil
+}
+
+// ListConsentRequests implements FleetPlacementService.
+func (s *fleetPlacementService) ListConsentRequests(ctx context.Context, tenantID string, state orchestration.ConsentState) ([]*orchestration.PlacementConsentRequest, error) {
+	const op = "ListConsentRequests"
+	ctx, tenantID, ledger, err := s.beginConsent(ctx, op, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	requests, err := ledger.List(ctx, tenantID, state)
+	if err != nil {
+		return nil, classifyFleetPlacementError(op, err)
+	}
+	if requests == nil {
+		requests = []*orchestration.PlacementConsentRequest{}
+	}
+	return requests, nil
+}
+
+// AnswerConsent implements FleetPlacementService. The answer is recorded as
+// the authenticated principal's: a By the caller passed is overwritten.
+func (s *fleetPlacementService) AnswerConsent(ctx context.Context, tenantID, requestID string, answer orchestration.ConsentAnswer) (*orchestration.PlacementConsentRequest, error) {
+	const op = "AnswerConsent"
+	principal := auth.PrincipalFromContext(ctx)
+	if principal == "" {
+		return nil, &errors.QBError{Code: errors.ErrForbidden, Op: "FleetPlacementService." + op, Err: stderrors.New("no authenticated principal")}
+	}
+	ctx, tenantID, ledger, err := s.beginConsent(ctx, op, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	answer.By = principal
+	req, err := ledger.Answer(ctx, tenantID, requestID, answer)
+	if err != nil {
+		return nil, classifyFleetPlacementError(op, err)
+	}
+	return req, nil
+}
+
 // fleetPlacementErrorCode maps the orchestration placement failures to the
 // codes the transports turn into statuses. The first match wins.
 var fleetPlacementErrorCode = []struct {
@@ -197,6 +280,13 @@ var fleetPlacementErrorCode = []struct {
 		return stderrors.As(err, &e)
 	}, errors.ErrPreconditionFailed},
 	{func(err error) bool { var e *orchestration.PlacementWorkUnnameableError; return stderrors.As(err, &e) }, errors.ErrPreconditionFailed},
+	{func(err error) bool { var e *orchestration.ConsentInvalidError; return stderrors.As(err, &e) }, errors.ErrInvalidInput},
+	{func(err error) bool { var e *orchestration.ConsentNotFoundError; return stderrors.As(err, &e) }, errors.ErrNotFound},
+	// An answer is final, and a stale swap means another answer stands.
+	{func(err error) bool { var e *orchestration.ConsentNotPendingError; return stderrors.As(err, &e) }, errors.ErrConflict},
+	{func(err error) bool { var e *orchestration.ConsentStaleError; return stderrors.As(err, &e) }, errors.ErrConflict},
+	// An incoherent request grants nothing and cannot be answered.
+	{func(err error) bool { var e *orchestration.ConsentIncoherentError; return stderrors.As(err, &e) }, errors.ErrPreconditionFailed},
 }
 
 // classifyFleetPlacementError wraps a store or reporter failure in a QBError

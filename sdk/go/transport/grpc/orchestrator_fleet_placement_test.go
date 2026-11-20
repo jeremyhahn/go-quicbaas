@@ -25,6 +25,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/orchestrator"
@@ -36,6 +37,33 @@ type recordingFleetPlacementServer struct {
 	declared *pb.DeclareFleetPlacementSpecRequest
 	named    []*pb.FleetPlacementSpecRequest
 	listed   *pb.ListFleetPlacementSpecsRequest
+	consents *pb.ListFleetPlacementConsentsRequest
+	answered *pb.AnswerFleetPlacementConsentRequest
+}
+
+func (s *recordingFleetPlacementServer) ListFleetPlacementConsents(_ context.Context, req *pb.ListFleetPlacementConsentsRequest) (*pb.ListFleetPlacementConsentsResponse, error) {
+	s.consents = req
+	return &pb.ListFleetPlacementConsentsResponse{
+		Requests: []*pb.FleetPlacementConsentRequest{{
+			Id: "c1", TenantId: req.GetTenantId(), State: "pending",
+			Move:     &pb.FleetPlacementConsentMove{SpecName: "agents", SpecGeneration: 2, Class: "agent", WorkId: "s1", SourceHost: "h2"},
+			RaisedAt: timestamppb.New(time.Date(2026, 11, 14, 0, 0, 0, 0, time.UTC)),
+		}},
+		Count: 1,
+	}, nil
+}
+
+func (s *recordingFleetPlacementServer) AnswerFleetPlacementConsent(_ context.Context, req *pb.AnswerFleetPlacementConsentRequest) (*pb.FleetPlacementConsentRequest, error) {
+	s.answered = req
+	if req.GetId() == "answered" {
+		return nil, status.Error(codes.AlreadyExists, "consent request already answered")
+	}
+	return &pb.FleetPlacementConsentRequest{
+		Id: req.GetId(), TenantId: req.GetTenantId(), State: req.GetState(), By: "alice", Reason: req.GetReason(),
+		Move:       &pb.FleetPlacementConsentMove{SpecName: "agents", WorkId: "s1"},
+		RaisedAt:   timestamppb.New(time.Date(2026, 11, 14, 0, 0, 0, 0, time.UTC)),
+		AnsweredAt: timestamppb.New(time.Date(2026, 11, 15, 0, 0, 0, 0, time.UTC)),
+	}, nil
 }
 
 func (s *recordingFleetPlacementServer) DeclareFleetPlacementSpec(_ context.Context, req *pb.DeclareFleetPlacementSpecRequest) (*pb.FleetPlacementSpec, error) {
@@ -115,6 +143,35 @@ func TestOrchestratorFleetPlacement_OverGRPC(t *testing.T) {
 
 	_, err = call("GetFleetPlacementDrift", &orchestrator.ListFleetPlacementSpecsRequest{})
 	assert.True(t, sdkerrors.IsInvalidInput(err), "wrong request type = %v, want invalid input", err)
+
+	resp, err = call("ListFleetPlacementConsents", &orchestrator.ListFleetPlacementConsentsRequest{TenantID: "acme", State: "pending"})
+	require.NoError(t, err)
+	assert.Equal(t, "acme", fake.consents.GetTenantId())
+	assert.Equal(t, "pending", fake.consents.GetState())
+	consents := resp.(*orchestrator.ListFleetPlacementConsentsResponse)
+	assert.Equal(t, 1, consents.Count)
+	require.Len(t, consents.Requests, 1)
+	assert.Equal(t, orchestrator.FleetPlacementConsentMove{SpecName: "agents", SpecGeneration: 2, Class: "agent", WorkID: "s1", SourceHost: "h2"},
+		consents.Requests[0].Move)
+	assert.True(t, consents.Requests[0].AnsweredAt.IsZero(), "an unanswered request has no answer time")
+	assert.Equal(t, time.Date(2026, 11, 14, 0, 0, 0, 0, time.UTC), consents.Requests[0].RaisedAt.UTC())
+
+	resp, err = call("AnswerFleetPlacementConsent", &orchestrator.AnswerFleetPlacementConsentRequest{
+		TenantID: "acme", ID: "c1", State: "granted", Reason: "fine",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "acme", fake.answered.GetTenantId())
+	assert.Equal(t, "c1", fake.answered.GetId())
+	assert.Equal(t, "granted", fake.answered.GetState())
+	assert.Equal(t, "fine", fake.answered.GetReason())
+	answered := resp.(*orchestrator.FleetPlacementConsentRequest)
+	assert.Equal(t, "alice", answered.By)
+	assert.Equal(t, time.Date(2026, 11, 15, 0, 0, 0, 0, time.UTC), answered.AnsweredAt.UTC())
+
+	_, err = call("AnswerFleetPlacementConsent", &orchestrator.AnswerFleetPlacementConsentRequest{ID: "answered", State: "granted"})
+	assert.True(t, sdkerrors.IsAlreadyExists(err), "second answer = %v, want already exists", err)
+	_, err = call("AnswerFleetPlacementConsent", &orchestrator.ListFleetPlacementConsentsRequest{})
+	assert.True(t, sdkerrors.IsInvalidInput(err), "wrong request type = %v, want invalid input", err)
 }
 
 // Every field of a spec survives the trip to proto and back, so a field
@@ -131,4 +188,6 @@ func TestOrchestratorFleetPlacement_SpecProtoRoundTrip(t *testing.T) {
 	}
 	assert.Equal(t, 9, reflect.TypeOf(orchestrator.FleetPlacementSpec{}).NumField(), "map the new field here")
 	assert.Equal(t, 8, reflect.TypeOf(orchestrator.FleetPlacementDrift{}).NumField(), "map the new field here")
+	assert.Equal(t, 8, reflect.TypeOf(orchestrator.FleetPlacementConsentRequest{}).NumField(), "map the new field here")
+	assert.Equal(t, 5, reflect.TypeOf(orchestrator.FleetPlacementConsentMove{}).NumField(), "map the new field here")
 }

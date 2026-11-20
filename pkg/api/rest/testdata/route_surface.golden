@@ -171,6 +171,7 @@ GET /api/v1/ollama/health
 GET /api/v1/ollama/models
 GET /api/v1/ollama/models/{model}
 GET /api/v1/fleet
+GET /api/v1/fleet/placement-consents
 GET /api/v1/fleet/placements
 GET /api/v1/fleet/placements/{name}
 GET /api/v1/fleet/placements/{name}/drift
@@ -462,6 +463,7 @@ POST /api/v1/objects/batch/get
 POST /api/v1/ollama/embed
 POST /api/v1/ollama/embed/batch
 POST /api/v1/fleet
+POST /api/v1/fleet/placement-consents/{id}/answer
 POST /api/v1/fleet/{nodeID}/disable
 POST /api/v1/fleet/{nodeID}/enable
 POST /api/v1/fleet/{nodeID}/heartbeat
