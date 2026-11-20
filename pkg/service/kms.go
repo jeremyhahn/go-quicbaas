@@ -2584,7 +2584,11 @@ func (k *kmsServiceImpl) disableKeyVersion(ctx context.Context, keyID string, ve
 	}
 
 	// Get current version status
-	oldStatus, _ := k.getVersionStatus(ctx, keyID, version)
+	// A status that cannot be read is not "no status": fail before any write.
+	oldStatus, _, err := k.lookupVersionStatus(ctx, keyID, version)
+	if err != nil {
+		return nil, WrapError(err, errors.ErrInternal, "kms.disableKeyVersion", "failed to read key version status")
+	}
 	if oldStatus == "" {
 		oldStatus = KeyStatusEnabled
 	}
@@ -2670,7 +2674,11 @@ func (k *kmsServiceImpl) UpdateKeyStatus(ctx context.Context, req *UpdateKeyStat
 	var oldStatus KeyStatus
 	if req.Version > 0 {
 		// Get version-specific status for grace period and similar operations
-		versionStatus, _ := k.getVersionStatus(ctx, scopedKeyID, req.Version)
+		// A status that cannot be read is not "no status": fail before any write.
+		versionStatus, _, err := k.lookupVersionStatus(ctx, scopedKeyID, req.Version)
+		if err != nil {
+			return nil, WrapError(err, errors.ErrInternal, "kms.UpdateKeyStatus", "failed to read key version status")
+		}
 		if versionStatus != "" {
 			oldStatus = versionStatus
 		} else {
