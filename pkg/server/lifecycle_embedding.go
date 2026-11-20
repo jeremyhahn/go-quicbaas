@@ -506,8 +506,21 @@ func (a *qrdbEmbeddingProvider) embedUpstream(ctx context.Context, up qrdbsdk.Em
 	return out, nil
 }
 
-// Models reports the single model the wrapped provider is configured with.
-func (a *qrdbEmbeddingProvider) Models(_ context.Context) ([]qrdbservice.ModelInfo, error) {
+// Models reports the models the wrapped provider lists. A provider that wraps
+// a go-qrdb provider (embedding.QRDBUpstream) lists the upstream's models; any
+// other provider reports the single model it is configured with.
+func (a *qrdbEmbeddingProvider) Models(ctx context.Context) ([]qrdbservice.ModelInfo, error) {
+	if up, ok := a.p.(embedding.QRDBUpstream); ok {
+		listed, err := up.QRDBProvider().Models(ctx)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]qrdbservice.ModelInfo, 0, len(listed))
+		for _, m := range listed {
+			out = append(out, qrdbservice.ModelInfo{Name: m.Name, Dimensions: m.Dimensions, MaxTokens: m.MaxTokens})
+		}
+		return out, nil
+	}
 	return []qrdbservice.ModelInfo{{Name: a.model, Dimensions: a.p.Dimensions(), MaxTokens: a.p.MaxTokens()}}, nil
 }
 

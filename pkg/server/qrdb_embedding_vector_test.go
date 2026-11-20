@@ -55,6 +55,11 @@ func TestUnifiedModuleServerOptions_ComposesQRDBEmbedding(t *testing.T) {
 // quicbaas embedding manager registers also serves go-qrdb's embedding service.
 func TestQRDBEmbedding_ProviderServesGoQRDBEmbed(t *testing.T) {
 	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/models") {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"object": "list", "data": []map[string]any{{"id": "m", "object": "model"}}})
+			return
+		}
 		if r.Method != http.MethodPost || !strings.HasSuffix(r.URL.Path, "/embeddings") {
 			http.NotFound(w, r)
 			return
@@ -125,6 +130,11 @@ func TestQRDBEmbedding_ProviderHonoursRequestedModel(t *testing.T) {
 		models []string
 	)
 	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/models") {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"object": "list", "data": []map[string]any{{"id": "m", "object": "model"}}})
+			return
+		}
 		if r.Method != http.MethodPost || !strings.HasSuffix(r.URL.Path, "/embeddings") {
 			http.NotFound(w, r)
 			return
@@ -302,6 +312,21 @@ func TestQRDBEmbeddingProvider_CarriesUsage(t *testing.T) {
 			assert.Equal(t, "m", res.Model)
 		}
 	}
+}
+
+func TestQRDBEmbeddingProvider_ListsUpstreamModels(t *testing.T) {
+	up := &upstreamEmbedder{models: []qrdbsdk.EmbeddingModelInfo{
+		{Name: "small", Dimensions: 384, MaxTokens: 512},
+		{Name: "large", Dimensions: 1024, MaxTokens: 8192},
+	}}
+	a := &qrdbEmbeddingProvider{p: &upstreamBackedProvider{up: up}, model: "m"}
+
+	models, err := a.Models(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, []qrdbservice.ModelInfo{
+		{Name: "small", Dimensions: 384, MaxTokens: 512},
+		{Name: "large", Dimensions: 1024, MaxTokens: 8192},
+	}, models)
 }
 
 var _ embedding.Provider = (*singleModelProvider)(nil)
