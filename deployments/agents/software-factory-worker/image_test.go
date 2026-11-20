@@ -378,16 +378,24 @@ func TestToolchainPins_AreTheRepositorysPins(t *testing.T) {
 func TestPins_ValidateNamesWhatIsMissing(t *testing.T) {
 	var missing *PinsMissingError
 	err := Pins{}.Validate()
-	if !errors.As(err, &missing) || len(missing.Missing) != 49 ||
+	if !errors.As(err, &missing) || len(missing.Missing) != 48 ||
 		!strings.Contains(err.Error(), "GOPLS_VERSION") || !strings.Contains(err.Error(), "SHELLCHECK_SHA256_AARCH64") ||
 		!strings.Contains(err.Error(), "OPENCODE_SHA256_AARCH64") || !strings.Contains(err.Error(), "GH_SHA256_AARCH64") || !strings.Contains(err.Error(), "GO_TOOL_DEPENDENCY_FLOORS") ||
 		!strings.Contains(err.Error(), "SERENA_DEPENDENCY_FLOORS") || !strings.Contains(err.Error(), "PROTOC_VERSION") ||
 		!strings.Contains(err.Error(), "PROTOC_SHA256_AARCH64") || !strings.Contains(err.Error(), "PROTOC_GEN_GO_GRPC_VERSION") ||
 		!strings.Contains(err.Error(), "NODE_SHA256_AARCH64") || !strings.Contains(err.Error(), "UV_VERSION") ||
 		!strings.Contains(err.Error(), "TYPESCRIPT_LANGUAGE_SERVER_VERSION") || !strings.Contains(err.Error(), "CLANGD_SHA256_X86_64") ||
-		!strings.Contains(err.Error(), "MARKSMAN_SHA256_AARCH64") || !strings.Contains(err.Error(), "NPM_BUNDLED_DEPENDENCY_FLOORS") ||
+		!strings.Contains(err.Error(), "MARKSMAN_SHA256_AARCH64") || strings.Contains(err.Error(), "NPM_BUNDLED_DEPENDENCY_FLOORS") ||
 		!strings.Contains(err.Error(), "OPENJDK_MAJOR") || !strings.Contains(err.Error(), "KOTLIN_LSP_SHA256_AARCH64") {
-		t.Fatalf("Validate() = %v, want all forty-nine pins named", err)
+		t.Fatalf("Validate() = %v, want all forty-eight required pins named", err)
+	}
+}
+
+func TestPins_ValidateAllowsNoNpmBundledFloors(t *testing.T) {
+	pins := testPins()
+	pins.NpmBundledDependencyFloors = ""
+	if err := pins.Validate(); err != nil {
+		t.Fatalf("Validate() with no npm bundled floors = %v, want nil", err)
 	}
 }
 
