@@ -47,6 +47,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/backup"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	dbxkms "github.com/jeremyhahn/go-quicbaas/pkg/xkms"
 )
 
 // newTTGRPCServer returns a bare gRPC server for listener-wiring tests.
@@ -116,6 +117,12 @@ func TestServer_InitializeAndShutdown_TT_NetworkGRPC(t *testing.T) {
 func startTTNetworkNodeUnix(t *testing.T, socket string, opts ...func(*Server)) *Server {
 	t.Helper()
 	saveAndRestoreSeams(t)
+	// Boot on a fresh xkms registry: an earlier server in the process may
+	// have left the global singleton bound to its closed KV or a
+	// non-software default, which leaves the OIDC provider nil and the
+	// RequireAuthz gate unable to start.
+	dbxkms.Reset()
+	t.Cleanup(dbxkms.Reset)
 	srv := withTempServer(t)
 	srv.config.Server.Embedded = false
 	srv.config.Security.TLSEnabled = true
