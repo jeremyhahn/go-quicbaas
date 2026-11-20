@@ -1349,7 +1349,7 @@ IAM_TEST_TAGS := $(TEST_TAGS)
 # TEST_CHECKS are the repository validations every unit-test pass runs first.
 # Both `test` and `coverage` (the CI test stage) list this one variable, so
 # CI cannot drop a check that `make test` runs.
-TEST_CHECKS := check-insecure-tls check-build-tags check-coded-sentinels check-local-keygen check-case-collisions check-library-pins check-workspace-script check-package-targets
+TEST_CHECKS := check-insecure-tls check-build-tags check-coded-sentinels check-local-keygen check-case-collisions check-library-pins check-workspace-script check-package-targets check-ci-image-cache
 
 .PHONY: test
 test: $(TEST_CHECKS) ## Run unit tests (excludes integration tests)
@@ -1419,6 +1419,15 @@ check-package-targets: ## Fail if a per-package make target does not reach its n
 	@echo "$(BLUE)Checking per-package make targets resolve nested packages...$(NC)"
 	@TEST_TAGS='$(TEST_TAGS)' IAM_TEST_TAGS='$(IAM_TEST_TAGS)' MAKE='$(MAKE)' sh scripts/resolve-package_test.sh
 	@MAKE='$(MAKE)' sh scripts/package-targets-exit_test.sh
+
+.PHONY: check-ci-image-cache
+# scripts/ci-image-cache_test.sh drives scripts/ci-image-cache.sh against stub
+# docker and make binaries, so the CI_IMAGE_REGISTRY cache path is proven
+# without a daemon or a registry (#2503); scripts/devcontainer-build_test.sh
+# runs DEVCONTAINER_BUILD's compose and plain docker build paths the same way.
+check-ci-image-cache: ## Prove ci-image-cache.sh's registry cache path against stub docker
+	@bash scripts/ci-image-cache_test.sh
+	@bash scripts/devcontainer-build_test.sh
 
 .PHONY: check-local-keygen
 # go-xkms owns keys and certificates for the whole stack; go-quicbaas composes
@@ -1549,19 +1558,19 @@ check-build-tags: ## Fail if any //go:build CONSTRAINT is satisfied by no test p
 test-minimal: check-insecure-tls check-build-tags check-local-keygen ## Run unit tests with every tag that has a !tag side off (compiles the stub/no-op paths)
 	@echo "$(BLUE)Running unit tests with every disabled-side tag off...$(NC)"
 	@echo "$(YELLOW)Build tags: $(MINIMAL_TEST_TAGS)$(NC)"
-	$(GOTEST) -p 2 -tags '$(MINIMAL_TEST_TAGS)' -timeout=10m ./pkg/... ./cmd/...
+	$(GOTEST) -p 2 -tags '$(MINIMAL_TEST_TAGS)' -timeout=$(TAG_PASS_TIMEOUT) ./pkg/... ./cmd/...
 
 .PHONY: test-standard
 test-standard: check-insecure-tls check-build-tags check-local-keygen ## Run unit tests in the build-standard configuration (REST on, AI features off)
 	@echo "$(BLUE)Running unit tests in the build-standard configuration...$(NC)"
 	@echo "$(YELLOW)Build tags: $(STANDARD_TEST_TAGS)$(NC)"
-	$(GOTEST) -p 2 -tags '$(STANDARD_TEST_TAGS)' -timeout=10m ./pkg/... ./cmd/...
+	$(GOTEST) -p 2 -tags '$(STANDARD_TEST_TAGS)' -timeout=$(TAG_PASS_TIMEOUT) ./pkg/... ./cmd/...
 
 .PHONY: test-lean
 test-lean: check-insecure-tls check-build-tags check-local-keygen ## Run unit tests with the transports on and the optional data-model features off
 	@echo "$(BLUE)Running unit tests with the transports on, data-model extras off...$(NC)"
 	@echo "$(YELLOW)Build tags: $(LEAN_TEST_TAGS)$(NC)"
-	$(GOTEST) -p 2 -tags '$(LEAN_TEST_TAGS)' -timeout=10m ./pkg/... ./cmd/...
+	$(GOTEST) -p 2 -tags '$(LEAN_TEST_TAGS)' -timeout=$(TAG_PASS_TIMEOUT) ./pkg/... ./cmd/...
 
 .PHONY: test-tooling
 test-tooling: ## Run the unit tests of the repository tooling (scripts, build gates)
@@ -3389,6 +3398,11 @@ COVER_PKGS ?= ./pkg/... ./cmd/...
 # `coverage`). pkg/iam alone takes 655s under contention, past Go's 10m
 # default; see the note in the `race` recipe for the measurements.
 RACE_TIMEOUT := 30m
+
+# TAG_PASS_TIMEOUT is the per-package -timeout of the tag passes
+# (test-minimal, test-standard, test-lean). pkg/server takes 254s under
+# -race alone but over 600s in a tag pass sharing the runner, past 10m.
+TAG_PASS_TIMEOUT ?= 20m
 
 # The test stage is three pieces, so CI can run the slow -race pass as
 # parallel shards and a developer runs the same targets in one go:
@@ -5650,7 +5664,8 @@ DEVCONTAINER_DIR := build/docker/devcontainer
 DEVCONTAINER_REPO := $(APP_NAME)-devcontainer
 DEVCONTAINER_INPUTS := $(DEVCONTAINER_DIR)/Dockerfile pkg/version/toolchain.mk go.mod go.sum sdk/go/go.mod sdk/go/go.sum \
 	sdk/typescript/package.json sdk/typescript/package-lock.json sdk/typescript/svelte-security/package.json \
-	cmd/quicbaas/frontend/package.json cmd/quicbaas/frontend/package-lock.json
+	cmd/quicbaas/frontend/package.json cmd/quicbaas/frontend/package-lock.json \
+	sdk/javascript/package.json sdk/javascript/package-lock.json
 DEVCONTAINER_HASH = $(shell cat $(DEVCONTAINER_INPUTS) | sha256sum | cut -c1-16)
 TOOLCHAIN_IMAGE = $(DEVCONTAINER_REPO):toolchain-$(DEVCONTAINER_HASH)
 SOURCE_DIRTY = $(shell if [ -n "$$(git status --porcelain)" ]; then \
@@ -5665,11 +5680,45 @@ DEVCONTAINER_COMPOSE = TOOLCHAIN_IMAGE='$(TOOLCHAIN_IMAGE)' \
 	GO_BUILD_PROXY="$${DEVCACHE_GOPROXY:-}" \
 	GOMODAUTH_ENV='$(GOMODAUTH_ENV)' RUN_UID="$$(id -u)" RUN_GID="$$(id -g)" \
 	$(DOCKER) compose -f $(DEVCONTAINER_DIR)/compose.yaml
+# The plain `docker build` arguments compose.yaml's x-build gives every
+# service: the repository root as context, the Dockerfile, the build args and
+# the gomodauth secret (the included integration compose file's).
+DEVCONTAINER_DOCKER_BUILD = DOCKER_BUILDKIT=1 $(DOCKER) build -f $(DEVCONTAINER_DIR)/Dockerfile \
+	--build-arg GO_VERSION='$(GO_VERSION)' --build-arg GO_IMAGE_DIGEST='$(GO_IMAGE_DIGEST)' \
+	--build-arg GO_BUILD_PROXY="$${DEVCACHE_GOPROXY:-}" \
+	--secret id=gomodauth,src='$(GOMODAUTH_ENV)'
 # Builds the named compose services with the module credentials staged for the
-# build only, unless CI handed them over in MODULE_ENV_FILE.
+# build only, unless CI handed them over in MODULE_ENV_FILE. A docker without
+# the compose plugin (#2503) builds each service with plain `docker build`,
+# with the target, build args, secret and tag compose.yaml gives it. On both
+# paths the toolchain image is skipped when the daemon already holds its tag.
 DEVCONTAINER_BUILD = $(if $(strip $(MODULE_ENV_FILE)),,trap '$(GOMODAUTH_CLEAR)' EXIT; \
 	$(MAKE) --no-print-directory stage-gomodauth;) \
-	$(DEVCONTAINER_COMPOSE) build
+	devcontainer_build() { \
+		svcs=; \
+		for svc in "$$@"; do \
+			if [ "$$svc" = toolchain ] && $(DOCKER) image inspect '$(TOOLCHAIN_IMAGE)' >/dev/null 2>&1; then \
+				echo "the daemon holds $(TOOLCHAIN_IMAGE); no build"; continue; \
+			fi; \
+			svcs="$$svcs $$svc"; \
+		done; \
+		[ -n "$$svcs" ] || return 0; \
+		set -- $$svcs; \
+		if $(DOCKER) compose version >/dev/null 2>&1; then \
+			$(DEVCONTAINER_COMPOSE) build "$$@"; return; \
+		fi; \
+		for svc in "$$@"; do \
+			case $$svc in \
+			toolchain) \
+				$(DEVCONTAINER_DOCKER_BUILD) --target toolchain -t '$(TOOLCHAIN_IMAGE)' . || return 1 ;; \
+			integration) \
+				$(DEVCONTAINER_DOCKER_BUILD) --target integration \
+					--build-arg BUILD_TAGS='$(strip $(INTEGRATION_BUILD_TAGS))' --build-arg COVER="$${COVER:-}" \
+					-t '$(INTEGRATION_IMAGE)' . || return 1 ;; \
+			*) echo "devcontainer build: unknown service $$svc" >&2; return 2 ;; \
+			esac; \
+		done; \
+	}; devcontainer_build
 
 .PHONY: toolchain-image
 toolchain-image: ## Print the toolchain image tag, hashed from the files it is built from
