@@ -648,8 +648,11 @@ func TestPoolHealthCheck(t *testing.T) {
 	}
 	defer pool.Close()
 
-	// Wait for health checks to run
-	time.Sleep(150 * time.Millisecond)
+	// Wait for the first health-check tick, up to a generous deadline
+	deadline := time.Now().Add(5 * time.Second)
+	for healthCheckCalls.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
 
 	if healthCheckCalls.Load() == 0 {
 		t.Error("expected health check to be called")

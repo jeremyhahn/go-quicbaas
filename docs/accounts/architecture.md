@@ -1132,6 +1132,29 @@ is about to be refused:
 | In-process spawn | `accountResolver.Resolve` → `checkSelected` → `authorizeSpend` |
 | Remote fleet node daemon | `AccountService.MaterializeAccountCredential` |
 
+### Accounts: every turn asks again
+
+A release is checked once, but a session runs many turns. A long session
+can cross its account's window after it was spawned. So `runPromptTurn`
+asks the same authority before every turn of a pooled session
+(`authorizeTurnSpend`, `turn_spend_gate.go`). The ask happens before the
+session is reconstituted or the backend runs.
+
+- The account is the one the live session record names now, so a rotated
+  session is checked against its new account.
+- A refused turn returns `AccountQuotaExhaustedError` (or a breaker refusal). It
+  is not run and not charged. It classifies as `account_quota_exhausted`,
+  exactly as a refused spawn does.
+- The estimate is zero, as at spawn: the question is whether the account is
+  already over.
+- An account record that cannot be read refuses the turn with the read error.
+- The cost per turn is one account read and one bounded ledger scan. No
+  cached verdict sits in front of it, because a cache would be a second,
+  staler authority.
+- A session hosted by a worker daemon is covered too. The control plane drives
+  its turns through `runPromptTurn`, so the envelope the daemon cached at
+  release stops being usable at the next turn.
+
 ### Projects and tenants: deferred at admission
 
 A project's and a tenant's limits cannot be enforced at release, because no

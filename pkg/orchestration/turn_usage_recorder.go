@@ -126,6 +126,10 @@ func (s *agentServiceImpl) recordTurnUsage(ctx context.Context, turn completedTu
 	if s.costTracker == nil && s.ledger == nil {
 		return
 	}
+	// The turn spent its tokens whether or not its caller is still there:
+	// the record is written on a context the turn's cancellation cannot end.
+	ctx, cancel := recordingContext(ctx)
+	defer cancel()
 
 	// A REPAIRED TURN IS NOT A FREE TURN, and before #242 the two were the same
 	// four zeroes. {"input_tokens":1,"output_tokens":-1} summed to zero, was
@@ -303,10 +307,12 @@ func (s *agentServiceImpl) recordConsumption(
 	settings := s.tenantCostSettings(ctx, entry.TenantID)
 	s.prices.StampWithEnergy(&entry, settings, s.measureTurnEnergy(ctx, &entry, settings))
 	stampBilling(&entry, s.accountBilling(ctx, entry.TenantID, entry.AccountID))
-	if err := s.ledger.Record(ctx, entry); err != nil {
-		s.logger.Warnf(
-			"orchestration: failed to record consumption; spend reports and caps are now under-counting: session=%s account=%s entry=%s err=%s",
-			turn.sessionID, session.accountID, turn.turnID, err.Error())
+	// A FAILED WRITE IS KEPT, NOT LOGGED AND LOST. The spend cap is read
+	// from the ledger before the session's next turn; an entry missing from
+	// it would admit that turn against a sum that leaves these tokens out.
+	// recordLedgerEntry keeps it pending, and flushPendingConsumption retries
+	// it and refuses the next turn while it still fails.
+	if !s.recordLedgerEntry(ctx, entry) {
 		return
 	}
 	// Counted only once the ledger holds the entry, so the metrics and the
@@ -418,5 +424,7 @@ func (s *agentServiceImpl) recordFailedTurn(ctx context.Context, turn completedT
 	if s.ledger == nil {
 		return
 	}
+	ctx, cancel := recordingContext(ctx)
+	defer cancel()
 	s.recordConsumption(ctx, turn, TurnAttributionFromContext(ctx), s.sessionOfTurn(turn), usage, ConsumptionOutcomeFailure)
 }
