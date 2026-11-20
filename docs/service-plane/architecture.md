@@ -160,8 +160,11 @@ lease, RBAC binds the manifest's role to the identity, and the secrets grant
 binds `services/<name>/` to it. A redeploy keeps every grant whose ref still
 fits the manifest; an SVID under another ID is reissued and the old one
 revoked; undeploy revokes the certificates and destroys what was
-stored. Not built: the `RoleBinder` over go-qrdb IAM for SPIFFE principals,
-and the server wiring that passes `grants.All` as the plane's grants.
+stored. The `RoleBinder` over go-qrdb IAM is `iam.WorkloadRoleBinder`: the
+SPIFFE ID is a machine principal (username the SVID's CommonName, active,
+mTLS-only, no email login key) holding the built-in role; it never widens an
+account that is not mTLS-only, and a revoke removes the role. Not built: the
+server wiring that passes `grants.All` as the plane's grants.
 
 **Placement** reuses `pkg/scheduler/placement`. `FleetDeployService`, the SSH
 install of the daemon itself, stays as node bootstrap. Its verbs are not
