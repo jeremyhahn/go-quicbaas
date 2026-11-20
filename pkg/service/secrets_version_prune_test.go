@@ -177,3 +177,47 @@ func TestSecretsService_LatestReadRetriesADestroyedVersion(t *testing.T) {
 		})
 	}
 }
+
+func TestSecretsService_RollbackToAPrunedVersionIsNotFound(t *testing.T) {
+	for name, b := range prunedSecretBackends(t) {
+		t.Run(name, func(t *testing.T) {
+			svc := newSecretsService(newPrunedSecretsManager(t, b), newMockLogger())
+			ctx := tenantctx.WithSystem(context.Background())
+
+			_, err := svc.StoreSecret(ctx, &StoreSecretRequest{SecretID: "db-password", Name: "db-password", Data: []byte("one")})
+			require.NoError(t, err)
+			_, err = svc.RotateSecret(ctx, &RotateSecretRequest{SecretID: "db-password", NewData: []byte("two")})
+			require.NoError(t, err)
+
+			_, err = svc.RollbackSecret(ctx, &RollbackSecretRequest{SecretID: "db-password", TargetVersion: 1})
+			require.Error(t, err)
+			require.Equal(t, qberrors.ErrNotFound, qberrors.Code(err), "rollback to a pruned version: %v", err)
+
+			got, err := svc.GetSecret(ctx, &GetSecretRequest{SecretID: "db-password"})
+			require.NoError(t, err)
+			require.Equal(t, []byte("two"), got.Data)
+			require.Equal(t, uint64(2), got.Version)
+		})
+	}
+}
+
+func TestSecretsService_GetSecretVersionPrunedBeforeAuthorReadIsNotFound(t *testing.T) {
+	for name, b := range prunedSecretBackends(t) {
+		t.Run(name, func(t *testing.T) {
+			base := newPrunedSecretsManager(t, b)
+			ctx := tenantctx.WithSystem(context.Background())
+			_, err := newSecretsService(base, newMockLogger()).StoreSecret(ctx, &StoreSecretRequest{SecretID: "db-password", Name: "db-password", Data: []byte("one")})
+			require.NoError(t, err)
+
+			mgr := &pruneAfterGetVersionManager{Manager: base}
+			mgr.afterGetVersion = func(ctx context.Context, path string) {
+				require.NoError(t, base.Store(ctx, path, map[string][]byte{"data": []byte("two")}, nil))
+			}
+			svc := newSecretsService(mgr, newMockLogger())
+
+			_, err = svc.GetSecretVersion(ctx, &GetSecretVersionRequest{SecretID: "db-password", Version: 1})
+			require.Error(t, err)
+			require.Equal(t, qberrors.ErrNotFound, qberrors.Code(err), "version pruned before the author read: %v", err)
+		})
+	}
+}

@@ -761,13 +761,14 @@ func (s *secretsService) GetSecretVersion(ctx context.Context, req *GetSecretVer
 	// The version's author lives in the backend's per-version record, which
 	// GetVersion does not return. An outage reading it fails the call rather
 	// than answering with an empty created_by that reads as "nobody" (#862).
+	// A version pruned between the two reads is reported not-found.
 	createdBy, err := s.secretVersionCreatedBy(ctx, scopedID, versionNumber)
 	if err != nil {
 		if s.metrics != nil {
 			s.metrics.operationErrors.With("get_version", "list_failed").Inc()
 		}
 		return nil, &errors.QBError{
-			Code: errors.ErrInternal,
+			Code: secretLookupCode(err),
 			Op:   "secrets.GetSecretVersion",
 			Err:  &api.OperationFailedError{Operation: "read secret version author", Cause: err},
 		}
@@ -790,18 +791,32 @@ func (s *secretsService) GetSecretVersion(ctx context.Context, req *GetSecretVer
 }
 
 // secretVersionCreatedBy returns the principal recorded as the author of one
-// version of the secret at scopedID, "" when the version records none.
+// version of the secret at scopedID, "" when the version records none. A
+// version the listing shows deleted, or no longer lists, was pruned or
+// deleted after the caller read it: it is read again, and a version that is
+// now gone returns that read's error, so the caller reports it not-found
+// rather than answering with an author for a version that no longer exists.
 func (s *secretsService) secretVersionCreatedBy(ctx context.Context, scopedID string, version int) (string, error) {
 	versions, err := s.secretsManager.ListVersions(ctx, scopedID)
 	if err != nil {
 		return "", err
 	}
+	var entry *interfaces.SecretVersionMetadata
 	for _, vm := range versions {
 		if vm.Version == version {
-			return vm.CreatedBy, nil
+			entry = vm
+			break
 		}
 	}
-	return "", nil
+	if entry == nil || entry.Deleted {
+		if _, _, recheckErr := s.secretsManager.GetVersion(ctx, scopedID, version); recheckErr != nil {
+			return "", recheckErr
+		}
+	}
+	if entry == nil {
+		return "", nil
+	}
+	return entry.CreatedBy, nil
 }
 
 // secretWriteTimes is what the store records about when each version of a
@@ -1043,7 +1058,7 @@ func (s *secretsService) RollbackSecret(ctx context.Context, req *RollbackSecret
 			s.metrics.operationErrors.With("rollback", "rollback_failed").Inc()
 		}
 		return nil, &errors.QBError{
-			Code: errors.ErrInternal,
+			Code: secretLookupCode(err),
 			Op:   "secrets.RollbackSecret",
 			Err:  &api.OperationFailedError{Operation: "rollback secret", Cause: err},
 		}
