@@ -59,10 +59,13 @@ production-s3:
 
 A `session_token` (or `aws_session_token`) next to static keys is refused
 for `s3` and `minio`: the storage library cannot send a session token with
-static keys, so the request would go out without it. To use temporary
-credentials, omit `access_key` and `secret_key`; the backend then uses the
-environment credential chain, which reads `AWS_ACCESS_KEY_ID`,
-`AWS_SECRET_ACCESS_KEY` and `AWS_SESSION_TOKEN`.
+static keys, so the request would go out without it. For `s3`, use
+temporary credentials by omitting `access_key` and `secret_key`; the backend
+then uses the environment credential chain, which reads `AWS_ACCESS_KEY_ID`,
+`AWS_SECRET_ACCESS_KEY` and `AWS_SESSION_TOKEN`. `minio` has no such
+fallback: it requires `access_key` and `secret_key` (without them it fails
+with "accessKey not set"), so temporary credentials are not supported for
+`minio`.
 
 An `endpoint` without a scheme takes it from `use_ssl`: for `minio`,
 `https://` when `use_ssl` is `true` and `http://` otherwise; for `s3`,
@@ -217,7 +220,7 @@ profiles:
 
 ### Use Temporary Credentials
 
-For AWS, prefer temporary credentials. A session token cannot be set next
+For AWS (`s3`), prefer temporary credentials; `minio` does not support them and needs static keys. A session token cannot be set next
 to static keys in the profile (that config is refused, because the storage
 library would drop the token). Leave `access_key`, `secret_key` and
 `session_token` out of the profile and export the temporary credentials

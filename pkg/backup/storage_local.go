@@ -275,8 +275,8 @@ var sessionTokenKeys = []string{"session_token", "aws_session_token", "sessionTo
 //
 //   - A session token next to static keys is refused: the library builds
 //     static credentials with an empty token, so the token would be dropped.
-//     Without static keys the environment credential chain (including
-//     AWS_SESSION_TOKEN) is used, and the config is accepted.
+//     For s3, without static keys the environment credential chain
+//     (including AWS_SESSION_TOKEN) is used; minio always needs static keys.
 //   - An endpoint without a scheme gets one from use_ssl, which the library
 //     does not read: for minio https:// when use_ssl is true and http://
 //     otherwise; for s3 http:// only when use_ssl is explicitly false. An
@@ -292,8 +292,12 @@ func objstoreBackendSettings(backendType string, settings map[string]string) (ma
 	if out["accessKey"] != "" {
 		for _, key := range sessionTokenKeys {
 			if out[key] != "" {
+				hint := "omit the static keys to use the environment credential chain"
+				if backendType == "minio" {
+					hint = "minio requires static keys and does not support temporary credentials"
+				}
 				return nil, api.NewUnsupportedValueError("backup.NewStorageBackend", "storage config",
-					"session_token (temporary credentials are not supported by the storage library; omit the static keys to use the environment credential chain)")
+					"session_token (temporary credentials are not supported by the storage library; "+hint+")")
 			}
 		}
 	}

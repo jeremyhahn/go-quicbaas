@@ -531,7 +531,8 @@ func (c *client) qrdbClient() (*QRDBClient, error) {
 // list, get, delete, restore and verify backups), re-exported through the
 // SDK. The QRDB client is lazily initialized on first call. It returns an
 // Unimplemented error when the active QRDB transport carries no backup
-// service, so a caller never receives a nil client.
+// service (on the embedded transport, when QRDBEmbeddedServicers.Backup is
+// nil), so a caller never receives a nil client.
 //
 // Durability limit: on a clustered quicbaas node the pinned go-qrdb node
 // builds its backup service without a backup sink, so it keeps backups in
@@ -540,6 +541,13 @@ func (c *client) QRDBBackup() (QRDBBackupClient, error) {
 	qrdb, err := c.qrdbClient()
 	if err != nil {
 		return nil, err
+	}
+	// The embedded transport implements BackupClient whether or not a
+	// backup servicer was supplied, so qrdb.Backup() cannot tell; check the
+	// servicer itself.
+	if s := c.opts.embeddedQRDB; s != nil && s.Backup == nil {
+		return nil, sdkerrors.NewUnimplemented("QRDBBackup",
+			"the embedded QRDB transport has no backup service (QRDBEmbeddedServicers.Backup is nil)")
 	}
 	b := qrdb.Backup()
 	if b == nil {

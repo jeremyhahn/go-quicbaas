@@ -112,3 +112,23 @@ func TestClient_QRDBBackup_PropagatesInitError(t *testing.T) {
 		t.Errorf("expected the invalid-input build error, got %v", err)
 	}
 }
+
+// TestStorageQRDBBackup_EmbeddedWithoutBackupServiceIsUnimplemented: valid
+// embedded KV and Admin without a Backup servicer yield Unimplemented and a
+// nil client, not a client that fails on first use.
+func TestStorageQRDBBackup_EmbeddedWithoutBackupServiceIsUnimplemented(t *testing.T) {
+	c := buildEmbeddedQRDBClient(t, QRDBEmbeddedServicers{
+		KV:    stubKVService{},
+		Admin: stubAdminService{},
+	})
+	bc, err := c.Storage().QRDBBackup()
+	if err == nil {
+		t.Fatal("expected an error without a backup servicer")
+	}
+	if bc != nil {
+		t.Errorf("expected a nil client with the error, got %T", bc)
+	}
+	if !sdkerrors.IsUnimplemented(err) {
+		t.Errorf("expected an Unimplemented error, got %v", err)
+	}
+}

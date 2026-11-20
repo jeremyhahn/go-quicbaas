@@ -42,6 +42,11 @@ func TestNewStorageBackend_RefusesSessionTokenWithStaticKeys(t *testing.T) {
 				require.Error(t, err)
 				assert.Nil(t, storage)
 				assert.Contains(t, err.Error(), "session_token")
+				if backend == "minio" {
+					assert.NotContains(t, err.Error(), "environment credential chain")
+				} else {
+					assert.Contains(t, err.Error(), "environment credential chain")
+				}
 			})
 		}
 	}
