@@ -19,6 +19,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/jeremyhahn/go-qrdb/pkg/api/errclass"
 	qrdbserver "github.com/jeremyhahn/go-qrdb/pkg/server"
 	qrdbservice "github.com/jeremyhahn/go-qrdb/pkg/service"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -241,6 +242,26 @@ func defaultEmbeddingDimensionsFor(provider string) int {
 	return fallbackEmbeddingDimensions
 }
 
+// embeddingProviderDefaultModels records the model each provider's
+// constructor applies when its configuration names none, so the go-qrdb
+// embedding adapter reports and accepts the model the provider really uses.
+var embeddingProviderDefaultModels = map[string]string{
+	"ollama":                  embedding.DefaultOllamaConfig().Model,
+	"lmstudio":                embedding.DefaultLMStudioConfig().Model,
+	"openai":                  embedding.ModelTextEmbedding3Small,
+	"voyage":                  embedding.DefaultConfig().Model, // DefaultConfig is Voyage's
+	embedding.NPUProviderName: embedding.DefaultNPUModel,
+}
+
+// effectiveEmbeddingModel returns the configured model, or the provider's
+// default when the configuration names none.
+func effectiveEmbeddingModel(cfg *embedding.Config) string {
+	if cfg.Model != "" {
+		return cfg.Model
+	}
+	return embeddingProviderDefaultModels[cfg.Provider]
+}
+
 // newOllamaEmbeddingProvider builds the Ollama provider, which remains the
 // default embedding backend.
 func newOllamaEmbeddingProvider(_ context.Context, cfg *embedding.Config) (embedding.Provider, error) {
@@ -408,7 +429,7 @@ func (s *Server) registerEmbeddingProviders(mgr *embedding.Manager, cfg *embeddi
 	}
 
 	if s.qrdbEmbeddingSvc != nil {
-		if err := s.qrdbEmbeddingSvc.RegisterProvider(cfg.Provider, &qrdbEmbeddingProvider{p: provider, model: cfg.Model}); err != nil {
+		if err := s.qrdbEmbeddingSvc.RegisterProvider(cfg.Provider, &qrdbEmbeddingProvider{p: provider, model: effectiveEmbeddingModel(cfg)}); err != nil {
 			return &api.OperationFailedError{
 				Operation: "register " + cfg.Provider + " go-qrdb embedding provider",
 				Cause:     err,
@@ -442,6 +463,23 @@ func (s *Server) qrdbEmbeddingServerOptions() []qrdbsdk.ServerOption {
 // service-layer EmbeddingProvider, so go-qrdb's embedding service serves the
 // providers the quicbaas embedding manager registers. Each provider is served
 // with the one model it is configured with.
+// qrdbModelNotServedError refuses a go-qrdb embedding request for a model the
+// provider does not serve. It wraps the *api.InvalidInputError that describes
+// the refusal.
+type qrdbModelNotServedError struct {
+	cause *api.InvalidInputError
+}
+
+// Error returns the message of the wrapped InvalidInputError.
+func (e *qrdbModelNotServedError) Error() string { return e.cause.Error() }
+
+// Unwrap returns the wrapped *api.InvalidInputError.
+func (e *qrdbModelNotServedError) Unwrap() error { return e.cause }
+
+// ErrorClass reports go-qrdb's InvalidArgument class, so the native
+// transports answer 400 / InvalidArgument instead of an internal error.
+func (e *qrdbModelNotServedError) ErrorClass() errclass.Class { return errclass.InvalidArgument }
+
 type qrdbEmbeddingProvider struct {
 	p     embedding.Provider
 	model string
@@ -450,11 +488,12 @@ type qrdbEmbeddingProvider struct {
 var _ qrdbservice.EmbeddingProvider = (*qrdbEmbeddingProvider)(nil)
 
 // Embed embeds texts with the wrapped provider's configured model. An empty
-// model, or the configured one, is served; any other model is refused with an
-// InvalidInputError rather than answered with the configured model's vectors.
+// model, or the configured one, is served; any other model is refused with a
+// qrdbModelNotServedError of go-qrdb's InvalidArgument class rather than
+// answered with the configured model's vectors.
 func (a *qrdbEmbeddingProvider) Embed(ctx context.Context, texts []string, model string) (*qrdbservice.EmbeddingResult, error) {
 	if model != "" && model != a.model {
-		return nil, &api.InvalidInputError{Message: "embedding provider " + a.p.Name() + " serves only model " + a.model + ", not " + model}
+		return nil, &qrdbModelNotServedError{cause: &api.InvalidInputError{Message: "embedding provider " + a.p.Name() + " serves only model " + a.model + ", not " + model}}
 	}
 	vecs, err := a.p.EmbedBatch(ctx, texts)
 	if err != nil {
