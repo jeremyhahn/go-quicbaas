@@ -583,9 +583,9 @@ func remarshalBarrier(src interface{}, dst interface{}) error {
 	return json.Unmarshal(data, dst)
 }
 
-// stringsToInterfaces widens a []string to []interface{} for JSON-friendly
-// transport. Returning []interface{} avoids accidental joins on the wire and
-// matches the MCP tool schema, which accepts arrays of strings.
+// stringsToInterfaces widens a []string to []interface{} for callers that
+// send a JSON array argument. No qrdb_barrier_* or qrdb_ceremony_* tool takes
+// one today: they take comma-separated or JSON-encoded strings.
 func stringsToInterfaces(in []string) []interface{} {
 	if len(in) == 0 {
 		return []interface{}{}
