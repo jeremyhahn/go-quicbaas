@@ -2585,3 +2585,64 @@ func TestGetCompactionProgress_OperationOfAnotherNamespaceIsNotFound(t *testing.
 	assert.Equal(t, "on", resp.OperationID)
 	assert.Equal(t, "test-ns", resp.Namespace)
 }
+
+// vecFullScanStorage is a vecMockStorage that also reads a whole namespace in
+// one call, as interfaces.VectorFullScanner.
+type vecFullScanStorage struct {
+	*vecMockStorage
+	fullScans int
+	fullOpts  *interfaces.VectorScanOptions
+	total     int
+}
+
+func (s *vecFullScanStorage) ScanAllVectors(_ context.Context, _ string, opts *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
+	s.fullScans++
+	s.fullOpts = opts
+	out := make([]*interfaces.VectorValue, 0, s.total)
+	for i := 0; i < s.total; i++ {
+		out = append(out, &interfaces.VectorValue{ID: uint64(i + 1), Embedding: []float32{float32(i), 1}})
+	}
+	return out, nil
+}
+
+// TestPerformIndexRebuild_UsesFullScanner checks a rebuild reads a storage
+// that implements VectorFullScanner once, not page by page.
+func TestPerformIndexRebuild_UsesFullScanner(t *testing.T) {
+	svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 2)
+	const total = 2500
+	var offsetScans int
+	storage.scanNamespaceFn = func(context.Context, string, *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
+		offsetScans++
+		return nil, nil
+	}
+	full := &vecFullScanStorage{vecMockStorage: storage, total: total}
+	svc.storage = full
+
+	idx := newVecMockVectorIndex()
+	var inserted, empty int
+	idx.insertFn = func(_ uint64, emb []float32) error {
+		inserted++
+		if len(emb) == 0 {
+			empty++
+		}
+		return nil
+	}
+	svc.indexFactory = &vecMockVectorIndexFactory{createFn: func(*interfaces.VectorIndexConfig) (interfaces.VectorIndex, error) {
+		return idx, nil
+	}}
+	job := &RebuildJobState{JobID: "jf", Namespace: "test-ns", InProgress: true, TotalVectors: total, StartedAt: time.Now()}
+	svc.jobMu.Lock()
+	svc.rebuildJobs["jf"] = job
+	svc.jobMu.Unlock()
+
+	require.NoError(t, svc.performIndexRebuild(tenantctx.WithSystem(context.Background()), "jf", "test-ns", nil))
+	assert.Equal(t, 1, full.fullScans)
+	require.NotNil(t, full.fullOpts)
+	assert.True(t, full.fullOpts.IncludeVectors, "the rebuild needs the embeddings")
+	assert.Zero(t, offsetScans, "the rebuild paged by offset over a full scanner")
+	assert.Equal(t, total, inserted)
+	assert.Zero(t, empty)
+	job.mu.RLock()
+	defer job.mu.RUnlock()
+	assert.Equal(t, int64(total), int64(job.VectorsProcessed))
+}

@@ -183,3 +183,13 @@ type VectorStorage interface {
 	// Close releases storage resources.
 	Close() error
 }
+
+// VectorFullScanner is implemented by a VectorStorage that can read a whole
+// namespace, every vector once and ordered by ID, more cheaply than by offset
+// pages of ScanNamespace. Index rebuilds use it when the storage offers it.
+type VectorFullScanner interface {
+	// ScanAllVectors returns every vector of the namespace once each, ordered
+	// by ID. opts selects whether embeddings and metadata are included; its
+	// paging fields are ignored.
+	ScanAllVectors(ctx context.Context, namespace string, opts *VectorScanOptions) ([]*VectorValue, error)
+}

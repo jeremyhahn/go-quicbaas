@@ -215,7 +215,7 @@ func (n *nodeVectorStorage) ScanNamespace(ctx context.Context, namespace string,
 	// qrdb pages by cursor only, and the order of one page is not stable
 	// from call to call. Offset paging (#1868) needs a stable order, so
 	// read the whole namespace, order it by ID, and cut the page from that.
-	all, err := n.listAllVectors(ctx, req)
+	all, err := listAllVectors(ctx, n.client.Vector(), req)
 	if err != nil {
 		return nil, err
 	}
@@ -228,6 +228,28 @@ func (n *nodeVectorStorage) ScanNamespace(ctx context.Context, namespace string,
 	all = all[offset:]
 	if limit > 0 && limit < len(all) {
 		all = all[:limit]
+	}
+	return nodeVectorDataToInterface(all), nil
+}
+
+var _ interfaces.VectorFullScanner = (*nodeVectorStorage)(nil)
+
+// ScanAllVectors returns every vector of a namespace once each, ordered by ID,
+// from one listAllVectors read. It includes embeddings and metadata unless
+// opts says otherwise; opts' paging fields are ignored.
+func (n *nodeVectorStorage) ScanAllVectors(ctx context.Context, namespace string, opts *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
+	req := &qrdbtransport.ListVectorsRequest{
+		Namespace:       namespace,
+		IncludeVectors:  true,
+		IncludeMetadata: true,
+	}
+	if opts != nil {
+		req.IncludeVectors = opts.IncludeVectors
+		req.IncludeMetadata = opts.IncludeMetadata
+	}
+	all, err := listAllVectors(ctx, n.client.Vector(), req)
+	if err != nil {
+		return nil, err
 	}
 	return nodeVectorDataToInterface(all), nil
 }
@@ -253,23 +275,36 @@ var errIncompleteVectorScan = errors.New("vector scan did not return every vecto
 // If nodeScanMaxPasses passes still fall short it returns
 // errIncompleteVectorScan rather than an incomplete set, so a caller such as an
 // index rebuild never reports success over vectors it did not read.
-func (n *nodeVectorStorage) listAllVectors(ctx context.Context, req *qrdbtransport.ListVectorsRequest) ([]*qrdbtransport.VectorData, error) {
-	info, err := n.client.Vector().GetNamespaceInfo(ctx, &qrdbtransport.GetNamespaceInfoRequest{
-		Namespace: req.Namespace,
-	})
-	if err != nil {
-		return nil, err
-	}
-	want := int(info.VectorCount)
-
-	seen := make(map[uint64]struct{})
+//
+// Each pass re-reads the namespace count first; when it changed, the vectors
+// read by earlier passes are discarded, so a result never holds a vector that
+// was deleted since. A pass requests at most want/nodeScanPageSize + 2 pages:
+// once the cursor passes the end of a namespace that shrank between requests,
+// qrdb restarts from the first vector with an ever larger cursor, so the pass
+// would otherwise never end. The context is checked before every request.
+func listAllVectors(ctx context.Context, vc qrdbtransport.VectorClient, req *qrdbtransport.ListVectorsRequest) ([]*qrdbtransport.VectorData, error) {
+	var want int
+	var seen map[uint64]struct{}
 	var all []*qrdbtransport.VectorData
-	for pass := 0; pass < nodeScanMaxPasses && (pass == 0 || len(seen) < want); pass++ {
+	for pass := 0; pass < nodeScanMaxPasses; pass++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		info, err := vc.GetNamespaceInfo(ctx, &qrdbtransport.GetNamespaceInfoRequest{Namespace: req.Namespace})
+		if err != nil {
+			return nil, err
+		}
+		if count := int(info.VectorCount); pass == 0 || count != want {
+			want, seen, all = count, make(map[uint64]struct{}, count), nil
+		}
 		page := *req
 		page.Limit = nodeScanPageSize
 		page.Cursor = ""
-		for {
-			resp, err := n.client.Vector().ListVectors(ctx, &page)
+		for pages := want/nodeScanPageSize + 2; pages > 0; pages-- {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			resp, err := vc.ListVectors(ctx, &page)
 			if err != nil {
 				return nil, err
 			}
@@ -290,12 +325,12 @@ func (n *nodeVectorStorage) listAllVectors(ctx context.Context, req *qrdbtranspo
 			}
 			page.Cursor = resp.NextCursor
 		}
+		if len(seen) >= want {
+			sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
+			return all, nil
+		}
 	}
-	if len(seen) < want {
-		return nil, fmt.Errorf("%w: namespace %q: read %d of %d vectors", errIncompleteVectorScan, req.Namespace, len(seen), want)
-	}
-	sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
-	return all, nil
+	return nil, fmt.Errorf("%w: namespace %q: read %d of %d vectors", errIncompleteVectorScan, req.Namespace, len(seen), want)
 }
 
 // ScanByMultipleFilters scans vectors matching multiple metadata filters via the node transport.

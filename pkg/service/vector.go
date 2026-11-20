@@ -1758,26 +1758,17 @@ func (v *vectorService) performIndexRebuild(ctx context.Context, jobID, namespac
 		Limit:          1000,
 		IncludeVectors: true,
 	}
-
-	offset := 0
-	for {
-		opts.Offset = offset
-		vecs, err := v.storage.ScanNamespace(ctx, namespace, opts)
-		if err != nil {
-			job.mu.Lock()
-			job.Error = err
-			job.mu.Unlock()
-			return &qbErrors.QBError{
-				Code: qbErrors.ErrInternal,
-				Op:   "vector.performIndexRebuild",
-				Err:  &api.OperationFailedError{Operation: "scan vectors", Cause: err},
-			}
+	scanFailed := func(err error) error {
+		job.mu.Lock()
+		job.Error = err
+		job.mu.Unlock()
+		return &qbErrors.QBError{
+			Code: qbErrors.ErrInternal,
+			Op:   "vector.performIndexRebuild",
+			Err:  &api.OperationFailedError{Operation: "scan vectors", Cause: err},
 		}
-
-		if len(vecs) == 0 {
-			break
-		}
-
+	}
+	insertAll := func(vecs []*interfaces.VectorValue) {
 		for _, vec := range vecs {
 			if err := newIndex.Insert(vec.ID, vec.Embedding); err != nil {
 				v.logger.WithFields(map[string]interface{}{
@@ -1791,12 +1782,36 @@ func (v *vectorService) performIndexRebuild(ctx context.Context, jobID, namespac
 			job.VectorsProcessed++
 			job.mu.Unlock()
 		}
+	}
 
-		offset += len(vecs)
+	if full, ok := v.storage.(interfaces.VectorFullScanner); ok {
+		// One read: each offset page would reread the whole namespace.
+		vecs, err := full.ScanAllVectors(ctx, namespace, &interfaces.VectorScanOptions{IncludeVectors: true})
+		if err != nil {
+			return scanFailed(err)
+		}
+		insertAll(vecs)
+	} else {
+		offset := 0
+		for {
+			opts.Offset = offset
+			vecs, err := v.storage.ScanNamespace(ctx, namespace, opts)
+			if err != nil {
+				return scanFailed(err)
+			}
 
-		// Break if we got less than requested
-		if len(vecs) < opts.Limit {
-			break
+			if len(vecs) == 0 {
+				break
+			}
+
+			insertAll(vecs)
+
+			offset += len(vecs)
+
+			// Break if we got less than requested
+			if len(vecs) < opts.Limit {
+				break
+			}
 		}
 	}
 
