@@ -805,6 +805,9 @@ func (c *client) qrdbEmbedding() (QRDBEmbeddingClient, error) {
 	if rt, ok := c.transport.(*rest.Transport); ok && (c.opts == nil || (c.opts.embeddedQRDB == nil && c.opts.transportType == TransportREST)) {
 		return rt.QRDBEmbedding(), nil
 	}
+	if mt, ok := c.transport.(*qbmcp.Transport); ok && (c.opts == nil || (c.opts.embeddedQRDB == nil && c.opts.transportType == TransportMCP)) {
+		return mt.QRDBEmbedding(), nil
+	}
 	qrdb, err := c.qrdbClient()
 	if err != nil {
 		return nil, err
