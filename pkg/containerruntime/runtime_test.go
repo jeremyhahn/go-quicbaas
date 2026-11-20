@@ -14,10 +14,12 @@
 package containerruntime
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -495,4 +497,73 @@ func TestOCIRlimit_Fields(t *testing.T) {
 	assert.Equal(t, "RLIMIT_NOFILE", rlimit.Type)
 	assert.Equal(t, uint64(1048576), rlimit.Hard)
 	assert.Equal(t, uint64(1048576), rlimit.Soft)
+}
+
+// startAutoRemoveTest creates and starts a container, with AutoRemove as
+// given, and returns its id and bundle directory.
+func startAutoRemoveTest(t *testing.T, rt *Runtime, name string, autoRemove bool) (string, string) {
+	t.Helper()
+	state, err := rt.CreateContainer(context.Background(), &ContainerConfig{
+		Name: name, Image: "alpine:latest", AutoRemove: autoRemove,
+	})
+	require.NoError(t, err)
+	require.NoError(t, rt.StartContainer(context.Background(), state.ID))
+	return state.ID, state.BundleDir
+}
+
+// requireAutoRemoved waits for an exited auto-remove container to be gone:
+// from the runtime, the engine, its root filesystem, its bundle and its logs.
+func requireAutoRemoved(t *testing.T, rt *Runtime, doubles *testBackends, id, name, bundleDir string) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		_, err := rt.InspectContainer(context.Background(), id)
+		return errors.Is(err, ErrContainerNotFound)
+	}, 5*time.Second, 10*time.Millisecond, "the auto-remove container is still registered")
+	_, err := rt.InspectContainer(context.Background(), name)
+	require.ErrorIs(t, err, ErrContainerNotFound)
+
+	doubles.engine.mu.Lock()
+	assert.NotContains(t, doubles.engine.created, id, "the engine state outlived the container")
+	assert.Equal(t, []string{id}, doubles.engine.destroyed)
+	doubles.engine.mu.Unlock()
+	doubles.rootfs.mu.Lock()
+	assert.Equal(t, []string{id}, doubles.rootfs.removed)
+	doubles.rootfs.mu.Unlock()
+	assert.NoDirExists(t, filepath.Join(doubles.rootfs.root, id), "the writable layer outlived the container")
+	assert.NoFileExists(t, filepath.Join(bundleDir, "stdout.log"), "the log outlived the container")
+	assert.NoDirExists(t, bundleDir, "the bundle outlived the container")
+}
+
+func TestRuntime_AutoRemoveAfterStop(t *testing.T) {
+	rt, doubles := newTestRuntimeWithBackends(t)
+	id, bundleDir := startAutoRemoveTest(t, rt, "auto-remove-stop", true)
+	require.FileExists(t, filepath.Join(bundleDir, "stdout.log"))
+
+	require.NoError(t, rt.StopContainer(context.Background(), id, 10))
+	requireAutoRemoved(t, rt, doubles, id, "auto-remove-stop", bundleDir)
+}
+
+func TestRuntime_AutoRemoveAfterNaturalExit(t *testing.T) {
+	rt, doubles := newTestRuntimeWithBackends(t)
+	doubles.engine.initResult = &fakeResult{exitCode: 0}
+	id, bundleDir := startAutoRemoveTest(t, rt, "auto-remove-exit", true)
+	requireAutoRemoved(t, rt, doubles, id, "auto-remove-exit", bundleDir)
+}
+
+func TestRuntime_NoAutoRemoveKeepsExited(t *testing.T) {
+	rt, doubles := newTestRuntimeWithBackends(t)
+	doubles.engine.initResult = &fakeResult{exitCode: 0}
+	id, bundleDir := startAutoRemoveTest(t, rt, "keep-exited", false)
+	_, err := rt.WaitContainer(context.Background(), id)
+	require.NoError(t, err)
+
+	// Give a removal that should not happen the time it would take.
+	time.Sleep(100 * time.Millisecond)
+	state, err := rt.InspectContainer(context.Background(), id)
+	require.NoError(t, err)
+	assert.Equal(t, ContainerStateExited, state.State)
+	assert.DirExists(t, bundleDir)
+	doubles.engine.mu.Lock()
+	assert.Empty(t, doubles.engine.destroyed)
+	doubles.engine.mu.Unlock()
 }

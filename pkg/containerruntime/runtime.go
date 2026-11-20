@@ -885,6 +885,15 @@ func (r *Runtime) awaitExit(state *containerState, process containerProcess, log
 
 	close(exited)
 	r.logger.Info("container exited", "id", state.ID, "exit_code", exitCode)
+
+	// An auto-remove container goes once it exits, as `docker run --rm`
+	// removes one: its engine state, writable layer, bundle and logs. A
+	// caller that removed it first leaves nothing to remove.
+	if state.Config != nil && state.Config.AutoRemove {
+		if err := r.RemoveContainer(context.Background(), state.ID, false); err != nil && !errors.Is(err, ErrContainerNotFound) {
+			r.logger.Warn("failed to auto-remove exited container", "id", state.ID, "error", err)
+		}
+	}
 }
 
 // StopContainer stops a running container: SIGTERM, then SIGKILL once
