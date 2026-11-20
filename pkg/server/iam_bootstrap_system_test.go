@@ -58,9 +58,9 @@ func TestRunBootstrapSystem_ProtectionFailureIsFatal(t *testing.T) {
 
 	s := &Server{
 		config:                  cfg,
-		dataPlaneBarrier:        barrier,
 		bootstrapSealPassphrase: []byte("operator-seal-passphrase"),
 	}
+	s.dataPlaneBarrier.Store(barrier)
 
 	// The failure happens before deps is read, so an empty value suffices and
 	// keeps the test focused on the branch under test.

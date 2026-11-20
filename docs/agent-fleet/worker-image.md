@@ -328,10 +328,13 @@ environment is raised the same way with `SERENA_DEPENDENCY_FLOORS`, through
 uv's `--overrides` rather than `--with` (serena-agent pins its dependencies
 exactly, so `--with` only adds a second, unsatisfiable constraint; `--overrides`
 replaces the pin instead) (go-quicbaas#1161: a fixable urllib3 finding in
-serena's Python environment).
-npm's own bundled packages are raised with `NPM_BUNDLED_DEPENDENCY_FLOORS`:
-every npm release up to 12.2.0 ships brace-expansion 5.0.9 and undici 6.28.0,
-both with fixable HIGHs. After the npm upgrade, the build `npm pack`s each
+serena's Python environment; serena-agent 1.7.0 also pins filelock and mcp
+below their fixed releases, so its floors raise those two as well, mcp held
+below 2, the major serena 1.7.0 was built against).
+npm's own bundled packages are raised with `NPM_BUNDLED_DEPENDENCY_FLOORS`.
+npm 12.2.3 bundles fixed copies of brace-expansion and undici, so the list is
+empty (it has no line in `toolchain.mk`) until a future npm bundles a copy
+with a fixable HIGH and needs a floor again. With entries, after the npm upgrade, the build `npm pack`s each
 `name@version=integrity` entry through the same registry as the rest of the npm
 layer, checks the tarball against the pinned registry integrity, and unpacks
 it over npm's copy. It fails if npm already bundles the floor or newer, no

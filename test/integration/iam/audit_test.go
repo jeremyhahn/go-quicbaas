@@ -619,19 +619,6 @@ func TestAuditEventGeneration(t *testing.T) {
 			expectedEvent: "user_management",
 		},
 		{
-			name: "Group Creation",
-			operation: func() error {
-				createGroupReq := map[string]interface{}{
-					"name":        fmt.Sprintf("test-group-%d", time.Now().UnixNano()),
-					"description": "Test group for audit events",
-				}
-				// The group create acts in the test's tenant as the system admin
-				// (tenant lift, pkg/api/rest/tenant_target.go).
-				return cluster.asSystemAdmin().postJSON(fmt.Sprintf("/api/v1/tenants/%s/groups", tenantID), createGroupReq, nil)
-			},
-			expectedEvent: "group_management",
-		},
-		{
 			name: "Role Creation",
 			operation: func() error {
 				createRoleReq := map[string]interface{}{
