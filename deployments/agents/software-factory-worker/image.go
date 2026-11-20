@@ -224,10 +224,19 @@ func ToolchainPins() (Pins, error) {
 	return pins, pins.Validate()
 }
 
-// Validate reports the pins that are empty.
+// npmBundledFloorsBuildArg is the one pin that may be empty: npm bundles no
+// copy that needs a floor, and toolchain.mk then has no line for it.
+const npmBundledFloorsBuildArg = "NPM_BUNDLED_DEPENDENCY_FLOORS"
+
+// Validate reports the pins that are empty. NPM_BUNDLED_DEPENDENCY_FLOORS is
+// the one pin that may be empty (it is still passed as a build argument):
+// an empty list means npm bundles no copy that needs a floor.
 func (p Pins) Validate() error {
 	var missing []string
 	for _, pin := range p.named() {
+		if pin.buildArg == npmBundledFloorsBuildArg {
+			continue
+		}
 		if strings.TrimSpace(pin.value) == "" {
 			missing = append(missing, pin.buildArg)
 		}
@@ -277,7 +286,7 @@ func (p Pins) named() []namedPin {
 		{buildArg: "NODE_SHA256_X86_64", value: p.NodeSHA256X86_64},
 		{buildArg: "NODE_SHA256_AARCH64", value: p.NodeSHA256Aarch64},
 		{buildArg: "NPM_VERSION", label: LabelNpmVersion, value: p.Npm},
-		{buildArg: "NPM_BUNDLED_DEPENDENCY_FLOORS", value: p.NpmBundledDependencyFloors},
+		{buildArg: npmBundledFloorsBuildArg, value: p.NpmBundledDependencyFloors},
 		{buildArg: "UV_VERSION", label: LabelUvVersion, value: p.Uv},
 		{buildArg: "UV_SHA256_X86_64", value: p.UvSHA256X86_64},
 		{buildArg: "UV_SHA256_AARCH64", value: p.UvSHA256Aarch64},
