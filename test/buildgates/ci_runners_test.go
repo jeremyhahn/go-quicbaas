@@ -25,9 +25,19 @@ import (
 )
 
 const (
-	// hostedRunner is where every ci.yml job runs (ci-template v1.43 and
-	// v1.46): the standard GitHub-hosted runner.
+	// hostedRunner is the standard GitHub-hosted runner (ci-template v1.43
+	// and v1.46). Since v1.48 it is still where every ci.yml job runs unless
+	// the hosted pool is full: the jobs on overflowRunnerDocker and
+	// overflowRunnerGate take it from the preflight output then too.
 	hostedRunner = "ubuntu-latest"
+	// overflowRunnerDocker is ci-template v1.48's runs-on for a job that
+	// builds or runs images: the preflight `runner_docker` output on
+	// github.com ("ubuntu-latest" unless the hosted pool is full, then the
+	// Dells' bigdisk-docker labels), and the forge label bigdisk elsewhere.
+	overflowRunnerDocker = `${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner_docker) || 'bigdisk' }}`
+	// overflowRunnerGate is ci-template v1.48's runs-on for CI Gate: the
+	// preflight `runner` output on github.com, and ci-gate elsewhere.
+	overflowRunnerGate = `${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner || '"ubuntu-latest"') || 'ci-gate' }}`
 	// selfHostedWaiver opens the waiver a job that leaves hostedRunner
 	// carries in its runs-on line comment, followed by a category and a
 	// measured reason.
@@ -85,9 +95,11 @@ func waiverProblem(comment string) string {
 }
 
 // runnerProblems lists every ci.yml job whose runs-on breaks the runner
-// rule, given the workflow's text: a job runs on hostedRunner, or on a
-// self-hosted label with a categorised waiver, and never on an expression,
-// which can pick a self-hosted label.
+// rule, given the workflow's text: a job runs on hostedRunner, on one of
+// ci-template v1.48's two runs-on expressions exactly (overflowRunnerDocker,
+// overflowRunnerGate: hosted first, the Dells only when the hosted pool is
+// full), or on a self-hosted label with a categorised waiver, and never on
+// any other expression, which can pick a self-hosted label.
 func runnerProblems(body []byte) []string {
 	jobs, problem := runnerJobs(body)
 	if problem != "" {
@@ -104,6 +116,7 @@ func runnerProblems(body []byte) []string {
 			if p := waiverProblem(j.runsOn.LineComment); p != "" {
 				problems = append(problems, where+" "+p)
 			}
+		case isOverflowRunner(j.runsOn.Value):
 		case strings.Contains(j.runsOn.Value, "${{"):
 			problems = append(problems, where+" runs on an expression, which can pick a self-hosted label: "+strconv.Quote(j.runsOn.Value))
 		case j.runsOn.Value != hostedRunner:
@@ -113,6 +126,12 @@ func runnerProblems(body []byte) []string {
 		}
 	}
 	return problems
+}
+
+// isOverflowRunner reports whether a runs-on value is exactly one of
+// ci-template v1.48's two hosted-first expressions.
+func isOverflowRunner(v string) bool {
+	return v == overflowRunnerDocker || v == overflowRunnerGate
 }
 
 // mapValue returns the value of key in the mapping n, or nil.
@@ -145,7 +164,8 @@ func readCI(t *testing.T) []byte {
 }
 
 // TestCIRunsHostedFirst holds the runner rule on ci.yml, and that no job
-// carries a self-hosted waiver today: every job runs on hostedRunner.
+// carries a self-hosted waiver today: every job runs on hostedRunner or on
+// one of ci-template v1.48's two hosted-first runs-on expressions.
 func TestCIRunsHostedFirst(t *testing.T) {
 	body := readCI(t)
 	for _, p := range runnerProblems(body) {
@@ -156,7 +176,7 @@ func TestCIRunsHostedFirst(t *testing.T) {
 		t.Fatal(problem)
 	}
 	for _, j := range jobs {
-		if j.runsOn != nil && j.runsOn.Value != hostedRunner {
+		if j.runsOn != nil && j.runsOn.Value != hostedRunner && !isOverflowRunner(j.runsOn.Value) {
 			t.Errorf("job %s runs on %q; no ci.yml job is waived off %s today", j.name, j.runsOn.Value, hostedRunner)
 		}
 	}
@@ -186,6 +206,7 @@ func TestRunnerProblems_Mutations(t *testing.T) {
 		{"the Gitea release arm put back", func(b string) string {
 			return replaceJobRunner(t, b, "publish-images", `${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'release' }}`)
 		}, "job publish-images runs on an expression"},
+		{"a v1.48 output read without its forge arm", coverage(`${{ fromJSON(needs.preflight.outputs.runner_docker) }}`), "job coverage runs on an expression"},
 		{"a bare waiver", coverage("bigdisk  " + selfHostedWaiver + "needs a big disk"), "names no category"},
 		{"a credential waiver", coverage("bigdisk  " + selfHostedWaiver + "credential: the token is here"), "credential: waiver"},
 		{"a waiver with an empty reason", coverage("bigdisk  " + selfHostedWaiver + "hardware: "), "hardware: waiver with an empty reason"},
