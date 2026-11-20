@@ -532,6 +532,10 @@ func (c *client) qrdbClient() (*QRDBClient, error) {
 // SDK. The QRDB client is lazily initialized on first call. It returns an
 // Unimplemented error when the active QRDB transport carries no backup
 // service, so a caller never receives a nil client.
+//
+// Durability limit: on a clustered quicbaas node the pinned go-qrdb node
+// builds its backup service without a backup sink, so it keeps backups in
+// memory only. They do not survive a restart of the node.
 func (c *client) QRDBBackup() (QRDBBackupClient, error) {
 	qrdb, err := c.qrdbClient()
 	if err != nil {
