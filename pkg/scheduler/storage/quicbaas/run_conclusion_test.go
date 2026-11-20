@@ -18,8 +18,10 @@ func conclusion(jobID uint64, firing, started time.Time, owner string) *schedule
 // TestConcludeRun_OneWriterPerRun is the guarded transition against the live
 // transaction plane: the first writer of a run wins, a second writer of the
 // same run loses, and the winner's retry wins again.
+// These tests share the package's qrdb node, so each takes its own job ID to keep its mark key fresh on every run.
 func TestConcludeRun_OneWriterPerRun(t *testing.T) {
 	storage := newClusteredFixture(t)
+	jobID := jobIDs.next()
 	ctx := context.Background()
 	firing := time.Unix(1_800_000_000, 0)
 	started := firing.Add(time.Second)
@@ -34,7 +36,7 @@ func TestConcludeRun_OneWriterPerRun(t *testing.T) {
 		{"the winner's retry wins again", "recovery@node-2", true},
 	}
 	for _, step := range steps {
-		won, err := storage.ConcludeRun(ctx, conclusion(7, firing, started, step.owner))
+		won, err := storage.ConcludeRun(ctx, conclusion(jobID, firing, started, step.owner))
 		if err != nil {
 			t.Fatalf("%s: %v", step.name, err)
 		}
@@ -49,12 +51,13 @@ func TestConcludeRun_OneWriterPerRun(t *testing.T) {
 // zombie outcome of an earlier run then loses rather than overwriting.
 func TestConcludeRun_TheMarkOnlyMovesForward(t *testing.T) {
 	storage := newClusteredFixture(t)
+	jobID := jobIDs.next()
 	ctx := context.Background()
 	firing := time.Unix(1_800_000_000, 0)
 
-	first := conclusion(8, firing, firing.Add(time.Second), "execution@node-1")
-	rearmed := conclusion(8, firing, firing.Add(time.Minute), "execution@node-2")
-	next := conclusion(8, firing.Add(5*time.Minute), firing.Add(5*time.Minute), "execution@node-1")
+	first := conclusion(jobID, firing, firing.Add(time.Second), "execution@node-1")
+	rearmed := conclusion(jobID, firing, firing.Add(time.Minute), "execution@node-2")
+	next := conclusion(jobID, firing.Add(5*time.Minute), firing.Add(5*time.Minute), "execution@node-1")
 
 	for _, run := range []*scheduler.RunConclusion{first, rearmed, next} {
 		if won, err := storage.ConcludeRun(ctx, run); err != nil || !won {
@@ -88,15 +91,16 @@ func TestConcludeRun_RefusesAnIncompleteRun(t *testing.T) {
 // reissued still must not leave coordination state behind for every run.
 func TestDeleteJob_RemovesTheConclusionMark(t *testing.T) {
 	storage := newClusteredFixture(t)
+	jobID := jobIDs.next()
 	ctx := context.Background()
 	firing := time.Unix(1_800_000_000, 0)
-	if won, err := storage.ConcludeRun(ctx, conclusion(10, firing, firing, "o")); err != nil || !won {
+	if won, err := storage.ConcludeRun(ctx, conclusion(jobID, firing, firing, "o")); err != nil || !won {
 		t.Fatalf("ConcludeRun: won=%v err=%v", won, err)
 	}
-	if err := storage.DeleteJob(ctx, 10, "tenant-a"); err != nil && !isNotFound(err) {
+	if err := storage.DeleteJob(ctx, jobID, "tenant-a"); err != nil && !isNotFound(err) {
 		t.Fatalf("DeleteJob: %v", err)
 	}
-	held, err := storage.marks.Get(ctx, keyForConclusion(10, "tenant-a"))
+	held, err := storage.marks.Get(ctx, keyForConclusion(jobID, "tenant-a"))
 	if err == nil && len(held) > 0 {
 		t.Fatalf("the conclusion mark survived its job: %s", held)
 	}
