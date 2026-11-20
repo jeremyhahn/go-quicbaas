@@ -403,7 +403,9 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, req i
 	// handler. The SDK trust surface uses plain Go structs that don't
 	// implement proto.Message, so they must be converted to the generated
 	// TrustService proto types before calling gRPC.
-	if isTrustService(service) {
+	// quicbaas.TrustedCA shares the quicbaas.Trust prefix; it is dispatched
+	// by the CA branch below.
+	if isTrustService(service) && !isTrustedCAService(service) {
 		handler := newTrustHandler(conn)
 		return handler.handleRequest(ctx, service, method, req)
 	}
@@ -454,11 +456,20 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, req i
 		return handler.handleRequest(ctx, service, method, req)
 	}
 
-	// The re-exported go-xkms CAService (Security().TrustedCA()) converts its
-	// go-xkms wire structs to the TrustedCAService proto types, as PIV does
-	// (#1330). This branch also serves the Unix transport.
-	if isTrustedCAService(service) {
-		return newTrustedCAHandler(conn).handleRequest(ctx, service, method, req)
+	// The re-exported go-xkms CAService and TCGCAService
+	// (Security().TrustedCA(), Security().TCGCA()). The node's TCP gRPC
+	// listener serves their verbs only on go-xkms's xkms.v1.KeystoreService;
+	// the Unix socket serves the CA verbs on TrustedCAService and no TCG
+	// verb (#1330).
+	if isTrustedCAService(service) || isTCGCAService(service) {
+		if onUnixSocket(t.cfg) {
+			if isTCGCAService(service) {
+				return nil, errors.NewUnimplemented("grpc.Request",
+					"TCGCAService is not served on the Unix socket: "+method)
+			}
+			return newTrustedCAHandler(conn).handleRequest(ctx, service, method, req)
+		}
+		return newKeystoreCAHandler(conn).handleRequest(ctx, service, method, req)
 	}
 
 	// Check if this is an Operations service request and route through the
