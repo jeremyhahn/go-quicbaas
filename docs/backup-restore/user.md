@@ -53,10 +53,22 @@ production-s3:
   credentials:
     access_key: ${AWS_ACCESS_KEY_ID}
     secret_key: ${AWS_SECRET_ACCESS_KEY}
-    session_token: ${AWS_SESSION_TOKEN}  # Optional
   config:
     endpoint: https://s3.custom.com  # Optional
 ```
+
+A `session_token` (or `aws_session_token`) next to static keys is refused
+for `s3` and `minio`: the storage library cannot send a session token with
+static keys, so the request would go out without it. To use temporary
+credentials, omit `access_key` and `secret_key`; the backend then uses the
+environment credential chain, which reads `AWS_ACCESS_KEY_ID`,
+`AWS_SECRET_ACCESS_KEY` and `AWS_SESSION_TOKEN`.
+
+An `endpoint` without a scheme takes it from `use_ssl`: for `minio`,
+`https://` when `use_ssl` is `true` and `http://` otherwise; for `s3`,
+`http://` only when `use_ssl` is `false`. An endpoint whose scheme
+contradicts an explicit `use_ssl` (`http://` with `use_ssl: true`, or
+`https://` with `use_ssl: false`) is refused.
 
 ### Azure Profile
 
@@ -205,13 +217,16 @@ profiles:
 
 ### Use Temporary Credentials
 
-For AWS, prefer temporary credentials with session tokens:
+For AWS, prefer temporary credentials. A session token cannot be set next
+to static keys in the profile (that config is refused, because the storage
+library would drop the token). Leave `access_key`, `secret_key` and
+`session_token` out of the profile and export the temporary credentials
+instead; the environment credential chain picks them up:
 
-```yaml
-credentials:
-  access_key: ${AWS_ACCESS_KEY_ID}
-  secret_key: ${AWS_SECRET_ACCESS_KEY}
-  session_token: ${AWS_SESSION_TOKEN}
+```bash
+export AWS_ACCESS_KEY_ID=...
+export AWS_SECRET_ACCESS_KEY=...
+export AWS_SESSION_TOKEN=...
 ```
 
 ## Complete Example

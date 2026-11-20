@@ -16,6 +16,12 @@
 package backup
 
 import (
+	"bytes"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -36,4 +42,39 @@ func TestNewStorageBackend_MinIO(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotNil(t, backend)
+}
+
+// TestMinIOStorage_PutOverPlainHTTPWithUseSSLFalse proves use_ssl=false is
+// honoured for a bare endpoint: the Put reaches a plain-HTTP server.
+func TestMinIOStorage_PutOverPlainHTTPWithUseSSLFalse(t *testing.T) {
+	var (
+		mu   sync.Mutex
+		seen []string
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		mu.Lock()
+		seen = append(seen, r.Method+" "+r.URL.Path)
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	backend, err := NewStorageBackend(&Config{
+		StorageBackend: "minio",
+		StorageConfig: map[string]string{
+			"endpoint":   strings.TrimPrefix(srv.URL, "http://"),
+			"bucket":     "backups",
+			"access_key": "minioadmin",
+			"secret_key": "minioadmin",
+			"use_ssl":    "false",
+		},
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, backend.Put("k", bytes.NewReader([]byte("x"))))
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Contains(t, seen, "PUT /backups/k")
 }

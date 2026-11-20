@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -215,7 +216,11 @@ func NewStorageBackend(config *Config) (common.Storage, error) {
 	factoryType := backendType
 
 	// Create storage using go-objstore factory
-	storage, err := factory.NewStorage(factoryType, objstoreSettings(config.StorageConfig))
+	settings, err := objstoreBackendSettings(backendType, config.StorageConfig)
+	if err != nil {
+		return nil, err
+	}
+	storage, err := factory.NewStorage(factoryType, settings)
 	if err != nil {
 		return nil, api.NewOperationFailedError("create storage backend", err)
 	}
@@ -258,6 +263,68 @@ func objstoreSettings(settings map[string]string) map[string]string {
 		}
 	}
 	return out
+}
+
+// sessionTokenKeys are the config keys that carry a temporary-credential
+// session token.
+var sessionTokenKeys = []string{"session_token", "aws_session_token", "sessionToken"}
+
+// objstoreBackendSettings returns the settings handed to go-objstore for
+// backendType: the snake_case keys mapped by objstoreSettings, then, for s3
+// and minio, two checks the storage library does not make itself.
+//
+//   - A session token next to static keys is refused: the library builds
+//     static credentials with an empty token, so the token would be dropped.
+//     Without static keys the environment credential chain (including
+//     AWS_SESSION_TOKEN) is used, and the config is accepted.
+//   - An endpoint without a scheme gets one from use_ssl, which the library
+//     does not read: for minio https:// when use_ssl is true and http://
+//     otherwise; for s3 http:// only when use_ssl is explicitly false. An
+//     endpoint whose scheme contradicts an explicit use_ssl is refused.
+//
+// The caller's map is never modified.
+func objstoreBackendSettings(backendType string, settings map[string]string) (map[string]string, error) {
+	out := objstoreSettings(settings)
+	if backendType != "s3" && backendType != "minio" {
+		return out, nil
+	}
+
+	if out["accessKey"] != "" {
+		for _, key := range sessionTokenKeys {
+			if out[key] != "" {
+				return nil, api.NewUnsupportedValueError("backup.NewStorageBackend", "storage config",
+					"session_token (temporary credentials are not supported by the storage library; omit the static keys to use the environment credential chain)")
+			}
+		}
+	}
+
+	endpoint := out["endpoint"]
+	if endpoint == "" {
+		return out, nil
+	}
+	useSSL, explicit := false, false
+	if v, err := strconv.ParseBool(strings.TrimSpace(out["useSSL"])); err == nil {
+		useSSL, explicit = v, true
+	}
+
+	if scheme, _, ok := strings.Cut(endpoint, "://"); ok {
+		scheme = strings.ToLower(scheme)
+		if explicit && ((useSSL && scheme == "http") || (!useSSL && scheme == "https")) {
+			return nil, api.NewUnsupportedValueError("backup.NewStorageBackend", "storage config",
+				"endpoint "+endpoint+" (its scheme contradicts use_ssl="+strconv.FormatBool(useSSL)+")")
+		}
+		return out, nil
+	}
+
+	switch {
+	case backendType == "minio" && useSSL:
+		out["endpoint"] = "https://" + endpoint
+	case backendType == "minio":
+		out["endpoint"] = "http://" + endpoint
+	case explicit && !useSSL:
+		out["endpoint"] = "http://" + endpoint
+	}
+	return out, nil
 }
 
 // MockStorage implements both common.Storage and the backup-specific StorageBackend interface for testing.
