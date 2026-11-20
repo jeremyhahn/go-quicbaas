@@ -567,3 +567,70 @@ func TestRuntime_NoAutoRemoveKeepsExited(t *testing.T) {
 	assert.Empty(t, doubles.engine.destroyed)
 	doubles.engine.mu.Unlock()
 }
+
+// mountAt returns the OCI mount the fake engine was given for target.
+func mountAt(t *testing.T, doubles *testBackends, id, target string) ociMount {
+	t.Helper()
+	doubles.engine.mu.Lock()
+	defer doubles.engine.mu.Unlock()
+	oci, ok := doubles.engine.created[id]
+	require.True(t, ok, "container %s was created", id)
+	for _, m := range oci.Mounts {
+		if m.Destination == target {
+			return m
+		}
+	}
+	require.Failf(t, "no mount", "container %s has no mount at %s", id, target)
+	return ociMount{}
+}
+
+func TestRuntime_NamedVolumeIsBoundFromVolumePath(t *testing.T) {
+	rt, doubles := newTestRuntimeWithBackends(t)
+	dir := filepath.Join(rt.Config().VolumePath, "cache")
+
+	first, err := rt.CreateContainer(t.Context(), &ContainerConfig{
+		Name: "volume-a", Image: "alpine:latest",
+		Mounts: []Mount{{Type: "volume", Source: "cache", Target: "/cache"}},
+	})
+	require.NoError(t, err)
+	m := mountAt(t, doubles, first.ID, "/cache")
+	assert.Equal(t, "bind", m.Type)
+	assert.Equal(t, dir, m.Source)
+	assert.Contains(t, m.Options, "rbind")
+	assert.NotContains(t, m.Options, "ro")
+	info, err := os.Stat(dir)
+	require.NoError(t, err, "the volume's directory is created")
+	assert.True(t, info.IsDir())
+
+	second, err := rt.CreateContainer(t.Context(), &ContainerConfig{
+		Name: "volume-b", Image: "alpine:latest",
+		Mounts: []Mount{{Type: "volume", Source: "cache", Target: "/cache", ReadOnly: true}},
+	})
+	require.NoError(t, err)
+	m = mountAt(t, doubles, second.ID, "/cache")
+	assert.Equal(t, "bind", m.Type)
+	assert.Equal(t, dir, m.Source, "a second container naming the volume gets the same directory")
+	assert.Contains(t, m.Options, "rbind")
+	assert.Contains(t, m.Options, "ro", "a read-only volume is bound read-only")
+
+	require.NoError(t, rt.RemoveContainer(t.Context(), first.ID, true))
+	require.NoError(t, rt.RemoveContainer(t.Context(), second.ID, true))
+	_, err = os.Stat(dir)
+	require.NoError(t, err, "a volume outlives the containers that mount it")
+}
+
+func TestRuntime_NamedVolumeBadNameRefused(t *testing.T) {
+	for _, name := range []string{"../x", "a/b", ".hidden", "/abs"} {
+		t.Run(name, func(t *testing.T) {
+			rt, doubles := newTestRuntimeWithBackends(t)
+			_, err := rt.CreateContainer(t.Context(), &ContainerConfig{
+				Name: "bad-volume", Image: "alpine:latest",
+				Mounts: []Mount{{Type: "volume", Source: name, Target: "/data"}},
+			})
+			require.ErrorIs(t, err, ErrInvalidVolumeName)
+			doubles.engine.mu.Lock()
+			defer doubles.engine.mu.Unlock()
+			assert.Empty(t, doubles.engine.created, "the engine created nothing")
+		})
+	}
+}

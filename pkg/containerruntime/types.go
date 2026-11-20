@@ -14,9 +14,15 @@
 package containerruntime
 
 import (
+	"errors"
 	"strconv"
 	"time"
 )
+
+// ErrInvalidVolumeName reports a named volume mount whose name is not a
+// single plain path element: it must start with a letter or digit and hold
+// only letters, digits, '_', '.' and '-'.
+var ErrInvalidVolumeName = errors.New("invalid volume name")
 
 // ContainerState represents the lifecycle state of a container.
 type ContainerState string

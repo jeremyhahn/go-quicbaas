@@ -18,6 +18,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -469,6 +470,23 @@ func TestJobRuntime_RunInteractive_SupervisorOwnsRemoval(t *testing.T) {
 	proc.Wait(t.Context())
 	require.NoError(t, proc.Stdin.Close())
 	require.NoError(t, proc.Stdout.Close())
+}
+
+func TestJobRuntime_RunWithNamedVolume(t *testing.T) {
+	jr, doubles := newTestJobRuntime(t)
+
+	id, err := jr.Run(t.Context(), &orchestration.ContainerSpec{
+		Network: "none",
+		Image:   "alpine:latest",
+		Mounts:  []orchestration.ContainerMount{{Type: orchestration.MountTypeVolume, Source: "work", Target: "/work"}},
+	})
+	require.NoError(t, err)
+
+	m := mountAt(t, doubles, id, "/work")
+	assert.Equal(t, "bind", m.Type)
+	assert.Equal(t, filepath.Join(jr.runtime.Config().VolumePath, "work"), m.Source)
+	assert.Contains(t, m.Options, "rbind")
+	require.NoError(t, jr.Remove(t.Context(), id))
 }
 
 func TestJobRuntime_RunInteractive_ContextEndKillsAndRemoves(t *testing.T) {

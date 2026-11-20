@@ -26,6 +26,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -329,6 +330,10 @@ func (r *Runtime) CreateContainer(ctx context.Context, config *ContainerConfig) 
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
+	config, err := r.resolveVolumes(config)
+	if err != nil {
+		return nil, err
+	}
 
 	// The image must already be in local storage, and a pinned reference
 	// must still resolve to the pinned digest.
@@ -365,6 +370,40 @@ func (r *Runtime) CreateContainer(ctx context.Context, config *ContainerConfig) 
 
 	r.logger.Info("created container", "name", config.Name, "id", id)
 	return state, nil
+}
+
+// volumeNamePattern is what a named volume may be called: one plain path
+// element, so its directory always lies directly under VolumePath.
+var volumeNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
+
+// resolveVolumes returns config with each named volume mount turned into a
+// bind of the volume's directory under VolumePath, creating the directory
+// the first time a container names it. The caller's config is not changed.
+// A volume outlives the containers that mount it: removing a container
+// never removes its volumes.
+func (r *Runtime) resolveVolumes(config *ContainerConfig) (*ContainerConfig, error) {
+	if !slices.ContainsFunc(config.Mounts, func(m Mount) bool { return m.Type == "volume" }) {
+		return config, nil
+	}
+	resolved := *config
+	resolved.Mounts = slices.Clone(config.Mounts)
+	for i, m := range resolved.Mounts {
+		if m.Type != "volume" {
+			continue
+		}
+		if !volumeNamePattern.MatchString(m.Source) {
+			return nil, fmt.Errorf("%w: %q", ErrInvalidVolumeName, m.Source)
+		}
+		dir := filepath.Join(r.config.VolumePath, m.Source)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return nil, &RuntimeError{Operation: "create volume", Err: err}
+		}
+		m.Type = "bind"
+		m.Source = dir
+		m.Options = slices.Clone(m.Options)
+		resolved.Mounts[i] = m
+	}
+	return &resolved, nil
 }
 
 // createInBundle unpacks the image into the container's root filesystem,
