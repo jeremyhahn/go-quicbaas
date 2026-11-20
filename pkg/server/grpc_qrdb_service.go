@@ -16,6 +16,7 @@ package server
 import (
 	ggrpc "google.golang.org/grpc"
 
+	qrdbgrpc "github.com/jeremyhahn/go-qrdb/pkg/api/grpc"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	grpcapi "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
@@ -42,11 +43,15 @@ import (
 // server. The qrdb proto surface lives in the qrdb.v1 namespace, so it can
 // coexist with the quicbaas.v1 services already registered on the same
 // grpc.Server. Sub-services are conditionally wired based on which
-// implementations are available.
+// implementations are available. The data services (KV, MVCC, batch,
+// transaction, collections and the rest) resolve the embedded node's
+// per-(tenant, database) registry on each call, and fail closed while the
+// node is absent or sealed.
 func (s *Server) registerQRDBService(grpcServer *ggrpc.Server) {
 	opts := s.buildQRDBRegisterOptions()
+	opts = append(opts, qrdbgrpc.WithRegisterServiceRegistry(newQRDBDataRegistryProxy(s)))
 	qrdbsdk.RegisterGRPCService(grpcServer, nil, nil, opts...)
-	s.logger.Info("Registered qrdb.v1.QRDBService on gRPC server (credential/barrier/ceremony/user/user-auth-factor surface)")
+	s.logger.Info("Registered qrdb.v1.QRDBService on gRPC server (data/credential/barrier/ceremony/user/user-auth-factor surface)")
 }
 
 // buildQRDBRegisterOptions assembles the qrdbsdk.GRPCRegisterOption slice from
