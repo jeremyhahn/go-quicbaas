@@ -252,7 +252,7 @@ func TestTransport_Request_ContextCancellation(t *testing.T) {
 func newInitTestTransport(t *testing.T) *Transport {
 	t.Helper()
 	srv := mcpserver.NewMCPServer("TestServer", "1.0.0")
-	srv.AddTool(mcpgo.NewTool("qrdb_get"), func(_ context.Context, _ mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	srv.AddTool(mcpgo.NewTool(ToolName("quicbaas.KV", "Get")), func(_ context.Context, _ mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 		return mcpgo.NewToolResultText("{}"), nil
 	})
 	httpSrv := mcpserver.NewTestStreamableHTTPServer(srv)
