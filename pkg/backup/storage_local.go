@@ -188,9 +188,15 @@ func (s *LocalStorage) Close() error {
 	return nil
 }
 
+// newSessionTokenS3 builds the S3 backend for temporary credentials (an
+// access key, secret key and session token). It is set by storage_s3_session.go
+// under the awss3 tag, the tag that links the S3 SDK.
+var newSessionTokenS3 func(settings map[string]string) (common.Storage, error)
+
 // NewStorageBackend creates a storage backend using go-objstore factory.
 // This returns go-objstore's common.Storage interface directly.
 // Supported backends: local, s3, minio, gcs, azure, mock (for testing).
+// An s3 configuration with a session_token uses the token-aware backend.
 func NewStorageBackend(config *Config) (common.Storage, error) {
 	backendType := strings.ToLower(config.StorageBackend)
 
@@ -220,6 +226,20 @@ func NewStorageBackend(config *Config) (common.Storage, error) {
 	if err := applyEndpointScheme(backendType, settings); err != nil {
 		return nil, err
 	}
+	if backendType == "s3" && settings["sessionToken"] != "" {
+		// go-objstore's S3 backend drops the session token: temporary
+		// credentials go through the token-aware backend instead.
+		if newSessionTokenS3 == nil {
+			return nil, api.NewUnsupportedValueError("backup.NewStorageBackend", "storage backend",
+				"s3 with session_token (built without the awss3 tag)")
+		}
+		storage, err := newSessionTokenS3(settings)
+		if err != nil {
+			return nil, api.NewOperationFailedError("create storage backend", err)
+		}
+		return storage, nil
+	}
+
 	storage, err := factory.NewStorage(factoryType, settings)
 	if err != nil {
 		return nil, api.NewOperationFailedError("create storage backend", err)
@@ -234,6 +254,7 @@ func NewStorageBackend(config *Config) (common.Storage, error) {
 var objstoreKeyAliases = map[string][]string{
 	"accessKey":        {"access_key", "access_key_id"},
 	"secretKey":        {"secret_key", "secret_access_key"},
+	"sessionToken":     {"session_token"},
 	"useSSL":           {"use_ssl"},
 	"forcePathStyle":   {"use_path_style", "force_path_style"},
 	"accountName":      {"account_name"},

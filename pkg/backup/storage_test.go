@@ -105,6 +105,7 @@ func TestObjstoreSettings_MapsSnakeCaseKeys(t *testing.T) {
 		"bucket":            "b",
 		"access_key":        "ak",
 		"secret_access_key": "sk",
+		"session_token":     "tok",
 		"use_ssl":           "false",
 		"use_path_style":    "true",
 		"account_name":      "acct",
@@ -116,6 +117,7 @@ func TestObjstoreSettings_MapsSnakeCaseKeys(t *testing.T) {
 	want := map[string]string{
 		"accessKey":        "ak",
 		"secretKey":        "sk",
+		"sessionToken":     "tok",
 		"useSSL":           "false",
 		"forcePathStyle":   "true",
 		"accountName":      "acct",
