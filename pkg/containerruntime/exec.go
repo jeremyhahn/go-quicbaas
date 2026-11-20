@@ -155,7 +155,16 @@ func (r *Runtime) execBuffered(ctx context.Context, state *containerState, opts 
 		select {
 		case <-done:
 		case <-grace.C:
-			killErr = errors.Join(killErr, ErrExecOutlivedItsKill)
+			// A descendant the kill missed holds the pipes: release the
+			// exec, which closes them and cleans up its workload, so its
+			// Wait ends and its output stops.
+			killErr = errors.Join(killErr, ErrExecOutlivedItsKill, process.Release())
+			released := time.NewTimer(execCancelGrace)
+			defer released.Stop()
+			select {
+			case <-done:
+			case <-released.C:
+			}
 		}
 		return nil, errors.Join(ctx.Err(), killErr)
 	}

@@ -62,6 +62,13 @@ type containerProcess interface {
 
 	// Console is the pseudo-terminal master of a TTY process, nil otherwise.
 	Console() io.ReadWriteCloser
+
+	// Release gives up on a process that outlived its kill: it kills what
+	// is left of the process's workload and closes the stdio pipes the
+	// process owns, so a descendant still holding them can keep neither
+	// Wait blocked nor its output flowing into the caller's writers. Wait
+	// returns once Release has returned.
+	Release() error
 }
 
 // containerEngine creates, runs and destroys containers.

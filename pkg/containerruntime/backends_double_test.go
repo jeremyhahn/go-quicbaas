@@ -22,8 +22,10 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -58,6 +60,19 @@ type fakeProcess struct {
 	// holding the process's output pipes does.
 	outlivesKill bool
 
+	// released is closed by Release, which closes the process's pipes and
+	// cleans up its workload: Wait returns and the output stops.
+	released    chan struct{}
+	releaseOnce sync.Once
+	// writing, when set, is closed once the output writer Release stops
+	// has returned.
+	writing chan struct{}
+	// waitReturned is closed when Wait returns.
+	waitReturned     chan struct{}
+	waitReturnedOnce sync.Once
+	// written counts the bytes the output writer has written.
+	written atomic.Int64
+
 	mu       sync.Mutex
 	signals  []os.Signal
 	exitCode int
@@ -66,7 +81,12 @@ type fakeProcess struct {
 }
 
 func newFakeProcess(pid int) *fakeProcess {
-	return &fakeProcess{pid: pid, exited: make(chan struct{})}
+	return &fakeProcess{
+		pid:          pid,
+		exited:       make(chan struct{}),
+		released:     make(chan struct{}),
+		waitReturned: make(chan struct{}),
+	}
 }
 
 func (p *fakeProcess) exit(code int) {
@@ -81,10 +101,55 @@ func (p *fakeProcess) exit(code int) {
 func (p *fakeProcess) Pid() int { return p.pid }
 
 func (p *fakeProcess) Wait() (int, error) {
-	<-p.exited
+	defer p.waitReturnedOnce.Do(func() { close(p.waitReturned) })
+	select {
+	case <-p.exited:
+	case <-p.released:
+		return -1, os.ErrClosed
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.exitCode, nil
+}
+
+// Release closes the process's pipes and cleans up its workload: the
+// output writer stops, and Wait returns.
+func (p *fakeProcess) Release() error {
+	p.releaseOnce.Do(func() { close(p.released) })
+	if p.writing != nil {
+		<-p.writing
+	}
+	return nil
+}
+
+// isReleased reports whether Release was called.
+func (p *fakeProcess) isReleased() bool {
+	select {
+	case <-p.released:
+		return true
+	default:
+		return false
+	}
+}
+
+// keepWriting writes to w until Release, as a descendant holding the
+// process's output pipe does.
+func (p *fakeProcess) keepWriting(w io.Writer) {
+	p.writing = make(chan struct{})
+	go func() {
+		defer close(p.writing)
+		ticker := time.NewTicker(time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-p.released:
+				return
+			case <-ticker.C:
+				n, _ := w.Write([]byte("x"))
+				p.written.Add(int64(n))
+			}
+		}
+	}()
 }
 
 func (p *fakeProcess) Signal(sig os.Signal) error {
@@ -163,6 +228,9 @@ type fakeEngine struct {
 	execBlocks bool
 	// execOutlivesKill makes exec processes' Wait outlast SIGKILL.
 	execOutlivesKill bool
+	// execKeepsWriting makes exec processes outlast SIGKILL and keep
+	// writing to their stdout until released.
+	execKeepsWriting bool
 
 	created   map[string]*ociConfig
 	destroyed []string
@@ -225,6 +293,13 @@ func (e *fakeEngine) Exec(id string, spec processSpec) (containerProcess, error)
 
 	process := newFakeProcess(2000 + len(e.execs))
 	process.outlivesKill = e.execOutlivesKill
+	if e.execKeepsWriting {
+		// lastProcess returns it.
+		e.processes = append(e.processes, process)
+		process.outlivesKill = true
+		process.keepWriting(spec.Stdout)
+		return process, nil
+	}
 	if e.execBlocks {
 		reader, writer := io.Pipe()
 		process.console = &silentConsole{reader: reader, writer: writer}

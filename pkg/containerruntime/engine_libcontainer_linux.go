@@ -172,10 +172,7 @@ func (e *libcontainerEngine) run(id string, spec processSpec, init bool) (contai
 
 	process := toLibcontainerProcess(spec, init)
 	if !spec.TTY {
-		if err := container.Run(process); err != nil {
-			return nil, err
-		}
-		return &libcontainerProcess{process: process}, nil
+		return runPiped(container, process)
 	}
 
 	parent, child, err := utils.NewSockPair("console")
@@ -301,6 +298,82 @@ func closeIfSet(f *os.File) error {
 type libcontainerProcess struct {
 	process *libcontainer.Process
 	console *os.File
+
+	// outputs are the pipes the process writes to in place of output
+	// writers that are not files; copies drains them into the writers.
+	// With exec.Cmd's own copying a descendant holding a pipe kept Wait
+	// blocked and nothing could close the pipe; these Release closes.
+	outputs []outputPipe
+	copies  sync.WaitGroup
+}
+
+// outputPipe is a pipe the runtime owns between a process and an output
+// writer.
+type outputPipe struct {
+	read, write *os.File
+	dst         io.Writer
+}
+
+// runPiped runs a non-TTY process, its output writers that are not files
+// fed through pipes the runtime owns.
+func runPiped(container *libcontainer.Container, process *libcontainer.Process) (containerProcess, error) {
+	p := &libcontainerProcess{process: process}
+	var err error
+	if process.Stdout, err = p.pipeOutput(process.Stdout); err == nil {
+		process.Stderr, err = p.pipeOutput(process.Stderr)
+	}
+	if err == nil {
+		err = container.Run(process)
+	}
+	// The process holds its own copies of the write ends now.
+	var closeErr error
+	for _, out := range p.outputs {
+		closeErr = errors.Join(closeErr, out.write.Close())
+	}
+	if err != nil {
+		return nil, errors.Join(err, closeErr, p.closeOutputs())
+	}
+	if closeErr != nil {
+		return nil, errors.Join(closeErr, killProcess(process), p.closeOutputs())
+	}
+	for _, out := range p.outputs {
+		p.copies.Add(1)
+		go func() {
+			defer p.copies.Done()
+			// The copy ends at EOF, or when Release closes the read end.
+			_, _ = io.Copy(out.dst, out.read)
+		}()
+	}
+	return p, nil
+}
+
+// pipeOutput returns what the process writes to in place of w: w itself
+// when it is a file or nil, otherwise the write end of a new pipe.
+func (p *libcontainerProcess) pipeOutput(w io.Writer) (io.Writer, error) {
+	if w == nil {
+		return nil, nil
+	}
+	if _, ok := w.(*os.File); ok {
+		return w, nil
+	}
+	read, write, err := os.Pipe()
+	if err != nil {
+		return nil, err
+	}
+	p.outputs = append(p.outputs, outputPipe{read: read, write: write, dst: w})
+	return write, nil
+}
+
+// closeOutputs closes the read ends of the process's output pipes. One
+// already closed is not an error.
+func (p *libcontainerProcess) closeOutputs() error {
+	var err error
+	for _, out := range p.outputs {
+		if closeErr := out.read.Close(); closeErr != nil && !errors.Is(closeErr, os.ErrClosed) {
+			err = errors.Join(err, closeErr)
+		}
+	}
+	return err
 }
 
 // Pid returns the process ID, or 0 for a process that has been reaped.
@@ -315,10 +388,24 @@ func (p *libcontainerProcess) Pid() int {
 // Wait blocks until the process exits and returns its exit code.
 func (p *libcontainerProcess) Wait() (int, error) {
 	state, err := p.process.Wait()
+	// The output is complete once every holder of the pipes has closed
+	// them, or Release has.
+	p.copies.Wait()
+	err = errors.Join(err, p.closeOutputs())
 	if state == nil {
 		return -1, err
 	}
 	return exitCode(state), nil
+}
+
+// Release kills the process and its descendants and closes the read ends
+// of its output pipes, which ends the copies Wait waits for.
+func (p *libcontainerProcess) Release() error {
+	killErr := p.KillTree()
+	if errors.Is(killErr, os.ErrProcessDone) {
+		killErr = nil
+	}
+	return errors.Join(killErr, p.closeOutputs())
 }
 
 // Signal delivers sig to the process.
