@@ -22,6 +22,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/json"
+	"errors"
 	"math/big"
 	"net"
 	"net/http"
@@ -29,6 +30,7 @@ import (
 	"testing"
 	"time"
 
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/quic-go/quic-go/http3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -241,6 +243,98 @@ func TestRequest_PropagatesAuthTokenHeader(t *testing.T) {
 	select {
 	case got := <-gotAuth:
 		assert.Equal(t, "Bearer test-token", got)
+	case <-time.After(2 * time.Second):
+		t.Fatal("server handler was not invoked")
+	}
+}
+
+// sopinCtx binds pin to a context the way a go-qrdb caller does, and
+// releases it when the test ends.
+func sopinCtx(t *testing.T, pin string) context.Context {
+	t.Helper()
+
+	ctx, release, err := qrdbtransport.WithSOPIN(context.Background(), []byte(pin))
+	require.NoError(t, err)
+	t.Cleanup(release)
+	return ctx
+}
+
+func TestTransport_SOPINHeaderToConfiguredHost(t *testing.T) {
+	gotPIN := make(chan string, 1)
+	addr, shutdown := startTestHTTP3Server(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPIN <- r.Header.Get(qrdbtransport.SOPINHeader)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "healthy"})
+	}))
+	defer shutdown()
+
+	tr, err := New(testTransportConfig(t, addr))
+	require.NoError(t, err)
+	defer tr.Close()
+
+	_, err = tr.Request(sopinCtx(t, "so-pin-1234"), "Health", "Check", nil)
+	require.NoError(t, err)
+
+	select {
+	case got := <-gotPIN:
+		assert.Equal(t, "so-pin-1234", got)
+	case <-time.After(2 * time.Second):
+		t.Fatal("server handler was not invoked")
+	}
+}
+
+func TestTransport_SOPINRefusesForeignRedirect(t *testing.T) {
+	foreignHit := make(chan struct{}, 1)
+	foreignAddr, shutdownForeign := startTestHTTP3Server(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		select {
+		case foreignHit <- struct{}{}:
+		default:
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "healthy"})
+	}))
+	defer shutdownForeign()
+
+	addr, shutdown := startTestHTTP3Server(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "https://"+foreignAddr+r.URL.RequestURI(), http.StatusTemporaryRedirect)
+	}))
+	defer shutdown()
+
+	tr, err := New(testTransportConfig(t, addr))
+	require.NoError(t, err)
+	defer tr.Close()
+
+	_, err = tr.Request(sopinCtx(t, "so-pin-1234"), "Health", "Check", nil)
+	require.Error(t, err)
+	var foreign *qrdbtransport.SOPINForeignHostError
+	assert.True(t, errors.As(err, &foreign), "want *SOPINForeignHostError, got %v", err)
+
+	select {
+	case <-foreignHit:
+		t.Fatal("the redirect target received the PIN-bound request")
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+func TestTransport_SOPINUnboundPassesThrough(t *testing.T) {
+	gotPIN := make(chan []string, 1)
+	addr, shutdown := startTestHTTP3Server(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPIN <- r.Header.Values(qrdbtransport.SOPINHeader)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "healthy"})
+	}))
+	defer shutdown()
+
+	tr, err := New(testTransportConfig(t, addr))
+	require.NoError(t, err)
+	defer tr.Close()
+
+	_, err = tr.Request(context.Background(), "Health", "Check", nil)
+	require.NoError(t, err)
+
+	select {
+	case got := <-gotPIN:
+		assert.Empty(t, got)
 	case <-time.After(2 * time.Second):
 		t.Fatal("server handler was not invoked")
 	}

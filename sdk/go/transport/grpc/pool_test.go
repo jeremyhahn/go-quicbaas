@@ -4,10 +4,15 @@
 package grpc
 
 import (
+	"context"
+	"net"
+	"sync"
 	"testing"
 	"time"
 
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/connectivity"
+	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
@@ -257,4 +262,112 @@ func TestDecidePut(t *testing.T) {
 			}
 		})
 	}
+}
+
+// stalledListener accepts TCP connections and holds them open without
+// writing anything, so a gRPC client's HTTP/2 handshake never completes and
+// its connection stays in connectivity.Connecting.
+func stalledListener(t *testing.T) string {
+	t.Helper()
+
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+
+	var (
+		mu   sync.Mutex
+		held []net.Conn
+		done = make(chan struct{})
+	)
+	go func() {
+		defer close(done)
+		for {
+			c, err := lis.Accept()
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			held = append(held, c)
+			mu.Unlock()
+		}
+	}()
+
+	// Close the listener first and wait for the accept loop to exit, so no
+	// connection is accepted after the held ones are closed.
+	t.Cleanup(func() {
+		_ = lis.Close()
+		<-done
+		mu.Lock()
+		defer mu.Unlock()
+		for _, c := range held {
+			_ = c.Close()
+		}
+	})
+
+	return lis.Addr().String()
+}
+
+// connectingConn returns a client connection that is in
+// connectivity.Connecting and stays there.
+func connectingConn(t *testing.T) *grpc.ClientConn {
+	t.Helper()
+
+	conn, err := grpc.NewClient(stalledListener(t), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+
+	conn.Connect()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for state := conn.GetState(); state != connectivity.Connecting; state = conn.GetState() {
+		if !conn.WaitForStateChange(ctx, state) {
+			t.Fatalf("connection did not reach Connecting; last state %v", state)
+		}
+	}
+	return conn
+}
+
+func TestPool_Get_ReturnsConnectingConnection(t *testing.T) {
+	t.Run("connecting", func(t *testing.T) {
+		conn := connectingConn(t)
+		pc := &pooledConn{conn: conn, createdAt: time.Now()}
+		pool := &Pool{cfg: &PoolConfig{MaxSize: 1}, connections: []*pooledConn{pc}}
+
+		if state := conn.GetState(); state != connectivity.Connecting {
+			t.Fatalf("precondition: state = %v, want Connecting", state)
+		}
+
+		got, err := pool.Get()
+		if err != nil {
+			t.Fatalf("Get() error = %v, want the connecting connection", err)
+		}
+		if got != conn {
+			t.Fatalf("Get() returned %p, want the pool's only connection %p", got, conn)
+		}
+		if !pc.inUse.Load() {
+			t.Error("Get() did not mark the pooled connection in use")
+		}
+	})
+
+	t.Run("shutdown", func(t *testing.T) {
+		conn := connectingConn(t)
+		if err := conn.Close(); err != nil {
+			t.Fatalf("close: %v", err)
+		}
+		if state := conn.GetState(); state != connectivity.Shutdown {
+			t.Fatalf("precondition: state = %v, want Shutdown", state)
+		}
+		pool := &Pool{
+			cfg:         &PoolConfig{MaxSize: 1},
+			connections: []*pooledConn{{conn: conn, createdAt: time.Now()}},
+		}
+
+		if got, err := pool.Get(); err == nil {
+			t.Fatalf("Get() = %p, nil; want an error for a shut-down connection", got)
+		}
+	})
 }

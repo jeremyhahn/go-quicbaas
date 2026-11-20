@@ -28,8 +28,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/query"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
+
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
 
@@ -41,7 +43,8 @@ var ErrStreamNotSupported = errors.New(errors.CodeUnimplemented, "rest",
 type Transport struct {
 	cfg                 *transport.Config
 	client              *http.Client
-	streamClient        *http.Client // lazily built by streamHTTPClient; no per-request timeout
+	baseTransport       *http.Transport // under client's SO PIN guard; Close closes its idle connections
+	streamClient        *http.Client    // lazily built by streamHTTPClient; no per-request timeout
 	baseURL             string
 	basePath            string // URL path prefix for all requests (from HTTP URL addresses)
 	headers             map[string]string
@@ -104,6 +107,12 @@ func New(cfg *transport.Config, opts ...Option) (*Transport, error) {
 		opt(t)
 	}
 
+	// Build base URL. It comes before the HTTP client, whose SO PIN guard
+	// names the base URL's host as the only one a bound PIN may reach.
+	if t.baseURL == "" {
+		t.buildBaseURL()
+	}
+
 	// Build HTTP client if not provided via options
 	if t.client == nil {
 		client, err := t.buildHTTPClient()
@@ -111,11 +120,25 @@ func New(cfg *transport.Config, opts ...Option) (*Transport, error) {
 			return nil, err
 		}
 		t.client = client
-	}
-
-	// Build base URL
-	if t.baseURL == "" {
-		t.buildBaseURL()
+	} else {
+		// A client supplied WithHTTPClient (the QUIC transport builds its
+		// REST client this way) needs the same SO PIN guard as one built
+		// here, or a bound PIN would cross plaintext http, follow a
+		// redirect to another host, and never reach the X-QRDB-SO-PIN
+		// header. Wrap its transport on a shallow copy, keeping its
+		// Timeout, Jar and CheckRedirect and never mutating the caller's
+		// client. Requests without a bound PIN pass through unchanged.
+		c := *t.client
+		base := c.Transport
+		if base == nil {
+			base = http.DefaultTransport
+		} else if httpTransport, ok := base.(*http.Transport); ok {
+			// Close closed a supplied *http.Transport's idle connections
+			// before; it keeps doing so through the guard.
+			t.baseTransport = httpTransport
+		}
+		c.Transport = qrdbtransport.SOPINRoundTripper(base, "rest", qrdbtransport.ConfiguredHost(t.baseURL))
+		t.client = &c
 	}
 
 	// Initialize Auth handler
@@ -221,8 +244,15 @@ func (t *Transport) buildHTTPClient() (*http.Client, error) {
 		timeout = 30 * time.Second
 	}
 
+	t.baseTransport = httpTransport
+
+	// Guard an SO PIN bound by qrdbtransport.WithSOPIN the way go-qrdb's own
+	// REST transport does: a PIN-bound request is refused before it is sent
+	// on any hop, redirects included, that is not https or that names a host
+	// other than the configured one. Requests without a bound PIN pass
+	// through unchanged.
 	return &http.Client{
-		Transport: httpTransport,
+		Transport: qrdbtransport.SOPINRoundTripper(httpTransport, "rest", qrdbtransport.ConfiguredHost(t.baseURL)),
 		Timeout:   timeout,
 	}, nil
 }
@@ -424,8 +454,10 @@ func (t *Transport) requestWithRetry(ctx context.Context, service, method string
 		if attempt > 0 {
 			select {
 			case <-ctx.Done():
+				// Name the attempt that led to this wait: without it the
+				// caller sees only the cancellation, not why it retried.
 				return nil, errors.Wrap(ctx.Err(), errors.CodeCanceled, "rest.Request",
-					"request canceled during retry")
+					canceledDuringRetryMessage(lastErr))
 			case <-time.After(backoff):
 				backoff = minDuration(backoff*2, t.cfg.MaxRetryBackoff)
 			}
@@ -444,6 +476,15 @@ func (t *Transport) requestWithRetry(ctx context.Context, service, method string
 	}
 
 	return nil, lastErr
+}
+
+// canceledDuringRetryMessage is the message of the error returned when the
+// context ends while waiting to retry; it names the last attempt's error.
+func canceledDuringRetryMessage(lastErr error) string {
+	if lastErr == nil {
+		return "request canceled during retry"
+	}
+	return "request canceled during retry; last attempt: " + lastErr.Error()
 }
 
 // doRequest executes a single HTTP request.
@@ -1401,8 +1442,11 @@ func (t *Transport) Close() error {
 		return nil
 	}
 
-	// Close idle connections
-	if t.client != nil && t.client.Transport != nil {
+	// Close idle connections. A client this transport built wraps its
+	// http.Transport in the SO PIN guard, so close the base directly.
+	if t.baseTransport != nil {
+		t.baseTransport.CloseIdleConnections()
+	} else if t.client != nil && t.client.Transport != nil {
 		if httpTransport, ok := t.client.Transport.(*http.Transport); ok {
 			httpTransport.CloseIdleConnections()
 		}
