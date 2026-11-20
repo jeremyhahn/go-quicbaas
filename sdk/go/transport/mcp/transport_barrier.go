@@ -77,17 +77,14 @@ func (t *Transport) BarrierUnseal(ctx context.Context, req *qrdbtransport.Barrie
 func (t *Transport) BarrierSeal(ctx context.Context) error {
 	// The SO PIN travels as the tool's so_pin argument when the caller bound
 	// one with qrdbsdk.WithSOPIN; the server verifies it.
-	pin, ok, err := qrdbtransport.SOPINFromContext(ctx)
+	ctx, pin, release, err := t.guardSOPIN(ctx, "BarrierSeal", "")
 	if err != nil {
 		return err
 	}
+	defer release()
 	var args map[string]interface{}
-	if ok {
-		defer secure.Wipe(pin)
-		if !strings.HasPrefix(t.endpoint, "https://") {
-			return &qrdbtransport.SOPINRequiresTLSError{Transport: "mcp"}
-		}
-		args = map[string]interface{}{"so_pin": string(pin)}
+	if pin != "" {
+		args = map[string]interface{}{"so_pin": pin}
 	}
 	if _, err := t.callBarrier(ctx, "qrdb_barrier_seal", args); err != nil {
 		return err
@@ -115,6 +112,13 @@ func (t *Transport) BarrierInitializeShamir(ctx context.Context, req *qrdbtransp
 	if req == nil {
 		return nil, errors.NewInvalidInput("mcp.BarrierInitializeShamir", "request is required")
 	}
+	// The tool takes no so_pin argument, but a PIN the caller supplied is
+	// still refused over a plaintext or redirected connection.
+	ctx, _, release, err := t.guardSOPIN(ctx, "BarrierInitializeShamir", req.SOPin)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	raw, err := t.callBarrier(ctx, "qrdb_barrier_shamir_initialize", map[string]interface{}{
 		"secret":       secretArg(req.Secret),
 		"threshold":    req.Threshold,
@@ -171,6 +175,13 @@ func (t *Transport) BarrierRekey(ctx context.Context, req *qrdbtransport.Barrier
 	if req == nil {
 		return nil, errors.NewInvalidInput("mcp.BarrierRekey", "request is required")
 	}
+	// The tool takes no so_pin argument, but a PIN the caller supplied is
+	// still refused over a plaintext or redirected connection.
+	ctx, _, release, err := t.guardSOPIN(ctx, "BarrierRekey", req.SOPin)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	raw, err := t.callBarrier(ctx, "qrdb_barrier_rekey", map[string]interface{}{
 		"threshold": req.Threshold,
 		"total":     req.Total,
@@ -191,6 +202,13 @@ func (t *Transport) BarrierGenerateRecoveryKeys(ctx context.Context, req *qrdbtr
 	if req == nil {
 		return nil, errors.NewInvalidInput("mcp.BarrierGenerateRecoveryKeys", "request is required")
 	}
+	// The tool takes no so_pin argument, but a PIN the caller supplied is
+	// still refused over a plaintext or redirected connection.
+	ctx, _, release, err := t.guardSOPIN(ctx, "BarrierGenerateRecoveryKeys", req.SOPin)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	raw, err := t.callBarrier(ctx, "qrdb_barrier_recovery_generate", map[string]interface{}{
 		"threshold": req.Threshold,
 		"total":     req.Total,
@@ -493,6 +511,38 @@ func (t *Transport) BarrierEnableEncryption(ctx context.Context, req *qrdbtransp
 // closed-transport precondition check inline. It returns the (already JSON-
 // parsed) tool result for the caller to round-trip into a typed response, or
 // the conventional SDK QBError on failure.
+// guardSOPIN resolves the SO PIN a call carries (its request's own SOPin
+// field, or the PIN bound with WithSOPIN) and, when there is one, refuses a
+// non-https endpoint with *SOPINRequiresTLSError before anything is sent. A
+// PIN from the request field alone is bound to the returned context, so the
+// client's SOPINRoundTripper also refuses a redirect to a plaintext or
+// foreign host. The caller defers release.
+func (t *Transport) guardSOPIN(ctx context.Context, method, requestPIN string) (context.Context, string, func(), error) {
+	noop := func() {}
+	pin, err := qrdbtransport.ResolveSOPIN(ctx, method, requestPIN)
+	if err != nil || pin == "" {
+		return ctx, pin, noop, err
+	}
+	if !strings.HasPrefix(t.endpoint, "https://") {
+		return ctx, "", noop, &qrdbtransport.SOPINRequiresTLSError{Transport: "mcp"}
+	}
+	boundPIN, bound, err := qrdbtransport.SOPINFromContext(ctx)
+	secure.Wipe(boundPIN)
+	if err != nil {
+		return ctx, "", noop, err
+	}
+	if bound {
+		return ctx, pin, noop, nil
+	}
+	pinBytes := []byte(pin)
+	boundCtx, release, err := qrdbtransport.WithSOPIN(ctx, pinBytes)
+	secure.Wipe(pinBytes)
+	if err != nil {
+		return ctx, "", noop, err
+	}
+	return boundCtx, pin, release, nil
+}
+
 func (t *Transport) callBarrier(ctx context.Context, name string, args map[string]interface{}) (interface{}, error) {
 	if t.closed.Load() {
 		return nil, errors.NewConnection("mcp."+name, "transport is closed")

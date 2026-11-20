@@ -29,6 +29,8 @@ import (
 	mcptransport "github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
 
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 	secure "github.com/jeremyhahn/go-quicbaas/sdk/go/xkms/secure"
@@ -114,18 +116,19 @@ func New(cfg *transport.Config, opts ...Option) (*Transport, error) {
 		return nil, t.optionErr
 	}
 
-	// Build HTTP client if not provided via options
+	// Build base URL and endpoint only if not explicitly set via options
+	if t.baseURL == "" && t.endpoint == "" {
+		t.buildBaseURL()
+	}
+
+	// Build HTTP client if not provided via options. It is built after the
+	// base URL, the only host its SO PIN guard sends a PIN to.
 	if t.client == nil {
 		client, err := t.buildHTTPClient()
 		if err != nil {
 			return nil, err
 		}
 		t.client = client
-	}
-
-	// Build base URL and endpoint only if not explicitly set via options
-	if t.baseURL == "" && t.endpoint == "" {
-		t.buildBaseURL()
 	}
 
 	// Mark as healthy initially
@@ -178,8 +181,16 @@ func (t *Transport) buildHTTPClient() (*http.Client, error) {
 		timeout = 30 * time.Second
 	}
 
+	// Guard every hop of a call that carries an SO PIN: the round tripper
+	// refuses an http:// hop, or a redirect to a host other than the
+	// configured one, before the PIN is sent.
+	configured := t.baseURL
+	if configured == "" {
+		configured = t.endpoint
+	}
+
 	return &http.Client{
-		Transport: httpTransport,
+		Transport: qrdbtransport.SOPINRoundTripper(httpTransport, "mcp", qrdbtransport.ConfiguredHost(configured)),
 		Timeout:   timeout,
 	}, nil
 }
