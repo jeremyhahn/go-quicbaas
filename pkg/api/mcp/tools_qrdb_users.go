@@ -548,6 +548,7 @@ func qrdbUserToMCPMap(u *qrdbsdk.User) map[string]interface{} {
 	return map[string]interface{}{
 		"id":        u.ID,
 		"username":  u.Username,
+		"email":     u.Email,
 		"tenantID":  u.TenantID,
 		"roleIDs":   roleIDs,
 		"lifecycle": string(u.Lifecycle),
