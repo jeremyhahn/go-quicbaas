@@ -121,6 +121,20 @@ func TestTenantMgmt_TenantBarrierSecrets_RefuseHTTPBase(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "needs https")
 
+	_, err = tc.TenantBarrierInit(ctx, &QRDBTenantBarrierInitRequest{TenantID: "t1", Passphrase: []byte("p")})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "needs https")
+
+	_, err = tc.TenantBarrierShareClaimComplete(ctx, &QRDBTenantShareClaimCompleteRequest{
+		TenantID: "t1", Username: "u", NonceHex: "abcd", Signature: []byte("sig"),
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "needs https")
+
+	_, err = tc.TenantBarrierShamirSealVote(ctx, &QRDBTenantShamirSealVoteRequest{TenantID: "t1", Share: "s"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "needs https")
+
 	assert.Zero(t, hits.Load(), "no tenant barrier secret may be sent to an http:// base")
 }
 
