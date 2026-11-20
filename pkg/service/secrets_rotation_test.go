@@ -24,6 +24,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/kvstore"
 	"github.com/jeremyhahn/go-quicbaas/pkg/secrets"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
@@ -449,4 +450,47 @@ func TestSecretsService_RotationPolicyRoundTripKeepsRetention(t *testing.T) {
 		}
 	}
 	assert.Len(t, live, 3, "rotations keep the retained versions plus the current one")
+}
+
+// The facade built with a running scheduler and a secrets manager registers
+// the rotation job; a due policy is rotated by that job alone, gaining a
+// version and an advanced deadline.
+func TestQuicBaaS_SecretsRotationJobRotatesADuePolicy(t *testing.T) {
+	mgr, err := secrets.NewManager(&secrets.ManagerOptions{Backend: secrets.NewMemoryBackend()})
+	require.NoError(t, err)
+	schedulerKV := kvstore.NewMemory()
+	svc := createTestService(t, func(b *serviceBuilder) {
+		b.config.EnableScheduler = true
+		b.config.SchedulerTickInterval = 10 * time.Millisecond
+		b.config.SecretsRotationScanInterval = time.Second
+		b.kvStoreProvider = func(_ uint64) interface{} { return schedulerKV }
+		b.secretsManager = mgr
+	})
+	t.Cleanup(func() { _ = svc.Close() })
+
+	secretsSvc := svc.Secrets()
+	require.NotNil(t, secretsSvc)
+	acme := tenantctx.WithTenant(context.Background(), "acme")
+	const path = "tenant/acme/db/scheduled"
+	now := time.Now().UTC().Truncate(time.Second)
+	_, err = secretsSvc.StoreSecret(acme, &StoreSecretRequest{SecretID: "db/scheduled", Name: "db/scheduled", Data: []byte("value")})
+	require.NoError(t, err)
+	before, err := mgr.ListVersions(context.Background(), path)
+	require.NoError(t, err)
+	_, err = secretsSvc.SetRotationPolicy(acme, &SetRotationPolicyRequest{SecretID: "db/scheduled", Policy: &SecretRotationPolicy{
+		Enabled: true, Interval: time.Hour, NextRotation: now.Add(-90 * time.Minute),
+	}})
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		_, meta, err := mgr.Get(context.Background(), path)
+		return err == nil && meta["rotation_reason"] == "scheduled"
+	}, 15*time.Second, 20*time.Millisecond, "the registered rotation job rotates the due secret")
+
+	after, err := mgr.ListVersions(context.Background(), path)
+	require.NoError(t, err)
+	assert.Len(t, after, len(before)+2, "the policy write and one rotation each add a version")
+	got, err := secretsSvc.GetRotationPolicy(acme, &GetRotationPolicyRequest{SecretID: "db/scheduled"})
+	require.NoError(t, err)
+	assert.Equal(t, now.Add(30*time.Minute), got.Policy.NextRotation.UTC(), "the next rotation advances past the missed period")
 }
