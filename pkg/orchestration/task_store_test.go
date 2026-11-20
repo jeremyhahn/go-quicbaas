@@ -3456,3 +3456,64 @@ func TestTaskMatchesFilter_AutoSpawnIsTriState(t *testing.T) {
 		})
 	}
 }
+
+// TestBackendError_WrapsCause pins that a backend error keeps its cause
+// reachable through errors.Is and errors.As, with the message unchanged.
+func TestBackendError_WrapsCause(t *testing.T) {
+	t.Parallel()
+
+	outage := errors.New("kv unavailable")
+	err := backendError("failed to read task", outage)
+
+	if !errors.Is(err, ErrTaskStoreBackend) {
+		t.Fatalf("errors.Is(err, ErrTaskStoreBackend) = false for %v", err)
+	}
+	if !errors.Is(err, outage) {
+		t.Fatalf("errors.Is(err, outage) = false for %v", err)
+	}
+	var tse *TaskStoreError
+	if !errors.As(err, &tse) {
+		t.Fatalf("errors.As(err, *TaskStoreError) = false for %v", err)
+	}
+	if want := "task store: backend failure: failed to read task: kv unavailable"; err.Error() != want {
+		t.Fatalf("err.Error() = %q, want %q", err.Error(), want)
+	}
+}
+
+// TestTaskStoreError_NoCauseUnwrapsSentinelOnly pins that a refusal with no
+// cause unwraps to its sentinel alone.
+func TestTaskStoreError_NoCauseUnwrapsSentinelOnly(t *testing.T) {
+	t.Parallel()
+
+	err := &TaskStoreError{Sentinel: ErrTaskStoreBackend}
+	if got := err.Unwrap(); len(got) != 1 {
+		t.Fatalf("len(Unwrap()) = %d, want 1", len(got))
+	}
+	if !errors.Is(err, ErrTaskStoreBackend) {
+		t.Fatalf("errors.Is(err, ErrTaskStoreBackend) = false for %v", err)
+	}
+}
+
+// TestTaskStore_BackendFailureReachesCause pins that a KV failure seen through
+// the store is reachable as both the backend sentinel and the KV's own error.
+func TestTaskStore_BackendFailureReachesCause(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	outage := errors.New("kv unavailable")
+	kv := newTaskFaultKV()
+	store := NewTaskStore(kv, NewProcessClaimArbiter())
+	seedTask(t, store, "ten", "task-1")
+	kv.getErr = outage
+
+	_, err := store.GetTask(ctx, "ten", "task-1")
+	if err == nil {
+		t.Fatal("GetTask succeeded with the KV down")
+	}
+	if !errors.Is(err, outage) {
+		t.Fatalf("errors.Is(err, outage) = false for %v", err)
+	}
+	if !errors.Is(err, ErrTaskStoreBackend) {
+		t.Fatalf("errors.Is(err, ErrTaskStoreBackend) = false for %v", err)
+	}
+}

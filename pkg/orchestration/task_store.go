@@ -42,12 +42,13 @@ import (
 var ErrTaskStoreBackend = errors.New("task store: backend failure")
 
 // backendError reports a failed KV operation in the task store's error
-// vocabulary. The cause is folded into the message because TaskStoreError
-// carries a sentinel rather than a wrapped cause.
+// vocabulary. The cause is kept both in the message and as the wrapped Cause,
+// so errors.Is and errors.As reach it.
 func backendError(op string, cause error) error {
 	return &TaskStoreError{
 		Sentinel: ErrTaskStoreBackend,
 		Message:  op + ": " + cause.Error(),
+		Cause:    cause,
 	}
 }
 
