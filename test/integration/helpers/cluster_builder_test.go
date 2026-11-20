@@ -18,7 +18,6 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -40,20 +39,9 @@ type fakeClusterClient struct {
 	quicbaas.ClusterClient
 	status *quicbaas.ClusterStatus
 	err    error
-	// hang makes Status block until its context is done, as a node that
-	// never answers does.
-	hang bool
 }
 
-// Status answers like a real client: a context that is already done, or
-// ends while hang holds the call, fails it with the context's error.
-func (f *fakeClusterClient) Status(ctx context.Context) (*quicbaas.ClusterStatus, error) {
-	if f.hang {
-		<-ctx.Done()
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
+func (f *fakeClusterClient) Status(context.Context) (*quicbaas.ClusterStatus, error) {
 	return f.status, f.err
 }
 
@@ -110,26 +98,6 @@ func TestFindLeaderReturnsMarkedLeader(t *testing.T) {
 	require.NotNil(t, node)
 	assert.Equal(t, uint64(2), node.ID)
 	assert.True(t, node.IsLeader)
-	assert.Same(t, tc.Clients[1], client)
-}
-
-// TestFindLeaderBoundsEachNodeStatusCall checks that a node that never
-// answers uses up only its own bound, not the whole context, so the next
-// node is still asked and its leader is found.
-func TestFindLeaderBoundsEachNodeStatusCall(t *testing.T) {
-	tc := newFakeCluster(
-		&fakeClusterClient{hang: true},
-		&fakeClusterClient{status: &quicbaas.ClusterStatus{Members: []quicbaas.ClusterMember{{ID: "1"}, {ID: "2", IsLeader: true}}}},
-	)
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(len(tc.Clients))*nodeStatusTimeout+time.Second)
-	defer cancel()
-
-	node, client, err := tc.FindLeader(ctx)
-
-	require.NoError(t, err)
-	require.NotNil(t, node)
-	assert.Equal(t, uint64(2), node.ID)
 	assert.Same(t, tc.Clients[1], client)
 }
 

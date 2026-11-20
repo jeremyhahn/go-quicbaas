@@ -59,12 +59,6 @@ func WaitForClusterHealthy(t *testing.T, cluster *TestCluster) error {
 	})
 }
 
-// findLeaderTimeout is the time one FindLeader call over cluster may take:
-// each node's own status bound, once per node.
-func findLeaderTimeout(cluster *TestCluster) time.Duration {
-	return time.Duration(len(cluster.Clients)) * nodeStatusTimeout
-}
-
 // WaitForLeaderElection waits for a leader to be elected in the cluster.
 func WaitForLeaderElection(t *testing.T, cluster *TestCluster, timeout time.Duration) (*TestNode, quicbaas.Client, error) {
 	t.Helper()
@@ -73,7 +67,7 @@ func WaitForLeaderElection(t *testing.T, cluster *TestCluster, timeout time.Dura
 	var leader *TestNode
 	var leaderClient quicbaas.Client
 	err := Poll(context.Background(), time.Second, timeout, func(ctx context.Context) (bool, error) {
-		findCtx, cancel := context.WithTimeout(ctx, findLeaderTimeout(cluster))
+		findCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		node, client, err := cluster.FindLeader(findCtx)
 		cancel()
 
@@ -324,7 +318,7 @@ func VerifyLeaderStability(t *testing.T, cluster *TestCluster, duration time.Dur
 		case <-ticker.C:
 			checkCount++
 
-			queryCtx, queryCancel := context.WithTimeout(context.Background(), findLeaderTimeout(cluster))
+			queryCtx, queryCancel := context.WithTimeout(context.Background(), 5*time.Second)
 			currentLeader, _, queryErr := cluster.FindLeader(queryCtx)
 			queryCancel()
 

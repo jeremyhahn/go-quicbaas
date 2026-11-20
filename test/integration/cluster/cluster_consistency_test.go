@@ -66,7 +66,6 @@ func testDataSurvivesMembershipChanges(t *testing.T) {
 
 	// Build 3-node cluster
 	cluster, err := helpers.NewClusterBuilder().
-		WithAuthToken(helpers.TenantOperatorBearer(t)).
 		WithHealthCheck(180*time.Second, 2*time.Second).
 		Build(ctx)
 	require.NoError(t, err, "Failed to build cluster")
@@ -140,7 +139,6 @@ func testWriteSuccessRateDuringMembershipChanges(t *testing.T) {
 
 	// Build cluster
 	cluster, err := helpers.NewClusterBuilder().
-		WithAuthToken(helpers.TenantOperatorBearer(t)).
 		WithHealthCheck(180*time.Second, 2*time.Second).
 		Build(ctx)
 	require.NoError(t, err, "Failed to build cluster")
@@ -240,7 +238,6 @@ func testReadConsistencyAcrossAllNodes(t *testing.T) {
 
 	// Build cluster
 	cluster, err := helpers.NewClusterBuilder().
-		WithAuthToken(helpers.TenantOperatorBearer(t)).
 		WithHealthCheck(180*time.Second, 2*time.Second).
 		Build(ctx)
 	require.NoError(t, err, "Failed to build cluster")
@@ -359,7 +356,6 @@ func testZeroDataLossVerification(t *testing.T) {
 
 	// Build cluster
 	cluster, err := helpers.NewClusterBuilder().
-		WithAuthToken(helpers.TenantOperatorBearer(t)).
 		WithHealthCheck(180*time.Second, 2*time.Second).
 		Build(ctx)
 	require.NoError(t, err, "Failed to build cluster")

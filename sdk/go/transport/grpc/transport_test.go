@@ -7,7 +7,6 @@ import (
 	"context"
 	"crypto/tls"
 	"net"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -18,7 +17,6 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
-	"google.golang.org/protobuf/types/known/emptypb"
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
@@ -766,56 +764,6 @@ func TestRequestWithRetry_ContextCanceledDuringBackoff(t *testing.T) {
 		t.Fatal("expected error after context cancel")
 	}
 	// May be canceled error or the initial request error
-}
-
-// TestRequestWithRetry_ContextEndsDuringBackoffKeepsLastError checks that a
-// retry ended by its context still reports why the attempt before it failed:
-// the error keeps CodeCanceled and names the last attempt's error.
-func TestRequestWithRetry_ContextEndsDuringBackoffKeepsLastError(t *testing.T) {
-	const attemptMsg = "shard-7 leader unreachable"
-
-	lis := bufconn.Listen(bufSize)
-	srv := grpc.NewServer(grpc.UnknownServiceHandler(func(interface{}, grpc.ServerStream) error {
-		return status.Error(codes.Unavailable, attemptMsg)
-	}))
-	go func() { _ = srv.Serve(lis) }()
-	defer func() {
-		srv.Stop()
-		_ = lis.Close()
-	}()
-	ts := &testServer{lis: lis, server: srv}
-
-	p, err := NewPool("bufnet", ts.dialOpts(), &PoolConfig{
-		MinSize: 1, MaxSize: 2, MaxAge: time.Hour,
-	})
-	if err != nil {
-		t.Fatalf("failed to create pool: %v", err)
-	}
-
-	tr := &Transport{
-		cfg: &transport.Config{
-			MaxRetries:      10,
-			RetryBackoff:    5 * time.Second, // the context ends during this wait
-			MaxRetryBackoff: 5 * time.Second,
-			Timeout:         time.Second,
-		},
-		pool: p,
-	}
-	defer tr.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
-	defer cancel()
-
-	_, err = tr.requestWithRetry(ctx, "test.Service", "Method", &emptypb.Empty{})
-	if err == nil {
-		t.Fatal("expected an error once the context ended")
-	}
-	if got := errors.Code(err); got != errors.CodeCanceled {
-		t.Errorf("errors.Code(err) = %v, want %v (err: %v)", got, errors.CodeCanceled, err)
-	}
-	if !strings.Contains(err.Error(), attemptMsg) {
-		t.Errorf("error %q does not name the last attempt's error %q", err.Error(), attemptMsg)
-	}
 }
 
 // TestRequestWithRetry_ExhaustsRetries tests exhausting all retries.

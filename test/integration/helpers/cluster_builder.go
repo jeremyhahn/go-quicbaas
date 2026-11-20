@@ -20,22 +20,13 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"testing"
 	"time"
 
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
 )
 
-// nodeStatusTimeout bounds one node's Cluster().Status call in FindLeader, so
-// a node that does not answer cannot use up the time of the nodes after it.
-// A caller polling FindLeader gives each poll this bound times the number
-// of nodes.
-const nodeStatusTimeout = 5 * time.Second
-
 // ClusterBuilder provides a fluent API for building test cluster configurations.
 type ClusterBuilder struct {
-	// authToken, when set, is the bearer every node client sends.
-	authToken      string
 	endpoints      []string
 	timeout        time.Duration
 	retries        int
@@ -74,21 +65,6 @@ func (cb *ClusterBuilder) WithRetries(retries int) *ClusterBuilder {
 	return cb
 }
 
-// WithAuthToken has every node client send token as its bearer. The cluster
-// status a gated server serves needs one; TenantOperatorBearer returns the
-// tenant operator's.
-func (cb *ClusterBuilder) WithAuthToken(token string) *ClusterBuilder {
-	cb.authToken = token
-	return cb
-}
-
-// TenantOperatorBearer returns the tenant operator's bearer for the first
-// REST endpoint's cluster, as IsStandaloneMode sends it, or fails the test.
-func TenantOperatorBearer(t *testing.T) string {
-	t.Helper()
-	return tenantOperatorAuth.mustBearer(t, GetRESTEndpoints()[0])
-}
-
 // WithHealthCheck sets health check parameters.
 func (cb *ClusterBuilder) WithHealthCheck(timeout, interval time.Duration) *ClusterBuilder {
 	cb.healthTimeout = timeout
@@ -107,14 +83,9 @@ func (cb *ClusterBuilder) Build(ctx context.Context) (*TestCluster, error) {
 		healthInterval: cb.healthInterval,
 	}
 
-	var opts []quicbaas.Option
-	if cb.authToken != "" {
-		opts = append(opts, quicbaas.WithAuthToken(cb.authToken))
-	}
-
 	// Connect to all nodes
 	for i, endpoint := range cb.endpoints {
-		client, err := connectToNode(ctx, endpoint, cb.timeout, cb.retries, cb.retryBackoff, opts...)
+		client, err := connectToNode(ctx, endpoint, cb.timeout, cb.retries, cb.retryBackoff)
 		if err != nil {
 			// Clean up any successful connections
 			cluster.Close()
@@ -181,11 +152,7 @@ func (tc *TestCluster) FindLeader(ctx context.Context) (*TestNode, quicbaas.Clie
 			name = fmt.Sprintf("node%d", tc.Nodes[i].ID)
 		}
 
-		// Each node gets its own bound, so one that does not answer leaves
-		// the rest of ctx to the nodes after it.
-		nodeCtx, cancel := context.WithTimeout(ctx, nodeStatusTimeout)
-		status, err := client.Cluster().Status(nodeCtx)
-		cancel()
+		status, err := client.Cluster().Status(ctx)
 		if err != nil {
 			reasons = append(reasons, fmt.Sprintf("%s: %v", name, err))
 			continue
