@@ -16,6 +16,8 @@ package quicbaas
 import (
 	"context"
 	"net"
+	"os"
+	"path/filepath"
 	"time"
 
 	"google.golang.org/grpc"
@@ -532,6 +534,71 @@ func TestQRDBData_EmbeddedKVKeepsGuardedWrites(t *testing.T) {
 	ctx := qrdbsdk.ContextWithTenant(context.Background(), "row1652-tenant-b")
 	if _, err := g.PutIfAbsent(ctx, "row1652/tenant", []byte("b")); !sdkerrors.IsForbidden(err) {
 		t.Errorf("tenant-bound PutIfAbsent: err %v, want Forbidden", err)
+	}
+}
+
+// TestQRDBData_UnixCarriesBearerToken proves a client configured with
+// WithAuthToken sends the token on QRDBData() calls over the Unix socket
+// transport: a server that refuses calls without
+// "authorization: Bearer <token>" serves them.
+func TestQRDBData_UnixCarriesBearerToken(t *testing.T) {
+	const token = "row1652-token"
+	var mu sync.Mutex
+	var seen []string
+	srv := grpc.NewServer(grpc.UnknownServiceHandler(func(_ any, stream grpc.ServerStream) error {
+		md, _ := metadata.FromIncomingContext(stream.Context())
+		mu.Lock()
+		seen = append(seen, strings.Join(md.Get("authorization"), ","))
+		mu.Unlock()
+		if got := md.Get("authorization"); len(got) != 1 || got[0] != "Bearer "+token {
+			return status.Error(codes.Unauthenticated, "bearer token required")
+		}
+		var req emptypb.Empty
+		if err := stream.RecvMsg(&req); err != nil {
+			return err
+		}
+		return stream.SendMsg(&emptypb.Empty{})
+	}))
+	dir, err := os.MkdirTemp("", "qb1652")
+	if err != nil {
+		t.Fatalf("socket dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	sock := filepath.Join(dir, "q.sock")
+	lis, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	go func() { _ = srv.Serve(lis) }()
+	t.Cleanup(srv.Stop)
+
+	newData := func(t *testing.T, opts ...Option) QRDBDataService {
+		t.Helper()
+		c := &client{opts: defaultOptions(), address: sock}
+		c.opts.transportType = TransportUnix
+		c.opts.tlsEnabled = false
+		for _, o := range opts {
+			o(c.opts)
+		}
+		t.Cleanup(func() { _ = c.Close() })
+		data, err := c.QRDBData()
+		if err != nil {
+			t.Fatalf("QRDBData(): %v", err)
+		}
+		return data
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := newData(t).KV().Put(ctx, "row1652/k", []byte("v")); err == nil {
+		t.Fatal("anonymous KV().Put succeeded against a server that requires a bearer token")
+	}
+	data := newData(t, WithAuthToken(token))
+	if err := data.KV().Put(ctx, "row1652/k", []byte("v")); err != nil {
+		t.Fatalf("bearer-authenticated KV().Put: %v (server saw %q)", err, seen)
+	}
+	if _, err := data.Collections().ListCollections(ctx, "row1652db"); err != nil {
+		t.Fatalf("bearer-authenticated Collections().ListCollections: %v (server saw %q)", err, seen)
 	}
 }
 
