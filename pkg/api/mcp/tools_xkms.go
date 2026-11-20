@@ -31,6 +31,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/xkmsca"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
+	dbxkms "github.com/jeremyhahn/go-quicbaas/pkg/xkms"
 )
 
 // xkmsToolPrefix is the prefix used for all xkms-compatible MCP tool names.
@@ -1058,8 +1059,22 @@ func (r *ToolRegistry) handleXKMSRotateKey(ctx context.Context, args map[string]
 	if backend := getString(args, "backend"); backend != "" {
 		kid = backend + ":::" + keyID
 	}
-
-	privKey, err := xkmssdk.ServiceRotateKey(ctx, kid)
+	// Platform OIDC signing keys rotate only through their signing key
+	// manager, which serialises rotations across the nodes sharing them.
+	delegate, err := dbxkms.HostedRotationDelegate(kid)
+	if err != nil {
+		return nil, err
+	}
+	var privKey crypto.PrivateKey
+	if delegate != nil {
+		// The delegate's errors are typed (a busy or fenced rotation lease,
+		// a tenant with no dedicated key) and reach the caller as they are.
+		if privKey, err = delegate(ctx, kid); err != nil {
+			return nil, err
+		}
+	} else {
+		privKey, err = xkmssdk.ServiceRotateKey(ctx, kid)
+	}
 	if err != nil {
 		return nil, &XKMSOperationError{Operation: "rotateKey", Cause: err}
 	}

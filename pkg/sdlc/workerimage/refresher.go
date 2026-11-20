@@ -37,6 +37,9 @@ import (
 type Engine interface {
 	ImageRunner
 	BuildImage(ctx context.Context, spec *orchestration.ImageBuildSpec) (string, error)
+	// ReleaseImage tells the engine the caller is done with an ID
+	// BuildImage returned, so the reference that kept it can go.
+	ReleaseImage(ctx context.Context, id string)
 	InspectImage(ctx context.Context, image string) (*orchestration.ImageInfo, error)
 	TagImage(ctx context.Context, source, target string) error
 	PushImage(ctx context.Context, image string, auth *orchestration.RegistryAuth) (string, error)
@@ -389,9 +392,14 @@ func (r *Refresher) refreshStale(ctx context.Context, report *Report, uses []ima
 	}
 	localRef := r.cfg.Repository + ":" + build.Tag()
 	report.Candidate = localRef
-	imageID, err := r.candidate(ctx, build, localRef)
+	imageID, built, err := r.candidate(ctx, build, localRef)
 	if err != nil {
 		return err
+	}
+	if built {
+		// The pass is done with the ID it built on every return below. A
+		// reused candidate is never released: this pass took no reference.
+		defer r.deps.Engine.ReleaseImage(context.WithoutCancel(ctx), imageID)
 	}
 	report.ImageID = imageID
 	if err := r.gate(ctx, report, build, imageID, localRef, staleUses); err != nil {
@@ -671,15 +679,14 @@ func versionBehind(have, latest string) bool {
 // candidate returns the ID of the image built for build, building it only
 // when this host does not already hold a correctly labelled one under its tag,
 // and proves the labels a later pass will decide by.
-func (r *Refresher) candidate(ctx context.Context, build softwarefactoryworker.Build, localRef string) (string, error) {
-	imageID := ""
+func (r *Refresher) candidate(ctx context.Context, build softwarefactoryworker.Build, localRef string) (imageID string, built bool, err error) {
 	held, err := r.deps.Engine.InspectImage(ctx, localRef)
 	switch {
 	case err == nil && softwarefactoryworker.AgentsFromLabels(held.Labels) == build.Agents:
 		imageID = held.ID
 		r.deps.Logger.Info("worker image: reusing the candidate already built", "tag", localRef, "image_id", imageID)
 	case err != nil && !errors.Is(err, orchestration.ErrImageNotFound):
-		return "", err
+		return "", false, err
 	default:
 		r.deps.Logger.Info("worker image: building", "tag", localRef)
 		imageID, err = r.deps.Engine.BuildImage(ctx, &orchestration.ImageBuildSpec{
@@ -689,27 +696,36 @@ func (r *Refresher) candidate(ctx context.Context, build softwarefactoryworker.B
 			Pull:       true,
 		})
 		if err != nil {
-			return "", err
+			return "", false, err
 		}
+		built = true
+		// A gate below that refuses the image returns no ID, so nothing
+		// would release the reference this build took: release it here.
+		builtID := imageID
+		defer func() {
+			if err != nil {
+				r.deps.Engine.ReleaseImage(context.WithoutCancel(ctx), builtID)
+			}
+		}()
 	}
-	built, err := r.deps.Engine.InspectImage(ctx, imageID)
+	info, err := r.deps.Engine.InspectImage(ctx, imageID)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	var wrong []string
 	for key, want := range build.Labels() {
-		if built.Labels[key] != want {
-			wrong = append(wrong, key+"="+strconv.Quote(built.Labels[key])+" (want "+strconv.Quote(want)+")")
+		if info.Labels[key] != want {
+			wrong = append(wrong, key+"="+strconv.Quote(info.Labels[key])+" (want "+strconv.Quote(want)+")")
 		}
 	}
 	if len(wrong) > 0 {
 		slices.Sort(wrong)
-		return "", &GateError{Image: localRef, Failed: append([]string{"labels"}, wrong...)}
+		return "", false, &GateError{Image: localRef, Failed: append([]string{"labels"}, wrong...)}
 	}
-	if err := checkLanguages(localRef, built.Labels); err != nil {
-		return "", err
+	if err := checkLanguages(localRef, info.Labels); err != nil {
+		return "", false, err
 	}
-	return imageID, nil
+	return imageID, built, nil
 }
 
 // checkLanguages refuses an image whose languages label is missing, empty, or
