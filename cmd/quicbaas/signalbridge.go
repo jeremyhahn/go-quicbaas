@@ -42,12 +42,11 @@ import (
 )
 
 var (
-	sbConfigPath   string
-	sbBotIdentity  string
-	sbGoSignalURL  string
-	sbDeviceName   string
-	sbPasswordSeed string
-	sbStatePath    string
+	sbConfigPath  string
+	sbBotIdentity string
+	sbGoSignalURL string
+	sbDeviceName  string
+	sbStatePath   string
 )
 
 // newSignalBridgeCommand builds the `quicbaas signalbridge` subtree.
@@ -269,8 +268,8 @@ func runSignalBridgeRegister(cmd *cobra.Command, args []string) error {
 	if err == nil {
 		return errors.New("unexpected success without verification code")
 	}
-	bridgeErr, ok := err.(*signalbridge.Error)
-	if !ok || bridgeErr.Kind != signalbridge.ErrKindVerificationRequired {
+	var bridgeErr *signalbridge.Error
+	if !errors.As(err, &bridgeErr) || bridgeErr.Kind != signalbridge.ErrKindVerificationRequired {
 		return err
 	}
 	sessionID := bridgeErr.Msg
