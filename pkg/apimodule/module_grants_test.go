@@ -205,10 +205,10 @@ func TestNewModule_RegistersRoleGrants_NewBrokerDataPlaneServices(t *testing.T) 
 // ssh.proto (SSHService, still registered) declares the identical strings
 // for its own SSH-key operations, so their presence in the contributed set
 // proves nothing about whether kms.proto's KeyManagement/DEKManagement
-// leaked back in. ca:create/certs:generate/certs:read/attestation:verify/
-// piv:read are exclusive to certificate.proto/piv.proto/attestation.proto
-// (grepped api/proto/*.proto to confirm), so their absence is a clean
-// signal.
+// leaked back in. ca:create/certs:generate/certs:read/piv:read are exclusive
+// to certificate.proto/piv.proto (grepped api/proto/*.proto to confirm), so
+// their absence is a clean signal.
+// AttestationService is mounted (module.go) because the pinned go-xkms serves no Verifier RPCs.
 func TestNewModule_RegistersRoleGrants_XKMSWireServicesNotDuplicated(t *testing.T) {
 	set := map[string]struct{}{}
 	contributeGRPCPermissions(set)

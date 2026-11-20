@@ -25,7 +25,6 @@ import (
 	qrdbembedded "github.com/jeremyhahn/go-qrdb/sdk/go/transport/embedded"
 	qrdbgrpc "github.com/jeremyhahn/go-qrdb/sdk/go/transport/grpc"
 	qrdbmcp "github.com/jeremyhahn/go-qrdb/sdk/go/transport/mcp"
-	qrdbquic "github.com/jeremyhahn/go-qrdb/sdk/go/transport/quic"
 	qrdbrest "github.com/jeremyhahn/go-qrdb/sdk/go/transport/rest"
 	qrdbunix "github.com/jeremyhahn/go-qrdb/sdk/go/transport/unix"
 
@@ -271,6 +270,30 @@ type QRDBTenantBarrierUnsealShareRequest = qrdbtransport.TenantBarrierUnsealShar
 
 // QRDBTenantBarrierUnsealProgress is a re-export of the qrdb TenantBarrierUnsealProgress type.
 type QRDBTenantBarrierUnsealProgress = qrdbtransport.TenantBarrierUnsealProgress
+
+// The rest of the go-qrdb TenantClient surface (#1656): the request and
+// response types of every TenantClient method, re-exported so an sdk/go
+// caller can drive tenants and per-tenant barriers without importing go-qrdb.
+type (
+	QRDBUpdateTenantRequest              = qrdbtransport.UpdateTenantRequest
+	QRDBUpdateTenantResponse             = qrdbtransport.UpdateTenantResponse
+	QRDBUpdateTenantQuotasRequest        = qrdbtransport.UpdateTenantQuotasRequest
+	QRDBUpdateTenantQuotasResponse       = qrdbtransport.UpdateTenantQuotasResponse
+	QRDBUpdateTenantEntitlementsRequest  = qrdbtransport.UpdateTenantEntitlementsRequest
+	QRDBUpdateTenantEntitlementsResponse = qrdbtransport.UpdateTenantEntitlementsResponse
+	QRDBTenantQuotas                     = qrdbtransport.TenantQuotas
+	QRDBTenantEntitlements               = qrdbtransport.TenantEntitlements
+	QRDBListDeletedTenantsRequest        = qrdbtransport.ListDeletedTenantsRequest
+	QRDBListDeletedTenantsResponse       = qrdbtransport.ListDeletedTenantsResponse
+	QRDBDeletedTenant                    = qrdbtransport.DeletedTenant
+	QRDBReconcileDeletedTenantsResponse  = qrdbtransport.ReconcileDeletedTenantsResponse
+	QRDBTenantOfficerRegisterRequest     = qrdbtransport.TenantOfficerRegisterRequest
+	QRDBTenantOfficerClaimStatusRequest  = qrdbtransport.TenantOfficerClaimStatusRequest
+	QRDBTenantShareClaimBeginRequest     = qrdbtransport.TenantShareClaimBeginRequest
+	QRDBTenantShareClaimCompleteRequest  = qrdbtransport.TenantShareClaimCompleteRequest
+	QRDBTenantShamirSealVoteRequest      = qrdbtransport.TenantShamirSealVoteRequest
+	QRDBTenantDatabaseAccessDeniedError  = qrdbtransport.TenantDatabaseAccessDeniedError
+)
 
 // =============================================================================
 // QRDB Barrier Request/Response Re-exports
@@ -606,10 +629,17 @@ func (c *client) buildQRDBTransport() (qrdbtransport.Transport, error) {
 	address := qrdbSubClientAddress(c.opts.transportType, c.address, tlsConfigured)
 
 	switch c.opts.transportType {
-	case TransportREST:
+	case TransportREST, TransportQUIC:
+		// quicbaas's QUIC transport is its REST transport over HTTP/3 on
+		// the REST port, and the node serves no native qrdb-quic listener:
+		// go-qrdb's QUIC transport offers wire.ProtocolV2 and is refused
+		// ("tls: no application protocol", go-quicbaas#2533). The QUIC
+		// selection reaches the same qrdb REST API at the same origin.
+		// Barrier verbs go over HTTP/3 through the SDK transport
+		// (Security().Barrier()); the other QRDB verb groups still use
+		// go-qrdb's REST transport over TCP until go-qrdb's REST transport
+		// accepts an HTTP/3 client (#2533).
 		return qrdbrest.New(buildOpts(address)...)
-	case TransportQUIC:
-		return qrdbquic.New(buildOpts(address)...)
 	case TransportUnix:
 		return c.buildQRDBUnixTransport()
 	case TransportMCP:
@@ -622,15 +652,15 @@ func (c *client) buildQRDBTransport() (qrdbtransport.Transport, error) {
 // qrdbSubClientAddress returns the address the go-qrdb sub-client transport
 // dials for the active quicbaas transport selection.
 //
-// gRPC and QUIC dial a bare "host:port" and must not be handed a scheme.
-// REST needs a scheme-qualified origin because go-qrdb's REST transport
+// gRPC dials a bare "host:port" and must not be handed a scheme.
+// REST (and QUIC, whose qrdb sub-client is the REST transport) needs a scheme-qualified origin because go-qrdb's REST transport
 // concatenates its request path onto the address; MCP needs the full
 // Streamable HTTP endpoint URL, path included. Unix is resolved separately by
 // buildQRDBUnixTransport, which chooses between the gRPC and unix transports
 // on TLS posture, so it keeps the socket path verbatim here.
 func qrdbSubClientAddress(transportType TransportType, address string, tlsConfigured bool) string {
 	switch transportType {
-	case TransportREST:
+	case TransportREST, TransportQUIC:
 		return qbtransport.HTTPBaseURL(address, tlsConfigured)
 	case TransportMCP:
 		return qbtransport.HTTPEndpoint(address, tlsConfigured, qbmcp.MCPEndpointPath)

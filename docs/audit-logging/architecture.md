@@ -110,7 +110,9 @@ for _, event := range events {
 The audit chain is append-only. The node's logger delegates to go-qrdb's
 chain (`pkg/server/node_audit_logger.go`), and its `DeleteOlderThan` is a
 no-op that returns 0: "the chain is append-only and tamper-evident by
-design". No retention job, API call or administrator erases an event.
+design". No API call or administrator erases an event. The node's file
+sink does prune rotated files older than its retention period (90 days by
+default) at startup; see Compliance below for archiving.
 
 ```go
 // Always (0, nil): nothing is deleted.
@@ -179,6 +181,10 @@ Authorization: Bearer <admin_token>
 ```
 
 **Required Permission**: `audit_events:delete`
+
+The chain is append-only, so an authorized request erases no event and
+always answers `deleted_count: 0`. The endpoint stays so that a delete
+attempt is authorized and audited, and callers learn the contract.
 
 The chain is append-only, so an authorized request erases no event and
 always answers `deleted_count: 0`. The endpoint stays so that a delete
@@ -413,7 +419,14 @@ When limit is reached, oldest events are automatically evicted (FIFO).
 
 ### Compliance
 
-- The append-only chain keeps every event, which meets any minimum retention period
+- The chain is append-only and no API call deletes events: `Delete` is a
+  no-op that is itself audited. The node's audit file sink
+  (`<data_dir>/audit/node-audit.log`) does rotate its files, though, and when
+  the node starts it deletes rotated files older than its retention period,
+  90 days by default. The node passes the sink no retention option
+  (`pkg/server/qrdb_node.go`), so that default applies. A deployment whose
+  retention requirement is longer must archive rotated audit files (or export
+  events) to durable storage before they age out
 - Authentication events help with SOC 2, ISO 27001 compliance
 - Authorization events support principle of least privilege auditing
 - Administrative actions provide audit trail for governance
@@ -423,18 +436,20 @@ When limit is reached, oldest events are automatically evicted (FIFO).
 
 - Consider encrypting audit events at rest
 - The chain is append-only and hash-chained, so tampering is evident
-- Export to a SIEM for analysis; the chain itself is never trimmed
+- Export to a SIEM for analysis, and archive rotated audit files to durable
+  storage for long-term retention: the sink deletes rotated files past its
+  retention period (90 days by default) at node startup
 
 ## Best Practices
 
 1. **Log Consistently**: Use helper methods for consistent event structure
 2. **Include Context**: Add relevant details to the Details field
 3. **Use Async for Hot Paths**: Avoid blocking critical paths
-4. **Plan for Growth**: The chain is append-only, so size storage for every event
+4. **Plan for Growth**: Size storage for every event within the sink's retention period (90 days by default)
 5. **Monitor Storage**: Alert on storage growth or dropped events
-6. **No Cleanup Jobs**: Nothing erases audit events; do not schedule retention cleanup
+6. **No Cleanup Jobs**: No API erases audit events, and the sink prunes its own rotated files; do not schedule another cleanup
 7. **Secure Access**: Restrict audit log access to administrators
-8. **Export for Analysis**: Integrate with SIEM for security monitoring
+8. **Archive and Export**: Archive rotated audit files to durable storage when your retention requirement is longer than the sink's retention, and integrate with a SIEM for security monitoring
 9. **Protect Delete Access**: Only grant `audit_events:delete` to trusted super admins
 10. **Audit the Auditors**: Monitor who accesses audit logs and who attempts deletes
 

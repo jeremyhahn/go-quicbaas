@@ -14,6 +14,7 @@
 package iam
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -225,7 +226,7 @@ func TestPublicForKIDCurrentAndUnknown(t *testing.T) {
 
 	kid, _, _ := mgr.Current()
 
-	pub, err := mgr.PublicForKID(kid)
+	pub, err := mgr.PublicForKID(context.Background(), kid)
 	if err != nil {
 		t.Fatalf("PublicForKID(current) failed: %v", err)
 	}
@@ -233,7 +234,7 @@ func TestPublicForKIDCurrentAndUnknown(t *testing.T) {
 		t.Fatalf("expected ECDSA public key, got %T", pub)
 	}
 
-	_, err = mgr.PublicForKID("missing")
+	_, err = mgr.PublicForKID(context.Background(), "missing")
 	var unknownErr *UnknownKeyIDError
 	if !errors.As(err, &unknownErr) {
 		t.Fatalf("expected UnknownKeyIDError, got %T", err)
@@ -294,7 +295,7 @@ func TestRotateOverlapAndJWKS(t *testing.T) {
 	if prevSigner == nil {
 		t.Fatal("previous signer is nil after rotation")
 	}
-	if _, err := mgr.PublicForKID(oldKID); err != nil {
+	if _, err := mgr.PublicForKID(context.Background(), oldKID); err != nil {
 		t.Fatalf("previous public key did not resolve after rotation: %v", err)
 	}
 
