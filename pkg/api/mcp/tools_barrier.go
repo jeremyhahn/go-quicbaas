@@ -17,6 +17,7 @@ package mcp
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -370,7 +371,7 @@ func (r *ToolRegistry) registerBarrierTools() {
 
 	r.addTool(ToolDefinition{
 		Name:        "qrdb_barrier_enable_encryption",
-		Description: "Migrate the system barrier, or the tenant barrier named by tenant_id, from the none strategy to a keyed at-rest encryption strategy. This is a one-way, in-place migration that requires the embedded qrdb node.",
+		Description: "Migrate the system barrier, or the tenant barrier named by tenant_id, from the none strategy to a keyed at-rest encryption strategy. This is a one-way, in-place migration that requires the embedded qrdb node. It answers migration_started once the migration is accepted; poll the barrier status for completion.",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -415,7 +416,7 @@ func (r *ToolRegistry) registerBarrierTools() {
 
 	r.addTool(ToolDefinition{
 		Name:        "qrdb_tenant_barrier_enable_encryption",
-		Description: "Migrate a tenant barrier from the none strategy to a keyed at-rest encryption strategy. This is a one-way, in-place migration that requires the embedded qrdb node.",
+		Description: "Migrate a tenant barrier from the none strategy to a keyed at-rest encryption strategy. This is a one-way, in-place migration that requires the embedded qrdb node. It answers migration_started once the migration is accepted; poll the barrier status for completion.",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -834,8 +835,10 @@ func executeBarrierRootToken(ctx context.Context, svc service.BarrierServicer, a
 }
 
 // executeBarrierEnableEncryption implements qrdb_barrier_enable_encryption.
-// It migrates the SYSTEM barrier from none-strategy to a keyed at-rest
-// encryption strategy in place.
+// It migrates the system barrier, or the tenant barrier named by tenant_id,
+// from the none strategy to a keyed at-rest encryption strategy, and answers
+// migration_started once the acceptance window passes; poll
+// qrdb_barrier_status for completion.
 func executeBarrierEnableEncryption(ctx context.Context, svc service.BarrierServicer, args map[string]interface{}) (interface{}, error) {
 	// strategy is go-qrdb's native argument name (what the SDK sends); target_strategy is the older alias.
 	targetStrategy := getStringAlt(args, "strategy", "target_strategy")
@@ -846,23 +849,17 @@ func executeBarrierEnableEncryption(ctx context.Context, svc service.BarrierServ
 	if err != nil {
 		return nil, err
 	}
-	defer opts.Credentials.Secret.Destroy()
 	// tenant_id names a tenant barrier, as on go-qrdb's native tool; an empty
 	// tenantID routes to the system barrier scope inside EnableEncryption.
 	tenantID := getString(args, "tenant_id")
-	if err := svc.EnableEncryption(ctx, tenantID, opts); err != nil {
-		return nil, err
-	}
-	result := map[string]interface{}{"status": "encryption enabled"}
-	if tenantID != "" {
-		result["tenant_id"] = tenantID
-	}
-	return result, nil
+	return startBarrierEnableEncryption(ctx, svc, tenantID, opts)
 }
 
 // executeBarrierTenantEnableEncryption implements
-// qrdb_tenant_barrier_enable_encryption. It migrates a TENANT barrier from
-// none-strategy to a keyed at-rest encryption strategy in place.
+// qrdb_tenant_barrier_enable_encryption. It migrates the tenant barrier named
+// by tenant_id from the none strategy to a keyed at-rest encryption strategy,
+// and answers migration_started once the acceptance window passes; poll
+// qrdb_barrier_status for completion.
 func executeBarrierTenantEnableEncryption(ctx context.Context, svc service.BarrierServicer, args map[string]interface{}) (interface{}, error) {
 	tenantID := getString(args, "tenant_id")
 	if tenantID == "" {
@@ -877,12 +874,51 @@ func executeBarrierTenantEnableEncryption(ctx context.Context, svc service.Barri
 	if err != nil {
 		return nil, err
 	}
-	defer opts.Credentials.Secret.Destroy()
-	if err := svc.EnableEncryption(ctx, tenantID, opts); err != nil {
-		return nil, err
+	return startBarrierEnableEncryption(ctx, svc, tenantID, opts)
+}
+
+// barrierEnableEncryptionAcceptWindow is how long the enable-encryption tools
+// wait for the migration to fail fast before answering migration_started. It
+// mirrors go-qrdb's native qrdb_barrier_enable_encryption window.
+const barrierEnableEncryptionAcceptWindow = 750 * time.Millisecond
+
+// startBarrierEnableEncryption runs the barrier migration past the tool call.
+// It owns opts.Credentials.Secret: the migration goroutine destroys it when
+// the migration ends. An error inside the acceptance window is returned as
+// the tool error; a later one is logged. Otherwise it answers
+// migration_started with the migration's scope.
+func startBarrierEnableEncryption(ctx context.Context, svc service.BarrierServicer, tenantID string, opts qrdbsdk.MigrationOptions) (interface{}, error) {
+	migrationCtx := context.WithoutCancel(ctx)
+	resultCh := make(chan error, 1)
+	// The migration must outlive the tool call; WithoutCancel keeps the
+	// caller's principal on the context for the tenant binding.
+	go func() {
+		defer opts.Credentials.Secret.Destroy()
+		resultCh <- svc.EnableEncryption(migrationCtx, tenantID, opts)
+	}()
+
+	select {
+	case err := <-resultCh:
+		if err != nil {
+			return nil, err
+		}
+	case <-time.After(barrierEnableEncryptionAcceptWindow):
+		go func() {
+			if err := <-resultCh; err != nil {
+				slog.Error("enable-encryption migration failed",
+					slog.String("tenant", tenantID),
+					slog.String("strategy", string(opts.TargetStrategy)),
+					slog.Any("error", err))
+			}
+		}()
+	}
+
+	if tenantID == "" {
+		return map[string]interface{}{"status": "migration_started", "scope": "system"}, nil
 	}
 	return map[string]interface{}{
-		"status":    "encryption enabled",
+		"status":    "migration_started",
+		"scope":     "tenant",
 		"tenant_id": tenantID,
 	}, nil
 }

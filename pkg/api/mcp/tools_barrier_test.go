@@ -420,7 +420,7 @@ func TestBarrierToolsExecuteSuccess(t *testing.T) {
 			"passphrase":      "hunter2",
 		})
 		require.NoError(t, err)
-		assert.Equal(t, "encryption enabled", out.(map[string]interface{})["status"])
+		assert.Equal(t, "migration_started", out.(map[string]interface{})["status"])
 		// System barrier: empty tenantID.
 		assert.Equal(t, "", fake.gotEnableEncTenantID)
 		assert.Equal(t, qrdbsdk.StrategyID("passphrase"), fake.gotEnableEncOpts.TargetStrategy)
@@ -436,7 +436,7 @@ func TestBarrierToolsExecuteSuccess(t *testing.T) {
 			"passphrase": "hunter2",
 		})
 		require.NoError(t, err)
-		assert.Equal(t, "encryption enabled", out.(map[string]interface{})["status"])
+		assert.Equal(t, "migration_started", out.(map[string]interface{})["status"])
 		assert.Equal(t, "", fake.gotEnableEncTenantID)
 		assert.Equal(t, qrdbsdk.StrategyID("passphrase"), fake.gotEnableEncOpts.TargetStrategy)
 	})
@@ -450,7 +450,7 @@ func TestBarrierToolsExecuteSuccess(t *testing.T) {
 		})
 		require.NoError(t, err)
 		m := out.(map[string]interface{})
-		assert.Equal(t, "encryption enabled", m["status"])
+		assert.Equal(t, "migration_started", m["status"])
 		assert.Equal(t, "t1", m["tenant_id"])
 		assert.Equal(t, "t1", fake.gotEnableEncTenantID)
 		assert.Equal(t, qrdbsdk.StrategyID("passphrase"), fake.gotEnableEncOpts.TargetStrategy)

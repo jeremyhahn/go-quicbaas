@@ -74,7 +74,7 @@ func TestBarrierEnableEncryptionRoundTrip_SystemRequestReachesSystemTool(t *test
 	})
 	require.NoError(t, err)
 
-	assert.Equal(t, "encryption enabled", resp.Status)
+	assert.Equal(t, "migration_started", resp.Status)
 	assert.Equal(t, []string{systemEnableEncryptionTool}, reached())
 	assert.Empty(t, fake.gotEnableEncTenantID, "the system tool must migrate the system barrier")
 	assert.Equal(t, qrdbsdk.StrategyID("passphrase"), fake.gotEnableEncOpts.TargetStrategy)
@@ -97,7 +97,7 @@ func TestBarrierEnableEncryptionRoundTrip_TenantRequestCarriesTenantID(t *testin
 	})
 	require.NoError(t, err)
 
-	assert.Equal(t, "encryption enabled", resp.Status)
+	assert.Equal(t, "migration_started", resp.Status)
 	assert.Equal(t, []string{systemEnableEncryptionTool}, reached(),
 		"a tenant request goes to the one enable-encryption tool the node serves asynchronously")
 	assert.Equal(t, "t1", fake.gotEnableEncTenantID, "the tool must migrate the tenant barrier named by tenant_id")
