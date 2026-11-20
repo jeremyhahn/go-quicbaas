@@ -28,15 +28,15 @@ import (
 // BarrierClient implementation against the quicbaas MCP server.
 //
 // The qrdb SDK transport.BarrierClient interface defines the canonical
-// barrier wire contract. The quicbaas MCP server exposes the same surface
-// under the quicbaas_barrier_* tool namespace (see pkg/api/mcp/tools_barrier
-// on the daemon side). This file makes *Transport implement
+// barrier wire contract. The node serves that surface natively under go-qrdb's
+// qrdb_barrier_* tool names (pkg/api/mcp/tools_barrier on a standalone
+// server). This file makes *Transport implement
 // qrdbtransport.BarrierClient so consumers can talk to the quicbaas MCP
 // listener with the same client type they use against go-qrdb.
 //
 // Every method:
 //   1. Short-circuits with errors.NewConnection when the transport is closed.
-//   2. Calls the matching quicbaas_barrier_* MCP tool via callTool.
+//   2. Calls the matching qrdb_barrier_* MCP tool via callTool.
 //   3. Decodes the (already-parsed) JSON content back into the canonical
 //      qrdb response type via a round-trip through json.Marshal/Unmarshal.
 // =============================================================================
@@ -548,9 +548,6 @@ func (t *Transport) callBarrier(ctx context.Context, name string, args map[strin
 	return t.callTool(ctx, name, args)
 }
 
-// remarshalBarrier copies the JSON shape from src (already-decoded interface{}
-// from callTool) into the typed pointer dst via a JSON round-trip. This keeps
-// the transport client free of bespoke per-field conversion logic.
 // officerRegisterWireResponse is an officer registration as the server
 // sends it: cert_pem is PEM text, which encoding/json cannot decode into
 // OfficerRegisterResponse's []byte CertPEM (it would expect base64).
@@ -572,6 +569,9 @@ func decodeOfficerRegister(raw interface{}) (*qrdbtransport.OfficerRegisterRespo
 	}, nil
 }
 
+// remarshalBarrier copies the JSON shape from src (already-decoded interface{}
+// from callTool) into the typed pointer dst via a JSON round-trip. This keeps
+// the transport client free of bespoke per-field conversion logic.
 func remarshalBarrier(src interface{}, dst interface{}) error {
 	if src == nil {
 		return nil
