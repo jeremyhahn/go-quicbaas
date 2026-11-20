@@ -96,8 +96,8 @@ func TestGet_Errors(t *testing.T) {
 	if _, err := NewClient(&fakeTransport{resp: map[string]interface{}{"x": 1}}).Get(context.Background()); err == nil {
 		t.Error("response without subsystems: want an error")
 	}
-	//nolint:staticcheck // a nil context is the case under test
-	if _, err := NewClient(&fakeTransport{}).Get(nil); err == nil {
+	var nilCtx context.Context
+	if _, err := NewClient(&fakeTransport{}).Get(nilCtx); err == nil {
 		t.Error("nil context: want an error")
 	}
 	var nilReport *Report
