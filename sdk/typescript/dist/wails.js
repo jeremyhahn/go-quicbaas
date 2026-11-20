@@ -775,6 +775,8 @@ export class WailsClient {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     dek = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    attestation = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     dynamicSecrets = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     barrier = null;

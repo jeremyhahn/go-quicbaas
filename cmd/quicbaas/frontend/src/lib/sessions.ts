@@ -1,3 +1,5 @@
+import type { SessionInfo } from '../stores/orchestrator.svelte.ts';
+
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
@@ -183,4 +185,29 @@ export function sessionModel(record: unknown): string {
   if (record === null || typeof record !== 'object') return '';
   const model = (record as { model?: unknown }).model;
   return typeof model === 'string' ? model : '';
+}
+
+/**
+ * toSessionInfo turns a session record from either transport into the
+ * console's SessionInfo. The REST daemon sends `state` and `last_activity`;
+ * the Wails bridge (and the SDK type) send `status` and `last_active`
+ * (go-quicbaas#856). The REST spelling wins when a record carries both.
+ */
+export function toSessionInfo(r: unknown): SessionInfo {
+  const rec = (r !== null && typeof r === 'object' ? r : {}) as Record<string, unknown>;
+  const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
+  const num = (v: unknown): number | undefined => (typeof v === 'number' ? v : undefined);
+  const info: SessionInfo = {
+    session_id: str(rec.session_id) ?? '',
+    project_id: str(rec.project_id) ?? '',
+    backend: str(rec.backend) ?? '',
+    state: str(rec.state) ?? str(rec.status) ?? '',
+    created_at: num(rec.created_at) ?? 0,
+    last_activity: num(rec.last_activity) ?? num(rec.last_active) ?? 0,
+  };
+  const model = str(rec.model);
+  if (model !== undefined) info.model = model;
+  const jobId = str(rec.job_id);
+  if (jobId !== undefined) info.job_id = jobId;
+  return info;
 }

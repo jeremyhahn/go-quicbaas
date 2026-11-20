@@ -69,6 +69,9 @@
 
   // Step 2 — Agents
   interface AgentForm extends Omit<AgentRoleSpec, 'env'> {
+    // host_affinity pins the agent to a fleet node by name or host; the
+    // Agents step edits it and the assembled definition carries it.
+    host_affinity?: string;
     envRows: { key: string; value: string }[];
     showAdvanced: boolean;
   }
@@ -1173,8 +1176,8 @@
                             onchange={(e) => updateAgentField(idx, 'skip_permissions', (e.target as HTMLInputElement).checked)}
                           />
                           skip_permissions
-                          <span class="text-base-content/40">
-                            <HelpCircle class="h-3 w-3 inline" title="--dangerously-skip-permissions flag" />
+                          <span class="text-base-content/40" title="--dangerously-skip-permissions flag">
+                            <HelpCircle class="h-3 w-3 inline" />
                           </span>
                         </label>
                         <label class="flex items-center gap-2 cursor-pointer text-xs">

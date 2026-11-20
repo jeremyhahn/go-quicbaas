@@ -82,10 +82,10 @@ func (r *CreateBackendRequest) Validate() error {
 // CreateBackendResponse contains the result of creating a backend.
 type CreateBackendResponse struct {
 	// Name is the created backend name.
-	Name string
+	Name string `json:"name"`
 
 	// CreatedAt is the creation timestamp (Unix nanoseconds).
-	CreatedAt int64
+	CreatedAt int64 `json:"created_at"`
 }
 
 // UpdateBackendRequest contains parameters for updating backend configuration.
@@ -114,10 +114,10 @@ func (r *UpdateBackendRequest) Validate() error {
 // UpdateBackendResponse contains the result of updating a backend.
 type UpdateBackendResponse struct {
 	// Name is the updated backend name.
-	Name string
+	Name string `json:"name"`
 
 	// UpdatedAt is the update timestamp (Unix nanoseconds).
-	UpdatedAt int64
+	UpdatedAt int64 `json:"updated_at"`
 }
 
 // DeleteBackendRequest contains parameters for removing a storage backend.
@@ -146,13 +146,13 @@ func (r *DeleteBackendRequest) Validate() error {
 // DeleteBackendResponse contains the result of deleting a backend.
 type DeleteBackendResponse struct {
 	// Name is the deleted backend name.
-	Name string
+	Name string `json:"name"`
 
 	// Deleted indicates if the backend was deleted.
-	Deleted bool
+	Deleted bool `json:"deleted"`
 
 	// MigratedObjects is the count of migrated objects.
-	MigratedObjects int64
+	MigratedObjects int64 `json:"migrated_objects"`
 }
 
 // SetBackendStatusRequest contains parameters for enabling/disabling a backend.
@@ -178,13 +178,13 @@ func (r *SetBackendStatusRequest) Validate() error {
 // SetBackendStatusResponse contains the result of updating backend status.
 type SetBackendStatusResponse struct {
 	// Name is the backend name.
-	Name string
+	Name string `json:"name"`
 
 	// Enabled is the new status.
-	Enabled bool
+	Enabled bool `json:"enabled"`
 
 	// UpdatedAt is the update timestamp (Unix nanoseconds).
-	UpdatedAt int64
+	UpdatedAt int64 `json:"updated_at"`
 }
 
 // =============================================================================
@@ -211,49 +211,49 @@ func (r *GetStorageStatsRequest) Validate() error {
 // GetStorageStatsResponse contains cluster-wide storage statistics.
 type GetStorageStatsResponse struct {
 	// TotalBytes is the total storage used.
-	TotalBytes int64
+	TotalBytes int64 `json:"total_bytes"`
 
 	// TotalObjects is the total object count.
-	TotalObjects int64
+	TotalObjects int64 `json:"total_objects"`
 
 	// TotalBackends is the number of backends.
-	TotalBackends int32
+	TotalBackends int32 `json:"total_backends"`
 
 	// HealthyBackends is the number of healthy backends.
-	HealthyBackends int32
+	HealthyBackends int32 `json:"healthy_backends"`
 
 	// BackendStats contains per-backend statistics.
-	BackendStats []*BackendInfo
+	BackendStats []*BackendInfo `json:"backend_stats"`
 
 	// TenantStats contains per-tenant statistics.
-	TenantStats []*TenantStorageStats
+	TenantStats []*TenantStorageStats `json:"tenant_stats"`
 
 	// CalculatedAt is when stats were calculated (Unix nanoseconds).
-	CalculatedAt int64
+	CalculatedAt int64 `json:"calculated_at"`
 }
 
 // TenantStorageStats contains storage statistics for a tenant.
 type TenantStorageStats struct {
 	// TenantID identifies the tenant.
-	TenantID string
+	TenantID string `json:"tenant_id"`
 
 	// TotalBytes is the total storage used.
-	TotalBytes int64
+	TotalBytes int64 `json:"total_bytes"`
 
 	// ObjectCount is the total number of objects.
-	ObjectCount int64
+	ObjectCount int64 `json:"object_count"`
 
 	// HotBytes is storage in hot tier.
-	HotBytes int64
+	HotBytes int64 `json:"hot_bytes"`
 
 	// WarmBytes is storage in warm tier.
-	WarmBytes int64
+	WarmBytes int64 `json:"warm_bytes"`
 
 	// ColdBytes is storage in cold tier.
-	ColdBytes int64
+	ColdBytes int64 `json:"cold_bytes"`
 
 	// ArchiveBytes is storage in archive tier.
-	ArchiveBytes int64
+	ArchiveBytes int64 `json:"archive_bytes"`
 }
 
 // =============================================================================
@@ -283,10 +283,10 @@ func (r *RunGarbageCollectionRequest) Validate() error {
 // RunGarbageCollectionResponse contains the result of initiating GC.
 type RunGarbageCollectionResponse struct {
 	// OperationID is the async operation ID for tracking.
-	OperationID string
+	OperationID string `json:"operation_id"`
 
 	// StartedAt is when GC started (Unix nanoseconds).
-	StartedAt int64
+	StartedAt int64 `json:"started_at"`
 }
 
 // GetGarbageCollectionProgressRequest contains parameters for retrieving GC progress.
@@ -318,28 +318,28 @@ const (
 // GetGarbageCollectionProgressResponse contains GC progress information.
 type GetGarbageCollectionProgressResponse struct {
 	// OperationID is the GC operation ID.
-	OperationID string
+	OperationID string `json:"operation_id"`
 
 	// Status is the GC status (running, completed, failed).
-	Status GCStatus
+	Status GCStatus `json:"status"`
 
 	// ObjectsScanned is the count of scanned objects.
-	ObjectsScanned int64
+	ObjectsScanned int64 `json:"objects_scanned"`
 
 	// ObjectsDeleted is the count of deleted objects.
-	ObjectsDeleted int64
+	ObjectsDeleted int64 `json:"objects_deleted"`
 
 	// BytesReclaimed is the storage reclaimed.
-	BytesReclaimed int64
+	BytesReclaimed int64 `json:"bytes_reclaimed"`
 
 	// PercentComplete is the completion percentage.
-	PercentComplete float64
+	PercentComplete float64 `json:"percent_complete"`
 
 	// Error contains error message if failed.
-	Error string
+	Error string `json:"error,omitempty"`
 
 	// CompletedAt is when GC completed (Unix nanoseconds, 0 if not finished).
-	CompletedAt int64
+	CompletedAt int64 `json:"completed_at"`
 }
 
 // =============================================================================
@@ -373,16 +373,16 @@ func (r *RepairObjectRequest) Validate() error {
 // RepairObjectResponse contains the result of repairing an object.
 type RepairObjectResponse struct {
 	// Key is the repaired object key.
-	Key string
+	Key string `json:"key"`
 
 	// Success indicates if repair succeeded.
-	Success bool
+	Success bool `json:"success"`
 
 	// RepairedLocations lists locations that were repaired.
-	RepairedLocations []string
+	RepairedLocations []string `json:"repaired_locations"`
 
 	// Error contains error message if failed.
-	Error string
+	Error string `json:"error,omitempty"`
 }
 
 // =============================================================================
@@ -412,13 +412,13 @@ func (r *CompactBackendRequest) Validate() error {
 // CompactBackendResponse contains the result of initiating compaction.
 type CompactBackendResponse struct {
 	// Name is the backend name.
-	Name string
+	Name string `json:"name"`
 
 	// OperationID is the async operation ID.
-	OperationID string
+	OperationID string `json:"operation_id"`
 
 	// StartedAt is when compaction started (Unix nanoseconds).
-	StartedAt int64
+	StartedAt int64 `json:"started_at"`
 }
 
 // =============================================================================

@@ -582,6 +582,8 @@ export interface AgentRoleSpec {
     env: Record<string, string>;
     sandboxed: boolean;
     container_image: string;
+    /** host_affinity optionally pins the role to one daemon hostname; empty lets the orchestrator pick any eligible host. */
+    host_affinity?: string;
     num_ctx: number;
     /** prompt_append is run-time prompt material appended to every session of this role. At most 64 KiB. */
     prompt_append?: string;
@@ -1420,7 +1422,7 @@ export interface ListPoliciesResponse {
     policies: IAMPolicy[];
     count: number;
 }
-export type KMSKeyStatus = 'active' | 'inactive' | 'pending_deletion' | 'destroyed';
+export type KMSKeyStatus = 'enabled' | 'disabled' | 'pending_deletion' | 'deleted';
 export interface KMSKey {
     id: string;
     name: string;

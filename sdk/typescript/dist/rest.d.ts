@@ -9,6 +9,7 @@ import type { CAClient, IssueCertificateRequest, IssueCertificateResponse, SignC
 import type { TrustClient, CrossSignedRootPoolResponse, AutoImportAIARequest, AutoImportAIAResponse, PublishDANERequest, PublishDANEResponse } from './trust.js';
 import type { CryptoClient, CryptoEncryptRequest, CryptoEncryptResponse, CryptoDecryptRequest, CryptoDecryptResponse, CryptoRewrapRequest, CryptoRewrapResponse, CryptoSignRequest, CryptoSignResponse, CryptoVerifyRequest, CryptoVerifyResponse, CryptoHashRequest, CryptoHashResponse, CryptoRandomResponse, CryptoDataKeyRequest, CryptoDataKeyResponse } from './crypto.js';
 import type { DEKClient, CreateDEKRequest, CreateDEKResponse, GetDEKResponse, ListDEKsRequest, ListDEKsResponse, RotateDEKRequest, RotateDEKResponse, DeleteDEKRequest, DeleteDEKResponse, GetDEKStatusResponse, SetDefaultDEKResponse, SetDEKSafetyRequest, SetDEKSafetyResponse, ClearDEKSafetyResponse, StartReencryptionRequest, StartReencryptionResponse, GetReencryptionProgressResponse } from './dek.js';
+import type { AttestationClient, Endorsement, EndorsementKind, ListEndorsementsResponse, ListReferenceValuesResponse, PutEndorsementRequest, ReferenceValues } from './attestation.js';
 import type { DynamicSecretsClient, DynamicSecretRole, CreateRoleRequest as DynamicSecretCreateRoleRequest, ListRolesResponse as ListDynamicSecretRolesResponse, DeleteRoleResponse as DeleteDynamicSecretRoleResponse, GenerateCredentialRequest, GenerateCredentialResponse, RenewLeaseRequest, RenewLeaseResponse, RevokeLeaseResponse as RevokeDynamicSecretLeaseResponse, ListLeasesResponse } from './dynamicsecrets.js';
 import type { AccountsClient, Account, CreateAccountRequest, CreateAccountResponse, GetAccountResponse, ListAccountsRequest, ListAccountsResponse, UpdateAccountRequest, UpdateAccountResponse, DeleteAccountResponse, RotateAccountCredentialRequest, RotateAccountCredentialResponse, RevokeAccountRequest, RevokeAccountResponse, SetDefaultAccountResponse, GetAccountUsageResponse } from './accounts.js';
 import type { AgentsClient } from './agents.js';
@@ -117,6 +118,21 @@ export declare class RestDEKClient implements DEKClient {
     clearDEKSafety(path: string): Promise<ClearDEKSafetyResponse>;
     startReencryption(path: string, req?: StartReencryptionRequest): Promise<StartReencryptionResponse>;
     getReencryptionProgress(path: string, operationId?: string, verbose?: boolean): Promise<GetReencryptionProgressResponse>;
+}
+/**
+ * RestAttestationClient manages the attestation verifier's endorsements and
+ * reference values over REST (/api/v1/attestation/*).
+ */
+export declare class RestAttestationClient implements AttestationClient {
+    private readonly http;
+    constructor(baseUrl: string, config?: ClientConfig);
+    putEndorsement(name: string, req: PutEndorsementRequest): Promise<Endorsement>;
+    listEndorsements(kind?: EndorsementKind): Promise<ListEndorsementsResponse>;
+    deleteEndorsement(name: string): Promise<void>;
+    putReferenceValues(name: string, signedCoRIM: string): Promise<ReferenceValues>;
+    getReferenceValues(name: string): Promise<ReferenceValues>;
+    listReferenceValues(): Promise<ListReferenceValuesResponse>;
+    deleteReferenceValues(name: string): Promise<void>;
 }
 export declare class RestDynamicSecretsClient implements DynamicSecretsClient {
     private readonly http;
@@ -245,6 +261,7 @@ export declare class RestClient implements Client {
     readonly trust: TrustClient;
     readonly crypto: CryptoClient;
     readonly dek: DEKClient;
+    readonly attestation: AttestationClient;
     readonly dynamicSecrets: DynamicSecretsClient;
     readonly barrier: BarrierClient;
     readonly tenantBarrier: TenantBarrierClient;

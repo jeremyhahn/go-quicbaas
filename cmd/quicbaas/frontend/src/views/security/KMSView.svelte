@@ -142,7 +142,7 @@
   let togglingKey: string | null = $state(null);
 
   async function toggleKeyStatus(key: KMSKey): Promise<void> {
-    const nextStatus = (key.status === 'active' || key.status === 'enabled') ? 'disabled' : 'enabled';
+    const nextStatus = (key.status === 'enabled') ? 'disabled' : 'enabled';
     togglingKey = key.id;
     try {
       const client = await getSDKClient();
@@ -383,16 +383,16 @@
               </div>
               <div
                 class="tooltip tooltip-left"
-                data-tip={key.status === 'active' || key.status === 'enabled' ? 'Disable key' : 'Enable key'}
+                data-tip={key.status === 'enabled' ? 'Disable key' : 'Enable key'}
               >
                 <button
                   class="btn btn-ghost btn-xs"
                   disabled={togglingKey === key.id}
                   onclick={() => void toggleKeyStatus(key)}
-                  title={key.status === 'active' || key.status === 'enabled' ? 'Disable key' : 'Enable key'}
-                  aria-label={key.status === 'active' || key.status === 'enabled' ? `Disable key ${key.name || key.id}` : `Enable key ${key.name || key.id}`}
+                  title={key.status === 'enabled' ? 'Disable key' : 'Enable key'}
+                  aria-label={key.status === 'enabled' ? `Disable key ${key.name || key.id}` : `Enable key ${key.name || key.id}`}
                 >
-                  {#if key.status === 'active' || key.status === 'enabled'}
+                  {#if key.status === 'enabled'}
                     <ToggleRight class="h-3 w-3 text-success" />
                   {:else}
                     <ToggleLeft class="h-3 w-3 text-warning" />

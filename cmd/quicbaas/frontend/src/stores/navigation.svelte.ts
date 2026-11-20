@@ -53,6 +53,13 @@ export type ViewID =
   | 'ceremony'
   | 'bootstrap'
   | 'ssh-keys'
+  | 'my-sessions'
+  | 'attestation'
+  | 'oauth-apps'
+  | 'identity-providers'
+  | 'policy-tester'
+  | 'impersonation'
+  | 'iam-audit'
   | 'cluster'
   | 'nodes'
   | 'backup'
@@ -98,6 +105,13 @@ const viewHashPaths: Partial<Record<ViewID, string>> = {
   ceremony:      '/ceremony',
   bootstrap:     '/bootstrap',
   'ssh-keys':    '/ssh-keys',
+  'my-sessions': '/my-sessions',
+  attestation:   '/attestation',
+  'oauth-apps':  '/oauth-apps',
+  'identity-providers': '/identity-providers',
+  'policy-tester': '/policy-tester',
+  impersonation: '/impersonation',
+  'iam-audit':   '/iam-audit',
   // ORCHESTRATION — inference
   inference:     '/inference',
   // ORCHESTRATION — projects
@@ -150,6 +164,13 @@ const routeToViewID: Partial<Record<RouteName, ViewID>> = {
   ceremony:         'ceremony',
   bootstrap:        'bootstrap',
   'ssh-keys':       'ssh-keys',
+  'my-sessions':    'my-sessions',
+  attestation:      'attestation',
+  'oauth-apps':     'oauth-apps',
+  'identity-providers': 'identity-providers',
+  'policy-tester':  'policy-tester',
+  impersonation:    'impersonation',
+  'iam-audit':      'iam-audit',
   // ORCHESTRATION — inference
   inference:        'inference',
   // ORCHESTRATION — projects

@@ -88,6 +88,13 @@
   import CeremonyView from './security/CeremonyView.svelte';
   import BootstrapView from './security/BootstrapView.svelte';
   import SSHKeysView from './security/SSHKeysView.svelte';
+  import MySessionsView from './security/MySessionsView.svelte';
+  import AttestationView from './security/AttestationView.svelte';
+  import OAuthAppsView from './security/OAuthAppsView.svelte';
+  import IdentityProvidersView from './security/IdentityProvidersView.svelte';
+  import PolicyTesterView from './security/PolicyTesterView.svelte';
+  import ImpersonationView from './security/ImpersonationView.svelte';
+  import IAMAuditView from './security/IAMAuditView.svelte';
 
   // CLUSTER views
   import ClusterDashboard from './cluster/ClusterDashboard.svelte';
@@ -162,6 +169,11 @@
     KeySquare,
     Timer,
     Inbox,
+    BadgeCheck,
+    AppWindow,
+    Fingerprint,
+    FlaskConical,
+    ScrollText,
   } from 'lucide-svelte';
 
   // ---------------------------------------------------------------------------
@@ -260,6 +272,13 @@
         { id: 'ceremony',  label: 'Ceremony',  icon: Users,    implemented: true },
         { id: 'bootstrap', label: 'Bootstrap', icon: Compass,  implemented: true },
         { id: 'ssh-keys',  label: 'SSH Keys',  icon: KeyRound, implemented: true },
+        { id: 'my-sessions', label: 'My Sessions', icon: Timer, implemented: true },
+        { id: 'attestation', label: 'Attestation', icon: BadgeCheck, implemented: true },
+        { id: 'oauth-apps', label: 'OAuth Apps', icon: AppWindow, implemented: true },
+        { id: 'identity-providers', label: 'Identity Providers', icon: Fingerprint, implemented: true },
+        { id: 'policy-tester', label: 'Policy Tester', icon: FlaskConical, implemented: true },
+        { id: 'impersonation', label: 'Impersonation', icon: UserCog, implemented: true },
+        { id: 'iam-audit', label: 'IAM Audit', icon: ScrollText, implemented: true },
       ],
     },
     {
@@ -766,6 +785,27 @@
             {:else if routerStore.name === 'ssh-keys'}
               <li class="text-base-content/40">Security</li>
               <li class="font-medium">SSH Keys</li>
+            {:else if routerStore.name === 'my-sessions'}
+              <li class="text-base-content/40">Security</li>
+              <li class="font-medium">My Sessions</li>
+            {:else if routerStore.name === 'attestation'}
+              <li class="text-base-content/40">Security</li>
+              <li class="font-medium">Attestation</li>
+            {:else if routerStore.name === 'oauth-apps'}
+              <li class="text-base-content/40">Security</li>
+              <li class="font-medium">OAuth Apps</li>
+            {:else if routerStore.name === 'identity-providers'}
+              <li class="text-base-content/40">Security</li>
+              <li class="font-medium">Identity Providers</li>
+            {:else if routerStore.name === 'policy-tester'}
+              <li class="text-base-content/40">Security</li>
+              <li class="font-medium">Policy Tester</li>
+            {:else if routerStore.name === 'impersonation'}
+              <li class="text-base-content/40">Security</li>
+              <li class="font-medium">Impersonation</li>
+            {:else if routerStore.name === 'iam-audit'}
+              <li class="text-base-content/40">Security</li>
+              <li class="font-medium">IAM Audit</li>
             {:else if routerStore.name === 'projects'}
               <li class="text-base-content/40">{FACTORY_CRUMB}</li>
               <li class="font-medium">Projects</li>
@@ -1123,6 +1163,37 @@
           <SSHKeysView />
         </div>
 
+      {:else if routerStore.name === 'my-sessions'}
+        <div class="flex-1 overflow-y-auto">
+          <MySessionsView />
+        </div>
+
+      {:else if routerStore.name === 'attestation'}
+        <div class="flex-1 overflow-y-auto">
+          <AttestationView />
+        </div>
+
+      {:else if routerStore.name === 'oauth-apps'}
+        <div class="flex-1 overflow-y-auto">
+          <OAuthAppsView />
+        </div>
+      {:else if routerStore.name === 'identity-providers'}
+        <div class="flex-1 overflow-y-auto">
+          <IdentityProvidersView />
+        </div>
+      {:else if routerStore.name === 'policy-tester'}
+        <div class="flex-1 overflow-y-auto">
+          <PolicyTesterView />
+        </div>
+      {:else if routerStore.name === 'impersonation'}
+        <div class="flex-1 overflow-y-auto">
+          <ImpersonationView />
+        </div>
+      {:else if routerStore.name === 'iam-audit'}
+        <div class="flex-1 overflow-y-auto">
+          <IAMAuditView />
+        </div>
+
       {:else if routerStore.name === 'projects'}
         <div class="flex-1 overflow-y-auto">
           <ProjectsView />
@@ -1160,8 +1231,8 @@
     <div class="flex items-center gap-3">
       {#if orchestratorStore.health}
         <StatusBadge
-          text={orchestratorStore.health.status}
-          variant={orchestratorStore.health.status === 'ok' || orchestratorStore.health.status === 'healthy' ? 'success' : 'warning'}
+          text={orchestratorStore.health.unhealthy === 0 ? 'healthy' : `${orchestratorStore.health.unhealthy} unhealthy`}
+          variant={orchestratorStore.health.unhealthy === 0 ? 'success' : 'warning'}
         />
       {/if}
       <span class="text-base-content/60">QuicBaaS v0.1.0</span>

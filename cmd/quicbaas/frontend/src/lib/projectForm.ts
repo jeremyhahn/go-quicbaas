@@ -389,9 +389,17 @@ export function updateProjectRequestFrom(
   return req;
 }
 
-/** StringUpdateField names an UpdateProjectRequest field carrying a string. */
+/**
+ * StringUpdateField names an UpdateProjectRequest field carrying any string.
+ * A field narrowed to a string-literal union (session_rotation) is excluded:
+ * setIfChanged writes free text, which such a field cannot hold.
+ */
 type StringUpdateField = {
-  [K in keyof UpdateProjectRequest]-?: UpdateProjectRequest[K] extends string | undefined ? K : never;
+  [K in keyof UpdateProjectRequest]-?: UpdateProjectRequest[K] extends string | undefined
+    ? string extends Exclude<UpdateProjectRequest[K], undefined>
+      ? K
+      : never
+    : never;
 }[keyof UpdateProjectRequest];
 
 /** NumberUpdateField names an UpdateProjectRequest field carrying a number. */

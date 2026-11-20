@@ -338,3 +338,156 @@ describe('BarrierView strategy-aware rendering', () => {
     }
   });
 });
+
+describe('BarrierView operations card', () => {
+  let spy: FetchSpy;
+  let hasKeys: boolean;
+
+  function opsSpy(extra: Record<string, (call: FetchCall) => unknown> = {}): FetchSpy {
+    return makeFetchSpy({
+      '/api/v1/barrier/status': () => makeStatus({ strategy: 'shamir', sealed: false }),
+      '/api/v1/barrier/recovery/status': () => ({ has_keys: hasKeys }),
+      ...extra,
+    });
+  }
+
+  function countHits(suffix: string, method: string): number {
+    return spy.calls.filter((c) => c.url.endsWith(suffix) && c.method === method).length;
+  }
+
+  async function renderOps(): Promise<void> {
+    render(BarrierView);
+    await waitFor(() => {
+      expect(screen.getByTestId('barrier-operations')).toBeInTheDocument();
+    });
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    hasKeys = false;
+    spy = opsSpy();
+    vi.stubGlobal('fetch', spy.mock);
+  });
+
+  it('is not shown while the barrier is sealed', async () => {
+    spy = makeFetchSpy({
+      '/api/v1/barrier/status': () => makeStatus({ strategy: 'shamir', sealed: true }),
+    });
+    vi.stubGlobal('fetch', spy.mock);
+    render(BarrierView);
+    await waitFor(() => {
+      expect(screen.getByTestId('barrier-strategy-shamir-unseal')).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('barrier-operations')).not.toBeInTheDocument();
+  });
+
+  it('seals only after the confirm and reloads the status', async () => {
+    await renderOps();
+    await fireEvent.click(screen.getByRole('button', { name: 'Seal barrier' }));
+    expect(countHits('/api/v1/barrier/seal', 'POST')).toBe(0);
+    expect(screen.getByTestId('barrier-op-confirm')).toHaveTextContent(
+      /Every service that uses the barrier stops until it is unsealed/,
+    );
+    const before = countHits('/api/v1/barrier/status', 'GET');
+    await fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => {
+      expect(countHits('/api/v1/barrier/seal', 'POST')).toBe(1);
+      expect(countHits('/api/v1/barrier/status', 'GET')).toBeGreaterThan(before);
+    });
+    const { showToast } = await import('../src/stores/toast.svelte.ts');
+    expect(showToast).toHaveBeenCalledWith(expect.objectContaining({ message: 'Barrier sealed' }));
+  });
+
+  it('cancel on the seal confirm does not seal', async () => {
+    await renderOps();
+    await fireEvent.click(screen.getByRole('button', { name: 'Seal barrier' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByTestId('barrier-op-confirm')).not.toBeInTheDocument();
+    expect(countHits('/api/v1/barrier/seal', 'POST')).toBe(0);
+  });
+
+  it('toasts the message of a rejected seal', async () => {
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url.endsWith('/api/v1/barrier/seal')) {
+        return Promise.reject(new Error('seal exploded'));
+      }
+      return spy.mock(url, init);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    await renderOps();
+    await fireEvent.click(screen.getByRole('button', { name: 'Seal barrier' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    const { showToast } = await import('../src/stores/toast.svelte.ts');
+    await waitFor(() => {
+      expect(showToast).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'error', message: expect.stringContaining('seal exploded') }),
+      );
+    });
+  });
+
+  it('rekey sends the typed values, shows the new shares once and clears the inputs', async () => {
+    spy = opsSpy({
+      '/api/v1/barrier/rekey': () => ({ shares: ['n1', 'n2', 'n3', 'n4'], threshold: 3, total_shares: 4 }),
+    });
+    vi.stubGlobal('fetch', spy.mock);
+    await renderOps();
+    const threshold = screen.getByLabelText('New threshold') as HTMLInputElement;
+    const total = screen.getByLabelText('New total shares') as HTMLInputElement;
+    await fireEvent.input(threshold, { target: { value: '3' } });
+    await fireEvent.input(total, { target: { value: '4' } });
+    await fireEvent.submit(screen.getByTestId('barrier-rekey-form'));
+    expect(countHits('/api/v1/barrier/rekey', 'POST')).toBe(0);
+    await fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => {
+      expect(countHits('/api/v1/barrier/rekey', 'POST')).toBe(1);
+    });
+    const call = spy.calls.find((c) => c.url.endsWith('/api/v1/barrier/rekey'));
+    expect(call?.body).toEqual({ threshold: 3, total: 4 });
+    await waitFor(() => {
+      expect(screen.getAllByTestId('barrier-rekey-shares-value')).toHaveLength(4);
+    });
+    expect(screen.getByTestId('barrier-rekey-shares')).toHaveTextContent(/not shown again/);
+    expect(threshold.value).toBe('');
+    expect(total.value).toBe('');
+  });
+
+  it('generate shows the returned recovery keys', async () => {
+    spy = opsSpy({
+      '/api/v1/barrier/recovery/generate': () => ({ keys: ['rk-a', 'rk-b'], threshold: 1, total: 2 }),
+    });
+    vi.stubGlobal('fetch', spy.mock);
+    await renderOps();
+    await waitFor(() => {
+      expect(screen.getByTestId('barrier-recovery-status')).toHaveTextContent(/No recovery keys/);
+    });
+    await fireEvent.input(screen.getByLabelText('Recovery threshold'), { target: { value: '1' } });
+    await fireEvent.input(screen.getByLabelText('Recovery keys to generate'), { target: { value: '2' } });
+    hasKeys = true;
+    await fireEvent.submit(screen.getByTestId('barrier-recovery-form'));
+    await waitFor(() => {
+      expect(screen.getAllByTestId('barrier-recovery-keys-value')).toHaveLength(2);
+    });
+    expect(screen.getByTestId('barrier-recovery-keys')).toHaveTextContent('rk-a');
+    const call = spy.calls.find((c) => c.url.endsWith('/api/v1/barrier/recovery/generate'));
+    expect(call?.body).toEqual({ threshold: 1, total: 2 });
+    await waitFor(() => {
+      expect(screen.getByTestId('barrier-recovery-status')).toHaveTextContent('Recovery keys exist.');
+    });
+  });
+
+  it('deletes recovery keys only after the confirm and refreshes the status', async () => {
+    hasKeys = true;
+    await renderOps();
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Delete recovery keys' })).toBeInTheDocument();
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete recovery keys' }));
+    expect(countHits('/api/v1/barrier/recovery', 'DELETE')).toBe(0);
+    hasKeys = false;
+    await fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => {
+      expect(countHits('/api/v1/barrier/recovery', 'DELETE')).toBe(1);
+      expect(screen.getByTestId('barrier-recovery-status')).toHaveTextContent(/No recovery keys/);
+    });
+  });
+});

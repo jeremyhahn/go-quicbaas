@@ -2397,11 +2397,195 @@ class RestIAMClient {
     async revokeRoleFromUser(tenantID, userID, role) {
         await this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/users/${encodeURIComponent(userID)}/roles/${encodeURIComponent(role)}`, { method: 'DELETE' });
     }
+    async listSessions(opts) {
+        const params = new URLSearchParams();
+        if (opts?.user_id)
+            params.set('user_id', opts.user_id);
+        if (opts?.tenant_id)
+            params.set('tenant_id', opts.tenant_id);
+        const qs = params.toString();
+        return this.fetchJSON(`/api/v1/iam/sessions${qs ? `?${qs}` : ''}`);
+    }
+    async getSession(sessionID) {
+        return this.fetchJSON(`/api/v1/iam/sessions/${encodeURIComponent(sessionID)}`);
+    }
+    async revokeSession(sessionID) {
+        await this.fetchJSON(`/api/v1/iam/sessions/${encodeURIComponent(sessionID)}`, { method: 'DELETE' });
+    }
+    async revokeAllSessions(opts) {
+        const params = new URLSearchParams();
+        if (opts?.except)
+            params.set('except', opts.except);
+        if (opts?.user_id)
+            params.set('user_id', opts.user_id);
+        if (opts?.tenant_id)
+            params.set('tenant_id', opts.tenant_id);
+        const qs = params.toString();
+        await this.fetchJSON(`/api/v1/iam/sessions${qs ? `?${qs}` : ''}`, { method: 'DELETE' });
+    }
+    async revokeOtherSessions(keepSessionID) {
+        return this.fetchJSON('/api/v1/iam/sessions/revoke-others', { method: 'POST', body: JSON.stringify({ keep_session_id: keepSessionID }) });
+    }
+    userPath(tenantID, userID) {
+        return `/api/v1/tenants/${encodeURIComponent(tenantID)}/users/${encodeURIComponent(userID)}`;
+    }
+    // Maps to GET /api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials/
+    async listWebAuthnCredentials(tenantID, userID) {
+        return this.fetchJSON(`${this.userPath(tenantID, userID)}/webauthn/credentials/`);
+    }
+    // Maps to DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials/
+    async deleteAllWebAuthnCredentials(tenantID, userID) {
+        return this.fetchJSON(`${this.userPath(tenantID, userID)}/webauthn/credentials/`, { method: 'DELETE' });
+    }
+    // Maps to DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials/{credential_id}
+    async deleteWebAuthnCredential(tenantID, userID, credentialID) {
+        await this.fetchJSON(`${this.userPath(tenantID, userID)}/webauthn/credentials/${encodeURIComponent(credentialID)}`, { method: 'DELETE' });
+    }
+    // Maps to POST /api/v1/tenants/{tenant_id}/users/{user_id}/links/
+    async createAccountLink(tenantID, userID, req) {
+        return this.fetchJSON(`${this.userPath(tenantID, userID)}/links/`, {
+            method: 'POST',
+            body: JSON.stringify(req),
+        });
+    }
+    // Maps to GET /api/v1/tenants/{tenant_id}/users/{user_id}/links/
+    async listAccountLinks(tenantID, userID, opts) {
+        const params = new URLSearchParams();
+        if (opts?.limit !== undefined)
+            params.set('limit', String(opts.limit));
+        if (opts?.offset !== undefined)
+            params.set('offset', String(opts.offset));
+        const qs = params.toString();
+        return this.fetchJSON(`${this.userPath(tenantID, userID)}/links/${qs ? `?${qs}` : ''}`);
+    }
+    // Maps to DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/links/{provider_id}
+    async deleteAccountLink(tenantID, userID, providerID) {
+        await this.fetchJSON(`${this.userPath(tenantID, userID)}/links/${encodeURIComponent(providerID)}`, {
+            method: 'DELETE',
+        });
+    }
+    mfaPath(tenantID, userID) {
+        return `/api/v1/tenants/${encodeURIComponent(tenantID)}/users/${encodeURIComponent(userID)}/mfa`;
+    }
+    // Maps to GET /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/
+    async getMFAStatus(tenantID, userID) {
+        return this.fetchJSON(`${this.mfaPath(tenantID, userID)}/`);
+    }
+    // Maps to DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/
+    async disableMFA(tenantID, userID) {
+        await this.fetchJSON(`${this.mfaPath(tenantID, userID)}/`, { method: 'DELETE' });
+    }
+    // Maps to POST /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/enroll
+    async beginMFAEnrollment(tenantID, userID, method) {
+        return this.fetchJSON(`${this.mfaPath(tenantID, userID)}/enroll`, { method: 'POST', body: JSON.stringify(method ? { method } : {}) });
+    }
+    // Maps to POST /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/verify
+    async completeMFAEnrollment(tenantID, userID, enrollmentID, code) {
+        return this.fetchJSON(`${this.mfaPath(tenantID, userID)}/verify`, { method: 'POST', body: JSON.stringify({ enrollment_id: enrollmentID, code }) });
+    }
+    // Maps to DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/enroll/{enrollment_id}
+    async cancelMFAEnrollment(tenantID, userID, enrollmentID) {
+        await this.fetchJSON(`${this.mfaPath(tenantID, userID)}/enroll/${encodeURIComponent(enrollmentID)}`, { method: 'DELETE' });
+    }
+    // Maps to POST /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/challenge
+    async beginMFAChallenge(tenantID, userID, sessionToken) {
+        return this.fetchJSON(`${this.mfaPath(tenantID, userID)}/challenge`, { method: 'POST', body: JSON.stringify({ session_token: sessionToken }) });
+    }
+    // Maps to POST /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/verify-challenge
+    async verifyMFAChallenge(tenantID, userID, challengeID, code) {
+        return this.fetchJSON(`${this.mfaPath(tenantID, userID)}/verify-challenge`, { method: 'POST', body: JSON.stringify({ challenge_id: challengeID, code }) });
+    }
+    // Maps to GET /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/backup-codes
+    async getBackupCodeStatus(tenantID, userID) {
+        return this.fetchJSON(`${this.mfaPath(tenantID, userID)}/backup-codes`);
+    }
+    // Maps to POST /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/backup-codes
+    async generateBackupCodes(tenantID, userID) {
+        return this.fetchJSON(`${this.mfaPath(tenantID, userID)}/backup-codes`, { method: 'POST' });
+    }
     async updateTenant(tenantID, req) {
         return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}`, { method: 'PUT', body: JSON.stringify(req) });
     }
     async deleteTenant(tenantID) {
         await this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}`, { method: 'DELETE' });
+    }
+    // Maps to GET /api/v1/tenants/{tenantID}
+    async getTenant(tenantID) {
+        // Same wire shape as a listTenants element: created/updated → *_at.
+        const t = await this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}`);
+        return {
+            id: t.id ?? '',
+            name: t.name ?? '',
+            description: t.description ?? '',
+            created_at: t.created_at ?? t.created ?? '',
+            updated_at: t.updated_at ?? t.updated ?? '',
+        };
+    }
+    // Maps to GET /api/v1/tenants/{tenantID}/users/{userID}
+    async getUser(tenantID, userID) {
+        // Same wire shape as a listUsers element; normalised the same way.
+        const u = await this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/users/${encodeURIComponent(userID)}`);
+        return {
+            id: u.id ?? '',
+            tenant_id: u.tenant_id ?? tenantID,
+            username: u.username ?? u.name ?? u.email ?? '',
+            email: u.email ?? '',
+            lifecycle: u.lifecycle,
+            roles: u.roles ?? (u.role ? [u.role] : []),
+            created_at: u.created_at ?? u.created ?? '',
+            updated_at: u.updated_at ?? u.updated ?? '',
+        };
+    }
+    // Maps to GET /api/v1/tenants/{tenantID}/users/{userID}/sessions[?limit=N]
+    async listUserSessions(tenantID, userID, limit) {
+        const qs = limit !== undefined && limit > 0 ? `?limit=${limit}` : '';
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/users/${encodeURIComponent(userID)}/sessions${qs}`);
+    }
+    // Maps to DELETE /api/v1/tenants/{tenantID}/users/{userID}/sessions
+    async revokeAllUserSessions(tenantID, userID) {
+        await this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/users/${encodeURIComponent(userID)}/sessions`, { method: 'DELETE' });
+    }
+    // Maps to GET /api/v1/tenants/{tenantID}/apps/?limit=&offset=
+    async listApps(tenantID, opts) {
+        const params = new URLSearchParams();
+        if (opts?.limit !== undefined)
+            params.set('limit', String(opts.limit));
+        if (opts?.offset !== undefined)
+            params.set('offset', String(opts.offset));
+        const qs = params.toString();
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/apps/${qs ? `?${qs}` : ''}`);
+    }
+    // Maps to POST /api/v1/tenants/{tenantID}/apps/ (201)
+    async registerApp(tenantID, req) {
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/apps/`, { method: 'POST', body: JSON.stringify(req) });
+    }
+    // Maps to GET /api/v1/tenants/{tenantID}/apps/{clientID}
+    async getApp(tenantID, clientID) {
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/apps/${encodeURIComponent(clientID)}`);
+    }
+    // Maps to PUT /api/v1/tenants/{tenantID}/apps/{clientID}
+    async updateApp(tenantID, clientID, req) {
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/apps/${encodeURIComponent(clientID)}`, { method: 'PUT', body: JSON.stringify({ ...req, client_id: clientID }) });
+    }
+    // Maps to DELETE /api/v1/tenants/{tenantID}/apps/{clientID} (204)
+    async deleteApp(tenantID, clientID) {
+        await this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/apps/${encodeURIComponent(clientID)}`, { method: 'DELETE' });
+    }
+    // Maps to POST /api/v1/tenants/{tenantID}/apps/{clientID}/rotate-secret
+    async rotateAppSecret(tenantID, clientID) {
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/apps/${encodeURIComponent(clientID)}/rotate-secret`, { method: 'POST' });
+    }
+    // Maps to PATCH /api/v1/tenants/{tenantID}/quotas (204)
+    async updateTenantQuotas(tenantID, quotas) {
+        await this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/quotas`, { method: 'PATCH', body: JSON.stringify(quotas) });
+    }
+    // Maps to PATCH /api/v1/tenants/{tenantID}/entitlements (204)
+    async updateTenantEntitlements(tenantID, entitlements) {
+        await this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/entitlements`, { method: 'PATCH', body: JSON.stringify(entitlements) });
+    }
+    // Maps to POST /api/v1/tenants/{tenantID}/provision (201)
+    async provisionTenant(req) {
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(req.tenant_id)}/provision`, { method: 'POST', body: JSON.stringify(req) });
     }
     async listRoles(tenantID) {
         // Server returns {limit, offset, roles:[...]} — count field absent; derive it.
@@ -2422,6 +2606,101 @@ class RestIAMClient {
     async updateRole(tenantID, roleID, req) {
         return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/roles/${encodeURIComponent(roleID)}`, { method: 'PUT', body: JSON.stringify(req) });
     }
+    // Maps to GET /api/v1/iam/audit?tenant_id=&event_type=&category=&outcome=&actor_id=&resource_id=&start_time=&end_time=&limit=&offset=
+    async listAuditEvents(opts) {
+        const q = [];
+        const add = (name, v) => {
+            if (v !== undefined)
+                q.push(`${name}=${encodeURIComponent(String(v))}`);
+        };
+        add('tenant_id', opts?.tenantID);
+        add('event_type', opts?.eventType);
+        add('category', opts?.category);
+        add('outcome', opts?.outcome);
+        add('actor_id', opts?.actorID);
+        add('resource_id', opts?.resourceID);
+        add('start_time', opts?.startTime);
+        add('end_time', opts?.endTime);
+        add('limit', opts?.limit);
+        add('offset', opts?.offset);
+        const qs = q.length > 0 ? `?${q.join('&')}` : '';
+        return this.fetchJSON(`/api/v1/iam/audit${qs}`);
+    }
+    // Maps to GET /api/v1/iam/audit/{id}?tenant_id=
+    async getAuditEvent(eventID, tenantID) {
+        const qs = tenantID !== undefined ? `?tenant_id=${encodeURIComponent(tenantID)}` : '';
+        return this.fetchJSON(`/api/v1/iam/audit/${encodeURIComponent(eventID)}${qs}`);
+    }
+    // Maps to POST /api/v1/iam/audit
+    async recordAuditEvent(req) {
+        return this.fetchJSON('/api/v1/iam/audit', {
+            method: 'POST',
+            body: JSON.stringify(req),
+        });
+    }
+    // Maps to DELETE /api/v1/iam/audit?before=&tenant_id=
+    async deleteAuditEventsBefore(before, tenantID) {
+        let qs = `?before=${encodeURIComponent(before)}`;
+        if (tenantID !== undefined)
+            qs += `&tenant_id=${encodeURIComponent(tenantID)}`;
+        return this.fetchJSON(`/api/v1/iam/audit${qs}`, {
+            method: 'DELETE',
+        });
+    }
+    // Maps to GET /api/v1/admin/impersonation/?active=true&admin_user_id=
+    async listImpersonations(opts) {
+        const q = [];
+        if (opts?.activeOnly === true)
+            q.push('active=true');
+        if (opts?.adminUserID !== undefined)
+            q.push(`admin_user_id=${encodeURIComponent(opts.adminUserID)}`);
+        const qs = q.length > 0 ? `?${q.join('&')}` : '';
+        return this.fetchJSON(`/api/v1/admin/impersonation/${qs}`);
+    }
+    // Maps to POST /api/v1/admin/impersonation/start
+    async startImpersonation(req) {
+        return this.fetchJSON('/api/v1/admin/impersonation/start', { method: 'POST', body: JSON.stringify(req) });
+    }
+    // Maps to POST /api/v1/admin/impersonation/{sessionID}/end
+    async endImpersonation(sessionID) {
+        return this.fetchJSON(`/api/v1/admin/impersonation/${encodeURIComponent(sessionID)}/end`, { method: 'POST' });
+    }
+    // Maps to GET /api/v1/admin/users/{userID}/impersonations
+    async listUserImpersonations(userID) {
+        return this.fetchJSON(`/api/v1/admin/users/${encodeURIComponent(userID)}/impersonations`);
+    }
+    // Maps to GET /api/v1/tenants/{tenantID}/roles/{roleID}
+    async getRole(tenantID, roleID) {
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/roles/${encodeURIComponent(roleID)}`);
+    }
+    // Maps to POST /api/v1/tenants/{tenantID}/providers/
+    async registerProvider(tenantID, req) {
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/providers/`, { method: 'POST', body: JSON.stringify(req) });
+    }
+    // Maps to GET /api/v1/tenants/{tenantID}/providers/?limit=&offset=&type=
+    async listProviders(tenantID, opts) {
+        const q = [];
+        if (opts?.limit !== undefined)
+            q.push(`limit=${encodeURIComponent(String(opts.limit))}`);
+        if (opts?.offset !== undefined)
+            q.push(`offset=${encodeURIComponent(String(opts.offset))}`);
+        if (opts?.type !== undefined)
+            q.push(`type=${encodeURIComponent(opts.type)}`);
+        const qs = q.length > 0 ? `?${q.join('&')}` : '';
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/providers/${qs}`);
+    }
+    // Maps to GET /api/v1/tenants/{tenantID}/providers/{providerID}
+    async getProvider(tenantID, providerID) {
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/providers/${encodeURIComponent(providerID)}`);
+    }
+    // Maps to PUT /api/v1/tenants/{tenantID}/providers/{providerID}
+    async updateProvider(tenantID, providerID, req) {
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/providers/${encodeURIComponent(providerID)}`, { method: 'PUT', body: JSON.stringify(req) });
+    }
+    // Maps to DELETE /api/v1/tenants/{tenantID}/providers/{providerID}
+    async deleteProvider(tenantID, providerID) {
+        await this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/providers/${encodeURIComponent(providerID)}`, { method: 'DELETE' });
+    }
     async deleteRole(tenantID, roleID) {
         await this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/roles/${encodeURIComponent(roleID)}`, { method: 'DELETE' });
     }
@@ -2439,6 +2718,27 @@ class RestIAMClient {
     }
     async deletePolicy(tenantID, policyName) {
         await this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/policies/${encodeURIComponent(policyName)}`, { method: 'DELETE' });
+    }
+    // Maps to GET /api/v1/tenants/{tenantID}/policies/{policyName}
+    async getPolicy(tenantID, policyName) {
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/policies/${encodeURIComponent(policyName)}`);
+    }
+    // Maps to POST /api/v1/tenants/{tenantID}/policies/validate[?name=]
+    async validatePolicy(tenantID, req, name) {
+        const query = name !== undefined ? `?name=${encodeURIComponent(name)}` : '';
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/policies/validate${query}`, { method: 'POST', body: JSON.stringify(req) });
+    }
+    // Maps to POST /api/v1/tenants/{tenantID}/policies/test
+    async testPolicy(tenantID, req) {
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/policies/test`, { method: 'POST', body: JSON.stringify(req) });
+    }
+    // Maps to POST /api/v1/tenants/{tenantID}/policies/simulate
+    async simulatePolicy(tenantID, req) {
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/policies/simulate`, { method: 'POST', body: JSON.stringify(req) });
+    }
+    // Maps to POST /api/v1/tenants/{tenantID}/policies/effective-permissions
+    async getEffectivePermissions(tenantID, req) {
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/policies/effective-permissions`, { method: 'POST', body: JSON.stringify(req) });
     }
     // THE TENANT IS A PATH SEGMENT, and it is not optional. Invitations live in
     // their tenant's own store, so a token issued for one tenant is simply absent
@@ -2458,6 +2758,53 @@ class RestIAMClient {
     }
     async activatePIV(tenantID, token, certPEM) {
         return this.fetchJSON(`/api/v1/iam/${encodeURIComponent(tenantID)}/invites/${encodeURIComponent(token)}/activate/piv`, { method: 'POST', body: JSON.stringify({ cert_pem: certPEM }) });
+    }
+    // gdprPath is the GDPR route prefix of one user in one tenant.
+    gdprPath(tenantID, userID) {
+        return `/api/v1/tenants/${encodeURIComponent(tenantID)}/users/${encodeURIComponent(userID)}/gdpr`;
+    }
+    async grantConsent(tenantID, userID, req) {
+        return this.fetchJSON(`${this.gdprPath(tenantID, userID)}/consent`, {
+            method: 'POST',
+            body: JSON.stringify(req),
+        });
+    }
+    async listUserConsents(tenantID, userID) {
+        const consents = await this.fetchJSON(`${this.gdprPath(tenantID, userID)}/consents`);
+        return consents ?? [];
+    }
+    async getConsent(tenantID, userID, purpose) {
+        return this.fetchJSON(`${this.gdprPath(tenantID, userID)}/consent/${encodeURIComponent(purpose)}`);
+    }
+    async withdrawConsent(tenantID, userID, purpose, req) {
+        return this.fetchJSON(`${this.gdprPath(tenantID, userID)}/consent/${encodeURIComponent(purpose)}/withdraw`, { method: 'PUT', body: JSON.stringify(req ?? {}) });
+    }
+    async requestDataExport(tenantID, userID, req) {
+        return this.fetchJSON(`${this.gdprPath(tenantID, userID)}/export`, {
+            method: 'POST',
+            body: JSON.stringify(req ?? {}),
+        });
+    }
+    async getExportStatus(tenantID, userID, exportID) {
+        return this.fetchJSON(`${this.gdprPath(tenantID, userID)}/export/${encodeURIComponent(exportID)}`);
+    }
+    // downloadExport reads the export as JSON: DownloadExport always writes
+    // application/json, whatever format the request named.
+    async downloadExport(tenantID, userID, exportID) {
+        return this.fetchJSON(`${this.gdprPath(tenantID, userID)}/export/${encodeURIComponent(exportID)}/download`);
+    }
+    async requestDeletion(tenantID, userID, req) {
+        return this.fetchJSON(`${this.gdprPath(tenantID, userID)}/deletion`, {
+            method: 'POST',
+            body: JSON.stringify(req ?? {}),
+        });
+    }
+    async getDeletionStatus(tenantID, userID, deletionID) {
+        return this.fetchJSON(`${this.gdprPath(tenantID, userID)}/deletion/${encodeURIComponent(deletionID)}`);
+    }
+    async cancelDeletion(tenantID, userID, deletionID, cancelledBy) {
+        const query = cancelledBy ? `?${new URLSearchParams({ cancelled_by: cancelledBy }).toString()}` : '';
+        return this.fetchJSON(`${this.gdprPath(tenantID, userID)}/deletion/${encodeURIComponent(deletionID)}${query}`, { method: 'DELETE' });
     }
 }
 // RestKMSClient implements KMSClient over the QuicBaaS REST KMS endpoints.
@@ -3090,6 +3437,48 @@ export class RestDEKClient {
             params.verbose = 'true';
         const query = new URLSearchParams(params).toString();
         return this.http.fetchJSON(`/api/v1/kms/deks/${encodeURIComponent(path)}/reencrypt${query ? `?${query}` : ''}`);
+    }
+}
+/**
+ * RestAttestationClient manages the attestation verifier's endorsements and
+ * reference values over REST (/api/v1/attestation/*).
+ */
+export class RestAttestationClient {
+    http;
+    constructor(baseUrl, config = {}) {
+        this.http = newFetchHelper(baseUrl, config);
+    }
+    // Maps to PUT /api/v1/attestation/endorsements/{name}
+    async putEndorsement(name, req) {
+        return this.http.fetchJSON(`/api/v1/attestation/endorsements/${encodeURIComponent(name)}`, { method: 'PUT', body: JSON.stringify(req) });
+    }
+    // Maps to GET /api/v1/attestation/endorsements[?kind=]
+    async listEndorsements(kind) {
+        const query = kind ? `?kind=${encodeURIComponent(kind)}` : '';
+        const wire = await this.http.fetchJSON(`/api/v1/attestation/endorsements${query}`);
+        return { ...wire, endorsements: wire?.endorsements ?? [] };
+    }
+    // Maps to DELETE /api/v1/attestation/endorsements/{name}
+    async deleteEndorsement(name) {
+        return this.http.fetchVoid(`/api/v1/attestation/endorsements/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    }
+    // Maps to PUT /api/v1/attestation/reference-values/{name}
+    async putReferenceValues(name, signedCoRIM) {
+        const req = { signed_corim: signedCoRIM };
+        return this.http.fetchJSON(`/api/v1/attestation/reference-values/${encodeURIComponent(name)}`, { method: 'PUT', body: JSON.stringify(req) });
+    }
+    // Maps to GET /api/v1/attestation/reference-values/{name}
+    async getReferenceValues(name) {
+        return this.http.fetchJSON(`/api/v1/attestation/reference-values/${encodeURIComponent(name)}`);
+    }
+    // Maps to GET /api/v1/attestation/reference-values
+    async listReferenceValues() {
+        const wire = await this.http.fetchJSON('/api/v1/attestation/reference-values');
+        return { ...wire, reference_values: wire?.reference_values ?? [] };
+    }
+    // Maps to DELETE /api/v1/attestation/reference-values/{name}
+    async deleteReferenceValues(name) {
+        return this.http.fetchVoid(`/api/v1/attestation/reference-values/${encodeURIComponent(name)}`, { method: 'DELETE' });
     }
 }
 // ---------------------------------------------------------------------------
@@ -3813,6 +4202,7 @@ export class RestClient {
     trust;
     crypto;
     dek;
+    attestation;
     dynamicSecrets;
     barrier;
     tenantBarrier;
@@ -3854,6 +4244,7 @@ export class RestClient {
         this.trust = new RestTrustClient(baseUrl, config);
         this.crypto = new RestCryptoClient(baseUrl, config);
         this.dek = new RestDEKClient(baseUrl, config);
+        this.attestation = new RestAttestationClient(baseUrl, config);
         this.dynamicSecrets = new RestDynamicSecretsClient(baseUrl, config);
         this.barrier = new RestBarrierClient(baseUrl, config);
         this.tenantBarrier = new RestTenantBarrierClient(baseUrl, config);

@@ -106,7 +106,7 @@
 
   // An attempt's ordinal is on the record itself; older records carry it only
   // on the config they were launched from.
-  function attemptOrdinal(job: { attempt?: number; config?: { attempt?: number } }): string {
+  function attemptOrdinal(job: { attempt?: number; config?: { attempt?: number } | null }): string {
     const ordinal = job.attempt ?? job.config?.attempt ?? 0;
     return ordinal > 0 ? String(ordinal) : '—';
   }
