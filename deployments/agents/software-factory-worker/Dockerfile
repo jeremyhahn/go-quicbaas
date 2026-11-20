@@ -754,6 +754,8 @@ RUN set -eux; \
 # no longer bundles the package, so a stale floor cannot outlive the npm
 # release that fixed it; and when a floor is more than a patch release of
 # npm's copy, so npm keeps the major and minor its own dependents declared.
+# An empty NPM_BUNDLED_DEPENDENCY_FLOORS means npm bundles no copy that needs
+# a floor.
 # The language-server install that follows is the proof npm still works.
 ARG NPM_VERSION
 ARG NPM_BUNDLED_DEPENDENCY_FLOORS
@@ -764,7 +766,7 @@ ARG BASH_LANGUAGE_SERVER_VERSION
 ARG YAML_LANGUAGE_SERVER_VERSION
 ARG DEVCACHE_NPM_REGISTRY
 RUN set -eux; \
-    for pin in NPM_VERSION NPM_BUNDLED_DEPENDENCY_FLOORS PYRIGHT_VERSION TYPESCRIPT_VERSION TYPESCRIPT_LANGUAGE_SERVER_VERSION BASH_LANGUAGE_SERVER_VERSION YAML_LANGUAGE_SERVER_VERSION; do \
+    for pin in NPM_VERSION PYRIGHT_VERSION TYPESCRIPT_VERSION TYPESCRIPT_LANGUAGE_SERVER_VERSION BASH_LANGUAGE_SERVER_VERSION YAML_LANGUAGE_SERVER_VERSION; do \
         if [ -z "$(printenv "$pin")" ]; then \
             echo "$pin is a required build argument. Build with 'make build-worker-image', which passes the repository's pins." >&2; \
             exit 1; \
@@ -1124,6 +1126,14 @@ ENV GOPATH=/home/agent/go
 # grep in a `|| true` pipeline passes a security check that never ran.
 ENV PATH="/usr/local/go/bin:${GOPATH}/bin:${PATH}" \
     GOTOOLCHAIN=local
+
+# CLAUDE CODE DOES NOT UPDATE ITSELF HERE. The image is immutable: Claude Code
+# is installed root-owned under /usr/local and runs as `agent`, which cannot
+# write that npm prefix, so the self-updater can only fail ("Auto-update
+# failed: no write permission to npm prefix", #2548). A new Claude Code comes
+# only from a new image built from versions.lock. /etc/profile resets PATH
+# alone, so this survives the agent's `sh -lc`.
+ENV DISABLE_AUTOUPDATER=1
 
 # ENV PATH IS NOT ENOUGH, BECAUSE THE AGENT EXECS THROUGH A LOGIN SHELL.
 #

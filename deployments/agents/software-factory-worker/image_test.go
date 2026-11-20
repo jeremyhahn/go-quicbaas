@@ -314,6 +314,51 @@ func TestDockerfile_OnlyClaudeCodeRunsAnInstallScript(t *testing.T) {
 	}
 }
 
+// The image is immutable and runs Claude Code as `agent`, which cannot write
+// the root-owned npm prefix, so the self-updater can only fail (#2548). The
+// final stage must turn it off; Claude Code moves only with versions.lock.
+func TestDockerfile_FinalStageDisablesTheClaudeCodeAutoupdater(t *testing.T) {
+	lines := strings.Split(string(Dockerfile), "\n")
+	last := -1
+	for i, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "FROM ") {
+			last = i
+		}
+	}
+	if last < 0 {
+		t.Fatal("the Dockerfile has no FROM instruction")
+	}
+	found := false
+	inEnv := false
+	for _, line := range lines[last+1:] {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "ENV ") {
+			inEnv = true
+		}
+		if inEnv {
+			for _, field := range strings.Fields(strings.TrimSuffix(trimmed, `\`)) {
+				if field == "DISABLE_AUTOUPDATER=1" {
+					found = true
+				}
+			}
+		}
+		inEnv = inEnv && strings.HasSuffix(trimmed, `\`)
+	}
+	if !found {
+		t.Error("the final stage has no ENV DISABLE_AUTOUPDATER=1: Claude Code's self-updater cannot write the root-owned npm prefix")
+	}
+}
+
+func TestProbes_ToolchainProbeAssertsTheAutoupdaterIsDisabled(t *testing.T) {
+	want := `[ "${DISABLE_AUTOUPDATER:-}" = 1 ]`
+	if !strings.Contains(toolchainProbe, want) {
+		t.Errorf("the toolchain probe does not check %s", want)
+	}
+}
+
 func TestToolchainPins_AreTheRepositorysPins(t *testing.T) {
 	pins, err := ToolchainPins()
 	if err != nil {
@@ -333,16 +378,24 @@ func TestToolchainPins_AreTheRepositorysPins(t *testing.T) {
 func TestPins_ValidateNamesWhatIsMissing(t *testing.T) {
 	var missing *PinsMissingError
 	err := Pins{}.Validate()
-	if !errors.As(err, &missing) || len(missing.Missing) != 49 ||
+	if !errors.As(err, &missing) || len(missing.Missing) != 48 ||
 		!strings.Contains(err.Error(), "GOPLS_VERSION") || !strings.Contains(err.Error(), "SHELLCHECK_SHA256_AARCH64") ||
 		!strings.Contains(err.Error(), "OPENCODE_SHA256_AARCH64") || !strings.Contains(err.Error(), "GH_SHA256_AARCH64") || !strings.Contains(err.Error(), "GO_TOOL_DEPENDENCY_FLOORS") ||
 		!strings.Contains(err.Error(), "SERENA_DEPENDENCY_FLOORS") || !strings.Contains(err.Error(), "PROTOC_VERSION") ||
 		!strings.Contains(err.Error(), "PROTOC_SHA256_AARCH64") || !strings.Contains(err.Error(), "PROTOC_GEN_GO_GRPC_VERSION") ||
 		!strings.Contains(err.Error(), "NODE_SHA256_AARCH64") || !strings.Contains(err.Error(), "UV_VERSION") ||
 		!strings.Contains(err.Error(), "TYPESCRIPT_LANGUAGE_SERVER_VERSION") || !strings.Contains(err.Error(), "CLANGD_SHA256_X86_64") ||
-		!strings.Contains(err.Error(), "MARKSMAN_SHA256_AARCH64") || !strings.Contains(err.Error(), "NPM_BUNDLED_DEPENDENCY_FLOORS") ||
+		!strings.Contains(err.Error(), "MARKSMAN_SHA256_AARCH64") || strings.Contains(err.Error(), "NPM_BUNDLED_DEPENDENCY_FLOORS") ||
 		!strings.Contains(err.Error(), "OPENJDK_MAJOR") || !strings.Contains(err.Error(), "KOTLIN_LSP_SHA256_AARCH64") {
-		t.Fatalf("Validate() = %v, want all forty-nine pins named", err)
+		t.Fatalf("Validate() = %v, want all forty-eight required pins named", err)
+	}
+}
+
+func TestPins_ValidateAllowsNoNpmBundledFloors(t *testing.T) {
+	pins := testPins()
+	pins.NpmBundledDependencyFloors = ""
+	if err := pins.Validate(); err != nil {
+		t.Fatalf("Validate() with no npm bundled floors = %v, want nil", err)
 	}
 }
 
