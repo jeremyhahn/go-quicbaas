@@ -43,6 +43,9 @@ import (
 func TestGRPCRegistrations_EveryProjectedMethodDeclaresAPermission(t *testing.T) {
 	var missing []string
 	for _, entry := range grpcRegistrations {
+		if entry.grpcOnly {
+			continue
+		}
 		missing = append(missing, unpermittedMethods(t, entry.desc)...)
 	}
 	sort.Strings(missing)
@@ -68,8 +71,15 @@ func TestModule_RegisterQUIC_RegistersTheGRPCSurface(t *testing.T) {
 	m.RegisterQUIC(viaQUIC)
 
 	quicSurface := registeredSurface(viaQUIC)
-	assert.Len(t, quicSurface, len(grpcRegistrations))
-	assert.Equal(t, registeredSurface(viaGRPC), quicSurface)
+	assert.Len(t, quicSurface, quicRegistrationCount())
+	grpcSurface := registeredSurface(viaGRPC)
+	for _, entry := range grpcRegistrations {
+		if entry.grpcOnly {
+			assert.NotContains(t, quicSurface, entry.desc.ServiceName, "grpcOnly services stay off QUIC")
+			delete(grpcSurface, entry.desc.ServiceName)
+		}
+	}
+	assert.Equal(t, grpcSurface, quicSurface)
 }
 
 // TestModule_RegisterQUIC_ProjectedCallIsLateBound drives a registered unary

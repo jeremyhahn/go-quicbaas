@@ -91,14 +91,15 @@ func newInventoryFacade() *inventoryFacade {
 // mounted on the node, each with the reason it stays off. The inventory
 // fails if one of them gets mounted, so the entry is dropped with the change.
 var unixOnlyServices = map[string]string{
-	// Their RPCs carry no (qrdb.v1.permission) option in
-	// api/proto/iam/iam.proto (IAMService 6 of 60 methods, PEPService,
-	// MFAService and AuditService none): the node default-denies them and the
+	// IAMService is mounted (its six annotated RPCs carry their permissions,
+	// the four invite RPCs are public and the rest stay default-denied). The
+	// RPCs below carry no (qrdb.v1.permission) option in
+	// api/proto/iam/iam.proto (PEPService, MFAService and AuditService
+	// none): the node default-denies them and the
 	// QUIC projection assertion refuses them. The Unix listener has no
 	// permission for them either (pkg/api/grpc/authz_mapping.go leaves them
 	// unmapped, so it denies them too): annotating them is an owner
 	// authorization-policy decision, not a copy of an existing grant.
-	"quicbaas.iam.v1.IAMService":   "unannotated",
 	"quicbaas.iam.v1.PEPService":   "unannotated",
 	"quicbaas.iam.v1.MFAService":   "unannotated",
 	"quicbaas.iam.v1.AuditService": "unannotated",

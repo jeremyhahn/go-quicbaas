@@ -455,6 +455,11 @@ type grpcRegistration struct {
 	capability string
 	pick       func(*grpcServers) any
 	hostPick   func(HostGRPCServers) any
+	// grpcOnly keeps the service off the QUIC projection: QUIC's startup
+	// assertion refuses a unary method without a (qrdb.v1.permission)
+	// option, and IAMService leaves most of its RPCs unannotated
+	// (default-denied on gRPC and Unix).
+	grpcOnly bool
 }
 
 // grpcRegistrations is the full gRPC surface the module registers: the
@@ -489,7 +494,7 @@ var grpcRegistrations = []grpcRegistration{
 	{desc: &pb.RegistryService_ServiceDesc, capability: "registry", pick: func(s *grpcServers) any { return s.registry }},
 	{desc: &iampb.FederationService_ServiceDesc, capability: "federation", hostPick: func(h HostGRPCServers) any { return h.Federation }},
 	{desc: &iampb.SessionService_ServiceDesc, capability: "session", hostPick: func(h HostGRPCServers) any { return h.Session }},
-	{desc: &iampb.IAMService_ServiceDesc, capability: "iam", hostPick: func(h HostGRPCServers) any { return h.IAM }},
+	{desc: &iampb.IAMService_ServiceDesc, capability: "iam", hostPick: func(h HostGRPCServers) any { return h.IAM }, grpcOnly: true},
 }
 
 // publicGRPCMethods is the exact set of this module's gRPC methods the
@@ -549,9 +554,25 @@ func (m *Module) RegisterGRPC(reg grpc.ServiceRegistrar) {
 // go-qrdb's QUIC frame transport. The QUIC server's registrar projects each
 // unary method, authorized by its (qrdb.v1.permission) option; it skips the
 // methods PublicGRPCMethods lists (QUIC is mTLS-only) and every streaming
-// method.
+// method. Services marked grpcOnly (IAMService) are not projected.
 func (m *Module) RegisterQUIC(reg grpc.ServiceRegistrar) {
-	m.RegisterGRPC(reg)
+	for _, entry := range grpcRegistrations {
+		if entry.grpcOnly {
+			continue
+		}
+		reg.RegisterService(lazyServiceDesc(entry.desc, m.server(entry), m.trustDomain), nil)
+	}
+}
+
+// quicRegistrationCount is the number of services RegisterQUIC projects.
+func quicRegistrationCount() int {
+	n := 0
+	for _, entry := range grpcRegistrations {
+		if !entry.grpcOnly {
+			n++
+		}
+	}
+	return n
 }
 
 // server returns the per-service implementation resolver: it binds the bundle

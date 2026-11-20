@@ -202,9 +202,10 @@ func TestModule_RegisterGRPC_RegistersFullGRPCSurface(t *testing.T) {
 		&pb.RegistryService_ServiceDesc,
 		&iampb.FederationService_ServiceDesc,
 		&iampb.SessionService_ServiceDesc,
+		&iampb.IAMService_ServiceDesc,
 	}
 	info := server.GetServiceInfo()
-	require.Len(t, info, len(generated), "exactly the twenty-seven quicbaas-native and broker services must be registered")
+	require.Len(t, info, len(generated), "exactly the twenty-eight quicbaas-native and broker services must be registered")
 
 	for _, desc := range generated {
 		svcInfo, ok := info[desc.ServiceName]
@@ -503,6 +504,10 @@ var wantPublicGRPCMethods = map[string]bool{
 	"/quicbaas.fido2.v1.FIDO2Service/FinishAuthentication":       true,
 	"/quicbaas.iam.v1.FederationService/BeginFederatedLogin":     true,
 	"/quicbaas.iam.v1.FederationService/HandleFederatedCallback": true,
+	"/quicbaas.iam.v1.IAMService/GetInvite":                      true,
+	"/quicbaas.iam.v1.IAMService/ActivateFIDO2Begin":             true,
+	"/quicbaas.iam.v1.IAMService/ActivateFIDO2Finish":            true,
+	"/quicbaas.iam.v1.IAMService/ActivatePIV":                    true,
 }
 
 // TestModule_PublicGRPCMethods_ExactSet proves PublicGRPCMethods returns

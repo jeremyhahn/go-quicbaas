@@ -26,6 +26,7 @@ package server
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"net"
 	"os"
@@ -134,11 +135,14 @@ func startTTNetworkNodeUnix(t *testing.T, socket string) *Server {
 // answered Unimplemented, and the public GetInvite reaches the handler.
 func TestServer_TT_NetworkGRPC_UnixSocketServesIAM(t *testing.T) {
 	socket := shortTTUnixSocketPath(t)
-	startTTNetworkNodeUnix(t, socket)
+	srv := startTTNetworkNodeUnix(t, socket)
 
-	// The node's Unix server speaks verified TLS 1.3; this test checks
-	// service routing, not the server certificate, so it skips verification.
-	clientTLS := &tls.Config{MinVersion: tls.VersionTLS13, InsecureSkipVerify: true} //nolint:gosec // test-only routing check
+	// The node's Unix server speaks verified TLS 1.3 with srv's certificate.
+	bundle, err := srv.xkmsCA.CABundle()
+	require.NoError(t, err)
+	roots := x509.NewCertPool()
+	require.True(t, roots.AppendCertsFromPEM(bundle), "srv's CA bundle holds a certificate")
+	clientTLS := &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots, ServerName: "localhost"}
 	conn, err := ggrpc.NewClient("unix://"+socket, ggrpc.WithTransportCredentials(credentials.NewTLS(clientTLS)))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = conn.Close() })
