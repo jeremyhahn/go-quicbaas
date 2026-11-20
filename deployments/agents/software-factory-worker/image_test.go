@@ -412,7 +412,7 @@ func TestBuild_LabelsRecordToolVersionsNotTarballDigests(t *testing.T) {
 	for key, value := range labels {
 		switch value {
 		case "8c3b", "12b3", "1ce4", "abf3", "aaaa", "bbbb", "cccc", "dddd", "eeee", "ffff",
-			"a1a1", "b2b2", "c3c3", "d4d4", "e5e5", "f6f6", "a7a7", "golang.org/x/mod@v0.41.0", "urllib3>=2.8.0":
+			"a1a1", "b2b2", "c3c3", "d4d4", "e5e5", "f6f6", "a7a7", "9a9a", "8b8b", "golang.org/x/mod@v0.41.0", "urllib3>=2.8.0":
 			t.Fatalf("label %q=%q: a tarball digest or dependency floor is a build input, not a label", key, value)
 		}
 	}
