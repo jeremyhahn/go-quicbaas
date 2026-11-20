@@ -138,6 +138,39 @@ func TestObjstoreSettings_MapsSnakeCaseKeys(t *testing.T) {
 	assert.Len(t, in, 2)
 }
 
+func TestApplyEndpointScheme(t *testing.T) {
+	cases := []struct {
+		name, backend, endpoint, useSSL, want string
+		wantErr                               bool
+	}{
+		{"minio bare, ssl off", "minio", "localhost:9000", "false", "http://localhost:9000", false},
+		{"minio bare, ssl on", "minio", "localhost:9000", "true", "https://localhost:9000", false},
+		{"minio bare, ssl unset", "minio", "localhost:9000", "", "http://localhost:9000", false},
+		{"s3 bare, ssl unset", "s3", "s3.example.com", "", "https://s3.example.com", false},
+		{"s3 bare, ssl off", "s3", "localhost:4566", "false", "http://localhost:4566", false},
+		{"scheme kept", "minio", "http://m:9000", "false", "http://m:9000", false},
+		{"https with ssl off", "minio", "https://m:9000", "false", "", true},
+		{"http with ssl on", "s3", "HTTP://m:9000", "true", "", true},
+		{"bad use_ssl", "minio", "m:9000", "maybe", "", true},
+		{"gcs untouched", "gcs", "storage.example", "false", "storage.example", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			settings := map[string]string{"endpoint": tc.endpoint}
+			if tc.useSSL != "" {
+				settings["useSSL"] = tc.useSSL
+			}
+			err := applyEndpointScheme(tc.backend, settings)
+			if tc.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, settings["endpoint"])
+		})
+	}
+}
+
 func TestNewStorageBackend(t *testing.T) {
 	tests := []struct {
 		name        string

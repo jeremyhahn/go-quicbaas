@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -215,7 +216,11 @@ func NewStorageBackend(config *Config) (common.Storage, error) {
 	factoryType := backendType
 
 	// Create storage using go-objstore factory
-	storage, err := factory.NewStorage(factoryType, objstoreSettings(config.StorageConfig))
+	settings := objstoreSettings(config.StorageConfig)
+	if err := applyEndpointScheme(backendType, settings); err != nil {
+		return nil, err
+	}
+	storage, err := factory.NewStorage(factoryType, settings)
 	if err != nil {
 		return nil, api.NewOperationFailedError("create storage backend", err)
 	}
@@ -258,6 +263,50 @@ func objstoreSettings(settings map[string]string) map[string]string {
 		}
 	}
 	return out
+}
+
+// applyEndpointScheme makes the useSSL setting decide the scheme of an S3 or
+// MinIO endpoint. go-objstore's S3 and MinIO backends hand the endpoint to the
+// AWS SDK as given and never read useSSL; the SDK then takes the scheme from
+// the endpoint and uses HTTPS when it has none. A bare host:port therefore
+// gets http:// when useSSL is false and https:// when it is true. When useSSL
+// is unset, MinIO defaults to http (go-objstore's documented default) and S3
+// to https. An endpoint whose scheme contradicts an explicit useSSL is refused.
+func applyEndpointScheme(backend string, settings map[string]string) error {
+	if backend != "s3" && backend != "minio" {
+		return nil
+	}
+	endpoint := settings["endpoint"]
+	if endpoint == "" {
+		return nil
+	}
+	useSSL := backend == "s3"
+	explicit := false
+	if raw := strings.TrimSpace(settings["useSSL"]); raw != "" {
+		v, err := strconv.ParseBool(raw)
+		if err != nil {
+			return api.NewUnsupportedValueError("backup.NewStorageBackend", "use_ssl", raw)
+		}
+		useSSL, explicit = v, true
+	}
+	lower := strings.ToLower(endpoint)
+	switch {
+	case strings.HasPrefix(lower, "https://"):
+		if explicit && !useSSL {
+			return api.NewUnsupportedValueError("backup.NewStorageBackend", "endpoint",
+				endpoint+" (https endpoint with use_ssl=false)")
+		}
+	case strings.HasPrefix(lower, "http://"):
+		if explicit && useSSL {
+			return api.NewUnsupportedValueError("backup.NewStorageBackend", "endpoint",
+				endpoint+" (http endpoint with use_ssl=true)")
+		}
+	case useSSL:
+		settings["endpoint"] = "https://" + endpoint
+	default:
+		settings["endpoint"] = "http://" + endpoint
+	}
+	return nil
 }
 
 // MockStorage implements both common.Storage and the backup-specific StorageBackend interface for testing.
