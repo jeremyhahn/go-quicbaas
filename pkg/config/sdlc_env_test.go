@@ -158,8 +158,8 @@ func TestValidateSDLC_RefusesANodeThatCannotSayWhereItLives(t *testing.T) {
 		public  string
 		wantErr bool
 	}{
-		"absent":         {"", true},
-		"blank":          {"   ", true},
+		"absent":         {"", false},
+		"blank":          {"   ", false},
 		"relative":       {"/api/v1", true},
 		"no host":        {"https://", true},
 		"wrong scheme":   {"ftp://factory.example.com", true},

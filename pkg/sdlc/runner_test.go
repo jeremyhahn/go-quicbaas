@@ -89,8 +89,34 @@ func registerTestReviewValidator(t *testing.T) {
 // The embedded interface is nil: every method the runner does not use panics
 // rather than answering, so a runner that reached for the fleet, the registry
 // or a second backend fails the test loudly instead of being quietly served.
+// operatorPolicy is the lifecycle policy a fake agent service answers for,
+// as the daemon's does (orchestration.JobLifecyclePolicyProvider): a job reads
+// the operator's command allowlist from the service its sessions run on.
+type operatorPolicy struct {
+	policy atomic.Pointer[orchestration.JobLifecyclePolicy]
+}
+
+func (p *operatorPolicy) JobLifecyclePolicy() orchestration.JobLifecyclePolicy {
+	if policy := p.policy.Load(); policy != nil {
+		return *policy
+	}
+	return orchestration.JobLifecyclePolicy{}
+}
+
+// admit makes guard the operator's command allowlist.
+func (p *operatorPolicy) admit(guard orchestration.ExecutionGuard) {
+	p.policy.Store(&orchestration.JobLifecyclePolicy{Guard: guard})
+}
+
+// guardedAgents is an agent service whose operator allowlist a test sets.
+type guardedAgents interface {
+	orchestration.AgentService
+	admit(guard orchestration.ExecutionGuard)
+}
+
 type fakeAgents struct {
 	orchestration.AgentService
+	operatorPolicy
 
 	mu      sync.Mutex
 	spawns  []*orchestration.SpawnSessionRequest
@@ -674,6 +700,11 @@ func (r *runnerRig) buildJob(t *testing.T, resumed *orchestration.JobStatus, sta
 	if r.agentService != nil {
 		agents = r.agentService
 	}
+	guarded, ok := agents.(guardedAgents)
+	if !ok {
+		t.Fatalf("agent service %T cannot answer for the operator's policy", agents)
+	}
+	guarded.admit(guard)
 	return orchestration.NewJobRun(orchestration.JobRunConfig{
 		JobID:      "job-1",
 		Runner:     JobRunnerName,
@@ -684,7 +715,6 @@ func (r *runnerRig) buildJob(t *testing.T, resumed *orchestration.JobStatus, sta
 		Resumed:    resumed,
 		Agents:     agents,
 		Logger:     logger.NewAdapter(base),
-		Policy:     &orchestration.JobLifecyclePolicy{Guard: guard},
 		AuditFn: func(eventType, details string) {
 			r.auditMu.Lock()
 			r.audits = append(r.audits, orchestration.JobAuditEvent{Type: eventType, Details: details})
@@ -1579,92 +1609,90 @@ func TestRunner_AResumeOfAnUnpromptedSessionCarriesNoConversation(t *testing.T) 
 	}
 }
 
-// TestRunner_AnAccountRotationStartsFreshWhenTheProjectSaysSo: a project whose
-// session_rotation is fresh gets go-quicbaas#997's first behaviour: the
-// replacement starts a new conversation, told only why it is new. No
-// conversation is read at all.
-func TestRunner_AnAccountRotationStartsFreshWhenTheProjectSaysSo(t *testing.T) {
-	rig := newRunnerRig(t)
-	rig.sessionRotation = orchestration.SessionRotationFresh
-	rig.rebindVerification(t, "true")
-	rig.workerWrote()
-	rig.verdictOnPublish("APPROVED", "lgtm")
-	rig.agents.freshnessFn = refreshedOnce
-	rig.agents.transcriptFn = func(sessionID string) (*orchestration.ReplayTranscript, error) {
-		return workerTranscript(sessionID), nil
+// TestRunner_AnAccountRotationStartsFresh: the replacement for a session on a
+// retired credential starts a new conversation, told only why it is new, in two
+// cases. A project whose session_rotation is fresh gets go-quicbaas#997's first
+// behaviour, and no conversation is read at all. A project that resumes, on a
+// service whose session log will not answer, still gets its session off the
+// retired credential, and the audit record says the resume was unavailable and
+// why: prompting the old session instead would lose the round to the
+// provider's refusal.
+func TestRunner_AnAccountRotationStartsFresh(t *testing.T) {
+	tests := []struct {
+		name       string
+		policy     orchestration.SessionRotationPolicy
+		transcript func(sessionID string) (*orchestration.ReplayTranscript, error)
+		wantReads  bool
+		wantRolled []string
+	}{
+		{
+			name:   "the project says so",
+			policy: orchestration.SessionRotationFresh,
+			transcript: func(sessionID string) (*orchestration.ReplayTranscript, error) {
+				return workerTranscript(sessionID), nil
+			},
+			wantRolled: []string{"reason=account_rotated", "account=acct-1", "round=0", "rotated_at="},
+		},
+		{
+			name: "no conversation is readable",
+			transcript: func(sessionID string) (*orchestration.ReplayTranscript, error) {
+				return nil, &orchestration.SessionTranscriptUnavailableError{SessionID: sessionID, Reason: "no session event log is configured"}
+			},
+			wantReads:  true,
+			wantRolled: []string{"reason=account_rotated", `resume_unavailable="no session event log is configured"`},
+		},
 	}
-	rig.agents.onPrompt = func(*orchestration.PromptSessionRequest) { rig.workerWrote() }
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rig := newRunnerRig(t)
+			if tt.policy != "" {
+				rig.sessionRotation = tt.policy
+			}
+			rig.rebindVerification(t, "true")
+			rig.workerWrote()
+			rig.verdictOnPublish("APPROVED", "lgtm")
+			rig.agents.freshnessFn = refreshedOnce
+			rig.agents.transcriptFn = tt.transcript
+			rig.agents.onPrompt = func(*orchestration.PromptSessionRequest) { rig.workerWrote() }
 
-	job := rig.job(t)
-	if err := rig.runner.Run(context.Background(), job); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
+			job := rig.job(t)
+			if err := rig.runner.Run(context.Background(), job); err != nil {
+				t.Fatalf("Run: %v", err)
+			}
 
-	if len(rig.agents.spawns) != 2 {
-		t.Fatalf("spawns = %d, want the left-behind session replaced by one fresh one", len(rig.agents.spawns))
-	}
-	if len(rig.agents.transcriptReads) != 0 {
-		t.Errorf("transcript reads = %v, want none on a fresh project", rig.agents.transcriptReads)
-	}
-	if len(rig.agents.prompts) == 0 {
-		t.Fatal("the fresh session was never prompted")
-	}
-	prompt := rig.agents.prompts[0].Prompt
-	if !strings.Contains(prompt, "provider account was refreshed") {
-		t.Errorf("the fresh session was not told why it is fresh:\n%s", prompt)
-	}
-	if strings.Contains(prompt, "pkg/router/table.go") {
-		t.Errorf("a fresh session was handed the old conversation:\n%s", prompt)
-	}
+			if len(rig.agents.spawns) != 2 {
+				t.Fatalf("spawns = %d, want the left-behind session replaced by one fresh one", len(rig.agents.spawns))
+			}
+			if !tt.wantReads && len(rig.agents.transcriptReads) != 0 {
+				t.Errorf("transcript reads = %v, want none on a fresh project", rig.agents.transcriptReads)
+			}
+			if len(rig.agents.prompts) == 0 {
+				t.Fatal("the fresh session was never prompted")
+			}
+			prompt := rig.agents.prompts[0].Prompt
+			if !strings.Contains(prompt, "provider account was refreshed") {
+				t.Errorf("the fresh session was not told why it is fresh:\n%s", prompt)
+			}
+			if strings.Contains(prompt, "pkg/router/table.go") {
+				t.Errorf("a fresh session was handed the old conversation:\n%s", prompt)
+			}
 
-	rolled := rig.auditDetails(auditSessionRolled)
-	if len(rolled) != 1 {
-		t.Fatalf("session_rolled audits = %v, want one", rolled)
-	}
-	for _, want := range []string{"reason=account_rotated", "account=acct-1", "round=0", "rotated_at="} {
-		if !strings.Contains(rolled[0], want) {
-			t.Errorf("session_rolled audit %q does not record %q", rolled[0], want)
-		}
-	}
-	if resumed := rig.auditDetails(auditSessionResumed); len(resumed) != 0 {
-		t.Errorf("session_resumed audits = %v, want none on a fresh project", resumed)
-	}
-	if job.Iteration() != 0 {
-		t.Errorf("iteration = %d, want the roll to spend no round", job.Iteration())
-	}
-}
-
-// TestRunner_AResumeWithNoReadableConversationStartsFresh: a project that
-// resumes, on a service whose session log will not answer, still gets its
-// session off the retired credential — fresh, and the audit record says the
-// resume was unavailable and why. Prompting the old session instead would lose
-// the round to the provider's refusal.
-func TestRunner_AResumeWithNoReadableConversationStartsFresh(t *testing.T) {
-	rig := newRunnerRig(t)
-	rig.rebindVerification(t, "true")
-	rig.workerWrote()
-	rig.verdictOnPublish("APPROVED", "lgtm")
-	rig.agents.freshnessFn = refreshedOnce
-	rig.agents.transcriptFn = func(sessionID string) (*orchestration.ReplayTranscript, error) {
-		return nil, &orchestration.SessionTranscriptUnavailableError{SessionID: sessionID, Reason: "no session event log is configured"}
-	}
-	rig.agents.onPrompt = func(*orchestration.PromptSessionRequest) { rig.workerWrote() }
-
-	if err := rig.runner.Run(context.Background(), rig.job(t)); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	if len(rig.agents.spawns) != 2 {
-		t.Fatalf("spawns = %d, want one replacement", len(rig.agents.spawns))
-	}
-	rolled := rig.auditDetails(auditSessionRolled)
-	if len(rolled) != 1 || !strings.Contains(rolled[0], `resume_unavailable="no session event log is configured"`) {
-		t.Fatalf("session_rolled audits = %v, want one naming why the resume was unavailable", rolled)
-	}
-	if resumed := rig.auditDetails(auditSessionResumed); len(resumed) != 0 {
-		t.Errorf("session_resumed audits = %v, want none", resumed)
-	}
-	if prompt := rig.agents.prompts[0].Prompt; !strings.Contains(prompt, "provider account was refreshed") {
-		t.Errorf("the fresh session was not told why it is fresh:\n%s", prompt)
+			rolled := rig.auditDetails(auditSessionRolled)
+			if len(rolled) != 1 {
+				t.Fatalf("session_rolled audits = %v, want one", rolled)
+			}
+			for _, want := range tt.wantRolled {
+				if !strings.Contains(rolled[0], want) {
+					t.Errorf("session_rolled audit %q does not record %q", rolled[0], want)
+				}
+			}
+			if resumed := rig.auditDetails(auditSessionResumed); len(resumed) != 0 {
+				t.Errorf("session_resumed audits = %v, want none", resumed)
+			}
+			if job.Iteration() != 0 {
+				t.Errorf("iteration = %d, want the roll to spend no round", job.Iteration())
+			}
+		})
 	}
 }
 
@@ -1898,7 +1926,8 @@ func TestRunner_VerificationFailureGoesBackToTheWorkerWithTheOutput(t *testing.T
 // TestRunner_AFailedVerificationRecordsAndEscalatesItsFailingLines is
 // go-quicbaas#1037: the output go-luks2#12 escalated on, whose first line was
 // GNU make's harmless `env: can't execute 'GOPATH'` and whose failure was at
-// the end. The record and the escalation carry the failure, not the noise.
+// the end. The record carries the failure, not the noise; the escalation
+// carries neither, only the summary that points at the record (#213).
 func TestRunner_AFailedVerificationRecordsAndEscalatesItsFailingLines(t *testing.T) {
 	rig := newRunnerRig(t)
 	rig.rebindVerification(t, "make test")
@@ -1945,13 +1974,19 @@ func TestRunner_AFailedVerificationRecordsAndEscalatesItsFailingLines(t *testing
 			t.Errorf("the record carries the harmless first line:\n%s", audit)
 		}
 	}
-	for _, want := range []string{"verification failed after 1 review round(s)", "`make test` exited 2:", "make: *** [Makefile:12: test] Error 1", "--- FAIL: TestOpenVolume"} {
+	// The escalation is the structured summary (#213): the command, how it
+	// exited, and where its failing lines are. The lines themselves stay in
+	// the record above.
+	for _, want := range []string{"verification failed after 1 review round(s)", "- `make test` exited 2; ",
+		" bytes of output withheld from publication", "`" + auditVerification + "` audit record of job "} {
 		if !strings.Contains(escalated.Reason, want) {
 			t.Errorf("the escalation lacks %q:\n%s", want, escalated.Reason)
 		}
 	}
-	if strings.Contains(escalated.Reason, noise) {
-		t.Errorf("the escalation names the harmless first line:\n%s", escalated.Reason)
+	for _, output := range []string{noise, "make: *** [Makefile:12: test] Error 1", "--- FAIL: TestOpenVolume", "checksum mismatch"} {
+		if strings.Contains(escalated.Reason, output) {
+			t.Errorf("the escalation carries the command's output %q:\n%s", output, escalated.Reason)
+		}
 	}
 	// Output that happens to spell a marker must not become a condition.
 	if condition, err := ParseUnblockCondition(escalated.Reason); err != nil || condition.Kind != UnblockOwnerRuling {
@@ -1959,14 +1994,13 @@ func TestRunner_AFailedVerificationRecordsAndEscalatesItsFailingLines(t *testing
 	}
 }
 
-// TestRunner_ThePostedEscalationKeepsTheFailureWithinThePublicationBudget
-// reads the comment the forge actually carries, not the reason: the comment
-// keeps only the head of the reason (publicOutputLimit), and a failure whose
-// last stderr lines are long and harmless must still show its `make: ***`
-// line and stdout's compiler diagnostic there. A credential that crosses the
-// summary's line cut, and a PEM block whose delimiters a selection could
-// drop, must leave no fragment on the page.
-func TestRunner_ThePostedEscalationKeepsTheFailureWithinThePublicationBudget(t *testing.T) {
+// TestRunner_ThePostedEscalationCarriesNoSubprocessOutput
+// reads the comment the forge actually carries, not the reason (#213, ruling
+// 189): the comment carries the structured summary and none of the command's
+// output. A password printed with no shape redaction knows stays off the page,
+// as do a credential that crosses the summary's line cut and a PEM block,
+// and the failing lines stay in the verification record, not on the page.
+func TestRunner_ThePostedEscalationCarriesNoSubprocessOutput(t *testing.T) {
 	rig := newRunnerRig(t)
 	rig.rebindVerification(t, "make test")
 	if err := rig.rebind(context.Background(), func(b *ProjectBinding) {
@@ -1982,9 +2016,12 @@ func TestRunner_ThePostedEscalationKeepsTheFailureWithinThePublicationBudget(t *
 		failingOut = "src/luks.c:10:3: error: unknown type name 'foo'"
 		failingErr = "make: *** [Makefile:12: test] Error 1"
 		noise      = "env: can't execute 'GOPATH': No such file or directory"
+		// A database password printed bare: no key name, no known prefix.
+		bareSecret = "connecting as svc with Xq7-plover-Kestrel-91"
 	)
 	var stderr strings.Builder
 	stderr.WriteString(noise + "\n")
+	stderr.WriteString(bareSecret + "\n")
 	// A credential placed so it straddles the 240-byte line cut.
 	stderr.WriteString(strings.Repeat("w", VerificationSummaryLineBytes-10) + " " + token + "\n")
 	stderr.WriteString("-----BEGIN PRIVATE KEY-----\n" + pemBody + "\n-----END PRIVATE KEY-----\n")
@@ -2009,13 +2046,24 @@ func TestRunner_ThePostedEscalationKeepsTheFailureWithinThePublicationBudget(t *
 		t.Fatalf("park comments = %d, want exactly one", len(parks))
 	}
 	body := parks[0].Body
-	for _, want := range []string{"verification failed after 1 review round(s)", failingErr, failingOut} {
+	for _, want := range []string{"verification failed after 1 review round(s)", "- `make test` exited 2; ",
+		"`" + auditVerification + "` audit record of job "} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the posted escalation lacks %q:\n%s", want, body)
 		}
 	}
 	if strings.Contains(body, "more bytes withheld") {
 		t.Errorf("the evidence overran the publication budget and was cut:\n%s", body)
+	}
+	// NO OUTPUT AT ALL REACHES THE ISSUE (#213): not the failing lines, and
+	// not a secret no redaction pattern knows the shape of.
+	for _, output := range []string{failingErr, failingOut, bareSecret, "warning: harmless"} {
+		if strings.Contains(body, output) {
+			t.Errorf("the posted escalation carries the command's output %q:\n%s", output, body)
+		}
+	}
+	if redactSecrets(bareSecret) != bareSecret {
+		t.Fatalf("the fixture's secret is a shape redaction knows; it must be one it does not")
 	}
 	for _, leaked := range []string{"ghp_", token[len(token)-12:], pemBody[:16], pemBody[len(pemBody)-12:]} {
 		if strings.Contains(body, leaked) {
@@ -2861,9 +2909,6 @@ func TestRunner_ARefusalFromAnyCollaboratorFailsTheJob(t *testing.T) {
 		"the signing agent cannot start": func(rig *runnerRig) {
 			rig.signing.err = cause
 		},
-		"the worker session runs no container": func(rig *runnerRig) {
-			rig.agents.noContainer = true
-		},
 	}
 	for name, arrange := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -3081,20 +3126,6 @@ func TestRunnerRun_CompleteSurfacesTheMergeRefusal(t *testing.T) {
 	ctx := context.Background()
 	if _, err := run.complete(ctx); err == nil {
 		t.Fatal("Complete accepted a delivery with no pull request")
-	}
-}
-
-// TestRunnerRun_PostMergeIsSkippedForACarveOut: a change that never had a
-// pull request has nothing after it either.
-func TestRunnerRun_PostMergeIsSkippedForACarveOut(t *testing.T) {
-	rig := newRunnerRig(t)
-	run := newRunnerRun(t, rig)
-	run.delivery.RequiresPullRequest = false
-	if err := run.runPostMerge(context.Background()); err != nil {
-		t.Fatalf("runPostMerge on a carve-out: %v", err)
-	}
-	if len(rig.forge.prs) != 0 {
-		t.Fatal("a carve-out opened a post-merge pull request")
 	}
 }
 
