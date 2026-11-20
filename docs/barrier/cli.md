@@ -291,7 +291,8 @@ one secret only: `--passphrase-stdin` with `--so-pin-file -`, or both PIN
 files as `-`, is refused. Each PIN is read into protected memory; the SDK
 request still carries it as a string. `barrier seal` keeps its
 `--so-pin-stdin` path ([#491](https://github.com/jeremyhahn/go-quicbaas/issues/491)), and
-`iam tenant barrier unseal-share` submits a single share and is still argv-only.
+`iam tenant barrier unseal-share`, which submits a single share, reads it from
+standard input with `--share-stdin`.
 
 ---
 
