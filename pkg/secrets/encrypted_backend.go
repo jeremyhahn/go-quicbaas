@@ -531,7 +531,8 @@ func (eb *EncryptedBackend) PruneVersions(ctx context.Context, path string, keep
 	versions.Latest = versions.latest()
 	kept := make([]*encryptedEntry, 0, 1+len(all)-cut)
 	kept = append(kept, first)
-	versions.Versions = append(kept, all[cut:]...)
+	kept = append(kept, all[cut:]...)
+	versions.Versions = kept
 
 	// Publication is a compare-and-swap of the exact history this prune
 	// read. eb.mu is per instance: another instance on the same store can

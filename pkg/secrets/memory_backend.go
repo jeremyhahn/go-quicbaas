@@ -230,7 +230,8 @@ func (mb *MemoryBackend) PruneVersions(ctx context.Context, path string, keep in
 	}
 	kept := make([]*SecretEntry, 0, 1+len(all)-cut)
 	kept = append(kept, first)
-	store.versions = append(kept, all[cut:]...)
+	kept = append(kept, all[cut:]...)
+	store.versions = kept
 	return pruned, nil
 }
 
