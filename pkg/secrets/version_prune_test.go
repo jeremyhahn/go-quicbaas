@@ -9,9 +9,10 @@ import (
 	"sync/atomic"
 	"testing"
 
-	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
 // pruneBackends is every backend that implements VersionPruner.
