@@ -615,11 +615,16 @@ func (c *client) buildQRDBTransport() (qrdbtransport.Transport, error) {
 	address := qrdbSubClientAddress(c.opts.transportType, c.address, tlsConfigured)
 
 	switch c.opts.transportType {
-	case TransportREST:
-		return qrdbrest.New(buildOpts(address)...)
-	case TransportQUIC:
-		// A quicbaasd node serves REST over TCP and HTTP/3 on one port and
-		// never offers go-qrdb's frame-protocol ALPN (go-quicbaas#2554).
+	case TransportREST, TransportQUIC:
+		// quicbaas's QUIC transport is its REST transport over HTTP/3 on
+		// the REST port, and the node serves no native qrdb-quic listener:
+		// go-qrdb's QUIC transport offers wire.ProtocolV2 and is refused
+		// ("tls: no application protocol", go-quicbaas#2533). The QUIC
+		// selection reaches the same qrdb REST API at the same origin.
+		// Barrier verbs go over HTTP/3 through the SDK transport
+		// (Security().Barrier()); the other QRDB verb groups still use
+		// go-qrdb's REST transport over TCP until go-qrdb's REST transport
+		// accepts an HTTP/3 client (#2533).
 		return qrdbrest.New(buildOpts(address)...)
 	case TransportUnix:
 		return c.buildQRDBUnixTransport()
