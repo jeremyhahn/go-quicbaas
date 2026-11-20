@@ -81,6 +81,19 @@ func (s *recordingKVService) GetWithConsistency(_ context.Context, key string, _
 	return s.get(key)
 }
 
+func (s *recordingKVService) PutIfAbsent(_ context.Context, key string, value []byte) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.data[key]; ok {
+		return false, nil
+	}
+	if s.data == nil {
+		s.data = map[string][]byte{}
+	}
+	s.data[key] = append([]byte(nil), value...)
+	return true, nil
+}
+
 // TestQRDBData_ReturnsGoQRDBClients proves the six data services are
 // go-qrdb's own clients: each accessor of QRDBData() returns exactly what
 // the go-qrdb SDK client this QuicBaaS client carries returns.
@@ -471,6 +484,54 @@ func TestQRDBData_EmbeddedHonoursSDKTenantContext(t *testing.T) {
 	_, err = data.Collections().ListCollections(conflict, "row1652db")
 	if !sdkerrors.IsForbidden(err) {
 		t.Errorf("Collections().ListCollections with conflicting tenant bindings: err %v, want Forbidden", err)
+	}
+}
+
+// TestQRDBData_EmbeddedKVKeepsGuardedWrites proves QRDBData().KV() keeps the
+// embedded client's guarded-write capability (PutIfAbsent, CompareAndDelete,
+// CompareAndSwap), still behind the tenant guard.
+func TestQRDBData_EmbeddedKVKeepsGuardedWrites(t *testing.T) {
+	kv := &recordingKVService{}
+	batch := &reachedBatchService{}
+	txn := &reachedTransactionService{}
+	coll := &reachedCollectionService{}
+	idx := &reachedIndexService{}
+	tr, err := qrdbembedded.New(kv, stubAdminService{},
+		qrdbembedded.WithBatchService(batch),
+		qrdbembedded.WithTransactionService(txn),
+		qrdbembedded.WithMVCCService(reachedMVCCService{}),
+		qrdbembedded.WithCollectionService(coll),
+		qrdbembedded.WithIndexService(idx),
+	)
+	if err != nil {
+		t.Fatalf("embedded.New: %v", err)
+	}
+	node, err := qrdbsdk.NewClient(tr)
+	if err != nil {
+		t.Fatalf("qrdbsdk.NewClient: %v", err)
+	}
+	c := buildEmbeddedQRDBClient(t, QRDBEmbeddedServicers{KV: kv, Admin: stubAdminService{}, Data: node})
+	data, err := c.QRDBData()
+	if err != nil {
+		t.Fatalf("QRDBData(): %v", err)
+	}
+
+	g, ok := data.KV().(qrdbtransport.GuardedKVClient)
+	if !ok {
+		t.Fatalf("QRDBData().KV() = %T, want a qrdbtransport.GuardedKVClient", data.KV())
+	}
+	if put, err := g.PutIfAbsent(context.Background(), "row1652/once", []byte("a")); err != nil || !put {
+		t.Fatalf("first PutIfAbsent = %v, %v, want true, nil", put, err)
+	}
+	if put, err := g.PutIfAbsent(context.Background(), "row1652/once", []byte("b")); err != nil || put {
+		t.Fatalf("second PutIfAbsent = %v, %v, want false, nil", put, err)
+	}
+	if got, err := kv.get("row1652/once"); err != nil || string(got) != "a" {
+		t.Fatalf("servicer holds %q (err %v), want %q", got, err, "a")
+	}
+	ctx := qrdbsdk.ContextWithTenant(context.Background(), "row1652-tenant-b")
+	if _, err := g.PutIfAbsent(ctx, "row1652/tenant", []byte("b")); !sdkerrors.IsForbidden(err) {
+		t.Errorf("tenant-bound PutIfAbsent: err %v, want Forbidden", err)
 	}
 }
 

@@ -916,7 +916,12 @@ type preparedQRDBData struct {
 var _ QRDBDataService = (*preparedQRDBData)(nil)
 
 func (d *preparedQRDBData) KV() QRDBKVClient {
-	return preparedKV{inner: d.inner.KV(), prepare: d.prepare}
+	inner := d.inner.KV()
+	kv := preparedKV{inner: inner, prepare: d.prepare}
+	if g, ok := inner.(qrdbtransport.GuardedKVClient); ok {
+		return preparedGuardedKV{preparedKV: kv, guarded: g}
+	}
+	return kv
 }
 
 func (d *preparedQRDBData) Batch() QRDBBatchClient {
@@ -993,6 +998,40 @@ func (k preparedKV) Exists(ctx context.Context, key string, opts ...qrdbtranspor
 		return false, err
 	}
 	return k.inner.Exists(ctx, key, opts...)
+}
+
+// preparedGuardedKV is preparedKV over an inner client that has go-qrdb's
+// guarded writes: it keeps PutIfAbsent, CompareAndDelete and CompareAndSwap,
+// each prepared like the plain KV calls. QRDBData's KV returns it only when
+// the inner client is a GuardedKVClient, so callers that detect the
+// capability by type assertion see exactly what the inner client offers.
+type preparedGuardedKV struct {
+	preparedKV
+	guarded qrdbtransport.GuardedKVClient
+}
+
+func (k preparedGuardedKV) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
+	ctx, err := k.prepare(ctx)
+	if err != nil {
+		return false, err
+	}
+	return k.guarded.PutIfAbsent(ctx, key, value)
+}
+
+func (k preparedGuardedKV) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
+	ctx, err := k.prepare(ctx)
+	if err != nil {
+		return false, err
+	}
+	return k.guarded.CompareAndDelete(ctx, key, expected)
+}
+
+func (k preparedGuardedKV) CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error) {
+	ctx, err := k.prepare(ctx)
+	if err != nil {
+		return false, err
+	}
+	return k.guarded.CompareAndSwap(ctx, key, expected, next)
 }
 
 type preparedBatch struct {
