@@ -208,10 +208,13 @@ func (a *SchedulerAdapter) ListJobs(ctx context.Context, req *ListSchedulerJobsR
 		return nil, err
 	}
 
-	// Convert request to scheduler.JobQuery
+	// Convert request to scheduler.JobQuery. The store picks the namespace by
+	// owner, so the listing reads the caller's own tenant namespace (an
+	// explicit owner_id has already been held to that tenant above); the
+	// system tenant's is "" (the system namespace).
 	query := &scheduler.JobQuery{
 		OwnerType:      scheduler.OwnerType(req.OwnerType),
-		OwnerID:        req.OwnerID,
+		OwnerID:        tenantID,
 		TargetTenantID: targetTenantID,
 		Status:         scheduler.JobStatus(req.Status),
 		Handler:        req.Handler,
