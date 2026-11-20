@@ -127,12 +127,12 @@ func (e *BarrierThresholdInvalidError) Error() string {
 }
 
 // BarrierTargetStrategyRequiredError is returned when enable-encryption is
-// called without the required target_strategy argument.
+// called without the required strategy argument (or its target_strategy alias).
 type BarrierTargetStrategyRequiredError struct{}
 
 // Error implements the error interface.
 func (e *BarrierTargetStrategyRequiredError) Error() string {
-	return "target_strategy is required"
+	return "strategy is required"
 }
 
 // BarrierTenantIDRequiredError is returned when a barrier tool that targets
@@ -374,9 +374,13 @@ func (r *ToolRegistry) registerBarrierTools() {
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
-				"target_strategy": map[string]interface{}{
+				"strategy": map[string]interface{}{
 					"type":        "string",
 					"description": "Target sealing strategy: passphrase or shamir.",
+				},
+				"target_strategy": map[string]interface{}{
+					"type":        "string",
+					"description": "Deprecated alias for strategy; used only when strategy is not set.",
 				},
 				"mechanism": map[string]interface{}{
 					"type":        "string",
@@ -388,20 +392,20 @@ func (r *ToolRegistry) registerBarrierTools() {
 				},
 				"passphrase": map[string]interface{}{
 					"type":        "string",
-					"description": "Passphrase for the passphrase strategy. Required when target_strategy is passphrase.",
+					"description": "Passphrase for the passphrase strategy. Required when strategy is passphrase.",
 				},
 				"shamir_threshold": map[string]interface{}{
 					"type":        "integer",
-					"description": "Shamir threshold (minimum shares required). Required when target_strategy is shamir.",
+					"description": "Shamir threshold (minimum shares required). Required when strategy is shamir.",
 					"minimum":     1,
 				},
 				"shamir_total": map[string]interface{}{
 					"type":        "integer",
-					"description": "Total number of Shamir shares to generate. Required when target_strategy is shamir.",
+					"description": "Total number of Shamir shares to generate. Required when strategy is shamir.",
 					"minimum":     1,
 				},
 			},
-			"required": []string{"target_strategy"},
+			"required": []string{"strategy"},
 		},
 	})
 
@@ -415,9 +419,13 @@ func (r *ToolRegistry) registerBarrierTools() {
 					"type":        "string",
 					"description": "The tenant whose barrier to migrate.",
 				},
-				"target_strategy": map[string]interface{}{
+				"strategy": map[string]interface{}{
 					"type":        "string",
 					"description": "Target sealing strategy: passphrase or shamir.",
+				},
+				"target_strategy": map[string]interface{}{
+					"type":        "string",
+					"description": "Deprecated alias for strategy; used only when strategy is not set.",
 				},
 				"mechanism": map[string]interface{}{
 					"type":        "string",
@@ -429,20 +437,20 @@ func (r *ToolRegistry) registerBarrierTools() {
 				},
 				"passphrase": map[string]interface{}{
 					"type":        "string",
-					"description": "Passphrase for the passphrase strategy. Required when target_strategy is passphrase.",
+					"description": "Passphrase for the passphrase strategy. Required when strategy is passphrase.",
 				},
 				"shamir_threshold": map[string]interface{}{
 					"type":        "integer",
-					"description": "Shamir threshold (minimum shares required). Required when target_strategy is shamir.",
+					"description": "Shamir threshold (minimum shares required). Required when strategy is shamir.",
 					"minimum":     1,
 				},
 				"shamir_total": map[string]interface{}{
 					"type":        "integer",
-					"description": "Total number of Shamir shares to generate. Required when target_strategy is shamir.",
+					"description": "Total number of Shamir shares to generate. Required when strategy is shamir.",
 					"minimum":     1,
 				},
 			},
-			"required": []string{"tenant_id", "target_strategy"},
+			"required": []string{"tenant_id", "strategy"},
 		},
 	})
 
@@ -825,7 +833,8 @@ func executeBarrierRootToken(ctx context.Context, svc service.BarrierServicer, a
 // It migrates the SYSTEM barrier from none-strategy to a keyed at-rest
 // encryption strategy in place.
 func executeBarrierEnableEncryption(ctx context.Context, svc service.BarrierServicer, args map[string]interface{}) (interface{}, error) {
-	targetStrategy := getString(args, "target_strategy")
+	// strategy is go-qrdb's native argument name (what the SDK sends); target_strategy is the older alias.
+	targetStrategy := getStringAlt(args, "strategy", "target_strategy")
 	if targetStrategy == "" {
 		return nil, &BarrierTargetStrategyRequiredError{}
 	}
@@ -849,7 +858,8 @@ func executeBarrierTenantEnableEncryption(ctx context.Context, svc service.Barri
 	if tenantID == "" {
 		return nil, &BarrierTenantIDRequiredError{}
 	}
-	targetStrategy := getString(args, "target_strategy")
+	// strategy is go-qrdb's native argument name (what the SDK sends); target_strategy is the older alias.
+	targetStrategy := getStringAlt(args, "strategy", "target_strategy")
 	if targetStrategy == "" {
 		return nil, &BarrierTargetStrategyRequiredError{}
 	}

@@ -429,6 +429,18 @@ func TestBarrierToolsExecuteSuccess(t *testing.T) {
 		assert.Equal(t, []byte("hunter2"), fake.gotEnableEncSecret)
 	})
 
+	t.Run("enable_encryption_system_native_strategy", func(t *testing.T) {
+		fake.gotEnableEncOpts = qrdbsdk.MigrationOptions{}
+		out, err := r.ExecuteTool(ctx, "qrdb_barrier_enable_encryption", map[string]interface{}{
+			"strategy":   "passphrase",
+			"passphrase": "hunter2",
+		})
+		require.NoError(t, err)
+		assert.Equal(t, "encryption enabled", out.(map[string]interface{})["status"])
+		assert.Equal(t, "", fake.gotEnableEncTenantID)
+		assert.Equal(t, qrdbsdk.StrategyID("passphrase"), fake.gotEnableEncOpts.TargetStrategy)
+	})
+
 	t.Run("enable_encryption_tenant", func(t *testing.T) {
 		out, err := r.ExecuteTool(ctx, "qrdb_tenant_barrier_enable_encryption", map[string]interface{}{
 			"tenant_id":       "t1",
@@ -775,7 +787,7 @@ func TestBarrierToolsErrorMessages(t *testing.T) {
 		{&BarrierSharesRequiredError{}, "shares is required"},
 		{&BarrierRecoveryKeysRequiredError{}, "keys is required"},
 		{&BarrierThresholdInvalidError{Reason: "x"}, "invalid threshold/total: x"},
-		{&BarrierTargetStrategyRequiredError{}, "target_strategy is required"},
+		{&BarrierTargetStrategyRequiredError{}, "strategy is required"},
 		{&BarrierTenantIDRequiredError{}, "tenant_id is required"},
 	}
 	for _, c := range cases {
