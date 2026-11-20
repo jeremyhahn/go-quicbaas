@@ -795,14 +795,16 @@ func (c *client) DataStore() (QRDBKVStore, error) {
 	return qrdb.KVStore(), nil
 }
 
-// qrdbEmbedding returns go-qrdb's embedding service client. Over REST the
-// quicbaas transport carries the call, so the platform bearer is sent; on the
-// other transports it comes from the qrdb sub-client. Over gRPC and Unix the
+// qrdbEmbedding returns go-qrdb's embedding service client. Over REST and
+// QUIC the quicbaas transport carries the call (QUIC on its HTTP/3 client), so
+// the platform bearer is sent; on the other transports it comes from the qrdb sub-client. Over gRPC and Unix the
 // configured bearer rides each call as authorization metadata; with no token
 // set, go-qrdb's own client is returned. It errors when the qrdb client cannot
 // be built, or when the active qrdb transport has no embedding surface.
 func (c *client) qrdbEmbedding() (QRDBEmbeddingClient, error) {
-	if rt, ok := c.transport.(*rest.Transport); ok && (c.opts == nil || (c.opts.embeddedQRDB == nil && c.opts.transportType == TransportREST)) {
+	if rt, ok := c.transport.(interface {
+		QRDBEmbedding() *rest.QRDBEmbeddingClient
+	}); ok && (c.opts == nil || (c.opts.embeddedQRDB == nil && (c.opts.transportType == TransportREST || c.opts.transportType == TransportQUIC))) {
 		return rt.QRDBEmbedding(), nil
 	}
 	if mt, ok := c.transport.(*qbmcp.Transport); ok && (c.opts == nil || (c.opts.embeddedQRDB == nil && c.opts.transportType == TransportMCP)) {
