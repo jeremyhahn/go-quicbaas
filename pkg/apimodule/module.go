@@ -126,12 +126,15 @@
 // AgentCatalogService, SDLCService, RegistryService, FederationService and
 // SessionService are quicbaas-native too and are registered here (#1696), so
 // the node's TCP gRPC port serves them as the Unix listener does. The first
-// three are built from the facade. Federation and Session need IAM state the
-// facade does not expose, so the host builds them and passes the SAME
-// instances it registers on the Unix listener (WithHostGRPCServers). The
-// other iam.v1 services (IAMService, PEPService, MFAService, AuditService)
-// stay off: most of their RPCs carry no (qrdb.v1.permission) option, and an
-// unannotated RPC is default-denied here.
+// three are built from the facade. Federation, Session and IAMService need
+// IAM state the facade does not expose, so the host builds them and passes
+// the SAME instances it registers on the Unix listener (WithHostGRPCServers).
+// IAMService is mounted: its six annotated RPCs carry their permissions, its
+// four invite RPCs are public (PublicGRPCMethods), and the rest are
+// default-denied, as on the legacy server. The other iam.v1 services
+// (PEPService, MFAService, AuditService) stay off: most of their RPCs carry
+// no (qrdb.v1.permission) option, and an unannotated RPC is default-denied
+// here.
 //
 // ObjectTransferService is deliberately NOT registered here. Unlike the five
 // above, it has no facade-backed gRPC implementation to reuse: the only
@@ -404,13 +407,14 @@ type grpcServers struct {
 }
 
 // HostGRPCServers carries the gRPC servers the host builds from IAM state
-// the service facade does not expose: the federation manager and the session
-// storage. The host builds them once and registers the SAME instances on its
-// Unix-socket gRPC server, so both listeners serve one session store. A nil
-// field answers Unavailable.
+// the service facade does not expose: the federation manager, the session
+// storage and the IAM components behind IAMService. The host builds them once
+// and registers the SAME instances on its Unix-socket gRPC server, so both
+// listeners serve one session store. A nil field answers Unavailable.
 type HostGRPCServers struct {
 	Federation iampb.FederationServiceServer
 	Session    iampb.SessionServiceServer
+	IAM        iampb.IAMServiceServer
 }
 
 // HostGRPCResolver returns the host's gRPC servers. The module calls it on
@@ -485,6 +489,7 @@ var grpcRegistrations = []grpcRegistration{
 	{desc: &pb.RegistryService_ServiceDesc, capability: "registry", pick: func(s *grpcServers) any { return s.registry }},
 	{desc: &iampb.FederationService_ServiceDesc, capability: "federation", hostPick: func(h HostGRPCServers) any { return h.Federation }},
 	{desc: &iampb.SessionService_ServiceDesc, capability: "session", hostPick: func(h HostGRPCServers) any { return h.Session }},
+	{desc: &iampb.IAMService_ServiceDesc, capability: "iam", hostPick: func(h HostGRPCServers) any { return h.IAM }},
 }
 
 // publicGRPCMethods is the exact set of this module's gRPC methods the
@@ -497,6 +502,8 @@ var grpcRegistrations = []grpcRegistration{
 // REGISTRATION pair (BeginRegistration/FinishRegistration) is deliberately
 // absent: it binds a new authenticator to a caller-supplied identity and
 // stays gated behind user_authfactors:add, exactly like the legacy listener.
+// The four IAMService invite RPCs (GetInvite and the activation ceremonies)
+// are public on the legacy listener too: the invite token is the credential.
 var publicGRPCMethods = []string{
 	"/quicbaas.v1.QuicBaaS/Health",
 	"/quicbaas.v1.QuicBaaS/Login",
@@ -506,6 +513,10 @@ var publicGRPCMethods = []string{
 	"/quicbaas.fido2.v1.FIDO2Service/FinishAuthentication",
 	"/quicbaas.iam.v1.FederationService/BeginFederatedLogin",
 	"/quicbaas.iam.v1.FederationService/HandleFederatedCallback",
+	"/quicbaas.iam.v1.IAMService/GetInvite",
+	"/quicbaas.iam.v1.IAMService/ActivateFIDO2Begin",
+	"/quicbaas.iam.v1.IAMService/ActivateFIDO2Finish",
+	"/quicbaas.iam.v1.IAMService/ActivatePIV",
 }
 
 // PublicGRPCMethods implements qrdbsdk.ModuleGRPCPublicMethodLister. It

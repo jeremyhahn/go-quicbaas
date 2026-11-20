@@ -25,6 +25,7 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"net"
 	"os"
@@ -35,7 +36,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	ggrpc "google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/status"
 
+	iampb "github.com/jeremyhahn/go-quicbaas/api/proto/iam"
 	restapi "github.com/jeremyhahn/go-quicbaas/pkg/api/rest"
 	"github.com/jeremyhahn/go-quicbaas/pkg/backup"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
@@ -101,6 +106,53 @@ func TestServer_InitializeAndShutdown_TT_NetworkGRPC(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	require.NoError(t, srv.Shutdown(ctx), "graceful shutdown must succeed")
+}
+
+// startTTNetworkNodeUnix initialises a network-serving server whose embedded
+// node serves socket over the CA-backed TLS, and shuts it down when the test
+// ends.
+func startTTNetworkNodeUnix(t *testing.T, socket string) *Server {
+	t.Helper()
+	saveAndRestoreSeams(t)
+	srv := withTempServer(t)
+	srv.config.Server.Embedded = false
+	srv.config.Security.TLSEnabled = true
+	srv.config.Server.Unix.Socket = socket
+	require.NoError(t, srv.initialize(), "network initialize must succeed")
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		assert.NoError(t, srv.Shutdown(ctx), "graceful shutdown must succeed")
+	})
+	requireNodeServesUnixSocket(t, srv, socket)
+	return srv
+}
+
+// TestServer_TT_NetworkGRPC_UnixSocketServesIAM pins that IAMService, which
+// the legacy Unix listener served, stays on the socket when the node serves
+// it: an authenticated RPC is refused by the node's authentication, not
+// answered Unimplemented, and the public GetInvite reaches the handler.
+func TestServer_TT_NetworkGRPC_UnixSocketServesIAM(t *testing.T) {
+	socket := shortTTUnixSocketPath(t)
+	startTTNetworkNodeUnix(t, socket)
+
+	// The node's Unix server speaks verified TLS 1.3; this test checks
+	// service routing, not the server certificate, so it skips verification.
+	clientTLS := &tls.Config{MinVersion: tls.VersionTLS13, InsecureSkipVerify: true} //nolint:gosec // test-only routing check
+	conn, err := ggrpc.NewClient("unix://"+socket, ggrpc.WithTransportCredentials(credentials.NewTLS(clientTLS)))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+	client := iampb.NewIAMServiceClient(conn)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	_, err = client.ListWebAuthnCredentials(ctx, &iampb.ListWebAuthnCredentialsRequest{})
+	require.Error(t, err, "an unauthenticated ListWebAuthnCredentials must be refused")
+	assert.NotEqual(t, codes.Unimplemented, status.Code(err), "IAMService must be served on the socket: %v", err)
+
+	_, err = client.GetInvite(ctx, &iampb.GetInviteRequest{Token: "bogus-invite-token"})
+	assert.NotEqual(t, codes.Unimplemented, status.Code(err), "GetInvite must be served on the socket: %v", err)
+	assert.NotEqual(t, codes.Unauthenticated, status.Code(err), "GetInvite must be public on the socket: %v", err)
 }
 
 // TestServer_InitializeAndShutdown_TT_WithObjectStorageAndKMS brings up the
