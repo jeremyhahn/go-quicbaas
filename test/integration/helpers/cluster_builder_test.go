@@ -206,3 +206,50 @@ func TestFindLeaderFallsBackToLeaderIDWhenMarkedLeaderUnusable(t *testing.T) {
 		})
 	}
 }
+
+// TestClusterBuilderAuthToken checks that a built cluster's clients carry the
+// tenant operator's bearer unless the caller sets one, and that a bearer the
+// source cannot supply fails Build before it connects.
+func TestClusterBuilderAuthToken(t *testing.T) {
+	t.Run("DefaultIsTenantOperator", func(t *testing.T) {
+		calls := 0
+		cb := NewClusterBuilder()
+		cb.bearerSource = func(context.Context) (string, error) {
+			calls++
+			return "fake-bearer", nil
+		}
+
+		token, err := cb.resolveAuthToken(context.Background())
+		require.NoError(t, err)
+		assert.Equal(t, "fake-bearer", token)
+		assert.Equal(t, 1, calls)
+	})
+
+	t.Run("ExplicitTokenWins", func(t *testing.T) {
+		calls := 0
+		cb := NewClusterBuilder().WithAuthToken("explicit")
+		cb.bearerSource = func(context.Context) (string, error) {
+			calls++
+			return "fake-bearer", nil
+		}
+
+		token, err := cb.resolveAuthToken(context.Background())
+		require.NoError(t, err)
+		assert.Equal(t, "explicit", token)
+		assert.Zero(t, calls)
+	})
+
+	t.Run("SourceErrorFailsBuild", func(t *testing.T) {
+		sourceErr := errors.New("fake source failure")
+		cb := NewClusterBuilder().WithEndpoints([]string{"127.0.0.1:1"})
+		cb.bearerSource = func(context.Context) (string, error) {
+			return "", sourceErr
+		}
+
+		cluster, err := cb.Build(context.Background())
+		assert.Nil(t, cluster)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, sourceErr)
+		assert.NotContains(t, err.Error(), "failed to connect")
+	})
+}
