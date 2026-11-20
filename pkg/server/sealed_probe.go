@@ -14,6 +14,9 @@
 package server
 
 import (
+	"context"
+	"time"
+
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
@@ -53,9 +56,26 @@ func (p *serverSealedProbe) IsSealed() bool {
 	// never-initialized barrier reports state "sealed" internally but
 	// protects nothing, and gating it would lock every first boot out of
 	// the full surface.
-	if barrier := s.dataPlaneBarrier; barrier != nil {
-		if st := barrier.Status(); st != nil && st.Sealed && !st.InitializedAt.IsZero() {
+	//
+	// Until startService publishes that barrier the probe fails closed (see
+	// dataPlaneBarrierPending).
+	if s.dataPlaneBarrierPending.Load() {
+		return true
+	}
+	if barrier := s.dataPlaneBarrier.Load(); barrier != nil {
+		// Initialized reads the persisted metadata, so a restarted barrier
+		// answers correctly; a read error means the state is unknown and
+		// the probe fails closed.
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		initialized, err := barrier.Initialized(ctx)
+		if err != nil {
 			return true
+		}
+		if initialized {
+			if st := barrier.Status(); st == nil || st.Sealed {
+				return true
+			}
 		}
 	}
 
@@ -67,8 +87,16 @@ func (p *serverSealedProbe) IsSealed() bool {
 var _ qrdbsdk.SealedWindowProbe = (*serverSealedProbe)(nil)
 
 // SealedWindowProbe returns the server's canonical sealed-window probe. The
-// same instance is installed on every transport gate; it is cheap (two
-// atomic loads) and safe to call at any lifecycle phase.
+// same instance is installed on every transport gate; it is cheap (atomic
+// loads and a barrier metadata read bounded at two seconds) and safe to call at any lifecycle phase.
 func (s *Server) SealedWindowProbe() qrdbsdk.SealedWindowProbe {
 	return &serverSealedProbe{server: s}
+}
+
+// publishDataPlaneBarrier stores the persistent data-plane barrier and only
+// then clears dataPlaneBarrierPending, so the probe never observes the window
+// between the two as "no barrier, unsealed".
+func (s *Server) publishDataPlaneBarrier(barrier *qrdbsdk.StorageBarrier) {
+	s.dataPlaneBarrier.Store(barrier)
+	s.dataPlaneBarrierPending.Store(false)
 }

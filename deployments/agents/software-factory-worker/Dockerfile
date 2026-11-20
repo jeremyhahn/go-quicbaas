@@ -1127,6 +1127,14 @@ ENV GOPATH=/home/agent/go
 ENV PATH="/usr/local/go/bin:${GOPATH}/bin:${PATH}" \
     GOTOOLCHAIN=local
 
+# CLAUDE CODE DOES NOT UPDATE ITSELF HERE. The image is immutable: Claude Code
+# is installed root-owned under /usr/local and runs as `agent`, which cannot
+# write that npm prefix, so the self-updater can only fail ("Auto-update
+# failed: no write permission to npm prefix", #2548). A new Claude Code comes
+# only from a new image built from versions.lock. /etc/profile resets PATH
+# alone, so this survives the agent's `sh -lc`.
+ENV DISABLE_AUTOUPDATER=1
+
 # ENV PATH IS NOT ENOUGH, BECAUSE THE AGENT EXECS THROUGH A LOGIN SHELL.
 #
 # Every tool the factory runs in this container arrives as `sh -lc <command>`.

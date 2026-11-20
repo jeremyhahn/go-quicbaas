@@ -15,6 +15,8 @@ package iam
 
 import (
 	"context"
+	"crypto"
+	"errors"
 	"sync"
 
 	"github.com/go-jose/go-jose/v4"
@@ -283,6 +285,61 @@ func (r *TenantSigningKeyResolver) JWKS(ctx context.Context) *jose.JSONWebKeySet
 	})
 
 	return out
+}
+
+// heldPublicForKID returns kid's key from the global manager or a dedicated
+// manager this resolver has built, as each holds it now (an adopted
+// pre-upgrade key past its cutoff is not held), and whether one holds it.
+// Each manager it consults first takes its routine, rate-limited refresh, so
+// a key a peer has rotated out of the overlap is not held for longer than
+// signingKeyRefreshInterval; that refresh's error, when ctx ends or its
+// bound passes first, is returned.
+func (r *TenantSigningKeyResolver) heldPublicForKID(ctx context.Context, kid string) (crypto.PublicKey, bool, error) {
+	managers := []*SigningKeyManager{r.global}
+	r.managers.Range(func(_, v any) bool {
+		if mgr, ok := v.(*SigningKeyManager); ok {
+			managers = append(managers, mgr)
+		}
+		return true
+	})
+	for _, mgr := range managers {
+		if err := mgr.maybeRefresh(ctx, signingKeyRefreshInterval); err != nil {
+			return nil, false, err
+		}
+		if pub, err := mgr.publicForKID(kid); err == nil {
+			return pub, true, nil
+		}
+	}
+	return nil, false, nil
+}
+
+// PublicForKID returns the public key for kid from the aggregated key set
+// (the global key and every dedicated tenant key). A kid none of them
+// publishes may name a key a peer sharing the backend has just rotated in,
+// so each manager is then asked through its refresh-aware lookup, which
+// re-reads its version record at most once per unknownKIDRefreshInterval;
+// only then is the kid an UnknownKeyIDError.
+func (r *TenantSigningKeyResolver) PublicForKID(ctx context.Context, kid string) (crypto.PublicKey, error) {
+	if pub := publicForKIDInJWKS(r.JWKS(ctx), kid); pub != nil {
+		return pub, nil
+	}
+	managers := []*SigningKeyManager{r.global}
+	r.managers.Range(func(_, v any) bool {
+		if mgr, ok := v.(*SigningKeyManager); ok {
+			managers = append(managers, mgr)
+		}
+		return true
+	})
+	for _, mgr := range managers {
+		pub, err := mgr.PublicForKID(ctx, kid)
+		if err == nil {
+			return pub, nil
+		}
+		if !errors.As(err, new(*UnknownKeyIDError)) {
+			return nil, err
+		}
+	}
+	return nil, &UnknownKeyIDError{KID: kid}
 }
 
 // TenantSigningKeyUnavailableError is returned when a dedicated tenant's signing

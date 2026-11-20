@@ -126,14 +126,25 @@ backs the rest of QuicBaaS.
 
 ### Build Tags
 
-The Signal integration requires the `signal` build tag (IAM is always compiled):
+The Signal integration requires the `quicbaas_signal` build tag (IAM is always
+compiled):
 
 ```bash
-go build -tags "signal" ./...
+go build -tags quicbaas_signal ./...
 ```
 
-All files in `pkg/signal/` carry the `//go:build signal` directive. Without
-this tag, the Signal package is excluded from the binary entirely.
+Every file in `pkg/signal/` carries `//go:build quicbaas_signal` except
+`stub.go` (`//go:build !quicbaas_signal`), which keeps the package importable
+when the tag is off. Without the tag no go-signal code is in the binary.
+The unit gate (`make test`) builds and tests with the tag (it is in
+`TEST_EXTRA_TAGS`), so the bridge cannot drift from go-signal unnoticed.
+
+go-signal's `store.KVClient` requires `DeleteIfPresent`, an atomic
+check-and-delete that makes one-time pre-key consumption single-use. The
+adapter (`pkg/signal/kv_adapter.go`) runs it as a go-qrdb transaction:
+compare the key's version > 0, then delete, under the tenant's `{tenantID}/`
+prefix. `NewSignalService` therefore takes the database's
+`TransactionClient` next to its `KVClient`.
 
 ### Quick Start
 
@@ -147,9 +158,7 @@ signal:
 #### 2. Build with the signal tag
 
 ```bash
-make build-signal
-# or
-go build -tags "signal" ./cmd/...
+go build -tags quicbaas_signal ./cmd/...
 ```
 
 #### 3. Start the service
@@ -157,8 +166,13 @@ go build -tags "signal" ./cmd/...
 The `SignalService` is created and started as part of the QuicBaaS server
 lifecycle:
 
+`kvClient` and `txnClient` are the KV and transaction clients of the same
+go-qrdb database: one-time pre-keys are consumed with an atomic
+compare-and-delete through `txnClient`, and a nil `txnClient` is refused
+(`signal.ErrNoTransactions`).
+
 ```go
-svc := signal.NewSignalService(kvClient, log, &signal.SignalConfig{
+svc := signal.NewSignalService(kvClient, txnClient, log, &signal.SignalConfig{
     Enabled: true,
 })
 if err := svc.Start(ctx); err != nil {
