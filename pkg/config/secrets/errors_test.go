@@ -14,6 +14,7 @@
 package secrets
 
 import (
+	"context"
 	stderrors "errors"
 	"strings"
 	"testing"
@@ -1488,5 +1489,91 @@ func TestErrorsAs_AllTypes(t *testing.T) {
 				t.Errorf("Unknown target type: %T", target)
 			}
 		})
+	}
+}
+
+func TestNewResolutionFailedError_UnwrapsToCause(t *testing.T) {
+	sentinel := stderrors.New("kms client failure")
+	err := NewResolutionFailedError("op", "kms://secret", "failed to retrieve secret from KMS", sentinel)
+
+	if !stderrors.Is(err, sentinel) {
+		t.Errorf("errors.Is(err, sentinel) = false, want true")
+	}
+	if !IsResolutionFailed(err) {
+		t.Errorf("IsResolutionFailed(err) = false, want true")
+	}
+
+	var rfe *ResolutionFailedError
+	if !stderrors.As(err, &rfe) {
+		t.Fatal("errors.As(err, *ResolutionFailedError) = false, want true")
+	}
+	if rfe.Cause != sentinel {
+		t.Errorf("Cause = %v, want %v", rfe.Cause, sentinel)
+	}
+	if got, want := rfe.Error(), `failed to resolve secret URI "kms://secret": failed to retrieve secret from KMS`; got != want {
+		t.Errorf("Error() = %q, want %q", got, want)
+	}
+	if got := err.Context["cause"]; got != sentinel.Error() {
+		t.Errorf("Context[cause] = %v, want %q", got, sentinel.Error())
+	}
+}
+
+func TestResolutionFailedError_NilCauseUnwrapsToNil(t *testing.T) {
+	err := NewResolutionFailedError("op", "kms://secret", "no cause", nil)
+
+	var rfe *ResolutionFailedError
+	if !stderrors.As(err, &rfe) {
+		t.Fatal("errors.As(err, *ResolutionFailedError) = false, want true")
+	}
+	if got := rfe.Unwrap(); got != nil {
+		t.Errorf("Unwrap() = %v, want nil", got)
+	}
+	if _, ok := err.Context["cause"]; ok {
+		t.Errorf("Context[cause] set for a nil cause")
+	}
+	if !IsResolutionFailed(err) {
+		t.Errorf("IsResolutionFailed(err) = false, want true")
+	}
+}
+
+func TestLocalKMSResolver_Resolve_CancelledContextUnwrapsToCanceled(t *testing.T) {
+	client := newMockSecretsClient().withSecret("secret", []byte("value"))
+	resolver := NewLocalKMSResolver(client)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := resolver.Resolve(ctx, "kms://secret")
+	if err == nil {
+		t.Fatal("Resolve() error = nil, want error")
+	}
+	if !stderrors.Is(err, context.Canceled) {
+		t.Errorf("errors.Is(err, context.Canceled) = false, want true; err = %v", err)
+	}
+	if !IsResolutionFailed(err) {
+		t.Errorf("IsResolutionFailed(err) = false, want true")
+	}
+}
+
+func TestNewResolutionFailedError_UnwrapsCause(t *testing.T) {
+	sentinel := stderrors.New("kms down")
+	err := NewResolutionFailedError("op", "kms://a", "failed", sentinel)
+	if !stderrors.Is(err, sentinel) {
+		t.Fatalf("errors.Is(err, sentinel) = false, want true")
+	}
+	if !IsResolutionFailed(err) {
+		t.Fatalf("IsResolutionFailed(err) = false, want true")
+	}
+	if !strings.Contains(err.Error(), "kms://a") {
+		t.Fatalf("Error() = %q, want it to name the URI", err.Error())
+	}
+
+	nilCause := NewResolutionFailedError("op", "kms://a", "failed", nil)
+	var rfe *ResolutionFailedError
+	if !stderrors.As(nilCause, &rfe) {
+		t.Fatalf("errors.As(*ResolutionFailedError) = false, want true")
+	}
+	if got := stderrors.Unwrap(rfe); got != nil {
+		t.Fatalf("errors.Unwrap(inner) = %v, want nil", got)
 	}
 }

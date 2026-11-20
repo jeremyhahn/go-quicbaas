@@ -42,6 +42,7 @@ Layer 4 of the stack, one product in layers: the application-layer framework and
 - **cluster** — no hardcoded bind, advertise or upstream addresses — DC: [#185](../../issues/185) — open
 - **codec** — the unused own codec package is removed — [#1321](../../pulls/1321) — blocked: held for the owner's word
 - **data-encryption-keys** — re-export go-qrdb's DEK service; the own DEK store is removed — [#1321](../../pulls/1321) — blocked: held for the owner's word
+- **tenant DEK and secret references** — the tenant DEK lifecycle, app secret rotation and `kms://` resolution through `sdk/go` and the CLI, for go-trusted-platform — DC: [#1841](../../issues/1841) — open
 - **data-services** — the own data clients and the second store beside the qrdb node are removed — [#1321](../../pulls/1321) — blocked: held for the owner's word
 - **deployment** — every node runs one go-quicbaas tag; formation, smoke and failover pass with a re-runnable suite — [milestone 32](../../milestone/32) — done
 - **desktop-gui** — the Prompts page in the web UI — DC: [#806](../../issues/806) — blocked: see issue

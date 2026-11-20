@@ -14,11 +14,15 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/testutil"
+	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
 )
 
 // TestEmbeddedQRDBWiringError verifies the typed error formats correctly
@@ -98,6 +102,8 @@ func TestBuildEmbeddedQRDBServicers_EndToEnd(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, servicers.KV, "WithEmbeddedQRDB requires non-nil KV")
 	require.NotNil(t, servicers.Admin, "WithEmbeddedQRDB requires non-nil Admin")
+	require.NotNil(t, servicers.DEK, "Security().TenantDEK() needs the node's go-qrdb DEK keyring")
+	assert.Same(t, es.server.GetQRDBDEKServicer(), servicers.DEK, "DEK must be the node's own keyring service")
 
 	// The bootstrap ceremony services should be wired on a healthy first
 	// boot. If they are not, the CLI's first-boot SDK path falls back to
@@ -123,4 +129,37 @@ func TestEmbeddedQRDBOption_EndToEnd(t *testing.T) {
 	opt, err := embeddedQRDBOption(es)
 	require.NoError(t, err)
 	require.NotNil(t, opt)
+}
+
+// TestEmbeddedQRDBOption_TenantDEKServedByNodeKeyring proves the embedded
+// composition serves Security().TenantDEK() from the node's go-qrdb keyring:
+// a rotation adds a version and the next status reports it as current.
+func TestEmbeddedQRDBOption_TenantDEKServedByNodeKeyring(t *testing.T) {
+	es, err := getOrCreateEmbeddedServer()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = shutdownEmbeddedServer()
+	})
+
+	opt, err := embeddedQRDBOption(es)
+	require.NoError(t, err)
+	client, err := quicbaas.NewClient("embedded", quicbaas.WithEmbedded(testutil.NewMockQuicBaaS()), opt)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Close() })
+
+	keyring, err := client.Security().TenantDEK()
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	before, err := keyring.TenantDEKStatus(ctx, &quicbaas.QRDBTenantDEKRequest{})
+	require.NoError(t, err)
+
+	rotated, err := keyring.TenantDEKRotate(ctx, &quicbaas.QRDBTenantDEKRequest{})
+	require.NoError(t, err)
+	assert.Equal(t, before.CurrentVersion+1, rotated.CurrentVersion, "rotate adds a version and makes it current")
+
+	after, err := keyring.TenantDEKStatus(ctx, &quicbaas.QRDBTenantDEKRequest{})
+	require.NoError(t, err)
+	assert.Equal(t, rotated.CurrentVersion, after.CurrentVersion)
+	assert.Equal(t, rotated.TenantID, after.TenantID)
 }

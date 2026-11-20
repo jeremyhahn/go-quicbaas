@@ -14,6 +14,7 @@
 package quicbaas
 
 import (
+	qrdbservice "github.com/jeremyhahn/go-qrdb/pkg/service"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
@@ -44,6 +45,11 @@ type QRDBCeremonyServicer = qrdbsdk.ServiceCeremonyServicer
 // QRDBCredentialServicer is a re-export of the qrdb service.CredentialServicer
 // interface. Required to enable Security().Credentials() embedded dispatch.
 type QRDBCredentialServicer = qrdbsdk.ServiceCredentialServicer
+
+// QRDBDEKServicer is a re-export of the qrdb service.DEKServicer interface,
+// the per-tenant DEK keyring. Required to enable Security().TenantDEK()
+// embedded dispatch.
+type QRDBDEKServicer = qrdbservice.DEKServicer
 
 // QRDBTenantServicer is a re-export of the qrdb tenant.TenantServicer
 // interface. Required to enable per-tenant barrier operations through the
@@ -142,6 +148,11 @@ type QRDBEmbeddedServicers struct {
 	// retrieve, list, rotate, delete). Must be non-nil for
 	// Security().Credentials() calls to succeed against the embedded transport.
 	Credential QRDBCredentialServicer
+
+	// DEK exposes the qrdb per-tenant DEK keyring (status, rotate, retire,
+	// encrypt, decrypt, rewrap). Must be non-nil for Security().TenantDEK()
+	// calls to succeed against the embedded transport.
+	DEK QRDBDEKServicer
 
 	// Tenant exposes per-tenant lifecycle operations including the
 	// per-tenant barrier (init / unseal / seal / status). Optional.

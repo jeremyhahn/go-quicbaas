@@ -97,6 +97,13 @@ func buildEmbeddedQRDBServicers(es *embeddedServer) (quicbaas.QRDBEmbeddedServic
 		servicers.Tenant = tenantSvc
 	}
 
+	// Wire go-qrdb's per-tenant DEK keyring so Security().TenantDEK() is
+	// served in-process by the node's own keyring service, the one its
+	// network transports serve.
+	if dekSvc := es.server.GetQRDBDEKServicer(); dekSvc != nil {
+		servicers.DEK = dekSvc
+	}
+
 	// Wire ceremony and credential services from the node's bootstrap
 	// ceremony stack. These are the real services backed by the qrdb node.
 	if ceremonyStack := es.server.GetCeremonyServices(); ceremonyStack != nil {

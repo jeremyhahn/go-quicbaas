@@ -1,6 +1,6 @@
 # Data Encryption Keys — User Guide
 
-> **Status: NORMATIVE** · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Last verified: 2026-11-14
 > Task-oriented guide to creating, rotating and retiring DEKs. Feature folder:
 > `docs/data-encryption-keys/`.
 
@@ -70,19 +70,24 @@ anything.
 ### Engage the safety interlock
 
 ```bash
-quicbaas dek set-safety tenants/acme/records
+quicbaas dek set-safety tenants/acme/records --max-operations 1000000 --max-bytes 68719476736 --warning-percent 80
 ```
 
-Do this on any DEK protecting data you cannot lose. It refuses the destructive
-operations at the server, so it holds against the API as well as the CLI — not
-just against a mistyped command in one shell.
+An AEAD key is only safe for a bounded number of encryptions. The interlock
+sets that bound for one DEK at the server, so it holds against the API as well
+as the CLI. Past `--warning-percent` the server warns; the use that reaches the
+bound, and every use after it, is refused. `quicbaas dek status` shows the
+usage counted so far.
+
+**Rotate to clear a refusal.** Rotation gives a new key version whose usage
+starts at zero; it is never refused by the interlock.
 
 ```bash
 quicbaas dek clear-safety tenants/acme/records
 ```
 
-Clearing the safety is itself the significant action. Treat it as a separate,
-deliberate, audited step, not as part of a longer runbook line.
+Clearing drops the DEK's own bound back to the server default. Treat it as a
+deliberate, audited step.
 
 ### Retire a DEK
 
@@ -103,7 +108,7 @@ sequence above is the only safe order.
 | Symptom | Likely cause |
 |---|---|
 | Every DEK command fails | The barrier is sealed. `quicbaas barrier status`. |
-| `delete` or `rotate` refused | The safety interlock is engaged. That refusal is a different error from a permission denial — clear the safety deliberately, do not go looking for a missing grant. |
+| Encryption refused with an AEAD limit error | The DEK reached its safety bound. That is a different error from a permission denial — rotate the DEK, do not go looking for a missing grant. |
 | Re-encryption "finished" but records are still on the old version | `reencrypt` returned acceptance, not completion. Poll `reencrypt-progress`. |
 | Rotating did not protect old data | Correct. Rotation affects new writes; re-encryption moves old ones. |
 | Records unreadable after a delete | They were still encrypted under the deleted key. There is no recovery. |
