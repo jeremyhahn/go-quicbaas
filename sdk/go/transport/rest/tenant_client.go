@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"strconv"
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
@@ -71,10 +72,47 @@ func officerPath(verb, tenantID, username, step string) (string, error) {
 	return tenantPath(verb, false, tenantID, "/officers/"+url.PathEscape(username)+"/claim/"+step)
 }
 
-// doJSONResult sends the request through the transport's guarded client and
-// decodes a non-empty response into result.
-func (c *TenantClient) doJSONResult(ctx context.Context, method, path string, reqBody, result any) error {
-	return c.t.Barrier().doJSONResult(ctx, method, path, reqBody, result)
+// doTenantRequest sends the request through the transport's guarded client
+// and refuses any status not in allowed: the tenant barrier routes answer
+// only 200 or 204, so a 3xx handed back by net/http (a 307 without a
+// Location, or a client whose CheckRedirect stops at the redirect) is never
+// taken as success.
+func (c *TenantClient) doTenantRequest(ctx context.Context, verb, method, path string, reqBody any, allowed ...int) (*rawResponse, error) {
+	var body []byte
+	if reqBody != nil {
+		data, err := json.Marshal(reqBody)
+		if err != nil {
+			return nil, errors.Wrap(err, errors.CodeInvalidInput, tenantClientOp, "failed to encode request body")
+		}
+		body = data
+	}
+	resp, err := c.t.doRawRequest(ctx, method, path, body, nil)
+	if err != nil {
+		return nil, err
+	}
+	for _, status := range allowed {
+		if resp.StatusCode == status {
+			return resp, nil
+		}
+	}
+	return nil, errors.New(errors.CodeInternal, tenantClientOp,
+		verb+": unexpected HTTP status "+strconv.Itoa(resp.StatusCode)+" from "+path)
+}
+
+// doTenantResult sends the request, accepts only 200 and decodes the
+// non-empty response into result.
+func (c *TenantClient) doTenantResult(ctx context.Context, verb, method, path string, reqBody, result any) error {
+	resp, err := c.doTenantRequest(ctx, verb, method, path, reqBody, http.StatusOK)
+	if err != nil {
+		return err
+	}
+	if len(resp.Body) == 0 {
+		return errors.New(errors.CodeInternal, tenantClientOp, "empty response from "+path)
+	}
+	if err := json.Unmarshal(resp.Body, result); err != nil {
+		return errors.Wrap(err, errors.CodeInternal, tenantClientOp, "failed to decode response")
+	}
+	return nil
 }
 
 // tenantBarrierInitWireRequest is the REST wire shape of a tenant barrier
@@ -88,23 +126,19 @@ type tenantBarrierInitWireRequest struct {
 
 // TenantBarrierInit maps to POST /v1/tenants/{id}/barrier/init. A 204 (the
 // none/passphrase strategies) is populated from the request; a 200 (Shamir)
-// carries the share metadata.
+// carries the share metadata. Any other status is an error.
 func (c *TenantClient) TenantBarrierInit(ctx context.Context, req *qrdbtransport.TenantBarrierInitRequest) (*qrdbtransport.TenantBarrierInitResponse, error) {
 	path, err := tenantPath("TenantBarrierInit", req == nil, tenantIDOf(req), "/init")
 	if err != nil {
 		return nil, err
 	}
 	ctx = withSecretHop(ctx, "TenantBarrierInit")
-	body, err := json.Marshal(tenantBarrierInitWireRequest{
+	resp, err := c.doTenantRequest(ctx, "TenantBarrierInit", http.MethodPost, path, tenantBarrierInitWireRequest{
 		Passphrase: req.Passphrase,
 		Threshold:  req.Threshold,
 		Shares:     req.Shares,
 		Strategy:   req.Strategy,
-	})
-	if err != nil {
-		return nil, errors.Wrap(err, errors.CodeInvalidInput, tenantClientOp, "failed to encode request body")
-	}
-	resp, err := c.t.doRawRequest(ctx, http.MethodPost, path, body, nil)
+	}, http.StatusOK, http.StatusNoContent)
 	if err != nil {
 		return nil, err
 	}
@@ -129,7 +163,8 @@ func tenantIDOf(req *qrdbtransport.TenantBarrierInitRequest) string {
 }
 
 // TenantBarrierUnseal maps to POST /v1/tenants/{id}/barrier/unseal. The key
-// is Key, or Share when Key is empty.
+// is Key, or Share when Key is empty. Only 200 and 204 succeed; any other
+// status is an error.
 func (c *TenantClient) TenantBarrierUnseal(ctx context.Context, req *qrdbtransport.TenantBarrierUnsealRequest) error {
 	var tenantID string
 	if req != nil {
@@ -144,9 +179,10 @@ func (c *TenantClient) TenantBarrierUnseal(ctx context.Context, req *qrdbtranspo
 	if len(key) == 0 {
 		key = req.Share
 	}
-	return c.t.doJSONRequest(ctx, http.MethodPost, path, struct {
+	_, err = c.doTenantRequest(ctx, "TenantBarrierUnseal", http.MethodPost, path, struct {
 		Key []byte `json:"key"`
-	}{Key: key}, nil)
+	}{Key: key}, http.StatusOK, http.StatusNoContent)
+	return err
 }
 
 // TenantBarrierUnsealShare maps to POST /v1/tenants/{id}/barrier/unseal-share.
@@ -161,7 +197,7 @@ func (c *TenantClient) TenantBarrierUnsealShare(ctx context.Context, req *qrdbtr
 	}
 	ctx = withSecretHop(ctx, "TenantBarrierUnsealShare")
 	var out qrdbtransport.TenantBarrierUnsealProgress
-	if err := c.doJSONResult(ctx, http.MethodPost, path, struct {
+	if err := c.doTenantResult(ctx, "TenantBarrierUnsealShare", http.MethodPost, path, struct {
 		Share string `json:"share"`
 	}{Share: req.Share}, &out); err != nil {
 		return nil, err
@@ -183,7 +219,7 @@ func (c *TenantClient) TenantBarrierShareClaimComplete(ctx context.Context, req 
 	}
 	ctx = withSecretHop(ctx, "TenantBarrierShareClaimComplete")
 	var out qrdbtransport.ShareClaimCompleteResponse
-	if err := c.doJSONResult(ctx, http.MethodPost, path, req, &out); err != nil {
+	if err := c.doTenantResult(ctx, "TenantBarrierShareClaimComplete", http.MethodPost, path, req, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -201,14 +237,14 @@ func (c *TenantClient) TenantBarrierShamirSealVote(ctx context.Context, req *qrd
 	}
 	ctx = withSecretHop(ctx, "TenantBarrierShamirSealVote")
 	var out qrdbtransport.ShamirSealVoteResponse
-	if err := c.doJSONResult(ctx, http.MethodPost, path, req, &out); err != nil {
+	if err := c.doTenantResult(ctx, "TenantBarrierShamirSealVote", http.MethodPost, path, req, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
 }
 
 // TenantBarrierSeal maps to POST /v1/tenants/{id}/barrier/seal, with no
-// body. 200 and 204 both succeed.
+// body. Only 200 and 204 succeed; any other status is an error.
 func (c *TenantClient) TenantBarrierSeal(ctx context.Context, req *qrdbtransport.TenantBarrierSealRequest) error {
 	var tenantID string
 	if req != nil {
@@ -218,7 +254,8 @@ func (c *TenantClient) TenantBarrierSeal(ctx context.Context, req *qrdbtransport
 	if err != nil {
 		return err
 	}
-	return c.t.doJSONRequest(ctx, http.MethodPost, path, nil, nil)
+	_, err = c.doTenantRequest(ctx, "TenantBarrierSeal", http.MethodPost, path, nil, http.StatusOK, http.StatusNoContent)
+	return err
 }
 
 // TenantBarrierStatus maps to GET /v1/tenants/{id}/barrier/status.
@@ -232,7 +269,7 @@ func (c *TenantClient) TenantBarrierStatus(ctx context.Context, req *qrdbtranspo
 		return nil, err
 	}
 	var out qrdbtransport.TenantBarrierStatusResponse
-	if err := c.doJSONResult(ctx, http.MethodGet, path, nil, &out); err != nil {
+	if err := c.doTenantResult(ctx, "TenantBarrierStatus", http.MethodGet, path, nil, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -250,7 +287,7 @@ func (c *TenantClient) TenantBarrierOfficerRegister(ctx context.Context, req *qr
 		return nil, err
 	}
 	var wire officerRegisterWireResponse
-	if err := c.doJSONResult(ctx, http.MethodPost, path, &officerRegisterWireRequest{
+	if err := c.doTenantResult(ctx, "TenantBarrierOfficerRegister", http.MethodPost, path, &officerRegisterWireRequest{
 		Username:          req.Username,
 		CSRPEM:            string(req.CSRPEM),
 		AuthenticatorType: req.AuthenticatorType,
@@ -270,7 +307,11 @@ func (c *TenantClient) TenantBarrierOfficerList(ctx context.Context, tenantID st
 	if err != nil {
 		return nil, err
 	}
-	return c.t.Barrier().listOfficers(ctx, path)
+	var wire officersWireResponse
+	if err := c.doTenantResult(ctx, "TenantBarrierOfficerList", http.MethodGet, path, nil, &wire); err != nil {
+		return nil, err
+	}
+	return wire.Officers, nil
 }
 
 // TenantBarrierOfficerClaimStatus maps to
@@ -280,7 +321,11 @@ func (c *TenantClient) TenantBarrierOfficerClaimStatus(ctx context.Context, tena
 	if err != nil {
 		return nil, err
 	}
-	return c.t.Barrier().listOfficers(ctx, path)
+	var wire officersWireResponse
+	if err := c.doTenantResult(ctx, "TenantBarrierOfficerClaimStatus", http.MethodGet, path, nil, &wire); err != nil {
+		return nil, err
+	}
+	return wire.Officers, nil
 }
 
 // TenantBarrierShareClaimBegin maps to
@@ -295,7 +340,7 @@ func (c *TenantClient) TenantBarrierShareClaimBegin(ctx context.Context, req *qr
 		return nil, err
 	}
 	var out qrdbtransport.ShareClaimBeginResponse
-	if err := c.doJSONResult(ctx, http.MethodPost, path, req, &out); err != nil {
+	if err := c.doTenantResult(ctx, "TenantBarrierShareClaimBegin", http.MethodPost, path, req, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
