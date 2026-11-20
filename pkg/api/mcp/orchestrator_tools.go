@@ -154,6 +154,15 @@ func (r *ToolRegistry) registerAgentTools() {
 					"enum":        []string{"default", "required", "none"},
 					"description": "Sandbox policy selector. Empty defers to the server-side SandboxPolicy. Optional.",
 				},
+				"sandboxed": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Deprecated: use sandbox_mode, which takes precedence. true requires a sandbox. Optional.",
+				},
+				"env": map[string]interface{}{
+					"type":                 "object",
+					"additionalProperties": map[string]interface{}{"type": "string"},
+					"description":          "Environment variables for the agent process. Optional.",
+				},
 				"host_affinity": map[string]interface{}{
 					"type":        "string",
 					"description": "Pin the session to a specific fleet node daemon by Name or Host. Optional.",
@@ -760,10 +769,38 @@ func (r *ToolRegistry) registerAgentTools() {
 					"type":        "string",
 					"description": "High-level description of the work to be orchestrated",
 				},
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Tenant ID. Optional; defaults to the caller's tenant, and may name only it.",
+				},
 				"lead": agentRefSchema("The Agent or pool the lead runs as (optional; unset takes the project's default lead)."),
+				"lead_agent_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Registered fleet node the lead is pinned to (optional)",
+				},
 				"project_id": map[string]interface{}{
 					"type":        "string",
 					"description": "Project ID to scope the orchestration job (optional)",
+				},
+				"poll_interval": map[string]interface{}{
+					"type":        "string",
+					"description": "How often the job's loop polls its work, as a Go duration such as 30s (optional)",
+				},
+				"workflow_name": map[string]interface{}{
+					"type":        "string",
+					"description": "Registered workflow the job runs (optional)",
+				},
+				"workflow_file": map[string]interface{}{
+					"type":        "string",
+					"description": "Workflow definition file the job runs (optional)",
+				},
+				"task_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Task the job is an attempt at (optional)",
+				},
+				"attempt": map[string]interface{}{
+					"type":        "integer",
+					"description": "1-based ordinal of the attempt at task_id (optional)",
 				},
 				"max_iterations": map[string]interface{}{
 					"type":        "integer",
@@ -1551,15 +1588,19 @@ func (r *ToolRegistry) executeAgentSpawn(ctx context.Context, args map[string]in
 	gpuRequired := getBool(args, "gpu_required")
 
 	req := &orchestration.SpawnSessionRequest{
-		AgentID:            agentID,
-		PoolID:             poolID,
-		Role:               orchestration.AgentRole(getString(args, "role")),
-		Backend:            backend,
-		ProjectID:          projectID,
-		Model:              getString(args, "model"),
-		SystemPrompt:       getString(args, "system_prompt"),
-		PromptAppend:       getString(args, "prompt_append"),
-		WorkDir:            getString(args, "work_dir"),
+		AgentID:      agentID,
+		PoolID:       poolID,
+		Role:         orchestration.AgentRole(getString(args, "role")),
+		Backend:      backend,
+		ProjectID:    projectID,
+		Model:        getString(args, "model"),
+		SystemPrompt: getString(args, "system_prompt"),
+		PromptAppend: getString(args, "prompt_append"),
+		WorkDir:      getString(args, "work_dir"),
+		Env:          getStringMap(args, "env"),
+		// Deprecated in favour of sandbox_mode, which takes precedence; the
+		// SDK still sends it, so a spawn that set it is not silently unsandboxed.
+		Sandboxed:          getBool(args, "sandboxed"),
 		HostAffinity:       hostAffinity,
 		HostAffinityStrict: getBool(args, "host_affinity_strict"),
 		GpuRequired:        gpuRequired,
@@ -1626,14 +1667,25 @@ func (r *ToolRegistry) executeAgentSpawn(ctx context.Context, args map[string]in
 		return nil, err
 	}
 
-	return marshalResult(map[string]interface{}{
+	result := map[string]interface{}{
 		"session_id": resp.SessionID,
 		"backend":    resp.Backend,
 		"model":      resp.Model,
 		"tenant_id":  tenantID,
 		"persistent": req.Persistent,
 		"timestamp":  time.Unix(0, resp.Timestamp).Format(time.RFC3339Nano),
-	})
+	}
+	// What the SDK's SpawnSessionResponse reads, omitted when empty as there.
+	if resp.ContainerID != "" {
+		result["container_id"] = resp.ContainerID
+	}
+	if resp.ResolvedAgentID != "" {
+		result["resolved_agent_id"] = resp.ResolvedAgentID
+	}
+	if len(resp.Failovers) > 0 {
+		result["failovers"] = resp.Failovers
+	}
+	return marshalResult(result)
 }
 
 // executeAgentPrompt backs the quicbaas_orchestrator_prompt tool.
@@ -2289,12 +2341,27 @@ func (r *ToolRegistry) executeOrchestratorStartJob(ctx context.Context, args map
 		return nil, api.NewRequiredFieldError("description")
 	}
 
+	// The job is the caller's tenant's: tenant_id may name only that tenant,
+	// as on get_job_status, and the service's tenant guard reads it off the
+	// context (go-quicbaas#1644).
+	ctx, tenantID, err := orchestratorTenantContext(ctx, args)
+	if err != nil {
+		return nil, err
+	}
+
 	req := &orchestration.StartJobRequest{
+		TenantID:      tenantID,
 		Description:   description,
 		Lead:          getAgentRef(args, "lead"),
+		LeadAgentID:   getString(args, "lead_agent_id"),
 		ProjectID:     getString(args, "project_id"),
 		MaxIterations: getInt(args, "max_iterations"),
+		PollInterval:  getString(args, "poll_interval"),
+		WorkflowName:  getString(args, "workflow_name"),
+		WorkflowFile:  getString(args, "workflow_file"),
 		Runner:        getString(args, "runner"),
+		TaskID:        getString(args, "task_id"),
+		Attempt:       getInt(args, "attempt"),
 		PromptAppend:  getString(args, "prompt_append"),
 	}
 
@@ -2351,6 +2418,7 @@ func (r *ToolRegistry) executeOrchestratorGetJobStatus(ctx context.Context, args
 		"session_ids":     jobStatus.SessionIDs,
 		"stage":           jobStatus.Stage,
 		"runner":          jobStatus.Runner,
+		"prompt_append":   jobStatus.PromptAppend,
 
 		// Provenance: the same facts the REST and gRPC job shapes carry.
 		// The domain types serialize themselves — a hand-rolled map per

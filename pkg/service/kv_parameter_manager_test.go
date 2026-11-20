@@ -109,8 +109,6 @@ func (p *mockParamClientProvider) ForShard(_ uint64) (*qrdbsdk.Client, error) {
 
 func (p *mockParamClientProvider) Close() error { return nil }
 
-func (p *mockParamClientProvider) IsEmbedded() bool { return true }
-
 // =============================================================================
 // Test Helpers for kvParameterManager
 // =============================================================================

@@ -172,6 +172,36 @@ func TestBuildQRDBConfig_NoNativeQUICListener(t *testing.T) {
 	}
 }
 
+// TestBuildQRDBConfig_MCPBindAddress covers #2228: server.mcp.bind_address
+// reaches the host the node binds its MCP listener on. The pinned go-qrdb joins
+// Server.Host with every listener's port, so the override becomes the node host.
+func TestBuildQRDBConfig_MCPBindAddress(t *testing.T) {
+	cfg := clusterTestConfig()
+	cfg.Server.Host = "0.0.0.0"
+	cfg.Server.MCP.Enabled = true
+	cfg.Server.MCP.Port = 11443
+	cfg.Server.MCP.BindAddress = "127.0.0.1"
+
+	qcfg := mustBuildQRDBConfig(t, cfg, false)
+
+	assert.True(t, qcfg.Protocols.MCP)
+	assert.Equal(t, "127.0.0.1", qcfg.Server.Host, "mcp.bind_address must bind the MCP listener")
+	assert.Equal(t, 11443, qcfg.MCP.Port)
+}
+
+// TestBuildQRDBConfig_NoBindAddressKeepsServerHost: with no override the node
+// host is Server.Host, as before.
+func TestBuildQRDBConfig_NoBindAddressKeepsServerHost(t *testing.T) {
+	cfg := clusterTestConfig()
+	cfg.Server.Host = "10.1.2.3"
+	cfg.Server.REST.Enabled = true
+	cfg.Server.MCP.Enabled = true
+
+	qcfg := mustBuildQRDBConfig(t, cfg, false)
+
+	assert.Equal(t, "10.1.2.3", qcfg.Server.Host)
+}
+
 // ---------------------------------------------------------------------------
 // buildXKMSCryptoOptions
 // ---------------------------------------------------------------------------
@@ -211,17 +241,6 @@ func TestBuildXKMSCryptoOptions_EmptyStrategy(t *testing.T) {
 // ---------------------------------------------------------------------------
 // newNodeBackedShardedClient
 // ---------------------------------------------------------------------------
-
-func TestNewNodeBackedShardedClient_IsEmbedded(t *testing.T) {
-	// Build a real memory-backed qrdb standalone node so we have a valid
-	// *qrdbnode.Node to pass to newNodeBackedShardedClient.
-	node := buildMemoryStandaloneNode(t)
-	defer node.Close()
-
-	sc := newNodeBackedShardedClient(node)
-	require.NotNil(t, sc)
-	assert.True(t, sc.IsEmbedded(), "node-backed client must report embedded transport")
-}
 
 func TestNewNodeBackedShardedClient_ForShardReturnsSameClient(t *testing.T) {
 	node := buildMemoryStandaloneNode(t)
@@ -827,7 +846,6 @@ func TestNewNodeBackedShardedClient_FromClusteredNode(t *testing.T) {
 
 	sc := newNodeBackedShardedClient(s.qrdbNode)
 	require.NotNil(t, sc)
-	assert.True(t, sc.IsEmbedded(), "clustered node-backed client must report embedded transport")
 
 	c1, err := sc.ForShard(1)
 	require.NoError(t, err)

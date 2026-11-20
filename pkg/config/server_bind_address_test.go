@@ -51,6 +51,40 @@ func TestResolveBindHostPerProtocol(t *testing.T) {
 	assert.Equal(t, "0.0.0.0", sc.ResolveBindHost(sc.Unix.BindAddress))
 }
 
+// TestNodeListenHost covers #2228: the embedded qrdb node has one host for
+// every listener, so an enabled protocol's bind_address becomes that host and
+// disagreeing overrides are reported, never silently dropped.
+func TestNodeListenHost(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  ServerConfig
+		host string
+		key  string
+		ok   bool
+	}{
+		{"no override", ServerConfig{Host: "0.0.0.0", MCP: ServerMCPConfig{Enabled: true}}, "0.0.0.0", "", true},
+		{"mcp override", ServerConfig{Host: "0.0.0.0", MCP: ServerMCPConfig{Enabled: true, BindAddress: "127.0.0.1"}}, "127.0.0.1", "", true},
+		{"agreeing overrides", ServerConfig{Host: "0.0.0.0",
+			REST: ServerRESTConfig{Enabled: true, BindAddress: "10.0.0.1"},
+			MCP:  ServerMCPConfig{Enabled: true, BindAddress: "10.0.0.1"}}, "10.0.0.1", "", true},
+		{"override on disabled protocol ignored", ServerConfig{Host: "0.0.0.0",
+			REST: ServerRESTConfig{Enabled: true},
+			MCP:  ServerMCPConfig{BindAddress: "127.0.0.1"}}, "0.0.0.0", "", true},
+		{"mcp disagrees with rest", ServerConfig{Host: "0.0.0.0",
+			REST: ServerRESTConfig{Enabled: true},
+			MCP:  ServerMCPConfig{Enabled: true, BindAddress: "127.0.0.1"}}, "", "server.mcp.bind_address", false},
+		{"nothing enabled", ServerConfig{Host: "10.9.9.9"}, "10.9.9.9", "", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			host, key, ok := tc.cfg.NodeListenHost()
+			assert.Equal(t, tc.ok, ok)
+			assert.Equal(t, tc.key, key)
+			assert.Equal(t, tc.host, host)
+		})
+	}
+}
+
 // TestResolveSealedBindHostDefaultsToLoopback verifies that an unset
 // SealedBindHost resolves to loopback even when Server.Host binds all
 // interfaces — the sealed-window surface must never inherit Host.

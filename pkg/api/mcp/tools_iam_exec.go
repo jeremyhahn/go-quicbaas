@@ -49,6 +49,10 @@ var iamTenantScopedTools = map[string]struct{}{
 	"quicbaas_iam_audit_query":     {},
 	"quicbaas_iam_audit_get":       {},
 	"quicbaas_iam_audit_delete":    {},
+	// The self-service session tools act on the caller's own tenant; a
+	// tenant_id naming another is refused here.
+	"quicbaas_iam_session_list":       {},
+	"quicbaas_iam_session_revoke_all": {},
 }
 
 // scopeIAMTenant applies the REST cross-tenant rule to an IAM tool call: the
