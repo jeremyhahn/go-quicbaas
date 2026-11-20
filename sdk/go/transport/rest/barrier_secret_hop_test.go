@@ -13,6 +13,7 @@ import (
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
 
@@ -71,6 +72,12 @@ func requireRefusal(t *testing.T, err error, what string) {
 	}
 	if strings.Contains(err.Error(), unsealSecret) {
 		t.Fatalf("%s: the refusal names the secret: %v", what, err)
+	}
+	if got := errors.Code(err); got != errors.CodeForbidden {
+		t.Fatalf("%s: code = %v, want CodeForbidden: %v", what, got, err)
+	}
+	if errors.IsRetryable(err) {
+		t.Fatalf("%s: refusal is retryable: %v", what, err)
 	}
 }
 

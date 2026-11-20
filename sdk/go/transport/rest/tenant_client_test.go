@@ -508,6 +508,9 @@ func TestTenantClient_BearerRedirects(t *testing.T) {
 						if got := errors.Code(err); got != errors.CodeForbidden {
 							t.Errorf("code = %v, want CodeForbidden", got)
 						}
+						if errors.IsRetryable(err) {
+							t.Errorf("refusal is retryable: %v", err)
+						}
 						if saw.Load() {
 							t.Errorf("redirect target received the bearer")
 						}
@@ -515,5 +518,60 @@ func TestTenantClient_BearerRedirects(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestTenantClient_SecretHopRefusalIsForbidden pins that the secret-hop
+// guard's refusal of a tenant unseal (an http base, or a redirect to http)
+// reaches the caller as CodeForbidden and not retryable, and that no request
+// reaches the plaintext server.
+func TestTenantClient_SecretHopRefusalIsForbidden(t *testing.T) {
+	var hits atomic.Int32
+	plain := countingServer(&hits)
+	t.Cleanup(plain.Close)
+
+	requireForbidden := func(t *testing.T, err error) {
+		t.Helper()
+		if err == nil {
+			t.Fatal("got nil error, want a refusal")
+		}
+		if got := errors.Code(err); got != errors.CodeForbidden {
+			t.Errorf("code = %v, want CodeForbidden: %v", got, err)
+		}
+		if errors.IsRetryable(err) {
+			t.Errorf("refusal is retryable: %v", err)
+		}
+		if stderrors.Is(err, ErrInsecureRedirect) {
+			t.Errorf("err = %v, want the secret-hop refusal, not ErrInsecureRedirect", err)
+		}
+	}
+	unseal := func(tr *Transport) error {
+		return tr.Tenants(nil).TenantBarrierUnseal(context.Background(),
+			&qrdbtransport.TenantBarrierUnsealRequest{TenantID: "t1", Key: []byte("k")})
+	}
+
+	t.Run("http base", func(t *testing.T) {
+		tr, err := New(&transport.Config{Address: plain.URL, MaxRetries: 0})
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		t.Cleanup(func() { _ = tr.Close() })
+		requireForbidden(t, unseal(tr))
+	})
+
+	t.Run("redirect", func(t *testing.T) {
+		srv := redirectingTLSServer("/v1/tenants/t1/barrier/unseal",
+			func(*httptest.Server) string { return plain.URL + "/v1/tenants/t1/barrier/unseal" },
+			recordingHandler(new(atomic.Int32)))
+		t.Cleanup(srv.Close)
+		for name, tr := range newTLSTransports(t, srv) {
+			t.Run(name, func(t *testing.T) {
+				requireForbidden(t, unseal(tr))
+			})
+		}
+	})
+
+	if n := hits.Load(); n != 0 {
+		t.Fatalf("plaintext server received %d requests, want 0", n)
 	}
 }

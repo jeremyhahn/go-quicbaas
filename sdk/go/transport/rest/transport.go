@@ -1423,6 +1423,15 @@ func (t *Transport) convertHTTPError(err error, op string) error {
 		return errors.Wrap(err, errors.CodeTimeout, op, "request timeout")
 	}
 
+	// A refusal from a guard beneath the client (secretHopRoundTripper) or
+	// from a CheckRedirect policy reaches here wrapped in *url.Error, which
+	// is a net.Error: keep the guard's code (CodeForbidden, not retryable)
+	// instead of reporting a retryable network failure.
+	var qbErr *errors.QBError
+	if stderrors.As(err, &qbErr) {
+		return errors.Wrap(err, qbErr.Code, op, "request refused before it was sent")
+	}
+
 	// Check for network errors
 	var netErr net.Error
 	if stderrors.As(err, &netErr) {
