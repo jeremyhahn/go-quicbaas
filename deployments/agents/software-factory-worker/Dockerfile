@@ -239,8 +239,8 @@ FROM debian:trixie-slim
 # not built invariant-globalization), named rather than left to arrive with
 # WebKit; jq is what release scripts run in a worker need, starting with
 # go-enclave's release.sh (go-quicbaas#1431); the headless JDK, at the
-# OPENJDK_MAJOR pin (toolchain.mk), is the Java a Kotlin or Java project builds
-# with (go-quicbaas#1746).
+# OPENJDK_MAJOR pin (toolchain.mk), is the Java a Java project builds with
+# (go-quicbaas#1746).
 ARG OPENJDK_MAJOR
 RUN set -eux; \
     if [ -z "${OPENJDK_MAJOR}" ]; then \
@@ -698,35 +698,6 @@ RUN set -eux; \
     install -m 0755 /tmp/marksman /usr/local/bin/marksman; \
     rm -f /tmp/marksman; \
     test "$(marksman --version)" = "${MARKSMAN_VERSION}"
-
-# THE KOTLIN LANGUAGE SERVER, JetBrains' kotlin-server release tarball, its
-# SHA-256 per architecture pinned beside the version as the release's .sha256
-# files publish it (toolchain.mk). It runs on the JetBrains runtime it bundles,
-# not the JDK above. kotlin-lsp.sh resolves its own symlinks, so the PATH entry
-# is a link into /opt/kotlin-lsp (go-quicbaas#1746).
-ARG KOTLIN_LSP_VERSION
-ARG KOTLIN_LSP_SHA256_X86_64
-ARG KOTLIN_LSP_SHA256_AARCH64
-RUN set -eux; \
-    for pin in KOTLIN_LSP_VERSION KOTLIN_LSP_SHA256_X86_64 KOTLIN_LSP_SHA256_AARCH64; do \
-        if [ -z "$(printenv "$pin")" ]; then \
-            echo "$pin is a required build argument. Build with 'make build-worker-image', which passes the repository's pins." >&2; \
-            exit 1; \
-        fi; \
-    done; \
-    case "$(uname -m)" in \
-        x86_64) tarball="kotlin-server-${KOTLIN_LSP_VERSION}.tar.gz"; sum="$KOTLIN_LSP_SHA256_X86_64" ;; \
-        aarch64) tarball="kotlin-server-${KOTLIN_LSP_VERSION}-aarch64.tar.gz"; sum="$KOTLIN_LSP_SHA256_AARCH64" ;; \
-        *) echo "no pinned Kotlin language server release for $(uname -m)" >&2; exit 1 ;; \
-    esac; \
-    curl -fsSL -o "/tmp/$tarball" "https://download.jetbrains.com/language-server/kotlin-server/${KOTLIN_LSP_VERSION}/$tarball"; \
-    echo "$sum  /tmp/$tarball" | sha256sum -c -; \
-    mkdir -p /opt/kotlin-lsp; \
-    tar -xzf "/tmp/$tarball" -C /opt/kotlin-lsp --strip-components=1 --no-same-owner; \
-    rm -f "/tmp/$tarball"; \
-    ln -s /opt/kotlin-lsp/kotlin-lsp.sh /usr/local/bin/kotlin-lsp; \
-    test -x /opt/kotlin-lsp/bin/intellij-server; \
-    command -v kotlin-lsp
 
 # NPM, AND THE npm-PUBLISHED LANGUAGE SERVERS serena drives: pyright (Python),
 # typescript-language-server with the TypeScript it drives (TypeScript and
@@ -1428,5 +1399,4 @@ LABEL org.opencontainers.image.title="QuicBaaS Software Factory Worker" \
       io.quicbaas.worker.clangd.version="${CLANGD_VERSION}" \
       io.quicbaas.worker.rust-analyzer.version="${RUST_ANALYZER_VERSION}" \
       io.quicbaas.worker.marksman.version="${MARKSMAN_VERSION}" \
-      io.quicbaas.worker.kotlin-lsp.version="${KOTLIN_LSP_VERSION}" \
       io.quicbaas.worker.openjdk.version="${OPENJDK_MAJOR}"
