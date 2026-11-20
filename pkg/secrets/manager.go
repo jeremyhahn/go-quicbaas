@@ -459,7 +459,7 @@ func (m *Manager) GetVersion(ctx context.Context, path string, version int) (map
 
 	data, metadata, err := m.backend.GetVersion(ctx, path, version)
 	if err != nil {
-		if stderrors.Is(err, ErrSecretNotFound) || stderrors.Is(err, ErrVersionNotFound) {
+		if stderrors.Is(err, ErrSecretNotFound) || stderrors.Is(err, ErrVersionNotFound) || stderrors.Is(err, ErrVersionDestroyed) {
 			return nil, nil, &errors.QBError{
 				Code: errors.ErrNotFound,
 				Op:   "Manager.GetVersion",

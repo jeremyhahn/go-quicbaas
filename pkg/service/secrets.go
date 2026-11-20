@@ -334,10 +334,12 @@ func (s *secretsService) GetSecret(ctx context.Context, req *GetSecretRequest) (
 	// Retrieve the secret, its reported version and that version's write
 	// time. A latest-version read is a pointer read, a version read and a
 	// history read; a concurrent write's retention prune can remove the
-	// version between them (ErrVersionNotFound from the read, or a history
-	// without its write time). That is not an error for the caller: the
-	// secret exists, so the whole current read is retried and returns the
-	// version that replaced it. A requested version that is gone is gone.
+	// version between them (ErrVersionNotFound or ErrVersionDestroyed from
+	// the read, or a history without its write time). That is not an error
+	// for the caller: the secret exists, so the whole current read is
+	// retried and returns the version that replaced it. A requested version
+	// that is gone is gone: one pruned before the read, or pruned between
+	// the read and the history read, is not found.
 	var (
 		data      map[string][]byte
 		metadata  map[string]string
@@ -351,7 +353,7 @@ func (s *secretsService) GetSecret(ctx context.Context, req *GetSecretRequest) (
 		} else {
 			data, metadata, err = s.secretsManager.Get(ctx, scopedID)
 		}
-		if err != nil && retry && stderrors.Is(err, secrets.ErrVersionNotFound) {
+		if err != nil && retry && (stderrors.Is(err, secrets.ErrVersionNotFound) || stderrors.Is(err, secrets.ErrVersionDestroyed)) {
 			continue
 		}
 		if err != nil {
@@ -388,6 +390,15 @@ func (s *secretsService) GetSecret(ctx context.Context, req *GetSecretRequest) (
 		}
 		if retry {
 			continue
+		}
+		if requested > 0 {
+			// A write's retention prune between the version read and the
+			// history read removed the requested version: recheck it, and
+			// report a version that is now gone as not found.
+			if _, _, recheckErr := s.secretsManager.GetVersion(ctx, scopedID, requested); recheckErr != nil && secretLookupCode(recheckErr) == errors.ErrNotFound {
+				err = recheckErr
+				break
+			}
 		}
 		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
@@ -2107,13 +2118,15 @@ func (s *secretsService) EnsureSecret(ctx context.Context, req *EnsureSecretRequ
 // backend told the caller that a secret it had named correctly did not exist
 // — and a reference check on save then refused a correct reference. A
 // failure that is not an absence keeps its own code, or is unavailable when
-// it carries none.
+// it carries none. A version that retention pruned or that was destroyed
+// (ErrVersionDestroyed) is absent too, so it is not-found.
 func secretLookupCode(err error) errors.ErrorCode {
 	switch {
 	case errors.IsNotFound(err),
 		stderrors.Is(err, secrets.ErrSecretNotFound),
 		stderrors.Is(err, secrets.ErrSecretDeleted),
-		stderrors.Is(err, secrets.ErrVersionNotFound):
+		stderrors.Is(err, secrets.ErrVersionNotFound),
+		stderrors.Is(err, secrets.ErrVersionDestroyed):
 		return errors.ErrNotFound
 	case errors.Code(err) != errors.ErrUnknown:
 		return errors.Code(err)
