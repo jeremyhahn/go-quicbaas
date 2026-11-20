@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/tls"
 	"net"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
+	"google.golang.org/protobuf/types/known/emptypb"
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
@@ -764,6 +766,56 @@ func TestRequestWithRetry_ContextCanceledDuringBackoff(t *testing.T) {
 		t.Fatal("expected error after context cancel")
 	}
 	// May be canceled error or the initial request error
+}
+
+// TestRequestWithRetry_ContextEndsDuringBackoffKeepsLastError checks that a
+// retry ended by its context still reports why the attempt before it failed:
+// the error keeps CodeCanceled and names the last attempt's error.
+func TestRequestWithRetry_ContextEndsDuringBackoffKeepsLastError(t *testing.T) {
+	const attemptMsg = "shard-7 leader unreachable"
+
+	lis := bufconn.Listen(bufSize)
+	srv := grpc.NewServer(grpc.UnknownServiceHandler(func(interface{}, grpc.ServerStream) error {
+		return status.Error(codes.Unavailable, attemptMsg)
+	}))
+	go func() { _ = srv.Serve(lis) }()
+	defer func() {
+		srv.Stop()
+		_ = lis.Close()
+	}()
+	ts := &testServer{lis: lis, server: srv}
+
+	p, err := NewPool("bufnet", ts.dialOpts(), &PoolConfig{
+		MinSize: 1, MaxSize: 2, MaxAge: time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("failed to create pool: %v", err)
+	}
+
+	tr := &Transport{
+		cfg: &transport.Config{
+			MaxRetries:      10,
+			RetryBackoff:    5 * time.Second, // the context ends during this wait
+			MaxRetryBackoff: 5 * time.Second,
+			Timeout:         time.Second,
+		},
+		pool: p,
+	}
+	defer tr.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	_, err = tr.requestWithRetry(ctx, "test.Service", "Method", &emptypb.Empty{})
+	if err == nil {
+		t.Fatal("expected an error once the context ended")
+	}
+	if got := errors.Code(err); got != errors.CodeCanceled {
+		t.Errorf("errors.Code(err) = %v, want %v (err: %v)", got, errors.CodeCanceled, err)
+	}
+	if !strings.Contains(err.Error(), attemptMsg) {
+		t.Errorf("error %q does not name the last attempt's error %q", err.Error(), attemptMsg)
+	}
 }
 
 // TestRequestWithRetry_ExhaustsRetries tests exhausting all retries.
@@ -1649,14 +1701,65 @@ func TestPool_ReplaceConnection(t *testing.T) {
 		t.Fatalf("failed to get connection: %v", err)
 	}
 
+	// Record the pool entry Get handed out and every entry present before
+	// Put, so the replacement can be told apart from the original.
+	var original *pooledConn
+	before := make(map[*pooledConn]bool)
+	p.mu.Lock()
+	for _, pc := range p.connections {
+		before[pc] = true
+		if pc.conn == conn {
+			original = pc
+		}
+	}
+	p.mu.Unlock()
+	if original == nil {
+		t.Fatal("connection returned by Get is not in the pool")
+	}
+
 	time.Sleep(5 * time.Millisecond)
 
 	p.Put(conn)
 
-	time.Sleep(50 * time.Millisecond)
+	// Put replaces the expired connection asynchronously. Wait, under the
+	// pool mutex, until the original entry has left the pool and the pool is
+	// back to MinSize, so the replacement has finished before the deferred
+	// p.Close and ts.stop run.
+	var replacement *pooledConn
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		p.mu.Lock()
+		stillThere := false
+		replacement = nil
+		for _, pc := range p.connections {
+			if pc == original {
+				stillThere = true
+			}
+			if !before[pc] {
+				replacement = pc
+			}
+		}
+		size := len(p.connections)
+		p.mu.Unlock()
 
+		if !stillThere && size >= cfg.MinSize {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expired connection not replaced within 5s (still in pool: %v, size %d, min %d)",
+				stillThere, size, cfg.MinSize)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if replacement == nil {
+		t.Fatal("expired connection was removed but no replacement connection was added")
+	}
+	if !p.isHealthy(replacement) {
+		t.Fatalf("replacement connection is not healthy: state %v", replacement.conn.GetState())
+	}
 	if !p.Healthy() {
-		t.Error("expected pool to be healthy after replacement")
+		t.Fatal("expected pool to be healthy after replacement")
 	}
 }
 

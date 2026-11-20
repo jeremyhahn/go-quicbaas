@@ -197,10 +197,17 @@ Publishes to channel `signal:accounts:{eventType}`. Event types: `registered`,
 ```go
 func NewSignalService(
     kvClient qrdbtransport.KVClient,
+    txnClient qrdbtransport.TransactionClient,
     log *logger.Logger,
     cfg *SignalConfig,
 ) SignalService
 ```
 
 Creates a new `SignalService`. The service is not active until `Start` is
-called.
+called. `txnClient` is the transaction client of the same go-qrdb database
+as `kvClient`: one-time pre-keys are consumed with an atomic
+compare-and-delete through it. Without one, every tenant operation fails
+with `ErrNoTransactions`.
+
+`GetPreKeys` fails when a one-time pre-key cannot be consumed for any reason
+other than exhaustion, rather than returning a bundle without the key.

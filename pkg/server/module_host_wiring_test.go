@@ -44,14 +44,14 @@ func newModuleHostTestServer(t *testing.T, opts ...ServerOption) *Server {
 // exactly one option per module.
 func TestUnifiedModuleServerOptions_ThreadsHostModules(t *testing.T) {
 	baseline := newModuleHostTestServer(t)
-	baseOpts, err := baseline.unifiedModuleServerOptions(nil)
+	baseOpts, err := baseline.unifiedModuleServerOptions(nil, false)
 	require.NoError(t, err)
 
 	hosted := newModuleHostTestServer(t,
 		WithModule(newHostTestModule("platform", "/api/v1/platform/devices")),
 		WithModule(newHostTestModule("fleet", "/api/v1/fleet/nodes")),
 	)
-	hostedOpts, err := hosted.unifiedModuleServerOptions(nil)
+	hostedOpts, err := hosted.unifiedModuleServerOptions(nil, false)
 	require.NoError(t, err)
 
 	assert.Equal(t, len(baseOpts)+2, len(hostedOpts),
@@ -63,7 +63,7 @@ func TestUnifiedModuleServerOptions_ThreadsHostModules(t *testing.T) {
 // is appended.
 func TestUnifiedModuleServerOptions_DefaultCompositionUnchanged(t *testing.T) {
 	srv := newModuleHostTestServer(t)
-	opts, err := srv.unifiedModuleServerOptions(nil)
+	opts, err := srv.unifiedModuleServerOptions(nil, false)
 	require.NoError(t, err)
 	assert.NotEmpty(t, opts, "the default composition still mounts quicbaas and xkms")
 	assert.Empty(t, srv.opts.hostModules)
@@ -78,7 +78,7 @@ func TestUnifiedModuleServerOptions_CollidingHostModulesFailConstruction(t *test
 		WithModule(newHostTestModule("fleet", "/api/v1/shared")),
 	)
 
-	opts, err := srv.unifiedModuleServerOptions(nil)
+	opts, err := srv.unifiedModuleServerOptions(nil, false)
 	require.Error(t, err)
 	assert.Nil(t, opts)
 
@@ -109,11 +109,11 @@ func TestUnifiedModuleServerOptions_MountedModulesAreRepeatable(t *testing.T) {
 	srv := newModuleHostTestServer(t,
 		WithModule(newHostTestModule("platform", "/api/v1/platform/devices")))
 
-	first, err := srv.unifiedModuleServerOptions(nil)
+	first, err := srv.unifiedModuleServerOptions(nil, false)
 	require.NoError(t, err)
 
 	for i := 0; i < 3; i++ {
-		again, err := srv.unifiedModuleServerOptions(nil)
+		again, err := srv.unifiedModuleServerOptions(nil, false)
 		require.NoErrorf(t, err, "assembly %d must not fail on a repeated registration", i+2)
 		assert.Len(t, again, len(first),
 			"a repeated registration must produce the same option set")
