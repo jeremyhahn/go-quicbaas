@@ -218,3 +218,41 @@ func TestRecoveryOfficerRegister_DecodesPEMText(t *testing.T) {
 		t.Fatalf("RecoveryOfficerRegister = {CertPEM: %q, ShareIndex: %d}, want {%q, 3}", resp.CertPEM, resp.ShareIndex, testCertPEM)
 	}
 }
+
+// TestBarrierShareListsAreCommaSeparatedStrings pins the wire contract of the
+// native go-qrdb v0.30.1-alpha MCP barrier handlers the composed node serves:
+// qrdb_barrier_shamir_unseal_shares, qrdb_barrier_recovery_recover and
+// qrdb_barrier_root_token declare shares/keys with mcp.WithString, read them
+// with mcp.ParseString and split the value on ",". A JSON array arrives there
+// as "shares is required"/"keys is required", so the lists go as one
+// comma-separated string, as go-qrdb's own MCP client sends them.
+func TestBarrierShareListsAreCommaSeparatedStrings(t *testing.T) {
+	const (
+		unsealTool  = "qrdb_barrier_shamir_unseal_shares"
+		recoverTool = "qrdb_barrier_recovery_recover"
+		rootTool    = "qrdb_barrier_root_token"
+	)
+	got := map[string]map[string]interface{}{}
+	tr, _ := newMultiToolMCPServerTLS(t, []string{unsealTool, recoverTool, rootTool}, recordArgs(got, nil))
+	ctx := context.Background()
+
+	if err := tr.BarrierUnsealWithShares(ctx, &qrdbtransport.BarrierUnsealSharesRequest{
+		Shares: []string{"s1", "s2", "s3"},
+	}); err != nil {
+		t.Fatalf("BarrierUnsealWithShares: %v", err)
+	}
+	if err := tr.BarrierRecoverWithKeys(ctx, &qrdbtransport.BarrierRecoverWithKeysRequest{
+		Keys: []string{"k1", "k2"},
+	}); err != nil {
+		t.Fatalf("BarrierRecoverWithKeys: %v", err)
+	}
+	if _, err := tr.BarrierGenerateRootToken(ctx, &qrdbtransport.BarrierGenerateRootTokenRequest{
+		Shares: []string{"s1", "s2"},
+	}); err != nil {
+		t.Fatalf("BarrierGenerateRootToken: %v", err)
+	}
+
+	assertStringArg(t, unsealTool, got[unsealTool], "shares", "s1,s2,s3")
+	assertStringArg(t, recoverTool, got[recoverTool], "keys", "k1,k2")
+	assertStringArg(t, rootTool, got[rootTool], "shares", "s1,s2")
+}

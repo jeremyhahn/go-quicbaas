@@ -171,14 +171,14 @@ func (t *Transport) BarrierUnsealWithShare(ctx context.Context, req *qrdbtranspo
 
 // BarrierUnsealWithShares unseals the barrier in a single call with a complete
 // set of Shamir shares by calling the qrdb_barrier_shamir_unseal_shares
-// MCP tool. The shares are sent as a JSON array argument so the server's
-// strongly-typed parser does not have to split a comma-separated string.
+// MCP tool. The shares are sent as one comma-separated string: the node's
+// handler reads the argument as a string and splits it on ",".
 func (t *Transport) BarrierUnsealWithShares(ctx context.Context, req *qrdbtransport.BarrierUnsealSharesRequest) error {
 	if req == nil {
 		return errors.NewInvalidInput("mcp.BarrierUnsealWithShares", "request is required")
 	}
 	if _, err := t.callBarrier(ctx, "qrdb_barrier_shamir_unseal_shares", map[string]interface{}{
-		"shares": stringsToInterfaces(req.Shares),
+		"shares": strings.Join(req.Shares, ","),
 	}); err != nil {
 		return err
 	}
@@ -248,7 +248,7 @@ func (t *Transport) BarrierRecoverWithKeys(ctx context.Context, req *qrdbtranspo
 		return errors.NewInvalidInput("mcp.BarrierRecoverWithKeys", "request is required")
 	}
 	if _, err := t.callBarrier(ctx, "qrdb_barrier_recovery_recover", map[string]interface{}{
-		"keys": stringsToInterfaces(req.Keys),
+		"keys": strings.Join(req.Keys, ","),
 	}); err != nil {
 		return err
 	}
@@ -287,7 +287,7 @@ func (t *Transport) BarrierGenerateRootToken(ctx context.Context, req *qrdbtrans
 		return nil, errors.NewInvalidInput("mcp.BarrierGenerateRootToken", "request is required")
 	}
 	raw, err := t.callBarrier(ctx, "qrdb_barrier_root_token", map[string]interface{}{
-		"shares": stringsToInterfaces(req.Shares),
+		"shares": strings.Join(req.Shares, ","),
 	})
 	if err != nil {
 		return nil, err
