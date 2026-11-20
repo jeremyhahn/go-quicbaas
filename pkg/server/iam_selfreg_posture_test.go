@@ -106,7 +106,7 @@ func TestUnifiedModuleServerOptions_WarnsWhenSelfRegistrationOpen(t *testing.T) 
 		buf := captureServerLog(t, srv)
 		srv.config.IAM.SelfServiceRegistration.Enabled = enabled
 
-		_, err := srv.unifiedModuleServerOptions(nil)
+		_, err := srv.unifiedModuleServerOptions(nil, false)
 		require.NoError(t, err)
 
 		if enabled {
