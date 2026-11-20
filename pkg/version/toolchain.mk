@@ -56,7 +56,11 @@ GOPLS_VERSION := v0.23.0
 # Drop an entry once the tools' own releases require that version or newer.
 # gosec v2.29.0 (and v2.30.0) require golang.org/x/net below v0.62.0
 # (CVE-2026-78661).
-GO_TOOL_DEPENDENCY_FLOORS := golang.org/x/mod@v0.41.0 golang.org/x/net@v0.62.0 golang.org/x/text@v0.42.0 golang.org/x/tools@v0.51.0 google.golang.org/grpc@v1.84.0
+# The floors must agree with each other: a floor's own go.mod can require
+# another listed module above that module's floor (x/net v0.62.0 requires
+# x/text v0.43.0), and the build applies every floor in one `go get`, which
+# then fails rather than lowering one floor to satisfy another.
+GO_TOOL_DEPENDENCY_FLOORS := golang.org/x/mod@v0.41.0 golang.org/x/net@v0.62.0 golang.org/x/text@v0.43.0 golang.org/x/tools@v0.51.0 google.golang.org/grpc@v1.84.0
 # trivy, the scanner `make security` ends with (devops.md section 8). From its
 # release tarball, each architecture's SHA-256 as the release's own
 # trivy_<version>_checksums.txt publishes it: change all three together. Pins
