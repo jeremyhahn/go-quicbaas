@@ -88,9 +88,13 @@ func TestJSONRPCError(t *testing.T) {
 			{MCPAuthenticationRequired, errors.CodeUnauthorized},
 			{MCPInvalidToken, errors.CodeUnauthorized},
 			{MCPPermissionDenied, errors.CodeForbidden},
-			{-32050, errors.CodeInternal}, // Server error range
-			{-32000, errors.CodeInternal}, // Server error range
-			{12345, errors.CodeUnknown},   // Unknown code
+			{-32050, errors.CodeInternal},     // Server error range
+			{-32000, errors.CodeInternal},     // Server error range
+			{-32015, errors.CodeConflict},     // go-qrdb Aborted
+			{-32016, errors.CodeInvalidInput}, // go-qrdb OutOfRange
+			{-32017, errors.CodeInternal},     // go-qrdb DataLoss
+			{-32018, errors.CodeUnknown},      // go-qrdb Unknown
+			{12345, errors.CodeUnknown},       // Unknown code
 		}
 
 		for _, tc := range tests {
@@ -123,6 +127,10 @@ func TestMCPApplicationErrorCodesPinned(t *testing.T) {
 		{name: "invalid input", got: MCPInvalidInput, want: -32012},
 		{name: "already exists", got: MCPAlreadyExists, want: -32013},
 		{name: "unimplemented", got: MCPUnimplemented, want: -32014},
+		{name: "aborted", got: MCPAborted, want: -32015},
+		{name: "out of range", got: MCPOutOfRange, want: -32016},
+		{name: "data loss", got: MCPDataLoss, want: -32017},
+		{name: "unknown", got: MCPUnknown, want: -32018},
 	}
 
 	for _, tc := range tests {

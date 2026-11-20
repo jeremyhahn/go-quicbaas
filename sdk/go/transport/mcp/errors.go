@@ -47,6 +47,11 @@ const (
 	MCPInvalidInput        = -32012
 	MCPAlreadyExists       = -32013
 	MCPUnimplemented       = -32014
+	// go-qrdb's native application codes beyond the shared set above.
+	MCPAborted    = -32015
+	MCPOutOfRange = -32016
+	MCPDataLoss   = -32017
+	MCPUnknown    = -32018
 )
 
 // JSONRPCError represents a JSON-RPC 2.0 error returned by the server.
@@ -122,6 +127,14 @@ func (e *JSONRPCError) mapToErrorCode() errors.ErrorCode {
 		return errors.CodeAlreadyExists
 	case MCPUnimplemented:
 		return errors.CodeUnimplemented
+	case MCPAborted:
+		return errors.CodeConflict
+	case MCPOutOfRange:
+		return errors.CodeInvalidInput
+	case MCPDataLoss:
+		return errors.CodeInternal
+	case MCPUnknown:
+		return errors.CodeUnknown
 
 	default:
 		// Check for server-defined error range
