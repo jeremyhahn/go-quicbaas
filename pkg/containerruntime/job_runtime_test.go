@@ -424,6 +424,53 @@ func TestJobRuntime_RunInteractive_StreamsStdoutAndReportsExit(t *testing.T) {
 	require.NoError(t, proc.Stdout.Close())
 }
 
+// An auto-remove interactive container that exits at once still reports its
+// exit code: its removal never races the supervisor's wait.
+func TestJobRuntime_RunInteractive_FastExitWithAutoRemoveReportsItsCode(t *testing.T) {
+	jr, doubles := newTestJobRuntime(t)
+	doubles.engine.initResult = &fakeResult{exitCode: 7}
+
+	for i := range 50 {
+		proc, err := jr.RunInteractive(t.Context(), &orchestration.ContainerSpec{
+			Network:    "none",
+			Image:      "alpine:latest",
+			AutoRemove: true,
+		})
+		require.NoError(t, err, "launch %d", i)
+
+		_, err = io.ReadAll(proc.Stdout)
+		require.NoError(t, err)
+		require.Equal(t, orchestration.ContainerExit{Known: true, Code: 7}, proc.Wait(t.Context()), "launch %d", i)
+
+		_, err = jr.IsRunning(t.Context(), proc.ContainerID)
+		require.ErrorIs(t, err, orchestration.ErrContainerNotFound, "launch %d: the exited container is removed", i)
+		require.NoError(t, proc.Stdin.Close())
+		require.NoError(t, proc.Stdout.Close())
+	}
+}
+
+// The interactive supervisor, not the runtime, removes the container, so the
+// container is created without runtime auto-removal.
+func TestJobRuntime_RunInteractive_SupervisorOwnsRemoval(t *testing.T) {
+	jr, _ := newTestJobRuntime(t)
+	ctx, cancel := context.WithCancel(t.Context())
+
+	spec := &orchestration.ContainerSpec{Network: "none", Image: "alpine:latest", AutoRemove: true}
+	proc, err := jr.RunInteractive(ctx, spec)
+	require.NoError(t, err)
+	assert.True(t, spec.AutoRemove, "the caller's spec is left as it was")
+
+	state, err := jr.runtime.InspectContainer(t.Context(), proc.ContainerID)
+	require.NoError(t, err)
+	require.NotNil(t, state.Config)
+	assert.False(t, state.Config.AutoRemove, "the runtime does not auto-remove an interactive container")
+
+	cancel()
+	proc.Wait(t.Context())
+	require.NoError(t, proc.Stdin.Close())
+	require.NoError(t, proc.Stdout.Close())
+}
+
 func TestJobRuntime_RunInteractive_ContextEndKillsAndRemoves(t *testing.T) {
 	jr, doubles := newTestJobRuntime(t)
 	ctx, cancel := context.WithCancel(t.Context())

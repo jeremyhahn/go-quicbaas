@@ -235,7 +235,7 @@ func (j *JobRuntime) RunImage(ctx context.Context, spec *orchestration.ImageRunS
 		return nil, err
 	}
 
-	id, err := j.launch(ctx, containerSpec, func(id string) error {
+	id, err := j.launch(ctx, containerSpec, false, func(id string) error {
 		return j.runtime.startInit(id, func(init *processSpec) {
 			if spec.Stdin != nil {
 				init.Stdin = bytes.NewReader(spec.Stdin)

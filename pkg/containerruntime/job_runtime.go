@@ -72,7 +72,7 @@ func NewJobRuntime(runtime *Runtime) *JobRuntime {
 // starts a detached container. It returns the container ID. A pinned spec is
 // launched by digest, and the stored image must resolve to that digest.
 func (j *JobRuntime) Run(ctx context.Context, spec *orchestration.ContainerSpec) (string, error) {
-	return j.launch(ctx, spec, func(id string) error {
+	return j.launch(ctx, spec, false, func(id string) error {
 		return j.runtime.StartContainer(ctx, id)
 	})
 }
@@ -80,10 +80,16 @@ func (j *JobRuntime) Run(ctx context.Context, spec *orchestration.ContainerSpec)
 // launch creates the container spec describes, pulling its image when the
 // store lacks it, and runs start on it. A container whose start fails is
 // removed.
-func (j *JobRuntime) launch(ctx context.Context, spec *orchestration.ContainerSpec, start func(id string) error) (string, error) {
+func (j *JobRuntime) launch(ctx context.Context, spec *orchestration.ContainerSpec, supervised bool, start func(id string) error) (string, error) {
 	config, err := jobContainerConfig(spec)
 	if err != nil {
 		return "", err
+	}
+	if supervised {
+		// The supervisor removes the container once it has recorded the
+		// exit; runtime auto-removal could remove it before the supervisor
+		// reads the exit code.
+		config.AutoRemove = false
 	}
 	if err := j.ensureImage(ctx, config.Image); err != nil {
 		return "", err
@@ -111,7 +117,7 @@ func (j *JobRuntime) launch(ctx context.Context, spec *orchestration.ContainerSp
 // it exits. The environment never leaves the process, so Cleanup is nil.
 func (j *JobRuntime) RunInteractive(ctx context.Context, spec *orchestration.ContainerSpec) (*orchestration.InteractiveProcess, error) {
 	var attached *AttachedIO
-	id, err := j.launch(ctx, spec, func(id string) error {
+	id, err := j.launch(ctx, spec, true, func(id string) error {
 		var startErr error
 		attached, startErr = j.runtime.StartAttached(ctx, id)
 		return startErr
