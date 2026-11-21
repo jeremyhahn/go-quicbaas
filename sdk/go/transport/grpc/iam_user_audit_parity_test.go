@@ -179,6 +179,26 @@ func TestIAMUserGetByEmail_EmptyEmail(t *testing.T) {
 	})
 }
 
+// TestIAMUserGetByEmail_NumericInput pins that a non-email never reaches
+// GetUser, which looks an identifier without "@" up as a numeric user ID.
+func TestIAMUserGetByEmail_NumericInput(t *testing.T) {
+	t.Run("client", func(t *testing.T) {
+		server, tr := newIAMParityServer(t)
+		_, err := iam.NewUserClient(tr).GetByEmail(context.Background(), "acme", "30001")
+		require.Error(t, err)
+		assert.True(t, sdkerrors.IsInvalidInput(err), "want a typed invalid-input error, got %v", err)
+		assert.Zero(t, server.calls.Load(), "a numeric email reached the server")
+	})
+	t.Run("transport", func(t *testing.T) {
+		server, tr := newIAMParityServer(t)
+		_, err := tr.Request(context.Background(), "quicbaas.IAM.User", "GetByEmail",
+			map[string]interface{}{"tenant_id": "acme", "email": "30001"})
+		require.Error(t, err)
+		assert.True(t, sdkerrors.IsInvalidInput(err), "want a typed invalid-input error, got %v", err)
+		assert.Zero(t, server.calls.Load(), "a numeric email reached the server")
+	})
+}
+
 // FindByUsername goes through GetUserByUsername, which carries GetUser's
 // authorization.
 func TestIAMUserFindByUsername_CallsGetUserByUsername(t *testing.T) {

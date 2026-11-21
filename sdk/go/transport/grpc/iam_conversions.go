@@ -15,6 +15,7 @@ package grpc
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -110,6 +111,11 @@ func (h *iamHandler) handleGetUserByEmail(ctx context.Context, client iampb.IAMS
 	email, _ := getString(reqMap, "email")
 	if email == "" {
 		return nil, errors.NewInvalidInput("handleGetUserByEmail", "email is required")
+	}
+	// GetUser treats an id without "@" as a numeric user ID, so a non-email
+	// must never reach it: GetByEmail("30001") would return user 30001.
+	if !strings.Contains(email, "@") {
+		return nil, errors.NewInvalidInput("handleGetUserByEmail", "email must contain @")
 	}
 
 	resp, err := client.GetUser(ctx, &iampb.GetUserRequest{TenantId: tenantID, UserId: email})
