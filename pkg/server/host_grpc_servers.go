@@ -20,7 +20,7 @@ import (
 type HostGRPCNotReadyError struct{}
 
 func (e *HostGRPCNotReadyError) Error() string {
-	return "quicbaas federation and session services are not yet available: IAM initialisation has not completed"
+	return "quicbaas federation, session and IAM services are not yet available: IAM initialisation has not completed"
 }
 
 // GRPCStatus maps the error onto gRPC Unavailable.
@@ -32,10 +32,12 @@ func (e *HostGRPCNotReadyError) GRPCStatus() *status.Status {
 // service facade does not expose. They are built once and shared: the
 // Unix-socket gRPC server registers them, and the quicbaas module mounts the
 // same instances on the node's TCP gRPC server (WithHostGRPCServers), so both
-// listeners serve one session store.
+// listeners serve one session store. The servers are FederationService,
+// SessionService and IAMService.
 //
 // The node accepts requests before startService attaches IAM, so a call can
-// arrive while the facade has no federation manager or session storage yet.
+// arrive while the facade has no federation manager, session storage or IAM
+// components yet.
 // Until attachIAMComponents marks IAM ready, hostGRPCServers returns
 // HostGRPCNotReadyError and builds nothing, so no server over missing IAM
 // components is ever cached. Lock-free: concurrent first calls after IAM is
@@ -55,13 +57,14 @@ func (s *Server) hostGRPCServers() (apimodule.HostGRPCServers, error) {
 	return *built, nil
 }
 
-// buildHostGRPCServers builds the federation and session servers when the
-// facade carries IAM components; otherwise both stay nil.
+// buildHostGRPCServers builds the federation, session and IAMService servers
+// when the facade carries IAM components; otherwise all three stay nil.
 func (s *Server) buildHostGRPCServers() *apimodule.HostGRPCServers {
 	built := &apimodule.HostGRPCServers{}
 	if getter, ok := s.quicBaaSServiceRef().(iamComponentsGetter); ok {
 		built.Federation = s.buildFederationServer(getter)
 		built.Session = s.buildSessionServer(getter)
+		built.IAM = s.buildIAMServer(getter)
 	}
 	return built
 }

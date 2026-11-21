@@ -25,7 +25,10 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
@@ -34,11 +37,17 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	ggrpc "google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/status"
 
+	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
+	iampb "github.com/jeremyhahn/go-quicbaas/api/proto/iam"
 	restapi "github.com/jeremyhahn/go-quicbaas/pkg/api/rest"
 	"github.com/jeremyhahn/go-quicbaas/pkg/backup"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	dbxkms "github.com/jeremyhahn/go-quicbaas/pkg/xkms"
 )
 
 // newTTGRPCServer returns a bare gRPC server for listener-wiring tests.
@@ -57,6 +66,19 @@ func shortTTUnixSocketPath(t *testing.T) string {
 	return filepath.Join(dir, "g.sock")
 }
 
+// requireNodeServesUnixSocket asserts the network-mode ownership of
+// server.unix.socket: the embedded node's Unix listener serves it (behind the
+// node's authentication middleware), and quicbaas's own grpcServer does not
+// bind it.
+func requireNodeServesUnixSocket(t *testing.T, srv *Server, socket string) {
+	t.Helper()
+	require.Nil(t, srv.grpcUnixListener,
+		"quicbaas's own gRPC Unix listener must not bind the socket the node serves")
+	conn, err := net.Dial("unix", socket)
+	require.NoError(t, err, "the embedded node must be listening on server.unix.socket")
+	_ = conn.Close()
+}
+
 // TestServer_InitializeAndShutdown_TT_NetworkGRPC drives a non-embedded
 // initialize so the real gRPC listener body executes and binds, then a graceful
 // Shutdown.
@@ -73,11 +95,12 @@ func TestServer_InitializeAndShutdown_TT_NetworkGRPC(t *testing.T) {
 	saveAndRestoreSeams(t)
 	srv := withTempServer(t)
 	srv.config.Server.Embedded = false
-	srv.config.Server.Unix.Socket = shortTTUnixSocketPath(t)
+	socket := shortTTUnixSocketPath(t)
+	srv.config.Server.Unix.Socket = socket
 
 	require.NoError(t, srv.initialize(), "network initialize must succeed")
 	require.NotNil(t, srv.grpcServer, "gRPC server must be constructed in network mode")
-	require.NotNil(t, srv.grpcUnixListener, "gRPC Unix-socket listener must be bound in network mode")
+	requireNodeServesUnixSocket(t, srv, socket)
 
 	grpcHealth := srv.GetHealthChecker().CheckGRPC()
 	assert.Equal(t, HealthStatusHealthy, grpcHealth.Status,
@@ -86,6 +109,140 @@ func TestServer_InitializeAndShutdown_TT_NetworkGRPC(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	require.NoError(t, srv.Shutdown(ctx), "graceful shutdown must succeed")
+}
+
+// startTTNetworkNodeUnix initialises a network-serving server whose embedded
+// node serves socket over the CA-backed TLS, and shuts it down when the test
+// ends.
+func startTTNetworkNodeUnix(t *testing.T, socket string, opts ...func(*Server)) *Server {
+	t.Helper()
+	saveAndRestoreSeams(t)
+	// Boot on a fresh xkms registry: an earlier server in the process may
+	// have left the global singleton bound to its closed KV or a
+	// non-software default, which leaves the OIDC provider nil and the
+	// RequireAuthz gate unable to start.
+	dbxkms.Reset()
+	t.Cleanup(dbxkms.Reset)
+	srv := withTempServer(t)
+	srv.config.Server.Embedded = false
+	srv.config.Security.TLSEnabled = true
+	srv.config.Server.Unix.Socket = socket
+	for _, opt := range opts {
+		opt(srv)
+	}
+	require.NoError(t, srv.initialize(), "network initialize must succeed")
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		assert.NoError(t, srv.Shutdown(ctx), "graceful shutdown must succeed")
+	})
+	requireNodeServesUnixSocket(t, srv, socket)
+	return srv
+}
+
+// withRequireAuthz turns on Security.RequireAuthz before initialize, so the
+// node's interceptor chain enforces authentication and authorization.
+func withRequireAuthz(srv *Server) { srv.config.Security.RequireAuthz = true }
+
+// startTTNetworkNodeUnixAuthz is startTTNetworkNodeUnix with
+// Security.RequireAuthz on.
+func startTTNetworkNodeUnixAuthz(t *testing.T, socket string) *Server {
+	t.Helper()
+	return startTTNetworkNodeUnix(t, socket, withRequireAuthz)
+}
+
+// dialTTNodeUnix dials the node's Unix socket over verified TLS 1.3 with
+// srv's CA bundle, without credentials.
+func dialTTNodeUnix(t *testing.T, srv *Server, socket string) *ggrpc.ClientConn {
+	t.Helper()
+	bundle, err := srv.xkmsCA.CABundle()
+	require.NoError(t, err)
+	roots := x509.NewCertPool()
+	require.True(t, roots.AppendCertsFromPEM(bundle), "srv's CA bundle holds a certificate")
+	clientTLS := &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots, ServerName: "localhost"}
+	conn, err := ggrpc.NewClient("unix://"+socket, ggrpc.WithTransportCredentials(credentials.NewTLS(clientTLS)))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+	return conn
+}
+
+// TestServer_TT_NetworkGRPC_UnixSocketServesIAM pins that IAMService, which
+// the legacy Unix listener served, stays on the socket when the node serves
+// it: an authenticated RPC is refused by the node's authentication, not
+// answered Unimplemented, and the public GetInvite reaches the handler.
+func TestServer_TT_NetworkGRPC_UnixSocketServesIAM(t *testing.T) {
+	socket := shortTTUnixSocketPath(t)
+	srv := startTTNetworkNodeUnixAuthz(t, socket)
+
+	// The node's Unix server speaks verified TLS 1.3 with srv's certificate.
+	client := iampb.NewIAMServiceClient(dialTTNodeUnix(t, srv, socket))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	_, err := client.ListWebAuthnCredentials(ctx, &iampb.ListWebAuthnCredentialsRequest{})
+	assert.Equal(t, codes.Unauthenticated, status.Code(err),
+		"an unauthenticated ListWebAuthnCredentials must be refused Unauthenticated: %v", err)
+
+	// GetInvite is public: with no TenantId it reaches the handler, whose
+	// tenant check answers InvalidArgument.
+	_, err = client.GetInvite(ctx, &iampb.GetInviteRequest{Token: "bogus-invite-token"})
+	assert.Equal(t, codes.InvalidArgument, status.Code(err),
+		"GetInvite must reach the handler on the socket: %v", err)
+}
+
+// TestServer_TT_NetworkGRPC_UnixSocketServesLegacyXKMSWrappers asserts the
+// node serves the Unix SDK's legacy Crypto, CertificateService, TrustService
+// and PIVService wire names on its Unix socket: an unauthenticated call is
+// refused Unauthenticated when the capability is composed, Unavailable when
+// it is not, and never Unimplemented.
+func TestServer_TT_NetworkGRPC_UnixSocketServesLegacyXKMSWrappers(t *testing.T) {
+	socket := shortTTUnixSocketPath(t)
+	srv := startTTNetworkNodeUnixAuthz(t, socket)
+	conn := dialTTNodeUnix(t, srv, socket)
+
+	expect := func(name string, enabled bool) codes.Code {
+		if enabled {
+			t.Logf("%s: capability composed, expecting Unauthenticated", name)
+			return codes.Unauthenticated
+		}
+		t.Logf("%s: capability not composed, expecting Unavailable", name)
+		return codes.Unavailable
+	}
+	svc := srv.quicBaaSService
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	_, err := pb.NewCryptoClient(conn).Encrypt(ctx, &pb.CryptoEncryptRequest{})
+	assert.Equal(t, expect("Crypto", svc.Crypto() != nil), status.Code(err), "Crypto/Encrypt: %v", err)
+
+	_, err = pb.NewCertificateServiceClient(conn).GetCACertificate(ctx, &pb.GetCACertificateRequest{})
+	assert.Equal(t, expect("CertificateService", svc.Certificate() != nil), status.Code(err),
+		"CertificateService/GetCACertificate: %v", err)
+
+	_, err = pb.NewTrustServiceClient(conn).CrossSignedRootPool(ctx, &pb.CrossSignedRootPoolRequest{})
+	assert.Equal(t, expect("TrustService", svc.Trust() != nil), status.Code(err),
+		"TrustService/CrossSignedRootPool: %v", err)
+
+	_, err = pb.NewPIVServiceClient(conn).ListPIVSlots(ctx, &pb.PIVListSlotsRequest{})
+	assert.Equal(t, expect("PIVService", true), status.Code(err), "PIVService/ListPIVSlots: %v", err)
+}
+
+// TestServer_TT_NetworkGRPC_UnixSocketModes pins that the node's socket keeps
+// the legacy listener's modes: the socket 0660 and a directory the node has
+// to create 0750.
+func TestServer_TT_NetworkGRPC_UnixSocketModes(t *testing.T) {
+	dir := filepath.Join(filepath.Dir(shortTTUnixSocketPath(t)), "sub")
+	socket := filepath.Join(dir, "g.sock")
+	startTTNetworkNodeUnix(t, socket)
+
+	info, err := os.Stat(socket)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o660), info.Mode().Perm(), "socket mode")
+
+	info, err = os.Stat(dir)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o750), info.Mode().Perm(), "socket directory mode")
 }
 
 // TestServer_InitializeAndShutdown_TT_WithObjectStorageAndKMS brings up the
@@ -148,7 +305,8 @@ func TestServer_InitializeAndShutdown_TT_FullStackNetworkGRPC(t *testing.T) {
 	saveAndRestoreSeams(t)
 	srv := withTempServer(t)
 	srv.config.Server.Embedded = false
-	srv.config.Server.Unix.Socket = shortTTUnixSocketPath(t)
+	socket := shortTTUnixSocketPath(t)
+	srv.config.Server.Unix.Socket = socket
 
 	srv.config.ObjectStorage.Enabled = true
 	srv.config.KMS.Enabled = true
@@ -164,7 +322,7 @@ func TestServer_InitializeAndShutdown_TT_FullStackNetworkGRPC(t *testing.T) {
 	require.NoError(t, srv.initialize(), "full-stack network initialize must succeed")
 	require.NotNil(t, srv.embeddedFleetNodeState, "embedded agent must be started")
 	require.NotNil(t, srv.grpcServer, "gRPC server must be constructed in network mode")
-	require.NotNil(t, srv.grpcUnixListener, "gRPC Unix-socket listener must be bound")
+	requireNodeServesUnixSocket(t, srv, socket)
 	require.NotNil(t, srv.catalogManager)
 	require.NotNil(t, srv.backupManager)
 	require.NotNil(t, srv.messagingService)

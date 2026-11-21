@@ -16,6 +16,8 @@
 package mcp
 
 import (
+	"fmt"
+	"math"
 	"strconv"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/api"
@@ -40,6 +42,36 @@ func uint64Arg(args map[string]interface{}, key string) (uint64, error) {
 			return 0, nil
 		}
 		return strconv.ParseUint(v, 10, 64)
+	}
+	return 0, nil
+}
+
+// idOrHashKeyArg reads the entity id of an entity KV tool call. An id
+// that is present must be a uint64: a decimal string ("9007199254740993"
+// keeps its exact value above 2^53) or an integral, non-negative number.
+// A string that is not a decimal uint64 ("abc", "18446744073709551616"),
+// a fractional or negative number, or a value of any other type is an
+// error, so the call never reaches the service with a guessed id. An
+// absent or empty id (or id 0) falls back to the hashed string key, as
+// before; with neither, the id is 0.
+func idOrHashKeyArg(entityType string, args map[string]interface{}) (uint64, error) {
+	switch v := args["id"].(type) {
+	case nil, float64, int, int64, uint64, string:
+		if f, ok := v.(float64); ok && f != math.Trunc(f) {
+			return 0, newIntArgError("id", fmt.Errorf("%v is not an integer", f))
+		}
+	default:
+		return 0, newIntArgError("id", fmt.Errorf("unsupported type %T", v))
+	}
+	id, err := uint64Arg(args, "id")
+	if err != nil {
+		return 0, newIntArgError("id", err)
+	}
+	if id != 0 {
+		return id, nil
+	}
+	if key, ok := args["key"].(string); ok && key != "" {
+		return hashStringKey(entityType, key), nil
 	}
 	return 0, nil
 }

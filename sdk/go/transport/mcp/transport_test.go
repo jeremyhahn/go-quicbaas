@@ -715,7 +715,7 @@ func TestRequestWithRetry_ContextEndsDuringBackoffKeepsLastError(t *testing.T) {
 	const attemptMsg = "shard-7 leader unreachable"
 
 	srv := mcpserver.NewMCPServer("TestServer", "1.0.0")
-	srv.AddTool(mcpgo.NewTool("qrdb_get"), func(context.Context, mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	srv.AddTool(mcpgo.NewTool("quicbaas_kv_get"), func(context.Context, mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 		res := mcpgo.NewToolResultError(attemptMsg)
 		res.StructuredContent = ToolError{Code: MCPServiceUnavailable}
 		return res, nil
