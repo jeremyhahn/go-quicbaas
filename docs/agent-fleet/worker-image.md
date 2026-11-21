@@ -196,7 +196,12 @@ publishes the image itself in its `build-publish` job. It runs nightly at
   pushed.
 - **Scan.** Two Trivy secret scans run first, one of the built image and one
   of each of its layer tarballs (`docker save`, every layer extracted on its
-  own); a secret of any severity fails the job. The image scan also covers the
+  own); a secret of any severity fails the job. The layer scan's one
+  exception is an image path listed in
+  `deployments/agents/software-factory-worker/secret-allowlist.txt` whose file
+  has the pinned sha256 (today only the Go standard-library test key);
+  `check-secret-findings.sh` gates trivy's JSON report and fails closed on
+  any other finding. The image scan also covers the
   image config, and the config JSON is scanned with the layers. Then
   `make push-worker-image`'s own vulnerability gate runs: a fixable CRITICAL
   or HIGH finding fails the job. All three run before anything is tagged or
