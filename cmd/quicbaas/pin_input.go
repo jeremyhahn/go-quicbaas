@@ -85,9 +85,15 @@ func addPINFlags(cmd *cobra.Command, note string, inputs ...pinInput) {
 // carries. The returned release destroys the protected copies.
 func resolvePINs(cmd *cobra.Command, op string, inputs ...pinInput) (func(), error) {
 	var bufs []*secure.Buffer
+	// release destroys the protected buffers and drops every PIN target, so
+	// the package-global flag variables stop referencing the PIN once the
+	// command ends, on success and on failure alike.
 	release := func() {
 		for _, b := range bufs {
 			b.Destroy()
+		}
+		for _, in := range inputs {
+			*in.target = ""
 		}
 	}
 	stdinClaim := ""

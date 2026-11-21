@@ -153,3 +153,34 @@ func TestResolvePINs_RekeyFromFile(t *testing.T) {
 	require.NoError(t, cmd.Execute())
 	assert.Equal(t, "S", fc.lastRekeyReq.SOPin)
 }
+
+// TestResolvePINs_ReleaseDropsPINTargets checks that release() leaves no PIN
+// in the package-global flag targets, after a success and after a failure.
+func TestResolvePINs_ReleaseDropsPINTargets(t *testing.T) {
+	clearPINEnv(t)
+	defer resetBarrierFlags()
+
+	var so, user string
+	cmd := &cobra.Command{Use: "t"}
+	addPINFlags(cmd, "", soPINInput(&so), userPINInput(&user))
+	require.NoError(t, cmd.Flags().Set(soPINFileFlag, writePINFile(t, "so", "S0\n")))
+	require.NoError(t, cmd.Flags().Set(userPINFileFlag, writePINFile(t, "user", "U1\n")))
+	release, err := resolvePINs(cmd, "t", soPINInput(&so), userPINInput(&user))
+	require.NoError(t, err)
+	assert.Equal(t, "S0", so)
+	assert.Equal(t, "U1", user)
+	release()
+	assert.Empty(t, so, "SO PIN still referenced after release")
+	assert.Empty(t, user, "user PIN still referenced after release")
+
+	// Failure: the SO PIN resolves, the user PIN file is empty.
+	so, user = "", ""
+	cmd = &cobra.Command{Use: "t"}
+	addPINFlags(cmd, "", soPINInput(&so), userPINInput(&user))
+	require.NoError(t, cmd.Flags().Set(soPINFileFlag, writePINFile(t, "so2", "S0\n")))
+	require.NoError(t, cmd.Flags().Set(userPINFileFlag, writePINFile(t, "user2", "")))
+	_, err = resolvePINs(cmd, "t", soPINInput(&so), userPINInput(&user))
+	require.Error(t, err)
+	assert.Empty(t, so, "SO PIN still referenced after a failed resolve")
+	assert.Empty(t, user)
+}
