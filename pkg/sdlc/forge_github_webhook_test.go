@@ -348,7 +348,7 @@ func newGitHubWebhookRig(t *testing.T) *webhookRig {
 	binding := testBinding()
 	binding.Forge.Type = ForgeGitHub
 	binding.Forge.Owner, binding.Forge.Repo = githubRepo.Owner, githubRepo.Repo
-	if err := store.PutBinding(context.Background(), testTenant, binding); err != nil {
+	if _, err := store.PutBinding(context.Background(), testTenant, binding); err != nil {
 		t.Fatal(err)
 	}
 	nudger := &fakeNudger{}

@@ -36,7 +36,7 @@ type hooksRig struct {
 func newHooksRig(t *testing.T) *hooksRig {
 	t.Helper()
 	store := newTestStore(t)
-	if err := store.PutBinding(context.Background(), testTenant, testBinding()); err != nil {
+	if _, err := store.PutBinding(context.Background(), testTenant, testBinding()); err != nil {
 		t.Fatal(err)
 	}
 	forge := newFakeForge()
@@ -60,7 +60,7 @@ func newHooksRig(t *testing.T) *hooksRig {
 func (r *hooksRig) rebind(ctx context.Context, mutate func(*ProjectBinding)) error {
 	binding := testBinding()
 	mutate(binding)
-	return r.store.PutBinding(ctx, testTenant, binding)
+	return putErr(r.store.PutBinding(ctx, testTenant, binding))
 }
 
 // containerWorkDir stands in for the directory the worker's container

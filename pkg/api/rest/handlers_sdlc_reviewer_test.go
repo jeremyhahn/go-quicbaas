@@ -80,7 +80,7 @@ func TestSDLCBinding_ARebindKeepsTheReviewerProfiles(t *testing.T) {
 func TestSDLCReviewer_Refusals(t *testing.T) {
 	server, svc := setupSDLCServer(t)
 	binding := profiledRESTBinding("p1")
-	require.NoError(t, svc.Store().PutBinding(context.Background(), "tenant-a", &binding))
+	require.NoError(t, putErr(svc.Store().PutBinding(context.Background(), "tenant-a", &binding)))
 
 	cases := []struct {
 		name, tenant, method, path string

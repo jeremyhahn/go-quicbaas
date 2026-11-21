@@ -179,6 +179,75 @@ func (e *VersionConflictError) Error() string {
 // Unwrap returns the sentinel for errors.Is support.
 func (e *VersionConflictError) Unwrap() error { return ErrVersionConflict }
 
+// ProjectDeletingError refuses a bind of a project whose delete is in flight
+// (go-quicbaas#1303). The bind's binding is withdrawn before this returns, so
+// nothing is left on a project about to be deleted. It is a version conflict:
+// retrying after the delete settles either binds a project that survived, or
+// finds the project gone.
+type ProjectDeletingError struct {
+	TenantID  string
+	ProjectID string
+}
+
+// Error implements the error interface.
+func (e *ProjectDeletingError) Error() string {
+	return "sdlc: project " + e.ProjectID + " is being deleted; the bind was withdrawn, retry once the delete settles"
+}
+
+// Unwrap returns the sentinel for errors.Is support.
+func (e *ProjectDeletingError) Unwrap() error { return ErrVersionConflict }
+
+// DeleteInProgressError refuses a project delete while another delete of the
+// same project holds a live fence (go-quicbaas#1303). It is a version
+// conflict: the caller retries once the other delete settles, and then finds
+// the project gone or deletes it.
+type DeleteInProgressError struct {
+	TenantID  string
+	ProjectID string
+}
+
+// Error implements the error interface.
+func (e *DeleteInProgressError) Error() string {
+	return "sdlc: project " + e.ProjectID + " is already being deleted; retry once that delete settles"
+}
+
+// Unwrap returns the sentinel for errors.Is support.
+func (e *DeleteInProgressError) Unwrap() error { return ErrVersionConflict }
+
+// BindInProgressError refuses a bind or unbind while another bind or unbind
+// of the same project holds a live bind lease (go-quicbaas#1679). It is a
+// version conflict: the caller retries once the other settles.
+type BindInProgressError struct {
+	TenantID  string
+	ProjectID string
+}
+
+// Error implements the error interface.
+func (e *BindInProgressError) Error() string {
+	return "sdlc: project " + e.ProjectID + " is already being bound or unbound; retry once that settles"
+}
+
+// Unwrap returns the sentinel for errors.Is support.
+func (e *BindInProgressError) Unwrap() error { return ErrVersionConflict }
+
+// BindWithdrawError reports a bind that had to withdraw its binding (a delete
+// of the project was in flight, or the fence could not be read) and could not.
+// The binding may still stand on a project that is being deleted; the cause
+// says why the withdrawal failed.
+type BindWithdrawError struct {
+	TenantID  string
+	ProjectID string
+	Cause     error
+}
+
+// Error implements the error interface.
+func (e *BindWithdrawError) Error() string {
+	return "sdlc: bind of project " + e.ProjectID + " could not be withdrawn from a delete in flight: " + e.Cause.Error()
+}
+
+// Unwrap returns the cause for errors.Is and errors.As support.
+func (e *BindWithdrawError) Unwrap() error { return e.Cause }
+
 // InvalidInputError reports a caller-supplied value that was refused.
 type InvalidInputError struct {
 	Field   string

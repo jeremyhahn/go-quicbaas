@@ -51,7 +51,7 @@ func newRerunScheduler(t *testing.T) (*TriageScheduler, *Store, *memoryResolver)
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
-	if err := store.PutBinding(context.Background(), testTenant, testBinding()); err != nil {
+	if _, err := store.PutBinding(context.Background(), testTenant, testBinding()); err != nil {
 		t.Fatalf("put binding: %v", err)
 	}
 	starter := &fakeJobStarter{err: &orchestration.JobLeaseTakenError{JobID: "job-2", HeldBy: "job-1"}}

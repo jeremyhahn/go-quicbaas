@@ -57,7 +57,7 @@ func (f *linkingForge) link(issue int, links ...ForgeIssueLink) {
 func newLinkingSource(t *testing.T) (*IssueSource, *linkingForge, *recordingAdoptionAuditor) {
 	t.Helper()
 	store := newTestStore(t)
-	if err := store.PutBinding(context.Background(), testTenant, testBinding()); err != nil {
+	if _, err := store.PutBinding(context.Background(), testTenant, testBinding()); err != nil {
 		t.Fatal(err)
 	}
 	forge := &linkingForge{fakeForge: newFakeForge(), links: map[int][]ForgeIssueLink{}}

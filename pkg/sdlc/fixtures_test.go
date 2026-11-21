@@ -155,6 +155,10 @@ func generateTestSSHHostKey() string {
 
 func testForgeType(name string) ForgeType { return ForgeType("fake-" + name) }
 
+// putErr drops the prior record PutBinding returns, for a caller that only
+// checks the write.
+func putErr(_ *ProjectBinding, err error) error { return err }
+
 func testBinding() *ProjectBinding {
 	return &ProjectBinding{
 		ProjectID: testProject,

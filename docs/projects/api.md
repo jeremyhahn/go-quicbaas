@@ -135,7 +135,9 @@ Content-Type: application/json
 
 `DELETE /api/v1/projects/{id}?tenant_id=acme` → `200` with
 `{project_id, deleted, timestamp}`. A project with an SDLC binding is
-refused with `409`; the message names `unbind` as the remedy.
+refused with `409`; the message names `unbind` as the remedy. A bind that
+lands while a delete of the same project is in flight is refused with `409`
+and withdrawn, so no binding is left on a deleted project.
 
 ### Grant and revoke
 

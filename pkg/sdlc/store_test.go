@@ -28,7 +28,7 @@ func TestStore_BindingRoundTrip(t *testing.T) {
 		t.Fatalf("GetBinding before put: err=%v, want ErrNotFound", err)
 	}
 	binding := testBinding()
-	if err := store.PutBinding(ctx, testTenant, binding); err != nil {
+	if _, err := store.PutBinding(ctx, testTenant, binding); err != nil {
 		t.Fatalf("PutBinding: %v", err)
 	}
 	if binding.CreatedAt.IsZero() || binding.UpdatedAt.IsZero() {
@@ -46,7 +46,7 @@ func TestStore_BindingRoundTrip(t *testing.T) {
 	created := got.CreatedAt
 	store.now = func() time.Time { return created.Add(time.Hour) }
 	binding.Review.RequiredApprovals = 2
-	if err := store.PutBinding(ctx, testTenant, binding); err != nil {
+	if _, err := store.PutBinding(ctx, testTenant, binding); err != nil {
 		t.Fatalf("PutBinding again: %v", err)
 	}
 	got, err = store.GetBinding(ctx, testTenant, testProject)
@@ -85,7 +85,7 @@ func TestStore_BindingEpoch(t *testing.T) {
 
 	binding := testBinding()
 	binding.Epoch = "chosen-by-the-caller"
-	if err := store.PutBinding(ctx, testTenant, binding); err != nil {
+	if _, err := store.PutBinding(ctx, testTenant, binding); err != nil {
 		t.Fatal(err)
 	}
 	first, err := store.GetBinding(ctx, testTenant, testProject)
@@ -98,7 +98,7 @@ func TestStore_BindingEpoch(t *testing.T) {
 
 	update := testBinding()
 	update.Review.RequiredApprovals = 2
-	if err := store.PutBinding(ctx, testTenant, update); err != nil {
+	if _, err := store.PutBinding(ctx, testTenant, update); err != nil {
 		t.Fatal(err)
 	}
 	updated, err := store.GetBinding(ctx, testTenant, testProject)
@@ -109,7 +109,7 @@ func TestStore_BindingEpoch(t *testing.T) {
 	if err := store.DeleteBinding(ctx, testTenant, testProject); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.PutBinding(ctx, testTenant, testBinding()); err != nil {
+	if _, err := store.PutBinding(ctx, testTenant, testBinding()); err != nil {
 		t.Fatal(err)
 	}
 	rebound, err := store.GetBinding(ctx, testTenant, testProject)
@@ -124,10 +124,10 @@ func TestStore_RefusesBadInput(t *testing.T) {
 	if _, err := store.GetBinding(ctx, testTenant, "a/b"); !errors.Is(err, ErrInvalidKeySegment) {
 		t.Fatalf("slash in project id: %v", err)
 	}
-	if err := store.PutBinding(ctx, testTenant, &ProjectBinding{ProjectID: testProject}); !errors.Is(err, ErrInvalidInput) {
+	if _, err := store.PutBinding(ctx, testTenant, &ProjectBinding{ProjectID: testProject}); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("incomplete binding: %v", err)
 	}
-	if err := store.PutBinding(ctx, testTenant, nil); !errors.Is(err, ErrInvalidInput) {
+	if _, err := store.PutBinding(ctx, testTenant, nil); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("nil binding: %v", err)
 	}
 	if _, err := store.GetDelivery(ctx, testTenant, ""); !errors.Is(err, ErrInvalidKeySegment) {
@@ -152,7 +152,7 @@ func TestStore_ResolverFailureIsABackendError(t *testing.T) {
 	if _, err := store.GetBinding(ctx, testTenant, testProject); !errors.Is(err, ErrBackend) {
 		t.Fatalf("GetBinding: %v", err)
 	}
-	if err := store.PutBinding(ctx, testTenant, testBinding()); !errors.Is(err, ErrBackend) {
+	if _, err := store.PutBinding(ctx, testTenant, testBinding()); !errors.Is(err, ErrBackend) {
 		t.Fatalf("PutBinding: %v", err)
 	}
 	if _, err := store.ListBindings(ctx, testTenant); !errors.Is(err, ErrBackend) {
@@ -246,7 +246,7 @@ func TestStore_UpdateBinding_RefusesAChangedOrDeletedRecord(t *testing.T) {
 	ctx := context.Background()
 	base := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
 	store.now = func() time.Time { return base }
-	if err := store.PutBinding(ctx, testTenant, testBinding()); err != nil {
+	if _, err := store.PutBinding(ctx, testTenant, testBinding()); err != nil {
 		t.Fatalf("PutBinding: %v", err)
 	}
 
@@ -272,7 +272,7 @@ func TestStore_UpdateBinding_RefusesAChangedOrDeletedRecord(t *testing.T) {
 	store.now = func() time.Time { return base.Add(time.Hour) }
 	concurrent := testBinding()
 	concurrent.Review.RequiredApprovals = 5
-	if err := store.PutBinding(ctx, testTenant, concurrent); err != nil {
+	if _, err := store.PutBinding(ctx, testTenant, concurrent); err != nil {
 		t.Fatal(err)
 	}
 	stale.Review.RequiredApprovals = 9

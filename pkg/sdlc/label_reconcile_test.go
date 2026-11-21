@@ -102,7 +102,7 @@ func newReconcileRigPaced(t *testing.T, pacer ForgePacer, issueLabels []string, 
 
 	store := newTestStore(t)
 	binding := reconcileBinding()
-	if err := store.PutBinding(ctx, testTenant, binding); err != nil {
+	if _, err := store.PutBinding(ctx, testTenant, binding); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1659,7 +1659,7 @@ func TestLabelReconciler_BindingWithNoInProgressLabelRestoresNothing(t *testing.
 
 	unlabelled := reconcileBinding()
 	delete(unlabelled.Forge.Labels, LabelInProgress)
-	if err := rig.store.PutBinding(context.Background(), testTenant, unlabelled); err != nil {
+	if _, err := rig.store.PutBinding(context.Background(), testTenant, unlabelled); err != nil {
 		t.Fatal(err)
 	}
 

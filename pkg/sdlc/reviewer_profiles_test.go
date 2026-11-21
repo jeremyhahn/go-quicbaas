@@ -175,7 +175,7 @@ func TestProjectBinding_ReviewersSurviveTheStore(t *testing.T) {
 	store := newTestStore(t)
 	binding := profiledBinding()
 	binding.Reviewers[0].StatusContext = DefaultReviewStatusContext + "/" + qwenProfile
-	if err := store.PutBinding(context.Background(), testTenant, binding); err != nil {
+	if _, err := store.PutBinding(context.Background(), testTenant, binding); err != nil {
 		t.Fatal(err)
 	}
 	got, err := store.GetBinding(context.Background(), testTenant, testProject)
@@ -434,7 +434,7 @@ func TestReviewDispatcher_TheOverrideChoosesTheProfileTheJobRunsAs(t *testing.T)
 		t.Fatal(err)
 	}
 	binding.Reviewers = []ReviewerConfig{qwenAlternate()}
-	if err := rig.store.PutBinding(ctx, testTenant, binding); err != nil {
+	if _, err := rig.store.PutBinding(ctx, testTenant, binding); err != nil {
 		t.Fatal(err)
 	}
 
@@ -489,7 +489,7 @@ func TestReviewDispatcher_AdvisoryStatusesDoNotHoldTheHeadBack(t *testing.T) {
 		t.Fatal(err)
 	}
 	binding.Reviewers = []ReviewerConfig{qwenAlternate()}
-	if err := rig.store.PutBinding(ctx, testTenant, binding); err != nil {
+	if _, err := rig.store.PutBinding(ctx, testTenant, binding); err != nil {
 		t.Fatal(err)
 	}
 	rig.setChecks(dispatchHead, greenRun("ci", dispatchHead), redRun(DefaultReviewStatusContext+"/"+qwenProfile, dispatchHead))

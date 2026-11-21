@@ -468,6 +468,13 @@ type ProjectBinding struct {
 	// ignored.
 	Epoch string `json:"epoch,omitempty"`
 
+	// WriteToken identifies the PutBinding that wrote this record: the store
+	// draws a fresh one on every put. A bind that must withdraw its write
+	// (Store.WithdrawBinding) withdraws only the record still carrying its
+	// token, so a binding another bind wrote since is never undone. Set by
+	// the store; a value sent in is ignored.
+	WriteToken string `json:"write_token,omitempty"`
+
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }

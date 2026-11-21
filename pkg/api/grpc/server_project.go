@@ -24,6 +24,7 @@ import (
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
@@ -510,6 +511,8 @@ func convertProjectError(err error) error {
 	var notFound *service.ProjectNotFoundError
 	var alreadyExists *service.ProjectAlreadyExistsError
 	var bound *service.ProjectBoundError
+	var deleting *sdlc.DeleteInProgressError
+	var binding *sdlc.BindInProgressError
 	var invalid *service.ProjectInvalidError
 	var accessDenied *service.ProjectAccessDeniedError
 	var unresolved *service.ProjectUnresolvedError
@@ -531,6 +534,12 @@ func convertProjectError(err error) error {
 		return status.Error(codes.AlreadyExists, err.Error())
 	case stderrors.As(err, &bound):
 		// The project still has an SDLC binding: unbind first.
+		return status.Error(codes.FailedPrecondition, err.Error())
+	case stderrors.As(err, &deleting):
+		// Another delete of the project is in flight: retry once it settles.
+		return status.Error(codes.FailedPrecondition, err.Error())
+	case stderrors.As(err, &binding):
+		// Another bind or unbind of the project is in flight: retry once it settles.
 		return status.Error(codes.FailedPrecondition, err.Error())
 	case stderrors.As(err, &invalid):
 		return status.Error(codes.InvalidArgument, err.Error())
