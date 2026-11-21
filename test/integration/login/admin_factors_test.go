@@ -164,7 +164,8 @@ func signWith(key crypto.Signer) func(nonce []byte) ([]byte, error) {
 
 // A passkey the administrator enrolls through AdminFactors().Enroll is the
 // credential the unified login resolves to that administrator, on every
-// transport. Without a FIDO2 handler Enroll refuses before the server is asked.
+// transport that serves FIDO2 enrollment; over MCP, Enroll is refused.
+// Without a FIDO2 handler Enroll refuses before the server is asked.
 func TestAdminFactors_PasskeyEnrollsThenLogsIn(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
@@ -176,6 +177,22 @@ func TestAdminFactors_PasskeyEnrollsThenLogsIn(t *testing.T) {
 			defer c.Close()
 
 			adapter := webauthnclient.NewSoftwareAdapter()
+			if tr == transportMCP {
+				// FIDO2 enrollment is not served over MCP: the unified server's
+				// MCP bridge registers no xkms.* tools, so Enroll must be refused
+				// rather than enroll a credential.
+				refused, err := c.Security().Auth().AdminFactors().Enroll(ctx, &quicbaas.AdminFactorEnrollRequest{
+					Factors:        []string{"fido2"},
+					Subject:        adminSubject,
+					TenantID:       systemTenantID,
+					RelyingPartyID: adminFactorRPID,
+					FIDO2Handler:   &softwarePasskey{adapter: adapter},
+				})
+				require.Error(t, err, "[%s] fido2 enrollment must be refused over MCP", tr)
+				require.Empty(t, refused, "[%s] a refused enrollment must report no results", tr)
+				return
+			}
+
 			results, err := c.Security().Auth().AdminFactors().Enroll(ctx, &quicbaas.AdminFactorEnrollRequest{
 				Factors:        []string{"fido2"},
 				Subject:        adminSubject,
