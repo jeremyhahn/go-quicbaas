@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/kvstore"
 	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
 	schedulerhandlers "github.com/jeremyhahn/go-quicbaas/pkg/scheduler/handlers"
@@ -79,6 +80,22 @@ func TestUpdateJob_TenantCannotEditGraceJob(t *testing.T) {
 	renamed, err := adapter.UpdateJob(ctx, &UpdateSchedulerJobRequest{JobID: jobID, Name: "renamed-grace"})
 	require.NoError(t, err, "the name stays editable")
 	assert.Equal(t, "renamed-grace", renamed.Job.Name)
+}
+
+// TestTriggerJob_TenantCannotRunGraceJobEarly checks that a tenant cannot
+// run its grace job before the deadline the KMS service set, which would get
+// around UpdateJob's refusal to change that job's run time.
+func TestTriggerJob_TenantCannotRunGraceJobEarly(t *testing.T) {
+	adapter, jobID := newGraceEditFixture(t)
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-a")
+
+	_, err := adapter.TriggerJob(ctx, &TriggerSchedulerJobRequest{JobID: jobID})
+	require.Error(t, err)
+	assert.Equal(t, errors.ErrForbidden, codeOf(t, err))
+
+	after, err := adapter.GetJob(ctx, &GetSchedulerJobRequest{JobID: jobID})
+	require.NoError(t, err)
+	assert.Equal(t, SchedulerJobStatusPending, after.Job.Status)
 }
 
 // A tenant cannot create a job that names a system handler.

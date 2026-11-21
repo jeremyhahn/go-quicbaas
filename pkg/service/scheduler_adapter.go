@@ -311,6 +311,13 @@ func (a *SchedulerAdapter) TriggerJob(ctx context.Context, req *TriggerScheduler
 		return nil, err
 	}
 
+	// The KMS service runs a grace job at the deadline it set; a tenant
+	// cannot run it early, as UpdateJob cannot change its run time.
+	if tenantID != "" && job.Handler == schedulerhandlers.HandlerKMSGracePeriod && time.Now().Before(job.ExecuteAt) {
+		return nil, NewError(errors.ErrForbidden, "scheduler.TriggerJob",
+			"a service-managed job cannot be triggered by a tenant before its run time")
+	}
+
 	if err := a.scheduler.TriggerJob(ctx, req.JobID, tenantID); err != nil {
 		return nil, err
 	}
