@@ -17,8 +17,14 @@ import (
 
 // Type aliases
 type (
-	IssuedCertificate      = xkmssdk.TrustedCAIssuedCertificate
-	Params                 = xkmssdk.TrustedCAParams
+	IssuedCertificate = xkmssdk.TrustedCAIssuedCertificate
+	Params            = xkmssdk.TrustedCAParams
+	// RevocationStore is the type of Params.RevocationStore: the durable
+	// go-xkms storage backend the CA persists revocations and its CRL in, so
+	// both survive restarts and replicate. Required: the CA has no in-memory
+	// or object-store fallback. Open one with go-xkms's OpenDatastore, or
+	// implement it (sdk/go/xkms/storage.Backend is the same type).
+	RevocationStore        = xkmssdk.StorageBackend
 	RevokeOptions          = xkmssdk.RevokeOptions
 	SignOptions            = xkmssdk.TrustedCASignOptions
 	TCGCA                  = xkmssdk.TCGCA
@@ -68,7 +74,17 @@ type (
 
 // Re-exported function values and helpers
 var (
-	NewCA                        = xkmssdk.NewCA
+	NewCA = xkmssdk.NewCA
+
+	// NewParentCA creates only the root TrustedCA from Params.Identity[0].
+	// The returned CA is not initialized; callers invoke Init() or Load().
+	NewParentCA = xkmssdk.NewParentCA
+
+	// NewIntermediateCA creates the intermediate TrustedCA from
+	// Params.Identity[1] signed by the given parent. The parent must be
+	// initialized.
+	NewIntermediateCA = xkmssdk.NewIntermediateCA
+
 	DefaultMultiIdentityCAConfig = xkmssdk.DefaultMultiIdentityCAConfig
 
 	// CAIAKCommonName returns the subject common name ("iak-<model>-<serial>")

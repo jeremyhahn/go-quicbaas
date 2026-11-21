@@ -382,3 +382,41 @@ func (s *Server) appendOperatorClientCAs(tlsConfig *tls.Config) error {
 	s.logger.Infof("iam.mtls: operator CA appended to REST ClientCAs from %s", caFile)
 	return nil
 }
+
+// trustIAMClientCAs adds the operator CA (iam.mtls.tls_client_auth_ca_file)
+// and, when iam.piv_login.enabled is true, the PIV CA (iam.piv_login.ca_file)
+// to the ClientCAs of s.tlsConfig. The unified listeners serve s.tlsConfig
+// through GetConfigForClient, so this is the config operator and PIV client
+// certificates are verified against during the handshake.
+//
+// Copy-on-write: a listener may already be handshaking with the current
+// config, so neither it nor its pool is mutated. The roots go into a clone with
+// a pool of its own, and the clone replaces s.tlsConfig under s.mu. A full-mTLS
+// config (RequireAndVerifyClientCert) keeps its ClientAuth; the appenders'
+// VerifyClientCertIfGiven applies only when the config asked for less.
+func (s *Server) trustIAMClientCAs() error {
+	current := s.serverTLSConfigRef()
+	if current == nil {
+		return nil
+	}
+	next := current.Clone()
+	if current.ClientCAs != nil {
+		next.ClientCAs = current.ClientCAs.Clone()
+	}
+	if err := appendOperatorClientCAsFn(s, next); err != nil {
+		return err
+	}
+	if s.config.IAM.PIVLogin.Enabled {
+		if err := appendPIVClientCAsFn(s, next); err != nil {
+			return err
+		}
+	}
+	if current.ClientAuth == tls.RequireAndVerifyClientCert {
+		next.ClientAuth = current.ClientAuth
+	}
+
+	s.mu.Lock()
+	s.tlsConfig = next
+	s.mu.Unlock()
+	return nil
+}

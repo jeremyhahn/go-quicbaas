@@ -33,6 +33,7 @@ import (
 	ggrpc "google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
 
+	"github.com/jeremyhahn/go-xkms/pkg/ca/provider"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -811,8 +812,40 @@ func (s *Server) initializeCA() error {
 // and fail closed, or this one.
 func (s *Server) adoptCA(ca xkmssdk.TrustedCA) {
 	s.xkmsCA = ca
+	// The KeystoreService installs its CA servicer from the global XKMS
+	// service, so the adopted CA must be set there too.
+	if svc, err := xkmssdk.Get(); err == nil && svc != nil {
+		if p, ok := ca.(provider.CA); ok {
+			svc.SetCA(p)
+		} else {
+			slog.Debug("adopted CA does not implement provider.CA; the XKMS service keeps its CA")
+		}
+	}
 	if s.caAdapter != nil {
 		s.caAdapter.SetCA(ca)
+	}
+	s.wireTrustedCA()
+}
+
+// wireTrustedCA hands the QuicBaaS facade the go-xkms CA adapter the REST
+// and MCP transports serve, so the embedded transport's
+// Security().TrustedCA() reaches the same CA (#1330). It runs both when the
+// CA is adopted and when the facade is built, whichever comes second wins.
+func (s *Server) wireTrustedCA() {
+	s.mu.RLock()
+	svc := s.quicBaaSService
+	s.mu.RUnlock()
+	if svc == nil || s.xkmsCA == nil {
+		return
+	}
+	ca := s.trustedCAService()
+	if ca == nil {
+		return
+	}
+	if setter, ok := svc.(interface {
+		SetTrustedCA(service.TrustedCAService)
+	}); ok {
+		setter.SetTrustedCA(ca)
 	}
 }
 
@@ -2161,6 +2194,7 @@ func (s *Server) startService() error {
 	s.mu.Lock()
 	s.quicBaaSService = svc
 	s.mu.Unlock()
+	s.wireTrustedCA()
 	s.logger.Info("QuicBaaS facade initialized")
 
 	// Wire the unified secret resolver registry (built unconditionally by
@@ -2588,6 +2622,7 @@ func (s *Server) startGRPCServer() error {
 	// QUIC/MCP/Unix/embedded transports.
 	s.registerFIDO2Service(grpcServer, quicbaasService)
 	s.registerPIVService(grpcServer, quicbaasService)
+	s.registerTrustedCAService(grpcServer, quicbaasService)
 
 	// Register Barrier and Ceremony gRPC services. The handlers delegate to
 	// the embedded go-qrdb instance via the QuicBaaS service facade, keeping

@@ -30,6 +30,9 @@ import (
 // ErrKeyNotFound indicates a key was not found.
 var ErrKeyNotFound = stderrors.New("key not found")
 
+// ErrKeyAlreadyExists indicates a key of that name is already stored.
+var ErrKeyAlreadyExists = stderrors.New("key already exists")
+
 // ErrNilStorage indicates storage is nil.
 var ErrNilStorage = stderrors.New("storage cannot be nil")
 

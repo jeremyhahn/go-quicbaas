@@ -25,15 +25,22 @@
 // Tool Name Mapping:
 //
 // The transport maps SDK service/method names to MCP tool names. qrdb-mirror
-// services (KV, Vector, Timeseries, Health.Check, RBAC user/role lifecycle,
+// services (Vector, Timeseries, Health.Check, RBAC user/role lifecycle,
 // Barrier, Ceremony) are routed to canonical qrdb_* tools; quicbaas-specific
 // surfaces (KMS, Crypto, Orchestrator, Scheduler, Agent, etc.) keep the
-// quicbaas_ prefix.
+// quicbaas_ prefix. KV Put, Get, Delete and List call quicbaas_kv_put,
+// quicbaas_kv_get, quicbaas_kv_delete and quicbaas_kv_list, quicbaas's
+// entity tools (on a full node the qrdb_* names are go-qrdb's own key/value
+// tools). The id is sent as a decimal string so IDs above 2^53 stay exact.
+// KV CompareAndSwap and PutIfAbsent call quicbaas_kv_compare_and_swap and
+// quicbaas_kv_put_if_absent.
 //
 // Examples:
 //   - "quicbaas.KV/Put" -> "quicbaas_kv_put"
 //   - "quicbaas.KV/Get" -> "quicbaas_kv_get"
 //   - "quicbaas.KV/Delete" -> "quicbaas_kv_delete"
+//   - "quicbaas.KV/CompareAndSwap" -> "quicbaas_kv_compare_and_swap"
+//   - "quicbaas.KV/PutIfAbsent" -> "quicbaas_kv_put_if_absent"
 //   - "quicbaas.Cluster/Status" -> "quicbaas_cluster_status"
 //   - "quicbaas.Health/Check" -> "qrdb_health"
 //   - "quicbaas.KMS/GenerateKey" -> "quicbaas_kms_generate_key"

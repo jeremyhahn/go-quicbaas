@@ -81,6 +81,15 @@ type SecurityService interface {
 	// AIA-driven root import.
 	Trust() TrustService
 
+	// TrustedCA re-exports the go-xkms CAService under go-xkms's own names
+	// and types (bundle, CA certificate, CSR signing, issuance, revocation,
+	// CRL). It is served by go-xkms's CA on the server (#1330).
+	TrustedCA() TrustedCAService
+
+	// TCGCA re-exports the go-xkms TCGCAService (EK and AK certificates,
+	// TCG-CSR signing, device enrollment) served by the same CA (#1330).
+	TCGCA() TCGCAService
+
 	// Attestation exposes the standalone trusted-computing surface:
 	// verification of hardware attestation statements and certificate
 	// chains (composed from go-xkms pkg/attestation), the Tier 0 image
@@ -231,6 +240,12 @@ type securityService struct {
 	trustOnce sync.Once
 	trustSvc  TrustService
 
+	trustedCAOnce sync.Once
+	trustedCASvc  TrustedCAService
+
+	tcgCAOnce sync.Once
+	tcgCASvc  TCGCAService
+
 	attestationOnce sync.Once
 	attestationSvc  AttestationService
 
@@ -273,6 +288,20 @@ func (s *securityService) Trust() TrustService {
 		s.trustSvc = newTrustService(s.c.transport)
 	})
 	return s.trustSvc
+}
+
+func (s *securityService) TrustedCA() TrustedCAService {
+	s.trustedCAOnce.Do(func() {
+		s.trustedCASvc = newTrustedCAService(s.c.transport)
+	})
+	return s.trustedCASvc
+}
+
+func (s *securityService) TCGCA() TCGCAService {
+	s.tcgCAOnce.Do(func() {
+		s.tcgCASvc = newTCGCAService(s.c.transport)
+	})
+	return s.tcgCASvc
 }
 
 // Attestation returns the trusted-computing sub-service. The returned
@@ -598,6 +627,9 @@ type XKMSFIDO2Service = xkmstransport.FIDO2Service
 // TrustedCAService is a re-export of the go-xkms CAService interface
 // for Certificate Authority operations.
 type TrustedCAService = xkmstransport.CAService
+
+// TCGCAService is a re-export of the go-xkms TCGCAService interface (#1330).
+type TCGCAService = xkmstransport.TCGCAService
 
 // XKMSPINService is a re-export of the go-xkms PINService interface
 // for PIN management operations.

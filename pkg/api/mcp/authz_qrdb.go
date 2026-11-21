@@ -80,15 +80,21 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	// and removed with them in issue #905.
 	// TestMCPPermissions_EveryMappedToolIsRegistered now makes that class of
 	// entry impossible to add back.
-	"quicbaas_query":        {"kv", "range"},
-	"quicbaas_scan_index":   {"index", "scan"},
-	"quicbaas_batch_get":    {"batch", "execute"},
-	"quicbaas_batch_put":    {"batch", "execute"},
-	"quicbaas_batch_delete": {"batch", "execute"},
-	"qrdb_get":              {"kv", "get"},
-	"qrdb_list":             {"kv", "list"},
-	"qrdb_put":              {"kv", "put"},
-	"qrdb_delete":           {"kv", "delete"},
+	"quicbaas_query":         {"kv", "range"},
+	"quicbaas_scan_index":    {"index", "scan"},
+	"quicbaas_batch_get":     {"batch", "execute"},
+	"quicbaas_batch_put":     {"batch", "execute"},
+	"quicbaas_batch_delete":  {"batch", "execute"},
+	"quicbaas_batch_execute": {"batch", "execute"},
+	"qrdb_get":               {"kv", "get"},
+	"qrdb_list":              {"kv", "list"},
+	"qrdb_put":               {"kv", "put"},
+	"qrdb_delete":            {"kv", "delete"},
+
+	// KV conditional writes, in the keyspace qrdb_put writes.
+	"quicbaas_kv_compare_and_swap": {"kv", "put"},
+	"quicbaas_kv_put_if_absent":    {"kv", "put"},
+
 	// The quicbaas_kv_* names of the same entity tools (addKVEntityTool): a
 	// full node serves them in place of the qrdb_* names go-qrdb owns there
 	// (CA ruling 574). quicbaas_kv_list answers every entity's Data, so it
@@ -467,10 +473,10 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	// than leaf issuance, so it authorizes with ca:create. The AIA chain walk
 	// fetches and imports issuer certificates, the same mutation
 	// quicbaas_trust_auto_import_aia performs, so it carries the same
-	// write-strength verb. Device identity issuance mints END-ENTITY TCG
+	// trust:write. Device identity issuance mints END-ENTITY TCG
 	// EK / AK / IDevID certificates and stays on certs:generate.
 	"quicbaas_certificate_cross_sign":            {"ca", "create"},
-	"quicbaas_certificate_chain":                 {"certs", "generate"},
+	"quicbaas_certificate_chain":                 {"trust", "write"},
 	"quicbaas_certificate_issue_device_identity": {"certs", "generate"},
 
 	// Ollama -> ollama
@@ -836,6 +842,12 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	"xkms.ca.issueCert":   {"certs", "generate"},
 	"xkms.ca.revokeCert":  {"certs", "revoke"},
 	"xkms.ca.generateCRL": {"certs", "revoke"},
+	// go-xkms TCGCAService (#1330): the same certs:generate as the REST
+	// /api/v1/xkms/ca/tcg/* routes.
+	"xkms.ca.tcg.issueEKCert": {"certs", "generate"},
+	"xkms.ca.tcg.issueAKCert": {"certs", "generate"},
+	"xkms.ca.tcg.signCSR":     {"certs", "generate"},
+	"xkms.ca.tcg.enroll":      {"certs", "generate"},
 
 	"xkms.piv.listSlots":   {"piv", "read"},
 	"xkms.piv.getCert":     {"piv", "read"},
@@ -894,8 +906,10 @@ var qrdbToolPrefixMapping = map[string]qrdbToolResource{
 	"quicbaas_attestation_appraise_quote":          {"attestation", "verify"},
 
 	"quicbaas_trust_cross_signed_root_pool": {"certs", "read"},
-	"quicbaas_trust_auto_import_aia":        {"certs", "generate"},
-	"quicbaas_trust_publish_dane":           {"certs", "generate"},
+	// AIA auto-import and DANE publish write trust state: trust:write, as
+	// TrustService/AutoImportAIA and /PublishDANE on gRPC and REST.
+	"quicbaas_trust_auto_import_aia": {"trust", "write"},
+	"quicbaas_trust_publish_dane":    {"trust", "write"},
 
 	// Timeseries
 	"quicbaas_timeseries_query":  {"timeseries", "query"},

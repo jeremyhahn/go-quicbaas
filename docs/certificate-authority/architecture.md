@@ -26,6 +26,16 @@ on every transport, for go-trusted-platform ([SPEC](../SPEC.md) rows
 | Certificate | `Security().Certificate()` | `/api/v1/certificate` | `ca` |
 | ACME | `Security().ACME()` | `/api/v1/acme` | `acme` |
 | Trust | `Security().Trust()` | `/api/v1/trust` | `trust` |
+| go-xkms CA (`CAService`) | `Security().TrustedCA()` | `/api/v1/xkms/ca` | — |
+
+`Security().TrustedCA()` is the go-xkms `CAService` under go-xkms's own names
+and types (#1330). It is served on REST (`/api/v1/xkms/ca/*`), MCP
+(`xkms.ca.*`), the embedded transport, and gRPC on the Unix socket
+(`quicbaas.trustedca.v1.TrustedCAService`). One go-xkms CA adapter backs all of
+them. The node's TCP gRPC listener carries the same CA verbs on go-xkms's
+canonical `xkms.v1.KeystoreService`. QUIC carries it as REST over HTTP/3: the
+SDK QUIC transport is the REST client, and the node's unified REST/HTTP3
+listener serves the same `/api/v1/xkms/ca/*` routes.
 
 Issuance (Certificate, ACME) and acceptance (Trust) stay separate surfaces: a
 deployment can issue for its own nodes while accepting a different set of
@@ -55,6 +65,11 @@ and `acme`). The replacement re-exports the go-xkms `CAService`,
 
 - **`certs:read` and `certs:generate` are separate.** A service that needs the
   CA bundle to verify peers does not need the ability to mint identities.
+- **Writing trust state takes `trust:write`, not `certs:generate`.** The
+  certificate `Chain` walk imports the issuers it fetches over AIA, so it is
+  gated like AIA auto-import and DANE publish: `trust:write` on gRPC, REST
+  (`POST /api/v1/certificate/chain`) and MCP (`quicbaas_certificate_chain`,
+  `quicbaas_trust_auto_import_aia`, `quicbaas_trust_publish_dane`) (#2070).
 - **Issuance fails closed when the barrier is sealed.** It does not fall back
   to a software key and does not queue.
 

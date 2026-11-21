@@ -21,6 +21,8 @@ import (
 type kvStoreService struct {
 	*mockService
 	entries map[string][]byte
+	// shards records the ShardID of each conditional write, in order.
+	shards []uint64
 }
 
 func newKVStoreService() *kvStoreService {

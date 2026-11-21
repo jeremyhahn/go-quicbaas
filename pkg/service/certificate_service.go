@@ -624,6 +624,52 @@ func SPIFFEKindForProfile(profile string) string {
 	return qrdbsdk.SpiffeKindService
 }
 
+// SPIFFEWorkloadName derives the SPIFFE SAN's workload name from a subject
+// common name. A SPIFFE path segment carries only letters, digits, '.', '-'
+// and '_', so every other byte, and '_' itself, becomes '_' followed by two
+// lower-case hex digits ("admin@example.com" -> "admin_40example.com"). The
+// mapping is injective, so two common names never share a workload name, and
+// the subject CN itself is left as requested. "." and ".." are escaped too,
+// since a segment may not be either. An empty name stays empty, letting the
+// CA apply its own default.
+func SPIFFEWorkloadName(commonName string) string {
+	const hexDigits = "0123456789abcdef"
+	if commonName == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.Grow(len(commonName))
+	for i := 0; i < len(commonName); i++ {
+		c := commonName[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '-':
+			b.WriteByte(c)
+		case c == '.' && commonName != "." && commonName != "..":
+			b.WriteByte(c)
+		default:
+			b.WriteByte('_')
+			b.WriteByte(hexDigits[c>>4])
+			b.WriteByte(hexDigits[c&0x0f])
+		}
+	}
+	return b.String()
+}
+
+// CSRCommonName returns the subject common name of a PEM-encoded certificate
+// signing request, or "" when the PEM does not hold a parsable CSR (the CA
+// then reports the malformed request itself).
+func CSRCommonName(csrPEM []byte) string {
+	block, _ := pem.Decode(csrPEM)
+	if block == nil {
+		return ""
+	}
+	csr, err := x509.ParseCertificateRequest(block.Bytes)
+	if err != nil {
+		return ""
+	}
+	return csr.Subject.CommonName
+}
+
 // =============================================================================
 // CA Administration Surface — types & implementation
 // =============================================================================

@@ -1603,10 +1603,14 @@ message RevokeOtherSessionsResponse {
 // Audit Service for querying audit logs
 service AuditService {
   // Query audit events with filters
-  rpc QueryAuditEvents(QueryAuditEventsRequest) returns (QueryAuditEventsResponse);
+  rpc QueryAuditEvents(QueryAuditEventsRequest) returns (QueryAuditEventsResponse) {
+      option (qrdb.v1.permission) = "audit:query";
+  }
 
   // Get a specific audit event
-  rpc GetAuditEvent(GetAuditEventRequest) returns (AuditEvent);
+  rpc GetAuditEvent(GetAuditEventRequest) returns (AuditEvent) {
+      option (qrdb.v1.permission) = "audit:read";
+  }
 
   // Record (emit) a new audit event onto the platform audit chain. This is
   // the remote-write counterpart to Query/Get: a caller (e.g. a downstream
@@ -1616,7 +1620,9 @@ service AuditService {
   // tenant, and ONLY there: a tenant_id naming any other tenant fails
   // PermissionDenied regardless of who the caller is — the system-tenant
   // principal included (go-quicbaas#356, no operator lift).
-  rpc RecordAuditEvent(RecordAuditEventRequest) returns (RecordAuditEventResponse);
+  rpc RecordAuditEvent(RecordAuditEventRequest) returns (RecordAuditEventResponse) {
+      option (qrdb.v1.permission) = "audit_events:record";
+  }
 }
 
 // AuditEvent represents a single audit log entry

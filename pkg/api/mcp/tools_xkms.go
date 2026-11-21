@@ -131,6 +131,11 @@ func (r *ToolRegistry) initXKMSHandlers() map[string]XKMSToolHandler {
 		"xkms.ca.revokeCert":  r.handleTrustedCARevokeCert,
 		"xkms.ca.generateCRL": r.handleTrustedCAGenerateCRL,
 		"xkms.ca.isRevoked":   r.handleTrustedCAIsRevoked,
+		// go-xkms TCGCAService (#1330), tools_xkms_tcg.go.
+		"xkms.ca.tcg.issueEKCert": r.handleTCGCAIssueEKCert,
+		"xkms.ca.tcg.issueAKCert": r.handleTCGCAIssueAKCert,
+		"xkms.ca.tcg.signCSR":     r.handleTCGCASignCSR,
+		"xkms.ca.tcg.enroll":      r.handleTCGCAEnroll,
 
 		// PIN operations
 		"xkms.pin.setSO":         r.handleXKMSPINSetSO,
@@ -168,6 +173,7 @@ func (r *ToolRegistry) registerXKMSTools() {
 	r.registerXKMSCoreTools()
 	r.registerXKMSPIVTools()
 	r.registerTrustedCATools()
+	r.registerTCGCATools()
 	r.registerXKMSPINTools()
 }
 
@@ -664,6 +670,14 @@ func (r *ToolRegistry) registerTrustedCATools() {
 				"csr_pem":       map[string]interface{}{"type": "string", "description": "PEM-encoded PKCS#10 CSR"},
 				"profile":       map[string]interface{}{"type": "string", "description": "Certificate profile (server, client, idevid)"},
 				"validity_days": map[string]interface{}{"type": "integer", "description": "Override default validity in days"},
+				"tenant_id":     map[string]interface{}{"type": "string", "description": "Tenant to scope the operation to"},
+				// Attestation proof (go-xkms SignCSRRequest): the CA verifies
+				// it or refuses the request; it is never ignored.
+				"attestation_format": map[string]interface{}{"type": "string", "description": "Attestation format (tpm2, yubikey-piv)"},
+				"attestation_chain":  map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Base64 DER attestation certificate chain"},
+				"attestation_data":   map[string]interface{}{"type": "string", "description": "Base64 attestation evidence"},
+				"attestation_sig":    map[string]interface{}{"type": "string", "description": "Base64 signature over the attestation data"},
+				"attestation_nonce":  map[string]interface{}{"type": "string", "description": "Base64 freshness nonce"},
 			},
 			"required": []string{"csr_pem"},
 		},
@@ -2058,93 +2072,174 @@ func (r *ToolRegistry) handleXKMSFIDO2FinishAuthentication(ctx context.Context, 
 // CA Tool Handlers
 // =============================================================================
 
-// handleTrustedCAGetBundle retrieves the CA certificate bundle.
-func (r *ToolRegistry) handleTrustedCAGetBundle(_ context.Context, args map[string]interface{}) (interface{}, error) {
-	if err := ensureXKMSInitialized(); err != nil {
+// trustedCAGate is the readiness check of the xkms.ca.* tools. A wired CA
+// is its own handle, as on the REST /api/v1/xkms/ca/* routes, so the global
+// xkms service gate applies only when none is wired.
+func (r *ToolRegistry) trustedCAGate() error {
+	if r.caSvc != nil {
+		return nil
+	}
+	return ensureXKMSInitialized()
+}
+
+// trustedCA returns the go-xkms CA the xkms.ca.* tools serve, or the typed
+// "operation not supported" error when the server wired none (#1330).
+func (r *ToolRegistry) trustedCA(op string) (transport.CAService, error) {
+	if err := r.trustedCAGate(); err != nil {
 		return nil, err
 	}
+	if r.caSvc == nil {
+		return nil, &XKMSOperationError{Operation: op, Cause: xkmssdk.ServiceErrOperationNotSupported}
+	}
+	return r.caSvc, nil
+}
 
-	// CA operations are not yet implemented as top-level xkms functions.
-	return nil, &XKMSOperationError{Operation: "ca.getBundle", Cause: xkmssdk.ServiceErrOperationNotSupported}
+// handleTrustedCAGetBundle retrieves the CA certificate bundle.
+func (r *ToolRegistry) handleTrustedCAGetBundle(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	ca, err := r.trustedCA("ca.getBundle")
+	if err != nil {
+		return nil, err
+	}
+	return ca.GetCABundle(ctx, &transport.GetCABundleRequest{
+		StoreType: getString(args, "store_type"),
+		Algorithm: getString(args, "algorithm"),
+		TenantID:  getString(args, "tenant_id"),
+	})
 }
 
 // handleTrustedCAGetCert retrieves the CA certificate.
-func (r *ToolRegistry) handleTrustedCAGetCert(_ context.Context, args map[string]interface{}) (interface{}, error) {
-	if err := ensureXKMSInitialized(); err != nil {
+func (r *ToolRegistry) handleTrustedCAGetCert(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	ca, err := r.trustedCA("ca.getCert")
+	if err != nil {
 		return nil, err
 	}
-
-	return nil, &XKMSOperationError{Operation: "ca.getCert", Cause: xkmssdk.ServiceErrOperationNotSupported}
+	return ca.GetCACertificate(ctx, &transport.GetCACertificateRequest{
+		Identity: getString(args, "identity"),
+		TenantID: getString(args, "tenant_id"),
+	})
 }
 
 // handleTrustedCASignCSR signs a certificate signing request.
-func (r *ToolRegistry) handleTrustedCASignCSR(_ context.Context, args map[string]interface{}) (interface{}, error) {
-	if err := ensureXKMSInitialized(); err != nil {
+func (r *ToolRegistry) handleTrustedCASignCSR(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	if err := r.trustedCAGate(); err != nil {
 		return nil, err
 	}
-
 	csrPEM := getString(args, "csr_pem")
 	if csrPEM == "" {
 		return nil, api.NewRequiredFieldError("csr_pem")
 	}
-
-	return nil, &XKMSOperationError{Operation: "ca.signCSR", Cause: xkmssdk.ServiceErrOperationNotSupported}
+	ca, err := r.trustedCA("ca.signCSR")
+	if err != nil {
+		return nil, err
+	}
+	req := &transport.SignCSRRequest{
+		CSRPEM:            []byte(csrPEM),
+		Profile:           getString(args, "profile"),
+		ValidityDays:      getInt(args, "validity_days"),
+		TenantID:          getString(args, "tenant_id"),
+		AttestationFormat: getString(args, "attestation_format"),
+	}
+	// The attestation proof is carried to the CA, which verifies it or
+	// refuses the request; it is never dropped. The SDK sends go-xkms's
+	// JSON encoding of the request: byte fields as base64 strings.
+	for _, f := range []struct {
+		key string
+		dst *[]byte
+	}{
+		{"attestation_data", &req.AttestationData},
+		{"attestation_sig", &req.AttestationSig},
+		{"attestation_nonce", &req.AttestationNonce},
+	} {
+		b, decErr := decodeBase64Arg(args, f.key)
+		if decErr != nil {
+			return nil, api.NewInvalidBase64Error(f.key, decErr)
+		}
+		*f.dst = b
+	}
+	for _, s := range getStringSlice(args, "attestation_chain") {
+		b, decErr := base64.StdEncoding.DecodeString(s)
+		if decErr != nil {
+			return nil, api.NewInvalidBase64Error("attestation_chain", decErr)
+		}
+		req.AttestationChain = append(req.AttestationChain, b)
+	}
+	return ca.SignCSR(ctx, req)
 }
 
 // handleTrustedCAIssueCert issues a new certificate.
-func (r *ToolRegistry) handleTrustedCAIssueCert(_ context.Context, args map[string]interface{}) (interface{}, error) {
-	if err := ensureXKMSInitialized(); err != nil {
+func (r *ToolRegistry) handleTrustedCAIssueCert(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	if err := r.trustedCAGate(); err != nil {
 		return nil, err
 	}
-
 	profile := getString(args, "profile")
 	if profile == "" {
 		return nil, api.NewRequiredFieldError("profile")
 	}
-
 	commonName := getString(args, "common_name")
 	if commonName == "" {
 		return nil, api.NewRequiredFieldError("common_name")
 	}
-
-	return nil, &XKMSOperationError{Operation: "ca.issueCert", Cause: xkmssdk.ServiceErrOperationNotSupported}
+	ca, err := r.trustedCA("ca.issueCert")
+	if err != nil {
+		return nil, err
+	}
+	return ca.IssueCertificate(ctx, &transport.IssueCertificateRequest{
+		CommonName:   commonName,
+		Profile:      profile,
+		Organization: getString(args, "organization"),
+		SANs:         getStringSlice(args, "sans"),
+		ValidityDays: getInt(args, "validity_days"),
+		Algorithm:    getString(args, "algorithm"),
+		TenantID:     getString(args, "tenant_id"),
+	})
 }
 
 // handleTrustedCARevokeCert revokes a certificate by serial number.
-func (r *ToolRegistry) handleTrustedCARevokeCert(_ context.Context, args map[string]interface{}) (interface{}, error) {
-	if err := ensureXKMSInitialized(); err != nil {
+func (r *ToolRegistry) handleTrustedCARevokeCert(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	if err := r.trustedCAGate(); err != nil {
 		return nil, err
 	}
-
 	serialNumber := getString(args, "serial_number")
 	if serialNumber == "" {
 		return nil, api.NewRequiredFieldError("serial_number")
 	}
-
-	return nil, &XKMSOperationError{Operation: "ca.revokeCert", Cause: xkmssdk.ServiceErrOperationNotSupported}
+	ca, err := r.trustedCA("ca.revokeCert")
+	if err != nil {
+		return nil, err
+	}
+	return ca.RevokeCertificate(ctx, &transport.RevokeCertificateRequest{
+		SerialNumber: serialNumber,
+		Reason:       getInt(args, "reason"),
+		TenantID:     getString(args, "tenant_id"),
+	})
 }
 
 // handleTrustedCAGenerateCRL generates a certificate revocation list.
-func (r *ToolRegistry) handleTrustedCAGenerateCRL(_ context.Context, _ map[string]interface{}) (interface{}, error) {
-	if err := ensureXKMSInitialized(); err != nil {
+func (r *ToolRegistry) handleTrustedCAGenerateCRL(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	ca, err := r.trustedCA("ca.generateCRL")
+	if err != nil {
 		return nil, err
 	}
-
-	return nil, &XKMSOperationError{Operation: "ca.generateCRL", Cause: xkmssdk.ServiceErrOperationNotSupported}
+	return ca.GenerateCRL(ctx, &transport.GenerateCRLRequest{TenantID: getString(args, "tenant_id")})
 }
 
 // handleTrustedCAIsRevoked checks if a certificate is revoked.
-func (r *ToolRegistry) handleTrustedCAIsRevoked(_ context.Context, args map[string]interface{}) (interface{}, error) {
-	if err := ensureXKMSInitialized(); err != nil {
+func (r *ToolRegistry) handleTrustedCAIsRevoked(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	if err := r.trustedCAGate(); err != nil {
 		return nil, err
 	}
-
 	serialNumber := getString(args, "serial_number")
 	if serialNumber == "" {
 		return nil, api.NewRequiredFieldError("serial_number")
 	}
-
-	return nil, &XKMSOperationError{Operation: "ca.isRevoked", Cause: xkmssdk.ServiceErrOperationNotSupported}
+	ca, err := r.trustedCA("ca.isRevoked")
+	if err != nil {
+		return nil, err
+	}
+	return ca.IsRevoked(ctx, &transport.IsRevokedRequest{
+		SerialNumber: serialNumber,
+		TenantID:     getString(args, "tenant_id"),
+	})
 }
 
 // =============================================================================

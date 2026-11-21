@@ -116,6 +116,8 @@ var unixOnlyServices = map[string]string{
 	// CertificateService, TrustService and PIVService are mounted for
 	// Unix-socket peers only (pkg/apimodule
 	// TestModule_RegisterGRPC_LegacyXKMSWrappersAreUnixOnly).
+	// The node serves the go-xkms CA verbs on xkms.v1.KeystoreService (#1330).
+	"quicbaas.trustedca.v1.TrustedCAService": "xkms canonical surface",
 }
 
 // serviceNames returns the sorted names of the services registered on gs.

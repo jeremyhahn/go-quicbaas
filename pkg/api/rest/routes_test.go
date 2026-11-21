@@ -153,8 +153,13 @@ import (
 // under messaging:watch, the REST face of Messaging.WatchChannel.
 // PLUS 8 for the prompt store's verbs (/api/v1/prompts/{set}[/{name}...],
 // handlers_prompt.go, go-quicbaas#805) under prompts:read, prompts:history
-// and prompts:write.
-const baseRouteTableSize = 672
+// and prompts:write. PLUS 1 for the batch executor
+// (POST /api/v1/batch/execute) that the SDK gRPC and REST batch calls reach.
+// PLUS 2 for the KV conditional writes
+// (/api/v1/kv/{type}/{key}/compare-and-swap and /put-if-absent,
+// go-quicbaas#2029) under kv:put. 679 adds the four go-xkms TCG CA routes
+// (/api/v1/xkms/ca/tcg/{ak,ek,enroll,sign-csr}, #1330) under certs:generate.
+const baseRouteTableSize = 679
 
 // TestRoutes_SurfaceGuard asserts the table's structural invariants: exact
 // size, absolute patterns, no duplicate method+pattern, and a handler binder

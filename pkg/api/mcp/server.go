@@ -33,6 +33,7 @@ import (
 	"sync"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/sealedwindow"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
@@ -118,6 +119,13 @@ func DefaultConfig() *Config {
 func (s *Server) SetBarrierService(svc service.BarrierServicer) {
 	if s.tools != nil {
 		s.tools.SetBarrierService(svc)
+	}
+}
+
+// SetCAService wires the go-xkms CA the xkms.ca.* tools serve (#1330).
+func (s *Server) SetCAService(svc xkmstransport.CAService) {
+	if s.tools != nil {
+		s.tools.SetCAService(svc)
 	}
 }
 

@@ -1,6 +1,4 @@
-//go:build rest
-
-package rest
+package caadapter
 
 import (
 	"context"
@@ -44,7 +42,7 @@ func TestXKMSCAServicer_RevokeBindsCallerToIssuingTenant(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			a := newXKMSCAServicer(testca.New(t, "xkmsca-revoke-ca"), tt.trustDomain)
+			a := NewXKMSCAServicer(testca.New(t, "xkmsca-revoke-ca"), tt.trustDomain)
 
 			serial := issueForRevoke(t, a, tt.issuer, tt.keypair)
 
@@ -79,7 +77,7 @@ func TestXKMSCAServicer_RevokeBindsCallerToIssuingTenant(t *testing.T) {
 // issueForRevoke issues a client certificate for the tenant bound to ctx, on
 // the CSR-sign path or the generate-and-distribute (keypair) path, and returns
 // its serial.
-func issueForRevoke(t *testing.T, a *xkmsCAServicer, ctx context.Context, keypair bool) string {
+func issueForRevoke(t *testing.T, a *XKMSCAServicer, ctx context.Context, keypair bool) string {
 	t.Helper()
 	if keypair {
 		issued, err := a.IssueCertificate(ctx, &xkmstransport.IssueCertificateRequest{

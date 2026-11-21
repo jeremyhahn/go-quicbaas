@@ -104,10 +104,13 @@ type DeviceIdentityIssuance struct {
 // issuance.
 type IssuedDeviceIdentity struct {
 	CertificatePEM []byte
-	ChainPEM       []byte
-	SerialNumber   string
-	NotBefore      time.Time
-	NotAfter       time.Time
+	// IAKCertificatePEM is the IAK certificate issued with an IDevID; it
+	// is empty for the other identity types.
+	IAKCertificatePEM []byte
+	ChainPEM          []byte
+	SerialNumber      string
+	NotBefore         time.Time
+	NotAfter          time.Time
 }
 
 // =============================================================================
@@ -161,11 +164,14 @@ type IssueDeviceIdentityRequest struct {
 
 // IssueDeviceIdentityResponse carries the issued device identity certificate.
 type IssueDeviceIdentityResponse struct {
-	CertificatePEM []byte    `json:"certificate_pem"`
-	ChainPEM       []byte    `json:"chain_pem"`
-	SerialNumber   string    `json:"serial_number"`
-	NotBefore      time.Time `json:"not_before"`
-	NotAfter       time.Time `json:"not_after"`
+	CertificatePEM []byte `json:"certificate_pem"`
+	// IAKCertificatePEM is the IAK certificate issued with an IDevID; it
+	// is empty for the other identity types.
+	IAKCertificatePEM []byte    `json:"iak_certificate_pem,omitempty"`
+	ChainPEM          []byte    `json:"chain_pem"`
+	SerialNumber      string    `json:"serial_number"`
+	NotBefore         time.Time `json:"not_before"`
+	NotAfter          time.Time `json:"not_after"`
 }
 
 // =============================================================================
@@ -394,10 +400,6 @@ func (s *certificateService) IssueDeviceIdentity(ctx context.Context, req *Issue
 		return nil, err
 	}
 
-	tenantID, err := prepareTenantContext(ctx)
-	if err != nil {
-		return nil, err
-	}
 	// A device identity is issued in the caller's own tenant only. A request
 	// naming another tenant is refused, the system tenant included: go-qrdb
 	// v0.28 lets no caller mint another tenant's certificates.
@@ -425,7 +427,10 @@ func (s *certificateService) IssueDeviceIdentity(ctx context.Context, req *Issue
 		AKPub:          req.AKPub,
 		QualifyingData: req.QualifyingData,
 		ValidityDays:   req.ValidityDays,
-		TenantID:       tenantID,
+		// The CA stamps this tenant into the certificate and refuses none,
+		// so the literal system tenant is named, not the services' ""
+		// platform scope prepareTenantContext maps it to.
+		TenantID: target,
 	})
 	if err != nil {
 		return nil, &errors.QBError{
@@ -443,10 +448,11 @@ func (s *certificateService) IssueDeviceIdentity(ctx context.Context, req *Issue
 	}
 
 	return &IssueDeviceIdentityResponse{
-		CertificatePEM: issued.CertificatePEM,
-		ChainPEM:       issued.ChainPEM,
-		SerialNumber:   issued.SerialNumber,
-		NotBefore:      issued.NotBefore,
-		NotAfter:       issued.NotAfter,
+		CertificatePEM:    issued.CertificatePEM,
+		IAKCertificatePEM: issued.IAKCertificatePEM,
+		ChainPEM:          issued.ChainPEM,
+		SerialNumber:      issued.SerialNumber,
+		NotBefore:         issued.NotBefore,
+		NotAfter:          issued.NotAfter,
 	}, nil
 }

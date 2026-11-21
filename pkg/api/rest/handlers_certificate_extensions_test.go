@@ -253,7 +253,7 @@ func TestCertificateExtensionPEPMapping(t *testing.T) {
 		action   string
 	}{
 		{"/api/v1/certificate/cross-sign", "ca", "create"},
-		{"/api/v1/certificate/chain", "certs", "generate"},
+		{"/api/v1/certificate/chain", "trust", "write"},
 		{"/api/v1/certificate/device-identity", "certs", "generate"},
 	}
 

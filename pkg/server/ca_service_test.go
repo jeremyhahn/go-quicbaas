@@ -101,7 +101,12 @@ func TestNewCAService_StampsTheTenantSPIFFESAN(t *testing.T) {
 		t.Fatalf("parse issued certificate: %v", err)
 	}
 
-	want := "spiffe://fixtures.test/tenant/system/user/admin@fixtures.test"
+	// The workload name is the CN escaped to a valid SPIFFE path segment
+	// ('@' is 0x40); the subject CN itself is kept as requested (#1894).
+	want := "spiffe://fixtures.test/tenant/system/user/admin_40fixtures.test"
+	if cert.Subject.CommonName != "admin@fixtures.test" {
+		t.Errorf("subject CN = %q, want admin@fixtures.test", cert.Subject.CommonName)
+	}
 	var got []string
 	for _, u := range cert.URIs {
 		got = append(got, u.String())

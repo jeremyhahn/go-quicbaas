@@ -40,15 +40,18 @@ type Transport struct {
 var unaryHandlers = map[string]handlerFunc{
 	// KV operations
 	"quicbaas.KV/Put":             handlePut,
+	"quicbaas.KV/CompareAndSwap":  handleCompareAndSwap,
+	"quicbaas.KV/PutIfAbsent":     handlePutIfAbsent,
 	"quicbaas.KV/Get":             handleGet,
 	"quicbaas.KV/Delete":          handleDelete,
 	"quicbaas.KV/List":            handleList,
 	"quicbaas.KV/ListEntityTypes": handleListEntityTypes,
 
 	// Batch operations
-	"quicbaas.Batch/Put":    handleBatchPut,
-	"quicbaas.Batch/Get":    handleBatchGet,
-	"quicbaas.Batch/Delete": handleBatchDelete,
+	"quicbaas.Batch/Put":     handleBatchPut,
+	"quicbaas.Batch/Get":     handleBatchGet,
+	"quicbaas.Batch/Delete":  handleBatchDelete,
+	"quicbaas.Batch/Execute": handleBatchExecute,
 
 	// Transaction operations
 	"quicbaas.Transaction/Execute": handleTransaction,
@@ -321,6 +324,21 @@ var unaryHandlers = map[string]handlerFunc{
 	"quicbaas.Trust/CrossSignedRootPool": handleTrustCrossSignedRootPool,
 	"quicbaas.Trust/AutoImportAIA":       handleTrustAutoImportAIA,
 	"quicbaas.Trust/PublishDANE":         handleTrustPublishDANE,
+
+	// TrustedCA: the re-exported go-xkms CAService
+	// (Security().TrustedCA()), xkms wire types verbatim (#1330).
+	"quicbaas.TrustedCA/GetCABundle":       handleTrustedCAGetCABundle,
+	"quicbaas.TrustedCA/GetCACertificate":  handleTrustedCAGetCACertificate,
+	"quicbaas.TrustedCA/SignCSR":           handleTrustedCASignCSR,
+	"quicbaas.TrustedCA/IssueCertificate":  handleTrustedCAIssueCertificate,
+	"quicbaas.TrustedCA/RevokeCertificate": handleTrustedCARevokeCertificate,
+	"quicbaas.TrustedCA/GenerateCRL":       handleTrustedCAGenerateCRL,
+	"quicbaas.TrustedCA/IsRevoked":         handleTrustedCAIsRevoked,
+	// The re-exported go-xkms TCGCAService (Security().TCGCA()).
+	"quicbaas.TCGCA/IssueEKCertificate": handleTCGCAIssueEKCertificate,
+	"quicbaas.TCGCA/IssueAKCertificate": handleTCGCAIssueAKCertificate,
+	"quicbaas.TCGCA/SignTCGCSR":         handleTCGCASignTCGCSR,
+	"quicbaas.TCGCA/EnrollDevice":       handleTCGCAEnrollDevice,
 
 	// PIV: the backend-scoped go-xkms PIV surface
 	// (Security().Auth().PIV()), xkms wire types verbatim.

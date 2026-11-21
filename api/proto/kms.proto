@@ -846,6 +846,8 @@ message UnwrapKeyRequest {
   // Source key ID and version for AAD verification (from export response)
   string source_key_id = 8;
   uint64 source_version = 9;
+  // Whether the unwrapped key can be exported again (default false)
+  bool exportable = 10;
 }
 
 message UnwrapKeyResponse {

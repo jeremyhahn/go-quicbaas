@@ -25,9 +25,11 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"math/big"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -1253,10 +1255,12 @@ func TestGetSymmetricKey_NotInitialized(t *testing.T) {
 func TestGetSymmetricKey_BackendNotSupported(t *testing.T) {
 	setupFullTestXKMS(t)
 
-	// PKCS8 backend does not support symmetric key retrieval
+	// PKCS8 backend does not support symmetric key retrieval: a failed
+	// lookup, not an absent key.
 	_, err := GetSymmetricKey(context.Background(), "software:symmetric:aes256:test-key")
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrKeyNotFound)
+	assert.ErrorIs(t, err, ErrKeyLookup)
+	assert.NotErrorIs(t, err, ErrKeyNotFound)
 }
 
 // -----------------------------------------------------------------------------
@@ -3204,9 +3208,37 @@ func TestGenerateSymmetricKey_Error(t *testing.T) {
 func TestGetSymmetricKey_Error(t *testing.T) {
 	setupFullTestXKMS(t)
 
+	// The test backend does not support symmetric operations: the lookup
+	// fails, and that failure is not reported as the key's absence.
 	_, err := GetSymmetricKey(context.Background(), "non-existent-ref")
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrKeyNotFound)
+	assert.ErrorIs(t, err, ErrKeyLookup)
+	assert.NotErrorIs(t, err, ErrKeyNotFound)
+}
+
+// TestGetSymmetricKeyVia_OnlyGoXKMSNotFoundIsAbsence pins the classification
+// a caller deciding whether it may write relies on: go-xkms's not-found errors
+// are ErrKeyNotFound, and any other lookup failure is ErrKeyLookup, never
+// ErrKeyNotFound.
+func TestGetSymmetricKeyVia_OnlyGoXKMSNotFoundIsAbsence(t *testing.T) {
+	setupFullTestXKMS(t)
+	ctx := context.Background()
+	failWith := func(err error) func(context.Context, string) (xkmssdk.SymmetricKey, error) {
+		return func(context.Context, string) (xkmssdk.SymmetricKey, error) { return nil, err }
+	}
+
+	for _, absent := range []error{xkmssdk.ErrBackendKeyNotFound, xkmssdk.ErrKeyNotFound, fmt.Errorf("lookup: %w", xkmssdk.ErrBackendKeyNotFound)} {
+		_, err := GetSymmetricKeyVia(ctx, "ref", failWith(absent))
+		assert.ErrorIs(t, err, ErrKeyNotFound, "%v", absent)
+		assert.NotErrorIs(t, err, ErrKeyLookup, "%v", absent)
+	}
+
+	for _, fault := range []error{stderrors.New("storage unavailable"), fmt.Errorf("open: %w", os.ErrPermission)} {
+		_, err := GetSymmetricKeyVia(ctx, "ref", failWith(fault))
+		assert.ErrorIs(t, err, ErrKeyLookup, "%v", fault)
+		assert.ErrorIs(t, err, fault)
+		assert.NotErrorIs(t, err, ErrKeyNotFound, "%v must not read as absence", fault)
+	}
 }
 
 // TestJWTVerifyWithKeyAndClaims_ValidTokenSuccess tests the function with a valid signed token.
