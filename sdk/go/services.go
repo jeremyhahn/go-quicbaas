@@ -19,6 +19,7 @@ import (
 	qrdbsecret "github.com/jeremyhahn/go-qrdb/sdk/go/secret"
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport/mcp"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport/quic"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport/rest"
 )
@@ -309,6 +310,11 @@ func (s *securityService) SSH() SSHService {
 // own HTTP/3 client: go-qrdb's REST transport dials TCP, which a node serving
 // only its QUIC (UDP) listener refuses (go-quicbaas#2533). An embedded QRDB
 // takes precedence over that shortcut too.
+//
+// Over MCP the barrier verbs ride the SDK's own MCP transport, which sends
+// the platform bearer on every request: go-qrdb's MCP sub-client opens its
+// own session with no Authorization header, so the node answered its
+// initialize with 401 (TestBarrierStatus/mcp, #1700).
 func (s *securityService) Barrier() (QRDBBarrierClient, error) {
 	if s.c.opts == nil || s.c.opts.embeddedQRDB == nil {
 		if rt, ok := s.c.transport.(*rest.Transport); ok {
@@ -316,6 +322,9 @@ func (s *securityService) Barrier() (QRDBBarrierClient, error) {
 		}
 		if qt, ok := s.c.transport.(*quic.Transport); ok {
 			return qt.Transport.Barrier(), nil
+		}
+		if mt, ok := s.c.transport.(*mcp.Transport); ok {
+			return mt, nil
 		}
 	}
 	qrdbClient, err := s.c.qrdbClient()
