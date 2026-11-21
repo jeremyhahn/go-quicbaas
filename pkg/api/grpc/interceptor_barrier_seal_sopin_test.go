@@ -296,3 +296,61 @@ func TestUnaryBarrierSealSOPINInterceptor_Direct(t *testing.T) {
 		}
 	})
 }
+
+// BarrierRekey and BarrierRecoveryGenerate need the SO PIN as seal does:
+// the qrdb.v1 registration has no PIN backend, so the interceptor is their
+// only gate on the gRPC and Unix transports (go-quicbaas #2488).
+func TestUnaryBarrierSealSOPINInterceptor_RekeyAndRecoveryGenerate(t *testing.T) {
+	interceptor := UnaryBarrierSealSOPINInterceptor(sealPINBackend(t, testSealSOPIN))
+	missing := status.Code(ToGRPCError(&dberrors.QBError{Code: dberrors.ErrForbidden, Op: "barrier.Seal", Err: qrdbsdk.ErrSOPINRequired}))
+
+	for _, method := range []string{
+		"/qrdb.v1.QRDBService/BarrierRekey",
+		"/qrdb.v1.QRDBService/BarrierRecoveryGenerate",
+	} {
+		info := &grpc.UnaryServerInfo{FullMethod: method}
+		t.Run(method, func(t *testing.T) {
+			cases := []struct {
+				name     string
+				ctx      context.Context
+				req      fieldPINRequest
+				wantCode codes.Code
+			}{
+				{"correct PIN reaches the handler", context.Background(), fieldPINRequest{pin: testSealSOPIN}, codes.OK},
+				{"correct metadata PIN reaches the handler",
+					metadata.NewIncomingContext(context.Background(), metadata.Pairs(qrdbtransport.SOPINMetadataKey, testSealSOPIN)),
+					fieldPINRequest{}, codes.OK},
+				{"wrong PIN is refused", context.Background(), fieldPINRequest{pin: "wrong-pin"}, codes.PermissionDenied},
+				{"omitted PIN is refused", context.Background(), fieldPINRequest{}, missing},
+			}
+			for _, tc := range cases {
+				t.Run(tc.name, func(t *testing.T) {
+					reached := false
+					handler := func(context.Context, any) (any, error) { reached = true; return "done", nil }
+					resp, err := interceptor(tc.ctx, tc.req, info, handler)
+					if got := status.Code(err); got != tc.wantCode {
+						t.Fatalf("want %v, got %v", tc.wantCode, err)
+					}
+					if tc.wantCode == codes.OK {
+						if !reached || resp != "done" {
+							t.Fatalf("handler not reached: %v, %v", resp, err)
+						}
+						return
+					}
+					if reached {
+						t.Fatal("handler ran despite a refused SO PIN")
+					}
+				})
+			}
+		})
+	}
+
+	t.Run("method outside the guarded set passes through", func(t *testing.T) {
+		reached := false
+		handler := func(context.Context, any) (any, error) { reached = true; return "done", nil }
+		info := &grpc.UnaryServerInfo{FullMethod: "/qrdb.v1.QRDBService/BarrierRecoveryVerify"}
+		if _, err := interceptor(context.Background(), fieldPINRequest{}, info, handler); err != nil || !reached {
+			t.Fatalf("want pass-through, got reached=%v err=%v", reached, err)
+		}
+	})
+}
