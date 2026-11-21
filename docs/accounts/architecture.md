@@ -1545,6 +1545,7 @@ report about the same job is refused with `AttemptConcludedError`.
 | `forge_unreachable` | An error unwrapping to `ErrForgeUnreachable` (`task_attempt.go:216`): a forge call unanswered after the adapter's retries and reconciliation ([../sdlc/architecture.md](../sdlc/architecture.md#forge-transport-deadlines-retries-and-unanswered-writes)) | Refunded, requeued (bounded) |
 | `agent_interrupted` | An error unwrapping to `ErrAgentInterrupted` (`FaultAgentInterrupted`, `task_attempt.go:208`): a worker turn whose Prompt the fleet node stopped serving, or a container stream that closed with no exit of the worker's own | Refunded, requeued (bounded); never charged |
 | `consumption_pending` | An error unwrapping to `ErrConsumptionPending` (`ConsumptionPendingError`): a turn refused because an earlier turn's consumption is not yet in the ledger | Refunded, requeued (bounded); never charged |
+| `spend_check_unavailable` | An error unwrapping to `ErrSpendCheckUnavailable` (`SpendCheckUnavailableError`): a turn refused because the account record or the spend ledger could not be read | Refunded, requeued (bounded); never charged |
 | `no_provider_account`, `no_account_resolver`, `account_credential_missing`, `account_refresher_missing` | Resolver errors | Refunded, **blocked** for a human |
 | `superseded` | `JobSupersededError`, `JobLeaseTakenError` | Nothing written; the lease holder owns the task |
 | `stalled` | Stall detector | Charged |

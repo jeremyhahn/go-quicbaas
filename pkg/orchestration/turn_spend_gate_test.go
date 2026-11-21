@@ -165,6 +165,102 @@ func TestPromptSession_RefusesATurnWhoseAccountCannotBeRead(t *testing.T) {
 	if got := harness.accountTokens(t, ctx); got != 0 {
 		t.Errorf("account usage = %d, want 0 — a refused turn must not be charged", got)
 	}
+	var unavailable *SpendCheckUnavailableError
+	if !stderrors.As(err, &unavailable) {
+		t.Fatalf("PromptSession with an unreadable account = %v, want a *SpendCheckUnavailableError", err)
+	}
+	if unavailable.AccountID != "acct-1" {
+		t.Errorf("unavailable account = %q, want %q", unavailable.AccountID, "acct-1")
+	}
+	assertSpendCheckRefunded(t, err)
+}
+
+// assertSpendCheckRefunded drives err through a job's end and checks the
+// attempt was refunded as a spend_check_unavailable environment fault.
+func assertSpendCheckRefunded(t *testing.T, err error) {
+	t.Helper()
+	task, class := concludeFailedJob(t, err)
+	if class != FaultSpendCheckUnavailable {
+		t.Errorf("failure class = %q, want %q", class, FaultSpendCheckUnavailable)
+	}
+	if got := task.ChargedAttempts(); got != 0 {
+		t.Errorf("charged attempts = %d, want 0 — a store read that failed is not the work's failure", got)
+	}
+	if task.EnvironmentFaults != 1 {
+		t.Errorf("environment faults = %d, want 1", task.EnvironmentFaults)
+	}
+	if task.Status != TaskStatusPending {
+		t.Errorf("task status = %q, want %q — the refused turn requeues", task.Status, TaskStatusPending)
+	}
+}
+
+// unreadableLedger fails WindowUsage while failing is set; cancel, when set,
+// is called first, so the caller's ctx ends inside the spend check itself.
+type unreadableLedger struct {
+	ConsumptionLedger
+	failing atomic.Bool
+	cancel  context.CancelFunc
+}
+
+func (l *unreadableLedger) WindowUsage(ctx context.Context, tenantID, accountID string, from, to time.Time) (*ConsumptionRollup, error) {
+	if l.failing.Load() {
+		if l.cancel != nil {
+			l.cancel()
+			return nil, context.Canceled
+		}
+		return nil, stderrors.New("ledger: window scan failed")
+	}
+	return l.ConsumptionLedger.WindowUsage(ctx, tenantID, accountID, from, to)
+}
+
+// withUnreadableLedger rewires the harness's spend authority onto a ledger
+// that can be made to fail its window reads.
+func withUnreadableLedger(t *testing.T, harness *turnSpendHarness) *unreadableLedger {
+	t.Helper()
+	ledger := &unreadableLedger{ConsumptionLedger: harness.ledger}
+	authority, err := NewSpendAuthority(ledger, NewMemoryTaskKV(), spendHolder)
+	if err != nil {
+		t.Fatalf("NewSpendAuthority: %v", err)
+	}
+	harness.service.SetSpendAuthority(authority)
+	return ledger
+}
+
+func TestPromptSession_ASpendLedgerReadFailureIsRefundedNotCharged(t *testing.T) {
+	harness := newTurnSpendHarness(t, true)
+	ledger := withUnreadableLedger(t, harness)
+	ctx := ContextWithTenant(context.Background(), "tenant-a")
+	sessionID := harness.spawn(t, ctx)
+
+	ledger.failing.Store(true)
+	err := harness.prompt(ctx, sessionID)
+	var unavailable *SpendCheckUnavailableError
+	if !stderrors.As(err, &unavailable) {
+		t.Fatalf("PromptSession with an unreadable ledger = %v, want a *SpendCheckUnavailableError — a cap that cannot be checked is not a cap that was met", err)
+	}
+	if got := harness.accountTokens(t, ctx); got != 0 {
+		t.Errorf("account usage = %d, want 0 — a refused turn must not be charged", got)
+	}
+	assertSpendCheckRefunded(t, err)
+}
+
+func TestPromptSession_ACancelledSpendCheckIsNotReclassified(t *testing.T) {
+	harness := newTurnSpendHarness(t, true)
+	ledger := withUnreadableLedger(t, harness)
+	base := ContextWithTenant(context.Background(), "tenant-a")
+	sessionID := harness.spawn(t, base)
+
+	ctx, cancel := context.WithCancel(base)
+	defer cancel()
+	ledger.cancel = cancel
+	ledger.failing.Store(true)
+	err := harness.prompt(ctx, sessionID)
+	if err == nil {
+		t.Fatal("PromptSession whose spend check was cancelled = nil, want an error")
+	}
+	if stderrors.Is(err, ErrSpendCheckUnavailable) {
+		t.Errorf("PromptSession whose spend check was cancelled = %v, want the caller's cancellation, not a spend-check fault", err)
+	}
 }
 
 // A turn queued on a session behind the turn that spends its account is asked

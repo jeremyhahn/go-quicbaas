@@ -15,9 +15,67 @@ package orchestration
 
 import (
 	"context"
+	"errors"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
+
+// ErrSpendCheckUnavailable is a turn refused because the account record or the
+// spend ledger could not be read, so the cap could not be checked. It is an
+// environment fault: the turn never ran and the attempt is not charged.
+var ErrSpendCheckUnavailable = errors.New("account: the spend cap could not be read")
+
+// SpendCheckUnavailableError is the per-turn spend check failing on a read of
+// the account record or the spend ledger. It unwraps to both
+// ErrSpendCheckUnavailable and the read error, so errors.Is still finds
+// ErrAccountNotFound or the store's own error.
+type SpendCheckUnavailableError struct {
+	SessionID string
+	AccountID string
+	Err       error
+}
+
+func (e *SpendCheckUnavailableError) Error() string {
+	var b strings.Builder
+	b.WriteString(ErrSpendCheckUnavailable.Error())
+	b.WriteString(": session ")
+	b.WriteString(strconv.Quote(e.SessionID))
+	b.WriteString(", account ")
+	b.WriteString(strconv.Quote(e.AccountID))
+	if e.Err != nil {
+		b.WriteString(": ")
+		b.WriteString(e.Err.Error())
+	}
+	return b.String()
+}
+
+// Unwrap returns the sentinel and the read error.
+func (e *SpendCheckUnavailableError) Unwrap() []error {
+	return []error{ErrSpendCheckUnavailable, e.Err}
+}
+
+// spendCheckFault classifies an error from the per-turn spend check. A
+// cancelled caller, a typed refusal (quota exhausted, breaker, account limited,
+// consumption pending and the rest) and a code or wiring defect (unknown
+// verdict, authority config) pass through unchanged; any other error is a read
+// of the account or the ledger that failed, and becomes a
+// *SpendCheckUnavailableError.
+func spendCheckFault(ctx context.Context, sessionID, accountID string, err error) error {
+	if err == nil || ctx.Err() != nil {
+		return err
+	}
+	if _, typed := classifyEnvironmentFault(err); typed {
+		return err
+	}
+	var unknown *AccountSpendUnknownVerdictError
+	var config *SpendAuthorityConfigError
+	if errors.As(err, &unknown) || errors.As(err, &config) {
+		return err
+	}
+	return &SpendCheckUnavailableError{SessionID: sessionID, AccountID: accountID, Err: err}
+}
 
 // =============================================================================
 // The per-turn spend gate — the cap is asked again before every turn.
@@ -58,10 +116,13 @@ func (s *agentServiceImpl) SetSpendAuthority(spend SpendAuthority) {
 // serving sessionID may run one more turn.
 //
 // A session with no pooled account, or a service with no authority or account
-// store wired, is admitted: there is no cap to check. An account record that
-// cannot be read refuses the turn with the read error — a cap that cannot be
-// checked is not a cap that was met, which is the same fail-closed rule the
-// authority applies to a ledger it cannot read.
+// store wired, is admitted: there is no cap to check. An account record or a
+// spend ledger that cannot be read refuses the turn — a cap that cannot be
+// checked is not a cap that was met, the same fail-closed rule the authority
+// applies — as a *SpendCheckUnavailableError: a spend_check_unavailable
+// environment fault, requeued and never charged, since no turn ran. A typed
+// refusal (quota exhausted, breaker, account limited, consumption pending)
+// keeps its own class, and a cancelled caller gets its context's error.
 //
 // The estimate is zero, as at spawn: nothing measures what a turn will cost
 // before it runs, so the honest question is whether the account is ALREADY
@@ -80,9 +141,10 @@ func (s *agentServiceImpl) authorizeTurnSpend(ctx context.Context, sessionID str
 	}
 	account, err := s.accountStore.Get(ctx, mem.TenantID, accountID)
 	if err != nil {
-		return err
+		return spendCheckFault(ctx, sessionID, accountID, err)
 	}
-	return s.turnSpend.Authorize(ctx, SpendAuthorizeRequest{Account: account}, time.Now().UTC())
+	err = s.turnSpend.Authorize(ctx, SpendAuthorizeRequest{Account: account}, time.Now().UTC())
+	return spendCheckFault(ctx, sessionID, accountID, err)
 }
 
 // lockSessionTurn waits until no other turn is running on sessionID and
