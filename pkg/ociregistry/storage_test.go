@@ -134,9 +134,9 @@ func TestNewQuicBaaSStorage_NilClient(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for nil client")
 	}
-	var nilErr ErrNilClient
+	var nilErr NilClientError
 	if !errors.As(err, &nilErr) {
-		t.Errorf("expected ErrNilClient, got %T", err)
+		t.Errorf("expected NilClientError, got %T", err)
 	}
 }
 
@@ -166,7 +166,7 @@ func TestStoreBlob_Success(t *testing.T) {
 }
 
 // TestStorage_NilContext checks that every operation refuses a nil context
-// with an ErrNilContext naming the operation.
+// with an NilContextError naming the operation.
 func TestStorage_NilContext(t *testing.T) {
 	var nilCtx context.Context
 	ops := map[string]func(s *QuicBaaSStorage) error{
@@ -208,9 +208,9 @@ func TestStorage_NilContext(t *testing.T) {
 			storage, _ := NewQuicBaaSStorage(newMockStorageClient())
 
 			err := op(storage)
-			var nilCtxErr ErrNilContext
+			var nilCtxErr NilContextError
 			if !errors.As(err, &nilCtxErr) {
-				t.Fatalf("expected ErrNilContext, got %T (%v)", err, err)
+				t.Fatalf("expected NilContextError, got %T (%v)", err, err)
 			}
 			if nilCtxErr.Operation != name {
 				t.Errorf("expected operation %q, got %q", name, nilCtxErr.Operation)
@@ -263,7 +263,7 @@ func TestStoreBlob_StorageError(t *testing.T) {
 }
 
 // TestStorage_Closed checks that every operation refuses a closed storage
-// with ErrRegistryClosed.
+// with RegistryClosedError.
 func TestStorage_Closed(t *testing.T) {
 	ctx := context.Background()
 	ops := map[string]func(s *QuicBaaSStorage) error{
@@ -306,9 +306,9 @@ func TestStorage_Closed(t *testing.T) {
 			_ = storage.Close()
 
 			err := op(storage)
-			var closedErr ErrRegistryClosed
+			var closedErr RegistryClosedError
 			if !errors.As(err, &closedErr) {
-				t.Errorf("expected ErrRegistryClosed, got %T (%v)", err, err)
+				t.Errorf("expected RegistryClosedError, got %T (%v)", err, err)
 			}
 		})
 	}
@@ -323,9 +323,9 @@ func TestGetBlob_NotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for nonexistent blob")
 	}
-	var notFoundErr ErrBlobNotFound
+	var notFoundErr BlobNotFoundError
 	if !errors.As(err, &notFoundErr) {
-		t.Errorf("expected ErrBlobNotFound, got %T", err)
+		t.Errorf("expected BlobNotFoundError, got %T", err)
 	}
 }
 
@@ -562,9 +562,9 @@ func TestStoreManifest_NilManifest(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for nil manifest")
 	}
-	var invalidErr ErrInvalidManifest
+	var invalidErr InvalidManifestError
 	if !errors.As(err, &invalidErr) {
-		t.Errorf("expected ErrInvalidManifest, got %T", err)
+		t.Errorf("expected InvalidManifestError, got %T", err)
 	}
 }
 
@@ -578,9 +578,9 @@ func TestStoreManifest_EmptyReference(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for empty reference")
 	}
-	var refErr ErrInvalidImageRef
+	var refErr InvalidImageRefError
 	if !errors.As(err, &refErr) {
-		t.Errorf("expected ErrInvalidImageRef, got %T", err)
+		t.Errorf("expected InvalidImageRefError, got %T", err)
 	}
 }
 
@@ -699,9 +699,9 @@ func TestGetManifest_NotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for nonexistent manifest")
 	}
-	var notFoundErr ErrManifestNotFound
+	var notFoundErr ManifestNotFoundError
 	if !errors.As(err, &notFoundErr) {
-		t.Errorf("expected ErrManifestNotFound, got %T", err)
+		t.Errorf("expected ManifestNotFoundError, got %T", err)
 	}
 }
 
@@ -714,9 +714,9 @@ func TestGetManifest_EmptyReference(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for empty reference")
 	}
-	var refErr ErrInvalidImageRef
+	var refErr InvalidImageRefError
 	if !errors.As(err, &refErr) {
-		t.Errorf("expected ErrInvalidImageRef, got %T", err)
+		t.Errorf("expected InvalidImageRefError, got %T", err)
 	}
 }
 
@@ -788,9 +788,9 @@ func TestDeleteManifest_EmptyReference(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for empty reference")
 	}
-	var refErr ErrInvalidImageRef
+	var refErr InvalidImageRefError
 	if !errors.As(err, &refErr) {
-		t.Errorf("expected ErrInvalidImageRef, got %T", err)
+		t.Errorf("expected InvalidImageRefError, got %T", err)
 	}
 }
 
@@ -868,9 +868,9 @@ func TestManifestExists_EmptyReference(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for empty reference")
 	}
-	var refErr ErrInvalidImageRef
+	var refErr InvalidImageRefError
 	if !errors.As(err, &refErr) {
-		t.Errorf("expected ErrInvalidImageRef, got %T", err)
+		t.Errorf("expected InvalidImageRefError, got %T", err)
 	}
 }
 

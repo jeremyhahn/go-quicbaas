@@ -70,7 +70,7 @@ func WithObjectStoreTenant(tenant string) ObjectStoreOption {
 // NewObjectStoreClient returns the storage client over objects.
 func NewObjectStoreClient(objects ObjectStore, opts ...ObjectStoreOption) (*ObjectStoreClient, error) {
 	if objects == nil {
-		return nil, ErrNilClient{Client: "object storage"}
+		return nil, NilClientError{Client: "object storage"}
 	}
 	c := &ObjectStoreClient{objects: objects, tenant: tenantctx.SystemTenantID}
 	for _, opt := range opts {
@@ -156,7 +156,7 @@ func unescapeObjectPath(path string) (string, bool) {
 // objects until they are deleted, so ttl must be zero.
 func (c *ObjectStoreClient) Put(ctx context.Context, entityType, key string, value []byte, ttl time.Duration) error {
 	if ttl != 0 {
-		return ErrObjectStoreTTL{TTL: ttl}
+		return ObjectStoreTTLError{TTL: ttl}
 	}
 	req := &service.PutObjectRequest{
 		Key:         objectKey(entityType, key),

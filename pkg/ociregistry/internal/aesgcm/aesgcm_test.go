@@ -37,7 +37,6 @@ func (e *eofReader) Read(p []byte) (n int, err error) {
 }
 
 func TestSealWithoutAdditionalData(t *testing.T) {
-
 	// Use rand.Reader for entropy
 	aesgcm := NewAESGCM(nil)
 
@@ -83,7 +82,6 @@ func TestSealProducesDistinctCiphertexts(t *testing.T) {
 }
 
 func TestSealWithAdditionalData(t *testing.T) {
-
 	// Use rand.Reader for entropy
 	aesgcm := NewAESGCM(nil)
 
@@ -167,7 +165,7 @@ func TestOpenWithInvalidCiphertext(t *testing.T) {
 
 	t.Run("a blob shorter than nonce and tag is a typed error", func(t *testing.T) {
 		_, err := aesgcm.Open(key, sealed[:NonceSize+TagSize-1], nil)
-		var tooShort ErrCiphertextTooShort
+		var tooShort CiphertextTooShortError
 		assert.ErrorAs(t, err, &tooShort)
 		assert.Equal(t, NonceSize+TagSize-1, tooShort.Length)
 	})
@@ -175,7 +173,7 @@ func TestOpenWithInvalidCiphertext(t *testing.T) {
 	t.Run("a blob of exactly nonce and tag reaches authentication", func(t *testing.T) {
 		_, err := aesgcm.Open(key, sealed[:NonceSize+TagSize], nil)
 		assert.Error(t, err)
-		var tooShort ErrCiphertextTooShort
+		var tooShort CiphertextTooShortError
 		assert.False(t, errors.As(err, &tooShort))
 	})
 }
@@ -202,7 +200,7 @@ func TestNewAESGCMWithCustomReader(t *testing.T) {
 }
 
 func TestErrCiphertextTooShort(t *testing.T) {
-	err := ErrCiphertextTooShort{Length: 5}
+	err := CiphertextTooShortError{Length: 5}
 	assert.EqualError(t, err,
 		"aesgcm: ciphertext of 5 bytes is shorter than nonce and tag (28 bytes)")
 }

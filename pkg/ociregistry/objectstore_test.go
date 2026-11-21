@@ -105,7 +105,7 @@ func TestObjectStorage_RegistryRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, ok)
 	_, err = reg.GetBlob(ctx, sha256Digest([]byte("absent")))
-	assert.ErrorAs(t, err, &ErrBlobNotFound{})
+	assert.ErrorAs(t, err, &BlobNotFoundError{})
 
 	// The blob is an object in the object-storage service.
 	obj, err := objects.GetObject(tenantctx.WithSystem(ctx), &service.GetObjectRequest{Key: objectKey(entityTypeBlob, "registry/blobs/"+normalizeDigest(layerDigest))})
@@ -144,7 +144,7 @@ func TestObjectStorage_RegistryRoundTrip(t *testing.T) {
 
 	require.NoError(t, reg.DeleteManifest(ctx, "apps/web", "v2"))
 	_, _, err = reg.GetManifest(ctx, "apps/web", "v2")
-	assert.ErrorAs(t, err, &ErrManifestNotFound{})
+	assert.ErrorAs(t, err, &ManifestNotFoundError{})
 	tags, err = reg.ListTags(ctx, "apps/web")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"v1"}, tags)
@@ -209,14 +209,14 @@ func TestObjectPathEscape(t *testing.T) {
 // object store's failures.
 func TestObjectStoreClient_Errors(t *testing.T) {
 	_, err := NewObjectStoreClient(nil)
-	assert.ErrorAs(t, err, &ErrNilClient{})
+	assert.ErrorAs(t, err, &NilClientError{})
 	_, err = NewObjectStorage(nil, nil)
-	assert.ErrorAs(t, err, &ErrNilClient{})
+	assert.ErrorAs(t, err, &NilClientError{})
 
 	client, err := NewObjectStoreClient(newObjectStorageService(t))
 	require.NoError(t, err)
 	err = client.Put(context.Background(), entityTypeBlob, "k", []byte("v"), time.Minute)
-	assert.ErrorAs(t, err, &ErrObjectStoreTTL{})
+	assert.ErrorAs(t, err, &ObjectStoreTTLError{})
 
 	boom := errors.New("object store down")
 	failing, err := NewObjectStoreClient(failingObjectStore{err: boom})

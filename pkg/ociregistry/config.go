@@ -18,7 +18,7 @@ import (
 	"time"
 )
 
-// RegistryConfig holds configuration for the trusted container registry
+// RegistryConfig holds configuration for the trusted container registry.
 type RegistryConfig struct {
 	// ListenAddr is the address for the registry to listen on (e.g., ":5000")
 	ListenAddr string `yaml:"listen_addr" json:"listen_addr"`
@@ -51,7 +51,7 @@ type RegistryConfig struct {
 	MaxConcurrentPushes int `yaml:"max_concurrent_pushes" json:"max_concurrent_pushes"`
 }
 
-// TLSConfig holds TLS configuration for the registry
+// TLSConfig holds TLS configuration for the registry.
 type TLSConfig struct {
 	// Enabled indicates whether TLS is enabled
 	Enabled bool `yaml:"enabled" json:"enabled"`
@@ -75,7 +75,7 @@ type TLSConfig struct {
 	CipherSuites []uint16 `yaml:"cipher_suites" json:"cipher_suites"`
 }
 
-// RegistryAttestationConfig holds attestation requirements for registry clients
+// RegistryAttestationConfig holds attestation requirements for registry clients.
 type RegistryAttestationConfig struct {
 	// RequireAttestation indicates whether clients must provide attestation evidence
 	RequireAttestation bool `yaml:"require_attestation" json:"require_attestation"`
@@ -227,7 +227,7 @@ func DefaultEncryptionConfig() EncryptionConfig {
 // Validate checks if the configuration is valid
 func (c *RegistryConfig) Validate() error {
 	if c.ListenAddr == "" {
-		return ErrInvalidConfig{Field: "listen_addr", Reason: "cannot be empty"}
+		return InvalidConfigError{Field: "listen_addr", Reason: "cannot be empty"}
 	}
 
 	if err := c.TLS.Validate(); err != nil {
@@ -247,19 +247,19 @@ func (c *RegistryConfig) Validate() error {
 	}
 
 	if c.ReadTimeout <= 0 {
-		return ErrInvalidConfig{Field: "read_timeout", Reason: "must be positive"}
+		return InvalidConfigError{Field: "read_timeout", Reason: "must be positive"}
 	}
 
 	if c.WriteTimeout <= 0 {
-		return ErrInvalidConfig{Field: "write_timeout", Reason: "must be positive"}
+		return InvalidConfigError{Field: "write_timeout", Reason: "must be positive"}
 	}
 
 	if c.MaxConcurrentPulls <= 0 {
-		return ErrInvalidConfig{Field: "max_concurrent_pulls", Reason: "must be positive"}
+		return InvalidConfigError{Field: "max_concurrent_pulls", Reason: "must be positive"}
 	}
 
 	if c.MaxConcurrentPushes <= 0 {
-		return ErrInvalidConfig{Field: "max_concurrent_pushes", Reason: "must be positive"}
+		return InvalidConfigError{Field: "max_concurrent_pushes", Reason: "must be positive"}
 	}
 
 	return nil
@@ -272,15 +272,15 @@ func (c *TLSConfig) Validate() error {
 	}
 
 	if c.CertFile == "" {
-		return ErrInvalidConfig{Field: "tls.cert_file", Reason: "cannot be empty when TLS is enabled"}
+		return InvalidConfigError{Field: "tls.cert_file", Reason: "cannot be empty when TLS is enabled"}
 	}
 
 	if c.KeyFile == "" {
-		return ErrInvalidConfig{Field: "tls.key_file", Reason: "cannot be empty when TLS is enabled"}
+		return InvalidConfigError{Field: "tls.key_file", Reason: "cannot be empty when TLS is enabled"}
 	}
 
 	if c.MinVersion < tls.VersionTLS12 {
-		return ErrInvalidConfig{Field: "tls.min_version", Reason: "minimum TLS version must be TLS 1.2 or higher"}
+		return InvalidConfigError{Field: "tls.min_version", Reason: "minimum TLS version must be TLS 1.2 or higher"}
 	}
 
 	return nil
@@ -293,15 +293,15 @@ func (c *RegistryAttestationConfig) Validate() error {
 	}
 
 	if c.NonceValidityDuration <= 0 {
-		return ErrInvalidConfig{Field: "attestation.nonce_validity_duration", Reason: "must be positive"}
+		return InvalidConfigError{Field: "attestation.nonce_validity_duration", Reason: "must be positive"}
 	}
 
 	if c.QuoteMaxAge <= 0 {
-		return ErrInvalidConfig{Field: "attestation.quote_max_age", Reason: "must be positive"}
+		return InvalidConfigError{Field: "attestation.quote_max_age", Reason: "must be positive"}
 	}
 
 	if c.CacheSessionDuration <= 0 {
-		return ErrInvalidConfig{Field: "attestation.cache_session_duration", Reason: "must be positive"}
+		return InvalidConfigError{Field: "attestation.cache_session_duration", Reason: "must be positive"}
 	}
 
 	return nil
@@ -310,27 +310,27 @@ func (c *RegistryAttestationConfig) Validate() error {
 // Validate checks if the storage configuration is valid
 func (c *StorageConfig) Validate() error {
 	if c.Addr == "" {
-		return ErrInvalidConfig{Field: "storage.addr", Reason: "QuicBaaS address cannot be empty"}
+		return InvalidConfigError{Field: "storage.addr", Reason: "QuicBaaS address cannot be empty"}
 	}
 
 	if c.Namespace == "" {
-		return ErrInvalidConfig{Field: "storage.namespace", Reason: "namespace cannot be empty"}
+		return InvalidConfigError{Field: "storage.namespace", Reason: "namespace cannot be empty"}
 	}
 
 	if c.Encrypted && c.KeyID == "" {
-		return ErrInvalidConfig{Field: "storage.key_id", Reason: "key ID required when encryption is enabled"}
+		return InvalidConfigError{Field: "storage.key_id", Reason: "key ID required when encryption is enabled"}
 	}
 
 	if c.ConnectionTimeout <= 0 {
-		return ErrInvalidConfig{Field: "storage.connection_timeout", Reason: "must be positive"}
+		return InvalidConfigError{Field: "storage.connection_timeout", Reason: "must be positive"}
 	}
 
 	if c.RequestTimeout <= 0 {
-		return ErrInvalidConfig{Field: "storage.request_timeout", Reason: "must be positive"}
+		return InvalidConfigError{Field: "storage.request_timeout", Reason: "must be positive"}
 	}
 
 	if c.MaxRetries < 0 {
-		return ErrInvalidConfig{Field: "storage.max_retries", Reason: "cannot be negative"}
+		return InvalidConfigError{Field: "storage.max_retries", Reason: "cannot be negative"}
 	}
 
 	return nil
@@ -339,15 +339,15 @@ func (c *StorageConfig) Validate() error {
 // Validate checks if the encryption configuration is valid
 func (c *EncryptionConfig) Validate() error {
 	if c.QuicBaaSAddr == "" {
-		return ErrInvalidConfig{Field: "encryption.quicbaas_addr", Reason: "QuicBaaS address cannot be empty"}
+		return InvalidConfigError{Field: "encryption.quicbaas_addr", Reason: "QuicBaaS address cannot be empty"}
 	}
 
 	if c.KeyNamespace == "" {
-		return ErrInvalidConfig{Field: "encryption.key_namespace", Reason: "key namespace cannot be empty"}
+		return InvalidConfigError{Field: "encryption.key_namespace", Reason: "key namespace cannot be empty"}
 	}
 
 	if c.Algorithm == "" {
-		return ErrInvalidConfig{Field: "encryption.algorithm", Reason: "algorithm cannot be empty"}
+		return InvalidConfigError{Field: "encryption.algorithm", Reason: "algorithm cannot be empty"}
 	}
 
 	// Validate supported algorithms
@@ -355,15 +355,15 @@ func (c *EncryptionConfig) Validate() error {
 	case "AES-256-GCM", "AES-128-GCM":
 		// Valid algorithms
 	default:
-		return ErrInvalidConfig{Field: "encryption.algorithm", Reason: "unsupported algorithm: " + c.Algorithm}
+		return InvalidConfigError{Field: "encryption.algorithm", Reason: "unsupported algorithm: " + c.Algorithm}
 	}
 
 	if c.DEKCacheSize <= 0 {
-		return ErrInvalidConfig{Field: "encryption.dek_cache_size", Reason: "must be positive"}
+		return InvalidConfigError{Field: "encryption.dek_cache_size", Reason: "must be positive"}
 	}
 
 	if c.DEKCacheTTL <= 0 {
-		return ErrInvalidConfig{Field: "encryption.dek_cache_ttl", Reason: "must be positive"}
+		return InvalidConfigError{Field: "encryption.dek_cache_ttl", Reason: "must be positive"}
 	}
 
 	return nil

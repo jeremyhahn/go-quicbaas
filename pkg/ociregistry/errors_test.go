@@ -20,7 +20,7 @@ import (
 )
 
 func TestErrAttestationRequired(t *testing.T) {
-	err := ErrAttestationRequired{}
+	err := AttestationRequiredError{}
 
 	if err.Error() == "" {
 		t.Error("expected non-empty error message")
@@ -51,7 +51,7 @@ func TestErrAttestationFailed(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := ErrAttestationFailed{Reason: tt.reason}
+			err := AttestationFailedError{Reason: tt.reason}
 			if !strings.Contains(err.Error(), tt.contains) {
 				t.Errorf("expected error to contain %q, got: %s", tt.contains, err.Error())
 			}
@@ -62,22 +62,22 @@ func TestErrAttestationFailed(t *testing.T) {
 func TestErrInvalidQuote(t *testing.T) {
 	tests := []struct {
 		name     string
-		err      ErrInvalidQuote
+		err      InvalidQuoteError
 		contains string
 	}{
 		{
 			name:     "with reason",
-			err:      ErrInvalidQuote{Reason: "malformed nonce"},
+			err:      InvalidQuoteError{Reason: "malformed nonce"},
 			contains: "malformed nonce",
 		},
 		{
 			name:     "with cause",
-			err:      ErrInvalidQuote{Cause: errors.New("underlying error")},
+			err:      InvalidQuoteError{Cause: errors.New("underlying error")},
 			contains: "underlying error",
 		},
 		{
 			name:     "empty",
-			err:      ErrInvalidQuote{},
+			err:      InvalidQuoteError{},
 			contains: "invalid TPM quote",
 		},
 	}
@@ -92,7 +92,7 @@ func TestErrInvalidQuote(t *testing.T) {
 
 	// Test Unwrap
 	cause := errors.New("wrapped error")
-	err := ErrInvalidQuote{Cause: cause}
+	err := InvalidQuoteError{Cause: cause}
 	if err.Unwrap() != cause {
 		t.Error("Unwrap should return the cause")
 	}
@@ -101,17 +101,17 @@ func TestErrInvalidQuote(t *testing.T) {
 func TestErrAccessDenied(t *testing.T) {
 	tests := []struct {
 		name     string
-		err      ErrAccessDenied
+		err      AccessDeniedError
 		contains []string
 	}{
 		{
 			name:     "with subject and resource",
-			err:      ErrAccessDenied{Subject: "client1", Resource: "image:latest", Reason: "policy violation"},
+			err:      AccessDeniedError{Subject: "client1", Resource: "image:latest", Reason: "policy violation"},
 			contains: []string{"client1", "image:latest", "policy violation"},
 		},
 		{
 			name:     "reason only",
-			err:      ErrAccessDenied{Reason: "unauthorized"},
+			err:      AccessDeniedError{Reason: "unauthorized"},
 			contains: []string{"unauthorized"},
 		},
 	}
@@ -129,7 +129,7 @@ func TestErrAccessDenied(t *testing.T) {
 }
 
 func TestErrImageNotFound(t *testing.T) {
-	err := ErrImageNotFound{Reference: "myrepo/myimage:v1"}
+	err := ImageNotFoundError{Reference: "myrepo/myimage:v1"}
 
 	if !strings.Contains(err.Error(), "myrepo/myimage:v1") {
 		t.Errorf("expected error to contain reference, got: %s", err.Error())
@@ -141,7 +141,7 @@ func TestErrImageNotFound(t *testing.T) {
 }
 
 func TestErrImageExists(t *testing.T) {
-	err := ErrImageExists{Reference: "myrepo/myimage:v1"}
+	err := ImageExistsError{Reference: "myrepo/myimage:v1"}
 
 	if !strings.Contains(err.Error(), "myrepo/myimage:v1") {
 		t.Errorf("expected error to contain reference, got: %s", err.Error())
@@ -155,27 +155,27 @@ func TestErrImageExists(t *testing.T) {
 func TestErrDecryptionFailed(t *testing.T) {
 	tests := []struct {
 		name     string
-		err      ErrDecryptionFailed
+		err      DecryptionFailedError
 		contains string
 	}{
 		{
 			name:     "with layer and cause",
-			err:      ErrDecryptionFailed{LayerID: "sha256:abc123", Cause: errors.New("key not found")},
+			err:      DecryptionFailedError{LayerID: "sha256:abc123", Cause: errors.New("key not found")},
 			contains: "sha256:abc123",
 		},
 		{
 			name:     "with reference and cause",
-			err:      ErrDecryptionFailed{Reference: "myimage:v1", Cause: errors.New("key error")},
+			err:      DecryptionFailedError{Reference: "myimage:v1", Cause: errors.New("key error")},
 			contains: "myimage:v1",
 		},
 		{
 			name:     "cause only",
-			err:      ErrDecryptionFailed{Cause: errors.New("decrypt error")},
+			err:      DecryptionFailedError{Cause: errors.New("decrypt error")},
 			contains: "decrypt error",
 		},
 		{
 			name:     "empty",
-			err:      ErrDecryptionFailed{},
+			err:      DecryptionFailedError{},
 			contains: "decryption failed",
 		},
 	}
@@ -190,7 +190,7 @@ func TestErrDecryptionFailed(t *testing.T) {
 
 	// Test Unwrap
 	cause := errors.New("wrapped error")
-	err := ErrDecryptionFailed{Cause: cause}
+	err := DecryptionFailedError{Cause: cause}
 	if err.Unwrap() != cause {
 		t.Error("Unwrap should return the cause")
 	}
@@ -199,27 +199,27 @@ func TestErrDecryptionFailed(t *testing.T) {
 func TestErrEncryptionFailed(t *testing.T) {
 	tests := []struct {
 		name     string
-		err      ErrEncryptionFailed
+		err      EncryptionFailedError
 		contains string
 	}{
 		{
 			name:     "with layer and cause",
-			err:      ErrEncryptionFailed{LayerID: "sha256:abc123", Cause: errors.New("key generation failed")},
+			err:      EncryptionFailedError{LayerID: "sha256:abc123", Cause: errors.New("key generation failed")},
 			contains: "sha256:abc123",
 		},
 		{
 			name:     "with reference and cause",
-			err:      ErrEncryptionFailed{Reference: "myimage:v1", Cause: errors.New("key error")},
+			err:      EncryptionFailedError{Reference: "myimage:v1", Cause: errors.New("key error")},
 			contains: "myimage:v1",
 		},
 		{
 			name:     "cause only",
-			err:      ErrEncryptionFailed{Cause: errors.New("encrypt error")},
+			err:      EncryptionFailedError{Cause: errors.New("encrypt error")},
 			contains: "encrypt error",
 		},
 		{
 			name:     "empty",
-			err:      ErrEncryptionFailed{},
+			err:      EncryptionFailedError{},
 			contains: "encryption failed",
 		},
 	}
@@ -234,7 +234,7 @@ func TestErrEncryptionFailed(t *testing.T) {
 
 	// Test Unwrap
 	cause := errors.New("wrapped error")
-	err := ErrEncryptionFailed{Cause: cause}
+	err := EncryptionFailedError{Cause: cause}
 	if err.Unwrap() != cause {
 		t.Error("Unwrap should return the cause")
 	}
@@ -283,7 +283,7 @@ func TestErrStorageError(t *testing.T) {
 }
 
 func TestErrRegistryNotInitialized(t *testing.T) {
-	err := ErrRegistryNotInitialized{}
+	err := RegistryNotInitializedError{}
 
 	if !strings.Contains(err.Error(), "not initialized") {
 		t.Errorf("expected error to contain 'not initialized', got: %s", err.Error())
@@ -291,7 +291,7 @@ func TestErrRegistryNotInitialized(t *testing.T) {
 }
 
 func TestErrRegistryClosed(t *testing.T) {
-	err := ErrRegistryClosed{}
+	err := RegistryClosedError{}
 
 	if !strings.Contains(err.Error(), "closed") {
 		t.Errorf("expected error to contain 'closed', got: %s", err.Error())
@@ -299,7 +299,7 @@ func TestErrRegistryClosed(t *testing.T) {
 }
 
 func TestErrInvalidImageRef(t *testing.T) {
-	err := ErrInvalidImageRef{Reference: "INVALID/ref:tag", Reason: "uppercase not allowed"}
+	err := InvalidImageRefError{Reference: "INVALID/ref:tag", Reason: "uppercase not allowed"}
 
 	if !strings.Contains(err.Error(), "INVALID/ref:tag") {
 		t.Errorf("expected error to contain reference, got: %s", err.Error())
@@ -311,7 +311,7 @@ func TestErrInvalidImageRef(t *testing.T) {
 }
 
 func TestErrBlobNotFound(t *testing.T) {
-	err := ErrBlobNotFound{Digest: "sha256:abc123def456"}
+	err := BlobNotFoundError{Digest: "sha256:abc123def456"}
 
 	if !strings.Contains(err.Error(), "sha256:abc123def456") {
 		t.Errorf("expected error to contain digest, got: %s", err.Error())
@@ -319,7 +319,7 @@ func TestErrBlobNotFound(t *testing.T) {
 }
 
 func TestErrManifestNotFound(t *testing.T) {
-	err := ErrManifestNotFound{Reference: "myrepo/myimage:v1"}
+	err := ManifestNotFoundError{Reference: "myrepo/myimage:v1"}
 
 	if !strings.Contains(err.Error(), "myrepo/myimage:v1") {
 		t.Errorf("expected error to contain reference, got: %s", err.Error())
@@ -327,7 +327,7 @@ func TestErrManifestNotFound(t *testing.T) {
 }
 
 func TestErrInvalidManifest(t *testing.T) {
-	err := ErrInvalidManifest{Reference: "myimage:v1", Reason: "missing config"}
+	err := InvalidManifestError{Reference: "myimage:v1", Reason: "missing config"}
 
 	if !strings.Contains(err.Error(), "myimage:v1") {
 		t.Errorf("expected error to contain reference, got: %s", err.Error())
@@ -339,7 +339,7 @@ func TestErrInvalidManifest(t *testing.T) {
 }
 
 func TestErrKeyNotFound(t *testing.T) {
-	err := ErrKeyNotFound{KeyID: "my-encryption-key"}
+	err := KeyNotFoundError{KeyID: "my-encryption-key"}
 
 	if !strings.Contains(err.Error(), "my-encryption-key") {
 		t.Errorf("expected error to contain key ID, got: %s", err.Error())
@@ -349,22 +349,22 @@ func TestErrKeyNotFound(t *testing.T) {
 func TestErrKeyCreationFailed(t *testing.T) {
 	tests := []struct {
 		name     string
-		err      ErrKeyCreationFailed
+		err      KeyCreationFailedError
 		contains string
 	}{
 		{
 			name:     "with key and cause",
-			err:      ErrKeyCreationFailed{KeyID: "my-key", Cause: errors.New("permission denied")},
+			err:      KeyCreationFailedError{KeyID: "my-key", Cause: errors.New("permission denied")},
 			contains: "my-key",
 		},
 		{
 			name:     "cause only",
-			err:      ErrKeyCreationFailed{Cause: errors.New("db error")},
+			err:      KeyCreationFailedError{Cause: errors.New("db error")},
 			contains: "db error",
 		},
 		{
 			name:     "empty",
-			err:      ErrKeyCreationFailed{},
+			err:      KeyCreationFailedError{},
 			contains: "key creation failed",
 		},
 	}
@@ -379,7 +379,7 @@ func TestErrKeyCreationFailed(t *testing.T) {
 
 	// Test Unwrap
 	cause := errors.New("wrapped error")
-	err := ErrKeyCreationFailed{Cause: cause}
+	err := KeyCreationFailedError{Cause: cause}
 	if err.Unwrap() != cause {
 		t.Error("Unwrap should return the cause")
 	}
@@ -388,22 +388,22 @@ func TestErrKeyCreationFailed(t *testing.T) {
 func TestErrKeyWrapFailed(t *testing.T) {
 	tests := []struct {
 		name     string
-		err      ErrKeyWrapFailed
+		err      KeyWrapFailedError
 		contains string
 	}{
 		{
 			name:     "with key and cause",
-			err:      ErrKeyWrapFailed{KeyID: "kek-1", Cause: errors.New("key expired")},
+			err:      KeyWrapFailedError{KeyID: "kek-1", Cause: errors.New("key expired")},
 			contains: "kek-1",
 		},
 		{
 			name:     "cause only",
-			err:      ErrKeyWrapFailed{Cause: errors.New("crypto error")},
+			err:      KeyWrapFailedError{Cause: errors.New("crypto error")},
 			contains: "crypto error",
 		},
 		{
 			name:     "empty",
-			err:      ErrKeyWrapFailed{},
+			err:      KeyWrapFailedError{},
 			contains: "DEK wrap failed",
 		},
 	}
@@ -418,7 +418,7 @@ func TestErrKeyWrapFailed(t *testing.T) {
 
 	// Test Unwrap
 	cause := errors.New("wrapped error")
-	err := ErrKeyWrapFailed{Cause: cause}
+	err := KeyWrapFailedError{Cause: cause}
 	if err.Unwrap() != cause {
 		t.Error("Unwrap should return the cause")
 	}
@@ -427,22 +427,22 @@ func TestErrKeyWrapFailed(t *testing.T) {
 func TestErrKeyUnwrapFailed(t *testing.T) {
 	tests := []struct {
 		name     string
-		err      ErrKeyUnwrapFailed
+		err      KeyUnwrapFailedError
 		contains string
 	}{
 		{
 			name:     "with key and cause",
-			err:      ErrKeyUnwrapFailed{KeyID: "kek-1", Cause: errors.New("decryption failed")},
+			err:      KeyUnwrapFailedError{KeyID: "kek-1", Cause: errors.New("decryption failed")},
 			contains: "kek-1",
 		},
 		{
 			name:     "cause only",
-			err:      ErrKeyUnwrapFailed{Cause: errors.New("invalid ciphertext")},
+			err:      KeyUnwrapFailedError{Cause: errors.New("invalid ciphertext")},
 			contains: "invalid ciphertext",
 		},
 		{
 			name:     "empty",
-			err:      ErrKeyUnwrapFailed{},
+			err:      KeyUnwrapFailedError{},
 			contains: "DEK unwrap failed",
 		},
 	}
@@ -457,7 +457,7 @@ func TestErrKeyUnwrapFailed(t *testing.T) {
 
 	// Test Unwrap
 	cause := errors.New("wrapped error")
-	err := ErrKeyUnwrapFailed{Cause: cause}
+	err := KeyUnwrapFailedError{Cause: cause}
 	if err.Unwrap() != cause {
 		t.Error("Unwrap should return the cause")
 	}
@@ -466,17 +466,17 @@ func TestErrKeyUnwrapFailed(t *testing.T) {
 func TestErrInvalidConfig(t *testing.T) {
 	tests := []struct {
 		name     string
-		err      ErrInvalidConfig
+		err      InvalidConfigError
 		contains []string
 	}{
 		{
 			name:     "with field and reason",
-			err:      ErrInvalidConfig{Field: "listen_addr", Reason: "cannot be empty"},
+			err:      InvalidConfigError{Field: "listen_addr", Reason: "cannot be empty"},
 			contains: []string{"listen_addr", "cannot be empty"},
 		},
 		{
 			name:     "reason only",
-			err:      ErrInvalidConfig{Reason: "missing required fields"},
+			err:      InvalidConfigError{Reason: "missing required fields"},
 			contains: []string{"missing required fields"},
 		},
 	}
@@ -496,7 +496,7 @@ func TestErrInvalidConfig(t *testing.T) {
 func TestErrPCRMismatch(t *testing.T) {
 	expected := []byte{0x01, 0x02, 0x03}
 	actual := []byte{0x04, 0x05, 0x06}
-	err := ErrPCRMismatch{PCRIndex: 7, Expected: expected, Actual: actual}
+	err := PCRMismatchError{PCRIndex: 7, Expected: expected, Actual: actual}
 
 	errMsg := err.Error()
 	if !strings.Contains(errMsg, "7") {
@@ -513,7 +513,7 @@ func TestErrPCRMismatch(t *testing.T) {
 }
 
 func TestErrAIKNotAllowed(t *testing.T) {
-	err := ErrAIKNotAllowed{AIK: "sha256:fingerprint123"}
+	err := AIKNotAllowedError{AIK: "sha256:fingerprint123"}
 
 	if !strings.Contains(err.Error(), "sha256:fingerprint123") {
 		t.Errorf("expected error to contain AIK, got: %s", err.Error())
@@ -527,17 +527,17 @@ func TestErrAIKNotAllowed(t *testing.T) {
 func TestErrQuicBaaSConnection(t *testing.T) {
 	tests := []struct {
 		name     string
-		err      ErrQuicBaaSConnection
+		err      QuicBaaSConnectionError
 		contains []string
 	}{
 		{
 			name:     "with cause",
-			err:      ErrQuicBaaSConnection{Addr: "localhost:9000", Cause: errors.New("connection refused")},
+			err:      QuicBaaSConnectionError{Addr: "localhost:9000", Cause: errors.New("connection refused")},
 			contains: []string{"localhost:9000", "connection refused"},
 		},
 		{
 			name:     "without cause",
-			err:      ErrQuicBaaSConnection{Addr: "localhost:9000"},
+			err:      QuicBaaSConnectionError{Addr: "localhost:9000"},
 			contains: []string{"localhost:9000"},
 		},
 	}
@@ -555,7 +555,7 @@ func TestErrQuicBaaSConnection(t *testing.T) {
 
 	// Test Unwrap
 	cause := errors.New("wrapped error")
-	err := ErrQuicBaaSConnection{Addr: "localhost:9000", Cause: cause}
+	err := QuicBaaSConnectionError{Addr: "localhost:9000", Cause: cause}
 	if err.Unwrap() != cause {
 		t.Error("Unwrap should return the cause")
 	}
@@ -581,7 +581,7 @@ func TestErrSessionExpired(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := ErrSessionExpired{SessionID: tt.sessionID}
+			err := SessionExpiredError{SessionID: tt.sessionID}
 			if !strings.Contains(err.Error(), tt.contains) {
 				t.Errorf("expected error to contain %q, got: %s", tt.contains, err.Error())
 			}
@@ -609,7 +609,7 @@ func TestErrSessionNotFound(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := ErrSessionNotFound{SessionID: tt.sessionID}
+			err := SessionNotFoundError{SessionID: tt.sessionID}
 			if !strings.Contains(err.Error(), tt.contains) {
 				t.Errorf("expected error to contain %q, got: %s", tt.contains, err.Error())
 			}
@@ -637,7 +637,7 @@ func TestErrInvalidSession(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := ErrInvalidSession{Reason: tt.reason}
+			err := InvalidSessionError{Reason: tt.reason}
 			if !strings.Contains(err.Error(), tt.contains) {
 				t.Errorf("expected error to contain %q, got: %s", tt.contains, err.Error())
 			}
@@ -646,7 +646,7 @@ func TestErrInvalidSession(t *testing.T) {
 }
 
 func TestErrOperationTimeout(t *testing.T) {
-	err := ErrOperationTimeout{Operation: "pull"}
+	err := OperationTimeoutError{Operation: "pull"}
 
 	if !strings.Contains(err.Error(), "pull") {
 		t.Errorf("expected error to contain operation, got: %s", err.Error())
@@ -658,7 +658,7 @@ func TestErrOperationTimeout(t *testing.T) {
 }
 
 func TestErrDigestMismatch(t *testing.T) {
-	err := ErrDigestMismatch{Expected: "sha256:expected", Actual: "sha256:actual"}
+	err := DigestMismatchError{Expected: "sha256:expected", Actual: "sha256:actual"}
 
 	errMsg := err.Error()
 	if !strings.Contains(errMsg, "sha256:expected") {
@@ -690,7 +690,7 @@ func TestErrNilClient(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := ErrNilClient{Client: tt.client}
+			err := NilClientError{Client: tt.client}
 			if !strings.Contains(err.Error(), tt.contains) {
 				t.Errorf("expected error to contain %q, got: %s", tt.contains, err.Error())
 			}
@@ -718,7 +718,7 @@ func TestErrNilContext(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := ErrNilContext{Operation: tt.operation}
+			err := NilContextError{Operation: tt.operation}
 			if !strings.Contains(err.Error(), tt.contains) {
 				t.Errorf("expected error to contain %q, got: %s", tt.contains, err.Error())
 			}
@@ -727,7 +727,7 @@ func TestErrNilContext(t *testing.T) {
 }
 
 func TestErrImageEmpty(t *testing.T) {
-	err := ErrImageEmpty{}
+	err := ImageEmptyError{}
 
 	if !strings.Contains(err.Error(), "no layers") {
 		t.Errorf("expected error to contain 'no layers', got: %s", err.Error())
@@ -737,22 +737,22 @@ func TestErrImageEmpty(t *testing.T) {
 func TestErrPolicyEvaluationFailed(t *testing.T) {
 	tests := []struct {
 		name     string
-		err      ErrPolicyEvaluationFailed
+		err      PolicyEvaluationFailedError
 		contains string
 	}{
 		{
 			name:     "with policy and cause",
-			err:      ErrPolicyEvaluationFailed{Policy: "registry.access", Cause: errors.New("undefined rule")},
+			err:      PolicyEvaluationFailedError{Policy: "registry.access", Cause: errors.New("undefined rule")},
 			contains: "registry.access",
 		},
 		{
 			name:     "cause only",
-			err:      ErrPolicyEvaluationFailed{Cause: errors.New("rego error")},
+			err:      PolicyEvaluationFailedError{Cause: errors.New("rego error")},
 			contains: "rego error",
 		},
 		{
 			name:     "empty",
-			err:      ErrPolicyEvaluationFailed{},
+			err:      PolicyEvaluationFailedError{},
 			contains: "policy evaluation failed",
 		},
 	}
@@ -767,7 +767,7 @@ func TestErrPolicyEvaluationFailed(t *testing.T) {
 
 	// Test Unwrap
 	cause := errors.New("wrapped error")
-	err := ErrPolicyEvaluationFailed{Cause: cause}
+	err := PolicyEvaluationFailedError{Cause: cause}
 	if err.Unwrap() != cause {
 		t.Error("Unwrap should return the cause")
 	}
@@ -776,22 +776,22 @@ func TestErrPolicyEvaluationFailed(t *testing.T) {
 func TestErrInvalidDigest(t *testing.T) {
 	tests := []struct {
 		name     string
-		err      ErrInvalidDigest
+		err      InvalidDigestError
 		contains string
 	}{
 		{
 			name:     "with digest and reason",
-			err:      ErrInvalidDigest{Digest: "invalid-digest", Reason: "missing algorithm prefix"},
+			err:      InvalidDigestError{Digest: "invalid-digest", Reason: "missing algorithm prefix"},
 			contains: "invalid-digest",
 		},
 		{
 			name:     "digest only",
-			err:      ErrInvalidDigest{Digest: "bad"},
+			err:      InvalidDigestError{Digest: "bad"},
 			contains: "bad",
 		},
 		{
 			name:     "empty",
-			err:      ErrInvalidDigest{},
+			err:      InvalidDigestError{},
 			contains: "invalid digest",
 		},
 	}
@@ -807,11 +807,11 @@ func TestErrInvalidDigest(t *testing.T) {
 
 // Test errors.Is for checking error types
 func TestErrorsIs(t *testing.T) {
-	err := ErrImageNotFound{Reference: "test:latest"}
+	err := ImageNotFoundError{Reference: "test:latest"}
 
-	var target ErrImageNotFound
+	var target ImageNotFoundError
 	if !errors.As(err, &target) {
-		t.Error("errors.As should match ErrImageNotFound")
+		t.Error("errors.As should match ImageNotFoundError")
 	}
 
 	if target.Reference != "test:latest" {
@@ -822,17 +822,17 @@ func TestErrorsIs(t *testing.T) {
 // Test error wrapping chain
 func TestErrorWrappingChain(t *testing.T) {
 	root := errors.New("root cause")
-	decryptErr := ErrDecryptionFailed{Reference: "myimage", Cause: root}
+	decryptErr := DecryptionFailedError{Reference: "myimage", Cause: root}
 	storageErr := ErrStorageError{Operation: "get", Cause: decryptErr}
 
 	// Should be able to unwrap to decryption error
-	var decryptTarget ErrDecryptionFailed
+	var decryptTarget DecryptionFailedError
 	if !errors.As(storageErr, &decryptTarget) {
-		t.Error("should be able to unwrap to ErrDecryptionFailed")
+		t.Error("should be able to unwrap to DecryptionFailedError")
 	}
 
 	// Should be able to find root cause
 	if !errors.Is(storageErr.Unwrap(), decryptErr) {
-		t.Error("should find ErrDecryptionFailed in chain")
+		t.Error("should find DecryptionFailedError in chain")
 	}
 }

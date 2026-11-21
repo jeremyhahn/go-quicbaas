@@ -218,12 +218,12 @@ func TestRegistryPush_SigningFailureStoresNothing(t *testing.T) {
 	img := signTestImage(nil, []byte("layer"))
 
 	err = reg.Push(ctx, "apps/web:v1", img, PushOptions{SignImage: true, SigningKeyID: "web-sign"})
-	var signErr ErrManifestSigningFailed
+	var signErr ManifestSigningFailedError
 	if !errors.As(err, &signErr) {
-		t.Fatalf("Push error = %v, want ErrManifestSigningFailed", err)
+		t.Fatalf("Push error = %v, want ManifestSigningFailedError", err)
 	}
 	if signErr.KeyID != "web-sign" || !errors.Is(err, errSignerDown) {
-		t.Errorf("ErrManifestSigningFailed = %+v, want key web-sign wrapping the KMS error", signErr)
+		t.Errorf("ManifestSigningFailedError = %+v, want key web-sign wrapping the KMS error", signErr)
 	}
 	if _, err := reg.storage.GetManifest(ctx, "apps/web:v1"); err == nil {
 		t.Error("a manifest was stored for a push whose signing failed")
@@ -241,12 +241,12 @@ func TestRegistryPush_MissingSigningKeyIsRefused(t *testing.T) {
 	img := signTestImage(nil, []byte("layer"))
 
 	err := reg.Push(ctx, "apps/web:v1", img, PushOptions{SignImage: true, SigningKeyID: "no-such-key"})
-	var unavailable ErrSigningKeyUnavailable
+	var unavailable SigningKeyUnavailableError
 	if !errors.As(err, &unavailable) || unavailable.KeyID != "no-such-key" {
-		t.Fatalf("Push error = %v, want ErrSigningKeyUnavailable for no-such-key", err)
+		t.Fatalf("Push error = %v, want SigningKeyUnavailableError for no-such-key", err)
 	}
-	if !errors.As(err, &ErrManifestSigningFailed{}) {
-		t.Errorf("Push error = %v, want it wrapped in ErrManifestSigningFailed", err)
+	if !errors.As(err, &ManifestSigningFailedError{}) {
+		t.Errorf("Push error = %v, want it wrapped in ManifestSigningFailedError", err)
 	}
 	if sdkKMS.generated != 0 {
 		t.Errorf("a signed push created %d KMS keys, want none", sdkKMS.generated)
@@ -262,8 +262,8 @@ func TestRegistryPush_MissingSigningKeyIsRefused(t *testing.T) {
 func TestRegistryPush_SignWithoutSignerIsRefused(t *testing.T) {
 	reg := newTestRegistry(t)
 	err := reg.Push(context.Background(), "apps/web:v1", signTestImage(nil, []byte("layer")), PushOptions{SignImage: true})
-	if !errors.As(err, &ErrSigningNotConfigured{}) {
-		t.Fatalf("Push error = %v, want ErrSigningNotConfigured", err)
+	if !errors.As(err, &SigningNotConfiguredError{}) {
+		t.Fatalf("Push error = %v, want SigningNotConfiguredError", err)
 	}
 }
 

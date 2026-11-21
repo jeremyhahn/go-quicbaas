@@ -239,7 +239,7 @@ func sha256Of(b []byte) string {
 
 func TestRegisterOCIDistRoutes_RefusesNilBackend(t *testing.T) {
 	err := RegisterOCIDistRoutes(mux.NewRouter(), slog.Default(), nil, openGates(), OCIDistLimits{})
-	var want *ErrOCIDistBackendRequired
+	var want *OCIDistBackendRequiredError
 	require.True(t, errors.As(err, &want), "got %v", err)
 }
 
@@ -252,7 +252,7 @@ func TestRegisterOCIDistRoutes_RefusesMissingGate(t *testing.T) {
 	for name, gates := range cases {
 		t.Run(name, func(t *testing.T) {
 			err := RegisterOCIDistRoutes(mux.NewRouter(), slog.Default(), newFakeOCIBackend(), gates, OCIDistLimits{})
-			var want *ErrOCIDistGateRequired
+			var want *OCIDistGateRequiredError
 			require.True(t, errors.As(err, &want), "got %v", err)
 		})
 	}
@@ -671,9 +671,9 @@ func TestOCIDistLimits_Defaults(t *testing.T) {
 }
 
 func TestOCIDistErrors_Messages(t *testing.T) {
-	assert.Contains(t, (&ErrOCIDistBackendRequired{}).Error(), "backend")
-	assert.Contains(t, (&ErrOCIDistGateRequired{Surface: "write"}).Error(), "write")
-	assert.Contains(t, (&ErrUploadUnknown{}).Error(), "upload")
+	assert.Contains(t, (&OCIDistBackendRequiredError{}).Error(), "backend")
+	assert.Contains(t, (&OCIDistGateRequiredError{Surface: "write"}).Error(), "write")
+	assert.Contains(t, (&UploadUnknownError{}).Error(), "upload")
 }
 
 // TestOCIDist_AppendAfterReleaseIsRefused pins the interleaving the review
@@ -700,7 +700,7 @@ func TestOCIDist_AppendAfterReleaseIsRefused(t *testing.T) {
 	require.Equal(t, int64(0), h.inFlight.Load())
 
 	_, err := h.appendChunk(id, sess, []byte("efgh"))
-	var unknown *ErrUploadUnknown
+	var unknown *UploadUnknownError
 	require.True(t, errors.As(err, &unknown), "got %v", err)
 	assert.Equal(t, int64(0), h.inFlight.Load(), "an orphaned session must not count bytes")
 	assert.Nil(t, sess.buffer)

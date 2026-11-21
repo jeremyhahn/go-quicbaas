@@ -86,9 +86,9 @@ func TestOCIDistBackend964_RefusesWithoutStorage(t *testing.T) {
 	}
 	for op, call := range calls {
 		t.Run(op, func(t *testing.T) {
-			var notConfigured ErrStorageNotConfigured
+			var notConfigured StorageNotConfiguredError
 			if err := call(); !errors.As(err, &notConfigured) {
-				t.Fatalf("error = %v, want ErrStorageNotConfigured", err)
+				t.Fatalf("error = %v, want StorageNotConfiguredError", err)
 			}
 			if notConfigured.Op != op {
 				t.Errorf("Op = %q, want %q", notConfigured.Op, op)
@@ -118,8 +118,8 @@ func TestOCIDistBackend964_RefusesWhenClosed(t *testing.T) {
 	}
 	for op, call := range calls {
 		t.Run(op, func(t *testing.T) {
-			if err := call(); !errors.As(err, &ErrRegistryClosed{}) {
-				t.Fatalf("error = %v, want ErrRegistryClosed", err)
+			if err := call(); !errors.As(err, &RegistryClosedError{}) {
+				t.Fatalf("error = %v, want RegistryClosedError", err)
 			}
 		})
 	}
@@ -134,8 +134,8 @@ func TestOCIDistBackend964_DeleteManifestRemovesTheTag(t *testing.T) {
 	if err := reg.DeleteManifest(ctx, "alpine", "3.20"); err != nil {
 		t.Fatalf("DeleteManifest: %v", err)
 	}
-	if _, _, err := reg.GetManifest(ctx, "alpine", "3.20"); !errors.As(err, &ErrManifestNotFound{}) {
-		t.Fatalf("GetManifest after delete error = %v, want ErrManifestNotFound", err)
+	if _, _, err := reg.GetManifest(ctx, "alpine", "3.20"); !errors.As(err, &ManifestNotFoundError{}) {
+		t.Fatalf("GetManifest after delete error = %v, want ManifestNotFoundError", err)
 	}
 }
 
@@ -179,14 +179,14 @@ func TestErrorMessages964(t *testing.T) {
 		err  error
 		want []string
 	}{
-		{ErrImageAlreadyExists{Reference: "apps/web:v1"}, []string{"already exists", "apps/web:v1"}},
-		{ErrManifestSigningFailed{KeyID: "k1", Err: cause}, []string{"k1", "boom"}},
-		{ErrSigningClientRequired{}, []string{"KMS and crypto clients"}},
-		{ErrInvalidSigningRequest{Reason: "empty key ID"}, []string{"invalid signing request", "empty key ID"}},
-		{ErrSigningKeyUnavailable{KeyID: "k2"}, []string{"k2", "not found"}},
-		{ErrSigningKeyUnavailable{KeyID: "k3", Err: cause}, []string{"k3", "not available", "boom"}},
-		{ErrSigningKeyUnsupported{KeyID: "k4", Reason: "RSA"}, []string{"k4", "RSA"}},
-		{ErrKeyNotFoundLocal{KeyID: "k5"}, []string{"k5", "not found"}},
+		{ImageAlreadyExistsError{Reference: "apps/web:v1"}, []string{"already exists", "apps/web:v1"}},
+		{ManifestSigningFailedError{KeyID: "k1", Err: cause}, []string{"k1", "boom"}},
+		{SigningClientRequiredError{}, []string{"KMS and crypto clients"}},
+		{InvalidSigningRequestError{Reason: "empty key ID"}, []string{"invalid signing request", "empty key ID"}},
+		{SigningKeyUnavailableError{KeyID: "k2"}, []string{"k2", "not found"}},
+		{SigningKeyUnavailableError{KeyID: "k3", Err: cause}, []string{"k3", "not available", "boom"}},
+		{SigningKeyUnsupportedError{KeyID: "k4", Reason: "RSA"}, []string{"k4", "RSA"}},
+		{KeyNotFoundLocalError{KeyID: "k5"}, []string{"k5", "not found"}},
 	}
 	for _, tt := range tests {
 		msg := tt.err.Error()
@@ -196,11 +196,11 @@ func TestErrorMessages964(t *testing.T) {
 			}
 		}
 	}
-	if !errors.Is(ErrManifestSigningFailed{KeyID: "k1", Err: cause}, cause) {
-		t.Error("ErrManifestSigningFailed does not unwrap to its cause")
+	if !errors.Is(ManifestSigningFailedError{KeyID: "k1", Err: cause}, cause) {
+		t.Error("ManifestSigningFailedError does not unwrap to its cause")
 	}
-	if !errors.Is(ErrSigningKeyUnavailable{KeyID: "k3", Err: cause}, cause) {
-		t.Error("ErrSigningKeyUnavailable does not unwrap to its cause")
+	if !errors.Is(SigningKeyUnavailableError{KeyID: "k3", Err: cause}, cause) {
+		t.Error("SigningKeyUnavailableError does not unwrap to its cause")
 	}
 }
 
@@ -225,11 +225,11 @@ func TestLocalKMS964_GetKey(t *testing.T) {
 			t.Errorf("GetKey = %+v, want the default AES-256-GCM metadata", info)
 		}
 	})
-	t.Run("unknown key is ErrKeyNotFoundLocal", func(t *testing.T) {
+	t.Run("unknown key is KeyNotFoundLocalError", func(t *testing.T) {
 		kms, _ := newTestKMS(t)
-		var notFound ErrKeyNotFoundLocal
+		var notFound KeyNotFoundLocalError
 		if _, err := kms.GetKey(context.Background(), "local-missing"); !errors.As(err, &notFound) {
-			t.Fatalf("GetKey error = %v, want ErrKeyNotFoundLocal", err)
+			t.Fatalf("GetKey error = %v, want KeyNotFoundLocalError", err)
 		}
 		if notFound.KeyID != "local-missing" {
 			t.Errorf("KeyID = %q, want local-missing", notFound.KeyID)
@@ -279,8 +279,8 @@ func TestSessionManager964_GetReadsStorage(t *testing.T) {
 		client := newMockQuicBaaSClient()
 		m := NewSessionManager(client, time.Hour)
 		storedSession(t, client, &RegistrySession{SessionID: "s2", ValidFrom: now.Add(-2 * time.Hour), ValidUntil: now.Add(-time.Hour)})
-		if _, err := m.Get(ctx, "s2"); !errors.As(err, &ErrSessionExpired{}) {
-			t.Fatalf("Get error = %v, want ErrSessionExpired", err)
+		if _, err := m.Get(ctx, "s2"); !errors.As(err, &SessionExpiredError{}) {
+			t.Fatalf("Get error = %v, want SessionExpiredError", err)
 		}
 		if _, ok := client.data[sessionEntityType+":s2"]; ok {
 			t.Error("expired session was left in storage")
@@ -290,8 +290,8 @@ func TestSessionManager964_GetReadsStorage(t *testing.T) {
 		client := newMockQuicBaaSClient()
 		m := NewSessionManager(client, time.Hour)
 		m.cache.Store("s3", &RegistrySession{SessionID: "s3", ValidFrom: now.Add(-2 * time.Hour), ValidUntil: now.Add(-time.Hour)})
-		if _, err := m.Get(ctx, "s3"); !errors.As(err, &ErrSessionNotFound{}) {
-			t.Fatalf("Get error = %v, want ErrSessionNotFound", err)
+		if _, err := m.Get(ctx, "s3"); !errors.As(err, &SessionNotFoundError{}) {
+			t.Fatalf("Get error = %v, want SessionNotFoundError", err)
 		}
 		if _, ok := m.cache.Load("s3"); ok {
 			t.Error("expired session was left in the cache")
@@ -326,10 +326,10 @@ func TestSessionManager964_InputValidation(t *testing.T) {
 		call func() error
 		want error
 	}{
-		{"Get nil context", func() error { _, err := m.Get(nilCtx, "s"); return err }, ErrNilContext{Operation: "SessionManager.Get"}},
-		{"Get empty ID", func() error { _, err := m.Get(ctx, ""); return err }, ErrInvalidSession{Reason: "session ID is empty"}},
-		{"Delete nil context", func() error { return m.Delete(nilCtx, "s") }, ErrNilContext{Operation: "SessionManager.Delete"}},
-		{"Delete empty ID", func() error { return m.Delete(ctx, "") }, ErrInvalidSession{Reason: "session ID is empty"}},
+		{"Get nil context", func() error { _, err := m.Get(nilCtx, "s"); return err }, NilContextError{Operation: "SessionManager.Get"}},
+		{"Get empty ID", func() error { _, err := m.Get(ctx, ""); return err }, InvalidSessionError{Reason: "session ID is empty"}},
+		{"Delete nil context", func() error { return m.Delete(nilCtx, "s") }, NilContextError{Operation: "SessionManager.Delete"}},
+		{"Delete empty ID", func() error { return m.Delete(ctx, "") }, InvalidSessionError{Reason: "session ID is empty"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -351,8 +351,8 @@ func TestSessionManager964_InvalidateRemovesTheSession(t *testing.T) {
 	if err := m.Invalidate(ctx, "s1"); err != nil {
 		t.Fatalf("Invalidate: %v", err)
 	}
-	if _, err := m.Get(ctx, "s1"); !errors.As(err, &ErrSessionNotFound{}) {
-		t.Fatalf("Get after Invalidate error = %v, want ErrSessionNotFound", err)
+	if _, err := m.Get(ctx, "s1"); !errors.As(err, &SessionNotFoundError{}) {
+		t.Fatalf("Get after Invalidate error = %v, want SessionNotFoundError", err)
 	}
 
 	client.delErr = errors.New("unreachable")

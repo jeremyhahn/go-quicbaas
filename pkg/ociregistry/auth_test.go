@@ -191,9 +191,9 @@ func TestNewRegistryAuthHandler_NilAttestor(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for nil attestor")
 	}
-	var nilErr ErrNilClient
+	var nilErr NilClientError
 	if !errors.As(err, &nilErr) {
-		t.Errorf("expected ErrNilClient, got %T", err)
+		t.Errorf("expected NilClientError, got %T", err)
 	}
 }
 
@@ -205,9 +205,9 @@ func TestNewRegistryAuthHandler_NilPolicyEngine(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for nil policy engine")
 	}
-	var nilErr ErrNilClient
+	var nilErr NilClientError
 	if !errors.As(err, &nilErr) {
-		t.Errorf("expected ErrNilClient, got %T", err)
+		t.Errorf("expected NilClientError, got %T", err)
 	}
 }
 
@@ -219,9 +219,9 @@ func TestNewRegistryAuthHandler_NilQuicBaaS(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for nil QuicBaaS")
 	}
-	var nilErr ErrNilClient
+	var nilErr NilClientError
 	if !errors.As(err, &nilErr) {
-		t.Errorf("expected ErrNilClient, got %T", err)
+		t.Errorf("expected NilClientError, got %T", err)
 	}
 }
 
@@ -272,9 +272,9 @@ func TestAuthenticate_NilContext(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for nil context")
 	}
-	var nilCtxErr ErrNilContext
+	var nilCtxErr NilContextError
 	if !errors.As(err, &nilCtxErr) {
-		t.Errorf("expected ErrNilContext, got %T", err)
+		t.Errorf("expected NilContextError, got %T", err)
 	}
 }
 
@@ -290,9 +290,9 @@ func TestAuthenticate_NilRequest(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for nil request")
 	}
-	var attestErr ErrAttestationRequired
+	var attestErr AttestationRequiredError
 	if !errors.As(err, &attestErr) {
-		t.Errorf("expected ErrAttestationRequired, got %T", err)
+		t.Errorf("expected AttestationRequiredError, got %T", err)
 	}
 }
 
@@ -311,9 +311,9 @@ func TestAuthenticate_MissingHeader(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for missing header")
 	}
-	var attestErr ErrAttestationRequired
+	var attestErr AttestationRequiredError
 	if !errors.As(err, &attestErr) {
-		t.Errorf("expected ErrAttestationRequired, got %T", err)
+		t.Errorf("expected AttestationRequiredError, got %T", err)
 	}
 }
 
@@ -332,9 +332,9 @@ func TestAuthenticate_InvalidBase64(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for invalid base64")
 	}
-	var attestErr ErrAttestationFailed
+	var attestErr AttestationFailedError
 	if !errors.As(err, &attestErr) {
-		t.Errorf("expected ErrAttestationFailed, got %T", err)
+		t.Errorf("expected AttestationFailedError, got %T", err)
 	}
 }
 
@@ -353,9 +353,9 @@ func TestAuthenticate_InvalidJSON(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for invalid JSON")
 	}
-	var attestErr ErrAttestationFailed
+	var attestErr AttestationFailedError
 	if !errors.As(err, &attestErr) {
-		t.Errorf("expected ErrAttestationFailed, got %T", err)
+		t.Errorf("expected AttestationFailedError, got %T", err)
 	}
 }
 
@@ -382,9 +382,9 @@ func TestAuthenticate_MissingQuote(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for missing quote")
 	}
-	var attestErr ErrAttestationFailed
+	var attestErr AttestationFailedError
 	if !errors.As(err, &attestErr) {
-		t.Errorf("expected ErrAttestationFailed, got %T", err)
+		t.Errorf("expected AttestationFailedError, got %T", err)
 	}
 }
 
@@ -407,9 +407,9 @@ func TestAuthenticate_QuoteVerificationFailed(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for quote verification failure")
 	}
-	var quoteErr ErrInvalidQuote
+	var quoteErr InvalidQuoteError
 	if !errors.As(err, &quoteErr) {
-		t.Errorf("expected ErrInvalidQuote, got %T", err)
+		t.Errorf("expected InvalidQuoteError, got %T", err)
 	}
 }
 
@@ -435,9 +435,9 @@ func TestAuthenticate_PolicyDenied(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for policy denial")
 	}
-	var accessErr ErrAccessDenied
+	var accessErr AccessDeniedError
 	if !errors.As(err, &accessErr) {
-		t.Errorf("expected ErrAccessDenied, got %T", err)
+		t.Errorf("expected AccessDeniedError, got %T", err)
 	}
 }
 
@@ -466,9 +466,9 @@ func TestAuthenticate_PCRMismatch(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for PCR mismatch")
 	}
-	var pcrErr ErrPCRMismatch
+	var pcrErr PCRMismatchError
 	if !errors.As(err, &pcrErr) {
-		t.Errorf("expected ErrPCRMismatch, got %T", err)
+		t.Errorf("expected PCRMismatchError, got %T", err)
 	}
 }
 
@@ -530,9 +530,9 @@ func TestValidateSession_NilSession(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for nil session")
 	}
-	var sessionErr ErrInvalidSession
+	var sessionErr InvalidSessionError
 	if !errors.As(err, &sessionErr) {
-		t.Errorf("expected ErrInvalidSession, got %T", err)
+		t.Errorf("expected InvalidSessionError, got %T", err)
 	}
 }
 
@@ -555,9 +555,9 @@ func TestValidateSession_Expired(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for expired session")
 	}
-	var expiredErr ErrSessionExpired
+	var expiredErr SessionExpiredError
 	if !errors.As(err, &expiredErr) {
-		t.Errorf("expected ErrSessionExpired, got %T", err)
+		t.Errorf("expected SessionExpiredError, got %T", err)
 	}
 }
 
@@ -640,9 +640,9 @@ func TestSessionManager_Get_NotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for nonexistent session")
 	}
-	var notFoundErr ErrSessionNotFound
+	var notFoundErr SessionNotFoundError
 	if !errors.As(err, &notFoundErr) {
-		t.Errorf("expected ErrSessionNotFound, got %T", err)
+		t.Errorf("expected SessionNotFoundError, got %T", err)
 	}
 }
 

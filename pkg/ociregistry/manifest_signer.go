@@ -22,7 +22,7 @@ import (
 // defaultSigningKeyID is the signing key a push uses when it names none,
 // the same default the encryption path uses for its key. The registry does
 // not create it: until an operator creates an ECDSA P-256 or P-384 key of
-// this ID in the KMS, such a push is refused with ErrSigningKeyUnavailable.
+// this ID in the KMS, such a push is refused with SigningKeyUnavailableError.
 const defaultSigningKeyID = "registry-default"
 
 // SigningKMSClient is the signing half of the registry's KMS seam, beside

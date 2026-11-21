@@ -236,9 +236,9 @@ func TestRegistryConfigValidate(t *testing.T) {
 					t.Error("expected error but got nil")
 					return
 				}
-				var invalidCfg ErrInvalidConfig
+				var invalidCfg InvalidConfigError
 				if !errors.As(err, &invalidCfg) {
-					t.Errorf("expected ErrInvalidConfig, got: %T", err)
+					t.Errorf("expected InvalidConfigError, got: %T", err)
 				}
 			} else if err != nil {
 				t.Errorf("unexpected error: %v", err)

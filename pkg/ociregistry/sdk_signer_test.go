@@ -170,12 +170,12 @@ func TestSDKSigner_MissingKeyIsUnavailableAndNotCreated(t *testing.T) {
 	signer := newTestSDKSigner(t, fake)
 
 	_, _, err := signer.Sign(context.Background(), "registry-default", signTestDigest("manifest"))
-	var unavailable ErrSigningKeyUnavailable
+	var unavailable SigningKeyUnavailableError
 	if !errors.As(err, &unavailable) {
-		t.Fatalf("Sign error = %v, want ErrSigningKeyUnavailable", err)
+		t.Fatalf("Sign error = %v, want SigningKeyUnavailableError", err)
 	}
 	if unavailable.KeyID != "registry-default" || !errors.Is(err, errFakeKeyNotFound) {
-		t.Errorf("ErrSigningKeyUnavailable = %+v, want key registry-default wrapping the KMS error", unavailable)
+		t.Errorf("SigningKeyUnavailableError = %+v, want key registry-default wrapping the KMS error", unavailable)
 	}
 	if fake.generated != 0 || len(fake.keys) != 0 {
 		t.Errorf("signer created a key: generated=%d keys=%d", fake.generated, len(fake.keys))
@@ -199,9 +199,9 @@ func TestSDKSigner_RefusesKeysThatCannotSignManifests(t *testing.T) {
 			signer := newTestSDKSigner(t, fake)
 
 			_, _, err := signer.Sign(context.Background(), "wrong-kind", signTestDigest("manifest"))
-			var unsupported ErrSigningKeyUnsupported
+			var unsupported SigningKeyUnsupportedError
 			if !errors.As(err, &unsupported) || unsupported.KeyID != "wrong-kind" {
-				t.Fatalf("Sign error = %v, want ErrSigningKeyUnsupported for wrong-kind", err)
+				t.Fatalf("Sign error = %v, want SigningKeyUnsupportedError for wrong-kind", err)
 			}
 			if len(fake.signReqs) != 0 {
 				t.Error("signer asked the SDK to sign with an unsupported key")
@@ -228,8 +228,8 @@ func TestSDKSigner_RejectsBadInput(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, _, err := signer.Sign(context.Background(), tc.keyID, tc.digest)
-			if !errors.As(err, &ErrInvalidSigningRequest{}) {
-				t.Fatalf("Sign error = %v, want ErrInvalidSigningRequest", err)
+			if !errors.As(err, &InvalidSigningRequestError{}) {
+				t.Fatalf("Sign error = %v, want InvalidSigningRequestError", err)
 			}
 		})
 	}
@@ -255,8 +255,8 @@ func TestNewSDKSigner_RequiresBothClients(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			signer, err := NewSDKSigner(tc.keys, tc.crypto)
-			if !errors.As(err, &ErrSigningClientRequired{}) || signer != nil {
-				t.Fatalf("NewSDKSigner = (%v, %v), want ErrSigningClientRequired", signer, err)
+			if !errors.As(err, &SigningClientRequiredError{}) || signer != nil {
+				t.Fatalf("NewSDKSigner = (%v, %v), want SigningClientRequiredError", signer, err)
 			}
 		})
 	}

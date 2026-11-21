@@ -64,7 +64,7 @@ type SDKSigner struct {
 // usually client.Security().KMS() and client.Security().Crypto().
 func NewSDKSigner(keys SDKKeyReader, crypto SDKSignClient) (*SDKSigner, error) {
 	if keys == nil || crypto == nil {
-		return nil, ErrSigningClientRequired{}
+		return nil, SigningClientRequiredError{}
 	}
 	return &SDKSigner{keys: keys, crypto: crypto}, nil
 }
@@ -76,21 +76,21 @@ func (s *SDKSigner) Sign(ctx context.Context, keyID string, digest []byte) ([]by
 		return nil, "", err
 	}
 	if keyID == "" {
-		return nil, "", ErrInvalidSigningRequest{Reason: "signing key ID cannot be empty"}
+		return nil, "", InvalidSigningRequestError{Reason: "signing key ID cannot be empty"}
 	}
 	if len(digest) != sha256.Size {
-		return nil, "", ErrInvalidSigningRequest{Reason: fmt.Sprintf("signing digest must be %d bytes, got %d", sha256.Size, len(digest))}
+		return nil, "", InvalidSigningRequestError{Reason: fmt.Sprintf("signing digest must be %d bytes, got %d", sha256.Size, len(digest))}
 	}
 	info, err := s.keys.GetKey(ctx, keyID)
 	if err != nil {
-		return nil, "", ErrSigningKeyUnavailable{KeyID: keyID, Err: err}
+		return nil, "", SigningKeyUnavailableError{KeyID: keyID, Err: err}
 	}
 	if info == nil {
-		return nil, "", ErrSigningKeyUnavailable{KeyID: keyID}
+		return nil, "", SigningKeyUnavailableError{KeyID: keyID}
 	}
 	algorithm, ok := sdkSignatureAlgorithms[info.Algorithm]
 	if !ok {
-		return nil, "", ErrSigningKeyUnsupported{KeyID: keyID, Reason: fmt.Sprintf("algorithm %v cannot sign manifests", info.Algorithm)}
+		return nil, "", SigningKeyUnsupportedError{KeyID: keyID, Reason: fmt.Sprintf("algorithm %v cannot sign manifests", info.Algorithm)}
 	}
 	resp, err := s.crypto.Sign(ctx, &quicbaas.SignRequest{
 		KeyID:     keyID,

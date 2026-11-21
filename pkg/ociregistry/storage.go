@@ -154,7 +154,7 @@ func WithStorageNamespace(ns string) StorageOption {
 // NewQuicBaaSStorage creates a new QuicBaaSStorage instance.
 func NewQuicBaaSStorage(client QuicBaaSStorageClient, opts ...StorageOption) (*QuicBaaSStorage, error) {
 	if client == nil {
-		return nil, ErrNilClient{Client: "quicbaas"}
+		return nil, NilClientError{Client: "quicbaas"}
 	}
 
 	s := &QuicBaaSStorage{
@@ -172,13 +172,13 @@ func NewQuicBaaSStorage(client QuicBaaSStorageClient, opts ...StorageOption) (*Q
 // StoreBlob stores a blob by its digest.
 func (s *QuicBaaSStorage) StoreBlob(ctx context.Context, digest string, content []byte) error {
 	if ctx == nil {
-		return ErrNilContext{Operation: "StoreBlob"}
+		return NilContextError{Operation: "StoreBlob"}
 	}
 	if err := s.validateDigest(digest); err != nil {
 		return err
 	}
 	if s.closed.Load() {
-		return ErrRegistryClosed{}
+		return RegistryClosedError{}
 	}
 
 	key := s.blobKey(digest)
@@ -192,13 +192,13 @@ func (s *QuicBaaSStorage) StoreBlob(ctx context.Context, digest string, content 
 // GetBlob retrieves a blob by its digest.
 func (s *QuicBaaSStorage) GetBlob(ctx context.Context, digest string) ([]byte, error) {
 	if ctx == nil {
-		return nil, ErrNilContext{Operation: "GetBlob"}
+		return nil, NilContextError{Operation: "GetBlob"}
 	}
 	if err := s.validateDigest(digest); err != nil {
 		return nil, err
 	}
 	if s.closed.Load() {
-		return nil, ErrRegistryClosed{}
+		return nil, RegistryClosedError{}
 	}
 
 	key := s.blobKey(digest)
@@ -207,7 +207,7 @@ func (s *QuicBaaSStorage) GetBlob(ctx context.Context, digest string) ([]byte, e
 		return nil, ErrStorageError{Operation: "get_blob", Key: digest, Cause: err}
 	}
 	if !found {
-		return nil, ErrBlobNotFound{Digest: digest}
+		return nil, BlobNotFoundError{Digest: digest}
 	}
 
 	return content, nil
@@ -216,13 +216,13 @@ func (s *QuicBaaSStorage) GetBlob(ctx context.Context, digest string) ([]byte, e
 // DeleteBlob removes a blob by its digest.
 func (s *QuicBaaSStorage) DeleteBlob(ctx context.Context, digest string) error {
 	if ctx == nil {
-		return ErrNilContext{Operation: "DeleteBlob"}
+		return NilContextError{Operation: "DeleteBlob"}
 	}
 	if err := s.validateDigest(digest); err != nil {
 		return err
 	}
 	if s.closed.Load() {
-		return ErrRegistryClosed{}
+		return RegistryClosedError{}
 	}
 
 	key := s.blobKey(digest)
@@ -236,13 +236,13 @@ func (s *QuicBaaSStorage) DeleteBlob(ctx context.Context, digest string) error {
 // BlobExists checks if a blob exists.
 func (s *QuicBaaSStorage) BlobExists(ctx context.Context, digest string) (bool, error) {
 	if ctx == nil {
-		return false, ErrNilContext{Operation: "BlobExists"}
+		return false, NilContextError{Operation: "BlobExists"}
 	}
 	if err := s.validateDigest(digest); err != nil {
 		return false, err
 	}
 	if s.closed.Load() {
-		return false, ErrRegistryClosed{}
+		return false, RegistryClosedError{}
 	}
 
 	key := s.blobKey(digest)
@@ -257,16 +257,16 @@ func (s *QuicBaaSStorage) BlobExists(ctx context.Context, digest string) (bool, 
 // StoreManifest stores an image manifest.
 func (s *QuicBaaSStorage) StoreManifest(ctx context.Context, ref string, manifest *ImageManifest) error {
 	if ctx == nil {
-		return ErrNilContext{Operation: "StoreManifest"}
+		return NilContextError{Operation: "StoreManifest"}
 	}
 	if err := s.validateReference(ref); err != nil {
 		return err
 	}
 	if manifest == nil {
-		return ErrInvalidManifest{Reference: ref, Reason: "manifest is nil"}
+		return InvalidManifestError{Reference: ref, Reason: "manifest is nil"}
 	}
 	if s.closed.Load() {
-		return ErrRegistryClosed{}
+		return RegistryClosedError{}
 	}
 
 	// Set metadata
@@ -302,13 +302,13 @@ func (s *QuicBaaSStorage) StoreManifest(ctx context.Context, ref string, manifes
 // GetManifest retrieves an image manifest.
 func (s *QuicBaaSStorage) GetManifest(ctx context.Context, ref string) (*ImageManifest, error) {
 	if ctx == nil {
-		return nil, ErrNilContext{Operation: "GetManifest"}
+		return nil, NilContextError{Operation: "GetManifest"}
 	}
 	if err := s.validateReference(ref); err != nil {
 		return nil, err
 	}
 	if s.closed.Load() {
-		return nil, ErrRegistryClosed{}
+		return nil, RegistryClosedError{}
 	}
 
 	key := s.manifestKey(ref)
@@ -317,7 +317,7 @@ func (s *QuicBaaSStorage) GetManifest(ctx context.Context, ref string) (*ImageMa
 		return nil, ErrStorageError{Operation: "get_manifest", Key: ref, Cause: err}
 	}
 	if !found {
-		return nil, ErrManifestNotFound{Reference: ref}
+		return nil, ManifestNotFoundError{Reference: ref}
 	}
 
 	var manifest ImageManifest
@@ -331,13 +331,13 @@ func (s *QuicBaaSStorage) GetManifest(ctx context.Context, ref string) (*ImageMa
 // DeleteManifest removes an image manifest.
 func (s *QuicBaaSStorage) DeleteManifest(ctx context.Context, ref string) error {
 	if ctx == nil {
-		return ErrNilContext{Operation: "DeleteManifest"}
+		return NilContextError{Operation: "DeleteManifest"}
 	}
 	if err := s.validateReference(ref); err != nil {
 		return err
 	}
 	if s.closed.Load() {
-		return ErrRegistryClosed{}
+		return RegistryClosedError{}
 	}
 
 	key := s.manifestKey(ref)
@@ -356,13 +356,13 @@ func (s *QuicBaaSStorage) DeleteManifest(ctx context.Context, ref string) error 
 // ManifestExists checks if a manifest exists.
 func (s *QuicBaaSStorage) ManifestExists(ctx context.Context, ref string) (bool, error) {
 	if ctx == nil {
-		return false, ErrNilContext{Operation: "ManifestExists"}
+		return false, NilContextError{Operation: "ManifestExists"}
 	}
 	if err := s.validateReference(ref); err != nil {
 		return false, err
 	}
 	if s.closed.Load() {
-		return false, ErrRegistryClosed{}
+		return false, RegistryClosedError{}
 	}
 
 	key := s.manifestKey(ref)
@@ -377,10 +377,10 @@ func (s *QuicBaaSStorage) ManifestExists(ctx context.Context, ref string) (bool,
 // ListManifests lists manifests matching the given options.
 func (s *QuicBaaSStorage) ListManifests(ctx context.Context, opts ListOptions) (*ListResult, error) {
 	if ctx == nil {
-		return nil, ErrNilContext{Operation: "ListManifests"}
+		return nil, NilContextError{Operation: "ListManifests"}
 	}
 	if s.closed.Load() {
-		return nil, ErrRegistryClosed{}
+		return nil, RegistryClosedError{}
 	}
 
 	// Build prefix for listing
@@ -466,22 +466,22 @@ func (s *QuicBaaSStorage) deleteTag(ctx context.Context, ref string) error {
 // validateDigest validates a content digest.
 func (s *QuicBaaSStorage) validateDigest(digest string) error {
 	if digest == "" {
-		return ErrInvalidDigest{Reason: "digest is empty"}
+		return InvalidDigestError{Reason: "digest is empty"}
 	}
 	// Basic validation: should be algorithm:hash format
 	if !strings.Contains(digest, ":") {
-		return ErrInvalidDigest{Digest: digest, Reason: "missing algorithm prefix"}
+		return InvalidDigestError{Digest: digest, Reason: "missing algorithm prefix"}
 	}
 	parts := strings.SplitN(digest, ":", 2)
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		return ErrInvalidDigest{Digest: digest, Reason: "invalid format"}
+		return InvalidDigestError{Digest: digest, Reason: "invalid format"}
 	}
 	// Validate algorithm
 	switch parts[0] {
 	case "sha256", "sha512", "sha384":
 		// Valid algorithms
 	default:
-		return ErrInvalidDigest{Digest: digest, Reason: "unsupported algorithm: " + parts[0]}
+		return InvalidDigestError{Digest: digest, Reason: "unsupported algorithm: " + parts[0]}
 	}
 	return nil
 }
@@ -489,7 +489,7 @@ func (s *QuicBaaSStorage) validateDigest(digest string) error {
 // validateReference validates an image reference.
 func (s *QuicBaaSStorage) validateReference(ref string) error {
 	if ref == "" {
-		return ErrInvalidImageRef{Reason: "reference is empty"}
+		return InvalidImageRefError{Reason: "reference is empty"}
 	}
 	// References can be:
 	// - repository:tag (e.g., "nginx:latest")

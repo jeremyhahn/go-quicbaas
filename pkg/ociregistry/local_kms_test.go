@@ -221,9 +221,9 @@ func TestLocalKMS_DecryptRejectsTampering(t *testing.T) {
 		if err == nil {
 			t.Fatal("a blob shorter than nonce+tag must not open")
 		}
-		var tooShort aesgcm.ErrCiphertextTooShort
+		var tooShort aesgcm.CiphertextTooShortError
 		if !errors.As(err, &tooShort) {
-			t.Errorf("want aesgcm.ErrCiphertextTooShort for a truncated blob, got %T: %v", err, err)
+			t.Errorf("want aesgcm.CiphertextTooShortError for a truncated blob, got %T: %v", err, err)
 		}
 	})
 

@@ -41,7 +41,7 @@ func validTestConfig() RegistryConfig {
 
 // newTestRegistry constructs a Registry backed by an in-memory mock
 // QuicBaaSStorageClient so Push/Pull/Delete/List exercise the real
-// storage code path instead of returning ErrStorageNotConfigured.
+// storage code path instead of returning StorageNotConfiguredError.
 // Used by the post-Phase-5 tests; the older tests that intentionally
 // run without storage continue to call NewRegistry directly to
 // exercise the unconfigured branch.
@@ -157,35 +157,35 @@ func TestRegistryPush(t *testing.T) {
 			ref:         "myrepo/myimage:v2",
 			image:       &Image{Manifest: &ImageManifest{}},
 			opts:        PushOptions{},
-			expectError: ErrImageEmpty{},
+			expectError: ImageEmptyError{},
 		},
 		{
 			name:        "empty reference",
 			ref:         "",
 			image:       &Image{},
 			opts:        PushOptions{},
-			expectError: ErrInvalidImageRef{},
+			expectError: InvalidImageRefError{},
 		},
 		{
 			name:        "invalid reference uppercase",
 			ref:         "MyRepo/MyImage:v1",
 			image:       &Image{},
 			opts:        PushOptions{},
-			expectError: ErrInvalidImageRef{},
+			expectError: InvalidImageRefError{},
 		},
 		{
 			name:        "nil image",
 			ref:         "myrepo/myimage:v1",
 			image:       nil,
 			opts:        PushOptions{},
-			expectError: ErrInvalidManifest{},
+			expectError: InvalidManifestError{},
 		},
 		{
 			name:        "reference too long",
 			ref:         string(make([]byte, 300)),
 			image:       &Image{},
 			opts:        PushOptions{},
-			expectError: ErrInvalidImageRef{},
+			expectError: InvalidImageRefError{},
 		},
 	}
 
@@ -204,20 +204,20 @@ func TestRegistryPush(t *testing.T) {
 				}
 				// Check error type matches
 				switch tt.expectError.(type) {
-				case ErrInvalidImageRef:
-					var target ErrInvalidImageRef
+				case InvalidImageRefError:
+					var target InvalidImageRefError
 					if !errors.As(err, &target) {
-						t.Errorf("expected ErrInvalidImageRef, got: %T", err)
+						t.Errorf("expected InvalidImageRefError, got: %T", err)
 					}
-				case ErrInvalidManifest:
-					var target ErrInvalidManifest
+				case InvalidManifestError:
+					var target InvalidManifestError
 					if !errors.As(err, &target) {
-						t.Errorf("expected ErrInvalidManifest, got: %T", err)
+						t.Errorf("expected InvalidManifestError, got: %T", err)
 					}
-				case ErrImageEmpty:
-					var target ErrImageEmpty
+				case ImageEmptyError:
+					var target ImageEmptyError
 					if !errors.As(err, &target) {
-						t.Errorf("expected ErrImageEmpty, got: %T", err)
+						t.Errorf("expected ImageEmptyError, got: %T", err)
 					}
 				}
 			}
@@ -254,19 +254,19 @@ func TestRegistryPull(t *testing.T) {
 			name:        "image not found",
 			ref:         "myrepo/myimage:v1",
 			opts:        PullOptions{},
-			expectError: ErrImageNotFound{},
+			expectError: ImageNotFoundError{},
 		},
 		{
 			name:        "empty reference",
 			ref:         "",
 			opts:        PullOptions{},
-			expectError: ErrInvalidImageRef{},
+			expectError: InvalidImageRefError{},
 		},
 		{
 			name:        "invalid reference",
 			ref:         "INVALID:tag",
 			opts:        PullOptions{},
-			expectError: ErrInvalidImageRef{},
+			expectError: InvalidImageRefError{},
 		},
 	}
 
@@ -281,15 +281,15 @@ func TestRegistryPull(t *testing.T) {
 			}
 
 			switch tt.expectError.(type) {
-			case ErrInvalidImageRef:
-				var target ErrInvalidImageRef
+			case InvalidImageRefError:
+				var target InvalidImageRefError
 				if !errors.As(err, &target) {
-					t.Errorf("expected ErrInvalidImageRef, got: %T", err)
+					t.Errorf("expected InvalidImageRefError, got: %T", err)
 				}
-			case ErrImageNotFound:
-				var target ErrImageNotFound
+			case ImageNotFoundError:
+				var target ImageNotFoundError
 				if !errors.As(err, &target) {
-					t.Errorf("expected ErrImageNotFound, got: %T", err)
+					t.Errorf("expected ImageNotFoundError, got: %T", err)
 				}
 			}
 		})
@@ -323,12 +323,12 @@ func TestRegistryDelete(t *testing.T) {
 		{
 			name:        "image not found",
 			ref:         "myrepo/myimage:v1",
-			expectError: ErrImageNotFound{},
+			expectError: ImageNotFoundError{},
 		},
 		{
 			name:        "empty reference",
 			ref:         "",
-			expectError: ErrInvalidImageRef{},
+			expectError: InvalidImageRefError{},
 		},
 	}
 
@@ -343,15 +343,15 @@ func TestRegistryDelete(t *testing.T) {
 			}
 
 			switch tt.expectError.(type) {
-			case ErrInvalidImageRef:
-				var target ErrInvalidImageRef
+			case InvalidImageRefError:
+				var target InvalidImageRefError
 				if !errors.As(err, &target) {
-					t.Errorf("expected ErrInvalidImageRef, got: %T", err)
+					t.Errorf("expected InvalidImageRefError, got: %T", err)
 				}
-			case ErrImageNotFound:
-				var target ErrImageNotFound
+			case ImageNotFoundError:
+				var target ImageNotFoundError
 				if !errors.As(err, &target) {
-					t.Errorf("expected ErrImageNotFound, got: %T", err)
+					t.Errorf("expected ImageNotFoundError, got: %T", err)
 				}
 			}
 		})
@@ -410,7 +410,7 @@ func TestRegistryPushPullRoundTrip(t *testing.T) {
 
 	// Second push without AllowOverwrite must fail.
 	if err := reg.Push(ctx, ref, image, PushOptions{}); err == nil {
-		t.Fatal("expected ErrImageAlreadyExists on second push without overwrite")
+		t.Fatal("expected ImageAlreadyExistsError on second push without overwrite")
 	}
 
 	// List should include the just-pushed manifest.
@@ -442,7 +442,7 @@ func TestRegistryPushPullRoundTrip(t *testing.T) {
 		t.Error("expected error after delete")
 	}
 	if err := reg.Delete(ctx, ref); err == nil {
-		t.Error("expected ErrImageNotFound on second delete")
+		t.Error("expected ImageNotFoundError on second delete")
 	}
 }
 
@@ -454,11 +454,11 @@ func TestRegistryPush_Encrypted(t *testing.T) {
 	ctx := context.Background()
 	err := reg.Push(ctx, "myrepo/x:v1", &Image{Manifest: &ImageManifest{}}, PushOptions{Encrypt: true})
 	if err == nil {
-		t.Fatal("expected ErrEncryptionNotConfigured")
+		t.Fatal("expected EncryptionNotConfiguredError")
 	}
-	var enc ErrEncryptionNotConfigured
+	var enc EncryptionNotConfiguredError
 	if !errors.As(err, &enc) {
-		t.Errorf("expected ErrEncryptionNotConfigured, got %T: %v", err, err)
+		t.Errorf("expected EncryptionNotConfiguredError, got %T: %v", err, err)
 	}
 }
 
@@ -473,16 +473,16 @@ func TestRegistry_UnconfiguredStorage(t *testing.T) {
 	defer func() { _ = reg.Close() }()
 	ctx := context.Background()
 	if err := reg.Push(ctx, "x/y:1", &Image{Manifest: &ImageManifest{}}, PushOptions{}); err == nil {
-		t.Error("expected ErrStorageNotConfigured from Push")
+		t.Error("expected StorageNotConfiguredError from Push")
 	}
 	if _, err := reg.Pull(ctx, "x/y:1", PullOptions{}); err == nil {
-		t.Error("expected ErrStorageNotConfigured from Pull")
+		t.Error("expected StorageNotConfiguredError from Pull")
 	}
 	if err := reg.Delete(ctx, "x/y:1"); err == nil {
-		t.Error("expected ErrStorageNotConfigured from Delete")
+		t.Error("expected StorageNotConfiguredError from Delete")
 	}
 	if _, err := reg.List(ctx, RegistryListOptions{}); err == nil {
-		t.Error("expected ErrStorageNotConfigured from List")
+		t.Error("expected StorageNotConfiguredError from List")
 	}
 }
 
@@ -584,11 +584,11 @@ func TestRegistry_EncryptedPushWithoutEncryptor(t *testing.T) {
 	ctx := context.Background()
 	err := reg.Push(ctx, "no-enc/img:v1", &Image{Manifest: &ImageManifest{}}, PushOptions{Encrypt: true})
 	if err == nil {
-		t.Fatal("expected ErrEncryptionNotConfigured")
+		t.Fatal("expected EncryptionNotConfiguredError")
 	}
-	var enc ErrEncryptionNotConfigured
+	var enc EncryptionNotConfiguredError
 	if !errors.As(err, &enc) {
-		t.Errorf("expected ErrEncryptionNotConfigured, got %T: %v", err, err)
+		t.Errorf("expected EncryptionNotConfiguredError, got %T: %v", err, err)
 	}
 }
 
@@ -690,7 +690,7 @@ func TestRegistryVerifyClient(t *testing.T) {
 			requireAttestation: true,
 			attestation:        nil,
 			expectError:        true,
-			expectedErrorType:  ErrAttestationRequired{},
+			expectedErrorType:  AttestationRequiredError{},
 		},
 		{
 			name:               "attestation required and valid",
@@ -714,7 +714,7 @@ func TestRegistryVerifyClient(t *testing.T) {
 			},
 			quoteMaxAge:       10 * time.Minute,
 			expectError:       true,
-			expectedErrorType: ErrInvalidQuote{},
+			expectedErrorType: InvalidQuoteError{},
 		},
 		{
 			name:               "PCR mismatch",
@@ -728,7 +728,7 @@ func TestRegistryVerifyClient(t *testing.T) {
 			requiredPCRs:      map[int][]byte{7: {0x04, 0x05, 0x06}},
 			quoteMaxAge:       10 * time.Minute,
 			expectError:       true,
-			expectedErrorType: ErrPCRMismatch{},
+			expectedErrorType: PCRMismatchError{},
 		},
 		{
 			name:               "PCR missing",
@@ -742,7 +742,7 @@ func TestRegistryVerifyClient(t *testing.T) {
 			requiredPCRs:      map[int][]byte{7: {0x01, 0x02, 0x03}},
 			quoteMaxAge:       10 * time.Minute,
 			expectError:       true,
-			expectedErrorType: ErrPCRMismatch{},
+			expectedErrorType: PCRMismatchError{},
 		},
 		{
 			name:               "PCR match",
@@ -784,25 +784,25 @@ func TestRegistryVerifyClient(t *testing.T) {
 					return
 				}
 				switch tt.expectedErrorType.(type) {
-				case ErrAttestationRequired:
-					var target ErrAttestationRequired
+				case AttestationRequiredError:
+					var target AttestationRequiredError
 					if !errors.As(err, &target) {
-						t.Errorf("expected ErrAttestationRequired, got: %T (%v)", err, err)
+						t.Errorf("expected AttestationRequiredError, got: %T (%v)", err, err)
 					}
-				case ErrAIKNotAllowed:
-					var target ErrAIKNotAllowed
+				case AIKNotAllowedError:
+					var target AIKNotAllowedError
 					if !errors.As(err, &target) {
-						t.Errorf("expected ErrAIKNotAllowed, got: %T (%v)", err, err)
+						t.Errorf("expected AIKNotAllowedError, got: %T (%v)", err, err)
 					}
-				case ErrInvalidQuote:
-					var target ErrInvalidQuote
+				case InvalidQuoteError:
+					var target InvalidQuoteError
 					if !errors.As(err, &target) {
-						t.Errorf("expected ErrInvalidQuote, got: %T (%v)", err, err)
+						t.Errorf("expected InvalidQuoteError, got: %T (%v)", err, err)
 					}
-				case ErrPCRMismatch:
-					var target ErrPCRMismatch
+				case PCRMismatchError:
+					var target PCRMismatchError
 					if !errors.As(err, &target) {
-						t.Errorf("expected ErrPCRMismatch, got: %T (%v)", err, err)
+						t.Errorf("expected PCRMismatchError, got: %T (%v)", err, err)
 					}
 				}
 			} else if err != nil {
@@ -1003,9 +1003,9 @@ func TestRegistryClose(t *testing.T) {
 
 	// Second close should return error
 	err = reg.Close()
-	var target ErrRegistryClosed
+	var target RegistryClosedError
 	if !errors.As(err, &target) {
-		t.Errorf("expected ErrRegistryClosed, got: %T (%v)", err, err)
+		t.Errorf("expected RegistryClosedError, got: %T (%v)", err, err)
 	}
 }
 
@@ -1022,41 +1022,41 @@ func TestRegistryOperationsAfterClose(t *testing.T) {
 	ctx := context.Background()
 
 	// All operations should fail
-	var target ErrRegistryClosed
+	var target RegistryClosedError
 
 	err = reg.Push(ctx, "test:latest", &Image{}, PushOptions{})
 	if !errors.As(err, &target) {
-		t.Errorf("Push: expected ErrRegistryClosed, got: %T", err)
+		t.Errorf("Push: expected RegistryClosedError, got: %T", err)
 	}
 
 	_, err = reg.Pull(ctx, "test:latest", PullOptions{})
 	if !errors.As(err, &target) {
-		t.Errorf("Pull: expected ErrRegistryClosed, got: %T", err)
+		t.Errorf("Pull: expected RegistryClosedError, got: %T", err)
 	}
 
 	err = reg.Delete(ctx, "test:latest")
 	if !errors.As(err, &target) {
-		t.Errorf("Delete: expected ErrRegistryClosed, got: %T", err)
+		t.Errorf("Delete: expected RegistryClosedError, got: %T", err)
 	}
 
 	_, err = reg.List(ctx, RegistryListOptions{})
 	if !errors.As(err, &target) {
-		t.Errorf("List: expected ErrRegistryClosed, got: %T", err)
+		t.Errorf("List: expected RegistryClosedError, got: %T", err)
 	}
 
 	err = reg.VerifyClient(ctx, &AttestationEvidence{})
 	if !errors.As(err, &target) {
-		t.Errorf("VerifyClient: expected ErrRegistryClosed, got: %T", err)
+		t.Errorf("VerifyClient: expected RegistryClosedError, got: %T", err)
 	}
 
 	err = reg.EncryptImage(ctx, "test:latest", "key")
 	if !errors.As(err, &target) {
-		t.Errorf("EncryptImage: expected ErrRegistryClosed, got: %T", err)
+		t.Errorf("EncryptImage: expected RegistryClosedError, got: %T", err)
 	}
 
 	_, err = reg.DecryptImage(ctx, "test:latest")
 	if !errors.As(err, &target) {
-		t.Errorf("DecryptImage: expected ErrRegistryClosed, got: %T", err)
+		t.Errorf("DecryptImage: expected RegistryClosedError, got: %T", err)
 	}
 }
 

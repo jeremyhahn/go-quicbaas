@@ -71,7 +71,6 @@ func (a AESGCM) GenerateKey() []byte {
 // run in a FIPS build at all (#209). A single self-framing blob also removes
 // the caller's opportunity to pair a ciphertext with the wrong nonce.
 func (a AESGCM) Seal(key, data, additionalData []byte) ([]byte, error) {
-
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
@@ -82,13 +81,14 @@ func (a AESGCM) Seal(key, data, additionalData []byte) ([]byte, error) {
 		return nil, err
 	}
 
+	// #nosec G407 -- random nonce is generated inside Seal by NewGCMWithRandomNonce
 	return aesgcm.Seal(nil, nil, data, additionalData), nil
 }
 
 // Open decrypts a blob produced by Seal — nonce || ciphertext || tag — under
 // key, verifying additionalData. The nonce is read from the blob's prefix, so
 // there is no separate nonce parameter to get wrong. A blob too short to hold
-// a nonce and a tag is refused with ErrCiphertextTooShort before any
+// a nonce and a tag is refused with CiphertextTooShortError before any
 // decryption is attempted, rather than with the standard library's opaque
 // authentication failure.
 func (a AESGCM) Open(key, ciphertext, additionalData []byte) ([]byte, error) {
@@ -101,7 +101,7 @@ func (a AESGCM) Open(key, ciphertext, additionalData []byte) ([]byte, error) {
 		return nil, err
 	}
 	if len(ciphertext) < NonceSize+TagSize {
-		return nil, ErrCiphertextTooShort{Length: len(ciphertext)}
+		return nil, CiphertextTooShortError{Length: len(ciphertext)}
 	}
 	return aesgcm.Open(nil, nil, ciphertext, additionalData)
 }

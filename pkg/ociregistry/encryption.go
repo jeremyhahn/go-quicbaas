@@ -161,7 +161,7 @@ func WithKeyNamespace(ns string) EncryptorOption {
 // NewImageEncryptor creates a new ImageEncryptor.
 func NewImageEncryptor(kms KMSClient, opts ...EncryptorOption) (*ImageEncryptor, error) {
 	if kms == nil {
-		return nil, ErrNilClient{Client: "kms"}
+		return nil, NilClientError{Client: "kms"}
 	}
 
 	e := &ImageEncryptor{
@@ -179,16 +179,16 @@ func NewImageEncryptor(kms KMSClient, opts ...EncryptorOption) (*ImageEncryptor,
 // EncryptImage encrypts a container image using the specified key.
 func (e *ImageEncryptor) EncryptImage(ctx context.Context, image *Image, keyID string) (*EncryptedImage, error) {
 	if ctx == nil {
-		return nil, ErrNilContext{Operation: "EncryptImage"}
+		return nil, NilContextError{Operation: "EncryptImage"}
 	}
 	if image == nil {
-		return nil, ErrImageEmpty{}
+		return nil, ImageEmptyError{}
 	}
 	if len(image.Layers) == 0 {
-		return nil, ErrImageEmpty{}
+		return nil, ImageEmptyError{}
 	}
 	if keyID == "" {
-		return nil, ErrInvalidConfig{Field: "keyID", Reason: "key ID is required"}
+		return nil, InvalidConfigError{Field: "keyID", Reason: "key ID is required"}
 	}
 
 	// Get or create encryption key
@@ -202,7 +202,7 @@ func (e *ImageEncryptor) EncryptImage(ctx context.Context, image *Image, keyID s
 	for i, layer := range image.Layers {
 		encLayer, err := e.encryptLayer(ctx, &layer, keyInfo.KeyID)
 		if err != nil {
-			return nil, ErrEncryptionFailed{LayerID: layer.Digest, Cause: err}
+			return nil, EncryptionFailedError{LayerID: layer.Digest, Cause: err}
 		}
 		encryptedLayers[i] = *encLayer
 	}
@@ -219,13 +219,13 @@ func (e *ImageEncryptor) EncryptImage(ctx context.Context, image *Image, keyID s
 // DecryptImage decrypts an encrypted container image.
 func (e *ImageEncryptor) DecryptImage(ctx context.Context, encrypted *EncryptedImage) (*Image, error) {
 	if ctx == nil {
-		return nil, ErrNilContext{Operation: "DecryptImage"}
+		return nil, NilContextError{Operation: "DecryptImage"}
 	}
 	if encrypted == nil {
-		return nil, ErrImageEmpty{}
+		return nil, ImageEmptyError{}
 	}
 	if len(encrypted.EncryptedLayers) == 0 {
-		return nil, ErrImageEmpty{}
+		return nil, ImageEmptyError{}
 	}
 
 	// Decrypt each layer
@@ -233,7 +233,7 @@ func (e *ImageEncryptor) DecryptImage(ctx context.Context, encrypted *EncryptedI
 	for i, encLayer := range encrypted.EncryptedLayers {
 		layer, err := e.decryptLayer(ctx, &encLayer)
 		if err != nil {
-			return nil, ErrDecryptionFailed{LayerID: encLayer.Digest, Cause: err}
+			return nil, DecryptionFailedError{LayerID: encLayer.Digest, Cause: err}
 		}
 		layers[i] = *layer
 	}
@@ -257,7 +257,7 @@ func (e *ImageEncryptor) getOrCreateKey(ctx context.Context, keyID string) (*Key
 	keyName := e.keyNamespace + "/" + keyID
 	newKeyID, err := e.kms.GenerateKey(ctx, keyName, DefaultKeyAlgorithm, []string{"encrypt", "decrypt", "wrap", "unwrap"})
 	if err != nil {
-		return nil, ErrKeyCreationFailed{KeyID: keyID, Cause: err}
+		return nil, KeyCreationFailedError{KeyID: keyID, Cause: err}
 	}
 
 	return &KeyInfo{
@@ -291,7 +291,7 @@ func (e *ImageEncryptor) encryptLayer(ctx context.Context, layer *Layer, keyID s
 	// Wrap DEK with KEK from QuicBaaS
 	wrappedDEK, _, err := e.kms.Encrypt(ctx, keyID, dek, []byte(layer.Digest))
 	if err != nil {
-		return nil, ErrKeyWrapFailed{KeyID: keyID, Cause: err}
+		return nil, KeyWrapFailedError{KeyID: keyID, Cause: err}
 	}
 
 	// Encrypt layer content with DEK
@@ -326,7 +326,7 @@ func (e *ImageEncryptor) decryptLayer(ctx context.Context, encLayer *EncryptedLa
 	// Unwrap DEK using KEK from QuicBaaS
 	dek, err := e.kms.Decrypt(ctx, encLayer.KeyID, encLayer.WrappedDEK, []byte(encLayer.Digest))
 	if err != nil {
-		return nil, ErrKeyUnwrapFailed{KeyID: encLayer.KeyID, Cause: err}
+		return nil, KeyUnwrapFailedError{KeyID: encLayer.KeyID, Cause: err}
 	}
 
 	// Decrypt layer content with DEK
@@ -386,7 +386,7 @@ type EncryptedLayerMeta struct {
 func generateDEK() ([]byte, error) {
 	dek := make([]byte, DEKSize)
 	if _, err := io.ReadFull(rand.Reader, dek); err != nil {
-		return nil, ErrEncryptionFailed{Cause: err}
+		return nil, EncryptionFailedError{Cause: err}
 	}
 	return dek, nil
 }
@@ -398,7 +398,7 @@ func generateDEK() ([]byte, error) {
 func encryptContent(plaintext, key []byte) ([]byte, error) {
 	sealed, err := gcm.Seal(key, plaintext, nil)
 	if err != nil {
-		return nil, ErrEncryptionFailed{Cause: err}
+		return nil, EncryptionFailedError{Cause: err}
 	}
 	return sealed, nil
 }
@@ -409,7 +409,7 @@ func encryptContent(plaintext, key []byte) ([]byte, error) {
 func decryptContent(ciphertext, key []byte) ([]byte, error) {
 	plaintext, err := gcm.Open(key, ciphertext, nil)
 	if err != nil {
-		return nil, ErrDecryptionFailed{Cause: err}
+		return nil, DecryptionFailedError{Cause: err}
 	}
 	return plaintext, nil
 }

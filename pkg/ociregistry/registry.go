@@ -164,7 +164,7 @@ type Registry struct {
 	// storage is the backing blob+manifest store. It is set via the
 	// WithStorage option at construction time; without it the
 	// Registry remains in an "unconfigured" state where Push/Pull/
-	// List return ErrStorageNotConfigured rather than silently
+	// List return StorageNotConfiguredError rather than silently
 	// no-oping (the pre-Phase-5 behavior).
 	storage *QuicBaaSStorage
 
@@ -212,7 +212,7 @@ func WithStorage(s *QuicBaaSStorage) RegistryOption {
 
 // WithEncryptor installs an ImageEncryptor so the Registry can fulfill
 // Push(opts.Encrypt=true). When unset, encrypted pushes return
-// ErrEncryptionNotConfigured. The encryptor's underlying KMSClient
+// EncryptionNotConfiguredError. The encryptor's underlying KMSClient
 // can be any implementation — LocalKMSClient ships out of the box;
 // production deployments swap in the QuicBaaS-KMS-backed
 // implementation when it lands.
@@ -224,7 +224,7 @@ func WithEncryptor(e *ImageEncryptor) RegistryOption {
 
 // WithSigner wires the KMS that signs manifests (SDKSigner in the daemon:
 // the key a push names is the SDK KMS key of that ID). Without one, a push
-// that asks for signing is refused with ErrSigningNotConfigured.
+// that asks for signing is refused with SigningNotConfiguredError.
 func WithSigner(s SigningKMSClient) RegistryOption {
 	return func(r *Registry) {
 		r.signer = s
@@ -274,7 +274,7 @@ func NewRegistry(config RegistryConfig, logger *slog.Logger, opts ...RegistryOpt
 // Phase 5 first-ship intentionally skips encryption and signing — the
 // opts fields are honored to the extent the underlying storage
 // supports them today (none, both are deferred). Callers that pass
-// Encrypt=true receive ErrEncryptionNotConfigured rather than a
+// Encrypt=true receive EncryptionNotConfiguredError rather than a
 // silently-unencrypted push.
 func (r *Registry) Push(ctx context.Context, ref string, image *Image, opts PushOptions) error {
 	if err := r.checkState(); err != nil {
@@ -287,24 +287,24 @@ func (r *Registry) Push(ctx context.Context, ref string, image *Image, opts Push
 		return err
 	}
 	if image == nil {
-		return ErrInvalidManifest{Reference: ref, Reason: "image cannot be nil"}
+		return InvalidManifestError{Reference: ref, Reason: "image cannot be nil"}
 	}
 	if image.Manifest == nil {
-		return ErrInvalidManifest{Reference: ref, Reason: "manifest cannot be nil"}
+		return InvalidManifestError{Reference: ref, Reason: "manifest cannot be nil"}
 	}
 	if r.storage == nil {
-		return ErrStorageNotConfigured{Op: "Push"}
+		return StorageNotConfiguredError{Op: "Push"}
 	}
 	if opts.Encrypt && r.encryptor == nil {
-		return ErrEncryptionNotConfigured{Reference: ref}
+		return EncryptionNotConfiguredError{Reference: ref}
 	}
 	if opts.SignImage && r.signer == nil {
-		return ErrSigningNotConfigured{Reference: ref}
+		return SigningNotConfiguredError{Reference: ref}
 	}
 	// An image without layers has no content to serve; refuse it here so
 	// every transport that pushes through the registry inherits the check.
 	if len(image.Layers) == 0 {
-		return ErrImageEmpty{}
+		return ImageEmptyError{}
 	}
 	// Only the registry's signer sets the signature annotations.
 	image.Manifest.Annotations = withoutSignatureAnnotations(image.Manifest.Annotations)
@@ -331,7 +331,7 @@ func (r *Registry) Push(ctx context.Context, ref string, image *Image, opts Push
 			return err
 		}
 		if exists {
-			return ErrImageAlreadyExists{Reference: ref}
+			return ImageAlreadyExistsError{Reference: ref}
 		}
 	}
 
@@ -368,7 +368,7 @@ func (r *Registry) Push(ctx context.Context, ref string, image *Image, opts Push
 	for i := range image.Layers {
 		l := &image.Layers[i]
 		if l.Digest == "" {
-			return ErrInvalidManifest{Reference: ref, Reason: "layer with empty digest"}
+			return InvalidManifestError{Reference: ref, Reason: "layer with empty digest"}
 		}
 		var blob []byte
 		if opts.Encrypt {
@@ -411,12 +411,12 @@ func (r *Registry) signManifest(ctx context.Context, ref string, m *ImageManifes
 	}
 	payload, err := manifestSigningPayload(ref, m)
 	if err != nil {
-		return ErrManifestSigningFailed{KeyID: keyID, Err: err}
+		return ManifestSigningFailedError{KeyID: keyID, Err: err}
 	}
 	digest := sha256.Sum256(payload)
 	sig, algorithm, err := r.signer.Sign(ctx, keyID, digest[:])
 	if err != nil {
-		return ErrManifestSigningFailed{KeyID: keyID, Err: err}
+		return ManifestSigningFailedError{KeyID: keyID, Err: err}
 	}
 	if m.Annotations == nil {
 		m.Annotations = make(map[string]string, len(signatureAnnotations))
@@ -465,7 +465,7 @@ var signatureAnnotations = map[string]struct{}{
 // blob-by-blob using the digest recorded in the manifest. The
 // returned Image always references the on-disk content directly —
 // no decryption is performed today; encrypted images surface
-// ErrEncryptionNotConfigured.
+// EncryptionNotConfiguredError.
 func (r *Registry) Pull(ctx context.Context, ref string, opts PullOptions) (*Image, error) {
 	if err := r.checkState(); err != nil {
 		return nil, err
@@ -477,7 +477,7 @@ func (r *Registry) Pull(ctx context.Context, ref string, opts PullOptions) (*Ima
 		return nil, err
 	}
 	if r.storage == nil {
-		return nil, ErrStorageNotConfigured{Op: "Pull"}
+		return nil, StorageNotConfiguredError{Op: "Pull"}
 	}
 
 	select {
@@ -494,18 +494,18 @@ func (r *Registry) Pull(ctx context.Context, ref string, opts PullOptions) (*Ima
 
 	manifest, err := r.storage.GetManifest(ctx, ref)
 	if err != nil {
-		// Surface the public ErrImageNotFound at the registry boundary
+		// Surface the public ImageNotFoundError at the registry boundary
 		// so callers don't need to know about the storage-layer
-		// ErrManifestNotFound, which is an internal type. Other
+		// ManifestNotFoundError, which is an internal type. Other
 		// storage errors (transport, validation) pass through.
-		var notFound ErrManifestNotFound
+		var notFound ManifestNotFoundError
 		if errors.As(err, &notFound) {
-			return nil, ErrImageNotFound{Reference: ref}
+			return nil, ImageNotFoundError{Reference: ref}
 		}
 		return nil, err
 	}
 	if manifest == nil {
-		return nil, ErrImageNotFound{Reference: ref}
+		return nil, ImageNotFoundError{Reference: ref}
 	}
 
 	img := &Image{Manifest: manifest}
@@ -521,7 +521,7 @@ func (r *Registry) Pull(ctx context.Context, ref string, opts PullOptions) (*Ima
 	encrypted := manifest.Annotations != nil &&
 		manifest.Annotations[ManifestAnnotationEncrypted] == "true"
 	if encrypted && r.encryptor == nil {
-		return nil, ErrEncryptionNotConfigured{Reference: ref}
+		return nil, EncryptionNotConfiguredError{Reference: ref}
 	}
 
 	img.Layers = make([]Layer, 0, len(manifest.Layers))
@@ -570,7 +570,7 @@ func (r *Registry) Delete(ctx context.Context, ref string) error {
 		return err
 	}
 	if r.storage == nil {
-		return ErrStorageNotConfigured{Op: "Delete"}
+		return StorageNotConfiguredError{Op: "Delete"}
 	}
 
 	r.logger.Debug("deleting image", "ref", ref)
@@ -578,14 +578,14 @@ func (r *Registry) Delete(ctx context.Context, ref string) error {
 	// Fetch the manifest so we know which blobs to consider for GC.
 	manifest, err := r.storage.GetManifest(ctx, ref)
 	if err != nil {
-		var notFound ErrManifestNotFound
+		var notFound ManifestNotFoundError
 		if errors.As(err, &notFound) {
-			return ErrImageNotFound{Reference: ref}
+			return ImageNotFoundError{Reference: ref}
 		}
 		return err
 	}
 	if manifest == nil {
-		return ErrImageNotFound{Reference: ref}
+		return ImageNotFoundError{Reference: ref}
 	}
 
 	if err := r.storage.DeleteManifest(ctx, ref); err != nil {
@@ -675,7 +675,7 @@ func (r *Registry) List(ctx context.Context, opts RegistryListOptions) ([]*Image
 		return nil, err
 	}
 	if r.storage == nil {
-		return nil, ErrStorageNotConfigured{Op: "List"}
+		return nil, StorageNotConfiguredError{Op: "List"}
 	}
 
 	r.logger.Debug("listing images",
@@ -713,7 +713,7 @@ func (r *Registry) VerifyClient(ctx context.Context, attestation *AttestationEvi
 	}
 
 	if attestation == nil {
-		return ErrAttestationRequired{}
+		return AttestationRequiredError{}
 	}
 
 	r.logger.Debug("verifying client attestation",
@@ -731,14 +731,14 @@ func (r *Registry) VerifyClient(ctx context.Context, attestation *AttestationEvi
 			}
 		}
 		if !allowed {
-			return ErrAIKNotAllowed{AIK: aikStr}
+			return AIKNotAllowedError{AIK: aikStr}
 		}
 	}
 
 	// Check quote age
 	if r.config.Attestation.QuoteMaxAge > 0 {
 		if r.now().Sub(attestation.Timestamp) > r.config.Attestation.QuoteMaxAge {
-			return ErrInvalidQuote{Reason: "quote has expired"}
+			return InvalidQuoteError{Reason: "quote has expired"}
 		}
 	}
 
@@ -746,14 +746,14 @@ func (r *Registry) VerifyClient(ctx context.Context, attestation *AttestationEvi
 	for pcrIndex, expectedValue := range r.config.Attestation.RequiredPCRs {
 		actualValue, ok := attestation.PCRs[pcrIndex]
 		if !ok {
-			return ErrPCRMismatch{
+			return PCRMismatchError{
 				PCRIndex: pcrIndex,
 				Expected: expectedValue,
 				Actual:   nil,
 			}
 		}
 		if !bytesEqual(expectedValue, actualValue) {
-			return ErrPCRMismatch{
+			return PCRMismatchError{
 				PCRIndex: pcrIndex,
 				Expected: expectedValue,
 				Actual:   actualValue,
@@ -796,7 +796,7 @@ func (r *Registry) EncryptImage(ctx context.Context, ref string, keyID string) e
 	}
 
 	if keyID == "" {
-		return ErrInvalidConfig{Field: "key_id", Reason: "encryption key ID required"}
+		return InvalidConfigError{Field: "key_id", Reason: "encryption key ID required"}
 	}
 
 	r.logger.Debug("encrypting image",
@@ -815,7 +815,7 @@ func (r *Registry) EncryptImage(ctx context.Context, ref string, keyID string) e
 	// 4. Update manifest with encryption metadata
 	// 5. Store updated manifest
 
-	return ErrImageNotFound{Reference: ref}
+	return ImageNotFoundError{Reference: ref}
 }
 
 // DecryptImage retrieves and decrypts an encrypted image
@@ -839,13 +839,13 @@ func (r *Registry) DecryptImage(ctx context.Context, ref string) (*Image, error)
 	//    c. Decrypt layer with DEK
 	// 4. Return decrypted image
 
-	return nil, ErrImageNotFound{Reference: ref}
+	return nil, ImageNotFoundError{Reference: ref}
 }
 
 // Close releases all resources held by the registry
 func (r *Registry) Close() error {
 	if !r.closed.CompareAndSwap(false, true) {
-		return ErrRegistryClosed{}
+		return RegistryClosedError{}
 	}
 
 	r.logger.Info("closing trusted registry")
@@ -869,13 +869,13 @@ func (r *Registry) Close() error {
 
 // checkState verifies the registry is ready for operations
 func (r *Registry) checkState() error {
-	// Check closed first - a closed registry should return ErrRegistryClosed
+	// Check closed first - a closed registry should return RegistryClosedError
 	// even if initialized is also false
 	if r.closed.Load() {
-		return ErrRegistryClosed{}
+		return RegistryClosedError{}
 	}
 	if !r.initialized.Load() {
-		return ErrRegistryNotInitialized{}
+		return RegistryNotInitializedError{}
 	}
 	return nil
 }
@@ -928,17 +928,17 @@ const (
 // validateImageRef validates an image reference format
 func validateImageRef(ref string) error {
 	if ref == "" {
-		return ErrInvalidImageRef{Reference: ref, Reason: "reference cannot be empty"}
+		return InvalidImageRefError{Reference: ref, Reason: "reference cannot be empty"}
 	}
 
 	// Check for overly long references
 	if len(ref) > 256 {
-		return ErrInvalidImageRef{Reference: ref, Reason: "reference too long"}
+		return InvalidImageRefError{Reference: ref, Reason: "reference too long"}
 	}
 
 	// Validate the reference
 	if !imageRefRegex.MatchString(ref) {
-		return ErrInvalidImageRef{Reference: ref, Reason: "invalid format"}
+		return InvalidImageRefError{Reference: ref, Reason: "invalid format"}
 	}
 
 	return nil

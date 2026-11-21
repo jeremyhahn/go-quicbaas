@@ -76,7 +76,7 @@ func (m *mockKMSClient) GetKey(ctx context.Context, keyID string) (*KeyInfo, err
 	if info, ok := m.keys[keyID]; ok {
 		return info, nil
 	}
-	return nil, ErrKeyNotFound{KeyID: keyID}
+	return nil, KeyNotFoundError{KeyID: keyID}
 }
 
 func (m *mockKMSClient) Encrypt(ctx context.Context, keyID string, plaintext, aad []byte) ([]byte, int, error) {
@@ -89,7 +89,7 @@ func (m *mockKMSClient) Encrypt(ctx context.Context, keyID string, plaintext, aa
 	// Simple XOR "encryption" for testing
 	keyMaterial, ok := m.keyData[keyID]
 	if !ok {
-		return nil, 0, ErrKeyNotFound{KeyID: keyID}
+		return nil, 0, KeyNotFoundError{KeyID: keyID}
 	}
 
 	ciphertext := make([]byte, len(plaintext))
@@ -109,7 +109,7 @@ func (m *mockKMSClient) Decrypt(ctx context.Context, keyID string, ciphertext, a
 	// Simple XOR "decryption" for testing (same as encrypt for XOR)
 	keyMaterial, ok := m.keyData[keyID]
 	if !ok {
-		return nil, ErrKeyNotFound{KeyID: keyID}
+		return nil, KeyNotFoundError{KeyID: keyID}
 	}
 
 	plaintext := make([]byte, len(ciphertext))
@@ -196,9 +196,9 @@ func TestNewImageEncryptor_NilKMS(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for nil KMS")
 	}
-	var nilErr ErrNilClient
+	var nilErr NilClientError
 	if !errors.As(err, &nilErr) {
-		t.Errorf("expected ErrNilClient, got %T", err)
+		t.Errorf("expected NilClientError, got %T", err)
 	}
 }
 
@@ -240,9 +240,9 @@ func TestEncryptImage_NilContext(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for nil context")
 	}
-	var nilCtxErr ErrNilContext
+	var nilCtxErr NilContextError
 	if !errors.As(err, &nilCtxErr) {
-		t.Errorf("expected ErrNilContext, got %T", err)
+		t.Errorf("expected NilContextError, got %T", err)
 	}
 }
 
@@ -255,9 +255,9 @@ func TestEncryptImage_NilImage(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for nil image")
 	}
-	var emptyErr ErrImageEmpty
+	var emptyErr ImageEmptyError
 	if !errors.As(err, &emptyErr) {
-		t.Errorf("expected ErrImageEmpty, got %T", err)
+		t.Errorf("expected ImageEmptyError, got %T", err)
 	}
 }
 
@@ -275,9 +275,9 @@ func TestEncryptImage_EmptyLayers(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for empty layers")
 	}
-	var emptyErr ErrImageEmpty
+	var emptyErr ImageEmptyError
 	if !errors.As(err, &emptyErr) {
-		t.Errorf("expected ErrImageEmpty, got %T", err)
+		t.Errorf("expected ImageEmptyError, got %T", err)
 	}
 }
 
@@ -291,16 +291,16 @@ func TestEncryptImage_EmptyKeyID(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for empty key ID")
 	}
-	var configErr ErrInvalidConfig
+	var configErr InvalidConfigError
 	if !errors.As(err, &configErr) {
-		t.Errorf("expected ErrInvalidConfig, got %T", err)
+		t.Errorf("expected InvalidConfigError, got %T", err)
 	}
 }
 
 func TestEncryptImage_KeyCreationFailed(t *testing.T) {
 	kms := newMockKMSClient()
 	kms.genErr = errors.New("key generation failed")
-	kms.getErr = ErrKeyNotFound{KeyID: "test-key"} // Force key creation attempt
+	kms.getErr = KeyNotFoundError{KeyID: "test-key"} // Force key creation attempt
 
 	encryptor, _ := NewImageEncryptor(kms)
 	image := createTestImage(t)
@@ -310,9 +310,9 @@ func TestEncryptImage_KeyCreationFailed(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for key creation failure")
 	}
-	var keyErr ErrKeyCreationFailed
+	var keyErr KeyCreationFailedError
 	if !errors.As(err, &keyErr) {
-		t.Errorf("expected ErrKeyCreationFailed, got %T", err)
+		t.Errorf("expected KeyCreationFailedError, got %T", err)
 	}
 }
 
@@ -329,9 +329,9 @@ func TestEncryptImage_WrapFailed(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for wrap failure")
 	}
-	var encErr ErrEncryptionFailed
+	var encErr EncryptionFailedError
 	if !errors.As(err, &encErr) {
-		t.Errorf("expected ErrEncryptionFailed, got %T", err)
+		t.Errorf("expected EncryptionFailedError, got %T", err)
 	}
 }
 
@@ -388,9 +388,9 @@ func TestDecryptImage_NilContext(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for nil context")
 	}
-	var nilCtxErr ErrNilContext
+	var nilCtxErr NilContextError
 	if !errors.As(err, &nilCtxErr) {
-		t.Errorf("expected ErrNilContext, got %T", err)
+		t.Errorf("expected NilContextError, got %T", err)
 	}
 }
 
@@ -403,9 +403,9 @@ func TestDecryptImage_NilEncryptedImage(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for nil encrypted image")
 	}
-	var emptyErr ErrImageEmpty
+	var emptyErr ImageEmptyError
 	if !errors.As(err, &emptyErr) {
-		t.Errorf("expected ErrImageEmpty, got %T", err)
+		t.Errorf("expected ImageEmptyError, got %T", err)
 	}
 }
 
@@ -422,9 +422,9 @@ func TestDecryptImage_EmptyLayers(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for empty layers")
 	}
-	var emptyErr ErrImageEmpty
+	var emptyErr ImageEmptyError
 	if !errors.As(err, &emptyErr) {
-		t.Errorf("expected ErrImageEmpty, got %T", err)
+		t.Errorf("expected ImageEmptyError, got %T", err)
 	}
 }
 
@@ -451,9 +451,9 @@ func TestDecryptImage_UnwrapFailed(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for unwrap failure")
 	}
-	var decErr ErrDecryptionFailed
+	var decErr DecryptionFailedError
 	if !errors.As(err, &decErr) {
-		t.Errorf("expected ErrDecryptionFailed, got %T", err)
+		t.Errorf("expected DecryptionFailedError, got %T", err)
 	}
 }
 
@@ -618,7 +618,7 @@ func TestDecryptContent_TamperedCiphertext(t *testing.T) {
 }
 
 // A layer blob too short to hold a nonce and a tag must surface as the typed
-// pkg/crypto/aesgcm error inside ErrDecryptionFailed, not as the standard
+// pkg/crypto/aesgcm error inside DecryptionFailedError, not as the standard
 // library's opaque authentication failure.
 func TestDecryptContent_TruncatedCiphertext(t *testing.T) {
 	dek, err := generateDEK()
@@ -632,13 +632,13 @@ func TestDecryptContent_TruncatedCiphertext(t *testing.T) {
 
 	_, err = decryptContent(ciphertext[:NonceSize+TagSize-1], dek)
 
-	var decryptErr ErrDecryptionFailed
+	var decryptErr DecryptionFailedError
 	if !errors.As(err, &decryptErr) {
-		t.Fatalf("want ErrDecryptionFailed, got %T: %v", err, err)
+		t.Fatalf("want DecryptionFailedError, got %T: %v", err, err)
 	}
-	var tooShort aesgcm.ErrCiphertextTooShort
+	var tooShort aesgcm.CiphertextTooShortError
 	if !errors.As(err, &tooShort) {
-		t.Errorf("want aesgcm.ErrCiphertextTooShort as the cause, got %v", decryptErr.Cause)
+		t.Errorf("want aesgcm.CiphertextTooShortError as the cause, got %v", decryptErr.Cause)
 	}
 }
 

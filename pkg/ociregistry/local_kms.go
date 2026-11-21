@@ -93,7 +93,7 @@ func (c *LocalKMSClient) loadKey(keyID string) ([]byte, error) {
 	data, err := os.ReadFile(c.keyPath(keyID))
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, ErrKeyNotFoundLocal{KeyID: keyID}
+			return nil, KeyNotFoundLocalError{KeyID: keyID}
 		}
 		return nil, err
 	}
@@ -200,17 +200,17 @@ func (c *LocalKMSClient) Decrypt(ctx context.Context, keyID string, ciphertext, 
 		return nil, err
 	}
 	// A blob shorter than nonce + tag is refused with the typed
-	// aesgcm.ErrCiphertextTooShort before any decryption is attempted.
+	// aesgcm.CiphertextTooShortError before any decryption is attempted.
 	return gcm.Open(key, ciphertext, aad)
 }
 
-// ErrKeyNotFoundLocal is returned when GetKey is asked about a key
+// KeyNotFoundLocalError is returned when GetKey is asked about a key
 // that has never been generated. The wrapping ImageEncryptor reads
 // this as a signal to call GenerateKey.
-type ErrKeyNotFoundLocal struct {
+type KeyNotFoundLocalError struct {
 	KeyID string
 }
 
-func (e ErrKeyNotFoundLocal) Error() string {
+func (e KeyNotFoundLocalError) Error() string {
 	return fmt.Sprintf("registry: kms key %s not found", e.KeyID)
 }

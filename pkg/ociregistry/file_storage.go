@@ -71,7 +71,7 @@ func (f *FileStorageClient) Put(_ context.Context, entityType, key string, value
 		return err
 	}
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, value, 0o640); err != nil {
+	if err := os.WriteFile(tmp, value, 0o600); err != nil {
 		return err
 	}
 	return os.Rename(tmp, path)

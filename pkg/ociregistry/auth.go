@@ -196,13 +196,13 @@ func NewRegistryAuthHandler(
 	opts ...AuthHandlerOption,
 ) (*RegistryAuthHandler, error) {
 	if attestor == nil {
-		return nil, ErrNilClient{Client: "attestor"}
+		return nil, NilClientError{Client: "attestor"}
 	}
 	if policyEngine == nil {
-		return nil, ErrNilClient{Client: "policyEngine"}
+		return nil, NilClientError{Client: "policyEngine"}
 	}
 	if quicBaaS == nil {
-		return nil, ErrNilClient{Client: "quicBaaS"}
+		return nil, NilClientError{Client: "quicBaaS"}
 	}
 
 	h := &RegistryAuthHandler{
@@ -226,10 +226,10 @@ func NewRegistryAuthHandler(
 // Authenticate authenticates a client using attestation evidence from an HTTP request.
 func (h *RegistryAuthHandler) Authenticate(ctx context.Context, req *http.Request) (*RegistrySession, error) {
 	if ctx == nil {
-		return nil, ErrNilContext{Operation: "Authenticate"}
+		return nil, NilContextError{Operation: "Authenticate"}
 	}
 	if req == nil {
-		return nil, ErrAttestationRequired{}
+		return nil, AttestationRequiredError{}
 	}
 
 	// Extract attestation evidence from request header
@@ -241,14 +241,14 @@ func (h *RegistryAuthHandler) Authenticate(ctx context.Context, req *http.Reques
 	// Verify TPM quote
 	verifiedPCRs, err := h.attestor.VerifyQuote(ctx, evidence.Quote, evidence.Signature, evidence.AIK)
 	if err != nil {
-		return nil, ErrInvalidQuote{Cause: err}
+		return nil, InvalidQuoteError{Cause: err}
 	}
 
 	// Check AIK against allowed list if configured
 	if len(h.allowedAIKs) > 0 {
 		aikFingerprint := computeAIKFingerprint(evidence.AIK)
 		if _, ok := h.allowedAIKs[aikFingerprint]; !ok {
-			return nil, ErrAIKNotAllowed{AIK: aikFingerprint}
+			return nil, AIKNotAllowedError{AIK: aikFingerprint}
 		}
 	}
 
@@ -257,14 +257,14 @@ func (h *RegistryAuthHandler) Authenticate(ctx context.Context, req *http.Reques
 		for pcrIndex, expectedValue := range h.requiredPCRs {
 			actualValue, ok := verifiedPCRs[pcrIndex]
 			if !ok {
-				return nil, ErrPCRMismatch{
+				return nil, PCRMismatchError{
 					PCRIndex: pcrIndex,
 					Expected: expectedValue,
 					Actual:   nil,
 				}
 			}
 			if !bytesEqual(expectedValue, actualValue) {
-				return nil, ErrPCRMismatch{
+				return nil, PCRMismatchError{
 					PCRIndex: pcrIndex,
 					Expected: expectedValue,
 					Actual:   actualValue,
@@ -287,10 +287,10 @@ func (h *RegistryAuthHandler) Authenticate(ctx context.Context, req *http.Reques
 
 	decision, err := h.policyEngine.Evaluate(ctx, h.policyName, policyInput)
 	if err != nil {
-		return nil, ErrPolicyEvaluationFailed{Policy: h.policyName, Cause: err}
+		return nil, PolicyEvaluationFailedError{Policy: h.policyName, Cause: err}
 	}
 	if !decision.Allow {
-		return nil, ErrAccessDenied{
+		return nil, AccessDeniedError{
 			Subject:  evidence.ClientID,
 			Resource: req.URL.Path,
 			Reason:   decision.Reason,
@@ -321,32 +321,32 @@ func (h *RegistryAuthHandler) Authenticate(ctx context.Context, req *http.Reques
 func (h *RegistryAuthHandler) extractAttestationEvidence(req *http.Request) (*AttestationEvidence, error) {
 	headerValue := req.Header.Get(HeaderAttestationEvidence)
 	if headerValue == "" {
-		return nil, ErrAttestationRequired{}
+		return nil, AttestationRequiredError{}
 	}
 
 	// Decode base64-encoded JSON
 	jsonData, err := base64.StdEncoding.DecodeString(headerValue)
 	if err != nil {
-		return nil, ErrAttestationFailed{Reason: "invalid base64 encoding"}
+		return nil, AttestationFailedError{Reason: "invalid base64 encoding"}
 	}
 
 	var evidence AttestationEvidence
 	if err := json.Unmarshal(jsonData, &evidence); err != nil {
-		return nil, ErrAttestationFailed{Reason: "invalid JSON format"}
+		return nil, AttestationFailedError{Reason: "invalid JSON format"}
 	}
 
 	// Validate required fields
 	if len(evidence.Quote) == 0 {
-		return nil, ErrAttestationFailed{Reason: "missing quote"}
+		return nil, AttestationFailedError{Reason: "missing quote"}
 	}
 	if len(evidence.Signature) == 0 {
-		return nil, ErrAttestationFailed{Reason: "missing signature"}
+		return nil, AttestationFailedError{Reason: "missing signature"}
 	}
 	if len(evidence.AIK) == 0 {
-		return nil, ErrAttestationFailed{Reason: "missing AIK"}
+		return nil, AttestationFailedError{Reason: "missing AIK"}
 	}
 	if evidence.ClientID == "" {
-		return nil, ErrAttestationFailed{Reason: "missing client ID"}
+		return nil, AttestationFailedError{Reason: "missing client ID"}
 	}
 
 	return &evidence, nil
@@ -355,15 +355,15 @@ func (h *RegistryAuthHandler) extractAttestationEvidence(req *http.Request) (*At
 // ValidateSession validates an existing session.
 func (h *RegistryAuthHandler) ValidateSession(ctx context.Context, session *RegistrySession) error {
 	if ctx == nil {
-		return ErrNilContext{Operation: "ValidateSession"}
+		return NilContextError{Operation: "ValidateSession"}
 	}
 	if session == nil {
-		return ErrInvalidSession{Reason: "session is nil"}
+		return InvalidSessionError{Reason: "session is nil"}
 	}
 
 	// Check if session is within validity period
 	if !session.IsValid() {
-		return ErrSessionExpired{SessionID: session.SessionID}
+		return SessionExpiredError{SessionID: session.SessionID}
 	}
 
 	// Verify session exists in storage
@@ -372,12 +372,12 @@ func (h *RegistryAuthHandler) ValidateSession(ctx context.Context, session *Regi
 		return err
 	}
 	if stored == nil {
-		return ErrSessionNotFound{SessionID: session.SessionID}
+		return SessionNotFoundError{SessionID: session.SessionID}
 	}
 
 	// Verify session data matches
 	if stored.ClientID != session.ClientID {
-		return ErrInvalidSession{Reason: "client ID mismatch"}
+		return InvalidSessionError{Reason: "client ID mismatch"}
 	}
 
 	return nil
@@ -407,13 +407,13 @@ func NewSessionManager(quicBaaS QuicBaaSClient, sessionDuration time.Duration) *
 // Store stores a session in QuicBaaS and cache.
 func (m *SessionManager) Store(ctx context.Context, session *RegistrySession) error {
 	if ctx == nil {
-		return ErrNilContext{Operation: "SessionManager.Store"}
+		return NilContextError{Operation: "SessionManager.Store"}
 	}
 	if session == nil {
-		return ErrInvalidSession{Reason: "session is nil"}
+		return InvalidSessionError{Reason: "session is nil"}
 	}
 	if session.SessionID == "" {
-		return ErrInvalidSession{Reason: "session ID is empty"}
+		return InvalidSessionError{Reason: "session ID is empty"}
 	}
 
 	// Serialize session
@@ -425,7 +425,7 @@ func (m *SessionManager) Store(ctx context.Context, session *RegistrySession) er
 	// Calculate TTL based on session validity
 	ttl := time.Until(session.ValidUntil)
 	if ttl <= 0 {
-		return ErrSessionExpired{SessionID: session.SessionID}
+		return SessionExpiredError{SessionID: session.SessionID}
 	}
 
 	// Store in QuicBaaS
@@ -442,16 +442,15 @@ func (m *SessionManager) Store(ctx context.Context, session *RegistrySession) er
 // Get retrieves a session by ID.
 func (m *SessionManager) Get(ctx context.Context, sessionID string) (*RegistrySession, error) {
 	if ctx == nil {
-		return nil, ErrNilContext{Operation: "SessionManager.Get"}
+		return nil, NilContextError{Operation: "SessionManager.Get"}
 	}
 	if sessionID == "" {
-		return nil, ErrInvalidSession{Reason: "session ID is empty"}
+		return nil, InvalidSessionError{Reason: "session ID is empty"}
 	}
 
 	// Check cache first
 	if cached, ok := m.cache.Load(sessionID); ok {
-		session := cached.(*RegistrySession)
-		if session.IsValid() {
+		if session, isSession := cached.(*RegistrySession); isSession && session.IsValid() {
 			return session, nil
 		}
 		// Remove expired session from cache
@@ -464,7 +463,7 @@ func (m *SessionManager) Get(ctx context.Context, sessionID string) (*RegistrySe
 		return nil, ErrStorageError{Operation: "get_session", Key: sessionID, Cause: err}
 	}
 	if !found {
-		return nil, ErrSessionNotFound{SessionID: sessionID}
+		return nil, SessionNotFoundError{SessionID: sessionID}
 	}
 
 	var session RegistrySession
@@ -476,7 +475,7 @@ func (m *SessionManager) Get(ctx context.Context, sessionID string) (*RegistrySe
 	if !session.IsValid() {
 		// Clean up expired session
 		_ = m.Delete(ctx, sessionID)
-		return nil, ErrSessionExpired{SessionID: sessionID}
+		return nil, SessionExpiredError{SessionID: sessionID}
 	}
 
 	// Update cache
@@ -488,10 +487,10 @@ func (m *SessionManager) Get(ctx context.Context, sessionID string) (*RegistrySe
 // Delete removes a session.
 func (m *SessionManager) Delete(ctx context.Context, sessionID string) error {
 	if ctx == nil {
-		return ErrNilContext{Operation: "SessionManager.Delete"}
+		return NilContextError{Operation: "SessionManager.Delete"}
 	}
 	if sessionID == "" {
-		return ErrInvalidSession{Reason: "session ID is empty"}
+		return InvalidSessionError{Reason: "session ID is empty"}
 	}
 
 	// Remove from cache
@@ -517,9 +516,10 @@ func (m *SessionManager) CleanExpired() {
 
 	var toDelete []string
 	m.cache.Range(func(key, value any) bool {
-		session := value.(*RegistrySession)
-		if !session.IsValid() {
-			toDelete = append(toDelete, key.(string))
+		session, isSession := value.(*RegistrySession)
+		id, isID := key.(string)
+		if isSession && isID && !session.IsValid() {
+			toDelete = append(toDelete, id)
 		}
 		return true
 	})

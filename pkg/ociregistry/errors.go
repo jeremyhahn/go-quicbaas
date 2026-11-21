@@ -18,30 +18,30 @@ import (
 	"time"
 )
 
-// ErrAttestationRequired is returned when a client attempts to access
+// AttestationRequiredError is returned when a client attempts to access
 // the registry without providing attestation evidence.
-type ErrAttestationRequired struct{}
+type AttestationRequiredError struct{}
 
-func (e ErrAttestationRequired) Error() string {
+func (e AttestationRequiredError) Error() string {
 	return "registry: attestation evidence required for registry access"
 }
 
-// ErrAttestationFailed is returned when attestation verification fails.
-type ErrAttestationFailed struct {
+// AttestationFailedError is returned when attestation verification fails.
+type AttestationFailedError struct {
 	Reason string
 }
 
-func (e ErrAttestationFailed) Error() string {
+func (e AttestationFailedError) Error() string {
 	return fmt.Sprintf("registry: attestation verification failed: %s", e.Reason)
 }
 
-// ErrInvalidQuote is returned when a TPM quote is malformed or cannot be verified.
-type ErrInvalidQuote struct {
+// InvalidQuoteError is returned when a TPM quote is malformed or cannot be verified.
+type InvalidQuoteError struct {
 	Reason string
 	Cause  error
 }
 
-func (e ErrInvalidQuote) Error() string {
+func (e InvalidQuoteError) Error() string {
 	if e.Cause != nil {
 		return fmt.Sprintf("registry: invalid TPM quote: %v", e.Cause)
 	}
@@ -51,51 +51,51 @@ func (e ErrInvalidQuote) Error() string {
 	return "registry: invalid TPM quote"
 }
 
-func (e ErrInvalidQuote) Unwrap() error {
+func (e InvalidQuoteError) Unwrap() error {
 	return e.Cause
 }
 
-// ErrAccessDenied is returned when access is denied based on policy evaluation.
-type ErrAccessDenied struct {
+// AccessDeniedError is returned when access is denied based on policy evaluation.
+type AccessDeniedError struct {
 	Subject  string
 	Resource string
 	Reason   string
 }
 
-func (e ErrAccessDenied) Error() string {
+func (e AccessDeniedError) Error() string {
 	if e.Subject != "" && e.Resource != "" {
 		return fmt.Sprintf("registry: access denied: subject %s cannot access %s: %s", e.Subject, e.Resource, e.Reason)
 	}
 	return fmt.Sprintf("registry: access denied: %s", e.Reason)
 }
 
-// ErrImageNotFound is returned when a requested image does not exist.
-type ErrImageNotFound struct {
+// ImageNotFoundError is returned when a requested image does not exist.
+type ImageNotFoundError struct {
 	Reference string
 }
 
-func (e ErrImageNotFound) Error() string {
+func (e ImageNotFoundError) Error() string {
 	return fmt.Sprintf("registry: image not found: %s", e.Reference)
 }
 
-// ErrImageExists is returned when attempting to push an image that already exists
+// ImageExistsError is returned when attempting to push an image that already exists
 // and overwrite is not allowed.
-type ErrImageExists struct {
+type ImageExistsError struct {
 	Reference string
 }
 
-func (e ErrImageExists) Error() string {
+func (e ImageExistsError) Error() string {
 	return fmt.Sprintf("registry: image already exists: %s", e.Reference)
 }
 
-// ErrDecryptionFailed is returned when image decryption fails.
-type ErrDecryptionFailed struct {
+// DecryptionFailedError is returned when image decryption fails.
+type DecryptionFailedError struct {
 	Reference string
 	LayerID   string
 	Cause     error
 }
 
-func (e ErrDecryptionFailed) Error() string {
+func (e DecryptionFailedError) Error() string {
 	if e.LayerID != "" && e.Cause != nil {
 		return fmt.Sprintf("registry: failed to decrypt layer %s: %v", e.LayerID, e.Cause)
 	}
@@ -108,18 +108,18 @@ func (e ErrDecryptionFailed) Error() string {
 	return "registry: decryption failed"
 }
 
-func (e ErrDecryptionFailed) Unwrap() error {
+func (e DecryptionFailedError) Unwrap() error {
 	return e.Cause
 }
 
-// ErrEncryptionFailed is returned when image encryption fails.
-type ErrEncryptionFailed struct {
+// EncryptionFailedError is returned when image encryption fails.
+type EncryptionFailedError struct {
 	Reference string
 	LayerID   string
 	Cause     error
 }
 
-func (e ErrEncryptionFailed) Error() string {
+func (e EncryptionFailedError) Error() string {
 	if e.LayerID != "" && e.Cause != nil {
 		return fmt.Sprintf("registry: failed to encrypt layer %s: %v", e.LayerID, e.Cause)
 	}
@@ -132,7 +132,7 @@ func (e ErrEncryptionFailed) Error() string {
 	return "registry: encryption failed"
 }
 
-func (e ErrEncryptionFailed) Unwrap() error {
+func (e EncryptionFailedError) Unwrap() error {
 	return e.Cause
 }
 
@@ -157,75 +157,75 @@ func (e ErrStorageError) Unwrap() error {
 	return e.Cause
 }
 
-// ErrRegistryNotInitialized is returned when operations are attempted
+// RegistryNotInitializedError is returned when operations are attempted
 // on an uninitialized registry.
-type ErrRegistryNotInitialized struct{}
+type RegistryNotInitializedError struct{}
 
-func (e ErrRegistryNotInitialized) Error() string {
+func (e RegistryNotInitializedError) Error() string {
 	return "registry: registry not initialized"
 }
 
-// ErrRegistryClosed is returned when operations are attempted on a closed registry.
-type ErrRegistryClosed struct{}
+// RegistryClosedError is returned when operations are attempted on a closed registry.
+type RegistryClosedError struct{}
 
-func (e ErrRegistryClosed) Error() string {
+func (e RegistryClosedError) Error() string {
 	return "registry: registry is closed"
 }
 
-// ErrInvalidImageRef is returned when an image reference is malformed.
-type ErrInvalidImageRef struct {
+// InvalidImageRefError is returned when an image reference is malformed.
+type InvalidImageRefError struct {
 	Reference string
 	Reason    string
 }
 
-func (e ErrInvalidImageRef) Error() string {
+func (e InvalidImageRefError) Error() string {
 	return fmt.Sprintf("registry: invalid image reference %q: %s", e.Reference, e.Reason)
 }
 
-// ErrBlobNotFound is returned when a specific blob is not found.
-type ErrBlobNotFound struct {
+// BlobNotFoundError is returned when a specific blob is not found.
+type BlobNotFoundError struct {
 	Digest string
 }
 
-func (e ErrBlobNotFound) Error() string {
+func (e BlobNotFoundError) Error() string {
 	return fmt.Sprintf("registry: blob not found: %s", e.Digest)
 }
 
-// ErrManifestNotFound is returned when an image manifest is not found.
-type ErrManifestNotFound struct {
+// ManifestNotFoundError is returned when an image manifest is not found.
+type ManifestNotFoundError struct {
 	Reference string
 }
 
-func (e ErrManifestNotFound) Error() string {
+func (e ManifestNotFoundError) Error() string {
 	return fmt.Sprintf("registry: manifest not found: %s", e.Reference)
 }
 
-// ErrInvalidManifest is returned when a manifest is malformed.
-type ErrInvalidManifest struct {
+// InvalidManifestError is returned when a manifest is malformed.
+type InvalidManifestError struct {
 	Reference string
 	Reason    string
 }
 
-func (e ErrInvalidManifest) Error() string {
+func (e InvalidManifestError) Error() string {
 	return fmt.Sprintf("registry: invalid manifest for %s: %s", e.Reference, e.Reason)
 }
 
-// ErrKeyNotFound is returned when an encryption key is not found.
-type ErrKeyNotFound struct {
+// KeyNotFoundError is returned when an encryption key is not found.
+type KeyNotFoundError struct {
 	KeyID string
 }
 
-func (e ErrKeyNotFound) Error() string {
+func (e KeyNotFoundError) Error() string {
 	return fmt.Sprintf("registry: encryption key not found: %s", e.KeyID)
 }
 
-// ErrKeyCreationFailed is returned when key creation fails.
-type ErrKeyCreationFailed struct {
+// KeyCreationFailedError is returned when key creation fails.
+type KeyCreationFailedError struct {
 	KeyID string
 	Cause error
 }
 
-func (e ErrKeyCreationFailed) Error() string {
+func (e KeyCreationFailedError) Error() string {
 	if e.KeyID != "" && e.Cause != nil {
 		return fmt.Sprintf("registry: failed to create key %s: %v", e.KeyID, e.Cause)
 	}
@@ -235,17 +235,17 @@ func (e ErrKeyCreationFailed) Error() string {
 	return "registry: key creation failed"
 }
 
-func (e ErrKeyCreationFailed) Unwrap() error {
+func (e KeyCreationFailedError) Unwrap() error {
 	return e.Cause
 }
 
-// ErrKeyWrapFailed is returned when DEK wrapping fails.
-type ErrKeyWrapFailed struct {
+// KeyWrapFailedError is returned when DEK wrapping fails.
+type KeyWrapFailedError struct {
 	KeyID string
 	Cause error
 }
 
-func (e ErrKeyWrapFailed) Error() string {
+func (e KeyWrapFailedError) Error() string {
 	if e.KeyID != "" && e.Cause != nil {
 		return fmt.Sprintf("registry: failed to wrap DEK with key %s: %v", e.KeyID, e.Cause)
 	}
@@ -255,17 +255,17 @@ func (e ErrKeyWrapFailed) Error() string {
 	return "registry: DEK wrap failed"
 }
 
-func (e ErrKeyWrapFailed) Unwrap() error {
+func (e KeyWrapFailedError) Unwrap() error {
 	return e.Cause
 }
 
-// ErrKeyUnwrapFailed is returned when DEK unwrapping fails.
-type ErrKeyUnwrapFailed struct {
+// KeyUnwrapFailedError is returned when DEK unwrapping fails.
+type KeyUnwrapFailedError struct {
 	KeyID string
 	Cause error
 }
 
-func (e ErrKeyUnwrapFailed) Error() string {
+func (e KeyUnwrapFailedError) Error() string {
 	if e.KeyID != "" && e.Cause != nil {
 		return fmt.Sprintf("registry: failed to unwrap DEK with key %s: %v", e.KeyID, e.Cause)
 	}
@@ -275,163 +275,163 @@ func (e ErrKeyUnwrapFailed) Error() string {
 	return "registry: DEK unwrap failed"
 }
 
-func (e ErrKeyUnwrapFailed) Unwrap() error {
+func (e KeyUnwrapFailedError) Unwrap() error {
 	return e.Cause
 }
 
-// ErrInvalidConfig is returned when registry configuration is invalid.
-type ErrInvalidConfig struct {
+// InvalidConfigError is returned when registry configuration is invalid.
+type InvalidConfigError struct {
 	Field  string
 	Reason string
 }
 
-func (e ErrInvalidConfig) Error() string {
+func (e InvalidConfigError) Error() string {
 	if e.Field != "" {
 		return fmt.Sprintf("registry: invalid configuration for %s: %s", e.Field, e.Reason)
 	}
 	return fmt.Sprintf("registry: invalid configuration: %s", e.Reason)
 }
 
-// ErrPCRMismatch is returned when PCR values do not match expected values.
-type ErrPCRMismatch struct {
+// PCRMismatchError is returned when PCR values do not match expected values.
+type PCRMismatchError struct {
 	PCRIndex int
 	Expected []byte
 	Actual   []byte
 }
 
-func (e ErrPCRMismatch) Error() string {
+func (e PCRMismatchError) Error() string {
 	return fmt.Sprintf("registry: PCR %d mismatch: expected %x, got %x", e.PCRIndex, e.Expected, e.Actual)
 }
 
-// ErrAIKNotAllowed is returned when an AIK is not in the allowed list.
-type ErrAIKNotAllowed struct {
+// AIKNotAllowedError is returned when an AIK is not in the allowed list.
+type AIKNotAllowedError struct {
 	AIK string
 }
 
-func (e ErrAIKNotAllowed) Error() string {
+func (e AIKNotAllowedError) Error() string {
 	return fmt.Sprintf("registry: AIK not in allowed list: %s", e.AIK)
 }
 
-// ErrQuicBaaSConnection is returned when connection to QuicBaaS fails.
-type ErrQuicBaaSConnection struct {
+// QuicBaaSConnectionError is returned when connection to QuicBaaS fails.
+type QuicBaaSConnectionError struct {
 	Addr  string
 	Cause error
 }
 
-func (e ErrQuicBaaSConnection) Error() string {
+func (e QuicBaaSConnectionError) Error() string {
 	if e.Cause != nil {
 		return fmt.Sprintf("registry: failed to connect to QuicBaaS at %s: %v", e.Addr, e.Cause)
 	}
 	return fmt.Sprintf("registry: failed to connect to QuicBaaS at %s", e.Addr)
 }
 
-func (e ErrQuicBaaSConnection) Unwrap() error {
+func (e QuicBaaSConnectionError) Unwrap() error {
 	return e.Cause
 }
 
-// ErrSessionExpired is returned when a session has expired.
-type ErrSessionExpired struct {
+// SessionExpiredError is returned when a session has expired.
+type SessionExpiredError struct {
 	SessionID string
 }
 
-func (e ErrSessionExpired) Error() string {
+func (e SessionExpiredError) Error() string {
 	if e.SessionID != "" {
 		return fmt.Sprintf("registry: session %s has expired", e.SessionID)
 	}
 	return "registry: session has expired"
 }
 
-// ErrSessionNotFound is returned when a session cannot be found.
-type ErrSessionNotFound struct {
+// SessionNotFoundError is returned when a session cannot be found.
+type SessionNotFoundError struct {
 	SessionID string
 }
 
-func (e ErrSessionNotFound) Error() string {
+func (e SessionNotFoundError) Error() string {
 	if e.SessionID != "" {
 		return fmt.Sprintf("registry: session %s not found", e.SessionID)
 	}
 	return "registry: session not found"
 }
 
-// ErrInvalidSession is returned when session data is invalid.
-type ErrInvalidSession struct {
+// InvalidSessionError is returned when session data is invalid.
+type InvalidSessionError struct {
 	Reason string
 }
 
-func (e ErrInvalidSession) Error() string {
+func (e InvalidSessionError) Error() string {
 	if e.Reason != "" {
 		return fmt.Sprintf("registry: invalid session: %s", e.Reason)
 	}
 	return "registry: invalid session"
 }
 
-// ErrOperationTimeout is returned when an operation times out.
-type ErrOperationTimeout struct {
+// OperationTimeoutError is returned when an operation times out.
+type OperationTimeoutError struct {
 	Operation string
 }
 
-func (e ErrOperationTimeout) Error() string {
+func (e OperationTimeoutError) Error() string {
 	return fmt.Sprintf("registry: operation timed out: %s", e.Operation)
 }
 
-// ErrDigestMismatch is returned when a content digest does not match expected value.
-type ErrDigestMismatch struct {
+// DigestMismatchError is returned when a content digest does not match expected value.
+type DigestMismatchError struct {
 	Expected string
 	Actual   string
 }
 
-func (e ErrDigestMismatch) Error() string {
+func (e DigestMismatchError) Error() string {
 	return fmt.Sprintf("registry: digest mismatch: expected %s, got %s", e.Expected, e.Actual)
 }
 
-// ErrNilClient is returned when a required client is nil.
-type ErrNilClient struct {
+// NilClientError is returned when a required client is nil.
+type NilClientError struct {
 	Client string
 }
 
-func (e ErrNilClient) Error() string {
+func (e NilClientError) Error() string {
 	if e.Client != "" {
 		return fmt.Sprintf("registry: %s client is nil", e.Client)
 	}
 	return "registry: client is nil"
 }
 
-// ErrObjectStoreTTL is returned when an object-store write asks for an
+// ObjectStoreTTLError is returned when an object-store write asks for an
 // expiry: objects live until they are deleted.
-type ErrObjectStoreTTL struct {
+type ObjectStoreTTLError struct {
 	TTL time.Duration
 }
 
-func (e ErrObjectStoreTTL) Error() string {
+func (e ObjectStoreTTLError) Error() string {
 	return fmt.Sprintf("registry: object storage does not expire objects (ttl %s)", e.TTL)
 }
 
-// ErrNilContext is returned when a nil context is provided.
-type ErrNilContext struct {
+// NilContextError is returned when a nil context is provided.
+type NilContextError struct {
 	Operation string
 }
 
-func (e ErrNilContext) Error() string {
+func (e NilContextError) Error() string {
 	if e.Operation != "" {
 		return fmt.Sprintf("registry: nil context provided to %s", e.Operation)
 	}
 	return "registry: nil context provided"
 }
 
-// ErrImageEmpty is returned when an image has no layers.
-type ErrImageEmpty struct{}
+// ImageEmptyError is returned when an image has no layers.
+type ImageEmptyError struct{}
 
-func (e ErrImageEmpty) Error() string {
+func (e ImageEmptyError) Error() string {
 	return "registry: image has no layers"
 }
 
-// ErrPolicyEvaluationFailed is returned when OPA policy evaluation fails.
-type ErrPolicyEvaluationFailed struct {
+// PolicyEvaluationFailedError is returned when OPA policy evaluation fails.
+type PolicyEvaluationFailedError struct {
 	Policy string
 	Cause  error
 }
 
-func (e ErrPolicyEvaluationFailed) Error() string {
+func (e PolicyEvaluationFailedError) Error() string {
 	if e.Policy != "" && e.Cause != nil {
 		return fmt.Sprintf("registry: policy %s evaluation failed: %v", e.Policy, e.Cause)
 	}
@@ -441,17 +441,17 @@ func (e ErrPolicyEvaluationFailed) Error() string {
 	return "registry: policy evaluation failed"
 }
 
-func (e ErrPolicyEvaluationFailed) Unwrap() error {
+func (e PolicyEvaluationFailedError) Unwrap() error {
 	return e.Cause
 }
 
-// ErrInvalidDigest is returned when a digest is invalid.
-type ErrInvalidDigest struct {
+// InvalidDigestError is returned when a digest is invalid.
+type InvalidDigestError struct {
 	Digest string
 	Reason string
 }
 
-func (e ErrInvalidDigest) Error() string {
+func (e InvalidDigestError) Error() string {
 	if e.Digest != "" && e.Reason != "" {
 		return fmt.Sprintf("registry: invalid digest %s: %s", e.Digest, e.Reason)
 	}
@@ -461,112 +461,112 @@ func (e ErrInvalidDigest) Error() string {
 	return "registry: invalid digest"
 }
 
-// ErrImageAlreadyExists is returned by Push when the reference is
+// ImageAlreadyExistsError is returned by Push when the reference is
 // already populated and the caller did not request overwrite.
-type ErrImageAlreadyExists struct {
+type ImageAlreadyExistsError struct {
 	Reference string
 }
 
-func (e ErrImageAlreadyExists) Error() string {
+func (e ImageAlreadyExistsError) Error() string {
 	return fmt.Sprintf("registry: image already exists: %s", e.Reference)
 }
 
-// ErrStorageNotConfigured is returned by Registry methods when no
+// StorageNotConfiguredError is returned by Registry methods when no
 // QuicBaaSStorage backend was wired at construction time. The
 // daemon's Phase 5 wiring uses registry.WithStorage(...) — if you
 // see this in production it means the boot flow forgot to call it.
-type ErrStorageNotConfigured struct {
+type StorageNotConfiguredError struct {
 	Op string
 }
 
-func (e ErrStorageNotConfigured) Error() string {
+func (e StorageNotConfiguredError) Error() string {
 	return fmt.Sprintf("registry: storage not configured for %s", e.Op)
 }
 
-// ErrEncryptionNotConfigured is returned when a caller requests
+// EncryptionNotConfiguredError is returned when a caller requests
 // per-image encryption but the encryption pipeline has not been
 // wired into the Registry. Encryption + signing land in a follow-up
 // after the unencrypted-pipeline ships.
-type ErrEncryptionNotConfigured struct {
+type EncryptionNotConfiguredError struct {
 	Reference string
 }
 
-func (e ErrEncryptionNotConfigured) Error() string {
+func (e EncryptionNotConfiguredError) Error() string {
 	return fmt.Sprintf("registry: encryption not configured (ref=%s)", e.Reference)
 }
 
-// ErrSigningNotConfigured is returned when a push asks for the image to be
+// SigningNotConfiguredError is returned when a push asks for the image to be
 // signed and the registry was built without a SigningKMSClient (WithSigner):
 // it refuses rather than storing an unsigned image the caller believes is
 // signed.
-type ErrSigningNotConfigured struct {
+type SigningNotConfiguredError struct {
 	Reference string
 }
 
-func (e ErrSigningNotConfigured) Error() string {
+func (e SigningNotConfiguredError) Error() string {
 	return fmt.Sprintf("registry: image signing not configured (ref=%s)", e.Reference)
 }
 
-// ErrManifestSigningFailed is returned when the signer cannot sign a
+// ManifestSigningFailedError is returned when the signer cannot sign a
 // manifest with KeyID. Push stores nothing when it is returned.
-type ErrManifestSigningFailed struct {
+type ManifestSigningFailedError struct {
 	KeyID string
 	Err   error
 }
 
-func (e ErrManifestSigningFailed) Error() string {
+func (e ManifestSigningFailedError) Error() string {
 	return fmt.Sprintf("registry: sign manifest with key %s: %v", e.KeyID, e.Err)
 }
 
-func (e ErrManifestSigningFailed) Unwrap() error {
+func (e ManifestSigningFailedError) Unwrap() error {
 	return e.Err
 }
 
-// ErrSigningClientRequired is returned by NewSDKSigner when the SDK KMS or
+// SigningClientRequiredError is returned by NewSDKSigner when the SDK KMS or
 // crypto client is nil.
-type ErrSigningClientRequired struct{}
+type SigningClientRequiredError struct{}
 
-func (ErrSigningClientRequired) Error() string {
+func (SigningClientRequiredError) Error() string {
 	return "registry: the manifest signer needs the SDK KMS and crypto clients"
 }
 
-// ErrInvalidSigningRequest is returned when a sign request has no key ID
+// InvalidSigningRequestError is returned when a sign request has no key ID
 // or a digest that is not SHA-256 sized.
-type ErrInvalidSigningRequest struct {
+type InvalidSigningRequestError struct {
 	Reason string
 }
 
-func (e ErrInvalidSigningRequest) Error() string {
+func (e InvalidSigningRequestError) Error() string {
 	return "registry: invalid signing request: " + e.Reason
 }
 
-// ErrSigningKeyUnavailable is returned when the SDK KMS has no key with the
+// SigningKeyUnavailableError is returned when the SDK KMS has no key with the
 // ID a push names. The signer never creates the key.
-type ErrSigningKeyUnavailable struct {
+type SigningKeyUnavailableError struct {
 	KeyID string
 	Err   error
 }
 
-func (e ErrSigningKeyUnavailable) Error() string {
+func (e SigningKeyUnavailableError) Error() string {
 	if e.Err == nil {
 		return fmt.Sprintf("registry: signing key %s not found in the KMS", e.KeyID)
 	}
 	return fmt.Sprintf("registry: signing key %s not available in the KMS: %v", e.KeyID, e.Err)
 }
 
-func (e ErrSigningKeyUnavailable) Unwrap() error {
+func (e SigningKeyUnavailableError) Unwrap() error {
 	return e.Err
 }
 
-// ErrSigningKeyUnsupported is returned when the KMS key a push names cannot
+// SigningKeyUnsupportedError is returned when the KMS key a push names cannot
 // sign manifests: its algorithm is not ECDSA P-256 or P-384. The KMS itself
 // enforces the key's usage and policies when it signs.
-type ErrSigningKeyUnsupported struct {
+type SigningKeyUnsupportedError struct {
 	KeyID  string
 	Reason string
 }
 
-func (e ErrSigningKeyUnsupported) Error() string {
+func (e SigningKeyUnsupportedError) Error() string {
 	return fmt.Sprintf("registry: signing key %s cannot sign manifests: %s", e.KeyID, e.Reason)
 }
 

@@ -38,7 +38,7 @@ func (r *Registry) PutBlob(ctx context.Context, digest string, content []byte) e
 		return err
 	}
 	if r.storage == nil {
-		return ErrStorageNotConfigured{Op: "PutBlob"}
+		return StorageNotConfiguredError{Op: "PutBlob"}
 	}
 	return r.storage.StoreBlob(ctx, digest, content)
 }
@@ -49,7 +49,7 @@ func (r *Registry) GetBlob(ctx context.Context, digest string) ([]byte, error) {
 		return nil, err
 	}
 	if r.storage == nil {
-		return nil, ErrStorageNotConfigured{Op: "GetBlob"}
+		return nil, StorageNotConfiguredError{Op: "GetBlob"}
 	}
 	return r.storage.GetBlob(ctx, digest)
 }
@@ -60,7 +60,7 @@ func (r *Registry) BlobExists(ctx context.Context, digest string) (bool, error) 
 		return false, err
 	}
 	if r.storage == nil {
-		return false, ErrStorageNotConfigured{Op: "BlobExists"}
+		return false, StorageNotConfiguredError{Op: "BlobExists"}
 	}
 	return r.storage.BlobExists(ctx, digest)
 }
@@ -74,7 +74,7 @@ func (r *Registry) PutManifest(ctx context.Context, name, reference, mediaType s
 		return "", err
 	}
 	if r.storage == nil {
-		return "", ErrStorageNotConfigured{Op: "PutManifest"}
+		return "", StorageNotConfiguredError{Op: "PutManifest"}
 	}
 	digest := sha256Digest(content)
 	ref := refJoin(name, reference)
@@ -105,7 +105,7 @@ func (r *Registry) GetManifest(ctx context.Context, name, reference string) (str
 		return "", nil, err
 	}
 	if r.storage == nil {
-		return "", nil, ErrStorageNotConfigured{Op: "GetManifest"}
+		return "", nil, StorageNotConfiguredError{Op: "GetManifest"}
 	}
 	ref := refJoin(name, reference)
 	manifest, err := r.storage.GetManifest(ctx, ref)
@@ -131,7 +131,7 @@ func (r *Registry) DeleteManifest(ctx context.Context, name, reference string) e
 		return err
 	}
 	if r.storage == nil {
-		return ErrStorageNotConfigured{Op: "DeleteManifest"}
+		return StorageNotConfiguredError{Op: "DeleteManifest"}
 	}
 	return r.storage.DeleteManifest(ctx, refJoin(name, reference))
 }
@@ -143,7 +143,7 @@ func (r *Registry) ListRepositories(ctx context.Context, limit int) ([]string, e
 		return nil, err
 	}
 	if r.storage == nil {
-		return nil, ErrStorageNotConfigured{Op: "ListRepositories"}
+		return nil, StorageNotConfiguredError{Op: "ListRepositories"}
 	}
 	seen := map[string]struct{}{}
 	cursor := ""
@@ -195,7 +195,7 @@ func (r *Registry) ListTags(ctx context.Context, name string) ([]string, error) 
 		return nil, err
 	}
 	if r.storage == nil {
-		return nil, ErrStorageNotConfigured{Op: "ListTags"}
+		return nil, StorageNotConfiguredError{Op: "ListTags"}
 	}
 	tags := []string{}
 	cursor := ""
@@ -233,7 +233,7 @@ func (r *Registry) ListReferrers(ctx context.Context, name, digest, artifactType
 		return nil, err
 	}
 	if r.storage == nil {
-		return nil, ErrStorageNotConfigured{Op: "ListReferrers"}
+		return nil, StorageNotConfiguredError{Op: "ListReferrers"}
 	}
 	out := []Descriptor{}
 	cursor := ""

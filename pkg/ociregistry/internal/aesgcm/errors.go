@@ -15,14 +15,14 @@ package aesgcm
 
 import "fmt"
 
-// ErrCiphertextTooShort is returned by Open for a blob shorter than a nonce
+// CiphertextTooShortError is returned by Open for a blob shorter than a nonce
 // plus an authentication tag, which therefore cannot be anything Seal produced.
-type ErrCiphertextTooShort struct {
+type CiphertextTooShortError struct {
 	Length int
 }
 
 // Error implements the error interface.
-func (e ErrCiphertextTooShort) Error() string {
+func (e CiphertextTooShortError) Error() string {
 	return fmt.Sprintf("aesgcm: ciphertext of %d bytes is shorter than nonce and tag (%d bytes)",
 		e.Length, NonceSize+TagSize)
 }

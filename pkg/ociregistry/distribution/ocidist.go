@@ -155,25 +155,25 @@ func (l OCIDistLimits) withDefaults() OCIDistLimits {
 	return l
 }
 
-// ErrOCIDistBackendRequired is returned when the distribution surface is
+// OCIDistBackendRequiredError is returned when the distribution surface is
 // asked to mount with no backend. A nil backend used to be a silent skip;
 // a caller that asks for the surface and does not get it must be told.
-type ErrOCIDistBackendRequired struct{}
+type OCIDistBackendRequiredError struct{}
 
 // Error implements the error interface.
-func (e *ErrOCIDistBackendRequired) Error() string {
+func (e *OCIDistBackendRequiredError) Error() string {
 	return "registry: the OCI distribution surface requires a backend"
 }
 
-// ErrOCIDistGateRequired is returned when a read or write gate is missing.
+// OCIDistGateRequiredError is returned when a read or write gate is missing.
 // The surface never mounts ungated.
-type ErrOCIDistGateRequired struct {
+type OCIDistGateRequiredError struct {
 	// Surface names the missing gate: "read" or "write".
 	Surface string
 }
 
 // Error implements the error interface.
-func (e *ErrOCIDistGateRequired) Error() string {
+func (e *OCIDistGateRequiredError) Error() string {
 	return "registry: the OCI distribution surface requires a " + e.Surface + " gate"
 }
 
@@ -244,13 +244,13 @@ func NewOCIDistHandlers(logger *slog.Logger, backend OCIDistBackend, limits OCID
 // than mounting less than it was asked for.
 func RegisterOCIDistRoutes(parent *mux.Router, logger *slog.Logger, backend OCIDistBackend, gates OCIDistGates, limits OCIDistLimits) error {
 	if backend == nil {
-		return &ErrOCIDistBackendRequired{}
+		return &OCIDistBackendRequiredError{}
 	}
 	if gates.Read == nil {
-		return &ErrOCIDistGateRequired{Surface: "read"}
+		return &OCIDistGateRequiredError{Surface: "read"}
 	}
 	if gates.Write == nil {
-		return &ErrOCIDistGateRequired{Surface: "write"}
+		return &OCIDistGateRequiredError{Surface: "write"}
 	}
 	NewOCIDistHandlers(logger, backend, limits).registerRoutes(parent, gates)
 	return nil
@@ -654,17 +654,17 @@ func (h *OCIDistHandlers) appendChunk(uuid string, sess *uploadSession, chunk []
 	sess.mu.Lock()
 	if sess.released {
 		sess.mu.Unlock()
-		return 0, &ErrUploadUnknown{}
+		return 0, &UploadUnknownError{}
 	}
 	if int64(len(sess.buffer))+n > h.limits.MaxBlobBytes {
 		sess.mu.Unlock()
 		h.releaseSession(uuid, sess)
-		return 0, &ErrUploadTooLarge{Limit: h.limits.MaxBlobBytes}
+		return 0, &UploadTooLargeError{Limit: h.limits.MaxBlobBytes}
 	}
 	if h.inFlight.Add(n) > h.limits.MaxInFlightBytes {
 		h.inFlight.Add(-n)
 		sess.mu.Unlock()
-		return 0, &ErrUploadsSaturated{Limit: h.limits.MaxInFlightBytes}
+		return 0, &UploadsSaturatedError{Limit: h.limits.MaxInFlightBytes}
 	}
 	sess.buffer = append(sess.buffer, chunk...)
 	sess.lastActive = h.now()
@@ -713,43 +713,43 @@ func (h *OCIDistHandlers) evictIdle() int {
 	return evicted
 }
 
-// ErrUploadTooLarge is returned when a body or a session exceeds its cap.
-type ErrUploadTooLarge struct {
+// UploadTooLargeError is returned when a body or a session exceeds its cap.
+type UploadTooLargeError struct {
 	Limit int64
 }
 
 // Error implements the error interface.
-func (e *ErrUploadTooLarge) Error() string {
+func (e *UploadTooLargeError) Error() string {
 	return fmt.Sprintf("upload exceeds the %d byte limit", e.Limit)
 }
 
-// ErrUploadUnknown is returned when a chunk arrives for a session that was
+// UploadUnknownError is returned when a chunk arrives for a session that was
 // released between lookup and append.
-type ErrUploadUnknown struct{}
+type UploadUnknownError struct{}
 
 // Error implements the error interface.
-func (e *ErrUploadUnknown) Error() string {
+func (e *UploadUnknownError) Error() string {
 	return "no such upload"
 }
 
-// ErrUploadsSaturated is returned when the in-flight total is at its cap.
-type ErrUploadsSaturated struct {
+// UploadsSaturatedError is returned when the in-flight total is at its cap.
+type UploadsSaturatedError struct {
 	Limit int64
 }
 
 // Error implements the error interface.
-func (e *ErrUploadsSaturated) Error() string {
+func (e *UploadsSaturatedError) Error() string {
 	return fmt.Sprintf("uploads in flight exceed the %d byte limit; retry later", e.Limit)
 }
 
 // readBounded reads at most limit bytes of the request body, reporting
-// an ErrUploadTooLarge when the body is longer.
+// an UploadTooLargeError when the body is longer.
 func readBounded(w http.ResponseWriter, r *http.Request, limit int64) ([]byte, error) {
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
 	if err != nil {
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
-			return nil, &ErrUploadTooLarge{Limit: limit}
+			return nil, &UploadTooLargeError{Limit: limit}
 		}
 		return nil, err
 	}
@@ -760,9 +760,9 @@ func readBounded(w http.ResponseWriter, r *http.Request, limit int64) ([]byte, e
 // error envelope: 404 for a released session, 413 for a cap, 429 for
 // saturation, 400 otherwise.
 func writeBodyError(w http.ResponseWriter, err error, code string) {
-	var tooLarge *ErrUploadTooLarge
-	var saturated *ErrUploadsSaturated
-	var unknown *ErrUploadUnknown
+	var tooLarge *UploadTooLargeError
+	var saturated *UploadsSaturatedError
+	var unknown *UploadUnknownError
 	switch {
 	case errors.As(err, &unknown):
 		writeOCIError(w, http.StatusNotFound, "BLOB_UPLOAD_UNKNOWN", err.Error())
