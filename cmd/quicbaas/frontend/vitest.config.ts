@@ -9,6 +9,11 @@ import { availableParallelism } from 'node:os';
 // matches the 4-vCPU runner the tests were tuned on.
 const MAX_WORKERS = Math.min(4, availableParallelism());
 
+// An older Node (as in the CI devcontainer) rejects the flag and the workers exit.
+const nodeWebstorageOff = process.allowedNodeEnvironmentFlags.has('--experimental-webstorage')
+  ? ['--no-experimental-webstorage']
+  : [];
+
 export default defineConfig({
   plugins: [svelte({ hot: !process.env['VITEST'] })],
   test: {
@@ -19,6 +24,13 @@ export default defineConfig({
     include: ['test/**/*.test.ts'],
     maxWorkers: MAX_WORKERS,
     minWorkers: 1,
+    // Node 26 defines its own localStorage/sessionStorage globals, which shadow
+    // jsdom's window.localStorage (it reads undefined). Turn Node's off in the
+    // workers so the tests see jsdom's storage (only on a Node that has the flag).
+    poolOptions: {
+      forks: { execArgv: nodeWebstorageOff },
+      threads: { execArgv: nodeWebstorageOff },
+    },
     alias: {
       $lib: '/src/lib',
       $stores: '/src/stores',
