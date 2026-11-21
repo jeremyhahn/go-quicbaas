@@ -621,7 +621,13 @@ func (b *KVBackend) Get(ctx context.Context, path string) (map[string][]byte, ma
 			return data, metadata, err
 		}
 		now, reloadErr := b.loadCurrent(ctx, path)
-		if reloadErr != nil || (now.Version == cur.Version && now.Generation == cur.Generation) {
+		if reloadErr != nil {
+			// The version is missing and the pointer cannot be read again,
+			// so whether a writer moved it is unknown: report the store
+			// failure, not an absence the caller would act on.
+			return nil, nil, &SecretsCauseError{Message: "reload current pointer after a missing version", Cause: reloadErr}
+		}
+		if now.Version == cur.Version && now.Generation == cur.Generation {
 			return data, metadata, err
 		}
 	}
