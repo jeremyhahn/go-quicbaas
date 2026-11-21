@@ -44,6 +44,9 @@ const (
 	DriftNoAdmissibleHost DriftFindingKind = "no_admissible_host"
 	// DriftHostCountShort: fewer hosts satisfy the spec than its host_count.
 	DriftHostCountShort DriftFindingKind = "host_count_short"
+	// DriftHostCountExceeded: work of the role runs on more distinct hosts
+	// than the spec's host_count.
+	DriftHostCountExceeded DriftFindingKind = "host_count_exceeded"
 	// DriftRoleUnclassified: the spec's role is not in the class table, so
 	// whether its work may move without a person's consent is unknown.
 	DriftRoleUnclassified DriftFindingKind = "role_unclassified"
@@ -170,7 +173,8 @@ type PlacementWorkSource interface {
 type SessionRoleFunc func(*SessionRecord) string
 
 // SessionWorkSource is the PlacementWorkSource over the session store: the
-// tenant's sessions that have not ended, of the asked role, each named by
+// tenant's sessions that are not closed and not failed, of the asked role,
+// each named by
 // its session id and the host it recorded landing on.
 type SessionWorkSource struct {
 	sessions AgentStore
@@ -189,7 +193,8 @@ func NewSessionWorkSource(sessions AgentStore, roleOf SessionRoleFunc) (*Session
 	return &SessionWorkSource{sessions: sessions, roleOf: roleOf}, nil
 }
 
-// PlacementWork lists the tenant's live sessions of role.
+// PlacementWork lists the tenant's sessions of role that are not closed and
+// not failed: a failed session's record is kept, but no process runs for it.
 func (s *SessionWorkSource) PlacementWork(ctx context.Context, tenantID, role string) ([]PlacementWork, error) {
 	records, err := s.sessions.ListSessions(ctx, tenantID)
 	if err != nil {
@@ -197,7 +202,7 @@ func (s *SessionWorkSource) PlacementWork(ctx context.Context, tenantID, role st
 	}
 	var work []PlacementWork
 	for _, record := range records {
-		if record == nil || record.Status == SessionStateClosed || s.roleOf(record) != role {
+		if record == nil || record.Status == SessionStateClosed || record.Status == SessionStateError || s.roleOf(record) != role {
 			continue
 		}
 		work = append(work, PlacementWork{
@@ -517,11 +522,24 @@ func roleConstraint(in *driftInput) []DriftFinding {
 }
 
 func hostCountConstraint(in *driftInput) []DriftFinding {
-	if in.spec.HostCount == 0 || len(in.admissible) == 0 || len(in.admissible) >= in.spec.HostCount {
-		// Zero admissible hosts is already no_admissible_host.
+	if in.spec.HostCount == 0 {
 		return nil
 	}
-	return []DriftFinding{{Kind: DriftHostCountShort, Field: "host_count", Remedy: DriftRemedy{Action: DriftRemedyOperatorDecision}}}
+	var findings []DriftFinding
+	// Zero admissible hosts is already no_admissible_host.
+	if len(in.admissible) > 0 && len(in.admissible) < in.spec.HostCount {
+		findings = append(findings, DriftFinding{Kind: DriftHostCountShort, Field: "host_count", Remedy: DriftRemedy{Action: DriftRemedyOperatorDecision}})
+	}
+	// in.work holds work on registered hosts only: work on an unregistered
+	// host is already host_unregistered.
+	hosts := make(map[string]struct{}, len(in.work))
+	for _, w := range in.work {
+		hosts[w.Host] = struct{}{}
+	}
+	if len(hosts) > in.spec.HostCount {
+		findings = append(findings, DriftFinding{Kind: DriftHostCountExceeded, Field: "host_count", Remedy: DriftRemedy{Action: DriftRemedyOperatorDecision}})
+	}
+	return findings
 }
 
 func hostsConstraint(in *driftInput) []DriftFinding {

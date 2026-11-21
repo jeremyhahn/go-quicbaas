@@ -24,7 +24,7 @@ A `PlacementSpec` places a workload class onto **hosts**:
 | `hosts` | The admissible hosts; empty means any host that passes the capability check |
 | `required_capabilities` | All must be present on a host. A hard match, never a score |
 | `actuate` | False: report drift only. True: the actuator may move work |
-| `generation` | Orders edits. A put that read generation N writes N+1 by compare-and-swap, so two racing edits cannot lose one silently |
+| `generation` | Orders edits. A put that read generation N writes N+1 by compare-and-swap, so two racing edits cannot lose one silently. A withdraw leaves a tombstone, so a recreated spec continues the name's generations and never matches an old client's edit or an old grant |
 
 The archive called the target a **node** (`PlacementNode`). This note says
 **host**, because "fleet node" already names a registry record and bare "nodes"
@@ -128,7 +128,8 @@ adapter (`SessionWorkSource`) takes the caller's `SessionRoleFunc`.
 Findings come from one closed set of kinds: `host_not_admitted`,
 `capability_missing`, `host_unregistered`, `spec_host_absent`,
 `no_admissible_host`, `host_count_short` (fewer admissible hosts than
-`host_count`) and `role_unclassified`. The archive's `node_unrecorded` is
+`host_count`), `host_count_exceeded` (the role's work runs on more hosts
+than `host_count`) and `role_unclassified`. The archive's `node_unrecorded` is
 gone: work with no recorded host is refused (below), not reported. Each
 finding carries a remedy (`relocate` with its admissible destinations,
 `no_candidate`, `operator_decision`) and the spec's disposition.

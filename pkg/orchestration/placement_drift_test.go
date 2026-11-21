@@ -173,6 +173,25 @@ func TestDriftReport_HostCountShort(t *testing.T) {
 	}
 }
 
+func TestDriftReport_HostCountExceeded(t *testing.T) {
+	t.Parallel()
+
+	spec := &PlacementSpec{Name: "reviews", Role: "review", HostCount: 1, RequiredCapabilities: []string{"docker"}}
+	got := onlyFinding(t, reportDrift(t, spec, driftFleet(), work("s1", "h1"), work("s2", "h2"), work("s3", "h3")))
+	if got.Kind != DriftHostCountExceeded || got.Field != "host_count" {
+		t.Fatalf("finding = %+v, want host_count_exceeded", got)
+	}
+}
+
+func TestDriftReport_HostCountMetIsClean(t *testing.T) {
+	t.Parallel()
+
+	spec := &PlacementSpec{Name: "reviews", Role: "review", HostCount: 1, RequiredCapabilities: []string{"docker"}}
+	if report := reportDrift(t, spec, driftFleet(), work("s1", "h1"), work("s2", "h1")); !report.Clean() {
+		t.Fatalf("findings = %+v, want none", report.Findings)
+	}
+}
+
 func TestDriftReport_RoleUnclassified(t *testing.T) {
 	t.Parallel()
 
@@ -367,6 +386,7 @@ func TestSessionWorkSource_ListsTheRolesLiveSessions(t *testing.T) {
 		{SessionID: "s2", TenantID: "tenant-a", Backend: "review-bot", HostAffinity: "h2", Status: SessionStateClosed},
 		{SessionID: "s3", TenantID: "tenant-a", Backend: "claude", HostAffinity: "h1", Status: SessionStateIdle},
 		{SessionID: "s4", TenantID: "tenant-b", Backend: "review-bot", HostAffinity: "h1", Status: SessionStateActive},
+		{SessionID: "s5", TenantID: "tenant-a", Backend: "review-bot", HostAffinity: "h2", Status: SessionStateError},
 	} {
 		if err := sessions.PutSession(ctx, record); err != nil {
 			t.Fatalf("PutSession: %v", err)

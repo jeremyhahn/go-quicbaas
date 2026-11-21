@@ -140,6 +140,48 @@ func TestPlacementStore_DeclareGetListWithdraw(t *testing.T) {
 	}
 }
 
+func TestPlacementStore_WithdrawThenRecreateNeverReusesAGeneration(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := newTestPlacementStore(t)
+
+	created, err := store.DeclarePlacement(ctx, "tenant-a", validPlacementSpec())
+	if err != nil || created.Generation != 1 {
+		t.Fatalf("create = %+v, %v; want generation 1", created, err)
+	}
+	if err := store.WithdrawPlacement(ctx, "tenant-a", "reviews"); err != nil {
+		t.Fatalf("withdraw: %v", err)
+	}
+
+	if _, err := store.GetPlacement(ctx, "tenant-a", "reviews"); !errors.Is(err, ErrPlacementNotFound) {
+		t.Fatalf("get after withdraw = %v, want ErrPlacementNotFound", err)
+	}
+	if _, err := store.DeclarePlacement(ctx, "tenant-a", created.clone()); !errors.Is(err, ErrPlacementNotFound) {
+		t.Fatalf("edit of a withdrawn spec = %v, want ErrPlacementNotFound", err)
+	}
+	if list, err := store.ListPlacements(ctx, "tenant-a"); err != nil || len(list) != 0 {
+		t.Fatalf("list after withdraw = %+v, %v; want empty", list, err)
+	}
+
+	recreated, err := store.DeclarePlacement(ctx, "tenant-a", validPlacementSpec())
+	if err != nil {
+		t.Fatalf("recreate: %v", err)
+	}
+	if recreated.Generation != 3 {
+		t.Fatalf("recreate stored generation %d, want 3", recreated.Generation)
+	}
+
+	old := created.clone()
+	old.HostCount = 9
+	if _, err := store.DeclarePlacement(ctx, "tenant-a", old); !errors.Is(err, ErrPlacementSpecStale) {
+		t.Fatalf("edit at the withdrawn spec's generation = %v, want ErrPlacementSpecStale", err)
+	}
+	got, err := store.GetPlacement(ctx, "tenant-a", "reviews")
+	if err != nil || !reflect.DeepEqual(got, recreated) {
+		t.Fatalf("get = %+v, %v; want the recreated spec %+v", got, err, recreated)
+	}
+}
+
 func TestPlacementStore_RefusesAnInvalidOrMisnamedSpec(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

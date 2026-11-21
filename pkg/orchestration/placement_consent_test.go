@@ -381,6 +381,45 @@ func TestPlacementConsent_NewGenerationVoidsTheGrant(t *testing.T) {
 	}
 }
 
+func TestPlacementConsent_RecreatedSpecDoesNotInheritAGrant(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := newTestPlacementStore(t)
+	ledger, _ := newTestConsentLedger(t)
+
+	created, err := store.DeclarePlacement(ctx, consentTenant, validPlacementSpec())
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	move := testConsentMove()
+	move.SpecName = created.Name
+	move.SpecGeneration = created.Generation
+	req, err := ledger.Raise(ctx, consentTenant, move)
+	if err != nil {
+		t.Fatalf("Raise: %v", err)
+	}
+	if _, err := ledger.Answer(ctx, consentTenant, req.ID, ConsentAnswer{State: ConsentGranted, By: "alice"}); err != nil {
+		t.Fatalf("Answer: %v", err)
+	}
+
+	if err := store.WithdrawPlacement(ctx, consentTenant, created.Name); err != nil {
+		t.Fatalf("withdraw: %v", err)
+	}
+	recreated, err := store.DeclarePlacement(ctx, consentTenant, validPlacementSpec())
+	if err != nil {
+		t.Fatalf("recreate: %v", err)
+	}
+
+	again := move
+	again.SpecGeneration = recreated.Generation
+	if again.RequestID(consentTenant) == req.ID {
+		t.Fatalf("the recreated spec (generation %d) kept the old grant's request id", recreated.Generation)
+	}
+	if ok, err := ledger.Granted(ctx, consentTenant, again); ok || err != nil {
+		t.Fatalf("Granted for the recreated spec = %v, %v; want false", ok, err)
+	}
+}
+
 func TestPlacementConsent_UnreadableLedgerNeverGrants(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
