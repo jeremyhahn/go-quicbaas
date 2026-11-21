@@ -318,7 +318,7 @@ func (a *SessionServiceAdapter) RevokeAllSessions(ctx context.Context, tenantID 
 
 // RevokeOtherSessions revokes all sessions except the specified one.
 func (a *SessionServiceAdapter) RevokeOtherSessions(ctx context.Context, tenantID, keepSessionID string) (int, error) {
-	// Get the session to keep to find the user
+	// The kept session's stored ID is canonical: the caller may name it by the token's raw sid.
 	keepSession, err := a.sessionStorage.GetSession(ctx, keepSessionID)
 	if err != nil {
 		return 0, err
@@ -331,7 +331,7 @@ func (a *SessionServiceAdapter) RevokeOtherSessions(ctx context.Context, tenantI
 
 	count := 0
 	for _, s := range sessions {
-		if s.ID != keepSessionID {
+		if s.ID != keepSession.ID {
 			if err := a.sessionStorage.DeleteSession(ctx, s.ID); err == nil {
 				count++
 			}
