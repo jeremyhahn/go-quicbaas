@@ -430,6 +430,14 @@ var unaryHandlers = map[string]handlerFunc{
 	"quicbaas.Orchestrator/GetCostSettings":   handleOrchestratorGetCostSettings,
 	"quicbaas.Orchestrator/SetCostSettings":   handleOrchestratorSetCostSettings,
 
+	"quicbaas.Orchestrator/DeclareFleetPlacementSpec":   handleOrchestratorDeclareFleetPlacementSpec,
+	"quicbaas.Orchestrator/GetFleetPlacementSpec":       handleOrchestratorGetFleetPlacementSpec,
+	"quicbaas.Orchestrator/ListFleetPlacementSpecs":     handleOrchestratorListFleetPlacementSpecs,
+	"quicbaas.Orchestrator/WithdrawFleetPlacementSpec":  handleOrchestratorWithdrawFleetPlacementSpec,
+	"quicbaas.Orchestrator/GetFleetPlacementDrift":      handleOrchestratorGetFleetPlacementDrift,
+	"quicbaas.Orchestrator/ListFleetPlacementConsents":  handleOrchestratorListFleetPlacementConsents,
+	"quicbaas.Orchestrator/AnswerFleetPlacementConsent": handleOrchestratorAnswerFleetPlacementConsent,
+
 	// Project operations
 	"quicbaas.Project/Create":              handleProjectCreate,
 	"quicbaas.Project/Get":                 handleProjectGet,

@@ -2496,6 +2496,9 @@ func (s *Server) startGRPCServer() error {
 	// Register Orchestrator service (if enabled)
 	if agentSvc := s.quicBaaSService.Agent(); agentSvc != nil {
 		orchestratorServer := grpcapi.NewOrchestratorServer(agentSvc, s.logger)
+		if provider, ok := s.quicBaaSService.(service.FleetPlacementProvider); ok {
+			orchestratorServer.WithFleetPlacement(provider)
+		}
 		pb.RegisterOrchestratorServiceServer(grpcServer, orchestratorServer)
 		s.logger.Info("Registered Orchestrator gRPC service")
 
