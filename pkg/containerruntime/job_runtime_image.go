@@ -225,6 +225,22 @@ func imageRepository(name string) string {
 	return name
 }
 
+// imageIDReference reports whether ref names a stored image by its ID,
+// "sha256:<64 hex>" or the bare 64-hex ID, and returns the bare ID. An
+// ID is looked up locally and never pulled: no registry serves it.
+func imageIDReference(ref string) (string, bool) {
+	id := strings.TrimPrefix(ref, "sha256:")
+	if len(id) != 64 {
+		return "", false
+	}
+	for _, c := range id {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return "", false
+		}
+	}
+	return id, true
+}
+
 // RunImage runs spec.Command in a fresh container of spec.Image to
 // completion and reports its exit status and output, as `run --rm` does. The
 // container is removed afterwards; when ctx ends first it is killed and

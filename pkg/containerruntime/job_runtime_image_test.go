@@ -312,6 +312,48 @@ func TestJobRuntime_SweepOwned(t *testing.T) {
 	})
 }
 
+func TestJobRuntime_RunImageByAMissingIDNeverPulls(t *testing.T) {
+	id := strings.Repeat("e", 64)
+	for _, ref := range []string{"sha256:" + id, id} {
+		t.Run(ref[:8], func(t *testing.T) {
+			jr, doubles := newTestJobRuntime(t)
+			_, err := jr.RunImage(context.Background(), &orchestration.ImageRunSpec{
+				Image:       ref,
+				Command:     []string{"true"},
+				NetworkNone: true,
+			})
+			var notFound *orchestration.ImageNotFoundError
+			require.ErrorAs(t, err, &notFound)
+			assert.Empty(t, doubles.images.pulls, "an image ID was pulled")
+			assert.Empty(t, doubles.engine.created, "a container was created for a missing image")
+		})
+	}
+}
+
+func TestImageIDReference(t *testing.T) {
+	hex64 := strings.Repeat("0123456789abcdef", 4)
+	for _, tc := range []struct {
+		ref  string
+		isID bool
+	}{
+		{"sha256:" + hex64, true},
+		{hex64, true},
+		{strings.ToUpper(hex64), false},
+		{hex64[:63], false},
+		{"alpine:latest", false},
+		{"sha256:abc", false},
+		{"repo@sha256:" + hex64, false},
+	} {
+		id, ok := imageIDReference(tc.ref)
+		assert.Equal(t, tc.isID, ok, tc.ref)
+		if tc.isID {
+			assert.Equal(t, hex64, id, tc.ref)
+		} else {
+			assert.Empty(t, id, tc.ref)
+		}
+	}
+}
+
 func TestJobRuntime_RunImage(t *testing.T) {
 	t.Run("ReportsTheExitAndOutputAndRemovesTheContainer", func(t *testing.T) {
 		jr, doubles := newTestJobRuntime(t)

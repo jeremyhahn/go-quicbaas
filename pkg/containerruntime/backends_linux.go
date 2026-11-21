@@ -20,7 +20,6 @@ import (
 	"errors"
 	"path/filepath"
 	"slices"
-	"strings"
 
 	"go.podman.io/image/v5/copy"
 	"go.podman.io/image/v5/docker"
@@ -264,24 +263,24 @@ func (s *storageImageStore) Tag(ctx context.Context, source, target string) erro
 	if err != nil {
 		return err
 	}
-	var image *storage.Image
-	if id, byID := strings.CutPrefix(source, "sha256:"); byID {
-		image, err = s.store.Image(id)
-		if errors.Is(err, storage.ErrImageUnknown) {
-			err = errors.Join(ErrImageNotFound, err)
-		}
-	} else {
-		image, err = s.resolve(source)
-	}
+	image, err := s.resolve(source)
 	if err != nil {
 		return err
 	}
 	return s.store.AddNames(image.ID, []string{named.String()})
 }
 
-// resolve finds the stored image ref names. A missing image is an error
-// matching ErrImageNotFound.
+// resolve finds the stored image ref names: a name, or an image ID
+// ("sha256:<id>" or the bare ID), which is looked up locally by ID. A
+// missing image is an error matching ErrImageNotFound.
 func (s *storageImageStore) resolve(ref string) (*storage.Image, error) {
+	if id, byID := imageIDReference(ref); byID {
+		image, err := s.store.Image(id)
+		if errors.Is(err, storage.ErrImageUnknown) || (err == nil && image.ID != id) {
+			return nil, errors.Join(ErrImageNotFound, storage.ErrImageUnknown)
+		}
+		return image, err
+	}
 	named, err := normalizeImageReference(ref)
 	if err != nil {
 		return nil, err

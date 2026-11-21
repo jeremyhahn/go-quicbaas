@@ -335,10 +335,19 @@ func (j *JobRuntime) Pull(ctx context.Context, image string) error {
 	return nil
 }
 
-// ensureImage pulls ref unless the runtime already stores it.
+// ensureImage pulls ref unless the runtime already stores it. An image ID
+// is never pulled, since no registry serves it: a missing ID is an
+// orchestration.ImageNotFoundError.
 func (j *JobRuntime) ensureImage(ctx context.Context, ref string) error {
-	if _, err := j.runtime.backends.images.Inspect(ctx, ref); err == nil {
+	_, err := j.runtime.backends.images.Inspect(ctx, ref)
+	if err == nil {
 		return nil
+	}
+	if _, byID := imageIDReference(ref); byID {
+		if errors.Is(err, ErrImageNotFound) {
+			return &orchestration.ImageNotFoundError{Image: ref}
+		}
+		return &orchestration.ImageInspectError{Image: ref, Cause: err}
 	}
 	return j.Pull(ctx, ref)
 }

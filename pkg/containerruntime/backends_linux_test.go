@@ -29,6 +29,8 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
 
 // newStorageBackends opens the production backends over an empty vfs store in
@@ -147,6 +149,91 @@ func TestStorageImageStore_PushRoundTrip(t *testing.T) {
 
 	_, err = b.images.Push(ctx, host+"/o/missing:1", nil)
 	require.ErrorIs(t, err, ErrImageNotFound)
+}
+
+func TestStorageImageStore_ResolvesAndRunsByImageID(t *testing.T) {
+	ctx := context.Background()
+	server := httptest.NewServer(registry.New())
+	t.Cleanup(server.Close)
+	host := strings.TrimPrefix(server.URL, "http://")
+
+	// No layers: unpacking one chowns its files, which needs root.
+	seed, err := random.Image(256, 0)
+	require.NoError(t, err)
+	seedRef, err := name.ParseReference(host + "/seed/app:1")
+	require.NoError(t, err)
+	require.NoError(t, remote.Write(seedRef, seed))
+
+	dir := t.TempDir()
+	policy := filepath.Join(dir, "policy.json")
+	require.NoError(t, os.WriteFile(policy, []byte(`{"default":[{"type":"insecureAcceptAnything"}]}`), 0o600))
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "tmp"), 0o755))
+	b, err := newDefaultBackends(&RuntimeConfig{
+		Root:                filepath.Join(dir, "root"),
+		RunRoot:             filepath.Join(dir, "run"),
+		TmpDir:              filepath.Join(dir, "tmp"),
+		GraphDriverName:     "vfs",
+		SignaturePolicyPath: policy,
+		InsecureRegistries:  []string{host},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, b.close()) })
+
+	rec, err := b.images.Pull(ctx, host+"/seed/app:1")
+	require.NoError(t, err)
+
+	for _, ref := range []string{"sha256:" + rec.ID, rec.ID} {
+		got, err := b.images.Inspect(ctx, ref)
+		require.NoError(t, err, ref)
+		assert.Equal(t, rec.ID, got.ID, ref)
+	}
+	missing := "sha256:" + strings.Repeat("e", 64)
+	_, err = b.images.Inspect(ctx, missing)
+	require.ErrorIs(t, err, ErrImageNotFound)
+	require.NoError(t, b.images.Remove(ctx, missing, true))
+
+	engine := newFakeEngine()
+	engine.initResult = &fakeResult{stdout: "ok\n"}
+	config := &RuntimeConfig{
+		Root:            filepath.Join(dir, "rt-root"),
+		RunRoot:         filepath.Join(dir, "rt-run"),
+		TmpDir:          filepath.Join(dir, "tmp"),
+		GraphDriverName: "vfs",
+		StaticDir:       filepath.Join(dir, "static"),
+		VolumePath:      filepath.Join(dir, "volumes"),
+		ImageStorePath:  filepath.Join(dir, "images"),
+	}
+	rt, err := NewRuntime(ctx, config, withBackends(&backends{
+		engine: engine,
+		images: b.images,
+		rootfs: &fakeRootfs{root: filepath.Join(dir, "rootfs")},
+	}))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, rt.Close()) })
+	jr := NewJobRuntime(rt)
+
+	info, err := jr.InspectImage(ctx, "sha256:"+rec.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "sha256:"+rec.ID, info.ID)
+
+	// Without the registry a pull attempt fails differently.
+	server.Close()
+	result, err := jr.RunImage(ctx, &orchestration.ImageRunSpec{
+		Image:       "sha256:" + rec.ID,
+		Command:     []string{"true"},
+		NetworkNone: true,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 0, result.ExitCode)
+	assert.Equal(t, "ok\n", result.Stdout)
+
+	_, err = jr.RunImage(ctx, &orchestration.ImageRunSpec{
+		Image:       missing,
+		Command:     []string{"true"},
+		NetworkNone: true,
+	})
+	var notFound *orchestration.ImageNotFoundError
+	require.ErrorAs(t, err, &notFound)
 }
 
 func TestStorageImageStore_PullHonoursTheSignaturePolicy(t *testing.T) {

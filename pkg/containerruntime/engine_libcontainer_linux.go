@@ -305,6 +305,9 @@ type libcontainerProcess struct {
 	// blocked and nothing could close the pipe; these Release closes.
 	outputs []outputPipe
 	copies  sync.WaitGroup
+
+	// guard serializes Wait's reap with KillTree's signalling by PID.
+	guard reapGuard
 }
 
 // outputPipe is a pipe the runtime owns between a process and an output
@@ -387,7 +390,7 @@ func (p *libcontainerProcess) Pid() int {
 
 // Wait blocks until the process exits and returns its exit code.
 func (p *libcontainerProcess) Wait() (int, error) {
-	state, err := p.process.Wait()
+	state, err := p.guard.reap(p.Pid(), p.process.Wait)
 	// The output is complete once every holder of the pipes has closed
 	// them, or Release has.
 	p.copies.Wait()
@@ -414,19 +417,25 @@ func (p *libcontainerProcess) Signal(sig os.Signal) error {
 }
 
 // KillTree kills the process and every descendant it has, so none of them
-// keeps the process's output pipes open after it dies.
+// keeps the process's output pipes open after it dies. A leader Wait has
+// already reaped is never signalled by PID, since the host may have reused
+// it; what the leader left behind dies with its container.
 func (p *libcontainerProcess) KillTree() error {
 	pid, err := p.process.Pid()
 	if err != nil {
-		return p.process.Signal(unix.SIGKILL)
+		pid = 0
 	}
-	return killProcessTree(pid)
+	return p.guard.killTree(pid, p.process.Signal)
 }
 
 // killProcessTree stops pid so it cannot fork again, kills its descendants
 // depth first, then kills it. A process that has already gone is not an error.
-func killProcessTree(pid int) error {
-	if err := unix.Kill(pid, unix.SIGSTOP); err != nil {
+func killProcessTree(pid int) error { return signalProcessTree(pid, unix.Kill) }
+
+// signalProcessTree stops pid, kills its descendants, then kills pid,
+// sending every signal through kill.
+func signalProcessTree(pid int, kill func(int, unix.Signal) error) error {
+	if err := kill(pid, unix.SIGSTOP); err != nil {
 		if errors.Is(err, unix.ESRCH) {
 			return nil
 		}
@@ -434,12 +443,72 @@ func killProcessTree(pid int) error {
 	}
 	var errs []error
 	for _, child := range processChildren(pid) {
-		errs = append(errs, killProcessTree(child))
+		errs = append(errs, signalProcessTree(child, kill))
 	}
-	if err := unix.Kill(pid, unix.SIGKILL); err != nil && !errors.Is(err, unix.ESRCH) {
+	if err := kill(pid, unix.SIGKILL); err != nil && !errors.Is(err, unix.ESRCH) {
 		errs = append(errs, err)
 	}
 	return errors.Join(errs...)
+}
+
+// reapGuard serializes reaping a child process with signalling it by
+// PID. Once a process is reaped its PID can be reused by an unrelated
+// host process. Until then the PID is pinned, even for a zombie, and a
+// stopped parent cannot reap its own children. So killTree walks the
+// tree by number only while it holds mu and the leader is unreaped.
+type reapGuard struct {
+	mu     sync.Mutex
+	reaped bool
+	// kill signals a PID; nil is unix.Kill. Tests record it.
+	kill func(pid int, sig unix.Signal) error
+}
+
+// reap waits for pid to exit without reaping it, then reaps it with
+// wait while holding mu. If pid is not a waitable child (pid <= 0, or
+// waitid fails), the process is marked reaped first, so killTree stops
+// signalling by number before wait runs.
+func (g *reapGuard) reap(pid int, wait func() (*os.ProcessState, error)) (*os.ProcessState, error) {
+	if pid > 0 && waitExited(pid) == nil {
+		g.mu.Lock()
+		defer g.mu.Unlock()
+		g.reaped = true
+		return wait()
+	}
+	g.mu.Lock()
+	g.reaped = true
+	g.mu.Unlock()
+	return wait()
+}
+
+// killTree kills pid and its descendants while pid is still unreaped. A
+// reaped leader is not signalled at all, since its PID may be reused;
+// what it left behind dies with its container. A process that never
+// started (pid <= 0) is signalled through its handle.
+func (g *reapGuard) killTree(pid int, signal func(os.Signal) error) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.reaped {
+		return nil
+	}
+	if pid <= 0 {
+		return signal(unix.SIGKILL)
+	}
+	kill := g.kill
+	if kill == nil {
+		kill = unix.Kill
+	}
+	return signalProcessTree(pid, kill)
+}
+
+// waitExited blocks until the child pid has exited, leaving it unreaped.
+func waitExited(pid int) error {
+	for {
+		var info unix.Siginfo
+		err := unix.Waitid(unix.P_PID, pid, &info, unix.WEXITED|unix.WNOWAIT, nil)
+		if !errors.Is(err, unix.EINTR) {
+			return err
+		}
+	}
 }
 
 // processChildren lists pid's children from /proc, across all its threads.
