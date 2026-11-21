@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -45,8 +46,17 @@ type JobStorage interface {
 	// before the engine allocates from it. The engine calls it at Start and
 	// refuses to start when it fails: a counter that restarts from a guess
 	// reissues the IDs of jobs that already exist, and creating a job under a
-	// reissued ID overwrites the job that holds it.
+	// reissued ID overwrites the job that holds it. It is the store's open
+	// step, so a store also completes its one-time migrations here.
 	InitializeJobIDCounter(ctx context.Context) error
+}
+
+// ReconcileErrorReporter is a JobStorage whose due scan reconciles an index in
+// passing and reports a failed pass here instead of failing the scan.
+// TakeReconcileError returns the error of the last failed pass and clears it,
+// so the engine logs and counts each failed pass once.
+type ReconcileErrorReporter interface {
+	TakeReconcileError() error
 }
 
 // FiringClaimer arbitrates which node executes a given firing.
@@ -1131,11 +1141,32 @@ func (s *SchedulerEngine) processDueJobs(ctx context.Context) {
 	storageCtx, cancel := context.WithTimeout(ctx, s.config.DefaultTimeout)
 	defer cancel()
 
+	// The scan counts only jobs this node can dispatch, so jobs pinned to
+	// another node, or cluster-wide jobs on a follower, cannot fill the
+	// page and starve the ones this node can run.
+	filter, leaderErr := s.sweepDueFilterReporting(storageCtx)
+	storageCtx = WithDueJobFilter(storageCtx, filter)
+
 	jobs, err := s.storage.GetJobsDueForExecution(storageCtx, now, s.config.MaxConcurrentJobs)
+	// The filter refused the cluster-wide jobs a failed lookup left
+	// undecided, so they never reach shouldExecute: report it here, once
+	// per sweep, even when the scan itself also failed.
+	if lerr := leaderErr(); lerr != nil {
+		s.logWarn(sweepLogPrefix+" "+leaderCheckFailedReason+", cluster-wide jobs not dispatched: component=scheduler error=%q", lerr.Error())
+	}
 	if err != nil {
 		s.logError(sweepLogPrefix+" failed: component=scheduler error=%q", err.Error())
 		s.storageErrors.Add(1)
 		return
+	}
+
+	// A failed index reconcile does not fail the scan; it is logged and
+	// counted here, and the sweep goes on dispatching what it found.
+	if reporter, ok := s.storage.(ReconcileErrorReporter); ok {
+		if rerr := reporter.TakeReconcileError(); rerr != nil {
+			s.logError(sweepLogPrefix+" tenant job index reconcile failed: component=scheduler error=%q", rerr.Error())
+			s.storageErrors.Add(1)
+		}
 	}
 
 	// A sweep that finds nothing carries no information: the tick runs
@@ -1259,30 +1290,97 @@ func (s *SchedulerEngine) claimFiring(ctx context.Context, job *Job) bool {
 //     is disabled and affine jobs always fire — preserving
 //     pre-clustering behavior for single-node deployments.
 func (s *SchedulerEngine) shouldExecute(job *Job) bool {
+	ok, reason := s.canDispatch(job)
+	if ok {
+		return true
+	}
+	if strings.HasPrefix(reason, leaderCheckFailedReason) {
+		s.logWarn("Skipping job %d (%s): %s", job.ID, job.Name, reason)
+	} else {
+		s.logDebug("Skipping job %d (%s): %s", job.ID, job.Name, reason)
+	}
+	return false
+}
+
+// leaderCheckFailedReason prefixes the canDispatch reason for a failed
+// leadership check, which shouldExecute logs as a warning. The due sweep
+// also logs it, once per sweep, for the jobs its filter refused.
+const leaderCheckFailedReason = "leader check failed"
+
+// canDispatch reports whether this node can dispatch job and, when it
+// cannot, why. It does not log: the due scan calls it for every candidate.
+func (s *SchedulerEngine) canDispatch(job *Job) (bool, string) {
+	return s.canDispatchWith(job, s.isLeader)
+}
+
+// isLeader asks the leader checker whether this node leads. It is called only
+// when s.leader is non-nil.
+func (s *SchedulerEngine) isLeader() (bool, error) {
+	return s.leader.IsLeader()
+}
+
+// canDispatchWith is canDispatch with the leadership lookup supplied, so the
+// due scan can share one lookup across every candidate of a sweep.
+func (s *SchedulerEngine) canDispatchWith(job *Job, isLeader func() (bool, error)) (bool, string) {
 	if job.NodeAffinity != "" && s.nodeID != "" {
 		if job.NodeAffinity != s.nodeID {
-			s.logDebug("Skipping job %d (%s): NodeAffinity=%q, this node=%q",
-				job.ID, job.Name, job.NodeAffinity, s.nodeID)
-			return false
+			return false, fmt.Sprintf("NodeAffinity=%q, this node=%q", job.NodeAffinity, s.nodeID)
 		}
 		// Affinity matches: always execute regardless of leadership.
-		return true
+		return true, ""
 	}
 	// Cluster-wide job: gate on leadership.
 	if s.leader == nil {
-		return true
+		return true, ""
 	}
-	isLeader, err := s.leader.IsLeader()
+	leads, err := isLeader()
 	if err != nil {
-		s.logWarn("Skipping job %d (%s): leader check failed: %v",
-			job.ID, job.Name, err)
-		return false
+		return false, fmt.Sprintf("%s: %v", leaderCheckFailedReason, err)
 	}
-	if !isLeader {
-		s.logDebug("Skipping job %d (%s): not leader", job.ID, job.Name)
-		return false
+	if !leads {
+		return false, "not leader"
 	}
-	return true
+	return true, ""
+}
+
+// sweepDueFilter returns the due scan's filter for one sweep, as
+// sweepDueFilterReporting does, without the lookup error.
+func (s *SchedulerEngine) sweepDueFilter(ctx context.Context) DueJobFilter {
+	filter, _ := s.sweepDueFilterReporting(ctx)
+	return filter
+}
+
+// sweepDueFilterReporting returns the due scan's filter for one sweep and a
+// func that gives the sweep's failed leadership lookup. Leadership does not
+// depend on the job, so the sweep asks the leader checker at most once, on
+// its first cluster-wide candidate, and reuses the answer (a failed lookup
+// included) for every other candidate: the scan never waits on one lookup per
+// rejected job. Once the sweep's context is done the filter admits nothing.
+// The filter refuses every cluster-wide job when the lookup fails, so those
+// jobs never reach shouldExecute: the sweep reports the error, which the
+// second func returns (nil when the sweep never asked or the lookup
+// succeeded). Read it only after the scan that calls the filter has returned.
+func (s *SchedulerEngine) sweepDueFilterReporting(ctx context.Context) (DueJobFilter, func() error) {
+	var (
+		asked    bool
+		leads    bool
+		leadsErr error
+	)
+	once := func() (bool, error) {
+		if !asked {
+			asked = true
+			leads, leadsErr = s.isLeader()
+		}
+		return leads, leadsErr
+	}
+	filter := func(j *Job) bool {
+		if ctx.Err() != nil {
+			return false
+		}
+		ok, _ := s.canDispatchWith(j, once)
+		return ok
+	}
+	return filter, func() error { return leadsErr }
 }
 
 // triggerRequest is one queued manual trigger: the job, the scope it was
@@ -1422,6 +1520,7 @@ func (s *SchedulerEngine) executeJob(ctx context.Context, job *Job, claimedFirin
 	// Create execution record
 	exec := &JobExecution{
 		JobID:     job.ID,
+		TenantID:  JobTenantID(job),
 		Status:    JobStatusRunning,
 		StartedAt: time.Now(),
 	}
