@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build !integration && raft && local && quic && rest && mcp && vector && timeseries && rag
+//go:build !integration && raft && local && quic && rest && mcp && vector && qrdb_vector && timeseries && rag
 
 package server
 
