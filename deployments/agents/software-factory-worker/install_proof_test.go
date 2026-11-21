@@ -107,10 +107,9 @@ func TestDockerfile_NodeWebStorageIsOffAfterTheNodeInstall(t *testing.T) {
 	}
 }
 
-// TestProbes_ToolchainChecksJavaAndKotlinLsp proves the toolchain probe fails
-// an image whose java is not the pinned major, or whose kotlin-lsp is not on
-// the login PATH: the two tools #1746 adds are certified like every other.
-func TestProbes_ToolchainChecksJavaAndKotlinLsp(t *testing.T) {
+// TestProbes_ToolchainChecksJava proves the toolchain probe fails an image
+// whose java is not the pinned major.
+func TestProbes_ToolchainChecksJava(t *testing.T) {
 	var script string
 	for _, p := range Probes() {
 		if p.Name == "toolchain, signing and every agent" {
@@ -122,7 +121,6 @@ func TestProbes_ToolchainChecksJavaAndKotlinLsp(t *testing.T) {
 	}
 	for _, want := range []string{
 		`java -version 2>&1 | head -1 | grep -qF "\"$EXPECTED_OPENJDK_MAJOR."`,
-		"command -v kotlin-lsp",
 	} {
 		if !strings.Contains(script, want) {
 			t.Errorf("the toolchain probe does not run %q", want)

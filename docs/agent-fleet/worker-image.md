@@ -391,6 +391,9 @@ replaces the pin instead) (go-quicbaas#1161: a fixable urllib3 finding in
 serena's Python environment; serena-agent 1.7.0 also pins filelock and mcp
 below their fixed releases, so its floors raise those two as well, mcp held
 below 2, the major serena 1.7.0 was built against).
+The Go floors are applied in one `go get`, so a floor that requires another
+listed module above that module's floor fails the build instead of lowering it
+(x/net v0.62.0 requires x/text v0.43.0).
 npm's own bundled packages are raised with `NPM_BUNDLED_DEPENDENCY_FLOORS`.
 npm 12.2.3 bundles fixed copies of brace-expansion and undici, so the list is
 empty (it has no line in `toolchain.mk`) until a future npm bundles a copy
