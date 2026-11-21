@@ -404,8 +404,11 @@ func (s *Storage) ListJobs(ctx context.Context, query *scheduler.JobQuery) ([]*s
 }
 
 // GetJobsDueForExecution returns jobs that need to run. The scan covers the
-// system namespace and then every tenant's namespace, under one limit.
-func (s *Storage) GetJobsDueForExecution(ctx context.Context, before time.Time, limit int) ([]*scheduler.Job, error) {
+// system namespace and then every tenant's namespace, under one limit. A due
+// job that eligible rejects is skipped and does not use up the limit, so jobs
+// the caller can never run cannot crowd out others; a nil eligible admits
+// every job.
+func (s *Storage) GetJobsDueForExecution(ctx context.Context, before time.Time, limit int, eligible func(*scheduler.Job) bool) ([]*scheduler.Job, error) {
 	if limit <= 0 {
 		limit = 100
 	}
@@ -435,7 +438,7 @@ func (s *Storage) GetJobsDueForExecution(ctx context.Context, before time.Time, 
 			!job.NextRun.IsZero() &&
 			job.NextRun.Before(before)
 
-		if isDue {
+		if isDue && (eligible == nil || eligible(&job)) {
 			dueJobs = append(dueJobs, &job)
 			if len(dueJobs) >= limit {
 				return ErrLimitReached

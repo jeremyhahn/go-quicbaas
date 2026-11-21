@@ -51,7 +51,7 @@ func TestGetJobsDueForExecution_IncludesTenantJobs(t *testing.T) {
 		t.Fatalf("Put data: %v", err)
 	}
 
-	due, err := storage.GetJobsDueForExecution(ctx, now, 100)
+	due, err := storage.GetJobsDueForExecution(ctx, now, 100, nil)
 	if err != nil {
 		t.Fatalf("GetJobsDueForExecution: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestGetJobsDueForExecution_TenantJobsShareLimit(t *testing.T) {
 		}
 	}
 
-	due, err := storage.GetJobsDueForExecution(ctx, now, 4)
+	due, err := storage.GetJobsDueForExecution(ctx, now, 4, nil)
 	if err != nil {
 		t.Fatalf("GetJobsDueForExecution: %v", err)
 	}
@@ -145,5 +145,96 @@ func TestScheduler_RunsDueTenantJobAutomatically(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("tenant job was not run within 10s")
+	}
+}
+
+// TestClusteredScheduler_ForeignAffinityJobsDoNotStarveOtherTenants pins the
+// fix for a tenant that fills every due-job batch with jobs pinned to a node
+// that does not exist: this node can never run them, so they must not crowd
+// out another tenant's due job.
+func TestClusteredScheduler_ForeignAffinityJobsDoNotStarveOtherTenants(t *testing.T) {
+	kv := newMockKVStore()
+	store := newClusteredStoreOver(t, kv)
+
+	cfg := scheduler.DefaultConfig()
+	cfg.TickInterval = 10 * time.Millisecond
+	cfg.MaxConcurrentJobs = 2
+
+	engine, err := scheduler.NewWithClustering(cfg, store, "node-a", nil)
+	if err != nil {
+		t.Fatalf("NewWithClustering: %v", err)
+	}
+	ran := make(chan uint64, 16)
+	engine.RegisterHandler("noop", func(_ context.Context, job *scheduler.Job) (*scheduler.JobResult, error) {
+		ran <- job.ID
+		return &scheduler.JobResult{}, nil
+	})
+	startEngine(t, engine)
+
+	ctx := context.Background()
+	past := time.Now().Add(-time.Hour)
+	ghosts := map[uint64]bool{}
+	for i := 0; i < 2; i++ {
+		j := createTestJob("aaa-pinned", scheduler.OwnerTypeTenant, "aaa")
+		j.Handler = "noop"
+		j.ExecuteAt = past
+		j.NextRun = past
+		j.NodeAffinity = "node-ghost"
+		if err := store.CreateJob(ctx, j); err != nil {
+			t.Fatalf("CreateJob(aaa): %v", err)
+		}
+		ghosts[j.ID] = true
+	}
+	z := createTestJob("zzz-job", scheduler.OwnerTypeTenant, "zzz")
+	z.Handler = "noop"
+	z.ExecuteAt = past
+	z.NextRun = past
+	if err := store.CreateJob(ctx, z); err != nil {
+		t.Fatalf("CreateJob(zzz): %v", err)
+	}
+
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case id := <-ran:
+			if ghosts[id] {
+				t.Fatalf("job %d pinned to node-ghost ran on node-a", id)
+			}
+			if id == z.ID {
+				return
+			}
+		case <-deadline:
+			t.Fatal("zzz tenant job was not run within 5s")
+		}
+	}
+}
+
+// TestGetJobsDueForExecution_IneligibleJobsDoNotConsumeLimit checks that a
+// job the eligible predicate rejects is skipped without using up the limit.
+func TestGetJobsDueForExecution_IneligibleJobsDoNotConsumeLimit(t *testing.T) {
+	ctx := context.Background()
+	storage := NewStorage(newMockKVStore())
+	now := time.Now()
+
+	for i := 0; i < 2; i++ {
+		j := createTestJob("aaa-pinned", scheduler.OwnerTypeTenant, "aaa")
+		j.NextRun = now.Add(-time.Hour)
+		j.NodeAffinity = "node-ghost"
+		if err := storage.CreateJob(ctx, j); err != nil {
+			t.Fatalf("CreateJob(aaa): %v", err)
+		}
+	}
+	z := createTestJob("zzz-job", scheduler.OwnerTypeTenant, "zzz")
+	z.NextRun = now.Add(-time.Hour)
+	if err := storage.CreateJob(ctx, z); err != nil {
+		t.Fatalf("CreateJob(zzz): %v", err)
+	}
+
+	due, err := storage.GetJobsDueForExecution(ctx, now, 2, func(j *scheduler.Job) bool { return j.NodeAffinity == "" })
+	if err != nil {
+		t.Fatalf("GetJobsDueForExecution: %v", err)
+	}
+	if len(due) != 1 || due[0].ID != z.ID {
+		t.Fatalf("expected only the zzz job, got %d jobs", len(due))
 	}
 }
