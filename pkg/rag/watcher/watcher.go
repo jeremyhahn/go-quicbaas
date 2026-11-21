@@ -99,7 +99,7 @@ func New(config Config) (Watcher, error) {
 		events:        make(chan Event, config.BufferSize),
 		errors:        make(chan error, 10),
 		gitignore:     gitignore,
-		debouncer:     newDebouncer(config.DebounceDelay),
+		debouncer:     newDebouncer(),
 		paths:         make(map[string]bool),
 		stopCh:        make(chan struct{}),
 	}

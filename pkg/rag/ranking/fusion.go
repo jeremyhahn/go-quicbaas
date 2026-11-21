@@ -19,12 +19,25 @@ import "sort"
 
 // RRF implements Reciprocal Rank Fusion for combining multiple ranked lists.
 type RRF struct {
-	k float32 // Constant for reciprocal rank fusion (default: 60)
+	k             float32 // Constant for reciprocal rank fusion (default: 60)
+	vectorWeight  float32 // Multiplies each vector result's reciprocal rank
+	keywordWeight float32 // Multiplies each keyword result's reciprocal rank
 }
 
-// NewRRF creates a new RRF fusion instance.
+// NewRRF creates a new RRF instance that weighs both lists equally.
 func NewRRF(k float32) *RRF {
-	return &RRF{k: k}
+	return &RRF{k: k, vectorWeight: 1, keywordWeight: 1}
+}
+
+// NewWeightedRRF creates an RRF instance whose vector and keyword
+// reciprocal ranks are multiplied by vectorWeight and keywordWeight, so
+// ranking.Config's VectorWeight and KeywordWeight decide which list leads.
+// Two zero weights mean "unset" and weigh both lists equally.
+func NewWeightedRRF(k, vectorWeight, keywordWeight float32) *RRF {
+	if vectorWeight == 0 && keywordWeight == 0 {
+		return NewRRF(k)
+	}
+	return &RRF{k: k, vectorWeight: vectorWeight, keywordWeight: keywordWeight}
 }
 
 // Fuse combines vector and keyword search results using reciprocal rank fusion.
@@ -41,7 +54,7 @@ func (r *RRF) Fuse(vectorResults, keywordResults []Result) []ScoredResult {
 		}
 
 		// Calculate RRF score: 1 / (k + rank)
-		rrfScore := 1.0 / (r.k + float32(rank))
+		rrfScore := r.vectorWeight / (r.k + float32(rank))
 		scores[id] = rrfScore
 
 		// Store the result
@@ -57,7 +70,7 @@ func (r *RRF) Fuse(vectorResults, keywordResults []Result) []ScoredResult {
 		}
 
 		// Calculate RRF score
-		rrfScore := 1.0 / (r.k + float32(rank))
+		rrfScore := r.keywordWeight / (r.k + float32(rank))
 
 		// Add to existing score if already present
 		if existing, ok := scores[id]; ok {
@@ -82,7 +95,10 @@ func (r *RRF) Fuse(vectorResults, keywordResults []Result) []ScoredResult {
 
 	// Sort by score descending
 	sort.Slice(sorted, func(i, j int) bool {
-		return sorted[i].score > sorted[j].score
+		if sorted[i].score != sorted[j].score {
+			return sorted[i].score > sorted[j].score
+		}
+		return sorted[i].id < sorted[j].id // equal scores: a stable order
 	})
 
 	// Build final results

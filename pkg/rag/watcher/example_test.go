@@ -31,7 +31,6 @@ import (
 func ExampleNew() {
 	config := watcher.Config{
 		Paths:         []string{"./docs"},
-		DebounceDelay: 100 * time.Millisecond,
 		BatchInterval: 1 * time.Second,
 	}
 
@@ -50,12 +49,10 @@ func ExampleDefaultConfig() {
 	config := watcher.DefaultConfig()
 	config.Paths = []string{"./docs", "./src"}
 
-	fmt.Printf("Debounce Delay: %v\n", config.DebounceDelay)
 	fmt.Printf("Batch Interval: %v\n", config.BatchInterval)
 	fmt.Printf("Buffer Size: %d\n", config.BufferSize)
 
 	// Output:
-	// Debounce Delay: 100ms
 	// Batch Interval: 1s
 	// Buffer Size: 1000
 }
@@ -64,7 +61,6 @@ func ExampleDefaultConfig() {
 func ExampleConfig_Validate() {
 	config := watcher.Config{
 		Paths:         []string{"/tmp"},
-		DebounceDelay: 100 * time.Millisecond,
 		BatchInterval: 1 * time.Second,
 	}
 
@@ -86,7 +82,6 @@ func ExampleWatcher_AddPath() {
 
 	config := watcher.Config{
 		Paths:         []string{tmpDir1},
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 	}
 
@@ -162,7 +157,6 @@ func ExampleWatcher_integration() {
 	config := watcher.Config{
 		Paths:         []string{tmpDir},
 		Exclude:       []string{"*.tmp"},
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		IgnoreHidden:  true,
 	}

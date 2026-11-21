@@ -4610,11 +4610,19 @@ test-ollama-coverage: ## Run Ollama tests with coverage report
 # =============================================================================
 
 .PHONY: test-rag
-test-rag: ## Run RAG unit tests (pkg/rag + REST handlers)
+# pkg/rag/watcher and the REST and MCP RAG handlers build only under the rag,
+# rest and mcp tags, so every line passes TEST_TAGS: untagged, go test compiled
+# the !rag stub and skipped them all (#2067).
+test-rag: ## Run RAG unit tests (pkg/rag + REST, MCP, gRPC and embedded transports)
 	@echo "$(BLUE)Running RAG unit tests...$(NC)"
-	go test -v -race -count=1 ./pkg/rag/...
-	go test -v -race -count=1 -run "TestHandleRAG" ./pkg/api/rest/...
-	go test -v -race -count=1 -run "TestRAG" ./pkg/api/mcp/...
+	go test -v -race -count=1 -tags '$(TEST_TAGS)' ./pkg/rag/...
+	go test -v -race -count=1 -tags '$(TEST_TAGS)' -run "TestHandleRAG" ./pkg/api/rest/...
+	go test -v -race -count=1 -tags '$(TEST_TAGS)' -run "TestRAG|TestHandleRAGQuery_|TestExecuteRAGQuery_|TestExecuteRAGBuildContext_" ./pkg/api/mcp/...
+	go test -v -race -count=1 -tags '$(TEST_TAGS)' -run "TestRAG" ./pkg/api/grpc/
+	go test -v -race -count=1 -tags '$(TEST_TAGS)' -run "TestRegisterRAGService" ./pkg/server/
+	# The embedded RAG routes build only under the rag tag (#1611).
+	cd sdk/go && CGO_ENABLED=1 go test -v -race -count=1 -tags rag -run "TestEmbeddedRAG" ./transport/embedded/
+	cd sdk/go && CGO_ENABLED=1 go test -v -race -count=1 -tags rag -run "TestRAGHandler_RoundTrip" ./transport/grpc/
 	@echo "$(GREEN)✓ RAG unit tests passed$(NC)"
 
 .PHONY: test-rag-coverage

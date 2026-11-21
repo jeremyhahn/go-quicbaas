@@ -13,6 +13,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/service/mocks"
 )
 
 func TestGetAllRAGTools(t *testing.T) {
@@ -133,134 +134,6 @@ func TestRAGBuildContextTool_Schema(t *testing.T) {
 	}
 }
 
-func TestGetStringFromMetadata(t *testing.T) {
-	tests := []struct {
-		name     string
-		metadata map[string]string
-		key      string
-		expected string
-	}{
-		{"nil metadata", nil, "key", ""},
-		{"empty metadata", map[string]string{}, "key", ""},
-		{"key not found", map[string]string{"other": "value"}, "key", ""},
-		{"key found", map[string]string{"key": "value"}, "key", "value"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := getStringFromMetadata(tt.metadata, tt.key)
-			if result != tt.expected {
-				t.Errorf("getStringFromMetadata() = %v, want %v", result, tt.expected)
-			}
-		})
-	}
-}
-
-func TestGetIntFromMetadata(t *testing.T) {
-	tests := []struct {
-		name     string
-		metadata map[string]string
-		key      string
-		expected int
-	}{
-		{"nil metadata", nil, "key", 0},
-		{"empty metadata", map[string]string{}, "key", 0},
-		{"key not found", map[string]string{"other": "123"}, "key", 0},
-		{"key found with valid int", map[string]string{"key": "42"}, "key", 42},
-		{"key found with invalid int", map[string]string{"key": "invalid"}, "key", 0},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := getIntFromMetadata(tt.metadata, tt.key)
-			if result != tt.expected {
-				t.Errorf("getIntFromMetadata() = %v, want %v", result, tt.expected)
-			}
-		})
-	}
-}
-
-func TestGetIntFromStringMap(t *testing.T) {
-	tests := []struct {
-		name     string
-		m        map[string]string
-		key      string
-		expected int
-	}{
-		{"nil map", nil, "key", 0},
-		{"empty map", map[string]string{}, "key", 0},
-		{"key not found", map[string]string{"other": "123"}, "key", 0},
-		{"key found with valid int", map[string]string{"key": "42"}, "key", 42},
-		{"key found with invalid int", map[string]string{"key": "invalid"}, "key", 0},
-		{"negative int", map[string]string{"key": "-10"}, "key", -10},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := getIntFromStringMap(tt.m, tt.key)
-			if result != tt.expected {
-				t.Errorf("getIntFromStringMap() = %v, want %v", result, tt.expected)
-			}
-		})
-	}
-}
-
-func TestGetStringFromInterfaceMetadata(t *testing.T) {
-	tests := []struct {
-		name     string
-		metadata map[string]interface{}
-		key      string
-		expected string
-	}{
-		{"nil metadata", nil, "key", ""},
-		{"empty metadata", map[string]interface{}{}, "key", ""},
-		{"key not found", map[string]interface{}{"other": "value"}, "key", ""},
-		{"key found with string", map[string]interface{}{"key": "value"}, "key", "value"},
-		{"key found with non-string", map[string]interface{}{"key": 123}, "key", ""},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := getStringFromInterfaceMetadata(tt.metadata, tt.key)
-			if result != tt.expected {
-				t.Errorf("getStringFromInterfaceMetadata() = %v, want %v", result, tt.expected)
-			}
-		})
-	}
-}
-
-func TestGetIntFromInterfaceMetadata(t *testing.T) {
-	tests := []struct {
-		name     string
-		metadata map[string]interface{}
-		key      string
-		expected int
-	}{
-		{"nil metadata", nil, "key", 0},
-		{"empty metadata", map[string]interface{}{}, "key", 0},
-		{"key not found", map[string]interface{}{"other": 123}, "key", 0},
-		{"key found with int", map[string]interface{}{"key": 42}, "key", 42},
-		{"key found with int64", map[string]interface{}{"key": int64(100)}, "key", 100},
-		{"key found with float64", map[string]interface{}{"key": float64(75.0)}, "key", 75},
-		{"key found with string int", map[string]interface{}{"key": "50"}, "key", 50},
-		{"key found with invalid string", map[string]interface{}{"key": "invalid"}, "key", 0},
-		{"key found with unsupported type", map[string]interface{}{"key": []int{1, 2, 3}}, "key", 0},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := getIntFromInterfaceMetadata(tt.metadata, tt.key)
-			if result != tt.expected {
-				t.Errorf("getIntFromInterfaceMetadata() = %v, want %v", result, tt.expected)
-			}
-		})
-	}
-}
-
-// =============================================================================
-// RAG Tool Error Path Tests
-// =============================================================================
-
 func TestHandleRAGQuery_MissingQueryParam(t *testing.T) {
 	svc := &extendedMockService{
 		ollamaSvc: &mockOllamaService{},
@@ -306,6 +179,46 @@ func TestHandleRAGQuery_OllamaServiceNotConfigured(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "ollama service not configured")
+}
+
+// ragSearchMockService serves an Ollama that embeds every query and a vector
+// store that records the search it is asked for.
+type ragSearchMockService struct {
+	extendedMockService
+	vectorSvc service.VectorService
+}
+
+func (m *ragSearchMockService) Vector() service.VectorService { return m.vectorSvc }
+
+// TestHandleRAGQuery_ExplicitZeroMinScoreReachesSearch proves min_score "0"
+// disables the similarity filter, as quicbaas_rag_query did before #1611:
+// only an omitted min_score takes the default.
+func TestHandleRAGQuery_ExplicitZeroMinScoreReachesSearch(t *testing.T) {
+	var searched *service.SearchSimilarRequest
+	svc := &ragSearchMockService{
+		extendedMockService: extendedMockService{ollamaSvc: &mocks.MockOllamaService{
+			EmbedFunc: func(context.Context, *service.OllamaEmbedRequest) (*service.OllamaEmbedResponse, error) {
+				return &service.OllamaEmbedResponse{Embedding: []float32{0.1, 0.2}}, nil
+			},
+		}},
+		vectorSvc: &mocks.MockVectorService{
+			SearchSimilarFunc: func(_ context.Context, r *service.SearchSimilarRequest) (*service.SearchSimilarResponse, error) {
+				searched = r
+				return &service.SearchSimilarResponse{}, nil
+			},
+		},
+	}
+	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
+	registry := NewToolRegistry(svc, log)
+
+	_, err := registry.ExecuteTool(context.Background(), "quicbaas_rag_query", map[string]interface{}{
+		"query":     "test query",
+		"namespace": "test",
+		"min_score": "0",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, searched)
+	assert.Equal(t, float32(0), searched.MinScore)
 }
 
 func TestExecuteRAGTool_UnknownRAGTool(t *testing.T) {

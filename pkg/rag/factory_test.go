@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"sync"
 	"testing"
 	"time"
@@ -635,6 +636,40 @@ func TestRankerAdapter_RankResults(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, ranked)
 	assert.True(t, len(ranked) > 0)
+}
+
+// TestCreateRankerAdapter_OmittedRRFKKeepsScoresFinite checks that a hybrid
+// ranking config with rrf_k omitted (0) fuses vector-only results with the
+// default RRF constant instead of dividing by zero.
+func TestCreateRankerAdapter_OmittedRRFKKeepsScoresFinite(t *testing.T) {
+	adapter, err := createRankerAdapter(config.RankingConfig{
+		Strategy:      "hybrid",
+		BM25K1:        1.2,
+		BM25B:         0.75,
+		VectorWeight:  0.7,
+		KeywordWeight: 0.3,
+		RerankTopK:    10,
+	})
+	require.NoError(t, err)
+
+	vectorResults := []pipeline.Result{
+		{ID: "1", Score: 0.9, Content: "first content"},
+		{ID: "2", Score: 0.7, Content: "second content"},
+		{ID: "3", Score: 0.5, Content: "third content"},
+	}
+
+	ranked, err := adapter.Rank(context.Background(), "query", vectorResults, nil)
+	require.NoError(t, err)
+	require.NotEmpty(t, ranked)
+
+	for i, r := range ranked {
+		score := float64(r.Score)
+		assert.False(t, math.IsNaN(score), "result %d (%s) score is NaN", i, r.ID)
+		assert.False(t, math.IsInf(score, 0), "result %d (%s) score is Inf", i, r.ID)
+		if i > 0 {
+			assert.GreaterOrEqual(t, ranked[i-1].Score, r.Score, "results not in descending score order at %d", i)
+		}
+	}
 }
 
 // =============================================================================

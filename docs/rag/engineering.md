@@ -96,6 +96,12 @@ type RankingConfig struct {
 | `RerankTopK` | Rerank candidates | 50 |
 | `RRFK` | RRF smoothing constant | 60 |
 
+Hybrid fusion is weighted RRF. A result at 0-based rank `r` in the vector
+list scores `VectorWeight / (RRFK + r)`, and at rank `r` in the keyword
+list `KeywordWeight / (RRFK + r)`. A result in both lists gets the sum.
+When both weights are 0, both lists count as 1. Equal scores are ordered
+by result ID, so the same input always ranks the same way.
+
 ### Context Configuration
 
 ```go
@@ -115,7 +121,7 @@ type ContextConfig struct {
 | `DefaultTemplate` | Output format | markdown |
 | `TruncationStrategy` | Truncation method | smart |
 | `IncludeCitations` | Source citations | true |
-| `MaxResultsPerChunk` | Results per chunk | 10 |
+| `MaxResultsPerChunk` | Results per chunk; results past it are dropped and `Truncated` is set | 10 |
 | `TokenMultiplier` | Estimation factor | 1.3 |
 
 ### Pipeline Configuration
@@ -302,6 +308,12 @@ This makes re-indexing cheap: only changed files are re-processed.
 | Go | `GoCodeChunker` | Function-level chunks, preserves imports/comments/package |
 | Markdown | `MarkdownChunker` | Header-based sections, preserves code blocks |
 | Other | `TextChunker` | Sentence/paragraph-aware splitting with configurable overlap |
+
+`chunk_max_tokens` caps Markdown chunks (at a target of a quarter of the
+cap) and text chunks. Go is the exception: a function is always one
+chunk, so a function longer than `chunk_max_tokens` is kept whole, and
+its chunk metadata gets `too_large: "true"` and its `token_count`.
+`chunk_overlap` applies only to `TextChunker`.
 
 ### IndexingService
 

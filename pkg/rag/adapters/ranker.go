@@ -149,6 +149,11 @@ func (a *RankerAdapter) Rank(ctx context.Context, query string, vectorResults, k
 	switch {
 	case a.config.EnableHybrid && len(rankingVectorResults) > 0 && len(rankingKeywordResults) > 0:
 		scoredResults, err = a.hybridRanker.RankHybrid(rankingVectorResults, rankingKeywordResults, query)
+	case a.config.EnableHybrid && len(rankingVectorResults) > 0:
+		// The pipeline passes no keyword list: BM25-score a copy of the
+		// vector results as the keyword list, so the vector and keyword
+		// weights both take part in the fusion.
+		scoredResults, err = a.hybridRanker.RankHybrid(rankingVectorResults, pipelineToRankingResults(vectorResults), query)
 	case len(rankingVectorResults) > 0:
 		// Fall back to simple ranking with vector results
 		scoredResults, err = a.hybridRanker.Rank(rankingVectorResults, query)

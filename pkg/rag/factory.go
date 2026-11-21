@@ -419,6 +419,13 @@ func trainIndex(idx VectorIndex, dimensions int) error {
 
 // createRankerAdapter creates a ranker adapter from configuration.
 func createRankerAdapter(cfg config.RankingConfig) (*adapters.RankerAdapter, error) {
+	// An omitted RRF constant (0) would divide by zero at rank 0 in the
+	// reciprocal rank fusion; use the conventional default of 60.
+	rrfK := float32(cfg.RRFK)
+	if rrfK == 0 {
+		rrfK = 60
+	}
+
 	// Create ranking config
 	rankingCfg := ranking.Config{
 		BM25K1:        cfg.BM25K1,
@@ -427,7 +434,7 @@ func createRankerAdapter(cfg config.RankingConfig) (*adapters.RankerAdapter, err
 		KeywordWeight: cfg.KeywordWeight,
 		RerankTopK:    cfg.RerankTopK,
 		EnableRerank:  cfg.EnableRerank,
-		RRFK:          float32(cfg.RRFK),
+		RRFK:          rrfK,
 	}
 
 	// Create hybrid ranker

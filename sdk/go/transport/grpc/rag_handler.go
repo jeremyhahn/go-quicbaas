@@ -15,15 +15,15 @@ package grpc
 
 import (
 	"context"
-	"encoding/json"
 
 	"google.golang.org/grpc"
 
+	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/rag"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
 
-// ragHandler handles RAG gRPC requests.
+// ragHandler calls the node's quicbaas.rag.v1.RAGService.
 type ragHandler struct {
 	conn *grpc.ClientConn
 }
@@ -50,170 +50,164 @@ func (h *ragHandler) handleRequest(ctx context.Context, service, method string, 
 	}
 }
 
-// handleQuery handles a RAG Query request.
+// handleQuery calls RAGService.Query.
 func (h *ragHandler) handleQuery(ctx context.Context, req interface{}) (interface{}, error) {
+	const op = "grpc.rag.handleQuery"
 	queryReq, ok := req.(*rag.QueryRequest)
-	if !ok {
-		return nil, errors.NewInvalidInput("grpc.rag.handleQuery", "invalid request type")
+	if !ok || queryReq == nil {
+		return nil, errors.NewInvalidInput(op, "invalid request type")
 	}
-
-	// Convert to gRPC request format (JSON payload)
-	payload := map[string]interface{}{
-		"query":             queryReq.Query,
-		"namespace":         queryReq.Namespace,
-		"top_k":             queryReq.TopK,
-		"max_tokens":        queryReq.MaxTokens,
-		"min_score":         queryReq.MinScore,
-		"template":          queryReq.Template,
-		"include_citations": queryReq.IncludeCitations,
-		"model":             queryReq.Model,
-	}
-
-	jsonData, err := json.Marshal(payload)
+	pbReq, err := ragQueryRequestToProto(op, queryReq)
 	if err != nil {
-		return nil, errors.Wrap(err, errors.CodeInternal, "grpc.rag.handleQuery", "failed to marshal request")
+		return nil, err
 	}
-
-	// Use generic invoke with JSON payload
-	var respData []byte
-	err = h.conn.Invoke(ctx, "/quicbaas.RAG/Query", jsonData, &respData)
+	resp, err := pb.NewRAGServiceClient(h.conn).Query(ctx, pbReq)
 	if err != nil {
-		return nil, convertGRPCError(err, "grpc.rag.handleQuery")
+		return nil, convertGRPCError(err, op)
 	}
-
-	// Parse response
-	var respMap map[string]interface{}
-	if err := json.Unmarshal(respData, &respMap); err != nil {
-		return nil, errors.Wrap(err, errors.CodeInternal, "grpc.rag.handleQuery", "failed to unmarshal response")
-	}
-
-	return convertRAGQueryResponse(respMap)
+	return &rag.QueryResponse{
+		Context:     resp.GetContext(),
+		Tokens:      int(resp.GetTokens()),
+		Truncated:   resp.GetTruncated(),
+		ResultCount: int(resp.GetResultCount()),
+		Citations:   ragCitationsFromProto(resp.GetCitations()),
+	}, nil
 }
 
-// handleBuildContext handles a RAG BuildContext request.
+// handleBuildContext calls RAGService.BuildContext.
 func (h *ragHandler) handleBuildContext(ctx context.Context, req interface{}) (interface{}, error) {
+	const op = "grpc.rag.handleBuildContext"
 	buildReq, ok := req.(*rag.BuildContextRequest)
-	if !ok {
-		return nil, errors.NewInvalidInput("grpc.rag.handleBuildContext", "invalid request type")
+	if !ok || buildReq == nil {
+		return nil, errors.NewInvalidInput(op, "invalid request type")
 	}
-
-	// Convert results to map format
-	results := make([]map[string]interface{}, len(buildReq.Results))
-	for i, r := range buildReq.Results {
-		results[i] = map[string]interface{}{
-			"content":  r.Content,
-			"score":    r.Score,
-			"metadata": r.Metadata,
-		}
-	}
-
-	// Convert to gRPC request format (JSON payload)
-	payload := map[string]interface{}{
-		"results":             results,
-		"max_tokens":          buildReq.MaxTokens,
-		"template":            buildReq.Template,
-		"include_citations":   buildReq.IncludeCitations,
-		"truncation_strategy": buildReq.TruncationStrategy,
-	}
-
-	jsonData, err := json.Marshal(payload)
+	pbReq, err := ragBuildContextRequestToProto(op, buildReq)
 	if err != nil {
-		return nil, errors.Wrap(err, errors.CodeInternal, "grpc.rag.handleBuildContext", "failed to marshal request")
+		return nil, err
 	}
-
-	// Use generic invoke with JSON payload
-	var respData []byte
-	err = h.conn.Invoke(ctx, "/quicbaas.RAG/BuildContext", jsonData, &respData)
+	resp, err := pb.NewRAGServiceClient(h.conn).BuildContext(ctx, pbReq)
 	if err != nil {
-		return nil, convertGRPCError(err, "grpc.rag.handleBuildContext")
+		return nil, convertGRPCError(err, op)
 	}
-
-	// Parse response
-	var respMap map[string]interface{}
-	if err := json.Unmarshal(respData, &respMap); err != nil {
-		return nil, errors.Wrap(err, errors.CodeInternal, "grpc.rag.handleBuildContext", "failed to unmarshal response")
-	}
-
-	return convertRAGBuildContextResponse(respMap)
+	return &rag.BuildContextResponse{
+		Context:     resp.GetContext(),
+		Tokens:      int(resp.GetTokens()),
+		Truncated:   resp.GetTruncated(),
+		ResultCount: int(resp.GetResultCount()),
+		Citations:   ragCitationsFromProto(resp.GetCitations()),
+	}, nil
 }
 
-// convertRAGQueryResponse converts a raw map to a QueryResponse.
-func convertRAGQueryResponse(m map[string]interface{}) (*rag.QueryResponse, error) {
-	resp := &rag.QueryResponse{}
+// ragQueryRequestToProto maps the SDK query to the wire message. min_score
+// is sent only when the caller set it, so an omitted threshold takes the
+// server's default and an explicit 0 disables the filter.
+func ragQueryRequestToProto(op string, r *rag.QueryRequest) (*pb.RAGQueryRequest, error) {
+	topK, err := int32ToProto(op, "top_k", r.TopK)
+	if err != nil {
+		return nil, err
+	}
+	maxTokens, err := int32ToProto(op, "max_tokens", r.MaxTokens)
+	if err != nil {
+		return nil, err
+	}
+	template, err := ragTemplateToProto(op, r.Template)
+	if err != nil {
+		return nil, err
+	}
+	out := &pb.RAGQueryRequest{
+		Query:            r.Query,
+		Namespace:        r.Namespace,
+		TopK:             topK,
+		MaxTokens:        maxTokens,
+		Template:         template,
+		IncludeCitations: r.IncludeCitations,
+		Model:            r.Model,
+	}
+	if r.MinScoreSet || r.MinScore != 0 {
+		minScore := r.MinScore
+		out.MinScore = &minScore
+	}
+	return out, nil
+}
 
-	if v, ok := m["context"].(string); ok {
-		resp.Context = v
+// ragBuildContextRequestToProto maps the SDK build-context request to the
+// wire message.
+func ragBuildContextRequestToProto(op string, r *rag.BuildContextRequest) (*pb.RAGBuildContextRequest, error) {
+	maxTokens, err := int32ToProto(op, "max_tokens", r.MaxTokens)
+	if err != nil {
+		return nil, err
 	}
-	if v, ok := m["tokens"].(float64); ok {
-		resp.Tokens = int(v)
+	template, err := ragTemplateToProto(op, r.Template)
+	if err != nil {
+		return nil, err
 	}
-	if v, ok := m["truncated"].(bool); ok {
-		resp.Truncated = v
+	truncation, err := ragTruncationToProto(op, r.TruncationStrategy)
+	if err != nil {
+		return nil, err
 	}
-	if v, ok := m["result_count"].(float64); ok {
-		resp.ResultCount = int(v)
+	results := make([]*pb.RAGResultInput, len(r.Results))
+	for i, in := range r.Results {
+		results[i] = &pb.RAGResultInput{Content: in.Content, Score: in.Score, Metadata: in.Metadata}
 	}
+	return &pb.RAGBuildContextRequest{
+		Results:            results,
+		MaxTokens:          maxTokens,
+		Template:           template,
+		IncludeCitations:   r.IncludeCitations,
+		TruncationStrategy: truncation,
+	}, nil
+}
 
-	if citations, ok := m["citations"].([]interface{}); ok {
-		resp.Citations = make([]rag.Citation, len(citations))
-		for i, c := range citations {
-			if cm, ok := c.(map[string]interface{}); ok {
-				resp.Citations[i] = convertCitation(cm)
-			}
+// ragTemplateToProto maps a template name to the wire enum; "" is the
+// server's default.
+func ragTemplateToProto(op, name string) (pb.RAGTemplate, error) {
+	switch name {
+	case "":
+		return pb.RAGTemplate_RAG_TEMPLATE_UNSPECIFIED, nil
+	case "markdown":
+		return pb.RAGTemplate_RAG_TEMPLATE_MARKDOWN, nil
+	case "json":
+		return pb.RAGTemplate_RAG_TEMPLATE_JSON, nil
+	case "xml":
+		return pb.RAGTemplate_RAG_TEMPLATE_XML, nil
+	case "plain":
+		return pb.RAGTemplate_RAG_TEMPLATE_PLAIN, nil
+	default:
+		return 0, errors.NewInvalidInput(op, "unknown template: "+name)
+	}
+}
+
+// ragTruncationToProto maps a truncation strategy name to the wire enum; ""
+// is the server's default.
+func ragTruncationToProto(op, name string) (pb.RAGTruncationStrategy, error) {
+	switch name {
+	case "":
+		return pb.RAGTruncationStrategy_RAG_TRUNCATION_UNSPECIFIED, nil
+	case "smart":
+		return pb.RAGTruncationStrategy_RAG_TRUNCATION_SMART, nil
+	case "hard":
+		return pb.RAGTruncationStrategy_RAG_TRUNCATION_HARD, nil
+	case "none":
+		return pb.RAGTruncationStrategy_RAG_TRUNCATION_NONE, nil
+	default:
+		return 0, errors.NewInvalidInput(op, "unknown truncation strategy: "+name)
+	}
+}
+
+// ragCitationsFromProto maps wire citations to the SDK's.
+func ragCitationsFromProto(in []*pb.RAGCitation) []rag.Citation {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]rag.Citation, len(in))
+	for i, c := range in {
+		out[i] = rag.Citation{
+			Index:     int(c.GetIndex()),
+			FilePath:  c.GetFilePath(),
+			StartLine: int(c.GetStartLine()),
+			EndLine:   int(c.GetEndLine()),
+			Score:     c.GetScore(),
 		}
 	}
-
-	return resp, nil
-}
-
-// convertRAGBuildContextResponse converts a raw map to a BuildContextResponse.
-func convertRAGBuildContextResponse(m map[string]interface{}) (*rag.BuildContextResponse, error) {
-	resp := &rag.BuildContextResponse{}
-
-	if v, ok := m["context"].(string); ok {
-		resp.Context = v
-	}
-	if v, ok := m["tokens"].(float64); ok {
-		resp.Tokens = int(v)
-	}
-	if v, ok := m["truncated"].(bool); ok {
-		resp.Truncated = v
-	}
-	if v, ok := m["result_count"].(float64); ok {
-		resp.ResultCount = int(v)
-	}
-
-	if citations, ok := m["citations"].([]interface{}); ok {
-		resp.Citations = make([]rag.Citation, len(citations))
-		for i, c := range citations {
-			if cm, ok := c.(map[string]interface{}); ok {
-				resp.Citations[i] = convertCitation(cm)
-			}
-		}
-	}
-
-	return resp, nil
-}
-
-// convertCitation converts a map to a Citation.
-func convertCitation(m map[string]interface{}) rag.Citation {
-	c := rag.Citation{}
-
-	if v, ok := m["index"].(float64); ok {
-		c.Index = int(v)
-	}
-	if v, ok := m["file_path"].(string); ok {
-		c.FilePath = v
-	}
-	if v, ok := m["start_line"].(float64); ok {
-		c.StartLine = int(v)
-	}
-	if v, ok := m["end_line"].(float64); ok {
-		c.EndLine = int(v)
-	}
-	if v, ok := m["score"].(float64); ok {
-		c.Score = float32(v)
-	}
-
-	return c
+	return out
 }

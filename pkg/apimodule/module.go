@@ -388,6 +388,7 @@ type grpcServers struct {
 	objectStorage      pb.ObjectStorageServiceServer
 	objectStorageAdmin pb.ObjectStorageAdminServer
 	ollama             pb.OllamaServiceServer
+	rag                pb.RAGServiceServer
 	secretsManagement  pb.SecretsManagementServer
 	keyManagement      pb.KeyManagementServer
 	dekManagement      pb.DEKManagementServer
@@ -485,6 +486,7 @@ var grpcRegistrations = []grpcRegistration{
 	{desc: &pb.ObjectStorageService_ServiceDesc, capability: "object-storage", pick: func(s *grpcServers) any { return s.objectStorage }},
 	{desc: &pb.ObjectStorageAdmin_ServiceDesc, capability: "object-storage-admin", pick: func(s *grpcServers) any { return s.objectStorageAdmin }},
 	{desc: &pb.OllamaService_ServiceDesc, capability: "ollama", pick: func(s *grpcServers) any { return s.ollama }},
+	{desc: &pb.RAGService_ServiceDesc, capability: "rag", pick: func(s *grpcServers) any { return s.rag }},
 	{desc: &pb.SecretsManagement_ServiceDesc, capability: "secrets-management", pick: func(s *grpcServers) any { return s.secretsManagement }},
 	{desc: &pb.KeyManagement_ServiceDesc, capability: "key-management", pick: func(s *grpcServers) any { return s.keyManagement }},
 	{desc: &pb.DEKManagement_ServiceDesc, capability: "dek-management", pick: func(s *grpcServers) any { return s.dekManagement }},
@@ -766,6 +768,10 @@ func (m *Module) bind() (*grpcServers, error) {
 	// exactly like the other broker capabilities above, and is unconditionally
 	// nil without the tag — matching lifecycle_rag_noop.go's registerOllamaService.
 	built.ollama = buildOllamaServer(svc.Ollama(), m.log)
+	// buildRAGServer (module_rag_rag.go / module_rag_norag.go) mounts
+	// quicbaas.rag.v1.RAGService under -tags rag, as lifecycle_rag.go's
+	// registerRAGService does on the Unix socket; nil without the tag.
+	built.rag = buildRAGServer(svc, m.log)
 
 	// SecretsManagement is quicbaas's own public wire API over the composed
 	// go-xkms library — registered here exactly like the seven broker

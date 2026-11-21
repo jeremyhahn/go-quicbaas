@@ -61,10 +61,14 @@ func (h *ragHandler) handleQuery(ctx context.Context, req interface{}) (interfac
 		"namespace":         queryReq.Namespace,
 		"top_k":             queryReq.TopK,
 		"max_tokens":        queryReq.MaxTokens,
-		"min_score":         queryReq.MinScore,
 		"template":          queryReq.Template,
 		"include_citations": queryReq.IncludeCitations,
 		"model":             queryReq.Model,
+	}
+	// An omitted min_score takes the server's default; a sent 0 disables
+	// the filter, so 0 is sent only when the caller set it.
+	if queryReq.MinScoreSet || queryReq.MinScore != 0 {
+		restReq["min_score"] = queryReq.MinScore
 	}
 
 	// Make REST request
