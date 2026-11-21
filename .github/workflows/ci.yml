@@ -12,6 +12,18 @@
 # a ci.yml-only PR that keeps the CUSTOMIZE blocks, together with v1.52's
 # runner selection (internal pull requests run on our runners), separately
 # from code-review.yml.
+# v1.53 at 88c10e76 also: (1) CI Gate runs on !cancelled() off
+# pull_request, so a main run cancelled by a newer push posts a skipped
+# gate, not a failed one; a pull request keeps always(), as a skipped
+# required check counts as passed. (2) scripts/ci-mask-lan.sh (template
+# v1.44, with v1.53's host-name rule) runs right after checkout in every job
+# that builds, since internal pull requests and main overflow run on the
+# Dells' pools: it masks each private address and each internal host name
+# (a single label, or a name under .internal, .lan, .local, .localdomain,
+# .home.arpa or .corp) that DEVCACHE_*, GOPROXY, CI_REGISTRY,
+# CI_IMAGE_REGISTRY, RELEASE_REGISTRY or GITHUB_SERVER_URL names. The
+# template's `Runner labels (ruling 633)` review-guard exemption does not
+# apply: this file has no such step.
 # v1.52 (2026-11-21, Tenant Agent order, defect fix): a fork's pull request
 # under pull_request reached a self-hosted runner. preflight's runs-on had
 # no fork check, so on github.com it took the Dells' bigdisk pool for a
@@ -1167,6 +1179,13 @@ jobs:
 
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
+      # v1.53 (ruling 887; template v1.44, host names since v1.53): a pool
+      # runner's environment names LAN addresses and host names; they are
+      # masked before any step that builds can print one. On a GitHub-hosted
+      # runner the variables are unset and the script prints nothing.
+      - name: Mask the LAN addresses
+        run: scripts/ci-mask-lan.sh
+
       - name: Publish the toolchain image when the registry lacks its hash
         run: |
           ( umask 077; : > "$RUNNER_TEMP/gomodauth.env" )
@@ -1215,6 +1234,13 @@ jobs:
           exit "$found"
 
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      # v1.53 (ruling 887; template v1.44, host names since v1.53): a pool
+      # runner's environment names LAN addresses and host names; they are
+      # masked before any step that builds can print one. On a GitHub-hosted
+      # runner the variables are unset and the script prints nothing.
+      - name: Mask the LAN addresses
+        run: scripts/ci-mask-lan.sh
 
       # go-quicbaas: the merge result, against the base the run's event
       # pinned (#436).
@@ -1485,6 +1511,13 @@ jobs:
 
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
+      # v1.53 (ruling 887; template v1.44, host names since v1.53): a pool
+      # runner's environment names LAN addresses and host names; they are
+      # masked before any step that builds can print one. On a GitHub-hosted
+      # runner the variables are unset and the script prints nothing.
+      - name: Mask the LAN addresses
+        run: scripts/ci-mask-lan.sh
+
       - name: Reap stale CI stacks
         run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
 
@@ -1638,6 +1671,13 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         if: runner.environment == 'github-hosted'
 
+      # v1.53 (ruling 887; template v1.44, host names since v1.53): a pool
+      # runner's environment names LAN addresses and host names; they are
+      # masked before any step that builds can print one. On a GitHub-hosted
+      # runner the variables are unset and the script prints nothing.
+      - name: Mask the LAN addresses
+        run: scripts/ci-mask-lan.sh
+
       - name: Validate the merge result, not the head alone
         run: .github/scripts/ci-merge-base.sh "${{ github.event_name }}" "${{ github.base_ref }}" "${{ github.event.pull_request.base.sha }}"
 
@@ -1716,6 +1756,13 @@ jobs:
 
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         if: runner.environment == 'github-hosted'
+
+      # v1.53 (ruling 887; template v1.44, host names since v1.53): a pool
+      # runner's environment names LAN addresses and host names; they are
+      # masked before any step that builds can print one. On a GitHub-hosted
+      # runner the variables are unset and the script prints nothing.
+      - name: Mask the LAN addresses
+        run: scripts/ci-mask-lan.sh
 
       - name: Check out (bigdisk pool)
         if: runner.environment == 'self-hosted'
@@ -1817,6 +1864,13 @@ jobs:
 
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         if: runner.environment == 'github-hosted'
+
+      # v1.53 (ruling 887; template v1.44, host names since v1.53): a pool
+      # runner's environment names LAN addresses and host names; they are
+      # masked before any step that builds can print one. On a GitHub-hosted
+      # runner the variables are unset and the script prints nothing.
+      - name: Mask the LAN addresses
+        run: scripts/ci-mask-lan.sh
 
       - name: Check out (bigdisk pool)
         if: runner.environment == 'self-hosted'
@@ -1937,6 +1991,13 @@ jobs:
           exit "$found"
 
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      # v1.53 (ruling 887; template v1.44, host names since v1.53): a pool
+      # runner's environment names LAN addresses and host names; they are
+      # masked before any step that builds can print one. On a GitHub-hosted
+      # runner the variables are unset and the script prints nothing.
+      - name: Mask the LAN addresses
+        run: scripts/ci-mask-lan.sh
 
       # A source check on the runner's shell: no make recipe runs here.
       - name: Does the Makefile define lint-gates?
@@ -2068,6 +2129,13 @@ jobs:
 
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
+      # v1.53 (ruling 887; template v1.44, host names since v1.53): a pool
+      # runner's environment names LAN addresses and host names; they are
+      # masked before any step that builds can print one. On a GitHub-hosted
+      # runner the variables are unset and the script prints nothing.
+      - name: Mask the LAN addresses
+        run: scripts/ci-mask-lan.sh
+
       - name: Reap stale CI stacks
         run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
 
@@ -2133,7 +2201,15 @@ jobs:
     runs-on: ${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner || '"ubuntu-latest"') || 'ci-gate' }}   # v1.48
     # v1.29.3: on a schedule run the schedule guard decides; every other
     # event runs the gate.
-    if: ${{ always() && (github.event_name != 'schedule' || needs.preflight.outputs.verdict != 'busy') }}
+    # v1.53 (template at 88c10e76): with main-{event} a newer push cancels
+    # the older main run, and an always() gate then read the cancelled needs
+    # and failed, so every superseded main commit showed a red gate. Off
+    # pull_request the gate runs on !cancelled(): a cancelled run posts no
+    # gate result (skipped), and a run that is not cancelled still fails
+    # closed on any need that failed. A pull request keeps always(): a
+    # skipped required check counts as passed, so a cancelled PR run must
+    # post a failing gate, never a skip.
+    if: ${{ (startsWith(github.event_name, 'pull_request') && always() || !cancelled()) && (github.event_name != 'schedule' || needs.preflight.outputs.verdict != 'busy') }}
     timeout-minutes: 5        # v1.30
     # CUSTOMIZE: the repo's job list. Add every CUSTOMIZE job here AND as a
     # check line below. publish-images is outside the gate (see its comment).
