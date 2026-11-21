@@ -200,8 +200,10 @@ func (h *timeseriesHandler) transformQuery(req interface{}) (map[string]interfac
 		args["aggregation"] = strings.ToLower(sdkReq.Aggregate.String())
 	}
 
+	// qrdb_ts_rich_query (the tool aggregate queries dispatch to) takes
+	// the bucket width in nanoseconds.
 	if sdkReq.Interval > 0 {
-		args["interval_seconds"] = int64(sdkReq.Interval.Seconds())
+		args["interval_ns"] = sdkReq.Interval.Nanoseconds()
 	}
 
 	return args, nil
@@ -237,10 +239,12 @@ func (h *timeseriesHandler) transformQueryFromMap(req map[string]interface{}) (m
 	if agg, ok := req["aggregation"].(string); ok {
 		args["aggregation"] = agg
 	}
-	if interval, ok := req["interval_seconds"].(int64); ok {
-		args["interval_seconds"] = interval
+	if intervalNs, ok := req["interval_ns"].(int64); ok {
+		args["interval_ns"] = intervalNs
+	} else if interval, ok := req["interval_seconds"].(int64); ok {
+		args["interval_ns"] = interval * int64(time.Second)
 	} else if interval, ok := req["interval_sec"].(int32); ok {
-		args["interval_seconds"] = int64(interval)
+		args["interval_ns"] = int64(interval) * int64(time.Second)
 	}
 	if groupBy, ok := req["group_by"].([]string); ok && len(groupBy) > 0 {
 		groupByJSON, err := json.Marshal(groupBy)
@@ -258,6 +262,17 @@ func (h *timeseriesHandler) transformQueryFromMap(req map[string]interface{}) (m
 	}
 
 	return args, nil
+}
+
+// timeseriesQueryTool picks the go-qrdb MCP tool for a time-series query.
+// qrdb_ts_query returns raw samples and ignores aggregation fields, so a
+// query that carries an aggregation goes to qrdb_ts_rich_query, which
+// downsamples into interval_ns buckets.
+func timeseriesQueryTool(args map[string]interface{}) string {
+	if agg, ok := args["aggregation"].(string); ok && agg != "" {
+		return "qrdb_ts_rich_query"
+	}
+	return "qrdb_ts_query"
 }
 
 func (h *timeseriesHandler) transformDeleteSeries(req interface{}) (map[string]interface{}, error) {

@@ -119,6 +119,12 @@ func TestTimeseriesQueryFromMapInt64Times(t *testing.T) {
 	if args["start"] != int64(100) || args["end"] != int64(200) {
 		t.Errorf("times = %v / %v", args["start"], args["end"])
 	}
+	if args["interval_ns"] != int64(60e9) {
+		t.Errorf("interval_ns = %v, want 60e9", args["interval_ns"])
+	}
+	if _, ok := args["interval_seconds"]; ok {
+		t.Errorf("interval_seconds must not be sent: %v", args)
+	}
 	if args["group_by"] != `["host"]` {
 		t.Errorf("group_by = %v", args["group_by"])
 	}

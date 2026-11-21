@@ -19,6 +19,7 @@ import (
 	qrdbsecret "github.com/jeremyhahn/go-qrdb/sdk/go/secret"
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport/mcp"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport/rest"
 )
 
@@ -558,30 +559,47 @@ func (c *client) Share() (QRDBShareClient, error) {
 	return qrdbClient.Shares(), nil
 }
 
-// qrdbTimeSeries returns go-qrdb's TimeSeriesClient from the lazily built
-// go-qrdb client. Search().QRDBTimeSeries() is its public entry point.
+// qrdbTimeSeries returns go-qrdb's TimeSeriesClient for this client.
+// Search().QRDBTimeSeries() is its public entry point. Each transport
+// authenticates the time-series verbs as follows:
 //
-// Over REST the time-series verbs ride the SDK's own REST transport, which
-// sends the platform bearer set by WithAuthToken on every request; go-qrdb's
-// REST sub-client cannot add an Authorization header, so the server's
-// default-deny gate refused it with 401 (go-quicbaas#2500). Every other
-// transport, and a client wired WithEmbeddedQRDB (whose qrdb calls always
-// dispatch in-process), keeps the qrdb sub-client. An embedded client whose
-// time-series servicer implements QRDBTimeSeriesContextReader reads retention
-// and lists metrics through it, in the caller's scope.
+//   - REST: the verbs ride the SDK's own REST transport, which sends the
+//     platform bearer set by WithAuthToken on every request; go-qrdb's REST
+//     sub-client cannot add an Authorization header (go-quicbaas#2500).
+//   - MCP: the verbs call go-qrdb's native qrdb_ts_* tools through the SDK's
+//     own MCP session, which carries WithMCPAuthToken or the configured login
+//     credentials. No second MCP session is opened.
+//   - gRPC and Unix: the verbs use the lazily built go-qrdb sub-client, whose
+//     transports install no bearer interceptor; when WithAuthToken is set the
+//     client is wrapped so every RPC carries `authorization: Bearer <token>`
+//     metadata. client.Close() closes the sub-client.
+//   - WithEmbeddedQRDB: qrdb calls dispatch in-process. An embedded client
+//     whose time-series servicer implements QRDBTimeSeriesContextReader reads
+//     retention and lists metrics through it, in the caller's scope.
 func (c *client) qrdbTimeSeries() (QRDBTimeSeriesClient, error) {
-	if rt, ok := c.transport.(*rest.Transport); ok && (c.opts == nil || c.opts.embeddedQRDB == nil) {
-		return rt.QRDBTimeSeries(), nil
+	embedded := c.opts != nil && c.opts.embeddedQRDB != nil
+	if !embedded {
+		switch t := c.transport.(type) {
+		case *rest.Transport:
+			return t.QRDBTimeSeries(), nil
+		case *mcp.Transport:
+			return t.QRDBTimeSeries(), nil
+		}
 	}
 	qrdbClient, err := c.qrdbClient()
 	if err != nil {
 		return nil, err
 	}
 	ts := qrdbClient.TimeSeries()
-	if c.opts != nil && c.opts.embeddedQRDB != nil {
+	if embedded {
 		if scoped, ok := c.opts.embeddedQRDB.TimeSeries.(QRDBTimeSeriesContextReader); ok {
 			return &embeddedQRDBTimeSeries{QRDBTimeSeriesClient: ts, scoped: scoped}, nil
 		}
+		return ts, nil
+	}
+	if c.opts != nil && c.opts.authToken != "" &&
+		(c.opts.transportType == TransportGRPC || c.opts.transportType == TransportUnix) {
+		return &qrdbTimeSeriesBearer{next: ts, token: c.opts.authToken}, nil
 	}
 	return ts, nil
 }

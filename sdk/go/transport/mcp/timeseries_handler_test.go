@@ -241,8 +241,30 @@ func TestTimeseriesHandlerTransformQuery(t *testing.T) {
 		t.Errorf("aggregation = %v, want avg", args["aggregation"])
 	}
 
-	if args["interval_seconds"] != int64(60) {
-		t.Errorf("interval_seconds = %v, want 60", args["interval_seconds"])
+	if args["interval_ns"] != int64(60*time.Second) {
+		t.Errorf("interval_ns = %v, want %d", args["interval_ns"], int64(60*time.Second))
+	}
+}
+
+func TestTimeseriesQueryTool(t *testing.T) {
+	cases := []struct {
+		name string
+		args map[string]interface{}
+		want string
+	}{
+		{"avg aggregate", map[string]interface{}{"metric": "m", "aggregation": "avg", "interval_ns": int64(60e9)}, "qrdb_ts_rich_query"},
+		{"sum aggregate", map[string]interface{}{"metric": "m", "aggregation": "sum"}, "qrdb_ts_rich_query"},
+		{"raw", map[string]interface{}{"metric": "m"}, "qrdb_ts_query"},
+		{"empty aggregation", map[string]interface{}{"metric": "m", "aggregation": ""}, "qrdb_ts_query"},
+		{"non-string aggregation", map[string]interface{}{"metric": "m", "aggregation": 3}, "qrdb_ts_query"},
+		{"nil args", nil, "qrdb_ts_query"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := timeseriesQueryTool(tc.args); got != tc.want {
+				t.Errorf("timeseriesQueryTool(%v) = %q, want %q", tc.args, got, tc.want)
+			}
+		})
 	}
 }
 

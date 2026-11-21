@@ -440,6 +440,9 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 		if err != nil {
 			return nil, err
 		}
+		if method == "Query" || method == "TSQuery" {
+			toolName = timeseriesQueryTool(arguments)
+		}
 	} else if isEmbedding {
 		// Use embedding handler to transform SDK request to MCP arguments
 		eh := newEmbeddingHandler()
