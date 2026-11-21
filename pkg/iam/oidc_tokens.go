@@ -72,7 +72,7 @@ type TokenService struct {
 	// (OIDCProvider.parseVerifiedAccessTokenClaims), set by NewOIDCProvider.
 	// RevokeToken acts on a JWT's claims only through it; when nil no JWT
 	// is revoked by jti.
-	verifyClaims func(tokenString string) (*Claims, error)
+	verifyClaims func(ctx context.Context, tokenString string) (*Claims, error)
 }
 
 // signingMaterial returns the signer, algorithm, and kid to use for signing a
@@ -457,7 +457,7 @@ func (s *TokenService) RevokeToken(ctx context.Context, tokenValue string) error
 	// revoked in. The verified parse also refuses an expired token, which no
 	// verifier accepts any more, so it is not revoked by jti either.
 	if s.verifyClaims != nil {
-		claims, err := s.verifyClaims(tokenValue)
+		claims, err := s.verifyClaims(ctx, tokenValue)
 		if err == nil && claims.JTI != "" {
 			// The verified tenant_id claim is authoritative: inject it so
 			// the tenant-scoped token index is resolved.
