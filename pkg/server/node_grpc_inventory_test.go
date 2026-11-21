@@ -110,10 +110,10 @@ var unixOnlyServices = map[string]string{
 	"quicbaas.tenant.v1.TenantBarrier": "qrdb proxy plane",
 	// VectorDB and VectorAdmin are mounted: go-qrdb registers no
 	// quicbaas.vector.v1 name.
-	// KeyManagement and DEKManagement are mounted: the pinned go-xkms serves
-	// no DEK surface and no quicbaas.kms.v1 name. AttestationService is
-	// mounted: the pinned go-xkms serves no Verifier RPCs. Crypto,
-	// CertificateService, TrustService and PIVService are mounted for
+	// KeyManagement, DEKManagement and Crypto are mounted: the pinned
+	// go-xkms serves no DEK surface and no quicbaas.kms.v1 name.
+	// AttestationService is mounted: the pinned go-xkms serves no Verifier
+	// RPCs. CertificateService, TrustService and PIVService are mounted for
 	// Unix-socket peers only (pkg/apimodule
 	// TestModule_RegisterGRPC_LegacyXKMSWrappersAreUnixOnly).
 }

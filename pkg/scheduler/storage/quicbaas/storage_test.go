@@ -764,6 +764,59 @@ func TestGetJobsDueForExecution_ScanError(t *testing.T) {
 	}
 }
 
+// A tenant-owned job lives in the tenant's namespace, yet the scheduler runs
+// it: the due scan must return it, and must stop returning it once deleted.
+func TestGetJobsDueForExecution_IncludesTenantJobs(t *testing.T) {
+	ctx := context.Background()
+	kv := newMockKVStore()
+	storage := NewStorage(kv)
+	now := time.Now()
+
+	tenantJob := createTestJob("tenant-due", scheduler.OwnerTypeTenant, "acme")
+	tenantJob.Status = scheduler.JobStatusPending
+	tenantJob.NextRun = now.Add(-time.Minute)
+	if err := storage.CreateJob(ctx, tenantJob); err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+
+	tenantFuture := createTestJob("tenant-future", scheduler.OwnerTypeTenant, "acme")
+	tenantFuture.Status = scheduler.JobStatusPending
+	tenantFuture.NextRun = now.Add(time.Hour)
+	if err := storage.CreateJob(ctx, tenantFuture); err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+
+	systemJob := createTestJob("system-due", scheduler.OwnerTypeSystem, "")
+	systemJob.Status = scheduler.JobStatusPending
+	systemJob.NextRun = now.Add(-time.Minute)
+	if err := storage.CreateJob(ctx, systemJob); err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+
+	dueJobs, err := storage.GetJobsDueForExecution(ctx, now, 100)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	names := map[string]bool{}
+	for _, j := range dueJobs {
+		names[j.Name] = true
+	}
+	if len(dueJobs) != 2 || !names["tenant-due"] || !names["system-due"] {
+		t.Fatalf("due jobs = %v, want tenant-due and system-due", names)
+	}
+
+	if err := storage.DeleteJob(ctx, tenantJob.ID, "acme"); err != nil {
+		t.Fatalf("DeleteJob: %v", err)
+	}
+	dueJobs, err = storage.GetJobsDueForExecution(ctx, now, 100)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(dueJobs) != 1 || dueJobs[0].Name != "system-due" {
+		t.Fatalf("after delete, due jobs = %d, want only system-due", len(dueJobs))
+	}
+}
+
 func TestSaveExecution_Success(t *testing.T) {
 	ctx := context.Background()
 	kv := newMockKVStore()
@@ -786,6 +839,62 @@ func TestSaveExecution_Success(t *testing.T) {
 	// Verify ID was assigned
 	if exec.ID == 0 {
 		t.Error("expected execution ID to be assigned")
+	}
+}
+
+// TestSaveExecution_TenantExecutionIsReadInTenantKeyspace pins that a
+// tenant-owned execution is stored where tenant history is read, and that a
+// system execution stays in the system keyspace.
+func TestSaveExecution_TenantExecutionIsReadInTenantKeyspace(t *testing.T) {
+	ctx := context.Background()
+	kv := newMockKVStore()
+	storage := NewStorage(kv)
+
+	const jobID uint64 = 7
+	tenantExec := &scheduler.JobExecution{
+		JobID:     jobID,
+		TenantID:  "acme",
+		Status:    scheduler.JobStatusCompleted,
+		StartedAt: time.Now().Add(-2 * time.Minute),
+		EndedAt:   time.Now().Add(-time.Minute),
+		Output:    "tenant",
+	}
+	if err := storage.SaveExecution(ctx, tenantExec); err != nil {
+		t.Fatalf("SaveExecution(tenant): %v", err)
+	}
+
+	tenantHistory, err := storage.GetExecutions(ctx, jobID, "acme", 10)
+	if err != nil {
+		t.Fatalf("GetExecutions(acme): %v", err)
+	}
+	if len(tenantHistory) != 1 || tenantHistory[0].ID != tenantExec.ID {
+		t.Fatalf("GetExecutions(acme) = %+v, want the tenant execution %d", tenantHistory, tenantExec.ID)
+	}
+
+	systemHistory, err := storage.GetExecutions(ctx, jobID, "", 10)
+	if err != nil {
+		t.Fatalf("GetExecutions(system): %v", err)
+	}
+	if len(systemHistory) != 0 {
+		t.Fatalf("GetExecutions(system) = %+v, want no tenant execution in the system keyspace", systemHistory)
+	}
+
+	systemExec := &scheduler.JobExecution{
+		JobID:     jobID,
+		Status:    scheduler.JobStatusCompleted,
+		StartedAt: time.Now().Add(-time.Minute),
+		EndedAt:   time.Now(),
+		Output:    "system",
+	}
+	if err := storage.SaveExecution(ctx, systemExec); err != nil {
+		t.Fatalf("SaveExecution(system): %v", err)
+	}
+	systemHistory, err = storage.GetExecutions(ctx, jobID, "", 10)
+	if err != nil {
+		t.Fatalf("GetExecutions(system): %v", err)
+	}
+	if len(systemHistory) != 1 || systemHistory[0].ID != systemExec.ID {
+		t.Fatalf("GetExecutions(system) = %+v, want the system execution %d", systemHistory, systemExec.ID)
 	}
 }
 

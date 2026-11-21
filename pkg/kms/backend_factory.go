@@ -32,6 +32,8 @@ type BackendFactory struct {
 	logger   interfaces.Logger
 	registry *BackendRegistry
 	mu       sync.RWMutex
+
+	keyNameStore goxkms.StorageBackend
 }
 
 // BackendFactoryConfig configures the backend factory.
@@ -45,6 +47,15 @@ type BackendFactoryConfig struct {
 
 	// HealthCheckInterval for the registry in seconds (default: 30)
 	HealthCheckInterval int
+
+	// KeyNameStore is the persistent go-xkms key store. When set,
+	// InitializeFromXKMS refuses a store holding a legacy name that reads as
+	// an encoded key ID and marks a clean store; nil skips the check. It also
+	// holds the ownership records of the keys the XKMS backends write under
+	// encoded names, one per full go-xkms key identity (backend, type,
+	// algorithm, name), not per name (xkms_key_owner.go); nil keeps those in
+	// memory per backend.
+	KeyNameStore goxkms.StorageBackend
 }
 
 // NewBackendFactory creates a new backend factory.
@@ -66,8 +77,9 @@ func NewBackendFactory(cfg *BackendFactoryConfig) (*BackendFactory, error) {
 	})
 
 	factory := &BackendFactory{
-		logger:   cfg.Logger,
-		registry: registry,
+		logger:       cfg.Logger,
+		registry:     registry,
+		keyNameStore: cfg.KeyNameStore,
 	}
 
 	return factory, nil
@@ -115,6 +127,7 @@ func (f *BackendFactory) InitializeFromXKMS(ctx context.Context, enabledBackends
 
 	// Create and register backends
 	priority := 1
+	var registered []string
 	for _, backendName := range xkmsBackends {
 		// Apply filter if specified
 		if len(enabledSet) > 0 && !enabledSet[backendName] {
@@ -129,8 +142,9 @@ func (f *BackendFactory) InitializeFromXKMS(ctx context.Context, enabledBackends
 		// Create XKMSBackend wrapper
 		backendType := config.BackendType(backendName)
 		backend, err := NewXKMSBackend(&XKMSBackendConfig{
-			BackendType: backendType,
-			Logger:      f.logger,
+			BackendType:  backendType,
+			Logger:       f.logger,
+			KeyNameStore: f.keyNameStore,
 		})
 		if err != nil {
 			if f.logger != nil {
@@ -160,6 +174,7 @@ func (f *BackendFactory) InitializeFromXKMS(ctx context.Context, enabledBackends
 			}).Info("Registered KMS backend")
 		}
 
+		registered = append(registered, backendName)
 		priority++
 	}
 
@@ -167,6 +182,10 @@ func (f *BackendFactory) InitializeFromXKMS(ctx context.Context, enabledBackends
 	backends := f.registry.List()
 	if len(backends) == 0 {
 		return api.NewNoBackendsRegisteredError("BackendFactory.InitializeFromXKMS")
+	}
+
+	if err := checkXKMSKeyNames(ctx, f.keyNameStore, registered); err != nil {
+		return err
 	}
 
 	return nil
