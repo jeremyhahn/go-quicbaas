@@ -182,6 +182,7 @@ import type {
   BootstrapBundleRequest,
   BootstrapBundleResponse,
   ClusterStatusResponse,
+  ListClusterNodesResponse,
   SessionEventEnvelope,
   SessionInfo,
   SpawnSessionRequest,
@@ -1199,6 +1200,11 @@ export interface ClusterClient {
   // health). In standalone (non-Raft) mode `shards` is empty and total_nodes
   // is 1. Maps to GET /api/v1/cluster/status.
   status(): Promise<ClusterStatusResponse>;
+  // listNodes returns the cluster's members with their address, Raft
+  // address, leadership, health, version and uptime. `nodes` is always an
+  // array (empty when the server reports none). Maps to
+  // GET /api/v1/cluster/nodes.
+  listNodes(): Promise<ListClusterNodesResponse>;
 }
 
 // advertises a different verification mechanism. Paths: /api/v1/bootstrap.
