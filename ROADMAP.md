@@ -44,6 +44,7 @@ Layer 4 of the stack, one product in layers: the application-layer framework and
 - **bootstrap** — first-boot re-entry delivers the admin credential — DC: [#64](../../issues/64) — open
 - **cluster** — no hardcoded bind, advertise or upstream addresses — DC: [#185](../../issues/185) — open
 - **codec** — the unused own codec package is removed — [#1321](../../pulls/1321) — blocked: held for the owner's word
+- **daemon-rest-plane-authentication-and-authorisation** — go-trusted-platform's daemon REST plane authenticates and authorises with go-quicbaas IAM, JWT, WebAuthn, PIV, mTLS and RBAC/ABAC through `sdk/go`, with no auth model of its own; non-system tenant login through the SDK — [docs/SPEC.md](docs/SPEC.md) — open
 - **data-encryption-keys** — re-export go-qrdb's DEK service; the own DEK store is removed — [#1321](../../pulls/1321) — blocked: held for the owner's word
 - **data-services** — the own data clients and the second store beside the qrdb node are removed — [#1321](../../pulls/1321) — blocked: held for the owner's word
 - **deployment** — every node runs one go-quicbaas tag; formation, smoke and failover pass with a re-runnable suite — [milestone 32](../../milestone/32) — done
@@ -71,6 +72,7 @@ Layer 4 of the stack, one product in layers: the application-layer framework and
 - **service-policy** — policy as signed data with one Go engine — DC: [#1347](../../issues/1347) — blocked: see issue
 - **transparency-log** — go-quicbaas's records appended to go-xkms's transparency log through `sdk/go` — DC: [#1341](../../issues/1341) — blocked: waits on go-xkms's transparency log
 - **release-signing-key** — the tenant release signing key as the default signer of images and CoRIM, with a key named per repository, re-exported through `sdk/go` — DC: [#1834](../../issues/1834) — blocked: waits on go-xkms#1697
+- **devices** — the go-xkms device permission family and the tenant-scoped paired-device registry re-exported through the mounted xkms module; no device permission or registry of go-quicbaas's own — [docs/SPEC.md](docs/SPEC.md) — blocked: code lands after the release candidate
 
 ## Future
 - **identity-refactor** — the identity surface layered over go-qrdb's primitives; authentication on UI routes — [docs/SPEC.md](docs/SPEC.md) — open
