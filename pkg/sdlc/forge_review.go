@@ -203,6 +203,7 @@ func (v *ReviewValidator) round(ctx context.Context, job *orchestration.JobConte
 		Reviews:             delivery.Reviews,
 		Checks:              delivery.Checks,
 		AuthorModelFamilies: agents.authorFamilies,
+		AuthorLogin:         pr.Author,
 		Draft:               delivery.PullRequest.Draft,
 		Advisory:            advisory,
 	})

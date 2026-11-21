@@ -1781,6 +1781,7 @@ func (s *reviewRun) recordGate(ctx context.Context) error {
 		Reviews:             records,
 		Checks:              checkRecordsFor(checks, s.headSHA, now),
 		AuthorModelFamilies: s.agents.authorFamilies,
+		AuthorLogin:         s.pr.Author,
 		Draft:               s.pr.Draft,
 		Advisory:            s.binding.AdvisoryReviewers(),
 	})
