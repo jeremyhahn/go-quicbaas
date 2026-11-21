@@ -16,10 +16,18 @@
 package init
 
 import (
+	"context"
+	"encoding/pem"
 	"errors"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"slices"
+	"sync"
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -121,5 +129,55 @@ func TestAllocPortBundle_QUICRowIsTheRESTPort(t *testing.T) {
 	restRow := allocPortBundle(t, "rest", t.TempDir())
 	if restRow.QUIC != 0 {
 		t.Errorf("rest row: QUIC port = %d, want 0", restRow.QUIC)
+	}
+}
+
+// TestNewSDKClient_MCPPresentsAdminToken pins the credential the matrices'
+// MCP liveness carries. go-qrdb's MCP server refuses an uncredentialed
+// initialize (CA ruling 571), so an MCP client dialled without the
+// administrator's session is refused on every backend; the client
+// newSDKClient builds must present the token on initialize.
+func TestNewSDKClient_MCPPresentsAdminToken(t *testing.T) {
+	const adminToken = "first-boot-admin-session"
+
+	var mu sync.Mutex
+	var seen []string
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		seen = append(seen, r.Header.Get("Authorization"))
+		mu.Unlock()
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	dataDir := t.TempDir()
+	certsDir := filepath.Join(dataDir, "certs")
+	if err := os.MkdirAll(certsDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw})
+	if err := os.WriteFile(filepath.Join(certsDir, "ca-chain.crt"), caPEM, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	port := srv.Listener.Addr().(*net.TCPAddr).Port
+
+	client, err := newSDKClient("mcp", PortBundle{MCP: port}, dataDir, adminToken)
+	if err != nil {
+		t.Fatalf("newSDKClient(mcp): %v", err)
+	}
+	defer func() { _ = client.Close() }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	// The stub refuses everything; the assertion is on what was sent.
+	_, _ = client.Transport().Request(ctx, "quicbaas.Health", "Liveness", struct{}{})
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(seen) == 0 {
+		t.Fatal("the MCP client sent no request")
+	}
+	if want := "Bearer " + adminToken; seen[0] != want {
+		t.Errorf("MCP initialize Authorization = %q, want %q", seen[0], want)
 	}
 }
