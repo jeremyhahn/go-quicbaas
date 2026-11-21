@@ -83,22 +83,17 @@ func (p *qrdbDataRegistryProxy) MVCCService(tenant, db string) (qrdbservice.MVCC
 	return reg.MVCCService(tenant, db)
 }
 
-// WatchService resolves the node's watch service for (tenant, db).
-func (p *qrdbDataRegistryProxy) WatchService(tenant, db string) (qrdbservice.WatchServicer, error) {
-	reg, err := p.current()
-	if err != nil {
-		return nil, err
-	}
-	return reg.WatchService(tenant, db)
+// WatchService refuses: watch is outside the data-services surface (KV,
+// batch, transaction, MVCC, collections and index), so the socket never
+// serves the node's watch service, even with authorization off.
+func (p *qrdbDataRegistryProxy) WatchService(_, _ string) (qrdbservice.WatchServicer, error) {
+	return nil, &qrdbservice.CapabilityUnsupportedError{Message: "watch service is not served on this socket: outside the data-services surface"}
 }
 
-// LeaseService resolves the node's lease service for (tenant, db).
-func (p *qrdbDataRegistryProxy) LeaseService(tenant, db string) (qrdbservice.LeaseServicer, error) {
-	reg, err := p.current()
-	if err != nil {
-		return nil, err
-	}
-	return reg.LeaseService(tenant, db)
+// LeaseService refuses: leases are outside the data-services surface, so the
+// socket never serves the node's lease service, even with authorization off.
+func (p *qrdbDataRegistryProxy) LeaseService(_, _ string) (qrdbservice.LeaseServicer, error) {
+	return nil, &qrdbservice.CapabilityUnsupportedError{Message: "lease service is not served on this socket: outside the data-services surface"}
 }
 
 // IndexService resolves the node's index service for (tenant, db).
@@ -182,13 +177,10 @@ func (p *qrdbDataRegistryProxy) CollectionService(tenant, db string) (qrdbservic
 	return reg.CollectionService(tenant, db)
 }
 
-// LockService resolves the node's lock service for (tenant, db).
-func (p *qrdbDataRegistryProxy) LockService(tenant, db string) (qrdbservice.LockServicer, error) {
-	reg, err := p.current()
-	if err != nil {
-		return nil, err
-	}
-	return reg.LockService(tenant, db)
+// LockService refuses: locks are outside the data-services surface, so the
+// socket never serves the node's lock service, even with authorization off.
+func (p *qrdbDataRegistryProxy) LockService(_, _ string) (qrdbservice.LockServicer, error) {
+	return nil, &qrdbservice.CapabilityUnsupportedError{Message: "lock service is not served on this socket: outside the data-services surface"}
 }
 
 var _ qrdbservice.Registry = (*qrdbDataRegistryProxy)(nil)

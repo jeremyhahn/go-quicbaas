@@ -81,8 +81,9 @@ func qrdbWiredMethod(name string) bool {
 
 // qrdbDataSurfaceMethods is the registry-dispatched QRDBService data
 // surface the server serves on the Unix socket through its data-registry
-// proxy: KV, MVCC, transaction, batch, watch, lease, lock, index,
-// timeseries, vector and collection calls.
+// proxy: KV, MVCC, transaction, batch, index, timeseries, vector and
+// collection calls. Watch, lease and lock calls are not part of it: they stay
+// default-denied.
 var qrdbDataSurfaceMethods = map[string]bool{
 	// KV
 	"Put": true, "PutIfAbsent": true, "CompareAndSwap": true, "Get": true,
@@ -91,14 +92,8 @@ var qrdbDataSurfaceMethods = map[string]bool{
 	"PutWithLease": true, "GetRevision": true, "GetAtRevision": true,
 	"Range": true, "Compact": true, "CurrentRevision": true,
 	"RestoreToRevision": true,
-	// Transaction, batch, watch
-	"Transaction": true, "Batch": true, "BatchImport": true, "Watch": true,
-	// Lease
-	"LeaseGrant": true, "LeaseRevoke": true, "LeaseKeepAlive": true,
-	"LeaseTimeToLive": true, "LeaseList": true,
-	// Locks
-	"LockAcquire": true, "LockTryLock": true, "LockRelease": true,
-	"LockExtend": true, "LockStatus": true, "LockList": true,
+	// Transaction, batch
+	"Transaction": true, "Batch": true, "BatchImport": true,
 	// Index
 	"IndexCreate": true, "IndexDrop": true, "IndexQuery": true,
 	"IndexScan": true, "IndexList": true,
@@ -128,7 +123,7 @@ var qrdbDataSurfaceMethods = map[string]bool{
 // method to the permission qrdb itself declares in the method's
 // (qrdb.v1.permission) proto option.
 func TestQRDBGRPCPermissions_DataMethodsMatchQRDBProto(t *testing.T) {
-	require.Len(t, qrdbDataSurfaceMethods, 74)
+	require.Len(t, qrdbDataSurfaceMethods, 62)
 	sd := qrdbServiceDescriptor(t, "qrdb.v1.QRDBService")
 	for name := range qrdbDataSurfaceMethods {
 		md := sd.Methods().ByName(protoreflect.Name(name))
@@ -580,6 +575,11 @@ func TestQRDBUnwiredSurface_DefaultDenied(t *testing.T) {
 		"/qrdb.v1.QRDBService/Peers",
 		"/qrdb.v1.QRDBService/CreateRole",
 		"/qrdb.v1.QRDBService/SQLQuery",
+		"/qrdb.v1.QRDBService/Watch",
+		"/qrdb.v1.QRDBService/LeaseGrant",
+		"/qrdb.v1.QRDBService/LeaseKeepAlive",
+		"/qrdb.v1.QRDBService/LockAcquire",
+		"/qrdb.v1.QRDBService/LockRelease",
 	} {
 		_, _, mapped := grpcResourceAndAction(method)
 		assert.False(t, mapped, method)

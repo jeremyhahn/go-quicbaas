@@ -15,6 +15,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -25,6 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 	ggrpc "google.golang.org/grpc"
 
+	qrdbservice "github.com/jeremyhahn/go-qrdb/pkg/service"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	unixtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport/unix"
@@ -91,4 +93,25 @@ func qrdbUnixDataClient(t *testing.T) (context.Context, *qrdbsdk.Client) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = cl.Close() })
 	return ctx, cl
+}
+
+// TestQRDBDataRegistryProxy_RefusesOutOfRowServices pins that the registry
+// proxy refuses the watch, lease and lock services: they are outside the
+// data-services surface, so the Unix socket never serves them, whether or not
+// authorization is on.
+func TestQRDBDataRegistryProxy_RefusesOutOfRowServices(t *testing.T) {
+	p := newQRDBDataRegistryProxy(&Server{})
+	var unsupported *qrdbservice.CapabilityUnsupportedError
+
+	watch, err := p.WatchService("system", "system")
+	require.Nil(t, watch)
+	require.True(t, errors.As(err, &unsupported), "watch: %v", err)
+
+	lease, err := p.LeaseService("system", "system")
+	require.Nil(t, lease)
+	require.True(t, errors.As(err, &unsupported), "lease: %v", err)
+
+	lock, err := p.LockService("system", "system")
+	require.Nil(t, lock)
+	require.True(t, errors.As(err, &unsupported), "lock: %v", err)
 }
