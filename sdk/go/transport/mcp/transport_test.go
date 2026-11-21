@@ -18,8 +18,12 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
+
+	mcpgo "github.com/mark3labs/mcp-go/mcp"
+	mcpserver "github.com/mark3labs/mcp-go/server"
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
@@ -163,10 +167,10 @@ func TestTransport_MapToToolName(t *testing.T) {
 		expected string
 	}{
 		// KV operations
-		{"quicbaas.KV", "Put", "qrdb_put"},
-		{"quicbaas.KV", "Get", "qrdb_get"},
-		{"quicbaas.KV", "Delete", "qrdb_delete"},
-		{"quicbaas.KV", "List", "qrdb_list"},
+		{"quicbaas.KV", "Put", "quicbaas_kv_put"},
+		{"quicbaas.KV", "Get", "quicbaas_kv_get"},
+		{"quicbaas.KV", "Delete", "quicbaas_kv_delete"},
+		{"quicbaas.KV", "List", "quicbaas_kv_list"},
 
 		// Batch operations
 		{"quicbaas.Batch", "Put", "quicbaas_batch_put"},
@@ -297,7 +301,7 @@ func TestTransport_MapToToolName(t *testing.T) {
 		{"quicbaas.IAM.Audit", "Log", "quicbaas_iam_audit_log"},
 
 		// Without package prefix
-		{"KV", "Put", "qrdb_put"},
+		{"KV", "Put", "quicbaas_kv_put"},
 		{"Health", "Check", "qrdb_health"},
 
 		// Unknown service (default mapping)
@@ -704,6 +708,48 @@ func TestMinDuration(t *testing.T) {
 		if result != tc.expected {
 			t.Errorf("minDuration(%v, %v) = %v, expected %v", tc.a, tc.b, result, tc.expected)
 		}
+	}
+}
+
+// TestRequestWithRetry_ContextEndsDuringBackoffKeepsLastError checks that a
+// retry ended by its context still reports why the attempt before it failed:
+// the error keeps CodeCanceled and names the last attempt's error.
+func TestRequestWithRetry_ContextEndsDuringBackoffKeepsLastError(t *testing.T) {
+	const attemptMsg = "shard-7 leader unreachable"
+
+	srv := mcpserver.NewMCPServer("TestServer", "1.0.0")
+	srv.AddTool(mcpgo.NewTool("quicbaas_kv_get"), func(context.Context, mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+		res := mcpgo.NewToolResultError(attemptMsg)
+		res.StructuredContent = ToolError{Code: MCPServiceUnavailable}
+		return res, nil
+	})
+	httpSrv := mcpserver.NewTestStreamableHTTPServer(srv)
+	defer httpSrv.Close()
+
+	tr, err := New(&transport.Config{
+		Address:         httpSrv.URL,
+		Timeout:         time.Second,
+		MaxRetries:      10,
+		RetryBackoff:    5 * time.Second, // the context ends during this wait
+		MaxRetryBackoff: 5 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer tr.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	_, err = tr.Request(ctx, "quicbaas.KV", "Get", map[string]interface{}{"id": 123})
+	if err == nil {
+		t.Fatal("expected an error once the context ended")
+	}
+	if got := errors.Code(err); got != errors.CodeCanceled {
+		t.Errorf("errors.Code(err) = %v, want %v (err: %v)", got, errors.CodeCanceled, err)
+	}
+	if !strings.Contains(err.Error(), attemptMsg) {
+		t.Errorf("error %q does not name the last attempt's error %q", err.Error(), attemptMsg)
 	}
 }
 
