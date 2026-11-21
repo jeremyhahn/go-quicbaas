@@ -35,9 +35,37 @@ import (
 // node's data services: a go-qrdb client over the socket writes and reads a
 // key instead of getting Unimplemented.
 func TestServer_QRDBServiceOnUnixSocket_ServesNodeData(t *testing.T) {
+	ctx, cl := qrdbUnixDataClient(t)
+
+	require.NoError(t, cl.KV().Put(ctx, "row1652/unix", []byte("v")))
+	got, err := cl.KV().Get(ctx, "row1652/unix")
+	require.NoError(t, err)
+	require.Equal(t, "v", string(got))
+}
+
+// TestServer_QRDBServiceOnUnixSocket_HonoursDatabaseScope proves the Unix
+// chain carries the client's x-qrdb-database selection to the data
+// services: a client scoped to another database must not read the
+// system database.
+func TestServer_QRDBServiceOnUnixSocket_HonoursDatabaseScope(t *testing.T) {
+	ctx, cl := qrdbUnixDataClient(t)
+
+	require.NoError(t, cl.KV().Put(ctx, "row1652/scope", []byte("v")))
+	scoped, err := cl.DatabaseScoped("nope1652")
+	require.NoError(t, err)
+	got, err := scoped.KV().Get(ctx, "row1652/scope")
+	require.Error(t, err, "a client scoped to a missing database read %q from the system database", got)
+}
+
+// qrdbUnixDataClient serves the node's qrdb service on a Unix socket
+// through the server's own gRPC interceptor chain and returns a qrdb SDK
+// client connected to it.
+func qrdbUnixDataClient(t *testing.T) (context.Context, *qrdbsdk.Client) {
+	t.Helper()
 	srv := withTempServer(t)
 	require.NoError(t, srv.initStandaloneQRDBNode(), "initStandaloneQRDBNode")
 	t.Cleanup(func() { _ = srv.stopQRDBNode() })
+	srv.dataPlaneBarrierPending.Store(false)
 
 	dir, err := os.MkdirTemp("", "qb1652")
 	require.NoError(t, err)
@@ -45,7 +73,9 @@ func TestServer_QRDBServiceOnUnixSocket_ServesNodeData(t *testing.T) {
 	sock := filepath.Join(dir, "q.sock")
 	lis, err := net.Listen("unix", sock)
 	require.NoError(t, err)
-	gs := ggrpc.NewServer()
+	u, st, err := srv.grpcServerInterceptors()
+	require.NoError(t, err)
+	gs := ggrpc.NewServer(ggrpc.ChainUnaryInterceptor(u...), ggrpc.ChainStreamInterceptor(st...))
 	srv.registerQRDBService(gs)
 	go func() { _ = gs.Serve(lis) }()
 	t.Cleanup(gs.Stop)
@@ -53,16 +83,12 @@ func TestServer_QRDBServiceOnUnixSocket_ServesNodeData(t *testing.T) {
 	tr, err := unixtransport.New(qrdbtransport.WithAddress(sock))
 	require.NoError(t, err)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	t.Cleanup(cancel)
 	if err := tr.Connect(ctx); err != nil && !strings.Contains(err.Error(), "health check failed") {
 		t.Fatal(err)
 	}
 	cl, err := qrdbsdk.NewClient(tr)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = cl.Close() })
-
-	require.NoError(t, cl.KV().Put(ctx, "row1652/unix", []byte("v")))
-	got, err := cl.KV().Get(ctx, "row1652/unix")
-	require.NoError(t, err)
-	require.Equal(t, "v", string(got))
+	return ctx, cl
 }
