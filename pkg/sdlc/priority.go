@@ -64,11 +64,38 @@ func (in PriorityInputs) Computed() int {
 // priority:low issue must sort below every unlabelled one, including those at
 // the floor, and a priority:critical one above every unlabelled one at the
 // ceiling.
+//
+// Two shifts read the issue rather than its priority:* label, through
+// ComputedForIssue. A release-blocker or release-candidate label lifts an
+// issue above every priority:critical one, even one at the ceiling: the
+// release waits on it. A milestone lifts an issue by less than the gap
+// between two tiers, so it orders issues inside one tier and never carries
+// one past the next tier up.
 const (
 	PriorityShiftCritical = 600
 	PriorityShiftHigh     = 300
 	PriorityShiftLow      = -300
+
+	PriorityShiftReleaseBlocker = 1600
+	PriorityShiftMilestone      = 100
 )
+
+// releaseBlockerLabels are the labels that mark an issue a release waits on.
+// They match case-insensitively after trimming, like the priority:* labels.
+var releaseBlockerLabels = map[string]bool{
+	"release-blocker":   true,
+	"release-candidate": true,
+}
+
+// hasReleaseBlockerLabel reports whether any label marks a release blocker.
+func hasReleaseBlockerLabel(labels []string) bool {
+	for _, label := range labels {
+		if releaseBlockerLabels[strings.ToLower(strings.TrimSpace(label))] {
+			return true
+		}
+	}
+	return false
+}
 
 // priorityLabelShifts maps a repository's priority:* label to its shift.
 // "priority:normal", like no label at all, shifts nothing.
@@ -105,6 +132,30 @@ func (in PriorityInputs) ComputedFor(labels []string) int {
 		return base
 	}
 	return clamp(base+shift, ComputedFloor+PriorityShiftLow, ComputedCeiling+PriorityShiftCritical)
+}
+
+// ComputedForIssue is the priority of one forge issue: ComputedFor its
+// labels, lifted by PriorityShiftReleaseBlocker when a release label is
+// present and by PriorityShiftMilestone when the issue is in a milestone. An
+// issue with neither is exactly ComputedFor(issue.Labels); a nil issue is
+// Computed.
+func (in PriorityInputs) ComputedForIssue(issue *ForgeIssue) int {
+	if issue == nil {
+		return in.Computed()
+	}
+	base := in.ComputedFor(issue.Labels)
+	shift := 0
+	if hasReleaseBlockerLabel(issue.Labels) {
+		shift += PriorityShiftReleaseBlocker
+	}
+	if strings.TrimSpace(issue.Milestone) != "" {
+		shift += PriorityShiftMilestone
+	}
+	if shift == 0 {
+		return base
+	}
+	return clamp(base+shift, ComputedFloor+PriorityShiftLow,
+		ComputedCeiling+PriorityShiftCritical+PriorityShiftReleaseBlocker+PriorityShiftMilestone)
 }
 
 func saturatingAdd(radius, weight, offset int) int {

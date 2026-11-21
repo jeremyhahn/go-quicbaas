@@ -264,7 +264,7 @@ func (s *IssueSource) Poll(ctx context.Context, project *orchestration.Project) 
 			},
 			Subject:     strings.TrimSpace(issue.Title),
 			Description: contract,
-			Priority:    inputs.ComputedFor(issue.Labels),
+			Priority:    inputs.ComputedForIssue(issue),
 			Runner:      JobRunnerName,
 			Park:        park,
 			Metadata:    issueSpecMetadata(repo, binding, issue.Number, members),
