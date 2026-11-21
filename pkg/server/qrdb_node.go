@@ -223,6 +223,14 @@ func buildQRDBConfig(cfg *config.Config, clusterMode bool) (*qrdbsdk.DaemonConfi
 		if qcfg.Protocols.MCP {
 			qcfg.MCP.Port = cfg.Server.MCP.Port
 		}
+		// The local Unix socket is the node's too: its Unix listener serves
+		// the node's services and the capability modules behind the SAME
+		// authentication middleware as its gRPC TCP listener, so a Unix
+		// caller is admitted or refused exactly as over TCP.
+		if cfg.Server.Unix.Socket != "" {
+			qcfg.Protocols.Unix = true
+			qcfg.Unix.SocketPath = cfg.Server.Unix.Socket
+		}
 	}
 
 	if !clusterMode {
@@ -650,6 +658,8 @@ func (s *Server) unifiedModuleServerOptions(serverOpts []qrdbsdk.ServerOption, s
 	s.tenantUnsealRouter = newTenantUnsealRouter(s.rawQRDBTenantServicer, s.buildTenantBarrierService)
 	serverOpts = append(serverOpts, qrdbserver.WithTenantService(s.tenantUnsealRouter))
 	serverOpts = append(serverOpts, s.nodeBarrierServerOptions(sealEnabled)...)
+	// Compose go-qrdb's embedding service on REST, gRPC, QUIC, Unix and MCP.
+	serverOpts = append(serverOpts, s.qrdbEmbeddingServerOptions()...)
 
 	module, err := s.newQuicBaaSModule()
 	if err != nil {
@@ -752,6 +762,17 @@ func (s *Server) unifiedModuleServerOptions(serverOpts []qrdbsdk.ServerOption, s
 			s.logger.Info("qrdb node: mounting host capability module", "module", hostModule.Name())
 			serverOpts = append(serverOpts, qrdbsdk.WithModule(hostModule))
 		}
+	}
+
+	// The node's Unix socket keeps the legacy listener's modes: its
+	// directory is created 0750 before the node is built, and the
+	// unixSocketModeModule's Start hook sets the socket 0660 after every
+	// server start, recycles included.
+	if s.nodeServesUnixSocket() {
+		if err := prepareNodeUnixSocketDir(s.config.Server.Unix.Socket); err != nil {
+			return nil, &QRDBNodeError{Stage: "prepare unix socket directory", Cause: err}
+		}
+		serverOpts = append(serverOpts, qrdbsdk.WithModule(&unixSocketModeModule{socket: s.config.Server.Unix.Socket}))
 	}
 
 	// Unified API server TLS: qrdb's transports are TLS-only and take their
