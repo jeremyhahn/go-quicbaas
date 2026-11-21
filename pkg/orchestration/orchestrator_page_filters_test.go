@@ -282,9 +282,9 @@ func TestListWorkflowsPage_NarrowsOnProjectAndMode(t *testing.T) {
 	svc := pagedTestService(t)
 	ctx := ContextWithTenant(context.Background(), "tenant-1")
 	definitions := []*WorkflowDefinition{
-		{Name: "alpha", Mode: WorkflowModeCanned, ProjectID: "proj-a", Agents: []AgentRoleSpec{{Role: "lead", Backend: "claude"}}},
+		{Name: "alpha", Mode: WorkflowModeConstrained, ProjectID: "proj-a", Agents: []AgentRoleSpec{{Role: "lead", Backend: "claude"}}},
 		{Name: "beta", Mode: WorkflowModeAutonomous, ProjectID: "proj-a", Agents: []AgentRoleSpec{{Role: "worker", Backend: "claude"}}},
-		{Name: "gamma", Mode: WorkflowModeCanned, ProjectID: "proj-b", Agents: []AgentRoleSpec{{Role: "lead", Backend: "claude"}}},
+		{Name: "gamma", Mode: WorkflowModeConstrained, ProjectID: "proj-b", Agents: []AgentRoleSpec{{Role: "lead", Backend: "claude"}}},
 	}
 	for _, definition := range definitions {
 		if err := svc.RegisterWorkflow(ctx, definition); err != nil {
@@ -292,7 +292,7 @@ func TestListWorkflowsPage_NarrowsOnProjectAndMode(t *testing.T) {
 		}
 	}
 
-	page, err := svc.ListWorkflowsPage(ctx, &WorkflowFilter{ProjectID: "proj-a", Mode: WorkflowModeCanned}, &Page{})
+	page, err := svc.ListWorkflowsPage(ctx, &WorkflowFilter{ProjectID: "proj-a", Mode: WorkflowModeConstrained}, &Page{})
 	if err != nil {
 		t.Fatalf("ListWorkflowsPage() error = %v, want nil", err)
 	}

@@ -67,6 +67,23 @@ type daemonAgents struct {
 	// host is the fleet node the sessions run on: it provisions each
 	// spawn's named workspace under its OWN projects root.
 	host executingHost
+
+	// policy is the operator's lifecycle policy the daemon carries
+	// (orchestration.JobLifecyclePolicyProvider).
+	policy orchestration.JobLifecyclePolicy
+}
+
+// JobLifecyclePolicy implements orchestration.JobLifecyclePolicyProvider.
+func (d *daemonAgents) JobLifecyclePolicy() orchestration.JobLifecyclePolicy {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.policy
+}
+
+func (d *daemonAgents) setLifecyclePolicy(p orchestration.JobLifecyclePolicy) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.policy = p
 }
 
 // newDaemonAgents is a fleet node whose projects root is its own — never the

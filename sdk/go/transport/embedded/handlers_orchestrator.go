@@ -156,7 +156,7 @@ func handleOrchestratorGetSessionConversation(ctx context.Context, svc service.Q
 	if !ok {
 		return nil, NewUnknownMethodError("quicbaas.Orchestrator", "GetSessionConversation")
 	}
-	page, err := orchestration.ReadSessionHistory(ctx, accessor.SessionEventLog(), &orchestration.SessionHistoryRequest{
+	page, err := orchestration.ReadSessionHistory(workflowTenantContext(ctx, r.TenantID), accessor.SessionEventLog(), &orchestration.SessionHistoryRequest{
 		TenantID:  r.TenantID,
 		SessionID: r.SessionID,
 		Cursor:    r.Cursor,
@@ -516,7 +516,7 @@ func handleOrchestratorCreateTask(ctx context.Context, svc service.QuicBaaS, req
 	if agentSvc == nil {
 		return nil, NewUnknownMethodError("quicbaas.Orchestrator", "CreateTask")
 	}
-	task, err := agentSvc.CreateTask(ctx, &orchestration.CreateTaskRequest{
+	task, err := agentSvc.CreateTask(workflowTenantContext(ctx, r.TenantID), &orchestration.CreateTaskRequest{
 		TenantID:      r.TenantID,
 		TeamName:      r.TeamName,
 		Subject:       r.Subject,
@@ -551,7 +551,7 @@ func handleOrchestratorGetTask(ctx context.Context, svc service.QuicBaaS, req in
 	if agentSvc == nil {
 		return nil, NewUnknownMethodError("quicbaas.Orchestrator", "GetTask")
 	}
-	task, err := agentSvc.GetTask(ctx, r.TenantID, r.TaskID)
+	task, err := agentSvc.GetTask(workflowTenantContext(ctx, r.TenantID), r.TenantID, r.TaskID)
 	if err != nil {
 		return nil, err
 	}
@@ -577,7 +577,7 @@ func handleOrchestratorListTasks(ctx context.Context, svc service.QuicBaaS, req 
 		return nil, err
 	}
 
-	tasks, err := agentSvc.ListTasksPage(ctx, r.TenantID, &orchestration.TaskFilter{
+	tasks, err := agentSvc.ListTasksPage(workflowTenantContext(ctx, r.TenantID), r.TenantID, &orchestration.TaskFilter{
 		Status:     orchestration.TaskStatus(r.Status),
 		TeamName:   r.TeamName,
 		AssignedTo: r.AssignedTo,
@@ -613,7 +613,7 @@ func handleOrchestratorClaimTask(ctx context.Context, svc service.QuicBaaS, req 
 	if agentSvc == nil {
 		return nil, NewUnknownMethodError("quicbaas.Orchestrator", "ClaimTask")
 	}
-	if err := agentSvc.ClaimTask(ctx, r.TenantID, r.TaskID, r.AgentID); err != nil {
+	if err := agentSvc.ClaimTask(workflowTenantContext(ctx, r.TenantID), r.TenantID, r.TaskID, r.AgentID); err != nil {
 		return nil, err
 	}
 	return &orchestratorSDK.ClaimTaskResponse{
@@ -633,7 +633,7 @@ func handleOrchestratorBlockTask(ctx context.Context, svc service.QuicBaaS, req 
 	if agentSvc == nil {
 		return nil, NewUnknownMethodError("quicbaas.Orchestrator", "BlockTask")
 	}
-	if err := agentSvc.BlockTask(ctx, r.TenantID, r.TaskID, orchestration.TaskBlockKind(r.Kind), r.Reason); err != nil {
+	if err := agentSvc.BlockTask(workflowTenantContext(ctx, r.TenantID), r.TenantID, r.TaskID, orchestration.TaskBlockKind(r.Kind), r.Reason); err != nil {
 		return nil, err
 	}
 	return &orchestratorSDK.BlockTaskResponse{
@@ -653,7 +653,7 @@ func handleOrchestratorReadmitTask(ctx context.Context, svc service.QuicBaaS, re
 	if agentSvc == nil {
 		return nil, NewUnknownMethodError("quicbaas.Orchestrator", "ReadmitTask")
 	}
-	if err := agentSvc.ReadmitTask(ctx, r.TenantID, r.TaskID); err != nil {
+	if err := agentSvc.ReadmitTask(workflowTenantContext(ctx, r.TenantID), r.TenantID, r.TaskID); err != nil {
 		return nil, err
 	}
 	return &orchestratorSDK.ReadmitTaskResponse{
@@ -693,7 +693,7 @@ func handleOrchestratorAttentionList(ctx context.Context, svc service.QuicBaaS, 
 	if sdlcSvc == nil || sdlcSvc.Attention() == nil {
 		return nil, NewUnknownMethodError("quicbaas.Orchestrator", "AttentionList")
 	}
-	result, err := sdlcSvc.Attention().List(ctx, r.TenantID,
+	result, err := sdlcSvc.Attention().List(workflowTenantContext(ctx, r.TenantID), r.TenantID,
 		sdlc.AttentionFilter{ProjectID: r.ProjectID, Kind: sdlc.AttentionKind(r.Kind)},
 		pageFromSDK(r.Params))
 	if err != nil {
@@ -718,7 +718,7 @@ func handleOrchestratorAttentionResolve(ctx context.Context, svc service.QuicBaa
 	if sdlcSvc == nil || sdlcSvc.Attention() == nil {
 		return nil, NewUnknownMethodError("quicbaas.Orchestrator", "AttentionResolve")
 	}
-	item, err := sdlcSvc.Attention().Resolve(ctx, r.TenantID, r.TaskID, sdlc.AttentionResolution{
+	item, err := sdlcSvc.Attention().Resolve(workflowTenantContext(ctx, r.TenantID), r.TenantID, r.TaskID, sdlc.AttentionResolution{
 		Action: sdlc.AttentionAction(r.Action), Answer: r.Answer,
 	})
 	if err != nil {
@@ -737,7 +737,7 @@ func handleOrchestratorDeleteTask(ctx context.Context, svc service.QuicBaaS, req
 	if agentSvc == nil {
 		return nil, NewUnknownMethodError("quicbaas.Orchestrator", "DeleteTask")
 	}
-	if err := agentSvc.DeleteTask(ctx, r.TenantID, r.TaskID); err != nil {
+	if err := agentSvc.DeleteTask(workflowTenantContext(ctx, r.TenantID), r.TenantID, r.TaskID); err != nil {
 		return nil, err
 	}
 	return &orchestratorSDK.DeleteTaskResponse{
@@ -764,7 +764,7 @@ func handleOrchestratorCompleteTask(ctx context.Context, svc service.QuicBaaS, r
 			Metadata: r.Result.Metadata,
 		}
 	}
-	if err := agentSvc.CompleteTask(ctx, r.TenantID, r.TaskID, result); err != nil {
+	if err := agentSvc.CompleteTask(workflowTenantContext(ctx, r.TenantID), r.TenantID, r.TaskID, result); err != nil {
 		return nil, err
 	}
 	return &orchestratorSDK.CompleteTaskResponse{
@@ -799,7 +799,7 @@ func handleOrchestratorSubmitTaskArtifacts(ctx context.Context, svc service.Quic
 			Metadata: a.Metadata,
 		}
 	}
-	if err := agentSvc.SubmitTaskArtifacts(ctx, r.TenantID, r.TaskID, artifacts); err != nil {
+	if err := agentSvc.SubmitTaskArtifacts(workflowTenantContext(ctx, r.TenantID), r.TenantID, r.TaskID, artifacts); err != nil {
 		return nil, err
 	}
 	return &orchestratorSDK.SubmitTaskArtifactsResponse{
@@ -818,7 +818,7 @@ func handleOrchestratorGetTaskArtifact(ctx context.Context, svc service.QuicBaaS
 	if agentSvc == nil {
 		return nil, NewUnknownMethodError("quicbaas.Orchestrator", "GetTaskArtifact")
 	}
-	artifact, err := agentSvc.GetTaskArtifact(ctx, r.TenantID, r.TaskID, r.Name)
+	artifact, err := agentSvc.GetTaskArtifact(workflowTenantContext(ctx, r.TenantID), r.TenantID, r.TaskID, r.Name)
 	if err != nil {
 		return nil, err
 	}
@@ -835,7 +835,7 @@ func handleOrchestratorListTaskArtifacts(ctx context.Context, svc service.QuicBa
 	if agentSvc == nil {
 		return nil, NewUnknownMethodError("quicbaas.Orchestrator", "ListTaskArtifacts")
 	}
-	result, err := orchestration.ListTaskArtifactsPage(ctx, agentSvc, r.TenantID, r.TaskID, pageFromSDK(r.Params))
+	result, err := orchestration.ListTaskArtifactsPage(workflowTenantContext(ctx, r.TenantID), agentSvc, r.TenantID, r.TaskID, pageFromSDK(r.Params))
 	if err != nil {
 		return nil, err
 	}
@@ -1040,7 +1040,7 @@ func handleOrchestratorStartJob(ctx context.Context, svc service.QuicBaaS, req i
 	if agentSvc == nil {
 		return nil, NewUnknownMethodError("quicbaas.Orchestrator", "StartJob")
 	}
-	resp, err := agentSvc.StartJob(ctx, &orchestration.StartJobRequest{
+	resp, err := agentSvc.StartJob(workflowTenantContext(ctx, r.TenantID), &orchestration.StartJobRequest{
 		TenantID:      r.TenantID,
 		Description:   r.Description,
 		Lead:          agentRefToDomain(r.Lead),
@@ -1074,7 +1074,7 @@ func handleOrchestratorGetJobStatus(ctx context.Context, svc service.QuicBaaS, r
 	if agentSvc == nil {
 		return nil, NewUnknownMethodError("quicbaas.Orchestrator", "GetJobStatus")
 	}
-	status, err := agentSvc.GetJobStatus(ctx, r.TenantID, r.JobID)
+	status, err := agentSvc.GetJobStatus(workflowTenantContext(ctx, r.TenantID), r.TenantID, r.JobID)
 	if err != nil {
 		return nil, err
 	}
@@ -1096,7 +1096,7 @@ func handleOrchestratorListJobs(ctx context.Context, svc service.QuicBaaS, req i
 		return nil, err
 	}
 
-	jobs, err := agentSvc.ListJobsPage(ctx, r.TenantID, &orchestration.JobFilter{
+	jobs, err := agentSvc.ListJobsPage(workflowTenantContext(ctx, r.TenantID), r.TenantID, &orchestration.JobFilter{
 		TaskID:    r.TaskID,
 		Runner:    r.Runner,
 		ProjectID: r.ProjectID,
@@ -1325,7 +1325,10 @@ func workflowFromSDK(workflow *orchestratorSDK.WorkflowDefinition) *orchestratio
 }
 
 // workflowTenantContext scopes ctx to tenantID, defaulting to the "default"
-// tenant exactly as ListWorkflows does.
+// tenant exactly as ListWorkflows does. Every embedded orchestrator handler
+// whose request carries a tenant calls the service through it, so the
+// tenant-routed KV resolves its backend from the context (the #820 class, see
+// handleOrchestratorGetSpendReport): the SDK client hands in a bare context.
 func workflowTenantContext(ctx context.Context, tenantID string) context.Context {
 	if tenantID == "" {
 		tenantID = "default"
@@ -1429,7 +1432,7 @@ func handleOrchestratorCancelJob(ctx context.Context, svc service.QuicBaaS, req 
 	if agentSvc == nil {
 		return nil, NewUnknownMethodError("quicbaas.Orchestrator", "CancelJob")
 	}
-	if err := agentSvc.CancelJob(ctx, r.TenantID, r.JobID); err != nil {
+	if err := agentSvc.CancelJob(workflowTenantContext(ctx, r.TenantID), r.TenantID, r.JobID); err != nil {
 		return nil, err
 	}
 	return &orchestratorSDK.CancelJobResponse{JobID: r.JobID, Cancelled: true}, nil

@@ -424,7 +424,7 @@ func TestListWorkflowsSuccess(t *testing.T) {
 	resp := &ListWorkflowsResponse{
 		Workflows: []*WorkflowDefinition{
 			{Name: "wf-a", Mode: WorkflowModeAutonomous},
-			{Name: "wf-b", Mode: WorkflowModeCanned},
+			{Name: "wf-b", Mode: WorkflowModeConstrained},
 		},
 		Count: 2,
 	}
@@ -625,7 +625,7 @@ func TestUpdateWorkflowValidation(t *testing.T) {
 }
 
 func TestUpdateWorkflowSuccess(t *testing.T) {
-	updated := &WorkflowDefinition{Name: "wf1", Mode: WorkflowModeCanned, Description: "updated"}
+	updated := &WorkflowDefinition{Name: "wf1", Mode: WorkflowModeConstrained, Description: "updated"}
 
 	mt := &mockTransport{
 		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {

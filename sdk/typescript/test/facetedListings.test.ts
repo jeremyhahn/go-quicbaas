@@ -186,10 +186,10 @@ describe('RestClient faceted filters', () => {
   it('sends the workflows and projects narrowings', async () => {
     fetchMock.mockResolvedValueOnce(mockOK({ workflows: [], total: 0, limit: 25, offset: 0 }));
     const client = new RestClient('https://q');
-    await client.orchestrator.listWorkflowsPage('acme', { project_id: 'proj-a', mode: 'canned' });
+    await client.orchestrator.listWorkflowsPage('acme', { project_id: 'proj-a', mode: 'constrained' });
     let query = queryOf(fetchMock);
     expect(query.get('project_id')).toBe('proj-a');
-    expect(query.get('mode')).toBe('canned');
+    expect(query.get('mode')).toBe('constrained');
 
     fetchMock.mockReset();
     fetchMock.mockResolvedValueOnce(mockOK({ projects: [], total: 0, limit: 25, offset: 0 }));

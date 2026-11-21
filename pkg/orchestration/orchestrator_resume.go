@@ -185,6 +185,15 @@ func (s *agentServiceImpl) LoadPersistedSessions(ctx context.Context) error {
 	// hands each record a context scoped to its owner.
 	err := s.eachSessionRecord(ctx, func(tenantCtx context.Context, record *SessionRecord) {
 		if record.Status == SessionStateClosed {
+			// A tombstone is not restored, but its log is made to agree with
+			// it: a conclusion whose log transition failed under an earlier
+			// daemon has no other path to its ending (#201). A repair that
+			// fails is logged and retried by the next boot or CloseSession;
+			// it does not hold the rest of the boot back.
+			if repairErr := s.repairConcludedLog(tenantCtx, record); repairErr != nil {
+				s.logger.Warnf("orchestration: session %s is closed and its log could not be ended: %s",
+					record.SessionID, repairErr.Error())
+			}
 			return
 		}
 

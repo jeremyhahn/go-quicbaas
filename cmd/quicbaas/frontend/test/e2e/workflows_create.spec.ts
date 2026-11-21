@@ -21,7 +21,7 @@
  * step is invalid (stepValid() returns false).
  *
  * MODE CHOICE — AUTONOMOUS:
- *   canned / constrained modes require a "lead" role agent (step2Valid() asserts
+ *   constrained mode requires a "lead" role agent (step2Valid() asserts
  *   agentForms.some(af => af.role === 'lead')).  Autonomous only requires
  *   agentForms.length > 0, making it the simplest path through step 2.
  *
