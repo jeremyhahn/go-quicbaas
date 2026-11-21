@@ -29,7 +29,7 @@ import (
 func TestMain(m *testing.M) {
 	// Wait for cluster to be ready
 	if !waitForClusterReady() {
-		fmt.Println("Cluster not ready, exiting")
+		fmt.Fprintln(os.Stderr, "Cluster not ready, exiting")
 		os.Exit(1)
 	}
 
@@ -71,7 +71,7 @@ func waitForClusterReady() bool {
 			}
 			resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
-				fmt.Println("Cluster is ready for cluster tests")
+				fmt.Fprintln(os.Stderr, "Cluster is ready for cluster tests")
 				return true
 			}
 		}
