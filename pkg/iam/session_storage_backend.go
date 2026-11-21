@@ -88,22 +88,67 @@ func (s *BackendSessionStorage) CreateSession(ctx context.Context, session *Sess
 	return s.kv.Put(ctx, sessionUserIdxKey(session.TenantID, session.UserID, session.ID), []byte(session.ID))
 }
 
-// GetSession decodes the tenant from the session ID, routes, and reads.
+// GetSession decodes the tenant from the session ID, routes, and reads. An ID
+// with no tenant prefix (the sid claim a token carries) is first resolved in
+// the context's tenant, where the session manager stored it tenant-encoded;
+// when no such record exists it is read from the system store, as before.
 func (s *BackendSessionStorage) GetSession(ctx context.Context, sessionID string) (*Session, error) {
 	tenantID, fullID := decodeTenantID(sessionID)
-	ctx = withTenant(ctx, tenantID)
+	if tenantID == systemTenantID {
+		if ctxTenant := contextTenant(ctx); ctxTenant != "" && ctxTenant != systemTenantID {
+			session, err := s.readSession(withTenant(ctx, ctxTenant), encodeTenantID(ctxTenant, sessionID))
+			if !dberrors.IsNotFound(err) {
+				return session, err
+			}
+		}
+	}
+	session, err := s.readSession(withTenant(ctx, tenantID), fullID)
+	if dberrors.IsNotFound(err) {
+		return nil, NewIAMError(ErrUserNotFound, "iam.session.storage.get", "session not found", nil)
+	}
+	return session, err
+}
+
+// readSession reads and decodes the record stored under fullID in ctx's
+// tenant. A missing record is the store's not-found error, unchanged.
+func (s *BackendSessionStorage) readSession(ctx context.Context, fullID string) (*Session, error) {
 	data, err := s.kv.Get(ctx, sessionRecKey(fullID))
 	if err != nil {
-		if dberrors.IsNotFound(err) {
-			return nil, NewIAMError(ErrUserNotFound, "iam.session.storage.get", "session not found", nil)
-		}
 		return nil, err
 	}
-	var session Session
-	if err := json.Unmarshal(data, &session); err != nil {
+	session, err := decodeSessionRecord(data)
+	if err != nil {
 		return nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.session.storage.get", Err: err}
 	}
 	return &session, nil
+}
+
+// decodeSessionRecord decodes a session record into a Session. The session
+// manager (BackendSessionExtStorage) writes the same keys with a SessionExt,
+// whose expiry and last activity are named expires_at and last_active; when
+// expires or last_activity is absent, those fields are used instead, so a
+// session-manager record does not read as expired.
+func decodeSessionRecord(data []byte) (Session, error) {
+	var session Session
+	if err := json.Unmarshal(data, &session); err != nil {
+		return Session{}, err
+	}
+	if session.Expires.IsZero() || session.LastActivity.IsZero() {
+		var ext struct {
+			ExpiresAt  time.Time `json:"expires_at"`
+			LastActive time.Time `json:"last_active"`
+		}
+		if err := json.Unmarshal(data, &ext); err != nil {
+			return Session{}, err
+		}
+		if session.Expires.IsZero() {
+			session.Expires = ext.ExpiresAt
+		}
+		if session.LastActivity.IsZero() {
+			session.LastActivity = ext.LastActive
+		}
+	}
+	return session, nil
 }
 
 // GetSessionsByUser routes by the explicit tenantID and returns the user's
@@ -123,8 +168,8 @@ func (s *BackendSessionStorage) GetSessionsByUser(ctx context.Context, tenantID 
 			}
 			return nil, err
 		}
-		var session Session
-		if json.Unmarshal(data, &session) != nil {
+		session, err := decodeSessionRecord(data)
+		if err != nil {
 			continue
 		}
 		if !session.IsExpired() {
@@ -165,8 +210,7 @@ func (s *BackendSessionStorage) DeleteSession(ctx context.Context, sessionID str
 		}
 		return err
 	}
-	var session Session
-	if json.Unmarshal(data, &session) == nil && session.UserID != 0 {
+	if session, err := decodeSessionRecord(data); err == nil && session.UserID != 0 {
 		_ = s.kv.Delete(ctx, sessionUserIdxKey(session.TenantID, session.UserID, fullID))
 	}
 	return s.kv.Delete(ctx, sessionRecKey(fullID))
@@ -194,8 +238,8 @@ func (s *BackendSessionStorage) DeleteExpiredSessions(ctx context.Context) (int,
 func (s *BackendSessionStorage) cleanupTenant(ctx context.Context) (int, error) {
 	var stale []*Session
 	if err := s.kv.Scan(ctx, keyPrefixSessionRec, func(_ string, value []byte) error {
-		var session Session
-		if json.Unmarshal(value, &session) != nil {
+		session, err := decodeSessionRecord(value)
+		if err != nil {
 			return nil
 		}
 		if session.IsExpired() {
