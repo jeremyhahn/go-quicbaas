@@ -17,7 +17,6 @@ import (
 	"context"
 	stderrors "errors"
 	"net"
-	"strings"
 	"testing"
 	"time"
 
@@ -311,15 +310,23 @@ func TestKeystoreCA_UnixKeepsTrustedCAService(t *testing.T) {
 	}
 }
 
-func TestKeystoreCA_UnixRefusesTCG(t *testing.T) {
+func TestKeystoreCA_UnixRoutesTCGToTrustedCAService(t *testing.T) {
 	srv := &recordingTrustedCAServer{}
 	tr := caTestTransport(startTrustedCAServer(t, srv), transport.AddressTypeUnix)
-	_, err := tr.Request(context.Background(), "quicbaas.TCGCA", "IssueEKCertificate",
-		&xkmstransport.IssueEKCertificateRequest{CommonName: "ek", EKPublicKey: []byte("EK")})
-	if !errors.IsUnimplemented(err) || !strings.Contains(err.Error(), "Unix socket") {
-		t.Errorf("TCGCA over Unix: err = %v, want Unimplemented naming the Unix socket", err)
+	out, err := tr.Request(context.Background(), "quicbaas.TCGCA", "IssueEKCertificate",
+		&xkmstransport.IssueEKCertificateRequest{CommonName: "ek", Organization: "org", EKPublicKey: []byte("EK"), TenantID: "t1"})
+	if err != nil {
+		t.Fatalf("TCGCA over Unix: %v", err)
 	}
-	if srv.got != nil {
-		t.Errorf("TrustedCAService got %#v, want no call", srv.got)
+	got, ok := srv.got.(*pb.TrustedCAIssueEKCertificateRequest)
+	if !ok {
+		t.Fatalf("TrustedCAService got %#v, want a TrustedCAIssueEKCertificateRequest", srv.got)
+	}
+	if got.CommonName != "ek" || got.Organization != "org" || string(got.EkPublicKey) != "EK" || got.TenantId != "t1" {
+		t.Errorf("TrustedCAService got %+v", got)
+	}
+	resp, ok := out.(*xkmstransport.IssueEKCertificateResponse)
+	if !ok || resp.SerialNumber != "0e" {
+		t.Errorf("IssueEKCertificate over Unix = %#v", out)
 	}
 }

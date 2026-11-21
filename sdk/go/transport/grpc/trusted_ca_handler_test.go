@@ -26,6 +26,7 @@ import (
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
 
 // recordingTrustedCAServer records each TrustedCAService request and answers
@@ -63,6 +64,29 @@ func (s *recordingTrustedCAServer) RevokeCertificate(_ context.Context, r *pb.Tr
 func (s *recordingTrustedCAServer) GenerateCRL(_ context.Context, r *pb.TrustedCAGenerateCRLRequest) (*pb.TrustedCAGenerateCRLResponse, error) {
 	s.got = r
 	return &pb.TrustedCAGenerateCRLResponse{CrlPem: []byte("CRL")}, nil
+}
+
+func (s *recordingTrustedCAServer) IssueEKCertificate(_ context.Context, r *pb.TrustedCAIssueEKCertificateRequest) (*pb.TrustedCAIssueEKCertificateResponse, error) {
+	s.got = r
+	return &pb.TrustedCAIssueEKCertificateResponse{CertificateDer: []byte("EKDER"), CertificatePem: []byte("EKPEM"), SerialNumber: "0e"}, nil
+}
+
+func (s *recordingTrustedCAServer) IssueAKCertificate(_ context.Context, r *pb.TrustedCAIssueAKCertificateRequest) (*pb.TrustedCAIssueAKCertificateResponse, error) {
+	s.got = r
+	return &pb.TrustedCAIssueAKCertificateResponse{CertificateDer: []byte("AKDER"), CertificatePem: []byte("AKPEM"), SerialNumber: "0f"}, nil
+}
+
+func (s *recordingTrustedCAServer) SignTCGCSR(_ context.Context, r *pb.TrustedCASignTCGCSRRequest) (*pb.TrustedCASignTCGCSRResponse, error) {
+	s.got = r
+	return &pb.TrustedCASignTCGCSRResponse{IakCertDer: []byte("IAK"), IdevidCertDer: []byte("IDEVID")}, nil
+}
+
+func (s *recordingTrustedCAServer) EnrollDevice(_ context.Context, r *pb.TrustedCAEnrollDeviceRequest) (*pb.TrustedCAEnrollDeviceResponse, error) {
+	s.got = r
+	return &pb.TrustedCAEnrollDeviceResponse{
+		IakCertDer: []byte("IAK"), IdevidCertDer: []byte("IDEVID"),
+		CredentialBlob: []byte("BLOB"), EncryptedSecret: []byte("ENC"), PlainSecret: []byte("PLAIN"),
+	}, nil
 }
 
 // IsRevoked is left to UnimplementedTrustedCAServiceServer so the error path
@@ -154,6 +178,69 @@ func TestTrustedCAHandler_RoundTrip(t *testing.T) {
 
 	if out := call("GenerateCRL", &xkmstransport.GenerateCRLRequest{TenantID: "t1"}).(*xkmstransport.GenerateCRLResponse); string(out.CRLPEM) != "CRL" {
 		t.Fatalf("GenerateCRL = %+v", out)
+	}
+}
+
+// TestTrustedCAHandler_TCGRoundTrip drives the four TCG CA verbs over the
+// Unix transport and proves each reaches TrustedCAService with its fields
+// mapped, and that the response comes back mapped.
+func TestTrustedCAHandler_TCGRoundTrip(t *testing.T) {
+	srv := &recordingTrustedCAServer{}
+	tr := caTestTransport(startTrustedCAServer(t, srv), transport.AddressTypeUnix)
+	ctx := context.Background()
+	call := func(method string, req interface{}) interface{} {
+		t.Helper()
+		out, err := tr.Request(ctx, "quicbaas.TCGCA", method, req)
+		if err != nil {
+			t.Fatalf("%s: %v", method, err)
+		}
+		return out
+	}
+
+	ek := call("IssueEKCertificate", &xkmstransport.IssueEKCertificateRequest{
+		CommonName: "ek", Organization: "org", EKPublicKey: []byte("EKPUB"), TenantID: "t1",
+	}).(*xkmstransport.IssueEKCertificateResponse)
+	if string(ek.CertificateDER) != "EKDER" || string(ek.CertificatePEM) != "EKPEM" || ek.SerialNumber != "0e" {
+		t.Fatalf("IssueEKCertificate = %+v", ek)
+	}
+	if got := srv.got.(*pb.TrustedCAIssueEKCertificateRequest); got.CommonName != "ek" || got.Organization != "org" ||
+		string(got.EkPublicKey) != "EKPUB" || got.TenantId != "t1" {
+		t.Fatalf("server got %+v", got)
+	}
+
+	ak := call("IssueAKCertificate", &xkmstransport.IssueAKCertificateRequest{
+		CommonName: "ak", Organization: "org", PublicKey: []byte("AKPUB"), TenantID: "t1",
+	}).(*xkmstransport.IssueAKCertificateResponse)
+	if string(ak.CertificateDER) != "AKDER" || string(ak.CertificatePEM) != "AKPEM" || ak.SerialNumber != "0f" {
+		t.Fatalf("IssueAKCertificate = %+v", ak)
+	}
+	if got := srv.got.(*pb.TrustedCAIssueAKCertificateRequest); got.CommonName != "ak" || got.Organization != "org" ||
+		string(got.PublicKey) != "AKPUB" || got.TenantId != "t1" {
+		t.Fatalf("server got %+v", got)
+	}
+
+	signed := call("SignTCGCSR", &xkmstransport.SignTCGCSRRequest{
+		CommonName: "dev", Organization: "org", TCGCSR: []byte("CSR"), TenantID: "t1",
+	}).(*xkmstransport.SignTCGCSRResponse)
+	if string(signed.IAKCertDER) != "IAK" || string(signed.IDevIDCertDER) != "IDEVID" {
+		t.Fatalf("SignTCGCSR = %+v", signed)
+	}
+	if got := srv.got.(*pb.TrustedCASignTCGCSRRequest); got.CommonName != "dev" || got.Organization != "org" ||
+		string(got.TcgCsr) != "CSR" || got.TenantId != "t1" {
+		t.Fatalf("server got %+v", got)
+	}
+
+	enrolled := call("EnrollDevice", &xkmstransport.EnrollDeviceRequest{
+		CommonName: "dev", Organization: "org", PackedCSR: []byte("PACKED"), TenantID: "t1",
+	}).(*xkmstransport.EnrollDeviceResponse)
+	if string(enrolled.IAKCertDER) != "IAK" || string(enrolled.IDevIDCertDER) != "IDEVID" ||
+		string(enrolled.CredentialBlob) != "BLOB" || string(enrolled.EncryptedSecret) != "ENC" ||
+		string(enrolled.PlainSecret) != "PLAIN" {
+		t.Fatalf("EnrollDevice = %+v", enrolled)
+	}
+	if got := srv.got.(*pb.TrustedCAEnrollDeviceRequest); got.CommonName != "dev" || got.Organization != "org" ||
+		string(got.PackedCsr) != "PACKED" || got.TenantId != "t1" {
+		t.Fatalf("server got %+v", got)
 	}
 }
 

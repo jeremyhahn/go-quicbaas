@@ -60,6 +60,28 @@ service TrustedCAService {
   rpc IsRevoked(TrustedCAIsRevokedRequest) returns (TrustedCAIsRevokedResponse) {
       option (qrdb.v1.permission) = "certs:read";
   }
+
+  // IssueEKCertificate issues a TPM Endorsement Key certificate (go-xkms
+  // TCGCAService). It is served here so the Unix socket carries the TCG CA.
+  rpc IssueEKCertificate(TrustedCAIssueEKCertificateRequest) returns (TrustedCAIssueEKCertificateResponse) {
+      option (qrdb.v1.permission) = "certs:generate";
+  }
+
+  // IssueAKCertificate issues a TPM Attestation Key certificate.
+  rpc IssueAKCertificate(TrustedCAIssueAKCertificateRequest) returns (TrustedCAIssueAKCertificateResponse) {
+      option (qrdb.v1.permission) = "certs:generate";
+  }
+
+  // SignTCGCSR verifies a TCG-CSR-IDEVID and issues the IAK and IDevID
+  // certificates it requests.
+  rpc SignTCGCSR(TrustedCASignTCGCSRRequest) returns (TrustedCASignTCGCSRResponse) {
+      option (qrdb.v1.permission) = "certs:generate";
+  }
+
+  // EnrollDevice performs the complete TCG device enrollment.
+  rpc EnrollDevice(TrustedCAEnrollDeviceRequest) returns (TrustedCAEnrollDeviceResponse) {
+      option (qrdb.v1.permission) = "certs:generate";
+  }
 }
 
 // =============================================================================
@@ -156,4 +178,59 @@ message TrustedCAIsRevokedResponse {
   bool revoked = 1;
   int32 reason = 2;
   string message = 3;
+}
+
+// TCG CA messages (go-xkms pkg/api/transport TCG CA wire shapes)
+
+message TrustedCAIssueEKCertificateRequest {
+  string common_name = 1;
+  string organization = 2;
+  bytes ek_public_key = 3;
+  string tenant_id = 4;
+}
+
+message TrustedCAIssueEKCertificateResponse {
+  bytes certificate_der = 1;
+  bytes certificate_pem = 2;
+  string serial_number = 3;
+}
+
+message TrustedCAIssueAKCertificateRequest {
+  string common_name = 1;
+  string organization = 2;
+  bytes public_key = 3;
+  string tenant_id = 4;
+}
+
+message TrustedCAIssueAKCertificateResponse {
+  bytes certificate_der = 1;
+  bytes certificate_pem = 2;
+  string serial_number = 3;
+}
+
+message TrustedCASignTCGCSRRequest {
+  string common_name = 1;
+  string organization = 2;
+  bytes tcg_csr = 3;
+  string tenant_id = 4;
+}
+
+message TrustedCASignTCGCSRResponse {
+  bytes iak_cert_der = 1;
+  bytes idevid_cert_der = 2;
+}
+
+message TrustedCAEnrollDeviceRequest {
+  string common_name = 1;
+  string organization = 2;
+  bytes packed_csr = 3;
+  string tenant_id = 4;
+}
+
+message TrustedCAEnrollDeviceResponse {
+  bytes iak_cert_der = 1;
+  bytes idevid_cert_der = 2;
+  bytes credential_blob = 3;
+  bytes encrypted_secret = 4;
+  bytes plain_secret = 5;
 }

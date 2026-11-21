@@ -145,3 +145,109 @@ func TestTrustedCAService_PermissionsMapped(t *testing.T) {
 		assert.True(t, mapped, "%s is not mapped", m.MethodName)
 	}
 }
+
+func (f *grpcFakeCA) IssueEKCertificate(_ context.Context, req *xkmstransport.IssueEKCertificateRequest) (*xkmstransport.IssueEKCertificateResponse, error) {
+	f.got = req
+	return &xkmstransport.IssueEKCertificateResponse{CertificateDER: []byte("EKDER"), CertificatePEM: []byte("EKPEM"), SerialNumber: "0e"}, nil
+}
+
+func (f *grpcFakeCA) IssueAKCertificate(_ context.Context, req *xkmstransport.IssueAKCertificateRequest) (*xkmstransport.IssueAKCertificateResponse, error) {
+	f.got = req
+	return &xkmstransport.IssueAKCertificateResponse{CertificateDER: []byte("AKDER"), CertificatePEM: []byte("AKPEM"), SerialNumber: "0f"}, nil
+}
+
+func (f *grpcFakeCA) SignTCGCSR(_ context.Context, req *xkmstransport.SignTCGCSRRequest) (*xkmstransport.SignTCGCSRResponse, error) {
+	f.got = req
+	return &xkmstransport.SignTCGCSRResponse{IAKCertDER: []byte("IAK"), IDevIDCertDER: []byte("IDEVID")}, nil
+}
+
+func (f *grpcFakeCA) EnrollDevice(_ context.Context, req *xkmstransport.EnrollDeviceRequest) (*xkmstransport.EnrollDeviceResponse, error) {
+	f.got = req
+	return &xkmstransport.EnrollDeviceResponse{
+		IAKCertDER: []byte("IAK"), IDevIDCertDER: []byte("IDEVID"),
+		CredentialBlob: []byte("BLOB"), EncryptedSecret: []byte("ENC"), PlainSecret: []byte("PLAIN"),
+	}, nil
+}
+
+// TestTrustedCAServer_TCGDelegatesToTheWiredCA proves the four TCG verbs
+// reach the wired CA's TCGCAService with every field mapped both ways, and
+// that each takes certs:generate, as REST does.
+func TestTrustedCAServer_TCGDelegatesToTheWiredCA(t *testing.T) {
+	ca := &grpcFakeCA{}
+	s := &trustedCAServer{service: &trustedCAFacade{ca: ca}}
+	ctx := context.Background()
+
+	ek, err := s.IssueEKCertificate(ctx, &pb.TrustedCAIssueEKCertificateRequest{
+		CommonName: "ek", Organization: "org", EkPublicKey: []byte("EKPUB"), TenantId: "t1",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, &xkmstransport.IssueEKCertificateRequest{
+		CommonName: "ek", Organization: "org", EKPublicKey: []byte("EKPUB"), TenantID: "t1",
+	}, ca.got)
+	assert.Equal(t, &pb.TrustedCAIssueEKCertificateResponse{
+		CertificateDer: []byte("EKDER"), CertificatePem: []byte("EKPEM"), SerialNumber: "0e",
+	}, ek)
+
+	ak, err := s.IssueAKCertificate(ctx, &pb.TrustedCAIssueAKCertificateRequest{
+		CommonName: "ak", Organization: "org", PublicKey: []byte("AKPUB"), TenantId: "t1",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, &xkmstransport.IssueAKCertificateRequest{
+		CommonName: "ak", Organization: "org", PublicKey: []byte("AKPUB"), TenantID: "t1",
+	}, ca.got)
+	assert.Equal(t, &pb.TrustedCAIssueAKCertificateResponse{
+		CertificateDer: []byte("AKDER"), CertificatePem: []byte("AKPEM"), SerialNumber: "0f",
+	}, ak)
+
+	signed, err := s.SignTCGCSR(ctx, &pb.TrustedCASignTCGCSRRequest{
+		CommonName: "dev", Organization: "org", TcgCsr: []byte("CSR"), TenantId: "t1",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, &xkmstransport.SignTCGCSRRequest{
+		CommonName: "dev", Organization: "org", TCGCSR: []byte("CSR"), TenantID: "t1",
+	}, ca.got)
+	assert.Equal(t, &pb.TrustedCASignTCGCSRResponse{IakCertDer: []byte("IAK"), IdevidCertDer: []byte("IDEVID")}, signed)
+
+	enrolled, err := s.EnrollDevice(ctx, &pb.TrustedCAEnrollDeviceRequest{
+		CommonName: "dev", Organization: "org", PackedCsr: []byte("PACKED"), TenantId: "t1",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, &xkmstransport.EnrollDeviceRequest{
+		CommonName: "dev", Organization: "org", PackedCSR: []byte("PACKED"), TenantID: "t1",
+	}, ca.got)
+	assert.Equal(t, &pb.TrustedCAEnrollDeviceResponse{
+		IakCertDer: []byte("IAK"), IdevidCertDer: []byte("IDEVID"),
+		CredentialBlob: []byte("BLOB"), EncryptedSecret: []byte("ENC"), PlainSecret: []byte("PLAIN"),
+	}, enrolled)
+
+	for _, m := range []string{"IssueEKCertificate", "IssueAKCertificate", "SignTCGCSR", "EnrollDevice"} {
+		resource, action, mapped := grpcResourceAndAction("/" + pb.TrustedCAService_ServiceDesc.ServiceName + "/" + m)
+		require.True(t, mapped, "%s is not mapped", m)
+		assert.Equal(t, "certs", resource, m)
+		assert.Equal(t, "generate", action, m)
+	}
+}
+
+// nonTCGCA exposes only the CAService half of the fake, so the wired CA
+// has no TCG CA.
+type nonTCGCA struct{ service.TrustedCAService }
+
+func TestTrustedCAServer_TCGUnavailable(t *testing.T) {
+	ctx := context.Background()
+	s := &trustedCAServer{service: &trustedCAFacade{ca: nonTCGCA{&grpcFakeCA{}}}}
+
+	_, err := s.IssueEKCertificate(ctx, &pb.TrustedCAIssueEKCertificateRequest{CommonName: "ek"})
+	assert.Equal(t, codes.Unimplemented, status.Code(err))
+	_, err = s.IssueAKCertificate(ctx, &pb.TrustedCAIssueAKCertificateRequest{CommonName: "ak"})
+	assert.Equal(t, codes.Unimplemented, status.Code(err))
+	_, err = s.SignTCGCSR(ctx, &pb.TrustedCASignTCGCSRRequest{CommonName: "dev"})
+	assert.Equal(t, codes.Unimplemented, status.Code(err))
+	_, err = s.EnrollDevice(ctx, &pb.TrustedCAEnrollDeviceRequest{CommonName: "dev"})
+	assert.Equal(t, codes.Unimplemented, status.Code(err))
+
+	// No CA at all is Unimplemented too, and a nil request is refused.
+	_, err = (&trustedCAServer{service: &trustedCAFacade{}}).SignTCGCSR(ctx, &pb.TrustedCASignTCGCSRRequest{})
+	assert.Equal(t, codes.Unimplemented, status.Code(err))
+	_, err = (&trustedCAServer{service: &trustedCAFacade{ca: &grpcFakeCA{}}}).EnrollDevice(ctx, nil)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+}
