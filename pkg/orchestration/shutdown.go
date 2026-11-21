@@ -58,6 +58,9 @@ const (
 // start. That is the same disposition the loop has today when the daemon is
 // killed, and the one the SDLC runner's per-state resume expects.
 //
+// Once the turns have drained, consumption still pending in memory gets one
+// last ledger write attempt, and the background drainer is stopped.
+//
 // It is safe to call more than once; only the first call drains.
 func (s *agentServiceImpl) Shutdown(ctx context.Context) error {
 	if !s.draining.CompareAndSwap(false, true) {
@@ -75,7 +78,15 @@ func (s *agentServiceImpl) Shutdown(ctx context.Context) error {
 	if err := s.drainPhase(ctx, DrainPhaseJobs, &s.jobsInFlight, s.runningJobIDs); err != nil {
 		return err
 	}
-	return s.drainPhase(ctx, DrainPhaseTurns, &s.turnsInFlight, nil)
+	err := s.drainPhase(ctx, DrainPhaseTurns, &s.turnsInFlight, nil)
+	if err == nil && s.ledger != nil && s.pendingLedger.size() > 0 {
+		// Last write of consumption still pending: no turn retries it now.
+		if failed, lastErr := s.retryPendingEntries(ctx, s.pendingLedger.all()); failed > 0 {
+			s.logger.Warnf("orchestration: shutdown with consumption still not recorded: pending=%d err=%v", failed, lastErr)
+		}
+	}
+	s.pendingLedger.stopDrainer()
+	return err
 }
 
 // drainPhase waits for one group of goroutines to finish, and reports what it

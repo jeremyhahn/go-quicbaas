@@ -261,6 +261,80 @@ func (l *flakyLedger) Record(ctx context.Context, entry ConsumptionEntry) error 
 	return l.ConsumptionLedger.Record(ctx, entry)
 }
 
+// goneSessionEntry is a consumption entry of a session that is not live and
+// drew on no pooled account: no turn will ever flush it.
+func goneSessionEntry(now time.Time) ConsumptionEntry {
+	return ConsumptionEntry{
+		EntryID:      "e-gone",
+		TenantID:     "t1",
+		SessionID:    "sess-gone",
+		Engine:       "claude",
+		Model:        "claude-test",
+		Outcome:      ConsumptionOutcomeSuccess,
+		InputTokens:  70,
+		OutputTokens: 30,
+		OccurredAt:   now,
+	}
+}
+
+func TestRecordLedgerEntry_PendingEntryDrainsAfterItsSessionIsGone(t *testing.T) {
+	svc, inner, _ := newConsumptionRecorder(t)
+	ledger := &flakyLedger{ConsumptionLedger: inner}
+	svc.SetConsumptionLedger(ledger)
+	svc.pendingLedger.firstRetry = 10 * time.Millisecond
+	ledger.failing.Store(true)
+
+	now := time.Now().UTC()
+	if svc.recordLedgerEntry(context.Background(), goneSessionEntry(now)) {
+		t.Fatal("recordLedgerEntry reported the entry recorded while the ledger fails")
+	}
+	if n := svc.pendingLedger.size(); n != 1 {
+		t.Fatalf("pending = %d, want 1", n)
+	}
+
+	ledger.failing.Store(false)
+	deadline := time.Now().Add(5 * time.Second)
+	for svc.pendingLedger.size() != 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if n := svc.pendingLedger.size(); n != 0 {
+		t.Fatalf("pending = %d after 5s, want the drainer to have written it", n)
+	}
+
+	rollup, err := inner.TenantWindowUsage(ContextWithTenant(context.Background(), "t1"), "t1", now.Add(-time.Hour), now.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("TenantWindowUsage: %v", err)
+	}
+	if rollup.InputTokens != 70 || rollup.OutputTokens != 30 {
+		t.Fatalf("ledger holds input=%d output=%d, want 70/30", rollup.InputTokens, rollup.OutputTokens)
+	}
+}
+
+func TestShutdown_StopsThePendingConsumptionDrainer(t *testing.T) {
+	svc, inner, _ := newConsumptionRecorder(t)
+	ledger := &flakyLedger{ConsumptionLedger: inner}
+	svc.SetConsumptionLedger(ledger)
+	svc.pendingLedger.firstRetry = time.Hour
+	ledger.failing.Store(true)
+
+	if svc.recordLedgerEntry(context.Background(), goneSessionEntry(time.Now().UTC())) {
+		t.Fatal("recordLedgerEntry reported the entry recorded while the ledger fails")
+	}
+	before := ledger.writes.Load()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := svc.Shutdown(ctx); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+	if n := svc.pendingLedger.size(); n != 1 {
+		t.Fatalf("pending = %d, want 1 (the ledger still fails)", n)
+	}
+	if got := ledger.writes.Load() - before; got != 1 {
+		t.Fatalf("writes during shutdown = %d, want exactly the one last attempt", got)
+	}
+}
+
 // A turn whose usage record fails must not release the next turn against a
 // spend sum without it: 950 of 1000 recorded, a 150-token turn whose write
 // fails, and the next prompt is refused until the entry is in the ledger —
