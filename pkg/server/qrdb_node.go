@@ -852,6 +852,18 @@ func (s *Server) initStandaloneQRDBNode() error {
 	ctx := context.Background()
 	s.logger.Info("Standalone mode: constructing real qrdb engine via NewStandaloneNode")
 
+	// One embedded node per process. Claimed before the seal strategy is
+	// built, so a refused second Server never opens a TPM session.
+	if err := currentNodeSlot().claim(s); err != nil {
+		return &QRDBNodeError{Stage: "claim embedded node", Cause: err}
+	}
+	nodeBuilt := false
+	defer func() {
+		if !nodeBuilt {
+			currentNodeSlot().release(s)
+		}
+	}()
+
 	qcfg, qcfgErr := buildQRDBConfig(s.config, false)
 	if qcfgErr != nil {
 		return &QRDBNodeError{Stage: "build qrdb config", Cause: qcfgErr}
@@ -970,6 +982,7 @@ func (s *Server) initStandaloneQRDBNode() error {
 		return &QRDBNodeError{Stage: "new standalone node", Cause: err}
 	}
 
+	nodeBuilt = true
 	s.setQRDBNode(node)
 	if s.tenantUnsealRouter != nil {
 		s.tenantUnsealRouter.bind()
@@ -1030,6 +1043,10 @@ func (s *Server) stopQRDBNode() error {
 		}
 	}
 
+	// The node reference is cleared above, so the process's embedded-node
+	// slot is released whether or not a node existed or Close failed.
+	currentNodeSlot().release(s)
+
 	if closeErr != nil {
 		return &QRDBNodeError{Stage: "close", Cause: closeErr}
 	}
@@ -1064,6 +1081,17 @@ func (s *Server) stopQRDBNode() error {
 func (s *Server) initClusteredQRDBNode() error {
 	ctx := context.Background()
 	s.logger.Info("Cluster mode: constructing real qrdb clustered node via NewClusteredNode")
+
+	// One embedded node per process (see initStandaloneQRDBNode).
+	if err := currentNodeSlot().claim(s); err != nil {
+		return &QRDBNodeError{Stage: "claim embedded node", Cause: err}
+	}
+	nodeBuilt := false
+	defer func() {
+		if !nodeBuilt {
+			currentNodeSlot().release(s)
+		}
+	}()
 
 	qcfg, qcfgErr := buildQRDBConfig(s.config, true)
 	if qcfgErr != nil {
@@ -1197,6 +1225,7 @@ func (s *Server) initClusteredQRDBNode() error {
 		return &QRDBNodeError{Stage: "new clustered node", Cause: err}
 	}
 
+	nodeBuilt = true
 	s.setQRDBNode(node)
 	if s.tenantUnsealRouter != nil {
 		s.tenantUnsealRouter.bind()
