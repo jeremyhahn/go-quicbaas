@@ -94,7 +94,7 @@ func newXKMSPIVLoginModule(t *testing.T, srv *Server) qrdbsdk.ServiceModule {
 			return svc
 		},
 		xkmssdk.WithServiceModuleQRDBClient(srv.GetQRDBNodeClient),
-		xkmssdk.WithServiceModuleSession(&xkmssdk.ServiceModuleSessionOptions{}),
+		xkmssdk.WithServiceModuleSession(srv.xkmsModuleSessionOptions()),
 		xkmssdk.WithServiceModulePIVLogin(srv.pivLoginModuleOptions()),
 	)
 	require.NoError(t, err)
