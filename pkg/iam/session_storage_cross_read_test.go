@@ -75,3 +75,44 @@ func TestBackendSessionStorage_ReadsSessionManagerRecords(t *testing.T) {
 		t.Fatalf("GetSession Expires = %v, want %v", byID.Expires, live.ExpiresAt)
 	}
 }
+
+// A token's sid has no tenant prefix; the session manager stored it
+// tenant-encoded, so a read in the tenant's context must still find it.
+func TestBackendSessionStorage_GetSessionResolvesTokenSID(t *testing.T) {
+	kv := newRoutingTestKV()
+	kv.barrierTenant("acme")
+	ext := NewBackendSessionExtStorage(kv, nil)
+	store := NewBackendSessionStorage(kv, nil)
+
+	s := extSession("acme", 7, "0a1b2c3d", "h1")
+	if err := ext.Create(tenantctx.WithTenant(context.Background(), "acme"), s); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if s.ID != "acme.0a1b2c3d" {
+		t.Fatalf("stored ID = %q, want the tenant-encoded %q", s.ID, "acme.0a1b2c3d")
+	}
+
+	got, err := store.GetSession(tenantctx.WithTenant(context.Background(), "acme"), "0a1b2c3d")
+	if err != nil {
+		t.Fatalf("GetSession(raw sid) in the session's tenant: %v, want the session", err)
+	}
+	if got.ID != "acme.0a1b2c3d" {
+		t.Fatalf("GetSession ID = %q, want the stored ID %q", got.ID, "acme.0a1b2c3d")
+	}
+	if got.TenantID != "acme" {
+		t.Fatalf("GetSession TenantID = %q, want %q", got.TenantID, "acme")
+	}
+	if got.UserID != 7 {
+		t.Fatalf("GetSession UserID = %d, want 7", got.UserID)
+	}
+
+	if _, err := store.GetSession(tenantctx.WithTenant(context.Background(), "other"), "0a1b2c3d"); err == nil {
+		t.Fatal("GetSession(raw sid) in another tenant's context found the session, want an error")
+	}
+	if _, err := store.GetSession(context.Background(), "0a1b2c3d"); err == nil {
+		t.Fatal("GetSession(raw sid) with no tenant bound found the session, want an error")
+	}
+	if _, err := store.GetSession(context.Background(), "acme.0a1b2c3d"); err != nil {
+		t.Fatalf("GetSession(encoded ID) with no tenant bound: %v, want the session", err)
+	}
+}

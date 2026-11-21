@@ -88,15 +88,32 @@ func (s *BackendSessionStorage) CreateSession(ctx context.Context, session *Sess
 	return s.kv.Put(ctx, sessionUserIdxKey(session.TenantID, session.UserID, session.ID), []byte(session.ID))
 }
 
-// GetSession decodes the tenant from the session ID, routes, and reads.
+// GetSession decodes the tenant from the session ID, routes, and reads. An ID
+// with no tenant prefix (the sid claim a token carries) is first resolved in
+// the context's tenant, where the session manager stored it tenant-encoded;
+// when no such record exists it is read from the system store, as before.
 func (s *BackendSessionStorage) GetSession(ctx context.Context, sessionID string) (*Session, error) {
 	tenantID, fullID := decodeTenantID(sessionID)
-	ctx = withTenant(ctx, tenantID)
+	if tenantID == systemTenantID {
+		if ctxTenant := contextTenant(ctx); ctxTenant != "" && ctxTenant != systemTenantID {
+			session, err := s.readSession(withTenant(ctx, ctxTenant), encodeTenantID(ctxTenant, sessionID))
+			if !dberrors.IsNotFound(err) {
+				return session, err
+			}
+		}
+	}
+	session, err := s.readSession(withTenant(ctx, tenantID), fullID)
+	if dberrors.IsNotFound(err) {
+		return nil, NewIAMError(ErrUserNotFound, "iam.session.storage.get", "session not found", nil)
+	}
+	return session, err
+}
+
+// readSession reads and decodes the record stored under fullID in ctx's
+// tenant. A missing record is the store's not-found error, unchanged.
+func (s *BackendSessionStorage) readSession(ctx context.Context, fullID string) (*Session, error) {
 	data, err := s.kv.Get(ctx, sessionRecKey(fullID))
 	if err != nil {
-		if dberrors.IsNotFound(err) {
-			return nil, NewIAMError(ErrUserNotFound, "iam.session.storage.get", "session not found", nil)
-		}
 		return nil, err
 	}
 	session, err := decodeSessionRecord(data)
