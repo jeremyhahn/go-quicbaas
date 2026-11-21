@@ -229,12 +229,24 @@ func TestAgentSession_EnrolledCertificateHoldsExactlyItsFloor(t *testing.T) {
 		t.Fatalf("identity roles = %v, want exactly [%s]", identity.Roles, wantRole)
 	}
 
-	// Admitted on exactly the floor.
+	// Admitted on exactly the floor. quicbaas's entity get and put carry the
+	// same kv:get/kv:put grants as the qrdb_* key/value tools (CA ruling
+	// 574), so the floor admits them. The entity list answers every entity's
+	// Data and needs kv:range, which the floor's keys-only kv:list does not
+	// grant: it is refused below with everything else outside the floor.
 	allowed := map[string]bool{
 		"quicbaas_orchestrator_inference": true,
 		qrdbGetTool:                       true,
 		qrdbPutTool:                       true,
 		qrdbListTool:                      true,
+		"quicbaas_kv_get":                 true,
+		"quicbaas_kv_put":                 true,
+	}
+	if _, covered := registry.Lookup("quicbaas_kv_list"); !covered {
+		t.Fatal("quicbaas_kv_list is not in the tool registry")
+	}
+	if err := am.AuthorizeMCP(ctx, registry, "quicbaas_kv_list", nil); err == nil {
+		t.Error("quicbaas_kv_list returns values and must be refused to a kv:list-only session")
 	}
 	for tool := range allowed {
 		if _, covered := registry.Lookup(tool); !covered {

@@ -54,7 +54,13 @@ GOPLS_VERSION := v0.23.0
 # `make install-gosec` and CI's gosec build the same way, so the gosec that
 # gates CI is the gosec in the image. Space-separated module@version pairs.
 # Drop an entry once the tools' own releases require that version or newer.
-GO_TOOL_DEPENDENCY_FLOORS := golang.org/x/mod@v0.41.0 golang.org/x/net@v0.60.0 golang.org/x/text@v0.42.0 golang.org/x/tools@v0.51.0 google.golang.org/grpc@v1.84.0
+# gosec v2.29.0 (and v2.30.0) require golang.org/x/net below v0.62.0
+# (CVE-2026-78661).
+# The floors must agree with each other: a floor's own go.mod can require
+# another listed module above that module's floor (x/net v0.62.0 requires
+# x/text v0.43.0), and the build applies every floor in one `go get`, which
+# then fails rather than lowering one floor to satisfy another.
+GO_TOOL_DEPENDENCY_FLOORS := golang.org/x/mod@v0.41.0 golang.org/x/net@v0.62.0 golang.org/x/text@v0.43.0 golang.org/x/tools@v0.51.0 google.golang.org/grpc@v1.84.0
 # trivy, the scanner `make security` ends with (devops.md section 8). From its
 # release tarball, each architecture's SHA-256 as the release's own
 # trivy_<version>_checksums.txt publishes it: change all three together. Pins
@@ -91,10 +97,10 @@ OPENCODE_SHA256_AARCH64 := f7f2ba59ee8aa94d388f9696575a32d20e71c2ee48def9f80fc69
 # installed from its release tarball, and the SHA-256 of each architecture's
 # tarball is pinned beside the version, taken from the release's own
 # gh_<version>_checksums.txt
-# (github.com/cli/cli/releases/tag/v2.103.3): change all three together.
-GH_VERSION := v2.103.3
-GH_SHA256_X86_64 := 4c806978ffce1cec70853302a56d70ac6da4f19bae7adca4e1a8ab00633dd91d
-GH_SHA256_AARCH64 := ee32df2323c8847f5fac6cb6b4b69ca75828e9329a8f22f677021f7b3306ce63
+# (github.com/cli/cli/releases/tag/v2.105.0): change all three together.
+GH_VERSION := v2.105.0
+GH_SHA256_X86_64 := 79e7ab5db738c48777b696e374f8b428f0647debfb424f44d2f426370407fe2f
+GH_SHA256_AARCH64 := b1278c75107423d818f1937fd92cafc9e5e9b606631568f68d7fb816f5885a02
 # protoc, so a Go project with .proto files regenerates code inside the worker
 # image instead of host-mounting protoc (the container-only tooling rule).
 # `protoc --version` prints `libprotoc <PROTOC_VERSION>`, and generated .pb.go
@@ -119,9 +125,12 @@ PROTOC_GEN_GO_GRPC_VERSION := v1.6.2
 # packages (go-quicbaas#1161). `--overrides`, not `--with`: serena-agent
 # 1.7.0 depends on urllib3==2.7.0 exactly, and `--with` only adds a second,
 # conflicting constraint uv then refuses to resolve -- `--overrides` replaces
-# the declared pin instead. Space-separated requirement specifiers. Drop an
-# entry once serena's own release requires that version or newer.
-SERENA_DEPENDENCY_FLOORS := urllib3>=2.8.0
+# the declared pin instead. serena-agent 1.7.0 also pins filelock==3.25.2
+# (CVE-2026-112940) and mcp==1.28.1 (CVE-2026-115563); mcp is held below 2,
+# the major serena 1.7.0 was built against. Space-separated requirement
+# specifiers, no spaces inside an entry. Drop an entry once serena's own
+# release requires that version or newer.
+SERENA_DEPENDENCY_FLOORS := urllib3>=2.8.0 filelock>=4.2.1 mcp>=1.30.0,<2
 
 # Node.js, which runs the claude and codex CLIs and the npm-built language
 # servers below, and a project's own frontend build. Installed from the
@@ -132,19 +141,20 @@ SERENA_DEPENDENCY_FLOORS := urllib3>=2.8.0
 NODE_VERSION := v26.10.0
 NODE_SHA256_X86_64 := ca70e9e349de048b9522abb3adc05b3bd6f43c5ffd3ec57916c7da292f59f022
 NODE_SHA256_AARCH64 := 7a6353f63eb3d04765004b4adf172616243e4522434635cb1d26288658b04ab5
-NPM_VERSION := 12.2.0
+NPM_VERSION := 12.2.3
 # Dependency floors for the packages npm BUNDLES in its own node_modules, the
-# same idea as SERENA_DEPENDENCY_FLOORS: npm 12.2.0 (and every npm before it,
-# back to Node 26.10's 11.19.1) ships brace-expansion 5.0.9 (CVE-2026-102276,
-# CVE-2026-102278) and undici 6.28.0 (CVE-2026-19534), which the image's trivy
-# gate reads as fixable findings. The image replaces exactly these packages
-# after its npm upgrade. Each entry is name@version=integrity, the integrity
-# being the tarball's sha512 as the npm registry publishes it (dist.integrity),
-# so the build verifies what it fetched: change version and integrity
-# together. A floor is a patch release of what npm bundles and nothing more;
-# the build refuses one npm already meets, so an entry is dropped as soon as
-# an npm release carries the fix.
-NPM_BUNDLED_DEPENDENCY_FLOORS := brace-expansion@5.0.11=sha512-awigjhi6cLTh90bdw6+QJ9CtmJmyYhEIi70iCbc8Rozn04Fw9FeQIBjv/E22FFGuCGx1bLJyUfB64x/szUSXUg== undici@6.28.1=sha512-zWpdTVD54H48CIybL0rWQ3ukpb9d23wM7eH5RtfdmeP70cWHNjtfo7P4vZX+5CoDcO53J4Pu5uXp7lNfjc6DRA==
+# same idea as SERENA_DEPENDENCY_FLOORS: when an npm release bundles a copy the
+# image's trivy gate reads as a fixable finding, the image replaces exactly
+# that package after its npm upgrade. npm 12.2.3 bundles brace-expansion
+# 5.0.12 and undici 6.29.1, so no floor is needed and there is no line here:
+# NPM_BUNDLED_DEPENDENCY_FLOORS is optional, and empty when absent. When a
+# future npm bundles a vulnerable copy, add the floor back as a
+# `NPM_BUNDLED_DEPENDENCY_FLOORS := name@version=integrity` line (space-
+# separated entries), the integrity being the tarball's sha512 as the npm
+# registry publishes it (dist.integrity), so the build verifies what it
+# fetched: change version and integrity together. A floor is a patch release
+# of what npm bundles and nothing more; the build refuses one npm already
+# meets, so an entry is dropped as soon as an npm release carries the fix.
 # uv, which installs Serena (and is on the PATH for a Python project). From its
 # release tarball -- Debian packages no uv -- with each architecture's SHA-256
 # pinned beside the version, as the release's own .sha256 files publish it.
@@ -180,13 +190,8 @@ RUST_ANALYZER_SHA256_AARCH64 := 3974c863acbbd96ef2cc02a7aaa79123935b05f27ffe4fd3
 MARKSMAN_VERSION := 2026-02-08
 MARKSMAN_SHA256_X86_64 := be5098e8213219269c47fc0d916a66fa31ce0602ec967475c722260aabf26087
 MARKSMAN_SHA256_AARCH64 := db8e124527f7f8048e3e6c91821b9c52ef173d92c01e47d221bf1337afd962fb
-# Kotlin's server, JetBrains' kotlin-server release tarball, with each
-# architecture's SHA-256 as the release's own .sha256 files publish it. It runs
-# on its bundled JetBrains runtime; the JDK below is for the projects a worker
-# builds, Debian's headless package at this major (go-quicbaas#1746). A major
-# rather than a *_VERSION: Debian's archive moves its patch release, and the
-# currency check tracks no upstream for it.
-KOTLIN_LSP_VERSION := 263.6379.0
-KOTLIN_LSP_SHA256_X86_64 := ab8ca4455dc2fc5fe1a24db2bccc46c104254d2c465155c4251ee65df8f3f7cc
-KOTLIN_LSP_SHA256_AARCH64 := 50999901ef8bcfa1e58561b6a8d782a72dea5620fcf92a64130807f8924a56fc
+# The JDK, Debian's headless package at this major, is for the projects a
+# worker builds (go-quicbaas#1746). A major rather than a *_VERSION: Debian's
+# archive moves its patch release, and the currency check tracks no upstream
+# for it.
 OPENJDK_MAJOR := 21
