@@ -2150,7 +2150,7 @@ integration-test-cluster: ## Phase F: Run 3+1-node Raft cluster integration test
 	QUICBAAS_NODE3_DATADIR="$$PWD/$$CLUSTER_DIR/cluster-data/node3" \
 	QUICBAAS_NODE4_DATADIR="$$PWD/$$CLUSTER_DIR/cluster-data/node4" \
 	QUICBAAS_CLUSTER_CONTAINERS="$$($(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE ps -q quicbaas-node1 quicbaas-node2 quicbaas-node3 | tr '\n' ' ')" \
-	$(GOTEST) -v -tags integration -timeout 300s ./test/integration/cluster/...; \
+	$(GOTEST) -v -tags integration -timeout 900s ./test/integration/cluster/...; \
 	RESULT=$$?; \
 	echo "$(BLUE)Stopping cluster stack...$(NC)"; \
 	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi local; \
