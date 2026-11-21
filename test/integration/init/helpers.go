@@ -324,7 +324,7 @@ func (d *DaemonProcess) Stop() error {
 			// Graceful drain timed out; force-kill.
 			_ = d.cmd.Process.Signal(syscall.SIGKILL)
 			<-d.doneCh
-			d.stopErr = fmt.Errorf("daemon SIGTERM exceeded %s; SIGKILL applied; wait err=%v",
+			d.stopErr = fmt.Errorf("daemon SIGTERM exceeded %s; SIGKILL applied; wait err=%w",
 				daemonShutdownTimeout, d.WaitErr())
 		}
 		if d.logFile != nil {
@@ -343,7 +343,8 @@ func sanitizeWaitErr(waitErr error, signalled bool) error {
 	if waitErr == nil {
 		return nil
 	}
-	exitErr, ok := waitErr.(*exec.ExitError)
+	var exitErr *exec.ExitError
+	ok := errors.As(waitErr, &exitErr)
 	if !ok {
 		return waitErr
 	}
@@ -717,7 +718,7 @@ func waitForTransportReady(ctx context.Context, t *testing.T, d *DaemonProcess, 
 		case <-deadline.Done():
 			return fmt.Errorf("transport %q not ready within %s: %w", transport, daemonStartTimeout, deadline.Err())
 		case <-d.Done():
-			return fmt.Errorf("daemon exited while waiting for transport %q: wait_err=%v", transport, d.WaitErr())
+			return fmt.Errorf("daemon exited while waiting for transport %q: wait_err=%w", transport, d.WaitErr())
 		case <-ticker.C:
 			// The daemon auto-issues its OWN CA chain during first-boot. Until
 			// that lands on disk we cannot verify its TLS listeners, so a

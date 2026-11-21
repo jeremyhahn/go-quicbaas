@@ -51,7 +51,7 @@ vectors, err := manager.EmbedBatch(ctx, []string{"first", "second"})
 dims, err := manager.Dimensions()
 ```
 
-Switching providers is a configuration change, not a code change: set `Provider` to `openai`, `lmstudio` or `voyage` and supply the matching `APIURL`, `APIKey` and `Model`. `embedding.Config` is an alias for `qrdbsdk.EmbeddingConfig`, so one source of truth governs every provider.
+Switching providers is a configuration change, not a code change: set `Provider` to `openai`, `lmstudio` or `voyage` and supply the matching `APIURL`, `APIKey` and `Model`. `embedding.Config` is an alias for `qrdbsdk.EmbeddingConfig`, so one source of truth governs every provider. `TestManager_EachSpecProviderAsDefault` (`pkg/embedding/providers_manager_vector_test.go`) proves each of the four (`ollama`, `openai`, `voyage`, `lmstudio`) as the configured default, embedding a text and a batch through the `Manager`.
 
 ### Over the SDK: the embedding client
 

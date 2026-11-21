@@ -1558,19 +1558,19 @@ check-build-tags: ## Fail if any //go:build CONSTRAINT is satisfied by no test p
 test-minimal: check-insecure-tls check-build-tags check-local-keygen ## Run unit tests with every tag that has a !tag side off (compiles the stub/no-op paths)
 	@echo "$(BLUE)Running unit tests with every disabled-side tag off...$(NC)"
 	@echo "$(YELLOW)Build tags: $(MINIMAL_TEST_TAGS)$(NC)"
-	$(GOTEST) -p 2 -tags '$(MINIMAL_TEST_TAGS)' -timeout=10m ./pkg/... ./cmd/...
+	$(GOTEST) -p 2 -tags '$(MINIMAL_TEST_TAGS)' -timeout=$(TAG_PASS_TIMEOUT) ./pkg/... ./cmd/...
 
 .PHONY: test-standard
 test-standard: check-insecure-tls check-build-tags check-local-keygen ## Run unit tests in the build-standard configuration (REST on, AI features off)
 	@echo "$(BLUE)Running unit tests in the build-standard configuration...$(NC)"
 	@echo "$(YELLOW)Build tags: $(STANDARD_TEST_TAGS)$(NC)"
-	$(GOTEST) -p 2 -tags '$(STANDARD_TEST_TAGS)' -timeout=10m ./pkg/... ./cmd/...
+	$(GOTEST) -p 2 -tags '$(STANDARD_TEST_TAGS)' -timeout=$(TAG_PASS_TIMEOUT) ./pkg/... ./cmd/...
 
 .PHONY: test-lean
 test-lean: check-insecure-tls check-build-tags check-local-keygen ## Run unit tests with the transports on and the optional data-model features off
 	@echo "$(BLUE)Running unit tests with the transports on, data-model extras off...$(NC)"
 	@echo "$(YELLOW)Build tags: $(LEAN_TEST_TAGS)$(NC)"
-	$(GOTEST) -p 2 -tags '$(LEAN_TEST_TAGS)' -timeout=10m ./pkg/... ./cmd/...
+	$(GOTEST) -p 2 -tags '$(LEAN_TEST_TAGS)' -timeout=$(TAG_PASS_TIMEOUT) ./pkg/... ./cmd/...
 
 .PHONY: test-tooling
 test-tooling: ## Run the unit tests of the repository tooling (scripts, build gates)
@@ -3358,6 +3358,10 @@ actionlint: ## Lint the GitHub Actions workflows with actionlint and shellcheck
 lint-go: ## Run golangci-lint alone (the second half of `make lint`)
 	$(GOLANGCI_LINT_RECIPE)
 
+# The cgroup v2 file the lint recipe reads its memory cap from; tests point
+# it at a fixture.
+LINT_MEMORY_MAX ?= /sys/fs/cgroup/memory.max
+
 define GOLANGCI_LINT_RECIPE
 	@echo "$(BLUE)Running linters...$(NC)"
 	@test -x $(GOLINT) || (echo "$(RED)golangci-lint not installed. Run: make install-tools$(NC)" && exit 1)
@@ -3373,7 +3377,16 @@ define GOLANGCI_LINT_RECIPE
 	# without this, that is indistinguishable from golangci-lint reporting real
 	# findings. Both are just "make: *** [lint] Error", which is how three kills
 	# on 2026-08-26 (#154) read as lint failures on code that lints clean.
-	@$(GOLINT) run --timeout=20m --build-tags '$(LINT_BUILD_TAGS)' ./...; rc=$$?; \
+	# Memory bound (#2656). Go's heap target is about twice the live heap, and
+	# the overflow runners cap the stage's container at 8g with no swap, so
+	# the pass was killed there while it passes under a 16g bound. When the
+	# container's cgroup v2 memory.max is a number, GOMEMLIMIT is three
+	# quarters of it, so the GC collects before the cap; at 8 GiB or less the
+	# analysis also runs two packages at a time, which bounds the live type
+	# information. An unbounded container runs as before.
+	@mem=$$(cat $(LINT_MEMORY_MAX) 2>/dev/null); lim=; conc=; \
+	case $$mem in ''|max|*[!0-9]*) ;; *) lim=GOMEMLIMIT=$$((mem / 4 * 3)); [ $$mem -gt 8589934592 ] || conc=--concurrency=2 ;; esac; \
+	env $$lim $(GOLINT) run --timeout=20m $$conc --build-tags '$(LINT_BUILD_TAGS)' ./...; rc=$$?; \
 	if [ $$rc -eq 0 ]; then \
 		exit 0; \
 	elif [ $$rc -gt 128 ]; then \
@@ -3398,6 +3411,11 @@ COVER_PKGS ?= ./pkg/... ./cmd/...
 # `coverage`). pkg/iam alone takes 655s under contention, past Go's 10m
 # default; see the note in the `race` recipe for the measurements.
 RACE_TIMEOUT := 30m
+
+# TAG_PASS_TIMEOUT is the per-package -timeout of the tag passes
+# (test-minimal, test-standard, test-lean). pkg/server takes 254s under
+# -race alone but over 600s in a tag pass sharing the runner, past 10m.
+TAG_PASS_TIMEOUT ?= 20m
 
 # The test stage is three pieces, so CI can run the slow -race pass as
 # parallel shards and a developer runs the same targets in one go:
@@ -3926,9 +3944,6 @@ build-worker-image: ## Build the Software Factory worker image (quicbaas-softwar
 		--build-arg MARKSMAN_VERSION=$(MARKSMAN_VERSION) \
 		--build-arg MARKSMAN_SHA256_X86_64=$(MARKSMAN_SHA256_X86_64) \
 		--build-arg MARKSMAN_SHA256_AARCH64=$(MARKSMAN_SHA256_AARCH64) \
-		--build-arg KOTLIN_LSP_VERSION=$(KOTLIN_LSP_VERSION) \
-		--build-arg KOTLIN_LSP_SHA256_X86_64=$(KOTLIN_LSP_SHA256_X86_64) \
-		--build-arg KOTLIN_LSP_SHA256_AARCH64=$(KOTLIN_LSP_SHA256_AARCH64) \
 		--build-arg OPENJDK_MAJOR=$(OPENJDK_MAJOR) \
 		--build-arg CLAUDE_CODE_VERSION=$(CLAUDE_CODE_VERSION) \
 		--build-arg CODEX_VERSION=$(CODEX_VERSION) \
@@ -4175,7 +4190,8 @@ deploy-prod: ## Deploy to production environment
 # so all three run one gosec. It is rebuilt even when a gosec is on the PATH,
 # because an installed gosec of another version or build is exactly the drift
 # the pin exists to stop. main.Version is stamped because a bare build reports
-# "Version: dev" (go-luks2#21).
+# "Version: dev" (go-luks2#21). The floors go to one `go get`, so a floor list
+# that disagrees with itself fails here instead of shipping a lowered floor.
 .PHONY: install-gosec
 install-gosec: ## Build and install gosec at GOSEC_VERSION with GO_TOOL_DEPENDENCY_FLOORS
 	@echo "$(BLUE)Building gosec $(GOSEC_VERSION) with $(GO_TOOL_DEPENDENCY_FLOORS)...$(NC)"
@@ -4186,9 +4202,11 @@ install-gosec: ## Build and install gosec at GOSEC_VERSION with GO_TOOL_DEPENDEN
 	export GOWORK=off; \
 	go mod init build.local/gosec >/dev/null 2>&1; \
 	go get github.com/securego/gosec/v2/cmd/gosec@$(GOSEC_VERSION); \
+	floors=""; \
 	for floor in $(GO_TOOL_DEPENDENCY_FLOORS); do \
-		if go list -m "$${floor%@*}" >/dev/null 2>&1; then go get "$$floor"; fi; \
+		if go list -m "$${floor%@*}" >/dev/null 2>&1; then floors="$$floors $$floor"; fi; \
 	done; \
+	if [ -n "$$floors" ]; then go get $$floors; fi; \
 	CGO_ENABLED=0 go build -ldflags "-X main.Version=$(GOSEC_VERSION)" -o "$$gobin/gosec" github.com/securego/gosec/v2/cmd/gosec; \
 	"$$gobin/gosec" -version
 	@echo "$(GREEN)gosec installed$(NC)"
