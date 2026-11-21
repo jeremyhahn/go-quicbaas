@@ -33,6 +33,7 @@ import (
 	ggrpc "google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
 
+	"github.com/jeremyhahn/go-xkms/pkg/ca/provider"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -811,6 +812,15 @@ func (s *Server) initializeCA() error {
 // and fail closed, or this one.
 func (s *Server) adoptCA(ca xkmssdk.TrustedCA) {
 	s.xkmsCA = ca
+	// The KeystoreService installs its CA servicer from the global XKMS
+	// service, so the adopted CA must be set there too.
+	if svc, err := xkmssdk.Get(); err == nil && svc != nil {
+		if p, ok := ca.(provider.CA); ok {
+			svc.SetCA(p)
+		} else {
+			slog.Debug("adopted CA does not implement provider.CA; the XKMS service keeps its CA")
+		}
+	}
 	if s.caAdapter != nil {
 		s.caAdapter.SetCA(ca)
 	}
