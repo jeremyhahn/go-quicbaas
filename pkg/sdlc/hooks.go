@@ -621,7 +621,8 @@ func (h *Hooks) Complete(ctx context.Context, job *orchestration.JobContext) err
 	if err != nil {
 		return err
 	}
-	if landed != nil {
+	switch {
+	case landed != nil:
 		if err := h.closeLanded(ctx, a, pr, landed); err != nil {
 			return err
 		}
@@ -635,11 +636,11 @@ func (h *Hooks) Complete(ctx context.Context, job *orchestration.JobContext) err
 		if err := h.confirmClosed(ctx, a, trainPR, landed.MergeSHA); err != nil {
 			return err
 		}
-	} else if pr.Merged {
+	case pr.Merged:
 		if err := h.confirmClosed(ctx, a, pr.Number, pr.MergeSHA); err != nil {
 			return err
 		}
-	} else {
+	default:
 		if delivery.HeadSHA == "" {
 			return &HeadMovedError{Subject: subject, Reviewed: "", Current: pr.HeadSHA}
 		}
