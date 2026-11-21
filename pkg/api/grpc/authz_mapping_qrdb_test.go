@@ -75,7 +75,76 @@ func qrdbWiredMethod(name string) bool {
 		strings.HasPrefix(name, "Credential") {
 		return true
 	}
-	return qrdbUserSurfaceMethods[name] || name == "Health" || name == "Status"
+	return qrdbUserSurfaceMethods[name] || qrdbDataSurfaceMethods[name] ||
+		name == "Health" || name == "Status"
+}
+
+// qrdbDataSurfaceMethods is the registry-dispatched QRDBService data
+// surface the server serves on the Unix socket through its data-registry
+// proxy: KV, MVCC, transaction, batch, watch, lease, lock, index,
+// timeseries, vector and collection calls.
+var qrdbDataSurfaceMethods = map[string]bool{
+	// KV
+	"Put": true, "PutIfAbsent": true, "CompareAndSwap": true, "Get": true,
+	"Delete": true, "CompareAndDelete": true, "List": true, "Scan": true,
+	// MVCC
+	"PutWithLease": true, "GetRevision": true, "GetAtRevision": true,
+	"Range": true, "Compact": true, "CurrentRevision": true,
+	"RestoreToRevision": true,
+	// Transaction, batch, watch
+	"Transaction": true, "Batch": true, "BatchImport": true, "Watch": true,
+	// Lease
+	"LeaseGrant": true, "LeaseRevoke": true, "LeaseKeepAlive": true,
+	"LeaseTimeToLive": true, "LeaseList": true,
+	// Locks
+	"LockAcquire": true, "LockTryLock": true, "LockRelease": true,
+	"LockExtend": true, "LockStatus": true, "LockList": true,
+	// Index
+	"IndexCreate": true, "IndexDrop": true, "IndexQuery": true,
+	"IndexScan": true, "IndexList": true,
+	// Timeseries
+	"TSWrite": true, "TSWriteBatch": true, "TSQuery": true,
+	"TSAggregate": true, "TSWritePoint": true, "TSRichQuery": true,
+	"TSDeleteSeries": true, "TSGetRetention": true, "TSSetRetention": true,
+	"TSListMetrics": true,
+	// Vector
+	"VectorCreateNamespace": true, "VectorDeleteNamespace": true,
+	"VectorListNamespaces": true, "VectorGetNamespaceInfo": true,
+	"VectorUpsert": true, "VectorGet": true, "VectorDelete": true,
+	"VectorBatchUpsert": true, "VectorBatchDelete": true, "VectorList": true,
+	"VectorUpdateMetadata": true, "VectorSearchSimilar": true,
+	"VectorSearchByMetadata": true, "VectorHybridSearch": true,
+	"VectorSearchByID": true, "VectorRebuildIndex": true,
+	"VectorGetRebuildProgress": true, "VectorGetIndexStats": true,
+	"VectorCompactNamespace": true, "VectorGetCompactionProgress": true,
+	// Collections
+	"CreateCollection": true, "GetCollectionInfo": true,
+	"ListCollections": true, "DropCollection": true, "InsertDocument": true,
+	"GetDocument": true, "UpdateDocument": true, "DeleteDocument": true,
+	"ListDocuments": true,
+}
+
+// TestQRDBGRPCPermissions_DataMethodsMatchQRDBProto pins every mapped data
+// method to the permission qrdb itself declares in the method's
+// (qrdb.v1.permission) proto option.
+func TestQRDBGRPCPermissions_DataMethodsMatchQRDBProto(t *testing.T) {
+	require.Len(t, qrdbDataSurfaceMethods, 74)
+	sd := qrdbServiceDescriptor(t, "qrdb.v1.QRDBService")
+	for name := range qrdbDataSurfaceMethods {
+		md := sd.Methods().ByName(protoreflect.Name(name))
+		if !assert.NotNil(t, md, "QRDBService has no method %s", name) {
+			continue
+		}
+		want, ok := protoPermissionOption(t, md)
+		if !assert.True(t, ok, "%s: qrdb.v1.permission option missing", name) {
+			continue
+		}
+		res, act, mapped := grpcResourceAndAction("/qrdb.v1.QRDBService/" + name)
+		if !assert.True(t, mapped, "%s must be mapped", name) {
+			continue
+		}
+		assert.Equal(t, want, res+":"+act, name)
+	}
 }
 
 // qrdbServiceDescriptor resolves a qrdb.v1 service descriptor from the global
@@ -291,6 +360,9 @@ func TestUnaryAuthorizationInterceptor_QRDBAdmitDeny(t *testing.T) {
 		{"authfactor_login", "/qrdb.v1.UserAuthFactorService/Login", "user_authfactors:login", "user_authfactors:list"},
 		{"authfactor_add", "/qrdb.v1.UserAuthFactorService/Add", "user_authfactors:add", "user_authfactors:login"},
 		{"admin_status", "/qrdb.v1.QRDBService/Status", "admin:status", "admin:health"},
+		{"kv_put", "/qrdb.v1.QRDBService/Put", "kv:put", "kv:get"},
+		{"kv_get", "/qrdb.v1.QRDBService/Get", "kv:get", "kv:put"},
+		{"collection_insert", "/qrdb.v1.QRDBService/InsertDocument", "collections:insert", "collections:read"},
 	}
 
 	for _, c := range cases {
@@ -502,12 +574,12 @@ func TestQRDBIdentityGatedMethods_FailClosedWithoutAuthenticator(t *testing.T) {
 // capabilities is the quicbaas.* service namespace.
 func TestQRDBUnwiredSurface_DefaultDenied(t *testing.T) {
 	for _, method := range []string{
-		"/qrdb.v1.QRDBService/Put",
-		"/qrdb.v1.QRDBService/Get",
-		"/qrdb.v1.QRDBService/LeaseGrant",
-		"/qrdb.v1.QRDBService/LockAcquire",
-		"/qrdb.v1.QRDBService/VectorUpsert",
-		"/qrdb.v1.QRDBService/Watch",
+		"/qrdb.v1.QRDBService/DatabaseCreate",
+		"/qrdb.v1.QRDBService/TenantCreate",
+		"/qrdb.v1.QRDBService/BackupCreate",
+		"/qrdb.v1.QRDBService/Peers",
+		"/qrdb.v1.QRDBService/CreateRole",
+		"/qrdb.v1.QRDBService/SQLQuery",
 	} {
 		_, _, mapped := grpcResourceAndAction(method)
 		assert.False(t, mapped, method)
