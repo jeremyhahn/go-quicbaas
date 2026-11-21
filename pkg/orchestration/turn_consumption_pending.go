@@ -79,21 +79,34 @@ func (p *pendingConsumption) add(entry ConsumptionEntry) {
 	p.entries = append(p.entries, entry)
 }
 
-// take removes and returns the entries of sessionID, and of accountID when
-// it is set: a pooled account's other sessions spend the same cap.
-func (p *pendingConsumption) take(sessionID, accountID string) []ConsumptionEntry {
+// matching returns a copy of the entries of sessionID, and of accountID
+// when it is set: a pooled account's other sessions spend the same cap. The
+// entries stay pending until the ledger holds them, so a session that comes
+// while another one retries an entry still sees it.
+func (p *pendingConsumption) matching(sessionID, accountID string) []ConsumptionEntry {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	var taken, kept []ConsumptionEntry
+	var matched []ConsumptionEntry
 	for _, entry := range p.entries {
 		if entry.SessionID == sessionID || (accountID != "" && entry.AccountID == accountID) {
-			taken = append(taken, entry)
-			continue
+			matched = append(matched, entry)
 		}
-		kept = append(kept, entry)
 	}
-	p.entries = kept
-	return taken
+	return matched
+}
+
+// remove deletes the entry with entryID once the ledger holds it, and
+// reports whether it was still pending.
+func (p *pendingConsumption) remove(entryID string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for i, entry := range p.entries {
+		if entry.EntryID == entryID {
+			p.entries = append(p.entries[:i:i], p.entries[i+1:]...)
+			return true
+		}
+	}
+	return false
 }
 
 // size reports how many entries wait for the ledger.
@@ -129,7 +142,10 @@ func (s *agentServiceImpl) recordLedgerEntry(ctx context.Context, entry Consumpt
 // flushPendingConsumption retries every pending entry of sessionID and of
 // its pooled account. It returns a *ConsumptionPendingError while any of
 // them is still not in the ledger: the turn is refused rather than admitted
-// against a spend sum that leaves those tokens out.
+// against a spend sum that leaves those tokens out. An entry stays pending
+// while it is retried, so a session that finds an entry another session is
+// retrying retries it too (Record is idempotent on the entry id), and
+// neither is admitted before the ledger holds it.
 func (s *agentServiceImpl) flushPendingConsumption(ctx context.Context, sessionID string) error {
 	if s.ledger == nil || sessionID == "" {
 		return nil
@@ -138,30 +154,35 @@ func (s *agentServiceImpl) flushPendingConsumption(ctx context.Context, sessionI
 	if mem, ok := s.liveSessionRecord(sessionID); ok {
 		accountID = mem.AccountID()
 	}
-	taken := s.pendingLedger.take(sessionID, accountID)
-	if len(taken) == 0 {
+	pending := s.pendingLedger.matching(sessionID, accountID)
+	if len(pending) == 0 {
 		return nil
 	}
 	rctx, cancel := recordingContext(ctx)
 	defer cancel()
 	var lastErr error
 	failed := 0
-	for _, entry := range taken {
+	for _, entry := range pending {
 		err := s.ledger.Record(rctx, entry)
 		var conflict *ConsumptionConflictError
 		switch {
 		case err == nil:
-			// Counted once the ledger holds it, as recordConsumption does.
-			countFactoryTurn(metrics.GetMetrics(), entry, s.prices.Lists(entry.TenantID, entry.Engine, entry.Model))
+			// Counted once the ledger holds it, as recordConsumption does,
+			// and only by the retry that removes it: two sessions retrying
+			// one entry count it once.
+			if s.pendingLedger.remove(entry.EntryID) {
+				countFactoryTurn(metrics.GetMetrics(), entry, s.prices.Lists(entry.TenantID, entry.Engine, entry.Model))
+			}
 		case errors.As(err, &conflict):
 			// The id is already stored with a different record: the
 			// ledger holds a consumption for it, and retrying cannot
 			// change that. Logged, not kept.
+			s.pendingLedger.remove(entry.EntryID)
 			s.logger.Warnf(
 				"orchestration: pending consumption conflicts with the stored entry; dropped: session=%s entry=%s err=%s",
 				entry.SessionID, entry.EntryID, err.Error())
 		default:
-			s.pendingLedger.add(entry)
+			// Still pending: it never left the list.
 			lastErr = err
 			failed++
 		}

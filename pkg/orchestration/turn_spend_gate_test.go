@@ -66,8 +66,15 @@ func newTurnSpendHarness(t *testing.T, withAccount bool) *turnSpendHarness {
 // gate exists for.
 func (h *turnSpendHarness) spawn(t *testing.T, ctx context.Context) string {
 	t.Helper()
+	return h.spawnAt(t, ctx, "/work")
+}
+
+// spawnAt spawns a session at workDir. The usage backend names a session
+// from its work dir, so two sessions need two work dirs.
+func (h *turnSpendHarness) spawnAt(t *testing.T, ctx context.Context, workDir string) string {
+	t.Helper()
 	spawn, err := h.service.SpawnSession(ctx, &SpawnSessionRequest{
-		Backend: "usage", WorkDir: "/work", ProjectID: "proj-1", Persistent: true, AccountAuto: true,
+		Backend: "usage", WorkDir: workDir, ProjectID: "proj-1", Persistent: true, AccountAuto: true,
 	})
 	if err != nil {
 		t.Fatalf("SpawnSession: %v", err)
@@ -231,6 +238,11 @@ type flakyLedger struct {
 	failing   atomic.Bool
 	writes    atomic.Int32
 	cancelled atomic.Int32
+
+	// held and release, when set, hold every write: Record signals held,
+	// then waits for release to close.
+	held    chan struct{}
+	release chan struct{}
 }
 
 func (l *flakyLedger) Record(ctx context.Context, entry ConsumptionEntry) error {
@@ -238,6 +250,10 @@ func (l *flakyLedger) Record(ctx context.Context, entry ConsumptionEntry) error 
 	if ctx.Err() != nil {
 		l.cancelled.Add(1)
 		return ctx.Err()
+	}
+	if l.release != nil {
+		l.held <- struct{}{}
+		<-l.release
 	}
 	if l.failing.Load() {
 		return stderrors.New("quota plane unavailable")
@@ -293,6 +309,87 @@ func TestPromptSession_RefusesTheNextTurnWhileAFailedUsageRecordIsPending(t *tes
 	}
 	if got := turns.Load(); got != 1 {
 		t.Errorf("backend ran %d turns, want 1", got)
+	}
+}
+
+// TestPromptSession_APendingEntryStaysVisibleToASessionSharingItsAccount
+// holds session a's retry of its pending entry inside the ledger write and
+// prompts session b on the same account meanwhile: b must still see the
+// entry, retry it too, and be refused at the cap rather than admitted
+// against a sum that leaves a's tokens out.
+func TestPromptSession_APendingEntryStaysVisibleToASessionSharingItsAccount(t *testing.T) {
+	harness := newTurnSpendHarness(t, true)
+	ledger := &flakyLedger{ConsumptionLedger: harness.ledger}
+	harness.service.SetConsumptionLedger(ledger)
+	ctx := ContextWithTenant(context.Background(), "tenant-a")
+	sessionA := harness.spawn(t, ctx)
+	sessionB := harness.spawnAt(t, ctx, "/work-b")
+	if sessionA == sessionB {
+		t.Fatalf("sessions a and b are both %q — one session serializes on its own turn lock and cannot show the race", sessionA)
+	}
+	for _, id := range []string{sessionA, sessionB} {
+		mem, ok := harness.service.liveSessionRecord(id)
+		if !ok || mem.AccountID() != "acct-1" {
+			t.Fatalf("session %q is not live on acct-1 — the test needs both sessions on one account", id)
+		}
+	}
+	harness.spendAccount1(t, 950)
+
+	var turns atomic.Int32
+	harness.backend.beforePrompt = func() { turns.Add(1) }
+
+	ledger.failing.Store(true)
+	if err := harness.prompt(ctx, sessionA); err != nil {
+		t.Fatalf("first turn = %v, want it admitted under the cap", err)
+	}
+	if got := harness.service.pendingLedger.size(); got != 1 {
+		t.Fatalf("pending entries = %d, want 1 — the failed write was dropped", got)
+	}
+	ledger.failing.Store(false)
+
+	ledger.held = make(chan struct{}, 2)
+	ledger.release = make(chan struct{})
+	resultA := make(chan error, 1)
+	go func() { resultA <- harness.prompt(ctx, sessionA) }()
+	select {
+	case <-ledger.held:
+	case <-time.After(10 * time.Second):
+		close(ledger.release)
+		t.Fatal("session a never retried its pending entry")
+	}
+	resultB := make(chan error, 1)
+	go func() { resultB <- harness.prompt(ctx, sessionB) }()
+	time.Sleep(200 * time.Millisecond)
+	if got := turns.Load(); got != 1 {
+		close(ledger.release)
+		t.Fatalf("session b reached the backend while session a's pending entry was being retried (%d turns, want 1) — it was admitted against 950 of the 1100 tokens spent", got)
+	}
+	close(ledger.release)
+
+	for name, result := range map[string]chan error{"a": resultA, "b": resultB} {
+		select {
+		case err := <-result:
+			var exhausted *AccountQuotaExhaustedError
+			if !stderrors.As(err, &exhausted) {
+				t.Errorf("session %s turn = %v, want an *AccountQuotaExhaustedError — 1100 of 1000 tokens are spent", name, err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatalf("session %s turn never returned", name)
+		}
+	}
+	if got := turns.Load(); got != 1 {
+		t.Errorf("backend ran %d turns, want 1", got)
+	}
+	if got := harness.service.pendingLedger.size(); got != 0 {
+		t.Errorf("pending entries = %d, want 0 once the ledger holds the entry", got)
+	}
+	now := time.Now().UTC()
+	usage, err := harness.ledger.WindowUsage(ctx, "tenant-a", "acct-1", now.Add(-2*time.Hour), now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("WindowUsage: %v", err)
+	}
+	if got := usage.InputTokens + usage.OutputTokens; got != 1100 {
+		t.Errorf("ledger holds %d tokens for acct-1, want 1100 — the entry retried by both sessions must be stored once", got)
 	}
 }
 
