@@ -112,7 +112,8 @@ var unixOnlyServices = map[string]string{
 	// quicbaas.vector.v1 name.
 	// KeyManagement and DEKManagement are mounted: the pinned go-xkms serves
 	// no DEK surface and no quicbaas.kms.v1 name. AttestationService is
-	// mounted: the pinned go-xkms serves no Verifier RPCs. Crypto,
+	// mounted: the pinned go-xkms serves no Verifier RPCs. Crypto is mounted
+	// for every gRPC peer: the pinned go-xkms serves no quicbaas.kms.v1 name.
 	// CertificateService, TrustService and PIVService are mounted for
 	// Unix-socket peers only (pkg/apimodule
 	// TestModule_RegisterGRPC_LegacyXKMSWrappersAreUnixOnly).

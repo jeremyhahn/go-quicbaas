@@ -20,6 +20,9 @@ var (
 	// ErrKeyIDEmpty indicates a keyID parameter is empty.
 	ErrKeyIDEmpty = errors.New("keyID cannot be empty")
 
+	// ErrInvalidKeyID is returned when a key ID cannot be mapped to a backend key name.
+	ErrInvalidKeyID = errors.New("invalid key ID")
+
 	// ErrKeyAttributesNil indicates key attributes are nil.
 	ErrKeyAttributesNil = errors.New("key attributes cannot be nil")
 
@@ -76,4 +79,10 @@ var (
 
 	// ErrKeyBytesPositive indicates keyBytes must be positive.
 	ErrKeyBytesPositive = errors.New("keyBytes must be positive")
+
+	// ErrInvalidCiphertextKeyVersion indicates a ciphertext's key version metadata is not a positive integer.
+	ErrInvalidCiphertextKeyVersion = errors.New("ciphertext key version is invalid")
+
+	// ErrVersionNameTaken indicates the name of a key's next version is taken by another key.
+	ErrVersionNameTaken = errors.New("key version name is taken by another key")
 )

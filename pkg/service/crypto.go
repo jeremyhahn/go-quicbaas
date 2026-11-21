@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"context"
 	stderrors "errors"
+	"fmt"
 	"time"
 
 	types "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -200,8 +201,19 @@ func (t *cryptoService) Encrypt(ctx context.Context, req *EncryptRequest) (*Encr
 		return nil, err
 	}
 
+	if err := t.checkCurrentVersionUsable(ctx, scopedKeyID, "service.Encrypt"); err != nil {
+		t.metrics.encryptOperationsTotal.With(req.KeyID, "version_disabled").Inc()
+		t.metrics.errorsByType.With("key_version_error").Inc()
+		return nil, err
+	}
+
 	// Track key usage before encryption (if tracker configured)
 	if t.safetyTracker != nil {
+		// Held until the operation returns, so a concurrent rotation cannot
+		// reset the usage this operation records (AEADSafetyTracker.KeyLock).
+		keyLock := t.safetyTracker.KeyLock(scopedKeyID)
+		keyLock.RLock()
+		defer keyLock.RUnlock()
 		if err := t.safetyTracker.RecordKeyEncrypt(ctx, scopedKeyID, uint64(len(req.Plaintext))); err != nil {
 			t.metrics.encryptOperationsTotal.With(req.KeyID, "safety_limit_exceeded").Inc()
 			t.metrics.errorsByType.With("safety_limit_error").Inc()
@@ -248,13 +260,23 @@ func (t *cryptoService) Encrypt(ctx context.Context, req *EncryptRequest) (*Encr
 // reports it. It returns 1 when no KMS manager is configured, the lookup
 // fails, or the metadata carries no version.
 func (t *cryptoService) keyVersion(ctx context.Context, scopedKeyID string) uint64 {
+	version, err := t.currentKeyVersion(ctx, scopedKeyID)
+	if err != nil {
+		return 1
+	}
+	return version
+}
+
+// currentKeyVersion returns the key's current version, 1 when the KMS manager
+// records none, and the KMS manager's lookup error.
+func (t *cryptoService) currentKeyVersion(ctx context.Context, scopedKeyID string) (uint64, error) {
 	var version uint64 = 1
 	if t.kmsManager == nil {
-		return version
+		return version, nil
 	}
 	keyInfo, err := t.kmsManager.GetKey(ctx, scopedKeyID)
 	if err != nil {
-		return version
+		return 0, err
 	}
 	switch info := keyInfo.(type) {
 	case *kms.KeyMetadata:
@@ -266,7 +288,61 @@ func (t *cryptoService) keyVersion(ctx context.Context, scopedKeyID string) uint
 			version = v
 		}
 	}
-	return version
+	return version, nil
+}
+
+// checkVersionUsable refuses a ciphertext whose key version is no longer
+// usable: once a rotated-out version's grace period ends it is disabled, and
+// data sealed under it must not decrypt. A version with no recorded status is
+// in its default (enabled) state, as KMSService treats it.
+func (t *cryptoService) checkVersionUsable(ctx context.Context, scopedKeyID string, ciphertext []byte) error {
+	if t.kmsSvc == nil {
+		return nil
+	}
+	version, err := kms.CiphertextKeyVersion(ciphertext)
+	if stderrors.Is(err, kms.ErrInvalidCiphertextKeyVersion) {
+		// A version that is not a positive integer names no key version: refuse it rather than check another version's status.
+		return WrapError(err, errors.ErrInvalidInput, "service.Decrypt", "ciphertext key version is invalid")
+	}
+	if err != nil {
+		// A ciphertext that does not decode names no version; the crypto backend rejects ciphertext it cannot decode, so its own error is what the caller sees.
+		return nil
+	}
+	status, _, err := t.kmsSvc.lookupVersionStatus(ctx, scopedKeyID, version)
+	if err != nil {
+		// A status that cannot be read may be a disabled one: refuse rather than decrypt under it.
+		return WrapError(err, errors.ErrUnavailable, "service.Decrypt", "key version status unavailable")
+	}
+	switch status {
+	case "", KeyStatusEnabled, KeyStatusRotating:
+		return nil
+	default:
+		return api.NewKeyDisabledError("service.Decrypt", scopedKeyID)
+	}
+}
+
+// checkCurrentVersionUsable refuses an operation that would encrypt under the
+// key's current version when that version is not usable, so nothing is sealed
+// or wrapped under a version the Decrypt gate would then refuse. A version
+// whose status cannot be read is refused too.
+func (t *cryptoService) checkCurrentVersionUsable(ctx context.Context, scopedKeyID, op string) error {
+	if t.kmsSvc == nil {
+		return nil
+	}
+	version, err := t.currentKeyVersion(ctx, scopedKeyID)
+	if err != nil {
+		return WrapError(err, errors.ErrUnavailable, op, "key version unavailable")
+	}
+	status, _, err := t.kmsSvc.lookupVersionStatus(ctx, scopedKeyID, version)
+	if err != nil {
+		return WrapError(err, errors.ErrUnavailable, op, "key version status unavailable")
+	}
+	switch status {
+	case "", KeyStatusEnabled, KeyStatusRotating:
+		return nil
+	default:
+		return api.NewKeyDisabledError(op, scopedKeyID)
+	}
 }
 
 // cryptoItemFunc encrypts or decrypts one item under keyID bound to encContext.
@@ -339,9 +415,36 @@ func (t *cryptoService) Decrypt(ctx context.Context, req *DecryptRequest) (*Decr
 		return nil, err
 	}
 
+	// The backend decrypts under the version the ciphertext names, so that is
+	// the version reported, and an explicit version that differs is refused.
+	keyVersion := req.KeyVersion
+	if v, verr := kms.CiphertextKeyVersion(req.Ciphertext); verr == nil {
+		if req.KeyVersion != 0 && req.KeyVersion != v {
+			t.metrics.decryptOperationsTotal.With(req.KeyID, "validation_error").Inc()
+			t.metrics.errorsByType.With("validation_error").Inc()
+			return nil, NewError(errors.ErrInvalidInput, "crypto.Decrypt",
+				fmt.Sprintf("key version %d does not match the ciphertext's key version %d", req.KeyVersion, v))
+		}
+		keyVersion = v
+	}
+	if keyVersion == 0 {
+		keyVersion = 1
+	}
+
+	if err := t.checkVersionUsable(ctx, scopedKeyID, req.Ciphertext); err != nil {
+		t.metrics.decryptOperationsTotal.With(req.KeyID, "version_disabled").Inc()
+		t.metrics.errorsByType.With("key_version_error").Inc()
+		return nil, err
+	}
+
 	// Track key usage before decryption (if tracker configured)
 	// Note: For decryption we track the ciphertext size as an approximation
 	if t.safetyTracker != nil {
+		// Held until the operation returns, so a concurrent rotation cannot
+		// reset the usage this operation records (AEADSafetyTracker.KeyLock).
+		keyLock := t.safetyTracker.KeyLock(scopedKeyID)
+		keyLock.RLock()
+		defer keyLock.RUnlock()
 		if err := t.safetyTracker.RecordKeyEncrypt(ctx, scopedKeyID, uint64(len(req.Ciphertext))); err != nil {
 			t.metrics.decryptOperationsTotal.With(req.KeyID, "safety_limit_exceeded").Inc()
 			t.metrics.errorsByType.With("safety_limit_error").Inc()
@@ -362,11 +465,6 @@ func (t *cryptoService) Decrypt(ctx context.Context, req *DecryptRequest) (*Decr
 	}
 
 	// Use provided key version or default
-	keyVersion := req.KeyVersion
-	if keyVersion == 0 {
-		keyVersion = 1
-	}
-
 	resp := &DecryptResponse{
 		KeyID:      req.KeyID,
 		KeyVersion: keyVersion,
@@ -422,8 +520,19 @@ func (t *cryptoService) Rewrap(ctx context.Context, req *RewrapRequest) (*Rewrap
 		}
 	}
 
+	if err := t.checkCurrentVersionUsable(ctx, scopedKeyID, "service.Rewrap"); err != nil {
+		t.metrics.encryptOperationsTotal.With(req.KeyID, "version_disabled").Inc()
+		t.metrics.errorsByType.With("key_version_error").Inc()
+		return nil, err
+	}
+
 	// Track key usage for rewrap operation (if tracker configured)
 	if t.safetyTracker != nil {
+		// Held until the operation returns, so a concurrent rotation cannot
+		// reset the usage this operation records (AEADSafetyTracker.KeyLock).
+		keyLock := t.safetyTracker.KeyLock(scopedKeyID)
+		keyLock.RLock()
+		defer keyLock.RUnlock()
 		if err := t.safetyTracker.RecordKeyEncrypt(ctx, scopedKeyID, uint64(len(req.Ciphertext))); err != nil {
 			t.metrics.encryptOperationsTotal.With(req.KeyID, "safety_limit_exceeded").Inc()
 			t.metrics.errorsByType.With("safety_limit_error").Inc()
@@ -499,6 +608,12 @@ func (t *cryptoService) EncryptBatch(ctx context.Context, req *EncryptBatchReque
 		return nil, err
 	}
 
+	if err := t.checkCurrentVersionUsable(ctx, scopedKeyID, "service.EncryptBatch"); err != nil {
+		t.metrics.encryptOperationsTotal.With(req.KeyID, "version_disabled").Inc()
+		t.metrics.errorsByType.With("key_version_error").Inc()
+		return nil, err
+	}
+
 	// Track key usage for batch operation (if tracker configured)
 	if t.safetyTracker != nil {
 		// Calculate total bytes in the batch
@@ -508,7 +623,13 @@ func (t *cryptoService) EncryptBatch(ctx context.Context, req *EncryptBatchReque
 		}
 
 		// Check safety limits before processing batch
-		if err := t.safetyTracker.RecordKeyEncrypt(ctx, scopedKeyID, totalBytes); err != nil {
+		// Each item is one AEAD operation under the key.
+		// Held until the operation returns, so a concurrent rotation cannot
+		// reset the usage this operation records (AEADSafetyTracker.KeyLock).
+		keyLock := t.safetyTracker.KeyLock(scopedKeyID)
+		keyLock.RLock()
+		defer keyLock.RUnlock()
+		if err := t.safetyTracker.RecordKeyEncryptN(ctx, scopedKeyID, uint64(len(req.Items)), totalBytes); err != nil {
 			t.metrics.encryptOperationsTotal.With(req.KeyID, "safety_limit_exceeded").Inc()
 			t.metrics.errorsByType.With("safety_limit_error").Inc()
 			return nil, &errors.QBError{
@@ -592,6 +713,15 @@ func (t *cryptoService) DecryptBatch(ctx context.Context, req *DecryptBatchReque
 		return nil, err
 	}
 
+	// A disabled key version on any item fails the whole batch.
+	for _, item := range req.Items {
+		if err := t.checkVersionUsable(ctx, scopedKeyID, item.Ciphertext); err != nil {
+			t.metrics.decryptOperationsTotal.With(req.KeyID, "version_disabled").Inc()
+			t.metrics.errorsByType.With("key_version_error").Inc()
+			return nil, err
+		}
+	}
+
 	// Track key usage for batch operation (if tracker configured)
 	if t.safetyTracker != nil {
 		// Calculate total bytes in the batch
@@ -601,7 +731,13 @@ func (t *cryptoService) DecryptBatch(ctx context.Context, req *DecryptBatchReque
 		}
 
 		// Check safety limits before processing batch
-		if err := t.safetyTracker.RecordKeyEncrypt(ctx, scopedKeyID, totalBytes); err != nil {
+		// Each item is one AEAD operation under the key.
+		// Held until the operation returns, so a concurrent rotation cannot
+		// reset the usage this operation records (AEADSafetyTracker.KeyLock).
+		keyLock := t.safetyTracker.KeyLock(scopedKeyID)
+		keyLock.RLock()
+		defer keyLock.RUnlock()
+		if err := t.safetyTracker.RecordKeyDecryptN(ctx, scopedKeyID, uint64(len(req.Items)), totalBytes); err != nil {
 			t.metrics.decryptOperationsTotal.With(req.KeyID, "safety_limit_exceeded").Inc()
 			t.metrics.errorsByType.With("safety_limit_error").Inc()
 			return nil, &errors.QBError{
@@ -688,12 +824,23 @@ func (t *cryptoService) GenerateDataKey(ctx context.Context, req *GenerateDataKe
 		return nil, err
 	}
 
+	if err := t.checkCurrentVersionUsable(ctx, scopedKeyID, "service.GenerateDataKey"); err != nil {
+		t.metrics.encryptOperationsTotal.With(req.KeyID, "version_disabled").Inc()
+		t.metrics.errorsByType.With("key_version_error").Inc()
+		return nil, err
+	}
+
 	// Determine key size from KeyAttributes (default to 32 bytes for AES-256)
 	keyBytes := keySizeFromAttributes(req.KeyAttributes)
 
 	// Track key usage for DEK generation (if tracker configured)
 	// The wrapped DEK is what gets encrypted with the KEK
 	if t.safetyTracker != nil {
+		// Held until the operation returns, so a concurrent rotation cannot
+		// reset the usage this operation records (AEADSafetyTracker.KeyLock).
+		keyLock := t.safetyTracker.KeyLock(scopedKeyID)
+		keyLock.RLock()
+		defer keyLock.RUnlock()
 		if err := t.safetyTracker.RecordKeyEncrypt(ctx, scopedKeyID, conv.ClampIntToUint64(keyBytes)); err != nil {
 			t.metrics.encryptOperationsTotal.With(req.KeyID, "safety_limit_exceeded").Inc()
 			t.metrics.errorsByType.With("safety_limit_error").Inc()
@@ -764,11 +911,22 @@ func (t *cryptoService) GenerateWrappedDataKey(ctx context.Context, req *Generat
 		return nil, err
 	}
 
+	if err := t.checkCurrentVersionUsable(ctx, scopedKeyID, "service.GenerateWrappedDataKey"); err != nil {
+		t.metrics.encryptOperationsTotal.With(req.KeyID, "version_disabled").Inc()
+		t.metrics.errorsByType.With("key_version_error").Inc()
+		return nil, err
+	}
+
 	// Determine key size from KeyAttributes (default to 32 bytes for AES-256)
 	keyBytes := keySizeFromAttributes(req.KeyAttributes)
 
 	// Track key usage for wrapped DEK generation (if tracker configured)
 	if t.safetyTracker != nil {
+		// Held until the operation returns, so a concurrent rotation cannot
+		// reset the usage this operation records (AEADSafetyTracker.KeyLock).
+		keyLock := t.safetyTracker.KeyLock(scopedKeyID)
+		keyLock.RLock()
+		defer keyLock.RUnlock()
 		if err := t.safetyTracker.RecordKeyEncrypt(ctx, scopedKeyID, conv.ClampIntToUint64(keyBytes)); err != nil {
 			t.metrics.encryptOperationsTotal.With(req.KeyID, "safety_limit_exceeded").Inc()
 			t.metrics.errorsByType.With("safety_limit_error").Inc()
