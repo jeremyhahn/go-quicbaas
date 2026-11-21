@@ -3359,6 +3359,10 @@ actionlint: ## Lint the GitHub Actions workflows with actionlint and shellcheck
 lint-go: ## Run golangci-lint alone (the second half of `make lint`)
 	$(GOLANGCI_LINT_RECIPE)
 
+# The cgroup v2 file the lint recipe reads its memory cap from; tests point
+# it at a fixture.
+LINT_MEMORY_MAX ?= /sys/fs/cgroup/memory.max
+
 define GOLANGCI_LINT_RECIPE
 	@echo "$(BLUE)Running linters...$(NC)"
 	@test -x $(GOLINT) || (echo "$(RED)golangci-lint not installed. Run: make install-tools$(NC)" && exit 1)
@@ -3374,7 +3378,16 @@ define GOLANGCI_LINT_RECIPE
 	# without this, that is indistinguishable from golangci-lint reporting real
 	# findings. Both are just "make: *** [lint] Error", which is how three kills
 	# on 2026-08-26 (#154) read as lint failures on code that lints clean.
-	@$(GOLINT) run --timeout=20m --build-tags '$(LINT_BUILD_TAGS)' ./...; rc=$$?; \
+	# Memory bound (#2656). Go's heap target is about twice the live heap, and
+	# the overflow runners cap the stage's container at 8g with no swap, so
+	# the pass was killed there while it passes under a 16g bound. When the
+	# container's cgroup v2 memory.max is a number, GOMEMLIMIT is three
+	# quarters of it, so the GC collects before the cap; at 8 GiB or less the
+	# analysis also runs two packages at a time, which bounds the live type
+	# information. An unbounded container runs as before.
+	@mem=$$(cat $(LINT_MEMORY_MAX) 2>/dev/null); lim=; conc=; \
+	case $$mem in ''|max|*[!0-9]*) ;; *) lim=GOMEMLIMIT=$$((mem / 4 * 3)); [ $$mem -gt 8589934592 ] || conc=--concurrency=2 ;; esac; \
+	env $$lim $(GOLINT) run --timeout=20m $$conc --build-tags '$(LINT_BUILD_TAGS)' ./...; rc=$$?; \
 	if [ $$rc -eq 0 ]; then \
 		exit 0; \
 	elif [ $$rc -gt 128 ]; then \
