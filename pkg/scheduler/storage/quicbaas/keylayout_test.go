@@ -43,6 +43,7 @@ func TestPlatformPrefixes_AreAllReserved(t *testing.T) {
 		"executions": ExecutionsPrefix,
 		"counter":    JobIDCounterKey,
 		"claims":     ClaimsPrefix,
+		"tenantjobs": TenantJobIndexPrefix,
 	}
 	for name, prefix := range prefixes {
 		if !strings.HasPrefix(prefix, systemNamespace) {

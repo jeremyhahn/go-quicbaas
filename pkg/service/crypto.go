@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"context"
 	stderrors "errors"
+	"strconv"
 	"time"
 
 	types "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -100,6 +101,18 @@ func scopeKeyID(ctx context.Context, keyID string) (string, error) {
 
 // keyOperationError wraps a failed key operation. A key absent from the
 // caller's tenant surfaces as not-found, mirroring the KMS verbs.
+// KeyVersionDisabledError reports a decrypt refused because the
+// ciphertext's key version is disabled.
+type KeyVersionDisabledError struct {
+	KeyID   string
+	Version uint64
+}
+
+// Error implements the error interface.
+func (e *KeyVersionDisabledError) Error() string {
+	return "key " + e.KeyID + " version " + strconv.FormatUint(e.Version, 10) + " is disabled"
+}
+
 func keyOperationError(code errors.ErrorCode, op, operation string, err error) error {
 	if stderrors.Is(err, kms.ErrKeyNotFound) {
 		code = errors.ErrNotFound
@@ -202,6 +215,7 @@ func (t *cryptoService) Encrypt(ctx context.Context, req *EncryptRequest) (*Encr
 
 	// Track key usage before encryption (if tracker configured)
 	if t.safetyTracker != nil {
+		defer t.safetyTracker.BeginKeyUse(scopedKeyID)()
 		if err := t.safetyTracker.RecordKeyEncrypt(ctx, scopedKeyID, uint64(len(req.Plaintext))); err != nil {
 			t.metrics.encryptOperationsTotal.With(req.KeyID, "safety_limit_exceeded").Inc()
 			t.metrics.errorsByType.With("safety_limit_error").Inc()
@@ -339,9 +353,14 @@ func (t *cryptoService) Decrypt(ctx context.Context, req *DecryptRequest) (*Decr
 		return nil, err
 	}
 
+	if err := t.refuseDisabledVersions(ctx, "crypto.Decrypt", req.KeyID, scopedKeyID, req.Ciphertext); err != nil {
+		return nil, err
+	}
+
 	// Track key usage before decryption (if tracker configured)
 	// Note: For decryption we track the ciphertext size as an approximation
 	if t.safetyTracker != nil {
+		defer t.safetyTracker.BeginKeyUse(scopedKeyID)()
 		if err := t.safetyTracker.RecordKeyEncrypt(ctx, scopedKeyID, uint64(len(req.Ciphertext))); err != nil {
 			t.metrics.decryptOperationsTotal.With(req.KeyID, "safety_limit_exceeded").Inc()
 			t.metrics.errorsByType.With("safety_limit_error").Inc()
@@ -424,6 +443,7 @@ func (t *cryptoService) Rewrap(ctx context.Context, req *RewrapRequest) (*Rewrap
 
 	// Track key usage for rewrap operation (if tracker configured)
 	if t.safetyTracker != nil {
+		defer t.safetyTracker.BeginKeyUse(scopedKeyID)()
 		if err := t.safetyTracker.RecordKeyEncrypt(ctx, scopedKeyID, uint64(len(req.Ciphertext))); err != nil {
 			t.metrics.encryptOperationsTotal.With(req.KeyID, "safety_limit_exceeded").Inc()
 			t.metrics.errorsByType.With("safety_limit_error").Inc()
@@ -507,8 +527,10 @@ func (t *cryptoService) EncryptBatch(ctx context.Context, req *EncryptBatchReque
 			totalBytes += uint64(len(item.Plaintext))
 		}
 
-		// Check safety limits before processing batch
-		if err := t.safetyTracker.RecordKeyEncrypt(ctx, scopedKeyID, totalBytes); err != nil {
+		// Reserve one operation per item before processing the batch, so a
+		// batch cannot exceed the MaxOperations single calls honour.
+		defer t.safetyTracker.BeginKeyUse(scopedKeyID)()
+		if err := t.safetyTracker.RecordKeyEncryptBatch(ctx, scopedKeyID, uint64(len(req.Items)), totalBytes); err != nil {
 			t.metrics.encryptOperationsTotal.With(req.KeyID, "safety_limit_exceeded").Inc()
 			t.metrics.errorsByType.With("safety_limit_error").Inc()
 			return nil, &errors.QBError{
@@ -592,6 +614,15 @@ func (t *cryptoService) DecryptBatch(ctx context.Context, req *DecryptBatchReque
 		return nil, err
 	}
 
+	// Any item sealed under a disabled version refuses the whole batch.
+	itemCiphertexts := make([][]byte, len(req.Items))
+	for i, item := range req.Items {
+		itemCiphertexts[i] = item.Ciphertext
+	}
+	if err := t.refuseDisabledVersions(ctx, "crypto.DecryptBatch", req.KeyID, scopedKeyID, itemCiphertexts...); err != nil {
+		return nil, err
+	}
+
 	// Track key usage for batch operation (if tracker configured)
 	if t.safetyTracker != nil {
 		// Calculate total bytes in the batch
@@ -600,8 +631,10 @@ func (t *cryptoService) DecryptBatch(ctx context.Context, req *DecryptBatchReque
 			totalBytes += uint64(len(item.Ciphertext))
 		}
 
-		// Check safety limits before processing batch
-		if err := t.safetyTracker.RecordKeyEncrypt(ctx, scopedKeyID, totalBytes); err != nil {
+		// Reserve one operation per item before processing the batch, so a
+		// batch cannot exceed the MaxOperations single calls honour.
+		defer t.safetyTracker.BeginKeyUse(scopedKeyID)()
+		if err := t.safetyTracker.RecordKeyEncryptBatch(ctx, scopedKeyID, uint64(len(req.Items)), totalBytes); err != nil {
 			t.metrics.decryptOperationsTotal.With(req.KeyID, "safety_limit_exceeded").Inc()
 			t.metrics.errorsByType.With("safety_limit_error").Inc()
 			return nil, &errors.QBError{
@@ -654,6 +687,37 @@ func (t *cryptoService) DecryptBatch(ctx context.Context, req *DecryptBatchReque
 	return resp, nil
 }
 
+// refuseDisabledVersions returns a precondition error when any ciphertext was
+// sealed under a key version the KMS service has disabled. A ciphertext the
+// backend cannot parse is skipped: the backend refuses it anyway.
+func (t *cryptoService) refuseDisabledVersions(ctx context.Context, op, keyID, scopedKeyID string, ciphertexts ...[]byte) error {
+	if t.kmsSvc == nil {
+		return nil
+	}
+	seen := make(map[uint64]struct{})
+	for _, ciphertext := range ciphertexts {
+		version, ok := kms.CiphertextKeyVersion(ciphertext)
+		if !ok {
+			continue
+		}
+		v := conv.ClampIntToUint64(version)
+		if _, done := seen[v]; done {
+			continue
+		}
+		seen[v] = struct{}{}
+		if status, _ := t.kmsSvc.getVersionStatus(ctx, scopedKeyID, v); status == KeyStatusDisabled {
+			t.metrics.decryptOperationsTotal.With(keyID, "version_disabled").Inc()
+			t.metrics.errorsByType.With("version_disabled_error").Inc()
+			return &errors.QBError{
+				Code: errors.ErrPreconditionFailed,
+				Op:   op,
+				Err:  &KeyVersionDisabledError{KeyID: keyID, Version: v},
+			}
+		}
+	}
+	return nil
+}
+
 // =============================================================================
 // Data Key Generation (Envelope Encryption)
 // =============================================================================
@@ -694,6 +758,7 @@ func (t *cryptoService) GenerateDataKey(ctx context.Context, req *GenerateDataKe
 	// Track key usage for DEK generation (if tracker configured)
 	// The wrapped DEK is what gets encrypted with the KEK
 	if t.safetyTracker != nil {
+		defer t.safetyTracker.BeginKeyUse(scopedKeyID)()
 		if err := t.safetyTracker.RecordKeyEncrypt(ctx, scopedKeyID, conv.ClampIntToUint64(keyBytes)); err != nil {
 			t.metrics.encryptOperationsTotal.With(req.KeyID, "safety_limit_exceeded").Inc()
 			t.metrics.errorsByType.With("safety_limit_error").Inc()
@@ -769,6 +834,7 @@ func (t *cryptoService) GenerateWrappedDataKey(ctx context.Context, req *Generat
 
 	// Track key usage for wrapped DEK generation (if tracker configured)
 	if t.safetyTracker != nil {
+		defer t.safetyTracker.BeginKeyUse(scopedKeyID)()
 		if err := t.safetyTracker.RecordKeyEncrypt(ctx, scopedKeyID, conv.ClampIntToUint64(keyBytes)); err != nil {
 			t.metrics.encryptOperationsTotal.With(req.KeyID, "safety_limit_exceeded").Inc()
 			t.metrics.errorsByType.With("safety_limit_error").Inc()
