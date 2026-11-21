@@ -4,7 +4,7 @@
 // This file is part of go-quicbaas.
 //
 // Reviewer profiles on the wire: the binding carries the default reviewer and
-// the alternates (pkg/sdlc/binding.go `reviewer` / `reviewers`), and the
+// the alternates (pkg/orchestration/sdlc/binding.go `reviewer` / `reviewers`), and the
 // per-pull-request override is three verbs on one route
 // (pkg/api/rest/handlers_sdlc.go).
 

@@ -78,7 +78,7 @@ under `--work-dir` and on later starts goes straight to `/oauth2/token`.
 Delete the file to force re-enrollment (CA rotation, tenant change,
 compromise recovery).
 
-### Enrollment retry (`pkg/fleet/enroll_retry.go`)
+### Enrollment retry (`pkg/orchestration/fleet/enroll_retry.go`)
 
 | Class | Examples | Behaviour |
 |---|---|---|
@@ -90,7 +90,7 @@ There is no attempt budget. The packaged unit sets `Restart=on-failure`,
 `StartLimitIntervalSec=300` with `StartLimitBurst=5`, so a terminal failure
 ends in `failed`.
 
-## Heartbeat and recovery (`pkg/fleet/heartbeat.go`)
+## Heartbeat and recovery (`pkg/orchestration/fleet/heartbeat.go`)
 
 `HTTPHeartbeatSender` posts to `/api/v1/fleet/{agent_id}/heartbeat?tenant_id=`
 every `--heartbeat-interval` (30s).
@@ -297,11 +297,11 @@ fleet node does not start. Its startup error wraps
 
 | Concern | Where |
 |---|---|
-| Daemon config and flags | `pkg/fleet/config.go`, `cmd/quicbaas/fleet_serve.go` |
-| Enrollment, retry, heartbeat | `pkg/fleet/enrollment.go`, `enroll_retry.go`, `heartbeat.go` |
+| Daemon config and flags | `pkg/orchestration/fleet/config.go`, `cmd/quicbaas/fleet_serve.go` |
+| Enrollment, retry, heartbeat | `pkg/orchestration/fleet/enrollment.go`, `enroll_retry.go`, `heartbeat.go` |
 | Packaged unit and env sample | `deployments/fleet-node/{Dockerfile,quicbaas-agent.service,agent.env.sample}` |
 | Sandbox | `pkg/orchestration/{sandbox_policy,mount_policy,sandbox_network,sandbox_security,container_env_file}.go` |
-| Deploy | `pkg/service/fleet_deploy*.go`, `pkg/fleet/deploy`, `cmd/quicbaas/fleet_deploy*.go` |
+| Deploy | `pkg/service/fleet_deploy*.go`, `pkg/orchestration/fleet/deploy`, `cmd/quicbaas/fleet_deploy*.go` |
 
 ## See also
 

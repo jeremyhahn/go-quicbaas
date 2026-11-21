@@ -168,7 +168,7 @@ func TestTheGateCatchesWhatTheFirstAuditFound(t *testing.T) {
 		},
 		{
 			name:    "the fleet address in exported godoc",
-			file:    "pkg/fleet/config.go",
+			file:    "pkg/orchestration/fleet/config.go",
 			content: "\t// (e.g., \"https://203.0.113.51:8443\"). Required.\n",
 			want:    ClassLabAddress,
 		},

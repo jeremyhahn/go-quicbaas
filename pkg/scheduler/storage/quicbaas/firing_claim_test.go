@@ -41,7 +41,7 @@ import (
 // of both, which is precisely why the claim was moved onto it.
 
 // node returns the package's shared qrdb node, booted on first use by
-// pkg/testutil/qrdbnode. The fixture lives there because pkg/sdlc's coordination tests
+// pkg/testutil/qrdbnode. The fixture lives there because pkg/orchestration/sdlc's coordination tests
 // need exactly the same thing, and its port is assigned by the kernel rather
 // than hand-picked — see qrdbnode.Shared.
 func node(t *testing.T) *qrdbnode.Node {

@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
-	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/sdlc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	orchestratorSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/orchestrator"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/page"

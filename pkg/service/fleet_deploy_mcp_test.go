@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/fleet/deploy"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/fleet/deploy"
 )
 
 // capturingRenderer records the spec it was asked to render so tests can

@@ -20,7 +20,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc/gitsign"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/sdlc/gitsign"
 )
 
 var errClosed = errors.New("closed")

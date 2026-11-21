@@ -82,7 +82,7 @@ type FleetRegistrarRequest struct {
 // DefaultFleetRuntimeScopes returns the fleet node runtime's SERVICE-SURFACE
 // scopes: the three permissions a caller must hold to spawn, prompt and poll a
 // session on a daemon. The daemon's own gRPC spawn server checks them
-// (pkg/fleet GRPCSpawnServer.authorize), and the central's outbound dispatch
+// (pkg/orchestration/fleet GRPCSpawnServer.authorize), and the central's outbound dispatch
 // client is granted them so it can reach a daemon at all. Kept in sync with
 // pkg/orchestration/agent_identity.go.
 //

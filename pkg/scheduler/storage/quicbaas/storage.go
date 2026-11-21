@@ -76,7 +76,7 @@ type ClusteredStorage struct {
 
 	// writer performs the guarded write that decides a firing. The
 	// create/read/decide/swap sequence lives in pkg/cas, shared with
-	// pkg/sdlc's coordination leases: it was written twice before it was
+	// pkg/orchestration/sdlc's coordination leases: it was written twice before it was
 	// written once, and two spellings of one rule drift silently because both
 	// keep passing their own tests.
 	writer *cas.Writer

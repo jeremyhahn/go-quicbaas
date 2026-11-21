@@ -87,7 +87,7 @@ func (s *OrchestratorServer) SpawnSession(ctx context.Context, req *pb.SpawnSess
 		// reaches: forwarding it would let a caller add any flag the CLI takes
 		// — including the permission grants the SDLC module exists to decide. It is
 		// carried on the internal control-plane-to-daemon spawn instead
-		// (pkg/fleet/spawn_server.go), where the sender is the SDLC module itself.
+		// (pkg/orchestration/fleet/spawn_server.go), where the sender is the SDLC module itself.
 
 		// Without this the gRPC transport silently spawns a one-shot session:
 		// the backend runs a fresh process per prompt, the agent keeps no

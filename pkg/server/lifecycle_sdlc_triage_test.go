@@ -21,7 +21,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
-	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/sdlc"
 )
 
 // triageBindingPorts answers one binding for every project, and refuses the

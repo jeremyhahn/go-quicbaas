@@ -289,7 +289,7 @@ export function readmitAllowed(job: Pick<JobProvenance, 'readmit_allowed'>): boo
 
 /**
  * AGENT_TURN_EVENT is the audit event an sdlc worker's turn is recorded
- * under. The producer is `pkg/sdlc`'s runner:
+ * under. The producer is `pkg/orchestration/sdlc`'s runner:
  *
  *     s.job.Audit(auditAgentTurn, turn.Describe())   // auditAgentTurn = "sdlc:agent_turn"
  *

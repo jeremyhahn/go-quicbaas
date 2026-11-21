@@ -28,7 +28,7 @@
 // — for long enough that the REST route goldens froze a surface the shipped
 // build does not serve (go-quicbaas#299). The same hole, one tag over, still
 // hid `rest && !timeseries` (#305), and the inverse of it — a tag turned off
-// in a pass with no !tag file behind it — cost pkg/sdlc every test in the
+// in a pass with no !tag file behind it — cost pkg/orchestration/sdlc every test in the
 // minimal pass (#304).
 //
 // So this asks the question that actually matters: FOR EACH CONSTRAINT, IS
@@ -104,7 +104,7 @@ func main() {
 	// still runs, still passes, and simply stops compiling the file nobody
 	// noticed was added — which is #299 with the numbers changed. A tag with
 	// no `!tag` file must NOT be in the set: turning it off buys no stub
-	// coverage and merely deletes working code, which is what broke pkg/sdlc
+	// coverage and merely deletes working code, which is what broke pkg/orchestration/sdlc
 	// in the minimal pass (#304).
 	if *listNegated {
 		found, err := scan(dirs)

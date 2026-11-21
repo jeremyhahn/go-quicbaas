@@ -20,7 +20,7 @@ import (
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	qrdbembedded "github.com/jeremyhahn/go-qrdb/sdk/go/transport/embedded"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/sdlc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 

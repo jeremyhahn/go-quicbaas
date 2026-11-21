@@ -24,7 +24,7 @@
  * who may merge is the repository owner's policy, and a button that changed
  * it behind their back would be the UI widening the module's authority.
  *
- * Mirrors pkg/sdlc/onboarding.go. Conflicts with that file are defects here.
+ * Mirrors pkg/orchestration/sdlc/onboarding.go. Conflicts with that file are defects here.
  */
 
 import type { ConformanceFinding, ConformanceReport } from '@quicbaas/sdk';

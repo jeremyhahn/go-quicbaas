@@ -20,7 +20,7 @@ import (
 	"encoding/json"
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
-	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/sdlc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 

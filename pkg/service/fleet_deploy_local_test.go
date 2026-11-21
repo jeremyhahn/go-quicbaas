@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/fleet/deploy"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/fleet/deploy"
 )
 
 // recordingTarget is a deploy.Target that runs nothing: it records every

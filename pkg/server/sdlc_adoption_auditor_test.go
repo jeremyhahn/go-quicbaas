@@ -18,7 +18,7 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
-	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/sdlc"
 )
 
 // A skipped adoption lands on the audit trail naming the issue and the pull

@@ -902,7 +902,7 @@ func (v *Validator) validateSDLCPublicURL(public string) {
 // node's public webhook origin. It is PURE — it reads no filesystem and no
 // environment — so the rule can be exercised on its own, which is what lets a
 // drift test pin it against the module's own refusal
-// (sdlc.NormalizeWebhookPublicURL). pkg/config cannot import pkg/sdlc, so the
+// (sdlc.NormalizeWebhookPublicURL). pkg/config cannot import pkg/orchestration/sdlc, so the
 // rule is stated twice and the drift test is what keeps the two the same.
 func ValidateSDLCWebhookPublicURL(public string) error {
 	trimmed := strings.TrimSpace(public)
