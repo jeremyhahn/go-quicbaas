@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"math/rand"
 	"testing"
+	"time"
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/stretchr/testify/assert"
@@ -284,4 +285,118 @@ func TestListAllVectors_SmallNamespaceOneRequest(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, all, 700)
 	assert.Equal(t, 1, f.calls)
+}
+
+// scanSnapshotPages reads a namespace as ListVectors in pkg/service does:
+// offset pages of size until a short page.
+func scanSnapshotPages(t *testing.T, s *vectorScanSnapshots, f *fakeScanVectorClient, ns string, size int) []uint64 {
+	t.Helper()
+	req := &qrdbtransport.ListVectorsRequest{Namespace: ns}
+	var ids []uint64
+	for offset := 0; ; offset += size {
+		all, err := s.read(context.Background(), f, req)
+		require.NoError(t, err)
+		if offset >= len(all) {
+			return ids
+		}
+		end := offset + size
+		if end > len(all) {
+			end = len(all)
+		}
+		for _, v := range all[offset:end] {
+			ids = append(ids, v.ID)
+		}
+	}
+}
+
+// TestVectorScanSnapshots_PagesReadNamespaceOnce lists 2500 vectors as 25
+// offset pages of 100: every ID comes back once, and the namespace is read
+// once. One read is ceil(2500/nodeScanPageSize) = 3 ListVectors calls, which
+// is all the fake counts.
+func TestVectorScanSnapshots_PagesReadNamespaceOnce(t *testing.T) {
+	f := newFakeScanVectorClient(2500)
+	var s vectorScanSnapshots
+
+	ids := scanSnapshotPages(t, &s, f, "ns", 100)
+	require.Len(t, ids, 2500)
+	for i, id := range ids {
+		require.Equal(t, uint64(i+1), id)
+	}
+	assert.Equal(t, 3, f.calls)
+}
+
+// TestVectorScanSnapshots_CountChangeRereads shrinks the namespace after the
+// first read: the changed count reads it again. 3 calls for 2500 vectors,
+// then 2 for 1500, makes 5.
+func TestVectorScanSnapshots_CountChangeRereads(t *testing.T) {
+	f := newFakeScanVectorClient(2500)
+	var s vectorScanSnapshots
+	req := &qrdbtransport.ListVectorsRequest{Namespace: "ns"}
+
+	all, err := s.read(context.Background(), f, req)
+	require.NoError(t, err)
+	require.Len(t, all, 2500)
+
+	f.ids = f.ids[:1500]
+	all, err = s.read(context.Background(), f, req)
+	require.NoError(t, err)
+	require.Len(t, all, 1500)
+	assert.Equal(t, 5, f.calls)
+}
+
+// TestVectorScanSnapshots_ExpiresAfterTTL reads the namespace again once the
+// snapshot is older than nodeScanSnapshotTTL: 3 calls per read of 2500.
+func TestVectorScanSnapshots_ExpiresAfterTTL(t *testing.T) {
+	f := newFakeScanVectorClient(2500)
+	now := time.Unix(1670, 0)
+	s := vectorScanSnapshots{now: func() time.Time { return now }}
+	req := &qrdbtransport.ListVectorsRequest{Namespace: "ns"}
+
+	_, err := s.read(context.Background(), f, req)
+	require.NoError(t, err)
+	now = now.Add(nodeScanSnapshotTTL - time.Second)
+	_, err = s.read(context.Background(), f, req)
+	require.NoError(t, err)
+	require.Equal(t, 3, f.calls, "a snapshot younger than the TTL holds")
+
+	now = now.Add(2 * time.Second)
+	_, err = s.read(context.Background(), f, req)
+	require.NoError(t, err)
+	assert.Equal(t, 6, f.calls, "an expired snapshot reads the namespace again")
+}
+
+// TestVectorScanSnapshots_DropRereads reads the namespace again after drop,
+// even though its count is unchanged: 3 calls per read of 2500.
+func TestVectorScanSnapshots_DropRereads(t *testing.T) {
+	f := newFakeScanVectorClient(2500)
+	var s vectorScanSnapshots
+	req := &qrdbtransport.ListVectorsRequest{Namespace: "ns"}
+
+	_, err := s.read(context.Background(), f, req)
+	require.NoError(t, err)
+	s.drop("other")
+	_, err = s.read(context.Background(), f, req)
+	require.NoError(t, err)
+	require.Equal(t, 3, f.calls, "dropping another namespace keeps this snapshot")
+
+	s.drop("ns")
+	_, err = s.read(context.Background(), f, req)
+	require.NoError(t, err)
+	assert.Equal(t, 6, f.calls)
+}
+
+// TestVectorScanSnapshots_Bounded reads more namespaces than the cache keeps:
+// it never holds more than nodeScanSnapshotMax snapshots.
+func TestVectorScanSnapshots_Bounded(t *testing.T) {
+	f := newFakeScanVectorClient(700)
+	now := time.Unix(1670, 0)
+	s := vectorScanSnapshots{now: func() time.Time { now = now.Add(time.Millisecond); return now }}
+
+	for i := 0; i < 3*nodeScanSnapshotMax; i++ {
+		_, err := s.read(context.Background(), f, &qrdbtransport.ListVectorsRequest{Namespace: fmt.Sprintf("ns-%d", i)})
+		require.NoError(t, err)
+		require.LessOrEqual(t, len(s.entries), nodeScanSnapshotMax)
+	}
+	last := vectorSnapshotKey{namespace: fmt.Sprintf("ns-%d", 3*nodeScanSnapshotMax-1)}
+	assert.Contains(t, s.entries, last, "the newest snapshot is kept")
 }

@@ -319,6 +319,49 @@ func TestNodeVectorStorage_ScanNamespace_Offset(t *testing.T) {
 	}
 }
 
+// TestNodeVectorStorage_ScanNamespace_OffsetSeesOwnWrite pages a namespace
+// by offset, writes through the node, and pages it again: the next scan sees
+// a new vector and the new embedding of a re-upserted one, even though the
+// re-upsert leaves the namespace count unchanged.
+func TestNodeVectorStorage_ScanNamespace_OffsetSeesOwnWrite(t *testing.T) {
+	client := newEmbeddedVectorClient(t)
+	vs := newNodeVectorStorage(client)
+	ctx := context.Background()
+
+	const ns = "paged-write"
+	require.NoError(t, vs.CreateNamespace(ctx, &interfaces.VectorNamespaceInfo{
+		Name:           ns,
+		Dimension:      2,
+		DistanceMetric: "cosine",
+		IndexType:      "flat",
+	}))
+	for id := uint64(1); id <= 5; id++ {
+		require.NoError(t, vs.UpsertVector(ctx, ns, &interfaces.VectorValue{
+			ID:        id,
+			Embedding: []float32{float32(id), 1},
+		}))
+	}
+
+	page, err := vs.ScanNamespace(ctx, ns, &interfaces.VectorScanOptions{Limit: 2, Offset: 4, IncludeVectors: true})
+	require.NoError(t, err)
+	require.Len(t, page, 1)
+	assert.Equal(t, uint64(5), page[0].ID)
+
+	require.NoError(t, vs.UpsertVector(ctx, ns, &interfaces.VectorValue{ID: 5, Embedding: []float32{5, 2}}))
+	page, err = vs.ScanNamespace(ctx, ns, &interfaces.VectorScanOptions{Limit: 2, Offset: 4, IncludeVectors: true})
+	require.NoError(t, err)
+	require.Len(t, page, 1)
+	require.Len(t, page[0].Embedding, 2)
+	assert.Equal(t, float32(2), page[0].Embedding[1], "the re-upserted vector has its new embedding")
+
+	require.NoError(t, vs.UpsertVector(ctx, ns, &interfaces.VectorValue{ID: 6, Embedding: []float32{6, 1}}))
+	page, err = vs.ScanNamespace(ctx, ns, &interfaces.VectorScanOptions{Limit: 2, Offset: 4, IncludeVectors: true})
+	require.NoError(t, err)
+	require.Len(t, page, 2)
+	assert.Equal(t, uint64(5), page[0].ID)
+	assert.Equal(t, uint64(6), page[1].ID, "the new vector is in the next scan")
+}
+
 // TestNodeVectorStorage_ScanNamespace_OffsetPastOnePage pages a namespace
 // larger than one qrdb page (1,000 vectors) the way performIndexRebuild does:
 // every vector is visited exactly once, and one large page is ordered by ID.

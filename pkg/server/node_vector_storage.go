@@ -21,6 +21,8 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"sync"
+	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
@@ -35,6 +37,9 @@ import (
 // The node owns the underlying storage lifecycle; Close is a no-op here.
 type nodeVectorStorage struct {
 	client *qrdbsdk.Client
+	// snapshots lets the offset pages of one listing share one read of the
+	// namespace instead of reading it once per page.
+	snapshots vectorScanSnapshots
 }
 
 // newNodeVectorStorage creates a nodeVectorStorage backed by the given
@@ -66,6 +71,7 @@ func (n *nodeVectorStorage) DeleteNamespace(ctx context.Context, namespace strin
 	_, err := n.client.Vector().DeleteNamespace(ctx, &qrdbtransport.DeleteNamespaceRequest{
 		Namespace: namespace,
 	})
+	n.snapshots.drop(namespace)
 	return err
 }
 
@@ -120,6 +126,7 @@ func (n *nodeVectorStorage) UpsertVector(ctx context.Context, namespace string, 
 		Vector:    vec.Embedding,
 		Metadata:  meta,
 	})
+	n.snapshots.drop(namespace)
 	return err
 }
 
@@ -154,6 +161,7 @@ func (n *nodeVectorStorage) DeleteVector(ctx context.Context, namespace string, 
 		Namespace: namespace,
 		ID:        id,
 	})
+	n.snapshots.drop(namespace)
 	return err
 }
 
@@ -178,6 +186,7 @@ func (n *nodeVectorStorage) BatchUpsertVectors(ctx context.Context, namespace st
 		Namespace: namespace,
 		Vectors:   tvecs,
 	})
+	n.snapshots.drop(namespace)
 	return err
 }
 
@@ -187,6 +196,7 @@ func (n *nodeVectorStorage) BatchDeleteVectors(ctx context.Context, namespace st
 		Namespace: namespace,
 		IDs:       ids,
 	})
+	n.snapshots.drop(namespace)
 	return err
 }
 
@@ -216,7 +226,9 @@ func (n *nodeVectorStorage) ScanNamespace(ctx context.Context, namespace string,
 	// qrdb pages by cursor only, and the order of one page is not stable
 	// from call to call. Offset paging (#1868) needs a stable order, so
 	// read the whole namespace, order it by ID, and cut the page from that.
-	all, err := listAllVectors(ctx, n.client.Vector(), req)
+	// The pages of one listing share one snapshot of the namespace; the
+	// snapshot is shared, so it is sliced here and never written to.
+	all, err := n.snapshots.read(ctx, n.client.Vector(), req)
 	if err != nil {
 		return nil, err
 	}
@@ -367,6 +379,110 @@ func listAllVectors(ctx context.Context, vc qrdbtransport.VectorClient, req *qrd
 		}
 	}
 	return nil, fmt.Errorf("%w: namespace %q: read %d of %d distinct vectors (namespace count %d)", errIncompleteVectorScan, req.Namespace, len(seen), distinct, count)
+}
+
+// nodeScanSnapshotTTL bounds how long the offset pages of one listing reuse
+// one read of the namespace, and nodeScanSnapshotMax how many such reads the
+// node keeps.
+const (
+	nodeScanSnapshotTTL = 30 * time.Second
+	nodeScanSnapshotMax = 4
+)
+
+// vectorSnapshotKey names one snapshot: a namespace read with or without
+// embeddings and metadata.
+type vectorSnapshotKey struct {
+	namespace         string
+	vectors, metadata bool
+}
+
+// vectorSnapshot is one full, ID-ordered read of a namespace, with the
+// namespace count read before it and the time it was taken.
+type vectorSnapshot struct {
+	count uint64
+	at    time.Time
+	all   []*qrdbtransport.VectorData
+}
+
+// vectorScanSnapshots keeps the last few full reads of namespaces, so the
+// offset pages of one listing read the namespace once instead of once per
+// page. A snapshot holds while it is younger than nodeScanSnapshotTTL and
+// the namespace count is unchanged; every write through the node drops the
+// namespace's snapshots. The zero value is ready to use.
+type vectorScanSnapshots struct {
+	mu      sync.Mutex
+	now     func() time.Time
+	entries map[vectorSnapshotKey]*vectorSnapshot
+	// gen counts drops, so a read that a write overlapped does not store
+	// what it read.
+	gen uint64
+}
+
+func (s *vectorScanSnapshots) clock() time.Time {
+	if s.now != nil {
+		return s.now()
+	}
+	return time.Now()
+}
+
+// read returns the whole namespace of req ordered by ID, from a snapshot
+// when one still holds and from listAllVectors otherwise. The returned slice
+// is shared and must not be modified.
+func (s *vectorScanSnapshots) read(ctx context.Context, vc qrdbtransport.VectorClient, req *qrdbtransport.ListVectorsRequest) ([]*qrdbtransport.VectorData, error) {
+	key := vectorSnapshotKey{namespace: req.Namespace, vectors: req.IncludeVectors, metadata: req.IncludeMetadata}
+	info, err := vc.GetNamespaceInfo(ctx, &qrdbtransport.GetNamespaceInfoRequest{Namespace: req.Namespace})
+	if err != nil {
+		return nil, err
+	}
+	count := info.VectorCount
+
+	s.mu.Lock()
+	if e, ok := s.entries[key]; ok && e.count == count && s.clock().Sub(e.at) < nodeScanSnapshotTTL {
+		all := e.all
+		s.mu.Unlock()
+		return all, nil
+	}
+	gen := s.gen
+	s.mu.Unlock()
+
+	all, err := listAllVectors(ctx, vc, req)
+	if err != nil {
+		return nil, err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.gen != gen {
+		return all, nil
+	}
+	if s.entries == nil {
+		s.entries = make(map[vectorSnapshotKey]*vectorSnapshot)
+	}
+	s.entries[key] = &vectorSnapshot{count: count, at: s.clock(), all: all}
+	for len(s.entries) > nodeScanSnapshotMax {
+		var oldest vectorSnapshotKey
+		var oldestAt time.Time
+		first := true
+		for k, e := range s.entries {
+			if first || e.at.Before(oldestAt) {
+				oldest, oldestAt, first = k, e.at, false
+			}
+		}
+		delete(s.entries, oldest)
+	}
+	return all, nil
+}
+
+// drop forgets every snapshot of namespace.
+func (s *vectorScanSnapshots) drop(namespace string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.gen++
+	for k := range s.entries {
+		if k.namespace == namespace {
+			delete(s.entries, k)
+		}
+	}
 }
 
 // scanCursorOffset reads a qrdb ListVectors cursor as the offset it encodes;
