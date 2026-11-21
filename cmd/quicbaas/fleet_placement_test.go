@@ -150,6 +150,50 @@ func TestFleetPlacementDeclareFromFile(t *testing.T) {
 	}
 }
 
+// A spec printed as YAML uses the json field names, so declaring it back
+// from the file keeps every field.
+func TestFleetPlacementYAMLRoundTrip(t *testing.T) {
+	roundTrip := func(t *testing.T, spec *orchestratorSDK.FleetPlacementSpec) *orchestratorSDK.FleetPlacementSpec {
+		t.Helper()
+		var out bytes.Buffer
+		if err := formatFleetPlacement(spec, "yaml", &out); err != nil {
+			t.Fatalf("formatFleetPlacement: %v", err)
+		}
+		text := out.String()
+		if strings.Contains(text, "requiredcapabilities") || strings.Contains(text, "hostcount") {
+			t.Fatalf("YAML uses Go field names:\n%s", text)
+		}
+		path := filepath.Join(t.TempDir(), "spec.yaml")
+		if err := os.WriteFile(path, out.Bytes(), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		fake := &fakePlacementClient{}
+		withFakePlacement(t, fake)
+		if err := runPlacement(t, "declare", spec.Name, "--file", path); err != nil {
+			t.Fatalf("declare --file of the printed spec: %v", err)
+		}
+		return fake.declared.Spec
+	}
+
+	var out bytes.Buffer
+	listed := &orchestratorSDK.FleetPlacementSpec{Name: "agents", Role: "agent", Hosts: []string{"h1"}, RequiredCapabilities: []string{"gpu"}, Actuate: true, Generation: 7}
+	if err := formatFleetPlacement(listed, "yaml", &out); err != nil {
+		t.Fatalf("formatFleetPlacement: %v", err)
+	}
+	if !strings.Contains(out.String(), "required_capabilities:") {
+		t.Fatalf("YAML lacks required_capabilities:\n%s", out.String())
+	}
+	got := roundTrip(t, listed)
+	if strings.Join(got.Hosts, ",") != "h1" || strings.Join(got.RequiredCapabilities, ",") != "gpu" || !got.Actuate || got.Generation != 7 {
+		t.Fatalf("declared %+v, want the printed spec", got)
+	}
+
+	counted := roundTrip(t, &orchestratorSDK.FleetPlacementSpec{Name: "pool", Role: "agent", HostCount: 3})
+	if counted.HostCount != 3 {
+		t.Fatalf("declared %+v, want host_count 3", counted)
+	}
+}
+
 // A client without the placement verbs is refused, not a panic.
 func TestFleetPlacementClientWithoutVerbs(t *testing.T) {
 	withFakePlacement(t, &closeOnlyClient{})

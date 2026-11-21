@@ -416,6 +416,60 @@ func TestSessionWorkSource_ListsTheRolesLiveSessions(t *testing.T) {
 	}
 }
 
+// A source that observes only some roles refuses a report for another role
+// instead of listing no work for it; a source without a role set lists any.
+func TestSessionWorkSource_RefusesUnobservedRole(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	sessions := NewInMemoryAgentStore()
+	for _, record := range []*SessionRecord{
+		{SessionID: "s1", TenantID: "tenant-a", Backend: "review-bot", HostAffinity: "h1", Status: SessionStateActive},
+		{SessionID: "s2", TenantID: "tenant-a", Backend: "claude", HostAffinity: "h2", Status: SessionStateActive},
+	} {
+		if err := sessions.PutSession(ctx, record); err != nil {
+			t.Fatalf("PutSession: %v", err)
+		}
+	}
+	roleOf := func(r *SessionRecord) string {
+		if r.Backend == "review-bot" {
+			return "review"
+		}
+		return "agent"
+	}
+
+	source, err := NewSessionWorkSourceForRoles(sessions, roleOf, "agent")
+	if err != nil {
+		t.Fatalf("NewSessionWorkSourceForRoles: %v", err)
+	}
+	_, err = source.PlacementWork(ctx, "tenant-a", "review")
+	if !errors.Is(err, ErrPlacementRoleUnobserved) {
+		t.Fatalf("review work = %v, want ErrPlacementRoleUnobserved", err)
+	}
+	var unobserved *PlacementRoleUnobservedError
+	if !errors.As(err, &unobserved) || unobserved.Role != "review" {
+		t.Fatalf("review work = %v, want a PlacementRoleUnobservedError for review", err)
+	}
+	got, err := source.PlacementWork(ctx, "tenant-a", "agent")
+	want := []PlacementWork{{TenantID: "tenant-a", ID: "s2", Role: "agent", Host: "h2"}}
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("agent work = %+v, %v; want %+v", got, err, want)
+	}
+
+	all, err := NewSessionWorkSource(sessions, roleOf)
+	if err != nil {
+		t.Fatalf("NewSessionWorkSource: %v", err)
+	}
+	got, err = all.PlacementWork(ctx, "tenant-a", "review")
+	want = []PlacementWork{{TenantID: "tenant-a", ID: "s1", Role: "review", Host: "h1"}}
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("review work without a role set = %+v, %v; want %+v", got, err, want)
+	}
+
+	if _, err := NewSessionWorkSourceForRoles(nil, roleOf, "agent"); !errors.Is(err, ErrSessionWorkSourceIncomplete) {
+		t.Fatalf("no store: %v, want ErrSessionWorkSourceIncomplete", err)
+	}
+}
+
 // A live session of the role that recorded no host reaches the reporter
 // through the adapter and is refused there, named.
 func TestDriftReport_RefusesAHostlessSessionFromTheStore(t *testing.T) {

@@ -174,18 +174,23 @@ type SessionRoleFunc func(*SessionRecord) string
 
 // SessionWorkSource is the PlacementWorkSource over the session store: the
 // tenant's sessions that are not closed and not failed, of the asked role,
-// each named by
-// its session id and the host it recorded landing on.
+// each named by its session id and the host it recorded landing on. A
+// source built with NewSessionWorkSourceForRoles observes only the roles it
+// was given and refuses a report for any other role: the role function
+// cannot return a role the session records do not carry, so listing such a
+// role would report no work where work may run.
 type SessionWorkSource struct {
 	sessions AgentStore
 	roleOf   SessionRoleFunc
+	roles    map[string]bool
 }
 
 // ErrSessionWorkSourceIncomplete refuses a SessionWorkSource without a
 // store or a role function.
 var ErrSessionWorkSourceIncomplete = errors.New("placement: session work source needs a session store and a role function")
 
-// NewSessionWorkSource returns the work source over sessions.
+// NewSessionWorkSource returns the work source over sessions, observing
+// every role roleOf may return.
 func NewSessionWorkSource(sessions AgentStore, roleOf SessionRoleFunc) (*SessionWorkSource, error) {
 	if sessions == nil || roleOf == nil {
 		return nil, ErrSessionWorkSourceIncomplete
@@ -193,9 +198,30 @@ func NewSessionWorkSource(sessions AgentStore, roleOf SessionRoleFunc) (*Session
 	return &SessionWorkSource{sessions: sessions, roleOf: roleOf}, nil
 }
 
+// NewSessionWorkSourceForRoles returns the work source over sessions that
+// observes only roles: PlacementWork refuses any other role with a
+// PlacementRoleUnobservedError. With no roles it is NewSessionWorkSource.
+func NewSessionWorkSourceForRoles(sessions AgentStore, roleOf SessionRoleFunc, roles ...string) (*SessionWorkSource, error) {
+	source, err := NewSessionWorkSource(sessions, roleOf)
+	if err != nil {
+		return nil, err
+	}
+	if len(roles) > 0 {
+		source.roles = make(map[string]bool, len(roles))
+		for _, role := range roles {
+			source.roles[role] = true
+		}
+	}
+	return source, nil
+}
+
 // PlacementWork lists the tenant's sessions of role that are not closed and
 // not failed: a failed session's record is kept, but no process runs for it.
+// A role outside the source's observed roles is refused.
 func (s *SessionWorkSource) PlacementWork(ctx context.Context, tenantID, role string) ([]PlacementWork, error) {
+	if len(s.roles) > 0 && !s.roles[role] {
+		return nil, &PlacementRoleUnobservedError{Role: role}
+	}
 	records, err := s.sessions.ListSessions(ctx, tenantID)
 	if err != nil {
 		return nil, err
@@ -222,6 +248,9 @@ var (
 	ErrPlacementFieldCoverage = errors.New("placement: spec field coverage")
 	// ErrPlacementWorkUnnameable refuses work the report cannot name.
 	ErrPlacementWorkUnnameable = errors.New("placement: work cannot be named")
+	// ErrPlacementRoleUnobserved refuses a report for a role whose work the
+	// work source does not observe.
+	ErrPlacementRoleUnobserved = errors.New("placement: role is not observed")
 	// ErrDriftReporterIncomplete refuses a reporter missing an input.
 	ErrDriftReporterIncomplete = errors.New("placement: drift reporter needs a spec store, an inventory and a work source")
 )
@@ -251,6 +280,15 @@ func (e *PlacementFieldAmbiguousError) Error() string {
 	return fmt.Sprintf("placement: spec field %s is classified as a constraint and as none", e.Field)
 }
 func (e *PlacementFieldAmbiguousError) Unwrap() error { return ErrPlacementFieldCoverage }
+
+// PlacementRoleUnobservedError: the work source cannot observe the work of
+// Role, because no session record carries that role.
+type PlacementRoleUnobservedError struct{ Role string }
+
+func (e *PlacementRoleUnobservedError) Error() string {
+	return fmt.Sprintf("placement: the work of role %q is not observed: no session records that role", e.Role)
+}
+func (e *PlacementRoleUnobservedError) Unwrap() error { return ErrPlacementRoleUnobserved }
 
 // PlacementWorkUnnameableError names work the report refused, and the
 // field that made it unnameable.

@@ -211,7 +211,18 @@ func formatFleetPlacement(v interface{}, format string, w io.Writer) error {
 		encoder.SetIndent("", "  ")
 		return encoder.Encode(v)
 	case cli.OutputFormatYAML:
-		return yaml.NewEncoder(w).Encode(v)
+		// The SDK types carry json tags only: encode through JSON so the
+		// YAML keys are the json names (required_capabilities,
+		// host_count) that declare --file reads back.
+		data, err := json.Marshal(v)
+		if err != nil {
+			return err
+		}
+		var doc interface{}
+		if err := yaml.Unmarshal(data, &doc); err != nil {
+			return err
+		}
+		return yaml.NewEncoder(w).Encode(doc)
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	specRow := func(s *orchestratorSDK.FleetPlacementSpec) {

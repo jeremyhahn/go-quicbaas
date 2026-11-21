@@ -125,6 +125,14 @@ the credential cannot carry the role, however much room it has.
 The session store has no role on a record yet (open question 2), so its
 adapter (`SessionWorkSource`) takes the caller's `SessionRoleFunc`.
 
+The server classifies a remote session as `agent` work and a local one
+(`BackendLocal`) as no role. A remote session with no recorded host is still
+`agent` work, so the report refuses it as unnameable rather than dropping it.
+The server's source observes only `agent`: a drift report for a role the
+session store does not record (`ci`, `review`) is refused
+(`PlacementRoleUnobservedError`, precondition failed) until sessions carry a
+role.
+
 Findings come from one closed set of kinds: `host_not_admitted`,
 `capability_missing`, `host_unregistered`, `spec_host_absent`,
 `no_admissible_host`, `host_count_short` (fewer admissible hosts than

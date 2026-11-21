@@ -280,6 +280,7 @@ var fleetPlacementErrorCode = []struct {
 		return stderrors.As(err, &e)
 	}, errors.ErrPreconditionFailed},
 	{func(err error) bool { var e *orchestration.PlacementWorkUnnameableError; return stderrors.As(err, &e) }, errors.ErrPreconditionFailed},
+	{func(err error) bool { var e *orchestration.PlacementRoleUnobservedError; return stderrors.As(err, &e) }, errors.ErrPreconditionFailed},
 	{func(err error) bool { var e *orchestration.ConsentInvalidError; return stderrors.As(err, &e) }, errors.ErrInvalidInput},
 	{func(err error) bool { var e *orchestration.ConsentNotFoundError; return stderrors.As(err, &e) }, errors.ErrNotFound},
 	// An answer is final, and a stale swap means another answer stands.

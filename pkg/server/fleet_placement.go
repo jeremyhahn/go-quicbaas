@@ -22,11 +22,12 @@ import (
 // fleetPlacementSessionRole names the placement role of a session. A
 // SessionRecord carries no role yet (open question 2 of
 // docs/agent-fleet/placement.md), so the one classification the record
-// supports is used: a session that landed on a fleet host is agent work, and
-// a session with no recorded host ran on the control plane, which no
-// placement spec governs.
+// supports is used: a local session (BackendLocal) ran on the control plane,
+// which no placement spec governs, and a remote session is agent work, with
+// or without a recorded host. A remote session with no recorded host is then
+// refused by the drift report as unnameable, not dropped from it.
 func fleetPlacementSessionRole(record *orchestration.SessionRecord) string {
-	if record.HostAffinity == "" {
+	if record.BackendLocal {
 		return ""
 	}
 	return "agent"
@@ -52,7 +53,9 @@ func bindFleetPlacement(svc any, kv interfaces.KVStore, registry orchestration.F
 	if err != nil {
 		return err
 	}
-	work, err := orchestration.NewSessionWorkSource(sessions, fleetPlacementSessionRole)
+	// Sessions carry no role, so only agent work is observed: a report for
+	// any other role is refused rather than reported clean.
+	work, err := orchestration.NewSessionWorkSourceForRoles(sessions, fleetPlacementSessionRole, "agent")
 	if err != nil {
 		return err
 	}

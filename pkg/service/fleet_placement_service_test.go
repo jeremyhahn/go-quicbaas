@@ -214,6 +214,7 @@ func TestFleetPlacementService_ClassifiesFailures(t *testing.T) {
 		{"consent not pending", &orchestration.ConsentNotPendingError{TenantID: "acme", RequestID: "r", State: orchestration.ConsentGranted}, errors.ErrConflict},
 		{"consent stale", &orchestration.ConsentStaleError{TenantID: "acme", RequestID: "r"}, errors.ErrConflict},
 		{"consent incoherent", &orchestration.ConsentIncoherentError{TenantID: "acme", RequestID: "r"}, errors.ErrPreconditionFailed},
+		{"role unobserved", &orchestration.PlacementRoleUnobservedError{Role: "review"}, errors.ErrPreconditionFailed},
 	} {
 		wantFleetPlacementCode(t, tc.name, classifyFleetPlacementError("AnswerConsent", tc.err), tc.want)
 	}
