@@ -28,11 +28,12 @@
 // services (Vector, Timeseries, Health.Check, RBAC user/role lifecycle,
 // Barrier, Ceremony) are routed to canonical qrdb_* tools; quicbaas-specific
 // surfaces (KMS, Crypto, Orchestrator, Scheduler, Agent, etc.) keep the
-// quicbaas_ prefix. KV Put/Get/Delete call quicbaas_kv_put/get/delete, which
-// reach quicbaas's KV service: the service builds the canonical key from the
-// caller's tenant and routes to the request's shard. Every uint64 (id,
-// shard_id, version, leader_id) crosses the wire as a decimal string so
-// values above 2^53 stay exact.
+// quicbaas_ prefix. KV Put, Get, Delete and List call quicbaas_kv_put,
+// quicbaas_kv_get, quicbaas_kv_delete and quicbaas_kv_list, quicbaas's
+// entity tools (on a full node the qrdb_* names are go-qrdb's own key/value
+// tools). The id is sent as a decimal string so IDs above 2^53 stay exact.
+// KV CompareAndSwap and PutIfAbsent call quicbaas_kv_compare_and_swap and
+// quicbaas_kv_put_if_absent.
 //
 // Examples:
 //   - "quicbaas.KV/Put" -> "quicbaas_kv_put"

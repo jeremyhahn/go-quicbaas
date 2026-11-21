@@ -1,5 +1,5 @@
-// Copyright (c) 2025 Jeremy Hahn
-// Copyright (c) 2025 Automate The Things, LLC
+// Copyright (c) 2026 Jeremy Hahn
+// Copyright (c) 2026 Automate The Things, LLC
 //
 // This file is part of go-quicbaas.
 //
@@ -14,152 +14,149 @@
 package mcp
 
 import (
-	"context"
-	"encoding/base64"
 	"encoding/json"
 	"strconv"
-	"strings"
 
-	"github.com/mark3labs/mcp-go/mcp"
-
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
-	"github.com/jeremyhahn/go-quicbaas/sdk/go/service"
 )
 
-// The SDK's typed KV requests go to quicbaas's quicbaas_kv_put, quicbaas_kv_get
-// and quicbaas_kv_delete tools, which call the same KV service REST and gRPC
-// call: the service builds the canonical key from the caller's tenant and
-// routes to the requested shard. Every uint64 crosses the wire as a decimal
-// string so IDs above 2^53 stay exact.
-
-// kvVerb maps one KV method onto its tool, arguments and answer. args reports
-// false when req is not the method's typed SDK request.
-type kvVerb struct {
-	tool   string
-	args   func(req interface{}) (map[string]interface{}, bool)
-	result func(text string) (interface{}, error)
-}
-
-var kvVerbs = map[string]kvVerb{
-	"Put":    {tool: "quicbaas_kv_put", args: kvPutArgs, result: kvPutResult},
-	"Get":    {tool: "quicbaas_kv_get", args: kvGetArgs, result: kvGetResult},
-	"Delete": {tool: "quicbaas_kv_delete", args: kvDeleteArgs, result: kvDeleteResult},
-}
-
-// isMCPKVService reports whether service names the KV service.
+// isMCPKVService reports whether service is the entity KV service whose
+// Put/Get/Delete/List reach the quicbaas_kv_* tools.
 func isMCPKVService(service string) bool {
-	if idx := strings.LastIndex(service, "."); idx >= 0 {
-		service = service[idx+1:]
-	}
-	return service == "KV"
+	return service == "quicbaas.KV" || service == "KV"
 }
 
-// requestKV calls a KV tool and decodes its JSON answer. A tool error comes
-// back as an error, never as a miss.
-func (t *Transport) requestKV(ctx context.Context, verb kvVerb, args map[string]interface{}) (interface{}, error) {
-	result, err := t.callToolResult(ctx, verb.tool, args)
-	if err != nil {
-		return nil, err
-	}
-	return verb.result(firstText(result.Content))
+// kvListToolResult is the quicbaas_kv_list tool's answer: one page of
+// entities and the camelCase cursor fields the tool emits.
+type kvListToolResult struct {
+	Entities      []*service.Entity `json:"entities"`
+	NextPageToken string            `json:"nextPageToken"`
+	TotalCount    uint64            `json:"totalCount"`
 }
 
-// kvArgs is the arguments every KV tool takes.
-func kvArgs(entityType string, id, shardID uint64, consistency service.ConsistencyLevel) map[string]interface{} {
-	return map[string]interface{}{
-		"entity_type": entityType,
-		"id":          strconv.FormatUint(id, 10),
-		"shard_id":    strconv.FormatUint(shardID, 10),
-		"consistency": strconv.Itoa(int(consistency)),
+// kvArguments converts a KV request to the entity tool's arguments. The
+// generic conversion already yields entity_type, id and base64 data, which
+// the tools read; List's paging fields are renamed to the pageSize and
+// pageToken names the list tool reads.
+func (t *Transport) kvArguments(method string, req interface{}) map[string]interface{} {
+	args := toolArguments(req, true)
+	if args == nil {
+		return nil
 	}
+	// The server's MCP layer decodes tool arguments with plain
+	// encoding/json, so a numeric id above 2^53 would round there; the
+	// entity tools parse a decimal-string id exactly.
+	// A map-based request carries its id as a Go integer, not json.Number,
+	// so every integral form is sent as its decimal string.
+	if id, ok := kvIDDecimal(args["id"]); ok {
+		args["id"] = id
+	}
+	// The entity tools read only shardID; a shard_id key would leave every
+	// KV request on the default shard.
+	if v, ok := args["shard_id"]; ok {
+		args["shardID"] = v
+		delete(args, "shard_id")
+	}
+	if method != "List" {
+		return args
+	}
+	if v, ok := args["page_size"]; ok {
+		args["pageSize"] = v
+		delete(args, "page_size")
+	}
+	if v, ok := args["page_token"]; ok {
+		args["pageToken"] = v
+		delete(args, "page_token")
+	}
+	return args
 }
 
-// decodeKVAnswer decodes a KV tool's JSON answer into out.
-func decodeKVAnswer(tool, text string, out interface{}) error {
-	if err := json.Unmarshal([]byte(text), out); err != nil {
-		return errors.Wrap(err, errors.CodeInternal, "mcp.kv", tool+" answered a result that is not its JSON shape")
-	}
-	return nil
-}
-
-func kvPutArgs(req interface{}) (map[string]interface{}, bool) {
-	r, ok := req.(*service.PutRequest)
-	if !ok || r == nil {
-		return nil, false
-	}
-	args := kvArgs(r.EntityType, r.ID, r.ShardID, r.Consistency)
-	args["data"] = base64.StdEncoding.EncodeToString(r.Data)
-	return args, true
-}
-
-func kvPutResult(text string) (interface{}, error) {
-	var answer struct {
-		ID        uint64 `json:"id,string"`
-		Version   uint64 `json:"version,string"`
-		Timestamp int64  `json:"timestamp"`
-		LeaderID  uint64 `json:"leader_id,string"`
-	}
-	if err := decodeKVAnswer("quicbaas_kv_put", text, &answer); err != nil {
-		return nil, err
-	}
-	return &service.PutResponse{
-		ID:        answer.ID,
-		Version:   answer.Version,
-		Timestamp: answer.Timestamp,
-		LeaderID:  answer.LeaderID,
-	}, nil
-}
-
-func kvGetArgs(req interface{}) (map[string]interface{}, bool) {
-	r, ok := req.(*service.GetRequest)
-	if !ok || r == nil {
-		return nil, false
-	}
-	return kvArgs(r.EntityType, r.ID, r.ShardID, r.Consistency), true
-}
-
-func kvGetResult(text string) (interface{}, error) {
-	var answer struct {
-		ID        uint64 `json:"id,string"`
-		Found     bool   `json:"found"`
-		Data      []byte `json:"data"`
-		Version   uint64 `json:"version,string"`
-		Timestamp int64  `json:"timestamp"`
-	}
-	if err := decodeKVAnswer("quicbaas_kv_get", text, &answer); err != nil {
-		return nil, err
-	}
-	return &service.GetResponse{
-		ID:        answer.ID,
-		Data:      answer.Data,
-		Version:   answer.Version,
-		Timestamp: answer.Timestamp,
-		Found:     answer.Found,
-	}, nil
-}
-
-func kvDeleteArgs(req interface{}) (map[string]interface{}, bool) {
-	r, ok := req.(*service.DeleteRequest)
-	if !ok || r == nil {
-		return nil, false
-	}
-	return kvArgs(r.EntityType, r.ID, r.ShardID, r.Consistency), true
-}
-
-func kvDeleteResult(text string) (interface{}, error) {
-	var answer service.DeleteResponse
-	if err := decodeKVAnswer("quicbaas_kv_delete", text, &answer); err != nil {
-		return nil, err
-	}
-	return &answer, nil
-}
-
-// firstText returns the first non-empty text content of a tool result.
-func firstText(content []mcp.Content) string {
-	for _, item := range content {
-		if text, ok := mcp.AsTextContent(item); ok && text.Text != "" {
-			return text.Text
+// kvIDDecimal renders an integral KV id as its decimal string: json.Number
+// (a struct request decoded exactly) and the Go integer types a map-based
+// request carries. Anything else (a string, a fractional or negative value,
+// a non-numeric type) is left for the entity tool to accept or refuse.
+func kvIDDecimal(v interface{}) (string, bool) {
+	switch id := v.(type) {
+	case json.Number:
+		return id.String(), true
+	case uint64:
+		return strconv.FormatUint(id, 10), true
+	case uint:
+		return strconv.FormatUint(uint64(id), 10), true
+	case uint32:
+		return strconv.FormatUint(uint64(id), 10), true
+	case int64:
+		if id >= 0 {
+			return strconv.FormatInt(id, 10), true
+		}
+	case int:
+		if id >= 0 {
+			return strconv.Itoa(id), true
+		}
+	case int32:
+		if id >= 0 {
+			return strconv.FormatInt(int64(id), 10), true
 		}
 	}
-	return ""
+	return "", false
+}
+
+// transformKVResponse decodes an entity KV tool result into the
+// pkg/service response the KV client accepts from every transport.
+func transformKVResponse(method string, result interface{}) (interface{}, error) {
+	op := "mcp.kv." + method
+	switch method {
+	case "Put":
+		var resp service.PutResponse
+		if err := decodeToolResult(op, result, &resp); err != nil {
+			return nil, err
+		}
+		return &resp, nil
+	case "Get":
+		var resp service.GetResponse
+		if err := decodeToolResult(op, result, &resp); err != nil {
+			return nil, err
+		}
+		return &resp, nil
+	case "Delete":
+		var resp service.DeleteResponse
+		if err := decodeToolResult(op, result, &resp); err != nil {
+			return nil, err
+		}
+		return &resp, nil
+	case "List":
+		var page kvListToolResult
+		if err := decodeToolResult(op, result, &page); err != nil {
+			return nil, err
+		}
+		return &service.ListResponse{
+			Entities:      page.Entities,
+			NextPageToken: page.NextPageToken,
+			TotalCount:    page.TotalCount,
+		}, nil
+	default:
+		return result, nil
+	}
+}
+
+// decodeToolResult re-encodes a generic tool result and decodes it into out.
+func decodeToolResult(op string, result, out interface{}) error {
+	// An empty or JSON-null tool reply carries no response: decoding it would
+	// leave out zero-valued and report a write that nothing confirmed as a
+	// success, so it is a protocol error.
+	if result == nil {
+		return errors.New(errors.CodeInternal, op, "tool returned no result")
+	}
+	data, err := json.Marshal(result)
+	if err != nil {
+		return errors.Wrap(err, errors.CodeInternal, op, "failed to re-encode tool result")
+	}
+	if string(data) == "null" {
+		return errors.New(errors.CodeInternal, op, "tool returned no result")
+	}
+	if err := json.Unmarshal(data, out); err != nil {
+		return errors.Wrap(err, errors.CodeInternal, op, "failed to decode tool result")
+	}
+	return nil
 }

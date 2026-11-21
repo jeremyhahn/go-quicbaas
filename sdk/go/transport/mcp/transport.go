@@ -14,11 +14,14 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	stderrors "errors"
+	"io"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -305,15 +308,6 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 		}
 	}
 
-	// KV Put/Get/Delete are served by quicbaas's quicbaas_kv_* tools, which
-	// call the KV service; a request that is not the typed SDK struct keeps
-	// the generic path.
-	if verb, ok := kvVerbs[method]; ok && isMCPKVService(service) {
-		if args, typed := verb.args(reqBody); typed {
-			return t.requestKV(ctx, verb, args)
-		}
-	}
-
 	// KV conditional writes go to qrdb's guarded tools, which answer with a
 	// single boolean decision.
 	if isMCPKVService(service) {
@@ -581,13 +575,20 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 		// that could never succeed -- a filtered listing came back as a
 		// required-field error instead of a session list.
 		arguments = applyTenantFromContext(ctx, t.convertToArguments(reqBody))
+	} else if isMCPKVService(service) {
+		arguments = t.kvArguments(method, reqBody)
 	} else {
 		// Convert request to tool arguments using generic conversion
 		arguments = t.convertToArguments(reqBody)
 	}
 
-	// Call the tool via JSON-RPC
-	result, err := t.callTool(ctx, toolName, arguments)
+	// Call the tool via JSON-RPC. Entity KV results carry uint64 IDs, so
+	// their numbers keep their exact tokens.
+	call := t.callTool
+	if isMCPKVService(service) {
+		call = t.callToolExact
+	}
+	result, err := call(ctx, toolName, arguments)
 	if err != nil {
 		return nil, err
 	}
@@ -718,6 +719,12 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 	// client accepts.
 	if isMCPDEKService(service) {
 		return transformDEKResponse(method, result)
+	}
+
+	// Decode the entity KV verbs into the service responses the KV client
+	// accepts.
+	if isMCPKVService(service) {
+		return transformKVResponse(method, result)
 	}
 
 	return result, nil
@@ -982,16 +989,16 @@ func (t *Transport) ensureRawTransport(ctx context.Context) (mcptransport.Interf
 
 // callTool invokes an MCP tool via the negotiated mcpClient session.
 func (t *Transport) callTool(ctx context.Context, name string, arguments map[string]interface{}) (interface{}, error) {
-	result, err := t.callToolResult(ctx, name, arguments)
-	if err != nil {
-		return nil, err
-	}
-	return t.extractContent(result.Content)
+	return t.callToolDecoded(ctx, name, arguments, false)
 }
 
-// callToolResult calls a tool and returns its raw result, converting a
-// transport failure or a tool error into an SDK error.
-func (t *Transport) callToolResult(ctx context.Context, name string, arguments map[string]interface{}) (*mcp.CallToolResult, error) {
+// callToolExact is callTool with numbers in the result decoded as
+// json.Number, so integer tokens above 2^53 survive.
+func (t *Transport) callToolExact(ctx context.Context, name string, arguments map[string]interface{}) (interface{}, error) {
+	return t.callToolDecoded(ctx, name, arguments, true)
+}
+
+func (t *Transport) callToolDecoded(ctx context.Context, name string, arguments map[string]interface{}, exact bool) (interface{}, error) {
 	result, err := t.mcpClient.CallTool(ctx, mcp.CallToolRequest{
 		Params: mcp.CallToolParams{
 			Name:      name,
@@ -1008,7 +1015,9 @@ func (t *Transport) callToolResult(ctx context.Context, name string, arguments m
 	}
 
 	t.lastHealth.Store(time.Now().UnixNano())
-	return result, nil
+
+	// Extract result from content
+	return decodeContent(result.Content, exact)
 }
 
 // sendRPC forwards a caller-owned JSON-RPC 2.0 request verbatim over the
@@ -1181,11 +1190,15 @@ func ToolName(service, method string) string {
 	// All tool names use snake_case: quicbaas_<service>_<method_in_snake_case>
 	switch serviceName {
 	case "KV":
-		// Core KV operations are qrdb-mirror tools (canonical qrdb_*).
-		// Quicbaas-specific methods (ListEntityTypes, Watch, etc.) keep
-		// the quicbaas_ prefix.
+		// Core KV operations reach quicbaas's entity tools
+		// (entityType/id/data) under their quicbaas_kv_* names: on a full
+		// node the qrdb_* names are go-qrdb's own key/value tools, which
+		// take key/value (CA ruling 574). Quicbaas-specific methods
+		// (ListEntityTypes, Watch, etc.) keep the quicbaas_ prefix.
 		switch method {
-		case "Put", "Get", "Delete", "List", "Scan":
+		case "Put", "Get", "Delete", "List":
+			return "quicbaas_kv_" + strings.ToLower(method)
+		case "Scan":
 			return "qrdb_" + strings.ToLower(method)
 		case "CompareAndSwap", "PutIfAbsent":
 			// quicbaas's conditional tools, which name the entity as
@@ -1419,6 +1432,13 @@ func camelToSnake(s string) string {
 // convertToArguments converts a request object to MCP tool arguments.
 // Field names are converted to snake_case to match MCP tool expectations.
 func (t *Transport) convertToArguments(req interface{}) map[string]interface{} {
+	return toolArguments(req, false)
+}
+
+// toolArguments converts req to tool arguments via a JSON round-trip with
+// snake_case keys. With exact set, numbers decode as json.Number, so an
+// integer above 2^53 keeps its token instead of rounding through float64.
+func toolArguments(req interface{}, exact bool) map[string]interface{} {
 	if req == nil {
 		return nil
 	}
@@ -1435,12 +1455,39 @@ func (t *Transport) convertToArguments(req interface{}) map[string]interface{} {
 	}
 
 	var args map[string]interface{}
-	if err := json.Unmarshal(data, &args); err != nil {
+	if err := decodeJSON(data, &args, exact); err != nil {
 		return nil
 	}
 
 	// Convert keys to snake_case for MCP tools
 	return convertKeysToSnakeCase(args)
+}
+
+// decodeJSON is json.Unmarshal; with exact set, numbers decode as
+// json.Number. Trailing data after the value is refused in both modes.
+func decodeJSON(data []byte, out interface{}, exact bool) error {
+	if !exact {
+		return json.Unmarshal(data, out)
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	if err := dec.Decode(out); err != nil {
+		return err
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return &trailingJSONError{Offset: dec.InputOffset()}
+	}
+	return nil
+}
+
+// trailingJSONError reports data after the one JSON value a tool text or
+// argument document may hold, as json.Unmarshal refuses it.
+type trailingJSONError struct {
+	Offset int64
+}
+
+func (e *trailingJSONError) Error() string {
+	return "mcp: invalid character after top-level JSON value at offset " + strconv.FormatInt(e.Offset, 10)
 }
 
 // convertKeysToSnakeCase recursively converts all map keys to snake_case.
@@ -1462,6 +1509,13 @@ func convertKeysToSnakeCase(m map[string]interface{}) map[string]interface{} {
 // return content items without the type field explicitly set. Just check
 // for the first item with non-empty text.
 func (t *Transport) extractContent(content []mcp.Content) (interface{}, error) {
+	return decodeContent(content, false)
+}
+
+// decodeContent decodes the first non-empty text item as JSON, answering the
+// raw text when it is not JSON. With exact set, numbers decode as
+// json.Number (see decodeJSON).
+func decodeContent(content []mcp.Content, exact bool) (interface{}, error) {
 	for _, item := range content {
 		text, ok := mcp.AsTextContent(item)
 		if !ok || text.Text == "" {
@@ -1469,7 +1523,7 @@ func (t *Transport) extractContent(content []mcp.Content) (interface{}, error) {
 		}
 		// Parse JSON from text
 		var result interface{}
-		if err := json.Unmarshal([]byte(text.Text), &result); err != nil {
+		if err := decodeJSON([]byte(text.Text), &result, exact); err != nil {
 			// Return raw text if not valid JSON
 			return text.Text, nil
 		}
