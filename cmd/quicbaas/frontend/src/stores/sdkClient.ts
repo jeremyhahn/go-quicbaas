@@ -40,6 +40,7 @@
 import { createClient, isWailsRuntime } from '@quicbaas/sdk';
 import type { Client } from '@quicbaas/sdk';
 import { getValidAccessToken } from './auth.svelte.ts';
+import { connectionOverride } from './connection.svelte.ts';
 
 // ---------------------------------------------------------------------------
 // Module-level singleton
@@ -70,8 +71,9 @@ export async function getSDKClient(): Promise<Client> {
     if (isWailsRuntime()) {
       _client = await createClient({ transport: 'wails', token });
     } else {
+      const o = connectionOverride();
       const baseURL =
-        typeof window !== 'undefined' ? window.location.origin : '';
+        o?.baseURL ?? (typeof window !== 'undefined' ? window.location.origin : '');
       _client = await createClient({ transport: 'rest', baseURL, token });
     }
     return _client;
@@ -81,8 +83,26 @@ export async function getSDKClient(): Promise<Client> {
 }
 
 /**
- * resetSDKClient tears down the singleton. Used in tests to ensure a fresh
- * client per test case. Not intended for production use.
+ * activeConnection reports the transport and address getSDKClient uses:
+ * 'wails' with no address under Wails, otherwise 'rest' with the persisted
+ * override or the page origin.
+ */
+export function activeConnection(): { transport: string; address: string; overridden: boolean } {
+  if (isWailsRuntime()) {
+    return { transport: 'wails', address: '', overridden: false };
+  }
+  const o = connectionOverride();
+  if (o !== null) {
+    return { transport: 'rest', address: o.baseURL, overridden: true };
+  }
+  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  return { transport: 'rest', address: origin, overridden: false };
+}
+
+/**
+ * resetSDKClient tears down the singleton so the next getSDKClient builds a
+ * new client. Tests call it for a fresh client per case; the Connection view
+ * calls it after the daemon address changes.
  */
 export function resetSDKClient(): void {
   _client = null;
