@@ -232,16 +232,18 @@ func NewStorageBackend(config *Config) (common.Storage, error) {
 // (docs/backup-restore, the CLI, the integration suite) to the camelCase keys
 // go-objstore's backends read.
 var objstoreKeyAliases = map[string][]string{
-	"accessKey":        {"access_key", "access_key_id"},
-	"secretKey":        {"secret_key", "secret_access_key"},
-	"useSSL":           {"use_ssl"},
-	"forcePathStyle":   {"use_path_style", "force_path_style"},
-	"accountName":      {"account_name"},
-	"accountKey":       {"account_key"},
-	"containerName":    {"container", "container_name"},
-	"sasToken":         {"sas_token"},
-	"connectionString": {"connection_string"},
+	"accessKey":      {"access_key", "access_key_id"},
+	"secretKey":      {"secret_key", "secret_access_key"},
+	"useSSL":         {"use_ssl"},
+	"forcePathStyle": {"use_path_style", "force_path_style"},
+	"accountName":    {"account_name"},
+	"accountKey":     {"account_key"},
+	"containerName":  {"container", "container_name"},
 }
+
+// azureUnsupportedKeys are the Azure credential keys go-objstore's Azure
+// backend does not read; objstoreBackendSettings refuses them.
+var azureUnsupportedKeys = []string{"connection_string", "connectionString", "sas_token", "sasToken"}
 
 // objstoreSettings returns a copy of settings with each go-objstore key set
 // from its first non-empty snake_case alias. An explicit go-objstore key
@@ -282,9 +284,20 @@ var sessionTokenKeys = []string{"session_token", "aws_session_token", "sessionTo
 //     otherwise; for s3 http:// only when use_ssl is explicitly false. An
 //     endpoint whose scheme contradicts an explicit use_ssl is refused.
 //
+// For azure, a connection string or SAS token is refused: the library reads
+// only account_name and account_key, so either would be silently ignored.
+//
 // The caller's map is never modified.
 func objstoreBackendSettings(backendType string, settings map[string]string) (map[string]string, error) {
 	out := objstoreSettings(settings)
+	if backendType == "azure" {
+		for _, key := range azureUnsupportedKeys {
+			if settings[key] != "" {
+				return nil, api.NewUnsupportedValueError("backup.NewStorageBackend", "storage config",
+					key+" (the storage library supports only account_name and account_key for azure)")
+			}
+		}
+	}
 	if backendType != "s3" && backendType != "minio" {
 		return out, nil
 	}

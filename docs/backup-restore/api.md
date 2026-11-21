@@ -51,6 +51,9 @@ returns it over the client's QRDB transport (`sdk/go/qrdb.go`): `CreateBackup`,
 go to the qrdb node's backup service. On the embedded transport, pass the
 service as `QRDBEmbeddedServicers.Backup`; a QRDB transport without the backup
 service returns an `Unimplemented` error, never a nil client.
+`CreateBackup` with an encryption type or key and `RestoreBackup` with a
+decryption key return `Unimplemented`, since the pinned go-qrdb does not
+encrypt backup data.
 
 
 

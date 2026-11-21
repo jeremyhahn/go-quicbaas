@@ -82,8 +82,8 @@ staging-azure:
   credentials:
     account_name: ${AZURE_STORAGE_ACCOUNT}
     account_key: ${AZURE_STORAGE_KEY}
-    # Or use connection string:
-    # connection_string: ${AZURE_STORAGE_CONNECTION_STRING}
+    # Azure takes account_name and account_key only; connection strings
+    # and SAS tokens are refused.
 ```
 
 ### GCS Profile

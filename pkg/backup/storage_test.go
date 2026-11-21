@@ -110,20 +110,16 @@ func TestObjstoreSettings_MapsSnakeCaseKeys(t *testing.T) {
 		"account_name":      "acct",
 		"account_key":       "key",
 		"container":         "c",
-		"sas_token":         "sas",
-		"connection_string": "cs",
 	})
 	want := map[string]string{
-		"accessKey":        "ak",
-		"secretKey":        "sk",
-		"useSSL":           "false",
-		"forcePathStyle":   "true",
-		"accountName":      "acct",
-		"accountKey":       "key",
-		"containerName":    "c",
-		"sasToken":         "sas",
-		"connectionString": "cs",
-		"bucket":           "b",
+		"accessKey":      "ak",
+		"secretKey":      "sk",
+		"useSSL":         "false",
+		"forcePathStyle": "true",
+		"accountName":    "acct",
+		"accountKey":     "key",
+		"containerName":  "c",
+		"bucket":         "b",
 	}
 	for k, v := range want {
 		assert.Equal(t, v, got[k], "key %q", k)

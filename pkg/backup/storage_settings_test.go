@@ -52,6 +52,28 @@ func TestNewStorageBackend_RefusesSessionTokenWithStaticKeys(t *testing.T) {
 	}
 }
 
+// TestNewStorageBackend_AzureRefusesConnectionStringAndSASToken proves an
+// azure config with a connection string or SAS token is refused: the storage
+// library reads only account_name and account_key and would ignore either.
+func TestNewStorageBackend_AzureRefusesConnectionStringAndSASToken(t *testing.T) {
+	for _, key := range []string{"connection_string", "connectionString", "sas_token", "sasToken"} {
+		t.Run(key, func(t *testing.T) {
+			storage, err := NewStorageBackend(&Config{
+				StorageBackend: "azure",
+				StorageConfig: map[string]string{
+					"account_name": "acct",
+					"account_key":  "a2V5",
+					"container":    "backups",
+					key:            "value",
+				},
+			})
+			require.Error(t, err)
+			assert.Nil(t, storage)
+			assert.Contains(t, err.Error(), key)
+		})
+	}
+}
+
 // TestObjstoreSettings_EndpointSchemeFollowsUseSSL proves a bare endpoint
 // takes its scheme from use_ssl, an endpoint whose scheme contradicts an
 // explicit use_ssl is refused, and the caller's map is never modified.
