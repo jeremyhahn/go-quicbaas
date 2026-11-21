@@ -1640,6 +1640,13 @@ type ServiceConfig struct {
 	// the KMS service and the scheduler are configured.
 	KMSRotationScanInterval time.Duration
 
+	// SecretsRotationScanInterval controls how often the secrets rotation
+	// system job performs the rotation policies whose next rotation is due.
+	// It must be a whole number of seconds; zero selects
+	// handlers.DefaultSecretsRotationScanInterval (5 minutes). Only active
+	// when the secrets service and the scheduler are configured.
+	SecretsRotationScanInterval time.Duration
+
 	// TimeSeriesShardID is the Raft shard used for time series write operations.
 	// When zero, defaults to 1.
 	TimeSeriesShardID uint64

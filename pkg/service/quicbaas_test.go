@@ -1968,6 +1968,35 @@ func TestNewQuicBaaS_WithSchedulerDefaultIntervals(t *testing.T) {
 	assert.NotNil(t, impl.schedulerEngine, "scheduler engine should be initialized with defaults")
 }
 
+// TestNewQuicBaaS_BadSecretsRotationIntervalFailsBeforeTheSchedulerStarts:
+// a scan interval that is not a whole number of seconds fails construction,
+// and it is refused before the scheduler engine starts, so the failed Build
+// leaves no polling goroutine and no handle the caller cannot close.
+func TestNewQuicBaaS_BadSecretsRotationIntervalFailsBeforeTheSchedulerStarts(t *testing.T) {
+	kvStore := &covMockKVStore{}
+	builder := &serviceBuilder{
+		config: &ServiceConfig{
+			NodeID:                      1,
+			Version:                     "1.0.0",
+			RequestTimeout:              5 * time.Second,
+			MaxConcurrentRequests:       100,
+			EnableScheduler:             true,
+			SecretsRotationScanInterval: 500 * time.Millisecond,
+		},
+		raftNode:       &mockRaftNode{},
+		logger:         createTestLogger(t),
+		secretsManager: &covMockSecretsManager{},
+		qrdbClient:     newSvcBoostMockQRDBProvider(nil, nil),
+		kvStoreProvider: func(_ uint64) interface{} {
+			return kvStore
+		},
+	}
+
+	svc, err := newQuicBaaS(builder)
+	require.Error(t, err, "a sub-second rotation interval is refused")
+	assert.Nil(t, svc)
+}
+
 func TestNewQuicBaaS_WithSchedulerAndKMS(t *testing.T) {
 	// Test scheduler initialization with KMS service present
 	// This exercises the KMS grace period handler registration path

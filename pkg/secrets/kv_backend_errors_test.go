@@ -37,6 +37,9 @@ type errKVStore struct {
 	putErr      error
 	deleteErrOn string
 	deleteErr   error
+	// onGet runs once, before the fault check, on the first Get of onGetKey.
+	onGetKey string
+	onGet    func()
 }
 
 func newErrKV() *errKVStore {
@@ -44,6 +47,10 @@ func newErrKV() *errKVStore {
 }
 
 func (e *errKVStore) Get(ctx context.Context, key string) ([]byte, error) {
+	if hook := e.onGet; hook != nil && key == e.onGetKey {
+		e.onGet, e.onGetKey = nil, ""
+		hook()
+	}
 	if e.getErr != nil && strings.Contains(key, e.getErrOn) {
 		return nil, e.getErr
 	}
@@ -132,6 +139,32 @@ func TestKVBackend_LoadCurrentUnmarshalError(t *testing.T) {
 	_, _, err := b.Get(context.Background(), "corrupt/ptr")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrDeserializationFailed)
+}
+
+// TestKVBackend_GetCurrentRetryReloadError checks that a pointer reload that
+// fails during the current-version retry surfaces the store error, not
+// ErrVersionNotFound.
+func TestKVBackend_GetCurrentRetryReloadError(t *testing.T) {
+	kv := newErrKV()
+	b := NewKVBackend(kv)
+	ctx := context.Background()
+	const path = "app/secret"
+	require.NoError(t, b.Store(ctx, path, map[string][]byte{"k": []byte("v")}, nil))
+	require.NoError(t, kv.inMemKV.Delete(ctx, versionKey(path, 1)))
+
+	// Control: the version is missing under an unmoved pointer.
+	_, _, err := b.Get(ctx, path)
+	require.ErrorIs(t, err, ErrVersionNotFound)
+
+	// The version read misses, then the pointer reload fails.
+	kv.onGetKey = versionKey(path, 1)
+	kv.onGet = func() { kv.getErr, kv.getErrOn = errInjected, "/current" }
+	_, _, err = b.Get(ctx, path)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, errInjected)
+	assert.NotErrorIs(t, err, ErrVersionNotFound)
+	var ce *SecretsCauseError
+	require.True(t, errors.As(err, &ce), "want *SecretsCauseError, got %T", err)
 }
 
 // TestKVBackend_WriteEntryPutError covers writeEntry's store.Put error

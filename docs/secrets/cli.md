@@ -161,13 +161,17 @@ quicbaas secrets get database/prod --version 2
 quicbaas secrets get database/prod --output json
 ```
 
+Without `--output`, and with `--output raw`, `secrets get` prints the stored
+bytes verbatim, whatever their shape. A file stored with `secrets put
+--from-file` or `--from-stdin` round-trips byte for byte, even when it is a
+JSON object such as `auth.json`. `--output table` or `--output json` format the
+value.
+
 ### Output
 
-**Default format:**
+**Default format (and `--output raw`):** the stored value as it is, e.g.
 ```
-password=secret123
-username=admin
-host=localhost
+{"password":"secret123","username":"admin"}
 ```
 
 **Table format:**

@@ -16,6 +16,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -23,6 +24,7 @@ import (
 	"strings"
 	"text/tabwriter"
 	"time"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 
@@ -240,7 +242,24 @@ func runSecretsGetCommand(cmd *cobra.Command, args []string) error {
 		return formatError(err)
 	}
 
-	return formatSecretsGetResponse(resp, secretsOutputFmt, os.Stdout)
+	format := secretsGetOutputFormat(resp, secretsOutputFmt, cmd.Flags().Changed("output"))
+	return formatSecretsGetResponse(resp, format, cmd.OutOrStdout())
+}
+
+// secretsGetOutputFormat is the format `secrets get` prints in. An --output
+// the caller gave wins. Without one, a raw value (not a JSON object: what
+// `secrets put --from-file` or `--from-stdin` stored) prints verbatim, so
+// `secrets get` round-trips the bytes (#143); a key-value secret keeps the
+// flag's table default.
+func secretsGetOutputFormat(_ *service.GetSecretResponse, format string, explicit bool) string {
+	// Without --output, get prints the stored bytes as they are, whatever
+	// their shape: a file stored with --from-file (even a JSON object such
+	// as auth.json) round-trips. The REST and QUIC transports return no
+	// metadata on get, so the value's source cannot pick the format.
+	if !explicit {
+		return string(cli.OutputFormatRaw)
+	}
+	return format
 }
 
 // newSecretsListCommand creates the secrets list command.
@@ -665,8 +684,13 @@ func formatSecretsGetResponse(resp *service.GetSecretResponse, format string, w 
 	}
 
 	var dataMap map[string]interface{}
-	if err := json.Unmarshal(resp.Data, &dataMap); err != nil {
-		return errors.Wrapf(err, errors.ErrInternal, "secrets.get", "failed to unmarshal secret data")
+	if outputFormat == cli.OutputFormatRaw {
+		// raw is the stored bytes, verbatim, for every value.
+		_, err := w.Write(resp.Data)
+		return err
+	}
+	if err := json.Unmarshal(resp.Data, &dataMap); err != nil || dataMap == nil {
+		return formatRawSecretsGetResponse(resp, outputFormat, w)
 	}
 
 	switch outputFormat {
@@ -697,6 +721,48 @@ func formatSecretsGetResponse(resp *service.GetSecretResponse, format string, w 
 			fmt.Fprintf(w, "%s=%v\n", k, v)
 		}
 		return nil
+	}
+}
+
+// formatRawSecretsGetResponse prints a secret whose data is not a JSON object:
+// the raw bytes `secrets put --from-stdin` or `--from-file` stored (#143).
+// The default format writes the bytes verbatim, so `secrets get` round-trips
+// what `secrets put --from-file` read. JSON carries the value as "data" when it
+// is valid UTF-8 and as "data_base64" otherwise; the table shows a binary value
+// by its size only.
+func formatRawSecretsGetResponse(resp *service.GetSecretResponse, outputFormat cli.OutputFormat, w io.Writer) error {
+	text := utf8.Valid(resp.Data)
+	switch outputFormat {
+	case cli.OutputFormatJSON:
+		output := map[string]interface{}{
+			"secret_id": resp.SecretID,
+			"version":   resp.Version,
+			"created":   resp.CreatedAt.Format(time.RFC3339),
+		}
+		if text {
+			output["data"] = string(resp.Data)
+		} else {
+			output["data_base64"] = base64.StdEncoding.EncodeToString(resp.Data)
+		}
+		encoder := json.NewEncoder(w)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(output)
+
+	case cli.OutputFormatTable:
+		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+		fmt.Fprintf(tw, "Secret ID:\t%s\n", resp.SecretID)
+		fmt.Fprintf(tw, "Version:\t%d\n", resp.Version)
+		fmt.Fprintf(tw, "Created:\t%s\n", resp.CreatedAt.Format(time.RFC3339))
+		if text {
+			fmt.Fprintf(tw, "\nData:\n%s\n", resp.Data)
+		} else {
+			fmt.Fprintf(tw, "\nData:\t(%d bytes, binary)\n", len(resp.Data))
+		}
+		return tw.Flush()
+
+	default:
+		_, err := w.Write(resp.Data)
+		return err
 	}
 }
 
