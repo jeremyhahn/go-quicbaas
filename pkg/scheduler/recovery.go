@@ -100,6 +100,12 @@ const (
 	// the double-fire failure inverted — killing live work instead of
 	// duplicating it.
 	RefusedFiringMoved RecoveryRefusal = "firing_moved"
+
+	// RefusedConcluded: on a clustered engine, another writer concluded this
+	// run first — the executing node recorded its outcome, or another
+	// node's recovery won the guard. The run is no longer this caller's to
+	// conclude, and nothing was written.
+	RefusedConcluded RecoveryRefusal = "concluded_elsewhere"
 )
 
 // String implements fmt.Stringer.
@@ -150,6 +156,9 @@ func (e RecoveryRefusedError) Error() string {
 		return fmt.Sprintf("job %d is running the firing at %s, not the attested %s: the job "+
 			"moved on between the observation and this call",
 			e.JobID, e.Found.UTC().Format(time.RFC3339Nano), e.Attested.UTC().Format(time.RFC3339Nano))
+	case RefusedConcluded:
+		return fmt.Sprintf("job %d: the run was concluded by another writer before this "+
+			"recovery took the guard; nothing was written", e.JobID)
 	default:
 		return fmt.Sprintf("job %d recovery refused: %s", e.JobID, e.Refusal)
 	}
@@ -194,17 +203,16 @@ func (s *SchedulerEngine) RecoverAbandonedRun(
 	job *Job,
 	att AbandonedRunAttestation,
 ) (JobStatus, error) {
-	// A CLUSTERED ENGINE REFUSES, at the gate rather than in a comment. The
-	// guards below run under a stripe mutex local to THIS engine and persist
-	// with an unconditional UpdateJob; a second node can complete or advance
-	// the same run between this node's read and its write, and recovery
-	// would overwrite that newer state. On a single-node engine (claims are
-	// nil exactly when New built it) in-process exclusivity is the COMPLETE
-	// answer, and the mutex is that exclusivity. On a clustered engine
-	// (NewWithClustering, which requires the claim plane) safe recovery
-	// needs a storage-level guarded transition that does not exist yet —
-	// so the capability is refused by name, never run with a known race.
-	if s.claims != nil {
+	// A CLUSTERED ENGINE CONCLUDES THROUGH A GUARD, or refuses. The guards
+	// below run under a stripe mutex local to THIS engine; a second node can
+	// complete or recover the same run between this node's read and its
+	// write. On a single-node engine (claims are nil exactly when New built
+	// it) in-process exclusivity is the COMPLETE answer, and the mutex is
+	// that exclusivity. On a clustered engine the run is concluded through
+	// the storage-level guarded transition (RunConcluder, go-quicbaas#105):
+	// exactly one writer per run wins. A clustered store without it refuses
+	// by name, never runs with a known race.
+	if s.claims != nil && s.concluder == nil {
 		return "", RecoveryUnsupportedClusteredError{
 			Missing: "a storage-level guarded (compare-and-swap) job transition",
 		}
@@ -288,6 +296,33 @@ func (s *SchedulerEngine) RecoverAbandonedRun(
 	// this is the production path, not an edge.
 	if att.ObservedAt.IsZero() {
 		att.ObservedAt = startedAt
+	}
+
+	// THE GUARD IS TAKEN BEFORE ANYTHING IS WRITTEN on a clustered engine.
+	// Losing it means another writer concluded this run — the executing node
+	// came back with its outcome, or another node's recovery won — and this
+	// recovery writes neither history nor a transition. The owner is stable
+	// per node, so a retry here after a later failure wins again and the
+	// history-then-transition retry contract below still holds.
+	if s.concluder != nil {
+		won, err := s.concluder.ConcludeRun(storageCtx, &RunConclusion{
+			JobID:     current.ID,
+			TenantID:  JobTenantID(current),
+			Firing:    current.NextRun,
+			StartedAt: startedAt,
+			Owner:     s.recoveryOwner(),
+		})
+		if err != nil {
+			s.storageErrors.Add(1)
+			return "", ErrStorageError{Op: "ConcludeRun", Cause: err}
+		}
+		if !won {
+			return current.Status, RecoveryRefusedError{
+				JobID:   job.ID,
+				Refusal: RefusedConcluded,
+				Status:  current.Status,
+			}
+		}
 	}
 
 	// THE HISTORY RECORD IS WRITTEN BEFORE THE TRANSITION, and the order is
@@ -385,12 +420,12 @@ func renderAttestation(att AbandonedRunAttestation) string {
 }
 
 // RecoveryUnsupportedClusteredError reports RecoverAbandonedRun called on a
-// clustered engine, where the recovery's read-modify-write is not safe.
+// clustered engine whose storage provides no guarded run transition
+// (RunConcluder), where the recovery's read-modify-write is not safe.
 //
-// The refusal is the enforcement of a limitation that used to be prose in the
-// doc-comment. It is lifted by giving JobStorage a guarded transition and
-// routing the recovery through it; until then a clustered deployment must not
-// be able to reach the race.
+// The quicbaas ClusteredStorage provides the guard, so a clustered engine
+// built over it recovers; a clustered store without it must not be able to
+// reach the race.
 type RecoveryUnsupportedClusteredError struct {
 	// Missing names the capability whose absence forces the refusal.
 	Missing string

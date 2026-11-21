@@ -93,6 +93,23 @@ type SchedulerEngine struct {
 	// arbitrate and never consults it.
 	claims FiringClaimer
 
+	// concluder guards the conclusion of a run across nodes (#105). It is
+	// set when a clustered engine's storage provides it, and nil otherwise;
+	// a clustered engine without it refuses abandoned-run recovery.
+	concluder RunConcluder
+
+	// startedRuns holds, per job, the identity of the run this node moved
+	// to Running, so its outcome is concluded through the guard.
+	startedRuns sync.Map // uint64 -> RunConclusion
+
+	// remoteRuns holds, per job, the open run of a remote handler this node
+	// fired and is waiting on (see remote_handler.go).
+	remoteRuns sync.Map // uint64 -> *remoteWaiter
+
+	// concludedElsewhere counts outcomes dropped because another writer
+	// concluded the run first.
+	concludedElsewhere atomic.Uint64
+
 	// Map-based dispatch for O(1) handler lookup
 	handlers   map[string]JobHandler
 	handlersMu sync.RWMutex
@@ -254,7 +271,11 @@ func NewWithClustering(config *SchedulerConfig, storage JobStorage, nodeID strin
 	if !ok {
 		return nil, ClaimUnsupportedError{Backend: fmt.Sprintf("%T", storage)}
 	}
-	return newEngine(config, storage, nodeID, leader, claimer), nil
+	engine := newEngine(config, storage, nodeID, leader, claimer)
+	if concluder, ok := storage.(RunConcluder); ok {
+		engine.concluder = concluder
+	}
+	return engine, nil
 }
 
 // newEngine is the shared constructor behind New and NewWithClustering.
@@ -1349,7 +1370,8 @@ func (s *SchedulerEngine) executeJob(ctx context.Context, job *Job, claimedFirin
 
 	// Get handler
 	handler, ok := s.getHandler(job.Handler)
-	if !ok {
+	remote := !ok && IsRemoteHandler(job.Handler)
+	if !ok && !remote {
 		s.handleJobFailure(storageCtx, job, HandlerNotFoundError{Handler: job.Handler})
 		return
 	}
@@ -1417,6 +1439,14 @@ func (s *SchedulerEngine) executeJob(ctx context.Context, job *Job, claimedFirin
 		s.storageErrors.Add(1)
 		return
 	}
+	s.noteRunStarted(job)
+	var waiter *remoteWaiter
+	if remote {
+		// A remote worker runs this job: the execution waits for the
+		// result it reports (see remote_handler.go).
+		waiter = s.openRemoteRun(job)
+		handler = s.remoteHandler(waiter)
+	}
 	lock.Unlock()
 
 	// Create execution record
@@ -1472,7 +1502,9 @@ func (s *SchedulerEngine) executeJob(ctx context.Context, job *Job, claimedFirin
 		result *JobResult
 		err    error
 	}) {
-		if execCtx.Err() == context.DeadlineExceeded {
+		// A remote result accepted before the deadline is the run's
+		// outcome, even when it is read after the deadline passed.
+		if execCtx.Err() == context.DeadlineExceeded && (waiter == nil || !waiter.delivered()) {
 			s.handleJobTimeout(ctx, job, exec, timeout)
 			return
 		}
@@ -1482,6 +1514,15 @@ func (s *SchedulerEngine) executeJob(ctx context.Context, job *Job, claimedFirin
 	// Wait for result or timeout
 	select {
 	case <-execCtx.Done():
+		// End a remote run's wait here, before any outcome is recorded:
+		// left to the handler goroutine, a worker's result could still be
+		// accepted after the timeout was recorded, and then be lost. When
+		// close loses, the worker's result was accepted first and is the
+		// outcome; the handler returns it at once.
+		if waiter != nil && !waiter.close() {
+			recordResult(<-resultCh)
+			return
+		}
 		switch execCtx.Err() {
 		case context.DeadlineExceeded:
 			s.handleJobTimeout(ctx, job, exec, timeout)
@@ -1555,7 +1596,10 @@ func (s *SchedulerEngine) handleInterruptedRun(ctx context.Context, job *Job, ex
 
 	s.logWarn("Job %d (%s) interrupted by scheduler shutdown; re-armed for %s",
 		job.ID, job.Name, job.NextRun)
-	s.persistJobOutcome(storageCtx, job)
+	if !s.persistJobOutcome(storageCtx, job) {
+		// Another writer concluded this run: its record and history stand.
+		return
+	}
 	if err := s.storage.SaveExecution(storageCtx, exec); err != nil {
 		s.storageErrors.Add(1)
 	}
@@ -1594,7 +1638,10 @@ func (s *SchedulerEngine) handleJobSuccess(ctx context.Context, job *Job, exec *
 
 	// Persist the outcome under the job's stripe lock so a concurrent
 	// cancel or delete cannot be clobbered by this write.
-	s.persistJobOutcome(storageCtx, job)
+	if !s.persistJobOutcome(storageCtx, job) {
+		// Another writer concluded this run: its record and history stand.
+		return
+	}
 	if err := s.storage.SaveExecution(storageCtx, exec); err != nil {
 		s.storageErrors.Add(1)
 	}
@@ -1613,16 +1660,27 @@ func (s *SchedulerEngine) handleJobSuccess(ctx context.Context, job *Job, exec *
 //
 // Writes remain best effort (errors are tracked via storageErrors),
 // matching the background-processing semantics of the callers.
-func (s *SchedulerEngine) persistJobOutcome(ctx context.Context, job *Job) {
+//
+// It reports whether this outcome concludes the run. False means another
+// writer concluded it (see concludeOwnRun), and the caller must write no
+// history either: the run's record and history are the winner's.
+func (s *SchedulerEngine) persistJobOutcome(ctx context.Context, job *Job) bool {
 	lock := s.jobLock(job.ID)
 	lock.Lock()
 	defer lock.Unlock()
+
+	// On a clustered engine the stripe lock is this node's exclusivity only:
+	// a recovery on another node may have concluded this run as abandoned.
+	// The guard decides which conclusion stands, and a loss writes nothing.
+	if !s.concludeOwnRun(ctx, job) {
+		return false
+	}
 
 	current, getErr := s.storage.GetJob(ctx, job.ID, JobTenantID(job))
 	switch {
 	case isJobNotFound(getErr), getErr == nil && current == nil:
 		// Job was deleted concurrently; do not resurrect it.
-		return
+		return true
 	case getErr == nil && (current.Status == JobStatusCanceled || current.Status == JobStatusCompleted):
 		// Preserve the terminal status set by a concurrent transition.
 		job.Status = current.Status
@@ -1631,6 +1689,7 @@ func (s *SchedulerEngine) persistJobOutcome(ctx context.Context, job *Job) {
 	if err := s.storage.UpdateJob(ctx, job); err != nil {
 		s.storageErrors.Add(1)
 	}
+	return true
 }
 
 // applyRunFailure records one failed run on job and decides whether it retries.
@@ -1717,7 +1776,10 @@ func (s *SchedulerEngine) handleJobError(ctx context.Context, job *Job, exec *Jo
 
 	// Persist the outcome under the job's stripe lock so a concurrent
 	// cancel or delete cannot be clobbered by this write.
-	s.persistJobOutcome(storageCtx, job)
+	if !s.persistJobOutcome(storageCtx, job) {
+		// Another writer concluded this run: its record and history stand.
+		return
+	}
 	if storageErr := s.storage.SaveExecution(storageCtx, exec); storageErr != nil {
 		s.storageErrors.Add(1)
 	}

@@ -185,6 +185,8 @@ func TestMapToEndpointAllServices(t *testing.T) {
 		{"Scheduler/DeleteJob", "Scheduler", "DeleteJob", "/api/v1/scheduler/jobs/{id}", http.MethodDelete},
 		{"Scheduler/ListJobs", "Scheduler", "ListJobs", "/api/v1/scheduler/jobs", http.MethodGet},
 		{"Scheduler/TriggerJob", "Scheduler", "TriggerJob", "/api/v1/scheduler/jobs/{id}/trigger", http.MethodPost},
+		{"Scheduler/ListRemoteRuns", "Scheduler", "ListRemoteRuns", "/api/v1/scheduler/remote-runs", http.MethodGet},
+		{"Scheduler/CompleteRemoteRun", "Scheduler", "CompleteRemoteRun", "/api/v1/scheduler/remote-runs/complete", http.MethodPost},
 		{"Scheduler/PauseJob", "Scheduler", "PauseJob", "/api/v1/scheduler/jobs/{id}/pause", http.MethodPost},
 		{"Scheduler/ResumeJob", "Scheduler", "ResumeJob", "/api/v1/scheduler/jobs/{id}/resume", http.MethodPost},
 		{"Scheduler/CancelJob", "Scheduler", "CancelJob", "/api/v1/scheduler/jobs/{id}/cancel", http.MethodPost},

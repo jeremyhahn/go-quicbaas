@@ -154,7 +154,10 @@ import (
 // PLUS 8 for the prompt store's verbs (/api/v1/prompts/{set}[/{name}...],
 // handlers_prompt.go, go-quicbaas#805) under prompts:read, prompts:history
 // and prompts:write.
-const baseRouteTableSize = 672
+// PLUS 2 for the scheduler's remote handlers (/api/v1/scheduler/remote-runs
+// and /remote-runs/complete, handlers_scheduler_remote.go, go-quicbaas#1955)
+// under scheduler:read and scheduler:trigger.
+const baseRouteTableSize = 674
 
 // TestRoutes_SurfaceGuard asserts the table's structural invariants: exact
 // size, absolute patterns, no duplicate method+pattern, and a handler binder

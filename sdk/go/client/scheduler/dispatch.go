@@ -55,6 +55,9 @@ var dispatchers = map[string]dispatchFunc{
 	"GetJobHistory": dispatchGetJobHistory,
 	"GetStatus":     dispatchGetStatus,
 
+	"ListRemoteRuns":    dispatchListRemoteRuns,
+	"CompleteRemoteRun": dispatchCompleteRemoteRun,
+
 	"RegisterNode":   dispatchRegisterNode,
 	"RenewNode":      dispatchRenewNode,
 	"DeregisterNode": dispatchDeregisterNode,

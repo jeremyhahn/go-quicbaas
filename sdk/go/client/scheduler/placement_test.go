@@ -124,8 +124,8 @@ func TestDispatch_ErrorsAndAbsentHalves(t *testing.T) {
 	if _, err := Dispatch(ctx, Backends{}, "ListNodes", &ListNodesRequest{}); errors.Code(err) != errors.CodeUnavailable {
 		t.Errorf("placement half absent: %v", err)
 	}
-	if len(Methods()) != 23 {
-		t.Errorf("Methods() = %d, want the 11 job and 12 placement methods", len(Methods()))
+	if len(Methods()) != 25 {
+		t.Errorf("Methods() = %d, want the 11 job, 2 remote-run and 12 placement methods", len(Methods()))
 	}
 }
 

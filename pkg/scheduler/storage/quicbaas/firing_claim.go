@@ -308,5 +308,8 @@ func (s *ClusteredStorage) DeleteJob(ctx context.Context, id uint64, tenantID st
 	if err := s.marks.Delete(ctx, keyForClaim(id, tenantID)); err != nil {
 		return &scheduler.ErrStorageError{Op: "DeleteJob.claim_mark", Cause: err}
 	}
+	if err := s.marks.Delete(ctx, keyForConclusion(id, tenantID)); err != nil {
+		return &scheduler.ErrStorageError{Op: "DeleteJob.conclusion_mark", Cause: err}
+	}
 	return nil
 }

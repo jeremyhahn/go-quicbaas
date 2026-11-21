@@ -670,3 +670,5 @@ POST /api/v1/scheduler/placements permission placement:place
 GET /api/v1/scheduler/placements permission placement:read
 GET /api/v1/scheduler/placements/{id} permission placement:read
 DELETE /api/v1/scheduler/placements/{id} permission placement:place
+GET /api/v1/scheduler/remote-runs permission scheduler:read
+POST /api/v1/scheduler/remote-runs/complete permission scheduler:trigger

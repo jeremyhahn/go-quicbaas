@@ -1265,6 +1265,12 @@ func (t *Transport) mapSchedulerMethod(method string) (string, string) {
 	case "GetStatus":
 		return "/api/v1/scheduler/status", http.MethodGet
 
+	// Remote handlers (go-quicbaas#1955)
+	case "ListRemoteRuns":
+		return "/api/v1/scheduler/remote-runs", http.MethodGet
+	case "CompleteRemoteRun":
+		return "/api/v1/scheduler/remote-runs/complete", http.MethodPost
+
 	// Workload placement: nodes and placements
 	case "RegisterNode":
 		return "/api/v1/scheduler/nodes", http.MethodPost

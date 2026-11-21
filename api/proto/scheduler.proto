@@ -56,6 +56,16 @@ service SchedulerService {
         option (qrdb.v1.permission) = "scheduler:status";
     }
 
+    // Remote handlers (go-quicbaas#1955): a job whose handler is named
+    // "remote:<name>" runs in a client's worker, which lists its open runs
+    // and reports each result.
+    rpc ListRemoteRuns(ListRemoteRunsRequest) returns (ListRemoteRunsResponse) {
+        option (qrdb.v1.permission) = "scheduler:read";
+    }
+    rpc CompleteRemoteRun(CompleteRemoteRunRequest) returns (CompleteRemoteRunResponse) {
+        option (qrdb.v1.permission) = "scheduler:trigger";
+    }
+
     // ---- Workload placement (pkg/scheduler/placement) ----
     //
     // Placement filters and scores caller-supplied node facts and records
@@ -387,6 +397,51 @@ message GetSchedulerStatusResponse {
     bool running = 1;
     SchedulerStats stats = 2;
     int64 timestamp = 3;
+}
+
+// =============================================================================
+// Remote-run messages (go-quicbaas#1955)
+// =============================================================================
+
+// RemoteRunRef names one run. The times are Unix nanoseconds: the scheduler
+// matches a reported run to the run it started exactly.
+message RemoteRunRef {
+    uint64 job_id = 1;
+    int64 firing_unix_nano = 2;
+    int64 started_at_unix_nano = 3;
+}
+
+message RemoteRun {
+    RemoteRunRef run = 1;
+    string name = 2;
+    string handler = 3;
+    bytes payload = 4;
+    int64 deadline_unix_nano = 5;  // the scheduler stops waiting at this time
+}
+
+message ListRemoteRunsRequest {
+    repeated string handlers = 1;  // each carries the "remote:" prefix
+    string tenant_id = 2;
+}
+
+message ListRemoteRunsResponse {
+    repeated RemoteRun runs = 1;
+    int64 timestamp = 2;
+}
+
+// CompleteRemoteRunRequest reports one run: a non-empty error fails it;
+// otherwise message and output are its result.
+message CompleteRemoteRunRequest {
+    RemoteRunRef run = 1;
+    string message = 2;
+    bytes output = 3;
+    string error = 4;
+    string tenant_id = 5;
+}
+
+message CompleteRemoteRunResponse {
+    uint64 job_id = 1;
+    int64 timestamp = 2;
 }
 
 // =============================================================================
