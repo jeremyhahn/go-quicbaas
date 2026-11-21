@@ -519,8 +519,10 @@ func (t *Transport) requestWithRetry(ctx context.Context, service, method string
 		if attempt > 0 {
 			select {
 			case <-ctx.Done():
+				// Name the attempt that led to this wait: without it the
+				// caller sees only the cancellation, not why it retried.
 				return nil, errors.Wrap(ctx.Err(), errors.CodeCanceled, "rest.Request",
-					"request canceled during retry")
+					canceledDuringRetryMessage(lastErr))
 			case <-time.After(backoff):
 				backoff = minDuration(backoff*2, t.cfg.MaxRetryBackoff)
 			}
@@ -539,6 +541,15 @@ func (t *Transport) requestWithRetry(ctx context.Context, service, method string
 	}
 
 	return nil, lastErr
+}
+
+// canceledDuringRetryMessage is the message of the error returned when the
+// context ends while waiting to retry; it names the last attempt's error.
+func canceledDuringRetryMessage(lastErr error) string {
+	if lastErr == nil {
+		return "request canceled during retry"
+	}
+	return "request canceled during retry; last attempt: " + lastErr.Error()
 }
 
 // doRequest executes a single HTTP request.
