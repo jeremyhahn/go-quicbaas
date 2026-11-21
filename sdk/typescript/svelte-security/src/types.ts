@@ -66,9 +66,21 @@ export interface BarrierInitRequest {
   total_shares: number;
 }
 
-/** BarrierInitResponse contains the freshly minted Shamir shares. */
+/**
+ * BarrierInitResponse is the result of a Shamir barrier init. The system
+ * barrier is share-free (go-qrdb seals each share to an enrolled officer, who
+ * claims it): it carries the counts and never `shares`. The per-tenant
+ * barrier still returns its freshly minted `shares` once.
+ */
 export interface BarrierInitResponse {
-  shares: string[];
+  /** Per-tenant barrier only: the minted shares, returned exactly once. */
+  shares?: string[];
+  /** Threshold (M) required to unseal. */
+  threshold?: number;
+  /** Total shares (N) minted. */
+  total_shares?: number;
+  /** System barrier: shares go-qrdb sealed to enrolled officers. */
+  share_count?: number;
 }
 
 /** BarrierUnsealRequest submits one share toward unsealing. */
