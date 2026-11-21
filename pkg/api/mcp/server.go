@@ -35,6 +35,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/sealedwindow"
+	"github.com/jeremyhahn/go-quicbaas/pkg/api/xkmsca"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
@@ -149,6 +150,14 @@ func (s *Server) SetCredentialService(svc qrdbsdk.ServiceCredentialServicer) {
 func (s *Server) SetTenantBarrierService(svc service.TenantBarrierServicer) {
 	if s.tools != nil {
 		s.tools.SetTenantBarrierService(svc)
+	}
+}
+
+// SetCAService wires the xkms CA servicer (pkg/api/xkmsca, the adapter the
+// REST CA routes use) behind the xkms.ca.* tools. nil takes them offline.
+func (s *Server) SetCAService(svc xkmsca.Servicer) {
+	if s.tools != nil {
+		s.tools.SetCAService(svc)
 	}
 }
 

@@ -13,7 +13,12 @@
 
 package service
 
-import "time"
+import (
+	"strconv"
+	"time"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+)
 
 // =============================================================================
 // MFA Types and Constants
@@ -377,6 +382,33 @@ type AuthSession struct {
 
 	// AuthMethod is how the user authenticated.
 	AuthMethod string
+}
+
+// NewAuthSession maps a stored session's caller-facing view onto the SDK
+// shape. It takes iam.SessionView, never iam.SessionExt, so the token and
+// refresh hashes cannot reach a caller. DeviceInfo carries the device name,
+// and AuthMethod comes from the session's auth_method metadata. A nil view
+// maps to nil.
+func NewAuthSession(v *iam.SessionView) *AuthSession {
+	if v == nil {
+		return nil
+	}
+	out := &AuthSession{
+		ID:          v.ID,
+		UserID:      strconv.FormatUint(v.UserID, 10),
+		TenantID:    v.TenantID,
+		CreatedAt:   v.Created,
+		LastActive:  v.LastActive,
+		ExpiresAt:   v.ExpiresAt,
+		MFAVerified: v.MFAVerified,
+		IPAddress:   v.IPAddress,
+		UserAgent:   v.UserAgent,
+		AuthMethod:  v.Metadata["auth_method"],
+	}
+	if v.DeviceInfo != nil {
+		out.DeviceInfo = v.DeviceInfo.Name
+	}
+	return out
 }
 
 // AuthListSessionsResponse contains the list of sessions.

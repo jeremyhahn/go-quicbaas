@@ -42,7 +42,7 @@ services:
     networks:
       - agents-net
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/v1/health/live"]
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/api/v1/health/live"]
       interval: 10s
       timeout: 5s
       retries: 5
