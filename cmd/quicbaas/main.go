@@ -221,6 +221,7 @@ func init() {
 	// Add Account command for the provider subscription accounts agents run on
 	rootCmd.AddCommand(newAccountCommand())
 	rootCmd.AddCommand(newRegistryCommand())
+	rootCmd.AddCommand(newServicesCommand())
 	rootCmd.AddCommand(newAttestationCommand())
 
 	// Add Project command for agentic project management

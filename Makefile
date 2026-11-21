@@ -5035,6 +5035,10 @@ bench-registry: ## Run service registry benchmarks
 integration-test-registry: ## Run service registry CLI integration tests (all transports, in the devcontainer)
 	@$(MAKE) integration-test WITH_REST=1 WITH_QUIC=1 WITH_MCP=1 QUICBAAS_TEST_FILTER="-run TestServiceRegistry ./test/integration/cli/..."
 
+.PHONY: integration-test-services
+integration-test-services: ## Run service plane integration tests (a real node started WithServicePlane, in the devcontainer)
+	@$(MAKE) integration-test QUICBAAS_TEST_FILTER="./test/integration/services/..."
+
 .PHONY: test-attestation
 test-attestation: ## Run attestation Verifier unit tests (service, every transport, SDK, CLI)
 	@echo "$(BLUE)Running attestation unit tests...$(NC)"

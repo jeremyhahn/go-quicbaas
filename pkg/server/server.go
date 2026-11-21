@@ -103,6 +103,11 @@ type serverOptions struct {
 	// AttestContainer returns a typed not-configured error.
 	containerAttestor service.ContainerAttestor
 
+	// servicePlane is the application-supplied launcher, grants and
+	// manifest keyring of the service plane (WithServicePlane). The node
+	// supplies the store.
+	servicePlane *service.ServicePlaneRuntime
+
 	// attestationTrustAnchors are the root certificates every attestation
 	// verification is anchored against. When empty, only the per-request
 	// anchors supplied in the verify options apply.
@@ -193,6 +198,15 @@ func WithDANEPublisher(publisher dane.DANEPublisher) ServerOption {
 // WithDANEPublisher uses.
 func WithContainerAttestor(attestor service.ContainerAttestor) ServerOption {
 	return func(o *serverOptions) { o.containerAttestor = attestor }
+}
+
+// WithServicePlane supplies the service plane's launcher, its grants (one per
+// grant kind) and the keyring that verifies service manifests. The node keeps
+// the services in the platform shard of go-qrdb, every write arbitrated by
+// cas.Writer. Until this is set, every Services() verb answers
+// service.ErrServicePlaneNotConfigured on every transport.
+func WithServicePlane(rt service.ServicePlaneRuntime) ServerOption {
+	return func(o *serverOptions) { o.servicePlane = &rt }
 }
 
 // WithAttestationTrustAnchors returns a ServerOption that sets the root

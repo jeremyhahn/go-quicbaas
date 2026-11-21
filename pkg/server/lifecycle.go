@@ -2079,6 +2079,9 @@ func (s *Server) startService() error {
 		builder = builder.WithContainerAttestor(s.opts.containerAttestor)
 		s.logger.Info("Container attestor attached to service builder")
 	}
+	if s.opts.servicePlane != nil {
+		builder = builder.WithServicePlane(s.servicePlaneResolver(*s.opts.servicePlane))
+	}
 
 	// Wire the Certificate Authority into the service builder so the
 	// CertificateService inside QuicBaaS can issue and revoke certificates
@@ -2580,6 +2583,7 @@ func (s *Server) startGRPCServer() error {
 	s.registerTrustService(grpcServer, quicbaasService)
 	s.registerAttestationService(grpcServer, quicbaasService)
 	s.registerRegistryService(grpcServer)
+	s.registerServicesService(grpcServer)
 
 	// Register the FIDO2 (WebAuthn ceremony) and PIV gRPC services. The
 	// handlers delegate to the tenant-scoped FIDO2() and backend-scoped

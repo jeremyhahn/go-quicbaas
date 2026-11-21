@@ -25,3 +25,10 @@ func ConvertToArguments(req interface{}) map[string]interface{} {
 // DecodeMCPFleetNodeHeartbeat exposes decodeMCPFleetNodeHeartbeat to the
 // external mcp_test package.
 var DecodeMCPFleetNodeHeartbeat = decodeMCPFleetNodeHeartbeat
+
+// ServicesArguments and ServicesResult expose the service plane encoding to
+// the external mcp_test package.
+var (
+	ServicesArguments = servicesArguments
+	ServicesResult    = servicesResult
+)

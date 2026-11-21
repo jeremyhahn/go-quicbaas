@@ -99,6 +99,7 @@ func TestModule_NodeMountedServices_ContributeTheirPermissions(t *testing.T) {
 		"agents:read", "agents:write",
 		"sdlc:read", "sdlc:bind", "sdlc:unbind", "sdlc:issue_create",
 		"service_registry:read", "service_registry:register",
+		"services:deploy", "services:control", "services:read",
 		"users:read", "users:update",
 		"tenants:create", "tenants:read", "tenants:delete",
 	} {

@@ -199,6 +199,7 @@ func TestModule_RegisterGRPC_RegistersFullGRPCSurface(t *testing.T) {
 		&pb.AgentCatalogService_ServiceDesc,
 		&pb.SDLCService_ServiceDesc,
 		&pb.RegistryService_ServiceDesc,
+		&pb.ServicesService_ServiceDesc,
 		&iampb.FederationService_ServiceDesc,
 		&iampb.SessionService_ServiceDesc,
 		&iampb.IAMService_ServiceDesc,

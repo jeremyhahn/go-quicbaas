@@ -44,6 +44,7 @@ type ClusterManagementService interface {
 	Operations() OperationsClient
 	Cache() CacheClient
 	Registry() RegistryClient
+	Services() ServicesClient
 }
 
 // SecurityService provides security and encryption operations including
@@ -211,6 +212,7 @@ func (s *clusterManagementService) Health() HealthClient         { return s.c.He
 func (s *clusterManagementService) Operations() OperationsClient { return s.c.Operations() }
 func (s *clusterManagementService) Cache() CacheClient           { return s.c.Cache() }
 func (s *clusterManagementService) Registry() RegistryClient     { return s.c.Registry() }
+func (s *clusterManagementService) Services() ServicesClient     { return s.c.Services() }
 
 // securityService delegates SecurityService methods to the underlying client.
 // The new Auth() returns an AuthService that composes the existing AuthClient

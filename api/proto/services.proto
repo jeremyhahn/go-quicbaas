@@ -1,0 +1,130 @@
+// QuicBaaS Service Plane Protocol Buffer Definitions v1
+//
+// Copyright (c) 2026 Jeremy Hahn
+// Copyright (c) 2026 Automate The Things, LLC
+//
+// This file is part of go-quicbaas.
+//
+// go-quicbaas is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+syntax = "proto3";
+
+package quicbaas.services.v1;
+
+option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
+
+import "pkg/api/grpc/proto/qrdbv1/authz.proto";
+
+// ServicesService serves the service plane's seven lifecycle verbs and its
+// two reads (docs/service-plane/architecture.md). A service is a signed
+// manifest; every call acts in the authenticated caller's tenant.
+service ServicesService {
+  // Deploy verifies a signed manifest, grants the service its identity,
+  // certificate, name, RBAC and secrets, and launches it.
+  rpc Deploy(DeployServiceRequest) returns (ServiceRecord) {
+      option (qrdb.v1.permission) = "services:deploy";
+  }
+
+  // Redeploy replaces a settled service's manifest with a newer signed one.
+  rpc Redeploy(DeployServiceRequest) returns (ServiceRecord) {
+      option (qrdb.v1.permission) = "services:deploy";
+  }
+
+  // Undeploy halts a settled service, revokes its grants and removes it.
+  rpc Undeploy(ServiceNameRequest) returns (UndeployServiceResponse) {
+      option (qrdb.v1.permission) = "services:deploy";
+  }
+
+  // Start launches a stopped service.
+  rpc Start(ServiceNameRequest) returns (ServiceRecord) {
+      option (qrdb.v1.permission) = "services:control";
+  }
+
+  // Stop halts a running service.
+  rpc Stop(ServiceNameRequest) returns (ServiceRecord) {
+      option (qrdb.v1.permission) = "services:control";
+  }
+
+  // Resume launches a service a failure left halted.
+  rpc Resume(ServiceNameRequest) returns (ServiceRecord) {
+      option (qrdb.v1.permission) = "services:control";
+  }
+
+  // Restart halts and launches a running or halted service.
+  rpc Restart(ServiceNameRequest) returns (ServiceRecord) {
+      option (qrdb.v1.permission) = "services:control";
+  }
+
+  // Get reads one of the caller tenant's services.
+  rpc Get(ServiceNameRequest) returns (ServiceRecord) {
+      option (qrdb.v1.permission) = "services:read";
+  }
+
+  // List lists the caller tenant's services by name.
+  rpc List(ListServicesRequest) returns (ListServicesResponse) {
+      option (qrdb.v1.permission) = "services:read";
+  }
+}
+
+// SignedServiceManifest is a manifest as its signer produced it: the JSON
+// payload the signature covers, the signing key's ID in the node's keyring,
+// and the signature.
+message SignedServiceManifest {
+  bytes payload = 1;
+  string key_id = 2;
+  bytes signature = 3;
+}
+
+message DeployServiceRequest {
+  // Manifest is the signed manifest to deploy or redeploy.
+  SignedServiceManifest manifest = 1;
+}
+
+message ServiceNameRequest {
+  // Name is the service's name in the caller's tenant.
+  string name = 1;
+}
+
+message UndeployServiceResponse {}
+
+message ListServicesRequest {}
+
+// ServiceRecord is a service's lifecycle state and the manifest it runs.
+message ServiceRecord {
+  string tenant = 1;
+  string name = 2;
+
+  // State is running, stopped, halted or transitioning.
+  string state = 3;
+
+  // Verb is the last verb that acted on the service.
+  string verb = 4;
+
+  int64 revision = 5;
+  int64 restarts = 6;
+
+  // Grants are the references each grant kind returned, by kind.
+  map<string, string> grants = 7;
+
+  // Reason says why a service is halted.
+  string reason = 8;
+
+  // UpdatedAtUnixNano is the time of the last transition.
+  int64 updated_at_unix_nano = 9;
+
+  // KeyId names the key that signed the running manifest.
+  string key_id = 10;
+
+  // ManifestJson is the verified manifest, JSON-encoded.
+  bytes manifest_json = 11;
+}
+
+message ListServicesResponse {
+  repeated ServiceRecord services = 1;
+}
