@@ -79,7 +79,7 @@ func (d Document) Payload() ([]byte, error) {
 	}
 	var spec bytes.Buffer
 	if err := json.Compact(&spec, d.Spec); err != nil {
-		return nil, fmt.Errorf("%w: %s/%s: %v", ErrInvalidSpec, d.Kind, d.Name, err)
+		return nil, fmt.Errorf("%w: %s/%s: %w", ErrInvalidSpec, d.Kind, d.Name, err)
 	}
 	d.Spec = spec.Bytes()
 	return json.Marshal(d)
@@ -243,14 +243,14 @@ func (e *Engine) Load(ctx context.Context, tenant string, sd SignedDocument) (*L
 		return nil, err
 	}
 	if err := e.verifier.Verify(ctx, tenant, sd.KeyID, payload, sd.Signature); err != nil {
-		return nil, fmt.Errorf("%w: %s/%s: %v", ErrBadSignature, doc.Kind, doc.Name, err)
+		return nil, fmt.Errorf("%w: %s/%s: %w", ErrBadSignature, doc.Kind, doc.Name, err)
 	}
 	ev, err := e.evaluator(doc.Kind)
 	if err != nil {
 		return nil, err
 	}
 	if err := ev.Validate(doc.Spec); err != nil {
-		return nil, fmt.Errorf("%w: %s/%s: %v", ErrInvalidSpec, doc.Kind, doc.Name, err)
+		return nil, fmt.Errorf("%w: %s/%s: %w", ErrInvalidSpec, doc.Kind, doc.Name, err)
 	}
 	return &Loaded{doc: doc, engine: e}, nil
 }
