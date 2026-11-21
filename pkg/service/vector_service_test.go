@@ -2414,3 +2414,235 @@ func TestLocalPointsToSDK_Multiple(t *testing.T) {
 	result := localPointsToSDK(points)
 	assert.Len(t, result, 2)
 }
+
+func TestPerformIndexRebuild_UsesNamespaceMetric(t *testing.T) {
+	svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 3)
+	storage.scanNamespaceFn = func(_ context.Context, _ string, opts *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
+		if opts.Offset > 0 {
+			return nil, nil
+		}
+		return []*interfaces.VectorValue{{ID: 1, Embedding: []float32{1, 2, 3}}, {ID: 2, Embedding: []float32{4, 5, 6}}}, nil
+	}
+	var gotMetric string
+	svc.indexFactory = &vecMockVectorIndexFactory{createFn: func(config *interfaces.VectorIndexConfig) (interfaces.VectorIndex, error) {
+		gotMetric = config.DistanceMetric
+		return newVecMockVectorIndex(), nil
+	}}
+	job := &RebuildJobState{JobID: "jm", Namespace: "test-ns", InProgress: true, TotalVectors: 2, StartedAt: time.Now(), DistanceMetric: "COSINE"}
+	svc.jobMu.Lock()
+	svc.rebuildJobs["jm"] = job
+	svc.jobMu.Unlock()
+
+	err := svc.performIndexRebuild(tenantctx.WithSystem(context.Background()), "jm", "test-ns", nil)
+	require.NoError(t, err)
+	assert.Equal(t, "cosine", gotMetric)
+}
+
+func TestVectorIndexDistanceMetric(t *testing.T) {
+	tests := []struct {
+		stored string
+		want   string
+	}{
+		{"COSINE", "cosine"},
+		{"cosine", "cosine"},
+		{"DOT_PRODUCT", "dot_product"},
+		{"dot_product", "dot_product"},
+		{"L2", "l2"},
+		{"", "l2"},
+	}
+	for _, tt := range tests {
+		assert.Equal(t, tt.want, vectorIndexDistanceMetric(tt.stored), "stored=%q", tt.stored)
+	}
+}
+
+func TestGetRebuildProgress_TenantNamespace(t *testing.T) {
+	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
+	job := &RebuildJobState{JobID: "jt", Namespace: vectorTenantScopedNamespace("acme-corp", "test-ns"), InProgress: true, StartedAt: time.Now()}
+	svc.jobMu.Lock()
+	svc.rebuildJobs["jt"] = job
+	svc.jobMu.Unlock()
+
+	acme := tenantctx.WithTenant(context.Background(), "acme-corp")
+	resp, err := svc.GetRebuildProgress(acme, &GetRebuildProgressRequest{Namespace: "test-ns"})
+	require.NoError(t, err)
+	assert.Equal(t, "jt", resp.JobID)
+	assert.Equal(t, "test-ns", resp.Namespace)
+
+	other := tenantctx.WithTenant(context.Background(), "other-co")
+	_, err = svc.GetRebuildProgress(other, &GetRebuildProgressRequest{Namespace: "test-ns"})
+	require.Error(t, err)
+	_, err = svc.GetRebuildProgress(other, &GetRebuildProgressRequest{JobID: "jt"})
+	require.Error(t, err)
+}
+
+// TestPerformIndexRebuild_PagesWithVectors proves the rebuild asks storage for
+// the embeddings and advances the scan Offset page by page (#1868).
+func TestPerformIndexRebuild_PagesWithVectors(t *testing.T) {
+	svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 2)
+	const total = 2500
+	var offsets []int
+	storage.scanNamespaceFn = func(_ context.Context, _ string, opts *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
+		offsets = append(offsets, opts.Offset)
+		var out []*interfaces.VectorValue
+		for i := opts.Offset; i < total && len(out) < opts.Limit; i++ {
+			v := &interfaces.VectorValue{ID: uint64(i + 1)}
+			if opts.IncludeVectors {
+				v.Embedding = []float32{float32(i), 1}
+			}
+			out = append(out, v)
+		}
+		return out, nil
+	}
+	idx := newVecMockVectorIndex()
+	var inserted, empty int
+	idx.insertFn = func(_ uint64, emb []float32) error {
+		inserted++
+		if len(emb) == 0 {
+			empty++
+		}
+		return nil
+	}
+	svc.indexFactory = &vecMockVectorIndexFactory{createFn: func(*interfaces.VectorIndexConfig) (interfaces.VectorIndex, error) {
+		return idx, nil
+	}}
+	job := &RebuildJobState{JobID: "jp", Namespace: "test-ns", InProgress: true, TotalVectors: total, StartedAt: time.Now()}
+	svc.jobMu.Lock()
+	svc.rebuildJobs["jp"] = job
+	svc.jobMu.Unlock()
+
+	require.NoError(t, svc.performIndexRebuild(tenantctx.WithSystem(context.Background()), "jp", "test-ns", nil))
+	assert.Equal(t, []int{0, 1000, 2000}, offsets)
+	assert.Equal(t, total, inserted)
+	assert.Zero(t, empty, "the rebuild indexed vectors without their embeddings")
+}
+
+// TestGetCompactionProgress_TenantNamespace proves a caller sees only its own
+// tenant's compaction operations, by namespace and by operation ID (#2055).
+func TestGetCompactionProgress_TenantNamespace(t *testing.T) {
+	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
+	job := &CompactionJobState{OperationID: "op1", Namespace: vectorTenantScopedNamespace("acme-corp", "test-ns"), InProgress: true, StartedAt: time.Now()}
+	svc.jobMu.Lock()
+	svc.compactionJobs["op1"] = job
+	svc.jobMu.Unlock()
+
+	acme := tenantctx.WithTenant(context.Background(), "acme-corp")
+	resp, err := svc.GetCompactionProgress(acme, &GetCompactionProgressRequest{Namespace: "test-ns"})
+	require.NoError(t, err)
+	assert.Equal(t, "op1", resp.OperationID)
+	assert.Equal(t, "test-ns", resp.Namespace)
+
+	resp, err = svc.GetCompactionProgress(acme, &GetCompactionProgressRequest{OperationID: "op1"})
+	require.NoError(t, err)
+	assert.Equal(t, "test-ns", resp.Namespace)
+
+	other := tenantctx.WithTenant(context.Background(), "other-co")
+	_, err = svc.GetCompactionProgress(other, &GetCompactionProgressRequest{Namespace: "test-ns"})
+	require.Error(t, err)
+	_, err = svc.GetCompactionProgress(other, &GetCompactionProgressRequest{OperationID: "op1"})
+	require.Error(t, err)
+}
+
+func TestGetRebuildProgress_JobOfAnotherNamespaceIsNotFound(t *testing.T) {
+	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
+	job := &RebuildJobState{JobID: "jn", Namespace: vectorTenantScopedNamespace("acme-corp", "test-ns"), InProgress: true, StartedAt: time.Now()}
+	svc.jobMu.Lock()
+	svc.rebuildJobs["jn"] = job
+	svc.jobMu.Unlock()
+
+	acme := tenantctx.WithTenant(context.Background(), "acme-corp")
+	_, err := svc.GetRebuildProgress(acme, &GetRebuildProgressRequest{JobID: "jn", Namespace: "other-ns"})
+	require.Error(t, err, "a job of another namespace was returned")
+
+	resp, err := svc.GetRebuildProgress(acme, &GetRebuildProgressRequest{JobID: "jn", Namespace: "test-ns"})
+	require.NoError(t, err)
+	assert.Equal(t, "jn", resp.JobID)
+	assert.Equal(t, "test-ns", resp.Namespace)
+
+	resp, err = svc.GetRebuildProgress(acme, &GetRebuildProgressRequest{JobID: "jn"})
+	require.NoError(t, err)
+	assert.Equal(t, "jn", resp.JobID)
+	assert.Equal(t, "test-ns", resp.Namespace)
+}
+
+func TestGetCompactionProgress_OperationOfAnotherNamespaceIsNotFound(t *testing.T) {
+	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
+	job := &CompactionJobState{OperationID: "on", Namespace: vectorTenantScopedNamespace("acme-corp", "test-ns"), InProgress: true, StartedAt: time.Now()}
+	svc.jobMu.Lock()
+	svc.compactionJobs["on"] = job
+	svc.jobMu.Unlock()
+
+	acme := tenantctx.WithTenant(context.Background(), "acme-corp")
+	_, err := svc.GetCompactionProgress(acme, &GetCompactionProgressRequest{OperationID: "on", Namespace: "other-ns"})
+	require.Error(t, err, "an operation of another namespace was returned")
+
+	resp, err := svc.GetCompactionProgress(acme, &GetCompactionProgressRequest{OperationID: "on", Namespace: "test-ns"})
+	require.NoError(t, err)
+	assert.Equal(t, "on", resp.OperationID)
+	assert.Equal(t, "test-ns", resp.Namespace)
+
+	resp, err = svc.GetCompactionProgress(acme, &GetCompactionProgressRequest{OperationID: "on"})
+	require.NoError(t, err)
+	assert.Equal(t, "on", resp.OperationID)
+	assert.Equal(t, "test-ns", resp.Namespace)
+}
+
+// vecFullScanStorage is a vecMockStorage that also reads a whole namespace in
+// one call, as interfaces.VectorFullScanner.
+type vecFullScanStorage struct {
+	*vecMockStorage
+	fullScans int
+	fullOpts  *interfaces.VectorScanOptions
+	total     int
+}
+
+func (s *vecFullScanStorage) ScanAllVectors(_ context.Context, _ string, opts *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
+	s.fullScans++
+	s.fullOpts = opts
+	out := make([]*interfaces.VectorValue, 0, s.total)
+	for i := 0; i < s.total; i++ {
+		out = append(out, &interfaces.VectorValue{ID: uint64(i + 1), Embedding: []float32{float32(i), 1}})
+	}
+	return out, nil
+}
+
+// TestPerformIndexRebuild_UsesFullScanner checks a rebuild reads a storage
+// that implements VectorFullScanner once, not page by page.
+func TestPerformIndexRebuild_UsesFullScanner(t *testing.T) {
+	svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 2)
+	const total = 2500
+	var offsetScans int
+	storage.scanNamespaceFn = func(context.Context, string, *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
+		offsetScans++
+		return nil, nil
+	}
+	full := &vecFullScanStorage{vecMockStorage: storage, total: total}
+	svc.storage = full
+
+	idx := newVecMockVectorIndex()
+	var inserted, empty int
+	idx.insertFn = func(_ uint64, emb []float32) error {
+		inserted++
+		if len(emb) == 0 {
+			empty++
+		}
+		return nil
+	}
+	svc.indexFactory = &vecMockVectorIndexFactory{createFn: func(*interfaces.VectorIndexConfig) (interfaces.VectorIndex, error) {
+		return idx, nil
+	}}
+	job := &RebuildJobState{JobID: "jf", Namespace: "test-ns", InProgress: true, TotalVectors: total, StartedAt: time.Now()}
+	svc.jobMu.Lock()
+	svc.rebuildJobs["jf"] = job
+	svc.jobMu.Unlock()
+
+	require.NoError(t, svc.performIndexRebuild(tenantctx.WithSystem(context.Background()), "jf", "test-ns", nil))
+	assert.Equal(t, 1, full.fullScans)
+	require.NotNil(t, full.fullOpts)
+	assert.True(t, full.fullOpts.IncludeVectors, "the rebuild needs the embeddings")
+	assert.Zero(t, offsetScans, "the rebuild paged by offset over a full scanner")
+	assert.Equal(t, total, inserted)
+	assert.Zero(t, empty)
+	job.mu.RLock()
+	defer job.mu.RUnlock()
+	assert.Equal(t, int64(total), int64(job.VectorsProcessed))
+}

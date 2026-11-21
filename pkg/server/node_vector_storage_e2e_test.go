@@ -249,6 +249,162 @@ func TestNodeVectorStorage_ScanNamespace_Missing(t *testing.T) {
 	assert.Nil(t, got)
 }
 
+// TestNodeVectorStorage_ScanNamespace_Offset proves the scan honours Offset
+// (#1868): qrdb pages by cursor, so the storage skips the first Offset
+// vectors itself, and a rebuild that pages by Offset reads every vector once.
+func TestNodeVectorStorage_ScanNamespace_Offset(t *testing.T) {
+	client := newEmbeddedVectorClient(t)
+	vs := newNodeVectorStorage(client)
+	ctx := context.Background()
+
+	require.NoError(t, vs.CreateNamespace(ctx, &interfaces.VectorNamespaceInfo{
+		Name:           "paged",
+		Dimension:      2,
+		DistanceMetric: "cosine",
+		IndexType:      "flat",
+	}))
+	for id := uint64(1); id <= 5; id++ {
+		require.NoError(t, vs.UpsertVector(ctx, "paged", &interfaces.VectorValue{
+			ID:        id,
+			Embedding: []float32{float32(id), 1},
+		}))
+	}
+
+	all, err := vs.ScanNamespace(ctx, "paged", &interfaces.VectorScanOptions{Limit: 10, IncludeVectors: true})
+	require.NoError(t, err)
+	require.Len(t, all, 5)
+	for i, v := range all {
+		assert.Equal(t, uint64(i+1), v.ID, "an offset scan is ordered by ID")
+	}
+
+	ids := func(vs []*interfaces.VectorValue) []uint64 {
+		out := make([]uint64, len(vs))
+		for i, v := range vs {
+			out[i] = v.ID
+		}
+		return out
+	}
+
+	page, err := vs.ScanNamespace(ctx, "paged", &interfaces.VectorScanOptions{Limit: 2, Offset: 2, IncludeVectors: true})
+	require.NoError(t, err)
+	assert.Equal(t, ids(all[2:4]), ids(page))
+	for _, v := range page {
+		assert.Len(t, v.Embedding, 2)
+	}
+
+	tail, err := vs.ScanNamespace(ctx, "paged", &interfaces.VectorScanOptions{Limit: 10, Offset: 4})
+	require.NoError(t, err)
+	assert.Equal(t, ids(all[4:]), ids(tail))
+
+	past, err := vs.ScanNamespace(ctx, "paged", &interfaces.VectorScanOptions{Limit: 10, Offset: 5})
+	require.NoError(t, err)
+	assert.Empty(t, past)
+
+	// Paging the way performIndexRebuild does visits each vector once.
+	seen := map[uint64]int{}
+	for offset := 0; ; {
+		got, err := vs.ScanNamespace(ctx, "paged", &interfaces.VectorScanOptions{Limit: 2, Offset: offset, IncludeVectors: true})
+		require.NoError(t, err)
+		for _, v := range got {
+			seen[v.ID]++
+		}
+		offset += len(got)
+		if len(got) < 2 {
+			break
+		}
+	}
+	assert.Len(t, seen, 5)
+	for id, n := range seen {
+		assert.Equal(t, 1, n, "vector %d", id)
+	}
+}
+
+// TestNodeVectorStorage_ScanNamespace_OffsetPastOnePage pages a namespace
+// larger than one qrdb page (1,000 vectors) the way performIndexRebuild does:
+// every vector is visited exactly once, and one large page is ordered by ID.
+func TestNodeVectorStorage_ScanNamespace_OffsetPastOnePage(t *testing.T) {
+	client := newEmbeddedVectorClient(t)
+	vs := newNodeVectorStorage(client)
+	ctx := context.Background()
+
+	const ns, total = "paged-big", 2500
+	require.NoError(t, vs.CreateNamespace(ctx, &interfaces.VectorNamespaceInfo{
+		Name:           ns,
+		Dimension:      2,
+		DistanceMetric: "cosine",
+		IndexType:      "flat",
+	}))
+	for start := uint64(1); start <= total; start += 500 {
+		batch := make([]*interfaces.VectorValue, 0, 500)
+		for id := start; id < start+500 && id <= total; id++ {
+			batch = append(batch, &interfaces.VectorValue{
+				ID:        id,
+				Embedding: []float32{float32(id), 1},
+			})
+		}
+		require.NoError(t, vs.BatchUpsertVectors(ctx, ns, batch))
+	}
+
+	info, err := vs.GetNamespaceInfo(ctx, ns)
+	require.NoError(t, err)
+	require.Equal(t, int64(total), int64(info.VectorCount), "the full scan relies on VectorCount")
+
+	const pageSize = 1000
+	seen := map[uint64]int{}
+	for offset := 0; ; {
+		got, err := vs.ScanNamespace(ctx, ns, &interfaces.VectorScanOptions{Limit: pageSize, Offset: offset, IncludeVectors: true})
+		require.NoError(t, err)
+		for _, v := range got {
+			seen[v.ID]++
+		}
+		offset += len(got)
+		if len(got) < pageSize {
+			break
+		}
+	}
+	assert.Len(t, seen, total)
+	for id, n := range seen {
+		assert.Equal(t, 1, n, "vector %d", id)
+	}
+
+	all, err := vs.ScanNamespace(ctx, ns, &interfaces.VectorScanOptions{Limit: 3000, Offset: 0})
+	require.NoError(t, err)
+	require.Len(t, all, total)
+	for i, v := range all {
+		require.Equal(t, uint64(i+1), v.ID, "an offset scan is ordered by ID")
+	}
+}
+
+// TestNodeVectorStorage_Compact_WaitsForCompletion checks Compact returns
+// only once qrdb has finished compacting the namespace.
+func TestNodeVectorStorage_Compact_WaitsForCompletion(t *testing.T) {
+	client := newEmbeddedVectorClient(t)
+	vs := newNodeVectorStorage(client)
+	ctx := context.Background()
+
+	require.NoError(t, vs.CreateNamespace(ctx, &interfaces.VectorNamespaceInfo{
+		Name:           "compact",
+		Dimension:      2,
+		DistanceMetric: "cosine",
+		IndexType:      "flat",
+	}))
+	for id := uint64(1); id <= 5; id++ {
+		require.NoError(t, vs.UpsertVector(ctx, "compact", &interfaces.VectorValue{
+			ID:        id,
+			Embedding: []float32{float32(id), 1},
+		}))
+	}
+
+	require.NoError(t, vs.Compact(ctx, "compact"))
+
+	progress, err := client.Vector().GetCompactionProgress(ctx, &qrdbtransport.GetCompactionProgressRequest{Namespace: "compact"})
+	require.NoError(t, err)
+	require.NotNil(t, progress)
+	assert.False(t, progress.InProgress, "compaction is finished when Compact returns")
+	assert.NotNil(t, progress.CompletedAt)
+	assert.Empty(t, progress.Error)
+}
+
 // TestNodeVectorStorage_ListNamespaces_ClientClosed covers the ListNamespaces
 // error branch: a closed transport makes the underlying Vector().ListNamespaces
 // call fail, and the adapter surfaces the error (nil result).
@@ -276,9 +432,8 @@ func TestNodeVectorStorage_ScanByMultipleFilters_ClientClosed(t *testing.T) {
 
 // TestNodeVectorStorage_Compact_ClientClosed covers the Compact request-side
 // path through the adapter: the request conversion and transport dispatch run
-// against a closed transport so the underlying CompactNamespace enqueue call
-// surfaces the error synchronously without spawning background compaction work
-// against a torn-down engine.
+// against a closed transport so the underlying CompactNamespace call surfaces
+// the error before any compaction work runs against a torn-down engine.
 func TestNodeVectorStorage_Compact_ClientClosed(t *testing.T) {
 	client := newEmbeddedVectorClient(t)
 	vs := newNodeVectorStorage(client)

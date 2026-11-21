@@ -6009,7 +6009,7 @@ func TestRemaining91_HandleGetIndexProgress_NilVectorService(t *testing.T) {
 	w := httptest.NewRecorder()
 	server.HandleGetIndexProgress(w, req)
 
-	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 }
 
 func TestRemaining91_HandleGetGlobalStats_NilVectorService(t *testing.T) {
@@ -6032,7 +6032,7 @@ func TestRemaining91_HandleCompactNamespace_NilVectorService(t *testing.T) {
 	w := httptest.NewRecorder()
 	server.HandleCompactNamespace(w, req)
 
-	assert.Equal(t, http.StatusAccepted, w.Code)
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 }
 
 func TestRemaining91_HandleGetCompactionProgress_NilVectorService(t *testing.T) {
@@ -6043,7 +6043,7 @@ func TestRemaining91_HandleGetCompactionProgress_NilVectorService(t *testing.T) 
 	w := httptest.NewRecorder()
 	server.HandleGetCompactionProgress(w, req)
 
-	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 }
 
 func TestRemaining91_HandleUpdateMetadata_NilVectorService(t *testing.T) {

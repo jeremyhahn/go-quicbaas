@@ -17,7 +17,9 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"sort"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
@@ -194,17 +196,141 @@ func (n *nodeVectorStorage) ScanNamespace(ctx context.Context, namespace string,
 		IncludeVectors:  true,
 		IncludeMetadata: true,
 	}
+	offset, limit := 0, 0
 	if opts != nil {
 		req.Limit = opts.Limit
 		req.Cursor = opts.Cursor
 		req.IncludeVectors = opts.IncludeVectors
 		req.IncludeMetadata = opts.IncludeMetadata
+		offset, limit = opts.Offset, opts.Limit
 	}
-	resp, err := n.client.Vector().ListVectors(ctx, req)
+	if req.Cursor != "" || (offset <= 0 && limit <= 0) {
+		resp, err := n.client.Vector().ListVectors(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		return nodeVectorDataToInterface(resp.Vectors), nil
+	}
+
+	// qrdb pages by cursor only, and the order of one page is not stable
+	// from call to call. Offset paging (#1868) needs a stable order, so
+	// read the whole namespace, order it by ID, and cut the page from that.
+	all, err := listAllVectors(ctx, n.client.Vector(), req)
 	if err != nil {
 		return nil, err
 	}
-	return nodeVectorDataToInterface(resp.Vectors), nil
+	if offset < 0 {
+		offset = 0
+	}
+	if offset >= len(all) {
+		return []*interfaces.VectorValue{}, nil
+	}
+	all = all[offset:]
+	if limit > 0 && limit < len(all) {
+		all = all[:limit]
+	}
+	return nodeVectorDataToInterface(all), nil
+}
+
+var _ interfaces.VectorFullScanner = (*nodeVectorStorage)(nil)
+
+// ScanAllVectors returns every vector of a namespace once each, ordered by ID,
+// from one listAllVectors read. It includes embeddings and metadata unless
+// opts says otherwise; opts' paging fields are ignored.
+func (n *nodeVectorStorage) ScanAllVectors(ctx context.Context, namespace string, opts *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
+	req := &qrdbtransport.ListVectorsRequest{
+		Namespace:       namespace,
+		IncludeVectors:  true,
+		IncludeMetadata: true,
+	}
+	if opts != nil {
+		req.IncludeVectors = opts.IncludeVectors
+		req.IncludeMetadata = opts.IncludeMetadata
+	}
+	all, err := listAllVectors(ctx, n.client.Vector(), req)
+	if err != nil {
+		return nil, err
+	}
+	return nodeVectorDataToInterface(all), nil
+}
+
+// nodeScanPageSize is the qrdb page size listAllVectors reads with.
+const nodeScanPageSize = 1000
+
+// nodeScanMaxPasses bounds how many whole cursor passes listAllVectors makes
+// over a namespace before it gives up on reading every vector.
+const nodeScanMaxPasses = 32
+
+// errIncompleteVectorScan reports that listAllVectors could not read every
+// vector the namespace holds within nodeScanMaxPasses passes.
+var errIncompleteVectorScan = errors.New("vector scan did not return every vector in the namespace")
+
+// listAllVectors returns every vector of a namespace once each, ordered by ID.
+//
+// qrdb reads its cursor as an offset into a slice it rebuilds from a map on
+// every call, so the order differs from page to page: one cursor pass over a
+// namespace larger than one page can return a vector twice and skip another.
+// listAllVectors therefore reads the namespace's vector count first and repeats
+// whole cursor passes, deduplicating by ID, until it has seen that many vectors.
+// If nodeScanMaxPasses passes still fall short it returns
+// errIncompleteVectorScan rather than an incomplete set, so a caller such as an
+// index rebuild never reports success over vectors it did not read.
+//
+// Each pass re-reads the namespace count first; when it changed, the vectors
+// read by earlier passes are discarded, so a result never holds a vector that
+// was deleted since. A pass requests at most want/nodeScanPageSize + 2 pages:
+// once the cursor passes the end of a namespace that shrank between requests,
+// qrdb restarts from the first vector with an ever larger cursor, so the pass
+// would otherwise never end. The context is checked before every request.
+func listAllVectors(ctx context.Context, vc qrdbtransport.VectorClient, req *qrdbtransport.ListVectorsRequest) ([]*qrdbtransport.VectorData, error) {
+	var want int
+	var seen map[uint64]struct{}
+	var all []*qrdbtransport.VectorData
+	for pass := 0; pass < nodeScanMaxPasses; pass++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		info, err := vc.GetNamespaceInfo(ctx, &qrdbtransport.GetNamespaceInfoRequest{Namespace: req.Namespace})
+		if err != nil {
+			return nil, err
+		}
+		if count := int(info.VectorCount); pass == 0 || count != want {
+			want, seen, all = count, make(map[uint64]struct{}, count), nil
+		}
+		page := *req
+		page.Limit = nodeScanPageSize
+		page.Cursor = ""
+		for pages := want/nodeScanPageSize + 2; pages > 0; pages-- {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			resp, err := vc.ListVectors(ctx, &page)
+			if err != nil {
+				return nil, err
+			}
+			for _, v := range resp.Vectors {
+				if v == nil {
+					continue
+				}
+				if _, dup := seen[v.ID]; dup {
+					continue
+				}
+				seen[v.ID] = struct{}{}
+				all = append(all, v)
+			}
+			// A later pass meets pages it has fully seen, so only an empty
+			// page (not one with nothing new) ends the pass early.
+			if resp.NextCursor == "" || resp.NextCursor == page.Cursor || len(resp.Vectors) == 0 {
+				break
+			}
+			page.Cursor = resp.NextCursor
+		}
+		if len(seen) >= want {
+			sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
+			return all, nil
+		}
+	}
+	return nil, fmt.Errorf("%w: namespace %q: read %d of %d vectors", errIncompleteVectorScan, req.Namespace, len(seen), want)
 }
 
 // ScanByMultipleFilters scans vectors matching multiple metadata filters via the node transport.
@@ -247,13 +373,25 @@ func (n *nodeVectorStorage) GetStats(ctx context.Context, namespace string) (*in
 	}, nil
 }
 
-// Compact triggers compaction for a namespace via the node transport.
+// Compact compacts a namespace via the node transport and returns once storage
+// compaction has finished. It asks qrdb for a synchronous compaction: the
+// service already runs Compact in its own background job, which marks the job
+// completed when Compact returns, so a storage failure must surface here.
 func (n *nodeVectorStorage) Compact(ctx context.Context, namespace string) error {
-	_, err := n.client.Vector().CompactNamespace(ctx, &qrdbtransport.CompactNamespaceRequest{
+	resp, err := n.client.Vector().CompactNamespace(ctx, &qrdbtransport.CompactNamespaceRequest{
 		Namespace: namespace,
-		Async:     true,
+		Async:     false,
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	if resp == nil {
+		return fmt.Errorf("compact namespace %q: no response from storage", namespace)
+	}
+	if !resp.Success {
+		return fmt.Errorf("compact namespace %q: storage reported the compaction did not succeed", namespace)
+	}
+	return nil
 }
 
 // Close is a no-op: the node owns the underlying vector storage lifecycle.
