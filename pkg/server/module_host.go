@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -566,8 +567,9 @@ func (c *routeClaims) insert(module string, r moduleRoute) (err error) {
 
 // seed records a route already mounted on the node. Overlap between the
 // modules quicbaas itself composes predates the host seam and is go-qrdb's to
-// police, so a seeded route never fails: the FIRST claimant keeps ownership
-// and later ones are silently absorbed.
+// police, so a seeded route never fails: the claimant first in claim
+// precedence (inClaimPrecedence) keeps ownership and later ones are silently
+// absorbed.
 func (c *routeClaims) seed(module string, r moduleRoute) error {
 	if err := c.insert(module, r); err != nil {
 		return err
@@ -642,6 +644,8 @@ func (c *routeClaims) claim(module string, r moduleRoute) error {
 // composition that boots today, and it is never something a downstream host
 // can act on. The mounted modules therefore seed the claim set first-wins, and
 // only host registrations are checked — against them and against each other.
+// Both sets are claimed in inClaimPrecedence order, so the outcome does not
+// depend on the order the composition declared its modules in.
 // The whole check runs ONLY when a host module is present, so the default
 // composition keeps precisely the behavior it has today.
 //
@@ -667,10 +671,7 @@ func (c *routeClaims) claim(module string, r moduleRoute) error {
 func assertNoHostModuleRouteConflicts(mounted, hosts []qrdbsdk.ServiceModule) error {
 	claims := newRouteClaims()
 
-	for _, m := range mounted {
-		if isNilModule(m) {
-			continue
-		}
+	for _, m := range inClaimPrecedence(mounted) {
 		name := m.Name()
 		routes, err := captureModuleRoutes(m, false)
 		if err != nil {
@@ -686,10 +687,7 @@ func assertNoHostModuleRouteConflicts(mounted, hosts []qrdbsdk.ServiceModule) er
 		}
 	}
 
-	for _, m := range hosts {
-		if isNilModule(m) {
-			continue
-		}
+	for _, m := range inClaimPrecedence(hosts) {
 		name := m.Name()
 		routes, err := captureModuleRoutes(m, true)
 		if err != nil {
@@ -714,4 +712,24 @@ func assertNoHostModuleRouteConflicts(mounted, hosts []qrdbsdk.ServiceModule) er
 		}
 	}
 	return nil
+}
+
+// inClaimPrecedence returns the non-nil modules of mods ordered by module
+// name. The route guard claims routes in this order, so its verdict, the
+// owner and the offender a conflict names, and which of several faults it
+// reports first are a function of the module set, never of the order the
+// composition declared the modules in. Module names are unique by the time
+// the guard runs (validateHostModules rejects a duplicate at NewServer), so
+// the order is total. The stated precedence is: mounted modules before host
+// modules, and within each set the module whose name sorts first owns a
+// contested route.
+func inClaimPrecedence(mods []qrdbsdk.ServiceModule) []qrdbsdk.ServiceModule {
+	out := make([]qrdbsdk.ServiceModule, 0, len(mods))
+	for _, m := range mods {
+		if !isNilModule(m) {
+			out = append(out, m)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Name() < out[j].Name() })
+	return out
 }

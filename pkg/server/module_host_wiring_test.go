@@ -89,8 +89,8 @@ func TestUnifiedModuleServerOptions_CollidingHostModulesFailConstruction(t *test
 	var conflict *HostModuleRouteConflictError
 	require.ErrorAs(t, err, &conflict)
 	assert.Equal(t, "/api/v1/shared", conflict.Pattern)
-	assert.Equal(t, "platform", conflict.Owner)
-	assert.Equal(t, "fleet", conflict.Module)
+	assert.Equal(t, "fleet", conflict.Owner, "the host whose name sorts first owns the route")
+	assert.Equal(t, "platform", conflict.Module)
 }
 
 // Compile-time proof the host-module option accepts the same interface value
