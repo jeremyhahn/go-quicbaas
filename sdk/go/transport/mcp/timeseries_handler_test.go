@@ -229,12 +229,12 @@ func TestTimeseriesHandlerTransformQuery(t *testing.T) {
 		t.Errorf("metric = %v, want cpu.usage", args["metric"])
 	}
 
-	if args["start_time"] != start.UnixNano() {
-		t.Errorf("start_time = %v, want %v", args["start_time"], start.UnixNano())
+	if args["start"] != start.UnixNano() {
+		t.Errorf("start = %v, want %v", args["start"], start.UnixNano())
 	}
 
-	if args["end_time"] != end.UnixNano() {
-		t.Errorf("end_time = %v, want %v", args["end_time"], end.UnixNano())
+	if args["end"] != end.UnixNano() {
+		t.Errorf("end = %v, want %v", args["end"], end.UnixNano())
 	}
 
 	if args["aggregation"] != "avg" {
@@ -244,6 +244,106 @@ func TestTimeseriesHandlerTransformQuery(t *testing.T) {
 	if args["interval_seconds"] != int64(60) {
 		t.Errorf("interval_seconds = %v, want 60", args["interval_seconds"])
 	}
+}
+
+// TestTimeseriesQueryArgsMatchQRDBTool checks that the query arguments use the
+// names go-qrdb's qrdb_ts_query tool reads: start and end in Unix nanoseconds.
+func TestTimeseriesQueryArgsMatchQRDBTool(t *testing.T) {
+	h := newTSHandler(t)
+	start := time.Unix(0, 1_700_000_000_000_000_000)
+	end := start.Add(time.Hour)
+
+	assertKeys := func(t *testing.T, args map[string]interface{}) {
+		t.Helper()
+		if args["start"] != start.UnixNano() {
+			t.Errorf("start = %v, want %v", args["start"], start.UnixNano())
+		}
+		if args["end"] != end.UnixNano() {
+			t.Errorf("end = %v, want %v", args["end"], end.UnixNano())
+		}
+		for _, k := range []string{"start_time", "end_time"} {
+			if _, ok := args[k]; ok {
+				t.Errorf("unexpected argument %q", k)
+			}
+		}
+	}
+
+	t.Run("typed", func(t *testing.T) {
+		args, err := h.transformQuery(&timeseries.QueryRequest{Metric: "m", Start: start, End: end})
+		if err != nil {
+			t.Fatalf("transformQuery: %v", err)
+		}
+		if args["metric"] != "m" {
+			t.Errorf("metric = %v, want m", args["metric"])
+		}
+		assertKeys(t, args)
+	})
+	t.Run("map int64", func(t *testing.T) {
+		args, err := h.transformQueryFromMap(map[string]interface{}{
+			"metric": "m", "start_time": start.UnixNano(), "end_time": end.UnixNano(),
+		})
+		if err != nil {
+			t.Fatalf("transformQueryFromMap: %v", err)
+		}
+		assertKeys(t, args)
+	})
+	t.Run("map time", func(t *testing.T) {
+		args, err := h.transformQueryFromMap(map[string]interface{}{
+			"metric": "m", "start_time": start, "end_time": end,
+		})
+		if err != nil {
+			t.Fatalf("transformQueryFromMap: %v", err)
+		}
+		assertKeys(t, args)
+	})
+}
+
+// TestTimeseriesQueryResponseBareArray checks that the bare JSON array of points
+// go-qrdb's qrdb_ts_query returns decodes, alongside the {"points": [...]} map.
+func TestTimeseriesQueryResponseBareArray(t *testing.T) {
+	h := newTSHandler(t)
+	const ts = "2026-11-21T07:58:28.123456789Z"
+	want, err := time.Parse(time.RFC3339Nano, ts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	point := map[string]interface{}{"metric": "m", "value": 42.5, "timestamp": ts}
+
+	for name, in := range map[string]interface{}{
+		"bare array": []interface{}{point},
+		"points map": map[string]interface{}{"points": []interface{}{point}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			out, err := h.transformQueryResponse(in)
+			if err != nil {
+				t.Fatalf("transformQueryResponse: %v", err)
+			}
+			resp, ok := out.(*timeseries.QueryResponse)
+			if !ok {
+				t.Fatalf("got %T, want *timeseries.QueryResponse", out)
+			}
+			if len(resp.Series) != 1 {
+				t.Fatalf("len(Series) = %d, want 1", len(resp.Series))
+			}
+			if resp.Series[0].Value != 42.5 {
+				t.Errorf("Value = %v, want 42.5", resp.Series[0].Value)
+			}
+			if !resp.Series[0].Timestamp.Equal(want) {
+				t.Errorf("Timestamp = %v, want %v", resp.Series[0].Timestamp, want)
+			}
+		})
+	}
+
+	t.Run("nil", func(t *testing.T) {
+		out, err := h.transformQueryResponse(nil)
+		if err != nil {
+			t.Fatalf("transformQueryResponse: %v", err)
+		}
+		resp, ok := out.(*timeseries.QueryResponse)
+		if !ok || resp.Series == nil || len(resp.Series) != 0 {
+			t.Errorf("got %#v, want empty series", out)
+		}
+	})
 }
 
 func TestFormatFloatValue(t *testing.T) {

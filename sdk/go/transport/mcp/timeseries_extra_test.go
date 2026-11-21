@@ -116,8 +116,8 @@ func TestTimeseriesQueryFromMapInt64Times(t *testing.T) {
 	if err != nil {
 		t.Fatalf("transformQueryFromMap: %v", err)
 	}
-	if args["start_time"] != int64(100) || args["end_time"] != int64(200) {
-		t.Errorf("times = %v / %v", args["start_time"], args["end_time"])
+	if args["start"] != int64(100) || args["end"] != int64(200) {
+		t.Errorf("times = %v / %v", args["start"], args["end"])
 	}
 	if args["group_by"] != `["host"]` {
 		t.Errorf("group_by = %v", args["group_by"])

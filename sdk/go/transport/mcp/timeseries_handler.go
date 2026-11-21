@@ -167,6 +167,9 @@ func (h *timeseriesHandler) transformWriteBatch(req interface{}) (map[string]int
 	return h.transport.convertToArguments(req), nil
 }
 
+// transformQuery builds the arguments of go-qrdb's qrdb_ts_query tool: metric,
+// start and end (Unix nanoseconds, end exclusive) and tags as a JSON object,
+// plus aggregation and interval_seconds when an aggregate is requested.
 func (h *timeseriesHandler) transformQuery(req interface{}) (map[string]interface{}, error) {
 	sdkReq, ok := req.(*timeseries.QueryRequest)
 	if !ok {
@@ -179,9 +182,9 @@ func (h *timeseriesHandler) transformQuery(req interface{}) (map[string]interfac
 	}
 
 	args := map[string]interface{}{
-		"metric":     sdkReq.Metric,
-		"start_time": sdkReq.Start.UnixNano(),
-		"end_time":   sdkReq.End.UnixNano(),
+		"metric": sdkReq.Metric,
+		"start":  sdkReq.Start.UnixNano(),
+		"end":    sdkReq.End.UnixNano(),
 	}
 
 	if len(sdkReq.Tags) > 0 {
@@ -204,6 +207,9 @@ func (h *timeseriesHandler) transformQuery(req interface{}) (map[string]interfac
 	return args, nil
 }
 
+// transformQueryFromMap builds the qrdb_ts_query arguments from a map request.
+// It reads the input keys start_time and end_time (time.Time or Unix
+// nanoseconds) and sends them as go-qrdb's start and end arguments.
 func (h *timeseriesHandler) transformQueryFromMap(req map[string]interface{}) (map[string]interface{}, error) {
 	args := map[string]interface{}{}
 
@@ -211,14 +217,14 @@ func (h *timeseriesHandler) transformQueryFromMap(req map[string]interface{}) (m
 		args["metric"] = metric
 	}
 	if start, ok := req["start_time"].(time.Time); ok {
-		args["start_time"] = start.UnixNano()
+		args["start"] = start.UnixNano()
 	} else if startNano, ok := req["start_time"].(int64); ok {
-		args["start_time"] = startNano
+		args["start"] = startNano
 	}
 	if end, ok := req["end_time"].(time.Time); ok {
-		args["end_time"] = end.UnixNano()
+		args["end"] = end.UnixNano()
 	} else if endNano, ok := req["end_time"].(int64); ok {
-		args["end_time"] = endNano
+		args["end"] = endNano
 	}
 	if tags, ok := req["tags"].(map[string]string); ok && len(tags) > 0 {
 		tagsJSON, err := json.Marshal(tags)
@@ -378,29 +384,34 @@ func (h *timeseriesHandler) transformWriteBatchResponse(resp interface{}) (inter
 	}, nil
 }
 
+// transformQueryResponse decodes a qrdb_ts_query result. go-qrdb returns a bare
+// JSON array of {"metric","value","timestamp"} points (timestamp as RFC 3339),
+// or null when nothing matched; a {"points": [...]} map is read as well.
+
 func (h *timeseriesHandler) transformQueryResponse(resp interface{}) (interface{}, error) {
 	if resp == nil {
 		return &timeseries.QueryResponse{Series: []timeseries.Point{}}, nil
 	}
 
-	m, ok := resp.(map[string]interface{})
-	if !ok {
+	var points []interface{}
+	switch v := resp.(type) {
+	case []interface{}:
+		points = v
+	case map[string]interface{}:
+		points, _ = v["points"].([]interface{})
+	default:
 		return resp, nil
 	}
 
 	response := &timeseries.QueryResponse{
 		Series: []timeseries.Point{},
 	}
-
-	if points, ok := m["points"].([]interface{}); ok {
-		for _, p := range points {
-			if pm, ok := p.(map[string]interface{}); ok {
-				point := timeseries.Point{
-					Timestamp: tsGetTime(pm, "timestamp"),
-					Value:     tsGetFloat64(pm, "value"),
-				}
-				response.Series = append(response.Series, point)
-			}
+	for _, p := range points {
+		if pm, ok := p.(map[string]interface{}); ok {
+			response.Series = append(response.Series, timeseries.Point{
+				Timestamp: tsGetTime(pm, "timestamp"),
+				Value:     tsGetFloat64(pm, "value"),
+			})
 		}
 	}
 
