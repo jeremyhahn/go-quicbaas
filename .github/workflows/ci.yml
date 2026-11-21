@@ -1,4 +1,4 @@
-# ci-template: v1.48 + v1.49 delta + v1.50 (delta port onto v1.34.1 + v1.42 hermetic gate + v1.43 hosted first + v1.46 runner rule; customized)
+# ci-template: v1.48 + v1.49 delta + v1.50 + v1.51 (v1.51 header only: its change is to the Runner labels check, which this file does not carry; delta port onto v1.34.1 + v1.42 hermetic gate + v1.43 hosted first + v1.46 runner rule; customized)
 # v1.50 (2026-11-21, defect fix, "hosted first with overflow to the
 # Dells"): the overflow never fired under load. The Actions API's
 # runs?status=queued listing returns fewer items than its total_count
