@@ -151,7 +151,7 @@ the field. The rules for composing these blocks are in
 | `trigger_label` | yes | The label an OPEN issue must carry before the module adopts it as a Task. Compared exactly, case-sensitively. |
 | `labels` | no | The module's label keys mapped to the forge labels that display them. Display output only. |
 | `token_secret_ref` | yes | Names the tenant secret holding the forge API token. The value never enters this record. |
-| `webhook_secret_ref` | when `discovery` is `webhook` | Names the tenant secret holding the webhook HMAC key. Without it no delivery verifies, so the project is discovered by the periodic passes alone; a `webhook` binding, which runs none, is refused without it. |
+| `webhook_secret_ref` | when `discovery` is `webhook` | Names the tenant secret holding the webhook HMAC key. For Gitea and GitHub the key must be at least 14 bytes (112 bits, the NIST SP 800-131A HMAC floor that FIPS 140-only mode enforces); a shorter one is refused when the webhook is provisioned and every delivery under it fails verification. Without it no delivery verifies, so the project is discovered by the periodic passes alone; a `webhook` binding, which runs none, is refused without it. |
 | `ssh_host_key` | for an ssh checkout | The forge's own SSH **host public key**, pinned. See below. |
 
 The binding also carries an `onboarding:` block, outside `forge:`, declaring
