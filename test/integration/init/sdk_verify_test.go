@@ -18,12 +18,14 @@ package init
 import (
 	"context"
 	"encoding/pem"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -33,8 +35,26 @@ import (
 // classifier sees the error chain the sealed-window check sees.
 func sealedMCPStubError(t *testing.T, handler http.HandlerFunc, timeout time.Duration) error {
 	t.Helper()
+	ports, dataDir := sealedMCPStub(t, handler)
+
+	client, err := newSDKClient("mcp", ports, dataDir, "")
+	if err != nil {
+		t.Fatalf("newSDKClient(mcp): %v", err)
+	}
+	defer func() { _ = client.Close() }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	_, err = client.Transport().Request(ctx, "quicbaas.Health", "Liveness", struct{}{})
+	return err
+}
+
+// sealedMCPStub serves handler over TLS and returns the port bundle and a
+// data directory whose CA chain trusts the stub's certificate.
+func sealedMCPStub(t *testing.T, handler http.HandlerFunc) (PortBundle, string) {
+	t.Helper()
 	srv := httptest.NewTLSServer(handler)
-	defer srv.Close()
+	t.Cleanup(srv.Close)
 
 	dataDir := t.TempDir()
 	certsDir := filepath.Join(dataDir, "certs")
@@ -46,17 +66,40 @@ func sealedMCPStubError(t *testing.T, handler http.HandlerFunc, timeout time.Dur
 		t.Fatal(err)
 	}
 	port := srv.Listener.Addr().(*net.TCPAddr).Port
+	return PortBundle{MCP: port}, dataDir
+}
 
-	client, err := newSDKClient("mcp", PortBundle{MCP: port}, dataDir, "")
-	if err != nil {
-		t.Fatalf("newSDKClient(mcp): %v", err)
-	}
-	defer func() { _ = client.Close() }()
-
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	_, err = client.Transport().Request(ctx, "quicbaas.Health", "Liveness", struct{}{})
-	return err
+// TestCheckSealedMCPWindow proves the check probes initialize alone: a
+// node that answers initialize and refuses only the next call with 401
+// fails it, and a node that refuses initialize with 401 passes it.
+func TestCheckSealedMCPWindow(t *testing.T) {
+	t.Run("initialize allowed then 401 fails", func(t *testing.T) {
+		var calls atomic.Int32
+		handler := func(w http.ResponseWriter, r *http.Request) {
+			if calls.Add(1) == 1 {
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("Mcp-Session-Id", "stub-session")
+				_, _ = io.WriteString(w, `{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-03-26",`+
+					`"capabilities":{"tools":{}},"serverInfo":{"name":"stub","version":"0.0.0"}}}`)
+				return
+			}
+			http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
+		}
+		ports, dataDir := sealedMCPStub(t, handler)
+		err := checkSealedMCPWindow(ports, dataDir)
+		if err == nil {
+			t.Fatal("a stub that served initialize and refused the next call with 401 passed the sealed check")
+		}
+		if !strings.Contains(err.Error(), "HTTP 200") {
+			t.Fatalf("want the initialize probe to report HTTP 200, got: %v", err)
+		}
+	})
+	t.Run("initialize refused with 401 passes", func(t *testing.T) {
+		ports, dataDir := sealedMCPStub(t, statusHandler(http.StatusUnauthorized))
+		if err := checkSealedMCPWindow(ports, dataDir); err != nil {
+			t.Fatalf("a stub that refused initialize with 401 failed the sealed check: %v", err)
+		}
+	})
 }
 
 func statusHandler(code int) http.HandlerFunc {

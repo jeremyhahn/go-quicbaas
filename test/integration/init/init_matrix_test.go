@@ -91,7 +91,6 @@ func TestCanonicalInit_Matrix(t *testing.T) {
 
 	for _, strategy := range matrixStrategies {
 		for _, transport := range matrixTransports {
-			strategy, transport := strategy, transport
 			t.Run(matrixSubtestName(strategy, transport), func(t *testing.T) {
 				runMatrixCell(t, binary, cliBinary, strategy, transport)
 			})
@@ -323,7 +322,6 @@ func TestCanonicalInit_UnsupportedHardwareGracefulSkip(t *testing.T) {
 	defer cancel()
 
 	for _, strategy := range []string{"pkcs11", "tpm2", "awskms", "gcpkms", "azurekv", "vault"} {
-		strategy := strategy
 		t.Run(strategy, func(t *testing.T) {
 			dataDir := t.TempDir()
 			output, err := execInit(ctx, binary, []string{

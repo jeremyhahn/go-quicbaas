@@ -69,7 +69,6 @@ func TestBackendMatrix(t *testing.T) {
 
 	for _, backend := range matrixBackends {
 		for _, transport := range backendTransports {
-			backend, transport := backend, transport
 			t.Run(backend+"_"+transport, func(t *testing.T) {
 				runBackendCell(t, daemonBinary, cliBinary, backend, transport)
 			})
@@ -198,9 +197,7 @@ func loginFirstBootAdmin(
 	// Over MCP the login is made on REST, which every cell serves: the MCP
 	// login tools carry no permission registration and an MCP session needs a
 	// credential to begin with, so MCP cannot be where the credential is
-	// obtained (quicbaas_login_begin is deliberately not a public tool and
-	// maps to no permission). The session the REST login issues is then used
-	// over MCP.
+	// obtained. The session the REST login issues is then used over MCP.
 	loginTransport := transport
 	if transport == "mcp" {
 		loginTransport = "rest"
@@ -210,13 +207,13 @@ func loginFirstBootAdmin(
 		"--client-cert", filepath.Join(dataDir, "admin", "admin.crt"),
 		"--username", "admin")
 	if loginErr != nil {
-		t.Fatalf("admin mTLS login (%s) for the %q cell (login over %q) failed: %v\noutput:\n%s",
-			label, transport, loginTransport, loginErr, loginOut)
+		t.Fatalf("admin mTLS login (%s) over %q failed: %v\noutput:\n%s",
+			label, transport, loginErr, loginOut)
 	}
 	// Log the outcome even on success: a login that exits 0 without issuing a
 	// usable token looks identical to a working one until the next call is
 	// refused, which is exactly the failure mode this matrix must not hide.
-	t.Logf("admin login (%s/%s, over %s) output:\n%s", label, transport, loginTransport, loginOut)
+	t.Logf("admin login (%s/%s) output:\n%s", label, transport, loginOut)
 
 	session, err := cli.LoadToken(filepath.Join(dataDir, ".quicbaas", "token"))
 	if err != nil {
@@ -256,18 +253,31 @@ func verifyDataRoundTrip(
 	}
 
 	getOut, getErr := runCLIAgainst(ctx, t, cliBinary, transport, ports, dataDir,
-		"data", "get", collection, key)
+		"data", "get", collection, key, "--output", "json")
 	if getErr != nil {
 		t.Fatalf("data get on backend %q over %q failed: %v\noutput:\n%s",
 			backend, transport, getErr, getOut)
 	}
 
-	// Match on the payload rather than the exact envelope: the assertion is
-	// that the ENGINE returned what was written, not that a particular output
-	// format was used.
-	if !strings.Contains(getOut, backend) || !strings.Contains(getOut, transport) {
-		t.Errorf("backend %q over %q: round trip lost the value.\nwrote %s\nread back:\n%s",
+	// Compare the exact payload: the assertion is that the ENGINE returned
+	// byte for byte what was written. The JSON object is decoded from its
+	// first '{' to its last '}' so log lines around it do not matter.
+	var got struct {
+		Found bool   `json:"found"`
+		Value []byte `json:"value"`
+	}
+	start, end := strings.Index(getOut, "{"), strings.LastIndex(getOut, "}")
+	if start < 0 || end < start {
+		t.Fatalf("backend %q over %q: data get printed no JSON object.\nwrote %s\nread back:\n%s",
 			backend, transport, value, getOut)
+	}
+	if err := json.Unmarshal([]byte(getOut[start:end+1]), &got); err != nil {
+		t.Fatalf("backend %q over %q: decode data get output: %v\nwrote %s\nread back:\n%s",
+			backend, transport, err, value, getOut)
+	}
+	if !got.Found || string(got.Value) != value {
+		t.Errorf("backend %q over %q: round trip lost the value (found=%v).\nwrote %s\nread back:\n%s",
+			backend, transport, got.Found, value, getOut)
 	}
 }
 
@@ -329,7 +339,6 @@ func TestBackendMatrix_InitHonoursConfiguredBackend(t *testing.T) {
 	binary := resolveDaemonBinary(t)
 
 	for _, backend := range matrixBackends {
-		backend := backend
 		t.Run(backend, func(t *testing.T) {
 			dataDir := t.TempDir()
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
