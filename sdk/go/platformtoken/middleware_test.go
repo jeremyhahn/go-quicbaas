@@ -14,6 +14,7 @@
 package platformtoken
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -27,6 +28,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam/dpop"
 )
@@ -74,7 +77,7 @@ func principalEcho(t *testing.T) http.Handler {
 }
 
 // The route guard a downstream daemon's REST plane mounts (go-trusted-platform
-// #644, owner ruling 133): it authenticates with the go-quicbaas platform
+// #644): it authenticates with the go-quicbaas platform
 // token, enforces its DPoP or mTLS binding, authorises the permission against
 // the granted scopes, and binds the token's principal, never a request field.
 func TestMiddleware_DaemonRoutesAuthenticateAndAuthoriseThroughTheSDK(t *testing.T) {
@@ -148,7 +151,7 @@ func TestMiddleware_DaemonRoutesAuthenticateAndAuthoriseThroughTheSDK(t *testing
 			wantStatus: http.StatusServiceUnavailable},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			opts := Options{ModeResolver: offline}
+			opts := Options{ModeResolver: offline, Authorizer: &qrdbsdk.NoopAuthorizer{}}
 			if !tc.noReplay {
 				opts.ReplayCache = dpop.NewMemoryReplayCache(&fixedDPoPClock{now})
 			}
@@ -200,5 +203,80 @@ func TestMiddleware_EmptyPermissionAuthenticatesOnly(t *testing.T) {
 	}
 	if ac.TenantID != "tenant-1" || ac.Subject != "user-1" {
 		t.Fatalf("principal %+v", ac)
+	}
+}
+
+// abacDenyKeysGet is go-qrdb's ABAC decorator over an allow-all authorizer,
+// with one tenant-1 policy that denies keys:get.
+func abacDenyKeysGet(t *testing.T) qrdbsdk.Authorizer {
+	t.Helper()
+	policy := &qrdbsdk.ABACPolicy{
+		APIVersion: "abac.qrdb.io/v1",
+		Kind:       "Policy",
+		Metadata:   qrdbsdk.ABACPolicyMetadata{Name: "no-key-reads", Tenant: "tenant-1"},
+		Spec: qrdbsdk.ABACPolicySpec{
+			Subjects: qrdbsdk.ABACSubjectSelector{Any: true},
+			Rules: []qrdbsdk.ABACRule{{
+				Name: "deny-get", Effect: qrdbsdk.ABACEffectDeny,
+				Actions: []string{"get"}, Resources: []string{"keys"},
+			}},
+		},
+	}
+	a, err := qrdbsdk.DecorateAuthorizer(&qrdbsdk.NoopAuthorizer{}, qrdbsdk.ABACWithPolicies([]*qrdbsdk.ABACPolicy{policy}))
+	if err != nil {
+		t.Fatalf("DecorateAuthorizer: %v", err)
+	}
+	return a
+}
+
+// mustNotAuthorize fails the test if the guard asks it.
+type mustNotAuthorize struct{ t *testing.T }
+
+func (m mustNotAuthorize) Authorize(context.Context, *qrdbsdk.Identity, string, string) error {
+	m.t.Error("the guard asked the authorizer for a permission the scopes do not grant")
+	return nil
+}
+
+// A permission route asks the go-qrdb authorizer after the scope check, and fails closed without one.
+func TestMiddleware_AuthorizerDecision(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	key := newIssuerKey(t, testKID)
+	offline := func(string) AuthzMode { return AuthzModeOffline }
+
+	for _, tc := range []struct {
+		name       string
+		scopes     []string
+		authz      qrdbsdk.Authorizer
+		wantStatus int
+		wantBody   string
+	}{
+		{name: "ABAC denies a granted scope", scopes: []string{"keys:get"}, authz: abacDenyKeysGet(t),
+			wantStatus: http.StatusForbidden},
+		{name: "the authorizer allows", scopes: []string{"keys:get"}, authz: &qrdbsdk.NoopAuthorizer{},
+			wantStatus: http.StatusOK, wantBody: "tenant-1/user-1"},
+		{name: "no authorizer on a permission route", scopes: []string{"keys:get"},
+			wantStatus: http.StatusServiceUnavailable},
+		{name: "a scope not granted never reaches the authorizer", scopes: []string{"keys:list"},
+			authz: mustNotAuthorize{t}, wantStatus: http.StatusForbidden},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			guard := newAuthzValidator(t, key, now, Options{ModeResolver: offline, Authorizer: tc.authz}).
+				Middleware("keys:get")(principalEcho(t))
+			req := httptest.NewRequest(http.MethodGet, "https://daemon.example/v1/keys", nil)
+			req.Header.Set("X-Tenant-ID", "tenant-2")
+			req.Header.Set("Authorization", "Bearer "+bearerToken(t, key, now, tc.scopes, "tenant-1"))
+			w := httptest.NewRecorder()
+			guard.ServeHTTP(w, req)
+
+			if w.Code != tc.wantStatus {
+				t.Fatalf("status %d, want %d (body %q)", w.Code, tc.wantStatus, w.Body.String())
+			}
+			if tc.wantBody != "" && w.Body.String() != tc.wantBody {
+				t.Fatalf("principal %q, want %q", w.Body.String(), tc.wantBody)
+			}
+			if tc.wantStatus != http.StatusOK && strings.Contains(w.Body.String(), "platformtoken:") {
+				t.Fatalf("the validator's detail reached the caller: %q", w.Body.String())
+			}
+		})
 	}
 }

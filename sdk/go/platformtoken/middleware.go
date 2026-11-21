@@ -21,12 +21,14 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // The route guard below is what a downstream daemon's REST plane mounts to
 // authenticate and authorise every request with go-quicbaas, so the daemon
-// keeps no auth model, route guard or token format of its own (owner ruling
-// 133; go-trusted-platform#644). The principal comes from the go-quicbaas
+// keeps no auth model, route guard or token format of its own
+// (go-trusted-platform#644). The principal comes from the go-quicbaas
 // platform token only: its tenant and user are the token's, never a request
 // field.
 
@@ -55,13 +57,15 @@ func WithAuthorizedContext(ctx context.Context, ac *AuthorizedContext) context.C
 //   - for an mTLS-bound token (cnf x5t#S256), requires the TLS client
 //     certificate whose SHA-256 thumbprint the token names (RFC 8705), so a
 //     PIV or device certificate login cannot be replayed from another key;
-//   - requires the permission among the token's granted scopes (RBAC/ABAC is
-//     decided by go-quicbaas when it issues the scopes), then the liveness
-//     check the validator's mode asks for.
+//   - requires the permission among the token's granted scopes, then the
+//     liveness check the validator's mode asks for, then asks
+//     Options.Authorizer (go-qrdb RBAC with its ABAC policies) for the
+//     permission in the token's tenant.
 //
 // A missing or invalid credential is 401 with a WWW-Authenticate challenge, a
-// missing permission 403, and a guard that cannot decide (no JWKS, no
-// liveness authority) 503. The authorised principal is bound onto the
+// missing permission 403, a permission the authorizer denies 403, and a guard
+// that cannot decide (no JWKS, no liveness authority, no authorizer for a
+// permission route) 503. The authorised principal is bound onto the
 // request's context; read it with FromContext.
 func (v *Validator) Middleware(permission string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
@@ -98,7 +102,29 @@ func (v *Validator) AuthorizeRequest(r *http.Request, permission string) (*Autho
 	if err := v.enforceLivenessByMode(r.Context(), token, claims); err != nil {
 		return nil, err
 	}
+	if permission != "" {
+		if err := v.authorizePermission(r.Context(), ac, permission); err != nil {
+			return nil, err
+		}
+	}
 	return ac, nil
+}
+
+// authorizePermission asks the go-qrdb authorizer for permission's resource
+// and action as the token's principal, in the token's tenant. It fails
+// closed: no authorizer is a configuration error, and any error from the
+// authorizer is a refusal.
+func (v *Validator) authorizePermission(ctx context.Context, ac *AuthorizedContext, permission string) error {
+	if v.authorizer == nil {
+		return &ConfigError{Detail: "a permission route needs Options.Authorizer"}
+	}
+	identity := &qrdbsdk.Identity{Subject: ac.Subject, TenantID: ac.TenantID, ScopePermissions: ac.Scopes}
+	ctx = qrdbsdk.ContextWithTenant(ctx, qrdbsdk.NormalizeTenantID(ac.TenantID))
+	perm := qrdbsdk.Permission(permission)
+	if err := v.authorizer.Authorize(ctx, identity, qrdbsdk.PermissionResource(perm), qrdbsdk.PermissionAction(perm)); err != nil {
+		return &PolicyDeniedError{Required: permission, Cause: err}
+	}
+	return nil
 }
 
 // requestToken reads the access token from the Authorization header.
@@ -149,15 +175,18 @@ func requireCertificateBinding(r *http.Request, cnf *Confirmation) error {
 // written: a caller learns the class of refusal, not the validator's detail.
 func writeGuardError(w http.ResponseWriter, err error) {
 	var (
-		scope *ScopeDeniedError
-		cfg   *ConfigError
-		jwks  *JWKSFetchError
-		live  *LivenessCheckError
+		scope  *ScopeDeniedError
+		policy *PolicyDeniedError
+		cfg    *ConfigError
+		jwks   *JWKSFetchError
+		live   *LivenessCheckError
 	)
 	switch {
 	case errors.As(err, &scope):
 		w.Header().Set("WWW-Authenticate", `Bearer error="insufficient_scope", scope="`+scope.Required+`"`)
 		http.Error(w, "insufficient_scope", http.StatusForbidden)
+	case errors.As(err, &policy):
+		http.Error(w, "access_denied", http.StatusForbidden)
 	case errors.As(err, &cfg), errors.As(err, &jwks), errors.As(err, &live):
 		http.Error(w, "authorization unavailable", http.StatusServiceUnavailable)
 	default:

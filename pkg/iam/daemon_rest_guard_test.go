@@ -29,6 +29,8 @@ import (
 	"testing"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/platformtoken"
 )
 
@@ -55,8 +57,8 @@ func daemonGuardClientCert(t *testing.T, cn string) *x509.Certificate {
 	return c
 }
 
-// The go-trusted-platform daemon's REST plane (go-trusted-platform#644, owner
-// ruling 133) mounts the sdk/go route guard over the tokens this node issues:
+// The go-trusted-platform daemon's REST plane (go-trusted-platform#644)
+// mounts the sdk/go route guard over the tokens this node issues:
 // a WebAuthn login, a PIV smartcard login and an mTLS service login each reach
 // the daemon's handler with the token's tenant and subject, the role's RBAC
 // permissions decide the route, and an mTLS-bound token needs its certificate.
@@ -81,6 +83,7 @@ func TestDaemonRESTGuard_AdmitsTokensThisNodeIssues(t *testing.T) {
 		Audience:     issuer,
 		JWKS:         svc.keyManager.JWKS(),
 		ModeResolver: func(string) platformtoken.AuthzMode { return platformtoken.AuthzModeOffline },
+		Authorizer:   &qrdbsdk.NoopAuthorizer{},
 	})
 	if err != nil {
 		t.Fatalf("NewValidator: %v", err)

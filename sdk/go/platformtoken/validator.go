@@ -32,6 +32,7 @@ import (
 
 	jose "github.com/go-jose/go-jose/v4"
 	"github.com/golang-jwt/jwt/v5"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam/dpop"
 )
@@ -135,6 +136,12 @@ type Options struct {
 	// sender-constrained token. Required only when sender-constrained tokens are
 	// authorized through Authorize.
 	ReplayCache dpop.ReplayCache
+	// Authorizer is the go-qrdb policy decision point a permission route asks
+	// after the scope check: go-qrdb RBAC, decorated with its ABAC policies by
+	// qrdbsdk.DecorateAuthorizer. AuthorizeRequest and Middleware refuse a
+	// permission route with 503 when it is nil; an empty permission does not
+	// use it.
+	Authorizer qrdbsdk.Authorizer
 }
 
 // Validator verifies platform access tokens for one trusted issuer and one
@@ -149,6 +156,7 @@ type Validator struct {
 	cachedLiveness LivenessChecker
 	modeResolver   ModeResolver
 	replayCache    dpop.ReplayCache
+	authorizer     qrdbsdk.Authorizer
 }
 
 // NewValidator constructs a Validator. It requires an issuer, an audience, and
@@ -213,6 +221,7 @@ func NewValidator(opts Options) (*Validator, error) {
 		liveness:     opts.LivenessChecker,
 		modeResolver: opts.ModeResolver,
 		replayCache:  opts.ReplayCache,
+		authorizer:   opts.Authorizer,
 	}
 	if opts.LivenessChecker != nil {
 		v.cachedLiveness = NewCachedLivenessChecker(opts.LivenessChecker, opts.LivenessCacheTTL, nowFunc)
