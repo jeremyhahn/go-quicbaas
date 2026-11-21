@@ -151,7 +151,7 @@ func TestDefaultEncryptionConfig(t *testing.T) {
 	}
 }
 
-// validTestConfigForConfigTests returns a complete valid config for validation tests
+// validTestConfigForConfigTests returns a complete valid config for validation tests.
 func validTestConfigForConfigTests() RegistryConfig {
 	cfg := DefaultRegistryConfig()
 	// Provide TLS certs for validation

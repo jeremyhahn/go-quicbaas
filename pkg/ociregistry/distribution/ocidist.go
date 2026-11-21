@@ -701,11 +701,15 @@ func (h *OCIDistHandlers) evictIdle() int {
 		if !ok {
 			return true
 		}
+		id, ok := key.(string)
+		if !ok {
+			return true
+		}
 		sess.mu.Lock()
 		idle := sess.lastActive.Before(cutoff)
 		sess.mu.Unlock()
 		if idle {
-			h.releaseSession(key.(string), sess)
+			h.releaseSession(id, sess)
 			evicted++
 		}
 		return true

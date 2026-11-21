@@ -22,14 +22,14 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// Mock reader that always returns an error
+// Mock reader that always returns an error.
 type errorReader struct{}
 
 func (e *errorReader) Read(p []byte) (n int, err error) {
 	return 0, errors.New("random reader error")
 }
 
-// Mock reader that returns EOF immediately
+// Mock reader that returns EOF immediately.
 type eofReader struct{}
 
 func (e *eofReader) Read(p []byte) (n int, err error) {

@@ -24,14 +24,14 @@ import (
 	"time"
 )
 
-// testLogger returns a logger for tests
+// testLogger returns a logger for tests.
 func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelError, // Only log errors during tests
 	}))
 }
 
-// validTestConfig returns a valid test configuration
+// validTestConfig returns a valid test configuration.
 func validTestConfig() RegistryConfig {
 	cfg := DefaultRegistryConfig()
 	cfg.TLS.Enabled = false // Disable TLS for tests
@@ -1135,7 +1135,7 @@ func TestRegistryConcurrentOperations(t *testing.T) {
 	wg.Wait()
 }
 
-// Ensure TrustedRegistry interface is properly implemented
+// Ensure TrustedRegistry interface is properly implemented.
 func TestInterfaceImplementation(t *testing.T) {
 	var _ TrustedRegistry = (*Registry)(nil)
 }

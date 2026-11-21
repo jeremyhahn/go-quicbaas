@@ -102,7 +102,7 @@ type RegistryAttestationConfig struct {
 }
 
 // StorageConfig holds QuicBaaS storage configuration
-// QuicBaaS is the only supported storage backend for the trusted registry
+// QuicBaaS is the only supported storage backend for the trusted registry.
 type StorageConfig struct {
 	// Addr is the QuicBaaS server address (e.g., "localhost:9000")
 	Addr string `yaml:"addr" json:"addr"`
@@ -129,7 +129,7 @@ type StorageConfig struct {
 	RetryBackoff time.Duration `yaml:"retry_backoff" json:"retry_backoff"`
 }
 
-// EncryptionConfig holds encryption configuration for images
+// EncryptionConfig holds encryption configuration for images.
 type EncryptionConfig struct {
 	// QuicBaaSAddr is the QuicBaaS address for key management
 	QuicBaaSAddr string `yaml:"quicbaas_addr" json:"quicbaas_addr"`
@@ -153,7 +153,7 @@ type EncryptionConfig struct {
 	DEKCacheTTL time.Duration `yaml:"dek_cache_ttl" json:"dek_cache_ttl"`
 }
 
-// DefaultRegistryConfig returns a RegistryConfig with sensible defaults
+// DefaultRegistryConfig returns a RegistryConfig with sensible defaults.
 func DefaultRegistryConfig() RegistryConfig {
 	return RegistryConfig{
 		ListenAddr:          ":5000",
@@ -169,7 +169,7 @@ func DefaultRegistryConfig() RegistryConfig {
 	}
 }
 
-// DefaultTLSConfig returns a TLSConfig with sensible defaults
+// DefaultTLSConfig returns a TLSConfig with sensible defaults.
 func DefaultTLSConfig() TLSConfig {
 	return TLSConfig{
 		Enabled:    true,
@@ -184,7 +184,7 @@ func DefaultTLSConfig() TLSConfig {
 	}
 }
 
-// DefaultAttestationConfig returns a RegistryAttestationConfig with sensible defaults
+// DefaultAttestationConfig returns a RegistryAttestationConfig with sensible defaults.
 func DefaultAttestationConfig() RegistryAttestationConfig {
 	return RegistryAttestationConfig{
 		RequireAttestation:    true,
@@ -197,7 +197,7 @@ func DefaultAttestationConfig() RegistryAttestationConfig {
 	}
 }
 
-// DefaultStorageConfig returns a StorageConfig with sensible defaults
+// DefaultStorageConfig returns a StorageConfig with sensible defaults.
 func DefaultStorageConfig() StorageConfig {
 	return StorageConfig{
 		Addr:              "localhost:9000",
@@ -211,7 +211,7 @@ func DefaultStorageConfig() StorageConfig {
 	}
 }
 
-// DefaultEncryptionConfig returns an EncryptionConfig with sensible defaults
+// DefaultEncryptionConfig returns an EncryptionConfig with sensible defaults.
 func DefaultEncryptionConfig() EncryptionConfig {
 	return EncryptionConfig{
 		QuicBaaSAddr:        "localhost:9000",
@@ -224,7 +224,7 @@ func DefaultEncryptionConfig() EncryptionConfig {
 	}
 }
 
-// Validate checks if the configuration is valid
+// Validate checks if the configuration is valid.
 func (c *RegistryConfig) Validate() error {
 	if c.ListenAddr == "" {
 		return InvalidConfigError{Field: "listen_addr", Reason: "cannot be empty"}
@@ -265,7 +265,7 @@ func (c *RegistryConfig) Validate() error {
 	return nil
 }
 
-// Validate checks if the TLS configuration is valid
+// Validate checks if the TLS configuration is valid.
 func (c *TLSConfig) Validate() error {
 	if !c.Enabled {
 		return nil
@@ -286,7 +286,7 @@ func (c *TLSConfig) Validate() error {
 	return nil
 }
 
-// Validate checks if the attestation configuration is valid
+// Validate checks if the attestation configuration is valid.
 func (c *RegistryAttestationConfig) Validate() error {
 	if !c.RequireAttestation {
 		return nil
@@ -307,7 +307,7 @@ func (c *RegistryAttestationConfig) Validate() error {
 	return nil
 }
 
-// Validate checks if the storage configuration is valid
+// Validate checks if the storage configuration is valid.
 func (c *StorageConfig) Validate() error {
 	if c.Addr == "" {
 		return InvalidConfigError{Field: "storage.addr", Reason: "QuicBaaS address cannot be empty"}
@@ -336,7 +336,7 @@ func (c *StorageConfig) Validate() error {
 	return nil
 }
 
-// Validate checks if the encryption configuration is valid
+// Validate checks if the encryption configuration is valid.
 func (c *EncryptionConfig) Validate() error {
 	if c.QuicBaaSAddr == "" {
 		return InvalidConfigError{Field: "encryption.quicbaas_addr", Reason: "QuicBaaS address cannot be empty"}

@@ -805,7 +805,7 @@ func TestErrInvalidDigest(t *testing.T) {
 	}
 }
 
-// Test errors.Is for checking error types
+// Test errors.Is for checking error types.
 func TestErrorsIs(t *testing.T) {
 	err := ImageNotFoundError{Reference: "test:latest"}
 
@@ -819,7 +819,7 @@ func TestErrorsIs(t *testing.T) {
 	}
 }
 
-// Test error wrapping chain
+// Test error wrapping chain.
 func TestErrorWrappingChain(t *testing.T) {
 	root := errors.New("root cause")
 	decryptErr := DecryptionFailedError{Reference: "myimage", Cause: root}

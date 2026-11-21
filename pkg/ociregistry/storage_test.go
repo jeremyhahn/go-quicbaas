@@ -24,7 +24,7 @@ import (
 	"time"
 )
 
-// Mock QuicBaaS storage client for testing
+// Mock QuicBaaS storage client for testing.
 type mockStorageClient struct {
 	mu      sync.RWMutex
 	data    map[string][]byte
@@ -677,7 +677,7 @@ func TestStoreManifest_StoreTagError(t *testing.T) {
 	}
 }
 
-// entityTypeMockStorageClient allows errors based on entity type
+// entityTypeMockStorageClient allows errors based on entity type.
 type entityTypeMockStorageClient struct {
 	*mockStorageClient
 	errorOnEntityTypes map[string]error
@@ -1065,7 +1065,7 @@ func TestListManifests_SkipsOnGetError(t *testing.T) {
 }
 
 // conditionalMockStorageClient extends mockStorageClient to allow
-// conditional behavior for specific keys
+// conditional behavior for specific keys.
 type conditionalMockStorageClient struct {
 	*mockStorageClient
 	skipOnGet  map[string]bool

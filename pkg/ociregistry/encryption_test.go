@@ -24,7 +24,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/ociregistry/internal/aesgcm"
 )
 
-// Mock KMS client for testing
+// Mock KMS client for testing.
 type mockKMSClient struct {
 	mu      sync.RWMutex
 	keys    map[string]*KeyInfo
@@ -119,7 +119,7 @@ func (m *mockKMSClient) Decrypt(ctx context.Context, keyID string, ciphertext, a
 	return plaintext, nil
 }
 
-// Helper to create test image
+// Helper to create test image.
 func createTestImage(t *testing.T) *Image {
 	t.Helper()
 	return &Image{

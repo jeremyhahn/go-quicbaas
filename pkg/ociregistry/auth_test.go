@@ -110,7 +110,7 @@ func (m *mockQuicBaaSClient) Delete(ctx context.Context, entityType, key string)
 	return nil
 }
 
-// Helper to create valid attestation evidence
+// Helper to create valid attestation evidence.
 func createTestEvidence(t *testing.T, clientID string) string {
 	t.Helper()
 	evidence := AttestationEvidence{

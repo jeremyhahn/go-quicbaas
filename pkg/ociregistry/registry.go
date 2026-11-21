@@ -58,7 +58,7 @@ type TrustedRegistry interface {
 	Close() error
 }
 
-// PushOptions configures image push behavior
+// PushOptions configures image push behavior.
 type PushOptions struct {
 	// Encrypt indicates whether to encrypt the image
 	Encrypt bool
@@ -82,7 +82,7 @@ type PushOptions struct {
 	Timeout time.Duration
 }
 
-// PullOptions configures image pull behavior
+// PullOptions configures image pull behavior.
 type PullOptions struct {
 	// DecryptIfEncrypted will attempt to decrypt encrypted images
 	DecryptIfEncrypted bool
@@ -122,7 +122,7 @@ type RegistryListOptions struct {
 	SortDesc bool
 }
 
-// PlatformInfo contains platform identification
+// PlatformInfo contains platform identification.
 type PlatformInfo struct {
 	// Manufacturer is the platform manufacturer
 	Manufacturer string
@@ -156,7 +156,7 @@ type RegistrySessionView struct {
 	Permissions []string
 }
 
-// Registry implements TrustedRegistry with QuicBaaS storage
+// Registry implements TrustedRegistry with QuicBaaS storage.
 type Registry struct {
 	config RegistryConfig
 	logger *slog.Logger
@@ -231,7 +231,7 @@ func WithSigner(s SigningKMSClient) RegistryOption {
 	}
 }
 
-// NewRegistry creates a new TrustedRegistry with the given configuration
+// NewRegistry creates a new TrustedRegistry with the given configuration.
 func NewRegistry(config RegistryConfig, logger *slog.Logger, opts ...RegistryOption) (*Registry, error) {
 	if logger == nil {
 		logger = slog.Default()
@@ -702,7 +702,7 @@ func (r *Registry) List(ctx context.Context, opts RegistryListOptions) ([]*Image
 	return out, nil
 }
 
-// VerifyClient verifies a client's attestation evidence
+// VerifyClient verifies a client's attestation evidence.
 func (r *Registry) VerifyClient(ctx context.Context, attestation *AttestationEvidence) error {
 	if err := r.checkState(); err != nil {
 		return err
@@ -785,7 +785,7 @@ func (r *Registry) VerifyClient(ctx context.Context, attestation *AttestationEvi
 	return nil
 }
 
-// EncryptImage encrypts an image in place using the specified key
+// EncryptImage encrypts an image in place using the specified key.
 func (r *Registry) EncryptImage(ctx context.Context, ref string, keyID string) error {
 	if err := r.checkState(); err != nil {
 		return err
@@ -818,7 +818,7 @@ func (r *Registry) EncryptImage(ctx context.Context, ref string, keyID string) e
 	return ImageNotFoundError{Reference: ref}
 }
 
-// DecryptImage retrieves and decrypts an encrypted image
+// DecryptImage retrieves and decrypts an encrypted image.
 func (r *Registry) DecryptImage(ctx context.Context, ref string) (*Image, error) {
 	if err := r.checkState(); err != nil {
 		return nil, err
@@ -842,7 +842,7 @@ func (r *Registry) DecryptImage(ctx context.Context, ref string) (*Image, error)
 	return nil, ImageNotFoundError{Reference: ref}
 }
 
-// Close releases all resources held by the registry
+// Close releases all resources held by the registry.
 func (r *Registry) Close() error {
 	if !r.closed.CompareAndSwap(false, true) {
 		return RegistryClosedError{}
@@ -867,7 +867,7 @@ func (r *Registry) Close() error {
 	return nil
 }
 
-// checkState verifies the registry is ready for operations
+// checkState verifies the registry is ready for operations.
 func (r *Registry) checkState() error {
 	// Check closed first - a closed registry should return RegistryClosedError
 	// even if initialized is also false
@@ -880,15 +880,15 @@ func (r *Registry) checkState() error {
 	return nil
 }
 
-// GetSession retrieves a cached session for a client
+// GetSession retrieves a cached session for a client.
 func (r *Registry) GetSession(clientID string) (*RegistrySessionView, bool) {
 	value, ok := r.sessions.Load(clientID)
 	if !ok {
 		return nil, false
 	}
 
-	session := value.(*RegistrySessionView)
-	if r.now().After(session.ValidUntil) {
+	session, isView := value.(*RegistrySessionView)
+	if !isView || r.now().After(session.ValidUntil) {
 		r.sessions.Delete(clientID)
 		return nil, false
 	}
@@ -896,7 +896,7 @@ func (r *Registry) GetSession(clientID string) (*RegistrySessionView, bool) {
 	return session, true
 }
 
-// InvalidateSession removes a session from the cache
+// InvalidateSession removes a session from the cache.
 func (r *Registry) InvalidateSession(clientID string) {
 	r.sessions.Delete(clientID)
 }
@@ -925,7 +925,7 @@ const (
 	ociTag = `[a-zA-Z0-9_][a-zA-Z0-9._-]{0,127}`
 )
 
-// validateImageRef validates an image reference format
+// validateImageRef validates an image reference format.
 func validateImageRef(ref string) error {
 	if ref == "" {
 		return InvalidImageRefError{Reference: ref, Reason: "reference cannot be empty"}
@@ -944,7 +944,7 @@ func validateImageRef(ref string) error {
 	return nil
 }
 
-// aikToString converts an AIK byte slice to a string representation
+// aikToString converts an AIK byte slice to a string representation.
 func aikToString(aik []byte) string {
 	if len(aik) == 0 {
 		return ""
