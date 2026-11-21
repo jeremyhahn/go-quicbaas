@@ -20,28 +20,18 @@ import (
 	"time"
 )
 
-// debouncer collects events and deduplicates them per path. A path's event is
-// ready once delay has passed since the last event for that path; now is the
-// clock the window is measured against (time.Now outside tests).
+// debouncer collects events within a time window and deduplicates them.
 type debouncer struct {
 	delay  time.Duration
-	now    func() time.Time
 	mu     sync.Mutex
-	events map[string]*pendingEvent // keyed by path
-}
-
-// pendingEvent is the newest event for a path and the time it was added.
-type pendingEvent struct {
-	Event
-	lastSeen time.Time
+	events map[string]*Event // keyed by path
 }
 
 // newDebouncer creates a new debouncer with the given delay.
 func newDebouncer(delay time.Duration) *debouncer {
 	return &debouncer{
 		delay:  delay,
-		now:    time.Now,
-		events: make(map[string]*pendingEvent),
+		events: make(map[string]*Event),
 	}
 }
 
@@ -51,11 +41,11 @@ func (d *debouncer) Add(event Event) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	// Replace any existing event for this path and restart its window.
-	d.events[event.Path] = &pendingEvent{Event: event, lastSeen: d.now()}
+	// Replace any existing event for this path
+	d.events[event.Path] = &event
 }
 
-// Flush returns all accumulated events, ready or not, and clears the buffer.
+// Flush returns all accumulated events and clears the buffer.
 func (d *debouncer) Flush() []Event {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -66,36 +56,12 @@ func (d *debouncer) Flush() []Event {
 
 	// Convert map to slice
 	events := make([]Event, 0, len(d.events))
-	for _, pending := range d.events {
-		events = append(events, pending.Event)
+	for _, event := range d.events {
+		events = append(events, *event)
 	}
 
 	// Clear the map
-	d.events = make(map[string]*pendingEvent)
-
-	return events
-}
-
-// FlushReady returns and removes the events whose path has seen no new event
-// for at least the debounce delay. Events still inside their window stay
-// buffered so later changes to the same path keep coalescing into them.
-func (d *debouncer) FlushReady() []Event {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	if len(d.events) == 0 {
-		return nil
-	}
-
-	now := d.now()
-	var events []Event
-	for path, pending := range d.events {
-		if now.Sub(pending.lastSeen) < d.delay {
-			continue
-		}
-		events = append(events, pending.Event)
-		delete(d.events, path)
-	}
+	d.events = make(map[string]*Event)
 
 	return events
 }
@@ -111,5 +77,5 @@ func (d *debouncer) Count() int {
 func (d *debouncer) Clear() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.events = make(map[string]*pendingEvent)
+	d.events = make(map[string]*Event)
 }

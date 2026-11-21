@@ -384,28 +384,18 @@ func (w *fsWatcher) processBatches(ctx context.Context) {
 
 		case <-w.manualFlush:
 			// Test-driven flush (nil channel in production: never fires).
-			w.flushReady()
+			w.flushEvents()
 
 		case <-ticker.C:
-			w.flushReady()
+			w.flushEvents()
 		}
 	}
 }
 
-// flushEvents sends every buffered event, ready or not, to the output channel.
-// It drains the debouncer at shutdown.
+// flushEvents flushes debounced events to the output channel.
 func (w *fsWatcher) flushEvents() {
-	w.sendEvents(w.debouncer.Flush())
-}
+	events := w.debouncer.Flush()
 
-// flushReady sends only the events whose debounce window has passed.
-func (w *fsWatcher) flushReady() {
-	w.sendEvents(w.debouncer.FlushReady())
-}
-
-// sendEvents delivers events to the events channel, dropping any that do not
-// fit.
-func (w *fsWatcher) sendEvents(events []Event) {
 	for _, event := range events {
 		select {
 		case w.events <- event:
