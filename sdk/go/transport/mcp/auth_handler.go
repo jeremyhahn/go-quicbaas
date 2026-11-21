@@ -20,6 +20,7 @@ import (
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	sdktransport "github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
@@ -37,6 +38,9 @@ func newAuthHandler(t *Transport) *authHandler {
 
 // transformResponse transforms MCP tool response to SDK auth types.
 func (h *authHandler) transformResponse(method string, resp interface{}) (interface{}, error) {
+	if decode, ok := authSessionTransforms[method]; ok {
+		return decode(method, resp)
+	}
 	switch method {
 	case "Login":
 		return h.transformLoginResponse(resp)
@@ -54,6 +58,83 @@ func (h *authHandler) transformResponse(method string, resp interface{}) (interf
 		// For other methods, return as-is
 		return resp, nil
 	}
+}
+
+// authSessionTools routes the Auth session verbs to the self-service
+// quicbaas_iam_session_* tools, which act only on the authenticated caller's
+// own sessions.
+var authSessionTools = map[string]string{
+	"GetSession":        "quicbaas_iam_session_get",
+	"ListSessions":      "quicbaas_iam_session_list",
+	"RevokeSession":     "quicbaas_iam_session_revoke",
+	"RevokeAllSessions": "quicbaas_iam_session_revoke_all",
+}
+
+// authSessionTransform decodes one session tool result into its SDK type.
+type authSessionTransform func(method string, resp interface{}) (interface{}, error)
+
+// authSessionTransforms gives O(1) dispatch from session verb to decoder.
+var authSessionTransforms = map[string]authSessionTransform{
+	"GetSession":        decodeMCPAuthSession,
+	"ListSessions":      decodeMCPAuthSessionList,
+	"RevokeSession":     decodeMCPAuthSessionRevoke,
+	"RevokeAllSessions": decodeMCPAuthSessionRevoke,
+}
+
+// reencodeAuthSessionResult turns the generic tool result back into JSON so
+// it can be decoded into a typed session view.
+func reencodeAuthSessionResult(method string, resp interface{}) ([]byte, error) {
+	if resp == nil {
+		return nil, errors.NewInternal("mcp.auth."+method, "empty tool result")
+	}
+	raw, err := json.Marshal(resp)
+	if err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal, "mcp.auth."+method,
+			"failed to re-encode tool result")
+	}
+	return raw, nil
+}
+
+// decodeMCPAuthSession decodes the hash-free session view the get tool
+// returns into the SDK session.
+func decodeMCPAuthSession(method string, resp interface{}) (interface{}, error) {
+	raw, err := reencodeAuthSessionResult(method, resp)
+	if err != nil {
+		return nil, err
+	}
+	var view iam.SessionView
+	if err := json.Unmarshal(raw, &view); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal, "mcp.auth."+method,
+			"failed to decode session view")
+	}
+	return service.NewAuthSession(&view), nil
+}
+
+// decodeMCPAuthSessionList decodes the list tool's {"sessions": [...]} result
+// into the SDK session list.
+func decodeMCPAuthSessionList(method string, resp interface{}) (interface{}, error) {
+	raw, err := reencodeAuthSessionResult(method, resp)
+	if err != nil {
+		return nil, err
+	}
+	var envelope struct {
+		Sessions []iam.SessionView `json:"sessions"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal, "mcp.auth."+method,
+			"failed to decode session list")
+	}
+	sessions := make([]service.AuthSession, 0, len(envelope.Sessions))
+	for i := range envelope.Sessions {
+		sessions = append(sessions, *service.NewAuthSession(&envelope.Sessions[i]))
+	}
+	return &service.AuthListSessionsResponse{Sessions: sessions}, nil
+}
+
+// decodeMCPAuthSessionRevoke discards the revoke tools' acknowledgement: the
+// SDK revoke verbs return only an error, which the transport already carries.
+func decodeMCPAuthSessionRevoke(string, interface{}) (interface{}, error) {
+	return nil, nil
 }
 
 // extractStringField extracts a string field from a map, checking both PascalCase and snake_case keys.
