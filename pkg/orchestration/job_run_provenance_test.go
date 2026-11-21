@@ -165,12 +165,13 @@ func newVerifyingRun(t *testing.T, answers map[string]bool) *JobRun {
 	if err != nil {
 		t.Fatalf("Register: %v", err)
 	}
-	return NewJobRun(JobRunConfig{
-		JobID:      "job-verify",
-		Config:     &JobConfig{TenantID: "acme"},
-		Logger:     &agentTestLogger{},
-		Validators: registry,
+	run := NewJobRun(JobRunConfig{
+		JobID:  "job-verify",
+		Config: &JobConfig{TenantID: "acme"},
+		Logger: &agentTestLogger{},
 	})
+	run.validatorRegistry = registry
+	return run
 }
 
 func TestJobRunVerifyRecordsWhatTheCommandsSaid(t *testing.T) {

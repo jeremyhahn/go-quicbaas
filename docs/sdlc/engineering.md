@@ -151,7 +151,7 @@ the field. The rules for composing these blocks are in
 | `trigger_label` | yes | The label an OPEN issue must carry before the module adopts it as a Task. Compared exactly, case-sensitively. |
 | `labels` | no | The module's label keys mapped to the forge labels that display them. Display output only. |
 | `token_secret_ref` | yes | Names the tenant secret holding the forge API token. The value never enters this record. |
-| `webhook_secret_ref` | when `discovery` is `webhook` | Names the tenant secret holding the webhook HMAC key. Without it no delivery verifies, so the project is discovered by the periodic passes alone; a `webhook` binding, which runs none, is refused without it. |
+| `webhook_secret_ref` | when `discovery` is `webhook` | Names the tenant secret holding the webhook HMAC key. For Gitea and GitHub the key must be at least 14 bytes (112 bits, the NIST SP 800-131A HMAC floor that FIPS 140-only mode enforces); a shorter one is refused when the webhook is provisioned and every delivery under it fails verification. Without it no delivery verifies, so the project is discovered by the periodic passes alone; a `webhook` binding, which runs none, is refused without it. |
 | `ssh_host_key` | for an ssh checkout | The forge's own SSH **host public key**, pinned. See below. |
 
 The binding also carries an `onboarding:` block, outside `forge:`, declaring
@@ -357,9 +357,11 @@ sdlc:
   webhook:
     max_body: 1048576               # bytes; the signature check buffers the body
     # THIS NODE's externally reachable ORIGIN: scheme, host, optional path.
-    # REQUIRED when the module is enabled and deliberately not defaulted:
+    # OPTIONAL and deliberately not defaulted. Without it the node is
+    # poll-only: it takes no webhook deliveries, and onboarding refuses a
+    # binding that names a webhook_secret_ref (go-quicbaas#2225). When set,
     # onboarding provisions forge webhooks pointing at
-    # <public_url>/api/v1/sdlc/webhook/<projectID>, and a guessed origin would
+    # <public_url>/api/v1/sdlc/webhook/<projectID>; a guessed origin would
     # provision every managed repository to deliver into the void and report
     # each one provisioned.
     #
@@ -381,6 +383,24 @@ sdlc:
     retry_backoff: 1s               # first wait between attempts; doubles
                                     # env: QUICBAAS_SDLC_FORGE_* (e.g.
                                     #      QUICBAAS_SDLC_FORGE_HEAVY_WRITE_TIMEOUT)
+    # token_commands:               # per forge type (github, gitea); optional
+    #   github:
+    #     argv: ["/usr/local/bin/forge-mint", "--app", "factory"]
+    #     refresh_before: 5m        # run again this long before expires_at
+    #     timeout: 30s              # one run
+    #     allowed_base_urls: ["https://api.github.com"]   # required
+    #
+    # A token command is node configuration only: no tenant, project or binding
+    # can name one, and a binding of a listed forge type never reads its
+    # token_secret_ref. The command runs only for a binding whose base URL is one
+    # of allowed_base_urls; any other is refused before the command runs, so a
+    # binding cannot send the node's credential to a host it chose. A reviewer
+    # with its own token_secret_ref keeps that identity. The command runs without a shell, with the daemon's
+    # environment plus QUICBAAS_FORGE_TYPE and QUICBAAS_FORGE_BASE_URL, and
+    # prints one JSON object on stdout: {"token": "...", "expires_at":
+    # "<RFC 3339>"}. The token is cached per forge base URL and the command runs
+    # again, once for all concurrent callers, at expires_at - refresh_before;
+    # the token never reaches a log, an error or the command's argv.
 
 orchestration:
   sweep_interval: 30s               # task-source poller cadence
@@ -679,6 +699,14 @@ and `make cluster-down-integration` export the tag too. What runs where:
   node image tag on to the compose calls it makes through the Docker socket.
 - The other compose files (`cluster`, `seal`, `kms-*`, `test`) still build
   `test/integration/Dockerfile.node`.
+
+`make integration-test-forge-gitea` and `make integration-test-forge-github`
+run the live forge suites against a scratch repository, outside the
+`integration-test` aggregate. The GitHub suite needs `GITHUB_ITEST_TOKEN`,
+`GITHUB_ITEST_OWNER`, `GITHUB_ITEST_REPO` and `GITHUB_ITEST_REVIEWER_TOKEN` (a
+second account, since GitHub refuses self-approval), plus an optional
+`GITHUB_ITEST_BASE_URL`. Each suite fails, naming every unset variable, rather
+than skipping.
 
 `make deps-check` fails when a direct requirement of `go.mod` or
 `sdk/go/go.mod` is behind its latest release and has no comment on its

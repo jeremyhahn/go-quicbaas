@@ -40,6 +40,10 @@ type usageReportingBackend struct {
 
 	// strategy names the policy that chose account.
 	strategy string
+
+	// beforePrompt, when set, runs at the start of every turn, so a test can
+	// hold a turn open.
+	beforePrompt func()
 }
 
 func (b *usageReportingBackend) Spawn(_ context.Context, req *SpawnRequest) (*Session, error) {
@@ -62,6 +66,9 @@ func (b *usageReportingBackend) Spawn(_ context.Context, req *SpawnRequest) (*Se
 }
 
 func (b *usageReportingBackend) Prompt(_ context.Context, req *PromptRequest) (*PromptResponse, error) {
+	if b.beforePrompt != nil {
+		b.beforePrompt()
+	}
 	return &PromptResponse{
 		SessionID:  req.SessionID,
 		Content:    []ContentBlock{{Type: "text", Text: "ok"}},

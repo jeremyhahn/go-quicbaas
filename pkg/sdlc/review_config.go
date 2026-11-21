@@ -282,6 +282,7 @@ func validEndpointRoot(endpoint string) bool {
 // identities exist.
 func (r ReviewerConfig) ForgeConfigFor(forge ForgeConfig) ForgeConfig {
 	forge.TokenSecretRef = r.TokenSecretRef
+	forge.TokenFromSecret = true
 	return forge
 }
 

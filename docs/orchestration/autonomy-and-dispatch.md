@@ -208,6 +208,13 @@ wins that claim starts a job. A spawner whose claim finds a job already there is
 not a failure — it reports the winner's job and starts nothing, which is what
 makes `SpawnTask` idempotent per Task.
 
+The claim holds across nodes, not only within one process (#719). Every task
+record write commits through go-qrdb's compare-and-swap against the bytes it
+read, so when two nodes claim one Task over the same version, the store lands
+exactly one write; the loser re-reads, finds the winner's job, and starts
+nothing. The task store refuses to edit a record over a KV store that cannot
+decide a guarded swap, rather than overwrite it unguarded.
+
 `Task.SpawnedJobID` already meant "the Task's open attempt" — it is what
 `recordAttemptHistory` clears when an attempt concludes — so the claim is not
 new state, only that state written a moment earlier. A claim whose job then
