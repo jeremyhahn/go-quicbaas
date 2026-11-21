@@ -41,10 +41,13 @@ sign locally". That asymmetry is the whole design.
   the SSH resources — known hosts, authorized-keys lines — are not crypto
   operations and have nowhere to live in such a surface. Generic signing is
   `../kms/`'s; this feature is the SSH-shaped surface on top.
-- **An SSH jump host.** `Session().Dial` and `Console` are deliberately
-  unimplemented. Making the vault a jump host would put an interactive shell
-  path inside the process holding every key, which is the opposite of what the
-  key store is for. This is a stated non-goal, not a gap.
+- **An SSH jump host.** Making the vault a jump host would put an interactive
+  shell path inside the process holding every key, which is the opposite of
+  what the key store is for. `Session().Dial` therefore dials from the
+  caller's own process, as go-xkms's does: the server only signs digests
+  (`Keys().Signer`) and serves host pins (`KnownHosts().Callback`); the SSH
+  byte stream never reaches it. `Console` stays unimplemented: it needs a
+  persistent byte stream no QuicBaaS transport carries.
 
 ## Component boundaries
 
@@ -150,8 +153,9 @@ handshake's signature is produced by the server.
 
 ## What this feature deliberately does not do
 
-- **No interactive SSH.** No `Dial`, no `Console`, no port forwarding. The vault
-  is not a jump host.
+- **No server-side SSH.** The server never terminates or relays an SSH
+  connection: `Session().Dial` connects from the caller's process, and there
+  is no `Console` and no port forwarding. The vault is not a jump host.
 - **No agent forwarding.** There is no `ssh-agent` protocol surface.
 - **No key rotation policy engine.** Rotation is generate-plus-redistribute,
   driven by the operator. Automatic rotation belongs to `../kms/` for the key
