@@ -43,13 +43,14 @@ const (
 	// overflowRunnerGate is ci-template v1.48's runs-on for CI Gate: the
 	// preflight `runner` output on github.com, and ci-gate elsewhere.
 	overflowRunnerGate = `${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner || '"ubuntu-latest"') || 'ci-gate' }}`
-	// preflightRunner is preflight's runs-on (ci-template v1.49): on
+	// preflightRunner is preflight's runs-on (ci-template v1.52): on
 	// github.com the Dells' bigdisk pool unless the repository variable
 	// CI_PREFLIGHT_RUNS_ON (runs-on JSON) overrides it, and off github.com
-	// ubuntu-latest. The fork arm is go-quicbaas's own: this preflight runs
-	// the pull request's scripts/docs-only.sh, so a fork pull request (or
-	// one whose head repository is gone) stays hosted.
-	preflightRunner = `${{ github.server_url == 'https://github.com' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.CI_PREFLIGHT_RUNS_ON || '["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}`
+	// ubuntu-latest. A pull request (pull_request or pull_request_target)
+	// whose head repository is not this one, a deleted fork included, takes
+	// ubuntu-latest whatever CI_PREFLIGHT_RUNS_ON holds: this preflight runs
+	// the pull request's scripts/docs-only.sh.
+	preflightRunner = `${{ github.server_url == 'https://github.com' && (!startsWith(github.event_name, 'pull_request') || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.CI_PREFLIGHT_RUNS_ON || '["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}`
 	// selfHostedWaiver opens the waiver a job that leaves hostedRunner
 	// carries in its runs-on line comment, followed by a category and a
 	// measured reason.
@@ -409,7 +410,11 @@ func ghTokenize(s string) ([]ghToken, error) {
 }
 
 // ghParser evaluates a token list against a context while it parses. With
-// eval false it only parses: the operand a short circuit skips.
+// eval false it only parses: the operand a short circuit skips. It calls
+// four functions: fromJSON, startsWith (case-insensitive, its arguments cast
+// to strings), always() and cancelled(). The context key `__cancelled`
+// stands for the run's cancelled status; a context without it is a run that
+// is not cancelled.
 type ghParser struct {
 	toks []ghToken
 	pos  int
@@ -484,21 +489,51 @@ func (p *ghParser) primary(eval bool) (any, error) {
 	case t.kind == 's':
 		return t.text, nil
 	case t.kind == 'i' && p.peek("("):
-		if !strings.EqualFold(t.text, "fromJSON") {
+		p.pos++
+		var args []any
+		if p.peek(")") {
+			p.pos++
+		} else {
+			for {
+				arg, err := p.or(eval)
+				if err != nil {
+					return nil, err
+				}
+				args = append(args, arg)
+				if p.peek(",") {
+					p.pos++
+					continue
+				}
+				if !p.peek(")") {
+					return nil, fmt.Errorf("%s: missing )", t.text)
+				}
+				p.pos++
+				break
+			}
+		}
+		want := map[string]int{"fromjson": 1, "startswith": 2, "always": 0, "cancelled": 0}
+		name := strings.ToLower(t.text)
+		n, ok := want[name]
+		if !ok {
 			return nil, fmt.Errorf("unsupported function %s", t.text)
 		}
-		p.pos++
-		arg, err := p.or(eval)
-		if err == nil && !p.peek(")") {
-			err = fmt.Errorf("fromJSON: missing )")
+		if len(args) != n {
+			return nil, fmt.Errorf("%s: want %d arguments, got %d", t.text, n, len(args))
 		}
-		p.pos++
-		if err != nil || !eval {
-			return nil, err
+		if !eval {
+			return nil, nil
 		}
-		s, ok := arg.(string)
+		switch name {
+		case "always":
+			return true, nil
+		case "cancelled":
+			return ghTruthy(p.ctx["__cancelled"]), nil
+		case "startswith":
+			return strings.HasPrefix(strings.ToLower(ghString(args[0])), strings.ToLower(ghString(args[1]))), nil
+		}
+		s, ok := args[0].(string)
 		if !ok {
-			return nil, fmt.Errorf("fromJSON of a non-string %v", arg)
+			return nil, fmt.Errorf("fromJSON of a non-string %v", args[0])
 		}
 		var v any
 		if err := json.Unmarshal([]byte(s), &v); err != nil {
@@ -528,6 +563,21 @@ func (p *ghParser) primary(eval bool) (any, error) {
 }
 
 // ghTruthy is GitHub's truthiness: null, false, 0 and ” are falsy.
+// ghString casts a value to a string as GitHub's string functions do.
+func ghString(v any) string {
+	switch x := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return x
+	case bool:
+		return strconv.FormatBool(x)
+	case float64:
+		return strconv.FormatFloat(x, 'f', -1, 64)
+	}
+	return fmt.Sprint(v)
+}
+
 func ghTruthy(v any) bool {
 	switch x := v.(type) {
 	case nil:
@@ -583,18 +633,34 @@ func ghEval(value string, ctx map[string]any) (any, error) {
 
 func TestGHEval(t *testing.T) {
 	ctx := map[string]any{"a": map[string]any{"b": "X"}, "e": ""}
-	for _, c := range []struct{ expr, want string }{
-		{"${{ a.b == 'x' }}", "true"},
-		{"${{ a.c == null }}", "true"},
-		{"${{ a.c == '' }}", "false"},
-		{"${{ e || 'd' }}", `"d"`},
-		{"${{ a.b && 'y' }}", `"y"`},
-		{"${{ !a.b }}", "false"},
-		{"${{ a.c && fromJSON('bad') || 'z' }}", `"z"`},
-		{"${{ fromJSON('[1, \"it''s\"]') }}", `[1,"it's"]`},
-		{"plain", `"plain"`},
+	for _, c := range []struct {
+		expr, want string
+		ctx        map[string]any
+	}{
+		{"${{ a.b == 'x' }}", "true", nil},
+		{"${{ a.c == null }}", "true", nil},
+		{"${{ a.c == '' }}", "false", nil},
+		{"${{ e || 'd' }}", `"d"`, nil},
+		{"${{ a.b && 'y' }}", `"y"`, nil},
+		{"${{ !a.b }}", "false", nil},
+		{"${{ a.c && fromJSON('bad') || 'z' }}", `"z"`, nil},
+		{"${{ fromJSON('[1, \"it''s\"]') }}", `[1,"it's"]`, nil},
+		{"plain", `"plain"`, nil},
+		{"${{ startsWith('pull_request_target', 'pull_request') }}", "true", nil},
+		{"${{ startsWith('Pull_Request', 'pull_') }}", "true", nil},
+		{"${{ startsWith('push', 'pull_request') }}", "false", nil},
+		{"${{ !startsWith(a.b, 'y') }}", "true", nil},
+		{"${{ a.c && startsWith(a.c, 'x') || 'z' }}", `"z"`, nil},
+		{"${{ always() }}", "true", nil},
+		{"${{ !cancelled() }}", "true", nil},
+		{"${{ e && always() || !cancelled() }}", "true", nil},
+		{"${{ !cancelled() }}", "false", map[string]any{"__cancelled": true}},
 	} {
-		v, err := ghEval(c.expr, ctx)
+		cx := ctx
+		if c.ctx != nil {
+			cx = c.ctx
+		}
+		v, err := ghEval(c.expr, cx)
 		if err != nil {
 			t.Errorf("%s: %v", c.expr, err)
 			continue
@@ -603,15 +669,26 @@ func TestGHEval(t *testing.T) {
 			t.Errorf("%s = %s, want %s", c.expr, got, c.want)
 		}
 	}
+	for _, c := range []struct{ expr, want string }{
+		{"${{ contains('ab', 'a') }}", "unsupported function contains"},
+		{"${{ startsWith('a') }}", "startsWith"},
+		{"${{ fromJSON('1', '2') }}", "fromJSON"},
+		{"${{ always(1) }}", "always"},
+	} {
+		_, err := ghEval(c.expr, ctx)
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: want an error containing %q, got %v", c.expr, c.want, err)
+		}
+	}
 }
 
 // ghContext is the expression context of one ci.yml run. repository is
-// o/r; for a pull request, head is the head repository's full name, and
+// o/r; for a pull request (pull_request or pull_request_target), head is the head repository's full name, and
 // "" a head repository that is gone (null). preflightVar "" leaves
 // CI_PREFLIGHT_RUNS_ON unset.
 func ghContext(server, event, ref, head, preflightVar string) map[string]any {
 	gh := map[string]any{"server_url": server, "event_name": event, "ref": ref, "repository": "o/r"}
-	if event == "pull_request" {
+	if strings.HasPrefix(event, "pull_request") {
 		var repo any
 		if head != "" {
 			repo = map[string]any{"full_name": head}
@@ -651,6 +728,10 @@ func TestCIPreflightRunsOn(t *testing.T) {
 		{"github.com fork pull request", githubCom, "pull_request", prRef, "fork/r", "", `"ubuntu-latest"`},
 		{"github.com fork pull request, variable bigdisk", githubCom, "pull_request", prRef, "fork/r", bigdiskJSON, `"ubuntu-latest"`},
 		{"github.com deleted fork pull request", githubCom, "pull_request", prRef, "", "", `"ubuntu-latest"`},
+		{"github.com same-repository pull_request_target", githubCom, "pull_request_target", mainRef, "o/r", "", bigdiskJSON},
+		{"github.com fork pull_request_target", githubCom, "pull_request_target", mainRef, "fork/r", "", `"ubuntu-latest"`},
+		{"github.com fork pull_request_target, variable bigdisk", githubCom, "pull_request_target", mainRef, "fork/r", bigdiskJSON, `"ubuntu-latest"`},
+		{"github.com deleted fork pull_request_target", githubCom, "pull_request_target", mainRef, "", "", `"ubuntu-latest"`},
 		{"off github.com, variable unset", forge, "push", mainRef, "", "", `"ubuntu-latest"`},
 		{"off github.com, variable bigdisk", forge, "push", mainRef, "", bigdiskJSON, `"ubuntu-latest"`},
 	} {
@@ -1011,6 +1092,28 @@ func TestRunnerSelect(t *testing.T) {
 	short.list(t, runsURL("queued", 1), "workflow_runs", 0, nil)
 	short.list(t, runsURL("in_progress", 1), "workflow_runs", 150, page1)
 	short.list(t, runsURL("in_progress", 2), "workflow_runs", 150, nil)
+	for id := 1; id <= 100; id++ {
+		short.list(t, jobsURL(id, 1), "jobs", 0, nil)
+	}
+
+	// v1.50: a short listing is a lower bound. Each fixture below lists
+	// fewer entries than its total_count.
+	shortRuns := func(base apiFixture, id int) apiFixture {
+		f := maps.Clone(base)
+		f.list(t, runsURL("in_progress", 1), "workflow_runs", 2, []any{map[string]any{"id": id}})
+		f.list(t, runsURL("in_progress", 2), "workflow_runs", 2, nil)
+		return f
+	}
+	shortRunsAtLimit := shortRuns(loadFixture(t, running(limit)...), 1)
+	shortJobsAtLimit := loadFixture(t, running(limit)...)
+	var limitJobs []any
+	for _, j := range running(limit) {
+		limitJobs = append(limitJobs, j)
+	}
+	shortJobsAtLimit.list(t, jobsURL(1, 1), "jobs", limit+5, limitJobs)
+	shortJobsAtLimit.list(t, jobsURL(1, 2), "jobs", limit+5, nil)
+	shortRunsQueued := shortRuns(loadFixture(t, selJob(7, "queued", 61*time.Second, hosted)), 7)
+	shortRunsBelow := shortRuns(loadFixture(t, running(limit-1)...), 1)
 
 	notOK := loadFixture(t, running(limit)...)
 	notOK[runsURL("queued", 1)] = apiReply{502, ""}
@@ -1023,7 +1126,9 @@ func TestRunnerSelect(t *testing.T) {
 		fix      apiFixture
 		overflow bool
 		warning  string // a ::warning:: line contains it; "" for no warning
+		warning2 string // a ::warning:: line contains it too
 		notice   string // a ::notice:: line contains it
+		notice2  string // a ::notice:: line contains it too
 		call     string // a called URL contains it
 		noCall   bool
 	}{
@@ -1034,14 +1139,21 @@ func TestRunnerSelect(t *testing.T) {
 		{name: "this run's own job queued long", fix: loadFixture(t, selJob(runID, "queued", time.Hour, hosted))},
 		{name: "self-hosted jobs are not counted", fix: loadFixture(t, append(running(2), repeatJob(limit+1, selJob(3, "in_progress", time.Minute, "self-hosted", "linux", "x64", "bigdisk"))...)...)},
 		{name: "a run list over two pages", fix: paged, overflow: true, call: "page=2"},
-		{name: "a run list short of its total_count", fix: short, warning: "100 of 150 entries"},
+		{name: "a run list short of its total_count", fix: short, warning: "listed fewer entries than its total", warning2: "100 of 150 entries"},
+		{name: "a short run list whose count reaches LIMIT overflows", fix: shortRunsAtLimit, overflow: true, notice: "(a lower bound: ", notice2: "1 of 2 entries"},
+		{name: "a short job list whose count reaches LIMIT overflows", fix: shortJobsAtLimit, overflow: true, notice: "12 hosted jobs in progress", notice2: "12 of 17 entries"},
+		{name: "a short run list with a hosted job queued past GRACE overflows", fix: shortRunsQueued, overflow: true, notice: "1 hosted job(s) queued 60s or more", notice2: "(a lower bound: "},
+		{name: "a short list below every trigger stays hosted", fix: shortRunsBelow, warning: "listed fewer entries than its total"},
 		{name: "a reply that is not 200", fix: notOK, warning: "/runs?status=queued: 502"},
 		{name: "a 200 with no total_count", fix: noTotal, warning: "200 with no total_count"},
 		{name: "LIMIT not a number", env: map[string]string{"LIMIT": "twelve"}, fix: loadFixture(t, running(limit)...), warning: "HOSTED_JOBS_PER_REPO='twelve'", noCall: true},
 		{name: "not github.com", env: map[string]string{"SERVER": "https://gitea.example"}, fix: loadFixture(t, running(limit)...), noCall: true},
-		{name: "a fork pull request at overflow load", env: map[string]string{"EVENT": "pull_request", "HEAD_REPO": "someone/r"}, fix: loadFixture(t, running(limit)...), notice: "a pull request from someone/r;", noCall: true},
-		{name: "a deleted fork's pull request at overflow load", env: map[string]string{"EVENT": "pull_request", "HEAD_REPO": ""}, fix: loadFixture(t, running(limit)...), notice: "a pull request from a deleted fork;", noCall: true},
+		{name: "a fork pull request at overflow load", env: map[string]string{"EVENT": "pull_request", "HEAD_REPO": "someone/r"}, fix: loadFixture(t, running(limit)...), notice: "head repository is not this repository (a fork)", noCall: true},
+		{name: "a deleted fork's pull request at overflow load", env: map[string]string{"EVENT": "pull_request", "HEAD_REPO": ""}, fix: loadFixture(t, running(limit)...), notice: "head repository is not this repository (a fork)", noCall: true},
 		{name: "a same-repository pull request at overflow load", env: map[string]string{"EVENT": "pull_request", "HEAD_REPO": "o/r"}, fix: loadFixture(t, running(limit)...), overflow: true},
+		{name: "a fork's pull_request_target at overflow load", env: map[string]string{"EVENT": "pull_request_target", "HEAD_REPO": "someone/r"}, fix: loadFixture(t, running(limit)...), notice: "head repository is not this repository (a fork)", noCall: true},
+		{name: "a deleted fork's pull_request_target at overflow load", env: map[string]string{"EVENT": "pull_request_target", "HEAD_REPO": ""}, fix: loadFixture(t, running(limit)...), notice: "head repository is not this repository (a fork)", noCall: true},
+		{name: "a same-repository pull_request_target at overflow load", env: map[string]string{"EVENT": "pull_request_target", "HEAD_REPO": "o/r"}, fix: loadFixture(t, running(limit)...), overflow: true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			env := maps.Clone(baseEnv)
@@ -1064,8 +1176,13 @@ func TestRunnerSelect(t *testing.T) {
 			if c.warning != "" && !hasLine("::warning::", c.warning) {
 				t.Errorf("want a ::warning containing %q, got\n%s", c.warning, r.stdout)
 			}
-			if c.notice != "" && !hasLine("::notice::", c.notice) {
-				t.Errorf("want a ::notice containing %q, got\n%s", c.notice, r.stdout)
+			if c.warning2 != "" && !hasLine("::warning::", c.warning2) {
+				t.Errorf("want a ::warning containing %q, got\n%s", c.warning2, r.stdout)
+			}
+			for _, n := range []string{c.notice, c.notice2} {
+				if n != "" && !hasLine("::notice::", n) {
+					t.Errorf("want a ::notice containing %q, got\n%s", n, r.stdout)
+				}
 			}
 			if c.noCall && len(r.calls) != 0 {
 				t.Errorf("want no API call, got %v", r.calls)
