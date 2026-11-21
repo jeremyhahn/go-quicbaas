@@ -110,10 +110,10 @@ type guardedKVStore interface {
 	CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error)
 }
 
-// casKVStore is the one guarded verb a conditional write over a single
-// record needs (the EncryptedBackend keeps a path's versions in one key):
-// a compare-and-swap the storage engine evaluates for every process sharing
-// the store. pkg/kvstore.Store offers it without the other guarded verbs.
+// casKVStore is the compare-and-swap verb the EncryptedBackend's history
+// rewrites use when the store offers it (the backend keeps a path's versions
+// in one key). A conditional write or a prune also needs PutIfAbsent
+// (historyGuardedKVStore). pkg/kvstore.Store offers CAS without it.
 type casKVStore interface {
 	CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error)
 }

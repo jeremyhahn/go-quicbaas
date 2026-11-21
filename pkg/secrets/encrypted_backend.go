@@ -290,14 +290,14 @@ func (eb *EncryptedBackend) StoreVersion(ctx context.Context, path string, data 
 // StoreVersionIfCurrent implements ConditionalVersionedBackend: it stores a
 // new version only while the path's current record is the one read. Within
 // the process the backend's lock holds the check and the write together;
-// on a store that can arbitrate (CompareAndSwap), the write is also
-// conditional on the exact bytes checked, so a writer in another process
-// that lands between them refuses this one.
+// on a store that arbitrates both creation and rewrites (PutIfAbsent and
+// CompareAndSwap), the write is also conditional on the exact bytes checked,
+// so a writer in another process that lands between them refuses this one.
 func (eb *EncryptedBackend) StoreVersionIfCurrent(ctx context.Context, path string, expected ReadVersion, data map[string][]byte, metadata map[string]string) (int, error) {
 	if expected.Version <= 0 {
 		return 0, staleReadError(expected, 0, false, false)
 	}
-	if _, guarded := eb.store.(casKVStore); !guarded {
+	if _, guarded := eb.store.(historyGuardedKVStore); !guarded {
 		return 0, errUnguardedConditionalWrite()
 	}
 	return eb.storeVersion(ctx, path, &expected, data, metadata, nil)
@@ -458,8 +458,8 @@ func (eb *EncryptedBackend) storeVersion(ctx context.Context, path string, expec
 // creation time survives; every other pruned version is removed from the
 // record, which stays at keep live versions plus that tombstone. The record
 // tracks the latest version number separately, so numbering continues past
-// the removed versions. On a store with compare-and-swap the rewrite holds
-// only while the record is the one read: a write that lands in between wins,
+// the removed versions. Only a store that guards both creation and rewrites
+// (PutIfAbsent and CompareAndSwap) can prune; the rewrite holds only while the record is the one read: a write that lands in between wins,
 // and the prune stores nothing and reports nothing pruned (the next write
 // prunes again).
 func (eb *EncryptedBackend) PruneVersions(ctx context.Context, path string, keep int) (int, error) {
@@ -538,11 +538,13 @@ func (eb *EncryptedBackend) PruneVersions(ctx context.Context, path string, keep
 	// read. eb.mu is per instance: another instance on the same store can
 	// Delete, Destroy or write the secret after the read, and an
 	// unconditional save would revive the deleted secret or drop the
-	// acknowledged write. A store without CAS cannot prune.
-	g, guarded := eb.store.(casKVStore)
+	// acknowledged write. A store without both PutIfAbsent and
+	// CompareAndSwap cannot prune: a creation on a CAS-only store is a plain
+	// Put that could overwrite the pruned history.
+	g, guarded := eb.store.(historyGuardedKVStore)
 	if !guarded {
 		return 0, &SecretsSentinelCauseError{Sentinel: ErrPruneUnsupported,
-			Cause: errors.New("the backing store has no compare-and-swap to arbitrate the prune")}
+			Cause: errors.New("the backing store does not guard both creation and compare-and-swap to arbitrate the prune")}
 	}
 	raw, err := json.Marshal(versions)
 	if err != nil {
@@ -950,7 +952,7 @@ func (eb *EncryptedBackend) checkReadVersion(ctx context.Context, versions *secr
 // still the bytes the check read (observedRaw; nil: absent). A store that
 // cannot arbitrate gets the plain write, held only by the backend's lock.
 func (eb *EncryptedBackend) saveVersionsIfUnchanged(ctx context.Context, path string, versions *secretVersions, observedRaw []byte, expected ReadVersion) error {
-	g, guarded := eb.store.(casKVStore)
+	g, guarded := eb.store.(historyGuardedKVStore)
 	if !guarded {
 		return errUnguardedConditionalWrite()
 	}
@@ -1012,14 +1014,24 @@ func (eb *EncryptedBackend) saveVersions(ctx context.Context, path string, versi
 // reapplies itself after another writer moved the record under it.
 const historyWriteAttempts = 4
 
+// historyGuardedKVStore is what arbitrates a path's history across instances:
+// its creation is guarded (PutIfAbsent) and so are its rewrites
+// (CompareAndSwap). A CAS-only store such as pkg/kvstore.Store creates with a
+// plain Put, which can overwrite another instance's history.
+type historyGuardedKVStore interface {
+	PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error)
+	CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error)
+}
+
 // publishVersions writes a rewritten history only while the store still holds
 // the bytes it was read from (observedRaw; nil means the record was absent).
 // eb.mu is per instance: another instance on the same store can prune, delete
 // or write the history after this read, and an unconditional Put would then
 // republish the stale history, restoring ciphertext a prune destroyed. A store
 // with compare-and-swap arbitrates the rewrite; one with a guarded create
-// arbitrates a first write. A store without those verbs gets the plain Put;
-// pruning is refused there, so no destroyed version can come back.
+// arbitrates a first write. A store lacking either verb (including a CAS-only
+// store, whose creation is a plain Put) has pruning and conditional writes
+// refused, so no destroyed version can come back.
 // It reports false when another writer moved the record: reload and reapply.
 func (eb *EncryptedBackend) publishVersions(ctx context.Context, path string, versions *secretVersions, observedRaw []byte) (bool, error) {
 	raw, err := json.Marshal(versions)

@@ -280,7 +280,10 @@ compare-and-swaps the history it read, and every other history rewrite (store,
 delete, rollback) is published against the bytes it read and reapplied on a
 moved record, so a prune never deletes a version another node recreated, never
 revives a deleted secret, and a stale writer never restores a pruned version.
-A store without those verbs keeps every version (`ErrPruneUnsupported`). The
+A store without those verbs keeps every version (`ErrPruneUnsupported`): the
+encrypted backend needs both `PutIfAbsent` and `CompareAndSwap` to prune or to
+write conditionally, so pkg/kvstore.Store, which has only `CompareAndSwap`, is
+refused (`ErrPruneUnsupported`, `ErrConditionalWriteUnsupported`). The
 KV backend's latest-version read follows a pointer that moved while a
 concurrent prune removed the version it named, so every Manager reader sees
 the version that replaced it; an explicit version read is not retried: when a prune removes the requested version between the version read and the history or author read, the service reads that version again and answers not-found. The scheduler dispatches the handler only for its reserved
