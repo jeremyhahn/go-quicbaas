@@ -293,3 +293,8 @@ func parseSubprotocols(h http.Header) []string {
 	}
 	return protocols
 }
+
+// ServeHTTP makes *Server an http.Handler; it delegates to HandleHTTP.
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	s.HandleHTTP(w, r)
+}
