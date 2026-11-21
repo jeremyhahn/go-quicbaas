@@ -63,7 +63,7 @@ func testPins() Pins {
 		Clangd: "23.1.0", ClangdSHA256X86_64: "a1a1",
 		RustAnalyzer: "2026-10-05", RustAnalyzerSHA256X86_64: "b2b2", RustAnalyzerSHA256Aarch64: "c3c3",
 		Marksman: "2026-02-08", MarksmanSHA256X86_64: "d4d4", MarksmanSHA256Aarch64: "e5e5",
-		OpenJDK: "21", KotlinLsp: "263.6379.0", KotlinLspSHA256X86_64: "f6f6", KotlinLspSHA256Aarch64: "a7a7"}
+		OpenJDK: "21"}
 }
 
 func testBuild() Build {
@@ -134,8 +134,7 @@ func TestBuild_BuildArgsCarryEveryInput(t *testing.T) {
 		"CLANGD_VERSION": "23.1.0", "CLANGD_SHA256_X86_64": "a1a1",
 		"RUST_ANALYZER_VERSION": "2026-10-05", "RUST_ANALYZER_SHA256_X86_64": "b2b2", "RUST_ANALYZER_SHA256_AARCH64": "c3c3",
 		"MARKSMAN_VERSION": "2026-02-08", "MARKSMAN_SHA256_X86_64": "d4d4", "MARKSMAN_SHA256_AARCH64": "e5e5",
-		"OPENJDK_MAJOR": "21", "KOTLIN_LSP_VERSION": "263.6379.0",
-		"KOTLIN_LSP_SHA256_X86_64": "f6f6", "KOTLIN_LSP_SHA256_AARCH64": "a7a7",
+		"OPENJDK_MAJOR": "21",
 	}
 	for k, v := range want {
 		if args[k] != v {
@@ -218,6 +217,15 @@ func TestDockerfile_DeclaresEveryBuildArgAndLabel(t *testing.T) {
 	}
 }
 
+// TestDockerfile_CarriesNoKotlinLanguageServer proves the image installs no
+// Kotlin language server: the jars it bundles fail the image scan, and no
+// project the factory builds here is Kotlin.
+func TestDockerfile_CarriesNoKotlinLanguageServer(t *testing.T) {
+	if strings.Contains(strings.ToLower(string(Dockerfile)), "kotlin") {
+		t.Fatal("the Dockerfile mentions Kotlin; the image must not carry the Kotlin language server")
+	}
+}
+
 // dockerfileArgNames returns the name of every ARG the Dockerfile declares,
 // deduplicated.
 func dockerfileArgNames(dockerfile string) []string {
@@ -279,6 +287,20 @@ func TestDockerfile_GoInstallUsesDevcacheProxyChain(t *testing.T) {
 	}
 }
 
+// TestDockerfile_GoToolFloorsGoToOneGoGet proves the gopls/gosec build
+// applies every dependency floor the tool uses in one `go get`. Applied one
+// at a time, a later floor below what an earlier floor requires silently
+// downgraded the earlier one (golang.org/x/net v0.62.0 shipped as v0.60.0).
+func TestDockerfile_GoToolFloorsGoToOneGoGet(t *testing.T) {
+	dockerfile := string(Dockerfile)
+	if !strings.Contains(dockerfile, `if [ -n "$floors" ]; then go get $floors; fi;`) {
+		t.Error("build_with_floors does not apply the dependency floors in one go get")
+	}
+	if strings.Contains(dockerfile, `then go get "$floor"; fi`) {
+		t.Error("build_with_floors still runs one go get per dependency floor")
+	}
+}
+
 // TestDockerfile_NpmInstallEvalsDevcacheEnvFirst proves the agent-CLI npm
 // install reads the dev caches before it installs, and that devcache-env
 // lands in the image before that RUN needs it.
@@ -314,6 +336,51 @@ func TestDockerfile_OnlyClaudeCodeRunsAnInstallScript(t *testing.T) {
 	}
 }
 
+// The image is immutable and runs Claude Code as `agent`, which cannot write
+// the root-owned npm prefix, so the self-updater can only fail (#2548). The
+// final stage must turn it off; Claude Code moves only with versions.lock.
+func TestDockerfile_FinalStageDisablesTheClaudeCodeAutoupdater(t *testing.T) {
+	lines := strings.Split(string(Dockerfile), "\n")
+	last := -1
+	for i, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "FROM ") {
+			last = i
+		}
+	}
+	if last < 0 {
+		t.Fatal("the Dockerfile has no FROM instruction")
+	}
+	found := false
+	inEnv := false
+	for _, line := range lines[last+1:] {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "ENV ") {
+			inEnv = true
+		}
+		if inEnv {
+			for _, field := range strings.Fields(strings.TrimSuffix(trimmed, `\`)) {
+				if field == "DISABLE_AUTOUPDATER=1" {
+					found = true
+				}
+			}
+		}
+		inEnv = inEnv && strings.HasSuffix(trimmed, `\`)
+	}
+	if !found {
+		t.Error("the final stage has no ENV DISABLE_AUTOUPDATER=1: Claude Code's self-updater cannot write the root-owned npm prefix")
+	}
+}
+
+func TestProbes_ToolchainProbeAssertsTheAutoupdaterIsDisabled(t *testing.T) {
+	want := `[ "${DISABLE_AUTOUPDATER:-}" = 1 ]`
+	if !strings.Contains(toolchainProbe, want) {
+		t.Errorf("the toolchain probe does not check %s", want)
+	}
+}
+
 func TestToolchainPins_AreTheRepositorysPins(t *testing.T) {
 	pins, err := ToolchainPins()
 	if err != nil {
@@ -333,16 +400,24 @@ func TestToolchainPins_AreTheRepositorysPins(t *testing.T) {
 func TestPins_ValidateNamesWhatIsMissing(t *testing.T) {
 	var missing *PinsMissingError
 	err := Pins{}.Validate()
-	if !errors.As(err, &missing) || len(missing.Missing) != 49 ||
+	if !errors.As(err, &missing) || len(missing.Missing) != 45 ||
 		!strings.Contains(err.Error(), "GOPLS_VERSION") || !strings.Contains(err.Error(), "SHELLCHECK_SHA256_AARCH64") ||
 		!strings.Contains(err.Error(), "OPENCODE_SHA256_AARCH64") || !strings.Contains(err.Error(), "GH_SHA256_AARCH64") || !strings.Contains(err.Error(), "GO_TOOL_DEPENDENCY_FLOORS") ||
 		!strings.Contains(err.Error(), "SERENA_DEPENDENCY_FLOORS") || !strings.Contains(err.Error(), "PROTOC_VERSION") ||
 		!strings.Contains(err.Error(), "PROTOC_SHA256_AARCH64") || !strings.Contains(err.Error(), "PROTOC_GEN_GO_GRPC_VERSION") ||
 		!strings.Contains(err.Error(), "NODE_SHA256_AARCH64") || !strings.Contains(err.Error(), "UV_VERSION") ||
 		!strings.Contains(err.Error(), "TYPESCRIPT_LANGUAGE_SERVER_VERSION") || !strings.Contains(err.Error(), "CLANGD_SHA256_X86_64") ||
-		!strings.Contains(err.Error(), "MARKSMAN_SHA256_AARCH64") || !strings.Contains(err.Error(), "NPM_BUNDLED_DEPENDENCY_FLOORS") ||
-		!strings.Contains(err.Error(), "OPENJDK_MAJOR") || !strings.Contains(err.Error(), "KOTLIN_LSP_SHA256_AARCH64") {
-		t.Fatalf("Validate() = %v, want all forty-nine pins named", err)
+		!strings.Contains(err.Error(), "MARKSMAN_SHA256_AARCH64") || strings.Contains(err.Error(), "NPM_BUNDLED_DEPENDENCY_FLOORS") ||
+		!strings.Contains(err.Error(), "OPENJDK_MAJOR") {
+		t.Fatalf("Validate() = %v, want all forty-five required pins named", err)
+	}
+}
+
+func TestPins_ValidateAllowsNoNpmBundledFloors(t *testing.T) {
+	pins := testPins()
+	pins.NpmBundledDependencyFloors = ""
+	if err := pins.Validate(); err != nil {
+		t.Fatalf("Validate() with no npm bundled floors = %v, want nil", err)
 	}
 }
 
@@ -361,13 +436,13 @@ func TestBuild_LabelsRecordToolVersionsNotTarballDigests(t *testing.T) {
 		labels[LabelRustAnalyzerVersion] != "2026-10-05" || labels[LabelMarksmanVersion] != "2026-02-08" {
 		t.Fatalf("labels = %v, want node, uv and language-server versions recorded", labels)
 	}
-	if labels[LabelOpenJDKVersion] != "21" || labels[LabelKotlinLspVersion] != "263.6379.0" {
-		t.Fatalf("labels = %v, want the OpenJDK major and the Kotlin language server version recorded", labels)
+	if labels[LabelOpenJDKVersion] != "21" {
+		t.Fatalf("labels = %v, want the OpenJDK major recorded", labels)
 	}
 	for key, value := range labels {
 		switch value {
 		case "8c3b", "12b3", "1ce4", "abf3", "aaaa", "bbbb", "cccc", "dddd", "eeee", "ffff",
-			"a1a1", "b2b2", "c3c3", "d4d4", "e5e5", "f6f6", "a7a7", "golang.org/x/mod@v0.41.0", "urllib3>=2.8.0":
+			"a1a1", "b2b2", "c3c3", "d4d4", "e5e5", "golang.org/x/mod@v0.41.0", "urllib3>=2.8.0":
 			t.Fatalf("label %q=%q: a tarball digest or dependency floor is a build input, not a label", key, value)
 		}
 	}
