@@ -124,6 +124,11 @@ func getOrCreateEmbeddedServer() (*embeddedServer, error) {
 
 	srv, err := createEmbeddedServer()
 	if err != nil {
+		// A concurrent caller may already have stored the singleton, in
+		// which case the one-node-per-process guard refused this one.
+		if existing := embeddedServerHolder.Load(); existing != nil {
+			return existing, nil
+		}
 		return nil, err
 	}
 	embeddedServerHolder.Store(srv)
