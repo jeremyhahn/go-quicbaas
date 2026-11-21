@@ -30,6 +30,7 @@ const (
 	IAMService_UpdateUser_FullMethodName                = "/quicbaas.iam.v1.IAMService/UpdateUser"
 	IAMService_DeleteUser_FullMethodName                = "/quicbaas.iam.v1.IAMService/DeleteUser"
 	IAMService_ListUsers_FullMethodName                 = "/quicbaas.iam.v1.IAMService/ListUsers"
+	IAMService_GetUserByUsername_FullMethodName         = "/quicbaas.iam.v1.IAMService/GetUserByUsername"
 	IAMService_ApproveUser_FullMethodName               = "/quicbaas.iam.v1.IAMService/ApproveUser"
 	IAMService_ListWebAuthnCredentials_FullMethodName   = "/quicbaas.iam.v1.IAMService/ListWebAuthnCredentials"
 	IAMService_DeleteWebAuthnCredential_FullMethodName  = "/quicbaas.iam.v1.IAMService/DeleteWebAuthnCredential"
@@ -100,6 +101,9 @@ type IAMServiceClient interface {
 	UpdateUser(ctx context.Context, in *UpdateUserRequest, opts ...grpc.CallOption) (*User, error)
 	DeleteUser(ctx context.Context, in *DeleteUserRequest, opts ...grpc.CallOption) (*DeleteUserResponse, error)
 	ListUsers(ctx context.Context, in *ListUsersRequest, opts ...grpc.CallOption) (*ListUsersResponse, error)
+	// GetUserByUsername is the tenant-scoped username lookup. It carries
+	// GetUser's authorization: no permission option, so it is unmapped.
+	GetUserByUsername(ctx context.Context, in *GetUserByUsernameRequest, opts ...grpc.CallOption) (*User, error)
 	// ApproveUser moves a pending user to active, as REST's
 	// POST /api/v1/iam/users/{user_id}/approve does, and carries that route's
 	// users:enable grant. It is its own verb so approving never needs the
@@ -295,6 +299,16 @@ func (c *iAMServiceClient) ListUsers(ctx context.Context, in *ListUsersRequest, 
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListUsersResponse)
 	err := c.cc.Invoke(ctx, IAMService_ListUsers_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *iAMServiceClient) GetUserByUsername(ctx context.Context, in *GetUserByUsernameRequest, opts ...grpc.CallOption) (*User, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(User)
+	err := c.cc.Invoke(ctx, IAMService_GetUserByUsername_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -810,6 +824,9 @@ type IAMServiceServer interface {
 	UpdateUser(context.Context, *UpdateUserRequest) (*User, error)
 	DeleteUser(context.Context, *DeleteUserRequest) (*DeleteUserResponse, error)
 	ListUsers(context.Context, *ListUsersRequest) (*ListUsersResponse, error)
+	// GetUserByUsername is the tenant-scoped username lookup. It carries
+	// GetUser's authorization: no permission option, so it is unmapped.
+	GetUserByUsername(context.Context, *GetUserByUsernameRequest) (*User, error)
 	// ApproveUser moves a pending user to active, as REST's
 	// POST /api/v1/iam/users/{user_id}/approve does, and carries that route's
 	// users:enable grant. It is its own verb so approving never needs the
@@ -932,6 +949,9 @@ func (UnimplementedIAMServiceServer) DeleteUser(context.Context, *DeleteUserRequ
 }
 func (UnimplementedIAMServiceServer) ListUsers(context.Context, *ListUsersRequest) (*ListUsersResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListUsers not implemented")
+}
+func (UnimplementedIAMServiceServer) GetUserByUsername(context.Context, *GetUserByUsernameRequest) (*User, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetUserByUsername not implemented")
 }
 func (UnimplementedIAMServiceServer) ApproveUser(context.Context, *ApproveUserRequest) (*ApproveUserResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ApproveUser not implemented")
@@ -1294,6 +1314,24 @@ func _IAMService_ListUsers_Handler(srv interface{}, ctx context.Context, dec fun
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(IAMServiceServer).ListUsers(ctx, req.(*ListUsersRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _IAMService_GetUserByUsername_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetUserByUsernameRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(IAMServiceServer).GetUserByUsername(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: IAMService_GetUserByUsername_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(IAMServiceServer).GetUserByUsername(ctx, req.(*GetUserByUsernameRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -2230,6 +2268,10 @@ var IAMService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListUsers",
 			Handler:    _IAMService_ListUsers_Handler,
+		},
+		{
+			MethodName: "GetUserByUsername",
+			Handler:    _IAMService_GetUserByUsername_Handler,
 		},
 		{
 			MethodName: "ApproveUser",

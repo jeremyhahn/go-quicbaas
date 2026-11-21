@@ -65,6 +65,7 @@ type IAMService interface {
 	// token and its record; both are empty for any other lifecycle.
 	CreateUser(ctx context.Context, user *iam.User, inviteTTL time.Duration) (*iam.User, string, *iam.InviteRecord, error)
 	GetUser(ctx context.Context, tenantID, userID string) (*iam.User, error)
+	GetUserByUsername(ctx context.Context, tenantID, username string) (*iam.User, error)
 	UpdateUser(ctx context.Context, user *iam.User) (*iam.User, error)
 	ApproveUser(ctx context.Context, tenantID string, userID uint64) (*iam.User, error)
 	DeleteUser(ctx context.Context, tenantID, userID string) error
@@ -387,6 +388,34 @@ func (s *IAMServer) GetUser(ctx context.Context, req *iampb.GetUserRequest) (*ia
 	}
 
 	user, err := s.iamService.GetUser(ctx, req.TenantId, req.UserId)
+	if err != nil {
+		return nil, convertIAMError(err)
+	}
+
+	return convertUserToProto(user), nil
+}
+
+// GetUserByUsername is the tenant-scoped username lookup. It carries GetUser's
+// authorization: no permission option and no grpcMethodPermissions entry, so
+// it is default-denied under RequireAuthz, and without RequireAuthz
+// requireCallerTenant refuses a foreign or absent tenant.
+func (s *IAMServer) GetUserByUsername(ctx context.Context, req *iampb.GetUserByUsernameRequest) (*iampb.User, error) {
+	s.logger.WithFields(map[string]interface{}{
+		"tenant_id": req.TenantId,
+		"username":  req.Username,
+	}).Debug("Processing GetUserByUsername request")
+
+	if req.TenantId == "" {
+		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
+	}
+	if err := requireCallerTenant(ctx, "grpc.IAM", req.TenantId); err != nil {
+		return nil, err
+	}
+	if req.Username == "" {
+		return nil, status.Error(codes.InvalidArgument, "username is required")
+	}
+
+	user, err := s.iamService.GetUserByUsername(ctx, req.TenantId, req.Username)
 	if err != nil {
 		return nil, convertIAMError(err)
 	}

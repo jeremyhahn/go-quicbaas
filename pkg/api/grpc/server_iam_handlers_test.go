@@ -99,6 +99,14 @@ func (m *mockIAMService) GetUser(ctx context.Context, tenantID, userID string) (
 	return args.Get(0).(*iam.User), args.Error(1)
 }
 
+func (m *mockIAMService) GetUserByUsername(ctx context.Context, tenantID, username string) (*iam.User, error) {
+	args := m.Called(ctx, tenantID, username)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*iam.User), args.Error(1)
+}
+
 func (m *mockIAMService) UpdateUser(ctx context.Context, user *iam.User) (*iam.User, error) {
 	args := m.Called(ctx, user)
 	if args.Get(0) == nil {
@@ -573,6 +581,78 @@ func TestIAMServer_GetUser_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "30001", resp.Id)
 	svc.AssertExpectations(t)
+}
+
+// TestIAMServer_GetUser_ByEmail drives GetUser with an email as the id: the
+// server passes it through unchanged; the "@" routing is the adapter's.
+func TestIAMServer_GetUser_ByEmail(t *testing.T) {
+	srv, svc := newTestIAMServer(t)
+
+	svc.On("GetUser", mock.Anything, "t1", "user@test.com").
+		Return(&iam.User{ID: 30001, TenantID: "t1", Email: "user@test.com"}, nil)
+
+	resp, err := srv.GetUser(callerContext("t1"), &iampb.GetUserRequest{TenantId: "t1", UserId: "user@test.com"})
+
+	require.NoError(t, err)
+	assert.Equal(t, "user@test.com", resp.Email)
+	svc.AssertExpectations(t)
+}
+
+func TestIAMServer_GetUserByUsername_Success(t *testing.T) {
+	srv, svc := newTestIAMServer(t)
+
+	svc.On("GetUserByUsername", mock.Anything, "t1", "alice").
+		Return(&iam.User{ID: 30001, TenantID: "t1", Username: "alice", Email: "alice@test.com"}, nil)
+
+	resp, err := srv.GetUserByUsername(callerContext("t1"), &iampb.GetUserByUsernameRequest{TenantId: "t1", Username: "alice"})
+
+	require.NoError(t, err)
+	assert.Equal(t, "30001", resp.Id)
+	assert.Equal(t, "alice@test.com", resp.Email)
+	svc.AssertExpectations(t)
+}
+
+func TestIAMServer_GetUserByUsername_NotFound(t *testing.T) {
+	srv, svc := newTestIAMServer(t)
+
+	svc.On("GetUserByUsername", mock.Anything, "t1", "nobody").
+		Return(nil, &errors.QBError{Code: errors.ErrNotFound, Op: "GetUserByUsername", Err: stderrors.New("user not found")})
+
+	_, err := srv.GetUserByUsername(callerContext("t1"), &iampb.GetUserByUsernameRequest{TenantId: "t1", Username: "nobody"})
+
+	require.Error(t, err)
+	assert.Equal(t, codes.NotFound, status.Code(err))
+	svc.AssertExpectations(t)
+}
+
+func TestIAMServer_GetUserByUsername_MissingTenant(t *testing.T) {
+	srv, svc := newTestIAMServer(t)
+
+	_, err := srv.GetUserByUsername(callerContext("t1"), &iampb.GetUserByUsernameRequest{Username: "alice"})
+
+	require.Error(t, err)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+	svc.AssertNotCalled(t, "GetUserByUsername", mock.Anything, mock.Anything, mock.Anything)
+}
+
+func TestIAMServer_GetUserByUsername_MissingUsername(t *testing.T) {
+	srv, svc := newTestIAMServer(t)
+
+	_, err := srv.GetUserByUsername(callerContext("t1"), &iampb.GetUserByUsernameRequest{TenantId: "t1"})
+
+	require.Error(t, err)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+	svc.AssertNotCalled(t, "GetUserByUsername", mock.Anything, mock.Anything, mock.Anything)
+}
+
+func TestIAMServer_GetUserByUsername_ForeignTenant(t *testing.T) {
+	srv, svc := newTestIAMServer(t)
+
+	_, err := srv.GetUserByUsername(callerContext("t2"), &iampb.GetUserByUsernameRequest{TenantId: "t1", Username: "alice"})
+
+	require.Error(t, err)
+	assert.NotEqual(t, codes.OK, status.Code(err))
+	svc.AssertNotCalled(t, "GetUserByUsername", mock.Anything, mock.Anything, mock.Anything)
 }
 
 func TestIAMServer_UpdateUser_Success(t *testing.T) {
