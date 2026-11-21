@@ -2702,6 +2702,9 @@ func TestBuildSDKClientOptions_EmbeddedTransportErrorCovPlus(t *testing.T) {
 
 	transport = "embedded"
 	globalTimeout = 5 * time.Second
+	// buildSDKClientOptions starts the process's embedded server; stop it so
+	// the one-node-per-process guard does not refuse a later test's node.
+	t.Cleanup(func() { _ = shutdownEmbeddedServer() })
 
 	opts, err := buildSDKClientOptions()
 

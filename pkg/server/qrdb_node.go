@@ -965,6 +965,18 @@ func (s *Server) initStandaloneQRDBNode() error {
 	ctx := context.Background()
 	s.logger.Info("Standalone mode: constructing real qrdb engine via NewStandaloneNode")
 
+	// One embedded node per process. Claimed before the seal strategy is
+	// built, so a refused second Server never opens a TPM session.
+	if err := currentNodeSlot().claim(s); err != nil {
+		return &QRDBNodeError{Stage: "claim embedded node", Cause: err}
+	}
+	nodeBuilt := false
+	defer func() {
+		if !nodeBuilt {
+			currentNodeSlot().release(s)
+		}
+	}()
+
 	qcfg, qcfgErr := buildQRDBConfig(s.config, false)
 	if qcfgErr != nil {
 		return &QRDBNodeError{Stage: "build qrdb config", Cause: qcfgErr}
@@ -1083,6 +1095,7 @@ func (s *Server) initStandaloneQRDBNode() error {
 		return &QRDBNodeError{Stage: "new standalone node", Cause: err}
 	}
 
+	nodeBuilt = true
 	s.setQRDBNode(node)
 	if s.tenantUnsealRouter != nil {
 		s.tenantUnsealRouter.bind()
@@ -1143,6 +1156,10 @@ func (s *Server) stopQRDBNode() error {
 		}
 	}
 
+	// The node reference is cleared above, so the process's embedded-node
+	// slot is released whether or not a node existed or Close failed.
+	currentNodeSlot().release(s)
+
 	if closeErr != nil {
 		return &QRDBNodeError{Stage: "close", Cause: closeErr}
 	}
@@ -1177,6 +1194,17 @@ func (s *Server) stopQRDBNode() error {
 func (s *Server) initClusteredQRDBNode() error {
 	ctx := context.Background()
 	s.logger.Info("Cluster mode: constructing real qrdb clustered node via NewClusteredNode")
+
+	// One embedded node per process (see initStandaloneQRDBNode).
+	if err := currentNodeSlot().claim(s); err != nil {
+		return &QRDBNodeError{Stage: "claim embedded node", Cause: err}
+	}
+	nodeBuilt := false
+	defer func() {
+		if !nodeBuilt {
+			currentNodeSlot().release(s)
+		}
+	}()
 
 	qcfg, qcfgErr := buildQRDBConfig(s.config, true)
 	if qcfgErr != nil {
@@ -1310,6 +1338,7 @@ func (s *Server) initClusteredQRDBNode() error {
 		return &QRDBNodeError{Stage: "new clustered node", Cause: err}
 	}
 
+	nodeBuilt = true
 	s.setQRDBNode(node)
 	if s.tenantUnsealRouter != nil {
 		s.tenantUnsealRouter.bind()
@@ -1400,22 +1429,12 @@ func buildRaftMTLSConfig(cfg *config.Config) (*qrdbnode.RaftMTLSConfig, error) {
 
 // newNodeBackedShardedClient returns a *ShardedClient backed by the qrdb
 // node's SDK client. All shard-ID lookups return the same client via the
-// nodeClient short-circuit in ShardedClient.ForShard.
-//
-// The factory is wired with the embedded transport config so IsEmbedded()
-// returns true — callers that check the transport type still see the correct
-// embedded indicator. The qrdb node owns all per-shard storage; quicbaas
-// does not manage separate per-shard stores.
-//
-// The node client's lifetime is owned by the qrdb node, not the ShardedClient.
-// When nodeOwned is true, Close() is a no-op on the ShardedClient side;
-// the node closes the client during node.Close().
+// nodeClient in ShardedClient.ForShard. The qrdb node owns all per-shard
+// storage and the client's lifetime: the node closes the client during
+// node.Close(), and ShardedClient.Close never does.
 func newNodeBackedShardedClient(node *qrdbnode.Node) *ShardedClient {
-	embeddedCfg := &config.QRDBConfig{Transport: config.QRDBTransportEmbedded}
 	return &ShardedClient{
-		factory:    newTransportFactory(embeddedCfg, nil, nil),
 		nodeClient: node.Client(),
-		nodeOwned:  true,
 	}
 }
 

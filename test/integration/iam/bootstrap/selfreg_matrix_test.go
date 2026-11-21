@@ -13,7 +13,7 @@
 
 //go:build integration
 
-package iam_test
+package bootstrap_test
 
 import (
 	"bytes"

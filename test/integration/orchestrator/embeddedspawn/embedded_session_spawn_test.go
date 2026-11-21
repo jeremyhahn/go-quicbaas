@@ -28,7 +28,7 @@
 //     "fleet node daemon has not completed enrollment" rejection (routing-bug fix).
 //  3. SpawnSession returns a valid session_id — no 500 internal server error.
 //  4. A subsequent GetSession lookup succeeds on the returned session_id.
-package orchestrator_test
+package embeddedspawn_test
 
 import (
 	"context"
@@ -322,3 +322,9 @@ func waitForReady(t *testing.T, srv *server.Server, timeout time.Duration) error
 		return ErrEmbeddedBootTimeout{}
 	}
 }
+
+// ErrEmbeddedBootTimeout is returned when the embedded server fails to start
+// within the configured deadline.
+type ErrEmbeddedBootTimeout struct{}
+
+func (ErrEmbeddedBootTimeout) Error() string { return "embedded server boot timeout" }
