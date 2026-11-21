@@ -91,14 +91,15 @@ func newInventoryFacade() *inventoryFacade {
 // mounted on the node, each with the reason it stays off. The inventory
 // fails if one of them gets mounted, so the entry is dropped with the change.
 var unixOnlyServices = map[string]string{
-	// Their RPCs carry no (qrdb.v1.permission) option in
-	// api/proto/iam/iam.proto (IAMService 6 of 60 methods, PEPService,
-	// MFAService and AuditService none): the node default-denies them and the
+	// IAMService is mounted (its six annotated RPCs carry their permissions,
+	// the four invite RPCs are public and the rest stay default-denied). The
+	// RPCs below carry no (qrdb.v1.permission) option in
+	// api/proto/iam/iam.proto (PEPService, MFAService and AuditService
+	// none): the node default-denies them and the
 	// QUIC projection assertion refuses them. The Unix listener has no
 	// permission for them either (pkg/api/grpc/authz_mapping.go leaves them
 	// unmapped, so it denies them too): annotating them is an owner
 	// authorization-policy decision, not a copy of an existing grant.
-	"quicbaas.iam.v1.IAMService":   "unannotated",
 	"quicbaas.iam.v1.PEPService":   "unannotated",
 	"quicbaas.iam.v1.MFAService":   "unannotated",
 	"quicbaas.iam.v1.AuditService": "unannotated",
@@ -107,17 +108,14 @@ var unixOnlyServices = map[string]string{
 	"quicbaas.barrier.v1.Barrier":      "qrdb proxy plane",
 	"quicbaas.ceremony.v1.Ceremony":    "qrdb proxy plane",
 	"quicbaas.tenant.v1.TenantBarrier": "qrdb proxy plane",
-	"quicbaas.vector.v1.VectorDB":      "qrdb proxy plane",
-	"quicbaas.vector.v1.VectorAdmin":   "qrdb proxy plane",
-	// go-xkms's own ServiceModule serves the canonical xkms.v1 surface on the
-	// node (pkg/apimodule TestModule_RegisterGRPC_ExcludesXKMSCanonicalSurface).
-	"quicbaas.kms.v1.KeyManagement":              "xkms canonical surface",
-	"quicbaas.kms.v1.DEKManagement":              "xkms canonical surface",
-	"quicbaas.kms.v1.Crypto":                     "xkms canonical surface",
-	"quicbaas.certificate.v1.CertificateService": "xkms canonical surface",
-	"quicbaas.certificate.v1.TrustService":       "xkms canonical surface",
-	"quicbaas.attestation.v1.AttestationService": "xkms canonical surface",
-	"quicbaas.piv.v1.PIVService":                 "xkms canonical surface",
+	// VectorDB and VectorAdmin are mounted: go-qrdb registers no
+	// quicbaas.vector.v1 name.
+	// KeyManagement and DEKManagement are mounted: the pinned go-xkms serves
+	// no DEK surface and no quicbaas.kms.v1 name. AttestationService is
+	// mounted: the pinned go-xkms serves no Verifier RPCs. Crypto,
+	// CertificateService, TrustService and PIVService are mounted for
+	// Unix-socket peers only (pkg/apimodule
+	// TestModule_RegisterGRPC_LegacyXKMSWrappersAreUnixOnly).
 }
 
 // serviceNames returns the sorted names of the services registered on gs.

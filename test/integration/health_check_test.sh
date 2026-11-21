@@ -57,7 +57,7 @@ case $url in
 */api/v1/health)
 	[ "$host" != "${STUB_READ_DOWN_HOST:-}" ] || code=503
 	;;
-*/api/v1/auth/login/piv)
+*/api/v1/iam/login/piv)
 	if [ "$host" = "${STUB_LOGIN_STALL_HOST:-}" ]; then
 		# A stalled node: a bounded request ends as curl's timeout (28);
 		# an unbounded one would hang, so it fails at once instead.

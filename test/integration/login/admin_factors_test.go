@@ -35,6 +35,7 @@ import (
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
 	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/xkms/fido2"
+	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 
 	"github.com/stretchr/testify/require"
 )
@@ -80,7 +81,9 @@ func (p *softwarePasskey) RegisterWebAuthn(opts fido2.WebAuthnRegistrationOption
 	if opts.RequireUserVerification {
 		userVerification = "required"
 	}
-	optionsJSON, err := json.Marshal(map[string]any{
+	// The software adapter reads the browser-shaped CredentialCreation
+	// document, so the options sit under "publicKey".
+	optionsJSON, err := json.Marshal(map[string]any{"publicKey": map[string]any{
 		"challenge": base64.RawURLEncoding.EncodeToString(opts.Challenge),
 		"rp":        map[string]string{"id": opts.RPID, "name": opts.RPName},
 		"user": map[string]string{
@@ -91,7 +94,7 @@ func (p *softwarePasskey) RegisterWebAuthn(opts fido2.WebAuthnRegistrationOption
 		"pubKeyCredParams":       []map[string]any{{"type": "public-key", "alg": -7}},
 		"attestation":            "none",
 		"authenticatorSelection": map[string]string{"userVerification": userVerification},
-	})
+	}})
 	if err != nil {
 		return nil, &SoftwarePasskeyError{Op: "encode creation options", Cause: err}
 	}
@@ -114,11 +117,15 @@ func (p *softwarePasskey) RegisterWebAuthn(opts fido2.WebAuthnRegistrationOption
 }
 
 // passkeyLogin runs the unified FIDO2 login with the software authenticator.
-func passkeyLogin(ctx context.Context, c quicbaas.Client, adapter *webauthnclient.SoftwareAdapter) (*quicbaas.FinishLoginResponse, error) {
+// The hint is the user's email, the only subject login key (docs/SPEC.md row
+// iam): it is what lets the relying party list the user's non-discoverable
+// credential in allowCredentials. A username hint resolves to no user, and the
+// ceremony falls back to discoverable, which a non-resident passkey cannot answer.
+func passkeyLogin(ctx context.Context, c quicbaas.Client, adapter *webauthnclient.SoftwareAdapter, email string) (*quicbaas.FinishLoginResponse, error) {
 	auth := c.Security().Auth()
 	begin, err := auth.BeginLogin(ctx, qrdbtransport.BeginLoginRequest{
 		Type:     qrdbtransport.FactorTypeFIDO2,
-		Hint:     adminSubject,
+		Hint:     email,
 		TenantID: systemTenantID,
 	})
 	if err != nil {
@@ -182,7 +189,13 @@ func TestAdminFactors_PasskeyEnrollsThenLogsIn(t *testing.T) {
 			credentialID := results[0].Enrollment.Metadata["credential_id"]
 			require.NotEmpty(t, credentialID, "[%s] the server must report the stored credential", tr)
 
-			finish, err := passkeyLogin(ctx, c, adapter)
+			// The login hint is the enrolled admin's email, read from the same
+			// user record the enrollment resolved adminSubject to.
+			admin := resolveEnrolledAdmin(ctx, t, c, tr)
+			require.Equal(t, adminSubject, admin.Username, "[%s] the admin certificate must resolve the enrolled admin", tr)
+			require.NotEmpty(t, admin.Email, "[%s] the enrolled admin must carry an email login key", tr)
+
+			finish, err := passkeyLogin(ctx, c, adapter, admin.Email)
 			require.NoError(t, err, "[%s] login with the enrolled passkey", tr)
 			require.NotEmpty(t, finish.Bearer, "[%s] login must mint a bearer", tr)
 			require.NotNil(t, finish.Identity, "[%s] login must resolve an identity", tr)
@@ -199,6 +212,30 @@ func TestAdminFactors_PasskeyEnrollsThenLogsIn(t *testing.T) {
 				"[%s] fido2 without a handler must be refused at preflight, got %v", tr, err)
 		})
 	}
+}
+
+// resolveEnrolledAdmin looks up the enrolled admin by the admin certificate.
+// The binding Enroll writes can take a moment before the lookup sees it, so
+// the helper retries NOT_FOUND for up to 10s and fails at once on any other
+// error.
+func resolveEnrolledAdmin(ctx context.Context, t *testing.T, c quicbaas.Client, tr loginTransport) *quicbaas.QRDBUser {
+	t.Helper()
+
+	leaf := loadAdminLeaf(t)
+	var admin *quicbaas.QRDBUser
+	err := helpers.Poll(ctx, 200*time.Millisecond, 10*time.Second, func(pctx context.Context) (bool, error) {
+		user, err := c.Security().Auth().UserByCertificate(pctx, leaf)
+		if err == nil {
+			admin = user
+			return true, nil
+		}
+		if sdkerrors.IsNotFound(err) {
+			return false, err
+		}
+		return false, &helpers.FinalPollError{Cause: err}
+	})
+	require.NoError(t, err, "[%s] resolve the enrolled admin", tr)
+	return admin
 }
 
 // A PIV key the administrator enrolls through AdminFactors().Enroll holds a
