@@ -22,6 +22,7 @@ import (
 
 	iamsdk "github.com/jeremyhahn/go-quicbaas/sdk/go/client/iam"
 	pepsdk "github.com/jeremyhahn/go-quicbaas/sdk/go/client/iam"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -460,20 +461,53 @@ func handleIAMUserList(ctx context.Context, svc service.QuicBaaS, req interface{
 		return nil, err
 	}
 	tenantID, _ := iamRequestField(req, "TenantID")
-	limit := 0
-	if r, ok := req.(*iamsdk.ListUsersRequest); ok {
-		limit = r.PageSize
+
+	// The SDK client wraps the caller's request beside the tenant; accept
+	// a bare *ListUsersRequest too.
+	var listReq *iamsdk.ListUsersRequest
+	if inner, ok := iamRequestStructPtr(req, "Request").(*iamsdk.ListUsersRequest); ok {
+		listReq = inner
+	} else if direct, ok := req.(*iamsdk.ListUsersRequest); ok {
+		listReq = direct
 	}
-	users, err := store.ListUsers(ctx, tenantID, iam.ListOptions{Limit: limit})
+
+	size := 0
+	token := ""
+	if listReq != nil {
+		size = listReq.PageSize
+		token = listReq.PageToken
+	}
+	if size <= 0 {
+		size = defaultUserListPageSize
+	}
+	offset := 0
+	if token != "" {
+		offset, err = strconv.Atoi(token)
+		if err != nil || offset < 0 {
+			return nil, errors.NewInvalidInput("embedded.quicbaas.IAM.User.List",
+				"page token must be a non-negative decimal offset")
+		}
+	}
+
+	users, err := store.ListUsers(ctx, tenantID, iam.ListOptions{Limit: size + 1, Offset: offset})
 	if err != nil {
 		return nil, err
 	}
-	out := &iamsdk.ListUsersResponse{Users: make([]iamsdk.User, 0, len(users))}
+	out := &iamsdk.ListUsersResponse{Pagination: iamsdk.PaginationInfo{PageSize: size}}
+	if len(users) > size {
+		users = users[:size]
+		out.Pagination.HasMore = true
+		out.Pagination.NextPageToken = strconv.Itoa(offset + size)
+	}
+	out.Users = make([]iamsdk.User, 0, len(users))
 	for _, u := range users {
 		out.Users = append(out.Users, *userToSDK(u))
 	}
 	return out, nil
 }
+
+// defaultUserListPageSize is the page size of a user List that names none.
+const defaultUserListPageSize = 100
 
 func userToSDK(u *iam.User) *iamsdk.User {
 	if u == nil {
