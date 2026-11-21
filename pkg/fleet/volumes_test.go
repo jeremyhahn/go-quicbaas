@@ -2,6 +2,7 @@ package fleet
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
@@ -67,4 +68,40 @@ func TestWrapVolumeRuntimeRejectsBadConfig(t *testing.T) {
 	if _, err := WrapVolumeRuntime(VolumeConfig{Provider: "no-such-provider", NodeID: "n"}, &nopRuntime{}); err == nil {
 		t.Error("unknown provider: err = nil")
 	}
+}
+
+func TestWrapVolumeRuntimeNoHostName(t *testing.T) {
+	errBoom := errors.New("boom")
+
+	t.Run("lookup error", func(t *testing.T) {
+		var name string
+		stubVolumeProvider(t, &name)
+		old := hostname
+		hostname = func() (string, error) { return "", errBoom }
+		t.Cleanup(func() { hostname = old })
+
+		_, err := WrapVolumeRuntime(VolumeConfig{Provider: "local"}, &nopRuntime{})
+		if err == nil {
+			t.Fatal("WrapVolumeRuntime: want an error, got nil")
+		}
+		if !errors.Is(err, errBoom) {
+			t.Errorf("err = %v, want it to wrap %v", err, errBoom)
+		}
+	})
+
+	t.Run("empty name", func(t *testing.T) {
+		var name string
+		stubVolumeProvider(t, &name)
+		old := hostname
+		hostname = func() (string, error) { return "", nil }
+		t.Cleanup(func() { hostname = old })
+
+		_, err := WrapVolumeRuntime(VolumeConfig{Provider: "local"}, &nopRuntime{})
+		if err == nil {
+			t.Fatal("WrapVolumeRuntime: want an error, got nil")
+		}
+		if !strings.Contains(err.Error(), "host name is empty") {
+			t.Errorf("err = %v, want it to say the host name is empty", err)
+		}
+	})
 }

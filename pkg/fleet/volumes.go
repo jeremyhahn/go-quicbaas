@@ -1,6 +1,7 @@
 package fleet
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -51,8 +52,11 @@ func WrapVolumeRuntime(cfg VolumeConfig, inner orchestration.ContainerRuntime) (
 	node := cfg.NodeID
 	if node == "" {
 		h, err := hostname()
-		if err != nil || h == "" {
-			return nil, fmt.Errorf("fleet volumes: no node_id and no host name: %v", err)
+		if err != nil {
+			return nil, fmt.Errorf("fleet volumes: no node_id and no host name: %w", err)
+		}
+		if h == "" {
+			return nil, errors.New("fleet volumes: no node_id and the host name is empty")
 		}
 		node = h
 	}
