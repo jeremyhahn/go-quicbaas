@@ -15,6 +15,14 @@
 
 package server
 
+import qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
+// qrdbEmbeddingServerOptions returns nil when vector support is not compiled,
+// so the node serves no go-qrdb embedding routes.
+func (s *Server) qrdbEmbeddingServerOptions() []qrdbsdk.ServerOption {
+	return nil
+}
+
 // startEmbedding is a no-op when vector support is not compiled.
 func (s *Server) startEmbedding() error {
 	s.logger.Debug("Embedding not compiled, skipping initialization")

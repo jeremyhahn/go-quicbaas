@@ -175,7 +175,7 @@ func TestQRDBSubClientAddress(t *testing.T) {
 		{"mcp bare host:port", TransportMCP, "127.0.0.1:18443", true, "https://127.0.0.1:18443" + qbmcp.MCPEndpointPath},
 		{"mcp endpoint already full", TransportMCP, "https://node.example.com:8443/mcp", true, "https://node.example.com:8443/mcp"},
 		{"grpc stays bare", TransportGRPC, "127.0.0.1:18443", true, "127.0.0.1:18443"},
-		{"quic stays bare", TransportQUIC, "127.0.0.1:18443", true, "127.0.0.1:18443"},
+		{"quic bare host:port is the REST origin", TransportQUIC, "127.0.0.1:18443", true, "https://127.0.0.1:18443"},
 		{"unix stays a socket path", TransportUnix, "/var/run/quicbaas/quicbaasd.sock", true, "/var/run/quicbaas/quicbaasd.sock"},
 	}
 

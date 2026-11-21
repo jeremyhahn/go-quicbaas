@@ -44,7 +44,10 @@ GOTEST := $(GOCMD) test
 GOGET := $(GOCMD) get
 GOMOD := $(GOCMD) mod
 GOFMT ?= gofmt
-GOLINT := $(shell go env GOPATH)/bin/golangci-lint
+# Recursive (=), so `go env` runs only when a lint recipe expands it, not on
+# every make invocation: CI hosts that run make without Go on PATH (the
+# integration image job) printed "go: command not found" at parse time.
+GOLINT = $(shell go env GOPATH)/bin/golangci-lint
 # GOLANGCI_VERSION, GOSEC_VERSION, GOVULNCHECK_VERSION, ACTIONLINT_VERSION,
 # SHELLCHECK_VERSION (with its tarball digests), SERENA_VERSION, GOPLS_VERSION,
 # GO_TOOL_DEPENDENCY_FLOORS (what gopls and gosec are built with),
@@ -1142,7 +1145,13 @@ install: build ## Install the binary
 # silently absent from this gate — a control that appears present but never
 # executes. They are listed here, not in BUILD_TAGS, because they must gate
 # tests without altering a shipped binary.
-TEST_EXTRA_TAGS := canary otel l2_redis rest quic mcp rag tpm_simulator $(CONTAINER_LIB_TAGS)
+#
+# quicbaas_signal compiles the go-signal bridge (pkg/signal and the
+# `quicbaas signalbridge` command group) into the unit gate. While it sat in
+# TAG_GATE_EXEMPT the package stopped compiling against go-signal unnoticed
+# (#2430); a test-only tag keeps it built and tested without putting the
+# bridge in a shipped binary.
+TEST_EXTRA_TAGS := canary otel l2_redis rest quic mcp rag tpm_simulator quicbaas_signal $(CONTAINER_LIB_TAGS)
 
 # Note: Go 1.25+ requires space-separated tags, not comma-separated.
 # The leading !integration is documentation: `integration` is simply absent
@@ -1304,14 +1313,6 @@ LINT_BUILD_TAGS := $(filter-out !integration,$(TEST_TAGS))
 #   awss3 gcpstorage azureblob minio
 #                               need live cloud credentials / endpoints
 #   gpu                         needs an NVIDIA GPU
-#   quicbaas_signal             pkg/signal DOES NOT COMPILE. Its kvAdapter is
-#                               missing DeleteIfPresent, which go-signal's
-#                               store.KVClient requires and which go-qrdb's
-#                               sdk/go/transport.KVClient cannot supply
-#                               atomically. That primitive is what makes
-#                               one-time prekey consumption single-use, so this
-#                               needs a qrdb SDK addition -- the package is
-#                               currently unbuildable, not merely untested.
 # openvino_live drives a REAL OpenVINO Model Server on a REAL NPU
 # (pkg/orchestration/openvino_backend_live_test.go). It is exempt for the
 # reason gpu and swtpm are: no CI runner in this fleet has the accelerator, and
@@ -1323,7 +1324,7 @@ LINT_BUILD_TAGS := $(filter-out !integration,$(TEST_TAGS))
 TAG_GATE_EXEMPT := linux darwin windows unix ignore integration coverage production \
 	pkcs11 swtpm \
 	awskms gcpkms azurekv vault awss3 gcpstorage azureblob minio \
-	gpu quicbaas_signal \
+	gpu \
 	openvino_live
 
 # IAM_TEST_TAGS: retained alias for TEST_TAGS. IAM is now always compiled
@@ -1348,7 +1349,7 @@ IAM_TEST_TAGS := $(TEST_TAGS)
 # TEST_CHECKS are the repository validations every unit-test pass runs first.
 # Both `test` and `coverage` (the CI test stage) list this one variable, so
 # CI cannot drop a check that `make test` runs.
-TEST_CHECKS := check-insecure-tls check-build-tags check-coded-sentinels check-local-keygen check-case-collisions check-library-pins check-workspace-script check-package-targets
+TEST_CHECKS := check-insecure-tls check-build-tags check-coded-sentinels check-local-keygen check-case-collisions check-library-pins check-workspace-script check-package-targets check-ci-image-cache
 
 .PHONY: test
 test: $(TEST_CHECKS) ## Run unit tests (excludes integration tests)
@@ -1418,6 +1419,15 @@ check-package-targets: ## Fail if a per-package make target does not reach its n
 	@echo "$(BLUE)Checking per-package make targets resolve nested packages...$(NC)"
 	@TEST_TAGS='$(TEST_TAGS)' IAM_TEST_TAGS='$(IAM_TEST_TAGS)' MAKE='$(MAKE)' sh scripts/resolve-package_test.sh
 	@MAKE='$(MAKE)' sh scripts/package-targets-exit_test.sh
+
+.PHONY: check-ci-image-cache
+# scripts/ci-image-cache_test.sh drives scripts/ci-image-cache.sh against stub
+# docker and make binaries, so the CI_IMAGE_REGISTRY cache path is proven
+# without a daemon or a registry (#2503); scripts/devcontainer-build_test.sh
+# runs DEVCONTAINER_BUILD's compose and plain docker build paths the same way.
+check-ci-image-cache: ## Prove ci-image-cache.sh's registry cache path against stub docker
+	@bash scripts/ci-image-cache_test.sh
+	@bash scripts/devcontainer-build_test.sh
 
 .PHONY: check-local-keygen
 # go-xkms owns keys and certificates for the whole stack; go-quicbaas composes
@@ -1548,19 +1558,19 @@ check-build-tags: ## Fail if any //go:build CONSTRAINT is satisfied by no test p
 test-minimal: check-insecure-tls check-build-tags check-local-keygen ## Run unit tests with every tag that has a !tag side off (compiles the stub/no-op paths)
 	@echo "$(BLUE)Running unit tests with every disabled-side tag off...$(NC)"
 	@echo "$(YELLOW)Build tags: $(MINIMAL_TEST_TAGS)$(NC)"
-	$(GOTEST) -p 2 -tags '$(MINIMAL_TEST_TAGS)' -timeout=10m ./pkg/... ./cmd/...
+	$(GOTEST) -p 2 -tags '$(MINIMAL_TEST_TAGS)' -timeout=$(TAG_PASS_TIMEOUT) ./pkg/... ./cmd/...
 
 .PHONY: test-standard
 test-standard: check-insecure-tls check-build-tags check-local-keygen ## Run unit tests in the build-standard configuration (REST on, AI features off)
 	@echo "$(BLUE)Running unit tests in the build-standard configuration...$(NC)"
 	@echo "$(YELLOW)Build tags: $(STANDARD_TEST_TAGS)$(NC)"
-	$(GOTEST) -p 2 -tags '$(STANDARD_TEST_TAGS)' -timeout=10m ./pkg/... ./cmd/...
+	$(GOTEST) -p 2 -tags '$(STANDARD_TEST_TAGS)' -timeout=$(TAG_PASS_TIMEOUT) ./pkg/... ./cmd/...
 
 .PHONY: test-lean
 test-lean: check-insecure-tls check-build-tags check-local-keygen ## Run unit tests with the transports on and the optional data-model features off
 	@echo "$(BLUE)Running unit tests with the transports on, data-model extras off...$(NC)"
 	@echo "$(YELLOW)Build tags: $(LEAN_TEST_TAGS)$(NC)"
-	$(GOTEST) -p 2 -tags '$(LEAN_TEST_TAGS)' -timeout=10m ./pkg/... ./cmd/...
+	$(GOTEST) -p 2 -tags '$(LEAN_TEST_TAGS)' -timeout=$(TAG_PASS_TIMEOUT) ./pkg/... ./cmd/...
 
 .PHONY: test-tooling
 test-tooling: ## Run the unit tests of the repository tooling (scripts, build gates)
@@ -3410,6 +3420,11 @@ COVER_PKGS ?= ./pkg/... ./cmd/...
 # default; see the note in the `race` recipe for the measurements.
 RACE_TIMEOUT := 30m
 
+# TAG_PASS_TIMEOUT is the per-package -timeout of the tag passes
+# (test-minimal, test-standard, test-lean). pkg/server takes 254s under
+# -race alone but over 600s in a tag pass sharing the runner, past 10m.
+TAG_PASS_TIMEOUT ?= 20m
+
 # The test stage is three pieces, so CI can run the slow -race pass as
 # parallel shards and a developer runs the same targets in one go:
 #   coverage-shard   one shard of the -race unit run, writing its profile
@@ -3937,9 +3952,6 @@ build-worker-image: ## Build the Software Factory worker image (quicbaas-softwar
 		--build-arg MARKSMAN_VERSION=$(MARKSMAN_VERSION) \
 		--build-arg MARKSMAN_SHA256_X86_64=$(MARKSMAN_SHA256_X86_64) \
 		--build-arg MARKSMAN_SHA256_AARCH64=$(MARKSMAN_SHA256_AARCH64) \
-		--build-arg KOTLIN_LSP_VERSION=$(KOTLIN_LSP_VERSION) \
-		--build-arg KOTLIN_LSP_SHA256_X86_64=$(KOTLIN_LSP_SHA256_X86_64) \
-		--build-arg KOTLIN_LSP_SHA256_AARCH64=$(KOTLIN_LSP_SHA256_AARCH64) \
 		--build-arg OPENJDK_MAJOR=$(OPENJDK_MAJOR) \
 		--build-arg CLAUDE_CODE_VERSION=$(CLAUDE_CODE_VERSION) \
 		--build-arg CODEX_VERSION=$(CODEX_VERSION) \
@@ -4186,7 +4198,8 @@ deploy-prod: ## Deploy to production environment
 # so all three run one gosec. It is rebuilt even when a gosec is on the PATH,
 # because an installed gosec of another version or build is exactly the drift
 # the pin exists to stop. main.Version is stamped because a bare build reports
-# "Version: dev" (go-luks2#21).
+# "Version: dev" (go-luks2#21). The floors go to one `go get`, so a floor list
+# that disagrees with itself fails here instead of shipping a lowered floor.
 .PHONY: install-gosec
 install-gosec: ## Build and install gosec at GOSEC_VERSION with GO_TOOL_DEPENDENCY_FLOORS
 	@echo "$(BLUE)Building gosec $(GOSEC_VERSION) with $(GO_TOOL_DEPENDENCY_FLOORS)...$(NC)"
@@ -4197,9 +4210,11 @@ install-gosec: ## Build and install gosec at GOSEC_VERSION with GO_TOOL_DEPENDEN
 	export GOWORK=off; \
 	go mod init build.local/gosec >/dev/null 2>&1; \
 	go get github.com/securego/gosec/v2/cmd/gosec@$(GOSEC_VERSION); \
+	floors=""; \
 	for floor in $(GO_TOOL_DEPENDENCY_FLOORS); do \
-		if go list -m "$${floor%@*}" >/dev/null 2>&1; then go get "$$floor"; fi; \
+		if go list -m "$${floor%@*}" >/dev/null 2>&1; then floors="$$floors $$floor"; fi; \
 	done; \
+	if [ -n "$$floors" ]; then go get $$floors; fi; \
 	CGO_ENABLED=0 go build -ldflags "-X main.Version=$(GOSEC_VERSION)" -o "$$gobin/gosec" github.com/securego/gosec/v2/cmd/gosec; \
 	"$$gobin/gosec" -version
 	@echo "$(GREEN)gosec installed$(NC)"
@@ -5670,7 +5685,8 @@ DEVCONTAINER_DIR := build/docker/devcontainer
 DEVCONTAINER_REPO := $(APP_NAME)-devcontainer
 DEVCONTAINER_INPUTS := $(DEVCONTAINER_DIR)/Dockerfile pkg/version/toolchain.mk go.mod go.sum sdk/go/go.mod sdk/go/go.sum \
 	sdk/typescript/package.json sdk/typescript/package-lock.json sdk/typescript/svelte-security/package.json \
-	cmd/quicbaas/frontend/package.json cmd/quicbaas/frontend/package-lock.json
+	cmd/quicbaas/frontend/package.json cmd/quicbaas/frontend/package-lock.json \
+	sdk/javascript/package.json sdk/javascript/package-lock.json
 DEVCONTAINER_HASH = $(shell cat $(DEVCONTAINER_INPUTS) | sha256sum | cut -c1-16)
 TOOLCHAIN_IMAGE = $(DEVCONTAINER_REPO):toolchain-$(DEVCONTAINER_HASH)
 SOURCE_DIRTY = $(shell if [ -n "$$(git status --porcelain)" ]; then \
@@ -5685,11 +5701,45 @@ DEVCONTAINER_COMPOSE = TOOLCHAIN_IMAGE='$(TOOLCHAIN_IMAGE)' \
 	GO_BUILD_PROXY="$${DEVCACHE_GOPROXY:-}" \
 	GOMODAUTH_ENV='$(GOMODAUTH_ENV)' RUN_UID="$$(id -u)" RUN_GID="$$(id -g)" \
 	$(DOCKER) compose -f $(DEVCONTAINER_DIR)/compose.yaml
+# The plain `docker build` arguments compose.yaml's x-build gives every
+# service: the repository root as context, the Dockerfile, the build args and
+# the gomodauth secret (the included integration compose file's).
+DEVCONTAINER_DOCKER_BUILD = DOCKER_BUILDKIT=1 $(DOCKER) build -f $(DEVCONTAINER_DIR)/Dockerfile \
+	--build-arg GO_VERSION='$(GO_VERSION)' --build-arg GO_IMAGE_DIGEST='$(GO_IMAGE_DIGEST)' \
+	--build-arg GO_BUILD_PROXY="$${DEVCACHE_GOPROXY:-}" \
+	--secret id=gomodauth,src='$(GOMODAUTH_ENV)'
 # Builds the named compose services with the module credentials staged for the
-# build only, unless CI handed them over in MODULE_ENV_FILE.
+# build only, unless CI handed them over in MODULE_ENV_FILE. A docker without
+# the compose plugin (#2503) builds each service with plain `docker build`,
+# with the target, build args, secret and tag compose.yaml gives it. On both
+# paths the toolchain image is skipped when the daemon already holds its tag.
 DEVCONTAINER_BUILD = $(if $(strip $(MODULE_ENV_FILE)),,trap '$(GOMODAUTH_CLEAR)' EXIT; \
 	$(MAKE) --no-print-directory stage-gomodauth;) \
-	$(DEVCONTAINER_COMPOSE) build
+	devcontainer_build() { \
+		svcs=; \
+		for svc in "$$@"; do \
+			if [ "$$svc" = toolchain ] && $(DOCKER) image inspect '$(TOOLCHAIN_IMAGE)' >/dev/null 2>&1; then \
+				echo "the daemon holds $(TOOLCHAIN_IMAGE); no build"; continue; \
+			fi; \
+			svcs="$$svcs $$svc"; \
+		done; \
+		[ -n "$$svcs" ] || return 0; \
+		set -- $$svcs; \
+		if $(DOCKER) compose version >/dev/null 2>&1; then \
+			$(DEVCONTAINER_COMPOSE) build "$$@"; return; \
+		fi; \
+		for svc in "$$@"; do \
+			case $$svc in \
+			toolchain) \
+				$(DEVCONTAINER_DOCKER_BUILD) --target toolchain -t '$(TOOLCHAIN_IMAGE)' . || return 1 ;; \
+			integration) \
+				$(DEVCONTAINER_DOCKER_BUILD) --target integration \
+					--build-arg BUILD_TAGS='$(strip $(INTEGRATION_BUILD_TAGS))' --build-arg COVER="$${COVER:-}" \
+					-t '$(INTEGRATION_IMAGE)' . || return 1 ;; \
+			*) echo "devcontainer build: unknown service $$svc" >&2; return 2 ;; \
+			esac; \
+		done; \
+	}; devcontainer_build
 
 .PHONY: toolchain-image
 toolchain-image: ## Print the toolchain image tag, hashed from the files it is built from
