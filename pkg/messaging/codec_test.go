@@ -725,6 +725,14 @@ func TestCodecErrorTypes(t *testing.T) {
 		}
 	})
 
+	t.Run("NilCodecNameError message", func(t *testing.T) {
+		t.Parallel()
+		err := &NilCodecNameError{}
+		if err.Error() != "default codec name is nil or invalid" {
+			t.Errorf("unexpected error message: %q", err.Error())
+		}
+	})
+
 	t.Run("NilEntityError message", func(t *testing.T) {
 		t.Parallel()
 		err := &NilEntityError{}

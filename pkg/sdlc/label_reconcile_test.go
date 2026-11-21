@@ -481,129 +481,117 @@ func TestLabelReconciler_FreshTaskSupersedesASpentOneDuringThePass(t *testing.T)
 	}
 }
 
-// TestLabelReconciler_SpentTaskWithNoSuccessorIsStillSurfaced is the negative
-// half: with nothing adopted during the pass, the re-read returns the same spent
-// task and its ending is posted exactly as before. Without this, the guard above
-// could be satisfied by a sweep that simply stopped surfacing terminal tasks.
-func TestLabelReconciler_SpentTaskWithNoSuccessorIsStillSurfaced(t *testing.T) {
-	rig := newReconcileRig(t, []string{"factory:in-progress"},
-		parkedTask(orchestration.TaskBlockKindBlocked, "the account pool is empty"))
+// TestLabelReconciler_UnreadableRecordDefersRatherThanDecides proves the re-read
+// is fail-closed (go-quicbaas#848): a store that will not answer, a record it
+// cannot decode, or an unreadable record beside a spent task is NOT evidence
+// that no record (or no successor) exists, so nothing is written on the
+// strength of it. The issue is left as found and the next sweep asks again.
+func TestLabelReconciler_UnreadableRecordDefersRatherThanDecides(t *testing.T) {
+	spent := func() []*orchestration.Task {
+		return []*orchestration.Task{parkedTask(orchestration.TaskBlockKindBlocked, "the account pool is empty")}
+	}
+	failListingMidPass := func(t *testing.T, rig *reconcileRig, pacer *firstStepPacer) func() {
+		pacer.act = func() { rig.tasks.failListing(errors.New("store unreachable")) }
+		return func() { rig.tasks.failListing(nil) }
+	}
+	tests := []struct {
+		name  string
+		tasks []*orchestration.Task
+		// arm makes a record unreadable and returns what heals it, so the
+		// retry can prove the deferral is not a standing refusal.
+		arm        func(t *testing.T, rig *reconcileRig, pacer *firstStepPacer) func()
+		evidence   []string
+		wantTaskID string
+		forbidden  string
+		retrySeen  bool
+	}{
+		{
+			name: "a terminal task's record fails mid-pass", tasks: spent(), arm: failListingMidPass,
+			evidence:   []string{ErrLabelReconcileRecord.Error()},
+			wantTaskID: testTask, forbidden: "factory:blocked",
+		},
+		{
+			name: "an unreadable record beside a spent task", tasks: spent(),
+			arm: func(t *testing.T, rig *reconcileRig, pacer *firstStepPacer) func() {
+				rig.tasks.unreadable = []string{"task-successor"}
+				return nil
+			},
+			evidence:  []string{"task-successor"},
+			forbidden: "factory:blocked",
+		},
+		{
+			name: "no task and the listing fails mid-pass", arm: failListingMidPass,
+			evidence: []string{
+				ErrLabelReconcileDeferred.Error(), ErrLabelReconcileRecord.Error(), "store unreachable",
+			},
+			forbidden: "factory:escalated", retrySeen: true,
+		},
+		{
+			name: "a corrupt task record",
+			arm: func(t *testing.T, rig *reconcileRig, pacer *firstStepPacer) func() {
+				ctx := context.Background()
+				key := "orch/task/" + testTenant + "/" + testTask
+				kv := orchestration.NewMemoryTaskKV()
+				if err := kv.Put(ctx, key, []byte("{not json")); err != nil {
+					t.Fatalf("plant corrupt record: %v", err)
+				}
+				store := orchestration.NewTaskStore(kv, orchestration.NewProcessClaimArbiter())
+				reconciler, err := NewLabelReconciler(LabelReconcilerConfig{
+					Tenants: rig.tenants, Bindings: rig.store, Tasks: store, Hooks: rig.reconciler.hooks, Pacer: pacer,
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				rig.reconciler = reconciler
+				return func() {
+					if err := kv.Delete(ctx, key); err != nil {
+						t.Fatalf("remove corrupt record: %v", err)
+					}
+				}
+			},
+			evidence: []string{
+				ErrLabelReconcileRecord.Error(), orchestration.ErrTaskListingIncomplete.Error(), testTask,
+			},
+			forbidden: "factory:escalated", retrySeen: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pacer := &firstStepPacer{}
+			rig := newReconcileRigPaced(t, pacer, []string{"factory:in-progress"}, tt.tasks...)
+			heal := tt.arm(t, rig, pacer)
 
-	finding := only(t, rig.sweep(t))
-	if finding.Verdict != LabelReconcileSurfaced || finding.Outcome != OutcomeBlocked {
-		t.Fatalf("finding = %+v, want the spent task's ending surfaced", finding)
-	}
-	if got := rig.forge.issueLabels(reconcileIssue); !hasAll(got, []string{"factory:blocked"}) {
-		t.Fatalf("labels = %v, want factory:blocked", got)
-	}
-}
+			finding := only(t, rig.sweep(t))
+			if finding.Verdict != LabelReconcileDeferred {
+				t.Fatalf("verdict = %q (%s), want deferred", finding.Verdict, finding.Evidence)
+			}
+			if tt.wantTaskID != "" && finding.TaskID != tt.wantTaskID {
+				t.Fatalf("the deferred finding names task %q, want %q", finding.TaskID, tt.wantTaskID)
+			}
+			for _, want := range tt.evidence {
+				if !strings.Contains(finding.Evidence, want) {
+					t.Fatalf("the evidence does not carry %q: %s", want, finding.Evidence)
+				}
+			}
+			if got := rig.outcomeComments(); len(got) != 0 {
+				t.Fatalf("an unreadable record produced an announcement: %+v", got)
+			}
+			if got := rig.forge.issueLabels(reconcileIssue); !hasAll(got, []string{"factory:in-progress"}) ||
+				hasAll(got, []string{tt.forbidden}) {
+				t.Fatalf("labels = %v, want the issue untouched", got)
+			}
 
-// TestLabelReconciler_UnreadableRecordDefersATerminalTaskToo proves the re-read
-// is fail-closed on the terminal answer as well: a store that will not answer
-// leaves the issue alone rather than falling back on the snapshot, and the
-// deferred finding still names the task the pass knew about.
-func TestLabelReconciler_UnreadableRecordDefersATerminalTaskToo(t *testing.T) {
-	pacer := &firstStepPacer{}
-	rig := newReconcileRigPaced(t, pacer, []string{"factory:in-progress"},
-		parkedTask(orchestration.TaskBlockKindBlocked, "the account pool is empty"))
-	pacer.act = func() { rig.tasks.failListing(errors.New("store unreachable")) }
-
-	finding := only(t, rig.sweep(t))
-	if finding.Verdict != LabelReconcileDeferred {
-		t.Fatalf("verdict = %q (%s), want deferred", finding.Verdict, finding.Evidence)
-	}
-	if finding.TaskID != testTask {
-		t.Fatalf("the deferred finding names task %q, want the one the snapshot held", finding.TaskID)
-	}
-	if !strings.Contains(finding.Evidence, ErrLabelReconcileRecord.Error()) {
-		t.Fatalf("the evidence does not carry the record sentinel: %s", finding.Evidence)
-	}
-	if got := rig.outcomeComments(); len(got) != 0 {
-		t.Fatalf("an unreadable record produced an announcement: %+v", got)
-	}
-	if got := rig.forge.issueLabels(reconcileIssue); !hasAll(got, []string{"factory:in-progress"}) ||
-		hasAll(got, []string{"factory:blocked"}) {
-		t.Fatalf("labels = %v, want the issue untouched", got)
-	}
-}
-
-// TestLabelReconciler_CorruptTaskRecordDefersRatherThanOrphans is the
-// go-quicbaas#848 regression, driven through the REAL task store: a record the
-// store cannot decode is absent from a plain listing exactly as a deleted one
-// is, so an issue whose task record is corrupt used to be declared an orphan
-// and announced `abandoned` over live work. The listing now reports the record
-// it could not read, and the sweep defers exactly as it does for a store that
-// refuses outright.
-func TestLabelReconciler_CorruptTaskRecordDefersRatherThanOrphans(t *testing.T) {
-	ctx := context.Background()
-	rig := newReconcileRig(t, []string{"factory:in-progress"})
-
-	kv := orchestration.NewMemoryTaskKV()
-	if err := kv.Put(ctx, "orch/task/"+testTenant+"/"+testTask, []byte("{not json")); err != nil {
-		t.Fatalf("plant corrupt record: %v", err)
-	}
-	store := orchestration.NewTaskStore(kv, orchestration.NewProcessClaimArbiter())
-	reconciler, err := NewLabelReconciler(LabelReconcilerConfig{
-		Tenants: rig.tenants, Bindings: rig.store, Tasks: store, Hooks: rig.reconciler.hooks, Pacer: rig.pacer,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	rig.reconciler = reconciler
-
-	finding := only(t, rig.sweep(t))
-	if finding.Verdict != LabelReconcileDeferred {
-		t.Fatalf("verdict = %q (%s), want deferred", finding.Verdict, finding.Evidence)
-	}
-	for _, want := range []string{
-		ErrLabelReconcileRecord.Error(), orchestration.ErrTaskListingIncomplete.Error(), testTask,
-	} {
-		if !strings.Contains(finding.Evidence, want) {
-			t.Fatalf("the evidence does not carry %q: %s", want, finding.Evidence)
-		}
-	}
-	if got := rig.outcomeComments(); len(got) != 0 {
-		t.Fatalf("a corrupt record produced an announcement: %+v", got)
-	}
-	if got := rig.forge.issueLabels(reconcileIssue); !hasAll(got, []string{"factory:in-progress"}) ||
-		hasAll(got, []string{"factory:escalated"}) {
-		t.Fatalf("labels = %v, want the issue untouched", got)
-	}
-
-	// AND ONCE THE RECORD IS GONE THE ISSUE IS THE ORPHAN IT THEN IS: the
-	// deferral is on the unreadable record, not a standing refusal.
-	if err := kv.Delete(ctx, "orch/task/"+testTenant+"/"+testTask); err != nil {
-		t.Fatalf("remove corrupt record: %v", err)
-	}
-	if retried := only(t, rig.sweep(t)); retried.Verdict != LabelReconcileSurfaced ||
-		retried.Outcome != OutcomeAbandoned {
-		t.Fatalf("the retry = %+v, want the orphan surfaced", retried)
-	}
-}
-
-// TestLabelReconciler_UnreadableRecordBesideASpentTaskDefers proves the
-// incomplete listing stops the TERMINAL answer too: the record the store could
-// not read may be the fresh task a re-label adopted, which would supersede the
-// spent one the listing did return, so posting the spent task's ending would
-// announce one over a live run.
-func TestLabelReconciler_UnreadableRecordBesideASpentTaskDefers(t *testing.T) {
-	rig := newReconcileRig(t, []string{"factory:in-progress"},
-		parkedTask(orchestration.TaskBlockKindBlocked, "the account pool is empty"))
-	rig.tasks.unreadable = []string{"task-successor"}
-
-	finding := only(t, rig.sweep(t))
-	if finding.Verdict != LabelReconcileDeferred {
-		t.Fatalf("verdict = %q (%s), want deferred", finding.Verdict, finding.Evidence)
-	}
-	if !strings.Contains(finding.Evidence, "task-successor") {
-		t.Fatalf("the evidence does not name the unreadable record: %s", finding.Evidence)
-	}
-	if got := rig.outcomeComments(); len(got) != 0 {
-		t.Fatalf("an incomplete listing produced an announcement: %+v", got)
-	}
-	if got := rig.forge.issueLabels(reconcileIssue); !hasAll(got, []string{"factory:in-progress"}) ||
-		hasAll(got, []string{"factory:blocked"}) {
-		t.Fatalf("labels = %v, want the issue untouched", got)
+			// AND ONCE THE RECORD READS AGAIN the issue is the orphan it then
+			// is: the deferral is on the unreadable record, not a standing refusal.
+			if !tt.retrySeen {
+				return
+			}
+			heal()
+			if retried := only(t, rig.sweep(t)); retried.Verdict != LabelReconcileSurfaced ||
+				retried.Outcome != OutcomeAbandoned {
+				t.Fatalf("the retry = %+v, want the orphan surfaced", retried)
+			}
+		})
 	}
 }
 
@@ -637,44 +625,6 @@ func TestLabelReconciler_TaskConcludedDuringThePassIsSurfacedNotOrphaned(t *test
 	}
 	if got := rig.forge.issueLabels(reconcileIssue); !hasAll(got, []string{"factory:needs-info"}) {
 		t.Fatalf("labels = %v, want factory:needs-info", got)
-	}
-}
-
-// TestLabelReconciler_UnreadableRecordDefersRatherThanOrphans is the error path
-// of the re-read and the reason it is fail-closed: a store that will not answer
-// is NOT evidence that no record exists, so nothing may be written on the
-// strength of it. The issue is left exactly as it was found and the next sweep
-// asks again.
-func TestLabelReconciler_UnreadableRecordDefersRatherThanOrphans(t *testing.T) {
-	pacer := &firstStepPacer{}
-	rig := newReconcileRigPaced(t, pacer, []string{"factory:in-progress"})
-	pacer.act = func() { rig.tasks.failListing(errors.New("store unreachable")) }
-
-	finding := only(t, rig.sweep(t))
-	if finding.Verdict != LabelReconcileDeferred {
-		t.Fatalf("verdict = %q (%s), want deferred", finding.Verdict, finding.Evidence)
-	}
-	for _, want := range []string{
-		ErrLabelReconcileDeferred.Error(), ErrLabelReconcileRecord.Error(), "store unreachable",
-	} {
-		if !strings.Contains(finding.Evidence, want) {
-			t.Fatalf("the evidence does not carry %q: %s", want, finding.Evidence)
-		}
-	}
-	if got := rig.outcomeComments(); len(got) != 0 {
-		t.Fatalf("an unreadable record produced an announcement: %+v", got)
-	}
-	if got := rig.forge.issueLabels(reconcileIssue); !hasAll(got, []string{"factory:in-progress"}) ||
-		hasAll(got, []string{"factory:escalated"}) {
-		t.Fatalf("labels = %v, want the issue untouched", got)
-	}
-
-	// AND THE NEXT SWEEP SETTLES IT. With the store answering again and still
-	// holding no record, the issue is the orphan it always was.
-	rig.tasks.failListing(nil)
-	if retried := only(t, rig.sweep(t)); retried.Verdict != LabelReconcileSurfaced ||
-		retried.Outcome != OutcomeAbandoned {
-		t.Fatalf("the retry = %+v, want the orphan surfaced", retried)
 	}
 }
 
@@ -731,13 +681,13 @@ func TestLabelReconciler_QueuedTaskUnderAClaimIsUndecidable(t *testing.T) {
 
 // TestLabelReconciler_ClaimVerdictByLiveStatus locks the classification of
 // every status the engine still intends to work, so the two maps cannot be
-// read one way here and the other way in examineHandovers.
+// read one way here and the other way in examineHandovers. Pending, the one
+// live status that is not vouched for, is TestLabelReconciler_QueuedTaskUnderAClaimIsUndecidable.
 func TestLabelReconciler_ClaimVerdictByLiveStatus(t *testing.T) {
 	for _, tc := range []struct {
 		status orchestration.TaskStatus
 		want   LabelReconcileVerdict
 	}{
-		{orchestration.TaskStatusPending, LabelReconcileUndecidable},
 		{orchestration.TaskStatusClaimed, LabelReconcileConsistent},
 		{orchestration.TaskStatusInProgress, LabelReconcileConsistent},
 	} {
@@ -1024,52 +974,6 @@ func TestSettleSilent_EveryUnannouncedReasonIsNamed(t *testing.T) {
 	}
 }
 
-// TestLabelReconciler_CompletedTaskStillSettlesOnMerged is the other half of the
-// same silence: a completed task must keep landing on `merged`. Without this the
-// branch above could be satisfied by never settling on `merged` at all.
-func TestLabelReconciler_CompletedTaskStillSettlesOnMerged(t *testing.T) {
-	task := testTaskRecord(reconcileIssue)
-	task.Status = orchestration.TaskStatusCompleted
-	task.ConclusionReason = orchestration.TaskConcludedCompleted
-	rig := newReconcileRig(t, []string{"factory:in-progress"}, task)
-
-	if got := rig.forge.issueLabels(reconcileIssue); hasAll(got, []string{"factory:merged"}) {
-		t.Fatalf("the fixture already carries the label under test: %v", got)
-	}
-	finding := only(t, rig.sweep(t))
-	if finding.Verdict != LabelReconcileRelabelled {
-		t.Fatalf("verdict = %q (%s), want relabelled", finding.Verdict, finding.Evidence)
-	}
-	if got := rig.forge.issueLabels(reconcileIssue); !hasAll(got, []string{"factory:merged"}) {
-		t.Fatalf("labels = %v, want factory:merged", got)
-	}
-	if n := len(rig.outcomeComments()); n != 0 {
-		t.Fatalf("a completed task announced %d comment(s), want none", n)
-	}
-}
-
-// TestLabelReconciler_IncoherentRunnerParkIsUndecidable is the fail-closed edge:
-// the park label is read off BlockKind, which means something only while the task
-// is actually parked. A record naming a runner park while resting elsewhere is
-// reported rather than relabelled from.
-func TestLabelReconciler_IncoherentRunnerParkIsUndecidable(t *testing.T) {
-	task := testTaskRecord(reconcileIssue)
-	task.Status = orchestration.TaskStatusFailed
-	task.ConclusionReason = orchestration.TaskConcludedRunnerParked
-	rig := newReconcileRig(t, []string{"factory:in-progress"}, task)
-
-	finding := only(t, rig.sweep(t))
-	if finding.Verdict != LabelReconcileUndecidable {
-		t.Fatalf("verdict = %q (%s), want undecidable", finding.Verdict, finding.Evidence)
-	}
-	if !strings.Contains(finding.Evidence, "rests in status failed") {
-		t.Fatalf("the evidence does not name the incoherence: %s", finding.Evidence)
-	}
-	if len(rig.forge.labelAdds)+len(rig.forge.labelRemovals) != 0 {
-		t.Fatalf("an incoherent record was written from: +%v -%v", rig.forge.labelAdds, rig.forge.labelRemovals)
-	}
-}
-
 // =============================================================================
 // A readmission whose label never came off
 // =============================================================================
@@ -1118,10 +1022,14 @@ func TestLabelReconciler_ReadmittedTaskHasItsParkLabelCleared(t *testing.T) {
 	}
 
 	// AND IT IS IDEMPOTENT: with the trigger and nothing else owned, the
-	// issue agrees.
+	// issue agrees and nothing more is written.
+	writes := len(rig.forge.labelAdds) + len(rig.forge.labelRemovals)
 	second := only(t, rig.sweep(t))
 	if second.Verdict != LabelReconcileConsistent {
 		t.Fatalf("second sweep verdict = %q (%s), want consistent", second.Verdict, second.Evidence)
+	}
+	if got := len(rig.forge.labelAdds) + len(rig.forge.labelRemovals); got != writes {
+		t.Fatalf("a clean issue was written to: +%v -%v", rig.forge.labelAdds, rig.forge.labelRemovals)
 	}
 }
 
@@ -1201,21 +1109,6 @@ func TestLabelReconciler_HandoversAndReadmissionsCannotBothFire(t *testing.T) {
 	}
 }
 
-// TestLabelReconciler_ReadmittedTaskWithACleanIssueIsConsistent is the healthy
-// state: the readmission's label move landed, so the issue carries the trigger
-// and nothing else this module owns, and there is nothing to do.
-func TestLabelReconciler_ReadmittedTaskWithACleanIssueIsConsistent(t *testing.T) {
-	rig := newReconcileRig(t, []string{"bug", "task:ready"}, readmittedTask())
-
-	finding := only(t, rig.sweep(t))
-	if finding.Verdict != LabelReconcileConsistent {
-		t.Fatalf("verdict = %q (%s), want consistent", finding.Verdict, finding.Evidence)
-	}
-	if len(rig.forge.labelAdds)+len(rig.forge.labelRemovals) != 0 {
-		t.Fatalf("a clean issue was written to: +%v -%v", rig.forge.labelAdds, rig.forge.labelRemovals)
-	}
-}
-
 // TestLabelReconciler_ReadmittedTaskAlreadyRestartedIsTheClaimDirections is the
 // boundary between two directions: once the next attempt has started and
 // labelled the issue in progress, the issue claims live work and the claim
@@ -1261,48 +1154,45 @@ func TestLabelReconciler_ReadmissionReparkedMidPassIsNotCleared(t *testing.T) {
 	}
 }
 
-// TestLabelReconciler_ReadmissionDefersWhenTheForgeRefuses is the error path:
-// both reads are fail-closed and the label write is retried next sweep.
-func TestLabelReconciler_ReadmissionDefersWhenTheForgeRefuses(t *testing.T) {
-	for name, arm := range map[string]func(*reconcileRig){
-		"issue unreadable": func(r *reconcileRig) { r.forge.getIssueErr = errors.New("forge down") },
-		"label write":      func(r *reconcileRig) { r.forge.removeLabelErr = errors.New("forge down") },
+// TestLabelReconciler_ReadmissionDefers is the error path: both reads (the
+// issue and the record, the freshness guard) are fail-closed and the label
+// write is retried next sweep.
+func TestLabelReconciler_ReadmissionDefers(t *testing.T) {
+	for name, tc := range map[string]struct {
+		arm      func(*reconcileRig, *firstStepPacer)
+		evidence string
+	}{
+		"issue unreadable": {
+			arm:      func(r *reconcileRig, _ *firstStepPacer) { r.forge.getIssueErr = errors.New("forge down") },
+			evidence: "forge down",
+		},
+		"label write": {
+			arm:      func(r *reconcileRig, _ *firstStepPacer) { r.forge.removeLabelErr = errors.New("forge down") },
+			evidence: "forge down",
+		},
+		"record unreadable": {
+			arm: func(r *reconcileRig, p *firstStepPacer) {
+				p.act = func() { r.tasks.failListing(errors.New("store unreachable")) }
+			},
+			evidence: ErrLabelReconcileRecord.Error(),
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			rig := newReconcileRig(t, []string{"factory:blocked"}, readmittedTask())
-			arm(rig)
+			pacer := &firstStepPacer{}
+			rig := newReconcileRigPaced(t, pacer, []string{"factory:blocked"}, readmittedTask())
+			tc.arm(rig, pacer)
 
 			finding := only(t, rig.sweep(t))
 			if finding.Verdict != LabelReconcileDeferred {
 				t.Fatalf("verdict = %q (%s), want deferred", finding.Verdict, finding.Evidence)
 			}
-			if !strings.Contains(finding.Evidence, "forge down") {
-				t.Fatalf("the evidence does not carry the cause: %s", finding.Evidence)
+			if !strings.Contains(finding.Evidence, tc.evidence) {
+				t.Fatalf("the evidence does not carry %q: %s", tc.evidence, finding.Evidence)
 			}
 			if got := rig.forge.issueLabels(reconcileIssue); !hasAll(got, []string{"factory:blocked"}) {
 				t.Fatalf("labels = %v, want the issue untouched", got)
 			}
 		})
-	}
-}
-
-// TestLabelReconciler_ReadmissionDefersWhenTheRecordCannotBeReRead is the
-// fail-closed half of the freshness guard: an unreadable record is not evidence
-// that a readmission still stands.
-func TestLabelReconciler_ReadmissionDefersWhenTheRecordCannotBeReRead(t *testing.T) {
-	pacer := &firstStepPacer{}
-	rig := newReconcileRigPaced(t, pacer, []string{"factory:blocked"}, readmittedTask())
-	pacer.act = func() { rig.tasks.failListing(errors.New("store unreachable")) }
-
-	finding := only(t, rig.sweep(t))
-	if finding.Verdict != LabelReconcileDeferred {
-		t.Fatalf("verdict = %q (%s), want deferred", finding.Verdict, finding.Evidence)
-	}
-	if !strings.Contains(finding.Evidence, ErrLabelReconcileRecord.Error()) {
-		t.Fatalf("the evidence does not carry the record sentinel: %s", finding.Evidence)
-	}
-	if len(rig.forge.labelRemovals) != 0 {
-		t.Fatalf("an unreadable record still wrote: -%v", rig.forge.labelRemovals)
 	}
 }
 
@@ -1366,28 +1256,6 @@ func TestLabelReconciler_EscalatedTaskIsStillEscalated(t *testing.T) {
 	if got := rig.outcomeComments(); len(got) != 1 ||
 		!strings.Contains(got[0].Body, "the pipeline has no reviewer") {
 		t.Fatalf("the escalation's own reason was not announced: %+v", got)
-	}
-}
-
-// TestLabelReconciler_ParkedTaskWithNoReasonIsUndecidable is the fail-closed
-// edge of reading the record: a blocked task whose ConclusionReason is empty is
-// what a requeue leaves and what a record written before the field existed
-// carries. Neither is an ending, so the sweep reports it and writes nothing
-// rather than inventing one from the block kind.
-func TestLabelReconciler_ParkedTaskWithNoReasonIsUndecidable(t *testing.T) {
-	task := parkedTask(orchestration.TaskBlockKindBlocked, "the account pool is empty")
-	task.ConclusionReason = ""
-	rig := newReconcileRig(t, []string{"factory:in-progress"}, task)
-
-	finding := only(t, rig.sweep(t))
-	if finding.Verdict != LabelReconcileUndecidable {
-		t.Fatalf("verdict = %q (%s), want undecidable", finding.Verdict, finding.Evidence)
-	}
-	if got := len(rig.outcomeComments()); got != 0 {
-		t.Fatalf("an ending was invented for a record that names none: %d comment(s)", got)
-	}
-	if got := rig.forge.issueLabels(reconcileIssue); !hasAll(got, []string{"factory:in-progress"}) {
-		t.Fatalf("labels = %v, want the issue untouched", got)
 	}
 }
 
@@ -1495,64 +1363,81 @@ func TestLabelReconciler_HandoverClaimedAgainMidPassIsConsistent(t *testing.T) {
 	}
 }
 
-// TestLabelReconciler_RestorationDefersWhenTheRecordCannotBeReRead is the
-// error path of the restoration's re-read: fail-closed, nothing written, and
-// the next sweep asks again.
-func TestLabelReconciler_RestorationDefersWhenTheRecordCannotBeReRead(t *testing.T) {
-	live := testTaskRecord(reconcileIssue)
-	live.Status = orchestration.TaskStatusInProgress
+// TestLabelReconciler_RestorationDefers proves each half of the restoration's
+// premise is fail-closed: an unreadable record or issue is not evidence, and a
+// refused write lands nothing. The finding carries the typed cause and the
+// next sweep tries the same issue again.
+func TestLabelReconciler_RestorationDefers(t *testing.T) {
+	tests := []struct {
+		name string
+		// arm breaks one half of the restoration and returns what heals it,
+		// or nil when the case proves only the deferral.
+		arm            func(rig *reconcileRig, pacer *firstStepPacer) func()
+		evidence       []string
+		writeAttempted bool
+	}{
+		{
+			name: "the record cannot be re-read",
+			arm: func(rig *reconcileRig, pacer *firstStepPacer) func() {
+				pacer.act = func() { rig.tasks.failListing(errors.New("store unreachable")) }
+				return func() { rig.tasks.failListing(nil) }
+			},
+			evidence: []string{ErrLabelReconcileRecord.Error()},
+		},
+		{
+			name: "the label write fails",
+			arm: func(rig *reconcileRig, pacer *firstStepPacer) func() {
+				rig.forge.addLabelErr = errors.New("forge down")
+				return func() { rig.forge.addLabelErr = nil }
+			},
+			evidence:       []string{ErrLabelReconcileDeferred.Error(), "forge down"},
+			writeAttempted: true,
+		},
+		{
+			name: "the issue cannot be read",
+			arm: func(rig *reconcileRig, pacer *firstStepPacer) func() {
+				rig.forge.getIssueErr = errors.New("forge down")
+				return nil
+			},
+			evidence: []string{ErrLabelReconcileForge.Error(), "GetIssue", "forge down"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			live := testTaskRecord(reconcileIssue)
+			live.Status = orchestration.TaskStatusInProgress
+			pacer := &firstStepPacer{}
+			rig := newReconcileRigPaced(t, pacer, []string{"bug"}, live)
+			heal := tt.arm(rig, pacer)
 
-	pacer := &firstStepPacer{}
-	rig := newReconcileRigPaced(t, pacer, []string{"bug"}, live)
-	pacer.act = func() { rig.tasks.failListing(errors.New("store unreachable")) }
+			finding := only(t, rig.sweep(t))
+			if finding.Verdict != LabelReconcileDeferred {
+				t.Fatalf("verdict = %q (%s), want deferred", finding.Verdict, finding.Evidence)
+			}
+			for _, want := range tt.evidence {
+				if !strings.Contains(finding.Evidence, want) {
+					t.Fatalf("the evidence does not carry %q: %s", want, finding.Evidence)
+				}
+			}
+			if !tt.writeAttempted && len(rig.forge.labelAdds)+len(rig.forge.labelRemovals) != 0 {
+				t.Fatalf("a failed premise still wrote: +%v -%v", rig.forge.labelAdds, rig.forge.labelRemovals)
+			}
+			if got := rig.forge.issueLabels(reconcileIssue); hasAll(got, []string{"factory:in-progress"}) {
+				t.Fatalf("labels = %v, want no in-progress label to have landed", got)
+			}
 
-	finding := only(t, rig.sweep(t))
-	if finding.Verdict != LabelReconcileDeferred {
-		t.Fatalf("verdict = %q (%s), want deferred", finding.Verdict, finding.Evidence)
-	}
-	if !strings.Contains(finding.Evidence, ErrLabelReconcileRecord.Error()) {
-		t.Fatalf("the evidence does not carry the record sentinel: %s", finding.Evidence)
-	}
-	if len(rig.forge.labelAdds)+len(rig.forge.labelRemovals) != 0 {
-		t.Fatalf("an unreadable record still wrote: +%v -%v", rig.forge.labelAdds, rig.forge.labelRemovals)
-	}
-
-	// AND THE NEXT SWEEP RESTORES IT, with the store answering again.
-	rig.tasks.failListing(nil)
-	if retried := only(t, rig.sweep(t)); retried.Verdict != LabelReconcileRestored {
-		t.Fatalf("the retry = %+v, want the hand-over restored", retried)
-	}
-	if got := rig.forge.issueLabels(reconcileIssue); !hasAll(got, []string{"factory:in-progress", "bug"}) {
-		t.Fatalf("labels = %v, want the in-progress label back", got)
-	}
-}
-
-// TestLabelReconciler_RestorationDefersWhenTheLabelWriteFails is the last of
-// the restoration's error paths: the premise held, the write was attempted and
-// the forge refused. The finding carries the typed cause and the next sweep
-// tries the same issue again.
-func TestLabelReconciler_RestorationDefersWhenTheLabelWriteFails(t *testing.T) {
-	live := testTaskRecord(reconcileIssue)
-	live.Status = orchestration.TaskStatusInProgress
-	rig := newReconcileRig(t, []string{"bug"}, live)
-	rig.forge.addLabelErr = errors.New("forge down")
-
-	finding := only(t, rig.sweep(t))
-	if finding.Verdict != LabelReconcileDeferred {
-		t.Fatalf("verdict = %q (%s), want deferred", finding.Verdict, finding.Evidence)
-	}
-	for _, want := range []string{ErrLabelReconcileDeferred.Error(), "forge down"} {
-		if !strings.Contains(finding.Evidence, want) {
-			t.Fatalf("the evidence does not carry %q: %s", want, finding.Evidence)
-		}
-	}
-	if got := rig.forge.issueLabels(reconcileIssue); hasAll(got, []string{"factory:in-progress"}) {
-		t.Fatalf("labels = %v, want the refused write not to have landed", got)
-	}
-
-	rig.forge.addLabelErr = nil
-	if retried := only(t, rig.sweep(t)); retried.Verdict != LabelReconcileRestored {
-		t.Fatalf("the retry = %+v, want the hand-over restored", retried)
+			// AND THE NEXT SWEEP RESTORES IT once the failure clears.
+			if heal == nil {
+				return
+			}
+			heal()
+			if retried := only(t, rig.sweep(t)); retried.Verdict != LabelReconcileRestored {
+				t.Fatalf("the retry = %+v, want the hand-over restored", retried)
+			}
+			if got := rig.forge.issueLabels(reconcileIssue); !hasAll(got, []string{"factory:in-progress", "bug"}) {
+				t.Fatalf("labels = %v, want the in-progress label back", got)
+			}
+		})
 	}
 }
 
@@ -1605,29 +1490,6 @@ func TestLabelReconciler_RestorationRefusesAnIssueTheAdapterWillNotAnswerFor(t *
 	}
 }
 
-// TestLabelReconciler_RestorationDefersWhenTheIssueCannotBeRead proves the
-// issue half of the premise is fail-closed too: an unreadable issue is not
-// evidence that it carries no claim.
-func TestLabelReconciler_RestorationDefersWhenTheIssueCannotBeRead(t *testing.T) {
-	live := testTaskRecord(reconcileIssue)
-	live.Status = orchestration.TaskStatusInProgress
-	rig := newReconcileRig(t, []string{"bug"}, live)
-	rig.forge.getIssueErr = errors.New("forge down")
-
-	finding := only(t, rig.sweep(t))
-	if finding.Verdict != LabelReconcileDeferred {
-		t.Fatalf("verdict = %q (%s), want deferred", finding.Verdict, finding.Evidence)
-	}
-	for _, want := range []string{ErrLabelReconcileForge.Error(), "GetIssue", "forge down"} {
-		if !strings.Contains(finding.Evidence, want) {
-			t.Fatalf("the evidence does not carry %q: %s", want, finding.Evidence)
-		}
-	}
-	if len(rig.forge.labelAdds)+len(rig.forge.labelRemovals) != 0 {
-		t.Fatalf("an unreadable issue still wrote: +%v -%v", rig.forge.labelAdds, rig.forge.labelRemovals)
-	}
-}
-
 // TestLabelReconciler_PendingTaskIsLeftAlone is the negative of the
 // restoration: a queued task has not been handed over, its issue correctly
 // still carries the trigger, and labelling it in progress would claim a run
@@ -1669,25 +1531,6 @@ func TestLabelReconciler_BindingWithNoInProgressLabelRestoresNothing(t *testing.
 	}
 	if len(rig.forge.labelAdds)+len(rig.forge.labelRemovals) != 0 {
 		t.Fatalf("the forge was written to: +%v -%v", rig.forge.labelAdds, rig.forge.labelRemovals)
-	}
-}
-
-// TestLabelReconciler_LiveTaskWithItsClaimIsConsistent is the healthy state:
-// the forge says the factory is working and it is. Nothing is written.
-func TestLabelReconciler_LiveTaskWithItsClaimIsConsistent(t *testing.T) {
-	task := testTaskRecord(reconcileIssue)
-	task.Status = orchestration.TaskStatusInProgress
-	rig := newReconcileRig(t, []string{"factory:in-progress"}, task)
-
-	finding := only(t, rig.sweep(t))
-	if finding.Verdict != LabelReconcileConsistent {
-		t.Fatalf("verdict = %q (%s), want consistent", finding.Verdict, finding.Evidence)
-	}
-	if len(rig.forge.labelAdds)+len(rig.forge.labelRemovals) != 0 {
-		t.Fatalf("a consistent issue was written to: +%v -%v", rig.forge.labelAdds, rig.forge.labelRemovals)
-	}
-	if got := len(rig.outcomeComments()); got != 0 {
-		t.Fatalf("a consistent issue got %d comment(s)", got)
 	}
 }
 
@@ -1784,38 +1627,70 @@ func TestLabelReconciler_ListIssuesFailureEndsTheProjectPassTyped(t *testing.T) 
 	}
 }
 
-// TestLabelReconciler_OperatorFailedTaskIsUndecidable is the fail-closed case.
-// applyConclusion fails a task for one reason only — the budget is spent — so a
-// failed task with attempts left was retired by some other hand, and announcing
-// "this task has spent its attempt budget" on its issue would be false.
-func TestLabelReconciler_OperatorFailedTaskIsUndecidable(t *testing.T) {
-	task := testTaskRecord(reconcileIssue)
-	task.Status = orchestration.TaskStatusFailed
-	task.Attempts, task.AttemptBudget = 1, 5
-	rig := newReconcileRig(t, []string{"factory:in-progress"}, task)
-
-	finding := only(t, rig.sweep(t))
-	if finding.Verdict != LabelReconcileUndecidable {
-		t.Fatalf("verdict = %q (%s), want undecidable", finding.Verdict, finding.Evidence)
+// TestLabelReconciler_UnreadableEndingIsUndecidable is the fail-closed edge of
+// reading the record: a failed task with attempts left was retired by some
+// other hand, a block kind the vocabulary does not name, a park with no
+// ConclusionReason (a requeue, or a record older than the field) and a runner
+// park resting outside blocked all name no ending. The sweep reports each and
+// writes nothing rather than inventing one.
+func TestLabelReconciler_UnreadableEndingIsUndecidable(t *testing.T) {
+	tests := []struct {
+		name     string
+		task     func() *orchestration.Task
+		evidence string
+	}{
+		{
+			name: "an operator-failed task",
+			task: func() *orchestration.Task {
+				task := testTaskRecord(reconcileIssue)
+				task.Status = orchestration.TaskStatusFailed
+				task.Attempts, task.AttemptBudget = 1, 5
+				return task
+			},
+		},
+		{
+			name: "an unnamed block kind",
+			task: func() *orchestration.Task {
+				return parkedTask(orchestration.TaskBlockKind("invented_yesterday"), "who knows")
+			},
+		},
+		{
+			name: "a parked task with no reason",
+			task: func() *orchestration.Task {
+				task := parkedTask(orchestration.TaskBlockKindBlocked, "the account pool is empty")
+				task.ConclusionReason = ""
+				return task
+			},
+		},
+		{
+			name: "a runner park resting in failed",
+			task: func() *orchestration.Task {
+				task := testTaskRecord(reconcileIssue)
+				task.Status = orchestration.TaskStatusFailed
+				task.ConclusionReason = orchestration.TaskConcludedRunnerParked
+				return task
+			},
+			evidence: "rests in status failed",
+		},
 	}
-	if got := len(rig.outcomeComments()); got != 0 {
-		t.Fatalf("an undecidable task was announced anyway: %d comment(s)", got)
-	}
-	if got := rig.forge.issueLabels(reconcileIssue); !hasAll(got, []string{"factory:in-progress"}) {
-		t.Fatalf("an undecidable task's label was moved: %v", got)
-	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rig := newReconcileRig(t, []string{"factory:in-progress"}, tt.task())
 
-// TestLabelReconciler_UnnamedBlockKindIsUndecidable covers a parked task whose
-// block kind the conclusion vocabulary does not name. The sweep reports it
-// rather than guessing.
-func TestLabelReconciler_UnnamedBlockKindIsUndecidable(t *testing.T) {
-	task := parkedTask(orchestration.TaskBlockKind("invented_yesterday"), "who knows")
-	rig := newReconcileRig(t, []string{"factory:in-progress"}, task)
-
-	finding := only(t, rig.sweep(t))
-	if finding.Verdict != LabelReconcileUndecidable {
-		t.Fatalf("verdict = %q (%s), want undecidable", finding.Verdict, finding.Evidence)
+			finding := only(t, rig.sweep(t))
+			if finding.Verdict != LabelReconcileUndecidable {
+				t.Fatalf("verdict = %q (%s), want undecidable", finding.Verdict, finding.Evidence)
+			}
+			if !strings.Contains(finding.Evidence, tt.evidence) {
+				t.Fatalf("the evidence does not name %q: %s", tt.evidence, finding.Evidence)
+			}
+			if got := len(rig.outcomeComments()); got != 0 {
+				t.Fatalf("an ending was invented for a record that names none: %d comment(s)", got)
+			}
+			if len(rig.forge.labelAdds)+len(rig.forge.labelRemovals) != 0 {
+				t.Fatalf("an undecidable record was written from: +%v -%v", rig.forge.labelAdds, rig.forge.labelRemovals)
+			}
+		})
 	}
 }
 

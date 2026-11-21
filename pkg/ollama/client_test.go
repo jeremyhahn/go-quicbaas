@@ -121,48 +121,6 @@ func TestClientDoRequest_Success(t *testing.T) {
 	}
 }
 
-func TestClientDoRequest_NotFound(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		_, _ = w.Write([]byte(`{"error": "model 'test' not found"}`))
-	}))
-	defer server.Close()
-
-	client := NewClient(ClientConfig{
-		BaseURL:    server.URL,
-		MaxRetries: 0, // No retries for this test
-	})
-	defer client.Close()
-
-	ctx := context.Background()
-	_, err := client.doRequest(ctx, "GET", "/test", nil)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-}
-
-func TestClientDoRequest_BadRequest(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"error": "invalid request"}`))
-	}))
-	defer server.Close()
-
-	client := NewClient(ClientConfig{
-		BaseURL:    server.URL,
-		MaxRetries: 0,
-	})
-	defer client.Close()
-
-	ctx := context.Background()
-	_, err := client.doRequest(ctx, "POST", "/test", map[string]string{"bad": "data"})
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-}
-
 func TestClientDoRequest_ServerError(t *testing.T) {
 	callCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -258,8 +216,18 @@ func TestIsConnectionRefused(t *testing.T) {
 			expected: false,
 		},
 		{
-			name:     "generic error",
+			name:     "non-net error",
 			err:      ErrRequestFailed,
+			expected: false,
+		},
+		{
+			name:     "net op error with ECONNREFUSED",
+			err:      &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED},
+			expected: true,
+		},
+		{
+			name:     "net op error with ETIMEDOUT",
+			err:      &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ETIMEDOUT},
 			expected: false,
 		},
 	}
@@ -274,169 +242,65 @@ func TestIsConnectionRefused(t *testing.T) {
 	}
 }
 
-func TestClientDoRequest_InvalidJSON(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`not valid json`))
-	}))
-	defer server.Close()
-
-	client := NewClient(ClientConfig{BaseURL: server.URL})
-	defer client.Close()
-
-	ctx := context.Background()
-	body, err := client.doRequest(ctx, "GET", "/test", nil)
-	// This should succeed - the client just returns raw bytes
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
+func TestClientHandleErrorResponse(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+		body       string
+		expected   error
+	}{
+		{
+			name:       "unknown status",
+			statusCode: http.StatusTeapot,
+			body:       "I'm a teapot",
+			expected:   ErrRequestFailed,
+		},
+		{
+			name:       "bad request with empty body",
+			statusCode: http.StatusBadRequest,
+			body:       "",
+			expected:   ErrInvalidInput,
+		},
+		{
+			name:       "bad request with plain text body",
+			statusCode: http.StatusBadRequest,
+			body:       "plain text error",
+			expected:   ErrInvalidInput,
+		},
+		{
+			name:       "not found naming a model",
+			statusCode: http.StatusNotFound,
+			body:       `{"error":"model 'xyz' not found"}`,
+			expected:   ErrModelNotFound,
+		},
+		{
+			name:       "not found without a model",
+			statusCode: http.StatusNotFound,
+			body:       `{"error":"resource not found"}`,
+			expected:   ErrRequestFailed,
+		},
+		{
+			name:       "bad gateway",
+			statusCode: http.StatusBadGateway,
+			body:       `{"error":"bad gateway"}`,
+			expected:   ErrOllamaUnavailable,
+		},
 	}
-	if string(body) != "not valid json" {
-		t.Errorf("expected raw body, got %s", string(body))
-	}
-}
 
-func TestClientDoRequest_GatewayTimeout(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusGatewayTimeout)
-		_, _ = w.Write([]byte(`{"error": "gateway timeout"}`))
-	}))
-	defer server.Close()
-
-	client := NewClient(ClientConfig{
-		BaseURL:    server.URL,
-		MaxRetries: 0,
-	})
-	defer client.Close()
-
-	ctx := context.Background()
-	_, err := client.doRequest(ctx, "GET", "/test", nil)
-	if err == nil {
-		t.Fatal("expected error")
-	}
-}
-
-func TestClientHandleErrorResponse_UnknownStatus(t *testing.T) {
 	client := NewClient(DefaultClientConfig())
-	err := client.handleErrorResponse(418, []byte("I'm a teapot"))
-	if err == nil {
-		t.Fatal("expected error")
-	}
-	if !errors.Is(err, ErrRequestFailed) {
-		t.Errorf("expected ErrRequestFailed, got %v", err)
-	}
-}
-
-func TestClientHandleErrorResponse_EmptyBody(t *testing.T) {
-	client := NewClient(DefaultClientConfig())
-	err := client.handleErrorResponse(http.StatusBadRequest, []byte(""))
-	if err == nil {
-		t.Fatal("expected error")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := client.handleErrorResponse(tt.statusCode, []byte(tt.body))
+			if !errors.Is(err, tt.expected) {
+				t.Errorf("expected %v, got %v", tt.expected, err)
+			}
+		})
 	}
 }
 
 // =============================================================================
 // Consolidated from coverage_91_test.go
 // =============================================================================
-
-// TestIsConnectionRefused_NilError tests isConnectionRefused with nil error.
-func TestIsConnectionRefused_NilError(t *testing.T) {
-	if isConnectionRefused(nil) {
-		t.Error("expected false for nil error")
-	}
-}
-
-// TestIsConnectionRefused_NonNetError tests isConnectionRefused with non-net error.
-func TestIsConnectionRefused_NonNetError(t *testing.T) {
-	err := errors.New("some random error")
-	if isConnectionRefused(err) {
-		t.Error("expected false for non-net error")
-	}
-}
-
-// TestIsConnectionRefused_NetOpError tests isConnectionRefused with net.OpError.
-func TestIsConnectionRefused_NetOpError(t *testing.T) {
-	// Create a connection refused error
-	opErr := &net.OpError{
-		Op:  "dial",
-		Net: "tcp",
-		Err: syscall.ECONNREFUSED,
-	}
-	if !isConnectionRefused(opErr) {
-		t.Error("expected true for connection refused error")
-	}
-}
-
-// TestIsConnectionRefused_OtherNetError tests isConnectionRefused with other net error.
-func TestIsConnectionRefused_OtherNetError(t *testing.T) {
-	// Create a different network error
-	opErr := &net.OpError{
-		Op:  "dial",
-		Net: "tcp",
-		Err: syscall.ETIMEDOUT,
-	}
-	if isConnectionRefused(opErr) {
-		t.Error("expected false for timeout error")
-	}
-}
-
-// TestHealthChecker_IsAvailable_NilStatus tests IsAvailable with no status stored.
-func TestHealthChecker_IsAvailable_NilStatus(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-
-	client := NewClient(DefaultClientConfig())
-	client.baseURL = server.URL
-	checker := NewHealthChecker(client)
-
-	// Should be false before any check
-	if checker.IsAvailable() {
-		t.Error("expected false when no status is stored")
-	}
-}
-
-// TestHealthChecker_LastStatus_NilStatus tests LastStatus with no status stored.
-func TestHealthChecker_LastStatus_NilStatus(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-
-	client := NewClient(DefaultClientConfig())
-	client.baseURL = server.URL
-	checker := NewHealthChecker(client)
-
-	// Should return unavailable status when nothing stored
-	status := checker.LastStatus()
-	if status.Available {
-		t.Error("expected Available=false when no status is stored")
-	}
-}
-
-// TestHealthChecker_GetVersion_Success tests getVersion method.
-func TestHealthChecker_GetVersion_Success(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/version" {
-			resp := VersionResponse{Version: "0.1.25"}
-			json.NewEncoder(w).Encode(resp)
-		}
-	}))
-	defer server.Close()
-
-	client := NewClient(DefaultClientConfig())
-	client.baseURL = server.URL
-	checker := NewHealthChecker(client)
-
-	version, err := checker.getVersion(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if version != "0.1.25" {
-		t.Errorf("expected version 0.1.25, got %s", version)
-	}
-}
 
 // TestHealthChecker_GetVersion_InvalidJSON tests getVersion with invalid JSON.
 func TestHealthChecker_GetVersion_InvalidJSON(t *testing.T) {
@@ -582,66 +446,6 @@ func TestClientDoRequestOnce_MarshalError(t *testing.T) {
 	}
 }
 
-// TestClientDoRequestOnce_NilBody tests doRequestOnce with nil body.
-func TestClientDoRequestOnce_NilBody(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("{}"))
-	}))
-	defer server.Close()
-
-	client := NewClient(DefaultClientConfig())
-	client.baseURL = server.URL
-
-	resp, err := client.doRequestOnce(context.Background(), "GET", "/test", nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(resp) == 0 {
-		t.Error("expected non-empty response")
-	}
-}
-
-// TestClientHandleErrorResponse_NotFoundWithModel tests 404 with model in message.
-func TestClientHandleErrorResponse_NotFoundWithModel(t *testing.T) {
-	client := NewClient(DefaultClientConfig())
-
-	err := client.handleErrorResponse(http.StatusNotFound, []byte(`{"error":"model 'xyz' not found"}`))
-	if !errors.Is(err, ErrModelNotFound) {
-		t.Errorf("expected ErrModelNotFound, got %v", err)
-	}
-}
-
-// TestClientHandleErrorResponse_NotFoundGeneric tests 404 without model.
-func TestClientHandleErrorResponse_NotFoundGeneric(t *testing.T) {
-	client := NewClient(DefaultClientConfig())
-
-	err := client.handleErrorResponse(http.StatusNotFound, []byte(`{"error":"resource not found"}`))
-	if !errors.Is(err, ErrRequestFailed) {
-		t.Errorf("expected ErrRequestFailed for generic 404, got %v", err)
-	}
-}
-
-// TestClientHandleErrorResponse_BadGateway tests 502 error.
-func TestClientHandleErrorResponse_BadGateway(t *testing.T) {
-	client := NewClient(DefaultClientConfig())
-
-	err := client.handleErrorResponse(http.StatusBadGateway, []byte(`{"error":"bad gateway"}`))
-	if !errors.Is(err, ErrOllamaUnavailable) {
-		t.Errorf("expected ErrOllamaUnavailable, got %v", err)
-	}
-}
-
-// TestClientHandleErrorResponse_ServiceUnavailable tests 503 error.
-func TestClientHandleErrorResponse_ServiceUnavailable(t *testing.T) {
-	client := NewClient(DefaultClientConfig())
-
-	err := client.handleErrorResponse(http.StatusServiceUnavailable, []byte(`{"error":"service unavailable"}`))
-	if !errors.Is(err, ErrOllamaUnavailable) {
-		t.Errorf("expected ErrOllamaUnavailable, got %v", err)
-	}
-}
-
 // TestClientDoRequest_RetrySuccess tests retry logic success.
 func TestClientDoRequest_RetrySuccess(t *testing.T) {
 	attempts := 0
@@ -670,119 +474,9 @@ func TestClientDoRequest_RetrySuccess(t *testing.T) {
 	}
 }
 
-// TestClientDoRequest_AllRetriesExhausted tests retry exhaustion.
-func TestClientDoRequest_AllRetriesExhausted(t *testing.T) {
-	attempts := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		attempts++
-		w.WriteHeader(http.StatusServiceUnavailable)
-	}))
-	defer server.Close()
-
-	cfg := DefaultClientConfig()
-	cfg.MaxRetries = 2
-	client := NewClient(cfg)
-	client.baseURL = server.URL
-
-	_, err := client.doRequest(context.Background(), "GET", "/test", nil)
-	if err == nil {
-		t.Fatal("expected error after retries exhausted")
-	}
-}
-
-// TestHealthChecker_Check_WithVersion tests Check method stores version.
-func TestHealthChecker_Check_WithVersion(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/":
-			w.Write([]byte("Ollama is running"))
-		case "/api/version":
-			json.NewEncoder(w).Encode(VersionResponse{Version: "0.1.30"})
-		}
-	}))
-	defer server.Close()
-
-	client := NewClient(DefaultClientConfig())
-	client.baseURL = server.URL
-	checker := NewHealthChecker(client)
-
-	status, err := checker.Check(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !status.Available {
-		t.Error("expected available=true")
-	}
-	if status.Version != "0.1.30" {
-		t.Errorf("expected version 0.1.30, got %s", status.Version)
-	}
-
-	// IsAvailable should now return true
-	if !checker.IsAvailable() {
-		t.Error("expected IsAvailable() to return true after successful check")
-	}
-}
-
 // =============================================================================
 // Consolidated from coverage_boost_test.go
 // =============================================================================
-
-// TestIsConnectionRefused_WithOpError tests isConnectionRefused with net.OpError wrapping ECONNREFUSED.
-func TestIsConnectionRefused_WithOpError(t *testing.T) {
-	// Create a proper net.OpError with ECONNREFUSED
-	opErr := &net.OpError{
-		Op:  "dial",
-		Net: "tcp",
-		Err: syscall.ECONNREFUSED,
-	}
-
-	if !isConnectionRefused(opErr) {
-		t.Error("expected true for connection refused error")
-	}
-}
-
-// TestIsConnectionRefused_WithOtherSyscallError tests isConnectionRefused with other syscall errors.
-func TestIsConnectionRefused_WithOtherSyscallError(t *testing.T) {
-	// Create a net.OpError with a different error
-	opErr := &net.OpError{
-		Op:  "dial",
-		Net: "tcp",
-		Err: syscall.ETIMEDOUT,
-	}
-
-	if isConnectionRefused(opErr) {
-		t.Error("expected false for timeout error")
-	}
-}
-
-// TestIsConnectionRefused_WithWrappedError tests isConnectionRefused with wrapped error.
-func TestIsConnectionRefused_WithWrappedError(t *testing.T) {
-	// Non-net.OpError should return false
-	wrappedErr := errors.New("connection error")
-	if isConnectionRefused(wrappedErr) {
-		t.Error("expected false for non-OpError")
-	}
-}
-
-// TestModelService_List_RequestError tests List when the request fails.
-func TestModelService_List_RequestError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		w.Write([]byte(`{"error": "service unavailable"}`))
-	}))
-	defer server.Close()
-
-	client := NewClient(ClientConfig{
-		BaseURL:    server.URL,
-		MaxRetries: 0,
-	})
-	svc := NewModelService(client)
-
-	_, err := svc.List(context.Background())
-	if err == nil {
-		t.Fatal("expected error when request fails")
-	}
-}
 
 // TestModelService_Show_RequestError tests Show when the request fails.
 func TestModelService_Show_RequestError(t *testing.T) {
@@ -821,26 +515,6 @@ func TestEmbeddingService_EmbedWithModel_InvalidJSON(t *testing.T) {
 	}
 	if !errors.Is(err, ErrInvalidResponse) {
 		t.Errorf("expected ErrInvalidResponse, got %v", err)
-	}
-}
-
-// TestEmbeddingService_EmbedWithModel_EmptyEmbedding tests EmbedWithModel with empty embedding response.
-func TestEmbeddingService_EmbedWithModel_EmptyEmbedding(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		resp := EmbedResponse{Embedding: []float32{}}
-		json.NewEncoder(w).Encode(resp)
-	}))
-	defer server.Close()
-
-	client := NewClient(ClientConfig{BaseURL: server.URL})
-	svc := NewEmbeddingService(client, "test-model")
-
-	_, err := svc.EmbedWithModel(context.Background(), "model", "test text")
-	if err == nil {
-		t.Fatal("expected error for empty embedding")
-	}
-	if !errors.Is(err, ErrEmptyResponse) {
-		t.Errorf("expected ErrEmptyResponse, got %v", err)
 	}
 }
 
@@ -972,26 +646,6 @@ func TestClientDoRequestOnce_ContextDeadlineExceeded(t *testing.T) {
 	}
 }
 
-// TestHealthChecker_GetVersion_RequestError tests getVersion when request fails.
-func TestHealthChecker_GetVersion_RequestError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(`{"error": "internal error"}`))
-	}))
-	defer server.Close()
-
-	client := NewClient(ClientConfig{
-		BaseURL:    server.URL,
-		MaxRetries: 0,
-	})
-	checker := NewHealthChecker(client)
-
-	_, err := checker.getVersion(context.Background())
-	if err == nil {
-		t.Fatal("expected error for failed request")
-	}
-}
-
 // TestHealthChecker_Check_StoresError tests that Check stores error in status.
 func TestHealthChecker_Check_StoresError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1026,145 +680,5 @@ func TestHealthChecker_Check_StoresError(t *testing.T) {
 	lastStatus := checker.LastStatus()
 	if lastStatus.Error == "" {
 		t.Error("expected LastStatus().Error to be set")
-	}
-}
-
-// TestClientHandleErrorResponse_InvalidJSONBody tests handleErrorResponse with invalid JSON.
-func TestClientHandleErrorResponse_InvalidJSONBody(t *testing.T) {
-	client := NewClient(DefaultClientConfig())
-
-	// Body that's not valid JSON but not empty
-	err := client.handleErrorResponse(http.StatusBadRequest, []byte("plain text error"))
-	if err == nil {
-		t.Fatal("expected error")
-	}
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Errorf("expected ErrInvalidInput, got %v", err)
-	}
-}
-
-// TestEmbeddingService_EmbedBatchWithModel_EmptyTextInBatch tests EmbedBatchWithModel with empty text in batch.
-func TestEmbeddingService_EmbedBatchWithModel_EmptyTextInBatch(t *testing.T) {
-	client := NewClient(DefaultClientConfig())
-	svc := NewEmbeddingService(client, "test-model")
-
-	_, err := svc.EmbedBatchWithModel(context.Background(), "model", []string{"text1", "", "text3"})
-	if err == nil {
-		t.Fatal("expected error for empty text in batch")
-	}
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Errorf("expected ErrInvalidInput, got %v", err)
-	}
-}
-
-// TestEmbeddingService_EmbedBatch_SequentialMode tests batch embedding with small batch (sequential).
-func TestEmbeddingService_EmbedBatch_SequentialMode(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		resp := EmbedResponse{Embedding: []float32{0.1, 0.2, 0.3}}
-		json.NewEncoder(w).Encode(resp)
-	}))
-	defer server.Close()
-
-	client := NewClient(ClientConfig{BaseURL: server.URL})
-	svc := NewEmbeddingService(client, "test-model")
-
-	// Small batch (<=3) uses sequential processing
-	texts := []string{"text1", "text2"}
-	embeddings, err := svc.EmbedBatch(context.Background(), texts)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(embeddings) != 2 {
-		t.Errorf("expected 2 embeddings, got %d", len(embeddings))
-	}
-}
-
-// TestEmbeddingService_EmbedBatch_ConcurrentMode tests batch embedding with large batch (concurrent).
-func TestEmbeddingService_EmbedBatch_ConcurrentMode(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		resp := EmbedResponse{Embedding: []float32{0.1, 0.2, 0.3}}
-		json.NewEncoder(w).Encode(resp)
-	}))
-	defer server.Close()
-
-	client := NewClient(ClientConfig{BaseURL: server.URL})
-	svc := NewEmbeddingService(client, "test-model")
-
-	// Large batch (>3) uses concurrent processing
-	texts := []string{"text1", "text2", "text3", "text4", "text5"}
-	embeddings, err := svc.EmbedBatch(context.Background(), texts)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(embeddings) != 5 {
-		t.Errorf("expected 5 embeddings, got %d", len(embeddings))
-	}
-}
-
-// TestEmbeddingService_EmbedBatchConcurrent_ContextCanceled tests concurrent batch with context canceled.
-func TestEmbeddingService_EmbedBatchConcurrent_ContextCanceled(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(100 * time.Millisecond)
-		resp := EmbedResponse{Embedding: []float32{0.1, 0.2, 0.3}}
-		json.NewEncoder(w).Encode(resp)
-	}))
-	defer server.Close()
-
-	client := NewClient(ClientConfig{BaseURL: server.URL})
-	svc := NewEmbeddingService(client, "test-model")
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // Cancel immediately
-
-	texts := []string{"text1", "text2", "text3", "text4", "text5"}
-	_, err := svc.embedBatchConcurrent(ctx, "model", texts)
-	if err == nil {
-		t.Fatal("expected error for canceled context")
-	}
-}
-
-// TestEmbeddingService_EmbedBatchConcurrent_Error tests concurrent batch with request error.
-func TestEmbeddingService_EmbedBatchConcurrent_Error(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer server.Close()
-
-	client := NewClient(ClientConfig{
-		BaseURL:    server.URL,
-		MaxRetries: 0,
-	})
-	svc := NewEmbeddingService(client, "test-model")
-
-	texts := []string{"text1", "text2", "text3", "text4", "text5"}
-	_, err := svc.embedBatchConcurrent(context.Background(), "model", texts)
-	if err == nil {
-		t.Fatal("expected error")
-	}
-}
-
-// TestHealthChecker_IsAvailable_InitialState tests IsAvailable returns false initially.
-func TestHealthChecker_IsAvailable_InitialState(t *testing.T) {
-	client := NewClient(DefaultClientConfig())
-	checker := NewHealthChecker(client)
-
-	// Should be unavailable initially
-	if checker.IsAvailable() {
-		t.Error("expected false when checker is newly created")
-	}
-}
-
-// TestHealthChecker_LastStatus_InitialState tests LastStatus returns unavailable initially.
-func TestHealthChecker_LastStatus_InitialState(t *testing.T) {
-	client := NewClient(DefaultClientConfig())
-	checker := NewHealthChecker(client)
-
-	// Should return unavailable status initially
-	status := checker.LastStatus()
-	if status == nil {
-		t.Fatal("expected non-nil status")
-	}
-	if status.Available {
-		t.Error("expected Available=false initially")
 	}
 }

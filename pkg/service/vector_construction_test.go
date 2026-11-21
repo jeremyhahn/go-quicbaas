@@ -17,7 +17,6 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -188,20 +187,6 @@ func TestWithVectorShardID_Option(t *testing.T) {
 	require.NotNil(t, svc)
 }
 
-func TestNewVectorService_AllOptions(t *testing.T) {
-	storage := newVecMockStorage()
-	logger := newVecTestLogger()
-
-	svc, err := NewVectorService(
-		storage,
-		logger,
-		WithVectorShardID(3),
-	)
-
-	require.NoError(t, err)
-	require.NotNil(t, svc)
-}
-
 // =============================================================================
 // Namespace Operation Tests - Unique Tests Only
 // =============================================================================
@@ -285,23 +270,6 @@ func TestVectorService_CreateNamespace_AlreadyExists(t *testing.T) {
 	assert.Equal(t, qbErrors.ErrAlreadyExists, qbErr.Code)
 }
 
-func TestVectorService_DeleteNamespace_EmptyNamespace(t *testing.T) {
-	storage := newVecMockStorage()
-	logger := newVecTestLogger()
-
-	svc, err := NewVectorService(storage, logger)
-	require.NoError(t, err)
-
-	req := &DeleteNamespaceRequest{
-		Namespace: "",
-	}
-
-	resp, err := svc.DeleteNamespace(tenantctx.WithSystem(context.Background()), req)
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
 func TestVectorService_ListNamespaces_EmptyRequest(t *testing.T) {
 	storage := newVecMockStorage()
 	calls := 0
@@ -342,186 +310,6 @@ func TestVectorService_ListNamespaces_StorageError(t *testing.T) {
 	assert.Nil(t, resp)
 }
 
-func TestVectorService_GetNamespaceInfo_EmptyNamespace(t *testing.T) {
-	storage := newVecMockStorage()
-	logger := newVecTestLogger()
-
-	svc, err := NewVectorService(storage, logger)
-	require.NoError(t, err)
-
-	resp, err := svc.GetNamespaceInfo(tenantctx.WithSystem(context.Background()), &GetNamespaceInfoRequest{
-		Namespace: "",
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestVectorService_UpsertVector_EmptyNamespace(t *testing.T) {
-	storage := newVecMockStorage()
-	logger := newVecTestLogger()
-
-	svc, err := NewVectorService(storage, logger)
-	require.NoError(t, err)
-
-	req := &UpsertVectorRequest{
-		Namespace: "",
-		Vector:    []float32{0.1, 0.2, 0.3},
-	}
-
-	resp, err := svc.UpsertVector(tenantctx.WithSystem(context.Background()), req)
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-// =============================================================================
-// GetVector Tests - Unique Tests Only
-// =============================================================================
-
-func TestVectorService_GetVector_EmptyNamespace(t *testing.T) {
-	storage := newVecMockStorage()
-	logger := newVecTestLogger()
-
-	svc, err := NewVectorService(storage, logger)
-	require.NoError(t, err)
-
-	req := &GetVectorRequest{
-		Namespace: "",
-		ID:        1,
-	}
-
-	resp, err := svc.GetVector(tenantctx.WithSystem(context.Background()), req)
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-// =============================================================================
-// DeleteVector Tests - Unique Tests Only
-// =============================================================================
-
-func TestVectorService_DeleteVector_EmptyNamespace(t *testing.T) {
-	storage := newVecMockStorage()
-	logger := newVecTestLogger()
-
-	svc, err := NewVectorService(storage, logger)
-	require.NoError(t, err)
-
-	req := &DeleteVectorRequest{
-		Namespace: "",
-		ID:        1,
-	}
-
-	resp, err := svc.DeleteVector(tenantctx.WithSystem(context.Background()), req)
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-// =============================================================================
-// Search Validation Tests - Unique Tests Only
-// =============================================================================
-
-func TestVectorService_SearchSimilar_EmptyNamespace(t *testing.T) {
-	storage := newVecMockStorage()
-	logger := newVecTestLogger()
-
-	svc, err := NewVectorService(storage, logger)
-	require.NoError(t, err)
-
-	req := &SearchSimilarRequest{
-		Namespace:   "",
-		QueryVector: []float32{0.1, 0.2},
-		K:           10,
-	}
-
-	resp, err := svc.SearchSimilar(tenantctx.WithSystem(context.Background()), req)
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestVectorService_SearchSimilar_EmptyVector(t *testing.T) {
-	storage := newVecMockStorage()
-	logger := newVecTestLogger()
-
-	svc, err := NewVectorService(storage, logger)
-	require.NoError(t, err)
-
-	req := &SearchSimilarRequest{
-		Namespace:   "test-ns",
-		QueryVector: []float32{},
-		K:           10,
-	}
-
-	resp, err := svc.SearchSimilar(tenantctx.WithSystem(context.Background()), req)
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestVectorService_SearchSimilar_ZeroTopK(t *testing.T) {
-	storage := newVecMockStorage()
-	logger := newVecTestLogger()
-
-	svc, err := NewVectorService(storage, logger)
-	require.NoError(t, err)
-
-	req := &SearchSimilarRequest{
-		Namespace:   "test-ns",
-		QueryVector: []float32{0.1, 0.2},
-		K:           0,
-	}
-
-	resp, err := svc.SearchSimilar(tenantctx.WithSystem(context.Background()), req)
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-// =============================================================================
-// Batch Operation Validation Tests - Unique Tests Only
-// =============================================================================
-
-func TestVectorService_BatchUpsert_EmptyNamespace(t *testing.T) {
-	storage := newVecMockStorage()
-	logger := newVecTestLogger()
-
-	svc, err := NewVectorService(storage, logger)
-	require.NoError(t, err)
-
-	req := &BatchUpsertRequest{
-		Namespace: "",
-		Vectors: []*VectorData{
-			{Vector: []float32{0.1, 0.2}},
-		},
-	}
-
-	resp, err := svc.BatchUpsert(tenantctx.WithSystem(context.Background()), req)
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestVectorService_SearchByMetadata_EmptyNamespace(t *testing.T) {
-	storage := newVecMockStorage()
-	logger := newVecTestLogger()
-
-	svc, err := NewVectorService(storage, logger)
-	require.NoError(t, err)
-
-	req := &SearchByMetadataRequest{
-		Namespace: "",
-		Filters:   map[string]interface{}{"key": "value"},
-	}
-
-	resp, err := svc.SearchByMetadata(tenantctx.WithSystem(context.Background()), req)
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
 func TestVectorService_SearchByMetadata_NoFilters(t *testing.T) {
 	storage := newVecMockStorage()
 	logger := newVecTestLogger()
@@ -542,247 +330,94 @@ func TestVectorService_SearchByMetadata_NoFilters(t *testing.T) {
 }
 
 // =============================================================================
-// Index and Compaction Validation Tests - Unique Tests Only
+// Request Validation Tests
 // =============================================================================
 
-func TestVectorService_RebuildIndex_EmptyNamespace(t *testing.T) {
-	storage := newVecMockStorage()
-	logger := newVecTestLogger()
-
-	svc, err := NewVectorService(storage, logger)
+// TestVectorService_RequestValidation checks that every method rejects a
+// request missing a required field with ErrInvalidInput and no response.
+func TestVectorService_RequestValidation(t *testing.T) {
+	svc, err := NewVectorService(newVecMockStorage(), newVecTestLogger())
 	require.NoError(t, err)
+	ctx := tenantctx.WithSystem(context.Background())
 
-	req := &RebuildIndexRequest{
-		Namespace: "",
+	tests := []struct {
+		name string
+		call func() (any, error)
+	}{
+		{"DeleteNamespace empty namespace", func() (any, error) {
+			return svc.DeleteNamespace(ctx, &DeleteNamespaceRequest{})
+		}},
+		{"GetNamespaceInfo empty namespace", func() (any, error) {
+			return svc.GetNamespaceInfo(ctx, &GetNamespaceInfoRequest{})
+		}},
+		{"UpsertVector empty namespace", func() (any, error) {
+			return svc.UpsertVector(ctx, &UpsertVectorRequest{Vector: []float32{0.1, 0.2, 0.3}})
+		}},
+		{"GetVector empty namespace", func() (any, error) {
+			return svc.GetVector(ctx, &GetVectorRequest{ID: 1})
+		}},
+		{"DeleteVector empty namespace", func() (any, error) {
+			return svc.DeleteVector(ctx, &DeleteVectorRequest{ID: 1})
+		}},
+		{"SearchSimilar empty namespace", func() (any, error) {
+			return svc.SearchSimilar(ctx, &SearchSimilarRequest{QueryVector: []float32{0.1, 0.2}, K: 10})
+		}},
+		{"SearchSimilar empty vector", func() (any, error) {
+			return svc.SearchSimilar(ctx, &SearchSimilarRequest{Namespace: "test-ns", QueryVector: []float32{}, K: 10})
+		}},
+		{"SearchSimilar zero K", func() (any, error) {
+			return svc.SearchSimilar(ctx, &SearchSimilarRequest{Namespace: "test-ns", QueryVector: []float32{0.1, 0.2}})
+		}},
+		{"BatchUpsert empty namespace", func() (any, error) {
+			return svc.BatchUpsert(ctx, &BatchUpsertRequest{Vectors: []*VectorData{{Vector: []float32{0.1, 0.2}}}})
+		}},
+		{"SearchByMetadata empty namespace", func() (any, error) {
+			return svc.SearchByMetadata(ctx, &SearchByMetadataRequest{Filters: map[string]interface{}{"key": "value"}})
+		}},
+		{"RebuildIndex empty namespace", func() (any, error) {
+			return svc.RebuildIndex(ctx, &RebuildIndexRequest{})
+		}},
+		{"GetRebuildProgress empty job ID", func() (any, error) {
+			return svc.GetRebuildProgress(ctx, &GetRebuildProgressRequest{})
+		}},
+		{"GetIndexStats empty namespace", func() (any, error) {
+			return svc.GetIndexStats(ctx, &GetIndexStatsRequest{})
+		}},
+		{"BatchDeleteVectors empty namespace", func() (any, error) {
+			return svc.BatchDeleteVectors(ctx, &BatchDeleteVectorsRequest{IDs: []uint64{1, 2}})
+		}},
+		{"BatchDeleteVectors empty IDs", func() (any, error) {
+			return svc.BatchDeleteVectors(ctx, &BatchDeleteVectorsRequest{Namespace: "test-ns", IDs: []uint64{}})
+		}},
+		{"ListVectors empty namespace", func() (any, error) {
+			return svc.ListVectors(ctx, &ListVectorsRequest{})
+		}},
+		{"UpdateMetadata empty namespace", func() (any, error) {
+			return svc.UpdateMetadata(ctx, &UpdateVectorMetadataRequest{ID: 1, Metadata: map[string]interface{}{"key": "value"}})
+		}},
+		{"SearchByID empty namespace", func() (any, error) {
+			return svc.SearchByID(ctx, &SearchByIDRequest{ID: 1, K: 10})
+		}},
+		{"HybridSearch empty namespace", func() (any, error) {
+			return svc.HybridSearch(ctx, &HybridSearchRequest{QueryVector: []float32{0.1, 0.2}, K: 10})
+		}},
+		{"HybridSearch zero K", func() (any, error) {
+			return svc.HybridSearch(ctx, &HybridSearchRequest{Namespace: "test-ns", QueryVector: []float32{0.1, 0.2}})
+		}},
+		{"GetCompactionProgress empty operation ID", func() (any, error) {
+			return svc.GetCompactionProgress(ctx, &GetCompactionProgressRequest{})
+		}},
 	}
 
-	resp, err := svc.RebuildIndex(tenantctx.WithSystem(context.Background()), req)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, err := tt.call()
 
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestVectorService_GetRebuildProgress_EmptyJobID(t *testing.T) {
-	storage := newVecMockStorage()
-	logger := newVecTestLogger()
-
-	svc, err := NewVectorService(storage, logger)
-	require.NoError(t, err)
-
-	req := &GetRebuildProgressRequest{
-		JobID: "",
+			require.Error(t, err)
+			assert.Nil(t, resp)
+			var qbErr *qbErrors.QBError
+			require.True(t, errors.As(err, &qbErr))
+			assert.Equal(t, qbErrors.ErrInvalidInput, qbErr.Code)
+		})
 	}
-
-	resp, err := svc.GetRebuildProgress(tenantctx.WithSystem(context.Background()), req)
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestVectorService_GetIndexStats_EmptyNamespace(t *testing.T) {
-	storage := newVecMockStorage()
-	logger := newVecTestLogger()
-
-	svc, err := NewVectorService(storage, logger)
-	require.NoError(t, err)
-
-	req := &GetIndexStatsRequest{
-		Namespace: "",
-	}
-
-	resp, err := svc.GetIndexStats(tenantctx.WithSystem(context.Background()), req)
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestVectorService_BatchDeleteVectors_EmptyNamespace(t *testing.T) {
-	storage := newVecMockStorage()
-	logger := newVecTestLogger()
-
-	svc, err := NewVectorService(storage, logger)
-	require.NoError(t, err)
-
-	req := &BatchDeleteVectorsRequest{
-		Namespace: "",
-		IDs:       []uint64{1, 2},
-	}
-
-	resp, err := svc.BatchDeleteVectors(tenantctx.WithSystem(context.Background()), req)
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestVectorService_BatchDeleteVectors_EmptyIDs(t *testing.T) {
-	storage := newVecMockStorage()
-	logger := newVecTestLogger()
-
-	svc, err := NewVectorService(storage, logger)
-	require.NoError(t, err)
-
-	req := &BatchDeleteVectorsRequest{
-		Namespace: "test-ns",
-		IDs:       []uint64{},
-	}
-
-	resp, err := svc.BatchDeleteVectors(tenantctx.WithSystem(context.Background()), req)
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestVectorService_ListVectors_EmptyNamespace(t *testing.T) {
-	storage := newVecMockStorage()
-	logger := newVecTestLogger()
-
-	svc, err := NewVectorService(storage, logger)
-	require.NoError(t, err)
-
-	req := &ListVectorsRequest{
-		Namespace: "",
-	}
-
-	resp, err := svc.ListVectors(tenantctx.WithSystem(context.Background()), req)
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestVectorService_UpdateMetadata_EmptyNamespace(t *testing.T) {
-	storage := newVecMockStorage()
-	logger := newVecTestLogger()
-
-	svc, err := NewVectorService(storage, logger)
-	require.NoError(t, err)
-
-	req := &UpdateVectorMetadataRequest{
-		Namespace: "",
-		ID:        1,
-		Metadata:  map[string]interface{}{"key": "value"},
-	}
-
-	resp, err := svc.UpdateMetadata(tenantctx.WithSystem(context.Background()), req)
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestVectorService_SearchByID_EmptyNamespace(t *testing.T) {
-	storage := newVecMockStorage()
-	logger := newVecTestLogger()
-
-	svc, err := NewVectorService(storage, logger)
-	require.NoError(t, err)
-
-	req := &SearchByIDRequest{
-		Namespace: "",
-		ID:        1,
-		K:         10,
-	}
-
-	resp, err := svc.SearchByID(tenantctx.WithSystem(context.Background()), req)
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestVectorService_HybridSearch_EmptyRequest(t *testing.T) {
-	storage := newVecMockStorage()
-	logger := newVecTestLogger()
-
-	svc, err := NewVectorService(storage, logger)
-	require.NoError(t, err)
-
-	req := &HybridSearchRequest{
-		Namespace:   "test-ns",
-		QueryVector: []float32{0.1, 0.2},
-		K:           0,
-	}
-
-	resp, err := svc.HybridSearch(tenantctx.WithSystem(context.Background()), req)
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestVectorService_HybridSearch_EmptyNamespace(t *testing.T) {
-	storage := newVecMockStorage()
-	logger := newVecTestLogger()
-
-	svc, err := NewVectorService(storage, logger)
-	require.NoError(t, err)
-
-	req := &HybridSearchRequest{
-		Namespace:   "",
-		QueryVector: []float32{0.1, 0.2},
-		K:           10,
-	}
-
-	resp, err := svc.HybridSearch(tenantctx.WithSystem(context.Background()), req)
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestVectorService_GetCompactionProgress_EmptyOperationID(t *testing.T) {
-	storage := newVecMockStorage()
-	logger := newVecTestLogger()
-
-	svc, err := NewVectorService(storage, logger)
-	require.NoError(t, err)
-
-	req := &GetCompactionProgressRequest{
-		OperationID: "",
-	}
-
-	resp, err := svc.GetCompactionProgress(tenantctx.WithSystem(context.Background()), req)
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-// =============================================================================
-// RebuildJobState and CompactionJobState Struct Tests
-// =============================================================================
-
-func TestRebuildJobState_Fields(t *testing.T) {
-	now := time.Now()
-	completed := now.Add(time.Minute)
-
-	state := &RebuildJobState{
-		JobID:            "rebuild-123",
-		Namespace:        "test-ns",
-		InProgress:       true,
-		VectorsProcessed: 500,
-		TotalVectors:     1000,
-		StartedAt:        now,
-		CompletedAt:      &completed,
-		Error:            nil,
-	}
-
-	assert.Equal(t, "rebuild-123", state.JobID)
-	assert.Equal(t, "test-ns", state.Namespace)
-	assert.True(t, state.InProgress)
-	assert.Equal(t, uint64(500), state.VectorsProcessed)
-	assert.Equal(t, uint64(1000), state.TotalVectors)
-}
-
-func TestCompactionJobState_Fields(t *testing.T) {
-	now := time.Now()
-
-	state := &CompactionJobState{
-		OperationID:    "compact-456",
-		Namespace:      "test-ns",
-		InProgress:     false,
-		BytesCompacted: 1024,
-		TotalBytes:     2048,
-		StartedAt:      now,
-		Error:          errors.New("compaction failed"),
-	}
-
-	assert.Equal(t, "compact-456", state.OperationID)
-	assert.False(t, state.InProgress)
-	assert.Equal(t, int64(1024), state.BytesCompacted)
-	assert.Error(t, state.Error)
 }

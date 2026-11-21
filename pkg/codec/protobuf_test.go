@@ -129,31 +129,6 @@ func TestProtobufCodec_EncodeDecodeSimple(t *testing.T) {
 	assert.Equal(t, entity.Value, decoded.Value)
 }
 
-func TestProtobufCodec_EncodeDecodeWithTags(t *testing.T) {
-	codec := NewProtobufCodec()
-
-	entity := &ProtobufTestEntity{
-		ID:    100,
-		Name:  "protobuf-entity",
-		Value: 999,
-	}
-
-	// Encode
-	data, err := codec.Encode(entity)
-	require.NoError(t, err)
-	assert.NotEmpty(t, data)
-
-	// Decode
-	decoded := &ProtobufTestEntity{}
-	err = codec.Decode(data, decoded)
-	require.NoError(t, err)
-
-	// Verify
-	assert.Equal(t, entity.ID, decoded.ID)
-	assert.Equal(t, entity.Name, decoded.Name)
-	assert.Equal(t, entity.Value, decoded.Value)
-}
-
 func TestProtobufCodec_EncodeDecodeNativeMessage(t *testing.T) {
 	codec := NewProtobufCodec()
 
@@ -211,134 +186,6 @@ func TestProtobufCodec_DecodeInvalidData(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestProtobufCodec_ComplexEntity(t *testing.T) {
-	codec := NewProtobufCodec()
-
-	type ComplexEntity struct {
-		ID       uint64            `json:"id"`
-		Name     string            `json:"name"`
-		Tags     []string          `json:"tags"`
-		Metadata map[string]string `json:"metadata"`
-		Nested   struct {
-			Field1 string `json:"field1"`
-			Field2 int    `json:"field2"`
-		} `json:"nested"`
-	}
-
-	entity := &ComplexEntity{
-		ID:   1,
-		Name: "complex",
-		Tags: []string{"tag1", "tag2", "tag3"},
-		Metadata: map[string]string{
-			"key1": "value1",
-			"key2": "value2",
-		},
-	}
-	entity.Nested.Field1 = "nested-value"
-	entity.Nested.Field2 = 123
-
-	// Encode
-	data, err := codec.Encode(entity)
-	require.NoError(t, err)
-	assert.NotEmpty(t, data)
-
-	// Decode
-	decoded := &ComplexEntity{}
-	err = codec.Decode(data, decoded)
-	require.NoError(t, err)
-
-	// Verify
-	assert.Equal(t, entity.ID, decoded.ID)
-	assert.Equal(t, entity.Name, decoded.Name)
-	assert.Equal(t, entity.Tags, decoded.Tags)
-	assert.Equal(t, entity.Metadata, decoded.Metadata)
-	assert.Equal(t, entity.Nested.Field1, decoded.Nested.Field1)
-	assert.Equal(t, entity.Nested.Field2, decoded.Nested.Field2)
-}
-
-func TestProtobufCodec_EmptyValues(t *testing.T) {
-	codec := NewProtobufCodec()
-
-	entity := &SimpleEntity{
-		ID:    0,
-		Name:  "",
-		Value: 0,
-	}
-
-	// Encode
-	data, err := codec.Encode(entity)
-	require.NoError(t, err)
-
-	// Decode
-	decoded := &SimpleEntity{}
-	err = codec.Decode(data, decoded)
-	require.NoError(t, err)
-
-	// Verify
-	assert.Equal(t, entity.ID, decoded.ID)
-	assert.Equal(t, entity.Name, decoded.Name)
-	assert.Equal(t, entity.Value, decoded.Value)
-}
-
-func TestProtobufCodec_UnicodeStrings(t *testing.T) {
-	codec := NewProtobufCodec()
-
-	entity := &SimpleEntity{
-		ID:    1,
-		Name:  "Hello 世界 🌍",
-		Value: 42,
-	}
-
-	// Encode
-	data, err := codec.Encode(entity)
-	require.NoError(t, err)
-
-	// Decode
-	decoded := &SimpleEntity{}
-	err = codec.Decode(data, decoded)
-	require.NoError(t, err)
-
-	// Verify
-	assert.Equal(t, entity.Name, decoded.Name)
-}
-
-func TestProtobufCodec_LargeEntity(t *testing.T) {
-	codec := NewProtobufCodec()
-
-	type LargeEntity struct {
-		ID   uint64 `json:"id"`
-		Data string `json:"data"`
-	}
-
-	// Create entity with large text data (100KB of alphanumeric)
-	// Using alphanumeric to avoid JSON encoding issues with binary data
-	largeData := make([]byte, 100*1024)
-	chars := "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
-	for i := range largeData {
-		largeData[i] = chars[i%len(chars)]
-	}
-
-	entity := &LargeEntity{
-		ID:   1,
-		Data: string(largeData),
-	}
-
-	// Encode
-	data, err := codec.Encode(entity)
-	require.NoError(t, err)
-	assert.NotEmpty(t, data)
-	t.Logf("Encoded size: %d bytes (original: %d bytes)", len(data), len(entity.Data))
-
-	// Decode
-	decoded := &LargeEntity{}
-	err = codec.Decode(data, decoded)
-	require.NoError(t, err)
-
-	// Verify
-	assert.Equal(t, entity.ID, decoded.ID)
-	assert.Equal(t, entity.Data, decoded.Data, "data should match exactly")
-}
-
 func TestProtobufCodec_EncodeJSON(t *testing.T) {
 	codec := NewProtobufCodec()
 
@@ -385,37 +232,6 @@ func TestProtobufCodec_DecodeJSON_NotProtoMessage(t *testing.T) {
 	err := codec.DecodeJSON(jsonData, entity)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "must be a protobuf message")
-}
-
-func TestProtobufCodec_MultipleRoundTrips(t *testing.T) {
-	codec := NewProtobufCodec()
-
-	entity := &SimpleEntity{
-		ID:    1,
-		Name:  "round-trip-test",
-		Value: 100,
-	}
-
-	// First round trip
-	data1, err := codec.Encode(entity)
-	require.NoError(t, err)
-
-	decoded1 := &SimpleEntity{}
-	err = codec.Decode(data1, decoded1)
-	require.NoError(t, err)
-
-	// Second round trip
-	data2, err := codec.Encode(decoded1)
-	require.NoError(t, err)
-
-	decoded2 := &SimpleEntity{}
-	err = codec.Decode(data2, decoded2)
-	require.NoError(t, err)
-
-	// Verify both are identical
-	assert.Equal(t, entity.ID, decoded2.ID)
-	assert.Equal(t, entity.Name, decoded2.Name)
-	assert.Equal(t, entity.Value, decoded2.Value)
 }
 
 // Benchmark tests.

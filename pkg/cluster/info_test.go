@@ -103,38 +103,36 @@ func (m *mockRaftNode) Close() error {
 	return nil
 }
 
-func TestNewClusterInfo_Standalone(t *testing.T) {
-	config := ClusterInfoConfig{
+func testClusterInfoConfig() ClusterInfoConfig {
+	return ClusterInfoConfig{
 		NodeID:         1,
 		Address:        "localhost:8443",
 		RaftAddress:    "localhost:63000",
 		DefaultShardID: 1,
 	}
-
-	ci := NewClusterInfo(nil, config)
-	require.NotNil(t, ci)
-
-	// In standalone mode, local node should be leader
-	assert.True(t, ci.IsLeader())
-
-	localNode := ci.LocalNode()
-	assert.Equal(t, uint64(1), localNode.NodeID)
-	assert.Equal(t, "localhost:8443", localNode.Address)
-	assert.Equal(t, "localhost:63000", localNode.RaftAddress)
-	assert.True(t, localNode.IsLeader)
-	assert.True(t, localNode.IsHealthy)
 }
 
-func TestNewClusterInfo_Cluster(t *testing.T) {
-	mockRaft := &mockRaftNode{
-		leaderID: 2, // Different node is leader
+// newTestClusterInfo builds a ClusterInfo over raft, or a standalone one
+// when raft is nil (a nil *mockRaftNode must not become a non-nil interface).
+func newTestClusterInfo(raft *mockRaftNode) ClusterInfo {
+	if raft == nil {
+		return NewClusterInfo(nil, testClusterInfoConfig())
+	}
+	return NewClusterInfo(raft, testClusterInfoConfig())
+}
+
+// threeNodeRaft returns a raft double whose default shard holds nodes 1-3,
+// led by leaderID.
+func threeNodeRaft(leaderID uint64) *mockRaftNode {
+	return &mockRaftNode{
+		leaderID: leaderID,
 		nodeHostInfo: &interfaces.NodeHostInfo{
 			RaftAddress: "localhost:63000",
 			ShardInfoList: []interfaces.ShardInfo{
 				{
 					ShardID:   1,
 					ReplicaID: 1,
-					LeaderID:  2,
+					LeaderID:  leaderID,
 					Nodes: map[uint64]string{
 						1: "localhost:63000",
 						2: "localhost:63001",
@@ -144,459 +142,190 @@ func TestNewClusterInfo_Cluster(t *testing.T) {
 			},
 		},
 	}
-
-	config := ClusterInfoConfig{
-		NodeID:         1,
-		Address:        "localhost:8443",
-		RaftAddress:    "localhost:63000",
-		DefaultShardID: 1,
-	}
-
-	ci := NewClusterInfo(mockRaft, config)
-	require.NotNil(t, ci)
-
-	// Local node is not the leader
-	assert.False(t, ci.IsLeader())
 }
 
-func TestClusterInfo_NonLeaderNodes_Standalone(t *testing.T) {
-	config := ClusterInfoConfig{
-		NodeID:         1,
-		Address:        "localhost:8443",
-		RaftAddress:    "localhost:63000",
-		DefaultShardID: 1,
-	}
-
-	ci := NewClusterInfo(nil, config)
-	ctx := context.Background()
-
-	nodes, err := ci.NonLeaderNodes(ctx)
-	require.NoError(t, err)
-	assert.Empty(t, nodes) // In standalone mode, local node is leader, so no non-leaders
-}
-
-func TestClusterInfo_NonLeaderNodes_Cluster(t *testing.T) {
-	mockRaft := &mockRaftNode{
-		leaderID: 1, // Local node is leader
-		nodeHostInfo: &interfaces.NodeHostInfo{
-			RaftAddress: "localhost:63000",
-			ShardInfoList: []interfaces.ShardInfo{
-				{
-					ShardID:   1,
-					ReplicaID: 1,
-					LeaderID:  1,
-					Nodes: map[uint64]string{
-						1: "localhost:63000",
-						2: "localhost:63001",
-						3: "localhost:63002",
-					},
-				},
-			},
-		},
-	}
-
-	config := ClusterInfoConfig{
-		NodeID:         1,
-		Address:        "localhost:8443",
-		RaftAddress:    "localhost:63000",
-		DefaultShardID: 1,
-	}
-
-	ci := NewClusterInfo(mockRaft, config)
-	ctx := context.Background()
-
-	nodes, err := ci.NonLeaderNodes(ctx)
-	require.NoError(t, err)
-	assert.Len(t, nodes, 2) // Two non-leader nodes (2 and 3)
-
-	// Verify none of the returned nodes are leaders
-	for _, node := range nodes {
-		assert.False(t, node.IsLeader)
-		assert.True(t, node.IsHealthy)
-	}
-}
-
-func TestClusterInfo_NonLeaderNodes_ContextCanceled(t *testing.T) {
-	config := ClusterInfoConfig{
-		NodeID:         1,
-		Address:        "localhost:8443",
-		RaftAddress:    "localhost:63000",
-		DefaultShardID: 1,
-	}
-
-	ci := NewClusterInfo(nil, config)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // Cancel immediately
-
-	nodes, err := ci.NonLeaderNodes(ctx)
-	assert.Nil(t, nodes)
-	assert.Equal(t, ErrContextCanceled, err)
-}
-
-func TestClusterInfo_AllNodes_Standalone(t *testing.T) {
-	config := ClusterInfoConfig{
-		NodeID:         1,
-		Address:        "localhost:8443",
-		RaftAddress:    "localhost:63000",
-		DefaultShardID: 1,
-	}
-
-	ci := NewClusterInfo(nil, config)
-	ctx := context.Background()
-
-	nodes, err := ci.AllNodes(ctx)
-	require.NoError(t, err)
-	require.Len(t, nodes, 1)
-	assert.Equal(t, uint64(1), nodes[0].NodeID)
-	assert.True(t, nodes[0].IsLeader)
-}
-
-func TestClusterInfo_AllNodes_Cluster(t *testing.T) {
-	mockRaft := &mockRaftNode{
-		leaderID: 1,
-		nodeHostInfo: &interfaces.NodeHostInfo{
-			RaftAddress: "localhost:63000",
-			ShardInfoList: []interfaces.ShardInfo{
-				{
-					ShardID:   1,
-					ReplicaID: 1,
-					LeaderID:  1,
-					Nodes: map[uint64]string{
-						1: "localhost:63000",
-						2: "localhost:63001",
-						3: "localhost:63002",
-					},
-				},
-			},
-		},
-	}
-
-	config := ClusterInfoConfig{
-		NodeID:         1,
-		Address:        "localhost:8443",
-		RaftAddress:    "localhost:63000",
-		DefaultShardID: 1,
-	}
-
-	ci := NewClusterInfo(mockRaft, config)
-	ctx := context.Background()
-
-	nodes, err := ci.AllNodes(ctx)
-	require.NoError(t, err)
-	assert.Len(t, nodes, 3)
-
-	// Find the leader
-	var leaderCount int
-	for _, node := range nodes {
-		if node.IsLeader {
-			leaderCount++
-		}
-	}
-	assert.Equal(t, 1, leaderCount)
-}
-
-func TestClusterInfo_AllNodes_NotInitialized(t *testing.T) {
-	mockRaft := &mockRaftNode{
-		leaderID:     1,
-		nodeHostInfo: nil, // Not initialized
-	}
-
-	config := ClusterInfoConfig{
-		NodeID:         1,
-		Address:        "localhost:8443",
-		RaftAddress:    "localhost:63000",
-		DefaultShardID: 1,
-	}
-
-	ci := NewClusterInfo(mockRaft, config)
-	ctx := context.Background()
-
-	nodes, err := ci.AllNodes(ctx)
-	assert.Nil(t, nodes)
-	assert.True(t, IsClusterNotInitialized(err))
-}
-
-func TestClusterInfo_AllNodes_ContextCanceled(t *testing.T) {
-	mockRaft := &mockRaftNode{
-		leaderID: 1,
-		nodeHostInfo: &interfaces.NodeHostInfo{
-			ShardInfoList: []interfaces.ShardInfo{},
-		},
-	}
-
-	config := ClusterInfoConfig{
-		NodeID:         1,
-		Address:        "localhost:8443",
-		RaftAddress:    "localhost:63000",
-		DefaultShardID: 1,
-	}
-
-	ci := NewClusterInfo(mockRaft, config)
-
+func canceledContext() context.Context {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-
-	nodes, err := ci.AllNodes(ctx)
-	assert.Nil(t, nodes)
-	assert.Equal(t, ErrContextCanceled, err)
+	return ctx
 }
 
-func TestClusterInfo_Leader_Standalone(t *testing.T) {
-	config := ClusterInfoConfig{
-		NodeID:         1,
-		Address:        "localhost:8443",
-		RaftAddress:    "localhost:63000",
-		DefaultShardID: 1,
+func isContextCanceled(err error) bool {
+	return errors.Is(err, ErrContextCanceled)
+}
+
+// nodeIDs returns the IDs of the nodes that keep selects.
+func nodeIDs(nodes []NodeInfo, keep func(NodeInfo) bool) []uint64 {
+	ids := []uint64{}
+	for _, n := range nodes {
+		if keep(n) {
+			ids = append(ids, n.NodeID)
+		}
+	}
+	return ids
+}
+
+func anyNode(NodeInfo) bool { return true }
+
+func TestNewClusterInfo_LocalNode(t *testing.T) {
+	tests := []struct {
+		name       string
+		raft       *mockRaftNode
+		wantLeader bool
+	}{
+		{name: "standalone is always leader", raft: nil, wantLeader: true},
+		{name: "cluster leader", raft: &mockRaftNode{leaderID: 1}, wantLeader: true},
+		{name: "cluster follower", raft: &mockRaftNode{leaderID: 2}, wantLeader: false},
 	}
 
-	ci := NewClusterInfo(nil, config)
-	ctx := context.Background()
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ci := newTestClusterInfo(tc.raft)
+			require.NotNil(t, ci)
 
-	leader, err := ci.Leader(ctx)
-	require.NoError(t, err)
-	assert.Equal(t, uint64(1), leader.NodeID)
-	assert.True(t, leader.IsLeader)
+			localNode := ci.LocalNode()
+			assert.Equal(t, uint64(1), localNode.NodeID)
+			assert.Equal(t, "localhost:8443", localNode.Address)
+			assert.Equal(t, "localhost:63000", localNode.RaftAddress)
+			assert.Equal(t, tc.wantLeader, localNode.IsLeader)
+			assert.True(t, localNode.IsHealthy)
+			assert.False(t, localNode.LastSeen.IsZero())
+		})
+	}
 }
 
-func TestClusterInfo_Leader_LocalIsLeader(t *testing.T) {
-	mockRaft := &mockRaftNode{
-		leaderID: 1, // Local node is leader
-		nodeHostInfo: &interfaces.NodeHostInfo{
-			ShardInfoList: []interfaces.ShardInfo{
-				{
-					ShardID:  1,
-					LeaderID: 1,
-					Nodes: map[uint64]string{
-						1: "localhost:63000",
-					},
-				},
-			},
+func TestClusterInfo_NonLeaderNodes(t *testing.T) {
+	tests := []struct {
+		name    string
+		raft    *mockRaftNode
+		ctx     context.Context
+		wantIDs []uint64
+		wantErr func(error) bool
+	}{
+		{name: "standalone has no non-leaders", raft: nil, ctx: context.Background(), wantIDs: []uint64{}},
+		{name: "cluster returns followers", raft: threeNodeRaft(1), ctx: context.Background(), wantIDs: []uint64{2, 3}},
+		{name: "cluster not initialized", raft: &mockRaftNode{leaderID: 1}, ctx: context.Background(), wantErr: IsClusterNotInitialized},
+		{name: "context canceled", raft: nil, ctx: canceledContext(), wantErr: isContextCanceled},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			nodes, err := newTestClusterInfo(tc.raft).NonLeaderNodes(tc.ctx)
+			if tc.wantErr != nil {
+				assert.Nil(t, nodes)
+				assert.True(t, tc.wantErr(err), "unexpected error: %v", err)
+				return
+			}
+			require.NoError(t, err)
+			assert.ElementsMatch(t, tc.wantIDs, nodeIDs(nodes, anyNode))
+			for _, node := range nodes {
+				assert.False(t, node.IsLeader)
+				assert.True(t, node.IsHealthy)
+			}
+		})
+	}
+}
+
+func TestClusterInfo_AllNodes(t *testing.T) {
+	tests := []struct {
+		name        string
+		raft        *mockRaftNode
+		ctx         context.Context
+		wantIDs     []uint64
+		wantLeaders []uint64
+		wantErr     func(error) bool
+	}{
+		{name: "standalone returns local node", raft: nil, ctx: context.Background(), wantIDs: []uint64{1}, wantLeaders: []uint64{1}},
+		{name: "cluster returns every member", raft: threeNodeRaft(1), ctx: context.Background(), wantIDs: []uint64{1, 2, 3}, wantLeaders: []uint64{1}},
+		{name: "cluster not initialized", raft: &mockRaftNode{leaderID: 1}, ctx: context.Background(), wantErr: IsClusterNotInitialized},
+		{name: "context canceled", raft: threeNodeRaft(1), ctx: canceledContext(), wantErr: isContextCanceled},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			nodes, err := newTestClusterInfo(tc.raft).AllNodes(tc.ctx)
+			if tc.wantErr != nil {
+				assert.Nil(t, nodes)
+				assert.True(t, tc.wantErr(err), "unexpected error: %v", err)
+				return
+			}
+			require.NoError(t, err)
+			assert.ElementsMatch(t, tc.wantIDs, nodeIDs(nodes, anyNode))
+			assert.ElementsMatch(t, tc.wantLeaders, nodeIDs(nodes, func(n NodeInfo) bool { return n.IsLeader }))
+		})
+	}
+}
+
+func TestClusterInfo_Leader(t *testing.T) {
+	tests := []struct {
+		name            string
+		raft            *mockRaftNode
+		ctx             context.Context
+		wantID          uint64
+		wantAddress     string
+		wantRaftAddress string
+		wantErr         func(error) bool
+	}{
+		{
+			name: "standalone local node", raft: nil, ctx: context.Background(),
+			wantID: 1, wantAddress: "localhost:8443", wantRaftAddress: "localhost:63000",
 		},
-	}
-
-	config := ClusterInfoConfig{
-		NodeID:         1,
-		Address:        "localhost:8443",
-		RaftAddress:    "localhost:63000",
-		DefaultShardID: 1,
-	}
-
-	ci := NewClusterInfo(mockRaft, config)
-	ctx := context.Background()
-
-	leader, err := ci.Leader(ctx)
-	require.NoError(t, err)
-	assert.Equal(t, uint64(1), leader.NodeID)
-	assert.Equal(t, "localhost:8443", leader.Address)
-	assert.True(t, leader.IsLeader)
-}
-
-func TestClusterInfo_Leader_RemoteIsLeader(t *testing.T) {
-	mockRaft := &mockRaftNode{
-		leaderID: 2, // Remote node is leader
-		nodeHostInfo: &interfaces.NodeHostInfo{
-			ShardInfoList: []interfaces.ShardInfo{
-				{
-					ShardID:  1,
-					LeaderID: 2,
-					Nodes: map[uint64]string{
-						1: "localhost:63000",
-						2: "localhost:63001",
-					},
-				},
-			},
+		{
+			name: "local node is leader", raft: threeNodeRaft(1), ctx: context.Background(),
+			wantID: 1, wantAddress: "localhost:8443", wantRaftAddress: "localhost:63000",
 		},
+		{
+			name: "remote node is leader", raft: threeNodeRaft(2), ctx: context.Background(),
+			wantID: 2, wantAddress: "localhost:63001", wantRaftAddress: "localhost:63001",
+		},
+		{name: "no leader elected", raft: &mockRaftNode{}, ctx: context.Background(), wantErr: IsNoLeader},
+		{
+			name: "leader lookup error", raft: &mockRaftNode{leaderErr: errors.New("leader lookup failed")},
+			ctx: context.Background(), wantErr: IsNoLeader,
+		},
+		{name: "context canceled", raft: &mockRaftNode{leaderID: 1}, ctx: canceledContext(), wantErr: isContextCanceled},
 	}
 
-	config := ClusterInfoConfig{
-		NodeID:         1,
-		Address:        "localhost:8443",
-		RaftAddress:    "localhost:63000",
-		DefaultShardID: 1,
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			leader, err := newTestClusterInfo(tc.raft).Leader(tc.ctx)
+			if tc.wantErr != nil {
+				assert.Nil(t, leader)
+				assert.True(t, tc.wantErr(err), "unexpected error: %v", err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantID, leader.NodeID)
+			assert.Equal(t, tc.wantAddress, leader.Address)
+			assert.Equal(t, tc.wantRaftAddress, leader.RaftAddress)
+			assert.True(t, leader.IsLeader)
+		})
 	}
-
-	ci := NewClusterInfo(mockRaft, config)
-	ctx := context.Background()
-
-	leader, err := ci.Leader(ctx)
-	require.NoError(t, err)
-	assert.Equal(t, uint64(2), leader.NodeID)
-	assert.Equal(t, "localhost:63001", leader.RaftAddress)
-	assert.True(t, leader.IsLeader)
 }
 
-func TestClusterInfo_Leader_NoLeader(t *testing.T) {
-	mockRaft := &mockRaftNode{
-		leaderID: 0, // No leader elected
+func TestClusterInfo_IsLeader(t *testing.T) {
+	tests := []struct {
+		name string
+		raft *mockRaftNode
+		want bool
+	}{
+		{name: "standalone", raft: nil, want: true},
+		{name: "cluster leader", raft: &mockRaftNode{leaderID: 1}, want: true},
+		{name: "cluster follower", raft: &mockRaftNode{leaderID: 2}, want: false},
 	}
 
-	config := ClusterInfoConfig{
-		NodeID:         1,
-		Address:        "localhost:8443",
-		RaftAddress:    "localhost:63000",
-		DefaultShardID: 1,
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, newTestClusterInfo(tc.raft).IsLeader())
+		})
 	}
 
-	ci := NewClusterInfo(mockRaft, config)
-	ctx := context.Background()
+	t.Run("lookup error falls back to cached value", func(t *testing.T) {
+		raft := &mockRaftNode{leaderID: 1}
+		ci := newTestClusterInfo(raft)
+		require.True(t, ci.IsLeader())
 
-	leader, err := ci.Leader(ctx)
-	assert.Nil(t, leader)
-	assert.True(t, IsNoLeader(err))
-}
-
-func TestClusterInfo_Leader_Error(t *testing.T) {
-	mockRaft := &mockRaftNode{
-		leaderErr: errors.New("leader lookup failed"),
-	}
-
-	config := ClusterInfoConfig{
-		NodeID:         1,
-		Address:        "localhost:8443",
-		RaftAddress:    "localhost:63000",
-		DefaultShardID: 1,
-	}
-
-	ci := NewClusterInfo(mockRaft, config)
-	ctx := context.Background()
-
-	leader, err := ci.Leader(ctx)
-	assert.Nil(t, leader)
-	assert.True(t, IsNoLeader(err))
-}
-
-func TestClusterInfo_Leader_ContextCanceled(t *testing.T) {
-	mockRaft := &mockRaftNode{
-		leaderID: 1,
-	}
-
-	config := ClusterInfoConfig{
-		NodeID:         1,
-		Address:        "localhost:8443",
-		RaftAddress:    "localhost:63000",
-		DefaultShardID: 1,
-	}
-
-	ci := NewClusterInfo(mockRaft, config)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	leader, err := ci.Leader(ctx)
-	assert.Nil(t, leader)
-	assert.Equal(t, ErrContextCanceled, err)
-}
-
-func TestClusterInfo_LocalNode(t *testing.T) {
-	mockRaft := &mockRaftNode{
-		leaderID: 1,
-	}
-
-	config := ClusterInfoConfig{
-		NodeID:         1,
-		Address:        "localhost:8443",
-		RaftAddress:    "localhost:63000",
-		DefaultShardID: 1,
-	}
-
-	ci := NewClusterInfo(mockRaft, config)
-
-	localNode := ci.LocalNode()
-	assert.Equal(t, uint64(1), localNode.NodeID)
-	assert.Equal(t, "localhost:8443", localNode.Address)
-	assert.Equal(t, "localhost:63000", localNode.RaftAddress)
-	assert.True(t, localNode.IsLeader)
-	assert.True(t, localNode.IsHealthy)
-	assert.False(t, localNode.LastSeen.IsZero())
-}
-
-func TestClusterInfo_LocalNode_NotLeader(t *testing.T) {
-	mockRaft := &mockRaftNode{
-		leaderID: 2, // Different node is leader
-	}
-
-	config := ClusterInfoConfig{
-		NodeID:         1,
-		Address:        "localhost:8443",
-		RaftAddress:    "localhost:63000",
-		DefaultShardID: 1,
-	}
-
-	ci := NewClusterInfo(mockRaft, config)
-
-	localNode := ci.LocalNode()
-	assert.Equal(t, uint64(1), localNode.NodeID)
-	assert.False(t, localNode.IsLeader)
-}
-
-func TestClusterInfo_IsLeader_Standalone(t *testing.T) {
-	config := ClusterInfoConfig{
-		NodeID:         1,
-		Address:        "localhost:8443",
-		RaftAddress:    "localhost:63000",
-		DefaultShardID: 1,
-	}
-
-	ci := NewClusterInfo(nil, config)
-	assert.True(t, ci.IsLeader())
-}
-
-func TestClusterInfo_IsLeader_Cluster(t *testing.T) {
-	t.Run("is leader", func(t *testing.T) {
-		mockRaft := &mockRaftNode{
-			leaderID: 1,
-		}
-
-		config := ClusterInfoConfig{
-			NodeID:         1,
-			Address:        "localhost:8443",
-			RaftAddress:    "localhost:63000",
-			DefaultShardID: 1,
-		}
-
-		ci := NewClusterInfo(mockRaft, config)
-		assert.True(t, ci.IsLeader())
-	})
-
-	t.Run("not leader", func(t *testing.T) {
-		mockRaft := &mockRaftNode{
-			leaderID: 2,
-		}
-
-		config := ClusterInfoConfig{
-			NodeID:         1,
-			Address:        "localhost:8443",
-			RaftAddress:    "localhost:63000",
-			DefaultShardID: 1,
-		}
-
-		ci := NewClusterInfo(mockRaft, config)
-		assert.False(t, ci.IsLeader())
-	})
-
-	t.Run("error falls back to cached", func(t *testing.T) {
-		mockRaft := &mockRaftNode{
-			leaderID:  1,
-			leaderErr: nil,
-		}
-
-		config := ClusterInfoConfig{
-			NodeID:         1,
-			Address:        "localhost:8443",
-			RaftAddress:    "localhost:63000",
-			DefaultShardID: 1,
-		}
-
-		ci := NewClusterInfo(mockRaft, config)
-
-		// First call should succeed and cache the value
-		assert.True(t, ci.IsLeader())
-
-		// Now cause an error
-		mockRaft.leaderErr = errors.New("connection failed")
-
-		// Should fall back to cached value
+		raft.leaderErr = errors.New("connection failed")
 		assert.True(t, ci.IsLeader())
 	})
 }
@@ -652,18 +381,33 @@ func TestNodeInfo_IsAvailable(t *testing.T) {
 	}
 }
 
-func TestNodeList_Filter(t *testing.T) {
+func TestNodeList_Selectors(t *testing.T) {
 	nodes := NodeList{
 		{NodeID: 1, IsLeader: true, IsHealthy: true},
 		{NodeID: 2, IsLeader: false, IsHealthy: true},
 		{NodeID: 3, IsLeader: false, IsHealthy: false},
 	}
 
-	healthy := nodes.Filter(func(n NodeInfo) bool {
-		return n.IsHealthy
-	})
+	tests := []struct {
+		name    string
+		sel     func(NodeList) NodeList
+		wantIDs []uint64
+	}{
+		{
+			name:    "Filter",
+			sel:     func(l NodeList) NodeList { return l.Filter(func(n NodeInfo) bool { return n.NodeID == 3 }) },
+			wantIDs: []uint64{3},
+		},
+		{name: "Healthy", sel: NodeList.Healthy, wantIDs: []uint64{1, 2}},
+		{name: "NonLeaders", sel: NodeList.NonLeaders, wantIDs: []uint64{2, 3}},
+		{name: "Leaders", sel: NodeList.Leaders, wantIDs: []uint64{1}},
+	}
 
-	assert.Len(t, healthy, 2)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.ElementsMatch(t, tc.wantIDs, nodeIDs(tc.sel(nodes), anyNode))
+		})
+	}
 }
 
 func TestNodeList_FindByID(t *testing.T) {
@@ -727,25 +471,29 @@ func TestNodeList_Leaders(t *testing.T) {
 	assert.Equal(t, uint64(1), leaders[0].NodeID)
 }
 
-func TestError_IsNoLeader(t *testing.T) {
-	assert.True(t, IsNoLeader(ErrNoLeader))
-	assert.True(t, IsNoLeader(NewNoLeaderError("test")))
-	assert.False(t, IsNoLeader(nil))
-	assert.False(t, IsNoLeader(errors.New("some other error")))
-}
+func TestError_Predicates(t *testing.T) {
+	tests := []struct {
+		name        string
+		is          func(error) bool
+		sentinel    error
+		constructed error
+	}{
+		{name: "IsNoLeader", is: IsNoLeader, sentinel: ErrNoLeader, constructed: NewNoLeaderError("test")},
+		{name: "IsNoHealthyNodes", is: IsNoHealthyNodes, sentinel: ErrNoHealthyNodes, constructed: NewNoHealthyNodesError("test", 3)},
+		{
+			name: "IsClusterNotInitialized", is: IsClusterNotInitialized,
+			sentinel: ErrClusterNotInitialized, constructed: NewClusterNotInitializedError("test"),
+		},
+	}
 
-func TestError_IsNoHealthyNodes(t *testing.T) {
-	assert.True(t, IsNoHealthyNodes(ErrNoHealthyNodes))
-	assert.True(t, IsNoHealthyNodes(NewNoHealthyNodesError("test", 3)))
-	assert.False(t, IsNoHealthyNodes(nil))
-	assert.False(t, IsNoHealthyNodes(errors.New("some other error")))
-}
-
-func TestError_IsClusterNotInitialized(t *testing.T) {
-	assert.True(t, IsClusterNotInitialized(ErrClusterNotInitialized))
-	assert.True(t, IsClusterNotInitialized(NewClusterNotInitializedError("test")))
-	assert.False(t, IsClusterNotInitialized(nil))
-	assert.False(t, IsClusterNotInitialized(errors.New("some other error")))
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.True(t, tc.is(tc.sentinel))
+			assert.True(t, tc.is(tc.constructed))
+			assert.False(t, tc.is(nil))
+			assert.False(t, tc.is(errors.New("some other error")))
+		})
+	}
 }
 
 func TestNewNodeNotFoundError(t *testing.T) {

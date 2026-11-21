@@ -398,78 +398,78 @@ func TestHandleHookTaskCreated_Success(t *testing.T) {
 	assert.Equal(t, "orchestrator:tasks:my-project", messagingSvc.lastChannel)
 }
 
-func TestHandleHookTaskCreated_InvalidPayload(t *testing.T) {
-	server, _, _, cleanup := setupHookTestServer(t)
-	defer cleanup()
+// TestHandleHook_InvalidInput covers the handler side of input validation:
+// a body that is not JSON, and a payload the validator rejects, both answer
+// 400 naming the problem. The validator's per-field rules are covered by
+// TestHookPayload_Validation; one missing-field row per handler proves the
+// handler maps the validator's error to 400.
+func TestHandleHook_InvalidInput(t *testing.T) {
+	tests := []struct {
+		name     string
+		path     string
+		handler  func(*Server, http.ResponseWriter, *http.Request)
+		body     string
+		wantBody string
+	}{
+		{
+			name:     "task created invalid JSON",
+			path:     "/api/v1/hooks/task-created",
+			handler:  (*Server).HandleHookTaskCreated,
+			body:     "{invalid json",
+			wantBody: "invalid JSON body",
+		},
+		{
+			name:     "task created missing task_id",
+			path:     "/api/v1/hooks/task-created",
+			handler:  (*Server).HandleHookTaskCreated,
+			body:     `{"hook_event_name": "TaskCreated", "teammate_name": "implementer", "team_name": "my-project"}`,
+			wantBody: "task_id",
+		},
+		{
+			name:     "task completed invalid JSON",
+			path:     "/api/v1/hooks/task-completed",
+			handler:  (*Server).HandleHookTaskCompleted,
+			body:     "{invalid json",
+			wantBody: "invalid JSON body",
+		},
+		{
+			name:     "task completed missing hook_event_name",
+			path:     "/api/v1/hooks/task-completed",
+			handler:  (*Server).HandleHookTaskCompleted,
+			body:     `{"task_id": "task-001", "team_name": "my-project"}`,
+			wantBody: "hook_event_name",
+		},
+		{
+			name:     "teammate idle invalid JSON",
+			path:     "/api/v1/hooks/teammate-idle",
+			handler:  (*Server).HandleHookTeammateIdle,
+			body:     "{invalid json",
+			wantBody: "invalid JSON body",
+		},
+		{
+			name:     "teammate idle missing teammate_name",
+			path:     "/api/v1/hooks/teammate-idle",
+			handler:  (*Server).HandleHookTeammateIdle,
+			body:     `{"hook_event_name": "TeammateIdle", "team_name": "my-project"}`,
+			wantBody: "teammate_name",
+		},
+	}
 
-	req := tenantRequest("my-project", http.MethodPost, "/api/v1/hooks/task-created", strings.NewReader("{invalid json"))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server, _, _, cleanup := setupHookTestServer(t)
+			defer cleanup()
 
-	server.HandleHookTaskCreated(w, req)
+			req := tenantRequest("my-project", http.MethodPost, tt.path, strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
 
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "invalid JSON body")
-}
+			tt.handler(server, w, req)
 
-func TestHandleHookTaskCreated_MissingTaskID(t *testing.T) {
-	server, _, _, cleanup := setupHookTestServer(t)
-	defer cleanup()
-
-	payload := `{
-		"hook_event_name": "TaskCreated",
-		"teammate_name": "implementer",
-		"team_name": "my-project"
-	}`
-
-	req := tenantRequest("my-project", http.MethodPost, "/api/v1/hooks/task-created", strings.NewReader(payload))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.HandleHookTaskCreated(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "task_id")
-}
-
-func TestHandleHookTaskCreated_MissingTeamName(t *testing.T) {
-	server, _, _, cleanup := setupHookTestServer(t)
-	defer cleanup()
-
-	payload := `{
-		"hook_event_name": "TaskCreated",
-		"task_id": "task-001",
-		"teammate_name": "implementer"
-	}`
-
-	req := tenantRequest("my-project", http.MethodPost, "/api/v1/hooks/task-created", strings.NewReader(payload))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.HandleHookTaskCreated(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "team_name")
-}
-
-func TestHandleHookTaskCreated_MissingTeammateName(t *testing.T) {
-	server, _, _, cleanup := setupHookTestServer(t)
-	defer cleanup()
-
-	payload := `{
-		"hook_event_name": "TaskCreated",
-		"task_id": "task-001",
-		"team_name": "my-project"
-	}`
-
-	req := tenantRequest("my-project", http.MethodPost, "/api/v1/hooks/task-created", strings.NewReader(payload))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.HandleHookTaskCreated(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "teammate_name")
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+			assert.Contains(t, w.Body.String(), tt.wantBody)
+		})
+	}
 }
 
 func TestHandleHookTaskCreated_DuplicateTask(t *testing.T) {
@@ -531,40 +531,6 @@ func TestHandleHookTaskCreated_WithTenantHeader(t *testing.T) {
 	storedTask, ok := taskStore.tasks["custom-tenant/task-002"]
 	require.True(t, ok)
 	assert.Equal(t, "custom-tenant", storedTask.TenantID)
-}
-
-func TestHandleHookTaskCreated_MissingHookEventName(t *testing.T) {
-	server, _, _, cleanup := setupHookTestServer(t)
-	defer cleanup()
-
-	payload := `{
-		"task_id": "task-001",
-		"teammate_name": "implementer",
-		"team_name": "my-project"
-	}`
-
-	req := tenantRequest("my-project", http.MethodPost, "/api/v1/hooks/task-created", strings.NewReader(payload))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.HandleHookTaskCreated(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "hook_event_name")
-}
-
-func TestHandleHookTaskCreated_EmptyBody(t *testing.T) {
-	server, _, _, cleanup := setupHookTestServer(t)
-	defer cleanup()
-
-	req := tenantRequest("my-project", http.MethodPost, "/api/v1/hooks/task-created", strings.NewReader(""))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.HandleHookTaskCreated(w, req)
-
-	// Empty body is invalid JSON.
-	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestHandleHookTaskCreated_PublishFailureDoesNotBlockResponse(t *testing.T) {
@@ -656,57 +622,6 @@ func TestHandleHookTaskCompleted_TaskNotFound(t *testing.T) {
 
 	assert.Equal(t, http.StatusNotFound, w.Code)
 	assert.Contains(t, w.Body.String(), "task")
-}
-
-func TestHandleHookTaskCompleted_InvalidPayload(t *testing.T) {
-	server, _, _, cleanup := setupHookTestServer(t)
-	defer cleanup()
-
-	req := tenantRequest("my-project", http.MethodPost, "/api/v1/hooks/task-completed", strings.NewReader("{not valid"))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.HandleHookTaskCompleted(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestHandleHookTaskCompleted_MissingTaskID(t *testing.T) {
-	server, _, _, cleanup := setupHookTestServer(t)
-	defer cleanup()
-
-	payload := `{
-		"hook_event_name": "TaskCompleted",
-		"team_name": "my-project"
-	}`
-
-	req := tenantRequest("my-project", http.MethodPost, "/api/v1/hooks/task-completed", strings.NewReader(payload))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.HandleHookTaskCompleted(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "task_id")
-}
-
-func TestHandleHookTaskCompleted_MissingHookEventName(t *testing.T) {
-	server, _, _, cleanup := setupHookTestServer(t)
-	defer cleanup()
-
-	payload := `{
-		"task_id": "task-001",
-		"team_name": "my-project"
-	}`
-
-	req := tenantRequest("my-project", http.MethodPost, "/api/v1/hooks/task-completed", strings.NewReader(payload))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.HandleHookTaskCompleted(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "hook_event_name")
 }
 
 func TestHandleHookTaskCompleted_PublishFailureDoesNotBlockResponse(t *testing.T) {
@@ -832,57 +747,6 @@ func TestHandleHookTeammateIdle_TaskAvailableWithNoSubject(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 2, resp.ExitCode)
 	assert.Contains(t, resp.Stderr, "New task available: task-006")
-}
-
-func TestHandleHookTeammateIdle_InvalidPayload(t *testing.T) {
-	server, _, _, cleanup := setupHookTestServer(t)
-	defer cleanup()
-
-	req := tenantRequest("my-project", http.MethodPost, "/api/v1/hooks/teammate-idle", strings.NewReader("{broken"))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.HandleHookTeammateIdle(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestHandleHookTeammateIdle_MissingTeammateName(t *testing.T) {
-	server, _, _, cleanup := setupHookTestServer(t)
-	defer cleanup()
-
-	payload := `{
-		"hook_event_name": "TeammateIdle",
-		"team_name": "my-project"
-	}`
-
-	req := tenantRequest("my-project", http.MethodPost, "/api/v1/hooks/teammate-idle", strings.NewReader(payload))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.HandleHookTeammateIdle(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "teammate_name")
-}
-
-func TestHandleHookTeammateIdle_MissingTeamName(t *testing.T) {
-	server, _, _, cleanup := setupHookTestServer(t)
-	defer cleanup()
-
-	payload := `{
-		"hook_event_name": "TeammateIdle",
-		"teammate_name": "researcher"
-	}`
-
-	req := tenantRequest("my-project", http.MethodPost, "/api/v1/hooks/teammate-idle", strings.NewReader(payload))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.HandleHookTeammateIdle(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "team_name")
 }
 
 func TestHandleHookTeammateIdle_ListTasksError(t *testing.T) {
@@ -1032,21 +896,40 @@ func TestHookPayload_Validation(t *testing.T) {
 // Error Type Tests
 // =============================================================================
 
-func TestHookPayloadError_Error(t *testing.T) {
-	err := &HookPayloadError{Field: "task_id", Message: "required"}
-	assert.Equal(t, "hook payload error: task_id: required", err.Error())
-}
-
-func TestHookProcessingError_Error(t *testing.T) {
+func TestHookErrors_Error(t *testing.T) {
 	cause := errors.New("connection refused")
-	err := &HookProcessingError{Operation: "create task", Cause: cause}
-	assert.Equal(t, "hook processing error: create task: connection refused", err.Error())
-	assert.True(t, errors.Is(err, cause))
-}
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{
+			name: "payload",
+			err:  &HookPayloadError{Field: "task_id", Message: "required"},
+			want: "hook payload error: task_id: required",
+		},
+		{
+			name: "processing",
+			err:  &HookProcessingError{Operation: "create task", Cause: cause},
+			want: "hook processing error: create task: connection refused",
+		},
+		{
+			name: "service not configured",
+			err:  &HookServiceNotConfiguredError{Component: "task store"},
+			want: "hook service not configured: task store",
+		},
+	}
 
-func TestHookServiceNotConfiguredError_Error(t *testing.T) {
-	err := &HookServiceNotConfiguredError{Component: "task store"}
-	assert.Equal(t, "hook service not configured: task store", err.Error())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, tt.err.Error())
+		})
+	}
+
+	t.Run("processing unwraps cause", func(t *testing.T) {
+		err := &HookProcessingError{Operation: "create task", Cause: cause}
+		assert.True(t, errors.Is(err, cause))
+	})
 }
 
 // =============================================================================

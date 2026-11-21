@@ -460,19 +460,14 @@ func TestSigningRelay_TheRuntimeRefusesEachWrongAttachTyped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("spawn: %v", err)
 	}
-	for name, tc := range map[string]struct {
-		tenant, session string
-		want            error
-	}{
-		"unknown session":  {"tenant-a", "sess-nobody", ErrSigningRelayUnknownSession},
-		"another tenant":   {"tenant-b", sess.ID, ErrSigningRelayForeignSession},
-		"already attached": {"tenant-a", sess.ID, ErrSigningRelayAlreadyAttached},
-	} {
-		_, err := h.runtime.AttachSigningRelay(tc.tenant, tc.session, &fakeRelayLink{})
-		var attachErr *SigningRelayAttachError
-		if !errors.As(err, &attachErr) || !errors.Is(err, tc.want) {
-			t.Errorf("%s: %v, want %v", name, err, tc.want)
-		}
+	// The unknown-session and second-attach refusals are driven over the wire
+	// by TestSigningRelay_AnotherSessionsOrTenantsRelayIsRefused; the wire
+	// refuses another tenant before the runtime sees it, so only here is the
+	// runtime's own foreign-session refusal reached.
+	_, err = h.runtime.AttachSigningRelay("tenant-b", sess.ID, &fakeRelayLink{})
+	var attachErr *SigningRelayAttachError
+	if !errors.As(err, &attachErr) || !errors.Is(err, ErrSigningRelayForeignSession) || attachErr.SessionID != sess.ID {
+		t.Fatalf("attach from another tenant = %v, want a typed ErrSigningRelayForeignSession for %s", err, sess.ID)
 	}
 }
 

@@ -16,6 +16,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -79,41 +80,6 @@ func newBasicVecSvc(t *testing.T) (VectorService, *vecMockStorage) {
 	return svc, storage
 }
 
-func TestVecCreateNamespace_ServiceClosed(t *testing.T) {
-	svc, _ := newBasicVecSvc(t)
-
-	concreteSvc := svc.(*vectorService)
-	concreteSvc.mu.Lock()
-	concreteSvc.closed = true
-	concreteSvc.mu.Unlock()
-
-	resp, err := svc.CreateNamespace(tenantctx.WithSystem(context.Background()), &CreateNamespaceRequest{
-		Namespace: "closed-ns",
-		Dimension: 128,
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-// =============================================================================
-// DeleteNamespace - New coverage paths
-// =============================================================================
-
-func TestVecDeleteNamespace_ServiceClosed(t *testing.T) {
-	svc, _ := newBasicVecSvc(t)
-
-	concreteSvc := svc.(*vectorService)
-	concreteSvc.mu.Lock()
-	concreteSvc.closed = true
-	concreteSvc.mu.Unlock()
-
-	resp, err := svc.DeleteNamespace(tenantctx.WithSystem(context.Background()), &DeleteNamespaceRequest{
-		Namespace: "ns",
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
 // =============================================================================
 // ListNamespaces - New coverage paths
 // =============================================================================
@@ -137,63 +103,39 @@ func TestVecListNamespaces_WithPrefix(t *testing.T) {
 }
 
 func TestVecListNamespaces_Pagination(t *testing.T) {
-	svc, storage := newBasicVecSvc(t)
-
-	storage.listNamespacesFn = func(ctx context.Context) ([]interfaces.VectorNamespaceInfo, error) {
-		nsList := make([]interfaces.VectorNamespaceInfo, 5)
-		for i := range nsList {
-			nsList[i] = interfaces.VectorNamespaceInfo{Name: "ns-" + string(rune('a'+i)), Dimension: 128}
-		}
-		return nsList, nil
+	tests := []struct {
+		name    string
+		count   int
+		limit   int
+		offset  int
+		wantLen int
+	}{
+		{name: "limit and offset", count: 5, limit: 2, offset: 1, wantLen: 2},
+		{name: "offset beyond count", count: 1, offset: 100, wantLen: 0},
+		{name: "default limit", count: 150, wantLen: 100},
+		{name: "limit capped at 1000", count: 1500, limit: 5000, wantLen: 1000},
 	}
 
-	resp, err := svc.ListNamespaces(tenantctx.WithSystem(context.Background()), &ListNamespacesRequest{
-		Limit:  2,
-		Offset: 1,
-	})
-	require.NoError(t, err)
-	assert.Equal(t, 5, resp.TotalCount)
-	assert.Len(t, resp.Namespaces, 2)
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, storage := newBasicVecSvc(t)
+			storage.listNamespacesFn = func(ctx context.Context) ([]interfaces.VectorNamespaceInfo, error) {
+				nsList := make([]interfaces.VectorNamespaceInfo, tt.count)
+				for i := range nsList {
+					nsList[i] = interfaces.VectorNamespaceInfo{Name: fmt.Sprintf("ns-%d", i), Dimension: 128}
+				}
+				return nsList, nil
+			}
 
-func TestVecListNamespaces_LimitCapping(t *testing.T) {
-	svc, _ := newBasicVecSvc(t)
-
-	resp, err := svc.ListNamespaces(tenantctx.WithSystem(context.Background()), &ListNamespacesRequest{
-		Limit: 5000,
-	})
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-}
-
-func TestVecListNamespaces_ServiceClosed(t *testing.T) {
-	svc, _ := newBasicVecSvc(t)
-
-	concreteSvc := svc.(*vectorService)
-	concreteSvc.mu.Lock()
-	concreteSvc.closed = true
-	concreteSvc.mu.Unlock()
-
-	resp, err := svc.ListNamespaces(tenantctx.WithSystem(context.Background()), &ListNamespacesRequest{})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestVecListNamespaces_OffsetBeyondCount(t *testing.T) {
-	svc, storage := newBasicVecSvc(t)
-
-	storage.listNamespacesFn = func(ctx context.Context) ([]interfaces.VectorNamespaceInfo, error) {
-		return []interfaces.VectorNamespaceInfo{
-			{Name: "ns-a", Dimension: 128},
-		}, nil
+			resp, err := svc.ListNamespaces(tenantctx.WithSystem(context.Background()), &ListNamespacesRequest{
+				Limit:  tt.limit,
+				Offset: tt.offset,
+			})
+			require.NoError(t, err)
+			assert.Equal(t, tt.count, resp.TotalCount)
+			assert.Len(t, resp.Namespaces, tt.wantLen)
+		})
 	}
-
-	resp, err := svc.ListNamespaces(tenantctx.WithSystem(context.Background()), &ListNamespacesRequest{
-		Offset: 100,
-	})
-	require.NoError(t, err)
-	assert.Equal(t, 1, resp.TotalCount)
-	assert.Empty(t, resp.Namespaces)
 }
 
 func TestVecListNamespaces_TenantFiltering(t *testing.T) {
@@ -256,21 +198,6 @@ func TestVecGetNamespaceInfo_NotFound(t *testing.T) {
 	var qbErr *qbErrors.QBError
 	require.True(t, errors.As(err, &qbErr))
 	assert.Equal(t, qbErrors.ErrNotFound, qbErr.Code)
-}
-
-func TestVecGetNamespaceInfo_ServiceClosed(t *testing.T) {
-	svc, _ := newBasicVecSvc(t)
-
-	concreteSvc := svc.(*vectorService)
-	concreteSvc.mu.Lock()
-	concreteSvc.closed = true
-	concreteSvc.mu.Unlock()
-
-	resp, err := svc.GetNamespaceInfo(tenantctx.WithSystem(context.Background()), &GetNamespaceInfoRequest{
-		Namespace: "ns",
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
 }
 
 func TestVecGetNamespaceInfo_WithFullData(t *testing.T) {
@@ -336,43 +263,146 @@ func TestVecUpsert_DimensionMismatch(t *testing.T) {
 	require.True(t, errors.As(err, &qbErr))
 	assert.Equal(t, qbErrors.ErrInvalidInput, qbErr.Code)
 }
-func TestVecUpsert_ServiceClosed(t *testing.T) {
-	svc, _ := newVecSvcWithNamespace(t, "vectors", 3)
 
-	concreteSvc := svc.(*vectorService)
-	concreteSvc.mu.Lock()
-	concreteSvc.closed = true
-	concreteSvc.mu.Unlock()
+// =============================================================================
+// Tenant isolation: cross-tenant access to every method
+// =============================================================================
 
-	resp, err := svc.UpsertVector(tenantctx.WithSystem(context.Background()), &UpsertVectorRequest{
-		Namespace: "vectors",
-		ID:        1,
-		Vector:    []float32{1.0, 2.0, 3.0},
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
+// TestVecTenantForbidden checks that a tenant cannot reach another tenant's
+// namespace through any vector method. With prefix-based tenant isolation the
+// attacker's request is scoped to "tenant/<attacker>/tenant-ns", which does not
+// exist, so each method either fails or returns nothing from the owner's
+// namespace, without leaking that the namespace exists.
+func TestVecTenantForbidden(t *testing.T) {
+	wantNotFound := func(t *testing.T, resp any, err error) {
+		require.Error(t, err)
+		assert.Nil(t, resp)
+		var qbErr *qbErrors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, qbErrors.ErrNotFound, qbErr.Code)
+	}
+	wantError := func(t *testing.T, resp any, err error) {
+		require.Error(t, err)
+		assert.Nil(t, resp)
+	}
 
-func TestVecUpsert_TenantForbidden(t *testing.T) {
-	// With prefix-based tenant isolation, "other-tenant" scopes the namespace
-	// to "tenant/other-tenant/tenant-ns" which does not exist in the mock
-	// storage. The service returns ErrNotFound because the scoped namespace
-	// is not found, preventing cross-tenant access without leaking namespace
-	// existence to the attacker.
-	svc, _ := newVecSvcWithNamespace(t, "tenant-ns", 3)
+	tests := []struct {
+		name string
+		// ownedNamespace makes the storage report the namespace as owned by
+		// another tenant, whatever namespace name is asked for.
+		ownedNamespace bool
+		call           func(svc VectorService, ctx context.Context) (any, error)
+		check          func(t *testing.T, resp any, err error)
+	}{
+		{
+			name: "UpsertVector",
+			call: func(svc VectorService, ctx context.Context) (any, error) {
+				return svc.UpsertVector(ctx, &UpsertVectorRequest{
+					Namespace: "tenant-ns", ID: 1, Vector: []float32{1.0, 2.0, 3.0},
+				})
+			},
+			check: wantNotFound,
+		},
+		{
+			name:           "GetVector",
+			ownedNamespace: true,
+			call: func(svc VectorService, ctx context.Context) (any, error) {
+				return svc.GetVector(ctx, &GetVectorRequest{Namespace: "tenant-ns", ID: 1})
+			},
+			check: wantError,
+		},
+		{
+			// The SDK provider is not configured, so the delete on the scoped
+			// namespace fails with an internal error.
+			name: "DeleteVector",
+			call: func(svc VectorService, ctx context.Context) (any, error) {
+				return svc.DeleteVector(ctx, &DeleteVectorRequest{Namespace: "tenant-ns", ID: 1})
+			},
+			check: wantError,
+		},
+		{
+			name:           "BatchUpsert",
+			ownedNamespace: true,
+			call: func(svc VectorService, ctx context.Context) (any, error) {
+				return svc.BatchUpsert(ctx, &BatchUpsertRequest{
+					Namespace: "tenant-ns",
+					Vectors:   []*VectorData{{ID: 1, Vector: []float32{1.0, 2.0, 3.0}}},
+				})
+			},
+			check: wantError,
+		},
+		{
+			// A missing namespace returns empty results (eventual consistency).
+			name: "SearchSimilar",
+			call: func(svc VectorService, ctx context.Context) (any, error) {
+				return svc.SearchSimilar(ctx, &SearchSimilarRequest{
+					Namespace: "tenant-ns", QueryVector: []float32{1.0, 2.0, 3.0}, K: 5,
+				})
+			},
+			check: func(t *testing.T, resp any, err error) {
+				require.NoError(t, err)
+				require.IsType(t, &SearchSimilarResponse{}, resp)
+				assert.Empty(t, resp.(*SearchSimilarResponse).Results)
+			},
+		},
+		{
+			name: "SearchByMetadata",
+			call: func(svc VectorService, ctx context.Context) (any, error) {
+				return svc.SearchByMetadata(ctx, &SearchByMetadataRequest{
+					Namespace: "tenant-ns",
+					Filters:   map[string]interface{}{"key": "val"},
+				})
+			},
+			check: func(t *testing.T, resp any, err error) {
+				require.NoError(t, err)
+				require.IsType(t, &SearchByMetadataResponse{}, resp)
+				assert.Empty(t, resp.(*SearchByMetadataResponse).Results)
+			},
+		},
+		{
+			name: "ListVectors",
+			call: func(svc VectorService, ctx context.Context) (any, error) {
+				return svc.ListVectors(ctx, &ListVectorsRequest{Namespace: "tenant-ns"})
+			},
+			check: wantNotFound,
+		},
+		{
+			name: "SearchByID",
+			call: func(svc VectorService, ctx context.Context) (any, error) {
+				return svc.SearchByID(ctx, &SearchByIDRequest{Namespace: "tenant-ns", ID: 1, K: 5})
+			},
+			check: wantNotFound,
+		},
+		{
+			// Delete is idempotent: it succeeds on the empty scoped namespace
+			// and never touches the owner's data.
+			name: "BatchDeleteVectors",
+			call: func(svc VectorService, ctx context.Context) (any, error) {
+				return svc.BatchDeleteVectors(ctx, &BatchDeleteVectorsRequest{
+					Namespace: "tenant-ns", IDs: []uint64{1},
+				})
+			},
+			check: func(t *testing.T, resp any, err error) {
+				require.NoError(t, err)
+				require.IsType(t, &BatchDeleteVectorsResponse{}, resp)
+				assert.True(t, resp.(*BatchDeleteVectorsResponse).Success)
+			},
+		},
+	}
 
-	ctx := tenantctx.WithTenant(context.Background(), "other-tenant")
-	resp, err := svc.UpsertVector(ctx, &UpsertVectorRequest{
-		Namespace: "tenant-ns",
-		ID:        1,
-		Vector:    []float32{1.0, 2.0, 3.0},
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, storage := newVecSvcWithNamespace(t, "tenant-ns", 3)
+			if tt.ownedNamespace {
+				storage.getNamespaceInfoFn = func(ctx context.Context, namespace string) (*interfaces.VectorNamespaceInfo, error) {
+					return &interfaces.VectorNamespaceInfo{Name: "tenant-ns", Dimension: 3, TenantID: "owner"}, nil
+				}
+			}
 
-	var qbErr *qbErrors.QBError
-	require.True(t, errors.As(err, &qbErr))
-	assert.Equal(t, qbErrors.ErrNotFound, qbErr.Code)
+			resp, err := tt.call(svc, tenantctx.WithTenant(context.Background(), "attacker"))
+			tt.check(t, resp, err)
+		})
+	}
 }
 
 // =============================================================================
@@ -402,140 +432,6 @@ func TestVecGetVector_WithoutVectorData(t *testing.T) {
 	assert.Nil(t, resp.Metadata)
 }
 
-func TestVecGetVector_ServiceClosed(t *testing.T) {
-	svc, _ := newVecSvcWithNamespace(t, "vectors", 3)
-
-	concreteSvc := svc.(*vectorService)
-	concreteSvc.mu.Lock()
-	concreteSvc.closed = true
-	concreteSvc.mu.Unlock()
-
-	resp, err := svc.GetVector(tenantctx.WithSystem(context.Background()), &GetVectorRequest{
-		Namespace: "vectors",
-		ID:        1,
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestVecGetVector_TenantForbidden(t *testing.T) {
-	svc, storage := newVecSvcWithNamespace(t, "tenant-ns", 3)
-
-	storage.getNamespaceInfoFn = func(ctx context.Context, namespace string) (*interfaces.VectorNamespaceInfo, error) {
-		return &interfaces.VectorNamespaceInfo{
-			Name:      "tenant-ns",
-			Dimension: 3,
-			TenantID:  "owner",
-		}, nil
-	}
-
-	ctx := tenantctx.WithTenant(context.Background(), "attacker")
-	resp, err := svc.GetVector(ctx, &GetVectorRequest{
-		Namespace: "tenant-ns",
-		ID:        1,
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-// =============================================================================
-// DeleteVector - New coverage paths
-// =============================================================================
-func TestVecDeleteVector_ServiceClosed(t *testing.T) {
-	svc, _ := newVecSvcWithNamespace(t, "vectors", 3)
-
-	concreteSvc := svc.(*vectorService)
-	concreteSvc.mu.Lock()
-	concreteSvc.closed = true
-	concreteSvc.mu.Unlock()
-
-	resp, err := svc.DeleteVector(tenantctx.WithSystem(context.Background()), &DeleteVectorRequest{
-		Namespace: "vectors",
-		ID:        1,
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestVecDeleteVector_TenantForbidden(t *testing.T) {
-	// With prefix-based tenant isolation, the attacker's scoped namespace
-	// "tenant/attacker-tenant/tenant-ns" does not exist. DeleteVector delegates
-	// to the SDK which operates on the scoped namespace. The SDK provider is
-	// not configured in this test, so the call fails with an internal error,
-	// preventing cross-tenant access.
-	svc, _ := newVecSvcWithNamespace(t, "tenant-ns", 3)
-
-	ctx := tenantctx.WithTenant(context.Background(), "attacker-tenant")
-	resp, err := svc.DeleteVector(ctx, &DeleteVectorRequest{
-		Namespace: "tenant-ns",
-		ID:        1,
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-// =============================================================================
-// BatchUpsert - New coverage paths
-// =============================================================================
-
-func TestVecBatchUpsert_StorageError(t *testing.T) {
-	svc, storage := newVecSvcWithNamespace(t, "batch-ns", 3)
-
-	storage.batchDeleteVectorsFn = func(ctx context.Context, namespace string, ids []uint64) error {
-		return errors.New("batch write failed")
-	}
-
-	resp, err := svc.BatchUpsert(tenantctx.WithSystem(context.Background()), &BatchUpsertRequest{
-		Namespace: "batch-ns",
-		Vectors: []*VectorData{
-			{ID: 1, Vector: []float32{1.0, 2.0, 3.0}},
-		},
-	})
-	// BatchUpsert may succeed or fail depending on write path (SDK vs storage)
-	// The test validates the code path is exercised
-	if err != nil {
-		assert.Nil(t, resp)
-	}
-}
-
-func TestVecBatchUpsert_ServiceClosed(t *testing.T) {
-	svc, _ := newVecSvcWithNamespace(t, "batch-ns", 3)
-
-	concreteSvc := svc.(*vectorService)
-	concreteSvc.mu.Lock()
-	concreteSvc.closed = true
-	concreteSvc.mu.Unlock()
-
-	resp, err := svc.BatchUpsert(tenantctx.WithSystem(context.Background()), &BatchUpsertRequest{
-		Namespace: "batch-ns",
-		Vectors: []*VectorData{
-			{ID: 1, Vector: []float32{1.0, 2.0, 3.0}},
-		},
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestVecBatchUpsert_TenantForbidden(t *testing.T) {
-	svc, storage := newVecSvcWithNamespace(t, "tenant-ns", 3)
-
-	storage.getNamespaceInfoFn = func(ctx context.Context, namespace string) (*interfaces.VectorNamespaceInfo, error) {
-		return &interfaces.VectorNamespaceInfo{
-			Name:      "tenant-ns",
-			Dimension: 3,
-			TenantID:  "owner",
-		}, nil
-	}
-
-	ctx := tenantctx.WithTenant(context.Background(), "attacker")
-	resp, err := svc.BatchUpsert(ctx, &BatchUpsertRequest{
-		Namespace: "tenant-ns",
-		Vectors:   []*VectorData{{ID: 1, Vector: []float32{1.0, 2.0, 3.0}}},
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
 // =============================================================================
 // SearchSimilar - New coverage paths
 // =============================================================================
@@ -545,41 +441,6 @@ func TestVecSearchSimilar_NamespaceNotFoundReturnsEmpty(t *testing.T) {
 
 	resp, err := svc.SearchSimilar(tenantctx.WithSystem(context.Background()), &SearchSimilarRequest{
 		Namespace:   "nonexistent",
-		QueryVector: []float32{1.0, 2.0, 3.0},
-		K:           5,
-	})
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-	assert.Empty(t, resp.Results)
-}
-
-func TestVecSearchSimilar_ServiceClosed(t *testing.T) {
-	svc, _ := newBasicVecSvc(t)
-
-	concreteSvc := svc.(*vectorService)
-	concreteSvc.mu.Lock()
-	concreteSvc.closed = true
-	concreteSvc.mu.Unlock()
-
-	resp, err := svc.SearchSimilar(tenantctx.WithSystem(context.Background()), &SearchSimilarRequest{
-		Namespace:   "ns",
-		QueryVector: []float32{1.0},
-		K:           5,
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestVecSearchSimilar_TenantForbidden(t *testing.T) {
-	// With prefix-based tenant isolation, the attacker's scoped namespace
-	// "tenant/attacker/tenant-ns" does not exist. SearchSimilar returns empty
-	// results for non-existent namespaces (eventual consistency design),
-	// preventing cross-tenant data access without leaking namespace existence.
-	svc, _ := newVecSvcWithNamespace(t, "tenant-ns", 3)
-
-	ctx := tenantctx.WithTenant(context.Background(), "attacker")
-	resp, err := svc.SearchSimilar(ctx, &SearchSimilarRequest{
-		Namespace:   "tenant-ns",
 		QueryVector: []float32{1.0, 2.0, 3.0},
 		K:           5,
 	})
@@ -633,73 +494,35 @@ func TestVecSearchByMetadata_StorageError(t *testing.T) {
 	assert.Nil(t, resp)
 }
 
-func TestVecSearchByMetadata_LimitCapping(t *testing.T) {
-	svc, storage := newVecSvcWithNamespace(t, "meta-ns", 3)
-
-	var capturedOpts *interfaces.VectorScanOptions
-	storage.scanByMultiFiltersFn = func(ctx context.Context, namespace string, filters []interfaces.VectorMetadataFilter, opts *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
-		capturedOpts = opts
-		return nil, nil
+func TestVecSearchByMetadata_Limit(t *testing.T) {
+	tests := []struct {
+		name      string
+		limit     int
+		wantLimit int
+	}{
+		{name: "default limit", limit: 0, wantLimit: 100},
+		{name: "limit capped at 1000", limit: 5000, wantLimit: 1000},
 	}
 
-	_, err := svc.SearchByMetadata(tenantctx.WithSystem(context.Background()), &SearchByMetadataRequest{
-		Namespace: "meta-ns",
-		Filters:   map[string]interface{}{"key": "val"},
-		Limit:     5000,
-	})
-	require.NoError(t, err)
-	assert.Equal(t, 1000, capturedOpts.Limit)
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, storage := newVecSvcWithNamespace(t, "meta-ns", 3)
 
-func TestVecSearchByMetadata_DefaultLimit(t *testing.T) {
-	svc, storage := newVecSvcWithNamespace(t, "meta-ns", 3)
+			var capturedOpts *interfaces.VectorScanOptions
+			storage.scanByMultiFiltersFn = func(ctx context.Context, namespace string, filters []interfaces.VectorMetadataFilter, opts *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
+				capturedOpts = opts
+				return nil, nil
+			}
 
-	var capturedOpts *interfaces.VectorScanOptions
-	storage.scanByMultiFiltersFn = func(ctx context.Context, namespace string, filters []interfaces.VectorMetadataFilter, opts *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
-		capturedOpts = opts
-		return nil, nil
+			_, err := svc.SearchByMetadata(tenantctx.WithSystem(context.Background()), &SearchByMetadataRequest{
+				Namespace: "meta-ns",
+				Filters:   map[string]interface{}{"key": "val"},
+				Limit:     tt.limit,
+			})
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantLimit, capturedOpts.Limit)
+		})
 	}
-
-	_, err := svc.SearchByMetadata(tenantctx.WithSystem(context.Background()), &SearchByMetadataRequest{
-		Namespace: "meta-ns",
-		Filters:   map[string]interface{}{"key": "val"},
-		Limit:     0,
-	})
-	require.NoError(t, err)
-	assert.Equal(t, 100, capturedOpts.Limit)
-}
-
-func TestVecSearchByMetadata_ServiceClosed(t *testing.T) {
-	svc, _ := newVecSvcWithNamespace(t, "meta-ns", 3)
-
-	concreteSvc := svc.(*vectorService)
-	concreteSvc.mu.Lock()
-	concreteSvc.closed = true
-	concreteSvc.mu.Unlock()
-
-	resp, err := svc.SearchByMetadata(tenantctx.WithSystem(context.Background()), &SearchByMetadataRequest{
-		Namespace: "meta-ns",
-		Filters:   map[string]interface{}{"key": "val"},
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestVecSearchByMetadata_TenantForbidden(t *testing.T) {
-	// With prefix-based tenant isolation, the attacker's scoped namespace
-	// "tenant/attacker/tenant-ns" does not exist. SearchByMetadata scans the
-	// scoped namespace which returns empty results (mock default), preventing
-	// cross-tenant data access.
-	svc, _ := newVecSvcWithNamespace(t, "tenant-ns", 3)
-
-	ctx := tenantctx.WithTenant(context.Background(), "attacker")
-	resp, err := svc.SearchByMetadata(ctx, &SearchByMetadataRequest{
-		Namespace: "tenant-ns",
-		Filters:   map[string]interface{}{"key": "val"},
-	})
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-	assert.Empty(t, resp.Results)
 }
 
 // =============================================================================
@@ -738,57 +561,42 @@ func TestVecListVectors_NamespaceNotFound(t *testing.T) {
 	assert.Nil(t, resp)
 }
 
-func TestVecListVectors_WithCursor(t *testing.T) {
-	svc, storage := newVecSvcWithNamespace(t, "list-ns", 3)
-
-	var capturedOpts *interfaces.VectorScanOptions
-	storage.scanNamespaceFn = func(ctx context.Context, namespace string, opts *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
-		capturedOpts = opts
-		return []*interfaces.VectorValue{{ID: 3, Version: 1}}, nil
+func TestVecListVectors_ScanOptions(t *testing.T) {
+	// The scan asks for one row more than the limit, to know whether a next
+	// page exists.
+	tests := []struct {
+		name       string
+		cursor     string
+		limit      int
+		wantOffset int
+		wantLimit  int
+	}{
+		{name: "cursor sets offset", cursor: "10", limit: 5, wantOffset: 10, wantLimit: 6},
+		{name: "invalid cursor starts at zero", cursor: "invalid", wantOffset: 0, wantLimit: 101},
+		{name: "default limit", limit: 0, wantOffset: 0, wantLimit: 101},
 	}
 
-	resp, err := svc.ListVectors(tenantctx.WithSystem(context.Background()), &ListVectorsRequest{
-		Namespace: "list-ns",
-		Cursor:    "10",
-		Limit:     5,
-	})
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-	assert.Equal(t, 10, capturedOpts.Offset)
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, storage := newVecSvcWithNamespace(t, "list-ns", 3)
 
-func TestVecListVectors_InvalidCursor(t *testing.T) {
-	svc, storage := newVecSvcWithNamespace(t, "list-ns", 3)
+			var capturedOpts *interfaces.VectorScanOptions
+			storage.scanNamespaceFn = func(ctx context.Context, namespace string, opts *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
+				capturedOpts = opts
+				return nil, nil
+			}
 
-	var capturedOpts *interfaces.VectorScanOptions
-	storage.scanNamespaceFn = func(ctx context.Context, namespace string, opts *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
-		capturedOpts = opts
-		return nil, nil
+			resp, err := svc.ListVectors(tenantctx.WithSystem(context.Background()), &ListVectorsRequest{
+				Namespace: "list-ns",
+				Cursor:    tt.cursor,
+				Limit:     tt.limit,
+			})
+			require.NoError(t, err)
+			assert.NotNil(t, resp)
+			assert.Equal(t, tt.wantOffset, capturedOpts.Offset)
+			assert.Equal(t, tt.wantLimit, capturedOpts.Limit)
+		})
 	}
-
-	_, err := svc.ListVectors(tenantctx.WithSystem(context.Background()), &ListVectorsRequest{
-		Namespace: "list-ns",
-		Cursor:    "invalid",
-	})
-	require.NoError(t, err)
-	assert.Equal(t, 0, capturedOpts.Offset)
-}
-
-func TestVecListVectors_LimitDefaults(t *testing.T) {
-	svc, storage := newVecSvcWithNamespace(t, "list-ns", 3)
-
-	var capturedOpts *interfaces.VectorScanOptions
-	storage.scanNamespaceFn = func(ctx context.Context, namespace string, opts *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
-		capturedOpts = opts
-		return nil, nil
-	}
-
-	_, err := svc.ListVectors(tenantctx.WithSystem(context.Background()), &ListVectorsRequest{
-		Namespace: "list-ns",
-		Limit:     0,
-	})
-	require.NoError(t, err)
-	assert.Equal(t, 101, capturedOpts.Limit)
 }
 
 func TestVecListVectors_NextCursor(t *testing.T) {
@@ -825,105 +633,57 @@ func TestVecListVectors_ScanError(t *testing.T) {
 	assert.Nil(t, resp)
 }
 
-func TestVecListVectors_TenantForbidden(t *testing.T) {
-	// With prefix-based tenant isolation, the attacker's scoped namespace
-	// "tenant/attacker/tenant-ns" does not exist in the mock. GetNamespaceInfo
-	// returns not-found for the scoped namespace, resulting in an ErrNotFound
-	// error that prevents cross-tenant access.
-	svc, _ := newVecSvcWithNamespace(t, "tenant-ns", 3)
+func TestVecUpdateMetadata_Errors(t *testing.T) {
+	tests := []struct {
+		name string
+		id   uint64
+	}{
+		{name: "zero id", id: 0},
+		{name: "vector not found", id: 999},
+	}
 
-	ctx := tenantctx.WithTenant(context.Background(), "attacker")
-	resp, err := svc.ListVectors(ctx, &ListVectorsRequest{
-		Namespace: "tenant-ns",
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, _ := newVecSvcWithNamespace(t, "meta-ns", 3)
 
-	var qbErr *qbErrors.QBError
-	require.True(t, errors.As(err, &qbErr))
-	assert.Equal(t, qbErrors.ErrNotFound, qbErr.Code)
-}
-func TestVecUpdateMetadata_ZeroID(t *testing.T) {
-	svc, _ := newBasicVecSvc(t)
-
-	resp, err := svc.UpdateMetadata(tenantctx.WithSystem(context.Background()), &UpdateVectorMetadataRequest{
-		Namespace: "ns",
-		ID:        0,
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestVecUpdateMetadata_VectorNotFound(t *testing.T) {
-	svc, _ := newVecSvcWithNamespace(t, "meta-ns", 3)
-
-	resp, err := svc.UpdateMetadata(tenantctx.WithSystem(context.Background()), &UpdateVectorMetadataRequest{
-		Namespace: "meta-ns",
-		ID:        999,
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
+			resp, err := svc.UpdateMetadata(tenantctx.WithSystem(context.Background()), &UpdateVectorMetadataRequest{
+				Namespace: "meta-ns",
+				ID:        tt.id,
+			})
+			require.Error(t, err)
+			assert.Nil(t, resp)
+		})
+	}
 }
 
 // =============================================================================
 // SearchByID - New coverage paths
 // =============================================================================
 
-func TestVecSearchByID_ZeroID(t *testing.T) {
-	svc, _ := newBasicVecSvc(t)
+func TestVecSearchByID_Errors(t *testing.T) {
+	tests := []struct {
+		name string
+		id   uint64
+		k    int
+	}{
+		{name: "zero id", id: 0, k: 5},
+		{name: "invalid k", id: 1, k: 0},
+		{name: "vector not found", id: 999, k: 5},
+	}
 
-	resp, err := svc.SearchByID(tenantctx.WithSystem(context.Background()), &SearchByIDRequest{
-		Namespace: "ns",
-		ID:        0,
-		K:         5,
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, _ := newVecSvcWithNamespace(t, "ns", 3)
 
-func TestVecSearchByID_InvalidK(t *testing.T) {
-	svc, _ := newBasicVecSvc(t)
-
-	resp, err := svc.SearchByID(tenantctx.WithSystem(context.Background()), &SearchByIDRequest{
-		Namespace: "ns",
-		ID:        1,
-		K:         0,
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestVecSearchByID_VectorNotFound(t *testing.T) {
-	svc, _ := newVecSvcWithNamespace(t, "ns", 3)
-
-	resp, err := svc.SearchByID(tenantctx.WithSystem(context.Background()), &SearchByIDRequest{
-		Namespace: "ns",
-		ID:        999,
-		K:         5,
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestVecSearchByID_TenantForbidden(t *testing.T) {
-	// With prefix-based tenant isolation, the attacker's scoped namespace
-	// "tenant/attacker/tenant-ns" does not exist. SearchByID first tries to
-	// get the source vector from the scoped namespace, which fails with
-	// not-found, preventing cross-tenant access.
-	svc, _ := newVecSvcWithNamespace(t, "tenant-ns", 3)
-
-	ctx := tenantctx.WithTenant(context.Background(), "attacker")
-	resp, err := svc.SearchByID(ctx, &SearchByIDRequest{
-		Namespace: "tenant-ns",
-		ID:        1,
-		K:         5,
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var qbErr *qbErrors.QBError
-	require.True(t, errors.As(err, &qbErr))
-	assert.Equal(t, qbErrors.ErrNotFound, qbErr.Code)
+			resp, err := svc.SearchByID(tenantctx.WithSystem(context.Background()), &SearchByIDRequest{
+				Namespace: "ns",
+				ID:        tt.id,
+				K:         tt.k,
+			})
+			require.Error(t, err)
+			assert.Nil(t, resp)
+		})
+	}
 }
 
 // =============================================================================
@@ -940,26 +700,6 @@ func TestVecBatchDelete_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, resp.Success)
 	assert.Equal(t, 3, resp.DeletedCount)
-}
-
-func TestVecBatchDelete_TenantForbidden(t *testing.T) {
-	// With prefix-based tenant isolation, the attacker's scoped namespace
-	// "tenant/attacker/tenant-ns" does not exist. BatchDeleteVectors operates
-	// on the scoped namespace. The mock storage silently succeeds on batch
-	// delete (idempotent delete), returning a success response with no data
-	// actually deleted from the owner's namespace.
-	svc, _ := newVecSvcWithNamespace(t, "tenant-ns", 3)
-
-	ctx := tenantctx.WithTenant(context.Background(), "attacker")
-	resp, err := svc.BatchDeleteVectors(ctx, &BatchDeleteVectorsRequest{
-		Namespace: "tenant-ns",
-		IDs:       []uint64{1},
-	})
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-	// The delete operates on a non-existent scoped namespace, so the owner's
-	// data is never touched.
-	assert.True(t, resp.Success)
 }
 
 // =============================================================================
@@ -988,39 +728,9 @@ func TestVecGetIndexStats_NotFound(t *testing.T) {
 	assert.Nil(t, resp)
 }
 
-func TestVecGetIndexStats_ServiceClosed(t *testing.T) {
-	svc, _ := newBasicVecSvc(t)
-
-	concreteSvc := svc.(*vectorService)
-	concreteSvc.mu.Lock()
-	concreteSvc.closed = true
-	concreteSvc.mu.Unlock()
-
-	resp, err := svc.GetIndexStats(tenantctx.WithSystem(context.Background()), &GetIndexStatsRequest{
-		Namespace: "ns",
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
 // =============================================================================
 // RebuildIndex - New coverage paths
 // =============================================================================
-
-func TestVecRebuildIndex_ServiceClosed(t *testing.T) {
-	svc, _ := newBasicVecSvc(t)
-
-	concreteSvc := svc.(*vectorService)
-	concreteSvc.mu.Lock()
-	concreteSvc.closed = true
-	concreteSvc.mu.Unlock()
-
-	resp, err := svc.RebuildIndex(tenantctx.WithSystem(context.Background()), &RebuildIndexRequest{
-		Namespace: "ns",
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
 
 func TestVecGetRebuildProgress_NotFound(t *testing.T) {
 	svc, _ := newBasicVecSvc(t)
@@ -1035,21 +745,6 @@ func TestVecGetRebuildProgress_NotFound(t *testing.T) {
 // =============================================================================
 // CompactNamespace - New coverage paths
 // =============================================================================
-
-func TestVecCompactNamespace_ServiceClosed(t *testing.T) {
-	svc, _ := newBasicVecSvc(t)
-
-	concreteSvc := svc.(*vectorService)
-	concreteSvc.mu.Lock()
-	concreteSvc.closed = true
-	concreteSvc.mu.Unlock()
-
-	resp, err := svc.CompactNamespace(tenantctx.WithSystem(context.Background()), &CompactNamespaceRequest{
-		Namespace: "ns",
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
 
 func TestVecGetCompactionProgress_NotFound(t *testing.T) {
 	svc, _ := newBasicVecSvc(t)
@@ -1146,35 +841,69 @@ func TestVecClosedState_AllOperationsReturnProperError(t *testing.T) {
 	concreteSvc.closed = true
 	concreteSvc.mu.Unlock()
 
-	// Verify multiple operations all return errors when closed
-	_, err := svc.CreateNamespace(tenantctx.WithSystem(context.Background()), &CreateNamespaceRequest{
-		Namespace: "ns", Dimension: 128,
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "vector service not available")
+	ctx := tenantctx.WithSystem(context.Background())
+	tests := []struct {
+		name string
+		call func() (any, error)
+		// notChecked marks a method that does not check the closed state
+		// and fails later, on its own path, with a different error.
+		notChecked bool
+	}{
+		{"CreateNamespace", func() (any, error) {
+			return svc.CreateNamespace(ctx, &CreateNamespaceRequest{Namespace: "ns", Dimension: 128})
+		}, false},
+		{"DeleteNamespace", func() (any, error) {
+			return svc.DeleteNamespace(ctx, &DeleteNamespaceRequest{Namespace: "ns"})
+		}, true},
+		{"ListNamespaces", func() (any, error) {
+			return svc.ListNamespaces(ctx, &ListNamespacesRequest{})
+		}, false},
+		{"GetNamespaceInfo", func() (any, error) {
+			return svc.GetNamespaceInfo(ctx, &GetNamespaceInfoRequest{Namespace: "ns"})
+		}, false},
+		{"UpsertVector", func() (any, error) {
+			return svc.UpsertVector(ctx, &UpsertVectorRequest{Namespace: "ns", ID: 1, Vector: []float32{1.0}})
+		}, false},
+		{"GetVector", func() (any, error) {
+			return svc.GetVector(ctx, &GetVectorRequest{Namespace: "ns", ID: 1})
+		}, false},
+		{"DeleteVector", func() (any, error) {
+			return svc.DeleteVector(ctx, &DeleteVectorRequest{Namespace: "ns", ID: 1})
+		}, false},
+		{"BatchUpsert", func() (any, error) {
+			return svc.BatchUpsert(ctx, &BatchUpsertRequest{
+				Namespace: "ns",
+				Vectors:   []*VectorData{{ID: 1, Vector: []float32{1.0}}},
+			})
+		}, false},
+		{"SearchSimilar", func() (any, error) {
+			return svc.SearchSimilar(ctx, &SearchSimilarRequest{Namespace: "ns", QueryVector: []float32{1.0}, K: 5})
+		}, false},
+		{"SearchByMetadata", func() (any, error) {
+			return svc.SearchByMetadata(ctx, &SearchByMetadataRequest{
+				Namespace: "ns",
+				Filters:   map[string]interface{}{"key": "val"},
+			})
+		}, false},
+		{"GetIndexStats", func() (any, error) {
+			return svc.GetIndexStats(ctx, &GetIndexStatsRequest{Namespace: "ns"})
+		}, false},
+		{"RebuildIndex", func() (any, error) {
+			return svc.RebuildIndex(ctx, &RebuildIndexRequest{Namespace: "ns"})
+		}, true},
+		{"CompactNamespace", func() (any, error) {
+			return svc.CompactNamespace(ctx, &CompactNamespaceRequest{Namespace: "ns"})
+		}, false},
+	}
 
-	_, err = svc.UpsertVector(tenantctx.WithSystem(context.Background()), &UpsertVectorRequest{
-		Namespace: "ns", ID: 1, Vector: []float32{1.0},
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "vector service not available")
-
-	_, err = svc.GetVector(tenantctx.WithSystem(context.Background()), &GetVectorRequest{
-		Namespace: "ns", ID: 1,
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "vector service not available")
-
-	_, err = svc.DeleteVector(tenantctx.WithSystem(context.Background()), &DeleteVectorRequest{
-		Namespace: "ns", ID: 1,
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "vector service not available")
-
-	_, err = svc.BatchUpsert(tenantctx.WithSystem(context.Background()), &BatchUpsertRequest{
-		Namespace: "ns",
-		Vectors:   []*VectorData{{ID: 1, Vector: []float32{1.0}}},
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "vector service not available")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, err := tt.call()
+			require.Error(t, err)
+			if !tt.notChecked {
+				assert.Contains(t, err.Error(), "vector service not available")
+			}
+			assert.Nil(t, resp)
+		})
+	}
 }

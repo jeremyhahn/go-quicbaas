@@ -269,80 +269,87 @@ func TestPoolConfigValidation(t *testing.T) {
 	}
 }
 
-// TestNewStoragePoolSuccess tests successful pool creation.
-func TestNewStoragePoolSuccess(t *testing.T) {
-	ctx := context.Background()
-	factory := func(ctx context.Context) (interfaces.KVStore, error) {
+// TestNewStoragePool tests both constructors: MinConns pre-creation and the
+// option, validation and factory error paths.
+func TestNewStoragePool(t *testing.T) {
+	okFactory := func(ctx context.Context) (interfaces.KVStore, error) {
 		return newPoolMockKVStore(), nil
 	}
-
-	pool, err := NewStoragePool(ctx,
-		WithMinConns(2),
-		WithMaxConns(10),
-		WithMaxIdleTime(5*time.Minute),
-		WithMaxLifetime(30*time.Minute),
-		WithAcquireTimeout(5*time.Second),
-		WithHealthCheckFreq(0), // Disable for tests
-		WithFactory(factory),
-	)
-	if err != nil {
-		t.Fatalf("failed to create pool: %v", err)
-	}
-	defer pool.Close()
-
-	stats := pool.Stats()
-	if stats.TotalConns != 2 {
-		t.Errorf("expected 2 initial connections, got %d", stats.TotalConns)
-	}
-	if stats.IdleConns != 2 {
-		t.Errorf("expected 2 idle connections, got %d", stats.IdleConns)
-	}
-	if stats.TotalCreated != 2 {
-		t.Errorf("expected 2 total created, got %d", stats.TotalCreated)
-	}
-}
-
-// TestNewStoragePoolWithConfig tests pool creation with explicit config.
-func TestNewStoragePoolWithConfig(t *testing.T) {
-	ctx := context.Background()
-	config := PoolConfig{
-		MinConns:        1,
-		MaxConns:        5,
-		MaxIdleTime:     time.Minute,
-		MaxLifetime:     10 * time.Minute,
-		AcquireTimeout:  time.Second,
-		HealthCheckFreq: 0,
-		Factory: func(ctx context.Context) (interfaces.KVStore, error) {
-			return newPoolMockKVStore(), nil
-		},
-	}
-
-	pool, err := NewStoragePoolWithConfig(ctx, config)
-	if err != nil {
-		t.Fatalf("failed to create pool: %v", err)
-	}
-	defer pool.Close()
-
-	stats := pool.Stats()
-	if stats.TotalConns != 1 {
-		t.Errorf("expected 1 initial connection, got %d", stats.TotalConns)
-	}
-}
-
-// TestNewStoragePoolFactoryError tests pool creation with factory error.
-func TestNewStoragePoolFactoryError(t *testing.T) {
-	ctx := context.Background()
-	factory := func(ctx context.Context) (interfaces.KVStore, error) {
+	failFactory := func(ctx context.Context) (interfaces.KVStore, error) {
 		return nil, &dberrors.MessageError{Message: "factory error"}
 	}
+	config := func(minConns int, factory ConnectionFactory) PoolConfig {
+		return PoolConfig{
+			MinConns:        minConns,
+			MaxConns:        5,
+			MaxIdleTime:     time.Minute,
+			MaxLifetime:     10 * time.Minute,
+			AcquireTimeout:  time.Second,
+			HealthCheckFreq: 0,
+			Factory:         factory,
+		}
+	}
+	withOptions := func(factory ConnectionFactory) func(context.Context) (StoragePool, error) {
+		return func(ctx context.Context) (StoragePool, error) {
+			return NewStoragePool(ctx,
+				WithMinConns(2),
+				WithMaxConns(10),
+				WithMaxIdleTime(5*time.Minute),
+				WithMaxLifetime(30*time.Minute),
+				WithAcquireTimeout(5*time.Second),
+				WithHealthCheckFreq(0), // Disable for tests
+				WithFactory(factory),
+			)
+		}
+	}
+	withConfig := func(c PoolConfig) func(context.Context) (StoragePool, error) {
+		return func(ctx context.Context) (StoragePool, error) {
+			return NewStoragePoolWithConfig(ctx, c)
+		}
+	}
 
-	_, err := NewStoragePool(ctx,
-		WithMinConns(1),
-		WithMaxConns(5),
-		WithFactory(factory),
-	)
-	if err == nil {
-		t.Fatal("expected error but got nil")
+	tests := []struct {
+		name      string
+		newPool   func(context.Context) (StoragePool, error)
+		wantErr   bool
+		wantConns int
+	}{
+		{name: "options pre-create MinConns", newPool: withOptions(okFactory), wantConns: 2},
+		{name: "config pre-creates MinConns", newPool: withConfig(config(1, okFactory)), wantConns: 1},
+		{name: "options factory error", newPool: withOptions(failFactory), wantErr: true},
+		{name: "option error", newPool: func(ctx context.Context) (StoragePool, error) {
+			return NewStoragePool(ctx, WithMinConns(-1), WithFactory(okFactory))
+		}, wantErr: true},
+		{name: "config factory error", newPool: withConfig(config(1, failFactory)), wantErr: true},
+		{name: "config validation error", newPool: withConfig(config(-1, okFactory)), wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pool, err := tt.newPool(context.Background())
+			if tt.wantErr {
+				if err == nil {
+					pool.Close()
+					t.Fatal("expected error but got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("failed to create pool: %v", err)
+			}
+			defer pool.Close()
+
+			stats := pool.Stats()
+			if stats.TotalConns != tt.wantConns {
+				t.Errorf("expected %d initial connections, got %d", tt.wantConns, stats.TotalConns)
+			}
+			if stats.IdleConns != tt.wantConns {
+				t.Errorf("expected %d idle connections, got %d", tt.wantConns, stats.IdleConns)
+			}
+			if stats.TotalCreated != int64(tt.wantConns) {
+				t.Errorf("expected %d total created, got %d", tt.wantConns, stats.TotalCreated)
+			}
+		})
 	}
 }
 
@@ -702,55 +709,6 @@ func TestPoolHealthCheckFailure(t *testing.T) {
 	pool.Put(conn)
 }
 
-// TestPoolStats tests statistics accuracy.
-func TestPoolStats(t *testing.T) {
-	ctx := context.Background()
-	pool, err := NewStoragePool(ctx,
-		WithMinConns(2),
-		WithMaxConns(5),
-		WithHealthCheckFreq(0),
-		WithFactory(func(ctx context.Context) (interfaces.KVStore, error) {
-			return newPoolMockKVStore(), nil
-		}),
-	)
-	if err != nil {
-		t.Fatalf("failed to create pool: %v", err)
-	}
-	defer pool.Close()
-
-	stats := pool.Stats()
-	if stats.TotalConns != 2 {
-		t.Errorf("expected 2 total connections, got %d", stats.TotalConns)
-	}
-	if stats.IdleConns != 2 {
-		t.Errorf("expected 2 idle connections, got %d", stats.IdleConns)
-	}
-	if stats.InUseConns != 0 {
-		t.Errorf("expected 0 in-use connections, got %d", stats.InUseConns)
-	}
-	if stats.TotalCreated != 2 {
-		t.Errorf("expected 2 total created, got %d", stats.TotalCreated)
-	}
-
-	// Get a connection
-	conn, err := pool.Get(ctx)
-	if err != nil {
-		t.Fatalf("failed to get connection: %v", err)
-	}
-
-	stats = pool.Stats()
-	if stats.InUseConns != 1 {
-		t.Errorf("expected 1 in-use connection, got %d", stats.InUseConns)
-	}
-
-	pool.Put(conn)
-
-	stats = pool.Stats()
-	if stats.InUseConns != 0 {
-		t.Errorf("expected 0 in-use connections after put, got %d", stats.InUseConns)
-	}
-}
-
 // TestPoolOptions tests functional options.
 func TestPoolOptions(t *testing.T) {
 	tests := []struct {
@@ -1043,132 +1001,139 @@ func (m *poolMockStorageConnection) IsHealthy() bool           { return true }
 func (m *poolMockStorageConnection) MarkUsed()                 {}
 func (m *poolMockStorageConnection) Close() error              { return nil }
 
-// TestConnectionClose tests explicit connection close.
+// TestConnectionClose tests explicit, idempotent connection close, with and
+// without a pool reference.
 func TestConnectionClose(t *testing.T) {
-	ctx := context.Background()
-	pool, err := NewStoragePool(ctx,
-		WithMinConns(1),
-		WithMaxConns(2),
-		WithHealthCheckFreq(0),
-		WithFactory(func(ctx context.Context) (interfaces.KVStore, error) {
-			return newPoolMockKVStore(), nil
-		}),
-	)
-	if err != nil {
-		t.Fatalf("failed to create pool: %v", err)
-	}
-	defer pool.Close()
+	t.Run("pooled connection", func(t *testing.T) {
+		ctx := context.Background()
+		pool, err := NewStoragePool(ctx,
+			WithMinConns(1),
+			WithMaxConns(2),
+			WithHealthCheckFreq(0),
+			WithFactory(func(ctx context.Context) (interfaces.KVStore, error) {
+				return newPoolMockKVStore(), nil
+			}),
+		)
+		if err != nil {
+			t.Fatalf("failed to create pool: %v", err)
+		}
+		defer pool.Close()
 
-	conn, err := pool.Get(ctx)
-	if err != nil {
-		t.Fatalf("failed to get connection: %v", err)
-	}
+		conn, err := pool.Get(ctx)
+		if err != nil {
+			t.Fatalf("failed to get connection: %v", err)
+		}
 
-	// Close the connection explicitly
-	if err := conn.Close(); err != nil {
-		t.Errorf("failed to close connection: %v", err)
-	}
+		if err := conn.Close(); err != nil {
+			t.Errorf("failed to close connection: %v", err)
+		}
+		if err := conn.Close(); err != nil {
+			t.Errorf("double close should not error: %v", err)
+		}
 
-	// Close again should not error
-	if err := conn.Close(); err != nil {
-		t.Errorf("double close should not error: %v", err)
-	}
+		// Connection should no longer be tracked
+		stats := pool.Stats()
+		if stats.TotalClosed < 1 {
+			t.Error("expected at least one closed connection in stats")
+		}
+	})
 
-	// Connection should no longer be tracked
-	stats := pool.Stats()
-	if stats.TotalClosed < 1 {
-		t.Error("expected at least one closed connection in stats")
-	}
+	t.Run("without pool", func(t *testing.T) {
+		store := newPoolMockKVStore()
+		now := time.Now()
+
+		conn := &storageConnection{
+			id:        "test-id",
+			store:     &closableKVStore{KVStore: store},
+			createdAt: now,
+			pool:      nil, // No pool reference
+		}
+		conn.lastUsedAt.Store(&now)
+		conn.healthy.Store(true)
+
+		if err := conn.Close(); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if !store.IsClosed() {
+			t.Error("expected store to be closed")
+		}
+		if err := conn.Close(); err != nil {
+			t.Errorf("double close should not error: %v", err)
+		}
+	})
 }
 
-// TestPoolFullReturnToPool tests returning connection when pool is full.
-func TestPoolFullReturnToPool(t *testing.T) {
-	ctx := context.Background()
-	pool, err := NewStoragePool(ctx,
-		WithMinConns(1),
-		WithMaxConns(1), // Only one connection allowed
-		WithHealthCheckFreq(0),
-		WithFactory(func(ctx context.Context) (interfaces.KVStore, error) {
-			return newPoolMockKVStore(), nil
-		}),
-	)
-	if err != nil {
-		t.Fatalf("failed to create pool: %v", err)
-	}
-	defer pool.Close()
-
-	// Get the only connection
-	conn, err := pool.Get(ctx)
-	if err != nil {
-		t.Fatalf("failed to get connection: %v", err)
-	}
-
-	// Put it back
-	if err := pool.Put(conn); err != nil {
-		t.Errorf("failed to put connection: %v", err)
-	}
-
-	// The connection should be in the pool now
-	stats := pool.Stats()
-	if stats.IdleConns != 1 {
-		t.Errorf("expected 1 idle connection, got %d", stats.IdleConns)
-	}
-}
-
-// TestErrorTypes tests the custom error types.
+// TestErrorTypes tests each sentinel's code and its typed error's message.
 func TestErrorTypes(t *testing.T) {
-	// Test ErrPoolClosed
-	if ErrPoolClosed.Code != dberrors.ErrForbidden {
-		t.Errorf("ErrPoolClosed should have code ErrForbidden, got %v", ErrPoolClosed.Code)
+	tests := []struct {
+		name     string
+		sentinel *dberrors.QBError
+		wantCode dberrors.ErrorCode
+		wantMsg  string
+	}{
+		{"ErrPoolClosed", ErrPoolClosed, dberrors.ErrForbidden, "storage pool is closed"},
+		{"ErrPoolExhausted", ErrPoolExhausted, dberrors.ErrResourceExhausted, "storage pool exhausted: no connections available"},
+		{"ErrPoolConfigInvalid", ErrPoolConfigInvalid, dberrors.ErrInvalidInput, "invalid pool configuration"},
+		{"ErrConnectionUnhealthy", ErrConnectionUnhealthy, dberrors.ErrUnavailable, "storage connection is unhealthy"},
+		{"ErrConnectionClosed", ErrConnectionClosed, dberrors.ErrForbidden, "storage connection is closed"},
 	}
 
-	// Test ErrPoolExhausted
-	if ErrPoolExhausted.Code != dberrors.ErrResourceExhausted {
-		t.Errorf("ErrPoolExhausted should have code ErrResourceExhausted, got %v", ErrPoolExhausted.Code)
-	}
-
-	// Test ErrPoolConfigInvalid
-	if ErrPoolConfigInvalid.Code != dberrors.ErrInvalidInput {
-		t.Errorf("ErrPoolConfigInvalid should have code ErrInvalidInput, got %v", ErrPoolConfigInvalid.Code)
-	}
-
-	// Test ErrConnectionUnhealthy
-	if ErrConnectionUnhealthy.Code != dberrors.ErrUnavailable {
-		t.Errorf("ErrConnectionUnhealthy should have code ErrUnavailable, got %v", ErrConnectionUnhealthy.Code)
-	}
-
-	// Test ErrConnectionClosed
-	if ErrConnectionClosed.Code != dberrors.ErrForbidden {
-		t.Errorf("ErrConnectionClosed should have code ErrForbidden, got %v", ErrConnectionClosed.Code)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.sentinel.Code != tt.wantCode {
+				t.Errorf("expected code %v, got %v", tt.wantCode, tt.sentinel.Code)
+			}
+			if got := tt.sentinel.Err.Error(); got != tt.wantMsg {
+				t.Errorf("expected message %q, got %q", tt.wantMsg, got)
+			}
+		})
 	}
 }
 
-// TestClosableKVStoreWrapper tests the closable wrapper functionality.
+// TestClosableKVStoreWrapper tests that Close closes the wrapped store, or
+// calls the explicit close function when one is set.
 func TestClosableKVStoreWrapper(t *testing.T) {
-	store := newPoolMockKVStore()
-	wrapped := wrapClosable(store)
+	t.Run("closes underlying store", func(t *testing.T) {
+		store := newPoolMockKVStore()
+		wrapped := wrapClosable(store)
 
-	// Should be able to use the store
-	ctx := context.Background()
-	if err := wrapped.Put(ctx, "key", []byte("value")); err != nil {
-		t.Errorf("failed to put: %v", err)
-	}
+		// Should be able to use the store
+		ctx := context.Background()
+		if err := wrapped.Put(ctx, "key", []byte("value")); err != nil {
+			t.Errorf("failed to put: %v", err)
+		}
 
-	// Double wrap should return same wrapper
-	doubleWrapped := wrapClosable(wrapped)
-	if doubleWrapped != wrapped {
-		t.Error("double wrapping should return same instance")
-	}
+		// Double wrap should return same wrapper
+		doubleWrapped := wrapClosable(wrapped)
+		if doubleWrapped != wrapped {
+			t.Error("double wrapping should return same instance")
+		}
 
-	// Close should close the underlying store
-	if err := wrapped.Close(); err != nil {
-		t.Errorf("failed to close: %v", err)
-	}
+		if err := wrapped.Close(); err != nil {
+			t.Errorf("failed to close: %v", err)
+		}
+		if !store.IsClosed() {
+			t.Error("underlying store should be closed")
+		}
+	})
 
-	// Underlying store should be closed
-	if !store.IsClosed() {
-		t.Error("underlying store should be closed")
-	}
+	t.Run("calls close func", func(t *testing.T) {
+		closeCalled := false
+		wrapper := &closableKVStore{
+			KVStore: newPoolMockKVStore(),
+			closeFunc: func() error {
+				closeCalled = true
+				return nil
+			},
+		}
+
+		if err := wrapper.Close(); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if !closeCalled {
+			t.Error("expected closeFunc to be called")
+		}
+	})
 }
 
 // TestPutClosedConnection tests putting a closed connection.
@@ -1199,44 +1164,6 @@ func TestPutClosedConnection(t *testing.T) {
 	err = pool.Put(conn)
 	if err != ErrConnectionClosed {
 		t.Errorf("expected ErrConnectionClosed, got %v", err)
-	}
-}
-
-// TestNewStoragePoolWithConfigFactoryError tests NewStoragePoolWithConfig with factory error.
-func TestNewStoragePoolWithConfigFactoryError(t *testing.T) {
-	ctx := context.Background()
-	config := PoolConfig{
-		MinConns:        1,
-		MaxConns:        5,
-		MaxIdleTime:     time.Minute,
-		MaxLifetime:     10 * time.Minute,
-		AcquireTimeout:  time.Second,
-		HealthCheckFreq: 0,
-		Factory: func(ctx context.Context) (interfaces.KVStore, error) {
-			return nil, &dberrors.MessageError{Message: "factory error"}
-		},
-	}
-
-	_, err := NewStoragePoolWithConfig(ctx, config)
-	if err == nil {
-		t.Fatal("expected error but got nil")
-	}
-}
-
-// TestNewStoragePoolWithConfigValidationError tests NewStoragePoolWithConfig with invalid config.
-func TestNewStoragePoolWithConfigValidationError(t *testing.T) {
-	ctx := context.Background()
-	config := PoolConfig{
-		MinConns: -1, // Invalid
-		MaxConns: 5,
-		Factory: func(ctx context.Context) (interfaces.KVStore, error) {
-			return newPoolMockKVStore(), nil
-		},
-	}
-
-	_, err := NewStoragePoolWithConfig(ctx, config)
-	if err == nil {
-		t.Fatal("expected error but got nil")
 	}
 }
 
@@ -1344,26 +1271,6 @@ func TestPerformMaintenanceRefillMinConns(t *testing.T) {
 	}
 }
 
-// TestClosableKVStoreWithCloseFunc tests closable wrapper with explicit close function.
-func TestClosableKVStoreWithCloseFunc(t *testing.T) {
-	closeCalled := false
-	wrapper := &closableKVStore{
-		KVStore: newPoolMockKVStore(),
-		closeFunc: func() error {
-			closeCalled = true
-			return nil
-		},
-	}
-
-	if err := wrapper.Close(); err != nil {
-		t.Errorf("unexpected error: %v", err)
-	}
-
-	if !closeCalled {
-		t.Error("expected closeFunc to be called")
-	}
-}
-
 // TestPoolGetRecyclesOnFactoryError tests that Get handles factory errors during recycling.
 func TestPoolGetRecyclesOnFactoryError(t *testing.T) {
 	ctx := context.Background()
@@ -1408,52 +1315,6 @@ func TestPoolGetRecyclesOnFactoryError(t *testing.T) {
 	// The key is that it doesn't hang
 }
 
-// TestPoolOptionError tests that option errors are returned during pool creation.
-func TestPoolOptionError(t *testing.T) {
-	ctx := context.Background()
-
-	// Use an option that returns an error
-	_, err := NewStoragePool(ctx,
-		WithMinConns(-1), // Invalid
-		WithFactory(func(ctx context.Context) (interfaces.KVStore, error) {
-			return newPoolMockKVStore(), nil
-		}),
-	)
-	if err == nil {
-		t.Fatal("expected error but got nil")
-	}
-}
-
-// TestConnectionCloseWithoutPool tests closing a connection that has no pool reference.
-func TestConnectionCloseWithoutPool(t *testing.T) {
-	store := newPoolMockKVStore()
-	now := time.Now()
-
-	conn := &storageConnection{
-		id:        "test-id",
-		store:     &closableKVStore{KVStore: store},
-		createdAt: now,
-		pool:      nil, // No pool reference
-	}
-	conn.lastUsedAt.Store(&now)
-	conn.healthy.Store(true)
-
-	// Close should work without a pool
-	if err := conn.Close(); err != nil {
-		t.Errorf("unexpected error: %v", err)
-	}
-
-	// Verify the store was closed
-	if !store.IsClosed() {
-		t.Error("expected store to be closed")
-	}
-
-	// Double close should not error
-	if err := conn.Close(); err != nil {
-		t.Errorf("double close should not error: %v", err)
-	}
-}
-
 // TestPoolStatsWithNegativeInUse tests that Stats handles negative in-use count gracefully.
 func TestPoolStatsWithNegativeInUse(t *testing.T) {
 	ctx := context.Background()
@@ -1479,53 +1340,4 @@ func TestPoolStatsWithNegativeInUse(t *testing.T) {
 	if stats.InUseConns != 0 {
 		t.Errorf("expected InUseConns to be 0 when negative, got %d", stats.InUseConns)
 	}
-}
-
-// =============================================================================
-// Storage Pool Error Type Tests
-// =============================================================================
-
-func TestPoolClosedError_Error(t *testing.T) {
-	t.Run("returns correct message", func(t *testing.T) {
-		err := &PoolClosedError{}
-		if err.Error() != "storage pool is closed" {
-			t.Errorf("unexpected: %q", err.Error())
-		}
-	})
-}
-
-func TestPoolExhaustedError_Error(t *testing.T) {
-	t.Run("returns correct message", func(t *testing.T) {
-		err := &PoolExhaustedError{}
-		if err.Error() != "storage pool exhausted: no connections available" {
-			t.Errorf("unexpected: %q", err.Error())
-		}
-	})
-}
-
-func TestPoolConfigInvalidError_Error(t *testing.T) {
-	t.Run("returns correct message", func(t *testing.T) {
-		err := &PoolConfigInvalidError{}
-		if err.Error() != "invalid pool configuration" {
-			t.Errorf("unexpected: %q", err.Error())
-		}
-	})
-}
-
-func TestConnectionUnhealthyError_Error(t *testing.T) {
-	t.Run("returns correct message", func(t *testing.T) {
-		err := &ConnectionUnhealthyError{}
-		if err.Error() != "storage connection is unhealthy" {
-			t.Errorf("unexpected: %q", err.Error())
-		}
-	})
-}
-
-func TestConnectionClosedError_Error(t *testing.T) {
-	t.Run("returns correct message", func(t *testing.T) {
-		err := &ConnectionClosedError{}
-		if err.Error() != "storage connection is closed" {
-			t.Errorf("unexpected: %q", err.Error())
-		}
-	})
 }

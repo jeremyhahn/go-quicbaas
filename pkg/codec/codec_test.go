@@ -103,6 +103,7 @@ func TestRegistry_Register(t *testing.T) {
 
 	assert.Len(t, r.codecs, 1)
 	assert.Equal(t, codec, r.Get("test"))
+	assert.Nil(t, r.Get("nonexistent"))
 }
 
 func TestRegistry_RegisterReplaces(t *testing.T) {
@@ -117,16 +118,6 @@ func TestRegistry_RegisterReplaces(t *testing.T) {
 	r.Register(codec2)
 	assert.Equal(t, codec2, r.Get("test"))
 	assert.Len(t, r.codecs, 1)
-}
-
-func TestRegistry_Get(t *testing.T) {
-	r := NewRegistry()
-
-	codec := &mockCodec{name: "test", priority: 50}
-	r.Register(codec)
-
-	assert.Equal(t, codec, r.Get("test"))
-	assert.Nil(t, r.Get("nonexistent"))
 }
 
 func TestRegistry_ListCodecs(t *testing.T) {
@@ -246,87 +237,6 @@ func TestRegistry_Decode_Error(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to decode test")
 }
 
-func TestRegistry_DetectExplicitCodec(t *testing.T) {
-	r := NewRegistry()
-
-	tests := []struct {
-		name     string
-		entity   interface{}
-		expected string
-	}{
-		{
-			name:     "explicit codec tag",
-			entity:   &ExplicitCodecEntity{ID: 1, Name: "test"},
-			expected: "msgpack",
-		},
-		{
-			name:     "no explicit codec",
-			entity:   &TestEntity{ID: 1, Name: "test"},
-			expected: "",
-		},
-		{
-			name:     "nil entity",
-			entity:   nil,
-			expected: "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := r.detectExplicitCodec(tt.entity)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-func TestRegistry_DetectCodecFromTags(t *testing.T) {
-	r := NewRegistry()
-
-	tests := []struct {
-		name     string
-		entity   interface{}
-		expected string
-	}{
-		{
-			name:     "protobuf tags (highest priority)",
-			entity:   &ProtobufEntity{ID: 1, Name: "test"},
-			expected: "protobuf",
-		},
-		{
-			name:     "json tags",
-			entity:   &TestEntity{ID: 1, Name: "test"},
-			expected: "json",
-		},
-		{
-			name:     "msgpack tags",
-			entity:   &MsgPackEntity{ID: 1, Name: "test"},
-			expected: "msgpack",
-		},
-		{
-			name:     "yaml tags",
-			entity:   &YAMLEntity{ID: 1, Name: "test"},
-			expected: "yaml",
-		},
-		{
-			name:     "no tags",
-			entity:   &NoTagsEntity{ID: 1, Name: "test"},
-			expected: "",
-		},
-		{
-			name:     "nil entity",
-			entity:   nil,
-			expected: "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := r.detectCodecFromTags(tt.entity)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
 func TestRegistry_EncodeAuto_ExplicitCodec(t *testing.T) {
 	r := NewRegistry()
 
@@ -373,6 +283,20 @@ func TestRegistry_EncodeAuto_TagDetection(t *testing.T) {
 			return []byte("protobuf-encoded"), nil
 		},
 	})
+	r.Register(&mockCodec{
+		name:     "msgpack",
+		priority: 40,
+		enc: func(entity interface{}) ([]byte, error) {
+			return []byte("msgpack-encoded"), nil
+		},
+	})
+	r.Register(&mockCodec{
+		name:     "yaml",
+		priority: 30,
+		enc: func(entity interface{}) ([]byte, error) {
+			return []byte("yaml-encoded"), nil
+		},
+	})
 
 	tests := []struct {
 		name         string
@@ -391,6 +315,24 @@ func TestRegistry_EncodeAuto_TagDetection(t *testing.T) {
 			entity:       &TestEntity{ID: 1, Name: "test"},
 			expectedName: "json",
 			expectedData: []byte("json-encoded"),
+		},
+		{
+			name:         "msgpack tags detected",
+			entity:       &MsgPackEntity{ID: 1, Name: "test"},
+			expectedName: "msgpack",
+			expectedData: []byte("msgpack-encoded"),
+		},
+		{
+			name:         "yaml tags detected",
+			entity:       &YAMLEntity{ID: 1, Name: "test"},
+			expectedName: "yaml",
+			expectedData: []byte("yaml-encoded"),
+		},
+		{
+			name:         "nil entity falls back to highest priority",
+			entity:       nil,
+			expectedName: "protobuf",
+			expectedData: []byte("protobuf-encoded"),
 		},
 	}
 

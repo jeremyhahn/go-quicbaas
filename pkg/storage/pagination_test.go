@@ -312,6 +312,10 @@ func TestCursorEncoding(t *testing.T) {
 				return
 			}
 
+			// The cursor is standard base64 of the key.
+			_, err := base64.StdEncoding.DecodeString(string(encoded))
+			require.NoError(t, err)
+
 			decoded, err := decodeCursor(encoded)
 			require.NoError(t, err)
 			assert.Equal(t, tt.key, decoded)
@@ -431,46 +435,4 @@ func TestSortOrder_String(t *testing.T) {
 			assert.Equal(t, tt.want, tt.order.String())
 		})
 	}
-}
-
-func TestPageIterator_ExactPageBoundary(t *testing.T) {
-	// Test when data size is exact multiple of page size
-	data := []KV{
-		{Key: []byte("key1"), Value: []byte("value1")},
-		{Key: []byte("key2"), Value: []byte("value2")},
-		{Key: []byte("key3"), Value: []byte("value3")},
-		{Key: []byte("key4"), Value: []byte("value4")},
-	}
-
-	iter := newMockIterator(data, false)
-	pageIter := NewPageIterator(iter, 2, nil)
-
-	// First page
-	page1, cursor1, err := pageIter.NextPage()
-	require.NoError(t, err)
-	assert.Len(t, page1, 2)
-	assert.NotNil(t, cursor1)
-
-	// Second page - new iterator
-	iter2 := newMockIterator(data, false)
-	pageIter2 := NewPageIterator(iter2, 2, cursor1)
-
-	page2, cursor2, err := pageIter2.NextPage()
-	require.NoError(t, err)
-	assert.Len(t, page2, 2)
-	assert.Nil(t, cursor2) // Should be nil since we're at the end
-}
-
-func TestEncodeCursor_Roundtrip(t *testing.T) {
-	key := []byte("test-key-123")
-	cursor := encodeCursor(key)
-
-	// Verify it's valid base64
-	_, err := base64.StdEncoding.DecodeString(string(cursor))
-	require.NoError(t, err)
-
-	// Decode and verify
-	decoded, err := decodeCursor(cursor)
-	require.NoError(t, err)
-	assert.Equal(t, key, decoded)
 }

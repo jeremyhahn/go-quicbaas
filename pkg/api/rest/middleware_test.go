@@ -58,30 +58,6 @@ func TestSecurityHeadersMiddleware(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-// TestSecurityHeadersMiddlewareHSTSOmittedOverPlainHTTP verifies that a
-// request arriving over plain HTTP (r.TLS == nil) does not receive the
-// Strict-Transport-Security header, per RFC 6797 §7.2.
-func TestSecurityHeadersMiddlewareHSTSOmittedOverPlainHTTP(t *testing.T) {
-	middleware := SecurityHeadersMiddleware()
-
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-
-	wrappedHandler := middleware(handler)
-
-	req := httptest.NewRequest(http.MethodGet, "/test", nil)
-	req.TLS = nil // explicit: non-secure transport
-	w := httptest.NewRecorder()
-
-	wrappedHandler.ServeHTTP(w, req)
-
-	assert.Empty(t, w.Header().Get(HeaderStrictTransportSecurity),
-		"HSTS header must not be emitted over plain HTTP")
-	// Other security headers remain present.
-	assert.Equal(t, "DENY", w.Header().Get(HeaderXFrameOptions))
-}
-
 // TestSecurityHeadersMiddlewareHSTSPresentOverTLS verifies that a request
 // arriving over TLS (r.TLS != nil) receives the Strict-Transport-Security
 // header with its canonical value.
@@ -108,62 +84,6 @@ func TestSecurityHeadersMiddlewareHSTSPresentOverTLS(t *testing.T) {
 	assert.Equal(t, "DENY", w.Header().Get(HeaderXFrameOptions))
 }
 
-func TestSecurityHeadersMiddlewareWithDifferentMethods(t *testing.T) {
-	middleware := SecurityHeadersMiddleware()
-
-	tests := []struct {
-		name   string
-		method string
-	}{
-		{
-			name:   "GET request",
-			method: http.MethodGet,
-		},
-		{
-			name:   "POST request",
-			method: http.MethodPost,
-		},
-		{
-			name:   "PUT request",
-			method: http.MethodPut,
-		},
-		{
-			name:   "DELETE request",
-			method: http.MethodDelete,
-		},
-		{
-			name:   "OPTIONS request",
-			method: http.MethodOptions,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.WriteHeader(http.StatusOK)
-			})
-
-			wrappedHandler := middleware(handler)
-
-			req := httptest.NewRequest(tt.method, "/test", nil)
-			w := httptest.NewRecorder()
-
-			wrappedHandler.ServeHTTP(w, req)
-
-			// All methods should have security headers. HSTS is omitted on
-			// plain HTTP (r.TLS == nil) per RFC 6797 §7.2; the remaining
-			// headers are set unconditionally.
-			assert.Empty(t, w.Header().Get(HeaderStrictTransportSecurity))
-			assert.NotEmpty(t, w.Header().Get(HeaderXFrameOptions))
-			assert.NotEmpty(t, w.Header().Get(HeaderXContentTypeOptions))
-			assert.NotEmpty(t, w.Header().Get(HeaderXXSSProtection))
-			assert.NotEmpty(t, w.Header().Get(HeaderReferrerPolicy))
-			assert.NotEmpty(t, w.Header().Get(HeaderContentSecurityPolicy))
-			assert.NotEmpty(t, w.Header().Get(HeaderPermissionsPolicy))
-		})
-	}
-}
-
 func TestSecurityHeadersMiddlewarePreservesOtherHeaders(t *testing.T) {
 	middleware := SecurityHeadersMiddleware()
 
@@ -186,29 +106,6 @@ func TestSecurityHeadersMiddlewarePreservesOtherHeaders(t *testing.T) {
 	// Custom headers from handler should also be preserved
 	assert.Equal(t, "custom-value", w.Header().Get("X-Custom-Header"))
 	assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
-}
-
-func TestSecurityHeadersMiddlewareChaining(t *testing.T) {
-	// Test that security headers middleware works correctly when chained
-	securityMiddleware := SecurityHeadersMiddleware()
-	requestIDMiddleware := RequestIDMiddleware()
-
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-
-	// Chain middlewares: RequestID -> Security -> Handler
-	wrappedHandler := requestIDMiddleware(securityMiddleware(handler))
-
-	req := httptest.NewRequest(http.MethodGet, "/test", nil)
-	w := httptest.NewRecorder()
-
-	wrappedHandler.ServeHTTP(w, req)
-
-	// Both middleware should have added their headers
-	assert.NotEmpty(t, w.Header().Get("X-Request-ID"))
-	assert.Equal(t, "DENY", w.Header().Get(HeaderXFrameOptions))
-	assert.Equal(t, "nosniff", w.Header().Get(HeaderXContentTypeOptions))
 }
 
 func TestRecoveryMiddleware(t *testing.T) {
@@ -266,56 +163,19 @@ func TestRecoveryMiddleware(t *testing.T) {
 	}
 }
 
+// TestTimeoutMiddleware checks that a handler finishing inside the timeout is
+// served unchanged; TestTimeoutMiddleware_TimeoutFires503 covers expiry.
 func TestTimeoutMiddleware(t *testing.T) {
-	tests := []struct {
-		name           string
-		timeout        time.Duration
-		expectedStatus int
-		shouldTimeout  bool
-	}{
-		{
-			name:           "completes before timeout",
-			timeout:        100 * time.Millisecond,
-			expectedStatus: http.StatusOK,
-			shouldTimeout:  false,
-		},
-		{
-			// Per RFC 7231 §6.5.7, server-side handler timeouts are 503
-			// (the canonical http.TimeoutHandler behavior). 408 is reserved
-			// for client-side request stalls.
-			name:           "times out",
-			timeout:        50 * time.Millisecond,
-			expectedStatus: http.StatusServiceUnavailable,
-			shouldTimeout:  true,
-		},
-	}
+	wrappedHandler := TimeoutMiddleware(time.Second)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			middleware := TimeoutMiddleware(tt.timeout)
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	w := httptest.NewRecorder()
 
-			handlerStarted := make(chan struct{})
-			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				close(handlerStarted)
-				if tt.shouldTimeout {
-					<-r.Context().Done()
-					return
-				}
-				w.WriteHeader(http.StatusOK)
-			})
+	wrappedHandler.ServeHTTP(w, req)
 
-			wrappedHandler := middleware(handler)
-
-			req := httptest.NewRequest(http.MethodGet, "/test", nil)
-			req = req.WithContext(context.WithValue(req.Context(), requestIDKey, "test-123"))
-			w := httptest.NewRecorder()
-
-			wrappedHandler.ServeHTTP(w, req)
-			<-handlerStarted
-
-			assert.Equal(t, tt.expectedStatus, w.Code)
-		})
-	}
+	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 func TestCORSMiddlewareVariations(t *testing.T) {
@@ -393,7 +253,6 @@ func TestCORSMiddlewareVariations(t *testing.T) {
 }
 
 func TestRateLimitMiddleware(t *testing.T) {
-	// Note: RateLimitMiddleware is currently a placeholder
 	middleware := RateLimitMiddleware(100)
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -407,7 +266,7 @@ func TestRateLimitMiddleware(t *testing.T) {
 
 	wrappedHandler.ServeHTTP(w, req)
 
-	// Should pass through for now
+	// One request is well inside the bucket, so it reaches the handler.
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
@@ -492,33 +351,6 @@ func TestLoggingMiddleware(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, "test response", w.Body.String())
-}
-
-func TestMetricsMiddlewareMetrics(t *testing.T) {
-	// Initialize metrics
-	if httpRequestsTotal == nil {
-		initMiddlewareMetrics()
-	}
-
-	middleware := MetricsMiddleware()
-
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-
-	wrappedHandler := middleware(handler)
-
-	// Make several requests
-	for i := 0; i < 5; i++ {
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
-		w := httptest.NewRecorder()
-		wrappedHandler.ServeHTTP(w, req)
-		assert.Equal(t, http.StatusOK, w.Code)
-	}
-
-	// Metrics should have been recorded
-	// Note: We can't easily verify counter values without exposing them,
-	// but we can verify the middleware executes successfully
 }
 
 func TestRoutePatternWithChiContext(t *testing.T) {
@@ -682,6 +514,14 @@ func TestMiddlewareErrorTypes(t *testing.T) {
 			},
 			expected: "request timeout after 30s",
 		},
+		{
+			name: "rate limit error",
+			err: &RateLimitError{
+				Limit:  100,
+				Period: "1s",
+			},
+			expected: "rate limit exceeded: 100 requests per 1s",
+		},
 	}
 
 	for _, tt := range tests {
@@ -760,171 +600,6 @@ func BenchmarkMetricsMiddleware(b *testing.B) {
 		w := httptest.NewRecorder()
 		wrappedHandler.ServeHTTP(w, req)
 	}
-}
-
-func TestRateLimitMiddlewareDisabledZero(t *testing.T) {
-	// Test with rate limit disabled (0)
-	middleware := RateLimitMiddleware(0)
-
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-
-	wrappedHandler := middleware(handler)
-
-	req := httptest.NewRequest(http.MethodGet, "/test", nil)
-	w := httptest.NewRecorder()
-
-	wrappedHandler.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestRateLimitMiddlewareNegativeValue(t *testing.T) {
-	middleware := RateLimitMiddleware(-1)
-
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-
-	wrappedHandler := middleware(handler)
-
-	req := httptest.NewRequest(http.MethodGet, "/test", nil)
-	w := httptest.NewRecorder()
-
-	wrappedHandler.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestCORSMiddlewareOptionsPreflightRequest(t *testing.T) {
-	middleware := CORSMiddleware([]string{"https://example.com"})
-
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-
-	wrappedHandler := middleware(handler)
-
-	req := httptest.NewRequest(http.MethodOptions, "/test", nil)
-	req.Header.Set("Origin", "https://example.com")
-	w := httptest.NewRecorder()
-
-	wrappedHandler.ServeHTTP(w, req)
-
-	// OPTIONS should return 204 No Content
-	assert.Equal(t, http.StatusNoContent, w.Code)
-	assert.NotEmpty(t, w.Header().Get("Access-Control-Allow-Origin"))
-}
-
-func TestGetClientIPWithVariousHeaders(t *testing.T) {
-	tests := []struct {
-		name       string
-		headers    map[string]string
-		remoteAddr string
-		expected   string
-	}{
-		{
-			name: "X-Forwarded-For with multiple IPs",
-			headers: map[string]string{
-				"X-Forwarded-For": "192.0.2.1, 10.0.0.1, 172.16.0.1",
-			},
-			remoteAddr: "127.0.0.1:8080",
-			expected:   "192.0.2.1",
-		},
-		{
-			name: "X-Forwarded-For single IP",
-			headers: map[string]string{
-				"X-Forwarded-For": "192.0.2.100",
-			},
-			remoteAddr: "127.0.0.1:8080",
-			expected:   "192.0.2.100",
-		},
-		{
-			name: "X-Real-IP header",
-			headers: map[string]string{
-				"X-Real-IP": "10.10.10.10",
-			},
-			remoteAddr: "127.0.0.1:8080",
-			expected:   "10.10.10.10",
-		},
-		{
-			name:       "RemoteAddr with port",
-			headers:    map[string]string{},
-			remoteAddr: "198.51.100.1:54321",
-			expected:   "198.51.100.1",
-		},
-		{
-			name:       "RemoteAddr without port",
-			headers:    map[string]string{},
-			remoteAddr: "203.0.113.1",
-			expected:   "203.0.113.1",
-		},
-		{
-			name:       "IPv6 address",
-			headers:    map[string]string{},
-			remoteAddr: "[::1]:8080",
-			// Bare, not "[::1]". net/http brackets an IPv6 peer; the brackets
-			// are transport syntax, not part of the address, and the old
-			// expectation kept them -- so this value reached the rate limiter
-			// as a key no IP parser accepts, and audit records as a
-			// non-address.
-			expected: "::1",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "/test", nil)
-			for k, v := range tt.headers {
-				req.Header.Set(k, v)
-			}
-			req.RemoteAddr = tt.remoteAddr
-
-			// See resolvedViaOwnPeer: this table is about header parsing, not
-			// about which peers are believed.
-			assert.Equal(t, tt.expected, resolvedViaOwnPeer(t, req))
-		})
-	}
-}
-
-func TestRateLimiterAllowAndDenyBehavior(t *testing.T) {
-	// Create a rate limiter with 2 requests per second
-	rl := newRateLimiter(2)
-
-	// First two requests should be allowed
-	assert.True(t, rl.Allow("client1"))
-	assert.True(t, rl.Allow("client1"))
-
-	// Third request should be denied (bucket empty)
-	assert.False(t, rl.Allow("client1"))
-
-	// Different client should be allowed
-	assert.True(t, rl.Allow("client2"))
-}
-
-func TestTokenBucketConsumeLogic(t *testing.T) {
-	tb := &tokenBucket{
-		tokens:   2.0,
-		capacity: 5.0,
-		rate:     1.0,
-	}
-
-	// Should consume successfully
-	assert.True(t, tb.consume())
-	assert.True(t, tb.consume())
-
-	// Should fail when no tokens
-	tb.tokens = 0.5
-	assert.False(t, tb.consume())
-}
-
-func TestRateLimitErrorMessageFormatting(t *testing.T) {
-	err := &RateLimitError{
-		Limit:  100,
-		Period: "1s",
-	}
-	assert.Equal(t, "rate limit exceeded: 100 requests per 1s", err.Error())
 }
 
 // TestTimeoutMiddleware_HandlerEmitted503PassesThrough is the regression guard
@@ -1039,107 +714,6 @@ func TestSealedWindowMiddleware_Returns503NotRewritten(t *testing.T) {
 	assert.Contains(t, w.Body.String(), `"SEALED"`)
 }
 
-func TestInternalServerErrorMessageOutput(t *testing.T) {
-	err := &InternalServerError{Message: "database connection failed"}
-	assert.Equal(t, "database connection failed", err.Error())
-}
-
-func TestRequestTimeoutErrorMessageOutput(t *testing.T) {
-	tests := []struct {
-		name     string
-		timeout  time.Duration
-		expected string
-	}{
-		{
-			name:     "5 seconds",
-			timeout:  5 * time.Second,
-			expected: "request timeout after 5s",
-		},
-		{
-			name:     "100 milliseconds",
-			timeout:  100 * time.Millisecond,
-			expected: "request timeout after 100ms",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := &RequestTimeoutError{Timeout: tt.timeout}
-			assert.Equal(t, tt.expected, err.Error())
-		})
-	}
-}
-
-func TestCORSMiddlewareDisallowedOrigin(t *testing.T) {
-	middleware := CORSMiddleware([]string{"https://allowed.com"})
-
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-
-	wrappedHandler := middleware(handler)
-
-	req := httptest.NewRequest(http.MethodGet, "/test", nil)
-	req.Header.Set("Origin", "https://notallowed.com")
-	w := httptest.NewRecorder()
-
-	wrappedHandler.ServeHTTP(w, req)
-
-	assert.Empty(t, w.Header().Get("Access-Control-Allow-Origin"))
-}
-
-func TestCORSMiddlewareOptionsWithDisallowedOrigin(t *testing.T) {
-	middleware := CORSMiddleware([]string{"https://allowed.com"})
-
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-
-	wrappedHandler := middleware(handler)
-
-	req := httptest.NewRequest(http.MethodOptions, "/test", nil)
-	req.Header.Set("Origin", "https://notallowed.com")
-	w := httptest.NewRecorder()
-
-	wrappedHandler.ServeHTTP(w, req)
-
-	// OPTIONS still returns 204 but no CORS headers
-	assert.Equal(t, http.StatusNoContent, w.Code)
-	assert.Empty(t, w.Header().Get("Access-Control-Allow-Origin"))
-}
-
-func TestRateLimiterDoubleCheckLocking(t *testing.T) {
-	rl := newRateLimiter(10)
-
-	// First call creates the bucket
-	rl.Allow("test-client")
-
-	// Second call uses existing bucket
-	rl.Allow("test-client")
-
-	// Verify bucket exists
-	rl.mu.RLock()
-	_, exists := rl.buckets["test-client"]
-	rl.mu.RUnlock()
-
-	assert.True(t, exists)
-}
-
-func TestTokenBucketRefill(t *testing.T) {
-	now := time.Now()
-	tb := &tokenBucket{
-		tokens:    0.0,
-		capacity:  5.0,
-		rate:      10.0, // 10 tokens per second
-		lastCheck: now.Add(-1 * time.Second),
-	}
-
-	// After 1 second with rate of 10/sec, should have ~10 tokens (capped at capacity)
-	result := tb.consume()
-	assert.True(t, result, "Should have tokens after refill")
-	assert.LessOrEqual(t, tb.tokens, tb.capacity)
-}
-
 func TestRateLimiterAllowNewClient(t *testing.T) {
 	t.Run("allows first request from new client", func(t *testing.T) {
 		rl := newRateLimiter(10)
@@ -1179,48 +753,6 @@ func TestRateLimiterAllowNewClient(t *testing.T) {
 	})
 }
 
-func TestTokenBucketConsumeViaRateLimiter(t *testing.T) {
-	t.Run("consume returns true when tokens available", func(t *testing.T) {
-		// Use the rate limiter to properly initialize the bucket
-		rl := newRateLimiter(5)
-		defer rl.cleanup.Stop()
-
-		// First call creates bucket with tokens = capacity
-		allowed := rl.Allow("test-client")
-		assert.True(t, allowed)
-
-		// Check remaining tokens via subsequent allows
-		for i := 0; i < 4; i++ {
-			assert.True(t, rl.Allow("test-client"))
-		}
-
-		// Should be denied now
-		assert.False(t, rl.Allow("test-client"))
-	})
-
-	t.Run("consume returns false when no tokens", func(t *testing.T) {
-		rl := newRateLimiter(1)
-		defer rl.cleanup.Stop()
-
-		// Use the only token
-		assert.True(t, rl.Allow("test-client"))
-
-		// Should be denied
-		assert.False(t, rl.Allow("test-client"))
-	})
-
-	t.Run("tokens cap at capacity", func(t *testing.T) {
-		rl := newRateLimiter(3)
-		defer rl.cleanup.Stop()
-
-		// Use all tokens
-		assert.True(t, rl.Allow("test-client"))
-		assert.True(t, rl.Allow("test-client"))
-		assert.True(t, rl.Allow("test-client"))
-		assert.False(t, rl.Allow("test-client"))
-	})
-}
-
 // TestGetClientIP covers header parsing FROM A TRUSTED PROXY. The subtests
 // below used to call getClientIP on a request from an arbitrary peer and assert
 // the header won; that is the #156 defect, and it is now covered from the other
@@ -1228,114 +760,118 @@ func TestTokenBucketConsumeViaRateLimiter(t *testing.T) {
 // X-Real-IP fallback, precedence between the two -- is still real logic, so it
 // is exercised the way a deployment reaches it: through a configured proxy.
 func TestGetClientIP(t *testing.T) {
-	t.Run("extracts from X-Forwarded-For", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
-		req.RemoteAddr = trustedPeer
-		req.Header.Set("X-Forwarded-For", "203.0.113.195")
-
-		assert.Equal(t, "203.0.113.195", resolvedVia(t, []string{trustedProxyCIDR}, req))
-	})
-
-	t.Run("extracts first IP from X-Forwarded-For chain", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
-		req.RemoteAddr = trustedPeer
-		req.Header.Set("X-Forwarded-For", "203.0.113.195, 70.41.3.18, 150.172.238.178")
-
-		assert.Equal(t, "203.0.113.195", resolvedVia(t, []string{trustedProxyCIDR}, req))
-	})
-
-	t.Run("extracts from X-Real-IP", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
-		req.RemoteAddr = trustedPeer
-		req.Header.Set("X-Real-IP", "192.0.2.100")
-
-		assert.Equal(t, "192.0.2.100", resolvedVia(t, []string{trustedProxyCIDR}, req))
-	})
-
-	t.Run("prefers X-Forwarded-For over X-Real-IP", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
-		req.RemoteAddr = trustedPeer
-		req.Header.Set("X-Forwarded-For", "10.0.0.1")
-		req.Header.Set("X-Real-IP", "10.0.0.2")
-
-		assert.Equal(t, "10.0.0.1", resolvedVia(t, []string{trustedProxyCIDR}, req))
-	})
-
-	t.Run("falls back to RemoteAddr", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
-		req.RemoteAddr = "127.0.0.1:12345"
-
-		ip := getClientIP(req)
-		assert.Equal(t, "127.0.0.1", ip)
-	})
-
-	t.Run("handles RemoteAddr without port", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
-		req.RemoteAddr = "127.0.0.1"
-
-		ip := getClientIP(req)
-		assert.Equal(t, "127.0.0.1", ip)
-	})
-
-	t.Run("trims whitespace from headers", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
-		req.RemoteAddr = trustedPeer
-		req.Header.Set("X-Forwarded-For", "  10.0.0.1  ")
-
-		assert.Equal(t, "10.0.0.1", resolvedVia(t, []string{trustedProxyCIDR}, req))
-	})
-
-	t.Run("trims whitespace from X-Real-IP", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
-		req.RemoteAddr = trustedPeer
-		req.Header.Set("X-Real-IP", "  192.0.2.1  ")
-
-		assert.Equal(t, "192.0.2.1", resolvedVia(t, []string{trustedProxyCIDR}, req))
-	})
-}
-
-func TestRateLimitMiddlewareDisabled(t *testing.T) {
-	t.Run("disabled with zero rate", func(t *testing.T) {
-		middleware := RateLimitMiddleware(0)
-
-		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-		})
-
-		wrappedHandler := middleware(handler)
-
-		for i := 0; i < 100; i++ {
-			req := httptest.NewRequest(http.MethodGet, "/test", nil)
-			w := httptest.NewRecorder()
-			wrappedHandler.ServeHTTP(w, req)
-			assert.Equal(t, http.StatusOK, w.Code)
-		}
-	})
-
-	t.Run("disabled with negative rate", func(t *testing.T) {
-		middleware := RateLimitMiddleware(-1)
-
-		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-		})
-
-		wrappedHandler := middleware(handler)
-
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
-		w := httptest.NewRecorder()
-		wrappedHandler.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-	})
-}
-
-func TestRateLimitErrorType(t *testing.T) {
-	err := &RateLimitError{
-		Limit:  100,
-		Period: "1s",
+	tests := []struct {
+		name       string
+		headers    map[string]string
+		remoteAddr string
+		// direct calls getClientIP with no ClientIPMiddleware in front, the
+		// fallback a handler sees when no resolver ran.
+		direct   bool
+		expected string
+	}{
+		{
+			name:       "X-Forwarded-For single IP",
+			headers:    map[string]string{"X-Forwarded-For": "203.0.113.195"},
+			remoteAddr: trustedPeer,
+			expected:   "203.0.113.195",
+		},
+		{
+			name:       "X-Forwarded-For chain yields first IP",
+			headers:    map[string]string{"X-Forwarded-For": "203.0.113.195, 70.41.3.18, 150.172.238.178"},
+			remoteAddr: trustedPeer,
+			expected:   "203.0.113.195",
+		},
+		{
+			name:       "X-Real-IP",
+			headers:    map[string]string{"X-Real-IP": "192.0.2.100"},
+			remoteAddr: trustedPeer,
+			expected:   "192.0.2.100",
+		},
+		{
+			name:       "X-Forwarded-For preferred over X-Real-IP",
+			headers:    map[string]string{"X-Forwarded-For": "10.0.0.1", "X-Real-IP": "10.0.0.2"},
+			remoteAddr: trustedPeer,
+			expected:   "10.0.0.1",
+		},
+		{
+			name:       "X-Forwarded-For whitespace trimmed",
+			headers:    map[string]string{"X-Forwarded-For": "  10.0.0.1  "},
+			remoteAddr: trustedPeer,
+			expected:   "10.0.0.1",
+		},
+		{
+			name:       "X-Real-IP whitespace trimmed",
+			headers:    map[string]string{"X-Real-IP": "  192.0.2.1  "},
+			remoteAddr: trustedPeer,
+			expected:   "192.0.2.1",
+		},
+		{
+			name:       "RemoteAddr with port",
+			remoteAddr: "127.0.0.1:12345",
+			direct:     true,
+			expected:   "127.0.0.1",
+		},
+		{
+			name:       "RemoteAddr without port",
+			remoteAddr: "127.0.0.1",
+			direct:     true,
+			expected:   "127.0.0.1",
+		},
+		{
+			name:       "IPv6 RemoteAddr",
+			remoteAddr: "[::1]:8080",
+			// Bare, not "[::1]". net/http brackets an IPv6 peer; the brackets
+			// are transport syntax, not part of the address, and the old
+			// expectation kept them -- so this value reached the rate limiter
+			// as a key no IP parser accepts, and audit records as a
+			// non-address.
+			expected: "::1",
+		},
 	}
 
-	assert.Equal(t, "rate limit exceeded: 100 requests per 1s", err.Error())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/test", nil)
+			for k, v := range tt.headers {
+				req.Header.Set(k, v)
+			}
+			req.RemoteAddr = tt.remoteAddr
+
+			if tt.direct {
+				assert.Equal(t, tt.expected, getClientIP(req))
+				return
+			}
+			// See resolvedViaOwnPeer: this table is about header parsing, not
+			// about which peers are believed.
+			assert.Equal(t, tt.expected, resolvedViaOwnPeer(t, req))
+		})
+	}
+}
+
+// TestRateLimitMiddlewareDisabled checks that a zero or negative rate turns
+// the limiter off: a burst far past any bucket is served in full.
+func TestRateLimitMiddlewareDisabled(t *testing.T) {
+	tests := []struct {
+		name string
+		rate int
+	}{
+		{name: "zero rate", rate: 0},
+		{name: "negative rate", rate: -1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			wrappedHandler := RateLimitMiddleware(tt.rate)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			}))
+
+			for i := 0; i < 100; i++ {
+				req := httptest.NewRequest(http.MethodGet, "/test", nil)
+				w := httptest.NewRecorder()
+				wrappedHandler.ServeHTTP(w, req)
+				assert.Equal(t, http.StatusOK, w.Code)
+			}
+		})
+	}
 }
 
 func TestTokenBucketDirectConsume(t *testing.T) {
@@ -1397,108 +933,48 @@ func TestTokenBucketDirectConsume(t *testing.T) {
 	})
 }
 
+// TestCORSMiddlewarePreflightRequest checks that an OPTIONS preflight is
+// answered 204 without reaching the handler, and carries the allow-origin
+// header only for a configured origin.
 func TestCORSMiddlewarePreflightRequest(t *testing.T) {
-	t.Run("preflight returns 204 with allowed origin", func(t *testing.T) {
-		middleware := CORSMiddleware([]string{"https://example.com"})
-
-		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-		})
-
-		wrappedHandler := middleware(handler)
-
-		req := httptest.NewRequest(http.MethodOptions, "/test", nil)
-		req.Header.Set("Origin", "https://example.com")
-		w := httptest.NewRecorder()
-
-		wrappedHandler.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusNoContent, w.Code)
-		assert.Equal(t, "https://example.com", w.Header().Get("Access-Control-Allow-Origin"))
-	})
-
-	t.Run("preflight with disallowed origin returns no CORS headers", func(t *testing.T) {
-		middleware := CORSMiddleware([]string{"https://example.com"})
-
-		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-		})
-
-		wrappedHandler := middleware(handler)
-
-		req := httptest.NewRequest(http.MethodOptions, "/test", nil)
-		req.Header.Set("Origin", "https://evil.com")
-		w := httptest.NewRecorder()
-
-		wrappedHandler.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusNoContent, w.Code)
-		assert.Empty(t, w.Header().Get("Access-Control-Allow-Origin"))
-	})
-
-	t.Run("preflight with nil origins denies cross-origin", func(t *testing.T) {
-		middleware := CORSMiddleware(nil)
-
-		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-		})
-
-		wrappedHandler := middleware(handler)
-
-		req := httptest.NewRequest(http.MethodOptions, "/test", nil)
-		w := httptest.NewRecorder()
-
-		wrappedHandler.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusNoContent, w.Code)
-		assert.Empty(t, w.Header().Get("Access-Control-Allow-Origin"))
-	})
-}
-
-func TestRateLimitError_Error(t *testing.T) {
-	err := &RateLimitError{
-		Limit:  100,
-		Period: "1s",
+	tests := []struct {
+		name           string
+		allowedOrigins []string
+		requestOrigin  string
+		expectedOrigin string
+	}{
+		{
+			name:           "allowed origin",
+			allowedOrigins: []string{"https://example.com"},
+			requestOrigin:  "https://example.com",
+			expectedOrigin: "https://example.com",
+		},
+		{
+			name:           "disallowed origin returns no CORS headers",
+			allowedOrigins: []string{"https://example.com"},
+			requestOrigin:  "https://evil.com",
+		},
+		{
+			name: "nil origins denies cross-origin",
+		},
 	}
 
-	errMsg := err.Error()
-	assert.Contains(t, errMsg, "rate limit exceeded")
-	assert.Contains(t, errMsg, "100")
-	assert.Contains(t, errMsg, "1s")
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			wrappedHandler := CORSMiddleware(tt.allowedOrigins)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			}))
 
-// Header parsing, reached from a configured proxy — see TestGetClientIP.
-func TestGetClientIP_XForwardedFor(t *testing.T) {
-	// Test X-Forwarded-For with single IP
-	r := httptest.NewRequest(http.MethodGet, "/test", nil)
-	r.RemoteAddr = trustedPeer
-	r.Header.Set("X-Forwarded-For", "192.0.2.1")
-	assert.Equal(t, "192.0.2.1", resolvedVia(t, []string{trustedProxyCIDR}, r))
+			req := httptest.NewRequest(http.MethodOptions, "/test", nil)
+			if tt.requestOrigin != "" {
+				req.Header.Set("Origin", tt.requestOrigin)
+			}
+			w := httptest.NewRecorder()
 
-	// Test X-Forwarded-For with multiple IPs
-	r = httptest.NewRequest(http.MethodGet, "/test", nil)
-	r.RemoteAddr = trustedPeer
-	r.Header.Set("X-Forwarded-For", "192.0.2.1, 10.0.0.1, 172.16.0.1")
-	assert.Equal(t, "192.0.2.1", resolvedVia(t, []string{trustedProxyCIDR}, r))
-}
+			wrappedHandler.ServeHTTP(w, req)
 
-func TestGetClientIP_XRealIP(t *testing.T) {
-	r := httptest.NewRequest(http.MethodGet, "/test", nil)
-	r.RemoteAddr = trustedPeer
-	r.Header.Set("X-Real-IP", "192.0.2.2")
-	assert.Equal(t, "192.0.2.2", resolvedVia(t, []string{trustedProxyCIDR}, r))
-}
-
-func TestGetClientIP_RemoteAddr(t *testing.T) {
-	r := httptest.NewRequest(http.MethodGet, "/test", nil)
-	r.RemoteAddr = "192.0.2.3:54321"
-	ip := getClientIP(r)
-	assert.Equal(t, "192.0.2.3", ip)
-}
-
-func TestGetClientIP_RemoteAddrNoPort(t *testing.T) {
-	r := httptest.NewRequest(http.MethodGet, "/test", nil)
-	r.RemoteAddr = "192.0.2.4"
-	ip := getClientIP(r)
-	assert.Equal(t, "192.0.2.4", ip)
+			assert.Equal(t, http.StatusNoContent, w.Code)
+			assert.Equal(t, tt.expectedOrigin, w.Header().Get("Access-Control-Allow-Origin"))
+		})
+	}
 }

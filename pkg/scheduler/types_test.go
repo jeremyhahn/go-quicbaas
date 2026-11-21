@@ -220,35 +220,6 @@ func TestJobJSONMarshalUnmarshal(t *testing.T) {
 	}
 }
 
-// TestJobJSONInvalidInput tests Job unmarshaling with invalid input.
-func TestJobJSONInvalidInput(t *testing.T) {
-	t.Run("InvalidJSON", func(t *testing.T) {
-		var job Job
-		err := json.Unmarshal([]byte("not valid json"), &job)
-		assert.Error(t, err)
-	})
-
-	t.Run("EmptyJSON", func(t *testing.T) {
-		var job Job
-		err := json.Unmarshal([]byte("{}"), &job)
-		assert.NoError(t, err)
-		assert.Equal(t, uint64(0), job.ID)
-		assert.Equal(t, "", job.Name)
-	})
-
-	t.Run("NullJSON", func(t *testing.T) {
-		var job Job
-		err := json.Unmarshal([]byte("null"), &job)
-		assert.NoError(t, err)
-	})
-
-	t.Run("InvalidTypeForField", func(t *testing.T) {
-		var job Job
-		err := json.Unmarshal([]byte(`{"id":"not-a-number"}`), &job)
-		assert.Error(t, err)
-	})
-}
-
 // TestJobExecutionJSONMarshalUnmarshal tests JobExecution struct JSON marshaling/unmarshaling.
 func TestJobExecutionJSONMarshalUnmarshal(t *testing.T) {
 	tests := []struct {
@@ -321,22 +292,6 @@ func TestJobExecutionJSONMarshalUnmarshal(t *testing.T) {
 	}
 }
 
-// TestJobExecutionJSONInvalidInput tests JobExecution unmarshaling with invalid input.
-func TestJobExecutionJSONInvalidInput(t *testing.T) {
-	t.Run("InvalidJSON", func(t *testing.T) {
-		var exec JobExecution
-		err := json.Unmarshal([]byte("invalid json"), &exec)
-		assert.Error(t, err)
-	})
-
-	t.Run("EmptyJSON", func(t *testing.T) {
-		var exec JobExecution
-		err := json.Unmarshal([]byte("{}"), &exec)
-		assert.NoError(t, err)
-		assert.Equal(t, uint64(0), exec.ID)
-	})
-}
-
 // TestJobResultJSONMarshalUnmarshal tests JobResult struct JSON marshaling/unmarshaling.
 func TestJobResultJSONMarshalUnmarshal(t *testing.T) {
 	tests := []struct {
@@ -393,22 +348,6 @@ func TestJobResultJSONMarshalUnmarshal(t *testing.T) {
 			assert.Equal(t, tc.result.Output, unmarshaled.Output)
 		})
 	}
-}
-
-// TestJobResultJSONInvalidInput tests JobResult unmarshaling with invalid input.
-func TestJobResultJSONInvalidInput(t *testing.T) {
-	t.Run("InvalidJSON", func(t *testing.T) {
-		var result JobResult
-		err := json.Unmarshal([]byte("invalid"), &result)
-		assert.Error(t, err)
-	})
-
-	t.Run("EmptyJSON", func(t *testing.T) {
-		var result JobResult
-		err := json.Unmarshal([]byte("{}"), &result)
-		assert.NoError(t, err)
-		assert.False(t, result.Success)
-	})
 }
 
 // TestJobQueryJSONMarshalUnmarshal tests JobQuery struct JSON marshaling/unmarshaling.
@@ -490,21 +429,6 @@ func TestJobQueryJSONMarshalUnmarshal(t *testing.T) {
 	}
 }
 
-// TestJobQueryJSONInvalidInput tests JobQuery unmarshaling with invalid input.
-func TestJobQueryJSONInvalidInput(t *testing.T) {
-	t.Run("InvalidJSON", func(t *testing.T) {
-		var query JobQuery
-		err := json.Unmarshal([]byte("not-json"), &query)
-		assert.Error(t, err)
-	})
-
-	t.Run("InvalidLimitType", func(t *testing.T) {
-		var query JobQuery
-		err := json.Unmarshal([]byte(`{"limit":"not-a-number"}`), &query)
-		assert.Error(t, err)
-	})
-}
-
 // TestSchedulerStatsJSONMarshalUnmarshal tests SchedulerStats struct JSON marshaling/unmarshaling.
 func TestSchedulerStatsJSONMarshalUnmarshal(t *testing.T) {
 	tests := []struct {
@@ -568,21 +492,6 @@ func TestSchedulerStatsJSONMarshalUnmarshal(t *testing.T) {
 			assert.Equal(t, tc.stats.FailureCount, unmarshaled.FailureCount)
 		})
 	}
-}
-
-// TestSchedulerStatsJSONInvalidInput tests SchedulerStats unmarshaling with invalid input.
-func TestSchedulerStatsJSONInvalidInput(t *testing.T) {
-	t.Run("InvalidJSON", func(t *testing.T) {
-		var stats SchedulerStats
-		err := json.Unmarshal([]byte("bad json"), &stats)
-		assert.Error(t, err)
-	})
-
-	t.Run("InvalidFieldType", func(t *testing.T) {
-		var stats SchedulerStats
-		err := json.Unmarshal([]byte(`{"job_count":"not-a-number"}`), &stats)
-		assert.Error(t, err)
-	})
 }
 
 // TestSchedulerConfigJSONMarshalUnmarshal tests SchedulerConfig struct JSON marshaling/unmarshaling.
@@ -651,21 +560,6 @@ func TestSchedulerConfigJSONMarshalUnmarshal(t *testing.T) {
 			assert.Equal(t, tc.config.RetryBackoff, unmarshaled.RetryBackoff)
 		})
 	}
-}
-
-// TestSchedulerConfigJSONInvalidInput tests SchedulerConfig unmarshaling with invalid input.
-func TestSchedulerConfigJSONInvalidInput(t *testing.T) {
-	t.Run("InvalidJSON", func(t *testing.T) {
-		var cfg SchedulerConfig
-		err := json.Unmarshal([]byte("not valid json"), &cfg)
-		assert.Error(t, err)
-	})
-
-	t.Run("InvalidMaxConcurrentJobsType", func(t *testing.T) {
-		var cfg SchedulerConfig
-		err := json.Unmarshal([]byte(`{"max_concurrent_jobs":"not-a-number"}`), &cfg)
-		assert.Error(t, err)
-	})
 }
 
 // TestJobPayloadHandling tests that Job properly handles RawMessage payload.

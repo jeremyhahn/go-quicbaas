@@ -15,7 +15,6 @@ package service
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -25,209 +24,196 @@ import (
 )
 
 // =============================================================================
-// osTenantScopedKey tests
+// Key helper tests
 // =============================================================================
 
-func TestOsTenantScopedKey_EmptyTenant(t *testing.T) {
-	// Single-tenant mode: key is returned unchanged
-	key := "my-bucket:my-object"
-	result := osTenantScopedKey("", key)
-	assert.Equal(t, key, result)
+func TestOsTenantScopedKey(t *testing.T) {
+	tests := []struct {
+		name     string
+		tenantID string
+		key      string
+		want     string
+	}{
+		{"empty tenant returns key unchanged", "", "my-bucket:my-object", "my-bucket:my-object"},
+		{"tenant prefixes key", "acme-corp", "my-bucket:my-object", "tenant/acme-corp/my-bucket:my-object"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, osTenantScopedKey(tt.tenantID, tt.key))
+		})
+	}
 }
 
-func TestOsTenantScopedKey_WithTenant(t *testing.T) {
-	// Multi-tenant mode: key is prefixed with tenant namespace
-	result := osTenantScopedKey("acme-corp", "my-bucket:my-object")
-	assert.Equal(t, "tenant/acme-corp/my-bucket:my-object", result)
+func TestOsTenantStripKey(t *testing.T) {
+	tests := []struct {
+		name     string
+		tenantID string
+		key      string
+		want     string
+	}{
+		{"unscoped key returned as-is", "acme-corp", "other-key", "other-key"},
+		{"other tenant prefix not stripped", "acme-corp", "tenant/other-corp/my-bucket:my-object", "tenant/other-corp/my-bucket:my-object"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, osTenantStripKey(tt.tenantID, tt.key))
+		})
+	}
 }
 
-func TestOsTenantScopedKey_PreservesComplexKey(t *testing.T) {
-	// Keys with special characters are preserved
-	result := osTenantScopedKey("tenant-123", "path/to/object.bin")
-	assert.Equal(t, "tenant/tenant-123/path/to/object.bin", result)
+func TestOsTenantKeyBelongsTo(t *testing.T) {
+	tests := []struct {
+		name     string
+		tenantID string
+		key      string
+		want     bool
+	}{
+		{"empty tenant owns unscoped key", "", "any-key", true},
+		{"empty tenant owns scoped key", "", "tenant/acme-corp/key", true},
+		{"tenant does not own unscoped key", "acme-corp", "my-object", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, osTenantKeyBelongsTo(tt.tenantID, tt.key))
+		})
+	}
 }
 
-// =============================================================================
-// osTenantStripKey tests
-// =============================================================================
+func TestOsTenantListPrefix(t *testing.T) {
+	tests := []struct {
+		name     string
+		tenantID string
+		want     string
+	}{
+		{"empty tenant has no prefix", "", ""},
+		{"tenant prefix", "acme-corp", "tenant/acme-corp/"},
+	}
 
-func TestOsTenantStripKey_EmptyTenant(t *testing.T) {
-	// Single-tenant mode: no stripping
-	result := osTenantStripKey("", "my-bucket:my-object")
-	assert.Equal(t, "my-bucket:my-object", result)
-}
-
-func TestOsTenantStripKey_WithTenant(t *testing.T) {
-	// Multi-tenant mode: tenant prefix is removed
-	result := osTenantStripKey("acme-corp", "tenant/acme-corp/my-bucket:my-object")
-	assert.Equal(t, "my-bucket:my-object", result)
-}
-
-func TestOsTenantStripKey_NoMatchingPrefix(t *testing.T) {
-	// If the key doesn't have the tenant prefix, it's returned as-is
-	result := osTenantStripKey("acme-corp", "other-key")
-	assert.Equal(t, "other-key", result)
-}
-
-func TestOsTenantStripKey_WrongTenant(t *testing.T) {
-	// If the key belongs to a different tenant, the prefix is not stripped
-	result := osTenantStripKey("acme-corp", "tenant/other-corp/my-bucket:my-object")
-	assert.Equal(t, "tenant/other-corp/my-bucket:my-object", result)
-}
-
-// =============================================================================
-// osTenantKeyBelongsTo tests
-// =============================================================================
-
-func TestOsTenantKeyBelongsTo_EmptyTenant(t *testing.T) {
-	// Single-tenant mode: all keys belong
-	assert.True(t, osTenantKeyBelongsTo("", "any-key"))
-	assert.True(t, osTenantKeyBelongsTo("", "tenant/acme-corp/key"))
-}
-
-func TestOsTenantKeyBelongsTo_MatchingTenant(t *testing.T) {
-	assert.True(t, osTenantKeyBelongsTo("acme-corp", "tenant/acme-corp/my-object"))
-}
-
-func TestOsTenantKeyBelongsTo_NonMatchingTenant(t *testing.T) {
-	assert.False(t, osTenantKeyBelongsTo("acme-corp", "tenant/other-corp/my-object"))
-}
-
-func TestOsTenantKeyBelongsTo_UnscopedKey(t *testing.T) {
-	// A key without tenant prefix does not belong to a multi-tenant request
-	assert.False(t, osTenantKeyBelongsTo("acme-corp", "my-object"))
-}
-
-// =============================================================================
-// osTenantListPrefix tests
-// =============================================================================
-
-func TestOsTenantListPrefix_EmptyTenant(t *testing.T) {
-	assert.Equal(t, "", osTenantListPrefix(""))
-}
-
-func TestOsTenantListPrefix_WithTenant(t *testing.T) {
-	assert.Equal(t, "tenant/acme-corp/", osTenantListPrefix("acme-corp"))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, osTenantListPrefix(tt.tenantID))
+		})
+	}
 }
 
 // =============================================================================
-// osTenantScopedBucket tests
+// Bucket helper tests
 // =============================================================================
 
-func TestOsTenantScopedBucket_EmptyTenant(t *testing.T) {
-	// Single-tenant mode: bucket name is returned unchanged
-	result := osTenantScopedBucket("", "my-bucket")
-	assert.Equal(t, "my-bucket", result)
+func TestOsTenantScopedBucket(t *testing.T) {
+	tests := []struct {
+		name     string
+		tenantID string
+		bucket   string
+		want     string
+	}{
+		{"empty tenant returns bucket unchanged", "", "my-bucket", "my-bucket"},
+		{"tenant prefixes bucket", "acme-corp", "my-bucket", "tenant/acme-corp/my-bucket"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, osTenantScopedBucket(tt.tenantID, tt.bucket))
+		})
+	}
 }
 
-func TestOsTenantScopedBucket_WithTenant(t *testing.T) {
-	// Multi-tenant mode: bucket is prefixed with tenant namespace
-	result := osTenantScopedBucket("acme-corp", "my-bucket")
-	assert.Equal(t, "tenant/acme-corp/my-bucket", result)
+func TestOsTenantStripBucket(t *testing.T) {
+	tests := []struct {
+		name     string
+		tenantID string
+		bucket   string
+		want     string
+	}{
+		{"unscoped bucket returned as-is", "acme-corp", "other-bucket", "other-bucket"},
+		{"other tenant prefix not stripped", "acme-corp", "tenant/other-corp/my-bucket", "tenant/other-corp/my-bucket"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, osTenantStripBucket(tt.tenantID, tt.bucket))
+		})
+	}
 }
 
-func TestOsTenantScopedBucket_PreservesComplexName(t *testing.T) {
-	result := osTenantScopedBucket("tenant-123", "nested/bucket/name")
-	assert.Equal(t, "tenant/tenant-123/nested/bucket/name", result)
-}
+func TestOsTenantBucketBelongsTo(t *testing.T) {
+	tests := []struct {
+		name     string
+		tenantID string
+		bucket   string
+		want     bool
+	}{
+		{"empty tenant owns unscoped bucket", "", "any-bucket", true},
+		{"empty tenant owns scoped bucket", "", "tenant/acme-corp/bucket", true},
+		{"tenant does not own unscoped bucket", "acme-corp", "my-bucket", false},
+	}
 
-// =============================================================================
-// osTenantStripBucket tests
-// =============================================================================
-
-func TestOsTenantStripBucket_EmptyTenant(t *testing.T) {
-	// Single-tenant mode: no stripping
-	result := osTenantStripBucket("", "my-bucket")
-	assert.Equal(t, "my-bucket", result)
-}
-
-func TestOsTenantStripBucket_WithTenant(t *testing.T) {
-	// Multi-tenant mode: tenant prefix is removed
-	result := osTenantStripBucket("acme-corp", "tenant/acme-corp/my-bucket")
-	assert.Equal(t, "my-bucket", result)
-}
-
-func TestOsTenantStripBucket_NoMatchingPrefix(t *testing.T) {
-	result := osTenantStripBucket("acme-corp", "other-bucket")
-	assert.Equal(t, "other-bucket", result)
-}
-
-func TestOsTenantStripBucket_WrongTenant(t *testing.T) {
-	result := osTenantStripBucket("acme-corp", "tenant/other-corp/my-bucket")
-	assert.Equal(t, "tenant/other-corp/my-bucket", result)
-}
-
-// =============================================================================
-// osTenantBucketBelongsTo tests
-// =============================================================================
-
-func TestOsTenantBucketBelongsTo_EmptyTenant(t *testing.T) {
-	// Single-tenant mode: all buckets belong
-	assert.True(t, osTenantBucketBelongsTo("", "any-bucket"))
-	assert.True(t, osTenantBucketBelongsTo("", "tenant/acme-corp/bucket"))
-}
-
-func TestOsTenantBucketBelongsTo_MatchingTenant(t *testing.T) {
-	assert.True(t, osTenantBucketBelongsTo("acme-corp", "tenant/acme-corp/my-bucket"))
-}
-
-func TestOsTenantBucketBelongsTo_NonMatchingTenant(t *testing.T) {
-	assert.False(t, osTenantBucketBelongsTo("acme-corp", "tenant/other-corp/my-bucket"))
-}
-
-func TestOsTenantBucketBelongsTo_UnscopedBucket(t *testing.T) {
-	assert.False(t, osTenantBucketBelongsTo("acme-corp", "my-bucket"))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, osTenantBucketBelongsTo(tt.tenantID, tt.bucket))
+		})
+	}
 }
 
 // =============================================================================
-// osEnforceTenantAccess tests
+// Access enforcement tests
 // =============================================================================
 
-func TestOsEnforceTenantAccess_EmptyTenant(t *testing.T) {
-	// Single-tenant mode: always allowed
-	assert.NoError(t, osEnforceTenantAccess("", "any-key", "PutObject"))
+func TestOsEnforceTenantAccess(t *testing.T) {
+	tests := []struct {
+		name      string
+		tenantID  string
+		key       string
+		operation string
+		wantErr   bool
+	}{
+		{"empty tenant always allowed", "", "any-key", "PutObject", false},
+		{"matching tenant allowed", "acme-corp", "tenant/acme-corp/my-object", "GetObject", false},
+		{"cross tenant denied", "acme-corp", "tenant/other-corp/my-object", "GetObject", true},
+		{"unscoped key denied", "acme-corp", "unscoped-key", "DeleteObject", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := osEnforceTenantAccess(tt.tenantID, tt.key, tt.operation)
+			if !tt.wantErr {
+				assert.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "does not belong to the requesting tenant")
+		})
+	}
 }
 
-func TestOsEnforceTenantAccess_MatchingTenant(t *testing.T) {
-	assert.NoError(t, osEnforceTenantAccess("acme-corp", "tenant/acme-corp/my-object", "GetObject"))
-}
+func TestOsEnforceBucketTenantAccess(t *testing.T) {
+	tests := []struct {
+		name      string
+		tenantID  string
+		bucket    string
+		operation string
+		wantErr   bool
+	}{
+		{"empty tenant always allowed", "", "any-bucket", "CreateBucket", false},
+		{"matching tenant allowed", "acme-corp", "tenant/acme-corp/my-bucket", "ListBucket", false},
+		{"cross tenant denied", "acme-corp", "tenant/other-corp/my-bucket", "DeleteBucket", true},
+		{"unscoped bucket denied", "acme-corp", "unscoped-bucket", "ListBucket", true},
+	}
 
-func TestOsEnforceTenantAccess_CrossTenantDenied(t *testing.T) {
-	err := osEnforceTenantAccess("acme-corp", "tenant/other-corp/my-object", "GetObject")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "does not belong to the requesting tenant")
-}
-
-func TestOsEnforceTenantAccess_UnscopedKeyDenied(t *testing.T) {
-	// A multi-tenant request cannot access an unscoped key
-	err := osEnforceTenantAccess("acme-corp", "unscoped-key", "DeleteObject")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "does not belong to the requesting tenant")
-}
-
-// =============================================================================
-// osEnforceBucketTenantAccess tests
-// =============================================================================
-
-func TestOsEnforceBucketTenantAccess_EmptyTenant(t *testing.T) {
-	// Single-tenant mode: always allowed
-	assert.NoError(t, osEnforceBucketTenantAccess("", "any-bucket", "CreateBucket"))
-}
-
-func TestOsEnforceBucketTenantAccess_MatchingTenant(t *testing.T) {
-	assert.NoError(t, osEnforceBucketTenantAccess("acme-corp", "tenant/acme-corp/my-bucket", "ListBucket"))
-}
-
-func TestOsEnforceBucketTenantAccess_CrossTenantDenied(t *testing.T) {
-	err := osEnforceBucketTenantAccess("acme-corp", "tenant/other-corp/my-bucket", "DeleteBucket")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "does not belong to the requesting tenant")
-}
-
-func TestOsEnforceBucketTenantAccess_UnscopedBucketDenied(t *testing.T) {
-	err := osEnforceBucketTenantAccess("acme-corp", "unscoped-bucket", "ListBucket")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "does not belong to the requesting tenant")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := osEnforceBucketTenantAccess(tt.tenantID, tt.bucket, tt.operation)
+			if !tt.wantErr {
+				assert.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "does not belong to the requesting tenant")
+		})
+	}
 }
 
 // =============================================================================
@@ -314,13 +300,4 @@ func TestOsTenantBucket_ScopeAndBelongsTo(t *testing.T) {
 
 	// But not to a different tenant
 	assert.False(t, osTenantBucketBelongsTo("other-corp", scoped))
-}
-
-func TestOsTenantKey_ListPrefixMatchesScopedKeys(t *testing.T) {
-	tenantID := "acme-corp"
-	key := "bucket:object"
-	scoped := osTenantScopedKey(tenantID, key)
-	prefix := osTenantListPrefix(tenantID)
-	assert.True(t, strings.HasPrefix(scoped, prefix),
-		"scoped key should start with tenant list prefix")
 }

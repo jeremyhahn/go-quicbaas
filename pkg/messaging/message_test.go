@@ -113,6 +113,9 @@ func TestMessage_Clone(t *testing.T) {
 		if clone.Source != original.Source {
 			t.Errorf("expected Source %q, got %q", original.Source, clone.Source)
 		}
+		if clone.Payload != nil || clone.Metadata != nil || clone.Dedup != nil {
+			t.Error("expected nil payload, metadata and dedup on the clone")
+		}
 	})
 
 	t.Run("clones message with payload", func(t *testing.T) {
@@ -163,25 +166,6 @@ func TestMessage_Clone(t *testing.T) {
 		}
 	})
 
-	t.Run("handles nil payload and metadata", func(t *testing.T) {
-		t.Parallel()
-		original := &Message{
-			ID:       "simple-msg",
-			Type:     MessageTypePing,
-			Payload:  nil,
-			Metadata: nil,
-		}
-
-		clone := original.Clone()
-
-		if clone.Payload != nil {
-			t.Error("expected nil payload")
-		}
-		if clone.Metadata != nil {
-			t.Error("expected nil metadata")
-		}
-	})
-
 	t.Run("clones message with dedup info", func(t *testing.T) {
 		t.Parallel()
 		firstSeen := time.Date(2026, 1, 15, 10, 0, 0, 0, time.UTC)
@@ -214,21 +198,6 @@ func TestMessage_Clone(t *testing.T) {
 		clone.Dedup.Count = 10
 		if original.Dedup.Count == 10 {
 			t.Error("dedup info was not deep copied")
-		}
-	})
-
-	t.Run("handles nil dedup info", func(t *testing.T) {
-		t.Parallel()
-		original := &Message{
-			ID:    "msg-no-dedup",
-			Type:  MessageTypePing,
-			Dedup: nil,
-		}
-
-		clone := original.Clone()
-
-		if clone.Dedup != nil {
-			t.Error("expected nil Dedup")
 		}
 	})
 }
