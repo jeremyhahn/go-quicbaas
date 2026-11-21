@@ -29,8 +29,8 @@ func jsonDecoder() func([]byte, interface{}) error {
 // escaping and without indentation. The OCI manifest digest is the
 // SHA-256 of the canonical byte representation; we don't try to
 // reproduce a specific client's exact byte layout — the Distribution
-// spec digest contract is "what the registry returned" not "what the
-// client originally sent."
+// spec digest contract is "what the registry returned", not "what the
+// client originally sent".
 func jsonEncoder() func(interface{}) ([]byte, error) {
 	return json.Marshal
 }
