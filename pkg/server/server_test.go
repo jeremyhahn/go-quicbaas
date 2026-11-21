@@ -26,6 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
 func TestNewServer(t *testing.T) {
@@ -465,4 +466,58 @@ func TestServer_TriggerShutdown(t *testing.T) {
 
 	// Calling again should be safe (idempotent)
 	srv.TriggerShutdown()
+}
+
+// TestServer_IsStarted_NotWhileComposing pins the readiness contract callers
+// rely on (cmd/quicbaas waitReady, the integration helpers' waitForStarted):
+// IsStarted reports true only once initialize has finished composing the
+// server. It reads IsStarted from inside the IAM seam, while startService is
+// still running and before iamReady is set (so ModuleRESTServer, and every
+// apimodule lazy route, still answers 503 "server still composing"). A
+// started flag raised on initialize's entry reports the server started there
+// (#2555).
+func TestServer_IsStarted_NotWhileComposing(t *testing.T) {
+	// Save and restore the two seams inline: saveAndRestoreLifecycleSeams
+	// lives in a !integration file, and this file also builds under the
+	// integration tag (make lint's vet-integration).
+	seamMu.Lock()
+	origInitializeCAFn, origInitIAMComponentsFn := initializeCAFn, initIAMComponentsFn
+	seamMu.Unlock()
+	t.Cleanup(func() {
+		seamMu.Lock()
+		initializeCAFn, initIAMComponentsFn = origInitializeCAFn, origInitIAMComponentsFn
+		seamMu.Unlock()
+	})
+
+	cfg := createTestConfig(t)
+	t.Cleanup(func() { cleanupTestData(t, cfg) })
+	cfg.Server.Mode = config.ServerModeStandalone
+	cfg.Storage.Backend = config.StorageBackendMemory
+	cfg.Server.Embedded = true
+
+	srv, err := NewServer(cfg)
+	require.NoError(t, err)
+
+	var startedWhileComposing, iamReadyWhileComposing bool
+	seamMu.Lock()
+	initializeCAFn = func(_ *Server) error { return nil }
+	initIAMComponentsFn = func(s *Server) (service.IAMComponents, error) {
+		startedWhileComposing = s.IsStarted()
+		iamReadyWhileComposing = s.iamReady.Load()
+		return nil, nil
+	}
+	seamMu.Unlock()
+
+	require.NoError(t, srv.initialize())
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+	})
+
+	require.False(t, iamReadyWhileComposing, "the IAM seam runs before iamReady is set")
+	assert.False(t, startedWhileComposing,
+		"IsStarted must not report true while the server is still composing (IAM not attached, REST surface unresolvable)")
+	assert.True(t, srv.IsStarted(), "IsStarted must report true once initialize has returned")
+	assert.True(t, srv.iamReady.Load(), "once started is reported, the module REST surface's IAM precondition holds")
 }

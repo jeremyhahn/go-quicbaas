@@ -53,7 +53,7 @@ func TestOrchestratorMethodToolNames(t *testing.T) {
 // bare method name, which other services also use.
 func TestOrchestratorMethodToolNames_NonOrchestratorUnaffected(t *testing.T) {
 	tr := &Transport{}
-	if got := tr.mapToToolName("quicbaas.KV", "Get"); got != "qrdb_get" {
+	if got := tr.mapToToolName("quicbaas.KV", "Get"); got != "quicbaas_kv_get" {
 		t.Errorf("KV/Get mapped to %q; the orchestrator table must not apply", got)
 	}
 }

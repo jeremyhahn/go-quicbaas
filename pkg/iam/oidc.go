@@ -175,6 +175,33 @@ func (p *OIDCProvider) GetJWKS() *jose.JSONWebKeySet {
 	return p.config.SigningKeyManager.JWKS()
 }
 
+// PublicKeyForKID returns the key the provider trusts now for kid, resolved
+// from its signing key managers at each call, so a key past its trust (an
+// adopted pre-upgrade key past its cutoff) is never returned. A kid no
+// manager holds sends each manager to re-read its version record (at most
+// once per unknownKIDRefreshInterval), so a peer's rotation is seen at once;
+// a kid still unheld is reported with *UnknownKeyIDError.
+func (p *OIDCProvider) PublicKeyForKID(ctx context.Context, kid string) (crypto.PublicKey, error) {
+	r, km := p.config.TenantSigningKeys, p.config.SigningKeyManager
+	if r == nil && km == nil {
+		return nil, &SigningKeyUnavailableError{}
+	}
+	if r != nil {
+		pub, held, err := r.heldPublicForKID(ctx, kid)
+		if err != nil {
+			return nil, err
+		}
+		if held {
+			return pub, nil
+		}
+		// A kid no built manager holds may name a key a peer sharing the
+		// backend has just rotated in: the refresh-aware lookup builds any
+		// dedicated tenant's manager and re-reads the version records.
+		return r.PublicForKID(ctx, kid)
+	}
+	return km.PublicForKID(ctx, kid)
+}
+
 // Issuer returns the configured OIDC issuer URL (the iss this provider stamps on
 // the tokens it signs). The platform-token validator uses it as both the trusted
 // issuer and -- under the AS==RS audience convention -- the required audience
@@ -507,7 +534,7 @@ type revocationTarget struct {
 // a refresh token is opaque, and its stored record names the client. found is
 // false for a token this provider did not issue or no longer verifies.
 func (p *OIDCProvider) resolveRevocationTarget(ctx context.Context, token string) (revocationTarget, bool) {
-	if claims, err := p.parseVerifiedAccessTokenClaims(token); err == nil && claims.JTI != "" {
+	if claims, err := p.parseVerifiedAccessTokenClaims(ctx, token); err == nil && claims.JTI != "" {
 		return revocationTarget{ClientID: claims.ClientID, TenantID: claims.TenantID, JTI: claims.JTI}, true
 	}
 	stored, err := p.tokenService.storage.GetTokenByValue(ctx, token)
@@ -533,7 +560,7 @@ func (p *OIDCProvider) Introspect(ctx context.Context, req *IntrospectRequest) (
 	// Verify the token signature and parse claims WITHOUT the revocation check
 	// first, so we can derive the tenant from the verified claim and route the
 	// revocation lookup to the correct tenant store.
-	claims, err := p.parseVerifiedAccessTokenClaims(req.Token)
+	claims, err := p.parseVerifiedAccessTokenClaims(ctx, req.Token)
 	if err != nil {
 		// Signature/parse failure: the token is not active. RFC 7662 says
 		// respond active=false rather than surface an error to the caller.
@@ -748,8 +775,8 @@ func (p *OIDCProvider) TenantAuthzMode(ctx context.Context, tenantID string) (st
 // parsed claims WITHOUT performing the revocation check. It is the shared
 // signature-verification + claim-parsing path used by ValidateAccessToken and
 // Introspect so the crypto lives in exactly one place.
-func (p *OIDCProvider) parseVerifiedAccessTokenClaims(tokenString string) (*Claims, error) {
-	publicKey, err := p.resolveVerificationKey(tokenString)
+func (p *OIDCProvider) parseVerifiedAccessTokenClaims(ctx context.Context, tokenString string) (*Claims, error) {
+	publicKey, err := p.resolveVerificationKey(ctx, tokenString)
 	if err != nil {
 		return nil, err
 	}
@@ -862,7 +889,7 @@ func (p *OIDCProvider) UserInfo(ctx context.Context, accessToken string) (*UserI
 func (p *OIDCProvider) ValidateAccessToken(ctx context.Context, tokenString string) (*Claims, error) {
 	// Verify the signature and parse claims using the shared verification path
 	// (kid-aware key resolution lives there). The crypto is not duplicated.
-	claims, err := p.parseVerifiedAccessTokenClaims(tokenString)
+	claims, err := p.parseVerifiedAccessTokenClaims(ctx, tokenString)
 	if err != nil {
 		return nil, err
 	}
@@ -933,7 +960,7 @@ func (p *OIDCProvider) ValidateAccessTokenWithDPoP(ctx context.Context, tokenStr
 // ValidateIDToken validates an ID token and returns its claims.
 func (p *OIDCProvider) ValidateIDToken(ctx context.Context, tokenString string) (*IDTokenClaims, error) {
 	// Resolve the verification key (kid-aware when a key manager is present).
-	publicKey, err := p.resolveVerificationKey(tokenString)
+	publicKey, err := p.resolveVerificationKey(ctx, tokenString)
 	if err != nil {
 		return nil, err
 	}
@@ -962,7 +989,7 @@ func (p *OIDCProvider) ValidateIDToken(ctx context.Context, tokenString string) 
 // SigningKeyManager (current key or a previous key still inside the rotation
 // overlap), which keeps tokens minted by a superseded key valid until they
 // expire. When no kid is present it is the manager's current key.
-func (p *OIDCProvider) resolveVerificationKey(tokenString string) (crypto.PublicKey, error) {
+func (p *OIDCProvider) resolveVerificationKey(ctx context.Context, tokenString string) (crypto.PublicKey, error) {
 	// When a per-tenant resolver is configured the kid in the token header
 	// selects the matching public key from the aggregated JWKS (global or any
 	// dedicated tenant key). This keeps the OIDC provider able to verify its
@@ -970,10 +997,10 @@ func (p *OIDCProvider) resolveVerificationKey(tokenString string) (crypto.Public
 	if p.config.TenantSigningKeys != nil {
 		kid, _ := xkms.JWTExtractKID(tokenString)
 		if kid != "" {
-			if pub := publicForKIDInJWKS(p.config.TenantSigningKeys.JWKS(context.Background()), kid); pub != nil {
-				return pub, nil
-			}
-			return nil, &UnknownKeyIDError{KID: kid}
+			// A kid the aggregate does not publish goes through the
+			// rate-limited refresh before it is unknown: a peer may have
+			// just rotated and signed with the new key.
+			return p.config.TenantSigningKeys.PublicForKID(ctx, kid)
 		}
 		_, signer, _ := p.config.TenantSigningKeys.Global().Current()
 		if signer != nil {
@@ -986,7 +1013,7 @@ func (p *OIDCProvider) resolveVerificationKey(tokenString string) (crypto.Public
 	}
 	kid, _ := xkms.JWTExtractKID(tokenString)
 	if kid != "" {
-		return km.PublicForKID(kid)
+		return km.PublicForKID(ctx, kid)
 	}
 	// No kid header: verify against the manager's current key.
 	_, signer, _ := km.Current()
