@@ -426,6 +426,11 @@ func bindEnvVars() {
 	_ = viper.BindEnv("raft.deployment_id")
 	config.BindRaftAddressEnv(viper.GetViper())
 	_ = viper.BindEnv("raft.join_addresses")
+	// Per-node Raft mTLS material: a replica's certificate differs from its
+	// peers', so it arrives by environment even when the file omits the keys.
+	_ = viper.BindEnv("raft.tls_cert_file")
+	_ = viper.BindEnv("raft.tls_key_file")
+	_ = viper.BindEnv("raft.tls_ca_file")
 
 	// Storage configuration.
 	_ = viper.BindEnv("storage.backend")

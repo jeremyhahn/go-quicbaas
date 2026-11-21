@@ -1,0 +1,41 @@
+# QuicBaaS on Kubernetes: a 3-node Raft cluster, one go-quicbaas tag.
+#
+#   kubectl create namespace quicbaas
+#   kubectl -n quicbaas create secret generic quicbaas-raft-tls \
+#     --from-file=ca.crt \
+#     --from-file=quicbaas-0.crt --from-file=quicbaas-0.key \
+#     --from-file=quicbaas-1.crt --from-file=quicbaas-1.key \
+#     --from-file=quicbaas-2.crt --from-file=quicbaas-2.key
+#   kubectl -n quicbaas create secret tls quicbaas-server-tls \
+#     --cert=server.crt --key=server.key
+#   kubectl -n quicbaas create secret generic quicbaas-seal \
+#     --from-literal=passphrase="$(openssl rand -base64 32)"
+#   kubectl apply -k deployments/kubernetes
+#
+# docs/deployment/kubernetes.md is the guide. The image tag below is the ONE
+# tag every node runs: it is the repository's VERSION (the release workflow
+# publishes v<VERSION> as ghcr.io/jeremyhahn/quicbaasd:<VERSION>), and
+# test/buildgates/kubernetes_test.go fails when the two drift apart. An
+# upgrade changes this one line and rolls the StatefulSet one pod at a time.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: quicbaas
+
+labels:
+  - pairs:
+      app.kubernetes.io/name: quicbaas
+      app.kubernetes.io/part-of: quicbaas
+    includeSelectors: false
+
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - services.yaml
+  - statefulset.yaml
+  - poddisruptionbudget.yaml
+  - networkpolicy.yaml
+
+images:
+  - name: ghcr.io/jeremyhahn/quicbaasd
+    newTag: 0.16.0-alpha
