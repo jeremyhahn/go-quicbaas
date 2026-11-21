@@ -178,3 +178,46 @@ func TestGRPC_UpdateUserRefusesTheDeletingLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, iam.LifecycleSuspended, after.Lifecycle)
 }
+
+// TestGRPC_UpdateUserKeepsRolesWhenAReplacementIsMissing pins that a
+// replacement role that does not exist fails the update and leaves the
+// user's roles as they were.
+func TestGRPC_UpdateUserKeepsRolesWhenAReplacementIsMissing(t *testing.T) {
+	srv, mem := newRealIAMGRPCStack(t)
+	ctx := callerContext("acme")
+
+	require.NoError(t, mem.CreateRole(ctx, &iam.Role{ID: "viewer", TenantID: "acme", Name: "viewer"}))
+	require.NoError(t, mem.CreateRole(ctx, &iam.Role{ID: "editor", TenantID: "acme", Name: "editor"}))
+
+	created, err := srv.CreateUser(ctx, &iampb.CreateUserRequest{
+		TenantId:  "acme",
+		Email:     "rhea@acme.test",
+		Username:  "rhea",
+		Name:      "Rhea",
+		Lifecycle: string(iam.LifecycleActive),
+		Roles:     []string{"viewer"},
+	})
+	require.NoError(t, err)
+	createdID, err := strconv.ParseUint(created.Id, 10, 64)
+	require.NoError(t, err)
+
+	_, err = srv.UpdateUser(ctx, &iampb.UpdateUserRequest{
+		TenantId: "acme",
+		UserId:   created.Id,
+		Roles:    []string{"no-such-role"},
+	})
+	require.Error(t, err, "an update naming a missing role succeeded")
+	after, err := mem.GetUser(ctx, "acme", createdID)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"viewer"}, after.Roles, "the failed update changed the roles anyway")
+
+	_, err = srv.UpdateUser(ctx, &iampb.UpdateUserRequest{
+		TenantId: "acme",
+		UserId:   created.Id,
+		Roles:    []string{"editor"},
+	})
+	require.NoError(t, err)
+	after, err = mem.GetUser(ctx, "acme", createdID)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"editor"}, after.Roles)
+}
