@@ -156,7 +156,9 @@ func New(cfg *transport.Config, opts ...Option) (*Transport, error) {
 	// own MCP transport does: a PIN-bound request is refused before it is
 	// sent on any hop, redirects included, that is not https or names a
 	// host other than the endpoint's. Requests without a bound PIN pass
-	// through unchanged.
+	// through unchanged. A barrier or ceremony tool call whose so_pin comes
+	// from the request rather than from WithSOPIN is bound for that call by
+	// callBarrier, so it meets the same guard on every hop.
 	c.Transport = qrdbtransport.SOPINRoundTripper(base, "mcp", qrdbtransport.ConfiguredHost(t.endpoint))
 	t.client = c
 

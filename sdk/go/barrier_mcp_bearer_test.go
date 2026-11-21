@@ -67,3 +67,40 @@ func TestBarrierStatus_MCP_SendsPlatformBearer(t *testing.T) {
 		}
 	}
 }
+
+// TestBarrierStatus_MCP_EmptyResultIsError: a barrier status tool result with
+// no content is an error, not an unsealed barrier.
+func TestBarrierStatus_MCP_EmptyResultIsError(t *testing.T) {
+	const want = "Bearer t-mcp"
+	server := mcpserver.NewMCPServer("barrier-empty", "1.0.0")
+	server.AddTool(mcpgo.NewTool("qrdb_barrier_status"), func(_ context.Context, _ mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+		return &mcpgo.CallToolResult{}, nil
+	})
+	mcpHandler := mcpserver.NewStreamableHTTPServer(server)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != want {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		mcpHandler.ServeHTTP(w, r)
+	}))
+	t.Cleanup(srv.Close)
+
+	c, err := NewClient(srv.URL+"/mcp", WithMCP(), WithMCPAuthToken("t-mcp"))
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	barrier, err := c.Security().Barrier()
+	if err != nil {
+		t.Fatalf("Security().Barrier(): %v", err)
+	}
+	status, err := barrier.BarrierStatus(context.Background())
+	if err == nil {
+		t.Fatalf("BarrierStatus with no result content = %+v, nil; want an error", status)
+	}
+	if status != nil {
+		t.Errorf("BarrierStatus status = %+v, want nil on error", status)
+	}
+}

@@ -21,9 +21,15 @@ package mcp
 import (
 	"context"
 	"testing"
+	"time"
+
+	mcpgo "github.com/mark3labs/mcp-go/mcp"
+	mcpserver "github.com/mark3labs/mcp-go/server"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
 
 const (
@@ -255,4 +261,29 @@ func TestBarrierShareListsAreCommaSeparatedStrings(t *testing.T) {
 	assertStringArg(t, unsealTool, got[unsealTool], "shares", "s1,s2,s3")
 	assertStringArg(t, recoverTool, got[recoverTool], "keys", "k1,k2")
 	assertStringArg(t, rootTool, got[rootTool], "shares", "s1,s2")
+}
+
+// TestBarrierStatus_EmptyResultIsError: a qrdb_barrier_status tool that
+// answers with empty text content is a failed call, not an unsealed barrier.
+func TestBarrierStatus_EmptyResultIsError(t *testing.T) {
+	srv := mcpserver.NewMCPServer("TestServer", "1.0.0")
+	srv.AddTool(mcpgo.NewTool("qrdb_barrier_status"),
+		func(context.Context, mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+			return mcpgo.NewToolResultText(""), nil
+		})
+	httpSrv := mcpserver.NewTestStreamableHTTPServer(srv)
+	t.Cleanup(httpSrv.Close)
+	tr, err := New(&transport.Config{Address: httpSrv.URL, Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = tr.Close() })
+
+	status, err := tr.BarrierStatus(context.Background())
+	if err == nil {
+		t.Fatalf("BarrierStatus with empty content = %+v, nil; want an error", status)
+	}
+	if status != nil {
+		t.Errorf("BarrierStatus status = %+v, want nil on error", status)
+	}
 }

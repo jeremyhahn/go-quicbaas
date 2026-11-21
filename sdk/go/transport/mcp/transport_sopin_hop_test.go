@@ -157,6 +157,135 @@ func TestSOPINHop_RedirectToForeignHostRefused(t *testing.T) {
 	}
 }
 
+// requestShamirInit runs BarrierInitializeShamir with the SO PIN in the
+// request's own SOPin field and nothing bound in the context.
+func requestShamirInit(tr *Transport) error {
+	_, err := tr.BarrierInitializeShamir(context.Background(), &qrdbtransport.BarrierInitializeShamirRequest{
+		SOPin: testSOPIN, UserPin: testUserPIN, Secret: []byte("pw"), Threshold: 2, TotalShares: 2,
+	})
+	return err
+}
+
+// TestSOPINHop_RequestPINPlainEndpointRefused: an SO PIN supplied in the
+// request, with none bound by WithSOPIN, is refused before it is sent to an
+// http:// endpoint.
+func TestSOPINHop_RequestPINPlainEndpointRefused(t *testing.T) {
+	verbs := map[string]func(*Transport) error{
+		"BarrierInitialize": func(tr *Transport) error {
+			return tr.BarrierInitialize(context.Background(), &qrdbtransport.BarrierInitializeRequest{
+				SOPin: testSOPIN, UserPin: testUserPIN, Secret: []byte("pw"),
+			})
+		},
+		"BarrierInitializeShamir": requestShamirInit,
+		"BarrierRekey": func(tr *Transport) error {
+			_, err := tr.BarrierRekey(context.Background(), &qrdbtransport.BarrierRekeyRequest{
+				SOPin: testSOPIN, Threshold: 2, Total: 2,
+			})
+			return err
+		},
+		"BarrierGenerateRecoveryKeys": func(tr *Transport) error {
+			_, err := tr.BarrierGenerateRecoveryKeys(context.Background(), &qrdbtransport.BarrierGenerateRecoveryKeysRequest{
+				SOPin: testSOPIN, Threshold: 2, Total: 2,
+			})
+			return err
+		},
+	}
+	for name, call := range verbs {
+		t.Run(name, func(t *testing.T) {
+			counter := &pinCounter{next: mcpHandler(t)}
+			srv := httptest.NewServer(counter)
+			t.Cleanup(srv.Close)
+			tr, err := New(&transport.Config{Address: srv.URL, Timeout: 5 * time.Second})
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			t.Cleanup(func() { _ = tr.Close() })
+
+			err = call(tr)
+			var tlsErr *qrdbtransport.SOPINRequiresTLSError
+			if !errors.As(err, &tlsErr) {
+				t.Fatalf("%s over http with a request PIN: err = %v, want *SOPINRequiresTLSError", name, err)
+			}
+			if n := counter.withPIN.Load(); n != 0 {
+				t.Fatalf("plain server received %d requests carrying the SO PIN, want 0", n)
+			}
+		})
+	}
+}
+
+// TestSOPINHop_RequestPINRedirectToPlainRefused: a request-supplied SO PIN
+// does not follow a redirect from the https endpoint to http.
+func TestSOPINHop_RequestPINRedirectToPlainRefused(t *testing.T) {
+	plain := &pinCounter{}
+	plainSrv := httptest.NewServer(plain)
+	t.Cleanup(plainSrv.Close)
+
+	tlsSrv := httptest.NewTLSServer(redirectTool(mcpHandler(t), plainSrv.URL))
+	t.Cleanup(tlsSrv.Close)
+	tr, err := New(&transport.Config{Address: tlsSrv.URL, Timeout: 5 * time.Second},
+		WithHTTPClient(tlsSrv.Client()))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = tr.Close() })
+
+	err = requestShamirInit(tr)
+	var tlsErr *qrdbtransport.SOPINRequiresTLSError
+	if !errors.As(err, &tlsErr) {
+		t.Fatalf("redirect to http with a request PIN: err = %v, want *SOPINRequiresTLSError", err)
+	}
+	if n := plain.all.Load(); n != 0 {
+		t.Fatalf("plain server received %d requests, want 0", n)
+	}
+}
+
+// TestSOPINHop_RequestPINRedirectToForeignHostRefused: a request-supplied SO
+// PIN does not follow a redirect to a host other than the endpoint's.
+func TestSOPINHop_RequestPINRedirectToForeignHostRefused(t *testing.T) {
+	foreign := &pinCounter{}
+	foreignSrv := httptest.NewTLSServer(foreign)
+	t.Cleanup(foreignSrv.Close)
+
+	tlsSrv := httptest.NewTLSServer(redirectTool(mcpHandler(t), foreignSrv.URL))
+	t.Cleanup(tlsSrv.Close)
+	tr, err := New(&transport.Config{Address: tlsSrv.URL, Timeout: 5 * time.Second},
+		WithHTTPClient(tlsSrv.Client()))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = tr.Close() })
+
+	err = requestShamirInit(tr)
+	var hostErr *qrdbtransport.SOPINForeignHostError
+	if !errors.As(err, &hostErr) {
+		t.Fatalf("redirect to another host with a request PIN: err = %v, want *SOPINForeignHostError", err)
+	}
+	if n := foreign.all.Load(); n != 0 {
+		t.Fatalf("foreign server received %d requests, want 0", n)
+	}
+}
+
+// TestSOPINHop_RequestPINReachesHTTPSEndpoint: over https with no redirect, a
+// request-supplied SO PIN still reaches the server in the tool arguments.
+func TestSOPINHop_RequestPINReachesHTTPSEndpoint(t *testing.T) {
+	got := map[string]map[string]interface{}{}
+	reply := map[string]interface{}{"threshold": 2, "total_shares": 2, "total": 2, "share_count": 2}
+	srv, _ := newMultiToolServer(t, barrierPINToolNames, recordArgs(got, reply))
+	tlsSrv := httptest.NewTLSServer(mcpserver.NewStreamableHTTPServer(srv))
+	t.Cleanup(tlsSrv.Close)
+	tr, err := New(&transport.Config{Address: tlsSrv.URL, Timeout: 5 * time.Second},
+		WithHTTPClient(tlsSrv.Client()))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = tr.Close() })
+
+	if err := requestShamirInit(tr); err != nil {
+		t.Fatalf("BarrierInitializeShamir over https with a request PIN: %v", err)
+	}
+	assertStringArg(t, "qrdb_barrier_shamir_initialize", got["qrdb_barrier_shamir_initialize"], "so_pin", testSOPIN)
+}
+
 // New guards a supplied client on a copy and leaves the caller's client as
 // it was.
 func TestSOPINHop_SuppliedClientNotMutated(t *testing.T) {

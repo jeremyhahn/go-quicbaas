@@ -530,9 +530,41 @@ func (t *Transport) BarrierEnableEncryption(ctx context.Context, req *qrdbtransp
 // closed-transport precondition check inline. It returns the (already JSON-
 // parsed) tool result for the caller to round-trip into a typed response, or
 // the conventional SDK QBError on failure.
+//
+// A tool call whose arguments carry an so_pin is held to the SO PIN hop
+// guard whether the PIN came from qrdbtransport.WithSOPIN or from the
+// request's own SOPin field. A PIN bound in ctx is already guarded by the
+// client's round tripper. A PIN that came from the request is refused with
+// *qrdbtransport.SOPINRequiresTLSError before anything is sent when the
+// endpoint is not https, and otherwise is bound into the context of the tool
+// call alone, so that every hop of it, redirects included, must be https and
+// name the configured host. Initialization and authentication run on the
+// caller's ctx.
 func (t *Transport) callBarrier(ctx context.Context, name string, args map[string]interface{}) (interface{}, error) {
 	if t.closed.Load() {
 		return nil, errors.NewConnection("mcp."+name, "transport is closed")
+	}
+	callCtx := ctx
+	if pin, _ := args["so_pin"].(string); pin != "" {
+		bound, ok, err := qrdbtransport.SOPINFromContext(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			// The round tripper already guards a bound PIN, and
+			// ResolveSOPIN has already refused a conflicting one.
+			secure.Wipe(bound)
+		} else {
+			if !strings.HasPrefix(t.endpoint, "https://") {
+				return nil, &qrdbtransport.SOPINRequiresTLSError{Transport: "mcp"}
+			}
+			pctx, release, err := qrdbtransport.WithSOPIN(ctx, []byte(pin))
+			if err != nil {
+				return nil, err
+			}
+			defer release()
+			callCtx = pctx
+		}
 	}
 	if err := t.ensureInitialized(ctx); err != nil {
 		return nil, err
@@ -545,7 +577,7 @@ func (t *Transport) callBarrier(ctx context.Context, name string, args map[strin
 			return nil, err
 		}
 	}
-	return t.callTool(ctx, name, args)
+	return t.callTool(callCtx, name, args)
 }
 
 // officerRegisterWireResponse is an officer registration as the server
@@ -572,9 +604,13 @@ func decodeOfficerRegister(raw interface{}) (*qrdbtransport.OfficerRegisterRespo
 // remarshalBarrier copies the JSON shape from src (already-decoded interface{}
 // from callTool) into the typed pointer dst via a JSON round-trip. This keeps
 // the transport client free of bespoke per-field conversion logic.
+//
+// Every caller decodes a response it needs, so a tool result with no content
+// (a nil src) is a failed call, not a zero-valued success: go-qrdb's own
+// client fails the same way when it decodes an empty body.
 func remarshalBarrier(src interface{}, dst interface{}) error {
 	if src == nil {
-		return nil
+		return errors.NewInternal("mcp.remarshalBarrier", "tool returned no result content")
 	}
 	data, err := json.Marshal(src)
 	if err != nil {
