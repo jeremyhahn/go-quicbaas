@@ -250,10 +250,11 @@ func (p *Pool) removeConnection(target *pooledConn) {
 	}
 }
 
-// isHealthy checks if a connection is healthy.
+// isHealthy reports whether a connection is usable: Ready, Idle or Connecting,
+// since gRPC queues an RPC on a connecting connection until the attempt completes.
 func (p *Pool) isHealthy(pc *pooledConn) bool {
 	state := pc.conn.GetState()
-	return state == connectivity.Ready || state == connectivity.Idle
+	return state == connectivity.Ready || state == connectivity.Idle || state == connectivity.Connecting
 }
 
 // isExpired checks if a connection has exceeded max age.

@@ -15,6 +15,7 @@ package server
 
 import (
 	"context"
+	"crypto"
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
@@ -43,6 +44,8 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	qbshards "github.com/jeremyhahn/go-quicbaas/pkg/shards"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
+	dbxkms "github.com/jeremyhahn/go-quicbaas/pkg/xkms"
 )
 
 type iamComponents struct {
@@ -427,13 +430,18 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 	}
 
 	// Create the OIDC provider with an xkms/KMS/HSM-backed ES256 signing key.
-	// The key manager performs get-or-create against xkms (the key persists in
-	// the configured keystore across restarts), derives a stable kid from the
+	// The key manager performs get-or-create against the replicated,
+	// barrier-encrypted qrdb store (oidcSigningStoreType), so every node signs
+	// and verifies platform tokens with one key and one kid; it derives a stable kid from the
 	// key's public SPKI, and supports rotation with a JWKS overlap window.
 	// If xkms is unavailable or the key cannot be built we log a warning and
 	// leave the OIDC provider nil (graceful degradation) rather than panic.
 	var oidcProvider *iam.OIDCProvider
-	signingKeyManager, err := iam.NewSigningKeyManagerFromXKMS(iam.OIDCSigningKeyCN, "")
+	var signingKeyManager *iam.SigningKeyManager
+	storeType, err := s.oidcSigningStoreType()
+	if err == nil {
+		signingKeyManager, err = newOIDCSigningKeyManager(storeType)
+	}
 	if err != nil {
 		s.logger.WithError(err).Warn("Failed to initialize xkms-backed OIDC signing key, OIDC provider will be unavailable")
 	} else {
@@ -448,6 +456,12 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 			s.logger.WithError(tkErr).Warn("iam.oidc: per-tenant signing-key resolver unavailable; using global key only")
 		} else {
 			tenantManager.AddSettingsObserver(tenantSigningKeys)
+		}
+		if storeType == oidcSigningBackendName {
+			// The hosted xkms rotate route rotates the replicated OIDC
+			// signing keys through their managers, under the rotation lease.
+			dbxkms.RegisterRotationDelegate(oidcSigningBackendName,
+				oidcRotationDelegate(signingKeyManager, tenantSigningKeys))
 		}
 		oidcProvider, err = iam.NewOIDCProvider(
 			&iam.OIDCConfig{
@@ -1818,73 +1832,19 @@ func (s *Server) registerIAMService(grpcServer *ggrpc.Server) {
 		return
 	}
 
-	ctx := context.Background()
-
-	// Retrieve core IAM components
-	tenantMgr, err := getter.GetTenantManager(ctx)
-	if err != nil {
-		s.logger.WithError(err).Warn("Failed to get tenant manager, skipping IAM gRPC registration")
+	iamServer := s.buildIAMServer(getter)
+	if iamServer == nil {
 		return
 	}
-
-	identityStore, err := getter.GetIdentityStore(ctx)
-	if err != nil {
-		s.logger.WithError(err).Warn("Failed to get identity store, skipping IAM gRPC registration")
-		return
-	}
-
-	policyEngine, err := getter.GetPolicyEngine(ctx)
-	if err != nil {
-		s.logger.WithError(err).Warn("Failed to get policy engine, skipping IAM gRPC registration")
-		return
-	}
-
-	appManager, err := getter.GetAppManager(ctx)
-	if err != nil {
-		s.logger.WithError(err).Warn("Failed to get app manager, skipping IAM gRPC registration")
-		return
-	}
-
-	// Retrieve optional components
-	adminManager, _ := getter.GetAdminManager(ctx)
-	gdprManager, _ := getter.GetGDPRManager(ctx)
-
-	// Create IAM gRPC service adapter and register
-	iamAdapter := grpcapi.NewIAMServiceAdapter(tenantMgr, identityStore, policyEngine, appManager, adminManager, gdprManager)
-	// WebAuthn credential administration over gRPC (and the Unix socket that
-	// delegates to it). The service is built from the components already
-	// resolved here so gRPC runs the SAME user-id-to-email translation REST,
-	// the embedded transport and MCP do; a nil WebAuthn manager makes the
-	// verbs report unavailable rather than misresolve.
-	webauthnMgr, _ := getter.GetWebAuthnManager(ctx)
-	iamAdapter.SetWebAuthnCredentials(
-		service.NewWebAuthnCredentialServiceFor(identityStore, webauthnMgr))
-	// Control-plane tenant provisioning: the same provisioner the service
-	// layer hands REST, MCP and the embedded transport.
-	if pg, ok := getter.(tenantProvisionerGetter); ok {
-		provisioner, err := pg.GetTenantProvisioner(ctx)
-		if err != nil {
-			s.logger.WithError(err).Warn("Tenant provisioner unavailable; gRPC ProvisionTenant will report it unconfigured")
-		}
-		iamAdapter.SetTenantProvisioner(provisioner)
-	}
-	// CreateUser issues activation invites from the same store REST and the
-	// activation endpoints use. Without one, a pending create is refused as
-	// unavailable rather than leaving an account nothing can activate.
-	inviteStore, err := getter.GetInviteStore(ctx)
-	if err != nil {
-		s.logger.WithError(err).Warn("Invite store unavailable; gRPC CreateUser refuses pending users")
-	}
-	iamAdapter.SetInviteStore(inviteStore)
-	// The public invite activation verbs redeem through the same service
-	// REST and the embedded transport use.
-	if ag, ok := s.quicBaaSService.(inviteActivationGetter); ok {
-		iamAdapter.SetInviteActivation(ag.InviteActivation())
-	}
-	iamServer := grpcapi.NewIAMServer(iamAdapter, s.logger)
-	iamServer.SetInviteOrigin(s.inviteOrigin())
 	iampb.RegisterIAMServiceServer(grpcServer, iamServer)
 	s.logger.Info("Registered IAM gRPC service")
+
+	ctx := context.Background()
+	policyEngine, err := getter.GetPolicyEngine(ctx)
+	if err != nil {
+		s.logger.WithError(err).Warn("Failed to get policy engine, skipping the remaining IAM gRPC registrations")
+		return
+	}
 
 	// Register Federation service if available. The Unix listener starts
 	// after startService has attached IAM, so the shared servers are built
@@ -1939,6 +1899,80 @@ func (s *Server) registerIAMService(grpcServer *ggrpc.Server) {
 	auditServer := grpcapi.NewAuditServer(auditAdapter, s.logger)
 	iampb.RegisterAuditServiceServer(grpcServer, auditServer)
 	s.logger.Info("Registered Audit gRPC service")
+}
+
+// buildIAMServer builds the IAMService server over the IAM components the
+// getter resolves. registerIAMService registers it on the legacy Unix
+// listener, and buildHostGRPCServers hands it to the API module, so the
+// node's Unix and TCP servers serve IAMService under network serving too.
+// It returns nil when a core component is unavailable.
+func (s *Server) buildIAMServer(getter iamComponentsGetter) iampb.IAMServiceServer {
+	ctx := context.Background()
+
+	// Retrieve core IAM components
+	tenantMgr, err := getter.GetTenantManager(ctx)
+	if err != nil {
+		s.logger.WithError(err).Warn("Failed to get tenant manager, skipping IAM gRPC registration")
+		return nil
+	}
+
+	identityStore, err := getter.GetIdentityStore(ctx)
+	if err != nil {
+		s.logger.WithError(err).Warn("Failed to get identity store, skipping IAM gRPC registration")
+		return nil
+	}
+
+	policyEngine, err := getter.GetPolicyEngine(ctx)
+	if err != nil {
+		s.logger.WithError(err).Warn("Failed to get policy engine, skipping IAM gRPC registration")
+		return nil
+	}
+
+	appManager, err := getter.GetAppManager(ctx)
+	if err != nil {
+		s.logger.WithError(err).Warn("Failed to get app manager, skipping IAM gRPC registration")
+		return nil
+	}
+
+	// Retrieve optional components
+	adminManager, _ := getter.GetAdminManager(ctx)
+	gdprManager, _ := getter.GetGDPRManager(ctx)
+
+	// Create the IAM gRPC service adapter
+	iamAdapter := grpcapi.NewIAMServiceAdapter(tenantMgr, identityStore, policyEngine, appManager, adminManager, gdprManager)
+	// WebAuthn credential administration over gRPC (and the Unix socket that
+	// delegates to it). The service is built from the components already
+	// resolved here so gRPC runs the SAME user-id-to-email translation REST,
+	// the embedded transport and MCP do; a nil WebAuthn manager makes the
+	// verbs report unavailable rather than misresolve.
+	webauthnMgr, _ := getter.GetWebAuthnManager(ctx)
+	iamAdapter.SetWebAuthnCredentials(
+		service.NewWebAuthnCredentialServiceFor(identityStore, webauthnMgr))
+	// Control-plane tenant provisioning: the same provisioner the service
+	// layer hands REST, MCP and the embedded transport.
+	if pg, ok := getter.(tenantProvisionerGetter); ok {
+		provisioner, err := pg.GetTenantProvisioner(ctx)
+		if err != nil {
+			s.logger.WithError(err).Warn("Tenant provisioner unavailable; gRPC ProvisionTenant will report it unconfigured")
+		}
+		iamAdapter.SetTenantProvisioner(provisioner)
+	}
+	// CreateUser issues activation invites from the same store REST and the
+	// activation endpoints use. Without one, a pending create is refused as
+	// unavailable rather than leaving an account nothing can activate.
+	inviteStore, err := getter.GetInviteStore(ctx)
+	if err != nil {
+		s.logger.WithError(err).Warn("Invite store unavailable; gRPC CreateUser refuses pending users")
+	}
+	iamAdapter.SetInviteStore(inviteStore)
+	// The public invite activation verbs redeem through the same service
+	// REST and the embedded transport use.
+	if ag, ok := s.quicBaaSService.(inviteActivationGetter); ok {
+		iamAdapter.SetInviteActivation(ag.InviteActivation())
+	}
+	iamServer := grpcapi.NewIAMServer(iamAdapter, s.logger)
+	iamServer.SetInviteOrigin(s.inviteOrigin())
+	return iamServer
 }
 
 // OrchestratorDaemonClientAppName is the fixed OAuth2 application name the
@@ -2148,4 +2182,81 @@ func loadPIVActivationRoots(path string) (*x509.CertPool, error) {
 		return nil, &PIVActivationRootsError{Path: path, Reason: "no certificates parsed"}
 	}
 	return pool, nil
+}
+
+// oidcRotationOp names the hosted OIDC signing key rotation in tenant-binding
+// errors.
+const oidcRotationOp = "xkms.rotateKey"
+
+// OIDCSigningKeyNotDedicatedError reports a hosted rotation of the OIDC
+// signing key by a caller acting for a tenant with no dedicated signing key:
+// that tenant's tokens are signed with the platform key, which only the
+// system tenant rotates.
+type OIDCSigningKeyNotDedicatedError struct {
+	TenantID string
+}
+
+// Error implements error.
+func (e *OIDCSigningKeyNotDedicatedError) Error() string {
+	return "server: tenant " + e.TenantID + " has no dedicated oidc signing key to rotate; the platform key rotates only for the system tenant"
+}
+
+// ErrorCode classifies the refusal as forbidden.
+func (e *OIDCSigningKeyNotDedicatedError) ErrorCode() dberrors.ErrorCode {
+	return dberrors.ErrForbidden
+}
+
+// OIDCSigningKeyNameError reports a hosted rotation of a key in the OIDC
+// signing backend that is not the OIDC signing key.
+type OIDCSigningKeyNameError struct {
+	KID string
+}
+
+// Error implements error.
+func (e *OIDCSigningKeyNameError) Error() string {
+	return "server: " + e.KID + " names no oidc signing key; the keys in backend " +
+		oidcSigningBackendName + " are named " + iam.OIDCSigningKeyCN
+}
+
+// ErrorCode classifies the error as invalid input.
+func (e *OIDCSigningKeyNameError) ErrorCode() dberrors.ErrorCode {
+	return dberrors.ErrInvalidInput
+}
+
+// oidcRotationDelegate is the hosted rotation of the replicated OIDC signing
+// keys (ruling 725 (b)): it rotates through the signing key manager, which
+// takes the cluster rotation lease, the key of the tenant the caller acts
+// for: the platform key for the system tenant, a dedicated tenant's own key
+// for that tenant. tenants may be nil, when only the platform key exists.
+func oidcRotationDelegate(global *iam.SigningKeyManager, tenants *iam.TenantSigningKeyResolver) dbxkms.RotationDelegate {
+	return func(ctx context.Context, kid string) (crypto.PrivateKey, error) {
+		parts := strings.Split(kid, ":")
+		if !strings.EqualFold(strings.TrimSpace(parts[len(parts)-1]), iam.OIDCSigningKeyCN) {
+			return nil, &OIDCSigningKeyNameError{KID: kid}
+		}
+		tenantID, err := tenantctx.FromContext(ctx, oidcRotationOp)
+		if err != nil {
+			return nil, err
+		}
+		mgr := global
+		if !tenantctx.IsSystem(tenantID) {
+			if tenants == nil {
+				return nil, &OIDCSigningKeyNotDedicatedError{TenantID: tenantID}
+			}
+			if mgr, err = tenants.ManagerFor(ctx, tenantID); err != nil {
+				return nil, err
+			}
+			if mgr == tenants.Global() {
+				return nil, &OIDCSigningKeyNotDedicatedError{TenantID: tenantID}
+			}
+		}
+		if err := mgr.Rotate(); err != nil {
+			return nil, err
+		}
+		_, signer, _ := mgr.Current()
+		if signer == nil {
+			return nil, &iam.SigningKeyUnavailableError{}
+		}
+		return signer, nil
+	}
 }
