@@ -270,6 +270,7 @@ GET /api/v1/vector/namespaces/{namespace}/stats
 GET /api/v1/vector/namespaces/{namespace}/vectors/
 GET /api/v1/vector/namespaces/{namespace}/vectors/{id}
 GET /api/v1/version
+GET /api/v1/ws
 GET /api/v1/xkms/backends
 GET /api/v1/xkms/backends/{id}
 GET /api/v1/xkms/ca/bundle

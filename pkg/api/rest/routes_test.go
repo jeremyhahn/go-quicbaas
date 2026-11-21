@@ -154,7 +154,8 @@ import (
 // PLUS 8 for the prompt store's verbs (/api/v1/prompts/{set}[/{name}...],
 // handlers_prompt.go, go-quicbaas#805) under prompts:read, prompts:history
 // and prompts:write.
-const baseRouteTableSize = 672
+// PLUS 1 for the WebSocket upgrade (GET /api/v1/ws, issue #1691) under messaging:subscribe.
+const baseRouteTableSize = 673
 
 // TestRoutes_SurfaceGuard asserts the table's structural invariants: exact
 // size, absolute patterns, no duplicate method+pattern, and a handler binder

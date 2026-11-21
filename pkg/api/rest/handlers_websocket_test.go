@@ -1,0 +1,87 @@
+//go:build rest
+
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
+//
+// This file is part of go-quicbaas.
+//
+// go-quicbaas is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+package rest
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
+	"testing"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
+	"github.com/jeremyhahn/go-quicbaas/pkg/testutil"
+)
+
+func newWebSocketTestServer(t *testing.T) *Server {
+	t.Helper()
+	log, err := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := NewServer(testutil.NewMockQuicBaaS(), DefaultConfig(), log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return srv
+}
+
+// TestHandleWebSocket_NotRunning: with no WebSocket handler set, the upgrade
+// route answers 503.
+func TestHandleWebSocket_NotRunning(t *testing.T) {
+	srv := newWebSocketTestServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/ws", nil)
+	rec := httptest.NewRecorder()
+	srv.HandleWebSocket(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusServiceUnavailable)
+	}
+}
+
+// closeRecordingHandler is an http.Handler and io.Closer that records Close.
+type closeRecordingHandler struct {
+	closed atomic.Int32
+}
+
+func (h *closeRecordingHandler) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *closeRecordingHandler) Close() error {
+	h.closed.Add(1)
+	return nil
+}
+
+// TestHandleWebSocket_ClosedOnShutdown: Shutdown closes the WebSocket handler,
+// and a set handler serves the route.
+func TestHandleWebSocket_ClosedOnShutdown(t *testing.T) {
+	srv := newWebSocketTestServer(t)
+	h := &closeRecordingHandler{}
+	srv.SetWebSocketHandler(h)
+
+	rec := httptest.NewRecorder()
+	srv.HandleWebSocket(rec, httptest.NewRequest(http.MethodGet, "/api/v1/ws", nil))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNoContent)
+	}
+
+	_ = srv.Shutdown(context.Background())
+	if got := h.closed.Load(); got != 1 {
+		t.Fatalf("Close called %d times, want 1", got)
+	}
+}
