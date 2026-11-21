@@ -42,7 +42,7 @@ import (
 // concludeAttempt (the loop and the reaper) and the block/readmit verbs.
 //
 // THE VOCABULARY IS CLOSED AND EXHAUSTIVE. Every reason a task stops is named
-// here, and a module that surfaces conclusions maps the whole set: pkg/sdlc's
+// here, and a module that surfaces conclusions maps the whole set: pkg/orchestration/sdlc's
 // table is asserted against TaskConclusionReasons(), so a reason added here
 // without a rendering fails that test rather than going silently unposted —
 // which is the failure this file exists to remove.
@@ -173,7 +173,7 @@ func (r TaskConclusionReason) String() string { return string(r) }
 // stable.
 //
 // EXPORTED SO A SURFACING MODULE COVERS THE SET RATHER THAN A COPY OF IT.
-// pkg/sdlc renders one comment per reason and asserts its table against this
+// pkg/orchestration/sdlc renders one comment per reason and asserts its table against this
 // list; a reason added here and nowhere else fails that test.
 func TaskConclusionReasons() []TaskConclusionReason {
 	out := make([]TaskConclusionReason, 0, len(taskConclusionReasons))

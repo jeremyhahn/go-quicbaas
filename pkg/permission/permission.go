@@ -170,7 +170,7 @@ const (
 	// (TestAll_DoesNotShadowAQRDBPermission).
 	CostSettingsWrite qrdbsdk.Permission = "cost_settings:write"
 
-	// The Software Factory worker image refresh (pkg/sdlc/workerimage). It
+	// The Software Factory worker image refresh (pkg/orchestration/sdlc/workerimage). It
 	// is a HOST operation, not a tenant one: a pass builds on the node's own
 	// container engine and rebinds the managed image in EVERY tenant's
 	// bindings, so both verbs are cross-tenant — held only by the system

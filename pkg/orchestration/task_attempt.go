@@ -388,7 +388,7 @@ func KnownFaultClass(class string) bool {
 // classes means to somebody who was not watching.
 //
 // THEY LIVE BESIDE THE CLASSES THEY EXPLAIN. The forge comment (see
-// pkg/sdlc/blocked.go) is where they are read, but a copy of this table over
+// pkg/orchestration/sdlc/blocked.go) is where they are read, but a copy of this table over
 // there would be the copy that goes stale the next time a class is added —
 // and a class with no meaning renders as a bare identifier on an issue a
 // person is waiting on.
@@ -798,7 +798,7 @@ func capacityReason(err error) string {
 //
 // WRITTEN FOR THE PERSON WATCHING THE ISSUE, not for the operator reading a
 // log. Both of these end up quoted verbatim in a forge comment (see
-// pkg/sdlc/blocked.go), so each one says three things in order: what stopped,
+// pkg/orchestration/sdlc/blocked.go), so each one says three things in order: what stopped,
 // what it means, and what happens next without anyone doing anything. A
 // refusal that reads like a fault sends somebody to investigate a cap that is
 // working exactly as configured.

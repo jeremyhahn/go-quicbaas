@@ -19,7 +19,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc/workerimage"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/sdlc/workerimage"
 )
 
 // =============================================================================

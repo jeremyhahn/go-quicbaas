@@ -528,7 +528,7 @@ operator CLI
       → agentServiceImpl.Infer (pkg/orchestration)
           → RemoteBackendResolver → RemoteACPBackend.Infer
               → proto.FleetRuntime/Infer (gRPC server-streaming, :9091 mTLS)
-                  → Runtime.Infer (pkg/fleet)
+                  → Runtime.Infer (pkg/orchestration/fleet)
                       → OllamaBackend.Prompt → local ollama 127.0.0.1:11434
 ```
 
@@ -667,8 +667,8 @@ for chunk := range chunks {
 | `pkg/orchestration`                    | `InferBackendError`    | Wraps a backend Prompt failure                |
 | `pkg/orchestration`                    | `AccumulateChunks`     | Drains `<-chan *InferChunk` to `*InferResponse`|
 | `pkg/orchestration`                    | `AgentService.Infer`   | Service interface method                      |
-| `pkg/fleet`                            | `Runtime.Infer`        | Agent-side: delegates to OllamaBackend.Prompt |
-| `pkg/fleet`                            | `GRPCSpawnServer.Infer`| gRPC streaming handler on the daemon          |
+| `pkg/orchestration/fleet`                            | `Runtime.Infer`        | Agent-side: delegates to OllamaBackend.Prompt |
+| `pkg/orchestration/fleet`                            | `GRPCSpawnServer.Infer`| gRPC streaming handler on the daemon          |
 | `sdk/go/client/orchestrator`           | `InferenceRequest`     | SDK wire type                                 |
 | `sdk/go/client/orchestrator`           | `InferenceChunk`       | SDK streaming chunk                           |
 

@@ -337,7 +337,7 @@ type Task struct {
 	// differ only in what produced them. go-quicbaas#796.
 	ConclusionReason TaskConclusionReason `json:"conclusion_reason"`
 
-	// ReviewRoundBonus extends the review-round budget pkg/sdlc's runner
+	// ReviewRoundBonus extends the review-round budget pkg/orchestration/sdlc's runner
 	// checks (binding.MaxReviewRounds) by this many rounds for THIS task
 	// only. It is how a person's "allow another round" — granted from the
 	// attention inbox after a review that did not converge — reaches the

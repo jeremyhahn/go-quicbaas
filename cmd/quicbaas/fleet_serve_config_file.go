@@ -20,7 +20,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/fleet"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/fleet"
 )
 
 // serveRequiredFlags are the `fleet serve` flags a flag-only invocation must

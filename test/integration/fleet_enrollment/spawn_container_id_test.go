@@ -32,10 +32,10 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/fleet"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/fleet"
 )
 
 // =============================================================================
@@ -320,7 +320,7 @@ func TestE2E_RemoteSpawn_ReturnsTheContainerTheDaemonCreated(t *testing.T) {
 
 	require.NotEmpty(t, session.ContainerID,
 		"the spawn came back with no container id: the control plane cannot tell this worker "+
-			"from a host process, and pkg/sdlc refuses it as 'runs no container' (go-quicbaas#740)")
+			"from a host process, and pkg/orchestration/sdlc refuses it as 'runs no container' (go-quicbaas#740)")
 	require.Equal(t, created[0], session.ContainerID,
 		"the id that came home is not the container the daemon's runtime created")
 

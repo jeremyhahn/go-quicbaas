@@ -14,7 +14,7 @@
 /**
  * Filing an issue on a bound project's repository, as the SDLC panel's
  * "File issue" action does it. The issue is written through the binding's own
- * forge token and audited; see pkg/sdlc/issue_filing.go.
+ * forge token and audited; see pkg/orchestration/sdlc/issue_filing.go.
  */
 
 import type { FileIssueRequest } from '@quicbaas/sdk';

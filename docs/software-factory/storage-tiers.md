@@ -12,7 +12,7 @@ into a sized tmpfs inside the container instead, so those writes never reach a
 disk.
 
 Implementation: `pkg/orchestration/workspace_storage.go`,
-`pkg/orchestration/job_turn_push.go`, `pkg/sdlc/publish.go`.
+`pkg/orchestration/job_turn_push.go`, `pkg/orchestration/sdlc/publish.go`.
 
 ## The three tiers
 
@@ -118,7 +118,7 @@ SpawnSessionRequest.storage          api/proto/orchestrator.proto (field 27)
 ContainerMount.tmpfs_size_bytes      api/proto/orchestrator.proto (field 5)
 ```
 
-`pkg/fleet/spawn_wire_contract_test.go` walks `SpawnRequest` by reflection and
+`pkg/orchestration/fleet/spawn_wire_contract_test.go` walks `SpawnRequest` by reflection and
 fails on any field its sentinel leaves at zero, so a storage term that stopped
 travelling is a test failure rather than a remote worker quietly writing to that
 host's disk.
@@ -168,9 +168,9 @@ attempt resumes from a head missing work a person can see was done.
 So the engine publishes after every turn that touched the tree:
 
 ```
-pkg/sdlc/runner.go   runTurn → workerTouchedTree → job.PushTurn
+pkg/orchestration/sdlc/runner.go   runTurn → workerTouchedTree → job.PushTurn
 pkg/orchestration    JobRun.PushTurn → TurnPusher (installed by the runner)
-pkg/sdlc/publish.go  publisher.Publish, plan.Force → git push --force-with-lease
+pkg/orchestration/sdlc/publish.go  publisher.Publish, plan.Force → git push --force-with-lease
 ```
 
 - **The engine owns the *when*, the runner owns the *how*.** `runTurn` is

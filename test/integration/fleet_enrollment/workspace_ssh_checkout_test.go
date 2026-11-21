@@ -47,7 +47,7 @@ import (
 // So this scenario runs a real sshd, a real git and a real ssh, and drives
 // them with the production `orchestration.NewWorkspaceSpecFiles`,
 // `WorkspaceManager.ProvisionSession` and `orchestration.ApplyWorkspaceSpec` —
-// the calls pkg/sdlc's runner and the executing host make per attempt. NOTHING about the forge is written down here: the sshd
+// the calls pkg/orchestration/sdlc's runner and the executing host make per attempt. NOTHING about the forge is written down here: the sshd
 // generates its host key at container start and the test reads it back, which
 // is exactly what an operator does with `ssh-keyscan` before binding.
 //

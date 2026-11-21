@@ -59,7 +59,7 @@ Once these tests pass, two pieces are removed:
 - `ExecContainerRuntime`: `pkg/orchestration/container_runtime*.go`,
   `container_exec.go`, `container_sweep.go`, `container_reaper.go`, and the
   shell-outs in `container_image.go`;
-- the docker/podman selector in `pkg/fleet/container_runtime.go`.
+- the docker/podman selector in `pkg/orchestration/fleet/container_runtime.go`.
 
 **Where it runs.** The runtime lives in the fleet node agent. The agent is
 built with cgo for libcontainer's `nsenter` init step. quicbaasd stays
@@ -175,7 +175,7 @@ The broker class grants:
 The boot node also gets what every service gets: the lifecycle verbs, A/B
 slots, measurement and transparency-log records.
 
-go-trusted-platform's `pkg/bootstrap/deployer` moves to `pkg/fleet/deploy`,
+go-trusted-platform's `pkg/bootstrap/deployer` moves to `pkg/orchestration/fleet/deploy`,
 beside `FleetDeployService`. It keeps:
 
 - the `Deployer` interface;
@@ -252,7 +252,7 @@ agent at startup.
 **Cluster manifest.** A signed list of every service release in the cluster,
 held in go-qrdb.
 
-**Provenance.** The software factory (`pkg/sdlc`) emits SLSA provenance. It is
+**Provenance.** The software factory (`pkg/orchestration/sdlc`) emits SLSA provenance. It is
 signed through go-xkms image signing and stored as a DSSE referrer.
 
 **Default deny.** A digest runs only if it is signed, carries provenance and is
@@ -263,7 +263,7 @@ it appears in the node's evidence.
 ## Service policy
 
 The row `service-policy` moves the Go-coded policies into one engine. The
-policies come from `pkg/orchestration` and `pkg/fleet/sandbox_policy.go`:
+policies come from `pkg/orchestration` and `pkg/orchestration/fleet/sandbox_policy.go`:
 admission, sandbox, sandbox-network, mount, trust tiers, communication, role,
 lifecycle and spend.
 

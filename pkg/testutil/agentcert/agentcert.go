@@ -23,7 +23,7 @@
 // signature from the CA's SignCSR and the key encoding from go-xkms
 // EncodePrivateKeyPEM -- the steps the production XKMSFleetNodeCertIssuer
 // (pkg/service) takes. That issuer cannot be called from here: pkg/service
-// imports pkg/fleet, whose own tests use this package.
+// imports pkg/orchestration/fleet, whose own tests use this package.
 package agentcert
 
 import (

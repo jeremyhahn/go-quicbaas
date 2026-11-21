@@ -647,7 +647,7 @@ func (r *fleetRegistry) Heartbeat(ctx context.Context, tenantID, nodeID string, 
 // served list a daemon heartbeats is Runtime.Backends() and carries backends
 // only; taking it wholesale would un-advertise a GPU on the first heartbeat.
 //
-// The primary is the first served name. pkg/fleet sorts the served set, so the
+// The primary is the first served name. pkg/orchestration/fleet sorts the served set, so the
 // primary a record settles on is stable across restarts rather than a function
 // of map iteration order.
 func reconcileFleetNodeBackends(agent *FleetNode, observed *FleetNodeObservation) bool {
