@@ -20,10 +20,13 @@
 # digest push-worker-image prints is the job's output, the `WORKER-IMAGE-DIGEST`
 # log line and the `worker-image-digest` artifact, each with the locked
 # versions and the CLIs' npm integrity sums. post-digest then posts that digest
-# to the run summary and as its own output. This workflow does not move
-# `current`. Once the digest is known, an anonymous lookup of it must be
-# refused, or the job fails: the package stays private. The nightly schedule is
-# an owner exception to the no-`schedule:` workflow rule.
+# to the run summary and as its own output. The package is public, like the
+# repository: no step asserts that it is private, and once the digest is
+# known the job checks that ghcr.io resolves it. move-current then points
+# `current` at that digest, on a scheduled run only and only when
+# build-publish and post-digest both succeeded: `current` moves after a green
+# nightly and never on a dispatch. The nightly schedule is an owner exception
+# to the no-`schedule:` workflow rule.
 name: worker-image
 
 on:
@@ -205,59 +208,6 @@ jobs:
           bash deployments/agents/software-factory-worker/check-secret-findings.sh "$work/secrets.json" "$work/layers"
           echo "scanned ${i} layer tarballs of ${IMAGE}:${TAG} for secrets"
 
-      - name: The package is not public before the push
-        id: private-before
-        if: ${{ steps.existing.outputs.exists != 'true' }}
-        env:
-          REPO: ${{ steps.resolve.outputs.repo }}
-        run: |
-          set -euo pipefail
-          if ! [[ "$REPO" =~ ^ghcr\.io/[a-z0-9._/-]+$ ]]; then
-            echo "::error::REPO is not a ghcr.io repository: ${REPO}"
-            exit 1
-          fi
-          path="${REPO#ghcr.io/}"
-          work="$(mktemp -d)"
-          trap 'rm -rf "$work"' EXIT
-          if ! code="$(curl -sS -o "$work/token.json" -w '%{http_code}' "https://ghcr.io/token?service=ghcr.io&scope=repository:${path}:pull")"; then
-            echo "::error::could not ask ghcr.io for an anonymous pull token for ${REPO}; pushing nothing"
-            exit 1
-          fi
-          case "$code" in
-            401|403)
-              echo "${REPO} is not public: ghcr.io refused an anonymous pull token (HTTP ${code})"
-              exit 0
-              ;;
-            200) ;;
-            *)
-              echo "::error::could not tell whether ${REPO} is public (token HTTP ${code}); pushing nothing"
-              exit 1
-              ;;
-          esac
-          anon="$(jq -r '.token // empty' "$work/token.json")"
-          if [ -z "$anon" ]; then
-            echo "::error::ghcr.io answered HTTP 200 without an anonymous pull token for ${REPO}; pushing nothing"
-            exit 1
-          fi
-          ( umask 077; printf 'Authorization: Bearer %s\n' "$anon" > "$work/hdr" )
-          if ! code="$(curl -sS -o /dev/null -w '%{http_code}' -H @"$work/hdr" "https://ghcr.io/v2/${path}/tags/list")"; then
-            echo "::error::could not list the tags of ${REPO} anonymously; pushing nothing"
-            exit 1
-          fi
-          case "$code" in
-            200)
-              echo "::error::${REPO} can be read without credentials; the package must be private, and nothing is pushed"
-              exit 1
-              ;;
-            401|403|404)
-              echo "${REPO} is not public: an anonymous tag listing got HTTP ${code}"
-              ;;
-            *)
-              echo "::error::could not tell whether ${REPO} is public (tags HTTP ${code}); pushing nothing"
-              exit 1
-              ;;
-          esac
-
       - name: Scan, then push
         id: push
         if: ${{ steps.existing.outputs.exists != 'true' }}
@@ -316,27 +266,17 @@ jobs:
           printf '%s\n%s\n' "$line" "$versions" > "$RUNNER_TEMP/worker-image-digest.txt"
           { echo "ref=$ref"; echo "digest=$digest"; echo "published=$published"; } >> "$GITHUB_OUTPUT"
 
-      - name: The package stays private
-        id: private
+      - name: The digest resolves on ghcr.io
+        id: resolves
         if: ${{ steps.record.outcome == 'success' }}
         env:
           REPO: ${{ steps.resolve.outputs.repo }}
           DIGEST: ${{ steps.record.outputs.digest }}
         run: |
           set -euo pipefail
-          anon="$(mktemp -d)"; err="$(mktemp)"
-          trap 'rm -rf "$anon" "$err"' EXIT
-          if DOCKER_CONFIG="$anon" docker buildx imagetools inspect "${REPO}@${DIGEST}" >/dev/null 2>"$err"; then
-            echo "::error::${REPO}@${DIGEST} can be pulled without credentials; the package must be private"
-            exit 1
-          elif grep -qiE '\b(denied|unauthorized|forbidden|401|403)\b|not found|name unknown|manifest unknown' "$err"; then
-            cat "$err" >&2
-            echo "${REPO} is private: an anonymous lookup of ${DIGEST} was refused"
-          else
-            cat "$err" >&2
-            echo "::error::could not tell whether ${REPO} is private"
-            exit 1
-          fi
+          got="$(docker buildx imagetools inspect "${REPO}@${DIGEST}" --format '{{json .Manifest}}' | jq -r .digest)"
+          [ "$got" = "$DIGEST" ] || { echo "::error::ghcr.io resolves ${REPO}@${DIGEST} to '${got}'"; exit 1; }
+          echo "${REPO}@${DIGEST} resolves on ghcr.io"
 
       - name: Upload the digest
         if: ${{ always() && steps.record.outcome == 'success' }}
@@ -390,3 +330,41 @@ jobs:
             printf '```\n%s\ndigest=%s\nclaude-code=%s codex=%s go=%s gh=%s\n```\n' "$line" "$DIGEST" "$CC" "$CX" "$GO" "$GH"
           } >> "$GITHUB_STEP_SUMMARY"
           { echo "ref=$REF"; echo "digest=$DIGEST"; } >> "$GITHUB_OUTPUT"
+
+  # The third job moves `current` to the digest this run published, on a
+  # scheduled run only and only after build-publish and post-digest succeeded,
+  # so `current` names the newest green nightly. A dispatch never moves it. The
+  # move is a registry-side retag of the same manifest: no build, no new bytes.
+  move-current:
+    name: Move current to the green nightly
+    needs: [build-publish, post-digest]
+    if: ${{ github.event_name == 'schedule' && needs.build-publish.result == 'success' && needs.post-digest.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    concurrency: { group: worker-image-move-current, cancel-in-progress: false }
+    steps:
+      - name: Point current at the nightly digest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF: ${{ needs.build-publish.outputs.ref }}
+          DIGEST: ${{ needs.build-publish.outputs.digest }}
+        run: |
+          set -euo pipefail
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::build-publish output no sha256 digest (got '${DIGEST}')"; exit 1; }
+          repo="${REF%%:*}"
+          [[ "$repo" =~ ^ghcr\.io/[a-z0-9._/-]+$ ]] || { echo "::error::not a ghcr.io repository: '${repo}'"; exit 1; }
+          export DOCKER_CONFIG="$RUNNER_TEMP/docker-config"
+          ( umask 077; mkdir -p "$DOCKER_CONFIG" )
+          trap 'docker logout ghcr.io >/dev/null 2>&1 || true; rm -rf "$DOCKER_CONFIG"' EXIT
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          before="$(docker buildx imagetools inspect "${repo}:current" --format '{{json .Manifest}}' 2>/dev/null | jq -r '.digest // empty' || true)"
+          docker buildx imagetools create --tag "${repo}:current" "${repo}@${DIGEST}"
+          after="$(docker buildx imagetools inspect "${repo}:current" --format '{{json .Manifest}}' | jq -r .digest)"
+          [ "$after" = "$DIGEST" ] || { echo "::error::${repo}:current names '${after}', not ${DIGEST}"; exit 1; }
+          line="WORKER-IMAGE-CURRENT ${repo}:current ${before:-none} -> ${DIGEST}"
+          echo "$line"
+          # shellcheck disable=SC2016 # the backticks are a literal Markdown code fence, not a command substitution
+          printf '### current\n\n```\n%s\n```\n' "$line" >> "$GITHUB_STEP_SUMMARY"
