@@ -17,6 +17,7 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -278,14 +279,13 @@ func (r *ToolRegistry) registerTools() {
 
 	r.registerXKMSTools()
 	// KV Operations
-	r.addTool(ToolDefinition{
-		Name:        "qrdb_put",
+	r.addKVEntityTool("put", ToolDefinition{
 		Description: "Store a key-value pair in QuicBaaS with optional consistency guarantees",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"entityType": map[string]interface{}{"type": "string", "description": "Entity type"},
-				"id":         map[string]interface{}{"type": "integer", "description": "Entity ID"},
+				"id":         map[string]interface{}{"type": []string{"integer", "string"}, "description": "Entity ID; a decimal string carries an ID above 2^53 exactly"},
 				"data":       map[string]interface{}{"type": "string", "description": "Base64-encoded (standard) data; the value alias is decoded the same way"},
 				"shardID":    map[string]interface{}{"type": "integer", "description": "Target shard ID"},
 			},
@@ -293,36 +293,34 @@ func (r *ToolRegistry) registerTools() {
 		},
 	})
 
-	r.addTool(ToolDefinition{
-		Name:        "qrdb_get",
+	r.addKVEntityTool("get", ToolDefinition{
 		Description: "Retrieve a value by key from QuicBaaS",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"entityType": map[string]interface{}{"type": "string", "description": "Entity type"},
-				"id":         map[string]interface{}{"type": "integer", "description": "Entity ID"},
+				"id":         map[string]interface{}{"type": []string{"integer", "string"}, "description": "Entity ID; a decimal string carries an ID above 2^53 exactly"},
 				"shardID":    map[string]interface{}{"type": "integer", "description": "Target shard ID"},
+				"timeout_ms": map[string]interface{}{"type": "integer", "minimum": 0, "description": "Read timeout in milliseconds (0 = the service default)"},
 			},
 			"required": []string{"entityType", "id"},
 		},
 	})
 
-	r.addTool(ToolDefinition{
-		Name:        "qrdb_delete",
+	r.addKVEntityTool("delete", ToolDefinition{
 		Description: "Delete a key-value pair from QuicBaaS",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"entityType": map[string]interface{}{"type": "string", "description": "Entity type"},
-				"id":         map[string]interface{}{"type": "integer", "description": "Entity ID"},
+				"id":         map[string]interface{}{"type": []string{"integer", "string"}, "description": "Entity ID; a decimal string carries an ID above 2^53 exactly"},
 				"shardID":    map[string]interface{}{"type": "integer", "description": "Target shard ID"},
 			},
 			"required": []string{"entityType", "id"},
 		},
 	})
 
-	r.addTool(ToolDefinition{
-		Name:        "qrdb_list",
+	r.addKVEntityTool("list", ToolDefinition{
 		Description: "List all entities of a specific type with pagination",
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -894,6 +892,22 @@ func (r *ToolRegistry) addTool(tool ToolDefinition) {
 	r.tools = append(r.tools, tool)
 }
 
+// kvEntityToolPrefix names quicbaas's entity KV tools (entityType/id/data)
+// on every surface. The qrdb_<verb> twins carry the same schema and handler
+// but are served only by the standalone server: on a full node go-qrdb owns
+// qrdb_<verb> as its own key/value tools (qrdbNativeDuplicateTools), so the
+// SDK's MCP transport sends quicbaas.KV to quicbaas_kv_<verb> (CA ruling 574).
+const kvEntityToolPrefix = "quicbaas_kv_"
+
+// addKVEntityTool registers one entity KV tool definition under both its
+// qrdb_<verb> and its quicbaas_kv_<verb> name.
+func (r *ToolRegistry) addKVEntityTool(verb string, tool ToolDefinition) {
+	tool.Name = "qrdb_" + verb
+	r.addTool(tool)
+	tool.Name = kvEntityToolPrefix + verb
+	r.addTool(tool)
+}
+
 // ListTools returns all registered tools.
 func (r *ToolRegistry) ListTools() []ToolDefinition {
 	return r.tools
@@ -1087,13 +1101,13 @@ func (r *ToolRegistry) ExecuteTool(ctx context.Context, name string, args map[st
 		return r.executeCryptoDecryptBatch(ctx, args)
 
 	// KV Operations
-	case "qrdb_put":
+	case "qrdb_put", kvEntityToolPrefix + "put":
 		return r.executePut(ctx, args)
-	case "qrdb_get":
+	case "qrdb_get", kvEntityToolPrefix + "get":
 		return r.executeGet(ctx, args)
-	case "qrdb_delete":
+	case "qrdb_delete", kvEntityToolPrefix + "delete":
 		return r.executeDelete(ctx, args)
-	case "qrdb_list":
+	case "qrdb_list", kvEntityToolPrefix + "list":
 		return r.executeList(ctx, args)
 
 	// Batch Operations
@@ -1668,14 +1682,29 @@ func getStringMap(args map[string]interface{}, key string) map[string]string {
 
 // Helper function to marshal result to JSON-compatible format.
 func marshalResult(v interface{}) (interface{}, error) {
+	return marshalResultNumbers(v, false)
+}
+
+// marshalEntityResult is marshalResult for the entity KV tools: numbers
+// decode as json.Number, so a uint64 entity ID above 2^53 keeps its exact
+// token when the result is encoded for the caller.
+func marshalEntityResult(v interface{}) (interface{}, error) {
+	return marshalResultNumbers(v, true)
+}
+
+func marshalResultNumbers(v interface{}, exact bool) (interface{}, error) {
 	// Convert to JSON and back to get JSON-compatible types
 	data, err := json.Marshal(v)
 	if err != nil {
 		return nil, err
 	}
 
+	dec := json.NewDecoder(bytes.NewReader(data))
+	if exact {
+		dec.UseNumber()
+	}
 	var result interface{}
-	if err := json.Unmarshal(data, &result); err != nil {
+	if err := dec.Decode(&result); err != nil {
 		return nil, err
 	}
 
@@ -1698,8 +1727,12 @@ func (r *ToolRegistry) executePut(ctx context.Context, args map[string]interface
 	entityType := getStringAlt(args, "entityType", "entity_type")
 
 	// Support both numeric id and string key parameters
-	// If string key is provided, hash it to uint64 ID
-	id := getIDOrHashKey(entityType, args)
+	// If string key is provided, hash it to uint64 ID. A malformed or
+	// overflowing id is refused before the service is called.
+	id, err := idOrHashKeyArg(entityType, args)
+	if err != nil {
+		return nil, err
+	}
 
 	// Support both data and its value alias; both carry base64.
 	data, err := decodePutData(getStringAlt(args, "data", "value"))
@@ -1717,7 +1750,7 @@ func (r *ToolRegistry) executePut(ctx context.Context, args map[string]interface
 	if err != nil {
 		return nil, err
 	}
-	return marshalResult(resp)
+	return marshalEntityResult(resp)
 }
 
 // decodePutData decodes the data argument of the KV put tools (qrdb_put and
@@ -1736,19 +1769,35 @@ func (r *ToolRegistry) executeGet(ctx context.Context, args map[string]interface
 	entityType := getStringAlt(args, "entityType", "entity_type")
 
 	// Support both numeric id and string key parameters
-	// If string key is provided, hash it to uint64 ID
-	id := getIDOrHashKey(entityType, args)
+	// If string key is provided, hash it to uint64 ID. A malformed or
+	// overflowing id is refused before the service is called.
+	id, err := idOrHashKeyArg(entityType, args)
+	if err != nil {
+		return nil, err
+	}
+
+	// The requested read timeout (0 = the service's default) reaches the
+	// service; a malformed or negative one is refused.
+	timeoutKey := "timeout_ms"
+	if _, ok := args[timeoutKey]; !ok {
+		timeoutKey = "timeoutMs"
+	}
+	timeoutMs, err := uint64Arg(args, timeoutKey)
+	if err != nil {
+		return nil, newIntArgError(timeoutKey, err)
+	}
 
 	req := &service.GetRequest{
 		EntityType: entityType,
 		ID:         id,
 		ShardID:    getUint64(args, "shardID"),
+		TimeoutMs:  timeoutMs,
 	}
 	resp, err := r.service.Get(ctx, req)
 	if err != nil {
 		return nil, err
 	}
-	return marshalResult(resp)
+	return marshalEntityResult(resp)
 }
 
 func (r *ToolRegistry) executeDelete(ctx context.Context, args map[string]interface{}) (interface{}, error) {
@@ -1756,8 +1805,12 @@ func (r *ToolRegistry) executeDelete(ctx context.Context, args map[string]interf
 	entityType := getStringAlt(args, "entityType", "entity_type")
 
 	// Support both numeric id and string key parameters
-	// If string key is provided, hash it to uint64 ID
-	id := getIDOrHashKey(entityType, args)
+	// If string key is provided, hash it to uint64 ID. A malformed or
+	// overflowing id is refused before the service is called.
+	id, err := idOrHashKeyArg(entityType, args)
+	if err != nil {
+		return nil, err
+	}
 
 	req := &service.DeleteRequest{
 		EntityType: entityType,
@@ -1768,7 +1821,7 @@ func (r *ToolRegistry) executeDelete(ctx context.Context, args map[string]interf
 	if err != nil {
 		return nil, err
 	}
-	return marshalResult(resp)
+	return marshalEntityResult(resp)
 }
 
 func (r *ToolRegistry) executeList(ctx context.Context, args map[string]interface{}) (interface{}, error) {
