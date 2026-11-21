@@ -24,7 +24,7 @@ import (
 
 // qrdbServiceAdapter serves a native go-qrdb embedding provider as go-qrdb's
 // service-layer EmbeddingProvider: it passes the per-call model through and
-// reports the native model list.
+// reports the native model list and the native token usage.
 type qrdbServiceAdapter struct {
 	inner qrdbsdk.EmbeddingProvider
 }
@@ -48,7 +48,11 @@ func (a *qrdbServiceAdapter) Embed(ctx context.Context, texts []string, model st
 	if res == nil {
 		return &qrdbservice.EmbeddingResult{}, nil
 	}
-	return &qrdbservice.EmbeddingResult{Embeddings: res.Embeddings, Model: res.Model}, nil
+	out := &qrdbservice.EmbeddingResult{Embeddings: res.Embeddings, Model: res.Model}
+	if res.Usage != nil {
+		out.Usage = &qrdbservice.UsageInfo{PromptTokens: res.Usage.PromptTokens, TotalTokens: res.Usage.TotalTokens}
+	}
+	return out, nil
 }
 
 // Models reports the models the native provider lists.

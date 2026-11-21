@@ -176,7 +176,11 @@ func newRecordingEmbeddingStub(t *testing.T) (stub *httptest.Server, recorded fu
 			data[i] = item{Embedding: []float32{0.1, 0.2, 0.3}, Index: i}
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"data": data, "model": body.Model})
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data":  data,
+			"model": body.Model,
+			"usage": map[string]any{"prompt_tokens": 2 * len(inputs), "total_tokens": 3 * len(inputs)},
+		})
 	}))
 	t.Cleanup(stub.Close)
 	recorded = func() []string {
@@ -244,6 +248,27 @@ func TestQRDBEmbedding_NativeProviderServesTheModelARequestNames(t *testing.T) {
 		names = append(names, m.Name)
 	}
 	assert.ElementsMatch(t, []string{"m", large}, names, "ListModels must report the models the upstream lists")
+}
+
+// TestQRDBEmbedding_UpstreamUsageReachesEmbedAndBatchEmbed checks that the
+// token usage the upstream reports reaches go-qrdb's Embed answer, and that
+// BatchEmbed sums the usage of its sub-batches.
+func TestQRDBEmbedding_UpstreamUsageReachesEmbedAndBatchEmbed(t *testing.T) {
+	stub, _ := newRecordingEmbeddingStub(t)
+	svc := newOpenAIEmbeddingNode(t, stub)
+
+	ctx := context.Background()
+	resp, err := svc.Embed(ctx, &qrdbservice.EmbedRequest{Texts: []string{"hi"}})
+	require.NoError(t, err)
+	require.NotNil(t, resp.Usage, "Embed must carry the upstream's token usage")
+	assert.Equal(t, 2, resp.Usage.PromptTokens)
+	assert.Equal(t, 3, resp.Usage.TotalTokens)
+
+	batch, err := svc.BatchEmbed(ctx, &qrdbservice.BatchEmbedRequest{Texts: []string{"a", "b", "c"}, BatchSize: 2})
+	require.NoError(t, err)
+	require.NotNil(t, batch.TotalUsage, "BatchEmbed must sum the upstream's token usage")
+	assert.Equal(t, 6, batch.TotalUsage.PromptTokens)
+	assert.Equal(t, 9, batch.TotalUsage.TotalTokens)
 }
 
 // singleModelProvider is an embedding.Provider without per-call model
