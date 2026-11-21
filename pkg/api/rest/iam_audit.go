@@ -297,7 +297,9 @@ func (h *IAMHandler) DeleteOldAuditEvents(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Check if user has audit:delete permission
+	// Check that the user holds audit:delete on the target tenant. The
+	// route already requires audit:delete; this check against the resolved
+	// tenant is defence in depth.
 	checkResp, err := manager.CheckPermission(ctx, &iam.AdminCheckRequest{
 		UserID:       subject.UserID,
 		Permission:   iam.PermAuditDelete,

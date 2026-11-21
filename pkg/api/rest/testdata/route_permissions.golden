@@ -12,7 +12,7 @@ DELETE /api/v1/cluster/migrate/ permission admin:drain
 DELETE /api/v1/cluster/nodes/{nodeId} permission admin:remove_member
 DELETE /api/v1/embedding/cache permission embedding:embed
 DELETE /api/v1/entities/{type}/{id} permission kv:delete
-DELETE /api/v1/iam/audit permission audit:query
+DELETE /api/v1/iam/audit permission audit:delete
 DELETE /api/v1/iam/sessions permission users:update
 DELETE /api/v1/iam/sessions/{id} permission users:update
 DELETE /api/v1/kms/deks/* permission keys:delete

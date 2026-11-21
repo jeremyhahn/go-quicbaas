@@ -273,6 +273,14 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.iam.v1.IAMService/DeleteWebAuthnCredential":  {"users", "delete"},
 	"/quicbaas.iam.v1.IAMService/DeleteWebAuthnCredentials": {"users", "delete"},
 
+	// ---- quicbaas.iam.v1.AuditService ----
+	// The same permissions REST and MCP require for these verbs (#1751):
+	// GET /api/v1/iam/audit (audit:query), GET /api/v1/iam/audit/{id}
+	// (audit:read) and POST /api/v1/iam/audit (audit_events:record).
+	"/quicbaas.iam.v1.AuditService/QueryAuditEvents": {"audit", "query"},
+	"/quicbaas.iam.v1.AuditService/GetAuditEvent":    {"audit", "read"},
+	"/quicbaas.iam.v1.AuditService/RecordAuditEvent": {"audit_events", "record"},
+
 	// ---- quicbaas.iam.v1.IAMService: built-in role reconciliation ----
 	//
 	// ReconcileRoles takes the role-create family rather than a verb of its

@@ -2697,9 +2697,9 @@ func auditDeleteEventTypeCount(args map[string]interface{}) int {
 
 // requireAuditDeletePermission requires audit:delete on tenantID for the
 // authenticated subject, as REST DeleteOldAuditEvents and the embedded
-// transport do. The tool's route permission is audit:query, so this is the
-// check that keeps a query-only principal from pruning audit history. It
-// fails closed when no authenticated subject is bound.
+// transport do. The tool's route permission is also audit:delete; this
+// second check, against the target tenant, is defence in depth. It fails
+// closed when no authenticated subject is bound.
 func (r *ToolRegistry) requireAuditDeletePermission(ctx context.Context, tenantID string) error {
 	const op = "mcp.iam.audit.delete"
 	subject, ok := auth.SubjectFromContext(ctx)

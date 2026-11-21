@@ -65,7 +65,7 @@ var frozenRoutePermissions = map[string]frozenPermission{
 	"DELETE /api/v1/cluster/nodes/{nodeId}":                                                   {auth: RouteAuthPermission, resource: "admin", action: "remove_member"},
 	"DELETE /api/v1/embedding/cache":                                                          {auth: RouteAuthPermission, resource: "embedding", action: "embed"},
 	"DELETE /api/v1/entities/{type}/{id}":                                                     {auth: RouteAuthPermission, resource: "kv", action: "delete"},
-	"DELETE /api/v1/iam/audit":                                                                {auth: RouteAuthPermission, resource: "audit", action: "query"},
+	"DELETE /api/v1/iam/audit":                                                                {auth: RouteAuthPermission, resource: "audit", action: "delete"},
 	"DELETE /api/v1/iam/sessions":                                                             {auth: RouteAuthPermission, resource: "users", action: "update"},
 	"DELETE /api/v1/iam/sessions/{id}":                                                        {auth: RouteAuthPermission, resource: "users", action: "update"},
 	"DELETE /api/v1/kms/deks/*":                                                               {auth: RouteAuthPermission, resource: "keys", action: "delete"},
