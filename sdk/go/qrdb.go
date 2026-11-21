@@ -31,6 +31,7 @@ import (
 	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	qbtransport "github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 	qbmcp "github.com/jeremyhahn/go-quicbaas/sdk/go/transport/mcp"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport/rest"
 )
 
 // QRDBClient is a re-export of the go-qrdb SDK Client so consumers do not
@@ -127,6 +128,30 @@ type QRDBTenantClient = qrdbtransport.TenantClient
 
 // QRDBDEKClient is a re-export of the qrdb DEKClient interface.
 type QRDBDEKClient = qrdbtransport.DEKClient
+
+// QRDBEmbeddingClient is a re-export of go-qrdb's EmbeddingClient interface:
+// go-qrdb's embedding service (Embed, BatchEmbed, ListEmbeddingModels).
+// Reach it through AI().QRDBEmbedding().
+type QRDBEmbeddingClient = qrdbtransport.EmbeddingClient
+
+// QRDBEmbedRequest is a re-export of the qrdb EmbedRequest type.
+type QRDBEmbedRequest = qrdbtransport.EmbedRequest
+
+// QRDBEmbedResponse is a re-export of the qrdb EmbedResponse type.
+type QRDBEmbedResponse = qrdbtransport.EmbedResponse
+
+// QRDBBatchEmbedRequest is a re-export of the qrdb BatchEmbedRequest type.
+type QRDBBatchEmbedRequest = qrdbtransport.BatchEmbedRequest
+
+// QRDBBatchEmbedResponse is a re-export of the qrdb BatchEmbedResponse type.
+type QRDBBatchEmbedResponse = qrdbtransport.BatchEmbedResponse
+
+// QRDBListEmbeddingModelsResponse is a re-export of the qrdb
+// ListEmbeddingModelsResponse type.
+type QRDBListEmbeddingModelsResponse = qrdbtransport.ListEmbeddingModelsResponse
+
+// QRDBEmbeddingModelInfo is a re-export of the qrdb EmbeddingModelInfo type.
+type QRDBEmbeddingModelInfo = qrdbtransport.EmbeddingModelInfo
 
 // QRDBIndexClient is a re-export of the qrdb IndexClient interface.
 type QRDBIndexClient = qrdbtransport.IndexClient
@@ -746,6 +771,9 @@ func (c *client) buildQRDBEmbeddedClient() (*qrdbsdk.Client, error) {
 	if s.User != nil {
 		embOpts = append(embOpts, qrdbembedded.WithUserService(s.User))
 	}
+	if s.Embedding != nil {
+		embOpts = append(embOpts, qrdbembedded.WithEmbeddingService(s.Embedding))
+	}
 
 	t, err := qrdbembedded.New(s.KV, s.Admin, embOpts...)
 	if err != nil {
@@ -765,4 +793,36 @@ func (c *client) DataStore() (QRDBKVStore, error) {
 		return nil, err
 	}
 	return qrdb.KVStore(), nil
+}
+
+// qrdbEmbedding returns go-qrdb's embedding service client. Over REST and
+// QUIC the quicbaas transport carries the call (QUIC on its HTTP/3 client), so
+// the platform bearer is sent; on the other transports it comes from the qrdb sub-client. Over gRPC and Unix the
+// configured bearer rides each call as authorization metadata; with no token
+// set, go-qrdb's own client is returned. It errors when the qrdb client cannot
+// be built, or when the active qrdb transport has no embedding surface.
+func (c *client) qrdbEmbedding() (QRDBEmbeddingClient, error) {
+	if rt, ok := c.transport.(interface {
+		QRDBEmbedding() *rest.QRDBEmbeddingClient
+	}); ok && (c.opts == nil || (c.opts.embeddedQRDB == nil && (c.opts.transportType == TransportREST || c.opts.transportType == TransportQUIC))) {
+		return rt.QRDBEmbedding(), nil
+	}
+	if mt, ok := c.transport.(*qbmcp.Transport); ok && (c.opts == nil || (c.opts.embeddedQRDB == nil && c.opts.transportType == TransportMCP)) {
+		return mt.QRDBEmbedding(), nil
+	}
+	qrdb, err := c.qrdbClient()
+	if err != nil {
+		return nil, err
+	}
+	if qrdb == nil {
+		return nil, sdkerrors.NewUnavailable("qrdbEmbedding", "the qrdb client is not configured")
+	}
+	ec := qrdb.Embedding()
+	if ec == nil {
+		return nil, sdkerrors.NewUnavailable("qrdbEmbedding", "the qrdb transport does not serve the embedding service")
+	}
+	if c.opts != nil && c.opts.embeddedQRDB == nil && c.opts.authToken != "" && qrdbSubClientSpeaksGRPC(c.opts.transportType) {
+		return &qrdbBearerEmbeddingClient{inner: ec, bearer: "Bearer " + c.opts.authToken}, nil
+	}
+	return ec, nil
 }
