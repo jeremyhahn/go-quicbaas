@@ -165,7 +165,12 @@ type AsyncService interface {
 // AIService provides AI and machine learning operations including
 // embedding generation, Ollama integration, and retrieval-augmented generation.
 type AIService interface {
+	// Embedding returns QuicBaaS's own embedding service client.
 	Embedding() EmbeddingClient
+	// QRDBEmbedding returns go-qrdb's embedding service client, re-exported
+	// through this SDK. It runs in parallel with Embedding until the owner
+	// retires QuicBaaS's own service.
+	QRDBEmbedding() (QRDBEmbeddingClient, error)
 	Ollama() OllamaClient
 	RAG() RAGClient
 }
@@ -425,8 +430,11 @@ type aiService struct {
 }
 
 func (s *aiService) Embedding() EmbeddingClient { return s.c.Embedding() }
-func (s *aiService) Ollama() OllamaClient       { return s.c.Ollama() }
-func (s *aiService) RAG() RAGClient             { return s.c.RAG() }
+func (s *aiService) QRDBEmbedding() (QRDBEmbeddingClient, error) {
+	return s.c.qrdbEmbedding()
+}
+func (s *aiService) Ollama() OllamaClient { return s.c.Ollama() }
+func (s *aiService) RAG() RAGClient       { return s.c.RAG() }
 
 // barrierCeremonyService delegates BarrierCeremonyService methods to the
 // underlying client.
