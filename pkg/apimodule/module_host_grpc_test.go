@@ -107,3 +107,68 @@ func TestModule_NodeMountedServices_ContributeTheirPermissions(t *testing.T) {
 		assert.True(t, ok, "the gRPC registrations must contribute %s", perm)
 	}
 }
+
+// hostIAMServer answers ListWebAuthnCredentials with a marker so a test can
+// tell the host's IAMService instance served the call.
+type hostIAMServer struct {
+	iampb.UnimplementedIAMServiceServer
+}
+
+func (hostIAMServer) ListWebAuthnCredentials(_ context.Context, _ *iampb.ListWebAuthnCredentialsRequest) (*iampb.ListWebAuthnCredentialsResponse, error) {
+	return &iampb.ListWebAuthnCredentialsResponse{Total: 41}, nil
+}
+
+// TestModule_ServesTheHostIAMService pins that the module mounts the host's
+// IAMService, so the node's Unix and TCP servers keep the IAMService the
+// legacy Unix listener served, and that a nil IAM field answers Unavailable
+// like the other host services.
+func TestModule_ServesTheHostIAMService(t *testing.T) {
+	composed := &mocks.MockQuicBaaS{}
+	m, err := NewModule(func() service.QuicBaaS { return composed }, testLogger(t),
+		WithHostGRPCServers(func() (HostGRPCServers, error) {
+			return HostGRPCServers{IAM: hostIAMServer{}}, nil
+		}))
+	require.NoError(t, err)
+
+	resp, err := iampb.NewIAMServiceClient(startBufconnModule(t, m)).
+		ListWebAuthnCredentials(context.Background(), &iampb.ListWebAuthnCredentialsRequest{})
+	require.NoError(t, err)
+	assert.Equal(t, int32(41), resp.GetTotal(), "the host's IAMService must answer")
+
+	nilIAM, err := NewModule(func() service.QuicBaaS { return composed }, testLogger(t),
+		WithHostGRPCServers(func() (HostGRPCServers, error) {
+			return HostGRPCServers{Session: hostSessionServer{}}, nil
+		}))
+	require.NoError(t, err)
+	_, err = iampb.NewIAMServiceClient(startBufconnModule(t, nilIAM)).
+		ListWebAuthnCredentials(context.Background(), &iampb.ListWebAuthnCredentialsRequest{})
+	assert.Equal(t, codes.Unavailable, status.Code(err), "nil IAM: got %v", err)
+}
+
+// TestModule_IAMInviteMethodsArePublic pins that the four IAMService invite
+// RPCs the legacy interceptor admits without authentication are public here.
+func TestModule_IAMInviteMethodsArePublic(t *testing.T) {
+	composed := &mocks.MockQuicBaaS{}
+	m, err := NewModule(func() service.QuicBaaS { return composed }, testLogger(t))
+	require.NoError(t, err)
+	public := m.PublicGRPCMethods()
+	for _, method := range []string{
+		"/quicbaas.iam.v1.IAMService/GetInvite",
+		"/quicbaas.iam.v1.IAMService/ActivateFIDO2Begin",
+		"/quicbaas.iam.v1.IAMService/ActivateFIDO2Finish",
+		"/quicbaas.iam.v1.IAMService/ActivatePIV",
+	} {
+		assert.Contains(t, public, method)
+	}
+}
+
+// TestModule_IAMService_ContributesItsPermissions pins that the permissions
+// of IAMService's six annotated RPCs reach the module's grant set.
+func TestModule_IAMService_ContributesItsPermissions(t *testing.T) {
+	set := map[string]struct{}{}
+	contributeGRPCPermissions(set)
+	for _, perm := range []string{"users:read", "users:enable", "users:delete", "roles:create", "tenants:create"} {
+		_, ok := set[perm]
+		assert.True(t, ok, "IAMService must contribute %s", perm)
+	}
+}
