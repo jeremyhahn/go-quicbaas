@@ -114,6 +114,10 @@ var (
 	// is not signed by the attempt's signing key.
 	ErrUnsignedCommit = errors.New("sdlc: an outgoing commit is not signed by the attempt's key")
 
+	// ErrAttributionTrailer is returned when a commit the attempt would
+	// publish carries an AI attribution trailer in its message.
+	ErrAttributionTrailer = errors.New("sdlc: an outgoing commit carries an AI attribution trailer")
+
 	// ErrDeliveryAbsent indicates a lifecycle moment ran for a task whose
 	// attempt has no Delivery record, so Prepare never completed.
 	ErrDeliveryAbsent = errors.New("sdlc: no delivery recorded for this attempt")
@@ -682,6 +686,28 @@ func (e *UnsignedCommitError) Error() string {
 
 // Unwrap returns the sentinel for errors.Is support.
 func (e *UnsignedCommitError) Unwrap() error { return ErrUnsignedCommit }
+
+// AttributionTrailerError reports an outgoing commit whose message carries an
+// AI attribution trailer (a Co-Authored-By naming an AI tool, or a "Generated
+// with" footer). The push is refused before it reaches the forge.
+type AttributionTrailerError struct {
+	TaskID string
+
+	// Commit is the first outgoing commit whose message matched.
+	Commit string
+
+	// Line is the offending message line, trimmed.
+	Line string
+}
+
+// Error implements the error interface.
+func (e *AttributionTrailerError) Error() string {
+	return "sdlc: task " + e.TaskID + ": commit " + e.Commit +
+		" carries an AI attribution trailer: " + strconv.Quote(e.Line)
+}
+
+// Unwrap returns the sentinel for errors.Is support.
+func (e *AttributionTrailerError) Unwrap() error { return ErrAttributionTrailer }
 
 // TaskNotForgeIssueError reports a task the module was asked to act on that
 // did not originate from a forge issue.
