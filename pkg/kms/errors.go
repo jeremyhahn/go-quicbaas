@@ -26,6 +26,10 @@ var (
 	// ErrKeyCNEmpty indicates key common name is empty.
 	ErrKeyCNEmpty = errors.New("key CN (common name) cannot be empty")
 
+	// ErrReservedKeyName indicates a key name that uses the prefix reserved
+	// for the backend names of tenant-scoped keys.
+	ErrReservedKeyName = errors.New("key names starting with \"tenant.\" are reserved for tenant-scoped keys")
+
 	// ErrKeyMaterialEmpty indicates key material is empty.
 	ErrKeyMaterialEmpty = errors.New("key material cannot be empty")
 
