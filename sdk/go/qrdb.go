@@ -863,7 +863,9 @@ func (c *client) qrdbEmbedding() (QRDBEmbeddingClient, error) {
 // gRPC and Unix: a client configured with WithAuthToken sends the token as
 // "authorization: Bearer <token>" metadata on every data call. REST, QUIC
 // and MCP: go-qrdb's transports carry no bearer, so a client with an auth
-// token gets an Unimplemented error rather than anonymous data calls.
+// token gets an Unimplemented error rather than anonymous data calls. MCP: a
+// client configured with WithMCPAuthToken or WithMCPCredentials gets the same
+// Unimplemented error, since go-qrdb's MCP client carries neither credential.
 func (c *client) QRDBData() (QRDBDataService, error) {
 	if s := c.opts.embeddedQRDB; s != nil {
 		data := s.Data
@@ -882,6 +884,11 @@ func (c *client) QRDBData() (QRDBDataService, error) {
 			return nil, sdkerrors.NewUnimplemented("QRDBData",
 				"go-qrdb's REST, QUIC and MCP transports cannot carry the client's bearer token; use the gRPC transport for authenticated data calls")
 		}
+	}
+	if c.opts.transportType == TransportMCP &&
+		(c.opts.mcpAuthToken != "" || c.opts.mcpUsername != "" || c.opts.mcpPassword != "") {
+		return nil, sdkerrors.NewUnimplemented("QRDBData",
+			"go-qrdb's MCP transport cannot carry the client's MCP credentials; use the gRPC transport for authenticated data calls")
 	}
 	qrdb, err := c.qrdbClient()
 	if err != nil {

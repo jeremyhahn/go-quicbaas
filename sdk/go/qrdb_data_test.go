@@ -673,3 +673,25 @@ func TestQRDBData_RefusesBearerOnTransportsWithoutSeam(t *testing.T) {
 		_ = c.Close()
 	}
 }
+
+// TestQRDBData_RefusesMCPCredentials pins that an MCP token or MCP
+// username/password, which go-qrdb's MCP client cannot carry, gets an
+// Unimplemented error rather than anonymous data calls.
+func TestQRDBData_RefusesMCPCredentials(t *testing.T) {
+	for name, opt := range map[string]Option{
+		"mcp token":       WithMCPAuthToken("row1652-mcp"),
+		"mcp credentials": WithMCPCredentials("u1652", "p1652"),
+	} {
+		c := &client{opts: defaultOptions(), address: "127.0.0.1:1"}
+		c.opts.transportType = TransportMCP
+		opt(c.opts)
+		if c.opts.authToken != "" {
+			t.Fatalf("%s: authToken must stay empty", name)
+		}
+		data, err := c.QRDBData()
+		if !sdkerrors.IsUnimplemented(err) || data != nil {
+			t.Errorf("%s: QRDBData() = %v, %v, want a nil service and Unimplemented", name, data, err)
+		}
+		_ = c.Close()
+	}
+}
