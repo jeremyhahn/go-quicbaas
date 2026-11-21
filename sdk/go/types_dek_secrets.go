@@ -15,11 +15,12 @@
 // secrets clients. With these constructors and aliases a consumer reaches
 // every DEK and secrets operation, and names every request and response
 // type, through sdk/go alone, without importing sdk/go/client/dek,
-// sdk/go/client/secrets or any generated api/proto type.
+// sdk/go/client/secrets, pkg/service or any generated api/proto type.
 
 package quicbaas
 
 import (
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/dek"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/secrets"
 )
@@ -56,6 +57,11 @@ type EnsureSecretRequest = secrets.EnsureSecretRequest
 
 // EnsureSecretResponse is the result of SecretsClient.Ensure.
 type EnsureSecretResponse = secrets.EnsureSecretResponse
+
+// GetSecretDataResponse is the stored payload a transport returns for the
+// secrets service's GetData verb, the read behind SecretsClient.GetWithBytes.
+// A custom transport must answer GetData with a *GetSecretDataResponse.
+type GetSecretDataResponse = service.GetSecretResponse
 
 // SecretStatus is the status of a secret, set with SecretsClient.UpdateStatus.
 type SecretStatus = secrets.SecretStatus

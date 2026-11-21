@@ -8,8 +8,8 @@
   (`SetDefaultDEKResponse`, `SetDEKSafetyRequest`, `StartReencryptionRequest`,
   `StartReencryptionResponse`, `GetReencryptionProgressRequest`,
   `ReencryptionProgressResponse`, `ReencryptionProgress`,
-  `EnsureSecretRequest`, `EnsureSecretResponse` and `SecretStatus` with its
-  three values). A consumer reaches every DEK and secrets operation through
+  `EnsureSecretRequest`, `EnsureSecretResponse`, `GetSecretDataResponse` and
+  `SecretStatus` with its three values). A consumer reaches every DEK and secrets operation through
   `sdk/go` alone, without generated `api/proto` types. Before, it had to
   import `sdk/go/client/dek` or `sdk/go/client/secrets`, or the generated
   `api/proto` clients.

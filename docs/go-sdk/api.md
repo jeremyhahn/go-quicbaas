@@ -1118,6 +1118,10 @@ response type, including `EnsureSecretRequest`, `EnsureSecretResponse` and
 `SecretStatusDeleted`), is named from the root package, so no generated
 `api/proto` type is needed.
 
+A custom transport answers the `GetData` verb behind `GetWithBytes` with a
+`*quicbaas.GetSecretDataResponse` holding the stored payload; any other
+response type is refused.
+
 ### Store
 
 Stores a secret.
