@@ -3358,6 +3358,10 @@ actionlint: ## Lint the GitHub Actions workflows with actionlint and shellcheck
 lint-go: ## Run golangci-lint alone (the second half of `make lint`)
 	$(GOLANGCI_LINT_RECIPE)
 
+# The cgroup v2 file the lint recipe reads its memory cap from; tests point
+# it at a fixture.
+LINT_MEMORY_MAX ?= /sys/fs/cgroup/memory.max
+
 define GOLANGCI_LINT_RECIPE
 	@echo "$(BLUE)Running linters...$(NC)"
 	@test -x $(GOLINT) || (echo "$(RED)golangci-lint not installed. Run: make install-tools$(NC)" && exit 1)
@@ -3380,7 +3384,7 @@ define GOLANGCI_LINT_RECIPE
 	# quarters of it, so the GC collects before the cap; at 8 GiB or less the
 	# analysis also runs two packages at a time, which bounds the live type
 	# information. An unbounded container runs as before.
-	@mem=$$(cat /sys/fs/cgroup/memory.max 2>/dev/null); lim=; conc=; \
+	@mem=$$(cat $(LINT_MEMORY_MAX) 2>/dev/null); lim=; conc=; \
 	case $$mem in ''|max|*[!0-9]*) ;; *) lim=GOMEMLIMIT=$$((mem / 4 * 3)); [ $$mem -gt 8589934592 ] || conc=--concurrency=2 ;; esac; \
 	env $$lim $(GOLINT) run --timeout=20m $$conc --build-tags '$(LINT_BUILD_TAGS)' ./...; rc=$$?; \
 	if [ $$rc -eq 0 ]; then \
