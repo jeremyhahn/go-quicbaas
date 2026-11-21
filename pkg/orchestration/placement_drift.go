@@ -47,6 +47,9 @@ const (
 	// DriftHostCountExceeded: work of the role runs on more distinct hosts
 	// than the spec's host_count.
 	DriftHostCountExceeded DriftFindingKind = "host_count_exceeded"
+	// DriftHostCountUnderfilled: enough hosts satisfy the spec, but the
+	// role's work runs on fewer distinct admissible hosts than host_count.
+	DriftHostCountUnderfilled DriftFindingKind = "host_count_underfilled"
 	// DriftRoleUnclassified: the spec's role is not in the class table, so
 	// whether its work may move without a person's consent is unknown.
 	DriftRoleUnclassified DriftFindingKind = "role_unclassified"
@@ -172,13 +175,23 @@ type PlacementWorkSource interface {
 // note), so the caller supplies the classification.
 type SessionRoleFunc func(*SessionRecord) string
 
+// tenantSessionObserver is a store that can list a tenant's session records
+// without dropping malformed ones (sessionStore.observeTenantSessions).
+type tenantSessionObserver interface {
+	observeTenantSessions(ctx context.Context, tenantID string) ([]*SessionRecord, error)
+}
+
 // SessionWorkSource is the PlacementWorkSource over the session store: the
 // tenant's sessions that are not closed and not failed, of the asked role,
 // each named by its session id and the host it recorded landing on. A
 // source built with NewSessionWorkSourceForRoles observes only the roles it
 // was given and refuses a report for any other role: the role function
 // cannot return a role the session records do not carry, so listing such a
-// role would report no work where work may run.
+// role would report no work where work may run. Every record under the
+// tenant's storage subtree is observed as stored: a live record whose body
+// names no tenant or another tenant is not skipped, so the report refuses it
+// as unnameable (tenant_id); a closed or failed one is not live work and
+// stays ignored.
 type SessionWorkSource struct {
 	sessions AgentStore
 	roleOf   SessionRoleFunc
@@ -222,7 +235,19 @@ func (s *SessionWorkSource) PlacementWork(ctx context.Context, tenantID, role st
 	if len(s.roles) > 0 && !s.roles[role] {
 		return nil, &PlacementRoleUnobservedError{Role: role}
 	}
-	records, err := s.sessions.ListSessions(ctx, tenantID)
+	var (
+		records []*SessionRecord
+		err     error
+	)
+	// The session store is the only store that filters on read: its
+	// ListSessions skips a record whose body tenant is empty or foreign, so
+	// it is observed without that filter and the record reaches the
+	// unnameable refusal instead of vanishing from the report.
+	if observer, ok := s.sessions.(tenantSessionObserver); ok {
+		records, err = observer.observeTenantSessions(ctx, tenantID)
+	} else {
+		records, err = s.sessions.ListSessions(ctx, tenantID)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -576,6 +601,27 @@ func hostCountConstraint(in *driftInput) []DriftFinding {
 	}
 	if len(hosts) > in.spec.HostCount {
 		findings = append(findings, DriftFinding{Kind: DriftHostCountExceeded, Field: "host_count", Remedy: DriftRemedy{Action: DriftRemedyOperatorDecision}})
+	}
+	// Only work on an admissible host carries the role: work on any other
+	// host has its own host_not_admitted or capability_missing finding.
+	admissible := make(map[string]struct{}, len(in.admissible))
+	for _, host := range in.admissible {
+		admissible[host] = struct{}{}
+	}
+	carrying := make(map[string]struct{}, len(in.work))
+	for _, w := range in.work {
+		if _, ok := admissible[w.Host]; ok {
+			carrying[w.Host] = struct{}{}
+		}
+	}
+	switch {
+	case len(in.work) == 0:
+		// No observed work: there is nothing to spread, and ObservedWork
+		// already says 0.
+	case len(in.admissible) < in.spec.HostCount:
+		// Too few admissible hosts: host_count_short already reports it.
+	case len(carrying) < in.spec.HostCount:
+		findings = append(findings, DriftFinding{Kind: DriftHostCountUnderfilled, Field: "host_count", Remedy: DriftRemedy{Action: DriftRemedyOperatorDecision}})
 	}
 	return findings
 }

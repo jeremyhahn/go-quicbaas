@@ -137,7 +137,9 @@ Findings come from one closed set of kinds: `host_not_admitted`,
 `capability_missing`, `host_unregistered`, `spec_host_absent`,
 `no_admissible_host`, `host_count_short` (fewer admissible hosts than
 `host_count`), `host_count_exceeded` (the role's work runs on more hosts
-than `host_count`) and `role_unclassified`. The archive's `node_unrecorded` is
+than `host_count`), `host_count_underfilled` (enough admissible hosts, but
+the role's work runs on fewer of them than `host_count`) and
+`role_unclassified`. The archive's `node_unrecorded` is
 gone: work with no recorded host is refused (below), not reported. Each
 finding carries a remedy (`relocate` with its admissible destinations,
 `no_candidate`, `operator_decision`) and the spec's disposition.
@@ -166,6 +168,10 @@ never mentions it.
   this was a lease with no tenant. On main a `SessionRecord` carries its
   tenant, so the rule becomes: work with no tenant, no id or no recorded host
   is refused with the work named, as is an id seen twice.
+- **A live session record under the tenant whose body names no tenant or
+  another tenant is refused as unnameable** (field `tenant_id`), not skipped:
+  the report reads the tenant's records as stored, without the session list's
+  tenant filter.
 - A spec whose role is not in the classification table reports
   `role_unclassified` and is never actuated.
 - An edit written against a stale generation is refused

@@ -5,9 +5,12 @@ package orchestration
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"testing"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/kvstore"
 )
 
 type staticPlacementInventory struct {
@@ -189,6 +192,20 @@ func TestDriftReport_HostCountMetIsClean(t *testing.T) {
 	spec := &PlacementSpec{Name: "reviews", Role: "review", HostCount: 1, RequiredCapabilities: []string{"docker"}}
 	if report := reportDrift(t, spec, driftFleet(), work("s1", "h1"), work("s2", "h1")); !report.Clean() {
 		t.Fatalf("findings = %+v, want none", report.Findings)
+	}
+}
+
+func TestDriftReport_HostCountUnderfilled(t *testing.T) {
+	t.Parallel()
+
+	spec := &PlacementSpec{Name: "reviews", Role: "review", HostCount: 2, RequiredCapabilities: []string{"gpu"}}
+	report := reportDrift(t, spec, driftFleet(), work("s1", "h1"), work("s2", "h1"))
+	want := DriftFinding{Kind: DriftHostCountUnderfilled, Field: "host_count", Remedy: DriftRemedy{Action: DriftRemedyOperatorDecision}}
+	if got := onlyFinding(t, report); !reflect.DeepEqual(got, want) {
+		t.Fatalf("finding = %+v, want %+v", got, want)
+	}
+	if report := reportDrift(t, spec, driftFleet(), work("s1", "h1"), work("s2", "h2")); !report.Clean() {
+		t.Fatalf("findings = %+v, want none with the work on h1 and h2", report.Findings)
 	}
 }
 
@@ -492,5 +509,69 @@ func TestDriftReport_RefusesAHostlessSessionFromTheStore(t *testing.T) {
 	var unnameable *PlacementWorkUnnameableError
 	if !errors.As(err, &unnameable) || unnameable.WorkID != "local-1" || unnameable.Field != "host" {
 		t.Fatalf("ReportDrift = %v, want local-1 refused as hostless", err)
+	}
+}
+
+func TestSessionWorkSource_RefusesMalformedSessionRecords(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name       string
+		bodyTenant string
+		status     SessionState
+		refused    bool
+	}{
+		{name: "empty body tenant", bodyTenant: "", status: SessionStateActive, refused: true},
+		{name: "foreign body tenant", bodyTenant: "tenant-b", status: SessionStateActive, refused: true},
+		{name: "closed malformed record is not live work", bodyTenant: "", status: SessionStateClosed, refused: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			kv := kvstore.NewMemory()
+			sessions := NewAgentStore(kv)
+			if err := sessions.PutSession(ctx, &SessionRecord{SessionID: "s1", TenantID: "tenant-a", HostAffinity: "h1", Status: SessionStateActive}); err != nil {
+				t.Fatalf("PutSession: %v", err)
+			}
+			key, err := sessionRecordKey("tenant-a", "s-bad")
+			if err != nil {
+				t.Fatalf("sessionRecordKey: %v", err)
+			}
+			data, err := json.Marshal(&SessionRecord{SessionID: "s-bad", TenantID: tc.bodyTenant, HostAffinity: "h1", Status: tc.status})
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if err := kv.Put(ctx, key, data); err != nil {
+				t.Fatalf("kv.Put: %v", err)
+			}
+			source, err := NewSessionWorkSourceForRoles(sessions, func(r *SessionRecord) string {
+				if r.BackendLocal {
+					return ""
+				}
+				return "agent"
+			}, "agent")
+			if err != nil {
+				t.Fatalf("NewSessionWorkSourceForRoles: %v", err)
+			}
+			store := newTestPlacementStore(t)
+			if _, err := store.DeclarePlacement(ctx, "tenant-a", &PlacementSpec{Name: "agents", Role: "agent", Hosts: []string{"h1"}}); err != nil {
+				t.Fatalf("declare: %v", err)
+			}
+			reporter := mustDriftReporter(t, store, &staticPlacementInventory{hosts: driftFleet()}, source)
+			report, err := reporter.ReportDrift(ctx, "tenant-a", "agents")
+			if !tc.refused {
+				if err != nil {
+					t.Fatalf("ReportDrift: %v", err)
+				}
+				if report.ObservedWork != 1 {
+					t.Fatalf("ObservedWork = %d, want 1", report.ObservedWork)
+				}
+				return
+			}
+			var unnameable *PlacementWorkUnnameableError
+			if !errors.As(err, &unnameable) || unnameable.WorkID != "s-bad" || unnameable.Field != "tenant_id" {
+				t.Fatalf("ReportDrift = %v, want s-bad refused on tenant_id", err)
+			}
+		})
 	}
 }
