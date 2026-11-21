@@ -83,6 +83,15 @@ func TestCapabilitiesBuild_RAGFamilyFollowsProbe(t *testing.T) {
 	}
 }
 
+func TestCapabilitiesBuild_ObjectTransferFamilyFollowsProbe(t *testing.T) {
+	if families := Build(nil, Probes{}).Families; slices.Contains(families, FamilyObjectTransfer) {
+		t.Errorf("families = %v, want no %q without the probe", families, FamilyObjectTransfer)
+	}
+	if families := Build(nil, Probes{ObjectTransferServed: true}).Families; !slices.Contains(families, FamilyObjectTransfer) {
+		t.Errorf("families = %v, want %q with the probe", families, FamilyObjectTransfer)
+	}
+}
+
 func TestCapabilitiesBuild_ProbeAndServiceWired(t *testing.T) {
 	m := testutil.NewMockQuicBaaS()
 	m.On("Messaging").Return(nil)

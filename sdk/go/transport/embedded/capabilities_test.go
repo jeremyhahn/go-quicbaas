@@ -15,6 +15,7 @@ package embedded
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -58,4 +59,94 @@ func TestTransport_CapabilitiesGet(t *testing.T) {
 
 	// The embedded transport has no RAG handlers.
 	assert.NotContains(t, report.Families, servercaps.FamilyRAG)
+	// Nor any object transfer handlers.
+	assert.NotContains(t, report.Families, servercaps.FamilyObjectTransfer)
+}
+
+// TestTransport_CapabilitiesFamiliesHaveEmbeddedHandlers checks that every
+// family the embedded report advertises has at least one handler in the
+// embedded dispatch maps, so a client of an advertised family never gets an
+// unknown-method answer.
+func TestTransport_CapabilitiesFamiliesHaveEmbeddedHandlers(t *testing.T) {
+	tr, err := New(&mockQuicBaaS{})
+	require.NoError(t, err)
+
+	report, err := capabilities.NewClient(tr).Get(context.Background())
+	require.NoError(t, err)
+
+	// familyService maps each family to its SDK service name. A name ending
+	// in "." is a prefix that spans several services.
+	familyService := map[string]string{
+		"account":            "quicbaas.Account",
+		"acme":               "quicbaas.ACME",
+		"agents":             "quicbaas.Agents",
+		"attestation":        "quicbaas.Attestation",
+		"auth":               "quicbaas.Auth",
+		"backup":             "quicbaas.Backup",
+		"batch":              "quicbaas.Batch",
+		"cache":              "quicbaas.Cache",
+		"certificate":        "quicbaas.Certificate",
+		"cluster":            "quicbaas.Cluster",
+		"crypto":             "quicbaas.Crypto",
+		"dek":                "quicbaas.DEK",
+		"dynamicsecrets":     "quicbaas.DynamicSecrets",
+		"embedding":          "quicbaas.Embedding",
+		"health":             "quicbaas.Health",
+		"iam":                "quicbaas.IAM.",
+		"kms":                "quicbaas.KMS",
+		"kv":                 "quicbaas.KV",
+		"objectstorage":      "quicbaas.ObjectStorage",
+		"objectstorageadmin": "quicbaas.ObjectStorageAdmin",
+		"objecttransfer":     "quicbaas.ObjectTransfer",
+		"ollama":             "quicbaas.Ollama",
+		"operations":         "quicbaas.Operations",
+		"orchestrator":       "quicbaas.Orchestrator",
+		"parameterstore":     "quicbaas.ParameterStore",
+		"project":            "quicbaas.Project",
+		"prompt":             "quicbaas.Prompts",
+		"query":              "quicbaas.Query",
+		"rbac":               "quicbaas.RBAC",
+		"registry":           "quicbaas.Registry",
+		"sdlc":               "quicbaas.SDLC",
+		"secrets":            "quicbaas.Secrets",
+		"ssh":                "quicbaas.SSH",
+		"transaction":        "quicbaas.Transaction",
+		"trust":              "quicbaas.Trust",
+		"messaging":          "quicbaas.Messaging",
+		"timeseries":         "quicbaas.TimeSeries",
+		"vector":             "quicbaas.Vector",
+		"scheduler":          "quicbaas.Scheduler",
+	}
+	// sdk/go/client/spend holds only types and has no service to dispatch.
+	typesOnly := map[string]bool{"spend": true}
+
+	hasPrefix := func(prefix string) bool {
+		for key := range unaryHandlers {
+			if strings.HasPrefix(key, prefix) {
+				return true
+			}
+		}
+		for key := range streamHandlers {
+			if strings.HasPrefix(key, prefix) {
+				return true
+			}
+		}
+		return false
+	}
+
+	for _, family := range report.Families {
+		if typesOnly[family] {
+			continue
+		}
+		service, ok := familyService[family]
+		if !ok {
+			t.Errorf("family %q has no service name: add the family's service name to the table", family)
+			continue
+		}
+		prefix := service
+		if !strings.HasSuffix(prefix, ".") {
+			prefix += "/"
+		}
+		assert.Truef(t, hasPrefix(prefix), "family %q is advertised but the embedded transport has no %s handler", family, prefix)
+	}
 }

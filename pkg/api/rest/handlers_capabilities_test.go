@@ -126,6 +126,17 @@ func TestCapabilities_RAGFamilyFollowsBuildTag(t *testing.T) {
 	}
 }
 
+func TestCapabilities_ObjectTransferFamilyListed(t *testing.T) {
+	server, m, cleanup := setupMockServer(t)
+	defer cleanup()
+	wireAll(t, server, m)
+
+	report := getCapabilities(t, server)
+	if !slices.Contains(report.Families, capabilities.FamilyObjectTransfer) {
+		t.Errorf("families = %v, want %q (the REST server serves object transfer)", report.Families, capabilities.FamilyObjectTransfer)
+	}
+}
+
 func TestCapabilities_MessagingUnwired(t *testing.T) {
 	server, m, cleanup := setupMockServer(t)
 	defer cleanup()

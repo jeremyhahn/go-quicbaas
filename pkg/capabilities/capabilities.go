@@ -54,6 +54,10 @@ const (
 // that serves them.
 const FamilyRAG = "rag"
 
+// FamilyObjectTransfer is the SDK family of the object transfer handlers,
+// listed only by a transport that serves them.
+const FamilyObjectTransfer = "objecttransfer"
+
 // Subsystem is one subsystem's entry in the report.
 type Subsystem struct {
 	// Served is true when this binary has the subsystem's handlers.
@@ -87,6 +91,10 @@ type Probes struct {
 	// RAGServed is true when this transport serves the RAG family: on REST
 	// the constant RAGServed (-tags rag); the embedded transport has none.
 	RAGServed bool
+	// ObjectTransferServed is true when this transport serves
+	// quicbaas.ObjectTransfer (the REST server's /api/v1/object-transfer
+	// routes); the embedded transport has none.
+	ObjectTransferServed bool
 }
 
 // baseFamilies are the SDK families every server serves, whatever its build
@@ -95,7 +103,7 @@ var baseFamilies = []string{
 	"account", "acme", "agents", "attestation", "auth", "backup", "batch",
 	"cache", "certificate", "cluster", "crypto", "dek", "dynamicsecrets",
 	"embedding", "health", "iam", "kms", "kv", "objectstorage",
-	"objectstorageadmin", "objecttransfer", "ollama", "operations",
+	"objectstorageadmin", "ollama", "operations",
 	"orchestrator", "parameterstore", "project", "prompt", "query",
 	"rbac", "registry", "sdlc", "secrets", "spend", "ssh", "transaction",
 	"trust",
@@ -121,6 +129,9 @@ func Build(svc service.QuicBaaS, probes Probes) Report {
 	}
 	if probes.RAGServed {
 		report.Families = append(report.Families, FamilyRAG)
+	}
+	if probes.ObjectTransferServed {
+		report.Families = append(report.Families, FamilyObjectTransfer)
 	}
 	return report
 }
