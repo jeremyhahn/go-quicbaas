@@ -19,6 +19,7 @@ import (
 	qrdbsecret "github.com/jeremyhahn/go-qrdb/sdk/go/secret"
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport/quic"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport/rest"
 )
 
@@ -155,7 +156,12 @@ type AsyncService interface {
 // AIService provides AI and machine learning operations including
 // embedding generation, Ollama integration, and retrieval-augmented generation.
 type AIService interface {
+	// Embedding returns QuicBaaS's own embedding service client.
 	Embedding() EmbeddingClient
+	// QRDBEmbedding returns go-qrdb's embedding service client, re-exported
+	// through this SDK. It runs in parallel with Embedding until the owner
+	// retires QuicBaaS's own service.
+	QRDBEmbedding() (QRDBEmbeddingClient, error)
 	Ollama() OllamaClient
 	RAG() RAGClient
 }
@@ -298,9 +304,19 @@ func (s *securityService) SSH() SSHService {
 // default-deny gate refused it with 401 (go-quicbaas#2538). Every other
 // transport, and a client wired WithEmbeddedQRDB (whose qrdb calls always
 // dispatch in-process), keeps the qrdb sub-client.
+//
+// Over the SDK QUIC transport the barrier verbs go through that transport's
+// own HTTP/3 client: go-qrdb's REST transport dials TCP, which a node serving
+// only its QUIC (UDP) listener refuses (go-quicbaas#2533). An embedded QRDB
+// takes precedence over that shortcut too.
 func (s *securityService) Barrier() (QRDBBarrierClient, error) {
-	if rt, ok := s.c.transport.(*rest.Transport); ok && (s.c.opts == nil || s.c.opts.embeddedQRDB == nil) {
-		return rt.Barrier(), nil
+	if s.c.opts == nil || s.c.opts.embeddedQRDB == nil {
+		if rt, ok := s.c.transport.(*rest.Transport); ok {
+			return rt.Barrier(), nil
+		}
+		if qt, ok := s.c.transport.(*quic.Transport); ok {
+			return qt.Transport.Barrier(), nil
+		}
 	}
 	qrdbClient, err := s.c.qrdbClient()
 	if err != nil {
@@ -385,8 +401,11 @@ type aiService struct {
 }
 
 func (s *aiService) Embedding() EmbeddingClient { return s.c.Embedding() }
-func (s *aiService) Ollama() OllamaClient       { return s.c.Ollama() }
-func (s *aiService) RAG() RAGClient             { return s.c.RAG() }
+func (s *aiService) QRDBEmbedding() (QRDBEmbeddingClient, error) {
+	return s.c.qrdbEmbedding()
+}
+func (s *aiService) Ollama() OllamaClient { return s.c.Ollama() }
+func (s *aiService) RAG() RAGClient       { return s.c.RAG() }
 
 // barrierCeremonyService delegates BarrierCeremonyService methods to the
 // underlying client.

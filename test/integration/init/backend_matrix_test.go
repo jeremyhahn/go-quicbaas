@@ -43,6 +43,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/cli"
 )
 
 // matrixBackends enumerates the qrdb storage engines a deployment may select.
@@ -67,7 +69,6 @@ func TestBackendMatrix(t *testing.T) {
 
 	for _, backend := range matrixBackends {
 		for _, transport := range backendTransports {
-			backend, transport := backend, transport
 			t.Run(backend+"_"+transport, func(t *testing.T) {
 				runBackendCell(t, daemonBinary, cliBinary, backend, transport)
 			})
@@ -108,24 +109,20 @@ func runBackendCell(t *testing.T, daemonBinary, cliBinary, backend, transport st
 		t.Fatalf("backend %q over %q never became ready: %v", backend, transport, err)
 	}
 
-	// Phase 3: the SDK reaches the daemon over this transport.
-	verifySDKLivenessOverTransport(t, transport, ports, dataDir)
+	// Phase 3: log in as the administrator first boot issued. On the memory
+	// engine `quicbaasd start` runs first boot again in the serving process
+	// (the init process's state is not durable) and delivers a fresh admin
+	// bundle the same way, so every engine logs in identically.
+	token := loginFirstBootAdmin(ctx, t, cliBinary, transport, ports, dataDir, backend)
 
-	// Phase 4: a real round trip through the engine. This is the assertion
+	// Phase 4: the SDK reaches the daemon over this transport, with that
+	// administrator's session (MCP refuses an uncredentialed initialize).
+	verifySDKLivenessOverTransport(t, transport, ports, dataDir, token)
+
+	// Phase 5: a real round trip through the engine. This is the assertion
 	// that distinguishes a working backend from a daemon that merely booted.
-	//
-	// The memory engine is exempt, and that exemption is itself the finding:
-	// `quicbaasd init` runs in its OWN process, so first-boot IAM state
-	// written to a non-durable engine is gone before `quicbaasd start` opens
-	// it. The daemon comes up healthy with an empty store and no
-	// administrator, so the admin credential init issued cannot authenticate.
-	// Memory is therefore viable for single-process / embedded use, not for
-	// the init-then-restart deployment flow the durable engines support.
-	if backend == "memory" {
-		t.Log("memory backend: skipping the authenticated round trip — " +
-			"first-boot state cannot survive the init/start process boundary")
-		return
-	}
+	// Every engine, memory included, authenticates with the administrator
+	// first boot issued: no backend is exempt.
 	verifyDataRoundTrip(ctx, t, cliBinary, transport, ports, dataDir, backend)
 
 	if stopErr := daemon.Stop(); stopErr != nil {
@@ -179,6 +176,55 @@ func startDaemonOnBackend(
 // The CLI is the subject deliberately: it is the surface an operator uses, and
 // driving it end to end catches contract breaks between CLI, SDK, transport,
 // and engine that a direct service-layer call would step over.
+// loginFirstBootAdmin logs in, over the transport under test, as the
+// administrator first boot issued, and returns the session's access token.
+//
+// The data plane is fail-closed by default: every transport gates on a
+// platform token whose scp claim carries the required resource:action, so a
+// client certificate alone is not enough, and the MCP server refuses an
+// uncredentialed initialize (CA ruling 571). The CLI caches the session under
+// HOME, which the harness points at this cell's data dir, so each cell's
+// session stays isolated; the token is also handed back for SDK clients.
+func loginFirstBootAdmin(
+	ctx context.Context,
+	t *testing.T,
+	cliBinary, transport string,
+	ports PortBundle,
+	dataDir, label string,
+) string {
+	t.Helper()
+
+	// Over MCP the login is made on REST, which every cell serves: the MCP
+	// login tools carry no permission registration and an MCP session needs a
+	// credential to begin with, so MCP cannot be where the credential is
+	// obtained. The session the REST login issues is then used over MCP.
+	loginTransport := transport
+	if transport == "mcp" {
+		loginTransport = "rest"
+	}
+	loginOut, loginErr := runCLIAgainst(ctx, t, cliBinary, loginTransport, ports, dataDir,
+		"auth", "login", "--method", "mtls",
+		"--client-cert", filepath.Join(dataDir, "admin", "admin.crt"),
+		"--username", "admin")
+	if loginErr != nil {
+		t.Fatalf("admin mTLS login (%s) over %q failed: %v\noutput:\n%s",
+			label, transport, loginErr, loginOut)
+	}
+	// Log the outcome even on success: a login that exits 0 without issuing a
+	// usable token looks identical to a working one until the next call is
+	// refused, which is exactly the failure mode this matrix must not hide.
+	t.Logf("admin login (%s/%s) output:\n%s", label, transport, loginOut)
+
+	session, err := cli.LoadToken(filepath.Join(dataDir, ".quicbaas", "token"))
+	if err != nil {
+		t.Fatalf("admin login (%s) over %q stored no session: %v", label, transport, err)
+	}
+	if session.AccessToken == "" {
+		t.Fatalf("admin login (%s) over %q stored an empty access token", label, transport)
+	}
+	return session.AccessToken
+}
+
 func verifyDataRoundTrip(
 	ctx context.Context,
 	t *testing.T,
@@ -188,37 +234,8 @@ func verifyDataRoundTrip(
 ) {
 	t.Helper()
 
-	// Authenticate first. The data plane is fail-closed by default: every
-	// transport gates on a platform token whose scp claim carries the required
-	// resource:action, so a client certificate alone is not enough. Logging in
-	// with the administrator credential first-boot issued caches the token
-	// under HOME, which the harness already points at this cell's data dir.
-	//
-	// MCP has no login ceremony: quicbaas_login_begin is deliberately not a
-	// public tool and maps to no permission, so an MCP login is refused by
-	// design. An MCP cell's session therefore comes from REST, which every
-	// cell serves; the token is saved under the same HOME, so the MCP put/get
-	// below present it. Every other transport logs in over itself.
-	loginTransport := transport
-	if transport == "mcp" {
-		loginTransport = "rest"
-	}
-	loginOut, loginErr := runCLIAgainst(ctx, t, cliBinary, loginTransport, ports, dataDir,
-		"auth", "login", "--method", "mtls",
-		"--client-cert", filepath.Join(dataDir, "admin", "admin.crt"),
-		"--username", "admin",
-		// Persist the session: without this the CLI prints the token and
-		// discards it, so the very next command is refused. HOME points at
-		// this cell's data dir, so the session stays isolated per cell.
-		"--save-token")
-	if loginErr != nil {
-		t.Fatalf("admin mTLS login on backend %q for the %q cell (login over %q) failed: %v\noutput:\n%s",
-			backend, transport, loginTransport, loginErr, loginOut)
-	}
-	// Log the outcome even on success: a login that exits 0 without issuing a
-	// usable token looks identical to a working one until the next call is
-	// refused, which is exactly the failure mode this matrix must not hide.
-	t.Logf("admin login (%s/%s, over %s) output:\n%s", backend, transport, loginTransport, loginOut)
+	// The CLI session loginFirstBootAdmin cached under HOME (this cell's data
+	// dir) authenticates every call below: the data plane is fail-closed.
 
 	// data put/get take a COLLECTION and a key, not a single path.
 	collection := "backendmatrix"
@@ -236,18 +253,31 @@ func verifyDataRoundTrip(
 	}
 
 	getOut, getErr := runCLIAgainst(ctx, t, cliBinary, transport, ports, dataDir,
-		"data", "get", collection, key)
+		"data", "get", collection, key, "--output", "json")
 	if getErr != nil {
 		t.Fatalf("data get on backend %q over %q failed: %v\noutput:\n%s",
 			backend, transport, getErr, getOut)
 	}
 
-	// Match on the payload rather than the exact envelope: the assertion is
-	// that the ENGINE returned what was written, not that a particular output
-	// format was used.
-	if !strings.Contains(getOut, backend) || !strings.Contains(getOut, transport) {
-		t.Errorf("backend %q over %q: round trip lost the value.\nwrote %s\nread back:\n%s",
+	// Compare the exact payload: the assertion is that the ENGINE returned
+	// byte for byte what was written. The JSON object is decoded from its
+	// first '{' to its last '}' so log lines around it do not matter.
+	var got struct {
+		Found bool   `json:"found"`
+		Value []byte `json:"value"`
+	}
+	start, end := strings.Index(getOut, "{"), strings.LastIndex(getOut, "}")
+	if start < 0 || end < start {
+		t.Fatalf("backend %q over %q: data get printed no JSON object.\nwrote %s\nread back:\n%s",
 			backend, transport, value, getOut)
+	}
+	if err := json.Unmarshal([]byte(getOut[start:end+1]), &got); err != nil {
+		t.Fatalf("backend %q over %q: decode data get output: %v\nwrote %s\nread back:\n%s",
+			backend, transport, err, value, getOut)
+	}
+	if !got.Found || string(got.Value) != value {
+		t.Errorf("backend %q over %q: round trip lost the value (found=%v).\nwrote %s\nread back:\n%s",
+			backend, transport, got.Found, value, getOut)
 	}
 }
 
@@ -309,7 +339,6 @@ func TestBackendMatrix_InitHonoursConfiguredBackend(t *testing.T) {
 	binary := resolveDaemonBinary(t)
 
 	for _, backend := range matrixBackends {
-		backend := backend
 		t.Run(backend, func(t *testing.T) {
 			dataDir := t.TempDir()
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
