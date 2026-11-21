@@ -22,34 +22,35 @@
 //
 // The verification target is Health.Liveness because:
 //
-//   - it is wired across the rest / grpc / quic / unix transports per
-//     sdk/go/transport/<t>;
+//   - it is wired across every transport (rest / grpc / quic / mcp /
+//     unix) per sdk/go/transport/<t>;
 //   - it requires zero authentication so we do not pay the cost of
 //     bootstrapping admin credentials per-cell;
 //   - a 200 / Healthy response proves the SDK's transport handshake +
 //     request envelope + response decoder all line up with the daemon's
 //     listener for this cell.
-//
-// MCP has no anonymous session: go-qrdb gates the whole /mcp endpoint on
-// a bearer, refusing a request without one before the MCP layer parses
-// it. The MCP cell therefore checks that an anonymous initialize is
-// refused with 401 (verifyMCPAnonymousRefused), which proves the MCP
-// listener is up and fail-closed. The authenticated MCP path is covered
-// by phase 4 on durable backends.
 package init
 
 import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
+	"io"
+	"io/fs"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	mcptransport "github.com/mark3labs/mcp-go/client/transport"
 
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
 )
@@ -71,15 +72,25 @@ const sdkLivenessTimeout = 10 * time.Second
 // CA chain into the SDK's TLS trust store. Without that, every TLS
 // transport (rest / quic / mcp / grpc) fails handshake against the
 // self-signed daemon cert.
-func verifySDKLivenessOverTransport(t *testing.T, transport string, ports PortBundle, dataDir string) {
+func verifySDKLivenessOverTransport(t *testing.T, transport string, ports PortBundle, dataDir, adminToken string) {
 	t.Helper()
 
 	if transport == "mcp" {
-		verifyMCPAnonymousRefused(t, ports, dataDir)
-		return
+		// MCP has no anonymous session: an initialize without a bearer is
+		// refused with 401 before the authenticated liveness call below.
+		tlsCfg, err := loadDaemonCATLSConfig(dataDir)
+		if err != nil {
+			t.Fatalf("load daemon CA for transport \"mcp\": %v", err)
+		}
+		probeCtx, probeCancel := context.WithTimeout(context.Background(), sdkLivenessTimeout)
+		probeErr := probeSealedMCPInitialize(probeCtx, fmt.Sprintf("https://127.0.0.1:%d/mcp", ports.MCP), tlsCfg)
+		probeCancel()
+		if probeErr != nil {
+			t.Fatalf("anonymous MCP initialize: %v", probeErr)
+		}
 	}
 
-	client, err := newSDKClient(transport, ports, dataDir)
+	client, err := newSDKClient(transport, ports, dataDir, adminToken)
 	if err != nil {
 		t.Fatalf("construct SDK client for transport %q: %v", transport, err)
 	}
@@ -109,45 +120,130 @@ func verifySDKLivenessOverTransport(t *testing.T, transport string, ports PortBu
 	assertLivenessResponseHealthy(t, transport, resp)
 }
 
-// mcpAnonymousInitialize is the JSON-RPC initialize request
-// verifyMCPAnonymousRefused sends without a bearer.
-const mcpAnonymousInitialize = `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"backend-matrix","version":"0"}}}`
-
-// verifyMCPAnonymousRefused checks the MCP listener's contract for an
-// anonymous caller. MCP has no anonymous session: go-qrdb gates the whole
-// /mcp endpoint on a bearer, so an initialize without an Authorization
-// header must be refused with 401. A 401 proves the MCP listener is up,
-// speaks TLS with the daemon's CA, and is fail-closed. The authenticated
-// MCP path is covered by phase 4 on durable backends.
-func verifyMCPAnonymousRefused(t *testing.T, ports PortBundle, dataDir string) {
+// verifySealedMCPWindow is the SDK phase of a shamir MCP cell. A shamir init
+// only records the M-of-N parameters, so the daemon boots SEALED with no
+// administrator: first boot issues none until the officers' ceremony unseals
+// it (cmd/quicbaasd init_runtime_test.go). There is no credential to log in
+// with, and MCP refuses an uncredentialed session (CA ruling 571), so the
+// cell proves the sealed window instead: no administrator certificate exists,
+// the MCP listener completed its TLS handshake in the readiness probe, and an
+// SDK client without a credential is refused rather than served.
+func verifySealedMCPWindow(t *testing.T, ports PortBundle, dataDir string) {
 	t.Helper()
 
+	adminCert := filepath.Join(dataDir, "admin", "admin.crt")
+	if _, err := os.Stat(adminCert); err == nil {
+		t.Fatalf("sealed shamir node issued an administrator certificate (%s) before its ceremony", adminCert)
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("stat %s: %v", adminCert, err)
+	}
+
+	if err := checkSealedMCPWindow(ports, dataDir); err != nil {
+		t.Fatalf("sealed shamir node: %v", err)
+	}
+	t.Logf("uncredentialed MCP initialize refused with 401 on the sealed node")
+}
+
+// checkSealedMCPWindow probes the sealed node's MCP endpoint. It first
+// sends the MCP initialize request by itself, with no session and no
+// credentials, and requires HTTP 401 for it: a node that answers that
+// initialize and refuses only a later notifications/initialized or
+// tools/call has served an uncredentialed session, and fails here. Only
+// then does it run the SDK's whole Health.Liveness exchange, which must
+// also be refused with 401.
+func checkSealedMCPWindow(ports PortBundle, dataDir string) error {
 	tlsCfg, err := loadDaemonCATLSConfig(dataDir)
 	if err != nil {
-		t.Fatalf("load daemon CA for transport \"mcp\": %v", err)
+		return err
 	}
-	httpClient := &http.Client{Transport: &http.Transport{TLSClientConfig: tlsCfg}}
-	defer httpClient.CloseIdleConnections()
-
 	ctx, cancel := context.WithTimeout(context.Background(), sdkLivenessTimeout)
 	defer cancel()
 
-	address := fmt.Sprintf("https://127.0.0.1:%d/mcp", ports.MCP)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, address, strings.NewReader(mcpAnonymousInitialize))
+	endpoint := fmt.Sprintf("https://127.0.0.1:%d/mcp", ports.MCP)
+	if err := probeSealedMCPInitialize(ctx, endpoint, tlsCfg); err != nil {
+		return err
+	}
+
+	client, err := newSDKClient("mcp", ports, dataDir, "")
 	if err != nil {
-		t.Fatalf("build anonymous MCP initialize: %v", err)
+		return fmt.Errorf("construct uncredentialed MCP client for the sealed node: %w", err)
+	}
+	defer func() { _ = client.Close() }()
+	_, err = client.Transport().Request(ctx, "quicbaas.Health", "Liveness", struct{}{})
+	return classifySealedMCPRefusal(err)
+}
+
+// sealedMCPInitializeProbe is a bare MCP initialize request: no session id
+// header and no Authorization header go with it.
+const sealedMCPInitializeProbe = `{"jsonrpc":"2.0","id":1,"method":"initialize",` +
+	`"params":{"protocolVersion":"2025-03-26","capabilities":{},` +
+	`"clientInfo":{"name":"sealed-window-probe","version":"0.0.0"}}}`
+
+// probeSealedMCPInitialize posts the bare initialize request to endpoint
+// and returns nil only when it is refused with HTTP 401.
+func probeSealedMCPInitialize(ctx context.Context, endpoint string, tlsCfg *tls.Config) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(sealedMCPInitializeProbe))
+	if err != nil {
+		return fmt.Errorf("build the uncredentialed MCP initialize probe: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
 
+	httpClient := &http.Client{Transport: &http.Transport{TLSClientConfig: tlsCfg}}
+	defer httpClient.CloseIdleConnections()
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		t.Fatalf("anonymous MCP initialize: %v", err)
+		return fmt.Errorf("the uncredentialed MCP initialize failed without an HTTP 401 refusal: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<16))
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("anonymous MCP initialize: status %d, want %d", resp.StatusCode, http.StatusUnauthorized)
+		return fmt.Errorf("the uncredentialed MCP initialize, sent alone, was answered with HTTP %d, want 401", resp.StatusCode)
 	}
+	return nil
+}
+
+// mcpHTTPStatusPattern matches the status mcp-go's Streamable HTTP client
+// puts in the error of a non-2xx reply it has no sentinel for ("request
+// failed with status 500: ..."); 401 and an initialize 4xx have sentinels.
+var mcpHTTPStatusPattern = regexp.MustCompile(`request failed with status (\d{3})\b`)
+
+// classifySealedMCPRefusal decides whether err, the result of an
+// uncredentialed MCP call against a sealed node, is the authentication
+// refusal the sealed window must produce: HTTP 401 on initialize. It returns
+// nil for a 401 and an error naming what was seen otherwise: a served call, a
+// timeout, or any other status or failure (404, 5xx, unknown tool, ...).
+func classifySealedMCPRefusal(err error) error {
+	if err == nil {
+		return errors.New("an uncredentialed MCP session was served; MCP must refuse it with 401")
+	}
+	var oauthRequired *mcptransport.OAuthAuthorizationRequiredError
+	if errors.Is(err, mcptransport.ErrUnauthorized) || errors.As(err, &oauthRequired) ||
+		errors.Is(err, mcptransport.ErrOAuthAuthorizationRequired) {
+		return nil
+	}
+	if errors.Is(err, mcptransport.ErrLegacySSEServer) || errors.Is(err, mcptransport.ErrSessionTerminated) {
+		return fmt.Errorf("the uncredentialed MCP initialize was answered with a non-401 HTTP 4xx (404 or similar), want 401: %w", err)
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("the uncredentialed MCP call timed out instead of being refused with 401: %w", err)
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return fmt.Errorf("the uncredentialed MCP call timed out instead of being refused with 401: %w", err)
+	}
+	m := mcpHTTPStatusPattern.FindStringSubmatch(err.Error())
+	if m == nil {
+		return fmt.Errorf("the uncredentialed MCP call failed without an HTTP 401 refusal (%T): %w", err, err)
+	}
+	status, convErr := strconv.Atoi(m[1])
+	if convErr != nil {
+		return fmt.Errorf("the uncredentialed MCP call failed with an unreadable HTTP status %q: %w", m[1], err)
+	}
+	if status != http.StatusUnauthorized {
+		return fmt.Errorf("the uncredentialed MCP call was answered with HTTP %d, want 401: %w", status, err)
+	}
+	return nil
 }
 
 // assertLivenessResponseHealthy normalises the Health.Liveness response
@@ -222,7 +318,12 @@ func isMapHealthyByAlive(m map[string]interface{}) bool {
 // auto-generated CA chain so the SDK accepts the self-signed server
 // cert; CLAUDE.md bans WithInsecure so explicit CA trust is the only
 // supported path.
-func newSDKClient(transport string, ports PortBundle, dataDir string) (quicbaas.Client, error) {
+//
+// adminToken is the first-boot administrator's session token. The MCP client
+// presents it on initialize, which go-qrdb's MCP server refuses without a
+// credential (CA ruling 571); the other transports serve Health.Liveness
+// publicly and are dialled without it.
+func newSDKClient(transport string, ports PortBundle, dataDir, adminToken string) (quicbaas.Client, error) {
 	tlsCfg, err := loadDaemonCATLSConfig(dataDir)
 	if err != nil {
 		return nil, err
@@ -254,6 +355,7 @@ func newSDKClient(transport string, ports PortBundle, dataDir string) (quicbaas.
 		address := fmt.Sprintf("https://127.0.0.1:%d/mcp", ports.MCP)
 		return quicbaas.NewClient(address,
 			quicbaas.WithMCP(),
+			quicbaas.WithMCPAuthToken(adminToken),
 			quicbaas.WithTLSConfig(tlsCfg),
 		)
 	case "unix":
@@ -308,7 +410,7 @@ func isReflectivelyHealthy(v interface{}) bool {
 	if !rv.IsValid() {
 		return false
 	}
-	if rv.Kind() == reflect.Ptr {
+	if rv.Kind() == reflect.Pointer {
 		if rv.IsNil() {
 			return false
 		}

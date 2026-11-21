@@ -101,6 +101,11 @@ func createTestConfig(t *testing.T) *config.Config {
 	cfg.Vector.StoragePath = filepath.Join(tempDir, "vector")
 	cfg.TimeSeries.StoragePath = filepath.Join(tempDir, "timeseries")
 	cfg.Server.Host = "127.0.0.1"
+	// The embedded node serves server.unix.socket under network serving, so
+	// the default path ($HOME/quicbaas.sock) would make parallel tests that
+	// start a node collide on one socket. Give each test its own short path
+	// (sun_path is limited to ~104 bytes, too short for t.TempDir()).
+	cfg.Server.Unix.Socket = filepath.Join(shortSocketDir(t), "q.sock")
 	cfg.Server.REST.Port = httpPort
 	cfg.Server.GRPC.Port = grpcPort
 	cfg.Raft.NodeID = 1
