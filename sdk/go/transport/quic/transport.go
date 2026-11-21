@@ -28,6 +28,7 @@ import (
 	"crypto/tls"
 	"net/http"
 
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/quic-go/quic-go/http3"
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
@@ -102,8 +103,16 @@ func New(cfg *transport.Config, opts ...Option) (*Transport, error) {
 		TLSClientConfig: tlsConfig,
 	}
 
+	// go-qrdb's REST client puts a PIN bound by WithSOPIN in the
+	// X-QRDB-SO-PIN header and refuses, on every redirect hop, to send it in
+	// plaintext or to a host other than the configured one. The HTTP/3 client
+	// must do the same, or the server never sees the PIN and a redirect
+	// replays a body carrying it to a foreign host. The host is the one the
+	// REST transport builds its base URL from; t.h3 stays the raw transport
+	// so Close still closes its QUIC connections.
+	configuredHost := qrdbtransport.ConfiguredHost(transport.HTTPBaseURL(cfg.Address, cfg.TLSConfig != nil))
 	httpClient := &http.Client{
-		Transport: h3Transport,
+		Transport: qrdbtransport.SOPINRoundTripper(h3Transport, "quic", configuredHost),
 	}
 	if cfg.Timeout > 0 {
 		httpClient.Timeout = cfg.Timeout
