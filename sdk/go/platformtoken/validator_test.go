@@ -68,9 +68,11 @@ type tokenClaims struct {
 	sub string
 	tid string
 	scp []string
-	exp time.Time
-	iat time.Time
-	jkt string
+	// roles is the token's "roles" claim.
+	roles []string
+	exp   time.Time
+	iat   time.Time
+	jkt   string
 	// x5t is the RFC 8705 cnf "x5t#S256" mTLS certificate binding.
 	x5t string
 	// typ overrides the JOSE "typ" header. Empty defaults to the RFC 9068
@@ -94,6 +96,9 @@ func (k *issuerKey) sign(t *testing.T, tc tokenClaims) string {
 	}
 	if len(tc.scp) > 0 {
 		m["scp"] = tc.scp
+	}
+	if len(tc.roles) > 0 {
+		m["roles"] = tc.roles
 	}
 	if tc.jkt != "" {
 		m["cnf"] = map[string]interface{}{"jkt": tc.jkt}

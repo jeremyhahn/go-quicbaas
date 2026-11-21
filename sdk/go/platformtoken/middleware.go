@@ -60,7 +60,7 @@ func WithAuthorizedContext(ctx context.Context, ac *AuthorizedContext) context.C
 //   - requires the permission among the token's granted scopes, then the
 //     liveness check the validator's mode asks for, then asks
 //     Options.Authorizer (go-qrdb RBAC with its ABAC policies) for the
-//     permission in the token's tenant.
+//     permission as the token's subject and roles, in the token's tenant.
 //
 // A missing or invalid credential is 401 with a WWW-Authenticate challenge, a
 // missing permission 403, a permission the authorizer denies 403, and a guard
@@ -114,15 +114,35 @@ func (v *Validator) AuthorizeRequest(r *http.Request, permission string) (*Autho
 // and action as the token's principal, in the token's tenant. It fails
 // closed: no authorizer is a configuration error, and any error from the
 // authorizer is a refusal.
+//
+// The authorizer sees the token's roles, so an ABAC policy that selects one
+// of the caller's roles with a deny refuses the request. The role-bearing
+// decision is only ever added to the role-less one: the request is admitted
+// only when the authorizer allows it both without and with the roles, so a
+// role-selected ABAC allow (decisive in go-qrdb) cannot admit a request the
+// role-less decision refuses.
 func (v *Validator) authorizePermission(ctx context.Context, ac *AuthorizedContext, permission string) error {
 	if v.authorizer == nil {
 		return &ConfigError{Detail: "a permission route needs Options.Authorizer"}
 	}
-	identity := &qrdbsdk.Identity{Subject: ac.Subject, TenantID: ac.TenantID, ScopePermissions: ac.Scopes}
 	ctx = qrdbsdk.ContextWithTenant(ctx, qrdbsdk.NormalizeTenantID(ac.TenantID))
 	perm := qrdbsdk.Permission(permission)
-	if err := v.authorizer.Authorize(ctx, identity, qrdbsdk.PermissionResource(perm), qrdbsdk.PermissionAction(perm)); err != nil {
+	resource, action := qrdbsdk.PermissionResource(perm), qrdbsdk.PermissionAction(perm)
+
+	identity := &qrdbsdk.Identity{Subject: ac.Subject, TenantID: ac.TenantID, ScopePermissions: ac.Scopes}
+	if err := v.authorizer.Authorize(ctx, identity, resource, action); err != nil {
 		return &PolicyDeniedError{Required: permission, Cause: err}
+	}
+	if len(ac.Roles) > 0 {
+		withRoles := &qrdbsdk.Identity{
+			Subject:          ac.Subject,
+			TenantID:         ac.TenantID,
+			Roles:            append([]string(nil), ac.Roles...),
+			ScopePermissions: ac.Scopes,
+		}
+		if err := v.authorizer.Authorize(ctx, withRoles, resource, action); err != nil {
+			return &PolicyDeniedError{Required: permission, Cause: err}
+		}
 	}
 	return nil
 }
