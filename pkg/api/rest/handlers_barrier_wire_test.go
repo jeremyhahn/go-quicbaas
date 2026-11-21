@@ -28,15 +28,13 @@ import (
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	qrdbrest "github.com/jeremyhahn/go-qrdb/sdk/go/transport/rest"
-
-	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
 // =============================================================================
 // Barrier REST wire contract — go-quicbaas#988.
 //
 // The go-qrdb SDK's REST transport marshals go-qrdb's own
-// transport.Barrier*Request structs straight into the request body these
+// qrdbtransport.Barrier*Request structs straight into the request body these
 // handlers decode, so those structs ARE the wire format (CLAUDE.md, "SDK
 // Boundary": the stack is pre-v1 with exactly one). go-qrdb v0.19.0-alpha
 // retyped every barrier credential from `string` to wipeable `[]byte`, which
@@ -149,10 +147,10 @@ func TestBarrierWire_ShamirInitializeCarriesExactSecretBytes(t *testing.T) {
 		wantThr, wantTotal = 2, 3
 	)
 	svc := &fakeBarrierService{
-		initShamirFn: func(_ context.Context, secret []byte, threshold, total int) (*service.ShamirInitInfo, error) {
+		initShamirFn: func(_ context.Context, secret []byte, threshold, total int) (*qrdbtransport.BarrierInitializeShamirResponse, error) {
 			got = append([]byte(nil), secret...)
 			gotThr, gotTotal = threshold, total
-			return &service.ShamirInitInfo{Threshold: threshold, TotalShares: total, ShareCount: total}, nil
+			return &qrdbtransport.BarrierInitializeShamirResponse{Threshold: threshold, TotalShares: total, ShareCount: total}, nil
 		},
 	}
 	client := newQRDBRESTClient(t, barrierServer(t, svc))
@@ -188,9 +186,9 @@ func TestBarrierWire_ShareVerbsCarryShareStrings(t *testing.T) {
 		gotShares []string
 	)
 	svc := &fakeBarrierService{
-		unsealWithShareFn: func(_ context.Context, s string) (*service.UnsealShareProgress, error) {
+		unsealWithShareFn: func(_ context.Context, s string) (*qrdbtransport.BarrierUnsealShareResponse, error) {
 			gotShare = s
-			return &service.UnsealShareProgress{Required: 2, Submitted: 1}, nil
+			return &qrdbtransport.BarrierUnsealShareResponse{Required: 2, Submitted: 1}, nil
 		},
 		unsealWithSharesFn: func(_ context.Context, shares []string) error {
 			gotShares = shares
@@ -233,18 +231,18 @@ func TestBarrierWire_QuorumVerbsCarryCounts(t *testing.T) {
 		gotKeys, gotTokenShares    []string
 	)
 	svc := &fakeBarrierService{
-		rekeyFn: func(_ context.Context, threshold, total int) (*service.ShamirInitInfo, error) {
+		rekeyFn: func(_ context.Context, threshold, total int) (*qrdbtransport.BarrierRekeyResponse, error) {
 			gotRekeyThr, gotRekeyTotal = threshold, total
-			return &service.ShamirInitInfo{Threshold: threshold, TotalShares: total, ShareCount: total}, nil
+			return &qrdbtransport.BarrierRekeyResponse{Threshold: threshold, TotalShares: total, ShareCount: total}, nil
 		},
-		genRecoveryFn: func(_ context.Context, threshold, total int) (*service.RecoveryKeysInfo, error) {
+		genRecoveryFn: func(_ context.Context, threshold, total int) (*qrdbtransport.BarrierRecoveryKeysResponse, error) {
 			gotGenThr, gotGenTotal = threshold, total
-			return &service.RecoveryKeysInfo{Threshold: threshold, Total: total, ShareCount: total}, nil
+			return &qrdbtransport.BarrierRecoveryKeysResponse{Threshold: threshold, Total: total, ShareCount: total}, nil
 		},
 		recoverWithKeysFn: func(_ context.Context, keys []string) error { gotKeys = keys; return nil },
-		genRootTokenFn: func(_ context.Context, shares []string) (*service.RootTokenInfo, error) {
+		genRootTokenFn: func(_ context.Context, shares []string) (*qrdbtransport.BarrierRootTokenResponse, error) {
 			gotTokenShares = shares
-			return &service.RootTokenInfo{Token: "root-tok"}, nil
+			return &qrdbtransport.BarrierRootTokenResponse{Token: "root-tok"}, nil
 		},
 	}
 	client := newQRDBRESTClient(t, barrierServer(t, svc))
@@ -295,8 +293,8 @@ func TestBarrierWire_QuorumVerbsCarryCounts(t *testing.T) {
 // BarrierStatusResponse, since that is what `barrier status` renders.
 func TestBarrierWire_StatusDecodesIntoQRDBResponse(t *testing.T) {
 	svc := &fakeBarrierService{
-		statusFn: func(context.Context) (*service.BarrierStatusInfo, error) {
-			return &service.BarrierStatusInfo{Sealed: true, Strategy: "passphrase", HardwareBacked: false}, nil
+		statusFn: func(context.Context) (*qrdbtransport.BarrierStatusResponse, error) {
+			return &qrdbtransport.BarrierStatusResponse{Sealed: true, Strategy: "passphrase", HardwareBacked: false}, nil
 		},
 	}
 	client := newQRDBRESTClient(t, barrierServer(t, svc))
@@ -704,9 +702,9 @@ func TestBarrierWire_RejectedRequestsNeverReachTheService(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			called := false
 			svc := &fakeBarrierService{
-				initShamirFn: func(context.Context, []byte, int, int) (*service.ShamirInitInfo, error) {
+				initShamirFn: func(context.Context, []byte, int, int) (*qrdbtransport.BarrierInitializeShamirResponse, error) {
 					called = true
-					return &service.ShamirInitInfo{}, nil
+					return &qrdbtransport.BarrierInitializeShamirResponse{}, nil
 				},
 				unsealFn: func(context.Context, []byte) error { called = true; return nil },
 			}

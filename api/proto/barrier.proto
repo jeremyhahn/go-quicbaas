@@ -143,6 +143,10 @@ message BarrierStatusResponse {
   bool hardware_backed = 3;
   // initialized_at is RFC3339 (UTC) or empty when never initialised.
   string initialized_at = 4;
+  // shamir_threshold and shamir_total carry go-qrdb's configured M-of-N
+  // quorum when the barrier uses the Shamir strategy; zero otherwise.
+  int32 shamir_threshold = 5;
+  int32 shamir_total = 6;
 }
 
 // BarrierShamirInitializeRequest initialises the barrier with Shamir secret sharing.
@@ -153,11 +157,16 @@ message BarrierShamirInitializeRequest {
   int32 total_shares = 3;
 }
 
-// BarrierShamirInitializeResponse returns the generated key shares.
+// BarrierShamirInitializeResponse is go-qrdb's share-free answer: each share
+// is sealed to an enrolled officer and claimed through the share-claim flow,
+// never returned here.
 message BarrierShamirInitializeResponse {
-  repeated string shares = 1;
+  reserved 1;
+  reserved "shares";
   int32 threshold = 2;
   int32 total_shares = 3;
+  // share_count is go-qrdb's count of shares sealed to enrolled officers.
+  int32 share_count = 4;
 }
 
 // BarrierShamirUnsealShareRequest submits a single Shamir share.
@@ -189,11 +198,15 @@ message BarrierRecoveryGenerateRequest {
   int32 total = 2;
 }
 
-// BarrierRecoveryKeysResponse returns generated recovery keys.
+// BarrierRecoveryKeysResponse is go-qrdb's share-free answer: each recovery
+// share is sealed to an enrolled recovery officer, never returned here.
 message BarrierRecoveryKeysResponse {
-  repeated string keys = 1;
+  reserved 1;
+  reserved "keys";
   int32 threshold = 2;
   int32 total = 3;
+  // share_count is go-qrdb's count of recovery shares sealed to officers.
+  int32 share_count = 4;
 }
 
 // BarrierRecoveryRecoverRequest unseals the barrier using recovery keys.

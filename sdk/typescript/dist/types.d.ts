@@ -1571,6 +1571,10 @@ export interface BarrierStatusResponse {
     hardware_backed: boolean;
     /** RFC3339 timestamp recorded when the barrier was first initialized. */
     initialized_at?: string;
+    /** Shamir quorum threshold (M of N); absent unless the strategy is Shamir. */
+    shamir_threshold?: number;
+    /** Shamir share total (N); absent unless the strategy is Shamir. */
+    shamir_total?: number;
 }
 export interface BarrierInitRequest {
     /** Passphrase used to derive the master key. The REST client base64-encodes it. */
@@ -1593,12 +1597,12 @@ export interface BarrierShamirInitRequest {
     total_shares: number;
 }
 export interface BarrierShamirInitResponse {
-    /** Shamir shares for distribution. */
-    shares: string[];
     /** Threshold required for reconstruction. */
     threshold: number;
     /** Total shares generated. */
     total_shares: number;
+    /** Shares go-qrdb sealed to enrolled officers; share material is never returned. */
+    share_count: number;
 }
 export interface BarrierUnsealShareRequest {
     /** Single Shamir share. */
@@ -1623,12 +1627,12 @@ export interface BarrierRekeyRequest {
     total: number;
 }
 export interface BarrierRekeyResponse {
-    /** New Shamir shares. */
-    shares: string[];
     /** New threshold value. */
     threshold: number;
     /** New total share count. */
     total_shares: number;
+    /** Shares go-qrdb sealed to enrolled officers; share material is never returned. */
+    share_count: number;
 }
 /** TenantBarrierStrategy identifies how a tenant's barrier is sealed. */
 export type TenantBarrierStrategy = 'none' | 'passphrase' | 'shamir';
@@ -1689,12 +1693,12 @@ export interface BarrierGenerateRecoveryKeysRequest {
     total: number;
 }
 export interface BarrierRecoveryKeysResponse {
-    /** Recovery key values for distribution. */
-    keys: string[];
     /** Threshold required for recovery. */
     threshold: number;
     /** Total recovery keys generated. */
     total: number;
+    /** Recovery shares go-qrdb sealed to officers; key material is never returned. */
+    share_count: number;
 }
 export interface BarrierRecoverWithKeysRequest {
     /** Recovery keys used to unseal. */

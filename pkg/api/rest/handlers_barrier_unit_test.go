@@ -39,27 +39,27 @@ var errBarrierBoom = stderrors.New("barrier boom")
 // fakeBarrierService is a hand-written test double for service.BarrierServicer.
 // Methods delegate to optional function fields so a test can shape each path.
 type fakeBarrierService struct {
-	statusFn           func(ctx context.Context) (*service.BarrierStatusInfo, error)
+	statusFn           func(ctx context.Context) (*qrdbtransport.BarrierStatusResponse, error)
 	initializeFn       func(ctx context.Context, secret []byte) error
 	unsealFn           func(ctx context.Context, secret []byte) error
 	sealFn             func(ctx context.Context, req *service.BarrierSealRequest) error
-	initShamirFn       func(ctx context.Context, secret []byte, threshold, total int) (*service.ShamirInitInfo, error)
-	unsealWithShareFn  func(ctx context.Context, share string) (*service.UnsealShareProgress, error)
+	initShamirFn       func(ctx context.Context, secret []byte, threshold, total int) (*qrdbtransport.BarrierInitializeShamirResponse, error)
+	unsealWithShareFn  func(ctx context.Context, share string) (*qrdbtransport.BarrierUnsealShareResponse, error)
 	unsealWithSharesFn func(ctx context.Context, shares []string) error
-	rekeyFn            func(ctx context.Context, threshold, total int) (*service.ShamirInitInfo, error)
-	genRecoveryFn      func(ctx context.Context, threshold, total int) (*service.RecoveryKeysInfo, error)
+	rekeyFn            func(ctx context.Context, threshold, total int) (*qrdbtransport.BarrierRekeyResponse, error)
+	genRecoveryFn      func(ctx context.Context, threshold, total int) (*qrdbtransport.BarrierRecoveryKeysResponse, error)
 	recoverWithKeysFn  func(ctx context.Context, keys []string) error
 	deleteRecoveryFn   func(ctx context.Context) error
 	hasRecoveryFn      func(ctx context.Context) (bool, error)
-	genRootTokenFn     func(ctx context.Context, shares []string) (*service.RootTokenInfo, error)
+	genRootTokenFn     func(ctx context.Context, shares []string) (*qrdbtransport.BarrierRootTokenResponse, error)
 	enableEncryptionFn func(ctx context.Context, tenantID string, opts qrdbsdk.MigrationOptions) error
 }
 
-func (f *fakeBarrierService) BarrierStatus(ctx context.Context) (*service.BarrierStatusInfo, error) {
+func (f *fakeBarrierService) BarrierStatus(ctx context.Context) (*qrdbtransport.BarrierStatusResponse, error) {
 	if f.statusFn != nil {
 		return f.statusFn(ctx)
 	}
-	return &service.BarrierStatusInfo{}, nil
+	return &qrdbtransport.BarrierStatusResponse{}, nil
 }
 
 func (f *fakeBarrierService) BarrierInitialize(ctx context.Context, secret []byte) error {
@@ -83,18 +83,18 @@ func (f *fakeBarrierService) BarrierSeal(ctx context.Context, req *service.Barri
 	return nil
 }
 
-func (f *fakeBarrierService) BarrierInitializeShamir(ctx context.Context, secret []byte, threshold, total int) (*service.ShamirInitInfo, error) {
+func (f *fakeBarrierService) BarrierInitializeShamir(ctx context.Context, secret []byte, threshold, total int) (*qrdbtransport.BarrierInitializeShamirResponse, error) {
 	if f.initShamirFn != nil {
 		return f.initShamirFn(ctx, secret, threshold, total)
 	}
-	return &service.ShamirInitInfo{}, nil
+	return &qrdbtransport.BarrierInitializeShamirResponse{}, nil
 }
 
-func (f *fakeBarrierService) BarrierUnsealWithShare(ctx context.Context, share string) (*service.UnsealShareProgress, error) {
+func (f *fakeBarrierService) BarrierUnsealWithShare(ctx context.Context, share string) (*qrdbtransport.BarrierUnsealShareResponse, error) {
 	if f.unsealWithShareFn != nil {
 		return f.unsealWithShareFn(ctx, share)
 	}
-	return &service.UnsealShareProgress{}, nil
+	return &qrdbtransport.BarrierUnsealShareResponse{}, nil
 }
 
 func (f *fakeBarrierService) BarrierUnsealWithShares(ctx context.Context, shares []string) error {
@@ -104,18 +104,18 @@ func (f *fakeBarrierService) BarrierUnsealWithShares(ctx context.Context, shares
 	return nil
 }
 
-func (f *fakeBarrierService) BarrierRekey(ctx context.Context, threshold, total int) (*service.ShamirInitInfo, error) {
+func (f *fakeBarrierService) BarrierRekey(ctx context.Context, threshold, total int) (*qrdbtransport.BarrierRekeyResponse, error) {
 	if f.rekeyFn != nil {
 		return f.rekeyFn(ctx, threshold, total)
 	}
-	return &service.ShamirInitInfo{}, nil
+	return &qrdbtransport.BarrierRekeyResponse{}, nil
 }
 
-func (f *fakeBarrierService) BarrierGenerateRecoveryKeys(ctx context.Context, threshold, total int) (*service.RecoveryKeysInfo, error) {
+func (f *fakeBarrierService) BarrierGenerateRecoveryKeys(ctx context.Context, threshold, total int) (*qrdbtransport.BarrierRecoveryKeysResponse, error) {
 	if f.genRecoveryFn != nil {
 		return f.genRecoveryFn(ctx, threshold, total)
 	}
-	return &service.RecoveryKeysInfo{}, nil
+	return &qrdbtransport.BarrierRecoveryKeysResponse{}, nil
 }
 
 func (f *fakeBarrierService) BarrierRecoverWithKeys(ctx context.Context, keys []string) error {
@@ -139,11 +139,11 @@ func (f *fakeBarrierService) BarrierHasRecoveryKeys(ctx context.Context) (bool, 
 	return false, nil
 }
 
-func (f *fakeBarrierService) BarrierGenerateRootToken(ctx context.Context, shares []string) (*service.RootTokenInfo, error) {
+func (f *fakeBarrierService) BarrierGenerateRootToken(ctx context.Context, shares []string) (*qrdbtransport.BarrierRootTokenResponse, error) {
 	if f.genRootTokenFn != nil {
 		return f.genRootTokenFn(ctx, shares)
 	}
-	return &service.RootTokenInfo{}, nil
+	return &qrdbtransport.BarrierRootTokenResponse{}, nil
 }
 
 func (f *fakeBarrierService) EnableEncryption(ctx context.Context, tenantID string, opts qrdbsdk.MigrationOptions) error {
@@ -181,10 +181,10 @@ func doBarrierReq(t *testing.T, s *Server, method, path, body string) *httptest.
 // =============================================================================
 
 func TestHandleBarrierStatus_OK(t *testing.T) {
-	now := time.Now()
+	now := time.Now().UTC().Format(time.RFC3339)
 	svc := &fakeBarrierService{
-		statusFn: func(ctx context.Context) (*service.BarrierStatusInfo, error) {
-			return &service.BarrierStatusInfo{
+		statusFn: func(ctx context.Context) (*qrdbtransport.BarrierStatusResponse, error) {
+			return &qrdbtransport.BarrierStatusResponse{
 				Sealed:         true,
 				Strategy:       "shamir",
 				HardwareBacked: true,
@@ -210,8 +210,8 @@ func TestHandleBarrierStatus_OK(t *testing.T) {
 
 func TestHandleBarrierStatus_ZeroTimeOmitsInitializedAt(t *testing.T) {
 	svc := &fakeBarrierService{
-		statusFn: func(ctx context.Context) (*service.BarrierStatusInfo, error) {
-			return &service.BarrierStatusInfo{Sealed: false, Strategy: "none"}, nil
+		statusFn: func(ctx context.Context) (*qrdbtransport.BarrierStatusResponse, error) {
+			return &qrdbtransport.BarrierStatusResponse{Sealed: false, Strategy: "none"}, nil
 		},
 	}
 	w := doBarrierReq(t, barrierServer(t, svc), http.MethodGet, "/api/v1/barrier/status", "")
@@ -225,7 +225,7 @@ func TestHandleBarrierStatus_ZeroTimeOmitsInitializedAt(t *testing.T) {
 
 func TestHandleBarrierStatus_ServiceError(t *testing.T) {
 	svc := &fakeBarrierService{
-		statusFn: func(ctx context.Context) (*service.BarrierStatusInfo, error) {
+		statusFn: func(ctx context.Context) (*qrdbtransport.BarrierStatusResponse, error) {
 			return nil, errBarrierBoom
 		},
 	}
@@ -369,8 +369,8 @@ func TestHandleBarrierSeal_ServiceError(t *testing.T) {
 
 func TestHandleBarrierShamirInitialize_OK(t *testing.T) {
 	svc := &fakeBarrierService{
-		initShamirFn: func(ctx context.Context, secret []byte, threshold, total int) (*service.ShamirInitInfo, error) {
-			return &service.ShamirInitInfo{Threshold: threshold, TotalShares: total, ShareCount: total}, nil
+		initShamirFn: func(ctx context.Context, secret []byte, threshold, total int) (*qrdbtransport.BarrierInitializeShamirResponse, error) {
+			return &qrdbtransport.BarrierInitializeShamirResponse{Threshold: threshold, TotalShares: total, ShareCount: total}, nil
 		},
 	}
 	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/shamir/initialize",
@@ -408,7 +408,7 @@ func TestHandleBarrierShamirInitialize_Validation(t *testing.T) {
 
 func TestHandleBarrierShamirInitialize_ServiceError(t *testing.T) {
 	svc := &fakeBarrierService{
-		initShamirFn: func(ctx context.Context, secret []byte, threshold, total int) (*service.ShamirInitInfo, error) {
+		initShamirFn: func(ctx context.Context, secret []byte, threshold, total int) (*qrdbtransport.BarrierInitializeShamirResponse, error) {
 			return nil, errBarrierBoom
 		},
 	}
@@ -425,8 +425,8 @@ func TestHandleBarrierShamirInitialize_ServiceError(t *testing.T) {
 
 func TestHandleBarrierShamirUnsealShare_OK(t *testing.T) {
 	svc := &fakeBarrierService{
-		unsealWithShareFn: func(ctx context.Context, share string) (*service.UnsealShareProgress, error) {
-			return &service.UnsealShareProgress{Required: 3, Submitted: 1, Complete: false}, nil
+		unsealWithShareFn: func(ctx context.Context, share string) (*qrdbtransport.BarrierUnsealShareResponse, error) {
+			return &qrdbtransport.BarrierUnsealShareResponse{Required: 3, Submitted: 1, Complete: false}, nil
 		},
 	}
 	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/shamir/unseal-share", `{"share":"abc"}`)
@@ -451,7 +451,7 @@ func TestHandleBarrierShamirUnsealShare_MissingShare(t *testing.T) {
 
 func TestHandleBarrierShamirUnsealShare_ServiceError(t *testing.T) {
 	svc := &fakeBarrierService{
-		unsealWithShareFn: func(ctx context.Context, share string) (*service.UnsealShareProgress, error) {
+		unsealWithShareFn: func(ctx context.Context, share string) (*qrdbtransport.BarrierUnsealShareResponse, error) {
 			return nil, errBarrierBoom
 		},
 	}
@@ -490,8 +490,8 @@ func TestHandleBarrierShamirUnsealShares_ServiceError(t *testing.T) {
 
 func TestHandleBarrierRekey_OK(t *testing.T) {
 	svc := &fakeBarrierService{
-		rekeyFn: func(ctx context.Context, threshold, total int) (*service.ShamirInitInfo, error) {
-			return &service.ShamirInitInfo{Threshold: threshold, TotalShares: total, ShareCount: total}, nil
+		rekeyFn: func(ctx context.Context, threshold, total int) (*qrdbtransport.BarrierRekeyResponse, error) {
+			return &qrdbtransport.BarrierRekeyResponse{Threshold: threshold, TotalShares: total, ShareCount: total}, nil
 		},
 	}
 	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/rekey", `{"threshold":2,"total":3}`)
@@ -516,7 +516,7 @@ func TestHandleBarrierRekey_Validation(t *testing.T) {
 
 func TestHandleBarrierRekey_ServiceError(t *testing.T) {
 	svc := &fakeBarrierService{
-		rekeyFn: func(ctx context.Context, threshold, total int) (*service.ShamirInitInfo, error) {
+		rekeyFn: func(ctx context.Context, threshold, total int) (*qrdbtransport.BarrierRekeyResponse, error) {
 			return nil, errBarrierBoom
 		},
 	}
@@ -532,8 +532,8 @@ func TestHandleBarrierRekey_ServiceError(t *testing.T) {
 
 func TestHandleBarrierRecoveryGenerate_OK(t *testing.T) {
 	svc := &fakeBarrierService{
-		genRecoveryFn: func(ctx context.Context, threshold, total int) (*service.RecoveryKeysInfo, error) {
-			return &service.RecoveryKeysInfo{Threshold: threshold, Total: total, ShareCount: total}, nil
+		genRecoveryFn: func(ctx context.Context, threshold, total int) (*qrdbtransport.BarrierRecoveryKeysResponse, error) {
+			return &qrdbtransport.BarrierRecoveryKeysResponse{Threshold: threshold, Total: total, ShareCount: total}, nil
 		},
 	}
 	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/recovery/generate", `{"threshold":2,"total":3}`)
@@ -569,7 +569,7 @@ func TestHandleBarrierRecoveryGenerate_Validation(t *testing.T) {
 
 func TestHandleBarrierRecoveryGenerate_ServiceError(t *testing.T) {
 	svc := &fakeBarrierService{
-		genRecoveryFn: func(ctx context.Context, threshold, total int) (*service.RecoveryKeysInfo, error) {
+		genRecoveryFn: func(ctx context.Context, threshold, total int) (*qrdbtransport.BarrierRecoveryKeysResponse, error) {
 			return nil, errBarrierBoom
 		},
 	}
@@ -639,7 +639,7 @@ func TestHandleBarrierRecoveryStatus_OK(t *testing.T) {
 // TestHandleBarrierRecoveryStatus_DecodesIntoQRDBTransportType pins the wire
 // format to the client that actually reads it: go-qrdb's REST transport
 // decodes GET /v1/barrier/recovery/status into
-// transport.BarrierHasRecoveryKeysResponse, whose field is tagged "has_keys".
+// qrdbtransport.BarrierHasRecoveryKeysResponse, whose field is tagged "has_keys".
 // A mismatched key decodes to false for a barrier that HAS recovery keys —
 // a wrong answer on a disaster-recovery precondition, not an error
 // (go-quicbaas#991).
@@ -671,10 +671,10 @@ func TestHandleBarrierRecoveryStatus_ServiceError(t *testing.T) {
 // =============================================================================
 
 func TestHandleBarrierRootToken_OK(t *testing.T) {
-	now := time.Now()
+	now := time.Now().UTC().Format(time.RFC3339)
 	svc := &fakeBarrierService{
-		genRootTokenFn: func(ctx context.Context, shares []string) (*service.RootTokenInfo, error) {
-			return &service.RootTokenInfo{Token: "deadbeef", CreatedAt: now}, nil
+		genRootTokenFn: func(ctx context.Context, shares []string) (*qrdbtransport.BarrierRootTokenResponse, error) {
+			return &qrdbtransport.BarrierRootTokenResponse{Token: "deadbeef", CreatedAt: now}, nil
 		},
 	}
 	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/root-token", `{"shares":["a","b"]}`)
@@ -702,7 +702,7 @@ func TestHandleBarrierRootToken_Empty(t *testing.T) {
 
 func TestHandleBarrierRootToken_ServiceError(t *testing.T) {
 	svc := &fakeBarrierService{
-		genRootTokenFn: func(ctx context.Context, shares []string) (*service.RootTokenInfo, error) {
+		genRootTokenFn: func(ctx context.Context, shares []string) (*qrdbtransport.BarrierRootTokenResponse, error) {
 			return nil, errBarrierBoom
 		},
 	}
@@ -712,17 +712,23 @@ func TestHandleBarrierRootToken_ServiceError(t *testing.T) {
 	}
 }
 
-func TestHandleBarrierRootToken_ZeroCreatedAtOmitted(t *testing.T) {
+func TestHandleBarrierRootToken_ServesGoQrdbShape(t *testing.T) {
+	want := qrdbtransport.BarrierRootTokenResponse{Token: "deadbeef", CreatedAt: "2026-01-01T00:00:00Z"}
 	svc := &fakeBarrierService{
-		genRootTokenFn: func(ctx context.Context, shares []string) (*service.RootTokenInfo, error) {
-			return &service.RootTokenInfo{Token: "deadbeef"}, nil
+		genRootTokenFn: func(ctx context.Context, shares []string) (*qrdbtransport.BarrierRootTokenResponse, error) {
+			resp := want
+			return &resp, nil
 		},
 	}
 	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/root-token", `{"shares":["a"]}`)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
-	if strings.Contains(w.Body.String(), "created_at") {
-		t.Fatalf("zero CreatedAt should be omitted: %s", w.Body.String())
+	var got qrdbtransport.BarrierRootTokenResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v: %s", err, w.Body.String())
+	}
+	if got != want {
+		t.Fatalf("root token body = %+v, want go-qrdb's %+v", got, want)
 	}
 }

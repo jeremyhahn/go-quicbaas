@@ -2564,6 +2564,10 @@ export interface BarrierStatusResponse {
   hardware_backed: boolean;
   /** RFC3339 timestamp recorded when the barrier was first initialized. */
   initialized_at?: string;
+  /** Shamir quorum threshold (M of N); absent unless the strategy is Shamir. */
+  shamir_threshold?: number;
+  /** Shamir share total (N); absent unless the strategy is Shamir. */
+  shamir_total?: number;
 }
 
 // Wire note: a barrier credential is BYTES, not text. go-qrdb types every
@@ -2612,15 +2616,15 @@ export interface BarrierShamirInitRequest {
   total_shares: number;
 }
 
-// BarrierShamirInitResponse contains the generated Shamir shares.
+// BarrierShamirInitResponse is go-qrdb's share-free Shamir init result.
 // Mirrors transport.BarrierInitializeShamirResponse.
 export interface BarrierShamirInitResponse {
-  /** Shamir shares for distribution. */
-  shares: string[];
   /** Threshold required for reconstruction. */
   threshold: number;
   /** Total shares generated. */
   total_shares: number;
+  /** Shares go-qrdb sealed to enrolled officers; share material is never returned. */
+  share_count: number;
 }
 
 // BarrierUnsealShareRequest submits a single Shamir share toward the unseal
@@ -2657,15 +2661,15 @@ export interface BarrierRekeyRequest {
   total: number;
 }
 
-// BarrierRekeyResponse returns the new key shares after a rekey operation.
+// BarrierRekeyResponse is go-qrdb's share-free rekey result.
 // Mirrors transport.BarrierRekeyResponse.
 export interface BarrierRekeyResponse {
-  /** New Shamir shares. */
-  shares: string[];
   /** New threshold value. */
   threshold: number;
   /** New total share count. */
   total_shares: number;
+  /** Shares go-qrdb sealed to enrolled officers; share material is never returned. */
+  share_count: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -2756,15 +2760,15 @@ export interface BarrierGenerateRecoveryKeysRequest {
   total: number;
 }
 
-// BarrierRecoveryKeysResponse returns generated recovery keys.
+// BarrierRecoveryKeysResponse is go-qrdb's key-free recovery generation result.
 // Mirrors transport.BarrierRecoveryKeysResponse.
 export interface BarrierRecoveryKeysResponse {
-  /** Recovery key values for distribution. */
-  keys: string[];
   /** Threshold required for recovery. */
   threshold: number;
   /** Total recovery keys generated. */
   total: number;
+  /** Recovery shares go-qrdb sealed to officers; key material is never returned. */
+  share_count: number;
 }
 
 // BarrierRecoverWithKeysRequest holds recovery keys for disaster recovery.
