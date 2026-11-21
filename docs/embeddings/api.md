@@ -48,4 +48,36 @@ MCP tools: `quicbaas_embedding_batch`, `quicbaas_embedding_cache_clear`, `quicba
 | `ListProviders` | `GET /api/v1/embedding/providers` | yes | yes | yes | MISSING | `embedding:list_models` |
 | `SetDefaultProvider` | `PUT /api/v1/embedding/providers/default` | yes | yes | yes | MISSING | `embedding:list_models` |
 
+### `quicbaas.AI().QRDBEmbedding()` — go-qrdb's embedding service, re-exported
+
+`sdk/go` re-exports go-qrdb's `transport.EmbeddingClient` as
+`quicbaas.QRDBEmbeddingClient` (`sdk/go/qrdb.go`), with its request and
+response types: `QRDBEmbedRequest`, `QRDBEmbedResponse`,
+`QRDBBatchEmbedRequest`, `QRDBBatchEmbedResponse`,
+`QRDBListEmbeddingModelsResponse` and `QRDBEmbeddingModelInfo`. A consumer
+calls go-qrdb's embedding service without importing `go-qrdb/sdk/go`:
+
+```go
+ec, err := c.AI().QRDBEmbedding()
+if err != nil {
+    return err // the qrdb client failed to build, or its transport has no embedding surface
+}
+resp, err := ec.Embed(ctx, &quicbaas.QRDBEmbedRequest{Texts: []string{"hello"}, Provider: "ollama"})
+```
+
+| Method | What it does |
+|---|---|
+| `Embed` | Embeds one or more texts with a provider and model (empty = the service defaults). A quicbaas node serves each provider with its configured model only and refuses another model as invalid input. |
+| `BatchEmbed` | Splits a long text list into provider sub-batches (`BatchSize`, default 256) and returns the vectors in input order. |
+| `ListEmbeddingModels` | Lists a provider's embedding models (empty provider = the default). |
+
+The client is the qrdb sub-client's `Embedding()`: it rides the same transport
+and address as the QuicBaaS client (REST, gRPC, QUIC, Unix, MCP or embedded).
+The accessor returns an `UNAVAILABLE` error, never a nil client, when the qrdb
+transport does not serve the embedding service.
+
+This runs **in parallel** with QuicBaaS's own service above
+(`quicbaas.Embedding` / `AI().Embedding()`); QuicBaaS's own service is removed
+on the owner's word.
+
 
