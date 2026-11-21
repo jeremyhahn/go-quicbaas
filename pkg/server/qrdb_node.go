@@ -658,6 +658,8 @@ func (s *Server) unifiedModuleServerOptions(serverOpts []qrdbsdk.ServerOption, s
 	s.tenantUnsealRouter = newTenantUnsealRouter(s.rawQRDBTenantServicer, s.buildTenantBarrierService)
 	serverOpts = append(serverOpts, qrdbserver.WithTenantService(s.tenantUnsealRouter))
 	serverOpts = append(serverOpts, s.nodeBarrierServerOptions(sealEnabled)...)
+	// Compose go-qrdb's embedding service on REST, gRPC, QUIC, Unix and MCP.
+	serverOpts = append(serverOpts, s.qrdbEmbeddingServerOptions()...)
 
 	module, err := s.newQuicBaaSModule()
 	if err != nil {
