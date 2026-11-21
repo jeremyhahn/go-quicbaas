@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -1302,6 +1303,32 @@ func TestManagerListByPrefix(t *testing.T) {
 		}
 		if !result.HasMore {
 			t.Error("expected HasMore to be true")
+		}
+	})
+
+	t.Run("pages follow the cursor", func(t *testing.T) {
+		var keys []string
+		cursor := ""
+		for pages := 0; pages < 10; pages++ {
+			result, err := manager.ListByPrefix(ctx, "ns-prefix:", &ListOptions{Limit: 2, Cursor: cursor})
+			if err != nil {
+				t.Fatalf("ListByPrefix failed: %v", err)
+			}
+			keys = append(keys, result.Keys...)
+			if !result.HasMore {
+				if result.NextCursor != "" {
+					t.Errorf("last page NextCursor = %q, want empty", result.NextCursor)
+				}
+				break
+			}
+			if result.NextCursor == "" {
+				t.Fatal("HasMore without a NextCursor")
+			}
+			cursor = result.NextCursor
+		}
+		want := []string{"ns-prefix:dir/file-a.txt", "ns-prefix:dir/file-b.txt", "ns-prefix:dir/file-c.txt"}
+		if strings.Join(keys, ",") != strings.Join(want, ",") {
+			t.Errorf("paged keys = %v, want %v", keys, want)
 		}
 	})
 }
