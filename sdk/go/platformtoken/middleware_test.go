@@ -103,7 +103,15 @@ func TestMiddleware_DaemonRoutesAuthenticateAndAuthoriseThroughTheSDK(t *testing
 		iss: testIssuer, aud: []string{testAudience}, sub: "user-1", tid: "tenant-1",
 		scp: []string{"keys:get"}, exp: now.Add(10 * time.Minute), iat: now, jkt: jkt,
 	})
-	proof, err := dpop.NewProofWithClock(dpopKey, http.MethodGet, url, &fixedDPoPClock{now})
+	proof, err := dpop.NewProofForAccessTokenWithClock(dpopKey, http.MethodGet, url, dpopBound, &fixedDPoPClock{now})
+	if err != nil {
+		t.Fatalf("proof: %v", err)
+	}
+	noATH, err := dpop.NewProofWithClock(dpopKey, http.MethodGet, url, &fixedDPoPClock{now})
+	if err != nil {
+		t.Fatalf("proof: %v", err)
+	}
+	otherATH, err := dpop.NewProofForAccessTokenWithClock(dpopKey, http.MethodGet, url, "another-token", &fixedDPoPClock{now})
 	if err != nil {
 		t.Fatalf("proof: %v", err)
 	}
@@ -132,6 +140,10 @@ func TestMiddleware_DaemonRoutesAuthenticateAndAuthoriseThroughTheSDK(t *testing
 		{name: "DPoP-bound without a proof", auth: "DPoP " + dpopBound, wantStatus: http.StatusUnauthorized},
 		{name: "DPoP-bound with its proof", auth: "DPoP " + dpopBound, dpopProof: proof,
 			wantStatus: http.StatusOK, wantBody: "tenant-1/user-1"},
+		{name: "DPoP-bound with a proof that carries no ath", auth: "DPoP " + dpopBound, dpopProof: noATH,
+			wantStatus: http.StatusUnauthorized},
+		{name: "DPoP-bound with another token's ath", auth: "DPoP " + dpopBound, dpopProof: otherATH,
+			wantStatus: http.StatusUnauthorized},
 		{name: "guard cannot verify a binding", auth: "DPoP " + dpopBound, dpopProof: proof, noReplay: true,
 			wantStatus: http.StatusServiceUnavailable},
 	} {

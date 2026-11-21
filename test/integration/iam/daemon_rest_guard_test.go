@@ -114,11 +114,15 @@ func TestDaemonRESTGuard_LiveNodeTokens(t *testing.T) {
 
 		attacker, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		require.NoError(t, err)
-		stolen, err := dpop.NewProof(attacker, http.MethodGet, resource)
+		stolen, err := dpop.NewProofForAccessToken(attacker, http.MethodGet, resource, token)
 		require.NoError(t, err)
 		assert.Equal(t, http.StatusUnauthorized, call("", "DPoP "+token, stolen).Code, "another key's proof")
 
-		proof, err := dpop.NewProof(key, http.MethodGet, resource)
+		noATH, err := dpop.NewProof(key, http.MethodGet, resource)
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusUnauthorized, call("", "DPoP "+token, noATH).Code, "a proof without ath")
+
+		proof, err := dpop.NewProofForAccessToken(key, http.MethodGet, resource, token)
 		require.NoError(t, err)
 		w := call("", "DPoP "+token, proof)
 		require.Equal(t, http.StatusOK, w.Code, w.Body.String())

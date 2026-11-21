@@ -50,6 +50,12 @@ var NewDPoPProof = dpop.NewProof
 // need a fixed issuance time.
 var NewDPoPProofWithClock = dpop.NewProofWithClock
 
+// NewDPoPProofForAccessToken builds a DPoP proof carrying the ath hash of the access token the request presents.
+var NewDPoPProofForAccessToken = dpop.NewProofForAccessToken
+
+// NewDPoPProofForAccessTokenWithClock is NewDPoPProofForAccessToken with an injectable clock.
+var NewDPoPProofForAccessTokenWithClock = dpop.NewProofForAccessTokenWithClock
+
 // DPoPThumbprint returns the RFC 7638 JWK SHA-256 thumbprint (jkt) of a public
 // key, used to bind an access token to a DPoP key.
 var DPoPThumbprint = dpop.Thumbprint

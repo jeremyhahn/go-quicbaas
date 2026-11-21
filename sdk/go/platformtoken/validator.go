@@ -275,7 +275,8 @@ func (v *Validator) ValidatePlatformToken(ctx context.Context, tokenString strin
 
 // ValidateWithDPoP verifies the access token (as ValidatePlatformToken) and
 // then verifies the presented DPoP proof against the token's cnf.jkt binding
-// (RFC 9449): the proof signature, htm/htu, iat skew, jti replay, and that the
+// (RFC 9449): the proof signature, htm/htu, the ath hash of tokenString, iat
+// skew, jti replay, and that the
 // SHA-256 thumbprint of the proof key equals cnf.jkt. A token without cnf.jkt
 // is rejected on this path (a bearer cannot be replayed with an attacker's DPoP
 // key and accepted). The replayCache must be supplied by the caller and is
@@ -298,6 +299,7 @@ func (v *Validator) ValidateWithDPoP(ctx context.Context, tokenString, dpopProof
 		ExpectedJkt: claims.Confirmation.Jkt,
 		ReplayCache: replayCache,
 		Clock:       clockAdapter{now: v.nowFunc},
+		AccessToken: tokenString,
 	}); err != nil {
 		return nil, err
 	}
