@@ -143,14 +143,9 @@ type Pins struct {
 	MarksmanSHA256X86_64      string
 	MarksmanSHA256Aarch64     string
 
-	// KotlinLsp is JetBrains' Kotlin language server, from its release
-	// tarball with the SHA-256 per architecture pinned beside it. OpenJDK is
-	// the major of Debian's headless JDK, the Java a Kotlin or Java project
+	// OpenJDK is the major of Debian's headless JDK, the Java a Java project
 	// builds with (go-quicbaas#1746).
-	KotlinLsp              string
-	KotlinLspSHA256X86_64  string
-	KotlinLspSHA256Aarch64 string
-	OpenJDK                string
+	OpenJDK string
 }
 
 // ToolchainPins returns the repository's toolchain pins, as this binary
@@ -216,18 +211,24 @@ func ToolchainPins() (Pins, error) {
 		MarksmanSHA256X86_64:      toolchain["MARKSMAN_SHA256_X86_64"],
 		MarksmanSHA256Aarch64:     toolchain["MARKSMAN_SHA256_AARCH64"],
 
-		KotlinLsp:              toolchain["KOTLIN_LSP_VERSION"],
-		KotlinLspSHA256X86_64:  toolchain["KOTLIN_LSP_SHA256_X86_64"],
-		KotlinLspSHA256Aarch64: toolchain["KOTLIN_LSP_SHA256_AARCH64"],
-		OpenJDK:                toolchain["OPENJDK_MAJOR"],
+		OpenJDK: toolchain["OPENJDK_MAJOR"],
 	}
 	return pins, pins.Validate()
 }
 
-// Validate reports the pins that are empty.
+// npmBundledFloorsBuildArg is the one pin that may be empty: npm bundles no
+// copy that needs a floor, and toolchain.mk then has no line for it.
+const npmBundledFloorsBuildArg = "NPM_BUNDLED_DEPENDENCY_FLOORS"
+
+// Validate reports the pins that are empty. NPM_BUNDLED_DEPENDENCY_FLOORS is
+// the one pin that may be empty (it is still passed as a build argument):
+// an empty list means npm bundles no copy that needs a floor.
 func (p Pins) Validate() error {
 	var missing []string
 	for _, pin := range p.named() {
+		if pin.buildArg == npmBundledFloorsBuildArg {
+			continue
+		}
 		if strings.TrimSpace(pin.value) == "" {
 			missing = append(missing, pin.buildArg)
 		}
@@ -277,7 +278,7 @@ func (p Pins) named() []namedPin {
 		{buildArg: "NODE_SHA256_X86_64", value: p.NodeSHA256X86_64},
 		{buildArg: "NODE_SHA256_AARCH64", value: p.NodeSHA256Aarch64},
 		{buildArg: "NPM_VERSION", label: LabelNpmVersion, value: p.Npm},
-		{buildArg: "NPM_BUNDLED_DEPENDENCY_FLOORS", value: p.NpmBundledDependencyFloors},
+		{buildArg: npmBundledFloorsBuildArg, value: p.NpmBundledDependencyFloors},
 		{buildArg: "UV_VERSION", label: LabelUvVersion, value: p.Uv},
 		{buildArg: "UV_SHA256_X86_64", value: p.UvSHA256X86_64},
 		{buildArg: "UV_SHA256_AARCH64", value: p.UvSHA256Aarch64},
@@ -295,9 +296,6 @@ func (p Pins) named() []namedPin {
 		{buildArg: "MARKSMAN_VERSION", label: LabelMarksmanVersion, value: p.Marksman},
 		{buildArg: "MARKSMAN_SHA256_X86_64", value: p.MarksmanSHA256X86_64},
 		{buildArg: "MARKSMAN_SHA256_AARCH64", value: p.MarksmanSHA256Aarch64},
-		{buildArg: "KOTLIN_LSP_VERSION", label: LabelKotlinLspVersion, value: p.KotlinLsp},
-		{buildArg: "KOTLIN_LSP_SHA256_X86_64", value: p.KotlinLspSHA256X86_64},
-		{buildArg: "KOTLIN_LSP_SHA256_AARCH64", value: p.KotlinLspSHA256Aarch64},
 		{buildArg: "OPENJDK_MAJOR", label: LabelOpenJDKVersion, value: p.OpenJDK},
 	}
 }
@@ -339,7 +337,6 @@ const (
 	LabelClangdVersion                   = "io.quicbaas.worker.clangd.version"
 	LabelRustAnalyzerVersion             = "io.quicbaas.worker.rust-analyzer.version"
 	LabelMarksmanVersion                 = "io.quicbaas.worker.marksman.version"
-	LabelKotlinLspVersion                = "io.quicbaas.worker.kotlin-lsp.version"
 	LabelOpenJDKVersion                  = "io.quicbaas.worker.openjdk.version"
 )
 
