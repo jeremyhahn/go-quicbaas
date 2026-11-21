@@ -1889,73 +1889,19 @@ func (s *Server) registerIAMService(grpcServer *ggrpc.Server) {
 		return
 	}
 
-	ctx := context.Background()
-
-	// Retrieve core IAM components
-	tenantMgr, err := getter.GetTenantManager(ctx)
-	if err != nil {
-		s.logger.WithError(err).Warn("Failed to get tenant manager, skipping IAM gRPC registration")
+	iamServer := s.buildIAMServer(getter)
+	if iamServer == nil {
 		return
 	}
-
-	identityStore, err := getter.GetIdentityStore(ctx)
-	if err != nil {
-		s.logger.WithError(err).Warn("Failed to get identity store, skipping IAM gRPC registration")
-		return
-	}
-
-	policyEngine, err := getter.GetPolicyEngine(ctx)
-	if err != nil {
-		s.logger.WithError(err).Warn("Failed to get policy engine, skipping IAM gRPC registration")
-		return
-	}
-
-	appManager, err := getter.GetAppManager(ctx)
-	if err != nil {
-		s.logger.WithError(err).Warn("Failed to get app manager, skipping IAM gRPC registration")
-		return
-	}
-
-	// Retrieve optional components
-	adminManager, _ := getter.GetAdminManager(ctx)
-	gdprManager, _ := getter.GetGDPRManager(ctx)
-
-	// Create IAM gRPC service adapter and register
-	iamAdapter := grpcapi.NewIAMServiceAdapter(tenantMgr, identityStore, policyEngine, appManager, adminManager, gdprManager)
-	// WebAuthn credential administration over gRPC (and the Unix socket that
-	// delegates to it). The service is built from the components already
-	// resolved here so gRPC runs the SAME user-id-to-email translation REST,
-	// the embedded transport and MCP do; a nil WebAuthn manager makes the
-	// verbs report unavailable rather than misresolve.
-	webauthnMgr, _ := getter.GetWebAuthnManager(ctx)
-	iamAdapter.SetWebAuthnCredentials(
-		service.NewWebAuthnCredentialServiceFor(identityStore, webauthnMgr))
-	// Control-plane tenant provisioning: the same provisioner the service
-	// layer hands REST, MCP and the embedded transport.
-	if pg, ok := getter.(tenantProvisionerGetter); ok {
-		provisioner, err := pg.GetTenantProvisioner(ctx)
-		if err != nil {
-			s.logger.WithError(err).Warn("Tenant provisioner unavailable; gRPC ProvisionTenant will report it unconfigured")
-		}
-		iamAdapter.SetTenantProvisioner(provisioner)
-	}
-	// CreateUser issues activation invites from the same store REST and the
-	// activation endpoints use. Without one, a pending create is refused as
-	// unavailable rather than leaving an account nothing can activate.
-	inviteStore, err := getter.GetInviteStore(ctx)
-	if err != nil {
-		s.logger.WithError(err).Warn("Invite store unavailable; gRPC CreateUser refuses pending users")
-	}
-	iamAdapter.SetInviteStore(inviteStore)
-	// The public invite activation verbs redeem through the same service
-	// REST and the embedded transport use.
-	if ag, ok := s.quicBaaSService.(inviteActivationGetter); ok {
-		iamAdapter.SetInviteActivation(ag.InviteActivation())
-	}
-	iamServer := grpcapi.NewIAMServer(iamAdapter, s.logger)
-	iamServer.SetInviteOrigin(s.inviteOrigin())
 	iampb.RegisterIAMServiceServer(grpcServer, iamServer)
 	s.logger.Info("Registered IAM gRPC service")
+
+	ctx := context.Background()
+	policyEngine, err := getter.GetPolicyEngine(ctx)
+	if err != nil {
+		s.logger.WithError(err).Warn("Failed to get policy engine, skipping the remaining IAM gRPC registrations")
+		return
+	}
 
 	// Register Federation service if available. The Unix listener starts
 	// after startService has attached IAM, so the shared servers are built
@@ -2010,6 +1956,80 @@ func (s *Server) registerIAMService(grpcServer *ggrpc.Server) {
 	auditServer := grpcapi.NewAuditServer(auditAdapter, s.logger)
 	iampb.RegisterAuditServiceServer(grpcServer, auditServer)
 	s.logger.Info("Registered Audit gRPC service")
+}
+
+// buildIAMServer builds the IAMService server over the IAM components the
+// getter resolves. registerIAMService registers it on the legacy Unix
+// listener, and buildHostGRPCServers hands it to the API module, so the
+// node's Unix and TCP servers serve IAMService under network serving too.
+// It returns nil when a core component is unavailable.
+func (s *Server) buildIAMServer(getter iamComponentsGetter) iampb.IAMServiceServer {
+	ctx := context.Background()
+
+	// Retrieve core IAM components
+	tenantMgr, err := getter.GetTenantManager(ctx)
+	if err != nil {
+		s.logger.WithError(err).Warn("Failed to get tenant manager, skipping IAM gRPC registration")
+		return nil
+	}
+
+	identityStore, err := getter.GetIdentityStore(ctx)
+	if err != nil {
+		s.logger.WithError(err).Warn("Failed to get identity store, skipping IAM gRPC registration")
+		return nil
+	}
+
+	policyEngine, err := getter.GetPolicyEngine(ctx)
+	if err != nil {
+		s.logger.WithError(err).Warn("Failed to get policy engine, skipping IAM gRPC registration")
+		return nil
+	}
+
+	appManager, err := getter.GetAppManager(ctx)
+	if err != nil {
+		s.logger.WithError(err).Warn("Failed to get app manager, skipping IAM gRPC registration")
+		return nil
+	}
+
+	// Retrieve optional components
+	adminManager, _ := getter.GetAdminManager(ctx)
+	gdprManager, _ := getter.GetGDPRManager(ctx)
+
+	// Create the IAM gRPC service adapter
+	iamAdapter := grpcapi.NewIAMServiceAdapter(tenantMgr, identityStore, policyEngine, appManager, adminManager, gdprManager)
+	// WebAuthn credential administration over gRPC (and the Unix socket that
+	// delegates to it). The service is built from the components already
+	// resolved here so gRPC runs the SAME user-id-to-email translation REST,
+	// the embedded transport and MCP do; a nil WebAuthn manager makes the
+	// verbs report unavailable rather than misresolve.
+	webauthnMgr, _ := getter.GetWebAuthnManager(ctx)
+	iamAdapter.SetWebAuthnCredentials(
+		service.NewWebAuthnCredentialServiceFor(identityStore, webauthnMgr))
+	// Control-plane tenant provisioning: the same provisioner the service
+	// layer hands REST, MCP and the embedded transport.
+	if pg, ok := getter.(tenantProvisionerGetter); ok {
+		provisioner, err := pg.GetTenantProvisioner(ctx)
+		if err != nil {
+			s.logger.WithError(err).Warn("Tenant provisioner unavailable; gRPC ProvisionTenant will report it unconfigured")
+		}
+		iamAdapter.SetTenantProvisioner(provisioner)
+	}
+	// CreateUser issues activation invites from the same store REST and the
+	// activation endpoints use. Without one, a pending create is refused as
+	// unavailable rather than leaving an account nothing can activate.
+	inviteStore, err := getter.GetInviteStore(ctx)
+	if err != nil {
+		s.logger.WithError(err).Warn("Invite store unavailable; gRPC CreateUser refuses pending users")
+	}
+	iamAdapter.SetInviteStore(inviteStore)
+	// The public invite activation verbs redeem through the same service
+	// REST and the embedded transport use.
+	if ag, ok := s.quicBaaSService.(inviteActivationGetter); ok {
+		iamAdapter.SetInviteActivation(ag.InviteActivation())
+	}
+	iamServer := grpcapi.NewIAMServer(iamAdapter, s.logger)
+	iamServer.SetInviteOrigin(s.inviteOrigin())
+	return iamServer
 }
 
 // OrchestratorDaemonClientAppName is the fixed OAuth2 application name the

@@ -147,7 +147,8 @@ func TestModuleTools_ClassCounts(t *testing.T) {
 // lists quicbaas's entity KV tools under their quicbaas_kv_* names (the
 // qrdb_* names belong to go-qrdb's own key/value tools there), each on the
 // kv:* permission its qrdb_* twin already carries: no new permission, no
-// role widened.
+// role widened. The entity list returns values, so it is on kv:range, the
+// value-scan permission, not on the keys-only kv:list.
 func TestModuleTools_EntityKVToolsOnExistingKVPermissions(t *testing.T) {
 	specs := make(map[string]ToolSpec)
 	for _, spec := range ModuleTools() {
@@ -163,8 +164,20 @@ func TestModuleTools_EntityKVToolsOnExistingKVPermissions(t *testing.T) {
 		if spec.Public {
 			t.Errorf("%s must not be public", name)
 		}
-		if spec.Resource != "kv" || spec.Action != verb {
-			t.Errorf("%s permission = %s:%s, want kv:%s", name, spec.Resource, spec.Action, verb)
+		wantAction := verb
+		if verb == "list" {
+			// The entity list answers values: it needs the value-scan
+			// permission, never go-qrdb's keys-only kv:list.
+			wantAction = "range"
+		}
+		if spec.Resource != "kv" || spec.Action != wantAction {
+			t.Errorf("%s permission = %s:%s, want kv:%s", name, spec.Resource, spec.Action, wantAction)
+		}
+		if verb == "list" {
+			if _, listed := specs["qrdb_"+verb]; listed {
+				t.Errorf("qrdb_%s must stay off the node (go-qrdb owns it)", verb)
+			}
+			continue
 		}
 		twinResource, twinAction, mapped := getToolQRDBPermission("qrdb_" + verb)
 		if !mapped || twinResource != spec.Resource || twinAction != spec.Action {
