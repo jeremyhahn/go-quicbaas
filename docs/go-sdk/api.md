@@ -1110,7 +1110,7 @@ func DeleteKey(ctx context.Context, keyID string) error
 
 Provides secrets management operations.
 
-`client.Secrets()` returns the client of a connected `Client`. A consumer that
+`client.Security().Secrets()` returns the client of a connected `Client`. A consumer that
 owns its own `quicbaas.Transport` builds the same client with
 `quicbaas.NewSecretsClient(t)` (nil for a nil transport). Every request and
 response type, including `EnsureSecretRequest`, `EnsureSecretResponse` and
@@ -1147,7 +1147,7 @@ func Store(ctx context.Context, req *StoreSecretRequest) (*StoreSecretResponse, 
 **Example:**
 
 ```go
-resp, err := client.Secrets().Store(ctx, &quicbaas.StoreSecretRequest{
+resp, err := client.Security().Secrets().Store(ctx, &quicbaas.StoreSecretRequest{
     Path: "database/postgres",
     Data: map[string]interface{}{
         "username": "admin",
