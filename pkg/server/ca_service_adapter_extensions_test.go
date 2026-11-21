@@ -480,6 +480,72 @@ func TestIssueDeviceIdentityCert_IDevIDRejectsUnverifiableCSR(t *testing.T) {
 	assert.ErrorIs(t, err, ErrCAInvalidTCGCSR)
 }
 
+// iakIssuingCA is a real CA whose SignTCGCSRIDevID issues two genuine
+// certificates from the wrapped CA, CN "iak" and CN "idevid", so a test can
+// see which one lands in which field of the issued device identity.
+type iakIssuingCA struct {
+	xkmssdk.TrustedCA
+	tcg tcgIssuer
+}
+
+func (c *iakIssuingCA) IssueEKCertificate(ctx context.Context, req *xkmssdk.TrustedCACertificateRequest, pub crypto.PublicKey) (*x509.Certificate, error) {
+	return c.tcg.IssueEKCertificate(ctx, req, pub)
+}
+
+func (c *iakIssuingCA) IssueAKCertificate(ctx context.Context, req *xkmssdk.TrustedCACertificateRequest, pub crypto.PublicKey) (*x509.Certificate, error) {
+	return c.tcg.IssueAKCertificate(ctx, req, pub)
+}
+
+func (c *iakIssuingCA) SignTCGCSRIDevID(ctx context.Context, _ *xkmssdk.TCG_CSR_IDEVID, _ *xkmssdk.TrustedCACertificateRequest) ([]byte, []byte, error) {
+	issue := func(cn string) ([]byte, error) {
+		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			return nil, err
+		}
+		cert, err := c.tcg.IssueAKCertificate(ctx, &xkmssdk.TrustedCACertificateRequest{
+			Subject: xkmssdk.TrustedCASubject{CommonName: cn},
+			Valid:   1,
+		}, key.Public())
+		if err != nil {
+			return nil, err
+		}
+		return cert.Raw, nil
+	}
+	iakDER, err := issue("iak")
+	if err != nil {
+		return nil, nil, err
+	}
+	idevidDER, err := issue("idevid")
+	if err != nil {
+		return nil, nil, err
+	}
+	return iakDER, idevidDER, nil
+}
+
+func TestIssueDeviceIdentityCert_IDevIDReturnsTheIAK(t *testing.T) {
+	realCA := newRealSoftwareCA(t)
+	adapter, err := newCAServiceAdapter(&iakIssuingCA{TrustedCA: realCA, tcg: realCA.(tcgIssuer)})
+	require.NoError(t, err)
+
+	csr, err := xkmssdk.PackIDevIDCSR(&xkmssdk.TCG_CSR_IDEVID{})
+	require.NoError(t, err)
+
+	issued, err := adapter.IssueDeviceIdentityCert(context.Background(), &service.DeviceIdentityIssuance{
+		Type:     service.DeviceIdentityTypeIDevID,
+		DeviceID: "device-idevid-0001",
+		CSR:      csr,
+	})
+	require.NoError(t, err)
+
+	iak, err := parseCertificatePEM(issued.IAKCertificatePEM)
+	require.NoError(t, err, "IssueDeviceIdentityCert must return the IAK certificate")
+	assert.Equal(t, "iak", iak.Subject.CommonName)
+
+	idevid, err := parseCertificatePEM(issued.CertificatePEM)
+	require.NoError(t, err)
+	assert.Equal(t, "idevid", idevid.Subject.CommonName)
+}
+
 func TestIssueDeviceIdentityCert_Errors(t *testing.T) {
 	adapter := newRealAdapter(t)
 	ctx := context.Background()

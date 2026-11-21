@@ -283,7 +283,7 @@ type deviceIdentityHandler func(
 	tcg tcgIssuer,
 	req *service.DeviceIdentityIssuance,
 	certReq *xkmssdk.TrustedCACertificateRequest,
-) (*x509.Certificate, error)
+) (cert *x509.Certificate, iakDER []byte, err error)
 
 // deviceIdentityHandlers dispatches on the requested identity flavor in
 // constant time. The service layer has already validated that the flavor is
@@ -331,7 +331,7 @@ func (a *caServiceAdapter) IssueDeviceIdentityCert(ctx context.Context, req *ser
 		TenantID: req.TenantID,
 	}
 
-	cert, err := handler(ctx, tcg, req, certReq)
+	cert, iakDER, err := handler(ctx, tcg, req, certReq)
 	if err != nil {
 		return nil, err
 	}
@@ -350,6 +350,12 @@ func (a *caServiceAdapter) IssueDeviceIdentityCert(ctx context.Context, req *ser
 		NotBefore: cert.NotBefore.UTC(),
 		NotAfter:  cert.NotAfter.UTC(),
 	}
+	if len(iakDER) > 0 {
+		issued.IAKCertificatePEM = pem.EncodeToMemory(&pem.Block{
+			Type:  "CERTIFICATE",
+			Bytes: iakDER,
+		})
+	}
 	if cert.SerialNumber != nil {
 		issued.SerialNumber = cert.SerialNumber.Text(16)
 	}
@@ -363,12 +369,13 @@ func issueEKIdentity(
 	tcg tcgIssuer,
 	req *service.DeviceIdentityIssuance,
 	certReq *xkmssdk.TrustedCACertificateRequest,
-) (*x509.Certificate, error) {
+) (*x509.Certificate, []byte, error) {
 	pub, err := parsePublicKey(req.EKPub)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return tcg.IssueEKCertificate(ctx, certReq, pub)
+	cert, err := tcg.IssueEKCertificate(ctx, certReq, pub)
+	return cert, nil, err
 }
 
 // issueAKIdentity issues an Attestation Key certificate over the supplied AK
@@ -378,12 +385,13 @@ func issueAKIdentity(
 	tcg tcgIssuer,
 	req *service.DeviceIdentityIssuance,
 	certReq *xkmssdk.TrustedCACertificateRequest,
-) (*x509.Certificate, error) {
+) (*x509.Certificate, []byte, error) {
 	pub, err := parsePublicKey(req.AKPub)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return tcg.IssueAKCertificate(ctx, certReq, pub)
+	cert, err := tcg.IssueAKCertificate(ctx, certReq, pub)
+	return cert, nil, err
 }
 
 // issueIDevIDIdentity verifies the supplied TCG-CSR-IDEVID and issues the
@@ -396,22 +404,22 @@ func issueIDevIDIdentity(
 	tcg tcgIssuer,
 	req *service.DeviceIdentityIssuance,
 	certReq *xkmssdk.TrustedCACertificateRequest,
-) (*x509.Certificate, error) {
+) (*x509.Certificate, []byte, error) {
 	tcgCSR, err := xkmssdk.UnmarshalIDevIDCSR(unwrapPEM(req.CSR))
 	if err != nil {
-		return nil, ErrCAInvalidTCGCSR
+		return nil, nil, ErrCAInvalidTCGCSR
 	}
 
-	_, idevidDER, err := tcg.SignTCGCSRIDevID(ctx, tcgCSR, certReq)
+	iakDER, idevidDER, err := tcg.SignTCGCSRIDevID(ctx, tcgCSR, certReq)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	cert, err := x509.ParseCertificate(idevidDER)
 	if err != nil {
-		return nil, ErrCAServiceAdapterInvalidPEM
+		return nil, nil, ErrCAServiceAdapterInvalidPEM
 	}
-	return cert, nil
+	return cert, iakDER, nil
 }
 
 // =============================================================================

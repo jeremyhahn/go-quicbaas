@@ -239,6 +239,23 @@ func TestCertificateService_IssueDeviceIdentity(t *testing.T) {
 	}
 }
 
+func TestCertificateService_IssueDeviceIdentityReturnsTheIAK(t *testing.T) {
+	stub := &extCAStub{issued: &IssuedDeviceIdentity{
+		CertificatePEM:    []byte("IDEVID"),
+		IAKCertificatePEM: []byte("IAK"),
+		ChainPEM:          []byte("chain"),
+	}}
+	svc := newExtService(t, stub)
+
+	resp, err := svc.IssueDeviceIdentity(systemTenantCtx(), &IssueDeviceIdentityRequest{
+		Type: DeviceIdentityTypeIDevID, DeviceID: "dev-iak", CSRPEM: []byte("tcg-csr"),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.Equal(t, []byte("IDEVID"), resp.CertificatePEM)
+	assert.Equal(t, []byte("IAK"), resp.IAKCertificatePEM)
+}
+
 // A device identity is issued in the caller's own tenant only (go-qrdb v0.28:
 // no caller mints another tenant's certificates, the system tenant included).
 func TestCertificateService_IssueDeviceIdentity_IsConfinedToTheCallerTenant(t *testing.T) {
