@@ -403,10 +403,6 @@ type Server struct {
 	// started by startOrchestration and stopped at shutdown.
 	orchSweeps *orchestrationSweeps
 
-	// orchContainerReaper is the orchestrator's sandbox-container reaper
-	// goroutine, started with the container runtime and stopped at shutdown.
-	orchContainerReaper *orchestrationSweeps
-
 	// orchWorkspaceSweep is the periodic sweep of concluded tasks' session
 	// workspaces, stopped at shutdown.
 	orchWorkspaceSweep *orchestrationSweeps
@@ -424,10 +420,10 @@ type Server struct {
 	// when the node has a container engine; see lifecycle_sdlc_worker_image.go.
 	sdlcWorkerImage *sdlcWorkerImageLoop
 
-	// orchContainerRuntime is the container engine the orchestration service
-	// spawns sandboxed sessions on, nil on a node without docker or podman.
-	// The worker image refresh builds on the same engine, so the image it
-	// builds is the image this node's workers run.
+	// orchContainerRuntime is the engine the worker image refresh builds,
+	// tags and pushes images on. It is nil on a node without docker or podman
+	// or with the refresh disabled. No session runs on it: sessions run in
+	// containers only on the co-located fleet node agent.
 	orchContainerRuntime *orchestration.ExecContainerRuntime
 
 	// gitProvisioner is the managed-workspace git path wireProjectWorkspaces
@@ -1324,7 +1320,6 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		// Stop the job sweep before the stores it reads leases and tasks
 		// from go away.
 		s.stopOrchestrationSweeps()
-		s.stopContainerReaper()
 		s.stopWorkspaceSweep()
 
 		// Nothing starts new jobs from here on, so the running ones can be

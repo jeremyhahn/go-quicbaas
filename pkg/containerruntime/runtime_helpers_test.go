@@ -19,9 +19,12 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
 
 func TestGenerateOCIConfig_UserMounts(t *testing.T) {
@@ -37,7 +40,7 @@ func TestGenerateOCIConfig_UserMounts(t *testing.T) {
 	assert.Equal(t, ociMount{Destination: "/srv/data", Type: "bind", Source: "/data", Options: []string{"rbind"}}, data)
 	config := oci.Mounts[len(oci.Mounts)-1]
 	assert.Equal(t, "/etc/app", config.Destination)
-	assert.Equal(t, []string{"ro"}, config.Options)
+	assert.Equal(t, []string{"rbind", "ro", "rro"}, config.Options, "a read-only bind mount must be bound, recursively read-only")
 }
 
 func TestGenerateOCIConfig_CapabilityChanges(t *testing.T) {
@@ -66,16 +69,24 @@ func TestGenerateOCIConfig_PrivilegedKeepsAllCapabilities(t *testing.T) {
 	assert.False(t, oci.Process.NoNewPrivileges)
 }
 
-func TestStopProcess_SignalFailure(t *testing.T) {
+func TestStopProcess_AFinishedProcessWaitsForItsExitRecord(t *testing.T) {
 	process := newFakeProcess(42)
 	process.exit(0)
 
-	// The process is gone but its exit has not been observed yet.
-	err := stopProcess(context.Background(), process, make(chan struct{}), 0)
-	var runtimeErr *RuntimeError
-	require.ErrorAs(t, err, &runtimeErr)
-	assert.Equal(t, "signal SIGTERM", runtimeErr.Operation)
-	require.ErrorIs(t, err, os.ErrProcessDone)
+	// The process is gone but its exit has not been recorded yet: the stop
+	// waits for the record rather than failing on the signal.
+	exited := make(chan struct{})
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		close(exited)
+	}()
+	require.NoError(t, stopProcess(context.Background(), process, exited, 0))
+
+	// A record that never comes ends with the caller's context.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	err := stopProcess(ctx, process, make(chan struct{}), 0)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
 }
 
 func TestStopProcess_AlreadyExited(t *testing.T) {
@@ -211,4 +222,96 @@ func TestWrappedError_Unwrap(t *testing.T) {
 	err := &WrappedError{Msg: "pull", Err: errTestBackend}
 	require.ErrorIs(t, err, errTestBackend)
 	assert.Nil(t, (&WrappedError{Msg: "bare"}).Unwrap())
+}
+
+func TestGenerateOCIConfig_SandboxDropsAllCapabilities(t *testing.T) {
+	spec := &orchestration.ContainerSpec{Network: "none", Image: "alpine:latest", User: "1000:1000"}
+	require.NoError(t, orchestration.SandboxSecurity{}.Apply(spec))
+	config, err := jobContainerConfig(spec)
+	require.NoError(t, err)
+	oci := newTestRuntime(t).generateOCIConfig(config, "/rootfs")
+
+	want := []string{"CAP_CHOWN", "CAP_DAC_OVERRIDE", "CAP_FOWNER", "CAP_SETGID", "CAP_SETUID"}
+	caps := oci.Process.Capabilities
+	require.NotNil(t, caps)
+	assert.ElementsMatch(t, want, caps.Bounding)
+	assert.ElementsMatch(t, want, caps.Effective)
+	assert.ElementsMatch(t, want, caps.Permitted)
+	assert.Empty(t, caps.Inheritable)
+	assert.Empty(t, caps.Ambient)
+	for _, dropped := range []string{"CAP_NET_RAW", "CAP_MKNOD", "CAP_SETFCAP", "CAP_KILL"} {
+		assert.NotContains(t, caps.Bounding, dropped)
+	}
+	assert.False(t, oci.Process.NoNewPrivileges, "no_new_privs would stop a setuid sudo")
+	assert.Equal(t, "1000:1000", config.User)
+}
+
+func TestCapabilitySet(t *testing.T) {
+	defaults := []string{"CAP_CHOWN", "CAP_KILL", "CAP_NET_RAW"}
+	assert.Equal(t, defaults, capabilitySet(defaults, nil, nil))
+	assert.Equal(t, []string{"CAP_SETUID"}, capabilitySet(defaults, []string{"setuid"}, []string{"all"}))
+	assert.Equal(t, []string{"CAP_CHOWN", "CAP_SYS_ADMIN"},
+		capabilitySet(defaults, []string{"SYS_ADMIN", "CAP_CHOWN"}, []string{"KILL", "CAP_NET_RAW"}))
+	assert.Empty(t, capabilitySet(defaults, nil, []string{"ALL"}))
+	assert.Equal(t, []string{"CAP_CHOWN", "CAP_KILL", "CAP_NET_RAW"}, defaults, "the defaults were changed")
+}
+
+func TestGenerateOCIConfig_NoNewPrivilegesIsExplicit(t *testing.T) {
+	rt := newTestRuntime(t)
+	assert.True(t, rt.generateOCIConfig(&ContainerConfig{}, "/rootfs").Process.NoNewPrivileges)
+	assert.False(t, rt.generateOCIConfig(&ContainerConfig{AllowNewPrivileges: true}, "/rootfs").Process.NoNewPrivileges)
+	assert.False(t, rt.generateOCIConfig(&ContainerConfig{Privileged: true}, "/rootfs").Process.NoNewPrivileges)
+}
+
+func TestJobContainerConfig_HostMountsAreBound(t *testing.T) {
+	config, err := jobContainerConfig(&orchestration.ContainerSpec{
+		Network: "none",
+		Image:   "alpine:latest",
+		Mounts: []orchestration.ContainerMount{
+			{Source: "/srv/workspace", Target: "/workspace"},
+			{Source: "/srv/creds", Target: "/home/agent/.creds", Type: "bind", ReadOnly: true},
+			{Target: "/tmp", Type: "tmpfs", TmpfsSizeBytes: 1024},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "bind", config.Mounts[0].Type, "an untyped host mount stayed untyped")
+
+	mounts := newTestRuntime(t).generateOCIConfig(config, "/rootfs").Mounts
+	require.GreaterOrEqual(t, len(mounts), 3)
+	mounts = mounts[len(mounts)-3:]
+	assert.Equal(t, ociMount{Destination: "/workspace", Type: "bind", Source: "/srv/workspace", Options: []string{"rbind"}}, mounts[0])
+	assert.Equal(t, ociMount{Destination: "/home/agent/.creds", Type: "bind", Source: "/srv/creds", Options: []string{"rbind", "ro", "rro"}}, mounts[1])
+	assert.Equal(t, "tmpfs", mounts[2].Type)
+	assert.NotContains(t, mounts[2].Options, "rbind")
+}
+
+func TestGenerateOCIConfig_ReadOnlyRbindIsRecursive(t *testing.T) {
+	tests := []struct {
+		name  string
+		mount Mount
+		want  []string
+	}{
+		{name: "ReadOnlyWithNoOptions", mount: Mount{ReadOnly: true}, want: []string{"rbind", "ro", "rro"}},
+		{name: "RoOptionOnAnRbind", mount: Mount{Options: []string{"rbind", "ro"}}, want: []string{"rbind", "ro", "rro"}},
+		{name: "ReadOnlyBindIsNotRecursive", mount: Mount{Options: []string{"bind"}, ReadOnly: true}, want: []string{"bind", "ro"}},
+		{name: "WritableRbind", mount: Mount{Options: []string{"rbind"}}, want: []string{"rbind"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := tt.mount
+			m.Type, m.Source, m.Target = "bind", "/srv/data", "/data"
+			mounts := newTestRuntime(t).generateOCIConfig(&ContainerConfig{Mounts: []Mount{m}}, "/rootfs").Mounts
+			assert.Equal(t, tt.want, mounts[len(mounts)-1].Options)
+		})
+	}
+}
+
+func TestGenerateOCIConfig_MountOptionsAreNotShared(t *testing.T) {
+	config := &ContainerConfig{Mounts: []Mount{{Type: "bind", Source: "/a", Target: "/b", Options: make([]string, 1, 4), ReadOnly: true}}}
+	config.Mounts[0].Options[0] = "rbind"
+	rt := newTestRuntime(t)
+	rt.generateOCIConfig(config, "/rootfs")
+	mounts := rt.generateOCIConfig(config, "/rootfs").Mounts
+	assert.Equal(t, []string{"rbind"}, config.Mounts[0].Options, "the caller's mount options were changed")
+	assert.Equal(t, []string{"rbind", "ro", "rro"}, mounts[len(mounts)-1].Options)
 }

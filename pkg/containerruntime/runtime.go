@@ -20,10 +20,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"maps"
 	"math"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -94,6 +97,22 @@ func DefaultRuntimeConfig() *RuntimeConfig {
 		StaticDir:       "/var/lib/trusted-platform/containers/static",
 		VolumePath:      "/var/lib/trusted-platform/containers/volumes",
 		ImageStorePath:  "/var/lib/trusted-platform/containers/images",
+	}
+}
+
+// RuntimeConfigUnder is a configuration that keeps every directory of the
+// runtime under root, so two runtimes given different roots share nothing:
+// not container state, not run state, not images.
+func RuntimeConfigUnder(root string) *RuntimeConfig {
+	root = filepath.Clean(root)
+	return &RuntimeConfig{
+		Root:            filepath.Join(root, "state"),
+		RunRoot:         filepath.Join(root, "run"),
+		TmpDir:          filepath.Join(root, "tmp"),
+		GraphDriverName: "overlay",
+		StaticDir:       filepath.Join(root, "static"),
+		VolumePath:      filepath.Join(root, "volumes"),
+		ImageStorePath:  filepath.Join(root, "images"),
 	}
 }
 
@@ -311,6 +330,10 @@ func (r *Runtime) CreateContainer(ctx context.Context, config *ContainerConfig) 
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
+	config, err := r.resolveVolumes(config)
+	if err != nil {
+		return nil, err
+	}
 
 	// The image must already be in local storage, and a pinned reference
 	// must still resolve to the pinned digest.
@@ -321,13 +344,14 @@ func (r *Runtime) CreateContainer(ctx context.Context, config *ContainerConfig) 
 	if err := verifyPinnedDigest(config.Image, image.Digests); err != nil {
 		return nil, NewImageError(config.Image, "create", err)
 	}
+	config = withImageDefaults(config, image.Config)
 
 	// Generate container ID
 	id := r.generateContainerID()
 
 	r.logger.Info("creating container", "name", config.Name, "image", config.Image, "id", id)
 
-	bundleDir := filepath.Join(r.config.RunRoot, "bundles", id)
+	bundleDir := filepath.Join(r.bundlesDir(), id)
 	if err := os.MkdirAll(bundleDir, 0700); err != nil {
 		return nil, &RuntimeError{Operation: "create bundle", Err: err}
 	}
@@ -346,6 +370,40 @@ func (r *Runtime) CreateContainer(ctx context.Context, config *ContainerConfig) 
 
 	r.logger.Info("created container", "name", config.Name, "id", id)
 	return state, nil
+}
+
+// volumeNamePattern is what a named volume may be called: one plain path
+// element, so its directory always lies directly under VolumePath.
+var volumeNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
+
+// resolveVolumes returns config with each named volume mount turned into a
+// bind of the volume's directory under VolumePath, creating the directory
+// the first time a container names it. The caller's config is not changed.
+// A volume outlives the containers that mount it: removing a container
+// never removes its volumes.
+func (r *Runtime) resolveVolumes(config *ContainerConfig) (*ContainerConfig, error) {
+	if !slices.ContainsFunc(config.Mounts, func(m Mount) bool { return m.Type == "volume" }) {
+		return config, nil
+	}
+	resolved := *config
+	resolved.Mounts = slices.Clone(config.Mounts)
+	for i, m := range resolved.Mounts {
+		if m.Type != "volume" {
+			continue
+		}
+		if !volumeNamePattern.MatchString(m.Source) {
+			return nil, fmt.Errorf("%w: %q", ErrInvalidVolumeName, m.Source)
+		}
+		dir := filepath.Join(r.config.VolumePath, m.Source)
+		if err := os.MkdirAll(dir, 0o750); err != nil {
+			return nil, &RuntimeError{Operation: "create volume", Err: err}
+		}
+		m.Type = "bind"
+		m.Source = dir
+		m.Options = slices.Clone(m.Options)
+		resolved.Mounts[i] = m
+	}
+	return &resolved, nil
 }
 
 // createInBundle unpacks the image into the container's root filesystem,
@@ -385,6 +443,12 @@ func (r *Runtime) configureContainer(id, bundleDir, rootfsDir string, config *Co
 	if err := os.WriteFile(filepath.Join(bundleDir, "config.json"), configData, 0600); err != nil {
 		return nil, &RuntimeError{Operation: "write config", Err: err}
 	}
+	createdAt := time.Now()
+	if err := writeContainerRecord(bundleDir, LeftoverContainer{
+		ID: id, Name: config.Name, Image: config.Image, CreatedAt: createdAt, Labels: config.Labels,
+	}); err != nil {
+		return nil, &RuntimeError{Operation: "write container record", Err: err}
+	}
 
 	if err := r.backends.engine.Create(id, oci); err != nil {
 		return nil, &RuntimeError{Operation: "create container", Err: err}
@@ -396,7 +460,7 @@ func (r *Runtime) configureContainer(id, bundleDir, rootfsDir string, config *Co
 		Image:     config.Image,
 		BundleDir: bundleDir,
 		State:     ContainerStateCreated,
-		CreatedAt: time.Now(),
+		CreatedAt: createdAt,
 		Config:    config,
 		init: processSpec{
 			Args: oci.Process.Args,
@@ -507,11 +571,14 @@ type ociLinuxDevice struct {
 func (r *Runtime) generateOCIConfig(config *ContainerConfig, rootfsPath string) *ociConfig {
 	// Build environment variables
 	var env []string
-	env = append(env,
-		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-		"TERM=xterm")
-	for k, v := range config.Environment {
-		env = append(env, k+"="+v)
+	if _, ok := config.Environment["PATH"]; !ok {
+		env = append(env, "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+	}
+	if _, ok := config.Environment["TERM"]; !ok {
+		env = append(env, "TERM=xterm")
+	}
+	for _, k := range slices.Sorted(maps.Keys(config.Environment)) {
+		env = append(env, k+"="+config.Environment[k])
 	}
 
 	// Build args
@@ -534,7 +601,8 @@ func (r *Runtime) generateOCIConfig(config *ContainerConfig, rootfsPath string) 
 			Args:            args,
 			Env:             env,
 			Cwd:             cwd,
-			NoNewPrivileges: !config.Privileged,
+			Rlimits:         ociRlimits(config.Ulimits),
+			NoNewPrivileges: !config.Privileged && !config.AllowNewPrivileges,
 		},
 		Root: &ociRoot{
 			Path:     rootfsPath,
@@ -583,13 +651,28 @@ func (r *Runtime) generateOCIConfig(config *ContainerConfig, rootfsPath string) 
 
 	// Add user-specified mounts
 	for _, m := range config.Mounts {
-		opts := m.Options
+		opts := slices.Clone(m.Options)
+		mountType := m.Type
+		if mountType == "" {
+			mountType = "bind"
+		}
+		// The OCI type "bind" alone asks the kernel for nothing: MS_BIND
+		// comes from the bind or rbind option.
+		if mountType == "bind" && !slices.Contains(opts, "bind") && !slices.Contains(opts, "rbind") {
+			opts = append(opts, "rbind")
+		}
 		if m.ReadOnly {
 			opts = append(opts, "ro")
 		}
+		// ro covers only the top of an rbind, so rro makes every submount
+		// read-only too, and runc refuses the container where the kernel
+		// cannot do that.
+		if slices.Contains(opts, "rbind") && slices.Contains(opts, "ro") && !slices.Contains(opts, "rro") {
+			opts = append(opts, "rro")
+		}
 		oci.Mounts = append(oci.Mounts, ociMount{
 			Destination: m.Target,
-			Type:        m.Type,
+			Type:        mountType,
 			Source:      m.Source,
 			Options:     opts,
 		})
@@ -659,34 +742,14 @@ func (r *Runtime) generateOCIConfig(config *ContainerConfig, rootfsPath string) 
 			"CAP_KILL",
 			"CAP_AUDIT_WRITE",
 		}
+		caps := capabilitySet(defaultCaps, config.CapAdd, config.CapDrop)
+		// Inheritable and Ambient stay empty, as Docker and Podman leave them
+		// since CVE-2022-24769: a capability in them survives an exec of an
+		// unprivileged program, beyond what CapAdd grants the container.
 		oci.Process.Capabilities = &ociCapabilities{
-			Bounding:    defaultCaps,
-			Effective:   defaultCaps,
-			Inheritable: defaultCaps,
-			Permitted:   defaultCaps,
-			Ambient:     defaultCaps,
-		}
-
-		// Add extra capabilities
-		for _, cap := range config.CapAdd {
-			capName := cap
-			if !strings.HasPrefix(capName, "CAP_") {
-				capName = "CAP_" + capName
-			}
-			oci.Process.Capabilities.Bounding = append(oci.Process.Capabilities.Bounding, capName)
-			oci.Process.Capabilities.Effective = append(oci.Process.Capabilities.Effective, capName)
-			oci.Process.Capabilities.Permitted = append(oci.Process.Capabilities.Permitted, capName)
-		}
-
-		// Remove dropped capabilities
-		for _, cap := range config.CapDrop {
-			capName := cap
-			if !strings.HasPrefix(capName, "CAP_") {
-				capName = "CAP_" + capName
-			}
-			oci.Process.Capabilities.Bounding = removeString(oci.Process.Capabilities.Bounding, capName)
-			oci.Process.Capabilities.Effective = removeString(oci.Process.Capabilities.Effective, capName)
-			oci.Process.Capabilities.Permitted = removeString(oci.Process.Capabilities.Permitted, capName)
+			Bounding:  caps,
+			Effective: slices.Clone(caps),
+			Permitted: slices.Clone(caps),
 		}
 	}
 
@@ -694,6 +757,39 @@ func (r *Runtime) generateOCIConfig(config *ContainerConfig, rootfsPath string) 
 }
 
 // removeString removes a string from a slice.
+// capabilitySet is the container's capability set: the defaults less the
+// dropped ones, then the added ones, as `docker run --cap-drop --cap-add`
+// resolves them. A drop of ALL removes every default, so that only the
+// added capabilities remain. Names are taken with or without the CAP_
+// prefix, in any case.
+func capabilitySet(defaults, add, drop []string) []string {
+	caps := slices.Clone(defaults)
+	for _, name := range drop {
+		capName := capabilityName(name)
+		if capName == "CAP_ALL" {
+			caps = nil
+			continue
+		}
+		caps = removeString(caps, capName)
+	}
+	for _, name := range add {
+		capName := capabilityName(name)
+		if !slices.Contains(caps, capName) {
+			caps = append(caps, capName)
+		}
+	}
+	return caps
+}
+
+// capabilityName is name upper-cased with the CAP_ prefix.
+func capabilityName(name string) string {
+	name = strings.ToUpper(strings.TrimSpace(name))
+	if !strings.HasPrefix(name, "CAP_") {
+		name = "CAP_" + name
+	}
+	return name
+}
+
 func removeString(slice []string, s string) []string {
 	result := make([]string, 0, len(slice))
 	for _, item := range slice {
@@ -706,7 +802,54 @@ func removeString(slice []string, s string) []string {
 
 // StartContainer starts a container's init process. Its stdout and stderr
 // go to stdout.log and stderr.log in the container's bundle.
-func (r *Runtime) StartContainer(ctx context.Context, id string) error {
+func (r *Runtime) StartContainer(_ context.Context, id string) error {
+	return r.startInit(id, nil)
+}
+
+// AttachedIO is the standard input and output of a container started with
+// StartAttached.
+type AttachedIO struct {
+	// Stdin feeds the init process's standard input. Close it to send EOF.
+	Stdin io.WriteCloser
+
+	// Stdout reads the init process's standard output. It reaches EOF once
+	// the process, and everything in the container that inherited it, has
+	// closed it.
+	Stdout io.ReadCloser
+}
+
+// StartAttached runs a created container's init process with its standard
+// input and output on pipes the caller holds, instead of on the container's
+// log files. Standard error still goes to the log. The caller closes both
+// ends it is given.
+func (r *Runtime) StartAttached(_ context.Context, id string) (*AttachedIO, error) {
+	stdinR, stdinW, err := os.Pipe()
+	if err != nil {
+		return nil, NewContainerError(id, "start", err)
+	}
+	stdoutR, stdoutW, err := os.Pipe()
+	if err != nil {
+		return nil, NewContainerError(id, "start", errors.Join(err, stdinR.Close(), stdinW.Close()))
+	}
+
+	err = r.startInit(id, func(init *processSpec) {
+		init.Stdin = stdinR
+		init.Stdout = stdoutW
+	})
+	// The init process holds its own copies of the child ends now. The
+	// runtime's copies would keep the caller from ever seeing EOF.
+	if closeErr := errors.Join(stdinR.Close(), stdoutW.Close()); closeErr != nil {
+		r.logger.Warn("failed to close the child ends of the attached pipes", "id", id, "error", closeErr)
+	}
+	if err != nil {
+		return nil, errors.Join(err, stdinW.Close(), stdoutR.Close())
+	}
+	return &AttachedIO{Stdin: stdinW, Stdout: stdoutR}, nil
+}
+
+// startInit runs a created container's init process. attach, when set,
+// replaces the log files on the init process's standard streams.
+func (r *Runtime) startInit(id string, attach func(init *processSpec)) error {
 	state, err := r.lookupContainer(id)
 	if err != nil {
 		return err
@@ -732,6 +875,9 @@ func (r *Runtime) StartContainer(ctx context.Context, id string) error {
 	init := state.init
 	init.Stdout = logs.stdout
 	init.Stderr = logs.stderr
+	if attach != nil {
+		attach(&init)
+	}
 
 	process, err := r.backends.engine.Start(state.ID, init)
 	if err != nil {
@@ -778,6 +924,15 @@ func (r *Runtime) awaitExit(state *containerState, process containerProcess, log
 
 	close(exited)
 	r.logger.Info("container exited", "id", state.ID, "exit_code", exitCode)
+
+	// An auto-remove container goes once it exits, as `docker run --rm`
+	// removes one: its engine state, writable layer, bundle and logs. A
+	// caller that removed it first leaves nothing to remove.
+	if state.Config != nil && state.Config.AutoRemove {
+		if err := r.RemoveContainer(context.Background(), state.ID, false); err != nil && !errors.Is(err, ErrContainerNotFound) {
+			r.logger.Warn("failed to auto-remove exited container", "id", state.ID, "error", err)
+		}
+	}
 }
 
 // StopContainer stops a running container: SIGTERM, then SIGKILL once
@@ -822,6 +977,10 @@ func stopProcess(ctx context.Context, process containerProcess, exited <-chan st
 	}
 
 	if err := process.Signal(syscall.SIGTERM); err != nil {
+		if errors.Is(err, os.ErrProcessDone) {
+			// It exited before its exit was recorded; wait for the record.
+			return awaitExited(ctx, exited)
+		}
 		return &RuntimeError{Operation: "signal SIGTERM", Err: err}
 	}
 
@@ -836,10 +995,14 @@ func stopProcess(ctx context.Context, process containerProcess, exited <-chan st
 	case <-timer.C:
 	}
 
-	if err := process.Signal(syscall.SIGKILL); err != nil {
+	if err := process.Signal(syscall.SIGKILL); err != nil && !errors.Is(err, os.ErrProcessDone) {
 		return &RuntimeError{Operation: "signal SIGKILL", Err: err}
 	}
+	return awaitExited(ctx, exited)
+}
 
+// awaitExited waits for a container's exit to be recorded, or for ctx.
+func awaitExited(ctx context.Context, exited <-chan struct{}) error {
 	select {
 	case <-exited:
 		return nil

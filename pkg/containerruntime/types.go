@@ -13,7 +13,16 @@
 
 package containerruntime
 
-import "time"
+import (
+	"errors"
+	"strconv"
+	"time"
+)
+
+// ErrInvalidVolumeName reports a named volume mount whose name is not a
+// single plain path element: it must start with a letter or digit and hold
+// only letters, digits, '_', '.' and '-'.
+var ErrInvalidVolumeName = errors.New("invalid volume name")
 
 // ContainerState represents the lifecycle state of a container.
 type ContainerState string
@@ -139,6 +148,10 @@ type ContainerConfig struct {
 	// Resources specifies resource limits
 	Resources *ResourceLimits `json:"resources,omitempty" yaml:"resources,omitempty"`
 
+	// Ulimits are the init process's resource limits (setrlimit), which
+	// every process in the container inherits.
+	Ulimits []Ulimit `json:"ulimits,omitempty" yaml:"ulimits,omitempty"`
+
 	// TPMAccess enables mounting /dev/tpm0 into the container
 	TPMAccess bool `json:"tpm_access" yaml:"tpm_access"`
 
@@ -156,6 +169,13 @@ type ContainerConfig struct {
 
 	// Privileged runs the container in privileged mode
 	Privileged bool `json:"privileged" yaml:"privileged"`
+
+	// AllowNewPrivileges leaves the init process's no_new_privs bit clear,
+	// so a setuid program such as sudo can raise its privileges within the
+	// capability bounding set. Unset, a non-privileged container runs with
+	// no_new_privs. A job sets it as `docker run` does without
+	// `--security-opt no-new-privileges`.
+	AllowNewPrivileges bool `json:"allow_new_privileges,omitempty" yaml:"allow_new_privileges,omitempty"`
 
 	// ReadOnly makes the container root filesystem read-only
 	ReadOnly bool `json:"read_only" yaml:"read_only"`
@@ -193,16 +213,18 @@ func (c *ContainerConfig) Validate() error {
 	}
 
 	// Validate mounts
-	for i, m := range c.Mounts {
-		if err := m.Validate(); err != nil {
-			return NewConfigValidationError("mounts["+string(rune('0'+i))+"]", err.Error())
+	// Validate in place: Validate defaults an untyped mount to a bind mount
+	// and a port to tcp, and the container is built from what it settles.
+	for i := range c.Mounts {
+		if err := c.Mounts[i].Validate(); err != nil {
+			return NewConfigValidationError("mounts["+strconv.Itoa(i)+"]", err.Error())
 		}
 	}
 
 	// Validate ports
-	for i, p := range c.Ports {
-		if err := p.Validate(); err != nil {
-			return NewConfigValidationError("ports["+string(rune('0'+i))+"]", err.Error())
+	for i := range c.Ports {
+		if err := c.Ports[i].Validate(); err != nil {
+			return NewConfigValidationError("ports["+strconv.Itoa(i)+"]", err.Error())
 		}
 	}
 
@@ -210,6 +232,12 @@ func (c *ContainerConfig) Validate() error {
 	if c.Resources != nil {
 		if err := c.Resources.Validate(); err != nil {
 			return err
+		}
+	}
+
+	for i, u := range c.Ulimits {
+		if err := u.Validate(); err != nil {
+			return NewConfigValidationError("ulimits["+strconv.Itoa(i)+"]", err.Error())
 		}
 	}
 

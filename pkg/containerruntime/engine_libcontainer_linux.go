@@ -18,11 +18,19 @@ package containerruntime
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"syscall"
+	"time"
 
+	// devices fills the cgroup managers' device hooks in its init. specconv
+	// gives every container default device rules, which both managers refuse
+	// while the hooks are nil.
+	_ "github.com/opencontainers/cgroups/devices"
 	"github.com/opencontainers/runc/libcontainer"
 	"github.com/opencontainers/runc/libcontainer/specconv"
 	"github.com/opencontainers/runc/libcontainer/utils"
@@ -104,6 +112,45 @@ func (e *libcontainerEngine) Destroy(id string) error {
 	return nil
 }
 
+// reclaimPoll and reclaimTimeout bound how long Reclaim waits for a killed
+// leftover container to stop. This process is not its parent, so it can only
+// poll the container's status.
+const (
+	reclaimPoll    = 50 * time.Millisecond
+	reclaimTimeout = 10 * time.Second
+)
+
+// Reclaim loads a container an earlier process left in the state directory,
+// kills it if it still runs, and destroys it, as `runc delete --force` does.
+func (e *libcontainerEngine) Reclaim(id string) error {
+	container, err := libcontainer.Load(e.root, id)
+	if errors.Is(err, libcontainer.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+
+	deadline := time.Now().Add(reclaimTimeout)
+	for {
+		status, err := container.Status()
+		if err != nil {
+			return err
+		}
+		if status == libcontainer.Stopped {
+			break
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("container %s is still %s %s after SIGKILL", id, status, reclaimTimeout)
+		}
+		if err := container.Signal(unix.SIGKILL); err != nil && !errors.Is(err, libcontainer.ErrNotRunning) {
+			return err
+		}
+		time.Sleep(reclaimPoll)
+	}
+	return container.Destroy()
+}
+
 // container returns a registered container.
 func (e *libcontainerEngine) container(id string) (*libcontainer.Container, error) {
 	e.mu.Lock()
@@ -125,10 +172,7 @@ func (e *libcontainerEngine) run(id string, spec processSpec, init bool) (contai
 
 	process := toLibcontainerProcess(spec, init)
 	if !spec.TTY {
-		if err := container.Run(process); err != nil {
-			return nil, err
-		}
-		return &libcontainerProcess{process: process}, nil
+		return runPiped(container, process)
 	}
 
 	parent, child, err := utils.NewSockPair("console")
@@ -165,6 +209,7 @@ func toLibcontainerProcess(spec processSpec, init bool) *libcontainer.Process {
 		process.AdditionalGroups = append(process.AdditionalGroups, int(gid))
 	}
 	if !spec.TTY {
+		process.Stdin = spec.Stdin
 		process.Stdout = spec.Stdout
 		process.Stderr = spec.Stderr
 	}
@@ -253,6 +298,82 @@ func closeIfSet(f *os.File) error {
 type libcontainerProcess struct {
 	process *libcontainer.Process
 	console *os.File
+
+	// outputs are the pipes the process writes to in place of output
+	// writers that are not files; copies drains them into the writers.
+	// With exec.Cmd's own copying a descendant holding a pipe kept Wait
+	// blocked and nothing could close the pipe; these Release closes.
+	outputs []outputPipe
+	copies  sync.WaitGroup
+}
+
+// outputPipe is a pipe the runtime owns between a process and an output
+// writer.
+type outputPipe struct {
+	read, write *os.File
+	dst         io.Writer
+}
+
+// runPiped runs a non-TTY process, its output writers that are not files
+// fed through pipes the runtime owns.
+func runPiped(container *libcontainer.Container, process *libcontainer.Process) (containerProcess, error) {
+	p := &libcontainerProcess{process: process}
+	var err error
+	if process.Stdout, err = p.pipeOutput(process.Stdout); err == nil {
+		process.Stderr, err = p.pipeOutput(process.Stderr)
+	}
+	if err == nil {
+		err = container.Run(process)
+	}
+	// The process holds its own copies of the write ends now.
+	var closeErr error
+	for _, out := range p.outputs {
+		closeErr = errors.Join(closeErr, out.write.Close())
+	}
+	if err != nil {
+		return nil, errors.Join(err, closeErr, p.closeOutputs())
+	}
+	if closeErr != nil {
+		return nil, errors.Join(closeErr, killProcess(process), p.closeOutputs())
+	}
+	for _, out := range p.outputs {
+		p.copies.Add(1)
+		go func() {
+			defer p.copies.Done()
+			// The copy ends at EOF, or when Release closes the read end.
+			_, _ = io.Copy(out.dst, out.read)
+		}()
+	}
+	return p, nil
+}
+
+// pipeOutput returns what the process writes to in place of w: w itself
+// when it is a file or nil, otherwise the write end of a new pipe.
+func (p *libcontainerProcess) pipeOutput(w io.Writer) (io.Writer, error) {
+	if w == nil {
+		return nil, nil
+	}
+	if _, ok := w.(*os.File); ok {
+		return w, nil
+	}
+	read, write, err := os.Pipe()
+	if err != nil {
+		return nil, err
+	}
+	p.outputs = append(p.outputs, outputPipe{read: read, write: write, dst: w})
+	return write, nil
+}
+
+// closeOutputs closes the read ends of the process's output pipes. One
+// already closed is not an error.
+func (p *libcontainerProcess) closeOutputs() error {
+	var err error
+	for _, out := range p.outputs {
+		if closeErr := out.read.Close(); closeErr != nil && !errors.Is(closeErr, os.ErrClosed) {
+			err = errors.Join(err, closeErr)
+		}
+	}
+	return err
 }
 
 // Pid returns the process ID, or 0 for a process that has been reaped.
@@ -267,15 +388,79 @@ func (p *libcontainerProcess) Pid() int {
 // Wait blocks until the process exits and returns its exit code.
 func (p *libcontainerProcess) Wait() (int, error) {
 	state, err := p.process.Wait()
+	// The output is complete once every holder of the pipes has closed
+	// them, or Release has.
+	p.copies.Wait()
+	err = errors.Join(err, p.closeOutputs())
 	if state == nil {
 		return -1, err
 	}
 	return exitCode(state), nil
 }
 
+// Release kills the process and its descendants and closes the read ends
+// of its output pipes, which ends the copies Wait waits for.
+func (p *libcontainerProcess) Release() error {
+	killErr := p.KillTree()
+	if errors.Is(killErr, os.ErrProcessDone) {
+		killErr = nil
+	}
+	return errors.Join(killErr, p.closeOutputs())
+}
+
 // Signal delivers sig to the process.
 func (p *libcontainerProcess) Signal(sig os.Signal) error {
 	return p.process.Signal(sig)
+}
+
+// KillTree kills the process and every descendant it has, so none of them
+// keeps the process's output pipes open after it dies.
+func (p *libcontainerProcess) KillTree() error {
+	pid, err := p.process.Pid()
+	if err != nil {
+		return p.process.Signal(unix.SIGKILL)
+	}
+	return killProcessTree(pid)
+}
+
+// killProcessTree stops pid so it cannot fork again, kills its descendants
+// depth first, then kills it. A process that has already gone is not an error.
+func killProcessTree(pid int) error {
+	if err := unix.Kill(pid, unix.SIGSTOP); err != nil {
+		if errors.Is(err, unix.ESRCH) {
+			return nil
+		}
+		return err
+	}
+	var errs []error
+	for _, child := range processChildren(pid) {
+		errs = append(errs, killProcessTree(child))
+	}
+	if err := unix.Kill(pid, unix.SIGKILL); err != nil && !errors.Is(err, unix.ESRCH) {
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
+}
+
+// processChildren lists pid's children from /proc, across all its threads.
+func processChildren(pid int) []int {
+	tasks, err := os.ReadDir(fmt.Sprintf("/proc/%d/task", pid))
+	if err != nil {
+		return nil
+	}
+	var children []int
+	for _, task := range tasks {
+		data, err := os.ReadFile(fmt.Sprintf("/proc/%d/task/%s/children", pid, task.Name()))
+		if err != nil {
+			continue
+		}
+		for _, field := range strings.Fields(string(data)) {
+			if child, err := strconv.Atoi(field); err == nil {
+				children = append(children, child)
+			}
+		}
+	}
+	return children
 }
 
 // Console returns the pseudo-terminal master, or nil for a non-TTY process.

@@ -20,11 +20,16 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
 
 // testImageDigest is the digest the image double reports for every image.
@@ -51,6 +56,23 @@ type fakeProcess struct {
 	// SIGKILL stops it.
 	ignoreSIGTERM bool
 
+	// outlivesKill keeps Wait blocked after SIGKILL, as a descendant still
+	// holding the process's output pipes does.
+	outlivesKill bool
+
+	// released is closed by Release, which closes the process's pipes and
+	// cleans up its workload: Wait returns and the output stops.
+	released    chan struct{}
+	releaseOnce sync.Once
+	// writing, when set, is closed once the output writer Release stops
+	// has returned.
+	writing chan struct{}
+	// waitReturned is closed when Wait returns.
+	waitReturned     chan struct{}
+	waitReturnedOnce sync.Once
+	// written counts the bytes the output writer has written.
+	written atomic.Int64
+
 	mu       sync.Mutex
 	signals  []os.Signal
 	exitCode int
@@ -59,7 +81,12 @@ type fakeProcess struct {
 }
 
 func newFakeProcess(pid int) *fakeProcess {
-	return &fakeProcess{pid: pid, exited: make(chan struct{})}
+	return &fakeProcess{
+		pid:          pid,
+		exited:       make(chan struct{}),
+		released:     make(chan struct{}),
+		waitReturned: make(chan struct{}),
+	}
 }
 
 func (p *fakeProcess) exit(code int) {
@@ -74,10 +101,55 @@ func (p *fakeProcess) exit(code int) {
 func (p *fakeProcess) Pid() int { return p.pid }
 
 func (p *fakeProcess) Wait() (int, error) {
-	<-p.exited
+	defer p.waitReturnedOnce.Do(func() { close(p.waitReturned) })
+	select {
+	case <-p.exited:
+	case <-p.released:
+		return -1, os.ErrClosed
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.exitCode, nil
+}
+
+// Release closes the process's pipes and cleans up its workload: the
+// output writer stops, and Wait returns.
+func (p *fakeProcess) Release() error {
+	p.releaseOnce.Do(func() { close(p.released) })
+	if p.writing != nil {
+		<-p.writing
+	}
+	return nil
+}
+
+// isReleased reports whether Release was called.
+func (p *fakeProcess) isReleased() bool {
+	select {
+	case <-p.released:
+		return true
+	default:
+		return false
+	}
+}
+
+// keepWriting writes to w until Release, as a descendant holding the
+// process's output pipe does.
+func (p *fakeProcess) keepWriting(w io.Writer) {
+	p.writing = make(chan struct{})
+	go func() {
+		defer close(p.writing)
+		ticker := time.NewTicker(time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-p.released:
+				return
+			case <-ticker.C:
+				n, _ := w.Write([]byte("x"))
+				p.written.Add(int64(n))
+			}
+		}
+	}()
 }
 
 func (p *fakeProcess) Signal(sig os.Signal) error {
@@ -92,6 +164,9 @@ func (p *fakeProcess) Signal(sig os.Signal) error {
 	p.mu.Unlock()
 
 	if sig == syscall.SIGTERM && p.ignoreSIGTERM {
+		return nil
+	}
+	if sig == syscall.SIGKILL && p.outlivesKill {
 		return nil
 	}
 	if s, ok := sig.(syscall.Signal); ok {
@@ -151,12 +226,21 @@ type fakeEngine struct {
 	// execBlocks makes exec processes run, with a silent terminal, until
 	// signalled.
 	execBlocks bool
+	// execOutlivesKill makes exec processes' Wait outlast SIGKILL.
+	execOutlivesKill bool
+	// execKeepsWriting makes exec processes outlast SIGKILL and keep
+	// writing to their stdout until released.
+	execKeepsWriting bool
 
 	created   map[string]*ociConfig
 	destroyed []string
-	starts    []processSpec
-	execs     []processSpec
-	processes []*fakeProcess
+
+	// reclaimErr fails Reclaim; reclaimed records the containers reclaimed.
+	reclaimErr error
+	reclaimed  []string
+	starts     []processSpec
+	execs      []processSpec
+	processes  []*fakeProcess
 }
 
 func newFakeEngine() *fakeEngine {
@@ -208,6 +292,14 @@ func (e *fakeEngine) Exec(id string, spec processSpec) (containerProcess, error)
 	e.execs = append(e.execs, spec)
 
 	process := newFakeProcess(2000 + len(e.execs))
+	process.outlivesKill = e.execOutlivesKill
+	if e.execKeepsWriting {
+		// lastProcess returns it.
+		e.processes = append(e.processes, process)
+		process.outlivesKill = true
+		process.keepWriting(spec.Stdout)
+		return process, nil
+	}
 	if e.execBlocks {
 		reader, writer := io.Pipe()
 		process.console = &silentConsole{reader: reader, writer: writer}
@@ -249,6 +341,16 @@ func (e *fakeEngine) Destroy(id string) error {
 	return nil
 }
 
+func (e *fakeEngine) Reclaim(id string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.reclaimErr != nil {
+		return e.reclaimErr
+	}
+	e.reclaimed = append(e.reclaimed, id)
+	return nil
+}
+
 func (e *fakeEngine) lastProcess() *fakeProcess {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -277,6 +379,18 @@ type fakeImages struct {
 
 	images map[string]imageRecord
 	pulls  []string
+
+	// pushErr fails every push; pushDigest is the digest a push reports.
+	pushErr    error
+	pushDigest string
+	// pushes records each pushed reference and the auth it carried.
+	pushes []fakePush
+}
+
+// fakePush is one push the fake image store took.
+type fakePush struct {
+	ref  string
+	auth *orchestration.RegistryAuth
 }
 
 func newFakeImages(refs ...string) *fakeImages {
@@ -328,6 +442,39 @@ func (s *fakeImages) Remove(ctx context.Context, ref string, force bool) error {
 	}
 	delete(s.images, ref)
 	return nil
+}
+
+func (s *fakeImages) Tag(ctx context.Context, source, target string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	record, ok := s.images[source]
+	if !ok {
+		id := strings.TrimPrefix(source, "sha256:")
+		for _, candidate := range s.images {
+			if candidate.ID != "" && candidate.ID == id {
+				record, ok = candidate, true
+				break
+			}
+		}
+	}
+	if !ok {
+		return ErrImageNotFound
+	}
+	s.images[target] = record
+	return nil
+}
+
+func (s *fakeImages) Push(ctx context.Context, ref string, auth *orchestration.RegistryAuth) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.images[ref]; !ok {
+		return "", ErrImageNotFound
+	}
+	s.pushes = append(s.pushes, fakePush{ref: ref, auth: auth})
+	if s.pushErr != nil {
+		return "", s.pushErr
+	}
+	return s.pushDigest, nil
 }
 
 // fakeRootfs is a rootfsStore that makes each container's rootfs a directory

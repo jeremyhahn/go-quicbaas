@@ -17,8 +17,35 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"slices"
+	"syscall"
+	"time"
 )
+
+// execCancelGrace bounds how long a cancelled exec waits for its killed
+// process to be reaped. Wait also waits for the copies out of its output
+// pipes, which a descendant that survived the kill can hold open.
+var execCancelGrace = 5 * time.Second
+
+// ErrExecOutlivedItsKill reports a cancelled exec whose process was not
+// reaped within execCancelGrace of its kill.
+var ErrExecOutlivedItsKill = errors.New("exec: the killed process was not reaped within its grace")
+
+// processTreeKiller is a containerProcess that can kill its descendants
+// with it, so none of them keeps its output pipes open.
+type processTreeKiller interface {
+	KillTree() error
+}
+
+// killExec kills a cancelled exec's process, and its descendants when the
+// engine can reach them.
+func killExec(process containerProcess) error {
+	if tree, ok := process.(processTreeKiller); ok {
+		return tree.KillTree()
+	}
+	return process.Signal(syscall.SIGKILL)
+}
 
 // ErrExecCommandRequired is returned when an exec request carries no command.
 var ErrExecCommandRequired = errors.New("exec command is required")
@@ -43,6 +70,11 @@ type ExecOptions struct {
 	// TTY allocates a pseudo-terminal for the process. When set on a buffered
 	// Exec the combined output is returned on the result's Stdout.
 	TTY bool
+
+	// Stdin is fed to a buffered exec's standard input. Nil leaves it
+	// closed, which is what a non-interactive command should see. It is
+	// ignored when TTY is set.
+	Stdin io.Reader
 }
 
 // Executor is the capability of running a command inside a running container.
@@ -78,7 +110,7 @@ func (r *Runtime) Exec(ctx context.Context, id string, opts ExecOptions) (*ExecR
 	if opts.TTY {
 		result, err = r.execTTY(ctx, state, opts)
 	} else {
-		result, err = r.execBuffered(state, opts)
+		result, err = r.execBuffered(ctx, state, opts)
 	}
 	if err != nil {
 		return nil, NewContainerError(id, "exec", err)
@@ -88,7 +120,7 @@ func (r *Runtime) Exec(ctx context.Context, id string, opts ExecOptions) (*ExecR
 
 // execBuffered runs an exec process with its stdout and stderr captured
 // separately.
-func (r *Runtime) execBuffered(state *containerState, opts ExecOptions) (*ExecResult, error) {
+func (r *Runtime) execBuffered(ctx context.Context, state *containerState, opts ExecOptions) (*ExecResult, error) {
 	var stdout, stderr bytes.Buffer
 	spec := execProcessSpec(state, opts)
 	spec.Stdout = &stdout
@@ -98,7 +130,45 @@ func (r *Runtime) execBuffered(state *containerState, opts ExecOptions) (*ExecRe
 	if err != nil {
 		return nil, err
 	}
-	exitCode, err := process.Wait()
+
+	type exit struct {
+		code int
+		err  error
+	}
+	done := make(chan exit, 1)
+	go func() {
+		code, err := process.Wait()
+		done <- exit{code: code, err: err}
+	}()
+
+	var exited exit
+	select {
+	case exited = <-done:
+	case <-ctx.Done():
+		// A cancelled exec is killed and reaped; its exit status is not the
+		// command's answer, so the cancellation is what is reported.
+		// Its descendants are killed with it; one the kill missed can still
+		// hold the output pipes, so the wait is bounded.
+		killErr := killExec(process)
+		grace := time.NewTimer(execCancelGrace)
+		defer grace.Stop()
+		select {
+		case <-done:
+		case <-grace.C:
+			// A descendant the kill missed holds the pipes: release the
+			// exec, which closes them and cleans up its workload, so its
+			// Wait ends and its output stops.
+			killErr = errors.Join(killErr, ErrExecOutlivedItsKill, process.Release())
+			released := time.NewTimer(execCancelGrace)
+			defer released.Stop()
+			select {
+			case <-done:
+			case <-released.C:
+			}
+		}
+		return nil, errors.Join(ctx.Err(), killErr)
+	}
+	exitCode, err := exited.code, exited.err
 	if err != nil {
 		return nil, err
 	}
@@ -156,5 +226,7 @@ func execProcessSpec(state *containerState, opts ExecOptions) processSpec {
 		Cwd:  cwd,
 		User: state.init.User,
 		TTY:  opts.TTY,
+
+		Stdin: opts.Stdin,
 	}
 }

@@ -16,6 +16,7 @@ package containerruntime
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -112,6 +113,59 @@ func TestRuntimeExec_TTYContextCancelled(t *testing.T) {
 
 	_, err := rt.Exec(ctx, id, ExecOptions{Command: []string{"/bin/sh"}, TTY: true})
 	require.ErrorIs(t, err, context.Canceled)
+}
+
+// A cancelled exec returns within its grace even when a descendant still
+// holds its output pipes and so keeps Wait from returning.
+func TestRuntimeExec_CancelledExecOutlivedByADescendantStillReturns(t *testing.T) {
+	rt, doubles := newTestRuntimeWithBackends(t)
+	id := createTestContainer(t, rt, "exec-outlived")
+	doubles.engine.execBlocks = true
+	doubles.engine.execOutlivesKill = true
+	grace := execCancelGrace
+	execCancelGrace = 50 * time.Millisecond
+	t.Cleanup(func() { execCancelGrace = grace })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	returned := make(chan error, 1)
+	go func() {
+		_, err := rt.Exec(ctx, id, ExecOptions{Command: []string{"sh", "-c", "sleep 600 & wait"}})
+		returned <- err
+	}()
+	select {
+	case err := <-returned:
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		require.ErrorIs(t, err, ErrExecOutlivedItsKill)
+	case <-time.After(5 * time.Second):
+		t.Fatal("a cancelled exec is still blocked on its output pipes")
+	}
+}
+
+func TestRuntimeExec_GraceExpiryReleasesTheExec(t *testing.T) {
+	rt, doubles := newTestRuntimeWithBackends(t)
+	id := createTestContainer(t, rt, "exec-released")
+	doubles.engine.execKeepsWriting = true
+	grace := execCancelGrace
+	execCancelGrace = 50 * time.Millisecond
+	t.Cleanup(func() { execCancelGrace = grace })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	_, err := rt.Exec(ctx, id, ExecOptions{Command: []string{"sh", "-c", "yes & wait"}})
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.ErrorIs(t, err, ErrExecOutlivedItsKill)
+
+	process := doubles.engine.lastProcess()
+	assert.True(t, process.isReleased(), "the exec's pipes were not closed nor its workload cleaned up")
+	select {
+	case <-process.waitReturned:
+	case <-time.After(time.Second):
+		t.Fatal("the exec's Wait goroutine is still blocked")
+	}
+	written := process.written.Load()
+	time.Sleep(50 * time.Millisecond)
+	assert.Equal(t, written, process.written.Load(), "the exec's output is still flowing into its buffer")
 }
 
 func TestRuntimeExec_MissingContainer(t *testing.T) {

@@ -18,6 +18,8 @@ import (
 	"io"
 	"os"
 	"time"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
 
 // The Runtime drives three in-process backends through the narrow interfaces
@@ -39,6 +41,9 @@ type processSpec struct {
 	// containerProcess.Console. Stdout and Stderr are unused when it is set.
 	TTY bool
 
+	// Stdin feeds the process's standard input. Nil leaves it closed. It is
+	// unused when TTY is set.
+	Stdin  io.Reader
 	Stdout io.Writer
 	Stderr io.Writer
 }
@@ -57,6 +62,13 @@ type containerProcess interface {
 
 	// Console is the pseudo-terminal master of a TTY process, nil otherwise.
 	Console() io.ReadWriteCloser
+
+	// Release gives up on a process that outlived its kill: it kills what
+	// is left of the process's workload and closes the stdio pipes the
+	// process owns, so a descendant still holding them can keep neither
+	// Wait blocked nor its output flowing into the caller's writers. Wait
+	// returns once Release has returned.
+	Release() error
 }
 
 // containerEngine creates, runs and destroys containers.
@@ -73,6 +85,12 @@ type containerEngine interface {
 
 	// Destroy removes a stopped container's state.
 	Destroy(id string) error
+
+	// Reclaim kills and removes a container that an earlier process of the
+	// runtime created under the same state directory and never destroyed.
+	// Nothing of it is registered in this process. A container the engine
+	// no longer knows is already reclaimed.
+	Reclaim(id string) error
 }
 
 // imageRecord is an image held in local storage.
@@ -82,6 +100,21 @@ type imageRecord struct {
 	Digests []string
 	Size    int64
 	Created time.Time
+
+	// Config is what the image's OCI configuration gives a container that
+	// leaves it unset.
+	Config imageConfig
+}
+
+// imageConfig is the part of an image's OCI configuration a container
+// inherits when its own configuration leaves it unset.
+type imageConfig struct {
+	Entrypoint []string
+	Cmd        []string
+	Env        []string
+	WorkingDir string
+	User       string
+	Labels     map[string]string
 }
 
 // imageStore pulls, inspects and removes images in local storage.
@@ -97,6 +130,16 @@ type imageStore interface {
 	// Remove deletes the stored image ref names. With force, an image that
 	// is not stored is not an error.
 	Remove(ctx context.Context, ref string, force bool) error
+
+	// Tag gives the stored image source, a reference or a "sha256:" ID,
+	// the name target as well, moving the name off any image that held it.
+	// A source that is not stored is an error matching ErrImageNotFound.
+	Tag(ctx context.Context, source, target string) error
+
+	// Push copies the stored image ref to the registry it names, signing in
+	// with auth when it is set, and returns the pushed manifest's digest. An
+	// image that is not stored is an error matching ErrImageNotFound.
+	Push(ctx context.Context, ref string, auth *orchestration.RegistryAuth) (string, error)
 }
 
 // rootfsStore unpacks an image's layers into a container root filesystem.

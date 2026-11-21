@@ -46,6 +46,77 @@ func TestPackageNeverImportsOSExec(t *testing.T) {
 	require.NotZero(t, checked)
 }
 
+// runtimeDaemonClients are the client packages of runtimes that live behind a
+// socket. The runtime drives containers in-process through libcontainer and
+// pulls and unpacks images in-process, so it never dials one.
+var runtimeDaemonClients = []string{
+	"github.com/docker/docker/client",
+	"github.com/moby/moby/client",
+	"github.com/containerd/containerd",
+	"github.com/containers/podman",
+	"go.podman.io/podman",
+	"k8s.io/cri-api",
+	"github.com/opencontainers/runc/libcontainer/cgroups/systemd",
+}
+
+// TestPackageNeverDialsARuntimeDaemon proves the "no sockets" half of the
+// container-runtime row: no non-test file imports a runtime daemon's client
+// (Docker, containerd, Podman, CRI or systemd's bus) or the net package.
+func TestPackageNeverDialsARuntimeDaemon(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	require.NoError(t, err)
+
+	checked := 0
+	for _, name := range files {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		imports, err := importsPackage(name, nil, "net")
+		require.NoError(t, err)
+		assert.False(t, imports, "%s imports net", name)
+		for _, prefix := range runtimeDaemonClients {
+			imported, err := importsPackagePrefix(name, nil, prefix)
+			require.NoError(t, err)
+			assert.Empty(t, imported, "%s imports runtime daemon client %s", name, imported)
+		}
+		checked++
+	}
+	require.NotZero(t, checked)
+}
+
+func TestImportsPackagePrefix(t *testing.T) {
+	src := "package p\n\nimport _ \"github.com/docker/docker/client/sub\"\n"
+	imported, err := importsPackagePrefix("p.go", src, "github.com/docker/docker/client")
+	require.NoError(t, err)
+	assert.Equal(t, "github.com/docker/docker/client/sub", imported)
+
+	imported, err = importsPackagePrefix("p.go", src, "github.com/docker/docker/clientx")
+	require.NoError(t, err)
+	assert.Empty(t, imported)
+
+	_, err = importsPackagePrefix("p.go", "not go", "x")
+	require.Error(t, err)
+}
+
+// importsPackagePrefix returns the first import of the file that is prefix or
+// lies under it, or "" if there is none.
+func importsPackagePrefix(name string, src any, prefix string) (string, error) {
+	file, err := parser.ParseFile(token.NewFileSet(), name, src, parser.ImportsOnly)
+	if err != nil {
+		return "", err
+	}
+	for _, spec := range file.Imports {
+		imported, err := strconv.Unquote(spec.Path.Value)
+		if err != nil {
+			return "", err
+		}
+		if imported == prefix || strings.HasPrefix(imported, prefix+"/") {
+			return imported, nil
+		}
+	}
+	return "", nil
+}
+
 func TestImportsPackage(t *testing.T) {
 	tests := []struct {
 		name string

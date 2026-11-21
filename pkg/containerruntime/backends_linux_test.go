@@ -17,10 +17,16 @@ package containerruntime
 
 import (
 	"context"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/google/go-containerregistry/pkg/name"
+	"github.com/google/go-containerregistry/pkg/registry"
+	"github.com/google/go-containerregistry/pkg/v1/random"
+	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -75,6 +81,74 @@ func TestStorageImageStore_RemoveOfAMissingImage(t *testing.T) {
 	require.ErrorIs(t, err, ErrImageNotFound)
 }
 
+func TestStorageImageStore_Tag(t *testing.T) {
+	ctx := context.Background()
+	b := newStorageBackends(t)
+	images, ok := b.images.(*storageImageStore)
+	require.True(t, ok)
+	stored, err := images.store.CreateImage("", []string{"docker.io/library/alpine:latest"}, "", "", nil)
+	require.NoError(t, err)
+
+	require.NoError(t, images.Tag(ctx, "alpine:latest", "reg.example/o/w:1"))
+	require.NoError(t, images.Tag(ctx, "sha256:"+stored.ID, "reg.example/o/w:2"))
+	got, err := images.store.Image(stored.ID)
+	require.NoError(t, err)
+	require.ElementsMatch(t, []string{
+		"docker.io/library/alpine:latest", "reg.example/o/w:1", "reg.example/o/w:2",
+	}, got.Names)
+
+	require.ErrorIs(t, images.Tag(ctx, "missing:latest", "reg.example/o/w:3"), ErrImageNotFound)
+	require.ErrorIs(t, images.Tag(ctx, "sha256:"+strings.Repeat("e", 64), "reg.example/o/w:3"), ErrImageNotFound)
+	require.Error(t, images.Tag(ctx, "alpine:latest", "Not A Reference"))
+}
+
+// The image goes out of local storage to a registry in-process, with no
+// docker or podman binary, and the digest returned is the one the registry
+// serves for the pushed name.
+func TestStorageImageStore_PushRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	server := httptest.NewServer(registry.New())
+	t.Cleanup(server.Close)
+	host := strings.TrimPrefix(server.URL, "http://")
+
+	// No layers: unpacking one chowns its files, which needs root.
+	seed, err := random.Image(256, 0)
+	require.NoError(t, err)
+	seedRef, err := name.ParseReference(host + "/seed/app:1")
+	require.NoError(t, err)
+	require.NoError(t, remote.Write(seedRef, seed))
+
+	dir := t.TempDir()
+	policy := filepath.Join(dir, "policy.json")
+	require.NoError(t, os.WriteFile(policy, []byte(`{"default":[{"type":"insecureAcceptAnything"}]}`), 0o600))
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "tmp"), 0o755))
+	b, err := newDefaultBackends(&RuntimeConfig{
+		Root:                filepath.Join(dir, "root"),
+		RunRoot:             filepath.Join(dir, "run"),
+		TmpDir:              filepath.Join(dir, "tmp"),
+		GraphDriverName:     "vfs",
+		SignaturePolicyPath: policy,
+		InsecureRegistries:  []string{host},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, b.close()) })
+
+	_, err = b.images.Pull(ctx, host+"/seed/app:1")
+	require.NoError(t, err)
+	require.NoError(t, b.images.Tag(ctx, host+"/seed/app:1", host+"/o/worker:1"))
+
+	digest, err := b.images.Push(ctx, host+"/o/worker:1", nil)
+	require.NoError(t, err)
+	pushedRef, err := name.ParseReference(host + "/o/worker:1")
+	require.NoError(t, err)
+	served, err := remote.Head(pushedRef)
+	require.NoError(t, err)
+	assert.Equal(t, served.Digest.String(), digest)
+
+	_, err = b.images.Push(ctx, host+"/o/missing:1", nil)
+	require.ErrorIs(t, err, ErrImageNotFound)
+}
+
 func TestStorageImageStore_PullHonoursTheSignaturePolicy(t *testing.T) {
 	b := newStorageBackends(t)
 
@@ -100,10 +174,26 @@ func TestStorageRootfsStore_CreateFromAMissingImage(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestStorageRootfsStore_RemoveOfAMissingContainer(t *testing.T) {
+// A reclaim that removed the rootfs and then died before deleting its bundle
+// retries the removal on the next start. The production store reports the
+// container's absence on unmount as an unknown layer, and the retry must read
+// that as done, or the bundle stays forever and every start fails its sweep.
+func TestStorageRootfsStore_RemoveIsRetrySafe(t *testing.T) {
+	ctx := context.Background()
 	b := newStorageBackends(t)
+	require.NoError(t, b.rootfs.Remove("never-created"))
+	if os.Geteuid() != 0 {
+		t.Skip("creating a read-write layer chowns it, which needs root")
+	}
+	images, ok := b.images.(*storageImageStore)
+	require.True(t, ok)
+	stored, err := images.store.CreateImage("", []string{"docker.io/library/empty:latest"}, "", "", nil)
+	require.NoError(t, err)
 
-	require.Error(t, b.rootfs.Remove("no-such-container"))
+	_, err = b.rootfs.Create(ctx, "reclaimed", stored.ID)
+	require.NoError(t, err)
+	require.NoError(t, b.rootfs.Remove("reclaimed"))
+	require.NoError(t, b.rootfs.Remove("reclaimed"), "the retried removal")
 }
 
 func TestNormalizeImageReference(t *testing.T) {

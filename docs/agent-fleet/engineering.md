@@ -201,7 +201,7 @@ leading `#`) is rejected at spec validation. Code:
 
 | `--container-runtime` | Behaviour |
 |---|---|
-| `auto` (default) | Probe Docker, then Podman; no runtime if neither |
+| `auto` (default) | Probe Docker, then Podman; no runtime if neither; never the in-process runtime |
 | `docker`, `podman` | Bind that engine; no runtime if unusable |
 | `none` | No containerized sessions; nothing probed |
 
