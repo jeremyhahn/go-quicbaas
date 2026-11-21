@@ -335,6 +335,8 @@ jobs:
   # scheduled run only and only after build-publish and post-digest succeeded,
   # so `current` names the newest green nightly. A dispatch never moves it. The
   # move is a registry-side retag of the same manifest: no build, no new bytes.
+  # --prefer-index=false keeps a single-platform manifest from being wrapped in
+  # a new index, so the digest does not change.
   move-current:
     name: Move current to the green nightly
     needs: [build-publish, post-digest]
@@ -361,7 +363,7 @@ jobs:
           trap 'docker logout ghcr.io >/dev/null 2>&1 || true; rm -rf "$DOCKER_CONFIG"' EXIT
           printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           before="$(docker buildx imagetools inspect "${repo}:current" --format '{{json .Manifest}}' 2>/dev/null | jq -r '.digest // empty' || true)"
-          docker buildx imagetools create --tag "${repo}:current" "${repo}@${DIGEST}"
+          docker buildx imagetools create --prefer-index=false --tag "${repo}:current" "${repo}@${DIGEST}"
           after="$(docker buildx imagetools inspect "${repo}:current" --format '{{json .Manifest}}' | jq -r .digest)"
           [ "$after" = "$DIGEST" ] || { echo "::error::${repo}:current names '${after}', not ${DIGEST}"; exit 1; }
           line="WORKER-IMAGE-CURRENT ${repo}:current ${before:-none} -> ${DIGEST}"
