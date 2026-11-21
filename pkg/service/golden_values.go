@@ -96,7 +96,7 @@ func SignGoldenValues(gv *GoldenValues, signer crypto.Signer, chain []*x509.Cert
 	for _, idx := range indices {
 		m, err := comid.NewMeasurement(uint64(idx), comid.UintType)
 		if err != nil {
-			return nil, fmt.Errorf("%w: measurement: %v", ErrGoldenValues, err)
+			return nil, fmt.Errorf("%w: measurement: %w", ErrGoldenValues, err)
 		}
 		for _, p := range byIndex[idx] {
 			m.AddDigest(goldenDigestAlgs[p.Hash], p.Value)
@@ -118,7 +118,7 @@ func SignGoldenValues(gv *GoldenValues, signer crypto.Signer, chain []*x509.Cert
 		return nil, fmt.Errorf("%w: comid", ErrGoldenValues)
 	}
 	if err := c.Valid(); err != nil {
-		return nil, fmt.Errorf("%w: comid: %v", ErrGoldenValues, err)
+		return nil, fmt.Errorf("%w: comid: %w", ErrGoldenValues, err)
 	}
 	profile := gv.Profile
 	if profile == "" {
@@ -130,7 +130,7 @@ func SignGoldenValues(gv *GoldenValues, signer crypto.Signer, chain []*x509.Cert
 	}
 	payload, err := unsigned.ToCBOR()
 	if err != nil {
-		return nil, fmt.Errorf("%w: corim: %v", ErrGoldenValues, err)
+		return nil, fmt.Errorf("%w: corim: %w", ErrGoldenValues, err)
 	}
 	provider := gv.Signer
 	if provider == "" {
@@ -138,7 +138,7 @@ func SignGoldenValues(gv *GoldenValues, signer crypto.Signer, chain []*x509.Cert
 	}
 	meta, err := corim.NewMeta().SetSigner(provider, nil).ToCBOR()
 	if err != nil {
-		return nil, fmt.Errorf("%w: corim meta: %v", ErrGoldenValues, err)
+		return nil, fmt.Errorf("%w: corim meta: %w", ErrGoldenValues, err)
 	}
 
 	msg := cose.NewSign1Message()
@@ -155,10 +155,10 @@ func SignGoldenValues(gv *GoldenValues, signer crypto.Signer, chain []*x509.Cert
 	}
 	coseSigner, err := cose.NewSigner(alg, signer)
 	if err != nil {
-		return nil, fmt.Errorf("%w: cose signer: %v", ErrGoldenValues, err)
+		return nil, fmt.Errorf("%w: cose signer: %w", ErrGoldenValues, err)
 	}
 	if err := msg.Sign(rand.Reader, nil, coseSigner); err != nil {
-		return nil, fmt.Errorf("%w: cose sign: %v", ErrGoldenValues, err)
+		return nil, fmt.Errorf("%w: cose sign: %w", ErrGoldenValues, err)
 	}
 	return msg.MarshalCBOR()
 }
