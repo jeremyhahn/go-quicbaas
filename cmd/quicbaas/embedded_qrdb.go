@@ -14,6 +14,8 @@
 package main
 
 import (
+	qrdbservice "github.com/jeremyhahn/go-qrdb/pkg/service"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/server"
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
@@ -81,6 +83,9 @@ func buildEmbeddedQRDBServicers(es *embeddedServer) (quicbaas.QRDBEmbeddedServic
 	// against — so an enrolled factor is immediately login-resolvable.
 	if userSvc := es.server.GetQRDBUserServicer(); userSvc != nil {
 		servicers.User = userSvc
+	}
+	if svc := es.server.GetQRDBEmbeddingServicer(); svc != nil {
+		servicers.Embedding = svc
 	}
 	if uafSvc := es.server.GetQRDBUserAuthFactorServicer(); uafSvc != nil {
 		servicers.UserAuthFactor = uafSvc
@@ -150,6 +155,7 @@ var _ interface {
 	GetQRDBKVServicer() quicbaas.QRDBKVServicer
 	GetQRDBAdminServicer() quicbaas.QRDBAdminServicer
 	GetQRDBUserServicer() quicbaas.QRDBUserServicer
+	GetQRDBEmbeddingServicer() qrdbservice.EmbeddingServicer
 	GetQRDBUserAuthFactorServicer() quicbaas.QRDBUserAuthFactorServicer
 	GetCeremonyServices() *server.CeremonyServices
 	GetDataPlaneBarrierService() server.BaasBarrierService

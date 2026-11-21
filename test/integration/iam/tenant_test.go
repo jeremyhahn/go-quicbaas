@@ -458,17 +458,8 @@ func TestTenantDeletionCascade(t *testing.T) {
 	require.NoError(t, err, "Failed to create user in tenant")
 	require.NotEmpty(t, user.ID, "User ID should not be empty")
 
-	// Create a group in the tenant
-	groupReq := map[string]interface{}{
-		"name":        "Cascade Test Group",
-		"description": "Group for cascade deletion testing",
-	}
-	var group struct {
-		ID string `json:"id"`
-	}
-	err = cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/groups", tenantID), groupReq, &group)
-	require.NoError(t, err, "Failed to create group in tenant")
-	require.NotEmpty(t, group.ID, "Group ID should not be empty")
+	// quicbaas keeps no groups of its own (identity is qrdb's), so the
+	// cascade covers the tenant's users only.
 
 	// Delete the tenant
 	err = cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
@@ -481,10 +472,6 @@ func TestTenantDeletionCascade(t *testing.T) {
 	// Verify users are deleted (tenant endpoint should return 404)
 	err = cluster.getJSONExpectNotFound(fmt.Sprintf("/api/v1/tenants/%s/users/%s", tenantID, user.ID))
 	assert.NoError(t, err, "User should be deleted with tenant")
-
-	// Verify groups are deleted (tenant endpoint should return 404)
-	err = cluster.getJSONExpectNotFound(fmt.Sprintf("/api/v1/tenants/%s/groups/%s", tenantID, group.ID))
-	assert.NoError(t, err, "Group should be deleted with tenant")
 }
 
 // TestTenantValidation tests input validation for tenant creation.

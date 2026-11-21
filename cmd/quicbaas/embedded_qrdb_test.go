@@ -113,6 +113,8 @@ func TestBuildEmbeddedQRDBServicers_EndToEnd(t *testing.T) {
 		assert.NotNil(t, servicers.Ceremony, "ceremony should be wired when bootstrap stack is available")
 		assert.NotNil(t, servicers.Credential, "credential should be wired when bootstrap stack is available")
 	}
+	assert.Equal(t, es.server.GetQRDBEmbeddingServicer() != nil, servicers.Embedding != nil,
+		"the embedding servicer is wired exactly when the node serves one")
 }
 
 // TestEmbeddedQRDBOption_EndToEnd verifies the SDK option helper returns a
