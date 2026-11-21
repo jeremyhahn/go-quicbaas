@@ -18,6 +18,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -418,6 +419,121 @@ func TestHooks_CompleteMergesTheReviewedHeadOnly(t *testing.T) {
 	// Already merged on the forge: idempotent.
 	if err := rig.hooks.Complete(ctx, job); err != nil || len(rig.forge.merges) != 3 {
 		t.Fatalf("second Complete: %v merges=%d", err, len(rig.forge.merges))
+	}
+}
+
+// reviewedForMerge takes the rig's task through Prepare, a published head and
+// Reviewable, so the next Complete merges it.
+func reviewedForMerge(t *testing.T, rig *hooksRig) *orchestration.JobContext {
+	t.Helper()
+	ctx := context.Background()
+	job := testJob(1)
+	if _, err := rig.hooks.Prepare(ctx, job); err != nil {
+		t.Fatal(err)
+	}
+	rig.publishHead(t, ctx, testPublishedHead)
+	if err := rig.hooks.Reviewable(ctx, job); err != nil {
+		t.Fatal(err)
+	}
+	return job
+}
+
+// issueClosedComments returns the confirm-closed comments on number's thread.
+func issueClosedComments(f *fakeForge, number int) []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var bodies []string
+	for _, comment := range f.comments[number] {
+		if strings.Contains(comment.Body, issueClosedMarker) {
+			bodies = append(bodies, comment.Body)
+		}
+	}
+	return bodies
+}
+
+func TestHooks_CompleteClosesAnIssueTheForgeLeftOpen(t *testing.T) {
+	rig := newHooksRig(t)
+	job := reviewedForMerge(t, rig)
+	if err := rig.hooks.Complete(context.Background(), job); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	comments := issueClosedComments(rig.forge, 25)
+	if len(comments) != 1 || !strings.Contains(comments[0], issueClosedMarker+" pr=100") ||
+		!strings.Contains(comments[0], "#100 at ") {
+		t.Fatalf("confirm comments = %q, want one naming #100 and its merge commit", comments)
+	}
+	if !reflect.DeepEqual(rig.forge.closed, []int{25}) || rig.forge.issues[25].State != "closed" {
+		t.Fatalf("closed = %v state = %s, want issue 25 closed", rig.forge.closed, rig.forge.issues[25].State)
+	}
+}
+
+func TestHooks_CompleteLeavesAClosedIssueAlone(t *testing.T) {
+	rig := newHooksRig(t)
+	job := reviewedForMerge(t, rig)
+	// The forge honoured the closing keyword.
+	rig.forge.issues[25].State = "CLOSED"
+	if err := rig.hooks.Complete(context.Background(), job); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if comments := issueClosedComments(rig.forge, 25); len(comments) != 0 || len(rig.forge.closed) != 0 {
+		t.Fatalf("comments = %q closed = %v, want a closed issue left alone", comments, rig.forge.closed)
+	}
+}
+
+func TestHooks_CompleteClosesEveryClusterMember(t *testing.T) {
+	rig := newHooksRig(t)
+	rig.forge.putIssue(26, "Fix the other thing")
+	rig.forge.putIssue(27, "Fix a third thing").State = "closed"
+	task := testTaskRecord(25)
+	task.Metadata = map[string]string{MetadataClusterIssues: "26, 27"}
+	rig.tasks.replace(task)
+	job := reviewedForMerge(t, rig)
+	if err := rig.hooks.Complete(context.Background(), job); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if !reflect.DeepEqual(rig.forge.closed, []int{25, 26}) {
+		t.Fatalf("closed = %v, want the anchor and the open member only", rig.forge.closed)
+	}
+	if len(issueClosedComments(rig.forge, 26)) != 1 || len(issueClosedComments(rig.forge, 27)) != 0 {
+		t.Fatalf("member comments: 26=%q 27=%q", issueClosedComments(rig.forge, 26), issueClosedComments(rig.forge, 27))
+	}
+}
+
+func TestHooks_CompleteConfirmClosedIsIdempotent(t *testing.T) {
+	rig := newHooksRig(t)
+	job := reviewedForMerge(t, rig)
+	ctx := context.Background()
+	// The first close fails after the comment was posted; the retry finds
+	// the comment and only closes.
+	rig.forge.closeIssueErr = errors.New("forge down")
+	if err := rig.hooks.Complete(ctx, job); err == nil {
+		t.Fatal("Complete succeeded with the close failing")
+	}
+	rig.forge.closeIssueErr = nil
+	if err := rig.hooks.Complete(ctx, job); err != nil {
+		t.Fatalf("retried Complete: %v", err)
+	}
+	if err := rig.hooks.Complete(ctx, job); err != nil {
+		t.Fatalf("third Complete: %v", err)
+	}
+	if comments := issueClosedComments(rig.forge, 25); len(comments) != 1 {
+		t.Fatalf("confirm comments = %q, want exactly one", comments)
+	}
+	if !reflect.DeepEqual(rig.forge.closed, []int{25}) {
+		t.Fatalf("closed = %v, want one close", rig.forge.closed)
+	}
+}
+
+func TestHooks_CompleteFailsWhenTheIssueCannotBeRead(t *testing.T) {
+	rig := newHooksRig(t)
+	job := reviewedForMerge(t, rig)
+	readErr := errors.New("issue read failed")
+	rig.forge.getIssueErr = readErr
+	if err := rig.hooks.Complete(context.Background(), job); !errors.Is(err, readErr) {
+		t.Fatalf("Complete = %v, want the read error", err)
+	}
+	if len(rig.forge.closed) != 0 {
+		t.Fatalf("closed = %v with the issue unread", rig.forge.closed)
 	}
 }
 
