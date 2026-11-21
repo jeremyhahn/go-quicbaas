@@ -101,10 +101,11 @@ func (s *Server) bootstrapBarrierRegistry() *qrdbsdk.BarrierRegistry {
 			return registry
 		}
 	}
-	if s.dataPlaneBarrier == nil {
+	dataPlaneBarrier := s.dataPlaneBarrier.Load()
+	if dataPlaneBarrier == nil {
 		return nil
 	}
-	registry, err := qrdbsdk.NewBarrierRegistry(slog.Default(), s.dataPlaneBarrier)
+	registry, err := qrdbsdk.NewBarrierRegistry(slog.Default(), dataPlaneBarrier)
 	if err != nil {
 		s.logger.WithError(err).Warn("First-boot: data-plane barrier registry construction failed; using direct first-boot path")
 		return nil
