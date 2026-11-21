@@ -239,8 +239,8 @@ FROM debian:trixie-slim
 # not built invariant-globalization), named rather than left to arrive with
 # WebKit; jq is what release scripts run in a worker need, starting with
 # go-enclave's release.sh (go-quicbaas#1431); the headless JDK, at the
-# OPENJDK_MAJOR pin (toolchain.mk), is the Java a Kotlin or Java project builds
-# with (go-quicbaas#1746).
+# OPENJDK_MAJOR pin (toolchain.mk), is the Java a Java project builds with
+# (go-quicbaas#1746).
 ARG OPENJDK_MAJOR
 RUN set -eux; \
     if [ -z "${OPENJDK_MAJOR}" ]; then \
@@ -699,35 +699,6 @@ RUN set -eux; \
     rm -f /tmp/marksman; \
     test "$(marksman --version)" = "${MARKSMAN_VERSION}"
 
-# THE KOTLIN LANGUAGE SERVER, JetBrains' kotlin-server release tarball, its
-# SHA-256 per architecture pinned beside the version as the release's .sha256
-# files publish it (toolchain.mk). It runs on the JetBrains runtime it bundles,
-# not the JDK above. kotlin-lsp.sh resolves its own symlinks, so the PATH entry
-# is a link into /opt/kotlin-lsp (go-quicbaas#1746).
-ARG KOTLIN_LSP_VERSION
-ARG KOTLIN_LSP_SHA256_X86_64
-ARG KOTLIN_LSP_SHA256_AARCH64
-RUN set -eux; \
-    for pin in KOTLIN_LSP_VERSION KOTLIN_LSP_SHA256_X86_64 KOTLIN_LSP_SHA256_AARCH64; do \
-        if [ -z "$(printenv "$pin")" ]; then \
-            echo "$pin is a required build argument. Build with 'make build-worker-image', which passes the repository's pins." >&2; \
-            exit 1; \
-        fi; \
-    done; \
-    case "$(uname -m)" in \
-        x86_64) tarball="kotlin-server-${KOTLIN_LSP_VERSION}.tar.gz"; sum="$KOTLIN_LSP_SHA256_X86_64" ;; \
-        aarch64) tarball="kotlin-server-${KOTLIN_LSP_VERSION}-aarch64.tar.gz"; sum="$KOTLIN_LSP_SHA256_AARCH64" ;; \
-        *) echo "no pinned Kotlin language server release for $(uname -m)" >&2; exit 1 ;; \
-    esac; \
-    curl -fsSL -o "/tmp/$tarball" "https://download.jetbrains.com/language-server/kotlin-server/${KOTLIN_LSP_VERSION}/$tarball"; \
-    echo "$sum  /tmp/$tarball" | sha256sum -c -; \
-    mkdir -p /opt/kotlin-lsp; \
-    tar -xzf "/tmp/$tarball" -C /opt/kotlin-lsp --strip-components=1 --no-same-owner; \
-    rm -f "/tmp/$tarball"; \
-    ln -s /opt/kotlin-lsp/kotlin-lsp.sh /usr/local/bin/kotlin-lsp; \
-    test -x /opt/kotlin-lsp/bin/intellij-server; \
-    command -v kotlin-lsp
-
 # NPM, AND THE npm-PUBLISHED LANGUAGE SERVERS serena drives: pyright (Python),
 # typescript-language-server with the TypeScript it drives (TypeScript and
 # JavaScript), bash-language-server and yaml-language-server. Each at its pin
@@ -754,6 +725,8 @@ RUN set -eux; \
 # no longer bundles the package, so a stale floor cannot outlive the npm
 # release that fixed it; and when a floor is more than a patch release of
 # npm's copy, so npm keeps the major and minor its own dependents declared.
+# An empty NPM_BUNDLED_DEPENDENCY_FLOORS means npm bundles no copy that needs
+# a floor.
 # The language-server install that follows is the proof npm still works.
 ARG NPM_VERSION
 ARG NPM_BUNDLED_DEPENDENCY_FLOORS
@@ -764,7 +737,7 @@ ARG BASH_LANGUAGE_SERVER_VERSION
 ARG YAML_LANGUAGE_SERVER_VERSION
 ARG DEVCACHE_NPM_REGISTRY
 RUN set -eux; \
-    for pin in NPM_VERSION NPM_BUNDLED_DEPENDENCY_FLOORS PYRIGHT_VERSION TYPESCRIPT_VERSION TYPESCRIPT_LANGUAGE_SERVER_VERSION BASH_LANGUAGE_SERVER_VERSION YAML_LANGUAGE_SERVER_VERSION; do \
+    for pin in NPM_VERSION PYRIGHT_VERSION TYPESCRIPT_VERSION TYPESCRIPT_LANGUAGE_SERVER_VERSION BASH_LANGUAGE_SERVER_VERSION YAML_LANGUAGE_SERVER_VERSION; do \
         if [ -z "$(printenv "$pin")" ]; then \
             echo "$pin is a required build argument. Build with 'make build-worker-image', which passes the repository's pins." >&2; \
             exit 1; \
@@ -1125,6 +1098,14 @@ ENV GOPATH=/home/agent/go
 ENV PATH="/usr/local/go/bin:${GOPATH}/bin:${PATH}" \
     GOTOOLCHAIN=local
 
+# CLAUDE CODE DOES NOT UPDATE ITSELF HERE. The image is immutable: Claude Code
+# is installed root-owned under /usr/local and runs as `agent`, which cannot
+# write that npm prefix, so the self-updater can only fail ("Auto-update
+# failed: no write permission to npm prefix", #2548). A new Claude Code comes
+# only from a new image built from versions.lock. /etc/profile resets PATH
+# alone, so this survives the agent's `sh -lc`.
+ENV DISABLE_AUTOUPDATER=1
+
 # ENV PATH IS NOT ENOUGH, BECAUSE THE AGENT EXECS THROUGH A LOGIN SHELL.
 #
 # Every tool the factory runs in this container arrives as `sh -lc <command>`.
@@ -1418,5 +1399,4 @@ LABEL org.opencontainers.image.title="QuicBaaS Software Factory Worker" \
       io.quicbaas.worker.clangd.version="${CLANGD_VERSION}" \
       io.quicbaas.worker.rust-analyzer.version="${RUST_ANALYZER_VERSION}" \
       io.quicbaas.worker.marksman.version="${MARKSMAN_VERSION}" \
-      io.quicbaas.worker.kotlin-lsp.version="${KOTLIN_LSP_VERSION}" \
       io.quicbaas.worker.openjdk.version="${OPENJDK_MAJOR}"
