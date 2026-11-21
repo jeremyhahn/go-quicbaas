@@ -2617,7 +2617,9 @@ func (s *Server) startGRPCServer() error {
 	// ONLY to serve the local Unix-domain-socket transport (CLI compatibility
 	// / local IPC), independent of network-serving configuration. There is no
 	// TCP listener here anymore: the node already owns server.grpc.port.
-	if s.config.Server.Unix.Socket != "" {
+	// Under network serving the node owns server.unix.socket as well (see
+	// quicbaasServesUnixSocket), so this listener only runs without it.
+	if s.quicbaasServesUnixSocket() {
 		if err := s.startUnixSocketListener(grpcServer); err != nil {
 			return err
 		}
@@ -2631,6 +2633,23 @@ func (s *Server) startGRPCServer() error {
 	}
 
 	return nil
+}
+
+// quicbaasServesUnixSocket reports whether quicbaas's own grpcServer binds
+// server.unix.socket after the full boot. Under network serving the embedded
+// node owns that socket (buildQRDBConfig), serving it behind the node's own
+// authentication middleware exactly as its gRPC TCP listener; quicbaas's
+// grpcServer then must not bind (and so replace) it. The sealed window,
+// which tears its listener down before the node binds, is not affected.
+func (s *Server) quicbaasServesUnixSocket() bool {
+	return s.config.Server.Unix.Socket != "" && !s.config.NetworkServing()
+}
+
+// nodeServesUnixSocket reports whether the embedded qrdb node serves
+// server.unix.socket: a socket is configured and the node's network
+// transports serve (buildQRDBConfig turns the node's Unix protocol on).
+func (s *Server) nodeServesUnixSocket() bool {
+	return s.config.Server.Unix.Socket != "" && s.config.NetworkServing()
 }
 
 // startUnixSocketListener creates and starts a Unix domain socket listener.
