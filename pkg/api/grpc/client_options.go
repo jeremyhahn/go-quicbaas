@@ -15,6 +15,7 @@
 package grpc
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
@@ -539,8 +540,48 @@ func (opts *clientOptions) buildDialOptions() ([]grpc.DialOption, error) {
 
 	dialOptions = append(dialOptions, grpc.WithDefaultServiceConfig(serviceConfig))
 
+	// Send the configured metadata on every call made on the connection
+	dialOptions = append(dialOptions, opts.metadataDialOptions()...)
+
 	// Add custom dial options
 	dialOptions = append(dialOptions, opts.dialOptions...)
 
 	return dialOptions, nil
+}
+
+// metadataDialOptions returns the client interceptors that send the metadata
+// WithMetadata configured on every call made on the connection, including the
+// generated service clients that never pass through addMetadata. It returns
+// nothing when no metadata is configured.
+func (opts *clientOptions) metadataDialOptions() []grpc.DialOption {
+	if len(opts.metadata) == 0 {
+		return nil
+	}
+	return []grpc.DialOption{
+		grpc.WithChainUnaryInterceptor(func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, callOpts ...grpc.CallOption) error {
+			return invoker(opts.withConfiguredMetadata(ctx), method, req, reply, cc, callOpts...)
+		}),
+		grpc.WithChainStreamInterceptor(func(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, callOpts ...grpc.CallOption) (grpc.ClientStream, error) {
+			return streamer(opts.withConfiguredMetadata(ctx), desc, cc, method, callOpts...)
+		}),
+	}
+}
+
+// withConfiguredMetadata returns ctx with every configured metadata key the
+// caller's outgoing metadata does not already set. A value the caller set
+// (for example through addMetadata) wins and is never duplicated.
+func (opts *clientOptions) withConfiguredMetadata(ctx context.Context) context.Context {
+	existing, _ := metadata.FromOutgoingContext(ctx)
+	out := existing.Copy()
+	added := false
+	for k, v := range opts.metadata {
+		if len(out.Get(k)) == 0 {
+			out.Set(k, v)
+			added = true
+		}
+	}
+	if !added {
+		return ctx
+	}
+	return metadata.NewOutgoingContext(ctx, out)
 }

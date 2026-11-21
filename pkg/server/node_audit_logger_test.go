@@ -15,6 +15,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -204,6 +205,46 @@ func TestNodeAuditLogger_GetEvent_FoundAndNotFound(t *testing.T) {
 	_, err = l.GetEvent(context.Background(), "t1", "nonexistent")
 	var notFound *AuditEventNotFoundError
 	assert.ErrorAs(t, err, &notFound)
+}
+
+// TestNodeAuditLogger_SinkNativeEvent_HasStableID pins that an event another
+// emitter put on the shared chain (qrdb's authorization decision logger
+// stamps neither an iam_id nor a request ID) reads back under the SAME ID on
+// every read, so a listed event can be fetched by its ID and recognized in a
+// later read of the append-only chain.
+func TestNodeAuditLogger_SinkNativeEvent_HasStableID(t *testing.T) {
+	l := newTestNodeAuditLogger()
+	ctx := context.Background()
+	require.NoError(t, l.sink.Emit(ctx, qrdbsdk.NodeAuditEvent{
+		Timestamp: time.Now().UTC(),
+		Actor:     "auditor",
+		TenantID:  "t1",
+		Resource:  "audit",
+		Action:    "read",
+		Outcome:   "success",
+	}))
+
+	first, total, err := l.Query(ctx, &iam.AuditFilter{TenantID: "t1"})
+	require.NoError(t, err)
+	require.Equal(t, 1, total)
+	second, _, err := l.Query(ctx, &iam.AuditFilter{TenantID: "t1"})
+	require.NoError(t, err)
+	require.Len(t, second, 1)
+	assert.NotEmpty(t, first[0].ID)
+	assert.Equal(t, first[0].ID, second[0].ID, "a chain event's ID must not change between reads")
+
+	got, err := l.GetEvent(ctx, "t1", first[0].ID)
+	require.NoError(t, err, "a listed event must be fetchable by its listed ID")
+	assert.Equal(t, first[0].ID, got.ID)
+}
+
+func TestNodeAuditLogger_AuditEventNotFound_MatchesIAMSentinel(t *testing.T) {
+	assert.True(t, errors.Is(&AuditEventNotFoundError{EventID: "x"}, iam.ErrAuditEventNotFound))
+
+	l := newTestNodeAuditLogger()
+	_, err := l.GetEvent(context.Background(), "t1", "nonexistent")
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, iam.ErrAuditEventNotFound))
 }
 
 func TestNodeAuditLogger_DeleteOlderThan_IsNoop(t *testing.T) {

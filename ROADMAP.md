@@ -1,5 +1,5 @@
 # go-quicbaas roadmap
-> **Status: REFERENCE** · Last verified: 2026-10-28 · Per handbook `software/conventions/roadmap.md`: the Software Department refreshes it; the project agent proposes changes by docs-only PR.
+> **Status: REFERENCE** · Last verified: 2026-11-21 · Per handbook `software/conventions/roadmap.md`: the Software Department refreshes it; the project agent proposes changes by docs-only PR.
 ## Mission
 Layer 4 of the stack, one product in layers: the application-layer framework and backend as a service. It embeds go-qrdb as a library, composes go-xkms on top with the hardware crypto passed in, re-exports every service of both through its SDK, and adds the application services. Every feature, its requirements and its status are in [docs/SPEC.md](docs/SPEC.md); what has shipped is in [CHANGELOG.md](CHANGELOG.md).
 
@@ -18,23 +18,26 @@ Layer 4 of the stack, one product in layers: the application-layer framework and
 - **signal-bridge** — the go-signal bridge — release 0.4.0-alpha — done
 
 ## Now
+- **iam** — one replicated OIDC signing key, so main Integration passes; `IAMService` mapped under authz, email-only login, invite self-registration, PIV attestation trust settings, a stable race pass — [#2343](../../issues/2343); DC: [#301](../../issues/301), [#377](../../issues/377), [#358](../../issues/358), [#800](../../issues/800), [#718](../../issues/718) — open
+- **scheduler** — guarded (CAS) writes for abandoned-run recovery and triage release — [#1676](../../issues/1676) — open
+- **orchestration** — RPCs always authenticated and gated by the role matrix; the session log neither overwrites events nor strands a conclusion; a pending task is claimed once across nodes — [#1677](../../issues/1677) — open
+- **accounts** — the spend cap is checked per turn — [#1678](../../issues/1678) — open
+- **agent-fleet** — agent images published to the registry — [#1680](../../issues/1680) — open
+- **sdlc** — webhook reviews, one-verb onboarding, adoption mode, the e2e gate and transport parity — [#1688](../../issues/1688) — open
+- **mcp-server** — the public MCP tool set matches its specification and is guarded — [#1692](../../issues/1692) — open
+- **software-factory** — triage, workers, review and merge run on QuicBaaS; company agents as standing MCP principals; MCP signing replaces the signing socket — [#1694](../../issues/1694); parity: [#2358](../../issues/2358), [#2359](../../issues/2359), [#2360](../../issues/2360), [#2361](../../issues/2361), [#2362](../../issues/2362), [#2363](../../issues/2363), [#2364](../../issues/2364), [#2365](../../issues/2365), [#2366](../../issues/2366), [#2367](../../issues/2367), [#2368](../../issues/2368); exit gate: [#2369](../../issues/2369) — open
 - **acme** — re-export the go-xkms ACME service; the own `/api/v1/acme/*` verbs are removed — DC: [#1327](../../issues/1327) — blocked: see issue
 - **audit-logging** — the audit signing key is held in protected memory — DC: [#23](../../issues/23) — blocked: see issue
 - **authorization** — REST permissions derive from the operation; every local role, permission and check is replaced by go-qrdb's — DC: [#338](../../issues/338) — blocked: see issue
 - **certificate-authority** — re-export the go-xkms CA, with device identity issued by it; the own certificate service and second datastore are removed — DC: [#1327](../../issues/1327) — blocked: see issue
 - **composition** — the module route-collision guard does not depend on registration order — DC: [#477](../../issues/477) — blocked: see issue
-- **iam** — `IAMService` mapped under authz, email-only login, invite self-registration, PIV attestation trust settings, a stable race pass — DC: [#301](../../issues/301), [#377](../../issues/377), [#358](../../issues/358), [#800](../../issues/800), [#718](../../issues/718) — open
-- **mcp-server** — the public MCP tool set matches its specification and is guarded — DC: [#1127](../../issues/1127) — blocked: see issue
 - **oauth2-oidc** — `acr` / `amr` emitted as documented; an xkms-issued FIDO2 login token verifies against the published JWKS — DC: [#392](../../issues/392), [#486](../../issues/486) — blocked: see issue
 - **object-storage** — object storage and dynamic secrets are tenant-isolated as the compliance model claims — DC: [#32](../../issues/32) — blocked: see issue
-- **orchestration** — RPCs always authenticated and gated by the role matrix; the session log neither overwrites events nor strands a conclusion; a pending task is claimed once across nodes — DC: [#502](../../issues/502), [#637](../../issues/637), [#200](../../issues/200), [#201](../../issues/201); PDC: [#719](../../issues/719) — blocked: see issue
 - **secrets** — rotation policies are performed, not only stored — DC: [#723](../../issues/723) — blocked: see issue
 - **security-hardening** — the scoped FIPS gate runs on push; webhook fixtures use FIPS-strength HMAC keys — DC: [#769](../../issues/769), [#524](../../issues/524) — blocked: see issue
 - **release-readiness** — no private host, path or lab value in the published tree; docs meet the handbook rules; CI mounts no host Docker socket — DC: [#1130](../../issues/1130), [#1258](../../issues/1258), [#1168](../../issues/1168) — open
 
 ## Next
-- **accounts** — the spend cap is checked per turn — DC: [#782](../../issues/782) — blocked: see issue
-- **agent-fleet** — agent images published to the registry — DC: [#756](../../issues/756) — open
 - **attestation** — no firmware module in the dependency graph — PDC: [#1185](../../issues/1185) — blocked: see issue
 - **backup-restore** — re-export go-qrdb's backup service; the own backup manager is removed — [#1321](../../pulls/1321) — blocked: held for the owner's word
 - **barrier** — passphrases, shares, recovery keys and PINs off argv and out of plain strings — DC: [#237](../../issues/237) — blocked: see issue
@@ -53,16 +56,13 @@ Layer 4 of the stack, one product in layers: the application-layer framework and
 - **object-storage** — an object storage provider per go-objstore backend and its SDK re-export; the Object storage navigation item after Dev complete (buckets, files and folders, pre-signed URLs and bucket permissions; ruling 228) — DC: [#1945](../../issues/1945); PDC: [#2043](../../issues/2043) — blocked: gates behind lane 1389co, the landing lane that succeeds [#1841](../../pulls/1841)
 - **projects** — the project record serves the Software Factory on QuicBaaS — [milestone 33](../../milestone/33) — done
 - **rag** — re-export go-qrdb's RAG service; the own pipeline is removed — [#1321](../../pulls/1321) — blocked: held for the owner's word
-- **scheduler** — guarded (CAS) writes for abandoned-run recovery and triage release — DC: [#105](../../issues/105) — open
-- **sdlc** — webhook reviews, one-verb onboarding, adoption mode, the e2e gate and transport parity — DC: [#182](../../issues/182), [#141](../../issues/141), [#124](../../issues/124) — open
-- **software-factory** — triage, workers, review and merge run on QuicBaaS; company agents as standing MCP principals; MCP signing replaces the signing socket — PDC: [#1126](../../issues/1126), [#1136](../../issues/1136), [#903](../../issues/903) — open
 - **ssh** — re-export the go-xkms SSH service; the own facade and key store are removed — [#1321](../../pulls/1321) — blocked: held for the owner's word
 - **timeseries** — re-export go-qrdb's time-series service; the own service is removed — [#1321](../../pulls/1321) — blocked: held for the owner's word
 - **vector** — re-export go-qrdb's vector service; the own service and local index are removed — [#1321](../../pulls/1321) — blocked: held for the owner's word
 
 ## Later
 - **hardware-backend-composition** — device backend adapters registered in the composition, the trusted-firmware go-xkms adapter first — DC: [#1660](../../issues/1660) — open
-- **declarative-placement** — declarative workload placement — DC: [#28](../../issues/28), [#1677](../../issues/1677) — blocked: see issue
+- **declarative-placement** — declarative workload placement — [#1681](../../issues/1681) — blocked: see issue
 - **orchestration-volumes** — go-blockstore volumes in container orchestration, with the NBD volume store behind them — DC: [#195](../../issues/195) — blocked: see issue
 - **container-runtime** — libcontainer in-process in the fleet node agent, co-located with quicbaasd — DC: [#1349](../../issues/1349) — blocked: see issue
 - **services** — a signed service manifest, the seven lifecycle verbs on every transport, A/B slots and one rollout controller — DC: [#1344](../../issues/1344) — blocked: see issue
@@ -78,7 +78,7 @@ Layer 4 of the stack, one product in layers: the application-layer framework and
 - **tenant-agent** — a QuicBaaS tenant agent replaces the Company Agent — [milestone 33](../../milestone/33) — open
 
 ## Dependencies
-- Up, pinned to release tags (`make check-library-pins`): go-xkms v0.49.0-alpha (the release without a firmware dependency is needed, [#1185](../../issues/1185)), go-qrdb v0.30.1-alpha, go-quicraft v0.15.0-alpha (indirect), go-signal v0.2.0-alpha (a `pkg/*` import), go-libsignal v0.2.0-alpha, go-objstore v0.3.0-alpha (a direct require: go-objstore owns all object storage and go-quicbaas re-exports it; buckets and multipart wait on go-objstore #89 and #90), go-enclave v0.6.1-alpha, go-auth v0.4.0-alpha, go-codec v1.4.0. Down: go-trusted-platform and go-recountly
+- Up, pinned to release tags (`make check-library-pins`): go-xkms v0.49.0-alpha (the release without a firmware dependency is needed, [#1185](../../issues/1185)), go-qrdb v0.30.1-alpha, go-quicraft v0.15.0-alpha (indirect), go-signal v0.2.0-alpha (a `pkg/*` import), go-libsignal v0.2.0-alpha, go-objstore v0.3.0-alpha (a direct require: go-objstore owns all object storage and go-quicbaas re-exports it; buckets and multipart wait on go-objstore #89 and #90), go-enclave v0.6.1-alpha, go-auth v0.4.0-alpha, go-codec v1.4.0; the latest go-qrdb and go-xkms, embedded and remote: [#2370](../../issues/2370). Down: go-trusted-platform and go-recountly
 - Seam waits on go-qrdb#1128: the compliance-mode switch, read through sdk/go, that the iam row's SO separation of duties follows (owner ruling 132)
 - Seam waits on go-xkms#1697: the per-repository signing-key binding, tenant release key by default, that the release-signing-key row re-exports (owner rulings 133 (a), 134)
 - Standards watch: draft-ietf-oauth-v2-1 (The OAuth 2.1 Authorization Framework), pinned at revision -16, implemented by `pkg/iam` ([copy and index](docs/reference/README.md))
