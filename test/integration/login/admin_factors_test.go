@@ -35,6 +35,7 @@ import (
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
 	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/xkms/fido2"
+	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 
 	"github.com/stretchr/testify/require"
 )
@@ -190,8 +191,7 @@ func TestAdminFactors_PasskeyEnrollsThenLogsIn(t *testing.T) {
 
 			// The login hint is the enrolled admin's email, read from the same
 			// user record the enrollment resolved adminSubject to.
-			admin, err := c.Security().Auth().UserByCertificate(ctx, loadAdminLeaf(t))
-			require.NoError(t, err, "[%s] resolve the enrolled admin", tr)
+			admin := resolveEnrolledAdmin(ctx, t, c, tr)
 			require.Equal(t, adminSubject, admin.Username, "[%s] the admin certificate must resolve the enrolled admin", tr)
 			require.NotEmpty(t, admin.Email, "[%s] the enrolled admin must carry an email login key", tr)
 
@@ -212,6 +212,30 @@ func TestAdminFactors_PasskeyEnrollsThenLogsIn(t *testing.T) {
 				"[%s] fido2 without a handler must be refused at preflight, got %v", tr, err)
 		})
 	}
+}
+
+// resolveEnrolledAdmin looks up the enrolled admin by the admin certificate.
+// The binding Enroll writes can take a moment before the lookup sees it, so
+// the helper retries NOT_FOUND for up to 10s and fails at once on any other
+// error.
+func resolveEnrolledAdmin(ctx context.Context, t *testing.T, c quicbaas.Client, tr loginTransport) *quicbaas.QRDBUser {
+	t.Helper()
+
+	leaf := loadAdminLeaf(t)
+	var admin *quicbaas.QRDBUser
+	err := helpers.Poll(ctx, 200*time.Millisecond, 10*time.Second, func(pctx context.Context) (bool, error) {
+		user, err := c.Security().Auth().UserByCertificate(pctx, leaf)
+		if err == nil {
+			admin = user
+			return true, nil
+		}
+		if sdkerrors.IsNotFound(err) {
+			return false, err
+		}
+		return false, &helpers.FinalPollError{Cause: err}
+	})
+	require.NoError(t, err, "[%s] resolve the enrolled admin", tr)
+	return admin
 }
 
 // A PIV key the administrator enrolls through AdminFactors().Enroll holds a
