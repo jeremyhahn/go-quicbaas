@@ -15,6 +15,7 @@ package buildgates
 
 import (
 	"encoding/json"
+	"fmt"
 	"maps"
 	"os"
 	"os/exec"
@@ -42,6 +43,13 @@ const (
 	// overflowRunnerGate is ci-template v1.48's runs-on for CI Gate: the
 	// preflight `runner` output on github.com, and ci-gate elsewhere.
 	overflowRunnerGate = `${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner || '"ubuntu-latest"') || 'ci-gate' }}`
+	// preflightRunner is preflight's runs-on (ci-template v1.49): on
+	// github.com the Dells' bigdisk pool unless the repository variable
+	// CI_PREFLIGHT_RUNS_ON (runs-on JSON) overrides it, and off github.com
+	// ubuntu-latest. The fork arm is go-quicbaas's own: this preflight runs
+	// the pull request's scripts/docs-only.sh, so a fork pull request (or
+	// one whose head repository is gone) stays hosted.
+	preflightRunner = `${{ github.server_url == 'https://github.com' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.CI_PREFLIGHT_RUNS_ON || '["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}`
 	// selfHostedWaiver opens the waiver a job that leaves hostedRunner
 	// carries in its runs-on line comment, followed by a category and a
 	// measured reason.
@@ -121,6 +129,7 @@ func runnerProblems(body []byte) []string {
 				problems = append(problems, where+" "+p)
 			}
 		case isOverflowRunner(j.runsOn.Value):
+		case j.name == "preflight" && j.runsOn.Value == preflightRunner:
 		case strings.Contains(j.runsOn.Value, "${{"):
 			problems = append(problems, where+" runs on an expression, which can pick a self-hosted label: "+strconv.Quote(j.runsOn.Value))
 		case j.runsOn.Value != hostedRunner:
@@ -180,7 +189,8 @@ func TestCIRunsHostedFirst(t *testing.T) {
 		t.Fatal(problem)
 	}
 	for _, j := range jobs {
-		if j.runsOn != nil && j.runsOn.Value != hostedRunner && !isOverflowRunner(j.runsOn.Value) {
+		if j.runsOn != nil && j.runsOn.Value != hostedRunner && !isOverflowRunner(j.runsOn.Value) &&
+			(j.name != "preflight" || j.runsOn.Value != preflightRunner) {
 			t.Errorf("job %s runs on %q; no ci.yml job is waived off %s today", j.name, j.runsOn.Value, hostedRunner)
 		}
 	}
@@ -211,6 +221,7 @@ func TestRunnerProblems_Mutations(t *testing.T) {
 			return replaceJobRunner(t, b, "publish-images", `${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'release' }}`)
 		}, "job publish-images runs on an expression"},
 		{"a v1.48 output read without its forge arm", coverage(`${{ fromJSON(needs.preflight.outputs.runner_docker) }}`), "job coverage runs on an expression"},
+		{"preflight's runs-on on another job", coverage(preflightRunner), "job coverage runs on an expression"},
 		{"a bare waiver", coverage("bigdisk  " + selfHostedWaiver + "needs a big disk"), "names no category"},
 		{"a credential waiver", coverage("bigdisk  " + selfHostedWaiver + "credential: the token is here"), "credential: waiver"},
 		{"a waiver with an empty reason", coverage("bigdisk  " + selfHostedWaiver + "hardware: "), "hardware: waiver with an empty reason"},
@@ -262,7 +273,7 @@ func replaceJobRunner(t *testing.T, body, job, runsOn string) string {
 // jobRunners is every ci.yml job's exact runs-on: the hosted-only jobs, the
 // jobs that build or run images (the Docker overflow class) and CI Gate.
 var jobRunners = map[string]string{
-	"preflight":      hostedRunner,
+	"preflight":      preflightRunner,
 	"publish-images": hostedRunner,
 	"unit":           hostedRunner,
 	"coverage":       hostedRunner,
@@ -320,6 +331,7 @@ func TestCIJobRunners_Mutations(t *testing.T) {
 		{"image", overflowRunnerGate, "job image runs on"},
 		{"ci-gate", overflowRunnerDocker, "job ci-gate runs on"},
 		{"coverage", overflowRunnerDocker, "job coverage runs on"},
+		{"preflight", hostedRunner, "job preflight runs on \"ubuntu-latest\""},
 	} {
 		t.Run(c.job, func(t *testing.T) {
 			mutated := replaceJobRunner(t, body, c.job, c.runsOn)
@@ -336,6 +348,354 @@ func TestCIJobRunners_Mutations(t *testing.T) {
 		return strings.Contains(s, "unit-passes-renamed is not in the runs-on table")
 	}) || !slices.ContainsFunc(p, func(s string) bool { return strings.Contains(s, "job unit-passes is not in ci.yml") }) {
 		t.Errorf("a renamed job: want both the unknown and the missing job reported, got %v", p)
+	}
+}
+
+// ghToken is one token of a GitHub Actions expression: a single-quoted
+// string literal (kind 's', text unquoted), an identifier or context path
+// (kind 'i') or an operator or bracket (kind 'o').
+type ghToken struct {
+	kind byte
+	text string
+}
+
+func ghTokenize(s string) ([]ghToken, error) {
+	var toks []ghToken
+	for i := 0; i < len(s); {
+		c := s[i]
+		switch {
+		case c == ' ' || c == '\t' || c == '\n':
+			i++
+		case c == '\'':
+			var b strings.Builder
+			i++
+			for {
+				if i >= len(s) {
+					return nil, fmt.Errorf("unterminated string in %q", s)
+				}
+				if s[i] == '\'' {
+					if i+1 < len(s) && s[i+1] == '\'' {
+						b.WriteByte('\'')
+						i += 2
+						continue
+					}
+					i++
+					break
+				}
+				b.WriteByte(s[i])
+				i++
+			}
+			toks = append(toks, ghToken{'s', b.String()})
+		case strings.HasPrefix(s[i:], "==") || strings.HasPrefix(s[i:], "!=") ||
+			strings.HasPrefix(s[i:], "&&") || strings.HasPrefix(s[i:], "||"):
+			toks = append(toks, ghToken{'o', s[i : i+2]})
+			i += 2
+		case strings.ContainsRune("!(),", rune(c)):
+			toks = append(toks, ghToken{'o', string(c)})
+			i++
+		case c == '_' || c == '-' || c == '.' || c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z':
+			j := i
+			for j < len(s) && (s[j] == '_' || s[j] == '-' || s[j] == '.' || s[j] >= '0' && s[j] <= '9' ||
+				s[j] >= 'a' && s[j] <= 'z' || s[j] >= 'A' && s[j] <= 'Z') {
+				j++
+			}
+			toks = append(toks, ghToken{'i', s[i:j]})
+			i = j
+		default:
+			return nil, fmt.Errorf("unexpected %q in %q", c, s)
+		}
+	}
+	return toks, nil
+}
+
+// ghParser evaluates a token list against a context while it parses. With
+// eval false it only parses: the operand a short circuit skips.
+type ghParser struct {
+	toks []ghToken
+	pos  int
+	ctx  map[string]any
+}
+
+func (p *ghParser) peek(op string) bool {
+	return p.pos < len(p.toks) && p.toks[p.pos].kind == 'o' && p.toks[p.pos].text == op
+}
+
+func (p *ghParser) or(eval bool) (any, error) {
+	v, err := p.and(eval)
+	for err == nil && p.peek("||") {
+		p.pos++
+		var r any
+		r, err = p.and(eval && !ghTruthy(v))
+		if eval && !ghTruthy(v) {
+			v = r
+		}
+	}
+	return v, err
+}
+
+func (p *ghParser) and(eval bool) (any, error) {
+	v, err := p.eq(eval)
+	for err == nil && p.peek("&&") {
+		p.pos++
+		var r any
+		r, err = p.eq(eval && ghTruthy(v))
+		if eval && ghTruthy(v) {
+			v = r
+		}
+	}
+	return v, err
+}
+
+func (p *ghParser) eq(eval bool) (any, error) {
+	v, err := p.unary(eval)
+	for err == nil && (p.peek("==") || p.peek("!=")) {
+		neg := p.toks[p.pos].text == "!="
+		p.pos++
+		var r any
+		r, err = p.unary(eval)
+		v = ghEqual(v, r) != neg
+	}
+	return v, err
+}
+
+func (p *ghParser) unary(eval bool) (any, error) {
+	if p.peek("!") {
+		p.pos++
+		v, err := p.unary(eval)
+		return !ghTruthy(v), err
+	}
+	return p.primary(eval)
+}
+
+func (p *ghParser) primary(eval bool) (any, error) {
+	if p.pos >= len(p.toks) {
+		return nil, fmt.Errorf("expression ends early")
+	}
+	t := p.toks[p.pos]
+	p.pos++
+	switch {
+	case t.kind == 'o' && t.text == "(":
+		v, err := p.or(eval)
+		if err == nil && !p.peek(")") {
+			err = fmt.Errorf("missing )")
+		}
+		p.pos++
+		return v, err
+	case t.kind == 's':
+		return t.text, nil
+	case t.kind == 'i' && p.peek("("):
+		if !strings.EqualFold(t.text, "fromJSON") {
+			return nil, fmt.Errorf("unsupported function %s", t.text)
+		}
+		p.pos++
+		arg, err := p.or(eval)
+		if err == nil && !p.peek(")") {
+			err = fmt.Errorf("fromJSON: missing )")
+		}
+		p.pos++
+		if err != nil || !eval {
+			return nil, err
+		}
+		s, ok := arg.(string)
+		if !ok {
+			return nil, fmt.Errorf("fromJSON of a non-string %v", arg)
+		}
+		var v any
+		if err := json.Unmarshal([]byte(s), &v); err != nil {
+			return nil, fmt.Errorf("fromJSON(%q): %w", s, err)
+		}
+		return v, nil
+	case t.kind == 'i':
+		switch t.text {
+		case "true":
+			return true, nil
+		case "false":
+			return false, nil
+		case "null":
+			return nil, nil
+		}
+		var v any = p.ctx
+		for _, k := range strings.Split(t.text, ".") {
+			m, ok := v.(map[string]any)
+			if !ok {
+				return nil, nil
+			}
+			v = m[k]
+		}
+		return v, nil
+	}
+	return nil, fmt.Errorf("unexpected %q", t.text)
+}
+
+// ghTruthy is GitHub's truthiness: null, false, 0 and ” are falsy.
+func ghTruthy(v any) bool {
+	switch x := v.(type) {
+	case nil:
+		return false
+	case bool:
+		return x
+	case float64:
+		return x != 0
+	case string:
+		return x != ""
+	}
+	return true
+}
+
+// ghEqual is GitHub's ==: strings compare ignoring case, and null equals
+// only null.
+func ghEqual(a, b any) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	if as, ok := a.(string); ok {
+		bs, ok := b.(string)
+		return ok && strings.EqualFold(as, bs)
+	}
+	switch a.(type) {
+	case bool, float64:
+		return a == b
+	}
+	return false
+}
+
+// ghEval evaluates a workflow value: a `${{ }}` expression against ctx, or
+// a plain string as itself.
+func ghEval(value string, ctx map[string]any) (any, error) {
+	s := strings.TrimSpace(value)
+	if !strings.HasPrefix(s, "${{") {
+		return value, nil
+	}
+	if !strings.HasSuffix(s, "}}") {
+		return nil, fmt.Errorf("unterminated expression %q", value)
+	}
+	toks, err := ghTokenize(s[3 : len(s)-2])
+	if err != nil {
+		return nil, err
+	}
+	p := &ghParser{toks: toks, ctx: ctx}
+	v, err := p.or(true)
+	if err == nil && p.pos != len(toks) {
+		err = fmt.Errorf("trailing tokens in %q", value)
+	}
+	return v, err
+}
+
+func TestGHEval(t *testing.T) {
+	ctx := map[string]any{"a": map[string]any{"b": "X"}, "e": ""}
+	for _, c := range []struct{ expr, want string }{
+		{"${{ a.b == 'x' }}", "true"},
+		{"${{ a.c == null }}", "true"},
+		{"${{ a.c == '' }}", "false"},
+		{"${{ e || 'd' }}", `"d"`},
+		{"${{ a.b && 'y' }}", `"y"`},
+		{"${{ !a.b }}", "false"},
+		{"${{ a.c && fromJSON('bad') || 'z' }}", `"z"`},
+		{"${{ fromJSON('[1, \"it''s\"]') }}", `[1,"it's"]`},
+		{"plain", `"plain"`},
+	} {
+		v, err := ghEval(c.expr, ctx)
+		if err != nil {
+			t.Errorf("%s: %v", c.expr, err)
+			continue
+		}
+		if got, _ := json.Marshal(v); string(got) != c.want {
+			t.Errorf("%s = %s, want %s", c.expr, got, c.want)
+		}
+	}
+}
+
+// ghContext is the expression context of one ci.yml run. repository is
+// o/r; for a pull request, head is the head repository's full name, and
+// "" a head repository that is gone (null). preflightVar "" leaves
+// CI_PREFLIGHT_RUNS_ON unset.
+func ghContext(server, event, ref, head, preflightVar string) map[string]any {
+	gh := map[string]any{"server_url": server, "event_name": event, "ref": ref, "repository": "o/r"}
+	if event == "pull_request" {
+		var repo any
+		if head != "" {
+			repo = map[string]any{"full_name": head}
+		}
+		gh["event"] = map[string]any{"pull_request": map[string]any{"head": map[string]any{"repo": repo}}}
+	}
+	vars := map[string]any{}
+	if preflightVar != "" {
+		vars["CI_PREFLIGHT_RUNS_ON"] = preflightVar
+	}
+	return map[string]any{"github": gh, "vars": vars, "secrets": map[string]any{"AGENT_TOKEN": "tok"}}
+}
+
+const (
+	githubCom   = "https://github.com"
+	forge       = "https://forge.example"
+	bigdiskJSON = `["self-hosted","linux","x64","bigdisk"]`
+	mainRef     = "refs/heads/main"
+	prRef       = "refs/pull/1/merge"
+)
+
+func TestCIPreflightRunsOn(t *testing.T) {
+	runsOn := mapValue(ciJobNode(readCI(t), "preflight"), "runs-on")
+	if runsOn == nil || runsOn.Kind != yaml.ScalarNode {
+		t.Fatal("ci.yml's preflight job has no scalar runs-on")
+	}
+	for _, c := range []struct {
+		name                           string
+		server, event, ref, head, varv string
+		want                           string
+	}{
+		{"github.com push to main, variable unset", githubCom, "push", mainRef, "", "", bigdiskJSON},
+		{"github.com push to main, variable hosted", githubCom, "push", mainRef, "", `"ubuntu-latest"`, `"ubuntu-latest"`},
+		{"github.com push to main, variable bigdisk", githubCom, "push", mainRef, "", bigdiskJSON, bigdiskJSON},
+		{"github.com dispatch, variable unset", githubCom, "workflow_dispatch", mainRef, "", "", bigdiskJSON},
+		{"github.com same-repository pull request", githubCom, "pull_request", prRef, "o/r", "", bigdiskJSON},
+		{"github.com fork pull request", githubCom, "pull_request", prRef, "fork/r", "", `"ubuntu-latest"`},
+		{"github.com fork pull request, variable bigdisk", githubCom, "pull_request", prRef, "fork/r", bigdiskJSON, `"ubuntu-latest"`},
+		{"github.com deleted fork pull request", githubCom, "pull_request", prRef, "", "", `"ubuntu-latest"`},
+		{"off github.com, variable unset", forge, "push", mainRef, "", "", `"ubuntu-latest"`},
+		{"off github.com, variable bigdisk", forge, "push", mainRef, "", bigdiskJSON, `"ubuntu-latest"`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			v, err := ghEval(runsOn.Value, ghContext(c.server, c.event, c.ref, c.head, c.varv))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, _ := json.Marshal(v); string(got) != c.want {
+				t.Errorf("preflight runs on %s, want %s", got, c.want)
+			}
+		})
+	}
+}
+
+func TestCIPreflightAgentToken(t *testing.T) {
+	const guard = "Is a main push run of this workflow in flight?"
+	steps := mapValue(ciJobNode(readCI(t), "preflight"), "steps")
+	if steps == nil {
+		t.Fatal("ci.yml's preflight job has no steps")
+	}
+	var bot *yaml.Node
+	for _, s := range steps.Content {
+		if n := mapValue(s, "name"); n != nil && n.Value == guard {
+			bot = mapValue(mapValue(s, "env"), "BOT")
+		}
+	}
+	if bot == nil {
+		t.Fatalf("ci.yml's preflight step %q has no BOT env", guard)
+	}
+	for _, c := range []struct{ name, server, event, ref, want string }{
+		{"github.com push to main", githubCom, "push", mainRef, `""`},
+		{"github.com dispatch", githubCom, "workflow_dispatch", mainRef, `""`},
+		{"off github.com push to main", forge, "push", mainRef, `"tok"`},
+		{"off github.com pull request", forge, "pull_request", prRef, `""`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			v, err := ghEval(bot.Value, ghContext(c.server, c.event, c.ref, "o/r", ""))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, _ := json.Marshal(v); string(got) != c.want {
+				t.Errorf("BOT is %s, want %s", got, c.want)
+			}
+		})
 	}
 }
 

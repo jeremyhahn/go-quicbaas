@@ -1,4 +1,4 @@
-# ci-template: v1.48 + v1.50 (delta port onto v1.34.1 + v1.42 hermetic gate + v1.43 hosted first + v1.46 runner rule; customized)
+# ci-template: v1.48 + v1.49 delta + v1.50 (delta port onto v1.34.1 + v1.42 hermetic gate + v1.43 hosted first + v1.46 runner rule; customized)
 # v1.50 (2026-11-21, defect fix, "hosted first with overflow to the
 # Dells"): the overflow never fired under load. The Actions API's
 # runs?status=queued listing returns fewer items than its total_count
@@ -46,12 +46,20 @@
 # and the template's runs-on expressions on lint, image, lint-gates and
 # integration (runner_docker) and on ci-gate (runner). Nothing else of v1.48.
 # Fork pull requests always take the hosted default, and IN_IMAGE_MEMORY keeps the 8g cap on the overflow runners (go-quicbaas, not in the template).
+# v1.49 delta: preflight's runs-on (on github.com the Dells' bigdisk pool,
+# overridden by the CI_PREFLIGHT_RUNS_ON variable) and the schedule guard's
+# BOT (off github.com only) as the template has them. Fork pull requests
+# keep preflight on ubuntu-latest (go-quicbaas, not in the template).
+# Nothing else of v1.49: its runner-labels lint is not taken, and
+# test/buildgates covers preflight's runs-on.
 # CUSTOMIZE (go-quicbaas): v1.22.2 through v1.34.1 adopted in one CI-file PR.
 # The jobs are the template's preflight, publish-images, lint, image,
 # lint-gates and ci-gate, with go-quicbaas's own unit, coverage, unit-passes
 # and integration jobs beside them. What differs from the template, and why:
-#   - Runners: preflight, publish-images, unit, coverage and unit-passes
-#     run on ubuntu-latest. lint, image, lint-gates, integration and ci-gate
+#   - Runners: publish-images, unit, coverage and unit-passes run on
+#     ubuntu-latest. preflight runs on the Dells' bigdisk pool on github.com
+#     (CI_PREFLIGHT_RUNS_ON overrides it; a fork pull request and every run
+#     off github.com take ubuntu-latest). lint, image, lint-gates, integration and ci-gate
 #     read the preflight `runner_docker`/`runner` output, which is
 #     ubuntu-latest unless the hosted pool is full. The unit, coverage and
 #     unit-passes jobs run their make target in the toolchain image.
@@ -744,8 +752,9 @@ jobs:
   # v1.34 (Company Agent m2211 item 2(b)): one preflight job instead of three.
   # `Changed files`, `Schedule guard` and `Architecture Gates` were three jobs.
   # They are steps of this one job now, in this order: the schedule guard
-  # first, before anything is checked out, so AGENT_TOKEN (a schedule run and
-  # a push to main only) still reaches a step beside no repository code; then
+  # first, before anything is checked out, so AGENT_TOKEN (off github.com, a
+  # schedule run and a push to main only; v1.49) reaches a step beside no
+  # repository code; then
   # one checkout with persist-credentials false; then the changed-files step;
   # then the architecture gates. The outputs are read as
   # needs.preflight.outputs.*, and CI Gate checks `preflight`.
@@ -764,9 +773,15 @@ jobs:
   # are its storage seam (OBJSTORE_SEAMS). Test files are exempt.
   preflight:
     name: Preflight [changed files, schedule guard, architecture gates]
-    # v1.43: GitHub-hosted. The job needs only bash, git, grep and sed, and
-    # the checkout keeps no credentials.
-    runs-on: ubuntu-latest
+    # v1.49: on github.com the Dells' bigdisk pool, so no run waits in the
+    # hosted queue for its first ten seconds of work; the repository variable
+    # CI_PREFLIGHT_RUNS_ON, runs-on JSON, overrides it (set it to
+    # `"ubuntu-latest"`, quotes included, while the Dells are down). Off
+    # github.com the forge label, as before.
+    # CUSTOMIZE (go-quicbaas): a fork pull request takes ubuntu-latest, since
+    # this preflight runs the pull request's scripts/docs-only.sh; an empty
+    # head repository (a deleted fork) counts as a fork.
+    runs-on: ${{ github.server_url == 'https://github.com' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.CI_PREFLIGHT_RUNS_ON || '["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}   # v1.49; CUSTOMIZE (go-quicbaas): fork pull requests stay hosted
     # v1.26: a draft PR runs no CI; every job that needs this one skips with it.
     if: ${{ !github.event.pull_request.draft }}
     timeout-minutes: 10       # v1.34: the three jobs had 5 each
@@ -800,7 +815,10 @@ jobs:
           REPO_API: ${{ github.server_url }}/api/v1/repos/${{ github.repository }}
           JOB_TOKEN: ${{ github.token }}
           # v1.30: a push to main reads the tree proof with it as well.
-          BOT: ${{ (github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && secrets.AGENT_TOKEN || '' }}
+          # v1.49: off github.com only. On github.com the guard never reads it
+          # (no schedule check, no tree proof there), so the secret does not
+          # reach the step on the Dells' runner.
+          BOT: ${{ github.server_url != 'https://github.com' && (github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && secrets.AGENT_TOKEN || '' }}
         run: |
           set -uo pipefail
           # runs <token>: sets N to the number of this workflow's push runs
@@ -1001,7 +1019,8 @@ jobs:
             pages "$API/runs/$id/jobs?filter=latest" jobs "$RUNNER_TEMP/sel-j.jsonl" || hosted "the Actions API gave no complete job list ($WHY)"
             cat "$RUNNER_TEMP/sel-j.jsonl" >> "$RUNNER_TEMP/sel-jobs.jsonl"
           done
-          # In progress: every hosted job, this one included. Queued: a hosted
+          # In progress: every hosted job (this one too, when CI_PREFLIGHT_RUNS_ON
+          # puts it on a hosted runner; v1.49). Queued: a hosted
           # job of another run (this run's jobs wait on this one) queued for
           # GRACE seconds or more, so a runner did not take it at once.
           read -r running queued < <(jq -rs --argjson run "$RUN_ID" --argjson grace "$GRACE" '
