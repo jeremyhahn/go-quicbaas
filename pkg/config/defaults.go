@@ -253,10 +253,8 @@ func DefaultConfig() *Config {
 				PassTimeout:     time.Hour,
 				SmokeModel:      "claude-opus-5-5",
 			},
-			// What the canonical workflow runs before publishing. Repo hosts
-			// default EMPTY: naming a forge host is the operator's explicit
-			// act.
-			VerificationCommands: []string{"make build", "make test", "make lint"},
+			// Repo hosts default EMPTY: naming a forge host is the
+			// operator's explicit act.
 		},
 		// Self-service registration stays off, but if an operator turns it
 		// on, a new account is held pending admin approval unless the

@@ -239,6 +239,7 @@ func (s *Server) startOrchestration() error {
 		SetFleetTelemetryStore(store *orchestration.FleetTelemetryStore)
 		SetAccountStore(store orchestration.AccountStore)
 		SetAccountCredentialGenerations(reader orchestration.AccountCredentialGenerationReader)
+		SetSpendAuthority(spend orchestration.SpendAuthority)
 		SetAccountCredentialLeaser(leases orchestration.AccountCredentialLeaser)
 		SetJobLifecyclePolicy(policy orchestration.JobLifecyclePolicy)
 		SetNode(node string)
@@ -862,6 +863,11 @@ func (s *Server) startOrchestration() error {
 			// the exhausted one stays nominally active and every other session
 			// rediscovers the same limit for itself.
 			wirer.SetAccountStore(accountStore)
+
+			// The cap, asked again before every turn of a pooled session
+			// (go-quicbaas#782), by the same authority the spawn and the
+			// remote release ask, so a session cannot outrun its window.
+			wirer.SetSpendAuthority(spendAuthority)
 
 			// And the authority a live session's credential is checked against
 			// before every job-runner turn (go-quicbaas#997): the same token

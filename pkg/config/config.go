@@ -861,8 +861,10 @@ type EmbeddedFleetNodeConfig struct {
 }
 
 // SDLCConfig configures the SDLC module of the Software Factory: which forge
-// hosts a bound project may live on, what a worker runs to verify its work,
-// and how a parked task's reason reaches its issue.
+// hosts a bound project may live on, how its sweeps are paced, and how a
+// parked task's reason reaches its issue. What a worker runs to verify its
+// work is the project binding's own verification list, admitted by the
+// allowlist orchestration.verification_commands; neither is configured here.
 //
 // The daemon does no clone, copy or worktree of its own: the worker's
 // container clones the project repository and the project's context
@@ -871,7 +873,7 @@ type EmbeddedFleetNodeConfig struct {
 // The generic knobs of a job — the attempt budget, the lease TTL, the stage
 // timeouts, the idle thresholds, the sweep interval — belong to the engine
 // and live under orchestration:. They are refused here BY NAME
-// (RemovedSDLCKeys) rather than silently ignored, so a configuration that
+// (RemovedKeys) rather than silently ignored, so a configuration that
 // still carries them fails to load with the key and its new home.
 type SDLCConfig struct {
 	// Enabled runs the SDLC module on this node.
@@ -886,18 +888,6 @@ type SDLCConfig struct {
 	// triggered issue; the next sweep sees the rest once the first page has
 	// been adopted and labelled in progress.
 	IssuePageLimit int `mapstructure:"issue_page_limit"`
-
-	// VerificationCommands is DECLARED AND UNREAD — see go-quicbaas#625.
-	//
-	// It described the validating-phase criteria of a canonical sdlc
-	// workflow that no longer exists (deleted by #596, replaced by the sdlc
-	// runner in #607). What the runner runs is the BINDING's own
-	// verification list, and what admits a command is the operator
-	// allowlist orchestration.verification_commands. Nothing reads this
-	// field; setting it has no effect.
-	//
-	// Default: make build, make test, make lint.
-	VerificationCommands []string `mapstructure:"verification_commands"`
 
 	// CheckoutRoot is where the worker's container finds its checkouts: the
 	// project at <root>/<project name> and each context repository beside
@@ -1124,14 +1114,16 @@ type SDLCWebhook struct {
 	// forge delivers to: scheme and host, no path — e.g.
 	// "https://factory.example.com".
 	//
-	// REQUIRED WHEN THE MODULE IS ENABLED, and deliberately not defaulted.
-	// Onboarding a project provisions a webhook on the forge pointing at
-	// <public_url>/api/v1/sdlc/webhook/<projectID>, and "the webhook points
-	// at this node" is a property of the NODE rather than of any project.
-	// A guessed origin — the listen address, a loopback — would provision
-	// every managed repository to deliver into the void and report every one
-	// of them provisioned, which is the silent failure the whole onboarding
-	// surface exists to end.
+	// OPTIONAL, and deliberately not defaulted. Empty means this node takes
+	// no webhook deliveries: only poll-only bindings onboard, and a binding
+	// that names a webhook secret is refused at onboarding
+	// (go-quicbaas#2225). When set, onboarding provisions a webhook on the
+	// forge pointing at <public_url>/api/v1/sdlc/webhook/<projectID>, and
+	// "the webhook points at this node" is a property of the NODE rather
+	// than of any project. A guessed origin — the listen address, a
+	// loopback — would provision every managed repository to deliver into
+	// the void and report every one of them provisioned, which is the
+	// silent failure the whole onboarding surface exists to end.
 	PublicURL string `mapstructure:"public_url"`
 }
 
@@ -1181,6 +1173,35 @@ type SDLCForge struct {
 
 	// RetryBackoff is the first wait between attempts; each retry doubles it.
 	RetryBackoff time.Duration `mapstructure:"retry_backoff"`
+
+	// TokenCommands maps a forge type ("github", "gitea") to the command the
+	// node runs for that forge's token. A binding of a type listed here takes
+	// its token from the command, never from its TokenSecretRef. This is
+	// node configuration only: no tenant, project or binding can name a
+	// command.
+	TokenCommands map[string]SDLCForgeTokenCommand `mapstructure:"token_commands"`
+}
+
+// SDLCForgeTokenCommand is one forge type's token command. It prints
+// {"token": "...", "expires_at": "<RFC 3339>"} on stdout.
+type SDLCForgeTokenCommand struct {
+	// Argv is the command and its words; Argv[0] is an absolute path. No
+	// shell runs it.
+	Argv []string `mapstructure:"argv"`
+
+	// RefreshBefore is how long before expires_at the command runs again.
+	// Zero takes 5m.
+	RefreshBefore time.Duration `mapstructure:"refresh_before"`
+
+	// Timeout bounds one run. Zero takes 30s.
+	Timeout time.Duration `mapstructure:"timeout"`
+
+	// AllowedBaseURLs are the forge API origins the command may be run
+	// for, as scheme://host[:port] with an optional path prefix. A binding
+	// whose base URL is not one of them is refused before the command runs,
+	// so a tenant's binding cannot point the node's credential at a host of
+	// its choosing. Required.
+	AllowedBaseURLs []string `mapstructure:"allowed_base_urls"`
 }
 
 // SDLCSurfacing is the retry behind a parked task's comment on its issue.
@@ -1230,10 +1251,10 @@ func BindSDLCSurfacingEnv(v *viper.Viper) {
 // the sweep this section paces would never start. That is a worse failure than a
 // dropped knob, because every other variable appears to work.
 //
-// THE SLICES ARE DELIBERATELY ABSENT. `verification_commands` and `repo_hosts`
-// are list configuration whose environment representation viper does not decode
-// into a []string reliably through Unmarshal, so binding them would advertise a
-// reachability that does not hold. They are file-only, said here rather than
+// THE SLICE IS DELIBERATELY ABSENT. `repo_hosts` is list configuration whose
+// environment representation viper does not decode into a []string reliably
+// through Unmarshal, so binding it would advertise a reachability that does
+// not hold. It is file-only, said here rather than
 // discovered, and the drift gate skips them by type for the same reason.
 var SDLCKeys = []string{
 	"sdlc.enabled",
@@ -1338,6 +1359,8 @@ var RemovedKeys = map[string]string{
 	"sdlc.worker_image.registry_token_file": "sdlc.worker_image.registry_token_secret and registry_token_tenant: " +
 		"the push token is a QuicBaaS tenant secret, never a plaintext file",
 	"sdlc.worktree_root": workerClonesItsOwnWorkspace,
+	"sdlc.verification_commands": "orchestration.verification_commands for the command allowlist; " +
+		"the project binding's verification list for the commands a project runs",
 }
 
 // agentReplacesTuple is where a backend/model tuple went: a reference to a

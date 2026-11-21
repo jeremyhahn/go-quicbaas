@@ -433,3 +433,10 @@ keeps the comment as the record.
   reviewer and fixed and landed, merged alone with the reason recorded,
   withdrawn, refused on a node with no train.
 - `merge_train_scheduler_test.go`.
+
+## The live GitHub train e2e
+
+`cmd/quicbaasd/sdlc_train_github_e2e_test.go` (build tag `integration`) runs a real node bound with forge type `github` to a scratch repository, and proves that a train of approved pull requests — one of them a pull request the daemon did not open, brought in with `adopt` — lands through one `queue/<n>` pull request as a squash with its branches deleted, and that a car which breaks the queue CI is ejected by bisection while the rest land.
+It reads `GITHUB_ITEST_TOKEN`, `GITHUB_ITEST_REVIEWER_TOKEN`, `GITHUB_ITEST_OWNER`, `GITHUB_ITEST_REPO` and the optional `GITHUB_ITEST_BASE_URL` through `pkg/testutil/githubitest`, which cuts a per-run base branch and commits `testdata/queue-ci.yml` to it as `.github/workflows/queue-ci.yml`.
+That workflow's one job, `ci-gate`, runs only for `queue/*` heads and fails when the tree holds a file named `BREAK-CI`, which is how the red test breaks one car.
+With any required variable unset every test fails, naming each missing variable; none skips.

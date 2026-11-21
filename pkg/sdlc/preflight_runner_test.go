@@ -84,6 +84,7 @@ func (r *preflightRig) run() error {
 	}
 	project := testOrchProject()
 	project.Workspace = orchestration.ProjectWorkspace{Path: r.root}
+	r.agents.admit(r.guard)
 	job := orchestration.NewJobRun(orchestration.JobRunConfig{
 		JobID:      "job-preflight-1",
 		Runner:     PreflightRunnerName,
@@ -92,7 +93,6 @@ func (r *preflightRig) run() error {
 		StartState: orchestration.JobStateInitializing,
 		Agents:     r.agents,
 		Logger:     logger.NewAdapter(base),
-		Policy:     &orchestration.JobLifecyclePolicy{Guard: r.guard},
 		AuditFn: func(eventType, details string) {
 			r.auditMu.Lock()
 			r.audits = append(r.audits, orchestration.JobAuditEvent{Type: eventType, Details: details})

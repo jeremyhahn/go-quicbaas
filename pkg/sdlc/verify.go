@@ -332,59 +332,6 @@ func verificationSummaryLines(result orchestration.ValidationResult) []summaryLi
 	return lines
 }
 
-// verificationExcerpt is a failed command's summary cut to budget bytes, for
-// a reader with less room than the record: the escalation a forge publishes,
-// which keeps only the head of its text (publicOutputLimit).
-//
-// THE LINES THAT NAME THE FAILURE ARE KEPT FIRST, and the rest of the room
-// goes to the output's last lines. Cutting the summary's head instead would
-// let a few long harmless lines push the `make: ***` line and the compiler's
-// diagnostics out of the very comment that exists to name them. The kept
-// lines stay in the summary's order.
-func verificationExcerpt(result orchestration.ValidationResult, budget int) string {
-	lines := verificationSummaryLines(result)
-	keep := make([]bool, len(lines))
-	used := 0
-	fits := func(i int) bool {
-		cost := len(lines[i].text) + 1
-		if used+cost > budget {
-			return false
-		}
-		used += cost
-		keep[i] = true
-		return true
-	}
-	for i := range lines {
-		if lines[i].failing {
-			fits(i)
-		}
-	}
-	for i := len(lines) - 1; i >= 0; i-- {
-		if !lines[i].failing && !fits(i) {
-			break
-		}
-	}
-	var kept []string
-	for i, line := range lines {
-		if keep[i] {
-			kept = append(kept, line.text)
-		}
-	}
-	if len(kept) == 0 && len(lines) > 0 && budget > 0 {
-		// Not one whole line fits: the last failing line, cut, still says
-		// more than nothing.
-		last := lines[len(lines)-1].text
-		for i := len(lines) - 1; i >= 0; i-- {
-			if lines[i].failing {
-				last = lines[i].text
-				break
-			}
-		}
-		return boundedLine(last, max(0, budget-len(" …")))
-	}
-	return strings.Join(kept, "\n")
-}
-
 // summaryFailureLine reports whether one line names a failure, by the
 // evidence's line starts or by a marker anywhere in it.
 func summaryFailureLine(line string) bool {
