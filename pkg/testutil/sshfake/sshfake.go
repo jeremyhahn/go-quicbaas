@@ -135,8 +135,14 @@ func (k *keysClient) Import(ctx context.Context, req xkmsssh.ImportRequest, prov
 			return nil, err
 		}
 		//secure:unwiped test-observation fake client stores the passphrase string for assertions only.
-		k.c.LastImportPassphrase = string(buf.Bytes()) //secure:unborrowed injected-interface test fake exposes the passphrase to assertion code.
+		err = buf.WithBytes(func(p []byte) error {
+			k.c.LastImportPassphrase = string(p)
+			return nil
+		})
 		buf.Destroy()
+		if err != nil {
+			return nil, err
+		}
 	}
 	key := &xkmsssh.Key{
 		Scope: req.Scope, Owner: req.Owner, Name: req.Name,

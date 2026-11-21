@@ -145,8 +145,8 @@ func TestLocalKMSResolver_Resolve_Success(t *testing.T) {
 	}
 
 	// Verify value matches secret
-	if result.String() != string(secretValue) {
-		t.Errorf("Value = %q, want %q", result.String(), string(secretValue))
+	if secretValueString(t, result) != string(secretValue) {
+		t.Errorf("Value = %q, want %q", secretValueString(t, result), string(secretValue))
 	}
 
 	// Verify strategy is LocalKMS
@@ -182,8 +182,8 @@ func TestLocalKMSResolver_Resolve_SuccessVariousPaths(t *testing.T) {
 				t.Fatalf("Resolve() error = %v, want nil", err)
 			}
 
-			if result.String() != string(tt.secretData) {
-				t.Errorf("Value = %q, want %q", result.String(), string(tt.secretData))
+			if secretValueString(t, result) != string(tt.secretData) {
+				t.Errorf("Value = %q, want %q", secretValueString(t, result), string(tt.secretData))
 			}
 
 			if result.Strategy != StrategyLocalKMS {
@@ -433,7 +433,7 @@ func TestLocalKMSResolver_Resolve_BinarySecret(t *testing.T) {
 		t.Fatalf("Resolve() error = %v, want nil", err)
 	}
 
-	if result.String() != string(binaryData) {
+	if secretValueString(t, result) != string(binaryData) {
 		t.Errorf("Value bytes mismatch")
 	}
 }
@@ -451,8 +451,8 @@ func TestLocalKMSResolver_Resolve_EmptySecret(t *testing.T) {
 		t.Fatalf("Resolve() error = %v, want nil", err)
 	}
 
-	if result.String() != "" {
-		t.Errorf("Value = %q, want empty string", result.String())
+	if secretValueString(t, result) != "" {
+		t.Errorf("Value = %q, want empty string", secretValueString(t, result))
 	}
 
 	if result.Strategy != StrategyLocalKMS {
@@ -477,8 +477,8 @@ func TestLocalKMSResolver_Resolve_LargeSecret(t *testing.T) {
 		t.Fatalf("Resolve() error = %v, want nil", err)
 	}
 
-	if len(result.String()) != len(largeData) {
-		t.Errorf("Value length = %d, want %d", len(result.String()), len(largeData))
+	if len(secretValueString(t, result)) != len(largeData) {
+		t.Errorf("Value length = %d, want %d", len(secretValueString(t, result)), len(largeData))
 	}
 }
 

@@ -15,6 +15,7 @@ package secure_test
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"os/exec"
@@ -31,20 +32,20 @@ import (
 func TestSecretRoundTrip(t *testing.T) {
 	const plaintext = "bank-api-token"
 
-	sec, err := secure.NewSecret([]byte(plaintext))
+	sec, err := secure.NewSecret(context.Background(), []byte(plaintext))
 	if err != nil {
 		t.Fatalf("NewSecret: %v", err)
 	}
 	t.Cleanup(sec.Destroy)
 
-	opened, err := sec.Open()
+	opened, err := sec.Open(context.Background())
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
 	defer opened.Destroy()
 
-	if !bytes.Equal(opened.Bytes(), []byte(plaintext)) {
-		t.Errorf("Open() = %q, want %q", opened.Bytes(), plaintext)
+	if eq, eqErr := opened.EqualBytes([]byte(plaintext)); eqErr != nil || !eq {
+		t.Errorf("Open(): equal = %v, %v; want %q", eq, eqErr, plaintext)
 	}
 }
 
@@ -55,7 +56,7 @@ func TestSecretRoundTrip(t *testing.T) {
 func TestNewSecretWipesItsSource(t *testing.T) {
 	src := []byte("wipe-me")
 
-	sec, err := secure.NewSecret(src)
+	sec, err := secure.NewSecret(context.Background(), src)
 	if err != nil {
 		t.Fatalf("NewSecret: %v", err)
 	}
@@ -76,20 +77,20 @@ func TestSecretFromBufferRoundTrip(t *testing.T) {
 		t.Fatalf("NewBufferFromBytes: %v", err)
 	}
 
-	sec, err := secure.NewSecretFromBuffer(buf)
+	sec, err := secure.NewSecretFromBuffer(context.Background(), buf)
 	if err != nil {
 		t.Fatalf("NewSecretFromBuffer: %v", err)
 	}
 	t.Cleanup(sec.Destroy)
 
-	opened, err := sec.Open()
+	opened, err := sec.Open(context.Background())
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
 	defer opened.Destroy()
 
-	if !bytes.Equal(opened.Bytes(), []byte(plaintext)) {
-		t.Errorf("Open() = %q, want %q", opened.Bytes(), plaintext)
+	if eq, eqErr := opened.EqualBytes([]byte(plaintext)); eqErr != nil || !eq {
+		t.Errorf("Open(): equal = %v, %v; want %q", eq, eqErr, plaintext)
 	}
 }
 
@@ -134,20 +135,20 @@ func TestAliasedValuesCrossTheModuleBoundary(t *testing.T) {
 		t.Fatalf("NewBufferFromBytes: %v", err)
 	}
 
-	sec, err := xkmssecure.NewSecretFromBuffer(buf)
+	sec, err := xkmssecure.NewSecretFromBuffer(context.Background(), buf)
 	if err != nil {
 		t.Fatalf("xkms NewSecretFromBuffer rejected a quicbaas SDK Buffer: %v", err)
 	}
 	t.Cleanup(sec.Destroy)
 
-	opened, err := sec.Open()
+	opened, err := sec.Open(context.Background())
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
 	defer opened.Destroy()
 
-	if !bytes.Equal(opened.Bytes(), []byte(plaintext)) {
-		t.Errorf("round trip = %q, want %q", opened.Bytes(), plaintext)
+	if eq, eqErr := opened.EqualBytes([]byte(plaintext)); eqErr != nil || !eq {
+		t.Errorf("round trip: equal = %v, %v; want %q", eq, eqErr, plaintext)
 	}
 }
 
@@ -174,22 +175,22 @@ func TestWipeAll(t *testing.T) {
 }
 
 func wipeAllChild(t *testing.T) {
-	sec, err := secure.NewSecret([]byte("shutdown-wiped"))
+	sec, err := secure.NewSecret(context.Background(), []byte("shutdown-wiped"))
 	if err != nil {
 		t.Fatalf("NewSecret: %v", err)
 	}
-	remaining, err := secure.WipeAll()
+	remaining, err := secure.WipeAll(context.Background())
 	if err != nil {
 		t.Fatalf("WipeAll: %v", err)
 	}
 	if remaining != 0 {
 		t.Fatalf("WipeAll left %d enclaves held", remaining)
 	}
-	if opened, err := sec.Open(); err == nil {
+	if opened, err := sec.Open(context.Background()); err == nil {
 		opened.Destroy()
 		t.Fatal("a Secret opened after WipeAll destroyed the process sealer")
 	}
-	if remaining, err := secure.WipeAll(); err != nil || remaining != 0 {
+	if remaining, err := secure.WipeAll(context.Background()); err != nil || remaining != 0 {
 		t.Fatalf("a second WipeAll = %d, %v; want an idempotent 0, nil", remaining, err)
 	}
 }
