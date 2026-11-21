@@ -170,3 +170,83 @@ func (s *trustedCAServer) IsRevoked(ctx context.Context, req *pb.TrustedCAIsRevo
 	}
 	return &pb.TrustedCAIsRevokedResponse{Revoked: resp.Revoked, Reason: int32(resp.Reason), Message: resp.Message}, nil
 }
+
+// trustedTCGCA returns the wired CA's TCG CA or the gRPC error to answer.
+func (s *trustedCAServer) trustedTCGCA(reqNil bool) (xkmstransport.TCGCAService, error) {
+	ca, err := s.trustedCAService(reqNil)
+	if err != nil {
+		return nil, err
+	}
+	tcg, ok := ca.(xkmstransport.TCGCAService)
+	if !ok || tcg == nil {
+		return nil, status.Error(codes.Unimplemented, "tcg ca not available")
+	}
+	return tcg, nil
+}
+
+// IssueEKCertificate issues a TPM Endorsement Key certificate.
+func (s *trustedCAServer) IssueEKCertificate(ctx context.Context, req *pb.TrustedCAIssueEKCertificateRequest) (*pb.TrustedCAIssueEKCertificateResponse, error) {
+	tcg, err := s.trustedTCGCA(req == nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := tcg.IssueEKCertificate(ctx, &xkmstransport.IssueEKCertificateRequest{
+		CommonName: req.CommonName, Organization: req.Organization, EKPublicKey: req.EkPublicKey, TenantID: req.TenantId,
+	})
+	if err != nil {
+		return nil, toProtoError(err)
+	}
+	return &pb.TrustedCAIssueEKCertificateResponse{
+		CertificateDer: resp.CertificateDER, CertificatePem: resp.CertificatePEM, SerialNumber: resp.SerialNumber,
+	}, nil
+}
+
+// IssueAKCertificate issues a TPM Attestation Key certificate.
+func (s *trustedCAServer) IssueAKCertificate(ctx context.Context, req *pb.TrustedCAIssueAKCertificateRequest) (*pb.TrustedCAIssueAKCertificateResponse, error) {
+	tcg, err := s.trustedTCGCA(req == nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := tcg.IssueAKCertificate(ctx, &xkmstransport.IssueAKCertificateRequest{
+		CommonName: req.CommonName, Organization: req.Organization, PublicKey: req.PublicKey, TenantID: req.TenantId,
+	})
+	if err != nil {
+		return nil, toProtoError(err)
+	}
+	return &pb.TrustedCAIssueAKCertificateResponse{
+		CertificateDer: resp.CertificateDER, CertificatePem: resp.CertificatePEM, SerialNumber: resp.SerialNumber,
+	}, nil
+}
+
+// SignTCGCSR signs a TCG-CSR-IDEVID and returns the IAK and IDevID certificates.
+func (s *trustedCAServer) SignTCGCSR(ctx context.Context, req *pb.TrustedCASignTCGCSRRequest) (*pb.TrustedCASignTCGCSRResponse, error) {
+	tcg, err := s.trustedTCGCA(req == nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := tcg.SignTCGCSR(ctx, &xkmstransport.SignTCGCSRRequest{
+		CommonName: req.CommonName, Organization: req.Organization, TCGCSR: req.TcgCsr, TenantID: req.TenantId,
+	})
+	if err != nil {
+		return nil, toProtoError(err)
+	}
+	return &pb.TrustedCASignTCGCSRResponse{IakCertDer: resp.IAKCertDER, IdevidCertDer: resp.IDevIDCertDER}, nil
+}
+
+// EnrollDevice enrolls a TPM device from a packed CSR.
+func (s *trustedCAServer) EnrollDevice(ctx context.Context, req *pb.TrustedCAEnrollDeviceRequest) (*pb.TrustedCAEnrollDeviceResponse, error) {
+	tcg, err := s.trustedTCGCA(req == nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := tcg.EnrollDevice(ctx, &xkmstransport.EnrollDeviceRequest{
+		CommonName: req.CommonName, Organization: req.Organization, PackedCSR: req.PackedCsr, TenantID: req.TenantId,
+	})
+	if err != nil {
+		return nil, toProtoError(err)
+	}
+	return &pb.TrustedCAEnrollDeviceResponse{
+		IakCertDer: resp.IAKCertDER, IdevidCertDer: resp.IDevIDCertDER,
+		CredentialBlob: resp.CredentialBlob, EncryptedSecret: resp.EncryptedSecret, PlainSecret: resp.PlainSecret,
+	}, nil
+}

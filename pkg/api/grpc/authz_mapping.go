@@ -587,6 +587,11 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.trustedca.v1.TrustedCAService/IssueCertificate":  {"certs", "generate"},
 	"/quicbaas.trustedca.v1.TrustedCAService/RevokeCertificate": {"certs", "revoke"},
 	"/quicbaas.trustedca.v1.TrustedCAService/GenerateCRL":       {"certs", "revoke"},
+	// The TCG verbs take certs:generate, the permission REST uses for them.
+	"/quicbaas.trustedca.v1.TrustedCAService/IssueEKCertificate": {"certs", "generate"},
+	"/quicbaas.trustedca.v1.TrustedCAService/IssueAKCertificate": {"certs", "generate"},
+	"/quicbaas.trustedca.v1.TrustedCAService/SignTCGCSR":         {"certs", "generate"},
+	"/quicbaas.trustedca.v1.TrustedCAService/EnrollDevice":       {"certs", "generate"},
 
 	// ---- quicbaas.barrier.v1.Barrier (system barrier lifecycle) ----
 	"/quicbaas.barrier.v1.Barrier/BarrierStatus":             {"tenant_barrier", "status"},

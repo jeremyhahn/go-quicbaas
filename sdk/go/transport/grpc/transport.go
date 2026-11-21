@@ -459,14 +459,10 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, req i
 	// The re-exported go-xkms CAService and TCGCAService
 	// (Security().TrustedCA(), Security().TCGCA()). The node's TCP gRPC
 	// listener serves their verbs only on go-xkms's xkms.v1.KeystoreService;
-	// the Unix socket serves the CA verbs on TrustedCAService and no TCG
-	// verb (#1330).
+	// the Unix socket serves both the CA verbs and the TCG verbs on
+	// TrustedCAService.
 	if isTrustedCAService(service) || isTCGCAService(service) {
 		if onUnixSocket(t.cfg) {
-			if isTCGCAService(service) {
-				return nil, errors.NewUnimplemented("grpc.Request",
-					"TCGCAService is not served on the Unix socket: "+method)
-			}
 			return newTrustedCAHandler(conn).handleRequest(ctx, service, method, req)
 		}
 		return newKeystoreCAHandler(conn).handleRequest(ctx, service, method, req)

@@ -36,9 +36,10 @@ func isTrustedCAService(svc string) bool {
 	return strings.HasPrefix(svc, trustedCAServicePrefix) || svc == "TrustedCA"
 }
 
-// trustedCAHandler converts between the go-xkms CA wire structs and the
-// generated TrustedCAService proto types, then calls the server's
-// TrustedCAService. The Unix transport delegates to it verbatim.
+// trustedCAHandler converts between the go-xkms CA and TCG CA wire structs
+// and the generated TrustedCAService proto types, then calls the server's
+// TrustedCAService, which serves both the CA verbs and the TCG verbs. The
+// Unix transport delegates to it verbatim.
 type trustedCAHandler struct {
 	conn *grpc.ClientConn
 }
@@ -60,8 +61,12 @@ var trustedCAMethods = map[string]trustedCAMethodHandler{
 	"IsRevoked":         trustedCAIsRevoked,
 }
 
-func (h *trustedCAHandler) handleRequest(ctx context.Context, _ string, method string, req interface{}) (interface{}, error) {
-	fn, ok := trustedCAMethods[method]
+func (h *trustedCAHandler) handleRequest(ctx context.Context, service string, method string, req interface{}) (interface{}, error) {
+	methods := trustedCAMethods
+	if isTCGCAService(service) {
+		methods = trustedTCGCAMethods
+	}
+	fn, ok := methods[method]
 	if !ok {
 		return nil, errors.NewUnimplemented("trustedCAHandler.handleRequest",
 			"method not exposed by TrustedCAService gRPC proto: "+method)
@@ -174,4 +179,76 @@ func trustedCAIsRevoked(ctx context.Context, c pb.TrustedCAServiceClient, req in
 		return nil, convertGRPCError(err, "trustedCAHandler.IsRevoked")
 	}
 	return &xkmstransport.IsRevokedResponse{Revoked: resp.Revoked, Reason: int(resp.Reason), Message: resp.Message}, nil
+}
+
+// trustedTCGCAMethods maps each TCGCAService verb to the TrustedCAService RPC
+// that serves it. Unlike the KeystoreService route, TenantID is carried.
+var trustedTCGCAMethods = map[string]trustedCAMethodHandler{
+	"IssueEKCertificate": trustedCAIssueEKCertificate,
+	"IssueAKCertificate": trustedCAIssueAKCertificate,
+	"SignTCGCSR":         trustedCASignTCGCSR,
+	"EnrollDevice":       trustedCAEnrollDevice,
+}
+
+func trustedCAIssueEKCertificate(ctx context.Context, c pb.TrustedCAServiceClient, req interface{}) (interface{}, error) {
+	r, err := trustedCAReq[xkmstransport.IssueEKCertificateRequest]("IssueEKCertificate", req)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.IssueEKCertificate(ctx, &pb.TrustedCAIssueEKCertificateRequest{
+		CommonName: r.CommonName, Organization: r.Organization, EkPublicKey: r.EKPublicKey, TenantId: r.TenantID,
+	})
+	if err != nil {
+		return nil, convertGRPCError(err, "trustedCAHandler.IssueEKCertificate")
+	}
+	return &xkmstransport.IssueEKCertificateResponse{
+		CertificateDER: resp.CertificateDer, CertificatePEM: resp.CertificatePem, SerialNumber: resp.SerialNumber,
+	}, nil
+}
+
+func trustedCAIssueAKCertificate(ctx context.Context, c pb.TrustedCAServiceClient, req interface{}) (interface{}, error) {
+	r, err := trustedCAReq[xkmstransport.IssueAKCertificateRequest]("IssueAKCertificate", req)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.IssueAKCertificate(ctx, &pb.TrustedCAIssueAKCertificateRequest{
+		CommonName: r.CommonName, Organization: r.Organization, PublicKey: r.PublicKey, TenantId: r.TenantID,
+	})
+	if err != nil {
+		return nil, convertGRPCError(err, "trustedCAHandler.IssueAKCertificate")
+	}
+	return &xkmstransport.IssueAKCertificateResponse{
+		CertificateDER: resp.CertificateDer, CertificatePEM: resp.CertificatePem, SerialNumber: resp.SerialNumber,
+	}, nil
+}
+
+func trustedCASignTCGCSR(ctx context.Context, c pb.TrustedCAServiceClient, req interface{}) (interface{}, error) {
+	r, err := trustedCAReq[xkmstransport.SignTCGCSRRequest]("SignTCGCSR", req)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.SignTCGCSR(ctx, &pb.TrustedCASignTCGCSRRequest{
+		CommonName: r.CommonName, Organization: r.Organization, TcgCsr: r.TCGCSR, TenantId: r.TenantID,
+	})
+	if err != nil {
+		return nil, convertGRPCError(err, "trustedCAHandler.SignTCGCSR")
+	}
+	return &xkmstransport.SignTCGCSRResponse{IAKCertDER: resp.IakCertDer, IDevIDCertDER: resp.IdevidCertDer}, nil
+}
+
+func trustedCAEnrollDevice(ctx context.Context, c pb.TrustedCAServiceClient, req interface{}) (interface{}, error) {
+	r, err := trustedCAReq[xkmstransport.EnrollDeviceRequest]("EnrollDevice", req)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.EnrollDevice(ctx, &pb.TrustedCAEnrollDeviceRequest{
+		CommonName: r.CommonName, Organization: r.Organization, PackedCsr: r.PackedCSR, TenantId: r.TenantID,
+	})
+	if err != nil {
+		return nil, convertGRPCError(err, "trustedCAHandler.EnrollDevice")
+	}
+	return &xkmstransport.EnrollDeviceResponse{
+		IAKCertDER: resp.IakCertDer, IDevIDCertDER: resp.IdevidCertDer,
+		CredentialBlob: resp.CredentialBlob, EncryptedSecret: resp.EncryptedSecret, PlainSecret: resp.PlainSecret,
+	}, nil
 }
