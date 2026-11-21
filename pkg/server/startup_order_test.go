@@ -14,6 +14,7 @@
 package server
 
 import (
+	"errors"
 	"slices"
 	"testing"
 
@@ -81,6 +82,108 @@ func TestOrchestrationStartup_TheDispatcherStartsAfterJobRecovery(t *testing.T) 
 	recoverAt, dispatchAt := slices.Index(got, startupRecoverJobs), slices.Index(got, startupTaskDispatcher)
 	if recoverAt < 0 || dispatchAt < 0 || dispatchAt != recoverAt+1 {
 		t.Fatalf("startup order = %v, want %s immediately after %s", got, startupTaskDispatcher, startupRecoverJobs)
+	}
+}
+
+// TestOrchestrationStartup_TheBeforeRecoveryHookRunsJustBeforeRecovery pins
+// go-quicbaas#2512: an embedder's WithBeforeJobRecovery hook (where it
+// registers the agent backends a resumed job needs) runs immediately before
+// interrupted jobs are recovered, and without the option nothing changes.
+func TestOrchestrationStartup_TheBeforeRecoveryHookRunsJustBeforeRecovery(t *testing.T) {
+	t.Parallel()
+	cfg := &config.Config{}
+	cfg.SDLC.Enabled = true
+	cfg.Orchestration.Enabled = true
+	without := startupNames(cfg)
+	if slices.Contains(without, startupBeforeRecoverJobs) {
+		t.Fatalf("startup order without the hook = %v, want no %s", without, startupBeforeRecoverJobs)
+	}
+
+	var opts serverOptions
+	WithBeforeJobRecovery(func(*Server) error { return nil })(&opts)
+	var got []string
+	for _, step := range (&Server{config: cfg, opts: opts}).orchestrationStartup() {
+		got = append(got, step.name)
+	}
+	want := slices.Clone(without)
+	at := slices.Index(want, startupRecoverJobs)
+	if at < 0 {
+		t.Fatalf("startup order = %v, want %s", without, startupRecoverJobs)
+	}
+	want = slices.Insert(want, at, startupBeforeRecoverJobs)
+	if !slices.Equal(got, want) {
+		t.Fatalf("startup order with the hook = %v, want %v", got, want)
+	}
+
+	off := &config.Config{}
+	off.SDLC.Enabled = true
+	if names := (&Server{config: off, opts: opts}).orchestrationStartup(); slices.ContainsFunc(names, func(s startupStep) bool {
+		return s.name == startupBeforeRecoverJobs
+	}) {
+		t.Fatalf("hook step ran with orchestration disabled")
+	}
+}
+
+func TestOrchestrationStartup_AFailingBeforeRecoveryHookStopsRecovery(t *testing.T) {
+	t.Parallel()
+	sentinel := errors.New("before-recovery hook failed")
+	cfg := &config.Config{}
+	cfg.SDLC.Enabled = true
+	cfg.Orchestration.Enabled = true
+
+	// run builds the steps with the hook returning hookErr, keeps the hook
+	// step's real closure, records every other step instead of running it,
+	// and returns the names that ran and runStartupSteps' error.
+	run := func(hookErr error) ([]string, error) {
+		var opts serverOptions
+		WithBeforeJobRecovery(func(*Server) error { return hookErr })(&opts)
+		steps := (&Server{config: cfg, opts: opts}).orchestrationStartup()
+		var ran []string
+		for i := range steps {
+			name := steps[i].name
+			if name == startupBeforeRecoverJobs {
+				hook := steps[i].run
+				steps[i].run = func() error {
+					ran = append(ran, name)
+					return hook()
+				}
+				continue
+			}
+			steps[i].run = func() error {
+				ran = append(ran, name)
+				return nil
+			}
+		}
+		err := runStartupSteps(steps)
+		return ran, err
+	}
+
+	ran, err := run(sentinel)
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("runStartupSteps error = %v, want %v", err, sentinel)
+	}
+	for _, name := range []string{startupRecoverJobs, startupTaskDispatcher} {
+		if slices.Contains(ran, name) {
+			t.Fatalf("steps run = %v, want no %s after the hook failed", ran, name)
+		}
+	}
+	all := startupNames(cfg)
+	at := slices.Index(all, startupRecoverJobs)
+	if at < 0 {
+		t.Fatalf("startup order = %v, want %s", all, startupRecoverJobs)
+	}
+	wantRan := append(slices.Clone(all[:at]), startupBeforeRecoverJobs)
+	if !slices.Equal(ran, wantRan) {
+		t.Fatalf("steps run with a failing hook = %v, want %v", ran, wantRan)
+	}
+
+	ran, err = run(nil)
+	if err != nil {
+		t.Fatalf("runStartupSteps error with a nil hook = %v, want nil", err)
+	}
+	wantAll := slices.Insert(slices.Clone(all), at, startupBeforeRecoverJobs)
+	if !slices.Equal(ran, wantAll) {
+		t.Fatalf("steps run with a nil hook = %v, want %v", ran, wantAll)
 	}
 }
 

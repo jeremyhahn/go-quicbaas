@@ -15,6 +15,7 @@ package mcp
 
 import (
 	"encoding/json"
+	"strconv"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
@@ -39,8 +40,25 @@ type kvListToolResult struct {
 // the tools read; List's paging fields are renamed to the pageSize and
 // pageToken names the list tool reads.
 func (t *Transport) kvArguments(method string, req interface{}) map[string]interface{} {
-	args := t.convertToArguments(req)
-	if method != "List" || args == nil {
+	args := toolArguments(req, true)
+	if args == nil {
+		return nil
+	}
+	// The server's MCP layer decodes tool arguments with plain
+	// encoding/json, so a numeric id above 2^53 would round there; the
+	// entity tools parse a decimal-string id exactly.
+	// A map-based request carries its id as a Go integer, not json.Number,
+	// so every integral form is sent as its decimal string.
+	if id, ok := kvIDDecimal(args["id"]); ok {
+		args["id"] = id
+	}
+	// The entity tools read only shardID; a shard_id key would leave every
+	// KV request on the default shard.
+	if v, ok := args["shard_id"]; ok {
+		args["shardID"] = v
+		delete(args, "shard_id")
+	}
+	if method != "List" {
 		return args
 	}
 	if v, ok := args["page_size"]; ok {
@@ -52,6 +70,36 @@ func (t *Transport) kvArguments(method string, req interface{}) map[string]inter
 		delete(args, "page_token")
 	}
 	return args
+}
+
+// kvIDDecimal renders an integral KV id as its decimal string: json.Number
+// (a struct request decoded exactly) and the Go integer types a map-based
+// request carries. Anything else (a string, a fractional or negative value,
+// a non-numeric type) is left for the entity tool to accept or refuse.
+func kvIDDecimal(v interface{}) (string, bool) {
+	switch id := v.(type) {
+	case json.Number:
+		return id.String(), true
+	case uint64:
+		return strconv.FormatUint(id, 10), true
+	case uint:
+		return strconv.FormatUint(uint64(id), 10), true
+	case uint32:
+		return strconv.FormatUint(uint64(id), 10), true
+	case int64:
+		if id >= 0 {
+			return strconv.FormatInt(id, 10), true
+		}
+	case int:
+		if id >= 0 {
+			return strconv.Itoa(id), true
+		}
+	case int32:
+		if id >= 0 {
+			return strconv.FormatInt(int64(id), 10), true
+		}
+	}
+	return "", false
 }
 
 // transformKVResponse decodes an entity KV tool result into the
@@ -94,9 +142,18 @@ func transformKVResponse(method string, result interface{}) (interface{}, error)
 
 // decodeToolResult re-encodes a generic tool result and decodes it into out.
 func decodeToolResult(op string, result, out interface{}) error {
+	// An empty or JSON-null tool reply carries no response: decoding it would
+	// leave out zero-valued and report a write that nothing confirmed as a
+	// success, so it is a protocol error.
+	if result == nil {
+		return errors.New(errors.CodeInternal, op, "tool returned no result")
+	}
 	data, err := json.Marshal(result)
 	if err != nil {
 		return errors.Wrap(err, errors.CodeInternal, op, "failed to re-encode tool result")
+	}
+	if string(data) == "null" {
+		return errors.New(errors.CodeInternal, op, "tool returned no result")
 	}
 	if err := json.Unmarshal(data, out); err != nil {
 		return errors.Wrap(err, errors.CodeInternal, op, "failed to decode tool result")

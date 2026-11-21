@@ -14,11 +14,14 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	stderrors "errors"
+	"io"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -221,8 +224,10 @@ func (t *Transport) requestWithRetry(ctx context.Context, service, method string
 		if attempt > 0 {
 			select {
 			case <-ctx.Done():
+				// Name the attempt that led to this wait: without it the
+				// caller sees only the cancellation, not why it retried.
 				return nil, errors.Wrap(ctx.Err(), errors.CodeCanceled, "mcp.Request",
-					"request canceled during retry")
+					canceledDuringRetryMessage(lastErr))
 			case <-time.After(backoff):
 				backoff = minDuration(backoff*2, t.cfg.MaxRetryBackoff)
 			}
@@ -235,12 +240,24 @@ func (t *Transport) requestWithRetry(ctx context.Context, service, method string
 
 		lastErr = err
 
-		if !errors.IsRetryable(err) {
+		// A failure after the caller's context is done cannot succeed on
+		// retry; return it as classified (canceled or timeout) instead of
+		// masking a deadline as "canceled during retry".
+		if !errors.IsRetryable(err) || ctx.Err() != nil {
 			return nil, err
 		}
 	}
 
 	return nil, lastErr
+}
+
+// canceledDuringRetryMessage is the message of the error returned when the
+// context ends while waiting to retry; it names the last attempt's error.
+func canceledDuringRetryMessage(lastErr error) string {
+	if lastErr == nil {
+		return "request canceled during retry"
+	}
+	return "request canceled during retry; last attempt: " + lastErr.Error()
 }
 
 // doRequest executes a single MCP request via JSON-RPC.
@@ -537,8 +554,13 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 		arguments = t.convertToArguments(reqBody)
 	}
 
-	// Call the tool via JSON-RPC
-	result, err := t.callTool(ctx, toolName, arguments)
+	// Call the tool via JSON-RPC. Entity KV results carry uint64 IDs, so
+	// their numbers keep their exact tokens.
+	call := t.callTool
+	if isMCPKVService(service) {
+		call = t.callToolExact
+	}
+	result, err := call(ctx, toolName, arguments)
 	if err != nil {
 		return nil, err
 	}
@@ -855,11 +877,11 @@ func (t *Transport) connect(ctx context.Context) error {
 	}
 
 	if err := mcpClient.Start(ctx); err != nil {
-		return &InitializationError{
+		return t.classifyInitError(&InitializationError{
 			Op:      "mcp.initialize",
 			Message: "failed to start MCP session",
 			Err:     err,
-		}
+		})
 	}
 
 	initReq := mcp.InitializeRequest{
@@ -873,11 +895,11 @@ func (t *Transport) connect(ctx context.Context) error {
 	result, err := mcpClient.Initialize(ctx, initReq)
 	if err != nil {
 		_ = mcpClient.Close()
-		return &InitializationError{
+		return t.classifyInitError(&InitializationError{
 			Op:      "mcp.initialize",
 			Message: "failed to initialize MCP session",
 			Err:     err,
-		}
+		})
 	}
 
 	t.serverInfo = &serverInfo{Name: result.ServerInfo.Name, Version: result.ServerInfo.Version}
@@ -885,6 +907,19 @@ func (t *Transport) connect(ctx context.Context) error {
 	t.lastHealth.Store(time.Now().UnixNano())
 
 	return nil
+}
+
+// classifyInitError returns a session-setup failure caused by the caller's
+// context being canceled or past its deadline as a CodeCanceled or
+// CodeTimeout QBError, the way convertHTTPError does for tool calls, so
+// errors.IsCanceled and errors.IsTimeout hold however far the request got.
+// The QBError wraps initErr, so errors.As still finds the
+// *InitializationError. Any other failure is returned unchanged.
+func (t *Transport) classifyInitError(initErr *InitializationError) error {
+	if stderrors.Is(initErr.Err, context.Canceled) || stderrors.Is(initErr.Err, context.DeadlineExceeded) {
+		return t.convertHTTPError(initErr, initErr.Op)
+	}
+	return initErr
 }
 
 // ensureRawTransport lazily constructs and starts the independent MCP
@@ -923,6 +958,16 @@ func (t *Transport) ensureRawTransport(ctx context.Context) (mcptransport.Interf
 
 // callTool invokes an MCP tool via the negotiated mcpClient session.
 func (t *Transport) callTool(ctx context.Context, name string, arguments map[string]interface{}) (interface{}, error) {
+	return t.callToolDecoded(ctx, name, arguments, false)
+}
+
+// callToolExact is callTool with numbers in the result decoded as
+// json.Number, so integer tokens above 2^53 survive.
+func (t *Transport) callToolExact(ctx context.Context, name string, arguments map[string]interface{}) (interface{}, error) {
+	return t.callToolDecoded(ctx, name, arguments, true)
+}
+
+func (t *Transport) callToolDecoded(ctx context.Context, name string, arguments map[string]interface{}, exact bool) (interface{}, error) {
 	result, err := t.mcpClient.CallTool(ctx, mcp.CallToolRequest{
 		Params: mcp.CallToolParams{
 			Name:      name,
@@ -941,7 +986,7 @@ func (t *Transport) callTool(ctx context.Context, name string, arguments map[str
 	t.lastHealth.Store(time.Now().UnixNano())
 
 	// Extract result from content
-	return t.extractContent(result.Content)
+	return decodeContent(result.Content, exact)
 }
 
 // sendRPC forwards a caller-owned JSON-RPC 2.0 request verbatim over the
@@ -1347,6 +1392,13 @@ func camelToSnake(s string) string {
 // convertToArguments converts a request object to MCP tool arguments.
 // Field names are converted to snake_case to match MCP tool expectations.
 func (t *Transport) convertToArguments(req interface{}) map[string]interface{} {
+	return toolArguments(req, false)
+}
+
+// toolArguments converts req to tool arguments via a JSON round-trip with
+// snake_case keys. With exact set, numbers decode as json.Number, so an
+// integer above 2^53 keeps its token instead of rounding through float64.
+func toolArguments(req interface{}, exact bool) map[string]interface{} {
 	if req == nil {
 		return nil
 	}
@@ -1363,12 +1415,39 @@ func (t *Transport) convertToArguments(req interface{}) map[string]interface{} {
 	}
 
 	var args map[string]interface{}
-	if err := json.Unmarshal(data, &args); err != nil {
+	if err := decodeJSON(data, &args, exact); err != nil {
 		return nil
 	}
 
 	// Convert keys to snake_case for MCP tools
 	return convertKeysToSnakeCase(args)
+}
+
+// decodeJSON is json.Unmarshal; with exact set, numbers decode as
+// json.Number. Trailing data after the value is refused in both modes.
+func decodeJSON(data []byte, out interface{}, exact bool) error {
+	if !exact {
+		return json.Unmarshal(data, out)
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	if err := dec.Decode(out); err != nil {
+		return err
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return &trailingJSONError{Offset: dec.InputOffset()}
+	}
+	return nil
+}
+
+// trailingJSONError reports data after the one JSON value a tool text or
+// argument document may hold, as json.Unmarshal refuses it.
+type trailingJSONError struct {
+	Offset int64
+}
+
+func (e *trailingJSONError) Error() string {
+	return "mcp: invalid character after top-level JSON value at offset " + strconv.FormatInt(e.Offset, 10)
 }
 
 // convertKeysToSnakeCase recursively converts all map keys to snake_case.
@@ -1390,6 +1469,13 @@ func convertKeysToSnakeCase(m map[string]interface{}) map[string]interface{} {
 // return content items without the type field explicitly set. Just check
 // for the first item with non-empty text.
 func (t *Transport) extractContent(content []mcp.Content) (interface{}, error) {
+	return decodeContent(content, false)
+}
+
+// decodeContent decodes the first non-empty text item as JSON, answering the
+// raw text when it is not JSON. With exact set, numbers decode as
+// json.Number (see decodeJSON).
+func decodeContent(content []mcp.Content, exact bool) (interface{}, error) {
 	for _, item := range content {
 		text, ok := mcp.AsTextContent(item)
 		if !ok || text.Text == "" {
@@ -1397,7 +1483,7 @@ func (t *Transport) extractContent(content []mcp.Content) (interface{}, error) {
 		}
 		// Parse JSON from text
 		var result interface{}
-		if err := json.Unmarshal([]byte(text.Text), &result); err != nil {
+		if err := decodeJSON([]byte(text.Text), &result, exact); err != nil {
 			// Return raw text if not valid JSON
 			return text.Text, nil
 		}

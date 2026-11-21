@@ -26,6 +26,7 @@ package mcp
 
 import (
 	"context"
+	stderrors "errors"
 	"net/http"
 	"runtime"
 	"sync/atomic"
@@ -48,8 +49,9 @@ func TestTransport_Request_Success(t *testing.T) {
 	srv := mcpserver.NewMCPServer("TestServer", "1.0.0")
 	srv.AddTool(mcpgo.NewTool("quicbaas_kv_get"), func(_ context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 		args := req.GetArguments()
-		if args["id"] != float64(123) {
-			t.Errorf("id = %v, want 123", args["id"])
+		// A map-based KV id reaches the tool as its exact decimal string.
+		if args["id"] != "123" {
+			t.Errorf("id = %T %v, want the decimal string \"123\"", args["id"], args["id"])
 		}
 		return mcpgo.NewToolResultText(string(mustMarshalJSON(map[string]interface{}{
 			"id":    123,
@@ -99,8 +101,8 @@ func TestTransport_Request_KVPutReachesEntityTool(t *testing.T) {
 		if args["entity_type"] != "users" {
 			t.Errorf("entity_type = %v, want users", args["entity_type"])
 		}
-		if args["id"] != float64(7) {
-			t.Errorf("id = %v, want 7", args["id"])
+		if args["id"] != "7" {
+			t.Errorf("id = %v, want the decimal string 7", args["id"])
 		}
 		if args["data"] != "dGVzdA==" {
 			t.Errorf("data = %v, want base64 of \"test\"", args["data"])
@@ -243,6 +245,67 @@ func TestTransport_Request_ContextCancellation(t *testing.T) {
 	}
 	if !errors.IsCanceled(err) {
 		t.Errorf("IsCanceled(err) = false for %v", err)
+	}
+}
+
+// newInitTestTransport starts a real MCP test server and returns a Transport
+// pointed at it that has not yet opened its session.
+func newInitTestTransport(t *testing.T) *Transport {
+	t.Helper()
+	srv := mcpserver.NewMCPServer("TestServer", "1.0.0")
+	srv.AddTool(mcpgo.NewTool("qrdb_get"), func(_ context.Context, _ mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+		return mcpgo.NewToolResultText("{}"), nil
+	})
+	httpSrv := mcpserver.NewTestStreamableHTTPServer(srv)
+	t.Cleanup(httpSrv.Close)
+
+	tr, err := New(&transport.Config{Address: httpSrv.URL, Timeout: 10 * time.Second, MaxRetries: 0})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = tr.Close() })
+	return tr
+}
+
+// TestTransport_Request_CanceledDuringInitialize cancels the context before
+// the first Request, so the cancel always lands in session setup.
+func TestTransport_Request_CanceledDuringInitialize(t *testing.T) {
+	tr := newInitTestTransport(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := tr.Request(ctx, "quicbaas.KV", "Get", map[string]interface{}{"id": 123})
+	if err == nil {
+		t.Fatal("expected a canceled error, got nil")
+	}
+	if !errors.IsCanceled(err) {
+		t.Errorf("IsCanceled(err) = false for %v", err)
+	}
+	var initErr *InitializationError
+	if !stderrors.As(err, &initErr) {
+		t.Errorf("errors.As(*InitializationError) = false for %v", err)
+	}
+}
+
+// TestTransport_Request_DeadlineDuringInitialize uses a context already past
+// its deadline before the first Request, so session setup times out.
+func TestTransport_Request_DeadlineDuringInitialize(t *testing.T) {
+	tr := newInitTestTransport(t)
+
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+
+	_, err := tr.Request(ctx, "quicbaas.KV", "Get", map[string]interface{}{"id": 123})
+	if err == nil {
+		t.Fatal("expected a timeout error, got nil")
+	}
+	if !errors.IsTimeout(err) {
+		t.Errorf("IsTimeout(err) = false for %v", err)
+	}
+	var initErr *InitializationError
+	if !stderrors.As(err, &initErr) {
+		t.Errorf("errors.As(*InitializationError) = false for %v", err)
 	}
 }
 

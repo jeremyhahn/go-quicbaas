@@ -38,6 +38,7 @@ import (
 
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	dbxkms "github.com/jeremyhahn/go-quicbaas/pkg/xkms"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -143,6 +144,16 @@ func respondXKMSError(w http.ResponseWriter, statusCode int, err error) {
 	_ = json.NewEncoder(w).Encode(xkmsErrorResponse{
 		Error: err.Error(),
 	})
+}
+
+// xkmsErrorCode returns the classification err (or an error it wraps)
+// carries, if any.
+func xkmsErrorCode(err error) (qberrors.ErrorCode, bool) {
+	var coded interface{ ErrorCode() qberrors.ErrorCode }
+	if errors.As(err, &coded) {
+		return coded.ErrorCode(), true
+	}
+	return 0, false
 }
 
 // respondXKMSJSON writes a JSON success response.
@@ -435,7 +446,23 @@ func (s *Server) HandleXKMSRotateKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	privKey, err := xkmssdk.ServiceRotateKey(r.Context(), keyID)
+	// Platform OIDC signing keys rotate only through their signing key
+	// manager, which serialises rotations across the nodes sharing them.
+	delegate, err := dbxkms.HostedRotationDelegate(keyID)
+	if err != nil {
+		respondXKMSError(w, http.StatusServiceUnavailable, err)
+		return
+	}
+	var privKey crypto.PrivateKey
+	if delegate != nil {
+		privKey, err = delegate(r.Context(), keyID)
+		if code, ok := xkmsErrorCode(err); ok && code == qberrors.ErrForbidden {
+			respondXKMSError(w, http.StatusForbidden, err)
+			return
+		}
+	} else {
+		privKey, err = xkmssdk.ServiceRotateKey(r.Context(), keyID)
+	}
 	if err != nil {
 		respondXKMSError(w, http.StatusInternalServerError, &XKMSOperationError{
 			Op:     "RotateKey",
@@ -1760,6 +1787,9 @@ func marshalPublicKeyPEM(privKey crypto.PrivateKey) string {
 	case *ecdsa.PrivateKey:
 		pubKey = &k.PublicKey
 	case ed25519.PrivateKey:
+		pubKey = k.Public()
+	case crypto.Signer:
+		// A backend handle whose private key never leaves the device.
 		pubKey = k.Public()
 	default:
 		return ""

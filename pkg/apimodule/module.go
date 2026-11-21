@@ -74,6 +74,10 @@
 // authz chain as every other service here; their permissions were already in
 // this module's derived set, because kms.proto also declares
 // SecretsManagement (module_grants.go reads options per proto file).
+// AttestationService is mounted beside KeyManagement/DEKManagement because the
+// pinned go-xkms serves only KeystoreService.AttestKey and none of the
+// Verifier RPCs (endorsements, reference values, AppraiseQuote) the CLI calls
+// by the quicbaas.attestation.v1 name.
 //
 // Crypto (quicbaas.kms.v1.Crypto, built with NewCryptoServer and gated on
 // the facade's Crypto(), as lifecycle.go does) is mounted for the same
@@ -83,26 +87,19 @@
 // (qrdb.v1.permission) option in kms.proto, already in this module's
 // derived set, and passes the same authz chain.
 //
-// CertificateService, TrustService, AttestationService, and PIVService are
-// DELIBERATELY NOT registered here
-// (Phase 3 of the login-plane plan, corrective to the prior design): they
-// were quicbaas.v1 wrappers over the SAME composed go-xkms library
-// (xkms.Get(), see pkg/server/qrdb_node.go's xkmsModule composition) that
-// go-xkms's OWN ServiceModule ("xkms", go-xkms/sdk/go/apimodule.go) now
-// registers on this SAME unified server as its canonical xkms.v1
-// KeystoreService surface. Registering both here would duplicate that
-// surface under a redundant proto name — the same reasoning that already
-// excluded the qrdb-proxy planes above. The quicbaas SDK's gRPC crypto
-// clients (sdk/go/transport/grpc/{certificate,trust,attestation,piv,kms,
-// crypto}_handler.go) re-export go-xkms's canonical SDK clients as thin
-// aliases instead (sdk/go/xkms_clients.go) so a downstream consumer
-// (go-trusted-platform) keeps ONE import point for the capability regardless
-// of which project's wire contract now serves it. quicbaas's legacy gRPC
-// transport (pkg/server/lifecycle.go, lifecycle_certificate_register.go,
-// lifecycle_fido2_piv_register.go) is UNCHANGED by this: it still registers
-// its own quicbaas.v1 handlers for these services, so a caller already
-// dialing the legacy listener directly (not through the unified server or
-// the SDK) keeps working exactly as before.
+// CertificateService, TrustService, and PIVService (the quicbaas.v1
+// wrappers over the SAME composed go-xkms library, xkms.Get(), that go-xkms's
+// OWN ServiceModule registers on this unified server as its canonical
+// xkms.v1 KeystoreService surface) are registered here for Unix-socket peers
+// ONLY: the quicbaas Unix SDK still calls these legacy wire names, and the
+// node serves the Unix socket when network serving is on. They are built
+// with the legacy listener's constructors and nil-gating
+// (pkg/server/lifecycle.go, lifecycle_certificate_register.go,
+// lifecycle_fido2_piv_register.go) and wrapped by unixPeerOnly, so a TCP
+// caller gets Unimplemented for these names exactly as before and uses
+// go-xkms's canonical surface instead. They never reach QUIC, no method of
+// theirs is public, and no permission or role grant is derived from them
+// (module_grants.go).
 //
 // FIDO2Service is the other xkms-backed surface registered here: quicbaas's
 // own tenant-scoped LOGIN ceremony (the WebAuthn analogue of the Login
@@ -130,12 +127,15 @@
 // AgentCatalogService, SDLCService, RegistryService, FederationService and
 // SessionService are quicbaas-native too and are registered here (#1696), so
 // the node's TCP gRPC port serves them as the Unix listener does. The first
-// three are built from the facade. Federation and Session need IAM state the
-// facade does not expose, so the host builds them and passes the SAME
-// instances it registers on the Unix listener (WithHostGRPCServers). The
-// other iam.v1 services (IAMService, PEPService, MFAService, AuditService)
-// stay off: most of their RPCs carry no (qrdb.v1.permission) option, and an
-// unannotated RPC is default-denied here.
+// three are built from the facade. Federation, Session and IAMService need
+// IAM state the facade does not expose, so the host builds them and passes
+// the SAME instances it registers on the Unix listener (WithHostGRPCServers).
+// IAMService is mounted: its six annotated RPCs carry their permissions, its
+// four invite RPCs are public (PublicGRPCMethods), and the rest are
+// default-denied, as on the legacy server. The other iam.v1 services
+// (PEPService, MFAService, AuditService) stay off: most of their RPCs carry
+// no (qrdb.v1.permission) option, and an unannotated RPC is default-denied
+// here.
 //
 // ObjectTransferService is deliberately NOT registered here. Unlike the five
 // above, it has no facade-backed gRPC implementation to reuse: the only
@@ -174,6 +174,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -398,6 +399,7 @@ type grpcServers struct {
 	secretsManagement  pb.SecretsManagementServer
 	keyManagement      pb.KeyManagementServer
 	dekManagement      pb.DEKManagementServer
+	attestation        pb.AttestationServiceServer
 	crypto             pb.CryptoServer
 	vectorDB           pb.VectorDBServer
 	vectorAdmin        pb.VectorAdminServer
@@ -405,16 +407,20 @@ type grpcServers struct {
 	agentCatalog       pb.AgentCatalogServiceServer
 	sdlc               pb.SDLCServiceServer
 	registry           pb.RegistryServiceServer
+	certificate        pb.CertificateServiceServer
+	trust              pb.TrustServiceServer
+	piv                pb.PIVServiceServer
 }
 
 // HostGRPCServers carries the gRPC servers the host builds from IAM state
-// the service facade does not expose: the federation manager and the session
-// storage. The host builds them once and registers the SAME instances on its
-// Unix-socket gRPC server, so both listeners serve one session store. A nil
-// field answers Unavailable.
+// the service facade does not expose: the federation manager, the session
+// storage and the IAM components behind IAMService. The host builds them once
+// and registers the SAME instances on its Unix-socket gRPC server, so both
+// listeners serve one session store. A nil field answers Unavailable.
 type HostGRPCServers struct {
 	Federation iampb.FederationServiceServer
 	Session    iampb.SessionServiceServer
+	IAM        iampb.IAMServiceServer
 }
 
 // HostGRPCResolver returns the host's gRPC servers. The module calls it on
@@ -455,6 +461,16 @@ type grpcRegistration struct {
 	capability string
 	pick       func(*grpcServers) any
 	hostPick   func(HostGRPCServers) any
+	// grpcOnly keeps the service off the QUIC projection: QUIC's startup
+	// assertion refuses a unary method without a (qrdb.v1.permission)
+	// option, and IAMService leaves most of its RPCs unannotated
+	// (default-denied on gRPC and Unix).
+	grpcOnly bool
+	// unixOnly implies grpcOnly, and additionally serves the service to
+	// Unix-socket peers only (unixPeerOnly): a peer on any other network
+	// gets Unimplemented, as if the service were not registered. It marks
+	// the Unix SDK's legacy xkms wrapper names (see the package doc).
+	unixOnly bool
 }
 
 // grpcRegistrations is the full gRPC surface the module registers: the
@@ -480,6 +496,7 @@ var grpcRegistrations = []grpcRegistration{
 	{desc: &pb.SecretsManagement_ServiceDesc, capability: "secrets-management", pick: func(s *grpcServers) any { return s.secretsManagement }},
 	{desc: &pb.KeyManagement_ServiceDesc, capability: "key-management", pick: func(s *grpcServers) any { return s.keyManagement }},
 	{desc: &pb.DEKManagement_ServiceDesc, capability: "dek-management", pick: func(s *grpcServers) any { return s.dekManagement }},
+	{desc: &pb.AttestationService_ServiceDesc, capability: "attestation", pick: func(s *grpcServers) any { return s.attestation }},
 	{desc: &pb.Crypto_ServiceDesc, capability: "crypto", pick: func(s *grpcServers) any { return s.crypto }},
 	{desc: &pb.VectorDB_ServiceDesc, capability: "vector", pick: func(s *grpcServers) any { return s.vectorDB }},
 	{desc: &pb.VectorAdmin_ServiceDesc, capability: "vector-admin", pick: func(s *grpcServers) any { return s.vectorAdmin }},
@@ -489,6 +506,10 @@ var grpcRegistrations = []grpcRegistration{
 	{desc: &pb.RegistryService_ServiceDesc, capability: "registry", pick: func(s *grpcServers) any { return s.registry }},
 	{desc: &iampb.FederationService_ServiceDesc, capability: "federation", hostPick: func(h HostGRPCServers) any { return h.Federation }},
 	{desc: &iampb.SessionService_ServiceDesc, capability: "session", hostPick: func(h HostGRPCServers) any { return h.Session }},
+	{desc: &iampb.IAMService_ServiceDesc, capability: "iam", hostPick: func(h HostGRPCServers) any { return h.IAM }, grpcOnly: true},
+	{desc: &pb.CertificateService_ServiceDesc, capability: "certificate", pick: func(s *grpcServers) any { return s.certificate }, unixOnly: true},
+	{desc: &pb.TrustService_ServiceDesc, capability: "trust", pick: func(s *grpcServers) any { return s.trust }, unixOnly: true},
+	{desc: &pb.PIVService_ServiceDesc, capability: "piv", pick: func(s *grpcServers) any { return s.piv }, unixOnly: true},
 }
 
 // publicGRPCMethods is the exact set of this module's gRPC methods the
@@ -501,6 +522,8 @@ var grpcRegistrations = []grpcRegistration{
 // REGISTRATION pair (BeginRegistration/FinishRegistration) is deliberately
 // absent: it binds a new authenticator to a caller-supplied identity and
 // stays gated behind user_authfactors:add, exactly like the legacy listener.
+// The four IAMService invite RPCs (GetInvite and the activation ceremonies)
+// are public on the legacy listener too: the invite token is the credential.
 var publicGRPCMethods = []string{
 	"/quicbaas.v1.QuicBaaS/Health",
 	"/quicbaas.v1.QuicBaaS/Login",
@@ -510,6 +533,10 @@ var publicGRPCMethods = []string{
 	"/quicbaas.fido2.v1.FIDO2Service/FinishAuthentication",
 	"/quicbaas.iam.v1.FederationService/BeginFederatedLogin",
 	"/quicbaas.iam.v1.FederationService/HandleFederatedCallback",
+	"/quicbaas.iam.v1.IAMService/GetInvite",
+	"/quicbaas.iam.v1.IAMService/ActivateFIDO2Begin",
+	"/quicbaas.iam.v1.IAMService/ActivateFIDO2Finish",
+	"/quicbaas.iam.v1.IAMService/ActivatePIV",
 }
 
 // PublicGRPCMethods implements qrdbsdk.ModuleGRPCPublicMethodLister. It
@@ -534,7 +561,11 @@ func (m *Module) PublicGRPCMethods() []string {
 // never a nil dereference.
 func (m *Module) RegisterGRPC(reg grpc.ServiceRegistrar) {
 	for _, entry := range grpcRegistrations {
-		reg.RegisterService(lazyServiceDesc(entry.desc, m.server(entry), m.trustDomain), nil)
+		desc := lazyServiceDesc(entry.desc, m.server(entry), m.trustDomain)
+		if entry.unixOnly {
+			desc = unixPeerOnly(desc)
+		}
+		reg.RegisterService(desc, nil)
 	}
 }
 
@@ -542,9 +573,66 @@ func (m *Module) RegisterGRPC(reg grpc.ServiceRegistrar) {
 // go-qrdb's QUIC frame transport. The QUIC server's registrar projects each
 // unary method, authorized by its (qrdb.v1.permission) option; it skips the
 // methods PublicGRPCMethods lists (QUIC is mTLS-only) and every streaming
-// method.
+// method. Services marked grpcOnly (IAMService) are not projected.
 func (m *Module) RegisterQUIC(reg grpc.ServiceRegistrar) {
-	m.RegisterGRPC(reg)
+	for _, entry := range grpcRegistrations {
+		if entry.grpcOnly || entry.unixOnly {
+			continue
+		}
+		reg.RegisterService(lazyServiceDesc(entry.desc, m.server(entry), m.trustDomain), nil)
+	}
+}
+
+// quicRegistrationCount is the number of services RegisterQUIC projects.
+func quicRegistrationCount() int {
+	n := 0
+	for _, entry := range grpcRegistrations {
+		if !entry.grpcOnly && !entry.unixOnly {
+			n++
+		}
+	}
+	return n
+}
+
+// unixPeerOnly returns a copy of desc whose every method and stream handler
+// first checks that the caller is a Unix-socket peer. Any other peer, or a
+// context without one, gets the Unimplemented status grpc-go answers for an
+// unregistered service, before the implementation is resolved and before
+// authentication runs, so a TCP caller learns nothing about the service.
+func unixPeerOnly(desc *grpc.ServiceDesc) *grpc.ServiceDesc {
+	out := *desc
+	refuse := func() error {
+		return status.Errorf(codes.Unimplemented, "unknown service %s", desc.ServiceName)
+	}
+	out.Methods = make([]grpc.MethodDesc, len(desc.Methods))
+	for i, md := range desc.Methods {
+		inner := md.Handler
+		md.Handler = func(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
+			if !isUnixPeer(ctx) {
+				return nil, refuse()
+			}
+			return inner(srv, ctx, dec, interceptor)
+		}
+		out.Methods[i] = md
+	}
+	out.Streams = make([]grpc.StreamDesc, len(desc.Streams))
+	for i, sd := range desc.Streams {
+		inner := sd.Handler
+		sd.Handler = func(srv any, ss grpc.ServerStream) error {
+			if !isUnixPeer(ss.Context()) {
+				return refuse()
+			}
+			return inner(srv, ss)
+		}
+		out.Streams[i] = sd
+	}
+	return &out
+}
+
+// isUnixPeer reports whether ctx carries a peer on the "unix" network.
+func isUnixPeer(ctx context.Context) bool {
+	p, ok := peer.FromContext(ctx)
+	return ok && p.Addr != nil && p.Addr.Network() == "unix"
 }
 
 // server returns the per-service implementation resolver: it binds the bundle
@@ -692,14 +780,24 @@ func (m *Module) bind() (*grpcServers, error) {
 	// capability services above, with the SAME nil-gating
 	// pkg/server/lifecycle.go applies on the legacy transport.
 	//
-	// CertificateService, TrustService, AttestationService, and PIVService
-	// are deliberately NOT bound here: see the package doc comment (Phase 3
-	// of the login-plane plan) — go-xkms's own ServiceModule serves that
-	// canonical surface on this same unified server. Crypto is bound below:
-	// go-xkms serves no quicbaas.kms.v1 name, and the CLI calls it.
+	// CertificateService, TrustService, and PIVService are bound for
+	// Unix-socket peers only (unixOnly in grpcRegistrations; see the package
+	// doc): the Unix SDK still calls these legacy wire names. They use the
+	// legacy constructors and lifecycle.go's nil-gating; TCP callers use
+	// go-xkms's canonical surface, and QUIC never projects them. Crypto is
+	// bound below: go-xkms serves no quicbaas.kms.v1 name, and the CLI calls
+	// it.
 	if secretsSvc := svc.Secrets(); secretsSvc != nil {
 		built.secretsManagement = grpcapi.NewSecretsServer(secretsSvc, m.log)
 	}
+	if svc.Certificate() != nil {
+		built.certificate = facade
+	}
+	if svc.Trust() != nil {
+		built.trust = facade
+	}
+	// PIVService is unconditional, as lifecycle.go's registerPIVService is.
+	built.piv = facade
 
 	// KeyManagement and DEKManagement are quicbaas-native here: the pinned
 	// go-xkms serves no DEK surface and no quicbaas.kms.v1 name (package
@@ -712,6 +810,13 @@ func (m *Module) bind() (*grpcServers, error) {
 		if kmsSvc != nil {
 			built.dekManagement = grpcapi.NewDEKServer(kmsSvc, m.log)
 		}
+	}
+
+	// AttestationService is quicbaas-native for the same reason (package doc):
+	// the pinned go-xkms serves no Verifier RPCs, and *grpcapi.Server carries
+	// the handlers (pkg/api/grpc/server_attestation.go).
+	if svc.Attestation() != nil {
+		built.attestation = facade
 	}
 
 	// Crypto is quicbaas-native for the same reason (package doc), built as

@@ -43,7 +43,7 @@ func TestOIDCProvider_ResolveVerificationKey_Manager(t *testing.T) {
 	}
 
 	// resolveVerificationKey returns the manager's current public key.
-	pub, err := provider.resolveVerificationKey(idToken)
+	pub, err := provider.resolveVerificationKey(context.Background(), idToken)
 	if err != nil {
 		t.Fatalf("resolveVerificationKey: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestOIDCProvider_ResolveVerificationKey_UnknownKID(t *testing.T) {
 	foreignToken := mintAccessToken(t, otherProvider)
 
 	// providerA's manager does not know the foreign kid.
-	_, err = providerA.resolveVerificationKey(foreignToken)
+	_, err = providerA.resolveVerificationKey(context.Background(), foreignToken)
 	if err == nil {
 		t.Fatal("resolveVerificationKey(foreign kid) want error")
 	}
@@ -133,7 +133,7 @@ func TestPublicForKIDInJWKS(t *testing.T) {
 // A provider with no signing material at all reports SigningKeyUnavailableError.
 func TestOIDCProvider_ResolveVerificationKey_NoKey(t *testing.T) {
 	p := &OIDCProvider{config: &OIDCConfig{}}
-	_, err := p.resolveVerificationKey("eyJhbGciOiJSUzI1NiJ9.e30.")
+	_, err := p.resolveVerificationKey(context.Background(), "eyJhbGciOiJSUzI1NiJ9.e30.")
 	if err == nil {
 		t.Fatal("resolveVerificationKey with no key want error")
 	}

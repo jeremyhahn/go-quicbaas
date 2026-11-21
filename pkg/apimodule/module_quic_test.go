@@ -43,6 +43,9 @@ import (
 func TestGRPCRegistrations_EveryProjectedMethodDeclaresAPermission(t *testing.T) {
 	var missing []string
 	for _, entry := range grpcRegistrations {
+		if entry.grpcOnly {
+			continue
+		}
 		missing = append(missing, unpermittedMethods(t, entry.desc)...)
 	}
 	sort.Strings(missing)
@@ -68,8 +71,22 @@ func TestModule_RegisterQUIC_RegistersTheGRPCSurface(t *testing.T) {
 	m.RegisterQUIC(viaQUIC)
 
 	quicSurface := registeredSurface(viaQUIC)
-	assert.Len(t, quicSurface, len(grpcRegistrations))
-	assert.Equal(t, registeredSurface(viaGRPC), quicSurface)
+	assert.Len(t, quicSurface, quicRegistrationCount())
+	grpcSurface := registeredSurface(viaGRPC)
+	for _, entry := range grpcRegistrations {
+		if entry.grpcOnly || entry.unixOnly {
+			assert.NotContains(t, quicSurface, entry.desc.ServiceName, "grpcOnly and unixOnly services stay off QUIC")
+			delete(grpcSurface, entry.desc.ServiceName)
+		}
+	}
+	assert.Equal(t, grpcSurface, quicSurface)
+	for _, desc := range []*grpc.ServiceDesc{
+		&pb.CertificateService_ServiceDesc,
+		&pb.TrustService_ServiceDesc,
+		&pb.PIVService_ServiceDesc,
+	} {
+		assert.NotContains(t, quicSurface, desc.ServiceName, "the legacy xkms wrappers are never QUIC-registered")
+	}
 }
 
 // TestModule_RegisterQUIC_ProjectedCallIsLateBound drives a registered unary

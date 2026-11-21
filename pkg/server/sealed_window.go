@@ -231,6 +231,7 @@ func (s *Server) runSealedWindow() error {
 		Credential: svcs.Credential,
 		Ceremony:   svcs.Ceremony,
 	}
+	s.publishBarrierServicer(svcs.Barrier)
 
 	client, err := newSealedWindowClient(s, s.ceremonyServices)
 	if err != nil {
@@ -458,6 +459,7 @@ func (s *Server) stopSealedTransports() error {
 	}
 	// The full boot's startService rewires ceremonyServices from the node.
 	s.ceremonyServices = nil
+	s.publishBarrierServicer(nil)
 	return errors.Join(errs...)
 }
 
