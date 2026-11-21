@@ -10,7 +10,13 @@ ARG DATE=unknown
 # and dolthub/go-mysql-server's internal/regex has no file satisfying
 # `cgo && !gms_pure_go` without cgo, so the link fails on "build constraints
 # exclude all Go files". Callers passing BUILD_TAGS must keep it in the list.
-ARG BUILD_TAGS=gms_pure_go
+# The rest of the default is the server's feature set, the one
+# test/integration/Dockerfile.node builds for the cluster suites: without
+# `rest` the daemon registers no REST routes, so /api/v1/health/live and
+# /ready (the Kubernetes and compose probes) would not exist. The release
+# workflow never overrides BUILD_TAGS, so this default is what ships;
+# test/buildgates/image_tags_test.go holds it to the probe routes' constraints.
+ARG BUILD_TAGS="local quic raft rest rag timeseries vector qrdb_vector iam mcp hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_protobuf gms_pure_go awss3 gcpstorage azureblob minio"
 
 # Stage 1: Build stage
 FROM golang:${GO_VERSION}-alpine AS builder
@@ -89,8 +95,9 @@ FROM alpine:3.24.1
 # Install runtime dependencies, patched. Measured 2026-08-26: alpine 3.24.1
 # ships libcrypto3/libssl3 3.5.7-r0, which carries CVE-2026-14456 (HIGH,
 # openssl DoS); `apk upgrade` takes them to 3.5.8-r0 and the image scans clean.
+# The daemon runs worker and train containers through the docker CLI and needs git (go-quicbaas#2228).
 RUN apk upgrade --no-cache && \
-    apk --no-cache add ca-certificates tzdata
+    apk --no-cache add ca-certificates tzdata docker-cli git
 
 # Create non-root user
 RUN addgroup -g 1000 quicbaas && \

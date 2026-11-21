@@ -12,7 +12,9 @@ ARG GOFIPS140=v1.0.0
 # `cgo && !gms_pure_go` without cgo, so the link fails on "build constraints
 # exclude all Go files" (see Dockerfile's identical comment). release.yml
 # never overrides BUILD_TAGS for this image, so this default is load-bearing.
-ARG BUILD_TAGS=gms_pure_go
+# The rest is the server's feature set, as in Dockerfile: without `rest` the
+# daemon serves no REST routes, health probes included.
+ARG BUILD_TAGS="local quic raft rest rag timeseries vector qrdb_vector iam mcp hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_protobuf gms_pure_go awss3 gcpstorage azureblob minio"
 
 # Stage 1: Build stage with FIPS support
 FROM golang:${GO_VERSION}-bookworm AS builder

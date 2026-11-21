@@ -1,0 +1,29 @@
+# Raft traffic is admitted from the other QuicBaaS nodes only; REST and gRPC
+# from any pod. Narrow the client rule to the namespaces that call QuicBaaS.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: quicbaas
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: quicbaas
+      app.kubernetes.io/component: node
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: quicbaas
+              app.kubernetes.io/component: node
+      ports:
+        - protocol: UDP
+          port: 63000
+    - from:
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 50051
