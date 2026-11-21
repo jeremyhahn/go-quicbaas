@@ -87,10 +87,7 @@ func (b *ACPBackend) releaseContainer(ctx context.Context, containerID string, p
 		removeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), containerReleaseTimeout)
 		err := b.containerRuntime.Remove(removeCtx, containerID)
 		cancel()
-		var notFound *ContainerNotFoundError
-		if err != nil && !errors.As(err, &notFound) {
-			releaseErr = &ContainerStopError{ContainerID: containerID, Cause: err}
-		}
+		releaseErr = containerRemovalOutcome(containerID, err)
 	}
 	if procCancel != nil {
 		procCancel()
@@ -102,4 +99,23 @@ func (b *ACPBackend) releaseContainer(ctx context.Context, containerID string, p
 		b.logger.Debugf("container %s: runtime client exit not reported within %s", truncateID(containerID), containerExitWaitBound)
 	}
 	return releaseErr
+}
+
+// containerRemovalOutcome is a session teardown's answer for a Remove that
+// returned err. A container already gone is success. A ContainerStopError is
+// returned as it is: wrapping it again rendered "stop failed: X: stop
+// failed: X" (go-quicbaas#1801). Any other error is wrapped once.
+func containerRemovalOutcome(containerID string, err error) error {
+	if err == nil {
+		return nil
+	}
+	var notFound *ContainerNotFoundError
+	if errors.As(err, &notFound) {
+		return nil
+	}
+	var stopErr *ContainerStopError
+	if errors.As(err, &stopErr) {
+		return err
+	}
+	return &ContainerStopError{ContainerID: containerID, Cause: err}
 }
