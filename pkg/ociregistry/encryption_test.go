@@ -236,7 +236,7 @@ func TestEncryptImage_NilContext(t *testing.T) {
 	encryptor, _ := NewImageEncryptor(kms)
 	image := createTestImage(t)
 
-	_, err := encryptor.EncryptImage(nil, image, "test-key") //nolint:staticcheck // testing nil context handling
+	_, err := encryptor.EncryptImage(nilCtx, image, "test-key")
 	if err == nil {
 		t.Fatal("expected error for nil context")
 	}
@@ -384,7 +384,7 @@ func TestDecryptImage_NilContext(t *testing.T) {
 		EncryptedLayers: []EncryptedLayer{{Digest: "test"}},
 	}
 
-	_, err := encryptor.DecryptImage(nil, encrypted) //nolint:staticcheck // testing nil context handling
+	_, err := encryptor.DecryptImage(nilCtx, encrypted)
 	if err == nil {
 		t.Fatal("expected error for nil context")
 	}

@@ -27,6 +27,9 @@ import (
 
 // Mock implementations for testing
 
+// nilCtx is a nil context.Context for the tests of nil-context handling.
+var nilCtx context.Context
+
 type mockAttestor struct {
 	verifyFunc    func(ctx context.Context, quote, sig, aik []byte) (map[int][]byte, error)
 	generateNonce func(ctx context.Context) ([]byte, error)
@@ -265,7 +268,7 @@ func TestAuthenticate_NilContext(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/v2/test/manifests/latest", nil)
 
-	_, err := handler.Authenticate(nil, req) //nolint:staticcheck // testing nil context handling
+	_, err := handler.Authenticate(nilCtx, req)
 	if err == nil {
 		t.Fatal("expected error for nil context")
 	}
@@ -509,7 +512,7 @@ func TestValidateSession_NilContext(t *testing.T) {
 		ValidUntil: time.Now().Add(time.Hour),
 	}
 
-	err := handler.ValidateSession(nil, session) //nolint:staticcheck // testing nil context handling
+	err := handler.ValidateSession(nilCtx, session)
 	if err == nil {
 		t.Fatal("expected error for nil context")
 	}
@@ -595,7 +598,7 @@ func TestSessionManager_Store_NilContext(t *testing.T) {
 		SessionID: "test-session",
 	}
 
-	err := mgr.Store(nil, session) //nolint:staticcheck // testing nil context handling
+	err := mgr.Store(nilCtx, session)
 	if err == nil {
 		t.Fatal("expected error for nil context")
 	}
