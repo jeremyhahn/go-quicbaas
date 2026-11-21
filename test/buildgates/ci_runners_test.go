@@ -112,6 +112,58 @@ func waiverProblem(comment string) string {
 // overflowRunnerGate: hosted first, the Dells only when the hosted pool is
 // full), or on a self-hosted label with a categorised waiver, and never on
 // any other expression, which can pick a self-hosted label.
+// reviewOnlyLabels are the review runners' labels. Only code-review.yml's
+// review jobs run on them; no other job may take one, waiver or not.
+var reviewOnlyLabels = []string{"codex", "qwen"}
+
+// runsOnLabels returns the labels a runs-on node names: the scalar's value,
+// each scalar in a sequence, or the labels value (scalar or sequence) of a
+// mapping.
+func runsOnLabels(n *yaml.Node) []string {
+	if n == nil {
+		return nil
+	}
+	switch n.Kind {
+	case yaml.ScalarNode:
+		return []string{n.Value}
+	case yaml.SequenceNode:
+		var out []string
+		for _, c := range n.Content {
+			if c.Kind == yaml.ScalarNode {
+				out = append(out, c.Value)
+			}
+		}
+		return out
+	case yaml.MappingNode:
+		if l := mapValue(n, "labels"); l != nil && l.Kind != yaml.MappingNode {
+			return runsOnLabels(l)
+		}
+	}
+	return nil
+}
+
+// reviewLabelProblems reports every job of a workflow that runs on a
+// review-only label.
+func reviewLabelProblems(body []byte) []string {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(body, &doc); err != nil || len(doc.Content) == 0 {
+		return []string{"the workflow does not parse: " + errString(err)}
+	}
+	jobs := mapValue(doc.Content[0], "jobs")
+	if jobs == nil {
+		return nil
+	}
+	var problems []string
+	for i := 0; i+1 < len(jobs.Content); i += 2 {
+		for _, l := range runsOnLabels(mapValue(jobs.Content[i+1], "runs-on")) {
+			if slices.Contains(reviewOnlyLabels, l) {
+				problems = append(problems, "job "+jobs.Content[i].Value+" runs on the review-only label "+strconv.Quote(l))
+			}
+		}
+	}
+	return problems
+}
+
 func runnerProblems(body []byte) []string {
 	jobs, problem := runnerJobs(body)
 	if problem != "" {
@@ -120,6 +172,11 @@ func runnerProblems(body []byte) []string {
 	var problems []string
 	for _, j := range jobs {
 		where := "job " + j.name
+		for _, l := range runsOnLabels(j.runsOn) {
+			if slices.Contains(reviewOnlyLabels, l) {
+				problems = append(problems, where+" runs on the review-only label "+strconv.Quote(l)+", which only code-review.yml may use")
+			}
+		}
 		switch {
 		case j.runsOn == nil:
 			problems = append(problems, where+" has no runs-on")
@@ -229,6 +286,9 @@ func TestRunnerProblems_Mutations(t *testing.T) {
 		{"a waiver with neither category nor reason", coverage("bigdisk  " + selfHostedWaiver), "names no category"},
 		{"a hardware waiver is allowed", coverage("gpu  " + selfHostedWaiver + "hardware: needs the GPU host"), ""},
 		{"an oversize waiver is allowed", coverage("bigdisk  " + selfHostedWaiver + "oversize: measured 40 GB of disk"), ""},
+		{"the codex review label with a waiver", coverage("codex  " + selfHostedWaiver + "hardware: x"), "review-only"},
+		{"the qwen review label with a waiver", coverage("qwen  " + selfHostedWaiver + "hardware: x"), "review-only"},
+		{"the codex review label in a list", coverage("[self-hosted, codex]"), "review-only"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			mutated := c.mutate(body)
@@ -236,6 +296,55 @@ func TestRunnerProblems_Mutations(t *testing.T) {
 				t.Fatal("the mutation changed nothing")
 			}
 			p := runnerProblems([]byte(mutated))
+			if c.want == "" {
+				if len(p) != 0 {
+					t.Fatalf("want no problem, got %v", p)
+				}
+				return
+			}
+			if !slices.ContainsFunc(p, func(s string) bool { return strings.Contains(s, c.want) }) {
+				t.Fatalf("want a problem containing %q, got %v", c.want, p)
+			}
+		})
+	}
+}
+
+// TestReviewRunnerLabelsStayInCodeReview holds the review runners' labels to
+// code-review.yml: no other workflow names codex or qwen in a runs-on.
+func TestReviewRunnerLabelsStayInCodeReview(t *testing.T) {
+	files, err := filepath.Glob(filepath.Join(repoRoot, ".github", "workflows", "*.y*ml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) == 0 {
+		t.Fatal("no workflow files found")
+	}
+	for _, f := range files {
+		if filepath.Base(f) == "code-review.yml" {
+			continue
+		}
+		body, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p := reviewLabelProblems(body); len(p) != 0 {
+			t.Errorf("%s: %v", filepath.Base(f), p)
+		}
+	}
+}
+
+func TestReviewLabelProblems_Mutations(t *testing.T) {
+	for _, c := range []struct {
+		name, runsOn, want string // want is "" when the runs-on is allowed
+	}{
+		{"a scalar review label", "codex", "job j runs on the review-only label \"codex\""},
+		{"a review label in a list", "[self-hosted, qwen]", "job j runs on the review-only label \"qwen\""},
+		{"a review label in a labels mapping", "{labels: [codex]}", "job j runs on the review-only label \"codex\""},
+		{"a hosted runner", "ubuntu-latest", ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			body := "on: push\njobs:\n  j:\n    runs-on: " + c.runsOn + "\n    steps:\n      - run: true\n"
+			p := reviewLabelProblems([]byte(body))
 			if c.want == "" {
 				if len(p) != 0 {
 					t.Fatalf("want no problem, got %v", p)
