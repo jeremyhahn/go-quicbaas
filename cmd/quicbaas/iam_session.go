@@ -395,7 +395,7 @@ func runIAMSessionRevokeAllCommand(cmd *cobra.Command, args []string) error {
 			return errors.Newf(errors.ErrInvalidInput, "iam.session.revoke-all", "no current session found; cannot use --keep-current")
 		}
 
-		if err := iamClient.Session().RevokeOthers(ctx, currentSessionID); err != nil {
+		if err := iamClient.Session().RevokeOthers(ctx, globalTenantID, currentSessionID); err != nil {
 			return formatError(err)
 		}
 		fmt.Println("Successfully revoked all other sessions")
