@@ -499,8 +499,9 @@ func GetTransportConfigs() []TransportConfig {
 		},
 		{
 			Transport: TransportQUIC,
-			// QUIC transport - disabled by default as it requires special setup
-			Address: getEnvOrDefault("QUICBAAS_QUIC_ADDRESS", "test-node1:4433"),
+			// QUIC transport - disabled by default as it requires special setup.
+			// QUIC is HTTP/3 on the node's REST port (UDP).
+			Address: getEnvOrDefault("QUICBAAS_QUIC_ADDRESS", "test-node1:8080"),
 			Enabled: getEnvOrDefault("QUICBAAS_QUIC_ENABLED", "false") == "true",
 		},
 		{

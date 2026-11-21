@@ -8,7 +8,7 @@ exclude google.golang.org/genproto v0.0.0-20230410155749-daa745c078e1
 require (
 	cloud.google.com/go/kms v1.36.0 // held: v1.36.1 released 2026-10-28, under 7 days old (#1704)
 	connectrpc.com/connect v1.21.1
-	github.com/aws/aws-sdk-go-v2 v1.47.5
+	github.com/aws/aws-sdk-go-v2 v1.47.5 // held: v1.48.0 also moves github.com/aws/aws-sdk-go-v2 and github.com/aws/smithy-go in sdk/go/go.mod (#2535)
 	github.com/aws/aws-sdk-go-v2/config v1.33.12 // held: v1.33.13 released 2026-10-30, under 7 days old (#1704)
 	github.com/aws/aws-sdk-go-v2/credentials v1.20.12 // held: v1.20.13 released 2026-10-30, under 7 days old (#1704)
 	github.com/aws/aws-sdk-go-v2/service/kms v1.62.1 // held: v1.62.2 released 2026-10-30, under 7 days old (#1704)
@@ -37,7 +37,7 @@ require (
 	github.com/jeremyhahn/go-signal v0.2.3-alpha
 	github.com/jeremyhahn/go-xkms v0.64.2-alpha
 	github.com/jeremyhahn/go-xkms/sdk/go v0.64.2-alpha
-	github.com/klauspost/compress v1.20.3
+	github.com/klauspost/compress v1.20.4
 	github.com/lestrrat-go/jwx/v2 v2.1.7
 	github.com/mark3labs/mcp-go v1.3.0 // MVS: required by the go-xkms v0.64.2-alpha / go-qrdb v0.51.0-alpha pins (#1389)
 	github.com/minio/blake2b-simd v0.0.0-20160723061019-3f5f724cb5b1
@@ -70,13 +70,13 @@ require (
 	go.opentelemetry.io/otel/sdk v1.45.0 // held: v1.47.0 needs go.opentelemetry.io/otel/metric/x v0.69.0, not in the lane module cache (#1597)
 	go.opentelemetry.io/otel/trace v1.45.0 // held: v1.47.0 needs go.opentelemetry.io/otel/metric/x v0.69.0, not in the lane module cache (#1597)
 	go.podman.io/image/v5 v5.41.2 // held: v5.42.0 released 2026-10-20, under 7 days old (#1704)
-	go.podman.io/storage v1.65.0
-	golang.org/x/crypto v0.58.0
-	golang.org/x/mod v0.42.0
+	go.podman.io/storage v1.65.1
+	golang.org/x/crypto v0.59.0
+	golang.org/x/mod v0.43.0
 	golang.org/x/net v0.62.0
-	golang.org/x/oauth2 v0.37.0
-	golang.org/x/sys v0.49.0
-	golang.org/x/term v0.47.0
+	golang.org/x/oauth2 v0.38.0
+	golang.org/x/sys v0.50.0
+	golang.org/x/term v0.48.0
 	google.golang.org/grpc v1.85.0
 	google.golang.org/protobuf v1.36.12
 	gopkg.in/yaml.v3 v3.0.1
@@ -347,9 +347,9 @@ require (
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/arch v0.30.0 // indirect
 	golang.org/x/exp v0.0.0-20260529124908-c761662dc8c9 // indirect
-	golang.org/x/sync v0.24.0 // indirect
+	golang.org/x/sync v0.25.0 // indirect
 	golang.org/x/telemetry v0.0.0-20261009151841-97e8ea77aa2a // indirect
-	golang.org/x/text v0.43.0 // indirect
+	golang.org/x/text v0.44.0 // indirect
 	golang.org/x/time v0.16.0 // indirect
 	golang.org/x/tools v0.52.0 // indirect
 	google.golang.org/api v0.293.0 // indirect

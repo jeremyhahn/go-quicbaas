@@ -328,13 +328,24 @@ type BackupVerifyRequest struct {
 // createGRPCClient creates a new gRPC client with default settings.
 // TLS configuration is always included since gRPC requires TLS for all connections.
 // When TLS certificate files are provided via CLI flags, mTLS is configured.
-// Otherwise, a default TLS configuration is used.
+// Otherwise, a default TLS configuration is used. It sends the stored
+// session's platform bearer on every call (see grpcClientOptions).
 func createGRPCClient() (*grpc.Client, error) {
-	opts := []grpc.ClientOption{
-		grpc.WithTimeout(globalTimeout),
-	}
+	return grpc.NewClient(address, grpcClientOptions()...)
+}
+
+// grpcClientOptions returns the options every CLI gRPC client is built with:
+// the global timeout, the TLS option, and, when the user has a stored session,
+// its platform bearer as "authorization" metadata so calls pass the server's
+// default-deny authentication gate. With no session it adds no bearer and the
+// server's error tells the user to log in.
+func grpcClientOptions() []grpc.ClientOption {
+	opts := []grpc.ClientOption{grpc.WithTimeout(globalTimeout)}
 	opts = append(opts, grpcTLSOption()...)
-	return grpc.NewClient(address, opts...)
+	if token := loadStoredAuthToken(); token != "" {
+		opts = append(opts, grpc.WithMetadata("authorization", "Bearer "+token))
+	}
+	return opts
 }
 
 // grpcTLSOption returns the appropriate TLS client option based on global TLS flags.

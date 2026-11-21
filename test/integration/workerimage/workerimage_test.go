@@ -146,6 +146,11 @@ func TestE2E_BuildInspectTagPushAndPullByDigest(t *testing.T) {
 
 	id, err := rt.BuildImage(ctx, &orchestration.ImageBuildSpec{Dockerfile: []byte(tinyDockerfile), Tags: []string{local}, Labels: labels})
 	require.NoError(t, err)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		rt.ReleaseImage(ctx, id)
+	})
 	removeImages(t, local)
 	require.True(t, strings.HasPrefix(id, "sha256:"), "the build must report its image ID, got %q", id)
 
@@ -180,8 +185,13 @@ func TestE2E_RunImageReportsTheExitAndWritesAsTheSpawnUID(t *testing.T) {
 	rt := engine(t)
 	ctx := context.Background()
 	local := "quicbaas-worker-image-it:run"
-	_, err := rt.BuildImage(ctx, &orchestration.ImageBuildSpec{Dockerfile: []byte(tinyDockerfile), Tags: []string{local}})
+	id, err := rt.BuildImage(ctx, &orchestration.ImageBuildSpec{Dockerfile: []byte(tinyDockerfile), Tags: []string{local}})
 	require.NoError(t, err)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		rt.ReleaseImage(ctx, id)
+	})
 	removeImages(t, local)
 
 	res, err := rt.RunImage(ctx, &orchestration.ImageRunSpec{
@@ -304,16 +314,26 @@ func TestE2E_ACandidateThatFailsItsProbesIsNeverPromoted(t *testing.T) {
 
 	oldBuild := build
 	oldBuild.Agents = softwarefactoryworker.Agents{ClaudeCode: "1.0.0", Codex: "1.0.0", Gemini: "1.0.0"}
-	_, err = rt.BuildImage(ctx, &orchestration.ImageBuildSpec{Dockerfile: []byte(tinyDockerfile), Tags: []string{stale}, Labels: oldBuild.Labels()})
+	staleID, err := rt.BuildImage(ctx, &orchestration.ImageBuildSpec{Dockerfile: []byte(tinyDockerfile), Tags: []string{stale}, Labels: oldBuild.Labels()})
 	require.NoError(t, err)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		rt.ReleaseImage(ctx, staleID)
+	})
 	// The worker Dockerfile declares its languages in a LABEL, not through
 	// Build.Labels, and the refresher refuses a candidate without them before
 	// any probe runs. The candidate carries the label so the probes are what
 	// fail it.
 	candidateLabels := build.Labels()
 	candidateLabels[softwarefactoryworker.LabelLanguages] = "go"
-	_, err = rt.BuildImage(ctx, &orchestration.ImageBuildSpec{Dockerfile: []byte(tinyDockerfile), Tags: []string{candidate}, Labels: candidateLabels})
+	candidateID, err := rt.BuildImage(ctx, &orchestration.ImageBuildSpec{Dockerfile: []byte(tinyDockerfile), Tags: []string{candidate}, Labels: candidateLabels})
 	require.NoError(t, err)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		rt.ReleaseImage(ctx, candidateID)
+	})
 	removeImages(t, stale, candidate)
 
 	versions, err := workerimage.NewNPMRegistry(npmDouble(t, "9.9.9", "9.9.9", "9.9.9").URL, nil)

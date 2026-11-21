@@ -223,6 +223,13 @@ if [ "$network" = bridge ]; then
   # `direct` entry (v5). go-quicbaas: no forge credential reaches a job (the
   # jobs refuse injected GIT_CONFIG_*), so none is passed to the stage.
   args+=(--env "GOPROXY=${DEVCACHE_GOPROXY:+$DEVCACHE_GOPROXY|}https://proxy.golang.org" --env "GOMODCACHE=$modcache")
+  # ci-template v1.36: the Trivy database repositories the runner sets (the
+  # dev-cache ghcr mirror on the LAN first, the public ones after) travel
+  # with the stage, so `make security` and `trivy image` fetch the vulnerability
+  # and Java databases from the LAN instead of the internet.
+  for v in TRIVY_DB_REPOSITORY TRIVY_JAVA_DB_REPOSITORY TRIVY_INSECURE; do
+    if [ -n "${!v:-}" ]; then args+=(--env "$v"); fi
+  done
 fi
 
 cleanup() { docker rm -f -v "$name" >/dev/null 2>&1 || true; }
