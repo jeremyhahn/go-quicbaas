@@ -46,8 +46,13 @@ func (t *Transport) CeremonyInitialize(ctx context.Context, req *qrdbtransport.C
 	if req == nil {
 		return nil, errors.NewInvalidInput("mcp.CeremonyInitialize", "request is required")
 	}
+	ctx, soPIN, release, err := t.guardSOPIN(ctx, "CeremonyInitialize", req.SOPin)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	args := map[string]interface{}{
-		"so_pin":    req.SOPin,
+		"so_pin":    soPIN,
 		"user_pin":  req.UserPin,
 		"threshold": req.Threshold,
 	}
@@ -202,9 +207,14 @@ func (t *Transport) CeremonySignCSR(ctx context.Context, req *qrdbtransport.Sign
 	if req == nil {
 		return nil, errors.NewInvalidInput("mcp.CeremonySignCSR", "request is required")
 	}
+	ctx, soPIN, release, err := t.guardSOPIN(ctx, "CeremonySignCSR", req.SOPin)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	raw, err := t.callBarrier(ctx, "qrdb_ceremony_sign_csr", map[string]interface{}{
 		"username": req.Username,
-		"so_pin":   req.SOPin,
+		"so_pin":   soPIN,
 		"csr_pem":  req.CSRPEM,
 		"role":     req.Role,
 	})

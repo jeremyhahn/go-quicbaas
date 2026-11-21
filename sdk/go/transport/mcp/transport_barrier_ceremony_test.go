@@ -307,7 +307,9 @@ var ceremonyToolNames = []string{
 
 func TestCeremonyMethodsEndToEnd(t *testing.T) {
 	ctx := context.Background()
-	tr, _, cleanup := newMultiToolMCPServer(t, ceremonyToolNames, func(t *testing.T, tool string, args map[string]interface{}) map[string]interface{} {
+	// TLS: CeremonyInitialize and CeremonySignCSR carry an SO PIN, which is
+	// refused over http://.
+	tr, _ := newMultiToolMCPServerTLS(t, ceremonyToolNames, func(t *testing.T, tool string, args map[string]interface{}) map[string]interface{} {
 		switch tool {
 		case "qrdb_ceremony_initialize":
 			return map[string]interface{}{"session_id": "sess-1"}
@@ -329,7 +331,6 @@ func TestCeremonyMethodsEndToEnd(t *testing.T) {
 			return map[string]interface{}{"ok": true}
 		}
 	})
-	defer cleanup()
 
 	if _, err := tr.CeremonyInitialize(ctx, &qrdbtransport.CeremonyInitializeRequest{
 		SOPin:                  "so",

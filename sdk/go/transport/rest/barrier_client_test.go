@@ -378,6 +378,139 @@ func TestBarrierClient_SOPINRefusesForeignRedirect(t *testing.T) {
 	}
 }
 
+// requestFieldPINCalls lists every REST barrier call that carries an SO PIN
+// in its request's so_pin field, each made with the PIN in that field only
+// (no WithSOPIN binding).
+var requestFieldPINCalls = []struct {
+	name string
+	call func(ctx context.Context, b *BarrierClient) error
+}{
+	{"BarrierInitialize", func(ctx context.Context, b *BarrierClient) error {
+		return b.BarrierInitialize(ctx, &qrdbtransport.BarrierInitializeRequest{SOPin: "123456"})
+	}},
+	{"BarrierInitializeShamir", func(ctx context.Context, b *BarrierClient) error {
+		_, err := b.BarrierInitializeShamir(ctx, &qrdbtransport.BarrierInitializeShamirRequest{SOPin: "123456"})
+		return err
+	}},
+	{"BarrierRekey", func(ctx context.Context, b *BarrierClient) error {
+		_, err := b.BarrierRekey(ctx, &qrdbtransport.BarrierRekeyRequest{SOPin: "123456"})
+		return err
+	}},
+	{"BarrierGenerateRecoveryKeys", func(ctx context.Context, b *BarrierClient) error {
+		_, err := b.BarrierGenerateRecoveryKeys(ctx, &qrdbtransport.BarrierGenerateRecoveryKeysRequest{SOPin: "123456"})
+		return err
+	}},
+}
+
+// redirectingTLSServer starts a TLS server that 307-redirects every request
+// but /health to target, keeping the path.
+func redirectingTLSServer(t *testing.T, target string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.Redirect(w, r, target+r.URL.Path, http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// newTLSTransport builds a REST transport to srv trusting the given servers'
+// certificates.
+func newTLSTransport(t *testing.T, srv *httptest.Server, trusted ...*httptest.Server) *Transport {
+	t.Helper()
+	pool := x509.NewCertPool()
+	pool.AddCert(srv.Certificate())
+	for _, s := range trusted {
+		pool.AddCert(s.Certificate())
+	}
+	tr, err := New(&transport.Config{
+		Address:    srv.URL,
+		TLSConfig:  &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12},
+		MaxRetries: 0,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = tr.Close() })
+	return tr
+}
+
+// TestBarrierClient_RequestFieldPINRequiresTLS: a PIN carried only in the
+// request's SOPin field is refused over http://, as a bound one is.
+func TestBarrierClient_RequestFieldPINRequiresTLS(t *testing.T) {
+	for _, tc := range requestFieldPINCalls {
+		t.Run(tc.name, func(t *testing.T) {
+			var hits atomic.Int32
+			srv := httptest.NewServer(recordingHandler(&hits))
+			t.Cleanup(srv.Close)
+
+			tr, err := New(&transport.Config{Address: srv.URL, MaxRetries: 0})
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			t.Cleanup(func() { _ = tr.Close() })
+
+			err = tc.call(context.Background(), tr.Barrier())
+			var tlsErr *qrdbtransport.SOPINRequiresTLSError
+			if !errors.As(err, &tlsErr) {
+				t.Fatalf("%s with a request-field PIN over http: got %v, want *SOPINRequiresTLSError", tc.name, err)
+			}
+			if n := hits.Load(); n != 0 {
+				t.Fatalf("requests reaching the plaintext server: got %d, want 0", n)
+			}
+		})
+	}
+}
+
+// TestBarrierClient_RequestFieldPINRefusesPlainRedirect: a request-field PIN
+// is not carried across a 307 from the TLS server to a plaintext one.
+func TestBarrierClient_RequestFieldPINRefusesPlainRedirect(t *testing.T) {
+	for _, tc := range requestFieldPINCalls {
+		t.Run(tc.name, func(t *testing.T) {
+			var hits atomic.Int32
+			plain := httptest.NewServer(recordingHandler(&hits))
+			t.Cleanup(plain.Close)
+			srv := redirectingTLSServer(t, plain.URL)
+			tr := newTLSTransport(t, srv)
+
+			err := tc.call(context.Background(), tr.Barrier())
+			var tlsErr *qrdbtransport.SOPINRequiresTLSError
+			if !errors.As(err, &tlsErr) {
+				t.Fatalf("%s with a request-field PIN redirected to http: got %v, want *SOPINRequiresTLSError", tc.name, err)
+			}
+			if n := hits.Load(); n != 0 {
+				t.Fatalf("requests reaching the plaintext redirect target: got %d, want 0", n)
+			}
+		})
+	}
+}
+
+// TestBarrierClient_RequestFieldPINRefusesForeignRedirect: a request-field
+// PIN is not carried across a 307 to another TLS host.
+func TestBarrierClient_RequestFieldPINRefusesForeignRedirect(t *testing.T) {
+	for _, tc := range requestFieldPINCalls {
+		t.Run(tc.name, func(t *testing.T) {
+			var hits atomic.Int32
+			other := httptest.NewTLSServer(recordingHandler(&hits))
+			t.Cleanup(other.Close)
+			srv := redirectingTLSServer(t, other.URL)
+			tr := newTLSTransport(t, srv, other)
+
+			err := tc.call(context.Background(), tr.Barrier())
+			var hostErr *qrdbtransport.SOPINForeignHostError
+			if !errors.As(err, &hostErr) {
+				t.Fatalf("%s with a request-field PIN redirected to another host: got %v, want *SOPINForeignHostError", tc.name, err)
+			}
+			if n := hits.Load(); n != 0 {
+				t.Fatalf("requests reaching the redirect target: got %d, want 0", n)
+			}
+		})
+	}
+}
+
 // A transport built WithHTTPClient guards a bound SO PIN too: the call over
 // plaintext http is refused before anything is sent. The QUIC transport
 // builds its REST client this way.
