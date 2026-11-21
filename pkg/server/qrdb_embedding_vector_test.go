@@ -128,10 +128,6 @@ func TestQRDBEmbedding_ProviderServesGoQRDBEmbed(t *testing.T) {
 	assert.Equal(t, "m", models.Models[0].Name)
 }
 
-// TestQRDBEmbedding_ProviderRefusesAnotherModel checks that a quicbaas node
-// serves a provider with its configured model only: a go-qrdb embedding
-// request naming another model is refused and never reaches the provider,
-// while the configured model is served.
 // newRecordingEmbeddingStub starts an OpenAI-compatible embeddings stub that
 // answers three-dimensional vectors and records the model of every
 // embeddings request; recorded returns the models in request order.
@@ -144,7 +140,7 @@ func newRecordingEmbeddingStub(t *testing.T) (stub *httptest.Server, recorded fu
 	stub = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/models") {
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]any{"object": "list", "data": []map[string]any{{"id": "m", "object": "model"}}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"object": "list", "data": []map[string]any{{"id": "m", "object": "model"}, {"id": "text-embedding-3-large", "object": "model"}}})
 			return
 		}
 		if r.Method != http.MethodPost || !strings.HasSuffix(r.URL.Path, "/embeddings") {
@@ -215,37 +211,39 @@ func newOpenAIEmbeddingNode(t *testing.T, stub *httptest.Server, additional ...c
 	return svc
 }
 
-func TestQRDBEmbedding_ProviderRefusesAnotherModel(t *testing.T) {
+// TestQRDBEmbedding_NativeProviderServesTheModelARequestNames checks that
+// go-qrdb's re-exported embedding service serves a native go-qrdb provider
+// unfiltered: a request naming a model other than the configured one is served
+// with that model, a request naming none gets the configured default, and
+// ListModels reports the models the upstream lists.
+func TestQRDBEmbedding_NativeProviderServesTheModelARequestNames(t *testing.T) {
 	stub, recorded := newRecordingEmbeddingStub(t)
-
-	srv := newModuleHostTestServer(t)
-	srv.config.RAG.Enabled = true
-	srv.config.RAG.Embedding.Provider = "openai"
-	srv.config.RAG.Embedding.APIURL = stub.URL
-	srv.config.RAG.Embedding.APIKey = "k"
-	srv.config.RAG.Embedding.Model = "m"
-	srv.config.RAG.Embedding.Dimensions = 3
-
-	_, err := srv.unifiedModuleServerOptions(nil, false)
-	require.NoError(t, err)
-	require.NoError(t, srv.startEmbedding())
-	t.Cleanup(func() { _ = srv.stopEmbedding() })
-
-	svc := srv.GetQRDBEmbeddingServicer()
-	require.NotNil(t, svc)
+	svc := newOpenAIEmbeddingNode(t, stub)
 
 	ctx := context.Background()
 	const large = "text-embedding-3-large"
-	_, err = svc.Embed(ctx, &qrdbservice.EmbedRequest{Texts: []string{"hi"}, Model: large})
-	require.Error(t, err, "Embed with a model other than the configured one must be refused")
-	_, err = svc.BatchEmbed(ctx, &qrdbservice.BatchEmbedRequest{Texts: []string{"hi"}, Model: large})
-	require.Error(t, err, "BatchEmbed with a model other than the configured one must be refused")
-	assert.NotContains(t, recorded(), large, "the provider must not be called with a model other than the configured one")
+	resp, err := svc.Embed(ctx, &qrdbservice.EmbedRequest{Texts: []string{"hi"}, Model: large})
+	require.NoError(t, err, "Embed must serve the model the request names")
+	assert.Equal(t, large, resp.Model)
 
-	resp, err := svc.Embed(ctx, &qrdbservice.EmbedRequest{Texts: []string{"hi"}, Model: "m"})
+	batch, err := svc.BatchEmbed(ctx, &qrdbservice.BatchEmbedRequest{Texts: []string{"a", "b"}, Model: large})
+	require.NoError(t, err, "BatchEmbed must serve the model the request names")
+	assert.Len(t, batch.Embeddings, 2)
+	assert.Equal(t, large, batch.Model)
+
+	resp, err = svc.Embed(ctx, &qrdbservice.EmbedRequest{Texts: []string{"hi"}})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"m"}, recorded())
-	assert.Equal(t, "m", resp.Model)
+	assert.Equal(t, "m", resp.Model, "a request naming no model is served with the configured default")
+
+	assert.Contains(t, recorded(), large, "the upstream must be called with the model the request names")
+
+	models, err := svc.ListModels(ctx, &qrdbservice.ListEmbeddingModelsRequest{Provider: "openai"})
+	require.NoError(t, err)
+	names := make([]string, 0, len(models.Models))
+	for _, m := range models.Models {
+		names = append(names, m.Name)
+	}
+	assert.ElementsMatch(t, []string{"m", large}, names, "ListModels must report the models the upstream lists")
 }
 
 // singleModelProvider is an embedding.Provider without per-call model
@@ -337,24 +335,28 @@ func TestQRDBEmbedding_AdditionalProviderServesItsDefaultModel(t *testing.T) {
 
 	models, err := svc.ListModels(ctx, &qrdbservice.ListEmbeddingModelsRequest{Provider: "lmstudio"})
 	require.NoError(t, err)
-	require.Len(t, models.Models, 1)
-	assert.Equal(t, lmstudioModel, models.Models[0].Name)
+	names := make([]string, 0, len(models.Models))
+	for _, m := range models.Models {
+		names = append(names, m.Name)
+	}
+	assert.ElementsMatch(t, []string{"m", "text-embedding-3-large"}, names, "LM Studio lists the models the upstream's GET /v1/models reports")
 
 	assert.Contains(t, recorded(), lmstudioModel, "the provider must be called with its effective model")
 }
 
-// TestQRDBEmbedding_AnotherModelIsInvalidArgumentOnEveryTransport checks that
-// the refusal of another model carries go-qrdb's InvalidArgument class, so
-// every native transport answers it as an invalid argument, and still
-// unwraps to an *api.InvalidInputError.
+// TestQRDBEmbedding_AnotherModelIsInvalidArgumentOnEveryTransport covers a
+// provider without a native go-qrdb counterpart (the NPU case), which go-qrdb's
+// service serves with its one configured model. It checks that the refusal of
+// another model carries go-qrdb's InvalidArgument class, so every native
+// transport answers it as an invalid argument, and still unwraps to an
+// *api.InvalidInputError.
 func TestQRDBEmbedding_AnotherModelIsInvalidArgumentOnEveryTransport(t *testing.T) {
-	stub, _ := newRecordingEmbeddingStub(t)
-	svc := newOpenAIEmbeddingNode(t, stub)
+	svc := qrdbservice.NewEmbeddingService(qrdbservice.WithDefaultProvider("single"))
+	require.NoError(t, svc.RegisterProvider("single", &qrdbEmbeddingProvider{p: &singleModelProvider{}, model: "m"}))
 
 	ctx := context.Background()
-	const large = "text-embedding-3-large"
-	_, embedErr := svc.Embed(ctx, &qrdbservice.EmbedRequest{Texts: []string{"hi"}, Model: large})
-	_, batchErr := svc.BatchEmbed(ctx, &qrdbservice.BatchEmbedRequest{Texts: []string{"hi"}, Model: large})
+	_, embedErr := svc.Embed(ctx, &qrdbservice.EmbedRequest{Texts: []string{"hi"}, Model: "other"})
+	_, batchErr := svc.BatchEmbed(ctx, &qrdbservice.BatchEmbedRequest{Texts: []string{"hi"}, Model: "other"})
 
 	for name, err := range map[string]error{"Embed": embedErr, "BatchEmbed": batchErr} {
 		require.Error(t, err, name)

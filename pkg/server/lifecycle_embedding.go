@@ -429,7 +429,14 @@ func (s *Server) registerEmbeddingProviders(mgr *embedding.Manager, cfg *embeddi
 	}
 
 	if s.qrdbEmbeddingSvc != nil {
-		if err := s.qrdbEmbeddingSvc.RegisterProvider(cfg.Provider, &qrdbEmbeddingProvider{p: provider, model: effectiveEmbeddingModel(cfg)}); err != nil {
+		// A provider that wraps a native go-qrdb provider is served by that
+		// native provider unfiltered; one without a native counterpart (the
+		// NPU) is served with its one configured model.
+		var svcProvider qrdbservice.EmbeddingProvider = &qrdbEmbeddingProvider{p: provider, model: effectiveEmbeddingModel(cfg)}
+		if native, ok := provider.(embedding.QRDBServiceProvider); ok {
+			svcProvider = native.QRDBServiceProvider()
+		}
+		if err := s.qrdbEmbeddingSvc.RegisterProvider(cfg.Provider, svcProvider); err != nil {
 			return &api.OperationFailedError{
 				Operation: "register " + cfg.Provider + " go-qrdb embedding provider",
 				Cause:     err,
@@ -459,10 +466,6 @@ func (s *Server) qrdbEmbeddingServerOptions() []qrdbsdk.ServerOption {
 	return []qrdbsdk.ServerOption{qrdbserver.WithEmbedding(s.qrdbEmbeddingSvc)}
 }
 
-// qrdbEmbeddingProvider adapts a quicbaas embedding provider to go-qrdb's
-// service-layer EmbeddingProvider, so go-qrdb's embedding service serves the
-// providers the quicbaas embedding manager registers. Each provider is served
-// with the one model it is configured with.
 // qrdbModelNotServedError refuses a go-qrdb embedding request for a model the
 // provider does not serve. It wraps the *api.InvalidInputError that describes
 // the refusal.
@@ -480,6 +483,11 @@ func (e *qrdbModelNotServedError) Unwrap() error { return e.cause }
 // transports answer 400 / InvalidArgument instead of an internal error.
 func (e *qrdbModelNotServedError) ErrorClass() errclass.Class { return errclass.InvalidArgument }
 
+// qrdbEmbeddingProvider adapts a quicbaas embedding provider to go-qrdb's
+// service-layer EmbeddingProvider. It serves only providers without a native
+// go-qrdb counterpart (the NPU), each with the one model it is configured
+// with; a provider wrapping a native go-qrdb provider is registered through
+// embedding.QRDBServiceProvider instead.
 type qrdbEmbeddingProvider struct {
 	p     embedding.Provider
 	model string
