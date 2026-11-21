@@ -63,7 +63,6 @@ declare -A SOURCES=(
 	[CLANGD_VERSION]="github:clangd/clangd"
 	[RUST_ANALYZER_VERSION]="github:rust-lang/rust-analyzer"
 	[MARKSMAN_VERSION]="github:artempyanykh/marksman"
-	[KOTLIN_LSP_VERSION]="github:Kotlin/kotlin-lsp"
 	[NODE_VERSION]="node:"
 	[NPM_VERSION]="npm:npm"
 	[PYRIGHT_VERSION]="npm:pyright"
@@ -133,7 +132,7 @@ latest_gem() {
 
 # normalize VERSION: comparable across sources that do and do not prefix one.
 normalize() {
-	# A monorepo tag names its project first ("kotlin-lsp/v263.7084.0").
+	# A monorepo tag names its project first ("project/v1.2.3").
 	local version="${1##*/}"
 	version="${version#go}"
 	printf '%s\n' "${version#v}"
