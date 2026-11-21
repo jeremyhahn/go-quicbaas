@@ -18,8 +18,10 @@ package sdlc
 import (
 	"context"
 	"errors"
+	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
@@ -193,5 +195,70 @@ func TestIssueSource_SecondAdoptionIsRefusedByTheIndex(t *testing.T) {
 	listed, err := tasks.ListTasks(ctx, testTenant, &orchestration.TaskFilter{ProjectID: testProject})
 	if err != nil || len(listed) != 1 {
 		t.Fatalf("tasks = %d, %v", len(listed), err)
+	}
+}
+
+func issueSourceSpecRefs(specs []orchestration.TaskSourceSpec) []string {
+	refs := make([]string, 0, len(specs))
+	for _, spec := range specs {
+		refs = append(refs, spec.Source.Ref)
+	}
+	sort.Strings(refs)
+	return refs
+}
+
+func baseHeadCheck(conclusion string) []ForgeCheckRun {
+	if conclusion == "" {
+		return []ForgeCheckRun{{ID: "ci", Name: "ci", Status: "in_progress"}}
+	}
+	return []ForgeCheckRun{{ID: "ci", Name: "ci", Status: "completed", Conclusion: conclusion, Completed: time.Now().UTC()}}
+}
+
+func TestIssueSource_RedBaseAdoptsOnlyMainFix(t *testing.T) {
+	source, forge, _ := newIssueSourceRig(t)
+	forge.putIssue(25, "Add the feature", "task:ready")
+	forge.putIssue(26, "Fix main", "task:ready", "main-fix")
+	forge.checks[fakeForgeHeadSHA] = baseHeadCheck("failure")
+
+	specs, err := source.Poll(context.Background(), testOrchProject())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := issueSourceSpecRefs(specs); len(got) != 1 || got[0] != "acme/api#26" {
+		t.Fatalf("specs = %v, want only the main-fix issue on a red base", got)
+	}
+}
+
+func TestIssueSource_RedBaseTurnedGreenAdoptsTheRest(t *testing.T) {
+	source, forge, _ := newIssueSourceRig(t)
+	forge.putIssue(25, "Add the feature", "task:ready")
+	forge.putIssue(26, "Fix main", "task:ready", "main-fix")
+	forge.checks[fakeForgeHeadSHA] = baseHeadCheck("failure")
+	if specs, err := source.Poll(context.Background(), testOrchProject()); err != nil || len(specs) != 1 {
+		t.Fatalf("red sweep = %v, %v; want only the main-fix issue", issueSourceSpecRefs(specs), err)
+	}
+
+	forge.checks[fakeForgeHeadSHA] = baseHeadCheck("success")
+	specs, err := source.Poll(context.Background(), testOrchProject())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := issueSourceSpecRefs(specs); len(got) != 2 || got[0] != "acme/api#25" || got[1] != "acme/api#26" {
+		t.Fatalf("specs = %v, want both issues once the base is green", got)
+	}
+}
+
+func TestIssueSource_PendingBaseAdoptsEverything(t *testing.T) {
+	source, forge, _ := newIssueSourceRig(t)
+	forge.putIssue(25, "Add the feature", "task:ready")
+	forge.putIssue(26, "Fix main", "task:ready", "main-fix")
+	forge.checks[fakeForgeHeadSHA] = baseHeadCheck("")
+
+	specs, err := source.Poll(context.Background(), testOrchProject())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := issueSourceSpecRefs(specs); len(got) != 2 {
+		t.Fatalf("specs = %v, want both issues: a pending base is not red", got)
 	}
 }
