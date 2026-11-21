@@ -312,6 +312,45 @@ func TestPromptSession_RefusesTheNextTurnWhileAFailedUsageRecordIsPending(t *tes
 	}
 }
 
+func TestPromptSession_APendingConsumptionRefusalIsRefundedNotCharged(t *testing.T) {
+	harness := newTurnSpendHarness(t, true)
+	ledger := &flakyLedger{ConsumptionLedger: harness.ledger}
+	harness.service.SetConsumptionLedger(ledger)
+	ctx := ContextWithTenant(context.Background(), "tenant-a")
+	sessionID := harness.spawn(t, ctx)
+	harness.spendAccount1(t, 950)
+
+	ledger.failing.Store(true)
+	if err := harness.prompt(ctx, sessionID); err != nil {
+		t.Fatalf("first turn = %v, want it admitted under the cap", err)
+	}
+	err := harness.prompt(ctx, sessionID)
+	var pending *ConsumptionPendingError
+	if !stderrors.As(err, &pending) {
+		t.Fatalf("turn after a failed usage record = %v, want a *ConsumptionPendingError", err)
+	}
+
+	task, class := concludeFailedJob(t, err)
+	if class != FaultConsumptionPending {
+		t.Errorf("failure class = %q, want %q", class, FaultConsumptionPending)
+	}
+	if got := task.ChargedAttempts(); got != 0 {
+		t.Errorf("charged attempts = %d, want 0 — a ledger write that failed is not the work's failure", got)
+	}
+	if task.EnvironmentFaults != 1 {
+		t.Errorf("environment faults = %d, want 1", task.EnvironmentFaults)
+	}
+	if task.Status != TaskStatusPending {
+		t.Errorf("task status = %q, want %q — the refused turn requeues", task.Status, TaskStatusPending)
+	}
+	if !KnownFaultClass(FaultConsumptionPending) {
+		t.Errorf("%q is not a known fault class", FaultConsumptionPending)
+	}
+	if !faultRequeues(FaultConsumptionPending) {
+		t.Errorf("%q does not requeue", FaultConsumptionPending)
+	}
+}
+
 // TestPromptSession_APendingEntryStaysVisibleToASessionSharingItsAccount
 // holds session a's retry of its pending entry inside the ledger write and
 // prompts session b on the same account meanwhile: b must still see the
