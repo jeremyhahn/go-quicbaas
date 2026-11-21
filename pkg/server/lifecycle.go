@@ -2016,7 +2016,7 @@ func (s *Server) startService() error {
 			s.logger.Info("Bootstrap ceremony services wired (node seal disabled): persistent data-plane barrier + manual credential/ceremony")
 		}
 	}
-	// Phase E: the else (legacy baasTransport) branch is removed.
+	// Phase E: the else (legacy in-process transport) branch is removed.
 	// s.qrdbNode is always set (both standalone and clustered modes build a
 	// real qrdb node). The node-backed ShardedClient is the only code path.
 

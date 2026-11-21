@@ -159,8 +159,8 @@ func buildSDKClientOptionsWithToken(authToken string) ([]quicbaas.Option, error)
 		}
 		opts = append(opts, quicbaas.WithEmbedded(es.service))
 		// Wire the qrdb sub-client to dispatch in-process against the
-		// embedded server's per-shard baasTransport (via the BaaS KV +
-		// Admin adapters) plus the bootstrap ceremony services. Without
+		// embedded server's qrdb node servicers (KV, Admin, User and
+		// Tenant) plus the bootstrap ceremony services. Without
 		// WithEmbeddedQRDB, the qrdb sub-client has no listener to dial
 		// in embedded mode and Security().Ceremony() / Security().Barrier()
 		// would fail with a "produced zero addresses" transport error.

@@ -138,7 +138,7 @@ func embeddedQRDBOption(es *embeddedServer) (quicbaas.Option, error) {
 // getServerForEmbeddedWiring is a compile-time assertion that *server.Server
 // exposes the accessor surface the CLI needs. This avoids the previous
 // dependency on server.NewBaasKVAdapter, server.NewBaasAdminAdapter,
-// sharded.EmbeddedTransportForShard, and baasTransport.
+// sharded.EmbeddedTransportForShard, and the legacy in-process transport.
 var _ interface {
 	GetQRDBKVServicer() quicbaas.QRDBKVServicer
 	GetQRDBAdminServicer() quicbaas.QRDBAdminServicer

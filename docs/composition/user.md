@@ -108,9 +108,9 @@ wiring obvious instead of silent.
 ## The node path: servicers come straight off the qrdb engine
 
 An earlier design bridged the qrdb embedded transport onto a QuicBaaS
-`*baasTransport` through two adapter types, `BaasKVAdapter` and
+in-process transport (deleted) through two adapter types, `BaasKVAdapter` and
 `BaasAdminAdapter`, in a `pkg/server/baas_kv_admin_adapter.go`. **None
-of that exists any more.** `baasTransport`, the adapters, their
+of that exists any more.** That transport, the adapters, their
 constructors, `ShardedClient.EmbeddedTransportForShard`, and the
 `BaasTransportNotSupportedError` they returned were all removed once
 standalone and clustered mode began embedding the real qrdb engine
