@@ -2530,7 +2530,7 @@ func TestRotate_VerificationSeesTheSecretOnlyDuringTheCall(t *testing.T) {
 	if lifecycle.verifiedWith != "new-secret" {
 		t.Fatalf("verified with %q: the adapter must see the real secret DURING the call", lifecycle.verifiedWith)
 	}
-	if lifecycle.mintedTokens[0].Secret.Bytes() != nil {
+	if lifecycle.mintedTokens[0].Secret.IsAlive() {
 		t.Fatal("the enclave outlived the rotation")
 	}
 }
@@ -2678,7 +2678,7 @@ func TestRotate_DestroysTheMintedSecretOnEveryPath(t *testing.T) {
 		if len(lifecycle.mintedTokens) != 1 {
 			t.Fatalf("fixture: %d minted tokens retained", len(lifecycle.mintedTokens))
 		}
-		if lifecycle.mintedTokens[0].Secret.Bytes() != nil {
+		if lifecycle.mintedTokens[0].Secret.IsAlive() {
 			t.Fatal("the minted secret's enclave survived a successful rotation")
 		}
 		// The STORE holds a usable copy — the destruction reached only the
@@ -2695,7 +2695,7 @@ func TestRotate_DestroysTheMintedSecretOnEveryPath(t *testing.T) {
 		if _, err := rotator.Rotate(context.Background(), testSpec()); err == nil {
 			t.Fatal("a divergent mint was accepted")
 		}
-		if lifecycle.mintedTokens[0].Secret.Bytes() != nil {
+		if lifecycle.mintedTokens[0].Secret.IsAlive() {
 			t.Fatal("the refused divergent secret's enclave survived the refusal path")
 		}
 	})

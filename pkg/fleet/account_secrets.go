@@ -189,12 +189,18 @@ func (e *cachedAccountCredential) release() {
 // snapshot copies the sealed envelope into a fresh heap slice the caller owns.
 // The returned bytes are the plaintext a spawn is handed; they are the one
 // unavoidable copy out of secure memory. The caller must hold a live reference.
-func (e *cachedAccountCredential) snapshot() []byte {
-	//secure:unborrowed injected-interface snapshot returns a caller-owned plaintext copy for container injection.
-	b := e.secret.Bytes()
-	out := make([]byte, len(b))
-	copy(out, b)
-	return out
+func (e *cachedAccountCredential) snapshot() ([]byte, error) {
+	var out []byte
+	err := e.secret.WithBytes(func(b []byte) error {
+		//secure:unwiped injected-interface snapshot returns a caller-owned plaintext copy for container injection.
+		out = make([]byte, len(b))
+		copy(out, b)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // copyOut returns a fresh copy of a published entry's envelope, taking and
@@ -206,7 +212,11 @@ func (e *cachedAccountCredential) copyOut() ([]byte, bool) {
 		return nil, false
 	}
 	defer e.release()
-	return e.snapshot(), true
+	out, err := e.snapshot()
+	if err != nil {
+		return nil, false
+	}
+	return out, true
 }
 
 // accountCredentialCache holds released envelopes keyed by account ID.
@@ -523,7 +533,11 @@ func (m *materializingSecrets) resolve(ctx context.Context, accountID string) ([
 	// Copy the plaintext out for THIS spawn before publishing the entry: the
 	// buffer is still privately owned here, so the read needs no reference and
 	// cannot race a concurrent eviction.
-	body := entry.snapshot()
+	body, snapErr := entry.snapshot()
+	if snapErr != nil {
+		entry.secret.Destroy()
+		return nil, &AccountAPIError{Op: "read released credential", AccountID: accountID, Cause: snapErr}
+	}
 	entry.recordGrant(ctx)
 	m.cache.store(accountID, entry)
 

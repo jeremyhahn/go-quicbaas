@@ -28,9 +28,9 @@ const (
 // tenant, so a test can present a token issued to someone else.
 func registerRevokeClient(t *testing.T, f *introspectFixture, clientID, secret string) {
 	t.Helper()
-	sec, err := secure.NewSecret([]byte(secret))
+	sec, err := secure.NewSecret(context.Background(), []byte(secret))
 	require.NoError(t, err)
-	hashed, err := iam.HashClientSecret(sec)
+	hashed, err := iam.HashClientSecret(context.Background(), sec)
 	sec.Destroy()
 	require.NoError(t, err)
 	require.NoError(t, f.appStorage.CreateApp(context.Background(), &iam.Application{
