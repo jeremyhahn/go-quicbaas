@@ -43,7 +43,7 @@ func newModuleSupportMCPServer(t *testing.T) *Server {
 
 // TestModuleTools_SurfaceGuard proves the enumeration mirrors the served
 // registry exactly, minus qrdbNativeDuplicateTools and the "xkms." family
-// (P6.1/item-C: both are deliberately excluded from the module surface --
+// other than its "xkms.ca." tools (P6.1/item-C: both are deliberately excluded from the module surface --
 // go-qrdb and go-xkms each register the identical capability natively when
 // composed alongside this module, see ModuleTools's doc comment): every
 // enumerated tool is still in the registry, every sanitized name is in the
@@ -60,7 +60,7 @@ func TestModuleTools_SurfaceGuard(t *testing.T) {
 			excluded++
 			continue
 		}
-		if strings.HasPrefix(def.Name, "xkms.") {
+		if strings.HasPrefix(def.Name, "xkms.") && !strings.HasPrefix(def.Name, "xkms.ca.") {
 			excluded++
 		}
 	}

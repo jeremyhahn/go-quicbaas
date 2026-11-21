@@ -204,8 +204,11 @@ func ModuleTools() []ToolSpec {
 		// and is a compatibility wrapper around the exact same capability
 		// (cert/key/seal/sign/verify/encrypt/decrypt), the MCP-surface twin
 		// of TestModule_RegisterGRPC_ExcludesXKMSCanonicalSurface
-		// (pkg/apimodule/module_test.go).
-		if strings.HasPrefix(def.Name, "xkms.") {
+		// (pkg/apimodule/module_test.go). The "xkms.ca." tools are kept:
+		// they serve quicbaas's embedded CA through the shared xkmsca adapter
+		// (the REST CA routes' adapter), and go-xkms serves no tool of the
+		// same name.
+		if strings.HasPrefix(def.Name, "xkms.") && !strings.HasPrefix(def.Name, "xkms.ca.") {
 			continue
 		}
 		spec := ToolSpec{
