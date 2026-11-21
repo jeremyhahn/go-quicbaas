@@ -140,7 +140,32 @@ type AttestContainerResponse struct {
 	MeasurementPCR    int               `json:"measurement_pcr,omitempty"`
 	MeasurementBank   string            `json:"measurement_bank,omitempty"`
 	LaunchMeasurement []byte            `json:"launch_measurement,omitempty"`
-	AttestedAt        string            `json:"attested_at,omitempty"`
+	// PCRBank names the bank the quoted PCRs were read from.
+	PCRBank string `json:"pcr_bank,omitempty"`
+	// MeasurementLog is the node measurement log the Verifier replayed
+	// against the quoted MeasurementPCR. Empty below the measured tier.
+	MeasurementLog []MeasurementLogEntry `json:"measurement_log,omitempty"`
+	AttestedAt     string                `json:"attested_at,omitempty"`
+}
+
+// MeasurementLogEntry is one entry of the node measurement log on the
+// wire: a measured launch, or the anchor ("anchor") a register held when
+// the log first used it. RecordedAt is RFC 3339.
+type MeasurementLogEntry struct {
+	Sequence      uint64 `json:"sequence"`
+	Kind          string `json:"kind"`
+	Base          []byte `json:"base,omitempty"`
+	Image         string `json:"image"`
+	ImageDigest   string `json:"image_digest"`
+	ConfigDigest  string `json:"config_digest"`
+	PolicyDigest  string `json:"policy_digest"`
+	TrustLabel    string `json:"trust_label,omitempty"`
+	AllowUnsigned string `json:"allow_unsigned,omitempty"`
+	PCR           int    `json:"pcr"`
+	Bank          string `json:"bank"`
+	Measurement   []byte `json:"measurement"`
+	RecordedAt    string `json:"recorded_at"`
+	Chain         string `json:"chain"`
 }
 
 // =============================================================================

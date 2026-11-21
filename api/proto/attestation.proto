@@ -405,4 +405,56 @@ message AttestContainerResponse {
 
   // Timestamp is when the request was processed.
   google.protobuf.Timestamp timestamp = 19;
+
+  // PcrBank names the bank the quoted pcrs were read from.
+  string pcr_bank = 20;
+
+  // MeasurementLog is the node measurement log the Verifier replayed
+  // against the quoted measurement_pcr. Empty below the measured tier.
+  repeated MeasurementLogEntry measurement_log = 21;
+}
+
+// MeasurementLogEntry is one entry of the node measurement log: a measured
+// launch, or the anchor a register held when the log first used it.
+message MeasurementLogEntry {
+  // Sequence is the entry's 0-based position in the log.
+  uint64 sequence = 1;
+
+  // Kind is "launch" or "anchor".
+  string kind = 2;
+
+  // Base is the register's value at an anchor.
+  bytes base = 3;
+
+  // Image is the reference the caller asked for.
+  string image = 4;
+
+  // ImageDigest is the content digest that was launched.
+  string image_digest = 5;
+
+  // ConfigDigest is the digest of the launch configuration.
+  string config_digest = 6;
+
+  // PolicyDigest is the digest of the launch policy.
+  string policy_digest = 7;
+
+  // TrustLabel is the operator-assigned workload identity.
+  string trust_label = 8;
+
+  // AllowUnsigned names the allow-unsigned grant that admitted an unsigned
+  // image; empty for a signed launch.
+  string allow_unsigned = 9;
+
+  // Pcr and Bank name the register the measurement was extended into.
+  int32 pcr = 10;
+  string bank = 11;
+
+  // Measurement is the exact data extended into the register.
+  bytes measurement = 12;
+
+  // RecordedAt is when the entry was recorded.
+  google.protobuf.Timestamp recorded_at = 13;
+
+  // Chain is the hex SHA-256 hash chain value through this entry.
+  string chain = 14;
 }

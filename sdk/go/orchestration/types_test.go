@@ -14,6 +14,7 @@
 package orchestration_test
 
 import (
+	"bytes"
 	"errors"
 	"testing"
 
@@ -87,6 +88,101 @@ func TestConfigDigestMatchesUpstream(t *testing.T) {
 	}
 	if len(measurement) == 0 {
 		t.Error("LaunchMeasurement returned an empty measurement")
+	}
+}
+
+// TestMeasurementLogAcrossBoundary checks that a log built and chained
+// through the SDK verifies and replays the same through the upstream package.
+func TestMeasurementLogAcrossBoundary(t *testing.T) {
+	spec := &sdkorch.ContainerSpec{
+		Image:       "registry.example.com/agent",
+		ImageDigest: testDigest,
+		TrustLabel:  "approved-agent",
+	}
+	policy, err := sdkorch.LaunchPolicyDigest(spec)
+	if err != nil {
+		t.Fatalf("LaunchPolicyDigest: %v", err)
+	}
+	upstreamPolicy, err := pkgorch.LaunchPolicyDigest(spec)
+	if err != nil || policy != upstreamPolicy {
+		t.Fatalf("policy digest diverged: sdk %q, pkg %q (%v)", policy, upstreamPolicy, err)
+	}
+	measurement, err := sdkorch.LaunchMeasurement(spec)
+	if err != nil {
+		t.Fatalf("LaunchMeasurement: %v", err)
+	}
+
+	log := sdkorch.ChainMeasurementLog([]sdkorch.MeasurementLogEntry{
+		{Kind: sdkorch.MeasurementLogAnchor, Base: make([]byte, 32), PCR: 16, Bank: "sha256"},
+		{Kind: sdkorch.MeasurementLogLaunch, PolicyDigest: policy, PCR: 16, Bank: "sha256", Measurement: measurement},
+	})
+	if err := pkgorch.VerifyMeasurementLog(log); err != nil {
+		t.Fatalf("upstream rejected an SDK-chained log: %v", err)
+	}
+	viaSDK, err := sdkorch.ReplayMeasurementLog(log, 16, "sha256")
+	if err != nil {
+		t.Fatalf("ReplayMeasurementLog: %v", err)
+	}
+	viaPkg, err := pkgorch.ReplayMeasurementLog(log, 16, "sha256")
+	if err != nil || !bytes.Equal(viaSDK, viaPkg) {
+		t.Fatalf("replay diverged: sdk %x, pkg %x (%v)", viaSDK, viaPkg, err)
+	}
+
+	log[1].Measurement = []byte("forged")
+	var logErr *sdkorch.MeasurementLogError
+	if err := sdkorch.VerifyMeasurementLog(log); !errors.As(err, &logErr) {
+		t.Fatalf("a tampered log must fail with MeasurementLogError, got %v", err)
+	}
+}
+
+func TestDefaultDenyAcrossBoundary(t *testing.T) {
+	spec := &sdkorch.ContainerSpec{
+		Image:       "registry.example.com/agent",
+		ImageDigest: testDigest,
+		TrustLabel:  "legacy",
+	}
+	grants := sdkorch.UnsignedImageGrants{"legacy": "tenant-a/legacy-ci"}
+	grant, ok := grants.AllowUnsigned(t.Context(), spec)
+	if !ok || grant != "tenant-a/legacy-ci" {
+		t.Fatalf("AllowUnsigned = %q, %v", grant, ok)
+	}
+
+	policy, err := sdkorch.LaunchPolicyOf(spec)
+	if err != nil {
+		t.Fatalf("LaunchPolicyOf: %v", err)
+	}
+	signed, err := sdkorch.LaunchMeasurementUnder(spec, policy)
+	if err != nil {
+		t.Fatalf("LaunchMeasurementUnder: %v", err)
+	}
+	policy.AllowUnsigned = grant
+	viaSDK, err := sdkorch.LaunchMeasurementUnder(spec, policy)
+	if err != nil {
+		t.Fatalf("LaunchMeasurementUnder: %v", err)
+	}
+	viaPkg, err := pkgorch.LaunchMeasurementUnder(spec, policy)
+	if err != nil || !bytes.Equal(viaSDK, viaPkg) {
+		t.Fatalf("granted measurement diverged: sdk %x, pkg %x (%v)", viaSDK, viaPkg, err)
+	}
+	if bytes.Equal(signed, viaSDK) {
+		t.Fatal("an allow-unsigned grant must change the launch measurement")
+	}
+
+	var refused error = &sdkorch.ImageUnsignedError{Image: spec.Image, ImageDigest: testDigest}
+	if !errors.Is(refused, sdkorch.ErrImageUnsigned) {
+		t.Fatal("ImageUnsignedError must wrap ErrImageUnsigned")
+	}
+	refused = &sdkorch.ImageSignatureRejectedError{Image: spec.Image, ImageDigest: testDigest, Cause: errors.New("untrusted signer")}
+	if !errors.Is(refused, sdkorch.ErrImageSignatureRejected) {
+		t.Fatal("ImageSignatureRejectedError must wrap ErrImageSignatureRejected")
+	}
+	refused = &sdkorch.ImageProvenanceError{Image: spec.Image, ImageDigest: testDigest, Cause: errors.New("no referrer")}
+	if !errors.Is(refused, sdkorch.ErrImageProvenance) {
+		t.Fatal("ImageProvenanceError must wrap ErrImageProvenance")
+	}
+	refused = &sdkorch.ReleaseNotListedError{Image: spec.Image, ImageDigest: testDigest, Cause: errors.New("not listed")}
+	if !errors.Is(refused, sdkorch.ErrReleaseNotListed) {
+		t.Fatal("ReleaseNotListedError must wrap ErrReleaseNotListed")
 	}
 }
 

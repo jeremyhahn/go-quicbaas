@@ -295,7 +295,12 @@ type AttestContainerResponse struct {
 	MeasurementPCR    int               `json:"measurement_pcr,omitempty"`
 	MeasurementBank   string            `json:"measurement_bank,omitempty"`
 	LaunchMeasurement []byte            `json:"launch_measurement,omitempty"`
-	AttestedAt        time.Time         `json:"attested_at"`
+	// PCRBank names the bank the quoted PCRs were read from.
+	PCRBank string `json:"pcr_bank,omitempty"`
+	// MeasurementLog is the node measurement log the Verifier replayed
+	// against the quoted MeasurementPCR. Empty below the measured tier.
+	MeasurementLog []orchestration.MeasurementLogEntry `json:"measurement_log,omitempty"`
+	AttestedAt     time.Time                           `json:"attested_at"`
 }
 
 // =============================================================================
@@ -440,6 +445,8 @@ func (a *runtimeContainerAttestor) AttestContainer(ctx context.Context, req *Att
 		MeasurementPCR:    evidence.MeasurementPCR,
 		MeasurementBank:   evidence.MeasurementBank,
 		LaunchMeasurement: evidence.LaunchMeasurement,
+		PCRBank:           evidence.PCRBank,
+		MeasurementLog:    evidence.MeasurementLog,
 		AttestedAt:        evidence.AttestedAt,
 	}, nil
 }

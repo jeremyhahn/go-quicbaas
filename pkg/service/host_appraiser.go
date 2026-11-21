@@ -14,10 +14,12 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"crypto"
 	"encoding/pem"
 	stderrors "errors"
+	"fmt"
 	"slices"
 	"time"
 
@@ -141,5 +143,50 @@ func (a *hostAppraiser) AppraiseHost(ctx context.Context, ev *orchestration.Host
 		}
 		appraisal.Failures = append(appraisal.Failures, failure)
 	}
+	if failure := appraiseLaunchLog(ev); failure != nil {
+		appraisal.Verified = false
+		appraisal.CryptographicFailure = true
+		appraisal.Failures = append(appraisal.Failures, *failure)
+	}
 	return appraisal, nil
+}
+
+// appraiseLaunchLog replays a measured launch's node measurement log for
+// each launch register and compares the result with the quoted value. The
+// quote is signed and bound to the read PCRs, so a log that does not
+// reproduce the quoted register is forged, truncated or padded. It returns
+// nil when the evidence carries no log (below the measured tier) or every
+// register replays.
+func appraiseLaunchLog(ev *orchestration.HostEvidence) *orchestration.HostAppraisalFailure {
+	if ev.LaunchLog == nil {
+		return nil
+	}
+	failure := &orchestration.HostAppraisalFailure{
+		Check:   AppraisalCheckLaunchLog,
+		Outcome: string(AppraisalForged),
+	}
+	for _, index := range ev.LaunchPCRs {
+		quoted, ok := ev.PCRs[index]
+		if !ok {
+			failure.Reason = fmt.Sprintf("launch PCR %d is not quoted", index)
+			return failure
+		}
+		replayed, err := orchestration.ReplayMeasurementLog(ev.LaunchLog, int(index), ev.PCRBank)
+		if err != nil {
+			failure.Reason = err.Error()
+			return failure
+		}
+		if !bytes.Equal(replayed, quoted) {
+			failure.Reason = fmt.Sprintf("measurement log does not reproduce quoted PCR %d", index)
+			failure.PCRs = append(failure.PCRs, orchestration.PCRDivergence{
+				Index:    index,
+				Expected: [][]byte{replayed},
+				Quoted:   quoted,
+			})
+		}
+	}
+	if len(failure.PCRs) > 0 {
+		return failure
+	}
+	return nil
 }

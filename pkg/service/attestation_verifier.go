@@ -60,12 +60,22 @@ const (
 	// EndorsementAKRoot anchors attestation-key certificates: a CA
 	// certificate the AK certificate must chain to.
 	EndorsementAKRoot EndorsementKind = "ak-root"
+
+	// EndorsementImageSigner anchors container image signatures: a CA
+	// certificate the signer chain of an ImageSignature must terminate at.
+	EndorsementImageSigner EndorsementKind = "image-signer"
+
+	// EndorsementManifestSigner anchors the signed cluster manifest: a CA
+	// certificate the manifest signer's chain must terminate at.
+	EndorsementManifestSigner EndorsementKind = "manifest-signer"
 )
 
 // endorsementKinds is the closed set of kinds.
 var endorsementKinds = map[EndorsementKind]bool{
 	EndorsementReferenceSigner: true,
 	EndorsementAKRoot:          true,
+	EndorsementImageSigner:     true,
+	EndorsementManifestSigner:  true,
 }
 
 // Appraisal check names.
@@ -74,6 +84,10 @@ const (
 	AppraisalCheckQuote         = "quote"
 	AppraisalCheckEventLog      = "event-log"
 	AppraisalCheckBaseline      = "baseline"
+
+	// AppraisalCheckLaunchLog replays a measured launch's node measurement
+	// log against the quoted launch registers.
+	AppraisalCheckLaunchLog = "launch-log"
 )
 
 // AppraisalOutcome is one check's result.
@@ -465,14 +479,14 @@ func (s *attestationService) PutEndorsement(ctx context.Context, req *PutEndorse
 // validateEndorsement checks the kind and that the anchor material parses.
 func validateEndorsement(req *PutEndorsementRequest) error {
 	if !endorsementKinds[req.Kind] {
-		return &EndorsementInvalidError{Reason: "kind must be reference-signer or ak-root"}
+		return &EndorsementInvalidError{Reason: "kind must be reference-signer, ak-root, image-signer or manifest-signer"}
 	}
 	hasCert, hasKey := len(req.CertificatePEM) > 0, len(req.PublicKeyPEM) > 0
 	if hasCert == hasKey {
 		return &EndorsementInvalidError{Reason: "exactly one of certificate_pem and public_key_pem is required"}
 	}
-	if req.Kind == EndorsementAKRoot && !hasCert {
-		return &EndorsementInvalidError{Reason: "an ak-root endorsement is a CA certificate"}
+	if (req.Kind == EndorsementAKRoot || req.Kind == EndorsementImageSigner || req.Kind == EndorsementManifestSigner) && !hasCert {
+		return &EndorsementInvalidError{Reason: "an " + string(req.Kind) + " endorsement is a CA certificate"}
 	}
 	if hasCert {
 		cert, err := parseCertificatePEM(req.CertificatePEM)
@@ -855,6 +869,11 @@ func (s *attestationService) appraiseQuote(ctx context.Context, req *AppraiseQuo
 		case AppraisalAbsent:
 			result.Verified = false
 		}
+	}
+	// The result is the go-xkms attestation result: it is recorded before
+	// it is returned, so a reported appraisal is never missing from it.
+	if err := recordAttestationResult(ctx, store, req.AKCertificatePEM, result); err != nil {
+		return nil, nil, verifierError(op, errors.ErrUnavailable, err)
 	}
 	return result, divergences, nil
 }

@@ -1318,6 +1318,79 @@ var NewHostAppraiser = pkgservice.NewHostAppraiser
 // already hold a runtime value.
 var NewRuntimeContainerAttestor = pkgservice.NewRuntimeContainerAttestor
 
+// MeasuredLaunchConfig is what a host supplies for measured container
+// launches (WithMeasuredLaunch): its HostTPM, the runtime, the provenance
+// source and builders, and the audited allow-unsigned policy.
+type MeasuredLaunchConfig = pkgservice.MeasuredLaunchConfig
+
+// ProvenanceSource fetches the software-factory provenance referrers of an
+// image (MeasuredLaunchConfig.Provenance).
+type ProvenanceSource = pkgservice.ProvenanceSource
+
+// Release is one service release a signed cluster manifest lists: an image
+// pinned to a digest.
+type Release = pkgservice.Release
+
+// MeasurementLogStore keeps a node's measurement log in the Verifier's
+// go-qrdb store; NewMeasurementLogStore returns it for one node.
+type MeasurementLogStore = pkgservice.MeasurementLogStore
+
+// NewMeasurementLogStore returns the measurement log store of a node.
+var NewMeasurementLogStore = pkgservice.NewMeasurementLogStore
+
+// ErrMeasurementLogStoreConfig is returned by NewMeasurementLogStore without
+// a store or a node name.
+var ErrMeasurementLogStoreConfig = pkgservice.ErrMeasurementLogStoreConfig
+
+// GoldenPCR is one golden PCR value in one bank.
+type GoldenPCR = pkgservice.GoldenPCR
+
+// GoldenValues is a set of go-trusted-platform golden PCR values to import
+// into the go-xkms reference-values store.
+type GoldenValues = pkgservice.GoldenValues
+
+// GoldenValuesProfile is the default CoRIM profile of imported golden values.
+const GoldenValuesProfile = pkgservice.GoldenValuesProfile
+
+// ErrGoldenValues is returned for golden values that cannot be signed.
+var ErrGoldenValues = pkgservice.ErrGoldenValues
+
+// SignGoldenValues signs golden values as a COSE_Sign1 CoRIM.
+var SignGoldenValues = pkgservice.SignGoldenValues
+
+// ImportGoldenValues signs golden values and stores them as reference values.
+var ImportGoldenValues = pkgservice.ImportGoldenValues
+
+// AttestationResults reads the attestation results the Verifier records in
+// go-qrdb, the latest appraisal per attestation key and tenant.
+type AttestationResults = pkgservice.AttestationResults
+
+// AttestationResultRecord is the latest appraisal of one attesting key.
+type AttestationResultRecord = pkgservice.AttestationResultRecord
+
+// NewAttestationResults returns the attestation results kept in a store.
+var NewAttestationResults = pkgservice.NewAttestationResults
+
+// ErrAttestationResultsConfig is returned by NewAttestationResults without
+// a store.
+var ErrAttestationResultsConfig = pkgservice.ErrAttestationResultsConfig
+
+// AttestationSubject returns the subject an attestation key's results are
+// recorded under.
+var AttestationSubject = pkgservice.AttestationSubject
+
+// NewMeasuredLaunchRuntime builds the measured-launch runtime over an
+// attestation store, with the Verifier's appraisal, image verification,
+// provenance verification and signed cluster manifest wired in.
+var NewMeasuredLaunchRuntime = pkgservice.NewMeasuredLaunchRuntime
+
+// ErrMeasuredLaunchConfig and ErrMeasuredLaunchWithAttestor are the
+// measured-launch configuration errors.
+var (
+	ErrMeasuredLaunchConfig       = pkgservice.ErrMeasuredLaunchConfig
+	ErrMeasuredLaunchWithAttestor = pkgservice.ErrMeasuredLaunchWithAttestor
+)
+
 // Typed sentinel errors returned by the attestation service.
 var (
 	// ErrAttestationNilRequest is returned when a request is nil.

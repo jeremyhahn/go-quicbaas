@@ -165,16 +165,18 @@ type quicBaaS struct {
 	watchManager       *watch.Manager
 
 	// KMS, Secrets, Crypto services (optional)
-	kmsManager                interfaces.KMSManager
-	kmsService                KMSService
-	secretsService            SecretsService
-	cryptoService             CryptoService
-	vectorService             VectorService
-	embeddingService          EmbeddingService
-	ollamaService             OllamaService
-	certificateService        CertificateService
-	trustService              TrustService
-	attestationService        AttestationService
+	kmsManager         interfaces.KMSManager
+	kmsService         KMSService
+	secretsService     SecretsService
+	cryptoService      CryptoService
+	vectorService      VectorService
+	embeddingService   EmbeddingService
+	ollamaService      OllamaService
+	certificateService CertificateService
+	trustService       TrustService
+	attestationService AttestationService
+	// measuredLaunchRuntime is the node's one measured-launch runtime (nil without WithMeasuredLaunch).
+	measuredLaunchRuntime     *orchestration.TPMAttestingRuntime
 	registryService           RegistryService
 	pivService                PIVService
 	fido2Service              FIDO2Service
@@ -616,10 +618,16 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 	// application registers a ContainerAttestor. Constructing it
 	// unconditionally means Security().Attestation() never returns nil and
 	// every transport can route to it.
-	svc.attestationService = NewAttestationService(b.attestationTrustAnchors, b.containerAttestor,
-		WithAttestationStore(NewQRDBAttestationStore(func() (*qrdbsdk.Client, error) {
-			return svc.qrdbForShard(attestationShardID)
-		})))
+	attestationStore := NewQRDBAttestationStore(func() (*qrdbsdk.Client, error) {
+		return svc.qrdbForShard(attestationShardID)
+	})
+	containerAttestor, measuredRuntime, attestorErr := b.resolveContainerAttestor(attestationStore, logger)
+	if attestorErr != nil {
+		return nil, &errors.QBError{Code: errors.ErrInvalidInput, Op: "service.newQuicBaaS", Err: attestorErr}
+	}
+	svc.measuredLaunchRuntime = measuredRuntime
+	svc.attestationService = NewAttestationService(b.attestationTrustAnchors, containerAttestor,
+		WithAttestationStore(attestationStore))
 
 	// The service registry is always wired. It resolves the platform shard's
 	// qrdb client per call, so a server whose store is not up yet answers

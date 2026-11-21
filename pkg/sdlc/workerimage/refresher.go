@@ -146,6 +146,12 @@ type Config struct {
 	// configuration.
 	Credential CredentialSource
 
+	// Provenance, when set, signs and publishes the factory's provenance of
+	// every pushed image as a DSSE referrer of its digest. It needs
+	// Registry. A failed publish fails the push, so no Agent is repointed
+	// to an image a measured launch would refuse.
+	Provenance *Provenance
+
 	// SmokeModel is the model the default Claude smoke asks, whatever the
 	// bindings name.
 	SmokeModel string
@@ -178,6 +184,11 @@ func (c Config) validate() error {
 		return &InvalidConfigError{Field: "smoke_model", Message: "the default Claude model is what every refresh must prove works"}
 	case c.UID < 0 || c.GID < 0:
 		return &InvalidConfigError{Field: "uid/gid", Message: "must not be negative"}
+	}
+	if c.Provenance != nil {
+		if err := c.Provenance.validate(c.Registry); err != nil {
+			return err
+		}
 	}
 	if err := softwarefactoryworker.ValidateVersion("base", c.Base); err != nil {
 		return err
@@ -865,7 +876,14 @@ func (r *Refresher) push(ctx context.Context, imageID, remote string) (string, e
 		}
 		auth = credential
 	}
-	return r.deps.Engine.PushImage(ctx, remote, auth)
+	digest, err := r.deps.Engine.PushImage(ctx, remote, auth)
+	if err != nil {
+		return "", err
+	}
+	if err := r.publishProvenance(ctx, remote, digest); err != nil {
+		return "", err
+	}
+	return digest, nil
 }
 
 // repoint moves one Agent from the image it names to reference, and audits

@@ -492,7 +492,7 @@ func newAttestingTestRuntimeDigests(t *testing.T, tpm HostTPM, reference []attes
 	}
 	base := &recordingRuntime{}
 	appraiser := NewTestHostAppraiser(t, akRoot, reference)
-	rt, err := NewTPMAttestingRuntime(base, tpm, appraiser, newContainerTestLogger(t))
+	rt, err := NewTPMAttestingRuntime(base, tpm, appraiser, newContainerTestLogger(t), WithImageVerifier(acceptingImageVerifier{}), WithProvenanceVerifier(acceptingProvenanceVerifier{}), WithClusterManifest(listingManifest{}))
 	if err != nil {
 		t.Fatalf("NewTPMAttestingRuntime: %v", err)
 	}
@@ -830,6 +830,7 @@ func TestTPMAttestingRuntime_MeasuredLaunch(t *testing.T) {
 		spec := &ContainerSpec{
 			Image:           "alpine@" + testDigest,
 			TrustLevel:      TrustLevelMeasured,
+			ImageSignature:  testImageSignature(),
 			TrustLabel:      "prod-agent",
 			ReferenceValues: "golden",
 		}
@@ -869,6 +870,7 @@ func TestTPMAttestingRuntime_MeasuredLaunch(t *testing.T) {
 		spec := &ContainerSpec{
 			Image:           "alpine@" + testDigest,
 			TrustLevel:      TrustLevelMeasured,
+			ImageSignature:  testImageSignature(),
 			ReferenceValues: "golden",
 		}
 
@@ -888,6 +890,7 @@ func TestTPMAttestingRuntime_MeasuredLaunch(t *testing.T) {
 		spec := &ContainerSpec{
 			Image:           "alpine@" + testDigest,
 			TrustLevel:      TrustLevelMeasured,
+			ImageSignature:  testImageSignature(),
 			ReferenceValues: "golden",
 		}
 
@@ -928,6 +931,7 @@ func TestTPMAttestingRuntime_MeasuredLaunch(t *testing.T) {
 		spec := &ContainerSpec{
 			Image:           "alpine@" + testDigest,
 			TrustLevel:      TrustLevelMeasured,
+			ImageSignature:  testImageSignature(),
 			TrustLabel:      "prod-agent",
 			ReferenceValues: "golden",
 		}
@@ -988,6 +992,7 @@ func TestTPMAttestingRuntime_MeasuredLaunch(t *testing.T) {
 		spec := &ContainerSpec{
 			Image:           "alpine@" + testDigest,
 			TrustLevel:      TrustLevelMeasured,
+			ImageSignature:  testImageSignature(),
 			MeasurementPCR:  12,
 			ReferenceValues: "golden",
 		}
@@ -1014,6 +1019,7 @@ func TestTPMAttestingRuntime_MeasuredLaunchWithBootLog(t *testing.T) {
 	spec := &ContainerSpec{
 		Image:           "alpine@" + testDigest,
 		TrustLevel:      TrustLevelMeasured,
+		ImageSignature:  testImageSignature(),
 		ReferenceValues: "golden",
 	}
 	measurement, err := LaunchMeasurement(spec)

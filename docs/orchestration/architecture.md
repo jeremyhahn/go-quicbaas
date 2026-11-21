@@ -1631,8 +1631,91 @@ The measurement is a newline-free, NUL-separated record so a verifier can
 reconstruct it from the spec alone:
 
 ```
-"quicbaas-container-launch/v1" \0 <imageDigest> \0 <configDigest> \0 <trustLabel>
+"quicbaas-container-launch/v2" \0 <imageDigest> \0 <configDigest> \0 <policyDigest> \0 <trustLabel>
 ```
+
+`<policyDigest>` is `LaunchPolicyDigest`: the SHA-256 of the `LaunchPolicy`
+the launch ran under (trust level, measurement PCR and bank), so one image and
+configuration launched under two policies carries two measured identities.
+
+The runtime records each measured launch in the node measurement log
+(`MeasurementLog`) in the same step as the extend: an entry is appended only
+when the extend succeeds, under one lock, so the log's order is the extend
+order. Each entry carries the image digest, config digest, policy digest,
+register, bank and the exact bytes extended, and chains to its predecessor by
+SHA-256. `VerifyMeasurementLog` checks the chain; `ReplayMeasurementLog`
+recomputes the register, which is the value the node quotes.
+
+The first time the log uses a register it reads the register and appends an
+`anchor` entry holding that value ahead of the launch. A node agent that
+restarts finds the application PCR already extended by launches its new log
+never saw; replay starts from the anchor instead of zero, and the signed
+reference values still judge the quoted value itself. An anchor after the
+register's first launch is refused.
+
+`Attest` carries the log in `ContainerAttestation.MeasurementLog` and hands
+it to the Verifier in `HostEvidence.LaunchLog` with the quoted bank. The
+Verifier (`service.NewHostAppraiser`, the `AppraiseQuote` path) runs a
+`launch-log` check: for every launch register it replays the log and
+compares the result with the quoted PCR. A broken chain, a launch register
+missing from the quote, or a register that does not replay to its quoted
+value fails the appraisal as forged; a divergence is reported as a
+`PCRDivergence`, so the error unwraps to `ErrPCRMismatch`. An extend the log
+did not record therefore fails even when the reference values admit the
+final register value. The log is held in memory; evidence below the
+measured tier carries none and is not replayed.
+
+A measured launch is default deny. Before anything is measured,
+`TPMAttestingRuntime` admits the image: a spec carrying an `ImageSignature`
+is checked with the runtime's `ImageVerifier` (`WithImageVerifier`), and a
+spec without one launches only when the runtime's `UnsignedImagePolicy`
+(`WithUnsignedImagePolicy`, for example `UnsignedImageGrants` keyed by trust
+label) grants it. Anything else is refused with `ErrImageUnsigned` or
+`ErrImageSignatureRejected`; a signed image on a runtime with no verifier is
+refused too. A refused launch extends no PCR and adds no log entry. An
+allow-unsigned grant is never silent: its name goes into
+`LaunchPolicy.AllowUnsigned`, so it changes the policy digest, the launch
+measurement and the PCR (`LaunchMeasurementUnder`); it is recorded and
+chained in the launch's log entry; and the runtime logs an `AUDIT` warning.
+Signed launches leave the field empty, so their policy digest is unchanged.
+
+The Verifier's image verifier is `service.NewImageVerifier`. It anchors the
+signer chain (leaf to root) at the tenant's `image-signer` endorsements,
+which must be CA certificates, and checks the leaf's signature over the
+image digest with the go-xkms attestation verifier. With no `image-signer`
+endorsement stored, no signature verifies; there is no trust on first use.
+
+A signed image must also carry software-factory provenance. The factory
+(`sdlc.PublishImageProvenance`) builds an in-toto statement with a SLSA v1
+provenance predicate for the image digest, signs it as a DSSE envelope with
+its go-xkms image-signing key, and pushes it to the registry as an OCI
+referrer of the image (`pkg/provenance`: artifact type
+`application/vnd.dsse.envelope.v1+json`, layers the envelope and the signer's
+PEM chain). At launch the runtime's `ProvenanceVerifier`
+(`WithProvenanceVerifier`) must accept it; without one, or when it refuses,
+the launch fails with `ErrImageProvenance`. The Verifier's is
+`service.NewProvenanceVerifier`: it reads the image's referrers through the
+OCI referrers API, checks each fetched manifest and blob against its digest,
+anchors the envelope's signer at the `image-signer` endorsements, checks the
+signature over the DSSE PAE with the go-xkms attestation verifier, and
+requires the statement to cover the launched digest and, when a builder list
+is configured, to name an accepted SLSA builder.
+
+A signed image must also be a release listed in the signed cluster manifest:
+the runtime's `ClusterManifest` (`WithClusterManifest`) must list the image's
+repository at the launched digest. Without one, or when the image is not
+listed, the launch fails with `ErrReleaseNotListed`. The Verifier's is
+`service.ClusterManifests`: one current manifest per tenant, a DSSE envelope
+(payload type `application/vnd.quicbaas.cluster-manifest.v1+json`, made by
+`service.SignClusterManifest`) stored in the Verifier's go-qrdb store. `Put`
+anchors the signer at the tenant's `manifest-signer` endorsements (CA
+certificates) with the go-xkms attestation verifier and refuses a version
+that does not advance the stored one, so an old manifest cannot be replayed.
+The signature is checked again each time the manifest is read, so a record
+altered in the store lists nothing.
+
+An allow-unsigned grant admits an image without a signature, provenance or a
+cluster-manifest listing.
 
 PCR 16 (`MeasurementPCRDefault`) is the default target. It is the TCG PC Client
 "debug" register: resettable, not consumed by firmware or the bootloader, and
@@ -1766,8 +1849,14 @@ Two seams exist for it to fill:
   seam exactly: QuicBaaS declares the interface, ships a nil default, and returns
   `ErrAttestationNoAttestor` until an embedder registers one.
   `NewRuntimeContainerAttestor` fills the seam with the standalone tiers for
-  deployments that do not need a fleet. Implementations **must** fail closed: a
-  host that cannot prove its state returns an error, never an unattested success.
+  deployments that do not need a fleet. `quicbaas.WithMeasuredLaunch` fills
+  it with the measured-launch runtime instead (`service.NewMeasuredLaunchRuntime`):
+  the host supplies its `HostTPM` and runtime, and the Verifier's appraiser,
+  image verifier, provenance verifier and signed cluster manifest run over the
+  server's go-qrdb attestation store, default deny. The two options are
+  exclusive. The response carries the quoted PCR bank and the node measurement
+  log. Implementations **must** fail closed: a host that cannot prove its state
+  returns an error, never an unattested success.
 
 ### The Orthogonal Sandbox Axis
 
