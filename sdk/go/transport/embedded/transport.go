@@ -148,6 +148,8 @@ var unaryHandlers = map[string]handlerFunc{
 	"quicbaas.TimeSeries/GetRetentionPolicy": handleGetRetentionPolicy,
 	"quicbaas.TimeSeries/SetRetentionPolicy": handleSetRetentionPolicy,
 	"quicbaas.TimeSeries/ListMetrics":        handleListMetrics,
+	"quicbaas.TimeSeries/SetRetention":       handleTSSetRetention,
+	"quicbaas.TimeSeries/GetRetention":       handleTSGetRetention,
 
 	// Operations
 	"quicbaas.Operations/MigrateData":          handleMigrateData,

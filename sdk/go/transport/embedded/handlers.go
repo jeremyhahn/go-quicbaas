@@ -520,11 +520,40 @@ func handleWriteBatch(ctx context.Context, svc service.QuicBaaS, req interface{}
 }
 
 func handleTSQuery(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
-	r, ok := req.(*service.TSQueryRequest)
-	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.TimeSeries", "Query", "*service.TSQueryRequest", typeNameOf(req))
+	switch r := req.(type) {
+	case *timeseries.QueryRequest:
+		if r == nil {
+			break
+		}
+		in := &service.TSQueryRequest{
+			Metric:    r.Metric,
+			Tags:      r.Tags,
+			StartTime: r.Start,
+			EndTime:   r.End,
+		}
+		if r.Aggregate != timeseries.AggregateNone {
+			in.Aggregation = r.Aggregate.String()
+			in.IntervalSec = int64(r.Interval.Seconds())
+		}
+		resp, err := svc.TSQuery(ctx, in)
+		if err != nil {
+			return nil, err
+		}
+		out := &timeseries.QueryResponse{Series: []timeseries.Point{}}
+		if resp != nil {
+			for _, p := range resp.Points {
+				if p != nil {
+					out.Series = append(out.Series, timeseries.Point{Timestamp: p.Timestamp, Value: p.Value})
+				}
+			}
+		}
+		return out, nil
+	case *service.TSQueryRequest:
+		if r != nil {
+			return svc.TSQuery(ctx, r)
+		}
 	}
-	return svc.TSQuery(ctx, r)
+	return nil, NewInvalidRequestTypeError("quicbaas.TimeSeries", "Query", "*timeseries.QueryRequest", typeNameOf(req))
 }
 
 func handleDeleteSeries(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
@@ -541,6 +570,55 @@ func handleGetRetentionPolicy(ctx context.Context, svc service.QuicBaaS, req int
 		return nil, NewInvalidRequestTypeError("quicbaas.TimeSeries", "GetRetentionPolicy", "*service.TSGetRetentionPolicyRequest", typeNameOf(req))
 	}
 	return svc.GetRetentionPolicy(ctx, r)
+}
+
+// handleTSSetRetention serves the SDK's typed SetRetentionRequest
+// (sdk/go/client/timeseries) through the service's SetRetentionPolicy.
+func handleTSSetRetention(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	r, ok := req.(*timeseries.SetRetentionRequest)
+	if !ok || r == nil {
+		return nil, NewInvalidRequestTypeError("quicbaas.TimeSeries", "SetRetention", "*timeseries.SetRetentionRequest", typeNameOf(req))
+	}
+	if _, err := svc.SetRetentionPolicy(ctx, &service.TSSetRetentionPolicyRequest{
+		Metric: r.Metric,
+		Policy: &service.TSRetentionPolicy{
+			Duration:    r.Policy.Duration,
+			Resolution:  r.Policy.Resolution,
+			Aggregation: r.Policy.Aggregation.WireName(),
+		},
+	}); err != nil {
+		return nil, err
+	}
+	return nil, nil
+}
+
+// handleTSGetRetention serves the SDK's typed GetRetentionRequest through
+// the service's GetRetentionPolicy and returns the policy typed; a metric
+// without a policy has a nil Policy.
+func handleTSGetRetention(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	r, ok := req.(*timeseries.GetRetentionRequest)
+	if !ok || r == nil {
+		return nil, NewInvalidRequestTypeError("quicbaas.TimeSeries", "GetRetention", "*timeseries.GetRetentionRequest", typeNameOf(req))
+	}
+	resp, err := svc.GetRetentionPolicy(ctx, &service.TSGetRetentionPolicyRequest{Metric: r.Metric})
+	if err != nil {
+		return nil, err
+	}
+	out := &timeseries.GetRetentionResponse{Metric: r.Metric}
+	if resp == nil {
+		return out, nil
+	}
+	if resp.Metric != "" {
+		out.Metric = resp.Metric
+	}
+	if p := resp.Policy; p != nil {
+		out.Policy = &timeseries.RetentionPolicy{
+			Duration:    p.Duration,
+			Resolution:  p.Resolution,
+			Aggregation: timeseries.ParseAggregateFunction(p.Aggregation),
+		}
+	}
+	return out, nil
 }
 
 func handleSetRetentionPolicy(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {

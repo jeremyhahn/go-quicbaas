@@ -135,6 +135,20 @@ type IdentityService interface {
 type SearchService interface {
 	Vector() VectorClient
 	TimeSeries() TimeSeriesClient
+
+	// QRDBTimeSeries returns go-qrdb's own time-series client
+	// (QRDBTimeSeriesClient, a re-export of go-qrdb's TimeSeriesClient):
+	// write, query, aggregate, delete and retention straight against the
+	// go-qrdb node, over the transport the client was built with. The
+	// go-qrdb client is built lazily on first use; its build error is
+	// returned here.
+	//
+	// Over REST the verbs ride the SDK's own REST transport, so they carry
+	// the platform bearer set by WithAuthToken; every other transport, and a
+	// client wired WithEmbeddedQRDB, keeps the qrdb sub-client. An embedded
+	// client whose time-series servicer implements
+	// QRDBTimeSeriesContextReader reads retention and lists metrics through it.
+	QRDBTimeSeries() (QRDBTimeSeriesClient, error)
 }
 
 // StorageService provides object storage, backup, and parameter store operations.
@@ -369,6 +383,10 @@ type searchService struct {
 func (s *searchService) Vector() VectorClient         { return s.c.Vector() }
 func (s *searchService) TimeSeries() TimeSeriesClient { return s.c.TimeSeries() }
 
+func (s *searchService) QRDBTimeSeries() (QRDBTimeSeriesClient, error) {
+	return s.c.qrdbTimeSeries()
+}
+
 // storageService delegates StorageService methods to the underlying client.
 type storageService struct {
 	c *client
@@ -549,6 +567,34 @@ func (c *client) Share() (QRDBShareClient, error) {
 		return nil, err
 	}
 	return qrdbClient.Shares(), nil
+}
+
+// qrdbTimeSeries returns go-qrdb's TimeSeriesClient from the lazily built
+// go-qrdb client. Search().QRDBTimeSeries() is its public entry point.
+//
+// Over REST the time-series verbs ride the SDK's own REST transport, which
+// sends the platform bearer set by WithAuthToken on every request; go-qrdb's
+// REST sub-client cannot add an Authorization header, so the server's
+// default-deny gate refused it with 401 (go-quicbaas#2500). Every other
+// transport, and a client wired WithEmbeddedQRDB (whose qrdb calls always
+// dispatch in-process), keeps the qrdb sub-client. An embedded client whose
+// time-series servicer implements QRDBTimeSeriesContextReader reads retention
+// and lists metrics through it, in the caller's scope.
+func (c *client) qrdbTimeSeries() (QRDBTimeSeriesClient, error) {
+	if rt, ok := c.transport.(*rest.Transport); ok && (c.opts == nil || c.opts.embeddedQRDB == nil) {
+		return rt.QRDBTimeSeries(), nil
+	}
+	qrdbClient, err := c.qrdbClient()
+	if err != nil {
+		return nil, err
+	}
+	ts := qrdbClient.TimeSeries()
+	if c.opts != nil && c.opts.embeddedQRDB != nil {
+		if scoped, ok := c.opts.embeddedQRDB.TimeSeries.(QRDBTimeSeriesContextReader); ok {
+			return &embeddedQRDBTimeSeries{QRDBTimeSeriesClient: ts, scoped: scoped}, nil
+		}
+	}
+	return ts, nil
 }
 
 // =============================================================================

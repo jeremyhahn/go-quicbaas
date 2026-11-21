@@ -1,6 +1,6 @@
 # Time Series — API
 
-> **Status: NORMATIVE** · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Last verified: 2026-11-14
 > The capability on every transport, with permissions. Feature folder: `docs/timeseries/`.
 
 
@@ -31,16 +31,39 @@ Every row below is derived from source, not from prose. The columns mean:
 - **Permission** — `resource:action` from
   `pkg/api/rest/routes_permissions_generated.go`.
 
+### `Search().QRDBTimeSeries()` — go-qrdb's own client, re-exported
+
+`Search().QRDBTimeSeries()` returns `QRDBTimeSeriesClient`, a type alias of
+go-qrdb's `transport.TimeSeriesClient` (`sdk/go/qrdb.go`). It is go-qrdb's
+client itself, built lazily over the transport the QuicBaaS client was built
+with, and talks straight to the go-qrdb node: `TSWrite`, `TSWriteBatch`,
+`TSWritePoint`, `TSQuery`, `TSRichQuery`, `TSAggregate`, `TSDeleteSeries`,
+`TSGetRetention`, `TSSetRetention` and `TSListMetrics`. Over REST they map to
+go-qrdb's `/v1/ts/*` routes (`/ts/write`, `/ts/query`,
+`/ts/series/{metric}/retention`, ...). A go-qrdb client that cannot be built
+(for example the embedded transport without go-qrdb servicers) is returned as
+an error. Test: `sdk/go/qrdb_timeseries_reexport_test.go`.
+
 ### `quicbaas.TimeSeries` — SDK package `sdk/go/client/timeseries`
 
-Dedicated transport handlers: rest=yes, grpc=no, mcp=yes; embedded routes registered: 8; MCP tools registered server-side: 7.
+Dedicated transport handlers: rest=yes, grpc=yes, mcp=yes; embedded routes registered: 11; MCP tools registered server-side: 7.
 
 MCP tools: `qrdb_ts_delete_series`, `qrdb_ts_get_retention_policy`, `qrdb_ts_list_metrics`, `qrdb_ts_query`, `qrdb_ts_set_retention_policy`, `qrdb_ts_write_batch`, `qrdb_ts_write_point`
 
 | SDK method | REST route (transport) | Served? | gRPC | MCP | Embedded | Permission |
 |---|---|---|---|---|---|---|
-| `Query` | dedicated handler (path not statically recoverable) | ? | MISSING | yes | yes | — |
-| `Write` | dedicated handler (path not statically recoverable) | ? | MISSING | yes | MISSING | — |
+| `Write` | `POST /api/v1/timeseries/write` | yes | `TSWritePoint` | `qrdb_ts_write_point` | `quicbaas.TimeSeries/Write` | `timeseries:write` |
+| `Query` | `POST /api/v1/timeseries/query` | yes | `TSQuery` | `qrdb_ts_query` | `quicbaas.TimeSeries/Query` | `timeseries:write` |
+| `SetRetention` | `PUT /api/v1/timeseries/retention/{metric}` | yes | `TSSetRetentionPolicy` | `qrdb_ts_set_retention_policy` | `quicbaas.TimeSeries/SetRetention` | `timeseries:write` |
+| `GetRetention` | `GET /api/v1/timeseries/retention/{metric}` | yes | `TSGetRetentionPolicy` | `qrdb_ts_get_retention_policy` | `quicbaas.TimeSeries/GetRetention` | `timeseries:query` |
 
+`SetRetention` and `GetRetention` carry a typed `RetentionPolicy` (`Duration`,
+`Resolution`, `Aggregation`). On the REST, gRPC and MCP wires durations travel
+as whole seconds and the aggregation as its lower-case name; `GetRetention`
+returns a nil `Policy` for a metric without one. `POST /api/v1/timeseries/query`
+needs `timeseries:write`, as the generated permission table states; a query is
+a read, so that row is a candidate for review.
 
-
+Tests: `sdk/go/client/timeseries/client_retention_test.go`;
+`sdk/go/transport/{rest,grpc,mcp}/timeseries_retention_test.go`;
+`sdk/go/transport/embedded/handlers_timeseries_{retention,query}_test.go`.

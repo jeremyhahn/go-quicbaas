@@ -746,6 +746,9 @@ func (c *client) buildQRDBEmbeddedClient() (*qrdbsdk.Client, error) {
 	if s.User != nil {
 		embOpts = append(embOpts, qrdbembedded.WithUserService(s.User))
 	}
+	if s.TimeSeries != nil {
+		embOpts = append(embOpts, qrdbembedded.WithTimeSeriesService(s.TimeSeries))
+	}
 
 	t, err := qrdbembedded.New(s.KV, s.Admin, embOpts...)
 	if err != nil {
