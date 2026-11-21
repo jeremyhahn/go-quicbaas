@@ -25,11 +25,15 @@ import (
 
 	"github.com/stretchr/testify/require"
 	ggrpc "google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	qrdbservice "github.com/jeremyhahn/go-qrdb/pkg/service"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	unixtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport/unix"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // TestServer_QRDBServiceOnUnixSocket_ServesNodeData proves the qrdb.v1
@@ -37,7 +41,7 @@ import (
 // node's data services: a go-qrdb client over the socket writes and reads a
 // key instead of getting Unimplemented.
 func TestServer_QRDBServiceOnUnixSocket_ServesNodeData(t *testing.T) {
-	ctx, cl := qrdbUnixDataClient(t)
+	ctx, cl := qrdbUnixDataClient(t, true)
 
 	require.NoError(t, cl.KV().Put(ctx, "row1652/unix", []byte("v")))
 	got, err := cl.KV().Get(ctx, "row1652/unix")
@@ -50,7 +54,7 @@ func TestServer_QRDBServiceOnUnixSocket_ServesNodeData(t *testing.T) {
 // services: a client scoped to another database must not read the
 // system database.
 func TestServer_QRDBServiceOnUnixSocket_HonoursDatabaseScope(t *testing.T) {
-	ctx, cl := qrdbUnixDataClient(t)
+	ctx, cl := qrdbUnixDataClient(t, true)
 
 	require.NoError(t, cl.KV().Put(ctx, "row1652/scope", []byte("v")))
 	scoped, err := cl.DatabaseScoped("nope1652")
@@ -62,7 +66,7 @@ func TestServer_QRDBServiceOnUnixSocket_HonoursDatabaseScope(t *testing.T) {
 // qrdbUnixDataClient serves the node's qrdb service on a Unix socket
 // through the server's own gRPC interceptor chain and returns a qrdb SDK
 // client connected to it.
-func qrdbUnixDataClient(t *testing.T) (context.Context, *qrdbsdk.Client) {
+func qrdbUnixDataClient(t *testing.T, bindTenant bool) (context.Context, *qrdbsdk.Client) {
 	t.Helper()
 	srv := withTempServer(t)
 	require.NoError(t, srv.initStandaloneQRDBNode(), "initStandaloneQRDBNode")
@@ -77,6 +81,18 @@ func qrdbUnixDataClient(t *testing.T) (context.Context, *qrdbsdk.Client) {
 	require.NoError(t, err)
 	u, st, err := srv.grpcServerInterceptors()
 	require.NoError(t, err)
+	if bindTenant {
+		u = append([]ggrpc.UnaryServerInterceptor{
+			func(ctx context.Context, req interface{}, _ *ggrpc.UnaryServerInfo, handler ggrpc.UnaryHandler) (interface{}, error) {
+				return handler(tenantctx.WithSystem(ctx), req)
+			},
+		}, u...)
+		st = append([]ggrpc.StreamServerInterceptor{
+			func(srv interface{}, ss ggrpc.ServerStream, _ *ggrpc.StreamServerInfo, handler ggrpc.StreamHandler) error {
+				return handler(srv, &qrdbTenantBoundStream{ServerStream: ss, ctx: tenantctx.WithSystem(ss.Context())})
+			},
+		}, st...)
+	}
 	gs := ggrpc.NewServer(ggrpc.ChainUnaryInterceptor(u...), ggrpc.ChainStreamInterceptor(st...))
 	srv.registerQRDBService(gs)
 	go func() { _ = gs.Serve(lis) }()
@@ -93,6 +109,26 @@ func qrdbUnixDataClient(t *testing.T) (context.Context, *qrdbsdk.Client) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = cl.Close() })
 	return ctx, cl
+}
+
+// qrdbTenantBoundStream carries a context with a bound tenant into a stream
+// handler.
+type qrdbTenantBoundStream struct {
+	ggrpc.ServerStream
+	ctx context.Context
+}
+
+// Context returns the tenant-bound context.
+func (s *qrdbTenantBoundStream) Context() context.Context { return s.ctx }
+
+// TestServer_QRDBServiceOnUnixSocket_RefusesUnboundTenant pins that a
+// certless caller with no tenant bound is refused before qrdb's handlers run:
+// they would read the absent tenant as the system tenant.
+func TestServer_QRDBServiceOnUnixSocket_RefusesUnboundTenant(t *testing.T) {
+	ctx, cl := qrdbUnixDataClient(t, false)
+	err := cl.KV().Put(ctx, "row1652/unbound", []byte("v"))
+	require.Error(t, err)
+	require.Equal(t, codes.PermissionDenied, status.Code(err), "%v", err)
 }
 
 // TestQRDBDataRegistryProxy_RefusesOutOfRowServices pins that the registry
