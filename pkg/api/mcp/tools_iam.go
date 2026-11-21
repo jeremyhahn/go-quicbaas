@@ -1534,6 +1534,12 @@ func (r *ToolRegistry) executeIAMUserCreate(ctx context.Context, args map[string
 		req.Attributes = attrs
 	}
 
+	if len(req.Roles) > 0 {
+		if err := r.authorizeRoleAssignment(ctx, req.TenantID); err != nil {
+			return nil, err
+		}
+	}
+
 	resp, err := iamSvc.CreateUser(ctx, req)
 	if err != nil {
 		return nil, err
@@ -1618,11 +1624,78 @@ func (r *ToolRegistry) executeIAMUserUpdate(ctx context.Context, args map[string
 		req.AuthMethods = &methods
 	}
 
+	// Any explicit roles array is a role assignment, even an empty one or one
+	// equal to the roles the user holds now: an equality exemption decided on
+	// an earlier read would let a concurrent revocation be undone by this write.
+	if req.Roles != nil {
+		if err := r.authorizeRoleAssignment(ctx, req.TenantID); err != nil {
+			return nil, err
+		}
+	}
+
 	resp, err := iamSvc.UpdateUser(ctx, req)
 	if err != nil {
 		return nil, err
 	}
 	return marshalResult(resp)
+}
+
+// Role assignment is the "roles:assign" permission, the one the role-assign
+// tool and the REST AssignRole route declare.
+const (
+	roleAssignmentResource = "roles"
+	roleAssignmentAction   = "assign"
+)
+
+// RoleAssignmentDeniedError is returned when a user create or update carries
+// roles and the caller may not assign them.
+type RoleAssignmentDeniedError struct {
+	Reason string
+}
+
+func (e *RoleAssignmentDeniedError) Error() string {
+	return "roles:assign denied: " + e.Reason
+}
+
+// SetRoleAssignmentAuthorizer installs the resolver of go-qrdb's RBAC
+// authorizer, the one the tool permissions use, for the roles:assign check on
+// user create and update. It is resolved per call because the embedded node is
+// built later in the lifecycle than the tool registry.
+func (r *ToolRegistry) SetRoleAssignmentAuthorizer(resolve func() qrdbsdk.Authorizer) {
+	r.roleAssignAuthz = resolve
+}
+
+// SetRoleAssignmentAuthorizer forwards the roles:assign authorizer resolver to
+// the tool registry.
+func (s *Server) SetRoleAssignmentAuthorizer(resolve func() qrdbsdk.Authorizer) {
+	if s.tools != nil {
+		s.tools.SetRoleAssignmentAuthorizer(resolve)
+	}
+}
+
+// authorizeRoleAssignment reports whether the caller may assign roles in
+// tenantID. A user create or update that carries roles assigns them as surely
+// as the role-assign tool does, so it needs the same roles:assign on top of
+// the tool's own permission: without it, a caller holding only users:update
+// could write the tenant Admin role into its own account. It fails closed:
+// with no identity or no authorizer, a role-bearing call is refused.
+func (r *ToolRegistry) authorizeRoleAssignment(ctx context.Context, tenantID string) error {
+	identity := qrdbsdk.IdentityFromContext(ctx)
+	if identity == nil {
+		return &RoleAssignmentDeniedError{Reason: "authentication required"}
+	}
+	var authz qrdbsdk.Authorizer
+	if r.roleAssignAuthz != nil {
+		authz = r.roleAssignAuthz()
+	}
+	if authz == nil {
+		return &RoleAssignmentDeniedError{Reason: "no authorizer is configured"}
+	}
+	tenantCtx := qrdbsdk.ContextWithTenant(ctx, tenantID)
+	if err := authz.Authorize(tenantCtx, identity, roleAssignmentResource, roleAssignmentAction); err != nil {
+		return &RoleAssignmentDeniedError{Reason: err.Error()}
+	}
+	return nil
 }
 
 func (r *ToolRegistry) executeIAMUserDelete(ctx context.Context, args map[string]interface{}) (interface{}, error) {

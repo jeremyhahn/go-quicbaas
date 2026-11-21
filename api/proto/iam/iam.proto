@@ -21,9 +21,13 @@ service IAMService {
   }
 
   // User management
-  rpc CreateUser(CreateUserRequest) returns (User);
+  rpc CreateUser(CreateUserRequest) returns (User) {
+      option (qrdb.v1.permission) = "users:create";
+  }
   rpc GetUser(GetUserRequest) returns (User);
-  rpc UpdateUser(UpdateUserRequest) returns (User);
+  rpc UpdateUser(UpdateUserRequest) returns (User) {
+      option (qrdb.v1.permission) = "users:update";
+  }
   rpc DeleteUser(DeleteUserRequest) returns (DeleteUserResponse);
   rpc ListUsers(ListUsersRequest) returns (ListUsersResponse);
 
