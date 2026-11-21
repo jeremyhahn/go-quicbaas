@@ -89,6 +89,25 @@ type pendingConsumption struct {
 	// stop, closed once by stopDrainer at shutdown, ends the drainer.
 	stop     chan struct{}
 	stopOnce sync.Once
+	// stopped is set by stopDrainer; no drainer is claimed after it.
+	stopped bool
+	// drainers counts the live drainer goroutines, so shutdown can wait
+	// for them. It is added to under mu, and never once stopped is set.
+	drainers sync.WaitGroup
+	// drainCtx is the drainer's retry context; stopDrainer cancels it.
+	drainCtx    context.Context
+	drainCancel context.CancelFunc
+}
+
+// initLocked creates stop and the drainer's retry context if they are not
+// yet set. p.mu must be held.
+func (p *pendingConsumption) initLocked() {
+	if p.stop == nil {
+		p.stop = make(chan struct{})
+	}
+	if p.drainCtx == nil {
+		p.drainCtx, p.drainCancel = context.WithCancel(context.Background())
+	}
 }
 
 // add keeps an entry whose ledger write failed.
@@ -145,14 +164,27 @@ func (p *pendingConsumption) all() []ConsumptionEntry {
 }
 
 // claimDrainer marks a drainer live. It reports true only to the caller that
-// turned draining on, so at most one drainer runs.
+// turned draining on, so at most one drainer runs, and false once
+// stopDrainer has run. On true it has added the drainer to p.drainers: the
+// caller must start a goroutine that calls p.drainers.Done when it ends.
 func (p *pendingConsumption) claimDrainer() bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.stop == nil {
-		p.stop = make(chan struct{})
+	p.initLocked()
+	if p.stopped || p.draining {
+		return false
 	}
-	if p.draining {
+	p.draining = true
+	p.drainers.Add(1)
+	return true
+}
+
+// reclaimDrainer is claimDrainer for the live drainer, which keeps going
+// after releaseDrainerIfEmpty returned false: it does not add to p.drainers.
+func (p *pendingConsumption) reclaimDrainer() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.stopped || p.draining {
 		return false
 	}
 	p.draining = true
@@ -173,20 +205,34 @@ func (p *pendingConsumption) releaseDrainerIfEmpty() bool {
 func (p *pendingConsumption) stopChan() <-chan struct{} {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.stop == nil {
-		p.stop = make(chan struct{})
-	}
+	p.initLocked()
 	return p.stop
 }
 
-// stopDrainer ends the drainer, if one runs, and keeps any from waiting again.
+// drainContext returns the drainer's retry context, which stopDrainer
+// cancels.
+func (p *pendingConsumption) drainContext() context.Context {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.initLocked()
+	return p.drainCtx
+}
+
+// stopDrainer ends the drainer, if one runs: it cancels a retry in progress
+// and keeps any drainer from starting or waiting again.
 func (p *pendingConsumption) stopDrainer() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.stop == nil {
-		p.stop = make(chan struct{})
-	}
+	p.stopped = true
+	p.initLocked()
 	p.stopOnce.Do(func() { close(p.stop) })
+	p.drainCancel()
+}
+
+// waitDrainer waits for every drainer goroutine to end. Call it only after
+// stopDrainer, so that none can start meanwhile.
+func (p *pendingConsumption) waitDrainer() {
+	p.drainers.Wait()
 }
 
 // recordingContext returns a context for writing a turn's consumption: it
@@ -236,7 +282,7 @@ func (s *agentServiceImpl) flushPendingConsumption(ctx context.Context, sessionI
 	if len(pending) == 0 {
 		return nil
 	}
-	failed, lastErr := s.retryPendingEntries(ctx, pending)
+	failed, lastErr := s.retryPendingEntries(context.WithoutCancel(ctx), pending)
 	if failed == 0 {
 		return nil
 	}
@@ -244,15 +290,21 @@ func (s *agentServiceImpl) flushPendingConsumption(ctx context.Context, sessionI
 }
 
 // retryPendingEntries writes each pending entry once more, each under its own
-// tenant and bounded by consumptionRecordTimeout, detached from ctx's
-// cancellation. An entry the ledger now holds is removed and counted; one
-// that conflicts with the stored entry is removed and logged; any other
-// failure leaves it pending. It returns how many are still pending and the
-// last error.
+// tenant and bounded by consumptionRecordTimeout within ctx's deadline. Once
+// ctx is done, the remaining entries are counted as failed and are not tried.
+// A caller that must not inherit ctx's cancellation passes a detached ctx.
+// An entry the ledger now holds is removed and counted; one that conflicts
+// with the stored entry is removed and logged; any other failure leaves it
+// pending. It returns how many are still pending and the last error.
 func (s *agentServiceImpl) retryPendingEntries(ctx context.Context, entries []ConsumptionEntry) (failed int, lastErr error) {
-	for _, entry := range entries {
+	for i, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			failed += len(entries) - i
+			lastErr = err
+			break
+		}
 		ectx, cancel := context.WithTimeout(
-			ContextWithTenant(tenantctx.WithTenant(context.WithoutCancel(ctx), entry.TenantID), entry.TenantID),
+			ContextWithTenant(tenantctx.WithTenant(ctx, entry.TenantID), entry.TenantID),
 			consumptionRecordTimeout)
 		err := s.ledger.Record(ectx, entry)
 		cancel()
@@ -296,11 +348,13 @@ func (s *agentServiceImpl) startPendingDrain() {
 // each round up to pendingRetryMax. An entry whose session has closed, or
 // whose account takes no more turns, is retried here and nowhere else.
 func (s *agentServiceImpl) drainPendingConsumption() {
+	defer s.pendingLedger.drainers.Done()
 	wait := s.pendingLedger.firstRetry
 	if wait <= 0 {
 		wait = pendingRetryFirst
 	}
 	stop := s.pendingLedger.stopChan()
+	rctx := s.pendingLedger.drainContext()
 	for {
 		select {
 		case <-time.After(wait):
@@ -308,11 +362,16 @@ func (s *agentServiceImpl) drainPendingConsumption() {
 			s.pendingLedger.releaseDrainerIfEmpty()
 			return
 		}
-		failed, lastErr := s.retryPendingEntries(context.Background(), s.pendingLedger.all())
+		failed, lastErr := s.retryPendingEntries(rctx, s.pendingLedger.all())
+		if rctx.Err() != nil {
+			// Shutdown stopped the drainer mid-retry.
+			s.pendingLedger.releaseDrainerIfEmpty()
+			return
+		}
 		if s.pendingLedger.releaseDrainerIfEmpty() {
 			return
 		}
-		if !s.pendingLedger.claimDrainer() {
+		if !s.pendingLedger.reclaimDrainer() {
 			return
 		}
 		if failed > 0 && lastErr != nil {

@@ -335,6 +335,122 @@ func TestShutdown_StopsThePendingConsumptionDrainer(t *testing.T) {
 	}
 }
 
+// ctxWaitLedger fails while failing is set, and while blocking is set holds
+// every write until its context is done, signalling entered first.
+type ctxWaitLedger struct {
+	ConsumptionLedger
+	failing  atomic.Bool
+	blocking atomic.Bool
+	writes   atomic.Int32
+	inFlight atomic.Int32
+	entered  chan struct{}
+}
+
+func newCtxWaitLedger(inner ConsumptionLedger) *ctxWaitLedger {
+	return &ctxWaitLedger{ConsumptionLedger: inner, entered: make(chan struct{}, 8)}
+}
+
+func (l *ctxWaitLedger) Record(ctx context.Context, entry ConsumptionEntry) error {
+	l.writes.Add(1)
+	l.inFlight.Add(1)
+	defer l.inFlight.Add(-1)
+	if l.blocking.Load() {
+		select {
+		case l.entered <- struct{}{}:
+		default:
+		}
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	if l.failing.Load() {
+		return stderrors.New("quota plane unavailable")
+	}
+	return l.ConsumptionLedger.Record(ctx, entry)
+}
+
+func TestShutdown_PendingRetryKeepsTheShutdownDeadline(t *testing.T) {
+	svc, inner, _ := newConsumptionRecorder(t)
+	ledger := newCtxWaitLedger(inner)
+	ledger.blocking.Store(true)
+	svc.SetConsumptionLedger(ledger)
+
+	now := time.Now().UTC()
+	for _, id := range []string{"e-1", "e-2", "e-3"} {
+		entry := goneSessionEntry(now)
+		entry.EntryID = id
+		svc.pendingLedger.add(entry)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	if err := svc.Shutdown(ctx); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+	if took := time.Since(start); took > 3*time.Second {
+		t.Fatalf("Shutdown took %s, past its 300ms deadline", took)
+	}
+	if n := svc.pendingLedger.size(); n != 3 {
+		t.Fatalf("pending = %d, want 3", n)
+	}
+	if got := ledger.writes.Load(); got != 1 {
+		t.Fatalf("writes = %d, want 1 (the deadline ends the retry after the first)", got)
+	}
+}
+
+// startBlockedDrainer starts the pending-consumption drainer and returns
+// once it is inside a ledger write that only its context ends.
+func startBlockedDrainer(t *testing.T) (*agentServiceImpl, *ctxWaitLedger) {
+	t.Helper()
+	svc, inner, _ := newConsumptionRecorder(t)
+	ledger := newCtxWaitLedger(inner)
+	ledger.failing.Store(true)
+	svc.SetConsumptionLedger(ledger)
+	svc.pendingLedger.firstRetry = 10 * time.Millisecond
+
+	if svc.recordLedgerEntry(context.Background(), goneSessionEntry(time.Now().UTC())) {
+		t.Fatal("recordLedgerEntry reported the entry recorded while the ledger fails")
+	}
+	ledger.blocking.Store(true)
+	ledger.failing.Store(false)
+	select {
+	case <-ledger.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the drainer never retried the pending entry")
+	}
+	return svc, ledger
+}
+
+func TestShutdown_JoinsADrainerMidRetry(t *testing.T) {
+	svc, ledger := startBlockedDrainer(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := svc.Shutdown(ctx); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+	if n := ledger.inFlight.Load(); n != 0 {
+		t.Fatalf("ledger writes in flight after Shutdown = %d, want 0", n)
+	}
+}
+
+func TestShutdown_JoinsTheDrainerWhenTheJobsDrainTimesOut(t *testing.T) {
+	svc, ledger := startBlockedDrainer(t)
+	svc.jobsInFlight.Add(1)
+	t.Cleanup(svc.jobsInFlight.Done)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	err := svc.Shutdown(ctx)
+	var drainErr *DrainTimeoutError
+	if !stderrors.As(err, &drainErr) || drainErr.Phase != DrainPhaseJobs {
+		t.Fatalf("Shutdown = %v, want a jobs-phase *DrainTimeoutError", err)
+	}
+	if n := ledger.inFlight.Load(); n != 0 {
+		t.Fatalf("ledger writes in flight after Shutdown = %d, want 0", n)
+	}
+}
+
 // A turn whose usage record fails must not release the next turn against a
 // spend sum without it: 950 of 1000 recorded, a 150-token turn whose write
 // fails, and the next prompt is refused until the entry is in the ledger —

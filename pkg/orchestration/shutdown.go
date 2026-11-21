@@ -58,8 +58,10 @@ const (
 // start. That is the same disposition the loop has today when the daemon is
 // killed, and the one the SDLC runner's per-state resume expects.
 //
-// Once the turns have drained, consumption still pending in memory gets one
-// last ledger write attempt, and the background drainer is stopped.
+// Once the jobs and turns have drained, or the window has closed, the
+// background consumption drainer is stopped (a retry in flight is cancelled)
+// and waited for. Then, if the turns drained, consumption still pending in
+// memory gets one last ledger write attempt within the same deadline.
 //
 // It is safe to call more than once; only the first call drains.
 func (s *agentServiceImpl) Shutdown(ctx context.Context) error {
@@ -75,17 +77,20 @@ func (s *agentServiceImpl) Shutdown(ctx context.Context) error {
 	// Jobs first, turns second: a running job is what starts a turn, so
 	// waiting for the loops first gives the turns they own a chance to have
 	// finished by the time the turn phase looks.
-	if err := s.drainPhase(ctx, DrainPhaseJobs, &s.jobsInFlight, s.runningJobIDs); err != nil {
-		return err
+	err := s.drainPhase(ctx, DrainPhaseJobs, &s.jobsInFlight, s.runningJobIDs)
+	if err == nil {
+		err = s.drainPhase(ctx, DrainPhaseTurns, &s.turnsInFlight, nil)
 	}
-	err := s.drainPhase(ctx, DrainPhaseTurns, &s.turnsInFlight, nil)
+	// The drainer is stopped and joined before anything else touches the
+	// ledger, and before the caller closes storage.
+	s.pendingLedger.stopDrainer()
+	s.pendingLedger.waitDrainer()
 	if err == nil && s.ledger != nil && s.pendingLedger.size() > 0 {
 		// Last write of consumption still pending: no turn retries it now.
 		if failed, lastErr := s.retryPendingEntries(ctx, s.pendingLedger.all()); failed > 0 {
 			s.logger.Warnf("orchestration: shutdown with consumption still not recorded: pending=%d err=%v", failed, lastErr)
 		}
 	}
-	s.pendingLedger.stopDrainer()
 	return err
 }
 
