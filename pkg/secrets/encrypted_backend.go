@@ -158,6 +158,38 @@ type encryptedEntry struct {
 type secretVersions struct {
 	Versions []*encryptedEntry `json:"versions"`
 	Deleted  bool              `json:"deleted"`
+	// Latest is the last version number issued in this lifetime. Pruning
+	// drops versions from Versions, so a version number is not a list
+	// position; a record written before Latest existed has 0 here and its
+	// version numbers are list positions.
+	Latest int `json:"latest,omitempty"`
+}
+
+// latest returns the last version number issued in this lifetime.
+func (v *secretVersions) latest() int {
+	if v == nil {
+		return 0
+	}
+	if v.Latest > 0 {
+		return v.Latest
+	}
+	return len(v.Versions)
+}
+
+// find returns the entry numbered version, or nil when it was dropped.
+func (v *secretVersions) find(version int) *encryptedEntry {
+	for _, e := range v.Versions {
+		if e.Version == version {
+			return e
+		}
+	}
+	return nil
+}
+
+// isPrunedTombstone reports whether e is a pruned version: destroyed and
+// holding no payload.
+func (e *encryptedEntry) isPrunedTombstone() bool {
+	return e.Deleted && e.Ciphertext == nil && e.Metadata == nil
 }
 
 // NewEncryptedBackend creates a new encrypted secrets backend.
@@ -245,19 +277,35 @@ func (eb *EncryptedBackend) StoreWithAlgorithm(ctx context.Context, path string,
 // If opts is nil or opts.KeyIdentifier is empty, uses the default key identifier.
 // If opts.TenantID is set and KeyIdentifier is empty, uses "dek:tenant:{tenantID}".
 func (eb *EncryptedBackend) StoreWithOptions(ctx context.Context, path string, data map[string][]byte, metadata map[string]string, opts *StoreOptions) error {
-	_, err := eb.storeVersion(ctx, path, data, metadata, opts)
+	_, err := eb.storeVersion(ctx, path, nil, data, metadata, opts)
 	return err
 }
 
 // StoreVersion saves a secret as Store does and returns the version it
 // assigned.
 func (eb *EncryptedBackend) StoreVersion(ctx context.Context, path string, data map[string][]byte, metadata map[string]string) (int, error) {
-	return eb.storeVersion(ctx, path, data, metadata, nil)
+	return eb.storeVersion(ctx, path, nil, data, metadata, nil)
+}
+
+// StoreVersionIfCurrent implements ConditionalVersionedBackend: it stores a
+// new version only while the path's current record is the one read. Within
+// the process the backend's lock holds the check and the write together;
+// on a store that arbitrates both creation and rewrites (PutIfAbsent and
+// CompareAndSwap), the write is also conditional on the exact bytes checked,
+// so a writer in another process that lands between them refuses this one.
+func (eb *EncryptedBackend) StoreVersionIfCurrent(ctx context.Context, path string, expected ReadVersion, data map[string][]byte, metadata map[string]string) (int, error) {
+	if expected.Version <= 0 {
+		return 0, staleReadError(expected, 0, false, false)
+	}
+	if _, guarded := eb.store.(historyGuardedKVStore); !guarded {
+		return 0, errUnguardedConditionalWrite()
+	}
+	return eb.storeVersion(ctx, path, &expected, data, metadata, nil)
 }
 
 // storeVersion encrypts and saves a secret under opts and returns the
 // version it assigned.
-func (eb *EncryptedBackend) storeVersion(ctx context.Context, path string, data map[string][]byte, metadata map[string]string, opts *StoreOptions) (int, error) {
+func (eb *EncryptedBackend) storeVersion(ctx context.Context, path string, expected *ReadVersion, data map[string][]byte, metadata map[string]string, opts *StoreOptions) (int, error) {
 	if path == "" {
 		return 0, ErrInvalidPath
 	}
@@ -293,75 +341,223 @@ func (eb *EncryptedBackend) storeVersion(ctx context.Context, path string, data 
 		}
 	}
 
-	// Validate algorithm
-	if !isValidAlgorithm(algorithm) {
-		return 0, ErrUnsupportedAlgorithm
+	// An unconditional write that loses its publication to another
+	// instance (a concurrent write, prune or delete) reloads and reapplies;
+	// a conditional one is refused instead.
+	for attempt := 1; ; attempt++ {
+		// Load existing versions or create new
+		versions, observedRaw, err := eb.loadVersionsRaw(ctx, path)
+		if err != nil && !errors.Is(err, ErrSecretNotFound) {
+			return 0, &SecretsCauseError{Message: "failed to load existing versions", Cause: err}
+		}
+		if expected != nil {
+			if err := eb.checkReadVersion(ctx, versions, *expected); err != nil {
+				return 0, err
+			}
+			// A conditional write supersedes the record read (a scheduled
+			// rotation): without explicit options it keeps that record's key and
+			// algorithm, so a secret stored under a tenant DEK or an HSM key is
+			// not re-encrypted under the backend's default key.
+			if opts == nil {
+				last := versions.Versions[len(versions.Versions)-1]
+				// The read path's key: KeyIdentifier, or a legacy record's KeyID.
+				if last.KeyIdentifier != "" {
+					keyIdentifier = last.KeyIdentifier
+				} else if last.KeyID != "" {
+					keyIdentifier = last.KeyID
+				}
+				if last.Algorithm != "" {
+					algorithm = last.Algorithm
+				}
+			}
+		}
+
+		// Validate algorithm
+		if !isValidAlgorithm(algorithm) {
+			return 0, ErrUnsupportedAlgorithm
+		}
+
+		// Serialize the secret data for encryption
+		plaintext, err := json.Marshal(data)
+		if err != nil {
+			return 0, ErrSerializationFailed
+		}
+
+		// Encrypt using SecretsEncryptor
+		encryptOpts := &interfaces.EncryptOptions{
+			Algorithm: algorithm,
+			AAD:       []byte(path), // Use path as AAD for binding
+		}
+		blob, err := eb.encryptor.Encrypt(ctx, keyIdentifier, plaintext, encryptOpts)
+		if err != nil {
+			return 0, &SecretsSentinelCauseError{Sentinel: ErrEncryptionFailed, Cause: err}
+		}
+		if versions == nil {
+			versions = &secretVersions{
+				Versions: make([]*encryptedEntry, 0, 1),
+			}
+		}
+
+		// Create new encrypted entry with all fields from blob
+		now := time.Now()
+		newVersion := versions.latest() + 1
+		entry := &encryptedEntry{
+			KeyIdentifier: blob.KeyIdentifier,
+			KeyVersion:    blob.KeyVersion,
+			Algorithm:     blob.Algorithm,
+			Nonce:         blob.Nonce,
+			Ciphertext:    blob.Ciphertext,
+			Tag:           blob.Tag,
+			AAD:           blob.AAD,
+			EncryptedAt:   blob.EncryptedAt,
+			Metadata:      metadata,
+			Version:       newVersion,
+			Deleted:       false,
+			CreatedAt:     now,
+			CreatedBy:     auth.PrincipalFromContext(ctx),
+		}
+
+		versions.Versions = append(versions.Versions, entry)
+		versions.Latest = newVersion
+		versions.Deleted = false
+
+		// Save to storage
+		if expected != nil {
+			if err := eb.saveVersionsIfUnchanged(ctx, path, versions, observedRaw, *expected); err != nil {
+				return 0, err
+			}
+		} else {
+			stored, err := eb.publishVersions(ctx, path, versions, observedRaw)
+			if err != nil {
+				return 0, &SecretsCauseError{Message: "failed to save secret", Cause: err}
+			}
+			if !stored {
+				if attempt < historyWriteAttempts {
+					continue
+				}
+				return 0, &SecretsCauseError{Message: "failed to save secret", Cause: ErrWriteConflict}
+			}
+		}
+
+		if eb.logger != nil {
+			eb.logger.WithFields(map[string]interface{}{
+				"path":           path,
+				"key_identifier": blob.KeyIdentifier,
+				"algorithm":      blob.Algorithm,
+				"version":        newVersion,
+			}).Info("Secret stored with SecretsEncryptor")
+		}
+
+		return newVersion, nil
+	}
+}
+
+// PruneVersions destroys every version of path older than its newest keep
+// live versions. The earliest version is kept as a tombstone (ciphertext,
+// nonce, tag, AAD and metadata dropped, CreatedAt kept) so the secret's
+// creation time survives; every other pruned version is removed from the
+// record, which stays at keep live versions plus that tombstone. The record
+// tracks the latest version number separately, so numbering continues past
+// the removed versions. Only a store that guards both creation and rewrites
+// (PutIfAbsent and CompareAndSwap) can prune; the rewrite holds only while the record is the one read: a write that lands in between wins,
+// and the prune stores nothing and reports nothing pruned (the next write
+// prunes again).
+func (eb *EncryptedBackend) PruneVersions(ctx context.Context, path string, keep int) (int, error) {
+	if path == "" {
+		return 0, ErrInvalidPath
+	}
+	if keep < 1 {
+		return 0, ErrVersionMustBePositive
+	}
+	if ctx.Err() != nil {
+		return 0, ctx.Err()
 	}
 
-	// Serialize the secret data for encryption
-	plaintext, err := json.Marshal(data)
+	eb.mu.Lock()
+	defer eb.mu.Unlock()
+
+	versions, observedRaw, err := eb.loadVersionsRaw(ctx, path)
+	if err != nil {
+		return 0, err
+	}
+	// Retained: the newest keep entries that can be rolled back to, and the
+	// latest entry. A soft-deleted entry keeps its payload, but GetVersion and
+	// Rollback refuse it, so it never counts toward keep.
+	all := versions.Versions
+	last := len(all) - 1
+	retain := make([]bool, len(all))
+	retain[last] = true
+	for i, live := last, 0; i >= 0 && live < keep; i-- {
+		if !all[i].Deleted {
+			retain[i] = true
+			live++
+		}
+	}
+	// THE EARLIEST ENTRY IS THE SECRET'S CREATION TIME: when not retained it
+	// is pruned to a tombstone (payload dropped, CreatedAt kept) so a
+	// listing's created_at stays the first write's time. Every other entry
+	// not retained is dropped outright, so the history stays at keep live
+	// versions plus the latest entry and one tombstone. An existing
+	// tombstone never counts as pruned.
+	pruned, dropped := 0, 0
+	now := time.Now()
+	first := all[0]
+	if !retain[0] && !first.isPrunedTombstone() {
+		first.Deleted = true
+		first.Nonce = nil
+		first.Ciphertext = nil
+		first.Tag = nil
+		first.AAD = nil
+		first.Metadata = nil
+		if first.DeletedAt == nil {
+			first.DeletedAt = &now
+		}
+		pruned++
+	}
+	kept := make([]*encryptedEntry, 0, len(all))
+	kept = append(kept, first)
+	for i := 1; i < len(all); i++ {
+		if retain[i] {
+			kept = append(kept, all[i])
+			continue
+		}
+		dropped++
+		if !all[i].isPrunedTombstone() {
+			pruned++
+		}
+	}
+	if pruned == 0 && dropped == 0 {
+		return 0, nil
+	}
+	// Latest is fixed before the slice shrinks, so a record written before
+	// Latest existed keeps its numbering.
+	versions.Latest = versions.latest()
+	versions.Versions = kept
+
+	// Publication is a compare-and-swap of the exact history this prune
+	// read. eb.mu is per instance: another instance on the same store can
+	// Delete, Destroy or write the secret after the read, and an
+	// unconditional save would revive the deleted secret or drop the
+	// acknowledged write. A store without both PutIfAbsent and
+	// CompareAndSwap cannot prune: a creation on a CAS-only store is a plain
+	// Put that could overwrite the pruned history.
+	g, guarded := eb.store.(historyGuardedKVStore)
+	if !guarded {
+		return 0, &SecretsSentinelCauseError{Sentinel: ErrPruneUnsupported,
+			Cause: errors.New("the backing store does not guard both creation and compare-and-swap to arbitrate the prune")}
+	}
+	raw, err := json.Marshal(versions)
 	if err != nil {
 		return 0, ErrSerializationFailed
 	}
-
-	// Encrypt using SecretsEncryptor
-	encryptOpts := &interfaces.EncryptOptions{
-		Algorithm: algorithm,
-		AAD:       []byte(path), // Use path as AAD for binding
-	}
-	blob, err := eb.encryptor.Encrypt(ctx, keyIdentifier, plaintext, encryptOpts)
+	stored, err := g.CompareAndSwap(ctx, secretKey(path), observedRaw, raw)
 	if err != nil {
-		return 0, &SecretsSentinelCauseError{Sentinel: ErrEncryptionFailed, Cause: err}
+		return 0, &SecretsCauseError{Message: "prune versions", Cause: err}
 	}
-
-	// Load existing versions or create new
-	versions, err := eb.loadVersions(ctx, path)
-	if err != nil && !errors.Is(err, ErrSecretNotFound) {
-		return 0, &SecretsCauseError{Message: "failed to load existing versions", Cause: err}
+	if !stored {
+		return 0, nil
 	}
-	if versions == nil {
-		versions = &secretVersions{
-			Versions: make([]*encryptedEntry, 0, 1),
-		}
-	}
-
-	// Create new encrypted entry with all fields from blob
-	now := time.Now()
-	newVersion := len(versions.Versions) + 1
-	entry := &encryptedEntry{
-		KeyIdentifier: blob.KeyIdentifier,
-		KeyVersion:    blob.KeyVersion,
-		Algorithm:     blob.Algorithm,
-		Nonce:         blob.Nonce,
-		Ciphertext:    blob.Ciphertext,
-		Tag:           blob.Tag,
-		AAD:           blob.AAD,
-		EncryptedAt:   blob.EncryptedAt,
-		Metadata:      metadata,
-		Version:       newVersion,
-		Deleted:       false,
-		CreatedAt:     now,
-		CreatedBy:     auth.PrincipalFromContext(ctx),
-	}
-
-	versions.Versions = append(versions.Versions, entry)
-	versions.Deleted = false
-
-	// Save to storage
-	if err := eb.saveVersions(ctx, path, versions); err != nil {
-		return 0, &SecretsCauseError{Message: "failed to save secret", Cause: err}
-	}
-
-	if eb.logger != nil {
-		eb.logger.WithFields(map[string]interface{}{
-			"path":           path,
-			"key_identifier": blob.KeyIdentifier,
-			"algorithm":      blob.Algorithm,
-			"version":        newVersion,
-		}).Info("Secret stored with SecretsEncryptor")
-	}
-
-	return newVersion, nil
+	return pruned, nil
 }
 
 // Get retrieves a secret from the specified path.
@@ -424,12 +620,12 @@ func (eb *EncryptedBackend) GetVersion(ctx context.Context, path string, version
 		return nil, nil, err
 	}
 
-	if version < 1 || version > len(versions.Versions) {
+	if version < 1 || version > versions.latest() {
 		return nil, nil, ErrVersionNotFound
 	}
 
-	entry := versions.Versions[version-1]
-	if entry.Deleted {
+	entry := versions.find(version)
+	if entry == nil || entry.Deleted {
 		return nil, nil, ErrVersionDestroyed
 	}
 
@@ -494,26 +690,39 @@ func (eb *EncryptedBackend) Delete(ctx context.Context, path string) error {
 	eb.mu.Lock()
 	defer eb.mu.Unlock()
 
-	versions, err := eb.loadVersions(ctx, path)
-	if err != nil {
-		return err
+	for attempt := 1; ; attempt++ {
+		versions, observedRaw, err := eb.loadVersionsRaw(ctx, path)
+		if err != nil {
+			return err
+		}
+
+		if versions.Deleted {
+			return ErrSecretDeleted
+		}
+
+		now := time.Now()
+		versions.Deleted = true
+
+		// Mark latest version as deleted
+		if len(versions.Versions) > 0 {
+			latest := versions.Versions[len(versions.Versions)-1]
+			latest.Deleted = true
+			latest.DeletedAt = &now
+		}
+
+		// Published against the history read, so a prune or write by another
+		// instance in between is not overwritten with this stale copy.
+		stored, err := eb.publishVersions(ctx, path, versions, observedRaw)
+		if err != nil {
+			return err
+		}
+		if stored {
+			return nil
+		}
+		if attempt >= historyWriteAttempts {
+			return ErrWriteConflict
+		}
 	}
-
-	if versions.Deleted {
-		return ErrSecretDeleted
-	}
-
-	now := time.Now()
-	versions.Deleted = true
-
-	// Mark latest version as deleted
-	if len(versions.Versions) > 0 {
-		latest := versions.Versions[len(versions.Versions)-1]
-		latest.Deleted = true
-		latest.DeletedAt = &now
-	}
-
-	return eb.saveVersions(ctx, path, versions)
 }
 
 // Destroy permanently removes all versions of a secret.
@@ -574,43 +783,58 @@ func (eb *EncryptedBackend) Rollback(ctx context.Context, path string, version i
 	eb.mu.Lock()
 	defer eb.mu.Unlock()
 
-	versions, err := eb.loadVersions(ctx, path)
-	if err != nil {
-		return err
+	for attempt := 1; ; attempt++ {
+		versions, observedRaw, err := eb.loadVersionsRaw(ctx, path)
+		if err != nil {
+			return err
+		}
+
+		if version < 1 || version > versions.latest() {
+			return ErrVersionNotFound
+		}
+
+		oldEntry := versions.find(version)
+		if oldEntry == nil || oldEntry.Deleted {
+			return ErrVersionDestroyed
+		}
+
+		// Create a new version that copies the old entry's encryption fields
+		now := time.Now()
+		newVersion := versions.latest() + 1
+		newEntry := &encryptedEntry{
+			KeyIdentifier: oldEntry.KeyIdentifier,
+			KeyVersion:    oldEntry.KeyVersion,
+			Algorithm:     oldEntry.Algorithm,
+			Nonce:         oldEntry.Nonce,
+			Ciphertext:    oldEntry.Ciphertext,
+			Tag:           oldEntry.Tag,
+			AAD:           oldEntry.AAD,
+			EncryptedAt:   oldEntry.EncryptedAt, // Keep original encryption timestamp
+			Metadata:      oldEntry.Metadata,
+			Version:       newVersion,
+			Deleted:       false,
+			CreatedAt:     now,
+			CreatedBy:     auth.PrincipalFromContext(ctx),
+		}
+
+		versions.Versions = append(versions.Versions, newEntry)
+		versions.Latest = newVersion
+		versions.Deleted = false
+
+		// Published against the history read: a version another instance
+		// pruned after this read is refused here and re-checked on reload,
+		// not copied back from the stale history.
+		stored, err := eb.publishVersions(ctx, path, versions, observedRaw)
+		if err != nil {
+			return err
+		}
+		if stored {
+			return nil
+		}
+		if attempt >= historyWriteAttempts {
+			return ErrWriteConflict
+		}
 	}
-
-	if version < 1 || version > len(versions.Versions) {
-		return ErrVersionNotFound
-	}
-
-	oldEntry := versions.Versions[version-1]
-	if oldEntry.Deleted {
-		return ErrVersionDestroyed
-	}
-
-	// Create a new version that copies the old entry's encryption fields
-	now := time.Now()
-	newVersion := len(versions.Versions) + 1
-	newEntry := &encryptedEntry{
-		KeyIdentifier: oldEntry.KeyIdentifier,
-		KeyVersion:    oldEntry.KeyVersion,
-		Algorithm:     oldEntry.Algorithm,
-		Nonce:         oldEntry.Nonce,
-		Ciphertext:    oldEntry.Ciphertext,
-		Tag:           oldEntry.Tag,
-		AAD:           oldEntry.AAD,
-		EncryptedAt:   oldEntry.EncryptedAt, // Keep original encryption timestamp
-		Metadata:      oldEntry.Metadata,
-		Version:       newVersion,
-		Deleted:       false,
-		CreatedAt:     now,
-		CreatedBy:     auth.PrincipalFromContext(ctx),
-	}
-
-	versions.Versions = append(versions.Versions, newEntry)
-	versions.Deleted = false
-
-	return eb.saveVersions(ctx, path, versions)
 }
 
 // Type returns the backend type identifier.
@@ -693,6 +917,66 @@ func unmarshalWiped(buf []byte, dst any) error {
 
 // loadVersions loads all versions of a secret from storage.
 func (eb *EncryptedBackend) loadVersions(ctx context.Context, path string) (*secretVersions, error) {
+	versions, _, err := eb.loadVersionsRaw(ctx, path)
+	return versions, err
+}
+
+// checkReadVersion refuses a conditional write unless the path's current
+// record is the one read: the number, undeleted, and (because Destroy lets
+// the numbering restart) the same data and metadata.
+func (eb *EncryptedBackend) checkReadVersion(ctx context.Context, versions *secretVersions, expected ReadVersion) error {
+	if versions == nil || len(versions.Versions) == 0 {
+		return staleReadError(expected, 0, false, false)
+	}
+	current := versions.latest()
+	last := versions.Versions[len(versions.Versions)-1]
+	if current != expected.Version || versions.Deleted || last.Deleted {
+		return staleReadError(expected, current, versions.Deleted || last.Deleted, false)
+	}
+	data, err := eb.decryptEntry(ctx, last)
+	if err != nil {
+		return &SecretsSentinelCauseError{Sentinel: ErrDecryptionFailed, Cause: err}
+	}
+	defer func() {
+		for _, v := range data {
+			clear(v)
+		}
+	}()
+	if !expected.holds(data, last.Metadata) {
+		return staleReadError(expected, current, false, true)
+	}
+	return nil
+}
+
+// saveVersionsIfUnchanged writes versions only while the stored record is
+// still the bytes the check read (observedRaw; nil: absent). A store that
+// cannot arbitrate gets the plain write, held only by the backend's lock.
+func (eb *EncryptedBackend) saveVersionsIfUnchanged(ctx context.Context, path string, versions *secretVersions, observedRaw []byte, expected ReadVersion) error {
+	g, guarded := eb.store.(historyGuardedKVStore)
+	if !guarded {
+		return errUnguardedConditionalWrite()
+	}
+	if observedRaw == nil {
+		// checkReadVersion refuses an absent record; nothing to publish over.
+		return staleReadError(expected, 0, false, false)
+	}
+	raw, err := json.Marshal(versions)
+	if err != nil {
+		return ErrSerializationFailed
+	}
+	stored, err := g.CompareAndSwap(ctx, secretKey(path), observedRaw, raw)
+	if err != nil {
+		return &SecretsCauseError{Message: "failed to save secret", Cause: err}
+	}
+	if !stored {
+		return staleReadError(expected, 0, false, true)
+	}
+	return nil
+}
+
+// loadVersionsRaw is loadVersions that also returns the stored bytes (nil
+// when the path is absent), for a write conditional on them.
+func (eb *EncryptedBackend) loadVersionsRaw(ctx context.Context, path string) (*secretVersions, []byte, error) {
 	data, err := eb.store.Get(ctx, secretKey(path))
 	if err != nil {
 		// ABSENCE AND OUTAGE STAY DISTINCT. The KVStore contract reports a
@@ -703,17 +987,17 @@ func (eb *EncryptedBackend) loadVersions(ctx context.Context, path string) (*sec
 		// ordinary (the documented contract) fail open under an outage.
 		var qbErr *dberrors.QBError
 		if ok := dberrors.As(err, &qbErr); ok && qbErr.Code == dberrors.ErrNotFound {
-			return nil, ErrSecretNotFound
+			return nil, nil, ErrSecretNotFound
 		}
-		return nil, &SecretsSentinelCauseError{Sentinel: ErrBackendUnavailable, Cause: err}
+		return nil, nil, &SecretsSentinelCauseError{Sentinel: ErrBackendUnavailable, Cause: err}
 	}
 
 	var versions secretVersions
 	if err := json.Unmarshal(data, &versions); err != nil {
-		return nil, ErrDeserializationFailed
+		return nil, nil, ErrDeserializationFailed
 	}
 
-	return &versions, nil
+	return &versions, data, nil
 }
 
 // saveVersions saves all versions of a secret to storage.
@@ -724,6 +1008,49 @@ func (eb *EncryptedBackend) saveVersions(ctx context.Context, path string, versi
 	}
 
 	return eb.store.Put(ctx, secretKey(path), data)
+}
+
+// historyWriteAttempts bounds how often a history rewrite reloads and
+// reapplies itself after another writer moved the record under it.
+const historyWriteAttempts = 4
+
+// historyGuardedKVStore is what arbitrates a path's history across instances:
+// its creation is guarded (PutIfAbsent) and so are its rewrites
+// (CompareAndSwap). A CAS-only store such as pkg/kvstore.Store creates with a
+// plain Put, which can overwrite another instance's history.
+type historyGuardedKVStore interface {
+	PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error)
+	CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error)
+}
+
+// publishVersions writes a rewritten history only while the store still holds
+// the bytes it was read from (observedRaw; nil means the record was absent).
+// eb.mu is per instance: another instance on the same store can prune, delete
+// or write the history after this read, and an unconditional Put would then
+// republish the stale history, restoring ciphertext a prune destroyed. A store
+// with compare-and-swap arbitrates the rewrite; one with a guarded create
+// arbitrates a first write. A store lacking either verb (including a CAS-only
+// store, whose creation is a plain Put) has pruning and conditional writes
+// refused, so no destroyed version can come back.
+// It reports false when another writer moved the record: reload and reapply.
+func (eb *EncryptedBackend) publishVersions(ctx context.Context, path string, versions *secretVersions, observedRaw []byte) (bool, error) {
+	raw, err := json.Marshal(versions)
+	if err != nil {
+		return false, ErrSerializationFailed
+	}
+	if observedRaw == nil {
+		if g, ok := eb.store.(interface {
+			PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error)
+		}); ok {
+			return g.PutIfAbsent(ctx, secretKey(path), raw)
+		}
+	} else if g, ok := eb.store.(casKVStore); ok {
+		return g.CompareAndSwap(ctx, secretKey(path), observedRaw, raw)
+	}
+	if err := eb.store.Put(ctx, secretKey(path), raw); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // secretKey builds the storage key for a secret path.

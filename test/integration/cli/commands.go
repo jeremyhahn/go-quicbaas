@@ -487,8 +487,9 @@ func KMSSafetyReportCommand() CommandDef {
 // =============================================================================
 
 // secretsTransportsToSkip defines which transports to skip for secrets operations.
-// Secrets operations are supported via gRPC, Unix, and MCP transports.
-// REST and QUIC do not have secrets service implementations.
+// The raw-byte put/get round trip runs on every transport (see
+// SecretsPutFromFileCommand); the remaining secrets commands still skip REST
+// and QUIC here.
 var secretsTransportsToSkip = []Transport{TransportREST, TransportQUIC}
 
 // SecretsStoreCommand returns a command to store a secret.
@@ -503,6 +504,37 @@ func SecretsStoreCommand(path, value string) CommandDef {
 		RequiresUnseal: true,
 		SkipTransports: secretsTransportsToSkip,
 	}
+}
+
+// SecretsPutFromFileCommand stores the raw bytes of file as the secret (#143).
+func SecretsPutFromFileCommand(path, file string) CommandDef {
+	return CommandDef{
+		Name:           fmt.Sprintf("secrets put %s --from-file", path),
+		Args:           []string{"secrets", "put", path, "--from-file", file},
+		ExpectSuccess:  true,
+		ExpectOutput:   []string{path},
+		Timeout:        10 * time.Second,
+		RequiresUnseal: true,
+		// The raw-byte round trip is the secrets row's acceptance on every
+		// transport (docs/SPEC.md): REST and QUIC both carry put and get.
+	}
+}
+
+// SecretsGetOnEveryTransportCommand is SecretsGetCommand run on every
+// transport, for the raw-byte round trip that must hold on all of them.
+func SecretsGetOnEveryTransportCommand(path string) CommandDef {
+	cmd := SecretsGetCommand(path, 0)
+	cmd.SkipTransports = nil
+	return cmd
+}
+
+// SecretsRoundTripCleanupCommand deletes a round-trip secret on the
+// runner's transport. The REST client refuses --all-versions (its route has
+// no permanent delete), so REST cleans up with a plain delete.
+func SecretsRoundTripCleanupCommand(transport Transport, path string) CommandDef {
+	cmd := SecretsDeleteCommand(path, transport != TransportREST)
+	cmd.SkipTransports = nil
+	return cmd
 }
 
 // SecretsGetCommand returns a command to get a secret.

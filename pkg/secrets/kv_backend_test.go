@@ -478,6 +478,11 @@ func (o *outageKV) Delete(ctx context.Context, key string) error {
 }
 
 func (o *outageKV) Scan(ctx context.Context, prefix string, fn func(key string, value []byte) error) error {
+	// A history listing enumerates the version records by a scan: the
+	// outage reaches it there as it reaches a point read.
+	if o.failVersionReads && strings.Contains(prefix, "/v/") {
+		return o.err
+	}
 	return o.inner.Scan(ctx, prefix, fn)
 }
 

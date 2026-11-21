@@ -555,6 +555,15 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 			// The error stays non-fatal, as it was when this ran in a
 			// goroutine: a scheduler that will not start must not fail the
 			// construction of every other service on the facade.
+			// The secrets rotation job is registered after the scheduler
+			// starts; its interval is refused here, before the engine runs,
+			// so a bad value leaves no running scheduler behind a failed
+			// construction.
+			if b.secretsManager != nil {
+				if _, err := schedulerhandlers.SecretsRotationJob(b.config.SecretsRotationScanInterval); err != nil {
+					return nil, err
+				}
+			}
 			if err := svc.schedulerEngine.Start(context.Background()); err != nil {
 				if logger != nil {
 					logger.Errorf("Scheduler failed to start: %v", err)
@@ -591,7 +600,23 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 	// Initialize Secrets service if secrets manager is provided
 	if b.secretsManager != nil {
 		if secretsMgr, ok := b.secretsManager.(interfaces.SecretsManager); ok {
-			svc.secretsService = newSecretsService(secretsMgr, logger)
+			secretsImpl := newSecretsService(secretsMgr, logger)
+			svc.secretsService = secretsImpl
+			// Rotation policies are performed by a scheduler system job,
+			// so a cluster rotates each due secret exactly once.
+			if engine, ok := svc.schedulerEngine.(*scheduler.SchedulerEngine); ok && engine != nil {
+				if err := registerSecretsRotation(engine, secretsImpl, b.config.SecretsRotationScanInterval); err != nil {
+					// The scheduler is already running and Build returns no
+					// handle to close: stop it here, or its polling goroutine
+					// and persisted jobs outlive the failed construction.
+					stopCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+					defer cancel()
+					if stopErr := svc.schedulerEngine.Stop(stopCtx); stopErr != nil {
+						return nil, stderrors.Join(err, fmt.Errorf("stop scheduler after failed construction: %w", stopErr))
+					}
+					return nil, err
+				}
+			}
 		}
 	}
 

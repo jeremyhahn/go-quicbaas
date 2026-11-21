@@ -14,11 +14,15 @@
 package secrets
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -42,6 +46,14 @@ type kvEntry struct {
 	DeletedAt *time.Time        `json:"deleted_at,omitempty"`
 	// CreatedBy is the authenticated principal that minted this version.
 	CreatedBy string `json:"created_by,omitempty"`
+	// Pruned marks a record retention reduced to a tombstone: its payload is
+	// gone and it reads as absent, while its timestamps stay history.
+	Pruned bool `json:"pruned,omitempty"`
+	// Prev is the version the current pointer held when the writer reserved
+	// this record, i.e. the version this record replaces once published. It
+	// is 0 for a lifetime's first record and for records written before the
+	// field existed.
+	Prev int `json:"prev,omitempty"`
 }
 
 // kvCurrentEntry tracks the current version and soft-delete state of a path.
@@ -49,6 +61,21 @@ type kvCurrentEntry struct {
 	Version   int        `json:"version"`
 	Deleted   bool       `json:"deleted"`
 	DeletedAt *time.Time `json:"deleted_at,omitempty"`
+	// Generation names the path's lifetime: drawn when the pointer is first
+	// published and carried by every later write, so a path destroyed and
+	// recreated to the same version has another pointer, and a guarded
+	// write that observed the old lifetime loses its CAS. Pointers written
+	// before it existed carry none, which a recreation also changes.
+	Generation string `json:"generation,omitempty"`
+}
+
+// newPointerGeneration draws a fresh path lifetime for kvCurrentEntry.
+func newPointerGeneration() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", &SecretsCauseError{Message: "draw pointer generation", Cause: err}
+	}
+	return hex.EncodeToString(b[:]), nil
 }
 
 // KVStoreWriter is the subset of the qrdb KVStore interface needed by KVBackend.
@@ -80,6 +107,14 @@ type guardedKVStore interface {
 	CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error)
 	// CompareAndSwap replaces key's value with next only while it still
 	// holds expected, atomically; an absent key stays absent.
+	CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error)
+}
+
+// casKVStore is the compare-and-swap verb the EncryptedBackend's history
+// rewrites use when the store offers it (the backend keeps a path's versions
+// in one key). A conditional write or a prune also needs PutIfAbsent
+// (historyGuardedKVStore). pkg/kvstore.Store offers CAS without it.
+type casKVStore interface {
 	CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error)
 }
 
@@ -115,6 +150,11 @@ const (
 //	_qb/secrets/<path>/v/<N>     → kvEntry (version N data)
 type KVBackend struct {
 	store KVStoreWriter
+
+	// writeLocks replaces the process-wide kvWriteLocks when set: a test
+	// gives each backend its own stripes, as two processes would have, so
+	// only the store's guarded writes arbitrate between them.
+	writeLocks *[32]sync.Mutex
 }
 
 // kvWriteLocks serialises writes per secret path, PROCESS-WIDE. Package-level
@@ -138,6 +178,15 @@ var kvWriteLocks [32]sync.Mutex
 // two stripes.
 func lockKVPath(path string) *sync.Mutex {
 	return &kvWriteLocks[id.HashString(path)%uint64(len(kvWriteLocks))]
+}
+
+// lockPath returns the write lock this backend takes for a path: the
+// process-wide stripe, or the backend's own when writeLocks is set.
+func (b *KVBackend) lockPath(path string) *sync.Mutex {
+	if b.writeLocks == nil {
+		return lockKVPath(path)
+	}
+	return &b.writeLocks[id.HashString(path)%uint64(len(b.writeLocks))]
 }
 
 // nextVersionNumber allocates the next version for a path: one past the
@@ -193,6 +242,28 @@ func (b *KVBackend) Store(ctx context.Context, path string, data map[string][]by
 // StoreVersion saves a secret as Store does and returns the version it
 // allocated and published.
 func (b *KVBackend) StoreVersion(ctx context.Context, path string, data map[string][]byte, metadata map[string]string) (int, error) {
+	return b.storeVersion(ctx, path, nil, data, metadata)
+}
+
+// StoreVersionIfCurrent stores a new version only while expected is the
+// path's current, undeleted version; otherwise it stores nothing and returns
+// ErrWriteConflict wrapping a *StaleVersionError. The check and the
+// publication are one storage-level decision: the pointer is published with
+// CompareAndSwap against the pointer the check read, so a write by any node
+// between them refuses this one.
+func (b *KVBackend) StoreVersionIfCurrent(ctx context.Context, path string, expected ReadVersion, data map[string][]byte, metadata map[string]string) (int, error) {
+	if expected.Version <= 0 {
+		return 0, staleReadError(expected, 0, false, false)
+	}
+	if _, guarded := b.store.(guardedKVStore); !guarded {
+		return 0, errUnguardedConditionalWrite()
+	}
+	return b.storeVersion(ctx, path, &expected, data, metadata)
+}
+
+// storeVersion is StoreVersion, conditional on the current version when
+// expected is positive.
+func (b *KVBackend) storeVersion(ctx context.Context, path string, expected *ReadVersion, data map[string][]byte, metadata map[string]string) (int, error) {
 	if path == "" {
 		return 0, ErrInvalidPath
 	}
@@ -200,7 +271,7 @@ func (b *KVBackend) StoreVersion(ctx context.Context, path string, data map[stri
 		return 0, ErrEmptyData
 	}
 
-	lock := lockKVPath(path)
+	lock := b.lockPath(path)
 	lock.Lock()
 	defer lock.Unlock()
 
@@ -208,9 +279,37 @@ func (b *KVBackend) StoreVersion(ctx context.Context, path string, data map[stri
 	if err != nil {
 		return 0, err
 	}
+	if expected != nil {
+		if cur.Version != expected.Version || cur.Deleted {
+			return 0, staleReadError(*expected, cur.Version, cur.Deleted, false)
+		}
+		// The number matched; the record must be the one read. A destroyed
+		// and recreated path restarts its numbering, and only the content
+		// tells the two records apart here. The pointer's generation, which
+		// a recreation renews, carries the check to the CAS below: a
+		// destroy and recreate after this read changes the pointer's bytes.
+		storedData, storedMetadata, getErr := b.getVersion(ctx, path, cur.Version)
+		if getErr != nil {
+			if errors.Is(getErr, ErrVersionNotFound) || errors.Is(getErr, ErrVersionDestroyed) {
+				return 0, staleReadError(*expected, cur.Version, false, true)
+			}
+			return 0, getErr
+		}
+		if !expected.holds(storedData, storedMetadata) {
+			return 0, staleReadError(*expected, cur.Version, false, true)
+		}
+	}
+	if observedRaw == nil {
+		generation, genErr := newPointerGeneration()
+		if genErr != nil {
+			return 0, genErr
+		}
+		cur.Generation = generation
+	}
 
 	now := time.Now()
 	createdBy := auth.PrincipalFromContext(ctx)
+	prev := cur.Version
 	nextVer, err := b.allocateAndReserve(ctx, path, cur.Version, func(version int) *kvEntry {
 		return &kvEntry{
 			Path:      path,
@@ -220,6 +319,7 @@ func (b *KVBackend) StoreVersion(ctx context.Context, path string, data map[stri
 			CreatedAt: now,
 			UpdatedAt: now,
 			CreatedBy: createdBy,
+			Prev:      prev,
 		}
 	})
 	if err != nil {
@@ -243,6 +343,226 @@ func (b *KVBackend) StoreVersion(ctx context.Context, path string, data map[stri
 		return 0, err
 	}
 	return nextVer, nil
+}
+
+// PruneVersions deletes every version entry of path numbered at or below the
+// current version minus keep. Version numbers come from the current pointer
+// and the highest entry, so a pruned number is never reused, and the gaps it
+// leaves are the ones ListVersions already skips. Deleting only entries older
+// than the pointer this read makes a concurrent write harmless: it adds a
+// newer version, never one this prune removes.
+func (b *KVBackend) PruneVersions(ctx context.Context, path string, keep int) (int, error) {
+	if path == "" {
+		return 0, ErrInvalidPath
+	}
+	if keep < 1 {
+		return 0, ErrVersionMustBePositive
+	}
+
+	// EVERY PRUNE DELETE IS A COMPARE-AND-DELETE of the exact record the scan
+	// read. The stripe lock is per process: on another node a Destroy can
+	// remove this history and a Store recreate version 1 between the scan
+	// and the delete, and an unconditional delete would then remove that
+	// acknowledged version while its pointer remains. A store that cannot
+	// arbitrate the delete cannot prune.
+	g, guarded := b.store.(guardedKVStore)
+	if !guarded {
+		return 0, &SecretsSentinelCauseError{Sentinel: ErrPruneUnsupported,
+			Cause: errors.New("the backing store has no compare-and-delete to arbitrate the prune")}
+	}
+
+	lock := b.lockPath(path)
+	lock.Lock()
+	defer lock.Unlock()
+
+	cur, err := b.loadCurrent(ctx, path)
+	if err != nil {
+		return 0, err
+	}
+	if cur.Version == 0 {
+		return 0, ErrSecretNotFound
+	}
+	if cur.Version <= keep {
+		return 0, nil
+	}
+	records, err := b.scanVersionRecords(ctx, path, cur.Version)
+	if err != nil {
+		return 0, &SecretsCauseError{Message: "prune versions: enumerate keyspace", Cause: err}
+	}
+	// RETENTION COUNTS COMMITTED LIVE RECORDS, NOT VERSION NUMBERS. The
+	// history can be sparse: a writer that loses publication removes its
+	// reservation, so versions 1 and 3 can be the only records under a
+	// pointer at 3, and a floor of cur.Version-keep would delete version 1
+	// with keep=2 and leave no rollback target. Nor is every record history:
+	// a writer that has reserved a version but not yet published its pointer
+	// holds a record that may still be unwound, and counting it would let
+	// this prune remove the rollback target it displaced. So the committed
+	// records are found by walking the pointer's chain: from cur.Version
+	// through each record's Prev (the version it replaced), following
+	// tombstones too, stopping at an absent record or at a Prev that does not
+	// descend. A record whose Prev is 0 is a lifetime's first record or was
+	// written before Prev existed; every live record below it counts as
+	// committed, the old rule for those records. The newest keep committed
+	// live records are retained; a tombstone is no rollback target, so it
+	// never counts toward keep. Every record below the oldest retained one
+	// is in the delete set, including a reservation never published: its
+	// pointer CAS expects a version the pointer has since moved past, so it
+	// can never publish, and its writer's unwind tolerates NotFound.
+	// Uncommitted records at or above the oldest retained one are neither
+	// counted nor deleted.
+	byVersion := make(map[int]kvVersionRecord, len(records))
+	for _, r := range records {
+		byVersion[r.version] = r
+	}
+	committed := make(map[int]bool, len(records))
+	for step := cur.Version; ; {
+		r, ok := byVersion[step]
+		if !ok {
+			break
+		}
+		committed[step] = true
+		prev := r.entry.Prev
+		if prev == 0 {
+			for _, older := range records {
+				if older.version < step {
+					committed[older.version] = true
+				}
+			}
+			break
+		}
+		if prev >= step {
+			break
+		}
+		step = prev
+	}
+	var live []kvVersionRecord
+	for _, r := range records {
+		if !r.destroyed && committed[r.version] {
+			live = append(live, r)
+		}
+	}
+	if len(live) < keep {
+		return 0, nil
+	}
+	oldestRetained := live[len(live)-keep].version
+	// THE EARLIEST RECORD IS THE SECRET'S CREATION TIME. Listings derive
+	// created_at from the earliest version's CreatedAt, so deleting that
+	// record would move the creation time forward to the oldest survivor.
+	// It is pruned to a tombstone instead (payload dropped, timestamps
+	// kept), as the memory and encrypted backends prune; every later
+	// record below the retained set is deleted outright, so the history
+	// stays bounded at keep live records plus one tombstone.
+	earliest := records[0].version
+	var doomed []kvVersionRecord
+	for _, r := range records {
+		if r.version >= oldestRetained {
+			break
+		}
+		if r.version == earliest && r.destroyed {
+			continue // already this lifetime's creation tombstone
+		}
+		doomed = append(doomed, r)
+	}
+	// Newest first: a concurrent recreation that this prune loses to is
+	// detected by the first refused delete, as before.
+	sort.Slice(doomed, func(i, j int) bool { return doomed[i].version > doomed[j].version })
+	// THE SCAN MUST BELONG TO THE LIFETIME THE CEILING WAS READ IN. Another
+	// node can destroy the path and recreate version 1 between loadCurrent
+	// and the scan; the scan then captures the new lifetime's records under
+	// the old ceiling, and a compare-and-delete against those very bytes
+	// would succeed. The pointer is read again after the scan: a changed
+	// generation (or a destroyed path) means the scan may hold another
+	// lifetime's records, so this prune deletes nothing. A recreation after
+	// this check replaces the records, so the scanned bytes no longer match
+	// and every delete below is refused.
+	after, err := b.loadCurrent(ctx, path)
+	if err != nil {
+		return 0, err
+	}
+	if after.Version == 0 || after.Generation != cur.Generation || after.Version < cur.Version {
+		return 0, nil
+	}
+	pruned := 0
+	for _, d := range doomed {
+		// A refused delete means the record changed since the scan (a
+		// concurrent destroy and recreate): it is not this prune's record,
+		// so it is left alone.
+		var deleted bool
+		if d.version == earliest {
+			deleted, err = b.tombstoneVersion(ctx, g, path, d)
+		} else {
+			deleted, err = g.CompareAndDelete(ctx, versionKey(path, d.version), d.raw)
+		}
+		if err != nil {
+			if qberrors.IsNotFound(err) {
+				continue
+			}
+			return pruned, &SecretsCauseError{Message: "prune version " + strconv.Itoa(d.version), Cause: err}
+		}
+		if deleted {
+			pruned++
+		}
+	}
+	return pruned, nil
+}
+
+// kvVersionRecord is one version record a scan read: its number, the exact
+// bytes (for a compare-and-delete or swap) and whether it is a tombstone.
+type kvVersionRecord struct {
+	version   int
+	raw       []byte
+	entry     kvEntry
+	destroyed bool
+}
+
+// scanVersionRecords enumerates the version records that exist for path,
+// numbered 1..ceiling, oldest first. It reads only the surviving records:
+// a history pruned to a handful of versions costs a handful of reads
+// however many versions the path has had. A record above the ceiling is
+// another writer's reservation in flight, not published history, and an
+// unreadable record is skipped as before.
+func (b *KVBackend) scanVersionRecords(ctx context.Context, path string, ceiling int) ([]kvVersionRecord, error) {
+	prefix := kvBackendKeyPrefix + path + "/v/"
+	var records []kvVersionRecord
+	if err := b.store.Scan(ctx, prefix, func(key string, value []byte) error {
+		rest := strings.TrimPrefix(key, prefix)
+		// Only a bare number is this path's version: a deeper key belongs
+		// to a child path such as path+"/v/3".
+		if rest == "" || strings.ContainsFunc(rest, func(r rune) bool { return r < '0' || r > '9' }) {
+			return nil
+		}
+		n, convErr := strconv.Atoi(rest)
+		if convErr != nil || n < 1 || n > ceiling || value == nil {
+			return nil
+		}
+		var entry kvEntry
+		if err := json.Unmarshal(value, &entry); err != nil {
+			return nil
+		}
+		records = append(records, kvVersionRecord{version: n, raw: bytes.Clone(value), entry: entry, destroyed: entry.Destroyed || entry.Pruned})
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	sort.Slice(records, func(i, j int) bool { return records[i].version < records[j].version })
+	return records, nil
+}
+
+// tombstoneVersion replaces the record r with a tombstone that keeps its
+// timestamps and author and drops its payload, only while the record still
+// holds the bytes the scan read.
+func (b *KVBackend) tombstoneVersion(ctx context.Context, g guardedKVStore, path string, r kvVersionRecord) (bool, error) {
+	now := time.Now().UTC()
+	tomb := r.entry
+	tomb.Data = nil
+	tomb.Metadata = nil
+	tomb.Pruned = true
+	tomb.DeletedAt = &now
+	next, err := json.Marshal(tomb)
+	if err != nil {
+		return false, err
+	}
+	return g.CompareAndSwap(ctx, versionKey(path, r.version), r.raw, next)
 }
 
 // allocateAndReserve allocates the next version number and reserves its key,
@@ -279,18 +599,43 @@ func (b *KVBackend) Get(ctx context.Context, path string) (map[string][]byte, ma
 	if path == "" {
 		return nil, nil, ErrInvalidPath
 	}
-	cur, err := b.loadCurrent(ctx, path)
-	if err != nil {
-		return nil, nil, err
+	// A current read is two store reads, the pointer and then its version.
+	// A concurrent write on any node can publish a newer version and prune
+	// the one the pointer named in between, so a missing version under a
+	// pointer that has since moved is retried against the new pointer; the
+	// secret existed throughout. A missing version under an unmoved pointer
+	// is reported as it is. GetVersion keeps its exact-version semantics.
+	for attempt := 1; ; attempt++ {
+		cur, err := b.loadCurrent(ctx, path)
+		if err != nil {
+			return nil, nil, err
+		}
+		if cur.Version == 0 {
+			return nil, nil, ErrSecretNotFound
+		}
+		if cur.Deleted {
+			return nil, nil, ErrSecretDeleted
+		}
+		data, metadata, err := b.getVersion(ctx, path, cur.Version)
+		if !errors.Is(err, ErrVersionNotFound) || attempt >= currentReadAttempts {
+			return data, metadata, err
+		}
+		now, reloadErr := b.loadCurrent(ctx, path)
+		if reloadErr != nil {
+			// The version is missing and the pointer cannot be read again,
+			// so whether a writer moved it is unknown: report the store
+			// failure, not an absence the caller would act on.
+			return nil, nil, &SecretsCauseError{Message: "reload current pointer after a missing version", Cause: reloadErr}
+		}
+		if now.Version == cur.Version && now.Generation == cur.Generation {
+			return data, metadata, err
+		}
 	}
-	if cur.Version == 0 {
-		return nil, nil, ErrSecretNotFound
-	}
-	if cur.Deleted {
-		return nil, nil, ErrSecretDeleted
-	}
-	return b.getVersion(ctx, path, cur.Version)
 }
+
+// currentReadAttempts bounds how often Get follows a pointer that moved while
+// a concurrent prune removed the version it named.
+const currentReadAttempts = 4
 
 // GetVersion retrieves a specific version of a secret.
 func (b *KVBackend) GetVersion(ctx context.Context, path string, version int) (map[string][]byte, map[string]string, error) {
@@ -340,7 +685,7 @@ func (b *KVBackend) Delete(ctx context.Context, path string) error {
 	if path == "" {
 		return ErrInvalidPath
 	}
-	lock := lockKVPath(path)
+	lock := b.lockPath(path)
 	lock.Lock()
 	defer lock.Unlock()
 
@@ -391,7 +736,7 @@ func (b *KVBackend) Destroy(ctx context.Context, path string) error {
 	if path == "" {
 		return ErrInvalidPath
 	}
-	lock := lockKVPath(path)
+	lock := b.lockPath(path)
 	lock.Lock()
 	defer lock.Unlock()
 
@@ -465,30 +810,24 @@ func (b *KVBackend) ListVersions(ctx context.Context, path string) ([]*VersionMe
 	if cur.Version == 0 {
 		return nil, ErrSecretNotFound
 	}
+	// The surviving records are enumerated, not every number up to the
+	// pointer: retention deletes retired versions, and probing each one
+	// would make every read cost the path's lifetime write count. Pruned
+	// and destroyed versions leave gaps; absence is ordinary here. An
+	// OUTAGE is not a gap: a failed scan is returned, never a truncated
+	// history presented as complete (the #109 class, at this seam).
+	records, err := b.scanVersionRecords(ctx, path, cur.Version)
+	if err != nil {
+		return nil, &SecretsCauseError{Message: "list version entry", Cause: err}
+	}
 	var versions []*VersionMetadata
-	for v := 1; v <= cur.Version; v++ {
-		raw, err := b.store.Get(ctx, versionKey(path, v))
-		if err != nil {
-			if qberrors.IsNotFound(err) {
-				continue // destroyed versions leave gaps; absence is ordinary here
-			}
-			// An OUTAGE is not a gap: skipping it silently hands the caller a
-			// truncated history presented as complete — the #109 class, at
-			// this seam.
-			return nil, &SecretsCauseError{Message: "list version entry", Cause: err}
-		}
-		if raw == nil {
-			continue
-		}
-		var entry kvEntry
-		if err := json.Unmarshal(raw, &entry); err != nil {
-			continue
-		}
+	for _, r := range records {
+		entry := r.entry
 		vm := &VersionMetadata{
 			Version:   entry.Version,
 			CreatedAt: entry.CreatedAt,
 			CreatedBy: entry.CreatedBy,
-			Deleted:   entry.Destroyed,
+			Deleted:   entry.Destroyed || entry.Pruned,
 		}
 		if entry.DeletedAt != nil {
 			vm.DeletedAt = entry.DeletedAt
@@ -506,7 +845,7 @@ func (b *KVBackend) Rollback(ctx context.Context, path string, version int) erro
 	if version <= 0 {
 		return ErrVersionMustBePositive
 	}
-	lock := lockKVPath(path)
+	lock := b.lockPath(path)
 	lock.Lock()
 	defer lock.Unlock()
 
@@ -539,6 +878,9 @@ func (b *KVBackend) Rollback(ctx context.Context, path string, version int) erro
 	if err := json.Unmarshal(raw, &oldEntry); err != nil {
 		return &SecretsSentinelCauseError{Sentinel: ErrDeserializationFailed, Cause: err}
 	}
+	if oldEntry.Pruned {
+		return ErrVersionNotFound // retention removed it; its tombstone holds no payload
+	}
 	if oldEntry.Destroyed {
 		return ErrVersionDestroyed
 	}
@@ -548,6 +890,7 @@ func (b *KVBackend) Rollback(ctx context.Context, path string, version int) erro
 	// exactly as Store reserves (review 994).
 	now := time.Now()
 	createdBy := auth.PrincipalFromContext(ctx)
+	prev := cur.Version
 	nextVer, err := b.allocateAndReserve(ctx, path, cur.Version, func(version int) *kvEntry {
 		return &kvEntry{
 			Path:      path,
@@ -557,6 +900,7 @@ func (b *KVBackend) Rollback(ctx context.Context, path string, version int) erro
 			CreatedAt: now,
 			UpdatedAt: now,
 			CreatedBy: createdBy,
+			Prev:      prev,
 		}
 	})
 	if err != nil {
@@ -704,6 +1048,10 @@ func (b *KVBackend) getVersion(ctx context.Context, path string, version int) (m
 	var entry kvEntry
 	if err := json.Unmarshal(raw, &entry); err != nil {
 		return nil, nil, &SecretsSentinelCauseError{Sentinel: ErrDeserializationFailed, Cause: err}
+	}
+	if entry.Pruned {
+		// Retention removed this version: absent, as on the other backends.
+		return nil, nil, ErrVersionNotFound
 	}
 	if entry.Destroyed {
 		return nil, nil, ErrVersionDestroyed

@@ -141,6 +141,36 @@ version entry it reserved, and leaves the winner's write in place; retrying
 re-reads the pointer. On a store without these verbs the pointer write is
 unconditional, so run exactly one writer process per shared store.
 
+**Across nodes.** The server's store (`pkg/server/kv_store.go`) carries the
+guarded verbs whenever go-qrdb's KV client offers them
+(`transport.GuardedKVClient`) and forwards them to go-qrdb, which decides
+each condition inside the replicated store. Every node of a cluster writes
+through that one store, so the arbitration above is cluster-wide: writers on
+different nodes racing on one secret each get a distinct version or
+`ErrWriteConflict`, never a lost or shared version.
+`TestKVBackend_TwoNodesArbitrateConcurrentWrites` races writers on two
+backends sharing one arbitrating store and checks exactly that, and that
+both nodes then read the same history.
+
+## Two implementations: go-qrdb's barrier and QuicBaaS's own backend
+
+Secret storage has two implementations today, and this is deliberate and
+bounded:
+
+- **go-qrdb's barrier and credentials** own encryption at rest, and the
+  secret references and dynamic secrets that resolve through them
+  ([engineering.md](engineering.md), [dynamic-secrets.md](dynamic-secrets.md)).
+- **QuicBaaS's own encrypted secrets backend** (`pkg/secrets`:
+  `EncryptedBackend`, the encryptor and its DEKs `dek:global`,
+  `dek:tenant:<id>` and `dek:tenant:<id>:db:<name>`) is a parallel
+  implementation of the same job. It stays, and keeps working as described
+  in this document, until the owner rules its removal; removing it is not
+  part of the `secrets` SPEC row.
+
+Until then, new secret capabilities go to go-qrdb's side, not to the
+parallel backend; changes to the parallel backend are fixes to what it
+already does.
+
 ## Security Model
 
 ### Defense in Depth
@@ -211,6 +241,53 @@ is mapped onto the same permission in each of the three tables:
 `list` is the names-only enumeration; anything that returns secret material or
 its metadata is `read`. The two rotation-policy verbs have no REST route of
 their own and take read / write of the policy sub-resource on the same family.
+
+### Rotation policies are performed
+
+`SetRotationPolicy` writes the policy into the secret's metadata
+(`rotation_enabled`, `rotation_interval`, `rotation_next`,
+`rotation_retain_versions`). The `secrets.rotation` scheduler system job
+(`pkg/scheduler/handlers/secrets_rotation.go`, `pkg/service/secrets_rotation.go`)
+performs it: every scan interval (`Config.SecretsRotationScanInterval`, default
+5 minutes, a whole number of seconds) the job lists every tenant's secrets and,
+for each enabled policy whose `rotation_next` has passed:
+
+- writes the current value as a new version, under the owning tenant's context
+  as that tenant's own `RotateSecret` would, so the backend encrypts it afresh;
+- records `rotation_reason=scheduled` and `rotation_last` on the new version;
+- advances `rotation_next` by whole intervals past now, so a scan that missed
+  several periods rotates once and keeps the cadence.
+
+The write is conditional on the version the scan read
+(`StoreVersionIfCurrent`): an update, a policy change or a delete that lands
+between the read and the write wins, and the rotation stores nothing. A policy
+enabled without a `rotation_next` (the MCP tool declares none) gets its first
+deadline one interval out; an enabled policy with no deadline at all is due on
+the next scan, which schedules one.
+
+It is a system job, so a cluster performs each due rotation exactly once. A
+secret that cannot be read (deleted or disabled) is not rotated; a failed
+rotation is counted, logged and stays due for the next scan. The job keeps the
+secret's value: a new value comes from `RotateSecret`. After each rotation the
+secret is pruned to `rotation_retain_versions` older versions plus the current
+one (nine older ones when the policy names none), so a policy that runs for
+years keeps a bounded history. Independently, the Manager prunes every secret
+to `secrets.versioning.max_versions` after each write (0 keeps every version).
+At the Manager and the API a pruned version is not found on every backend (memory and encrypted report ErrVersionDestroyed underneath, KV ErrVersionNotFound), for a versioned read and for a rollback alike. A soft-deleted version is no rollback target, so it never counts toward the versions retention keeps. Pruning is arbitrated by the backing store: the KV backend
+compare-and-deletes the exact records it scanned and deletes nothing when the
+pointer's lifetime changed during the scan; the encrypted backend
+compare-and-swaps the history it read, and every other history rewrite (store,
+delete, rollback) is published against the bytes it read and reapplied on a
+moved record, so a prune never deletes a version another node recreated, never
+revives a deleted secret, and a stale writer never restores a pruned version.
+A store without those verbs keeps every version (`ErrPruneUnsupported`): the
+encrypted backend needs both `PutIfAbsent` and `CompareAndSwap` to prune or to
+write conditionally, so pkg/kvstore.Store, which has only `CompareAndSwap`, is
+refused (`ErrPruneUnsupported`, `ErrConditionalWriteUnsupported`). The
+KV backend's latest-version read follows a pointer that moved while a
+concurrent prune removed the version it named, so every Manager reader sees
+the version that replaced it; an explicit version read is not retried: when a prune removes the requested version between the version read and the history or author read, the service reads that version again and answers not-found. The scheduler dispatches the handler only for its reserved
+system job: a tenant job that names it is refused before any secret is read.
 
 The tables live in `pkg/api/rest/routes_permissions_generated.go`,
 `pkg/api/grpc/authz_mapping.go` (plus the `(qrdb.v1.permission)` annotations in
