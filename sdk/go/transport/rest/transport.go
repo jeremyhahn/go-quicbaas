@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/json"
 	stderrors "errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -288,26 +289,37 @@ func withSecretHop(ctx context.Context, verb string) context.Context {
 // (net/http sets Request.Response on every hop it follows) or is not
 // https. A secret must reach the configured https origin and nothing
 // else; go-qrdb's SOPINRoundTripper does the same for a bound SO PIN.
-// Unmarked requests pass through untouched.
+// It also refuses any hop, the first included, of a request whose context
+// withTenantBearerHop marked when the hop carries an Authorization header
+// and is not https, with ErrPlaintextBearer: a tenant barrier verb never
+// sends the platform bearer in plaintext. Unmarked requests, and marked
+// ones without a bearer, pass through untouched.
 type secretHopRoundTripper struct {
 	base http.RoundTripper
 }
 
 // RoundTrip implements http.RoundTripper.
 func (s secretHopRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	verb, ok := req.Context().Value(secretHopKey{}).(string)
-	if !ok {
+	verb, secret := req.Context().Value(secretHopKey{}).(string)
+	bearerMarked, _ := req.Context().Value(tenantBearerHopKey{}).(bool)
+	if !secret && !bearerMarked {
 		return s.base.RoundTrip(req)
 	}
-	if req.Response != nil {
-		closeRequestBody(req)
-		return nil, errors.New(errors.CodeForbidden, "rest."+verb,
-			"refusing to follow a redirect for "+req.URL.Path+": the request carries a barrier secret")
+	if secret {
+		if req.Response != nil {
+			closeRequestBody(req)
+			return nil, errors.New(errors.CodeForbidden, "rest."+verb,
+				"refusing to follow a redirect for "+req.URL.Path+": the request carries a barrier secret")
+		}
+		if req.URL.Scheme != "https" {
+			closeRequestBody(req)
+			return nil, errors.New(errors.CodeForbidden, "rest."+verb,
+				"refusing to send "+req.URL.Path+" over "+req.URL.Scheme+": the request carries a barrier secret and needs https")
+		}
 	}
-	if req.URL.Scheme != "https" {
+	if bearerMarked && req.Header.Get("Authorization") != "" && req.URL.Scheme != "https" {
 		closeRequestBody(req)
-		return nil, errors.New(errors.CodeForbidden, "rest."+verb,
-			"refusing to send "+req.URL.Path+" over "+req.URL.Scheme+": the request carries a barrier secret and needs https")
+		return nil, fmt.Errorf("%w: %s", ErrPlaintextBearer, req.URL.Redacted())
 	}
 	return s.base.RoundTrip(req)
 }

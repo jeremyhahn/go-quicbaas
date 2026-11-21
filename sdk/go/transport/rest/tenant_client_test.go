@@ -575,3 +575,94 @@ func TestTenantClient_SecretHopRefusalIsForbidden(t *testing.T) {
 		t.Fatalf("plaintext server received %d requests, want 0", n)
 	}
 }
+
+// TestTenantClient_BearerNeverSentOverPlaintext pins that a tenant barrier
+// verb never sends the platform bearer on a non-https first hop, through the
+// built client and a WithHTTPClient client, while a tokenless verb over
+// http still works.
+func TestTenantClient_BearerNeverSentOverPlaintext(t *testing.T) {
+	var hits, authHits atomic.Int32
+	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		if r.Header.Get("Authorization") != "" {
+			authHits.Add(1)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"tenant_id":"t1","sealed":true}`)
+	}))
+	t.Cleanup(plain.Close)
+
+	newTransport := func(t *testing.T, opts ...Option) *Transport {
+		t.Helper()
+		tr, err := New(&transport.Config{Address: plain.URL, MaxRetries: 0}, opts...)
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		t.Cleanup(func() { _ = tr.Close() })
+		return tr
+	}
+
+	verbs := map[string]func(*TenantClient) error{
+		"TenantBarrierStatus": func(c *TenantClient) error {
+			_, err := c.TenantBarrierStatus(context.Background(), &qrdbtransport.TenantBarrierStatusRequest{TenantID: "t1"})
+			return err
+		},
+		"TenantBarrierSeal": func(c *TenantClient) error {
+			return c.TenantBarrierSeal(context.Background(), &qrdbtransport.TenantBarrierSealRequest{TenantID: "t1"})
+		},
+		"TenantBarrierOfficerList": func(c *TenantClient) error {
+			_, err := c.TenantBarrierOfficerList(context.Background(), "t1")
+			return err
+		},
+		"TenantBarrierShareClaimBegin": func(c *TenantClient) error {
+			_, err := c.TenantBarrierShareClaimBegin(context.Background(),
+				&qrdbtransport.TenantShareClaimBeginRequest{TenantID: "t1", Username: "alice"})
+			return err
+		},
+	}
+
+	t.Run("bearer", func(t *testing.T) {
+		transports := map[string]*Transport{
+			"built":    newTransport(t, WithAuthToken("tok-2558")),
+			"supplied": newTransport(t, WithAuthToken("tok-2558"), WithHTTPClient(&http.Client{Timeout: 5 * time.Second})),
+		}
+		for trName, tr := range transports {
+			for verbName, call := range verbs {
+				t.Run(trName+"/"+verbName, func(t *testing.T) {
+					err := call(tr.Tenants(nil))
+					if err == nil {
+						t.Fatal("got nil error, want a plaintext-bearer refusal")
+					}
+					if !stderrors.Is(err, ErrPlaintextBearer) {
+						t.Errorf("err = %v, want ErrPlaintextBearer", err)
+					}
+					if got := errors.Code(err); got != errors.CodeForbidden {
+						t.Errorf("code = %v, want CodeForbidden: %v", got, err)
+					}
+					if errors.IsRetryable(err) {
+						t.Errorf("refusal is retryable: %v", err)
+					}
+				})
+			}
+		}
+		if n := hits.Load(); n != 0 {
+			t.Fatalf("plaintext server received %d requests (%d with Authorization), want 0", n, authHits.Load())
+		}
+	})
+
+	t.Run("no bearer", func(t *testing.T) {
+		tr := newTransport(t)
+		before := authHits.Load()
+		out, err := tr.Tenants(nil).TenantBarrierStatus(context.Background(),
+			&qrdbtransport.TenantBarrierStatusRequest{TenantID: "t1"})
+		if err != nil {
+			t.Fatalf("TenantBarrierStatus without a bearer: %v", err)
+		}
+		if !out.Sealed {
+			t.Errorf("Sealed = false, want true")
+		}
+		if n := authHits.Load() - before; n != 0 {
+			t.Errorf("server saw %d requests with Authorization, want 0", n)
+		}
+	})
+}

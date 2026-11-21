@@ -39,7 +39,11 @@ import (
 // to a non-https URL or to a host:port other than the one the request was
 // sent to: the transport's client refuses such a hop before the bearer is
 // sent and the verb fails with a CodeForbidden error wrapping
-// ErrInsecureRedirect. A same-host https redirect is still followed.
+// ErrInsecureRedirect. A same-host https redirect is still followed. They
+// never send it on a non-https first hop either: the transport refuses the
+// hop before anything is sent and the verb fails with a CodeForbidden error
+// wrapping ErrPlaintextBearer. Without WithAuthToken they still work over
+// http.
 //
 // Each overridden verb keeps the HTTP method, path, request body and
 // response handling of the matching method in go-qrdb sdk/go transport/rest.
@@ -65,8 +69,13 @@ const tenantClientOp = "rest.TenantClient"
 // QBError, so errors.Is matches it alone and never the secret-hop refusals.
 var ErrInsecureRedirect = stderrors.New("rest: refusing a redirect that would carry the bearer over plaintext or to another host")
 
+// ErrPlaintextBearer is wrapped by the error a tenant barrier verb returns
+// when it refuses to send the platform bearer on a hop that is not https,
+// the first hop included. Like ErrInsecureRedirect it is a plain error.
+var ErrPlaintextBearer = stderrors.New("rest: refusing to send the bearer over plaintext http")
+
 // tenantBearerHopKey marks a request context as a tenant barrier verb whose
-// redirects tenantRedirectPolicy checks.
+// hops tenantRedirectPolicy and secretHopRoundTripper check.
 type tenantBearerHopKey struct{}
 
 // withTenantBearerHop marks ctx for tenantRedirectPolicy.
@@ -136,6 +145,9 @@ func (c *TenantClient) doTenantRequest(ctx context.Context, verb, method, path s
 	if err != nil {
 		if stderrors.Is(err, ErrInsecureRedirect) {
 			return nil, errors.Wrap(err, errors.CodeForbidden, tenantClientOp, verb+": refused an insecure redirect")
+		}
+		if stderrors.Is(err, ErrPlaintextBearer) {
+			return nil, errors.Wrap(err, errors.CodeForbidden, tenantClientOp, verb+": refused to send the bearer over plaintext")
 		}
 		return nil, err
 	}
