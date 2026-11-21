@@ -15,6 +15,7 @@ package grpc
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -201,9 +202,20 @@ func (h *iamHandler) handleListUsers(ctx context.Context, client iampb.IAMServic
 	pageSize, _ := getInt(requestData, "page_size")
 	roleID, _ := getString(requestData, "role_id")
 
+	// The page token is the decimal offset of the page to return.
+	offset := 0
+	if token, _ := getString(requestData, "page_token"); token != "" {
+		n, err := strconv.ParseInt(token, 10, 32)
+		if err != nil || n < 0 {
+			return nil, errors.NewInvalidInput("handleListUsers", "page token must be a non-negative decimal offset")
+		}
+		offset = int(n)
+	}
+
 	pbReq := &iampb.ListUsersRequest{
 		TenantId: tenantID,
 		Limit:    int32(pageSize),
+		Offset:   int32(offset),
 		Role:     roleID,
 	}
 
@@ -219,11 +231,18 @@ func (h *iamHandler) handleListUsers(ctx context.Context, client iampb.IAMServic
 		}
 	}
 
+	pagination := iam.PaginationInfo{
+		TotalCount: int(resp.Total),
+		PageSize:   pageSize,
+	}
+	if next := offset + len(resp.Users); len(resp.Users) > 0 && next < int(resp.Total) {
+		pagination.NextPageToken = strconv.Itoa(next)
+		pagination.HasMore = true
+	}
+
 	return &iam.ListUsersResponse{
-		Users: users,
-		Pagination: iam.PaginationInfo{
-			TotalCount: int(resp.Total),
-		},
+		Users:      users,
+		Pagination: pagination,
 	}, nil
 }
 
