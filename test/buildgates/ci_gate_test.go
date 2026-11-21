@@ -501,8 +501,8 @@ var stageInvocations = []struct {
 	{target: "coverage", invocations: []stageInvocation{
 		{role: "package discovery go list", count: 1, cmd: regexp.MustCompile(`^pkgs=\$\(go list .*\./pkg/\.\.\. \./cmd/\.\.\.\)`), tags: singleQuotedTags},
 		{role: "coverage go test", count: 1, cmd: regexp.MustCompile(`\bgo test -race .*-coverprofile=`), tags: singleQuotedTags},
-		{role: "tag-pass go test", count: 3, cmd: regexp.MustCompile(`^go test -p 2 .*\./pkg/\.\.\. \./cmd/\.\.\.$`), tags: singleQuotedTags},
-		{role: "tooling go test", count: 1, cmd: regexp.MustCompile(`^go test -p 2 .*\./scripts/\.\.\. \./test/buildgates/\.\.\.$`), tags: singleQuotedTags},
+		{role: "tag-pass go test", count: 3, cmd: regexp.MustCompile(`^GOMAXPROCS=[0-9]+ go test -p [0-9]+ -parallel [0-9]+ .*\./pkg/\.\.\. \./cmd/\.\.\.$`), tags: singleQuotedTags},
+		{role: "tooling go test", count: 1, cmd: regexp.MustCompile(`^GOMAXPROCS=[0-9]+ go test -p [0-9]+ -parallel [0-9]+ .*\./scripts/\.\.\. \./test/buildgates/\.\.\.$`), tags: singleQuotedTags},
 	}},
 	{target: "lint", invocations: []stageInvocation{
 		{role: "go vet integration tree", count: 1, cmd: regexp.MustCompile(`^go vet .*\./test/\.\.\.$`), tags: singleQuotedTags},
@@ -630,8 +630,8 @@ func TestMakeStageTagCheckCatchesALostTagArgument(t *testing.T) {
 	}{
 		{target: "coverage", role: "package discovery go list", from: "$(call go_packages,-tags '$(TEST_TAGS)' $(COVER_PKGS),", to: "$(call go_packages,$(COVER_PKGS),"},
 		{target: "coverage", role: "coverage go test", from: "-timeout=$(RACE_TIMEOUT) -tags '$(TEST_TAGS)' -coverprofile=", to: "-timeout=$(RACE_TIMEOUT) -coverprofile="},
-		{target: "coverage", role: "tag-pass go test", from: "-p 2 -tags '$(MINIMAL_TEST_TAGS)' -timeout=$(TAG_PASS_TIMEOUT)", to: "-p 2 -timeout=$(TAG_PASS_TIMEOUT)"},
-		{target: "coverage", role: "tooling go test", from: "-p 2 -tags '$(TEST_TAGS)' -timeout=10m ./scripts/...", to: "-p 2 -timeout=10m ./scripts/..."},
+		{target: "coverage", role: "tag-pass go test", from: "$(TEST_CPU_FLAGS) -tags '$(MINIMAL_TEST_TAGS)' -timeout=$(TAG_PASS_TIMEOUT)", to: "$(TEST_CPU_FLAGS) -timeout=$(TAG_PASS_TIMEOUT)"},
+		{target: "coverage", role: "tooling go test", from: "$(TEST_CPU_FLAGS) -tags '$(TEST_TAGS)' -timeout=10m ./scripts/...", to: "$(TEST_CPU_FLAGS) -timeout=10m ./scripts/..."},
 		{target: "lint", role: "go vet integration tree", from: "vet -tags '$(INTEGRATION_VET_TAGS)' ./test/...", to: "vet ./test/..."},
 		{target: "lint", role: "go vet integration-tagged", from: "vet -tags '$(INTEGRATION_VET_TAGS)' $$scope", to: "vet $$scope"},
 		{target: "lint", role: "go vet hardware unit", from: "vet -tags '$(TEST_TAGS) $(HARDWARE_VET_TAGS)' $$unit", to: "vet $$unit"},
