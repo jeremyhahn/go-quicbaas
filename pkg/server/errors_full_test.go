@@ -131,7 +131,10 @@ func TestSentinelErrors_Remaining(t *testing.T) {
 			ErrMCPShutdownFailed,
 			ErrRAGCloseFailed,
 			ErrShardedClientClosed,
-			ErrShardedClientNoNode,
+			ErrUnsupportedTransport,
+			ErrTransportCreationFailed,
+			ErrNetworkTransportMissingAddress,
+			ErrUnixTransportMissingSocket,
 			ErrQRDBClientNotInitialized,
 			ErrShardClientFailed,
 		}

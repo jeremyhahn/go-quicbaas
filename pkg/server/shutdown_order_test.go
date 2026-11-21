@@ -58,7 +58,7 @@ func (f *shutdownOrderFakeService) Close() error {
 // scheduler poller outlived the storage transport and spammed
 // "transport: connection is closed" errors after node teardown.
 func TestServerShutdown_ServiceFacadeClosesBeforeShardedClient(t *testing.T) {
-	sc := newDetachedShardedClient()
+	sc := NewShardedClient(nil)
 	fake := &shutdownOrderFakeService{sc: sc}
 
 	s := &Server{

@@ -312,6 +312,8 @@ func (p *svcBoostMockQRDBProvider) Close() error {
 	return p.client.Close()
 }
 
+func (p *svcBoostMockQRDBProvider) IsEmbedded() bool { return true }
+
 // capturedPutKey returns the last key passed to the Put method.
 func (p *svcBoostMockQRDBProvider) capturedPutKey() string {
 	p.transport.mu.Lock()

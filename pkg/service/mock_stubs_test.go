@@ -226,7 +226,8 @@ func (p *vecSDKProvider) ForShard(shardID uint64) (*qrdbsdk.Client, error) {
 	}
 	return qrdbsdk.NewClient(p.transport)
 }
-func (p *vecSDKProvider) Close() error { return nil }
+func (p *vecSDKProvider) Close() error     { return nil }
+func (p *vecSDKProvider) IsEmbedded() bool { return false }
 
 // covKeyspaceError implements error
 func (e *covKeyspaceError) Error() string { return e.msg }

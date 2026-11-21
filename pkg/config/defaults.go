@@ -275,6 +275,7 @@ func DefaultConfig() *Config {
 		},
 		Seal:      DefaultSealConfig(),
 		CA:        DefaultCAConfig(),
+		QRDB:      DefaultQRDBConfig(),
 		Databases: DefaultDatabasesConfig(),
 	}
 }
@@ -339,6 +340,14 @@ func DefaultCAConfig() CAConfig {
 		IntermediateKeyCurve:     "P-256",
 		DefaultValidityDays:      365,
 		IncludeLocalhostSANS:     true,
+	}
+}
+
+// DefaultQRDBConfig returns the default qrdb SDK client transport configuration.
+// The default uses embedded transport for zero-overhead in-process communication.
+func DefaultQRDBConfig() QRDBConfig {
+	return QRDBConfig{
+		Transport: QRDBTransportEmbedded,
 	}
 }
 
@@ -776,7 +785,8 @@ func TestConfig() *Config {
 		Seal: SealConfig{
 			Enabled: false,
 		},
-		CA: CAConfig{},
+		CA:   CAConfig{},
+		QRDB: DefaultQRDBConfig(),
 		Databases: DatabasesConfig{
 			DataDir:                     "data",
 			MaxPerTenant:                10,
