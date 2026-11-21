@@ -35,6 +35,7 @@ import type {
   OrchestratorClient,
 } from './interfaces.js';
 import type { AccountsClient } from './accounts.js';
+import type { PromptsClient } from './prompts.js';
 import type { ProjectsClient } from './projects.js';
 import type { SdlcClient } from './sdlc.js';
 import { unsupportedClient } from './unsupported.js';
@@ -363,6 +364,7 @@ export class GrpcWebClient implements Client {
   readonly projects = unsupportedClient<ProjectsClient>('grpc-web', 'projects', grpcWebUnsupported);
   readonly sdlc = unsupportedClient<SdlcClient>('grpc-web', 'sdlc', grpcWebUnsupported);
   readonly accounts = unsupportedClient<AccountsClient>('grpc-web', 'accounts', grpcWebUnsupported);
+  readonly prompts = unsupportedClient<PromptsClient>('grpc-web', 'prompts', grpcWebUnsupported);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly agents: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

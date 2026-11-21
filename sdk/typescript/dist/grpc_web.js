@@ -212,6 +212,7 @@ export class GrpcWebClient {
     projects = unsupportedClient('grpc-web', 'projects', grpcWebUnsupported);
     sdlc = unsupportedClient('grpc-web', 'sdlc', grpcWebUnsupported);
     accounts = unsupportedClient('grpc-web', 'accounts', grpcWebUnsupported);
+    prompts = unsupportedClient('grpc-web', 'prompts', grpcWebUnsupported);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     agents = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
