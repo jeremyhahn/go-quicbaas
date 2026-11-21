@@ -88,6 +88,26 @@ validating against the registry instead of a literal list.
 - **`pkg/vector/`** — the vector service surface (`../vector/`), which persists
   what this feature produces.
 
+### Two embedding services in parallel
+
+The SDK (`sdk/go`) exposes two embedding services side by side, on purpose:
+
+| Accessor | Service | Shape |
+|---|---|---|
+| `AI().Embedding()` / `Embedding()` | QuicBaaS's own (`sdk/go/client/embedding`, served by `pkg/api/*` over `pkg/embedding`) | single text or batch, provider registry, default provider, cache stats |
+| `AI().QRDBEmbedding()` | go-qrdb's, re-exported as `QRDBEmbeddingClient` (`sdk/go/qrdb.go`) | `Embed`, `BatchEmbed`, `ListEmbeddingModels`; model and provider per call |
+
+Both reach the same provider set (Ollama, OpenAI, Voyage, LM Studio): QuicBaaS's
+providers delegate to go-qrdb's. They are independent: neither wraps the other,
+a failure building the qrdb sub-client leaves `Embedding()` working, and the
+QuicBaaS service keeps its own routes, permissions (`embedding:*`) and MCP tools.
+
+**Which one to call.** New code should call `AI().QRDBEmbedding()`: it is the
+service go-qrdb owns and the one that remains. `Embedding()` stays for the
+callers that use its provider-management and cache surface. QuicBaaS's own
+service is a parallel implementation that is **removed on the owner's word**;
+until then neither is deprecated, and its removal is a separate change.
+
 ### The go-qrdb bridge
 
 `pkg/embedding/bridge.go` reconciles two interface shapes that were designed
