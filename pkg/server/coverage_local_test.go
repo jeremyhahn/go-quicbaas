@@ -154,7 +154,7 @@ func TestServer_QRDBSealSOPINInterceptor_NoPINBackendLeavesSealUngated(t *testin
 
 func TestServer_BuildBarrierCeremonyServices_Local_NonNilClient(t *testing.T) {
 	srv := withTempServer(t)
-	srv.qrdbClient = NewShardedClient(nil)
+	srv.qrdbClient = newDetachedShardedClient()
 	t.Cleanup(func() { _ = srv.qrdbClient.Close() })
 
 	barrier, ceremony := srv.buildBarrierCeremonyServices()
@@ -578,7 +578,7 @@ func TestServer_Start_Local_NonEmbeddedBlocksUntilShutdown(t *testing.T) {
 // facades are constructed against a nil transport rather than crashing.
 func TestServer_BuildBarrierCeremonyServices_Local_ForShardErrorFallsBackToNil(t *testing.T) {
 	srv := withTempServer(t)
-	sc := NewShardedClient(nil)
+	sc := newDetachedShardedClient()
 	require.NoError(t, sc.Close(), "close so ForShard returns ShardedClientClosedError")
 	srv.qrdbClient = sc
 
@@ -604,7 +604,7 @@ func TestServer_GetKVStore_Local_PanicsWhenShardLookupFails(t *testing.T) {
 	srv := withTempServer(t)
 	// A closed sharded client makes ForShard return ShardedClientClosedError,
 	// which GetKVStore wraps in a ShardClientError panic.
-	sc := NewShardedClient(nil)
+	sc := newDetachedShardedClient()
 	require.NoError(t, sc.Close())
 	srv.qrdbClient = sc
 
@@ -615,7 +615,7 @@ func TestServer_GetKVStore_Local_PanicsWhenShardLookupFails(t *testing.T) {
 func TestServer_GetKVStore_Local_ReturnsStoreForEmbeddedShard(t *testing.T) {
 	srv := withTempServer(t)
 	// Use a real qrdb node to back the ShardedClient so ForShard succeeds.
-	// Phase E: the bare NewShardedClient(nil) path no longer provides a
+	// Phase E: the bare newDetachedShardedClient() path no longer provides a
 	// working embedded transport — the qrdb node is always required.
 	require.NoError(t, srv.initStandaloneQRDBNode(), "qrdb node init must succeed")
 	t.Cleanup(func() { _ = srv.stopQRDBNode() })

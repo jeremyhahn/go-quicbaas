@@ -1104,7 +1104,7 @@ if err != nil {
 
 QuicBaaS delegates key-value, batch, transaction, MVCC, index, time-series and vector operations to go-qrdb through the go-qrdb SDK client. go-qrdb under go-quicbaas is embedded only: each `quicbaasd` process runs one go-qrdb node in-process, and a clustered deployment embeds a node in each instance. The server's qrdb client is the node's own SDK client (`node.Client()`), and every shard ID resolves to it.
 
-go-quicbaas never connects to a separate go-qrdb daemon. The `qrdb:` config block (`qrdb.transport` and its `QUICBAAS_QRDB_*` variables) is dead: nothing reads it to pick a transport, and it is removed in a later change ([SPEC, Composition clean-up](../SPEC.md#composition-clean-up)).
+go-quicbaas never connects to a separate go-qrdb daemon. The `qrdb:` config block (`qrdb.transport` and its `QUICBAAS_QRDB_*` variables) is removed: a config file that still carries it is refused with `RemovedKeyError` naming the `qrdb` key.
 
 ### See Also
 
