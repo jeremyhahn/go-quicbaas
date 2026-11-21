@@ -311,9 +311,17 @@ func (a *XKMSCAServicer) IssueCertificate(ctx context.Context, req *xkmstranspor
 		return nil, &XKMSCAOperationError{Op: "issue certificate", Err: errors.New("ca returned nil certificate")}
 	}
 
+	// go-xkms reports the issuing chain in CACertificatePEM and leaves
+	// ChainPEM empty; use ChainPEM only when CACertificatePEM is absent, as
+	// the go-xkms service adapter does.
+	chain := issued.CACertificatePEM
+	if len(chain) == 0 {
+		chain = issued.ChainPEM
+	}
+
 	return &xkmstransport.IssueCertificateResponse{
 		CertificatePEM: append([]byte(nil), issued.CertificatePEM...),
-		ChainPEM:       append([]byte(nil), issued.ChainPEM...),
+		ChainPEM:       append([]byte(nil), chain...),
 		PrivateKeyPEM:  append([]byte(nil), issued.PrivateKeyPEM...),
 		SerialNumber:   issued.SerialNumber.Text(16),
 	}, nil
