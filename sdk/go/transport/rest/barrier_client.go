@@ -38,26 +38,33 @@ func (t *Transport) Barrier() *BarrierClient {
 // a zero value (a BarrierStatusResponse with Sealed=false, an empty officer
 // list) would report a state the server never sent (go-quicbaas#2538).
 func (b *BarrierClient) doJSONResult(ctx context.Context, method, path string, reqBody, result any) error {
+	return doJSONResult(ctx, b.t, "rest.BarrierClient", method, path, reqBody, result)
+}
+
+// doJSONResult sends a JSON request through t and decodes the response into
+// result, refusing an empty body. component names the caller in the errors
+// it returns.
+func doJSONResult(ctx context.Context, t *Transport, component, method, path string, reqBody, result any) error {
 	var body []byte
 	if reqBody != nil {
 		data, err := json.Marshal(reqBody)
 		if err != nil {
-			return errors.Wrap(err, errors.CodeInvalidInput, "rest.BarrierClient",
+			return errors.Wrap(err, errors.CodeInvalidInput, component,
 				"failed to encode request body")
 		}
 		body = data
 	}
 
-	resp, err := b.t.doRawRequest(ctx, method, path, body, nil)
+	resp, err := t.doRawRequest(ctx, method, path, body, nil)
 	if err != nil {
 		return err
 	}
 	if len(resp.Body) == 0 {
-		return errors.New(errors.CodeInternal, "rest.BarrierClient",
+		return errors.New(errors.CodeInternal, component,
 			"empty response from "+path)
 	}
 	if err := json.Unmarshal(resp.Body, result); err != nil {
-		return errors.Wrap(err, errors.CodeInternal, "rest.BarrierClient",
+		return errors.Wrap(err, errors.CodeInternal, component,
 			"failed to decode response")
 	}
 	return nil
