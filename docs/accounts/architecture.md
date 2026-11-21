@@ -1132,6 +1132,29 @@ is about to be refused:
 | In-process spawn | `accountResolver.Resolve` → `checkSelected` → `authorizeSpend` |
 | Remote fleet node daemon | `AccountService.MaterializeAccountCredential` |
 
+### Accounts: every turn asks again
+
+A release is checked once, but a session runs many turns. A long session
+can cross its account's window after it was spawned. So `runPromptTurn`
+asks the same authority before every turn of a pooled session
+(`authorizeTurnSpend`, `turn_spend_gate.go`). The ask happens before the
+session is reconstituted or the backend runs.
+
+- The account is the one the live session record names now, so a rotated
+  session is checked against its new account.
+- A refused turn returns `AccountQuotaExhaustedError` (or a breaker refusal). It
+  is not run and not charged. It classifies as `account_quota_exhausted`,
+  exactly as a refused spawn does.
+- The estimate is zero, as at spawn: the question is whether the account is
+  already over.
+- An account record that cannot be read refuses the turn with the read error.
+- The cost per turn is one account read and one bounded ledger scan. No
+  cached verdict sits in front of it, because a cache would be a second,
+  staler authority.
+- A session hosted by a worker daemon is covered too. The control plane drives
+  its turns through `runPromptTurn`, so the envelope the daemon cached at
+  release stops being usable at the next turn.
+
 ### Projects and tenants: deferred at admission
 
 A project's and a tenant's limits cannot be enforced at release, because no
@@ -1521,6 +1544,7 @@ report about the same job is refused with `AttemptConcludedError`.
 | `project_capacity_exceeded` | `ProjectCapacityExceededError` | Refunded, requeued at `RetryAt` |
 | `forge_unreachable` | An error unwrapping to `ErrForgeUnreachable` (`task_attempt.go:216`): a forge call unanswered after the adapter's retries and reconciliation ([../sdlc/architecture.md](../sdlc/architecture.md#forge-transport-deadlines-retries-and-unanswered-writes)) | Refunded, requeued (bounded) |
 | `agent_interrupted` | An error unwrapping to `ErrAgentInterrupted` (`FaultAgentInterrupted`, `task_attempt.go:208`): a worker turn whose Prompt the fleet node stopped serving, or a container stream that closed with no exit of the worker's own | Refunded, requeued (bounded); never charged |
+| `consumption_pending` | An error unwrapping to `ErrConsumptionPending` (`ConsumptionPendingError`): a turn refused because an earlier turn's consumption is not yet in the ledger | Refunded, requeued (bounded); never charged |
 | `no_provider_account`, `no_account_resolver`, `account_credential_missing`, `account_refresher_missing` | Resolver errors | Refunded, **blocked** for a human |
 | `superseded` | `JobSupersededError`, `JobLeaseTakenError` | Nothing written; the lease holder owns the task |
 | `stalled` | Stall detector | Charged |
