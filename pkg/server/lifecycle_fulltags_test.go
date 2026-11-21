@@ -766,7 +766,11 @@ func TestP10_Initialize_StartGRPCError(t *testing.T) {
 	cfg.Storage.Backend = config.StorageBackendMemory
 	cfg.Security.TLSEnabled = false
 	cfg.Server.Embedded = false
+	// No network serving: quicbaas's own grpcServer owns server.unix.socket
+	// (quicbaasServesUnixSocket), so its listener error is the one to fail.
 	cfg.Server.GRPC.Enabled = false
+	cfg.Server.REST.Enabled = false
+	cfg.Server.MCP.Enabled = false
 	cfg.Server.Unix.Socket = shortTTUnixSocketPath(t)
 
 	seamMu.Lock()
@@ -943,7 +947,11 @@ func TestP10_StartGRPCServer_ListenerError(t *testing.T) {
 
 	srv.config.Security.TLSEnabled = false
 	srv.config.Server.Embedded = false
-	srv.config.Server.GRPC.Enabled = true
+	// No network serving: quicbaas's own grpcServer owns server.unix.socket
+	// (quicbaasServesUnixSocket), so startGRPCServer opens the listener.
+	srv.config.Server.GRPC.Enabled = false
+	srv.config.Server.REST.Enabled = false
+	srv.config.Server.MCP.Enabled = false
 	srv.config.Server.Unix.Socket = shortTTUnixSocketPath(t)
 
 	// Set up mock expectations for all service methods called during gRPC registration
