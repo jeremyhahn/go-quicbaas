@@ -83,6 +83,83 @@ func TestVerifyProof_Valid(t *testing.T) {
 	}
 }
 
+// A proof without ath is refused when an access token is presented.
+func TestVerifyProof_AccessTokenHashMissing(t *testing.T) {
+	key := newECKey(t)
+	clock := &fixedClock{t: time.Unix(1_700_000_000, 0)}
+	proof := newProof(t, key, testHTM, testHTU, clock)
+
+	_, err := VerifyProof(proof, VerifyOptions{
+		HTM: testHTM, HTU: testHTU, Clock: clock,
+		ReplayCache: NewMemoryReplayCache(clock), AccessToken: "tok-1",
+	})
+	var athErr *AccessTokenHashError
+	if !errors.As(err, &athErr) {
+		t.Fatalf("expected AccessTokenHashError, got %v", err)
+	}
+}
+
+// A proof made for another access token is refused.
+func TestVerifyProof_AccessTokenHashMismatch(t *testing.T) {
+	key := newECKey(t)
+	clock := &fixedClock{t: time.Unix(1_700_000_000, 0)}
+	proof, err := NewProofForAccessTokenWithClock(key, testHTM, testHTU, "tok-2", clock)
+	if err != nil {
+		t.Fatalf("NewProofForAccessTokenWithClock: %v", err)
+	}
+
+	_, err = VerifyProof(proof, VerifyOptions{
+		HTM: testHTM, HTU: testHTU, Clock: clock,
+		ReplayCache: NewMemoryReplayCache(clock), AccessToken: "tok-1",
+	})
+	var athErr *AccessTokenHashError
+	if !errors.As(err, &athErr) {
+		t.Fatalf("expected AccessTokenHashError, got %v", err)
+	}
+}
+
+// A proof made for the presented access token is accepted.
+func TestVerifyProof_AccessTokenHashMatch(t *testing.T) {
+	key := newECKey(t)
+	clock := &fixedClock{t: time.Unix(1_700_000_000, 0)}
+	proof, err := NewProofForAccessTokenWithClock(key, testHTM, testHTU, "tok-1", clock)
+	if err != nil {
+		t.Fatalf("NewProofForAccessTokenWithClock: %v", err)
+	}
+
+	if _, err := VerifyProof(proof, VerifyOptions{
+		HTM: testHTM, HTU: testHTU, Clock: clock,
+		ReplayCache: NewMemoryReplayCache(clock), AccessToken: "tok-1",
+	}); err != nil {
+		t.Fatalf("VerifyProof: unexpected error: %v", err)
+	}
+}
+
+// At issuance no access token is presented, so a proof without ath is accepted.
+func TestVerifyProof_AccessTokenHashNotRequiredAtIssuance(t *testing.T) {
+	key := newECKey(t)
+	clock := &fixedClock{t: time.Unix(1_700_000_000, 0)}
+	proof := newProof(t, key, testHTM, testHTU, clock)
+
+	if _, err := VerifyProof(proof, VerifyOptions{
+		HTM: testHTM, HTU: testHTU, Clock: clock,
+		ReplayCache: NewMemoryReplayCache(clock),
+	}); err != nil {
+		t.Fatalf("VerifyProof: unexpected error: %v", err)
+	}
+}
+
+// NewProofForAccessTokenWithClock refuses an empty access token.
+func TestNewProofForAccessToken_EmptyTokenRefused(t *testing.T) {
+	key := newECKey(t)
+	clock := &fixedClock{t: time.Unix(1_700_000_000, 0)}
+	_, err := NewProofForAccessTokenWithClock(key, testHTM, testHTU, "", clock)
+	var signerErr *SignerError
+	if !errors.As(err, &signerErr) {
+		t.Fatalf("expected SignerError, got %v", err)
+	}
+}
+
 func TestVerifyProof_ExpectedJktMatch(t *testing.T) {
 	key := newECKey(t)
 	clock := &fixedClock{t: time.Unix(1_700_000_000, 0)}

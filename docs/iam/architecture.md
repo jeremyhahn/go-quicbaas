@@ -540,6 +540,18 @@ behind. A node with no invite store refuses pending creates as unavailable.
 `invite_url` is omitted when the server has no origin to build it under, as
 in-process, or when the issuer is an IP literal.
 
+The tenant and the user of an invitation come from the authenticated
+principal and the invite record, never from a request body (owner ruling 133,
+go-quicbaas#1832, #1836). The invite is created in the tenant the caller is
+authenticated in. Over gRPC, a `tenant_id` field that names another tenant is
+refused. Over REST, the URL tenant must be the caller's own (the system
+administrator's IAM routes act in the tenant the URL names), and a
+`tenant_id` or user id in the body is ignored. Either way, the user and its
+invite get the caller's tenant and a store-assigned id. Accepting an invite is the
+invitee's first login: the invitee has no credential yet, so the invite token
+is the credential. It resolves only in the tenant that issued it, and the
+user it activates is the one the invite record names.
+
 #### 2. Invite URL Sent to User
 
 Admin or system sends user an invite URL:
@@ -840,6 +852,39 @@ The WebAuthn ceremony policy keys (`assurance`, `resident_key_requirement`,
 | `auth login` returns bare `UNAUTHORIZED` at begin | Login sent no tenant scope; the per-tenant WebAuthn relying party fails closed | Pass `--tenant <id>` (defaults to `system`) |
 | `auth login` returns `UNAUTHORIZED` at finish | No fido2 factor is enrolled for the credential in the qrdb auth-factor store | Enroll with `quicbaas auth factor add --type fido2` |
 | `auth login --method mtls` returns `UNAUTHORIZED` at finish | The certificate is not enrolled as an mtls factor — it was never bound, or the binding predates the write-through | Re-run the binding (`auth.bootstrap_admin_piv_cert_path` on first boot, or the SO-cert init ceremony), or enroll explicitly with `quicbaas auth factor add --type mtls --cert <path>` |
+
+### A downstream daemon's REST plane
+
+A daemon built on go-quicbaas, such as go-trusted-platform's (go-trusted-platform#644), authenticates and authorises its REST plane through `sdk/go` and keeps no auth model, route guard or token format of its own. Its users log in to go-quicbaas (WebAuthn, PIV or mTLS) and present the platform access token that go-quicbaas issues. The daemon mounts the guard from `sdk/go/platformtoken` on each route:
+
+```go
+const issuer = "https://quicbaas.example.com"
+v, _ := platformtoken.NewValidator(platformtoken.Options{
+    Issuer: issuer,
+    // A token from a WebAuthn, PIV or mTLS login carries the issuer as its aud.
+    Audience:    issuer,
+    JWKSURL:     issuer + "/.well-known/jwks.json",
+    ReplayCache: dpop.NewMemoryReplayCache(nil),
+    // The go-qrdb authorizer decides each permission route: RBAC, with
+    // qrdbsdk.DecorateAuthorizer adding the ABAC policies.
+    Authorizer: authz,
+    // The default (hybrid) mode asks go-quicbaas whether the token is still
+    // live. The introspection endpoint authenticates its caller: a registered
+    // OAuth client's credentials, or a client certificate on the HTTP client.
+    LivenessChecker: platformtoken.NewIntrospectionLivenessChecker(
+        issuer+"/oauth2/introspect", nil).WithBasicAuth(clientID, clientSecret),
+})
+mux.Handle("GET /v1/keys", v.Middleware("keys:get")(keysHandler))
+
+func keysHandler(w http.ResponseWriter, r *http.Request) {
+    p, _ := platformtoken.FromContext(r.Context()) // p.TenantID, p.Subject, p.UserID
+    ...
+}
+```
+
+The guard reads the token from `Authorization: Bearer` or `Authorization: DPoP`. It verifies the signature against the issuer's JWKS and checks `iss`, `aud`, `exp` and the `at+jwt` type. It then verifies the DPoP proof of a DPoP-bound token against the request's method and URL and, through its ath claim, against the presented access token (RFC 9449 §4.3), requires the client certificate an mTLS-bound token names (`cnf` `x5t#S256`, RFC 8705, the binding a PIV or device-certificate login carries), and requires the route's permission among the token's granted scopes. It then runs the liveness check the validator's mode asks for, and last asks `Options.Authorizer`, go-qrdb's RBAC authorizer with its ABAC policies, for the permission in the token's tenant, so an ABAC policy that denies the request refuses it even when the scope was granted. The tenant and the user the daemon acts for are the token's; a tenant or user named in the request is never read. A refusal is 401 with a `Bearer` challenge (no or bad credential, or a binding not met), 403 `insufficient_scope` or `access_denied`, or 503 when the guard cannot decide (no JWKS, no liveness authority, or no authorizer for a permission route). A router without net/http middleware calls `v.AuthorizeRequest(r, permission)` instead.
+
+The permission check is the scope match in `platformtoken/authz.go`, a local matcher that SPEC departures D5 and D8 list for replacement by go-qrdb's permission matcher once it is re-exported. The guard makes that decision in one place, `AuthorizeRequest`, so the daemon's code does not change when the matcher does. Login through the SDK for a non-system tenant waits on go-quicbaas#1816. As of main 341881c0de, #1816's work (the `sdk/go/xkms` re-export of the go-xkms signer store) is on the go-sdk row and not yet on main, so this row records the wait and does not provide that login.
 
 ### References
 

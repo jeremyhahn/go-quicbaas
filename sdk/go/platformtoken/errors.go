@@ -136,3 +136,29 @@ type ScopeDeniedError struct {
 func (e *ScopeDeniedError) Error() string {
 	return fmt.Sprintf("platformtoken: required scope %q not granted", e.Required)
 }
+
+// PolicyDeniedError indicates the go-qrdb authorizer refused a permission
+// the token's scopes grant (for example an ABAC deny).
+type PolicyDeniedError struct {
+	// Required is the permission that was demanded.
+	Required string
+	// Cause is the authorizer's error.
+	Cause error
+}
+
+func (e *PolicyDeniedError) Error() string {
+	return fmt.Sprintf("platformtoken: permission %q denied by policy: %v", e.Required, e.Cause)
+}
+
+func (e *PolicyDeniedError) Unwrap() error { return e.Cause }
+
+// CertificateBindingError indicates an mTLS-bound token (cnf x5t#S256, RFC
+// 8705) arrived without the client certificate it is bound to.
+type CertificateBindingError struct {
+	// Detail describes the mismatch.
+	Detail string
+}
+
+func (e *CertificateBindingError) Error() string {
+	return fmt.Sprintf("platformtoken: certificate-bound token: %s", e.Detail)
+}

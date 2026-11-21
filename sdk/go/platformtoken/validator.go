@@ -32,6 +32,7 @@ import (
 
 	jose "github.com/go-jose/go-jose/v4"
 	"github.com/golang-jwt/jwt/v5"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam/dpop"
 )
@@ -135,6 +136,12 @@ type Options struct {
 	// sender-constrained token. Required only when sender-constrained tokens are
 	// authorized through Authorize.
 	ReplayCache dpop.ReplayCache
+	// Authorizer is the go-qrdb policy decision point a permission route asks
+	// after the scope check: go-qrdb RBAC, decorated with its ABAC policies by
+	// qrdbsdk.DecorateAuthorizer. AuthorizeRequest and Middleware refuse a
+	// permission route with 503 when it is nil; an empty permission does not
+	// use it.
+	Authorizer qrdbsdk.Authorizer
 }
 
 // Validator verifies platform access tokens for one trusted issuer and one
@@ -149,6 +156,7 @@ type Validator struct {
 	cachedLiveness LivenessChecker
 	modeResolver   ModeResolver
 	replayCache    dpop.ReplayCache
+	authorizer     qrdbsdk.Authorizer
 }
 
 // NewValidator constructs a Validator. It requires an issuer, an audience, and
@@ -213,6 +221,7 @@ func NewValidator(opts Options) (*Validator, error) {
 		liveness:     opts.LivenessChecker,
 		modeResolver: opts.ModeResolver,
 		replayCache:  opts.ReplayCache,
+		authorizer:   opts.Authorizer,
 	}
 	if opts.LivenessChecker != nil {
 		v.cachedLiveness = NewCachedLivenessChecker(opts.LivenessChecker, opts.LivenessCacheTTL, nowFunc)
@@ -275,7 +284,8 @@ func (v *Validator) ValidatePlatformToken(ctx context.Context, tokenString strin
 
 // ValidateWithDPoP verifies the access token (as ValidatePlatformToken) and
 // then verifies the presented DPoP proof against the token's cnf.jkt binding
-// (RFC 9449): the proof signature, htm/htu, iat skew, jti replay, and that the
+// (RFC 9449): the proof signature, htm/htu, the ath hash of tokenString, iat
+// skew, jti replay, and that the
 // SHA-256 thumbprint of the proof key equals cnf.jkt. A token without cnf.jkt
 // is rejected on this path (a bearer cannot be replayed with an attacker's DPoP
 // key and accepted). The replayCache must be supplied by the caller and is
@@ -298,6 +308,7 @@ func (v *Validator) ValidateWithDPoP(ctx context.Context, tokenString, dpopProof
 		ExpectedJkt: claims.Confirmation.Jkt,
 		ReplayCache: replayCache,
 		Clock:       clockAdapter{now: v.nowFunc},
+		AccessToken: tokenString,
 	}); err != nil {
 		return nil, err
 	}

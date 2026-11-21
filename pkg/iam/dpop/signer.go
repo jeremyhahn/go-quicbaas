@@ -29,6 +29,8 @@ import (
 
 // NewProof builds and signs a DPoP proof JWT for the given key bound to the
 // HTTP method and URI, using the system clock for iat. See NewProofWithClock.
+// It carries no ath; a request that presents an access token uses
+// NewProofForAccessToken.
 func NewProof(key crypto.Signer, htm, htu string) (string, error) {
 	return NewProofWithClock(key, htm, htu, SystemClock{})
 }
@@ -42,6 +44,28 @@ func NewProof(key crypto.Signer, htm, htu string) (string, error) {
 // This is the client/SDK side of RFC 9449: a sender holding the DPoP private
 // key produces a fresh single-use proof per request.
 func NewProofWithClock(key crypto.Signer, htm, htu string, clock Clock) (string, error) {
+	return signProof(key, htm, htu, "", clock)
+}
+
+// NewProofForAccessToken builds a DPoP proof for a request that presents
+// accessToken, carrying its ath hash (RFC 9449 §4.3), using the system clock.
+func NewProofForAccessToken(key crypto.Signer, htm, htu, accessToken string) (string, error) {
+	return NewProofForAccessTokenWithClock(key, htm, htu, accessToken, SystemClock{})
+}
+
+// NewProofForAccessTokenWithClock is NewProofForAccessToken with an
+// injectable clock. An empty accessToken is refused: a proof without ath is
+// NewProofWithClock's.
+func NewProofForAccessTokenWithClock(key crypto.Signer, htm, htu, accessToken string, clock Clock) (string, error) {
+	if accessToken == "" {
+		return "", &SignerError{Detail: "empty access token"}
+	}
+	return signProof(key, htm, htu, accessToken, clock)
+}
+
+// signProof signs a proof for htm and htu, with the ath of accessToken when it
+// is non-empty.
+func signProof(key crypto.Signer, htm, htu, accessToken string, clock Clock) (string, error) {
 	if key == nil {
 		return "", &SignerError{Detail: "nil signing key"}
 	}
@@ -79,6 +103,9 @@ func NewProofWithClock(key crypto.Signer, htm, htu string, clock Clock) (string,
 		"htu": htu,
 		"jti": jti,
 		"iat": now.Unix(),
+	}
+	if accessToken != "" {
+		claims["ath"] = AccessTokenHash(accessToken)
 	}
 
 	token := jwt.NewWithClaims(method, claims)
