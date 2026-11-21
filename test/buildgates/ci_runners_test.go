@@ -647,10 +647,24 @@ func TestRunnerSelect(t *testing.T) {
 	paged.list(t, runsURL("in_progress", 1), "workflow_runs", 150, page1)
 	paged.list(t, runsURL("in_progress", 2), "workflow_runs", 150, page2)
 
-	short := apiFixture{}
-	short.list(t, runsURL("queued", 1), "workflow_runs", 0, nil)
-	short.list(t, runsURL("in_progress", 1), "workflow_runs", 150, page1)
-	short.list(t, runsURL("in_progress", 2), "workflow_runs", 150, nil)
+	// shortFixture: a 150-run in_progress listing whose pages give only runs
+	// 1-100 (page 2 is empty), each of the 100 with a job list; jobs go to
+	// the job list of their run_id, which must be in 1-100.
+	shortFixture := func(jobs ...map[string]any) apiFixture {
+		f := apiFixture{}
+		f.list(t, runsURL("queued", 1), "workflow_runs", 0, nil)
+		f.list(t, runsURL("in_progress", 1), "workflow_runs", 150, page1)
+		f.list(t, runsURL("in_progress", 2), "workflow_runs", 150, nil)
+		byRun := map[int][]any{}
+		for _, j := range jobs {
+			byRun[j["run_id"].(int)] = append(byRun[j["run_id"].(int)], j)
+		}
+		for id := 1; id <= 100; id++ {
+			f.list(t, jobsURL(id, 1), "jobs", len(byRun[id]), byRun[id])
+		}
+		return f
+	}
+	shortList := "https://api.github.com/repos/o/r/actions/runs?status=in_progress: 100 of 150 entries"
 
 	notOK := loadFixture(t, running(limit)...)
 	notOK[runsURL("queued", 1)] = apiReply{502, ""}
@@ -674,7 +688,9 @@ func TestRunnerSelect(t *testing.T) {
 		{name: "this run's own job queued long", fix: loadFixture(t, selJob(runID, "queued", time.Hour, hosted))},
 		{name: "self-hosted jobs are not counted", fix: loadFixture(t, append(running(2), repeatJob(limit+1, selJob(3, "in_progress", time.Minute, "self-hosted", "linux", "x64", "bigdisk"))...)...)},
 		{name: "a run list over two pages", fix: paged, overflow: true, call: "page=2"},
-		{name: "a run list short of its total_count", fix: short, warning: "100 of 150 entries"},
+		{name: "a short run list below every trigger", fix: shortFixture(running(limit - 1)...), warning: "the Actions API listed fewer entries than its total (" + shortList + "), and the counts read reach no trigger"},
+		{name: "a short run list at LIMIT", fix: shortFixture(repeatJob(limit, selJob(100, "in_progress", time.Minute, hosted))...), overflow: true, notice: "12 hosted jobs in progress, HOSTED_JOBS_PER_REPO=12 (a lower bound: " + shortList + ")"},
+		{name: "a short run list with another run's job queued GRACE", fix: shortFixture(selJob(7, "queued", 61*time.Second, hosted)), overflow: true, notice: "1 hosted job(s) queued 60s or more: the hosted pool is full (a lower bound: " + shortList + ")"},
 		{name: "a reply that is not 200", fix: notOK, warning: "/runs?status=queued: 502"},
 		{name: "a 200 with no total_count", fix: noTotal, warning: "200 with no total_count"},
 		{name: "LIMIT not a number", env: map[string]string{"LIMIT": "twelve"}, fix: loadFixture(t, running(limit)...), warning: "HOSTED_JOBS_PER_REPO='twelve'", noCall: true},
