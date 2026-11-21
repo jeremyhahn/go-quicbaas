@@ -467,6 +467,13 @@ enum HashAlgorithm {
   HASH_ALG_BLAKE2B_512 = 8;
 }
 
+// SignaturePadding specifies the RSA signature padding scheme.
+enum SignaturePadding {
+  SIGNATURE_PADDING_UNSPECIFIED = 0;
+  SIGNATURE_PADDING_PKCS1V15 = 1;
+  SIGNATURE_PADDING_PSS = 2;
+}
+
 // WrappingAlgorithm specifies the algorithm used for key wrapping.
 enum WrappingAlgorithm {
   WRAP_ALG_UNSPECIFIED = 0;
@@ -1295,6 +1302,14 @@ message SignRequest {
   // pre_hashed indicates message is already a hash digest (e.g., produced by a
   // crypto.Signer caller); the service signs it directly without hashing again.
   bool pre_hashed = 4;
+  // padding selects the RSA signature padding; UNSPECIFIED means PKCS#1 v1.5.
+  SignaturePadding padding = 5;
+  // pss_salt_length is the RSA-PSS salt length in bytes; 0 means equal to the
+  // hash length. Only valid with SIGNATURE_PADDING_PSS.
+  int32 pss_salt_length = 6;
+  // mgf1_hash is the RSA-PSS MGF1 hash; it must be UNSPECIFIED or equal to
+  // hash_algorithm. Only valid with SIGNATURE_PADDING_PSS.
+  HashAlgorithm mgf1_hash = 7;
 }
 
 message SignResponse {
