@@ -39,6 +39,12 @@ type embeddedServer struct {
 // embeddedServerHolder holds the singleton embedded server for the CLI.
 var embeddedServerHolder atomic.Pointer[embeddedServer]
 
+// embeddedServerInitMu serializes creation of the embedded server singleton
+// (getOrCreateEmbeddedServer) and its shutdown (shutdownEmbeddedServer), so
+// concurrent first callers share one server and a shutdown never races an
+// in-flight creation.
+var embeddedServerInitMu sync.Mutex
+
 // embeddedCLITrustDomain is the SPIFFE trust domain the CLI's own embedded node
 // issues its platform-admin certificate under.
 //
@@ -106,27 +112,21 @@ func getOrCreateEmbeddedServer() (*embeddedServer, error) {
 		return srv, nil
 	}
 
-	// Slow path: create new server
+	// Slow path: serialize creation. The process runs one embedded go-qrdb
+	// node, so a second concurrent creation would be refused by the node
+	// guard while the first is still starting; instead every concurrent
+	// first caller waits here for the one creation and shares its result.
+	embeddedServerInitMu.Lock()
+	defer embeddedServerInitMu.Unlock()
+	if srv := embeddedServerHolder.Load(); srv != nil {
+		return srv, nil
+	}
+
 	srv, err := createEmbeddedServer()
 	if err != nil {
-		// A concurrent caller may already have stored the singleton, in
-		// which case the one-node-per-process guard refused this one.
-		if existing := embeddedServerHolder.Load(); existing != nil {
-			return existing, nil
-		}
 		return nil, err
 	}
-
-	// Store atomically (handle race condition)
-	if !embeddedServerHolder.CompareAndSwap(nil, srv) {
-		// Another goroutine created the server first, clean up ours
-		_ = srv.shutdown()
-		if existing := embeddedServerHolder.Load(); existing != nil {
-			return existing, nil
-		}
-		return nil, ErrEmbeddedServerNotStarted
-	}
-
+	embeddedServerHolder.Store(srv)
 	return srv, nil
 }
 
@@ -253,6 +253,8 @@ func (es *embeddedServer) shutdown() error {
 
 // shutdownEmbeddedServer shuts down the global embedded server if running.
 func shutdownEmbeddedServer() error {
+	embeddedServerInitMu.Lock()
+	defer embeddedServerInitMu.Unlock()
 	srv := embeddedServerHolder.Swap(nil)
 	if srv == nil {
 		return nil
