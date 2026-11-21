@@ -45,7 +45,7 @@ func TestTransport_CapabilitiesGet(t *testing.T) {
 	}
 	assert.Equal(t, want.Families, report.Families)
 
-	// The embedded transport runs no transport server, so it has no CA probe.
+	// The mock facade wires no Certificate service, so xkms_ca is not configured.
 	xkms := report.Subsystems[servercaps.SubsystemXKMSCA]
 	assert.False(t, xkms.Configured)
 	assert.NotEmpty(t, xkms.Reason)
@@ -61,6 +61,20 @@ func TestTransport_CapabilitiesGet(t *testing.T) {
 	assert.NotContains(t, report.Families, servercaps.FamilyRAG)
 	// Nor any object transfer handlers.
 	assert.NotContains(t, report.Families, servercaps.FamilyObjectTransfer)
+}
+
+// TestTransport_CapabilitiesCAConfiguredWithCertificateService: a facade that
+// wires a Certificate service serves the embedded certificate handlers, so
+// the report lists xkms_ca as configured.
+func TestTransport_CapabilitiesCAConfiguredWithCertificateService(t *testing.T) {
+	tr := newCertTransport(t, &fakeCertService{})
+
+	report, err := capabilities.NewClient(tr).Get(context.Background())
+	require.NoError(t, err)
+
+	xkms := report.Subsystems[servercaps.SubsystemXKMSCA]
+	assert.True(t, xkms.Configured)
+	assert.Empty(t, xkms.Reason)
 }
 
 // TestTransport_CapabilitiesFamiliesHaveEmbeddedHandlers checks that every

@@ -695,13 +695,17 @@ func NewFactory(svc service.QuicBaaS) *Factory {
 // handleCapabilitiesGet answers quicbaas.Capabilities/Get with the report
 // capabilities.Build makes from the embedded service, the same report every
 // network transport serves. This transport always compiles its time series
-// handlers, has no RAG handlers and no object transfer handlers, and runs no
-// transport server, so it has no CA probe.
+// handlers and has no RAG handlers and no object transfer handlers. Its CA
+// probe is the check the embedded certificate handlers make: the facade's
+// Certificate service is wired.
 func handleCapabilitiesGet(_ context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	if _, ok := req.(*sdkcapabilities.GetRequest); !ok {
 		return nil, NewInvalidRequestTypeError(sdkcapabilities.ServiceName, sdkcapabilities.MethodGet, "*capabilities.GetRequest", typeNameOf(req))
 	}
-	report := capabilities.Build(svc, capabilities.Probes{TimeSeriesServed: true})
+	report := capabilities.Build(svc, capabilities.Probes{
+		TimeSeriesServed:     true,
+		CertificateAuthority: func() bool { return svc.Certificate() != nil },
+	})
 	return &report, nil
 }
 

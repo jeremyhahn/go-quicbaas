@@ -82,7 +82,8 @@ type Report struct {
 // false field reports the handlers as not served.
 type Probes struct {
 	// CertificateAuthority reports whether an xkms certificate authority is
-	// wired (on REST, the server's CA handlers are set).
+	// wired (on REST, the server's CA handlers are set; on Embedded, the
+	// facade's Certificate service is wired).
 	CertificateAuthority func() bool
 	// TimeSeriesServed is true when this transport compiles the time series
 	// handlers: on REST and QUIC the constant TimeSeriesServed (-tags
