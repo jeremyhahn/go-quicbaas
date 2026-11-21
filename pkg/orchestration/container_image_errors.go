@@ -82,12 +82,25 @@ func (e *ImageNotFoundError) Unwrap() error { return ErrImageNotFound }
 type ImageTagError struct {
 	Source string
 	Target string
-	Cause  error
+
+	// Reason is the engine's refusal classified into a fixed phrase
+	// (classifyTagFailure), or empty when it matches none. It IS rendered:
+	// a tag failure whose reason is withheld cannot be diagnosed (#1801,
+	// "114 bytes of output withheld"). No engine text is rendered, since
+	// stderr can carry any credential shape; the raw bytes stay on the
+	// CommandError cause, whose Output is never rendered.
+	Reason string
+
+	Cause error
 }
 
 // Error implements the error interface.
 func (e *ImageTagError) Error() string {
-	return withCause(ErrImageTag.Error()+": "+e.Source+" -> "+e.Target, e.Cause)
+	msg := withCause(ErrImageTag.Error()+": "+e.Source+" -> "+e.Target, e.Cause)
+	if e.Reason != "" {
+		msg += ": " + e.Reason
+	}
+	return msg
 }
 
 // Unwrap returns the sentinel and the cause for errors.Is/As.

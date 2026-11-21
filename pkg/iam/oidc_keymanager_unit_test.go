@@ -14,6 +14,7 @@
 package iam
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -73,7 +74,7 @@ func TestSigningKeyManagerUninitializedSnapshot(t *testing.T) {
 	if _, err := m.SignerForKID("any"); !errors.As(err, new(*SigningKeyUnavailableError)) {
 		t.Fatalf("SignerForKID on uninitialized manager: want SigningKeyUnavailableError, got %T", err)
 	}
-	if _, err := m.PublicForKID("any"); !errors.As(err, new(*SigningKeyUnavailableError)) {
+	if _, err := m.PublicForKID(context.Background(), "any"); !errors.As(err, new(*SigningKeyUnavailableError)) {
 		t.Fatalf("PublicForKID on uninitialized manager: want SigningKeyUnavailableError, got %T", err)
 	}
 
@@ -135,7 +136,7 @@ func TestNewSigningKeyManagerFromSigner(t *testing.T) {
 	if len(jwks.Keys) != 1 || jwks.Keys[0].KeyID != wantKID || jwks.Keys[0].Algorithm != SigningAlgorithmES256 {
 		t.Fatalf("JWKS() = %+v, want one ES256 key with kid %q", jwks.Keys, wantKID)
 	}
-	if _, err := mgr.PublicForKID(wantKID); err != nil {
+	if _, err := mgr.PublicForKID(context.Background(), wantKID); err != nil {
 		t.Fatalf("PublicForKID(current kid): %v", err)
 	}
 
