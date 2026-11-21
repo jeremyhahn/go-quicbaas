@@ -177,4 +177,11 @@ type QRDBEmbeddedServicers struct {
 	// nil, the embedded client's embedding calls fail as unavailable in
 	// go-qrdb.
 	Embedding QRDBEmbeddingServicer
+
+	// Data is the embedded node's own go-qrdb client, whose embedded
+	// transport carries the node's service registry, so all six data
+	// services (KV, batch, transaction, MVCC, collection, index) reach the
+	// node. QRDBData() returns it. Optional: when nil, QRDBData() returns this
+	// client's own go-qrdb client, whose embedded transport serves KV only.
+	Data QRDBDataService
 }

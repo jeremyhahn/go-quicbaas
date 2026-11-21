@@ -139,7 +139,9 @@ func (m *mockSDKClient) Search() quicbaas.SearchService                        {
 func (m *mockSDKClient) Storage() quicbaas.StorageService                      { return nil }
 func (m *mockSDKClient) Async() quicbaas.AsyncService                          { return nil }
 func (m *mockSDKClient) AI() quicbaas.AIService                                { return nil }
-func (m *mockSDKClient) DataStore() (quicbaas.QRDBKVStore, error)              { return nil, nil }
+func (m *mockSDKClient) QRDBData() (quicbaas.QRDBDataService, error)           { return nil, nil }
+
+func (m *mockSDKClient) DataStore() (quicbaas.QRDBKVStore, error) { return nil, nil }
 
 func (m *mockSDKClient) BarrierCeremonyMgmt() quicbaas.BarrierCeremonyService       { return nil }
 func (m *mockSDKClient) TenantMgmtService() quicbaas.TenantService                  { return nil }

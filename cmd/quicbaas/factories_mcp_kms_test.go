@@ -528,6 +528,8 @@ func (m *mockSDKClientForMCP) Transport() quicbaas.Transport { return m.mockTran
 
 func (m *mockSDKClientForMCP) Close() error { return nil }
 
+func (m *mockSDKClientForMCP) QRDBData() (quicbaas.QRDBDataService, error) { return nil, nil }
+
 func (m *mockSDKClientForMCP) DataStore() (quicbaas.QRDBKVStore, error) { return nil, nil }
 
 func (m *mockSDKClientForMCP) BarrierCeremonyMgmt() quicbaas.BarrierCeremonyService  { return nil }

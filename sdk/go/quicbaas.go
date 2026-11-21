@@ -167,6 +167,11 @@ type Client interface {
 	// Uses the QRDB transport layer.
 	DataStore() (QRDBKVStore, error)
 
+	// QRDBData returns go-qrdb's data services (KV, batch, transaction,
+	// MVCC, collection and index) as go-qrdb's own clients, carried on the
+	// transport this client was built with.
+	QRDBData() (QRDBDataService, error)
+
 	// Connection management
 	Transport() Transport
 	Close() error
