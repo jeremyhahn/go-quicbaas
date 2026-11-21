@@ -1,0 +1,24 @@
+# The scratch repository's queue gate for the live GitHub merge-train e2e.
+# It runs only for pull requests whose head is a queue/* branch, and fails
+# when the tree holds a file named BREAK-CI: that is how a test breaks one car.
+name: queue-ci
+
+on: pull_request
+
+permissions:
+  contents: read
+
+jobs:
+  ci-gate:
+    name: ci-gate
+    if: startsWith(github.head_ref, 'queue/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: refuse a tree that holds BREAK-CI
+        run: |
+          if [ -e BREAK-CI ]; then
+            echo "BREAK-CI is present: this queue head fails ci-gate"
+            exit 1
+          fi
+          echo "ci-gate passed"

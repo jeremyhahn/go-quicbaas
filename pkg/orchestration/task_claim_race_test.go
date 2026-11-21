@@ -75,6 +75,12 @@ func (k *claimBarrierKV) PutIfAbsent(ctx context.Context, key string, value []by
 	return forwardPutIfAbsent(ctx, k.KVStore, key, value)
 }
 
+// CompareAndSwap forwards the guarded edit every task record write commits
+// through, for the same reason.
+func (k *claimBarrierKV) CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error) {
+	return forwardCompareAndSwap(ctx, k.KVStore, key, expected, next)
+}
+
 func newClaimBarrierKV(inner interfaces.KVStore, key string) *claimBarrierKV {
 	return &claimBarrierKV{KVStore: inner, key: key, gate: make(chan struct{})}
 }

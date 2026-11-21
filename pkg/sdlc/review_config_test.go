@@ -58,6 +58,12 @@ func TestReviewerConfig_TheReviewerActsThroughItsOwnToken(t *testing.T) {
 	if got.TokenSecretRef != "reviewer-tok" {
 		t.Fatalf("token ref = %q, want the reviewer's", got.TokenSecretRef)
 	}
+	if !got.ReviewerIdentity {
+		t.Fatal("the reviewer's config is not marked as the reviewer's identity")
+	}
+	if author.ReviewerIdentity {
+		t.Fatal("the author's config was marked as the reviewer's identity")
+	}
 	if got.Owner != author.Owner || got.Repo != author.Repo || got.BaseURL != author.BaseURL {
 		t.Fatalf("the repository changed: %+v", got)
 	}
