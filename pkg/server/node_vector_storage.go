@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
@@ -270,22 +271,35 @@ var errIncompleteVectorScan = errors.New("vector scan did not return every vecto
 // qrdb reads its cursor as an offset into a slice it rebuilds from a map on
 // every call, so the order differs from page to page: one cursor pass over a
 // namespace larger than one page can return a vector twice and skip another.
-// listAllVectors therefore reads the namespace's vector count first and repeats
-// whole cursor passes, deduplicating by ID, until it has seen that many vectors.
-// If nodeScanMaxPasses passes still fall short it returns
-// errIncompleteVectorScan rather than an incomplete set, so a caller such as an
-// index rebuild never reports success over vectors it did not read.
+// listAllVectors therefore repeats whole cursor passes, deduplicating by ID,
+// until it holds every distinct vector of the namespace.
 //
-// Each pass re-reads the namespace count first; when it changed, the vectors
-// read by earlier passes are discarded, so a result never holds a vector that
-// was deleted since. A pass requests at most want/nodeScanPageSize + 2 pages:
-// once the cursor passes the end of a namespace that shrank between requests,
-// qrdb restarts from the first vector with an ever larger cursor, so the pass
-// would otherwise never end. The context is checked before every request.
+// The namespace count qrdb reports counts every stored version of a vector,
+// so it is not the number of distinct IDs and never ends a scan. That number
+// comes from the last page of a complete pass instead: qrdb deduplicates the
+// namespace by ID on each request and returns no next cursor only for the
+// page that reaches its end, so that page's offset plus its length is the
+// distinct total. A namespace that fits one page is read in one request.
+//
+// When the namespace count, or the distinct total of a complete pass, differs
+// from the previous pass's, the namespace changed: the vectors read so far are
+// discarded, so a result never holds a vector that was deleted since. If
+// nodeScanMaxPasses passes still fall short it returns errIncompleteVectorScan
+// rather than an incomplete set, so a caller such as an index rebuild never
+// reports success over vectors it did not read.
+//
+// A pass requests at most count/nodeScanPageSize + 2 pages, which reaches the
+// last page because the count is at least the distinct total: once the cursor
+// passes the end of a namespace that shrank between requests, qrdb restarts
+// from the first vector with an ever larger cursor, so the pass would
+// otherwise never end. The context is checked before every request.
 func listAllVectors(ctx context.Context, vc qrdbtransport.VectorClient, req *qrdbtransport.ListVectorsRequest) ([]*qrdbtransport.VectorData, error) {
-	var want int
+	count, distinct := -1, -1
 	var seen map[uint64]struct{}
 	var all []*qrdbtransport.VectorData
+	reset := func() {
+		seen, all = make(map[uint64]struct{}), nil
+	}
 	for pass := 0; pass < nodeScanMaxPasses; pass++ {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -294,13 +308,15 @@ func listAllVectors(ctx context.Context, vc qrdbtransport.VectorClient, req *qrd
 		if err != nil {
 			return nil, err
 		}
-		if count := int(info.VectorCount); pass == 0 || count != want {
-			want, seen, all = count, make(map[uint64]struct{}, count), nil
+		if c := int(info.VectorCount); c != count {
+			count, distinct = c, -1
+			reset()
 		}
 		page := *req
 		page.Limit = nodeScanPageSize
 		page.Cursor = ""
-		for pages := want/nodeScanPageSize + 2; pages > 0; pages-- {
+		passDistinct := -1
+		for pages := count/nodeScanPageSize + 2; pages > 0; pages-- {
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
@@ -318,19 +334,52 @@ func listAllVectors(ctx context.Context, vc qrdbtransport.VectorClient, req *qrd
 				seen[v.ID] = struct{}{}
 				all = append(all, v)
 			}
+			if resp.NextCursor == "" {
+				if offset, ok := scanCursorOffset(page.Cursor); ok {
+					passDistinct = offset + len(resp.Vectors)
+				}
+				break
+			}
 			// A later pass meets pages it has fully seen, so only an empty
 			// page (not one with nothing new) ends the pass early.
-			if resp.NextCursor == "" || resp.NextCursor == page.Cursor || len(resp.Vectors) == 0 {
+			if resp.NextCursor == page.Cursor || len(resp.Vectors) == 0 {
 				break
 			}
 			page.Cursor = resp.NextCursor
 		}
-		if len(seen) >= want {
-			sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
-			return all, nil
+		if passDistinct >= 0 {
+			if distinct >= 0 && passDistinct != distinct {
+				reset()
+			}
+			distinct = passDistinct
+		}
+		if distinct >= 0 && len(seen) == distinct {
+			// The distinct total holds only if the namespace did not change
+			// during the pass; a changed count sends the scan round again.
+			info, err := vc.GetNamespaceInfo(ctx, &qrdbtransport.GetNamespaceInfoRequest{Namespace: req.Namespace})
+			if err != nil {
+				return nil, err
+			}
+			if int(info.VectorCount) == count {
+				sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
+				return all, nil
+			}
 		}
 	}
-	return nil, fmt.Errorf("%w: namespace %q: read %d of %d vectors", errIncompleteVectorScan, req.Namespace, len(seen), want)
+	return nil, fmt.Errorf("%w: namespace %q: read %d of %d distinct vectors (namespace count %d)", errIncompleteVectorScan, req.Namespace, len(seen), distinct, count)
+}
+
+// scanCursorOffset reads a qrdb ListVectors cursor as the offset it encodes;
+// the empty cursor is offset 0.
+func scanCursorOffset(cursor string) (int, bool) {
+	if cursor == "" {
+		return 0, true
+	}
+	offset, err := strconv.Atoi(cursor)
+	if err != nil || offset < 0 {
+		return 0, false
+	}
+	return offset, true
 }
 
 // ScanByMultipleFilters scans vectors matching multiple metadata filters via the node transport.

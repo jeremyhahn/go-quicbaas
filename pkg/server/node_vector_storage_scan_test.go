@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand"
 	"testing"
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
@@ -40,6 +41,9 @@ type fakeScanVectorClient struct {
 	shrinkAt   int
 	shrinkTo   int
 	calls      int
+	// shuffle, when set, serves each page from a fresh order of ids, as
+	// qrdb rebuilds its listing from a map on every request.
+	shuffle *rand.Rand
 }
 
 func (f *fakeScanVectorClient) GetNamespaceInfo(_ context.Context, req *qrdbtransport.GetNamespaceInfoRequest) (*qrdbtransport.GetNamespaceInfoResponse, error) {
@@ -72,6 +76,10 @@ func (f *fakeScanVectorClient) ListVectors(_ context.Context, req *qrdbtransport
 		}
 	}
 	ids := f.ids
+	if f.shuffle != nil {
+		ids = append([]uint64(nil), f.ids...)
+		f.shuffle.Shuffle(len(ids), func(i, j int) { ids[i], ids[j] = ids[j], ids[i] })
+	}
 	if offset > 0 && offset < len(ids) {
 		ids = ids[offset:]
 	}
@@ -172,4 +180,108 @@ func TestNodeVectorStorage_ScanAllVectors(t *testing.T) {
 		require.Equal(t, uint64(i+1), v.ID, "a full scan is ordered by ID")
 		require.Len(t, v.Embedding, 2, "vector %d", v.ID)
 	}
+}
+
+// TestNodeVectorStorage_ScanAllVectors_Reupserted re-upserts some vectors of a
+// namespace larger than one qrdb page: a full scan and an offset scan return
+// every vector once, with its latest embedding. The pinned qrdb service writes
+// every upsert at version 1, so the namespace count cannot exceed the distinct
+// IDs here; TestListAllVectors_StoredVersions* cover a count that also counts
+// stored versions.
+func TestNodeVectorStorage_ScanAllVectors_Reupserted(t *testing.T) {
+	client := newEmbeddedVectorClient(t)
+	vs := newNodeVectorStorage(client)
+	ctx := context.Background()
+
+	const ns, total, updated = "versioned", 1500, 40
+	require.NoError(t, vs.CreateNamespace(ctx, &interfaces.VectorNamespaceInfo{
+		Name:           ns,
+		Dimension:      2,
+		DistanceMetric: "cosine",
+		IndexType:      "flat",
+	}))
+	for start := uint64(1); start <= total; start += 500 {
+		batch := make([]*interfaces.VectorValue, 0, 500)
+		for id := start; id < start+500 && id <= total; id++ {
+			batch = append(batch, &interfaces.VectorValue{
+				ID:        id,
+				Embedding: []float32{float32(id), 1},
+			})
+		}
+		require.NoError(t, vs.BatchUpsertVectors(ctx, ns, batch))
+	}
+	for id := uint64(1); id <= updated; id++ {
+		require.NoError(t, vs.UpsertVector(ctx, ns, &interfaces.VectorValue{
+			ID:        id,
+			Embedding: []float32{float32(id), 2},
+		}))
+	}
+
+	full, ok := vs.(interfaces.VectorFullScanner)
+	require.True(t, ok, "the node vector storage is a full scanner")
+	all, err := full.ScanAllVectors(ctx, ns, &interfaces.VectorScanOptions{IncludeVectors: true})
+	require.NoError(t, err)
+	require.Len(t, all, total)
+	for i, v := range all {
+		require.Equal(t, uint64(i+1), v.ID, "a full scan is ordered by ID")
+		require.Len(t, v.Embedding, 2, "vector %d", v.ID)
+		want := float32(1)
+		if v.ID <= updated {
+			want = 2
+		}
+		require.Equal(t, want, v.Embedding[1], "vector %d has its latest embedding", v.ID)
+	}
+
+	page, err := vs.ScanNamespace(ctx, ns, &interfaces.VectorScanOptions{Offset: total - 10, Limit: 20})
+	require.NoError(t, err)
+	require.Len(t, page, 10)
+	for i, v := range page {
+		require.Equal(t, uint64(total-10+i+1), v.ID)
+	}
+}
+
+// TestListAllVectors_StoredVersionsCount ends a scan on the distinct vectors a
+// complete cursor pass reports, not on a namespace count that also counts
+// stored versions: a count above the distinct total neither fails the scan nor
+// costs more than one pass.
+func TestListAllVectors_StoredVersionsCount(t *testing.T) {
+	f := newFakeScanVectorClient(2500)
+	f.staleCount = 2600
+
+	all, err := listAllVectors(context.Background(), f, &qrdbtransport.ListVectorsRequest{Namespace: "ns"})
+	require.NoError(t, err)
+	require.Len(t, all, 2500)
+	for i, v := range all {
+		require.Equal(t, uint64(i+1), v.ID)
+	}
+	assert.Equal(t, 3, f.calls, "one cursor pass of three pages")
+}
+
+// TestListAllVectors_StoredVersionsShuffledPages serves every page from a
+// fresh order of the namespace, the way qrdb does, with a namespace count that
+// counts stored versions: the scan repeats passes until it holds every
+// distinct vector, and returns each once.
+func TestListAllVectors_StoredVersionsShuffledPages(t *testing.T) {
+	f := newFakeScanVectorClient(3000)
+	f.staleCount = 3500
+	f.shuffle = rand.New(rand.NewSource(1670))
+
+	all, err := listAllVectors(context.Background(), f, &qrdbtransport.ListVectorsRequest{Namespace: "ns"})
+	require.NoError(t, err)
+	require.Len(t, all, 3000)
+	for i, v := range all {
+		require.Equal(t, uint64(i+1), v.ID)
+	}
+}
+
+// TestListAllVectors_SmallNamespaceOneRequest reads a namespace that fits one
+// qrdb page with a single ListVectors request, whatever the namespace count.
+func TestListAllVectors_SmallNamespaceOneRequest(t *testing.T) {
+	f := newFakeScanVectorClient(700)
+	f.staleCount = 900
+
+	all, err := listAllVectors(context.Background(), f, &qrdbtransport.ListVectorsRequest{Namespace: "ns"})
+	require.NoError(t, err)
+	require.Len(t, all, 700)
+	assert.Equal(t, 1, f.calls)
 }
