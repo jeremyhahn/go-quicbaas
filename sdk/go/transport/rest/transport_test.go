@@ -24,6 +24,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -1439,6 +1440,49 @@ func TestRetryWithMaxBackoff(t *testing.T) {
 	}
 	if attempts != 3 { // Initial + 2 retries
 		t.Errorf("expected 3 attempts, got %d", attempts)
+	}
+}
+
+// TestRequestWithRetry_ContextEndsDuringBackoffKeepsLastError checks that a
+// retry ended by its context still reports why the attempt before it failed:
+// the error keeps CodeCanceled and names the last attempt's error.
+func TestRequestWithRetry_ContextEndsDuringBackoffKeepsLastError(t *testing.T) {
+	const attemptMsg = "shard-7 leader unreachable"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": attemptMsg, "message": attemptMsg})
+	}))
+	defer server.Close()
+
+	tr, err := New(
+		&transport.Config{
+			Address:         server.Listener.Addr().String(),
+			Timeout:         time.Second,
+			MaxRetries:      10,
+			RetryBackoff:    5 * time.Second, // the context ends during this wait
+			MaxRetryBackoff: 5 * time.Second,
+		},
+		WithBaseURL(server.URL),
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer tr.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	_, err = tr.requestWithRetry(ctx, "test.Service", "Method", nil)
+	if err == nil {
+		t.Fatal("expected an error once the context ended")
+	}
+	if got := errors.Code(err); got != errors.CodeCanceled {
+		t.Errorf("errors.Code(err) = %v, want %v (err: %v)", got, errors.CodeCanceled, err)
+	}
+	if !strings.Contains(err.Error(), attemptMsg) {
+		t.Errorf("error %q does not name the last attempt's error %q", err.Error(), attemptMsg)
 	}
 }
 
