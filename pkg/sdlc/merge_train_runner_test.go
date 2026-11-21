@@ -1730,6 +1730,54 @@ func TestTrainRun_TheBuildsPushIsRefusedOnceTheLedgerNamesAnotherTrain(t *testin
 	}
 }
 
+func notesRun(forge *fakeForge) *trainRun {
+	return &trainRun{
+		binding: &ProjectBinding{Forge: ForgeConfig{Labels: map[string]string{LabelNeedsInfo: "Needs-Info"}}},
+		forge:   forge,
+		repo:    RepoRef{Owner: "acme", Repo: "widgets"},
+	}
+}
+
+func TestTrainRun_NotesGatherDocsAndOpenQuestions(t *testing.T) {
+	forge := newFakeForge()
+	forge.files[101] = []ForgeChangedFile{{Path: "docs/guide.md"}, {Path: "pkg/a/a.go"}}
+	forge.files[102] = []ForgeChangedFile{{Path: "docs/guide.md"}}
+	forge.issues[1] = &ForgeIssue{Number: 1, Title: "which port?", State: "open", Labels: []string{"needs-info"}}
+	forge.issues[2] = &ForgeIssue{Number: 2, Title: "answered", State: "closed", Labels: []string{"Needs-Info"}}
+	forge.issues[3] = &ForgeIssue{Number: 3, Title: "plain", State: "open", Labels: []string{"bug"}}
+	train := planTrain(2)
+	// Issue 4 is not on the forge: it is skipped, not a failure.
+	train.Cars[1].Closes = []int{2, 3, 4}
+
+	notes, err := notesRun(forge).trainNotes(context.Background(), train.Cars)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(notes.Docs) != 1 || notes.Docs[0] != "docs/guide.md" {
+		t.Fatalf("docs = %q, want the one shared docs file", notes.Docs)
+	}
+	want := trainQuestion{Issue: 1, Label: "Needs-Info", Title: "which port?"}
+	if len(notes.Questions) != 1 || notes.Questions[0] != want {
+		t.Fatalf("questions = %+v, want only %+v", notes.Questions, want)
+	}
+}
+
+func TestTrainRun_NotesFailOnForgeError(t *testing.T) {
+	train := planTrain(1)
+
+	forge := newFakeForge()
+	forge.listFilesErr = errors.New("files unavailable")
+	if _, err := notesRun(forge).trainNotes(context.Background(), train.Cars); err == nil || !errors.Is(err, forge.listFilesErr) {
+		t.Fatalf("a files failure answered %v", err)
+	}
+
+	forge = newFakeForge()
+	forge.getIssueErr = errors.New("issues unavailable")
+	if _, err := notesRun(forge).trainNotes(context.Background(), train.Cars); err == nil || !errors.Is(err, forge.getIssueErr) {
+		t.Fatalf("an issue failure answered %v", err)
+	}
+}
+
 // TestTrainErrors_NameTheTrainAndUnwrap proves an operator reading a failed
 // train job learns which train, which project and why, and a caller can test
 // the class.

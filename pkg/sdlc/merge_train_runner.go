@@ -18,6 +18,7 @@ import (
 	"errors"
 	"path"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -903,9 +904,13 @@ func (s *trainRun) openProbe(ctx context.Context, t *MergeTrain, probe *TrainPro
 			return err
 		}
 	}
+	notes, err := s.trainNotes(ctx, t.Cars[:probe.Length])
+	if err != nil {
+		return err
+	}
 	pr, err := s.forge.CreatePullRequest(ctx, s.repo, PullRequestSpec{
 		Title:   trainTitle(t, probe.Length),
-		Body:    trainBody(t, probe.Length),
+		Body:    trainBody(t, probe.Length, notes),
 		HeadRef: probe.Branch,
 		BaseRef: t.Target,
 	})
@@ -925,6 +930,81 @@ func (s *trainRun) openProbe(ctx context.Context, t *MergeTrain, probe *TrainPro
 	s.job.Audit(auditTrainProbe, "train="+strconv.Itoa(t.Number)+" prefix="+strconv.Itoa(probe.Length)+
 		" branch="+probe.Branch+" pull_request="+strconv.Itoa(pr.Number)+" head="+probe.HeadSHA)
 	return nil
+}
+
+// trainDocsLimit is how many docs paths a train's pull request lists before
+// it counts the rest.
+const trainDocsLimit = 50
+
+// trainNotes reads, through the forge, what the train's pull request lists
+// besides its cars: the docs its cars change and the open questions on the
+// issues it closes. A forge failure is returned: the pull request is not
+// opened with a body that leaves either out.
+func (s *trainRun) trainNotes(ctx context.Context, cars []TrainCar) (trainNotes, error) {
+	var notes trainNotes
+	seen := map[string]bool{}
+	for _, car := range cars {
+		files, err := s.forge.ListPullRequestFiles(ctx, s.repo, car.PullRequest)
+		if err != nil {
+			return trainNotes{}, err
+		}
+		for _, file := range files {
+			if docsPath(file.Path) && !seen[file.Path] {
+				seen[file.Path] = true
+				notes.Docs = append(notes.Docs, file.Path)
+			}
+		}
+	}
+	slices.Sort(notes.Docs)
+	if extra := len(notes.Docs) - trainDocsLimit; extra > 0 {
+		notes.Docs = append(notes.Docs[:trainDocsLimit:trainDocsLimit], "... and "+strconv.Itoa(extra)+" more")
+	}
+
+	var labels []string
+	if s.binding != nil {
+		for _, key := range []string{LabelNeedsInfo, LabelBlocked, LabelEscalated} {
+			if label := s.binding.Forge.Label(key); label != "" {
+				labels = append(labels, label)
+			}
+		}
+	}
+	if len(labels) == 0 {
+		return notes, nil
+	}
+	for _, number := range trainCloses(cars) {
+		issue, err := s.forge.GetIssue(ctx, s.repo, number)
+		if err != nil {
+			// An issue the forge says does not exist waits on nobody: it is
+			// no open question. Any other failure stops the pull request.
+			if errors.Is(err, ErrNotFound) {
+				continue
+			}
+			return trainNotes{}, err
+		}
+		if issue == nil {
+			return trainNotes{}, &ForgeWriteNotAppliedError{Type: s.forge.Type(), Operation: "GetIssue", Subject: s.repo.String() + "#" + strconv.Itoa(number)}
+		}
+		if issueClosed(issue) {
+			continue
+		}
+		if label := trainQuestionLabel(issue.Labels, labels); label != "" {
+			notes.Questions = append(notes.Questions, trainQuestion{Issue: number, Label: label, Title: issue.Title})
+		}
+	}
+	return notes, nil
+}
+
+// trainQuestionLabel is the first of the bound question labels the issue
+// carries, compared case-insensitively, or empty when it carries none.
+func trainQuestionLabel(have, bound []string) string {
+	for _, want := range bound {
+		for _, label := range have {
+			if strings.EqualFold(strings.TrimSpace(label), want) {
+				return want
+			}
+		}
+	}
+	return ""
 }
 
 // ensureBranch cuts a probe's branch at its commit, or accepts the one an
