@@ -16,7 +16,9 @@
 // the service those handlers use wired), with the setting or build tag that
 // enables each one it does not, and the SDK families it serves.
 //
-// The report is served on every transport: GET /api/v1/server/capabilities on REST
-// and QUIC, the quicbaas_capabilities tool on MCP, GetCapabilities on gRPC
-// and Unix, and in process on Embedded. Any authenticated caller may read it.
+// The report is served on REST and QUIC (GET /api/v1/server/capabilities) and
+// in process on Embedded. MCP, gRPC and Unix do not serve it yet: Get over
+// them returns the transport's unsupported-method error. The path sits under
+// /api/v1/server because go-xkms owns GET /api/v1/capabilities. Any
+// authenticated caller may read it.
 package capabilities

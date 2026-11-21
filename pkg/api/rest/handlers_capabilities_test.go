@@ -216,6 +216,17 @@ func TestCapabilities_RefusesUnauthenticated(t *testing.T) {
 	}
 }
 
+// TestCapabilities_NotOnXKMSPath keeps quicbaas's report off GET
+// /api/v1/capabilities: go-xkms serves that route, a REST route has one
+// owner, and the server refuses to start with both.
+func TestCapabilities_NotOnXKMSPath(t *testing.T) {
+	for _, spec := range Routes() {
+		if spec.Method == http.MethodGet && spec.Pattern == "/api/v1/capabilities" {
+			t.Errorf("Routes() registers GET /api/v1/capabilities: that path belongs to go-xkms; quicbaas serves its report at /api/v1/server/capabilities")
+		}
+	}
+}
+
 func TestCapabilities_BodyCarriesNoConfigValue(t *testing.T) {
 	server, m, cleanup := setupMockServer(t)
 	defer cleanup()

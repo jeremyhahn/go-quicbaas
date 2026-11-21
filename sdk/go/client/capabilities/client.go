@@ -95,8 +95,8 @@ func (c *client) Get(ctx context.Context) (*Report, error) {
 }
 
 // decodeReport accepts the report as a transport returns it: typed by the
-// in-process and gRPC transports, or decoded JSON (a map) by REST, QUIC and
-// MCP. Any other value is re-encoded as JSON and decoded into a Report.
+// in-process (Embedded) transport, or decoded JSON (a map) by REST and QUIC.
+// Any other value is re-encoded as JSON and decoded into a Report.
 func decodeReport(resp interface{}) (*Report, error) {
 	switch v := resp.(type) {
 	case *Report:
