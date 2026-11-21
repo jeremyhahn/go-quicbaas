@@ -2457,7 +2457,7 @@ func TestCoverage_ImportKey_EmptyKeyID(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = service.ImportKey(ctx, "", []byte("key-material"), AlgAES256GCM)
+	_, err = service.ImportKey(ctx, "", []byte("key-material"), AlgAES256GCM, false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "keyID cannot be empty")
 }
@@ -2473,7 +2473,7 @@ func TestCoverage_ImportKey_EmptyMaterial(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = service.ImportKey(ctx, "test-key", []byte{}, AlgAES256GCM)
+	_, err = service.ImportKey(ctx, "test-key", []byte{}, AlgAES256GCM, false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "key material cannot be empty")
 }
@@ -2489,7 +2489,7 @@ func TestCoverage_ImportKey_InvalidAlgorithm(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = service.ImportKey(ctx, "test-key", []byte("key-material"), "INVALID-ALG")
+	_, err = service.ImportKey(ctx, "test-key", []byte("key-material"), "INVALID-ALG", false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported algorithm")
 }
@@ -2507,7 +2507,7 @@ func TestCoverage_ImportKey_ContextCancelled(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = service.ImportKey(ctx, "test-key", []byte("key-material"), AlgAES256GCM)
+	_, err = service.ImportKey(ctx, "test-key", []byte("key-material"), AlgAES256GCM, false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "context canceled")
 }
@@ -2531,7 +2531,7 @@ func TestCoverage_ImportKey_Success(t *testing.T) {
 		keyMaterial[i] = byte(i)
 	}
 
-	result, err := service.ImportKey(ctx, "imported-key", keyMaterial, AlgAES256GCM)
+	result, err := service.ImportKey(ctx, "imported-key", keyMaterial, AlgAES256GCM, false)
 	require.NoError(t, err)
 	assert.NotNil(t, result)
 
@@ -2555,7 +2555,7 @@ func TestCoverage_ImportKey_BackendError(t *testing.T) {
 	backend.SetError("ImportKey", errors.New("import failed"))
 
 	keyMaterial := make([]byte, 32)
-	_, err = service.ImportKey(ctx, "test-key", keyMaterial, AlgAES256GCM)
+	_, err = service.ImportKey(ctx, "test-key", keyMaterial, AlgAES256GCM, false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "import failed")
 }
@@ -2573,7 +2573,7 @@ func TestCoverage_ImportKey_DefaultAlgorithm(t *testing.T) {
 
 	keyMaterial := make([]byte, 32)
 	// Empty algorithm should use default
-	result, err := service.ImportKey(ctx, "default-alg-key", keyMaterial, "")
+	result, err := service.ImportKey(ctx, "default-alg-key", keyMaterial, "", false)
 	require.NoError(t, err)
 	assert.NotNil(t, result)
 }

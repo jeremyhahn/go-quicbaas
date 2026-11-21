@@ -125,7 +125,7 @@ func (m *rotationKMSManager) GenerateKey(_ context.Context, _ *xkmssdk.KeyAttrib
 }
 
 // ImportKey implements interfaces.KMSManager.
-func (m *rotationKMSManager) ImportKey(_ context.Context, _ string, _ []byte, _ string) (interface{}, error) {
+func (m *rotationKMSManager) ImportKey(_ context.Context, _ string, _ []byte, _ string, _ bool) (interface{}, error) {
 	return nil, nil
 }
 

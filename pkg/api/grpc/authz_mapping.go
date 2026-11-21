@@ -198,6 +198,8 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.v1.QuicBaaS/ScanIndex":      {"index", "scan"},
 	"/quicbaas.v1.QuicBaaS/Put":            {"kv", "put"},
 	"/quicbaas.v1.QuicBaaS/Delete":         {"kv", "delete"},
+	"/quicbaas.v1.QuicBaaS/CompareAndSwap": {"kv", "put"},
+	"/quicbaas.v1.QuicBaaS/PutIfAbsent":    {"kv", "put"},
 	"/quicbaas.v1.QuicBaaS/BatchGet":       {"batch", "execute"},
 	"/quicbaas.v1.QuicBaaS/BatchPut":       {"batch", "execute"},
 	"/quicbaas.v1.QuicBaaS/BatchDelete":    {"batch", "execute"},
@@ -272,6 +274,14 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.iam.v1.IAMService/ListWebAuthnCredentials":   {"users", "read"},
 	"/quicbaas.iam.v1.IAMService/DeleteWebAuthnCredential":  {"users", "delete"},
 	"/quicbaas.iam.v1.IAMService/DeleteWebAuthnCredentials": {"users", "delete"},
+
+	// ---- quicbaas.iam.v1.AuditService ----
+	// The same permissions REST and MCP require for these verbs (#1751):
+	// GET /api/v1/iam/audit (audit:query), GET /api/v1/iam/audit/{id}
+	// (audit:read) and POST /api/v1/iam/audit (audit_events:record).
+	"/quicbaas.iam.v1.AuditService/QueryAuditEvents": {"audit", "query"},
+	"/quicbaas.iam.v1.AuditService/GetAuditEvent":    {"audit", "read"},
+	"/quicbaas.iam.v1.AuditService/RecordAuditEvent": {"audit_events", "record"},
 
 	// ---- quicbaas.iam.v1.IAMService: built-in role reconciliation ----
 	//

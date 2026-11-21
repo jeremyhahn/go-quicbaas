@@ -841,37 +841,24 @@ func TestBackupClient_RestoreFromBackupID(t *testing.T) {
 	}
 }
 
+// TestBackupClient_RestoreFromExternalSource proves a restore that names
+// only an external source is refused with an invalid-input error before any
+// call: the backup service restores by backup ID only (#1726).
 func TestBackupClient_RestoreFromExternalSource(t *testing.T) {
 	mt := mock.NewTransport()
 	client := backup.NewClient(mt)
-
-	expectedResp := &backup.RestoreResponse{
-		Restored: true,
-		Duration: 30 * time.Second,
-	}
-	mt.SetResponse("quicbaas.Backup", "Restore", expectedResp, nil)
 
 	ctx := context.Background()
 	req := &backup.RestoreRequest{
 		Source: "s3://external-bucket/backups/snapshot-2025-12-27.tar.gz",
 	}
 
-	resp, err := client.Restore(ctx, req)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	_, err := client.Restore(ctx, req)
+	if !errors.IsInvalidInput(err) {
+		t.Fatalf("expected an invalid-input error, got %v", err)
 	}
-	if !resp.Restored {
-		t.Error("expected Restored to be true")
-	}
-
-	// Verify request was captured with Source
-	requests := mt.Requests()
-	payload, ok := requests[0].Payload.(*backup.RestoreRequest)
-	if !ok {
-		t.Fatal("expected RestoreRequest payload")
-	}
-	if payload.Source != req.Source {
-		t.Errorf("expected source %q, got %q", req.Source, payload.Source)
+	if n := len(mt.Requests()); n != 0 {
+		t.Errorf("expected no request to be sent, got %d", n)
 	}
 }
 

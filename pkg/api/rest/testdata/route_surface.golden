@@ -374,6 +374,7 @@ POST /api/v1/barrier/shamir/unseal-share
 POST /api/v1/barrier/shamir/unseal-shares
 POST /api/v1/barrier/unseal
 POST /api/v1/batch/delete
+POST /api/v1/batch/execute
 POST /api/v1/batch/get
 POST /api/v1/batch/put
 POST /api/v1/bootstrap/auto
@@ -443,6 +444,8 @@ POST /api/v1/kms/keys/{name}/export
 POST /api/v1/kms/keys/{name}/revoke
 POST /api/v1/kms/keys/{name}/rotate
 POST /api/v1/kv/{type}/{key}
+POST /api/v1/kv/{type}/{key}/compare-and-swap
+POST /api/v1/kv/{type}/{key}/put-if-absent
 POST /api/v1/messaging/channels
 POST /api/v1/messaging/publish-delta/{channel}
 POST /api/v1/messaging/publish/{channel}

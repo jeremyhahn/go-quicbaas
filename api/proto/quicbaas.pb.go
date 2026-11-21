@@ -823,6 +823,207 @@ func (x *PutResponse) GetLeaderId() uint64 {
 	return 0
 }
 
+// CompareAndSwapRequest replaces an existing entity's value when it equals expect.
+type CompareAndSwapRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// entity_type categorizes the data.
+	EntityType string `protobuf:"bytes,1,opt,name=entity_type,json=entityType,proto3" json:"entity_type,omitempty"`
+	// id is the unique identifier.
+	Id uint64 `protobuf:"varint,2,opt,name=id,proto3" json:"id,omitempty"`
+	// expect is the value the entity must currently hold.
+	Expect []byte `protobuf:"bytes,3,opt,name=expect,proto3" json:"expect,omitempty"`
+	// set is the value stored when expect matches.
+	Set []byte `protobuf:"bytes,4,opt,name=set,proto3" json:"set,omitempty"`
+	// shard_id specifies the target shard (0 = default).
+	ShardId       uint64 `protobuf:"varint,5,opt,name=shard_id,json=shardId,proto3" json:"shard_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CompareAndSwapRequest) Reset() {
+	*x = CompareAndSwapRequest{}
+	mi := &file_api_proto_quicbaas_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CompareAndSwapRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CompareAndSwapRequest) ProtoMessage() {}
+
+func (x *CompareAndSwapRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_quicbaas_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CompareAndSwapRequest.ProtoReflect.Descriptor instead.
+func (*CompareAndSwapRequest) Descriptor() ([]byte, []int) {
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *CompareAndSwapRequest) GetEntityType() string {
+	if x != nil {
+		return x.EntityType
+	}
+	return ""
+}
+
+func (x *CompareAndSwapRequest) GetId() uint64 {
+	if x != nil {
+		return x.Id
+	}
+	return 0
+}
+
+func (x *CompareAndSwapRequest) GetExpect() []byte {
+	if x != nil {
+		return x.Expect
+	}
+	return nil
+}
+
+func (x *CompareAndSwapRequest) GetSet() []byte {
+	if x != nil {
+		return x.Set
+	}
+	return nil
+}
+
+func (x *CompareAndSwapRequest) GetShardId() uint64 {
+	if x != nil {
+		return x.ShardId
+	}
+	return 0
+}
+
+// PutIfAbsentRequest stores an entity only when it does not exist.
+type PutIfAbsentRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// entity_type categorizes the data.
+	EntityType string `protobuf:"bytes,1,opt,name=entity_type,json=entityType,proto3" json:"entity_type,omitempty"`
+	// id is the unique identifier.
+	Id uint64 `protobuf:"varint,2,opt,name=id,proto3" json:"id,omitempty"`
+	// data is the value stored when the entity is absent.
+	Data []byte `protobuf:"bytes,3,opt,name=data,proto3" json:"data,omitempty"`
+	// shard_id specifies the target shard (0 = default).
+	ShardId       uint64 `protobuf:"varint,4,opt,name=shard_id,json=shardId,proto3" json:"shard_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PutIfAbsentRequest) Reset() {
+	*x = PutIfAbsentRequest{}
+	mi := &file_api_proto_quicbaas_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PutIfAbsentRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PutIfAbsentRequest) ProtoMessage() {}
+
+func (x *PutIfAbsentRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_quicbaas_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PutIfAbsentRequest.ProtoReflect.Descriptor instead.
+func (*PutIfAbsentRequest) Descriptor() ([]byte, []int) {
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *PutIfAbsentRequest) GetEntityType() string {
+	if x != nil {
+		return x.EntityType
+	}
+	return ""
+}
+
+func (x *PutIfAbsentRequest) GetId() uint64 {
+	if x != nil {
+		return x.Id
+	}
+	return 0
+}
+
+func (x *PutIfAbsentRequest) GetData() []byte {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
+func (x *PutIfAbsentRequest) GetShardId() uint64 {
+	if x != nil {
+		return x.ShardId
+	}
+	return 0
+}
+
+// ConditionalPutResponse reports whether a conditional write was stored.
+type ConditionalPutResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// applied is true when the precondition held and the write was stored.
+	Applied       bool `protobuf:"varint,1,opt,name=applied,proto3" json:"applied,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ConditionalPutResponse) Reset() {
+	*x = ConditionalPutResponse{}
+	mi := &file_api_proto_quicbaas_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ConditionalPutResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ConditionalPutResponse) ProtoMessage() {}
+
+func (x *ConditionalPutResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_quicbaas_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ConditionalPutResponse.ProtoReflect.Descriptor instead.
+func (*ConditionalPutResponse) Descriptor() ([]byte, []int) {
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *ConditionalPutResponse) GetApplied() bool {
+	if x != nil {
+		return x.Applied
+	}
+	return false
+}
+
 // GetRequest retrieves a value by key.
 type GetRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -845,7 +1046,7 @@ type GetRequest struct {
 
 func (x *GetRequest) Reset() {
 	*x = GetRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[2]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -857,7 +1058,7 @@ func (x *GetRequest) String() string {
 func (*GetRequest) ProtoMessage() {}
 
 func (x *GetRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[2]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -870,7 +1071,7 @@ func (x *GetRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetRequest.ProtoReflect.Descriptor instead.
 func (*GetRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{2}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *GetRequest) GetEntityType() string {
@@ -936,7 +1137,7 @@ type GetResponse struct {
 
 func (x *GetResponse) Reset() {
 	*x = GetResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[3]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -948,7 +1149,7 @@ func (x *GetResponse) String() string {
 func (*GetResponse) ProtoMessage() {}
 
 func (x *GetResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[3]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -961,7 +1162,7 @@ func (x *GetResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetResponse.ProtoReflect.Descriptor instead.
 func (*GetResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{3}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *GetResponse) GetId() uint64 {
@@ -1025,7 +1226,7 @@ type DeleteRequest struct {
 
 func (x *DeleteRequest) Reset() {
 	*x = DeleteRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[4]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1037,7 +1238,7 @@ func (x *DeleteRequest) String() string {
 func (*DeleteRequest) ProtoMessage() {}
 
 func (x *DeleteRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[4]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1050,7 +1251,7 @@ func (x *DeleteRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteRequest.ProtoReflect.Descriptor instead.
 func (*DeleteRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{4}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *DeleteRequest) GetEntityType() string {
@@ -1101,7 +1302,7 @@ type DeleteResponse struct {
 
 func (x *DeleteResponse) Reset() {
 	*x = DeleteResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[5]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1113,7 +1314,7 @@ func (x *DeleteResponse) String() string {
 func (*DeleteResponse) ProtoMessage() {}
 
 func (x *DeleteResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[5]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1126,7 +1327,7 @@ func (x *DeleteResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteResponse.ProtoReflect.Descriptor instead.
 func (*DeleteResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{5}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *DeleteResponse) GetDeleted() bool {
@@ -1167,7 +1368,7 @@ type ListRequest struct {
 
 func (x *ListRequest) Reset() {
 	*x = ListRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[6]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1179,7 +1380,7 @@ func (x *ListRequest) String() string {
 func (*ListRequest) ProtoMessage() {}
 
 func (x *ListRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[6]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1192,7 +1393,7 @@ func (x *ListRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListRequest.ProtoReflect.Descriptor instead.
 func (*ListRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{6}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *ListRequest) GetEntityType() string {
@@ -1259,7 +1460,7 @@ type ListResponse struct {
 
 func (x *ListResponse) Reset() {
 	*x = ListResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[7]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1271,7 +1472,7 @@ func (x *ListResponse) String() string {
 func (*ListResponse) ProtoMessage() {}
 
 func (x *ListResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[7]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1284,7 +1485,7 @@ func (x *ListResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListResponse.ProtoReflect.Descriptor instead.
 func (*ListResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{7}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ListResponse) GetEntities() []*Entity {
@@ -1326,7 +1527,7 @@ type ListEntityTypesRequest struct {
 
 func (x *ListEntityTypesRequest) Reset() {
 	*x = ListEntityTypesRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[8]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1338,7 +1539,7 @@ func (x *ListEntityTypesRequest) String() string {
 func (*ListEntityTypesRequest) ProtoMessage() {}
 
 func (x *ListEntityTypesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[8]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1351,7 +1552,7 @@ func (x *ListEntityTypesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListEntityTypesRequest.ProtoReflect.Descriptor instead.
 func (*ListEntityTypesRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{8}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *ListEntityTypesRequest) GetPageSize() uint32 {
@@ -1397,7 +1598,7 @@ type ListEntityTypesResponse struct {
 
 func (x *ListEntityTypesResponse) Reset() {
 	*x = ListEntityTypesResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[9]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1409,7 +1610,7 @@ func (x *ListEntityTypesResponse) String() string {
 func (*ListEntityTypesResponse) ProtoMessage() {}
 
 func (x *ListEntityTypesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[9]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1422,7 +1623,7 @@ func (x *ListEntityTypesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListEntityTypesResponse.ProtoReflect.Descriptor instead.
 func (*ListEntityTypesResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{9}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *ListEntityTypesResponse) GetEntityTypes() []string {
@@ -1467,7 +1668,7 @@ type Entity struct {
 
 func (x *Entity) Reset() {
 	*x = Entity{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[10]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1479,7 +1680,7 @@ func (x *Entity) String() string {
 func (*Entity) ProtoMessage() {}
 
 func (x *Entity) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[10]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1492,7 +1693,7 @@ func (x *Entity) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Entity.ProtoReflect.Descriptor instead.
 func (*Entity) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{10}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *Entity) GetId() uint64 {
@@ -1565,7 +1766,7 @@ type WatchRequest struct {
 
 func (x *WatchRequest) Reset() {
 	*x = WatchRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[11]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1577,7 +1778,7 @@ func (x *WatchRequest) String() string {
 func (*WatchRequest) ProtoMessage() {}
 
 func (x *WatchRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[11]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1590,7 +1791,7 @@ func (x *WatchRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WatchRequest.ProtoReflect.Descriptor instead.
 func (*WatchRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{11}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *WatchRequest) GetKey() []byte {
@@ -1665,7 +1866,7 @@ type WatchEvent struct {
 
 func (x *WatchEvent) Reset() {
 	*x = WatchEvent{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[12]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1677,7 +1878,7 @@ func (x *WatchEvent) String() string {
 func (*WatchEvent) ProtoMessage() {}
 
 func (x *WatchEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[12]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1690,7 +1891,7 @@ func (x *WatchEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WatchEvent.ProtoReflect.Descriptor instead.
 func (*WatchEvent) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{12}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *WatchEvent) GetType() WatchEventType {
@@ -1766,7 +1967,7 @@ type WatchResponse struct {
 
 func (x *WatchResponse) Reset() {
 	*x = WatchResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[13]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1778,7 +1979,7 @@ func (x *WatchResponse) String() string {
 func (*WatchResponse) ProtoMessage() {}
 
 func (x *WatchResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[13]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1791,7 +1992,7 @@ func (x *WatchResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WatchResponse.ProtoReflect.Descriptor instead.
 func (*WatchResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{13}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *WatchResponse) GetWatchId() int64 {
@@ -1873,7 +2074,7 @@ type QueryRequest struct {
 
 func (x *QueryRequest) Reset() {
 	*x = QueryRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[14]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1885,7 +2086,7 @@ func (x *QueryRequest) String() string {
 func (*QueryRequest) ProtoMessage() {}
 
 func (x *QueryRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[14]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1898,7 +2099,7 @@ func (x *QueryRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use QueryRequest.ProtoReflect.Descriptor instead.
 func (*QueryRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{14}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *QueryRequest) GetEntityType() string {
@@ -1986,7 +2187,7 @@ type QueryResponse struct {
 
 func (x *QueryResponse) Reset() {
 	*x = QueryResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[15]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1998,7 +2199,7 @@ func (x *QueryResponse) String() string {
 func (*QueryResponse) ProtoMessage() {}
 
 func (x *QueryResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[15]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2011,7 +2212,7 @@ func (x *QueryResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use QueryResponse.ProtoReflect.Descriptor instead.
 func (*QueryResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{15}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *QueryResponse) GetEntities() []*Entity {
@@ -2059,7 +2260,7 @@ type ScanRequest struct {
 
 func (x *ScanRequest) Reset() {
 	*x = ScanRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[16]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2071,7 +2272,7 @@ func (x *ScanRequest) String() string {
 func (*ScanRequest) ProtoMessage() {}
 
 func (x *ScanRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[16]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2084,7 +2285,7 @@ func (x *ScanRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ScanRequest.ProtoReflect.Descriptor instead.
 func (*ScanRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{16}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *ScanRequest) GetEntityType() string {
@@ -2151,7 +2352,7 @@ type ScanResponse struct {
 
 func (x *ScanResponse) Reset() {
 	*x = ScanResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[17]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2163,7 +2364,7 @@ func (x *ScanResponse) String() string {
 func (*ScanResponse) ProtoMessage() {}
 
 func (x *ScanResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[17]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2176,7 +2377,7 @@ func (x *ScanResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ScanResponse.ProtoReflect.Descriptor instead.
 func (*ScanResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{17}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *ScanResponse) GetEntities() []*Entity {
@@ -2211,7 +2412,7 @@ type ClusterStatusRequest struct {
 
 func (x *ClusterStatusRequest) Reset() {
 	*x = ClusterStatusRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[18]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2223,7 +2424,7 @@ func (x *ClusterStatusRequest) String() string {
 func (*ClusterStatusRequest) ProtoMessage() {}
 
 func (x *ClusterStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[18]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2236,7 +2437,7 @@ func (x *ClusterStatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClusterStatusRequest.ProtoReflect.Descriptor instead.
 func (*ClusterStatusRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{18}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *ClusterStatusRequest) GetIncludeMetrics() bool {
@@ -2263,7 +2464,7 @@ type ClusterStatusResponse struct {
 
 func (x *ClusterStatusResponse) Reset() {
 	*x = ClusterStatusResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[19]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2275,7 +2476,7 @@ func (x *ClusterStatusResponse) String() string {
 func (*ClusterStatusResponse) ProtoMessage() {}
 
 func (x *ClusterStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[19]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2288,7 +2489,7 @@ func (x *ClusterStatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClusterStatusResponse.ProtoReflect.Descriptor instead.
 func (*ClusterStatusResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{19}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *ClusterStatusResponse) GetClusterId() string {
@@ -2344,7 +2545,7 @@ type NodeInfo struct {
 
 func (x *NodeInfo) Reset() {
 	*x = NodeInfo{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[20]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2356,7 +2557,7 @@ func (x *NodeInfo) String() string {
 func (*NodeInfo) ProtoMessage() {}
 
 func (x *NodeInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[20]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2369,7 +2570,7 @@ func (x *NodeInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NodeInfo.ProtoReflect.Descriptor instead.
 func (*NodeInfo) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{20}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *NodeInfo) GetNodeId() uint64 {
@@ -2449,7 +2650,7 @@ type ShardInfo struct {
 
 func (x *ShardInfo) Reset() {
 	*x = ShardInfo{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[21]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2461,7 +2662,7 @@ func (x *ShardInfo) String() string {
 func (*ShardInfo) ProtoMessage() {}
 
 func (x *ShardInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[21]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2474,7 +2675,7 @@ func (x *ShardInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ShardInfo.ProtoReflect.Descriptor instead.
 func (*ShardInfo) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{21}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *ShardInfo) GetShardId() uint64 {
@@ -2530,7 +2731,7 @@ type GetLeaderRequest struct {
 
 func (x *GetLeaderRequest) Reset() {
 	*x = GetLeaderRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[22]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2542,7 +2743,7 @@ func (x *GetLeaderRequest) String() string {
 func (*GetLeaderRequest) ProtoMessage() {}
 
 func (x *GetLeaderRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[22]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2555,7 +2756,7 @@ func (x *GetLeaderRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetLeaderRequest.ProtoReflect.Descriptor instead.
 func (*GetLeaderRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{22}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *GetLeaderRequest) GetShardId() uint64 {
@@ -2582,7 +2783,7 @@ type GetLeaderResponse struct {
 
 func (x *GetLeaderResponse) Reset() {
 	*x = GetLeaderResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[23]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2594,7 +2795,7 @@ func (x *GetLeaderResponse) String() string {
 func (*GetLeaderResponse) ProtoMessage() {}
 
 func (x *GetLeaderResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[23]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2607,7 +2808,7 @@ func (x *GetLeaderResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetLeaderResponse.ProtoReflect.Descriptor instead.
 func (*GetLeaderResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{23}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *GetLeaderResponse) GetShardId() uint64 {
@@ -2663,7 +2864,7 @@ type AggregateRequest struct {
 
 func (x *AggregateRequest) Reset() {
 	*x = AggregateRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[24]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2675,7 +2876,7 @@ func (x *AggregateRequest) String() string {
 func (*AggregateRequest) ProtoMessage() {}
 
 func (x *AggregateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[24]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2688,7 +2889,7 @@ func (x *AggregateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AggregateRequest.ProtoReflect.Descriptor instead.
 func (*AggregateRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{24}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *AggregateRequest) GetEntityType() string {
@@ -2762,7 +2963,7 @@ type AggregateResponse struct {
 
 func (x *AggregateResponse) Reset() {
 	*x = AggregateResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[25]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2774,7 +2975,7 @@ func (x *AggregateResponse) String() string {
 func (*AggregateResponse) ProtoMessage() {}
 
 func (x *AggregateResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[25]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2787,7 +2988,7 @@ func (x *AggregateResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AggregateResponse.ProtoReflect.Descriptor instead.
 func (*AggregateResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{25}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *AggregateResponse) GetResult() float64 {
@@ -2826,7 +3027,7 @@ type GroupedResult struct {
 
 func (x *GroupedResult) Reset() {
 	*x = GroupedResult{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[26]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2838,7 +3039,7 @@ func (x *GroupedResult) String() string {
 func (*GroupedResult) ProtoMessage() {}
 
 func (x *GroupedResult) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[26]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2851,7 +3052,7 @@ func (x *GroupedResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GroupedResult.ProtoReflect.Descriptor instead.
 func (*GroupedResult) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{26}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *GroupedResult) GetTimestamp() int64 {
@@ -2901,7 +3102,7 @@ type TimeSeriesQueryRequest struct {
 
 func (x *TimeSeriesQueryRequest) Reset() {
 	*x = TimeSeriesQueryRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[27]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2913,7 +3114,7 @@ func (x *TimeSeriesQueryRequest) String() string {
 func (*TimeSeriesQueryRequest) ProtoMessage() {}
 
 func (x *TimeSeriesQueryRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[27]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2926,7 +3127,7 @@ func (x *TimeSeriesQueryRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TimeSeriesQueryRequest.ProtoReflect.Descriptor instead.
 func (*TimeSeriesQueryRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{27}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *TimeSeriesQueryRequest) GetEntityType() string {
@@ -3000,7 +3201,7 @@ type TimeSeriesQueryResponse struct {
 
 func (x *TimeSeriesQueryResponse) Reset() {
 	*x = TimeSeriesQueryResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[28]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3012,7 +3213,7 @@ func (x *TimeSeriesQueryResponse) String() string {
 func (*TimeSeriesQueryResponse) ProtoMessage() {}
 
 func (x *TimeSeriesQueryResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[28]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3025,7 +3226,7 @@ func (x *TimeSeriesQueryResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TimeSeriesQueryResponse.ProtoReflect.Descriptor instead.
 func (*TimeSeriesQueryResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{28}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *TimeSeriesQueryResponse) GetDataPoints() []*TimeSeriesPoint {
@@ -3066,7 +3267,7 @@ type TimeSeriesPoint struct {
 
 func (x *TimeSeriesPoint) Reset() {
 	*x = TimeSeriesPoint{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[29]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3078,7 +3279,7 @@ func (x *TimeSeriesPoint) String() string {
 func (*TimeSeriesPoint) ProtoMessage() {}
 
 func (x *TimeSeriesPoint) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[29]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3091,7 +3292,7 @@ func (x *TimeSeriesPoint) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TimeSeriesPoint.ProtoReflect.Descriptor instead.
 func (*TimeSeriesPoint) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{29}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *TimeSeriesPoint) GetTimestamp() int64 {
@@ -3137,7 +3338,7 @@ type BatchPutRequest struct {
 
 func (x *BatchPutRequest) Reset() {
 	*x = BatchPutRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[30]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3149,7 +3350,7 @@ func (x *BatchPutRequest) String() string {
 func (*BatchPutRequest) ProtoMessage() {}
 
 func (x *BatchPutRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[30]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3162,7 +3363,7 @@ func (x *BatchPutRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BatchPutRequest.ProtoReflect.Descriptor instead.
 func (*BatchPutRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{30}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *BatchPutRequest) GetRequests() []*PutRequest {
@@ -3199,7 +3400,7 @@ type BatchPutResponse struct {
 
 func (x *BatchPutResponse) Reset() {
 	*x = BatchPutResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[31]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3211,7 +3412,7 @@ func (x *BatchPutResponse) String() string {
 func (*BatchPutResponse) ProtoMessage() {}
 
 func (x *BatchPutResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[31]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3224,7 +3425,7 @@ func (x *BatchPutResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BatchPutResponse.ProtoReflect.Descriptor instead.
 func (*BatchPutResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{31}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *BatchPutResponse) GetResponses() []*PutResponse {
@@ -3252,7 +3453,7 @@ type BatchGetRequest struct {
 
 func (x *BatchGetRequest) Reset() {
 	*x = BatchGetRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[32]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3264,7 +3465,7 @@ func (x *BatchGetRequest) String() string {
 func (*BatchGetRequest) ProtoMessage() {}
 
 func (x *BatchGetRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[32]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3277,7 +3478,7 @@ func (x *BatchGetRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BatchGetRequest.ProtoReflect.Descriptor instead.
 func (*BatchGetRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{32}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *BatchGetRequest) GetRequests() []*GetRequest {
@@ -3298,7 +3499,7 @@ type BatchGetResponse struct {
 
 func (x *BatchGetResponse) Reset() {
 	*x = BatchGetResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[33]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3310,7 +3511,7 @@ func (x *BatchGetResponse) String() string {
 func (*BatchGetResponse) ProtoMessage() {}
 
 func (x *BatchGetResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[33]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3323,7 +3524,7 @@ func (x *BatchGetResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BatchGetResponse.ProtoReflect.Descriptor instead.
 func (*BatchGetResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{33}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *BatchGetResponse) GetResponses() []*GetResponse {
@@ -3348,7 +3549,7 @@ type BatchDeleteRequest struct {
 
 func (x *BatchDeleteRequest) Reset() {
 	*x = BatchDeleteRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[34]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3360,7 +3561,7 @@ func (x *BatchDeleteRequest) String() string {
 func (*BatchDeleteRequest) ProtoMessage() {}
 
 func (x *BatchDeleteRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[34]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3373,7 +3574,7 @@ func (x *BatchDeleteRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BatchDeleteRequest.ProtoReflect.Descriptor instead.
 func (*BatchDeleteRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{34}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *BatchDeleteRequest) GetRequests() []*DeleteRequest {
@@ -3410,7 +3611,7 @@ type BatchDeleteResponse struct {
 
 func (x *BatchDeleteResponse) Reset() {
 	*x = BatchDeleteResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[35]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3422,7 +3623,7 @@ func (x *BatchDeleteResponse) String() string {
 func (*BatchDeleteResponse) ProtoMessage() {}
 
 func (x *BatchDeleteResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[35]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3435,7 +3636,7 @@ func (x *BatchDeleteResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BatchDeleteResponse.ProtoReflect.Descriptor instead.
 func (*BatchDeleteResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{35}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *BatchDeleteResponse) GetResponses() []*DeleteResponse {
@@ -3467,7 +3668,7 @@ type StreamBatchPutRequest struct {
 
 func (x *StreamBatchPutRequest) Reset() {
 	*x = StreamBatchPutRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[36]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3479,7 +3680,7 @@ func (x *StreamBatchPutRequest) String() string {
 func (*StreamBatchPutRequest) ProtoMessage() {}
 
 func (x *StreamBatchPutRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[36]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3492,7 +3693,7 @@ func (x *StreamBatchPutRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StreamBatchPutRequest.ProtoReflect.Descriptor instead.
 func (*StreamBatchPutRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{36}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *StreamBatchPutRequest) GetPayload() isStreamBatchPutRequest_Payload {
@@ -3573,7 +3774,7 @@ type StreamBatchHeader struct {
 
 func (x *StreamBatchHeader) Reset() {
 	*x = StreamBatchHeader{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[37]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3585,7 +3786,7 @@ func (x *StreamBatchHeader) String() string {
 func (*StreamBatchHeader) ProtoMessage() {}
 
 func (x *StreamBatchHeader) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[37]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3598,7 +3799,7 @@ func (x *StreamBatchHeader) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StreamBatchHeader.ProtoReflect.Descriptor instead.
 func (*StreamBatchHeader) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{37}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *StreamBatchHeader) GetShardId() uint64 {
@@ -3655,7 +3856,7 @@ type BatchCondition struct {
 
 func (x *BatchCondition) Reset() {
 	*x = BatchCondition{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[38]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3667,7 +3868,7 @@ func (x *BatchCondition) String() string {
 func (*BatchCondition) ProtoMessage() {}
 
 func (x *BatchCondition) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[38]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3680,7 +3881,7 @@ func (x *BatchCondition) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BatchCondition.ProtoReflect.Descriptor instead.
 func (*BatchCondition) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{38}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *BatchCondition) GetEntityType() string {
@@ -3731,7 +3932,7 @@ type StreamBatchChunk struct {
 
 func (x *StreamBatchChunk) Reset() {
 	*x = StreamBatchChunk{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[39]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3743,7 +3944,7 @@ func (x *StreamBatchChunk) String() string {
 func (*StreamBatchChunk) ProtoMessage() {}
 
 func (x *StreamBatchChunk) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[39]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3756,7 +3957,7 @@ func (x *StreamBatchChunk) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StreamBatchChunk.ProtoReflect.Descriptor instead.
 func (*StreamBatchChunk) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{39}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *StreamBatchChunk) GetOperations() []*PutRequest {
@@ -3784,7 +3985,7 @@ type StreamBatchComplete struct {
 
 func (x *StreamBatchComplete) Reset() {
 	*x = StreamBatchComplete{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[40]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3796,7 +3997,7 @@ func (x *StreamBatchComplete) String() string {
 func (*StreamBatchComplete) ProtoMessage() {}
 
 func (x *StreamBatchComplete) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[40]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3809,7 +4010,7 @@ func (x *StreamBatchComplete) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StreamBatchComplete.ProtoReflect.Descriptor instead.
 func (*StreamBatchComplete) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{40}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *StreamBatchComplete) GetCommit() bool {
@@ -3833,7 +4034,7 @@ type StreamBatchPutResponse struct {
 
 func (x *StreamBatchPutResponse) Reset() {
 	*x = StreamBatchPutResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[41]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3845,7 +4046,7 @@ func (x *StreamBatchPutResponse) String() string {
 func (*StreamBatchPutResponse) ProtoMessage() {}
 
 func (x *StreamBatchPutResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[41]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3858,7 +4059,7 @@ func (x *StreamBatchPutResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StreamBatchPutResponse.ProtoReflect.Descriptor instead.
 func (*StreamBatchPutResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{41}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *StreamBatchPutResponse) GetPayload() isStreamBatchPutResponse_Payload {
@@ -3921,7 +4122,7 @@ type StreamBatchProgress struct {
 
 func (x *StreamBatchProgress) Reset() {
 	*x = StreamBatchProgress{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[42]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3933,7 +4134,7 @@ func (x *StreamBatchProgress) String() string {
 func (*StreamBatchProgress) ProtoMessage() {}
 
 func (x *StreamBatchProgress) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[42]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3946,7 +4147,7 @@ func (x *StreamBatchProgress) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StreamBatchProgress.ProtoReflect.Descriptor instead.
 func (*StreamBatchProgress) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{42}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *StreamBatchProgress) GetOperationsReceived() int64 {
@@ -3996,7 +4197,7 @@ type StreamBatchResult struct {
 
 func (x *StreamBatchResult) Reset() {
 	*x = StreamBatchResult{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[43]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4008,7 +4209,7 @@ func (x *StreamBatchResult) String() string {
 func (*StreamBatchResult) ProtoMessage() {}
 
 func (x *StreamBatchResult) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[43]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4021,7 +4222,7 @@ func (x *StreamBatchResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StreamBatchResult.ProtoReflect.Descriptor instead.
 func (*StreamBatchResult) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{43}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{46}
 }
 
 func (x *StreamBatchResult) GetSucceeded() bool {
@@ -4070,7 +4271,7 @@ type HealthRequest struct {
 
 func (x *HealthRequest) Reset() {
 	*x = HealthRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[44]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4082,7 +4283,7 @@ func (x *HealthRequest) String() string {
 func (*HealthRequest) ProtoMessage() {}
 
 func (x *HealthRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[44]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4095,7 +4296,7 @@ func (x *HealthRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthRequest.ProtoReflect.Descriptor instead.
 func (*HealthRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{44}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *HealthRequest) GetIncludeDetails() bool {
@@ -4124,7 +4325,7 @@ type HealthResponse struct {
 
 func (x *HealthResponse) Reset() {
 	*x = HealthResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[45]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4136,7 +4337,7 @@ func (x *HealthResponse) String() string {
 func (*HealthResponse) ProtoMessage() {}
 
 func (x *HealthResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[45]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4149,7 +4350,7 @@ func (x *HealthResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthResponse.ProtoReflect.Descriptor instead.
 func (*HealthResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{45}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{48}
 }
 
 func (x *HealthResponse) GetStatus() HealthStatus {
@@ -4204,7 +4405,7 @@ type ComponentHealth struct {
 
 func (x *ComponentHealth) Reset() {
 	*x = ComponentHealth{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[46]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4216,7 +4417,7 @@ func (x *ComponentHealth) String() string {
 func (*ComponentHealth) ProtoMessage() {}
 
 func (x *ComponentHealth) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[46]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4229,7 +4430,7 @@ func (x *ComponentHealth) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ComponentHealth.ProtoReflect.Descriptor instead.
 func (*ComponentHealth) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{46}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{49}
 }
 
 func (x *ComponentHealth) GetStatus() HealthStatus {
@@ -4283,7 +4484,7 @@ type CompareCondition struct {
 
 func (x *CompareCondition) Reset() {
 	*x = CompareCondition{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[47]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[50]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4295,7 +4496,7 @@ func (x *CompareCondition) String() string {
 func (*CompareCondition) ProtoMessage() {}
 
 func (x *CompareCondition) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[47]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[50]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4308,7 +4509,7 @@ func (x *CompareCondition) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CompareCondition.ProtoReflect.Descriptor instead.
 func (*CompareCondition) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{47}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{50}
 }
 
 func (x *CompareCondition) GetEntityType() string {
@@ -4379,7 +4580,7 @@ type TransactionOp struct {
 
 func (x *TransactionOp) Reset() {
 	*x = TransactionOp{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[48]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[51]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4391,7 +4592,7 @@ func (x *TransactionOp) String() string {
 func (*TransactionOp) ProtoMessage() {}
 
 func (x *TransactionOp) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[48]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[51]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4404,7 +4605,7 @@ func (x *TransactionOp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TransactionOp.ProtoReflect.Descriptor instead.
 func (*TransactionOp) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{48}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{51}
 }
 
 func (x *TransactionOp) GetOpType() TransactionOpType {
@@ -4466,7 +4667,7 @@ type TransactionRequest struct {
 
 func (x *TransactionRequest) Reset() {
 	*x = TransactionRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[49]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[52]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4478,7 +4679,7 @@ func (x *TransactionRequest) String() string {
 func (*TransactionRequest) ProtoMessage() {}
 
 func (x *TransactionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[49]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[52]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4491,7 +4692,7 @@ func (x *TransactionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TransactionRequest.ProtoReflect.Descriptor instead.
 func (*TransactionRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{49}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{52}
 }
 
 func (x *TransactionRequest) GetCompare() []*CompareCondition {
@@ -4563,7 +4764,7 @@ type TransactionOpResponse struct {
 
 func (x *TransactionOpResponse) Reset() {
 	*x = TransactionOpResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[50]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[53]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4575,7 +4776,7 @@ func (x *TransactionOpResponse) String() string {
 func (*TransactionOpResponse) ProtoMessage() {}
 
 func (x *TransactionOpResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[50]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[53]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4588,7 +4789,7 @@ func (x *TransactionOpResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TransactionOpResponse.ProtoReflect.Descriptor instead.
 func (*TransactionOpResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{50}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{53}
 }
 
 func (x *TransactionOpResponse) GetOpType() TransactionOpType {
@@ -4675,7 +4876,7 @@ type TransactionResponse struct {
 
 func (x *TransactionResponse) Reset() {
 	*x = TransactionResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[51]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[54]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4687,7 +4888,7 @@ func (x *TransactionResponse) String() string {
 func (*TransactionResponse) ProtoMessage() {}
 
 func (x *TransactionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[51]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[54]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4700,7 +4901,7 @@ func (x *TransactionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TransactionResponse.ProtoReflect.Descriptor instead.
 func (*TransactionResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{51}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{54}
 }
 
 func (x *TransactionResponse) GetSucceeded() bool {
@@ -4755,7 +4956,7 @@ type CreateBackupRequest struct {
 
 func (x *CreateBackupRequest) Reset() {
 	*x = CreateBackupRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[52]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[55]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4767,7 +4968,7 @@ func (x *CreateBackupRequest) String() string {
 func (*CreateBackupRequest) ProtoMessage() {}
 
 func (x *CreateBackupRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[52]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[55]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4780,7 +4981,7 @@ func (x *CreateBackupRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateBackupRequest.ProtoReflect.Descriptor instead.
 func (*CreateBackupRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{52}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{55}
 }
 
 func (x *CreateBackupRequest) GetBackupType() BackupType {
@@ -4828,7 +5029,7 @@ type CreateBackupResponse struct {
 
 func (x *CreateBackupResponse) Reset() {
 	*x = CreateBackupResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[53]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[56]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4840,7 +5041,7 @@ func (x *CreateBackupResponse) String() string {
 func (*CreateBackupResponse) ProtoMessage() {}
 
 func (x *CreateBackupResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[53]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[56]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4853,7 +5054,7 @@ func (x *CreateBackupResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateBackupResponse.ProtoReflect.Descriptor instead.
 func (*CreateBackupResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{53}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{56}
 }
 
 func (x *CreateBackupResponse) GetBackupId() string {
@@ -4897,7 +5098,7 @@ type ListBackupsRequest struct {
 
 func (x *ListBackupsRequest) Reset() {
 	*x = ListBackupsRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[54]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[57]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4909,7 +5110,7 @@ func (x *ListBackupsRequest) String() string {
 func (*ListBackupsRequest) ProtoMessage() {}
 
 func (x *ListBackupsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[54]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[57]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4922,7 +5123,7 @@ func (x *ListBackupsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListBackupsRequest.ProtoReflect.Descriptor instead.
 func (*ListBackupsRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{54}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{57}
 }
 
 func (x *ListBackupsRequest) GetLimit() int32 {
@@ -4952,7 +5153,7 @@ type ListBackupsResponse struct {
 
 func (x *ListBackupsResponse) Reset() {
 	*x = ListBackupsResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[55]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[58]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4964,7 +5165,7 @@ func (x *ListBackupsResponse) String() string {
 func (*ListBackupsResponse) ProtoMessage() {}
 
 func (x *ListBackupsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[55]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[58]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4977,7 +5178,7 @@ func (x *ListBackupsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListBackupsResponse.ProtoReflect.Descriptor instead.
 func (*ListBackupsResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{55}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{58}
 }
 
 func (x *ListBackupsResponse) GetBackups() []*BackupInfo {
@@ -5019,7 +5220,7 @@ type BackupInfo struct {
 
 func (x *BackupInfo) Reset() {
 	*x = BackupInfo{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[56]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[59]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5031,7 +5232,7 @@ func (x *BackupInfo) String() string {
 func (*BackupInfo) ProtoMessage() {}
 
 func (x *BackupInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[56]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[59]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5044,7 +5245,7 @@ func (x *BackupInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BackupInfo.ProtoReflect.Descriptor instead.
 func (*BackupInfo) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{56}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{59}
 }
 
 func (x *BackupInfo) GetBackupId() string {
@@ -5120,7 +5321,7 @@ type RestoreBackupRequest struct {
 
 func (x *RestoreBackupRequest) Reset() {
 	*x = RestoreBackupRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[57]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[60]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5132,7 +5333,7 @@ func (x *RestoreBackupRequest) String() string {
 func (*RestoreBackupRequest) ProtoMessage() {}
 
 func (x *RestoreBackupRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[57]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[60]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5145,7 +5346,7 @@ func (x *RestoreBackupRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RestoreBackupRequest.ProtoReflect.Descriptor instead.
 func (*RestoreBackupRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{57}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{60}
 }
 
 func (x *RestoreBackupRequest) GetBackupId() string {
@@ -5193,7 +5394,7 @@ type RestoreBackupResponse struct {
 
 func (x *RestoreBackupResponse) Reset() {
 	*x = RestoreBackupResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[58]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[61]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5205,7 +5406,7 @@ func (x *RestoreBackupResponse) String() string {
 func (*RestoreBackupResponse) ProtoMessage() {}
 
 func (x *RestoreBackupResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[58]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[61]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5218,7 +5419,7 @@ func (x *RestoreBackupResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RestoreBackupResponse.ProtoReflect.Descriptor instead.
 func (*RestoreBackupResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{58}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{61}
 }
 
 func (x *RestoreBackupResponse) GetBackupId() string {
@@ -5260,7 +5461,7 @@ type DeleteBackupRequest struct {
 
 func (x *DeleteBackupRequest) Reset() {
 	*x = DeleteBackupRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[59]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[62]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5272,7 +5473,7 @@ func (x *DeleteBackupRequest) String() string {
 func (*DeleteBackupRequest) ProtoMessage() {}
 
 func (x *DeleteBackupRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[59]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[62]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5285,7 +5486,7 @@ func (x *DeleteBackupRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteBackupRequest.ProtoReflect.Descriptor instead.
 func (*DeleteBackupRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{59}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{62}
 }
 
 func (x *DeleteBackupRequest) GetBackupId() string {
@@ -5306,7 +5507,7 @@ type DeleteBackupResponse struct {
 
 func (x *DeleteBackupResponse) Reset() {
 	*x = DeleteBackupResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[60]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[63]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5318,7 +5519,7 @@ func (x *DeleteBackupResponse) String() string {
 func (*DeleteBackupResponse) ProtoMessage() {}
 
 func (x *DeleteBackupResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[60]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[63]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5331,7 +5532,7 @@ func (x *DeleteBackupResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteBackupResponse.ProtoReflect.Descriptor instead.
 func (*DeleteBackupResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{60}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{63}
 }
 
 func (x *DeleteBackupResponse) GetSuccess() bool {
@@ -5352,7 +5553,7 @@ type VerifyBackupRequest struct {
 
 func (x *VerifyBackupRequest) Reset() {
 	*x = VerifyBackupRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[61]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[64]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5364,7 +5565,7 @@ func (x *VerifyBackupRequest) String() string {
 func (*VerifyBackupRequest) ProtoMessage() {}
 
 func (x *VerifyBackupRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[61]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[64]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5377,7 +5578,7 @@ func (x *VerifyBackupRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VerifyBackupRequest.ProtoReflect.Descriptor instead.
 func (*VerifyBackupRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{61}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{64}
 }
 
 func (x *VerifyBackupRequest) GetBackupId() string {
@@ -5402,7 +5603,7 @@ type VerifyBackupResponse struct {
 
 func (x *VerifyBackupResponse) Reset() {
 	*x = VerifyBackupResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[62]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[65]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5414,7 +5615,7 @@ func (x *VerifyBackupResponse) String() string {
 func (*VerifyBackupResponse) ProtoMessage() {}
 
 func (x *VerifyBackupResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[62]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[65]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5427,7 +5628,7 @@ func (x *VerifyBackupResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VerifyBackupResponse.ProtoReflect.Descriptor instead.
 func (*VerifyBackupResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{62}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{65}
 }
 
 func (x *VerifyBackupResponse) GetValid() bool {
@@ -5464,7 +5665,7 @@ type LoginRequest struct {
 
 func (x *LoginRequest) Reset() {
 	*x = LoginRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[63]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[66]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5476,7 +5677,7 @@ func (x *LoginRequest) String() string {
 func (*LoginRequest) ProtoMessage() {}
 
 func (x *LoginRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[63]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[66]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5489,7 +5690,7 @@ func (x *LoginRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LoginRequest.ProtoReflect.Descriptor instead.
 func (*LoginRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{63}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{66}
 }
 
 func (x *LoginRequest) GetUsername() string {
@@ -5527,7 +5728,7 @@ type LoginResponse struct {
 
 func (x *LoginResponse) Reset() {
 	*x = LoginResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[64]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[67]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5539,7 +5740,7 @@ func (x *LoginResponse) String() string {
 func (*LoginResponse) ProtoMessage() {}
 
 func (x *LoginResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[64]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[67]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5552,7 +5753,7 @@ func (x *LoginResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LoginResponse.ProtoReflect.Descriptor instead.
 func (*LoginResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{64}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{67}
 }
 
 func (x *LoginResponse) GetAccessToken() string {
@@ -5608,7 +5809,7 @@ type LogoutRequest struct {
 
 func (x *LogoutRequest) Reset() {
 	*x = LogoutRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[65]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[68]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5620,7 +5821,7 @@ func (x *LogoutRequest) String() string {
 func (*LogoutRequest) ProtoMessage() {}
 
 func (x *LogoutRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[65]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[68]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5633,7 +5834,7 @@ func (x *LogoutRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogoutRequest.ProtoReflect.Descriptor instead.
 func (*LogoutRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{65}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{68}
 }
 
 func (x *LogoutRequest) GetAccessToken() string {
@@ -5654,7 +5855,7 @@ type LogoutResponse struct {
 
 func (x *LogoutResponse) Reset() {
 	*x = LogoutResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[66]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[69]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5666,7 +5867,7 @@ func (x *LogoutResponse) String() string {
 func (*LogoutResponse) ProtoMessage() {}
 
 func (x *LogoutResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[66]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[69]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5679,7 +5880,7 @@ func (x *LogoutResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogoutResponse.ProtoReflect.Descriptor instead.
 func (*LogoutResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{66}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{69}
 }
 
 func (x *LogoutResponse) GetSuccess() bool {
@@ -5700,7 +5901,7 @@ type RefreshTokenRequest struct {
 
 func (x *RefreshTokenRequest) Reset() {
 	*x = RefreshTokenRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[67]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[70]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5712,7 +5913,7 @@ func (x *RefreshTokenRequest) String() string {
 func (*RefreshTokenRequest) ProtoMessage() {}
 
 func (x *RefreshTokenRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[67]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[70]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5725,7 +5926,7 @@ func (x *RefreshTokenRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RefreshTokenRequest.ProtoReflect.Descriptor instead.
 func (*RefreshTokenRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{67}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{70}
 }
 
 func (x *RefreshTokenRequest) GetRefreshToken() string {
@@ -5758,7 +5959,7 @@ type RefreshTokenResponse struct {
 
 func (x *RefreshTokenResponse) Reset() {
 	*x = RefreshTokenResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[68]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[71]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5770,7 +5971,7 @@ func (x *RefreshTokenResponse) String() string {
 func (*RefreshTokenResponse) ProtoMessage() {}
 
 func (x *RefreshTokenResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[68]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[71]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5783,7 +5984,7 @@ func (x *RefreshTokenResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RefreshTokenResponse.ProtoReflect.Descriptor instead.
 func (*RefreshTokenResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{68}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{71}
 }
 
 func (x *RefreshTokenResponse) GetAccessToken() string {
@@ -5832,7 +6033,7 @@ type ValidateTokenRequest struct {
 
 func (x *ValidateTokenRequest) Reset() {
 	*x = ValidateTokenRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[69]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[72]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5844,7 +6045,7 @@ func (x *ValidateTokenRequest) String() string {
 func (*ValidateTokenRequest) ProtoMessage() {}
 
 func (x *ValidateTokenRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[69]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[72]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5857,7 +6058,7 @@ func (x *ValidateTokenRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ValidateTokenRequest.ProtoReflect.Descriptor instead.
 func (*ValidateTokenRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{69}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{72}
 }
 
 func (x *ValidateTokenRequest) GetAccessToken() string {
@@ -5889,7 +6090,7 @@ type ValidateTokenResponse struct {
 
 func (x *ValidateTokenResponse) Reset() {
 	*x = ValidateTokenResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[70]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[73]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5901,7 +6102,7 @@ func (x *ValidateTokenResponse) String() string {
 func (*ValidateTokenResponse) ProtoMessage() {}
 
 func (x *ValidateTokenResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[70]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[73]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5914,7 +6115,7 @@ func (x *ValidateTokenResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ValidateTokenResponse.ProtoReflect.Descriptor instead.
 func (*ValidateTokenResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{70}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{73}
 }
 
 func (x *ValidateTokenResponse) GetValid() bool {
@@ -5970,7 +6171,7 @@ type IntrospectTokenRequest struct {
 
 func (x *IntrospectTokenRequest) Reset() {
 	*x = IntrospectTokenRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[71]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[74]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5982,7 +6183,7 @@ func (x *IntrospectTokenRequest) String() string {
 func (*IntrospectTokenRequest) ProtoMessage() {}
 
 func (x *IntrospectTokenRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[71]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[74]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5995,7 +6196,7 @@ func (x *IntrospectTokenRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use IntrospectTokenRequest.ProtoReflect.Descriptor instead.
 func (*IntrospectTokenRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{71}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{74}
 }
 
 func (x *IntrospectTokenRequest) GetToken() string {
@@ -6045,7 +6246,7 @@ type IntrospectTokenResponse struct {
 
 func (x *IntrospectTokenResponse) Reset() {
 	*x = IntrospectTokenResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[72]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[75]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6057,7 +6258,7 @@ func (x *IntrospectTokenResponse) String() string {
 func (*IntrospectTokenResponse) ProtoMessage() {}
 
 func (x *IntrospectTokenResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[72]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[75]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6070,7 +6271,7 @@ func (x *IntrospectTokenResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use IntrospectTokenResponse.ProtoReflect.Descriptor instead.
 func (*IntrospectTokenResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{72}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{75}
 }
 
 func (x *IntrospectTokenResponse) GetActive() bool {
@@ -6184,7 +6385,7 @@ type CreateRoleRequest struct {
 
 func (x *CreateRoleRequest) Reset() {
 	*x = CreateRoleRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[73]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[76]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6196,7 +6397,7 @@ func (x *CreateRoleRequest) String() string {
 func (*CreateRoleRequest) ProtoMessage() {}
 
 func (x *CreateRoleRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[73]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[76]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6209,7 +6410,7 @@ func (x *CreateRoleRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateRoleRequest.ProtoReflect.Descriptor instead.
 func (*CreateRoleRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{73}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{76}
 }
 
 func (x *CreateRoleRequest) GetRoleName() string {
@@ -6239,7 +6440,7 @@ type Permission struct {
 
 func (x *Permission) Reset() {
 	*x = Permission{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[74]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[77]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6251,7 +6452,7 @@ func (x *Permission) String() string {
 func (*Permission) ProtoMessage() {}
 
 func (x *Permission) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[74]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[77]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6264,7 +6465,7 @@ func (x *Permission) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Permission.ProtoReflect.Descriptor instead.
 func (*Permission) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{74}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{77}
 }
 
 func (x *Permission) GetResource() string {
@@ -6292,7 +6493,7 @@ type CreateRoleResponse struct {
 
 func (x *CreateRoleResponse) Reset() {
 	*x = CreateRoleResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[75]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[78]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6304,7 +6505,7 @@ func (x *CreateRoleResponse) String() string {
 func (*CreateRoleResponse) ProtoMessage() {}
 
 func (x *CreateRoleResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[75]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[78]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6317,7 +6518,7 @@ func (x *CreateRoleResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateRoleResponse.ProtoReflect.Descriptor instead.
 func (*CreateRoleResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{75}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{78}
 }
 
 func (x *CreateRoleResponse) GetRoleName() string {
@@ -6338,7 +6539,7 @@ type DeleteRoleRequest struct {
 
 func (x *DeleteRoleRequest) Reset() {
 	*x = DeleteRoleRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[76]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[79]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6350,7 +6551,7 @@ func (x *DeleteRoleRequest) String() string {
 func (*DeleteRoleRequest) ProtoMessage() {}
 
 func (x *DeleteRoleRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[76]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[79]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6363,7 +6564,7 @@ func (x *DeleteRoleRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteRoleRequest.ProtoReflect.Descriptor instead.
 func (*DeleteRoleRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{76}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{79}
 }
 
 func (x *DeleteRoleRequest) GetRoleName() string {
@@ -6384,7 +6585,7 @@ type DeleteRoleResponse struct {
 
 func (x *DeleteRoleResponse) Reset() {
 	*x = DeleteRoleResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[77]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[80]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6396,7 +6597,7 @@ func (x *DeleteRoleResponse) String() string {
 func (*DeleteRoleResponse) ProtoMessage() {}
 
 func (x *DeleteRoleResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[77]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[80]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6409,7 +6610,7 @@ func (x *DeleteRoleResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteRoleResponse.ProtoReflect.Descriptor instead.
 func (*DeleteRoleResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{77}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{80}
 }
 
 func (x *DeleteRoleResponse) GetSuccess() bool {
@@ -6428,7 +6629,7 @@ type ListRolesRequest struct {
 
 func (x *ListRolesRequest) Reset() {
 	*x = ListRolesRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[78]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[81]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6440,7 +6641,7 @@ func (x *ListRolesRequest) String() string {
 func (*ListRolesRequest) ProtoMessage() {}
 
 func (x *ListRolesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[78]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[81]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6453,7 +6654,7 @@ func (x *ListRolesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListRolesRequest.ProtoReflect.Descriptor instead.
 func (*ListRolesRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{78}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{81}
 }
 
 // ListRolesResponse returns a list of roles.
@@ -6467,7 +6668,7 @@ type ListRolesResponse struct {
 
 func (x *ListRolesResponse) Reset() {
 	*x = ListRolesResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[79]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[82]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6479,7 +6680,7 @@ func (x *ListRolesResponse) String() string {
 func (*ListRolesResponse) ProtoMessage() {}
 
 func (x *ListRolesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[79]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[82]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6492,7 +6693,7 @@ func (x *ListRolesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListRolesResponse.ProtoReflect.Descriptor instead.
 func (*ListRolesResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{79}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{82}
 }
 
 func (x *ListRolesResponse) GetRoles() []*RoleInfo {
@@ -6515,7 +6716,7 @@ type RoleInfo struct {
 
 func (x *RoleInfo) Reset() {
 	*x = RoleInfo{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[80]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[83]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6527,7 +6728,7 @@ func (x *RoleInfo) String() string {
 func (*RoleInfo) ProtoMessage() {}
 
 func (x *RoleInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[80]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[83]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6540,7 +6741,7 @@ func (x *RoleInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RoleInfo.ProtoReflect.Descriptor instead.
 func (*RoleInfo) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{80}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{83}
 }
 
 func (x *RoleInfo) GetRoleName() string {
@@ -6570,7 +6771,7 @@ type AssignRoleRequest struct {
 
 func (x *AssignRoleRequest) Reset() {
 	*x = AssignRoleRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[81]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[84]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6582,7 +6783,7 @@ func (x *AssignRoleRequest) String() string {
 func (*AssignRoleRequest) ProtoMessage() {}
 
 func (x *AssignRoleRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[81]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[84]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6595,7 +6796,7 @@ func (x *AssignRoleRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AssignRoleRequest.ProtoReflect.Descriptor instead.
 func (*AssignRoleRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{81}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{84}
 }
 
 func (x *AssignRoleRequest) GetUserId() string {
@@ -6623,7 +6824,7 @@ type AssignRoleResponse struct {
 
 func (x *AssignRoleResponse) Reset() {
 	*x = AssignRoleResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[82]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[85]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6635,7 +6836,7 @@ func (x *AssignRoleResponse) String() string {
 func (*AssignRoleResponse) ProtoMessage() {}
 
 func (x *AssignRoleResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[82]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[85]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6648,7 +6849,7 @@ func (x *AssignRoleResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AssignRoleResponse.ProtoReflect.Descriptor instead.
 func (*AssignRoleResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{82}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{85}
 }
 
 func (x *AssignRoleResponse) GetSuccess() bool {
@@ -6671,7 +6872,7 @@ type RevokeRoleRequest struct {
 
 func (x *RevokeRoleRequest) Reset() {
 	*x = RevokeRoleRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[83]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[86]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6683,7 +6884,7 @@ func (x *RevokeRoleRequest) String() string {
 func (*RevokeRoleRequest) ProtoMessage() {}
 
 func (x *RevokeRoleRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[83]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[86]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6696,7 +6897,7 @@ func (x *RevokeRoleRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RevokeRoleRequest.ProtoReflect.Descriptor instead.
 func (*RevokeRoleRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{83}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{86}
 }
 
 func (x *RevokeRoleRequest) GetUserId() string {
@@ -6724,7 +6925,7 @@ type RevokeRoleResponse struct {
 
 func (x *RevokeRoleResponse) Reset() {
 	*x = RevokeRoleResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[84]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[87]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6736,7 +6937,7 @@ func (x *RevokeRoleResponse) String() string {
 func (*RevokeRoleResponse) ProtoMessage() {}
 
 func (x *RevokeRoleResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[84]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[87]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6749,7 +6950,7 @@ func (x *RevokeRoleResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RevokeRoleResponse.ProtoReflect.Descriptor instead.
 func (*RevokeRoleResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{84}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{87}
 }
 
 func (x *RevokeRoleResponse) GetSuccess() bool {
@@ -6780,7 +6981,7 @@ type MigrateDataRequest struct {
 
 func (x *MigrateDataRequest) Reset() {
 	*x = MigrateDataRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[85]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[88]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6792,7 +6993,7 @@ func (x *MigrateDataRequest) String() string {
 func (*MigrateDataRequest) ProtoMessage() {}
 
 func (x *MigrateDataRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[85]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[88]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6805,7 +7006,7 @@ func (x *MigrateDataRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MigrateDataRequest.ProtoReflect.Descriptor instead.
 func (*MigrateDataRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{85}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{88}
 }
 
 func (x *MigrateDataRequest) GetSourceBackend() string {
@@ -6863,7 +7064,7 @@ type MigrateDataResponse struct {
 
 func (x *MigrateDataResponse) Reset() {
 	*x = MigrateDataResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[86]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[89]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6875,7 +7076,7 @@ func (x *MigrateDataResponse) String() string {
 func (*MigrateDataResponse) ProtoMessage() {}
 
 func (x *MigrateDataResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[86]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[89]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6888,7 +7089,7 @@ func (x *MigrateDataResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MigrateDataResponse.ProtoReflect.Descriptor instead.
 func (*MigrateDataResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{86}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{89}
 }
 
 func (x *MigrateDataResponse) GetOperationId() string {
@@ -6916,7 +7117,7 @@ type GetMigrationProgressRequest struct {
 
 func (x *GetMigrationProgressRequest) Reset() {
 	*x = GetMigrationProgressRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[87]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[90]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6928,7 +7129,7 @@ func (x *GetMigrationProgressRequest) String() string {
 func (*GetMigrationProgressRequest) ProtoMessage() {}
 
 func (x *GetMigrationProgressRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[87]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[90]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6941,7 +7142,7 @@ func (x *GetMigrationProgressRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetMigrationProgressRequest.ProtoReflect.Descriptor instead.
 func (*GetMigrationProgressRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{87}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{90}
 }
 
 func (x *GetMigrationProgressRequest) GetOperationId() string {
@@ -6978,7 +7179,7 @@ type GetMigrationProgressResponse struct {
 
 func (x *GetMigrationProgressResponse) Reset() {
 	*x = GetMigrationProgressResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[88]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[91]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6990,7 +7191,7 @@ func (x *GetMigrationProgressResponse) String() string {
 func (*GetMigrationProgressResponse) ProtoMessage() {}
 
 func (x *GetMigrationProgressResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[88]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[91]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7003,7 +7204,7 @@ func (x *GetMigrationProgressResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetMigrationProgressResponse.ProtoReflect.Descriptor instead.
 func (*GetMigrationProgressResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{88}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{91}
 }
 
 func (x *GetMigrationProgressResponse) GetOperationId() string {
@@ -7082,7 +7283,7 @@ type RebalanceClusterRequest struct {
 
 func (x *RebalanceClusterRequest) Reset() {
 	*x = RebalanceClusterRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[89]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[92]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7094,7 +7295,7 @@ func (x *RebalanceClusterRequest) String() string {
 func (*RebalanceClusterRequest) ProtoMessage() {}
 
 func (x *RebalanceClusterRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[89]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[92]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7107,7 +7308,7 @@ func (x *RebalanceClusterRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RebalanceClusterRequest.ProtoReflect.Descriptor instead.
 func (*RebalanceClusterRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{89}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{92}
 }
 
 func (x *RebalanceClusterRequest) GetStrategy() string {
@@ -7137,7 +7338,7 @@ type RebalanceClusterResponse struct {
 
 func (x *RebalanceClusterResponse) Reset() {
 	*x = RebalanceClusterResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[90]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[93]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7149,7 +7350,7 @@ func (x *RebalanceClusterResponse) String() string {
 func (*RebalanceClusterResponse) ProtoMessage() {}
 
 func (x *RebalanceClusterResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[90]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[93]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7162,7 +7363,7 @@ func (x *RebalanceClusterResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RebalanceClusterResponse.ProtoReflect.Descriptor instead.
 func (*RebalanceClusterResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{90}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{93}
 }
 
 func (x *RebalanceClusterResponse) GetOperationId() string {
@@ -7190,7 +7391,7 @@ type GetRebalanceProgressRequest struct {
 
 func (x *GetRebalanceProgressRequest) Reset() {
 	*x = GetRebalanceProgressRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[91]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[94]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7202,7 +7403,7 @@ func (x *GetRebalanceProgressRequest) String() string {
 func (*GetRebalanceProgressRequest) ProtoMessage() {}
 
 func (x *GetRebalanceProgressRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[91]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[94]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7215,7 +7416,7 @@ func (x *GetRebalanceProgressRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetRebalanceProgressRequest.ProtoReflect.Descriptor instead.
 func (*GetRebalanceProgressRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{91}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{94}
 }
 
 func (x *GetRebalanceProgressRequest) GetOperationId() string {
@@ -7246,7 +7447,7 @@ type GetRebalanceProgressResponse struct {
 
 func (x *GetRebalanceProgressResponse) Reset() {
 	*x = GetRebalanceProgressResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[92]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[95]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7258,7 +7459,7 @@ func (x *GetRebalanceProgressResponse) String() string {
 func (*GetRebalanceProgressResponse) ProtoMessage() {}
 
 func (x *GetRebalanceProgressResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[92]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[95]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7271,7 +7472,7 @@ func (x *GetRebalanceProgressResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetRebalanceProgressResponse.ProtoReflect.Descriptor instead.
 func (*GetRebalanceProgressResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{92}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{95}
 }
 
 func (x *GetRebalanceProgressResponse) GetOperationId() string {
@@ -7331,7 +7532,7 @@ type ReplaceNodeRequest struct {
 
 func (x *ReplaceNodeRequest) Reset() {
 	*x = ReplaceNodeRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[93]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[96]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7343,7 +7544,7 @@ func (x *ReplaceNodeRequest) String() string {
 func (*ReplaceNodeRequest) ProtoMessage() {}
 
 func (x *ReplaceNodeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[93]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[96]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7356,7 +7557,7 @@ func (x *ReplaceNodeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReplaceNodeRequest.ProtoReflect.Descriptor instead.
 func (*ReplaceNodeRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{93}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{96}
 }
 
 func (x *ReplaceNodeRequest) GetFailedNodeId() uint64 {
@@ -7393,7 +7594,7 @@ type ReplaceNodeResponse struct {
 
 func (x *ReplaceNodeResponse) Reset() {
 	*x = ReplaceNodeResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[94]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[97]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7405,7 +7606,7 @@ func (x *ReplaceNodeResponse) String() string {
 func (*ReplaceNodeResponse) ProtoMessage() {}
 
 func (x *ReplaceNodeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[94]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[97]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7418,7 +7619,7 @@ func (x *ReplaceNodeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReplaceNodeResponse.ProtoReflect.Descriptor instead.
 func (*ReplaceNodeResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{94}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{97}
 }
 
 func (x *ReplaceNodeResponse) GetSuccess() bool {
@@ -7448,7 +7649,7 @@ type UpgradeNodeRequest struct {
 
 func (x *UpgradeNodeRequest) Reset() {
 	*x = UpgradeNodeRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[95]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[98]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7460,7 +7661,7 @@ func (x *UpgradeNodeRequest) String() string {
 func (*UpgradeNodeRequest) ProtoMessage() {}
 
 func (x *UpgradeNodeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[95]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[98]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7473,7 +7674,7 @@ func (x *UpgradeNodeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpgradeNodeRequest.ProtoReflect.Descriptor instead.
 func (*UpgradeNodeRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{95}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{98}
 }
 
 func (x *UpgradeNodeRequest) GetNodeId() uint64 {
@@ -7503,7 +7704,7 @@ type UpgradeNodeResponse struct {
 
 func (x *UpgradeNodeResponse) Reset() {
 	*x = UpgradeNodeResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[96]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[99]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7515,7 +7716,7 @@ func (x *UpgradeNodeResponse) String() string {
 func (*UpgradeNodeResponse) ProtoMessage() {}
 
 func (x *UpgradeNodeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[96]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[99]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7528,7 +7729,7 @@ func (x *UpgradeNodeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpgradeNodeResponse.ProtoReflect.Descriptor instead.
 func (*UpgradeNodeResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{96}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{99}
 }
 
 func (x *UpgradeNodeResponse) GetOperationId() string {
@@ -7556,7 +7757,7 @@ type GetUpgradeStatusRequest struct {
 
 func (x *GetUpgradeStatusRequest) Reset() {
 	*x = GetUpgradeStatusRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[97]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[100]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7568,7 +7769,7 @@ func (x *GetUpgradeStatusRequest) String() string {
 func (*GetUpgradeStatusRequest) ProtoMessage() {}
 
 func (x *GetUpgradeStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[97]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[100]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7581,7 +7782,7 @@ func (x *GetUpgradeStatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetUpgradeStatusRequest.ProtoReflect.Descriptor instead.
 func (*GetUpgradeStatusRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{97}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{100}
 }
 
 func (x *GetUpgradeStatusRequest) GetOperationId() string {
@@ -7614,7 +7815,7 @@ type GetUpgradeStatusResponse struct {
 
 func (x *GetUpgradeStatusResponse) Reset() {
 	*x = GetUpgradeStatusResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[98]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[101]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7626,7 +7827,7 @@ func (x *GetUpgradeStatusResponse) String() string {
 func (*GetUpgradeStatusResponse) ProtoMessage() {}
 
 func (x *GetUpgradeStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[98]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[101]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7639,7 +7840,7 @@ func (x *GetUpgradeStatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetUpgradeStatusResponse.ProtoReflect.Descriptor instead.
 func (*GetUpgradeStatusResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{98}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{101}
 }
 
 func (x *GetUpgradeStatusResponse) GetOperationId() string {
@@ -7700,7 +7901,7 @@ type GetCacheStatsRequest struct {
 
 func (x *GetCacheStatsRequest) Reset() {
 	*x = GetCacheStatsRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[99]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[102]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7712,7 +7913,7 @@ func (x *GetCacheStatsRequest) String() string {
 func (*GetCacheStatsRequest) ProtoMessage() {}
 
 func (x *GetCacheStatsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[99]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[102]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7725,7 +7926,7 @@ func (x *GetCacheStatsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetCacheStatsRequest.ProtoReflect.Descriptor instead.
 func (*GetCacheStatsRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{99}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{102}
 }
 
 // GetCacheStatsResponse returns cache statistics.
@@ -7751,7 +7952,7 @@ type GetCacheStatsResponse struct {
 
 func (x *GetCacheStatsResponse) Reset() {
 	*x = GetCacheStatsResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[100]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[103]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7763,7 +7964,7 @@ func (x *GetCacheStatsResponse) String() string {
 func (*GetCacheStatsResponse) ProtoMessage() {}
 
 func (x *GetCacheStatsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[100]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[103]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7776,7 +7977,7 @@ func (x *GetCacheStatsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetCacheStatsResponse.ProtoReflect.Descriptor instead.
 func (*GetCacheStatsResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{100}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{103}
 }
 
 func (x *GetCacheStatsResponse) GetEnabled() bool {
@@ -7837,7 +8038,7 @@ type ClearCacheRequest struct {
 
 func (x *ClearCacheRequest) Reset() {
 	*x = ClearCacheRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[101]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[104]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7849,7 +8050,7 @@ func (x *ClearCacheRequest) String() string {
 func (*ClearCacheRequest) ProtoMessage() {}
 
 func (x *ClearCacheRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[101]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[104]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7862,7 +8063,7 @@ func (x *ClearCacheRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClearCacheRequest.ProtoReflect.Descriptor instead.
 func (*ClearCacheRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{101}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{104}
 }
 
 // ClearCacheResponse confirms cache clear.
@@ -7878,7 +8079,7 @@ type ClearCacheResponse struct {
 
 func (x *ClearCacheResponse) Reset() {
 	*x = ClearCacheResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[102]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[105]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7890,7 +8091,7 @@ func (x *ClearCacheResponse) String() string {
 func (*ClearCacheResponse) ProtoMessage() {}
 
 func (x *ClearCacheResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[102]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[105]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7903,7 +8104,7 @@ func (x *ClearCacheResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClearCacheResponse.ProtoReflect.Descriptor instead.
 func (*ClearCacheResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{102}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{105}
 }
 
 func (x *ClearCacheResponse) GetSuccess() bool {
@@ -7929,7 +8130,7 @@ type GetCacheConfigRequest struct {
 
 func (x *GetCacheConfigRequest) Reset() {
 	*x = GetCacheConfigRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[103]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[106]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7941,7 +8142,7 @@ func (x *GetCacheConfigRequest) String() string {
 func (*GetCacheConfigRequest) ProtoMessage() {}
 
 func (x *GetCacheConfigRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[103]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[106]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7954,7 +8155,7 @@ func (x *GetCacheConfigRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetCacheConfigRequest.ProtoReflect.Descriptor instead.
 func (*GetCacheConfigRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{103}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{106}
 }
 
 // GetCacheConfigResponse returns cache configuration.
@@ -7974,7 +8175,7 @@ type GetCacheConfigResponse struct {
 
 func (x *GetCacheConfigResponse) Reset() {
 	*x = GetCacheConfigResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[104]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[107]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7986,7 +8187,7 @@ func (x *GetCacheConfigResponse) String() string {
 func (*GetCacheConfigResponse) ProtoMessage() {}
 
 func (x *GetCacheConfigResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[104]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[107]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7999,7 +8200,7 @@ func (x *GetCacheConfigResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetCacheConfigResponse.ProtoReflect.Descriptor instead.
 func (*GetCacheConfigResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{104}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{107}
 }
 
 func (x *GetCacheConfigResponse) GetEnabled() bool {
@@ -8045,7 +8246,7 @@ type UpdateCacheConfigRequest struct {
 
 func (x *UpdateCacheConfigRequest) Reset() {
 	*x = UpdateCacheConfigRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[105]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[108]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8057,7 +8258,7 @@ func (x *UpdateCacheConfigRequest) String() string {
 func (*UpdateCacheConfigRequest) ProtoMessage() {}
 
 func (x *UpdateCacheConfigRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[105]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[108]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8070,7 +8271,7 @@ func (x *UpdateCacheConfigRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateCacheConfigRequest.ProtoReflect.Descriptor instead.
 func (*UpdateCacheConfigRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{105}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{108}
 }
 
 func (x *UpdateCacheConfigRequest) GetEnabled() bool {
@@ -8107,7 +8308,7 @@ type UpdateCacheConfigResponse struct {
 
 func (x *UpdateCacheConfigResponse) Reset() {
 	*x = UpdateCacheConfigResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[106]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[109]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8119,7 +8320,7 @@ func (x *UpdateCacheConfigResponse) String() string {
 func (*UpdateCacheConfigResponse) ProtoMessage() {}
 
 func (x *UpdateCacheConfigResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[106]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[109]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8132,7 +8333,7 @@ func (x *UpdateCacheConfigResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateCacheConfigResponse.ProtoReflect.Descriptor instead.
 func (*UpdateCacheConfigResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{106}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{109}
 }
 
 func (x *UpdateCacheConfigResponse) GetSuccess() bool {
@@ -8158,7 +8359,7 @@ type SealStatusRequest struct {
 
 func (x *SealStatusRequest) Reset() {
 	*x = SealStatusRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[107]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[110]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8170,7 +8371,7 @@ func (x *SealStatusRequest) String() string {
 func (*SealStatusRequest) ProtoMessage() {}
 
 func (x *SealStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[107]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[110]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8183,7 +8384,7 @@ func (x *SealStatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SealStatusRequest.ProtoReflect.Descriptor instead.
 func (*SealStatusRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{107}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{110}
 }
 
 // SealStatusResponse returns seal status.
@@ -8215,7 +8416,7 @@ type SealStatusResponse struct {
 
 func (x *SealStatusResponse) Reset() {
 	*x = SealStatusResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[108]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[111]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8227,7 +8428,7 @@ func (x *SealStatusResponse) String() string {
 func (*SealStatusResponse) ProtoMessage() {}
 
 func (x *SealStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[108]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[111]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8240,7 +8441,7 @@ func (x *SealStatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SealStatusResponse.ProtoReflect.Descriptor instead.
 func (*SealStatusResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{108}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{111}
 }
 
 func (x *SealStatusResponse) GetSealed() bool {
@@ -8332,7 +8533,7 @@ type SealInitRequest struct {
 
 func (x *SealInitRequest) Reset() {
 	*x = SealInitRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[109]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[112]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8344,7 +8545,7 @@ func (x *SealInitRequest) String() string {
 func (*SealInitRequest) ProtoMessage() {}
 
 func (x *SealInitRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[109]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[112]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8357,7 +8558,7 @@ func (x *SealInitRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SealInitRequest.ProtoReflect.Descriptor instead.
 func (*SealInitRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{109}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{112}
 }
 
 func (x *SealInitRequest) GetThreshold() int32 {
@@ -8412,7 +8613,7 @@ type SealInitResponse struct {
 
 func (x *SealInitResponse) Reset() {
 	*x = SealInitResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[110]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[113]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8424,7 +8625,7 @@ func (x *SealInitResponse) String() string {
 func (*SealInitResponse) ProtoMessage() {}
 
 func (x *SealInitResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[110]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[113]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8437,7 +8638,7 @@ func (x *SealInitResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SealInitResponse.ProtoReflect.Descriptor instead.
 func (*SealInitResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{110}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{113}
 }
 
 func (x *SealInitResponse) GetRootToken() string {
@@ -8476,7 +8677,7 @@ type UnsealRequest struct {
 
 func (x *UnsealRequest) Reset() {
 	*x = UnsealRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[111]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[114]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8488,7 +8689,7 @@ func (x *UnsealRequest) String() string {
 func (*UnsealRequest) ProtoMessage() {}
 
 func (x *UnsealRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[111]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[114]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8501,7 +8702,7 @@ func (x *UnsealRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UnsealRequest.ProtoReflect.Descriptor instead.
 func (*UnsealRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{111}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{114}
 }
 
 func (x *UnsealRequest) GetShare() []byte {
@@ -8542,7 +8743,7 @@ type UnsealResponse struct {
 
 func (x *UnsealResponse) Reset() {
 	*x = UnsealResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[112]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[115]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8554,7 +8755,7 @@ func (x *UnsealResponse) String() string {
 func (*UnsealResponse) ProtoMessage() {}
 
 func (x *UnsealResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[112]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[115]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8567,7 +8768,7 @@ func (x *UnsealResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UnsealResponse.ProtoReflect.Descriptor instead.
 func (*UnsealResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{112}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{115}
 }
 
 func (x *UnsealResponse) GetSealed() bool {
@@ -8609,7 +8810,7 @@ type SealRequest struct {
 
 func (x *SealRequest) Reset() {
 	*x = SealRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[113]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[116]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8621,7 +8822,7 @@ func (x *SealRequest) String() string {
 func (*SealRequest) ProtoMessage() {}
 
 func (x *SealRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[113]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[116]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8634,7 +8835,7 @@ func (x *SealRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SealRequest.ProtoReflect.Descriptor instead.
 func (*SealRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{113}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{116}
 }
 
 func (x *SealRequest) GetForce() bool {
@@ -8657,7 +8858,7 @@ type SealResponse struct {
 
 func (x *SealResponse) Reset() {
 	*x = SealResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[114]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[117]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8669,7 +8870,7 @@ func (x *SealResponse) String() string {
 func (*SealResponse) ProtoMessage() {}
 
 func (x *SealResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[114]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[117]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8682,7 +8883,7 @@ func (x *SealResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SealResponse.ProtoReflect.Descriptor instead.
 func (*SealResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{114}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{117}
 }
 
 func (x *SealResponse) GetSealed() bool {
@@ -8712,7 +8913,7 @@ type SealRekeyRequest struct {
 
 func (x *SealRekeyRequest) Reset() {
 	*x = SealRekeyRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[115]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[118]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8724,7 +8925,7 @@ func (x *SealRekeyRequest) String() string {
 func (*SealRekeyRequest) ProtoMessage() {}
 
 func (x *SealRekeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[115]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[118]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8737,7 +8938,7 @@ func (x *SealRekeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SealRekeyRequest.ProtoReflect.Descriptor instead.
 func (*SealRekeyRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{115}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{118}
 }
 
 func (x *SealRekeyRequest) GetNewThreshold() int32 {
@@ -8769,7 +8970,7 @@ type SealRekeyResponse struct {
 
 func (x *SealRekeyResponse) Reset() {
 	*x = SealRekeyResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[116]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[119]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8781,7 +8982,7 @@ func (x *SealRekeyResponse) String() string {
 func (*SealRekeyResponse) ProtoMessage() {}
 
 func (x *SealRekeyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[116]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[119]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8794,7 +8995,7 @@ func (x *SealRekeyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SealRekeyResponse.ProtoReflect.Descriptor instead.
 func (*SealRekeyResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{116}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{119}
 }
 
 func (x *SealRekeyResponse) GetVersion() uint64 {
@@ -8828,7 +9029,7 @@ type TSDataPoint struct {
 
 func (x *TSDataPoint) Reset() {
 	*x = TSDataPoint{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[117]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[120]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8840,7 +9041,7 @@ func (x *TSDataPoint) String() string {
 func (*TSDataPoint) ProtoMessage() {}
 
 func (x *TSDataPoint) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[117]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[120]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8853,7 +9054,7 @@ func (x *TSDataPoint) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TSDataPoint.ProtoReflect.Descriptor instead.
 func (*TSDataPoint) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{117}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{120}
 }
 
 func (x *TSDataPoint) GetMetric() string {
@@ -8899,7 +9100,7 @@ type TSRetentionPolicy struct {
 
 func (x *TSRetentionPolicy) Reset() {
 	*x = TSRetentionPolicy{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[118]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[121]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8911,7 +9112,7 @@ func (x *TSRetentionPolicy) String() string {
 func (*TSRetentionPolicy) ProtoMessage() {}
 
 func (x *TSRetentionPolicy) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[118]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[121]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8924,7 +9125,7 @@ func (x *TSRetentionPolicy) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TSRetentionPolicy.ProtoReflect.Descriptor instead.
 func (*TSRetentionPolicy) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{118}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{121}
 }
 
 func (x *TSRetentionPolicy) GetDurationSeconds() int64 {
@@ -8965,7 +9166,7 @@ type TSWritePointRequest struct {
 
 func (x *TSWritePointRequest) Reset() {
 	*x = TSWritePointRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[119]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[122]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8977,7 +9178,7 @@ func (x *TSWritePointRequest) String() string {
 func (*TSWritePointRequest) ProtoMessage() {}
 
 func (x *TSWritePointRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[119]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[122]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8990,7 +9191,7 @@ func (x *TSWritePointRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TSWritePointRequest.ProtoReflect.Descriptor instead.
 func (*TSWritePointRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{119}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{122}
 }
 
 func (x *TSWritePointRequest) GetMetric() string {
@@ -9034,7 +9235,7 @@ type TSWritePointResponse struct {
 
 func (x *TSWritePointResponse) Reset() {
 	*x = TSWritePointResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[120]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[123]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9046,7 +9247,7 @@ func (x *TSWritePointResponse) String() string {
 func (*TSWritePointResponse) ProtoMessage() {}
 
 func (x *TSWritePointResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[120]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[123]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9059,7 +9260,7 @@ func (x *TSWritePointResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TSWritePointResponse.ProtoReflect.Descriptor instead.
 func (*TSWritePointResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{120}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{123}
 }
 
 func (x *TSWritePointResponse) GetSuccess() bool {
@@ -9087,7 +9288,7 @@ type TSWriteBatchRequest struct {
 
 func (x *TSWriteBatchRequest) Reset() {
 	*x = TSWriteBatchRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[121]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[124]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9099,7 +9300,7 @@ func (x *TSWriteBatchRequest) String() string {
 func (*TSWriteBatchRequest) ProtoMessage() {}
 
 func (x *TSWriteBatchRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[121]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[124]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9112,7 +9313,7 @@ func (x *TSWriteBatchRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TSWriteBatchRequest.ProtoReflect.Descriptor instead.
 func (*TSWriteBatchRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{121}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{124}
 }
 
 func (x *TSWriteBatchRequest) GetPoints() []*TSDataPoint {
@@ -9137,7 +9338,7 @@ type TSWriteBatchResponse struct {
 
 func (x *TSWriteBatchResponse) Reset() {
 	*x = TSWriteBatchResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[122]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[125]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9149,7 +9350,7 @@ func (x *TSWriteBatchResponse) String() string {
 func (*TSWriteBatchResponse) ProtoMessage() {}
 
 func (x *TSWriteBatchResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[122]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[125]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9162,7 +9363,7 @@ func (x *TSWriteBatchResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TSWriteBatchResponse.ProtoReflect.Descriptor instead.
 func (*TSWriteBatchResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{122}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{125}
 }
 
 func (x *TSWriteBatchResponse) GetSuccess() bool {
@@ -9213,7 +9414,7 @@ type TSQueryRequest struct {
 
 func (x *TSQueryRequest) Reset() {
 	*x = TSQueryRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[123]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[126]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9225,7 +9426,7 @@ func (x *TSQueryRequest) String() string {
 func (*TSQueryRequest) ProtoMessage() {}
 
 func (x *TSQueryRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[123]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[126]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9238,7 +9439,7 @@ func (x *TSQueryRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TSQueryRequest.ProtoReflect.Descriptor instead.
 func (*TSQueryRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{123}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{126}
 }
 
 func (x *TSQueryRequest) GetMetric() string {
@@ -9321,7 +9522,7 @@ type TSGroupedResult struct {
 
 func (x *TSGroupedResult) Reset() {
 	*x = TSGroupedResult{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[124]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[127]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9333,7 +9534,7 @@ func (x *TSGroupedResult) String() string {
 func (*TSGroupedResult) ProtoMessage() {}
 
 func (x *TSGroupedResult) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[124]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[127]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9346,7 +9547,7 @@ func (x *TSGroupedResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TSGroupedResult.ProtoReflect.Descriptor instead.
 func (*TSGroupedResult) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{124}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{127}
 }
 
 func (x *TSGroupedResult) GetTags() map[string]string {
@@ -9400,7 +9601,7 @@ type TSQueryResponse struct {
 
 func (x *TSQueryResponse) Reset() {
 	*x = TSQueryResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[125]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[128]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9412,7 +9613,7 @@ func (x *TSQueryResponse) String() string {
 func (*TSQueryResponse) ProtoMessage() {}
 
 func (x *TSQueryResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[125]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[128]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9425,7 +9626,7 @@ func (x *TSQueryResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TSQueryResponse.ProtoReflect.Descriptor instead.
 func (*TSQueryResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{125}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{128}
 }
 
 func (x *TSQueryResponse) GetMetric() string {
@@ -9496,7 +9697,7 @@ type TSDeleteSeriesRequest struct {
 
 func (x *TSDeleteSeriesRequest) Reset() {
 	*x = TSDeleteSeriesRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[126]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[129]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9508,7 +9709,7 @@ func (x *TSDeleteSeriesRequest) String() string {
 func (*TSDeleteSeriesRequest) ProtoMessage() {}
 
 func (x *TSDeleteSeriesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[126]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[129]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9521,7 +9722,7 @@ func (x *TSDeleteSeriesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TSDeleteSeriesRequest.ProtoReflect.Descriptor instead.
 func (*TSDeleteSeriesRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{126}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{129}
 }
 
 func (x *TSDeleteSeriesRequest) GetMetric() string {
@@ -9572,7 +9773,7 @@ type TSDeleteSeriesResponse struct {
 
 func (x *TSDeleteSeriesResponse) Reset() {
 	*x = TSDeleteSeriesResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[127]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[130]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9584,7 +9785,7 @@ func (x *TSDeleteSeriesResponse) String() string {
 func (*TSDeleteSeriesResponse) ProtoMessage() {}
 
 func (x *TSDeleteSeriesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[127]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[130]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9597,7 +9798,7 @@ func (x *TSDeleteSeriesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TSDeleteSeriesResponse.ProtoReflect.Descriptor instead.
 func (*TSDeleteSeriesResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{127}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{130}
 }
 
 func (x *TSDeleteSeriesResponse) GetSuccess() bool {
@@ -9625,7 +9826,7 @@ type TSGetRetentionPolicyRequest struct {
 
 func (x *TSGetRetentionPolicyRequest) Reset() {
 	*x = TSGetRetentionPolicyRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[128]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[131]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9637,7 +9838,7 @@ func (x *TSGetRetentionPolicyRequest) String() string {
 func (*TSGetRetentionPolicyRequest) ProtoMessage() {}
 
 func (x *TSGetRetentionPolicyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[128]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[131]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9650,7 +9851,7 @@ func (x *TSGetRetentionPolicyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TSGetRetentionPolicyRequest.ProtoReflect.Descriptor instead.
 func (*TSGetRetentionPolicyRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{128}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{131}
 }
 
 func (x *TSGetRetentionPolicyRequest) GetMetric() string {
@@ -9675,7 +9876,7 @@ type TSGetRetentionPolicyResponse struct {
 
 func (x *TSGetRetentionPolicyResponse) Reset() {
 	*x = TSGetRetentionPolicyResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[129]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[132]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9687,7 +9888,7 @@ func (x *TSGetRetentionPolicyResponse) String() string {
 func (*TSGetRetentionPolicyResponse) ProtoMessage() {}
 
 func (x *TSGetRetentionPolicyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[129]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[132]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9700,7 +9901,7 @@ func (x *TSGetRetentionPolicyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TSGetRetentionPolicyResponse.ProtoReflect.Descriptor instead.
 func (*TSGetRetentionPolicyResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{129}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{132}
 }
 
 func (x *TSGetRetentionPolicyResponse) GetMetric() string {
@@ -9737,7 +9938,7 @@ type TSSetRetentionPolicyRequest struct {
 
 func (x *TSSetRetentionPolicyRequest) Reset() {
 	*x = TSSetRetentionPolicyRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[130]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[133]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9749,7 +9950,7 @@ func (x *TSSetRetentionPolicyRequest) String() string {
 func (*TSSetRetentionPolicyRequest) ProtoMessage() {}
 
 func (x *TSSetRetentionPolicyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[130]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[133]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9762,7 +9963,7 @@ func (x *TSSetRetentionPolicyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TSSetRetentionPolicyRequest.ProtoReflect.Descriptor instead.
 func (*TSSetRetentionPolicyRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{130}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{133}
 }
 
 func (x *TSSetRetentionPolicyRequest) GetMetric() string {
@@ -9792,7 +9993,7 @@ type TSSetRetentionPolicyResponse struct {
 
 func (x *TSSetRetentionPolicyResponse) Reset() {
 	*x = TSSetRetentionPolicyResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[131]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[134]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9804,7 +10005,7 @@ func (x *TSSetRetentionPolicyResponse) String() string {
 func (*TSSetRetentionPolicyResponse) ProtoMessage() {}
 
 func (x *TSSetRetentionPolicyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[131]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[134]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9817,7 +10018,7 @@ func (x *TSSetRetentionPolicyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TSSetRetentionPolicyResponse.ProtoReflect.Descriptor instead.
 func (*TSSetRetentionPolicyResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{131}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{134}
 }
 
 func (x *TSSetRetentionPolicyResponse) GetSuccess() bool {
@@ -9851,7 +10052,7 @@ type TSListMetricsRequest struct {
 
 func (x *TSListMetricsRequest) Reset() {
 	*x = TSListMetricsRequest{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[132]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[135]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9863,7 +10064,7 @@ func (x *TSListMetricsRequest) String() string {
 func (*TSListMetricsRequest) ProtoMessage() {}
 
 func (x *TSListMetricsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[132]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[135]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9876,7 +10077,7 @@ func (x *TSListMetricsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TSListMetricsRequest.ProtoReflect.Descriptor instead.
 func (*TSListMetricsRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{132}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{135}
 }
 
 func (x *TSListMetricsRequest) GetPrefix() string {
@@ -9922,7 +10123,7 @@ type TSListMetricsResponse struct {
 
 func (x *TSListMetricsResponse) Reset() {
 	*x = TSListMetricsResponse{}
-	mi := &file_api_proto_quicbaas_proto_msgTypes[133]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[136]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9934,7 +10135,7 @@ func (x *TSListMetricsResponse) String() string {
 func (*TSListMetricsResponse) ProtoMessage() {}
 
 func (x *TSListMetricsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_quicbaas_proto_msgTypes[133]
+	mi := &file_api_proto_quicbaas_proto_msgTypes[136]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9947,7 +10148,7 @@ func (x *TSListMetricsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TSListMetricsResponse.ProtoReflect.Descriptor instead.
 func (*TSListMetricsResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{133}
+	return file_api_proto_quicbaas_proto_rawDescGZIP(), []int{136}
 }
 
 func (x *TSListMetricsResponse) GetMetrics() []string {
@@ -9994,7 +10195,22 @@ const file_api_proto_quicbaas_proto_rawDesc = "" +
 	"\x02id\x18\x01 \x01(\x04R\x02id\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\x04R\aversion\x12\x1c\n" +
 	"\ttimestamp\x18\x03 \x01(\x03R\ttimestamp\x12\x1b\n" +
-	"\tleader_id\x18\x04 \x01(\x04R\bleaderId\"\xe3\x01\n" +
+	"\tleader_id\x18\x04 \x01(\x04R\bleaderId\"\x8d\x01\n" +
+	"\x15CompareAndSwapRequest\x12\x1f\n" +
+	"\ventity_type\x18\x01 \x01(\tR\n" +
+	"entityType\x12\x0e\n" +
+	"\x02id\x18\x02 \x01(\x04R\x02id\x12\x16\n" +
+	"\x06expect\x18\x03 \x01(\fR\x06expect\x12\x10\n" +
+	"\x03set\x18\x04 \x01(\fR\x03set\x12\x19\n" +
+	"\bshard_id\x18\x05 \x01(\x04R\ashardId\"t\n" +
+	"\x12PutIfAbsentRequest\x12\x1f\n" +
+	"\ventity_type\x18\x01 \x01(\tR\n" +
+	"entityType\x12\x0e\n" +
+	"\x02id\x18\x02 \x01(\x04R\x02id\x12\x12\n" +
+	"\x04data\x18\x03 \x01(\fR\x04data\x12\x19\n" +
+	"\bshard_id\x18\x04 \x01(\x04R\ashardId\"2\n" +
+	"\x16ConditionalPutResponse\x12\x18\n" +
+	"\aapplied\x18\x01 \x01(\bR\aapplied\"\xe3\x01\n" +
 	"\n" +
 	"GetRequest\x12\x1f\n" +
 	"\ventity_type\x18\x01 \x01(\tR\n" +
@@ -10794,13 +11010,17 @@ const file_api_proto_quicbaas_proto_rawDesc = "" +
 	"\x15SEAL_MODE_UNSPECIFIED\x10\x00\x12\x14\n" +
 	"\x10SEAL_MODE_MANUAL\x10\x01\x12\x12\n" +
 	"\x0eSEAL_MODE_AUTO\x10\x02\x12\x14\n" +
-	"\x10SEAL_MODE_CRYPTO\x10\x032\xe3.\n" +
+	"\x10SEAL_MODE_CRYPTO\x10\x032\xab0\n" +
 	"\bQuicBaaS\x12D\n" +
 	"\x03Put\x12\x17.quicbaas.v1.PutRequest\x1a\x18.quicbaas.v1.PutResponse\"\n" +
 	"\xc2\xf3\x18\x06kv:put\x12D\n" +
 	"\x03Get\x12\x17.quicbaas.v1.GetRequest\x1a\x18.quicbaas.v1.GetResponse\"\n" +
 	"\xc2\xf3\x18\x06kv:get\x12P\n" +
-	"\x06Delete\x12\x1a.quicbaas.v1.DeleteRequest\x1a\x1b.quicbaas.v1.DeleteResponse\"\r\xc2\xf3\x18\tkv:delete\x12J\n" +
+	"\x06Delete\x12\x1a.quicbaas.v1.DeleteRequest\x1a\x1b.quicbaas.v1.DeleteResponse\"\r\xc2\xf3\x18\tkv:delete\x12e\n" +
+	"\x0eCompareAndSwap\x12\".quicbaas.v1.CompareAndSwapRequest\x1a#.quicbaas.v1.ConditionalPutResponse\"\n" +
+	"\xc2\xf3\x18\x06kv:put\x12_\n" +
+	"\vPutIfAbsent\x12\x1f.quicbaas.v1.PutIfAbsentRequest\x1a#.quicbaas.v1.ConditionalPutResponse\"\n" +
+	"\xc2\xf3\x18\x06kv:put\x12J\n" +
 	"\x04List\x12\x18.quicbaas.v1.ListRequest\x1a\x19.quicbaas.v1.ListResponse\"\v\xc2\xf3\x18\akv:list0\x01\x12n\n" +
 	"\x0fListEntityTypes\x12#.quicbaas.v1.ListEntityTypesRequest\x1a$.quicbaas.v1.ListEntityTypesResponse\"\x10\xc2\xf3\x18\fadmin:status\x12Q\n" +
 	"\x05Watch\x12\x19.quicbaas.v1.WatchRequest\x1a\x1a.quicbaas.v1.WatchResponse\"\x0f\xc2\xf3\x18\vwatch:watch0\x01\x12N\n" +
@@ -10881,7 +11101,7 @@ func file_api_proto_quicbaas_proto_rawDescGZIP() []byte {
 }
 
 var file_api_proto_quicbaas_proto_enumTypes = make([]protoimpl.EnumInfo, 11)
-var file_api_proto_quicbaas_proto_msgTypes = make([]protoimpl.MessageInfo, 154)
+var file_api_proto_quicbaas_proto_msgTypes = make([]protoimpl.MessageInfo, 157)
 var file_api_proto_quicbaas_proto_goTypes = []any{
 	(ConsistencyLevel)(0),                // 0: quicbaas.v1.ConsistencyLevel
 	(AggregateFunction)(0),               // 1: quicbaas.v1.AggregateFunction
@@ -10896,373 +11116,380 @@ var file_api_proto_quicbaas_proto_goTypes = []any{
 	(SealMode)(0),                        // 10: quicbaas.v1.SealMode
 	(*PutRequest)(nil),                   // 11: quicbaas.v1.PutRequest
 	(*PutResponse)(nil),                  // 12: quicbaas.v1.PutResponse
-	(*GetRequest)(nil),                   // 13: quicbaas.v1.GetRequest
-	(*GetResponse)(nil),                  // 14: quicbaas.v1.GetResponse
-	(*DeleteRequest)(nil),                // 15: quicbaas.v1.DeleteRequest
-	(*DeleteResponse)(nil),               // 16: quicbaas.v1.DeleteResponse
-	(*ListRequest)(nil),                  // 17: quicbaas.v1.ListRequest
-	(*ListResponse)(nil),                 // 18: quicbaas.v1.ListResponse
-	(*ListEntityTypesRequest)(nil),       // 19: quicbaas.v1.ListEntityTypesRequest
-	(*ListEntityTypesResponse)(nil),      // 20: quicbaas.v1.ListEntityTypesResponse
-	(*Entity)(nil),                       // 21: quicbaas.v1.Entity
-	(*WatchRequest)(nil),                 // 22: quicbaas.v1.WatchRequest
-	(*WatchEvent)(nil),                   // 23: quicbaas.v1.WatchEvent
-	(*WatchResponse)(nil),                // 24: quicbaas.v1.WatchResponse
-	(*QueryRequest)(nil),                 // 25: quicbaas.v1.QueryRequest
-	(*QueryResponse)(nil),                // 26: quicbaas.v1.QueryResponse
-	(*ScanRequest)(nil),                  // 27: quicbaas.v1.ScanRequest
-	(*ScanResponse)(nil),                 // 28: quicbaas.v1.ScanResponse
-	(*ClusterStatusRequest)(nil),         // 29: quicbaas.v1.ClusterStatusRequest
-	(*ClusterStatusResponse)(nil),        // 30: quicbaas.v1.ClusterStatusResponse
-	(*NodeInfo)(nil),                     // 31: quicbaas.v1.NodeInfo
-	(*ShardInfo)(nil),                    // 32: quicbaas.v1.ShardInfo
-	(*GetLeaderRequest)(nil),             // 33: quicbaas.v1.GetLeaderRequest
-	(*GetLeaderResponse)(nil),            // 34: quicbaas.v1.GetLeaderResponse
-	(*AggregateRequest)(nil),             // 35: quicbaas.v1.AggregateRequest
-	(*AggregateResponse)(nil),            // 36: quicbaas.v1.AggregateResponse
-	(*GroupedResult)(nil),                // 37: quicbaas.v1.GroupedResult
-	(*TimeSeriesQueryRequest)(nil),       // 38: quicbaas.v1.TimeSeriesQueryRequest
-	(*TimeSeriesQueryResponse)(nil),      // 39: quicbaas.v1.TimeSeriesQueryResponse
-	(*TimeSeriesPoint)(nil),              // 40: quicbaas.v1.TimeSeriesPoint
-	(*BatchPutRequest)(nil),              // 41: quicbaas.v1.BatchPutRequest
-	(*BatchPutResponse)(nil),             // 42: quicbaas.v1.BatchPutResponse
-	(*BatchGetRequest)(nil),              // 43: quicbaas.v1.BatchGetRequest
-	(*BatchGetResponse)(nil),             // 44: quicbaas.v1.BatchGetResponse
-	(*BatchDeleteRequest)(nil),           // 45: quicbaas.v1.BatchDeleteRequest
-	(*BatchDeleteResponse)(nil),          // 46: quicbaas.v1.BatchDeleteResponse
-	(*StreamBatchPutRequest)(nil),        // 47: quicbaas.v1.StreamBatchPutRequest
-	(*StreamBatchHeader)(nil),            // 48: quicbaas.v1.StreamBatchHeader
-	(*BatchCondition)(nil),               // 49: quicbaas.v1.BatchCondition
-	(*StreamBatchChunk)(nil),             // 50: quicbaas.v1.StreamBatchChunk
-	(*StreamBatchComplete)(nil),          // 51: quicbaas.v1.StreamBatchComplete
-	(*StreamBatchPutResponse)(nil),       // 52: quicbaas.v1.StreamBatchPutResponse
-	(*StreamBatchProgress)(nil),          // 53: quicbaas.v1.StreamBatchProgress
-	(*StreamBatchResult)(nil),            // 54: quicbaas.v1.StreamBatchResult
-	(*HealthRequest)(nil),                // 55: quicbaas.v1.HealthRequest
-	(*HealthResponse)(nil),               // 56: quicbaas.v1.HealthResponse
-	(*ComponentHealth)(nil),              // 57: quicbaas.v1.ComponentHealth
-	(*CompareCondition)(nil),             // 58: quicbaas.v1.CompareCondition
-	(*TransactionOp)(nil),                // 59: quicbaas.v1.TransactionOp
-	(*TransactionRequest)(nil),           // 60: quicbaas.v1.TransactionRequest
-	(*TransactionOpResponse)(nil),        // 61: quicbaas.v1.TransactionOpResponse
-	(*TransactionResponse)(nil),          // 62: quicbaas.v1.TransactionResponse
-	(*CreateBackupRequest)(nil),          // 63: quicbaas.v1.CreateBackupRequest
-	(*CreateBackupResponse)(nil),         // 64: quicbaas.v1.CreateBackupResponse
-	(*ListBackupsRequest)(nil),           // 65: quicbaas.v1.ListBackupsRequest
-	(*ListBackupsResponse)(nil),          // 66: quicbaas.v1.ListBackupsResponse
-	(*BackupInfo)(nil),                   // 67: quicbaas.v1.BackupInfo
-	(*RestoreBackupRequest)(nil),         // 68: quicbaas.v1.RestoreBackupRequest
-	(*RestoreBackupResponse)(nil),        // 69: quicbaas.v1.RestoreBackupResponse
-	(*DeleteBackupRequest)(nil),          // 70: quicbaas.v1.DeleteBackupRequest
-	(*DeleteBackupResponse)(nil),         // 71: quicbaas.v1.DeleteBackupResponse
-	(*VerifyBackupRequest)(nil),          // 72: quicbaas.v1.VerifyBackupRequest
-	(*VerifyBackupResponse)(nil),         // 73: quicbaas.v1.VerifyBackupResponse
-	(*LoginRequest)(nil),                 // 74: quicbaas.v1.LoginRequest
-	(*LoginResponse)(nil),                // 75: quicbaas.v1.LoginResponse
-	(*LogoutRequest)(nil),                // 76: quicbaas.v1.LogoutRequest
-	(*LogoutResponse)(nil),               // 77: quicbaas.v1.LogoutResponse
-	(*RefreshTokenRequest)(nil),          // 78: quicbaas.v1.RefreshTokenRequest
-	(*RefreshTokenResponse)(nil),         // 79: quicbaas.v1.RefreshTokenResponse
-	(*ValidateTokenRequest)(nil),         // 80: quicbaas.v1.ValidateTokenRequest
-	(*ValidateTokenResponse)(nil),        // 81: quicbaas.v1.ValidateTokenResponse
-	(*IntrospectTokenRequest)(nil),       // 82: quicbaas.v1.IntrospectTokenRequest
-	(*IntrospectTokenResponse)(nil),      // 83: quicbaas.v1.IntrospectTokenResponse
-	(*CreateRoleRequest)(nil),            // 84: quicbaas.v1.CreateRoleRequest
-	(*Permission)(nil),                   // 85: quicbaas.v1.Permission
-	(*CreateRoleResponse)(nil),           // 86: quicbaas.v1.CreateRoleResponse
-	(*DeleteRoleRequest)(nil),            // 87: quicbaas.v1.DeleteRoleRequest
-	(*DeleteRoleResponse)(nil),           // 88: quicbaas.v1.DeleteRoleResponse
-	(*ListRolesRequest)(nil),             // 89: quicbaas.v1.ListRolesRequest
-	(*ListRolesResponse)(nil),            // 90: quicbaas.v1.ListRolesResponse
-	(*RoleInfo)(nil),                     // 91: quicbaas.v1.RoleInfo
-	(*AssignRoleRequest)(nil),            // 92: quicbaas.v1.AssignRoleRequest
-	(*AssignRoleResponse)(nil),           // 93: quicbaas.v1.AssignRoleResponse
-	(*RevokeRoleRequest)(nil),            // 94: quicbaas.v1.RevokeRoleRequest
-	(*RevokeRoleResponse)(nil),           // 95: quicbaas.v1.RevokeRoleResponse
-	(*MigrateDataRequest)(nil),           // 96: quicbaas.v1.MigrateDataRequest
-	(*MigrateDataResponse)(nil),          // 97: quicbaas.v1.MigrateDataResponse
-	(*GetMigrationProgressRequest)(nil),  // 98: quicbaas.v1.GetMigrationProgressRequest
-	(*GetMigrationProgressResponse)(nil), // 99: quicbaas.v1.GetMigrationProgressResponse
-	(*RebalanceClusterRequest)(nil),      // 100: quicbaas.v1.RebalanceClusterRequest
-	(*RebalanceClusterResponse)(nil),     // 101: quicbaas.v1.RebalanceClusterResponse
-	(*GetRebalanceProgressRequest)(nil),  // 102: quicbaas.v1.GetRebalanceProgressRequest
-	(*GetRebalanceProgressResponse)(nil), // 103: quicbaas.v1.GetRebalanceProgressResponse
-	(*ReplaceNodeRequest)(nil),           // 104: quicbaas.v1.ReplaceNodeRequest
-	(*ReplaceNodeResponse)(nil),          // 105: quicbaas.v1.ReplaceNodeResponse
-	(*UpgradeNodeRequest)(nil),           // 106: quicbaas.v1.UpgradeNodeRequest
-	(*UpgradeNodeResponse)(nil),          // 107: quicbaas.v1.UpgradeNodeResponse
-	(*GetUpgradeStatusRequest)(nil),      // 108: quicbaas.v1.GetUpgradeStatusRequest
-	(*GetUpgradeStatusResponse)(nil),     // 109: quicbaas.v1.GetUpgradeStatusResponse
-	(*GetCacheStatsRequest)(nil),         // 110: quicbaas.v1.GetCacheStatsRequest
-	(*GetCacheStatsResponse)(nil),        // 111: quicbaas.v1.GetCacheStatsResponse
-	(*ClearCacheRequest)(nil),            // 112: quicbaas.v1.ClearCacheRequest
-	(*ClearCacheResponse)(nil),           // 113: quicbaas.v1.ClearCacheResponse
-	(*GetCacheConfigRequest)(nil),        // 114: quicbaas.v1.GetCacheConfigRequest
-	(*GetCacheConfigResponse)(nil),       // 115: quicbaas.v1.GetCacheConfigResponse
-	(*UpdateCacheConfigRequest)(nil),     // 116: quicbaas.v1.UpdateCacheConfigRequest
-	(*UpdateCacheConfigResponse)(nil),    // 117: quicbaas.v1.UpdateCacheConfigResponse
-	(*SealStatusRequest)(nil),            // 118: quicbaas.v1.SealStatusRequest
-	(*SealStatusResponse)(nil),           // 119: quicbaas.v1.SealStatusResponse
-	(*SealInitRequest)(nil),              // 120: quicbaas.v1.SealInitRequest
-	(*SealInitResponse)(nil),             // 121: quicbaas.v1.SealInitResponse
-	(*UnsealRequest)(nil),                // 122: quicbaas.v1.UnsealRequest
-	(*UnsealResponse)(nil),               // 123: quicbaas.v1.UnsealResponse
-	(*SealRequest)(nil),                  // 124: quicbaas.v1.SealRequest
-	(*SealResponse)(nil),                 // 125: quicbaas.v1.SealResponse
-	(*SealRekeyRequest)(nil),             // 126: quicbaas.v1.SealRekeyRequest
-	(*SealRekeyResponse)(nil),            // 127: quicbaas.v1.SealRekeyResponse
-	(*TSDataPoint)(nil),                  // 128: quicbaas.v1.TSDataPoint
-	(*TSRetentionPolicy)(nil),            // 129: quicbaas.v1.TSRetentionPolicy
-	(*TSWritePointRequest)(nil),          // 130: quicbaas.v1.TSWritePointRequest
-	(*TSWritePointResponse)(nil),         // 131: quicbaas.v1.TSWritePointResponse
-	(*TSWriteBatchRequest)(nil),          // 132: quicbaas.v1.TSWriteBatchRequest
-	(*TSWriteBatchResponse)(nil),         // 133: quicbaas.v1.TSWriteBatchResponse
-	(*TSQueryRequest)(nil),               // 134: quicbaas.v1.TSQueryRequest
-	(*TSGroupedResult)(nil),              // 135: quicbaas.v1.TSGroupedResult
-	(*TSQueryResponse)(nil),              // 136: quicbaas.v1.TSQueryResponse
-	(*TSDeleteSeriesRequest)(nil),        // 137: quicbaas.v1.TSDeleteSeriesRequest
-	(*TSDeleteSeriesResponse)(nil),       // 138: quicbaas.v1.TSDeleteSeriesResponse
-	(*TSGetRetentionPolicyRequest)(nil),  // 139: quicbaas.v1.TSGetRetentionPolicyRequest
-	(*TSGetRetentionPolicyResponse)(nil), // 140: quicbaas.v1.TSGetRetentionPolicyResponse
-	(*TSSetRetentionPolicyRequest)(nil),  // 141: quicbaas.v1.TSSetRetentionPolicyRequest
-	(*TSSetRetentionPolicyResponse)(nil), // 142: quicbaas.v1.TSSetRetentionPolicyResponse
-	(*TSListMetricsRequest)(nil),         // 143: quicbaas.v1.TSListMetricsRequest
-	(*TSListMetricsResponse)(nil),        // 144: quicbaas.v1.TSListMetricsResponse
-	nil,                                  // 145: quicbaas.v1.PutRequest.MetadataEntry
-	nil,                                  // 146: quicbaas.v1.GetResponse.MetadataEntry
-	nil,                                  // 147: quicbaas.v1.Entity.MetadataEntry
-	nil,                                  // 148: quicbaas.v1.NodeInfo.MetricsEntry
-	nil,                                  // 149: quicbaas.v1.ShardInfo.MetricsEntry
-	nil,                                  // 150: quicbaas.v1.TimeSeriesPoint.MetadataEntry
-	nil,                                  // 151: quicbaas.v1.HealthResponse.DetailsEntry
-	nil,                                  // 152: quicbaas.v1.ComponentHealth.MetricsEntry
-	nil,                                  // 153: quicbaas.v1.TransactionOp.MetadataEntry
-	nil,                                  // 154: quicbaas.v1.TransactionOpResponse.MetadataEntry
-	nil,                                  // 155: quicbaas.v1.CreateBackupRequest.TagsEntry
-	nil,                                  // 156: quicbaas.v1.BackupInfo.TagsEntry
-	nil,                                  // 157: quicbaas.v1.RebalanceClusterRequest.TargetDistributionEntry
-	nil,                                  // 158: quicbaas.v1.TSDataPoint.TagsEntry
-	nil,                                  // 159: quicbaas.v1.TSWritePointRequest.TagsEntry
-	nil,                                  // 160: quicbaas.v1.TSQueryRequest.TagsEntry
-	nil,                                  // 161: quicbaas.v1.TSGroupedResult.TagsEntry
-	nil,                                  // 162: quicbaas.v1.TSQueryResponse.TagsEntry
-	nil,                                  // 163: quicbaas.v1.TSDeleteSeriesRequest.TagsEntry
-	nil,                                  // 164: quicbaas.v1.TSListMetricsRequest.TagsEntry
-	(*AddNodeRequest)(nil),               // 165: quicbaas.v1.AddNodeRequest
-	(*RemoveNodeRequest)(nil),            // 166: quicbaas.v1.RemoveNodeRequest
-	(*CreateShardRequest)(nil),           // 167: quicbaas.v1.CreateShardRequest
-	(*AddNodeResponse)(nil),              // 168: quicbaas.v1.AddNodeResponse
-	(*RemoveNodeResponse)(nil),           // 169: quicbaas.v1.RemoveNodeResponse
-	(*CreateShardResponse)(nil),          // 170: quicbaas.v1.CreateShardResponse
+	(*CompareAndSwapRequest)(nil),        // 13: quicbaas.v1.CompareAndSwapRequest
+	(*PutIfAbsentRequest)(nil),           // 14: quicbaas.v1.PutIfAbsentRequest
+	(*ConditionalPutResponse)(nil),       // 15: quicbaas.v1.ConditionalPutResponse
+	(*GetRequest)(nil),                   // 16: quicbaas.v1.GetRequest
+	(*GetResponse)(nil),                  // 17: quicbaas.v1.GetResponse
+	(*DeleteRequest)(nil),                // 18: quicbaas.v1.DeleteRequest
+	(*DeleteResponse)(nil),               // 19: quicbaas.v1.DeleteResponse
+	(*ListRequest)(nil),                  // 20: quicbaas.v1.ListRequest
+	(*ListResponse)(nil),                 // 21: quicbaas.v1.ListResponse
+	(*ListEntityTypesRequest)(nil),       // 22: quicbaas.v1.ListEntityTypesRequest
+	(*ListEntityTypesResponse)(nil),      // 23: quicbaas.v1.ListEntityTypesResponse
+	(*Entity)(nil),                       // 24: quicbaas.v1.Entity
+	(*WatchRequest)(nil),                 // 25: quicbaas.v1.WatchRequest
+	(*WatchEvent)(nil),                   // 26: quicbaas.v1.WatchEvent
+	(*WatchResponse)(nil),                // 27: quicbaas.v1.WatchResponse
+	(*QueryRequest)(nil),                 // 28: quicbaas.v1.QueryRequest
+	(*QueryResponse)(nil),                // 29: quicbaas.v1.QueryResponse
+	(*ScanRequest)(nil),                  // 30: quicbaas.v1.ScanRequest
+	(*ScanResponse)(nil),                 // 31: quicbaas.v1.ScanResponse
+	(*ClusterStatusRequest)(nil),         // 32: quicbaas.v1.ClusterStatusRequest
+	(*ClusterStatusResponse)(nil),        // 33: quicbaas.v1.ClusterStatusResponse
+	(*NodeInfo)(nil),                     // 34: quicbaas.v1.NodeInfo
+	(*ShardInfo)(nil),                    // 35: quicbaas.v1.ShardInfo
+	(*GetLeaderRequest)(nil),             // 36: quicbaas.v1.GetLeaderRequest
+	(*GetLeaderResponse)(nil),            // 37: quicbaas.v1.GetLeaderResponse
+	(*AggregateRequest)(nil),             // 38: quicbaas.v1.AggregateRequest
+	(*AggregateResponse)(nil),            // 39: quicbaas.v1.AggregateResponse
+	(*GroupedResult)(nil),                // 40: quicbaas.v1.GroupedResult
+	(*TimeSeriesQueryRequest)(nil),       // 41: quicbaas.v1.TimeSeriesQueryRequest
+	(*TimeSeriesQueryResponse)(nil),      // 42: quicbaas.v1.TimeSeriesQueryResponse
+	(*TimeSeriesPoint)(nil),              // 43: quicbaas.v1.TimeSeriesPoint
+	(*BatchPutRequest)(nil),              // 44: quicbaas.v1.BatchPutRequest
+	(*BatchPutResponse)(nil),             // 45: quicbaas.v1.BatchPutResponse
+	(*BatchGetRequest)(nil),              // 46: quicbaas.v1.BatchGetRequest
+	(*BatchGetResponse)(nil),             // 47: quicbaas.v1.BatchGetResponse
+	(*BatchDeleteRequest)(nil),           // 48: quicbaas.v1.BatchDeleteRequest
+	(*BatchDeleteResponse)(nil),          // 49: quicbaas.v1.BatchDeleteResponse
+	(*StreamBatchPutRequest)(nil),        // 50: quicbaas.v1.StreamBatchPutRequest
+	(*StreamBatchHeader)(nil),            // 51: quicbaas.v1.StreamBatchHeader
+	(*BatchCondition)(nil),               // 52: quicbaas.v1.BatchCondition
+	(*StreamBatchChunk)(nil),             // 53: quicbaas.v1.StreamBatchChunk
+	(*StreamBatchComplete)(nil),          // 54: quicbaas.v1.StreamBatchComplete
+	(*StreamBatchPutResponse)(nil),       // 55: quicbaas.v1.StreamBatchPutResponse
+	(*StreamBatchProgress)(nil),          // 56: quicbaas.v1.StreamBatchProgress
+	(*StreamBatchResult)(nil),            // 57: quicbaas.v1.StreamBatchResult
+	(*HealthRequest)(nil),                // 58: quicbaas.v1.HealthRequest
+	(*HealthResponse)(nil),               // 59: quicbaas.v1.HealthResponse
+	(*ComponentHealth)(nil),              // 60: quicbaas.v1.ComponentHealth
+	(*CompareCondition)(nil),             // 61: quicbaas.v1.CompareCondition
+	(*TransactionOp)(nil),                // 62: quicbaas.v1.TransactionOp
+	(*TransactionRequest)(nil),           // 63: quicbaas.v1.TransactionRequest
+	(*TransactionOpResponse)(nil),        // 64: quicbaas.v1.TransactionOpResponse
+	(*TransactionResponse)(nil),          // 65: quicbaas.v1.TransactionResponse
+	(*CreateBackupRequest)(nil),          // 66: quicbaas.v1.CreateBackupRequest
+	(*CreateBackupResponse)(nil),         // 67: quicbaas.v1.CreateBackupResponse
+	(*ListBackupsRequest)(nil),           // 68: quicbaas.v1.ListBackupsRequest
+	(*ListBackupsResponse)(nil),          // 69: quicbaas.v1.ListBackupsResponse
+	(*BackupInfo)(nil),                   // 70: quicbaas.v1.BackupInfo
+	(*RestoreBackupRequest)(nil),         // 71: quicbaas.v1.RestoreBackupRequest
+	(*RestoreBackupResponse)(nil),        // 72: quicbaas.v1.RestoreBackupResponse
+	(*DeleteBackupRequest)(nil),          // 73: quicbaas.v1.DeleteBackupRequest
+	(*DeleteBackupResponse)(nil),         // 74: quicbaas.v1.DeleteBackupResponse
+	(*VerifyBackupRequest)(nil),          // 75: quicbaas.v1.VerifyBackupRequest
+	(*VerifyBackupResponse)(nil),         // 76: quicbaas.v1.VerifyBackupResponse
+	(*LoginRequest)(nil),                 // 77: quicbaas.v1.LoginRequest
+	(*LoginResponse)(nil),                // 78: quicbaas.v1.LoginResponse
+	(*LogoutRequest)(nil),                // 79: quicbaas.v1.LogoutRequest
+	(*LogoutResponse)(nil),               // 80: quicbaas.v1.LogoutResponse
+	(*RefreshTokenRequest)(nil),          // 81: quicbaas.v1.RefreshTokenRequest
+	(*RefreshTokenResponse)(nil),         // 82: quicbaas.v1.RefreshTokenResponse
+	(*ValidateTokenRequest)(nil),         // 83: quicbaas.v1.ValidateTokenRequest
+	(*ValidateTokenResponse)(nil),        // 84: quicbaas.v1.ValidateTokenResponse
+	(*IntrospectTokenRequest)(nil),       // 85: quicbaas.v1.IntrospectTokenRequest
+	(*IntrospectTokenResponse)(nil),      // 86: quicbaas.v1.IntrospectTokenResponse
+	(*CreateRoleRequest)(nil),            // 87: quicbaas.v1.CreateRoleRequest
+	(*Permission)(nil),                   // 88: quicbaas.v1.Permission
+	(*CreateRoleResponse)(nil),           // 89: quicbaas.v1.CreateRoleResponse
+	(*DeleteRoleRequest)(nil),            // 90: quicbaas.v1.DeleteRoleRequest
+	(*DeleteRoleResponse)(nil),           // 91: quicbaas.v1.DeleteRoleResponse
+	(*ListRolesRequest)(nil),             // 92: quicbaas.v1.ListRolesRequest
+	(*ListRolesResponse)(nil),            // 93: quicbaas.v1.ListRolesResponse
+	(*RoleInfo)(nil),                     // 94: quicbaas.v1.RoleInfo
+	(*AssignRoleRequest)(nil),            // 95: quicbaas.v1.AssignRoleRequest
+	(*AssignRoleResponse)(nil),           // 96: quicbaas.v1.AssignRoleResponse
+	(*RevokeRoleRequest)(nil),            // 97: quicbaas.v1.RevokeRoleRequest
+	(*RevokeRoleResponse)(nil),           // 98: quicbaas.v1.RevokeRoleResponse
+	(*MigrateDataRequest)(nil),           // 99: quicbaas.v1.MigrateDataRequest
+	(*MigrateDataResponse)(nil),          // 100: quicbaas.v1.MigrateDataResponse
+	(*GetMigrationProgressRequest)(nil),  // 101: quicbaas.v1.GetMigrationProgressRequest
+	(*GetMigrationProgressResponse)(nil), // 102: quicbaas.v1.GetMigrationProgressResponse
+	(*RebalanceClusterRequest)(nil),      // 103: quicbaas.v1.RebalanceClusterRequest
+	(*RebalanceClusterResponse)(nil),     // 104: quicbaas.v1.RebalanceClusterResponse
+	(*GetRebalanceProgressRequest)(nil),  // 105: quicbaas.v1.GetRebalanceProgressRequest
+	(*GetRebalanceProgressResponse)(nil), // 106: quicbaas.v1.GetRebalanceProgressResponse
+	(*ReplaceNodeRequest)(nil),           // 107: quicbaas.v1.ReplaceNodeRequest
+	(*ReplaceNodeResponse)(nil),          // 108: quicbaas.v1.ReplaceNodeResponse
+	(*UpgradeNodeRequest)(nil),           // 109: quicbaas.v1.UpgradeNodeRequest
+	(*UpgradeNodeResponse)(nil),          // 110: quicbaas.v1.UpgradeNodeResponse
+	(*GetUpgradeStatusRequest)(nil),      // 111: quicbaas.v1.GetUpgradeStatusRequest
+	(*GetUpgradeStatusResponse)(nil),     // 112: quicbaas.v1.GetUpgradeStatusResponse
+	(*GetCacheStatsRequest)(nil),         // 113: quicbaas.v1.GetCacheStatsRequest
+	(*GetCacheStatsResponse)(nil),        // 114: quicbaas.v1.GetCacheStatsResponse
+	(*ClearCacheRequest)(nil),            // 115: quicbaas.v1.ClearCacheRequest
+	(*ClearCacheResponse)(nil),           // 116: quicbaas.v1.ClearCacheResponse
+	(*GetCacheConfigRequest)(nil),        // 117: quicbaas.v1.GetCacheConfigRequest
+	(*GetCacheConfigResponse)(nil),       // 118: quicbaas.v1.GetCacheConfigResponse
+	(*UpdateCacheConfigRequest)(nil),     // 119: quicbaas.v1.UpdateCacheConfigRequest
+	(*UpdateCacheConfigResponse)(nil),    // 120: quicbaas.v1.UpdateCacheConfigResponse
+	(*SealStatusRequest)(nil),            // 121: quicbaas.v1.SealStatusRequest
+	(*SealStatusResponse)(nil),           // 122: quicbaas.v1.SealStatusResponse
+	(*SealInitRequest)(nil),              // 123: quicbaas.v1.SealInitRequest
+	(*SealInitResponse)(nil),             // 124: quicbaas.v1.SealInitResponse
+	(*UnsealRequest)(nil),                // 125: quicbaas.v1.UnsealRequest
+	(*UnsealResponse)(nil),               // 126: quicbaas.v1.UnsealResponse
+	(*SealRequest)(nil),                  // 127: quicbaas.v1.SealRequest
+	(*SealResponse)(nil),                 // 128: quicbaas.v1.SealResponse
+	(*SealRekeyRequest)(nil),             // 129: quicbaas.v1.SealRekeyRequest
+	(*SealRekeyResponse)(nil),            // 130: quicbaas.v1.SealRekeyResponse
+	(*TSDataPoint)(nil),                  // 131: quicbaas.v1.TSDataPoint
+	(*TSRetentionPolicy)(nil),            // 132: quicbaas.v1.TSRetentionPolicy
+	(*TSWritePointRequest)(nil),          // 133: quicbaas.v1.TSWritePointRequest
+	(*TSWritePointResponse)(nil),         // 134: quicbaas.v1.TSWritePointResponse
+	(*TSWriteBatchRequest)(nil),          // 135: quicbaas.v1.TSWriteBatchRequest
+	(*TSWriteBatchResponse)(nil),         // 136: quicbaas.v1.TSWriteBatchResponse
+	(*TSQueryRequest)(nil),               // 137: quicbaas.v1.TSQueryRequest
+	(*TSGroupedResult)(nil),              // 138: quicbaas.v1.TSGroupedResult
+	(*TSQueryResponse)(nil),              // 139: quicbaas.v1.TSQueryResponse
+	(*TSDeleteSeriesRequest)(nil),        // 140: quicbaas.v1.TSDeleteSeriesRequest
+	(*TSDeleteSeriesResponse)(nil),       // 141: quicbaas.v1.TSDeleteSeriesResponse
+	(*TSGetRetentionPolicyRequest)(nil),  // 142: quicbaas.v1.TSGetRetentionPolicyRequest
+	(*TSGetRetentionPolicyResponse)(nil), // 143: quicbaas.v1.TSGetRetentionPolicyResponse
+	(*TSSetRetentionPolicyRequest)(nil),  // 144: quicbaas.v1.TSSetRetentionPolicyRequest
+	(*TSSetRetentionPolicyResponse)(nil), // 145: quicbaas.v1.TSSetRetentionPolicyResponse
+	(*TSListMetricsRequest)(nil),         // 146: quicbaas.v1.TSListMetricsRequest
+	(*TSListMetricsResponse)(nil),        // 147: quicbaas.v1.TSListMetricsResponse
+	nil,                                  // 148: quicbaas.v1.PutRequest.MetadataEntry
+	nil,                                  // 149: quicbaas.v1.GetResponse.MetadataEntry
+	nil,                                  // 150: quicbaas.v1.Entity.MetadataEntry
+	nil,                                  // 151: quicbaas.v1.NodeInfo.MetricsEntry
+	nil,                                  // 152: quicbaas.v1.ShardInfo.MetricsEntry
+	nil,                                  // 153: quicbaas.v1.TimeSeriesPoint.MetadataEntry
+	nil,                                  // 154: quicbaas.v1.HealthResponse.DetailsEntry
+	nil,                                  // 155: quicbaas.v1.ComponentHealth.MetricsEntry
+	nil,                                  // 156: quicbaas.v1.TransactionOp.MetadataEntry
+	nil,                                  // 157: quicbaas.v1.TransactionOpResponse.MetadataEntry
+	nil,                                  // 158: quicbaas.v1.CreateBackupRequest.TagsEntry
+	nil,                                  // 159: quicbaas.v1.BackupInfo.TagsEntry
+	nil,                                  // 160: quicbaas.v1.RebalanceClusterRequest.TargetDistributionEntry
+	nil,                                  // 161: quicbaas.v1.TSDataPoint.TagsEntry
+	nil,                                  // 162: quicbaas.v1.TSWritePointRequest.TagsEntry
+	nil,                                  // 163: quicbaas.v1.TSQueryRequest.TagsEntry
+	nil,                                  // 164: quicbaas.v1.TSGroupedResult.TagsEntry
+	nil,                                  // 165: quicbaas.v1.TSQueryResponse.TagsEntry
+	nil,                                  // 166: quicbaas.v1.TSDeleteSeriesRequest.TagsEntry
+	nil,                                  // 167: quicbaas.v1.TSListMetricsRequest.TagsEntry
+	(*AddNodeRequest)(nil),               // 168: quicbaas.v1.AddNodeRequest
+	(*RemoveNodeRequest)(nil),            // 169: quicbaas.v1.RemoveNodeRequest
+	(*CreateShardRequest)(nil),           // 170: quicbaas.v1.CreateShardRequest
+	(*AddNodeResponse)(nil),              // 171: quicbaas.v1.AddNodeResponse
+	(*RemoveNodeResponse)(nil),           // 172: quicbaas.v1.RemoveNodeResponse
+	(*CreateShardResponse)(nil),          // 173: quicbaas.v1.CreateShardResponse
 }
 var file_api_proto_quicbaas_proto_depIdxs = []int32{
 	0,   // 0: quicbaas.v1.PutRequest.consistency:type_name -> quicbaas.v1.ConsistencyLevel
-	145, // 1: quicbaas.v1.PutRequest.metadata:type_name -> quicbaas.v1.PutRequest.MetadataEntry
+	148, // 1: quicbaas.v1.PutRequest.metadata:type_name -> quicbaas.v1.PutRequest.MetadataEntry
 	0,   // 2: quicbaas.v1.GetRequest.consistency:type_name -> quicbaas.v1.ConsistencyLevel
-	146, // 3: quicbaas.v1.GetResponse.metadata:type_name -> quicbaas.v1.GetResponse.MetadataEntry
+	149, // 3: quicbaas.v1.GetResponse.metadata:type_name -> quicbaas.v1.GetResponse.MetadataEntry
 	0,   // 4: quicbaas.v1.DeleteRequest.consistency:type_name -> quicbaas.v1.ConsistencyLevel
 	0,   // 5: quicbaas.v1.ListRequest.consistency:type_name -> quicbaas.v1.ConsistencyLevel
-	21,  // 6: quicbaas.v1.ListResponse.entities:type_name -> quicbaas.v1.Entity
+	24,  // 6: quicbaas.v1.ListResponse.entities:type_name -> quicbaas.v1.Entity
 	0,   // 7: quicbaas.v1.ListEntityTypesRequest.consistency:type_name -> quicbaas.v1.ConsistencyLevel
-	147, // 8: quicbaas.v1.Entity.metadata:type_name -> quicbaas.v1.Entity.MetadataEntry
+	150, // 8: quicbaas.v1.Entity.metadata:type_name -> quicbaas.v1.Entity.MetadataEntry
 	3,   // 9: quicbaas.v1.WatchRequest.filters:type_name -> quicbaas.v1.WatchEventType
 	3,   // 10: quicbaas.v1.WatchEvent.type:type_name -> quicbaas.v1.WatchEventType
-	23,  // 11: quicbaas.v1.WatchResponse.events:type_name -> quicbaas.v1.WatchEvent
+	26,  // 11: quicbaas.v1.WatchResponse.events:type_name -> quicbaas.v1.WatchEvent
 	0,   // 12: quicbaas.v1.QueryRequest.consistency:type_name -> quicbaas.v1.ConsistencyLevel
-	21,  // 13: quicbaas.v1.QueryResponse.entities:type_name -> quicbaas.v1.Entity
+	24,  // 13: quicbaas.v1.QueryResponse.entities:type_name -> quicbaas.v1.Entity
 	0,   // 14: quicbaas.v1.ScanRequest.consistency:type_name -> quicbaas.v1.ConsistencyLevel
-	21,  // 15: quicbaas.v1.ScanResponse.entities:type_name -> quicbaas.v1.Entity
-	31,  // 16: quicbaas.v1.ClusterStatusResponse.nodes:type_name -> quicbaas.v1.NodeInfo
-	32,  // 17: quicbaas.v1.ClusterStatusResponse.shards:type_name -> quicbaas.v1.ShardInfo
+	24,  // 15: quicbaas.v1.ScanResponse.entities:type_name -> quicbaas.v1.Entity
+	34,  // 16: quicbaas.v1.ClusterStatusResponse.nodes:type_name -> quicbaas.v1.NodeInfo
+	35,  // 17: quicbaas.v1.ClusterStatusResponse.shards:type_name -> quicbaas.v1.ShardInfo
 	2,   // 18: quicbaas.v1.NodeInfo.health_status:type_name -> quicbaas.v1.HealthStatus
-	148, // 19: quicbaas.v1.NodeInfo.metrics:type_name -> quicbaas.v1.NodeInfo.MetricsEntry
+	151, // 19: quicbaas.v1.NodeInfo.metrics:type_name -> quicbaas.v1.NodeInfo.MetricsEntry
 	2,   // 20: quicbaas.v1.ShardInfo.status:type_name -> quicbaas.v1.HealthStatus
-	149, // 21: quicbaas.v1.ShardInfo.metrics:type_name -> quicbaas.v1.ShardInfo.MetricsEntry
+	152, // 21: quicbaas.v1.ShardInfo.metrics:type_name -> quicbaas.v1.ShardInfo.MetricsEntry
 	1,   // 22: quicbaas.v1.AggregateRequest.function:type_name -> quicbaas.v1.AggregateFunction
 	0,   // 23: quicbaas.v1.AggregateRequest.consistency:type_name -> quicbaas.v1.ConsistencyLevel
-	37,  // 24: quicbaas.v1.AggregateResponse.grouped_results:type_name -> quicbaas.v1.GroupedResult
+	40,  // 24: quicbaas.v1.AggregateResponse.grouped_results:type_name -> quicbaas.v1.GroupedResult
 	0,   // 25: quicbaas.v1.TimeSeriesQueryRequest.consistency:type_name -> quicbaas.v1.ConsistencyLevel
-	40,  // 26: quicbaas.v1.TimeSeriesQueryResponse.data_points:type_name -> quicbaas.v1.TimeSeriesPoint
-	150, // 27: quicbaas.v1.TimeSeriesPoint.metadata:type_name -> quicbaas.v1.TimeSeriesPoint.MetadataEntry
+	43,  // 26: quicbaas.v1.TimeSeriesQueryResponse.data_points:type_name -> quicbaas.v1.TimeSeriesPoint
+	153, // 27: quicbaas.v1.TimeSeriesPoint.metadata:type_name -> quicbaas.v1.TimeSeriesPoint.MetadataEntry
 	11,  // 28: quicbaas.v1.BatchPutRequest.requests:type_name -> quicbaas.v1.PutRequest
 	0,   // 29: quicbaas.v1.BatchPutRequest.consistency:type_name -> quicbaas.v1.ConsistencyLevel
 	12,  // 30: quicbaas.v1.BatchPutResponse.responses:type_name -> quicbaas.v1.PutResponse
-	13,  // 31: quicbaas.v1.BatchGetRequest.requests:type_name -> quicbaas.v1.GetRequest
-	14,  // 32: quicbaas.v1.BatchGetResponse.responses:type_name -> quicbaas.v1.GetResponse
-	15,  // 33: quicbaas.v1.BatchDeleteRequest.requests:type_name -> quicbaas.v1.DeleteRequest
+	16,  // 31: quicbaas.v1.BatchGetRequest.requests:type_name -> quicbaas.v1.GetRequest
+	17,  // 32: quicbaas.v1.BatchGetResponse.responses:type_name -> quicbaas.v1.GetResponse
+	18,  // 33: quicbaas.v1.BatchDeleteRequest.requests:type_name -> quicbaas.v1.DeleteRequest
 	0,   // 34: quicbaas.v1.BatchDeleteRequest.consistency:type_name -> quicbaas.v1.ConsistencyLevel
-	16,  // 35: quicbaas.v1.BatchDeleteResponse.responses:type_name -> quicbaas.v1.DeleteResponse
-	48,  // 36: quicbaas.v1.StreamBatchPutRequest.header:type_name -> quicbaas.v1.StreamBatchHeader
-	50,  // 37: quicbaas.v1.StreamBatchPutRequest.chunk:type_name -> quicbaas.v1.StreamBatchChunk
-	51,  // 38: quicbaas.v1.StreamBatchPutRequest.complete:type_name -> quicbaas.v1.StreamBatchComplete
-	49,  // 39: quicbaas.v1.StreamBatchHeader.conditions:type_name -> quicbaas.v1.BatchCondition
+	19,  // 35: quicbaas.v1.BatchDeleteResponse.responses:type_name -> quicbaas.v1.DeleteResponse
+	51,  // 36: quicbaas.v1.StreamBatchPutRequest.header:type_name -> quicbaas.v1.StreamBatchHeader
+	53,  // 37: quicbaas.v1.StreamBatchPutRequest.chunk:type_name -> quicbaas.v1.StreamBatchChunk
+	54,  // 38: quicbaas.v1.StreamBatchPutRequest.complete:type_name -> quicbaas.v1.StreamBatchComplete
+	52,  // 39: quicbaas.v1.StreamBatchHeader.conditions:type_name -> quicbaas.v1.BatchCondition
 	0,   // 40: quicbaas.v1.StreamBatchHeader.consistency:type_name -> quicbaas.v1.ConsistencyLevel
 	11,  // 41: quicbaas.v1.StreamBatchChunk.operations:type_name -> quicbaas.v1.PutRequest
-	53,  // 42: quicbaas.v1.StreamBatchPutResponse.progress:type_name -> quicbaas.v1.StreamBatchProgress
-	54,  // 43: quicbaas.v1.StreamBatchPutResponse.result:type_name -> quicbaas.v1.StreamBatchResult
+	56,  // 42: quicbaas.v1.StreamBatchPutResponse.progress:type_name -> quicbaas.v1.StreamBatchProgress
+	57,  // 43: quicbaas.v1.StreamBatchPutResponse.result:type_name -> quicbaas.v1.StreamBatchResult
 	2,   // 44: quicbaas.v1.HealthResponse.status:type_name -> quicbaas.v1.HealthStatus
-	151, // 45: quicbaas.v1.HealthResponse.details:type_name -> quicbaas.v1.HealthResponse.DetailsEntry
+	154, // 45: quicbaas.v1.HealthResponse.details:type_name -> quicbaas.v1.HealthResponse.DetailsEntry
 	2,   // 46: quicbaas.v1.ComponentHealth.status:type_name -> quicbaas.v1.HealthStatus
-	152, // 47: quicbaas.v1.ComponentHealth.metrics:type_name -> quicbaas.v1.ComponentHealth.MetricsEntry
+	155, // 47: quicbaas.v1.ComponentHealth.metrics:type_name -> quicbaas.v1.ComponentHealth.MetricsEntry
 	4,   // 48: quicbaas.v1.CompareCondition.target:type_name -> quicbaas.v1.CompareTarget
 	5,   // 49: quicbaas.v1.CompareCondition.operator:type_name -> quicbaas.v1.CompareOperator
 	6,   // 50: quicbaas.v1.TransactionOp.op_type:type_name -> quicbaas.v1.TransactionOpType
-	153, // 51: quicbaas.v1.TransactionOp.metadata:type_name -> quicbaas.v1.TransactionOp.MetadataEntry
-	58,  // 52: quicbaas.v1.TransactionRequest.compare:type_name -> quicbaas.v1.CompareCondition
-	59,  // 53: quicbaas.v1.TransactionRequest.success:type_name -> quicbaas.v1.TransactionOp
-	59,  // 54: quicbaas.v1.TransactionRequest.failure:type_name -> quicbaas.v1.TransactionOp
+	156, // 51: quicbaas.v1.TransactionOp.metadata:type_name -> quicbaas.v1.TransactionOp.MetadataEntry
+	61,  // 52: quicbaas.v1.TransactionRequest.compare:type_name -> quicbaas.v1.CompareCondition
+	62,  // 53: quicbaas.v1.TransactionRequest.success:type_name -> quicbaas.v1.TransactionOp
+	62,  // 54: quicbaas.v1.TransactionRequest.failure:type_name -> quicbaas.v1.TransactionOp
 	0,   // 55: quicbaas.v1.TransactionRequest.consistency:type_name -> quicbaas.v1.ConsistencyLevel
 	6,   // 56: quicbaas.v1.TransactionOpResponse.op_type:type_name -> quicbaas.v1.TransactionOpType
-	154, // 57: quicbaas.v1.TransactionOpResponse.metadata:type_name -> quicbaas.v1.TransactionOpResponse.MetadataEntry
-	61,  // 58: quicbaas.v1.TransactionResponse.responses:type_name -> quicbaas.v1.TransactionOpResponse
+	157, // 57: quicbaas.v1.TransactionOpResponse.metadata:type_name -> quicbaas.v1.TransactionOpResponse.MetadataEntry
+	64,  // 58: quicbaas.v1.TransactionResponse.responses:type_name -> quicbaas.v1.TransactionOpResponse
 	7,   // 59: quicbaas.v1.CreateBackupRequest.backup_type:type_name -> quicbaas.v1.BackupType
 	8,   // 60: quicbaas.v1.CreateBackupRequest.compression:type_name -> quicbaas.v1.CompressionType
 	9,   // 61: quicbaas.v1.CreateBackupRequest.encryption:type_name -> quicbaas.v1.EncryptionType
-	155, // 62: quicbaas.v1.CreateBackupRequest.tags:type_name -> quicbaas.v1.CreateBackupRequest.TagsEntry
-	67,  // 63: quicbaas.v1.ListBackupsResponse.backups:type_name -> quicbaas.v1.BackupInfo
+	158, // 62: quicbaas.v1.CreateBackupRequest.tags:type_name -> quicbaas.v1.CreateBackupRequest.TagsEntry
+	70,  // 63: quicbaas.v1.ListBackupsResponse.backups:type_name -> quicbaas.v1.BackupInfo
 	7,   // 64: quicbaas.v1.BackupInfo.backup_type:type_name -> quicbaas.v1.BackupType
 	8,   // 65: quicbaas.v1.BackupInfo.compression:type_name -> quicbaas.v1.CompressionType
 	9,   // 66: quicbaas.v1.BackupInfo.encryption:type_name -> quicbaas.v1.EncryptionType
-	156, // 67: quicbaas.v1.BackupInfo.tags:type_name -> quicbaas.v1.BackupInfo.TagsEntry
-	85,  // 68: quicbaas.v1.CreateRoleRequest.permissions:type_name -> quicbaas.v1.Permission
-	91,  // 69: quicbaas.v1.ListRolesResponse.roles:type_name -> quicbaas.v1.RoleInfo
-	85,  // 70: quicbaas.v1.RoleInfo.permissions:type_name -> quicbaas.v1.Permission
-	157, // 71: quicbaas.v1.RebalanceClusterRequest.target_distribution:type_name -> quicbaas.v1.RebalanceClusterRequest.TargetDistributionEntry
+	159, // 67: quicbaas.v1.BackupInfo.tags:type_name -> quicbaas.v1.BackupInfo.TagsEntry
+	88,  // 68: quicbaas.v1.CreateRoleRequest.permissions:type_name -> quicbaas.v1.Permission
+	94,  // 69: quicbaas.v1.ListRolesResponse.roles:type_name -> quicbaas.v1.RoleInfo
+	88,  // 70: quicbaas.v1.RoleInfo.permissions:type_name -> quicbaas.v1.Permission
+	160, // 71: quicbaas.v1.RebalanceClusterRequest.target_distribution:type_name -> quicbaas.v1.RebalanceClusterRequest.TargetDistributionEntry
 	10,  // 72: quicbaas.v1.SealStatusResponse.mode:type_name -> quicbaas.v1.SealMode
-	158, // 73: quicbaas.v1.TSDataPoint.tags:type_name -> quicbaas.v1.TSDataPoint.TagsEntry
-	159, // 74: quicbaas.v1.TSWritePointRequest.tags:type_name -> quicbaas.v1.TSWritePointRequest.TagsEntry
-	128, // 75: quicbaas.v1.TSWriteBatchRequest.points:type_name -> quicbaas.v1.TSDataPoint
-	160, // 76: quicbaas.v1.TSQueryRequest.tags:type_name -> quicbaas.v1.TSQueryRequest.TagsEntry
-	161, // 77: quicbaas.v1.TSGroupedResult.tags:type_name -> quicbaas.v1.TSGroupedResult.TagsEntry
-	128, // 78: quicbaas.v1.TSGroupedResult.points:type_name -> quicbaas.v1.TSDataPoint
-	162, // 79: quicbaas.v1.TSQueryResponse.tags:type_name -> quicbaas.v1.TSQueryResponse.TagsEntry
-	128, // 80: quicbaas.v1.TSQueryResponse.points:type_name -> quicbaas.v1.TSDataPoint
-	135, // 81: quicbaas.v1.TSQueryResponse.grouped_results:type_name -> quicbaas.v1.TSGroupedResult
-	163, // 82: quicbaas.v1.TSDeleteSeriesRequest.tags:type_name -> quicbaas.v1.TSDeleteSeriesRequest.TagsEntry
-	129, // 83: quicbaas.v1.TSGetRetentionPolicyResponse.policy:type_name -> quicbaas.v1.TSRetentionPolicy
-	129, // 84: quicbaas.v1.TSSetRetentionPolicyRequest.policy:type_name -> quicbaas.v1.TSRetentionPolicy
-	164, // 85: quicbaas.v1.TSListMetricsRequest.tags:type_name -> quicbaas.v1.TSListMetricsRequest.TagsEntry
-	57,  // 86: quicbaas.v1.HealthResponse.DetailsEntry.value:type_name -> quicbaas.v1.ComponentHealth
+	161, // 73: quicbaas.v1.TSDataPoint.tags:type_name -> quicbaas.v1.TSDataPoint.TagsEntry
+	162, // 74: quicbaas.v1.TSWritePointRequest.tags:type_name -> quicbaas.v1.TSWritePointRequest.TagsEntry
+	131, // 75: quicbaas.v1.TSWriteBatchRequest.points:type_name -> quicbaas.v1.TSDataPoint
+	163, // 76: quicbaas.v1.TSQueryRequest.tags:type_name -> quicbaas.v1.TSQueryRequest.TagsEntry
+	164, // 77: quicbaas.v1.TSGroupedResult.tags:type_name -> quicbaas.v1.TSGroupedResult.TagsEntry
+	131, // 78: quicbaas.v1.TSGroupedResult.points:type_name -> quicbaas.v1.TSDataPoint
+	165, // 79: quicbaas.v1.TSQueryResponse.tags:type_name -> quicbaas.v1.TSQueryResponse.TagsEntry
+	131, // 80: quicbaas.v1.TSQueryResponse.points:type_name -> quicbaas.v1.TSDataPoint
+	138, // 81: quicbaas.v1.TSQueryResponse.grouped_results:type_name -> quicbaas.v1.TSGroupedResult
+	166, // 82: quicbaas.v1.TSDeleteSeriesRequest.tags:type_name -> quicbaas.v1.TSDeleteSeriesRequest.TagsEntry
+	132, // 83: quicbaas.v1.TSGetRetentionPolicyResponse.policy:type_name -> quicbaas.v1.TSRetentionPolicy
+	132, // 84: quicbaas.v1.TSSetRetentionPolicyRequest.policy:type_name -> quicbaas.v1.TSRetentionPolicy
+	167, // 85: quicbaas.v1.TSListMetricsRequest.tags:type_name -> quicbaas.v1.TSListMetricsRequest.TagsEntry
+	60,  // 86: quicbaas.v1.HealthResponse.DetailsEntry.value:type_name -> quicbaas.v1.ComponentHealth
 	11,  // 87: quicbaas.v1.QuicBaaS.Put:input_type -> quicbaas.v1.PutRequest
-	13,  // 88: quicbaas.v1.QuicBaaS.Get:input_type -> quicbaas.v1.GetRequest
-	15,  // 89: quicbaas.v1.QuicBaaS.Delete:input_type -> quicbaas.v1.DeleteRequest
-	17,  // 90: quicbaas.v1.QuicBaaS.List:input_type -> quicbaas.v1.ListRequest
-	19,  // 91: quicbaas.v1.QuicBaaS.ListEntityTypes:input_type -> quicbaas.v1.ListEntityTypesRequest
-	22,  // 92: quicbaas.v1.QuicBaaS.Watch:input_type -> quicbaas.v1.WatchRequest
-	25,  // 93: quicbaas.v1.QuicBaaS.Query:input_type -> quicbaas.v1.QueryRequest
-	27,  // 94: quicbaas.v1.QuicBaaS.ScanIndex:input_type -> quicbaas.v1.ScanRequest
-	29,  // 95: quicbaas.v1.QuicBaaS.ClusterStatus:input_type -> quicbaas.v1.ClusterStatusRequest
-	33,  // 96: quicbaas.v1.QuicBaaS.GetLeader:input_type -> quicbaas.v1.GetLeaderRequest
-	165, // 97: quicbaas.v1.QuicBaaS.AddNode:input_type -> quicbaas.v1.AddNodeRequest
-	166, // 98: quicbaas.v1.QuicBaaS.RemoveNode:input_type -> quicbaas.v1.RemoveNodeRequest
-	167, // 99: quicbaas.v1.QuicBaaS.CreateShard:input_type -> quicbaas.v1.CreateShardRequest
-	35,  // 100: quicbaas.v1.QuicBaaS.Aggregate:input_type -> quicbaas.v1.AggregateRequest
-	38,  // 101: quicbaas.v1.QuicBaaS.TimeSeriesQuery:input_type -> quicbaas.v1.TimeSeriesQueryRequest
-	130, // 102: quicbaas.v1.QuicBaaS.TSWritePoint:input_type -> quicbaas.v1.TSWritePointRequest
-	132, // 103: quicbaas.v1.QuicBaaS.TSWriteBatch:input_type -> quicbaas.v1.TSWriteBatchRequest
-	134, // 104: quicbaas.v1.QuicBaaS.TSQuery:input_type -> quicbaas.v1.TSQueryRequest
-	137, // 105: quicbaas.v1.QuicBaaS.TSDeleteSeries:input_type -> quicbaas.v1.TSDeleteSeriesRequest
-	139, // 106: quicbaas.v1.QuicBaaS.TSGetRetentionPolicy:input_type -> quicbaas.v1.TSGetRetentionPolicyRequest
-	141, // 107: quicbaas.v1.QuicBaaS.TSSetRetentionPolicy:input_type -> quicbaas.v1.TSSetRetentionPolicyRequest
-	143, // 108: quicbaas.v1.QuicBaaS.TSListMetrics:input_type -> quicbaas.v1.TSListMetricsRequest
-	41,  // 109: quicbaas.v1.QuicBaaS.BatchPut:input_type -> quicbaas.v1.BatchPutRequest
-	43,  // 110: quicbaas.v1.QuicBaaS.BatchGet:input_type -> quicbaas.v1.BatchGetRequest
-	45,  // 111: quicbaas.v1.QuicBaaS.BatchDelete:input_type -> quicbaas.v1.BatchDeleteRequest
-	47,  // 112: quicbaas.v1.QuicBaaS.StreamBatchPut:input_type -> quicbaas.v1.StreamBatchPutRequest
-	60,  // 113: quicbaas.v1.QuicBaaS.Transaction:input_type -> quicbaas.v1.TransactionRequest
-	55,  // 114: quicbaas.v1.QuicBaaS.Health:input_type -> quicbaas.v1.HealthRequest
-	63,  // 115: quicbaas.v1.QuicBaaS.CreateBackup:input_type -> quicbaas.v1.CreateBackupRequest
-	65,  // 116: quicbaas.v1.QuicBaaS.ListBackups:input_type -> quicbaas.v1.ListBackupsRequest
-	68,  // 117: quicbaas.v1.QuicBaaS.RestoreBackup:input_type -> quicbaas.v1.RestoreBackupRequest
-	70,  // 118: quicbaas.v1.QuicBaaS.DeleteBackup:input_type -> quicbaas.v1.DeleteBackupRequest
-	72,  // 119: quicbaas.v1.QuicBaaS.VerifyBackup:input_type -> quicbaas.v1.VerifyBackupRequest
-	74,  // 120: quicbaas.v1.QuicBaaS.Login:input_type -> quicbaas.v1.LoginRequest
-	76,  // 121: quicbaas.v1.QuicBaaS.Logout:input_type -> quicbaas.v1.LogoutRequest
-	78,  // 122: quicbaas.v1.QuicBaaS.RefreshToken:input_type -> quicbaas.v1.RefreshTokenRequest
-	80,  // 123: quicbaas.v1.QuicBaaS.ValidateToken:input_type -> quicbaas.v1.ValidateTokenRequest
-	82,  // 124: quicbaas.v1.QuicBaaS.IntrospectToken:input_type -> quicbaas.v1.IntrospectTokenRequest
-	84,  // 125: quicbaas.v1.QuicBaaS.CreateRole:input_type -> quicbaas.v1.CreateRoleRequest
-	87,  // 126: quicbaas.v1.QuicBaaS.DeleteRole:input_type -> quicbaas.v1.DeleteRoleRequest
-	89,  // 127: quicbaas.v1.QuicBaaS.ListRoles:input_type -> quicbaas.v1.ListRolesRequest
-	92,  // 128: quicbaas.v1.QuicBaaS.AssignRole:input_type -> quicbaas.v1.AssignRoleRequest
-	94,  // 129: quicbaas.v1.QuicBaaS.RevokeRole:input_type -> quicbaas.v1.RevokeRoleRequest
-	96,  // 130: quicbaas.v1.QuicBaaS.MigrateData:input_type -> quicbaas.v1.MigrateDataRequest
-	98,  // 131: quicbaas.v1.QuicBaaS.GetMigrationProgress:input_type -> quicbaas.v1.GetMigrationProgressRequest
-	100, // 132: quicbaas.v1.QuicBaaS.RebalanceCluster:input_type -> quicbaas.v1.RebalanceClusterRequest
-	102, // 133: quicbaas.v1.QuicBaaS.GetRebalanceProgress:input_type -> quicbaas.v1.GetRebalanceProgressRequest
-	104, // 134: quicbaas.v1.QuicBaaS.ReplaceNode:input_type -> quicbaas.v1.ReplaceNodeRequest
-	106, // 135: quicbaas.v1.QuicBaaS.UpgradeNode:input_type -> quicbaas.v1.UpgradeNodeRequest
-	108, // 136: quicbaas.v1.QuicBaaS.GetUpgradeStatus:input_type -> quicbaas.v1.GetUpgradeStatusRequest
-	110, // 137: quicbaas.v1.QuicBaaS.GetCacheStats:input_type -> quicbaas.v1.GetCacheStatsRequest
-	112, // 138: quicbaas.v1.QuicBaaS.ClearCache:input_type -> quicbaas.v1.ClearCacheRequest
-	114, // 139: quicbaas.v1.QuicBaaS.GetCacheConfig:input_type -> quicbaas.v1.GetCacheConfigRequest
-	116, // 140: quicbaas.v1.QuicBaaS.UpdateCacheConfig:input_type -> quicbaas.v1.UpdateCacheConfigRequest
-	118, // 141: quicbaas.v1.QuicBaaS.SealStatus:input_type -> quicbaas.v1.SealStatusRequest
-	120, // 142: quicbaas.v1.QuicBaaS.SealInit:input_type -> quicbaas.v1.SealInitRequest
-	122, // 143: quicbaas.v1.QuicBaaS.Unseal:input_type -> quicbaas.v1.UnsealRequest
-	124, // 144: quicbaas.v1.QuicBaaS.Seal:input_type -> quicbaas.v1.SealRequest
-	126, // 145: quicbaas.v1.QuicBaaS.SealRekey:input_type -> quicbaas.v1.SealRekeyRequest
-	12,  // 146: quicbaas.v1.QuicBaaS.Put:output_type -> quicbaas.v1.PutResponse
-	14,  // 147: quicbaas.v1.QuicBaaS.Get:output_type -> quicbaas.v1.GetResponse
-	16,  // 148: quicbaas.v1.QuicBaaS.Delete:output_type -> quicbaas.v1.DeleteResponse
-	18,  // 149: quicbaas.v1.QuicBaaS.List:output_type -> quicbaas.v1.ListResponse
-	20,  // 150: quicbaas.v1.QuicBaaS.ListEntityTypes:output_type -> quicbaas.v1.ListEntityTypesResponse
-	24,  // 151: quicbaas.v1.QuicBaaS.Watch:output_type -> quicbaas.v1.WatchResponse
-	26,  // 152: quicbaas.v1.QuicBaaS.Query:output_type -> quicbaas.v1.QueryResponse
-	28,  // 153: quicbaas.v1.QuicBaaS.ScanIndex:output_type -> quicbaas.v1.ScanResponse
-	30,  // 154: quicbaas.v1.QuicBaaS.ClusterStatus:output_type -> quicbaas.v1.ClusterStatusResponse
-	34,  // 155: quicbaas.v1.QuicBaaS.GetLeader:output_type -> quicbaas.v1.GetLeaderResponse
-	168, // 156: quicbaas.v1.QuicBaaS.AddNode:output_type -> quicbaas.v1.AddNodeResponse
-	169, // 157: quicbaas.v1.QuicBaaS.RemoveNode:output_type -> quicbaas.v1.RemoveNodeResponse
-	170, // 158: quicbaas.v1.QuicBaaS.CreateShard:output_type -> quicbaas.v1.CreateShardResponse
-	36,  // 159: quicbaas.v1.QuicBaaS.Aggregate:output_type -> quicbaas.v1.AggregateResponse
-	39,  // 160: quicbaas.v1.QuicBaaS.TimeSeriesQuery:output_type -> quicbaas.v1.TimeSeriesQueryResponse
-	131, // 161: quicbaas.v1.QuicBaaS.TSWritePoint:output_type -> quicbaas.v1.TSWritePointResponse
-	133, // 162: quicbaas.v1.QuicBaaS.TSWriteBatch:output_type -> quicbaas.v1.TSWriteBatchResponse
-	136, // 163: quicbaas.v1.QuicBaaS.TSQuery:output_type -> quicbaas.v1.TSQueryResponse
-	138, // 164: quicbaas.v1.QuicBaaS.TSDeleteSeries:output_type -> quicbaas.v1.TSDeleteSeriesResponse
-	140, // 165: quicbaas.v1.QuicBaaS.TSGetRetentionPolicy:output_type -> quicbaas.v1.TSGetRetentionPolicyResponse
-	142, // 166: quicbaas.v1.QuicBaaS.TSSetRetentionPolicy:output_type -> quicbaas.v1.TSSetRetentionPolicyResponse
-	144, // 167: quicbaas.v1.QuicBaaS.TSListMetrics:output_type -> quicbaas.v1.TSListMetricsResponse
-	42,  // 168: quicbaas.v1.QuicBaaS.BatchPut:output_type -> quicbaas.v1.BatchPutResponse
-	44,  // 169: quicbaas.v1.QuicBaaS.BatchGet:output_type -> quicbaas.v1.BatchGetResponse
-	46,  // 170: quicbaas.v1.QuicBaaS.BatchDelete:output_type -> quicbaas.v1.BatchDeleteResponse
-	52,  // 171: quicbaas.v1.QuicBaaS.StreamBatchPut:output_type -> quicbaas.v1.StreamBatchPutResponse
-	62,  // 172: quicbaas.v1.QuicBaaS.Transaction:output_type -> quicbaas.v1.TransactionResponse
-	56,  // 173: quicbaas.v1.QuicBaaS.Health:output_type -> quicbaas.v1.HealthResponse
-	64,  // 174: quicbaas.v1.QuicBaaS.CreateBackup:output_type -> quicbaas.v1.CreateBackupResponse
-	66,  // 175: quicbaas.v1.QuicBaaS.ListBackups:output_type -> quicbaas.v1.ListBackupsResponse
-	69,  // 176: quicbaas.v1.QuicBaaS.RestoreBackup:output_type -> quicbaas.v1.RestoreBackupResponse
-	71,  // 177: quicbaas.v1.QuicBaaS.DeleteBackup:output_type -> quicbaas.v1.DeleteBackupResponse
-	73,  // 178: quicbaas.v1.QuicBaaS.VerifyBackup:output_type -> quicbaas.v1.VerifyBackupResponse
-	75,  // 179: quicbaas.v1.QuicBaaS.Login:output_type -> quicbaas.v1.LoginResponse
-	77,  // 180: quicbaas.v1.QuicBaaS.Logout:output_type -> quicbaas.v1.LogoutResponse
-	79,  // 181: quicbaas.v1.QuicBaaS.RefreshToken:output_type -> quicbaas.v1.RefreshTokenResponse
-	81,  // 182: quicbaas.v1.QuicBaaS.ValidateToken:output_type -> quicbaas.v1.ValidateTokenResponse
-	83,  // 183: quicbaas.v1.QuicBaaS.IntrospectToken:output_type -> quicbaas.v1.IntrospectTokenResponse
-	86,  // 184: quicbaas.v1.QuicBaaS.CreateRole:output_type -> quicbaas.v1.CreateRoleResponse
-	88,  // 185: quicbaas.v1.QuicBaaS.DeleteRole:output_type -> quicbaas.v1.DeleteRoleResponse
-	90,  // 186: quicbaas.v1.QuicBaaS.ListRoles:output_type -> quicbaas.v1.ListRolesResponse
-	93,  // 187: quicbaas.v1.QuicBaaS.AssignRole:output_type -> quicbaas.v1.AssignRoleResponse
-	95,  // 188: quicbaas.v1.QuicBaaS.RevokeRole:output_type -> quicbaas.v1.RevokeRoleResponse
-	97,  // 189: quicbaas.v1.QuicBaaS.MigrateData:output_type -> quicbaas.v1.MigrateDataResponse
-	99,  // 190: quicbaas.v1.QuicBaaS.GetMigrationProgress:output_type -> quicbaas.v1.GetMigrationProgressResponse
-	101, // 191: quicbaas.v1.QuicBaaS.RebalanceCluster:output_type -> quicbaas.v1.RebalanceClusterResponse
-	103, // 192: quicbaas.v1.QuicBaaS.GetRebalanceProgress:output_type -> quicbaas.v1.GetRebalanceProgressResponse
-	105, // 193: quicbaas.v1.QuicBaaS.ReplaceNode:output_type -> quicbaas.v1.ReplaceNodeResponse
-	107, // 194: quicbaas.v1.QuicBaaS.UpgradeNode:output_type -> quicbaas.v1.UpgradeNodeResponse
-	109, // 195: quicbaas.v1.QuicBaaS.GetUpgradeStatus:output_type -> quicbaas.v1.GetUpgradeStatusResponse
-	111, // 196: quicbaas.v1.QuicBaaS.GetCacheStats:output_type -> quicbaas.v1.GetCacheStatsResponse
-	113, // 197: quicbaas.v1.QuicBaaS.ClearCache:output_type -> quicbaas.v1.ClearCacheResponse
-	115, // 198: quicbaas.v1.QuicBaaS.GetCacheConfig:output_type -> quicbaas.v1.GetCacheConfigResponse
-	117, // 199: quicbaas.v1.QuicBaaS.UpdateCacheConfig:output_type -> quicbaas.v1.UpdateCacheConfigResponse
-	119, // 200: quicbaas.v1.QuicBaaS.SealStatus:output_type -> quicbaas.v1.SealStatusResponse
-	121, // 201: quicbaas.v1.QuicBaaS.SealInit:output_type -> quicbaas.v1.SealInitResponse
-	123, // 202: quicbaas.v1.QuicBaaS.Unseal:output_type -> quicbaas.v1.UnsealResponse
-	125, // 203: quicbaas.v1.QuicBaaS.Seal:output_type -> quicbaas.v1.SealResponse
-	127, // 204: quicbaas.v1.QuicBaaS.SealRekey:output_type -> quicbaas.v1.SealRekeyResponse
-	146, // [146:205] is the sub-list for method output_type
-	87,  // [87:146] is the sub-list for method input_type
+	16,  // 88: quicbaas.v1.QuicBaaS.Get:input_type -> quicbaas.v1.GetRequest
+	18,  // 89: quicbaas.v1.QuicBaaS.Delete:input_type -> quicbaas.v1.DeleteRequest
+	13,  // 90: quicbaas.v1.QuicBaaS.CompareAndSwap:input_type -> quicbaas.v1.CompareAndSwapRequest
+	14,  // 91: quicbaas.v1.QuicBaaS.PutIfAbsent:input_type -> quicbaas.v1.PutIfAbsentRequest
+	20,  // 92: quicbaas.v1.QuicBaaS.List:input_type -> quicbaas.v1.ListRequest
+	22,  // 93: quicbaas.v1.QuicBaaS.ListEntityTypes:input_type -> quicbaas.v1.ListEntityTypesRequest
+	25,  // 94: quicbaas.v1.QuicBaaS.Watch:input_type -> quicbaas.v1.WatchRequest
+	28,  // 95: quicbaas.v1.QuicBaaS.Query:input_type -> quicbaas.v1.QueryRequest
+	30,  // 96: quicbaas.v1.QuicBaaS.ScanIndex:input_type -> quicbaas.v1.ScanRequest
+	32,  // 97: quicbaas.v1.QuicBaaS.ClusterStatus:input_type -> quicbaas.v1.ClusterStatusRequest
+	36,  // 98: quicbaas.v1.QuicBaaS.GetLeader:input_type -> quicbaas.v1.GetLeaderRequest
+	168, // 99: quicbaas.v1.QuicBaaS.AddNode:input_type -> quicbaas.v1.AddNodeRequest
+	169, // 100: quicbaas.v1.QuicBaaS.RemoveNode:input_type -> quicbaas.v1.RemoveNodeRequest
+	170, // 101: quicbaas.v1.QuicBaaS.CreateShard:input_type -> quicbaas.v1.CreateShardRequest
+	38,  // 102: quicbaas.v1.QuicBaaS.Aggregate:input_type -> quicbaas.v1.AggregateRequest
+	41,  // 103: quicbaas.v1.QuicBaaS.TimeSeriesQuery:input_type -> quicbaas.v1.TimeSeriesQueryRequest
+	133, // 104: quicbaas.v1.QuicBaaS.TSWritePoint:input_type -> quicbaas.v1.TSWritePointRequest
+	135, // 105: quicbaas.v1.QuicBaaS.TSWriteBatch:input_type -> quicbaas.v1.TSWriteBatchRequest
+	137, // 106: quicbaas.v1.QuicBaaS.TSQuery:input_type -> quicbaas.v1.TSQueryRequest
+	140, // 107: quicbaas.v1.QuicBaaS.TSDeleteSeries:input_type -> quicbaas.v1.TSDeleteSeriesRequest
+	142, // 108: quicbaas.v1.QuicBaaS.TSGetRetentionPolicy:input_type -> quicbaas.v1.TSGetRetentionPolicyRequest
+	144, // 109: quicbaas.v1.QuicBaaS.TSSetRetentionPolicy:input_type -> quicbaas.v1.TSSetRetentionPolicyRequest
+	146, // 110: quicbaas.v1.QuicBaaS.TSListMetrics:input_type -> quicbaas.v1.TSListMetricsRequest
+	44,  // 111: quicbaas.v1.QuicBaaS.BatchPut:input_type -> quicbaas.v1.BatchPutRequest
+	46,  // 112: quicbaas.v1.QuicBaaS.BatchGet:input_type -> quicbaas.v1.BatchGetRequest
+	48,  // 113: quicbaas.v1.QuicBaaS.BatchDelete:input_type -> quicbaas.v1.BatchDeleteRequest
+	50,  // 114: quicbaas.v1.QuicBaaS.StreamBatchPut:input_type -> quicbaas.v1.StreamBatchPutRequest
+	63,  // 115: quicbaas.v1.QuicBaaS.Transaction:input_type -> quicbaas.v1.TransactionRequest
+	58,  // 116: quicbaas.v1.QuicBaaS.Health:input_type -> quicbaas.v1.HealthRequest
+	66,  // 117: quicbaas.v1.QuicBaaS.CreateBackup:input_type -> quicbaas.v1.CreateBackupRequest
+	68,  // 118: quicbaas.v1.QuicBaaS.ListBackups:input_type -> quicbaas.v1.ListBackupsRequest
+	71,  // 119: quicbaas.v1.QuicBaaS.RestoreBackup:input_type -> quicbaas.v1.RestoreBackupRequest
+	73,  // 120: quicbaas.v1.QuicBaaS.DeleteBackup:input_type -> quicbaas.v1.DeleteBackupRequest
+	75,  // 121: quicbaas.v1.QuicBaaS.VerifyBackup:input_type -> quicbaas.v1.VerifyBackupRequest
+	77,  // 122: quicbaas.v1.QuicBaaS.Login:input_type -> quicbaas.v1.LoginRequest
+	79,  // 123: quicbaas.v1.QuicBaaS.Logout:input_type -> quicbaas.v1.LogoutRequest
+	81,  // 124: quicbaas.v1.QuicBaaS.RefreshToken:input_type -> quicbaas.v1.RefreshTokenRequest
+	83,  // 125: quicbaas.v1.QuicBaaS.ValidateToken:input_type -> quicbaas.v1.ValidateTokenRequest
+	85,  // 126: quicbaas.v1.QuicBaaS.IntrospectToken:input_type -> quicbaas.v1.IntrospectTokenRequest
+	87,  // 127: quicbaas.v1.QuicBaaS.CreateRole:input_type -> quicbaas.v1.CreateRoleRequest
+	90,  // 128: quicbaas.v1.QuicBaaS.DeleteRole:input_type -> quicbaas.v1.DeleteRoleRequest
+	92,  // 129: quicbaas.v1.QuicBaaS.ListRoles:input_type -> quicbaas.v1.ListRolesRequest
+	95,  // 130: quicbaas.v1.QuicBaaS.AssignRole:input_type -> quicbaas.v1.AssignRoleRequest
+	97,  // 131: quicbaas.v1.QuicBaaS.RevokeRole:input_type -> quicbaas.v1.RevokeRoleRequest
+	99,  // 132: quicbaas.v1.QuicBaaS.MigrateData:input_type -> quicbaas.v1.MigrateDataRequest
+	101, // 133: quicbaas.v1.QuicBaaS.GetMigrationProgress:input_type -> quicbaas.v1.GetMigrationProgressRequest
+	103, // 134: quicbaas.v1.QuicBaaS.RebalanceCluster:input_type -> quicbaas.v1.RebalanceClusterRequest
+	105, // 135: quicbaas.v1.QuicBaaS.GetRebalanceProgress:input_type -> quicbaas.v1.GetRebalanceProgressRequest
+	107, // 136: quicbaas.v1.QuicBaaS.ReplaceNode:input_type -> quicbaas.v1.ReplaceNodeRequest
+	109, // 137: quicbaas.v1.QuicBaaS.UpgradeNode:input_type -> quicbaas.v1.UpgradeNodeRequest
+	111, // 138: quicbaas.v1.QuicBaaS.GetUpgradeStatus:input_type -> quicbaas.v1.GetUpgradeStatusRequest
+	113, // 139: quicbaas.v1.QuicBaaS.GetCacheStats:input_type -> quicbaas.v1.GetCacheStatsRequest
+	115, // 140: quicbaas.v1.QuicBaaS.ClearCache:input_type -> quicbaas.v1.ClearCacheRequest
+	117, // 141: quicbaas.v1.QuicBaaS.GetCacheConfig:input_type -> quicbaas.v1.GetCacheConfigRequest
+	119, // 142: quicbaas.v1.QuicBaaS.UpdateCacheConfig:input_type -> quicbaas.v1.UpdateCacheConfigRequest
+	121, // 143: quicbaas.v1.QuicBaaS.SealStatus:input_type -> quicbaas.v1.SealStatusRequest
+	123, // 144: quicbaas.v1.QuicBaaS.SealInit:input_type -> quicbaas.v1.SealInitRequest
+	125, // 145: quicbaas.v1.QuicBaaS.Unseal:input_type -> quicbaas.v1.UnsealRequest
+	127, // 146: quicbaas.v1.QuicBaaS.Seal:input_type -> quicbaas.v1.SealRequest
+	129, // 147: quicbaas.v1.QuicBaaS.SealRekey:input_type -> quicbaas.v1.SealRekeyRequest
+	12,  // 148: quicbaas.v1.QuicBaaS.Put:output_type -> quicbaas.v1.PutResponse
+	17,  // 149: quicbaas.v1.QuicBaaS.Get:output_type -> quicbaas.v1.GetResponse
+	19,  // 150: quicbaas.v1.QuicBaaS.Delete:output_type -> quicbaas.v1.DeleteResponse
+	15,  // 151: quicbaas.v1.QuicBaaS.CompareAndSwap:output_type -> quicbaas.v1.ConditionalPutResponse
+	15,  // 152: quicbaas.v1.QuicBaaS.PutIfAbsent:output_type -> quicbaas.v1.ConditionalPutResponse
+	21,  // 153: quicbaas.v1.QuicBaaS.List:output_type -> quicbaas.v1.ListResponse
+	23,  // 154: quicbaas.v1.QuicBaaS.ListEntityTypes:output_type -> quicbaas.v1.ListEntityTypesResponse
+	27,  // 155: quicbaas.v1.QuicBaaS.Watch:output_type -> quicbaas.v1.WatchResponse
+	29,  // 156: quicbaas.v1.QuicBaaS.Query:output_type -> quicbaas.v1.QueryResponse
+	31,  // 157: quicbaas.v1.QuicBaaS.ScanIndex:output_type -> quicbaas.v1.ScanResponse
+	33,  // 158: quicbaas.v1.QuicBaaS.ClusterStatus:output_type -> quicbaas.v1.ClusterStatusResponse
+	37,  // 159: quicbaas.v1.QuicBaaS.GetLeader:output_type -> quicbaas.v1.GetLeaderResponse
+	171, // 160: quicbaas.v1.QuicBaaS.AddNode:output_type -> quicbaas.v1.AddNodeResponse
+	172, // 161: quicbaas.v1.QuicBaaS.RemoveNode:output_type -> quicbaas.v1.RemoveNodeResponse
+	173, // 162: quicbaas.v1.QuicBaaS.CreateShard:output_type -> quicbaas.v1.CreateShardResponse
+	39,  // 163: quicbaas.v1.QuicBaaS.Aggregate:output_type -> quicbaas.v1.AggregateResponse
+	42,  // 164: quicbaas.v1.QuicBaaS.TimeSeriesQuery:output_type -> quicbaas.v1.TimeSeriesQueryResponse
+	134, // 165: quicbaas.v1.QuicBaaS.TSWritePoint:output_type -> quicbaas.v1.TSWritePointResponse
+	136, // 166: quicbaas.v1.QuicBaaS.TSWriteBatch:output_type -> quicbaas.v1.TSWriteBatchResponse
+	139, // 167: quicbaas.v1.QuicBaaS.TSQuery:output_type -> quicbaas.v1.TSQueryResponse
+	141, // 168: quicbaas.v1.QuicBaaS.TSDeleteSeries:output_type -> quicbaas.v1.TSDeleteSeriesResponse
+	143, // 169: quicbaas.v1.QuicBaaS.TSGetRetentionPolicy:output_type -> quicbaas.v1.TSGetRetentionPolicyResponse
+	145, // 170: quicbaas.v1.QuicBaaS.TSSetRetentionPolicy:output_type -> quicbaas.v1.TSSetRetentionPolicyResponse
+	147, // 171: quicbaas.v1.QuicBaaS.TSListMetrics:output_type -> quicbaas.v1.TSListMetricsResponse
+	45,  // 172: quicbaas.v1.QuicBaaS.BatchPut:output_type -> quicbaas.v1.BatchPutResponse
+	47,  // 173: quicbaas.v1.QuicBaaS.BatchGet:output_type -> quicbaas.v1.BatchGetResponse
+	49,  // 174: quicbaas.v1.QuicBaaS.BatchDelete:output_type -> quicbaas.v1.BatchDeleteResponse
+	55,  // 175: quicbaas.v1.QuicBaaS.StreamBatchPut:output_type -> quicbaas.v1.StreamBatchPutResponse
+	65,  // 176: quicbaas.v1.QuicBaaS.Transaction:output_type -> quicbaas.v1.TransactionResponse
+	59,  // 177: quicbaas.v1.QuicBaaS.Health:output_type -> quicbaas.v1.HealthResponse
+	67,  // 178: quicbaas.v1.QuicBaaS.CreateBackup:output_type -> quicbaas.v1.CreateBackupResponse
+	69,  // 179: quicbaas.v1.QuicBaaS.ListBackups:output_type -> quicbaas.v1.ListBackupsResponse
+	72,  // 180: quicbaas.v1.QuicBaaS.RestoreBackup:output_type -> quicbaas.v1.RestoreBackupResponse
+	74,  // 181: quicbaas.v1.QuicBaaS.DeleteBackup:output_type -> quicbaas.v1.DeleteBackupResponse
+	76,  // 182: quicbaas.v1.QuicBaaS.VerifyBackup:output_type -> quicbaas.v1.VerifyBackupResponse
+	78,  // 183: quicbaas.v1.QuicBaaS.Login:output_type -> quicbaas.v1.LoginResponse
+	80,  // 184: quicbaas.v1.QuicBaaS.Logout:output_type -> quicbaas.v1.LogoutResponse
+	82,  // 185: quicbaas.v1.QuicBaaS.RefreshToken:output_type -> quicbaas.v1.RefreshTokenResponse
+	84,  // 186: quicbaas.v1.QuicBaaS.ValidateToken:output_type -> quicbaas.v1.ValidateTokenResponse
+	86,  // 187: quicbaas.v1.QuicBaaS.IntrospectToken:output_type -> quicbaas.v1.IntrospectTokenResponse
+	89,  // 188: quicbaas.v1.QuicBaaS.CreateRole:output_type -> quicbaas.v1.CreateRoleResponse
+	91,  // 189: quicbaas.v1.QuicBaaS.DeleteRole:output_type -> quicbaas.v1.DeleteRoleResponse
+	93,  // 190: quicbaas.v1.QuicBaaS.ListRoles:output_type -> quicbaas.v1.ListRolesResponse
+	96,  // 191: quicbaas.v1.QuicBaaS.AssignRole:output_type -> quicbaas.v1.AssignRoleResponse
+	98,  // 192: quicbaas.v1.QuicBaaS.RevokeRole:output_type -> quicbaas.v1.RevokeRoleResponse
+	100, // 193: quicbaas.v1.QuicBaaS.MigrateData:output_type -> quicbaas.v1.MigrateDataResponse
+	102, // 194: quicbaas.v1.QuicBaaS.GetMigrationProgress:output_type -> quicbaas.v1.GetMigrationProgressResponse
+	104, // 195: quicbaas.v1.QuicBaaS.RebalanceCluster:output_type -> quicbaas.v1.RebalanceClusterResponse
+	106, // 196: quicbaas.v1.QuicBaaS.GetRebalanceProgress:output_type -> quicbaas.v1.GetRebalanceProgressResponse
+	108, // 197: quicbaas.v1.QuicBaaS.ReplaceNode:output_type -> quicbaas.v1.ReplaceNodeResponse
+	110, // 198: quicbaas.v1.QuicBaaS.UpgradeNode:output_type -> quicbaas.v1.UpgradeNodeResponse
+	112, // 199: quicbaas.v1.QuicBaaS.GetUpgradeStatus:output_type -> quicbaas.v1.GetUpgradeStatusResponse
+	114, // 200: quicbaas.v1.QuicBaaS.GetCacheStats:output_type -> quicbaas.v1.GetCacheStatsResponse
+	116, // 201: quicbaas.v1.QuicBaaS.ClearCache:output_type -> quicbaas.v1.ClearCacheResponse
+	118, // 202: quicbaas.v1.QuicBaaS.GetCacheConfig:output_type -> quicbaas.v1.GetCacheConfigResponse
+	120, // 203: quicbaas.v1.QuicBaaS.UpdateCacheConfig:output_type -> quicbaas.v1.UpdateCacheConfigResponse
+	122, // 204: quicbaas.v1.QuicBaaS.SealStatus:output_type -> quicbaas.v1.SealStatusResponse
+	124, // 205: quicbaas.v1.QuicBaaS.SealInit:output_type -> quicbaas.v1.SealInitResponse
+	126, // 206: quicbaas.v1.QuicBaaS.Unseal:output_type -> quicbaas.v1.UnsealResponse
+	128, // 207: quicbaas.v1.QuicBaaS.Seal:output_type -> quicbaas.v1.SealResponse
+	130, // 208: quicbaas.v1.QuicBaaS.SealRekey:output_type -> quicbaas.v1.SealRekeyResponse
+	148, // [148:209] is the sub-list for method output_type
+	87,  // [87:148] is the sub-list for method input_type
 	87,  // [87:87] is the sub-list for extension type_name
 	87,  // [87:87] is the sub-list for extension extendee
 	0,   // [0:87] is the sub-list for field type_name
@@ -11274,12 +11501,12 @@ func file_api_proto_quicbaas_proto_init() {
 		return
 	}
 	file_api_proto_cluster_proto_init()
-	file_api_proto_quicbaas_proto_msgTypes[36].OneofWrappers = []any{
+	file_api_proto_quicbaas_proto_msgTypes[39].OneofWrappers = []any{
 		(*StreamBatchPutRequest_Header)(nil),
 		(*StreamBatchPutRequest_Chunk)(nil),
 		(*StreamBatchPutRequest_Complete)(nil),
 	}
-	file_api_proto_quicbaas_proto_msgTypes[41].OneofWrappers = []any{
+	file_api_proto_quicbaas_proto_msgTypes[44].OneofWrappers = []any{
 		(*StreamBatchPutResponse_Progress)(nil),
 		(*StreamBatchPutResponse_Result)(nil),
 	}
@@ -11289,7 +11516,7 @@ func file_api_proto_quicbaas_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_proto_quicbaas_proto_rawDesc), len(file_api_proto_quicbaas_proto_rawDesc)),
 			NumEnums:      11,
-			NumMessages:   154,
+			NumMessages:   157,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

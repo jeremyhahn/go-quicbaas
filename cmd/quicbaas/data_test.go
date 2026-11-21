@@ -36,10 +36,12 @@ import (
 )
 
 type mockKVClient struct {
-	PutFunc    func(ctx context.Context, req *service.PutRequest) (*service.PutResponse, error)
-	GetFunc    func(ctx context.Context, req *service.GetRequest) (*service.GetResponse, error)
-	DeleteFunc func(ctx context.Context, req *service.DeleteRequest) (*service.DeleteResponse, error)
-	ListFunc   func(ctx context.Context, req *service.ListRequest) (*service.ListResponse, error)
+	PutFunc            func(ctx context.Context, req *service.PutRequest) (*service.PutResponse, error)
+	GetFunc            func(ctx context.Context, req *service.GetRequest) (*service.GetResponse, error)
+	DeleteFunc         func(ctx context.Context, req *service.DeleteRequest) (*service.DeleteResponse, error)
+	ListFunc           func(ctx context.Context, req *service.ListRequest) (*service.ListResponse, error)
+	CompareAndSwapFunc func(ctx context.Context, req *service.CompareAndSwapRequest) (bool, error)
+	PutIfAbsentFunc    func(ctx context.Context, req *service.PutIfAbsentRequest) (bool, error)
 }
 
 func (m *mockKVClient) Put(ctx context.Context, req *service.PutRequest) (*service.PutResponse, error) {
@@ -68,6 +70,20 @@ func (m *mockKVClient) List(ctx context.Context, req *service.ListRequest) (*ser
 		return m.ListFunc(ctx, req)
 	}
 	return &service.ListResponse{Entities: []*service.Entity{}, TotalCount: 0}, nil
+}
+
+func (m *mockKVClient) CompareAndSwap(ctx context.Context, req *service.CompareAndSwapRequest) (bool, error) {
+	if m.CompareAndSwapFunc != nil {
+		return m.CompareAndSwapFunc(ctx, req)
+	}
+	return false, nil
+}
+
+func (m *mockKVClient) PutIfAbsent(ctx context.Context, req *service.PutIfAbsentRequest) (bool, error) {
+	if m.PutIfAbsentFunc != nil {
+		return m.PutIfAbsentFunc(ctx, req)
+	}
+	return false, nil
 }
 
 func (m *mockKVClient) Watch(ctx context.Context, key string, opts ...kv.WatchOption) (kv.Watcher, error) {

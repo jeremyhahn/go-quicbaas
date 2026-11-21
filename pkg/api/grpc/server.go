@@ -321,6 +321,43 @@ func (s *Server) Put(ctx context.Context, req *pb.PutRequest) (*pb.PutResponse, 
 	return resp, nil
 }
 
+// CompareAndSwap atomically replaces an existing entity's value when it equals
+// req.Expect. qrdb decides the match; a miss is applied=false, not an error.
+func (s *Server) CompareAndSwap(ctx context.Context, req *pb.CompareAndSwapRequest) (*pb.ConditionalPutResponse, error) {
+	resp, err := s.service.CompareAndSwap(ctx, &service.CompareAndSwapRequest{
+		EntityType: req.GetEntityType(),
+		ID:         req.GetId(),
+		Expect:     req.GetExpect(),
+		Set:        req.GetSet(),
+		ShardID:    req.GetShardId(),
+	})
+	return s.conditionalPutResult("CompareAndSwap", resp, err)
+}
+
+// PutIfAbsent atomically stores an entity only when it does not exist. A
+// present entity is applied=false, not an error.
+func (s *Server) PutIfAbsent(ctx context.Context, req *pb.PutIfAbsentRequest) (*pb.ConditionalPutResponse, error) {
+	resp, err := s.service.PutIfAbsent(ctx, &service.PutIfAbsentRequest{
+		EntityType: req.GetEntityType(),
+		ID:         req.GetId(),
+		Data:       req.GetData(),
+		ShardID:    req.GetShardId(),
+	})
+	return s.conditionalPutResult("PutIfAbsent", resp, err)
+}
+
+// conditionalPutResult converts a conditional write's service result to its
+// gRPC response, recording the outcome under method.
+func (s *Server) conditionalPutResult(method string, resp *service.ConditionalPutResponse, err error) (*pb.ConditionalPutResponse, error) {
+	if err != nil {
+		s.metrics.requestsTotal.With(method, "error").Inc()
+		s.logger.WithError(err).Error("Failed to " + method)
+		return nil, toProtoError(err)
+	}
+	s.metrics.requestsTotal.With(method, "success").Inc()
+	return &pb.ConditionalPutResponse{Applied: resp.Applied}, nil
+}
+
 // Get retrieves a value by key with configurable consistency.
 func (s *Server) Get(ctx context.Context, req *pb.GetRequest) (*pb.GetResponse, error) {
 	ctx, endSpan := startGRPCSpan(ctx, "grpc.Get", map[string]interface{}{

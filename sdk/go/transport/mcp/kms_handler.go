@@ -156,6 +156,9 @@ var kmsWireUsages = map[kmsclient.KeyUsage]service.KeyUsage{
 	kmsclient.KeyUsageVerify:  service.KeyUsageVerify,
 	kmsclient.KeyUsageWrap:    service.KeyUsageWrapKey,
 	kmsclient.KeyUsageUnwrap:  service.KeyUsageWrapKey,
+
+	kmsclient.KeyUsageGenerateMAC: service.KeyUsageGenerateMAC,
+	kmsclient.KeyUsageVerifyMAC:   service.KeyUsageVerifyMAC,
 }
 
 // invertKMSMap returns the inverse of a one-to-one lookup map.
@@ -224,6 +227,9 @@ func kmsImportKeyArgs(req interface{}) (map[string]interface{}, error) {
 	}
 	if r.Description != "" {
 		args["description"] = r.Description
+	}
+	if r.Exportable {
+		args["exportable"] = true
 	}
 	if len(r.Usage) > 0 {
 		usage := make([]string, 0, len(r.Usage))
@@ -510,6 +516,9 @@ func kmsUnwrapKeyArgs(req interface{}) (map[string]interface{}, error) {
 	}
 	if r.SourceKeyID != "" {
 		args["source_key_id"] = r.SourceKeyID
+	}
+	if r.Exportable {
+		args["exportable"] = true
 	}
 	if r.SourceVersion > 0 {
 		args["source_version"] = r.SourceVersion

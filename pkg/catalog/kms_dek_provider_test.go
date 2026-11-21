@@ -44,7 +44,7 @@ func (m *dekProviderMockKMSManager) GenerateKey(ctx context.Context, attrs *xkms
 	return nil, nil
 }
 
-func (m *dekProviderMockKMSManager) ImportKey(ctx context.Context, keyID string, material []byte, algorithm string) (interface{}, error) {
+func (m *dekProviderMockKMSManager) ImportKey(ctx context.Context, keyID string, material []byte, algorithm string, _ bool) (interface{}, error) {
 	return nil, nil
 }
 

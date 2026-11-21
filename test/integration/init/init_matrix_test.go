@@ -127,6 +127,18 @@ func runMatrixCell(t *testing.T, binary, cliBinary, strategy, transport string) 
 	// Phase 2: start daemon + wait for transport readiness.
 	ports := allocPortBundle(t, transport, dataDir)
 	daemon := startDaemon(t, binary, dataDir, strategy, transport, ports)
+	// CA ruling 576: a sealed node does not serve MCP at all. The shamir_mcp
+	// cell therefore waits for the sealed window on REST, proves MCP is
+	// absent, unseals through the officer ceremony, and only then waits for
+	// MCP, which the full boot starts.
+	sealedMCP := strategy == "shamir" && transport == "mcp"
+	if sealedMCP {
+		if err := waitForTransportReady(ctx, t, daemon, "rest", ports, dataDir); err != nil {
+			t.Fatalf("the sealed shamir node's REST window never became ready: %v", err)
+		}
+		requireMCPRefusedWhileSealed(t, ports)
+		unsealShamirByCeremony(ctx, t, cliBinary, ports, dataDir)
+	}
 	if err := waitForTransportReady(ctx, t, daemon, transport, ports, dataDir); err != nil {
 		t.Fatalf("transport %q for strategy %q never became ready: %v",
 			transport, strategy, err)
@@ -145,19 +157,19 @@ func runMatrixCell(t *testing.T, binary, cliBinary, strategy, transport string) 
 	// MCP refuses an uncredentialed initialize (CA ruling 571), so an MCP
 	// cell logs in first; the other transports serve it publicly, which is
 	// what lets a sealed shamir node (no administrator until its officers
-	// unseal it) answer here. A sealed shamir MCP cell has no administrator
-	// to log in as, so it proves the sealed window instead. A successful response proves
+	// unseal it) answer here. A successful response proves
 	// the SDK transport stack lines up with the daemon's listener for this
 	// cell — a regression here would silently break every downstream SDK
 	// caller without firing in the raw-socket probes above.
-	switch {
-	case transport == "mcp" && strategy == "shamir":
-		verifySealedMCPWindow(t, ports, dataDir)
-	case transport == "mcp":
-		token := loginFirstBootAdmin(ctx, t, cliBinary, transport, ports, dataDir, strategy)
-		verifySDKLivenessOverTransport(t, transport, ports, dataDir, token)
-	default:
-		verifySDKLivenessOverTransport(t, transport, ports, dataDir, "")
+	var token string
+	if transport == "mcp" {
+		token = loginFirstBootAdmin(ctx, t, cliBinary, transport, ports, dataDir, strategy)
+	}
+	verifySDKLivenessOverTransport(t, transport, ports, dataDir, token)
+	if sealedMCP {
+		// The unsealed node serves data over MCP with the administrator's
+		// session, exactly as every TestBackendMatrix MCP cell does.
+		verifyDataRoundTrip(ctx, t, cliBinary, transport, ports, dataDir, strategy)
 	}
 
 	// Phase 5: cross-strategy invariants on the marker (e.g. credential
