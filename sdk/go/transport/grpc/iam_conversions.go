@@ -96,6 +96,52 @@ func (h *iamHandler) handleGetUser(ctx context.Context, client iampb.IAMServiceC
 	return convertProtoUserToSDK(resp), nil
 }
 
+// handleGetUserByEmail handles User.GetByEmail requests. The server's GetUser
+// resolves an id containing "@" by an exact, tenant-scoped email lookup
+// (IAMServiceAdapter.GetUser), so this is the same RPC, and the same
+// authorization, as User.Get.
+func (h *iamHandler) handleGetUserByEmail(ctx context.Context, client iampb.IAMServiceClient, req interface{}) (interface{}, error) {
+	reqMap, ok := toMap(req)
+	if !ok {
+		return nil, errors.NewInvalidInput("handleGetUserByEmail", "invalid request type")
+	}
+
+	tenantID, _ := getString(reqMap, "tenant_id")
+	email, _ := getString(reqMap, "email")
+	if email == "" {
+		return nil, errors.NewInvalidInput("handleGetUserByEmail", "email is required")
+	}
+
+	resp, err := client.GetUser(ctx, &iampb.GetUserRequest{TenantId: tenantID, UserId: email})
+	if err != nil {
+		return nil, convertGRPCError(err, "handleGetUserByEmail")
+	}
+
+	return convertProtoUserToSDK(resp), nil
+}
+
+// handleFindUserByUsername handles User.FindByUsername requests through the
+// tenant-scoped GetUserByUsername RPC, which carries GetUser's authorization.
+func (h *iamHandler) handleFindUserByUsername(ctx context.Context, client iampb.IAMServiceClient, req interface{}) (interface{}, error) {
+	reqMap, ok := toMap(req)
+	if !ok {
+		return nil, errors.NewInvalidInput("handleFindUserByUsername", "invalid request type")
+	}
+
+	tenantID, _ := getString(reqMap, "tenant_id")
+	username, _ := getString(reqMap, "username")
+	if username == "" {
+		return nil, errors.NewInvalidInput("handleFindUserByUsername", "username is required")
+	}
+
+	resp, err := client.GetUserByUsername(ctx, &iampb.GetUserByUsernameRequest{TenantId: tenantID, Username: username})
+	if err != nil {
+		return nil, convertGRPCError(err, "handleFindUserByUsername")
+	}
+
+	return convertProtoUserToSDK(resp), nil
+}
+
 // handleUpdateUser handles UpdateUser requests.
 func (h *iamHandler) handleUpdateUser(ctx context.Context, client iampb.IAMServiceClient, req interface{}) (interface{}, error) {
 	reqMap, ok := toMap(req)
