@@ -666,8 +666,24 @@ type rawResponse struct {
 // without JSON-decoding. The reqHeaders override the transport defaults
 // for the duration of the call. This is required for transports whose
 // server contract exchanges opaque WebAuthn ceremony JSON plus correlation
-// headers rather than a flat JSON envelope.
+// headers rather than a flat JSON envelope. A status >= 400 is returned as
+// the error parseErrorResponse builds.
 func (t *Transport) doRawRequest(ctx context.Context, httpMethod, endpoint string, reqBody []byte, reqHeaders map[string]string) (*rawResponse, error) {
+	resp, err := t.doRawRequestAnyStatus(ctx, httpMethod, endpoint, reqBody, reqHeaders)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 400 {
+		return nil, t.parseErrorResponse(resp.StatusCode, resp.Body)
+	}
+	return resp, nil
+}
+
+// doRawRequestAnyStatus is doRawRequest without the status check: it returns
+// the raw response for every HTTP status, so a caller can build its own error
+// from a refusal. The transport's health stamp is refreshed only for a
+// status < 400.
+func (t *Transport) doRawRequestAnyStatus(ctx context.Context, httpMethod, endpoint string, reqBody []byte, reqHeaders map[string]string) (*rawResponse, error) {
 	if t.closed.Load() {
 		return nil, errors.NewConnection("rest.doRawRequest", "transport is closed")
 	}
@@ -710,11 +726,9 @@ func (t *Transport) doRawRequest(ctx context.Context, httpMethod, endpoint strin
 			"failed to read response body")
 	}
 
-	if resp.StatusCode >= 400 {
-		return nil, t.parseErrorResponse(resp.StatusCode, respBody)
+	if resp.StatusCode < 400 {
+		t.lastHealth.Store(time.Now().UnixNano())
 	}
-
-	t.lastHealth.Store(time.Now().UnixNano())
 
 	return &rawResponse{
 		StatusCode: resp.StatusCode,

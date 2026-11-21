@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
@@ -131,7 +132,9 @@ func officerPath(verb, tenantID, username, step string) (string, error) {
 // and refuses any status not in allowed: the tenant barrier routes answer
 // only 200 or 204, so a 3xx handed back by net/http (a 307 without a
 // Location, or a client whose CheckRedirect stops at the redirect) is never
-// taken as success.
+// taken as success. A server refusal (>= 400) is returned as go-qrdb's
+// RequestError, carrying the HTTP status, and for a 501 its Err is go-qrdb's
+// CapabilityUnsupportedError, as go-qrdb's own client returns them.
 func (c *TenantClient) doTenantRequest(ctx context.Context, verb, method, path string, reqBody any, allowed ...int) (*rawResponse, error) {
 	var body []byte
 	if reqBody != nil {
@@ -141,7 +144,7 @@ func (c *TenantClient) doTenantRequest(ctx context.Context, verb, method, path s
 		}
 		body = data
 	}
-	resp, err := c.t.doRawRequest(withTenantBearerHop(ctx), method, path, body, nil)
+	resp, err := c.t.doRawRequestAnyStatus(withTenantBearerHop(ctx), method, path, body, nil)
 	if err != nil {
 		if stderrors.Is(err, ErrInsecureRedirect) {
 			return nil, errors.Wrap(err, errors.CodeForbidden, tenantClientOp, verb+": refused an insecure redirect")
@@ -151,6 +154,9 @@ func (c *TenantClient) doTenantRequest(ctx context.Context, verb, method, path s
 		}
 		return nil, err
 	}
+	if resp.StatusCode >= 400 {
+		return nil, c.tenantServerError(verb, resp)
+	}
 	for _, status := range allowed {
 		if resp.StatusCode == status {
 			return resp, nil
@@ -158,6 +164,40 @@ func (c *TenantClient) doTenantRequest(ctx context.Context, verb, method, path s
 	}
 	return nil, errors.New(errors.CodeInternal, tenantClientOp,
 		verb+": unexpected HTTP status "+strconv.Itoa(resp.StatusCode)+" from "+path)
+}
+
+// tenantServerError builds the error for a server refusal (>= 400) the way
+// go-qrdb's client decodes one: the message is the JSON "error" field, else
+// the trimmed body, else the status text; a 501 is a
+// CapabilityUnsupportedError with CodeUnimplemented, and every refusal is
+// wrapped in a RequestError that keeps the HTTP status.
+func (c *TenantClient) tenantServerError(verb string, resp *rawResponse) error {
+	status := resp.StatusCode
+	var envelope struct {
+		Error string `json:"error"`
+	}
+	msg := ""
+	if json.Unmarshal(resp.Body, &envelope) == nil {
+		msg = envelope.Error
+	}
+	if msg == "" {
+		msg = strings.TrimSpace(string(resp.Body))
+	}
+	if msg == "" {
+		msg = http.StatusText(status)
+	}
+
+	var inner error
+	var code errors.ErrorCode
+	if status == http.StatusNotImplemented {
+		inner = &qrdbtransport.CapabilityUnsupportedError{Message: msg}
+		code = errors.CodeUnimplemented
+	} else {
+		inner = stderrors.New(msg)
+		code = c.t.statusCodeToErrorCode(status)
+	}
+	return errors.Wrap(&qrdbtransport.RequestError{Method: verb, StatusCode: status, Err: inner},
+		code, tenantClientOp, verb+": "+msg)
 }
 
 // doTenantResult sends the request, accepts only 200 and decodes the

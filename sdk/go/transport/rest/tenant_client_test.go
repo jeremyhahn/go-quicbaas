@@ -399,6 +399,72 @@ func TestTenantClient_RefusesUnexpectedStatus(t *testing.T) {
 	}
 }
 
+// TestTenantClient_ServerRefusalKeepsQRDBError pins that a server refusal
+// (>= 400) reaches the caller as go-qrdb's own error types, as go-qrdb's
+// client returns them: a RequestError carrying the HTTP status and, for a
+// 501, a CapabilityUnsupportedError, so callers using errors.As work against
+// either client.
+func TestTenantClient_ServerRefusalKeepsQRDBError(t *testing.T) {
+	srv, state := tenantWireServer(t)
+
+	cases := []struct {
+		name       string
+		status     int
+		body       string
+		code       errors.ErrorCode
+		capability string
+	}{
+		{"501", http.StatusNotImplemented, `{"error":"tenant service unavailable"}`, errors.CodeUnimplemented, "tenant service unavailable"},
+		{"500", http.StatusInternalServerError, `{"error":"boom"}`, errors.CodeInternal, ""},
+		{"404", http.StatusNotFound, "", errors.CodeNotFound, ""},
+	}
+
+	for _, tc := range cases {
+		for name, tr := range tenantWireServerTransports(t, srv) {
+			for verb, call := range tenantWireServerVerbs(tr.Tenants(nil)) {
+				t.Run(tc.name+"/"+name+"/"+verb, func(t *testing.T) {
+					state.answer(tc.status, tc.body, "")
+					err := call(context.Background())
+					if err == nil {
+						t.Fatalf("a %d answer returned no error", tc.status)
+					}
+
+					var reqErr *qrdbtransport.RequestError
+					if !stderrors.As(err, &reqErr) {
+						t.Fatalf("error %v (%T) carries no *qrdbtransport.RequestError", err, err)
+					}
+					if reqErr.StatusCode != tc.status {
+						t.Errorf("RequestError.StatusCode = %d, want %d", reqErr.StatusCode, tc.status)
+					}
+					if !strings.HasPrefix(reqErr.Method, "TenantBarrier") {
+						t.Errorf("RequestError.Method = %q, want a TenantBarrier verb", reqErr.Method)
+					}
+
+					var capErr *qrdbtransport.CapabilityUnsupportedError
+					gotCap := stderrors.As(err, &capErr)
+					if tc.capability != "" {
+						if !gotCap {
+							t.Fatalf("error %v carries no *qrdbtransport.CapabilityUnsupportedError", err)
+						}
+						if !strings.Contains(capErr.Message, tc.capability) {
+							t.Errorf("CapabilityUnsupportedError.Message = %q, want it to contain %q", capErr.Message, tc.capability)
+						}
+					} else if gotCap {
+						t.Errorf("a %d answer carries a CapabilityUnsupportedError: %v", tc.status, capErr)
+					}
+
+					if got := errors.Code(err); got != tc.code {
+						t.Errorf("errors.Code = %v, want %v", got, tc.code)
+					}
+					if tc.status == http.StatusNotImplemented && errors.IsRetryable(err) {
+						t.Errorf("a 501 refusal is retryable: %v", err)
+					}
+				})
+			}
+		}
+	}
+}
+
 // tenantRedirectTransports mirrors newTLSTransports with the platform bearer
 // set on both the built and the supplied transport.
 func tenantRedirectTransports(t *testing.T, srv *httptest.Server) map[string]*Transport {
