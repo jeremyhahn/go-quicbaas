@@ -1065,7 +1065,7 @@ func readSpawnWorkspaceSpec(req *orchestration.SpawnRequest) (orchestration.Work
 // startFactoryNode boots a node with the engine and the module on fast
 // cadences over dataDir. reapTTL is orchestration.reap_lease_ttl; nodeID
 // names the node on its leases.
-func startFactoryNode(t *testing.T, dataDir string, init bool, reapTTL time.Duration, nodeID uint64) *server.Server {
+func startFactoryNode(t *testing.T, dataDir string, init bool, reapTTL time.Duration, nodeID uint64, opts ...server.ServerOption) *server.Server {
 	t.Helper()
 	requireTestTrustDomain(t)
 	f := &inlineInitFlags{
@@ -1100,7 +1100,7 @@ func startFactoryNode(t *testing.T, dataDir string, init bool, reapTTL time.Dura
 	cfg.SDLC.AllowLocalRepos = true
 	cfg.SDLC.Surfacing.RetryInterval = 10 * time.Millisecond
 
-	srv, err := server.NewServer(cfg, server.WithSealPassphrase([]byte(f.secret)))
+	srv, err := server.NewServer(cfg, append([]server.ServerOption{server.WithSealPassphrase([]byte(f.secret))}, opts...)...)
 	require.NoError(t, err)
 	require.NoError(t, srv.Start())
 	require.NotNil(t, srv.SDLCService(), "the sdlc module did not start")
@@ -1650,13 +1650,19 @@ func TestSDLCRunner_AKilledWorkerResumesAndFinishesTheSameBranch(t *testing.T) {
 	// sockets root outlives the daemon and nothing else would ever remove it.
 	orphan := plantKilledSigningSession(t, factorySocketsRoot(t))
 
-	successor := startFactoryNode(t, dataDir, false, 2*time.Second, 1)
+	// The successor resumes the interrupted job inside Start, so its backend
+	// is registered in the hook Start runs just before recovery: registered
+	// after Start, the resumed attempt could spawn first, find no backend and
+	// escalate (go-quicbaas#2512).
+	resumed := newE2EBackend()
+	successor := startFactoryNode(t, dataDir, false, 2*time.Second, 1,
+		server.WithBeforeJobRecovery(func(s *server.Server) error {
+			registerFactoryProject(t, s, resumed, repo)
+			return nil
+		}))
 	t.Cleanup(func() { _ = successor.Shutdown(context.Background()) })
 	require.NoDirExists(t, orphan,
 		"the session a killed daemon left survived the successor's startup: %s", orphan)
-
-	resumed := newE2EBackend()
-	registerFactoryProject(t, successor, resumed, repo)
 
 	awaitJob(t, successor, orchestration.JobStateCompleted)
 	prs := loopForge.pullRequests()
