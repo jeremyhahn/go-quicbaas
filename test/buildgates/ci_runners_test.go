@@ -270,14 +270,16 @@ func replaceJobRunner(t *testing.T, body, job, runsOn string) string {
 	return body[:i] + "    runs-on: " + runsOn + body[end:]
 }
 
-// jobRunners is every ci.yml job's exact runs-on: the hosted-only jobs, the
-// jobs that build or run images (the Docker overflow class) and CI Gate.
+// jobRunners is every ci.yml job's exact runs-on: the hosted-only jobs (the
+// non-gating e2e-ui job among them), the jobs that build or run images (the
+// Docker overflow class) and CI Gate.
 var jobRunners = map[string]string{
 	"preflight":      preflightRunner,
 	"publish-images": hostedRunner,
 	"unit":           hostedRunner,
 	"coverage":       hostedRunner,
 	"unit-passes":    hostedRunner,
+	"e2e-ui":         hostedRunner,
 	"lint":           overflowRunnerDocker,
 	"image":          overflowRunnerDocker,
 	"lint-gates":     overflowRunnerDocker,
