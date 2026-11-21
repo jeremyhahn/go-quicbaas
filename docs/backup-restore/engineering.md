@@ -91,7 +91,7 @@ Azure Blob Storage for enterprise Azure environments.
 **Environment Variables:**
 - `AZURE_STORAGE_ACCOUNT`: Storage account name
 - `AZURE_STORAGE_KEY`: Storage account key
-- `AZURE_STORAGE_CONNECTION_STRING`: Full connection string (alternative)
+- `AZURE_STORAGE_CONNECTION_STRING`: not supported by the backup storage backend (refused)
 - `AZURE_STORAGE_CONTAINER`: Default container name
 
 **Example:**
@@ -106,7 +106,7 @@ quicbaas backup create my-backup \
 ```
 
 ```bash
-# Using connection string
+# Not supported: the backup storage backend refuses a connection string
 export AZURE_STORAGE_CONNECTION_STRING="DefaultEndpointsProtocol=https;AccountName=..."
 
 quicbaas backup create my-backup \

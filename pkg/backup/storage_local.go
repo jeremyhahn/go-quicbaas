@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -215,12 +216,132 @@ func NewStorageBackend(config *Config) (common.Storage, error) {
 	factoryType := backendType
 
 	// Create storage using go-objstore factory
-	storage, err := factory.NewStorage(factoryType, config.StorageConfig)
+	settings, err := objstoreBackendSettings(backendType, config.StorageConfig)
+	if err != nil {
+		return nil, err
+	}
+	storage, err := factory.NewStorage(factoryType, settings)
 	if err != nil {
 		return nil, api.NewOperationFailedError("create storage backend", err)
 	}
 
 	return storage, nil
+}
+
+// objstoreKeyAliases maps the snake_case keys QuicBaaS backup configs use
+// (docs/backup-restore, the CLI, the integration suite) to the camelCase keys
+// go-objstore's backends read.
+var objstoreKeyAliases = map[string][]string{
+	"accessKey":      {"access_key", "access_key_id"},
+	"secretKey":      {"secret_key", "secret_access_key"},
+	"useSSL":         {"use_ssl"},
+	"forcePathStyle": {"use_path_style", "force_path_style"},
+	"accountName":    {"account_name"},
+	"accountKey":     {"account_key"},
+	"containerName":  {"container", "container_name"},
+}
+
+// azureUnsupportedKeys are the Azure credential keys go-objstore's Azure
+// backend does not read; objstoreBackendSettings refuses them.
+var azureUnsupportedKeys = []string{"connection_string", "connectionString", "sas_token", "sasToken"}
+
+// objstoreSettings returns a copy of settings with each go-objstore key set
+// from its first non-empty snake_case alias. An explicit go-objstore key
+// wins; settings itself is not modified.
+func objstoreSettings(settings map[string]string) map[string]string {
+	out := make(map[string]string, len(settings))
+	for k, v := range settings {
+		out[k] = v
+	}
+	for key, aliases := range objstoreKeyAliases {
+		if out[key] != "" {
+			continue
+		}
+		for _, alias := range aliases {
+			if v := settings[alias]; v != "" {
+				out[key] = v
+				break
+			}
+		}
+	}
+	return out
+}
+
+// sessionTokenKeys are the config keys that carry a temporary-credential
+// session token.
+var sessionTokenKeys = []string{"session_token", "aws_session_token", "sessionToken"}
+
+// objstoreBackendSettings returns the settings handed to go-objstore for
+// backendType: the snake_case keys mapped by objstoreSettings, then, for s3
+// and minio, two checks the storage library does not make itself.
+//
+//   - A session token next to static keys is refused: the library builds
+//     static credentials with an empty token, so the token would be dropped.
+//     For s3, without static keys the environment credential chain
+//     (including AWS_SESSION_TOKEN) is used; minio always needs static keys.
+//   - An endpoint without a scheme gets one from use_ssl, which the library
+//     does not read: for minio https:// when use_ssl is true and http://
+//     otherwise; for s3 http:// only when use_ssl is explicitly false. An
+//     endpoint whose scheme contradicts an explicit use_ssl is refused.
+//
+// For azure, a connection string or SAS token is refused: the library reads
+// only account_name and account_key, so either would be silently ignored.
+//
+// The caller's map is never modified.
+func objstoreBackendSettings(backendType string, settings map[string]string) (map[string]string, error) {
+	out := objstoreSettings(settings)
+	if backendType == "azure" {
+		for _, key := range azureUnsupportedKeys {
+			if settings[key] != "" {
+				return nil, api.NewUnsupportedValueError("backup.NewStorageBackend", "storage config",
+					key+" (the storage library supports only account_name and account_key for azure)")
+			}
+		}
+	}
+	if backendType != "s3" && backendType != "minio" {
+		return out, nil
+	}
+
+	if out["accessKey"] != "" {
+		for _, key := range sessionTokenKeys {
+			if out[key] != "" {
+				hint := "omit the static keys to use the environment credential chain"
+				if backendType == "minio" {
+					hint = "minio requires static keys and does not support temporary credentials"
+				}
+				return nil, api.NewUnsupportedValueError("backup.NewStorageBackend", "storage config",
+					"session_token (temporary credentials are not supported by the storage library; "+hint+")")
+			}
+		}
+	}
+
+	endpoint := out["endpoint"]
+	if endpoint == "" {
+		return out, nil
+	}
+	useSSL, explicit := false, false
+	if v, err := strconv.ParseBool(strings.TrimSpace(out["useSSL"])); err == nil {
+		useSSL, explicit = v, true
+	}
+
+	if scheme, _, ok := strings.Cut(endpoint, "://"); ok {
+		scheme = strings.ToLower(scheme)
+		if explicit && ((useSSL && scheme == "http") || (!useSSL && scheme == "https")) {
+			return nil, api.NewUnsupportedValueError("backup.NewStorageBackend", "storage config",
+				"endpoint "+endpoint+" (its scheme contradicts use_ssl="+strconv.FormatBool(useSSL)+")")
+		}
+		return out, nil
+	}
+
+	switch {
+	case backendType == "minio" && useSSL:
+		out["endpoint"] = "https://" + endpoint
+	case backendType == "minio":
+		out["endpoint"] = "http://" + endpoint
+	case explicit && !useSSL:
+		out["endpoint"] = "http://" + endpoint
+	}
+	return out, nil
 }
 
 // MockStorage implements both common.Storage and the backup-specific StorageBackend interface for testing.

@@ -25,6 +25,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/timeseries"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/vector"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
+	svc "github.com/jeremyhahn/go-quicbaas/sdk/go/service"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/test/mock"
 )
 
@@ -815,11 +816,11 @@ func TestBackupClient_RestoreFromBackupID(t *testing.T) {
 	mt := mock.NewTransport()
 	client := backup.NewClient(mt)
 
-	expectedResp := &backup.RestoreResponse{
-		Restored: true,
-		Duration: 10 * time.Second,
+	serviceResp := &svc.RestoreBackupResponse{
+		JobID:  "restore-backup-20251227-001",
+		Status: "completed",
 	}
-	mt.SetResponse("quicbaas.Backup", "Restore", expectedResp, nil)
+	mt.SetResponse("quicbaas.Backup", "Restore", serviceResp, nil)
 
 	ctx := context.Background()
 	req := &backup.RestoreRequest{
@@ -836,8 +837,16 @@ func TestBackupClient_RestoreFromBackupID(t *testing.T) {
 	if !resp.Restored {
 		t.Error("expected Restored to be true")
 	}
-	if resp.Duration != expectedResp.Duration {
-		t.Errorf("expected duration %v, got %v", expectedResp.Duration, resp.Duration)
+	if resp.JobID != serviceResp.JobID {
+		t.Errorf("expected job ID %q, got %q", serviceResp.JobID, resp.JobID)
+	}
+
+	payload, ok := mt.Requests()[0].Payload.(*svc.RestoreBackupRequest)
+	if !ok {
+		t.Fatal("expected RestoreBackupRequest payload")
+	}
+	if payload.BackupID != req.BackupID {
+		t.Errorf("expected backup ID %q, got %q", req.BackupID, payload.BackupID)
 	}
 }
 
@@ -845,33 +854,20 @@ func TestBackupClient_RestoreFromExternalSource(t *testing.T) {
 	mt := mock.NewTransport()
 	client := backup.NewClient(mt)
 
-	expectedResp := &backup.RestoreResponse{
-		Restored: true,
-		Duration: 30 * time.Second,
-	}
-	mt.SetResponse("quicbaas.Backup", "Restore", expectedResp, nil)
-
 	ctx := context.Background()
 	req := &backup.RestoreRequest{
 		Source: "s3://external-bucket/backups/snapshot-2025-12-27.tar.gz",
 	}
 
 	resp, err := client.Restore(ctx, req)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if !errors.IsInvalidInput(err) {
+		t.Fatalf("expected invalid input error, got %v", err)
 	}
-	if !resp.Restored {
-		t.Error("expected Restored to be true")
+	if resp != nil {
+		t.Errorf("expected nil response, got %+v", resp)
 	}
-
-	// Verify request was captured with Source
-	requests := mt.Requests()
-	payload, ok := requests[0].Payload.(*backup.RestoreRequest)
-	if !ok {
-		t.Fatal("expected RestoreRequest payload")
-	}
-	if payload.Source != req.Source {
-		t.Errorf("expected source %q, got %q", req.Source, payload.Source)
+	if n := len(mt.Requests()); n != 0 {
+		t.Errorf("expected no transport request, got %d", n)
 	}
 }
 
@@ -987,7 +983,12 @@ func TestBackupClient_RestoreValidationErrors(t *testing.T) {
 		{
 			name:    "empty backup ID and source",
 			req:     &backup.RestoreRequest{},
-			wantErr: "backup ID or source is required",
+			wantErr: "backup ID is required",
+		},
+		{
+			name:    "source only",
+			req:     &backup.RestoreRequest{Source: "nightly"},
+			wantErr: "restore from a source is not supported; set backup ID",
 		},
 	}
 

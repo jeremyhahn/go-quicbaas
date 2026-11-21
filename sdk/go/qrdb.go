@@ -111,6 +111,24 @@ type QRDBCredentialClient = qrdbtransport.CredentialClient
 // QRDBBackupClient is a re-export of the qrdb BackupClient interface.
 type QRDBBackupClient = qrdbtransport.BackupClient
 
+// QRDBBackupRequest is a re-export of the qrdb BackupRequest type
+// (QRDBBackupClient.CreateBackup).
+type QRDBBackupRequest = qrdbtransport.BackupRequest
+
+// QRDBBackupInfo is a re-export of the qrdb BackupInfo type.
+type QRDBBackupInfo = qrdbtransport.BackupInfo
+
+// QRDBRestoreRequest is a re-export of the qrdb RestoreRequest type
+// (QRDBBackupClient.RestoreBackup).
+type QRDBRestoreRequest = qrdbtransport.RestoreRequest
+
+// QRDBRestoreResult is a re-export of the qrdb RestoreResult type.
+type QRDBRestoreResult = qrdbtransport.RestoreResult
+
+// QRDBVerifyResult is a re-export of the qrdb VerifyResult type
+// (QRDBBackupClient.VerifyBackup).
+type QRDBVerifyResult = qrdbtransport.VerifyResult
+
 // QRDBRebalanceClient is a re-export of the qrdb RebalanceClient interface.
 type QRDBRebalanceClient = qrdbtransport.RebalanceClient
 
@@ -533,6 +551,69 @@ func (c *client) qrdbClient() (*QRDBClient, error) {
 	return c.qrdb.client, c.qrdb.err
 }
 
+// QRDBBackup returns go-qrdb's own backup service (BackupClient: create,
+// list, get, delete, restore and verify backups), re-exported through the
+// SDK. The QRDB client is lazily initialized on first call. It returns an
+// Unimplemented error when the active QRDB transport carries no backup
+// service (on the embedded transport, when QRDBEmbeddedServicers.Backup is
+// nil), so a caller never receives a nil client.
+//
+// Durability limit: on a clustered quicbaas node the pinned go-qrdb node
+// builds its backup service without a backup sink, so it keeps backups in
+// memory only. They do not survive a restart of the node.
+//
+// Encryption limit: the pinned go-qrdb backup service records an encryption
+// type but stores backup data in plaintext and accepts any decryption key.
+// Encrypted backups (an encryption type other than none, an encryption key,
+// or a decryption key on restore) are refused with Unimplemented until
+// go-qrdb encrypts backup data.
+func (c *client) QRDBBackup() (QRDBBackupClient, error) {
+	qrdb, err := c.qrdbClient()
+	if err != nil {
+		return nil, err
+	}
+	// The embedded transport implements BackupClient whether or not a
+	// backup servicer was supplied, so qrdb.Backup() cannot tell; check the
+	// servicer itself.
+	if s := c.opts.embeddedQRDB; s != nil && s.Backup == nil {
+		return nil, sdkerrors.NewUnimplemented("QRDBBackup",
+			"the embedded QRDB transport has no backup service (QRDBEmbeddedServicers.Backup is nil)")
+	}
+	b := qrdb.Backup()
+	if b == nil {
+		return nil, sdkerrors.NewUnimplemented("QRDBBackup",
+			"the QRDB transport does not provide the backup service")
+	}
+	return plaintextOnlyBackupClient{b}, nil
+}
+
+// plaintextOnlyBackupClient wraps go-qrdb's BackupClient and refuses the
+// encryption options the pinned go-qrdb backup service does not apply: it
+// stores backup data in plaintext whatever encryption is requested and
+// restores with any non-empty decryption key. The other methods pass through.
+type plaintextOnlyBackupClient struct{ QRDBBackupClient }
+
+const backupEncryptionUnsupported = "the pinned go-qrdb backup service does not encrypt backups, " +
+	"so encryption and decryption keys are refused"
+
+// CreateBackup refuses a request that asks for encryption before it reaches
+// the backup service. A nil request is passed through unchanged.
+func (p plaintextOnlyBackupClient) CreateBackup(ctx context.Context, req *QRDBBackupRequest) (*QRDBBackupInfo, error) {
+	if req != nil && ((req.Encryption != "" && req.Encryption != qrdbtransport.EncryptionNone) || len(req.EncryptionKey) > 0) {
+		return nil, sdkerrors.NewUnimplemented("QRDBBackup.CreateBackup", backupEncryptionUnsupported)
+	}
+	return p.QRDBBackupClient.CreateBackup(ctx, req)
+}
+
+// RestoreBackup refuses a request carrying a decryption key before it
+// reaches the backup service. A nil request is passed through unchanged.
+func (p plaintextOnlyBackupClient) RestoreBackup(ctx context.Context, req *QRDBRestoreRequest) (*QRDBRestoreResult, error) {
+	if req != nil && len(req.DecryptionKey) > 0 {
+		return nil, sdkerrors.NewUnimplemented("QRDBBackup.RestoreBackup", backupEncryptionUnsupported)
+	}
+	return p.QRDBBackupClient.RestoreBackup(ctx, req)
+}
+
 // buildQRDBClient constructs the qrdb transport and client from the
 // existing clientOptions.
 //
@@ -773,6 +854,9 @@ func (c *client) buildQRDBEmbeddedClient() (*qrdbsdk.Client, error) {
 	}
 	if s.Embedding != nil {
 		embOpts = append(embOpts, qrdbembedded.WithEmbeddingService(s.Embedding))
+	}
+	if s.Backup != nil {
+		embOpts = append(embOpts, qrdbembedded.WithBackupService(s.Backup))
 	}
 
 	t, err := qrdbembedded.New(s.KV, s.Admin, embOpts...)

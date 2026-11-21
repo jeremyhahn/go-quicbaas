@@ -18,6 +18,11 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
+// QRDBBackupServicer is a re-export of the qrdb service.BackupServicer
+// interface. Required to enable Storage().QRDBBackup() (go-qrdb's
+// BackupClient) through the embedded transport.
+type QRDBBackupServicer = qrdbservice.BackupServicer
+
 // =============================================================================
 // QRDB Embedded Servicer Type Re-exports
 // =============================================================================
@@ -177,4 +182,9 @@ type QRDBEmbeddedServicers struct {
 	// nil, the embedded client's embedding calls fail as unavailable in
 	// go-qrdb.
 	Embedding QRDBEmbeddingServicer
+
+	// Backup exposes go-qrdb's backup service (create, list, get, delete,
+	// restore, verify). Must be non-nil for Storage().QRDBBackup() calls to
+	// succeed against the embedded transport. Optional otherwise.
+	Backup QRDBBackupServicer
 }
