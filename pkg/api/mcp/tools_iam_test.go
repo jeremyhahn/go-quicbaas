@@ -1706,7 +1706,8 @@ func TestExecuteIAMUserCreate_RolesForwarded(t *testing.T) {
 		"roles":     []interface{}{"role-a", "role-b"},
 	}
 
-	result, err := reg.executeIAMUserCreate(context.Background(), args)
+	reg.SetRoleAssignmentAuthorizer(resolveTo(&rolesAssignAuthorizer{allow: true}))
+	result, err := reg.executeIAMUserCreate(callerContext(), args)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.NotNil(t, captured)
@@ -1730,7 +1731,8 @@ func TestExecuteIAMUserCreate_UnknownRoleError(t *testing.T) {
 		"roles":     []interface{}{"no-such-role"},
 	}
 
-	result, err := reg.executeIAMUserCreate(context.Background(), args)
+	reg.SetRoleAssignmentAuthorizer(resolveTo(&rolesAssignAuthorizer{allow: true}))
+	result, err := reg.executeIAMUserCreate(callerContext(), args)
 	require.Error(t, err)
 	assert.Nil(t, result)
 	assert.True(t, dberrors.IsNotFound(err), "expected typed not-found, got %T: %v", err, err)

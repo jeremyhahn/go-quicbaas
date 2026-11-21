@@ -242,8 +242,9 @@ var grpcMethodPermissions = map[string]methodPermission{
 
 	// ---- quicbaas.iam.v1.IAMService: WebAuthn credential administration ----
 	//
-	// These three are the ONLY IAMService methods mapped here, and that needs
-	// saying out loud: the rest of quicbaas.iam.v1.IAMService is absent from
+	// These three, with ApproveUser, CreateUser and UpdateUser, are the ONLY
+	// IAMService user methods mapped here, and that needs saying out loud:
+	// the rest of quicbaas.iam.v1.IAMService is absent from
 	// brokerServiceDescs and unmapped, so under RequireAuthz it is denied
 	// wholesale. Mapping these three does not carve an exception into that
 	// posture — it is the minimum needed for the surface to exist at all.
@@ -269,6 +270,12 @@ var grpcMethodPermissions = map[string]methodPermission{
 	// stays unmapped and default-denied.
 	// Mirrors REST POST /api/v1/iam/users/{user_id}/approve (users:enable).
 	"/quicbaas.iam.v1.IAMService/ApproveUser":               {"users", "enable"},
+	// User create and update take the grants their REST twins require
+	// (POST and PUT /api/v1/iam/users), so the roles:assign argument check
+	// in authz_interceptor.go is reached on a write that carries roles
+	// (go-quicbaas#2064).
+	"/quicbaas.iam.v1.IAMService/CreateUser":                {"users", "create"},
+	"/quicbaas.iam.v1.IAMService/UpdateUser":                {"users", "update"},
 	"/quicbaas.iam.v1.IAMService/ListWebAuthnCredentials":   {"users", "read"},
 	"/quicbaas.iam.v1.IAMService/DeleteWebAuthnCredential":  {"users", "delete"},
 	"/quicbaas.iam.v1.IAMService/DeleteWebAuthnCredentials": {"users", "delete"},
