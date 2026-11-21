@@ -287,6 +287,20 @@ func TestDockerfile_GoInstallUsesDevcacheProxyChain(t *testing.T) {
 	}
 }
 
+// TestDockerfile_GoToolFloorsGoToOneGoGet proves the gopls/gosec build
+// applies every dependency floor the tool uses in one `go get`. Applied one
+// at a time, a later floor below what an earlier floor requires silently
+// downgraded the earlier one (golang.org/x/net v0.62.0 shipped as v0.60.0).
+func TestDockerfile_GoToolFloorsGoToOneGoGet(t *testing.T) {
+	dockerfile := string(Dockerfile)
+	if !strings.Contains(dockerfile, `if [ -n "$floors" ]; then go get $floors; fi;`) {
+		t.Error("build_with_floors does not apply the dependency floors in one go get")
+	}
+	if strings.Contains(dockerfile, `then go get "$floor"; fi`) {
+		t.Error("build_with_floors still runs one go get per dependency floor")
+	}
+}
+
 // TestDockerfile_NpmInstallEvalsDevcacheEnvFirst proves the agent-CLI npm
 // install reads the dev caches before it installs, and that devcache-env
 // lands in the image before that RUN needs it.
