@@ -68,6 +68,7 @@ jobs:
   # output. The skip-files entry keeps the secret scanner off the committed
   # test TLS material in pkg/server/certs.
   trivy:
+    timeout-minutes: 60
     name: Trivy
     runs-on: ubuntu-latest
     permissions:
