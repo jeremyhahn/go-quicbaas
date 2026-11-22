@@ -243,11 +243,12 @@ var grpcMethodPermissions = map[string]methodPermission{
 
 	// ---- quicbaas.iam.v1.IAMService: WebAuthn credential administration ----
 	//
-	// These three are the ONLY IAMService methods mapped here, and that needs
-	// saying out loud: the rest of quicbaas.iam.v1.IAMService is absent from
-	// brokerServiceDescs and unmapped, so under RequireAuthz it is denied
-	// wholesale. Mapping these three does not carve an exception into that
-	// posture — it is the minimum needed for the surface to exist at all.
+	// The IAMService methods mapped here are ApproveUser, GetUser,
+	// GetUserByUsername and the WebAuthn credential verbs, and only those;
+	// that needs saying out loud: the rest of quicbaas.iam.v1.IAMService is
+	// absent from brokerServiceDescs and unmapped, so under RequireAuthz it is
+	// denied wholesale. Mapping the WebAuthn verbs does not carve an exception
+	// into that posture — it is the minimum needed for the surface to exist.
 	// They are the operator's ONLY recovery path for a WebAuthn credential
 	// stranded by a deleted user (go-quicbaas#273): the credential blocks its
 	// email from ever registering an authenticator again, and every other way
@@ -269,7 +270,10 @@ var grpcMethodPermissions = map[string]methodPermission{
 	// the owner, not a wiring change; it is tracked separately. Until then it
 	// stays unmapped and default-denied.
 	// Mirrors REST POST /api/v1/iam/users/{user_id}/approve (users:enable).
-	"/quicbaas.iam.v1.IAMService/ApproveUser":               {"users", "enable"},
+	"/quicbaas.iam.v1.IAMService/ApproveUser": {"users", "enable"},
+	// Mirror QRDBService GetUser/GetUserByUsername (users:read).
+	"/quicbaas.iam.v1.IAMService/GetUser":                   {"users", "read"},
+	"/quicbaas.iam.v1.IAMService/GetUserByUsername":         {"users", "read"},
 	"/quicbaas.iam.v1.IAMService/ListWebAuthnCredentials":   {"users", "read"},
 	"/quicbaas.iam.v1.IAMService/DeleteWebAuthnCredential":  {"users", "delete"},
 	"/quicbaas.iam.v1.IAMService/DeleteWebAuthnCredentials": {"users", "delete"},
