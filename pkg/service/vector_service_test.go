@@ -11,6 +11,7 @@ package service
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -2645,4 +2646,100 @@ func TestPerformIndexRebuild_UsesFullScanner(t *testing.T) {
 	job.mu.RLock()
 	defer job.mu.RUnlock()
 	assert.Equal(t, int64(total), int64(job.VectorsProcessed))
+}
+
+// vecBlockingFullScanStorage is a full scanner whose scan waits for release
+// or for its context to end, so a test can cancel the request first.
+type vecBlockingFullScanStorage struct {
+	*vecMockStorage
+	release chan struct{}
+	total   int
+}
+
+func (s *vecBlockingFullScanStorage) ScanAllVectors(ctx context.Context, _ string, _ *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
+	select {
+	case <-s.release:
+	case <-ctx.Done():
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	out := make([]*interfaces.VectorValue, 0, s.total)
+	for i := 0; i < s.total; i++ {
+		out = append(out, &interfaces.VectorValue{ID: uint64(i + 1), Embedding: []float32{float32(i), 1}})
+	}
+	return out, nil
+}
+
+// An async rebuild must outlive the request that started it: net/http
+// cancels the request context once the accepted response is written. On
+// the code before the fix the job failed with context canceled.
+func TestRebuildIndex_AsyncSurvivesRequestCancel(t *testing.T) {
+	svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 2)
+	full := &vecBlockingFullScanStorage{vecMockStorage: storage, release: make(chan struct{}), total: 10}
+	svc.storage = full
+	idx := newVecMockVectorIndex()
+	idx.insertFn = func(uint64, []float32) error { return nil }
+	svc.indexFactory = &vecMockVectorIndexFactory{createFn: func(*interfaces.VectorIndexConfig) (interfaces.VectorIndex, error) {
+		return idx, nil
+	}}
+
+	ctx, cancel := context.WithCancel(tenantctx.WithSystem(context.Background()))
+	resp, err := svc.RebuildIndex(ctx, &RebuildIndexRequest{Namespace: "test-ns", Async: true})
+	require.NoError(t, err)
+	require.Equal(t, "in_progress", resp.Status)
+	cancel()
+	close(full.release)
+
+	svc.jobMu.Lock()
+	job := svc.rebuildJobs[resp.JobID]
+	svc.jobMu.Unlock()
+	require.NotNil(t, job)
+	require.Eventually(t, func() bool {
+		job.mu.RLock()
+		defer job.mu.RUnlock()
+		return !job.InProgress
+	}, 5*time.Second, 10*time.Millisecond)
+	job.mu.RLock()
+	defer job.mu.RUnlock()
+	assert.Nil(t, job.Error)
+	assert.Equal(t, int64(10), int64(job.VectorsProcessed))
+}
+
+// vecInvalidateRecorder records the namespaces the service invalidates.
+type vecInvalidateRecorder struct {
+	*vecMockStorage
+	mu  sync.Mutex
+	got []string
+}
+
+func (r *vecInvalidateRecorder) InvalidateScan(ns string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.got = append(r.got, ns)
+}
+
+// The service writes through the SDK client, so it must tell a storage that
+// caches scans about each write.
+func TestVectorService_WritesInvalidateScanSnapshots(t *testing.T) {
+	svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 2)
+	rec := &vecInvalidateRecorder{vecMockStorage: storage}
+	svc.storage = rec
+	ctx := tenantctx.WithSystem(context.Background())
+
+	_, err := svc.UpsertVector(ctx, &UpsertVectorRequest{Namespace: "test-ns", ID: 1, Vector: []float32{1, 2}})
+	require.NoError(t, err)
+	_, err = svc.BatchUpsert(ctx, &BatchUpsertRequest{
+		Namespace: "test-ns",
+		Vectors:   []*VectorData{{ID: 2, Vector: []float32{3, 4}}, {ID: 3, Vector: []float32{5, 6}}},
+	})
+	require.NoError(t, err)
+	_, err = svc.DeleteVector(ctx, &DeleteVectorRequest{Namespace: "test-ns", ID: 1})
+	require.NoError(t, err)
+	_, err = svc.DeleteNamespace(ctx, &DeleteNamespaceRequest{Namespace: "test-ns"})
+	require.NoError(t, err)
+
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	assert.Equal(t, []string{"test-ns", "test-ns", "test-ns", "test-ns"}, rec.got)
 }

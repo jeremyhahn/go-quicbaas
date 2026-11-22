@@ -441,6 +441,14 @@ func (v *vectorService) vectorClient() (qrdbtransport.VectorClient, error) {
 	return client.Vector(), nil
 }
 
+// invalidateScan tells a storage that caches namespace scans that the
+// namespace was written through the SDK client, not through the storage.
+func (v *vectorService) invalidateScan(namespace string) {
+	if inv, ok := v.storage.(interfaces.VectorScanInvalidator); ok {
+		inv.InvalidateScan(namespace)
+	}
+}
+
 // =============================================================================
 // Shard Helpers
 // =============================================================================
@@ -598,6 +606,7 @@ func (v *vectorService) DeleteNamespace(ctx context.Context, req *DeleteNamespac
 		Namespace: scopedNamespace,
 		ShardID:   v.resolveShardID(req.ShardID),
 	})
+	v.invalidateScan(scopedNamespace)
 	if err != nil {
 		if v.metrics != nil {
 			v.metrics.operationErrors.With("delete_namespace", "sdk_error").Inc()
@@ -887,6 +896,7 @@ func (v *vectorService) UpsertVector(ctx context.Context, req *UpsertVectorReque
 		Metadata:  req.Metadata,
 		ShardID:   v.resolveShardID(req.ShardID),
 	})
+	v.invalidateScan(scopedNamespace)
 	if err != nil {
 		if v.metrics != nil {
 			v.metrics.operationErrors.With("upsert_vector", "sdk_error").Inc()
@@ -1041,6 +1051,7 @@ func (v *vectorService) DeleteVector(ctx context.Context, req *DeleteVectorReque
 		ID:        req.ID,
 		ShardID:   v.resolveShardID(req.ShardID),
 	})
+	v.invalidateScan(scopedNamespace)
 	if err != nil {
 		if v.metrics != nil {
 			v.metrics.operationErrors.With("delete_vector", "sdk_error").Inc()
@@ -1133,6 +1144,7 @@ func (v *vectorService) BatchUpsert(ctx context.Context, req *BatchUpsertRequest
 		Vectors:   sdkVectors,
 		ShardID:   v.resolveShardID(req.ShardID),
 	})
+	v.invalidateScan(scopedNamespace)
 	if err != nil {
 		if v.metrics != nil {
 			v.metrics.operationErrors.With("batch_upsert", "sdk_error").Inc()
@@ -1501,7 +1513,9 @@ func (v *vectorService) RebuildIndex(ctx context.Context, req *RebuildIndexReque
 	// If async, start background rebuild
 	if req.Async {
 		go func() {
-			if err := v.performIndexRebuild(ctx, jobID, scopedNamespace, req.IndexConfig); err != nil {
+			// The request context ends when the accepted response is written;
+			// the background job keeps its values but not its cancellation.
+			if err := v.performIndexRebuild(context.WithoutCancel(ctx), jobID, scopedNamespace, req.IndexConfig); err != nil {
 				v.logger.WithFields(map[string]interface{}{
 					"job_id":    jobID,
 					"namespace": req.Namespace,

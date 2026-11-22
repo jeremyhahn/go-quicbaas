@@ -226,9 +226,16 @@ func (n *nodeVectorStorage) ScanNamespace(ctx context.Context, namespace string,
 	// qrdb pages by cursor only, and the order of one page is not stable
 	// from call to call. Offset paging (#1868) needs a stable order, so
 	// read the whole namespace, order it by ID, and cut the page from that.
-	// The pages of one listing share one snapshot of the namespace; the
+	// The first page of a listing (offset 0) re-reads the namespace and
+	// stores a fresh snapshot; its later pages slice that snapshot. The
 	// snapshot is shared, so it is sliced here and never written to.
-	all, err := n.snapshots.read(ctx, n.client.Vector(), req)
+	var all []*qrdbtransport.VectorData
+	var err error
+	if offset <= 0 {
+		all, err = n.snapshots.refresh(ctx, n.client.Vector(), req)
+	} else {
+		all, err = n.snapshots.read(ctx, n.client.Vector(), req)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -246,6 +253,11 @@ func (n *nodeVectorStorage) ScanNamespace(ctx context.Context, namespace string,
 }
 
 var _ interfaces.VectorFullScanner = (*nodeVectorStorage)(nil)
+var _ interfaces.VectorScanInvalidator = (*nodeVectorStorage)(nil)
+
+// InvalidateScan drops the namespace's scan snapshots, for a caller that
+// wrote the namespace through another client of the node.
+func (n *nodeVectorStorage) InvalidateScan(namespace string) { n.snapshots.drop(namespace) }
 
 // ScanAllVectors returns every vector of a namespace once each, ordered by ID,
 // from one listAllVectors read. It includes embeddings and metadata unless
@@ -429,6 +441,20 @@ func (s *vectorScanSnapshots) clock() time.Time {
 // when one still holds and from listAllVectors otherwise. The returned slice
 // is shared and must not be modified.
 func (s *vectorScanSnapshots) read(ctx context.Context, vc qrdbtransport.VectorClient, req *qrdbtransport.ListVectorsRequest) ([]*qrdbtransport.VectorData, error) {
+	return s.load(ctx, vc, req, true)
+}
+
+// refresh always re-reads the namespace and replaces its snapshot; a
+// listing calls it for its first page, so no listing starts from a
+// snapshot older than that page.
+func (s *vectorScanSnapshots) refresh(ctx context.Context, vc qrdbtransport.VectorClient, req *qrdbtransport.ListVectorsRequest) ([]*qrdbtransport.VectorData, error) {
+	return s.load(ctx, vc, req, false)
+}
+
+// load reads the namespace snapshot for req. With reuse it serves a cached
+// snapshot whose count still matches and whose age is within the TTL;
+// without it, it always re-reads and stores the result.
+func (s *vectorScanSnapshots) load(ctx context.Context, vc qrdbtransport.VectorClient, req *qrdbtransport.ListVectorsRequest, reuse bool) ([]*qrdbtransport.VectorData, error) {
 	key := vectorSnapshotKey{namespace: req.Namespace, vectors: req.IncludeVectors, metadata: req.IncludeMetadata}
 	info, err := vc.GetNamespaceInfo(ctx, &qrdbtransport.GetNamespaceInfoRequest{Namespace: req.Namespace})
 	if err != nil {
@@ -437,7 +463,7 @@ func (s *vectorScanSnapshots) read(ctx context.Context, vc qrdbtransport.VectorC
 	count := info.VectorCount
 
 	s.mu.Lock()
-	if e, ok := s.entries[key]; ok && e.count == count && s.clock().Sub(e.at) < nodeScanSnapshotTTL {
+	if e, ok := s.entries[key]; reuse && ok && e.count == count && s.clock().Sub(e.at) < nodeScanSnapshotTTL {
 		all := e.all
 		s.mu.Unlock()
 		return all, nil

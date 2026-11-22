@@ -193,3 +193,10 @@ type VectorFullScanner interface {
 	// paging fields are ignored.
 	ScanAllVectors(ctx context.Context, namespace string, opts *VectorScanOptions) ([]*VectorValue, error)
 }
+
+// VectorScanInvalidator is implemented by a VectorStorage that caches
+// namespace scans. A caller that writes a namespace through another path
+// calls InvalidateScan so later scans read the write.
+type VectorScanInvalidator interface {
+	InvalidateScan(namespace string)
+}
