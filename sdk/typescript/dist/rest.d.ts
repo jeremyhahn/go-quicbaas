@@ -11,6 +11,7 @@ import type { CryptoClient, CryptoEncryptRequest, CryptoEncryptResponse, CryptoD
 import type { DEKClient, CreateDEKRequest, CreateDEKResponse, GetDEKResponse, ListDEKsRequest, ListDEKsResponse, RotateDEKRequest, RotateDEKResponse, DeleteDEKRequest, DeleteDEKResponse, GetDEKStatusResponse, SetDefaultDEKResponse, SetDEKSafetyRequest, SetDEKSafetyResponse, ClearDEKSafetyResponse, StartReencryptionRequest, StartReencryptionResponse, GetReencryptionProgressResponse } from './dek.js';
 import type { DynamicSecretsClient, DynamicSecretRole, CreateRoleRequest as DynamicSecretCreateRoleRequest, ListRolesResponse as ListDynamicSecretRolesResponse, DeleteRoleResponse as DeleteDynamicSecretRoleResponse, GenerateCredentialRequest, GenerateCredentialResponse, RenewLeaseRequest, RenewLeaseResponse, RevokeLeaseResponse as RevokeDynamicSecretLeaseResponse, ListLeasesResponse } from './dynamicsecrets.js';
 import type { AccountsClient, Account, CreateAccountRequest, CreateAccountResponse, GetAccountResponse, ListAccountsRequest, ListAccountsResponse, UpdateAccountRequest, UpdateAccountResponse, DeleteAccountResponse, RotateAccountCredentialRequest, RotateAccountCredentialResponse, RevokeAccountRequest, RevokeAccountResponse, SetDefaultAccountResponse, GetAccountUsageResponse } from './accounts.js';
+import type { EffectivePrompt, GetPromptRequest, ListPromptsRequest, ListPromptsResponse, PromptAddress, PromptDiff, PromptHistory, PromptRecord, PromptsClient, PutPromptRequest, ResetPromptRequest, RollbackPromptRequest } from './prompts.js';
 import type { AgentsClient } from './agents.js';
 import type { ClientConfig, BarrierStatusResponse, BarrierInitRequest, BarrierUnsealRequest, BarrierSealRequest, BarrierShamirInitRequest, BarrierShamirInitResponse, BarrierUnsealShareRequest, BarrierUnsealShareResponse, BarrierUnsealSharesRequest, BarrierRekeyRequest, BarrierRekeyResponse, BarrierGenerateRecoveryKeysRequest, BarrierRecoveryKeysResponse, BarrierRecoverWithKeysRequest, BarrierHasRecoveryKeysResponse, BarrierGenerateRootTokenRequest, BarrierEnableEncryptionRequest, BarrierEnableEncryptionResponse, BarrierRootTokenResponse, TenantBarrierInitRequest, TenantBarrierInitResponse, TenantBarrierUnsealShareResponse, TenantBarrierStatusResponse, CeremonyInitializeRequest, CeremonyInitializeResponse, CeremonyStatusResponse, CeremonyClaimCertBeginRequest, CeremonyClaimCertBeginResponse, CeremonyClaimCertCompleteRequest, CeremonyClaimCertCompleteResponse, CeremonyClaimShareBeginRequest, CeremonyClaimShareBeginResponse, CeremonyClaimShareCompleteRequest, CeremonyClaimShareCompleteResponse, CeremonySignCSRRequest, CeremonySignCSRResponse, CeremonyEnrollExternalOfficerRequest, CeremonyEnrollExternalOfficerResponse, BootstrapBundleRequest, BootstrapBundleResponse, ClusterStatusResponse, SessionInfo, SSHScope, SSHKey, SSHPublicKey, SignRequest, SignResponse, CreateSSHKeyRequest, ImportSSHKeyRequest, ListSSHKeysQuery, ListSSHKeysResponse, AddSSHPinRequest, ListSSHPinsResponse, VerifySSHPinRequest, EmitAuthorizedRequest, EmitAuthorizedResponse, VerifyAuthorizedRequest, VerifyAuthorizedResponse } from './types.js';
 import { type AccountPageParams, type PageResult, type ProjectPageParams } from './page.js';
@@ -69,6 +70,20 @@ export declare class RestAccountsClient implements AccountsClient {
     revokeAccount(req: RevokeAccountRequest): Promise<RevokeAccountResponse>;
     setDefaultAccount(tenantId: string, accountId: string): Promise<SetDefaultAccountResponse>;
     getAccountUsage(tenantId: string, accountId: string): Promise<GetAccountUsageResponse>;
+}
+export declare class RestPromptsClient implements PromptsClient {
+    private readonly baseUrl;
+    private readonly config;
+    constructor(baseUrl: string, config?: ClientConfig);
+    private fetchJSON;
+    listPrompts(req: ListPromptsRequest): Promise<ListPromptsResponse>;
+    getPrompt(req: GetPromptRequest): Promise<PromptRecord>;
+    getEffectivePrompt(addr: PromptAddress): Promise<EffectivePrompt>;
+    diffPrompt(addr: PromptAddress): Promise<PromptDiff>;
+    getPromptHistory(addr: PromptAddress): Promise<PromptHistory>;
+    putPrompt(req: PutPromptRequest): Promise<PromptRecord>;
+    rollbackPrompt(req: RollbackPromptRequest): Promise<PromptRecord>;
+    resetPrompt(req: ResetPromptRequest): Promise<PromptRecord>;
 }
 export declare class RestCAClient implements CAClient {
     private readonly http;
@@ -237,6 +252,7 @@ export declare class RestClient implements Client {
     readonly projects: ProjectsClient;
     readonly sdlc: SdlcClient;
     readonly accounts: AccountsClient;
+    readonly prompts: PromptsClient;
     readonly agents: AgentsClient;
     readonly iam: IAMClient;
     readonly kms: KMSClient;
