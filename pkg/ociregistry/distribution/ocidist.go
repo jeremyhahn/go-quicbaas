@@ -510,7 +510,20 @@ func (h *OCIDistHandlers) startUpload(w http.ResponseWriter, r *http.Request) {
 	// the POST body along with ?digest= to commit immediately. It never
 	// touches the session table, so it is bounded by the blob cap alone.
 	if digest := r.URL.Query().Get("digest"); digest != "" {
-		body, err := readBounded(w, r, h.limits.MaxBlobBytes)
+		if r.ContentLength > h.limits.MaxBlobBytes {
+			writeBodyError(w, &UploadTooLargeError{Limit: h.limits.MaxBlobBytes}, "BLOB_UPLOAD_INVALID")
+			return
+		}
+		// The body is counted against the in-flight cap from before it is
+		// read until the backend has stored it.
+		limit := readLimit(r, h.limits.MaxBlobBytes)
+		release, err := h.reserve(limit)
+		if err != nil {
+			writeBodyError(w, err, "BLOB_UPLOAD_INVALID")
+			return
+		}
+		defer release()
+		body, err := readBounded(w, r, limit)
 		if err != nil {
 			writeBodyError(w, err, "BLOB_UPLOAD_INVALID")
 			return
@@ -545,12 +558,18 @@ func (h *OCIDistHandlers) patchUpload(w http.ResponseWriter, r *http.Request) {
 		writeOCIError(w, http.StatusNotFound, "BLOB_UPLOAD_UNKNOWN", "no such upload")
 		return
 	}
-	body, err := readBounded(w, r, h.limits.MaxChunkBytes)
+	res, err := h.reserveChunk(r)
 	if err != nil {
 		writeBodyError(w, err, "BLOB_UPLOAD_INVALID")
 		return
 	}
-	bufferedLen, err := h.appendChunk(vars["uuid"], sess, body)
+	defer res.release()
+	body, err := readBounded(w, r, res.size)
+	if err != nil {
+		writeBodyError(w, err, "BLOB_UPLOAD_INVALID")
+		return
+	}
+	bufferedLen, err := h.appendReserved(vars["uuid"], sess, body, res)
 	if err != nil {
 		writeBodyError(w, err, "BLOB_UPLOAD_INVALID")
 		return
@@ -578,24 +597,38 @@ func (h *OCIDistHandlers) putUpload(w http.ResponseWriter, r *http.Request) {
 	// request, so the body is read unless it is known to be empty, and
 	// appended only when it carried bytes.
 	if r.ContentLength != 0 {
-		tail, err := readBounded(w, r, h.limits.MaxChunkBytes)
+		res, err := h.reserveChunk(r)
 		if err != nil {
 			writeBodyError(w, err, "BLOB_UPLOAD_INVALID")
 			return
 		}
+		tail, err := readBounded(w, r, res.size)
+		if err != nil {
+			res.release()
+			writeBodyError(w, err, "BLOB_UPLOAD_INVALID")
+			return
+		}
 		if len(tail) > 0 {
-			if _, err := h.appendChunk(vars["uuid"], sess, tail); err != nil {
+			if _, err := h.appendReserved(vars["uuid"], sess, tail, res); err != nil {
+				res.release()
 				writeBodyError(w, err, "BLOB_UPLOAD_INVALID")
 				return
 			}
 		}
+		res.release()
 	}
 	// The commit consumes the session either way: the buffer moves out
-	// (no second copy of a multi-GiB layer) and its bytes are released,
-	// and a client whose digest did not match starts over rather than
-	// keeping a rejected buffer pinned.
-	buf := h.releaseSession(vars["uuid"], sess)
-	if err := h.commitBlob(r.Context(), digest, buf); err != nil {
+	// (no second copy of a multi-GiB layer), and a client whose digest did
+	// not match starts over rather than keeping a rejected buffer pinned.
+	// The buffer's bytes stay counted in flight until the backend returns.
+	buf, ok := h.takeSession(vars["uuid"], sess)
+	if !ok {
+		writeOCIError(w, http.StatusNotFound, "BLOB_UPLOAD_UNKNOWN", "no such upload")
+		return
+	}
+	err := h.commitBlob(r.Context(), digest, buf)
+	h.inFlight.Add(-int64(len(buf)))
+	if err != nil {
 		writeOCIError(w, http.StatusBadRequest, "DIGEST_INVALID", err.Error())
 		return
 	}
@@ -650,6 +683,18 @@ func (h *OCIDistHandlers) lookupUpload(uuid string) (*uploadSession, bool) {
 // would push the whole table past MaxInFlightBytes is refused without
 // touching the session, so the client may retry once room frees.
 func (h *OCIDistHandlers) appendChunk(uuid string, sess *uploadSession, chunk []byte) (int, error) {
+	res, err := h.reserveBytes(int64(len(chunk)))
+	if err != nil {
+		return 0, err
+	}
+	defer res.release()
+	return h.appendReserved(uuid, sess, chunk, res)
+}
+
+// appendReserved is appendChunk for a chunk whose bytes res already
+// counts in flight: len(chunk) of the reservation moves to the session
+// and the caller releases the rest.
+func (h *OCIDistHandlers) appendReserved(uuid string, sess *uploadSession, chunk []byte, res *inFlightReservation) (int, error) {
 	n := int64(len(chunk))
 	sess.mu.Lock()
 	if sess.released {
@@ -661,8 +706,7 @@ func (h *OCIDistHandlers) appendChunk(uuid string, sess *uploadSession, chunk []
 		h.releaseSession(uuid, sess)
 		return 0, &UploadTooLargeError{Limit: h.limits.MaxBlobBytes}
 	}
-	if h.inFlight.Add(n) > h.limits.MaxInFlightBytes {
-		h.inFlight.Add(-n)
+	if !res.keep(n) {
 		sess.mu.Unlock()
 		return 0, &UploadsSaturatedError{Limit: h.limits.MaxInFlightBytes}
 	}
@@ -677,16 +721,97 @@ func (h *OCIDistHandlers) appendChunk(uuid string, sess *uploadSession, chunk []
 // to the caller and releases the bytes it held from the in-flight total.
 // It is idempotent: a session released twice contributes nothing twice.
 func (h *OCIDistHandlers) releaseSession(uuid string, sess *uploadSession) []byte {
-	if _, loaded := h.uploads.LoadAndDelete(uuid); !loaded {
+	buf, ok := h.takeSession(uuid, sess)
+	if !ok {
 		return nil
+	}
+	h.inFlight.Add(-int64(len(buf)))
+	return buf
+}
+
+// takeSession removes the session from the table and returns its buffer
+// without releasing the bytes it holds; the caller subtracts them once
+// it is done with the buffer. ok is false when the session was already
+// released.
+func (h *OCIDistHandlers) takeSession(uuid string, sess *uploadSession) ([]byte, bool) {
+	if _, loaded := h.uploads.LoadAndDelete(uuid); !loaded {
+		return nil, false
 	}
 	sess.mu.Lock()
 	sess.released = true
 	buf := sess.buffer
 	sess.buffer = nil
 	sess.mu.Unlock()
-	h.inFlight.Add(-int64(len(buf)))
-	return buf
+	return buf, true
+}
+
+// inFlightReservation is a count of bytes held against MaxInFlightBytes.
+type inFlightReservation struct {
+	h *OCIDistHandlers
+	// size is the number of bytes reserved.
+	size int64
+	left atomic.Int64
+}
+
+// keep moves n bytes of the reservation to the caller, who must release
+// them itself. It reports false when fewer than n bytes are left.
+func (r *inFlightReservation) keep(n int64) bool {
+	for {
+		left := r.left.Load()
+		if n > left {
+			return false
+		}
+		if r.left.CompareAndSwap(left, left-n) {
+			return true
+		}
+	}
+}
+
+// release returns the bytes still held. It is safe to call more than once.
+func (r *inFlightReservation) release() {
+	if n := r.left.Swap(0); n > 0 {
+		r.h.inFlight.Add(-n)
+	}
+}
+
+// reserve adds n bytes to the in-flight total, or returns an
+// UploadsSaturatedError, leaving the total unchanged, when that would
+// exceed MaxInFlightBytes. release returns the bytes, once.
+func (h *OCIDistHandlers) reserve(n int64) (release func(), err error) {
+	res, err := h.reserveBytes(n)
+	if err != nil {
+		return nil, err
+	}
+	var once sync.Once
+	return func() { once.Do(res.release) }, nil
+}
+
+func (h *OCIDistHandlers) reserveBytes(n int64) (*inFlightReservation, error) {
+	if h.inFlight.Add(n) > h.limits.MaxInFlightBytes {
+		h.inFlight.Add(-n)
+		return nil, &UploadsSaturatedError{Limit: h.limits.MaxInFlightBytes}
+	}
+	res := &inFlightReservation{h: h, size: n}
+	res.left.Store(n)
+	return res, nil
+}
+
+// reserveChunk reserves the bytes a PATCH or PUT body may carry: its
+// Content-Length when known, else MaxChunkBytes. A declared length over
+// MaxChunkBytes is refused before anything is read.
+func (h *OCIDistHandlers) reserveChunk(r *http.Request) (*inFlightReservation, error) {
+	if r.ContentLength > h.limits.MaxChunkBytes {
+		return nil, &UploadTooLargeError{Limit: h.limits.MaxChunkBytes}
+	}
+	return h.reserveBytes(readLimit(r, h.limits.MaxChunkBytes))
+}
+
+// readLimit is the request's Content-Length when known, else max.
+func readLimit(r *http.Request, max int64) int64 {
+	if r.ContentLength >= 0 {
+		return r.ContentLength
+	}
+	return max
 }
 
 // evictIdle releases every session that has seen no chunk within

@@ -25,6 +25,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -42,6 +43,8 @@ type fakeOCIBackend struct {
 	manifests map[string]fakeManifest
 	failPut   error
 	failList  error
+	// onPutBlob, when set, runs at the start of every PutBlob.
+	onPutBlob func(digest string, content []byte)
 }
 
 type fakeManifest struct {
@@ -57,6 +60,9 @@ func newFakeOCIBackend() *fakeOCIBackend {
 }
 
 func (f *fakeOCIBackend) PutBlob(_ context.Context, digest string, content []byte) error {
+	if f.onPutBlob != nil {
+		f.onPutBlob(digest, content)
+	}
 	if f.failPut != nil {
 		return f.failPut
 	}
@@ -626,6 +632,88 @@ func TestOCIDist_UploadLimits(t *testing.T) {
 		rec = do(router, http.MethodPatch, "/v2/apps/web/blobs/uploads/"+third, bytes.Repeat([]byte("a"), 8), nil)
 		assert.Equal(t, http.StatusAccepted, rec.Code)
 	})
+}
+
+// newLimitedHandlers is a router over handlers the test can inspect.
+func newLimitedHandlers(t *testing.T, backend *fakeOCIBackend, limits OCIDistLimits) (*OCIDistHandlers, *mux.Router) {
+	t.Helper()
+	h := NewOCIDistHandlers(slog.Default(), backend, limits)
+	root := mux.NewRouter()
+	h.registerRoutes(root, openGates())
+	return h, root
+}
+
+func TestOCIDist_MonolithicUploadReservesInFlight(t *testing.T) {
+	h, router := newLimitedHandlers(t, newFakeOCIBackend(), OCIDistLimits{
+		MaxChunkBytes:    8,
+		MaxBlobBytes:     12,
+		MaxInFlightBytes: 20,
+	})
+	held := startUploadFor(t, router, "apps/web")
+	for i := 0; i < 2; i++ {
+		rec := do(router, http.MethodPatch, "/v2/apps/web/blobs/uploads/"+held, bytes.Repeat([]byte("a"), 6), nil)
+		require.Equal(t, http.StatusAccepted, rec.Code)
+	}
+	require.Equal(t, int64(12), h.inFlight.Load())
+
+	blob := bytes.Repeat([]byte("b"), 10)
+	target := "/v2/apps/web/blobs/uploads/?digest=" + sha256Of(blob)
+	rec := do(router, http.MethodPost, target, blob, nil)
+	assert.Equal(t, http.StatusTooManyRequests, rec.Code, rec.Body.String())
+	assert.Equal(t, int64(12), h.inFlight.Load())
+
+	rec = do(router, http.MethodDelete, "/v2/apps/web/blobs/uploads/"+held, nil, nil)
+	require.Equal(t, http.StatusNoContent, rec.Code)
+	rec = do(router, http.MethodPost, target, blob, nil)
+	assert.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	assert.Equal(t, int64(0), h.inFlight.Load())
+}
+
+func TestOCIDist_ChunkReadReservesInFlight(t *testing.T) {
+	h, router := newLimitedHandlers(t, newFakeOCIBackend(), OCIDistLimits{
+		MaxChunkBytes:    8,
+		MaxBlobBytes:     16,
+		MaxInFlightBytes: 20,
+	})
+	a := startUploadFor(t, router, "apps/web")
+	b := startUploadFor(t, router, "apps/web")
+	for i := 0; i < 2; i++ {
+		rec := do(router, http.MethodPatch, "/v2/apps/web/blobs/uploads/"+a, bytes.Repeat([]byte("a"), 8), nil)
+		require.Equal(t, http.StatusAccepted, rec.Code)
+	}
+	require.Equal(t, int64(16), h.inFlight.Load())
+
+	rec := do(router, http.MethodPatch, "/v2/apps/web/blobs/uploads/"+b, bytes.Repeat([]byte("b"), 5), nil)
+	assert.Equal(t, http.StatusTooManyRequests, rec.Code, rec.Body.String())
+	sessB, ok := h.lookupUpload(b)
+	require.True(t, ok)
+	sessB.mu.Lock()
+	assert.Empty(t, sessB.buffer)
+	sessB.mu.Unlock()
+	assert.Equal(t, int64(16), h.inFlight.Load())
+
+	// A chunked PATCH reserves MaxChunkBytes, which does not fit either.
+	rec = doChunked(router, http.MethodPatch, "/v2/apps/web/blobs/uploads/"+b, []byte("b"))
+	assert.Equal(t, http.StatusTooManyRequests, rec.Code, rec.Body.String())
+	assert.Equal(t, int64(16), h.inFlight.Load())
+}
+
+func TestOCIDist_CommitHoldsInFlightUntilStored(t *testing.T) {
+	backend := newFakeOCIBackend()
+	h, router := newLimitedHandlers(t, backend, OCIDistLimits{})
+	var seen atomic.Int64
+	seen.Store(-1)
+	backend.onPutBlob = func(string, []byte) { seen.Store(h.inFlight.Load()) }
+
+	content := []byte("hello world")
+	id := startUploadFor(t, router, "apps/web")
+	rec := do(router, http.MethodPatch, "/v2/apps/web/blobs/uploads/"+id, content[:6], nil)
+	require.Equal(t, http.StatusAccepted, rec.Code)
+	rec = do(router, http.MethodPut, "/v2/apps/web/blobs/uploads/"+id+"?digest="+sha256Of(content), content[6:], nil)
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+
+	assert.GreaterOrEqual(t, seen.Load(), int64(len(content)))
+	assert.Equal(t, int64(0), h.inFlight.Load())
 }
 
 func TestOCIDist_IdleSessionsAreEvicted(t *testing.T) {
