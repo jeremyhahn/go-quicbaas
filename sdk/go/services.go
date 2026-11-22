@@ -156,7 +156,12 @@ type AsyncService interface {
 // AIService provides AI and machine learning operations including
 // embedding generation, Ollama integration, and retrieval-augmented generation.
 type AIService interface {
+	// Embedding returns QuicBaaS's own embedding service client.
 	Embedding() EmbeddingClient
+	// QRDBEmbedding returns go-qrdb's embedding service client, re-exported
+	// through this SDK. It runs in parallel with Embedding until the owner
+	// retires QuicBaaS's own service.
+	QRDBEmbedding() (QRDBEmbeddingClient, error)
 	Ollama() OllamaClient
 	RAG() RAGClient
 }
@@ -300,6 +305,13 @@ func (s *securityService) SSH() SSHService {
 // transport, and a client wired WithEmbeddedQRDB (whose qrdb calls always
 // dispatch in-process), keeps the qrdb sub-client.
 //
+// QUIC takes the SDK's REST barrier client too: *quic.Transport embeds
+// *rest.Transport, and go-qrdb's REST sub-client (which QUIC clients' qrdb
+// calls otherwise ride) follows redirects with net/http's default policy,
+// which the SDK cannot reach. A 307/308 to an http:// Location would resend
+// an unseal passphrase in plaintext. The SDK's REST transport refuses every
+// redirect hop and every non-https hop of a secret-carrying barrier call.
+//
 // Over the SDK QUIC transport the barrier verbs go through that transport's
 // own HTTP/3 client: go-qrdb's REST transport dials TCP, which a node serving
 // only its QUIC (UDP) listener refuses (go-quicbaas#2533). An embedded QRDB
@@ -396,8 +408,11 @@ type aiService struct {
 }
 
 func (s *aiService) Embedding() EmbeddingClient { return s.c.Embedding() }
-func (s *aiService) Ollama() OllamaClient       { return s.c.Ollama() }
-func (s *aiService) RAG() RAGClient             { return s.c.RAG() }
+func (s *aiService) QRDBEmbedding() (QRDBEmbeddingClient, error) {
+	return s.c.qrdbEmbedding()
+}
+func (s *aiService) Ollama() OllamaClient { return s.c.Ollama() }
+func (s *aiService) RAG() RAGClient       { return s.c.RAG() }
 
 // barrierCeremonyService delegates BarrierCeremonyService methods to the
 // underlying client.
@@ -522,10 +537,27 @@ func (c *client) SealStore() (QRDBSealStoreClient, error) {
 // TenantMgmt returns the QRDB TenantClient for managing multi-tenant
 // operations and per-tenant barriers. The QRDB client is lazily
 // initialized on first call.
+//
+// Over REST and QUIC (*quic.Transport embeds *rest.Transport) the per-tenant
+// barrier verbs ride the SDK's own REST transport, and tenant CRUD stays on
+// the qrdb sub-client (go-quicbaas#2554). go-qrdb's REST sub-client follows
+// redirects with net/http's default policy, which the SDK cannot reach: a
+// 307/308 to an http:// Location would resend a tenant unseal key or share
+// in plaintext. The SDK's REST transport refuses every redirect hop and
+// every non-https hop of a secret-carrying barrier call. A client wired
+// WithEmbeddedQRDB (whose qrdb calls always dispatch in-process), and every
+// other transport, keeps the qrdb sub-client for every verb.
 func (c *client) TenantMgmt() (QRDBTenantClient, error) {
 	qrdbClient, err := c.qrdbClient()
 	if err != nil {
 		return nil, err
+	}
+	if c.opts == nil || c.opts.embeddedQRDB == nil {
+		if bt, ok := c.transport.(interface {
+			Tenants(QRDBTenantClient) *rest.TenantClient
+		}); ok {
+			return bt.Tenants(qrdbClient.Tenants()), nil
+		}
 	}
 	return qrdbClient.Tenants(), nil
 }
