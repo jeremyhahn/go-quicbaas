@@ -916,6 +916,84 @@ func TestPromptSession_APendingEntryStaysVisibleToASessionSharingItsAccount(t *t
 	}
 }
 
+func TestPromptSession_AnInFlightUsageRecordIsVisibleToASessionSharingItsAccount(t *testing.T) {
+	harness := newTurnSpendHarness(t, true)
+	ledger := &flakyLedger{ConsumptionLedger: harness.ledger}
+	harness.service.SetConsumptionLedger(ledger)
+	ctx := ContextWithTenant(context.Background(), "tenant-a")
+	sessionA := harness.spawn(t, ctx)
+	sessionB := harness.spawnAt(t, ctx, "/work-b")
+	if sessionA == sessionB {
+		t.Fatalf("sessions a and b are both %q — one session serializes on its own turn lock and cannot show the race", sessionA)
+	}
+	for _, id := range []string{sessionA, sessionB} {
+		mem, ok := harness.service.liveSessionRecord(id)
+		if !ok || mem.AccountID() != "acct-1" {
+			t.Fatalf("session %q is not live on acct-1 — the test needs both sessions on one account", id)
+		}
+	}
+	harness.spendAccount1(t, 950)
+
+	var turns atomic.Int32
+	harness.backend.beforePrompt = func() { turns.Add(1) }
+
+	ledger.held = make(chan struct{}, 2)
+	ledger.release = make(chan struct{})
+	resultA := make(chan error, 1)
+	go func() { resultA <- harness.prompt(ctx, sessionA) }()
+	select {
+	case <-ledger.held:
+	case <-time.After(10 * time.Second):
+		close(ledger.release)
+		t.Fatal("session a never wrote its usage")
+	}
+	if got := harness.service.pendingLedger.size(); got != 1 {
+		close(ledger.release)
+		t.Fatalf("pending entries = %d while session a's usage write is in flight, want 1 — the entry is invisible until the write ends", got)
+	}
+
+	resultB := make(chan error, 1)
+	go func() { resultB <- harness.prompt(ctx, sessionB) }()
+	time.Sleep(200 * time.Millisecond)
+	if got := turns.Load(); got != 1 {
+		close(ledger.release)
+		t.Fatalf("session b reached the backend while session a's usage write was in flight (%d turns, want 1): it was admitted against 950 of the 1100 tokens spent", got)
+	}
+	close(ledger.release)
+
+	select {
+	case err := <-resultA:
+		if err != nil {
+			t.Errorf("session a turn = %v, want nil — it was admitted under the cap", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("session a turn never returned")
+	}
+	select {
+	case err := <-resultB:
+		var exhausted *AccountQuotaExhaustedError
+		if !stderrors.As(err, &exhausted) {
+			t.Errorf("session b turn = %v, want an *AccountQuotaExhaustedError — 1100 of 1000 tokens are spent", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("session b turn never returned")
+	}
+	if got := turns.Load(); got != 1 {
+		t.Errorf("backend ran %d turns, want 1", got)
+	}
+	if got := harness.service.pendingLedger.size(); got != 0 {
+		t.Errorf("pending entries = %d, want 0 once the ledger holds the entry", got)
+	}
+	now := time.Now().UTC()
+	usage, err := harness.ledger.WindowUsage(ctx, "tenant-a", "acct-1", now.Add(-2*time.Hour), now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("WindowUsage: %v", err)
+	}
+	if got := usage.InputTokens + usage.OutputTokens; got != 1100 {
+		t.Errorf("ledger holds %d tokens for acct-1, want 1100 — the entry written by both sessions must be stored once", got)
+	}
+}
+
 // A turn cancelled while it runs still spent its tokens: the usage record is
 // written on a context the turn's cancellation does not end.
 func TestPromptSession_RecordsTheUsageOfATurnCancelledWhileItRuns(t *testing.T) {

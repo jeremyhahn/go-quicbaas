@@ -250,20 +250,28 @@ func recordingContext(ctx context.Context) (context.Context, context.CancelFunc)
 // recordLedgerEntry writes one consumption entry, and keeps it pending when
 // the write fails: the session's next turn retries it before the spend
 // check, and a background drainer (drainPendingConsumption) retries it with
-// backoff, so an entry whose session has ended still reaches the ledger. It
-// reports whether the ledger holds the entry.
+// backoff, so an entry whose session has ended still reaches the ledger. The
+// entry is pending from before the write until the ledger holds it, so a
+// session sharing the account sees it throughout. It reports whether this
+// write removed the entry: the caller counts the turn only then, because a
+// concurrent retry that removed it has already counted it.
 func (s *agentServiceImpl) recordLedgerEntry(ctx context.Context, entry ConsumptionEntry) bool {
+	// Pending BEFORE the write: while it is in flight, a session sharing the
+	// account must see the entry (flushPendingConsumption retries it and the
+	// spend check waits for it) rather than a ledger sum that leaves it out.
+	s.pendingLedger.add(entry)
 	rctx, cancel := recordingContext(ctx)
 	defer cancel()
 	if err := s.ledger.Record(rctx, entry); err != nil {
-		s.pendingLedger.add(entry)
 		s.startPendingDrain()
 		s.logger.Warnf(
 			"orchestration: failed to record consumption; spend reports and caps are under-counting until it is retried, and the session's next turn waits for it: session=%s account=%s entry=%s err=%s",
 			entry.SessionID, entry.AccountID, entry.EntryID, err.Error())
 		return false
 	}
-	return true
+	// Another session's retry may have stored and removed it meanwhile; that
+	// retry counted it, so this write reports it only when it removed it.
+	return s.pendingLedger.remove(entry.EntryID)
 }
 
 // flushPendingConsumption retries every pending entry of sessionID and of
