@@ -124,7 +124,7 @@ func TestIdentity_IssuesAnX509SVIDAndRevokesIt(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, strings.HasPrefix(ref, "spiffe://quicbaas.test/tenant/acme/svc/web#"), ref)
 
-	cert := e.kept(t, "acme", "services/web/svid")
+	cert := e.kept(t, "acme", "tenant/acme/services/web/svid")
 	require.Len(t, cert.URIs, 1)
 	assert.Equal(t, "spiffe://quicbaas.test/tenant/acme/svc/web", cert.URIs[0].String(), "the SVID carries the one SPIFFE ID")
 	assert.Empty(t, cert.DNSNames)
@@ -145,7 +145,7 @@ func TestIdentity_IssuesAnX509SVIDAndRevokesIt(t *testing.T) {
 
 	require.NoError(t, g.Revoke(ctx, m, ref))
 	assert.True(t, e.revoked(t, cert))
-	_, _, err = e.secrets.Get(tenantctx.WithTenant(ctx, "acme"), "services/web/svid")
+	_, _, err = e.secrets.Get(tenantctx.WithTenant(ctx, "acme"), "tenant/acme/services/web/svid")
 	assert.Error(t, err, "the SVID and its key are dropped")
 
 	var bad *RefError
@@ -160,7 +160,7 @@ func TestIdentity_ReissuesAnSVIDUnderAnotherIDAndRevokesTheOld(t *testing.T) {
 
 	first, err := g.Grant(ctx, m, "")
 	require.NoError(t, err)
-	old := e.kept(t, "acme", "services/web/svid")
+	old := e.kept(t, "acme", "tenant/acme/services/web/svid")
 
 	// A ref from before the platform SPIFFE form names another identity.
 	legacy := "spiffe://acme/svc/web#" + strings.SplitN(first, "#", 2)[1]
@@ -169,7 +169,7 @@ func TestIdentity_ReissuesAnSVIDUnderAnotherIDAndRevokesTheOld(t *testing.T) {
 	assert.NotEqual(t, first, ref, "a new SVID is issued")
 	assert.True(t, strings.HasPrefix(ref, SPIFFEID(trustDomain, m)+"#"), ref)
 	assert.True(t, e.revoked(t, old), "the SVID under the old ID is revoked")
-	assert.False(t, e.revoked(t, e.kept(t, "acme", "services/web/svid")))
+	assert.False(t, e.revoked(t, e.kept(t, "acme", "tenant/acme/services/web/svid")))
 }
 
 func TestGrants_RefuseAnEmptyTrustDomain(t *testing.T) {
@@ -195,7 +195,7 @@ func TestCertificate_IssuesTheRegisteredNamesLeaf(t *testing.T) {
 
 	ref, err := g.Grant(ctx, m, "")
 	require.NoError(t, err)
-	cert := e.kept(t, "acme", "services/web/tls")
+	cert := e.kept(t, "acme", "tenant/acme/services/web/tls")
 	assert.Equal(t, []string{"web.acme.svc.example"}, cert.DNSNames)
 	assert.Equal(t, cert.SerialNumber.Text(16), ref)
 
@@ -266,13 +266,13 @@ func TestSecrets_BindsTheNamespaceToTheIdentity(t *testing.T) {
 	ref, err := g.Grant(ctx, m, "")
 	require.NoError(t, err)
 	assert.Equal(t, "services/web/", ref)
-	data, meta, err := e.secrets.Get(acme, "services/web/binding")
+	data, meta, err := e.secrets.Get(acme, "tenant/acme/services/web/binding")
 	require.NoError(t, err)
 	assert.Equal(t, "spiffe://quicbaas.test/tenant/acme/svc/web", string(data["spiffe_id"]))
 	assert.Equal(t, "spiffe://quicbaas.test/tenant/acme/svc/web", meta["bound_to"])
 
 	require.NoError(t, g.Revoke(ctx, m, ref))
-	_, _, err = e.secrets.Get(acme, "services/web/binding")
+	_, _, err = e.secrets.Get(acme, "tenant/acme/services/web/binding")
 	assert.Error(t, err)
 }
 
@@ -316,8 +316,8 @@ func TestPlane_DeployGrantsAndUndeployRevokesThemAll(t *testing.T) {
 	svc, err := plane.Deploy(ctx, "acme", rt.Sign(t, "acme", "web"))
 	require.NoError(t, err)
 	require.Len(t, svc.Grants, len(serviceplane.GrantKinds))
-	svid := e.kept(t, "acme", "services/web/svid")
-	leaf := e.kept(t, "acme", "services/web/tls")
+	svid := e.kept(t, "acme", "tenant/acme/services/web/svid")
+	leaf := e.kept(t, "acme", "tenant/acme/services/web/tls")
 	names, _, err := e.reg.Resolve(acme, "web")
 	require.NoError(t, err)
 	require.Len(t, names, 1)
@@ -335,8 +335,46 @@ func TestPlane_DeployGrantsAndUndeployRevokesThemAll(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, names, "undeploy deregisters the name")
 	assert.Empty(t, e.roles.bound, "undeploy unbinds the role")
-	_, _, err = e.secrets.Get(acme, "services/web/binding")
+	_, _, err = e.secrets.Get(acme, "tenant/acme/services/web/binding")
 	assert.Error(t, err, "undeploy unbinds the secrets")
+}
+
+// TestPlane_TwoTenantsDeployTheSameName checks two tenants' services of one
+// name keep their own credentials, and undeploying one leaves the other's.
+func TestPlane_TwoTenantsDeployTheSameName(t *testing.T) {
+	e := newEnv(t)
+	rt := serviceplanetest.NewRuntime(t)
+	rt.Grants = e.grants
+	plane := rt.Plane(t)
+	ctx := context.Background()
+
+	_, err := plane.Deploy(ctx, "acme", rt.Sign(t, "acme", "web"))
+	require.NoError(t, err)
+	_, err = plane.Deploy(ctx, "globex", rt.Sign(t, "globex", "web"))
+	require.NoError(t, err)
+
+	acmeSVID := e.kept(t, "acme", "tenant/acme/services/web/svid")
+	globexSVID := e.kept(t, "globex", "tenant/globex/services/web/svid")
+	acmeTLS := e.kept(t, "acme", "tenant/acme/services/web/tls")
+	globexTLS := e.kept(t, "globex", "tenant/globex/services/web/tls")
+	assert.NotEqual(t, acmeSVID.SerialNumber, globexSVID.SerialNumber)
+	assert.NotEqual(t, acmeSVID.URIs[0].String(), globexSVID.URIs[0].String())
+	assert.NotEqual(t, acmeTLS.SerialNumber, globexTLS.SerialNumber)
+	binding := func(tenant string) string {
+		data, _, gerr := e.secrets.Get(tenantctx.WithTenant(ctx, tenant), "tenant/"+tenant+"/services/web/binding")
+		require.NoError(t, gerr)
+		return string(data["spiffe_id"])
+	}
+	assert.Equal(t, "spiffe://quicbaas.test/tenant/acme/svc/web", binding("acme"))
+	assert.Equal(t, "spiffe://quicbaas.test/tenant/globex/svc/web", binding("globex"))
+
+	require.NoError(t, plane.Undeploy(ctx, "acme", "web"))
+	assert.True(t, e.revoked(t, acmeSVID))
+	kept := e.kept(t, "globex", "tenant/globex/services/web/svid")
+	assert.Equal(t, globexSVID.SerialNumber, kept.SerialNumber, "globex keeps its SVID")
+	assert.False(t, e.revoked(t, kept), "globex's SVID is not revoked")
+	assert.Equal(t, globexTLS.SerialNumber, e.kept(t, "globex", "tenant/globex/services/web/tls").SerialNumber)
+	assert.Equal(t, "spiffe://quicbaas.test/tenant/globex/svc/web", binding("globex"))
 }
 
 // TestPlane_AFailedGrantRevokesTheOnesMade checks a refused role binding
@@ -352,7 +390,7 @@ func TestPlane_AFailedGrantRevokesTheOnesMade(t *testing.T) {
 
 	_, err := plane.Deploy(ctx, "acme", rt.Sign(t, "acme", "web"))
 	require.Error(t, err)
-	for _, path := range []string{"services/web/svid", "services/web/tls"} {
+	for _, path := range []string{"tenant/acme/services/web/svid", "tenant/acme/services/web/tls"} {
 		_, _, gerr := e.secrets.Get(acme, path)
 		assert.Error(t, gerr, "%s is dropped", path)
 	}

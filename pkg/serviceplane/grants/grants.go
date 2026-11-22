@@ -101,16 +101,29 @@ func workloadID(kind serviceplane.GrantKind, trustDomain string, m *serviceplane
 	return SPIFFEID(trustDomain, m), nil
 }
 
-// SecretPrefix is the service's secret namespace.
+// SecretPrefix is the service's secret namespace, relative to its tenant:
+// the namespace the tenant sees through the secrets service.
 func SecretPrefix(m *serviceplane.Manifest) string {
 	return "services/" + m.Name + "/"
 }
 
+// secretPath is where the plane stores rel, a path in the tenant's
+// namespace: under the tenant's scope, tenant/<tenant>/<rel>, the same place
+// the secrets service maps the tenant's own rel to. The secret store uses a
+// path verbatim, so without the scope two tenants' services of one name
+// would share their credentials.
+func secretPath(m *serviceplane.Manifest, rel string) string {
+	if qrdbsdk.IsSystemTenant(m.Tenant) {
+		return rel
+	}
+	return "tenant/" + m.Tenant + "/" + rel
+}
+
 // Paths of the credentials the grants keep for the launcher.
-func svidPath(m *serviceplane.Manifest) string { return SecretPrefix(m) + "svid" }
-func tlsPath(m *serviceplane.Manifest) string  { return SecretPrefix(m) + "tls" }
+func svidPath(m *serviceplane.Manifest) string { return secretPath(m, SecretPrefix(m)+"svid") }
+func tlsPath(m *serviceplane.Manifest) string  { return secretPath(m, SecretPrefix(m)+"tls") }
 func bindingPath(m *serviceplane.Manifest) string {
-	return SecretPrefix(m) + "binding"
+	return secretPath(m, SecretPrefix(m)+"binding")
 }
 
 // tenantCtx binds the manifest's tenant, the scope every grant writes in.

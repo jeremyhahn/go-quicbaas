@@ -157,7 +157,10 @@ SVID passes `TenantFromCert` like any workload's. Its x509-svid
 are issued as the tenant's from a fresh P-256 key, and certificate and key are stored under
 `services/<name>/svid` and `services/<name>/tls`. The name is a registry
 lease, RBAC binds the manifest's role to the identity, and the secrets grant
-binds `services/<name>/` to it. A redeploy keeps every grant whose ref still
+binds `services/<name>/` to it. The plane stores these under the tenant's
+scope (`tenant/<tenant>/services/<name>/...`), the same place the secrets
+service maps the tenant's `services/<name>/` to, so two tenants' services of
+one name never share credentials. A redeploy keeps every grant whose ref still
 fits the manifest; an SVID under another ID is reissued and the old one
 revoked; undeploy revokes the certificates and destroys what was
 stored. The `RoleBinder` over go-qrdb IAM is `iam.WorkloadRoleBinder`: the
