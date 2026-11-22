@@ -17,6 +17,7 @@ import (
 	"context"
 	stderrors "errors"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -634,6 +635,100 @@ func TestPromptSession_APendingConsumptionRefusalIsRefundedNotCharged(t *testing
 	}
 	if !faultRequeues(FaultConsumptionPending) {
 		t.Errorf("%q does not requeue", FaultConsumptionPending)
+	}
+}
+
+func TestPromptSession_RefusesAnotherTenantsTurnBeforeTheLedger(t *testing.T) {
+	harness := newTurnSpendHarness(t, true)
+	ledger := &flakyLedger{ConsumptionLedger: harness.ledger}
+	harness.service.SetConsumptionLedger(ledger)
+	ctx := ContextWithTenant(context.Background(), "tenant-a")
+	sessionID := harness.spawn(t, ctx)
+	harness.spendAccount1(t, 950)
+
+	var turns atomic.Int32
+	harness.backend.beforePrompt = func() { turns.Add(1) }
+
+	ledger.failing.Store(true)
+	if err := harness.prompt(ctx, sessionID); err != nil {
+		t.Fatalf("first turn = %v, want it admitted under the cap", err)
+	}
+	if got := harness.service.pendingLedger.size(); got != 1 {
+		t.Fatalf("pending entries = %d, want 1", got)
+	}
+
+	// Another tenant names the session while the owner's entry is pending:
+	// it is told the session does not exist, and nothing of the owner's is
+	// retried, charged or reported to it.
+	before := ledger.writes.Load()
+	foreign := ContextWithTenant(context.Background(), "tenant-b")
+	err := harness.prompt(foreign, sessionID)
+	var notFound *SessionNotFoundError
+	if !stderrors.As(err, &notFound) {
+		t.Fatalf("foreign prompt = %v, want a *SessionNotFoundError", err)
+	}
+	if stderrors.Is(err, ErrConsumptionPending) {
+		t.Errorf("foreign prompt = %v, want no pending-consumption refusal", err)
+	}
+	if strings.Contains(err.Error(), "acct-1") {
+		t.Errorf("foreign prompt = %q, leaks the owner's account ID", err.Error())
+	}
+	if got := ledger.writes.Load(); got != before {
+		t.Errorf("ledger writes = %d, want %d — the foreign prompt retried the owner's entry", got, before)
+	}
+	if got := turns.Load(); got != 1 {
+		t.Errorf("backend ran %d turns, want 1", got)
+	}
+	if got := harness.service.pendingLedger.size(); got != 1 {
+		t.Errorf("pending entries = %d, want 1", got)
+	}
+
+	_, err = harness.service.PromptSessionAsync(foreign, &PromptSessionRequest{
+		SessionID: sessionID, ProjectID: "proj-1", Prompt: "do the thing",
+	})
+	if !stderrors.As(err, &notFound) {
+		t.Fatalf("foreign async prompt = %v, want a *SessionNotFoundError", err)
+	}
+
+	// The owner's flush still runs: the retry stores the entry and the cap
+	// sees the account spent.
+	ledger.failing.Store(false)
+	err = harness.prompt(ctx, sessionID)
+	var exhausted *AccountQuotaExhaustedError
+	if !stderrors.As(err, &exhausted) {
+		t.Fatalf("owner's turn after the retry = %v, want an *AccountQuotaExhaustedError", err)
+	}
+	if got := harness.service.pendingLedger.size(); got != 0 {
+		t.Errorf("pending entries = %d, want 0 after the owner's retry", got)
+	}
+}
+
+func TestPendingConsumption_MatchingIsScopedToTheTenant(t *testing.T) {
+	var pending pendingConsumption
+	for _, e := range []struct{ entry, tenant, session, account string }{
+		{"a", "tenant-a", "s1", "acct-1"},
+		{"b", "tenant-b", "s1", "acct-1"},
+		{"c", "tenant-b", "s2", "acct-1"},
+	} {
+		entry := validEntry()
+		entry.EntryID, entry.TenantID, entry.SessionID, entry.AccountID = e.entry, e.tenant, e.session, e.account
+		pending.add(entry)
+	}
+	ids := func(entries []ConsumptionEntry) string {
+		var out []string
+		for _, entry := range entries {
+			out = append(out, entry.EntryID)
+		}
+		return strings.Join(out, ",")
+	}
+	if got := ids(pending.matching("tenant-a", "s1", "acct-1")); got != "a" {
+		t.Errorf("tenant-a matching = %q, want %q", got, "a")
+	}
+	if got := ids(pending.matching("tenant-b", "s2", "acct-1")); got != "b,c" {
+		t.Errorf("tenant-b matching = %q, want %q", got, "b,c")
+	}
+	if got := ids(pending.matching("tenant-c", "s1", "acct-1")); got != "" {
+		t.Errorf("tenant-c matching = %q, want none", got)
 	}
 }
 

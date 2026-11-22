@@ -2224,6 +2224,18 @@ func (s *agentServiceImpl) planPromptTurn(ctx context.Context, req *PromptSessio
 		return nil, &AgentServiceError{Sentinel: ErrPromptRequired}
 	}
 
+	// A caller naming another tenant's session is told it does not exist,
+	// the ownership rule every session verb applies. It is refused here,
+	// before the turn lock, the pending-consumption retry, the spend check
+	// or the prompt event: each of those acts on the owning tenant's data.
+	if req.SessionID != "" {
+		if mem, ok := s.liveSessionRecord(req.SessionID); ok {
+			if caller := TenantFromContext(ctx); caller != "" && caller != mem.TenantID {
+				return nil, &SessionNotFoundError{SessionID: req.SessionID}
+			}
+		}
+	}
+
 	// A CONCLUDED SESSION TAKES NO MORE TURNS, and the refusal happens HERE —
 	// before the backend is resolved, before a turn is planned, and above all
 	// before anything is appended to the session's event log. A prompt against

@@ -117,15 +117,20 @@ func (p *pendingConsumption) add(entry ConsumptionEntry) {
 	p.entries = append(p.entries, entry)
 }
 
-// matching returns a copy of the entries of sessionID, and of accountID
-// when it is set: a pooled account's other sessions spend the same cap. The
-// entries stay pending until the ledger holds them, so a session that comes
-// while another one retries an entry still sees it.
-func (p *pendingConsumption) matching(sessionID, accountID string) []ConsumptionEntry {
+// matching returns a copy of tenantID's entries of sessionID, and of
+// accountID when it is set: a pooled account's other sessions spend the same
+// cap. Account IDs are scoped to a tenant, so the tenant is part of the
+// match: an entry of another tenant never matches. The entries stay pending
+// until the ledger holds them, so a session that comes while another one
+// retries an entry still sees it.
+func (p *pendingConsumption) matching(tenantID, sessionID, accountID string) []ConsumptionEntry {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	var matched []ConsumptionEntry
 	for _, entry := range p.entries {
+		if entry.TenantID != tenantID {
+			continue
+		}
 		if entry.SessionID == sessionID || (accountID != "" && entry.AccountID == accountID) {
 			matched = append(matched, entry)
 		}
@@ -269,16 +274,23 @@ func (s *agentServiceImpl) recordLedgerEntry(ctx context.Context, entry Consumpt
 // retrying retries it too (Record is idempotent on the entry id), and
 // neither is admitted before the ledger holds it. The background drainer
 // retries the same entries on its own schedule; whichever write lands first
-// removes the entry.
+// removes the entry. Only the session's own tenant's entries are retried, and
+// a caller of another tenant is refused as *SessionNotFoundError before any
+// retry.
 func (s *agentServiceImpl) flushPendingConsumption(ctx context.Context, sessionID string) error {
 	if s.ledger == nil || sessionID == "" {
 		return nil
 	}
+	tenantID := TenantFromContext(ctx)
 	accountID := ""
 	if mem, ok := s.liveSessionRecord(sessionID); ok {
+		if caller := tenantID; caller != "" && caller != mem.TenantID {
+			return &SessionNotFoundError{SessionID: sessionID}
+		}
 		accountID = mem.AccountID()
+		tenantID = mem.TenantID
 	}
-	pending := s.pendingLedger.matching(sessionID, accountID)
+	pending := s.pendingLedger.matching(tenantID, sessionID, accountID)
 	if len(pending) == 0 {
 		return nil
 	}
