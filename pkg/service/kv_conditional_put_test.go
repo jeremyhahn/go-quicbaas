@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbsdknode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -122,4 +123,55 @@ func TestKVService_ConditionalPut_QRDBClientError(t *testing.T) {
 	var qbErr *errors.QBError
 	require.True(t, stderrors.As(err, &qbErr), "want *errors.QBError, got %v", err)
 	assert.Equal(t, errors.ErrRaft, qbErr.Code)
+}
+
+// TestKVService_ConditionalPut_FileBackend runs the conditional writes on the
+// file backend, whose engine rejects the revision compares of qrdb's
+// Coordinator: the service must use the guarded KV verbs there.
+func TestKVService_ConditionalPut_FileBackend(t *testing.T) {
+	qcfg := &qrdbsdk.DaemonConfig{}
+	qcfg.Raft.DataDir = t.TempDir()
+	qcfg.Databases = []qrdbsdk.DaemonDatabaseConfig{
+		{Name: "default", Engine: "mvcc", Backend: "file"},
+	}
+	node, err := qrdbsdknode.NewStandaloneNode(context.Background(), qcfg, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = node.Close() })
+
+	svc := createTestService(t, withQRDBClientProvider(sharedNodeProvider{client: node.Client()}))
+	ctx := tenantctx.WithSystem(context.Background())
+
+	t.Run("PutIfAbsent stores once", func(t *testing.T) {
+		first, err := svc.PutIfAbsent(ctx, &PutIfAbsentRequest{EntityType: "fileentity", ID: 1, Data: []byte("v1")})
+		require.NoError(t, err)
+		assert.True(t, first.Applied)
+
+		second, err := svc.PutIfAbsent(ctx, &PutIfAbsentRequest{EntityType: "fileentity", ID: 1, Data: []byte("other")})
+		require.NoError(t, err)
+		assert.False(t, second.Applied, "a second put is refused")
+	})
+
+	t.Run("CompareAndSwap swaps on a match only", func(t *testing.T) {
+		swapped, err := svc.CompareAndSwap(ctx, &CompareAndSwapRequest{EntityType: "fileentity", ID: 1, Expect: []byte("v1"), Set: []byte("v2")})
+		require.NoError(t, err)
+		assert.True(t, swapped.Applied, "a matching expect swaps")
+
+		stale, err := svc.CompareAndSwap(ctx, &CompareAndSwapRequest{EntityType: "fileentity", ID: 1, Expect: []byte("v1"), Set: []byte("v3")})
+		require.NoError(t, err)
+		assert.False(t, stale.Applied, "a stale expect is refused")
+
+		got, err := svc.Get(ctx, &GetRequest{EntityType: "fileentity", ID: 1})
+		require.NoError(t, err)
+		assert.Equal(t, []byte("v2"), got.Data)
+	})
+
+	t.Run("CompareAndSwap on an absent entity never matches", func(t *testing.T) {
+		for _, expect := range [][]byte{nil, {}} {
+			resp, err := svc.CompareAndSwap(ctx, &CompareAndSwapRequest{EntityType: "fileentity", ID: 2, Expect: expect, Set: []byte("x")})
+			require.NoError(t, err)
+			assert.False(t, resp.Applied)
+		}
+		_, err := svc.Get(ctx, &GetRequest{EntityType: "fileentity", ID: 2})
+		assert.Error(t, err, "the absent entity stays absent")
+	})
 }
