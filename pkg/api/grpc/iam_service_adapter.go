@@ -327,6 +327,12 @@ func (a *IAMServiceAdapter) GetUser(ctx context.Context, tenantID, userID string
 	return a.identityStore.GetUser(ctx, tenantID, id)
 }
 
+// GetUserByUsername looks up a user by username within the tenant, the same
+// store call the embedded transport makes for User.FindByUsername.
+func (a *IAMServiceAdapter) GetUserByUsername(ctx context.Context, tenantID, username string) (*iam.User, error) {
+	return a.identityStore.GetUserByUsername(ctx, tenantID, username)
+}
+
 // UpdateUser updates an existing user.
 func (a *IAMServiceAdapter) UpdateUser(ctx context.Context, user *iam.User) (*iam.User, error) {
 	if user == nil {
