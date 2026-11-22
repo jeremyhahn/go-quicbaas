@@ -92,11 +92,21 @@ func webSocketURL(t *testing.T) string {
 	return "ws" + strings.TrimPrefix(srv.URL, "http") + webSocketPattern
 }
 
-func dialWebSocket(t *testing.T, url string, protocols []string, header http.Header) (*websocket.Conn, *http.Response, error) {
+// dialWebSocket dials the upgrade route and returns the connection, the
+// handshake response's status code (0 when there was no response) and the
+// dial error. It closes the handshake response body.
+func dialWebSocket(t *testing.T, url string, protocols []string, header http.Header) (*websocket.Conn, int, error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	t.Cleanup(cancel)
-	return websocket.Dial(ctx, url, &websocket.DialOptions{Subprotocols: protocols, HTTPHeader: header})
+	conn, resp, err := websocket.Dial(ctx, url, &websocket.DialOptions{Subprotocols: protocols, HTTPHeader: header})
+	if resp == nil {
+		return conn, 0, err
+	}
+	if resp.Body != nil {
+		_ = resp.Body.Close()
+	}
+	return conn, resp.StatusCode, err
 }
 
 func bearer(token string) http.Header {
@@ -109,9 +119,9 @@ func TestWebSocket_DialEachSubprotocol(t *testing.T) {
 	url := webSocketURL(t)
 	for _, name := range []string{"mqtt", "amqp", "stomp"} {
 		t.Run(name, func(t *testing.T) {
-			conn, resp, err := dialWebSocket(t, url, []string{name}, bearer("subscribe-token"))
+			conn, status, err := dialWebSocket(t, url, []string{name}, bearer("subscribe-token"))
 			require.NoError(t, err)
-			require.Equal(t, http.StatusSwitchingProtocols, resp.StatusCode)
+			require.Equal(t, http.StatusSwitchingProtocols, status)
 			require.Equal(t, name, conn.Subprotocol())
 			_ = conn.Close(websocket.StatusNormalClosure, "")
 		})
@@ -121,26 +131,23 @@ func TestWebSocket_DialEachSubprotocol(t *testing.T) {
 // TestWebSocket_UpgradeRequiresCredential: an upgrade without a credential is
 // refused with 401 before the WebSocket server runs.
 func TestWebSocket_UpgradeRequiresCredential(t *testing.T) {
-	_, resp, err := dialWebSocket(t, webSocketURL(t), []string{"mqtt"}, nil)
+	_, status, err := dialWebSocket(t, webSocketURL(t), []string{"mqtt"}, nil)
 	require.Error(t, err)
-	require.NotNil(t, resp)
-	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	require.Equal(t, http.StatusUnauthorized, status)
 }
 
 // TestWebSocket_UpgradeRequiresSubscribeGrant: a credential without
 // messaging:subscribe is refused with 403.
 func TestWebSocket_UpgradeRequiresSubscribeGrant(t *testing.T) {
-	_, resp, err := dialWebSocket(t, webSocketURL(t), []string{"mqtt"}, bearer("watch-token"))
+	_, status, err := dialWebSocket(t, webSocketURL(t), []string{"mqtt"}, bearer("watch-token"))
 	require.Error(t, err)
-	require.NotNil(t, resp)
-	require.Equal(t, http.StatusForbidden, resp.StatusCode)
+	require.Equal(t, http.StatusForbidden, status)
 }
 
 // TestWebSocket_UnknownSubprotocolRefused: an authorized upgrade asking only
 // for an unsupported subprotocol is refused with 400.
 func TestWebSocket_UnknownSubprotocolRefused(t *testing.T) {
-	_, resp, err := dialWebSocket(t, webSocketURL(t), []string{"xmpp"}, bearer("subscribe-token"))
+	_, status, err := dialWebSocket(t, webSocketURL(t), []string{"xmpp"}, bearer("subscribe-token"))
 	require.Error(t, err)
-	require.NotNil(t, resp)
-	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	require.Equal(t, http.StatusBadRequest, status)
 }
