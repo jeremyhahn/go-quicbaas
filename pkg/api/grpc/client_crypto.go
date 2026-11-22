@@ -15,6 +15,7 @@ package grpc
 
 import (
 	"context"
+	"math"
 	"time"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
@@ -43,6 +44,9 @@ func (c *Client) KMSSign(ctx context.Context, req *service.SignRequest) (*servic
 		Message:       req.Message,
 		HashAlgorithm: convertServiceHashAlgorithmToProto(req.HashAlgorithm),
 		PreHashed:     req.PreHashed,
+		Padding:       convertServiceSignaturePaddingToProto(req.Padding),
+		PssSaltLength: pssSaltLengthToProto(req.PSSSaltLength),
+		Mgf1Hash:      convertServiceMGF1HashToProto(req.MGF1Hash),
 	}
 
 	pbResp, err := cryptoClient.Sign(ctx, pbReq)
@@ -298,6 +302,37 @@ func convertServiceHashAlgorithmToProto(alg service.HashAlgorithm) pb.HashAlgori
 	default:
 		return pb.HashAlgorithm_HASH_ALG_SHA256
 	}
+}
+
+// convertServiceSignaturePaddingToProto maps the service padding to the proto
+// padding; empty gives UNSPECIFIED.
+func convertServiceSignaturePaddingToProto(p service.SignaturePadding) pb.SignaturePadding {
+	switch p {
+	case service.SignaturePaddingPKCS1v15:
+		return pb.SignaturePadding_SIGNATURE_PADDING_PKCS1V15
+	case service.SignaturePaddingPSS:
+		return pb.SignaturePadding_SIGNATURE_PADDING_PSS
+	default:
+		return pb.SignaturePadding_SIGNATURE_PADDING_UNSPECIFIED
+	}
+}
+
+// pssSaltLengthToProto narrows the salt length to the wire type; a value out
+// of int32 range becomes -1 so the server refuses it.
+func pssSaltLengthToProto(n int) int32 {
+	if n < math.MinInt32 || n > math.MaxInt32 {
+		return -1
+	}
+	return int32(n)
+}
+
+// convertServiceMGF1HashToProto maps the service MGF1 hash; empty gives
+// UNSPECIFIED.
+func convertServiceMGF1HashToProto(alg service.HashAlgorithm) pb.HashAlgorithm {
+	if alg == "" {
+		return pb.HashAlgorithm_HASH_ALG_UNSPECIFIED
+	}
+	return convertServiceHashAlgorithmToProto(alg)
 }
 
 // convertProtoToServiceHashAlgorithm converts pb.HashAlgorithm to service.HashAlgorithm.

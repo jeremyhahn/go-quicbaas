@@ -241,9 +241,12 @@ func (s *Server) HandleCryptoSign(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
 	var reqBody struct {
-		Message       []byte                `json:"message"`
-		HashAlgorithm service.HashAlgorithm `json:"hash_algorithm,omitempty"`
-		PreHashed     bool                  `json:"pre_hashed,omitempty"`
+		Message       []byte                   `json:"message"`
+		HashAlgorithm service.HashAlgorithm    `json:"hash_algorithm,omitempty"`
+		PreHashed     bool                     `json:"pre_hashed,omitempty"`
+		Padding       service.SignaturePadding `json:"padding,omitempty"`
+		PSSSaltLength int                      `json:"pss_salt_length,omitempty"`
+		MGF1Hash      service.HashAlgorithm    `json:"mgf1_hash,omitempty"`
 	}
 
 	if err := json.Unmarshal(body, &reqBody); err != nil {
@@ -261,6 +264,9 @@ func (s *Server) HandleCryptoSign(w http.ResponseWriter, r *http.Request) {
 		Message:       reqBody.Message,
 		HashAlgorithm: reqBody.HashAlgorithm,
 		PreHashed:     reqBody.PreHashed,
+		Padding:       reqBody.Padding,
+		PSSSaltLength: reqBody.PSSSaltLength,
+		MGF1Hash:      reqBody.MGF1Hash,
 	}
 
 	cryptoService := s.service.(interface {
