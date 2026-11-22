@@ -865,11 +865,13 @@ func (c *client) qrdbEmbedding() (QRDBEmbeddingClient, error) {
 // client's own go-qrdb client does. The node's KV, batch, transaction, MVCC
 // and index services on the default database are the system tenant's: they
 // do not resolve the context's tenant, so a call whose context binds another
-// tenant (go-qrdb's ContextWithTenant or this SDK's
-// transport.ContextWithTenant) is refused rather than served from the system
-// keyspace, as is a context binding two different tenants. Collections
-// resolve (tenant, database) through the registry and pass through, with a
-// tenant bound by transport.ContextWithTenant carried as go-qrdb's binding.
+// tenant (go-qrdb's ContextWithTenant, this SDK's transport.ContextWithTenant,
+// or the tenant of the authenticated identity go-qrdb's WithIdentity carries)
+// is refused rather than served from the system keyspace, as is a context
+// naming two different tenants. Collections resolve (tenant, database)
+// through the registry and pass through, with a tenant bound by
+// transport.ContextWithTenant or carried by the authenticated identity bound
+// as go-qrdb's binding.
 //
 // gRPC and Unix: a client configured with WithAuthToken sends the token as
 // "authorization: Bearer <token>" metadata on every data call. REST, QUIC
@@ -913,45 +915,71 @@ func (c *client) QRDBData() (QRDBDataService, error) {
 }
 
 // qrdbCallTenant reads the tenant a data call's context binds, through
-// either go-qrdb's ContextWithTenant or this SDK's transport.ContextWithTenant.
-// bound is false when neither is set. Two bindings that name different
-// tenants are refused as Forbidden rather than one silently winning.
+// go-qrdb's ContextWithTenant, this SDK's transport.ContextWithTenant, or the
+// tenant of the authenticated identity go-qrdb's WithIdentity carries (the
+// same sources pkg/tenantctx.FromContext reads on the server). bound is false
+// when none is set. Two sources that name different tenants are refused as
+// Forbidden rather than one silently winning; otherwise the first set source
+// wins, in the order go-qrdb binding, SDK binding, identity.
 func qrdbCallTenant(ctx context.Context) (id string, bound bool, err error) {
 	qrdbID, qrdbBound := qrdbsdk.TenantFromContext(ctx)
+	if !qrdbBound {
+		qrdbID = ""
+	}
 	sdkID := qbtransport.TenantFromContext(ctx)
-	switch {
-	case qrdbBound && sdkID != "" && qrdbID != sdkID:
-		return "", false, sdkerrors.NewForbidden("QRDBData",
-			"the call's context binds conflicting tenants "+qrdbID+" (go-qrdb) and "+sdkID+" (QuicBaaS SDK)")
-	case qrdbBound:
-		return qrdbID, true, nil
-	case sdkID != "":
-		return sdkID, true, nil
-	default:
+	identityID := ""
+	if identity := qrdbsdk.IdentityFromContext(ctx); identity != nil {
+		identityID = identity.TenantID
+	}
+	sources := [...]struct{ id, from string }{
+		{qrdbID, "go-qrdb binding"},
+		{sdkID, "QuicBaaS SDK binding"},
+		{identityID, "authenticated identity"},
+	}
+	first := -1
+	for i, s := range sources {
+		if s.id == "" {
+			continue
+		}
+		if first < 0 {
+			first = i
+			continue
+		}
+		if s.id != sources[first].id {
+			return "", false, sdkerrors.NewForbidden("QRDBData",
+				"the call's context binds conflicting tenants "+sources[first].id+" ("+sources[first].from+") and "+s.id+" ("+s.from+")")
+		}
+	}
+	if first < 0 {
 		return "", false, nil
 	}
+	return sources[first].id, true, nil
 }
 
-// scopeQRDBCollectionsTenant carries a tenant bound with this SDK's
-// transport.ContextWithTenant into go-qrdb's ContextWithTenant, so the
-// embedded node's collection registry resolves the caller's tenant. A context
-// binding conflicting tenants is refused.
+// scopeQRDBCollectionsTenant binds the tenant qrdbCallTenant resolves (from
+// this SDK's transport.ContextWithTenant or the authenticated identity, when
+// go-qrdb's ContextWithTenant is not already set) into go-qrdb's
+// ContextWithTenant, so the embedded node's collection registry resolves the
+// caller's tenant rather than the system tenant. A context binding
+// conflicting tenants is refused.
 func scopeQRDBCollectionsTenant(ctx context.Context) (context.Context, error) {
-	if _, _, err := qrdbCallTenant(ctx); err != nil {
+	id, bound, err := qrdbCallTenant(ctx)
+	if err != nil {
 		return nil, err
+	}
+	if !bound {
+		return ctx, nil
 	}
 	if _, ok := qrdbsdk.TenantFromContext(ctx); ok {
 		return ctx, nil
 	}
-	if id := qbtransport.TenantFromContext(ctx); id != "" {
-		return qrdbsdk.ContextWithTenant(ctx, id), nil
-	}
-	return ctx, nil
+	return qrdbsdk.ContextWithTenant(ctx, id), nil
 }
 
 // refuseTenantBoundQRDBCall refuses a data call whose context binds a tenant
-// other than the system tenant, through go-qrdb's ContextWithTenant or this
-// SDK's transport.ContextWithTenant: the embedded node's default-database KV,
+// other than the system tenant, through go-qrdb's ContextWithTenant, this
+// SDK's transport.ContextWithTenant or the authenticated identity's tenant
+// (go-qrdb's WithIdentity): the embedded node's default-database KV,
 // batch, transaction, MVCC and index services serve the system keyspace
 // whatever the context names, so serving the call would let one tenant read
 // and write another's (and the system's) data. Conflicting bindings are

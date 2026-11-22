@@ -489,6 +489,102 @@ func TestQRDBData_EmbeddedHonoursSDKTenantContext(t *testing.T) {
 	}
 }
 
+// TestQRDBData_EmbeddedHonoursIdentityTenant pins that a context carrying only
+// a go-qrdb authenticated Identity is a tenant context to the embedded guard,
+// as it is to pkg/tenantctx: default-database data calls are refused,
+// collections see the identity's tenant, and an identity that disagrees with
+// either explicit binding is refused.
+func TestQRDBData_EmbeddedHonoursIdentityTenant(t *testing.T) {
+	kv := &recordingKVService{}
+	batch := &reachedBatchService{}
+	txn := &reachedTransactionService{}
+	coll := &reachedCollectionService{}
+	idx := &reachedIndexService{}
+	tr, err := qrdbembedded.New(kv, stubAdminService{},
+		qrdbembedded.WithBatchService(batch),
+		qrdbembedded.WithTransactionService(txn),
+		qrdbembedded.WithMVCCService(reachedMVCCService{}),
+		qrdbembedded.WithCollectionService(coll),
+		qrdbembedded.WithIndexService(idx),
+	)
+	if err != nil {
+		t.Fatalf("embedded.New: %v", err)
+	}
+	node, err := qrdbsdk.NewClient(tr)
+	if err != nil {
+		t.Fatalf("qrdbsdk.NewClient: %v", err)
+	}
+	c := buildEmbeddedQRDBClient(t, QRDBEmbeddedServicers{KV: kv, Admin: stubAdminService{}, Data: node})
+	data, err := c.QRDBData()
+	if err != nil {
+		t.Fatalf("QRDBData(): %v", err)
+	}
+
+	if err := data.KV().Put(context.Background(), "row1652/sys", []byte("system")); err != nil {
+		t.Fatalf("system KV().Put: %v", err)
+	}
+
+	withIdentity := func(ctx context.Context, tenant string) context.Context {
+		return qrdbsdk.WithIdentity(ctx, &qrdbsdk.Identity{TenantID: tenant})
+	}
+	ctx := withIdentity(context.Background(), "row1652-tenant-b")
+	put := qrdbtransport.Op{Type: qrdbtransport.OpPut, Key: []byte("row1652/sys"), Value: []byte("b")}
+	refused := func(name string, err error) {
+		t.Helper()
+		if !sdkerrors.IsForbidden(err) {
+			t.Errorf("%s with an identity of another tenant: err %v, want Forbidden", name, err)
+		}
+	}
+	_, err = data.KV().Get(ctx, "row1652/sys")
+	refused("KV().Get", err)
+	refused("KV().Put", data.KV().Put(ctx, "row1652/sys", []byte("b")))
+	refused("KV().Delete", data.KV().Delete(ctx, "row1652/sys"))
+	_, err = data.Batch().ExecuteBatch(ctx, []qrdbtransport.Op{put})
+	refused("Batch().ExecuteBatch", err)
+	_, err = data.Transaction().ExecuteTransaction(ctx, &qrdbtransport.TransactionRequest{SuccessOps: []qrdbtransport.Op{put}})
+	refused("Transaction().ExecuteTransaction", err)
+	_, err = data.MVCC().CurrentRevision(ctx)
+	refused("MVCC().CurrentRevision", err)
+	_, err = data.Index().IndexList(ctx)
+	refused("Index().IndexList", err)
+	if batch.reached || txn.reached || idx.reached {
+		t.Errorf("a refused call reached the node: batch %v, transaction %v, index %v", batch.reached, txn.reached, idx.reached)
+	}
+	if got, err := kv.get("row1652/sys"); err != nil || string(got) != "system" {
+		t.Errorf("system record = %q, %v after refused writes, want %q", got, err, "system")
+	}
+
+	if _, err := data.Collections().ListCollections(ctx, "row1652db"); err != nil || coll.tenant != "row1652-tenant-b" {
+		t.Errorf("identity-only Collections().ListCollections: err %v, node saw tenant %q, want %q", err, coll.tenant, "row1652-tenant-b")
+	}
+
+	ctxSys := withIdentity(context.Background(), qrdbsdk.SystemTenantID)
+	if got, err := data.KV().Get(ctxSys, "row1652/sys"); err != nil || string(got) != "system" {
+		t.Errorf("system-identity KV().Get = %q, %v, want %q", got, err, "system")
+	}
+
+	conflicts := map[string]context.Context{
+		"go-qrdb binding":      qrdbsdk.ContextWithTenant(withIdentity(context.Background(), "row1652-tenant-b"), "row1652-tenant-c"),
+		"QuicBaaS SDK binding": qbtransport.ContextWithTenant(withIdentity(context.Background(), "row1652-tenant-b"), "row1652-tenant-c"),
+	}
+	for name, conflict := range conflicts {
+		_, err = data.KV().Get(conflict, "row1652/sys")
+		if !sdkerrors.IsForbidden(err) {
+			t.Errorf("KV().Get with identity and %s naming different tenants: err %v, want Forbidden", name, err)
+		}
+		_, err = data.Collections().ListCollections(conflict, "row1652db")
+		if !sdkerrors.IsForbidden(err) {
+			t.Errorf("Collections().ListCollections with identity and %s naming different tenants: err %v, want Forbidden", name, err)
+		}
+	}
+
+	coll.tenant = ""
+	agree := qbtransport.ContextWithTenant(withIdentity(context.Background(), "row1652-tenant-b"), "row1652-tenant-b")
+	if _, err := data.Collections().ListCollections(agree, "row1652db"); err != nil || coll.tenant != "row1652-tenant-b" {
+		t.Errorf("Collections().ListCollections with agreeing identity and SDK binding: err %v, node saw tenant %q, want %q", err, coll.tenant, "row1652-tenant-b")
+	}
+}
+
 // TestQRDBData_EmbeddedKVKeepsGuardedWrites proves QRDBData().KV() keeps the
 // embedded client's guarded-write capability (PutIfAbsent, CompareAndDelete,
 // CompareAndSwap), still behind the tenant guard.
