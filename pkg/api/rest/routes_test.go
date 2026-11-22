@@ -157,7 +157,9 @@ import (
 // PLUS 9 for the service plane (/api/v1/services, handlers_services.go,
 // #1687): list, deploy, redeploy, get, undeploy, start, stop, resume and
 // restart under services:read, services:deploy and services:control.
-const baseRouteTableSize = 681
+// PLUS 1 for the capabilities report (GET /api/v1/server/capabilities,
+// handlers_capabilities.go), authenticated with no RBAC permission.
+const baseRouteTableSize = 682
 
 // TestRoutes_SurfaceGuard asserts the table's structural invariants: exact
 // size, absolute patterns, no duplicate method+pattern, and a handler binder
@@ -345,6 +347,10 @@ func TestRoutes_SessionRoutes(t *testing.T) {
 		// go-quicbaas#990). Its end-to-end authorization is pinned in
 		// pkg/apimodule module_barrier_enable_encryption_authz_test.go.
 		"POST /v1/barrier/enable-encryption": {},
+		// The capabilities report (handlers_capabilities.go): any
+		// authenticated caller reads which subsystems this server serves
+		// and has configured, so no RBAC permission applies.
+		"GET /api/v1/server/capabilities": {},
 	}
 	got := map[string]struct{}{}
 	for _, spec := range Routes() {

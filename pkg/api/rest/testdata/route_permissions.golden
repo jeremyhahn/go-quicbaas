@@ -223,6 +223,7 @@ GET /api/v1/secrets/* permission secrets:read
 GET /api/v1/secrets/dynamic/leases permission dynamic_secrets:lease_list
 GET /api/v1/secrets/dynamic/roles permission dynamic_secrets:role_list
 GET /api/v1/secrets/dynamic/roles/{name} permission dynamic_secrets:role_read
+GET /api/v1/server/capabilities session -:-
 GET /api/v1/services permission services:read
 GET /api/v1/services/{name} permission services:read
 GET /api/v1/ssh/authorized/keys permission keys:list
