@@ -15,14 +15,19 @@ package kms
 
 import (
 	"encoding/base64"
+	"fmt"
 	"strings"
 
 	"github.com/jeremyhahn/go-xkms/pkg/validation"
+
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
 // xkmsEncodedKeyNamePrefix starts every go-xkms key name that carries an
-// encoded service key ID. It is NOT reserved: a valid name that starts with
-// it (an existing "qbx.production") is used unchanged.
+// encoded service key ID. The prefix is reserved for encoded names: a valid
+// literal name that is exactly the canonical encoding of a rejected ID is
+// refused (refuseReservedKeyName). Every other "qbx." name, such as an
+// existing "qbx.production", is still used unchanged.
 const xkmsEncodedKeyNamePrefix = "qbx."
 
 // xkmsEncoding is strict so that each encoded payload has exactly one
@@ -40,10 +45,11 @@ var xkmsEncoding = base64.RawURLEncoding.Strict()
 // its canonical unpadded base64url form.
 //
 // go-xkms has one key-name space, and an encoded name must live in it, so
-// the mapping cannot be injective over every ID: the literal valid name
-// "qbx.<canonical base64url of a rejected ID>" and that rejected ID share a
-// go-xkms name. That is the only overlap; keyIDFromXKMSName reads such a
-// name as the encoded ID.
+// the encoded name of a rejected ID and the literal valid name
+// "qbx.<canonical base64url of that ID>" share a go-xkms name. The backend
+// refuses that literal at every entry point (refuseReservedKeyName), so the
+// shared name only ever means the encoded ID, and keyIDFromXKMSName reads it
+// that way.
 func xkmsKeyName(keyID string) string {
 	// An empty ID is refused before any go-xkms call (ErrKeyCNEmpty); it is
 	// not encoded, so "qbx." alone stays a literal name.
@@ -72,4 +78,20 @@ func keyIDFromXKMSName(name string) string {
 		return name
 	}
 	return keyID
+}
+
+// refuseReservedKeyName refuses a key ID that go-xkms accepts literally but
+// that keyIDFromXKMSName would read as a different, encoded ID: such a
+// literal names the same go-xkms key as that encoded ID (a tenant's key), so
+// accepting it would cross the tenant boundary. It returns an invalid-input
+// error wrapping ErrReservedKeyName, and nil for every other ID.
+func refuseReservedKeyName(op, keyID string) error {
+	if keyID == "" || validation.ValidateKeyID(keyID) != nil || keyIDFromXKMSName(keyID) == keyID {
+		return nil
+	}
+	return &qberrors.QBError{
+		Code: qberrors.ErrInvalidInput,
+		Op:   op,
+		Err:  fmt.Errorf("%w: %q", ErrReservedKeyName, keyID),
+	}
 }
