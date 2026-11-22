@@ -217,7 +217,7 @@ func TestCheckReportsAToolErrorWithoutAMakefile(t *testing.T) {
 }
 
 func TestRunReportsTheVerdictAndTheStatus(t *testing.T) {
-	t.Setenv(tokenFileEnv, testTokenFile)
+	t.Setenv(decoyPathEnv, testTokenFile)
 	t.Run("this repository", func(t *testing.T) {
 		var stdout, stderr strings.Builder
 		if status := run([]string{"-root", repoRoot}, &stdout, &stderr); status != gate.ExitClean {
@@ -261,36 +261,36 @@ const testTokenFile = ".gate/tokens.env"
 func TestDecoyTokenFileRefusesUnsetBlankAndNonLocal(t *testing.T) {
 	lookup := func(v string, set bool) func(string) (string, bool) {
 		return func(name string) (string, bool) {
-			if name != tokenFileEnv {
-				t.Fatalf("looked up %q, want %q", name, tokenFileEnv)
+			if name != decoyPathEnv {
+				t.Fatalf("looked up %q, want %q", name, decoyPathEnv)
 			}
 			return v, set
 		}
 	}
 	if _, err := decoyTokenFile(lookup("", false)); err == nil {
-		t.Errorf("an unset %s was accepted", tokenFileEnv)
+		t.Errorf("an unset %s was accepted", decoyPathEnv)
 	}
 	for _, v := range []string{"", "  ", "/abs/t.env", "../t.env"} {
 		if got, err := decoyTokenFile(lookup(v, true)); err == nil {
-			t.Errorf("%s=%q was accepted as %q", tokenFileEnv, v, got)
+			t.Errorf("%s=%q was accepted as %q", decoyPathEnv, v, got)
 		}
 	}
 	for _, v := range []string{"tokens.env", "a/b.env"} {
 		got, err := decoyTokenFile(lookup(v, true))
 		if err != nil || got != v {
-			t.Errorf("%s=%q: got %q, %v; want it accepted", tokenFileEnv, v, got, err)
+			t.Errorf("%s=%q: got %q, %v; want it accepted", decoyPathEnv, v, got, err)
 		}
 	}
 }
 
 func TestRunRefusesWithoutTheTokenFile(t *testing.T) {
-	t.Setenv(tokenFileEnv, "")
+	t.Setenv(decoyPathEnv, "")
 	var stdout, stderr strings.Builder
 	if status := run([]string{"-root", repoRoot}, &stdout, &stderr); status != gate.ExitToolError {
 		t.Fatalf("run exited %d, want %d", status, gate.ExitToolError)
 	}
-	if !strings.Contains(stderr.String(), tokenFileEnv) {
-		t.Fatalf("stderr does not name %s: %q", tokenFileEnv, stderr.String())
+	if !strings.Contains(stderr.String(), decoyPathEnv) {
+		t.Fatalf("stderr does not name %s: %q", decoyPathEnv, stderr.String())
 	}
 }
 

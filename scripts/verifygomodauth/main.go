@@ -75,7 +75,7 @@ var gateOriginEnv = []string{"GITEA_HTTP_ORIGIN=" + gateOrigin}
 var strippedEnv = []string{
 	"GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0",
 	"FORGE_READ_TOKEN", "GITEA_HTTP_ORIGIN", "GOMODAUTH_ENV",
-	"GOMODAUTH_TOKENS_FILE", "GOMODAUTH_TOKEN_KEY", "GOMODAUTH_OWNER", tokenFileEnv, "HOME",
+	"GOMODAUTH_TOKENS_FILE", "GOMODAUTH_TOKEN_KEY", "GOMODAUTH_OWNER", decoyPathEnv, "HOME",
 	"GOMOD_BACKUP", "SDK_GOMOD_BACKUP",
 }
 
@@ -94,20 +94,20 @@ func (e *WorkspaceError) Error() string { return "cannot prepare the gate worksp
 
 func (e *WorkspaceError) Unwrap() error { return e.Err }
 
-// tokenFileEnv names the decoy tokens file the gate plants in each case's
+// decoyPathEnv names the decoy tokens file the gate plants in each case's
 // throwaway HOME, as a path relative to that HOME. It has no default.
-const tokenFileEnv = "GOMODAUTH_TOKEN_FILE"
+const decoyPathEnv = "GOMODAUTH_TOKEN_FILE"
 
-// decoyTokenFile reads tokenFileEnv through lookup. It refuses an unset or
+// decoyTokenFile reads decoyPathEnv through lookup. It refuses an unset or
 // blank value, and a path that is absolute or climbs out with "..": the gate
 // never writes outside its throwaway HOME.
 func decoyTokenFile(lookup func(string) (string, bool)) (string, error) {
-	v, ok := lookup(tokenFileEnv)
+	v, ok := lookup(decoyPathEnv)
 	if !ok || strings.TrimSpace(v) == "" {
-		return "", fmt.Errorf("%s is not set: name the decoy token file, relative to the throwaway HOME", tokenFileEnv)
+		return "", fmt.Errorf("%s is not set: name the decoy token file, relative to the throwaway HOME", decoyPathEnv)
 	}
 	if !filepath.IsLocal(v) {
-		return "", fmt.Errorf("%s=%q must be a relative path inside the throwaway HOME", tokenFileEnv, v)
+		return "", fmt.Errorf("%s=%q must be a relative path inside the throwaway HOME", decoyPathEnv, v)
 	}
 	return filepath.Clean(v), nil
 }
