@@ -219,6 +219,18 @@ func (e KeyNotFoundError) Error() string {
 	return fmt.Sprintf("registry: encryption key not found: %s", e.KeyID)
 }
 
+// DistributionEncryptionUnsupportedError is returned by an OCI
+// distribution write while encryption by default is enabled: that route
+// stores the client's bytes as sent, so it is refused rather than
+// storing plaintext.
+type DistributionEncryptionUnsupportedError struct {
+	Op string
+}
+
+func (e DistributionEncryptionUnsupportedError) Error() string {
+	return fmt.Sprintf("%s: OCI distribution writes are refused while encryption by default is enabled", e.Op)
+}
+
 // KeyCreationFailedError is returned when key creation fails.
 type KeyCreationFailedError struct {
 	KeyID string

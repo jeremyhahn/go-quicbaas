@@ -40,6 +40,9 @@ func (r *Registry) PutBlob(ctx context.Context, digest string, content []byte) e
 	if r.storage == nil {
 		return StorageNotConfiguredError{Op: "PutBlob"}
 	}
+	if r.config.Encryption.EncryptByDefault {
+		return DistributionEncryptionUnsupportedError{Op: "PutBlob"}
+	}
 	return r.storage.StoreBlob(ctx, digest, content)
 }
 
@@ -75,6 +78,9 @@ func (r *Registry) PutManifest(ctx context.Context, name, reference, mediaType s
 	}
 	if r.storage == nil {
 		return "", StorageNotConfiguredError{Op: "PutManifest"}
+	}
+	if r.config.Encryption.EncryptByDefault {
+		return "", DistributionEncryptionUnsupportedError{Op: "PutManifest"}
 	}
 	digest := sha256Digest(content)
 	// A digest reference names content: the body must hash to it, or a

@@ -229,3 +229,47 @@ func TestOCIDistBackend_ListTagsBeyondFirstPage(t *testing.T) {
 		t.Errorf("ListTags aaa/filler returned %d tags, want %d", len(filler), fillers)
 	}
 }
+
+// TestOCIDistBackend_RefusesPlaintextWhenEncryptByDefault checks that the
+// distribution route, which stores the client's bytes as sent, refuses
+// writes while encryption by default is on.
+func TestOCIDistBackend_RefusesPlaintextWhenEncryptByDefault(t *testing.T) {
+	ctx := context.Background()
+	content := []byte("layer bytes")
+	digest := sha256Digest(content)
+
+	storage, err := NewQuicBaaSStorage(newMockStorageClient())
+	if err != nil {
+		t.Fatalf("NewQuicBaaSStorage: %v", err)
+	}
+	cfg := validTestConfig()
+	cfg.Encryption.EncryptByDefault = true
+	reg, err := NewRegistry(cfg, testLogger(), WithStorage(storage))
+	if err != nil {
+		t.Fatalf("NewRegistry: %v", err)
+	}
+	t.Cleanup(func() { _ = reg.Close() })
+
+	var refused DistributionEncryptionUnsupportedError
+	if err := reg.PutBlob(ctx, digest, content); !errors.As(err, &refused) {
+		t.Fatalf("PutBlob error = %v, want DistributionEncryptionUnsupportedError", err)
+	}
+	manifest := []byte(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","layers":[]}`)
+	if _, err := reg.PutManifest(ctx, "alpine", "3.20", "application/vnd.oci.image.manifest.v1+json", manifest); !errors.As(err, &refused) {
+		t.Fatalf("PutManifest error = %v, want DistributionEncryptionUnsupportedError", err)
+	}
+	exists, err := reg.BlobExists(ctx, digest)
+	if err != nil {
+		t.Fatalf("BlobExists: %v", err)
+	}
+	if exists {
+		t.Fatal("a refused PutBlob stored the blob")
+	}
+	if _, _, err := reg.GetManifest(ctx, "alpine", "3.20"); err == nil {
+		t.Fatal("a refused PutManifest stored the manifest")
+	}
+
+	if err := newTestRegistry(t).PutBlob(ctx, digest, content); err != nil {
+		t.Fatalf("PutBlob with encryption by default off: %v", err)
+	}
+}
