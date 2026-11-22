@@ -32,6 +32,9 @@ spec:
         app.kubernetes.io/component: node
     spec:
       terminationGracePeriodSeconds: 30
+      # The daemon calls no Kubernetes API, so a compromised pod holds no API
+      # credential.
+      automountServiceAccountToken: false
       affinity:
         podAntiAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
@@ -47,6 +50,56 @@ spec:
         fsGroup: 1000
         seccompProfile:
           type: RuntimeDefault
+      # Secret quicbaas-raft-keys holds every replica's certificate and key, so
+      # only this init container mounts it. It hands the daemon its own pair
+      # alone, with the key 0400 and owned by the daemon's uid, on a
+      # memory-backed volume.
+      initContainers:
+        - name: raft-key
+          image: ghcr.io/jeremyhahn/quicbaasd
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              keys=/etc/quicbaas/raft-keys
+              out=/etc/quicbaas/raft-node
+              for f in "$POD_NAME.crt" "$POD_NAME.key"; do
+                if [ ! -s "$keys/$f" ]; then
+                  echo "quicbaas: Secret quicbaas-raft-keys has no $f key" >&2
+                  exit 1
+                fi
+              done
+              umask 077
+              rm -f "$out/tls.crt" "$out/tls.key"
+              cp "$keys/$POD_NAME.crt" "$out/tls.crt"
+              cp "$keys/$POD_NAME.key" "$out/tls.key"
+              chmod 0444 "$out/tls.crt"
+              chmod 0400 "$out/tls.key"
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 32Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: raft-keys
+              mountPath: /etc/quicbaas/raft-keys
+              readOnly: true
+            - name: raft-node
+              mountPath: /etc/quicbaas/raft-node
       containers:
         - name: quicbaasd
           image: ghcr.io/jeremyhahn/quicbaasd
@@ -56,11 +109,18 @@ spec:
           # start command also exports the other replicas' identities, read
           # from the member-identities key of Secret quicbaas-raft-tls
           # ("1=spki:<hex>,2=spki:<hex>,3=spki:<hex>"; see kustomization.yaml).
+          # That Secret holds public material only: the CA and the identities.
+          # The replica's own certificate and key are placed at
+          # /etc/quicbaas/raft-node by the raft-key init container.
           command:
             - /bin/sh
             - -c
             - |
               set -eu
+              if [ -z "${QUICBAAS_IAM_SPIFFE_TRUST_DOMAIN:-}" ]; then
+                echo "quicbaas: ConfigMap quicbaas-identity sets no spiffe-trust-domain; first boot needs the operator's SPIFFE trust domain" >&2
+                exit 1
+              fi
               tls=/etc/quicbaas/raft-tls
               ordinal="${POD_NAME##*-}"
               node_id="$((ordinal + 1))"
@@ -100,8 +160,6 @@ spec:
               export QUICBAAS_RAFT_LISTEN_HOST="$POD_IP"
               export QUICBAAS_RAFT_JOIN_ADDRESSES="$peers"
               export QUICBAAS_RAFT_MEMBER_IDENTITIES="$identities"
-              export QUICBAAS_RAFT_TLS_CERT_FILE="$tls/$POD_NAME.crt"
-              export QUICBAAS_RAFT_TLS_KEY_FILE="$tls/$POD_NAME.key"
               exec /usr/local/bin/quicbaasd node --config /etc/quicbaas/quicbaas.yaml
           env:
             - name: POD_NAME
@@ -116,6 +174,13 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: status.podIP
+            # The operator's SPIFFE trust domain; never defaulted. A missing
+            # ConfigMap holds the pod in CreateContainerConfigError.
+            - name: QUICBAAS_IAM_SPIFFE_TRUST_DOMAIN
+              valueFrom:
+                configMapKeyRef:
+                  name: quicbaas-identity
+                  key: spiffe-trust-domain
             - name: QUICBAAS_SEAL_PASSPHRASE
               valueFrom:
                 secretKeyRef:
@@ -180,6 +245,9 @@ spec:
             - name: raft-tls
               mountPath: /etc/quicbaas/raft-tls
               readOnly: true
+            - name: raft-node
+              mountPath: /etc/quicbaas/raft-node
+              readOnly: true
             - name: server-tls
               mountPath: /etc/quicbaas/server-tls
               readOnly: true
@@ -196,8 +264,17 @@ spec:
         - name: raft-tls
           secret:
             secretName: quicbaas-raft-tls
-            # Group-readable: the kubelet gives the files the pod's fsGroup.
+            # CA and member identities, public; group-readable through fsGroup.
             defaultMode: 0440
+        - name: raft-keys
+          secret:
+            secretName: quicbaas-raft-keys
+            # Mounted by the init container only.
+            defaultMode: 0440
+        - name: raft-node
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Mi
         - name: server-tls
           secret:
             secretName: quicbaas-server-tls

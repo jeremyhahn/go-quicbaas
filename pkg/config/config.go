@@ -408,6 +408,13 @@ func BindIAMSelfServiceRegistrationEnv(v *viper.Viper) {
 	}
 }
 
+// BindIAMTrustDomainEnv binds iam.spiffe_trust_domain to
+// QUICBAAS_IAM_SPIFFE_TRUST_DOMAIN, so a deployment can supply the
+// operator's trust domain without writing it into a shared config file.
+func BindIAMTrustDomainEnv(v *viper.Viper) {
+	_ = v.BindEnv("iam.spiffe_trust_domain")
+}
+
 // ConfigValidationError is a typed error for configuration validation failures.
 type ConfigValidationError struct {
 	Field   string

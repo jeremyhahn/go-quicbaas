@@ -17,6 +17,7 @@ no Helm chart.
 | `statefulset.yaml` | Three `quicbaasd node` replicas with a data volume each |
 | `poddisruptionbudget.yaml` | Keeps two of three nodes up during voluntary disruption |
 | `networkpolicy.yaml` | Raft from QuicBaaS pods only; REST and gRPC from any pod |
+| `renew-raft-cert.sh` | Renews one replica's Raft certificate on its existing key |
 
 ## Prerequisites
 
@@ -48,9 +49,10 @@ no Helm chart.
 | 50051 | TCP | gRPC (TLS) |
 | 63000 | UDP | Raft over QUIC, mutual TLS between the nodes |
 
-## Secrets
+## Secrets and trust domain
 
-Create the namespace and three Secrets before the first apply:
+Create the namespace, four Secrets and the `quicbaas-identity` ConfigMap
+before the first apply:
 
 ```bash
 kubectl create namespace quicbaas
@@ -62,13 +64,21 @@ spki() { openssl x509 -in "$1" -noout -pubkey |
 printf '1=spki:%s,2=spki:%s,3=spki:%s\n' "$(spki quicbaas-0.crt)" \
   "$(spki quicbaas-1.crt)" "$(spki quicbaas-2.crt)" > member-identities
 
-# Raft mTLS: one CA, one certificate per replica named for its ordinal, and
-# the member identities.
+# Raft mTLS, public material: the CA and the member identities. Every
+# daemon mounts it.
 kubectl -n quicbaas create secret generic quicbaas-raft-tls \
-  --from-file=ca.crt --from-file=member-identities \
+  --from-file=ca.crt --from-file=member-identities
+
+# Raft mTLS, private: one certificate and key per replica, named for its
+# ordinal. Only the raft-key init container reads it.
+kubectl -n quicbaas create secret generic quicbaas-raft-keys \
   --from-file=quicbaas-0.crt --from-file=quicbaas-0.key \
   --from-file=quicbaas-1.crt --from-file=quicbaas-1.key \
   --from-file=quicbaas-2.crt --from-file=quicbaas-2.key
+
+# The operator's SPIFFE trust domain.
+kubectl -n quicbaas create configmap quicbaas-identity \
+  --from-literal=spiffe-trust-domain=<your trust domain>
 
 # The certificate REST and gRPC serve.
 kubectl -n quicbaas create secret tls quicbaas-server-tls \
@@ -92,6 +102,11 @@ format matches `raft.member_identities` in
 Keep the seal passphrase outside the cluster as well. Without it, a node's
 data cannot be unsealed.
 
+The SPIFFE trust domain is stamped into every certificate the cluster issues,
+and login resolves the tenant from it. First boot refuses to start without it,
+and so does the start command. Choose it once: changing it later invalidates
+every issued certificate.
+
 ## Deploy
 
 ```bash
@@ -103,17 +118,21 @@ kubectl -n quicbaas rollout status statefulset/quicbaas
 
 `kustomization.yaml` sets the image tag once, under `images:`. The containers
 in `statefulset.yaml` name the image without a tag, so every replica runs the
-same build. The tag is the repository's `VERSION`. The release workflow
-publishes `v<VERSION>` as `ghcr.io/jeremyhahn/quicbaasd:<VERSION>`.
-`test/buildgates/kubernetes_test.go` fails when the pin and `VERSION` drift
-apart, when the pin is `latest`, or when a container carries a tag of its own.
+same build.
 
-The image must serve REST, because the probes and clients use it. Releases
-build `Dockerfile` with its default `BUILD_TAGS`, which include `rest` from
-the first release after 0.16.0-alpha. 0.16.0-alpha itself was built with
-`gms_pure_go` alone and registers no REST routes, so its pods never pass a
-probe. `test/buildgates/image_tags_test.go` fails when a published
-Dockerfile's default tags exclude the probe routes.
+The shipped `newTag` is a placeholder that names no image. Before the first
+apply, set it to a release whose image serves REST, because the probes and
+clients use it: edit the `newTag` line, or run
+`kustomize edit set image ghcr.io/jeremyhahn/quicbaasd:<release>` in
+`deployments/kubernetes`. 0.16.0-alpha and 0.16.1-alpha were built with
+`gms_pure_go` alone. They register no REST routes and never pass a probe, so
+the build gate refuses them. Releases built from this Dockerfile's default
+`BUILD_TAGS` include `rest`.
+
+`test/buildgates/image_tags_test.go` fails when a published Dockerfile's
+default tags exclude the probe routes. `test/buildgates/kubernetes_test.go`
+refuses `latest`, the two releases above, a second pin, and a container that
+carries a tag of its own.
 
 ## How the cluster forms
 
@@ -131,8 +150,10 @@ Membership is static, the same shape as
   - `QUICBAAS_RAFT_MEMBER_IDENTITIES` holds the other two replicas' entries
     from the `member-identities` Secret key. The node derives its own
     identity from its certificate.
-  - `QUICBAAS_RAFT_TLS_CERT_FILE` and `QUICBAAS_RAFT_TLS_KEY_FILE` point at
-    the node's own certificate.
+- The `raft-key` init container copies the replica's own certificate and key
+  from `quicbaas-raft-keys` to `/etc/quicbaas/raft-node`, the paths the
+  ConfigMap names.
+- `QUICBAAS_IAM_SPIFFE_TRUST_DOMAIN` comes from ConfigMap `quicbaas-identity`.
 - `podManagementPolicy: Parallel` starts all three pods at once. A Raft group
   needs a quorum of members before any of them is ready.
 - `quicbaas-raft` sets `publishNotReadyAddresses: true`. The peers can then
@@ -171,7 +192,7 @@ build. They run under Docker in CI.
 
 ## Upgrades
 
-Change `newTag` in `kustomization.yaml`, together with `VERSION`, and apply.
+Change `newTag` in `kustomization.yaml` to the new release and apply.
 The StatefulSet's `RollingUpdate` replaces one pod at a time, highest ordinal
 first, and waits for each to be ready. The PDB holds the quorum throughout.
 
@@ -195,26 +216,25 @@ openssl req -new -key quicbaas-<n>.key \
   -out quicbaas-<n>.csr
 # Sign quicbaas-<n>.csr with the cluster CA into quicbaas-<n>.crt, with the
 # SAN quicbaas-<n>.quicbaas-raft.quicbaas.svc.cluster.local, as in Secrets.
-
-# The identity must be unchanged before going on.
-[ "$(spki quicbaas-<n>.crt)" = "$(spki old/quicbaas-<n>.crt)" ] &&
-  echo "identity unchanged" || echo "the key changed: stop here" >&2
-
-# The new certificate; every other file, member-identities included, unchanged.
-kubectl -n quicbaas create secret generic quicbaas-raft-tls \
-  --from-file=ca.crt --from-file=member-identities \
-  --from-file=quicbaas-0.crt --from-file=quicbaas-0.key \
-  --from-file=quicbaas-1.crt --from-file=quicbaas-1.key \
-  --from-file=quicbaas-2.crt --from-file=quicbaas-2.key \
-  --dry-run=client -o yaml | kubectl apply -f -
-
-# One pod at a time; the PDB holds the quorum.
-kubectl -n quicbaas delete pod quicbaas-<n>
-kubectl -n quicbaas wait --for=condition=Ready pod/quicbaas-<n> --timeout=5m
 ```
 
-Restart the other replicas the same way, one at a time, each only after the
-previous one is ready.
+Then run, from the directory that holds the six files and `old/`:
+
+```bash
+sh deployments/kubernetes/renew-raft-cert.sh <n>
+```
+
+Use the script's path from the repository root, or wherever your checkout is.
+
+- The script exits non-zero before it touches the cluster when the new
+  certificate presents a different key.
+- It updates Secret `quicbaas-raft-keys`.
+- It evicts the pod through the Eviction API, so the PodDisruptionBudget is
+  enforced. A refused eviction stops the script; wait until all three
+  replicas are ready and run it again.
+- It returns only when the replacement pod is Ready.
+
+Run it for each replica in turn.
 
 A new key is not a renewal. Do not generate a new key for a replica, rebuild
 `member-identities` and restart the pods: every restarted replica then
@@ -235,7 +255,14 @@ keep the keys on the replicas they were issued for.
   restricted Pod Security level, `IPC_LOCK` cannot be granted. The memlock
   limit comes from the node's container runtime; see the `RLIMIT_MEMLOCK`
   floor in [Prerequisites](#prerequisites).
-- The Secrets mount with mode `0440`, readable through `fsGroup: 1000`.
+- Only the `raft-key` init container mounts `quicbaas-raft-keys`. The daemon
+  gets its own key alone, mode `0400` and owned by uid 1000, on a
+  memory-backed emptyDir, with no service account token. The kubelet still
+  materializes the whole keys Secret for each pod's init container on that
+  pod's node, so treat a compromised Kubernetes node as exposing all three
+  keys.
+- `quicbaas-raft-tls` and `quicbaas-server-tls` mount with mode `0440`,
+  readable through `fsGroup: 1000`.
 - The data at rest is sealed, and auth is on (`seal.enabled`, `auth.enabled`).
 - Narrow the client ingress rule in `networkpolicy.yaml` to the namespaces
   that call QuicBaaS.

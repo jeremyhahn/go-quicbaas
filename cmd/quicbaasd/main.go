@@ -395,6 +395,7 @@ func bindEnvVars() {
 	config.BindSDLCLabelReconcileEnv(viper.GetViper())
 	config.BindSDLCWorkerImageEnv(viper.GetViper())
 	config.BindIAMSelfServiceRegistrationEnv(viper.GetViper())
+	config.BindIAMTrustDomainEnv(viper.GetViper())
 
 	// Server configuration - nested protocol configs. server.host and the
 	// other address keys are bound by bindAddressKeys.

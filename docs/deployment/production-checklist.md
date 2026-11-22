@@ -382,8 +382,8 @@ through the leader; it never bootstraps.
 `deployments/kubernetes` is the cluster as a kustomization
 ([kubernetes.md](kubernetes.md) is the guide):
 
-- [ ] `kustomization.yaml` pins `ghcr.io/jeremyhahn/quicbaasd` to the release tag
-- [ ] Secrets `quicbaas-raft-tls` (CA and one certificate per pod) and `quicbaas-seal` created first
+- [ ] `kustomization.yaml`'s `newTag` is set to a release that serves REST (not `0.16.0-alpha` or `0.16.1-alpha`)
+- [ ] Secrets `quicbaas-raft-tls` (CA and member identities), `quicbaas-raft-keys` (one certificate and key per pod) and `quicbaas-seal`, and ConfigMap `quicbaas-identity` (the SPIFFE trust domain), created first
 - [ ] The three pods land on three distinct nodes (required anti-affinity)
 - [ ] The PodDisruptionBudget (`minAvailable: 2`) is in place before any node drain
 - [ ] The StorageClass behind the `data` claims is SSD-backed with `reclaimPolicy: Retain`

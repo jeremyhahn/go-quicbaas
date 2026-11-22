@@ -1,8 +1,9 @@
 # The node configuration every replica shares. What differs per replica
-# (node ID, advertised Raft address, its Raft certificate) is derived from the
-# pod's ordinal by the StatefulSet's start command, the same QUICBAAS_RAFT_*
-# environment overrides test/integration/docker-compose.cluster.yml sets per
-# container.
+# (node ID, advertised Raft address) is derived from the pod's ordinal by the
+# StatefulSet's start command, the same QUICBAAS_RAFT_* environment overrides
+# test/integration/docker-compose.cluster.yml sets per container. The
+# replica's own Raft certificate and key are placed at a fixed path by the
+# StatefulSet's raft-key init container.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -44,9 +45,13 @@ data:
       # certificate's SubjectPublicKeyInfo>). The identities depend on the
       # issued certificates, so they are not set here: the start command
       # exports the other replicas' entries from the member-identities key of
-      # Secret quicbaas-raft-tls as QUICBAAS_RAFT_MEMBER_IDENTITIES.
+      # Secret quicbaas-raft-tls as QUICBAAS_RAFT_MEMBER_IDENTITIES. The
+      # replica's own certificate and key are copied to /etc/quicbaas/raft-node
+      # by the raft-key init container, from Secret quicbaas-raft-keys.
       mutual_tls: true
       tls_ca_file: /etc/quicbaas/raft-tls/ca.crt
+      tls_cert_file: /etc/quicbaas/raft-node/tls.crt
+      tls_key_file: /etc/quicbaas/raft-node/tls.key
       election_rtt: 10
       heartbeat_rtt: 1
       rtt_millisecond: 200
@@ -61,3 +66,8 @@ data:
 
     auth:
       enabled: true
+
+    # iam.spiffe_trust_domain is required on first boot and is the operator's
+    # choice. It is stamped into every issued certificate, so it is never
+    # defaulted here: it arrives as QUICBAAS_IAM_SPIFFE_TRUST_DOMAIN from
+    # ConfigMap quicbaas-identity.

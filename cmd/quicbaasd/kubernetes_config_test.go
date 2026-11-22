@@ -58,7 +58,11 @@ func TestKubernetesReplicaLoadsAsRaftNode2(t *testing.T) {
 	}
 	// The image sets QUICBAAS_SERVER_UNIX_SOCKET; the ConfigMap alone must
 	// name a writable socket path.
-	for _, name := range []string{"QUICBAAS_SERVER_UNIX_SOCKET", "QUICBAAS_SERVER_UNIX_ENABLED"} {
+	for _, name := range []string{
+		"QUICBAAS_SERVER_UNIX_SOCKET", "QUICBAAS_SERVER_UNIX_ENABLED",
+		"QUICBAAS_RAFT_TLS_CERT_FILE", "QUICBAAS_RAFT_TLS_KEY_FILE", "QUICBAAS_RAFT_TLS_CA_FILE",
+		"QUICBAAS_IAM_SPIFFE_TRUST_DOMAIN",
+	} {
 		t.Setenv(name, "")
 		require.NoError(t, os.Unsetenv(name))
 	}
@@ -71,8 +75,9 @@ func TestKubernetesReplicaLoadsAsRaftNode2(t *testing.T) {
 	t.Setenv("QUICBAAS_RAFT_JOIN_ADDRESSES", strings.Join(members, ","))
 	founders := []string{"1=spki:" + strings.Repeat("a1", 32), "3=spki:" + strings.Repeat("c3", 32)}
 	t.Setenv("QUICBAAS_RAFT_MEMBER_IDENTITIES", strings.Join(founders, ","))
-	t.Setenv("QUICBAAS_RAFT_TLS_CERT_FILE", "/etc/quicbaas/raft-tls/quicbaas-1.crt")
-	t.Setenv("QUICBAAS_RAFT_TLS_KEY_FILE", "/etc/quicbaas/raft-tls/quicbaas-1.key")
+	// The pod's env carries the operator's trust domain from ConfigMap
+	// quicbaas-identity.
+	t.Setenv("QUICBAAS_IAM_SPIFFE_TRUST_DOMAIN", "quicbaas.example.test")
 
 	cfgFile = filepath.Join(t.TempDir(), "quicbaas.yaml")
 	require.NoError(t, os.WriteFile(cfgFile, []byte(nodeYAML), 0o600))
@@ -91,8 +96,10 @@ func TestKubernetesReplicaLoadsAsRaftNode2(t *testing.T) {
 	assert.Equal(t, founders, cfg.Raft.MemberIdentities)
 	assert.True(t, cfg.Raft.MutualTLS)
 	assert.Equal(t, "/etc/quicbaas/raft-tls/ca.crt", cfg.Raft.TLSCAFile)
-	assert.Equal(t, "/etc/quicbaas/raft-tls/quicbaas-1.crt", cfg.Raft.TLSCertFile)
-	assert.Equal(t, "/etc/quicbaas/raft-tls/quicbaas-1.key", cfg.Raft.TLSKeyFile)
+	// The raft-key init container places the replica's own pair here.
+	assert.Equal(t, "/etc/quicbaas/raft-node/tls.crt", cfg.Raft.TLSCertFile)
+	assert.Equal(t, "/etc/quicbaas/raft-node/tls.key", cfg.Raft.TLSKeyFile)
+	assert.Equal(t, "quicbaas.example.test", cfg.IAM.SPIFFETrustDomain, "first boot refuses an empty trust domain")
 	assert.True(t, cfg.Seal.Enabled, "data must not rest unencrypted")
 	// The node serves the Unix socket whenever a path is set, and the root
 	// filesystem is read-only: the socket must be on the run emptyDir.
