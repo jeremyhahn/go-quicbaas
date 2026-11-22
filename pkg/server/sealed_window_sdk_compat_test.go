@@ -25,6 +25,7 @@
 package server_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -116,8 +117,9 @@ func sdkWaitFor(t *testing.T, startErr <-chan error, what string, fn func() bool
 //     death, no panic);
 //  2. sealed-phase allowlist over the real REST listener: barrier status
 //     reachable, off-allowlist path receives the sealed envelope;
-//  3. the quicbaas SDK client drives BarrierStatus + BarrierInitialize (the
-//     TP M6-gate verbs) against the sealed daemon pre-auth;
+//  3. the quicbaas SDK client drives BarrierStatus against the sealed daemon
+//     pre-auth, and refuses to send BarrierInitialize's secret over this
+//     plain-HTTP listener (#2554); a raw POST initializes the barrier;
 //  4. the unseal completes the full node boot (the node's own SDK client
 //     comes online).
 //
@@ -185,7 +187,9 @@ func TestSealedBoot_SDKDrivesBarrierAgainstSealedDaemon(t *testing.T) {
 	assert.Equal(t, sdkSealedEnvelope, string(deniedBody), "off-allowlist path must receive the sealed envelope")
 
 	// Phase 3 (TP M6-gate compatibility): the quicbaas SDK drives the
-	// barrier verbs against the sealed daemon.
+	// barrier verbs against the sealed daemon. Status works over http; the
+	// secret-carrying initialize is refused by the SDK over http, so the
+	// barrier is initialized with a raw POST instead.
 	sdkClient, err := quicbaassdk.NewClient(baseURL, quicbaassdk.WithREST())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = sdkClient.Close() })
@@ -204,9 +208,32 @@ func TestSealedBoot_SDKDrivesBarrierAgainstSealedDaemon(t *testing.T) {
 	// root key and unseals in one step. (BarrierUnseal is the restart-path
 	// verb over the same allowlisted wire route; on an uninitialized
 	// barrier only initialize is valid.)
-	require.NoError(t, barrier.BarrierInitialize(ctx, &qrdbtransport.BarrierInitializeRequest{
+	//
+	// The SDK refuses to send a barrier secret over plaintext http (#2554),
+	// and this daemon runs with TLS off on purpose (see the doc comment
+	// above), so the SDK leg must be refused before anything is sent and
+	// the barrier must stay sealed. The test then initializes the barrier
+	// with a raw POST of the same JSON body the SDK's REST barrier client
+	// sends, so Phase 4 can still check the post-unseal boot.
+	initReq := &qrdbtransport.BarrierInitializeRequest{
 		Secret: []byte("sealed-window-e2e-passphrase"),
-	}), "SDK BarrierInitialize must drive the sealed daemon's barrier")
+	}
+	err = barrier.BarrierInitialize(ctx, initReq)
+	require.Error(t, err, "SDK BarrierInitialize must refuse to send the secret over http")
+	assert.ErrorContains(t, err, "needs https")
+
+	st, err = barrier.BarrierStatus(ctx)
+	require.NoError(t, err, "SDK BarrierStatus must still work after the refused initialize")
+	assert.True(t, st.Sealed, "the refused initialize must leave the barrier sealed")
+
+	initBody, err := json.Marshal(initReq)
+	require.NoError(t, err)
+	initResp, err := http.Post(baseURL+"/v1/barrier/initialize", "application/json", bytes.NewReader(initBody))
+	require.NoError(t, err)
+	initRespBody, _ := io.ReadAll(initResp.Body)
+	_ = initResp.Body.Close()
+	require.True(t, initResp.StatusCode >= 200 && initResp.StatusCode < 300,
+		"raw POST /v1/barrier/initialize must succeed: %d %s", initResp.StatusCode, initRespBody)
 
 	// Phase 4: the daemon notices the unseal and completes the node boot —
 	// verified at the node level (GetQRDBNodeClient), since the post-unseal
