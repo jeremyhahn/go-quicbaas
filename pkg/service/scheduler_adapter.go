@@ -98,7 +98,7 @@ func (a *SchedulerAdapter) CreateJob(ctx context.Context, req *CreateSchedulerJo
 		return nil, err
 	}
 
-	if err := schedulerRefuseInternalHandler("CreateJob", req.Handler); err != nil {
+	if err := schedulerRefuseReservedHandler("CreateJob", req.Handler); err != nil {
 		return nil, err
 	}
 
@@ -163,10 +163,10 @@ func (a *SchedulerAdapter) UpdateJob(ctx context.Context, req *UpdateSchedulerJo
 		return nil, err
 	}
 
-	// A job run by an internal handler (a KMS grace job) is written only by
-	// the service that owns the handler: its handler and payload are not
+	// A job run by a reserved handler (a platform handler, or a KMS grace
+	// job) is written only by the service that owns the handler: its handler and payload are not
 	// user-editable, and no job is turned into one.
-	if err := schedulerRefuseInternalHandler("UpdateJob", req.Handler); err != nil {
+	if err := schedulerRefuseReservedHandler("UpdateJob", req.Handler); err != nil {
 		return nil, err
 	}
 	if req.Handler != "" || len(req.Payload) > 0 {
@@ -177,7 +177,7 @@ func (a *SchedulerAdapter) UpdateJob(ctx context.Context, req *UpdateSchedulerJo
 		if err := schedulerTenantEnforceAccess(tenantID, current.TargetTenantID, "UpdateJob"); err != nil {
 			return nil, err
 		}
-		if err := schedulerRefuseInternalHandler("UpdateJob", current.Handler); err != nil {
+		if err := schedulerRefuseReservedHandler("UpdateJob", current.Handler); err != nil {
 			return nil, err
 		}
 	}
@@ -519,16 +519,19 @@ type gracePeriodPayload struct {
 	Version uint64 `json:"version"`
 }
 
-// schedulerInternalHandlers are the handlers whose jobs only their owning
-// service creates and writes (KMSService.RotateKey files kms.grace_period).
-var schedulerInternalHandlers = map[string]bool{
-	"kms.grace_period": true,
-}
+// schedulerServiceInternalHandler is the handler whose jobs only its owning
+// service writes (KMSService.RotateKey files kms.grace_period through
+// ScheduleJob). Its jobs are tenant-owned and run bound to that tenant.
+const schedulerServiceInternalHandler = "kms.grace_period"
 
-// schedulerRefuseInternalHandler refuses a scheduler API write that names, or
-// would edit a job of, an internal handler.
-func schedulerRefuseInternalHandler(operation, handler string) error {
-	if !schedulerInternalHandlers[handler] {
+// schedulerRefuseReservedHandler refuses a scheduler API write that names, or
+// would edit a job of, a reserved handler: a platform-owned handler
+// (scheduler.IsPlatformHandler), which acts across every tenant and is
+// scheduled only by its owning service's internal registration, or the
+// service-internal kms.grace_period. It applies to every caller, the system
+// tenant included.
+func schedulerRefuseReservedHandler(operation, handler string) error {
+	if handler != schedulerServiceInternalHandler && !scheduler.IsPlatformHandler(handler) {
 		return nil
 	}
 	return NewError(errors.ErrForbidden, "scheduler."+operation,
