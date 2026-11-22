@@ -18,8 +18,10 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
+	schedulerhandlers "github.com/jeremyhahn/go-quicbaas/pkg/scheduler/handlers"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
@@ -34,6 +36,22 @@ type SchedulerAdapter struct {
 // NewSchedulerAdapter creates a new adapter for the given scheduler engine.
 func NewSchedulerAdapter(s interfaces.SchedulerEngine) *SchedulerAdapter {
 	return &SchedulerAdapter{scheduler: s}
+}
+
+// isSystemSchedulerHandler reports whether handler is one the platform runs
+// for itself: the cross-tenant KMS rotation scan, the KMS grace-period
+// disable, audit cleanup, database compaction and ledger pricing. A tenant
+// cannot create a job naming one, nor point a job at one.
+func isSystemSchedulerHandler(handler string) bool {
+	switch handler {
+	case schedulerhandlers.HandlerKMSRotation,
+		schedulerhandlers.HandlerKMSGracePeriod,
+		schedulerhandlers.HandlerAuditCleanup,
+		schedulerhandlers.HandlerDBCompaction,
+		schedulerhandlers.HandlerLedgerPricing:
+		return true
+	}
+	return false
 }
 
 // ScheduleJob converts the service-level job to a scheduler job and schedules it.
@@ -69,6 +87,12 @@ func (a *SchedulerAdapter) CreateJob(ctx context.Context, req *CreateSchedulerJo
 	tenantID, err := schedulerTenantResolveID(ctx, "CreateJob", req.TargetTenantID)
 	if err != nil {
 		return nil, err
+	}
+	// System handlers act across tenants or on service-managed state, so a
+	// tenant cannot file a job that runs one.
+	if tenantID != "" && isSystemSchedulerHandler(req.Handler) {
+		return nil, NewError(errors.ErrForbidden, "scheduler.CreateJob",
+			"a tenant cannot create a job that runs a system handler")
 	}
 	// A tenant-owned job is filed in its owner's namespace, so naming an
 	// owner is naming a tenant and is held to the same rule.
@@ -145,6 +169,25 @@ func (a *SchedulerAdapter) UpdateJob(ctx context.Context, req *UpdateSchedulerJo
 	if err != nil {
 		return nil, err
 	}
+	if tenantID != "" {
+		if isSystemSchedulerHandler(req.Handler) {
+			return nil, NewError(errors.ErrForbidden, "scheduler.UpdateJob",
+				"a tenant cannot point a job at a system handler")
+		}
+		// A service-managed job filed in the tenant's namespace (the KMS
+		// grace job) keeps the handler, payload and run time the service
+		// gave it; the tenant may still edit its name, labels and the like.
+		if req.Handler != "" || req.Payload != nil || !req.ExecuteAt.IsZero() {
+			current, err := a.scheduler.GetJobWithTenant(ctx, req.JobID, tenantID)
+			if err != nil {
+				return nil, err
+			}
+			if current.Handler == schedulerhandlers.HandlerKMSGracePeriod {
+				return nil, NewError(errors.ErrForbidden, "scheduler.UpdateJob",
+					"the handler, payload and run time of a service-managed job cannot be changed by a tenant")
+			}
+		}
+	}
 
 	// Convert request to scheduler.JobUpdateParams
 	updates := &scheduler.JobUpdateParams{
@@ -208,10 +251,13 @@ func (a *SchedulerAdapter) ListJobs(ctx context.Context, req *ListSchedulerJobsR
 		return nil, err
 	}
 
-	// Convert request to scheduler.JobQuery
+	// Convert request to scheduler.JobQuery. The store picks the namespace by
+	// owner, so the listing reads the caller's own tenant namespace (an
+	// explicit owner_id has already been held to that tenant above); the
+	// system tenant's is "" (the system namespace).
 	query := &scheduler.JobQuery{
 		OwnerType:      scheduler.OwnerType(req.OwnerType),
-		OwnerID:        req.OwnerID,
+		OwnerID:        tenantID,
 		TargetTenantID: targetTenantID,
 		Status:         scheduler.JobStatus(req.Status),
 		Handler:        req.Handler,
@@ -263,6 +309,13 @@ func (a *SchedulerAdapter) TriggerJob(ctx context.Context, req *TriggerScheduler
 	// Enforce tenant access on the returned job
 	if err := schedulerTenantEnforceAccess(tenantID, job.TargetTenantID, "TriggerJob"); err != nil {
 		return nil, err
+	}
+
+	// The KMS service runs a grace job at the deadline it set; a tenant
+	// cannot run it early, as UpdateJob cannot change its run time.
+	if tenantID != "" && job.Handler == schedulerhandlers.HandlerKMSGracePeriod && time.Now().Before(job.ExecuteAt) {
+		return nil, NewError(errors.ErrForbidden, "scheduler.TriggerJob",
+			"a service-managed job cannot be triggered by a tenant before its run time")
 	}
 
 	if err := a.scheduler.TriggerJob(ctx, req.JobID, tenantID); err != nil {
@@ -484,6 +537,12 @@ func (a *SchedulerAdapter) GetCompletedGracePeriodVersions(ctx context.Context, 
 		Status:  scheduler.JobStatusCompleted,
 		Limit:   100,
 	}
+	// A tenant's grace jobs are filed in its own namespace (see RotateKey).
+	ownerID, err := schedulerTenantResolveID(ctx, "grace_period.completed", "")
+	if err != nil {
+		return nil, err
+	}
+	query.OwnerID = ownerID
 
 	jobs, _, err := a.scheduler.ListJobsWithCursor(ctx, query)
 	if err != nil {

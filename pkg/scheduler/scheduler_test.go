@@ -247,7 +247,7 @@ func (m *mockJobStorage) ListJobs(ctx context.Context, query *JobQuery) ([]*Job,
 	return result, "", nil
 }
 
-func (m *mockJobStorage) GetJobsDueForExecution(ctx context.Context, before time.Time, limit int) ([]*Job, error) {
+func (m *mockJobStorage) GetJobsDueForExecution(ctx context.Context, before time.Time, limit int, eligible func(*Job) bool) ([]*Job, error) {
 	m.getJobsDueForExecutionCount.Add(1)
 	m.errMu.RLock()
 	getJobsDueForExecutionErr := m.getJobsDueForExecutionErr
@@ -266,6 +266,9 @@ func (m *mockJobStorage) GetJobsDueForExecution(ctx context.Context, before time
 	var result []*Job
 	for _, job := range m.jobs {
 		if job.Status == JobStatusPending && !job.NextRun.After(before) {
+			if eligible != nil && !eligible(job) {
+				continue
+			}
 			// Return copies to prevent race conditions
 			result = append(result, copyJob(job))
 			if len(result) >= limit {

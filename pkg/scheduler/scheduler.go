@@ -37,7 +37,10 @@ type JobStorage interface {
 	UpdateJob(ctx context.Context, job *Job) error
 	DeleteJob(ctx context.Context, id uint64, tenantID string) error
 	ListJobs(ctx context.Context, query *JobQuery) ([]*Job, string, error)
-	GetJobsDueForExecution(ctx context.Context, before time.Time, limit int) ([]*Job, error)
+	// GetJobsDueForExecution returns up to limit Pending jobs whose NextRun is
+	// before the given time. A nil eligible admits every job; a job eligible
+	// rejects is skipped and does not count against limit.
+	GetJobsDueForExecution(ctx context.Context, before time.Time, limit int, eligible func(*Job) bool) ([]*Job, error)
 	SaveExecution(ctx context.Context, exec *JobExecution) error
 	GetExecutions(ctx context.Context, jobID uint64, tenantID string, limit int) ([]*JobExecution, error)
 
@@ -1131,7 +1134,7 @@ func (s *SchedulerEngine) processDueJobs(ctx context.Context) {
 	storageCtx, cancel := context.WithTimeout(ctx, s.config.DefaultTimeout)
 	defer cancel()
 
-	jobs, err := s.storage.GetJobsDueForExecution(storageCtx, now, s.config.MaxConcurrentJobs)
+	jobs, err := s.storage.GetJobsDueForExecution(storageCtx, now, s.config.MaxConcurrentJobs, s.runnableHere)
 	if err != nil {
 		s.logError(sweepLogPrefix+" failed: component=scheduler error=%q", err.Error())
 		s.storageErrors.Add(1)
@@ -1285,6 +1288,12 @@ func (s *SchedulerEngine) shouldExecute(job *Job) bool {
 	return true
 }
 
+// runnableHere reports whether this node may ever run job. It looks at
+// node affinity only; leadership is left to shouldExecute.
+func (s *SchedulerEngine) runnableHere(job *Job) bool {
+	return job.NodeAffinity == "" || s.nodeID == "" || job.NodeAffinity == s.nodeID
+}
+
 // triggerRequest is one queued manual trigger: the job, the scope it was
 // resolved in, and — for a stranded-firing repair — the firing it is bound
 // to. See TriggerJob for the scope and RetriggerStrandedFiring for the
@@ -1424,6 +1433,7 @@ func (s *SchedulerEngine) executeJob(ctx context.Context, job *Job, claimedFirin
 		JobID:     job.ID,
 		Status:    JobStatusRunning,
 		StartedAt: time.Now(),
+		TenantID:  JobTenantID(job),
 	}
 
 	// Determine timeout
