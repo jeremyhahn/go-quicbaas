@@ -14,14 +14,20 @@ import (
 type launchRecorder struct {
 	ContainerRuntime // nil: only the methods below are used
 
-	mu      sync.Mutex
-	specs   []*ContainerSpec
-	runErr  error
-	stopped []string
-	removed []string
+	mu        sync.Mutex
+	specs     []*ContainerSpec
+	runErr    error
+	stopErr   error  // returned by Stop after recording
+	removeErr error  // returned by Remove after recording
+	onRun     func() // called first in Run and RunInteractive when set
+	stopped   []string
+	removed   []string
 }
 
 func (r *launchRecorder) Run(_ context.Context, spec *ContainerSpec) (string, error) {
+	if r.onRun != nil {
+		r.onRun()
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.specs = append(r.specs, spec)
@@ -32,6 +38,9 @@ func (r *launchRecorder) Run(_ context.Context, spec *ContainerSpec) (string, er
 }
 
 func (r *launchRecorder) RunInteractive(_ context.Context, spec *ContainerSpec) (*InteractiveProcess, error) {
+	if r.onRun != nil {
+		r.onRun()
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.specs = append(r.specs, spec)
@@ -42,13 +51,17 @@ func (r *launchRecorder) RunInteractive(_ context.Context, spec *ContainerSpec) 
 }
 
 func (r *launchRecorder) Stop(_ context.Context, id string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.stopped = append(r.stopped, id)
-	return nil
+	return r.stopErr
 }
 
 func (r *launchRecorder) Remove(_ context.Context, id string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.removed = append(r.removed, id)
-	return nil
+	return r.removeErr
 }
 
 func newTestVolumeRuntime(t *testing.T) (*VolumeRuntime, *launchRecorder, *fakeVolumeProvider, string) {
@@ -255,5 +268,223 @@ func TestContainerSpecValidateRefusesUnresolvedVolumes(t *testing.T) {
 	spec.Volumes = nil
 	if err := spec.Validate(); err != nil {
 		t.Errorf("Validate without volumes = %v", err)
+	}
+}
+
+func wrapInVolumeRuntime(t *testing.T, inner ContainerRuntime) *VolumeRuntime {
+	t.Helper()
+	att, err := NewVolumeAttacher(newFakeVolumeProvider(), "node-1", t.TempDir())
+	if err != nil {
+		t.Fatalf("NewVolumeAttacher: %v", err)
+	}
+	vr, err := NewVolumeRuntime(inner, att)
+	if err != nil {
+		t.Fatalf("NewVolumeRuntime: %v", err)
+	}
+	return vr
+}
+
+func TestRuntimeAsWalksTheWrapperChain(t *testing.T) {
+	inner := &pinningContainerRuntime{mockContainerRuntime: &mockContainerRuntime{available: true}}
+	vr := wrapInVolumeRuntime(t, inner)
+	if got, ok := RuntimeAs[pinVerifyingRuntime](vr); !ok || got != pinVerifyingRuntime(inner) {
+		t.Errorf("RuntimeAs[pinVerifyingRuntime] = %v, %v; want the inner runtime", got, ok)
+	}
+	if _, ok := RuntimeAs[ImageLister](vr); ok {
+		t.Error("RuntimeAs[ImageLister] found a capability neither runtime has")
+	}
+	if got, ok := RuntimeAs[*VolumeRuntime](vr); !ok || got != vr {
+		t.Errorf("RuntimeAs[*VolumeRuntime] = %v, %v; want the wrapper itself", got, ok)
+	}
+	if _, ok := RuntimeAs[ImageLister](nil); ok {
+		t.Error("RuntimeAs over nil reported a capability")
+	}
+}
+
+func TestVolumeRuntimeKeepsTrustCapabilities(t *testing.T) {
+	pinning := wrapInVolumeRuntime(t, &pinningContainerRuntime{mockContainerRuntime: &mockContainerRuntime{available: true}})
+	if got := runtimeTrustCapabilities(pinning); got != (TrustCapabilities{DigestPinning: true}) {
+		t.Errorf("pinning runtime behind the wrapper: %+v, want digest pinning", got)
+	}
+	attesting := &attestingContainerRuntime{mockContainerRuntime: &mockContainerRuntime{available: true}}
+	if got := runtimeTrustCapabilities(wrapInVolumeRuntime(t, attesting)); got != attesting.TrustCapabilities() {
+		t.Errorf("attesting runtime behind the wrapper: %+v, want %+v", got, attesting.TrustCapabilities())
+	}
+}
+
+// A container that exited under --rm is already gone: its volumes are still
+// released, the not-found error is kept, and a release failure is returned
+// alone so a caller treating not-found as success still sees it.
+func TestVolumeRuntimeReleasesAfterContainerAlreadyGone(t *testing.T) {
+	ctx := context.Background()
+	vr, inner, prov, _ := newTestVolumeRuntime(t)
+	id, err := vr.Run(ctx, volumeSpec())
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	inner.removeErr = &ContainerNotFoundError{ContainerID: id}
+	var notFound *ContainerNotFoundError
+	if err := vr.Remove(ctx, id); !errors.As(err, &notFound) {
+		t.Errorf("Remove = %v, want the not-found error", err)
+	}
+	if got := countCalls(prov.calls, "detach "); got != 2 {
+		t.Errorf("detaches = %d, want 2 (calls %v)", got, prov.calls)
+	}
+	if got := vr.Attached(id); len(got) != 0 {
+		t.Errorf("Attached = %v, want none", got)
+	}
+
+	p, err := vr.RunInteractive(ctx, volumeSpec())
+	if err != nil {
+		t.Fatalf("RunInteractive: %v", err)
+	}
+	inner.stopErr = &ContainerNotFoundError{ContainerID: p.ContainerID}
+	if err := vr.Stop(ctx, p.ContainerID); !errors.As(err, &notFound) {
+		t.Errorf("Stop = %v, want the not-found error", err)
+	}
+	if got := countCalls(prov.calls, "detach "); got != 4 {
+		t.Errorf("detaches = %d, want 4", got)
+	}
+	if got := vr.Attached(p.ContainerID); len(got) != 0 {
+		t.Errorf("Attached = %v, want none", got)
+	}
+
+	spec := volumeSpec()
+	spec.Name = "third"
+	id, err = vr.Run(ctx, spec)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	busy := errors.New("busy")
+	inner.removeErr = &ContainerNotFoundError{ContainerID: id}
+	prov.failOn["detach data"] = busy
+	err = vr.Remove(ctx, id)
+	if !errors.Is(err, busy) || errors.As(err, &notFound) {
+		t.Errorf("Remove = %v, want the release failure alone", err)
+	}
+}
+
+func TestVolumeRuntimeRetriesAFailedRelease(t *testing.T) {
+	ctx := context.Background()
+	vr, _, prov, _ := newTestVolumeRuntime(t)
+	id, err := vr.Run(ctx, volumeSpec())
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	busy := errors.New("busy")
+	prov.failOn["unmount data"] = busy
+	if err := vr.Stop(ctx, id); !errors.Is(err, busy) {
+		t.Fatalf("Stop = %v, want busy", err)
+	}
+	if held := vr.Attached(id); len(held) != 1 || held[0].VolumeID != "data" {
+		t.Fatalf("Attached after a failed release = %+v, want only data", held)
+	}
+	delete(prov.failOn, "unmount data")
+	if err := vr.Remove(ctx, id); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	if got := countCalls(prov.calls, "unmount data"); got != 2 {
+		t.Errorf("unmount data = %d, want 2", got)
+	}
+	if got := countCalls(prov.calls, "detach logs"); got != 1 {
+		t.Errorf("detach logs = %d, want 1", got)
+	}
+	if held := vr.Attached(id); len(held) != 0 {
+		t.Errorf("Attached = %+v, want none", held)
+	}
+}
+
+// gateUnmountProvider holds the first Unmount until the gate opens.
+type gateUnmountProvider struct {
+	*fakeVolumeProvider
+	entered chan struct{}
+	gate    chan struct{}
+}
+
+func (p gateUnmountProvider) Unmount(ctx context.Context, id, host string) error {
+	select {
+	case p.entered <- struct{}{}:
+	default:
+	}
+	<-p.gate
+	return p.fakeVolumeProvider.Unmount(ctx, id, host)
+}
+
+func TestVolumeRuntimeConcurrentTeardownReleasesOnce(t *testing.T) {
+	ctx := context.Background()
+	prov := newFakeVolumeProvider()
+	gp := gateUnmountProvider{prov, make(chan struct{}, 1), make(chan struct{})}
+	att, err := NewVolumeAttacher(gp, "node-1", t.TempDir())
+	if err != nil {
+		t.Fatalf("NewVolumeAttacher: %v", err)
+	}
+	vr, err := NewVolumeRuntime(&launchRecorder{}, att)
+	if err != nil {
+		t.Fatalf("NewVolumeRuntime: %v", err)
+	}
+	id, err := vr.Run(ctx, volumeSpec())
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); _ = vr.Stop(ctx, id) }()
+	go func() { defer wg.Done(); _ = vr.Remove(ctx, id) }()
+	<-gp.entered
+	close(gp.gate)
+	wg.Wait()
+	if got := countCalls(prov.calls, "unmount "); got != 2 {
+		t.Errorf("unmounts = %d, want 2 (calls %v)", got, prov.calls)
+	}
+	if got := countCalls(prov.calls, "detach "); got != 2 {
+		t.Errorf("detaches = %d, want 2 (calls %v)", got, prov.calls)
+	}
+}
+
+func TestVolumeRuntimeRollbackSurvivesCancelledLaunch(t *testing.T) {
+	vr, inner, prov, _ := newTestVolumeRuntime(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	inner.onRun = cancel
+	inner.runErr = context.Canceled
+	_, err := vr.Run(ctx, volumeSpec())
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run = %v, want context.Canceled", err)
+	}
+	if strings.Contains(err.Error(), "release volumes after failed start") {
+		t.Errorf("the rollback failed: %v", err)
+	}
+	if got := countCalls(prov.calls, "unmount "); got != 2 {
+		t.Errorf("unmounts = %d, want 2 (calls %v)", got, prov.calls)
+	}
+	if got := countCalls(prov.calls, "detach "); got != 2 {
+		t.Errorf("detaches = %d, want 2 (calls %v)", got, prov.calls)
+	}
+	if len(vr.pending) != 0 {
+		t.Errorf("pending = %+v, want none", vr.pending)
+	}
+}
+
+func TestVolumeRuntimeRetriesPendingRollback(t *testing.T) {
+	ctx := context.Background()
+	vr, inner, prov, _ := newTestVolumeRuntime(t)
+	inner.runErr = errors.New("boom")
+	prov.failOn["detach data"] = errors.New("busy")
+	if _, err := vr.Run(ctx, volumeSpec()); err == nil {
+		t.Fatal("Run = nil error, want the runtime's")
+	}
+	if len(vr.pending) != 1 || vr.pending[0].VolumeID != "data" {
+		t.Fatalf("pending = %+v, want data", vr.pending)
+	}
+	delete(prov.failOn, "detach data")
+	inner.runErr = nil
+	if _, err := vr.Run(ctx, volumeSpec()); err != nil {
+		t.Fatalf("second Run: %v", err)
+	}
+	if len(vr.pending) != 0 {
+		t.Errorf("pending = %+v, want none", vr.pending)
+	}
+	if got := countCalls(prov.calls, "detach data"); got != 2 {
+		t.Errorf("detach data = %d, want 2 (calls %v)", got, prov.calls)
 	}
 }

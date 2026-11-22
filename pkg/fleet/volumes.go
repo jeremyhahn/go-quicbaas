@@ -22,8 +22,9 @@ type VolumeConfig struct {
 	// Settings are the provider's snake_case settings.
 	Settings map[string]string `json:"settings,omitempty" yaml:"settings,omitempty"`
 
-	// NodeID is this node's identity to the provider. Empty means the host
-	// name.
+	// NodeID is this node's identity to the attacher and, for the local
+	// provider, to the provider (as its node_id setting). Empty means
+	// settings.node_id, then the host name. settings.node_id must not differ.
 	NodeID string `json:"node_id,omitempty" yaml:"node_id,omitempty"`
 
 	// StagingDir is the absolute directory filesystem volumes are mounted
@@ -49,7 +50,15 @@ func WrapVolumeRuntime(cfg VolumeConfig, inner orchestration.ContainerRuntime) (
 	if !cfg.Enabled() || inner == nil {
 		return inner, nil
 	}
+	settingsNode := cfg.Settings["node_id"]
+	if cfg.NodeID != "" && settingsNode != "" && settingsNode != cfg.NodeID {
+		return nil, fmt.Errorf("%w: fleet volumes: node_id %q and settings.node_id %q differ",
+			orchestration.ErrVolumeInvalidArgument, cfg.NodeID, settingsNode)
+	}
 	node := cfg.NodeID
+	if node == "" {
+		node = settingsNode
+	}
 	if node == "" {
 		h, err := hostname()
 		if err != nil {
@@ -64,7 +73,17 @@ func WrapVolumeRuntime(cfg VolumeConfig, inner orchestration.ContainerRuntime) (
 	if staging == "" {
 		staging = DefaultVolumeStagingDir
 	}
-	provider, err := newVolumeProvider(cfg.Provider, cfg.Settings)
+	settings := cfg.Settings
+	if cfg.Provider == "local" {
+		// The local provider refuses Attach for any node but its own, which it
+		// otherwise takes from the host name: give it the attacher's identity.
+		settings = make(map[string]string, len(cfg.Settings)+1)
+		for k, v := range cfg.Settings {
+			settings[k] = v
+		}
+		settings["node_id"] = node
+	}
+	provider, err := newVolumeProvider(cfg.Provider, settings)
 	if err != nil {
 		return nil, fmt.Errorf("fleet volumes: %w", err)
 	}

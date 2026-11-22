@@ -40,7 +40,7 @@ The fleet node agent enables volumes with a `volumes` block in its config
 volumes:
   provider: local          # or drbd in a build with the drbd tag
   settings: {}             # the provider's snake_case settings
-  node_id: ""              # default: the host name
+  node_id: ""              # default: settings.node_id, then the host name; given to the local provider too
   staging_dir: ""          # default: DefaultVolumeStagingDir
 ```
 
@@ -52,6 +52,18 @@ launch digest is taken over that resolved spec. Volumes are released in reverse
 order when the container stops, is removed or fails to start, and a failed
 attach rolls back the claims already attached. A node without a volume
 provider refuses any spec that still carries claims.
+
+The wrapper keeps the wrapped runtime's capabilities (image listing, the
+orphan sweep, the reaper, trust tiers): callers find them through
+`RuntimeAs`, and the reaper still removes through the wrapper. Its teardown
+releases volumes even when the container is already gone (an interactive
+container runs with `--rm`) and keeps whatever failed to release for the next
+Stop or Remove. A rollback runs on a bounded context of its own, so a
+cancelled launch still releases; what it cannot release is retried before the
+next launch. After mounting a writable claim on an existing volume, the agent
+re-runs Resize at the volume's size, so a filesystem grow left undone while
+unmounted (XFS grows only mounted) completes. A `node_id` that differs from
+`settings.node_id` is refused at startup.
 
 ## Raw devices and the broker class
 

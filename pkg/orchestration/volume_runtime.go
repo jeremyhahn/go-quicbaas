@@ -21,14 +21,30 @@ import (
 // Raw claims (no FSType) are passed through as devices at their Target, which
 // only a PrivilegeClassBroker spec may have; any other spec's raw claim is
 // refused with ErrDevicePassthroughDenied before anything is provisioned.
+//
+// Optional capabilities of the wrapped runtime (image listing, the orphan
+// sweep, the reaper's listing, trust tiers) are found through RuntimeAs, not
+// by type assertion on the wrapper.
 type VolumeRuntime struct {
 	ContainerRuntime
 
 	attacher *VolumeAttacher
 
 	mu       sync.Mutex
-	attached map[string][]AttachedVolume // container ID -> volumes
+	attached map[string]*volumeRecord // container ID -> volumes still held
+	// pending holds volumes a failed launch's rollback could not release; they
+	// are retried before the next volume launch.
+	pending []AttachedVolume
 }
+
+// volumeRecord is one container's held volumes. Its own mutex serialises
+// concurrent teardowns of that container, so a volume is never released twice.
+type volumeRecord struct {
+	mu   sync.Mutex
+	vols []AttachedVolume
+}
+
+var _ RuntimeUnwrapper = (*VolumeRuntime)(nil)
 
 // NewVolumeRuntime wraps inner with the attacher's volumes.
 func NewVolumeRuntime(inner ContainerRuntime, attacher *VolumeAttacher) (*VolumeRuntime, error) {
@@ -41,9 +57,12 @@ func NewVolumeRuntime(inner ContainerRuntime, attacher *VolumeAttacher) (*Volume
 	return &VolumeRuntime{
 		ContainerRuntime: inner,
 		attacher:         attacher,
-		attached:         make(map[string][]AttachedVolume),
+		attached:         make(map[string]*volumeRecord),
 	}, nil
 }
+
+// Unwrap returns the runtime this one wraps.
+func (r *VolumeRuntime) Unwrap() ContainerRuntime { return r.ContainerRuntime }
 
 // Attacher returns the runtime's volume attacher.
 func (r *VolumeRuntime) Attacher() *VolumeAttacher { return r.attacher }
@@ -85,25 +104,42 @@ func (r *VolumeRuntime) RunInteractive(ctx context.Context, spec *ContainerSpec)
 
 // Stop stops the container, then releases its volumes.
 func (r *VolumeRuntime) Stop(ctx context.Context, containerID string) error {
-	if err := r.ContainerRuntime.Stop(ctx, containerID); err != nil {
-		return err
-	}
-	return r.release(ctx, containerID)
+	return r.teardown(ctx, containerID, r.ContainerRuntime.Stop(ctx, containerID))
 }
 
 // Remove removes the container, then releases its volumes if Stop has not.
 func (r *VolumeRuntime) Remove(ctx context.Context, containerID string) error {
-	if err := r.ContainerRuntime.Remove(ctx, containerID); err != nil {
+	return r.teardown(ctx, containerID, r.ContainerRuntime.Remove(ctx, containerID))
+}
+
+// teardown releases the container's volumes after the inner Stop or Remove
+// returned err. An interactive container runs with --rm, so one that exited by
+// itself is already gone and the inner call reports it not found: its volumes
+// are still released then. A release failure is returned alone, not joined
+// with the not-found error, so a caller that treats not-found as success
+// still sees it; when the release succeeds the inner error is returned as is.
+func (r *VolumeRuntime) teardown(ctx context.Context, containerID string, err error) error {
+	var notFound *ContainerNotFoundError
+	if err != nil && !errors.As(err, &notFound) {
 		return err
 	}
-	return r.release(ctx, containerID)
+	if rerr := r.release(ctx, containerID); rerr != nil {
+		return rerr
+	}
+	return err
 }
 
 // Attached returns the volumes held for a running container.
 func (r *VolumeRuntime) Attached(containerID string) []AttachedVolume {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	return append([]AttachedVolume(nil), r.attached[containerID]...)
+	rec := r.attached[containerID]
+	r.mu.Unlock()
+	if rec == nil {
+		return nil
+	}
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	return append([]AttachedVolume(nil), rec.vols...)
 }
 
 func (r *VolumeRuntime) attach(ctx context.Context, spec *ContainerSpec) (*ContainerSpec, []AttachedVolume, error) {
@@ -113,8 +149,10 @@ func (r *VolumeRuntime) attach(ctx context.Context, spec *ContainerSpec) (*Conta
 				ErrDevicePassthroughDenied, c.Name, PrivilegeClassBroker)
 		}
 	}
-	vols, err := r.attacher.Attach(ctx, spec.Volumes)
+	r.retryPending(ctx)
+	vols, held, err := r.attacher.attach(ctx, spec.Volumes)
 	if err != nil {
+		r.addPending(held)
 		return nil, nil, err
 	}
 	resolved := *spec
@@ -126,26 +164,73 @@ func (r *VolumeRuntime) attach(ctx context.Context, spec *ContainerSpec) (*Conta
 	return &resolved, vols, nil
 }
 
+// releaseAfter rolls a failed start back on a context of its own, since the
+// start may have failed because its context was cancelled.
 func (r *VolumeRuntime) releaseAfter(ctx context.Context, cause error, vols []AttachedVolume) error {
-	if err := r.attacher.Release(ctx, vols); err != nil {
+	cctx, cancel := cleanupContext(ctx)
+	defer cancel()
+	held, err := r.attacher.release(cctx, vols)
+	r.addPending(held)
+	if err != nil {
 		return errors.Join(cause, fmt.Errorf("release volumes after failed start: %w", err))
 	}
 	return cause
 }
 
+// retryPending retries the volumes an earlier rollback could not release. Its
+// errors are dropped: the launch that left them already returned that error.
+func (r *VolumeRuntime) retryPending(ctx context.Context) {
+	r.mu.Lock()
+	vols := r.pending
+	r.pending = nil
+	r.mu.Unlock()
+	if len(vols) == 0 {
+		return
+	}
+	cctx, cancel := cleanupContext(ctx)
+	defer cancel()
+	held, _ := r.attacher.release(cctx, vols)
+	r.addPending(held)
+}
+
+func (r *VolumeRuntime) addPending(vols []AttachedVolume) {
+	if len(vols) == 0 {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.pending = append(r.pending, vols...)
+}
+
 func (r *VolumeRuntime) track(id string, vols []AttachedVolume) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.attached[id] = vols
+	r.attached[id] = &volumeRecord{vols: vols}
 }
 
+// release releases what is still held for the container. What fails to
+// release stays on its record for the next Stop or Remove; the record goes
+// once nothing is held.
 func (r *VolumeRuntime) release(ctx context.Context, id string) error {
 	r.mu.Lock()
-	vols, ok := r.attached[id]
-	delete(r.attached, id)
+	rec := r.attached[id]
 	r.mu.Unlock()
-	if !ok {
+	if rec == nil {
 		return nil
 	}
-	return r.attacher.Release(ctx, vols)
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if len(rec.vols) == 0 {
+		return nil // a concurrent teardown finished it
+	}
+	remaining, err := r.attacher.release(ctx, rec.vols)
+	rec.vols = remaining
+	if len(remaining) == 0 {
+		r.mu.Lock()
+		if r.attached[id] == rec {
+			delete(r.attached, id)
+		}
+		r.mu.Unlock()
+	}
+	return err
 }

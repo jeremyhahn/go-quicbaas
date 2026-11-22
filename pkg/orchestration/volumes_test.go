@@ -5,9 +5,11 @@ import (
 	"errors"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	bscommon "github.com/jeremyhahn/go-blockstore/pkg/common"
+	bslocal "github.com/jeremyhahn/go-blockstore/pkg/local"
 )
 
 // fakeVolumeProvider is an in-memory go-blockstore VolumeProvider that records
@@ -44,16 +46,24 @@ func (f *fakeVolumeProvider) Attach(_ context.Context, id string, node bscommon.
 	return bscommon.AttachInfo{DevicePath: f.devPrefix + id, Node: node}, nil
 }
 
-func (f *fakeVolumeProvider) Detach(_ context.Context, id string, _ bscommon.NodeID) error {
-	return f.record("detach", id)
+// Detach and Unmount fail on a done context, as the real ones do, so a
+// cleanup run on a cancelled launch context fails visibly.
+func (f *fakeVolumeProvider) Detach(ctx context.Context, id string, _ bscommon.NodeID) error {
+	if err := f.record("detach", id); err != nil {
+		return err
+	}
+	return ctx.Err()
 }
 
 func (f *fakeVolumeProvider) Mount(_ context.Context, id, _ string, _ bscommon.MountOptions) error {
 	return f.record("mount", id)
 }
 
-func (f *fakeVolumeProvider) Unmount(_ context.Context, id, _ string) error {
-	return f.record("unmount", id)
+func (f *fakeVolumeProvider) Unmount(ctx context.Context, id, _ string) error {
+	if err := f.record("unmount", id); err != nil {
+		return err
+	}
+	return ctx.Err()
 }
 
 func (f *fakeVolumeProvider) Resize(_ context.Context, id string, n int64) error {
@@ -388,5 +398,130 @@ func TestNewVolumeProvider(t *testing.T) {
 	}
 	if _, err := NewVolumeProvider("local", map[string]string{"no_such_key": "x"}); err == nil {
 		t.Fatal("unknown settings key: want an error")
+	}
+}
+
+// cancelOnMountProvider cancels the launch context when the second volume
+// mounts, as a launch cancelled part way does.
+type cancelOnMountProvider struct {
+	*fakeVolumeProvider
+	cancel context.CancelFunc
+}
+
+func (p cancelOnMountProvider) Mount(ctx context.Context, id, host string, o bscommon.MountOptions) error {
+	if id == "second" {
+		_ = p.record("mount", id)
+		p.cancel()
+		return context.Canceled
+	}
+	return p.fakeVolumeProvider.Mount(ctx, id, host, o)
+}
+
+// A rollback after a cancelled launch runs on its own context, so it still
+// unmounts and detaches.
+func TestVolumeAttacherAttachRollbackSurvivesCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	p := newFakeVolumeProvider()
+	a := newTestAttacher(t, cancelOnMountProvider{p, cancel})
+	_, err := a.Attach(ctx, []VolumeClaim{
+		{Name: "first", SizeBytes: 10, FSType: "ext4", Target: "/a"},
+		{Name: "second", SizeBytes: 10, FSType: "ext4", Target: "/b"},
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Attach = %v, want context.Canceled", err)
+	}
+	if strings.Contains(err.Error(), "release after failed attach") {
+		t.Errorf("the rollback failed: %v", err)
+	}
+	for _, want := range []string{"unmount first", "detach first", "detach second"} {
+		if countCalls(p.calls, want) != 1 {
+			t.Errorf("calls %v lack %q", p.calls, want)
+		}
+	}
+}
+
+// A grow of an existing volume is finished after mounting (XFS grows only
+// mounted), on every launch, and not for a read-only claim.
+func TestVolumeAttacherGrowsFilesystemAfterMount(t *testing.T) {
+	ctx := context.Background()
+	p := newFakeVolumeProvider()
+	p.sizes["data"] = 100
+	a := newTestAttacher(t, p)
+	claim := VolumeClaim{Name: "data", SizeBytes: 200, FSType: "xfs", Target: "/d"}
+	vols, err := a.Attach(ctx, []VolumeClaim{claim})
+	if err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	want := []string{"resize data", "attach data", "mount data", "resize data"}
+	if !reflect.DeepEqual(p.calls, want) || p.sizes["data"] != 200 {
+		t.Fatalf("calls = %v (size %d), want %v (size 200)", p.calls, p.sizes["data"], want)
+	}
+	if err := a.Release(ctx, vols); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+	want = append(want, "unmount data", "detach data", "attach data", "mount data", "resize data")
+	if vols, err = a.Attach(ctx, []VolumeClaim{claim}); err != nil {
+		t.Fatalf("second Attach: %v", err)
+	}
+	if !reflect.DeepEqual(p.calls, want) {
+		t.Fatalf("calls = %v, want %v", p.calls, want)
+	}
+	if err := a.Release(ctx, vols); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+	claim.ReadOnly = true
+	if _, err := a.Attach(ctx, []VolumeClaim{claim}); err != nil {
+		t.Fatalf("read-only Attach: %v", err)
+	}
+	if got := countCalls(p.calls, "resize "); got != 3 {
+		t.Errorf("resizes = %d, want 3: a read-only claim is not grown (calls %v)", got, p.calls)
+	}
+}
+
+// attachedResizeRefuser refuses Resize while attached, as the local provider
+// does for an encrypted volume.
+type attachedResizeRefuser struct{ *fakeVolumeProvider }
+
+func (p attachedResizeRefuser) Resize(_ context.Context, id string, _ int64) error {
+	_ = p.record("resize", id)
+	return bslocal.ErrResizeWhileAttached
+}
+
+// The local provider refuses any Resize of an attached encrypted volume; the
+// grow after mount then does not fail the launch.
+func TestVolumeAttacherToleratesAttachedResizeRefusal(t *testing.T) {
+	p := newFakeVolumeProvider()
+	p.sizes["data"] = 200
+	a := newTestAttacher(t, attachedResizeRefuser{p})
+	if _, err := a.Attach(context.Background(), []VolumeClaim{{Name: "data", SizeBytes: 200, FSType: "xfs", Target: "/d"}}); err != nil {
+		t.Fatalf("Attach = %v, want the refusal tolerated", err)
+	}
+	if got := countCalls(p.calls, "resize data"); got != 1 {
+		t.Errorf("resizes = %d, want 1 (calls %v)", got, p.calls)
+	}
+}
+
+// release reports what it could not release, in order: a volume still mounted
+// as it was, one that only failed to detach without its HostPath.
+func TestVolumeAttacherReleaseReportsHeldVolumes(t *testing.T) {
+	p := newFakeVolumeProvider()
+	p.failOn["unmount a"] = errors.New("busy")
+	p.failOn["detach b"] = errors.New("busy")
+	a := newTestAttacher(t, p)
+	vols := []AttachedVolume{
+		{Claim: VolumeClaim{Name: "a"}, VolumeID: "a", HostPath: "/s/a"},
+		{Claim: VolumeClaim{Name: "b"}, VolumeID: "b", HostPath: "/s/b"},
+		{Claim: VolumeClaim{Name: "c"}, VolumeID: "c"},
+	}
+	held, err := a.release(context.Background(), vols)
+	if err == nil {
+		t.Fatal("release = nil error, want the failures")
+	}
+	if len(held) != 2 || held[0].VolumeID != "a" || held[1].VolumeID != "b" {
+		t.Fatalf("held = %+v, want a then b", held)
+	}
+	if held[0].HostPath != "/s/a" || held[1].HostPath != "" {
+		t.Errorf("held host paths = %q, %q; want /s/a and empty", held[0].HostPath, held[1].HostPath)
 	}
 }

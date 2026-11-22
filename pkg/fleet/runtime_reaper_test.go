@@ -158,3 +158,72 @@ func TestConfig_GoBuildCacheDefaultsUnderTheWorkDir(t *testing.T) {
 		t.Fatalf("Validate = %v, want the allowlist overlap refused", err)
 	}
 }
+
+// capableContainerRuntime adds the orphan sweep and image listing to a
+// reapable runtime.
+type capableContainerRuntime struct {
+	listingContainerRuntime
+	swept  []string
+	images []string
+}
+
+func (c *capableContainerRuntime) SweepOwned(_ context.Context, owner string) (orchestration.ContainerSweep, error) {
+	c.swept = append(c.swept, owner)
+	return orchestration.ContainerSweep{Owner: owner}, nil
+}
+
+func (c *capableContainerRuntime) ListImages(context.Context) ([]string, error) {
+	return c.images, nil
+}
+
+// TestRuntime_VolumeRuntimeKeepsOptionalCapabilities: wrapped in a
+// VolumeRuntime, the node's runtime still lists images, sweeps orphans and is
+// reaped, and the reaper removes through the wrapper. Not parallel:
+// volumes_test.go stubs package variables.
+func TestRuntime_VolumeRuntimeKeepsOptionalCapabilities(t *testing.T) {
+	ctx := context.Background()
+	workDir := t.TempDir()
+	inner := &capableContainerRuntime{images: []string{"img:1"}}
+	inner.available = true
+	inner.containers = []orchestration.OwnedContainer{{ID: "orphan", CreatedAt: time.Now().Add(-time.Hour), SessionID: "ses-gone"}}
+	att, err := orchestration.NewVolumeAttacher(nopVolumeProvider{}, "n", t.TempDir())
+	if err != nil {
+		t.Fatalf("NewVolumeAttacher: %v", err)
+	}
+	vr, err := orchestration.NewVolumeRuntime(inner, att)
+	if err != nil {
+		t.Fatalf("NewVolumeRuntime: %v", err)
+	}
+	runtime, err := NewRuntime(RuntimeConfig{
+		Backends:         map[string]orchestration.AgentBackend{"mock": &mockBackend{}},
+		ContainerRuntime: vr,
+		Logger:           &testLogger{t: t},
+		WorkDir:          workDir,
+	})
+	if err != nil {
+		t.Fatalf("NewRuntime: %v", err)
+	}
+	if got := runtime.Images(ctx); len(got) != 1 || got[0] != "img:1" {
+		t.Errorf("Images = %v, want [img:1]", got)
+	}
+	if _, err := runtime.SweepOrphanContainers(ctx); err != nil {
+		t.Fatalf("SweepOrphanContainers: %v", err)
+	}
+	if len(inner.swept) != 1 || inner.swept[0] != workDir {
+		t.Errorf("swept owners = %v, want the work directory", inner.swept)
+	}
+	reaper, err := runtime.ContainerReaper(time.Minute)
+	if err != nil || reaper == nil {
+		t.Fatalf("ContainerReaper = %v, %v; want a reaper", reaper, err)
+	}
+	sweep, err := reaper.Reap(ctx)
+	if err != nil {
+		t.Fatalf("Reap: %v", err)
+	}
+	if len(sweep.Removed) != 1 || sweep.Removed[0] != "orphan" {
+		t.Errorf("reaped %v, want the orphan", sweep.Removed)
+	}
+	if len(inner.removed) != 1 || inner.removed[0] != "orphan" {
+		t.Errorf("inner removed %v, want the orphan", inner.removed)
+	}
+}

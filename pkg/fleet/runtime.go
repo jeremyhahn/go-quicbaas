@@ -808,7 +808,7 @@ func (r *Runtime) Close(ctx context.Context, backendName, sessionID string) erro
 // cannot list them or the listing failed. Nil means "not reported", which the
 // control plane reads as unknown rather than as a host with no images.
 func (r *Runtime) Images(ctx context.Context) []string {
-	lister, ok := r.containerRuntime.(orchestration.ImageLister)
+	lister, ok := orchestration.RuntimeAs[orchestration.ImageLister](r.containerRuntime)
 	if !ok {
 		return nil
 	}
@@ -928,7 +928,7 @@ func (r *Runtime) ensureImage(ctx context.Context, image string) error {
 	if r.containerRuntime == nil {
 		return nil
 	}
-	if inspector, ok := r.containerRuntime.(imageInspector); ok {
+	if inspector, ok := orchestration.RuntimeAs[imageInspector](r.containerRuntime); ok {
 		_, err := inspector.InspectImage(ctx, image)
 		if err == nil {
 			return nil
@@ -961,7 +961,7 @@ func (r *Runtime) SweepOrphanContainers(ctx context.Context) (orchestration.Cont
 	if r.containerRuntime == nil || r.workDir == "" {
 		return orchestration.ContainerSweep{}, nil
 	}
-	sweeper, ok := r.containerRuntime.(orchestration.ContainerOwnerSweeper)
+	sweeper, ok := orchestration.RuntimeAs[orchestration.ContainerOwnerSweeper](r.containerRuntime)
 	if !ok {
 		return orchestration.ContainerSweep{}, nil
 	}
@@ -977,17 +977,30 @@ func (r *Runtime) ContainerReaper(grace time.Duration) (*orchestration.Container
 	if r.containerRuntime == nil || r.workDir == "" {
 		return nil, nil
 	}
-	lister, ok := r.containerRuntime.(orchestration.OwnedContainerLister)
+	lister, ok := orchestration.RuntimeAs[orchestration.OwnedContainerLister](r.containerRuntime)
 	if !ok {
 		return nil, nil
 	}
 	return orchestration.NewContainerReaper(orchestration.ContainerReaperConfig{
-		Runtime: lister,
+		Runtime: ownedListerVia{OwnedContainerLister: lister, rt: r.containerRuntime},
 		Owner:   r.workDir,
 		Live:    r.HoldsSession,
 		Grace:   grace,
 		Logger:  r.logger,
 	})
+}
+
+// ownedListerVia lists through the runtime that can, removes through the
+// outermost runtime: a VolumeRuntime wrapping the lister then still releases
+// a reaped container's volumes.
+type ownedListerVia struct {
+	orchestration.OwnedContainerLister
+	rt orchestration.ContainerRuntime
+}
+
+// Remove removes the container through the outermost runtime.
+func (o ownedListerVia) Remove(ctx context.Context, containerID string) error {
+	return o.rt.Remove(ctx, containerID)
 }
 
 // HoldsSession reports whether any backend this daemon serves holds a live

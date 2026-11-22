@@ -80,6 +80,30 @@ type ContainerRuntime interface {
 	Pull(ctx context.Context, image string) error
 }
 
+// RuntimeUnwrapper is a ContainerRuntime that wraps another one and names it,
+// so a caller looking for an optional capability can find it on the wrapped
+// runtime.
+type RuntimeUnwrapper interface {
+	Unwrap() ContainerRuntime
+}
+
+// RuntimeAs returns the first runtime in rt's wrapper chain, rt itself
+// first, that implements T. The walk follows Unwrap and stops after 8 hops.
+func RuntimeAs[T any](rt ContainerRuntime) (T, bool) {
+	for i := 0; rt != nil && i < 8; i++ {
+		if t, ok := rt.(T); ok {
+			return t, true
+		}
+		u, ok := rt.(RuntimeUnwrapper)
+		if !ok {
+			break
+		}
+		rt = u.Unwrap()
+	}
+	var zero T
+	return zero, false
+}
+
 // InteractiveProcess represents a running interactive container with stdio pipes.
 // The caller uses Stdin and Stdout to communicate with the container's entrypoint
 // process over newline-delimited JSON-RPC.

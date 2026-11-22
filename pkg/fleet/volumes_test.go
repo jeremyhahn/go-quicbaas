@@ -2,6 +2,7 @@ package fleet
 
 import (
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -104,4 +105,69 @@ func TestWrapVolumeRuntimeNoHostName(t *testing.T) {
 			t.Errorf("err = %v, want it to say the host name is empty", err)
 		}
 	})
+}
+
+// stubVolumeProviderSettings records the settings the provider is built with.
+func stubVolumeProviderSettings(t *testing.T, got *map[string]string) {
+	t.Helper()
+	old := newVolumeProvider
+	newVolumeProvider = func(_ string, settings map[string]string) (orchestration.VolumeProvider, error) {
+		*got = settings
+		return nopVolumeProvider{}, nil
+	}
+	t.Cleanup(func() { newVolumeProvider = old })
+}
+
+func stubHostname(t *testing.T, name string) {
+	t.Helper()
+	old := hostname
+	hostname = func() (string, error) { return name, nil }
+	t.Cleanup(func() { hostname = old })
+}
+
+// The configured node identity reaches the local provider, which otherwise
+// takes the host name and refuses Attach for the attacher's node.
+func TestWrapVolumeRuntimeNodeIDReachesLocalProvider(t *testing.T) {
+	var settings map[string]string
+	stubVolumeProviderSettings(t, &settings)
+	stubHostname(t, "host-b")
+	cfgSettings := map[string]string{"x": "1"}
+	got, err := WrapVolumeRuntime(VolumeConfig{Provider: "local", NodeID: "fleet-a", Settings: cfgSettings}, &nopRuntime{})
+	if err != nil {
+		t.Fatalf("WrapVolumeRuntime: %v", err)
+	}
+	if want := map[string]string{"x": "1", "node_id": "fleet-a"}; !reflect.DeepEqual(settings, want) {
+		t.Errorf("provider settings = %v, want %v", settings, want)
+	}
+	if n := got.(*orchestration.VolumeRuntime).Attacher().Node(); n != "fleet-a" {
+		t.Errorf("attacher node = %q, want fleet-a", n)
+	}
+	if len(cfgSettings) != 1 {
+		t.Errorf("the caller's settings were modified: %v", cfgSettings)
+	}
+}
+
+func TestWrapVolumeRuntimeRejectsNodeIDMismatch(t *testing.T) {
+	var settings map[string]string
+	stubVolumeProviderSettings(t, &settings)
+	_, err := WrapVolumeRuntime(VolumeConfig{Provider: "local", NodeID: "a", Settings: map[string]string{"node_id": "b"}}, &nopRuntime{})
+	if !errors.Is(err, orchestration.ErrVolumeInvalidArgument) {
+		t.Fatalf("err = %v, want ErrVolumeInvalidArgument", err)
+	}
+}
+
+func TestWrapVolumeRuntimeTakesNodeIDFromSettings(t *testing.T) {
+	var settings map[string]string
+	stubVolumeProviderSettings(t, &settings)
+	stubHostname(t, "host-b")
+	got, err := WrapVolumeRuntime(VolumeConfig{Provider: "local", Settings: map[string]string{"node_id": "b"}}, &nopRuntime{})
+	if err != nil {
+		t.Fatalf("WrapVolumeRuntime: %v", err)
+	}
+	if n := got.(*orchestration.VolumeRuntime).Attacher().Node(); n != "b" {
+		t.Errorf("attacher node = %q, want b", n)
+	}
+	if settings["node_id"] != "b" {
+		t.Errorf("provider node_id = %q, want b", settings["node_id"])
+	}
 }

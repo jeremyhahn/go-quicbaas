@@ -1166,10 +1166,11 @@ func runtimeTrustCapabilities(runtime ContainerRuntime) TrustCapabilities {
 		return TrustCapabilities{}
 	}
 	// An attesting runtime answers for itself across all three tiers.
-	if attesting, ok := runtime.(AttestingContainerRuntime); ok {
+	// A wrapper (VolumeRuntime) answers with the runtime it wraps.
+	if attesting, ok := RuntimeAs[AttestingContainerRuntime](runtime); ok {
 		return attesting.TrustCapabilities()
 	}
-	if _, ok := runtime.(pinVerifyingRuntime); ok {
+	if _, ok := RuntimeAs[pinVerifyingRuntime](runtime); ok {
 		return TrustCapabilities{DigestPinning: true}
 	}
 	return TrustCapabilities{}

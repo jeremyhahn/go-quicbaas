@@ -22,10 +22,13 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
+	"time"
 
 	bscommon "github.com/jeremyhahn/go-blockstore/pkg/common"
 	bsfactory "github.com/jeremyhahn/go-blockstore/pkg/factory"
+	bslocal "github.com/jeremyhahn/go-blockstore/pkg/local"
 )
 
 type (
@@ -232,30 +235,37 @@ func (a *VolumeAttacher) Node() VolumeNodeID { return a.node }
 // Ensure returns the ID of the claim's volume, provisioning it when it does not
 // exist and growing it when it is smaller than the claim.
 func (a *VolumeAttacher) Ensure(ctx context.Context, claim VolumeClaim) (string, error) {
+	id, _, _, err := a.ensure(ctx, claim)
+	return id, err
+}
+
+// ensure is Ensure, also reporting the volume's size afterwards and whether
+// the volume existed before this call.
+func (a *VolumeAttacher) ensure(ctx context.Context, claim VolumeClaim) (id string, size int64, existed bool, err error) {
 	if err := claim.Validate(); err != nil {
-		return "", err
+		return "", 0, false, err
 	}
 	st, err := a.provider.Status(ctx, claim.Name)
 	if errors.Is(err, bscommon.ErrNotFound) {
 		vol, perr := a.provider.Provision(ctx, claim.spec())
 		if perr != nil {
-			return "", fmt.Errorf("volume %q: provision: %w", claim.Name, perr)
+			return "", 0, false, fmt.Errorf("volume %q: provision: %w", claim.Name, perr)
 		}
-		return vol.ID, nil
+		return vol.ID, claim.SizeBytes, false, nil
 	}
 	if err != nil {
-		return "", fmt.Errorf("volume %q: status: %w", claim.Name, err)
+		return "", 0, false, fmt.Errorf("volume %q: status: %w", claim.Name, err)
 	}
-	id := st.ID
+	id = st.ID
 	if id == "" {
 		id = claim.Name
 	}
 	if st.SizeBytes < claim.SizeBytes {
 		if err := a.provider.Resize(ctx, id, claim.SizeBytes); err != nil {
-			return "", fmt.Errorf("volume %q: grow to %d bytes: %w", claim.Name, claim.SizeBytes, err)
+			return "", 0, true, fmt.Errorf("volume %q: grow to %d bytes: %w", claim.Name, claim.SizeBytes, err)
 		}
 	}
-	return id, nil
+	return id, max(st.SizeBytes, claim.SizeBytes), true, nil
 }
 
 // Resize grows the volume to newSize bytes. A size below the current one is
@@ -311,8 +321,16 @@ func (a *VolumeAttacher) Demote(ctx context.Context, volID string) error {
 // released again and the error is returned, so a failed launch leaves nothing
 // attached.
 func (a *VolumeAttacher) Attach(ctx context.Context, claims []VolumeClaim) ([]AttachedVolume, error) {
+	vols, _, err := a.attach(ctx, claims)
+	return vols, err
+}
+
+// attach is Attach, also returning the volumes its rollback could not
+// release. The rollback runs on a cleanupContext, so a launch cancelled part
+// way still releases what it attached.
+func (a *VolumeAttacher) attach(ctx context.Context, claims []VolumeClaim) (vols, held []AttachedVolume, err error) {
 	if err := validateClaims(claims); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	attached := make([]AttachedVolume, 0, len(claims))
 	for _, claim := range claims {
@@ -321,19 +339,22 @@ func (a *VolumeAttacher) Attach(ctx context.Context, claims []VolumeClaim) ([]At
 			attached = append(attached, v)
 		}
 		if err != nil {
-			if rerr := a.Release(ctx, attached); rerr != nil {
+			cctx, cancel := cleanupContext(ctx)
+			held, rerr := a.release(cctx, attached)
+			cancel()
+			if rerr != nil {
 				err = errors.Join(err, fmt.Errorf("release after failed attach: %w", rerr))
 			}
-			return nil, err
+			return nil, held, err
 		}
 	}
-	return attached, nil
+	return attached, nil, nil
 }
 
 // attachOne returns the partly attached volume with the error when a step
 // after the provider's Attach fails, so the caller can release it.
 func (a *VolumeAttacher) attachOne(ctx context.Context, claim VolumeClaim) (AttachedVolume, error) {
-	id, err := a.Ensure(ctx, claim)
+	id, size, existed, err := a.ensure(ctx, claim)
 	if err != nil {
 		return AttachedVolume{}, err
 	}
@@ -356,28 +377,63 @@ func (a *VolumeAttacher) attachOne(ctx context.Context, claim VolumeClaim) (Atta
 		return v, fmt.Errorf("volume %q: mount at %s: %w", claim.Name, host, err)
 	}
 	v.HostPath = host
+	// A grow made while the volume was unmounted may leave the filesystem at
+	// its old size (XFS grows only mounted), and an equal-size Resize finishes
+	// it, so this also recovers a grow an earlier launch left undone. The local
+	// provider refuses any Resize of an attached encrypted volume
+	// (ErrResizeWhileAttached); its detached Resize in ensure grew the
+	// filesystem inside the container itself, so that refusal is not a failure.
+	if existed && !claim.ReadOnly {
+		if err := a.provider.Resize(ctx, id, size); err != nil && !errors.Is(err, bslocal.ErrResizeWhileAttached) {
+			return v, fmt.Errorf("volume %q: grow filesystem after mount: %w", claim.Name, err)
+		}
+	}
 	return v, nil
 }
 
 // Release unmounts and detaches the volumes in reverse order. It carries on
 // past a failure so one stuck volume does not keep the others attached, and
-// returns every failure joined.
+// returns every failure joined. VolumeRuntime retries what is still held.
 func (a *VolumeAttacher) Release(ctx context.Context, vols []AttachedVolume) error {
+	_, err := a.release(ctx, vols)
+	return err
+}
+
+// release is Release, also returning the volumes still held, in their
+// original order. A volume whose Unmount failed is kept as it was; one that
+// unmounted but did not detach is kept with no HostPath, so a retry only
+// detaches it.
+func (a *VolumeAttacher) release(ctx context.Context, vols []AttachedVolume) ([]AttachedVolume, error) {
 	var errs []error
+	var held []AttachedVolume
 	for i := len(vols) - 1; i >= 0; i-- {
 		v := vols[i]
 		if v.HostPath != "" {
 			if err := a.provider.Unmount(ctx, v.VolumeID, v.HostPath); err != nil {
 				errs = append(errs, fmt.Errorf("volume %q: unmount %s: %w", v.Claim.Name, v.HostPath, err))
+				held = append(held, v)
 				continue
 			}
 		}
 		if err := a.provider.Detach(ctx, v.VolumeID, a.node); err != nil {
 			errs = append(errs, fmt.Errorf("volume %q: detach from node %q: %w", v.Claim.Name, a.node, err))
+			v.HostPath = ""
+			held = append(held, v)
 		}
 	}
-	return errors.Join(errs...)
+	slices.Reverse(held)
+	return held, errors.Join(errs...)
 }
+
+// cleanupContext bounds a rollback on its own clock: the launch that failed
+// may have failed because its context was cancelled, and the release must
+// still run.
+func cleanupContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), volumeCleanupTimeout)
+}
+
+// volumeCleanupTimeout bounds one rollback or pending-release retry.
+const volumeCleanupTimeout = time.Minute
 
 // ContainerMounts returns the bind mounts for the attached volumes that have a
 // filesystem, in order.
