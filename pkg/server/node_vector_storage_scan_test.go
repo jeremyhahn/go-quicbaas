@@ -400,3 +400,23 @@ func TestVectorScanSnapshots_Bounded(t *testing.T) {
 	last := vectorSnapshotKey{namespace: fmt.Sprintf("ns-%d", 3*nodeScanSnapshotMax-1)}
 	assert.Contains(t, s.entries, last, "the newest snapshot is kept")
 }
+
+// refresh always re-reads and stores what it read, so a later read hits it.
+// A read of 2500 ids costs 3 ListVectors pages: read 3, refresh 3 more (6),
+// and the read after the refresh serves its snapshot (still 6).
+func TestVectorScanSnapshots_RefreshRereads(t *testing.T) {
+	f := newFakeScanVectorClient(2500)
+	var s vectorScanSnapshots
+	req := &qrdbtransport.ListVectorsRequest{Namespace: "ns"}
+
+	_, err := s.read(context.Background(), f, req)
+	require.NoError(t, err)
+	require.Equal(t, 3, f.calls)
+	all, err := s.refresh(context.Background(), f, req)
+	require.NoError(t, err)
+	require.Len(t, all, 2500)
+	require.Equal(t, 6, f.calls, "refresh re-reads a cached namespace")
+	_, err = s.read(context.Background(), f, req)
+	require.NoError(t, err)
+	assert.Equal(t, 6, f.calls, "refresh stored its snapshot")
+}
