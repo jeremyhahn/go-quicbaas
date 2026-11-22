@@ -23,6 +23,7 @@ import (
 
 	restapi "github.com/jeremyhahn/go-quicbaas/pkg/api/rest"
 	qbsealedwindow "github.com/jeremyhahn/go-quicbaas/pkg/api/sealedwindow"
+	"github.com/jeremyhahn/go-quicbaas/pkg/api/websocket/subprotocol"
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
@@ -290,6 +291,16 @@ func (s *Server) buildRESTServer() (*restapi.Server, error) {
 	// gets a retryable 503 rather than a 404 a forge would give up on.
 	if h := s.SDLCWebhookHandler(); h != nil {
 		restServer.SetSDLCWebhookHandler(h)
+	}
+
+	// Mount the WebSocket upgrade (GET /api/v1/ws). The route carries the
+	// messaging:subscribe permission, so go-qrdb's middleware authenticates and
+	// authorizes the upgrade like any other API call. FIPS-only mode refuses the
+	// server; the route then answers 503.
+	if wsSrv, err := subprotocol.NewMessagingServer(s.logger); err != nil {
+		s.logger.Warnf("WebSocket endpoint disabled: %v", err)
+	} else {
+		restServer.SetWebSocketHandler(wsSrv)
 	}
 
 	// The credential management service and the qrdb user + user
