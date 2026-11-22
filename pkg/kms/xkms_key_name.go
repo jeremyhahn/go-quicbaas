@@ -21,12 +21,16 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/validation"
 	kctypes "github.com/jeremyhahn/go-xkms/sdk/go"
+
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
 // xkmsEncodedKeyNamePrefix starts every go-xkms key name that carries an
 // encoded service key ID. The names it reserves are exactly the encoded
-// outputs (see xkmsNeedsEncoding); any other name that starts with it (an
-// existing "qbx.production") is used unchanged.
+// outputs (see xkmsNeedsEncoding): this backend refuses to write a valid
+// literal name that is exactly the canonical encoding of a rejected ID
+// (refuseReservedKeyName). Any other name that starts with it (an existing
+// "qbx.production") is used unchanged.
 const xkmsEncodedKeyNamePrefix = "qbx."
 
 // xkmsEncoding is strict so that each encoded payload has exactly one
@@ -65,6 +69,10 @@ var xkmsEncoding = base64.RawURLEncoding.Strict()
 // distinct keys under one name, so the marker alone cannot keep such a key
 // from reading as the ID it encodes; the record proves this backend wrote it.
 // TestXKMSKeyName_EncodedOutputsAreReserved pins the shape.
+//
+// Writes: the backend refuses a literal spelled as an encoded output at
+// every entry point (refuseReservedKeyName), so a name this backend writes
+// under that shape only ever means the encoded ID.
 func xkmsKeyName(keyID string) string {
 	if !xkmsNeedsEncoding(keyID) {
 		return keyID
@@ -156,4 +164,20 @@ func keyIDFromXKMSName(name string) string {
 		return keyID
 	}
 	return name
+}
+
+// refuseReservedKeyName refuses a key ID that go-xkms accepts literally but
+// that keyIDFromXKMSName would read as a different, encoded ID: such a
+// literal names the same go-xkms key as that encoded ID (a tenant's key), so
+// accepting it would cross the tenant boundary. It returns an invalid-input
+// error wrapping ErrReservedKeyName, and nil for every other ID.
+func refuseReservedKeyName(op, keyID string) error {
+	if keyID == "" || validation.ValidateKeyID(keyID) != nil || keyIDFromXKMSName(keyID) == keyID {
+		return nil
+	}
+	return &qberrors.QBError{
+		Code: qberrors.ErrInvalidInput,
+		Op:   op,
+		Err:  fmt.Errorf("%w: %q", ErrReservedKeyName, keyID),
+	}
 }

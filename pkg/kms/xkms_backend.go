@@ -225,6 +225,9 @@ func (kb *XKMSBackend) CreateKey(ctx context.Context, attrs *kctypes.KeyAttribut
 	if attrs.CN == "" {
 		return nil, ErrKeyCNEmpty
 	}
+	if err := refuseReservedKeyName("XKMSBackend.CreateKey", attrs.CN); err != nil {
+		return nil, err
+	}
 	if err := checkXKMSKeyName(attrs.CN); err != nil {
 		return nil, err
 	}
@@ -293,6 +296,9 @@ func (kb *XKMSBackend) ImportKey(ctx context.Context, keyID string, material []b
 
 	if keyID == "" {
 		return nil, ErrKeyIDEmpty
+	}
+	if err := refuseReservedKeyName("XKMSBackend.ImportKey", keyID); err != nil {
+		return nil, err
 	}
 	if err := checkXKMSKeyName(keyID); err != nil {
 		return nil, err
@@ -431,6 +437,9 @@ func xkmsProbedSymmetricAlgorithm(probed string, key kctypes.SymmetricKey) strin
 func (kb *XKMSBackend) GetKeyMetadata(ctx context.Context, keyID string) (*KeyMetadata, error) {
 	if !kb.IsAvailable(ctx) {
 		return nil, ErrBackendNotReady
+	}
+	if err := refuseReservedKeyName("XKMSBackend.GetKeyMetadata", keyID); err != nil {
+		return nil, err
 	}
 
 	// Check cache first. A cached entry is checked against the ownership
@@ -658,6 +667,9 @@ func (kb *XKMSBackend) RotateKey(ctx context.Context, keyID string) (*KeyMetadat
 	if !kb.IsAvailable(ctx) {
 		return nil, ErrBackendNotReady
 	}
+	if err := refuseReservedKeyName("XKMSBackend.RotateKey", keyID); err != nil {
+		return nil, err
+	}
 
 	// Get key metadata to retrieve the algorithm (with proper locking)
 	kb.mu.RLock()
@@ -780,6 +792,9 @@ func (kb *XKMSBackend) DisableKey(ctx context.Context, keyID string) error {
 	if !kb.IsAvailable(ctx) {
 		return ErrBackendNotReady
 	}
+	if err := refuseReservedKeyName("XKMSBackend.DisableKey", keyID); err != nil {
+		return err
+	}
 
 	// Update cached metadata - go-xkms doesn't have native disable
 	kb.mu.Lock()
@@ -801,6 +816,9 @@ func (kb *XKMSBackend) EnableKey(ctx context.Context, keyID string) error {
 	if !kb.IsAvailable(ctx) {
 		return ErrBackendNotReady
 	}
+	if err := refuseReservedKeyName("XKMSBackend.EnableKey", keyID); err != nil {
+		return err
+	}
 
 	// Update cached metadata - go-xkms doesn't have native enable
 	kb.mu.Lock()
@@ -821,6 +839,9 @@ func (kb *XKMSBackend) EnableKey(ctx context.Context, keyID string) error {
 func (kb *XKMSBackend) DeleteKey(ctx context.Context, keyID string) error {
 	if !kb.IsAvailable(ctx) {
 		return ErrBackendNotReady
+	}
+	if err := refuseReservedKeyName("XKMSBackend.DeleteKey", keyID); err != nil {
+		return err
 	}
 
 	// First check if key exists in our metadata cache
@@ -1043,6 +1064,9 @@ func (kb *XKMSBackend) Encrypt(ctx context.Context, keyID string, plaintext, aad
 	if !kb.IsAvailable(ctx) {
 		return nil, ErrBackendNotReady
 	}
+	if err := refuseReservedKeyName("XKMSBackend.Encrypt", keyID); err != nil {
+		return nil, err
+	}
 
 	// Get key metadata to determine algorithm and current version
 	meta, err := kb.GetKeyMetadata(ctx, keyID)
@@ -1093,6 +1117,9 @@ func (kb *XKMSBackend) Encrypt(ctx context.Context, keyID string, plaintext, aad
 func (kb *XKMSBackend) Decrypt(ctx context.Context, keyID string, ciphertext, aad []byte) ([]byte, error) {
 	if !kb.IsAvailable(ctx) {
 		return nil, ErrBackendNotReady
+	}
+	if err := refuseReservedKeyName("XKMSBackend.Decrypt", keyID); err != nil {
+		return nil, err
 	}
 
 	// Deserialize encrypted data
@@ -1155,6 +1182,9 @@ func (kb *XKMSBackend) Sign(ctx context.Context, keyID string, digest []byte, al
 	if !kb.IsAvailable(ctx) {
 		return nil, ErrBackendNotReady
 	}
+	if err := refuseReservedKeyName("XKMSBackend.Sign", keyID); err != nil {
+		return nil, err
+	}
 
 	// Get key metadata to determine the signing algorithm
 	meta, err := kb.GetKeyMetadata(ctx, keyID)
@@ -1201,6 +1231,9 @@ func (kb *XKMSBackend) Verify(ctx context.Context, keyID string, digest, signatu
 	if !kb.IsAvailable(ctx) {
 		return false, ErrBackendNotReady
 	}
+	if err := refuseReservedKeyName("XKMSBackend.Verify", keyID); err != nil {
+		return false, err
+	}
 
 	// Get key metadata to determine the signing algorithm
 	meta, err := kb.GetKeyMetadata(ctx, keyID)
@@ -1246,6 +1279,9 @@ func (kb *XKMSBackend) GenerateDataKey(ctx context.Context, keyID string, keyByt
 	if !kb.IsAvailable(ctx) {
 		return nil, nil, ErrBackendNotReady
 	}
+	if err := refuseReservedKeyName("XKMSBackend.GenerateDataKey", keyID); err != nil {
+		return nil, nil, err
+	}
 
 	// Generate random plaintext DEK using xkms RNG
 	plaintext, err = xkms.Rand(keyBytes)
@@ -1266,6 +1302,9 @@ func (kb *XKMSBackend) GenerateDataKey(ctx context.Context, keyID string, keyByt
 func (kb *XKMSBackend) ExportPublicKey(ctx context.Context, keyID string) ([]byte, error) {
 	if !kb.IsAvailable(ctx) {
 		return nil, ErrBackendNotReady
+	}
+	if err := refuseReservedKeyName("XKMSBackend.ExportPublicKey", keyID); err != nil {
+		return nil, err
 	}
 
 	// Build the full key ID for go-xkms
