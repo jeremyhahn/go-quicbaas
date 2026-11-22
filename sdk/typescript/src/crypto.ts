@@ -108,7 +108,16 @@ export interface CryptoSignRequest {
   hash_algorithm?: HashAlgorithm;
   /** pre_hashed indicates message is already a hash digest. */
   pre_hashed?: boolean;
+  /** padding is the RSA signature padding; omitted means PKCS1V15. */
+  padding?: SignaturePadding;
+  /** pss_salt_length is the RSA-PSS salt length in bytes; 0 means the hash length. */
+  pss_salt_length?: number;
+  /** mgf1_hash is the RSA-PSS MGF1 hash; omitted or equal to hash_algorithm. */
+  mgf1_hash?: HashAlgorithm;
 }
+
+/** SignaturePadding selects the RSA signature padding scheme. */
+export type SignaturePadding = 'PKCS1V15' | 'PSS';
 
 /** CryptoSignResponse returns the signature. */
 export interface CryptoSignResponse {

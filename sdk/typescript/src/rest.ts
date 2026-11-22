@@ -4115,6 +4115,9 @@ export class RestCryptoClient implements CryptoClient {
         message: req.message,
         hash_algorithm: req.hash_algorithm,
         pre_hashed: req.pre_hashed,
+        padding: req.padding,
+        pss_salt_length: req.pss_salt_length,
+        mgf1_hash: req.mgf1_hash,
       }),
     });
     return {

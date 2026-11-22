@@ -333,6 +333,26 @@ func TestHandleCryptoSign(t *testing.T) {
 			expectedStatus: http.StatusOK,
 		},
 		{
+			name:    "sign passes RSA-PSS padding through",
+			keyName: "test-key",
+			body: map[string]interface{}{
+				"message":         []byte("message-to-sign"),
+				"hash_algorithm":  "SHA256",
+				"padding":         "PSS",
+				"pss_salt_length": 32,
+				"mgf1_hash":       "SHA256",
+			},
+			setupMock: func(m *testutil.MockQuicBaaS) {
+				m.On("Sign", mock.Anything, mock.MatchedBy(func(req *service.SignRequest) bool {
+					return req.Padding == service.SignaturePaddingPSS && req.PSSSaltLength == 32 && req.MGF1Hash == "SHA256"
+				})).Return(&service.SignResponse{
+					Signature:  []byte("signature-data"),
+					KeyVersion: 1,
+				}, nil).Once()
+			},
+			expectedStatus: http.StatusOK,
+		},
+		{
 			name:           "missing key name",
 			keyName:        "",
 			body:           map[string]interface{}{"message": []byte("message-to-sign")},

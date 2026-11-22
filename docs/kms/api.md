@@ -109,5 +109,11 @@ today belong to the implementation being removed; they are defined by
 `sdk/go/client/crypto`. The DEK routes are in
 [../data-encryption-keys/api.md](../data-encryption-keys/api.md).
 
+`POST /api/v1/crypto/sign/{name}`, the gRPC `SignRequest` and the MCP
+`quicbaas_crypto_sign` tool accept `padding` (`PKCS1V15`, the default, or
+`PSS`, RSA keys only), `pss_salt_length` (bytes; 0 means the hash length) and
+`mgf1_hash` (empty or equal to `hash_algorithm`). PSS verify is not supported
+yet.
+
 Path parameters URL-encode hierarchical key names
 (`tenant-123%2Fprod%2Fdb-key`).
