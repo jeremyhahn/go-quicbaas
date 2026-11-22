@@ -127,6 +127,14 @@ func TestCryptoDecrypt_DisabledKeyVersionRefused_RealXKMS(t *testing.T) {
 type getFailingKVStore struct {
 	*mockKVStore
 	failGet bool
+	failPut bool
+}
+
+func (s *getFailingKVStore) Put(ctx context.Context, key string, value []byte) error {
+	if s.failPut {
+		return stderrors.New("kv store unavailable")
+	}
+	return s.mockKVStore.Put(ctx, key, value)
 }
 
 func (s *getFailingKVStore) Get(ctx context.Context, key string) ([]byte, error) {
@@ -206,4 +214,72 @@ func TestCryptoDecrypt_VersionStatusAcrossNodes_RealXKMS(t *testing.T) {
 	_, err = csB.DecryptBatch(ctx, &DecryptBatchRequest{KeyID: keyID, Items: []BatchDecryptItem{{Ciphertext: v1.Ciphertext}}})
 	require.Error(t, err)
 	shared.failGet = false
+}
+
+// TestCryptoDecrypt_FailedDisableWriteStaysDisabled_RealXKMS persists an
+// enabled record for v1, then makes the disable write fail. The disable must
+// report failure, the node must still refuse v1 ciphertexts rather than trust
+// the stale enabled record, and a retry once storage recovers must persist
+// the disable for every node.
+func TestCryptoDecrypt_FailedDisableWriteStaysDisabled_RealXKMS(t *testing.T) {
+	manager, cleanup := realKMSManagerForTest(t)
+	defer cleanup()
+
+	shared := &getFailingKVStore{mockKVStore: newMockKVStore()}
+	newNode := func() (*kmsServiceImpl, *cryptoService) {
+		logger := newMockLogger()
+		kmsSvc := newKMSService(manager, logger)
+		kmsSvc.SetKVStore(shared)
+		cs := newCryptoService(crypto.NewMemoryCryptoManager(manager), manager, logger, kmsSvc.GetSafetyTracker())
+		cs.kmsSvc = kmsSvc
+		return kmsSvc, cs
+	}
+	kmsA, csA := newNode()
+	_, csB := newNode()
+	ctx := systemTenantCtx()
+
+	const keyID = "vstatus-putfail-key"
+	_, err := kmsA.GenerateKey(ctx, &GenerateKeyRequest{
+		Name:  keyID,
+		Usage: []KeyUsage{KeyUsageEncrypt, KeyUsageDecrypt},
+		KeyAttributes: &xkmssdk.KeyAttributes{
+			StoreType:          xkmssdk.StoreType("software"),
+			KeyType:            xkmssdk.KeyTypeEncryption,
+			SymmetricAlgorithm: xkmssdk.SymmetricAES256GCM,
+		},
+	})
+	require.NoError(t, err)
+	v1, err := csA.Encrypt(ctx, &EncryptRequest{KeyID: keyID, Plaintext: []byte("sealed under v1")})
+	require.NoError(t, err)
+	_, err = kmsA.RotateKey(ctx, &RotateKeyRequest{KeyID: keyID})
+	require.NoError(t, err)
+	scoped, err := scopeKeyID(ctx, keyID)
+	require.NoError(t, err)
+
+	// A persisted enabled record for v1.
+	require.NoError(t, kmsA.setVersionStatus(scoped, 1, KeyStatusEnabled, nil))
+	_, err = csA.Decrypt(ctx, &DecryptRequest{KeyID: keyID, Ciphertext: v1.Ciphertext})
+	require.NoError(t, err)
+
+	// The disable write fails: both entry points report it.
+	shared.failPut = true
+	_, err = kmsA.disableKeyVersion(ctx, scoped, 1)
+	require.Error(t, err, "a disable that was not persisted must not report success")
+	_, err = kmsA.UpdateKeyStatus(ctx, &UpdateKeyStatusRequest{KeyID: keyID, Version: 1, Status: KeyStatusDisabled})
+	require.Error(t, err, "UpdateKeyStatus must not report a disable it could not persist")
+
+	// This node refuses v1 even though storage still says enabled.
+	var disabled *KeyVersionDisabledError
+	_, err = csA.Decrypt(ctx, &DecryptRequest{KeyID: keyID, Ciphertext: v1.Ciphertext})
+	require.ErrorAs(t, err, &disabled, "the stale enabled record must not release plaintext")
+	_, err = csA.DecryptBatch(ctx, &DecryptBatchRequest{KeyID: keyID, Items: []BatchDecryptItem{{Ciphertext: v1.Ciphertext}}})
+	require.ErrorAs(t, err, &disabled)
+
+	// Storage recovers: the retried disable persists and every node sees it.
+	shared.failPut = false
+	_, err = kmsA.disableKeyVersion(ctx, scoped, 1)
+	require.NoError(t, err)
+	require.False(t, kmsA.versionStatusUnpersisted(scoped, 1))
+	_, err = csB.Decrypt(ctx, &DecryptRequest{KeyID: keyID, Ciphertext: v1.Ciphertext})
+	require.ErrorAs(t, err, &disabled, "the retried disable must reach the other node")
 }
