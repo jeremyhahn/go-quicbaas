@@ -19,8 +19,12 @@ spec:
   serviceName: quicbaas-raft
   replicas: 3
   podManagementPolicy: Parallel
+  # OnDelete: an apply changes no running pod. A RollingUpdate deletes pods
+  # directly, which the PodDisruptionBudget does not gate, and with Parallel
+  # it can replace a pod while another replica is down. rolling-upgrade.sh
+  # replaces the pods one at a time through the Eviction API instead.
   updateStrategy:
-    type: RollingUpdate
+    type: OnDelete
   selector:
     matchLabels:
       app.kubernetes.io/name: quicbaas

@@ -415,6 +415,40 @@ func TestKubernetesClusterSurvivesTheLossOfOneNode(t *testing.T) {
 	}
 }
 
+// TestKubernetesUpgradesGoThroughTheDisruptionBudget holds upgrades to the
+// PodDisruptionBudget: a StatefulSet RollingUpdate deletes pods directly,
+// which the PDB does not gate, so the StatefulSet updates OnDelete and the
+// guide rolls the pods with rolling-upgrade.sh.
+func TestKubernetesUpgradesGoThroughTheDisruptionBudget(t *testing.T) {
+	_, objs := kubernetesManifests(t)
+	sts := findObject(t, objs, "StatefulSet", "quicbaas")
+	if s := dig(sts, "spec", "updateStrategy", "type"); s != "OnDelete" {
+		t.Errorf("updateStrategy = %v, want OnDelete: a RollingUpdate deletes pods directly, bypassing the PodDisruptionBudget", s)
+	}
+
+	data, err := os.ReadFile(filepath.Join(repoRoot, "docs", "deployment", "kubernetes.md"))
+	if err != nil {
+		t.Fatalf("read kubernetes guide: %v", err)
+	}
+	guide := string(data)
+	for _, want := range []string{"## Upgrades", "rolling-upgrade.sh", "OnDelete"} {
+		if !strings.Contains(guide, want) {
+			t.Errorf("kubernetes guide lacks %q", want)
+		}
+	}
+	if strings.Contains(guide, "holds the quorum throughout") {
+		t.Error("kubernetes guide says the PDB holds the quorum through an automatic rollout")
+	}
+
+	info, err := os.Stat(filepath.Join(kubernetesDir, "rolling-upgrade.sh"))
+	if err != nil {
+		t.Fatalf("rolling-upgrade.sh: %v", err)
+	}
+	if info.Mode()&0o111 == 0 {
+		t.Errorf("rolling-upgrade.sh mode = %v, want it executable", info.Mode())
+	}
+}
+
 // TestKubernetesPortsMatchTheNodeConfig holds the container ports, the
 // Services and the NetworkPolicy to the ports the shared node config serves.
 func TestKubernetesPortsMatchTheNodeConfig(t *testing.T) {
@@ -915,6 +949,167 @@ esac
 		}
 		if lines != nil {
 			t.Errorf("kubectl ran for an unknown replica: %q", lines)
+		}
+	})
+}
+
+// TestKubernetesRollingUpgradeScript runs rolling-upgrade.sh against a fake
+// kubectl: it evicts quicbaas-2, -1 and -0 in turn through the Eviction API
+// only after all three replicas are ready, stops when another replica is
+// unavailable or an eviction is refused, and skips replicas already on the
+// update revision.
+func TestKubernetesRollingUpgradeScript(t *testing.T) {
+	for _, tool := range []string{"mktemp", "/bin/sh"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skipf("%s not found: %v", tool, err)
+		}
+	}
+	bin := t.TempDir()
+	fakes := map[string]string{
+		// The ready wait ends at once instead of sleeping.
+		"sleep": "#!/bin/sh\nexit 0\n",
+		"kubectl": `#!/bin/sh
+echo "$*" >> "$KUBECTL_LOG"
+pod=
+for a in "$@"; do
+  case "$a" in
+    quicbaas-[0-2]) pod="$a" ;;
+    */pods/quicbaas-*/eviction) pod="${a#*/pods/}"; pod="${pod%/eviction}" ;;
+  esac
+done
+updated=no
+case " ${FAKE_UPDATED:-} " in *" $pod "*) updated=yes ;; esac
+if [ -n "$pod" ] && [ -e "$KUBECTL_LOG.evicted-$pod" ]; then updated=yes; fi
+case " $* " in
+  *updateRevision*) echo rev-new ;;
+  *readyReplicas*) echo "${FAKE_READY:-3}" ;;
+  *controller-revision-hash*)
+    if [ "$updated" = yes ]; then echo rev-new; else echo rev-old; fi ;;
+  *metadata.uid*)
+    if [ -e "$KUBECTL_LOG.evicted-$pod" ]; then echo uid-new; else echo uid-old; fi ;;
+  *"create --raw"*)
+    if [ "${FAKE_FAIL_EVICT:-}" = "$pod" ]; then
+      echo "Cannot evict pod as it would violate the pod's disruption budget." >&2
+      exit 1
+    fi
+    : > "$KUBECTL_LOG.evicted-$pod" ;;
+  *" wait "*) exit 0 ;;
+esac
+`,
+	}
+	for name, body := range fakes {
+		path := filepath.Join(bin, name)
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		// The fakes run from PATH, so they must be executable.
+		if out, err := exec.Command("chmod", "u+x", path).CombinedOutput(); err != nil {
+			t.Fatalf("chmod %s: %v\n%s", name, err, out)
+		}
+	}
+	// The script runs from its own work directory, so its path is absolute.
+	script, err := filepath.Abs(filepath.Join(kubernetesDir, "rolling-upgrade.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	run := func(t *testing.T, extraEnv ...string) (string, string, []string, error) {
+		t.Helper()
+		logPath := filepath.Join(t.TempDir(), "kubectl.log")
+		cmd := exec.Command("/bin/sh", script)
+		cmd.Dir = t.TempDir()
+		cmd.Env = append([]string{
+			"PATH=" + bin + string(os.PathListSeparator) + os.Getenv("PATH"),
+			"KUBECTL_LOG=" + logPath,
+		}, extraEnv...)
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		err := cmd.Run()
+		var lines []string
+		if raw, rerr := os.ReadFile(logPath); rerr == nil {
+			lines = strings.Split(strings.TrimSpace(string(raw)), "\n")
+		} else if !errors.Is(rerr, os.ErrNotExist) {
+			t.Fatal(rerr)
+		}
+		return stdout.String(), stderr.String(), lines, err
+	}
+	// ordered checks that want appears in lines as an in-order subsequence.
+	ordered := func(t *testing.T, lines, want []string) {
+		t.Helper()
+		i := 0
+		for _, line := range lines {
+			if i < len(want) && strings.Contains(line, want[i]) {
+				i++
+			}
+		}
+		if i != len(want) {
+			t.Errorf("kubectl calls %q lack, in order, %q", lines, want[i])
+		}
+	}
+	absent := func(t *testing.T, lines []string, banned ...string) {
+		t.Helper()
+		for _, line := range lines {
+			for _, b := range banned {
+				if strings.Contains(line, b) {
+					t.Errorf("kubectl call %q contains %q", line, b)
+				}
+			}
+		}
+	}
+	const evict = "create --raw /api/v1/namespaces/quicbaas/pods/"
+
+	t.Run("upgrades all three, highest ordinal first", func(t *testing.T) {
+		stdout, stderr, lines, err := run(t)
+		if err != nil {
+			t.Fatalf("upgrade failed: %v\n%s", err, stderr)
+		}
+		ordered(t, lines, []string{
+			"readyReplicas",
+			evict + "quicbaas-2/eviction",
+			"wait --for=condition=Ready pod/quicbaas-2",
+			"readyReplicas",
+			evict + "quicbaas-1/eviction",
+			"wait --for=condition=Ready pod/quicbaas-1",
+			"readyReplicas",
+			evict + "quicbaas-0/eviction",
+			"wait --for=condition=Ready pod/quicbaas-0",
+		})
+		// A direct delete, a rollout or a patch bypasses the PodDisruptionBudget.
+		absent(t, lines, "delete", "rollout", "patch")
+		if !strings.Contains(stdout, "all three replicas run rev-new") {
+			t.Errorf("stdout = %q, want it to report all three on rev-new", stdout)
+		}
+	})
+
+	t.Run("another replica unavailable", func(t *testing.T) {
+		_, stderr, lines, err := run(t, "FAKE_READY=2")
+		if err == nil {
+			t.Fatal("upgrade succeeded with only two replicas ready")
+		}
+		if !strings.Contains(stderr, "only 2 of 3 replicas are ready") {
+			t.Errorf("stderr = %q, want it to say only 2 of 3 replicas are ready", stderr)
+		}
+		absent(t, lines, "/eviction")
+	})
+
+	t.Run("eviction refused", func(t *testing.T) {
+		_, _, lines, err := run(t, "FAKE_FAIL_EVICT=quicbaas-1")
+		if err == nil {
+			t.Fatal("upgrade succeeded although an eviction was refused")
+		}
+		ordered(t, lines, []string{evict + "quicbaas-2/eviction", evict + "quicbaas-1/eviction"})
+		absent(t, lines, "quicbaas-0/eviction", "pod/quicbaas-1")
+	})
+
+	t.Run("resumes after a stop", func(t *testing.T) {
+		stdout, stderr, lines, err := run(t, "FAKE_UPDATED=quicbaas-2")
+		if err != nil {
+			t.Fatalf("upgrade failed: %v\n%s", err, stderr)
+		}
+		absent(t, lines, "quicbaas-2/eviction")
+		ordered(t, lines, []string{evict + "quicbaas-1/eviction", evict + "quicbaas-0/eviction"})
+		if !strings.Contains(stdout, "quicbaas-2 already runs rev-new") {
+			t.Errorf("stdout = %q, want it to skip quicbaas-2", stdout)
 		}
 	})
 }

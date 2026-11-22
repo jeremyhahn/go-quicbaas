@@ -23,8 +23,9 @@
 # tag every node runs, and the operator sets it to a release whose image
 # serves REST; 0.16.0-alpha and 0.16.1-alpha do not.
 # test/buildgates/kubernetes_test.go refuses `latest`, those two releases,
-# and any second pin. An upgrade changes this one line and rolls the
-# StatefulSet one pod at a time.
+# and any second pin. An upgrade changes this one line, applies, and runs
+# rolling-upgrade.sh, which evicts one pod at a time through the
+# PodDisruptionBudget.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 

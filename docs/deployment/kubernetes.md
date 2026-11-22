@@ -18,6 +18,7 @@ no Helm chart.
 | `poddisruptionbudget.yaml` | Keeps two of three nodes up during voluntary disruption |
 | `networkpolicy.yaml` | Raft from QuicBaaS pods only; REST and gRPC from any pod |
 | `renew-raft-cert.sh` | Renews one replica's Raft certificate on its existing key |
+| `rolling-upgrade.sh` | Moves the replicas to a new release one at a time through the PDB |
 
 ## Prerequisites
 
@@ -192,9 +193,29 @@ build. They run under Docker in CI.
 
 ## Upgrades
 
-Change `newTag` in `kustomization.yaml` to the new release and apply.
-The StatefulSet's `RollingUpdate` replaces one pod at a time, highest ordinal
-first, and waits for each to be ready. The PDB holds the quorum throughout.
+The StatefulSet uses `updateStrategy: OnDelete`, so applying a new tag
+changes no running pod. A StatefulSet `RollingUpdate` would delete the pods
+directly, which the PodDisruptionBudget does not gate, and with
+`podManagementPolicy: Parallel` it could replace a pod while another replica
+is down, leaving one Raft voter.
+
+To upgrade:
+
+1. Change `newTag` in `kustomization.yaml` to the new release and run
+   `kubectl apply -k deployments/kubernetes`.
+2. Run `sh deployments/kubernetes/rolling-upgrade.sh`.
+
+- The script replaces the replicas one at a time, highest ordinal first.
+- Before each one it waits until all three replicas are ready, and stops if
+  they are not ready within 5 minutes.
+- It evicts the pod through the Eviction API, so the PodDisruptionBudget
+  (`minAvailable: 2`) is enforced. A refused eviction stops the script.
+- It waits for the replacement pod to be Ready before it moves on.
+- It skips a replica already on the new revision. After a stop, wait until
+  all three replicas are ready and run it again.
+
+Do not remove pods with `kubectl delete` during an upgrade: a direct
+deletion bypasses the PodDisruptionBudget.
 
 ## Renewing a Raft certificate
 

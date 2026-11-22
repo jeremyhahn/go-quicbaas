@@ -386,6 +386,7 @@ through the leader; it never bootstraps.
 - [ ] Secrets `quicbaas-raft-tls` (CA and member identities), `quicbaas-raft-keys` (one certificate and key per pod) and `quicbaas-seal`, and ConfigMap `quicbaas-identity` (the SPIFFE trust domain), created first
 - [ ] The three pods land on three distinct nodes (required anti-affinity)
 - [ ] The PodDisruptionBudget (`minAvailable: 2`) is in place before any node drain
+- [ ] Upgrades apply the new `newTag`, then run `deployments/kubernetes/rolling-upgrade.sh`; no pod is deleted by hand
 - [ ] The StorageClass behind the `data` claims is SSD-backed with `reclaimPolicy: Retain`
 - [ ] `kubectl -n quicbaas get pods` shows three ready pods before clients are pointed at the `quicbaas` Service
 
