@@ -15,9 +15,13 @@ package server
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
+	"fmt"
 	"io"
+	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/attestation"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	tfw "github.com/jeremyhahn/trusted-firmware/sdk/go"
 
@@ -68,6 +72,35 @@ type avrKeyProvider struct {
 // Close closes the backend and the serial port under it.
 func (p *avrKeyProvider) Close() error {
 	return errors.Join(p.AVRBackend.Close(), p.port.Close())
+}
+
+// AttestKey attests the device key and returns the result in the form the
+// go-xkms service requires. The AVR backend returns its own *AVRAttestation,
+// which XKMSService.AttestKey refuses as an unexpected result type; the
+// alias certificate it carries is the statement, signed on the device.
+func (p *avrKeyProvider) AttestKey(ctx context.Context, attrs *xkmssdk.KeyAttributes, nonce []byte) (interface{}, error) {
+	res, err := p.AVRBackend.AttestKey(ctx, attrs, nonce)
+	if err != nil {
+		return nil, err
+	}
+	att, ok := res.(*xkmssdk.AVRAttestation)
+	if !ok || att == nil || att.Certificate == nil {
+		return nil, fmt.Errorf("avr: unexpected attestation result %T", res)
+	}
+	cert := att.Certificate
+	return &attestation.AttestationStatement{
+		Format:                att.Format,
+		AttestingKeyAlgorithm: cert.PublicKeyAlgorithm,
+		AttestingKeyPublic:    cert.PublicKey,
+		Signature:             cert.Signature,
+		SignatureAlgorithm:    cert.SignatureAlgorithm,
+		CertificateChain:      []*x509.Certificate{cert},
+		AttestedKeyPublic:     cert.PublicKey,
+		AttestationData:       att.CertificateDER,
+		CreatedAt:             time.Now().UTC().Format(time.RFC3339),
+		Backend:               string(xkmssdk.BackendTypeAVR),
+		Nonce:                 att.Nonce,
+	}, nil
 }
 
 // buildAVRServiceBackend opens cfg.KMS.AVR.Device, connects go-xkms's AVR
