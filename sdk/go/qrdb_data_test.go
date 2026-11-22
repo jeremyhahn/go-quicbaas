@@ -14,6 +14,7 @@
 package quicbaas
 
 import (
+	"bytes"
 	"context"
 	"net"
 	"os"
@@ -93,6 +94,28 @@ func (s *recordingKVService) PutIfAbsent(_ context.Context, key string, value []
 		s.data = map[string][]byte{}
 	}
 	s.data[key] = append([]byte(nil), value...)
+	return true, nil
+}
+
+// CompareAndSwap stores a copy of next only when key holds exactly expected.
+func (s *recordingKVService) CompareAndSwap(_ context.Context, key string, expected, next []byte) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if stored, ok := s.data[key]; !ok || !bytes.Equal(stored, expected) {
+		return false, nil
+	}
+	s.data[key] = append([]byte(nil), next...)
+	return true, nil
+}
+
+// CompareAndDelete removes key only when it holds exactly expected.
+func (s *recordingKVService) CompareAndDelete(_ context.Context, key string, expected []byte) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if stored, ok := s.data[key]; !ok || !bytes.Equal(stored, expected) {
+		return false, nil
+	}
+	delete(s.data, key)
 	return true, nil
 }
 
@@ -586,8 +609,9 @@ func TestQRDBData_EmbeddedHonoursIdentityTenant(t *testing.T) {
 }
 
 // TestQRDBData_EmbeddedKVKeepsGuardedWrites proves QRDBData().KV() keeps the
-// embedded client's guarded-write capability (PutIfAbsent, CompareAndDelete,
-// CompareAndSwap), still behind the tenant guard.
+// embedded client's guarded-write capability, still behind the tenant guard:
+// PutIfAbsent writes once, CompareAndSwap replaces only the current value and
+// CompareAndDelete removes only the current value, each on the node's servicer.
 func TestQRDBData_EmbeddedKVKeepsGuardedWrites(t *testing.T) {
 	kv := &recordingKVService{}
 	batch := &reachedBatchService{}
@@ -627,9 +651,33 @@ func TestQRDBData_EmbeddedKVKeepsGuardedWrites(t *testing.T) {
 	if got, err := kv.get("row1652/once"); err != nil || string(got) != "a" {
 		t.Fatalf("servicer holds %q (err %v), want %q", got, err, "a")
 	}
+	if swapped, err := g.CompareAndSwap(context.Background(), "row1652/once", []byte("b"), []byte("c")); err != nil || swapped {
+		t.Fatalf("CompareAndSwap on a stale value = %v, %v, want false, nil", swapped, err)
+	}
+	if got, err := kv.get("row1652/once"); err != nil || string(got) != "a" {
+		t.Fatalf("servicer holds %q (err %v) after a refused swap, want %q", got, err, "a")
+	}
+	if swapped, err := g.CompareAndSwap(context.Background(), "row1652/once", []byte("a"), []byte("c")); err != nil || !swapped {
+		t.Fatalf("CompareAndSwap on the current value = %v, %v, want true, nil", swapped, err)
+	}
+	if got, err := kv.get("row1652/once"); err != nil || string(got) != "c" {
+		t.Fatalf("servicer holds %q (err %v) after a swap, want %q", got, err, "c")
+	}
+	if deleted, err := g.CompareAndDelete(context.Background(), "row1652/once", []byte("a")); err != nil || deleted {
+		t.Fatalf("CompareAndDelete on a stale value = %v, %v, want false, nil", deleted, err)
+	}
+	if deleted, err := g.CompareAndDelete(context.Background(), "row1652/once", []byte("c")); err != nil || !deleted {
+		t.Fatalf("CompareAndDelete on the current value = %v, %v, want true, nil", deleted, err)
+	}
+	if got, err := kv.get("row1652/once"); err == nil {
+		t.Fatalf("servicer still holds %q after CompareAndDelete, want no record", got)
+	}
 	ctx := qrdbsdk.ContextWithTenant(context.Background(), "row1652-tenant-b")
 	if _, err := g.PutIfAbsent(ctx, "row1652/tenant", []byte("b")); !sdkerrors.IsForbidden(err) {
 		t.Errorf("tenant-bound PutIfAbsent: err %v, want Forbidden", err)
+	}
+	if _, err := g.CompareAndSwap(ctx, "row1652/tenant", []byte("a"), []byte("b")); !sdkerrors.IsForbidden(err) {
+		t.Errorf("tenant-bound CompareAndSwap: err %v, want Forbidden", err)
 	}
 }
 
