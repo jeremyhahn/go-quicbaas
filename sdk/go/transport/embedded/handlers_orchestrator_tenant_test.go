@@ -15,13 +15,17 @@ package embedded
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	orchestratorSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/orchestrator"
+	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
 
 // tenantWitnessAgentService records the tenant each orchestration service call
@@ -31,10 +35,17 @@ type tenantWitnessAgentService struct {
 
 	log  orchestration.SessionEventLog
 	seen []string
+	// seenStorage records the tenantctx binding, the key the tenant-routed
+	// store reads first (pkg/server/tenant_kvstore.go tenantFromAnyContext).
+	// That store is unexported in another module, so this key is the
+	// observable proof of which store a call lands on.
+	seenStorage []string
 }
 
 func (w *tenantWitnessAgentService) witness(ctx context.Context) {
 	w.seen = append(w.seen, orchestration.TenantFromContext(ctx))
+	storage, _ := tenantctx.Lookup(ctx)
+	w.seenStorage = append(w.seenStorage, storage)
 }
 
 func (w *tenantWitnessAgentService) CreateTask(ctx context.Context, req *orchestration.CreateTaskRequest) (*orchestration.Task, error) {
@@ -189,6 +200,69 @@ func TestEmbeddedOrchestrator_StampsTheTenantIntoTheContext(t *testing.T) {
 						"store resolves the backend from the context, so this call lands on the wrong store",
 					row.method, i, got, tenantID)
 			}
+			// tenantctx is the key tenantFromAnyContext reads first: a call
+			// that binds only the orchestration key passes the service guard
+			// but writes into the system store.
+			for i, got := range witness.seenStorage {
+				assert.Equal(t, tenantID, got,
+					"%s call %d reached the service with storage tenant %q, want %q",
+					row.method, i, got, tenantID)
+			}
 		})
+	}
+}
+
+func TestEmbeddedOrchestrator_BindsTheStorageTenant(t *testing.T) {
+	methods := []struct {
+		method string
+		req    func(tenantID string) any
+	}{
+		{"CreateTask", func(id string) any { return &orchestratorSDK.CreateTaskRequest{TenantID: id} }},
+		{"ListTasks", func(id string) any { return &orchestratorSDK.ListTasksRequest{TenantID: id} }},
+		{"CancelJob", func(id string) any { return &orchestratorSDK.CancelJobRequest{TenantID: id, JobID: "j1"} }},
+	}
+	cases := []struct {
+		name      string
+		ctx       context.Context
+		requested string
+		want      string // the tenant on both keys; "" means refused
+	}{
+		{"transport tenant", transport.ContextWithTenant(context.Background(), "acme"), "", "acme"},
+		{"cross-tenant refused", tenantctx.WithTenant(context.Background(), "beta"), "acme", ""},
+		{"bare context is system", context.Background(), "", tenantctx.SystemTenantID},
+	}
+
+	for _, m := range methods {
+		for _, c := range cases {
+			t.Run(m.method+"/"+c.name, func(t *testing.T) {
+				witness := &tenantWitnessAgentService{
+					fakeAgentService: &fakeAgentService{},
+					log:              orchestration.NewMemorySessionEventLog(),
+				}
+				tr, err := New(&orchMock{
+					mockQuicBaaS: &mockQuicBaaS{},
+					agent:        witness,
+					proj:         &fakeProjectService{},
+					admin:        &fakeFleetAdminService{},
+				})
+				require.NoError(t, err)
+
+				_, err = tr.Request(c.ctx, "quicbaas.Orchestrator", m.method, m.req(c.requested))
+				if c.want == "" {
+					require.Error(t, err)
+					var qbErr *sdkerrors.QBError
+					require.True(t, errors.As(err, &qbErr), "want a QBError, got %T: %v", err, err)
+					assert.Equal(t, sdkerrors.CodeForbidden, qbErr.Code)
+					assert.Empty(t, witness.seen, "a refused cross-tenant call reached the service")
+					return
+				}
+				require.NoError(t, err)
+				require.NotEmpty(t, witness.seen, "the service was never called")
+				for i := range witness.seen {
+					assert.Equal(t, c.want, witness.seen[i], "orchestration tenant, call %d", i)
+					assert.Equal(t, c.want, witness.seenStorage[i], "storage tenant, call %d", i)
+				}
+			})
+		}
 	}
 }
