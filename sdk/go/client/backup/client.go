@@ -15,6 +15,7 @@ package backup
 
 import (
 	"context"
+	"math"
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
@@ -31,7 +32,8 @@ const (
 
 // Client provides backup and restore operations.
 type Client interface {
-	// Create initiates a new backup operation.
+	// Create asks the backup service for a full backup in the service's
+	// configured backup storage.
 	Create(ctx context.Context, req *BackupRequest) (*BackupResponse, error)
 
 	// Restore starts a restore of the backup named by BackupID and returns
@@ -39,11 +41,18 @@ type Client interface {
 	// an error; Restored is set only once the restore has finished.
 	Restore(ctx context.Context, req *RestoreRequest) (*RestoreResponse, error)
 
-	// List returns all available backups.
+	// List returns the backups the service reports, up to its default page
+	// of 100 backups.
 	List(ctx context.Context) (*ListBackupsResponse, error)
 }
 
 // BackupRequest is a request to create a backup.
+//
+// The backup service writes to its configured backup storage and applies
+// its configured compression and encryption, so Destination, Compress and
+// Encrypt must stay at their zero values: Create refuses any of them with
+// an invalid-input error before it calls the server. &BackupRequest{}
+// requests a full backup.
 type BackupRequest struct {
 	Destination string
 	Compress    bool
@@ -52,10 +61,13 @@ type BackupRequest struct {
 
 // BackupResponse is the response from creating a backup.
 type BackupResponse struct {
-	BackupID  string
-	Size      int64
+	BackupID string
+	Size     int64
+	// Duration is always zero: the backup service does not report it.
 	Duration  time.Duration
 	CreatedAt time.Time
+	// Status is the backup service's status for the backup, such as "completed".
+	Status string
 }
 
 // RestoreRequest is a request to restore from a backup.
@@ -94,11 +106,9 @@ type BackupInfo struct {
 	ID        string
 	Size      int64
 	CreatedAt time.Time
+	// Encrypted is always false: the backup service does not report a backup's encryption state.
 	Encrypted bool
 }
-
-// listRequest is the internal list request.
-type listRequest struct{}
 
 // client implements the Client interface.
 type client struct {
@@ -115,7 +125,9 @@ func NewClient(t transport.Transport) Client {
 	}
 }
 
-// Create initiates a new backup operation.
+// Create asks the backup service for a full backup in the service's
+// configured backup storage. It refuses a request that sets Destination,
+// Compress or Encrypt, which the service does not honour.
 func (c *client) Create(ctx context.Context, req *BackupRequest) (*BackupResponse, error) {
 	if ctx == nil {
 		return nil, errors.NewInvalidInput("backup.Create", "context is required")
@@ -125,21 +137,26 @@ func (c *client) Create(ctx context.Context, req *BackupRequest) (*BackupRespons
 		return nil, err
 	}
 
-	resp, err := c.transport.Request(ctx, serviceName, "Create", req)
+	resp, err := c.transport.Request(ctx, serviceName, "Create", &service.CreateBackupRequest{})
 	if err != nil {
 		return nil, err
 	}
-
 	if resp == nil {
 		return nil, errors.NewInternal("backup.Create", "nil response from server")
 	}
-
-	backupResp, ok := resp.(*BackupResponse)
+	created, ok := resp.(*service.CreateBackupResponse)
 	if !ok {
 		return nil, errors.NewInternal("backup.Create", "invalid response type")
 	}
-
-	return backupResp, nil
+	if created == nil {
+		return nil, errors.NewInternal("backup.Create", "nil response from server")
+	}
+	return &BackupResponse{
+		BackupID:  created.BackupID,
+		Size:      clampBackupSize(created.Size),
+		CreatedAt: backupTime(created.Timestamp),
+		Status:    created.Status,
+	}, nil
 }
 
 // Restore restores data from a backup.
@@ -173,13 +190,14 @@ func (c *client) Restore(ctx context.Context, req *RestoreRequest) (*RestoreResp
 	}, nil
 }
 
-// List returns all available backups.
+// List returns the backups the service reports. The service returns up to
+// its default page of 100 backups.
 func (c *client) List(ctx context.Context) (*ListBackupsResponse, error) {
 	if ctx == nil {
 		return nil, errors.NewInvalidInput("backup.List", "context is required")
 	}
 
-	resp, err := c.transport.Request(ctx, serviceName, "List", &listRequest{})
+	resp, err := c.transport.Request(ctx, serviceName, "List", &service.ListBackupsRequest{})
 	if err != nil {
 		return nil, err
 	}
@@ -188,12 +206,26 @@ func (c *client) List(ctx context.Context) (*ListBackupsResponse, error) {
 		return &ListBackupsResponse{Backups: []BackupInfo{}}, nil
 	}
 
-	listResp, ok := resp.(*ListBackupsResponse)
+	listResp, ok := resp.(*service.ListBackupsResponse)
 	if !ok {
 		return nil, errors.NewInternal("backup.List", "invalid response type")
 	}
 
-	return listResp, nil
+	out := &ListBackupsResponse{Backups: []BackupInfo{}}
+	if listResp == nil {
+		return out, nil
+	}
+	for _, m := range listResp.Backups {
+		if m == nil {
+			continue
+		}
+		out.Backups = append(out.Backups, BackupInfo{
+			ID:        m.BackupID,
+			Size:      clampBackupSize(m.Size),
+			CreatedAt: backupTime(m.Timestamp),
+		})
+	}
+	return out, nil
 }
 
 // Validation functions
@@ -202,8 +234,14 @@ func validateBackupRequest(req *BackupRequest) error {
 	if req == nil {
 		return errors.NewInvalidInput("backup.Create", "request is required")
 	}
-	if req.Destination == "" {
-		return errors.NewInvalidInput("backup.Create", "destination is required")
+	if req.Destination != "" {
+		return errors.NewInvalidInput("backup.Create", "destination is not supported: the backup service writes to its configured backup storage")
+	}
+	if req.Compress {
+		return errors.NewInvalidInput("backup.Create", "compression is not supported: the backup service applies its configured settings")
+	}
+	if req.Encrypt {
+		return errors.NewInvalidInput("backup.Create", "encryption is not supported: the backup service applies its configured settings")
 	}
 	return nil
 }
@@ -219,4 +257,20 @@ func validateRestoreRequest(req *RestoreRequest) error {
 		return errors.NewInvalidInput("backup.Restore", "backup ID is required")
 	}
 	return nil
+}
+
+// clampBackupSize converts the service's uint64 size, clamping at math.MaxInt64.
+func clampBackupSize(n uint64) int64 {
+	if n > math.MaxInt64 {
+		return math.MaxInt64
+	}
+	return int64(n)
+}
+
+// backupTime converts the service's UnixNano timestamp; zero stays the zero time.
+func backupTime(ns int64) time.Time {
+	if ns == 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, ns)
 }

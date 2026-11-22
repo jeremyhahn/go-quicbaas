@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -68,4 +69,37 @@ func TestBackupClient_OverREST_RestoreServerErrorIsReturned(t *testing.T) {
 	resp, err := client.Restore(context.Background(), &backup.RestoreRequest{BackupID: "bkp-1"})
 	assert.Error(t, err)
 	assert.Nil(t, resp)
+}
+
+func TestBackupClient_OverREST_CreateAndList(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/v1/backups", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, err := w.Write([]byte(`{"backup_id":"bkp-2","size":2048,"timestamp":1700000000000000000,"status":"completed"}`))
+		assert.NoError(t, err)
+	})
+	mux.HandleFunc("GET /api/v1/backups", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, err := w.Write([]byte(`{"backups":[{"backup_id":"bkp-2","size":2048,"timestamp":1700000000000000000,"status":"completed"}],"total_count":1}`))
+		assert.NoError(t, err)
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	client := backup.NewClient(newTestTransport(t, server))
+	ctx := context.Background()
+
+	created, err := client.Create(ctx, &backup.BackupRequest{})
+	require.NoError(t, err)
+	assert.Equal(t, "bkp-2", created.BackupID)
+	assert.Equal(t, int64(2048), created.Size)
+	assert.Equal(t, "completed", created.Status)
+	// 1700000000000000000 is exact as a float64, so the JSON round trip keeps it.
+	assert.True(t, created.CreatedAt.Equal(time.Unix(0, 1700000000000000000)), "CreatedAt = %v", created.CreatedAt)
+
+	list, err := client.List(ctx)
+	require.NoError(t, err)
+	require.Len(t, list.Backups, 1)
+	assert.Equal(t, "bkp-2", list.Backups[0].ID)
+	assert.Equal(t, int64(2048), list.Backups[0].Size)
 }

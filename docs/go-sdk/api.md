@@ -1488,7 +1488,7 @@ Provides backup and restore operations.
 
 ### Create
 
-Creates a new backup.
+Asks the backup service for a full backup in its configured backup storage.
 
 ```go
 func Create(ctx context.Context, req *BackupRequest) (*BackupResponse, error)
@@ -1498,9 +1498,11 @@ func Create(ctx context.Context, req *BackupRequest) (*BackupResponse, error)
 
 | Field | Type | Description |
 |-------|------|-------------|
-| Destination | string | Backup destination path (required) |
-| Compress | bool | Enable compression |
-| Encrypt | bool | Enable encryption |
+| Destination | string | Must be left unset |
+| Compress | bool | Must be left unset |
+| Encrypt | bool | Must be left unset |
+
+The service writes to its configured backup storage with its configured compression and encryption settings, so `Create` refuses a request that sets `Destination`, `Compress` or `Encrypt` with an `InvalidInput` error. `&BackupRequest{}` requests a full backup.
 
 **BackupResponse:**
 
@@ -1508,17 +1510,14 @@ func Create(ctx context.Context, req *BackupRequest) (*BackupResponse, error)
 |-------|------|-------------|
 | BackupID | string | Unique backup identifier |
 | Size | int64 | Backup size in bytes |
-| Duration | time.Duration | Time taken to create backup |
+| Duration | time.Duration | Always zero: the service does not report it |
 | CreatedAt | time.Time | Creation timestamp |
+| Status | string | The service's status for the backup, such as `completed` |
 
 **Example:**
 
 ```go
-resp, err := client.Backup().Create(ctx, &quicbaas.BackupRequest{
-    Destination: "s3://my-bucket/backups/",
-    Compress:    true,
-    Encrypt:     true,
-})
+resp, err := client.Backup().Create(ctx, &quicbaas.BackupRequest{})
 fmt.Printf("Backup created: %s (%d bytes)\n", resp.BackupID, resp.Size)
 ```
 
@@ -1565,7 +1564,7 @@ func List(ctx context.Context) (*ListBackupsResponse, error)
 | ID | string | Backup identifier |
 | Size | int64 | Backup size in bytes |
 | CreatedAt | time.Time | Creation timestamp |
-| Encrypted | bool | Whether backup is encrypted |
+| Encrypted | bool | Always false: the service does not report a backup's encryption state |
 
 ---
 

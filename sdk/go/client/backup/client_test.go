@@ -5,6 +5,9 @@ package backup
 
 import (
 	"context"
+	"math"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -64,11 +67,11 @@ func TestNewClient(t *testing.T) {
 func TestClient_Create_Validation(t *testing.T) {
 	mockT := &mockTransport{
 		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return &BackupResponse{
+			return &svc.CreateBackupResponse{
 				BackupID:  "backup-123",
 				Size:      1024,
-				Duration:  time.Second,
-				CreatedAt: time.Now(),
+				Timestamp: time.Now().UnixNano(),
+				Status:    "completed",
 			}, nil
 		},
 	}
@@ -86,34 +89,34 @@ func TestClient_Create_Validation(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:    "empty destination",
-			req:     &BackupRequest{Destination: ""},
+			name:    "empty request is valid",
+			req:     &BackupRequest{},
+			wantErr: false,
+		},
+		{
+			name:    "local destination refused",
+			req:     &BackupRequest{Destination: "/backups/"},
 			wantErr: true,
 		},
 		{
-			name:    "valid request with local path",
-			req:     &BackupRequest{Destination: "/backups/"},
-			wantErr: false,
-		},
-		{
-			name:    "valid request with s3",
+			name:    "s3 destination refused",
 			req:     &BackupRequest{Destination: "s3://bucket/path"},
-			wantErr: false,
+			wantErr: true,
 		},
 		{
-			name:    "valid request with compression",
-			req:     &BackupRequest{Destination: "/backups/", Compress: true},
-			wantErr: false,
+			name:    "compression refused",
+			req:     &BackupRequest{Compress: true},
+			wantErr: true,
 		},
 		{
-			name:    "valid request with encryption",
-			req:     &BackupRequest{Destination: "/backups/", Encrypt: true},
-			wantErr: false,
+			name:    "encryption refused",
+			req:     &BackupRequest{Encrypt: true},
+			wantErr: true,
 		},
 		{
-			name:    "valid request with both options",
-			req:     &BackupRequest{Destination: "/backups/", Compress: true, Encrypt: true},
-			wantErr: false,
+			name:    "compression and encryption refused",
+			req:     &BackupRequest{Compress: true, Encrypt: true},
+			wantErr: true,
 		},
 	}
 
@@ -152,18 +155,14 @@ func TestClient_Create(t *testing.T) {
 					if method != "Create" {
 						t.Errorf("expected method %q, got %q", "Create", method)
 					}
-					backupReq, ok := req.(*BackupRequest)
-					if !ok {
-						t.Error("expected *BackupRequest")
+					if _, ok := req.(*svc.CreateBackupRequest); !ok {
+						t.Errorf("expected *svc.CreateBackupRequest, got %T", req)
 					}
-					if backupReq.Destination != "/backups/" {
-						t.Errorf("expected destination /backups/, got %q", backupReq.Destination)
-					}
-					return &BackupResponse{
+					return &svc.CreateBackupResponse{
 						BackupID:  "backup-abc123",
 						Size:      1048576,
-						Duration:  5 * time.Second,
-						CreatedAt: now,
+						Timestamp: now.UnixNano(),
+						Status:    "completed",
 					}, nil
 				},
 			},
@@ -209,9 +208,20 @@ func TestClient_Create(t *testing.T) {
 			wantErr: true,
 			errCode: errors.CodeInternal,
 		},
+		{
+			name: "typed nil response",
+			ctx:  context.Background(),
+			transport: &mockTransport{
+				requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+					return (*svc.CreateBackupResponse)(nil), nil
+				},
+			},
+			wantErr: true,
+			errCode: errors.CodeInternal,
+		},
 	}
 
-	validReq := &BackupRequest{Destination: "/backups/"}
+	validReq := &BackupRequest{}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -416,6 +426,7 @@ func TestClient_List(t *testing.T) {
 		wantErr     bool
 		errCode     errors.ErrorCode
 		backupCount int
+		wantFirst   *BackupInfo
 	}{
 		{
 			name: "list with backups",
@@ -428,25 +439,42 @@ func TestClient_List(t *testing.T) {
 					if method != "List" {
 						t.Errorf("expected method %q, got %q", "List", method)
 					}
-					return &ListBackupsResponse{
-						Backups: []BackupInfo{
-							{ID: "backup-1", Size: 1024, CreatedAt: now, Encrypted: false},
-							{ID: "backup-2", Size: 2048, CreatedAt: now, Encrypted: true},
-							{ID: "backup-3", Size: 4096, CreatedAt: now, Encrypted: true},
+					if _, ok := req.(*svc.ListBackupsRequest); !ok {
+						t.Errorf("expected *svc.ListBackupsRequest, got %T", req)
+					}
+					return &svc.ListBackupsResponse{
+						Backups: []*svc.BackupMetadata{
+							{BackupID: "backup-1", Size: 1024, Timestamp: now.UnixNano()},
+							nil,
+							{BackupID: "backup-2", Size: 2048, Timestamp: now.UnixNano()},
+							{BackupID: "backup-3", Size: 4096, Timestamp: now.UnixNano()},
 						},
+						TotalCount: 3,
 					}, nil
 				},
 			},
 			wantErr:     false,
 			backupCount: 3,
+			wantFirst:   &BackupInfo{ID: "backup-1", Size: 1024, CreatedAt: now},
+		},
+		{
+			name: "typed nil response returns empty list",
+			ctx:  context.Background(),
+			transport: &mockTransport{
+				requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+					return (*svc.ListBackupsResponse)(nil), nil
+				},
+			},
+			wantErr:     false,
+			backupCount: 0,
 		},
 		{
 			name: "list with empty result",
 			ctx:  context.Background(),
 			transport: &mockTransport{
 				requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-					return &ListBackupsResponse{
-						Backups: []BackupInfo{},
+					return &svc.ListBackupsResponse{
+						Backups: []*svc.BackupMetadata{},
 					}, nil
 				},
 			},
@@ -514,6 +542,12 @@ func TestClient_List(t *testing.T) {
 				if len(resp.Backups) != tt.backupCount {
 					t.Errorf("expected %d backups, got %d", tt.backupCount, len(resp.Backups))
 				}
+				if tt.wantFirst != nil && len(resp.Backups) > 0 {
+					got := resp.Backups[0]
+					if got.ID != tt.wantFirst.ID || got.Size != tt.wantFirst.Size || !got.CreatedAt.Equal(tt.wantFirst.CreatedAt) {
+						t.Errorf("first backup = %+v, want %+v", got, *tt.wantFirst)
+					}
+				}
 			}
 		})
 	}
@@ -523,17 +557,17 @@ func TestBackupResponse_Fields(t *testing.T) {
 	now := time.Now()
 	mockT := &mockTransport{
 		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return &BackupResponse{
+			return &svc.CreateBackupResponse{
 				BackupID:  "backup-xyz789",
 				Size:      10485760,
-				Duration:  30 * time.Second,
-				CreatedAt: now,
+				Timestamp: now.UnixNano(),
+				Status:    "completed",
 			}, nil
 		},
 	}
 
 	client := NewClient(mockT)
-	resp, err := client.Create(context.Background(), &BackupRequest{Destination: "/backups/"})
+	resp, err := client.Create(context.Background(), &BackupRequest{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -544,11 +578,38 @@ func TestBackupResponse_Fields(t *testing.T) {
 	if resp.Size != 10485760 {
 		t.Errorf("expected Size=10485760, got %d", resp.Size)
 	}
-	if resp.Duration != 30*time.Second {
-		t.Errorf("expected Duration=30s, got %v", resp.Duration)
+	if resp.Duration != 0 {
+		t.Errorf("expected Duration=0, got %v", resp.Duration)
 	}
-	if !resp.CreatedAt.Equal(now) {
-		t.Errorf("expected CreatedAt=%v, got %v", now, resp.CreatedAt)
+	if want := time.Unix(0, now.UnixNano()); !resp.CreatedAt.Equal(want) {
+		t.Errorf("expected CreatedAt=%v, got %v", want, resp.CreatedAt)
+	}
+	if resp.Status != "completed" {
+		t.Errorf("expected Status='completed', got %q", resp.Status)
+	}
+}
+
+func TestClient_Create_SizeClampsAndZeroTimestamp(t *testing.T) {
+	mockT := &mockTransport{
+		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+			return &svc.CreateBackupResponse{
+				BackupID:  "backup-big",
+				Size:      math.MaxUint64,
+				Timestamp: 0,
+				Status:    "completed",
+			}, nil
+		},
+	}
+
+	resp, err := NewClient(mockT).Create(context.Background(), &BackupRequest{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Size != math.MaxInt64 {
+		t.Errorf("expected Size=%d, got %d", int64(math.MaxInt64), resp.Size)
+	}
+	if !resp.CreatedAt.IsZero() {
+		t.Errorf("expected zero CreatedAt, got %v", resp.CreatedAt)
 	}
 }
 
@@ -602,15 +663,16 @@ func TestBackupInfo_Fields(t *testing.T) {
 	now := time.Now()
 	mockT := &mockTransport{
 		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return &ListBackupsResponse{
-				Backups: []BackupInfo{
+			return &svc.ListBackupsResponse{
+				Backups: []*svc.BackupMetadata{
 					{
-						ID:        "backup-abc",
+						BackupID:  "backup-abc",
 						Size:      5242880,
-						CreatedAt: now,
-						Encrypted: true,
+						Timestamp: now.UnixNano(),
+						Status:    "completed",
 					},
 				},
+				TotalCount: 1,
 			}, nil
 		},
 	}
@@ -632,50 +694,39 @@ func TestBackupInfo_Fields(t *testing.T) {
 	if backup.Size != 5242880 {
 		t.Errorf("expected Size=5242880, got %d", backup.Size)
 	}
-	if !backup.CreatedAt.Equal(now) {
-		t.Errorf("expected CreatedAt=%v, got %v", now, backup.CreatedAt)
+	if want := time.Unix(0, now.UnixNano()); !backup.CreatedAt.Equal(want) {
+		t.Errorf("expected CreatedAt=%v, got %v", want, backup.CreatedAt)
 	}
-	if !backup.Encrypted {
-		t.Error("expected Encrypted to be true")
+	if backup.Encrypted {
+		t.Error("expected Encrypted to be false")
 	}
 }
 
 func TestClient_Create_RequestValidation(t *testing.T) {
-	var capturedReq *BackupRequest
+	var captured interface{}
 	mockT := &mockTransport{
 		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			capturedReq = req.(*BackupRequest)
-			return &BackupResponse{
+			captured = req
+			return &svc.CreateBackupResponse{
 				BackupID:  "backup-123",
 				Size:      1024,
-				Duration:  time.Second,
-				CreatedAt: time.Now(),
+				Timestamp: time.Now().UnixNano(),
+				Status:    "completed",
 			}, nil
 		},
 	}
 
 	client := NewClient(mockT)
-	ctx := context.Background()
-
-	originalReq := &BackupRequest{
-		Destination: "s3://my-bucket/backups/",
-		Compress:    true,
-		Encrypt:     true,
-	}
-
-	_, err := client.Create(ctx, originalReq)
-	if err != nil {
+	if _, err := client.Create(context.Background(), &BackupRequest{}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if capturedReq.Destination != originalReq.Destination {
-		t.Errorf("expected Destination=%q, got %q", originalReq.Destination, capturedReq.Destination)
+	capturedReq, ok := captured.(*svc.CreateBackupRequest)
+	if !ok {
+		t.Fatalf("expected *svc.CreateBackupRequest, got %T", captured)
 	}
-	if capturedReq.Compress != originalReq.Compress {
-		t.Errorf("expected Compress=%v, got %v", originalReq.Compress, capturedReq.Compress)
-	}
-	if capturedReq.Encrypt != originalReq.Encrypt {
-		t.Errorf("expected Encrypt=%v, got %v", originalReq.Encrypt, capturedReq.Encrypt)
+	if !reflect.DeepEqual(capturedReq, &svc.CreateBackupRequest{}) {
+		t.Errorf("expected an empty CreateBackupRequest, got %+v", capturedReq)
 	}
 }
 
@@ -725,11 +776,13 @@ func TestClient_Restore_SourceRefusedBeforeCall(t *testing.T) {
 
 func TestClient_List_ServiceAndMethod(t *testing.T) {
 	var capturedService, capturedMethod string
+	var capturedReq interface{}
 	mockT := &mockTransport{
 		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
 			capturedService = service
 			capturedMethod = method
-			return &ListBackupsResponse{Backups: []BackupInfo{}}, nil
+			capturedReq = req
+			return &svc.ListBackupsResponse{Backups: []*svc.BackupMetadata{}}, nil
 		},
 	}
 
@@ -745,36 +798,57 @@ func TestClient_List_ServiceAndMethod(t *testing.T) {
 	if capturedMethod != "List" {
 		t.Errorf("expected method='List', got %q", capturedMethod)
 	}
+	if _, ok := capturedReq.(*svc.ListBackupsRequest); !ok {
+		t.Errorf("expected *svc.ListBackupsRequest, got %T", capturedReq)
+	}
 }
 
 func TestValidateBackupRequest(t *testing.T) {
 	tests := []struct {
 		name    string
 		req     *BackupRequest
-		wantErr bool
+		wantMsg string
 	}{
 		{
 			name:    "nil request",
 			req:     nil,
-			wantErr: true,
+			wantMsg: "request is required",
 		},
 		{
-			name:    "empty destination",
-			req:     &BackupRequest{Destination: ""},
-			wantErr: true,
+			name: "empty request",
+			req:  &BackupRequest{},
 		},
 		{
-			name:    "valid destination",
+			name:    "destination",
 			req:     &BackupRequest{Destination: "/path/to/backup"},
-			wantErr: false,
+			wantMsg: "destination is not supported: the backup service writes to its configured backup storage",
+		},
+		{
+			name:    "compress",
+			req:     &BackupRequest{Compress: true},
+			wantMsg: "compression is not supported: the backup service applies its configured settings",
+		},
+		{
+			name:    "encrypt",
+			req:     &BackupRequest{Encrypt: true},
+			wantMsg: "encryption is not supported: the backup service applies its configured settings",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := validateBackupRequest(tt.req)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("validateBackupRequest() error = %v, wantErr %v", err, tt.wantErr)
+			if tt.wantMsg == "" {
+				if err != nil {
+					t.Errorf("validateBackupRequest() error = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("validateBackupRequest() = nil, want %q", tt.wantMsg)
+			}
+			if !strings.Contains(err.Error(), tt.wantMsg) {
+				t.Errorf("validateBackupRequest() error = %q, want it to contain %q", err.Error(), tt.wantMsg)
 			}
 		})
 	}
@@ -827,12 +901,13 @@ func TestClient_MultipleBackups(t *testing.T) {
 	now := time.Now()
 	mockT := &mockTransport{
 		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return &ListBackupsResponse{
-				Backups: []BackupInfo{
-					{ID: "backup-1", Size: 100, CreatedAt: now.Add(-2 * time.Hour), Encrypted: false},
-					{ID: "backup-2", Size: 200, CreatedAt: now.Add(-1 * time.Hour), Encrypted: true},
-					{ID: "backup-3", Size: 300, CreatedAt: now, Encrypted: true},
+			return &svc.ListBackupsResponse{
+				Backups: []*svc.BackupMetadata{
+					{BackupID: "backup-1", Size: 100, Timestamp: now.Add(-2 * time.Hour).UnixNano()},
+					{BackupID: "backup-2", Size: 200, Timestamp: now.Add(-1 * time.Hour).UnixNano()},
+					{BackupID: "backup-3", Size: 300, Timestamp: now.UnixNano()},
 				},
+				TotalCount: 3,
 			}, nil
 		},
 	}
@@ -850,7 +925,6 @@ func TestClient_MultipleBackups(t *testing.T) {
 	// Verify order and content
 	expectedIDs := []string{"backup-1", "backup-2", "backup-3"}
 	expectedSizes := []int64{100, 200, 300}
-	expectedEncrypted := []bool{false, true, true}
 
 	for i, backup := range resp.Backups {
 		if backup.ID != expectedIDs[i] {
@@ -858,9 +932,6 @@ func TestClient_MultipleBackups(t *testing.T) {
 		}
 		if backup.Size != expectedSizes[i] {
 			t.Errorf("backup[%d]: expected Size=%d, got %d", i, expectedSizes[i], backup.Size)
-		}
-		if backup.Encrypted != expectedEncrypted[i] {
-			t.Errorf("backup[%d]: expected Encrypted=%v, got %v", i, expectedEncrypted[i], backup.Encrypted)
 		}
 	}
 }
