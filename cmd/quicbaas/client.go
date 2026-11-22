@@ -124,8 +124,10 @@ func buildSDKClientOptionsWithToken(authToken string) ([]quicbaas.Option, error)
 		opts = append(opts, quicbaas.WithTenant(globalTenantID))
 	}
 
-	// Settle the transport from --transport and --address (selectTransport).
-	transport = selectTransport()
+	// Settle the transport from --transport and --address (selectTransport),
+	// and the address it dials: quic:// and mcp:// name the transport and are
+	// dropped here, before NewClient(address, ...) dials.
+	transport, address = selectTransport()
 
 	// Configure transport type
 	switch transport {
