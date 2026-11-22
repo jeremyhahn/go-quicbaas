@@ -82,6 +82,13 @@ type Storage struct {
 	lastReconcile     time.Time
 	reconcileInterval time.Duration
 
+	// reconcileRun serialises reconciliation runs and guards
+	// reconcilePending, the key-prefix shards of the current pass not yet
+	// reconciled. A run cut short by its budget leaves them for the next
+	// run, which resumes the pass instead of restarting it.
+	reconcileRun     sync.Mutex
+	reconcilePending []reconcileShard
+
 	// tenantCursor is where the due scan starts in the rotation of tenant
 	// namespaces plus the system namespace; each sweep advances it, so a
 	// namespace with more due jobs than the limit, system included, cannot
@@ -758,46 +765,56 @@ func (s *Storage) InitializeJobIDCounter(ctx context.Context) error {
 // TenantJobIndexBackfillKey marker no longer ends reconciliation: it runs on
 // every open and periodically from the due scan, Putting only missing
 // entries, and writes the marker when absent.
+//
+// One pass covers the tenant records in key-prefix shards, starting from
+// tenantKeyPrefix. A shard is scanned, its records' index entries are
+// checked, and the missing ones are written before the next shard, so every
+// finished shard is durable progress. A shard holding more than
+// reconcileShardLimit records, or whose scan the budget cuts short, is split
+// into one narrower shard per next key byte; the unfinished shards are kept
+// on the Storage, so the next run resumes the pass where this one stopped
+// even when scanning the whole keyspace takes longer than one budget.
 func (s *Storage) reconcileTenantJobIndex(ctx context.Context) error {
-	// The index and the tenant records are each read in one prefix scan and
-	// compared in memory, so the cost is two scans plus one write per job
-	// missing from the index, not a lookup per retained job. Entries are
-	// collected first and written after the scans, so no write runs inside
-	// the store's iteration. Each write is durable: a run cut short by its
-	// budget resumes where it stopped, because the next run finds those
-	// entries present.
-	indexed := make(map[string]struct{})
-	err := s.kv.Scan(ctx, TenantJobIndexPrefix, func(key string, _ []byte) error {
-		indexed[key] = struct{}{}
-		return ctx.Err()
-	})
-	if err != nil {
-		return &scheduler.ErrStorageError{Op: "reconcileTenantJobIndex.index_scan", Cause: err}
+	if !s.reconcileRun.TryLock() {
+		return &scheduler.ErrStorageError{Op: "reconcileTenantJobIndex", Cause: errReconcileBusy}
 	}
-	type tenantJobRef struct {
-		id       uint64
-		tenantID string
+	defer s.reconcileRun.Unlock()
+
+	if len(s.reconcilePending) == 0 {
+		s.reconcilePending = []reconcileShard{{prefix: tenantKeyPrefix}}
 	}
-	var missing []tenantJobRef
-	err = s.kv.Scan(ctx, tenantKeyPrefix, func(key string, _ []byte) error {
-		if tenantID, id, ok := splitTenantJobKey(key); ok {
-			if _, present := indexed[keyForTenantJobIndex(id, tenantID)]; !present {
-				missing = append(missing, tenantJobRef{id: id, tenantID: tenantID})
+	for len(s.reconcilePending) > 0 {
+		if err := ctx.Err(); err != nil {
+			return &scheduler.ErrStorageError{Op: "reconcileTenantJobIndex.scan", Cause: err}
+		}
+		shard := s.reconcilePending[0]
+		refs, split, err := s.scanReconcileShard(ctx, shard)
+		if split {
+			s.reconcilePending = append(shard.children(), s.reconcilePending[1:]...)
+		}
+		if err != nil {
+			return &scheduler.ErrStorageError{Op: "reconcileTenantJobIndex.scan", Cause: err}
+		}
+		if split {
+			continue
+		}
+		for _, ref := range refs {
+			indexKey := keyForTenantJobIndex(ref.id, ref.tenantID)
+			present, err := s.kv.Exists(ctx, indexKey)
+			if err != nil {
+				return &scheduler.ErrStorageError{Op: "reconcileTenantJobIndex.index", Cause: err}
+			}
+			if present {
+				continue
+			}
+			if err := s.kv.Put(ctx, indexKey, []byte(ref.tenantID)); err != nil {
+				return &scheduler.ErrStorageError{Op: "reconcileTenantJobIndex.index", Cause: err}
 			}
 		}
-		return ctx.Err()
-	})
-	if err != nil {
-		return &scheduler.ErrStorageError{Op: "reconcileTenantJobIndex.scan", Cause: err}
+		s.reconcilePending = s.reconcilePending[1:]
 	}
-	for _, ref := range missing {
-		if err := ctx.Err(); err != nil {
-			return &scheduler.ErrStorageError{Op: "reconcileTenantJobIndex.index", Cause: err}
-		}
-		if err := s.kv.Put(ctx, keyForTenantJobIndex(ref.id, ref.tenantID), []byte(ref.tenantID)); err != nil {
-			return &scheduler.ErrStorageError{Op: "reconcileTenantJobIndex.index", Cause: err}
-		}
-	}
+	s.reconcilePending = nil
+
 	done, err := s.kv.Exists(ctx, TenantJobIndexBackfillKey)
 	if err != nil {
 		return &scheduler.ErrStorageError{Op: "reconcileTenantJobIndex.marker", Cause: err}
@@ -808,6 +825,82 @@ func (s *Storage) reconcileTenantJobIndex(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// reconcileShardLimit is the most tenant records one reconciliation shard
+// holds; a larger shard is split before any of it is written.
+const reconcileShardLimit = 1024
+
+// errReconcileBusy reports that another reconciliation run is in progress.
+var errReconcileBusy = errors.New("tenant job index reconciliation already running")
+
+// errReconcileShardFull stops a shard scan that passed reconcileShardLimit.
+var errReconcileShardFull = errors.New("reconciliation shard full")
+
+// reconcileShard is one key-prefix slice of a reconciliation pass. An exact
+// shard covers only the key equal to prefix: splitting a prefix shard into
+// one child per next byte leaves that key out of every child.
+type reconcileShard struct {
+	prefix string
+	exact  bool
+}
+
+// children returns the shards that together cover s: the key equal to its
+// prefix and one prefix shard per possible next byte.
+func (s reconcileShard) children() []reconcileShard {
+	out := make([]reconcileShard, 0, 257)
+	out = append(out, reconcileShard{prefix: s.prefix, exact: true})
+	for b := 0; b < 256; b++ {
+		out = append(out, reconcileShard{prefix: s.prefix + string([]byte{byte(b)})})
+	}
+	return out
+}
+
+// tenantJobRef names one tenant job record.
+type tenantJobRef struct {
+	id       uint64
+	tenantID string
+}
+
+// scanReconcileShard returns the tenant job records shard covers. split
+// reports that the shard must be divided: it holds more than
+// reconcileShardLimit records, or its scan was cut short by ctx (err is then
+// set too), so the next attempt scans narrower prefixes.
+func (s *Storage) scanReconcileShard(ctx context.Context, shard reconcileShard) (refs []tenantJobRef, split bool, err error) {
+	if shard.exact {
+		present, err := s.kv.Exists(ctx, shard.prefix)
+		if err != nil || !present {
+			return nil, false, err
+		}
+		if tenantID, id, ok := splitTenantJobKey(shard.prefix); ok {
+			refs = append(refs, tenantJobRef{id: id, tenantID: tenantID})
+		}
+		return refs, false, nil
+	}
+	full := false
+	err = s.kv.Scan(ctx, shard.prefix, func(key string, _ []byte) error {
+		if tenantID, id, ok := splitTenantJobKey(key); ok {
+			if len(refs) >= reconcileShardLimit {
+				full = true
+				return errReconcileShardFull
+			}
+			refs = append(refs, tenantJobRef{id: id, tenantID: tenantID})
+		}
+		return ctx.Err()
+	})
+	if full {
+		return nil, true, nil
+	}
+	if err != nil {
+		// A scan the budget cut after it had seen several records is split
+		// so the next run scans less; one cut before then is only retried,
+		// as narrower shards would not be any faster.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, len(refs) > 1, ctxErr
+		}
+		return nil, false, err
+	}
+	return refs, false, nil
 }
 
 // reconcileWithinBudget runs one reconciliation of the tenant job index under
