@@ -31,6 +31,7 @@ function familyCalls(c: Client): Array<[string, string, Promise<unknown>]> {
     ['sdlc', 'binding', c.sdlc.binding('tenant-a', 'proj-1')],
     ['accounts', 'listAccountsPage', c.accounts.listAccountsPage({ tenant_id: 'tenant-a' })],
     ['accounts', 'deleteAccount', c.accounts.deleteAccount('tenant-a', 'acct-1')],
+    ['prompts', 'listPrompts', c.prompts.listPrompts({ set: 'sdlc' })],
   ];
 }
 

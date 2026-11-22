@@ -4940,6 +4940,12 @@ func (s *quicBaaS) Scheduler() SchedulerService {
 	return s.schedulerService
 }
 
+// TimeSeriesStorageConfigured reports whether time series storage is wired.
+// Without it every time series method answers ErrNotImplemented.
+func (s *quicBaaS) TimeSeriesStorageConfigured() bool {
+	return s.timeSeriesService != nil && s.timeSeriesService.tsStorage != nil
+}
+
 // Placement returns the scheduler's placement service (nil when no qrdb
 // client is configured).
 func (s *quicBaaS) Placement() PlacementService {
