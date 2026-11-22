@@ -350,8 +350,72 @@ func TestFirstBootBootstrap_ConfiguredAdminEmail(t *testing.T) {
 	_, err = c.identityStore.GetUserByEmail(ctx, qrdbsdk.SystemTenantID, bootstrapAdminEmail)
 	assert.Error(t, err, "the synthetic default must not be used when an address is configured")
 
-	require.NoError(t, srv.firstBootBootstrap(ctx, c), "a re-entered first boot must find the configured admin")
-	assert.Equal(t, admin.ID, srv.bootstrapAdminUserID)
+}
+
+// TestFirstBootBootstrap_ConfiguredAdminEmail_RecoveryFindsTheConfiguredAdmin
+// drives the first-boot recovery path with a configured admin address: boot 1
+// completes, the super-admin grant is removed (as a boot that failed before
+// writing it leaves the store), and a FRESH server, which remembers nothing
+// about the user boot 1 created, re-enters bootstrap. The re-entry must look
+// the admin up by the configured address, not the synthetic default,
+// deliver a reissued credential, and restore the grant for that user.
+func TestFirstBootBootstrap_ConfiguredAdminEmail_RecoveryFindsTheConfiguredAdmin(t *testing.T) {
+	const configured = "platform-ops@acme.example"
+
+	newServer := func(ca *fakeTrustedCA) *Server {
+		srv := withTempServer(t)
+		srv.config.IAM.BootstrapAdminEmail = configured
+		srv.config.Auth.AllowPasswordAuth = false
+		srv.config.Auth.InsecureDevMode = false
+		srv.xkmsCA = ca
+		srv.config.IAM.SPIFFETrustDomain = testTrustDomain
+		return srv
+	}
+	ca := newFakeTrustedCA(t)
+	c := buildTestIAMComponents(t)
+	ctx := context.Background()
+
+	var banner adminEnrollmentBanner
+	restore := captureFirstBootBanner(t, &banner)
+	defer restore()
+
+	// Boot 1 completes and creates the admin under the configured address.
+	require.NoError(t, newServer(ca).firstBootBootstrap(ctx, c))
+	admin, err := c.identityStore.GetUserByEmail(ctx, qrdbsdk.SystemTenantID, configured)
+	require.NoError(t, err)
+	firstThumb := admin.SPKIThumbprint()
+	require.NotEmpty(t, firstThumb)
+
+	assignments, err := c.adminManager.ListAssignments(ctx, iam.ListAdminAssignmentsOptions{})
+	require.NoError(t, err)
+	require.Len(t, assignments, 1)
+	require.NoError(t, c.adminManager.DeleteAssignment(ctx, assignments[0].ID))
+	banner = adminEnrollmentBanner{}
+
+	// Boot 2 on fresh server state: the admin exists, so qrdb's first boot
+	// creates no user and the lookup by address is the only way to find it.
+	retry := newServer(ca)
+	require.NoError(t, retry.firstBootBootstrap(ctx, c),
+		"the recovery must find the admin by the configured address")
+	assert.Equal(t, admin.ID, retry.bootstrapAdminUserID)
+
+	require.NotEmpty(t, banner.CertPath, "the recovery must deliver a credential")
+	require.NotEmpty(t, banner.KeyPath, "the delivered bundle carries its private key")
+	certPEM, err := os.ReadFile(banner.CertPath)
+	require.NoError(t, err)
+	cert, err := parseCertLoginPEM(certPEM)
+	require.NoError(t, err)
+	admin, err = c.identityStore.GetUser(ctx, qrdbsdk.SystemTenantID, admin.ID)
+	require.NoError(t, err)
+	assert.Equal(t, qrdbsdk.ComputeSPKIThumbprint(cert), admin.SPKIThumbprint(),
+		"the configured admin must be bound to the delivered certificate")
+	assert.NotEqual(t, firstThumb, admin.SPKIThumbprint())
+
+	after, err := c.adminManager.ListAssignments(ctx, iam.ListAdminAssignmentsOptions{ActiveOnly: true})
+	require.NoError(t, err)
+	require.Len(t, after, 1, "the recovery must restore the grant")
+	assert.Equal(t, iam.AdminRoleSuperAdmin, after[0].AdminRole)
+	assert.Equal(t, admin.ID, after[0].UserID, "the grant belongs to the configured admin")
 }
 
 // TestFirstBootBootstrap_NoDataDirRefusesToWriteAdminBundle covers the
