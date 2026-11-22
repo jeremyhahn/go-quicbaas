@@ -28,6 +28,7 @@ import (
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // nodeVectorStorage implements interfaces.VectorStorage by delegating
@@ -339,6 +340,9 @@ func listAllVectors(ctx context.Context, vc qrdbtransport.VectorClient, req *qrd
 	reset := func() {
 		seen, all = make(map[uint64]struct{}), nil
 	}
+	// Keep the namespace's write state for the whole scan, so its revision
+	// is not forgotten and re-made between two checks.
+	defer writes.watch(req.Namespace)()
 	// rev is the write revision the vectors in seen were read under, and
 	// clean whether no write was in flight then.
 	var rev uint64
@@ -432,6 +436,9 @@ const (
 // vectorSnapshotKey names one snapshot: a namespace read with or without
 // embeddings and metadata.
 type vectorSnapshotKey struct {
+	// tenant is the tenant bound in the reading ctx: go-qrdb scopes each
+	// call by it, so one namespace name can hold different tenants' vectors.
+	tenant            string
 	namespace         string
 	vectors, metadata bool
 }
@@ -456,9 +463,12 @@ type vectorScanSnapshots struct {
 	// gen counts drops, so a read that a write overlapped does not store
 	// what it read.
 	gen uint64
-	// writes is the write revision of each namespace written since start;
-	// entries are never removed, so a revision never repeats.
+	// writes is the write state of each namespace; an entry lives while a
+	// write of it is in flight or a scan watches it. Revisions come from
+	// seq, so they never repeat even when an entry is removed and re-made.
 	writes map[string]*namespaceWrites
+	// seq is the last revision handed out; it only grows.
+	seq uint64
 }
 
 func (s *vectorScanSnapshots) clock() time.Time {
@@ -486,7 +496,8 @@ func (s *vectorScanSnapshots) refresh(ctx context.Context, vc qrdbtransport.Vect
 // snapshot whose count still matches and whose age is within the TTL;
 // without it, it always re-reads and stores the result.
 func (s *vectorScanSnapshots) load(ctx context.Context, vc qrdbtransport.VectorClient, req *qrdbtransport.ListVectorsRequest, reuse bool) ([]*qrdbtransport.VectorData, error) {
-	key := vectorSnapshotKey{namespace: req.Namespace, vectors: req.IncludeVectors, metadata: req.IncludeMetadata}
+	tenant, _ := tenantctx.Lookup(ctx)
+	key := vectorSnapshotKey{tenant: tenant, namespace: req.Namespace, vectors: req.IncludeVectors, metadata: req.IncludeMetadata}
 	info, err := vc.GetNamespaceInfo(ctx, &qrdbtransport.GetNamespaceInfoRequest{Namespace: req.Namespace})
 	if err != nil {
 		return nil, err
@@ -543,11 +554,12 @@ func (s *vectorScanSnapshots) drop(namespace string) {
 }
 
 // namespaceWrites is the write state of one namespace that a full scan
-// checks: rev changes when a write begins and when it ends, and inflight
-// counts the writes begun and not yet ended.
+// checks: rev changes when a write begins and when it ends, inflight counts
+// the writes begun and not yet ended, and scans the scans watching it.
 type namespaceWrites struct {
 	rev      uint64
 	inflight int
+	scans    int
 }
 
 // beginWrite records that a write of namespace starts. The returned func
@@ -555,7 +567,8 @@ type namespaceWrites struct {
 func (s *vectorScanSnapshots) beginWrite(namespace string) func() {
 	s.mu.Lock()
 	w := s.writesOf(namespace)
-	w.rev++
+	s.seq++
+	w.rev = s.seq
 	w.inflight++
 	s.gen++
 	s.mu.Unlock()
@@ -563,11 +576,47 @@ func (s *vectorScanSnapshots) beginWrite(namespace string) func() {
 	return func() {
 		once.Do(func() {
 			s.mu.Lock()
-			w.rev++
+			s.seq++
+			w.rev = s.seq
 			w.inflight--
+			s.reclaimLocked(namespace, w)
 			s.mu.Unlock()
 			s.drop(namespace)
 		})
+	}
+}
+
+// watch keeps namespace's write state for a scan until the returned func
+// runs, so a write during the scan always moves the revision the scan
+// read under. A nil s tracks nothing and returns a no-op func.
+func (s *vectorScanSnapshots) watch(namespace string) func() {
+	if s == nil {
+		return func() {}
+	}
+	s.mu.Lock()
+	w := s.writes[namespace]
+	if w == nil {
+		w = s.writesOf(namespace)
+		w.rev = s.seq
+	}
+	w.scans++
+	s.mu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			s.mu.Lock()
+			w.scans--
+			s.reclaimLocked(namespace, w)
+			s.mu.Unlock()
+		})
+	}
+}
+
+// reclaimLocked forgets namespace's write state once no write is in flight
+// and no scan watches it. s.mu is held.
+func (s *vectorScanSnapshots) reclaimLocked(namespace string, w *namespaceWrites) {
+	if w.inflight == 0 && w.scans == 0 && s.writes[namespace] == w {
+		delete(s.writes, namespace)
 	}
 }
 

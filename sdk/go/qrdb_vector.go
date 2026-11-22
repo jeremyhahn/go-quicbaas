@@ -57,6 +57,7 @@ type (
 type (
 	QRDBVectorData                   = qrdbtransport.VectorData
 	QRDBVectorNotFoundError          = qrdbtransport.VectorNotFoundError
+	QRDBDimensionMismatchError       = qrdbtransport.DimensionMismatchError
 	QRDBUpsertVectorRequest          = qrdbtransport.UpsertVectorRequest
 	QRDBUpsertVectorResponse         = qrdbtransport.UpsertVectorResponse
 	QRDBGetVectorRequest             = qrdbtransport.GetVectorRequest

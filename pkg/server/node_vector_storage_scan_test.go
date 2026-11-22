@@ -28,6 +28,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // fakeScanVectorClient models the pinned go-qrdb ListVectors: the cursor is an
@@ -432,6 +433,7 @@ func TestListAllVectors_WriteInFlightIsNotAccepted(t *testing.T) {
 
 func TestVectorScanSnapshots_BeginWriteRevision(t *testing.T) {
 	var s vectorScanSnapshots
+	release := s.watch("ns")
 	r0, quiet := s.revision("ns")
 	require.Equal(t, uint64(0), r0)
 	require.True(t, quiet)
@@ -455,6 +457,8 @@ func TestVectorScanSnapshots_BeginWriteRevision(t *testing.T) {
 	r, quiet = s.revision("ns")
 	require.True(t, quiet)
 	require.Equal(t, r2, r, "a second done changes nothing")
+	release()
+	require.Empty(t, s.writes, "released write state is reclaimed")
 
 	f := newFakeScanVectorClient(2500)
 	req := &qrdbtransport.ListVectorsRequest{Namespace: "ns"}
@@ -464,6 +468,59 @@ func TestVectorScanSnapshots_BeginWriteRevision(t *testing.T) {
 	_, err = s.read(context.Background(), f, req)
 	require.NoError(t, err)
 	assert.Equal(t, 6, f.calls, "the ended write dropped the snapshot")
+}
+
+// A key's snapshot is the reading tenant's: a system caller's namespace
+// "tenant/acme/docs" and tenant acme's "docs" share a name, not vectors.
+func TestVectorScanSnapshots_TenantsDoNotShareSnapshots(t *testing.T) {
+	f := newFakeScanVectorClient(2500)
+	var s vectorScanSnapshots
+	req := &qrdbtransport.ListVectorsRequest{Namespace: "tenant/acme/docs"}
+
+	_, err := s.refresh(tenantctx.WithSystem(context.Background()), f, req)
+	require.NoError(t, err)
+	acme := tenantctx.WithTenant(context.Background(), "acme")
+	_, err = s.read(acme, f, req)
+	require.NoError(t, err)
+	require.Equal(t, 6, f.calls, "another tenant's snapshot is not served")
+	_, err = s.read(acme, f, req)
+	require.NoError(t, err)
+	assert.Equal(t, 6, f.calls, "the tenant's own snapshot is reused")
+}
+
+// Writes of namespaces that do not exist (a failed delete) leave no state
+// behind once they end.
+func TestVectorScanSnapshots_WriteStateReclaimed(t *testing.T) {
+	var s vectorScanSnapshots
+	for i := 0; i < 10000; i++ {
+		s.beginWrite(fmt.Sprintf("missing-%d", i))()
+	}
+	require.Empty(t, s.writes)
+
+	done := s.beginWrite("ns")
+	s.beginWrite("other")()
+	require.Len(t, s.writes, 1, "a write in flight keeps its state")
+	done()
+	assert.Empty(t, s.writes)
+}
+
+func TestListAllVectors_WriteStateReclaimedAfterScan(t *testing.T) {
+	f := newFakeScanVectorClient(1500)
+	var s vectorScanSnapshots
+	f.mutateAt = 2
+	f.mutate = func(f *fakeScanVectorClient) {
+		done := s.beginWrite("ns")
+		f.ids = append(append([]uint64(nil), f.ids[1:]...), 1501)
+		done()
+	}
+
+	all, err := listAllVectors(context.Background(), f, &qrdbtransport.ListVectorsRequest{Namespace: "ns"}, &s)
+	require.NoError(t, err)
+	require.Len(t, all, 1500)
+	for i, v := range all {
+		require.Equal(t, uint64(i+2), v.ID, "index %d", i)
+	}
+	assert.Empty(t, s.writes, "the scan releases the namespace's write state")
 }
 
 // TestVectorScanSnapshots_Bounded reads more namespaces than the cache keeps:

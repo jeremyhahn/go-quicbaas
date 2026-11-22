@@ -71,7 +71,7 @@ call needs, so a consumer does not import go-qrdb:
 - the request, response and result types, with a `QRDB` prefix (for example
   `QRDBCreateNamespaceRequest`, `QRDBSearchSimilarRequest` and
   `QRDBRebuildIndexRequest`)
-- the namespace and vector error types
+- the namespace and vector error types, and `QRDBDimensionMismatchError` for a vector of the wrong dimension
 - the distance metrics `QRDBDistanceCosine`, `QRDBDistanceEuclidean` and
   `QRDBDistanceDotProduct`
 - the index types `QRDBIndexHNSW`, `QRDBIndexFlat` and `QRDBIndexIVFFlat`

@@ -15,6 +15,8 @@ package quicbaas
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -80,4 +82,24 @@ func TestQRDBVectorReexport_Constants(t *testing.T) {
 	assert.Equal(t, "hnsw", QRDBIndexHNSW)
 	assert.Equal(t, "flat", QRDBIndexFlat)
 	assert.Equal(t, "ivf_flat", QRDBIndexIVFFlat)
+}
+
+// fakeQRDBDimMismatch rejects every upsert with a wrapped dimension
+// mismatch, as the embedded transport does for a vector of the wrong size.
+type fakeQRDBDimMismatch struct {
+	QRDBVectorClient
+}
+
+func (fakeQRDBDimMismatch) UpsertVector(context.Context, *QRDBUpsertVectorRequest) (*QRDBUpsertVectorResponse, error) {
+	return nil, fmt.Errorf("upsert: %w", &QRDBDimensionMismatchError{Expected: 3, Got: 2})
+}
+
+// A consumer matches a dimension mismatch with sdk/go names alone.
+func TestQRDBVectorReexport_DimensionMismatchError(t *testing.T) {
+	var vc QRDBVectorClient = fakeQRDBDimMismatch{}
+	_, err := vc.UpsertVector(context.Background(), &QRDBUpsertVectorRequest{Namespace: "ns", ID: 1, Vector: []float32{1, 2}})
+	var dme *QRDBDimensionMismatchError
+	require.True(t, errors.As(err, &dme))
+	assert.Equal(t, 3, dme.Expected)
+	assert.Equal(t, 2, dme.Got)
 }
