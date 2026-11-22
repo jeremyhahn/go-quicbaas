@@ -249,8 +249,10 @@ func (e *ImageEncryptor) DecryptImage(ctx context.Context, encrypted *EncryptedI
 
 // getOrCreateKey gets an existing key or creates a new one.
 func (e *ImageEncryptor) getOrCreateKey(ctx context.Context, keyID string) (*KeyInfo, error) {
-	// Try to get existing key
-	keyInfo, err := e.kms.GetKey(ctx, keyID)
+	// The KMS names a key by its creation name, so the lookup and the
+	// creation use the same namespaced ID.
+	canon := e.keyNamespace + "/" + keyID
+	keyInfo, err := e.kms.GetKey(ctx, canon)
 	switch {
 	case err == nil && keyInfo != nil:
 		return keyInfo, nil
@@ -259,20 +261,32 @@ func (e *ImageEncryptor) getOrCreateKey(ctx context.Context, keyID string) (*Key
 		if !errors.As(err, &notFound) {
 			// A timeout or a denied lookup is not a missing key: creating
 			// one here would mint a fresh KEK on every transient failure.
-			return nil, &WrappedError{Msg: fmt.Sprintf("registry: look up key %s", keyID), Err: err}
+			return nil, &WrappedError{Msg: fmt.Sprintf("registry: look up key %s", canon), Err: err}
 		}
 	}
 
 	// Create the key: it is really missing.
-	keyName := e.keyNamespace + "/" + keyID
-	newKeyID, err := e.kms.GenerateKey(ctx, keyName, DefaultKeyAlgorithm, []string{"encrypt", "decrypt", "wrap", "unwrap"})
+	newKeyID, err := e.kms.GenerateKey(ctx, canon, DefaultKeyAlgorithm, []string{"encrypt", "decrypt", "wrap", "unwrap"})
 	if err != nil {
-		return nil, KeyCreationFailedError{KeyID: keyID, Cause: err}
+		var exists KeyAlreadyExistsError
+		if !errors.As(err, &exists) {
+			return nil, KeyCreationFailedError{KeyID: canon, Cause: err}
+		}
+		// Another push created it first, or the lookup misreported it as
+		// missing: use the key that exists, never a new one.
+		keyInfo, err := e.kms.GetKey(ctx, canon)
+		if err != nil {
+			return nil, &WrappedError{Msg: fmt.Sprintf("registry: look up key %s", canon), Err: err}
+		}
+		if keyInfo == nil {
+			return nil, KeyNotFoundError{KeyID: canon}
+		}
+		return keyInfo, nil
 	}
 
 	return &KeyInfo{
 		KeyID:     newKeyID,
-		Name:      keyName,
+		Name:      canon,
 		Algorithm: DefaultKeyAlgorithm,
 		CreatedAt: time.Now().UTC(),
 	}, nil

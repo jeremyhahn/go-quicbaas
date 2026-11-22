@@ -95,6 +95,9 @@ func (c *SDKKMSClient) GenerateKey(ctx context.Context, name, algorithm string, 
 		Usage:     usages,
 	})
 	if err != nil {
+		if sdkerrors.IsAlreadyExists(err) {
+			return "", KeyAlreadyExistsError{KeyID: name}
+		}
 		return "", &WrappedError{Msg: fmt.Sprintf("registry: generate key %s", name), Err: err}
 	}
 	if resp == nil || resp.KeyID == "" {

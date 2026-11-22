@@ -33,6 +33,8 @@ type mockKMSClient struct {
 	getErr  error
 	encErr  error
 	decErr  error
+	// missLookups is how many GetKey calls report a held key as missing.
+	missLookups int
 }
 
 func newMockKMSClient() *mockKMSClient {
@@ -49,7 +51,11 @@ func (m *mockKMSClient) GenerateKey(ctx context.Context, name, algorithm string,
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	keyID := "key-" + name
+	// The KMS uses the creation name as the key ID and refuses a duplicate.
+	keyID := name
+	if _, ok := m.keys[keyID]; ok {
+		return "", KeyAlreadyExistsError{KeyID: keyID}
+	}
 	m.keys[keyID] = &KeyInfo{
 		KeyID:     keyID,
 		Name:      name,
@@ -70,9 +76,13 @@ func (m *mockKMSClient) GetKey(ctx context.Context, keyID string) (*KeyInfo, err
 	if m.getErr != nil {
 		return nil, m.getErr
 	}
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
+	if m.missLookups > 0 {
+		m.missLookups--
+		return nil, KeyNotFoundError{KeyID: keyID}
+	}
 	if info, ok := m.keys[keyID]; ok {
 		return info, nil
 	}
@@ -707,5 +717,65 @@ func BenchmarkDecryptContent(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, _ = decryptContent(ciphertext, dek)
+	}
+}
+
+func TestImageEncryptor_ReusesCanonicalKey(t *testing.T) {
+	kmsClient := newMockKMSClient()
+	enc, err := NewImageEncryptor(kmsClient)
+	if err != nil {
+		t.Fatalf("NewImageEncryptor: %v", err)
+	}
+	ctx := context.Background()
+
+	first, err := enc.EncryptImage(ctx, createTestImage(t), "shared-key")
+	if err != nil {
+		t.Fatalf("first EncryptImage: %v", err)
+	}
+	second, err := enc.EncryptImage(ctx, createTestImage(t), "shared-key")
+	if err != nil {
+		t.Fatalf("second EncryptImage: %v", err)
+	}
+	if n := len(kmsClient.keys); n != 1 {
+		t.Fatalf("keys generated = %d, want 1", n)
+	}
+	if _, ok := kmsClient.keys["container-images/shared-key"]; !ok {
+		t.Fatalf("key not held under the canonical ID; keys = %v", kmsClient.keys)
+	}
+	for i, envelope := range []*EncryptedImage{first, second} {
+		if _, err := enc.DecryptImage(ctx, envelope); err != nil {
+			t.Fatalf("DecryptImage %d: %v", i, err)
+		}
+	}
+}
+
+func TestImageEncryptor_CreateRaceUsesExistingKey(t *testing.T) {
+	kmsClient := newMockKMSClient()
+	ctx := context.Background()
+	existing, err := kmsClient.GenerateKey(ctx, "container-images/raced-key", DefaultKeyAlgorithm, []string{"encrypt", "decrypt"})
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	// The first lookup misses the key, as a racing creator would see it.
+	kmsClient.missLookups = 1
+
+	enc, err := NewImageEncryptor(kmsClient)
+	if err != nil {
+		t.Fatalf("NewImageEncryptor: %v", err)
+	}
+	encrypted, err := enc.EncryptImage(ctx, createTestImage(t), "raced-key")
+	if err != nil {
+		t.Fatalf("EncryptImage: %v", err)
+	}
+	if n := len(kmsClient.keys); n != 1 {
+		t.Fatalf("keys = %d, want the one existing key", n)
+	}
+	for i, layer := range encrypted.EncryptedLayers {
+		if layer.KeyID != existing {
+			t.Fatalf("layer %d wrapped under %q, want %q", i, layer.KeyID, existing)
+		}
+	}
+	if _, err := enc.DecryptImage(ctx, encrypted); err != nil {
+		t.Fatalf("DecryptImage: %v", err)
 	}
 }

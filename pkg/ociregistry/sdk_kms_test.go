@@ -60,13 +60,17 @@ func (f *fakeSDKEncryptionKMS) GetKey(_ context.Context, keyID string) (*kms.Key
 }
 
 func (f *fakeSDKEncryptionKMS) GenerateKey(_ context.Context, req *kms.GenerateKeyRequest) (*kms.GenerateKeyResponse, error) {
+	// The KMS uses the creation name as the key ID and refuses a duplicate.
+	id := req.Name
+	if _, ok := f.keys[id]; ok {
+		return nil, sdkerrors.NewAlreadyExists("GenerateKey", "key "+id+" already exists")
+	}
 	f.generated++
 	f.genReqs = append(f.genReqs, *req)
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
 		return nil, err
 	}
-	id := "kek-" + req.Name
 	f.keys[id] = key
 	f.usages[id] = req.Usage
 	return &kms.GenerateKeyResponse{KeyID: id, Version: 1, Algorithm: req.Algorithm}, nil
@@ -146,6 +150,35 @@ func TestSDKKMSClient_ImageRoundTrip(t *testing.T) {
 		if !bytes.Equal(decrypted.Layers[i].Content, image.Layers[i].Content) {
 			t.Errorf("layer %d = %q, want %q", i, decrypted.Layers[i].Content, image.Layers[i].Content)
 		}
+	}
+
+	// A second image under the same key finds the key it created.
+	second, err := enc.EncryptImage(ctx, createTestImage(t), "img-key")
+	if err != nil {
+		t.Fatalf("second EncryptImage: %v", err)
+	}
+	if fake.generated != 1 {
+		t.Fatalf("generated = %d after the second image, want 1", fake.generated)
+	}
+	if _, err := enc.DecryptImage(ctx, second); err != nil {
+		t.Fatalf("DecryptImage second: %v", err)
+	}
+}
+
+func TestSDKKMSClient_GenerateKeyAlreadyExists(t *testing.T) {
+	client, _ := newTestSDKKMSClient(t)
+	ctx := context.Background()
+	usage := []string{"encrypt", "decrypt"}
+	if _, err := client.GenerateKey(ctx, "container-images/dup", DefaultKeyAlgorithm, usage); err != nil {
+		t.Fatalf("first GenerateKey: %v", err)
+	}
+	_, err := client.GenerateKey(ctx, "container-images/dup", DefaultKeyAlgorithm, usage)
+	var exists KeyAlreadyExistsError
+	if !errors.As(err, &exists) {
+		t.Fatalf("second GenerateKey error = %v, want KeyAlreadyExistsError", err)
+	}
+	if exists.KeyID != "container-images/dup" {
+		t.Errorf("KeyID = %q", exists.KeyID)
 	}
 }
 

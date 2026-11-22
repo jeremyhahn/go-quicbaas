@@ -219,6 +219,16 @@ func (e KeyNotFoundError) Error() string {
 	return fmt.Sprintf("registry: encryption key not found: %s", e.KeyID)
 }
 
+// KeyAlreadyExistsError is returned when a key is created under an ID
+// the KMS already holds.
+type KeyAlreadyExistsError struct {
+	KeyID string
+}
+
+func (e KeyAlreadyExistsError) Error() string {
+	return fmt.Sprintf("registry: encryption key already exists: %s", e.KeyID)
+}
+
 // DistributionEncryptionUnsupportedError is returned by an OCI
 // distribution write while encryption by default is enabled: that route
 // stores the client's bytes as sent, so it is refused rather than
