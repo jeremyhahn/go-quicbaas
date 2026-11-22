@@ -30,6 +30,7 @@ import (
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // NOTE: the PEPService test double for this file is mockPEPServiceCoverage,
@@ -86,7 +87,7 @@ func TestPEPServer_Check(t *testing.T) {
 			}, nil
 		}
 
-		resp, err := srv.Check(ctx, &iampb.CheckRequest{
+		resp, err := srv.Check(tenantctx.WithTenant(context.Background(), "tenant1"), &iampb.CheckRequest{
 			Subject:  &iampb.Subject{Id: "user1", TenantId: "tenant1"},
 			Action:   "read",
 			Resource: "document:123",
@@ -110,7 +111,7 @@ func TestPEPServer_Check(t *testing.T) {
 			}, nil
 		}
 
-		resp, err := srv.Check(ctx, &iampb.CheckRequest{
+		resp, err := srv.Check(tenantctx.WithTenant(context.Background(), "tenant1"), &iampb.CheckRequest{
 			Subject:  &iampb.Subject{Id: "user1", TenantId: "tenant1"},
 			Action:   "delete",
 			Resource: "document:123",
@@ -169,7 +170,7 @@ func TestPEPServer_Check(t *testing.T) {
 			return nil, errors.New("service error")
 		}
 
-		resp, err := srv.Check(ctx, &iampb.CheckRequest{
+		resp, err := srv.Check(tenantctx.WithTenant(context.Background(), "t1"), &iampb.CheckRequest{
 			Subject:  &iampb.Subject{Id: "user1"},
 			Action:   "read",
 			Resource: "document:123",
@@ -500,7 +501,7 @@ func TestPEPServerCoverage_Check_Success(t *testing.T) {
 	}
 	srv := newTestPEPServer(t, svc)
 
-	resp, err := srv.Check(context.Background(), &iampb.CheckRequest{
+	resp, err := srv.Check(tenantctx.WithTenant(context.Background(), "tenant1"), &iampb.CheckRequest{
 		Subject:  &iampb.Subject{Id: "user1", TenantId: "tenant1"},
 		Action:   "read",
 		Resource: "document:123",
@@ -521,7 +522,7 @@ func TestPEPServerCoverage_Check_Denied(t *testing.T) {
 	}
 	srv := newTestPEPServer(t, svc)
 
-	resp, err := srv.Check(context.Background(), &iampb.CheckRequest{
+	resp, err := srv.Check(tenantctx.WithTenant(context.Background(), "t1"), &iampb.CheckRequest{
 		Subject:  &iampb.Subject{Id: "user1"},
 		Action:   "delete",
 		Resource: "document:123",
@@ -570,7 +571,7 @@ func TestPEPServerCoverage_Check_ServiceError(t *testing.T) {
 		},
 	}
 	srv := newTestPEPServer(t, svc)
-	_, err := srv.Check(context.Background(), &iampb.CheckRequest{
+	_, err := srv.Check(tenantctx.WithTenant(context.Background(), "t1"), &iampb.CheckRequest{
 		Subject:  &iampb.Subject{Id: "user1"},
 		Action:   "read",
 		Resource: "doc:1",
