@@ -227,3 +227,171 @@ func TestRuntime_VolumeRuntimeKeepsOptionalCapabilities(t *testing.T) {
 		t.Errorf("inner removed %v, want the orphan", inner.removed)
 	}
 }
+
+// nameIDContainerRuntime returns the container's name from RunInteractive,
+// as the exec runtime does, while its listing reports full container IDs.
+type nameIDContainerRuntime struct {
+	capableContainerRuntime
+}
+
+func (n *nameIDContainerRuntime) RunInteractive(_ context.Context, spec *orchestration.ContainerSpec) (*orchestration.InteractiveProcess, error) {
+	return &orchestration.InteractiveProcess{ContainerID: spec.Name}, nil
+}
+
+// detachCountingProvider is a provider that provisions, attaches and mounts
+// anything, and counts Detach.
+type detachCountingProvider struct {
+	nopVolumeProvider
+
+	mu       sync.Mutex
+	detaches int
+}
+
+func (p *detachCountingProvider) Status(context.Context, string) (orchestration.VolumeStatus, error) {
+	return orchestration.VolumeStatus{}, orchestration.ErrVolumeNotFound
+}
+
+func (p *detachCountingProvider) Provision(_ context.Context, spec orchestration.VolumeSpec) (orchestration.Volume, error) {
+	return orchestration.Volume{ID: spec.Name, Spec: spec}, nil
+}
+
+func (p *detachCountingProvider) Attach(_ context.Context, id string, node orchestration.VolumeNodeID) (orchestration.VolumeAttachInfo, error) {
+	return orchestration.VolumeAttachInfo{DevicePath: "/dev/fake/" + id, Node: node}, nil
+}
+
+func (p *detachCountingProvider) Mount(context.Context, string, string, orchestration.VolumeMountOptions) error {
+	return nil
+}
+
+func (p *detachCountingProvider) Unmount(context.Context, string, string) error { return nil }
+
+func (p *detachCountingProvider) Detach(context.Context, string, orchestration.VolumeNodeID) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.detaches++
+	return nil
+}
+
+func (p *detachCountingProvider) detachCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.detaches
+}
+
+func volumeSvcSpec() *orchestration.ContainerSpec {
+	return &orchestration.ContainerSpec{
+		Name:    "svc",
+		Image:   "img:1",
+		Volumes: []orchestration.VolumeClaim{{Name: "data", SizeBytes: 1 << 20, FSType: "ext4", Target: "/data"}},
+	}
+}
+
+// TestRuntime_ReaperReleasesVolumesOfAnInteractiveContainer: the reaper lists
+// full container IDs, an interactive launch files its volumes under the
+// container's name, and reaping it still releases them. Not parallel:
+// volumes_test.go stubs package variables.
+func TestRuntime_ReaperReleasesVolumesOfAnInteractiveContainer(t *testing.T) {
+	ctx := context.Background()
+	inner := &nameIDContainerRuntime{}
+	inner.available = true
+	inner.containers = []orchestration.OwnedContainer{{
+		ID: "full-id-1", Name: "svc", CreatedAt: time.Now().Add(-time.Hour), SessionID: "ses-gone",
+	}}
+	prov := &detachCountingProvider{}
+	att, err := orchestration.NewVolumeAttacher(prov, "n", t.TempDir())
+	if err != nil {
+		t.Fatalf("NewVolumeAttacher: %v", err)
+	}
+	vr, err := orchestration.NewVolumeRuntime(inner, att)
+	if err != nil {
+		t.Fatalf("NewVolumeRuntime: %v", err)
+	}
+	if _, err := vr.RunInteractive(ctx, volumeSvcSpec()); err != nil {
+		t.Fatalf("RunInteractive: %v", err)
+	}
+	runtime, err := NewRuntime(RuntimeConfig{
+		Backends:         map[string]orchestration.AgentBackend{"mock": &mockBackend{}},
+		ContainerRuntime: vr,
+		Logger:           &testLogger{t: t},
+		WorkDir:          t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("NewRuntime: %v", err)
+	}
+	reaper, err := runtime.ContainerReaper(time.Minute)
+	if err != nil || reaper == nil {
+		t.Fatalf("ContainerReaper = %v, %v; want a reaper", reaper, err)
+	}
+	if _, err := reaper.Reap(ctx); err != nil {
+		t.Fatalf("Reap: %v", err)
+	}
+	if len(inner.removed) != 1 || inner.removed[0] != "full-id-1" {
+		t.Errorf("inner removed %v, want full-id-1", inner.removed)
+	}
+	if got := prov.detachCount(); got != 1 {
+		t.Errorf("detaches = %d, want 1", got)
+	}
+	if got := vr.Attached("svc"); len(got) != 0 {
+		t.Errorf("Attached(svc) = %+v, want none", got)
+	}
+}
+
+// TestRuntime_SweepReleasesRecoveredVolumes: a node restarted while a
+// container held volumes recovers them from the staging dir and releases them
+// after the startup sweep. Not parallel: volumes_test.go stubs package
+// variables.
+func TestRuntime_SweepReleasesRecoveredVolumes(t *testing.T) {
+	ctx := context.Background()
+	inner := &capableContainerRuntime{}
+	inner.available = true
+	prov := &detachCountingProvider{}
+	staging := t.TempDir()
+	att, err := orchestration.NewVolumeAttacher(prov, "n", staging)
+	if err != nil {
+		t.Fatalf("NewVolumeAttacher: %v", err)
+	}
+	before, err := orchestration.NewVolumeRuntime(inner, att)
+	if err != nil {
+		t.Fatalf("NewVolumeRuntime: %v", err)
+	}
+	if _, err := before.Run(ctx, volumeSvcSpec()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	att2, err := orchestration.NewVolumeAttacher(prov, "n", staging)
+	if err != nil {
+		t.Fatalf("NewVolumeAttacher: %v", err)
+	}
+	vr, err := orchestration.NewVolumeRuntime(inner, att2)
+	if err != nil {
+		t.Fatalf("NewVolumeRuntime after restart: %v", err)
+	}
+	if _, err := vr.Run(ctx, volumeSvcSpec()); !errors.Is(err, orchestration.ErrVolumeInUse) {
+		t.Fatalf("Run before the sweep = %v, want ErrVolumeInUse", err)
+	}
+	workDir := t.TempDir()
+	runtime, err := NewRuntime(RuntimeConfig{
+		Backends:         map[string]orchestration.AgentBackend{"mock": &mockBackend{}},
+		ContainerRuntime: vr,
+		Logger:           &testLogger{t: t},
+		WorkDir:          workDir,
+	})
+	if err != nil {
+		t.Fatalf("NewRuntime: %v", err)
+	}
+	if got := prov.detachCount(); got != 0 {
+		t.Fatalf("detaches before the sweep = %d, want 0", got)
+	}
+	if _, err := runtime.SweepOrphanContainers(ctx); err != nil {
+		t.Fatalf("SweepOrphanContainers: %v", err)
+	}
+	if len(inner.swept) != 1 || inner.swept[0] != workDir {
+		t.Errorf("swept owners = %v, want the work directory", inner.swept)
+	}
+	if got := prov.detachCount(); got != 1 {
+		t.Errorf("detaches after the sweep = %d, want 1", got)
+	}
+	if _, err := vr.Run(ctx, volumeSvcSpec()); err != nil {
+		t.Errorf("Run after the sweep: %v", err)
+	}
+}

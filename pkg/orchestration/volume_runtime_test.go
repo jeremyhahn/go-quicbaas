@@ -2,7 +2,10 @@ package orchestration
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
@@ -486,5 +489,188 @@ func TestVolumeRuntimeRetriesPendingRollback(t *testing.T) {
 	}
 	if got := countCalls(prov.calls, "detach data"); got != 2 {
 		t.Errorf("detach data = %d, want 2 (calls %v)", got, prov.calls)
+	}
+}
+
+// dataSpec is a second container claiming volumeSpec's "data" volume.
+func dataSpec(name string) *ContainerSpec {
+	return &ContainerSpec{
+		Name:    name,
+		Image:   "registry.example.com/other:1",
+		Volumes: []VolumeClaim{{Name: "data", SizeBytes: 1 << 30, FSType: "ext4", Target: "/data"}},
+	}
+}
+
+func TestVolumeRuntimeRefusesAVolumeAnotherContainerHolds(t *testing.T) {
+	ctx := context.Background()
+	vr, _, prov, _ := newTestVolumeRuntime(t)
+	id, err := vr.Run(ctx, volumeSpec())
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	attaches, detaches := countCalls(prov.calls, "attach "), countCalls(prov.calls, "detach ")
+	if _, err := vr.Run(ctx, dataSpec("b")); !errors.Is(err, ErrVolumeInUse) {
+		t.Fatalf("second Run = %v, want ErrVolumeInUse", err)
+	}
+	if _, err := vr.RunInteractive(ctx, dataSpec("b")); !errors.Is(err, ErrVolumeInUse) {
+		t.Fatalf("second RunInteractive = %v, want ErrVolumeInUse", err)
+	}
+	if a, d := countCalls(prov.calls, "attach "), countCalls(prov.calls, "detach "); a != attaches || d != detaches {
+		t.Errorf("attach/detach = %d/%d, want %d/%d unchanged (calls %v)", a, d, attaches, detaches, prov.calls)
+	}
+	if err := vr.Remove(ctx, id); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	if _, err := vr.Run(ctx, dataSpec("b")); err != nil {
+		t.Fatalf("Run after the owner's Remove: %v", err)
+	}
+}
+
+func TestVolumeRuntimeFailedLaunchFreesOrKeepsItsVolumes(t *testing.T) {
+	ctx := context.Background()
+	vr, inner, prov, _ := newTestVolumeRuntime(t)
+
+	// A launch that fails in the inner Run releases its volumes and frees
+	// their names.
+	inner.runErr = errors.New("boom")
+	if _, err := vr.Run(ctx, volumeSpec()); err == nil {
+		t.Fatal("Run = nil error, want the runtime's")
+	}
+	inner.runErr = nil
+	id, err := vr.Run(ctx, dataSpec("b"))
+	if err != nil {
+		t.Fatalf("Run after a failed launch: %v", err)
+	}
+	if err := vr.Remove(ctx, id); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+
+	// One whose rollback left "data" pending keeps it reserved until
+	// retryPending releases it; "logs" is freed.
+	inner.runErr = errors.New("boom")
+	prov.failOn["detach data"] = errors.New("busy")
+	if _, err := vr.Run(ctx, volumeSpec()); err == nil {
+		t.Fatal("Run = nil error, want the runtime's")
+	}
+	inner.runErr = nil
+	vr.mu.Lock()
+	_, dataOwned := vr.owned["data"]
+	_, logsOwned := vr.owned["logs"]
+	vr.mu.Unlock()
+	if !dataOwned || logsOwned {
+		t.Fatalf("owned data/logs = %v/%v, want true/false", dataOwned, logsOwned)
+	}
+	if _, err := vr.Run(ctx, dataSpec("c")); !errors.Is(err, ErrVolumeInUse) {
+		t.Fatalf("Run while data is pending = %v, want ErrVolumeInUse", err)
+	}
+	delete(prov.failOn, "detach data")
+	if _, err := vr.Run(ctx, dataSpec("c")); err != nil {
+		t.Fatalf("Run once pending is released: %v", err)
+	}
+}
+
+func TestVolumeRuntimeReleaseContainerByName(t *testing.T) {
+	ctx := context.Background()
+	vr, _, prov, _ := newTestVolumeRuntime(t)
+	p, err := vr.RunInteractive(ctx, volumeSpec())
+	if err != nil {
+		t.Fatalf("RunInteractive: %v", err)
+	}
+	if err := vr.ReleaseContainer(ctx, "unknown", p.ContainerID); err != nil {
+		t.Fatalf("ReleaseContainer: %v", err)
+	}
+	if got := countCalls(prov.calls, "detach "); got != 2 {
+		t.Fatalf("detaches = %d, want 2 (calls %v)", got, prov.calls)
+	}
+	if got := vr.Attached(p.ContainerID); len(got) != 0 {
+		t.Errorf("Attached = %+v, want none", got)
+	}
+
+	// A Run record is released by Remove under the name as well as the ID.
+	spec := volumeSpec()
+	id, err := vr.Run(ctx, spec)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if err := vr.Remove(ctx, spec.Name); err != nil {
+		t.Fatalf("Remove(name): %v", err)
+	}
+	if got := countCalls(prov.calls, "detach "); got != 4 {
+		t.Fatalf("detaches = %d, want 4 (calls %v)", got, prov.calls)
+	}
+	if got := vr.Attached(id); len(got) != 0 {
+		t.Errorf("Attached(id) = %+v, want none", got)
+	}
+	if _, err := vr.Run(ctx, spec); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if err := vr.Remove(ctx, id); err != nil {
+		t.Fatalf("Remove(id): %v", err)
+	}
+	if got := countCalls(prov.calls, "detach "); got != 6 {
+		t.Fatalf("detaches = %d, want 6 (calls %v)", got, prov.calls)
+	}
+}
+
+func readStateFile(t *testing.T, staging string) volumeState {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(staging, VolumeStateFile))
+	if err != nil {
+		t.Fatalf("read state file: %v", err)
+	}
+	var st volumeState
+	if err := json.Unmarshal(data, &st); err != nil {
+		t.Fatalf("decode state file: %v", err)
+	}
+	return st
+}
+
+func TestVolumeRuntimeRecoversAttachmentsAfterRestart(t *testing.T) {
+	ctx := context.Background()
+	vr, inner, prov, staging := newTestVolumeRuntime(t)
+	if _, err := vr.Run(ctx, volumeSpec()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if st := readStateFile(t, staging); len(st.Volumes) != 2 || st.Volumes[0].Claim.Name != "data" || st.Volumes[1].Claim.Name != "logs" {
+		t.Fatalf("state = %+v, want data and logs", st)
+	}
+
+	restarted, err := NewVolumeRuntime(inner, vr.Attacher())
+	if err != nil {
+		t.Fatalf("NewVolumeRuntime after restart: %v", err)
+	}
+	if _, err := restarted.Run(ctx, dataSpec("b")); !errors.Is(err, ErrVolumeInUse) {
+		t.Fatalf("Run of a recovered volume = %v, want ErrVolumeInUse", err)
+	}
+	unmounts, detaches := countCalls(prov.calls, "unmount "), countCalls(prov.calls, "detach ")
+	if err := restarted.ReleaseRecovered(ctx); err != nil {
+		t.Fatalf("ReleaseRecovered: %v", err)
+	}
+	if u, d := countCalls(prov.calls, "unmount ")-unmounts, countCalls(prov.calls, "detach ")-detaches; u != 2 || d != 2 {
+		t.Fatalf("unmounts/detaches = %d/%d, want 2/2 (calls %v)", u, d, prov.calls)
+	}
+	id, err := restarted.Run(ctx, dataSpec("b"))
+	if err != nil {
+		t.Fatalf("Run after ReleaseRecovered: %v", err)
+	}
+	if err := restarted.Remove(ctx, id); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	if st := readStateFile(t, staging); len(st.Volumes) != 0 {
+		t.Errorf("state = %+v, want no volumes", st)
+	}
+}
+
+func TestNewVolumeRuntimeRefusesAMalformedStateFile(t *testing.T) {
+	staging := t.TempDir()
+	if err := os.WriteFile(filepath.Join(staging, VolumeStateFile), []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	att, err := NewVolumeAttacher(newFakeVolumeProvider(), "node-1", staging)
+	if err != nil {
+		t.Fatalf("NewVolumeAttacher: %v", err)
+	}
+	if _, err := NewVolumeRuntime(&launchRecorder{}, att); err == nil {
+		t.Fatal("NewVolumeRuntime = nil error, want the state file's")
 	}
 }

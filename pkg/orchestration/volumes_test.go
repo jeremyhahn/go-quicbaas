@@ -525,3 +525,92 @@ func TestVolumeAttacherReleaseReportsHeldVolumes(t *testing.T) {
 		t.Errorf("held host paths = %q, %q; want /s/a and empty", held[0].HostPath, held[1].HostPath)
 	}
 }
+
+// detachedResizeRefuser refuses a Resize of a volume that is not attached,
+// as the drbd provider does.
+type detachedResizeRefuser struct {
+	*fakeVolumeProvider
+	attached map[string]bool
+}
+
+func newDetachedResizeRefuser() *detachedResizeRefuser {
+	return &detachedResizeRefuser{fakeVolumeProvider: newFakeVolumeProvider(), attached: map[string]bool{}}
+}
+
+func (p *detachedResizeRefuser) Attach(ctx context.Context, id string, node bscommon.NodeID) (bscommon.AttachInfo, error) {
+	info, err := p.fakeVolumeProvider.Attach(ctx, id, node)
+	if err == nil {
+		p.attached[id] = true
+	}
+	return info, err
+}
+
+func (p *detachedResizeRefuser) Detach(ctx context.Context, id string, node bscommon.NodeID) error {
+	err := p.fakeVolumeProvider.Detach(ctx, id, node)
+	if err == nil {
+		delete(p.attached, id)
+	}
+	return err
+}
+
+func (p *detachedResizeRefuser) Resize(ctx context.Context, id string, n int64) error {
+	if !p.attached[id] {
+		_ = p.record("resize-refused", id)
+		return ErrVolumeNotAttached
+	}
+	return p.fakeVolumeProvider.Resize(ctx, id, n)
+}
+
+func callIndex(calls []string, call string) int {
+	for i, c := range calls {
+		if c == call {
+			return i
+		}
+	}
+	return -1
+}
+
+func TestVolumeAttacherGrowsADetachedRefusingVolumeAfterAttach(t *testing.T) {
+	ctx := context.Background()
+	p := newDetachedResizeRefuser()
+	p.sizes["data"] = 1 << 20
+	a := newTestAttacher(t, p)
+	claim := VolumeClaim{Name: "data", SizeBytes: 1 << 30, FSType: "ext4", Target: "/data"}
+	vols, err := a.Attach(ctx, []VolumeClaim{claim})
+	if err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	if len(vols) != 1 || vols[0].HostPath == "" {
+		t.Fatalf("vols = %+v, want data mounted", vols)
+	}
+	if got := p.sizes["data"]; got != 1<<30 {
+		t.Errorf("size = %d, want %d", got, 1<<30)
+	}
+	attach, resize, mount := callIndex(p.calls, "attach data"), callIndex(p.calls, "resize data"), callIndex(p.calls, "mount data")
+	if attach < 0 || resize < attach || mount < resize {
+		t.Errorf("calls = %v, want the grow after attach and before mount", p.calls)
+	}
+}
+
+func TestVolumeAttacherRollsBackAFailedGrowAfterAttach(t *testing.T) {
+	ctx := context.Background()
+	p := newDetachedResizeRefuser()
+	p.sizes["data"] = 1 << 20
+	p.failOn["resize data"] = errors.New("grow failed")
+	a := newTestAttacher(t, p)
+	claim := VolumeClaim{Name: "data", SizeBytes: 1 << 30, FSType: "ext4", Target: "/data"}
+	vols, held, err := a.attach(ctx, []VolumeClaim{claim})
+	if err == nil || !strings.Contains(err.Error(), "grow failed") {
+		t.Fatalf("attach = %v, want the grow error", err)
+	}
+	if len(vols) != 0 || len(held) != 0 {
+		t.Errorf("vols = %+v, held = %+v, want none", vols, held)
+	}
+	resize, detach := callIndex(p.calls, "resize data"), callIndex(p.calls, "detach data")
+	if resize < 0 || detach < resize {
+		t.Errorf("calls = %v, want detach data after the failed grow", p.calls)
+	}
+	if countCalls(p.calls, "mount data") != 0 {
+		t.Errorf("calls = %v, want no mount", p.calls)
+	}
+}

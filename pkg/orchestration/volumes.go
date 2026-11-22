@@ -83,6 +83,10 @@ var (
 
 	// ErrVolumeClaim is returned when a VolumeClaim is malformed.
 	ErrVolumeClaim = errors.New("volume: invalid claim")
+
+	// ErrVolumeInUse is returned when a launch claims a volume another
+	// container on this node holds: a volume has one owner at a time.
+	ErrVolumeInUse = errors.New("volume: held by another container on this node")
 )
 
 // NewVolumeProvider constructs the named go-blockstore provider ("local", or
@@ -235,26 +239,26 @@ func (a *VolumeAttacher) Node() VolumeNodeID { return a.node }
 // Ensure returns the ID of the claim's volume, provisioning it when it does not
 // exist and growing it when it is smaller than the claim.
 func (a *VolumeAttacher) Ensure(ctx context.Context, claim VolumeClaim) (string, error) {
-	id, _, _, err := a.ensure(ctx, claim)
+	id, _, _, _, err := a.ensure(ctx, claim, false)
 	return id, err
 }
 
 // ensure is Ensure, also reporting the volume's size afterwards and whether
 // the volume existed before this call.
-func (a *VolumeAttacher) ensure(ctx context.Context, claim VolumeClaim) (id string, size int64, existed bool, err error) {
+func (a *VolumeAttacher) ensure(ctx context.Context, claim VolumeClaim, growAfterAttach bool) (id string, size int64, existed, grow bool, err error) {
 	if err := claim.Validate(); err != nil {
-		return "", 0, false, err
+		return "", 0, false, false, err
 	}
 	st, err := a.provider.Status(ctx, claim.Name)
 	if errors.Is(err, bscommon.ErrNotFound) {
 		vol, perr := a.provider.Provision(ctx, claim.spec())
 		if perr != nil {
-			return "", 0, false, fmt.Errorf("volume %q: provision: %w", claim.Name, perr)
+			return "", 0, false, false, fmt.Errorf("volume %q: provision: %w", claim.Name, perr)
 		}
-		return vol.ID, claim.SizeBytes, false, nil
+		return vol.ID, claim.SizeBytes, false, false, nil
 	}
 	if err != nil {
-		return "", 0, false, fmt.Errorf("volume %q: status: %w", claim.Name, err)
+		return "", 0, false, false, fmt.Errorf("volume %q: status: %w", claim.Name, err)
 	}
 	id = st.ID
 	if id == "" {
@@ -262,10 +266,15 @@ func (a *VolumeAttacher) ensure(ctx context.Context, claim VolumeClaim) (id stri
 	}
 	if st.SizeBytes < claim.SizeBytes {
 		if err := a.provider.Resize(ctx, id, claim.SizeBytes); err != nil {
-			return "", 0, true, fmt.Errorf("volume %q: grow to %d bytes: %w", claim.Name, claim.SizeBytes, err)
+			// A provider that grows only attached volumes (drbd) refuses a
+			// detached Resize; the launch grows it right after Attach.
+			if growAfterAttach && errors.Is(err, ErrVolumeNotAttached) {
+				return id, claim.SizeBytes, true, true, nil
+			}
+			return "", 0, true, false, fmt.Errorf("volume %q: grow to %d bytes: %w", claim.Name, claim.SizeBytes, err)
 		}
 	}
-	return id, max(st.SizeBytes, claim.SizeBytes), true, nil
+	return id, max(st.SizeBytes, claim.SizeBytes), true, false, nil
 }
 
 // Resize grows the volume to newSize bytes. A size below the current one is
@@ -354,7 +363,7 @@ func (a *VolumeAttacher) attach(ctx context.Context, claims []VolumeClaim) (vols
 // attachOne returns the partly attached volume with the error when a step
 // after the provider's Attach fails, so the caller can release it.
 func (a *VolumeAttacher) attachOne(ctx context.Context, claim VolumeClaim) (AttachedVolume, error) {
-	id, size, existed, err := a.ensure(ctx, claim)
+	id, size, existed, grow, err := a.ensure(ctx, claim, true)
 	if err != nil {
 		return AttachedVolume{}, err
 	}
@@ -366,6 +375,13 @@ func (a *VolumeAttacher) attachOne(ctx context.Context, claim VolumeClaim) (Atta
 		return AttachedVolume{}, fmt.Errorf("volume %q: attach to node %q: %w", claim.Name, a.node, err)
 	}
 	v := AttachedVolume{Claim: claim, VolumeID: id, DevicePath: info.DevicePath}
+	// The grow ensure deferred because the provider refused it detached runs
+	// now, before Mount; a failure returns v so the rollback detaches it.
+	if grow {
+		if err := a.provider.Resize(ctx, id, claim.SizeBytes); err != nil {
+			return v, fmt.Errorf("volume %q: grow to %d bytes after attach: %w", claim.Name, claim.SizeBytes, err)
+		}
+	}
 	if claim.FSType == "" {
 		return v, nil
 	}

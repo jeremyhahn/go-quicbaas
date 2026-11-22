@@ -87,6 +87,21 @@ type RuntimeUnwrapper interface {
 	Unwrap() ContainerRuntime
 }
 
+// ContainerVolumeReleaser is a runtime that holds volumes for containers and
+// releases them for the container known under the first of keys (its ID or
+// its name) that has a record. A caller that removed the container under
+// another key than the one it was launched under releases them with it.
+type ContainerVolumeReleaser interface {
+	ReleaseContainer(ctx context.Context, keys ...string) error
+}
+
+// RecoveredVolumeReleaser is a runtime that recovered, at start, the volumes
+// an earlier run of the node held, and releases them once their containers
+// are gone.
+type RecoveredVolumeReleaser interface {
+	ReleaseRecovered(ctx context.Context) error
+}
+
 // RuntimeAs returns the first runtime in rt's wrapper chain, rt itself
 // first, that implements T. The walk follows Unwrap and stops after 8 hops.
 func RuntimeAs[T any](rt ContainerRuntime) (T, bool) {

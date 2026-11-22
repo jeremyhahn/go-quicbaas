@@ -965,7 +965,20 @@ func (r *Runtime) SweepOrphanContainers(ctx context.Context) (orchestration.Cont
 	if !ok {
 		return orchestration.ContainerSweep{}, nil
 	}
-	return sweeper.SweepOwned(ctx, r.workDir)
+	sweep, err := sweeper.SweepOwned(ctx, r.workDir)
+	if err != nil {
+		return sweep, err
+	}
+	// The volumes the swept containers held were recovered from the staging
+	// dir's state file; release them now their containers are gone. What
+	// fails stays pending and reserved, and is retried before the next
+	// launch. Without a sweeper they stay reserved, which is the safe failure.
+	if rel, ok := orchestration.RuntimeAs[orchestration.RecoveredVolumeReleaser](r.containerRuntime); ok {
+		if rerr := rel.ReleaseRecovered(ctx); rerr != nil {
+			r.logger.Warnf("fleet volumes: release volumes of swept containers: %v", rerr)
+		}
+	}
+	return sweep, nil
 }
 
 // ContainerReaper returns the running reaper for this daemon's sandbox
@@ -982,7 +995,7 @@ func (r *Runtime) ContainerReaper(grace time.Duration) (*orchestration.Container
 		return nil, nil
 	}
 	return orchestration.NewContainerReaper(orchestration.ContainerReaperConfig{
-		Runtime: ownedListerVia{OwnedContainerLister: lister, rt: r.containerRuntime},
+		Runtime: &ownedListerVia{OwnedContainerLister: lister, rt: r.containerRuntime},
 		Owner:   r.workDir,
 		Live:    r.HoldsSession,
 		Grace:   grace,
@@ -992,15 +1005,54 @@ func (r *Runtime) ContainerReaper(grace time.Duration) (*orchestration.Container
 
 // ownedListerVia lists through the runtime that can, removes through the
 // outermost runtime: a VolumeRuntime wrapping the lister then still releases
-// a reaped container's volumes.
+// a reaped container's volumes. The listing gives full container IDs while
+// an interactive launch files its volumes under the container's name, so
+// Remove also releases the volumes filed under the name it last listed for
+// the ID.
 type ownedListerVia struct {
 	orchestration.OwnedContainerLister
 	rt orchestration.ContainerRuntime
+
+	mu    sync.Mutex
+	names map[string]string // container ID -> name, from the last listing
 }
 
-// Remove removes the container through the outermost runtime.
-func (o ownedListerVia) Remove(ctx context.Context, containerID string) error {
-	return o.rt.Remove(ctx, containerID)
+// ListOwned lists through the inner lister and remembers each container's
+// name.
+func (o *ownedListerVia) ListOwned(ctx context.Context, owner string) ([]orchestration.OwnedContainer, error) {
+	cs, err := o.OwnedContainerLister.ListOwned(ctx, owner)
+	if err != nil {
+		return cs, err
+	}
+	names := make(map[string]string, len(cs))
+	for _, c := range cs {
+		names[c.ID] = c.Name
+	}
+	o.mu.Lock()
+	o.names = names
+	o.mu.Unlock()
+	return cs, nil
+}
+
+// Remove removes the container through the outermost runtime, then releases
+// the volumes filed under its listed name when that differs from its ID.
+func (o *ownedListerVia) Remove(ctx context.Context, containerID string) error {
+	err := o.rt.Remove(ctx, containerID)
+	var notFound *orchestration.ContainerNotFoundError
+	if err != nil && !errors.As(err, &notFound) {
+		return err
+	}
+	o.mu.Lock()
+	name := o.names[containerID]
+	o.mu.Unlock()
+	if name != "" && name != containerID {
+		if rel, ok := orchestration.RuntimeAs[orchestration.ContainerVolumeReleaser](o.rt); ok {
+			if rerr := rel.ReleaseContainer(ctx, name); rerr != nil {
+				return rerr
+			}
+		}
+	}
+	return err
 }
 
 // HoldsSession reports whether any backend this daemon serves holds a live

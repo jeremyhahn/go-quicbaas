@@ -15,8 +15,9 @@ const DefaultVolumeStagingDir = "/run/quicbaas/volumes"
 // VolumeConfig selects the go-blockstore provider the node agent attaches
 // workload volumes with.
 type VolumeConfig struct {
-	// Provider names the go-blockstore provider ("local", or "drbd" in a
-	// build with the drbd tag). Empty disables volumes on this node.
+	// Provider names the go-blockstore provider: "local". "drbd" is refused
+	// until launches promote and demote its volumes. Empty disables volumes
+	// on this node.
 	Provider string `json:"provider,omitempty" yaml:"provider,omitempty"`
 
 	// Settings are the provider's snake_case settings.
@@ -49,6 +50,11 @@ var hostname = os.Hostname
 func WrapVolumeRuntime(cfg VolumeConfig, inner orchestration.ContainerRuntime) (orchestration.ContainerRuntime, error) {
 	if !cfg.Enabled() || inner == nil {
 		return inner, nil
+	}
+	if cfg.Provider == "drbd" {
+		// A drbd volume is Secondary after Provision and Attach, and Mount
+		// needs Primary: until a launch promotes and demotes, refuse it.
+		return nil, fmt.Errorf("%w: fleet volumes: the drbd provider needs a launch that promotes and demotes its volumes, which the node agent does not do yet", orchestration.ErrVolumeUnsupported)
 	}
 	settingsNode := cfg.Settings["node_id"]
 	if cfg.NodeID != "" && settingsNode != "" && settingsNode != cfg.NodeID {

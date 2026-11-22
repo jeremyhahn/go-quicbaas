@@ -124,12 +124,12 @@ func (p SandboxSecurity) Validate() error {
 
 // Apply sets the policy on spec: every capability dropped, the policy's
 // add-back set granted, the pids limit bounded, the ulimits set, and
-// privileged mode off.
+// privileged mode off, the privilege class and host devices cleared.
 //
 // It OVERRIDES whatever the spec carried, exactly as the resolved network
 // does: a caller-supplied ContainerConfig must not be able to name a wider
 // capability set, lift the pids bound, name its own ulimits, or ask for
-// --privileged. It is
+// --privileged, the broker class or a host device. It is
 // called while the spec is being built, before ContainerConfigDigest
 // measures it, so the measured configuration is the launched one.
 //
@@ -147,6 +147,8 @@ func (p SandboxSecurity) Apply(spec *ContainerSpec) error {
 		return err
 	}
 	spec.Privileged = false
+	spec.PrivilegeClass = ""
+	spec.Devices = nil
 	spec.CapDrop = []string{sandboxCapDropAll}
 	spec.CapAdd = capAdd
 	spec.PidsLimit = p.EffectivePidsLimit()

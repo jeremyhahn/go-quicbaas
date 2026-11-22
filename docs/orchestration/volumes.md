@@ -38,7 +38,7 @@ The fleet node agent enables volumes with a `volumes` block in its config
 
 ```yaml
 volumes:
-  provider: local          # or drbd in a build with the drbd tag
+  provider: local          # drbd is refused: launches do not promote yet
   settings: {}             # the provider's snake_case settings
   node_id: ""              # default: settings.node_id, then the host name; given to the local provider too
   staging_dir: ""          # default: DefaultVolumeStagingDir
@@ -62,8 +62,22 @@ Stop or Remove. A rollback runs on a bounded context of its own, so a
 cancelled launch still releases; what it cannot release is retried before the
 next launch. After mounting a writable claim on an existing volume, the agent
 re-runs Resize at the volume's size, so a filesystem grow left undone while
-unmounted (XFS grows only mounted) completes. A `node_id` that differs from
+unmounted (XFS grows only mounted) completes. A volume the provider will not
+grow while detached is grown right after Attach, before it is mounted, and a
+refused grow rolls the attach back. A `node_id` that differs from
 `settings.node_id` is refused at startup.
+
+A volume has one owner on a node. A launch whose claim names a volume another
+container holds is refused with `ErrVolumeInUse` before anything is attached.
+The owner is recorded under both the container's name and its ID, so the
+reaper, which lists full IDs, releases a container launched by name. Ownership
+is also written to `.quicbaas-attachments.json` in the staging directory; after
+a restart the agent holds those volumes until its startup orphan sweep has
+removed the old containers, then releases them.
+
+Spawn requests are not volume launches: a sandboxed spawn whose
+`container_config` asks for a privilege class, a device or a volume is refused,
+and the sandbox policy clears the class and devices it is given.
 
 ## Raw devices and the broker class
 
@@ -85,6 +99,10 @@ volume's primary through a `VolumeCoordinator`:
   boundary, so it is safe only where one process manages the volume.
 
 A standalone go-qrdb keeps no leases; use the local coordinator there.
+
+The fleet node agent does not start an HA controller, and its launches do not
+promote or demote a volume, so it refuses the `drbd` provider at startup
+(`ErrVolumeUnsupported`).
 
 ## The NBD volume store and diskless boot
 

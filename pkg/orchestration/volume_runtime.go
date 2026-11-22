@@ -2,10 +2,20 @@ package orchestration
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
 	"sync"
 )
+
+// VolumeStateFile is the file in the attacher's staging dir where the
+// VolumeRuntime records the volumes it holds. A claim name starts with a
+// lower-case letter or digit, so it cannot clash with a volume's mount point.
+const VolumeStateFile = ".quicbaas-attachments.json"
 
 // VolumeRuntime is the node agent's launch path for workloads that declare
 // volumes. It wraps the node's ContainerRuntime: Run and RunInteractive
@@ -13,6 +23,14 @@ import (
 // the inner runtime a copy of the spec with the volumes resolved into bind
 // mounts, and release the volumes again when the start fails. Stop and Remove
 // release a container's volumes after the inner runtime has stopped it.
+//
+// A volume has one owner on the node, from the start of its launch until its
+// release: a launch claiming a volume another container holds, or one a
+// failed release left pending, is refused with ErrVolumeInUse before anything
+// is attached. The volumes held are written to VolumeStateFile in the staging
+// dir after every change, so a restarted node keeps refusing them and
+// releases them through ReleaseRecovered once the startup sweep has removed
+// their containers.
 //
 // It must be the outermost runtime, so an attesting runtime inside it measures
 // the resolved mounts: the launch measurement covers where each volume is
@@ -28,25 +46,47 @@ import (
 type VolumeRuntime struct {
 	ContainerRuntime
 
-	attacher *VolumeAttacher
+	attacher  *VolumeAttacher
+	statePath string
 
-	mu       sync.Mutex
-	attached map[string]*volumeRecord // container ID -> volumes still held
+	mu sync.Mutex
+	// attached maps a container's ID and its name to its record.
+	attached map[string]*volumeRecord
 	// pending holds volumes a failed launch's rollback could not release; they
 	// are retried before the next volume launch.
 	pending []AttachedVolume
+	// owned maps a claim name to the volume its owner holds; a launch's entry
+	// has no VolumeID until the volume is attached.
+	owned map[string]AttachedVolume
+	// recovered holds the volumes read from the state file at start, owned by
+	// containers of an earlier run of the node.
+	recovered []AttachedVolume
 }
 
-// volumeRecord is one container's held volumes. Its own mutex serialises
-// concurrent teardowns of that container, so a volume is never released twice.
+// volumeRecord is one container's held volumes, filed under each of keys. Its
+// own mutex serialises concurrent teardowns of that container, so a volume is
+// never released twice.
 type volumeRecord struct {
 	mu   sync.Mutex
+	keys []string
 	vols []AttachedVolume
 }
 
-var _ RuntimeUnwrapper = (*VolumeRuntime)(nil)
+// volumeState is the state file's content.
+type volumeState struct {
+	Volumes []AttachedVolume `json:"volumes"`
+}
 
-// NewVolumeRuntime wraps inner with the attacher's volumes.
+var (
+	_ RuntimeUnwrapper        = (*VolumeRuntime)(nil)
+	_ ContainerVolumeReleaser = (*VolumeRuntime)(nil)
+	_ RecoveredVolumeReleaser = (*VolumeRuntime)(nil)
+)
+
+// NewVolumeRuntime wraps inner with the attacher's volumes. It reads the
+// volumes an earlier run of the node left held from the staging dir's state
+// file: they stay owned until ReleaseRecovered releases them. A state file
+// that cannot be read is an error, so the node does not start blind.
 func NewVolumeRuntime(inner ContainerRuntime, attacher *VolumeAttacher) (*VolumeRuntime, error) {
 	if inner == nil {
 		return nil, fmt.Errorf("%w: volume runtime: nil container runtime", ErrVolumeInvalidArgument)
@@ -54,11 +94,42 @@ func NewVolumeRuntime(inner ContainerRuntime, attacher *VolumeAttacher) (*Volume
 	if attacher == nil {
 		return nil, fmt.Errorf("%w: volume runtime: nil attacher", ErrVolumeInvalidArgument)
 	}
-	return &VolumeRuntime{
+	r := &VolumeRuntime{
 		ContainerRuntime: inner,
 		attacher:         attacher,
+		statePath:        filepath.Join(attacher.stagingDir, VolumeStateFile),
 		attached:         make(map[string]*volumeRecord),
-	}, nil
+		owned:            make(map[string]AttachedVolume),
+	}
+	recovered, err := readVolumeState(r.statePath)
+	if err != nil {
+		return nil, fmt.Errorf("volume runtime: read %s: %w", r.statePath, err)
+	}
+	for _, v := range recovered {
+		r.owned[v.Claim.Name] = v
+	}
+	r.recovered = recovered
+	return r, nil
+}
+
+func readVolumeState(path string) ([]AttachedVolume, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var st volumeState
+	if err := json.Unmarshal(data, &st); err != nil {
+		return nil, err
+	}
+	for _, v := range st.Volumes {
+		if v.Claim.Name == "" || v.VolumeID == "" {
+			return nil, fmt.Errorf("%w: a recorded volume has no claim name or volume id", ErrVolumeInvalidArgument)
+		}
+	}
+	return st.Volumes, nil
 }
 
 // Unwrap returns the runtime this one wraps.
@@ -80,7 +151,7 @@ func (r *VolumeRuntime) Run(ctx context.Context, spec *ContainerSpec) (string, e
 	if err != nil {
 		return "", r.releaseAfter(ctx, err, vols)
 	}
-	r.track(id, vols)
+	r.track(vols, id, spec.Name)
 	return id, nil
 }
 
@@ -98,7 +169,7 @@ func (r *VolumeRuntime) RunInteractive(ctx context.Context, spec *ContainerSpec)
 	if err != nil {
 		return nil, r.releaseAfter(ctx, err, vols)
 	}
-	r.track(p.ContainerID, vols)
+	r.track(vols, p.ContainerID, spec.Name)
 	return p, nil
 }
 
@@ -110,6 +181,45 @@ func (r *VolumeRuntime) Stop(ctx context.Context, containerID string) error {
 // Remove removes the container, then releases its volumes if Stop has not.
 func (r *VolumeRuntime) Remove(ctx context.Context, containerID string) error {
 	return r.teardown(ctx, containerID, r.ContainerRuntime.Remove(ctx, containerID))
+}
+
+// ReleaseContainer releases the volumes of the container filed under the
+// first of keys (its ID or its name) that has a record. A caller that removed
+// the container through the inner runtime, or knows it under another key,
+// releases its volumes with it.
+func (r *VolumeRuntime) ReleaseContainer(ctx context.Context, keys ...string) error {
+	r.mu.Lock()
+	var key string
+	for _, k := range keys {
+		if k != "" && r.attached[k] != nil {
+			key = k
+			break
+		}
+	}
+	r.mu.Unlock()
+	if key == "" {
+		return nil
+	}
+	return r.release(ctx, key)
+}
+
+// ReleaseRecovered releases the volumes an earlier run of the node left held.
+// Call it once their containers are gone (after the startup sweep). What
+// fails to release stays owned and pending, and is retried before the next
+// volume launch.
+func (r *VolumeRuntime) ReleaseRecovered(ctx context.Context) error {
+	r.mu.Lock()
+	vols := r.recovered
+	r.recovered = nil
+	r.mu.Unlock()
+	if len(vols) == 0 {
+		return nil
+	}
+	cctx, cancel := cleanupContext(ctx)
+	defer cancel()
+	held, err := r.attacher.release(cctx, vols)
+	werr := r.settle(vols, held, true)
+	return errors.Join(err, werr)
 }
 
 // teardown releases the container's volumes after the inner Stop or Remove
@@ -129,7 +239,8 @@ func (r *VolumeRuntime) teardown(ctx context.Context, containerID string, err er
 	return err
 }
 
-// Attached returns the volumes held for a running container.
+// Attached returns the volumes held for a running container, by its ID or
+// its name.
 func (r *VolumeRuntime) Attached(containerID string) []AttachedVolume {
 	r.mu.Lock()
 	rec := r.attached[containerID]
@@ -150,10 +261,28 @@ func (r *VolumeRuntime) attach(ctx context.Context, spec *ContainerSpec) (*Conta
 		}
 	}
 	r.retryPending(ctx)
+	if err := r.reserve(spec.Volumes); err != nil {
+		return nil, nil, err
+	}
 	vols, held, err := r.attacher.attach(ctx, spec.Volumes)
 	if err != nil {
-		r.addPending(held)
+		claims := make([]AttachedVolume, 0, len(spec.Volumes))
+		for _, c := range spec.Volumes {
+			claims = append(claims, AttachedVolume{Claim: c})
+		}
+		if werr := r.settle(claims, held, true); werr != nil {
+			err = errors.Join(err, werr)
+		}
 		return nil, nil, err
+	}
+	r.mu.Lock()
+	for _, v := range vols {
+		r.owned[v.Claim.Name] = v
+	}
+	werr := r.persistLocked()
+	r.mu.Unlock()
+	if werr != nil {
+		return nil, nil, r.releaseAfter(ctx, werr, vols)
 	}
 	resolved := *spec
 	resolved.Volumes = nil
@@ -164,15 +293,95 @@ func (r *VolumeRuntime) attach(ctx context.Context, spec *ContainerSpec) (*Conta
 	return &resolved, vols, nil
 }
 
+// reserve makes the launch the owner of every claim, or of none when another
+// owner holds one of them.
+func (r *VolumeRuntime) reserve(claims []VolumeClaim) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, c := range claims {
+		if _, ok := r.owned[c.Name]; ok {
+			return fmt.Errorf("%w: volume %q", ErrVolumeInUse, c.Name)
+		}
+	}
+	for _, c := range claims {
+		r.owned[c.Name] = AttachedVolume{Claim: c}
+	}
+	return nil
+}
+
+// settle records the outcome of releasing vols: what is still held keeps its
+// owner (and goes to pending when pend is set), the rest is no longer owned.
+// It writes the state file and returns the write's error.
+func (r *VolumeRuntime) settle(vols, held []AttachedVolume, pend bool) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, v := range vols {
+		delete(r.owned, v.Claim.Name)
+	}
+	for _, v := range held {
+		r.owned[v.Claim.Name] = v
+	}
+	if pend {
+		r.pending = append(r.pending, held...)
+	}
+	return r.persistLocked()
+}
+
+// persistLocked writes the owned volumes that have a VolumeID to the state
+// file, through a temporary file renamed over it. r.mu must be held.
+func (r *VolumeRuntime) persistLocked() error {
+	st := volumeState{Volumes: []AttachedVolume{}}
+	for _, v := range r.owned {
+		if v.VolumeID != "" {
+			st.Volumes = append(st.Volumes, v)
+		}
+	}
+	slices.SortFunc(st.Volumes, func(a, b AttachedVolume) int { return strings.Compare(a.Claim.Name, b.Claim.Name) })
+	data, err := json.Marshal(st)
+	if err != nil {
+		return fmt.Errorf("volume runtime: encode state: %w", err)
+	}
+	dir := filepath.Dir(r.statePath)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("volume runtime: write state: %w", err)
+	}
+	f, err := os.CreateTemp(dir, VolumeStateFile+".*.tmp")
+	if err != nil {
+		return fmt.Errorf("volume runtime: write state: %w", err)
+	}
+	tmp := f.Name()
+	werr := f.Chmod(0o600)
+	if werr == nil {
+		_, werr = f.Write(data)
+	}
+	if werr == nil {
+		werr = f.Sync()
+	}
+	if cerr := f.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr == nil {
+		werr = os.Rename(tmp, r.statePath)
+	}
+	if werr != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("volume runtime: write state %s: %w", r.statePath, werr)
+	}
+	return nil
+}
+
 // releaseAfter rolls a failed start back on a context of its own, since the
 // start may have failed because its context was cancelled.
 func (r *VolumeRuntime) releaseAfter(ctx context.Context, cause error, vols []AttachedVolume) error {
 	cctx, cancel := cleanupContext(ctx)
 	defer cancel()
 	held, err := r.attacher.release(cctx, vols)
-	r.addPending(held)
+	werr := r.settle(vols, held, true)
 	if err != nil {
-		return errors.Join(cause, fmt.Errorf("release volumes after failed start: %w", err))
+		cause = errors.Join(cause, fmt.Errorf("release volumes after failed start: %w", err))
+	}
+	if werr != nil {
+		cause = errors.Join(cause, werr)
 	}
 	return cause
 }
@@ -190,22 +399,23 @@ func (r *VolumeRuntime) retryPending(ctx context.Context) {
 	cctx, cancel := cleanupContext(ctx)
 	defer cancel()
 	held, _ := r.attacher.release(cctx, vols)
-	r.addPending(held)
+	_ = r.settle(vols, held, true)
 }
 
-func (r *VolumeRuntime) addPending(vols []AttachedVolume) {
-	if len(vols) == 0 {
-		return
+// track files the container's record under each of its non-empty keys.
+func (r *VolumeRuntime) track(vols []AttachedVolume, keys ...string) {
+	var uniq []string
+	for _, k := range keys {
+		if k != "" && !slices.Contains(uniq, k) {
+			uniq = append(uniq, k)
+		}
 	}
+	rec := &volumeRecord{keys: uniq, vols: vols}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.pending = append(r.pending, vols...)
-}
-
-func (r *VolumeRuntime) track(id string, vols []AttachedVolume) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.attached[id] = &volumeRecord{vols: vols}
+	for _, k := range uniq {
+		r.attached[k] = rec
+	}
 }
 
 // release releases what is still held for the container. What fails to
@@ -223,14 +433,21 @@ func (r *VolumeRuntime) release(ctx context.Context, id string) error {
 	if len(rec.vols) == 0 {
 		return nil // a concurrent teardown finished it
 	}
-	remaining, err := r.attacher.release(ctx, rec.vols)
+	vols := rec.vols
+	remaining, err := r.attacher.release(ctx, vols)
 	rec.vols = remaining
+	werr := r.settle(vols, remaining, false)
 	if len(remaining) == 0 {
 		r.mu.Lock()
-		if r.attached[id] == rec {
-			delete(r.attached, id)
+		for _, k := range rec.keys {
+			if r.attached[k] == rec {
+				delete(r.attached, k)
+			}
 		}
 		r.mu.Unlock()
+	}
+	if werr != nil {
+		return errors.Join(err, werr)
 	}
 	return err
 }

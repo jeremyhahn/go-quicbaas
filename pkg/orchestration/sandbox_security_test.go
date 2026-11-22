@@ -348,6 +348,48 @@ func TestSpawnSession_TheOrchestratorsSandboxGetsThePolicy(t *testing.T) {
 		}
 		requireSecureRunArgs(t, detachedRunArgs(t, h.runtime.runCalls[0].Spec), defaultSecurityRunArgs())
 	})
+	t.Run("CallerContainerConfigCannotAskForDevicesOrVolumes", func(t *testing.T) {
+		cases := map[string]*ContainerSpec{
+			"broker class": {Image: "ghcr.io/example/agent:v1", PrivilegeClass: PrivilegeClassBroker},
+			"host device":  {Image: "ghcr.io/example/agent:v1", Devices: []ContainerDevice{{HostPath: "/dev/sda"}}},
+			"volume claim": {Image: "ghcr.io/example/agent:v1", Volumes: []VolumeClaim{
+				{Name: "data", SizeBytes: 1 << 30, FSType: "ext4", Target: "/data"}}},
+		}
+		for name, cfg := range cases {
+			t.Run(name, func(t *testing.T) {
+				h := newSpawnMountHarness(t)
+				_, err := h.svc.SpawnSession(h.ctx(), &SpawnSessionRequest{
+					Backend:         "mock",
+					Sandboxed:       true,
+					WorkDir:         h.workspacePath(),
+					ContainerConfig: cfg,
+				})
+				if !errors.Is(err, ErrInvalidInput) {
+					t.Fatalf("SpawnSession = %v, want ErrInvalidInput", err)
+				}
+				if n := len(h.runtime.runCalls); n != 0 {
+					t.Errorf("runCalls = %d, want 0", n)
+				}
+			})
+		}
+	})
+}
+
+func TestSandboxSecurity_ClearsBrokerClassAndDevices(t *testing.T) {
+	spec := &ContainerSpec{
+		Image:          "ghcr.io/example/agent:v1",
+		PrivilegeClass: PrivilegeClassBroker,
+		Devices:        []ContainerDevice{{HostPath: "/dev/sda"}},
+	}
+	if err := (SandboxSecurity{}).Apply(spec); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if spec.PrivilegeClass != "" || len(spec.Devices) != 0 {
+		t.Errorf("PrivilegeClass = %q, Devices = %+v, want both empty", spec.PrivilegeClass, spec.Devices)
+	}
+	if args := spec.PrivilegeRunArgs(); slices.Contains(args, "--device") {
+		t.Errorf("PrivilegeRunArgs = %v, want no --device", args)
+	}
 }
 
 // TestOpenVINOBackend_TheToolContainerGetsThePolicy covers the triage tool

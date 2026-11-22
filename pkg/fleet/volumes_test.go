@@ -57,6 +57,27 @@ func TestWrapVolumeRuntimeWrapsWithDefaults(t *testing.T) {
 	}
 }
 
+// TestWrapVolumeRuntimeRefusesDRBD: the node agent does not promote or demote
+// drbd volumes on launch, so it refuses the provider before building one.
+func TestWrapVolumeRuntimeRefusesDRBD(t *testing.T) {
+	var name string
+	stubVolumeProvider(t, &name)
+	old := hostname
+	hostname = func() (string, error) { return "node-7", nil }
+	t.Cleanup(func() { hostname = old })
+
+	got, err := WrapVolumeRuntime(VolumeConfig{Provider: "drbd"}, &nopRuntime{})
+	if !errors.Is(err, orchestration.ErrVolumeUnsupported) {
+		t.Fatalf("WrapVolumeRuntime(drbd) = %v, %v; want ErrVolumeUnsupported", got, err)
+	}
+	if got != nil {
+		t.Errorf("runtime = %T, want none", got)
+	}
+	if name != "" {
+		t.Errorf("provider %q was built, want none", name)
+	}
+}
+
 func TestWrapVolumeRuntimeRejectsBadConfig(t *testing.T) {
 	var name string
 	stubVolumeProvider(t, &name)
