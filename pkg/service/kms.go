@@ -2447,6 +2447,65 @@ func (k *kmsServiceImpl) getVersionStatus(ctx context.Context, keyID string, ver
 	return "", nil // No explicit status, use default
 }
 
+// authoritativeVersionStatus returns a key version's status for an
+// enforcement decision. Unlike getVersionStatus it never answers from the
+// local cache when replicated storage is configured, since another node may
+// have changed the status since this node cached it, and it fails closed: a
+// failed or unreadable lookup returns an error, never an empty status.
+//
+// The order of precedence matches getVersionStatus: an explicit status in the
+// KVStore wins; then a status this node set but could not persist (only a
+// disabled one is trusted, because the KVStore had nothing newer); then a
+// completed grace-period job in the scheduler's replicated storage.
+func (k *kmsServiceImpl) authoritativeVersionStatus(ctx context.Context, keyID string, version uint64) (KeyStatus, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+	}
+
+	var cached KeyStatus
+	if info, ok := k.versionStatus.Load(fmt.Sprintf("%s:%d", keyID, version)); ok {
+		if vsi, ok := info.(*versionStatusInfo); ok {
+			cached = vsi.Status
+		}
+	}
+
+	if k.kvStore != nil {
+		data, err := k.kvStore.Get(ctx, versionStatusKey(keyID, version))
+		if err != nil && !errors.IsNotFound(err) {
+			return "", WrapError(err, errors.ErrStorage, "kms.versionStatus", "failed to load key version status")
+		}
+		if err == nil && len(data) > 0 {
+			var ps persistedVersionStatus
+			if err := json.Unmarshal(data, &ps); err != nil {
+				return "", WrapError(err, errors.ErrStorage, "kms.versionStatus", "failed to decode key version status")
+			}
+			return KeyStatus(ps.Status), nil
+		}
+		if cached == KeyStatusDisabled {
+			return KeyStatusDisabled, nil
+		}
+	} else if cached != "" {
+		// Without replicated storage the local cache is the only record.
+		return cached, nil
+	}
+
+	if querier, ok := k.scheduler.(KMSSchedulerQuerier); ok {
+		versions, err := querier.GetCompletedGracePeriodVersions(ctx, keyID)
+		if err != nil {
+			return "", WrapError(err, errors.ErrStorage, "kms.versionStatus", "failed to load key version grace periods")
+		}
+		if _, found := versions[version]; found {
+			return KeyStatusDisabled, nil
+		}
+	}
+	return "", nil
+}
+
 // versionStatusKey returns the KVStore key for a version status entry.
 func versionStatusKey(keyID string, version uint64) string {
 	return fmt.Sprintf("__sys:kms/version_status/%s/%d", keyID, version)
