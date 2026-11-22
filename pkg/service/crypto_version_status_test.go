@@ -23,6 +23,8 @@ import (
 	"time"
 
 	kctypes "github.com/jeremyhahn/go-xkms/sdk/go"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/kms"
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/api"
@@ -436,4 +438,53 @@ func TestCryptoService_Decrypt_ReportsCiphertextKeyVersion(t *testing.T) {
 	require.True(t, stderrors.As(err, &qbErr), "want QBError, got %v", err)
 	require.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	require.Equal(t, before, f.decrypt.Load(), "a conflicting version decrypts nothing")
+}
+
+// TestCryptoService_Encrypt_ReportsCiphertextVersionAcrossRotation: another
+// node rotates the key from v1 to v2 after Encrypt produced its v1 ciphertext
+// and before the response is built. The response reports v1, the version the
+// ciphertext records, and decrypting with that reported version succeeds.
+func TestCryptoService_Encrypt_ReportsCiphertextVersionAcrossRotation(t *testing.T) {
+	f := newVersionedCryptoFixture(t)
+	current := &atomic.Int64{}
+	current.Store(1)
+	f.kmsMgr.getKeyFn = func(_ context.Context, keyID string) (interface{}, error) {
+		return &kms.KeyMetadata{KeyID: keyID, Algorithm: "AES-256-GCM", Version: int(current.Load()), State: kms.KeyStateEnabled}, nil
+	}
+	cryptoMgr := f.svc.cryptoManager.(*mockCryptoManager)
+	seal := func(plaintext []byte) ([]byte, error) {
+		return json.Marshal(kctypes.EncryptedData{
+			Ciphertext: plaintext,
+			Metadata:   map[string][]byte{"kv": []byte("1")},
+		})
+	}
+	cryptoMgr.encryptFn = func(_ context.Context, _ string, plaintext, _ []byte) ([]byte, error) {
+		ct, err := seal(plaintext)
+		current.Store(2) // the rotation lands once the v1 ciphertext exists
+		return ct, err
+	}
+	cryptoMgr.encryptBatchFn = func(_ context.Context, _ string, items [][]byte, _ []byte) ([][]byte, error) {
+		out := make([][]byte, len(items))
+		for i, item := range items {
+			ct, err := seal(item)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = ct
+		}
+		current.Store(2)
+		return out, nil
+	}
+	ctx := systemTenantCtx()
+
+	resp, err := f.svc.Encrypt(ctx, &EncryptRequest{KeyID: versionStatusKeyID, Plaintext: []byte("sealed under v1")})
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), resp.KeyVersion, "the response names the version the ciphertext records")
+	_, err = f.svc.Decrypt(ctx, &DecryptRequest{KeyID: versionStatusKeyID, Ciphertext: resp.Ciphertext, KeyVersion: resp.KeyVersion})
+	require.NoError(t, err, "the reported version decrypts its own ciphertext")
+
+	current.Store(1)
+	batch, err := f.svc.EncryptBatch(ctx, &EncryptBatchRequest{KeyID: versionStatusKeyID, Items: []BatchEncryptItem{{Plaintext: []byte("a")}}})
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), batch.KeyVersion, "the batch response names the version its ciphertexts record")
 }

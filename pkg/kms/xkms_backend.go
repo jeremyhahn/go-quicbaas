@@ -865,7 +865,7 @@ func (kb *XKMSBackend) storedVersion(ctx context.Context, keyID string) (int, er
 			return 0, err
 		}
 		if !ok {
-			return 1, nil
+			return kb.migrateVersionRecord(ctx, reg, keyID)
 		}
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 1 {
@@ -878,6 +878,45 @@ func (kb *XKMSBackend) storedVersion(ctx context.Context, keyID string) (int, er
 		return 0, err
 	}
 	return kb.highestContiguousVersion(stored, keyID), nil
+}
+
+// migrateVersionRecord gives a stored key that has no version record one.
+//
+// Rotation records every version it writes, so a stored key without a record
+// was never rotated under the registry: it predates it. Before the registry a
+// key's versions were its contiguous stored run keyID_v2..keyID_vk, so that
+// run is adopted as its versions and recorded. The record is written before
+// any later name keyID_vN can be created: CreateKey and ImportKey resolve
+// keyID's version through refuseVersionName, which lands here, so an
+// independent key created under the registry lies above the recorded run and
+// is never adopted. A key that is not stored has no versions: it reports
+// version 1 and no record is written for it.
+func (kb *XKMSBackend) migrateVersionRecord(ctx context.Context, reg interfaces.KVStore, keyID string) (int, error) {
+	stored, err := kb.listStoredKeyIDs(ctx, keyID)
+	if err != nil {
+		return 0, err
+	}
+	if _, ok := stored[keyID]; !ok {
+		return 1, nil
+	}
+	version := kb.highestContiguousVersion(stored, keyID)
+	// A rotation on another node may have recorded a version since the read
+	// above: never overwrite a record with the migrated one.
+	v, ok, err := readRegistryRecord(ctx, reg, kb.versionRecordKey(keyID))
+	if err != nil {
+		return 0, err
+	}
+	if ok {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			return 0, fmt.Errorf("xkms key registry: version record of %q is not a positive integer: %q", keyID, v)
+		}
+		return n, nil
+	}
+	if err := reg.Put(ctx, kb.versionRecordKey(keyID), []byte(strconv.Itoa(version))); err != nil {
+		return 0, fmt.Errorf("xkms key registry: record migrated version %d of %q: %w", version, keyID, err)
+	}
+	return version, nil
 }
 
 // refuseHidingName refuses to create keyID when an ordinary key already

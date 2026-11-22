@@ -88,6 +88,69 @@ func TestXKMSBackend_DeleteKeepsIndependentVersionNamedKey(t *testing.T) {
 	assertKeyRoundTrips(t, fresh, "report_v2")
 }
 
+// TestXKMSBackend_PreRegistryRotatedKeyMigrates: a key rotated before the
+// registry has stored versions but no version record. Installing the registry
+// adopts its contiguous rotated run as its versions and records it, so its
+// version-2 ciphertext still decrypts, rotation continues at version 3 and
+// DeleteKey deletes every version.
+func TestXKMSBackend_PreRegistryRotatedKeyMigrates(t *testing.T) {
+	cleanup := initXKMSForTest(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	legacy := newKeyNameTestBackend(t)
+	createKeyNameTestKey(t, legacy, "ledger")
+	_, err := legacy.RotateKey(ctx, "ledger")
+	require.NoError(t, err)
+	v2Ciphertext, err := legacy.Encrypt(ctx, "ledger", []byte("sealed under v2"), nil)
+	require.NoError(t, err)
+	v, err := CiphertextKeyVersion(v2Ciphertext)
+	require.NoError(t, err)
+	require.Equal(t, uint64(2), v)
+
+	registry := kvstore.NewMemory()
+	upgraded := newRegistryTestBackend(t, registry)
+	current, err := upgraded.CurrentVersion(ctx, "ledger")
+	require.NoError(t, err)
+	assert.Equal(t, 2, current, "the pre-registry rotated run is the key's versions")
+	record, err := registry.Get(ctx, upgraded.versionRecordKey("ledger"))
+	require.NoError(t, err)
+	assert.Equal(t, "2", string(record), "the migrated version is recorded")
+
+	meta, err := upgraded.GetKeyMetadata(ctx, "ledger")
+	require.NoError(t, err)
+	assert.Equal(t, 2, meta.Version)
+	plaintext, err := upgraded.Decrypt(ctx, "ledger", v2Ciphertext, nil)
+	require.NoError(t, err, "version-2 ciphertext from before the upgrade decrypts")
+	assert.Equal(t, []byte("sealed under v2"), plaintext)
+
+	rotated, err := upgraded.RotateKey(ctx, "ledger")
+	require.NoError(t, err)
+	assert.Equal(t, 3, rotated.Version)
+
+	require.NoError(t, upgraded.DeleteKey(ctx, "ledger"))
+	stored, err := upgraded.listStoredKeyIDs(ctx, "ledger")
+	require.NoError(t, err)
+	assert.Empty(t, stored, "DeleteKey deletes every migrated version")
+}
+
+// TestXKMSBackend_MissingKeyWritesNoVersionRecord: a version lookup of a key
+// that is not stored reports version 1 and records nothing for it.
+func TestXKMSBackend_MissingKeyWritesNoVersionRecord(t *testing.T) {
+	cleanup := initXKMSForTest(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	registry := kvstore.NewMemory()
+	backend := newRegistryTestBackend(t, registry)
+	version, err := backend.storedVersion(ctx, "absent")
+	require.NoError(t, err)
+	assert.Equal(t, 1, version)
+	exists, err := registry.Exists(ctx, backend.versionRecordKey("absent"))
+	require.NoError(t, err)
+	assert.False(t, exists)
+}
+
 // Decrypt reads the cached version while RotateKey changes it.
 func TestXKMSBackend_DecryptConcurrentRotate_RealXKMS(t *testing.T) {
 	cleanup := initXKMSForTest(t)

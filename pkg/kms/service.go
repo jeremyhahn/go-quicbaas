@@ -493,9 +493,10 @@ func (s *KMSService) CurrentKeyVersion(ctx context.Context, keyID string) (int, 
 		return 0, &errors.QBError{Code: code, Op: "KMSService.CurrentKeyVersion", Err: err}
 	}
 	if cached, err := s.store.Get(keyID); err == nil && cached.Version != version {
-		refreshed := s.copyMetadata(cached)
-		refreshed.Version = version
-		if err := s.store.Put(refreshed); err != nil && s.logger != nil {
+		// SetVersion updates only Version, in place under the store lock: a
+		// Put of the snapshot read above would restore its State over a
+		// DisableKey that completed in between.
+		if err := s.store.SetVersion(keyID, version); err != nil && s.logger != nil {
 			s.logger.WithFields(map[string]interface{}{
 				"key_id": keyID,
 				"error":  err.Error(),

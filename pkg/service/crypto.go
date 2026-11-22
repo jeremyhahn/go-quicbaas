@@ -239,7 +239,7 @@ func (t *cryptoService) Encrypt(ctx context.Context, req *EncryptRequest) (*Encr
 		return nil, keyOperationError(errors.ErrEncryption, "crypto.Encrypt", "encrypt data", err)
 	}
 
-	keyVersion := t.keyVersion(ctx, scopedKeyID)
+	keyVersion := t.keyVersion(ctx, scopedKeyID, ciphertext)
 
 	resp := &EncryptResponse{
 		KeyID:      req.KeyID,
@@ -262,10 +262,20 @@ func (t *cryptoService) Encrypt(ctx context.Context, req *EncryptRequest) (*Encr
 	return resp, nil
 }
 
-// keyVersion returns the current version of scopedKeyID as the KMS manager
-// reports it. It returns 1 when no KMS manager is configured, the lookup
+// keyVersion returns the key version the first decodable ciphertext records
+// or, when none records one, the current version of scopedKeyID as the KMS
+// manager reports it. It returns 1 when no KMS manager is configured, the lookup
 // fails, or the metadata carries no version.
-func (t *cryptoService) keyVersion(ctx context.Context, scopedKeyID string) uint64 {
+func (t *cryptoService) keyVersion(ctx context.Context, scopedKeyID string, ciphertexts ...[]byte) uint64 {
+	// The version a ciphertext records is the one that produced it: another
+	// node can rotate the key between encryption and this lookup, and the
+	// durable current version would then name a version the ciphertext was
+	// not encrypted under.
+	for _, ciphertext := range ciphertexts {
+		if v, err := kms.CiphertextKeyVersion(ciphertext); err == nil {
+			return v
+		}
+	}
 	version, err := t.currentKeyVersion(ctx, scopedKeyID)
 	if err != nil {
 		return 1
@@ -691,7 +701,7 @@ func (t *cryptoService) EncryptBatch(ctx context.Context, req *EncryptBatchReque
 
 	resp := &EncryptBatchResponse{
 		KeyID:      req.KeyID,
-		KeyVersion: t.keyVersion(ctx, scopedKeyID),
+		KeyVersion: t.keyVersion(ctx, scopedKeyID, ciphertexts...),
 		Results:    results,
 		Timestamp:  time.Now(),
 	}
