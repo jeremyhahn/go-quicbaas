@@ -349,7 +349,6 @@ func TestFirstBootBootstrap_ConfiguredAdminEmail(t *testing.T) {
 	assert.Equal(t, "admin", admin.Username)
 	_, err = c.identityStore.GetUserByEmail(ctx, qrdbsdk.SystemTenantID, bootstrapAdminEmail)
 	assert.Error(t, err, "the synthetic default must not be used when an address is configured")
-
 }
 
 // TestFirstBootBootstrap_ConfiguredAdminEmail_RecoveryFindsTheConfiguredAdmin
