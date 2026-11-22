@@ -164,7 +164,8 @@ func signWith(key crypto.Signer) func(nonce []byte) ([]byte, error) {
 
 // A passkey the administrator enrolls through AdminFactors().Enroll is the
 // credential the unified login resolves to that administrator, on every
-// transport. Without a FIDO2 handler Enroll refuses before the server is asked.
+// transport that serves FIDO2 enrollment; over MCP, Enroll is refused.
+// Without a FIDO2 handler Enroll refuses before the server is asked.
 func TestAdminFactors_PasskeyEnrollsThenLogsIn(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
@@ -176,6 +177,27 @@ func TestAdminFactors_PasskeyEnrollsThenLogsIn(t *testing.T) {
 			defer c.Close()
 
 			adapter := webauthnclient.NewSoftwareAdapter()
+			if tr == transportMCP {
+				// FIDO2 enrollment is not served over MCP: the preflight checks
+				// (plan, tenant context, passkey device, administrator lookup)
+				// must pass, and Enroll must then fail at BeginAddCredential
+				// because the MCP bridge has no xkms.fido2.beginAddCredential tool.
+				req := &quicbaas.AdminFactorEnrollRequest{
+					Factors:        []string{"fido2"},
+					Subject:        adminSubject,
+					TenantID:       systemTenantID,
+					RelyingPartyID: adminFactorRPID,
+					FIDO2Handler:   &softwarePasskey{adapter: adapter},
+				}
+				require.NoError(t, c.Security().Auth().AdminFactors().Preflight(ctx, req), "[%s] fido2 enrollment preflight must pass over MCP", tr)
+				refused, err := c.Security().Auth().AdminFactors().Enroll(ctx, req)
+				require.Equal(t, sdkerrors.CodeInvalidInput, sdkerrors.Code(err), "[%s] fido2 enrollment over MCP must fail on the missing tool, got %v", tr, err)
+				require.ErrorContains(t, err, "mcp.callTool", "[%s] the refusal must come from the MCP tool call", tr)
+				require.ErrorContains(t, err, "tool 'xkms.fido2.beginAddCredential' not found", "[%s] the refusal must name the missing enrollment tool", tr)
+				require.Empty(t, refused, "[%s] a refused enrollment must report no results", tr)
+				return
+			}
+
 			results, err := c.Security().Auth().AdminFactors().Enroll(ctx, &quicbaas.AdminFactorEnrollRequest{
 				Factors:        []string{"fido2"},
 				Subject:        adminSubject,
