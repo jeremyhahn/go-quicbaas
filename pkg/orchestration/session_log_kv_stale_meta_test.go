@@ -199,3 +199,78 @@ func TestKVSessionEventLog_GuardedWriteRefusesOccupiedSequence(t *testing.T) {
 		t.Fatalf("stored event changed: %+v", events)
 	}
 }
+
+// TestKVSessionEventLog_RetentionUnderStaleMetaKeepsTail pins that retention
+// never prunes an event above the tail the stored metadata record names. With
+// MaxTurns=1 and metadata writes failing, pruning past the stale tail would
+// delete event 2 while event 3 stands, and the tail scan would read the gap as
+// the end of the log, handing the next append sequence 2 again.
+func TestKVSessionEventLog_RetentionUnderStaleMetaKeepsTail(t *testing.T) {
+	ctx := context.Background()
+	const tenant, sessionID = "tenant-a", "sess-retention-stale"
+
+	kv := &metaWriteFailingKV{memKVStore: newMemKVStore()}
+	log, err := NewKVSessionEventLog(KVSessionEventLogConfig{
+		KVStore:   kv,
+		Retention: SessionRetention{MaxTurns: 1},
+	})
+	if err != nil {
+		t.Fatalf("NewKVSessionEventLog: %v", err)
+	}
+	kv.metaKey = log.metaKey(tenant, sessionID)
+	if err := log.PutMeta(ctx, &SessionMeta{SessionID: sessionID, TenantID: tenant, Status: SessionStateActive}); err != nil {
+		t.Fatalf("PutMeta: %v", err)
+	}
+
+	appendPrompt(t, ctx, log, tenant, sessionID, "p1")
+	kv.failMeta.Store(true)
+	appendPrompt(t, ctx, log, tenant, sessionID, "p2")
+	appendPrompt(t, ctx, log, tenant, sessionID, "p3")
+
+	latest, err := log.LatestSequence(ctx, tenant, sessionID)
+	if err != nil {
+		t.Fatalf("LatestSequence: %v", err)
+	}
+	if latest != 3 {
+		t.Fatalf("LatestSequence = %d after p3 under failing metadata writes, want 3", latest)
+	}
+
+	appendPrompt(t, ctx, log, tenant, sessionID, "p4")
+	events, _, err := log.Range(ctx, tenant, sessionID, 0, 0)
+	if err != nil {
+		t.Fatalf("Range: %v", err)
+	}
+	if len(events) == 0 {
+		t.Fatal("Range returned no events")
+	}
+	prompts := map[uint64]string{}
+	for i, ev := range events {
+		if i > 0 && ev.Sequence <= events[i-1].Sequence {
+			t.Fatalf("Range sequences not strictly increasing: %d after %d", ev.Sequence, events[i-1].Sequence)
+		}
+		if ev.Prompt != nil {
+			prompts[ev.Sequence] = ev.Prompt.Prompt
+		}
+	}
+	if last := events[len(events)-1].Sequence; last != 4 {
+		t.Fatalf("last stored sequence = %d, want 4", last)
+	}
+	if prompts[3] != "p3" || prompts[4] != "p4" {
+		t.Fatalf("prompts at 3,4 = %q,%q, want p3,p4", prompts[3], prompts[4])
+	}
+
+	kv.failMeta.Store(false)
+	appendPrompt(t, ctx, log, tenant, sessionID, "p5")
+	appendPrompt(t, ctx, log, tenant, sessionID, "p6")
+	events, _, err = log.Range(ctx, tenant, sessionID, 0, 0)
+	if err != nil {
+		t.Fatalf("Range after recovery: %v", err)
+	}
+	if len(events) != 1 || events[0].Sequence != 6 || events[0].Prompt == nil || events[0].Prompt.Prompt != "p6" {
+		got := make([]uint64, 0, len(events))
+		for _, ev := range events {
+			got = append(got, ev.Sequence)
+		}
+		t.Fatalf("after metadata writes recover, stored sequences = %v, want exactly [6] holding p6", got)
+	}
+}

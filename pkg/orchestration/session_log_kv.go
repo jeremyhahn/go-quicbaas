@@ -178,10 +178,11 @@ func (l *KVSessionEventLog) Append(ctx context.Context, event *SessionEvent) err
 	// doing it anywhere else would mean a second read-modify-write of the same
 	// key under the same lock.
 	if meta, metaErr := l.GetMeta(ctx, event.TenantID, event.SessionID); metaErr == nil {
+		durable := meta.LatestSequence
 		meta.LatestSequence = event.Sequence
 		meta.EventCount = event.Sequence // monotonic = dense, so count == latest
 		meta.LastActivity = event.Timestamp
-		l.applyRetention(ctx, meta, event)
+		l.applyRetention(ctx, meta, event, durable)
 		// Non-fatal on write failure: the event is durable, and LatestSequence
 		// derives the tail from the stored events (the meta value is only a
 		// starting hint), so a stale record cannot steer a later append onto
@@ -273,8 +274,10 @@ func (l *KVSessionEventLog) LatestSequence(ctx context.Context, tenantID, sessio
 
 // tailFrom returns the highest sequence of the contiguous run of stored events
 // that continues past hint: it probes hint+1, hint+2, … and stops at the first
-// unoccupied key. Sequences are dense (Append refuses gaps), so the first free
-// key after the hint is the true next slot.
+// unoccupied key. Sequences above the hint are dense: Append refuses gaps, and
+// retention never deletes above the tail the stored metadata record names, so
+// every event above the hint is still stored and the first free key after it
+// is the true next slot.
 func (l *KVSessionEventLog) tailFrom(ctx context.Context, tenantID, sessionID string, hint uint64) (uint64, error) {
 	tail := hint
 	for {
@@ -450,9 +453,17 @@ func sinceDuration(t time.Time) time.Duration {
 // that exact — the first retained turn's opening sequence IS the cutoff, so the
 // delete is bounded and needs no scan.
 //
+// IT NEVER PRUNES ABOVE durable, the sequence the stored metadata record names
+// as the tail (the value Append read before rolling it forward). When a
+// metadata write has failed, the events above that stored tail are what
+// tailFrom walks to find the true tail; deleting one would open a gap it reads
+// as the end of the log, and the next append would reuse a sequence. Such an
+// event stays until a metadata write records a tail at or above it, and the
+// prune resumes from there.
+//
 // The caller holds the per-session append lock and writes the metadata record
 // afterwards; this mutates meta in place and never writes it itself.
-func (l *KVSessionEventLog) applyRetention(ctx context.Context, meta *SessionMeta, event *SessionEvent) {
+func (l *KVSessionEventLog) applyRetention(ctx context.Context, meta *SessionMeta, event *SessionEvent, durable uint64) {
 	if event.Kind != KindPromptSubmitted {
 		return
 	}
@@ -476,6 +487,13 @@ func (l *KVSessionEventLog) applyRetention(ctx context.Context, meta *SessionMet
 		from = 1
 	}
 	for seq := from; seq < cutoff; seq++ {
+		if seq > durable {
+			// Above the stored tail: tailFrom still needs this event. Stop
+			// here as a refused delete does; this is not a failure, and the
+			// next append whose metadata write lands resumes from seq.
+			meta.OldestSequence = seq
+			return
+		}
 		if err := l.kv.Delete(ctx, l.eventKey(meta.TenantID, meta.SessionID, seq)); err != nil {
 			// A KEY THAT WOULD NOT DELETE STOPS THE PRUNE WHERE IT STANDS.
 			// Continuing past it would advance OldestSequence over a key that
