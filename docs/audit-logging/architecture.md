@@ -119,6 +119,28 @@ default) at startup; see Compliance below for archiving.
 count, err := logger.DeleteOlderThan(ctx, tenantID, cutoff)
 ```
 
+### Two audit surfaces
+
+A quicbaas node has two audit surfaces today:
+
+- **The quicbaas IAM audit store.** The `/api/v1/iam/audit` routes (and their
+  gRPC, MCP and embedded counterparts, `quicbaas.IAM.Audit`) record, query and
+  read quicbaas's own `AuditEvent` model, with its own hash chain and signing,
+  under the `audit:query`, `audit:read`, `audit_events:record` and
+  `audit_events:delete` permissions. The rest of this document describes it.
+- **go-qrdb's audit service.** `Security().QRDBAudit()` returns go-qrdb's
+  `AuditClient` (`EmitAudit` / `QueryAudit`, permissions `audit:emit` and
+  `audit:query`). It is the one audit plane that capability modules emit onto.
+  On the node it is backed by the sink that `newQRDBAuditSink`
+  (`pkg/server/qrdb_node.go`) builds: a chained file logger under the data
+  directory, or an in-memory ring buffer when file audit is off. The embedded
+  SDK client reaches that sink through `QRDBEmbeddedServicers.Audit`, and every
+  query is confined to the caller's own tenant.
+
+The two surfaces do not share storage: an event recorded through one is not
+returned by the other. The quicbaas store stays until the owner rules on
+removing it.
+
 ## REST API
 
 ### Query Audit Events
@@ -181,10 +203,6 @@ Authorization: Bearer <admin_token>
 ```
 
 **Required Permission**: `audit_events:delete`
-
-The chain is append-only, so an authorized request erases no event and
-always answers `deleted_count: 0`. The endpoint stays so that a delete
-attempt is authorized and audited, and callers learn the contract.
 
 The chain is append-only, so an authorized request erases no event and
 always answers `deleted_count: 0`. The endpoint stays so that a delete

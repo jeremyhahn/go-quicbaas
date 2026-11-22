@@ -30,3 +30,54 @@ Every row below is derived from source, not from prose. The columns mean:
 - **Permission** — `resource:action` from
   `pkg/api/rest/routes_permissions_generated.go`.
 
+### `quicbaas.IAM.Audit` — the quicbaas IAM audit store
+
+Dedicated transport handlers: rest=yes (`sdk/go/transport/rest/iam_handler.go`),
+grpc=yes (`sdk/go/transport/grpc/iam_handler.go`), mcp=yes
+(`sdk/go/transport/mcp/iam_handler.go`); embedded routes registered: 5
+(`sdk/go/transport/embedded/handlers_iam_audit.go`).
+
+MCP tools: `quicbaas_iam_audit_query`, `quicbaas_iam_audit_get`, `quicbaas_iam_audit_delete` (`pkg/api/mcp/tools_iam.go`)
+
+| SDK method | REST route (transport) | Served? | gRPC | MCP | Embedded | Permission |
+|---|---|---|---|---|---|---|
+| `Query` | `GET /api/v1/iam/audit` | yes | `QueryAuditEvents` | `quicbaas_iam_audit_query` | `quicbaas.IAM.Audit/Query` | `audit:query` |
+| `Get` | `GET /api/v1/iam/audit/{id}` | yes | `GetAuditEvent` | `quicbaas_iam_audit_get` | `quicbaas.IAM.Audit/Get` | `audit:read` |
+| `Record`, `RecordAsync` | `POST /api/v1/iam/audit` | yes | `RecordAuditEvent` | — | `quicbaas.IAM.Audit/Record`, `/RecordAsync` | `audit_events:record` |
+| `Delete` | `DELETE /api/v1/iam/audit` | yes | — | `quicbaas_iam_audit_delete` | `quicbaas.IAM.Audit/Delete` | `audit_events:delete` |
+
+`Delete` erases nothing: the chain is append-only and the call always answers
+`deleted_count: 0` (see [architecture.md](architecture.md)). The gRPC handler
+answers `Unimplemented` for `Delete`, and no MCP tool records an event.
+
+### `quicbaas.Security().QRDBAudit()` — go-qrdb's audit service, re-exported
+
+`sdk/go` re-exports go-qrdb's `transport.AuditClient` as
+`quicbaas.QRDBAuditClient` (`sdk/go/qrdb.go`), with its types
+`QRDBAuditEvent`, `QRDBAuditFilter` and `QRDBAuditPage`. A consumer reaches
+go-qrdb's audit service without importing `go-qrdb/sdk/go`:
+
+```go
+ac, err := c.Security().QRDBAudit()
+if err != nil {
+    return err // the qrdb client failed to build, or its transport has no audit surface (Unavailable)
+}
+err = ac.EmitAudit(ctx, quicbaas.QRDBAuditEvent{Actor: "alice", Resource: "kv/key-1", Action: "kv.put", Outcome: "success"})
+page, err := ac.QueryAudit(ctx, quicbaas.QRDBAuditFilter{Limit: 50})
+```
+
+| Method | What it does | Permission |
+|---|---|---|
+| `EmitAudit` | Records one compliance-grade event in the node's audit sink. A non-nil error means the sink refused the write. | `audit:emit` |
+| `QueryAudit` | Returns a page of events matching the filter, always confined to the caller's own tenant; a filter naming another tenant is refused. | `audit:query` |
+
+The client is the qrdb sub-client's `Audit()`:
+
+- **Embedded**: backed by `QRDBEmbeddedServicers.Audit`, which the `quicbaas`
+  CLI fills with the daemon's node audit sink (`(*Server).GetQRDBAuditSink`).
+  Without a sink the accessor answers `Unavailable`.
+- **Network transports**: reached through the qrdb sub-client. Over go-qrdb's
+  REST transport, `QueryAudit` is `GET /v1/audit/events` and `EmitAudit`
+  answers `NotImplemented`.
+- A transport with no audit surface answers `Unavailable`.
+
