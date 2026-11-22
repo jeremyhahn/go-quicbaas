@@ -338,7 +338,11 @@ func (s *securityService) Barrier() (QRDBBarrierClient, error) {
 	if err != nil {
 		return nil, err
 	}
-	return qrdbClient.Barrier(), nil
+	bc := qrdbClient.Barrier()
+	if s.c.opts != nil && s.c.opts.embeddedQRDB == nil && s.c.opts.authToken != "" && qrdbSubClientSpeaksGRPC(s.c.opts.transportType) {
+		return &qrdbBearerBarrierClient{inner: bc, bearer: "Bearer " + s.c.opts.authToken}, nil
+	}
+	return bc, nil
 }
 
 // Ceremony returns the QRDB CeremonyClient. The QRDB transport is
