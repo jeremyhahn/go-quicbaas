@@ -115,6 +115,14 @@ type SecurityService interface {
 	// transport returns NotImplementedError.
 	Credentials() (QRDBCredentialClient, error)
 
+	// QRDBAudit returns go-qrdb's audit service (EmitAudit / QueryAudit,
+	// permissions audit:emit and audit:query), the one audit plane that
+	// capability modules emit onto. It is not the quicbaas IAM audit store
+	// behind /api/v1/iam/audit. It answers Unavailable when the transport
+	// has no audit surface (on the embedded transport, when
+	// QRDBEmbeddedServicers.Audit is nil).
+	QRDBAudit() (QRDBAuditClient, error)
+
 	// SecretResolver returns the unified secret resolver registry populated
 	// during server initialization. It dispatches credential://, kms://, and
 	// remote-kms:// resolution in registration order. Returns
@@ -350,6 +358,12 @@ func (s *securityService) Credentials() (QRDBCredentialClient, error) {
 		return nil, err
 	}
 	return qrdbClient.Credentials(), nil
+}
+
+// QRDBAudit returns go-qrdb's audit service client. See
+// SecurityService.QRDBAudit.
+func (s *securityService) QRDBAudit() (QRDBAuditClient, error) {
+	return s.c.qrdbAudit()
 }
 
 // SecretResolver returns the unified secret resolver registry injected via

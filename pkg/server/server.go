@@ -1919,6 +1919,12 @@ func (s *Server) GetQRDBEmbeddingServicer() qrdbservice.EmbeddingServicer {
 	return s.qrdbEmbeddingSvc
 }
 
+// GetQRDBAuditSink returns the node's go-qrdb audit sink, the logger that
+// backs go-qrdb's audit service. It is nil before the node starts.
+func (s *Server) GetQRDBAuditSink() qrdbsdk.NodeAuditLogger {
+	return s.qrdbAuditSink
+}
+
 // GetWatchBridge returns the WatchBridge (nil if not enabled).
 func (s *Server) GetWatchBridge() *watchbridge.WatchBridge {
 	return s.watchBridge

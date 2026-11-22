@@ -799,6 +799,9 @@ func (c *client) buildQRDBEmbeddedClient() (*qrdbsdk.Client, error) {
 	if s.Embedding != nil {
 		embOpts = append(embOpts, qrdbembedded.WithEmbeddingService(s.Embedding))
 	}
+	if s.Audit != nil {
+		embOpts = append(embOpts, qrdbembedded.WithAuditLogger(s.Audit))
+	}
 
 	t, err := qrdbembedded.New(s.KV, s.Admin, embOpts...)
 	if err != nil {
@@ -850,4 +853,24 @@ func (c *client) qrdbEmbedding() (QRDBEmbeddingClient, error) {
 		return &qrdbBearerEmbeddingClient{inner: ec, bearer: "Bearer " + c.opts.authToken}, nil
 	}
 	return ec, nil
+}
+
+// qrdbAudit returns go-qrdb's audit service client (EmitAudit / QueryAudit)
+// from the qrdb sub-client. On the embedded transport it is backed by
+// QRDBEmbeddedServicers.Audit; network transports reach it through the qrdb
+// sub-client. It answers Unavailable when the qrdb client is not configured
+// or its transport does not serve the audit service.
+func (c *client) qrdbAudit() (QRDBAuditClient, error) {
+	qrdb, err := c.qrdbClient()
+	if err != nil {
+		return nil, err
+	}
+	if qrdb == nil {
+		return nil, sdkerrors.NewUnavailable("qrdbAudit", "the qrdb client is not configured")
+	}
+	ac := qrdb.Audit()
+	if ac == nil {
+		return nil, sdkerrors.NewUnavailable("qrdbAudit", "the qrdb transport does not serve the audit service")
+	}
+	return ac, nil
 }
