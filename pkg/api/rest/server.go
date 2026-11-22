@@ -352,6 +352,13 @@ type Server struct {
 	// allowlist with the handlers the unix and gRPC windows serve.
 	sealedWindowHandler http.Handler
 
+	// sealedAdmission is the sealed window's shared listener probe (see
+	// SetSealedWindowAdmission); sealedMounted routes exactly the entries
+	// mountSealedWindowRoutes gave sealedWindowHandler, which admits its
+	// own requests on the same probe.
+	sealedAdmission sealedListenerProbe
+	sealedMounted   *chi.Mux
+
 	// sealedBypass is the shared sealed-window authentication-bypass
 	// predicate (probe + canonical-table lookup), derived by
 	// SetSealedWindowGate from the same probe that drives the sealed gate.
@@ -528,6 +535,9 @@ func (s *Server) setupRouter() {
 	// probe reports unsealed.
 	if s.sealedProbe != nil {
 		r.Use(qrdbsdk.SealedWindowMiddleware(s.sealedProbe, s.sealedAllowlist))
+	}
+	if s.sealedAdmission != nil {
+		r.Use(s.sealedWindowAdmissionMiddleware)
 	}
 
 	// CORS middleware (if origins configured)

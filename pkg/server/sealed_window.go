@@ -247,6 +247,7 @@ func (s *Server) runSealedWindow() error {
 		return err
 	}
 	s.sealedWindowFacade = facade
+	s.sealedWindowListener = s.newSealedWindowListener()
 
 	if err := s.startSealedGRPCServer(); err != nil {
 		_ = s.stopSealedTransports() // abort path: the causal error wins; failures are Warn-logged inside
@@ -340,6 +341,7 @@ func (s *Server) startSealedGRPCServer() error {
 
 	allow := sealedwindow.GRPCFullMethodAllowlist()
 	probe := constantSealedProbe{}
+	listener := s.sealedListener()
 
 	grpcOpts := []ggrpc.ServerOption{
 		ggrpc.Creds(creds),
@@ -358,12 +360,14 @@ func (s *Server) startSealedGRPCServer() error {
 			grpcapi.UnaryLoggingInterceptor(s.logger),
 			grpcapi.UnaryRecoveryInterceptor(s.logger),
 			qrdbsdk.SealedWindowUnaryInterceptor(probe, allow),
+			sealedAdmissionUnaryInterceptor(listener),
 			s.qrdbSealSOPINInterceptor(),
 		),
 		ggrpc.ChainStreamInterceptor(
 			grpcapi.StreamLoggingInterceptor(s.logger),
 			grpcapi.StreamRecoveryInterceptor(s.logger),
 			qrdbsdk.SealedWindowStreamInterceptor(probe, allow),
+			sealedAdmissionStreamInterceptor(listener),
 		),
 	}
 
