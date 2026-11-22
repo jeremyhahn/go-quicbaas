@@ -15,6 +15,7 @@ package iam
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
@@ -509,6 +510,12 @@ func (c *userClient) GetByEmail(ctx context.Context, tenantID, email string) (*U
 
 	if email == "" {
 		return nil, errors.NewInvalidInput("iam.user.GetByEmail", "email is required")
+	}
+
+	// A server may route an identifier without "@" to a user-ID lookup, so
+	// a non-email is refused here, on every transport.
+	if !strings.Contains(email, "@") {
+		return nil, errors.NewInvalidInput("iam.user.GetByEmail", "email must contain @")
 	}
 
 	if ctx == nil {
