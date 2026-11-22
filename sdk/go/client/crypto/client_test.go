@@ -478,6 +478,61 @@ func TestClient_Sign(t *testing.T) {
 	}
 }
 
+func TestClient_Sign_PSSFields(t *testing.T) {
+	tests := []struct {
+		name     string
+		req      *SignRequest
+		wantPad  svc.SignaturePadding
+		wantSalt int
+		wantMGF1 svc.HashAlgorithm
+	}{
+		{
+			name:     "PSS with salt and MGF1",
+			req:      &SignRequest{KeyID: "k", Data: []byte("d"), HashAlg: HashSHA384, Padding: svc.SignaturePaddingPSS, PSSSaltLength: 48, MGF1Hash: ptrHashAlg(HashSHA384)},
+			wantPad:  svc.SignaturePaddingPSS,
+			wantSalt: 48,
+			wantMGF1: svc.HashAlgSHA384,
+		},
+		{
+			name: "defaults stay empty",
+			req:  &SignRequest{KeyID: "k", Data: []byte("d"), HashAlg: HashSHA256},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var captured *svc.SignRequest
+			mockT := &mockTransport{
+				requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+					r, ok := req.(*svc.SignRequest)
+					if !ok {
+						t.Fatalf("expected *service.SignRequest, got %T", req)
+					}
+					captured = r
+					return &SignResponse{Signature: []byte("sig"), KeyVersion: 1}, nil
+				},
+			}
+			if _, err := NewClient(mockT).Sign(context.Background(), tc.req); err != nil {
+				t.Fatalf("Sign: %v", err)
+			}
+			if captured == nil {
+				t.Fatal("transport request was not captured")
+			}
+			if captured.Padding != tc.wantPad {
+				t.Errorf("Padding = %q, want %q", captured.Padding, tc.wantPad)
+			}
+			if captured.PSSSaltLength != tc.wantSalt {
+				t.Errorf("PSSSaltLength = %d, want %d", captured.PSSSaltLength, tc.wantSalt)
+			}
+			if captured.MGF1Hash != tc.wantMGF1 {
+				t.Errorf("MGF1Hash = %q, want %q", captured.MGF1Hash, tc.wantMGF1)
+			}
+		})
+	}
+}
+
+func ptrHashAlg(h HashAlgorithm) *HashAlgorithm { return &h }
+
 func TestClient_Verify_Validation(t *testing.T) {
 	mockT := &mockTransport{
 		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {

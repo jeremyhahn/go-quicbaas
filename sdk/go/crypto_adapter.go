@@ -23,6 +23,7 @@ import (
 	"io"
 
 	sdkcrypto "github.com/jeremyhahn/go-quicbaas/sdk/go/client/crypto"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/service"
 )
 
 // Compile-time interface assertions.
@@ -176,22 +177,44 @@ func (s *QuicBaaSSigner) Public() crypto.PublicKey {
 // remotely by the QuicBaaS server. The opts parameter is used to determine
 // the hash algorithm that was applied to produce the digest.
 func (s *QuicBaaSSigner) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
-	hashAlg, ok := hashToAlgorithm[opts.HashFunc()]
-	if !ok {
-		return nil, &ErrSignerUnsupportedHash{Hash: opts.HashFunc()}
+	req, err := signRequestForOpts(s.keyID, digest, opts)
+	if err != nil {
+		return nil, err
 	}
 
-	resp, err := s.client.Security().Crypto().Sign(context.Background(), &sdkcrypto.SignRequest{
-		KeyID:     s.keyID,
-		Data:      digest,
-		HashAlg:   hashAlg,
-		PreHashed: true,
-	})
+	resp, err := s.client.Security().Crypto().Sign(context.Background(), req)
 	if err != nil {
 		return nil, &ErrSignerSign{KeyID: s.keyID, Err: err}
 	}
 
 	return resp.Signature, nil
+}
+
+// signRequestForOpts builds the pre-hashed sign request for a crypto.Signer
+// call. *rsa.PSSOptions selects RSA-PSS padding: PSSSaltLengthEqualsHash and
+// PSSSaltLengthAuto both send salt 0 (equal to the hash length), a positive
+// salt length is kept.
+func signRequestForOpts(keyID string, digest []byte, opts crypto.SignerOpts) (*sdkcrypto.SignRequest, error) {
+	hashAlg, ok := hashToAlgorithm[opts.HashFunc()]
+	if !ok {
+		return nil, &ErrSignerUnsupportedHash{Hash: opts.HashFunc()}
+	}
+
+	req := &sdkcrypto.SignRequest{
+		KeyID:     keyID,
+		Data:      digest,
+		HashAlg:   hashAlg,
+		PreHashed: true,
+	}
+
+	if pss, ok := opts.(*rsa.PSSOptions); ok {
+		req.Padding = service.SignaturePaddingPSS
+		if pss.SaltLength > 0 {
+			req.PSSSaltLength = pss.SaltLength
+		}
+	}
+
+	return req, nil
 }
 
 // QuicBaaSDecrypter implements crypto.Decrypter using a QuicBaaS-managed key.

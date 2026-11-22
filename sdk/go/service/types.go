@@ -674,6 +674,12 @@ const (
 	KeyStatusCompromised     = pkgservice.KeyStatusCompromised
 )
 
+// SignaturePadding constants.
+const (
+	SignaturePaddingPKCS1v15 = pkgservice.SignaturePaddingPKCS1v15
+	SignaturePaddingPSS      = pkgservice.SignaturePaddingPSS
+)
+
 // HashAlgorithm constants.
 const (
 	HashAlgSHA256     = pkgservice.HashAlgSHA256
@@ -838,6 +844,7 @@ type (
 	GenerateWrappedDataKeyRequest  = pkgservice.GenerateWrappedDataKeyRequest
 	GenerateWrappedDataKeyResponse = pkgservice.GenerateWrappedDataKeyResponse
 	SignRequest                    = pkgservice.SignRequest
+	SignaturePadding               = pkgservice.SignaturePadding
 	SignResponse                   = pkgservice.SignResponse
 	VerifyRequest                  = pkgservice.VerifyRequest
 	VerifyResponse                 = pkgservice.VerifyResponse
