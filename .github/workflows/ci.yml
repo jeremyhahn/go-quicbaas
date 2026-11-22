@@ -1168,6 +1168,18 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      # CUSTOMIZE (go-quicbaas; local Codex review on ci/balanced-runner-pools,
+      # as on go-qrdb #1680): preflight runs on the Dells' bigdisk pool on
+      # github.com, whose environment names LAN addresses, and the steps below
+      # run checked-out scripts and tests. They are masked first, right after
+      # the checkout. On a GitHub-hosted runner the script prints nothing.
+      - name: Mask the LAN addresses
+        env:
+          # The registry is the Actions secret, as in every other mask step
+          # (testdata/ci-mask-lan-tests.py M1 to M5).
+          CI_IMAGE_REGISTRY: ${{ runner.environment != 'github-hosted' && secrets.CI_IMAGE_REGISTRY || '' }}
+        run: scripts/ci-mask-lan.sh
+
       # CUSTOMIZE (DS-3161): scripts/docs-only.sh decides docs_only. v1.30:
       # lint_gates is false only on a PR whose changed files all miss
       # LINT_GATES_PATTERN; any doubt runs the job.

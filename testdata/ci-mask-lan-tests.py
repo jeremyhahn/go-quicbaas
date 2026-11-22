@@ -521,7 +521,9 @@ def mutation_cases(text):
     check(caught(registry_cases, text.replace("          CI_IMAGE_REGISTRY: ${{ runner.environment != 'github-hosted' && secrets.CI_IMAGE_REGISTRY || '' }}\n", "", 1)),
           "M4 a mask step without CI_IMAGE_REGISTRY passes")
     # The check catches a job that loses the step.
-    gone = text.replace("        run: " + STEP_RUN + "\n", "        run: echo gone\n", 1)
+    # The first job that builds, lint (preflight's mask step guards no build).
+    k = text.index("\n  lint:\n")
+    gone = text[:k] + text[k:].replace("        run: " + STEP_RUN + "\n", "        run: echo gone\n", 1)
     check(caught(template_cases, gone), "removing the mask step from a job passes the template check")
 
 
