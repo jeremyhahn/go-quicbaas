@@ -353,6 +353,16 @@ func (t *cryptoService) Decrypt(ctx context.Context, req *DecryptRequest) (*Decr
 		return nil, err
 	}
 
+	// The backend picks the key version from the ciphertext, so the response
+	// reports that version; an explicit KeyVersion that names another one is
+	// refused rather than echoed back as false provenance.
+	keyVersion, err := decryptKeyVersion(req)
+	if err != nil {
+		t.metrics.decryptOperationsTotal.With(req.KeyID, "invalid").Inc()
+		t.metrics.errorsByType.With("validation_error").Inc()
+		return nil, err
+	}
+
 	if err := t.refuseDisabledVersions(ctx, "crypto.Decrypt", req.KeyID, scopedKeyID, req.Ciphertext); err != nil {
 		return nil, err
 	}
@@ -378,12 +388,6 @@ func (t *cryptoService) Decrypt(ctx context.Context, req *DecryptRequest) (*Decr
 		t.metrics.decryptOperationsTotal.With(req.KeyID, "error").Inc()
 		t.metrics.errorsByType.With("decrypt_error").Inc()
 		return nil, keyOperationError(errors.ErrDecryption, "crypto.Decrypt", "decrypt data", err)
-	}
-
-	// Use provided key version or default
-	keyVersion := req.KeyVersion
-	if keyVersion == 0 {
-		keyVersion = 1
 	}
 
 	resp := &DecryptResponse{
@@ -705,7 +709,19 @@ func (t *cryptoService) refuseDisabledVersions(ctx context.Context, op, keyID, s
 			continue
 		}
 		seen[v] = struct{}{}
-		if status, _ := t.kmsSvc.getVersionStatus(ctx, scopedKeyID, v); status == KeyStatusDisabled {
+		// The authoritative lookup reads replicated storage, not this node's
+		// cache, and an unreadable status refuses the decrypt (fail closed).
+		status, err := t.kmsSvc.enforcedVersionStatus(ctx, scopedKeyID, v)
+		if err != nil {
+			t.metrics.decryptOperationsTotal.With(keyID, "version_status_error").Inc()
+			t.metrics.errorsByType.With("version_status_error").Inc()
+			return &errors.QBError{
+				Code: errors.ErrStorage,
+				Op:   op,
+				Err:  err,
+			}
+		}
+		if status == KeyStatusDisabled {
 			t.metrics.decryptOperationsTotal.With(keyID, "version_disabled").Inc()
 			t.metrics.errorsByType.With("version_disabled_error").Inc()
 			return &errors.QBError{
@@ -716,6 +732,26 @@ func (t *cryptoService) refuseDisabledVersions(ctx context.Context, op, keyID, s
 		}
 	}
 	return nil
+}
+
+// decryptKeyVersion returns the key version a Decrypt reports: the version
+// the ciphertext was sealed under, the one the backend decrypts with. An
+// explicit req.KeyVersion naming a different version is refused. A ciphertext
+// that carries no version (another backend's format) reports the requested
+// version, or 1 when none was requested.
+func decryptKeyVersion(req *DecryptRequest) (uint64, error) {
+	version, ok := kms.CiphertextKeyVersion(req.Ciphertext)
+	if !ok {
+		if req.KeyVersion != 0 {
+			return req.KeyVersion, nil
+		}
+		return 1, nil
+	}
+	used := conv.ClampIntToUint64(version)
+	if req.KeyVersion != 0 && req.KeyVersion != used {
+		return 0, NewError(errors.ErrInvalidInput, "crypto.Decrypt", "key_version "+strconv.FormatUint(req.KeyVersion, 10)+" does not match the ciphertext's key version "+strconv.FormatUint(used, 10))
+	}
+	return used, nil
 }
 
 // =============================================================================

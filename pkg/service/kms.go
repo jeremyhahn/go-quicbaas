@@ -2447,6 +2447,80 @@ func (k *kmsServiceImpl) getVersionStatus(ctx context.Context, keyID string, ver
 	return "", nil // No explicit status, use default
 }
 
+// enforcedVersionStatus returns a key version's status for an enforcement
+// point (Decrypt refusing a disabled version). Unlike getVersionStatus it
+// never answers from this node's cache when replicated storage is
+// configured, so a version another node disabled is refused here at once,
+// and it returns an error, never an empty status, when a lookup fails, so
+// the caller fails closed. With neither a KVStore nor a scheduler querier
+// (a single node) the local record is the only record and is authoritative.
+func (k *kmsServiceImpl) enforcedVersionStatus(ctx context.Context, keyID string, version uint64) (KeyStatus, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+	}
+
+	cacheKey := fmt.Sprintf("%s:%d", keyID, version)
+	var local KeyStatus
+	if info, ok := k.versionStatus.Load(cacheKey); ok {
+		if vsi, ok := info.(*versionStatusInfo); ok {
+			local = vsi.Status
+		}
+	}
+
+	querier, hasQuerier := k.scheduler.(KMSSchedulerQuerier)
+	if k.kvStore == nil && !hasQuerier {
+		return local, nil
+	}
+
+	if k.kvStore != nil {
+		data, err := k.kvStore.Get(ctx, versionStatusKey(keyID, version))
+		switch {
+		case err != nil && !errors.IsNotFound(err):
+			return "", WrapError(err, errors.ErrStorage, "kms.enforcedVersionStatus", "failed to read key version status")
+		case err == nil && len(data) > 0:
+			var ps persistedVersionStatus
+			if err := json.Unmarshal(data, &ps); err != nil {
+				return "", NewError(errors.ErrInternal, "kms.enforcedVersionStatus", "failed to unmarshal key version status")
+			}
+			status := KeyStatus(ps.Status)
+			var disabledAt *time.Time
+			if ps.DisabledAt != 0 {
+				t := time.Unix(0, ps.DisabledAt)
+				disabledAt = &t
+			}
+			// Refresh this node's cache with the replicated record.
+			k.versionStatus.Store(cacheKey, &versionStatusInfo{Status: status, DisabledAt: disabledAt})
+			return status, nil
+		}
+		// No replicated record. A disable this node recorded whose
+		// replication failed still holds: never weaken a local disable.
+		if local == KeyStatusDisabled {
+			return local, nil
+		}
+	} else if local != "" {
+		// Without a KVStore an explicit status is never replicated, so this
+		// node's record is the only explicit one.
+		return local, nil
+	}
+
+	if hasQuerier {
+		versions, err := querier.GetCompletedGracePeriodVersions(ctx, keyID)
+		if err != nil {
+			return "", WrapError(err, errors.ErrStorage, "kms.enforcedVersionStatus", "failed to read completed grace periods")
+		}
+		if _, found := versions[version]; found {
+			return KeyStatusDisabled, nil
+		}
+	}
+
+	return "", nil
+}
+
 // versionStatusKey returns the KVStore key for a version status entry.
 func versionStatusKey(keyID string, version uint64) string {
 	return fmt.Sprintf("__sys:kms/version_status/%s/%d", keyID, version)
