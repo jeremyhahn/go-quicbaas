@@ -16,6 +16,7 @@ package server
 import (
 	"context"
 
+	"github.com/jeremyhahn/go-qrdb/pkg/api/errclass"
 	qrdbgrpc "github.com/jeremyhahn/go-qrdb/pkg/api/grpc"
 	qrdbservice "github.com/jeremyhahn/go-qrdb/pkg/service"
 )
@@ -59,8 +60,30 @@ func (p *qrdbBackupServicerProxy) servicer() (qrdbservice.BackupServicer, error)
 	}
 }
 
-// CreateBackup delegates to the node's backup service.
+// qrdbBackupEncryptionUnsupportedError refuses a backup create that asks for
+// encryption, or a restore that carries a decryption key. QuicBaaS does not
+// support encrypted backups, so key material never reaches the node through
+// this surface, whoever the gRPC caller is. Its class is Unimplemented, so
+// go-qrdb answers codes.Unimplemented.
+type qrdbBackupEncryptionUnsupportedError struct {
+	Op string
+}
+
+func (e *qrdbBackupEncryptionUnsupportedError) Error() string {
+	return "backup " + e.Op + ": backup encryption is not supported; use a plaintext backup"
+}
+
+// ErrorClass classes the refusal as Unimplemented.
+func (e *qrdbBackupEncryptionUnsupportedError) ErrorClass() errclass.Class {
+	return errclass.Unimplemented
+}
+
+// CreateBackup delegates to the node's backup service. A request for
+// encryption is refused before the node is resolved.
 func (p *qrdbBackupServicerProxy) CreateBackup(ctx context.Context, opts qrdbservice.BackupOptions) (*qrdbservice.BackupInfo, error) {
+	if (opts.Encryption != "" && opts.Encryption != qrdbservice.EncryptionNone) || len(opts.EncryptionKey) > 0 {
+		return nil, &qrdbBackupEncryptionUnsupportedError{Op: "create"}
+	}
 	svc, err := p.servicer()
 	if err != nil {
 		return nil, err
@@ -95,8 +118,12 @@ func (p *qrdbBackupServicerProxy) DeleteBackup(ctx context.Context, id string) e
 	return svc.DeleteBackup(ctx, id)
 }
 
-// RestoreBackup delegates to the node's backup service.
+// RestoreBackup delegates to the node's backup service. A request carrying a
+// decryption key is refused before the node is resolved.
 func (p *qrdbBackupServicerProxy) RestoreBackup(ctx context.Context, opts qrdbservice.RestoreOptions) (*qrdbservice.RestoreResult, error) {
+	if len(opts.DecryptionKey) > 0 {
+		return nil, &qrdbBackupEncryptionUnsupportedError{Op: "restore"}
+	}
 	svc, err := p.servicer()
 	if err != nil {
 		return nil, err

@@ -203,3 +203,52 @@ func TestQRDBBackupOverQuicBaaSGRPC_UnimplementedWithoutNode(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, codes.Unimplemented, status.Code(err), "want Unimplemented, not Internal: %v", err)
 }
+
+func TestQRDBBackupServicerProxy_RefusesEncryption(t *testing.T) {
+	stub := &stubBackupServicer{info: &qrdbservice.BackupInfo{ID: "bk-1"}}
+	p := &qrdbBackupServicerProxy{resolve: func() qrdbservice.BackupServicer { return stub }}
+	ctx := context.Background()
+
+	_, err := p.CreateBackup(ctx, qrdbservice.BackupOptions{Encryption: qrdbservice.EncryptionAES256})
+	assert.True(t, errors.As(err, new(*qrdbBackupEncryptionUnsupportedError)), "aes256 create: got %v", err)
+
+	_, err = p.CreateBackup(ctx, qrdbservice.BackupOptions{EncryptionKey: []byte("key")})
+	assert.True(t, errors.As(err, new(*qrdbBackupEncryptionUnsupportedError)), "key-only create: got %v", err)
+
+	_, err = p.RestoreBackup(ctx, qrdbservice.RestoreOptions{BackupID: "bk-1", DecryptionKey: []byte("key")})
+	assert.True(t, errors.As(err, new(*qrdbBackupEncryptionUnsupportedError)), "restore with key: got %v", err)
+
+	assert.Empty(t, stub.calls, "a refused request must never reach the node")
+
+	_, err = p.CreateBackup(ctx, qrdbservice.BackupOptions{})
+	require.NoError(t, err)
+	_, err = p.CreateBackup(ctx, qrdbservice.BackupOptions{Encryption: qrdbservice.EncryptionNone})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"CreateBackup", "CreateBackup"}, stub.calls)
+}
+
+func TestQRDBBackupOverQuicBaaSGRPC_RefusesEncryption(t *testing.T) {
+	srv := withTempServer(t)
+	require.NoError(t, srv.initStandaloneQRDBNode())
+	t.Cleanup(func() { _ = srv.stopQRDBNode() })
+
+	client := serveQuicBaaSQRDBOverTCP(t, srv)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	_, err := client.BackupCreate(ctx, &qrdbv1.BackupCreateRequest{
+		Encryption:    string(qrdbservice.EncryptionAES256),
+		EncryptionKey: []byte("0123456789abcdef0123456789abcdef"),
+	})
+	require.Error(t, err)
+	assert.Equal(t, codes.Unimplemented, status.Code(err), "encrypted create: %v", err)
+	assert.Contains(t, status.Convert(err).Message(), "backup encryption is not supported")
+
+	_, err = client.BackupRestore(ctx, &qrdbv1.BackupRestoreRequest{
+		BackupId:      "bk-1",
+		DecryptionKey: []byte("0123456789abcdef0123456789abcdef"),
+	})
+	require.Error(t, err)
+	assert.Equal(t, codes.Unimplemented, status.Code(err), "restore with key: %v", err)
+	assert.Contains(t, status.Convert(err).Message(), "backup encryption is not supported")
+}
