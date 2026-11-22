@@ -180,6 +180,27 @@ type methodPermission struct {
 // permissions, and quicbaas already maps the identical verbs on its own
 // quicbaas.ceremony.v1.Ceremony surface to those permissions, so the qrdb.v1
 // mirror carries the same (strictly narrower than qrdb) scope requirement.
+// systemTenantOnlyGRPCMethods are the gRPC methods only a system-tenant
+// identity may call, whatever permissions a token carries. go-qrdb registers
+// the backup permissions as cross-tenant scope: a qrdb backup holds every
+// tenant's shard data and a restore rolls back every tenant, so a tenant that
+// grants itself backup:read or backup:restore must still be refused.
+var systemTenantOnlyGRPCMethods = map[string]struct{}{
+	"/qrdb.v1.QRDBService/BackupCreate":  {},
+	"/qrdb.v1.QRDBService/BackupList":    {},
+	"/qrdb.v1.QRDBService/BackupGet":     {},
+	"/qrdb.v1.QRDBService/BackupDelete":  {},
+	"/qrdb.v1.QRDBService/BackupRestore": {},
+	"/qrdb.v1.QRDBService/BackupVerify":  {},
+}
+
+// isSystemTenantOnlyGRPCMethod reports whether fullMethod may only be called
+// by a system-tenant identity.
+func isSystemTenantOnlyGRPCMethod(fullMethod string) bool {
+	_, ok := systemTenantOnlyGRPCMethods[fullMethod]
+	return ok
+}
+
 var qrdbIdentityGatedMethods = map[string]bool{
 	"/qrdb.v1.QRDBService/BarrierShareClaimBegin":            true,
 	"/qrdb.v1.QRDBService/BarrierShareClaimComplete":         true,
