@@ -15,6 +15,7 @@ package embedded
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
@@ -90,5 +91,48 @@ func TestHandleIAMAppRegister_ReturnsTheIssuedSecretOnce(t *testing.T) {
 	}
 	if secret := got.(*iamsdk.Application).ClientSecret; secret != "" {
 		t.Errorf("get reply carries a client secret %q, want none", secret)
+	}
+}
+
+func TestHandleIAMAppRegister_ReturnsTheGrantTypes(t *testing.T) {
+	t.Parallel()
+	ctx, svc := newAppRegisterFixture(t)
+	want := []iamsdk.GrantType{iamsdk.GrantTypeClientCredentials, iamsdk.GrantTypeAuthorizationCode}
+
+	req := &embeddedRegisterAppRequest{App: &iamsdk.RegisterAppRequest{
+		Name:         "Grants",
+		RedirectURIs: []string{"https://grants.example/callback"},
+		GrantTypes:   want,
+	}}
+	resp, err := handleIAMAppRegister(ctx, svc, req)
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	out, ok := resp.(*iamsdk.Application)
+	if !ok {
+		t.Fatalf("register returned %T, want *iam.Application", resp)
+	}
+	if !slices.Equal(out.GrantTypes, want) {
+		t.Errorf("reply grant types = %v, want %v", out.GrantTypes, want)
+	}
+
+	stored, err := svc.apps.GetAppInTenant(context.Background(), "tenant-a", out.ClientID)
+	if err != nil {
+		t.Fatalf("GetAppInTenant: %v", err)
+	}
+	if wantStored := []string{"client_credentials", "authorization_code"}; !slices.Equal(stored.GrantTypes, wantStored) {
+		t.Errorf("stored grant types = %v, want %v", stored.GrantTypes, wantStored)
+	}
+
+	got, err := handleIAMAppGet(ctx, svc, &embeddedAppRequest{ClientID: out.ClientID})
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	app, ok := got.(*iamsdk.Application)
+	if !ok {
+		t.Fatalf("get returned %T, want *iam.Application", got)
+	}
+	if !slices.Equal(app.GrantTypes, want) {
+		t.Errorf("get grant types = %v, want %v", app.GrantTypes, want)
 	}
 }
