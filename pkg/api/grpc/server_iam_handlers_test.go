@@ -625,13 +625,26 @@ func TestIAMServer_GetUserByUsername_NotFound(t *testing.T) {
 	svc.AssertExpectations(t)
 }
 
-func TestIAMServer_GetUserByUsername_MissingTenant(t *testing.T) {
+func TestIAMServer_GetUserByUsername_EmptyTenantIsCallers(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
-	_, err := srv.GetUserByUsername(callerContext("t1"), &iampb.GetUserByUsernameRequest{Username: "alice"})
+	svc.On("GetUserByUsername", mock.Anything, "t1", "alice").
+		Return(&iam.User{ID: 30001, TenantID: "t1", Username: "alice", Email: "alice@test.com"}, nil)
+
+	resp, err := srv.GetUserByUsername(callerContext("t1"), &iampb.GetUserByUsernameRequest{Username: "alice"})
+
+	require.NoError(t, err)
+	assert.Equal(t, "alice", resp.Username)
+	svc.AssertExpectations(t)
+}
+
+func TestIAMServer_GetUserByUsername_TenantlessCallerRefused(t *testing.T) {
+	srv, svc := newTestIAMServer(t)
+
+	_, err := srv.GetUserByUsername(context.Background(), &iampb.GetUserByUsernameRequest{Username: "alice"})
 
 	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+	assert.NotEqual(t, codes.OK, status.Code(err))
 	svc.AssertNotCalled(t, "GetUserByUsername", mock.Anything, mock.Anything, mock.Anything)
 }
 

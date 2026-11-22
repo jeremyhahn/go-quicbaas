@@ -111,6 +111,22 @@ func TestIAMUserLookupGRPC_ThroughGate(t *testing.T) {
 		svc.AssertExpectations(t)
 	})
 
+	t.Run("empty request tenant resolves to the caller's", func(t *testing.T) {
+		srv, svc := newTestIAMServer(t)
+		svc.On("GetUserByUsername", mock.Anything, "t1", "alice").
+			Return(&iam.User{ID: 30001, TenantID: "t1", Username: "alice", Email: "alice@test.com"}, nil)
+		handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+			return srv.GetUserByUsername(ctx, req.(*iampb.GetUserByUsernameRequest))
+		}
+		interceptor, ctx := gate("t1")
+		info := &grpc.UnaryServerInfo{FullMethod: iampb.IAMService_GetUserByUsername_FullMethodName}
+
+		resp, err := interceptor(ctx, &iampb.GetUserByUsernameRequest{TenantId: "", Username: "alice"}, info, handler)
+		require.NoError(t, err)
+		assert.Equal(t, "alice", resp.(*iampb.User).Username)
+		svc.AssertExpectations(t)
+	})
+
 	t.Run("foreign tenant refused", func(t *testing.T) {
 		srv, svc := newTestIAMServer(t)
 		handler := func(ctx context.Context, req interface{}) (interface{}, error) {

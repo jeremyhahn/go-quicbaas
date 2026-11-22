@@ -214,6 +214,16 @@ func TestIAMUserFindByUsername_CallsGetUserByUsername(t *testing.T) {
 	assert.Nil(t, server.iam.got, "FindByUsername must not call GetUser")
 }
 
+func TestIAMUserFindByUsername_EmptyTenantForwarded(t *testing.T) {
+	server, tr := newIAMParityServer(t)
+
+	_, err := iam.NewUserClient(tr).FindByUsername(context.Background(), "", "alice")
+	require.NoError(t, err)
+
+	want := &iampb.GetUserByUsernameRequest{TenantId: "", Username: "alice"}
+	assert.True(t, proto.Equal(want, server.iam.byName), "GetUserByUsername request = %v, want %v", server.iam.byName, want)
+}
+
 func TestIAMUserFindByUsername_NotFound(t *testing.T) {
 	_, tr := newIAMParityServer(t)
 

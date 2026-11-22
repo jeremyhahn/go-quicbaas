@@ -397,24 +397,23 @@ func (s *IAMServer) GetUser(ctx context.Context, req *iampb.GetUserRequest) (*ia
 }
 
 // GetUserByUsername is the tenant-scoped username lookup. Like GetUser the RPC
-// takes users:read, and requireCallerTenant refuses a foreign or absent tenant.
+// takes users:read. An empty tenant_id names the caller's own tenant; a foreign
+// or absent caller tenant is refused.
 func (s *IAMServer) GetUserByUsername(ctx context.Context, req *iampb.GetUserByUsernameRequest) (*iampb.User, error) {
 	s.logger.WithFields(map[string]interface{}{
 		"tenant_id": req.TenantId,
 		"username":  req.Username,
 	}).Debug("Processing GetUserByUsername request")
 
-	if req.TenantId == "" {
-		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
-	}
-	if err := requireCallerTenant(ctx, "grpc.IAM", req.TenantId); err != nil {
+	tenantID, err := targetTenant(ctx, "grpc.IAM", req.TenantId)
+	if err != nil {
 		return nil, err
 	}
 	if req.Username == "" {
 		return nil, status.Error(codes.InvalidArgument, "username is required")
 	}
 
-	user, err := s.iamService.GetUserByUsername(ctx, req.TenantId, req.Username)
+	user, err := s.iamService.GetUserByUsername(ctx, tenantID, req.Username)
 	if err != nil {
 		return nil, convertIAMError(err)
 	}
