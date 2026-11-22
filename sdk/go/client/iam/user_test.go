@@ -307,6 +307,23 @@ func TestUserClient_GetByEmail(t *testing.T) {
 			t.Errorf("expected invalid input error, got %v", err)
 		}
 	})
+
+	t.Run("email without @", func(t *testing.T) {
+		calls := 0
+		client := NewUserClient(&mockTransport{
+			requestFunc: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+				calls++
+				return nil, nil
+			},
+		})
+		_, err := client.GetByEmail(context.Background(), "tenant-123", "30001")
+		if !errors.IsInvalidInput(err) {
+			t.Errorf("expected invalid input error, got %v", err)
+		}
+		if calls != 0 {
+			t.Errorf("transport called %d times, want 0", calls)
+		}
+	})
 }
 
 func TestUserClient_Update(t *testing.T) {
