@@ -67,9 +67,9 @@ fallback: it requires `access_key` and `secret_key` (without them it fails
 with "accessKey not set"), so temporary credentials are not supported for
 `minio`.
 
-An `endpoint` without a scheme takes it from `use_ssl`: for `minio`,
-`https://` when `use_ssl` is `true` and `http://` otherwise; for `s3`,
-`http://` only when `use_ssl` is `false`. An endpoint whose scheme
+An `endpoint` without a scheme gets `http://` only when `use_ssl` is `false`
+(for `minio` and `s3` alike); otherwise it is dialled over HTTPS. A `use_ssl`
+that is not `true` or `false` is refused. An endpoint whose scheme
 contradicts an explicit `use_ssl` (`http://` with `use_ssl: true`, or
 `https://` with `use_ssl: false`) is refused.
 

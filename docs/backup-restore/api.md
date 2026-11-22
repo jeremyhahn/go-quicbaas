@@ -54,6 +54,12 @@ service returns an `Unimplemented` error, never a nil client.
 `CreateBackup` with an encryption type or key and `RestoreBackup` with a
 decryption key return `Unimplemented`, since the pinned go-qrdb does not
 encrypt backup data.
+Over a network transport `CreateBackup` returns `Unimplemented`, because a
+quicbaas node's go-qrdb backup service keeps backups in memory only; use
+`sdk/go/client/backup` for durable backups.
+Over gRPC and Unix the `WithAuthToken` bearer is sent on every call; over
+REST, QUIC and MCP a client with credentials gets `Unimplemented` from
+`QRDBBackup()`.
 
 
 

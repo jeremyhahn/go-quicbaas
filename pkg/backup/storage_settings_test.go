@@ -75,8 +75,10 @@ func TestNewStorageBackend_AzureRefusesConnectionStringAndSASToken(t *testing.T)
 }
 
 // TestObjstoreSettings_EndpointSchemeFollowsUseSSL proves a bare endpoint
-// takes its scheme from use_ssl, an endpoint whose scheme contradicts an
-// explicit use_ssl is refused, and the caller's map is never modified.
+// becomes http only with an explicit use_ssl=false (and otherwise stays bare,
+// so the library dials HTTPS), a non-boolean use_ssl is refused, an endpoint
+// whose scheme contradicts an explicit use_ssl is refused, and the caller's
+// map is never modified.
 func TestObjstoreSettings_EndpointSchemeFollowsUseSSL(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -86,9 +88,12 @@ func TestObjstoreSettings_EndpointSchemeFollowsUseSSL(t *testing.T) {
 		want     string // expected endpoint; "" with wantErr
 		wantErr  bool
 	}{
-		{"minio bare unset", "minio", "localhost:9000", "", "http://localhost:9000", false},
+		{"minio bare unset", "minio", "localhost:9000", "", "localhost:9000", false},
 		{"minio bare false", "minio", "localhost:9000", "false", "http://localhost:9000", false},
-		{"minio bare true", "minio", "localhost:9000", "true", "https://localhost:9000", false},
+		{"minio bare true", "minio", "localhost:9000", "true", "localhost:9000", false},
+		{"minio bare invalid", "minio", "localhost:9000", "yes", "", true},
+		{"s3 bare invalid", "s3", "s3.example.com", "yes", "", true},
+		{"minio no endpoint invalid", "minio", "", "on", "", true},
 		{"minio http unset", "minio", "http://localhost:9000", "", "http://localhost:9000", false},
 		{"minio https unset", "minio", "https://localhost:9000", "", "https://localhost:9000", false},
 		{"minio https true", "minio", "https://localhost:9000", "true", "https://localhost:9000", false},

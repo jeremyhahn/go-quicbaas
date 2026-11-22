@@ -558,9 +558,18 @@ func (c *client) qrdbClient() (*QRDBClient, error) {
 // service (on the embedded transport, when QRDBEmbeddedServicers.Backup is
 // nil), so a caller never receives a nil client.
 //
-// Durability limit: on a clustered quicbaas node the pinned go-qrdb node
-// builds its backup service without a backup sink, so it keeps backups in
-// memory only. They do not survive a restart of the node.
+// Durability limit: over a network transport CreateBackup is refused with
+// Unimplemented, because every quicbaas node (standalone or clustered) builds
+// go-qrdb's backup service without a backup sink, so a backup would live in
+// memory only and not survive a restart. Use the QuicBaaS backup client
+// (sdk/go/client/backup) for durable backups. On the embedded transport,
+// durability is that of the supplied QRDBEmbeddedServicers.Backup servicer.
+//
+// Authentication: over gRPC and Unix the WithAuthToken bearer rides every
+// call as authorization metadata. go-qrdb's REST, QUIC and MCP backup clients
+// cannot carry credentials, so over those transports a client configured with
+// credentials gets Unimplemented instead of a client that would fail
+// authentication.
 //
 // Encryption limit: the pinned go-qrdb backup service records an encryption
 // type but stores backup data in plaintext and accepts any decryption key.
@@ -568,6 +577,12 @@ func (c *client) qrdbClient() (*QRDBClient, error) {
 // or a decryption key on restore) are refused with Unimplemented until
 // go-qrdb encrypts backup data.
 func (c *client) QRDBBackup() (QRDBBackupClient, error) {
+	network := c.opts.embeddedQRDB == nil
+	if network && !qrdbSubClientSpeaksGRPC(c.opts.transportType) &&
+		(c.opts.authToken != "" || c.opts.mcpAuthToken != "" || c.opts.mcpUsername != "") {
+		return nil, sdkerrors.NewUnimplemented("QRDBBackup",
+			"go-qrdb's REST and MCP backup clients send no credentials; use the gRPC or Unix transport for an authenticated QRDBBackup")
+	}
 	qrdb, err := c.qrdbClient()
 	if err != nil {
 		return nil, err
@@ -584,14 +599,30 @@ func (c *client) QRDBBackup() (QRDBBackupClient, error) {
 		return nil, sdkerrors.NewUnimplemented("QRDBBackup",
 			"the QRDB transport does not provide the backup service")
 	}
-	return plaintextOnlyBackupClient{b}, nil
+	if network {
+		if c.opts.authToken != "" {
+			b = &qrdbBearerBackupClient{inner: b, bearer: "Bearer " + c.opts.authToken}
+		}
+		return plaintextOnlyBackupClient{QRDBBackupClient: b, noDurableSink: true}, nil
+	}
+	return plaintextOnlyBackupClient{QRDBBackupClient: b}, nil
 }
 
 // plaintextOnlyBackupClient wraps go-qrdb's BackupClient and refuses the
 // encryption options the pinned go-qrdb backup service does not apply: it
 // stores backup data in plaintext whatever encryption is requested and
-// restores with any non-empty decryption key. The other methods pass through.
-type plaintextOnlyBackupClient struct{ QRDBBackupClient }
+// restores with any non-empty decryption key. With noDurableSink set (every
+// network transport) it also refuses CreateBackup outright, because a
+// quicbaas node's go-qrdb backup service keeps backups in memory only. The
+// other methods pass through.
+type plaintextOnlyBackupClient struct {
+	QRDBBackupClient
+	noDurableSink bool
+}
+
+const backupNotDurable = "a quicbaas node's go-qrdb backup service keeps backups in memory only " +
+	"(the pinned go-qrdb node takes no backup sink), so the backup would not survive a restart; " +
+	"use the QuicBaaS backup client (sdk/go/client/backup) for durable backups"
 
 const backupEncryptionUnsupported = "the pinned go-qrdb backup service does not encrypt backups, " +
 	"so encryption and decryption keys are refused"
@@ -599,6 +630,9 @@ const backupEncryptionUnsupported = "the pinned go-qrdb backup service does not 
 // CreateBackup refuses a request that asks for encryption before it reaches
 // the backup service. A nil request is passed through unchanged.
 func (p plaintextOnlyBackupClient) CreateBackup(ctx context.Context, req *QRDBBackupRequest) (*QRDBBackupInfo, error) {
+	if p.noDurableSink {
+		return nil, sdkerrors.NewUnimplemented("QRDBBackup.CreateBackup", backupNotDurable)
+	}
 	if req != nil && ((req.Encryption != "" && req.Encryption != qrdbtransport.EncryptionNone) || len(req.EncryptionKey) > 0) {
 		return nil, sdkerrors.NewUnimplemented("QRDBBackup.CreateBackup", backupEncryptionUnsupported)
 	}

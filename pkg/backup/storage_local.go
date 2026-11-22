@@ -279,10 +279,11 @@ var sessionTokenKeys = []string{"session_token", "aws_session_token", "sessionTo
 //     static credentials with an empty token, so the token would be dropped.
 //     For s3, without static keys the environment credential chain
 //     (including AWS_SESSION_TOKEN) is used; minio always needs static keys.
-//   - An endpoint without a scheme gets one from use_ssl, which the library
-//     does not read: for minio https:// when use_ssl is true and http://
-//     otherwise; for s3 http:// only when use_ssl is explicitly false. An
-//     endpoint whose scheme contradicts an explicit use_ssl is refused.
+//   - A bare endpoint (no scheme) gets http:// only when use_ssl is
+//     explicitly false, for s3 and minio alike; otherwise it stays bare so
+//     the storage library dials HTTPS. A use_ssl that is not a boolean is
+//     refused. An endpoint whose scheme contradicts an explicit use_ssl is
+//     refused.
 //
 // For azure, a connection string or SAS token is refused: the library reads
 // only account_name and account_key, so either would be silently ignored.
@@ -315,13 +316,19 @@ func objstoreBackendSettings(backendType string, settings map[string]string) (ma
 		}
 	}
 
+	useSSL, explicit := false, false
+	if raw := strings.TrimSpace(out["useSSL"]); raw != "" {
+		v, err := strconv.ParseBool(raw)
+		if err != nil {
+			return nil, api.NewUnsupportedValueError("backup.NewStorageBackend", "storage config",
+				"use_ssl "+raw+" (want true or false)")
+		}
+		useSSL, explicit = v, true
+	}
+
 	endpoint := out["endpoint"]
 	if endpoint == "" {
 		return out, nil
-	}
-	useSSL, explicit := false, false
-	if v, err := strconv.ParseBool(strings.TrimSpace(out["useSSL"])); err == nil {
-		useSSL, explicit = v, true
 	}
 
 	if scheme, _, ok := strings.Cut(endpoint, "://"); ok {
@@ -333,12 +340,7 @@ func objstoreBackendSettings(backendType string, settings map[string]string) (ma
 		return out, nil
 	}
 
-	switch {
-	case backendType == "minio" && useSSL:
-		out["endpoint"] = "https://" + endpoint
-	case backendType == "minio":
-		out["endpoint"] = "http://" + endpoint
-	case explicit && !useSSL:
+	if explicit && !useSSL {
 		out["endpoint"] = "http://" + endpoint
 	}
 	return out, nil
