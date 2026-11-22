@@ -23,11 +23,11 @@ Each count was taken with Serena `search_for_pattern` on
 
 | Count | Mine | Issue | Pattern / method |
 |---|---|---|---|
-| Routed views | 39 | 39 | `\{#if \|\{:else if ` with `routerStore.name ===` on `src/MainApp.svelte` (dispatch at :588-:1139, `ComingSoon` fall-through at :1144) |
-| Sidebar entries | 38 | 40 | `implemented:` on `src/MainApp.svelte` |
-| …of which `implemented: false` | 3 | 3 | same; nodes :270, backup :271, connection :277 |
+| Routed views | 39 | 39 | `\{#if \|\{:else if ` with `routerStore.name ===` on `src/views/MainApp.svelte`; see [Routed views](#routed-views) |
+| Sidebar entries | 38 | 40 | `implemented:` over the nav list `src/views/MainApp.svelte:195-277` |
+| …of which `implemented: false` | 3 | 3 | same; nodes :269, backup :270, connection :276 |
 | SDK call sites | 272 (254 via `getSDKClient`, 18 via standalone clients) | ~240 | see below |
-| Distinct SDK methods | incomplete | 192 | not recomputed yet |
+| Distinct SDK methods | 218 | 192 | hand count of the distinct `family.method` names in the [SDK calls](#sdk-calls) tables; a name is counted once per family (`orchestrator.listJobs` and `scheduler.listJobs` are two), and `…Page` variants count separately |
 | Client families used | 30 (26 via `getSDKClient` + barrier, ceremony, tenantBarrier, bootstrap) | 26 | family names from the call-site pattern; `Client` interface `sdk/typescript/src/interfaces.ts:1327-1424` has 30 families, `RestClient` adds `bootstrap` (`rest.ts:5265`) |
 | Standalone clients | 4 | 5 | `new Rest[A-Za-z]+\(\|create[A-Z][A-Za-z]*Client\(` |
 | Raw `fetch` calls | 5 | 5 | `\bfetch\(` (`authFetch.ts` wraps `window.fetch`; not a call site) |
@@ -50,12 +50,81 @@ TenantBarrierView (8) and BootstrapView (4).
 
 Where mine differ from the issue:
 
-- **Sidebar 38, not 40.** `implemented:` matches 38 entries; the 3 placeholders agree.
+- **Sidebar 38, not 40.** The nav list (`MainApp.svelte:195-277`) has 38
+  entries, each with one `implemented:` flag; the 3 placeholders agree.
 - **Call sites 272, not ~240.** The issue's figure left out the standalone
   clients and the `sdlc`/`ssh.keys` aliases.
 - **Standalone clients 4, not 5.** Ceremony, Barrier, TenantBarrier and
   Bootstrap. The fifth in the issue is probably `installAuthFetch`, which wraps
   `fetch` and builds no client.
+- **Distinct methods 218, not 192.** The issue's figure predates the
+  standalone clients and the `…Page` variants.
+
+`GET /api/v1/server/capabilities` (`routes.go:687`) has no UI caller yet; the
+capability-gating follow-ups (#2576) will use it.
+
+## Routed views
+
+Counting method: the Grep tool on `src/views/MainApp.svelte` for
+`\{#if \|\{:else if ` lines with `routerStore.name ===`. The dispatch runs from
+`{#if routerStore.name === 'invite-activate'}` (:587) to
+`{:else if routerStore.name === 'cluster'}` (:1136), with `ComingSoon` as the
+fall-through at :1143. It holds 81 branches: 3 for the auth shell
+(invite-activate :587, register :604, login :606; public routes, outside the
+app shell), 39 for the breadcrumb (:657-:775), and 39 for the view switch
+(:934-:1136). The routed views are the 39 view-switch branches, which matches
+the issue's 39. Modals (the SSH key, deploy, spawn and task dialogs) are not
+routes.
+
+Status of the worst SDK call each view makes. On Wails, `bound` means the
+family has a Wails client; `refuses` means the family is an
+`unsupportedClient` and the call rejects with `TransportNotSupportedError` (a
+TypeError on a `null` slot before this change, see [Wails](#wails-shipped-desktop-app));
+`standalone REST` means the view builds its own REST client and does not use
+the Wails client. Sidebar ids map to routes through `routeToViewID`
+(`src/stores/navigation.svelte.ts:114`).
+
+| # | Route | Component (file) | Sidebar entry | REST | Wails |
+|---|---|---|---|---|---|
+| 1 | dashboard | `SystemDashboard` (`src/views/SystemDashboard.svelte`) | dashboard | served | refuses (kms, scheduler, cluster) |
+| 2 | attention | `AttentionView` (`src/views/orchestrator/AttentionView.svelte`) | attention | served | bound (orchestrator) |
+| 3 | orchestration | `OrchestratorDashboard` (`src/views/orchestrator/OrchestratorDashboard.svelte`) | orchestration | served | bound (orchestrator) |
+| 4 | jobs | `JobsView` (`src/views/orchestrator/JobsView.svelte`) | jobs | served | refuses (agents in StartJobDialog:62; projects in referenceOptions.ts:93) |
+| 5 | job-detail | `JobDetailView` (`src/views/orchestrator/JobDetailView.svelte`) | none, linked from JobsView | served | bound (orchestrator) |
+| 6 | fleet | `FleetList` (`src/components/orchestrator/FleetList.svelte`) | fleet | not-configured (deployFleetNode) | bound (orchestrator, sshKeys) |
+| 7 | fleet-node | `FleetNodeDetailView` (`src/views/orchestrator/FleetNodeDetailView.svelte`) | none (highlights fleet), linked from FleetList | served | bound (orchestrator) |
+| 8 | sessions | `SessionList` (`src/components/orchestrator/SessionList.svelte`) | sessions | served | refuses (projects in referenceOptions.ts:93) |
+| 9 | session-detail | `SessionDetail` (`src/components/orchestrator/SessionDetail.svelte`) | none (highlights sessions), linked from SessionList | not-configured (rotateSessionAccount) | bound (orchestrator) |
+| 10 | tasks | `TasksView` (`src/views/orchestrator/TasksView.svelte`) | tasks | served | refuses (projects in referenceOptions.ts:93) |
+| 11 | task-detail | `TaskDetailView` (`src/views/orchestrator/TaskDetailView.svelte`) | none (highlights tasks), linked from TasksView | served | refuses (projects) |
+| 12 | workflows | `WorkflowsView` (`src/views/orchestrator/WorkflowsView.svelte`) | workflows | served | refuses (agents in StartJobDialog:62; projects in referenceOptions.ts:93) |
+| 13 | events | `EventStreamView` (`src/views/orchestrator/EventStreamView.svelte`) | events | served | bound (orchestrator) |
+| 14 | cost | `CostView` (`src/views/orchestrator/CostView.svelte`) | costs | served | refuses (agents, AgentSpendLimitsEditor) |
+| 15 | inference | `InferenceView` (`src/views/orchestrator/InferenceView.svelte`) | inference | served | bound (orchestrator) |
+| 16 | rag | `RAGView` (`src/views/ai/RAGView.svelte`) | rag | served | refuses (rag) |
+| 17 | embeddings | `EmbeddingsView` (`src/views/ai/EmbeddingsView.svelte`) | embeddings | served | refuses (embeddings) |
+| 18 | messaging | `MessagingView` (`src/views/async/MessagingView.svelte`) | messaging | not-configured | refuses (messaging) |
+| 19 | scheduler | `SchedulerView` (`src/views/async/SchedulerView.svelte`) | scheduler | served | refuses (scheduler) |
+| 20 | kv | `KVStoreView` (`src/views/data/KVStoreView.svelte`) | kv | served | refuses (data) |
+| 21 | vectors | `VectorsView` (`src/views/data/VectorsView.svelte`) | vectors | served | refuses (vectors) |
+| 22 | timeseries | `TimeSeriesView` (`src/views/data/TimeSeriesView.svelte`) | timeseries | not-configured | refuses (timeseries) |
+| 23 | objects | `ObjectsView` (`src/views/data/ObjectsView.svelte`) | objects | served | refuses (objects) |
+| 24 | iam | `IAMView` (`src/views/security/IAMView.svelte`) | iam | served | refuses (iam) |
+| 25 | kms | `KMSView` (`src/views/security/KMSView.svelte`) | kms | served | refuses (kms) |
+| 26 | secrets | `SecretsView` (`src/views/security/SecretsView.svelte`) | secrets | served | refuses (secrets) |
+| 27 | certificates | `CertificatesView` (`src/views/security/CertificatesView.svelte`) | certificates | served | refuses (ca) |
+| 28 | trust | `TrustView` (`src/views/security/TrustView.svelte`) | trust | served | refuses (trust) |
+| 29 | crypto | `CryptoView` (`src/views/security/CryptoView.svelte`) | crypto | served | refuses (crypto) |
+| 30 | dek | `DEKView` (`src/views/security/DEKView.svelte`) | dek | served | refuses (dek) |
+| 31 | dynamic-secrets | `DynamicSecretsView` (`src/views/security/DynamicSecretsView.svelte`) | dynamic-secrets | served | refuses (dynamicSecrets) |
+| 32 | barrier | `BarrierView` (`src/views/security/BarrierView.svelte`) | barrier | served | standalone REST |
+| 33 | tenant-barrier | `TenantBarrierView` (`src/views/security/TenantBarrierView.svelte`) | tenant-barrier | served | refuses (iam.listTenants :172; the barrier calls are standalone REST) |
+| 34 | ceremony | `CeremonyView` (`src/views/security/CeremonyView.svelte`) | ceremony | not-configured before init | standalone REST |
+| 35 | bootstrap | `BootstrapView` (`src/views/security/BootstrapView.svelte`) | bootstrap | served | standalone REST |
+| 36 | ssh-keys | `SSHKeysView` (`src/views/security/SSHKeysView.svelte`) | ssh-keys | ui-placeholder (scope tabs not role-gated) | throws (ssh.knownHosts in KnownHostsPanel) |
+| 37 | projects | `ProjectsView` (`src/views/orchestrator/ProjectsView.svelte`) | projects | served | refuses (projects, sdlc) |
+| 38 | accounts | `AccountsView` (`src/views/orchestrator/AccountsView.svelte`) | accounts | served | refuses (accounts) |
+| 39 | cluster | `ClusterDashboard` (`src/views/cluster/ClusterDashboard.svelte`) | cluster | served | refuses (cluster) |
 
 ## Raw fetch calls
 
@@ -71,9 +140,9 @@ Where mine differ from the issue:
 
 | Control (file:line) | SDK / path | Route | Registered | Status |
 |---|---|---|---|---|
-| Sidebar "Nodes" `src/MainApp.svelte:270` → `ComingSoon` | none | none (the Go SDK's cluster `Nodes` maps to POST `/api/v1/cluster/nodes`, served **no** per `docs/cluster/api.md:42`) | — | ui-placeholder |
-| Sidebar "Backup" `src/MainApp.svelte:271` → `ComingSoon` | none | backups exist at `routes.go:765-770` but no view calls them | — | ui-placeholder |
-| Sidebar "Connection" `src/MainApp.svelte:277` → `ComingSoon` | none | none (connection settings are client-local) | — | ui-placeholder |
+| Sidebar "Nodes" `src/views/MainApp.svelte:269` → `ComingSoon` | none | none (the Go SDK's cluster `Nodes` maps to POST `/api/v1/cluster/nodes`, served **no** per `docs/cluster/api.md:42`) | — | ui-placeholder |
+| Sidebar "Backup" `src/views/MainApp.svelte:270` → `ComingSoon` | none | backups exist at `routes.go:767-772` (`/api/v1/backups`) but no view calls them | — | ui-placeholder |
+| Sidebar "Connection" `src/views/MainApp.svelte:276` → `ComingSoon` | none | none (connection settings are client-local) | — | ui-placeholder |
 
 ## SDK calls
 
@@ -182,7 +251,7 @@ Registered lines are in `pkg/api/rest/routes.go` unless another file is named.
 | TimeSeriesView:100 | timeseries.query | POST `/api/v1/timeseries/query` | :648 | not-configured without build tag `timeseries` (`timeseries_handlers_noop.go:38`) |
 | TimeSeriesView:162 | timeseries.write | POST `/api/v1/timeseries/write` | :652 | not-configured without build tag `timeseries` (`timeseries_handlers_noop.go:28`) |
 | TimeSeriesView:190 | timeseries.deleteSeries | DELETE `/api/v1/timeseries/series` | :651 | not-configured without build tag `timeseries` (`timeseries_handlers_noop.go:43`) |
-| ObjectsView:65 / :129 / :151 / :177 | objects.list / put / get / delete | `/api/v1/objects/…` | :775-780 | served |
+| ObjectsView:65 / :129 / :151 / :177 | objects.list / put / get / delete | `/api/v1/objects/…` | :777-782 | served |
 | ObjectsView:194; SystemDashboard:112,139,202,305; FleetList:123 | connection.getAddress / getTransport | none (client-local) | — | served (no request) |
 | RAGView:58 / :194 | rag.query / buildContext | POST `/api/v1/rag/query` / `context` (`rest.ts:2200,2208`) | `handlers_rag.go:691-696` | served |
 | RAGView:139 / :154 / :169 | rag.listDocuments / deleteDocument / reindexDocument | `/api/v1/rag/documents…`, `reindex` | `handlers_rag.go:691-696` | served |
@@ -212,11 +281,13 @@ Registered lines are in `pkg/api/rest/routes.go` unless another file is named.
 | CertificatesView:103 / :360 | ca.caInfo / getCABundle | GET `/api/v1/certificate/ca/info` / `ca/bundle` | :340/:339 | served |
 | CertificatesView:137; providers.ts:198 | ca.listCertificates | GET `ca/list` | :341 | served |
 | CertificatesView:225 / :265 / :292 / :318 | ca.issue / signCSR / revoke / verify | POST `issue` / `sign-csr` / `revoke` / `verify` | :345/:347/:346/:349 | served |
-| CertificatesView:341; providers.ts:223 | ca.isRevoked | GET `/api/v1/xkms/ca/revoked/{serial}` | :693 | served |
-| CertificatesView:374 | ca.generateCRL | POST `/api/v1/xkms/ca/crl` | :690 | served |
+| CertificatesView:341; providers.ts:223 | ca.isRevoked | GET `/api/v1/xkms/ca/revoked/{serial}` | :695 | served |
+| CertificatesView:374 | ca.generateCRL | POST `/api/v1/xkms/ca/crl` | :692 | served |
 | TrustView:50 / :98 / :129 | trust.crossSignedRootPool / autoImportAIA / publishDANE | `/api/v1/trust/…` | :656/:655/:657 | served |
 | CryptoView:96,121,151,179,209,229,255 | crypto.encrypt / decrypt / sign / verify / hash / random / dataKey | `/api/v1/crypto/…` | :367-376 | served |
-| SSHKeysView:121; providers.ts:159 / :159 | ssh.keys.listScoped / deleteScoped | GET / DELETE `/api/v1/ssh/keys/{scope}/{owner}/…` | :640-641/:639 | served |
+| SSHKeysView:121; providers.ts:159 | ssh.keys.listScoped | GET `/api/v1/ssh/keys?scope=&owner=` (`rest.ts:5020-5026`) | :636 | served |
+| SSHKeysView:159 | ssh.keys.deleteScoped | DELETE `/api/v1/ssh/keys/{scope}/{owner}/{name}` | :639 | served |
+| SSHKeysView:69-73 scope tabs; :104-109 owner | none (the tabs choose `scope`/`owner` for listScoped) | — | — | ui-placeholder: the three tabs are hard-coded `enabled: true` (comment :65-68: role gating waits on an auth store that exposes roles), and scope `user` sends the tenant ID as the owner (:106-108) |
 | GenerateKeyModal:102 / ImportKeyModal:142 | ssh.keys.create / import_ | POST `/api/v1/ssh/keys` / `keys/import` | :637/:638 | served |
 | DeployFleetNodeDialog:85 | sshKeys.list | GET `/api/v1/ssh/keys` | :636 | served |
 | KnownHostsPanel:90 / :134 / :161 | ssh.knownHosts.list / add / remove | GET / POST / DELETE `/api/v1/ssh/known-hosts` | :643/:644/:645 | served |
@@ -240,7 +311,7 @@ Registered lines are in `pkg/api/rest/routes.go` unless another file is named.
 | DEK list/delete/safety "Served? no" (`docs/data-encryption-keys/api.md:39-47`) | cleared for the UI | those rows describe Go SDK paths; the TS SDK calls `/api/v1/kms/deks…`, registered `routes.go:410-416` with the bare alias from `server.go:614-620` |
 | Vector CreateNamespace / ListNamespaces "no" (`docs/vector/api.md:44,56`) | cleared for the UI | TS paths `rest.ts:1597,1612` hit `routes.go:666/667` via the bare alias |
 | Secrets list/get/store/delete/rotate "no" (`docs/secrets/api.md:41-51`) | cleared for the UI | TS paths `rest.ts:3622-3694` hit `routes.go:614-621` |
-| CA GenerateCRL / IsRevoked "no" (`docs/certificate-authority/api.md:53,58`) | cleared for the UI | TS SDK uses `/api/v1/xkms/ca/crl` (`rest.ts:3944`) and `/api/v1/xkms/ca/revoked/{serial}` (`rest.ts:3964`), registered `routes.go:690/693` |
+| CA GenerateCRL / IsRevoked "no" (`docs/certificate-authority/api.md:53,58`) | cleared for the UI | TS SDK uses `/api/v1/xkms/ca/crl` (`rest.ts:3944`) and `/api/v1/xkms/ca/revoked/{serial}` (`rest.ts:3964`), registered `routes.go:692/695` |
 | Cluster Nodes / Rebalance "no" (`docs/cluster/api.md:42-43`) | cleared for the UI | ClusterDashboard calls only `cluster.status` (`ClusterDashboard.svelte:77`, `routes.go:364`); the Nodes sidebar entry is a placeholder |
 | Liveness / readiness "no" (`docs/observability/api.md:39,41`) | cleared for the UI | the UI fetches `/api/v1/health/live` and `/ready`, `routes.go:392/393` |
 | Ceremony officers | confirmed `not-configured` before init | `CeremonyView.svelte:100` maps 503 to the notice at :335 |
@@ -249,68 +320,114 @@ Registered lines are in `pkg/api/rest/routes.go` unless another file is named.
 | rotateSessionAccount | confirmed `not-configured` without a rotation service | `handlers_orchestrator.go:332-334` returns 501 |
 | Messaging | confirmed `not-configured` without a messaging service | `handlers_messaging.go:238-240` returns 501 |
 | Time series | confirmed `not-configured` without build tag `timeseries` | `timeseries_handlers_noop.go:1` (`rest && !timeseries`) stubs every handler with 501 |
+| SSH key scope tabs | confirmed `ui-placeholder` | `SSHKeysView.svelte:69-73` enables all three tabs for every user; :104-109 uses the tenant ID as the `user` owner (Follow-up 10) |
+| Served stubs no control calls | confirmed `stubbed`, caller none | PUT `/api/v1/vector/namespaces/{namespace}` (`routes.go:670`, handler `vector_handlers.go:158`, always 501 at :188); the xkms PIN and lockout routes `routes.go:722-729`, eight handlers in `handlers_xkms.go:1491-1679`, each 501. Record only |
 
 ## Transports
 
-Pattern: `unsupportedClient|from '\./unsupported` on `sdk/typescript/src`.
+The UI builds two transports only: `src/stores/sdkClient.ts:71` creates the
+client with `transport: 'wails'` when `isWailsRuntime()` (the desktop app),
+and :75 creates `transport: 'rest'` against `window.location.origin` (the
+browser). gRPC-web, MCP, QUIC and Unix are SDK transports the UI does not
+ship; they are listed for completeness.
+
+Pattern: `unsupportedClient|: any = null;` on `sdk/typescript/src`.
 `unsupportedClient` (`sdk/typescript/src/unsupported.ts:24`) returns a client
-whose every method rejects with `TransportNotSupportedError`. The transport
-classes assign it directly; `factory.ts` only picks the class. Separately,
-`deployFleetNode` throws `DeployNotSupportedError` on every transport but Wails.
+whose every method rejects with `TransportNotSupportedError`. A `null` family
+slot instead fails with "Cannot read properties of null" at the first call.
+`factory.ts` only picks the class. Separately, `deployFleetNode` throws
+`DeployNotSupportedError` on every transport but Wails.
 
-UI users of the three affected families: `projects` — ProjectsView
-(:158,218,243,269,492,540,564), TaskDetailView:156, providers.ts:319,
-referenceOptions.ts:93; `sdlc` — ProjectsView (:359,373,399,417,436,460,497,503),
-SdlcReviewerPicker (:60,63,86,87); `accounts` — AccountsView
-(:144,278,356,384,399,424,452), AccountEditDialog:53, providers.ts:246.
+### REST (shipped: browser)
 
-### REST
+No family maps to `unsupportedClient` and none is `null`. `deployFleetNode`
+throws (`rest.ts:1179`): DeployFleetNodeDialog:150.
 
-No family maps to `unsupportedClient`. `deployFleetNode` throws
-(`rest.ts:1179`): DeployFleetNodeDialog:150.
+### Wails (shipped: desktop app)
 
-### gRPC-web
+The desktop app binds Go structs for connection, orchestrator, auth and SSH
+keys only. `projects`, `sdlc` and `accounts` were already `unsupportedClient`.
+The other 22 families were `readonly X: any = null`; after this change each is
+an `unsupportedClient` (`wails.ts:966-990`), so a call rejects with
+`TransportNotSupportedError` (transport `wails`, reason "no Wails binding")
+instead of a TypeError. The views still cannot use them on the desktop app
+(Follow-up 11). UI callers per family, from the SDK calls tables:
 
-`projects`, `sdlc`, `accounts` (`grpc_web.ts:363-365`). Views: ProjectsView,
-TaskDetailView, SdlcReviewerPicker, AccountsView, AccountEditDialog, the
-reference pickers (`providers.ts`, `referenceOptions.ts`). Deploy throws
-(`grpc_web.ts:271`).
+| Family | UI callers |
+|---|---|
+| data | KVStoreView |
+| vectors | VectorsView |
+| timeseries | TimeSeriesView |
+| objects | ObjectsView |
+| rag | RAGView |
+| embeddings | EmbeddingsView |
+| messaging | MessagingView |
+| scheduler | SchedulerView, SystemDashboard:291, providers.ts:458 |
+| projects | ProjectsView, TaskDetailView:156, providers.ts:319, referenceOptions.ts:93 (SessionList, JobsView, TasksView, WorkflowsView) |
+| sdlc | ProjectsView, SdlcReviewerPicker |
+| accounts | AccountsView, AccountEditDialog:53, providers.ts:246 |
+| agents | AgentSpendLimitsEditor:57,79 (CostView), StartJobDialog:62 (JobsView, WorkflowsView, SystemDashboard) |
+| iam | IAMView, MainApp.svelte:375, TenantBarrierView:172, InviteActivateView:77,151, providers.ts:349,385,417 |
+| kms | KMSView, SystemDashboard:277, providers.ts:125 |
+| secrets | SecretsView, providers.ts:71,93,106 |
+| ca | CertificatesView, providers.ts:198,223 |
+| trust | TrustView |
+| crypto | CryptoView |
+| dek | DEKView |
+| dynamicSecrets | DynamicSecretsView |
+| barrier, tenantBarrier, ceremony | none through the shared client; BarrierView, TenantBarrierView and CeremonyView build standalone REST clients |
+| cluster | ClusterDashboard:77, SystemDashboard:435 |
+| seal | none |
 
-### MCP
+`ssh.knownHosts` and `ssh.authorized` throw on Wails (`WailsSSHClient`), so
+KnownHostsPanel (SSHKeysView:357) fails there. Wails is the only transport
+that implements `deployFleetNode`.
 
-No family maps to `unsupportedClient`. Deploy throws (`mcp.ts:497`).
+### gRPC-web (not shipped by the UI)
 
-### QUIC
+`projects`, `sdlc`, `accounts` are `unsupportedClient` (`grpc_web.ts:363-365`).
+Still `null` (`grpc_web.ts:348-397`): data, vectors, timeseries, objects, rag,
+embeddings, messaging, scheduler, agents, iam, kms, secrets, ca, trust,
+crypto, dek, dynamicSecrets, tenantBarrier, cluster, seal, sshKeys, ssh.
+Deploy throws (`grpc_web.ts:271`).
 
-`projects`, `sdlc`, `accounts` (`quic.ts:368-370`). Same views as gRPC-web.
-Deploy throws (`quic.ts:280`).
+### MCP (not shipped by the UI)
 
-### Unix
+No family maps to `unsupportedClient`. Still `null` (`mcp.ts:1310-1359`): data,
+vectors, timeseries, objects, rag, embeddings, messaging, scheduler, agents,
+iam, kms, secrets, ca, trust, crypto, dek, dynamicSecrets, tenantBarrier,
+cluster, seal, sshKeys, ssh. Deploy throws (`mcp.ts:497`).
 
-`projects`, `sdlc`, `accounts` (`unix.ts:266-268`). Same views as gRPC-web.
+### QUIC (not shipped by the UI)
+
+`projects`, `sdlc`, `accounts` are `unsupportedClient` (`quic.ts:368-370`).
+Still `null` (`quic.ts:353-402`): the same 22 slots as gRPC-web. Deploy throws
+(`quic.ts:280`).
+
+### Unix (not shipped by the UI)
+
+`projects`, `sdlc`, `accounts` are `unsupportedClient` (`unix.ts:266-268`).
+Still `null` (`unix.ts:251-301`): the gRPC-web list plus barrier and ceremony.
 Deploy throws (`unix.ts:211`).
-
-### Wails
-
-`projects`, `sdlc`, `accounts` (`wails.ts:960-962`). Same views as gRPC-web.
-Wails is the only transport that implements `deployFleetNode`.
 
 ## Follow-ups
 
 Proposed rows; none filed.
 
-1. **Nodes view: replace the ComingSoon placeholder with a cluster-nodes view.** Caller: sidebar "Nodes" `MainApp.svelte:270`. Needs: a view over the served `/api/v1/cluster/nodes` routes (`routes.go:355-358`); capability gating is #2576.
-2. **Backup view: replace the ComingSoon placeholder with a backups view.** Caller: sidebar "Backup" `MainApp.svelte:271`. Needs: a view and TS SDK methods over the served `/api/v1/admin/backups` routes (`routes.go:765-770`).
-3. **Connection view: replace the ComingSoon placeholder with a connection-settings view.** Caller: sidebar "Connection" `MainApp.svelte:277`. Needs: a client-side view over the SDK's transport/address settings; no server route.
+1. **Nodes view: replace the ComingSoon placeholder with a cluster-nodes view.** Caller: sidebar "Nodes" `src/views/MainApp.svelte:269`. Needs: a view over the served `/api/v1/cluster/nodes` routes (`routes.go:355-358`); capability gating is #2576.
+2. **Backup view: replace the ComingSoon placeholder with a backups view.** Caller: sidebar "Backup" `src/views/MainApp.svelte:270`. Needs: a view and TS SDK methods over the served `/api/v1/backups` routes (`routes.go:767-772`).
+3. **Connection view: replace the ComingSoon placeholder with a connection-settings view.** Caller: sidebar "Connection" `src/views/MainApp.svelte:276`. Needs: a client-side view over the SDK's transport/address settings; no server route.
 4. **Ceremony view: explain the pre-init state without a 503 round trip.** Caller: `CeremonyView.svelte:87`. Needs: nothing server-side; the 503 before `quicbaasd init` is by design. Record only.
 5. **Deploy dialog: hide or explain Deploy when the transport is not Wails.** Caller: `DeployFleetNodeDialog.svelte:150`. Needs: a UI-side transport check (capability gating, #2576); no server route.
 6. **Sessions: explain account rotation when the server has no rotation service.** Caller: `SessionDetail.svelte:173`. Needs: the view to show the 501 as "not configured" (capability gating, #2576).
 7. **Messaging view: show "not configured" when the server has no messaging service.** Callers: `MessagingView.svelte:54,104,132,182`. Needs: capability gating (#2576).
 8. **Time series view: show "not enabled" on a build without the `timeseries` tag.** Callers: `TimeSeriesView.svelte:56,100,162,190`. Needs: capability gating (#2576).
 9. **Projects, SDLC and accounts views: say the family is unavailable on gRPC-web, QUIC, Unix and Wails.** Callers: the views listed under Transports. Needs: capability gating (#2576); the server routes are served.
-10. **Distinct SDK method count.** Needs: a recount; left `incomplete` here.
+10. **SSH keys: role-gate the scope tabs and use the principal's uid as the `user` owner.** Callers: `SSHKeysView.svelte:69-73` (tabs), :104-109 (owner). Needs: an auth store that exposes the principal's roles and uid, and an owner decision on which roles gate which scope.
+11. **Desktop SPA: route the families the Wails binding does not carry to REST against the embedded server.** Callers: every view listed under [Wails](#wails-shipped-desktop-app). Needs: `sdkClient.ts` to build a REST client for those families in desktop mode; the server routes are served.
+12. **gRPC-web/MCP/QUIC/Unix: replace the remaining `null` family slots with `unsupportedClient`.** Callers: none in the UI (it does not ship these transports). Needs: the SDK change made here for Wails, per transport.
 
 ## Audit progress
 
-Every raw fetch, sidebar entry and SDK call row is audited; no row is
-`pending`. Still `incomplete`: the distinct-SDK-method count (Follow-up 10).
+Every raw fetch, sidebar entry, routed view and SDK call row is audited; no
+row is `pending` and no count is `incomplete`.
