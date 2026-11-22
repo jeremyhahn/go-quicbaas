@@ -340,3 +340,45 @@ func TestOCIDistBackend_IndexRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+// TestOCIDistBackend_DeleteByDigestRemovesTags checks that deleting a
+// manifest by digest leaves no tag resolving to it.
+func TestOCIDistBackend_DeleteByDigestRemovesTags(t *testing.T) {
+	reg := newTestRegistry(t)
+	ctx := context.Background()
+	const mediaType = "application/vnd.oci.image.manifest.v1+json"
+	body := []byte(`{"schemaVersion":2,"mediaType":"` + mediaType + `","layers":[]}`)
+	other := []byte(`{"schemaVersion":2,"mediaType":"` + mediaType + `","layers":[],"annotations":{"k":"v"}}`)
+
+	var digest string
+	for _, tag := range []string{"a", "b"} {
+		d, err := reg.PutManifest(ctx, "alpine", tag, mediaType, body)
+		if err != nil {
+			t.Fatalf("PutManifest %s: %v", tag, err)
+		}
+		digest = d
+	}
+	// A tag naming other content survives.
+	if _, err := reg.PutManifest(ctx, "alpine", "c", mediaType, other); err != nil {
+		t.Fatalf("PutManifest c: %v", err)
+	}
+
+	if err := reg.DeleteManifest(ctx, "alpine", digest); err != nil {
+		t.Fatalf("DeleteManifest by digest: %v", err)
+	}
+	for _, ref := range []string{"a", "b", digest} {
+		if _, _, err := reg.GetManifest(ctx, "alpine", ref); err == nil {
+			t.Errorf("GetManifest %s still resolves after delete by digest", ref)
+		}
+	}
+	tags, err := reg.ListTags(ctx, "alpine")
+	if err != nil {
+		t.Fatalf("ListTags: %v", err)
+	}
+	if len(tags) != 1 || tags[0] != "c" {
+		t.Fatalf("ListTags = %v, want [c]", tags)
+	}
+	if _, _, err := reg.GetManifest(ctx, "alpine", "c"); err != nil {
+		t.Fatalf("GetManifest c: %v", err)
+	}
+}

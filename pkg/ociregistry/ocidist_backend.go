@@ -154,6 +154,37 @@ func (r *Registry) DeleteManifest(ctx context.Context, name, reference string) e
 	if r.storage == nil {
 		return StorageNotConfiguredError{Op: "DeleteManifest"}
 	}
+	if !strings.HasPrefix(reference, "sha256:") {
+		return r.storage.DeleteManifest(ctx, refJoin(name, reference))
+	}
+	// Deleting by digest deletes the content, so every tag that names it
+	// goes too. The whole repository is listed before anything is deleted:
+	// a listing that fails leaves every record in place.
+	var tags []string
+	cursor := ""
+	for {
+		res, err := r.storage.ListManifests(ctx, ListOptions{Repository: name, Limit: 500, Cursor: cursor, Strict: true})
+		if err != nil {
+			return err
+		}
+		for i := range res.Manifests {
+			m := &res.Manifests[i]
+			tag := strings.TrimPrefix(m.Reference, name+":")
+			if tag == m.Reference || isDigestReference(tag) || m.ContentDigest != reference {
+				continue
+			}
+			tags = append(tags, m.Reference)
+		}
+		if !res.HasMore || res.NextCursor == "" {
+			break
+		}
+		cursor = res.NextCursor
+	}
+	for _, ref := range tags {
+		if err := r.storage.DeleteManifest(ctx, ref); err != nil {
+			return err
+		}
+	}
 	return r.storage.DeleteManifest(ctx, refJoin(name, reference))
 }
 
