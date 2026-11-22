@@ -228,7 +228,9 @@ keep the keys on the replicas they were issued for.
 ## Security
 
 - The pods run as uid/gid 1000, non-root, with a read-only root filesystem, all
-  capabilities dropped, and the `RuntimeDefault` seccomp profile.
+  capabilities dropped, and the `RuntimeDefault` seccomp profile. The node's
+  Unix socket is therefore at `/var/run/quicbaas/quicbaas.sock`, on the
+  writable `run` emptyDir, the path the image's healthcheck uses.
 - Because the pods drop all capabilities and the namespace enforces the
   restricted Pod Security level, `IPC_LOCK` cannot be granted. The memlock
   limit comes from the node's container runtime; see the `RLIMIT_MEMLOCK`

@@ -56,6 +56,12 @@ func TestKubernetesReplicaLoadsAsRaftNode2(t *testing.T) {
 		t.Setenv(name, "")
 		require.NoError(t, os.Unsetenv(name))
 	}
+	// The image sets QUICBAAS_SERVER_UNIX_SOCKET; the ConfigMap alone must
+	// name a writable socket path.
+	for _, name := range []string{"QUICBAAS_SERVER_UNIX_SOCKET", "QUICBAAS_SERVER_UNIX_ENABLED"} {
+		t.Setenv(name, "")
+		require.NoError(t, os.Unsetenv(name))
+	}
 
 	const peer = ".quicbaas-raft.quicbaas.svc.cluster.local:63000"
 	members := []string{"1=quicbaas-0" + peer, "2=quicbaas-1" + peer, "3=quicbaas-2" + peer}
@@ -88,6 +94,9 @@ func TestKubernetesReplicaLoadsAsRaftNode2(t *testing.T) {
 	assert.Equal(t, "/etc/quicbaas/raft-tls/quicbaas-1.crt", cfg.Raft.TLSCertFile)
 	assert.Equal(t, "/etc/quicbaas/raft-tls/quicbaas-1.key", cfg.Raft.TLSKeyFile)
 	assert.True(t, cfg.Seal.Enabled, "data must not rest unencrypted")
+	// The node serves the Unix socket whenever a path is set, and the root
+	// filesystem is read-only: the socket must be on the run emptyDir.
+	assert.Equal(t, "/var/run/quicbaas/quicbaas.sock", cfg.Server.Unix.Socket)
 
 	// The certificate files exist only in the pod, so only the Raft and server
 	// sections are held to validation here.

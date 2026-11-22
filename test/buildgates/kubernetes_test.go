@@ -422,6 +422,53 @@ func TestKubernetesPortsMatchTheNodeConfig(t *testing.T) {
 	}
 }
 
+// The node serves its Unix socket whenever server.unix.socket is set, and the
+// pods run with a read-only root filesystem, so the socket's directory must be
+// a writable emptyDir mount of the quicbaasd container.
+func TestKubernetesUnixSocketIsOnAWritableMount(t *testing.T) {
+	_, objs := kubernetesManifests(t)
+	cm := findObject(t, objs, "ConfigMap", "quicbaas-config")
+	nodeYAML, _ := dig(cm, "data", "quicbaas.yaml").(string)
+	var cfg map[string]any
+	if err := yaml.Unmarshal([]byte(nodeYAML), &cfg); err != nil {
+		t.Fatalf("ConfigMap quicbaas.yaml: %v", err)
+	}
+	socket, _ := dig(cfg, "server", "unix", "socket").(string)
+	if socket == "" {
+		t.Fatal("ConfigMap sets no server.unix.socket: the default is on the read-only root filesystem")
+	}
+	dir := filepath.Dir(socket)
+
+	sts := findObject(t, objs, "StatefulSet", "quicbaas")
+	c := quicbaasdContainer(t, sts)
+	mounts, _ := dig(c, "volumeMounts").([]any)
+	volume := ""
+	for _, m := range mounts {
+		if dig(m, "mountPath") != dir {
+			continue
+		}
+		if ro, _ := dig(m, "readOnly").(bool); ro {
+			t.Fatalf("socket directory %s is mounted read-only", dir)
+		}
+		volume, _ = dig(m, "name").(string)
+	}
+	if volume == "" {
+		t.Fatalf("socket directory %s is not a volumeMount of quicbaasd", dir)
+	}
+
+	volumes, _ := dig(sts, "spec", "template", "spec", "volumes").([]any)
+	for _, v := range volumes {
+		if dig(v, "name") != volume {
+			continue
+		}
+		if _, ok := dig(v, "emptyDir").(map[string]any); !ok {
+			t.Errorf("volume %s holding the socket is not an emptyDir", volume)
+		}
+		return
+	}
+	t.Errorf("volume %s is not in the pod spec", volume)
+}
+
 // TestKubernetesGuideRenewsRaftCertificatesOnTheirKey holds the guide to the
 // renewal procedure: go-quicraft refuses, on restart, a replica whose key
 // differs from its committed identity, so a certificate is renewed on the
