@@ -331,17 +331,48 @@ func (t *cryptoService) checkCurrentVersionUsable(ctx context.Context, scopedKey
 	}
 	version, err := t.currentKeyVersion(ctx, scopedKeyID)
 	if err != nil {
-		return WrapError(err, errors.ErrUnavailable, op, "key version unavailable")
+		// A key that does not exist (in the caller's scope) stays NotFound:
+		// only a lookup that failed for another reason is Unavailable.
+		return keyOperationError(errors.ErrUnavailable, op, "look up current key version", err)
 	}
+	usable, err := t.versionUsable(ctx, scopedKeyID, version, op)
+	if err != nil || usable {
+		return err
+	}
+	// The current version came from node-local metadata, which a rotation
+	// on another node does not invalidate: re-read the authoritative
+	// version before refusing, so a disabled pre-rotation version cached
+	// here does not block a key whose current version is enabled.
+	refresher, ok := t.kmsManager.(interface {
+		RefreshKeyVersion(context.Context, string) (int, error)
+	})
+	if ok {
+		refreshed, rerr := refresher.RefreshKeyVersion(ctx, scopedKeyID)
+		if rerr != nil {
+			return keyOperationError(errors.ErrUnavailable, op, "refresh current key version", rerr)
+		}
+		if v := conv.ClampIntToUint64(refreshed); v > version {
+			usable, err = t.versionUsable(ctx, scopedKeyID, v, op)
+			if err != nil || usable {
+				return err
+			}
+		}
+	}
+	return api.NewKeyDisabledError(op, scopedKeyID)
+}
+
+// versionUsable reports whether version of scopedKeyID may encrypt: its
+// replicated status is enabled or rotating (or was never recorded).
+func (t *cryptoService) versionUsable(ctx context.Context, scopedKeyID string, version uint64, op string) (bool, error) {
 	status, _, err := t.kmsSvc.lookupVersionStatus(ctx, scopedKeyID, version)
 	if err != nil {
-		return WrapError(err, errors.ErrUnavailable, op, "key version status unavailable")
+		return false, WrapError(err, errors.ErrUnavailable, op, "key version status unavailable")
 	}
 	switch status {
 	case "", KeyStatusEnabled, KeyStatusRotating:
-		return nil
+		return true, nil
 	default:
-		return api.NewKeyDisabledError(op, scopedKeyID)
+		return false, nil
 	}
 }
 

@@ -1390,6 +1390,50 @@ func (s *KMSService) getBackendByKeyID(ctx context.Context, keyID string) (Backe
 	return s.router.RouteByKeyID(ctx, keyID)
 }
 
+// RefreshKeyVersion re-reads keyID's authoritative current version from
+// its backend and advances both metadata caches (the backend's and this
+// service's) to it. GetKey serves cached metadata, which a rotation on
+// another node does not invalidate; a caller that is about to refuse a
+// key because of its cached current version refreshes it first.
+func (s *KMSService) RefreshKeyVersion(ctx context.Context, keyID string) (int, error) {
+	if keyID == "" {
+		return 0, &errors.QBError{Code: errors.ErrInvalidInput, Op: "KMSService.RefreshKeyVersion", Err: ErrKeyIDEmpty}
+	}
+	backend, err := s.getBackendByKeyID(ctx, keyID)
+	if err != nil {
+		return 0, api.NewBackendRoutingError("KMSService.RefreshKeyVersion", err)
+	}
+	var version int
+	if r, ok := backend.(interface {
+		RefreshKeyVersion(context.Context, string) (int, error)
+	}); ok {
+		version, err = r.RefreshKeyVersion(ctx, keyID)
+	} else {
+		var meta *KeyMetadata
+		meta, err = backend.GetKeyMetadata(ctx, keyID)
+		if err == nil {
+			version = meta.Version
+		}
+	}
+	if err != nil {
+		code := errors.ErrInternal
+		if stderrors.Is(err, ErrKeyNotFound) {
+			code = errors.ErrNotFound
+		}
+		return 0, &errors.QBError{Code: code, Op: "KMSService.RefreshKeyVersion", Err: err}
+	}
+	if cached, cerr := s.store.Get(keyID); cerr == nil && cached.Version < version {
+		cached.Version = version
+		if perr := s.store.Put(cached); perr != nil && s.logger != nil {
+			s.logger.WithFields(map[string]interface{}{
+				"key_id": keyID,
+				"error":  perr.Error(),
+			}).Warn("Failed to refresh cached key version")
+		}
+	}
+	return version, nil
+}
+
 // getBackendByAlgorithm returns a backend that supports the specified algorithm.
 // Used for key generation where no key ID exists yet.
 func (s *KMSService) getBackendByAlgorithm(ctx context.Context, algorithm string) (Backend, error) {

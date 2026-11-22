@@ -856,6 +856,33 @@ func (kb *XKMSBackend) storedVersion(ctx context.Context, keyID string) (int, er
 	return kb.highestContiguousVersion(stored, keyID), nil
 }
 
+// RefreshKeyVersion re-reads keyID's current version from the durable
+// key registry (or the stored rotated versions) and advances the cached
+// metadata to it. A rotation on another node replicates the version
+// record but not this node's metadata cache; callers that gate on the
+// current version refresh it before refusing a key.
+func (kb *XKMSBackend) RefreshKeyVersion(ctx context.Context, keyID string) (int, error) {
+	if err := kb.refuseVersionName(ctx, keyID); err != nil {
+		return 0, err
+	}
+	version, err := kb.storedVersion(ctx, keyID)
+	if err != nil {
+		return 0, err
+	}
+	kb.mu.Lock()
+	defer kb.mu.Unlock()
+	if meta, ok := kb.metadata[keyID]; ok {
+		if meta.Version >= version {
+			return meta.Version, nil
+		}
+		// Cached metadata is handed out by pointer: replace, never mutate.
+		refreshed := *meta
+		refreshed.Version = version
+		kb.metadata[keyID] = &refreshed
+	}
+	return version, nil
+}
+
 // refuseHidingName refuses to create keyID when an ordinary key already
 // exists whose name refuseVersionName would read as a version of keyID: once
 // keyID exists, that key would be unreachable. When keyID itself already
