@@ -161,7 +161,7 @@ export interface PromptRevisionSummary {
   created_at: string;
 }
 
-/** PromptHistory is a prompt's revisions at a scope, newest first. */
+/** PromptHistory is a prompt's revisions at a scope, oldest first, the current revision last, as the server returns them. */
 export interface PromptHistory {
   set: string;
   name: string;

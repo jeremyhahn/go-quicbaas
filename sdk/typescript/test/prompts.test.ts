@@ -117,3 +117,25 @@ describe('McpClient.prompts — the prompt_* tools', () => {
     expect(args[6]).toEqual({ ...addr, to_version: 1, expected_version: 4 });
   });
 });
+
+describe('prompt history order', () => {
+  it('returns revisions oldest first, as the server sends them', async () => {
+    const revision = (version: number) => ({
+      version,
+      content_hash: `sha256:${version}`,
+      author: 'user-1',
+      note: `v${version}`,
+      follow_parent: false,
+      created_at: `2026-11-0${version}T00:00:00Z`,
+    });
+    const history = { set: 'sdlc', name: 'plan', scope: 'tenant', revisions: [revision(1), revision(2), revision(3)] };
+    fetchMock.mockImplementation(async () => new Response(JSON.stringify(history), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+
+    const got = await new RestClient('http://localhost:8080').prompts.getPromptHistory({ set: 'sdlc', name: 'plan' });
+
+    expect(got.revisions.map((r) => r.version)).toEqual([1, 2, 3]);
+  });
+});
