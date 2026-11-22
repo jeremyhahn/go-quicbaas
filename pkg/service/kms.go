@@ -253,6 +253,15 @@ func newKMSService(kmsManager interfaces.KMSManager, logger interfaces.Logger) *
 		reencryptionState: &reencryptionState{status: "idle"},
 		dekStore:          newDEKStore(),
 	}
+	// The production manager (kms.KMSService) owns the backend registry
+	// its backends live in: SetKVStore hands each backend the durable key
+	// registry through it, so ownership checks and stored key versions
+	// are enforced on the backends that actually serve requests.
+	if rp, ok := kmsManager.(interface {
+		GetRegistry() *kms.BackendRegistry
+	}); ok {
+		svc.backendRegistry = rp.GetRegistry()
+	}
 
 	// Initialize metrics
 	svc.initMetrics()
