@@ -1,12 +1,16 @@
 # Codec — Architecture
 
-> **Status: NORMATIVE** · Last verified: 2026-11-13
+> **Status: NORMATIVE** · Last verified: 2026-11-22
 > Design, component boundaries and data flow. Feature folder: `docs/codec/`.
 
 **The codec is go-qrdb's.** go-quicbaas embeds a go-qrdb node, and the node
 encodes what it persists with its own codec package (go-qrdb `pkg/codec`).
-go-quicbaas neither selects nor configures that codec: go-qrdb's `sdk/go`
-exports no codec, and go-quicbaas does not reach past `sdk/go` into the node.
+go-quicbaas neither selects nor configures that codec. go-qrdb's `sdk/go`
+does export codec facilities (`Codec`, `CodecType`, `NewCodec` and
+`DAOWithCodec` for DAO encoding, and `DaemonCodecConfig` for the node's codec
+settings), but go-quicbaas does not use, expose or configure any of them: its
+API, SDK and configuration carry no codec, and go-quicbaas does not reach
+past `sdk/go` into the node.
 
 ## Data flow
 
