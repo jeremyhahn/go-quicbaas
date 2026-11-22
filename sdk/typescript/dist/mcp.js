@@ -962,6 +962,39 @@ export class McpAccountsClient {
         return this.session.callTool('quicbaas_agent_account_usage', { tenant_id: tenantId, account_id: accountId });
     }
 }
+// McpPromptsClient carries the prompts family over the server's prompt_*
+// tools (pkg/api/mcp/prompt_tools.go). Each tool reads the request's JSON
+// fields flat, as the Go SDK's MCP prompt handler sends them.
+export class McpPromptsClient {
+    session;
+    constructor(session) {
+        this.session = session;
+    }
+    async listPrompts(req) {
+        return this.session.callTool('prompt_list', { ...req });
+    }
+    async getPrompt(req) {
+        return this.session.callTool('prompt_get', { ...req });
+    }
+    async getEffectivePrompt(addr) {
+        return this.session.callTool('prompt_effective', { ...addr });
+    }
+    async diffPrompt(addr) {
+        return this.session.callTool('prompt_diff', { ...addr });
+    }
+    async getPromptHistory(addr) {
+        return this.session.callTool('prompt_history', { ...addr });
+    }
+    async putPrompt(req) {
+        return this.session.callTool('prompt_put', { ...req });
+    }
+    async rollbackPrompt(req) {
+        return this.session.callTool('prompt_rollback', { ...req });
+    }
+    async resetPrompt(req) {
+        return this.session.callTool('prompt_reset', { ...req });
+    }
+}
 export class McpClient {
     connection;
     orchestrator;
@@ -985,6 +1018,7 @@ export class McpClient {
     projects;
     sdlc;
     accounts;
+    prompts;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     agents = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1023,6 +1057,7 @@ export class McpClient {
         this.projects = new McpProjectsClient(session);
         this.sdlc = new McpSdlcClient(session);
         this.accounts = new McpAccountsClient(session);
+        this.prompts = new McpPromptsClient(session);
         this.orchestrator = new McpOrchestratorClient(session);
         this.auth = new McpAuthClient();
         this.barrier = new McpBarrierClient(session);
