@@ -10,6 +10,7 @@ Layer 4 of the stack, one product in layers: the application-layer framework and
 ## Complete
 - **cache** — L1 in-memory cache with optional L2 Redis — release 1.0.0 — done
 - **credentials** — versioned named-credential rotation — release 0.8.0-alpha — done
+- **embeddings** — re-export of go-qrdb's embedding service (`EmbeddingClient`) through `sdk/go` — [#2506](../../pulls/2506) — done
 - **messaging** — channel pub/sub, delta publishing and deduplication — release 1.0.0 — done
 - **observability** — health, readiness, metrics, logging and tracing — release 0.8.0-alpha — done
 - **ollama** — the Ollama client and embedding provider — releases 0.13.0-alpha and 1.0.0 — done
@@ -49,7 +50,6 @@ Layer 4 of the stack, one product in layers: the application-layer framework and
 - **data-services** — the own data clients and the second store beside the qrdb node are removed — [#1321](../../pulls/1321) — blocked: held for the owner's word
 - **deployment** — every node runs one go-quicbaas tag; formation, smoke and failover pass with a re-runnable suite — [milestone 32](../../milestone/32) — done
 - **desktop-gui** — the Prompts page in the web UI — DC: [#806](../../issues/806) — blocked: see issue
-- **embeddings** — re-export go-qrdb's embedding service; the own embedding service is removed — [#1321](../../pulls/1321) — blocked: held for the owner's word
 - **go-sdk** — admin FIDO2 / PIV factor enrollment published in the SDK — DC: [#378](../../issues/378) — open
 - **kms** — re-export go-xkms KMS; the own key store and backend router are removed — [#1321](../../pulls/1321) — blocked: held for the owner's word
 - **multi-tenancy** — `tenant barrier unseal-share` takes its share off argv — DC: [#488](../../issues/488) — blocked: see issue
