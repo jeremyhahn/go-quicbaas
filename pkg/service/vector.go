@@ -18,7 +18,6 @@ package service
 import (
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
@@ -70,8 +69,11 @@ type vectorServiceMetrics struct {
 
 // RebuildJobState tracks the state of an index rebuild job.
 type RebuildJobState struct {
-	JobID            string
-	Namespace        string
+	JobID     string
+	Namespace string
+	// Tenant is the tenant that started the job, in the services' convention
+	// ("" is the system scope). Progress lookups return the job only to it.
+	Tenant           string
 	InProgress       bool
 	VectorsProcessed uint64
 	TotalVectors     uint64
@@ -98,8 +100,11 @@ func vectorIndexDistanceMetric(stored string) string {
 
 // CompactionJobState tracks the state of a compaction job.
 type CompactionJobState struct {
-	OperationID    string
-	Namespace      string
+	OperationID string
+	Namespace   string
+	// Tenant is the tenant that started the job, in the services' convention
+	// ("" is the system scope). Progress lookups return the job only to it.
+	Tenant         string
 	InProgress     bool
 	BytesCompacted int64
 	TotalBytes     int64
@@ -1517,6 +1522,7 @@ func (v *vectorService) RebuildIndex(ctx context.Context, req *RebuildIndexReque
 	job := &RebuildJobState{
 		JobID:            jobID,
 		Namespace:        scopedNamespace,
+		Tenant:           tenantID,
 		InProgress:       true,
 		VectorsProcessed: 0,
 		TotalVectors:     info.VectorCount,
@@ -1602,7 +1608,7 @@ func (v *vectorService) GetRebuildProgress(ctx context.Context, req *GetRebuildP
 		job, found = v.rebuildJobs[req.JobID]
 		if found {
 			job.mu.RLock()
-			if !strings.HasPrefix(job.Namespace, vectorTenantScopedNamespace(tenantID, "")) {
+			if job.Tenant != tenantID {
 				found = false
 			}
 			if req.Namespace != "" && job.Namespace != scoped {
@@ -1615,7 +1621,7 @@ func (v *vectorService) GetRebuildProgress(ctx context.Context, req *GetRebuildP
 		var latestStartTime time.Time
 		for _, j := range v.rebuildJobs {
 			j.mu.RLock()
-			if j.Namespace == scoped && j.StartedAt.After(latestStartTime) {
+			if j.Tenant == tenantID && j.Namespace == scoped && j.StartedAt.After(latestStartTime) {
 				job = j
 				latestStartTime = j.StartedAt
 				found = true
@@ -2358,6 +2364,7 @@ func (v *vectorService) CompactNamespace(ctx context.Context, req *CompactNamesp
 	job := &CompactionJobState{
 		OperationID: operationID,
 		Namespace:   scopedNamespace,
+		Tenant:      tenantID,
 		InProgress:  true,
 		TotalBytes:  int64(info.StorageBytes),
 		StartedAt:   time.Now(),
@@ -2512,13 +2519,13 @@ func (v *vectorService) GetCompactionProgress(ctx context.Context, req *GetCompa
 	}
 	v.mu.RUnlock()
 
-	// Jobs record the tenant-scoped namespace: a caller sees only its own
-	// tenant's operations (#2055).
+	// A job is returned only to the tenant that started it: the scoped
+	// namespace alone does not name the owner, since a system namespace can
+	// spell a tenant's scoped name.
 	tenantID, err := prepareTenantContext(ctx)
 	if err != nil {
 		return nil, err
 	}
-	tenantPrefix := vectorTenantScopedNamespace(tenantID, "")
 	scoped := vectorTenantScopedNamespace(tenantID, req.Namespace)
 
 	v.jobMu.RLock()
@@ -2531,7 +2538,7 @@ func (v *vectorService) GetCompactionProgress(ctx context.Context, req *GetCompa
 		job, exists := v.compactionJobs[req.OperationID]
 		if exists {
 			job.mu.RLock()
-			exists = strings.HasPrefix(job.Namespace, tenantPrefix)
+			exists = job.Tenant == tenantID
 			if req.Namespace != "" && job.Namespace != scoped {
 				exists = false
 			}
@@ -2584,7 +2591,7 @@ func (v *vectorService) GetCompactionProgress(ctx context.Context, req *GetCompa
 	var latestJob *CompactionJobState
 	for _, job := range v.compactionJobs {
 		job.mu.RLock()
-		if job.Namespace == scoped {
+		if job.Tenant == tenantID && job.Namespace == scoped {
 			if latestJob == nil || job.StartedAt.After(latestJob.StartedAt) {
 				latestJob = job
 			}

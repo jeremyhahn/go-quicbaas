@@ -2458,7 +2458,7 @@ func TestVectorIndexDistanceMetric(t *testing.T) {
 
 func TestGetRebuildProgress_TenantNamespace(t *testing.T) {
 	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
-	job := &RebuildJobState{JobID: "jt", Namespace: vectorTenantScopedNamespace("acme-corp", "test-ns"), InProgress: true, StartedAt: time.Now()}
+	job := &RebuildJobState{JobID: "jt", Namespace: vectorTenantScopedNamespace("acme-corp", "test-ns"), Tenant: "acme-corp", InProgress: true, StartedAt: time.Now()}
 	svc.jobMu.Lock()
 	svc.rebuildJobs["jt"] = job
 	svc.jobMu.Unlock()
@@ -2521,7 +2521,7 @@ func TestPerformIndexRebuild_PagesWithVectors(t *testing.T) {
 // tenant's compaction operations, by namespace and by operation ID (#2055).
 func TestGetCompactionProgress_TenantNamespace(t *testing.T) {
 	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
-	job := &CompactionJobState{OperationID: "op1", Namespace: vectorTenantScopedNamespace("acme-corp", "test-ns"), InProgress: true, StartedAt: time.Now()}
+	job := &CompactionJobState{OperationID: "op1", Namespace: vectorTenantScopedNamespace("acme-corp", "test-ns"), Tenant: "acme-corp", InProgress: true, StartedAt: time.Now()}
 	svc.jobMu.Lock()
 	svc.compactionJobs["op1"] = job
 	svc.jobMu.Unlock()
@@ -2545,7 +2545,7 @@ func TestGetCompactionProgress_TenantNamespace(t *testing.T) {
 
 func TestGetRebuildProgress_JobOfAnotherNamespaceIsNotFound(t *testing.T) {
 	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
-	job := &RebuildJobState{JobID: "jn", Namespace: vectorTenantScopedNamespace("acme-corp", "test-ns"), InProgress: true, StartedAt: time.Now()}
+	job := &RebuildJobState{JobID: "jn", Namespace: vectorTenantScopedNamespace("acme-corp", "test-ns"), Tenant: "acme-corp", InProgress: true, StartedAt: time.Now()}
 	svc.jobMu.Lock()
 	svc.rebuildJobs["jn"] = job
 	svc.jobMu.Unlock()
@@ -2567,7 +2567,7 @@ func TestGetRebuildProgress_JobOfAnotherNamespaceIsNotFound(t *testing.T) {
 
 func TestGetCompactionProgress_OperationOfAnotherNamespaceIsNotFound(t *testing.T) {
 	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
-	job := &CompactionJobState{OperationID: "on", Namespace: vectorTenantScopedNamespace("acme-corp", "test-ns"), InProgress: true, StartedAt: time.Now()}
+	job := &CompactionJobState{OperationID: "on", Namespace: vectorTenantScopedNamespace("acme-corp", "test-ns"), Tenant: "acme-corp", InProgress: true, StartedAt: time.Now()}
 	svc.jobMu.Lock()
 	svc.compactionJobs["on"] = job
 	svc.jobMu.Unlock()
@@ -2792,4 +2792,94 @@ func TestVectorService_SDKWritesAreTracked(t *testing.T) {
 	rec.mu.Lock()
 	defer rec.mu.Unlock()
 	assert.Equal(t, want, rec.got)
+}
+
+// A system compaction of "tenant/acme-corp/docs" stores the same namespace
+// as acme-corp's compaction of "docs"; only the recorded owner tells them
+// apart, and each tenant sees only its own job.
+func TestGetCompactionProgress_SystemNamespaceIsNotTenantJob(t *testing.T) {
+	svc, _, _, _ := newVecSvcWithSDK(t, "tenant/acme-corp/docs", 3)
+	sys := tenantctx.WithSystem(context.Background())
+	acme := tenantctx.WithTenant(context.Background(), "acme-corp")
+
+	sysResp, err := svc.CompactNamespace(sys, &CompactNamespaceRequest{Namespace: "tenant/acme-corp/docs"})
+	require.NoError(t, err)
+
+	_, err = svc.GetCompactionProgress(acme, &GetCompactionProgressRequest{OperationID: sysResp.OperationID})
+	require.Error(t, err)
+	_, err = svc.GetCompactionProgress(acme, &GetCompactionProgressRequest{OperationID: sysResp.OperationID, Namespace: "docs"})
+	require.Error(t, err)
+	_, err = svc.GetCompactionProgress(acme, &GetCompactionProgressRequest{Namespace: "docs"})
+	require.Error(t, err)
+
+	resp, err := svc.GetCompactionProgress(sys, &GetCompactionProgressRequest{OperationID: sysResp.OperationID})
+	require.NoError(t, err)
+	assert.Equal(t, "tenant/acme-corp/docs", resp.Namespace)
+
+	acmeResp, err := svc.CompactNamespace(acme, &CompactNamespaceRequest{Namespace: "docs"})
+	require.NoError(t, err)
+
+	resp, err = svc.GetCompactionProgress(acme, &GetCompactionProgressRequest{Namespace: "docs"})
+	require.NoError(t, err)
+	assert.Equal(t, acmeResp.OperationID, resp.OperationID)
+	assert.Equal(t, "docs", resp.Namespace)
+
+	_, err = svc.GetCompactionProgress(sys, &GetCompactionProgressRequest{OperationID: acmeResp.OperationID})
+	require.Error(t, err)
+	resp, err = svc.GetCompactionProgress(sys, &GetCompactionProgressRequest{Namespace: "tenant/acme-corp/docs"})
+	require.NoError(t, err)
+	assert.Equal(t, sysResp.OperationID, resp.OperationID)
+
+	svc.jobMu.RLock()
+	defer svc.jobMu.RUnlock()
+	assert.Equal(t, "", svc.compactionJobs[sysResp.OperationID].Tenant)
+	assert.Equal(t, "acme-corp", svc.compactionJobs[acmeResp.OperationID].Tenant)
+}
+
+// The rebuild counterpart: a system job on "tenant/acme-corp/docs" is not
+// acme-corp's job on "docs", by ID or by namespace, nor the reverse.
+func TestGetRebuildProgress_SystemNamespaceIsNotTenantJob(t *testing.T) {
+	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
+	sys := tenantctx.WithSystem(context.Background())
+	acme := tenantctx.WithTenant(context.Background(), "acme-corp")
+
+	svc.jobMu.Lock()
+	svc.rebuildJobs["sys"] = &RebuildJobState{JobID: "sys", Namespace: "tenant/acme-corp/docs", Tenant: "", InProgress: true, StartedAt: time.Now()}
+	svc.jobMu.Unlock()
+
+	_, err := svc.GetRebuildProgress(acme, &GetRebuildProgressRequest{JobID: "sys"})
+	require.Error(t, err)
+	_, err = svc.GetRebuildProgress(acme, &GetRebuildProgressRequest{JobID: "sys", Namespace: "docs"})
+	require.Error(t, err)
+	_, err = svc.GetRebuildProgress(acme, &GetRebuildProgressRequest{Namespace: "docs"})
+	require.Error(t, err)
+	_, err = svc.GetRebuildProgress(sys, &GetRebuildProgressRequest{JobID: "sys"})
+	require.NoError(t, err)
+
+	svc.jobMu.Lock()
+	svc.rebuildJobs["acme"] = &RebuildJobState{JobID: "acme", Namespace: "tenant/acme-corp/docs", Tenant: "acme-corp", InProgress: true, StartedAt: time.Now().Add(time.Second)}
+	svc.jobMu.Unlock()
+
+	resp, err := svc.GetRebuildProgress(acme, &GetRebuildProgressRequest{Namespace: "docs"})
+	require.NoError(t, err)
+	assert.Equal(t, "acme", resp.JobID)
+	_, err = svc.GetRebuildProgress(sys, &GetRebuildProgressRequest{JobID: "acme"})
+	require.Error(t, err)
+	resp, err = svc.GetRebuildProgress(sys, &GetRebuildProgressRequest{Namespace: "tenant/acme-corp/docs"})
+	require.NoError(t, err)
+	assert.Equal(t, "sys", resp.JobID, "the newer acme job is not the system's")
+}
+
+func TestRebuildIndex_RecordsOwningTenant(t *testing.T) {
+	svc, storage, _, _ := newVecSvcWithSDK(t, "tenant/acme-corp/test-ns", 3)
+	storage.scanNamespaceFn = func(_ context.Context, _ string, _ *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
+		return nil, nil
+	}
+	resp, err := svc.RebuildIndex(tenantctx.WithTenant(context.Background(), "acme-corp"), &RebuildIndexRequest{Namespace: "test-ns", Async: false})
+	require.NoError(t, err)
+
+	svc.jobMu.RLock()
+	defer svc.jobMu.RUnlock()
+	require.Contains(t, svc.rebuildJobs, resp.JobID)
+	assert.Equal(t, "acme-corp", svc.rebuildJobs[resp.JobID].Tenant)
 }
