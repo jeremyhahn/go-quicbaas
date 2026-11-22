@@ -20,6 +20,8 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"testing"
@@ -168,6 +170,118 @@ func TestReapGuard_NotStartedSignalsThroughTheHandle(t *testing.T) {
 	require.ErrorIs(t, err, sentinel)
 	require.Equal(t, []os.Signal{unix.SIGKILL}, sent)
 	require.Empty(t, rec.recorded())
+}
+
+func TestNewExecWorkload_CreatesASubCgroupUnderTheBase(t *testing.T) {
+	base := t.TempDir()
+
+	dir, err := newExecWorkload(base)
+	require.NoError(t, err)
+	require.DirExists(t, dir)
+	require.Equal(t, base, filepath.Dir(dir))
+	require.True(t, strings.HasPrefix(filepath.Base(dir), execWorkloadPrefix), dir)
+
+	other, err := newExecWorkload(base)
+	require.NoError(t, err)
+	require.NotEqual(t, dir, other)
+
+	none, err := newExecWorkload("")
+	require.NoError(t, err)
+	require.Empty(t, none)
+
+	_, err = newExecWorkload(filepath.Join(base, "missing"))
+	require.Error(t, err)
+}
+
+func TestLibcontainerProcess_KillTreeKillsTheWorkloadAfterTheLeaderIsReaped(t *testing.T) {
+	dir := t.TempDir()
+	kill := filepath.Join(dir, "cgroup.kill")
+	require.NoError(t, os.WriteFile(kill, nil, 0o600))
+
+	p := &libcontainerProcess{
+		process:  toLibcontainerProcess(processSpec{Args: []string{"/bin/true"}}, false),
+		workload: dir,
+	}
+	// Cancellation after Wait has reaped the leader.
+	p.guard.reaped = true
+
+	require.NoError(t, p.KillTree())
+	got, err := os.ReadFile(kill)
+	require.NoError(t, err)
+	require.Equal(t, "1", string(got))
+
+	require.NoError(t, os.WriteFile(kill, nil, 0o600))
+	require.NoError(t, p.Release())
+	got, err = os.ReadFile(kill)
+	require.NoError(t, err)
+	require.Equal(t, "1", string(got))
+}
+
+func TestLibcontainerProcess_KillTreeWithoutCgroupKillFallsBackToThePIDWalk(t *testing.T) {
+	for _, workload := range []string{t.TempDir(), filepath.Join(t.TempDir(), "gone")} {
+		p := &libcontainerProcess{
+			process:  toLibcontainerProcess(processSpec{Args: []string{"/bin/true"}}, false),
+			workload: workload,
+		}
+		p.guard.reaped = true
+
+		// The guard signals no reaped PID.
+		require.NoError(t, p.KillTree(), workload)
+	}
+}
+
+func TestKillWorkload_StopsTheDescendantsOfAReapedLeader(t *testing.T) {
+	if os.Geteuid() != 0 || !cgroups.IsCgroup2UnifiedMode() {
+		t.Skip("needs root on the cgroup v2 unified hierarchy")
+	}
+	own, err := cgroupDirForPID(os.Getpid())
+	if err != nil {
+		t.Skipf("own cgroup: %v", err)
+	}
+	dir, err := newExecWorkload(own)
+	if err != nil {
+		t.Skipf("sub-cgroup: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "cgroup.kill")); err != nil {
+		_ = unix.Rmdir(dir)
+		t.Skipf("no cgroup.kill: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = killWorkload(dir)
+		deadline := time.Now().Add(5 * time.Second)
+		for unix.Rmdir(dir) != nil && time.Now().Before(deadline) {
+			time.Sleep(50 * time.Millisecond)
+		}
+	})
+
+	fd, err := os.OpenFile(dir, unix.O_PATH|unix.O_DIRECTORY, 0)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = fd.Close() })
+	marker := filepath.Join(t.TempDir(), "late")
+
+	cmd := exec.Command("sh", "-c", "(sleep 1; touch \"$1\") & exit", "sh", marker)
+	cmd.SysProcAttr = &syscall.SysProcAttr{UseCgroupFD: true, CgroupFD: int(fd.Fd())}
+	// The leader exits at once and is reaped; its subshell keeps running.
+	require.NoError(t, cmd.Run())
+
+	procs := filepath.Join(dir, "cgroup.procs")
+	got, err := os.ReadFile(procs)
+	require.NoError(t, err)
+	require.NotEmpty(t, strings.TrimSpace(string(got)))
+
+	p := &libcontainerProcess{
+		process:  toLibcontainerProcess(processSpec{Args: []string{"/bin/true"}}, false),
+		workload: dir,
+	}
+	p.guard.reaped = true
+	require.NoError(t, p.KillTree())
+
+	require.Eventually(t, func() bool {
+		got, err := os.ReadFile(procs)
+		return err == nil && strings.TrimSpace(string(got)) == ""
+	}, 5*time.Second, 20*time.Millisecond)
+	time.Sleep(1500 * time.Millisecond)
+	require.NoFileExists(t, marker)
 }
 
 // A reclaim retried after an earlier one destroyed the engine state, or of a

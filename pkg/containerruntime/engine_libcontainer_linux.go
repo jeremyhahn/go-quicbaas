@@ -16,11 +16,14 @@
 package containerruntime
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -30,6 +33,7 @@ import (
 	// devices fills the cgroup managers' device hooks in its init. specconv
 	// gives every container default device rules, which both managers refuse
 	// while the hooks are nil.
+	"github.com/opencontainers/cgroups"
 	_ "github.com/opencontainers/cgroups/devices"
 	"github.com/opencontainers/runc/libcontainer"
 	"github.com/opencontainers/runc/libcontainer/specconv"
@@ -171,8 +175,22 @@ func (e *libcontainerEngine) run(id string, spec processSpec, init bool) (contai
 	}
 
 	process := toLibcontainerProcess(spec, init)
+	var workload string
+	if !init {
+		// An exec runs in its own sub-cgroup, so its descendants can be
+		// killed after its leader has exited and been reaped. Without one
+		// it runs in the container's cgroup.
+		if dir, err := newExecWorkload(execCgroupBase(container)); err == nil && dir != "" {
+			workload = dir
+			process.SubCgroupPaths = map[string]string{"": filepath.Base(dir)}
+		}
+	}
 	if !spec.TTY {
-		return runPiped(container, process)
+		p, err := runPiped(container, process, workload)
+		if err != nil {
+			removeExecWorkload(workload)
+		}
+		return p, err
 	}
 
 	parent, child, err := utils.NewSockPair("console")
@@ -184,6 +202,7 @@ func (e *libcontainerEngine) run(id string, spec processSpec, init bool) (contai
 	runErr := container.Run(process)
 	childErr := child.Close()
 	if runErr != nil {
+		removeExecWorkload(workload)
 		return nil, errors.Join(runErr, childErr, parent.Close())
 	}
 
@@ -191,7 +210,7 @@ func (e *libcontainerEngine) run(id string, spec processSpec, init bool) (contai
 	if err := errors.Join(recvErr, childErr, parent.Close()); err != nil {
 		return nil, errors.Join(err, killProcess(process), closeIfSet(console))
 	}
-	return &libcontainerProcess{process: process, console: console}, nil
+	return &libcontainerProcess{process: process, console: console, workload: workload}, nil
 }
 
 // toLibcontainerProcess converts a processSpec. A TTY process gets its stdio
@@ -308,6 +327,11 @@ type libcontainerProcess struct {
 
 	// guard serializes Wait's reap with KillTree's signalling by PID.
 	guard reapGuard
+
+	// workload is the exec's own cgroup v2 sub-cgroup, or "" when it runs
+	// in its container's cgroup. Every descendant stays in it however it
+	// is reparented, so KillTree reaches them after the leader is reaped.
+	workload string
 }
 
 // outputPipe is a pipe the runtime owns between a process and an output
@@ -318,9 +342,10 @@ type outputPipe struct {
 }
 
 // runPiped runs a non-TTY process, its output writers that are not files
-// fed through pipes the runtime owns.
-func runPiped(container *libcontainer.Container, process *libcontainer.Process) (containerProcess, error) {
-	p := &libcontainerProcess{process: process}
+// fed through pipes the runtime owns. When workload is set, the process
+// runs in that sub-cgroup.
+func runPiped(container *libcontainer.Container, process *libcontainer.Process, workload string) (containerProcess, error) {
+	p := &libcontainerProcess{process: process, workload: workload}
 	var err error
 	if process.Stdout, err = p.pipeOutput(process.Stdout); err == nil {
 		process.Stderr, err = p.pipeOutput(process.Stderr)
@@ -395,6 +420,7 @@ func (p *libcontainerProcess) Wait() (int, error) {
 	// them, or Release has.
 	p.copies.Wait()
 	err = errors.Join(err, p.closeOutputs())
+	removeExecWorkload(p.workload)
 	if state == nil {
 		return -1, err
 	}
@@ -417,10 +443,20 @@ func (p *libcontainerProcess) Signal(sig os.Signal) error {
 }
 
 // KillTree kills the process and every descendant it has, so none of them
-// keeps the process's output pipes open after it dies. A leader Wait has
-// already reaped is never signalled by PID, since the host may have reused
-// it; what the leader left behind dies with its container.
+// keeps the process's output pipes open after it dies. With a workload
+// sub-cgroup, the kernel kills everything in it through cgroup.kill, the
+// leader's orphans included, even after Wait has reaped the leader. Without
+// one, it walks the tree by PID only while the leader is unreaped: a leader
+// Wait has already reaped is never signalled by PID, since the host may have
+// reused it.
 func (p *libcontainerProcess) KillTree() error {
+	if p.workload != "" {
+		err := killWorkload(p.workload)
+		if err == nil || !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		// No cgroup.kill (Linux before 5.14), or the sub-cgroup is gone.
+	}
 	pid, err := p.process.Pid()
 	if err != nil {
 		pid = 0
@@ -482,8 +518,8 @@ func (g *reapGuard) reap(pid int, wait func() (*os.ProcessState, error)) (*os.Pr
 
 // killTree kills pid and its descendants while pid is still unreaped. A
 // reaped leader is not signalled at all, since its PID may be reused;
-// what it left behind dies with its container. A process that never
-// started (pid <= 0) is signalled through its handle.
+// an exec's workload sub-cgroup reaches what it left behind (KillTree). A
+// process that never started (pid <= 0) is signalled through its handle.
 func (g *reapGuard) killTree(pid int, signal func(os.Signal) error) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -508,6 +544,61 @@ func waitExited(pid int) error {
 		if !errors.Is(err, unix.EINTR) {
 			return err
 		}
+	}
+}
+
+// execWorkloadPrefix starts the name of each exec's sub-cgroup.
+const execWorkloadPrefix = "exec-"
+
+// execCgroupBase returns the container's cgroup v2 directory, or "" when
+// the host is not on the unified hierarchy or the container has none.
+func execCgroupBase(container *libcontainer.Container) string {
+	if !cgroups.IsCgroup2UnifiedMode() {
+		return ""
+	}
+	state, err := container.State()
+	if err != nil {
+		return ""
+	}
+	return state.CgroupPaths[""]
+}
+
+// newExecWorkload creates one exec's sub-cgroup under base, the
+// container's cgroup v2 directory, and returns its path. An empty base is
+// no workload and no error.
+func newExecWorkload(base string) (string, error) {
+	if base == "" {
+		return "", nil
+	}
+	var name [8]byte
+	if _, err := rand.Read(name[:]); err != nil {
+		return "", err
+	}
+	dir := filepath.Join(base, execWorkloadPrefix+hex.EncodeToString(name[:]))
+	if err := os.Mkdir(dir, 0o750); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
+// killWorkload kills every process in the cgroup dir through cgroup.kill.
+// The kernel walks the cgroup itself, so a process reparented away from
+// the exec's leader is killed too, and no PID is signalled.
+func killWorkload(dir string) error {
+	f, err := os.OpenFile(filepath.Join(dir, "cgroup.kill"), os.O_WRONLY, 0)
+	if err != nil {
+		return err
+	}
+	_, writeErr := f.WriteString("1")
+	return errors.Join(writeErr, f.Close())
+}
+
+// removeExecWorkload removes an exec's sub-cgroup once nothing runs in it.
+// One that still holds a process stays until its container's Destroy,
+// which removes sub-cgroups with the container's cgroup.
+func removeExecWorkload(dir string) {
+	if dir != "" {
+		_ = unix.Rmdir(dir)
 	}
 }
 
