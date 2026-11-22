@@ -379,28 +379,48 @@ func (kb *XKMSBackend) GetKeyMetadata(ctx context.Context, keyID string) (*KeyMe
 		return nil, ErrBackendNotReady
 	}
 
-	// Check cache first
+	// Check cache first. A cached entry is checked against the ownership
+	// record too: the material under its identity may have been replaced
+	// since it was cached.
 	kb.mu.RLock()
-	if meta, ok := kb.metadata[keyID]; ok {
-		kb.mu.RUnlock()
+	meta, ok := kb.metadata[keyID]
+	kb.mu.RUnlock()
+	if ok {
+		if err := kb.checkOwnedXKMSKey(ctx, keyID, meta.Algorithm); err != nil {
+			if stderrors.Is(err, ErrKeyNotFound) {
+				kb.mu.Lock()
+				delete(kb.metadata, keyID)
+				kb.mu.Unlock()
+				return nil, ErrKeyNotFound
+			}
+			return nil, err
+		}
 		return meta, nil
 	}
-	kb.mu.RUnlock()
 
 	xkmsName := xkmsKeyName(keyID)
 
 	// Probe every algorithm this backend supports, signing formats first,
 	// since the algorithm is not known without the cached metadata.
+	// A probe read error that does not confirm absence leaves the key's state
+	// unknown; it is kept so a failed read is never reported as "not found".
 	var foundAlgorithm string
+	var probeErr error
 	for _, p := range kb.xkmsKeyProbes(ctx, keyID) {
 		var rsaBits int
 		if p.symmetric {
 			if _, err := xkms.GetSymmetricKey(ctx, p.kid); err != nil {
+				if !isXKMSMaterialAbsent(err) && probeErr == nil {
+					probeErr = err
+				}
 				continue
 			}
 		} else {
 			signer, err := xkms.SignerByID(ctx, p.kid)
 			if err != nil {
+				if !isXKMSMaterialAbsent(err) && probeErr == nil {
+					probeErr = err
+				}
 				continue
 			}
 			if pub, ok := signer.Public().(*rsa.PublicKey); ok {
@@ -410,7 +430,7 @@ func (kb *XKMSBackend) GetKeyMetadata(ctx context.Context, keyID string) (*KeyMe
 		// A key under an encoded name that another writer stored (the
 		// node's native go-xkms service) is not this backend's key; only a
 		// recorded identity resolves, so probe the next format.
-		owned, err := kb.ownsXKMSKey(ctx, xkmsName, p.kid)
+		owned, err := kb.ownsXKMSKey(ctx, xkmsName, p.kid, p.symmetric)
 		if err != nil {
 			return nil, err
 		}
@@ -423,6 +443,10 @@ func (kb *XKMSBackend) GetKeyMetadata(ctx context.Context, keyID string) (*KeyMe
 			foundAlgorithm = "RSA-" + strconv.Itoa(rsaBits)
 		}
 		break
+	}
+
+	if foundAlgorithm == "" && probeErr != nil {
+		return nil, fmt.Errorf("XKMSBackend.GetKeyMetadata: read key %q: %w", keyID, probeErr)
 	}
 
 	// The legacy lookups by bare name cannot name a key identity, so an
@@ -453,7 +477,7 @@ func (kb *XKMSBackend) GetKeyMetadata(ctx context.Context, keyID string) (*KeyMe
 	}
 
 	// Key exists but we don't have metadata - create minimal metadata
-	meta := &KeyMetadata{
+	meta = &KeyMetadata{
 		KeyID:     keyID,
 		Algorithm: foundAlgorithm,
 		State:     KeyStateEnabled,
@@ -491,7 +515,7 @@ func (kb *XKMSBackend) ListKeys(ctx context.Context, prefix string, limit int) (
 		// A key under an encoded name is listed only when its full identity
 		// (backend, type, algorithm, name) is recorded: another writer's key
 		// cannot be reached through this backend, so it is not listed either.
-		owned, err := kb.ownsXKMSKey(ctx, attrs.CN, kb.xkmsKeyIdentity(attrs))
+		owned, err := kb.ownsXKMSKey(ctx, attrs.CN, kb.xkmsKeyIdentity(attrs), attrs.SymmetricAlgorithm != "")
 		if err != nil {
 			return nil, "", err
 		}
@@ -528,8 +552,15 @@ func (kb *XKMSBackend) ListKeys(ctx context.Context, prefix string, limit int) (
 	}
 
 	// Also add keys from in-memory cache that weren't in xkms list
-	// This handles cases where xkms.ListKeys doesn't return all keys
+	// This handles cases where xkms.ListKeys doesn't return all keys.
+	// Candidates are copied under the lock and checked against their
+	// ownership records outside it, so a replaced key is never listed.
 	kb.mu.RLock()
+	type cachedKey struct {
+		keyID string
+		meta  *KeyMetadata
+	}
+	var cached []cachedKey
 	for keyID, meta := range kb.metadata {
 		if seen[keyID] {
 			continue
@@ -538,14 +569,23 @@ func (kb *XKMSBackend) ListKeys(ctx context.Context, prefix string, limit int) (
 		if prefix != "" && !strings.HasPrefix(keyID, prefix) {
 			continue
 		}
+		cached = append(cached, cachedKey{keyID: keyID, meta: meta})
+	}
+	kb.mu.RUnlock()
+	for _, c := range cached {
+		meta := c.meta
+		if err := kb.checkOwnedXKMSKey(ctx, c.keyID, meta.Algorithm); err != nil {
+			if stderrors.Is(err, ErrKeyNotFound) {
+				continue
+			}
+			return nil, "", err
+		}
 		result = append(result, meta)
 		// Apply limit
 		if limit > 0 && len(result) >= limit {
-			kb.mu.RUnlock()
 			return result, "", nil
 		}
 	}
-	kb.mu.RUnlock()
 
 	// No pagination cursor for now
 	return result, "", nil
@@ -567,6 +607,11 @@ func (kb *XKMSBackend) RotateKey(ctx context.Context, keyID string) (*KeyMetadat
 
 	if !exists {
 		return nil, ErrKeyNotFound
+	}
+	// The cached key must still be this backend's before a version of it is
+	// generated.
+	if err := kb.checkOwnedXKMSKey(ctx, keyID, meta.Algorithm); err != nil {
+		return nil, err
 	}
 
 	// Calculate new version
@@ -629,13 +674,16 @@ func (kb *XKMSBackend) buildVersionedKeyID(keyID string, version int) string {
 	return fmt.Sprintf("%s_v%d", keyID, version)
 }
 
-// checkVersionedXKMSKey refuses a versioned key identity this backend did not
-// record. The version a ciphertext names is caller input, so the "_v<n>" key
-// it selects must be one this backend created by rotation; native material
-// stored under that name is not this key's version.
-func (kb *XKMSBackend) checkVersionedXKMSKey(ctx context.Context, versionedKeyID, algorithm string) error {
-	attrs := kb.xkmsKeyAttributes(versionedKeyID, algorithm)
-	owned, err := kb.ownsXKMSKey(ctx, attrs.CN, kb.xkmsKeyIdentity(attrs))
+// checkOwnedXKMSKey refuses a key identity, derived from keyID and algorithm
+// taken from cached metadata, that this backend does not own: any identity,
+// versioned or not. Cached metadata outlives the material it describes, and
+// the version a ciphertext names is caller input, so the key it selects must
+// be one this backend wrote and whose ownership proof still verifies; native
+// material stored under that name is not this key. It returns ErrKeyNotFound
+// when the key is not owned, and an ownership read error unchanged.
+func (kb *XKMSBackend) checkOwnedXKMSKey(ctx context.Context, keyID, algorithm string) error {
+	attrs := kb.xkmsKeyAttributes(keyID, algorithm)
+	owned, err := kb.ownsXKMSKey(ctx, attrs.CN, kb.xkmsKeyIdentity(attrs), kb.isSymmetricAlgorithm(algorithm))
 	if err != nil {
 		return err
 	}
@@ -737,6 +785,26 @@ func (kb *XKMSBackend) DeleteKey(ctx context.Context, keyID string) error {
 		}
 	}
 
+	// A cached key is deleted only while its ownership proof verifies. Material
+	// that no longer matches belongs to another writer and is never deleted;
+	// its stale record no longer verifies and is released once the material is
+	// confirmed absent.
+	if exists {
+		owned, err := kb.ownsXKMSKey(ctx, attrs.CN, kb.xkmsKeyIdentity(attrs), attrs.SymmetricAlgorithm != "")
+		if err != nil {
+			return fmt.Errorf("XKMSBackend.DeleteKey: %w", err)
+		}
+		if !owned {
+			kb.mu.Lock()
+			delete(kb.metadata, keyID)
+			kb.mu.Unlock()
+			// No material is deleted. A record left by an earlier delete
+			// whose release failed is dropped once its material is
+			// confirmed absent, so that retry still completes.
+			return kb.releaseStaleXKMSKeyRecords(ctx, keyID)
+		}
+	}
+
 	// Delete from go-xkms using attributes.
 	if err := xkms.DeleteKey(ctx, attrs); err != nil {
 		if stderrors.Is(err, xkms.ErrKeyNotFound) || stderrors.Is(err, kctypes.ErrBackendKeyNotFound) {
@@ -776,11 +844,12 @@ func (kb *XKMSBackend) DeleteKey(ctx context.Context, keyID string) error {
 	return nil
 }
 
-// releaseStaleXKMSKeyRecords drops any ownership record left under keyID's
-// encoded name when no owned key material resolves: the record of a delete
-// whose material went but whose release failed. It returns nil when a record
-// was released (that delete is now complete) and ErrKeyNotFound when there
-// was none, or when the name is literal and carries no record.
+// releaseStaleXKMSKeyRecords drops the ownership records of keyID's encoded
+// name whose material is confirmed absent: the record of a delete whose
+// release failed. A record is released only after its material is confirmed
+// absent; a record whose material is present stays, and a material read error
+// is returned. It returns ErrKeyNotFound when no record was released, and for
+// a literal name.
 func (kb *XKMSBackend) releaseStaleXKMSKeyRecords(ctx context.Context, keyID string) error {
 	name := xkmsKeyName(keyID)
 	if _, ok := decodeXKMSKeyName(name); !ok {
@@ -788,6 +857,17 @@ func (kb *XKMSBackend) releaseStaleXKMSKeyRecords(ctx context.Context, keyID str
 	}
 	releasedAny := false
 	for _, p := range kb.xkmsKeyProbes(ctx, keyID) {
+		// Only a record whose material is confirmed absent is released.
+		// Present material is another writer's key, or one whose proof does
+		// not verify, and its record stays; a read error is returned because
+		// the material may be live.
+		absent, err := kb.xkmsMaterialAbsent(ctx, p.kid, p.symmetric)
+		if err != nil {
+			return fmt.Errorf("XKMSBackend.DeleteKey: read key %q: %w", keyID, err)
+		}
+		if !absent {
+			continue
+		}
 		released, err := kb.releaseXKMSKeyIdentity(ctx, name, p.kid)
 		if err != nil {
 			return err
@@ -892,7 +972,7 @@ func (kb *XKMSBackend) Encrypt(ctx context.Context, keyID string, plaintext, aad
 		actualKeyID = keyID
 	} else {
 		actualKeyID = kb.buildVersionedKeyID(keyID, meta.Version)
-		if err := kb.checkVersionedXKMSKey(ctx, actualKeyID, meta.Algorithm); err != nil {
+		if err := kb.checkOwnedXKMSKey(ctx, actualKeyID, meta.Algorithm); err != nil {
 			return nil, api.NewKeyMetadataRetrievalError("XKMSBackend.Encrypt", err)
 		}
 	}
@@ -961,7 +1041,7 @@ func (kb *XKMSBackend) Decrypt(ctx context.Context, keyID string, ciphertext, aa
 		actualKeyID = keyID
 	} else {
 		actualKeyID = kb.buildVersionedKeyID(keyID, version)
-		if err := kb.checkVersionedXKMSKey(ctx, actualKeyID, meta.Algorithm); err != nil {
+		if err := kb.checkOwnedXKMSKey(ctx, actualKeyID, meta.Algorithm); err != nil {
 			return nil, api.NewKeyMetadataRetrievalError("XKMSBackend.Decrypt", err)
 		}
 	}

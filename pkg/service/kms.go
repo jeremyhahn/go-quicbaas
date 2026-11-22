@@ -503,7 +503,7 @@ func (k *kmsServiceImpl) GenerateKey(ctx context.Context, req *GenerateKeyReques
 		if k.metrics != nil {
 			k.metrics.errorsByType.With("kms_error", "generate_key").Inc()
 		}
-		return nil, WrapError(err, errors.ErrInternal, "kms.GenerateKey", "failed to generate key")
+		return nil, WrapError(err, managerErrorCode(err, errors.ErrInternal), "kms.GenerateKey", "failed to generate key")
 	}
 
 	// Convert manager response to service response
@@ -742,6 +742,17 @@ func importKeyErrorCode(err error) errors.ErrorCode {
 		}
 	}
 	return errors.ErrInternal
+}
+
+// managerErrorCode keeps the manager's invalid-input class, such as an
+// overlong key ID, so a client validation failure is not reported as an
+// internal error. Any other class gets fallback.
+func managerErrorCode(err error, fallback errors.ErrorCode) errors.ErrorCode {
+	var qbErr *errors.QBError
+	if stderrors.As(err, &qbErr) && qbErr.Code == errors.ErrInvalidInput {
+		return errors.ErrInvalidInput
+	}
+	return fallback
 }
 
 // GetKey retrieves key material or public key by key ID.
@@ -1150,7 +1161,7 @@ func (k *kmsServiceImpl) RotateKey(ctx context.Context, req *RotateKeyRequest) (
 		if stderrors.Is(err, kms.ErrKeyNotFound) {
 			return nil, WrapError(err, errors.ErrNotFound, "kms.RotateKey", "key not found")
 		}
-		return nil, WrapError(err, errors.ErrInternal, "kms.RotateKey", "failed to rotate key")
+		return nil, WrapError(err, managerErrorCode(err, errors.ErrInternal), "kms.RotateKey", "failed to rotate key")
 	}
 
 	newMetadata, ok := newResult.(*kms.KeyMetadata)

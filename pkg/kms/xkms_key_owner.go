@@ -14,7 +14,13 @@
 package kms
 
 import (
+	"bytes"
 	"context"
+	"crypto"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 
 	kctypes "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -25,9 +31,86 @@ import (
 // xkmsKeyOwnerRecordPrefix prefixes the key-store record that proves
 // XKMSBackend wrote a go-xkms key under an encoded name. It sits outside
 // go-xkms's "keys/" prefix, so go-xkms never lists a record as a key, and no
-// native go-xkms RPC writes raw store records. The v2 record names the full
-// key identity; v1 records named only the go-xkms name.
-const xkmsKeyOwnerRecordPrefix = "quicbaas.xkms-key-owner.v2/"
+// native go-xkms RPC writes raw store records. The record names the full key
+// identity and, from v3 on, carries a proof bound to the key material (see
+// xkmsKeyOwnerProof). A v2 record holds no proof and is never read, so the key
+// it named is not owned.
+const xkmsKeyOwnerRecordPrefix = "quicbaas.xkms-key-owner.v3/"
+
+// xkmsKeyOwnerCheckPlaintext is the plaintext a symmetric key's ownership
+// proof encrypts.
+var xkmsKeyOwnerCheckPlaintext = []byte("quicbaas xkms key owner check v3")
+
+// xkmsKeyOwnerProof is the content of an ownership record. It binds the record
+// to the key material this backend wrote: a signing key's public-key SHA-256,
+// or a check value encrypted under a symmetric key with the record name as
+// additional data. Material stored again under the same identity, by any
+// writer, does not match it.
+type xkmsKeyOwnerProof struct {
+	PublicKeySHA256 string `json:"pk,omitempty"`
+	Check           []byte `json:"kcv,omitempty"`
+}
+
+// isXKMSMaterialAbsent reports whether err from a go-xkms key read confirms
+// that no material is stored under the identity. Any other error leaves the
+// material's state unknown.
+func isXKMSMaterialAbsent(err error) bool {
+	return errors.Is(err, kctypes.ErrBackendKeyNotFound) || errors.Is(err, kctypes.ErrStorageNotFound)
+}
+
+// xkmsMaterialAbsent reads the material stored under identity and reports
+// whether it is confirmed absent. A read error that is not a confirmed absence
+// is returned.
+func (kb *XKMSBackend) xkmsMaterialAbsent(ctx context.Context, identity string, symmetric bool) (bool, error) {
+	var err error
+	if symmetric {
+		_, err = xkms.GetSymmetricKey(ctx, identity)
+	} else {
+		_, err = xkms.SignerByID(ctx, identity)
+	}
+	if err == nil {
+		return false, nil
+	}
+	if isXKMSMaterialAbsent(err) {
+		return true, nil
+	}
+	return false, err
+}
+
+// xkmsPublicKeySHA256 returns the hex SHA-256 of signer's PKIX public key.
+func xkmsPublicKeySHA256(signer crypto.Signer) (string, error) {
+	der, err := x509.MarshalPKIXPublicKey(signer.Public())
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(der)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+// xkmsKeyOwnerProofFor computes the proof of the material currently stored
+// under identity, for the ownership record named record.
+func (kb *XKMSBackend) xkmsKeyOwnerProofFor(ctx context.Context, identity, record string, symmetric bool) (xkmsKeyOwnerProof, error) {
+	if !symmetric {
+		signer, err := xkms.SignerByID(ctx, identity)
+		if err != nil {
+			return xkmsKeyOwnerProof{}, err
+		}
+		fp, err := xkmsPublicKeySHA256(signer)
+		if err != nil {
+			return xkmsKeyOwnerProof{}, err
+		}
+		return xkmsKeyOwnerProof{PublicKeySHA256: fp}, nil
+	}
+	encrypted, err := xkms.Encrypt(ctx, identity, xkmsKeyOwnerCheckPlaintext, &kctypes.EncryptOptions{AdditionalData: []byte(record)})
+	if err != nil {
+		return xkmsKeyOwnerProof{}, err
+	}
+	check, err := kb.serializeEncryptedData(encrypted)
+	if err != nil {
+		return xkmsKeyOwnerProof{}, err
+	}
+	return xkmsKeyOwnerProof{Check: check}, nil
+}
 
 // xkmsKeyOwnerRecord returns the ownership record key for a go-xkms key
 // identity. The identity is the full go-xkms key ID,
@@ -63,38 +146,103 @@ func (e *XKMSKeyOwnershipError) Error() string {
 func (e *XKMSKeyOwnershipError) Unwrap() error { return e.Err }
 
 // ownsXKMSKey reports whether this backend may read the go-xkms key with the
-// given full identity, stored under name, as one of its keys. A literal name
-// (one that does not decode to a service key ID) needs no record, so legacy
-// and system keys behave as before. A key under an encoded name is this
-// backend's only when the ownership record of its full identity exists: the
-// node's native go-xkms service writes the same key store under any valid
-// literal name, including one shaped like an encoded tenant key name, and
-// go-xkms keeps distinct keys under one name by backend, type and algorithm.
-// A name-only record would vouch for another writer's key of a different
-// type or backend, so only the identity's record proves this backend wrote
-// that key.
-func (kb *XKMSBackend) ownsXKMSKey(ctx context.Context, name, identity string) (bool, error) {
+// given full identity, stored under name, as one of its keys. symmetric names
+// the identity's key type. A literal name (one that does not decode to a
+// service key ID) needs no record, so legacy and system keys behave as before.
+// A key under an encoded name is this backend's only when the ownership record
+// of its full identity exists and its proof verifies against the material
+// stored under that identity now: the node's native go-xkms service writes the
+// same key store under any valid literal name, including one shaped like an
+// encoded tenant key name, and go-xkms keeps distinct keys under one name by
+// backend, type and algorithm. The record proves the material this backend
+// wrote, not just the identity, so a key that native go-xkms deletes and
+// recreates under the same identity is not owned. A missing, unreadable or
+// non-matching proof means not owned; a material read error that is not a
+// confirmed absence is returned.
+func (kb *XKMSBackend) ownsXKMSKey(ctx context.Context, name, identity string, symmetric bool) (bool, error) {
 	if _, ok := decodeXKMSKeyName(name); !ok {
 		return true, nil
 	}
-	ok, err := kb.keyNames.Exists(ctx, xkmsKeyOwnerRecord(identity))
+	record := xkmsKeyOwnerRecord(identity)
+	ok, err := kb.keyNames.Exists(ctx, record)
 	if err != nil {
 		return false, &XKMSKeyOwnershipError{Op: "read", Name: identity, Err: err}
 	}
-	return ok, nil
+	if !ok {
+		return false, nil
+	}
+	raw, err := kb.keyNames.Get(ctx, record)
+	if err != nil {
+		if errors.Is(err, kctypes.ErrStorageNotFound) {
+			return false, nil
+		}
+		return false, &XKMSKeyOwnershipError{Op: "read", Name: identity, Err: err}
+	}
+	if len(raw) == 0 {
+		return false, nil
+	}
+	var proof xkmsKeyOwnerProof
+	if err := json.Unmarshal(raw, &proof); err != nil {
+		return false, nil
+	}
+	if !symmetric {
+		if proof.PublicKeySHA256 == "" {
+			return false, nil
+		}
+		signer, err := xkms.SignerByID(ctx, identity)
+		if err != nil {
+			if isXKMSMaterialAbsent(err) {
+				return false, nil
+			}
+			return false, &XKMSKeyOwnershipError{Op: "verify", Name: identity, Err: err}
+		}
+		fp, err := xkmsPublicKeySHA256(signer)
+		if err != nil {
+			return false, nil
+		}
+		return fp == proof.PublicKeySHA256, nil
+	}
+	if len(proof.Check) == 0 {
+		return false, nil
+	}
+	if _, err := xkms.GetSymmetricKey(ctx, identity); err != nil {
+		if isXKMSMaterialAbsent(err) {
+			return false, nil
+		}
+		return false, &XKMSKeyOwnershipError{Op: "verify", Name: identity, Err: err}
+	}
+	encrypted, err := kb.deserializeEncryptedData(proof.Check)
+	if err != nil {
+		return false, nil
+	}
+	plaintext, err := xkms.Decrypt(ctx, identity, encrypted, &kctypes.DecryptOptions{AdditionalData: []byte(record)})
+	if err != nil {
+		return false, nil
+	}
+	return bytes.Equal(plaintext, xkmsKeyOwnerCheckPlaintext), nil
 }
 
 // claimXKMSKey records that this backend wrote the key attrs describe, so it
 // resolves and lists as the service key ID its encoded name decodes to. The
 // record binds the full identity (backend, type, algorithm, name), not the
-// name alone, because go-xkms keeps distinct keys under one name. A literal
-// name needs no record.
+// name alone, because go-xkms keeps distinct keys under one name, and it holds
+// a proof of the material just written, so only that material verifies as
+// owned (see ownsXKMSKey). A literal name needs no record.
 func (kb *XKMSBackend) claimXKMSKey(ctx context.Context, attrs *kctypes.KeyAttributes) error {
 	if _, ok := decodeXKMSKeyName(attrs.CN); !ok {
 		return nil
 	}
 	identity := kb.xkmsKeyIdentity(attrs)
-	if err := kb.keyNames.Put(ctx, xkmsKeyOwnerRecord(identity), []byte("1")); err != nil {
+	record := xkmsKeyOwnerRecord(identity)
+	proof, err := kb.xkmsKeyOwnerProofFor(ctx, identity, record, attrs.SymmetricAlgorithm != "")
+	if err != nil {
+		return &XKMSKeyOwnershipError{Op: "write", Name: identity, Err: err}
+	}
+	value, err := json.Marshal(proof)
+	if err != nil {
+		return &XKMSKeyOwnershipError{Op: "write", Name: identity, Err: err}
+	}
+	if err := kb.keyNames.Put(ctx, record, value); err != nil {
 		return &XKMSKeyOwnershipError{Op: "write", Name: identity, Err: err}
 	}
 	return nil
