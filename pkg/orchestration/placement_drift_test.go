@@ -575,3 +575,66 @@ func TestSessionWorkSource_RefusesMalformedSessionRecords(t *testing.T) {
 		})
 	}
 }
+
+// Two daemons on one machine differ only in the port of their endpoint. On
+// 8faa2dbae1 the inventory and the work were keyed on that endpoint, so this
+// report saw three admissible hosts (other:9091, worker:9091, worker:9092),
+// counted the two sessions as two hosts and reported no finding while one
+// machine carried the whole role.
+func TestDriftReport_HostCountCountsHostsNotDaemonEndpoints(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	docker := []string{"docker"}
+	inventory, err := NewFleetInventory(&staticFleetRegistry{byTenant: map[string][]*FleetNode{"tenant-a": {
+		{ID: "n1", TenantID: "tenant-a", Host: "worker:9091", Capabilities: docker},
+		{ID: "n2", TenantID: "tenant-a", Host: "worker:9092", Capabilities: docker},
+		{ID: "n3", TenantID: "tenant-a", Host: "other:9091", Capabilities: docker},
+	}}})
+	if err != nil {
+		t.Fatalf("NewFleetInventory: %v", err)
+	}
+	sessions := NewInMemoryAgentStore()
+	put := func(id, host string) {
+		t.Helper()
+		record := &SessionRecord{SessionID: id, TenantID: "tenant-a", Backend: "review-bot", HostAffinity: host, Status: SessionStateActive}
+		if err := sessions.PutSession(ctx, record); err != nil {
+			t.Fatalf("PutSession: %v", err)
+		}
+	}
+	put("s1", "worker:9091")
+	put("s2", "worker:9092")
+	source, err := NewSessionWorkSource(sessions, func(*SessionRecord) string { return "review" })
+	if err != nil {
+		t.Fatalf("NewSessionWorkSource: %v", err)
+	}
+	store := newTestPlacementStore(t)
+	spec := &PlacementSpec{Name: "reviews", Role: "review", HostCount: 2, RequiredCapabilities: []string{"docker"}}
+	if _, err := store.DeclarePlacement(ctx, "tenant-a", spec); err != nil {
+		t.Fatalf("declare: %v", err)
+	}
+	reporter := mustDriftReporter(t, store, inventory, source)
+
+	report, err := reporter.ReportDrift(ctx, "tenant-a", "reviews")
+	if err != nil {
+		t.Fatalf("ReportDrift: %v", err)
+	}
+	if want := []string{"other", "worker"}; !reflect.DeepEqual(report.AdmissibleHosts, want) {
+		t.Fatalf("AdmissibleHosts = %v, want %v", report.AdmissibleHosts, want)
+	}
+	if report.ObservedWork != 2 {
+		t.Fatalf("ObservedWork = %d, want 2", report.ObservedWork)
+	}
+	want := DriftFinding{Kind: DriftHostCountUnderfilled, Field: "host_count", Remedy: DriftRemedy{Action: DriftRemedyOperatorDecision}}
+	if got := onlyFinding(t, report); !reflect.DeepEqual(got, want) {
+		t.Fatalf("finding = %+v, want %+v", got, want)
+	}
+
+	put("s2", "other:9091")
+	report, err = reporter.ReportDrift(ctx, "tenant-a", "reviews")
+	if err != nil {
+		t.Fatalf("ReportDrift: %v", err)
+	}
+	if !report.Clean() {
+		t.Fatalf("findings = %+v, want none with the work on worker and other", report.Findings)
+	}
+}

@@ -448,6 +448,13 @@ func (r *DriftReporter) ReportDrift(ctx context.Context, tenantID, name string) 
 	if err != nil {
 		return nil, err
 	}
+	// Work records the daemon endpoint it landed on; placement compares hosts.
+	hosted := make([]PlacementWork, len(work))
+	for i, w := range work {
+		w.Host = PlacementHostIdentity(w.Host)
+		hosted[i] = w
+	}
+	work = hosted
 	if err := checkPlacementWorkNameable(tenantID, spec.Role, work); err != nil {
 		return nil, err
 	}

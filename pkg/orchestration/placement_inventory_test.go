@@ -98,3 +98,66 @@ func TestFleetInventory_RegistryErrorsAndNilRegistry(t *testing.T) {
 		t.Fatalf("PlacementHosts = %v, want the registry's error", err)
 	}
 }
+
+func TestPlacementHostIdentity(t *testing.T) {
+	t.Parallel()
+	for address, want := range map[string]string{
+		"worker:9091":    "worker",
+		" worker:9091 ":  "worker",
+		"worker":         "worker",
+		"10.0.0.7:9091":  "10.0.0.7",
+		"[fd00::1]:9091": "fd00::1",
+		"[fd00::1]":      "fd00::1",
+		"fd00::1":        "fd00::1",
+		":9091":          "",
+		"":               "",
+	} {
+		if got := PlacementHostIdentity(address); got != want {
+			t.Errorf("PlacementHostIdentity(%q) = %q, want %q", address, got, want)
+		}
+	}
+}
+
+// A record's Host is the daemon's dialable host:port. On 8faa2dbae1 the
+// inventory grouped on it as-is, so worker:9091 and worker:9092 were two
+// hosts; they are one.
+func TestFleetInventory_GroupsDaemonEndpointsByHost(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	nodes := []*FleetNode{
+		{ID: "n1", TenantID: "tenant-a", Host: "worker:9091", Capabilities: []string{"docker"}},
+		{ID: "n2", TenantID: "tenant-a", Host: "worker:9092", Capabilities: []string{"gpu"}},
+		{ID: "n3", TenantID: "tenant-a", Host: "10.0.0.7:9091"},
+		{ID: "n4", TenantID: "tenant-a", Host: "[fd00::1]:9091"},
+	}
+	inventory, err := NewFleetInventory(&staticFleetRegistry{byTenant: map[string][]*FleetNode{"tenant-a": nodes}})
+	if err != nil {
+		t.Fatalf("NewFleetInventory: %v", err)
+	}
+	got, err := inventory.PlacementHosts(ctx, "tenant-a")
+	if err != nil {
+		t.Fatalf("PlacementHosts: %v", err)
+	}
+	want := []PlacementHost{
+		{Host: "10.0.0.7", NodeIDs: []string{"n3"}},
+		{Host: "fd00::1", NodeIDs: []string{"n4"}},
+		{Host: "worker", Capabilities: []string{"docker", "gpu"}, NodeIDs: []string{"n1", "n2"}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("PlacementHosts = %+v, want %+v", got, want)
+	}
+	if _, err := IndexPlacementHosts(got); err != nil {
+		t.Fatalf("IndexPlacementHosts: %v", err)
+	}
+
+	withPortOnly := append(append([]*FleetNode{}, nodes...), &FleetNode{ID: "n5", TenantID: "tenant-a", Host: ":9091"})
+	inventory, err = NewFleetInventory(&staticFleetRegistry{byTenant: map[string][]*FleetNode{"tenant-a": withPortOnly}})
+	if err != nil {
+		t.Fatalf("NewFleetInventory: %v", err)
+	}
+	_, err = inventory.PlacementHosts(ctx, "tenant-a")
+	var invalid *PlacementInventoryInvalidError
+	if !errors.As(err, &invalid) || invalid.NodeID != "n5" {
+		t.Fatalf("PlacementHosts = %v, want n5 refused as hostless", err)
+	}
+}

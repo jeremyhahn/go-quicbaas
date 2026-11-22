@@ -35,9 +35,16 @@ is the Raft cluster's word ([naming](architecture.md#naming)).
 daemon: who registered, which backend it serves, its capabilities, health and
 `MaxConcurrentJobs`. A spec is *desired* state written by an operator. The
 registry answers "what exists", the spec answers "where should this work be".
-A registry record is not a host: several records can name one `Host`, so
+A registry record is not a host: several records can sit on one machine, so
 placement reads the registry through an inventory adapter that groups records
-by `Host` before it compares anything (archive d40b48d1).
+by host before it compares anything (archive d40b48d1). The host is the host
+component of `FleetNode.Host`, which is a daemon's dialable host:port
+(`PlacementHostIdentity`), so daemons on one machine that differ only in port
+are one host. Session locations (`HostAffinity`, also a daemon endpoint) map
+through the same rule, and a spec's `hosts` name hosts, not endpoints: an
+entry with a port is refused. One machine enrolled once under an IP and once
+under a DNS name still counts as two hosts, because the registry holds no
+verified machine identity to join them.
 
 **Host affinity.** Today `WorkItem.HostAffinity` and `WithHostAffinity` /
 `WithHostAffinityStrict` (`pkg/orchestration/host_affinity.go`,
@@ -159,7 +166,7 @@ never mentions it.
 - **A duplicate host description is refused** (`PlacementInventoryAmbiguousError`).
   If two inventory entries describe one host, keeping the last picks a
   capability set at random, union over-credits and intersection
-  under-credits. Grouping records by `Host` happens in the adapter, before the
+  under-credits. Grouping records by host happens in the adapter, before the
   reporter sees them, so an ordinary multi-daemon host never trips this. Only
   a broken adapter does.
 - **Unnameable work is refused** (`PlacementWorkUnnameableError`, naming the

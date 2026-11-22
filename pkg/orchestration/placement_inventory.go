@@ -6,6 +6,7 @@ package orchestration
 import (
 	"context"
 	"errors"
+	"net"
 	"sort"
 	"strings"
 )
@@ -48,7 +49,8 @@ func IndexPlacementHosts(hosts []PlacementHost) (map[string]PlacementHost, error
 
 // FleetInventory is the PlacementInventory over the fleet registry. A
 // registry record is one enrolled daemon, and several can name one host, so
-// it groups the records by FleetNode.Host before anything compares them.
+// it groups the records by PlacementHostIdentity(FleetNode.Host), the host
+// without the daemon's port, before anything compares them.
 type FleetInventory struct {
 	registry FleetRegistry
 }
@@ -85,7 +87,7 @@ func groupFleetNodesByHost(tenantID string, nodes []*FleetNode) ([]PlacementHost
 		if node == nil {
 			continue
 		}
-		host := strings.TrimSpace(node.Host)
+		host := PlacementHostIdentity(node.Host)
 		if host == "" {
 			return nil, &PlacementInventoryInvalidError{TenantID: tenantID, NodeID: node.ID}
 		}
@@ -112,4 +114,22 @@ func groupFleetNodesByHost(tenantID string, nodes []*FleetNode) ([]PlacementHost
 	}
 	sort.Slice(hosts, func(i, j int) bool { return hosts[i].Host < hosts[j].Host })
 	return hosts, nil
+}
+
+// PlacementHostIdentity is the host an address names, which is how
+// placement tells hosts apart. A fleet record's Host and a session's
+// HostAffinity are a daemon's dialable host:port, and several daemons on
+// one machine differ only in the port, so the port is dropped. An address
+// with no port is the host itself, without IPv6 brackets. One machine
+// enrolled under two names (an IP and a DNS name) is still two hosts: the
+// registry holds no verified machine identity to join them.
+func PlacementHostIdentity(address string) string {
+	address = strings.TrimSpace(address)
+	if host, _, err := net.SplitHostPort(address); err == nil {
+		return host
+	}
+	if strings.HasPrefix(address, "[") && strings.HasSuffix(address, "]") {
+		return address[1 : len(address)-1]
+	}
+	return address
 }

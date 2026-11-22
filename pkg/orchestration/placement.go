@@ -63,7 +63,8 @@ type PlacementSpec struct {
 // Validate refuses a spec the store must not write: an unusable name or
 // class, and an empty or repeated host or capability. A repeat is refused
 // rather than collapsed, because it is the sign of an edit that meant
-// something else.
+// something else. A hosts entry must be a host, not a daemon endpoint
+// (host:port) or a bracketed address.
 func (s *PlacementSpec) Validate() error {
 	if s == nil {
 		return &PlacementSpecInvalidError{Field: "spec", Reason: "is required"}
@@ -76,6 +77,14 @@ func (s *PlacementSpec) Validate() error {
 	}
 	if err := validatePlacementList(s.Name, "hosts", s.Hosts); err != nil {
 		return err
+	}
+	for i, host := range s.Hosts {
+		if id := PlacementHostIdentity(host); id != host {
+			return &PlacementSpecInvalidError{
+				Name: s.Name, Field: "hosts[" + strconv.Itoa(i) + "]",
+				Reason: "names " + strconv.Quote(host) + ", not a host; name it " + strconv.Quote(id),
+			}
+		}
 	}
 	if err := validatePlacementList(s.Name, "required_capabilities", s.RequiredCapabilities); err != nil {
 		return err
