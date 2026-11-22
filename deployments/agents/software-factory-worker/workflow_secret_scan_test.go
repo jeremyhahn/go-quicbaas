@@ -26,7 +26,9 @@ import (
 const workerImageWorkflowPath = "../../../.github/workflows/worker-image.yml"
 
 // secretCheckLine is the fail-closed check the layer scan must run on
-// trivy's JSON report.
+// trivy's JSON report, as its own unconditional line at the top level of
+// the run script: exactly this text at column 0, not continued from the
+// previous line.
 const secretCheckLine = `bash deployments/agents/software-factory-worker/check-secret-findings.sh "$work/secrets.json" "$work/layers"`
 
 type secretScanWorkflow struct {
@@ -141,13 +143,30 @@ func secretScanProblems(raw []byte) []string {
 				}
 			}
 		}
-		if strings.Contains(l, secretCheckLine) {
-			if trivyIdx >= 0 && i > trivyIdx && checkIdx < 0 {
+		raw := strings.TrimRight(lines[i], " \t\r")
+		switch {
+		case raw == secretCheckLine:
+			prev := ""
+			for j := i - 1; j >= 0; j-- {
+				if strings.TrimSpace(lines[j]) != "" {
+					prev = strings.TrimRight(lines[j], " \t\r")
+					break
+				}
+			}
+			continued := false
+			for _, op := range []string{`\`, "&&", "||", "|"} {
+				if strings.HasSuffix(prev, op) {
+					continued = true
+					break
+				}
+			}
+			if continued {
+				add("step layer-scan runs check-secret-findings.sh as a continuation of the previous line: %q", prev)
+			} else if trivyIdx >= 0 && i > trivyIdx && checkIdx < 0 {
 				checkIdx = i
 			}
-			if strings.HasSuffix(l, "|| true") {
-				add("step layer-scan ignores the check's exit with || true")
-			}
+		case strings.Contains(l, "check-secret-findings.sh"):
+			add("step layer-scan runs check-secret-findings.sh in a form whose exit may not fail the step: %q", l)
 		}
 	}
 	if trivyIdx < 0 {
@@ -187,6 +206,8 @@ func TestSecretScanProblems_Mutations(t *testing.T) {
 
 	cases := []struct {
 		name, old, new, want string
+		// wantAlso, when set, is a second problem the case must report.
+		wantAlso string
 	}{
 		{
 			name: "check line dropped",
@@ -198,7 +219,38 @@ func TestSecretScanProblems_Mutations(t *testing.T) {
 			name: "check exit ignored",
 			old:  secretCheckLine,
 			new:  secretCheckLine + " || true",
-			want: "|| true",
+			want: "whose exit may not fail the step",
+		},
+		{
+			name:     "check commented out",
+			old:      indent + secretCheckLine + "\n",
+			new:      indent + "# " + secretCheckLine + "\n",
+			want:     "does not run check-secret-findings.sh on the report",
+			wantAlso: "whose exit may not fail the step",
+		},
+		{
+			name: "check masked with a trailing comment",
+			old:  secretCheckLine,
+			new:  secretCheckLine + " || true # tolerate findings",
+			want: "whose exit may not fail the step",
+		},
+		{
+			name: "check masked with colon",
+			old:  secretCheckLine,
+			new:  secretCheckLine + " || :",
+			want: "whose exit may not fail the step",
+		},
+		{
+			name: "check wrapped in a masked block",
+			old:  indent + secretCheckLine + "\n",
+			new:  indent + "{\n" + indent + "  " + secretCheckLine + "\n" + indent + "} || true\n",
+			want: "whose exit may not fail the step",
+		},
+		{
+			name: "check short-circuited by the previous line",
+			old:  indent + secretCheckLine + "\n",
+			new:  indent + "true ||\n" + indent + secretCheckLine + "\n",
+			want: "as a continuation of the previous line",
 		},
 		{
 			name: "image scan exits zero",
@@ -244,12 +296,21 @@ func TestSecretScanProblems_Mutations(t *testing.T) {
 				t.Fatalf("replacement %q found nothing in worker-image.yml", tc.old)
 			}
 			problems := secretScanProblems([]byte(mutated))
-			for _, p := range problems {
-				if strings.Contains(p, tc.want) {
-					return
+			for _, want := range []string{tc.want, tc.wantAlso} {
+				if want == "" {
+					continue
+				}
+				found := false
+				for _, p := range problems {
+					if strings.Contains(p, want) {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("want a problem containing %q, got %q", want, problems)
 				}
 			}
-			t.Fatalf("want a problem containing %q, got %q", tc.want, problems)
 		})
 	}
 }
