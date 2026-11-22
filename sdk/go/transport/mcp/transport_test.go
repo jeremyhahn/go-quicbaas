@@ -599,8 +599,11 @@ func TestOptions(t *testing.T) {
 		}
 		defer tr.Close()
 
-		if tr.client != customClient {
-			t.Error("expected custom HTTP client to be set")
+		if tr.client.Timeout != 60*time.Second {
+			t.Error("expected custom HTTP client's Timeout to be kept")
+		}
+		if customClient.Transport != nil {
+			t.Error("expected the caller's HTTP client Transport to be unchanged")
 		}
 	})
 
