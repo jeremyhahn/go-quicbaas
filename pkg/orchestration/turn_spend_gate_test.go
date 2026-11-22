@@ -732,6 +732,109 @@ func TestPendingConsumption_MatchingIsScopedToTheTenant(t *testing.T) {
 	}
 }
 
+// pendingRetryHarness leaves one failed usage record pending for a session
+// whose account is at 950 of its 1000-token cap, with the drainer held off and
+// the ledger ready to block. It returns the harness, the ledger, the tenant's
+// context, the session and the backend's turn counter.
+func pendingRetryHarness(t *testing.T) (*turnSpendHarness, *ctxWaitLedger, context.Context, string, *atomic.Int32) {
+	t.Helper()
+	harness := newTurnSpendHarness(t, true)
+	harness.service.pendingLedger.firstRetry = time.Hour
+	t.Cleanup(harness.service.pendingLedger.stopDrainer)
+	ledger := newCtxWaitLedger(harness.ledger)
+	harness.service.SetConsumptionLedger(ledger)
+	base := ContextWithTenant(context.Background(), "tenant-a")
+	sessionID := harness.spawn(t, base)
+	harness.spendAccount1(t, 950)
+
+	turns := &atomic.Int32{}
+	harness.backend.beforePrompt = func() { turns.Add(1) }
+
+	ledger.failing.Store(true)
+	if err := harness.prompt(base, sessionID); err != nil {
+		t.Fatalf("first turn = %v, want it admitted under the cap", err)
+	}
+	if got := harness.service.pendingLedger.size(); got != 1 {
+		t.Fatalf("pending entries = %d, want 1 — the failed write was dropped", got)
+	}
+	ledger.failing.Store(false)
+	ledger.blocking.Store(true)
+	return harness, ledger, base, sessionID, turns
+}
+
+func TestPromptSession_ACancelledPendingRetryEndsWithTheCaller(t *testing.T) {
+	harness, ledger, base, sessionID, turns := pendingRetryHarness(t)
+
+	ctx, cancel := context.WithCancel(base)
+	defer cancel()
+	result := make(chan error, 1)
+	go func() { result <- harness.prompt(ctx, sessionID) }()
+	select {
+	case <-ledger.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the turn never retried the pending entry")
+	}
+	cancel()
+
+	var err error
+	select {
+	case err = <-result:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the cancelled prompt kept retrying the pending entry")
+	}
+	if !stderrors.Is(err, context.Canceled) {
+		t.Errorf("cancelled turn = %v, want context.Canceled", err)
+	}
+	if stderrors.Is(err, ErrConsumptionPending) {
+		t.Errorf("cancelled turn = %v, want its cancellation, not a pending-consumption fault", err)
+	}
+	if _, class := concludeFailedJob(t, err); class == FaultConsumptionPending {
+		t.Errorf("cancelled turn classified %q, want it not requeued as consumption_pending", class)
+	}
+	if got := harness.service.pendingLedger.size(); got != 1 {
+		t.Errorf("pending entries = %d, want 1 — the entry stays for the drainer", got)
+	}
+	if got := turns.Load(); got != 1 {
+		t.Errorf("backend ran %d turns, want 1", got)
+	}
+
+	// The turn lock was released: the owner's next turn retries the entry,
+	// stores it, and the cap now sees 1100 of 1000.
+	ledger.blocking.Store(false)
+	err = harness.prompt(base, sessionID)
+	var exhausted *AccountQuotaExhaustedError
+	if !stderrors.As(err, &exhausted) {
+		t.Fatalf("turn after the cancelled retry = %v, want an *AccountQuotaExhaustedError", err)
+	}
+	if got := harness.service.pendingLedger.size(); got != 0 {
+		t.Errorf("pending entries = %d, want 0 after a successful retry", got)
+	}
+	if got := turns.Load(); got != 1 {
+		t.Errorf("backend ran %d turns, want 1", got)
+	}
+}
+
+func TestPromptSession_APendingRetryKeepsTheCallersDeadline(t *testing.T) {
+	harness, _, base, sessionID, _ := pendingRetryHarness(t)
+
+	ctx, cancel := context.WithTimeout(base, 300*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	err := harness.prompt(ctx, sessionID)
+	if elapsed := time.Since(start); elapsed >= 3*time.Second {
+		t.Errorf("the pending retry ran %v past a 300ms deadline", elapsed)
+	}
+	if !stderrors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("expired turn = %v, want context.DeadlineExceeded", err)
+	}
+	if stderrors.Is(err, ErrConsumptionPending) {
+		t.Errorf("expired turn = %v, want its deadline, not a pending-consumption fault", err)
+	}
+	if got := harness.service.pendingLedger.size(); got != 1 {
+		t.Errorf("pending entries = %d, want 1 — the entry stays for the drainer", got)
+	}
+}
+
 // TestPromptSession_APendingEntryStaysVisibleToASessionSharingItsAccount
 // holds session a's retry of its pending entry inside the ledger write and
 // prompts session b on the same account meanwhile: b must still see the

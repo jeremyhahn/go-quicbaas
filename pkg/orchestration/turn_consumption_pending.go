@@ -276,7 +276,10 @@ func (s *agentServiceImpl) recordLedgerEntry(ctx context.Context, entry Consumpt
 // retries the same entries on its own schedule; whichever write lands first
 // removes the entry. Only the session's own tenant's entries are retried, and
 // a caller of another tenant is refused as *SessionNotFoundError before any
-// retry.
+// retry. The retry runs on the caller's ctx and holds the session's turn lock,
+// so it ends with the caller: a cancelled or expired ctx stops it, leaves the
+// entries it did not store pending for the drainer, and is returned as
+// ctx.Err().
 func (s *agentServiceImpl) flushPendingConsumption(ctx context.Context, sessionID string) error {
 	if s.ledger == nil || sessionID == "" {
 		return nil
@@ -294,9 +297,15 @@ func (s *agentServiceImpl) flushPendingConsumption(ctx context.Context, sessionI
 	if len(pending) == 0 {
 		return nil
 	}
-	failed, lastErr := s.retryPendingEntries(context.WithoutCancel(ctx), pending)
+	failed, lastErr := s.retryPendingEntries(ctx, pending)
 	if failed == 0 {
 		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		// The caller went away or ran out of time: the turn ends with its
+		// own cancellation, not a pending-consumption fault. The entries
+		// not stored stay pending for the drainer.
+		return err
 	}
 	return &ConsumptionPendingError{SessionID: sessionID, AccountID: accountID, Pending: failed, Err: lastErr}
 }
