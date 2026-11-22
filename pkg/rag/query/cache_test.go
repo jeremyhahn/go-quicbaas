@@ -434,16 +434,17 @@ func TestHandler_cleanupLoop(t *testing.T) {
 
 	h, err := NewHandler(newMockEmbedder(), newMockSearcher(), config)
 	require.NoError(t, err)
+	// Close waits for the loop to return; registered first so a failed
+	// assertion cannot leak the cleanup goroutine.
+	t.Cleanup(func() { assert.NoError(t, h.Close()) })
 
+	// The loop runs from construction, so it may remove the expired entry
+	// before any read here: only its eventual removal is asserted.
 	cache := h.(*handler).cache
 	cache.Set("expired", &Response{Query: "expired"}, -time.Minute)
-	require.Equal(t, 1, cache.Stats().Size)
 
 	require.Eventually(t, func() bool { return cache.Stats().Size == 0 },
 		5*time.Second, time.Millisecond, "cleanup loop never removed the expired entry")
-
-	// Close waits for the loop to return.
-	assert.NoError(t, h.Close())
 }
 
 // TestHandler_cleanupLoop_WithoutCache tests cleanup loop when cache is disabled.
