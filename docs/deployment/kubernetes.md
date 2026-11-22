@@ -27,6 +27,18 @@ no Helm chart.
   claims 20Gi.
 - A CNI that enforces NetworkPolicy, if you rely on `networkpolicy.yaml`.
 - Access to `ghcr.io/jeremyhahn/quicbaasd`.
+- A container runtime that gives each container an `RLIMIT_MEMLOCK` of at
+  least 3 MiB. The daemon locks its secrets in memory and sizes that budget as
+  the limit minus 2 MiB of headroom (the full default budget when the limit is
+  unlimited), and refuses to start when less than a 1 MiB budget remains:
+  2 MiB of headroom plus the 1 MiB minimum is the 3 MiB floor. Many runtimes
+  default to 64 KiB, which puts every replica into `CrashLoopBackOff`, so set
+  the runtime's default memlock ulimit (for example containerd's or CRI-O's
+  default ulimits) on every node. Check it with
+  `kubectl -n quicbaas exec quicbaas-0 -- sh -c 'ulimit -l'`: the value is in
+  KiB, so it must be at least 3072, or `unlimited`. A pod below the floor
+  logs `RLIMIT_MEMLOCK of <n> bytes leaves less than the 1048576-byte minimum
+  budget after 2097152 bytes of headroom`.
 
 ## Ports
 
@@ -167,6 +179,10 @@ first, and waits for each to be ready. The PDB holds the quorum throughout.
 
 - The pods run as uid/gid 1000, non-root, with a read-only root filesystem, all
   capabilities dropped, and the `RuntimeDefault` seccomp profile.
+- Because the pods drop all capabilities and the namespace enforces the
+  restricted Pod Security level, `IPC_LOCK` cannot be granted. The memlock
+  limit comes from the node's container runtime; see the `RLIMIT_MEMLOCK`
+  floor in [Prerequisites](#prerequisites).
 - The Secrets mount with mode `0440`, readable through `fsGroup: 1000`.
 - The data at rest is sealed, and auth is on (`seal.enabled`, `auth.enabled`).
 - Narrow the client ingress rule in `networkpolicy.yaml` to the namespaces

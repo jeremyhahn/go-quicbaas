@@ -337,6 +337,18 @@ list, in `id=host:port` form; each node names itself with `node_id` and the
 address it advertises with `raft_address`. Raft runs over QUIC (UDP) with
 mutual TLS, so every node carries its own certificate from one cluster CA.
 
+Every founder must also list the other two founders' Raft identities in
+`member_identities`, as `<node_id>=spki:<sha256>`: the SHA-256, in hex, of
+each founder certificate's SubjectPublicKeyInfo. The node derives its own
+identity from its certificate. Without the other founders' identities the
+cluster refuses to bootstrap. Derive them from the certificates; on node 1:
+
+```bash
+spki() { openssl x509 -in "$1" -noout -pubkey |
+  openssl pkey -pubin -outform DER | sha256sum | cut -d' ' -f1; }
+printf '2=spki:%s\n3=spki:%s\n' "$(spki node2.crt)" "$(spki node3.crt)"
+```
+
 ```yaml
 raft:
   node_id: 1                     # 2 and 3 on the other nodes
@@ -346,6 +358,9 @@ raft:
     - "1=node1.example.com:63000"
     - "2=node2.example.com:63000"
     - "3=node3.example.com:63000"
+  member_identities:            # the other founders; node 2 lists 1 and 3
+    - "2=spki:<sha256 of node2.crt SubjectPublicKeyInfo>"
+    - "3=spki:<sha256 of node3.crt SubjectPublicKeyInfo>"
   mutual_tls: true
   tls_ca_file: /etc/quicbaas/raft-tls/ca.crt
   tls_cert_file: /etc/quicbaas/raft-tls/node1.crt
@@ -358,6 +373,7 @@ through the leader; it never bootstraps.
 - [ ] Every node runs the same go-quicbaas release tag
 - [ ] `deployment_id` identical, and `node_id` unique, on every node
 - [ ] `join_addresses` identical on every node and lists all three members
+- [ ] member_identities on every founder lists the other two founders' spki identities
 - [ ] UDP 63000 open between the nodes only
 - [ ] Per-node Raft certificates issued by one cluster CA
 
@@ -907,6 +923,9 @@ raft:
     - "1=node1.example.com:63000"
     - "2=node2.example.com:63000"
     - "3=node3.example.com:63000"
+  member_identities:  # Change per node: the other two founders
+    - "2=spki:<sha256 of node2.crt SubjectPublicKeyInfo>"
+    - "3=spki:<sha256 of node3.crt SubjectPublicKeyInfo>"
   mutual_tls: true
   tls_ca_file: /etc/quicbaas/certs/ca.crt
   tls_cert_file: /etc/quicbaas/certs/node1.crt  # Change per node

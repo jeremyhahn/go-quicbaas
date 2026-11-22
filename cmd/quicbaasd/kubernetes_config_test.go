@@ -15,6 +15,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -99,4 +100,16 @@ func TestKubernetesReplicaLoadsAsRaftNode2(t *testing.T) {
 			t.Errorf("validate %s: %s", e.Field, e.Message)
 		}
 	}
+}
+
+// TestKubernetesGuideStatesTheMemlockFloor pins the RLIMIT_MEMLOCK floor the
+// Kubernetes guide states to the daemon's own numbers: the smallest bounded
+// limit that starts is the headroom plus the minimum budget.
+func TestKubernetesGuideStatesTheMemlockFloor(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "deployment", "kubernetes.md"))
+	require.NoError(t, err)
+	doc := string(raw)
+	floor := fmt.Sprintf("%d MiB", (secureMemoryHeadroomBytes+minSecureMemoryBudgetBytes)>>20)
+	assert.Contains(t, doc, "RLIMIT_MEMLOCK")
+	assert.Contains(t, doc, floor)
 }
