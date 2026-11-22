@@ -10,6 +10,9 @@ import (
 	qrdbservice "github.com/jeremyhahn/go-qrdb/pkg/service"
 	"github.com/jeremyhahn/go-qrdb/pkg/tenant"
 	"github.com/jeremyhahn/go-qrdb/pkg/timeseries"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
+	sdktransport "github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
 
 // qrdbTimeSeriesSurface names the time-series surface in
@@ -102,6 +105,8 @@ func (e *qrdbTimeSeriesUnscopedError) Error() string {
 // transport composer. It resolves the caller's (tenant, database) scope from
 // each call's context through the node's scoped service registry, so a
 // servicer captured before Unseal comes online once the node is unsealed.
+// An SDK tenant named with transport.ContextWithTenant is bound under
+// go-qrdb's key before the scope resolves; an existing binding wins.
 func (s *Server) QRDBTimeSeriesServicer() timeseries.TimeSeriesServicer {
 	return newQRDBTimeSeriesServicerProxy(s)
 }
@@ -111,7 +116,9 @@ func (s *Server) QRDBTimeSeriesServicer() timeseries.TimeSeriesServicer {
 // tenant.DatabaseFromContext). It fails closed with
 // QRDBUserServiceUnavailableError{Surface: "timeseries"} while the node is
 // absent or sealed, and with qrdbTimeSeriesUnscopedError for the methods that
-// carry no context.
+// carry no context. An SDK tenant named with transport.ContextWithTenant is
+// bound under go-qrdb's key before the scope resolves; an existing binding
+// wins.
 type qrdbTimeSeriesServicerProxy struct {
 	registry *qrdbScopedRegistryHolder
 }
@@ -122,13 +129,30 @@ func newQRDBTimeSeriesServicerProxy(s *Server) *qrdbTimeSeriesServicerProxy {
 	return &qrdbTimeSeriesServicerProxy{registry: &qrdbScopedRegistryHolder{s: s}}
 }
 
-func (p *qrdbTimeSeriesServicerProxy) servicer(ctx context.Context) (timeseries.TimeSeriesServicer, error) {
-	return p.registry.timeSeriesService(tenant.FromContext(ctx), tenant.DatabaseFromContext(ctx))
+func (p *qrdbTimeSeriesServicerProxy) servicer(ctx context.Context) (context.Context, timeseries.TimeSeriesServicer, error) {
+	ctx = qrdbTimeSeriesCallContext(ctx)
+	svc, err := p.registry.timeSeriesService(tenant.FromContext(ctx), tenant.DatabaseFromContext(ctx))
+	return ctx, svc, err
+}
+
+// qrdbTimeSeriesCallContext binds the tenant an in-process SDK caller named
+// with transport.ContextWithTenant under go-qrdb's central key, as the SDK's
+// embedded transport does for its own services. A tenant already bound
+// under the central key is kept. With neither, ctx is returned unchanged
+// and the scope resolves as before.
+func qrdbTimeSeriesCallContext(ctx context.Context) context.Context {
+	if _, ok := tenantctx.Lookup(ctx); ok {
+		return ctx
+	}
+	if id := sdktransport.TenantFromContext(ctx); id != "" {
+		return tenantctx.WithTenant(ctx, id)
+	}
+	return ctx
 }
 
 // Write implements timeseries.TimeSeriesServicer.
 func (p *qrdbTimeSeriesServicerProxy) Write(ctx context.Context, metric string, value float64, timestamp time.Time, tags map[string]string) error {
-	svc, err := p.servicer(ctx)
+	ctx, svc, err := p.servicer(ctx)
 	if err != nil {
 		return err
 	}
@@ -137,7 +161,7 @@ func (p *qrdbTimeSeriesServicerProxy) Write(ctx context.Context, metric string, 
 
 // WriteBatch implements timeseries.TimeSeriesServicer.
 func (p *qrdbTimeSeriesServicerProxy) WriteBatch(ctx context.Context, points []timeseries.DataPoint) error {
-	svc, err := p.servicer(ctx)
+	ctx, svc, err := p.servicer(ctx)
 	if err != nil {
 		return err
 	}
@@ -146,7 +170,7 @@ func (p *qrdbTimeSeriesServicerProxy) WriteBatch(ctx context.Context, points []t
 
 // Query implements timeseries.TimeSeriesServicer.
 func (p *qrdbTimeSeriesServicerProxy) Query(ctx context.Context, metric string, start, end time.Time, opts ...timeseries.TSQueryOption) ([]timeseries.DataPoint, error) {
-	svc, err := p.servicer(ctx)
+	ctx, svc, err := p.servicer(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -155,7 +179,7 @@ func (p *qrdbTimeSeriesServicerProxy) Query(ctx context.Context, metric string, 
 
 // QueryWithConsistency implements timeseries.TimeSeriesServicer.
 func (p *qrdbTimeSeriesServicerProxy) QueryWithConsistency(ctx context.Context, metric string, start, end time.Time, ropts consistency.ReadOptions, opts ...timeseries.TSQueryOption) ([]timeseries.DataPoint, error) {
-	svc, err := p.servicer(ctx)
+	ctx, svc, err := p.servicer(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -164,7 +188,7 @@ func (p *qrdbTimeSeriesServicerProxy) QueryWithConsistency(ctx context.Context, 
 
 // Aggregate implements timeseries.TimeSeriesServicer.
 func (p *qrdbTimeSeriesServicerProxy) Aggregate(ctx context.Context, metric string, start, end time.Time, fn timeseries.AggFunc, interval time.Duration) ([]timeseries.AggResult, error) {
-	svc, err := p.servicer(ctx)
+	ctx, svc, err := p.servicer(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -173,7 +197,7 @@ func (p *qrdbTimeSeriesServicerProxy) Aggregate(ctx context.Context, metric stri
 
 // AggregateWithConsistency implements timeseries.TimeSeriesServicer.
 func (p *qrdbTimeSeriesServicerProxy) AggregateWithConsistency(ctx context.Context, metric string, start, end time.Time, fn timeseries.AggFunc, interval time.Duration, ropts consistency.ReadOptions) ([]timeseries.AggResult, error) {
-	svc, err := p.servicer(ctx)
+	ctx, svc, err := p.servicer(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -182,7 +206,7 @@ func (p *qrdbTimeSeriesServicerProxy) AggregateWithConsistency(ctx context.Conte
 
 // WritePoint implements timeseries.TimeSeriesServicer.
 func (p *qrdbTimeSeriesServicerProxy) WritePoint(ctx context.Context, point *timeseries.DataPoint) error {
-	svc, err := p.servicer(ctx)
+	ctx, svc, err := p.servicer(ctx)
 	if err != nil {
 		return err
 	}
@@ -191,7 +215,7 @@ func (p *qrdbTimeSeriesServicerProxy) WritePoint(ctx context.Context, point *tim
 
 // QueryRich implements timeseries.TimeSeriesServicer.
 func (p *qrdbTimeSeriesServicerProxy) QueryRich(ctx context.Context, req *timeseries.QueryRequest) (*timeseries.QueryResult, error) {
-	svc, err := p.servicer(ctx)
+	ctx, svc, err := p.servicer(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -200,7 +224,7 @@ func (p *qrdbTimeSeriesServicerProxy) QueryRich(ctx context.Context, req *timese
 
 // QueryRichWithConsistency implements timeseries.TimeSeriesServicer.
 func (p *qrdbTimeSeriesServicerProxy) QueryRichWithConsistency(ctx context.Context, req *timeseries.QueryRequest, ropts consistency.ReadOptions) (*timeseries.QueryResult, error) {
-	svc, err := p.servicer(ctx)
+	ctx, svc, err := p.servicer(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -209,7 +233,7 @@ func (p *qrdbTimeSeriesServicerProxy) QueryRichWithConsistency(ctx context.Conte
 
 // DeleteSeries implements timeseries.TimeSeriesServicer.
 func (p *qrdbTimeSeriesServicerProxy) DeleteSeries(ctx context.Context, req *timeseries.DeleteRequest) error {
-	svc, err := p.servicer(ctx)
+	ctx, svc, err := p.servicer(ctx)
 	if err != nil {
 		return err
 	}
@@ -226,7 +250,7 @@ func (p *qrdbTimeSeriesServicerProxy) GetRetentionPolicy(string) (*timeseries.Re
 
 // SetRetentionPolicy implements timeseries.TimeSeriesServicer.
 func (p *qrdbTimeSeriesServicerProxy) SetRetentionPolicy(ctx context.Context, metric string, policy *timeseries.RetentionPolicy) error {
-	svc, err := p.servicer(ctx)
+	ctx, svc, err := p.servicer(ctx)
 	if err != nil {
 		return err
 	}
@@ -242,7 +266,7 @@ func (p *qrdbTimeSeriesServicerProxy) ListMetrics(string, int) ([]string, error)
 
 // ListMetricsWithConsistency implements timeseries.TimeSeriesServicer.
 func (p *qrdbTimeSeriesServicerProxy) ListMetricsWithConsistency(ctx context.Context, prefix string, limit int, ropts consistency.ReadOptions) ([]string, error) {
-	svc, err := p.servicer(ctx)
+	ctx, svc, err := p.servicer(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -254,7 +278,7 @@ func (p *qrdbTimeSeriesServicerProxy) ListMetricsWithConsistency(ctx context.Con
 // which the embedded qrdb transport uses so that an in-process caller reads
 // the policy of its own database; a scope failure is returned unchanged.
 func (p *qrdbTimeSeriesServicerProxy) GetRetentionPolicyContext(ctx context.Context, metric string) (*timeseries.RetentionPolicy, error) {
-	svc, err := p.servicer(ctx)
+	ctx, svc, err := p.servicer(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -266,7 +290,7 @@ func (p *qrdbTimeSeriesServicerProxy) GetRetentionPolicyContext(ctx context.Cont
 // uses so that an in-process caller lists the metrics of its own database; a
 // scope failure is returned unchanged.
 func (p *qrdbTimeSeriesServicerProxy) ListMetricsContext(ctx context.Context, prefix string, limit int) ([]string, error) {
-	svc, err := p.servicer(ctx)
+	ctx, svc, err := p.servicer(ctx)
 	if err != nil {
 		return nil, err
 	}

@@ -641,6 +641,9 @@ func (c *client) Share() (QRDBShareClient, error) {
 // without one, or no options) is refused with InvalidInput rather than
 // dialed through an unauthenticated go-qrdb client.
 func (c *client) qrdbTimeSeries() (QRDBTimeSeriesClient, error) {
+	if c.qrdb.closed.Load() {
+		return nil, errQRDBClientClosed()
+	}
 	embedded := c.opts != nil && c.opts.embeddedQRDB != nil
 	if !embedded {
 		switch t := c.transport.(type) {
@@ -665,7 +668,7 @@ func (c *client) qrdbTimeSeries() (QRDBTimeSeriesClient, error) {
 	ts := qrdbClient.TimeSeries()
 	if embedded {
 		if scoped, ok := c.opts.embeddedQRDB.TimeSeries.(QRDBTimeSeriesContextReader); ok {
-			return &embeddedQRDBTimeSeries{QRDBTimeSeriesClient: ts, scoped: scoped}, nil
+			return &embeddedQRDBTimeSeries{QRDBTimeSeriesClient: ts, scoped: scoped, closed: &c.qrdb.closed}, nil
 		}
 		return ts, nil
 	}

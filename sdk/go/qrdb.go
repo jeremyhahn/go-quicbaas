@@ -18,6 +18,7 @@ import (
 	"context"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -522,14 +523,29 @@ type qrdbState struct {
 	once   sync.Once
 	client *qrdbsdk.Client
 	err    error
+	// closed is set by Close; every qrdb accessor and the embedded
+	// time-series readers refuse once it is.
+	closed atomic.Bool
+}
+
+// errQRDBClientClosed is the error a qrdb accessor returns after Close.
+func errQRDBClientClosed() error {
+	return sdkerrors.NewConnection("client.Close", "client is closed")
 }
 
 // qrdbClient returns the lazily-initialized QRDB SDK client. The transport is
-// chosen to match the quicbaas transport type and address.
+// chosen to match the quicbaas transport type and address. After Close it
+// returns errQRDBClientClosed, even when the client was built before.
 func (c *client) qrdbClient() (*QRDBClient, error) {
+	if c.qrdb.closed.Load() {
+		return nil, errQRDBClientClosed()
+	}
 	c.qrdb.once.Do(func() {
 		c.qrdb.client, c.qrdb.err = c.buildQRDBClient()
 	})
+	if c.qrdb.closed.Load() {
+		return nil, errQRDBClientClosed()
+	}
 	return c.qrdb.client, c.qrdb.err
 }
 

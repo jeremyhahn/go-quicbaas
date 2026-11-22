@@ -2062,12 +2062,14 @@ func (c *client) Close() error {
 	// SealStore, TenantMgmt). Running the sync.Once here waits for an
 	// initialization in progress and makes any later qrdbClient() call
 	// fail instead of dialing a new connection after Close.
+	c.qrdb.closed.Store(true)
 	c.qrdb.once.Do(func() {
-		c.qrdb.err = errors.NewConnection("client.Close", "client is closed")
+		c.qrdb.err = errQRDBClientClosed()
 	})
 	var qrdbErr error
-	// An embedded qrdb dispatches to servicers the caller owns; leave them.
-	if c.qrdb.client != nil && (c.opts == nil || c.opts.embeddedQRDB == nil) {
+	// The embedded qrdb transport's Close only marks it closed; it never
+	// closes the caller-owned servicers, so closing it here is safe.
+	if c.qrdb.client != nil {
 		qrdbErr = c.qrdb.client.Close()
 	}
 	return stderrors.Join(transportErr, qrdbErr)

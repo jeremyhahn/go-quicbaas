@@ -23,6 +23,7 @@ import (
 	"google.golang.org/grpc/metadata"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
+	sdktransport "github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
 
 // newScopedTimeSeriesTestServer starts a real standalone qrdb node with a
@@ -218,4 +219,72 @@ func TestQRDBTimeSeriesProxy_NoNodeUnavailable(t *testing.T) {
 
 	_, err = newQRDBTimeSeriesRegistry(&Server{}).TimeSeriesService("acme", tenant.DefaultDatabase)
 	require.ErrorAs(t, err, &unavailable)
+}
+
+// NewScopedTimeSeriesTestServer exports newScopedTimeSeriesTestServer to the
+// external server_test package, whose SDK-to-node test cannot live here
+// because the SDK imports pkg/server.
+var NewScopedTimeSeriesTestServer = newScopedTimeSeriesTestServer
+
+// TestQRDBTimeSeriesProxy_SDKTenantIsolated pins that a tenant named with the
+// SDK's transport.ContextWithTenant scopes every proxy call: acme's metric
+// and policy are invisible to globex and to the system scope, and globex
+// cannot overwrite or delete them.
+func TestQRDBTimeSeriesProxy_SDKTenantIsolated(t *testing.T) {
+	srv := newScopedTimeSeriesTestServer(t)
+	proxy := newQRDBTimeSeriesServicerProxy(srv)
+
+	acme := sdktransport.ContextWithTenant(context.Background(), "acme")
+	globex := sdktransport.ContextWithTenant(context.Background(), "globex")
+	system := context.Background()
+
+	now := time.Now()
+	require.NoError(t, proxy.Write(acme, "m", 1, now, nil))
+	require.NoError(t, proxy.SetRetentionPolicy(acme, "m", &timeseries.RetentionPolicy{Duration: time.Hour}))
+
+	acmePolicy, err := proxy.GetRetentionPolicyContext(acme, "m")
+	require.NoError(t, err)
+	require.NotNil(t, acmePolicy)
+	require.Equal(t, time.Hour, acmePolicy.Duration)
+	acmeMetrics, err := proxy.ListMetricsContext(acme, "", 10)
+	require.NoError(t, err)
+	require.Contains(t, acmeMetrics, "m")
+
+	for name, ctx := range map[string]context.Context{"globex": globex, "system": system} {
+		policy, err := proxy.GetRetentionPolicyContext(ctx, "m")
+		require.NoError(t, err, name)
+		if policy != nil {
+			require.NotEqual(t, time.Hour, policy.Duration, "%s must not see acme's policy", name)
+		}
+		metrics, err := proxy.ListMetricsContext(ctx, "", 10)
+		require.NoError(t, err, name)
+		require.NotContains(t, metrics, "m", "%s must not list acme's metric", name)
+	}
+
+	require.NoError(t, proxy.SetRetentionPolicy(globex, "m", &timeseries.RetentionPolicy{Duration: 2 * time.Hour}))
+	acmePolicy, err = proxy.GetRetentionPolicyContext(acme, "m")
+	require.NoError(t, err)
+	require.NotNil(t, acmePolicy)
+	require.Equal(t, time.Hour, acmePolicy.Duration, "globex must not overwrite acme's policy")
+
+	require.NoError(t, proxy.DeleteSeries(globex, &timeseries.DeleteRequest{Metric: "m"}))
+	points, err := proxy.Query(acme, "m", now.Add(-time.Minute), now.Add(time.Minute))
+	require.NoError(t, err)
+	require.Len(t, points, 1, "globex must not delete acme's point")
+}
+
+// TestQRDBTimeSeriesCallContext_KeepsCentralBinding pins the translation
+// rule: a central binding wins over an SDK tenant, an SDK tenant alone is
+// bound, and a bare context gains no binding.
+func TestQRDBTimeSeriesCallContext_KeepsCentralBinding(t *testing.T) {
+	ctx := context.Background()
+
+	both := tenantctx.WithTenant(sdktransport.ContextWithTenant(ctx, "globex"), "acme")
+	require.Equal(t, "acme", tenant.FromContext(qrdbTimeSeriesCallContext(both)))
+
+	sdkOnly := sdktransport.ContextWithTenant(ctx, "globex")
+	require.Equal(t, "globex", tenant.FromContext(qrdbTimeSeriesCallContext(sdkOnly)))
+
+	_, ok := tenantctx.Lookup(qrdbTimeSeriesCallContext(ctx))
+	require.False(t, ok, "a bare context must gain no binding")
 }

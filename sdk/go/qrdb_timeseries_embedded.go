@@ -16,6 +16,7 @@ package quicbaas
 
 import (
 	"context"
+	"sync/atomic"
 
 	qrdbtimeseries "github.com/jeremyhahn/go-qrdb/pkg/timeseries"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
@@ -43,14 +44,25 @@ type QRDBTimeSeriesContextReader interface {
 // time-series servicer implements QRDBTimeSeriesContextReader. It routes the
 // two reads the embedded qrdb transport would send to the contextless
 // servicer methods through the scoped reader, and delegates every other verb
-// to the embedded qrdb client.
+// to the embedded qrdb client. Once the parent client is closed, the two
+// scoped reads return qrdbtransport.ClosedError, the error the closed
+// embedded qrdb transport returns for every other verb.
 type embeddedQRDBTimeSeries struct {
 	QRDBTimeSeriesClient
 	scoped QRDBTimeSeriesContextReader
+	closed *atomic.Bool
+}
+
+// isClosed reports whether the parent client has been closed.
+func (e *embeddedQRDBTimeSeries) isClosed() bool {
+	return e.closed != nil && e.closed.Load()
 }
 
 // TSGetRetention reads the metric's retention policy in the caller's scope.
 func (e *embeddedQRDBTimeSeries) TSGetRetention(ctx context.Context, req *qrdbtransport.TSGetRetentionRequest) (*qrdbtransport.TSGetRetentionResponse, error) {
+	if e.isClosed() {
+		return nil, &qrdbtransport.ClosedError{}
+	}
 	if req == nil {
 		return nil, sdkerrors.NewInvalidInput("TSGetRetention", "request is required")
 	}
@@ -73,6 +85,9 @@ func (e *embeddedQRDBTimeSeries) TSGetRetention(ctx context.Context, req *qrdbtr
 // consistency level goes to the embedded qrdb client, whose path already
 // carries ctx.
 func (e *embeddedQRDBTimeSeries) TSListMetrics(ctx context.Context, req *qrdbtransport.TSListMetricsRequest) (*qrdbtransport.TSListMetricsResponse, error) {
+	if e.isClosed() {
+		return nil, &qrdbtransport.ClosedError{}
+	}
 	if req == nil {
 		return nil, sdkerrors.NewInvalidInput("TSListMetrics", "request is required")
 	}
