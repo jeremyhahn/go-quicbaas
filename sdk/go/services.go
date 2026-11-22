@@ -19,6 +19,7 @@ import (
 	qrdbsecret "github.com/jeremyhahn/go-qrdb/sdk/go/secret"
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport/mcp"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport/quic"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport/rest"
 )
@@ -156,7 +157,12 @@ type AsyncService interface {
 // AIService provides AI and machine learning operations including
 // embedding generation, Ollama integration, and retrieval-augmented generation.
 type AIService interface {
+	// Embedding returns QuicBaaS's own embedding service client.
 	Embedding() EmbeddingClient
+	// QRDBEmbedding returns go-qrdb's embedding service client, re-exported
+	// through this SDK. It runs in parallel with Embedding until the owner
+	// retires QuicBaaS's own service.
+	QRDBEmbedding() (QRDBEmbeddingClient, error)
 	Ollama() OllamaClient
 	RAG() RAGClient
 }
@@ -296,14 +302,25 @@ func (s *securityService) SSH() SSHService {
 // Over REST the barrier verbs ride the SDK's own REST transport, which
 // sends the platform bearer set by WithAuthToken on every request; go-qrdb's
 // REST sub-client cannot add an Authorization header, so the server's
-// default-deny gate refused it with 401 (go-quicbaas#2538). Every other
-// transport, and a client wired WithEmbeddedQRDB (whose qrdb calls always
-// dispatch in-process), keeps the qrdb sub-client.
+// default-deny gate refused it with 401 (go-quicbaas#2538). Over MCP the
+// barrier verbs likewise ride the SDK's own MCP transport, which sends the
+// bearer set by WithMCPAuthToken (or WithAuthToken); go-qrdb's MCP
+// sub-client cannot, so the node's /mcp gate refused its initialize with 401
+// (go-quicbaas#2556). Every other transport, and a client wired
+// WithEmbeddedQRDB (whose qrdb calls always dispatch in-process), keeps the
+// qrdb sub-client.
+//
+// QUIC takes the SDK's REST barrier client too: *quic.Transport embeds
+// *rest.Transport, and go-qrdb's REST sub-client (which QUIC clients' qrdb
+// calls otherwise ride) follows redirects with net/http's default policy,
+// which the SDK cannot reach. A 307/308 to an http:// Location would resend
+// an unseal passphrase in plaintext. The SDK's REST transport refuses every
+// redirect hop and every non-https hop of a secret-carrying barrier call.
 //
 // Over the SDK QUIC transport the barrier verbs go through that transport's
 // own HTTP/3 client: go-qrdb's REST transport dials TCP, which a node serving
 // only its QUIC (UDP) listener refuses (go-quicbaas#2533). An embedded QRDB
-// takes precedence over that shortcut too.
+// takes precedence over the REST, QUIC and MCP shortcuts.
 func (s *securityService) Barrier() (QRDBBarrierClient, error) {
 	if s.c.opts == nil || s.c.opts.embeddedQRDB == nil {
 		if rt, ok := s.c.transport.(*rest.Transport); ok {
@@ -311,6 +328,9 @@ func (s *securityService) Barrier() (QRDBBarrierClient, error) {
 		}
 		if qt, ok := s.c.transport.(*quic.Transport); ok {
 			return qt.Transport.Barrier(), nil
+		}
+		if mt, ok := s.c.transport.(*mcp.Transport); ok {
+			return mt, nil
 		}
 	}
 	qrdbClient, err := s.c.qrdbClient()
@@ -322,6 +342,12 @@ func (s *securityService) Barrier() (QRDBBarrierClient, error) {
 
 // Ceremony returns the QRDB CeremonyClient. The QRDB transport is
 // lazily initialized on first call (delegated to client.qrdbClient).
+//
+// Over MCP, Ceremony, and likewise Credentials, SealStore, TenantMgmt,
+// CustodianGroup and Share, still use go-qrdb's MCP sub-client, which carries
+// no platform bearer, so a node whose /mcp gate requires one refuses its
+// initialize with 401. Only Barrier rides the SDK's own MCP transport; moving
+// the rest is tracked on go-quicbaas#2556.
 func (s *securityService) Ceremony() (QRDBCeremonyClient, error) {
 	qrdbClient, err := s.c.qrdbClient()
 	if err != nil {
@@ -396,8 +422,11 @@ type aiService struct {
 }
 
 func (s *aiService) Embedding() EmbeddingClient { return s.c.Embedding() }
-func (s *aiService) Ollama() OllamaClient       { return s.c.Ollama() }
-func (s *aiService) RAG() RAGClient             { return s.c.RAG() }
+func (s *aiService) QRDBEmbedding() (QRDBEmbeddingClient, error) {
+	return s.c.qrdbEmbedding()
+}
+func (s *aiService) Ollama() OllamaClient { return s.c.Ollama() }
+func (s *aiService) RAG() RAGClient       { return s.c.RAG() }
 
 // barrierCeremonyService delegates BarrierCeremonyService methods to the
 // underlying client.
@@ -522,10 +551,27 @@ func (c *client) SealStore() (QRDBSealStoreClient, error) {
 // TenantMgmt returns the QRDB TenantClient for managing multi-tenant
 // operations and per-tenant barriers. The QRDB client is lazily
 // initialized on first call.
+//
+// Over REST and QUIC (*quic.Transport embeds *rest.Transport) the per-tenant
+// barrier verbs ride the SDK's own REST transport, and tenant CRUD stays on
+// the qrdb sub-client (go-quicbaas#2554). go-qrdb's REST sub-client follows
+// redirects with net/http's default policy, which the SDK cannot reach: a
+// 307/308 to an http:// Location would resend a tenant unseal key or share
+// in plaintext. The SDK's REST transport refuses every redirect hop and
+// every non-https hop of a secret-carrying barrier call. A client wired
+// WithEmbeddedQRDB (whose qrdb calls always dispatch in-process), and every
+// other transport, keeps the qrdb sub-client for every verb.
 func (c *client) TenantMgmt() (QRDBTenantClient, error) {
 	qrdbClient, err := c.qrdbClient()
 	if err != nil {
 		return nil, err
+	}
+	if c.opts == nil || c.opts.embeddedQRDB == nil {
+		if bt, ok := c.transport.(interface {
+			Tenants(QRDBTenantClient) *rest.TenantClient
+		}); ok {
+			return bt.Tenants(qrdbClient.Tenants()), nil
+		}
 	}
 	return qrdbClient.Tenants(), nil
 }
