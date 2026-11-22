@@ -65,6 +65,7 @@ ollama_base_url: http://gpu-host.internal:11434
 // TestResolveServeConfig_FileOverridesDefaults: a key the file names beats the
 // flag's default, and a key it omits keeps that default.
 func TestResolveServeConfig_FileOverridesDefaults(t *testing.T) {
+	unsetEnv(t, serveOllamaEnv)
 	path := writeServeConfig(t, serveConfigBody)
 	cmd := parsedServeCommand(t, "--config", path)
 
@@ -176,6 +177,33 @@ func TestResolveServeConfig_AdvertisePrecedence(t *testing.T) {
 	cfg, err = resolveServeConfig(parsedServeCommand(t, "--config", path, "--advertise", "flag-host:9191").Flags())
 	require.NoError(t, err)
 	assert.Equal(t, "flag-host:9191", cfg.AdvertiseAddr)
+}
+
+// unsetEnv removes name from the environment for the test and restores its
+// value afterwards.
+func unsetEnv(t *testing.T, name string) {
+	t.Helper()
+	t.Setenv(name, "")
+	require.NoError(t, os.Unsetenv(name))
+}
+
+// TestResolveServeConfig_OllamaURLPrecedence: the ollama base URL follows the
+// configuration convention, and with nothing set it is fleet's loopback default.
+func TestResolveServeConfig_OllamaURLPrecedence(t *testing.T) {
+	unsetEnv(t, serveOllamaEnv)
+	cfg, err := resolveServeConfig(parsedServeCommand(t, "--server", "https://x:8443").Flags())
+	require.NoError(t, err)
+	assert.Equal(t, fleet.DefaultOllamaBaseURL, cfg.EffectiveOllamaBaseURL())
+
+	path := writeServeConfig(t, serveConfigBody)
+	t.Setenv(serveOllamaEnv, "http://env.example:11434")
+	cfg, err = resolveServeConfig(parsedServeCommand(t, "--config", path).Flags())
+	require.NoError(t, err)
+	assert.Equal(t, "http://env.example:11434", cfg.OllamaBaseURL, "the environment beats the file")
+
+	cfg, err = resolveServeConfig(parsedServeCommand(t, "--config", path, "--ollama-url", "http://flag.example:11434").Flags())
+	require.NoError(t, err)
+	assert.Equal(t, "http://flag.example:11434", cfg.OllamaBaseURL, "a flag beats the environment")
 }
 
 // TestServeEnvFields_NameStringFields: an environment entry naming a field

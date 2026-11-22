@@ -73,6 +73,9 @@ func TestReviewerConfig_ValidateEndpoint(t *testing.T) {
 			if err := reviewer.Validate(); !errors.As(err, &invalid) || invalid.Field != "reviewer.endpoint" {
 				t.Fatalf("Validate() = %v, want a refusal of reviewer.endpoint", err)
 			}
+			if !strings.Contains(invalid.Message, "inference.example") {
+				t.Errorf("message %q does not show the public example endpoint", invalid.Message)
+			}
 		})
 	}
 }
