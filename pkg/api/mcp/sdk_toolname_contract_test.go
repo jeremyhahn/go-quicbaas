@@ -85,6 +85,12 @@ const (
 // here are debt, not design. Removing one means either registering the tool or
 // fixing sdkmcp.ToolName.
 var sdkCallsWithoutMCPTool = map[sdkCall]string{
+	// --- Capabilities ----------------------------------------------------
+	// The REST route (GET /api/v1/server/capabilities) is authenticated
+	// with no RBAC permission, and MCP authz has no bucket for a tool that
+	// needs authentication but no permission, so an MCP tool waits on that
+	// decision.
+	{"quicbaas.Capabilities", "Get"}: gapNoTool,
 	// --- Auth ------------------------------------------------------------
 	{"quicbaas.Auth", "GetJWKS"}:                 gapNoTool,
 	{"quicbaas.Auth", "GetOpenIDConfiguration"}:  gapNoTool,

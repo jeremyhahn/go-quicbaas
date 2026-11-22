@@ -53,7 +53,7 @@ package rest
 // frozenRoutePermissions is the one-time codegen snapshot of every raw
 // route's deriveClassification result (routes.go), keyed by "METHOD
 // PATTERN". Routes() (routes.go applyFrozenPermissions) reads this table
-// instead of calling the PEP mapper live. 582 entries.
+// instead of calling the PEP mapper live. 583 entries.
 var frozenRoutePermissions = map[string]frozenPermission{
 	"DELETE /api/v1/admin/assignments/{assignment_id}":                                        {auth: RouteAuthPermission, resource: "roles", action: "unassign"},
 	"DELETE /api/v1/admin/object-backends/{name}":                                             {auth: RouteAuthPermission, resource: "roles", action: "unassign"},
@@ -285,6 +285,7 @@ var frozenRoutePermissions = map[string]frozenPermission{
 	"GET /api/v1/secrets/dynamic/leases":                                               {auth: RouteAuthPermission, resource: "dynamic_secrets", action: "lease_list"},
 	"GET /api/v1/secrets/dynamic/roles":                                                {auth: RouteAuthPermission, resource: "dynamic_secrets", action: "role_list"},
 	"GET /api/v1/secrets/dynamic/roles/{name}":                                         {auth: RouteAuthPermission, resource: "dynamic_secrets", action: "role_read"},
+	"GET /api/v1/server/capabilities":                                                  {auth: RouteAuthSession, resource: "", action: ""},
 	"GET /api/v1/ssh/authorized/keys":                                                  {auth: RouteAuthPermission, resource: "keys", action: "list"},
 	"GET /api/v1/ssh/authorized/keys/{scope}/{owner}/{name}":                           {auth: RouteAuthPermission, resource: "keys", action: "get"},
 	"GET /api/v1/ssh/keys":                                                             {auth: RouteAuthPermission, resource: "keys", action: "list"},
