@@ -69,7 +69,6 @@ var wantOrchestratorMethods = []string{
 // notCarriedOverGRPC are client methods the gRPC dialect has no handler for.
 var notCarriedOverGRPC = map[string]bool{
 	"DisableFleetNode": true, "EnableFleetNode": true,
-	"GetTaskArtifact": true, "SubmitTaskArtifacts": true,
 }
 
 func orchestratorReachCases() map[string]reachCase {
@@ -96,7 +95,7 @@ func orchestratorReachCases() map[string]reachCase {
 		"GetSessionHistory":      {req: &orchestratorclient.GetSessionHistoryRequest{}, rpc: "/SubscribeSessionEvents"},
 		"GetSpendReport":         {req: &orchestratorclient.GetSpendReportRequest{}, rpc: "/GetSpendReport"},
 		"GetTask":                {req: &orchestratorclient.GetTaskRequest{}, rpc: "/GetTask"},
-		"GetTaskArtifact":        {req: &orchestratorclient.GetTaskArtifactRequest{}},
+		"GetTaskArtifact":        {req: &orchestratorclient.GetTaskArtifactRequest{}, rpc: "/GetTaskArtifact"},
 		"GetWorkflow":            {req: &orchestratorclient.GetWorkflowRequest{}, rpc: "/GetWorkflow"},
 		// The client's Health request type is unexported; both dialects ignore it.
 		"Health":                 {req: nil, rpc: "/Health"},
@@ -120,7 +119,7 @@ func orchestratorReachCases() map[string]reachCase {
 		"SpawnChildJob":          {req: &orchestratorclient.SpawnChildJobRequest{}, rpc: "/SpawnChildJob"},
 		"SpawnSession":           {req: &orchestratorclient.SpawnSessionRequest{Backend: "claude"}, rpc: "/SpawnSession"},
 		"StartJob":               {req: &orchestratorclient.StartJobRequest{}, rpc: "/StartJob"},
-		"SubmitTaskArtifacts":    {req: &orchestratorclient.SubmitTaskArtifactsRequest{}},
+		"SubmitTaskArtifacts":    {req: &orchestratorclient.SubmitTaskArtifactsRequest{}, rpc: "/SubmitTaskArtifacts"},
 		"SubscribeJobEvents":     {req: &orchestratorclient.SubscribeJobEventsRequest{}, stream: true, rpc: "/SubscribeJobEvents"},
 		"SubscribeSessionEvents": {req: &orchestratorclient.SubscribeSessionEventsRequest{SessionID: "s1"}, stream: true, rpc: "/SubscribeSessionEvents"},
 		"UpdateWorkflow":         {req: &orchestratorclient.UpdateWorkflowRequest{Name: "w1", Definition: def}, rpc: "/UpdateWorkflow"},
