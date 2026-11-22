@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -493,19 +494,17 @@ func (s *Storage) GetJobsDueForExecution(ctx context.Context, before time.Time, 
 
 		if isDue(&job) {
 			dueJobs = append(dueJobs, &job)
-			if len(dueJobs) >= limit {
-				return ErrLimitReached
-			}
 		}
 
 		return nil
 	}
 
-	if err := s.kv.Scan(ctx, SystemJobsPrefix, visit); err != nil && !errors.Is(err, ErrLimitReached) {
+	// Every due job is collected before the limit applies: the store visits
+	// keys in sorted order, so stopping at the limit would hand each batch
+	// to the system jobs and the tenants that sort first, and a tenant with
+	// enough fast recurring jobs could starve every tenant after it.
+	if err := s.kv.Scan(ctx, SystemJobsPrefix, visit); err != nil {
 		return nil, &scheduler.ErrStorageError{Op: "GetJobsDueForExecution.scan", Cause: err}
-	}
-	if len(dueJobs) >= limit {
-		return dueJobs, nil
 	}
 
 	// Tenant jobs live in their tenants' namespaces; the index names them.
@@ -539,12 +538,22 @@ func (s *Storage) GetJobsDueForExecution(ctx context.Context, before time.Time, 
 		}
 		if isDue(job) {
 			dueJobs = append(dueJobs, job)
-			if len(dueJobs) >= limit {
-				break
-			}
 		}
 	}
 
+	// The batch is the jobs that have waited longest: ordered by scheduled
+	// firing time (then ID, so the order is total) and only then limited,
+	// so a job that is overdue longer is dispatched first whichever tenant
+	// owns it.
+	sort.SliceStable(dueJobs, func(i, j int) bool {
+		if !dueJobs[i].NextRun.Equal(dueJobs[j].NextRun) {
+			return dueJobs[i].NextRun.Before(dueJobs[j].NextRun)
+		}
+		return dueJobs[i].ID < dueJobs[j].ID
+	})
+	if len(dueJobs) > limit {
+		dueJobs = dueJobs[:limit]
+	}
 	return dueJobs, nil
 }
 
