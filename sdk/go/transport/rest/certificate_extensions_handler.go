@@ -63,11 +63,12 @@ type deviceIdentityRESTWireRequest struct {
 }
 
 type deviceIdentityRESTWireResponse struct {
-	CertificatePEM []byte    `json:"certificate_pem"`
-	ChainPEM       []byte    `json:"chain_pem"`
-	SerialNumber   string    `json:"serial_number"`
-	NotBefore      time.Time `json:"not_before"`
-	NotAfter       time.Time `json:"not_after"`
+	CertificatePEM    []byte    `json:"certificate_pem"`
+	ChainPEM          []byte    `json:"chain_pem"`
+	IAKCertificatePEM []byte    `json:"iak_certificate_pem,omitempty"`
+	SerialNumber      string    `json:"serial_number"`
+	NotBefore         time.Time `json:"not_before"`
+	NotAfter          time.Time `json:"not_after"`
 }
 
 // =============================================================================
@@ -141,10 +142,11 @@ func (h *certificateRESTHandler) handleIssueDeviceIdentity(ctx context.Context, 
 		return nil, err
 	}
 	return &certificate.DeviceIdentityResponse{
-		CertificatePEM: wire.CertificatePEM,
-		ChainPEM:       wire.ChainPEM,
-		SerialNumber:   wire.SerialNumber,
-		NotBefore:      wire.NotBefore,
-		NotAfter:       wire.NotAfter,
+		CertificatePEM:    wire.CertificatePEM,
+		ChainPEM:          wire.ChainPEM,
+		IAKCertificatePEM: wire.IAKCertificatePEM,
+		SerialNumber:      wire.SerialNumber,
+		NotBefore:         wire.NotBefore,
+		NotAfter:          wire.NotAfter,
 	}, nil
 }

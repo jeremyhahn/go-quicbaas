@@ -137,10 +137,11 @@ func DeviceIdentityClientResponse(resp *service.IssueDeviceIdentityResponse) *ce
 		return nil
 	}
 	return &certclient.DeviceIdentityResponse{
-		CertificatePEM: resp.CertificatePEM,
-		ChainPEM:       resp.ChainPEM,
-		SerialNumber:   resp.SerialNumber,
-		NotBefore:      resp.NotBefore,
-		NotAfter:       resp.NotAfter,
+		CertificatePEM:    resp.CertificatePEM,
+		ChainPEM:          resp.ChainPEM,
+		IAKCertificatePEM: resp.IAKCertificatePEM,
+		SerialNumber:      resp.SerialNumber,
+		NotBefore:         resp.NotBefore,
+		NotAfter:          resp.NotAfter,
 	}
 }

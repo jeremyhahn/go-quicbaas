@@ -139,11 +139,15 @@ func (h *certificateHandler) transformIssueDeviceIdentityResponse(resp interface
 	if err != nil {
 		return nil, err
 	}
-	return &certificate.DeviceIdentityResponse{
+	out := &certificate.DeviceIdentityResponse{
 		CertificatePEM: []byte(getResultString(m, "certificate_pem")),
 		ChainPEM:       []byte(getResultString(m, "chain_pem")),
 		SerialNumber:   getResultString(m, "serial_number"),
 		NotBefore:      getResultTime(m, "not_before"),
 		NotAfter:       getResultTime(m, "not_after"),
-	}, nil
+	}
+	if s := getResultString(m, "iak_certificate_pem"); s != "" {
+		out.IAKCertificatePEM = []byte(s)
+	}
+	return out, nil
 }
