@@ -609,6 +609,21 @@ type rawResponse struct {
 // server contract exchanges opaque WebAuthn ceremony JSON plus correlation
 // headers rather than a flat JSON envelope.
 func (t *Transport) doRawRequest(ctx context.Context, httpMethod, endpoint string, reqBody []byte, reqHeaders map[string]string) (*rawResponse, error) {
+	resp, err := t.sendRawRequest(ctx, httpMethod, endpoint, reqBody, reqHeaders)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 400 {
+		return nil, t.parseErrorResponse(resp.StatusCode, resp.Body)
+	}
+	return resp, nil
+}
+
+// sendRawRequest sends one request and returns the response whatever its
+// status; only a failure to build, send or read the request is an error.
+// doRawRequest turns a status of 400 or more into an SDK error; a caller
+// that must keep the status beside that error (BarrierClient) reads it here.
+func (t *Transport) sendRawRequest(ctx context.Context, httpMethod, endpoint string, reqBody []byte, reqHeaders map[string]string) (*rawResponse, error) {
 	if t.closed.Load() {
 		return nil, errors.NewConnection("rest.doRawRequest", "transport is closed")
 	}
@@ -651,11 +666,9 @@ func (t *Transport) doRawRequest(ctx context.Context, httpMethod, endpoint strin
 			"failed to read response body")
 	}
 
-	if resp.StatusCode >= 400 {
-		return nil, t.parseErrorResponse(resp.StatusCode, respBody)
+	if resp.StatusCode < 400 {
+		t.lastHealth.Store(time.Now().UnixNano())
 	}
-
-	t.lastHealth.Store(time.Now().UnixNano())
 
 	return &rawResponse{
 		StatusCode: resp.StatusCode,
