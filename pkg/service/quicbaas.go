@@ -4095,7 +4095,7 @@ func (t *timeSeriesService) GetRetentionPolicy(ctx context.Context, req *TSGetRe
 	// A zero policy (infinite duration, no downsampling) is "no policy": the
 	// backend returns one for a metric without a policy, so it reads nil.
 	var servicePolicy *TSRetentionPolicy
-	if policy != nil && !(policy.Duration == 0 && policy.Resolution == 0 && policy.Aggregation == interfaces.AggNone) {
+	if policy != nil && (policy.Duration != 0 || policy.Resolution != 0 || policy.Aggregation != interfaces.AggNone) {
 		servicePolicy = &TSRetentionPolicy{
 			Duration:    policy.Duration,
 			Resolution:  policy.Resolution,
