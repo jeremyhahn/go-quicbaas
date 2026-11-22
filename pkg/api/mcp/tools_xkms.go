@@ -682,7 +682,7 @@ func (r *ToolRegistry) registerTrustedCATools() {
 				"organization":  map[string]interface{}{"type": "string", "description": "Organization name"},
 				"sans":          map[string]interface{}{"type": "array", "description": "Subject alternative names", "items": map[string]interface{}{"type": "string"}},
 				"validity_days": map[string]interface{}{"type": "integer", "description": "Validity period in days"},
-				"algorithm":     map[string]interface{}{"type": "string", "description": "Key algorithm (ecdsa-p256, rsa2048, ed25519)"},
+				"algorithm":     map[string]interface{}{"type": "string", "description": "Key algorithm: ecdsa-p256, ecdsa-p384, rsa-2048, rsa-3072, rsa-4096 or ed25519 (aliases such as rsa2048 are accepted; empty means ecdsa-p256)"},
 				"tenant_id":     map[string]interface{}{"type": "string", "description": "Tenant scope; defaults to the authenticated tenant"},
 			},
 			"required": []string{"profile", "common_name"},

@@ -16,6 +16,9 @@ package xkmsca
 
 import (
 	"context"
+	"crypto"
+	"crypto/elliptic"
+	"crypto/x509"
 	"encoding/pem"
 	"errors"
 	"math/big"
@@ -23,6 +26,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
+	"github.com/jeremyhahn/go-quicbaas/pkg/xkms"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -281,6 +285,18 @@ func (a *xkmsCAServicer) IssueCertificate(ctx context.Context, req *xkmstranspor
 		Valid: req.ValidityDays,
 	}
 
+	// Honour the requested key algorithm. An empty algorithm keeps
+	// KeyAttributes nil so the CA's own default (ECDSA P-256) applies; an
+	// unknown one is refused before the CA is called, so a caller never gets
+	// back a certificate for a key type it did not ask for.
+	if algorithm := strings.TrimSpace(req.Algorithm); algorithm != "" {
+		canonical, algErr := xkms.CanonicalKeyAlgorithm(algorithm)
+		if algErr != nil {
+			return nil, algErr
+		}
+		certReq.KeyAttributes = keyAttributesFor(canonical, req.CommonName)
+	}
+
 	// Stamp the tenant-scoped SPIFFE URI SAN on the generate-and-distribute
 	// (keypair) path, symmetric with signOptionsWithSPIFFE on the CSR-sign
 	// path. The CertificateRequest SPIFFE fields are forwarded by the CA into
@@ -312,6 +328,42 @@ func (a *xkmsCAServicer) IssueCertificate(ctx context.Context, req *xkmstranspor
 		PrivateKeyPEM:  append([]byte(nil), issued.PrivateKeyPEM...),
 		SerialNumber:   issued.SerialNumber.Text(16),
 	}, nil
+}
+
+// keyAttributesFor maps a canonical key algorithm (see
+// xkms.CanonicalKeyAlgorithm) to the key attributes the CA generates the
+// certificate's key pair with. It mirrors the CA's own nil-attributes default
+// (software store, TLS key type, CN = common name) and changes only the
+// algorithm, its parameters and the matching hash. applyKeypairSPIFFE sets
+// request-level fields only, so these attributes reach the CA unchanged.
+func keyAttributesFor(canonical, commonName string) *xkmssdk.KeyAttributes {
+	attrs := &xkmssdk.KeyAttributes{
+		CN:        commonName,
+		StoreType: xkmssdk.StoreSoftware,
+		KeyType:   xkmssdk.KeyTypeTLS,
+		Hash:      crypto.SHA256,
+	}
+	switch canonical {
+	case xkms.KeyAlgorithmECDSAP384:
+		attrs.KeyAlgorithm = x509.ECDSA
+		attrs.ECCAttributes = &xkmssdk.ECCAttributes{Curve: elliptic.P384()}
+		attrs.Hash = crypto.SHA384
+	case xkms.KeyAlgorithmRSA2048:
+		attrs.KeyAlgorithm = x509.RSA
+		attrs.RSAAttributes = &xkmssdk.RSAAttributes{KeySize: 2048}
+	case xkms.KeyAlgorithmRSA3072:
+		attrs.KeyAlgorithm = x509.RSA
+		attrs.RSAAttributes = &xkmssdk.RSAAttributes{KeySize: 3072}
+	case xkms.KeyAlgorithmRSA4096:
+		attrs.KeyAlgorithm = x509.RSA
+		attrs.RSAAttributes = &xkmssdk.RSAAttributes{KeySize: 4096}
+	case xkms.KeyAlgorithmEd25519:
+		attrs.KeyAlgorithm = x509.Ed25519
+	default: // xkms.KeyAlgorithmECDSAP256
+		attrs.KeyAlgorithm = x509.ECDSA
+		attrs.ECCAttributes = &xkmssdk.ECCAttributes{Curve: elliptic.P256()}
+	}
+	return attrs
 }
 
 // RevokeCertificate marks a serial as revoked using the RFC 5280 reason
