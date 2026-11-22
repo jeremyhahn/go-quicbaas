@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/catalog"
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
@@ -226,6 +227,52 @@ func TestObjectStoreClient_Errors(t *testing.T) {
 	assert.ErrorIs(t, failing.Delete(context.Background(), entityTypeBlob, "k"), boom)
 	_, _, _, err = failing.List(context.Background(), entityTypeBlob, "", 1, "")
 	assert.ErrorIs(t, err, boom)
+}
+
+// TestObjectStoreClient_BackendKeyNotFound covers the object store
+// wrapping a backend key miss in a storage-coded error: the client and
+// the registry storage read it as a missing object, while any other
+// storage failure still surfaces.
+func TestObjectStoreClient_BackendKeyNotFound(t *testing.T) {
+	ctx := context.Background()
+	miss := api.NewStorageOperationError("objectstorage.GetObject", "read from backend",
+		api.NewStorageKeyNotFoundError("MemoryStorage.Get", "k"))
+
+	client, err := NewObjectStoreClient(failingObjectStore{err: miss})
+	require.NoError(t, err)
+	value, found, err := client.Get(ctx, entityTypeBlob, "k")
+	require.NoError(t, err)
+	assert.False(t, found)
+	assert.Nil(t, value)
+	assert.NoError(t, client.Delete(ctx, entityTypeBlob, "k"))
+
+	storage, err := NewObjectStorage(failingObjectStore{err: miss}, nil)
+	require.NoError(t, err)
+	_, err = storage.GetManifest(ctx, "apps/web:v2")
+	assert.ErrorAs(t, err, &ManifestNotFoundError{})
+	digest := sha256Digest([]byte("x"))
+	_, err = storage.GetBlob(ctx, digest)
+	assert.ErrorAs(t, err, &BlobNotFoundError{})
+	exists, err := storage.ManifestExists(ctx, "apps/web:v2")
+	require.NoError(t, err)
+	assert.False(t, exists)
+	exists, err = storage.BlobExists(ctx, digest)
+	require.NoError(t, err)
+	assert.False(t, exists)
+
+	disk := errors.New("disk")
+	broken := api.NewStorageOperationError("objectstorage.GetObject", "read from backend", disk)
+	failing, err := NewObjectStoreClient(failingObjectStore{err: broken})
+	require.NoError(t, err)
+	_, found, err = failing.Get(ctx, entityTypeBlob, "k")
+	assert.ErrorIs(t, err, disk)
+	assert.False(t, found)
+
+	brokenStorage, err := NewObjectStorage(failingObjectStore{err: broken}, nil)
+	require.NoError(t, err)
+	_, err = brokenStorage.GetManifest(ctx, "apps/web:v2")
+	assert.ErrorAs(t, err, &ErrStorageError{})
+	assert.False(t, errors.As(err, &ManifestNotFoundError{}))
 }
 
 type failingObjectStore struct{ err error }

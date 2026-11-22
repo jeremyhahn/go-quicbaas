@@ -15,9 +15,11 @@ package ociregistry
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/catalog"
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -48,6 +50,17 @@ const (
 
 // objectStatusActive is the catalog status of a live object.
 var objectStatusActive = string(catalog.StatusActive)
+
+// isObjectNotFound reports whether err says the object is missing:
+// a not-found code, or a storage key-not-found anywhere in the chain
+// (the object store wraps a backend miss in a storage error).
+func isObjectNotFound(err error) bool {
+	if qberrors.IsNotFound(err) {
+		return true
+	}
+	var knf *api.StorageKeyNotFoundError
+	return errors.As(err, &knf)
+}
 
 // ObjectStoreClient is the QuicBaaSStorageClient over the object-storage
 // service: each (entityType, key) pair is the object "entityType:key".
@@ -172,14 +185,14 @@ func (c *ObjectStoreClient) Put(ctx context.Context, entityType, key string, val
 }
 
 // Get returns the value under (entityType, key); found is false when
-// there is none.
+// there is none, including when the backend no longer has the key.
 func (c *ObjectStoreClient) Get(ctx context.Context, entityType, key string) ([]byte, bool, error) {
 	resp, err := c.objects.GetObject(c.ctx(ctx), &service.GetObjectRequest{
 		Key:             objectKey(entityType, key),
 		IncludeMetadata: true,
 	})
 	if err != nil {
-		if qberrors.IsNotFound(err) {
+		if isObjectNotFound(err) {
 			return nil, false, nil
 		}
 		return nil, false, err
@@ -194,7 +207,7 @@ func (c *ObjectStoreClient) Get(ctx context.Context, entityType, key string) ([]
 // an error.
 func (c *ObjectStoreClient) Delete(ctx context.Context, entityType, key string) error {
 	_, err := c.objects.DeleteObject(c.ctx(ctx), &service.DeleteObjectRequest{Key: objectKey(entityType, key)})
-	if err != nil && !qberrors.IsNotFound(err) {
+	if err != nil && !isObjectNotFound(err) {
 		return err
 	}
 	return nil
