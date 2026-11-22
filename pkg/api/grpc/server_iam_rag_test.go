@@ -32,6 +32,7 @@ import (
 	iampb "github.com/jeremyhahn/go-quicbaas/api/proto/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -94,7 +95,7 @@ func TestGRPCPhase2_PEP_Check_Success(t *testing.T) {
 	}
 	srv := NewPEPServer(svc, log)
 
-	resp, err := srv.Check(context.Background(), &iampb.CheckRequest{
+	resp, err := srv.Check(tenantctx.WithTenant(context.Background(), "t1"), &iampb.CheckRequest{
 		Subject:  &iampb.Subject{Id: "user-1", TenantId: "t1"},
 		Action:   "read",
 		Resource: "doc:123",
@@ -153,7 +154,7 @@ func TestGRPCPhase2_PEP_Check_ServiceError(t *testing.T) {
 	}
 	srv := NewPEPServer(svc, log)
 
-	_, err := srv.Check(context.Background(), &iampb.CheckRequest{
+	_, err := srv.Check(tenantctx.WithTenant(context.Background(), "t1"), &iampb.CheckRequest{
 		Subject:  &iampb.Subject{Id: "user-1"},
 		Action:   "read",
 		Resource: "doc:123",
