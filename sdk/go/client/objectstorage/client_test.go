@@ -2982,6 +2982,42 @@ func TestStreamGetReader_ReadAll_RecvEOF(t *testing.T) {
 	}
 }
 
+// TestStreamGetReader_ReadAll_RecvEOFBeforeTotalSize covers a transport
+// io.EOF that arrives before the advertised object size: the download is
+// truncated and must fail with io.ErrUnexpectedEOF, never a clean EOF.
+func TestStreamGetReader_ReadAll_RecvEOFBeforeTotalSize(t *testing.T) {
+	stream := chunkStream(io.EOF,
+		&ObjectChunk{Data: []byte("hello "), TotalSize: 11},
+	)
+
+	got, err := io.ReadAll(newChunkReader(stream))
+	if !stderrors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("io.ReadAll: expected io.ErrUnexpectedEOF, got %v", err)
+	}
+	if string(got) != "hello " {
+		t.Errorf("expected the %q received before EOF, got %q", "hello ", string(got))
+	}
+}
+
+// TestStreamGetReader_ReadMetadata_RecvEOFBeforeTotalSize covers the same
+// truncation when the size was advertised by the chunk ReadMetadata consumed.
+func TestStreamGetReader_ReadMetadata_RecvEOFBeforeTotalSize(t *testing.T) {
+	reader := newChunkReader(chunkStream(io.EOF,
+		&ObjectChunk{Data: []byte("hello"), TotalSize: 11},
+	))
+	if _, err := reader.ReadMetadata(); err != nil {
+		t.Fatalf("ReadMetadata: %v", err)
+	}
+
+	got, err := io.ReadAll(reader)
+	if !stderrors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("io.ReadAll: expected io.ErrUnexpectedEOF, got %v", err)
+	}
+	if string(got) != "hello" {
+		t.Errorf("expected %q, got %q", "hello", string(got))
+	}
+}
+
 func TestStreamGetReader_ReadAll_RecvFailure(t *testing.T) {
 	stream := chunkStream(errStreamBroken,
 		&ObjectChunk{Data: []byte("hello "), TotalSize: 11},

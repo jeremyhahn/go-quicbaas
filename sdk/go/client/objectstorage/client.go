@@ -949,6 +949,11 @@ func (r *streamGetReader) Read(p []byte) (n int, err error) {
 	// Receive next chunk from stream.
 	resp, err := r.stream.Recv()
 	if stderrors.Is(err, io.EOF) {
+		// A transport EOF before the advertised object size has arrived is
+		// a truncated download, not a complete one.
+		if r.totalSize > 0 && atomic.LoadInt64(&r.bytesRead) < r.totalSize {
+			return 0, io.ErrUnexpectedEOF
+		}
 		r.ended = true
 		return 0, io.EOF
 	}
