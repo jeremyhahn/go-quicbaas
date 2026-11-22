@@ -97,12 +97,13 @@ type IAMServiceClient interface {
 	ProvisionTenant(ctx context.Context, in *ProvisionTenantRequest, opts ...grpc.CallOption) (*ProvisionTenantResponse, error)
 	// User management
 	CreateUser(ctx context.Context, in *CreateUserRequest, opts ...grpc.CallOption) (*User, error)
+	// GetUser is the tenant-scoped user lookup. It takes users:read, the grant QRDBService's user reads take.
 	GetUser(ctx context.Context, in *GetUserRequest, opts ...grpc.CallOption) (*User, error)
 	UpdateUser(ctx context.Context, in *UpdateUserRequest, opts ...grpc.CallOption) (*User, error)
 	DeleteUser(ctx context.Context, in *DeleteUserRequest, opts ...grpc.CallOption) (*DeleteUserResponse, error)
 	ListUsers(ctx context.Context, in *ListUsersRequest, opts ...grpc.CallOption) (*ListUsersResponse, error)
-	// GetUserByUsername is the tenant-scoped username lookup. It carries
-	// GetUser's authorization: no permission option, so it is unmapped.
+	// GetUserByUsername is the tenant-scoped username lookup. Like GetUser it
+	// takes users:read, the grant QRDBService's user reads take.
 	GetUserByUsername(ctx context.Context, in *GetUserByUsernameRequest, opts ...grpc.CallOption) (*User, error)
 	// ApproveUser moves a pending user to active, as REST's
 	// POST /api/v1/iam/users/{user_id}/approve does, and carries that route's
@@ -820,12 +821,13 @@ type IAMServiceServer interface {
 	ProvisionTenant(context.Context, *ProvisionTenantRequest) (*ProvisionTenantResponse, error)
 	// User management
 	CreateUser(context.Context, *CreateUserRequest) (*User, error)
+	// GetUser is the tenant-scoped user lookup. It takes users:read, the grant QRDBService's user reads take.
 	GetUser(context.Context, *GetUserRequest) (*User, error)
 	UpdateUser(context.Context, *UpdateUserRequest) (*User, error)
 	DeleteUser(context.Context, *DeleteUserRequest) (*DeleteUserResponse, error)
 	ListUsers(context.Context, *ListUsersRequest) (*ListUsersResponse, error)
-	// GetUserByUsername is the tenant-scoped username lookup. It carries
-	// GetUser's authorization: no permission option, so it is unmapped.
+	// GetUserByUsername is the tenant-scoped username lookup. Like GetUser it
+	// takes users:read, the grant QRDBService's user reads take.
 	GetUserByUsername(context.Context, *GetUserByUsernameRequest) (*User, error)
 	// ApproveUser moves a pending user to active, as REST's
 	// POST /api/v1/iam/users/{user_id}/approve does, and carries that route's

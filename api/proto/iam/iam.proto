@@ -22,13 +22,18 @@ service IAMService {
 
   // User management
   rpc CreateUser(CreateUserRequest) returns (User);
-  rpc GetUser(GetUserRequest) returns (User);
+  // GetUser is the tenant-scoped user lookup. It takes users:read, the grant QRDBService's user reads take.
+  rpc GetUser(GetUserRequest) returns (User) {
+      option (qrdb.v1.permission) = "users:read";
+  }
   rpc UpdateUser(UpdateUserRequest) returns (User);
   rpc DeleteUser(DeleteUserRequest) returns (DeleteUserResponse);
   rpc ListUsers(ListUsersRequest) returns (ListUsersResponse);
-  // GetUserByUsername is the tenant-scoped username lookup. It carries
-  // GetUser's authorization: no permission option, so it is unmapped.
-  rpc GetUserByUsername(GetUserByUsernameRequest) returns (User);
+  // GetUserByUsername is the tenant-scoped username lookup. Like GetUser it
+  // takes users:read, the grant QRDBService's user reads take.
+  rpc GetUserByUsername(GetUserByUsernameRequest) returns (User) {
+      option (qrdb.v1.permission) = "users:read";
+  }
 
   // ApproveUser moves a pending user to active, as REST's
   // POST /api/v1/iam/users/{user_id}/approve does, and carries that route's

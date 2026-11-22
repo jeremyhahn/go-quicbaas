@@ -370,7 +370,8 @@ func (s *IAMServer) CreateUser(ctx context.Context, req *iampb.CreateUserRequest
 	return resp, nil
 }
 
-// GetUser retrieves a user by ID.
+// GetUser retrieves a user by ID. The RPC takes users:read, and
+// requireCallerTenant refuses a foreign or absent tenant.
 func (s *IAMServer) GetUser(ctx context.Context, req *iampb.GetUserRequest) (*iampb.User, error) {
 	s.logger.WithFields(map[string]interface{}{
 		"tenant_id": req.TenantId,
@@ -395,10 +396,8 @@ func (s *IAMServer) GetUser(ctx context.Context, req *iampb.GetUserRequest) (*ia
 	return convertUserToProto(user), nil
 }
 
-// GetUserByUsername is the tenant-scoped username lookup. It carries GetUser's
-// authorization: no permission option and no grpcMethodPermissions entry, so
-// it is default-denied under RequireAuthz, and without RequireAuthz
-// requireCallerTenant refuses a foreign or absent tenant.
+// GetUserByUsername is the tenant-scoped username lookup. Like GetUser the RPC
+// takes users:read, and requireCallerTenant refuses a foreign or absent tenant.
 func (s *IAMServer) GetUserByUsername(ctx context.Context, req *iampb.GetUserByUsernameRequest) (*iampb.User, error) {
 	s.logger.WithFields(map[string]interface{}{
 		"tenant_id": req.TenantId,
