@@ -18,6 +18,8 @@ import (
 	"errors"
 
 	kctypes "github.com/jeremyhahn/go-xkms/sdk/go"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/xkms"
 )
 
 // xkmsKeyOwnerRecordPrefix prefixes the key-store record that proves
@@ -96,6 +98,19 @@ func (kb *XKMSBackend) claimXKMSKey(ctx context.Context, attrs *kctypes.KeyAttri
 		return &XKMSKeyOwnershipError{Op: "write", Name: identity, Err: err}
 	}
 	return nil
+}
+
+// rollbackUnclaimedXKMSKey deletes the key material just created under attrs
+// after its ownership record could not be written. Without the rollback the
+// key would stay unowned: metadata lookups refuse it, and a retry fails because
+// the key already exists. The claim error is returned unchanged when the key is
+// gone; when the delete also fails, both errors are returned and the key stays
+// unowned and invisible.
+func (kb *XKMSBackend) rollbackUnclaimedXKMSKey(ctx context.Context, attrs *kctypes.KeyAttributes, claimErr error) error {
+	if delErr := xkms.DeleteKey(ctx, attrs); delErr != nil && !errors.Is(delErr, xkms.ErrKeyNotFound) {
+		return errors.Join(claimErr, &XKMSKeyOwnershipError{Op: "roll back", Name: attrs.CN, Err: delErr})
+	}
+	return claimErr
 }
 
 // releaseXKMSKey drops the ownership record of the deleted key attrs

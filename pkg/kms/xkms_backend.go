@@ -235,7 +235,7 @@ func (kb *XKMSBackend) CreateKey(ctx context.Context, attrs *kctypes.KeyAttribut
 		}
 	}
 	if err := kb.claimXKMSKey(ctx, &xattrs); err != nil {
-		return nil, err
+		return nil, kb.rollbackUnclaimedXKMSKey(ctx, &xattrs, err)
 	}
 
 	// Build metadata
@@ -295,7 +295,7 @@ func (kb *XKMSBackend) ImportKey(ctx context.Context, keyID string, material []b
 		return nil, api.NewKeyImportError("XKMSBackend.ImportKey", kind, err)
 	}
 	if err := kb.claimXKMSKey(ctx, attrs); err != nil {
-		return nil, err
+		return nil, kb.rollbackUnclaimedXKMSKey(ctx, attrs, err)
 	}
 
 	// Build metadata
@@ -571,7 +571,7 @@ func (kb *XKMSBackend) RotateKey(ctx context.Context, keyID string) (*KeyMetadat
 		}
 	}
 	if err := kb.claimXKMSKey(ctx, attrs); err != nil {
-		return nil, err
+		return nil, kb.rollbackUnclaimedXKMSKey(ctx, attrs, err)
 	}
 
 	// Update cached metadata
