@@ -254,9 +254,11 @@ func TestCIGateRunsEvenWhenADependencyFails(t *testing.T) {
 		t.Fatalf("could not isolate the %s job body", gateJobName)
 	}
 	// v1.29.3: always(), except that a schedule run whose guard read main as
-	// busy skips the gate.
-	if !regexp.MustCompile(`(?m)^    if: \$\{\{ always\(\) && \(github\.event_name != 'schedule' \|\| needs\.preflight\.outputs\.verdict != 'busy'\) \}\}\s*$`).MatchString(gate) {
-		t.Errorf("%s is missing the ci-template's always() `if:`:\n%s", gateJobName, gate)
+	// busy skips the gate. v1.53 (trusted-firmware #821): always() on a pull
+	// request, !cancelled() off it, so a main run cancelled by a newer push
+	// posts a skipped gate, not a failed one.
+	if !regexp.MustCompile(`(?m)^    if: \$\{\{ \(startsWith\(github\.event_name, 'pull_request'\) && always\(\) \|\| !cancelled\(\)\) && \(github\.event_name != 'schedule' \|\| needs\.preflight\.outputs\.verdict != 'busy'\) \}\}\s*$`).MatchString(gate) {
+		t.Errorf("%s is missing the ci-template's always() / !cancelled() `if:`:\n%s", gateJobName, gate)
 	}
 	// The ci-template's check(): only success passes, a skip passes only for
 	// its class's reason (a proven tree, a docs-only PR for `code`, no
@@ -373,10 +375,12 @@ var cancelsInProgress = regexp.MustCompile(`(?m)^\s*cancel-in-progress:\s*true\s
 
 // mainRunKey is the group-key term that gives each main commit its own group,
 // so a literal cancel-in-progress never cancels a main run. ciMainRunKey is
-// ci.yml's form, the ci-template's (v1.26.2, v1.29.3): main-{event}-{sha}.
+// ci.yml's form, the ci-template's v1.53 (ruling 1087): main-{event}, one
+// group per event, so a newer push to main cancels the older main run (it
+// supersedes v1.26.2's main-{event}-{sha}).
 const (
 	mainRunKey   = "github.ref == 'refs/heads/main' && github.sha"
-	ciMainRunKey = "github.ref == 'refs/heads/main' && format('main-{0}-{1}', github.event_name, github.sha)"
+	ciMainRunKey = "github.ref == 'refs/heads/main' && format('main-{0}', github.event_name)"
 )
 
 func TestPullRequestWorkflowsCancelSupersededRuns(t *testing.T) {
@@ -386,7 +390,7 @@ func TestPullRequestWorkflowsCancelSupersededRuns(t *testing.T) {
 	const want = "concurrency:\n" +
 		"  group: ${{ github.workflow }}-${{ github.ref }}-${{ " + mainRunKey + " || 'latest' }}\n" +
 		"  cancel-in-progress: true\n"
-	// ci.yml carries the ci-template's canonical block (v1.29.3).
+	// ci.yml carries the ci-template's canonical block (v1.29.3, v1.53).
 	const ciWant = "concurrency:\n" +
 		"  group: ${{ github.workflow }}-${{ github.event_name == 'schedule' && format('schedule-{0}', github.repository) || " + ciMainRunKey + " || github.ref }}\n" +
 		"  cancel-in-progress: true\n"
