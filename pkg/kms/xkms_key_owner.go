@@ -49,6 +49,10 @@ var xkmsKeyOwnerCheckPlaintext = []byte("quicbaas xkms key owner check v3")
 type xkmsKeyOwnerProof struct {
 	PublicKeySHA256 string `json:"pk,omitempty"`
 	Check           []byte `json:"kcv,omitempty"`
+	// Parent is the service key ID this key is a rotated version of; empty
+	// for a standalone key. A record with a parent vouches for the key only
+	// as that parent's version, never as a key of its own.
+	Parent string `json:"parent,omitempty"`
 }
 
 // isXKMSMaterialAbsent reports whether err from a go-xkms key read confirms
@@ -158,8 +162,18 @@ func (e *XKMSKeyOwnershipError) Unwrap() error { return e.Err }
 // wrote, not just the identity, so a key that native go-xkms deletes and
 // recreates under the same identity is not owned. A missing, unreadable or
 // non-matching proof means not owned; a material read error that is not a
-// confirmed absence is returned.
+// confirmed absence is returned. ownsXKMSKey asks whether the key is owned
+// as a standalone key; a rotated version is owned only through
+// ownsXKMSKeyAs with its parent.
 func (kb *XKMSBackend) ownsXKMSKey(ctx context.Context, name, identity string, symmetric bool) (bool, error) {
+	return kb.ownsXKMSKeyAs(ctx, name, identity, symmetric, "")
+}
+
+// ownsXKMSKeyAs is ownsXKMSKey for a key owned as parent's rotated version;
+// an empty parent means a standalone key. A record whose parent differs does
+// not vouch for the key, so a version never resolves as a key of its own and
+// a standalone key never serves as another key's version.
+func (kb *XKMSBackend) ownsXKMSKeyAs(ctx context.Context, name, identity string, symmetric bool, parent string) (bool, error) {
 	if _, ok := decodeXKMSKeyName(name); !ok {
 		return true, nil
 	}
@@ -183,6 +197,9 @@ func (kb *XKMSBackend) ownsXKMSKey(ctx context.Context, name, identity string, s
 	}
 	var proof xkmsKeyOwnerProof
 	if err := json.Unmarshal(raw, &proof); err != nil {
+		return false, nil
+	}
+	if proof.Parent != parent {
 		return false, nil
 	}
 	if !symmetric {
@@ -227,8 +244,18 @@ func (kb *XKMSBackend) ownsXKMSKey(ctx context.Context, name, identity string, s
 // record binds the full identity (backend, type, algorithm, name), not the
 // name alone, because go-xkms keeps distinct keys under one name, and it holds
 // a proof of the material just written, so only that material verifies as
-// owned (see ownsXKMSKey). A literal name needs no record.
+// owned (see ownsXKMSKey). A literal name needs no record. claimXKMSKey
+// claims a standalone key; a rotated version is claimed with its parent
+// through claimXKMSKeyAs.
 func (kb *XKMSBackend) claimXKMSKey(ctx context.Context, attrs *kctypes.KeyAttributes) error {
+	return kb.claimXKMSKeyAs(ctx, attrs, "")
+}
+
+// claimXKMSKeyAs is claimXKMSKey for a key written as parent's rotated
+// version; an empty parent claims a standalone key. The record names the
+// parent, so the version is owned only as that key's version (see
+// ownsXKMSKeyAs).
+func (kb *XKMSBackend) claimXKMSKeyAs(ctx context.Context, attrs *kctypes.KeyAttributes, parent string) error {
 	if _, ok := decodeXKMSKeyName(attrs.CN); !ok {
 		return nil
 	}
@@ -238,6 +265,7 @@ func (kb *XKMSBackend) claimXKMSKey(ctx context.Context, attrs *kctypes.KeyAttri
 	if err != nil {
 		return &XKMSKeyOwnershipError{Op: "write", Name: identity, Err: err}
 	}
+	proof.Parent = parent
 	value, err := json.Marshal(proof)
 	if err != nil {
 		return &XKMSKeyOwnershipError{Op: "write", Name: identity, Err: err}

@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/jeremyhahn/go-xkms/pkg/validation"
+	kctypes "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // xkmsEncodedKeyNamePrefix starts every go-xkms key name that carries an
@@ -73,7 +74,8 @@ func xkmsKeyName(keyID string) string {
 
 // ErrXKMSKeyIDTooLong reports a key ID whose go-xkms name go-xkms would
 // refuse, in practice because base64 expansion took it past go-xkms's
-// 255-character key-name limit.
+// 255-character key-name limit, or because the file name the key store writes
+// for it would be longer than a filesystem allows.
 var ErrXKMSKeyIDTooLong = errors.New("kms: key ID too long for a go-xkms key name")
 
 // checkXKMSKeyName refuses keyID when its go-xkms name fails go-xkms's own
@@ -83,6 +85,30 @@ var ErrXKMSKeyIDTooLong = errors.New("kms: key ID too long for a go-xkms key nam
 func checkXKMSKeyName(keyID string) error {
 	if err := validation.ValidateKeyID(xkmsKeyName(keyID)); err != nil {
 		return fmt.Errorf("%w: %w", ErrXKMSKeyIDTooLong, err)
+	}
+	return nil
+}
+
+// xkmsMaxStoredNameComponent is the longest file-name component a
+// filesystem accepts. go-xkms file storage names a key's files
+// keys/<ID>.key and meta/<ID>.json, and the ownership record's last
+// component is the key identity, so each must fit.
+const xkmsMaxStoredNameComponent = 255
+
+// xkmsLongestStoredNameSuffix is the longest suffix go-xkms file storage
+// adds to KeyAttributes.ID() (".json", meta/<ID>.json).
+const xkmsLongestStoredNameSuffix = len(".json")
+
+// checkXKMSKeyStorage refuses the key xattrs describe (CN already the
+// go-xkms name, StoreType set) when a file the production file store
+// writes for it would have a name component longer than the filesystem
+// allows. Callers check before any key material exists.
+func (kb *XKMSBackend) checkXKMSKeyStorage(xattrs *kctypes.KeyAttributes) error {
+	if n := len(xattrs.ID()) + xkmsLongestStoredNameSuffix; n > xkmsMaxStoredNameComponent {
+		return fmt.Errorf("%w: stored key file name is %d bytes, over the %d-byte limit", ErrXKMSKeyIDTooLong, n, xkmsMaxStoredNameComponent)
+	}
+	if n := len(kb.xkmsKeyIdentity(xattrs)); n > xkmsMaxStoredNameComponent {
+		return fmt.Errorf("%w: key ownership record name is %d bytes, over the %d-byte limit", ErrXKMSKeyIDTooLong, n, xkmsMaxStoredNameComponent)
 	}
 	return nil
 }

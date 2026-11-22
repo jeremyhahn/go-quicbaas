@@ -229,6 +229,9 @@ func (kb *XKMSBackend) CreateKey(ctx context.Context, attrs *kctypes.KeyAttribut
 	// the service key ID.
 	xattrs := *attrs
 	xattrs.CN = xkmsKeyName(attrs.CN)
+	if err := kb.checkXKMSKeyStorage(&xattrs); err != nil {
+		return nil, err
+	}
 
 	// Generate key using go-xkms
 	if isSymmetric {
@@ -289,6 +292,9 @@ func (kb *XKMSBackend) ImportKey(ctx context.Context, keyID string, material []b
 
 	// Build key attributes for the imported key
 	attrs := kb.xkmsKeyAttributes(keyID, algorithm)
+	if err := kb.checkXKMSKeyStorage(attrs); err != nil {
+		return nil, err
+	}
 
 	// Symmetric and asymmetric import are ONE operation. The algorithm rides on
 	// attrs, and go-xkms interprets the material accordingly: raw bytes for a
@@ -630,6 +636,9 @@ func (kb *XKMSBackend) RotateKey(ctx context.Context, keyID string) (*KeyMetadat
 		return nil, err
 	}
 	attrs := kb.xkmsKeyAttributes(versionedKeyID, meta.Algorithm)
+	if err := kb.checkXKMSKeyStorage(attrs); err != nil {
+		return nil, err
+	}
 
 	// Generate new key with versioned ID
 	// This backend's own version scheme (see the method comment).
@@ -644,7 +653,7 @@ func (kb *XKMSBackend) RotateKey(ctx context.Context, keyID string) (*KeyMetadat
 			return nil, api.NewKeyVersionGenerationError("XKMSBackend.RotateKey", err)
 		}
 	}
-	if err := kb.claimXKMSKey(ctx, attrs); err != nil {
+	if err := kb.claimXKMSKeyAs(ctx, attrs, keyID); err != nil {
 		return nil, kb.rollbackUnclaimedXKMSKey(ctx, attrs, err)
 	}
 
@@ -680,16 +689,36 @@ func (kb *XKMSBackend) buildVersionedKeyID(keyID string, version int) string {
 	return fmt.Sprintf("%s_v%d", keyID, version)
 }
 
-// checkOwnedXKMSKey refuses a key identity, derived from keyID and algorithm
-// taken from cached metadata, that this backend does not own: any identity,
-// versioned or not. Cached metadata outlives the material it describes, and
-// the version a ciphertext names is caller input, so the key it selects must
-// be one this backend wrote and whose ownership proof still verifies; native
-// material stored under that name is not this key. It returns ErrKeyNotFound
-// when the key is not owned, and an ownership read error unchanged.
+// checkOwnedXKMSKey refuses a standalone key identity, derived from keyID and
+// algorithm taken from cached metadata, that this backend does not own as a
+// key of its own. Cached metadata outlives the material it describes, so the
+// key must be one this backend wrote and whose ownership proof still
+// verifies; native material stored under that name is not this key, and a
+// rotated version is not a standalone key (see checkOwnedXKMSKeyVersion). It
+// returns ErrKeyNotFound when the key is not owned, and an ownership read
+// error unchanged.
 func (kb *XKMSBackend) checkOwnedXKMSKey(ctx context.Context, keyID, algorithm string) error {
 	attrs := kb.xkmsKeyAttributes(keyID, algorithm)
 	owned, err := kb.ownsXKMSKey(ctx, attrs.CN, kb.xkmsKeyIdentity(attrs), kb.isSymmetricAlgorithm(algorithm))
+	if err != nil {
+		return err
+	}
+	if !owned {
+		return ErrKeyNotFound
+	}
+	return nil
+}
+
+// checkOwnedXKMSKeyVersion refuses version of keyID unless this backend wrote
+// it as keyID's version. The version a ciphertext names is caller input, so
+// the version key must be one whose ownership record names keyID as its
+// parent and whose proof still verifies. A key under the versioned name that
+// was claimed standalone, or as another key's version, is not used. It
+// returns ErrKeyNotFound when the version is not owned, and an ownership read
+// error unchanged.
+func (kb *XKMSBackend) checkOwnedXKMSKeyVersion(ctx context.Context, keyID string, version int, algorithm string) error {
+	attrs := kb.xkmsKeyAttributes(kb.buildVersionedKeyID(keyID, version), algorithm)
+	owned, err := kb.ownsXKMSKeyAs(ctx, attrs.CN, kb.xkmsKeyIdentity(attrs), kb.isSymmetricAlgorithm(algorithm), keyID)
 	if err != nil {
 		return err
 	}
@@ -978,7 +1007,7 @@ func (kb *XKMSBackend) Encrypt(ctx context.Context, keyID string, plaintext, aad
 		actualKeyID = keyID
 	} else {
 		actualKeyID = kb.buildVersionedKeyID(keyID, meta.Version)
-		if err := kb.checkOwnedXKMSKey(ctx, actualKeyID, meta.Algorithm); err != nil {
+		if err := kb.checkOwnedXKMSKeyVersion(ctx, keyID, meta.Version, meta.Algorithm); err != nil {
 			return nil, api.NewKeyMetadataRetrievalError("XKMSBackend.Encrypt", err)
 		}
 	}
@@ -1047,7 +1076,7 @@ func (kb *XKMSBackend) Decrypt(ctx context.Context, keyID string, ciphertext, aa
 		actualKeyID = keyID
 	} else {
 		actualKeyID = kb.buildVersionedKeyID(keyID, version)
-		if err := kb.checkOwnedXKMSKey(ctx, actualKeyID, meta.Algorithm); err != nil {
+		if err := kb.checkOwnedXKMSKeyVersion(ctx, keyID, version, meta.Algorithm); err != nil {
 			return nil, api.NewKeyMetadataRetrievalError("XKMSBackend.Decrypt", err)
 		}
 	}

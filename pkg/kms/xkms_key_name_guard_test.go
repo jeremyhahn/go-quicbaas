@@ -16,6 +16,7 @@ package kms
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -173,12 +174,39 @@ func requireNoXKMSMaterialOrRecord(t *testing.T, ctx context.Context, kb *XKMSBa
 	require.False(t, ok)
 }
 
-func TestXKMSBackend_CreateKey_KeyNameAtLimitIsAccepted(t *testing.T) {
+// storableXKMSAttrs returns the go-xkms attributes CreateKey stores the
+// AES-256-GCM key keyID under: the encoded name and the backend's store type.
+func storableXKMSAttrs(kb *XKMSBackend, keyID string) *xkmssdk.KeyAttributes {
+	xattrs := *kb.algorithmToKeyAttributes(keyID, AlgAES256GCM)
+	xattrs.CN = xkmsKeyName(keyID)
+	if xattrs.StoreType == "" {
+		xattrs.StoreType = xkmssdk.StoreType(string(kb.backendType))
+	}
+	return &xattrs
+}
+
+// longestStorableTenantKeyLen returns the longest name length n for which the
+// AES-256-GCM key tenantKeyIDOfLength(n) passes checkXKMSKeyStorage, and
+// requires that n+1 is refused.
+func longestStorableTenantKeyLen(t *testing.T, kb *XKMSBackend) int {
+	t.Helper()
+	longest := 0
+	for n := 1; n <= 60; n++ {
+		if kb.checkXKMSKeyStorage(storableXKMSAttrs(kb, tenantKeyIDOfLength(n))) == nil {
+			longest = n
+		}
+	}
+	require.Positive(t, longest, "some tenant key name must fit the file store")
+	err := kb.checkXKMSKeyStorage(storableXKMSAttrs(kb, tenantKeyIDOfLength(longest+1)))
+	require.ErrorIs(t, err, ErrXKMSKeyIDTooLong)
+	return longest
+}
+
+func TestXKMSBackend_CreateKey_KeyAtStorageLimitIsAccepted(t *testing.T) {
 	ctx := context.Background()
 	store := newKeyNameGuardXKMS(t)
 	kb := newOwnerTestBackend(t, ctx, store)
-	id := tenantKeyIDOfLength(52)
-	require.Len(t, xkmsKeyName(id), 255)
+	id := tenantKeyIDOfLength(longestStorableTenantKeyLen(t, kb))
 
 	_, err := kb.CreateKey(ctx, kb.algorithmToKeyAttributes(id, AlgAES256GCM))
 	require.NoError(t, err)
@@ -188,8 +216,8 @@ func TestXKMSBackend_CreateKey_KeyNameAtLimitIsAccepted(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []byte("at the limit"), pt)
 
-	// _v2 takes the name past the limit, so the rotation is refused before
-	// any material exists and the key stays at version 1.
+	// _v2 takes the stored name past the limit, so the rotation is refused
+	// before any material exists and the key stays at version 1.
 	_, err = kb.RotateKey(ctx, id)
 	require.ErrorIs(t, err, ErrXKMSKeyIDTooLong)
 	requireNoXKMSMaterialOrRecord(t, ctx, kb, store, kb.buildVersionedKeyID(id, 2))
@@ -202,21 +230,88 @@ func TestXKMSBackend_CreateKey_KeyNameOverLimitIsRefusedBeforeKeyMaterial(t *tes
 	ctx := context.Background()
 	store := newKeyNameGuardXKMS(t)
 	kb := newOwnerTestBackend(t, ctx, store)
-	id := tenantKeyIDOfLength(53)
-	require.Len(t, xkmsKeyName(id), 256)
 
-	_, err := kb.CreateKey(ctx, kb.algorithmToKeyAttributes(id, AlgAES256GCM))
-	require.ErrorIs(t, err, ErrXKMSKeyIDTooLong)
-	requireNoXKMSMaterialOrRecord(t, ctx, kb, store, id)
+	// 52: the go-xkms name passes checkXKMSKeyName, but the stored file name
+	// is too long. 53: the go-xkms name itself is over 255 characters.
+	for _, nameLen := range []int{52, 53} {
+		id := tenantKeyIDOfLength(nameLen)
+		_, err := kb.CreateKey(ctx, kb.algorithmToKeyAttributes(id, AlgAES256GCM))
+		require.ErrorIs(t, err, ErrXKMSKeyIDTooLong, "name length %d", nameLen)
+		requireNoXKMSMaterialOrRecord(t, ctx, kb, store, id)
+	}
 }
 
 func TestXKMSBackend_ImportKey_KeyNameOverLimitIsRefusedBeforeKeyMaterial(t *testing.T) {
 	ctx := context.Background()
 	store := newKeyNameGuardXKMS(t)
 	kb := newOwnerTestBackend(t, ctx, store)
-	id := tenantKeyIDOfLength(53)
+	id := tenantKeyIDOfLength(52)
 
 	_, err := kb.ImportKey(ctx, id, make([]byte, 32), AlgAES256GCM, nil)
 	require.ErrorIs(t, err, ErrXKMSKeyIDTooLong)
 	requireNoXKMSMaterialOrRecord(t, ctx, kb, store, id)
+}
+
+// TestXKMSBackend_FileStorage_KeyAtStorageLimitRoundTripsAndLongerIsRefused
+// runs the storage limit on the file store production uses, with the
+// ownership records on disk too: the longest storable key works, and a longer
+// one is refused as invalid input rather than failing in the filesystem.
+func TestXKMSBackend_FileStorage_KeyAtStorageLimitRoundTripsAndLongerIsRefused(t *testing.T) {
+	ctx := context.Background()
+
+	dbxkms.Reset()
+	t.Cleanup(dbxkms.Reset)
+
+	keyDir := filepath.Join(t.TempDir(), "keys")
+	fileStorage, err := xkmssdk.NewFileStorageBackend(keyDir)
+	require.NoError(t, err)
+	certStorage, err := xkmssdk.NewMemoryBackend()
+	require.NoError(t, err)
+	swBackend, err := xkmssdk.NewSoftwareBackend(&xkmssdk.SoftwareBackendConfig{
+		KeyStorage: fileStorage,
+	})
+	require.NoError(t, err)
+	ks, err := xkmssdk.NewServiceBackend(&xkmssdk.ServiceBackendConfig{
+		Backend:     swBackend,
+		CertStorage: certStorage,
+	})
+	require.NoError(t, err)
+	require.NoError(t, dbxkms.Initialize(&dbxkms.Config{
+		DefaultBackend: "software",
+		Backends:       map[string]xkmssdk.ServiceBackend{"software": ks},
+		Logger:         &mockLogger{},
+	}))
+
+	kb := newOwnerTestBackend(t, ctx, fileStorage)
+
+	id := tenantKeyIDOfLength(longestStorableTenantKeyLen(t, kb))
+	_, err = kb.CreateKey(ctx, kb.algorithmToKeyAttributes(id, AlgAES256GCM))
+	require.NoError(t, err)
+	ct, err := kb.Encrypt(ctx, id, []byte("on disk"), nil)
+	require.NoError(t, err)
+	_, err = kb.RotateKey(ctx, id)
+	require.ErrorIs(t, err, ErrXKMSKeyIDTooLong)
+	pt, err := kb.Decrypt(ctx, id, ct, nil)
+	require.NoError(t, err)
+	require.Equal(t, []byte("on disk"), pt)
+
+	refused := tenantKeyIDOfLength(52)
+	_, err = kb.CreateKey(ctx, kb.algorithmToKeyAttributes(refused, AlgAES256GCM))
+	require.ErrorIs(t, err, ErrXKMSKeyIDTooLong)
+	_, err = kb.ImportKey(ctx, refused, make([]byte, 32), AlgAES256GCM, nil)
+	require.ErrorIs(t, err, ErrXKMSKeyIDTooLong)
+	// The record of a refused ID cannot be probed on this store (its name is
+	// what the filesystem refuses), so the walk below shows it is absent.
+	_, err = dbxkms.GetSymmetricKey(ctx, kb.buildFullKeyID(refused, AlgAES256GCM))
+	require.Error(t, err)
+
+	refusedName := xkmsKeyName(refused)
+	require.NoError(t, filepath.WalkDir(keyDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		require.LessOrEqual(t, len(d.Name()), 255, path)
+		require.NotContains(t, d.Name(), refusedName, path)
+		return nil
+	}))
 }
