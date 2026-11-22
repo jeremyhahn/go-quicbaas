@@ -559,12 +559,12 @@ func runInitSignCSRCommand(cmd *cobra.Command, _ []string) error {
 	if initUsername == "" {
 		return errors.Newf(errors.ErrInvalidInput, "init.sign-csr", "--username is required")
 	}
-	release, err := resolvePINs(cmd, "init.sign-csr", soPINInput(&initSOPin))
+	pins, release, err := resolvePINs(cmd, "init.sign-csr", soPINInput(&initSOPin))
 	if err != nil {
 		return err
 	}
 	defer release()
-	if initSOPin == "" {
+	if !pins.has(0) {
 		return errors.Newf(errors.ErrInvalidInput, "init.sign-csr",
 			"--so-pin is required (or --so-pin-file, or set "+soPINEnv+")")
 	}
@@ -591,7 +591,7 @@ func runInitSignCSRCommand(cmd *cobra.Command, _ []string) error {
 
 	resp, err := client.CeremonySignCSR(ctx, &qrdbtransport.SignCSRInitRequest{
 		Username: initUsername,
-		SOPin:    initSOPin,
+		SOPin:    pins.field(0),
 		CSRPEM:   string(csrPEM),
 		Role:     initRole,
 	})

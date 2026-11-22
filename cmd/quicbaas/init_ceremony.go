@@ -140,17 +140,17 @@ Example:
 
 // runInitInitializeCommand executes 'init initialize'.
 func runInitInitializeCommand(cmd *cobra.Command, _ []string) error {
-	release, err := resolvePINs(cmd, "init.initialize",
+	pins, release, err := resolvePINs(cmd, "init.initialize",
 		soPINInput(&initSOPin), userPINInput(&initUserPin))
 	if err != nil {
 		return err
 	}
 	defer release()
-	if initSOPin == "" {
+	if !pins.has(0) {
 		return errors.Newf(errors.ErrInvalidInput, "init.initialize",
 			"--so-pin is required (or --so-pin-file, or set "+soPINEnv+")")
 	}
-	if initUserPin == "" {
+	if !pins.has(1) {
 		return errors.Newf(errors.ErrInvalidInput, "init.initialize",
 			"--user-pin is required (or --user-pin-file, or set "+userPINEnv+")")
 	}
@@ -174,8 +174,8 @@ func runInitInitializeCommand(cmd *cobra.Command, _ []string) error {
 	defer cancel()
 
 	resp, err := client.CeremonyInitialize(ctx, &qrdbtransport.CeremonyInitializeRequest{
-		SOPin:                  initSOPin,
-		UserPin:                initUserPin,
+		SOPin:                  pins.field(0),
+		UserPin:                pins.field(1),
 		CredentialSealStrategy: initCredSeal,
 		Threshold:              initThreshold,
 		Officers:               officers,

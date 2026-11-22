@@ -80,42 +80,61 @@ func addPINFlags(cmd *cobra.Command, note string, inputs ...pinInput) {
 	}
 }
 
+// resolvedPINs holds each input's PIN in protected memory, in the order
+// the inputs were given; an input with no source has a nil entry.
+type resolvedPINs []*secure.Buffer
+
+// has reports whether input i has a PIN.
+func (p resolvedPINs) has(i int) bool { return i < len(p) && p[i] != nil }
+
+// field returns input i's PIN as the string a go-qrdb transport request
+// field takes, or "" when it has none. It is the CLI's one bytes-to-string
+// conversion of a PIN, because the go-qrdb sdk/go transport request types
+// declare SOPin and UserPin as string; call it only inside the request
+// literal, so the PIN stays in protected memory until the client call.
+func (p resolvedPINs) field(i int) string {
+	if !p.has(i) {
+		return ""
+	}
+	var s string
+	//secure:unwiped injected-interface the go-qrdb sdk/go transport request PIN fields (SOPin, UserPin) are strings, so the copy the request carries is unwipeable.
+	_ = p[i].WithBytes(func(b []byte) error { s = string(b); return nil })
+	return s
+}
+
 // resolvePINs reads every input's PIN from its first source into protected
-// memory and stores it in the input's target, the form the SDK request
-// carries. The returned release destroys the protected copies.
-func resolvePINs(cmd *cobra.Command, op string, inputs ...pinInput) (func(), error) {
-	var bufs []*secure.Buffer
-	// release destroys the protected buffers and drops every PIN target, so
-	// the package-global flag variables stop referencing the PIN once the
-	// command ends, on success and on failure alike.
+// memory and returns the buffers in input order. It clears each input's argv
+// target, so no package global keeps the PIN. The returned release destroys
+// the buffers; callers defer it past the client call.
+func resolvePINs(cmd *cobra.Command, op string, inputs ...pinInput) (resolvedPINs, func(), error) {
+	pins := make(resolvedPINs, len(inputs))
+	// release destroys the protected buffers, on success and on failure alike.
 	release := func() {
-		for _, b := range bufs {
-			b.Destroy()
-		}
-		for _, in := range inputs {
-			*in.target = ""
+		for _, b := range pins {
+			if b != nil {
+				b.Destroy()
+			}
 		}
 	}
 	stdinClaim := ""
 	if v, err := cmd.Flags().GetBool(passphraseStdinFlag); err == nil && v {
 		stdinClaim = "--" + passphraseStdinFlag
 	}
-	for _, in := range inputs {
+	for i, in := range inputs {
 		buf, err := resolvePIN(cmd, op, in, &stdinClaim)
+		// resolvePIN has copied any argv PIN into protected memory; drop
+		// the string the flag variable holds.
+		*in.target = ""
 		if err != nil {
+			for _, rest := range inputs[i:] {
+				*rest.target = ""
+			}
 			release()
-			return func() {}, err
+			return nil, func() {}, err
 		}
-		if buf == nil {
-			continue
-		}
-		bufs = append(bufs, buf)
-		var s string
-		//secure:unwiped injected-interface the PIN target is a cobra string flag whose consumers send it as a string request field.
-		_ = buf.WithBytes(func(b []byte) error { s = string(b); return nil })
-		*in.target = s
+		pins[i] = buf
 	}
-	return release, nil
+	return pins, release, nil
 }
 
 func resolvePIN(cmd *cobra.Command, op string, in pinInput, stdinClaim *string) (*secure.Buffer, error) {

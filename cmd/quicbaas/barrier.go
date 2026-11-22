@@ -423,19 +423,21 @@ func runBarrierInitCommand(cmd *cobra.Command, _ []string) error {
 	if barrierStrategy == "none" && pinFlagsRequested(cmd) {
 		return formatError(&PINsNotAllowedError{Strategy: "none", Op: "init"})
 	}
+	var pins resolvedPINs
 	if barrierStrategy != "none" {
-		release, err := resolvePINs(cmd, "barrier.init",
+		p, release, err := resolvePINs(cmd, "barrier.init",
 			soPINInput(&barrierSOPin), userPINInput(&barrierUserPin))
 		if err != nil {
 			return formatError(err)
 		}
 		defer release()
+		pins = p
 	}
-	if barrierUserPin != "" && barrierSOPin == "" {
+	if pins.has(1) && !pins.has(0) {
 		return errors.Newf(errors.ErrInvalidInput, "barrier.init",
 			"--user-pin requires --so-pin")
 	}
-	if barrierSOPin != "" && barrierUserPin == "" {
+	if pins.has(0) && !pins.has(1) {
 		return errors.Newf(errors.ErrInvalidInput, "barrier.init",
 			"--so-pin requires --user-pin (FIPS 140-3 / PCI-DSS v4 dual-control)")
 	}
@@ -452,8 +454,8 @@ func runBarrierInitCommand(cmd *cobra.Command, _ []string) error {
 		//secure:unborrowed injected-interface barrier transport request must carry bytes; the client owns the request lifetime.
 		Secret:          secret.Bytes(),
 		BarrierStrategy: barrierStrategy,
-		SOPin:           barrierSOPin,
-		UserPin:         barrierUserPin,
+		SOPin:           pins.field(0),
+		UserPin:         pins.field(1),
 	}); err != nil {
 		return formatError(err)
 	}
@@ -516,17 +518,17 @@ func runBarrierInitShamirCommand(cmd *cobra.Command, _ []string) error {
 	if barrierThreshold > barrierTotalShares {
 		return errors.Newf(errors.ErrInvalidInput, "barrier.init-shamir", "--threshold cannot exceed --total")
 	}
-	release, err := resolvePINs(cmd, "barrier.init-shamir",
+	pins, release, err := resolvePINs(cmd, "barrier.init-shamir",
 		soPINInput(&barrierSOPin), userPINInput(&barrierUserPin))
 	if err != nil {
 		return formatError(err)
 	}
 	defer release()
-	if barrierUserPin != "" && barrierSOPin == "" {
+	if pins.has(1) && !pins.has(0) {
 		return errors.Newf(errors.ErrInvalidInput, "barrier.init-shamir",
 			"--user-pin requires --so-pin")
 	}
-	if barrierSOPin != "" && barrierUserPin == "" {
+	if pins.has(0) && !pins.has(1) {
 		return errors.Newf(errors.ErrInvalidInput, "barrier.init-shamir",
 			"--so-pin requires --user-pin (FIPS 140-3 / PCI-DSS v4 dual-control)")
 	}
@@ -544,8 +546,8 @@ func runBarrierInitShamirCommand(cmd *cobra.Command, _ []string) error {
 		Secret:      secret.Bytes(),
 		Threshold:   barrierThreshold,
 		TotalShares: barrierTotalShares,
-		SOPin:       barrierSOPin,
-		UserPin:     barrierUserPin,
+		SOPin:       pins.field(0),
+		UserPin:     pins.field(1),
 	})
 	if err != nil {
 		return formatError(err)
@@ -873,7 +875,7 @@ func runBarrierRekeyCommand(cmd *cobra.Command, _ []string) error {
 		return errors.Newf(errors.ErrInvalidInput, "barrier.rekey",
 			"--total must be >= --threshold")
 	}
-	release, err := resolvePINs(cmd, "barrier.rekey", soPINInput(&barrierSOPin))
+	pins, release, err := resolvePINs(cmd, "barrier.rekey", soPINInput(&barrierSOPin))
 	if err != nil {
 		return formatError(err)
 	}
@@ -888,7 +890,7 @@ func runBarrierRekeyCommand(cmd *cobra.Command, _ []string) error {
 	defer cancel()
 
 	resp, err := client.BarrierRekey(ctx, &qrdbtransport.BarrierRekeyRequest{
-		SOPin:     barrierSOPin,
+		SOPin:     pins.field(0),
 		Threshold: barrierThreshold,
 		Total:     barrierTotalShares,
 	})
@@ -952,7 +954,7 @@ func runBarrierRecoveryGenerateCommand(cmd *cobra.Command, _ []string) error {
 		return errors.Newf(errors.ErrInvalidInput, "barrier.recovery.generate",
 			"--total must be >= --threshold")
 	}
-	release, err := resolvePINs(cmd, "barrier.recovery.generate", soPINInput(&barrierSOPin))
+	pins, release, err := resolvePINs(cmd, "barrier.recovery.generate", soPINInput(&barrierSOPin))
 	if err != nil {
 		return formatError(err)
 	}
@@ -969,7 +971,7 @@ func runBarrierRecoveryGenerateCommand(cmd *cobra.Command, _ []string) error {
 	resp, err := client.BarrierGenerateRecoveryKeys(ctx, &qrdbtransport.BarrierGenerateRecoveryKeysRequest{
 		Threshold: barrierThreshold,
 		Total:     barrierTotalShares,
-		SOPin:     barrierSOPin,
+		SOPin:     pins.field(0),
 	})
 	if err != nil {
 		return formatError(err)
