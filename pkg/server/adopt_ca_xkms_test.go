@@ -14,18 +14,53 @@
 package server
 
 import (
+	"context"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	dbxkms "github.com/jeremyhahn/go-quicbaas/pkg/xkms"
 )
+
+// capturedGRPCServices records the gRPC services a module registers, so a
+// test calls a method through the module's own generated handler.
+type capturedGRPCServices map[string]struct {
+	desc *grpc.ServiceDesc
+	impl any
+}
+
+// RegisterService records desc and impl.
+func (c capturedGRPCServices) RegisterService(desc *grpc.ServiceDesc, impl any) {
+	c[desc.ServiceName] = struct {
+		desc *grpc.ServiceDesc
+		impl any
+	}{desc, impl}
+}
+
+// call invokes service/method through its registered handler with req.
+func (c capturedGRPCServices) call(t *testing.T, service, method string, req proto.Message) (any, error) {
+	t.Helper()
+	svc, ok := c[service]
+	require.True(t, ok, "module registers %s", service)
+	for _, m := range svc.desc.Methods {
+		if m.MethodName == method {
+			return m.Handler(svc.impl, context.Background(), func(v any) error {
+				proto.Merge(v.(proto.Message), req)
+				return nil
+			}, nil)
+		}
+	}
+	t.Fatalf("%s has no method %s", service, method)
+	return nil, nil
+}
 
 // TestAdoptCA_InstallsTheCAOnTheXKMSService proves the adopted CA reaches the
 // global XKMS service: the TCP KeystoreService installs its CA servicer from
