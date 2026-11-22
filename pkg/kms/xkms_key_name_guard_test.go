@@ -18,6 +18,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -154,4 +155,68 @@ func TestCheckXKMSKeyNames_RemovedKeyDirHoldsNoKeys(t *testing.T) {
 
 	_, err = marker.Get(ctx, xkmsKeyNameMappingMarker)
 	require.NoError(t, err, "a store with no keys is marked clean")
+}
+
+// tenantKeyIDOfLength returns tenant/<128-char tenant>/<nameLen-char name>.
+func tenantKeyIDOfLength(nameLen int) string {
+	return "tenant/" + strings.Repeat("t", 128) + "/" + strings.Repeat("k", nameLen)
+}
+
+// requireNoXKMSMaterialOrRecord checks that no AES-256-GCM key and no
+// ownership record exist for keyID.
+func requireNoXKMSMaterialOrRecord(t *testing.T, ctx context.Context, kb *XKMSBackend, store xkmssdk.StorageBackend, keyID string) {
+	t.Helper()
+	_, err := dbxkms.GetSymmetricKey(ctx, kb.buildFullKeyID(keyID, AlgAES256GCM))
+	require.Error(t, err)
+	ok, err := store.Exists(ctx, xkmsKeyOwnerRecord(kb.xkmsKeyIdentity(kb.xkmsKeyAttributes(keyID, AlgAES256GCM))))
+	require.NoError(t, err)
+	require.False(t, ok)
+}
+
+func TestXKMSBackend_CreateKey_KeyNameAtLimitIsAccepted(t *testing.T) {
+	ctx := context.Background()
+	store := newKeyNameGuardXKMS(t)
+	kb := newOwnerTestBackend(t, ctx, store)
+	id := tenantKeyIDOfLength(52)
+	require.Len(t, xkmsKeyName(id), 255)
+
+	_, err := kb.CreateKey(ctx, kb.algorithmToKeyAttributes(id, AlgAES256GCM))
+	require.NoError(t, err)
+	ct, err := kb.Encrypt(ctx, id, []byte("at the limit"), nil)
+	require.NoError(t, err)
+	pt, err := kb.Decrypt(ctx, id, ct, nil)
+	require.NoError(t, err)
+	require.Equal(t, []byte("at the limit"), pt)
+
+	// _v2 takes the name past the limit, so the rotation is refused before
+	// any material exists and the key stays at version 1.
+	_, err = kb.RotateKey(ctx, id)
+	require.ErrorIs(t, err, ErrXKMSKeyIDTooLong)
+	requireNoXKMSMaterialOrRecord(t, ctx, kb, store, kb.buildVersionedKeyID(id, 2))
+	meta, err := kb.GetKeyMetadata(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, 1, meta.Version)
+}
+
+func TestXKMSBackend_CreateKey_KeyNameOverLimitIsRefusedBeforeKeyMaterial(t *testing.T) {
+	ctx := context.Background()
+	store := newKeyNameGuardXKMS(t)
+	kb := newOwnerTestBackend(t, ctx, store)
+	id := tenantKeyIDOfLength(53)
+	require.Len(t, xkmsKeyName(id), 256)
+
+	_, err := kb.CreateKey(ctx, kb.algorithmToKeyAttributes(id, AlgAES256GCM))
+	require.ErrorIs(t, err, ErrXKMSKeyIDTooLong)
+	requireNoXKMSMaterialOrRecord(t, ctx, kb, store, id)
+}
+
+func TestXKMSBackend_ImportKey_KeyNameOverLimitIsRefusedBeforeKeyMaterial(t *testing.T) {
+	ctx := context.Background()
+	store := newKeyNameGuardXKMS(t)
+	kb := newOwnerTestBackend(t, ctx, store)
+	id := tenantKeyIDOfLength(53)
+
+	_, err := kb.ImportKey(ctx, id, make([]byte, 32), AlgAES256GCM, nil)
+	require.ErrorIs(t, err, ErrXKMSKeyIDTooLong)
+	requireNoXKMSMaterialOrRecord(t, ctx, kb, store, id)
 }

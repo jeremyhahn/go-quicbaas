@@ -207,6 +207,9 @@ func (kb *XKMSBackend) CreateKey(ctx context.Context, attrs *kctypes.KeyAttribut
 	if attrs.CN == "" {
 		return nil, ErrKeyCNEmpty
 	}
+	if err := checkXKMSKeyName(attrs.CN); err != nil {
+		return nil, err
+	}
 
 	// Ensure StoreType matches backend
 	if attrs.StoreType == "" {
@@ -269,6 +272,9 @@ func (kb *XKMSBackend) ImportKey(ctx context.Context, keyID string, material []b
 
 	if keyID == "" {
 		return nil, ErrKeyIDEmpty
+	}
+	if err := checkXKMSKeyName(keyID); err != nil {
+		return nil, err
 	}
 
 	if len(material) == 0 {
@@ -569,6 +575,9 @@ func (kb *XKMSBackend) RotateKey(ctx context.Context, keyID string) (*KeyMetadat
 
 	// Build attributes for the new versioned key
 	versionedKeyID := kb.buildVersionedKeyID(keyID, newVersion)
+	if err := checkXKMSKeyName(versionedKeyID); err != nil {
+		return nil, err
+	}
 	attrs := kb.xkmsKeyAttributes(versionedKeyID, meta.Algorithm)
 
 	// Generate new key with versioned ID

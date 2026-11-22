@@ -15,6 +15,8 @@ package kms
 
 import (
 	"encoding/base64"
+	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/jeremyhahn/go-xkms/pkg/validation"
@@ -67,6 +69,22 @@ func xkmsKeyName(keyID string) string {
 		return keyID
 	}
 	return xkmsEncodedKeyNamePrefix + xkmsEncoding.EncodeToString([]byte(keyID))
+}
+
+// ErrXKMSKeyIDTooLong reports a key ID whose go-xkms name go-xkms would
+// refuse, in practice because base64 expansion took it past go-xkms's
+// 255-character key-name limit.
+var ErrXKMSKeyIDTooLong = errors.New("kms: key ID too long for a go-xkms key name")
+
+// checkXKMSKeyName refuses keyID when its go-xkms name fails go-xkms's own
+// key ID validation, which Encrypt and Decrypt apply to every key reference.
+// Callers check before any key material exists, so no key is stored that
+// later crypto operations would reject.
+func checkXKMSKeyName(keyID string) error {
+	if err := validation.ValidateKeyID(xkmsKeyName(keyID)); err != nil {
+		return fmt.Errorf("%w: %v", ErrXKMSKeyIDTooLong, err)
+	}
+	return nil
 }
 
 // xkmsNeedsEncoding reports whether keyID is stored under an encoded name:
