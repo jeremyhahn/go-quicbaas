@@ -93,6 +93,10 @@ type Storage struct {
 // tenant job index with the tenant job records.
 const tenantJobIndexReconcileInterval = 5 * time.Minute
 
+// tenantJobIndexReconcileBudget caps one reconciliation run; a sweep also
+// gives it at most half of its own remaining time.
+const tenantJobIndexReconcileBudget = 10 * time.Second
+
 // ClusteredStorage is a job store for a clustered deployment: a Storage that
 // can also arbitrate firings.
 //
@@ -496,12 +500,12 @@ func (s *Storage) GetJobsDueForExecution(ctx context.Context, before time.Time, 
 
 	// Older nodes in a rolling upgrade can still write tenant jobs without
 	// an index entry, so the index is reconciled periodically, not only at
-	// open.
+	// open. Reconciliation gets part of the sweep's budget and never fails
+	// the sweep: a run that does not finish is retried by the next sweep,
+	// which resumes from the entries already written, and the jobs already
+	// indexed, system jobs included, dispatch meanwhile.
 	if s.reconcileDue() {
-		if err := s.reconcileTenantJobIndex(ctx); err != nil {
-			return nil, &scheduler.ErrStorageError{Op: "GetJobsDueForExecution.reconcile", Cause: err}
-		}
-		s.markReconciled()
+		s.reconcileWithinBudget(ctx)
 	}
 
 	// Tenant jobs live in their tenants' namespaces; the index names them.
@@ -728,17 +732,22 @@ func (s *Storage) GetExecutions(ctx context.Context, jobID uint64, tenantID stri
 // guess: an ID reissued after a restart is the key of a live job, and
 // CreateJob would overwrite it.
 //
-// It is also where the store opens, so it completes the one-time tenant-job
-// index backfill (reconcileTenantJobIndex) before the first due scan; a
-// backfill that fails stops the engine from starting for the same reason.
+// It is also where the store opens, so it runs the tenant-job index
+// reconciliation (reconcileTenantJobIndex) before the first due scan, within
+// its budget. A reconciliation that does not finish does not stop the engine
+// from starting: the first sweep resumes it, and jobs already indexed,
+// system jobs included, dispatch meanwhile.
 func (s *Storage) InitializeJobIDCounter(ctx context.Context) error {
 	if err := s.ids.initialize(ctx); err != nil {
 		return err
 	}
-	if err := s.reconcileTenantJobIndex(ctx); err != nil {
-		return err
+	// Reconciliation does not gate opening: a run that does not finish in
+	// its budget leaves the index to the first sweep, which resumes it.
+	if !s.reconcileWithinBudget(ctx) {
+		s.reconcileMu.Lock()
+		s.lastReconcile = time.Time{}
+		s.reconcileMu.Unlock()
 	}
-	s.markReconciled()
 	return nil
 }
 
@@ -750,32 +759,42 @@ func (s *Storage) InitializeJobIDCounter(ctx context.Context) error {
 // every open and periodically from the due scan, Putting only missing
 // entries, and writes the marker when absent.
 func (s *Storage) reconcileTenantJobIndex(ctx context.Context) error {
-	// Entries are collected first and written after the scan, so no write
-	// runs inside the store's iteration.
+	// The index and the tenant records are each read in one prefix scan and
+	// compared in memory, so the cost is two scans plus one write per job
+	// missing from the index, not a lookup per retained job. Entries are
+	// collected first and written after the scans, so no write runs inside
+	// the store's iteration. Each write is durable: a run cut short by its
+	// budget resumes where it stopped, because the next run finds those
+	// entries present.
+	indexed := make(map[string]struct{})
+	err := s.kv.Scan(ctx, TenantJobIndexPrefix, func(key string, _ []byte) error {
+		indexed[key] = struct{}{}
+		return ctx.Err()
+	})
+	if err != nil {
+		return &scheduler.ErrStorageError{Op: "reconcileTenantJobIndex.index_scan", Cause: err}
+	}
 	type tenantJobRef struct {
 		id       uint64
 		tenantID string
 	}
-	var refs []tenantJobRef
-	err := s.kv.Scan(ctx, tenantKeyPrefix, func(key string, _ []byte) error {
+	var missing []tenantJobRef
+	err = s.kv.Scan(ctx, tenantKeyPrefix, func(key string, _ []byte) error {
 		if tenantID, id, ok := splitTenantJobKey(key); ok {
-			refs = append(refs, tenantJobRef{id: id, tenantID: tenantID})
+			if _, present := indexed[keyForTenantJobIndex(id, tenantID)]; !present {
+				missing = append(missing, tenantJobRef{id: id, tenantID: tenantID})
+			}
 		}
-		return nil
+		return ctx.Err()
 	})
 	if err != nil {
 		return &scheduler.ErrStorageError{Op: "reconcileTenantJobIndex.scan", Cause: err}
 	}
-	for _, ref := range refs {
-		key := keyForTenantJobIndex(ref.id, ref.tenantID)
-		present, err := s.kv.Exists(ctx, key)
-		if err != nil {
-			return &scheduler.ErrStorageError{Op: "reconcileTenantJobIndex.exists", Cause: err}
+	for _, ref := range missing {
+		if err := ctx.Err(); err != nil {
+			return &scheduler.ErrStorageError{Op: "reconcileTenantJobIndex.index", Cause: err}
 		}
-		if present {
-			continue
-		}
-		if err := s.kv.Put(ctx, key, []byte(ref.tenantID)); err != nil {
+		if err := s.kv.Put(ctx, keyForTenantJobIndex(ref.id, ref.tenantID), []byte(ref.tenantID)); err != nil {
 			return &scheduler.ErrStorageError{Op: "reconcileTenantJobIndex.index", Cause: err}
 		}
 	}
@@ -789,6 +808,31 @@ func (s *Storage) reconcileTenantJobIndex(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// reconcileWithinBudget runs one reconciliation of the tenant job index under
+// a budget of at most half of ctx's remaining time (and at most
+// tenantJobIndexReconcileBudget), so the caller keeps the rest for its own
+// work. It reports whether the reconciliation completed; a run cut short, or
+// one that failed, is retried by the next caller and resumes from the entries
+// already written.
+func (s *Storage) reconcileWithinBudget(ctx context.Context) bool {
+	budget := tenantJobIndexReconcileBudget
+	if deadline, ok := ctx.Deadline(); ok {
+		if half := time.Until(deadline) / 2; half < budget {
+			budget = half
+		}
+	}
+	if budget <= 0 {
+		return false
+	}
+	rctx, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
+	if err := s.reconcileTenantJobIndex(rctx); err != nil {
+		return false
+	}
+	s.markReconciled()
+	return true
 }
 
 // indexTenantJob writes a tenant job's TenantJobIndexPrefix entry. Callers
