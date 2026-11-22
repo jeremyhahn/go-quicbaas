@@ -56,6 +56,7 @@ type legacyBinding struct {
 	Triage    legacyTuple   `json:"triage"`
 	Reviewer  legacyTuple   `json:"reviewer"`
 	Reviewers []legacyTuple `json:"reviewers"`
+	Withdrawn bool          `json:"withdrawn,omitempty"`
 }
 
 // EntityID implements the DAO entity contract.
@@ -148,7 +149,8 @@ func migrateBinding(ctx context.Context, store *Store, seeder *orchestration.Age
 	return store.UpdateBinding(ctx, tenantID, binding)
 }
 
-// legacyBindings reads every binding record of tenantID as legacyBinding.
+// legacyBindings reads every binding record of tenantID as legacyBinding,
+// skipping a withdrawal's marker.
 func (s *Store) legacyBindings(ctx context.Context, tenantID string) ([]*legacyBinding, error) {
 	dao, err := entityDAO(ctx, s, "legacyBindings", tenantID, bindingEntityType, func() *legacyBinding { return &legacyBinding{} })
 	if err != nil {
@@ -156,7 +158,12 @@ func (s *Store) legacyBindings(ctx context.Context, tenantID string) ([]*legacyB
 	}
 	var out []*legacyBinding
 	pageErr := dao.ForEachPage(ctx, qrdbsdk.PageQuery{PageSize: listPageSize}, func(page qrdbsdk.PageResult[*legacyBinding]) error {
-		out = append(out, page.Entities...)
+		for _, b := range page.Entities {
+			// A withdrawal's marker is no binding and has nothing to migrate.
+			if !b.Withdrawn {
+				out = append(out, b)
+			}
+		}
 		return nil
 	})
 	if pageErr != nil {

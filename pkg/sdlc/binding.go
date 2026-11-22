@@ -475,6 +475,14 @@ type ProjectBinding struct {
 	// the store; a value sent in is ignored.
 	WriteToken string `json:"write_token,omitempty"`
 
+	// Withdrawn marks a record Store.WithdrawBinding left in place of a
+	// create whose outcome was unknown. It is not a binding: every reader
+	// treats it as absent. Its bytes differ from anything a pending
+	// PutIfAbsent or CompareAndSwap expects, so that write fails whenever it
+	// applies, and a later bind of the project overwrites it. Set by the
+	// store; a value sent in is ignored.
+	Withdrawn bool `json:"withdrawn,omitempty"`
+
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }

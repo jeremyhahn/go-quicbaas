@@ -487,6 +487,86 @@ func TestSDLCService_BindWithLostWriteAckBehindADeleteIsWithdrawn(t *testing.T) 
 	}
 }
 
+// deferredBindWriteKV does not apply the first binding write: it runs the
+// fence hook and reports the outcome unknown, keeping the write in apply, as
+// a proposal that timed out but is still in the log does. apply commits it
+// later, against whatever the slot holds then.
+type deferredBindWriteKV struct {
+	qrdbsdk.AtomicKVStore
+	fence func()
+	apply func() (bool, error)
+}
+
+func (k *deferredBindWriteKV) hold(key string, write func() (bool, error)) (bool, error) {
+	if k.apply != nil || !strings.HasPrefix(key, "sdlc_binding/") {
+		return write()
+	}
+	k.apply = write
+	if k.fence != nil {
+		k.fence()
+	}
+	return false, errors.New("proposal outcome unknown")
+}
+
+func (k *deferredBindWriteKV) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
+	ctx = context.WithoutCancel(ctx)
+	return k.hold(key, func() (bool, error) { return k.AtomicKVStore.PutIfAbsent(ctx, key, value) })
+}
+
+func (k *deferredBindWriteKV) CompareAndSwap(ctx context.Context, key string, old, value []byte) (bool, error) {
+	ctx = context.WithoutCancel(ctx)
+	return k.hold(key, func() (bool, error) { return k.AtomicKVStore.CompareAndSwap(ctx, key, old, value) })
+}
+
+// installDeferredBindWrite wraps the rig's tenant store so its next binding
+// write is held back and reports an error, running fence in between.
+func installDeferredBindWrite(t *testing.T, rig *sdlcServiceRig, fence func()) *deferredBindWriteKV {
+	t.Helper()
+	// Resolve once so the tenant store exists to be wrapped.
+	if _, err := rig.store.ProjectDeleteFenced(context.Background(), sdlcTestTenant, sdlcTestProject); err != nil {
+		t.Fatal(err)
+	}
+	rig.resolver.mu.Lock()
+	defer rig.resolver.mu.Unlock()
+	held, ok := rig.resolver.stores[sdlcTestTenant].(qrdbsdk.AtomicKVStore)
+	if !ok {
+		t.Fatal("the rig's tenant store takes no guarded writes")
+	}
+	deferred := &deferredBindWriteKV{AtomicKVStore: held, fence: fence}
+	rig.resolver.stores[sdlcTestTenant] = deferred
+	return deferred
+}
+
+// TestBind_PendingWriteAppliedAfterDeleteDoesNotRebind: the binding write
+// times out without applying and a delete fences in between. The bind's
+// withdrawal finds nothing to undo, the delete removes the binding, and only
+// then does the pending write apply. It must fail: the withdrawal settled it,
+// so the deleted project is left with neither a binding nor a route.
+func TestBind_PendingWriteAppliedAfterDeleteDoesNotRebind(t *testing.T) {
+	rig := newSDLCServiceRig(t)
+	ctx := context.Background()
+	deferred := installDeferredBindWrite(t, rig, fenceRigProject(t, rig))
+
+	_, err := rig.svc.Bind(ctx, sdlcTestTenant, rig.binding(), BindOptions{})
+	assertProjectDeleting(t, err)
+	if deferred.apply == nil {
+		t.Fatal("the bind's write was never held back")
+	}
+	// The delete's teardown removes the project's binding.
+	if err := rig.store.DeleteBinding(ctx, sdlcTestTenant, sdlcTestProject); err != nil {
+		t.Fatalf("DeleteBinding: %v", err)
+	}
+	if applied, err := deferred.apply(); err != nil || applied {
+		t.Fatalf("pending bind write applied after the delete: %v, %v; want false, nil", applied, err)
+	}
+	if _, err := rig.store.GetBinding(ctx, sdlcTestTenant, sdlcTestProject); !errors.Is(err, sdlc.ErrNotFound) {
+		t.Fatalf("binding after the pending write: %v, want not found", err)
+	}
+	if _, err := rig.svc.Routes().Tenant(ctx, sdlcTestProject); !errors.Is(err, sdlc.ErrNotFound) {
+		t.Fatalf("route after the pending write: %v, want not found", err)
+	}
+}
+
 // TestSDLCService_RebindWithLostWriteAckBehindADeleteRestoresThePrior: a
 // rebind whose write lands but reports an error behind a delete restores
 // the record it replaced, and keeps that record's route.

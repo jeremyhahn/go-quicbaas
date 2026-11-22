@@ -106,8 +106,9 @@ func (s *Store) GetBinding(ctx context.Context, tenantID, projectID string) (*Pr
 	if err != nil {
 		return nil, err
 	}
-	if binding == nil || binding.ProjectID != projectID {
-		// Absent, or a digest collision: the slot holds another project's binding.
+	if binding == nil || binding.ProjectID != projectID || binding.Withdrawn {
+		// Absent, a withdrawal's marker, or a digest collision: the slot
+		// holds another project's binding.
 		return nil, &NotFoundError{Entity: bindingEntityName, TenantID: tenantID, ID: projectID}
 	}
 	// The entity id is derived, never stored; a record read back carries it
@@ -156,7 +157,10 @@ func (s *Store) PutBinding(ctx context.Context, tenantID string, binding *Projec
 		binding.CreatedAt = now
 		binding.Epoch = epoch
 		binding.WriteToken = token
-		if held != nil && held.ProjectID == binding.ProjectID {
+		binding.Withdrawn = false
+		// A withdrawal's marker is no binding: this write is a create that
+		// swaps it out.
+		if held != nil && held.ProjectID == binding.ProjectID && !held.Withdrawn {
 			binding.CreatedAt = held.CreatedAt
 			binding.Epoch = held.Epoch
 			prior = held
@@ -177,11 +181,22 @@ func (s *Store) PutBinding(ctx context.Context, tenantID string, binding *Projec
 	}
 }
 
-// WithdrawBinding undoes the PutBinding that stamped writeToken: while the
-// stored record still carries that token, it is swapped back to prior (the
-// record that put replaced) or, when prior is nil, removed. A record carrying
-// another token (a later bind's, or none) is left alone and withdrawn is
-// false; so is an absent record.
+// WithdrawBinding undoes the PutBinding that stamped writeToken, and settles
+// it when its outcome is unknown, so that write can never commit later:
+//
+//   - The stored record carries writeToken: it is swapped back to prior (the
+//     record that put replaced) or, when prior is nil, removed.
+//   - prior is nil and the slot is empty or holds a withdrawal's marker: the
+//     create has not applied. A fresh marker (Withdrawn, a new token) is
+//     written in its place; a pending PutIfAbsent, or a CompareAndSwap over
+//     the old marker, then fails whenever it applies.
+//   - prior is not nil and the record still carries prior's token: the
+//     replace has not applied. The record is re-stamped with a fresh token,
+//     every other field kept, so the pending CompareAndSwap fails.
+//
+// withdrawn is true in each of these. A record carrying another token (a
+// later bind's) is left alone and withdrawn is false; so is an empty slot
+// when prior is not nil.
 func (s *Store) WithdrawBinding(ctx context.Context, tenantID, projectID, writeToken string, prior *ProjectBinding) (bool, error) {
 	if err := validateKeySegment("project_id", projectID); err != nil {
 		return false, err
@@ -199,20 +214,43 @@ func (s *Store) WithdrawBinding(ctx context.Context, tenantID, projectID, writeT
 		if err != nil {
 			return false, err
 		}
-		if held == nil || held.ProjectID != projectID || held.WriteToken != writeToken {
-			return false, nil
-		}
+		ours := held != nil && held.ProjectID == projectID
 		var applied bool
-		if prior == nil {
-			applied, err = store.CompareAndDelete(ctx, key, raw)
-			if err != nil {
-				return false, backendError("WithdrawBinding", err)
+		switch {
+		case ours && !held.Withdrawn && held.WriteToken == writeToken:
+			// The write applied: undo it.
+			if prior == nil {
+				applied, err = store.CompareAndDelete(ctx, key, raw)
+				if err != nil {
+					return false, backendError("WithdrawBinding", err)
+				}
+			} else {
+				applied, err = storeRecord(ctx, "WithdrawBinding", store, key, raw, prior)
+				if err != nil {
+					return false, err
+				}
 			}
-		} else {
-			applied, err = storeRecord(ctx, "WithdrawBinding", store, key, raw, prior)
+		case prior == nil && (held == nil || (ours && held.Withdrawn)):
+			// The create has not applied: put a fresh marker in its way.
+			applied, err = s.markWithdrawn(ctx, store, key, raw, projectID)
 			if err != nil {
 				return false, err
 			}
+		case prior != nil && ours && !held.Withdrawn && held.WriteToken == prior.WriteToken:
+			// The replace has not applied: re-stamp prior so its swap fails.
+			token, tokenErr := newNonce()
+			if tokenErr != nil {
+				return false, backendError("WithdrawBinding.write_token", tokenErr)
+			}
+			next := *prior
+			next.ID = entityIDFor(projectID)
+			next.WriteToken = token
+			applied, err = storeRecord(ctx, "WithdrawBinding", store, key, raw, &next)
+			if err != nil {
+				return false, err
+			}
+		default:
+			return false, nil
 		}
 		if applied {
 			return true, nil
@@ -222,6 +260,26 @@ func (s *Store) WithdrawBinding(ctx context.Context, tenantID, projectID, writeT
 		}
 	}
 	return false, &VersionConflictError{Entity: bindingEntityName, TenantID: tenantID, ID: projectID}
+}
+
+// markWithdrawn writes a withdrawal's marker for projectID over held (nil for
+// an empty slot), stamped with a fresh token so its bytes match nothing a
+// pending write read.
+func (s *Store) markWithdrawn(ctx context.Context, store qrdbsdk.AtomicKVStore, key string, held []byte, projectID string) (bool, error) {
+	token, err := newNonce()
+	if err != nil {
+		return false, backendError("WithdrawBinding.write_token", err)
+	}
+	now := s.now()
+	marker := &ProjectBinding{
+		ID:         entityIDFor(projectID),
+		ProjectID:  projectID,
+		WriteToken: token,
+		Withdrawn:  true,
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}
+	return storeRecord(ctx, "WithdrawBinding", store, key, held, marker)
 }
 
 // UpdateBinding writes binding only if the stored record is still the one
@@ -254,7 +312,7 @@ func (s *Store) UpdateBinding(ctx context.Context, tenantID string, binding *Pro
 	}
 	expected := binding.UpdatedAt.UnixNano()
 	conflict := &VersionConflictError{Entity: bindingEntityName, TenantID: tenantID, ID: binding.ProjectID, Expected: expected}
-	if held == nil || held.ProjectID != binding.ProjectID || held.UpdatedAt.UnixNano() != expected {
+	if held == nil || held.ProjectID != binding.ProjectID || held.Withdrawn || held.UpdatedAt.UnixNano() != expected {
 		return conflict
 	}
 	next := *binding
@@ -289,7 +347,9 @@ func (s *Store) DeleteBinding(ctx context.Context, tenantID, projectID string) e
 		return err
 	}
 	held, changed, err := removeRecord(ctx, "DeleteBinding", store, bindingKey(projectID), func(b *ProjectBinding) bool {
-		return b.ProjectID == projectID
+		// A withdrawal's marker stays: removing it would let the pending
+		// write it blocks land after this delete.
+		return b.ProjectID == projectID && !b.Withdrawn
 	})
 	if err != nil {
 		return err
@@ -310,10 +370,15 @@ func (s *Store) ListBindings(ctx context.Context, tenantID string) ([]*ProjectBi
 	if err != nil {
 		return nil, err
 	}
+	out := bindings[:0]
 	for _, binding := range bindings {
+		if binding.Withdrawn {
+			continue
+		}
 		binding.ID = entityIDFor(binding.ProjectID)
+		out = append(out, binding)
 	}
-	return bindings, nil
+	return out, nil
 }
 
 // listPageSize bounds one page of a listing.
