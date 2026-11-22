@@ -26,6 +26,7 @@ import (
 	"encoding/json"
 	stderrors "errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -327,6 +328,45 @@ func (kb *XKMSBackend) ImportKey(ctx context.Context, keyID string, material []b
 	return meta, nil
 }
 
+// xkmsKeyProbe is one go-xkms key ID GetKeyMetadata probes for a key whose
+// metadata is not cached.
+type xkmsKeyProbe struct {
+	algorithm, kid string
+	symmetric      bool
+}
+
+// xkmsKeyProbes derives the probes for keyID from SupportedAlgorithms, so
+// every algorithm a key can be created with resolves after a restart. An
+// algorithm whose attributes fall to a default mapping (HMAC, Ed448, X25519,
+// X448) names no key of its own and is dropped. Kids are unique, the first
+// algorithm keeping a shared kid (all RSA sizes share "rsa"); signing probes
+// come first, then symmetric ones.
+func (kb *XKMSBackend) xkmsKeyProbes(ctx context.Context, keyID string) []xkmsKeyProbe {
+	var signing, symmetric []xkmsKeyProbe
+	seen := make(map[string]bool)
+	for _, alg := range kb.SupportedAlgorithms(ctx) {
+		if kb.attrsToAlgorithmString(kb.xkmsKeyAttributes(keyID, alg)) != alg {
+			continue
+		}
+		sym := kb.isSymmetricAlgorithm(alg)
+		kid := kb.buildSigningKeyID(keyID, alg)
+		if sym {
+			kid = kb.buildFullKeyID(keyID, alg)
+		}
+		if seen[kid] {
+			continue
+		}
+		seen[kid] = true
+		p := xkmsKeyProbe{algorithm: alg, kid: kid, symmetric: sym}
+		if sym {
+			symmetric = append(symmetric, p)
+		} else {
+			signing = append(signing, p)
+		}
+	}
+	return append(signing, symmetric...)
+}
+
 // GetKeyMetadata retrieves metadata for a key.
 func (kb *XKMSBackend) GetKeyMetadata(ctx context.Context, keyID string) (*KeyMetadata, error) {
 	if !kb.IsAvailable(ctx) {
@@ -343,66 +383,40 @@ func (kb *XKMSBackend) GetKeyMetadata(ctx context.Context, keyID string) (*KeyMe
 
 	xkmsName := xkmsKeyName(keyID)
 
-	// Try to verify key exists in xkms using multiple lookup strategies
-	// Since we don't know the algorithm, try common signing key formats first
+	// Probe every algorithm this backend supports, signing formats first,
+	// since the algorithm is not known without the cached metadata.
 	var foundAlgorithm string
-
-	// Try signing key formats: RSA, ECDSA (P-256, P-384, P-521), Ed25519
-	signingFormats := []struct {
-		algo   string
-		format string
-	}{
-		{"RSA-4096", "rsa"},
-		{"RSA-2048", "rsa"},
-		{"ECDSA-P256", "ecdsa-p256"},
-		{"ECDSA-P384", "ecdsa-p384"},
-		{"ECDSA-P521", "ecdsa-p521"},
-		{"ED25519", "ed25519"},
-	}
-
-	for _, sf := range signingFormats {
-		kid := fmt.Sprintf("%s:signing:%s:%s", kb.backendType, sf.format, xkmsName)
-		if _, err := xkms.SignerByID(ctx, kid); err == nil {
-			// A key under an encoded name that another writer stored (the
-			// node's native go-xkms service) is not this backend's key;
-			// only a recorded identity resolves, so probe the next format.
-			owned, err := kb.ownsXKMSKey(ctx, xkmsName, kid)
-			if err != nil {
-				return nil, err
-			}
-			if !owned {
+	for _, p := range kb.xkmsKeyProbes(ctx, keyID) {
+		var rsaBits int
+		if p.symmetric {
+			if _, err := xkms.GetSymmetricKey(ctx, p.kid); err != nil {
 				continue
 			}
-			foundAlgorithm = sf.algo
-			break
-		}
-	}
-
-	// If not found as signing key, try symmetric key formats
-	if foundAlgorithm == "" {
-		symmetricFormats := []struct {
-			algo   string
-			format string
-		}{
-			{"AES-256-GCM", "aes256-gcm"},
-			{"AES-128-GCM", "aes128-gcm"},
-			{"CHACHA20-POLY1305", "chacha20-poly1305"},
-		}
-
-		for _, sf := range symmetricFormats {
-			kid := fmt.Sprintf("%s:encryption:%s:%s", kb.backendType, sf.format, xkmsName)
-			if _, err := xkms.GetSymmetricKey(ctx, kid); err == nil {
-				owned, err := kb.ownsXKMSKey(ctx, xkmsName, kid)
-				if err != nil {
-					return nil, err
-				}
-				if !owned {
-					continue
-				}
-				foundAlgorithm = sf.algo
-				break
+		} else {
+			signer, err := xkms.SignerByID(ctx, p.kid)
+			if err != nil {
+				continue
+			}
+			if pub, ok := signer.Public().(*rsa.PublicKey); ok {
+				rsaBits = pub.N.BitLen()
 			}
 		}
+		// A key under an encoded name that another writer stored (the
+		// node's native go-xkms service) is not this backend's key; only a
+		// recorded identity resolves, so probe the next format.
+		owned, err := kb.ownsXKMSKey(ctx, xkmsName, p.kid)
+		if err != nil {
+			return nil, err
+		}
+		if !owned {
+			continue
+		}
+		foundAlgorithm = p.algorithm
+		// Every RSA size shares the kid "rsa"; the key itself names its size.
+		if rsaBits > 0 {
+			foundAlgorithm = "RSA-" + strconv.Itoa(rsaBits)
+		}
+		break
 	}
 
 	// The legacy lookups by bare name cannot name a key identity, so an

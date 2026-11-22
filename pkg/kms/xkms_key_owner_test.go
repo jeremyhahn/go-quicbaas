@@ -259,3 +259,75 @@ func TestXKMSBackend_ImportKey_OwnershipWriteFailureRollsBack(t *testing.T) {
 	_, err = kb.GetKeyMetadata(ctx, id)
 	require.ErrorIs(t, err, ErrKeyNotFound)
 }
+
+func TestXKMSBackend_EverySymmetricAlgorithmResolvesAfterRestart(t *testing.T) {
+	ctx := context.Background()
+	store := newKeyNameGuardXKMS(t)
+	kb := newOwnerTestBackend(t, ctx, store)
+
+	for _, alg := range []string{AlgAES128GCM, AlgAES192GCM, AlgAES256GCM, AlgChaCha20Poly1305, AlgXChaCha20Poly1305} {
+		t.Run(alg, func(t *testing.T) {
+			id := "tenant/acme/restart-" + alg
+			_, err := kb.CreateKey(ctx, kb.algorithmToKeyAttributes(id, alg))
+			require.NoError(t, err)
+			ct, err := kb.Encrypt(ctx, id, []byte("survives a restart"), nil)
+			require.NoError(t, err)
+
+			kbR := newOwnerTestBackend(t, ctx, store)
+			meta, err := kbR.GetKeyMetadata(ctx, id)
+			require.NoError(t, err)
+			require.Equal(t, alg, meta.Algorithm)
+			pt, err := kbR.Decrypt(ctx, id, ct, nil)
+			require.NoError(t, err)
+			require.Equal(t, []byte("survives a restart"), pt)
+		})
+	}
+
+	for _, alg := range []string{AlgECDSAP256, AlgEd25519, AlgRSA3072} {
+		t.Run(alg, func(t *testing.T) {
+			id := "tenant/acme/restart-" + alg
+			_, err := kb.CreateKey(ctx, kb.algorithmToKeyAttributes(id, alg))
+			require.NoError(t, err)
+			pub, err := kb.ExportPublicKey(ctx, id)
+			require.NoError(t, err)
+
+			kbR := newOwnerTestBackend(t, ctx, store)
+			meta, err := kbR.GetKeyMetadata(ctx, id)
+			require.NoError(t, err)
+			require.Equal(t, alg, meta.Algorithm)
+			pubR, err := kbR.ExportPublicKey(ctx, id)
+			require.NoError(t, err)
+			require.Equal(t, pub, pubR)
+		})
+	}
+}
+
+func TestXKMSBackend_MetadataProbesDeriveFromSupportedAlgorithms(t *testing.T) {
+	ctx := context.Background()
+	store := newKeyNameGuardXKMS(t)
+	kb := newOwnerTestBackend(t, ctx, store)
+	const id = "tenant/acme/probe-k"
+
+	probes := kb.xkmsKeyProbes(ctx, id)
+	kids := make(map[string]bool, len(probes))
+	probed := make(map[string]bool, len(probes))
+	sawSymmetric := false
+	for _, p := range probes {
+		require.False(t, kids[p.kid], "kid %s probed twice", p.kid)
+		kids[p.kid] = true
+		probed[p.algorithm] = true
+		if p.symmetric {
+			sawSymmetric = true
+		} else {
+			require.False(t, sawSymmetric, "signing probe %s after a symmetric one", p.algorithm)
+		}
+	}
+	symmetricSupported := 0
+	for _, alg := range kb.SupportedAlgorithms(ctx) {
+		if kb.isSymmetricAlgorithm(alg) {
+			symmetricSupported++
+			require.True(t, probed[alg], "supported symmetric algorithm %s has no probe", alg)
+		}
+	}
+	require.Equal(t, 5, symmetricSupported)
+}
