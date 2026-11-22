@@ -344,7 +344,7 @@ and clustered), creates a `nodeBackedShardedClient`, and populates
 
 Phase E completed: the former in-process transport type (deleted), its per-shard Pebble stores, the
 `BaasKVAdapter` / `BaasAdminAdapter` service-layer adapters,
-`ShardedClient.EmbeddedTransportForShard`, and `BaasTransportNotSupportedError`
+`ShardedClient.EmbeddedTransportForShard`, and the transport's not-supported error
 are all gone from `pkg/server`. The only survivor of the `Baas*` naming is
 `pkg/server/interfaces_baas.go`, which is a set of type aliases onto the qrdb
 SDK (`BaasBarrierService = qrdbsdk.BarrierServicer`), not a transport.

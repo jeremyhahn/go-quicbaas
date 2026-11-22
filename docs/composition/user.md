@@ -112,7 +112,7 @@ in-process transport (deleted) through two adapter types, `BaasKVAdapter` and
 `BaasAdminAdapter`, in a `pkg/server/baas_kv_admin_adapter.go`. **None
 of that exists any more.** That transport, the adapters, their
 constructors, `ShardedClient.EmbeddedTransportForShard`, and the
-`BaasTransportNotSupportedError` they returned were all removed once
+not-supported error they returned were all removed once
 standalone and clustered mode began embedding the real qrdb engine
 (see composition.md, Phases B and C). Do not
 reintroduce them.
