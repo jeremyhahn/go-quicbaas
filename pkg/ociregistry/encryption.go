@@ -17,6 +17,8 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"time"
 
@@ -41,8 +43,8 @@ const (
 	TagSize = aesgcm.TagSize
 )
 
-// gcm seals layer content (encryption.go) and wraps DEKs (local_kms.go). It is
-// the platform's one AES-GCM implementation; pkg/registry constructs no cipher
+// gcm seals layer content under each layer's DEK; the platform KMS wraps the
+// DEKs (sdk_kms.go). It is the platform's one AES-GCM implementation; pkg/registry constructs no cipher
 // of its own (#248).
 var gcm = aesgcm.NewAESGCM(rand.Reader)
 
@@ -249,11 +251,19 @@ func (e *ImageEncryptor) DecryptImage(ctx context.Context, encrypted *EncryptedI
 func (e *ImageEncryptor) getOrCreateKey(ctx context.Context, keyID string) (*KeyInfo, error) {
 	// Try to get existing key
 	keyInfo, err := e.kms.GetKey(ctx, keyID)
-	if err == nil && keyInfo != nil {
+	switch {
+	case err == nil && keyInfo != nil:
 		return keyInfo, nil
+	case err != nil:
+		var notFound KeyNotFoundError
+		if !errors.As(err, &notFound) {
+			// A timeout or a denied lookup is not a missing key: creating
+			// one here would mint a fresh KEK on every transient failure.
+			return nil, &WrappedError{Msg: fmt.Sprintf("registry: look up key %s", keyID), Err: err}
+		}
 	}
 
-	// Create new key if not found
+	// Create the key: it is really missing.
 	keyName := e.keyNamespace + "/" + keyID
 	newKeyID, err := e.kms.GenerateKey(ctx, keyName, DefaultKeyAlgorithm, []string{"encrypt", "decrypt", "wrap", "unwrap"})
 	if err != nil {

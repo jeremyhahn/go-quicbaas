@@ -503,11 +503,8 @@ func TestRegistry_EncryptedRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewQuicBaaSStorage: %v", err)
 	}
-	kms, err := NewLocalKMSClient(t.TempDir())
-	if err != nil {
-		t.Fatalf("NewLocalKMSClient: %v", err)
-	}
-	enc, err := NewImageEncryptor(kms)
+	kmsClient, _ := newTestSDKKMSClient(t)
+	enc, err := NewImageEncryptor(kmsClient)
 	if err != nil {
 		t.Fatalf("NewImageEncryptor: %v", err)
 	}

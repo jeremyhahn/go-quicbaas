@@ -212,10 +212,9 @@ func WithStorage(s *QuicBaaSStorage) RegistryOption {
 
 // WithEncryptor installs an ImageEncryptor so the Registry can fulfill
 // Push(opts.Encrypt=true). When unset, encrypted pushes return
-// EncryptionNotConfiguredError. The encryptor's underlying KMSClient
-// can be any implementation — LocalKMSClient ships out of the box;
-// production deployments swap in the QuicBaaS-KMS-backed
-// implementation when it lands.
+// EncryptionNotConfiguredError. The encryptor's underlying KMSClient is
+// usually NewSDKKMSClient over the SDK's KMS and crypto clients, so the
+// per-layer DEKs are wrapped by a platform KMS key.
 func WithEncryptor(e *ImageEncryptor) RegistryOption {
 	return func(r *Registry) {
 		r.encryptor = e

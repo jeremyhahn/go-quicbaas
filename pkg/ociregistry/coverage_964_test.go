@@ -14,7 +14,6 @@
 package ociregistry
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -186,7 +185,6 @@ func TestErrorMessages964(t *testing.T) {
 		{SigningKeyUnavailableError{KeyID: "k2"}, []string{"k2", "not found"}},
 		{SigningKeyUnavailableError{KeyID: "k3", Err: cause}, []string{"k3", "not available", "boom"}},
 		{SigningKeyUnsupportedError{KeyID: "k4", Reason: "RSA"}, []string{"k4", "RSA"}},
-		{KeyNotFoundLocalError{KeyID: "k5"}, []string{"k5", "not found"}},
 	}
 	for _, tt := range tests {
 		msg := tt.err.Error()
@@ -202,47 +200,6 @@ func TestErrorMessages964(t *testing.T) {
 	if !errors.Is(SigningKeyUnavailableError{KeyID: "k3", Err: cause}, cause) {
 		t.Error("SigningKeyUnavailableError does not unwrap to its cause")
 	}
-}
-
-func TestLocalKMS964_GetKey(t *testing.T) {
-	t.Run("generated key returns its recorded metadata", func(t *testing.T) {
-		kms, keyID := newTestKMS(t)
-		info, err := kms.GetKey(context.Background(), keyID)
-		if err != nil {
-			t.Fatalf("GetKey: %v", err)
-		}
-		if info.KeyID != keyID || info.Name != "test-key" || info.Algorithm != "AES-256-GCM" {
-			t.Errorf("GetKey = %+v, want the generated key's metadata", info)
-		}
-	})
-	t.Run("key without a metadata sidecar gets the defaults", func(t *testing.T) {
-		kms, keyID := plantKey(t, bytes.Repeat([]byte{7}, 32))
-		info, err := kms.GetKey(context.Background(), keyID)
-		if err != nil {
-			t.Fatalf("GetKey: %v", err)
-		}
-		if info.KeyID != keyID || info.Algorithm != "AES-256-GCM" || info.Version != 1 || len(info.Usage) != 4 {
-			t.Errorf("GetKey = %+v, want the default AES-256-GCM metadata", info)
-		}
-	})
-	t.Run("unknown key is KeyNotFoundLocalError", func(t *testing.T) {
-		kms, _ := newTestKMS(t)
-		var notFound KeyNotFoundLocalError
-		if _, err := kms.GetKey(context.Background(), "local-missing"); !errors.As(err, &notFound) {
-			t.Fatalf("GetKey error = %v, want KeyNotFoundLocalError", err)
-		}
-		if notFound.KeyID != "local-missing" {
-			t.Errorf("KeyID = %q, want local-missing", notFound.KeyID)
-		}
-	})
-	t.Run("cancelled context", func(t *testing.T) {
-		kms, keyID := newTestKMS(t)
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
-		if _, err := kms.GetKey(ctx, keyID); !errors.Is(err, context.Canceled) {
-			t.Fatalf("GetKey error = %v, want context.Canceled", err)
-		}
-	})
 }
 
 // storedSession marshals session into client the way SessionManager.Store

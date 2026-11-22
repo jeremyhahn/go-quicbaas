@@ -28,19 +28,16 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/kms"
 )
 
-// newSigningTestRegistry builds a registry that encrypts and signs through
-// one LocalKMSClient, the daemon's wiring.
+// newSigningTestRegistry builds a registry that encrypts through the SDK KMS
+// client and signs through the SDK signer.
 func newSigningTestRegistry(t *testing.T) (*Registry, *fakeSDKKMS) {
 	t.Helper()
 	storage, err := NewQuicBaaSStorage(newMockStorageClient())
 	if err != nil {
 		t.Fatalf("NewQuicBaaSStorage: %v", err)
 	}
-	localKMS, err := NewLocalKMSClient(t.TempDir())
-	if err != nil {
-		t.Fatalf("NewLocalKMSClient: %v", err)
-	}
-	enc, err := NewImageEncryptor(localKMS)
+	encKMS, _ := newTestSDKKMSClient(t)
+	enc, err := NewImageEncryptor(encKMS)
 	if err != nil {
 		t.Fatalf("NewImageEncryptor: %v", err)
 	}
