@@ -31,6 +31,25 @@ const workerImageWorkflowPath = "../../../.github/workflows/worker-image.yml"
 // previous line.
 const secretCheckLine = `bash deployments/agents/software-factory-worker/check-secret-findings.sh "$work/secrets.json" "$work/layers"`
 
+// layerListLine lists the layer tarballs of the saved image from its
+// manifest.json, for layerExtractLoop to extract.
+const layerListLine = `layers="$(jq -r '.[0].Layers[]' "$work/image/manifest.json")"`
+
+// layerExtractLine extracts one layer tarball into its own directory under
+// the scanned root "$work/layers".
+const layerExtractLine = `tar -xf "$work/image/$layer" -C "$work/layers/$i" --no-same-owner --no-same-permissions`
+
+// layerExtractLoop is the top-level loop, as trimmed lines in order, that
+// extracts every layer listed in manifest.json (layerListLine) into the
+// scanned root "$work/layers", with no other command in the loop body.
+var layerExtractLoop = []string{
+	`while IFS= read -r layer; do`,
+	`i=$((i + 1))`,
+	`mkdir -p "$work/layers/$i"`,
+	layerExtractLine,
+	`done <<< "$layers"`,
+}
+
 // imageScanLine is the fail-closed image and image-config secret scan the
 // secret-scan step must run, held to the same rule as secretCheckLine:
 // exactly this text at column 0, at the top level of the run script, not
@@ -55,7 +74,10 @@ type secretScanStep struct {
 
 // secretScanProblems checks that job build-publish of the worker-image
 // workflow scans the image for secrets in steps that fail on a finding, and
-// that both scans run before the push. It returns one line per problem.
+// that both scans run before the push. The push and both scans must have no
+// status function (success(), failure(), always(), cancelled()) in their if,
+// so GitHub's implicit success() gate stays and a failed scan stops the push.
+// It returns one line per problem.
 func secretScanProblems(raw []byte) []string {
 	var wf secretScanWorkflow
 	if err := yaml.Unmarshal(raw, &wf); err != nil {
@@ -100,6 +122,12 @@ func secretScanProblems(raw []byte) []string {
 	}
 	push, image, layer := job.Steps[pushIdx], job.Steps[imageIdx], job.Steps[layerIdx]
 
+	for _, s := range []secretScanStep{push, image, layer} {
+		if fn := statusFunction(s.If); fn != "" {
+			add("step %s has if %q, which uses the status function %s(): only an if without one keeps the implicit success() gate, so a failed scan would not block the push", stepLabel(s), s.If, fn)
+		}
+	}
+
 	for _, sc := range []struct {
 		id  string
 		idx int
@@ -135,8 +163,40 @@ func secretScanProblems(raw []byte) []string {
 	layerProblems, checkIdx := commandLineProblems("layer-scan", run, secretCheckLine, "check-secret-findings.sh")
 	problems = append(problems, layerProblems...)
 
+	lines := strings.Split(run, "\n")
+	depths := blockDepths(lines)
+	w := -1
+	for i, l := range lines {
+		if strings.TrimSpace(l) == layerExtractLoop[0] {
+			w = i
+			break
+		}
+	}
+	extracted := w >= 0 && depths[w] == 0 && w+len(layerExtractLoop) <= len(lines)
+	if extracted {
+		for k, want := range layerExtractLoop {
+			if strings.TrimSpace(lines[w+k]) != want {
+				extracted = false
+				break
+			}
+		}
+	}
+	if extracted {
+		listed := false
+		for l := 0; l < w; l++ {
+			if strings.TrimSpace(lines[l]) == layerListLine && depths[l] == 0 {
+				listed = true
+				break
+			}
+		}
+		extracted = listed
+	}
+	if !extracted {
+		add("step layer-scan does not extract every layer listed in manifest.json into \"$work/layers\" with %q", layerExtractLine)
+	}
+
 	trivyIdx := -1
-	for i, l := range strings.Split(run, "\n") {
+	for i, l := range lines {
 		l = strings.TrimSpace(l)
 		if strings.Contains(l, "trivy fs --scanners secret") {
 			trivyIdx = i
@@ -151,6 +211,9 @@ func secretScanProblems(raw []byte) []string {
 			break
 		}
 	}
+	if extracted && trivyIdx >= 0 && trivyIdx < w+len(layerExtractLoop) {
+		add("step layer-scan runs trivy fs before the layers are extracted")
+	}
 	if trivyIdx < 0 {
 		add("step layer-scan does not run trivy fs --scanners secret")
 	} else if checkIdx <= trivyIdx {
@@ -162,7 +225,9 @@ func secretScanProblems(raw []byte) []string {
 // commandLineProblems checks that the run script of step runs want as one
 // exact line at column 0, at shell block depth 0 (see blockDepths), not
 // continued from the previous line, with errexit on from the first line and
-// never turned off. Every other line that mentions mention is reported: it
+// never turned off. Comments are dropped before the continuation check, and
+// comment-only lines are skipped like blank lines, so a trailing ||, && or |
+// behind a comment still counts. Every other line that mentions mention is reported: it
 // runs the command in a form whose exit may not fail the step. It returns
 // the problems and the index of the accepted line in the run's lines, or -1.
 func commandLineProblems(step, run, want, mention string) ([]string, int) {
@@ -194,8 +259,9 @@ func commandLineProblems(step, run, want, mention string) ([]string, int) {
 			seen = true
 			prev := ""
 			for j := i - 1; j >= 0; j-- {
-				if strings.TrimSpace(lines[j]) != "" {
-					prev = strings.TrimRight(lines[j], " \t\r")
+				s := strings.TrimRight(stripShellComment(lines[j]), " \t\r")
+				if strings.TrimSpace(s) != "" {
+					prev = s
 					break
 				}
 			}
@@ -224,6 +290,46 @@ func commandLineProblems(step, run, want, mention string) ([]string, int) {
 		add("step %s does not run %s as a top-level command", step, mention)
 	}
 	return problems, accepted
+}
+
+// stripShellComment returns line without its shell comment: the text from a
+// # outside quotes that starts a word (at index 0 or after a space, tab, ;,
+// &, |, (, ), < or >). So ${#x} and a#b are not comments.
+func stripShellComment(line string) string {
+	var quote byte
+	for j := 0; j < len(line); j++ {
+		c := line[j]
+		switch {
+		case quote == '\'':
+			if c == '\'' {
+				quote = 0
+			}
+		case c == '\\':
+			j++
+		case quote == '"':
+			if c == '"' {
+				quote = 0
+			}
+		case c == '\'' || c == '"':
+			quote = c
+		case c == '#' && (j == 0 || strings.IndexByte(" \t;&|()<>", line[j-1]) >= 0):
+			return line[:j]
+		}
+	}
+	return line
+}
+
+// statusFunction returns the first GitHub Actions status function (success,
+// failure, always or cancelled) that cond calls, or "". A step if without
+// one is implicitly prefixed with success() &&.
+func statusFunction(cond string) string {
+	c := strings.NewReplacer(" ", "", "\t", "").Replace(strings.ToLower(cond))
+	for _, fn := range []string{"success(", "failure(", "always(", "cancelled("} {
+		if strings.Contains(c, fn) {
+			return strings.TrimSuffix(fn, "(")
+		}
+	}
+	return ""
 }
 
 // blockDepths returns the shell compound-command depth before each line:
@@ -379,6 +485,8 @@ func TestSecretScanProblems_Mutations(t *testing.T) {
 		name, old, new, want string
 		// wantAlso, when set, is a second problem the case must report.
 		wantAlso string
+		// all, when set, replaces every occurrence of old instead of the first.
+		all bool
 	}{
 		{
 			name: "check line dropped",
@@ -515,10 +623,91 @@ func TestSecretScanProblems_Mutations(t *testing.T) {
 			new:  `--no-progress "$work/layers/config"`,
 			want: "does not scan the whole layer root",
 		},
+		{
+			name: "check short-circuited behind a trailing comment",
+			old:  indent + secretCheckLine + "\n",
+			new:  indent + "true || # tolerate findings\n" + indent + secretCheckLine + "\n",
+			want: "as a continuation of the previous line",
+		},
+		{
+			name: "check short-circuited across a comment line",
+			old:  indent + secretCheckLine + "\n",
+			new:  indent + "true ||\n" + indent + "# tolerate findings\n" + indent + secretCheckLine + "\n",
+			want: "as a continuation of the previous line",
+		},
+		{
+			name: "image scan short-circuited behind a trailing comment",
+			old:  indent + imageScanLine + "\n",
+			new:  indent + "true || # tolerate findings\n" + indent + imageScanLine + "\n",
+			want: "as a continuation of the previous line",
+		},
+		{
+			name: "image scan short-circuited across a comment line",
+			old:  indent + imageScanLine + "\n",
+			new:  indent + "true ||\n" + indent + "# tolerate findings\n" + indent + imageScanLine + "\n",
+			want: "as a continuation of the previous line",
+		},
+		{
+			name: "layer extraction removed",
+			old:  indent + "  " + layerExtractLine + "\n",
+			new:  "",
+			want: "does not extract every layer listed in manifest.json",
+		},
+		{
+			name: "layer extraction masked",
+			old:  layerExtractLine,
+			new:  layerExtractLine + " || true",
+			want: "does not extract every layer listed in manifest.json",
+		},
+		{
+			name: "layer extraction skipped",
+			old:  indent + "  " + layerExtractLine + "\n",
+			new:  indent + "  continue\n" + indent + "  " + layerExtractLine + "\n",
+			want: "does not extract every layer listed in manifest.json",
+		},
+		{
+			name: "layer extraction outside the scanned root",
+			old:  `-C "$work/layers/$i"`,
+			new:  `-C "$work/unscanned/$i"`,
+			want: "does not extract every layer listed in manifest.json",
+		},
+		{
+			name: "layer extraction commented out",
+			old:  indent + "  " + layerExtractLine + "\n",
+			new:  indent + "  # " + layerExtractLine + "\n",
+			want: "does not extract every layer listed in manifest.json",
+		},
+		{
+			name:     "scan and push conditions with always()",
+			all:      true,
+			old:      "if: ${{ steps.existing.outputs.exists != 'true' }}",
+			new:      "if: ${{ always() && steps.existing.outputs.exists != 'true' }}",
+			want:     "uses the status function always()",
+			wantAlso: "step push has if",
+		},
+		{
+			name:     "scan and push conditions with !cancelled()",
+			all:      true,
+			old:      "if: ${{ steps.existing.outputs.exists != 'true' }}",
+			new:      "if: ${{ !cancelled() && steps.existing.outputs.exists != 'true' }}",
+			want:     "uses the status function cancelled()",
+			wantAlso: "step push has if",
+		},
+		{
+			name:     "scan and push conditions with success() ||",
+			all:      true,
+			old:      "if: ${{ steps.existing.outputs.exists != 'true' }}",
+			new:      "if: ${{ success() || steps.existing.outputs.exists != 'true' }}",
+			want:     "uses the status function success()",
+			wantAlso: "step push has if",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			mutated := strings.Replace(orig, tc.old, tc.new, 1)
+			if tc.all {
+				mutated = strings.ReplaceAll(orig, tc.old, tc.new)
+			}
 			if mutated == orig {
 				t.Fatalf("replacement %q found nothing in worker-image.yml", tc.old)
 			}
