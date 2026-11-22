@@ -629,6 +629,22 @@ func (kb *XKMSBackend) buildVersionedKeyID(keyID string, version int) string {
 	return fmt.Sprintf("%s_v%d", keyID, version)
 }
 
+// checkVersionedXKMSKey refuses a versioned key identity this backend did not
+// record. The version a ciphertext names is caller input, so the "_v<n>" key
+// it selects must be one this backend created by rotation; native material
+// stored under that name is not this key's version.
+func (kb *XKMSBackend) checkVersionedXKMSKey(ctx context.Context, versionedKeyID, algorithm string) error {
+	attrs := kb.xkmsKeyAttributes(versionedKeyID, algorithm)
+	owned, err := kb.ownsXKMSKey(ctx, attrs.CN, kb.xkmsKeyIdentity(attrs))
+	if err != nil {
+		return err
+	}
+	if !owned {
+		return ErrKeyNotFound
+	}
+	return nil
+}
+
 // DisableKey temporarily disables a key.
 func (kb *XKMSBackend) DisableKey(ctx context.Context, keyID string) error {
 	if !kb.IsAvailable(ctx) {
@@ -876,6 +892,9 @@ func (kb *XKMSBackend) Encrypt(ctx context.Context, keyID string, plaintext, aad
 		actualKeyID = keyID
 	} else {
 		actualKeyID = kb.buildVersionedKeyID(keyID, meta.Version)
+		if err := kb.checkVersionedXKMSKey(ctx, actualKeyID, meta.Algorithm); err != nil {
+			return nil, api.NewKeyMetadataRetrievalError("XKMSBackend.Encrypt", err)
+		}
 	}
 
 	// Build the full key ID with algorithm info for go-xkms
@@ -942,6 +961,9 @@ func (kb *XKMSBackend) Decrypt(ctx context.Context, keyID string, ciphertext, aa
 		actualKeyID = keyID
 	} else {
 		actualKeyID = kb.buildVersionedKeyID(keyID, version)
+		if err := kb.checkVersionedXKMSKey(ctx, actualKeyID, meta.Algorithm); err != nil {
+			return nil, api.NewKeyMetadataRetrievalError("XKMSBackend.Decrypt", err)
+		}
 	}
 
 	// Build the full key ID with algorithm info for go-xkms

@@ -24,6 +24,7 @@ import (
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	dbxkms "github.com/jeremyhahn/go-quicbaas/pkg/xkms"
 )
@@ -444,4 +445,193 @@ func TestXKMSBackend_DeleteKey_NotFoundWithoutRecordReturnsNotFound(t *testing.T
 	kb := newOwnerTestBackend(t, ctx, store)
 	require.ErrorIs(t, kb.DeleteKey(ctx, "tenant/acme/never-k"), ErrKeyNotFound)
 	require.ErrorIs(t, newOwnerTestBackend(t, ctx, store).DeleteKey(ctx, "tenant/acme/never-k"), ErrKeyNotFound)
+}
+
+// failMaterialDeleteStore fails the next fails Deletes of key material (any
+// key that is not an ownership record); every other delete goes through.
+type failMaterialDeleteStore struct {
+	xkmssdk.StorageBackend
+	fails atomic.Int32
+}
+
+func (s *failMaterialDeleteStore) Delete(ctx context.Context, key string) error {
+	if !strings.HasPrefix(key, xkmsKeyOwnerRecordPrefix) {
+		for {
+			n := s.fails.Load()
+			if n <= 0 {
+				break
+			}
+			if s.fails.CompareAndSwap(n, n-1) {
+				return errors.New("injected key material delete failure")
+			}
+		}
+	}
+	return s.StorageBackend.Delete(ctx, key)
+}
+
+// newFailMaterialDeleteXKMS is newKeyNameGuardXKMS with go-xkms's key
+// storage behind a failMaterialDeleteStore.
+func newFailMaterialDeleteXKMS(t *testing.T) (xkmssdk.StorageBackend, *failMaterialDeleteStore) {
+	t.Helper()
+	dbxkms.Reset()
+	t.Cleanup(dbxkms.Reset)
+
+	memStorage, err := xkmssdk.NewMemoryBackend()
+	require.NoError(t, err)
+	keyStorage := &failMaterialDeleteStore{StorageBackend: memStorage}
+	certStorage, err := xkmssdk.NewMemoryBackend()
+	require.NoError(t, err)
+	swBackend, err := xkmssdk.NewSoftwareBackend(&xkmssdk.SoftwareBackendConfig{KeyStorage: keyStorage})
+	require.NoError(t, err)
+	ks, err := xkmssdk.NewServiceBackend(&xkmssdk.ServiceBackendConfig{Backend: swBackend, CertStorage: certStorage})
+	require.NoError(t, err)
+	require.NoError(t, dbxkms.Initialize(&dbxkms.Config{
+		DefaultBackend: "software",
+		Backends:       map[string]xkmssdk.ServiceBackend{"software": ks},
+		Logger:         &mockLogger{},
+	}))
+	return memStorage, keyStorage
+}
+
+// TestXKMSBackend_DeleteKey_FailureNeverDeletesFallbackIdentity: when the
+// key's own material fails to delete, DeleteKey returns a key deletion error
+// and keeps the record. It never deletes another identity under the same
+// name, such as a native AES-256-GCM key.
+func TestXKMSBackend_DeleteKey_FailureNeverDeletesFallbackIdentity(t *testing.T) {
+	ctx := context.Background()
+	store, material := newFailMaterialDeleteXKMS(t)
+	kb := newOwnerTestBackend(t, ctx, store)
+	const id = "tenant/acme/fallback-k"
+
+	_, err := kb.CreateKey(ctx, kb.algorithmToKeyAttributes(id, AlgEd25519))
+	require.NoError(t, err)
+	native := kb.xkmsKeyAttributes(id, AlgAES256GCM)
+	native.StoreType = xkmssdk.StoreType(string(config.BackendTypeSoftware))
+	_, err = dbxkms.GenerateSymmetricKey(ctx, "software", native)
+	require.NoError(t, err)
+
+	material.fails.Store(1)
+	err = kb.DeleteKey(ctx, id)
+	require.Error(t, err)
+	require.NotErrorIs(t, err, ErrKeyNotFound)
+	var delErr *api.KeyDeletionError
+	require.ErrorAs(t, err, &delErr)
+
+	_, err = dbxkms.GetSymmetricKey(ctx, kb.buildFullKeyID(id, AlgAES256GCM))
+	require.NoError(t, err, "the native AES key under the same name is not deleted")
+	ok, err := store.Exists(ctx, xkmsKeyOwnerRecord(kb.xkmsKeyIdentity(kb.xkmsKeyAttributes(id, AlgEd25519))))
+	require.NoError(t, err)
+	require.True(t, ok, "the record of the undeleted key is kept")
+	meta, err := kb.GetKeyMetadata(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, AlgEd25519, meta.Algorithm)
+
+	require.NoError(t, kb.DeleteKey(ctx, id), "the retry deletes the key")
+	requireNoXKMSKey(t, ctx, kb, store, id, AlgEd25519)
+}
+
+// failOwnerExistsStore fails Exists of ownership records while fail is set.
+type failOwnerExistsStore struct {
+	xkmssdk.StorageBackend
+	fail atomic.Bool
+}
+
+func (s *failOwnerExistsStore) Exists(ctx context.Context, key string) (bool, error) {
+	if s.fail.Load() && strings.HasPrefix(key, xkmsKeyOwnerRecordPrefix) {
+		return false, errors.New("injected ownership read failure")
+	}
+	return s.StorageBackend.Exists(ctx, key)
+}
+
+// TestXKMSBackend_DeleteKey_OwnershipReadErrorIsReturned: a store whose
+// ownership read fails makes DeleteKey return that error, never "not
+// found", and the key is left whole.
+func TestXKMSBackend_DeleteKey_OwnershipReadErrorIsReturned(t *testing.T) {
+	ctx := context.Background()
+	store := &failOwnerExistsStore{StorageBackend: newKeyNameGuardXKMS(t)}
+	kb := newOwnerTestBackend(t, ctx, store)
+	const id = "tenant/acme/read-error-k"
+	_, err := kb.CreateKey(ctx, kb.algorithmToKeyAttributes(id, AlgAES256GCM))
+	require.NoError(t, err)
+
+	kbR := newOwnerTestBackend(t, ctx, store)
+	store.fail.Store(true)
+	err = kbR.DeleteKey(ctx, id)
+	require.Error(t, err)
+	require.NotErrorIs(t, err, ErrKeyNotFound)
+	var ownErr *XKMSKeyOwnershipError
+	require.ErrorAs(t, err, &ownErr)
+	require.Equal(t, "read", ownErr.Op)
+
+	store.fail.Store(false)
+	meta, err := kbR.GetKeyMetadata(ctx, id)
+	require.NoError(t, err, "the key is left whole")
+	require.Equal(t, AlgAES256GCM, meta.Algorithm)
+}
+
+// TestXKMSBackend_ForgedVersionNeverSelectsNativeKey: a ciphertext version
+// is caller input. A forged version naming "<id>_v3", where native material
+// that this backend never rotated in is stored, is refused rather than
+// decrypted under that native key.
+func TestXKMSBackend_ForgedVersionNeverSelectsNativeKey(t *testing.T) {
+	ctx := context.Background()
+	store := newKeyNameGuardXKMS(t)
+	kb := newOwnerTestBackend(t, ctx, store)
+	const id = "tenant/acme/forged-version-k"
+	_, err := kb.CreateKey(ctx, kb.algorithmToKeyAttributes(id, AlgAES256GCM))
+	require.NoError(t, err)
+
+	v3 := kb.buildVersionedKeyID(id, 3)
+	native := kb.xkmsKeyAttributes(v3, AlgAES256GCM)
+	native.StoreType = xkmssdk.StoreType(string(config.BackendTypeSoftware))
+	_, err = dbxkms.GenerateSymmetricKey(ctx, "software", native)
+	require.NoError(t, err)
+
+	// A ciphertext made with the native _v3 key and labelled version 3.
+	encrypted, err := dbxkms.Encrypt(ctx, kb.buildFullKeyID(v3, AlgAES256GCM), []byte("forged"), &xkmssdk.EncryptOptions{})
+	require.NoError(t, err)
+	if encrypted.Metadata == nil {
+		encrypted.Metadata = make(map[string][]byte)
+	}
+	encrypted.Metadata[keyVersionMetadataKey] = []byte("3")
+	forged, err := kb.serializeEncryptedData(encrypted)
+	require.NoError(t, err)
+
+	for name, b := range map[string]*XKMSBackend{"same": kb, "fresh": newOwnerTestBackend(t, ctx, store)} {
+		t.Run(name, func(t *testing.T) {
+			pt, err := b.Decrypt(ctx, id, forged, nil)
+			require.ErrorIs(t, err, ErrKeyNotFound)
+			require.Nil(t, pt)
+		})
+	}
+
+	// The key's own versions still work.
+	ct, err := kb.Encrypt(ctx, id, []byte("own"), nil)
+	require.NoError(t, err)
+	pt, err := kb.Decrypt(ctx, id, ct, nil)
+	require.NoError(t, err)
+	require.Equal(t, []byte("own"), pt)
+}
+
+// TestXKMSBackend_VerifyRefusesNativeSigningKey: Verify, like Sign, never
+// uses native signing material under a tenant key's name that this backend
+// did not record.
+func TestXKMSBackend_VerifyRefusesNativeSigningKey(t *testing.T) {
+	ctx := context.Background()
+	store := newKeyNameGuardXKMS(t)
+	kb := newOwnerTestBackend(t, ctx, store)
+	const id = "tenant/acme/native-verify-k"
+
+	svc, err := xkmssdk.Get()
+	require.NoError(t, err)
+	_, err = svc.GenerateKey(ctx, &transport.GenerateKeyRequest{
+		KeyID: xkmsKeyName(id), Backend: "software", KeyType: "signing", Algorithm: "ed25519",
+	})
+	require.NoError(t, err)
+
+	ok, err := kb.Verify(ctx, id, make([]byte, 32), make([]byte, 64), AlgEd25519)
+	require.ErrorIs(t, err, ErrKeyNotFound)
+	require.False(t, ok)
+	_, err = kb.Sign(ctx, id, make([]byte, 32), AlgEd25519)
+	require.ErrorIs(t, err, ErrKeyNotFound)
 }

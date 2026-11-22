@@ -6,11 +6,11 @@ import "sort"
 // package, so the names are spelled out here; a test in pkg/service pins
 // them to the handler packages' own constants.
 const (
-	PlatformHandlerKMSRotation       = "kms.rotation"
-	PlatformHandlerLedgerPricing     = "ledger.pricing"
-	PlatformHandlerSDLCTokenRotation = "sdlc.token_rotation"
-	PlatformHandlerAuditCleanup      = "audit.cleanup"
-	PlatformHandlerDBCompaction      = "db.compaction"
+	PlatformHandlerKMSRotation   = "kms.rotation"
+	PlatformHandlerLedgerPricing = "ledger.pricing"
+	PlatformHandlerSDLCRotation  = "sdlc.token_rotation"
+	PlatformHandlerAuditCleanup  = "audit.cleanup"
+	PlatformHandlerDBCompaction  = "db.compaction"
 )
 
 // platformHandlers are the handlers that act for the platform as a whole:
@@ -22,11 +22,11 @@ const (
 // A handler that ignores the job's tenant or builds a system context MUST be
 // listed here.
 var platformHandlers = map[string]struct{}{
-	PlatformHandlerKMSRotation:       {},
-	PlatformHandlerLedgerPricing:     {},
-	PlatformHandlerSDLCTokenRotation: {},
-	PlatformHandlerAuditCleanup:      {},
-	PlatformHandlerDBCompaction:      {},
+	PlatformHandlerKMSRotation:   {},
+	PlatformHandlerLedgerPricing: {},
+	PlatformHandlerSDLCRotation:  {},
+	PlatformHandlerAuditCleanup:  {},
+	PlatformHandlerDBCompaction:  {},
 }
 
 // IsPlatformHandler reports whether name is a platform-owned handler, one
