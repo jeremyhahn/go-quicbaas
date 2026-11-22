@@ -22,6 +22,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	neturl "net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -956,6 +957,9 @@ func TestEndpointMapping(t *testing.T) {
 		{"KV", "Transaction", "/api/v1/transaction", http.MethodPost},
 		{"KV", "CustomKV", "/api/v1/kv/customkv", http.MethodPost},
 
+		// Capabilities methods
+		{"Capabilities", "Get", "/api/v1/server/capabilities", http.MethodGet},
+
 		// Cluster methods
 		{"Cluster", "Status", "/api/v1/cluster/status", http.MethodGet},
 		{"Cluster", "GetLeader", "/api/v1/cluster/leader/{shardID}", http.MethodGet},
@@ -1520,6 +1524,21 @@ func TestConvertHTTPError(t *testing.T) {
 		}
 		if errors.Code(result) != errors.CodeTimeout {
 			t.Errorf("expected timeout error, got: %v", result)
+		}
+	})
+
+	t.Run("QBError inside url.Error keeps its code", func(t *testing.T) {
+		refusal := &neturl.Error{
+			Op:  "Post",
+			URL: "http://127.0.0.1/v1/barrier/unseal",
+			Err: errors.New(errors.CodeForbidden, "rest.BarrierUnseal", "refused"),
+		}
+		result := tr.convertHTTPError(refusal, "test.op")
+		if got := errors.Code(result); got != errors.CodeForbidden {
+			t.Errorf("code = %v, want CodeForbidden: %v", got, result)
+		}
+		if errors.IsRetryable(result) {
+			t.Errorf("refusal is retryable: %v", result)
 		}
 	})
 }
