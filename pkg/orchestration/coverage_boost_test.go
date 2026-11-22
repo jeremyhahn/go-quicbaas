@@ -5163,10 +5163,13 @@ func TestOrchestrator_PromptSession_BackendFromSession(t *testing.T) {
 		t.Fatalf("RegisterBackend: %v", err)
 	}
 
-	// Store a session record in-memory so the lookup works.
+	// Store a session record in-memory so the lookup works. It is the
+	// caller's own tenant's session: a prompt naming another tenant's
+	// session is refused as not found.
 	impl.sessions.Store("sess-prompt-1", &sessionRecord{
 		Backend:   "acp",
 		ProjectID: "proj-p",
+		TenantID:  "t-prompt",
 	})
 
 	ctx := ContextWithTenant(context.Background(), "t-prompt")
