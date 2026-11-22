@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/json"
 	stderrors "errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -28,8 +29,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/query"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
+
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
 
@@ -41,7 +44,8 @@ var ErrStreamNotSupported = errors.New(errors.CodeUnimplemented, "rest",
 type Transport struct {
 	cfg                 *transport.Config
 	client              *http.Client
-	streamClient        *http.Client // lazily built by streamHTTPClient; no per-request timeout
+	baseTransport       *http.Transport // under client's SO PIN guard; Close closes its idle connections
+	streamClient        *http.Client    // lazily built by streamHTTPClient; no per-request timeout
 	baseURL             string
 	basePath            string // URL path prefix for all requests (from HTTP URL addresses)
 	headers             map[string]string
@@ -103,6 +107,12 @@ func New(cfg *transport.Config, opts ...Option) (*Transport, error) {
 		opt(t)
 	}
 
+	// Build base URL. It comes before the HTTP client, whose SO PIN guard
+	// names the base URL's host as the only one a bound PIN may reach.
+	if t.baseURL == "" {
+		t.buildBaseURL()
+	}
+
 	// Build HTTP client if not provided via options
 	if t.client == nil {
 		client, err := t.buildHTTPClient()
@@ -110,11 +120,30 @@ func New(cfg *transport.Config, opts ...Option) (*Transport, error) {
 			return nil, err
 		}
 		t.client = client
-	}
-
-	// Build base URL
-	if t.baseURL == "" {
-		t.buildBaseURL()
+	} else {
+		// A client supplied WithHTTPClient (the QUIC transport builds its
+		// REST client this way) needs the same SO PIN guard as one built
+		// here, or a bound PIN would cross plaintext http, follow a
+		// redirect to another host, and never reach the X-QRDB-SO-PIN
+		// header. Wrap its transport on a shallow copy, keeping its
+		// Timeout, Jar and CheckRedirect and never mutating the caller's
+		// client. Requests without a bound PIN pass through unchanged.
+		// The secret-hop guard goes beneath it here too, so a QUIC
+		// client's secret-carrying barrier call refuses every redirect
+		// and every non-https hop.
+		c := *t.client
+		base := c.Transport
+		if base == nil {
+			base = http.DefaultTransport
+		} else if httpTransport, ok := base.(*http.Transport); ok {
+			// Close closed a supplied *http.Transport's idle connections
+			// before; it keeps doing so through the guard.
+			t.baseTransport = httpTransport
+		}
+		c.Transport = qrdbtransport.SOPINRoundTripper(secretHopRoundTripper{base: base}, "rest", qrdbtransport.ConfiguredHost(t.baseURL))
+		// Tenant verbs refuse plaintext and cross-host redirects; the caller's policy decides the rest.
+		c.CheckRedirect = tenantRedirectPolicy(c.CheckRedirect)
+		t.client = &c
 	}
 
 	// Initialize Auth handler
@@ -219,9 +248,21 @@ func (t *Transport) buildHTTPClient() (*http.Client, error) {
 		timeout = 30 * time.Second
 	}
 
+	t.baseTransport = httpTransport
+
+	// Guard an SO PIN bound by qrdbtransport.WithSOPIN the way go-qrdb's own
+	// REST transport does: a PIN-bound request is refused before it is sent
+	// on any hop, redirects included, that is not https or that names a host
+	// other than the configured one. Requests without a bound PIN pass
+	// through unchanged. Beneath it, secretHopRoundTripper refuses any
+	// redirect hop and any non-https hop of a barrier call that carries a
+	// secret; it sits on every hop either way, and leaves a bound PIN's
+	// refusals to the SO PIN guard's typed errors.
 	return &http.Client{
-		Transport: httpTransport,
+		Transport: qrdbtransport.SOPINRoundTripper(secretHopRoundTripper{base: httpTransport}, "rest", qrdbtransport.ConfiguredHost(t.baseURL)),
 		Timeout:   timeout,
+		// Tenant verbs refuse plaintext and cross-host redirects; others keep net/http's default.
+		CheckRedirect: tenantRedirectPolicy(nil),
 	}, nil
 }
 
@@ -230,6 +271,65 @@ func (t *Transport) buildHTTPClient() (*http.Client, error) {
 func (t *Transport) buildBaseURL() {
 	t.baseURL = transport.HTTPBaseURL(t.cfg.Address, t.cfg.TLSConfig != nil)
 	t.basePath = transport.HTTPPath(t.cfg.Address)
+}
+
+// secretHopKey marks a request context as carrying a barrier secret (a
+// passphrase, Shamir share, recovery key or SO PIN in the request, or
+// shares, recovery keys or a root token in the response).
+type secretHopKey struct{}
+
+// withSecretHop marks ctx so secretHopRoundTripper guards every hop of
+// the request made with it. verb names the call in the refusal error.
+func withSecretHop(ctx context.Context, verb string) context.Context {
+	return context.WithValue(ctx, secretHopKey{}, verb)
+}
+
+// secretHopRoundTripper refuses, before anything is sent, any hop of a
+// request whose context withSecretHop marked when the hop is a redirect
+// (net/http sets Request.Response on every hop it follows) or is not
+// https. A secret must reach the configured https origin and nothing
+// else; go-qrdb's SOPINRoundTripper does the same for a bound SO PIN.
+// It also refuses any hop, the first included, of a request whose context
+// withTenantBearerHop marked when the hop carries an Authorization header
+// and is not https, with ErrPlaintextBearer: a tenant barrier verb never
+// sends the platform bearer in plaintext. Unmarked requests, and marked
+// ones without a bearer, pass through untouched.
+type secretHopRoundTripper struct {
+	base http.RoundTripper
+}
+
+// RoundTrip implements http.RoundTripper.
+func (s secretHopRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	verb, secret := req.Context().Value(secretHopKey{}).(string)
+	bearerMarked, _ := req.Context().Value(tenantBearerHopKey{}).(bool)
+	if !secret && !bearerMarked {
+		return s.base.RoundTrip(req)
+	}
+	if secret {
+		if req.Response != nil {
+			closeRequestBody(req)
+			return nil, errors.New(errors.CodeForbidden, "rest."+verb,
+				"refusing to follow a redirect for "+req.URL.Path+": the request carries a barrier secret")
+		}
+		if req.URL.Scheme != "https" {
+			closeRequestBody(req)
+			return nil, errors.New(errors.CodeForbidden, "rest."+verb,
+				"refusing to send "+req.URL.Path+" over "+req.URL.Scheme+": the request carries a barrier secret and needs https")
+		}
+	}
+	if bearerMarked && req.Header.Get("Authorization") != "" && req.URL.Scheme != "https" {
+		closeRequestBody(req)
+		return nil, fmt.Errorf("%w: %s", ErrPlaintextBearer, req.URL.Redacted())
+	}
+	return s.base.RoundTrip(req)
+}
+
+// closeRequestBody honours the RoundTripper contract that RoundTrip
+// closes the request body, even on error.
+func closeRequestBody(req *http.Request) {
+	if req.Body != nil {
+		_ = req.Body.Close()
+	}
 }
 
 // Request sends a unary request and returns the response.
@@ -419,8 +519,10 @@ func (t *Transport) requestWithRetry(ctx context.Context, service, method string
 		if attempt > 0 {
 			select {
 			case <-ctx.Done():
+				// Name the attempt that led to this wait: without it the
+				// caller sees only the cancellation, not why it retried.
 				return nil, errors.Wrap(ctx.Err(), errors.CodeCanceled, "rest.Request",
-					"request canceled during retry")
+					canceledDuringRetryMessage(lastErr))
 			case <-time.After(backoff):
 				backoff = minDuration(backoff*2, t.cfg.MaxRetryBackoff)
 			}
@@ -439,6 +541,15 @@ func (t *Transport) requestWithRetry(ctx context.Context, service, method string
 	}
 
 	return nil, lastErr
+}
+
+// canceledDuringRetryMessage is the message of the error returned when the
+// context ends while waiting to retry; it names the last attempt's error.
+func canceledDuringRetryMessage(lastErr error) string {
+	if lastErr == nil {
+		return "request canceled during retry"
+	}
+	return "request canceled during retry; last attempt: " + lastErr.Error()
 }
 
 // doRequest executes a single HTTP request.
@@ -566,8 +677,24 @@ type rawResponse struct {
 // without JSON-decoding. The reqHeaders override the transport defaults
 // for the duration of the call. This is required for transports whose
 // server contract exchanges opaque WebAuthn ceremony JSON plus correlation
-// headers rather than a flat JSON envelope.
+// headers rather than a flat JSON envelope. A status >= 400 is returned as
+// the error parseErrorResponse builds.
 func (t *Transport) doRawRequest(ctx context.Context, httpMethod, endpoint string, reqBody []byte, reqHeaders map[string]string) (*rawResponse, error) {
+	resp, err := t.doRawRequestAnyStatus(ctx, httpMethod, endpoint, reqBody, reqHeaders)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 400 {
+		return nil, t.parseErrorResponse(resp.StatusCode, resp.Body)
+	}
+	return resp, nil
+}
+
+// doRawRequestAnyStatus is doRawRequest without the status check: it returns
+// the raw response for every HTTP status, so a caller can build its own error
+// from a refusal. The transport's health stamp is refreshed only for a
+// status < 400.
+func (t *Transport) doRawRequestAnyStatus(ctx context.Context, httpMethod, endpoint string, reqBody []byte, reqHeaders map[string]string) (*rawResponse, error) {
 	if t.closed.Load() {
 		return nil, errors.NewConnection("rest.doRawRequest", "transport is closed")
 	}
@@ -610,11 +737,9 @@ func (t *Transport) doRawRequest(ctx context.Context, httpMethod, endpoint strin
 			"failed to read response body")
 	}
 
-	if resp.StatusCode >= 400 {
-		return nil, t.parseErrorResponse(resp.StatusCode, respBody)
+	if resp.StatusCode < 400 {
+		t.lastHealth.Store(time.Now().UnixNano())
 	}
-
-	t.lastHealth.Store(time.Now().UnixNano())
 
 	return &rawResponse{
 		StatusCode: resp.StatusCode,
@@ -643,6 +768,8 @@ func (t *Transport) mapToEndpoint(service, method string) (string, string) {
 		return t.mapQueryMethod(method)
 	case "Cluster":
 		return t.mapClusterMethod(method)
+	case "Capabilities":
+		return t.mapCapabilitiesMethod(method)
 	case "Health":
 		return t.mapHealthMethod(method)
 	case "KMS":
@@ -765,6 +892,16 @@ func refuseQueryPaging(service, method string, req interface{}) error {
 			"the REST query routes serve no paging: Limit and Cursor are not supported")
 	}
 	return nil
+}
+
+// mapCapabilitiesMethod maps Capabilities service methods to REST endpoints.
+func (t *Transport) mapCapabilitiesMethod(method string) (string, string) {
+	switch method {
+	case "Get":
+		return "/api/v1/server/capabilities", http.MethodGet
+	default:
+		return "/api/v1/server/capabilities/" + method, http.MethodPost
+	}
 }
 
 // mapClusterMethod maps Cluster service methods to REST endpoints.
@@ -1335,6 +1472,15 @@ func (t *Transport) convertHTTPError(err error, op string) error {
 		return errors.Wrap(err, errors.CodeTimeout, op, "request timeout")
 	}
 
+	// A refusal from a guard beneath the client (secretHopRoundTripper) or
+	// from a CheckRedirect policy reaches here wrapped in *url.Error, which
+	// is a net.Error: keep the guard's code (CodeForbidden, not retryable)
+	// instead of reporting a retryable network failure.
+	var qbErr *errors.QBError
+	if stderrors.As(err, &qbErr) {
+		return errors.Wrap(err, qbErr.Code, op, "request refused before it was sent")
+	}
+
 	// Check for network errors
 	var netErr net.Error
 	if stderrors.As(err, &netErr) {
@@ -1396,8 +1542,11 @@ func (t *Transport) Close() error {
 		return nil
 	}
 
-	// Close idle connections
-	if t.client != nil && t.client.Transport != nil {
+	// Close idle connections. A client this transport built wraps its
+	// http.Transport in the SO PIN guard, so close the base directly.
+	if t.baseTransport != nil {
+		t.baseTransport.CloseIdleConnections()
+	} else if t.client != nil && t.client.Transport != nil {
 		if httpTransport, ok := t.client.Transport.(*http.Transport); ok {
 			httpTransport.CloseIdleConnections()
 		}
