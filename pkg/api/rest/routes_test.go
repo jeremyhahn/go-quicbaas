@@ -157,9 +157,11 @@ import (
 // (POST /api/v1/batch/execute) that the SDK gRPC and REST batch calls reach.
 // PLUS 2 for the KV conditional writes
 // (/api/v1/kv/{type}/{key}/compare-and-swap and /put-if-absent,
-// go-quicbaas#2029) under kv:put. 679 adds the four go-xkms TCG CA routes
+// go-quicbaas#2029) under kv:put. PLUS 4 for the go-xkms TCG CA routes
 // (/api/v1/xkms/ca/tcg/{ak,ek,enroll,sign-csr}, #1330) under certs:generate.
-const baseRouteTableSize = 679
+// PLUS 1 for the capabilities report (GET /api/v1/server/capabilities,
+// handlers_capabilities.go), authenticated with no RBAC permission.
+const baseRouteTableSize = 680
 
 // TestRoutes_SurfaceGuard asserts the table's structural invariants: exact
 // size, absolute patterns, no duplicate method+pattern, and a handler binder
@@ -347,6 +349,10 @@ func TestRoutes_SessionRoutes(t *testing.T) {
 		// go-quicbaas#990). Its end-to-end authorization is pinned in
 		// pkg/apimodule module_barrier_enable_encryption_authz_test.go.
 		"POST /v1/barrier/enable-encryption": {},
+		// The capabilities report (handlers_capabilities.go): any
+		// authenticated caller reads which subsystems this server serves
+		// and has configured, so no RBAC permission applies.
+		"GET /api/v1/server/capabilities": {},
 	}
 	got := map[string]struct{}{}
 	for _, spec := range Routes() {
