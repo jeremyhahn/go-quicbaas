@@ -77,6 +77,15 @@ func (r *Registry) PutManifest(ctx context.Context, name, reference, mediaType s
 		return "", StorageNotConfiguredError{Op: "PutManifest"}
 	}
 	digest := sha256Digest(content)
+	// A digest reference names content: the body must hash to it, or a
+	// client could replace what another reference points at.
+	if strings.HasPrefix(reference, "sha256:") {
+		if reference != digest {
+			return "", DigestMismatchError{Expected: reference, Actual: digest}
+		}
+	} else if strings.Contains(reference, ":") {
+		return "", InvalidDigestError{Digest: reference, Reason: "only sha256 digests are supported"}
+	}
 	ref := refJoin(name, reference)
 	// Parse the manifest so we can store it in the platform's
 	// canonical ImageManifest shape. /v2/ clients send the OCI

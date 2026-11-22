@@ -17,6 +17,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"testing"
 )
@@ -91,6 +92,58 @@ func TestOCIDistBackend_ManifestRoundTrip(t *testing.T) {
 	_, _, err = reg.GetManifest(ctx, "alpine", digest)
 	if err != nil {
 		t.Fatalf("GetManifest by digest: %v", err)
+	}
+}
+
+// TestOCIDistBackend_PutManifestDigestReferenceMismatch checks that a
+// manifest PUT by digest must hash to that digest, so it cannot replace
+// the content another digest names.
+func TestOCIDistBackend_PutManifestDigestReferenceMismatch(t *testing.T) {
+	reg := newTestRegistry(t)
+	ctx := context.Background()
+	const mt = "application/vnd.oci.image.manifest.v1+json"
+	mk := func(c string) []byte {
+		return []byte(`{"schemaVersion":2,"mediaType":"` + mt + `","config":{"mediaType":"application/vnd.oci.image.config.v1+json","digest":"sha256:` +
+			repeat64(c) + `","size":4},"layers":[]}`)
+	}
+	manifestA, manifestB := mk("a"), mk("b")
+	sumA := sha256.Sum256(manifestA)
+	digestA := "sha256:" + hex.EncodeToString(sumA[:])
+
+	got, err := reg.PutManifest(ctx, "alpine", digestA, mt, manifestA)
+	if err != nil {
+		t.Fatalf("PutManifest A by its digest: %v", err)
+	}
+	if got != digestA {
+		t.Fatalf("digest = %s, want %s", got, digestA)
+	}
+	_, before, err := reg.GetManifest(ctx, "alpine", digestA)
+	if err != nil {
+		t.Fatalf("GetManifest A: %v", err)
+	}
+
+	_, err = reg.PutManifest(ctx, "alpine", digestA, mt, manifestB)
+	var mismatch DigestMismatchError
+	if !errors.As(err, &mismatch) {
+		t.Fatalf("PUT of B at A's digest: want DigestMismatchError, got %v", err)
+	}
+	_, after, err := reg.GetManifest(ctx, "alpine", digestA)
+	if err != nil {
+		t.Fatalf("GetManifest A after rejected PUT: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Errorf("content behind A's digest changed:\n%s\nwant\n%s", after, before)
+	}
+
+	_, err = reg.PutManifest(ctx, "alpine", "sha512:"+repeat64("a"), mt, manifestB)
+	var invalid InvalidDigestError
+	if !errors.As(err, &invalid) {
+		t.Errorf("non-sha256 digest reference: want InvalidDigestError, got %v", err)
+	}
+
+	sumB := sha256.Sum256(manifestB)
+	if _, err := reg.PutManifest(ctx, "alpine", "sha256:"+hex.EncodeToString(sumB[:]), mt, manifestB); err != nil {
+		t.Errorf("PUT of B by its own digest: %v", err)
 	}
 }
 
