@@ -5518,6 +5518,7 @@ verify-integration-teardown: ## Fail if the integration stack can outlive a run 
 	@echo "$(BLUE)verify-integration-teardown: checking the stack comes down on the early-exit path...$(NC)"
 	@$(GOCMD) run ./scripts/verifyteardown
 
+# GOMODAUTH_TOKEN_FILE must be set: the decoy token file's path relative to the gate's throwaway HOME, e.g. `.gate/tokens.env`.
 .PHONY: verify-gomodauth
 verify-gomodauth: ## Fail if a Docker test build receives module credentials, or the staged secret file is not empty and 0600
 	@echo "$(BLUE)verify-gomodauth: checking module credentials are staged on any host and cleared after the build...$(NC)"
