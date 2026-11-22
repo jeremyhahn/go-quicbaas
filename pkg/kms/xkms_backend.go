@@ -200,6 +200,9 @@ func (kb *XKMSBackend) CreateKey(ctx context.Context, attrs *kctypes.KeyAttribut
 
 	// go-xkms stores the key under its go-xkms name; the caller's attrs keep
 	// the service key ID.
+	if err := checkNewXKMSKeyID(attrs.CN); err != nil {
+		return nil, err
+	}
 	xattrs := *attrs
 	xattrs.CN = xkmsKeyName(attrs.CN)
 
@@ -252,6 +255,10 @@ func (kb *XKMSBackend) ImportKey(ctx context.Context, keyID string, material []b
 
 	if len(material) == 0 {
 		return nil, ErrKeyMaterialEmpty
+	}
+
+	if err := checkNewXKMSKeyID(keyID); err != nil {
+		return nil, err
 	}
 
 	// Build key attributes for the imported key
