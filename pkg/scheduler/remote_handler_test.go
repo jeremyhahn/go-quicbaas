@@ -184,6 +184,7 @@ func TestListRemoteRuns_ListsOnlyTheTenantsOpenRunsOfRemoteHandlers(t *testing.T
 	engine := New(DefaultConfig(), storage)
 	running := remoteJob(time.Minute)
 	running.Status = JobStatusRunning
+	running.RunStartedAt = time.Now().Truncate(time.Second)
 	seedRunningJob(t, storage, running)
 	pending := remoteJob(time.Minute)
 	seedRunningJob(t, storage, pending)
@@ -199,7 +200,7 @@ func TestListRemoteRuns_ListsOnlyTheTenantsOpenRunsOfRemoteHandlers(t *testing.T
 	if len(runs) != 1 || runs[0].JobID != running.ID {
 		t.Fatalf("listed %d runs, want only job %d's", len(runs), running.ID)
 	}
-	if want := running.UpdatedAt.Add(time.Minute); !runs[0].Deadline.Equal(want) {
+	if want := running.RunStartedAt.Add(time.Minute); !runs[0].Deadline.Equal(want) {
 		t.Fatalf("deadline %s, want %s", runs[0].Deadline, want)
 	}
 

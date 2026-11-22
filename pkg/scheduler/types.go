@@ -128,6 +128,12 @@ type Job struct {
 	FailCount uint64    `json:"fail_count"`
 	LastError string    `json:"last_error,omitempty"`
 
+	// RunStartedAt is the instant the engine moved the job to Running: the
+	// identity of the current run, with NextRun its firing. Unlike UpdatedAt,
+	// which every write restamps, nothing but the next Running transition
+	// changes it, so an update to a running job keeps its run's identity.
+	RunStartedAt time.Time `json:"run_started_at,omitempty"`
+
 	// Metadata
 	Labels    map[string]string `json:"labels,omitempty"`
 	CreatedAt time.Time         `json:"created_at"`

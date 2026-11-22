@@ -285,7 +285,7 @@ func (s *SchedulerEngine) RecoverAbandonedRun(
 	// StartedAt is the running transition, which is the best start time that
 	// survives the node that died: the execution record it would have written
 	// was never saved, so UpdatedAt is the only evidence of when the run began.
-	startedAt := current.UpdatedAt
+	startedAt := runStartedAt(current)
 
 	// An unset observation resolves HERE, from the same stable instant — not
 	// from the clock inside the renderer. The evidence string is the identity

@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -95,7 +96,8 @@ type remoteOutcome struct {
 // open until it receives a result or its wait ends; a result offered after
 // that is refused, so a result is never accepted and then discarded.
 type remoteWaiter struct {
-	ref RemoteRunRef
+	ref      RemoteRunRef
+	deadline time.Time // the run's timeout; no completion is accepted after it
 
 	mu       sync.Mutex
 	closed   bool
@@ -137,11 +139,21 @@ func (w *remoteWaiter) delivered() bool {
 }
 
 func runRefOf(job *Job) RemoteRunRef {
-	return RemoteRunRef{JobID: job.ID, TenantID: JobTenantID(job), Firing: job.NextRun, StartedAt: job.UpdatedAt}
+	return RemoteRunRef{JobID: job.ID, TenantID: JobTenantID(job), Firing: job.NextRun, StartedAt: runStartedAt(job)}
+}
+
+// runStartedAt is the identity of the job's current run: the instant of its
+// Running transition. A record written before RunStartedAt existed falls back
+// to UpdatedAt, the only evidence it has.
+func runStartedAt(job *Job) time.Time {
+	if !job.RunStartedAt.IsZero() {
+		return job.RunStartedAt
+	}
+	return job.UpdatedAt
 }
 
 func (r RemoteRunRef) names(job *Job) bool {
-	return job.ID == r.JobID && job.NextRun.Equal(r.Firing) && job.UpdatedAt.Equal(r.StartedAt)
+	return job.ID == r.JobID && job.NextRun.Equal(r.Firing) && runStartedAt(job).Equal(r.StartedAt)
 }
 
 func (r RemoteRunRef) same(o RemoteRunRef) bool {
@@ -152,8 +164,8 @@ func (r RemoteRunRef) same(o RemoteRunRef) bool {
 // Running. Called under the job's stripe lock, right after the Running write,
 // so a worker that sees the run in the store always finds it open here.
 func (s *SchedulerEngine) openRemoteRun(job *Job) *remoteWaiter {
-	w := &remoteWaiter{ref: runRefOf(job), outcome: make(chan remoteOutcome, 1)}
-	s.remoteRuns.Store(job.ID, w)
+	w := &remoteWaiter{ref: runRefOf(job), deadline: s.runDeadline(job), outcome: make(chan remoteOutcome, 1)}
+	s.remoteRuns.Store(runKeyOf(job), w)
 	return w
 }
 
@@ -165,12 +177,16 @@ func (s *SchedulerEngine) openRemoteRun(job *Job) *remoteWaiter {
 // decided; this goroutine's own close is then a no-op.
 func (s *SchedulerEngine) remoteHandler(w *remoteWaiter) JobHandler {
 	return func(ctx context.Context, _ *Job) (*JobResult, error) {
-		defer s.remoteRuns.CompareAndDelete(w.ref.JobID, w)
+		defer s.remoteRuns.CompareAndDelete(runKey{TenantID: w.ref.TenantID, JobID: w.ref.JobID}, w)
 		select {
 		case o := <-w.outcome:
 			return o.result, o.err
 		case <-ctx.Done():
-			if !w.close() {
+			// executeJob may have closed the wait first, with no result:
+			// receive only when a result was actually delivered, or this
+			// goroutine (and the deferred cleanup) would block forever.
+			w.close()
+			if w.delivered() {
 				o := <-w.outcome
 				return o.result, o.err
 			}
@@ -187,7 +203,13 @@ func (s *SchedulerEngine) ListRemoteRuns(ctx context.Context, tenantID string, h
 		if !IsRemoteHandler(handler) {
 			return nil, ErrNotRemoteHandler
 		}
-		jobs, err := s.ListJobs(ctx, &JobQuery{Status: JobStatusRunning, Handler: handler})
+		// The tenant's own namespace: storage scans a tenant's jobs only
+		// when the query names its owner, and the system namespace otherwise.
+		query := &JobQuery{Status: JobStatusRunning, Handler: handler}
+		if tenantID != "" {
+			query.OwnerType, query.OwnerID = OwnerTypeTenant, tenantID
+		}
+		jobs, err := s.ListJobs(ctx, query)
 		if err != nil {
 			return nil, err
 		}
@@ -195,16 +217,16 @@ func (s *SchedulerEngine) ListRemoteRuns(ctx context.Context, tenantID string, h
 			if job.Handler != handler || JobTenantID(job) != tenantID {
 				continue
 			}
-			timeout := job.Timeout
-			if timeout == 0 {
-				timeout = s.config.DefaultTimeout
+			deadline := s.runDeadline(job)
+			if time.Now().After(deadline) {
+				continue // expired: no completion of it would be accepted
 			}
 			runs = append(runs, &RemoteRun{
 				RemoteRunRef: runRefOf(job),
 				Name:         job.Name,
 				Handler:      job.Handler,
 				Payload:      job.Payload,
-				Deadline:     job.UpdatedAt.Add(timeout),
+				Deadline:     deadline,
 			})
 		}
 	}
@@ -216,12 +238,15 @@ func (s *SchedulerEngine) ListRemoteRuns(ctx context.Context, tenantID string, h
 // RemoteRunNotOpenError, and records nothing.
 func (s *SchedulerEngine) CompleteRemoteRun(ctx context.Context, ref RemoteRunRef, result *JobResult, runErr error) error {
 	outcome := remoteOutcome{result: result, err: runErr}
-	if v, ok := s.remoteRuns.Load(ref.JobID); ok {
+	if v, ok := s.remoteRuns.Load(runKey{TenantID: ref.TenantID, JobID: ref.JobID}); ok {
 		w, ok := v.(*remoteWaiter)
 		if !ok {
 			return fmt.Errorf("scheduler: open remote run of job %d is a %T, not a *remoteWaiter", ref.JobID, v)
 		}
 		if w.ref.same(ref) {
+			if time.Now().After(w.deadline) {
+				return RemoteRunNotOpenError{Ref: ref, Reason: "the run's deadline passed"}
+			}
 			if w.deliver(outcome) {
 				return nil
 			}
@@ -239,8 +264,14 @@ func (s *SchedulerEngine) completeRemoteRunElsewhere(ctx context.Context, ref Re
 	if s.concluder == nil {
 		return RemoteRunNotOpenError{Ref: ref, Reason: "no execution on this engine is waiting on it"}
 	}
+	// The job is read, validated and concluded under the stripe lock
+	// persistJobOutcome concludes under, so this result never races that
+	// conclusion, or another completion, on the same node.
+	lock := s.jobLock(ref.JobID)
+	lock.Lock()
 	job, err := s.storage.GetJob(ctx, ref.JobID, ref.TenantID)
 	if err != nil || job == nil {
+		lock.Unlock()
 		if err == nil || isJobNotFound(err) {
 			return RemoteRunNotOpenError{Ref: ref, Reason: "the job does not exist"}
 		}
@@ -248,15 +279,17 @@ func (s *SchedulerEngine) completeRemoteRunElsewhere(ctx context.Context, ref Re
 		return ErrStorageError{Op: "CompleteRemoteRun", Cause: err}
 	}
 	if job.Status != JobStatusRunning || !IsRemoteHandler(job.Handler) || !ref.names(job) {
+		lock.Unlock()
 		return RemoteRunNotOpenError{Ref: ref, Reason: "the job is not running that run"}
+	}
+	if time.Now().After(s.runDeadline(job)) {
+		lock.Unlock()
+		return RemoteRunNotOpenError{Ref: ref, Reason: "the run's deadline passed"}
 	}
 	// The firing node's own execution still owns the run while its started
 	// run is recorded: its wait ended (the timeout) and it is concluding the
-	// run now. Checked under the stripe lock persistJobOutcome concludes
-	// under, so this result never races that conclusion on the same node.
-	lock := s.jobLock(job.ID)
-	lock.Lock()
-	if v, ok := s.startedRuns.Load(job.ID); ok {
+	// run now.
+	if v, ok := s.startedRuns.Load(runKeyOf(job)); ok {
 		started, ok := v.(RunConclusion)
 		if !ok {
 			lock.Unlock()
@@ -267,9 +300,12 @@ func (s *SchedulerEngine) completeRemoteRunElsewhere(ctx context.Context, ref Re
 			return RemoteRunNotOpenError{Ref: ref, Reason: "the run already ended"}
 		}
 	}
+	// Each completion concludes under an owner of its own: a repeated
+	// completion of one run on one node loses the mark to the first, rather
+	// than winning it again as the same owner's retry would.
 	won, err := s.concluder.ConcludeRun(ctx, &RunConclusion{
 		JobID: job.ID, TenantID: JobTenantID(job), Firing: ref.Firing, StartedAt: ref.StartedAt,
-		Owner: "remote@" + s.nodeID,
+		Owner: fmt.Sprintf("remote@%s/%d", s.nodeID, remoteCompletionSeq.Add(1)),
 	})
 	lock.Unlock()
 	if err != nil {
@@ -286,4 +322,18 @@ func (s *SchedulerEngine) completeRemoteRunElsewhere(ctx context.Context, ref Re
 	}
 	s.handleJobSuccess(ctx, job, exec, o.result)
 	return nil
+}
+
+// remoteCompletionSeq makes each cross-node completion's conclusion owner
+// unique within the process.
+var remoteCompletionSeq atomic.Uint64
+
+// runDeadline is when the job's current run times out: its start plus the
+// effective timeout.
+func (s *SchedulerEngine) runDeadline(job *Job) time.Time {
+	timeout := job.Timeout
+	if timeout == 0 {
+		timeout = s.config.DefaultTimeout
+	}
+	return runStartedAt(job).Add(timeout)
 }

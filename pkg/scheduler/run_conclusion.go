@@ -59,11 +59,11 @@ func (s *SchedulerEngine) noteRunStarted(job *Job) {
 	if s.concluder == nil {
 		return
 	}
-	s.startedRuns.Store(job.ID, RunConclusion{
+	s.startedRuns.Store(runKeyOf(job), RunConclusion{
 		JobID:     job.ID,
 		TenantID:  JobTenantID(job),
 		Firing:    job.NextRun,
-		StartedAt: job.UpdatedAt,
+		StartedAt: runStartedAt(job),
 		Owner:     s.executionOwner(),
 	})
 }
@@ -78,13 +78,28 @@ func (s *SchedulerEngine) concludeOwnRun(ctx context.Context, job *Job) bool {
 	if s.concluder == nil {
 		return true
 	}
-	v, ok := s.startedRuns.LoadAndDelete(job.ID)
+	key := runKeyOf(job)
+	v, ok := s.startedRuns.Load(key)
 	if !ok {
 		return true
 	}
 	run, ok := v.(RunConclusion)
 	if !ok {
 		s.logError("Job %d: started run is a %T, not a RunConclusion; its outcome is dropped", job.ID, v)
+		return false
+	}
+	// The entry belongs to the run this outcome is for only when the run's
+	// start instant matches (the firing cannot be compared: a recurring
+	// job's outcome has already moved NextRun on). An old execution finishing
+	// after a newer run of the job started must neither consume the newer
+	// run's entry nor conclude it.
+	if !run.StartedAt.Equal(runStartedAt(job)) {
+		s.concludedElsewhere.Add(1)
+		s.logWarn("Job %d: outcome of a superseded run (firing %s) is dropped", job.ID, job.NextRun)
+		return false
+	}
+	if !s.startedRuns.CompareAndDelete(key, v) {
+		s.concludedElsewhere.Add(1)
 		return false
 	}
 	won, err := s.concluder.ConcludeRun(ctx, &run)
@@ -100,6 +115,15 @@ func (s *SchedulerEngine) concludeOwnRun(ctx context.Context, job *Job) bool {
 	}
 	return true
 }
+
+// runKey names a job across tenants: two tenants' jobs may share an ID, so
+// the per-run bookkeeping is keyed by both.
+type runKey struct {
+	TenantID string
+	JobID    uint64
+}
+
+func runKeyOf(job *Job) runKey { return runKey{TenantID: JobTenantID(job), JobID: job.ID} }
 
 // ConcludedElsewhere reports how many outcomes this engine dropped because
 // another writer had already concluded the run.

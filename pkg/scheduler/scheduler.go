@@ -98,13 +98,14 @@ type SchedulerEngine struct {
 	// a clustered engine without it refuses abandoned-run recovery.
 	concluder RunConcluder
 
-	// startedRuns holds, per job, the identity of the run this node moved
-	// to Running, so its outcome is concluded through the guard.
-	startedRuns sync.Map // uint64 -> RunConclusion
+	// startedRuns holds, per job (tenant and ID: two tenants' jobs can share
+	// an ID), the identity of the run this node moved to Running, so its
+	// outcome is concluded through the guard.
+	startedRuns sync.Map // runKey -> RunConclusion
 
-	// remoteRuns holds, per job, the open run of a remote handler this node
-	// fired and is waiting on (see remote_handler.go).
-	remoteRuns sync.Map // uint64 -> *remoteWaiter
+	// remoteRuns holds, per job (tenant and ID), the open run of a remote
+	// handler this node fired and is waiting on (see remote_handler.go).
+	remoteRuns sync.Map // runKey -> *remoteWaiter
 
 	// concludedElsewhere counts outcomes dropped because another writer
 	// concluded the run first.
@@ -1434,6 +1435,7 @@ func (s *SchedulerEngine) executeJob(ctx context.Context, job *Job, claimedFirin
 	// Update job status to running
 	job.Status = JobStatusRunning
 	job.UpdatedAt = time.Now()
+	job.RunStartedAt = job.UpdatedAt
 	if err := s.storage.UpdateJob(storageCtx, job); err != nil {
 		lock.Unlock()
 		s.storageErrors.Add(1)
@@ -1519,9 +1521,12 @@ func (s *SchedulerEngine) executeJob(ctx context.Context, job *Job, claimedFirin
 		// accepted after the timeout was recorded, and then be lost. When
 		// close loses, the worker's result was accepted first and is the
 		// outcome; the handler returns it at once.
-		if waiter != nil && !waiter.close() {
-			recordResult(<-resultCh)
-			return
+		if waiter != nil {
+			waiter.close()
+			if waiter.delivered() {
+				recordResult(<-resultCh)
+				return
+			}
 		}
 		switch execCtx.Err() {
 		case context.DeadlineExceeded:
