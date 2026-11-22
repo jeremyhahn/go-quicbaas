@@ -6,6 +6,7 @@ package orchestration
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"sort"
 	"strings"
@@ -55,6 +56,15 @@ type FleetInventory struct {
 	registry FleetRegistry
 }
 
+// tenantFleetObserver is the strict read of a tenant's fleet records, the
+// fleet counterpart of observeTenantSessions: every record as stored, with
+// no record skipped, so the drift report never under-reports. The
+// production registry implements it; a registry that does not is read
+// through ListFleetNodes.
+type tenantFleetObserver interface {
+	observeTenantFleetNodes(ctx context.Context, tenantID string) ([]*FleetNode, error)
+}
+
 // ErrFleetInventoryNoRegistry refuses a FleetInventory built over nothing.
 var ErrFleetInventoryNoRegistry = errors.New("placement: fleet inventory needs a fleet registry")
 
@@ -68,9 +78,19 @@ func NewFleetInventory(registry FleetRegistry) (*FleetInventory, error) {
 
 // PlacementHosts lists the tenant's hosts. A record that names no host is
 // refused with the record named, not dropped: dropping it would hide work
-// the drift report can never place.
+// the drift report can never place. The production registry is read without
+// the operator listing's skips, so an unreadable record or one that names
+// another tenant refuses the inventory instead of vanishing from it.
 func (f *FleetInventory) PlacementHosts(ctx context.Context, tenantID string) ([]PlacementHost, error) {
-	nodes, err := f.registry.ListFleetNodes(ctx, tenantID, nil)
+	var (
+		nodes []*FleetNode
+		err   error
+	)
+	if observer, ok := f.registry.(tenantFleetObserver); ok {
+		nodes, err = observer.observeTenantFleetNodes(ctx, tenantID)
+	} else {
+		nodes, err = f.registry.ListFleetNodes(ctx, tenantID, nil)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -86,6 +106,13 @@ func groupFleetNodesByHost(tenantID string, nodes []*FleetNode) ([]PlacementHost
 	for _, node := range nodes {
 		if node == nil {
 			continue
+		}
+		if node.TenantID != tenantID {
+			return nil, &PlacementInventoryInvalidError{
+				TenantID: tenantID,
+				NodeID:   node.ID,
+				Reason:   fmt.Sprintf("names tenant %q", node.TenantID),
+			}
 		}
 		host := PlacementHostIdentity(node.Host)
 		if host == "" {

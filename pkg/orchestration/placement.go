@@ -226,16 +226,21 @@ func (e *PlacementInventoryAmbiguousError) Error() string {
 
 func (e *PlacementInventoryAmbiguousError) Unwrap() error { return ErrPlacementInventoryAmbiguous }
 
-// PlacementInventoryInvalidError refuses a registry record that names no
-// host. Dropping it would leave work the report can never place; it is
-// named instead.
+// PlacementInventoryInvalidError refuses a registry record the inventory
+// cannot trust: one that names no host, does not decode, or names another
+// tenant. Dropping it would leave work the report can never place; it is
+// named instead. Reason is empty for a record that names no host.
 type PlacementInventoryInvalidError struct {
 	TenantID string
 	NodeID   string
+	Reason   string
 }
 
 func (e *PlacementInventoryInvalidError) Error() string {
-	return fmt.Sprintf("placement inventory: fleet node %q in tenant %q names no host", e.NodeID, e.TenantID)
+	if e.Reason == "" {
+		return fmt.Sprintf("placement inventory: fleet node %q in tenant %q names no host", e.NodeID, e.TenantID)
+	}
+	return fmt.Sprintf("placement inventory: fleet node %q in tenant %q %s", e.NodeID, e.TenantID, e.Reason)
 }
 
 func (e *PlacementInventoryInvalidError) Unwrap() error { return ErrPlacementInventoryInvalid }

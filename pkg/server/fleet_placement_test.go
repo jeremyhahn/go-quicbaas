@@ -119,6 +119,43 @@ func wantPlacementPrecondition[T error](t *testing.T, what string, err error) T 
 	return target
 }
 
+func TestBindFleetPlacement_RefusesAnUnreadableFleetRecord(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	kv := orchestration.NewMemoryTaskKV()
+	registry := orchestration.NewFleetRegistry(kv)
+	if err := registry.RegisterFleetNode(ctx, &orchestration.FleetNode{
+		ID: "n1", TenantID: "acme", Name: "n1", Host: "h1", NodeType: "worker", Status: orchestration.FleetNodeStatusRunning,
+	}); err != nil {
+		t.Fatalf("RegisterFleetNode: %v", err)
+	}
+	sessions := orchestration.NewInMemoryAgentStore()
+	if err := sessions.PutSession(ctx, &orchestration.SessionRecord{
+		SessionID: "s1", TenantID: "acme", Backend: "bot", HostAffinity: "h1", Status: orchestration.SessionStateActive,
+	}); err != nil {
+		t.Fatalf("PutSession: %v", err)
+	}
+
+	svc := service.NewFleetPlacementService(nil, nil)
+	acme := tenantctx.WithTenant(ctx, "acme")
+	if err := bindFleetPlacement(fleetPlacementFacade{svc}, orchestration.NewMemoryTaskKV(), registry, sessions); err != nil {
+		t.Fatalf("bindFleetPlacement: %v", err)
+	}
+	if _, err := svc.DeclarePlacementSpec(acme, "", &orchestration.PlacementSpec{Name: "agents", Role: "agent", Hosts: []string{"h1"}}); err != nil {
+		t.Fatalf("DeclarePlacementSpec: %v", err)
+	}
+	if err := kv.Put(ctx, "orch/agent/acme/corrupt", []byte("}{")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	_, err := svc.GetPlacementDrift(acme, "", "agents")
+	invalid := wantPlacementPrecondition[*orchestration.PlacementInventoryInvalidError](t, "drift over a corrupt record", err)
+	if invalid.NodeID != "corrupt" || invalid.TenantID != "acme" {
+		t.Fatalf("refusal = %+v, want record corrupt in tenant acme", invalid)
+	}
+}
+
 // The bound reporter refuses a role the session store does not record, and
 // a remote session with no recorded host; a local hostless session is not
 // agent work and is left out of the report.

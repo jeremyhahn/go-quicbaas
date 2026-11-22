@@ -5,6 +5,7 @@ package orchestration
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"testing"
@@ -80,6 +81,66 @@ func TestFleetInventory_RefusesARecordThatNamesNoHost(t *testing.T) {
 	var invalid *PlacementInventoryInvalidError
 	if !errors.As(err, &invalid) || invalid.NodeID != "n4" || invalid.TenantID != "tenant-a" {
 		t.Fatalf("PlacementHosts = %v, want n4 refused as hostless", err)
+	}
+}
+
+func TestFleetInventory_RefusesMalformedRegistryRecords(t *testing.T) {
+	t.Parallel()
+
+	foreign, err := json.Marshal(&FleetNode{
+		ID: "foreign", TenantID: "tenant-b", Name: "foreign",
+		Host: "host-2", NodeType: "claude-code", Backend: "acp",
+	})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	cases := []struct {
+		name   string
+		key    string
+		value  []byte
+		wantID string
+	}{
+		{name: "only good records"},
+		{name: "undecodable", key: "orch/agent/tenant-a/corrupt", value: []byte("}{"), wantID: "corrupt"},
+		{name: "foreign tenant", key: "orch/agent/tenant-a/foreign", value: foreign, wantID: "foreign"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			ctx := context.Background()
+			kv := NewMemoryTaskKV()
+			registry := NewFleetRegistry(kv)
+			seedAgent(t, registry, "tenant-a", "good-1")
+			if tc.key != "" {
+				if err := kv.Put(ctx, tc.key, tc.value); err != nil {
+					t.Fatalf("Put: %v", err)
+				}
+			}
+			inventory, err := NewFleetInventory(registry)
+			if err != nil {
+				t.Fatalf("NewFleetInventory: %v", err)
+			}
+			hosts, err := inventory.PlacementHosts(ctx, "tenant-a")
+			if tc.wantID == "" {
+				if err != nil || len(hosts) != 1 || hosts[0].Host != "host-1" {
+					t.Fatalf("PlacementHosts = %v, %v, want one host host-1", hosts, err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrPlacementInventoryInvalid) {
+				t.Fatalf("PlacementHosts = %v, want ErrPlacementInventoryInvalid", err)
+			}
+			var invalid *PlacementInventoryInvalidError
+			if !errors.As(err, &invalid) || invalid.TenantID != "tenant-a" || invalid.NodeID != tc.wantID || invalid.Reason == "" {
+				t.Fatalf("PlacementHosts = %#v, want %q refused with a reason", err, tc.wantID)
+			}
+
+			listed, err := registry.ListFleetNodes(ctx, "tenant-a", nil)
+			if err != nil || len(listed) != 1 || listed[0].ID != "good-1" {
+				t.Fatalf("ListFleetNodes = %v, %v, want only good-1", listed, err)
+			}
+		})
 	}
 }
 
