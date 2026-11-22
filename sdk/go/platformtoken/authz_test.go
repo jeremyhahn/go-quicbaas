@@ -15,6 +15,7 @@ package platformtoken
 
 import (
 	"context"
+	"maps"
 	"testing"
 	"time"
 
@@ -55,6 +56,27 @@ func TestAuthorizeProjectsUserID(t *testing.T) {
 	}
 	if service := Authorize(&Claims{RegisteredClaims: jwt.RegisteredClaims{Subject: "svc"}}); service.UserID != 0 {
 		t.Fatalf("UserID = %d, want 0 without a uid claim", service.UserID)
+	}
+}
+
+func TestAuthorizeProjectsAuthAttributes(t *testing.T) {
+	got := Authorize(&Claims{
+		RegisteredClaims: jwt.RegisteredClaims{Subject: "svc"},
+		AuthMethod:       "mtls",
+		AttestMethod:     "manual",
+		AttestLevel:      "hardware",
+		AttestAAGUID:     "cb69481e",
+		AMR:              []string{"mtls", "hwk"},
+	}).AuthAttributes
+	want := map[string]string{
+		"auth_method": "mtls", "attest_method": "manual", "attest_level": "hardware",
+		"attest_aaguid": "cb69481e", "amr": "mtls hwk",
+	}
+	if !maps.Equal(got, want) {
+		t.Fatalf("AuthAttributes = %v, want %v", got, want)
+	}
+	if none := Authorize(&Claims{RegisteredClaims: jwt.RegisteredClaims{Subject: "svc"}}).AuthAttributes; none != nil {
+		t.Fatalf("AuthAttributes = %v, want nil without authentication claims", none)
 	}
 }
 

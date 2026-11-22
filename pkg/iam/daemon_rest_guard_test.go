@@ -161,3 +161,101 @@ func TestDaemonRESTGuard_AdmitsTokensThisNodeIssues(t *testing.T) {
 		})
 	}
 }
+
+// TestDaemonRESTGuard_AttributeSelectedDenyRefusesNodeToken drives a token
+// this node issues through the guard with an ABAC policy that denies get on
+// keys to callers whose attest_method is manual: the manually attested
+// service token is refused, the TPM-attested one is admitted.
+func TestDaemonRESTGuard_AttributeSelectedDenyRefusesNodeToken(t *testing.T) {
+	const issuer = "https://broker.example.com"
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("issuer key: %v", err)
+	}
+	rbac := &fakeRBACClient{permsByRole: map[string][]string{"keyholder": {"keys:get"}}}
+	svc := newKIDTokenService(t, priv, &OIDCConfig{
+		Issuer:           issuer,
+		SigningAlgorithm: "ES256",
+		AccessTokenTTL:   time.Hour,
+		RefreshTokenTTL:  24 * time.Hour,
+		IDTokenTTL:       time.Hour,
+		AuthCodeTTL:      10 * time.Minute,
+	}, &fakePermissionResolver{client: rbac})
+
+	policy := &qrdbsdk.ABACPolicy{
+		APIVersion: "abac.qrdb.io/v1",
+		Kind:       "Policy",
+		Metadata:   qrdbsdk.ABACPolicyMetadata{Name: "deny-manual-attest-key-reads", Tenant: "system"},
+		Spec: qrdbsdk.ABACPolicySpec{
+			Subjects: qrdbsdk.ABACSubjectSelector{Match: map[string]interface{}{"attest_method": "manual"}},
+			Rules: []qrdbsdk.ABACRule{{
+				Name: "deny-manual-get", Effect: qrdbsdk.ABACEffectDeny,
+				Actions: []string{"get"}, Resources: []string{"keys"},
+			}},
+		},
+	}
+	authz, err := qrdbsdk.DecorateAuthorizer(&qrdbsdk.NoopAuthorizer{}, qrdbsdk.ABACWithPolicies([]*qrdbsdk.ABACPolicy{policy}))
+	if err != nil {
+		t.Fatalf("DecorateAuthorizer: %v", err)
+	}
+	validator, err := platformtoken.NewValidator(platformtoken.Options{
+		Issuer:       issuer,
+		Audience:     issuer,
+		JWKS:         svc.keyManager.JWKS(),
+		ModeResolver: func(string) platformtoken.AuthzMode { return platformtoken.AuthzModeOffline },
+		Authorizer:   authz,
+	})
+	if err != nil {
+		t.Fatalf("NewValidator: %v", err)
+	}
+	echo := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ac, ok := platformtoken.FromContext(r.Context())
+		if !ok {
+			t.Error("the guard passed a request without binding its principal")
+			return
+		}
+		_, _ = w.Write([]byte(ac.TenantID + "/" + ac.Subject))
+	})
+
+	clientCert := daemonGuardClientCert(t, "svc-daemon")
+	sum := sha256.Sum256(clientCert.Raw)
+	issue := func(attestMethod string) string {
+		t.Helper()
+		set, err := svc.IssueServiceAccountTokens(context.Background(), ServiceAccountTokenOptions{
+			ClientID:           "svc-daemon",
+			TenantID:           "system",
+			SCP:                []string{"keys:get"},
+			CertThumbprintS256: base64.RawURLEncoding.EncodeToString(sum[:]),
+			AttestMethod:       attestMethod,
+			AMR:                []string{"mtls"},
+		})
+		if err != nil {
+			t.Fatalf("IssueServiceAccountTokens(%s): %v", attestMethod, err)
+		}
+		return set.AccessToken
+	}
+
+	for _, tc := range []struct {
+		name       string
+		token      string
+		wantStatus int
+		wantBody   string
+	}{
+		{"manually attested service token", issue("manual"), http.StatusForbidden, ""},
+		{"tpm attested service token", issue("tpm"), http.StatusOK, "system/svc-daemon"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "https://daemon.example/v1/keys", nil)
+			req.Header.Set("Authorization", "Bearer "+tc.token)
+			req.TLS.PeerCertificates = []*x509.Certificate{clientCert}
+			w := httptest.NewRecorder()
+			validator.Middleware("keys:get")(echo).ServeHTTP(w, req)
+			if w.Code != tc.wantStatus {
+				t.Fatalf("status %d, want %d (body %q)", w.Code, tc.wantStatus, w.Body.String())
+			}
+			if tc.wantBody != "" && w.Body.String() != tc.wantBody {
+				t.Fatalf("principal %q, want %q", w.Body.String(), tc.wantBody)
+			}
+		})
+	}
+}

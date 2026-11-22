@@ -9,10 +9,11 @@
   token (its ath claim), requires the client certificate an mTLS-bound token
   (`cnf` `x5t#S256`) names, requires the permission among the granted scopes,
   and asks the go-qrdb authorizer (`Options.Authorizer`, RBAC with its ABAC
-  policies) for it. The authorizer sees the token's subject and roles, so an
-  ABAC policy that denies one of the caller's roles refuses the request, and
-  a role-selected allow never admits a request that the role-less decision
-  refuses. It binds the token's tenant and subject onto the
+  policies) for it. The authorizer sees the token's subject, roles and
+  authentication claims (`attest_method`, `attest_level` and the like), so an
+  ABAC policy that denies one of the caller's roles or authentication claims
+  refuses the request, and a role- or attribute-selected allow never admits a
+  request that the role-less decision refuses. It binds the token's tenant and subject onto the
   request's context (`platformtoken.FromContext`), never a tenant or user
   named in the request. A refusal is 401 with a `Bearer` challenge, 403
   `insufficient_scope` or `access_denied`, or 503 when the guard cannot

@@ -73,6 +73,16 @@ type Claims struct {
 	// asked of the token rather than inferred from a user lookup coming up
 	// empty. Empty on user tokens and on tokens minted before the claim.
 	PrincipalType string `json:"ptyp,omitempty"`
+	// AuthMethod is how the subject authenticated to the issuer (auth_method).
+	AuthMethod string `json:"auth_method,omitempty"`
+	// AttestMethod is how the subject's key or device was attested (attest_method).
+	AttestMethod string `json:"attest_method,omitempty"`
+	// AttestLevel is the assurance level of that attestation (attest_level).
+	AttestLevel string `json:"attest_level,omitempty"`
+	// AttestAAGUID is the attested authenticator's AAGUID (attest_aaguid).
+	AttestAAGUID string `json:"attest_aaguid,omitempty"`
+	// AMR lists the authentication methods references (RFC 8176 amr).
+	AMR []string `json:"amr,omitempty"`
 	// Confirmation is the cnf sender-constraint binding (DPoP jkt / mTLS x5t).
 	Confirmation *Confirmation `json:"cnf,omitempty"`
 }

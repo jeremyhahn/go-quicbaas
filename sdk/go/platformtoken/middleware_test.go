@@ -364,3 +364,83 @@ func TestMiddleware_AuthorizerSeesTokenRoles(t *testing.T) {
 		})
 	}
 }
+
+// abacAttestKeysGet decorates inner with one tenant-1 policy whose rule has
+// effect for get on keys, selecting callers whose attest_method is manual.
+func abacAttestKeysGet(t *testing.T, effect qrdbsdk.ABACEffect, inner qrdbsdk.Authorizer) qrdbsdk.Authorizer {
+	t.Helper()
+	policy := &qrdbsdk.ABACPolicy{
+		APIVersion: "abac.qrdb.io/v1",
+		Kind:       "Policy",
+		Metadata:   qrdbsdk.ABACPolicyMetadata{Name: "manual-attest-key-reads", Tenant: "tenant-1"},
+		Spec: qrdbsdk.ABACPolicySpec{
+			Subjects: qrdbsdk.ABACSubjectSelector{Match: map[string]interface{}{"attest_method": "manual"}},
+			Rules: []qrdbsdk.ABACRule{{
+				Name: "manual-attest-get", Effect: effect,
+				Actions: []string{"get"}, Resources: []string{"keys"},
+			}},
+		},
+	}
+	a, err := qrdbsdk.DecorateAuthorizer(inner, qrdbsdk.ABACWithPolicies([]*qrdbsdk.ABACPolicy{policy}))
+	if err != nil {
+		t.Fatalf("DecorateAuthorizer: %v", err)
+	}
+	return a
+}
+
+// TestMiddleware_AuthorizerSeesAuthAttributes proves the authorizer sees the
+// token's authentication claims as Identity.Metadata: an ABAC deny that
+// selects attest_method refuses the request, and an attribute-selected allow
+// never admits a request the decisions without the attributes refuse.
+func TestMiddleware_AuthorizerSeesAuthAttributes(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	key := newIssuerKey(t, testKID)
+	offline := func(string) AuthzMode { return AuthzModeOffline }
+
+	for _, tc := range []struct {
+		name         string
+		attestMethod string
+		authz        qrdbsdk.Authorizer
+		wantStatus   int
+		wantBody     string
+	}{
+		{name: "an attribute-selected deny refuses a granted scope", attestMethod: "manual",
+			authz: abacAttestKeysGet(t, qrdbsdk.ABACEffectDeny, &qrdbsdk.NoopAuthorizer{}), wantStatus: http.StatusForbidden},
+		{name: "an attribute-selected deny does not touch another value", attestMethod: "tpm",
+			authz:      abacAttestKeysGet(t, qrdbsdk.ABACEffectDeny, &qrdbsdk.NoopAuthorizer{}),
+			wantStatus: http.StatusOK, wantBody: "tenant-1/user-1"},
+		{name: "an attribute-selected allow cannot override an inner deny", attestMethod: "manual",
+			authz: abacAttestKeysGet(t, qrdbsdk.ABACEffectAllow, innerDeny{}), wantStatus: http.StatusForbidden},
+		{name: "no authentication claims in the token",
+			authz:      abacAttestKeysGet(t, qrdbsdk.ABACEffectDeny, &qrdbsdk.NoopAuthorizer{}),
+			wantStatus: http.StatusOK, wantBody: "tenant-1/user-1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			guard := newAuthzValidator(t, key, now, Options{ModeResolver: offline, Authorizer: tc.authz}).
+				Middleware("keys:get")(principalEcho(t))
+			token := key.sign(t, tokenClaims{
+				iss: testIssuer, aud: []string{testAudience}, sub: "user-1", tid: "tenant-1",
+				scp: []string{"keys:get"}, attestMethod: tc.attestMethod, exp: now.Add(10 * time.Minute), iat: now,
+			})
+			req := httptest.NewRequest(http.MethodGet, "https://daemon.example/v1/keys", nil)
+			req.Header.Set("Authorization", "Bearer "+token)
+			w := httptest.NewRecorder()
+			guard.ServeHTTP(w, req)
+
+			if w.Code != tc.wantStatus {
+				t.Fatalf("status %d, want %d (body %q)", w.Code, tc.wantStatus, w.Body.String())
+			}
+			if tc.wantBody != "" && w.Body.String() != tc.wantBody {
+				t.Fatalf("principal %q, want %q", w.Body.String(), tc.wantBody)
+			}
+			if tc.wantStatus != http.StatusOK {
+				if !strings.Contains(w.Body.String(), "access_denied") {
+					t.Fatalf("refusal body %q, want access_denied", w.Body.String())
+				}
+				if strings.Contains(w.Body.String(), "platformtoken:") {
+					t.Fatalf("the validator's detail reached the caller: %q", w.Body.String())
+				}
+			}
+		})
+	}
+}

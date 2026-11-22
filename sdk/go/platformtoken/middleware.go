@@ -19,6 +19,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"errors"
+	"maps"
 	"net/http"
 	"strings"
 
@@ -60,7 +61,7 @@ func WithAuthorizedContext(ctx context.Context, ac *AuthorizedContext) context.C
 //   - requires the permission among the token's granted scopes, then the
 //     liveness check the validator's mode asks for, then asks
 //     Options.Authorizer (go-qrdb RBAC with its ABAC policies) for the
-//     permission as the token's subject and roles, in the token's tenant.
+//     permission as the token's subject, roles and authentication claims, in the token's tenant.
 //
 // A missing or invalid credential is 401 with a WWW-Authenticate challenge, a
 // missing permission 403, a permission the authorizer denies 403, and a guard
@@ -121,6 +122,12 @@ func (v *Validator) AuthorizeRequest(r *http.Request, permission string) (*Autho
 // only when the authorizer allows it both without and with the roles, so a
 // role-selected ABAC allow (decisive in go-qrdb) cannot admit a request the
 // role-less decision refuses.
+//
+// The authorizer also sees the token's authentication claims (auth_method,
+// attest_method, attest_level, attest_aaguid, amr) as Identity.Metadata, so
+// an attribute-selected ABAC deny refuses the request. That decision too is
+// only ever added to the others, so an attribute-selected allow cannot admit
+// a request they refuse.
 func (v *Validator) authorizePermission(ctx context.Context, ac *AuthorizedContext, permission string) error {
 	if v.authorizer == nil {
 		return &ConfigError{Detail: "a permission route needs Options.Authorizer"}
@@ -141,6 +148,18 @@ func (v *Validator) authorizePermission(ctx context.Context, ac *AuthorizedConte
 			ScopePermissions: ac.Scopes,
 		}
 		if err := v.authorizer.Authorize(ctx, withRoles, resource, action); err != nil {
+			return &PolicyDeniedError{Required: permission, Cause: err}
+		}
+	}
+	if len(ac.AuthAttributes) > 0 {
+		withAttributes := &qrdbsdk.Identity{
+			Subject:          ac.Subject,
+			TenantID:         ac.TenantID,
+			Roles:            append([]string(nil), ac.Roles...),
+			ScopePermissions: ac.Scopes,
+			Metadata:         maps.Clone(ac.AuthAttributes),
+		}
+		if err := v.authorizer.Authorize(ctx, withAttributes, resource, action); err != nil {
 			return &PolicyDeniedError{Required: permission, Cause: err}
 		}
 	}
