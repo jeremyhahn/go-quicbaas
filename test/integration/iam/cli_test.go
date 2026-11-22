@@ -18,18 +18,24 @@ package iam_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	clitoken "github.com/jeremyhahn/go-quicbaas/pkg/cli"
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
@@ -91,6 +97,13 @@ type iamCLITestContext struct {
 	tenantID  string
 	timeout   time.Duration
 	outputFmt string
+
+	// The tenant-admin identity, set by actAsTenantAdmin: the admin's
+	// certificate and key, and the HOME whose token file holds the admin's
+	// bearer. Empty means the CLI runs as the system administrator.
+	certPath string
+	keyPath  string
+	home     string
 }
 
 // newIAMCLITestContext creates a new IAM CLI test context.
@@ -117,23 +130,148 @@ func newIAMCLITestContext(t *testing.T, protocol, address, tenantID string) *iam
 	}
 }
 
-// run executes a CLI command with the configured protocol, address, and tenant.
-func (c *iamCLITestContext) run(args ...string) (string, error) {
-	c.t.Helper()
+// newIAMCLITenantAdminContext returns a CLI context that acts as the
+// administrator of a freshly provisioned tenant, in that tenant. The session
+// verbs are self-service: the server refuses a system-tenant caller and a
+// caller acting in another tenant, so the success cases run as the tenant's
+// own administrator.
+func newIAMCLITenantAdminContext(t *testing.T, protocol, address string) *iamCLITestContext {
+	t.Helper()
+	cli := newIAMCLITestContext(t, protocol, address, generateUniqueTenantIDForCLI())
+	cli.actAsTenantAdmin()
+	return cli
+}
 
-	// Build full command with protocol, address, and output format
+// actAsTenantAdmin provisions c.tenantID with its administrator
+// (helpers.TenantAdmin deletes the tenant when the test ends) and makes the
+// CLI run under that administrator's certificate and bearer.
+func (c *iamCLITestContext) actAsTenantAdmin() {
+	t := c.t
+	t.Helper()
+
+	admin := helpers.TenantAdmin(t, getRESTEndpointForCLI(), c.tenantID)
+	tenant := admin.Tenant()
+
+	dir := t.TempDir()
+	certPath := filepath.Join(dir, "tenant-admin.crt")
+	keyPath := filepath.Join(dir, "tenant-admin.key")
+	home := filepath.Join(dir, "home")
+	require.NoError(t, os.WriteFile(certPath, tenant.AdminCertPEM, 0o600), "write tenant admin certificate")
+	require.NoError(t, os.WriteFile(keyPath, tenant.AdminKeyPEM, 0o600), "write tenant admin key")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	bearer, expiresAt, err := admin.BearerSession(ctx)
+	require.NoError(t, err, "tenant admin login failed")
+	require.NoError(t, clitoken.SaveToken(filepath.Join(home, ".quicbaas", "token"), &clitoken.TokenData{
+		AccessToken: bearer,
+		ExpiresAt:   expiresAt,
+		TokenType:   "Bearer",
+	}), "persist tenant admin bearer")
+
+	c.certPath = certPath
+	c.keyPath = keyPath
+	c.home = home
+}
+
+// seedTenantAdminSession records a session for the tenant administrator
+// through the REST session endpoint (the session manager), as the
+// administrator itself (its certificate and bearer), and returns the
+// session's id. The PIV login that issued the bearer records no session, so
+// the CLI session verbs have nothing to list until one is seeded.
+//
+// own=true seeds the bearer's own session: its id is the bearer's sid claim
+// and its token_hash the hex SHA-256 of the bearer. own=false seeds another
+// session of the same user, with its own id and token hash. Both expire with
+// the bearer.
+func (c *iamCLITestContext) seedTenantAdminSession(own bool) string {
+	t := c.t
+	t.Helper()
+	require.NotEmpty(t, c.home, "seedTenantAdminSession needs actAsTenantAdmin first")
+
+	token, err := clitoken.LoadToken(filepath.Join(c.home, ".quicbaas", "token"))
+	require.NoError(t, err, "load the tenant admin bearer")
+	bearer := token.AccessToken
+
+	// Read the claims the way the CLI's keep-current does: the JWT payload,
+	// base64url without padding.
+	parts := strings.Split(bearer, ".")
+	require.Len(t, parts, 3, "the tenant admin bearer is a JWT")
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	require.NoError(t, err, "decode the bearer's claims")
+	var claims map[string]interface{}
+	require.NoError(t, json.Unmarshal(payload, &claims), "parse the bearer's claims")
+	userID, _ := claims["uid"].(string)
+	require.NotEmpty(t, userID, "the bearer carries the user id (uid)")
+	sid, _ := claims["sid"].(string)
+	if sid == "" {
+		sid, _ = claims["session_id"].(string)
+	}
+	require.NotEmpty(t, sid, "the bearer carries its session id (sid)")
+
+	sessionID := sid
+	tokenSum := sha256.Sum256([]byte(bearer))
+	if !own {
+		sessionID = fmt.Sprintf("cli-seed-%d", time.Now().UnixNano())
+		tokenSum = sha256.Sum256([]byte(bearer + ":" + sessionID))
+	}
+
+	body, err := json.Marshal(map[string]string{
+		"id":         sessionID,
+		"token_hash": hex.EncodeToString(tokenSum[:]),
+		"expires_at": token.ExpiresAt.UTC().Format(time.RFC3339),
+	})
+	require.NoError(t, err)
+
+	client, err := helpers.PIVMTLSClient(c.certPath, c.keyPath, "")
+	require.NoError(t, err, "tenant admin mTLS client")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	url := fmt.Sprintf("%s/api/v1/tenants/%s/users/%s/sessions", getRESTEndpointForCLI(), c.tenantID, userID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+bearer)
+
+	resp, err := client.Do(req)
+	require.NoError(t, err, "POST %s", url)
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	require.Equal(t, http.StatusCreated, resp.StatusCode, "seed tenant admin session: %s", respBody)
+	return sessionID
+}
+
+// command builds the CLI command for args, with the global flags and, when
+// the context acts as a tenant admin, that admin's identity.
+func (c *iamCLITestContext) command(ctx context.Context, args []string) (*exec.Cmd, []string) {
 	fullArgs := []string{
 		"--transport", c.protocol,
 		"--address", c.address,
 		"--tls-ca", "/etc/quicbaas/certs/ca.crt",
 		"--output", c.outputFmt,
 	}
+	if c.certPath != "" {
+		fullArgs = append(fullArgs, "--tls-cert", c.certPath, "--tls-key", c.keyPath)
+	}
 	fullArgs = append(fullArgs, args...)
+
+	cmd := exec.CommandContext(ctx, c.binary, fullArgs...)
+	if c.home != "" {
+		cmd.Env = append(os.Environ(), "HOME="+c.home)
+	}
+	return cmd, fullArgs
+}
+
+// run executes a CLI command with the configured protocol, address, and tenant.
+func (c *iamCLITestContext) run(args ...string) (string, error) {
+	c.t.Helper()
 
 	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, c.binary, fullArgs...)
+	cmd, fullArgs := c.command(ctx, args)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -159,19 +297,10 @@ func (c *iamCLITestContext) run(args ...string) (string, error) {
 func (c *iamCLITestContext) runExpectError(args ...string) (string, error) {
 	c.t.Helper()
 
-	// Build full command with protocol, address, and output format
-	fullArgs := []string{
-		"--transport", c.protocol,
-		"--address", c.address,
-		"--tls-ca", "/etc/quicbaas/certs/ca.crt",
-		"--output", c.outputFmt,
-	}
-	fullArgs = append(fullArgs, args...)
-
 	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, c.binary, fullArgs...)
+	cmd, fullArgs := c.command(ctx, args)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -411,103 +540,94 @@ func isExpectedNotFoundError(err error) bool {
 		strings.Contains(errStr, "does not exist")
 }
 
-// isExpectedNoSessionError checks if an error is expected when no session
-// token exists (e.g., for --keep-current flag).
-func isExpectedNoSessionError(err error) bool {
-	if err == nil {
-		return false
-	}
-	errStr := err.Error()
-	return strings.Contains(errStr, "no such file or directory") ||
-		strings.Contains(errStr, "no current session found") ||
-		strings.Contains(errStr, "failed to get current session ID")
-}
-
 // =============================================================================
 // Session CLI Tests
 // =============================================================================
 
+// cliSession is the part of an `iam session list` item or an
+// `iam session get` result these tests read. The CLI prints iam.Session:
+// list prints a JSON array of them, get prints one object.
+type cliSession struct {
+	ID       string `json:"id"`
+	TenantID string `json:"tenant_id"`
+}
+
 // TestCLISessionList tests the session list command.
 func TestCLISessionList(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
 
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	// The session verbs are self-service: the caller (the tenant's own
+	// administrator) acts in its own tenant, and lists its own sessions.
+	cli := newIAMCLITenantAdminContext(t, proto.name, proto.address)
+	tenantID := cli.tenantID
+	cli.seedTenantAdminSession(true)
 
 	t.Run("list-sessions", func(t *testing.T) {
-		// Use --user flag to avoid needing a token file
-		output, err := cli.run("iam", "session", "list", "--tenant", tenantID, "--user", "test-user")
+		output, err := cli.run("iam", "session", "list", "--tenant", tenantID)
 		require.NoError(t, err, "session list should succeed")
 
-		// Verify JSON output structure
-		if cli.outputFmt == "json" {
-			var result struct {
-				Sessions []interface{} `json:"sessions"`
-			}
-			if parseErr := cli.unmarshalJSON(output, &result); parseErr == nil {
-				t.Logf("Found %d sessions", len(result.Sessions))
-			}
-		}
+		var sessions []cliSession
+		require.NoError(t, cli.unmarshalJSON(output, &sessions), "session list prints a JSON array")
+		require.NotEmpty(t, sessions, "the tenant admin's own login session is listed")
+		t.Logf("Found %d sessions", len(sessions))
 	})
 
 	t.Run("list-sessions-with-limit", func(t *testing.T) {
-		// Use --user flag to avoid needing a token file
-		output, err := cli.run("iam", "session", "list", "--tenant", tenantID, "--user", "test-user", "--limit", "5")
+		output, err := cli.run("iam", "session", "list", "--tenant", tenantID, "--limit", "5")
 		require.NoError(t, err, "session list with limit should succeed")
 		assert.NotEmpty(t, output)
+	})
+
+	t.Run("cross-tenant-refused", func(t *testing.T) {
+		// A system caller may not list another tenant's sessions
+		// (tenantctx.Target, go-quicbaas#1150).
+		sys := newIAMCLITestContext(t, proto.name, proto.address, qrdbsdk.SystemTenantID)
+		output, err := sys.runExpectError("iam", "session", "list", "--tenant", tenantID)
+		require.Error(t, err, "session list for another tenant must fail")
+		assert.Contains(t, output+err.Error(), "FORBIDDEN", "cross-tenant session list must be refused as forbidden")
 	})
 }
 
 // TestCLISessionGet tests the session get command.
 func TestCLISessionGet(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
+	// The session verbs are self-service: the caller (the tenant's own
+	// administrator) acts in its own tenant.
+	cli := newIAMCLITenantAdminContext(t, proto.name, proto.address)
+	tenantID := cli.tenantID
+	cli.seedTenantAdminSession(true)
 
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
-
-	// First, list sessions to get a valid session ID
+	// get-session lists the caller's own sessions, then gets the first one
+	// by its id: the get must succeed and return that session in the tenant.
 	t.Run("get-session", func(t *testing.T) {
-		// Try to list sessions first to get a session ID
-		listOutput, listErr := cli.run("iam", "session", "list", "--tenant", tenantID, "--user", "test-user", "--limit", "1")
+		// The tenant admin's own login session is listed; take its id.
+		listOutput, listErr := cli.run("iam", "session", "list", "--tenant", tenantID, "--limit", "1")
 		require.NoError(t, listErr, "session list should succeed")
 
-		var sessionID string
-		if cli.outputFmt == "json" {
-			var result struct {
-				Sessions []struct {
-					SessionID string `json:"session_id"`
-				} `json:"sessions"`
-			}
-			if err := cli.unmarshalJSON(listOutput, &result); err == nil && len(result.Sessions) > 0 {
-				sessionID = result.Sessions[0].SessionID
-			}
-		}
-
-		if sessionID == "" {
-			t.Log("No sessions found to test get command, using placeholder")
-			sessionID = "test-session-id"
-		}
+		var sessions []cliSession
+		require.NoError(t, cli.unmarshalJSON(listOutput, &sessions), "session list prints a JSON array")
+		require.NotEmpty(t, sessions, "the tenant admin's own login session is listed")
+		sessionID := sessions[0].ID
+		require.NotEmpty(t, sessionID, "a listed session carries its id")
 
 		output, err := cli.run("iam", "session", "get", sessionID, "--tenant", tenantID)
-		// If no session exists, expect an error
-		if isExpectedNotFoundError(err) {
-			t.Log("Session not found (expected for placeholder ID)")
-			return
-		}
-		require.NoError(t, err, "session get should succeed")
-		assert.NotEmpty(t, output)
+		require.NoError(t, err, "session get of the caller's own session should succeed")
+
+		var got cliSession
+		require.NoError(t, cli.unmarshalJSON(output, &got), "session get prints a JSON object")
+		assert.Equal(t, sessionID, got.ID)
+		assert.Equal(t, tenantID, got.TenantID)
+		t.Logf("Retrieved session %s in tenant %s", got.ID, got.TenantID)
 	})
 }
 
 // TestCLISessionRevoke tests the session revoke command.
 func TestCLISessionRevoke(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
-
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	// The session verbs are self-service: the caller (the tenant's own
+	// administrator) acts in its own tenant.
+	cli := newIAMCLITenantAdminContext(t, proto.name, proto.address)
+	tenantID := cli.tenantID
 
 	t.Run("revoke-session", func(t *testing.T) {
 		// Use a test session ID (in a real scenario, we'd create one first)
@@ -527,13 +647,13 @@ func TestCLISessionRevoke(t *testing.T) {
 // TestCLISessionRevokeAll tests the session revoke-all command.
 func TestCLISessionRevokeAll(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
-
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	// The session verbs are self-service: the caller (the tenant's own
+	// administrator) acts in its own tenant.
+	cli := newIAMCLITenantAdminContext(t, proto.name, proto.address)
+	tenantID := cli.tenantID
 
 	t.Run("revoke-all-sessions", func(t *testing.T) {
-		output, err := cli.run("iam", "session", "revoke-all", "--tenant", tenantID, "--user", "test-user", "--yes")
+		output, err := cli.run("iam", "session", "revoke-all", "--tenant", tenantID, "--yes")
 		require.NoError(t, err, "session revoke-all should succeed")
 		t.Logf("Revoke-all output: %s", output)
 	})
@@ -542,22 +662,26 @@ func TestCLISessionRevokeAll(t *testing.T) {
 // TestCLISessionRevokeAllKeepCurrent tests the session revoke-all with keep-current flag.
 func TestCLISessionRevokeAllKeepCurrent(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
+	// The session verbs are self-service: the caller (the tenant's own
+	// administrator) acts in its own tenant.
+	cli := newIAMCLITenantAdminContext(t, proto.name, proto.address)
+	tenantID := cli.tenantID
 
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	// The caller's own session (the bearer's sid) and one other session of
+	// the same user; keep-current must revoke only the other.
+	cli.seedTenantAdminSession(true)
+	cli.seedTenantAdminSession(false)
 
 	t.Run("revoke-all-keep-current", func(t *testing.T) {
 		output, err := cli.run("iam", "session", "revoke-all", "--tenant", tenantID, "--keep-current", "--yes")
-		// The --keep-current flag requires an existing session token to determine
-		// which session to keep. Without an authenticated session (no token file),
-		// this error is expected.
-		if isExpectedNoSessionError(err) {
-			t.Log("No current session token (expected in test environment without login)")
-			return
-		}
 		require.NoError(t, err, "session revoke-all with keep-current should succeed")
 		t.Logf("Revoke-all keep-current output: %s", output)
+
+		listOutput, listErr := cli.run("iam", "session", "list", "--tenant", tenantID)
+		require.NoError(t, listErr, "session list should succeed")
+		var sessions []cliSession
+		require.NoError(t, cli.unmarshalJSON(listOutput, &sessions), "session list prints a JSON array")
+		require.Len(t, sessions, 1, "keep-current leaves exactly the caller's own session")
 	})
 }
 
@@ -850,13 +974,18 @@ func TestCLISessionErrors(t *testing.T) {
 	proto := getGRPCProtocolConfig()
 	cli := newIAMCLITestContext(t, proto.name, proto.address, "")
 
+	// A nonexistent session is looked up by the tenant's own administrator,
+	// in its own tenant: the server refuses a system-tenant caller outright,
+	// which would not test the session lookup at all.
+	admin := newIAMCLITenantAdminContext(t, proto.name, proto.address)
+
 	t.Run("get-nonexistent-session", func(t *testing.T) {
-		_, err := cli.runExpectError("iam", "session", "get", "nonexistent-session-12345", "--tenant", "test-tenant")
+		_, err := admin.runExpectError("iam", "session", "get", "nonexistent-session-12345", "--tenant", admin.tenantID)
 		assert.Error(t, err, "get should fail for nonexistent session")
 	})
 
 	t.Run("revoke-nonexistent-session", func(t *testing.T) {
-		_, err := cli.runExpectError("iam", "session", "revoke", "nonexistent-session-12345", "--tenant", "test-tenant", "--yes")
+		_, err := admin.runExpectError("iam", "session", "revoke", "nonexistent-session-12345", "--tenant", admin.tenantID, "--yes")
 		// May or may not fail depending on implementation
 		t.Logf("Revoke nonexistent session result: %v", err)
 	})
