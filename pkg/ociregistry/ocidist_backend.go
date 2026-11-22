@@ -103,6 +103,12 @@ func (r *Registry) PutManifest(ctx context.Context, name, reference, mediaType s
 	}
 	manifest.Reference = ref
 	manifest.ContentSize = int64(len(content))
+	// The pushed bytes are what clients digest and sign, so they are kept
+	// as a blob and served as-is rather than re-encoded.
+	if err := r.storage.StoreBlob(ctx, digest, content); err != nil {
+		return "", err
+	}
+	manifest.ContentDigest = digest
 	if err := r.storage.StoreManifest(ctx, ref, manifest); err != nil {
 		return "", err
 	}
@@ -127,7 +133,7 @@ func (r *Registry) GetManifest(ctx context.Context, name, reference string) (str
 	if err != nil {
 		return "", nil, err
 	}
-	body, err := encodeOCIManifest(manifest)
+	body, err := manifestBody(ctx, r.storage, manifest)
 	if err != nil {
 		return "", nil, err
 	}
@@ -356,6 +362,23 @@ func encodeOCIManifest(m *ImageManifest) ([]byte, error) {
 		return nil, &MessageError{Msg: "registry: nil manifest"}
 	}
 	return jsonMarshalIndent(m)
+}
+
+// manifestBody returns the bytes to serve for m: the pushed bytes when
+// the distribution API stored them, checked against their digest, else
+// m encoded (a manifest written by Push).
+func manifestBody(ctx context.Context, storage *QuicBaaSStorage, m *ImageManifest) ([]byte, error) {
+	if m.ContentDigest == "" {
+		return encodeOCIManifest(m)
+	}
+	body, err := storage.GetBlob(ctx, m.ContentDigest)
+	if err != nil {
+		return nil, err
+	}
+	if got := sha256Digest(body); got != m.ContentDigest {
+		return nil, DigestMismatchError{Expected: m.ContentDigest, Actual: got}
+	}
+	return body, nil
 }
 
 // jsonUnmarshal + jsonMarshalIndent are wrappers that keep the

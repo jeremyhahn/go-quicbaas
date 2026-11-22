@@ -60,6 +60,14 @@ type ImageManifest struct {
 	// the referrers API can describe the manifest without its bytes.
 	ContentSize int64 `json:"contentSize,omitempty"`
 
+	// ContentDigest is the digest of the manifest bytes as pushed through
+	// the distribution API; those bytes are stored as a blob under it and
+	// served unchanged. It is empty for manifests written by Push.
+	ContentDigest string `json:"contentDigest,omitempty"`
+
+	// Manifests are the child descriptors of an image index.
+	Manifests []Descriptor `json:"manifests,omitempty"`
+
 	// Reference is the image reference (repository:tag or digest).
 	Reference string `json:"reference,omitempty"`
 

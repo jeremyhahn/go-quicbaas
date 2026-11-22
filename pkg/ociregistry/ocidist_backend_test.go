@@ -273,3 +273,70 @@ func TestOCIDistBackend_RefusesPlaintextWhenEncryptByDefault(t *testing.T) {
 		t.Fatalf("PutBlob with encryption by default off: %v", err)
 	}
 }
+
+// TestOCIDistBackend_ManifestBytesRoundTrip checks that a manifest GET
+// serves the bytes that were pushed, so they hash to the digest.
+func TestOCIDistBackend_ManifestBytesRoundTrip(t *testing.T) {
+	reg := newTestRegistry(t)
+	ctx := context.Background()
+	const mediaType = "application/vnd.oci.image.manifest.v1+json"
+	body := []byte("{\n   \"layers\" : [ ],\n\t\"mediaType\":\"" + mediaType + "\",  \"schemaVersion\": 2,\n" +
+		"  \"config\": {\"size\": 4, \"digest\": \"sha256:" + repeat64("c") + "\", \"mediaType\": \"application/vnd.oci.image.config.v1+json\"}\n}\n")
+
+	digest, err := reg.PutManifest(ctx, "alpine", "3.20", mediaType, body)
+	if err != nil {
+		t.Fatalf("PutManifest: %v", err)
+	}
+	if digest != sha256Digest(body) {
+		t.Fatalf("digest = %s, want %s", digest, sha256Digest(body))
+	}
+	for _, ref := range []string{"3.20", digest} {
+		_, got, err := reg.GetManifest(ctx, "alpine", ref)
+		if err != nil {
+			t.Fatalf("GetManifest %s: %v", ref, err)
+		}
+		if string(got) != string(body) {
+			t.Fatalf("GetManifest %s served\n%s\nwant\n%s", ref, got, body)
+		}
+		if sha256Digest(got) != digest {
+			t.Fatalf("GetManifest %s bytes hash to %s, want %s", ref, sha256Digest(got), digest)
+		}
+	}
+}
+
+// TestOCIDistBackend_IndexRoundTrip checks that an image index keeps its
+// child descriptors.
+func TestOCIDistBackend_IndexRoundTrip(t *testing.T) {
+	reg := newTestRegistry(t)
+	ctx := context.Background()
+	const mediaType = "application/vnd.oci.image.index.v1+json"
+	childA := "sha256:" + repeat64("a")
+	childB := "sha256:" + repeat64("b")
+	body := []byte(`{"schemaVersion":2,"mediaType":"` + mediaType + `","manifests":[` +
+		`{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":"` + childA + `","size":10,"platform":{"architecture":"amd64","os":"linux"}},` +
+		`{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":"` + childB + `","size":11,"platform":{"architecture":"arm64","os":"linux"}}]}`)
+
+	digest, err := reg.PutManifest(ctx, "alpine", "multi", mediaType, body)
+	if err != nil {
+		t.Fatalf("PutManifest: %v", err)
+	}
+	gotType, got, err := reg.GetManifest(ctx, "alpine", "multi")
+	if err != nil {
+		t.Fatalf("GetManifest: %v", err)
+	}
+	if string(got) != string(body) {
+		t.Fatalf("GetManifest served\n%s\nwant\n%s", got, body)
+	}
+	if gotType != mediaType {
+		t.Errorf("media type = %q, want %q", gotType, mediaType)
+	}
+	for _, ref := range []string{"multi", digest} {
+		m, err := reg.storage.GetManifest(ctx, refJoin("alpine", ref))
+		if err != nil {
+			t.Fatalf("storage.GetManifest %s: %v", ref, err)
+		}
+		if len(m.Manifests) != 2 || m.Manifests[0].Digest != childA || m.Manifests[1].Digest != childB {
+			t.Fatalf("stored index %s children = %+v, want %s and %s", ref, m.Manifests, childA, childB)
+		}
+	}
+}
