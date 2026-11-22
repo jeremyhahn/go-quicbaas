@@ -68,10 +68,10 @@ func (n *nodeVectorStorage) CreateNamespace(ctx context.Context, info *interface
 
 // DeleteNamespace removes a namespace and all its vectors via the node transport.
 func (n *nodeVectorStorage) DeleteNamespace(ctx context.Context, namespace string) error {
+	defer n.snapshots.beginWrite(namespace)()
 	_, err := n.client.Vector().DeleteNamespace(ctx, &qrdbtransport.DeleteNamespaceRequest{
 		Namespace: namespace,
 	})
-	n.snapshots.drop(namespace)
 	return err
 }
 
@@ -116,6 +116,7 @@ func (n *nodeVectorStorage) GetNamespaceInfo(ctx context.Context, namespace stri
 
 // UpsertVector inserts or updates a single vector via the node transport.
 func (n *nodeVectorStorage) UpsertVector(ctx context.Context, namespace string, vec *interfaces.VectorValue) error {
+	defer n.snapshots.beginWrite(namespace)()
 	meta := make(map[string]interface{}, len(vec.Metadata))
 	for k, v := range vec.Metadata {
 		meta[k] = v
@@ -126,7 +127,6 @@ func (n *nodeVectorStorage) UpsertVector(ctx context.Context, namespace string, 
 		Vector:    vec.Embedding,
 		Metadata:  meta,
 	})
-	n.snapshots.drop(namespace)
 	return err
 }
 
@@ -157,16 +157,17 @@ func (n *nodeVectorStorage) GetVector(ctx context.Context, namespace string, id 
 
 // DeleteVector removes a single vector by namespace and ID via the node transport.
 func (n *nodeVectorStorage) DeleteVector(ctx context.Context, namespace string, id uint64) error {
+	defer n.snapshots.beginWrite(namespace)()
 	_, err := n.client.Vector().DeleteVector(ctx, &qrdbtransport.DeleteVectorRequest{
 		Namespace: namespace,
 		ID:        id,
 	})
-	n.snapshots.drop(namespace)
 	return err
 }
 
 // BatchUpsertVectors inserts or updates multiple vectors atomically via the node transport.
 func (n *nodeVectorStorage) BatchUpsertVectors(ctx context.Context, namespace string, vecs []*interfaces.VectorValue) error {
+	defer n.snapshots.beginWrite(namespace)()
 	tvecs := make([]*qrdbtransport.VectorData, len(vecs))
 	for i, v := range vecs {
 		meta := make(map[string]interface{}, len(v.Metadata))
@@ -186,17 +187,16 @@ func (n *nodeVectorStorage) BatchUpsertVectors(ctx context.Context, namespace st
 		Namespace: namespace,
 		Vectors:   tvecs,
 	})
-	n.snapshots.drop(namespace)
 	return err
 }
 
 // BatchDeleteVectors deletes multiple vectors by IDs via the node transport.
 func (n *nodeVectorStorage) BatchDeleteVectors(ctx context.Context, namespace string, ids []uint64) error {
+	defer n.snapshots.beginWrite(namespace)()
 	_, err := n.client.Vector().BatchDeleteVectors(ctx, &qrdbtransport.BatchDeleteVectorsRequest{
 		Namespace: namespace,
 		IDs:       ids,
 	})
-	n.snapshots.drop(namespace)
 	return err
 }
 
@@ -255,9 +255,18 @@ func (n *nodeVectorStorage) ScanNamespace(ctx context.Context, namespace string,
 var _ interfaces.VectorFullScanner = (*nodeVectorStorage)(nil)
 var _ interfaces.VectorScanInvalidator = (*nodeVectorStorage)(nil)
 
-// InvalidateScan drops the namespace's scan snapshots, for a caller that
-// wrote the namespace through another client of the node.
-func (n *nodeVectorStorage) InvalidateScan(namespace string) { n.snapshots.drop(namespace) }
+var _ interfaces.VectorWriteTracker = (*nodeVectorStorage)(nil)
+
+// InvalidateScan records a write of namespace that already ended, for a
+// caller that wrote the namespace through another client of the node: the
+// namespace's write revision changes and its scan snapshots are dropped.
+func (n *nodeVectorStorage) InvalidateScan(namespace string) { n.snapshots.beginWrite(namespace)() }
+
+// BeginVectorWrite records a write of namespace made through another
+// client of the node, so a full scan that overlaps it is not accepted.
+func (n *nodeVectorStorage) BeginVectorWrite(namespace string) func() {
+	return n.snapshots.beginWrite(namespace)
+}
 
 // ScanAllVectors returns every vector of a namespace once each, ordered by ID,
 // from one listAllVectors read. It includes embeddings and metadata unless
@@ -272,7 +281,7 @@ func (n *nodeVectorStorage) ScanAllVectors(ctx context.Context, namespace string
 		req.IncludeVectors = opts.IncludeVectors
 		req.IncludeMetadata = opts.IncludeMetadata
 	}
-	all, err := listAllVectors(ctx, n.client.Vector(), req)
+	all, err := listAllVectors(ctx, n.client.Vector(), req, &n.snapshots)
 	if err != nil {
 		return nil, err
 	}
@@ -305,9 +314,15 @@ var errIncompleteVectorScan = errors.New("vector scan did not return every vecto
 // page that reaches its end, so that page's offset plus its length is the
 // distinct total. A namespace that fits one page is read in one request.
 //
-// When the namespace count, or the distinct total of a complete pass, differs
-// from the previous pass's, the namespace changed: the vectors read so far are
-// discarded, so a result never holds a vector that was deleted since. If
+// A scan is accepted only when the namespace's write revision, kept in writes,
+// is unchanged and no write of the namespace was in flight from the read of
+// the first vector it keeps to its last check; otherwise the vectors read so
+// far are discarded, so a result never holds a vector that was deleted since
+// nor misses one written meanwhile. When the namespace count, or the distinct
+// total of a complete pass, differs from the previous pass's, the vectors are
+// discarded too: that second guard is all that covers writes which do not
+// pass through this node's QuicBaaS vector storage or service. With a nil
+// writes only the count checks apply. If
 // nodeScanMaxPasses passes still fall short it returns errIncompleteVectorScan
 // rather than an incomplete set, so a caller such as an index rebuild never
 // reports success over vectors it did not read.
@@ -317,16 +332,27 @@ var errIncompleteVectorScan = errors.New("vector scan did not return every vecto
 // passes the end of a namespace that shrank between requests, qrdb restarts
 // from the first vector with an ever larger cursor, so the pass would
 // otherwise never end. The context is checked before every request.
-func listAllVectors(ctx context.Context, vc qrdbtransport.VectorClient, req *qrdbtransport.ListVectorsRequest) ([]*qrdbtransport.VectorData, error) {
+func listAllVectors(ctx context.Context, vc qrdbtransport.VectorClient, req *qrdbtransport.ListVectorsRequest, writes *vectorScanSnapshots) ([]*qrdbtransport.VectorData, error) {
 	count, distinct := -1, -1
 	var seen map[uint64]struct{}
 	var all []*qrdbtransport.VectorData
 	reset := func() {
 		seen, all = make(map[uint64]struct{}), nil
 	}
+	// rev is the write revision the vectors in seen were read under, and
+	// clean whether no write was in flight then.
+	var rev uint64
+	clean := false
 	for pass := 0; pass < nodeScanMaxPasses; pass++ {
 		if err := ctx.Err(); err != nil {
 			return nil, err
+		}
+		if r, quiet := writes.revision(req.Namespace); seen == nil || r != rev || !quiet {
+			// A write began or ended since these vectors were read, or one is
+			// still running: start over under the current revision.
+			reset()
+			count, distinct = -1, -1
+			rev, clean = r, quiet
 		}
 		info, err := vc.GetNamespaceInfo(ctx, &qrdbtransport.GetNamespaceInfoRequest{Namespace: req.Namespace})
 		if err != nil {
@@ -379,12 +405,14 @@ func listAllVectors(ctx context.Context, vc qrdbtransport.VectorClient, req *qrd
 		}
 		if distinct >= 0 && len(seen) == distinct {
 			// The distinct total holds only if the namespace did not change
-			// during the pass; a changed count sends the scan round again.
+			// during the pass: a write that began or ended, or a changed
+			// count, sends the scan round again.
 			info, err := vc.GetNamespaceInfo(ctx, &qrdbtransport.GetNamespaceInfoRequest{Namespace: req.Namespace})
 			if err != nil {
 				return nil, err
 			}
-			if int(info.VectorCount) == count {
+			r, quiet := writes.revision(req.Namespace)
+			if int(info.VectorCount) == count && clean && quiet && r == rev {
 				sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
 				return all, nil
 			}
@@ -428,6 +456,9 @@ type vectorScanSnapshots struct {
 	// gen counts drops, so a read that a write overlapped does not store
 	// what it read.
 	gen uint64
+	// writes is the write revision of each namespace written since start;
+	// entries are never removed, so a revision never repeats.
+	writes map[string]*namespaceWrites
 }
 
 func (s *vectorScanSnapshots) clock() time.Time {
@@ -471,7 +502,7 @@ func (s *vectorScanSnapshots) load(ctx context.Context, vc qrdbtransport.VectorC
 	gen := s.gen
 	s.mu.Unlock()
 
-	all, err := listAllVectors(ctx, vc, req)
+	all, err := listAllVectors(ctx, vc, req, s)
 	if err != nil {
 		return nil, err
 	}
@@ -509,6 +540,63 @@ func (s *vectorScanSnapshots) drop(namespace string) {
 			delete(s.entries, k)
 		}
 	}
+}
+
+// namespaceWrites is the write state of one namespace that a full scan
+// checks: rev changes when a write begins and when it ends, and inflight
+// counts the writes begun and not yet ended.
+type namespaceWrites struct {
+	rev      uint64
+	inflight int
+}
+
+// beginWrite records that a write of namespace starts. The returned func
+// records its end and drops the namespace's snapshots; it acts once.
+func (s *vectorScanSnapshots) beginWrite(namespace string) func() {
+	s.mu.Lock()
+	w := s.writesOf(namespace)
+	w.rev++
+	w.inflight++
+	s.gen++
+	s.mu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			s.mu.Lock()
+			w.rev++
+			w.inflight--
+			s.mu.Unlock()
+			s.drop(namespace)
+		})
+	}
+}
+
+// writesOf returns namespace's write state, creating it. s.mu is held.
+func (s *vectorScanSnapshots) writesOf(namespace string) *namespaceWrites {
+	if s.writes == nil {
+		s.writes = make(map[string]*namespaceWrites)
+	}
+	w := s.writes[namespace]
+	if w == nil {
+		w = &namespaceWrites{}
+		s.writes[namespace] = w
+	}
+	return w
+}
+
+// revision reports namespace's write revision and whether no write of it
+// is in flight. A nil s tracks nothing and always reports (0, true).
+func (s *vectorScanSnapshots) revision(namespace string) (uint64, bool) {
+	if s == nil {
+		return 0, true
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	w := s.writes[namespace]
+	if w == nil {
+		return 0, true
+	}
+	return w.rev, w.inflight == 0
 }
 
 // scanCursorOffset reads a qrdb ListVectors cursor as the offset it encodes;

@@ -200,3 +200,12 @@ type VectorFullScanner interface {
 type VectorScanInvalidator interface {
 	InvalidateScan(namespace string)
 }
+
+// VectorWriteTracker is implemented by a VectorStorage whose full scans
+// must notice writes made through another path. A caller that writes a
+// namespace through another path calls BeginVectorWrite before it sends
+// the write and the returned func once the write returns, whatever its
+// result.
+type VectorWriteTracker interface {
+	BeginVectorWrite(namespace string) (done func())
+}

@@ -2743,3 +2743,53 @@ func TestVectorService_WritesInvalidateScanSnapshots(t *testing.T) {
 	defer rec.mu.Unlock()
 	assert.Equal(t, []string{"test-ns", "test-ns", "test-ns", "test-ns"}, rec.got)
 }
+
+// vecWriteTrackerRecorder records the begin and end of each SDK write the
+// service reports, and each invalidation, in order.
+type vecWriteTrackerRecorder struct {
+	*vecMockStorage
+	mu  sync.Mutex
+	got []string
+}
+
+func (r *vecWriteTrackerRecorder) record(s string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.got = append(r.got, s)
+}
+
+func (r *vecWriteTrackerRecorder) BeginVectorWrite(ns string) func() {
+	r.record("begin " + ns)
+	return func() { r.record("end " + ns) }
+}
+
+func (r *vecWriteTrackerRecorder) InvalidateScan(ns string) { r.record("invalidate " + ns) }
+
+// The service brackets each SDK-client write with BeginVectorWrite, so a
+// full scan that overlaps the write is not accepted.
+func TestVectorService_SDKWritesAreTracked(t *testing.T) {
+	svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 2)
+	rec := &vecWriteTrackerRecorder{vecMockStorage: storage}
+	svc.storage = rec
+	ctx := tenantctx.WithSystem(context.Background())
+
+	_, err := svc.UpsertVector(ctx, &UpsertVectorRequest{Namespace: "test-ns", ID: 1, Vector: []float32{1, 2}})
+	require.NoError(t, err)
+	_, err = svc.BatchUpsert(ctx, &BatchUpsertRequest{
+		Namespace: "test-ns",
+		Vectors:   []*VectorData{{ID: 2, Vector: []float32{3, 4}}, {ID: 3, Vector: []float32{5, 6}}},
+	})
+	require.NoError(t, err)
+	_, err = svc.DeleteVector(ctx, &DeleteVectorRequest{Namespace: "test-ns", ID: 1})
+	require.NoError(t, err)
+	_, err = svc.DeleteNamespace(ctx, &DeleteNamespaceRequest{Namespace: "test-ns"})
+	require.NoError(t, err)
+
+	var want []string
+	for i := 0; i < 4; i++ {
+		want = append(want, "begin test-ns", "end test-ns", "invalidate test-ns")
+	}
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	assert.Equal(t, want, rec.got)
+}

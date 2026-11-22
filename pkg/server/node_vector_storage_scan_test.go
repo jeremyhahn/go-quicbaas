@@ -42,6 +42,9 @@ type fakeScanVectorClient struct {
 	shrinkAt   int
 	shrinkTo   int
 	calls      int
+	// mutate, when set, runs at call mutateAt before the page is served.
+	mutateAt int
+	mutate   func(f *fakeScanVectorClient)
 	// shuffle, when set, serves each page from a fresh order of ids, as
 	// qrdb rebuilds its listing from a map on every request.
 	shuffle *rand.Rand
@@ -62,6 +65,9 @@ func (f *fakeScanVectorClient) ListVectors(_ context.Context, req *qrdbtransport
 	}
 	if f.calls == f.shrinkAt {
 		f.ids = f.ids[:f.shrinkTo]
+	}
+	if f.mutate != nil && f.calls == f.mutateAt {
+		f.mutate(f)
 	}
 	limit := int(req.Limit)
 	switch {
@@ -113,7 +119,7 @@ func TestListAllVectors_DeleteBetweenCursorRequests(t *testing.T) {
 	f := newFakeScanVectorClient(2500)
 	f.shrinkAt, f.shrinkTo = 3, 1500
 
-	all, err := listAllVectors(context.Background(), f, &qrdbtransport.ListVectorsRequest{Namespace: "ns"})
+	all, err := listAllVectors(context.Background(), f, &qrdbtransport.ListVectorsRequest{Namespace: "ns"}, nil)
 	require.NoError(t, err)
 	require.Len(t, all, 1500)
 	for i, v := range all {
@@ -129,7 +135,7 @@ func TestListAllVectors_ShrunkNamespaceWithStaleCountEnds(t *testing.T) {
 	f := newFakeScanVectorClient(2500)
 	f.shrinkAt, f.shrinkTo, f.staleCount = 3, 1500, 2500
 
-	_, err := listAllVectors(context.Background(), f, &qrdbtransport.ListVectorsRequest{Namespace: "ns"})
+	_, err := listAllVectors(context.Background(), f, &qrdbtransport.ListVectorsRequest{Namespace: "ns"}, nil)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, errIncompleteVectorScan), "got %v", err)
 	assert.LessOrEqual(t, f.calls, nodeScanMaxPasses*(2500/nodeScanPageSize+2))
@@ -142,7 +148,7 @@ func TestListAllVectors_StopsOnCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := listAllVectors(ctx, f, &qrdbtransport.ListVectorsRequest{Namespace: "ns"})
+	_, err := listAllVectors(ctx, f, &qrdbtransport.ListVectorsRequest{Namespace: "ns"}, nil)
 	assert.True(t, errors.Is(err, context.Canceled), "got %v", err)
 	assert.Equal(t, 0, f.calls)
 }
@@ -249,7 +255,7 @@ func TestListAllVectors_StoredVersionsCount(t *testing.T) {
 	f := newFakeScanVectorClient(2500)
 	f.staleCount = 2600
 
-	all, err := listAllVectors(context.Background(), f, &qrdbtransport.ListVectorsRequest{Namespace: "ns"})
+	all, err := listAllVectors(context.Background(), f, &qrdbtransport.ListVectorsRequest{Namespace: "ns"}, nil)
 	require.NoError(t, err)
 	require.Len(t, all, 2500)
 	for i, v := range all {
@@ -267,7 +273,7 @@ func TestListAllVectors_StoredVersionsShuffledPages(t *testing.T) {
 	f.staleCount = 3500
 	f.shuffle = rand.New(rand.NewSource(1670))
 
-	all, err := listAllVectors(context.Background(), f, &qrdbtransport.ListVectorsRequest{Namespace: "ns"})
+	all, err := listAllVectors(context.Background(), f, &qrdbtransport.ListVectorsRequest{Namespace: "ns"}, nil)
 	require.NoError(t, err)
 	require.Len(t, all, 3000)
 	for i, v := range all {
@@ -281,7 +287,7 @@ func TestListAllVectors_SmallNamespaceOneRequest(t *testing.T) {
 	f := newFakeScanVectorClient(700)
 	f.staleCount = 900
 
-	all, err := listAllVectors(context.Background(), f, &qrdbtransport.ListVectorsRequest{Namespace: "ns"})
+	all, err := listAllVectors(context.Background(), f, &qrdbtransport.ListVectorsRequest{Namespace: "ns"}, nil)
 	require.NoError(t, err)
 	require.Len(t, all, 700)
 	assert.Equal(t, 1, f.calls)
@@ -383,6 +389,81 @@ func TestVectorScanSnapshots_DropRereads(t *testing.T) {
 	_, err = s.read(context.Background(), f, req)
 	require.NoError(t, err)
 	assert.Equal(t, 6, f.calls)
+}
+
+// TestListAllVectors_CountPreservingWriteBetweenPages is the review's case:
+// between the first and second page ID 1 is deleted and 1501 inserted, so
+// both counts hold, yet the pass kept 1 and missed 1001.
+func TestListAllVectors_CountPreservingWriteBetweenPages(t *testing.T) {
+	f := newFakeScanVectorClient(1500)
+	var s vectorScanSnapshots
+	f.mutateAt = 2
+	f.mutate = func(f *fakeScanVectorClient) {
+		done := s.beginWrite("ns")
+		f.ids = append(append([]uint64(nil), f.ids[1:]...), 1501)
+		done()
+	}
+
+	all, err := listAllVectors(context.Background(), f, &qrdbtransport.ListVectorsRequest{Namespace: "ns"}, &s)
+	require.NoError(t, err)
+	require.Len(t, all, 1500)
+	for i, v := range all {
+		require.Equal(t, uint64(i+2), v.ID, "index %d", i)
+	}
+}
+
+func TestListAllVectors_WriteInFlightIsNotAccepted(t *testing.T) {
+	f := newFakeScanVectorClient(1500)
+	var s vectorScanSnapshots
+	req := &qrdbtransport.ListVectorsRequest{Namespace: "ns"}
+
+	done := s.beginWrite("ns")
+	_, err := listAllVectors(context.Background(), f, req, &s)
+	require.ErrorIs(t, err, errIncompleteVectorScan)
+
+	done()
+	all, err := listAllVectors(context.Background(), f, req, &s)
+	require.NoError(t, err)
+	require.Len(t, all, 1500)
+	for i, v := range all {
+		require.Equal(t, uint64(i+1), v.ID, "index %d", i)
+	}
+}
+
+func TestVectorScanSnapshots_BeginWriteRevision(t *testing.T) {
+	var s vectorScanSnapshots
+	r0, quiet := s.revision("ns")
+	require.Equal(t, uint64(0), r0)
+	require.True(t, quiet)
+
+	done := s.beginWrite("ns")
+	r1, quiet := s.revision("ns")
+	require.False(t, quiet)
+	require.NotEqual(t, r0, r1)
+
+	s.beginWrite("other")()
+	r, _ := s.revision("ns")
+	require.Equal(t, r1, r, "a write of another namespace leaves this revision")
+
+	done()
+	r2, quiet := s.revision("ns")
+	require.True(t, quiet)
+	require.NotEqual(t, r0, r2)
+	require.NotEqual(t, r1, r2)
+
+	done()
+	r, quiet = s.revision("ns")
+	require.True(t, quiet)
+	require.Equal(t, r2, r, "a second done changes nothing")
+
+	f := newFakeScanVectorClient(2500)
+	req := &qrdbtransport.ListVectorsRequest{Namespace: "ns"}
+	_, err := s.read(context.Background(), f, req)
+	require.NoError(t, err)
+	s.beginWrite("ns")()
+	_, err = s.read(context.Background(), f, req)
+	require.NoError(t, err)
+	assert.Equal(t, 6, f.calls, "the ended write dropped the snapshot")
 }
 
 // TestVectorScanSnapshots_Bounded reads more namespaces than the cache keeps:

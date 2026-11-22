@@ -449,6 +449,16 @@ func (v *vectorService) invalidateScan(namespace string) {
 	}
 }
 
+// beginStorageWrite tells a storage whose full scans check for writes that
+// a write of namespace through the SDK client starts. Call the returned
+// func once the write returns, before invalidateScan.
+func (v *vectorService) beginStorageWrite(namespace string) func() {
+	if t, ok := v.storage.(interfaces.VectorWriteTracker); ok {
+		return t.BeginVectorWrite(namespace)
+	}
+	return func() {}
+}
+
 // =============================================================================
 // Shard Helpers
 // =============================================================================
@@ -602,10 +612,12 @@ func (v *vectorService) DeleteNamespace(ctx context.Context, req *DeleteNamespac
 	v.logger.WithField("namespace", req.Namespace).Debug("deleting namespace via SDK")
 
 	// Delegate to SDK which handles Raft consensus internally
+	done := v.beginStorageWrite(scopedNamespace)
 	sdkResp, err := vc.DeleteNamespace(ctx, &qrdbtransport.DeleteNamespaceRequest{
 		Namespace: scopedNamespace,
 		ShardID:   v.resolveShardID(req.ShardID),
 	})
+	done()
 	v.invalidateScan(scopedNamespace)
 	if err != nil {
 		if v.metrics != nil {
@@ -889,6 +901,7 @@ func (v *vectorService) UpsertVector(ctx context.Context, req *UpsertVectorReque
 	}
 
 	// Delegate to SDK which handles Raft consensus internally
+	done := v.beginStorageWrite(scopedNamespace)
 	sdkResp, err := vc.UpsertVector(ctx, &qrdbtransport.UpsertVectorRequest{
 		Namespace: scopedNamespace,
 		ID:        req.ID,
@@ -896,6 +909,7 @@ func (v *vectorService) UpsertVector(ctx context.Context, req *UpsertVectorReque
 		Metadata:  req.Metadata,
 		ShardID:   v.resolveShardID(req.ShardID),
 	})
+	done()
 	v.invalidateScan(scopedNamespace)
 	if err != nil {
 		if v.metrics != nil {
@@ -1046,11 +1060,13 @@ func (v *vectorService) DeleteVector(ctx context.Context, req *DeleteVectorReque
 	}
 
 	// Delegate to SDK which handles Raft consensus internally
+	done := v.beginStorageWrite(scopedNamespace)
 	sdkResp, err := vc.DeleteVector(ctx, &qrdbtransport.DeleteVectorRequest{
 		Namespace: scopedNamespace,
 		ID:        req.ID,
 		ShardID:   v.resolveShardID(req.ShardID),
 	})
+	done()
 	v.invalidateScan(scopedNamespace)
 	if err != nil {
 		if v.metrics != nil {
@@ -1139,11 +1155,13 @@ func (v *vectorService) BatchUpsert(ctx context.Context, req *BatchUpsertRequest
 	}
 
 	// Delegate to SDK which handles Raft consensus internally
+	done := v.beginStorageWrite(scopedNamespace)
 	sdkResp, err := vc.BatchUpsert(ctx, &qrdbtransport.BatchUpsertRequest{
 		Namespace: scopedNamespace,
 		Vectors:   sdkVectors,
 		ShardID:   v.resolveShardID(req.ShardID),
 	})
+	done()
 	v.invalidateScan(scopedNamespace)
 	if err != nil {
 		if v.metrics != nil {
