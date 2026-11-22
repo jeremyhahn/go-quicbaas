@@ -774,6 +774,9 @@ func (c *client) buildQRDBEmbeddedClient() (*qrdbsdk.Client, error) {
 	if s.Embedding != nil {
 		embOpts = append(embOpts, qrdbembedded.WithEmbeddingService(s.Embedding))
 	}
+	if s.RAG != nil {
+		embOpts = append(embOpts, qrdbembedded.WithRAGService(s.RAG))
+	}
 
 	t, err := qrdbembedded.New(s.KV, s.Admin, embOpts...)
 	if err != nil {

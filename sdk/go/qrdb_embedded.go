@@ -75,6 +75,10 @@ type QRDBUserServicer = qrdbsdk.UserServicer
 // interface. It serves the embedded transport's text embedding calls.
 type QRDBEmbeddingServicer = qrdbservice.EmbeddingServicer
 
+// QRDBRAGServicer is a re-export of the qrdb service.RAGServicer interface.
+// It serves the embedded transport's go-qrdb RAG calls.
+type QRDBRAGServicer = qrdbservice.RAGServicer
+
 // QRDBAuthFactorServicer is a re-export of the qrdb service.AuthFactorServicer
 // interface. Required to enable authentication factor enrollment and
 // verification through the embedded transport.
@@ -177,4 +181,8 @@ type QRDBEmbeddedServicers struct {
 	// nil, the embedded client's embedding calls fail as unavailable in
 	// go-qrdb.
 	Embedding QRDBEmbeddingServicer
+
+	// RAG serves go-qrdb's RAG service on the embedded transport. When nil,
+	// the embedded client's go-qrdb RAG calls fail as unavailable in go-qrdb.
+	RAG QRDBRAGServicer
 }

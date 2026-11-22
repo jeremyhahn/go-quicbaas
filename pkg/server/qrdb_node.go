@@ -660,6 +660,9 @@ func (s *Server) unifiedModuleServerOptions(serverOpts []qrdbsdk.ServerOption, s
 	serverOpts = append(serverOpts, s.nodeBarrierServerOptions(sealEnabled)...)
 	// Compose go-qrdb's embedding service on REST, gRPC, QUIC, Unix and MCP.
 	serverOpts = append(serverOpts, s.qrdbEmbeddingServerOptions()...)
+	// Compose go-qrdb's RAG service on REST, gRPC, QUIC, Unix and MCP, over
+	// the embedding service above.
+	serverOpts = append(serverOpts, s.qrdbRAGServerOptions()...)
 
 	module, err := s.newQuicBaaSModule()
 	if err != nil {

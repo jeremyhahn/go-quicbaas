@@ -262,6 +262,9 @@ type Server struct {
 	// Embedding manager - provides vector embedding generation via configurable providers
 	embeddingManager *embedding.Manager
 	qrdbEmbeddingSvc qrdbservice.EmbeddingServicer
+	// go-qrdb RAG service composed over qrdbEmbeddingSvc and the node's
+	// per-(tenant, database) registry; nil when no embedding upstream resolves
+	qrdbRAGSvc qrdbservice.RAGServicer
 
 	// Ollama service - provides LLM embedding and model management via Ollama
 	ollamaService service.OllamaService
@@ -1917,6 +1920,13 @@ func (s *Server) GetEmbeddingManager() *embedding.Manager {
 // serves, or nil when vector support is not compiled.
 func (s *Server) GetQRDBEmbeddingServicer() qrdbservice.EmbeddingServicer {
 	return s.qrdbEmbeddingSvc
+}
+
+// GetQRDBRAGServicer returns the go-qrdb RAG service the node serves, built
+// over its go-qrdb embedding service, or nil when vector support is not
+// compiled or no embedding upstream resolves.
+func (s *Server) GetQRDBRAGServicer() qrdbservice.RAGServicer {
+	return s.qrdbRAGSvc
 }
 
 // GetWatchBridge returns the WatchBridge (nil if not enabled).

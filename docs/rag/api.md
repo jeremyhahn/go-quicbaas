@@ -52,9 +52,11 @@ and call it. Its typed errors come back as invalid input (no query, no
 namespace, no results) or unavailable (Ollama or the vector store not
 configured), on every transport.
 
-`Client.RAG()` is the SDK's RAG surface. The node serves no go-qrdb RAG
-service (its `qrdb.v1.QRDBService` gets no RAG servicer), so the SDK does not
-re-export go-qrdb's RAG client.
+The node also serves go-qrdb's own RAG service (`qrdb.v1` RAG) on REST,
+gRPC, QUIC, Unix, MCP and the embedded transport, built over its go-qrdb
+embedding service; each caller's documents live in the caller's own
+(tenant, database). The SDK re-export of go-qrdb's `RAGClient` comes next;
+until then `Client.RAG()` is the SDK's RAG surface.
 
 ## Overview
 
