@@ -81,6 +81,9 @@ type Storage struct {
 	reconcileMu       sync.Mutex
 	lastReconcile     time.Time
 	reconcileInterval time.Duration
+	// reconcileStepTimeout caps one reconciliation pass; zero means
+	// tenantJobIndexReconcileStepTimeout.
+	reconcileStepTimeout time.Duration
 
 	// tenantCursor is where the due scan starts in the rotation of tenant
 	// namespaces plus the system namespace; each sweep advances it, so a
@@ -92,6 +95,11 @@ type Storage struct {
 // tenantJobIndexReconcileInterval is how often the due scan reconciles the
 // tenant job index with the tenant job records.
 const tenantJobIndexReconcileInterval = 5 * time.Minute
+
+// tenantJobIndexReconcileStepTimeout caps one reconciliation pass when the
+// caller's context has no deadline; with one, a pass gets at most half the
+// time left.
+const tenantJobIndexReconcileStepTimeout = 10 * time.Second
 
 // ClusteredStorage is a job store for a clustered deployment: a Storage that
 // can also arbitrate firings.
@@ -496,12 +504,18 @@ func (s *Storage) GetJobsDueForExecution(ctx context.Context, before time.Time, 
 
 	// Older nodes in a rolling upgrade can still write tenant jobs without
 	// an index entry, so the index is reconciled periodically, not only at
-	// open.
+	// open. Reconciliation never holds up dispatch: each sweep runs at most
+	// one bounded pass, within a share of the sweep's budget, and dispatches
+	// whatever that pass finished with. A pass cut short, or one that failed,
+	// leaves reconciliation due, and the next sweep resumes it.
 	if s.reconcileDue() {
-		if err := s.reconcileTenantJobIndex(ctx); err != nil {
+		complete, err := s.reconcileStep(ctx)
+		if err != nil && ctx.Err() != nil {
 			return nil, &scheduler.ErrStorageError{Op: "GetJobsDueForExecution.reconcile", Cause: err}
 		}
-		s.markReconciled()
+		if complete {
+			s.markReconciled()
+		}
 	}
 
 	// Tenant jobs live in their tenants' namespaces; the index names them.
@@ -645,6 +659,14 @@ func (s *Storage) markReconciled() {
 	s.reconcileMu.Unlock()
 }
 
+// markReconcilePending makes reconciliation due at once, for a pass that did
+// not finish: the next due scan resumes it.
+func (s *Storage) markReconcilePending() {
+	s.reconcileMu.Lock()
+	s.lastReconcile = time.Time{}
+	s.reconcileMu.Unlock()
+}
+
 // executionIDAt derives an execution ID from t in Unix nanoseconds. A time
 // before the epoch has no unsigned ID and is refused.
 func executionIDAt(t time.Time) (uint64, error) {
@@ -735,10 +757,18 @@ func (s *Storage) InitializeJobIDCounter(ctx context.Context) error {
 	if err := s.ids.initialize(ctx); err != nil {
 		return err
 	}
-	if err := s.reconcileTenantJobIndex(ctx); err != nil {
+	// Open runs one bounded reconciliation pass; one that does not finish
+	// within its budget leaves reconciliation due, so the due scan resumes it
+	// on its next sweep instead of failing the open.
+	complete, err := s.reconcileStep(ctx)
+	if err != nil {
 		return err
 	}
-	s.markReconciled()
+	if complete {
+		s.markReconciled()
+	} else {
+		s.markReconcilePending()
+	}
 	return nil
 }
 
@@ -750,32 +780,48 @@ func (s *Storage) InitializeJobIDCounter(ctx context.Context) error {
 // every open and periodically from the due scan, Putting only missing
 // entries, and writes the marker when absent.
 func (s *Storage) reconcileTenantJobIndex(ctx context.Context) error {
-	// Entries are collected first and written after the scan, so no write
-	// runs inside the store's iteration.
+	// The index entries present and the tenant job records are each read in
+	// one prefix scan and compared in memory, so a pass costs two scans plus
+	// one Put per missing entry, never a lookup per retained job. Every Put
+	// persists on its own, so a pass cut short resumes where it stopped: the
+	// next pass finds only the entries still missing. Entries are written
+	// after the scans, so no write runs inside the store's iteration.
+	indexed := make(map[string]struct{})
+	err := s.kv.Scan(ctx, TenantJobIndexPrefix, func(key string, _ []byte) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		indexed[key] = struct{}{}
+		return nil
+	})
+	if err != nil {
+		return &scheduler.ErrStorageError{Op: "reconcileTenantJobIndex.index_scan", Cause: err}
+	}
 	type tenantJobRef struct {
-		id       uint64
+		key      string
 		tenantID string
 	}
-	var refs []tenantJobRef
-	err := s.kv.Scan(ctx, tenantKeyPrefix, func(key string, _ []byte) error {
+	var missing []tenantJobRef
+	err = s.kv.Scan(ctx, tenantKeyPrefix, func(key string, _ []byte) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if tenantID, id, ok := splitTenantJobKey(key); ok {
-			refs = append(refs, tenantJobRef{id: id, tenantID: tenantID})
+			indexKey := keyForTenantJobIndex(id, tenantID)
+			if _, present := indexed[indexKey]; !present {
+				missing = append(missing, tenantJobRef{key: indexKey, tenantID: tenantID})
+			}
 		}
 		return nil
 	})
 	if err != nil {
 		return &scheduler.ErrStorageError{Op: "reconcileTenantJobIndex.scan", Cause: err}
 	}
-	for _, ref := range refs {
-		key := keyForTenantJobIndex(ref.id, ref.tenantID)
-		present, err := s.kv.Exists(ctx, key)
-		if err != nil {
-			return &scheduler.ErrStorageError{Op: "reconcileTenantJobIndex.exists", Cause: err}
+	for _, ref := range missing {
+		if err := ctx.Err(); err != nil {
+			return &scheduler.ErrStorageError{Op: "reconcileTenantJobIndex.index", Cause: err}
 		}
-		if present {
-			continue
-		}
-		if err := s.kv.Put(ctx, key, []byte(ref.tenantID)); err != nil {
+		if err := s.kv.Put(ctx, ref.key, []byte(ref.tenantID)); err != nil {
 			return &scheduler.ErrStorageError{Op: "reconcileTenantJobIndex.index", Cause: err}
 		}
 	}
@@ -789,6 +835,39 @@ func (s *Storage) reconcileTenantJobIndex(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// reconcileStep runs one reconciliation pass within its own budget, a share
+// of the caller's (half the time left before ctx's deadline, or
+// reconcileStepTimeout when ctx has none, whichever is shorter), so the
+// caller keeps the rest for its own work. A pass that runs out of its budget
+// is not an error: the entries it wrote persist and the next pass resumes
+// from them; complete is false until a pass finishes. An error is returned
+// only for a failure other than the step's own budget running out.
+func (s *Storage) reconcileStep(ctx context.Context) (complete bool, err error) {
+	budget := s.reconcileStepTimeout
+	if budget <= 0 {
+		budget = tenantJobIndexReconcileStepTimeout
+	}
+	if deadline, ok := ctx.Deadline(); ok {
+		if half := time.Until(deadline) / 2; half < budget {
+			budget = half
+		}
+	}
+	if budget <= 0 {
+		return false, nil
+	}
+	stepCtx, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
+	err = s.reconcileTenantJobIndex(stepCtx)
+	if err == nil {
+		return true, nil
+	}
+	if ctx.Err() == nil && stepCtx.Err() != nil {
+		// The step's budget ran out, not the caller's: resume next time.
+		return false, nil
+	}
+	return false, err
 }
 
 // indexTenantJob writes a tenant job's TenantJobIndexPrefix entry. Callers

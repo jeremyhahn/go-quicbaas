@@ -3,6 +3,8 @@ package quicbaas
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -193,5 +195,103 @@ func TestGetJobsDueForExecution_ReconcilesPeriodically(t *testing.T) {
 
 	if names := dueJobNames(t, storage, now); !names["older-writer"] {
 		t.Fatalf("after the interval, due jobs = %v, want older-writer", names)
+	}
+}
+
+// slowPutKVStore delays every Put, as a high-latency replicated store does.
+type slowPutKVStore struct {
+	*mockKVStore
+	delay atomic.Int64 // nanoseconds
+}
+
+func (s *slowPutKVStore) Put(ctx context.Context, key string, value []byte) error {
+	if d := time.Duration(s.delay.Load()); d > 0 {
+		select {
+		case <-time.After(d):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return s.mockKVStore.Put(ctx, key, value)
+}
+
+// TestGetJobsDueForExecution_ReconcileExceedingSweepBudget checks that a
+// reconciliation too slow for one sweep's budget neither stops dispatch nor
+// starts over: every sweep returns the due system job, each sweep indexes
+// more of the retained tenant jobs, and the unindexed due tenant job runs
+// once reconciliation reaches it.
+func TestGetJobsDueForExecution_ReconcileExceedingSweepBudget(t *testing.T) {
+	ctx := context.Background()
+	slow := &slowPutKVStore{mockKVStore: newMockKVStore()}
+	storage := NewStorage(slow)
+	if err := storage.InitializeJobIDCounter(ctx); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	now := time.Now()
+
+	system := createTestJob("system-maintenance", scheduler.OwnerTypeSystem, "")
+	system.NextRun = now.Add(-time.Minute)
+	if err := storage.CreateJob(ctx, system); err != nil {
+		t.Fatalf("create system job: %v", err)
+	}
+
+	// Retained history: completed tenant jobs an older writer left unindexed.
+	const retained = 40
+	for i := 0; i < retained; i++ {
+		job := createTestJob(fmt.Sprintf("history-%d", i), scheduler.OwnerTypeTenant, "acme")
+		job.ID = uint64(1000 + i)
+		job.Status = scheduler.JobStatusCompleted
+		putUnindexedTenantJob(t, slow.mockKVStore, job)
+	}
+	due := createTestJob("older-writer-due", scheduler.OwnerTypeTenant, "acme")
+	due.ID = 2000
+	due.NextRun = now.Add(-time.Minute)
+	putUnindexedTenantJob(t, slow.mockKVStore, due)
+
+	// Each index Put costs 20ms: a full pass (41 Puts, ~820ms) is well over
+	// one 200ms sweep budget.
+	slow.delay.Store(int64(20 * time.Millisecond))
+	storage.markReconcilePending()
+
+	indexedCount := func() int {
+		n := 0
+		_ = slow.mockKVStore.Scan(ctx, TenantJobIndexPrefix, func(string, []byte) error {
+			n++
+			return nil
+		})
+		return n
+	}
+
+	prev := indexedCount()
+	sawTenantJob := false
+	for sweep := 0; sweep < 30 && (!sawTenantJob || prev < retained+1); sweep++ {
+		sweepCtx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
+		jobs, err := storage.GetJobsDueForExecution(sweepCtx, now, 100)
+		cancel()
+		if err != nil {
+			t.Fatalf("sweep %d: %v", sweep, err)
+		}
+		names := make(map[string]bool, len(jobs))
+		for _, job := range jobs {
+			names[job.Name] = true
+		}
+		if !names["system-maintenance"] {
+			t.Fatalf("sweep %d: due jobs = %v, want the system job dispatched while reconciliation runs", sweep, names)
+		}
+		sawTenantJob = sawTenantJob || names["older-writer-due"]
+		got := indexedCount()
+		if prev < retained+1 && got <= prev {
+			t.Fatalf("sweep %d: index entries %d, was %d: reconciliation made no progress", sweep, got, prev)
+		}
+		prev = got
+	}
+	if !sawTenantJob {
+		t.Fatalf("the unindexed due tenant job never ran")
+	}
+	if got := indexedCount(); got != retained+1 {
+		t.Fatalf("index entries = %d, want %d", got, retained+1)
+	}
+	if storage.reconcileDue() {
+		t.Fatalf("a finished reconciliation must wait for the interval")
 	}
 }
