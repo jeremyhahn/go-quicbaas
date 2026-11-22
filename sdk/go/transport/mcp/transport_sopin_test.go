@@ -40,8 +40,6 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
 
-const testSOPIN = "so-pin-1234"
-
 // sopinCalls lists every MCP call that carries an SO PIN. Each builds its
 // own context: the request-field calls put the PIN in req.SOPin only, and
 // BarrierSeal, which has no request, binds it with WithSOPIN.
@@ -117,7 +115,7 @@ func TestMCP_SOPINRefusesPlainRedirect(t *testing.T) {
 			t.Cleanup(plain.Close)
 
 			srv, called := newMultiToolServer(t, sopinToolNames(), nil)
-			mcpHandler := mcpserver.NewStreamableHTTPServer(srv)
+			mcpSrv := mcpserver.NewStreamableHTTPServer(srv)
 			front := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				body, _ := io.ReadAll(r.Body)
 				r.Body = io.NopCloser(bytes.NewReader(body))
@@ -129,7 +127,7 @@ func TestMCP_SOPINRefusesPlainRedirect(t *testing.T) {
 					http.Redirect(w, r, plain.URL+r.URL.Path, http.StatusTemporaryRedirect)
 					return
 				}
-				mcpHandler.ServeHTTP(w, r)
+				mcpSrv.ServeHTTP(w, r)
 			}))
 			front.StartTLS()
 			t.Cleanup(front.Close)

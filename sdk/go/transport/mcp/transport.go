@@ -52,12 +52,15 @@ const MCPProtocolVersionHeader = "MCP-Protocol-Version"
 // tool-name derivation and argument/response transforms as the retired
 // hand-rolled JSON-RPC client. Only the wire engine changed.
 type Transport struct {
-	cfg      *transport.Config
-	client   *http.Client
-	baseURL  string
-	endpoint string
-	headers  map[string]string
-	closed   atomic.Bool
+	cfg    *transport.Config
+	client *http.Client
+	// baseTransport is the *http.Transport under client's SO PIN guard;
+	// Close closes its idle connections.
+	baseTransport *http.Transport
+	baseURL       string
+	endpoint      string
+	headers       map[string]string
+	closed        atomic.Bool
 
 	lastHealth atomic.Int64
 	requestID  atomic.Uint64
@@ -119,20 +122,49 @@ func New(cfg *transport.Config, opts ...Option) (*Transport, error) {
 		return nil, t.optionErr
 	}
 
-	// Build base URL and endpoint only if not explicitly set via options
+	// Build base URL and endpoint only if not explicitly set via options.
+	// It comes before the HTTP client, whose SO PIN guard names the
+	// endpoint's host as the only one a bound PIN may reach.
 	if t.baseURL == "" && t.endpoint == "" {
 		t.buildBaseURL()
 	}
 
-	// Build HTTP client if not provided via options. It is built after the
-	// base URL, the only host its SO PIN guard sends a PIN to.
+	// Build HTTP client if not provided via options
+	var base http.RoundTripper
+	var c *http.Client
 	if t.client == nil {
 		client, err := t.buildHTTPClient()
 		if err != nil {
 			return nil, err
 		}
-		t.client = client
+		c = client
+		base = client.Transport
+	} else {
+		// A supplied client gets the same guard on a shallow copy, keeping
+		// its Timeout, Jar and CheckRedirect and never mutating the
+		// caller's client.
+		copied := *t.client
+		c = &copied
+		base = c.Transport
 	}
+	if base == nil {
+		base = http.DefaultTransport
+	} else if httpTransport, ok := base.(*http.Transport); ok {
+		t.baseTransport = httpTransport
+	}
+	// Guard an SO PIN bound by qrdbtransport.WithSOPIN the way go-qrdb's
+	// own MCP transport does: a PIN-bound request is refused before it is
+	// sent on any hop, redirects included, that is not https or names a
+	// host other than the endpoint's. Requests without a bound PIN pass
+	// through unchanged. A barrier or ceremony tool call whose so_pin comes
+	// from the request rather than from WithSOPIN is bound for that call by
+	// callBarrier, so it meets the same guard on every hop. A call that
+	// carries only a user PIN is marked by callBarrier and refused by the
+	// inner pinHopRoundTripper on the same hops, without the PIN ever going
+	// into the SO PIN header.
+	host := qrdbtransport.ConfiguredHost(t.endpoint)
+	c.Transport = qrdbtransport.SOPINRoundTripper(&pinHopRoundTripper{base: base, host: host}, "mcp", host)
+	t.client = c
 
 	// Mark as healthy initially
 	t.lastHealth.Store(time.Now().UnixNano())
@@ -184,16 +216,8 @@ func (t *Transport) buildHTTPClient() (*http.Client, error) {
 		timeout = 30 * time.Second
 	}
 
-	// Guard every hop of a call that carries an SO PIN: the round tripper
-	// refuses an http:// hop, or a redirect to a host other than the
-	// configured one, before the PIN is sent.
-	configured := t.baseURL
-	if configured == "" {
-		configured = t.endpoint
-	}
-
 	return &http.Client{
-		Transport: qrdbtransport.SOPINRoundTripper(httpTransport, "mcp", qrdbtransport.ConfiguredHost(configured)),
+		Transport: httpTransport,
 		Timeout:   timeout,
 	}, nil
 }
@@ -1600,8 +1624,11 @@ func (t *Transport) Close() error {
 		}
 	}
 
-	// Close idle connections
-	if t.client != nil && t.client.Transport != nil {
+	// Close idle connections. The client's transport is the SO PIN guard,
+	// so close the *http.Transport under it directly.
+	if t.baseTransport != nil {
+		t.baseTransport.CloseIdleConnections()
+	} else if t.client != nil && t.client.Transport != nil {
 		if httpTransport, ok := t.client.Transport.(*http.Transport); ok {
 			httpTransport.CloseIdleConnections()
 		}

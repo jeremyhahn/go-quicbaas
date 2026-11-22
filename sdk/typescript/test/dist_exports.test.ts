@@ -14,6 +14,7 @@ import { unsupportedClient } from '../dist/unsupported.js';
 describe('dist/index.js', () => {
   it('exports the MCP family clients and their session', () => {
     expect(typeof pkg.McpAccountsClient).toBe('function');
+    expect(typeof pkg.McpPromptsClient).toBe('function');
     expect(typeof pkg.McpProjectsClient).toBe('function');
     expect(typeof pkg.McpSdlcClient).toBe('function');
     expect(typeof pkg.McpSession).toBe('function');

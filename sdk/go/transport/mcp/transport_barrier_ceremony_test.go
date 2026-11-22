@@ -307,8 +307,8 @@ var ceremonyToolNames = []string{
 
 func TestCeremonyMethodsEndToEnd(t *testing.T) {
 	ctx := context.Background()
-	// TLS: CeremonyInitialize and CeremonySignCSR carry an SO PIN, which is
-	// refused over http://.
+	// CeremonyInitialize and CeremonySignCSR carry an SO PIN, which travels
+	// only over TLS.
 	tr, _ := newMultiToolMCPServerTLS(t, ceremonyToolNames, func(t *testing.T, tool string, args map[string]interface{}) map[string]interface{} {
 		switch tool {
 		case "qrdb_ceremony_initialize":
@@ -489,10 +489,10 @@ func TestStringsToInterfaces(t *testing.T) {
 	}
 }
 
-func TestRemarshalBarrierNil(t *testing.T) {
+func TestRemarshalBarrier_NilIsError(t *testing.T) {
 	var dst struct{ X int }
-	if err := remarshalBarrier(nil, &dst); err != nil {
-		t.Errorf("remarshalBarrier(nil) = %v", err)
+	if err := remarshalBarrier(nil, &dst); err == nil {
+		t.Error("remarshalBarrier(nil) = nil, want an error for a result with no content")
 	}
 	if err := remarshalBarrier(map[string]interface{}{"X": 5}, &dst); err != nil {
 		t.Fatalf("remarshalBarrier: %v", err)
