@@ -126,6 +126,12 @@ and a bind can both refuse, and a retry settles it, but they never both
 succeed. A fence a crashed delete leaves behind stops holding after
 `sdlc.DeleteFenceTTL` (10 minutes) and the next delete replaces it. A fence
 that cannot be written refuses the delete with `ProjectBindingCheckError`.
+No live fence is not proof the project stands: a bind that finds none re-reads
+the project after its write and, if the project is gone, withdraws its write
+and returns `sdlc.ProjectDeletingError` as it would behind a fence. A delete
+whose tombstone cannot be written returns `service.ProjectDeleteUnsettledError`
+(`500`) with the project already deleted; its fence goes stale, and the late
+bind's project re-read still keeps a binding off the deleted project.
 
 ## Identity: id, name and source repository
 

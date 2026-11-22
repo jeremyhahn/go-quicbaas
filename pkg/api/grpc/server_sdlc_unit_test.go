@@ -103,6 +103,7 @@ func TestSDLCServer_ErrorMapping(t *testing.T) {
 		&sdlc.AdoptionRefusedError{Subject: "a#1"}:         codes.FailedPrecondition,
 		&sdlc.AdoptionIncompleteError{TaskID: "t"}:         codes.Unavailable,
 		&orchestration.TaskSourceAlreadyAdoptedError{}:     codes.AlreadyExists,
+		&sdlc.BindInProgressError{ProjectID: "p"}:          codes.FailedPrecondition,
 		errors.New("mystery"):                              codes.Internal,
 	}
 	for err, want := range cases {

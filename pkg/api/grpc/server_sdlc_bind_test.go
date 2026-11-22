@@ -21,6 +21,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
@@ -71,6 +73,14 @@ func (bindAgents) Catalogue(context.Context, string) (orchestration.AgentCatalog
 // p1, binds against an in-memory Gitea.
 func newBindRig(t *testing.T) (*SDLCServer, *bindProjects, *pb.ProjectBinding) {
 	t.Helper()
+	server, projects, binding, _ := newBindRigWithStore(t)
+	return server, projects, binding
+}
+
+// newBindRigWithStore is newBindRig that also hands back the SDLC store, so a
+// test can hold the project's bind lease itself.
+func newBindRigWithStore(t *testing.T) (*SDLCServer, *bindProjects, *pb.ProjectBinding, *sdlc.Store) {
+	t.Helper()
 	forge := giteafake.New(t, "acme", "p1")
 	log, err := logger.New(logger.LogConfig{Level: "error", Output: "stdout", Format: "console"})
 	require.NoError(t, err)
@@ -115,7 +125,7 @@ func newBindRig(t *testing.T) (*SDLCServer, *bindProjects, *pb.ProjectBinding) {
 		Review:          sdlc.ReviewPolicy{RequiredApprovals: 1},
 		MaxReviewRounds: 2,
 	})
-	return NewSDLCServer(fixedSDLCProvider{svc: svc}, sdlcTestLogger(t)), projects, binding
+	return NewSDLCServer(fixedSDLCProvider{svc: svc}, sdlcTestLogger(t)), projects, binding, store
 }
 
 // TestSDLCServer_BindProjectPausedLeavesAutonomyOff: paused on the wire
@@ -131,4 +141,23 @@ func TestSDLCServer_BindProjectPausedLeavesAutonomyOff(t *testing.T) {
 	_, err = server.BindProject(ctx, &pb.BindProjectRequest{TenantId: "tenant-a", Binding: binding})
 	require.NoError(t, err)
 	assert.True(t, projects.project.Autonomous, "a plain bind left autonomy off")
+}
+
+// TestSDLCServer_BindAndUnbindUnderAHeldLeaseAreFailedPrecondition: a bind or
+// unbind refused because another one of the project is in flight answers
+// FailedPrecondition ("retry once it settles"), not the AlreadyExists its
+// underlying version conflict would map to.
+func TestSDLCServer_BindAndUnbindUnderAHeldLeaseAreFailedPrecondition(t *testing.T) {
+	server, _, binding, store := newBindRigWithStore(t)
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-a")
+
+	token, err := store.AcquireBindLease(ctx, "tenant-a", "p1")
+	require.NoError(t, err)
+
+	_, err = server.BindProject(ctx, &pb.BindProjectRequest{TenantId: "tenant-a", Binding: binding})
+	assert.Equal(t, codes.FailedPrecondition, status.Code(err), "BindProject under a held lease: %v", err)
+	_, err = server.UnbindProject(ctx, &pb.UnbindProjectRequest{TenantId: "tenant-a", ProjectId: "p1"})
+	assert.Equal(t, codes.FailedPrecondition, status.Code(err), "UnbindProject under a held lease: %v", err)
+
+	require.NoError(t, store.ReleaseBindLease(ctx, "tenant-a", "p1", token))
 }

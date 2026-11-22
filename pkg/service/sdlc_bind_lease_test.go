@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -10,6 +12,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/id"
 )
 
 // hookAfterBindWriteKV runs hook once, right after the first binding write
@@ -54,6 +57,46 @@ func hookAfterBindWrite(t *testing.T, rig *sdlcServiceRig, hook func()) {
 		t.Fatal("the rig's tenant store takes no guarded writes")
 	}
 	rig.resolver.stores[sdlcTestTenant] = &hookAfterBindWriteKV{AtomicKVStore: held, hook: hook}
+}
+
+// ageSDLCRecord moves the created_at of the record of entityType kept for
+// projectID back by d, as if d had passed since it was placed or renewed.
+// Staleness is now minus created_at, so this stands in for a clock moved
+// forward by d.
+func ageSDLCRecord(t *testing.T, rig *sdlcServiceRig, entityType, projectID string, d time.Duration) {
+	t.Helper()
+	ctx := context.Background()
+	rig.resolver.mu.Lock()
+	kv, ok := rig.resolver.stores[sdlcTestTenant].(qrdbsdk.AtomicKVStore)
+	rig.resolver.mu.Unlock()
+	if !ok {
+		t.Fatal("the rig's tenant store takes no guarded writes")
+	}
+	key := entityType + "/" + strconv.FormatUint(id.HashString(projectID), 10)
+	raw, err := kv.Get(ctx, key)
+	if err != nil || raw == nil {
+		t.Fatalf("record %s: %q, %v", key, raw, err)
+	}
+	var record map[string]any
+	if err := json.Unmarshal(raw, &record); err != nil {
+		t.Fatal(err)
+	}
+	stamp, ok := record["created_at"].(string)
+	if !ok {
+		t.Fatalf("record %s carries no created_at: %s", key, raw)
+	}
+	at, err := time.Parse(time.RFC3339Nano, stamp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record["created_at"] = at.Add(-d).Format(time.RFC3339Nano)
+	next, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if applied, err := kv.CompareAndSwap(ctx, key, raw, next); err != nil || !applied {
+		t.Fatalf("age %s: applied=%v err=%v", key, applied, err)
+	}
 }
 
 // TestSDLCService_SecondBindRefusedWhileFirstHoldsTheLease: bind A has put
@@ -130,17 +173,15 @@ func TestSDLCService_UnbindRefusedWhileABindHoldsTheLease(t *testing.T) {
 func TestSDLCService_RenewedLeaseRefusesUnbindWhileBindOnboards(t *testing.T) {
 	rig := newSDLCServiceRig(t)
 	ctx := context.Background()
-	var clock steppedClock
-	clock.set(renewBase)
-	rig.store.SetClock(clock.now)
 	ticks := make(chan time.Time)
 	rig.svc.bindLeaseTicks = ticks
 	var unbindErr error
 	hookAfterBindWrite(t, rig, func() {
-		clock.set(renewBase.Add(sdlc.BindLeaseTTL - 10*time.Second))
+		ageSDLCRecord(t, rig, "sdlc_bind_lease", sdlcTestProject, sdlc.BindLeaseTTL-10*time.Second)
 		sendTick(t, ticks)
 		sendTick(t, ticks)
-		clock.set(renewBase.Add(sdlc.BindLeaseTTL + 30*time.Second))
+		// Without the renewal the lease would now be BindLeaseTTL+30s old.
+		ageSDLCRecord(t, rig, "sdlc_bind_lease", sdlcTestProject, 40*time.Second)
 		unbindErr = rig.svc.Unbind(ctx, sdlcTestTenant, sdlcTestProject)
 	})
 
@@ -169,14 +210,11 @@ func TestSDLCService_RenewedLeaseRefusesUnbindWhileBindOnboards(t *testing.T) {
 func TestSDLCService_BindThatLostItsLeaseStopsBeforeOnboard(t *testing.T) {
 	rig := newSDLCServiceRig(t)
 	ctx := context.Background()
-	var clock steppedClock
-	clock.set(renewBase)
-	rig.store.SetClock(clock.now)
 	ticks := make(chan time.Time)
 	rig.svc.bindLeaseTicks = ticks
 	var unbindErr error
 	hookAfterBindWrite(t, rig, func() {
-		clock.set(renewBase.Add(sdlc.BindLeaseTTL + time.Second))
+		ageSDLCRecord(t, rig, "sdlc_bind_lease", sdlcTestProject, sdlc.BindLeaseTTL+time.Second)
 		unbindErr = rig.svc.Unbind(ctx, sdlcTestTenant, sdlcTestProject)
 	})
 

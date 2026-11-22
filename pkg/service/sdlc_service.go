@@ -469,7 +469,9 @@ const bindLeaseRenewEvery = sdlc.BindLeaseTTL / 3
 // before this one landed, so this write is withdrawn and the bind is refused
 // with *sdlc.ProjectDeletingError. If the fence cannot be read, the write is
 // withdrawn as well and the read error returned: a bind that cannot rule out
-// the delete must not stand behind it.
+// the delete must not stand behind it. With no live fence the project is read
+// again, and a project gone since the bind's first read withdraws the write
+// the same way.
 //
 // The withdrawal runs detached from the request's cancellation (a canceled
 // request must not leave the binding standing) and undoes only this write:
@@ -481,7 +483,15 @@ func (s *SDLCService) withdrawIfDeleting(ctx context.Context, tenantID string, b
 	projectID := binding.ProjectID
 	fenced, readErr := s.store.ProjectDeleteFenced(ctx, tenantID, projectID)
 	if readErr == nil && !fenced {
-		return nil
+		// NO LIVE FENCE IS NOT PROOF THE PROJECT STANDS. A delete whose
+		// tombstone could not be written leaves a fence that goes stale, so the
+		// project is read again after this write: one gone since the bind's
+		// first read withdraws this write as a fence would.
+		gone, goneErr := s.projectGone(ctx, tenantID, projectID)
+		if goneErr == nil && !gone {
+			return nil
+		}
+		readErr = goneErr
 	}
 	detached, cancel := context.WithTimeout(context.WithoutCancel(ctx), bindWithdrawTimeout)
 	defer cancel()
@@ -1065,6 +1075,21 @@ func (s *SDLCService) project(ctx context.Context, tenantID, projectID string) (
 		return nil, &sdlc.NotFoundError{Entity: "project", TenantID: tenantID, ID: projectID}
 	}
 	return resp.Project, nil
+}
+
+// projectGone reports whether the project a bind targets no longer exists.
+// A read that fails for any other reason is returned: it does not prove the
+// project is there.
+func (s *SDLCService) projectGone(ctx context.Context, tenantID, projectID string) (bool, error) {
+	_, err := s.project(ctx, tenantID, projectID)
+	if err == nil {
+		return false, nil
+	}
+	var notFound *ProjectNotFoundError
+	if errors.As(err, &notFound) || errors.Is(err, sdlc.ErrNotFound) || errors.Is(err, orchestration.ErrProjectNotFound) {
+		return true, nil
+	}
+	return false, err
 }
 
 // checkProject refuses a project the pipeline could not deliver.

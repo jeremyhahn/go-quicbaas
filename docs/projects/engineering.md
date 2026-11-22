@@ -130,6 +130,7 @@ Reference checks are shared with other services; their two failure modes
 | `service.ProjectAlreadyExistsError` | `orchestration.ErrProjectAlreadyExists` | service | name taken in the tenant |
 | `service.ProjectBoundError` | — | service | delete of a project with an SDLC binding; unbind first |
 | `service.ProjectBindingCheckError` | wraps the store error | service | delete refused: the binding store could not be read, or the delete fence could not be written |
+| `service.ProjectDeleteUnsettledError` | — | service | the project was deleted but its delete tombstone could not be written; a late bind still withdraws on its project re-read |
 | `sdlc.ProjectDeletingError` | `sdlc.ErrVersionConflict` | SDLC bind | a fresh bind found a delete's fence after writing its binding; the binding was withdrawn, retry |
 | `service.ProjectInvalidError` | `orchestration.ErrProjectInvalid` | service | a field failed validation |
 | `service.ProjectAccessDeniedError` | `orchestration.ErrProjectAccessDenied` | service, authz | role below the required one |

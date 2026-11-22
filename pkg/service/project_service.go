@@ -444,6 +444,26 @@ func (e *ProjectBindingCheckError) Unwrap() error {
 	return e.Cause
 }
 
+// ProjectDeleteUnsettledError is returned when a delete removed the
+// project but could not turn its delete fence into a tombstone. The
+// project is gone; the delete is reported as failed so the caller does not
+// take it as settled. A bind that lands after the fence goes stale re-reads
+// the project and withdraws, so no binding is left on the deleted project.
+// It has no Unwrap on purpose: every transport answers it as an internal
+// fault, not as the cause's class (a version conflict would read as "retry",
+// and a retry finds the project gone).
+type ProjectDeleteUnsettledError struct {
+	TenantID  string
+	ProjectID string
+	Cause     error
+}
+
+// Error implements the error interface.
+func (e *ProjectDeleteUnsettledError) Error() string {
+	return "project " + e.ProjectID + " was deleted but its delete tombstone could not be written: tenant=" +
+		e.TenantID + ": " + e.Cause.Error()
+}
+
 // ProjectInvalidError is returned when a project request fails validation.
 type ProjectInvalidError struct {
 	Field   string
@@ -694,15 +714,16 @@ const deleteFenceRenewEvery = sdlc.DeleteFenceTTL / 3
 // another delete in flight refuses it with *sdlc.DeleteInProgressError. The
 // settle runs detached from the request's cancellation: a fence left behind
 // blocks binds of the project until it goes stale, and a tombstone not written
-// would let a late bind stand on the deleted project.
+// would let a late bind stand on the deleted project. settle reports a
+// tombstone it could not write; every other outcome settles to nil.
 //
 // The fence is renewed while the delete works, every deleteFenceRenewEvery,
 // and check confirms it is still this delete's before a destructive step: a
 // fence that went stale may have let a bind through, and is never renewed.
-func (s *projectServiceImpl) fenceDelete(ctx context.Context, tenantID, projectID string) (settle func(fenceOutcome), check func() error, err error) {
+func (s *projectServiceImpl) fenceDelete(ctx context.Context, tenantID, projectID string) (settle func(fenceOutcome) error, check func() error, err error) {
 	fence, ok := s.bindings.(ProjectDeleteFence)
 	if !ok || fence == nil {
-		return func(fenceOutcome) {}, func() error { return nil }, nil
+		return func(fenceOutcome) error { return nil }, func() error { return nil }, nil
 	}
 	token, err := fence.FenceProjectDelete(ctx, tenantID, projectID)
 	if err != nil {
@@ -745,7 +766,7 @@ func (s *projectServiceImpl) fenceDelete(ctx context.Context, tenantID, projectI
 		}
 		return nil
 	}
-	return func(outcome fenceOutcome) {
+	return func(outcome fenceOutcome) error {
 		close(stop)
 		<-done
 		settleCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), fenceSettleTimeout)
@@ -760,8 +781,10 @@ func (s *projectServiceImpl) fenceDelete(ctx context.Context, tenantID, projectI
 			if err := fence.MarkProjectDeleted(settleCtx, tenantID, projectID, token); err != nil {
 				slog.Default().Error("project: the delete fence could not be turned into a tombstone; a bind racing the delete may stand on the deleted project",
 					"tenant_id", tenantID, "project_id", projectID, "error", err)
+				return err
 			}
 		}
+		return nil
 	}, check, nil
 }
 
@@ -1389,7 +1412,12 @@ func (s *projectServiceImpl) DeleteProject(ctx context.Context, req *DeleteProje
 		return nil, err
 	}
 	outcome := fenceCleared
-	defer func() { settle(outcome) }()
+	settled := false
+	defer func() {
+		if !settled {
+			_ = settle(outcome)
+		}
+	}()
 
 	// Refused before the teardown, so a refused delete leaves the managed
 	// workspace intact.
@@ -1424,8 +1452,12 @@ func (s *projectServiceImpl) DeleteProject(ctx context.Context, req *DeleteProje
 		outcome = s.settleFailedDelete(ctx, req.TenantID, req.ProjectID)
 		return nil, s.convertStoreError(err)
 	}
-	// The project is gone: the fence becomes its tombstone.
-	outcome = fenceDeleted
+	// The project is gone: the fence becomes its tombstone. A tombstone that
+	// cannot be written is reported, not swallowed.
+	settled = true
+	if err := settle(fenceDeleted); err != nil {
+		return nil, &ProjectDeleteUnsettledError{TenantID: req.TenantID, ProjectID: req.ProjectID, Cause: err}
+	}
 
 	return &DeleteProjectResponse{
 		ProjectID: req.ProjectID,

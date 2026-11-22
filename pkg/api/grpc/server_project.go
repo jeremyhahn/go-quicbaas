@@ -512,7 +512,6 @@ func convertProjectError(err error) error {
 	var alreadyExists *service.ProjectAlreadyExistsError
 	var bound *service.ProjectBoundError
 	var deleting *sdlc.DeleteInProgressError
-	var binding *sdlc.BindInProgressError
 	var invalid *service.ProjectInvalidError
 	var accessDenied *service.ProjectAccessDeniedError
 	var unresolved *service.ProjectUnresolvedError
@@ -537,9 +536,6 @@ func convertProjectError(err error) error {
 		return status.Error(codes.FailedPrecondition, err.Error())
 	case stderrors.As(err, &deleting):
 		// Another delete of the project is in flight: retry once it settles.
-		return status.Error(codes.FailedPrecondition, err.Error())
-	case stderrors.As(err, &binding):
-		// Another bind or unbind of the project is in flight: retry once it settles.
 		return status.Error(codes.FailedPrecondition, err.Error())
 	case stderrors.As(err, &invalid):
 		return status.Error(codes.InvalidArgument, err.Error())
