@@ -52,6 +52,14 @@ import (
 // errors.go — error types exercised by transport-tagged suites elsewhere
 // =============================================================================
 
+// newDetachedShardedClient returns a ShardedClient with no embedded node
+// client attached, for tests that exercise server wiring without a node.
+// It lives in this untagged file so that every tag set that compiles its
+// callers (this file and sharded_client_node_test.go) also compiles it.
+func newDetachedShardedClient() *ShardedClient {
+	return &ShardedClient{}
+}
+
 func TestFirstBootBootstrapError_ErrorAndUnwrap(t *testing.T) {
 	cause := errors.New("kv write failed")
 	err := &FirstBootBootstrapError{Op: "persist-admin", Cause: cause}
