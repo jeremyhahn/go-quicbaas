@@ -27,6 +27,7 @@ import type { SchedulerClient } from './scheduler_sdk.js';
 import type { ProjectsClient } from './projects.js';
 import type { SdlcClient } from './sdlc.js';
 import type { AccountsClient } from './accounts.js';
+import type { PromptsClient } from './prompts.js';
 import type { AgentsClient } from './agents.js';
 import type { CAClient } from './ca.js';
 import type { TrustClient } from './trust.js';
@@ -1353,6 +1354,12 @@ export interface Client {
    * OpenAI/Codex, OpenCode) an agent session can be spawned against.
    */
   readonly accounts: AccountsClient;
+  /**
+   * prompts reads and edits the layered prompt library (platform, tenant,
+   * project): listings, the effective body and its chain, diff, history,
+   * and the guarded put, rollback and reset.
+   */
+  readonly prompts: PromptsClient;
   /**
    * agents manages the tenant's AI Agents — named runtime + model + provider
    * that role slots reference — and the pools slots fail over along.

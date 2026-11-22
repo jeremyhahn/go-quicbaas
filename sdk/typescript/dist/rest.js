@@ -10,6 +10,7 @@
 //
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
+import { promptPath, promptScopeQuery } from './prompts.js';
 import { parseJSONPreservingLargeIntegers } from './json.js';
 import { adoptPage, appendCSVParam, appendListParam, appendPageParams, } from './page.js';
 import { APIError, ConnectionError, NotConnectedError, DeployNotSupportedError, SSHError, SSHNotFoundError, SSHDuplicateError, SSHInvalidError, SSHUnavailableError, SSHServerError, SSHHostMismatchError, } from './errors.js';
@@ -2212,6 +2213,76 @@ export class RestAccountsClient {
         return this.fetchJSON(`/api/v1/agent-accounts/${encodeURIComponent(accountId)}/usage?${query}`);
     }
 }
+// RestPromptsClient carries the prompts family over /api/v1/prompts, the same
+// routes the Go SDK's REST prompt handler (sdk/go/transport/rest) sends.
+export class RestPromptsClient {
+    baseUrl;
+    config;
+    constructor(baseUrl, config = {}) {
+        this.baseUrl = baseUrl.replace(/\/$/, '');
+        this.config = config;
+    }
+    async fetchJSON(path, init = {}) {
+        const headers = { 'Content-Type': 'application/json' };
+        const tok = await resolveToken(this.config.token);
+        if (tok)
+            headers['Authorization'] = `Bearer ${tok}`;
+        const resp = await fetch(`${this.baseUrl}${path}`, {
+            ...init,
+            headers: { ...headers, ...(init.headers ?? {}) },
+        });
+        if (!resp.ok) {
+            const text = await resp.text().catch(() => resp.statusText);
+            throw new APIError(resp.status, text);
+        }
+        return parseResponseBody(resp);
+    }
+    // listPrompts maps to GET /api/v1/prompts/{set}?tenant_id&scope&project_id
+    async listPrompts(req) {
+        return this.fetchJSON(promptPath(req, '', promptScopeQuery(req), 'listPrompts'));
+    }
+    // getPrompt maps to GET /api/v1/prompts/{set}/{name}[?version]
+    async getPrompt(req) {
+        const query = promptScopeQuery(req);
+        if (req.version)
+            query.set('version', String(req.version));
+        return this.fetchJSON(promptPath(req, '', query, 'getPrompt'));
+    }
+    // getEffectivePrompt maps to GET /api/v1/prompts/{set}/{name}/effective
+    async getEffectivePrompt(addr) {
+        return this.fetchJSON(promptPath(addr, '/effective', promptScopeQuery(addr), 'getEffectivePrompt'));
+    }
+    // diffPrompt maps to GET /api/v1/prompts/{set}/{name}/diff
+    async diffPrompt(addr) {
+        return this.fetchJSON(promptPath(addr, '/diff', promptScopeQuery(addr), 'diffPrompt'));
+    }
+    // getPromptHistory maps to GET /api/v1/prompts/{set}/{name}/history
+    async getPromptHistory(addr) {
+        return this.fetchJSON(promptPath(addr, '/history', promptScopeQuery(addr), 'getPromptHistory'));
+    }
+    // putPrompt maps to PUT /api/v1/prompts/{set}/{name}
+    async putPrompt(req) {
+        return this.fetchJSON(promptPath(req, '', promptScopeQuery(req), 'putPrompt'), {
+            method: 'PUT',
+            body: JSON.stringify({ content: req.content, note: req.note, expected_version: req.expected_version }),
+        });
+    }
+    // rollbackPrompt maps to POST /api/v1/prompts/{set}/{name}/rollback
+    async rollbackPrompt(req) {
+        return this.fetchJSON(promptPath(req, '/rollback', promptScopeQuery(req), 'rollbackPrompt'), {
+            method: 'POST',
+            body: JSON.stringify({ to_version: req.to_version, note: req.note ?? '', expected_version: req.expected_version }),
+        });
+    }
+    // resetPrompt maps to DELETE /api/v1/prompts/{set}/{name}?expected_version[&note]
+    async resetPrompt(req) {
+        const query = promptScopeQuery(req);
+        query.set('expected_version', String(req.expected_version));
+        if (req.note)
+            query.set('note', req.note);
+        return this.fetchJSON(promptPath(req, '', query, 'resetPrompt'), { method: 'DELETE' });
+    }
+}
 // RestAgentsClient implements AgentsClient over the tenant AI agent catalog:
 // /api/v1/agents and /api/v1/agent-pools. See handlers_agents.go for the
 // server-side shapes this mirrors. Every route takes ?tenant_id=; without it
@@ -3812,6 +3883,7 @@ export class RestClient {
     projects;
     sdlc;
     accounts;
+    prompts;
     agents;
     iam;
     kms;
@@ -3853,6 +3925,7 @@ export class RestClient {
         this.projects = new RestProjectsClient(baseUrl, config);
         this.sdlc = new RestSdlcClient(baseUrl, config);
         this.accounts = new RestAccountsClient(baseUrl, config);
+        this.prompts = new RestPromptsClient(baseUrl, config);
         this.agents = new RestAgentsClient(baseUrl, config);
         this.iam = new RestIAMClient(baseUrl, config);
         this.kms = new RestKMSClient(baseUrl, config);
