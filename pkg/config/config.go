@@ -472,7 +472,6 @@ type Config struct {
 	Discovery     DiscoveryConfig     `mapstructure:"discovery"`
 	Cache         EnhancedCacheConfig `mapstructure:"cache"`
 	Metrics       MetricsConfig       `mapstructure:"metrics"`
-	Codec         CodecConfig         `mapstructure:"codec"`
 	KMS           KMSConfig           `mapstructure:"kms"`
 	Secrets       SecretsConfig       `mapstructure:"secrets"`
 	Vector        VectorConfig        `mapstructure:"vector"`
@@ -2721,14 +2720,6 @@ type MetricsConfig struct {
 	// and more detailed breakdowns. May increase memory usage.
 	// Default: false
 	AdvancedEnabled bool `mapstructure:"advanced_enabled"`
-}
-
-// CodecConfig contains codec-related configuration.
-type CodecConfig struct {
-	DefaultFormat string `mapstructure:"default_format"` // "json", "msgpack", "binary"
-	EnableBinary  bool   `mapstructure:"enable_binary"`
-	EnableJSON    bool   `mapstructure:"enable_json"`
-	EnableMsgpack bool   `mapstructure:"enable_msgpack"`
 }
 
 // SealConfig contains seal/unseal configuration for encryption at rest.
