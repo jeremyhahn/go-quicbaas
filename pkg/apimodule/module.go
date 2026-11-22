@@ -85,7 +85,9 @@
 // client_crypto.go) calls that proto name, which go-xkms does not register,
 // so the node answered Unimplemented. Every RPC carries a
 // (qrdb.v1.permission) option in kms.proto, already in this module's
-// derived set, and passes the same authz chain.
+// derived set, and passes the same authz chain. Like the legacy wrappers
+// below it is unixOnly: network gRPC peers and the QUIC projection keep
+// using go-xkms's canonical KMS surface.
 //
 // CertificateService, TrustService, and PIVService (the quicbaas.v1 wrappers
 // over the SAME composed go-xkms library, xkms.Get(), that go-xkms's OWN
@@ -501,7 +503,7 @@ var grpcRegistrations = []grpcRegistration{
 	{desc: &pb.SecretsManagement_ServiceDesc, capability: "secrets-management", pick: func(s *grpcServers) any { return s.secretsManagement }},
 	{desc: &pb.KeyManagement_ServiceDesc, capability: "key-management", pick: func(s *grpcServers) any { return s.keyManagement }},
 	{desc: &pb.DEKManagement_ServiceDesc, capability: "dek-management", pick: func(s *grpcServers) any { return s.dekManagement }},
-	{desc: &pb.Crypto_ServiceDesc, capability: "crypto", pick: func(s *grpcServers) any { return s.crypto }},
+	{desc: &pb.Crypto_ServiceDesc, capability: "crypto", pick: func(s *grpcServers) any { return s.crypto }, unixOnly: true},
 	{desc: &pb.VectorDB_ServiceDesc, capability: "vector", pick: func(s *grpcServers) any { return s.vectorDB }},
 	{desc: &pb.VectorAdmin_ServiceDesc, capability: "vector-admin", pick: func(s *grpcServers) any { return s.vectorAdmin }},
 	{desc: &pb.PromptService_ServiceDesc, capability: "prompt", pick: func(s *grpcServers) any { return s.prompt }},

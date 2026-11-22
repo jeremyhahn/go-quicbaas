@@ -18,6 +18,8 @@ import (
 	"crypto"
 	"errors"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -286,7 +288,58 @@ func TestModule_RegisterGRPC_LegacyXKMSWrappersAreUnixOnly(t *testing.T) {
 		assert.True(t, ok, "service %s must be registered for the Unix SDK's legacy wire name", name)
 		assert.True(t, unixOnly[name], "service %s must be unixOnly: TCP callers use go-xkms's canonical surface", name)
 	}
-	assert.False(t, unixOnly[pb.Crypto_ServiceDesc.ServiceName], "Crypto is served to every peer: go-xkms serves no quicbaas.kms.v1 name")
+	assert.True(t, unixOnly[pb.Crypto_ServiceDesc.ServiceName],
+		"Crypto must be unixOnly: network gRPC and QUIC peers use go-xkms's canonical KMS surface")
+}
+
+// TestModule_Crypto_RefusesNetworkPeers proves a non-Unix peer (bufconn
+// stands in for TCP) gets Unimplemented from quicbaas.kms.v1.Crypto even when
+// the facade composes a CryptoService, and that QUIC never projects it.
+func TestModule_Crypto_RefusesNetworkPeers(t *testing.T) {
+	m, err := NewModule(func() service.QuicBaaS {
+		return &mocks.MockQuicBaaS{
+			CryptoServiceFunc: func() service.CryptoService {
+				return &mocks.MockCryptoService{
+					EncryptFunc: func(context.Context, *service.EncryptRequest) (*service.EncryptResponse, error) {
+						t.Error("a network peer reached CryptoService.Encrypt")
+						return nil, nil
+					},
+				}
+			},
+		}
+	}, testLogger(t))
+	require.NoError(t, err)
+
+	client := pb.NewCryptoClient(startBufconnModule(t, m))
+	_, err = client.Encrypt(context.Background(), &pb.CryptoEncryptRequest{KeyId: "app-key", Plaintext: []byte("x")})
+	assert.Equal(t, codes.Unimplemented, status.Code(err), "Crypto/Encrypt from a network peer: %v", err)
+}
+
+// startUnixModule serves m's gRPC registrations on a Unix socket and returns
+// a client connection to it, so unixOnly services see a Unix peer.
+func startUnixModule(t *testing.T, m *Module) *grpc.ClientConn {
+	t.Helper()
+
+	// A short socket directory: t.TempDir() embeds the test name and can
+	// exceed the 107-byte sun_path limit.
+	sockDir, err := os.MkdirTemp("", "am")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
+	sockPath := filepath.Join(sockDir, "m.sock")
+	listener, err := net.Listen("unix", sockPath)
+	require.NoError(t, err)
+
+	server := grpc.NewServer()
+	m.RegisterGRPC(server)
+	go func() {
+		_ = server.Serve(listener)
+	}()
+	t.Cleanup(server.Stop)
+
+	conn, err := grpc.NewClient("unix://"+sockPath, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+	return conn
 }
 
 // TestModule_RegisterGRPC_ServesAttestationVerifier proves the node's network
@@ -725,7 +778,7 @@ func TestModule_Crypto_LateBinding(t *testing.T) {
 	}, testLogger(t))
 	require.NoError(t, err)
 
-	client := pb.NewCryptoClient(startBufconnModule(t, m))
+	client := pb.NewCryptoClient(startUnixModule(t, m))
 	ctx := context.Background()
 	req := &pb.CryptoEncryptRequest{KeyId: "app-key", Plaintext: []byte("hello")}
 
@@ -756,7 +809,7 @@ func TestModule_Crypto_DisabledAnswersUnavailable(t *testing.T) {
 	m, err := NewModule(func() service.QuicBaaS { return &mocks.MockQuicBaaS{} }, testLogger(t))
 	require.NoError(t, err)
 
-	client := pb.NewCryptoClient(startBufconnModule(t, m))
+	client := pb.NewCryptoClient(startUnixModule(t, m))
 	_, err = client.Encrypt(context.Background(), &pb.CryptoEncryptRequest{KeyId: "app-key", Plaintext: []byte("x")})
 	requireUnavailable(t, err, "the node's gRPC service")
 }
