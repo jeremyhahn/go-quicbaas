@@ -83,12 +83,68 @@ func TestBackupClientOverMCP_MalformedRestoreIsInternal(t *testing.T) {
 
 func TestTransformBackupResponse_OtherVerbPassesThrough(t *testing.T) {
 	result := map[string]interface{}{"backup_id": "bk-1"}
-	got, err := transformBackupResponse("Create", result)
+	got, err := transformBackupResponse("Verify", result)
 	if err != nil {
 		t.Fatalf("transformBackupResponse: %v", err)
 	}
 	if m, ok := got.(map[string]interface{}); !ok || m["backup_id"] != "bk-1" {
 		t.Errorf("result = %#v, want the tool result unchanged", got)
+	}
+}
+
+func TestBackupClientOverMCP_CreateReturnsBackupID(t *testing.T) {
+	tr, cleanup := newFakeMCPServer(t, mcpToolExpectation{
+		wantTool: "quicbaas_backup_create",
+		result: dekToolResult(t, &service.CreateBackupResponse{
+			BackupID: "bk-1", Size: 42, Timestamp: 1700000000, Status: "completed",
+		}),
+	})
+	defer cleanup()
+
+	resp, err := backupclient.NewClient(tr).Create(context.Background(), &backupclient.BackupRequest{})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if resp.BackupID != "bk-1" {
+		t.Errorf("BackupID = %q, want bk-1", resp.BackupID)
+	}
+	if resp.Size != 42 {
+		t.Errorf("Size = %d, want 42", resp.Size)
+	}
+	if resp.Status != "completed" {
+		t.Errorf("Status = %q, want completed", resp.Status)
+	}
+}
+
+func TestBackupClientOverMCP_MalformedCreateIsInternal(t *testing.T) {
+	tr, cleanup := newFakeMCPServer(t, mcpToolExpectation{
+		wantTool: "quicbaas_backup_create",
+		result:   map[string]interface{}{"BackupID": 7, "Status": "completed"},
+	})
+	defer cleanup()
+
+	_, err := backupclient.NewClient(tr).Create(context.Background(), &backupclient.BackupRequest{})
+	if sdkerrors.Code(err) != sdkerrors.CodeInternal {
+		t.Fatalf("err = %v, want a typed internal error", err)
+	}
+}
+
+func TestBackupClientOverMCP_ListReturnsBackups(t *testing.T) {
+	tr, cleanup := newFakeMCPServer(t, mcpToolExpectation{
+		wantTool: "quicbaas_backup_list",
+		result: dekToolResult(t, &service.ListBackupsResponse{
+			Backups:    []*service.BackupMetadata{{BackupID: "bk-1", Size: 42, Status: "completed"}},
+			TotalCount: 1,
+		}),
+	})
+	defer cleanup()
+
+	resp, err := backupclient.NewClient(tr).List(context.Background())
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(resp.Backups) != 1 || resp.Backups[0].ID != "bk-1" {
+		t.Errorf("Backups = %#v, want one backup bk-1", resp.Backups)
 	}
 }
 

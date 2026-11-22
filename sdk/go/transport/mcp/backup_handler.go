@@ -22,18 +22,26 @@ func isMCPBackupService(service string) bool {
 	return svc == "Backup"
 }
 
-// transformBackupResponse decodes the restore tool's result into the
-// RestoreBackupResponse every other transport returns. The server marshals
-// that service struct as is, so its keys are the Go field names. Any other
-// verb's result is returned unchanged.
+// transformBackupResponse decodes the create, list and restore tools' results
+// into the CreateBackupResponse, ListBackupsResponse and RestoreBackupResponse
+// every other transport returns, the types the backup client asserts. The
+// server marshals those service structs as is, so their keys are the Go field
+// names. Any other verb's result is returned unchanged.
 func transformBackupResponse(method string, result interface{}) (interface{}, error) {
-	if method != "Restore" {
+	var target interface{}
+	switch method {
+	case "Create":
+		target = &service.CreateBackupResponse{}
+	case "List":
+		target = &service.ListBackupsResponse{}
+	case "Restore":
+		target = &service.RestoreBackupResponse{}
+	default:
 		return result, nil
 	}
-	var resp service.RestoreBackupResponse
-	if err := remarshal(result, &resp); err != nil {
+	if err := remarshal(result, target); err != nil {
 		return nil, errors.Wrap(err, errors.CodeInternal,
-			"mcp.backup.Restore", "failed to decode tool result")
+			"mcp.backup."+method, "failed to decode tool result")
 	}
-	return &resp, nil
+	return target, nil
 }
