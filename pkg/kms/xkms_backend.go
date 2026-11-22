@@ -688,7 +688,15 @@ func (kb *XKMSBackend) DeleteKey(ctx context.Context, keyID string) error {
 		var err error
 		meta, err = kb.GetKeyMetadata(ctx, keyID)
 		if err != nil {
-			return ErrKeyNotFound
+			// An ownership read error is not "not found": the key may be
+			// live, so the caller must not treat it as deleted.
+			if !stderrors.Is(err, ErrKeyNotFound) {
+				return fmt.Errorf("XKMSBackend.DeleteKey: %w", err)
+			}
+			// No owned key resolves. A record left by an earlier delete
+			// whose release failed is still dropped, so that delete's retry
+			// completes after a restart too.
+			return kb.releaseStaleXKMSKeyRecords(ctx, keyID)
 		}
 	}
 
@@ -712,7 +720,21 @@ func (kb *XKMSBackend) DeleteKey(ctx context.Context, keyID string) error {
 	// key go-xkms actually deleted.
 	deleted := attrs
 	if err := xkms.DeleteKey(ctx, attrs); err != nil {
-		if stderrors.Is(err, xkms.ErrKeyNotFound) {
+		if stderrors.Is(err, xkms.ErrKeyNotFound) || stderrors.Is(err, kctypes.ErrBackendKeyNotFound) {
+			// The material is already gone: this is the retry of a delete
+			// whose release failed, or the key never existed. The record,
+			// if one is left, is still released so the identity can never
+			// resolve again.
+			released, relErr := kb.releaseXKMSKey(ctx, attrs)
+			if relErr != nil {
+				return relErr
+			}
+			kb.mu.Lock()
+			delete(kb.metadata, keyID)
+			kb.mu.Unlock()
+			if released {
+				return nil
+			}
 			return ErrKeyNotFound
 		}
 		// Try with default format as fallback
@@ -733,7 +755,7 @@ func (kb *XKMSBackend) DeleteKey(ctx context.Context, keyID string) error {
 
 	// Drop the ownership record of the deleted key's identity, or a later
 	// native key stored under it would resolve as the deleted key.
-	if err := kb.releaseXKMSKey(ctx, deleted); err != nil {
+	if _, err := kb.releaseXKMSKey(ctx, deleted); err != nil {
 		return err
 	}
 
@@ -742,6 +764,30 @@ func (kb *XKMSBackend) DeleteKey(ctx context.Context, keyID string) error {
 	delete(kb.metadata, keyID)
 	kb.mu.Unlock()
 
+	return nil
+}
+
+// releaseStaleXKMSKeyRecords drops any ownership record left under keyID's
+// encoded name when no owned key material resolves: the record of a delete
+// whose material went but whose release failed. It returns nil when a record
+// was released (that delete is now complete) and ErrKeyNotFound when there
+// was none, or when the name is literal and carries no record.
+func (kb *XKMSBackend) releaseStaleXKMSKeyRecords(ctx context.Context, keyID string) error {
+	name := xkmsKeyName(keyID)
+	if _, ok := decodeXKMSKeyName(name); !ok {
+		return ErrKeyNotFound
+	}
+	releasedAny := false
+	for _, p := range kb.xkmsKeyProbes(ctx, keyID) {
+		released, err := kb.releaseXKMSKeyIdentity(ctx, name, p.kid)
+		if err != nil {
+			return err
+		}
+		releasedAny = releasedAny || released
+	}
+	if !releasedAny {
+		return ErrKeyNotFound
+	}
 	return nil
 }
 

@@ -115,15 +115,33 @@ func (kb *XKMSBackend) rollbackUnclaimedXKMSKey(ctx context.Context, attrs *kcty
 
 // releaseXKMSKey drops the ownership record of the deleted key attrs
 // describe, so a later key the native service stores under the same identity
-// never resolves as the deleted service key. A missing record is not an
-// error.
-func (kb *XKMSBackend) releaseXKMSKey(ctx context.Context, attrs *kctypes.KeyAttributes) error {
-	if _, ok := decodeXKMSKeyName(attrs.CN); !ok {
-		return nil
+// never resolves as the deleted service key. It reports whether a record was
+// there to drop; a missing record is not an error, and a literal name has
+// none.
+func (kb *XKMSBackend) releaseXKMSKey(ctx context.Context, attrs *kctypes.KeyAttributes) (bool, error) {
+	return kb.releaseXKMSKeyIdentity(ctx, attrs.CN, kb.xkmsKeyIdentity(attrs))
+}
+
+// releaseXKMSKeyIdentity drops the ownership record of identity, the full
+// go-xkms key ID of a key stored under name, and reports whether one was
+// there. A literal name has no record.
+func (kb *XKMSBackend) releaseXKMSKeyIdentity(ctx context.Context, name, identity string) (bool, error) {
+	if _, ok := decodeXKMSKeyName(name); !ok {
+		return false, nil
 	}
-	identity := kb.xkmsKeyIdentity(attrs)
-	if err := kb.keyNames.Delete(ctx, xkmsKeyOwnerRecord(identity)); err != nil && !errors.Is(err, kctypes.ErrStorageNotFound) {
-		return &XKMSKeyOwnershipError{Op: "delete", Name: identity, Err: err}
+	record := xkmsKeyOwnerRecord(identity)
+	ok, err := kb.keyNames.Exists(ctx, record)
+	if err != nil {
+		return false, &XKMSKeyOwnershipError{Op: "read", Name: identity, Err: err}
 	}
-	return nil
+	if !ok {
+		return false, nil
+	}
+	if err := kb.keyNames.Delete(ctx, record); err != nil {
+		if errors.Is(err, kctypes.ErrStorageNotFound) {
+			return false, nil
+		}
+		return false, &XKMSKeyOwnershipError{Op: "delete", Name: identity, Err: err}
+	}
+	return true, nil
 }

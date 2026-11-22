@@ -331,3 +331,117 @@ func TestXKMSBackend_MetadataProbesDeriveFromSupportedAlgorithms(t *testing.T) {
 	}
 	require.Equal(t, 5, symmetricSupported)
 }
+
+// failOwnerDeleteStore fails the next fails Deletes of ownership records;
+// every other delete goes through.
+type failOwnerDeleteStore struct {
+	xkmssdk.StorageBackend
+	fails atomic.Int32
+}
+
+func (s *failOwnerDeleteStore) Delete(ctx context.Context, key string) error {
+	if strings.HasPrefix(key, xkmsKeyOwnerRecordPrefix) {
+		for {
+			n := s.fails.Load()
+			if n <= 0 {
+				break
+			}
+			if s.fails.CompareAndSwap(n, n-1) {
+				return errors.New("injected ownership delete failure")
+			}
+		}
+	}
+	return s.StorageBackend.Delete(ctx, key)
+}
+
+// failedOwnerRecordDelete creates an AES key and deletes it while the
+// ownership record's delete fails: the material is gone, the record stays.
+func failedOwnerRecordDelete(t *testing.T, ctx context.Context, kb *XKMSBackend, store *failOwnerDeleteStore, id string) {
+	t.Helper()
+	_, err := kb.CreateKey(ctx, kb.algorithmToKeyAttributes(id, AlgAES256GCM))
+	require.NoError(t, err)
+
+	store.fails.Store(1)
+	err = kb.DeleteKey(ctx, id)
+	var ownErr *XKMSKeyOwnershipError
+	require.ErrorAs(t, err, &ownErr)
+	require.Equal(t, "delete", ownErr.Op)
+
+	_, err = dbxkms.GetSymmetricKey(ctx, kb.buildFullKeyID(id, AlgAES256GCM))
+	require.Error(t, err, "the material went before the record")
+	ok, err := store.Exists(ctx, xkmsKeyOwnerRecord(kb.xkmsKeyIdentity(kb.xkmsKeyAttributes(id, AlgAES256GCM))))
+	require.NoError(t, err)
+	require.True(t, ok, "the record is left by the failed release")
+}
+
+// TestXKMSBackend_DeleteKey_RecordDeleteFailureRetrySucceeds: a delete whose
+// record release fails after the material went is completed by its retry, on
+// the same backend and on a fresh one (a restart with an empty cache).
+func TestXKMSBackend_DeleteKey_RecordDeleteFailureRetrySucceeds(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("same backend", func(t *testing.T) {
+		store := &failOwnerDeleteStore{StorageBackend: newKeyNameGuardXKMS(t)}
+		kb := newOwnerTestBackend(t, ctx, store)
+		const id = "tenant/acme/delete-retry-k"
+		failedOwnerRecordDelete(t, ctx, kb, store, id)
+
+		require.NoError(t, kb.DeleteKey(ctx, id), "the retry releases the record")
+		requireNoXKMSKey(t, ctx, kb, store, id, AlgAES256GCM)
+		_, err := kb.GetKeyMetadata(ctx, id)
+		require.ErrorIs(t, err, ErrKeyNotFound)
+		require.ErrorIs(t, kb.DeleteKey(ctx, id), ErrKeyNotFound, "a completed delete is not found again")
+	})
+
+	t.Run("fresh backend", func(t *testing.T) {
+		store := &failOwnerDeleteStore{StorageBackend: newKeyNameGuardXKMS(t)}
+		kb := newOwnerTestBackend(t, ctx, store)
+		const id = "tenant/acme/delete-restart-k"
+		failedOwnerRecordDelete(t, ctx, kb, store, id)
+
+		kbR := newOwnerTestBackend(t, ctx, store)
+		require.NoError(t, kbR.DeleteKey(ctx, id), "the retry after a restart releases the record")
+		requireNoXKMSKey(t, ctx, kbR, store, id, AlgAES256GCM)
+		require.ErrorIs(t, kbR.DeleteKey(ctx, id), ErrKeyNotFound)
+	})
+}
+
+// TestXKMSBackend_DeleteKey_NativeReuseAfterRecoveredDeleteIsNotOwned: once
+// the retry completes the delete, native material later stored under the
+// same identity is not the deleted key.
+func TestXKMSBackend_DeleteKey_NativeReuseAfterRecoveredDeleteIsNotOwned(t *testing.T) {
+	ctx := context.Background()
+	store := &failOwnerDeleteStore{StorageBackend: newKeyNameGuardXKMS(t)}
+	kb := newOwnerTestBackend(t, ctx, store)
+	const id = "tenant/acme/delete-reuse-k"
+	failedOwnerRecordDelete(t, ctx, kb, store, id)
+	require.NoError(t, kb.DeleteKey(ctx, id))
+
+	attrs := kb.xkmsKeyAttributes(id, AlgAES256GCM)
+	attrs.StoreType = xkmssdk.StoreType(string(config.BackendTypeSoftware))
+	_, err := dbxkms.GenerateSymmetricKey(ctx, "software", attrs)
+	require.NoError(t, err)
+
+	for name, b := range map[string]*XKMSBackend{"same": kb, "fresh": newOwnerTestBackend(t, ctx, store)} {
+		t.Run(name, func(t *testing.T) {
+			owned, err := b.ownsXKMSKey(ctx, attrs.CN, b.xkmsKeyIdentity(attrs))
+			require.NoError(t, err)
+			require.False(t, owned)
+			_, err = b.GetKeyMetadata(ctx, id)
+			require.ErrorIs(t, err, ErrKeyNotFound)
+			require.NotContains(t, listedKeyIDs(t, ctx, b, "tenant/"), id)
+			_, err = b.Encrypt(ctx, id, []byte("not yours"), nil)
+			require.Error(t, err)
+		})
+	}
+}
+
+// TestXKMSBackend_DeleteKey_NotFoundWithoutRecordReturnsNotFound: a key that
+// never existed is not found, on a warm and on a fresh backend.
+func TestXKMSBackend_DeleteKey_NotFoundWithoutRecordReturnsNotFound(t *testing.T) {
+	ctx := context.Background()
+	store := newKeyNameGuardXKMS(t)
+	kb := newOwnerTestBackend(t, ctx, store)
+	require.ErrorIs(t, kb.DeleteKey(ctx, "tenant/acme/never-k"), ErrKeyNotFound)
+	require.ErrorIs(t, newOwnerTestBackend(t, ctx, store).DeleteKey(ctx, "tenant/acme/never-k"), ErrKeyNotFound)
+}
