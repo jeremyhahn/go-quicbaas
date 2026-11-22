@@ -23,13 +23,15 @@
   a confirmation dialog. "Details" shows one session as GET
   /api/v1/iam/sessions/{id} returns it.
 
-  IAMSession carries no "current" flag today; a session the response marks
-  with `current` or `is_current` is shown as the current one, and "Revoke
-  other sessions" is enabled only when such a session is present.
+  The session list carries no "current" marker, so the current session is
+  the one whose ID is the logged-in token's sid claim (the server's ID for
+  this login). "Revoke other sessions" is enabled only when that session is
+  in the list.
 -->
 <script lang="ts">
   import { getSDKClient } from '../../stores/sdkClient.ts';
   import { showToast } from '../../stores/toast.svelte.ts';
+  import { authStore } from '../../stores/auth.svelte.ts';
   import PageHeader from '../../components/core/PageHeader.svelte';
   import DataTable from '../../components/core/DataTable.svelte';
   import type { Column } from '../../lib/dataTable.ts';
@@ -37,9 +39,7 @@
   import type { IAMSession } from '@quicbaas/sdk';
   import { Timer } from 'lucide-svelte';
 
-  // A session as the server may send it: the SDK type plus the optional
-  // markers a server can use to say which session made the request.
-  type SessionRow = IAMSession & { current?: boolean; is_current?: boolean };
+  type SessionRow = IAMSession;
 
   type Pending = { kind: 'one'; session: SessionRow } | { kind: 'others' } | { kind: 'all' };
 
@@ -152,8 +152,12 @@
   // Helpers
   // ---------------------------------------------------------------------------
 
+  // isCurrent is true for the session this login is: its ID is the sid claim
+  // of the token the console holds. Server-supplied data only; with no sid
+  // no session is treated as current.
   function isCurrent(s: SessionRow): boolean {
-    return s.current === true || s.is_current === true;
+    const sid = authStore.sessionID;
+    return sid !== '' && s.id === sid;
   }
 
   function deviceLabel(s: SessionRow): string {

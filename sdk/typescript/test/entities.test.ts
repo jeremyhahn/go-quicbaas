@@ -92,13 +92,24 @@ describe('entities.create', () => {
 });
 
 describe('entities.put', () => {
-  it('PUTs to the item with the type and id in the body', async () => {
+  it('PUTs to the item with the exact id in the URL only', async () => {
+    // HandlePut decodes the body into PutRequest, whose id is a uint64: a
+    // quoted id there is a 400. The URL id is the one the handler uses.
     fetchMock.mockResolvedValue(makeJSON(200, { id: 42, entity_type: 'a/b', created: false, timestamp: TS }));
     await new RestClient(BASE).entities.put('a/b', '18446744073709551615', [1, 2]);
     const c = lastCall();
     expect(c.url).toBe(`${BASE}/api/v1/entities/a%2Fb/18446744073709551615`);
     expect(c.method).toBe('PUT');
-    expect(c.body).toEqual({ entity_type: 'a/b', id: '18446744073709551615', data: [1, 2] });
+    expect(c.body).toEqual({ entity_type: 'a/b', data: [1, 2] });
+    expect(c.body).not.toHaveProperty('id');
+  });
+
+  it('keeps a numeric id out of the body too', async () => {
+    fetchMock.mockResolvedValue(makeJSON(200, { id: 7, entity_type: 'users', created: true, timestamp: TS }));
+    await new RestClient(BASE).entities.put('users', 7, { name: 'a' });
+    const c = lastCall();
+    expect(c.url).toBe(`${BASE}/api/v1/entities/users/7`);
+    expect(c.body).toEqual({ entity_type: 'users', data: { name: 'a' } });
   });
 
   it('sends write_mode only when set', async () => {

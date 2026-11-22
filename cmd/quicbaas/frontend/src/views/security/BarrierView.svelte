@@ -34,6 +34,7 @@
 -->
 <script lang="ts">
   import { showToast } from '../../stores/toast.svelte.ts';
+  import { getValidAccessToken } from '../../stores/auth.svelte.ts';
   import PageHeader from '../../components/core/PageHeader.svelte';
   import { ShieldOff } from 'lucide-svelte';
   import { APIError, createBarrierClient, isWailsRuntime } from '@quicbaas/sdk';
@@ -104,7 +105,11 @@
   // path is owned by the SDK — see RestBarrierClient in @quicbaas/sdk.
   async function makeClient(): Promise<{ structural: BarrierClient; sdk: SDKBarrierClient }> {
     const baseURL = typeof window !== 'undefined' ? window.location.origin : '';
-    const sdk = await createBarrierClient(resolveTransport(), { baseURL });
+    // The barrier operations are permission-gated routes, so the client
+    // attaches the logged-in user's bearer on every request, re-read (and
+    // refreshed when near expiry) from the auth store each time.
+    const token = async (): Promise<string> => getValidAccessToken();
+    const sdk = await createBarrierClient(resolveTransport(), { baseURL, token });
 
     // adaptStatus folds the SDK BarrierStatusResponse into the
     // strategy-aware BarrierStatus shape the
@@ -188,11 +193,15 @@
   let sealSOPIN = $state('');
   let rekeyThreshold: number | null = $state(null);
   let rekeyTotal: number | null = $state(null);
-  let rekeyShares: string[] | null = $state(null);
+  // The rekey and recovery routes answer with distribution metadata only:
+  // the server hands the new shares to the enrolled officers, who claim
+  // them through the share-claim flow. No share material reaches the UI.
+  type Distribution = { threshold: number; total: number; share_count: number };
+  let rekeyResult: Distribution | null = $state(null);
   let recoveryHasKeys: boolean | null = $state(null);
   let recoveryThreshold: number | null = $state(null);
   let recoveryTotal: number | null = $state(null);
-  let recoveryKeys: string[] | null = $state(null);
+  let recoveryResult: Distribution | null = $state(null);
 
   async function loadStatus(): Promise<void> {
     loading = true;
@@ -309,8 +318,12 @@
     const req = { threshold: Number(rekeyThreshold), total: Number(rekeyTotal) };
     try {
       const resp = await sdkClient.rekey(req);
-      rekeyShares = resp.shares ?? [];
-      showToast({ message: 'Barrier rekeyed — store the new shares securely!', type: 'warning' });
+      rekeyResult = {
+        threshold: Number(resp.threshold ?? req.threshold),
+        total: Number(resp.total_shares ?? req.total),
+        share_count: Number(resp.share_count ?? 0),
+      };
+      showToast({ message: 'Barrier rekeyed — officers must claim their new shares', type: 'warning' });
       void loadStatus();
     } catch (e) {
       showToast({ message: errorMessage(e, 'Rekey failed'), type: 'error' });
@@ -331,8 +344,12 @@
     const req = { threshold: Number(recoveryThreshold), total: Number(recoveryTotal) };
     try {
       const resp = await sdkClient.generateRecoveryKeys(req);
-      recoveryKeys = resp.keys ?? [];
-      showToast({ message: 'Recovery keys generated — store them securely!', type: 'warning' });
+      recoveryResult = {
+        threshold: Number(resp.threshold ?? req.threshold),
+        total: Number(resp.total ?? req.total),
+        share_count: Number(resp.share_count ?? 0),
+      };
+      showToast({ message: 'Recovery keys generated — officers must claim their recovery shares', type: 'warning' });
       void loadRecoveryStatus();
     } catch (e) {
       showToast({ message: errorMessage(e, 'Generating recovery keys failed'), type: 'error' });
@@ -349,7 +366,7 @@
     opBusy = true;
     try {
       await sdkClient.deleteRecoveryKeys();
-      recoveryKeys = null;
+      recoveryResult = null;
       showToast({ message: 'Recovery keys deleted', type: 'success' });
     } catch (e) {
       showToast({ message: errorMessage(e, 'Deleting recovery keys failed'), type: 'error' });
@@ -359,14 +376,6 @@
     }
   }
 
-  async function copyValues(values: string[]): Promise<void> {
-    try {
-      await navigator.clipboard.writeText(values.join('\n'));
-      showToast({ message: 'Copied to clipboard', type: 'success' });
-    } catch (e) {
-      showToast({ message: errorMessage(e, 'Copy failed'), type: 'error' });
-    }
-  }
 </script>
 
 <div class="p-6 space-y-6">
@@ -595,20 +604,17 @@
     </div>
   </div>
 
-  {#snippet shownOnce(title: string, values: string[], testid: string, ondismiss: () => void)}
-    <div class="alert alert-warning text-sm" role="alert" data-testid={testid}>
+  {#snippet distributed(title: string, result: Distribution, testid: string, ondismiss: () => void)}
+    <div class="alert alert-info text-sm" role="status" data-testid={testid}>
       <div class="w-full space-y-2">
         <div class="font-semibold">{title}</div>
-        <div class="text-xs">These values are shown only once and are not shown again. Store them securely now.</div>
-        <div class="space-y-1">
-          {#each values as value, i}
-            <div class="font-mono text-xs break-all" data-testid="{testid}-value">
-              <span class="text-base-content/50">#{i + 1}</span> {value}
-            </div>
-          {/each}
+        <div class="text-xs" data-testid="{testid}-summary">
+          {result.share_count} share{result.share_count === 1 ? '' : 's'} distributed; any {result.threshold} of {result.total} reconstruct the key.
+        </div>
+        <div class="text-xs">
+          The shares are not shown here. Each enrolled officer claims their own share through the share-claim flow.
         </div>
         <div class="flex gap-2">
-          <button class="btn btn-xs" onclick={() => { void copyValues(values); }}>Copy</button>
           <button class="btn btn-xs btn-ghost" onclick={ondismiss}>Dismiss</button>
         </div>
       </div>
@@ -667,8 +673,8 @@
         <!-- Rekey -->
         <section class="space-y-2" data-testid="barrier-op-rekey">
           <h3 class="font-semibold">Rekey</h3>
-          {#if rekeyShares !== null}
-            {@render shownOnce('New shares', rekeyShares, 'barrier-rekey-shares', () => { rekeyShares = null; })}
+          {#if rekeyResult !== null}
+            {@render distributed('Barrier rekeyed', rekeyResult, 'barrier-rekey-result', () => { rekeyResult = null; })}
           {/if}
           <form
             class="space-y-2"
@@ -701,8 +707,8 @@
               No recovery keys have been generated.
             {/if}
           </p>
-          {#if recoveryKeys !== null}
-            {@render shownOnce('Recovery keys', recoveryKeys, 'barrier-recovery-keys', () => { recoveryKeys = null; })}
+          {#if recoveryResult !== null}
+            {@render distributed('Recovery keys generated', recoveryResult, 'barrier-recovery-result', () => { recoveryResult = null; })}
           {/if}
           <form
             class="space-y-2"

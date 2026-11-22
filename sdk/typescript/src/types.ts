@@ -2696,11 +2696,13 @@ export interface BarrierRekeyRequest {
   total: number;
 }
 
-// BarrierRekeyResponse returns the new key shares after a rekey operation.
-// Mirrors transport.BarrierRekeyResponse.
+// BarrierRekeyResponse reports the new quorum after a rekey operation.
+// Mirrors transport.BarrierRekeyResponse. It carries no share material: the
+// server distributes the new shares to the enrolled officers, who claim
+// them through the share-claim flow.
 export interface BarrierRekeyResponse {
-  /** New Shamir shares. */
-  shares: string[];
+  /** Number of shares distributed to officers. */
+  share_count: number;
   /** New threshold value. */
   threshold: number;
   /** New total share count. */
@@ -2795,11 +2797,13 @@ export interface BarrierGenerateRecoveryKeysRequest {
   total: number;
 }
 
-// BarrierRecoveryKeysResponse returns generated recovery keys.
-// Mirrors transport.BarrierRecoveryKeysResponse.
+// BarrierRecoveryKeysResponse reports the quorum of generated recovery keys.
+// Mirrors transport.BarrierRecoveryKeysResponse. It carries no key material:
+// the server distributes the recovery shares to the enrolled officers, who
+// claim them through the recovery share-claim flow.
 export interface BarrierRecoveryKeysResponse {
-  /** Recovery key values for distribution. */
-  keys: string[];
+  /** Number of recovery shares distributed to officers. */
+  share_count: number;
   /** Threshold required for recovery. */
   threshold: number;
   /** Total recovery keys generated. */

@@ -17,7 +17,8 @@ import type { IAMSession } from '@quicbaas/sdk';
 // Mock data
 // ---------------------------------------------------------------------------
 
-const mockSessions: (IAMSession & { current?: boolean })[] = [
+// The wire shape IAMHandler.ListSessions sends: no current flag.
+const mockSessions: IAMSession[] = [
   {
     id: 'sess-current',
     created: '2026-11-01T10:00:00Z',
@@ -27,7 +28,6 @@ const mockSessions: (IAMSession & { current?: boolean })[] = [
     ip_address: '10.0.0.5',
     user_agent: 'Mozilla/5.0 (X11; Linux x86_64)',
     device_info: { id: 'dev-1', name: 'Work laptop', type: 'desktop', fingerprint: 'fp1', trusted: true },
-    current: true,
   },
   {
     id: 'sess-phone',
@@ -69,6 +69,24 @@ vi.mock('../src/stores/toast.svelte.ts', () => ({
   showToast: vi.fn(),
 }));
 
+// The session list carries no "current" marker (IAMHandler.ListSessions):
+// the view finds the current session by the logged-in token's sid claim.
+const authState = vi.hoisted(() => ({ sid: 'sess-current' }));
+vi.mock('../src/stores/auth.svelte.ts', async (importOriginal) => {
+  const orig = await importOriginal<typeof import('../src/stores/auth.svelte.ts')>();
+  return {
+    ...orig,
+    authStore: {
+      get status() { return orig.authStore.status; },
+      get endReason() { return orig.authStore.endReason; },
+      get tenantID() { return orig.authStore.tenantID; },
+      get principalUID() { return orig.authStore.principalUID; },
+      get sessionKey() { return orig.authStore.sessionKey; },
+      get sessionID() { return authState.sid; },
+    },
+  };
+});
+
 import MySessionsView from '../src/views/security/MySessionsView.svelte';
 import { showToast } from '../src/stores/toast.svelte.ts';
 
@@ -79,6 +97,7 @@ import { showToast } from '../src/stores/toast.svelte.ts';
 describe('MySessionsView', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    authState.sid = 'sess-current';
     mockListSessions.mockResolvedValue({ sessions: mockSessions });
     mockRevokeSession.mockResolvedValue(undefined);
     mockRevokeAll.mockResolvedValue(undefined);
@@ -131,6 +150,25 @@ describe('MySessionsView', () => {
     await waitFor(() => {
       expect(mockRevokeOthers).toHaveBeenCalledWith('sess-current');
     });
+  });
+
+  it('treats the session matching the token sid as current, and none without a sid', async () => {
+    authState.sid = 'sess-phone';
+    const first = render(MySessionsView);
+    await waitFor(() => screen.getByText('Phone'));
+    expect(screen.getByRole('button', { name: /Revoke other sessions/i })).not.toBeDisabled();
+    await fireEvent.click(screen.getByRole('button', { name: /Revoke other sessions/i }));
+    await fireEvent.click(screen.getByRole('button', { name: /^Revoke$/ }));
+    await waitFor(() => {
+      expect(mockRevokeOthers).toHaveBeenCalledWith('sess-phone');
+    });
+    first.unmount();
+
+    authState.sid = '';
+    render(MySessionsView);
+    await waitFor(() => screen.getByText('Phone'));
+    expect(screen.queryByText('Current')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Revoke other sessions/i })).toBeDisabled();
   });
 
   it('signs out of every session with no options only after the confirmation, then reloads', async () => {

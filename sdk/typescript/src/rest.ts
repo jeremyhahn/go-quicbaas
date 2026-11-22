@@ -5977,7 +5977,10 @@ export class RestEntitiesClient implements EntitiesClient {
     data: unknown,
     opts: EntityWriteOptions = {},
   ): Promise<PutEntityResponse> {
-    const body: PutEntityRequest = { entity_type: type, id, data };
+    // The ID travels only in the URL, which the handler takes as the entity's
+    // ID. The body's id is a uint64 on the server, so a decimal-string ID
+    // (an exact uint64 beyond 2^53) in the body would be refused with 400.
+    const body: PutEntityRequest = { entity_type: type, data };
     return this.http.fetchJSON<PutEntityResponse>(
       `/api/v1/entities/${encodeURIComponent(type)}/${encodeURIComponent(String(id))}${entityQuery({ write_mode: opts.write_mode })}`,
       { method: 'PUT', body: JSON.stringify(body) },

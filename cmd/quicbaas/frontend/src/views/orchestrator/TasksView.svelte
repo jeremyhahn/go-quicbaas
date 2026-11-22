@@ -46,7 +46,13 @@
   import EmptyState from '../../components/core/EmptyState.svelte';
   import DataTable from '../../components/core/DataTable.svelte';
   import type { Column, PageRequest } from '../../lib/dataTable.ts';
-  import type { DecomposeTaskRequest, ClaimTaskRequest, CompleteTaskRequest } from '@quicbaas/sdk';
+  import type {
+    DecomposeTaskRequest,
+    ClaimTaskRequest,
+    CompleteTaskRequest,
+    CreateTaskRequest,
+    WorkItem,
+  } from '@quicbaas/sdk';
   import { formatDateTime, formatRelative } from '../../lib/time.ts';
   import {
     budgetLabel,
@@ -69,6 +75,11 @@
 
   let createTaskOpen = $state(false);
   let decomposingID = $state('');
+  // decomposition holds the work items the last decompose returned. The
+  // decompose route only proposes them (it saves nothing), so they are shown
+  // here until the operator creates them as tasks or dismisses them.
+  let decomposition: { parent: Task; items: WorkItem[] } | null = $state(null);
+  let adopting = $state(false);
   let claimingID = $state('');
   let completingID = $state('');
 
@@ -280,15 +291,58 @@
     try {
       const client = await getSDKClient();
       const resp = await client.orchestrator.decomposeTask(req);
-      const count = resp.work_items?.length ?? 0;
+      const items = resp.work_items ?? [];
+      const count = items.length;
+      decomposition = count > 0 ? { parent: task, items } : null;
       showToast('success', `Task decomposed into ${count} work item${count === 1 ? '' : 's'}`);
-      refreshTasks();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       showToast('error', `Decompose failed: ${msg}`);
     } finally {
       decomposingID = '';
     }
+  }
+
+  // adoptDecomposition creates one task per proposed work item, in the
+  // parent's team and tagged with the parent it came from, then refreshes
+  // the list. Items that fail to create stay in the panel so none is lost.
+  async function adoptDecomposition(): Promise<void> {
+    if (decomposition === null) return;
+    const { parent, items } = decomposition;
+    adopting = true;
+    const failed: WorkItem[] = [];
+    let created = 0;
+    try {
+      const client = await getSDKClient();
+      for (const item of items) {
+        const req: CreateTaskRequest = {
+          tenant_id: orchestratorStore.activeTenantID,
+          subject: item.title,
+          team_name: parent.team_name,
+          description: item.description || undefined,
+          metadata: { decomposed_from: parent.id },
+        };
+        try {
+          await client.orchestrator.createTask(req);
+          created++;
+        } catch {
+          failed.push(item);
+        }
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      showToast('error', `Creating tasks failed: ${msg}`);
+      adopting = false;
+      return;
+    }
+    adopting = false;
+    decomposition = failed.length > 0 ? { parent, items: failed } : null;
+    if (failed.length > 0) {
+      showToast('error', `Created ${created} task${created === 1 ? '' : 's'}; ${failed.length} failed`);
+    } else {
+      showToast('success', `Created ${created} task${created === 1 ? '' : 's'} from the decomposition`);
+    }
+    refreshTasks();
   }
 
   async function handleClaim(taskID: string, e: Event): Promise<void> {
@@ -375,6 +429,35 @@
       </div>
     {/snippet}
   </PageHeader>
+
+  {#if decomposition !== null}
+    <section class="card bg-base-200 rounded-box mb-4" data-testid="decomposition" aria-label="Decomposition">
+      <div class="card-body p-4 gap-3">
+        <h2 class="font-semibold">
+          Proposed work items for “{decomposition.parent.subject}”
+        </h2>
+        <p class="text-xs text-base-content/70">
+          Nothing is saved yet. Create them as tasks in {decomposition.parent.team_name || 'the parent task’s team'}, or dismiss them.
+        </p>
+        <ol class="list-decimal ml-5 space-y-1 text-sm">
+          {#each decomposition.items as item, i (item.id || i)}
+            <li data-testid="decomposition-item">
+              <span class="font-medium">{item.title}</span>
+              {#if item.description}<span class="text-base-content/70"> — {item.description}</span>{/if}
+            </li>
+          {/each}
+        </ol>
+        <div class="flex gap-2">
+          <button class="btn btn-sm btn-primary" disabled={adopting} onclick={() => { void adoptDecomposition(); }}>
+            Create {decomposition.items.length} task{decomposition.items.length === 1 ? '' : 's'}
+          </button>
+          <button class="btn btn-sm btn-ghost" disabled={adopting} onclick={() => { decomposition = null; }}>
+            Dismiss
+          </button>
+        </div>
+      </div>
+    </section>
+  {/if}
 
   <!--
     THE TWO LAYOUTS ANSWER FOR THEMSELVES. The table is server-paged: it owns

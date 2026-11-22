@@ -49,6 +49,7 @@ interface FetchCall {
   url: string;
   method: string;
   body: unknown;
+  authorization: string | null;
 }
 
 interface FetchSpy {
@@ -67,7 +68,8 @@ function makeFetchSpy(
       try { body = JSON.parse(init.body as string); }
       catch { body = init.body; }
     }
-    const call: FetchCall = { url, method, body };
+    const authorization = new Headers(init?.headers).get('Authorization');
+    const call: FetchCall = { url, method, body, authorization };
     calls.push(call);
 
     // FORBID legacy paths up-front — fail loudly if any code regresses.
@@ -110,6 +112,13 @@ function makeFetchSpy(
 
 vi.mock('../src/stores/toast.svelte.ts', () => ({
   showToast: vi.fn(),
+}));
+
+// The barrier routes are permission-gated: the view's client must attach the
+// logged-in user's bearer, which it reads from the auth store per request.
+vi.mock('../src/stores/auth.svelte.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/stores/auth.svelte.ts')>()),
+  getValidAccessToken: vi.fn(async () => 'barrier-test-token'),
 }));
 
 import BarrierView from '../src/views/security/BarrierView.svelte';
@@ -425,9 +434,10 @@ describe('BarrierView operations card', () => {
     });
   });
 
-  it('rekey sends the typed values, shows the new shares once and clears the inputs', async () => {
+  it('rekey sends the typed values, reports the distribution and clears the inputs', async () => {
+    // The real wire shape: shamirInitToResponse, no share material.
     spy = opsSpy({
-      '/api/v1/barrier/rekey': () => ({ shares: ['n1', 'n2', 'n3', 'n4'], threshold: 3, total_shares: 4 }),
+      '/api/v1/barrier/rekey': () => ({ threshold: 3, total_shares: 4, share_count: 4 }),
     });
     vi.stubGlobal('fetch', spy.mock);
     await renderOps();
@@ -444,16 +454,19 @@ describe('BarrierView operations card', () => {
     const call = spy.calls.find((c) => c.url.endsWith('/api/v1/barrier/rekey'));
     expect(call?.body).toEqual({ threshold: 3, total: 4 });
     await waitFor(() => {
-      expect(screen.getAllByTestId('barrier-rekey-shares-value')).toHaveLength(4);
+      expect(screen.getByTestId('barrier-rekey-result-summary')).toHaveTextContent(
+        '4 shares distributed; any 3 of 4 reconstruct the key.',
+      );
     });
-    expect(screen.getByTestId('barrier-rekey-shares')).toHaveTextContent(/not shown again/);
+    expect(screen.getByTestId('barrier-rekey-result')).toHaveTextContent(/share-claim flow/);
     expect(threshold.value).toBe('');
     expect(total.value).toBe('');
   });
 
-  it('generate shows the returned recovery keys', async () => {
+  it('generate reports the recovery share distribution', async () => {
+    // The real wire shape: recoveryKeysToResponse, no key material.
     spy = opsSpy({
-      '/api/v1/barrier/recovery/generate': () => ({ keys: ['rk-a', 'rk-b'], threshold: 1, total: 2 }),
+      '/api/v1/barrier/recovery/generate': () => ({ threshold: 1, total: 2, share_count: 2 }),
     });
     vi.stubGlobal('fetch', spy.mock);
     await renderOps();
@@ -465,14 +478,37 @@ describe('BarrierView operations card', () => {
     hasKeys = true;
     await fireEvent.submit(screen.getByTestId('barrier-recovery-form'));
     await waitFor(() => {
-      expect(screen.getAllByTestId('barrier-recovery-keys-value')).toHaveLength(2);
+      expect(screen.getByTestId('barrier-recovery-result-summary')).toHaveTextContent(
+        '2 shares distributed; any 1 of 2 reconstruct the key.',
+      );
     });
-    expect(screen.getByTestId('barrier-recovery-keys')).toHaveTextContent('rk-a');
+    expect(screen.getByTestId('barrier-recovery-result')).toHaveTextContent(/share-claim flow/);
     const call = spy.calls.find((c) => c.url.endsWith('/api/v1/barrier/recovery/generate'));
     expect(call?.body).toEqual({ threshold: 1, total: 2 });
     await waitFor(() => {
       expect(screen.getByTestId('barrier-recovery-status')).toHaveTextContent('Recovery keys exist.');
     });
+  });
+
+  it('sends the logged-in bearer on every barrier operation', async () => {
+    spy = opsSpy({
+      '/api/v1/barrier/rekey': () => ({ threshold: 2, total_shares: 3, share_count: 3 }),
+    });
+    vi.stubGlobal('fetch', spy.mock);
+    await renderOps();
+    await fireEvent.input(screen.getByLabelText('New threshold'), { target: { value: '2' } });
+    await fireEvent.input(screen.getByLabelText('New total shares'), { target: { value: '3' } });
+    await fireEvent.submit(screen.getByTestId('barrier-rekey-form'));
+    await fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => {
+      expect(countHits('/api/v1/barrier/rekey', 'POST')).toBe(1);
+    });
+    const paths = ['/api/v1/barrier/status', '/api/v1/barrier/recovery/status', '/api/v1/barrier/rekey'];
+    for (const path of paths) {
+      const hits = spy.calls.filter((c) => c.url.endsWith(path));
+      expect(hits.length).toBeGreaterThan(0);
+      for (const hit of hits) expect(hit.authorization).toBe('Bearer barrier-test-token');
+    }
   });
 
   it('deletes recovery keys only after the confirm and refreshes the status', async () => {

@@ -1652,8 +1652,8 @@ export interface BarrierRekeyRequest {
     total: number;
 }
 export interface BarrierRekeyResponse {
-    /** New Shamir shares. */
-    shares: string[];
+    /** Number of shares distributed to officers. */
+    share_count: number;
     /** New threshold value. */
     threshold: number;
     /** New total share count. */
@@ -1718,8 +1718,8 @@ export interface BarrierGenerateRecoveryKeysRequest {
     total: number;
 }
 export interface BarrierRecoveryKeysResponse {
-    /** Recovery key values for distribution. */
-    keys: string[];
+    /** Number of recovery shares distributed to officers. */
+    share_count: number;
     /** Threshold required for recovery. */
     threshold: number;
     /** Total recovery keys generated. */

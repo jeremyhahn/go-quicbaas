@@ -388,6 +388,15 @@ export const authStore = {
     return sessionUID;
   },
   /**
+   * The server's identifier for this login (the token's sid claim), or ''
+   * when signed out or the token carries none. It is the ID the session
+   * list reports for this login, so it is how the console tells the
+   * current session apart from the caller's other sessions.
+   */
+  get sessionID(): string {
+    return sessionSID;
+  },
+  /**
    * Opaque key identifying WHICH session this is: the login generation, the
    * principal, the tenant, and the server's identifier for the login itself.
    * Two sessions share a key only when they are the same login — not merely the
