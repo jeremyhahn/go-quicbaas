@@ -18,6 +18,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -187,6 +188,30 @@ func TestBuildQRDBConfig_MCPBindAddress(t *testing.T) {
 	assert.True(t, qcfg.Protocols.MCP)
 	assert.Equal(t, "127.0.0.1", qcfg.Server.Host, "mcp.bind_address must bind the MCP listener")
 	assert.Equal(t, 11443, qcfg.MCP.Port)
+}
+
+// TestBuildQRDBConfig_ConflictingBindAddressesRefused: listeners that disagree
+// on their bind host refuse the node's configuration instead of all binding on
+// server.host, which would put MCP kept on loopback onto every interface.
+func TestBuildQRDBConfig_ConflictingBindAddressesRefused(t *testing.T) {
+	for _, clusterMode := range []bool{false, true} {
+		t.Run(fmt.Sprintf("cluster=%t", clusterMode), func(t *testing.T) {
+			cfg := clusterTestConfig()
+			cfg.Server.Host = "0.0.0.0"
+			cfg.Server.REST.Enabled = true
+			cfg.Server.MCP.Enabled = true
+			cfg.Server.MCP.Port = 11443
+			cfg.Server.MCP.BindAddress = "127.0.0.1"
+
+			qcfg, err := buildQRDBConfig(cfg, clusterMode)
+
+			require.Error(t, err)
+			assert.Nil(t, qcfg)
+			var verr *config.ValidationError
+			require.ErrorAs(t, err, &verr)
+			assert.Equal(t, "server.mcp.bind_address", verr.Field)
+		})
+	}
 }
 
 // TestBuildQRDBConfig_NoBindAddressKeepsServerHost: with no override the node

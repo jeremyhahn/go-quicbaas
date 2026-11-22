@@ -15,11 +15,13 @@ package orchestration
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 
 	"gopkg.in/yaml.v3"
 )
@@ -168,13 +170,54 @@ func (wl *WorkflowLoader) RehydrateAll(ctx context.Context) (int, error) {
 	return len(defs), nil
 }
 
+// MaxWorkflowFileBytes is the largest workflow file LoadFromFile reads. A
+// workflow definition is small YAML, and a request-supplied path must never
+// make the daemon allocate without bound.
+const MaxWorkflowFileBytes int64 = 1 << 20
+
+// readWorkflowFile reads path only when it is a regular file (symlinks are
+// followed by the open) of at most MaxWorkflowFileBytes. The open is
+// non-blocking, so a FIFO with no writer is refused at once instead of
+// hanging, and the type check runs on the opened descriptor, so there is no
+// stat-then-open race.
+func readWorkflowFile(path string) ([]byte, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, &WorkflowFileNotRegularError{Path: path, Mode: fi.Mode()}
+	}
+	if fi.Size() > MaxWorkflowFileBytes {
+		return nil, &WorkflowFileTooLargeError{Path: path, Limit: MaxWorkflowFileBytes}
+	}
+	data, err := io.ReadAll(io.LimitReader(f, MaxWorkflowFileBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > MaxWorkflowFileBytes {
+		// The file grew after the stat.
+		return nil, &WorkflowFileTooLargeError{Path: path, Limit: MaxWorkflowFileBytes}
+	}
+	return data, nil
+}
+
 // LoadFromFile loads a workflow definition from a YAML file at the given path
 // into the tenant's registry. The loaded workflow is validated and stored.
+// It reads only a regular file (symlinks are followed) of at most
+// MaxWorkflowFileBytes; a device, FIFO, socket, directory or larger file is
+// refused with a typed error inside the WorkflowLoadError.
 func (wl *WorkflowLoader) LoadFromFile(tenantID, path string) (*WorkflowDefinition, error) {
 	if err := requireTenant(tenantID); err != nil {
 		return nil, err
 	}
-	data, err := os.ReadFile(path)
+	data, err := readWorkflowFile(path)
 	if err != nil {
 		return nil, &WorkflowLoadError{Path: path, Cause: err}
 	}

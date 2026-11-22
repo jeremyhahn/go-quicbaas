@@ -13,7 +13,11 @@
 
 package orchestration
 
-import "errors"
+import (
+	"errors"
+	"io/fs"
+	"strconv"
+)
 
 // =============================================================================
 // Workflow Sentinel Errors
@@ -38,6 +42,14 @@ var (
 	// ErrWorkflowRetiredField indicates a workflow definition carries a
 	// field that no longer exists.
 	ErrWorkflowRetiredField = errors.New("workflow: retired field")
+
+	// ErrWorkflowFileNotRegular indicates a workflow path does not name a
+	// regular file (a device, FIFO, socket or directory).
+	ErrWorkflowFileNotRegular = errors.New("workflow: not a regular file")
+
+	// ErrWorkflowFileTooLarge indicates a workflow file exceeds
+	// MaxWorkflowFileBytes.
+	ErrWorkflowFileTooLarge = errors.New("workflow: file too large")
 )
 
 // =============================================================================
@@ -114,6 +126,39 @@ func (e *WorkflowLoadError) Error() string {
 // Unwrap returns both the sentinel and cause for errors.Is/As support.
 func (e *WorkflowLoadError) Unwrap() []error {
 	return []error{ErrWorkflowLoad, e.Cause}
+}
+
+// WorkflowFileNotRegularError indicates a workflow path names something other
+// than a regular file, after symlinks are followed.
+type WorkflowFileNotRegularError struct {
+	Path string
+	Mode fs.FileMode
+}
+
+// Error implements the error interface.
+func (e *WorkflowFileNotRegularError) Error() string {
+	return ErrWorkflowFileNotRegular.Error() + ": " + e.Path + " (" + e.Mode.Type().String() + ")"
+}
+
+// Unwrap returns the sentinel error for errors.Is support.
+func (e *WorkflowFileNotRegularError) Unwrap() error {
+	return ErrWorkflowFileNotRegular
+}
+
+// WorkflowFileTooLargeError indicates a workflow file is larger than Limit.
+type WorkflowFileTooLargeError struct {
+	Path  string
+	Limit int64
+}
+
+// Error implements the error interface.
+func (e *WorkflowFileTooLargeError) Error() string {
+	return ErrWorkflowFileTooLarge.Error() + ": " + e.Path + " exceeds " + strconv.FormatInt(e.Limit, 10) + " bytes"
+}
+
+// Unwrap returns the sentinel error for errors.Is support.
+func (e *WorkflowFileTooLargeError) Unwrap() error {
+	return ErrWorkflowFileTooLarge
 }
 
 // WorkflowParseError indicates a workflow file could not be parsed.

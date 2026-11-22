@@ -215,12 +215,17 @@ func buildQRDBConfig(cfg *config.Config, clusterMode bool) (*qrdbsdk.DaemonConfi
 	// the QuicBaaS facade.
 	if cfg.NetworkServing() {
 		// The node has one host for every listener; a per-protocol
-		// bind_address becomes it (validation refuses overrides that differ).
-		if host, _, ok := cfg.Server.NodeListenHost(); ok {
-			qcfg.Server.Host = host
-		} else {
-			qcfg.Server.Host = cfg.Server.Host
+		// bind_address becomes it. Overrides that differ refuse the boot
+		// rather than falling back to server.host: a fallback would put a
+		// listener kept on private ingress onto every interface.
+		host, conflictKey, ok := cfg.Server.NodeListenHost()
+		if !ok {
+			return nil, &config.ValidationError{
+				Field:   conflictKey,
+				Message: "the REST, gRPC and MCP listeners share one bind host on the embedded qrdb node; set the same bind_address on every enabled protocol",
+			}
 		}
+		qcfg.Server.Host = host
 		qcfg.Server.AdminPort = cfg.Server.REST.Port
 		qcfg.Server.GRPCPort = cfg.Server.GRPC.Port
 		qcfg.Protocols.REST = cfg.Server.REST.Enabled
