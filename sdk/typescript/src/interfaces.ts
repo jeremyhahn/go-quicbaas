@@ -182,6 +182,15 @@ import type {
   BootstrapBundleRequest,
   BootstrapBundleResponse,
   ClusterStatusResponse,
+  BackupStatusResponse,
+  CreateBackupRequest,
+  CreateBackupResponse,
+  DeleteBackupResponse,
+  ListBackupsOptions,
+  ListBackupsResponse,
+  RestoreBackupRequest,
+  RestoreBackupResponse,
+  VerifyBackupResponse,
   SessionEventEnvelope,
   SessionInfo,
   SpawnSessionRequest,
@@ -1201,6 +1210,22 @@ export interface ClusterClient {
   status(): Promise<ClusterStatusResponse>;
 }
 
+// BackupClient manages cluster backups under /api/v1/backups.
+export interface BackupClient {
+  // list returns a page of backups. Maps to GET /api/v1/backups.
+  list(opts?: ListBackupsOptions): Promise<ListBackupsResponse>;
+  // create starts a backup. Maps to POST /api/v1/backups.
+  create(req: CreateBackupRequest): Promise<CreateBackupResponse>;
+  // delete removes a backup. Maps to DELETE /api/v1/backups/{id}.
+  delete(id: string): Promise<DeleteBackupResponse>;
+  // restore restores a backup onto shards. Maps to POST /api/v1/backups/{id}/restore.
+  restore(id: string, req?: RestoreBackupRequest): Promise<RestoreBackupResponse>;
+  // status reports a backup's integrity. Maps to GET /api/v1/backups/{id}/status.
+  status(id: string): Promise<BackupStatusResponse>;
+  // verify checks a backup's checksums. Maps to POST /api/v1/backups/{id}/verify.
+  verify(id: string): Promise<VerifyBackupResponse>;
+}
+
 // advertises a different verification mechanism. Paths: /api/v1/bootstrap.
 export interface BootstrapClient {
   // auto attempts every configured bootstrap method in priority order and
@@ -1405,6 +1430,8 @@ export interface Client {
    * and rebalance writes when a caller needs them). Path: /api/v1/cluster.
    */
   readonly cluster: ClusterClient;
+  /** Path: /api/v1/backups */
+  readonly backups: BackupClient;
   /**
    * @deprecated Use barrier. Kept for one release so existing callers
    * continue to compile. The seal accessor proxies to barrier.

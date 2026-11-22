@@ -113,6 +113,7 @@ export declare class McpClient implements Client {
     readonly tenantBarrier: any;
     readonly ceremony: CeremonyClient;
     readonly cluster: any;
+    readonly backups: any;
     readonly seal: any;
     readonly sshKeys: any;
     readonly ssh: any;

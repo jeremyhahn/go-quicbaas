@@ -293,6 +293,7 @@ export class UnixClient implements Client {
   // cluster status/management is exposed over the REST transport; not wired here.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly cluster: any = null;
+  readonly backups: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly seal: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

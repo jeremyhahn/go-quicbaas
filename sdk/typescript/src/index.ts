@@ -36,6 +36,7 @@ export type {
   CeremonyClient,
   BootstrapClient,
   ClusterClient,
+  BackupClient,
   /** @deprecated Use BarrierClient. */
   SealClient,
   SecretsClient,
@@ -379,6 +380,7 @@ export {
   RestCeremonyClient,
   RestBootstrapClient,
   RestClusterClient,
+  RestBackupClient,
 } from './rest.js';
 
 // Certificate authority / trust / crypto REST clients — exported so callers

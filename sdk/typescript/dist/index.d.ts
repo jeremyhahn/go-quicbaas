@@ -1,5 +1,5 @@
 export { createClient, getClient, isDesktop, isWailsRuntime, createBarrierClient, createCeremonyClient, createBootstrapClient, } from './factory.js';
-export type { AuthClient, Client, ConnectionClient, OrchestratorClient, IAMClient, KMSClient, KMSKeyVersion, BarrierClient, TenantBarrierClient, CeremonyClient, BootstrapClient, ClusterClient, 
+export type { AuthClient, Client, ConnectionClient, OrchestratorClient, IAMClient, KMSClient, KMSKeyVersion, BarrierClient, TenantBarrierClient, CeremonyClient, BootstrapClient, ClusterClient, BackupClient, 
 /** @deprecated Use BarrierClient. */
 SealClient, SecretsClient, UpdateUserRequest, UpdateTenantRequest, CreateRoleRequest, UpdateRoleRequest, CreatePolicyRequest, UpdatePolicyRequest, SSHKeysClient, SSHKnownHostsClient, SSHAuthorizedKeysClient, SSHClient, SelfRegisterBeginRequest, SelfRegisterBeginResponse, SelfRegisterFinishRequest, SelfRegisterFinishResponse, } from './interfaces.js';
 export type { DataClient, KVEntry, KVListResponse, VectorsClient, VectorNamespace, VectorSearchResult, TimeSeriesClient, TSPoint, TSQueryResponse, ObjectsClient, ObjectEntry, ObjectListResponse, } from './interfaces.js';
@@ -26,7 +26,7 @@ export type { PageParams, PageResult, PageFacets, JobPageParams, TaskPageParams,
 export { adoptPage, adoptFacets, appendPageParams, appendListParam, appendCSVParam, wholeSetPage, MalformedPageError, } from './page.js';
 export { QuicBaaSError, SOPINRequiresTLSError, ConnectionError, NotConnectedError, APIError, DeployNotSupportedError, TransportNotSupportedError, McpError, SSHError, SSHNotFoundError, SSHDuplicateError, SSHInvalidError, SSHUnavailableError, SSHServerError, SSHHostMismatchError, } from './errors.js';
 export { RestSSHKeysClient, RestKnownHostsClient, RestAuthorizedKeysClient } from './rest.js';
-export { RestBarrierClient, RestTenantBarrierClient, RestCeremonyClient, RestBootstrapClient, RestClusterClient, } from './rest.js';
+export { RestBarrierClient, RestTenantBarrierClient, RestCeremonyClient, RestBootstrapClient, RestClusterClient, RestBackupClient, } from './rest.js';
 export { RestCAClient, RestTrustClient, RestCryptoClient } from './rest.js';
 export { GrpcWebNotImplementedError } from './grpc_web.js';
 export { McpNotImplementedError, McpAccountsClient, McpProjectsClient, McpSdlcClient } from './mcp.js';

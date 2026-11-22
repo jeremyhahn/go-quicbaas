@@ -3409,6 +3409,46 @@ export class RestClusterClient {
         });
     }
 }
+// RestBackupClient implements BackupClient against /api/v1/backups.
+export class RestBackupClient {
+    http;
+    constructor(baseUrl, config = {}) {
+        this.http = newFetchHelper(baseUrl, config);
+    }
+    async list(opts = {}) {
+        const params = new URLSearchParams();
+        if (opts.limit !== undefined)
+            params.set('limit', String(opts.limit));
+        if (opts.offset !== undefined)
+            params.set('offset', String(opts.offset));
+        const qs = params.toString();
+        const resp = await this.http.fetchJSON(`/api/v1/backups${qs ? `?${qs}` : ''}`, { method: 'GET' });
+        return { ...resp, backups: resp?.backups ?? [], total_count: resp?.total_count ?? 0 };
+    }
+    async create(req) {
+        return this.http.fetchJSON('/api/v1/backups', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(req),
+        });
+    }
+    async delete(id) {
+        return this.http.fetchJSON(`/api/v1/backups/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    }
+    async restore(id, req) {
+        return this.http.fetchJSON(`/api/v1/backups/${encodeURIComponent(id)}/restore`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(req ?? {}),
+        });
+    }
+    async status(id) {
+        return this.http.fetchJSON(`/api/v1/backups/${encodeURIComponent(id)}/status`, { method: 'GET' });
+    }
+    async verify(id) {
+        return this.http.fetchJSON(`/api/v1/backups/${encodeURIComponent(id)}/verify`, { method: 'POST' });
+    }
+}
 // ---------------------------------------------------------------------------
 // RestBootstrapClient — /api/v1/bootstrap surface.
 // ---------------------------------------------------------------------------
@@ -3819,6 +3859,7 @@ export class RestClient {
     ceremony;
     bootstrap;
     cluster;
+    backups;
     /** @deprecated Use barrier. The legacy seal accessor is kept for one release. */
     seal;
     /**
@@ -3860,6 +3901,7 @@ export class RestClient {
         this.ceremony = new RestCeremonyClient(baseUrl, config);
         this.bootstrap = new RestBootstrapClient(baseUrl, config);
         this.cluster = new RestClusterClient(baseUrl, config);
+        this.backups = new RestBackupClient(baseUrl, config);
         // RestSealClient is a deprecated alias retained for one release. Construction
         // is lazy via a getter so apps that never touch `client.seal` (which is the
         // expected case after the unification) don't pay for the deprecation

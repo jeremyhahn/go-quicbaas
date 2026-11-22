@@ -988,6 +988,7 @@ export class WailsClient implements Client {
   // mode (the embedded server runs in-process); no Wails Go binding yet.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly cluster: any = null;
+  readonly backups: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly seal: any = null;
   /**

@@ -195,6 +195,7 @@ export class UnixClient {
     // cluster status/management is exposed over the REST transport; not wired here.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     cluster = null;
+    backups = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     seal = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

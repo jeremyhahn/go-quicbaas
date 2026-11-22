@@ -1,4 +1,4 @@
-import type { AuthClient, Client, ConnectionClient, DataClient, IAMClient, KMSClient, ObjectsClient, BarrierClient, TenantBarrierClient, CeremonyClient, BootstrapClient, ClusterClient, SealClient, SecretsClient, SSHKeysClient, SSHKnownHostsClient, SSHAuthorizedKeysClient, SSHClient, TimeSeriesClient, VectorsClient, OrchestratorClient } from './interfaces.js';
+import type { AuthClient, Client, ConnectionClient, DataClient, IAMClient, KMSClient, ObjectsClient, BarrierClient, TenantBarrierClient, CeremonyClient, BootstrapClient, ClusterClient, BackupClient, SealClient, SecretsClient, SSHKeysClient, SSHKnownHostsClient, SSHAuthorizedKeysClient, SSHClient, TimeSeriesClient, VectorsClient, OrchestratorClient } from './interfaces.js';
 import type { RAGClient } from './rag.js';
 import type { EmbeddingsClient } from './embedding_sdk.js';
 import type { MessagingClient } from './messaging_sdk.js';
@@ -12,7 +12,7 @@ import type { DEKClient, CreateDEKRequest, CreateDEKResponse, GetDEKResponse, Li
 import type { DynamicSecretsClient, DynamicSecretRole, CreateRoleRequest as DynamicSecretCreateRoleRequest, ListRolesResponse as ListDynamicSecretRolesResponse, DeleteRoleResponse as DeleteDynamicSecretRoleResponse, GenerateCredentialRequest, GenerateCredentialResponse, RenewLeaseRequest, RenewLeaseResponse, RevokeLeaseResponse as RevokeDynamicSecretLeaseResponse, ListLeasesResponse } from './dynamicsecrets.js';
 import type { AccountsClient, Account, CreateAccountRequest, CreateAccountResponse, GetAccountResponse, ListAccountsRequest, ListAccountsResponse, UpdateAccountRequest, UpdateAccountResponse, DeleteAccountResponse, RotateAccountCredentialRequest, RotateAccountCredentialResponse, RevokeAccountRequest, RevokeAccountResponse, SetDefaultAccountResponse, GetAccountUsageResponse } from './accounts.js';
 import type { AgentsClient } from './agents.js';
-import type { ClientConfig, BarrierStatusResponse, BarrierInitRequest, BarrierUnsealRequest, BarrierSealRequest, BarrierShamirInitRequest, BarrierShamirInitResponse, BarrierUnsealShareRequest, BarrierUnsealShareResponse, BarrierUnsealSharesRequest, BarrierRekeyRequest, BarrierRekeyResponse, BarrierGenerateRecoveryKeysRequest, BarrierRecoveryKeysResponse, BarrierRecoverWithKeysRequest, BarrierHasRecoveryKeysResponse, BarrierGenerateRootTokenRequest, BarrierEnableEncryptionRequest, BarrierEnableEncryptionResponse, BarrierRootTokenResponse, TenantBarrierInitRequest, TenantBarrierInitResponse, TenantBarrierUnsealShareResponse, TenantBarrierStatusResponse, CeremonyInitializeRequest, CeremonyInitializeResponse, CeremonyStatusResponse, CeremonyClaimCertBeginRequest, CeremonyClaimCertBeginResponse, CeremonyClaimCertCompleteRequest, CeremonyClaimCertCompleteResponse, CeremonyClaimShareBeginRequest, CeremonyClaimShareBeginResponse, CeremonyClaimShareCompleteRequest, CeremonyClaimShareCompleteResponse, CeremonySignCSRRequest, CeremonySignCSRResponse, CeremonyEnrollExternalOfficerRequest, CeremonyEnrollExternalOfficerResponse, BootstrapBundleRequest, BootstrapBundleResponse, ClusterStatusResponse, SessionInfo, SSHScope, SSHKey, SSHPublicKey, SignRequest, SignResponse, CreateSSHKeyRequest, ImportSSHKeyRequest, ListSSHKeysQuery, ListSSHKeysResponse, AddSSHPinRequest, ListSSHPinsResponse, VerifySSHPinRequest, EmitAuthorizedRequest, EmitAuthorizedResponse, VerifyAuthorizedRequest, VerifyAuthorizedResponse } from './types.js';
+import type { ClientConfig, BarrierStatusResponse, BarrierInitRequest, BarrierUnsealRequest, BarrierSealRequest, BarrierShamirInitRequest, BarrierShamirInitResponse, BarrierUnsealShareRequest, BarrierUnsealShareResponse, BarrierUnsealSharesRequest, BarrierRekeyRequest, BarrierRekeyResponse, BarrierGenerateRecoveryKeysRequest, BarrierRecoveryKeysResponse, BarrierRecoverWithKeysRequest, BarrierHasRecoveryKeysResponse, BarrierGenerateRootTokenRequest, BarrierEnableEncryptionRequest, BarrierEnableEncryptionResponse, BarrierRootTokenResponse, TenantBarrierInitRequest, TenantBarrierInitResponse, TenantBarrierUnsealShareResponse, TenantBarrierStatusResponse, CeremonyInitializeRequest, CeremonyInitializeResponse, CeremonyStatusResponse, CeremonyClaimCertBeginRequest, CeremonyClaimCertBeginResponse, CeremonyClaimCertCompleteRequest, CeremonyClaimCertCompleteResponse, CeremonyClaimShareBeginRequest, CeremonyClaimShareBeginResponse, CeremonyClaimShareCompleteRequest, CeremonyClaimShareCompleteResponse, CeremonySignCSRRequest, CeremonySignCSRResponse, CeremonyEnrollExternalOfficerRequest, CeremonyEnrollExternalOfficerResponse, BootstrapBundleRequest, BootstrapBundleResponse, ClusterStatusResponse, BackupStatusResponse, CreateBackupRequest, CreateBackupResponse, DeleteBackupResponse, ListBackupsOptions, ListBackupsResponse, RestoreBackupRequest, RestoreBackupResponse, VerifyBackupResponse, SessionInfo, SSHScope, SSHKey, SSHPublicKey, SignRequest, SignResponse, CreateSSHKeyRequest, ImportSSHKeyRequest, ListSSHKeysQuery, ListSSHKeysResponse, AddSSHPinRequest, ListSSHPinsResponse, VerifySSHPinRequest, EmitAuthorizedRequest, EmitAuthorizedResponse, VerifyAuthorizedRequest, VerifyAuthorizedResponse } from './types.js';
 import { type AccountPageParams, type PageResult, type ProjectPageParams } from './page.js';
 import { APIError, ConnectionError, NotConnectedError, SSHError, SSHNotFoundError, SSHDuplicateError, SSHInvalidError, SSHUnavailableError, SSHServerError, SSHHostMismatchError } from './errors.js';
 export declare function resolveToken(token: string | (() => Promise<string>) | undefined): Promise<string>;
@@ -176,6 +176,16 @@ export declare class RestClusterClient implements ClusterClient {
     constructor(baseUrl: string, config?: ClientConfig);
     status(): Promise<ClusterStatusResponse>;
 }
+export declare class RestBackupClient implements BackupClient {
+    private readonly http;
+    constructor(baseUrl: string, config?: ClientConfig);
+    list(opts?: ListBackupsOptions): Promise<ListBackupsResponse>;
+    create(req: CreateBackupRequest): Promise<CreateBackupResponse>;
+    delete(id: string): Promise<DeleteBackupResponse>;
+    restore(id: string, req?: RestoreBackupRequest): Promise<RestoreBackupResponse>;
+    status(id: string): Promise<BackupStatusResponse>;
+    verify(id: string): Promise<VerifyBackupResponse>;
+}
 export declare class RestBootstrapClient implements BootstrapClient {
     private readonly http;
     constructor(baseUrl: string, config?: ClientConfig);
@@ -251,6 +261,7 @@ export declare class RestClient implements Client {
     readonly ceremony: CeremonyClient;
     readonly bootstrap: BootstrapClient;
     readonly cluster: ClusterClient;
+    readonly backups: BackupClient;
     /** @deprecated Use barrier. The legacy seal accessor is kept for one release. */
     readonly seal: SealClient;
     /**

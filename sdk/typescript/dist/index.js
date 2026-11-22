@@ -28,7 +28,7 @@ export { RestSSHKeysClient, RestKnownHostsClient, RestAuthorizedKeysClient } fro
 // Barrier / Ceremony / Bootstrap REST clients — exported so callers can
 // construct each sub-client directly without going through the full
 // RestClient. The convenience factory functions in factory.ts wrap these.
-export { RestBarrierClient, RestTenantBarrierClient, RestCeremonyClient, RestBootstrapClient, RestClusterClient, } from './rest.js';
+export { RestBarrierClient, RestTenantBarrierClient, RestCeremonyClient, RestBootstrapClient, RestClusterClient, RestBackupClient, } from './rest.js';
 // Certificate authority / trust / crypto REST clients — exported so callers
 // can construct each sub-client directly without going through the full
 // RestClient.

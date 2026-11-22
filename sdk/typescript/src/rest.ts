@@ -28,6 +28,7 @@ import type {
   CeremonyClient,
   BootstrapClient,
   ClusterClient,
+  BackupClient,
   SealClient,
   SecretsClient,
   SSHKeysClient,
@@ -351,6 +352,15 @@ import type {
   BootstrapBundleRequest,
   BootstrapBundleResponse,
   ClusterStatusResponse,
+  BackupStatusResponse,
+  CreateBackupRequest,
+  CreateBackupResponse,
+  DeleteBackupResponse,
+  ListBackupsOptions,
+  ListBackupsResponse,
+  RestoreBackupRequest,
+  RestoreBackupResponse,
+  VerifyBackupResponse,
   SecretEntry,
   SessionEventEnvelope,
   SessionInfo,
@@ -4777,6 +4787,67 @@ export class RestClusterClient implements ClusterClient {
   }
 }
 
+// RestBackupClient implements BackupClient against /api/v1/backups.
+export class RestBackupClient implements BackupClient {
+  private readonly http: FetchHelper;
+
+  constructor(baseUrl: string, config: ClientConfig = {}) {
+    this.http = newFetchHelper(baseUrl, config);
+  }
+
+  async list(opts: ListBackupsOptions = {}): Promise<ListBackupsResponse> {
+    const params = new URLSearchParams();
+    if (opts.limit !== undefined) params.set('limit', String(opts.limit));
+    if (opts.offset !== undefined) params.set('offset', String(opts.offset));
+    const qs = params.toString();
+    const resp = await this.http.fetchJSON<ListBackupsResponse>(
+      `/api/v1/backups${qs ? `?${qs}` : ''}`,
+      { method: 'GET' },
+    );
+    return { ...resp, backups: resp?.backups ?? [], total_count: resp?.total_count ?? 0 };
+  }
+
+  async create(req: CreateBackupRequest): Promise<CreateBackupResponse> {
+    return this.http.fetchJSON<CreateBackupResponse>('/api/v1/backups', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+    });
+  }
+
+  async delete(id: string): Promise<DeleteBackupResponse> {
+    return this.http.fetchJSON<DeleteBackupResponse>(
+      `/api/v1/backups/${encodeURIComponent(id)}`,
+      { method: 'DELETE' },
+    );
+  }
+
+  async restore(id: string, req?: RestoreBackupRequest): Promise<RestoreBackupResponse> {
+    return this.http.fetchJSON<RestoreBackupResponse>(
+      `/api/v1/backups/${encodeURIComponent(id)}/restore`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(req ?? {}),
+      },
+    );
+  }
+
+  async status(id: string): Promise<BackupStatusResponse> {
+    return this.http.fetchJSON<BackupStatusResponse>(
+      `/api/v1/backups/${encodeURIComponent(id)}/status`,
+      { method: 'GET' },
+    );
+  }
+
+  async verify(id: string): Promise<VerifyBackupResponse> {
+    return this.http.fetchJSON<VerifyBackupResponse>(
+      `/api/v1/backups/${encodeURIComponent(id)}/verify`,
+      { method: 'POST' },
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // RestBootstrapClient — /api/v1/bootstrap surface.
 // ---------------------------------------------------------------------------
@@ -5264,6 +5335,7 @@ export class RestClient implements Client {
   readonly ceremony: CeremonyClient;
   readonly bootstrap: BootstrapClient;
   readonly cluster: ClusterClient;
+  readonly backups: BackupClient;
   /** @deprecated Use barrier. The legacy seal accessor is kept for one release. */
   readonly seal!: SealClient;
   /**
@@ -5306,6 +5378,7 @@ export class RestClient implements Client {
     this.ceremony = new RestCeremonyClient(baseUrl, config);
     this.bootstrap = new RestBootstrapClient(baseUrl, config);
     this.cluster = new RestClusterClient(baseUrl, config);
+    this.backups = new RestBackupClient(baseUrl, config);
     // RestSealClient is a deprecated alias retained for one release. Construction
     // is lazy via a getter so apps that never touch `client.seal` (which is the
     // expected case after the unification) don't pay for the deprecation

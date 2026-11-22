@@ -3406,3 +3406,79 @@ export interface WorkerImageStatus {
   // last is the most recent pass that finished; absent before the first.
   last?: WorkerImageReport;
 }
+
+// Backups
+
+/** BackupInfo is one backup as listed by GET /api/v1/backups. */
+export interface BackupInfo {
+  backup_id: string;
+  name?: string;
+  description?: string;
+  timestamp: number;
+  size: number;
+  status: string;
+  shards?: number[];
+}
+
+/** ListBackupsOptions pages GET /api/v1/backups. */
+export interface ListBackupsOptions {
+  limit?: number;
+  offset?: number;
+}
+
+/** ListBackupsResponse is the body of GET /api/v1/backups. */
+export interface ListBackupsResponse {
+  backups: BackupInfo[];
+  total_count: number;
+}
+
+/** CreateBackupRequest is the body of POST /api/v1/backups. */
+export interface CreateBackupRequest {
+  name: string;
+  description?: string;
+  /** Compression algorithm, e.g. "gzip", "lz4" or "none". */
+  compression?: string;
+  /** Encryption scheme, e.g. "aes256" or "none". */
+  encryption?: string;
+  include_shards?: number[];
+}
+
+/** CreateBackupResponse is the 201 body of POST /api/v1/backups. */
+export interface CreateBackupResponse {
+  backup_id: string;
+  timestamp: number;
+  size: number;
+  status: string;
+}
+
+/** RestoreBackupRequest is the body of POST /api/v1/backups/{id}/restore. */
+export interface RestoreBackupRequest {
+  target_shards?: number[];
+}
+
+/** RestoreBackupResponse is the body returned by a restore. */
+export interface RestoreBackupResponse {
+  job_id: string;
+  status: string;
+  progress: number;
+}
+
+/** DeleteBackupResponse is the body of DELETE /api/v1/backups/{id}. */
+export interface DeleteBackupResponse {
+  success: boolean;
+}
+
+/** VerifyBackupResponse is the body of POST /api/v1/backups/{id}/verify. */
+export interface VerifyBackupResponse {
+  valid: boolean;
+  checksum_match: boolean;
+  issues?: string[];
+}
+
+/** BackupStatusResponse is the body of GET /api/v1/backups/{id}/status. */
+export interface BackupStatusResponse {
+  backup_id: string;
+  valid: boolean;
+  checksum_match: boolean;
+  issues?: string[];
+}
