@@ -35,6 +35,7 @@ import type {
   OrchestratorClient,
 } from './interfaces.js';
 import type { AccountsClient } from './accounts.js';
+import type { PromptsClient } from './prompts.js';
 import type { ProjectsClient } from './projects.js';
 import type { SdlcClient } from './sdlc.js';
 import { unsupportedClient } from './unsupported.js';
@@ -157,6 +158,22 @@ export class GrpcWebNotImplementedError extends QuicBaaSError {
 // notImpl is a helper that produces a rejected Promise with a clear error.
 function notImpl(method: string): never {
   throw new GrpcWebNotImplementedError(method);
+}
+
+// grpcWebNotImplementedClient returns a client of type T whose every verb
+// rejects with GrpcWebNotImplementedError naming `family.verb`. It is the
+// gRPC-Web refusal docs/SPEC.md (multiprotocol-api) requires until the
+// go-qrdb option lands. `then` and symbol keys read as undefined, so
+// awaiting or inspecting the client does not call a verb.
+function grpcWebNotImplementedClient<T extends object>(family: string): T {
+  return new Proxy({} as T, {
+    get(_target, prop) {
+      if (typeof prop !== 'string' || prop === 'then') return undefined;
+      return async () => {
+        throw new GrpcWebNotImplementedError(`${family}.${prop}`);
+      };
+    },
+  });
 }
 
 // grpcWebUnsupported is why projects, sdlc and accounts refuse here. The
@@ -363,6 +380,7 @@ export class GrpcWebClient implements Client {
   readonly projects = unsupportedClient<ProjectsClient>('grpc-web', 'projects', grpcWebUnsupported);
   readonly sdlc = unsupportedClient<SdlcClient>('grpc-web', 'sdlc', grpcWebUnsupported);
   readonly accounts = unsupportedClient<AccountsClient>('grpc-web', 'accounts', grpcWebUnsupported);
+  readonly prompts = grpcWebNotImplementedClient<PromptsClient>('prompts');
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly agents: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
