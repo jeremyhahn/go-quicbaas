@@ -16,6 +16,7 @@ package ociregistry
 import (
 	"context"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -256,6 +257,70 @@ func TestAuthenticate_Success(t *testing.T) {
 	}
 	if !session.IsValid() {
 		t.Error("expected session to be valid")
+	}
+}
+
+// aikPrefixPair returns two AIKs that share their first 16 bytes.
+func aikPrefixPair() ([]byte, []byte) {
+	prefix := []byte("0123456789abcdef")
+	keyA := append(append([]byte{}, prefix...), []byte("key-a-tail")...)
+	keyB := append(append([]byte{}, prefix...), []byte("key-b-tail")...)
+	return keyA, keyB
+}
+
+func TestComputeAIKFingerprint_HashesWholeKey(t *testing.T) {
+	keyA, keyB := aikPrefixPair()
+	fa := computeAIKFingerprint(keyA)
+	fb := computeAIKFingerprint(keyB)
+	if fa == fb {
+		t.Fatalf("keys with a shared prefix got the same fingerprint %s", fa)
+	}
+	for _, f := range []string{fa, fb} {
+		if len(f) != 64 {
+			t.Errorf("fingerprint %q is %d characters, want 64", f, len(f))
+		}
+		if _, err := hex.DecodeString(f); err != nil {
+			t.Errorf("fingerprint %q is not hex: %v", f, err)
+		}
+	}
+}
+
+func TestAuthenticate_AIKPrefixCollisionRejected(t *testing.T) {
+	keyA, keyB := aikPrefixPair()
+	handler, err := NewRegistryAuthHandler(&mockAttestor{}, &mockPolicyEngine{}, newMockQuicBaaSClient(),
+		WithAllowedAIKs([]string{computeAIKFingerprint(keyA)}))
+	if err != nil {
+		t.Fatalf("failed to create handler: %v", err)
+	}
+
+	evidence := AttestationEvidence{
+		Quote:     []byte("quote"),
+		Signature: []byte("sig"),
+		AIK:       keyB,
+		ClientID:  "client",
+		Timestamp: time.Now().UTC(),
+	}
+	data, err := json.Marshal(evidence)
+	if err != nil {
+		t.Fatalf("marshal evidence: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/v2/test/manifests/latest", nil)
+	req.Header.Set(HeaderAttestationEvidence, base64.StdEncoding.EncodeToString(data))
+
+	_, err = handler.Authenticate(context.Background(), req)
+	var notAllowed AIKNotAllowedError
+	if !errors.As(err, &notAllowed) {
+		t.Fatalf("expected AIKNotAllowedError, got %v", err)
+	}
+
+	evidence.AIK = keyA
+	data, err = json.Marshal(evidence)
+	if err != nil {
+		t.Fatalf("marshal evidence: %v", err)
+	}
+	req.Header.Set(HeaderAttestationEvidence, base64.StdEncoding.EncodeToString(data))
+	if _, err := handler.Authenticate(context.Background(), req); err != nil {
+		t.Fatalf("allowed AIK rejected: %v", err)
 	}
 }
 

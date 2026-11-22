@@ -16,6 +16,7 @@ package ociregistry
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -554,14 +555,10 @@ func generateSessionID() string {
 	return hex.EncodeToString(b)
 }
 
-// computeAIKFingerprint computes a fingerprint for an AIK.
+// computeAIKFingerprint returns the hex SHA-256 of the whole AIK.
 func computeAIKFingerprint(aik []byte) string {
-	// Use first 16 bytes of SHA-256 hash as fingerprint
-	// In production, use crypto/sha256
-	if len(aik) >= 16 {
-		return hex.EncodeToString(aik[:16])
-	}
-	return hex.EncodeToString(aik)
+	sum := sha256.Sum256(aik)
+	return hex.EncodeToString(sum[:])
 }
 
 // bytesEqual performs constant-time comparison of byte slices.

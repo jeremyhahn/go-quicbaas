@@ -178,6 +178,14 @@ type Registry struct {
 	// is then refused).
 	signer SigningKMSClient
 
+	// verifier checks manifest signatures when Pull(opts.VerifySignature)
+	// is requested. Set via WithVerifier; nil refuses verified pulls.
+	verifier ManifestVerifier
+
+	// attestor verifies client TPM quotes in VerifyClient. Set via
+	// WithAttestor; nil refuses every client when attestation is required.
+	attestor Attestor
+
 	// initialized tracks whether the registry is ready
 	initialized atomic.Bool
 
@@ -227,6 +235,27 @@ func WithEncryptor(e *ImageEncryptor) RegistryOption {
 func WithSigner(s SigningKMSClient) RegistryOption {
 	return func(r *Registry) {
 		r.signer = s
+	}
+}
+
+// WithAttestor sets the TPM quote verifier VerifyClient uses when
+// attestation is required.
+func WithAttestor(a Attestor) RegistryOption {
+	return func(r *Registry) {
+		r.attestor = a
+	}
+}
+
+// ManifestVerifier checks a manifest signature over a SHA-256 digest.
+type ManifestVerifier interface {
+	Verify(ctx context.Context, keyID, algorithm string, digest, signature []byte) error
+}
+
+// WithVerifier sets the manifest signature verifier Pull uses when
+// PullOptions.VerifySignature is set.
+func WithVerifier(v ManifestVerifier) RegistryOption {
+	return func(r *Registry) {
+		r.verifier = v
 	}
 }
 
@@ -715,9 +744,30 @@ func (r *Registry) VerifyClient(ctx context.Context, attestation *AttestationEvi
 		return AttestationRequiredError{}
 	}
 
+	if r.attestor == nil {
+		return AttestationFailedError{Reason: "no attestation verifier configured"}
+	}
+	switch {
+	case len(attestation.Quote) == 0:
+		return AttestationFailedError{Reason: "missing quote"}
+	case len(attestation.Signature) == 0:
+		return AttestationFailedError{Reason: "missing signature"}
+	case len(attestation.AIK) == 0:
+		return AttestationFailedError{Reason: "missing AIK"}
+	case attestation.ClientID == "":
+		return AttestationFailedError{Reason: "missing client ID"}
+	}
+
 	r.logger.Debug("verifying client attestation",
 		"client_id", attestation.ClientID,
 	)
+
+	// The quote signature is checked against the AIK; only the PCR values
+	// the attestor verified are trusted, never the caller's own claim.
+	verified, err := r.attestor.VerifyQuote(ctx, attestation.Quote, attestation.Signature, attestation.AIK)
+	if err != nil {
+		return InvalidQuoteError{Cause: err}
+	}
 
 	// Check if AIK is allowed
 	if len(r.config.Attestation.AllowedAIKs) > 0 {
@@ -741,9 +791,9 @@ func (r *Registry) VerifyClient(ctx context.Context, attestation *AttestationEvi
 		}
 	}
 
-	// Verify required PCR values
+	// Verify required PCR values against the verified quote
 	for pcrIndex, expectedValue := range r.config.Attestation.RequiredPCRs {
-		actualValue, ok := attestation.PCRs[pcrIndex]
+		actualValue, ok := verified[pcrIndex]
 		if !ok {
 			return PCRMismatchError{
 				PCRIndex: pcrIndex,
@@ -760,18 +810,11 @@ func (r *Registry) VerifyClient(ctx context.Context, attestation *AttestationEvi
 		}
 	}
 
-	// Implementation would also:
-	// 1. Verify quote signature with AIK
-	// 2. Verify nonce freshness
-	// 3. Replay measurement log if provided
-	// 4. Evaluate OPA policy if configured
-	// 5. Create and cache session
-
 	// Cache the session
 	session := &RegistrySessionView{
 		ClientID:   attestation.ClientID,
 		AIK:        aikToString(attestation.AIK),
-		PCRs:       attestation.PCRs,
+		PCRs:       verified,
 		ValidUntil: r.now().Add(r.config.Attestation.CacheSessionDuration),
 	}
 	r.sessions.Store(attestation.ClientID, session)

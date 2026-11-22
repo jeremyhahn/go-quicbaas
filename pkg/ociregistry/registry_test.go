@@ -22,6 +22,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // testLogger returns a logger for tests.
@@ -694,6 +697,8 @@ func TestRegistryVerifyClient(t *testing.T) {
 			requireAttestation: true,
 			attestation: &AttestationEvidence{
 				ClientID:  "client-1",
+				Quote:     []byte("quote"),
+				Signature: []byte("sig"),
 				AIK:       []byte("aik-1-bytes-here"),
 				Timestamp: time.Now(),
 				PCRs:      map[int][]byte{},
@@ -706,6 +711,8 @@ func TestRegistryVerifyClient(t *testing.T) {
 			requireAttestation: true,
 			attestation: &AttestationEvidence{
 				ClientID:  "client-1",
+				Quote:     []byte("quote"),
+				Signature: []byte("sig"),
 				AIK:       []byte("aik-1-bytes"),
 				Timestamp: time.Now().Add(-1 * time.Hour), // Old timestamp
 			},
@@ -718,6 +725,8 @@ func TestRegistryVerifyClient(t *testing.T) {
 			requireAttestation: true,
 			attestation: &AttestationEvidence{
 				ClientID:  "client-1",
+				Quote:     []byte("quote"),
+				Signature: []byte("sig"),
 				AIK:       []byte("aik-1-bytes"),
 				Timestamp: time.Now(),
 				PCRs:      map[int][]byte{7: {0x01, 0x02, 0x03}},
@@ -732,6 +741,8 @@ func TestRegistryVerifyClient(t *testing.T) {
 			requireAttestation: true,
 			attestation: &AttestationEvidence{
 				ClientID:  "client-1",
+				Quote:     []byte("quote"),
+				Signature: []byte("sig"),
 				AIK:       []byte("aik-1-bytes"),
 				Timestamp: time.Now(),
 				PCRs:      map[int][]byte{}, // PCR 7 missing
@@ -746,6 +757,8 @@ func TestRegistryVerifyClient(t *testing.T) {
 			requireAttestation: true,
 			attestation: &AttestationEvidence{
 				ClientID:  "client-1",
+				Quote:     []byte("quote"),
+				Signature: []byte("sig"),
 				AIK:       []byte("aik-1-bytes"),
 				Timestamp: time.Now(),
 				PCRs:      map[int][]byte{7: {0x01, 0x02, 0x03}},
@@ -766,7 +779,11 @@ func TestRegistryVerifyClient(t *testing.T) {
 				cfg.Attestation.QuoteMaxAge = tt.quoteMaxAge
 			}
 
-			reg, err := NewRegistry(cfg, testLogger())
+			var verifiedPCRs map[int][]byte
+			if tt.attestation != nil {
+				verifiedPCRs = tt.attestation.PCRs
+			}
+			reg, err := NewRegistry(cfg, testLogger(), WithAttestor(pcrAttestor(verifiedPCRs)))
 			if err != nil {
 				t.Fatalf("failed to create registry: %v", err)
 			}
@@ -809,12 +826,102 @@ func TestRegistryVerifyClient(t *testing.T) {
 	}
 }
 
+// pcrAttestor is an attestor whose quote verification succeeds and
+// reports pcrs as the verified PCR values.
+func pcrAttestor(pcrs map[int][]byte) *mockAttestor {
+	return &mockAttestor{verifyFunc: func(context.Context, []byte, []byte, []byte) (map[int][]byte, error) {
+		return pcrs, nil
+	}}
+}
+
+func TestRegistryVerifyClient_FailsClosed(t *testing.T) {
+	required := map[int][]byte{7: {0x01, 0x02, 0x03}}
+	evidence := func() *AttestationEvidence {
+		return &AttestationEvidence{
+			ClientID:  "client-1",
+			Quote:     []byte("quote"),
+			Signature: []byte("sig"),
+			AIK:       []byte("aik-1-bytes"),
+			Timestamp: time.Now(),
+			PCRs:      map[int][]byte{7: {0x01, 0x02, 0x03}},
+		}
+	}
+	noQuote := evidence()
+	noQuote.Quote = nil
+
+	tests := []struct {
+		name     string
+		attestor Attestor
+		evidence *AttestationEvidence
+		check    func(t *testing.T, err error)
+	}{
+		{
+			name:     "no attestor configured",
+			evidence: evidence(),
+			check: func(t *testing.T, err error) {
+				var target AttestationFailedError
+				assert.ErrorAs(t, err, &target)
+			},
+		},
+		{
+			name:     "empty quote",
+			attestor: pcrAttestor(required),
+			evidence: noQuote,
+			check: func(t *testing.T, err error) {
+				var target AttestationFailedError
+				assert.ErrorAs(t, err, &target)
+			},
+		},
+		{
+			name: "attestor rejects the quote",
+			attestor: &mockAttestor{verifyFunc: func(context.Context, []byte, []byte, []byte) (map[int][]byte, error) {
+				return nil, errors.New("bad quote signature")
+			}},
+			evidence: evidence(),
+			check: func(t *testing.T, err error) {
+				var target InvalidQuoteError
+				assert.ErrorAs(t, err, &target)
+			},
+		},
+		{
+			name:     "claimed PCR not in the verified quote",
+			attestor: pcrAttestor(map[int][]byte{7: {0x09, 0x09, 0x09}}),
+			evidence: evidence(),
+			check: func(t *testing.T, err error) {
+				var target PCRMismatchError
+				assert.ErrorAs(t, err, &target)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validTestConfig()
+			cfg.Attestation.RequireAttestation = true
+			cfg.Attestation.RequiredPCRs = required
+			var opts []RegistryOption
+			if tt.attestor != nil {
+				opts = append(opts, WithAttestor(tt.attestor))
+			}
+			reg, err := NewRegistry(cfg, testLogger(), opts...)
+			require.NoError(t, err)
+			defer func() { _ = reg.Close() }()
+
+			err = reg.VerifyClient(context.Background(), tt.evidence)
+			require.Error(t, err)
+			tt.check(t, err)
+			_, ok := reg.GetSession("client-1")
+			assert.False(t, ok, "no session may be cached on failure")
+		})
+	}
+}
+
 func TestRegistrySessionManagement(t *testing.T) {
 	cfg := validTestConfig()
 	cfg.Attestation.RequireAttestation = true
 	cfg.Attestation.CacheSessionDuration = 1 * time.Hour
 
-	reg, err := NewRegistry(cfg, testLogger())
+	reg, err := NewRegistry(cfg, testLogger(), WithAttestor(pcrAttestor(map[int][]byte{})))
 	if err != nil {
 		t.Fatalf("failed to create registry: %v", err)
 	}
@@ -823,6 +930,8 @@ func TestRegistrySessionManagement(t *testing.T) {
 	// Verify a client
 	attestation := &AttestationEvidence{
 		ClientID:  "client-1",
+		Quote:     []byte("quote"),
+		Signature: []byte("sig"),
 		AIK:       []byte("aik-1-bytes-here-long"),
 		Timestamp: time.Now(),
 		PCRs:      map[int][]byte{},
@@ -857,7 +966,7 @@ func TestRegistrySessionExpiration(t *testing.T) {
 	cfg.Attestation.RequireAttestation = true
 	cfg.Attestation.CacheSessionDuration = time.Minute
 
-	reg, err := NewRegistry(cfg, testLogger())
+	reg, err := NewRegistry(cfg, testLogger(), WithAttestor(pcrAttestor(map[int][]byte{})))
 	if err != nil {
 		t.Fatalf("failed to create registry: %v", err)
 	}
@@ -869,6 +978,8 @@ func TestRegistrySessionExpiration(t *testing.T) {
 	// Verify a client
 	attestation := &AttestationEvidence{
 		ClientID:  "client-1",
+		Quote:     []byte("quote"),
+		Signature: []byte("sig"),
 		AIK:       []byte("aik-1-bytes-here"),
 		Timestamp: current,
 		PCRs:      map[int][]byte{},
