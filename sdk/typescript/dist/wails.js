@@ -758,6 +758,7 @@ export class WailsClient {
     projects = unsupportedClient('wails', 'projects', wailsUnsupported);
     sdlc = unsupportedClient('wails', 'sdlc', wailsUnsupported);
     accounts = unsupportedClient('wails', 'accounts', wailsUnsupported);
+    prompts = unsupportedClient('wails', 'prompts', wailsUnsupported);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     agents = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

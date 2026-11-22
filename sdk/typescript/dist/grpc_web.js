@@ -26,6 +26,22 @@ export class GrpcWebNotImplementedError extends QuicBaaSError {
 function notImpl(method) {
     throw new GrpcWebNotImplementedError(method);
 }
+// grpcWebNotImplementedClient returns a client of type T whose every verb
+// rejects with GrpcWebNotImplementedError naming `family.verb`. It is the
+// gRPC-Web refusal docs/SPEC.md (multiprotocol-api) requires until the
+// go-qrdb option lands. `then` and symbol keys read as undefined, so
+// awaiting or inspecting the client does not call a verb.
+function grpcWebNotImplementedClient(family) {
+    return new Proxy({}, {
+        get(_target, prop) {
+            if (typeof prop !== 'string' || prop === 'then')
+                return undefined;
+            return async () => {
+                throw new GrpcWebNotImplementedError(`${family}.${prop}`);
+            };
+        },
+    });
+}
 // grpcWebUnsupported is why projects, sdlc and accounts refuse here. The
 // server serves ProjectService, SDLCService and AccountService as native gRPC
 // (pkg/server/lifecycle.go), but nothing serves the gRPC-Web framing a browser
@@ -212,6 +228,7 @@ export class GrpcWebClient {
     projects = unsupportedClient('grpc-web', 'projects', grpcWebUnsupported);
     sdlc = unsupportedClient('grpc-web', 'sdlc', grpcWebUnsupported);
     accounts = unsupportedClient('grpc-web', 'accounts', grpcWebUnsupported);
+    prompts = grpcWebNotImplementedClient('prompts');
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     agents = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

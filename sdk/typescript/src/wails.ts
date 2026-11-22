@@ -122,6 +122,7 @@ import type {
 } from './types.js';
 import { APIError, ConnectionError } from './errors.js';
 import type { AccountsClient } from './accounts.js';
+import type { PromptsClient } from './prompts.js';
 import type { ProjectsClient } from './projects.js';
 import type { SdlcClient } from './sdlc.js';
 import { unsupportedClient } from './unsupported.js';
@@ -960,6 +961,7 @@ export class WailsClient implements Client {
   readonly projects = unsupportedClient<ProjectsClient>('wails', 'projects', wailsUnsupported);
   readonly sdlc = unsupportedClient<SdlcClient>('wails', 'sdlc', wailsUnsupported);
   readonly accounts = unsupportedClient<AccountsClient>('wails', 'accounts', wailsUnsupported);
+  readonly prompts = unsupportedClient<PromptsClient>('wails', 'prompts', wailsUnsupported);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly agents: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

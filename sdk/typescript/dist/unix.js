@@ -168,6 +168,7 @@ export class UnixClient {
     projects = unsupportedClient('unix', 'projects', unixUnsupported);
     sdlc = unsupportedClient('unix', 'sdlc', unixUnsupported);
     accounts = unsupportedClient('unix', 'accounts', unixUnsupported);
+    prompts = unsupportedClient('unix', 'prompts', unixUnsupported);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     agents = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
