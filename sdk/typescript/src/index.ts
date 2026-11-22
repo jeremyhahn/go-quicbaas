@@ -356,7 +356,6 @@ export {
   APIError,
   DeployNotSupportedError,
   TransportNotSupportedError,
-  UnsupportedArgumentError,
   McpError,
   SSHError,
   SSHNotFoundError,
