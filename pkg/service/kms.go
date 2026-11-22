@@ -255,10 +255,33 @@ func newKMSService(kmsManager interfaces.KMSManager, logger interfaces.Logger) *
 		dekStore:          newDEKStore(),
 	}
 
+	// Usage is counted against the key's current version as the shared key
+	// manager reports it, so a rotation on any node restarts the count on
+	// every node.
+	if kmsManager != nil {
+		svc.safetyTracker.SetKeyVersionSource(svc.currentKeyVersion)
+	}
+
 	// Initialize metrics
 	svc.initMetrics()
 
 	return svc
+}
+
+// currentKeyVersion returns the current version of a tenant-scoped key from
+// the key manager.
+func (k *kmsServiceImpl) currentKeyVersion(ctx context.Context, scopedKeyID string) (uint64, error) {
+	result, err := k.kmsManager.GetKey(ctx, scopedKeyID)
+	if err != nil {
+		return 0, err
+	}
+	switch meta := result.(type) {
+	case *kms.KeyMetadata:
+		return kmsKeyVersion("kms.currentKeyVersion", meta.Version)
+	case *KeyMetadata:
+		return meta.Version, nil
+	}
+	return 0, nil
 }
 
 // SetScheduler sets the scheduler for scheduling grace period jobs.

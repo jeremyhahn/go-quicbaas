@@ -78,6 +78,10 @@ type AEADUsage struct {
 	// written only under mu.
 	Config AEADSafetyConfig
 
+	// Version is the key version the counters belong to (0 when unknown).
+	// It is read and written only under mu.
+	Version uint64
+
 	// mu serialises Config reads and writes with the counter add and limit
 	// check of a reservation and with a counter reset, so a reservation never
 	// sees a half-written config and a reset never lands between an add and
@@ -105,6 +109,25 @@ func (u *AEADUsage) resetCounters() {
 	u.OperationCount.Store(0)
 	u.BytesProcessed.Store(0)
 	u.mu.Unlock()
+}
+
+// observeVersion records that the key's current version is version. When it
+// is newer than the version the counters belong to, the counters restart from
+// zero: the new version has a fresh AEAD allowance.
+func (u *AEADUsage) observeVersion(version uint64) {
+	if version == 0 {
+		return
+	}
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if version <= u.Version {
+		return
+	}
+	if u.Version != 0 {
+		u.OperationCount.Store(0)
+		u.BytesProcessed.Store(0)
+	}
+	u.Version = version
 }
 
 // usagePercentOf is the highest share of a configured limit that ops and
@@ -243,6 +266,12 @@ type AEADSafetyTracker struct {
 	// reading (BeginKeyUse) and a rotation holds it for writing
 	// (RotateKeyUsage).
 	keyGates syncMap[string, *sync.RWMutex]
+
+	// keyVersionSource, when set, reports a key's current version from the
+	// replicated key manager. Key usage is counted per version: a rotation
+	// performed on any node restarts the count here once the new version is
+	// observed.
+	keyVersionSource atomic.Pointer[func(ctx context.Context, keyID string) (uint64, error)]
 
 	// serverConfig is the server-level default configuration
 	serverConfig AEADSafetyConfig
@@ -407,6 +436,12 @@ func (t *AEADSafetyTracker) recordOperation(ctx context.Context, id string, oper
 	usage := usageMap.LoadOrStore(id, &AEADUsage{
 		Config: t.getEffectiveConfig(id, isDEK),
 	})
+
+	// Count against the key's current version: a version rotated in on
+	// another node starts from zero here too.
+	if !isDEK {
+		t.observeKeyVersion(ctx, id, usage)
+	}
 
 	// Increment counters
 	limitExceeded := usage.IncrementUsageBy(operations, bytesProcessed)
@@ -679,5 +714,36 @@ func (t *AEADSafetyTracker) RotateKeyUsage(keyID string, rotate func() error) er
 		return err
 	}
 	t.ResetKeyUsage(keyID)
+	if usage, ok := t.keyUsage.Load(keyID); ok {
+		t.observeKeyVersion(context.Background(), keyID, usage)
+	}
 	return nil
+}
+
+// SetKeyVersionSource sets the function that reports a key's current
+// version. nil removes it.
+func (t *AEADSafetyTracker) SetKeyVersionSource(source func(ctx context.Context, keyID string) (uint64, error)) {
+	if source == nil {
+		t.keyVersionSource.Store(nil)
+		return
+	}
+	t.keyVersionSource.Store(&source)
+}
+
+// observeKeyVersion looks up keyID's current version and restarts usage's
+// counters when the version is newer than the one they belong to. A failed
+// lookup keeps counting against the version already tracked.
+func (t *AEADSafetyTracker) observeKeyVersion(ctx context.Context, keyID string, usage *AEADUsage) {
+	source := t.keyVersionSource.Load()
+	if source == nil {
+		return
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	version, err := (*source)(ctx, keyID)
+	if err != nil {
+		return
+	}
+	usage.observeVersion(version)
 }
