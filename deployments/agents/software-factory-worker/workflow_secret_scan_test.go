@@ -31,6 +31,12 @@ const workerImageWorkflowPath = "../../../.github/workflows/worker-image.yml"
 // previous line.
 const secretCheckLine = `bash deployments/agents/software-factory-worker/check-secret-findings.sh "$work/secrets.json" "$work/layers"`
 
+// imageScanLine is the fail-closed image and image-config secret scan the
+// secret-scan step must run, held to the same rule as secretCheckLine:
+// exactly this text at column 0, at the top level of the run script, not
+// continued from the previous line, with errexit on.
+const imageScanLine = `trivy image --scanners secret --image-config-scanners secret --exit-code 1 --no-progress "${IMAGE}:${TAG}"`
+
 type secretScanWorkflow struct {
 	Jobs map[string]secretScanJob `yaml:"jobs"`
 }
@@ -117,35 +123,72 @@ func secretScanProblems(raw []byte) []string {
 			add("step secret-scan does not run trivy image with %s", want)
 		}
 	}
+	imageProblems, _ := commandLineProblems("secret-scan", image.Run, imageScanLine, "trivy image")
+	problems = append(problems, imageProblems...)
 
 	run := layer.Run
-	if !strings.HasPrefix(strings.TrimSpace(run), "set -euo pipefail") {
-		add("step layer-scan does not start with set -euo pipefail")
-	}
 	for _, want := range []string{"docker save", ".Layers[]", "config.json"} {
 		if !strings.Contains(run, want) {
 			add("step layer-scan has no %s", want)
 		}
 	}
-	if strings.Contains(run, "set +e") {
-		add("step layer-scan turns off errexit with set +e")
-	}
+	layerProblems, checkIdx := commandLineProblems("layer-scan", run, secretCheckLine, "check-secret-findings.sh")
+	problems = append(problems, layerProblems...)
 
-	lines := strings.Split(run, "\n")
-	trivyIdx, checkIdx := -1, -1
-	for i, l := range lines {
+	trivyIdx := -1
+	for i, l := range strings.Split(run, "\n") {
 		l = strings.TrimSpace(l)
-		if trivyIdx < 0 && strings.Contains(l, "trivy fs --scanners secret") {
+		if strings.Contains(l, "trivy fs --scanners secret") {
 			trivyIdx = i
 			for _, want := range []string{"--format json", `--output "$work/secrets.json"`} {
 				if !strings.Contains(l, want) {
 					add("step layer-scan's trivy fs line has no %s", want)
 				}
 			}
+			break
 		}
-		raw := strings.TrimRight(lines[i], " \t\r")
-		switch {
-		case raw == secretCheckLine:
+	}
+	if trivyIdx < 0 {
+		add("step layer-scan does not run trivy fs --scanners secret")
+	} else if checkIdx <= trivyIdx {
+		add("step layer-scan does not run check-secret-findings.sh on the report after trivy fs")
+	}
+	return problems
+}
+
+// commandLineProblems checks that the run script of step runs want as one
+// exact line at column 0, at shell block depth 0 (see blockDepths), not
+// continued from the previous line, with errexit on from the first line and
+// never turned off. Every other line that mentions mention is reported: it
+// runs the command in a form whose exit may not fail the step. It returns
+// the problems and the index of the accepted line in the run's lines, or -1.
+func commandLineProblems(step, run, want, mention string) ([]string, int) {
+	var problems []string
+	add := func(format string, args ...any) {
+		problems = append(problems, fmt.Sprintf(format, args...))
+	}
+	if !strings.HasPrefix(strings.TrimSpace(run), "set -euo pipefail") {
+		add("step %s does not start with set -euo pipefail", step)
+	}
+	for _, off := range []string{"set +e", "set +o errexit"} {
+		if strings.Contains(run, off) {
+			add("step %s turns off errexit with %s", step, off)
+		}
+	}
+
+	lines := strings.Split(run, "\n")
+	depths := blockDepths(lines)
+	for _, d := range depths {
+		if d < 0 {
+			add("step %s has unbalanced shell blocks", step)
+			break
+		}
+	}
+	accepted, seen := -1, false
+	for i, l := range lines {
+		raw := strings.TrimRight(l, " \t\r")
+		if raw == want && !seen {
+			seen = true
 			prev := ""
 			for j := i - 1; j >= 0; j-- {
 				if strings.TrimSpace(lines[j]) != "" {
@@ -160,21 +203,144 @@ func secretScanProblems(raw []byte) []string {
 					break
 				}
 			}
-			if continued {
-				add("step layer-scan runs check-secret-findings.sh as a continuation of the previous line: %q", prev)
-			} else if trivyIdx >= 0 && i > trivyIdx && checkIdx < 0 {
-				checkIdx = i
+			switch {
+			case depths[i] != 0:
+				add("step %s runs %s inside a shell block (depth %d)", step, mention, depths[i])
+			case continued:
+				add("step %s runs %s as a continuation of the previous line: %q", step, mention, prev)
+			default:
+				accepted = i
 			}
-		case strings.Contains(l, "check-secret-findings.sh"):
-			add("step layer-scan runs check-secret-findings.sh in a form whose exit may not fail the step: %q", l)
+			continue
+		}
+		if strings.Contains(l, mention) {
+			add("step %s runs %s in a form whose exit may not fail the step: %q", step, mention, strings.TrimSpace(l))
 		}
 	}
-	if trivyIdx < 0 {
-		add("step layer-scan does not run trivy fs --scanners secret")
-	} else if checkIdx < 0 {
-		add("step layer-scan does not run check-secret-findings.sh on the report after trivy fs")
+	if !seen {
+		add("step %s does not run %s as a top-level command", step, mention)
 	}
-	return problems
+	return problems, accepted
+}
+
+// blockDepths returns the shell compound-command depth before each line:
+// how many { }, ( ), if/fi, while/until/for/select ... done and case/esac
+// blocks are open when the line starts. Only whole words outside quotes and
+// comments count, so $( ), ${ }, $(( )) and case patterns like a) do not. A
+// line that starts inside an open quote or a here-document is data, not a
+// command, and gets one extra level. A negative depth means the closers
+// outnumber the openers.
+func blockDepths(lines []string) []int {
+	depths := make([]int, len(lines))
+	depth := 0
+	var quote byte       // the open quote character carried across lines, or 0
+	heredoc := ""        // the delimiter of the open here-document
+	var pending []string // here-documents that start on the next line
+	for i, line := range lines {
+		depths[i] = depth
+		if heredoc != "" {
+			depths[i]++
+			if strings.TrimLeft(strings.TrimRight(line, " \t\r"), "\t") == heredoc {
+				heredoc = ""
+				if len(pending) > 0 {
+					heredoc, pending = pending[0], pending[1:]
+				}
+			}
+			continue
+		}
+		if quote != 0 {
+			depths[i]++
+		}
+		var words []string
+		var word strings.Builder
+		inWord, cmdsub := false, 0
+		flush := func() {
+			if inWord {
+				words = append(words, word.String())
+			}
+			word.Reset()
+			inWord = false
+		}
+	scan:
+		for j := 0; j < len(line); j++ {
+			c := line[j]
+			switch {
+			case quote == '\'':
+				word.WriteByte(c)
+				if c == '\'' {
+					quote = 0
+				}
+			case quote == '"':
+				word.WriteByte(c)
+				if c == '\\' && j+1 < len(line) {
+					j++
+					word.WriteByte(line[j])
+				} else if c == '"' {
+					quote = 0
+				}
+			case cmdsub > 0:
+				word.WriteByte(c)
+				switch c {
+				case '(':
+					cmdsub++
+				case ')':
+					cmdsub--
+				case '\'', '"':
+					quote = c
+				}
+			case c == ' ' || c == '\t' || c == '\r' || c == ';':
+				flush()
+			case c == '#' && !inWord:
+				break scan
+			default:
+				inWord = true
+				word.WriteByte(c)
+				switch {
+				case c == '\'' || c == '"':
+					quote = c
+				case c == '\\' && j+1 < len(line):
+					j++
+					word.WriteByte(line[j])
+				case c == '$' && j+1 < len(line) && line[j+1] == '(':
+					j++
+					word.WriteByte('(')
+					cmdsub = 1
+				}
+			}
+		}
+		if quote == 0 && cmdsub == 0 {
+			flush()
+		}
+		for k, w := range words {
+			switch w {
+			case "{", "(", "if", "while", "for", "until", "case", "select":
+				depth++
+				continue
+			case "}", ")", "fi", "done", "esac":
+				depth--
+				continue
+			}
+			if k == 0 && strings.HasPrefix(w, "(") && !strings.HasPrefix(w, "((") {
+				depth++
+			}
+			if k == 0 && (strings.HasPrefix(w, ")") || strings.HasPrefix(w, "}")) {
+				depth--
+			}
+			if at := strings.Index(w, "<<"); at >= 0 && !strings.HasPrefix(w[at:], "<<<") && (at == 0 || w[at-1] != '<') {
+				delim := strings.TrimPrefix(w[at+2:], "-")
+				if delim == "" && k+1 < len(words) {
+					delim = words[k+1]
+				}
+				if delim = strings.Trim(delim, `'"`); delim != "" {
+					pending = append(pending, delim)
+				}
+			}
+		}
+		if len(pending) > 0 {
+			heredoc, pending = pending[0], pending[1:]
+		}
+	}
+	return depths
 }
 
 func stepLabel(s secretScanStep) string {
@@ -287,6 +453,44 @@ func TestSecretScanProblems_Mutations(t *testing.T) {
 			old:  indent + secretCheckLine + "\n",
 			new:  indent + "set +e\n" + indent + secretCheckLine + "\n",
 			want: "set +e",
+		},
+		{
+			name: "check in a masked block at column zero",
+			old:  indent + secretCheckLine + "\n",
+			new:  indent + "{\n" + indent + secretCheckLine + "\n" + indent + "} || true\n",
+			want: "inside a shell block",
+		},
+		{
+			name: "check in a masked subshell at column zero",
+			old:  indent + secretCheckLine + "\n",
+			new:  indent + "(\n" + indent + secretCheckLine + "\n" + indent + ") || true\n",
+			want: "inside a shell block",
+		},
+		{
+			name:     "image scan exit swallowed",
+			old:      imageScanLine,
+			new:      imageScanLine + " || true",
+			want:     "does not run trivy image as a top-level command",
+			wantAlso: "whose exit may not fail the step",
+		},
+		{
+			name:     "image scan commented out",
+			old:      indent + imageScanLine + "\n",
+			new:      indent + "# " + imageScanLine + "\n",
+			want:     "does not run trivy image as a top-level command",
+			wantAlso: "whose exit may not fail the step",
+		},
+		{
+			name: "image scan in a masked block at column zero",
+			old:  indent + imageScanLine + "\n",
+			new:  indent + "{\n" + indent + imageScanLine + "\n" + indent + "} || true\n",
+			want: "inside a shell block",
+		},
+		{
+			name: "set +o errexit in image scan",
+			old:  indent + imageScanLine + "\n",
+			new:  indent + "set +o errexit\n" + indent + imageScanLine + "\n",
+			want: "turns off errexit",
 		},
 	}
 	for _, tc := range cases {
