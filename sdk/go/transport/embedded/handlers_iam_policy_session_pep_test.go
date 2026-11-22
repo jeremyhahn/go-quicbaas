@@ -81,6 +81,70 @@ func TestHandleIAMPolicySimulate_TypedNilRequest(t *testing.T) {
 	require.ErrorAs(t, err, &typeErr)
 }
 
+// The client's Check reaches the policy engine through the embedded
+// transport: the handler unwraps the request the client sends and answers
+// with the engine's decision.
+func TestEmbeddedPEPCheck_Success(t *testing.T) {
+	tr := newIAMVerbsTransport(t, newPolicyVerbsService(t))
+	client := iamsdk.NewPEPClient(tr)
+
+	resp, err := client.Check(tenantCtx(policyConditionsTenant), &iamsdk.CheckRequest{
+		Subject: iamsdk.CheckSubject{ID: "u1"}, Action: "read", Resource: "doc/1",
+	})
+	require.NoError(t, err)
+	assert.True(t, resp.Allowed)
+	assert.Equal(t, iamsdk.EffectAllow, resp.Effect)
+}
+
+func TestEmbeddedPEPCheck_CrossTenantRefused(t *testing.T) {
+	tr := newIAMVerbsTransport(t, newPolicyVerbsService(t))
+	client := iamsdk.NewPEPClient(tr)
+
+	_, err := client.Check(tenantCtx(policyConditionsTenant), &iamsdk.CheckRequest{
+		Subject: iamsdk.CheckSubject{ID: "u1"}, Action: "read", Resource: "doc/1", TenantID: "other",
+	})
+	require.Error(t, err)
+}
+
+func TestEmbeddedPEPCheck_NotConfigured(t *testing.T) {
+	tr := newIAMVerbsTransport(t, &mockQuicBaaS{})
+	client := iamsdk.NewPEPClient(tr)
+
+	_, err := client.Check(tenantCtx(policyConditionsTenant), &iamsdk.CheckRequest{
+		Subject: iamsdk.CheckSubject{ID: "u1"}, Action: "read", Resource: "doc/1",
+	})
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "IAM.Policy")
+}
+
+func TestHandleIAMPEPCheck_TypedNilRequest(t *testing.T) {
+	svc := newPolicyVerbsService(t)
+	envelope := &struct{ Request *iamsdk.CheckRequest }{}
+
+	_, err := handleIAMPEPCheck(tenantCtx(policyConditionsTenant), svc, envelope)
+	var typeErr *InvalidRequestTypeError
+	require.ErrorAs(t, err, &typeErr)
+}
+
+// The denying authorizer's refusal reaches the client as a denial, not an
+// error, on Check as on CheckBatch.
+func TestEmbeddedPEPCheck_Denied(t *testing.T) {
+	authz := &countingAuthorizer{deny: "doc/2"}
+	svc := newAuthorizedAdminTestService(t)
+	svc.policy = iam.NewPolicyEngine(iam.PolicyEngineOptions{
+		Storage:        iam.NewMemoryStorage(),
+		RBACAuthorizer: authz,
+	})
+	client := iamsdk.NewPEPClient(newIAMVerbsTransport(t, svc))
+
+	resp, err := client.Check(tenantCtx(policyConditionsTenant), &iamsdk.CheckRequest{
+		Subject: iamsdk.CheckSubject{ID: "u1"}, Action: "read", Resource: "doc/2",
+	})
+	require.NoError(t, err)
+	assert.False(t, resp.Allowed)
+	assert.Equal(t, iamsdk.EffectDeny, resp.Effect)
+}
+
 func TestEmbeddedPEPCheckBatch_Success(t *testing.T) {
 	tr := newIAMVerbsTransport(t, newPolicyVerbsService(t))
 	client := iamsdk.NewPEPClient(tr)
