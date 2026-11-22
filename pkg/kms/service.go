@@ -459,6 +459,52 @@ func (s *KMSService) GetKey(ctx context.Context, keyID string) (interface{}, err
 	return serviceMeta, nil
 }
 
+// CurrentKeyVersion returns keyID's current version from its backend's
+// durable record rather than from cached metadata, which a rotation on
+// another node does not invalidate, and refreshes the cached metadata with
+// it. A backend that keeps no durable version record answers from its
+// metadata. A key that does not exist is an ErrNotFound error wrapping
+// ErrKeyNotFound.
+func (s *KMSService) CurrentKeyVersion(ctx context.Context, keyID string) (int, error) {
+	if keyID == "" {
+		return 0, &errors.QBError{Code: errors.ErrInvalidInput, Op: "KMSService.CurrentKeyVersion", Err: ErrKeyIDEmpty}
+	}
+	backend, err := s.getBackendByKeyID(ctx, keyID)
+	if err != nil {
+		return 0, api.NewBackendRoutingError("KMSService.CurrentKeyVersion", err)
+	}
+	var version int
+	if vb, ok := backend.(interface {
+		CurrentVersion(ctx context.Context, keyID string) (int, error)
+	}); ok {
+		version, err = vb.CurrentVersion(ctx, keyID)
+	} else {
+		var meta *KeyMetadata
+		meta, err = backend.GetKeyMetadata(ctx, keyID)
+		if err == nil {
+			version = meta.Version
+		}
+	}
+	if err != nil {
+		code := errors.ErrInternal
+		if stderrors.Is(err, ErrKeyNotFound) {
+			code = errors.ErrNotFound
+		}
+		return 0, &errors.QBError{Code: code, Op: "KMSService.CurrentKeyVersion", Err: err}
+	}
+	if cached, err := s.store.Get(keyID); err == nil && cached.Version != version {
+		refreshed := s.copyMetadata(cached)
+		refreshed.Version = version
+		if err := s.store.Put(refreshed); err != nil && s.logger != nil {
+			s.logger.WithFields(map[string]interface{}{
+				"key_id": keyID,
+				"error":  err.Error(),
+			}).Warn("Failed to refresh cached key version")
+		}
+	}
+	return version, nil
+}
+
 // GetPublicKey retrieves the DER-encoded public key for an asymmetric key.
 // Returns an error if the key is symmetric (has no public component).
 func (s *KMSService) GetPublicKey(ctx context.Context, keyID string) ([]byte, error) {

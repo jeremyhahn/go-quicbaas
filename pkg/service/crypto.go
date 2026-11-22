@@ -112,6 +112,12 @@ func keyOperationError(code errors.ErrorCode, op, operation string, err error) e
 	}
 }
 
+// isKeyNotFound reports whether a key lookup failed because the key does not
+// exist (in the caller's scope), as opposed to failing to be read.
+func isKeyNotFound(err error) bool {
+	return stderrors.Is(err, kms.ErrKeyNotFound) || errors.IsNotFound(err)
+}
+
 // initMetrics initializes Prometheus metrics for crypto operations.
 func (t *cryptoService) initMetrics() {
 	t.metrics = &cryptoMetrics{
@@ -274,6 +280,21 @@ func (t *cryptoService) currentKeyVersion(ctx context.Context, scopedKeyID strin
 	if t.kmsManager == nil {
 		return version, nil
 	}
+	// The durable record, not this node's cached metadata: another node's
+	// rotation does not invalidate the cache, and a stale version would gate
+	// encryption on a version that has since been rotated out and disabled.
+	if cv, ok := t.kmsManager.(interface {
+		CurrentKeyVersion(ctx context.Context, keyID string) (int, error)
+	}); ok {
+		v, err := cv.CurrentKeyVersion(ctx, scopedKeyID)
+		if err != nil {
+			return 0, err
+		}
+		if v > 0 {
+			version = conv.ClampIntToUint64(v)
+		}
+		return version, nil
+	}
 	keyInfo, err := t.kmsManager.GetKey(ctx, scopedKeyID)
 	if err != nil {
 		return 0, err
@@ -331,6 +352,10 @@ func (t *cryptoService) checkCurrentVersionUsable(ctx context.Context, scopedKey
 	}
 	version, err := t.currentKeyVersion(ctx, scopedKeyID)
 	if err != nil {
+		if isKeyNotFound(err) {
+			// A key that does not exist is a permanent NotFound, not an outage to retry.
+			return keyOperationError(errors.ErrNotFound, op, "get key version", err)
+		}
 		return WrapError(err, errors.ErrUnavailable, op, "key version unavailable")
 	}
 	status, _, err := t.kmsSvc.lookupVersionStatus(ctx, scopedKeyID, version)

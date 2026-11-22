@@ -275,10 +275,11 @@ func (k *kmsServiceImpl) SetScheduler(scheduler KMSScheduler) {
 // one (the xkms backend's key owner and version records).
 func (k *kmsServiceImpl) SetKVStore(kv interfaces.KVStore) {
 	k.kvStore = kv
-	if k.backendRegistry == nil {
+	registry := k.keyBackendRegistry()
+	if registry == nil {
 		return
 	}
-	for _, info := range k.backendRegistry.ListWithBackends() {
+	for _, info := range registry.ListWithBackends() {
 		if r, ok := info.Backend.(interface {
 			SetKeyRegistry(interfaces.KVStore)
 		}); ok {
@@ -288,6 +289,21 @@ func (k *kmsServiceImpl) SetKVStore(kv interfaces.KVStore) {
 }
 
 // initMetrics initializes Prometheus metrics for KMS operations.
+// keyBackendRegistry returns the registry whose backends serve this
+// service's keys: the one set explicitly, else the KMS manager's own. The
+// production manager (*kms.KMSService) owns the registry its backends live
+// in, so the durable key registry reaches them without a separate wiring
+// step.
+func (k *kmsServiceImpl) keyBackendRegistry() *kms.BackendRegistry {
+	if k.backendRegistry != nil {
+		return k.backendRegistry
+	}
+	if m, ok := k.kmsManager.(interface{ GetRegistry() *kms.BackendRegistry }); ok {
+		return m.GetRegistry()
+	}
+	return nil
+}
+
 func (k *kmsServiceImpl) initMetrics() {
 	k.metrics = &kmsMetrics{
 		keysGeneratedTotal: metrics.NewCounter(metrics.CounterOpts{

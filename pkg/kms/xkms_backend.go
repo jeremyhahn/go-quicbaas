@@ -488,6 +488,30 @@ func (kb *XKMSBackend) GetKeyMetadata(ctx context.Context, keyID string) (*KeyMe
 	return meta, nil
 }
 
+// CurrentVersion returns keyID's current version as recorded in durable
+// storage (the key registry's version record, else the rotated versions
+// go-xkms stores), not this node's cached metadata, which another node's
+// rotation does not invalidate. The cached metadata is brought up to date
+// with it. A key that does not exist is ErrKeyNotFound.
+func (kb *XKMSBackend) CurrentVersion(ctx context.Context, keyID string) (int, error) {
+	if _, err := kb.GetKeyMetadata(ctx, keyID); err != nil {
+		return 0, err
+	}
+	version, err := kb.storedVersion(ctx, keyID)
+	if err != nil {
+		return 0, err
+	}
+	kb.mu.Lock()
+	if meta, ok := kb.metadata[keyID]; ok && meta.Version != version {
+		refreshed := *meta
+		refreshed.Version = version
+		refreshed.Updated = time.Now()
+		kb.metadata[keyID] = &refreshed
+	}
+	kb.mu.Unlock()
+	return version, nil
+}
+
 // ListKeys lists keys matching the prefix.
 func (kb *XKMSBackend) ListKeys(ctx context.Context, prefix string, limit int) ([]*KeyMetadata, string, error) {
 	if !kb.IsAvailable(ctx) {
