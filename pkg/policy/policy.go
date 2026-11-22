@@ -157,7 +157,13 @@ type Loaded struct {
 }
 
 // Document returns the loaded document.
-func (l *Loaded) Document() Document { return l.doc }
+// Document returns a copy of the loaded document; changing it does not
+// change the policy the engine evaluates.
+func (l *Loaded) Document() Document {
+	d := l.doc
+	d.Spec = append(json.RawMessage(nil), l.doc.Spec...)
+	return d
+}
 
 // Engine dispatches documents to evaluators by kind.
 type Engine struct {
@@ -232,6 +238,9 @@ func (e *Engine) Load(ctx context.Context, tenant string, sd SignedDocument) (*L
 		return nil, ErrNoVerifier
 	}
 	doc := sd.Document
+	// The spec is copied before it is verified: the Loaded value must own the
+	// bytes the signature covers, or a caller could change them afterwards.
+	doc.Spec = append(json.RawMessage(nil), sd.Document.Spec...)
 	if doc.Tenant != tenant {
 		return nil, fmt.Errorf("%w: %s/%s is %q's, not %q", ErrWrongTenant, doc.Kind, doc.Name, doc.Tenant, tenant)
 	}

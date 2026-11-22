@@ -266,3 +266,46 @@ func TestSignRefusesInvalidDocument(t *testing.T) {
 		t.Errorf("nil signer err = %v, want ErrNoSigner", err)
 	}
 }
+
+// On BASE the Loaded value shared the caller's spec bytes, so writing into
+// sd.Document.Spec after Load made Evaluate apply max 999 and allow 50.
+func TestLoadedPolicyIgnoresCallerMutation(t *testing.T) {
+	ctx := context.Background()
+	e := newEngine(t)
+	sd := mustSign(t, doc(KindSpend, `{"max": 10}`))
+	l, err := e.Load(ctx, "acme", sd)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if n := copy(sd.Document.Spec, `{"max":999}`); n != len(sd.Document.Spec) {
+		t.Fatalf("in-place write covered %d of %d bytes", n, len(sd.Document.Spec))
+	}
+	d, err := e.Evaluate(ctx, l, 50)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if d.Allow {
+		t.Errorf("Evaluate(50) allowed after the caller rewrote the spec; the loaded policy must keep max 10")
+	}
+}
+
+func TestLoadedDocumentReturnsACopy(t *testing.T) {
+	ctx := context.Background()
+	e := newEngine(t)
+	l, err := e.Load(ctx, "acme", mustSign(t, doc(KindSpend, `{"max": 10}`)))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	got := l.Document()
+	copy(got.Spec, `{"max":999}`)
+	d, err := e.Evaluate(ctx, l, 50)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if d.Allow {
+		t.Errorf("Evaluate(50) allowed after the caller rewrote Document().Spec")
+	}
+	if s := string(l.Document().Spec); s != `{"max": 10}` {
+		t.Errorf("Document().Spec = %s, want {\"max\": 10}", s)
+	}
+}
