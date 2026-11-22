@@ -23,12 +23,11 @@ import (
 	"time"
 
 	kctypes "github.com/jeremyhahn/go-xkms/sdk/go"
-
-	"github.com/jeremyhahn/go-quicbaas/pkg/kms"
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/kms"
 )
 
 // versionedCryptoFixture is a crypto service mounted over a KMS service whose
