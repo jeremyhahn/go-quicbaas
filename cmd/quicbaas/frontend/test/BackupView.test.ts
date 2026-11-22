@@ -135,6 +135,15 @@ describe('BackupView', () => {
     await waitFor(() => expect(mockList).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(screen.getByText('nightly')).toBeInTheDocument());
   });
+
+  it('shows that backups are not available when the client has none', async () => {
+    vi.mocked(getSDKClient).mockResolvedValue({ backups: null } as never);
+    render(BackupView);
+    await waitFor(() =>
+      expect(screen.getByRole('alert')).toHaveTextContent('Backups are not available over this connection'),
+    );
+    expect(mockList).not.toHaveBeenCalled();
+  });
 });
 
 describe('backup routing', () => {

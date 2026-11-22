@@ -27,6 +27,13 @@
   import { HardDrive } from 'lucide-svelte';
   import { formatDateTime } from '../../lib/time.ts';
   import type { BackupInfo, VerifyBackupResponse } from '@quicbaas/sdk';
+  import type { Component } from 'svelte';
+
+  /** The lucide-svelte icon typed as the component PageHeader takes. */
+  const ICON = HardDrive as unknown as Component<{ class?: string }>;
+
+  /** Shown when the connection's SDK client has no backups client. */
+  const UNAVAILABLE = 'Backups are not available over this connection';
 
   const COLUMNS: Column<BackupInfo>[] = [
     { key: 'name', label: 'Name', sortable: true, searchable: true, value: (b) => b.name || b.backup_id },
@@ -63,6 +70,7 @@
     error = null;
     try {
       const client = await getSDKClient();
+      if (!client.backups) { backups = []; error = UNAVAILABLE; return; }
       const resp = await client.backups.list();
       backups = resp.backups ?? [];
     } catch (e) {
@@ -80,6 +88,7 @@
     creating = true;
     try {
       const client = await getSDKClient();
+      if (!client.backups) { showToast('error', UNAVAILABLE); return; }
       await client.backups.create({ name: trimmed, description: description.trim() });
       showToast('success', `Backup "${trimmed}" created`);
       name = '';
@@ -96,6 +105,7 @@
     busyId = b.backup_id;
     try {
       const client = await getSDKClient();
+      if (!client.backups) { showToast('error', UNAVAILABLE); return; }
       const resp = await client.backups.verify(b.backup_id);
       verifyResults = { ...verifyResults, [b.backup_id]: resp };
     } catch (e) {
@@ -111,6 +121,7 @@
     busyId = b.backup_id;
     try {
       const client = await getSDKClient();
+      if (!client.backups) { showToast('error', UNAVAILABLE); return; }
       await client.backups.delete(b.backup_id);
       showToast('success', `Backup "${label}" deleted`);
       await loadBackups();
@@ -152,7 +163,7 @@
 </script>
 
 <div class="p-6 space-y-6">
-  <PageHeader title="Backup" subtitle="Snapshots of the cluster's shards" icon={HardDrive} />
+  <PageHeader title="Backup" subtitle="Snapshots of the cluster's shards" icon={ICON} />
 
   <form
     class="card bg-base-200 shadow-sm"
@@ -223,11 +234,11 @@
               >Delete</button>
               {#if verifyResults[b.backup_id]}
                 {@const r = verifyResults[b.backup_id]}
-                {#if r.valid}
+                {#if r?.valid}
                   <span class="badge badge-success badge-sm">Valid</span>
                 {:else}
                   <span class="text-xs text-error">
-                    {r.issues && r.issues.length > 0 ? r.issues.join('; ') : 'Invalid'}
+                    {r?.issues && r.issues.length > 0 ? r.issues.join('; ') : 'Invalid'}
                   </span>
                 {/if}
               {/if}
