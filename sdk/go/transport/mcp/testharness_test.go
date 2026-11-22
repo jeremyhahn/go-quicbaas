@@ -49,6 +49,10 @@ type mcpToolExpectation struct {
 	// toolErrorCode, when set, is sent as the tool error's structured
 	// content in the {"code": N} shape the quicbaas server emits.
 	toolErrorCode int
+	// toolErrorStructured, when set, is sent as the tool error's structured
+	// content instead of the flat {"code": N} shape (for example the nested
+	// {"error": {...}} envelope go-qrdb's native tools emit).
+	toolErrorStructured interface{}
 	// rawText overrides result with a literal text content payload
 	// (used to test malformed/non-JSON responses).
 	rawText string
@@ -75,7 +79,10 @@ func newFakeMCPServer(t *testing.T, exp mcpToolExpectation) (*Transport, func())
 		}
 		if exp.toolError {
 			result := mcpgo.NewToolResultError(text)
-			if exp.toolErrorCode != 0 {
+			switch {
+			case exp.toolErrorStructured != nil:
+				result.StructuredContent = exp.toolErrorStructured
+			case exp.toolErrorCode != 0:
 				result.StructuredContent = map[string]interface{}{"code": exp.toolErrorCode}
 			}
 			return result, nil

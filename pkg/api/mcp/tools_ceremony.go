@@ -18,6 +18,7 @@ package mcp
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"time"
 
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
@@ -344,7 +345,7 @@ func executeCeremonyInitialize(ctx context.Context, svc service.CeremonyServicer
 		CredentialSealStrategy: getString(args, "credential_seal_strategy"),
 		Threshold:              getInt(args, "threshold"),
 		Hostname:               getString(args, "hostname"),
-		SANs:                   getStringSlice(args, "sans"),
+		SANs:                   parseCeremonySANs(args),
 		Officers:               parseCeremonyOfficers(args),
 	}
 	info, err := svc.CeremonyInitialize(ctx, req)
@@ -527,13 +528,38 @@ func executeCeremonyEnrollExternalOfficer(ctx context.Context, svc service.Cerem
 // Helpers — argument parsing and response mapping
 // ---------------------------------------------------------------------------
 
+// parseCeremonySANs reads the "sans" argument as a JSON array of strings or
+// as a string holding one, the shape go-qrdb's native tool declares.
+func parseCeremonySANs(args map[string]interface{}) []string {
+	if sans := getStringSlice(args, "sans"); sans != nil {
+		return sans
+	}
+	raw := getString(args, "sans")
+	if raw == "" {
+		return nil
+	}
+	var sans []string
+	if err := json.Unmarshal([]byte(raw), &sans); err != nil {
+		return nil
+	}
+	return sans
+}
+
 // parseCeremonyOfficers extracts a list of CeremonyOfficer from the args
-// "officers" key. The MCP transport may deliver these as a JSON array of
-// objects with username + csr_pem fields. Missing/empty entries are skipped.
+// "officers" key: a JSON array of objects with username + csr_pem fields, or
+// a string holding that array (go-qrdb's native shape). Missing/empty entries
+// are skipped.
 func parseCeremonyOfficers(args map[string]interface{}) []service.CeremonyOfficer {
 	raw, ok := args["officers"]
 	if !ok || raw == nil {
 		return nil
+	}
+	if s, isString := raw.(string); isString {
+		var decoded []interface{}
+		if err := json.Unmarshal([]byte(s), &decoded); err != nil {
+			return nil
+		}
+		raw = decoded
 	}
 	list, ok := raw.([]interface{})
 	if !ok {
