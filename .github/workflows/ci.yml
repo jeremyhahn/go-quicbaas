@@ -211,7 +211,7 @@
 # v1.29.3 (Company Agent ruling 255(10)/(11)(c), 2026-10-29): one schedule
 # run per repository, skipped when a main run is in flight. The 04:00Z
 # nightly cron on every repository started six main runs over the throttle
-# and drove a CI runner host's /mnt/disk1 to 93 %. Two changes:
+# and drove a CI runner host's cache disk to 93 %. Two changes:
 #   - a schedule run's concurrency group is `schedule-{repository}`, with no
 #     sha, so a repository has one schedule run at a time. cancel-in-progress
 #     stays a literal `true`, so a newer schedule run cancels an older one
@@ -1125,7 +1125,7 @@ jobs:
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
       CI_IMAGE_NAMESPACE: ${{ vars.CI_IMAGE_NAMESPACE }}
-      # gpu-host's and the Dells' 8g sidecar cap (#2200); no cap only on a GitHub-hosted runner (the preflight runner_docker output is "ubuntu-latest").
+      # the GPU runner's and the big-disk hosts' 8g sidecar cap (#2200); no cap only on a GitHub-hosted runner (the preflight runner_docker output is "ubuntu-latest").
       IN_IMAGE_MEMORY: ${{ (github.server_url != 'https://github.com' || needs.preflight.outputs.runner_docker != '"ubuntu-latest"') && '8g' || 'none' }}
     steps:
       # No credential reaches a job. A runner that injects a git credential
@@ -1164,10 +1164,16 @@ jobs:
 
       # v1.30 (fix 1): the registry cache first. A miss, or an unreachable
       # registry, falls through to the local build below.
+      # The CI_IMAGE_REGISTRY secret is required; the step fails without it, and its value is masked in the log
       - name: Pull the toolchain image from the registry cache
         env:
-          CI_IMAGE_REGISTRY: ${{ vars.CI_IMAGE_REGISTRY }}
-        run: scripts/ci-image-cache.sh pull || true
+          CI_IMAGE_REGISTRY: ${{ secrets.CI_IMAGE_REGISTRY }}
+        run: |
+          if [ -z "$CI_IMAGE_REGISTRY" ]; then
+            echo "::error::the CI_IMAGE_REGISTRY secret is not set"; exit 1
+          fi
+          echo "::add-mask::$CI_IMAGE_REGISTRY"
+          scripts/ci-image-cache.sh pull || true
 
       # v1.30: the toolchain image alone (`make docker-build-toolchain`,
       # devcontainer.md §6), which skips when the daemon holds its tag.
@@ -1181,19 +1187,19 @@ jobs:
       # #2503: on a push to main, a miss pushes the built toolchain image to
       # CI_IMAGE_REGISTRY, logged in from the CI_IMAGE_REGISTRY_* secrets
       # (token on stdin); with no user or token it skips the login and pushes
-      # anonymously (default DOCKER_CONFIG). No CI_IMAGE_REGISTRY: a notice
-      # and no push. Pull requests only pull.
+      # anonymously (default DOCKER_CONFIG). Pull requests only pull.
+      # The CI_IMAGE_REGISTRY secret is required; the step fails without it, and its value is masked in the log
       - name: Push the toolchain image to the registry cache
         if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         env:
-          CI_IMAGE_REGISTRY: ${{ vars.CI_IMAGE_REGISTRY }}
+          CI_IMAGE_REGISTRY: ${{ secrets.CI_IMAGE_REGISTRY }}
           CI_IMAGE_REGISTRY_USER: ${{ secrets.CI_IMAGE_REGISTRY_USER }}
           CI_IMAGE_REGISTRY_TOKEN: ${{ secrets.CI_IMAGE_REGISTRY_TOKEN }}
         run: |
           if [ -z "$CI_IMAGE_REGISTRY" ]; then
-            echo "::notice::CI_IMAGE_REGISTRY is empty; no push to the registry cache"
-            exit 0
+            echo "::error::the CI_IMAGE_REGISTRY secret is not set"; exit 1
           fi
+          echo "::add-mask::$CI_IMAGE_REGISTRY"
           if [ -z "$CI_IMAGE_REGISTRY_USER" ] || [ -z "$CI_IMAGE_REGISTRY_TOKEN" ]; then
             echo "::notice::CI_IMAGE_REGISTRY_USER or CI_IMAGE_REGISTRY_TOKEN is empty; pushing to the registry cache without a login"
             scripts/ci-image-cache.sh push || true
@@ -1388,7 +1394,7 @@ jobs:
     env:
       CI_IMAGE_NAMESPACE: ${{ vars.CI_IMAGE_NAMESPACE }}   # v1.30
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
-      # gpu-host's and the Dells' 8g sidecar cap (#2200); no cap only on a GitHub-hosted runner (the preflight runner_docker output is "ubuntu-latest").
+      # the GPU runner's and the big-disk hosts' 8g sidecar cap (#2200); no cap only on a GitHub-hosted runner (the preflight runner_docker output is "ubuntu-latest").
       IN_IMAGE_MEMORY: ${{ (github.server_url != 'https://github.com' || needs.preflight.outputs.runner_docker != '"ubuntu-latest"') && '8g' || 'none' }}
       # v1.22: the cache volumes' trust class. Only a push to main writes the
       # caches main's build reads; every other event, pull requests included,
@@ -1439,10 +1445,16 @@ jobs:
 
       # v1.30 (fix 1): the toolchain image from the registry cache first, so
       # make docker-build builds the integration image alone.
+      # The CI_IMAGE_REGISTRY secret is required; the step fails without it, and its value is masked in the log
       - name: Pull the toolchain image from the registry cache
         env:
-          CI_IMAGE_REGISTRY: ${{ vars.CI_IMAGE_REGISTRY }}
-        run: scripts/ci-image-cache.sh pull || true
+          CI_IMAGE_REGISTRY: ${{ secrets.CI_IMAGE_REGISTRY }}
+        run: |
+          if [ -z "$CI_IMAGE_REGISTRY" ]; then
+            echo "::error::the CI_IMAGE_REGISTRY secret is not set"; exit 1
+          fi
+          echo "::add-mask::$CI_IMAGE_REGISTRY"
+          scripts/ci-image-cache.sh pull || true
 
       - name: Build the devcontainer images
         run: |
@@ -1454,19 +1466,19 @@ jobs:
       # #2503: on a push to main, a miss pushes the built toolchain image to
       # CI_IMAGE_REGISTRY, logged in from the CI_IMAGE_REGISTRY_* secrets
       # (token on stdin); with no user or token it skips the login and pushes
-      # anonymously (default DOCKER_CONFIG). No CI_IMAGE_REGISTRY: a notice
-      # and no push. Pull requests only pull.
+      # anonymously (default DOCKER_CONFIG). Pull requests only pull.
+      # The CI_IMAGE_REGISTRY secret is required; the step fails without it, and its value is masked in the log
       - name: Push the toolchain image to the registry cache
         if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         env:
-          CI_IMAGE_REGISTRY: ${{ vars.CI_IMAGE_REGISTRY }}
+          CI_IMAGE_REGISTRY: ${{ secrets.CI_IMAGE_REGISTRY }}
           CI_IMAGE_REGISTRY_USER: ${{ secrets.CI_IMAGE_REGISTRY_USER }}
           CI_IMAGE_REGISTRY_TOKEN: ${{ secrets.CI_IMAGE_REGISTRY_TOKEN }}
         run: |
           if [ -z "$CI_IMAGE_REGISTRY" ]; then
-            echo "::notice::CI_IMAGE_REGISTRY is empty; no push to the registry cache"
-            exit 0
+            echo "::error::the CI_IMAGE_REGISTRY secret is not set"; exit 1
           fi
+          echo "::add-mask::$CI_IMAGE_REGISTRY"
           if [ -z "$CI_IMAGE_REGISTRY_USER" ] || [ -z "$CI_IMAGE_REGISTRY_TOKEN" ]; then
             echo "::notice::CI_IMAGE_REGISTRY_USER or CI_IMAGE_REGISTRY_TOKEN is empty; pushing to the registry cache without a login"
             scripts/ci-image-cache.sh push || true
@@ -1847,7 +1859,7 @@ jobs:
       # v1.22: the cache volumes' trust class (as in the image job).
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
       CI_IMAGE_NAMESPACE: ${{ vars.CI_IMAGE_NAMESPACE }}   # v1.30
-      # gpu-host's and the Dells' 8g sidecar cap (#2200); no cap only on a GitHub-hosted runner (the preflight runner_docker output is "ubuntu-latest").
+      # the GPU runner's and the big-disk hosts' 8g sidecar cap (#2200); no cap only on a GitHub-hosted runner (the preflight runner_docker output is "ubuntu-latest").
       IN_IMAGE_MEMORY: ${{ (github.server_url != 'https://github.com' || needs.preflight.outputs.runner_docker != '"ubuntu-latest"') && '8g' || 'none' }}
     steps:
       # No credential reaches a job. A runner that injects a git credential
@@ -1899,11 +1911,17 @@ jobs:
       # v1.30 (fix 1): the registry cache first, then the toolchain image
       # alone (`make docker-build-toolchain`); this job never builds the
       # integration image.
+      # The CI_IMAGE_REGISTRY secret is required; the step fails without it, and its value is masked in the log
       - name: Pull the toolchain image from the registry cache
         if: ${{ steps.probe.outputs.has_target == 'true' }}
         env:
-          CI_IMAGE_REGISTRY: ${{ vars.CI_IMAGE_REGISTRY }}
-        run: scripts/ci-image-cache.sh pull || true
+          CI_IMAGE_REGISTRY: ${{ secrets.CI_IMAGE_REGISTRY }}
+        run: |
+          if [ -z "$CI_IMAGE_REGISTRY" ]; then
+            echo "::error::the CI_IMAGE_REGISTRY secret is not set"; exit 1
+          fi
+          echo "::add-mask::$CI_IMAGE_REGISTRY"
+          scripts/ci-image-cache.sh pull || true
 
       - name: Build the toolchain image
         if: ${{ steps.probe.outputs.has_target == 'true' }}
@@ -1916,19 +1934,19 @@ jobs:
       # #2503: on a push to main, a miss pushes the built toolchain image to
       # CI_IMAGE_REGISTRY, logged in from the CI_IMAGE_REGISTRY_* secrets
       # (token on stdin); with no user or token it skips the login and pushes
-      # anonymously (default DOCKER_CONFIG). No CI_IMAGE_REGISTRY: a notice
-      # and no push. Pull requests only pull.
+      # anonymously (default DOCKER_CONFIG). Pull requests only pull.
+      # The CI_IMAGE_REGISTRY secret is required; the step fails without it, and its value is masked in the log
       - name: Push the toolchain image to the registry cache
         if: ${{ steps.probe.outputs.has_target == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         env:
-          CI_IMAGE_REGISTRY: ${{ vars.CI_IMAGE_REGISTRY }}
+          CI_IMAGE_REGISTRY: ${{ secrets.CI_IMAGE_REGISTRY }}
           CI_IMAGE_REGISTRY_USER: ${{ secrets.CI_IMAGE_REGISTRY_USER }}
           CI_IMAGE_REGISTRY_TOKEN: ${{ secrets.CI_IMAGE_REGISTRY_TOKEN }}
         run: |
           if [ -z "$CI_IMAGE_REGISTRY" ]; then
-            echo "::notice::CI_IMAGE_REGISTRY is empty; no push to the registry cache"
-            exit 0
+            echo "::error::the CI_IMAGE_REGISTRY secret is not set"; exit 1
           fi
+          echo "::add-mask::$CI_IMAGE_REGISTRY"
           if [ -z "$CI_IMAGE_REGISTRY_USER" ] || [ -z "$CI_IMAGE_REGISTRY_TOKEN" ]; then
             echo "::notice::CI_IMAGE_REGISTRY_USER or CI_IMAGE_REGISTRY_TOKEN is empty; pushing to the registry cache without a login"
             scripts/ci-image-cache.sh push || true
@@ -1975,7 +1993,7 @@ jobs:
     if: ${{ !github.event.pull_request.draft && needs.preflight.outputs.verdict == 'run' && needs.preflight.outputs.docs_only != 'true' }}
     env:
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
-      # gpu-host's and the Dells' 8g sidecar cap (#2200); no cap only on a GitHub-hosted runner (the preflight runner_docker output is "ubuntu-latest").
+      # the GPU runner's and the big-disk hosts' 8g sidecar cap (#2200); no cap only on a GitHub-hosted runner (the preflight runner_docker output is "ubuntu-latest").
       IN_IMAGE_MEMORY: ${{ (github.server_url != 'https://github.com' || needs.preflight.outputs.runner_docker != '"ubuntu-latest"') && '8g' || 'none' }}
       IT_PROJECT: ${{ github.event.repository.name }}-ci-${{ github.run_id }}-${{ github.run_attempt }}
       IT_IMAGE: ${{ github.event.repository.name }}-ci-it:${{ github.run_id }}-${{ github.run_attempt }}
