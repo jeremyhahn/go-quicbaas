@@ -17,6 +17,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
@@ -248,5 +249,47 @@ func TestFleetPlacementToolsListedAndAuthorized(t *testing.T) {
 		if !ok || resource != want[0] || action != want[1] {
 			t.Errorf("%s: permission %s:%s (mapped %v), want %s:%s", name, resource, action, ok, want[0], want[1])
 		}
+	}
+}
+
+// TestFleetPlacementDeclareSchemaMatchesSDKShape checks the arguments the SDK
+// sends for DeclareFleetPlacementSpecRequest ({tenant_id, spec} with the name
+// inside spec) against the registered declare schema, and declares them.
+func TestFleetPlacementDeclareSchemaMatchesSDKShape(t *testing.T) {
+	reg := newFleetPlacementRegistry(t)
+	tool := toolByName(t, reg, "quicbaas_fleet_placement_declare")
+	required := requiredArgs(t, tool)
+	if len(required) != 1 || required[0] != "spec" {
+		t.Fatalf("declare required = %v, want [spec]", required)
+	}
+	props := schemaProperties(t, tool)
+	for _, key := range []string{"tenant_id", "spec", "name"} {
+		if _, ok := props[key]; !ok {
+			t.Errorf("declare schema has no %q property", key)
+		}
+	}
+
+	var args map[string]interface{}
+	sdkShape := `{"tenant_id":"","spec":{"name":"agents","role":"agent","hosts":["h1"]}}`
+	if err := json.Unmarshal([]byte(sdkShape), &args); err != nil {
+		t.Fatalf("unmarshal SDK arguments: %v", err)
+	}
+	for _, key := range required {
+		if _, ok := args[key]; !ok {
+			t.Errorf("SDK arguments lack required %q", key)
+		}
+	}
+
+	out, err := reg.executeFleetPlacementTool(tenantctx.WithTenant(context.Background(), "acme"),
+		"quicbaas_fleet_placement_declare", args)
+	if err != nil {
+		t.Fatalf("declare with SDK arguments: %v", err)
+	}
+	spec, ok := out.(*orchestration.PlacementSpec)
+	if !ok {
+		t.Fatalf("declare result is %T, want *orchestration.PlacementSpec", out)
+	}
+	if spec.Name != "agents" || spec.TenantID != "acme" || spec.Generation != 1 {
+		t.Errorf("declared spec = name %q tenant %q generation %d, want agents acme 1", spec.Name, spec.TenantID, spec.Generation)
 	}
 }

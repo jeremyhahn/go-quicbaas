@@ -163,8 +163,10 @@ see [worker-image.md](worker-image.md).
 | `quicbaas_fleet_placement_consent_list` | `placement:read` |
 | `quicbaas_fleet_placement_consent_answer` | `placement:consent` |
 
-The placement tools take `tenant_id` (optional, as on REST) and `name`;
-declare also takes `spec`, the REST body. The consent list takes `tenant_id`
+The placement tools other than declare take `tenant_id` (optional, as on
+REST) and `name`. Declare takes `tenant_id` and `spec`, the REST body, which
+names the spec; a top-level `name`, when given, overrides `spec.name`. The
+consent list takes `tenant_id`
 and `state`, and the answer `tenant_id`, `id`, `state` and `reason`. Their
 results are the REST responses.
 

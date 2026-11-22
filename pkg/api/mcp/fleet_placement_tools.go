@@ -42,9 +42,15 @@ func (r *ToolRegistry) registerFleetPlacementTools() {
 	r.addTool(ToolDefinition{
 		Name:        "quicbaas_fleet_placement_declare",
 		Description: "Create or replace a fleet placement spec: where a role's work may run across the fleet's hosts. generation is the one read, or 0 to create.",
-		InputSchema: named(map[string]interface{}{
-			"spec": map[string]interface{}{"type": "object", "description": "role, host_count or hosts, profile, required_capabilities, actuate, generation"},
-		}),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{"type": "string", "description": "Tenant; empty is the caller's"},
+				"spec":      map[string]interface{}{"type": "object", "description": "The REST body: name, role, host_count or hosts, profile, required_capabilities, actuate, generation"},
+				"name":      map[string]interface{}{"type": "string", "description": "Optional; overrides spec.name"},
+			},
+			"required": []string{"spec"},
+		},
 	})
 	r.addTool(ToolDefinition{Name: "quicbaas_fleet_placement_get", Description: "Get a fleet placement spec.", InputSchema: named(nil)})
 	r.addTool(ToolDefinition{
