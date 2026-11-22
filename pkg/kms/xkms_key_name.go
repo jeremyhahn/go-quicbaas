@@ -22,7 +22,8 @@ import (
 
 // xkmsEncodedKeyNamePrefix starts every go-xkms key name that carries an
 // encoded service key ID. It is NOT reserved: a valid name that starts with
-// it (an existing "qbx.production") is used unchanged.
+// it but is not in the encoded form (an existing "qbx.production") is used
+// unchanged.
 const xkmsEncodedKeyNamePrefix = "qbx."
 
 // xkmsEncoding is strict so that each encoded payload has exactly one
@@ -35,41 +36,54 @@ var xkmsEncoding = base64.RawURLEncoding.Strict()
 // reference (a tenant's key is "tenant/<tenantID>/<name>"); go-xkms's own
 // validation is not loosened, the name is encoded instead.
 //
-// A name go-xkms accepts is used unchanged, always, so every existing key
-// keeps its name. Only an ID go-xkms rejects is encoded, as the prefix plus
-// its canonical unpadded base64url form.
+// The mapping is injective, so two service IDs never share a go-xkms key:
+//   - a name go-xkms accepts that is not in the encoded form (see
+//     isEncodedXKMSName) is used unchanged, so every ordinary key keeps its
+//     name;
+//   - every other ID is encoded as the prefix plus its canonical unpadded
+//     base64url form. That covers an ID go-xkms rejects and also a valid
+//     literal ID that is itself in the encoded form, so the literal
+//     "qbx.dGVuYW50L2FjbWUvaw" and the tenant ID "tenant/acme/k" (whose
+//     encoding it spells) get different go-xkms names.
 //
-// go-xkms has one key-name space, and an encoded name must live in it, so
-// the mapping cannot be injective over every ID: the literal valid name
-// "qbx.<canonical base64url of a rejected ID>" and that rejected ID share a
-// go-xkms name. That is the only overlap; keyIDFromXKMSName reads such a
-// name as the encoded ID.
+// Literal outputs are never in the encoded form and encoded outputs always
+// are, so the two sets are disjoint, and base64 is injective within each.
 func xkmsKeyName(keyID string) string {
 	// An empty ID is refused before any go-xkms call (ErrKeyCNEmpty); it is
 	// not encoded, so "qbx." alone stays a literal name.
-	if keyID == "" || validation.ValidateKeyID(keyID) == nil {
+	if keyID == "" || (validation.ValidateKeyID(keyID) == nil && !isEncodedXKMSName(keyID)) {
 		return keyID
 	}
 	return xkmsEncodedKeyNamePrefix + xkmsEncoding.EncodeToString([]byte(keyID))
 }
 
-// keyIDFromXKMSName returns the service key ID behind a go-xkms key name. It
-// decodes a name only when the name is exactly what xkmsKeyName makes of an
-// ID go-xkms rejects; every other name is the key ID itself.
-func keyIDFromXKMSName(name string) string {
+// isEncodedXKMSName reports whether name is exactly what xkmsKeyName makes of
+// an ID it encodes: the prefix, then the canonical base64url of a non-empty ID
+// that go-xkms rejects or that is itself in the encoded form. The recursion
+// ends because each decoded payload is shorter than the name holding it.
+func isEncodedXKMSName(name string) bool {
 	encoded, ok := strings.CutPrefix(name, xkmsEncodedKeyNamePrefix)
 	if !ok {
-		return name
+		return false
 	}
 	decoded, err := xkmsEncoding.DecodeString(encoded)
+	if err != nil || len(decoded) == 0 {
+		return false
+	}
+	keyID := string(decoded)
+	return validation.ValidateKeyID(keyID) != nil || isEncodedXKMSName(keyID)
+}
+
+// keyIDFromXKMSName returns the service key ID behind a go-xkms key name, the
+// inverse of xkmsKeyName. It decodes a name only when the name is in the
+// encoded form; every other name is the key ID itself.
+func keyIDFromXKMSName(name string) string {
+	if !isEncodedXKMSName(name) {
+		return name
+	}
+	decoded, err := xkmsEncoding.DecodeString(strings.TrimPrefix(name, xkmsEncodedKeyNamePrefix))
 	if err != nil {
 		return name
 	}
-	keyID := string(decoded)
-	if keyID == "" || validation.ValidateKeyID(keyID) == nil {
-		// Neither an empty nor a valid ID is ever encoded, so this name is
-		// a literal.
-		return name
-	}
-	return keyID
+	return string(decoded)
 }

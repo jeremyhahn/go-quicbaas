@@ -90,14 +90,88 @@ func TestXKMSKeyName_EveryValidNameMapsToItself(t *testing.T) {
 		"qbx.production", "qbx.", "qbx.YS9i", "qbx.cHJvZA", "qbx.production.sign", "qbx-x", "QBX.prod",
 	} {
 		require.NoError(t, validation.ValidateKeyID(id), "fixture %q must be a valid go-xkms name", id)
-		require.Equal(t, id, xkmsKeyName(id), "a valid name maps to itself")
 		if id == "qbx.YS9i" {
-			// The one shape that is ambiguous by construction: the
-			// canonical encoding of the rejected ID "a/b". See xkmsKeyName.
+			// The canonical encoding of the rejected ID "a/b": a literal in
+			// the encoded form is encoded again, so it never shares a
+			// go-xkms name with "a/b".
+			name := xkmsKeyName(id)
+			require.NotEqual(t, id, name)
+			require.NotEqual(t, xkmsKeyName("a/b"), name)
+			require.NoError(t, validation.ValidateKeyID(name))
+			require.Equal(t, id, keyIDFromXKMSName(name), "the mapping round-trips")
 			continue
 		}
+		require.Equal(t, id, xkmsKeyName(id), "a valid name maps to itself")
 		require.Equal(t, id, keyIDFromXKMSName(id), "ListKeys reads a literal name unchanged")
 	}
+}
+
+// TestXKMSKeyName_LiteralSpellingAnEncodingIsItsOwnName pins that a valid
+// literal ID spelling another ID's encoding, and that ID, map to different
+// go-xkms names, at any depth, and each round-trips.
+func TestXKMSKeyName_LiteralSpellingAnEncodingIsItsOwnName(t *testing.T) {
+	tenantID := "tenant/acme/k"
+	literal := xkmsKeyName(tenantID)
+	require.Equal(t, "qbx.dGVuYW50L2FjbWUvaw", literal)
+	require.NoError(t, validation.ValidateKeyID(literal), "the fixture is a valid system key name")
+
+	names := map[string]string{}
+	for _, id := range []string{tenantID, literal, xkmsKeyName(literal), "tenant/acme/k2"} {
+		name := xkmsKeyName(id)
+		if prev, ok := names[name]; ok {
+			t.Fatalf("%q and %q map to the same go-xkms name %q", prev, id, name)
+		}
+		names[name] = id
+		require.Equal(t, id, keyIDFromXKMSName(name), "the mapping round-trips for %q", id)
+	}
+}
+
+// TestXKMSBackend_SystemKeyNamedLikeATenantEncoding_IsIsolated stores a system
+// key under the literal name that spells tenant/acme/k's encoding and a tenant
+// key tenant/acme/k, and checks that neither ID reaches the other's key.
+func TestXKMSBackend_SystemKeyNamedLikeATenantEncoding_IsIsolated(t *testing.T) {
+	cleanup := initXKMSForTest(t)
+	defer cleanup()
+
+	backend := newRealXKMSBackendForTest(t)
+	ctx := context.Background()
+
+	const tenantKeyID = "tenant/acme/k"
+	systemKeyID := xkmsEncodedKeyNamePrefix + base64.RawURLEncoding.EncodeToString([]byte(tenantKeyID))
+
+	_, err := backend.CreateKey(ctx, backend.algorithmToKeyAttributes(systemKeyID, AlgAES256GCM))
+	require.NoError(t, err)
+	_, err = backend.CreateKey(ctx, backend.algorithmToKeyAttributes(tenantKeyID, AlgAES256GCM))
+	require.NoError(t, err, "the tenant key must not collide with the system key")
+
+	systemCT, err := backend.Encrypt(ctx, systemKeyID, []byte("system"), nil)
+	require.NoError(t, err)
+	tenantCT, err := backend.Encrypt(ctx, tenantKeyID, []byte("tenant"), nil)
+	require.NoError(t, err)
+
+	_, err = backend.Decrypt(ctx, tenantKeyID, systemCT, nil)
+	require.Error(t, err, "the tenant ID must not decrypt under the system key")
+	_, err = backend.Decrypt(ctx, systemKeyID, tenantCT, nil)
+	require.Error(t, err, "the system ID must not decrypt under the tenant key")
+
+	plaintext, err := backend.Decrypt(ctx, systemKeyID, systemCT, nil)
+	require.NoError(t, err)
+	require.Equal(t, []byte("system"), plaintext)
+
+	keys, _, err := backend.ListKeys(ctx, "", 0)
+	require.NoError(t, err)
+	var listed []string
+	for _, k := range keys {
+		listed = append(listed, k.KeyID)
+	}
+	require.Contains(t, listed, systemKeyID, "the system key lists under its own ID")
+	require.Contains(t, listed, tenantKeyID, "the tenant key lists under its own ID")
+
+	require.NoError(t, backend.DeleteKey(ctx, tenantKeyID))
+	plaintext, err = backend.Decrypt(ctx, systemKeyID, systemCT, nil)
+	require.NoError(t, err, "deleting the tenant key must leave the system key")
+	require.Equal(t, []byte("system"), plaintext)
+	require.NoError(t, backend.DeleteKey(ctx, systemKeyID))
 }
 
 // TestXKMSKeyName_DecodesOnlyEncodedOutputs: keyIDFromXKMSName decodes a name
