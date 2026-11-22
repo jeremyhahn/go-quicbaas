@@ -17,9 +17,11 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -221,4 +223,33 @@ func TestResolvePINs_ReleaseWipesThePINs(t *testing.T) {
 	require.Error(t, err)
 	assert.NotPanics(t, release3)
 	assert.True(t, so == "" && user == "", "a failed resolve left a PIN in an argv target")
+}
+
+// TestResolvePINs_GoQrdbRequestPINFieldsAreStrings pins the upstream seam
+// resolvedPINs.field exists for: every go-qrdb request PIN field the CLI
+// fills is a string, so one unwipeable copy per call is unavoidable here.
+// When go-qrdb types these fields as bytes, this test fails: delete
+// resolvedPINs.field, hand the protected bytes to the request, and delete
+// this test.
+func TestResolvePINs_GoQrdbRequestPINFieldsAreStrings(t *testing.T) {
+	cases := []struct {
+		req    any
+		fields []string
+	}{
+		{qrdbtransport.BarrierInitializeRequest{}, []string{"SOPin", "UserPin"}},
+		{qrdbtransport.BarrierInitializeShamirRequest{}, []string{"SOPin", "UserPin"}},
+		{qrdbtransport.BarrierRekeyRequest{}, []string{"SOPin"}},
+		{qrdbtransport.BarrierGenerateRecoveryKeysRequest{}, []string{"SOPin"}},
+		{qrdbtransport.SignCSRInitRequest{}, []string{"SOPin"}},
+		{qrdbtransport.CeremonyInitializeRequest{}, []string{"SOPin", "UserPin"}},
+	}
+	for _, c := range cases {
+		rt := reflect.TypeOf(c.req)
+		for _, name := range c.fields {
+			f, ok := rt.FieldByName(name)
+			require.True(t, ok, "%s has no field %s", rt.Name(), name)
+			assert.Equal(t, reflect.String, f.Type.Kind(),
+				"%s.%s is no longer a string: go-qrdb now carries the PIN as bytes; delete resolvedPINs.field and pass the protected bytes to the request", rt.Name(), name)
+		}
+	}
 }
