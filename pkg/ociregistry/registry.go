@@ -626,13 +626,10 @@ func (r *Registry) Pull(ctx context.Context, ref string, opts PullOptions) (*Ima
 	return img, nil
 }
 
-// Delete removes a container image from the registry. The manifest
-// is removed first; layer blobs and the config blob are then GC'd if
-// they are no longer referenced by any surviving manifest. This is a
-// best-effort reference-counting sweep — under concurrent pushes a
-// blob may be re-counted, in which case the next Delete cycle picks
-// it up. The cost is O(remaining manifests) per delete, which is
-// fine for the volumes Phase 5 ships at.
+// Delete removes a container image's manifest from the registry. Its
+// layer and config blobs are left in place: a push running alongside the
+// delete may be storing the same blobs, and a manifest listing cannot
+// prove a blob is unreferenced, so deleting them here could lose data.
 func (r *Registry) Delete(ctx context.Context, ref string) error {
 	if err := r.checkState(); err != nil {
 		return err
@@ -649,7 +646,6 @@ func (r *Registry) Delete(ctx context.Context, ref string) error {
 
 	r.logger.Debug("deleting image", "ref", ref)
 
-	// Fetch the manifest so we know which blobs to consider for GC.
 	manifest, err := r.storage.GetManifest(ctx, ref)
 	if err != nil {
 		var notFound ManifestNotFoundError
@@ -662,80 +658,7 @@ func (r *Registry) Delete(ctx context.Context, ref string) error {
 		return ImageNotFoundError{Reference: ref}
 	}
 
-	if err := r.storage.DeleteManifest(ctx, ref); err != nil {
-		return err
-	}
-
-	// Run GC on layer + config blobs.
-	candidates := make([]string, 0, len(manifest.Layers)+1)
-	for _, d := range manifest.Layers {
-		if d.Digest != "" {
-			candidates = append(candidates, d.Digest)
-		}
-	}
-	if manifest.Config.Digest != "" {
-		candidates = append(candidates, manifest.Config.Digest)
-	}
-	if len(candidates) == 0 {
-		return nil
-	}
-
-	stillReferenced, err := r.referencedBlobs(ctx)
-	if err != nil {
-		// GC failure must not undo the manifest delete — the caller's
-		// intent (remove the image) succeeded. Log and continue;
-		// orphan blobs will be picked up by the next delete cycle or
-		// a future explicit sweep.
-		r.logger.Warn("registry: blob GC scan failed; leaving orphans",
-			"ref", ref, "error", err)
-		return nil
-	}
-	for _, digest := range candidates {
-		if _, ok := stillReferenced[digest]; ok {
-			continue
-		}
-		if delErr := r.storage.DeleteBlob(ctx, digest); delErr != nil {
-			r.logger.Warn("registry: failed to GC blob",
-				"digest", digest, "error", delErr)
-		}
-	}
-	return nil
-}
-
-// referencedBlobs walks every remaining manifest and returns the set
-// of blob digests still in use. Used by Delete's GC pass to decide
-// which orphans to reclaim. The set includes both layer digests and
-// config blob digests since either can be content-shared across
-// images.
-func (r *Registry) referencedBlobs(ctx context.Context) (map[string]struct{}, error) {
-	refs := make(map[string]struct{})
-	cursor := ""
-	for {
-		res, err := r.storage.ListManifests(ctx, ListOptions{
-			Limit:  500,
-			Cursor: cursor,
-			Strict: true,
-		})
-		if err != nil {
-			return nil, err
-		}
-		for i := range res.Manifests {
-			m := res.Manifests[i]
-			if m.Config.Digest != "" {
-				refs[m.Config.Digest] = struct{}{}
-			}
-			for _, d := range m.Layers {
-				if d.Digest != "" {
-					refs[d.Digest] = struct{}{}
-				}
-			}
-		}
-		if !res.HasMore || res.NextCursor == "" {
-			break
-		}
-		cursor = res.NextCursor
-	}
-	return refs, nil
+	return r.storage.DeleteManifest(ctx, ref)
 }
 
 // List returns image manifests matching the given options. The

@@ -598,76 +598,34 @@ func TestRegistry_EncryptedPushWithoutEncryptor(t *testing.T) {
 // blob storage for layers no longer referenced by any surviving
 // manifest, and that layers shared between images survive deletion
 // of one of the sharing images.
-func TestRegistry_DeleteGCsOrphanBlobs(t *testing.T) {
+func TestRegistry_DeleteLeavesBlobs(t *testing.T) {
 	reg := newTestRegistry(t)
 	ctx := context.Background()
 
-	mkImage := func(layerDigest, contentSuffix string) *Image {
-		return &Image{
-			Manifest: &ImageManifest{
-				SchemaVersion: 2,
-				MediaType:     "application/vnd.oci.image.manifest.v1+json",
-				Config: Descriptor{
-					Digest: sha256Digest([]byte("cfg!")),
-					Size:   4,
-				},
-				Layers: []Descriptor{{
-					MediaType: "application/vnd.oci.image.layer.v1.tar",
-					Digest:    layerDigest,
-					Size:      int64(len("hello" + contentSuffix)),
-				}},
-			},
-			Config: []byte("cfg!"),
-			Layers: []Layer{{
-				Digest:    layerDigest,
-				MediaType: "application/vnd.oci.image.layer.v1.tar",
-				Size:      int64(len("hello" + contentSuffix)),
-				Content:   []byte("hello" + contentSuffix),
-			}},
+	a := digestImage("shared layer", "cfg-a")
+	b := digestImage("shared layer", "cfg-b")
+	require.NoError(t, reg.Push(ctx, "img-a:v1", a, PushOptions{}))
+	require.NoError(t, reg.Push(ctx, "img-b:v1", b, PushOptions{}))
+
+	require.NoError(t, reg.Delete(ctx, "img-a:v1"))
+
+	for _, img := range []*Image{a, b} {
+		for _, d := range []string{img.Layers[0].Digest, img.Manifest.Config.Digest} {
+			exists, err := reg.storage.BlobExists(ctx, d)
+			require.NoError(t, err)
+			assert.True(t, exists, "blob %s was deleted", d)
 		}
 	}
 
-	uniqueLayer := sha256Digest([]byte("helloA"))
-	sharedLayer := sha256Digest([]byte("helloshared"))
+	_, err := reg.Pull(ctx, "img-a:v1", PullOptions{})
+	var notFound ImageNotFoundError
+	assert.ErrorAs(t, err, &notFound)
 
-	// Image A: unique layer only.
-	if err := reg.Push(ctx, "img-a:v1", mkImage(uniqueLayer, "A"), PushOptions{}); err != nil {
-		t.Fatalf("push A: %v", err)
-	}
-	// Image B + C: both reference the shared layer.
-	if err := reg.Push(ctx, "img-b:v1", mkImage(sharedLayer, "shared"), PushOptions{}); err != nil {
-		t.Fatalf("push B: %v", err)
-	}
-	if err := reg.Push(ctx, "img-c:v1", mkImage(sharedLayer, "shared"), PushOptions{}); err != nil {
-		t.Fatalf("push C: %v", err)
-	}
-
-	// Delete A: its unique layer should be GC'd.
-	if err := reg.Delete(ctx, "img-a:v1"); err != nil {
-		t.Fatalf("delete A: %v", err)
-	}
-	if exists, _ := reg.storage.BlobExists(ctx, uniqueLayer); exists {
-		t.Errorf("uniqueLayer should be GC'd after deleting its only referent")
-	}
-	if exists, _ := reg.storage.BlobExists(ctx, sharedLayer); !exists {
-		t.Errorf("sharedLayer should survive A's delete (B and C still reference it)")
-	}
-
-	// Delete B: shared layer should still survive (C references it).
-	if err := reg.Delete(ctx, "img-b:v1"); err != nil {
-		t.Fatalf("delete B: %v", err)
-	}
-	if exists, _ := reg.storage.BlobExists(ctx, sharedLayer); !exists {
-		t.Errorf("sharedLayer should survive B's delete (C still references it)")
-	}
-
-	// Delete C: now the shared layer is orphaned and should be GC'd.
-	if err := reg.Delete(ctx, "img-c:v1"); err != nil {
-		t.Fatalf("delete C: %v", err)
-	}
-	if exists, _ := reg.storage.BlobExists(ctx, sharedLayer); exists {
-		t.Errorf("sharedLayer should be GC'd after all referencing images are deleted")
-	}
+	pulled, err := reg.Pull(ctx, "img-b:v1", PullOptions{})
+	require.NoError(t, err)
+	require.Len(t, pulled.Layers, 1)
+	assert.Equal(t, b.Layers[0].Content, pulled.Layers[0].Content)
+	assert.Equal(t, b.Config, pulled.Config)
 }
 
 // digestImage builds an image whose layer and config digests are the
