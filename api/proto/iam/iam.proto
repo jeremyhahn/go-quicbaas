@@ -334,6 +334,9 @@ message CheckRequest {
   string action = 2;
   string resource = 3;
   map<string, string> context = 4;
+  // tenant_id is the tenant the check acts in. Empty means the caller's
+  // bound tenant; any other tenant than the caller's is refused.
+  string tenant_id = 5;
 }
 
 message CheckResponse {
