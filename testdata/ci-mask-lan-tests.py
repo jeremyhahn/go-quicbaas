@@ -97,6 +97,190 @@ def script_cases():
     check(public.returncode == 0 and public.stdout == "", f"on github.com the script masks {public.stdout!r}: want nothing")
 
 
+# Case matrix (go-qrdb #1680 and #1681, go-xkms #2346; carried here by
+# go-quicbaas ci/balanced-runner-pools): each case runs the script with a
+# clean environment holding only PATH and the case's variables and compares
+# the set of ::add-mask:: values it prints. S7: host names in any letter
+# case and with a terminal dot. U: an entry's userinfo is split off at its
+# last "@" before the host is classified, and the userinfo and its password
+# are masked whenever present. E: a mask value is escaped as workflow command
+# data. Every address is an RFC 1918, RFC 5737 or RFC 4193 example; every
+# user name and password is made up.
+def run(env):
+    """Run the script with only PATH and env; return its masks and output lines."""
+    full = {"PATH": os.environ.get("PATH", "/usr/bin:/bin")}
+    full.update(env)
+    res = subprocess.run(["bash", SCRIPT], env=full, capture_output=True, text=True, check=False)
+    if res.returncode != 0:
+        return None, [f"exit {res.returncode}: {res.stderr.strip()}"]
+    lines = [l for l in res.stdout.splitlines() if l]
+    masks = {l[len("::add-mask::"):] for l in lines if l.startswith("::add-mask::")}
+    return masks, lines
+
+
+def case(name, env, want=(), absent=(), exact=None):
+    masks, lines = run(env)
+    if masks is None:
+        failures.append(f"{name}: {lines[0]}")
+        return
+    errs = []
+    other = [l for l in lines if not l.startswith("::add-mask::")]
+    if other:
+        errs.append(f"printed {len(other)} line(s) that are not ::add-mask::")
+    if exact is not None and masks != set(exact):
+        errs.append(f"masks {sorted(masks)}, want exactly {sorted(exact)}")
+    for w in want:
+        if w not in masks:
+            errs.append(f"{w!r} not masked")
+    for a in absent:
+        if a in masks:
+            errs.append(f"{a!r} masked, must not be")
+    if errs:
+        failures.append(f"{name}: " + "; ".join(errs))
+
+
+def case_matrix():
+    # S7 (Codex on go-xkms #2340): a host name is classified case-insensitively
+    # and with its terminal dot removed; each host mask is printed as written
+    # and, when that differs, lowercased (Codex round 2 on go-xkms #2346).
+    case(
+        "S7 upper-case LAN suffix",
+        {"DEVCACHE_GO": "http://cache.INTERNAL:3000/go"},
+        exact={
+            "http://cache.INTERNAL:3000/go", "cache.INTERNAL:3000", "cache.INTERNAL",
+            "http://cache.internal:3000/go", "cache.internal:3000", "cache.internal",
+        },
+    )
+    case(
+        "S7b fully qualified LAN name",
+        {"CI_IMAGE_REGISTRY": "registry.lan.:5000"},
+        exact={"registry.lan.:5000", "registry.lan."},
+    )
+    case(
+        "S7c fully qualified, mixed case, no port",
+        {"RELEASE_REGISTRY": "Pkgs.Home.Arpa."},
+        exact={"Pkgs.Home.Arpa.", "pkgs.home.arpa."},
+    )
+    # S7f: a mixed-case registry as a helper that lowercases it would log it.
+    case(
+        "S7f mixed-case registry, lowercased form",
+        {"CI_IMAGE_REGISTRY": "Registry.Lan:5000"},
+        exact={"Registry.Lan:5000", "Registry.Lan", "registry.lan:5000", "registry.lan"},
+    )
+    # S7h: an upper-case bracketed IPv6 host is masked lowercased too, the
+    # unbracketed form included (local Codex review on this branch).
+    case(
+        "S7h upper-case IPv6 host",
+        {"GOPROXY": "http://[FD00::ABCD]:3000"},
+        want={"[FD00::ABCD]", "[fd00::abcd]", "FD00::ABCD", "fd00::abcd"},
+    )
+    # S7g: credentials are masked as written only, never lowercased.
+    case(
+        "S7g mixed-case credentials stay as written",
+        {"GOPROXY": "http://CI:PassWord@cache.lan"},  # lab-string-ok: made-up fixture of the userinfo cases
+        want={"CI:PassWord", "PassWord", "cache.lan"},
+        absent={"ci:password", "password"},
+    )
+    case(
+        "S7d fully qualified single label",
+        {"GOPROXY": "http://buildcache.:3000"},
+        exact={"http://buildcache.:3000", "buildcache.:3000", "buildcache."},
+    )
+    case(
+        "S7e fully qualified public host and upper-case keyword",
+        {"GOPROXY": "https://Proxy.Golang.Org.,DIRECT"},
+        exact=set(),
+    )
+
+    # U1: userinfo with a password before a private IPv4 host. The host is the
+    # authority's host, not the user name before the ":".
+    case(
+        "U1 userinfo + private IPv4",
+        {"GOPROXY": "http://build.user:password@192.168.1.10:8080"},  # lab-string-ok: made-up fixture of the userinfo cases
+        want={
+            "http://build.user:password@192.168.1.10:8080",  # lab-string-ok: made-up fixture of the userinfo cases
+            "build.user:password@192.168.1.10:8080",  # lab-string-ok: made-up fixture of the userinfo cases
+            "192.168.1.10:8080",
+            "192.168.1.10",
+            "build.user:password",
+            "password",
+        },
+        absent={"build.user"},
+    )
+    # U2: userinfo before a .internal host name.
+    case(
+        "U2 userinfo + .internal host",
+        {"DEVCACHE_GO": "https://ci:s3cret-token@proxy.corp.internal/go"},  # lab-string-ok: made-up fixture of the userinfo cases
+        want={
+            "https://ci:s3cret-token@proxy.corp.internal/go",  # lab-string-ok: made-up fixture of the userinfo cases
+            "ci:s3cret-token@proxy.corp.internal",  # lab-string-ok: made-up fixture of the userinfo cases
+            "proxy.corp.internal",
+            "ci:s3cret-token",
+            "s3cret-token",
+        },
+        absent={"ci"},
+    )
+    # U3: userinfo on a public host: the credentials are masked, the host is not.
+    case(
+        "U3 userinfo + public host",
+        {"GOPROXY": "https://alice:hunter2@proxy.example.com/mod"},  # lab-string-ok: made-up fixture of the userinfo cases
+        exact={"alice:hunter2", "hunter2"},
+    )
+    # U4: an "@" in the path only is no userinfo.
+    case(
+        "U4 @ in path, IPv4",
+        {"GOPROXY": "http://10.1.2.3:3000/mod@v1.2.3"},  # lab-string-ok: made-up fixture of the userinfo cases
+        exact={"http://10.1.2.3:3000/mod@v1.2.3", "10.1.2.3:3000", "10.1.2.3"},  # lab-string-ok: made-up fixture of the userinfo cases
+    )
+    case(
+        "U4b @ in path, bracketed IPv6",
+        {"GOPROXY": "http://[fd00::1]:3000/mod@v1.2.3"},  # lab-string-ok: made-up fixture of the userinfo cases
+        exact={
+            "http://[fd00::1]:3000/mod@v1.2.3",  # lab-string-ok: made-up fixture of the userinfo cases
+            "[fd00::1]:3000",
+            "[fd00::1]",
+            "fd00::1",
+        },
+    )
+    # U5: a GOPROXY list mixing an authenticated private entry and public ones.
+    case(
+        "U5 mixed list",
+        {"GOPROXY": "http://ci:pw-1@10.0.0.7:3000|https://proxy.golang.org,direct"},  # lab-string-ok: made-up fixture of the userinfo cases
+        exact={
+            "http://ci:pw-1@10.0.0.7:3000",  # lab-string-ok: made-up fixture of the userinfo cases
+            "ci:pw-1@10.0.0.7:3000",  # lab-string-ok: made-up fixture of the userinfo cases
+            "10.0.0.7:3000",
+            "10.0.0.7",
+            "ci:pw-1",
+            "pw-1",
+        },
+    )
+    # U6: a user name with no password (a token as the user) is masked whole.
+    case(
+        "U6 token user, LAN host",
+        {"GOPROXY": "http://tok-abc123@gomods:3000"},  # lab-string-ok: made-up fixture of the userinfo cases
+        exact={
+            "http://tok-abc123@gomods:3000",  # lab-string-ok: made-up fixture of the userinfo cases
+            "tok-abc123@gomods:3000",
+            "gomods:3000",
+            "gomods",
+            "tok-abc123",
+        },
+    )
+
+
+    # E1 (local Codex review on #1680): a mask value is escaped as workflow
+    # command data, so the runner decodes it back to the literal text: a
+    # password holding "%25" registers "%2525", which decodes to "%25".
+    case(
+        "E1 percent in a password",
+        {"GOPROXY": "http://ci:pa%25ss@192.168.1.10:8080"},  # lab-string-ok: made-up fixture of the userinfo cases
+        want={"pa%2525ss", "ci:pa%2525ss", "192.168.1.10"},
+        absent={"pa%25ss"},
+    )
+
+
+
 def jobs(text):
     """(name, [step blocks]) for each job of the template's ci.yml."""
     lines = text.split("\n")
@@ -342,6 +526,7 @@ def mutation_cases(text):
 
 
 script_cases()
+case_matrix()
 if not os.path.exists(CI):
     print(f"FAIL no {os.path.relpath(CI, TEMPLATES)}: carry it from the handbook template")
     sys.exit(1)
