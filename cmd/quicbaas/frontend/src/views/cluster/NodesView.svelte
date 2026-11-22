@@ -26,6 +26,7 @@
   import { getSDKClient } from '../../stores/sdkClient.ts';
   import { Network, Server, CheckCircle, Crown } from 'lucide-svelte';
   import type { ClusterNodeInfo, ListClusterNodesResponse } from '@quicbaas/sdk';
+  import type { Component } from 'svelte';
 
   const NODE_COLUMNS: Column<ClusterNodeInfo>[] = [
     { key: 'node_id', label: 'Node ID', sortable: true },
@@ -37,15 +38,22 @@
     { key: 'uptime_seconds', label: 'Uptime', sortable: true },
   ];
 
-  let result: ListClusterNodesResponse | null = $state(null);
+  const UNAVAILABLE = 'Cluster nodes are not available over this connection';
+
+  // PageHeader takes a Svelte 5 Component; lucide-svelte's icon classes do not
+  // match that signature in the type checker, though they render the same.
+  const HEADER_ICON = Network as unknown as Component<{ class?: string }>;
+
+  let result = $state<ListClusterNodesResponse | null>(null);
   let loading = $state(false);
-  let error: string | null = $state(null);
+  let error = $state<string | null>(null);
 
   async function load(): Promise<void> {
     loading = true;
     error = null;
     try {
       const client = await getSDKClient();
+      if (!client.cluster) { result = null; error = UNAVAILABLE; return; }
       result = await client.cluster.listNodes();
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to load cluster nodes';
@@ -73,7 +81,7 @@
 </script>
 
 <div class="p-6 space-y-6">
-  <PageHeader title="Nodes" subtitle="Members of the Raft cluster" icon={Network} />
+  <PageHeader title="Nodes" subtitle="Members of the Raft cluster" icon={HEADER_ICON} />
 
   {#if error}
     <div class="alert alert-error text-sm flex items-center justify-between" role="alert">

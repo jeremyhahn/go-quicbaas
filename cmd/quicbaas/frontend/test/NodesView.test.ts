@@ -95,6 +95,17 @@ describe('NodesView', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(mockListNodes).toHaveBeenCalledTimes(2));
   });
+
+  it('shows that cluster nodes are not available when the client has none', async () => {
+    vi.mocked(getSDKClient).mockResolvedValue({ cluster: null } as never);
+    render(NodesView);
+    await waitFor(() =>
+      expect(screen.getByRole('alert').textContent).toContain(
+        'Cluster nodes are not available over this connection',
+      ),
+    );
+    expect(mockListNodes).not.toHaveBeenCalled();
+  });
 });
 
 describe('Nodes routing', () => {
