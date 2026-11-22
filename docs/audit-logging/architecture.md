@@ -125,9 +125,12 @@ A quicbaas node has two audit surfaces today:
 
 - **The quicbaas IAM audit store.** The `/api/v1/iam/audit` routes (and their
   gRPC, MCP and embedded counterparts, `quicbaas.IAM.Audit`) record, query and
-  read quicbaas's own `AuditEvent` model, with its own hash chain and signing,
-  under the `audit:query`, `audit:read`, `audit_events:record` and
-  `audit_events:delete` permissions. The rest of this document describes it.
+  read quicbaas's own `AuditEvent` model. The store writes each event to the
+  node audit sink through `NodeAuditLogger` (`pkg/server/node_audit_logger.go`).
+  Fields that have no counterpart in the go-qrdb event ride in its attributes.
+  The routes run under the `audit:query`, `audit:read`, `audit_events:record`
+  and `audit_events:delete` permissions. The rest of this document describes
+  it.
 - **go-qrdb's audit service.** `Security().QRDBAudit()` returns go-qrdb's
   `AuditClient` (`EmitAudit` / `QueryAudit`, permissions `audit:emit` and
   `audit:query`). It is the one audit plane that capability modules emit onto.
@@ -137,9 +140,18 @@ A quicbaas node has two audit surfaces today:
   SDK client reaches that sink through `QRDBEmbeddedServicers.Audit`, and every
   query is confined to the caller's own tenant.
 
-The two surfaces do not share storage: an event recorded through one is not
-returned by the other. The quicbaas store stays until the owner rules on
-removing it.
+The two surfaces are two API models over one store. On a node,
+`NodeAuditLogger` (built in `pkg/server/iam_init.go`) and go-qrdb's audit
+service both write to the same sink, the one `newQRDBAuditSink` builds. An
+event recorded through either surface lands on the same chain, and a query on
+either surface can return it, subject to that surface's filters and tenant
+scope.
+
+For export or evidence, query one surface only. Combining the results of both
+surfaces duplicates records. An event that one surface's model does not show
+is not missing from the chain.
+
+The quicbaas store stays until the owner rules on removing it.
 
 ## REST API
 
