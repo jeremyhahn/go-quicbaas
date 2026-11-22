@@ -288,10 +288,10 @@ func TestEmbeddedGetSpendReport_NarrowsToAHost(t *testing.T) {
 	assert.Equal(t, report.TotalTokens, report.Hosts[0].TotalTokens)
 
 	none, err := tr.Request(ctx, "quicbaas.Orchestrator", "GetSpendReport",
-		&orchestratorSDK.GetSpendReportRequest{TenantID: "t1", Host: "gpu-host:9091"})
+		&orchestratorSDK.GetSpendReportRequest{TenantID: "t1", Host: "gpu-01:9091"})
 	require.NoError(t, err)
 	narrowed := none.(*orchestratorSDK.GetSpendReportResponse)
-	assert.Equal(t, "gpu-host:9091", narrowed.Host)
+	assert.Equal(t, "gpu-01:9091", narrowed.Host)
 	assert.Zero(t, narrowed.Entries)
 }
 

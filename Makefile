@@ -1319,7 +1319,7 @@ LINT_BUILD_TAGS := $(filter-out !integration,$(TEST_TAGS))
 # a pass that compiled it could not run it. Drive it by hand against a served
 # model:
 #
-#   OPENVINO_BASE_URL=http://gpu-host:9000 OPENVINO_MODEL=qwen3-8b \
+#   OPENVINO_BASE_URL=http://gpu-01:9000 OPENVINO_MODEL=qwen3-8b \
 #     go test -tags openvino_live -run TestOpenVINOBackend_Live ./pkg/orchestration/
 TAG_GATE_EXEMPT := linux darwin windows unix ignore integration coverage production \
 	pkcs11 swtpm \

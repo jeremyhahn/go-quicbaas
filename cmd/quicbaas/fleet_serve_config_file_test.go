@@ -59,7 +59,7 @@ node_key_file: /srv/agent/agent.key
 server_ca_file: /srv/agent/server-ca.crt
 max_concurrent_jobs: 4
 allowed_mount_roots: [/srv/sockets]
-ollama_base_url: http://gpu-host.internal:11434
+ollama_base_url: http://gpu-01.internal:11434
 `
 
 // TestResolveServeConfig_FileOverridesDefaults: a key the file names beats the
@@ -75,7 +75,7 @@ func TestResolveServeConfig_FileOverridesDefaults(t *testing.T) {
 	assert.Equal(t, "0.0.0.0:9191", cfg.BindAddr)
 	assert.Equal(t, 4, cfg.MaxConcurrentJobs)
 	assert.Equal(t, []string{"/srv/sockets"}, cfg.AllowedMountRoots)
-	assert.Equal(t, "http://gpu-host.internal:11434", cfg.OllamaBaseURL)
+	assert.Equal(t, "http://gpu-01.internal:11434", cfg.OllamaBaseURL)
 	// Omitted by the file: the flag defaults stand.
 	assert.Equal(t, orchestration.SandboxPolicyRequired, cfg.SandboxPolicy)
 	assert.Equal(t, 30*time.Second, cfg.HeartbeatInterval)

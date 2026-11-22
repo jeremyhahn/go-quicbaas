@@ -4582,7 +4582,7 @@ v0.13.1-alpha (held; see Changed).
   (`GITEA_HTTP_ORIGIN`) land unreported. The one remaining lab value in the
   Makefile carries an inline waiver naming the release issue it must be gone
   by. Fleet hostnames, lab addresses and the owner's account name were
-  replaced with neutral fixtures (`agent-NN`, `gpu-host`, RFC 5737
+  replaced with neutral fixtures (`agent-NN`, `gpu-01`, RFC 5737
   addresses, `operator`) in the tests, comments and changelog that carried
   them.
 

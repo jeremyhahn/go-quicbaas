@@ -38,7 +38,7 @@ import (
 //
 //	backend   claude | codex | opencode | openvino   — runs the agent loop
 //	model     qwen3-8b | gpt-5.5 | claude-opus-5-5   — what it thinks with
-//	provider  OVMS@gpu-host | ollama@gpu-host | ""   — where that model is served
+//	provider  OVMS@gpu-01 | ollama@gpu-01 | ""   — where that model is served
 
 // AgentRole names the kind of work an Agent is FOR. A role slot only accepts an
 // Agent that declares the slot's role, so "the triage model" cannot be bound
@@ -107,7 +107,7 @@ type ProviderEndpoint struct {
 	Name string `json:"name,omitempty"`
 
 	// BaseURL is the server root INCLUDING the version segment the runtime
-	// expects (e.g. "http://gpu-host:9000/v1").
+	// expects (e.g. "http://gpu-01:9000/v1").
 	BaseURL string `json:"base_url,omitempty"`
 
 	// WireAPI names the dialect the endpoint speaks: "responses" or "chat".

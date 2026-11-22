@@ -13,6 +13,10 @@ const registryEnvRead = "CI_IMAGE_REGISTRY: ${{"
 // repository secret, so the log masks it.
 const registrySecretLine = "CI_IMAGE_REGISTRY: ${{ secrets.CI_IMAGE_REGISTRY }}"
 
+// registryVarRead is the registry read from an Actions variable, which the log
+// prints unmasked. It is assembled so no file holds the forbidden form.
+const registryVarRead = "vars" + ".CI_IMAGE_REGISTRY"
+
 // registryStepCount is the registry cache steps in ci.yml: a pull and a push
 // in each of the three jobs that build the toolchain image.
 const registryStepCount = 6
@@ -22,7 +26,7 @@ const registryStepCount = 6
 // fail when it is empty, and mask it before the cache script runs.
 func registryStepProblems(body string) []string {
 	var problems []string
-	if strings.Contains(body, "vars.CI_IMAGE_REGISTRY") {
+	if strings.Contains(body, registryVarRead) {
 		problems = append(problems, "the workflow reads the image registry from an Actions variable, which the log prints unmasked")
 	}
 	jobs := body
@@ -79,7 +83,7 @@ func TestWorkflowsReadTheImageRegistryFromASecret(t *testing.T) {
 		t.Errorf("%s: %s", ciWorkflowPath, p)
 	}
 	for _, path := range workflowFiles(t) {
-		if strings.Contains(readFile(t, path), "vars.CI_IMAGE_REGISTRY") {
+		if strings.Contains(readFile(t, path), registryVarRead) {
 			t.Errorf("%s reads the image registry from an Actions variable; it is a required, masked secret", path)
 		}
 	}
@@ -88,7 +92,7 @@ func TestWorkflowsReadTheImageRegistryFromASecret(t *testing.T) {
 func TestRegistryStepProblemsCatchesAVariableRead(t *testing.T) {
 	body := readFile(t, ciWorkflowPath)
 	cases := map[string]string{
-		"variable read": strings.Replace(body, "secrets.CI_IMAGE_REGISTRY }}", "vars.CI_IMAGE_REGISTRY }}", 1),
+		"variable read": strings.Replace(body, "secrets.CI_IMAGE_REGISTRY }}", registryVarRead+" }}", 1),
 		"mask removed":  strings.Replace(body, `echo "::add-mask::$CI_IMAGE_REGISTRY"`+"\n", "", 1),
 	}
 	for name, mutated := range cases {

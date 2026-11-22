@@ -30,12 +30,12 @@ import (
 
 const (
 	reviewQ8      = "ollama/review-q8:latest"
-	reviewQ8Host  = "http://gpu-host.internal:11434"
-	gpuHostAffine = "gpu-host"
+	reviewQ8Host  = "http://gpu-01.internal:11434"
+	gpuHostAffine = "gpu-01"
 )
 
-// localQwenReviewer is the qwen seat on gpu-host: its Agent runs opencode on
-// the review model gpu-host's ollama serves, and the seat pins it to that host
+// localQwenReviewer is the qwen seat on gpu-01: its Agent runs opencode on
+// the review model gpu-01's ollama serves, and the seat pins it to that host
 // and hands it that server.
 func localQwenReviewer() ReviewerConfig {
 	return ReviewerConfig{
@@ -63,8 +63,8 @@ func TestReviewerConfig_ValidateEndpoint(t *testing.T) {
 		t.Fatalf("a seat with an http(s) endpoint is valid: %v", err)
 	}
 	for name, endpoint := range map[string]string{
-		"endpoint that is not a URL": "gpu-host:11434",
-		"endpoint on another scheme": "ftp://gpu-host:11434",
+		"endpoint that is not a URL": "gpu-01:11434",
+		"endpoint on another scheme": "ftp://gpu-01:11434",
 	} {
 		t.Run(name, func(t *testing.T) {
 			reviewer := localQwenReviewer()
