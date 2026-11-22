@@ -16,6 +16,7 @@ package quicbaas
 import (
 	"context"
 	"errors"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -85,14 +86,19 @@ func (m *mockKVStore) Scan(_ context.Context, prefix string, fn func(key string,
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	for k, v := range m.data {
+	keys := make([]string, 0, len(m.data))
+	for k := range m.data {
 		if strings.HasPrefix(k, prefix) {
-			if err := fn(k, v); err != nil {
-				if err == ErrLimitReached {
-					return nil
-				}
-				return err
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		if err := fn(k, m.data[k]); err != nil {
+			if err == ErrLimitReached {
+				return nil
 			}
+			return err
 		}
 	}
 	return nil
@@ -692,7 +698,7 @@ func TestGetJobsDueForExecution_Success(t *testing.T) {
 	completedJob.NextRun = now.Add(-time.Hour)
 	storage.CreateJob(ctx, completedJob)
 
-	dueJobs, err := storage.GetJobsDueForExecution(ctx, now, 100)
+	dueJobs, err := storage.GetJobsDueForExecution(ctx, now, 100, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -720,7 +726,7 @@ func TestGetJobsDueForExecution_Limit(t *testing.T) {
 		storage.CreateJob(ctx, job)
 	}
 
-	dueJobs, err := storage.GetJobsDueForExecution(ctx, now, 5)
+	dueJobs, err := storage.GetJobsDueForExecution(ctx, now, 5, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -742,7 +748,7 @@ func TestGetJobsDueForExecution_DefaultLimit(t *testing.T) {
 	storage.CreateJob(ctx, job)
 
 	// Use 0 limit (should default to 100)
-	dueJobs, err := storage.GetJobsDueForExecution(ctx, time.Now(), 0)
+	dueJobs, err := storage.GetJobsDueForExecution(ctx, time.Now(), 0, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -758,7 +764,7 @@ func TestGetJobsDueForExecution_ScanError(t *testing.T) {
 	kv.scanErr = errors.New("storage unavailable")
 	storage := NewStorage(kv)
 
-	_, err := storage.GetJobsDueForExecution(ctx, time.Now(), 10)
+	_, err := storage.GetJobsDueForExecution(ctx, time.Now(), 10, nil)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -766,7 +772,7 @@ func TestGetJobsDueForExecution_ScanError(t *testing.T) {
 
 // A tenant-owned job lives in the tenant's namespace, yet the scheduler runs
 // it: the due scan must return it, and must stop returning it once deleted.
-func TestGetJobsDueForExecution_IncludesTenantJobs(t *testing.T) {
+func TestGetJobsDueForExecution_IncludesTenantJobsUntilDeleted(t *testing.T) {
 	ctx := context.Background()
 	kv := newMockKVStore()
 	storage := NewStorage(kv)
@@ -793,7 +799,7 @@ func TestGetJobsDueForExecution_IncludesTenantJobs(t *testing.T) {
 		t.Fatalf("CreateJob: %v", err)
 	}
 
-	dueJobs, err := storage.GetJobsDueForExecution(ctx, now, 100)
+	dueJobs, err := storage.GetJobsDueForExecution(ctx, now, 100, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -808,7 +814,7 @@ func TestGetJobsDueForExecution_IncludesTenantJobs(t *testing.T) {
 	if err := storage.DeleteJob(ctx, tenantJob.ID, "acme"); err != nil {
 		t.Fatalf("DeleteJob: %v", err)
 	}
-	dueJobs, err = storage.GetJobsDueForExecution(ctx, now, 100)
+	dueJobs, err = storage.GetJobsDueForExecution(ctx, now, 100, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

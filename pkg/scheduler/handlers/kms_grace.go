@@ -18,12 +18,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
 )
 
 // HandlerKMSGracePeriod is the handler name for KMS grace period jobs.
 const HandlerKMSGracePeriod = "kms.grace_period"
+
+// kmsTenantKeyPrefix begins the tenant key namespace format,
+// tenant/{tenantID}/{keyID}, as pkg/service tenantScopedKeyID builds it.
+const kmsTenantKeyPrefix = "tenant/"
 
 // KeyStatus defines the status of a key for the grace period handler.
 type KeyStatus string
@@ -109,6 +114,18 @@ func (h *KMSGracePeriodHandler) Handle(ctx context.Context, job *scheduler.Job) 
 		return nil, &scheduler.InvalidJobError{
 			Field:   "payload.version",
 			Message: "version is required and must be > 0",
+		}
+	}
+
+	// A tenant-owned job acts only on its owner's keys. Its payload is
+	// editable by that tenant, so the key it names is checked against the
+	// job's owner, not trusted.
+	if tenant := scheduler.JobTenantID(job); tenant != "" {
+		if !strings.HasPrefix(payload.KeyID, kmsTenantKeyPrefix+tenant+"/") {
+			return nil, &scheduler.InvalidJobError{
+				Field:   "payload.key_id",
+				Message: "key_id is outside the job owner's key namespace",
+			}
 		}
 	}
 
