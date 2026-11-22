@@ -190,6 +190,10 @@ RUN set -eux; \
     # and `go build` the tool's main package. Every module is resolved through
     # the proxy and verified against the checksum database into that module's
     # go.sum, and every version is fixed, so the build is reproducible.
+    # The floors go to ONE `go get`, not one each: applied one at a time, a
+    # later floor below what an earlier one requires (x/text v0.42.0 after
+    # x/net v0.62.0, which requires x/text v0.43.0) silently downgrades the
+    # earlier one; resolved together, an inconsistent list fails the build.
     #
     #   $1  binary name        $2  main package        $3  its pin
     #   $4  -ldflags           $5  a module the tool is released in lockstep
@@ -201,9 +205,11 @@ RUN set -eux; \
         go mod init "build.local/$1"; \
         go get "$2@$3"; \
         if [ -n "$5" ]; then held="$(go list -m -f '{{.Version}}' "$5")"; fi; \
+        floors=""; \
         for floor in ${GO_TOOL_DEPENDENCY_FLOORS}; do \
-            if go list -m "${floor%@*}" >/dev/null 2>&1; then go get "$floor"; fi; \
+            if go list -m "${floor%@*}" >/dev/null 2>&1; then floors="$floors $floor"; fi; \
         done; \
+        if [ -n "$floors" ]; then go get $floors; fi; \
         if [ -n "$5" ]; then go mod edit -replace "$5=$5@$held"; fi; \
         go build -ldflags "$4" -o "${GOBIN}/$1" "$2"; \
         cd /; \
