@@ -30,6 +30,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/policy/sandbox"
 )
 
 // Runtime is the daemon-side agent runtime. It wraps pkg/orchestration
@@ -39,7 +40,7 @@ import (
 type Runtime struct {
 	mu               sync.RWMutex
 	backends         map[string]orchestration.AgentBackend
-	resolver         *SandboxResolver
+	resolver         *sandbox.Resolver
 	imageMap         map[string]string
 	imageRegistry    string
 	autoPull         bool
@@ -260,7 +261,7 @@ func NewRuntime(cfg RuntimeConfig) (*Runtime, error) {
 
 	return &Runtime{
 		backends:         backends,
-		resolver:         NewSandboxResolver(cfg.SandboxPolicy, hasRT),
+		resolver:         sandbox.NewResolver(cfg.SandboxPolicy, hasRT),
 		imageMap:         cloneStringMap(cfg.ImageMap),
 		imageRegistry:    cfg.ImageRegistry,
 		autoPull:         cfg.AutoPull,
@@ -822,7 +823,7 @@ func (r *Runtime) Images(ctx context.Context) []string {
 	return images
 }
 
-func (r *Runtime) SandboxResolver() *SandboxResolver {
+func (r *Runtime) SandboxResolver() *sandbox.Resolver {
 	return r.resolver
 }
 
