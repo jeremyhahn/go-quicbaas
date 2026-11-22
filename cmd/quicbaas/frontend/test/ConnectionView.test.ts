@@ -4,7 +4,7 @@
  * Verifies that ConnectionView renders its page header and the current
  * transport and address, lists the browser-stub transports as disabled,
  * validates the daemon address inline, saves an override (asking first when
- * it points at another origin), and resets it. Also checks that the
+ * it points at another origin, and only when a probe reaches it), and resets it. Also checks that the
  * 'connection' view is reachable through navigation and the hash router.
  */
 
@@ -42,6 +42,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe('ConnectionView', () => {
@@ -83,6 +84,8 @@ describe('ConnectionView', () => {
 
   it('saves a same-origin override without asking', async () => {
     const confirmSpy = vi.spyOn(window, 'confirm');
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
     // Start from a custom address so the page origin is a change.
     saveConnectionOverride({ transport: 'rest', baseURL: 'https://other.example:8443' });
     const { container } = render(ConnectionView);
@@ -91,6 +94,7 @@ describe('ConnectionView', () => {
     });
     await fireEvent.click(applyButton());
     expect(confirmSpy).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
     expect(connectionOverride()).toEqual({ transport: 'rest', baseURL: window.location.origin });
     expect(showToast).toHaveBeenCalledWith('success', 'Connection updated');
   });
@@ -110,23 +114,64 @@ describe('ConnectionView', () => {
 
   it('saves another origin when the confirm is accepted', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const fetchMock = vi.fn().mockResolvedValue(new Response('', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
     const { container } = render(ConnectionView);
     await fireEvent.input(addressInput(container), {
       target: { value: 'https://other.example:8443/' },
     });
     await fireEvent.click(applyButton());
-    expect(connectionOverride()).toEqual({
-      transport: 'rest',
-      baseURL: 'https://other.example:8443',
+    await waitFor(() => {
+      expect(connectionOverride()).toEqual({
+        transport: 'rest',
+        baseURL: 'https://other.example:8443',
+      });
+      expect(connectionStore.address).toBe('https://other.example:8443');
     });
-    expect(connectionStore.address).toBe('https://other.example:8443');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe('https://other.example:8443/api/v1/health/ready');
     await waitFor(() => {
       expect(screen.getByTestId('connection-source').textContent).toBe('Custom');
     });
   });
 
+  it('does not save another origin the page cannot reach', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
+    const { container } = render(ConnectionView);
+    await fireEvent.input(addressInput(container), {
+      target: { value: 'https://other.example:8443' },
+    });
+    await fireEvent.click(applyButton());
+    await waitFor(() =>
+      expect(screen.getByTestId('connection-apply-error')).toHaveTextContent(
+        'https://other.example:8443 cannot be reached from this page',
+      ),
+    );
+    expect(connectionOverride()).toBeNull();
+    expect(connectionStore.address).toBe(window.location.origin);
+    expect(screen.getByTestId('connection-source').textContent).toBe('Default');
+    expect(showToast).not.toHaveBeenCalledWith('success', expect.anything());
+  });
+
+  it('clears the reach error when the address changes', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
+    const { container } = render(ConnectionView);
+    await fireEvent.input(addressInput(container), {
+      target: { value: 'https://other.example:8443' },
+    });
+    await fireEvent.click(applyButton());
+    await waitFor(() => expect(screen.getByTestId('connection-apply-error')).toBeInTheDocument());
+    await fireEvent.input(addressInput(container), {
+      target: { value: 'https://another.example:8443' },
+    });
+    await waitFor(() => expect(screen.queryByTestId('connection-apply-error')).toBeNull());
+  });
+
   it('reports a storage failure as an error toast', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 200 })));
     vi.spyOn(window.localStorage, 'setItem').mockImplementation(() => {
       throw new Error('blocked');
     });
@@ -135,7 +180,9 @@ describe('ConnectionView', () => {
       target: { value: 'https://other.example:8443' },
     });
     await fireEvent.click(applyButton());
-    expect(showToast).toHaveBeenCalledWith('error', 'Browser storage is unavailable');
+    await waitFor(() =>
+      expect(showToast).toHaveBeenCalledWith('error', 'Browser storage is unavailable'),
+    );
   });
 
   it('resets a custom override to the default', async () => {

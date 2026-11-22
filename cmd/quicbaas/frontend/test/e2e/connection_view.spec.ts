@@ -2,8 +2,9 @@
  * connection_view.spec.ts
  *
  * Settings > Connection: the view shows the REST transport and the page
- * origin, validates the daemon address inline, saves an override to browser
- * storage, resets it, and its sidebar entry is no longer marked "soon".
+ * origin, validates the daemon address inline, resets a saved override,
+ * refuses to save another origin the page cannot reach (the page's content
+ * security policy blocks it), and its sidebar entry is no longer marked "soon".
  *
  * Runs in the chromium-no-backend project (daemon at QUICBAAS_UI_URL).
  */
@@ -45,24 +46,31 @@ test.describe('Connection view', () => {
     await expect(page.getByRole('button', { name: 'Apply' })).toBeDisabled();
   });
 
-  test('Apply saves the override and Reset to default removes it', async ({ page }) => {
+  test('Reset to default removes a saved override', async ({ page }) => {
     await navigateTo(page, '#/connection');
     const origin = await page.evaluate(() => window.location.origin);
 
-    // Start from a saved custom address so the page origin is a change.
+    // Seed an override on the page's own origin: the page can reach it.
     await page.evaluate(
       ([k, v]: [string, string]) => window.localStorage.setItem(k, v),
-      [KEY, JSON.stringify({ transport: 'rest', baseURL: 'https://other.example:8443' })] as [string, string],
+      [KEY, JSON.stringify({ transport: 'rest', baseURL: origin })] as [string, string],
     );
     await navigateTo(page, '#/connection');
     await expect(page.getByTestId('connection-source')).toHaveText('Custom');
 
-    await page.locator('#connection-address').fill(`${origin}/`);
-    await page.getByRole('button', { name: 'Apply' }).click();
-    await expect.poll(async () => storedOverride(page)).toContain(origin);
-
     await page.getByRole('button', { name: 'Reset to default' }).click();
     await expect.poll(async () => storedOverride(page)).toBeNull();
+    await expect(page.getByTestId('connection-source')).toHaveText('Default');
+  });
+
+  test('another origin the page cannot reach is not saved', async ({ page }) => {
+    await navigateTo(page, '#/connection');
+    page.once('dialog', (d) => d.accept());
+    await page.locator('#connection-address').fill('https://other.example:8443');
+    await page.getByRole('button', { name: 'Apply' }).click();
+    await expect(page.getByTestId('connection-apply-error')).toBeVisible({ timeout: 10_000 });
+    expect(await storedOverride(page)).toBeNull();
+    await expect(page.getByTestId('connection-source')).toHaveText('Default');
   });
 
   test('the Connection sidebar item has no "soon" badge', async ({ page }) => {

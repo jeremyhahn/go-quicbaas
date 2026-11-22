@@ -18,16 +18,19 @@
   uses, and lets the user point the REST client at another daemon. The choice
   is kept in browser storage; nothing is sent to the server. Only REST works
   in a browser today, so the other transports are listed but disabled. Under
-  Wails the transport is 'wails' and the view is read-only.
+  Wails the transport is 'wails' and the view is read-only. An address on
+  another origin is saved only after a probe of its readiness endpoint answers.
 -->
 <script lang="ts">
   import PageHeader from '../../components/core/PageHeader.svelte';
+  import type { Component } from 'svelte';
   import { Settings } from 'lucide-svelte';
   import {
     connectionStore,
     setConnected,
     isValidBaseURL,
     normalizeBaseURL,
+    probeDaemon,
     saveConnectionOverride,
     clearConnectionOverride,
   } from '../../stores/connection.svelte.ts';
@@ -36,28 +39,40 @@
 
   const UNAVAILABLE = 'not available in the browser yet';
   const BROWSER_STUBS = ['grpc-web', 'quic', 'mcp'];
+  // lucide-svelte's class component type does not match Svelte 5's Component.
+  const HeaderIcon = Settings as unknown as Component<{ class?: string }>;
 
   const initial = activeConnection();
   let active = $state(initial);
   let addressInput = $state(initial.address);
+  let checking = $state(false);
+  let applyError: string | null = $state(null);
 
   const isWails = $derived(active.transport === 'wails');
   const valid = $derived(isValidBaseURL(addressInput));
   const unchanged = $derived(valid && normalizeBaseURL(addressInput) === active.address);
-  const canApply = $derived(!isWails && valid && !unchanged);
+  const canApply = $derived(!isWails && valid && !unchanged && !checking);
 
   function refresh(): void {
     active = activeConnection();
     addressInput = active.address;
   }
 
-  function apply(event?: Event): void {
+  async function apply(event?: Event): Promise<void> {
     event?.preventDefault();
     if (!canApply) return;
+    applyError = null;
     const origin = normalizeBaseURL(addressInput);
     if (origin !== window.location.origin) {
       const ok = window.confirm(`Requests and your session token will go to ${origin}. Continue?`);
       if (!ok) return;
+      checking = true;
+      const reachable = await probeDaemon(origin);
+      checking = false;
+      if (!reachable) {
+        applyError = `${origin} cannot be reached from this page. The page only connects to its own origin unless its content security policy allows another, and that daemon must list this page's origin in its CORS origins.`;
+        return;
+      }
     }
     try {
       saveConnectionOverride({ transport: 'rest', baseURL: origin });
@@ -72,6 +87,7 @@
   }
 
   function resetToDefault(): void {
+    applyError = null;
     clearConnectionOverride();
     resetSDKClient();
     setConnected(window.location.origin, 'rest');
@@ -81,7 +97,7 @@
 </script>
 
 <div class="p-6 space-y-6">
-  <PageHeader title="Connection" subtitle="Transport and daemon address used by this UI" icon={Settings} />
+  <PageHeader title="Connection" subtitle="Transport and daemon address used by this UI" icon={HeaderIcon} />
 
   <div class="card bg-base-200 shadow-sm" data-testid="connection-current">
     <div class="card-body py-4 gap-2">
@@ -131,20 +147,28 @@
           bind:value={addressInput}
           disabled={isWails}
           aria-invalid={!isWails && !valid}
+          oninput={() => { applyError = null; }}
         />
         {#if !isWails && !valid}
           <span class="text-error text-xs mt-1" role="alert" data-testid="connection-address-error">
             Enter an http or https address, for example https://host:8443
           </span>
         {/if}
+        <span class="text-xs text-base-content/60 mt-1">Sign-in and the barrier, bootstrap and ceremony views keep using this page's daemon.</span>
       </label>
 
       <div class="flex gap-2">
-        <button type="submit" class="btn btn-primary btn-sm" disabled={!canApply}>Apply</button>
+        <button type="submit" class="btn btn-primary btn-sm" disabled={!canApply}>
+          {#if checking}<span class="loading loading-spinner loading-xs"></span>{/if}
+          Apply
+        </button>
         {#if active.overridden}
           <button type="button" class="btn btn-ghost btn-sm" onclick={resetToDefault}>Reset to default</button>
         {/if}
       </div>
+      {#if applyError}
+        <div class="alert alert-error text-sm" role="alert" data-testid="connection-apply-error">{applyError}</div>
+      {/if}
     </div>
   </form>
 </div>

@@ -96,6 +96,34 @@ export function normalizeBaseURL(s: string): string {
   return new URL(s.trim()).origin;
 }
 
+/** PROBE_PATH is the daemon's public readiness endpoint. */
+export const PROBE_PATH = '/api/v1/health/ready';
+
+/**
+ * probeDaemon reports whether this page can reach the daemon at origin.
+ * It sends no credentials and no Authorization header. Any HTTP answer
+ * counts (a sealed daemon answers 503); a rejected fetch does not: the
+ * page's content security policy, the daemon's CORS origins or the
+ * network refused it.
+ */
+export async function probeDaemon(origin: string, timeoutMs = 5000): Promise<boolean> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    await fetch(`${origin}${PROBE_PATH}`, {
+      method: 'GET',
+      credentials: 'omit',
+      cache: 'no-store',
+      signal: ctrl.signal,
+    });
+    return true;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /**
  * connectionOverride reads the persisted override. It returns null when none
  * is stored, when storage is blocked, or when the stored value is not a valid

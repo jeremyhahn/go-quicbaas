@@ -3,7 +3,8 @@
  *
  * Verifies the persisted connection override in stores/connection.svelte.ts:
  * URL validation, the save / read / clear round trip, rejection of corrupt or
- * foreign stored values, the error when storage is blocked, and what
+ * foreign stored values, the error when storage is blocked, the reachability
+ * probe, and what
  * activeConnection() in stores/sdkClient.ts reports with and without one.
  */
 
@@ -14,6 +15,7 @@ import {
   connectionOverride,
   saveConnectionOverride,
   clearConnectionOverride,
+  probeDaemon,
 } from '../src/stores/connection.svelte.ts';
 import { activeConnection } from '../src/stores/sdkClient.ts';
 
@@ -25,6 +27,45 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
+
+describe('probeDaemon', () => {
+  it('resolves true on any HTTP answer', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 200 })));
+    expect(await probeDaemon('https://h:8443')).toBe(true);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 503 })));
+    expect(await probeDaemon('https://h:8443')).toBe(true);
+  });
+
+  it('calls the readiness endpoint without credentials or a bearer', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await probeDaemon('https://h:8443');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('https://h:8443/api/v1/health/ready');
+    expect(init.credentials).toBe('omit');
+    expect(new Headers(init.headers).has('Authorization')).toBe(false);
+  });
+
+  it('resolves false when fetch rejects', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
+    expect(await probeDaemon('https://h:8443')).toBe(false);
+  });
+
+  it('resolves false on timeout', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        (_url: string, init: RequestInit) =>
+          new Promise((_resolve, reject) => {
+            init.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+          }),
+      ),
+    );
+    expect(await probeDaemon('https://h:8443', 10)).toBe(false);
+  });
 });
 
 describe('isValidBaseURL', () => {
