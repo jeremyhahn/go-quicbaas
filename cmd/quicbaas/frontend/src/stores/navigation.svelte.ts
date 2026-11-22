@@ -106,6 +106,7 @@ const viewHashPaths: Partial<Record<ViewID, string>> = {
   accounts:      '/accounts',
   // CLUSTER
   cluster:       '/cluster',
+  backup:        '/backup',
 };
 
 /**
@@ -158,6 +159,7 @@ const routeToViewID: Partial<Record<RouteName, ViewID>> = {
   accounts:         'accounts',
   // CLUSTER
   cluster:          'cluster',
+  backup:           'backup',
 };
 
 export interface NavState {

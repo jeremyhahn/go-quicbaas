@@ -91,6 +91,7 @@
 
   // CLUSTER views
   import ClusterDashboard from './cluster/ClusterDashboard.svelte';
+  import BackupView from './cluster/BackupView.svelte';
 
   // New session management views
   import SessionList from '../components/orchestrator/SessionList.svelte';
@@ -267,7 +268,7 @@
       items: [
         { id: 'cluster', label: 'Cluster',   icon: Server,    implemented: true },
         { id: 'nodes',   label: 'Nodes',     icon: Network,   implemented: false },
-        { id: 'backup',  label: 'Backup',    icon: HardDrive, implemented: false },
+        { id: 'backup',  label: 'Backup',    icon: HardDrive, implemented: true },
       ],
     },
     {
@@ -775,6 +776,9 @@
             {:else if routerStore.name === 'cluster'}
               <li class="text-base-content/40">Cluster</li>
               <li class="font-medium">Dashboard</li>
+            {:else if routerStore.name === 'backup'}
+              <li class="text-base-content/40">Cluster</li>
+              <li class="font-medium">Backup</li>
             {:else if activeViewLabel}
               <li class="font-medium">{activeViewLabel}</li>
             {/if}
@@ -1136,6 +1140,11 @@
       {:else if routerStore.name === 'cluster'}
         <div class="flex-1 overflow-y-auto">
           <ClusterDashboard />
+        </div>
+
+      {:else if routerStore.name === 'backup'}
+        <div class="flex-1 overflow-y-auto">
+          <BackupView />
         </div>
 
       {:else}

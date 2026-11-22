@@ -57,6 +57,7 @@ const views: ViewEntry[] = [
   { name: 'KMSView',               path: 'src/views/security/KMSView.svelte',                      title: 'KMS' },
   { name: 'SecretsView',           path: 'src/views/security/SecretsView.svelte',                  title: 'Secrets' },
   { name: 'CertificatesView',      path: 'src/views/security/CertificatesView.svelte',             title: 'Certificates' },
+  { name: 'BackupView',            path: 'src/views/cluster/BackupView.svelte',                    title: 'Backup' },
   { name: 'TrustView',             path: 'src/views/security/TrustView.svelte',                    title: 'Trust' },
   { name: 'CryptoView',            path: 'src/views/security/CryptoView.svelte',                   title: 'Crypto' },
   { name: 'DEKView',               path: 'src/views/security/DEKView.svelte',                      title: 'DEK' },
