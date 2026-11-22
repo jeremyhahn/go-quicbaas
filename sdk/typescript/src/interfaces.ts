@@ -42,13 +42,13 @@ import type { SchedulerClient } from './scheduler_sdk.js';
 import type { ProjectsClient } from './projects.js';
 import type { SdlcClient } from './sdlc.js';
 import type { AccountsClient } from './accounts.js';
+import type { PromptsClient } from './prompts.js';
 import type { AgentsClient } from './agents.js';
 import type { CAClient } from './ca.js';
 import type { TrustClient } from './trust.js';
 import type { CryptoClient } from './crypto.js';
 import type { DEKClient } from './dek.js';
 import type { AttestationClient } from './attestation.js';
-import type { PromptsClient } from './prompts.js';
 import type { XKMSKeysClient } from './xkms_keys.js';
 import type { PIVClient } from './piv.js';
 import type { XKMSClient } from './xkms.js';
@@ -2711,6 +2711,12 @@ export interface Client {
    */
   readonly accounts: AccountsClient;
   /**
+   * prompts reads and edits the layered prompt library (platform, tenant,
+   * project): listings, the effective body and its chain, diff, history,
+   * and the guarded put, rollback and reset.
+   */
+  readonly prompts: PromptsClient;
+  /**
    * agents manages the tenant's AI Agents — named runtime + model + provider
    * that role slots reference — and the pools slots fail over along.
    */
@@ -2754,11 +2760,6 @@ export interface Client {
    * /api/v1/attestation/reference-values/*.
    */
   readonly attestation: AttestationClient;
-  /**
-   * prompts reads, overrides, diffs, resets and rolls back orchestrator
-   * prompts per layer (project, tenant, system). Paths: /api/v1/prompts/*.
-   */
-  readonly prompts: PromptsClient;
   /**
    * XKMS keys client: the xkms passthrough's key routes (generate, list,
    * get, delete, rotate, encrypt, decrypt, sign, verify, key versions).

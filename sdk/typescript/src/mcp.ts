@@ -142,6 +142,20 @@ import type {
   UpdateAccountResponse,
 } from './accounts.js';
 import type {
+  EffectivePrompt,
+  GetPromptRequest,
+  ListPromptsRequest,
+  ListPromptsResponse,
+  PromptAddress,
+  PromptDiff,
+  PromptHistory,
+  PromptRecord,
+  PromptsClient,
+  PutPromptRequest,
+  ResetPromptRequest,
+  RollbackPromptRequest,
+} from './prompts.js';
+import type {
   CreateProjectRequest,
   CreateProjectResponse,
   DeleteProjectResponse,
@@ -1302,6 +1316,49 @@ export class McpAccountsClient implements AccountsClient {
   }
 }
 
+// McpPromptsClient carries the prompts family over the server's prompt_*
+// tools (pkg/api/mcp/prompt_tools.go). Each tool reads the request's JSON
+// fields flat, as the Go SDK's MCP prompt handler sends them.
+export class McpPromptsClient implements PromptsClient {
+  private readonly session: McpSession;
+
+  constructor(session: McpSession) {
+    this.session = session;
+  }
+
+  async listPrompts(req: ListPromptsRequest): Promise<ListPromptsResponse> {
+    return this.session.callTool('prompt_list', { ...req });
+  }
+
+  async getPrompt(req: GetPromptRequest): Promise<PromptRecord> {
+    return this.session.callTool('prompt_get', { ...req });
+  }
+
+  async getEffectivePrompt(addr: PromptAddress): Promise<EffectivePrompt> {
+    return this.session.callTool('prompt_effective', { ...addr });
+  }
+
+  async diffPrompt(addr: PromptAddress): Promise<PromptDiff> {
+    return this.session.callTool('prompt_diff', { ...addr });
+  }
+
+  async getPromptHistory(addr: PromptAddress): Promise<PromptHistory> {
+    return this.session.callTool('prompt_history', { ...addr });
+  }
+
+  async putPrompt(req: PutPromptRequest): Promise<PromptRecord> {
+    return this.session.callTool('prompt_put', { ...req });
+  }
+
+  async rollbackPrompt(req: RollbackPromptRequest): Promise<PromptRecord> {
+    return this.session.callTool('prompt_rollback', { ...req });
+  }
+
+  async resetPrompt(req: ResetPromptRequest): Promise<PromptRecord> {
+    return this.session.callTool('prompt_reset', { ...req });
+  }
+}
+
 export class McpClient implements Client {
   readonly connection: ConnectionClient;
   readonly orchestrator: OrchestratorClient;
@@ -1325,6 +1382,7 @@ export class McpClient implements Client {
   readonly projects: ProjectsClient;
   readonly sdlc: SdlcClient;
   readonly accounts: AccountsClient;
+  readonly prompts: PromptsClient;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly agents: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1345,8 +1403,6 @@ export class McpClient implements Client {
   readonly entities: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly attestation: any = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly prompts: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly xkmsKeys: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1394,6 +1450,7 @@ export class McpClient implements Client {
     this.projects = new McpProjectsClient(session);
     this.sdlc = new McpSdlcClient(session);
     this.accounts = new McpAccountsClient(session);
+    this.prompts = new McpPromptsClient(session);
     this.orchestrator = new McpOrchestratorClient(session);
     this.auth = new McpAuthClient();
     this.barrier = new McpBarrierClient(session);

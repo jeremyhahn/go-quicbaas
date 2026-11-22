@@ -21,6 +21,7 @@
 
 import type { AuthClient, Client, ConnectionClient, OrchestratorClient } from './interfaces.js';
 import type { AccountsClient } from './accounts.js';
+import type { PromptsClient } from './prompts.js';
 import type { ProjectsClient } from './projects.js';
 import type { SdlcClient } from './sdlc.js';
 import { unsupportedClient } from './unsupported.js';
@@ -266,6 +267,7 @@ export class UnixClient implements Client {
   readonly projects = unsupportedClient<ProjectsClient>('unix', 'projects', unixUnsupported);
   readonly sdlc = unsupportedClient<SdlcClient>('unix', 'sdlc', unixUnsupported);
   readonly accounts = unsupportedClient<AccountsClient>('unix', 'accounts', unixUnsupported);
+  readonly prompts = unsupportedClient<PromptsClient>('unix', 'prompts', unixUnsupported);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly agents: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -286,8 +288,6 @@ export class UnixClient implements Client {
   readonly entities: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly attestation: any = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly prompts: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly xkmsKeys: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

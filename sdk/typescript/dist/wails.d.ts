@@ -1,5 +1,6 @@
 import type { AuthClient, Client, ConnectionClient, OrchestratorClient, SSHKeysClient, SSHClient } from './interfaces.js';
 import type { AccountsClient } from './accounts.js';
+import type { PromptsClient } from './prompts.js';
 import type { ProjectsClient } from './projects.js';
 import type { SdlcClient } from './sdlc.js';
 export declare function wailsError(reason: unknown): unknown;
@@ -18,6 +19,7 @@ export declare class WailsClient implements Client {
     readonly projects: ProjectsClient;
     readonly sdlc: SdlcClient;
     readonly accounts: AccountsClient;
+    readonly prompts: PromptsClient;
     readonly agents: any;
     readonly iam: any;
     readonly kms: any;
@@ -26,7 +28,20 @@ export declare class WailsClient implements Client {
     readonly trust: any;
     readonly crypto: any;
     readonly dek: any;
+    readonly entities: any;
     readonly attestation: any;
+    readonly xkmsKeys: any;
+    readonly piv: any;
+    readonly xkms: any;
+    readonly backups: any;
+    readonly clusterNodes: any;
+    readonly kmsAdmin: any;
+    readonly objectStorageAdmin: any;
+    readonly parameters: any;
+    readonly vectorAdmin: any;
+    readonly xkmsFido2: any;
+    readonly registry: any;
+    readonly cache: any;
     readonly dynamicSecrets: any;
     readonly barrier: any;
     readonly tenantBarrier: any;

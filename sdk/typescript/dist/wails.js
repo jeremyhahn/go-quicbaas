@@ -152,6 +152,18 @@ class WailsAuthorizedKeysClient {
     async verify(_req) {
         throw new Error('wails: ssh.authorized not available — use REST transport');
     }
+    async add(_req) {
+        throw new Error('wails: ssh.authorized not available — use REST transport');
+    }
+    async list(_req) {
+        throw new Error('wails: ssh.authorized not available — use REST transport');
+    }
+    async get(_scope, _owner, _name) {
+        throw new Error('wails: ssh.authorized not available — use REST transport');
+    }
+    async remove(_scope, _owner, _name) {
+        throw new Error('wails: ssh.authorized not available — use REST transport');
+    }
 }
 // WailsSSHClient groups the three Wails SSH sub-client stubs.
 class WailsSSHClient {
@@ -758,6 +770,7 @@ export class WailsClient {
     projects = unsupportedClient('wails', 'projects', wailsUnsupported);
     sdlc = unsupportedClient('wails', 'sdlc', wailsUnsupported);
     accounts = unsupportedClient('wails', 'accounts', wailsUnsupported);
+    prompts = unsupportedClient('wails', 'prompts', wailsUnsupported);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     agents = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -775,7 +788,33 @@ export class WailsClient {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     dek = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    entities = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     attestation = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    xkmsKeys = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    piv = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    xkms = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    backups = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    clusterNodes = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    kmsAdmin = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    objectStorageAdmin = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    parameters = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    vectorAdmin = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    xkmsFido2 = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    registry = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    cache = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     dynamicSecrets = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

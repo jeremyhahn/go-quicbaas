@@ -1,19 +1,36 @@
 import type { FleetNodePageParams, AttentionPageParams, JobPageParams, PageResult, SessionPageParams, TaskPageParams, WorkflowPageParams } from './page.js';
 import type { RAGClient } from './rag.js';
 import type { EmbeddingsClient } from './embedding_sdk.js';
+import type { VectorHealthResponse, VectorClusterStatsResponse, VectorHybridSearchRequest, VectorHybridSearchResponse, VectorMetadataSearchRequest, VectorMetadataSearchResponse } from './vector_search.js';
+import type { ObjectsBatchPutOperation, ObjectsBatchPutResponse, ObjectsBatchGetOptions, ObjectsBatchGetResponse, ObjectsBatchDeleteResponse } from './objects_batch.js';
 import type { MessagingClient } from './messaging_sdk.js';
 import type { SchedulerClient } from './scheduler_sdk.js';
 import type { ProjectsClient } from './projects.js';
 import type { SdlcClient } from './sdlc.js';
 import type { AccountsClient } from './accounts.js';
+import type { PromptsClient } from './prompts.js';
 import type { AgentsClient } from './agents.js';
 import type { CAClient } from './ca.js';
 import type { TrustClient } from './trust.js';
 import type { CryptoClient } from './crypto.js';
 import type { DEKClient } from './dek.js';
 import type { AttestationClient } from './attestation.js';
+import type { XKMSKeysClient } from './xkms_keys.js';
+import type { PIVClient } from './piv.js';
+import type { XKMSClient } from './xkms.js';
+import type { BackupsClient } from './backups.js';
+import type { ClusterNodesClient } from './cluster_nodes.js';
+import type { EntitiesClient } from './entities.js';
+import type { KMSAdminClient } from './kms_admin.js';
+import type { ObjectStorageAdminClient } from './objectstorage_admin.js';
+import type { ParametersClient } from './parameters.js';
+import type { VectorAdminClient } from './vector_admin.js';
+import type { XKMSFIDO2Client } from './xkms_fido2.js';
+import type { RegistryClient } from './registry.js';
+import type { TSBatchPoint, TSWriteBatchResponse, TSRetentionPolicy, TSRetentionPolicyResponse, TSSetRetentionPolicyResponse } from './timeseries_admin.js';
+import type { CacheClient } from './cache.js';
 import type { DynamicSecretsClient } from './dynamicsecrets.js';
-import type { AgentBackendInfo, JobRunnerInfo, AuthTokenResponse, DeployFleetNodeResult, DeployFleetNodeSpec, InferenceRequest, InferenceResponse, InferenceChunk, PublicKeyCredentialJSON, WebAuthnLoginChallenge, SSHKey, SSHScope, CreateSSHKeyRequest, ImportSSHKeyRequest, ListSSHKeysQuery, ListSSHKeysResponse, SSHPublicKey, SignRequest, SignResponse, AddSSHPinRequest, ListSSHPinsResponse, VerifySSHPinRequest, EmitAuthorizedRequest, EmitAuthorizedResponse, VerifyAuthorizedRequest, VerifyAuthorizedResponse, FleetNode, SessionStatusResponse, CloseSessionRequest, CloseSessionResponse, CreateKeyRequest, CreateKeyResponse, CreateTenantRequest, CreateTenantResponse, CreateTaskRequest, CreateTaskResponse, CreateUserRequest, CreateUserResponse, CreateWorkflowRequest, CreateWorkflowResponse, DecomposeTaskRequest, DecomposeTaskResponse, GetFleetNodeRequest, GetSecretResponse, GetSessionHistoryRequest, GetSessionConversationRequest, GetSessionConversationResponse, GetSpendReportRequest, GetSpendReportResponse, GetTenantSpendPolicyRequest, SetTenantSpendPolicyRequest, TenantSpendPolicy, GetCostSettingsRequest, SetCostSettingsRequest, CostSettings, WorkerImageStatus, GetSessionHistoryResponse, HealthCheckReport, IAMRole, IAMPolicy, IAMTenant, IAMUser, JobEvent, JobStatus, KMSDecryptRequest, KMSDecryptResponse, KMSEncryptRequest, KMSEncryptResponse, ListFleetNodesRequest, ListFleetNodesResponse, ListKeysResponse, ListPoliciesResponse, ListRolesResponse, ListSecretsResponse, ListSessionsRequest, ListSessionsResponse, ListTenantsResponse, ListUsersResponse, ListWorkflowsResponse, PromptSessionRequest, PromptSessionResponse, ReconcileRolesResponse, RegisterFleetNodeRequest, RegisterFleetNodeResponse, RemoveFleetNodeRequest, DisableFleetNodeRequest, DisableFleetNodeResponse, EnableFleetNodeRequest, EnableFleetNodeResponse, RekeyRequest, RekeyResponse, RotateKeyResponse, RotateRootKeyResponse, RotateSecretResponse, RotateSessionAccountRequest, RotateSessionAccountResponse, ListSecretVersionsResponse, SetDefaultKeyResponse, SealStatus, BarrierStatusResponse, BarrierInitRequest, BarrierUnsealRequest, BarrierSealRequest, BarrierShamirInitRequest, BarrierShamirInitResponse, BarrierUnsealShareRequest, BarrierUnsealShareResponse, BarrierUnsealSharesRequest, BarrierRekeyRequest, BarrierRekeyResponse, BarrierGenerateRecoveryKeysRequest, BarrierRecoveryKeysResponse, BarrierRecoverWithKeysRequest, BarrierHasRecoveryKeysResponse, BarrierGenerateRootTokenRequest, BarrierEnableEncryptionRequest, BarrierEnableEncryptionResponse, BarrierRootTokenResponse, TenantBarrierInitRequest, TenantBarrierInitResponse, TenantBarrierUnsealShareResponse, TenantBarrierStatusResponse, CeremonyInitializeRequest, CeremonyInitializeResponse, CeremonyStatusResponse, CeremonyClaimCertBeginRequest, CeremonyClaimCertBeginResponse, CeremonyClaimCertCompleteRequest, CeremonyClaimCertCompleteResponse, CeremonyClaimShareBeginRequest, CeremonyClaimShareBeginResponse, CeremonyClaimShareCompleteRequest, CeremonyClaimShareCompleteResponse, CeremonySignCSRRequest, CeremonySignCSRResponse, CeremonyEnrollExternalOfficerRequest, CeremonyEnrollExternalOfficerResponse, BootstrapBundleRequest, BootstrapBundleResponse, ClusterStatusResponse, SessionEventEnvelope, SessionInfo, SpawnSessionRequest, SpawnSessionResponse, ClaimTaskRequest, CompleteTaskRequest, DeleteTaskRequest, DeleteTaskResponse, StartJobRequest, StartJobResponse, StoreSecretRequest, SubscribeSessionEventsRequest, Task, UnsealRequest, UnsealResponse, WorkflowDefinition, AttentionItem, AttentionResolveRequest } from './types.js';
+import type { AgentBackendInfo, JobRunnerInfo, AuthTokenResponse, DeployFleetNodeResult, DeployFleetNodeSpec, InferenceRequest, InferenceResponse, InferenceChunk, PublicKeyCredentialJSON, WebAuthnLoginChallenge, SSHKey, SSHScope, CreateSSHKeyRequest, ImportSSHKeyRequest, ListSSHKeysQuery, ListSSHKeysResponse, SSHPublicKey, SignRequest, SignResponse, AddSSHPinRequest, ListSSHPinsResponse, VerifySSHPinRequest, SSHAuthorizedEntry, EmitAuthorizedRequest, EmitAuthorizedResponse, VerifyAuthorizedRequest, VerifyAuthorizedResponse, AddAuthorizedKeyRequest, ListAuthorizedKeysRequest, FleetNode, SessionStatusResponse, CloseSessionRequest, CloseSessionResponse, CreateKeyRequest, CreateKeyResponse, CreateTenantRequest, CreateTenantResponse, CreateTaskRequest, CreateTaskResponse, CreateUserRequest, CreateUserResponse, CreateWorkflowRequest, CreateWorkflowResponse, DecomposeTaskRequest, DecomposeTaskResponse, GetFleetNodeRequest, GetSecretResponse, GetSessionHistoryRequest, GetSessionConversationRequest, GetSessionConversationResponse, GetSpendReportRequest, GetSpendReportResponse, GetTenantSpendPolicyRequest, SetTenantSpendPolicyRequest, TenantSpendPolicy, GetCostSettingsRequest, SetCostSettingsRequest, CostSettings, WorkerImageStatus, GetSessionHistoryResponse, HealthCheckReport, IAMRole, IAMPolicy, IAMTenant, IAMUser, JobEvent, JobStatus, KMSDecryptRequest, KMSDecryptResponse, KMSEncryptRequest, KMSEncryptResponse, ListFleetNodesRequest, ListFleetNodesResponse, ListKeysResponse, ListPoliciesResponse, ListRolesResponse, ListSecretsResponse, ListSessionsRequest, ListSessionsResponse, ListTenantsResponse, ListUsersResponse, ListWorkflowsResponse, PromptSessionRequest, PromptSessionResponse, ReconcileRolesResponse, RegisterFleetNodeRequest, RegisterFleetNodeResponse, RemoveFleetNodeRequest, DisableFleetNodeRequest, DisableFleetNodeResponse, EnableFleetNodeRequest, EnableFleetNodeResponse, RekeyRequest, RekeyResponse, RotateKeyResponse, RotateRootKeyResponse, RotateSecretResponse, RotateSessionAccountRequest, RotateSessionAccountResponse, ListSecretVersionsResponse, SetDefaultKeyResponse, SealStatus, BarrierStatusResponse, BarrierInitRequest, BarrierUnsealRequest, BarrierSealRequest, BarrierShamirInitRequest, BarrierShamirInitResponse, BarrierUnsealShareRequest, BarrierUnsealShareResponse, BarrierUnsealSharesRequest, BarrierRekeyRequest, BarrierRekeyResponse, BarrierGenerateRecoveryKeysRequest, BarrierRecoveryKeysResponse, BarrierRecoverWithKeysRequest, BarrierHasRecoveryKeysResponse, BarrierGenerateRootTokenRequest, BarrierEnableEncryptionRequest, BarrierEnableEncryptionResponse, BarrierRootTokenResponse, TenantBarrierInitRequest, TenantBarrierInitResponse, TenantBarrierUnsealShareResponse, TenantBarrierStatusResponse, CeremonyInitializeRequest, CeremonyInitializeResponse, CeremonyStatusResponse, CeremonyClaimCertBeginRequest, CeremonyClaimCertBeginResponse, CeremonyClaimCertCompleteRequest, CeremonyClaimCertCompleteResponse, CeremonyClaimShareBeginRequest, CeremonyClaimShareBeginResponse, CeremonyClaimShareCompleteRequest, CeremonyClaimShareCompleteResponse, CeremonySignCSRRequest, CeremonySignCSRResponse, CeremonyEnrollExternalOfficerRequest, CeremonyEnrollExternalOfficerResponse, BootstrapBundleRequest, BootstrapBundleResponse, ClusterStatusResponse, ClusterLeaderResponse, ShardLeaderResponse, RebalanceRequest, RebalanceResponse, RebalanceStatusResponse, RebalancePlanResponse, MigrationRequest, MigrationResponse, MigrationStatusResponse, CancelMigrationResponse, SessionEventEnvelope, SessionInfo, SpawnSessionRequest, SpawnSessionResponse, ClaimTaskRequest, CompleteTaskRequest, DeleteTaskRequest, DeleteTaskResponse, StartJobRequest, StartJobResponse, StoreSecretRequest, SubscribeSessionEventsRequest, Task, UnsealRequest, UnsealResponse, WorkflowDefinition, AttentionItem, AttentionResolveRequest } from './types.js';
 export interface ConnectionClient {
     connect(address: string, transport?: string, tenantID?: string): Promise<void>;
     disconnect(): Promise<void>;
@@ -132,6 +149,56 @@ export interface VectorNamespace {
     vector_count?: number;
     created_at?: string;
 }
+export interface NamespaceInfo {
+    namespace: string;
+    dimensions: number;
+    distance_metric: string;
+    precision?: string;
+    index_type: string;
+    index_params?: Record<string, string>;
+    vector_count: number;
+    indexed_count: number;
+    pending_count?: number;
+    storage_bytes: number;
+    index_bytes: number;
+    created_at?: string;
+    updated_at?: string;
+    last_index_build?: string;
+    shard_id?: number;
+    replication_factor?: number;
+    compression_enabled?: boolean;
+    metadata?: Record<string, string>;
+}
+export interface NamespaceStats {
+    namespace: string;
+    vector_count: number;
+    indexed_count: number;
+    storage_bytes: number;
+    index_bytes: number;
+    avg_search_latency_ms: number;
+    search_count: number;
+}
+export interface RebuildIndexRequest {
+    index_params?: Record<string, string>;
+    async: boolean;
+    timeout_ms?: number;
+}
+export interface RebuildIndexResponse {
+    operation_id: string;
+    started: string;
+    estimated_duration_ms: number;
+}
+export interface IndexProgress {
+    operation_id: string;
+    namespace: string;
+    vectors_indexed: number;
+    total_vectors: number;
+    percent_complete: number;
+    elapsed_time_ms: number;
+    estimated_remaining_ms: number;
+    status: string;
+    error_message?: string;
+}
 export interface VectorSearchResult {
     id: string;
     score: number;
@@ -145,12 +212,20 @@ export interface VectorsClient {
         metric?: string;
     }): Promise<VectorNamespace>;
     deleteNamespace(namespace: string): Promise<void>;
+    getNamespace(namespace: string): Promise<NamespaceInfo>;
+    getNamespaceStats(namespace: string): Promise<NamespaceStats>;
+    rebuildIndex(namespace: string, req: RebuildIndexRequest): Promise<RebuildIndexResponse>;
+    getIndexProgress(namespace: string, operationID: string): Promise<IndexProgress>;
     searchSimilar(namespace: string, req: {
         vector?: number[];
         text?: string;
         top_k?: number;
         filter?: Record<string, unknown>;
     }): Promise<VectorSearchResult[]>;
+    health(): Promise<VectorHealthResponse>;
+    clusterStats(): Promise<VectorClusterStatsResponse>;
+    hybridSearch(req: VectorHybridSearchRequest): Promise<VectorHybridSearchResponse>;
+    searchByMetadata(req: VectorMetadataSearchRequest): Promise<VectorMetadataSearchResponse>;
 }
 export interface TSPoint {
     metric: string;
@@ -173,6 +248,9 @@ export interface TimeSeriesClient {
     }): Promise<TSQueryResponse>;
     listMetrics(): Promise<string[]>;
     deleteSeries(metric: string): Promise<void>;
+    writeBatch(points: TSBatchPoint[]): Promise<TSWriteBatchResponse>;
+    getRetentionPolicy(metric: string): Promise<TSRetentionPolicyResponse>;
+    setRetentionPolicy(metric: string, policy: TSRetentionPolicy): Promise<TSSetRetentionPolicyResponse>;
 }
 export interface ObjectEntry {
     key: string;
@@ -190,6 +268,9 @@ export interface ObjectsClient {
     getObject(key: string): Promise<Blob>;
     putObject(key: string, body: Blob | ArrayBuffer, contentType?: string): Promise<void>;
     deleteObject(key: string): Promise<void>;
+    batchPut(objects: ObjectsBatchPutOperation[]): Promise<ObjectsBatchPutResponse>;
+    batchGet(keys: string[], opts?: ObjectsBatchGetOptions): Promise<ObjectsBatchGetResponse>;
+    batchDelete(keys: string[]): Promise<ObjectsBatchDeleteResponse>;
 }
 export interface UpdateUserRequest {
     email?: string;
@@ -1046,6 +1127,14 @@ export interface CeremonyClient {
 }
 export interface ClusterClient {
     status(): Promise<ClusterStatusResponse>;
+    leader(): Promise<ClusterLeaderResponse>;
+    shardLeader(shardID: number): Promise<ShardLeaderResponse>;
+    startRebalance(req?: RebalanceRequest): Promise<RebalanceResponse>;
+    rebalanceStatus(operationID?: string): Promise<RebalanceStatusResponse>;
+    rebalancePlan(): Promise<RebalancePlanResponse>;
+    startMigration(req: MigrationRequest): Promise<MigrationResponse>;
+    migrationStatus(operationID: string): Promise<MigrationStatusResponse>;
+    cancelMigration(operationID: string): Promise<CancelMigrationResponse>;
 }
 export interface BootstrapClient {
     auto(req?: BootstrapBundleRequest): Promise<BootstrapBundleResponse>;
@@ -1074,6 +1163,10 @@ export interface SSHKnownHostsClient {
 export interface SSHAuthorizedKeysClient {
     emit(req: EmitAuthorizedRequest): Promise<EmitAuthorizedResponse>;
     verify(req: VerifyAuthorizedRequest): Promise<VerifyAuthorizedResponse>;
+    add(req: AddAuthorizedKeyRequest): Promise<void>;
+    list(req?: ListAuthorizedKeysRequest): Promise<SSHAuthorizedEntry[]>;
+    get(scope: SSHScope, owner: string, name: string): Promise<SSHAuthorizedEntry>;
+    remove(scope: SSHScope, owner: string, name: string): Promise<void>;
 }
 export interface SSHClient {
     /** SSH key management. */
@@ -1107,6 +1200,12 @@ export interface Client {
      */
     readonly accounts: AccountsClient;
     /**
+     * prompts reads and edits the layered prompt library (platform, tenant,
+     * project): listings, the effective body and its chain, diff, history,
+     * and the guarded put, rollback and reset.
+     */
+    readonly prompts: PromptsClient;
+    /**
      * agents manages the tenant's AI Agents — named runtime + model + provider
      * that role slots reference — and the pools slots fail over along.
      */
@@ -1138,12 +1237,83 @@ export interface Client {
      */
     readonly dek: DEKClient;
     /**
+     * Backup management: create, list, restore, verify and delete backups.
+     * Maps to /api/v1/backups/* REST endpoints.
+     */
+    readonly backups: BackupsClient;
+    /**
      * Attestation verifier: endorsements (reference-value signers and AK
      * roots) and signed CoRIM reference values.
      * Paths: /api/v1/attestation/endorsements/* and
      * /api/v1/attestation/reference-values/*.
      */
     readonly attestation: AttestationClient;
+    /**
+     * XKMS keys client: the xkms passthrough's key routes (generate, list,
+     * get, delete, rotate, encrypt, decrypt, sign, verify, key versions).
+     * Maps to /api/v1/xkms/keys/* REST endpoints.
+     */
+    readonly xkmsKeys: XKMSKeysClient;
+    /**
+     * PIV slots of an xkms backend: list slots, generate keys and CSRs, and
+     * store, read or delete slot certificates (/api/v1/xkms/piv/slots*).
+     * Null on transports that do not carry it.
+     */
+    readonly piv: PIVClient;
+    /**
+     * xkms drives the xkms passthrough routes (/api/v1/xkms/*): backends,
+     * health, seal and unseal, and stored certificates.
+     */
+    readonly xkms: XKMSClient;
+    /**
+     * Cluster node membership: list nodes, add, remove and replace them.
+     * Paths: /api/v1/cluster/nodes/*. Distinct from `cluster` (status).
+     */
+    readonly clusterNodes: ClusterNodesClient;
+    /**
+     * Generic entity operations: list, create, put, get and delete entities
+     * of any registered type (/api/v1/entities/*).
+     */
+    readonly entities: EntitiesClient;
+    /**
+     * KMS key administration: metadata, access policy and rotation policy of
+     * named keys. Paths: /api/v1/kms/keys/{name}/{metadata,policy,rotation-policy}.
+     */
+    readonly kmsAdmin: KMSAdminClient;
+    /**
+     * objectStorageAdmin manages object storage backends and reports storage
+     * stats, runs garbage collection and repairs objects. Paths:
+     * /api/v1/admin/object-backends/*, /api/v1/admin/storage/*,
+     * /api/v1/admin/objects/repair. Replies keep the Go field names.
+     */
+    readonly objectStorageAdmin: ObjectStorageAdminClient;
+    /**
+     * Parameter store client: read, write, list, tag search and batch
+     * operations on hierarchical parameters. Paths: /api/v1/parameters/*.
+     */
+    readonly parameters: ParametersClient;
+    /**
+     * Vector admin: cluster-wide stats, namespace compaction and JSON Lines
+     * export/import. Paths: /api/v1/vector/admin/*.
+     */
+    readonly vectorAdmin: VectorAdminClient;
+    /**
+     * xkmsFido2 registers and authenticates FIDO2 (WebAuthn) passkeys:
+     * begin/finish registration, begin adding a credential, and
+     * begin/finish authentication. Paths: /api/v1/xkms/fido2/*.
+     */
+    readonly xkmsFido2: XKMSFIDO2Client;
+    /**
+     * registry registers service instances under TTL leases, renews and
+     * revokes the leases, and resolves a service's live instances.
+     * Paths: /api/v1/registry/*.
+     */
+    readonly registry: RegistryClient;
+    /**
+     * cache reads the server's L1 cache statistics and configuration, clears
+     * the cache and updates its configuration. Paths: /api/v1/cache/*.
+     */
+    readonly cache: CacheClient;
     /**
      * dynamicSecrets manages credential-generation roles, on-demand
      * short-lived credential minting, and lease renewal/revocation.

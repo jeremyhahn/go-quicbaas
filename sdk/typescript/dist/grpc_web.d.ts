@@ -1,5 +1,6 @@
 import type { AuthClient, BarrierClient, CeremonyClient, Client, ConnectionClient, OrchestratorClient } from './interfaces.js';
 import type { AccountsClient } from './accounts.js';
+import type { PromptsClient } from './prompts.js';
 import type { ProjectsClient } from './projects.js';
 import type { SdlcClient } from './sdlc.js';
 import type { BarrierGenerateRecoveryKeysRequest, BarrierGenerateRootTokenRequest, BarrierEnableEncryptionRequest, BarrierEnableEncryptionResponse, BarrierHasRecoveryKeysResponse, BarrierInitRequest, BarrierRecoverWithKeysRequest, BarrierRecoveryKeysResponse, BarrierRekeyRequest, BarrierRekeyResponse, BarrierRootTokenResponse, BarrierShamirInitRequest, BarrierShamirInitResponse, BarrierStatusResponse, BarrierUnsealRequest, BarrierSealRequest, BarrierUnsealShareRequest, BarrierUnsealShareResponse, BarrierUnsealSharesRequest, CeremonyClaimCertBeginRequest, CeremonyClaimCertBeginResponse, CeremonyClaimCertCompleteRequest, CeremonyClaimCertCompleteResponse, CeremonyClaimShareBeginRequest, CeremonyClaimShareBeginResponse, CeremonyClaimShareCompleteRequest, CeremonyClaimShareCompleteResponse, CeremonyEnrollExternalOfficerRequest, CeremonyEnrollExternalOfficerResponse, CeremonyInitializeRequest, CeremonyInitializeResponse, CeremonySignCSRRequest, CeremonySignCSRResponse, CeremonyStatusResponse, ClientConfig } from './types.js';
@@ -48,6 +49,7 @@ export declare class GrpcWebClient implements Client {
     readonly projects: ProjectsClient;
     readonly sdlc: SdlcClient;
     readonly accounts: AccountsClient;
+    readonly prompts: PromptsClient;
     readonly agents: any;
     readonly iam: any;
     readonly kms: any;
@@ -56,7 +58,20 @@ export declare class GrpcWebClient implements Client {
     readonly trust: any;
     readonly crypto: any;
     readonly dek: any;
+    readonly entities: any;
     readonly attestation: any;
+    readonly xkmsKeys: any;
+    readonly piv: any;
+    readonly xkms: any;
+    readonly backups: any;
+    readonly clusterNodes: any;
+    readonly kmsAdmin: any;
+    readonly objectStorageAdmin: any;
+    readonly parameters: any;
+    readonly vectorAdmin: any;
+    readonly xkmsFido2: any;
+    readonly registry: any;
+    readonly cache: any;
     readonly dynamicSecrets: any;
     readonly barrier: BarrierClient;
     readonly tenantBarrier: any;

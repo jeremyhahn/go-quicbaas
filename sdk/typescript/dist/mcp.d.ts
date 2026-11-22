@@ -1,6 +1,7 @@
 import type { AuthClient, BarrierClient, CeremonyClient, Client, ConnectionClient, OrchestratorClient } from './interfaces.js';
 import type { BarrierGenerateRecoveryKeysRequest, BarrierGenerateRootTokenRequest, BarrierEnableEncryptionRequest, BarrierEnableEncryptionResponse, BarrierHasRecoveryKeysResponse, BarrierInitRequest, BarrierRecoverWithKeysRequest, BarrierRecoveryKeysResponse, BarrierRekeyRequest, BarrierRekeyResponse, BarrierRootTokenResponse, BarrierShamirInitRequest, BarrierShamirInitResponse, BarrierStatusResponse, BarrierUnsealRequest, BarrierSealRequest, BarrierUnsealShareRequest, BarrierUnsealShareResponse, BarrierUnsealSharesRequest, CeremonyClaimCertBeginRequest, CeremonyClaimCertBeginResponse, CeremonyClaimCertCompleteRequest, CeremonyClaimCertCompleteResponse, CeremonyClaimShareBeginRequest, CeremonyClaimShareBeginResponse, CeremonyClaimShareCompleteRequest, CeremonyClaimShareCompleteResponse, CeremonyEnrollExternalOfficerRequest, CeremonyEnrollExternalOfficerResponse, CeremonyInitializeRequest, CeremonyInitializeResponse, CeremonySignCSRRequest, CeremonySignCSRResponse, CeremonyStatusResponse, ClientConfig } from './types.js';
 import type { Account, AccountsClient, CreateAccountRequest, CreateAccountResponse, DeleteAccountResponse, GetAccountResponse, GetAccountUsageResponse, ListAccountsRequest, ListAccountsResponse, RevokeAccountRequest, RevokeAccountResponse, RotateAccountCredentialRequest, RotateAccountCredentialResponse, SetDefaultAccountResponse, UpdateAccountRequest, UpdateAccountResponse } from './accounts.js';
+import type { EffectivePrompt, GetPromptRequest, ListPromptsRequest, ListPromptsResponse, PromptAddress, PromptDiff, PromptHistory, PromptRecord, PromptsClient, PutPromptRequest, ResetPromptRequest, RollbackPromptRequest } from './prompts.js';
 import type { CreateProjectRequest, CreateProjectResponse, DeleteProjectResponse, GetProjectResponse, GrantFleetNodeRoleRequest, GrantFleetNodeRoleResponse, ListProjectsResponse, Project, ProjectsClient, RevokeFleetNodeRoleRequest, RevokeFleetNodeRoleResponse, UpdateProjectRequest, UpdateProjectResponse } from './projects.js';
 import type { SdlcClient, ProjectBinding, Delivery, OnboardingReport, ConformanceReport, OpenWork, ReviewerSelection, FileIssueRequest, ForgeIssue, CollaboratorsResponse, AdoptIssueRequest, Adoption } from './sdlc.js';
 import { McpSession } from './mcp_rpc.js';
@@ -85,6 +86,18 @@ export declare class McpAccountsClient implements AccountsClient {
     setDefaultAccount(tenantId: string, accountId: string): Promise<SetDefaultAccountResponse>;
     getAccountUsage(tenantId: string, accountId: string): Promise<GetAccountUsageResponse>;
 }
+export declare class McpPromptsClient implements PromptsClient {
+    private readonly session;
+    constructor(session: McpSession);
+    listPrompts(req: ListPromptsRequest): Promise<ListPromptsResponse>;
+    getPrompt(req: GetPromptRequest): Promise<PromptRecord>;
+    getEffectivePrompt(addr: PromptAddress): Promise<EffectivePrompt>;
+    diffPrompt(addr: PromptAddress): Promise<PromptDiff>;
+    getPromptHistory(addr: PromptAddress): Promise<PromptHistory>;
+    putPrompt(req: PutPromptRequest): Promise<PromptRecord>;
+    rollbackPrompt(req: RollbackPromptRequest): Promise<PromptRecord>;
+    resetPrompt(req: ResetPromptRequest): Promise<PromptRecord>;
+}
 export declare class McpClient implements Client {
     readonly connection: ConnectionClient;
     readonly orchestrator: OrchestratorClient;
@@ -100,6 +113,7 @@ export declare class McpClient implements Client {
     readonly projects: ProjectsClient;
     readonly sdlc: SdlcClient;
     readonly accounts: AccountsClient;
+    readonly prompts: PromptsClient;
     readonly agents: any;
     readonly iam: any;
     readonly kms: any;
@@ -108,7 +122,20 @@ export declare class McpClient implements Client {
     readonly trust: any;
     readonly crypto: any;
     readonly dek: any;
+    readonly entities: any;
     readonly attestation: any;
+    readonly xkmsKeys: any;
+    readonly piv: any;
+    readonly xkms: any;
+    readonly backups: any;
+    readonly clusterNodes: any;
+    readonly kmsAdmin: any;
+    readonly objectStorageAdmin: any;
+    readonly parameters: any;
+    readonly vectorAdmin: any;
+    readonly xkmsFido2: any;
+    readonly registry: any;
+    readonly cache: any;
     readonly dynamicSecrets: any;
     readonly barrier: BarrierClient;
     readonly tenantBarrier: any;

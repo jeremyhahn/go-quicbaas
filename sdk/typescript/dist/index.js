@@ -14,6 +14,7 @@
 export { createClient, getClient, isDesktop, isWailsRuntime, createBarrierClient, createCeremonyClient, createBootstrapClient, } from './factory.js';
 export { formatAgentRef, parseAgentRef } from './agents.js';
 export { parseJSONPreservingLargeIntegers, quoteUnrepresentableIntegers, } from './json.js';
+export { RestClusterNodesClient } from './rest.js';
 // SandboxMode const object (not a type — must be a named export, not type-only).
 export { SandboxMode } from './types.js';
 // SPEND_UNATTRIBUTED is a value, not a type: a caller drilling into a spend
@@ -35,7 +36,7 @@ export { RestBarrierClient, RestTenantBarrierClient, RestCeremonyClient, RestBoo
 export { RestCAClient, RestTrustClient, RestCryptoClient } from './rest.js';
 // Stub transport error types — exported so callers can catch them explicitly.
 export { GrpcWebNotImplementedError } from './grpc_web.js';
-export { McpNotImplementedError, McpAccountsClient, McpProjectsClient, McpSdlcClient } from './mcp.js';
+export { McpNotImplementedError, McpAccountsClient, McpProjectsClient, McpPromptsClient, McpSdlcClient } from './mcp.js';
 export { McpSession } from './mcp_rpc.js';
 export { QuicNotImplementedError } from './quic.js';
 //# sourceMappingURL=index.js.map

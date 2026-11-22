@@ -286,6 +286,26 @@ export type {
   SpendHeadroom,
 } from './accounts.js';
 export type {
+  PromptsClient,
+  PromptAddress,
+  ListPromptsRequest,
+  GetPromptRequest,
+  PutPromptRequest,
+  RollbackPromptRequest,
+  ResetPromptRequest,
+  PromptVersionRef,
+  PromptRecord,
+  PromptListEntry,
+  ListPromptsResponse,
+  PromptLayer,
+  EffectivePrompt,
+  PromptDiffOp,
+  PromptDiffLine,
+  PromptDiff,
+  PromptRevisionSummary,
+  PromptHistory,
+} from './prompts.js';
+export type {
   AgentsClient,
   Agent,
   AgentRole,
@@ -406,25 +426,6 @@ export type {
   PutReferenceValuesRequest,
   ReferenceValues,
 } from './attestation.js';
-export type {
-  PromptsClient,
-  PromptScope,
-  PromptAddress,
-  PromptVersionRef,
-  PromptListEntry,
-  PromptList,
-  PromptView,
-  PromptLayer,
-  EffectivePrompt,
-  PromptDiffLine,
-  PromptDiff,
-  PromptRevisionSummary,
-  PromptHistory,
-  PutPromptRequest,
-  RollbackPromptRequest,
-  GetPromptOptions,
-  ResetPromptOptions,
-} from './prompts.js';
 export type {
   XKMSKeysClient,
   XKMSKeyInfo,
@@ -719,6 +720,6 @@ export { RestCAClient, RestTrustClient, RestCryptoClient } from './rest.js';
 
 // Stub transport error types — exported so callers can catch them explicitly.
 export { GrpcWebNotImplementedError } from './grpc_web.js';
-export { McpNotImplementedError, McpAccountsClient, McpProjectsClient, McpSdlcClient } from './mcp.js';
+export { McpNotImplementedError, McpAccountsClient, McpProjectsClient, McpPromptsClient, McpSdlcClient } from './mcp.js';
 export { McpSession } from './mcp_rpc.js';
 export { QuicNotImplementedError } from './quic.js';

@@ -24,14 +24,16 @@ export interface WorkItem {
     title: string;
     description: string;
     priority: number;
-    dependencies: string[];
-    backend: string;
-    required_capabilities: string[];
-    required_role: string;
-    secret_refs: string[];
-    max_retries: number;
-    parallelizable: boolean;
-    fallback_backend: string;
+    dependencies?: string[];
+    backend?: string;
+    required_capabilities?: string[];
+    required_role?: string;
+    secret_refs?: string[];
+    max_retries?: number;
+    parallelizable?: boolean;
+    fallback_backend?: string;
+    host_affinity?: string;
+    host_affinity_strict?: boolean;
 }
 export interface JobConfig {
     tenant_id: string;
@@ -1038,10 +1040,15 @@ export interface CreateTaskResponse {
 }
 export interface DecomposeTaskRequest {
     tenant_id: string;
-    task_id: string;
+    task: string;
+    backend?: string;
+    model?: string;
+    project_ids?: string[];
+    use_rag?: boolean;
 }
 export interface DecomposeTaskResponse {
-    tasks: Task[];
+    work_items: WorkItem[];
+    timestamp: number;
 }
 export interface ClaimTaskRequest {
     tenant_id: string;
@@ -1283,6 +1290,26 @@ export interface VerifyAuthorizedRequest {
 export interface VerifyAuthorizedResponse {
     /** The matching authorized entry. */
     entry: SSHAuthorizedEntry;
+}
+export interface AddAuthorizedKeyRequest {
+    /** Scope that owns the entry. */
+    scope: SSHScope;
+    /** Owner within the scope. */
+    owner: string;
+    /** Entry name, unique within scope/owner. */
+    name: string;
+    /** The authorized_keys line (public key). */
+    line: string;
+    /** Optional authorized_keys options (e.g. "restrict"). */
+    options?: string[];
+    /** Optional comment. */
+    comment?: string;
+}
+export interface ListAuthorizedKeysRequest {
+    /** Restrict the list to this scope. */
+    scope?: SSHScope;
+    /** Restrict the list to this owner. */
+    owner?: string;
 }
 export interface DeployFleetNodeSpec {
     host: string;
@@ -1927,6 +1954,83 @@ export interface ClusterStatusResponse {
     total_nodes?: number;
     shards?: ClusterShard[];
     healthy: boolean;
+    timestamp: string;
+}
+export interface ClusterNodeInfo {
+    node_id: number;
+    address: string;
+    raft_address: string;
+    is_leader: boolean;
+    health_status: string;
+    version: string;
+    uptime_seconds: number;
+}
+export interface ClusterLeaderResponse {
+    leader: ClusterNodeInfo;
+    timestamp: string;
+}
+export interface ShardLeaderResponse {
+    shard_id: number;
+    leader_id: number;
+    leader_address?: string;
+    term?: number;
+    valid: boolean;
+}
+export interface RebalanceRequest {
+    strategy?: string;
+    target_shard_count?: number;
+}
+export interface RebalanceResponse {
+    operation_id: string;
+    started: boolean;
+    status: string;
+    timestamp: string;
+}
+export interface RebalanceStatusResponse {
+    operation_id?: string;
+    status: string;
+    shards_moved?: number;
+    total_shards?: number;
+    percent_complete: number;
+    elapsed_time: number;
+    timestamp: string;
+}
+export interface RebalancePlanResponse {
+    current_shards: number;
+    target_shards: number;
+    strategy: string;
+    estimated_time: number;
+    timestamp: string;
+}
+export interface MigrationRequest {
+    source_shard_id: number;
+    target_shard_id: number;
+    entity_types?: string[];
+}
+export interface MigrationResponse {
+    operation_id: string;
+    status: string;
+    source_shard_id: number;
+    target_shard_id: number;
+    estimated_time: number;
+    timestamp: string;
+}
+export interface MigrationStatusResponse {
+    operation_id: string;
+    status: string;
+    keys_processed: number;
+    bytes_processed: number;
+    estimated_total?: number;
+    percent_complete: number;
+    elapsed_time: number;
+    estimated_remaining?: number;
+    current_rate?: number;
+    timestamp: string;
+}
+export interface CancelMigrationResponse {
+    operation_id: string;
+    cancelled: boolean;
+    message: string;
     timestamp: string;
 }
 /** @deprecated Use BarrierStatusResponse. */

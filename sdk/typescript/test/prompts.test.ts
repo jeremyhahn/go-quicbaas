@@ -1,31 +1,22 @@
-// Copyright (c) 2026 Jeremy Hahn
-// Copyright (c) 2026 Automate The Things, LLC
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-quicbaas.
-//
-// Tests for RestPromptsClient (client.prompts): each method's URL, HTTP
-// method, query and body against /api/v1/prompts/*.
+// The prompts family (#812): the layered prompt library over REST
+// (/api/v1/prompts/..., pkg/api/rest/routes.go) and MCP (the prompt_* tools,
+// pkg/api/mcp/prompt_tools.go). Each verb must reach the route or tool the
+// server serves, with the scope as query (REST) or flat arguments (MCP).
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { RestClient } from '../src/rest';
+import { McpClient } from '../src/mcp';
+import { QuicBaaSError } from '../src/errors';
+import { jsonReply, scriptServer, toolText, type RpcMessage } from './mcp_server';
 
 const originalFetch = globalThis.fetch;
 let fetchMock: ReturnType<typeof vi.fn>;
 
-function jsonResponse(status: number, body: unknown) {
-  const text = JSON.stringify(body);
-  return {
-    ok: status >= 200 && status < 300,
-    status,
-    statusText: status === 409 ? 'Conflict' : 'OK',
-    headers: new Headers({ 'content-type': 'application/json' }),
-    json: async () => JSON.parse(text),
-    text: async () => text,
-  };
-}
-
 beforeEach(() => {
-  fetchMock = vi.fn(async () => jsonResponse(200, { set: 'agents', name: 'x' }));
+  fetchMock = vi.fn();
   globalThis.fetch = fetchMock as unknown as typeof fetch;
 });
 
@@ -33,99 +24,118 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
 });
 
-function lastCall(): { url: string; method: string; body: unknown } {
-  const [url, init] = fetchMock.mock.calls[fetchMock.mock.calls.length - 1] as [string, RequestInit | undefined];
-  return {
-    url: String(url),
-    method: (init?.method ?? 'GET').toUpperCase(),
-    body: init?.body === undefined ? undefined : JSON.parse(String(init.body)),
-  };
+const record = { tenant_id: 'tenant-a', scope: 'tenant', set: 'sdlc', name: 'plan', version: 3 };
+
+function restReply(): void {
+  fetchMock.mockImplementation(async () => new Response(JSON.stringify(record), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  }));
 }
 
-const B = 'http://localhost/api/v1/prompts';
+function restCalls(): Array<{ url: string; method: string; body: unknown }> {
+  return fetchMock.mock.calls.map((call) => {
+    const init = (call[1] ?? {}) as RequestInit;
+    return {
+      url: String(call[0]),
+      method: init.method ?? 'GET',
+      body: init.body ? JSON.parse(init.body as string) : undefined,
+    };
+  });
+}
 
-describe('RestPromptsClient', () => {
-  const client = () => new RestClient('http://localhost');
+describe('RestClient.prompts — the /api/v1/prompts routes', () => {
+  it('maps each verb to its route, method, query and body', async () => {
+    restReply();
+    const p = new RestClient('http://localhost:8080').prompts;
+    const addr = { tenant_id: 'tenant-a', scope: 'project', project_id: 'proj-1', set: 'sdlc', name: 'plan' };
 
-  it('listPrompts GETs the set with no query when no option is set', async () => {
-    await client().prompts.listPrompts('agents');
-    const c = lastCall();
-    expect(c.url).toBe(`${B}/agents`);
-    expect(c.method).toBe('GET');
-    expect(c.body).toBeUndefined();
+    const got = await p.getPrompt({ ...addr, version: 2 });
+    await p.listPrompts({ set: 'sdlc', scope: 'tenant' });
+    await p.getEffectivePrompt(addr);
+    await p.diffPrompt(addr);
+    await p.getPromptHistory(addr);
+    await p.putPrompt({ ...addr, content: 'body', note: 'edit', expected_version: 3 });
+    await p.rollbackPrompt({ ...addr, to_version: 1, expected_version: 4 });
+    await p.resetPrompt({ ...addr, note: 'back', expected_version: 5 });
+
+    expect(got.version).toBe(3);
+    const q = 'tenant_id=tenant-a&scope=project&project_id=proj-1';
+    const base = 'http://localhost:8080/api/v1/prompts/sdlc';
+    expect(restCalls()).toEqual([
+      { url: `${base}/plan?${q}&version=2`, method: 'GET', body: undefined },
+      { url: `${base}?scope=tenant`, method: 'GET', body: undefined },
+      { url: `${base}/plan/effective?${q}`, method: 'GET', body: undefined },
+      { url: `${base}/plan/diff?${q}`, method: 'GET', body: undefined },
+      { url: `${base}/plan/history?${q}`, method: 'GET', body: undefined },
+      { url: `${base}/plan?${q}`, method: 'PUT', body: { content: 'body', note: 'edit', expected_version: 3 } },
+      { url: `${base}/plan/rollback?${q}`, method: 'POST', body: { to_version: 1, note: '', expected_version: 4 } },
+      { url: `${base}/plan?${q}&expected_version=5&note=back`, method: 'DELETE', body: undefined },
+    ]);
   });
 
-  it('listPrompts carries scope and project_id', async () => {
-    await client().prompts.listPrompts('agents', { scope: 'project', project_id: 'p1' });
-    expect(lastCall().url).toBe(`${B}/agents?scope=project&project_id=p1`);
+  it('refuses a one-prompt verb without a name before any request', async () => {
+    restReply();
+    const p = new RestClient('http://localhost:8080').prompts;
+    const err = await p.getEffectivePrompt({ set: 'sdlc' }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(QuicBaaSError);
+    expect((err as Error).message).toBe('prompts.getEffectivePrompt: name is required');
+    expect(fetchMock).not.toHaveBeenCalled();
   });
+});
 
-  it('getPrompt encodes a name containing a slash and carries version', async () => {
-    await client().prompts.getPrompt('agents', 'a/b', { tenant_id: 't1', version: 3 });
-    const c = lastCall();
-    expect(c.url).toBe(`${B}/agents/a%2Fb?tenant_id=t1&version=3`);
-    expect(c.method).toBe('GET');
+describe('McpClient.prompts — the prompt_* tools', () => {
+  it('maps each verb to its tool and passes the request flat', async () => {
+    const seen: string[] = [];
+    scriptServer(fetchMock, (msg) => {
+      seen.push(msg.params?.name as string);
+      return jsonReply(toolText(msg.id as number, record));
+    });
+    const p = new McpClient('http://node.example:8081/mcp').prompts;
+    const addr = { tenant_id: 'tenant-a', set: 'sdlc', name: 'plan' };
+
+    const got = await p.getPrompt({ ...addr, version: 2 });
+    await p.listPrompts({ set: 'sdlc' });
+    await p.getEffectivePrompt(addr);
+    await p.diffPrompt(addr);
+    await p.getPromptHistory(addr);
+    await p.putPrompt({ ...addr, content: 'body', note: 'edit', expected_version: 3 });
+    await p.rollbackPrompt({ ...addr, to_version: 1, expected_version: 4 });
+    await p.resetPrompt({ ...addr, expected_version: 5 });
+
+    expect(got.version).toBe(3);
+    expect(seen).toEqual([
+      'prompt_get', 'prompt_list', 'prompt_effective', 'prompt_diff',
+      'prompt_history', 'prompt_put', 'prompt_rollback', 'prompt_reset',
+    ]);
+    const args = fetchMock.mock.calls
+      .map((call) => JSON.parse((call[1] as RequestInit).body as string) as RpcMessage)
+      .filter((m) => m.method === 'tools/call')
+      .map((m) => m.params?.arguments);
+    expect(args[0]).toEqual({ ...addr, version: 2 });
+    expect(args[5]).toEqual({ ...addr, content: 'body', note: 'edit', expected_version: 3 });
+    expect(args[6]).toEqual({ ...addr, to_version: 1, expected_version: 4 });
   });
+});
 
-  it('getPrompt omits the query when no option is set', async () => {
-    await client().prompts.getPrompt('agents', 'planner');
-    expect(lastCall().url).toBe(`${B}/agents/planner`);
-  });
+describe('prompt history order', () => {
+  it('returns revisions oldest first, as the server sends them', async () => {
+    const revision = (version: number) => ({
+      version,
+      content_hash: `sha256:${version}`,
+      author: 'user-1',
+      note: `v${version}`,
+      follow_parent: false,
+      created_at: `2026-11-0${version}T00:00:00Z`,
+    });
+    const history = { set: 'sdlc', name: 'plan', scope: 'tenant', revisions: [revision(1), revision(2), revision(3)] };
+    fetchMock.mockImplementation(async () => new Response(JSON.stringify(history), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }));
 
-  it('putPrompt PUTs the body', async () => {
-    await client().prompts.putPrompt(
-      'agents',
-      'a/b',
-      { content: 'hi', note: 'n', expected_version: 2 },
-      { scope: 'tenant' },
-    );
-    const c = lastCall();
-    expect(c.url).toBe(`${B}/agents/a%2Fb?scope=tenant`);
-    expect(c.method).toBe('PUT');
-    expect(c.body).toEqual({ content: 'hi', note: 'n', expected_version: 2 });
-  });
+    const got = await new RestClient('http://localhost:8080').prompts.getPromptHistory({ set: 'sdlc', name: 'plan' });
 
-  it('resetPrompt DELETEs with expected_version and note in the query', async () => {
-    await client().prompts.resetPrompt('agents', 'a/b', { scope: 'project', project_id: 'p1', expected_version: 4, note: 'back' });
-    const c = lastCall();
-    expect(c.url).toBe(`${B}/agents/a%2Fb?scope=project&project_id=p1&expected_version=4&note=back`);
-    expect(c.method).toBe('DELETE');
-    expect(c.body).toBeUndefined();
-  });
-
-  it('getEffectivePrompt GETs /effective', async () => {
-    await client().prompts.getEffectivePrompt('agents', 'a/b');
-    const c = lastCall();
-    expect(c.url).toBe(`${B}/agents/a%2Fb/effective`);
-    expect(c.method).toBe('GET');
-  });
-
-  it('diffPrompt GETs /diff', async () => {
-    await client().prompts.diffPrompt('agents', 'planner', { scope: 'system' });
-    const c = lastCall();
-    expect(c.url).toBe(`${B}/agents/planner/diff?scope=system`);
-    expect(c.method).toBe('GET');
-  });
-
-  it('getPromptHistory GETs /history', async () => {
-    await client().prompts.getPromptHistory('agents', 'a/b');
-    const c = lastCall();
-    expect(c.url).toBe(`${B}/agents/a%2Fb/history`);
-    expect(c.method).toBe('GET');
-  });
-
-  it('rollbackPrompt POSTs the body to /rollback', async () => {
-    await client().prompts.rollbackPrompt('agents', 'a/b', { to_version: 1, note: 'r', expected_version: 5 });
-    const c = lastCall();
-    expect(c.url).toBe(`${B}/agents/a%2Fb/rollback`);
-    expect(c.method).toBe('POST');
-    expect(c.body).toEqual({ to_version: 1, note: 'r', expected_version: 5 });
-  });
-
-  it('a 409 rejects', async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse(409, { error: 'version conflict' }));
-    await expect(
-      client().prompts.putPrompt('agents', 'planner', { content: 'x', expected_version: 1 }),
-    ).rejects.toThrow();
+    expect(got.revisions.map((r) => r.version)).toEqual([1, 2, 3]);
   });
 });
