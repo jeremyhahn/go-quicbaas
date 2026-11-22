@@ -158,8 +158,12 @@ func New(cfg *transport.Config, opts ...Option) (*Transport, error) {
 	// host other than the endpoint's. Requests without a bound PIN pass
 	// through unchanged. A barrier or ceremony tool call whose so_pin comes
 	// from the request rather than from WithSOPIN is bound for that call by
-	// callBarrier, so it meets the same guard on every hop.
-	c.Transport = qrdbtransport.SOPINRoundTripper(base, "mcp", qrdbtransport.ConfiguredHost(t.endpoint))
+	// callBarrier, so it meets the same guard on every hop. A call that
+	// carries only a user PIN is marked by callBarrier and refused by the
+	// inner pinHopRoundTripper on the same hops, without the PIN ever going
+	// into the SO PIN header.
+	host := qrdbtransport.ConfiguredHost(t.endpoint)
+	c.Transport = qrdbtransport.SOPINRoundTripper(&pinHopRoundTripper{base: base, host: host}, "mcp", host)
 	t.client = c
 
 	// Mark as healthy initially

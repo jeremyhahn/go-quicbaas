@@ -21,9 +21,11 @@ import (
 // pinCounter wraps next and counts the requests whose body carries the SO
 // PIN, and all requests.
 type pinCounter struct {
-	next    http.Handler
-	withPIN atomic.Int32
-	all     atomic.Int32
+	next        http.Handler
+	withPIN     atomic.Int32
+	withUserPIN atomic.Int32
+	soPINHeader atomic.Int32
+	all         atomic.Int32
 }
 
 func (p *pinCounter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -31,6 +33,12 @@ func (p *pinCounter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(r.Body)
 	if bytes.Contains(body, []byte(testSOPIN)) {
 		p.withPIN.Add(1)
+	}
+	if bytes.Contains(body, []byte(testUserPIN)) {
+		p.withUserPIN.Add(1)
+	}
+	if r.Header.Get(qrdbtransport.SOPINHeader) != "" {
+		p.soPINHeader.Add(1)
 	}
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	if p.next == nil {
@@ -305,5 +313,129 @@ func TestSOPINHop_SuppliedClientNotMutated(t *testing.T) {
 	}
 	if tr.client == client || tr.client.Transport == orig {
 		t.Fatal("New did not guard the supplied client on a copy")
+	}
+}
+
+// userPINShamirInit sends a user PIN with no SO PIN, and nothing bound.
+func userPINShamirInit(tr *Transport) error {
+	_, err := tr.BarrierInitializeShamir(context.Background(), &qrdbtransport.BarrierInitializeShamirRequest{
+		UserPin: testUserPIN, Secret: []byte("pw"), Threshold: 2, TotalShares: 2,
+	})
+	return err
+}
+
+// The TestUserPINHop_ tests cover calls that carry only a user PIN. At
+// 886c719d2 these calls were not guarded: they reached the plain server in
+// clear and followed redirects to plaintext and to foreign hosts.
+func TestUserPINHop_PlainEndpointRefused(t *testing.T) {
+	verbs := map[string]func(*Transport) error{
+		"BarrierInitialize": func(tr *Transport) error {
+			return tr.BarrierInitialize(context.Background(), &qrdbtransport.BarrierInitializeRequest{
+				UserPin: testUserPIN, Secret: []byte("pw"),
+			})
+		},
+		"BarrierInitializeShamir": userPINShamirInit,
+		"CeremonyInitialize": func(tr *Transport) error {
+			_, err := tr.CeremonyInitialize(context.Background(), &qrdbtransport.CeremonyInitializeRequest{
+				UserPin: testUserPIN, Threshold: 2,
+			})
+			return err
+		},
+	}
+	for name, call := range verbs {
+		t.Run(name, func(t *testing.T) {
+			counter := &pinCounter{next: mcpHandler(t)}
+			srv := httptest.NewServer(counter)
+			t.Cleanup(srv.Close)
+			tr, err := New(&transport.Config{Address: srv.URL, Timeout: 5 * time.Second})
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			t.Cleanup(func() { _ = tr.Close() })
+
+			err = call(tr)
+			var tlsErr *PINRequiresTLSError
+			if !errors.As(err, &tlsErr) {
+				t.Fatalf("%s over http with a user PIN: err = %v, want *PINRequiresTLSError", name, err)
+			}
+			if n := counter.withUserPIN.Load(); n != 0 {
+				t.Fatalf("plain server received %d requests carrying the user PIN, want 0", n)
+			}
+		})
+	}
+}
+
+func TestUserPINHop_RedirectToPlainRefused(t *testing.T) {
+	plain := &pinCounter{}
+	plainSrv := httptest.NewServer(plain)
+	t.Cleanup(plainSrv.Close)
+
+	tlsSrv := httptest.NewTLSServer(redirectTool(mcpHandler(t), plainSrv.URL))
+	t.Cleanup(tlsSrv.Close)
+	tr, err := New(&transport.Config{Address: tlsSrv.URL, Timeout: 5 * time.Second},
+		WithHTTPClient(tlsSrv.Client()))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = tr.Close() })
+
+	err = userPINShamirInit(tr)
+	var tlsErr *PINRequiresTLSError
+	if !errors.As(err, &tlsErr) {
+		t.Fatalf("redirect to http with a user PIN: err = %v, want *PINRequiresTLSError", err)
+	}
+	if n := plain.all.Load(); n != 0 {
+		t.Fatalf("plain server received %d requests, want 0", n)
+	}
+}
+
+func TestUserPINHop_RedirectToForeignHostRefused(t *testing.T) {
+	foreign := &pinCounter{}
+	foreignSrv := httptest.NewTLSServer(foreign)
+	t.Cleanup(foreignSrv.Close)
+
+	tlsSrv := httptest.NewTLSServer(redirectTool(mcpHandler(t), foreignSrv.URL))
+	t.Cleanup(tlsSrv.Close)
+	tr, err := New(&transport.Config{Address: tlsSrv.URL, Timeout: 5 * time.Second},
+		WithHTTPClient(tlsSrv.Client()))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = tr.Close() })
+
+	err = userPINShamirInit(tr)
+	var hostErr *PINForeignHostError
+	if !errors.As(err, &hostErr) {
+		t.Fatalf("redirect to another host with a user PIN: err = %v, want *PINForeignHostError", err)
+	}
+	if n := foreign.all.Load(); n != 0 {
+		t.Fatalf("foreign server received %d requests, want 0", n)
+	}
+}
+
+func TestUserPINHop_ReachesHTTPSEndpointWithoutSOPINHeader(t *testing.T) {
+	got := map[string]map[string]interface{}{}
+	reply := map[string]interface{}{"threshold": 2, "total_shares": 2, "total": 2, "share_count": 2}
+	srv, _ := newMultiToolServer(t, barrierPINToolNames, recordArgs(got, reply))
+	counter := &pinCounter{next: mcpserver.NewStreamableHTTPServer(srv)}
+	tlsSrv := httptest.NewTLSServer(counter)
+	t.Cleanup(tlsSrv.Close)
+	tr, err := New(&transport.Config{Address: tlsSrv.URL, Timeout: 5 * time.Second},
+		WithHTTPClient(tlsSrv.Client()))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = tr.Close() })
+
+	if err := userPINShamirInit(tr); err != nil {
+		t.Fatalf("BarrierInitializeShamir over https with a user PIN: %v", err)
+	}
+	args := got["qrdb_barrier_shamir_initialize"]
+	assertStringArg(t, "qrdb_barrier_shamir_initialize", args, "user_pin", testUserPIN)
+	if so, _ := args["so_pin"].(string); so != "" {
+		t.Fatalf("qrdb_barrier_shamir_initialize carried so_pin %q, want none", so)
+	}
+	if n := counter.soPINHeader.Load(); n != 0 {
+		t.Fatalf("server received %d requests with the %s header, want 0", n, qrdbtransport.SOPINHeader)
 	}
 }

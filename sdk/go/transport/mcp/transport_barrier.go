@@ -538,13 +538,20 @@ func (t *Transport) BarrierEnableEncryption(ctx context.Context, req *qrdbtransp
 // *qrdbtransport.SOPINRequiresTLSError before anything is sent when the
 // endpoint is not https, and otherwise is bound into the context of the tool
 // call alone, so that every hop of it, redirects included, must be https and
-// name the configured host. Initialization and authentication run on the
-// caller's ctx.
+// name the configured host.
+//
+// A tool call whose arguments carry a user_pin without an so_pin is not
+// covered by that guard. It is refused with *PINRequiresTLSError before
+// anything is sent when the endpoint is not https, and is otherwise marked so
+// that every hop of the tool call, redirects included, must be https and name
+// the configured host (see pinHopRoundTripper). Initialization and
+// authentication run on the caller's ctx.
 func (t *Transport) callBarrier(ctx context.Context, name string, args map[string]interface{}) (interface{}, error) {
 	if t.closed.Load() {
 		return nil, errors.NewConnection("mcp."+name, "transport is closed")
 	}
 	callCtx := ctx
+	guarded := false
 	if pin, _ := args["so_pin"].(string); pin != "" {
 		bound, ok, err := qrdbtransport.SOPINFromContext(ctx)
 		if err != nil {
@@ -554,6 +561,7 @@ func (t *Transport) callBarrier(ctx context.Context, name string, args map[strin
 			// The round tripper already guards a bound PIN, and
 			// ResolveSOPIN has already refused a conflicting one.
 			secure.Wipe(bound)
+			guarded = true
 		} else {
 			if !strings.HasPrefix(t.endpoint, "https://") {
 				return nil, &qrdbtransport.SOPINRequiresTLSError{Transport: "mcp"}
@@ -564,7 +572,18 @@ func (t *Transport) callBarrier(ctx context.Context, name string, args map[strin
 			}
 			defer release()
 			callCtx = pctx
+			guarded = true
 		}
+	}
+	// A user PIN sent without an SO PIN is not covered by the SO PIN
+	// guard, and binding it with WithSOPIN would send it as the SO PIN.
+	// Mark the tool call instead, so pinHopRoundTripper holds every hop
+	// of it to https and the configured host.
+	if userPIN, _ := args["user_pin"].(string); userPIN != "" && !guarded {
+		if !strings.HasPrefix(t.endpoint, "https://") {
+			return nil, &PINRequiresTLSError{}
+		}
+		callCtx = withPINHopGuard(callCtx)
 	}
 	if err := t.ensureInitialized(ctx); err != nil {
 		return nil, err
