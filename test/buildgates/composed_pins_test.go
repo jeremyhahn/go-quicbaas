@@ -15,6 +15,8 @@ package buildgates
 
 import (
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
 	"golang.org/x/mod/modfile"
@@ -22,14 +24,42 @@ import (
 	"golang.org/x/mod/semver"
 )
 
-// composedLibraries are the libraries go-quicbaas composes (SPEC row
-// composition, #1648). Each must be pinned to a released tag: a
-// pseudo-version pins an untagged commit, which no release of the library
-// vouches for.
+// composedLibraries are every go-qrdb and go-xkms module go-quicbaas
+// requires (SPEC row composition, #1648). Each must be pinned to a released
+// tag: a pseudo-version pins an untagged commit, which no release of the
+// library vouches for.
 var composedLibraries = []string{
 	"github.com/jeremyhahn/go-qrdb",
 	"github.com/jeremyhahn/go-qrdb/sdk/go",
 	"github.com/jeremyhahn/go-xkms",
+	"github.com/jeremyhahn/go-xkms/sdk/go",
+	"github.com/jeremyhahn/go-xkms/xkey",
+}
+
+// composedPinFiles are the go.mod files whose composed-library pins are
+// gated, each with the composed modules it requires. sdk/go is its own
+// module, with its own pins, and consumers build against it.
+var composedPinFiles = []struct {
+	path string
+	libs []string
+}{
+	{"go.mod", composedLibraries},
+	{"sdk/go/go.mod", []string{
+		"github.com/jeremyhahn/go-qrdb",
+		"github.com/jeremyhahn/go-qrdb/sdk/go",
+		"github.com/jeremyhahn/go-xkms",
+		"github.com/jeremyhahn/go-xkms/sdk/go",
+	}},
+}
+
+// isComposedModule reports whether path is a go-qrdb or go-xkms module.
+func isComposedModule(path string) bool {
+	for _, root := range []string{"github.com/jeremyhahn/go-qrdb", "github.com/jeremyhahn/go-xkms"} {
+		if path == root || strings.HasPrefix(path, root+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // pinProblem reports why version is not an acceptable pin for a composed
@@ -80,10 +110,30 @@ func pinsOf(t *testing.T, gomod []byte, libs []string) map[string]string {
 }
 
 func TestComposedLibrariesArePinnedToReleasedTags(t *testing.T) {
-	gomod := readFile(t, filepath.Join(repoRoot, "go.mod"))
-	for lib, version := range pinsOf(t, []byte(gomod), composedLibraries) {
-		if problem := pinProblem(version); problem != "" {
-			t.Errorf("go.mod pins %s at %q: %s", lib, version, problem)
+	for _, f := range composedPinFiles {
+		gomod := readFile(t, filepath.Join(repoRoot, filepath.FromSlash(f.path)))
+		for lib, version := range pinsOf(t, []byte(gomod), f.libs) {
+			if problem := pinProblem(version); problem != "" {
+				t.Errorf("%s pins %s at %q: %s", f.path, lib, version, problem)
+			}
+		}
+	}
+}
+
+// TestComposedPinFilesNameEveryRequiredComposedModule keeps composedPinFiles
+// complete: a go-qrdb or go-xkms module a gated go.mod requires but its entry
+// does not list would slip past the pin gate.
+func TestComposedPinFilesNameEveryRequiredComposedModule(t *testing.T) {
+	for _, f := range composedPinFiles {
+		gomod := readFile(t, filepath.Join(repoRoot, filepath.FromSlash(f.path)))
+		parsed, err := modfile.Parse(f.path, []byte(gomod), nil)
+		if err != nil {
+			t.Fatalf("parse %s: %v", f.path, err)
+		}
+		for _, r := range parsed.Require {
+			if isComposedModule(r.Mod.Path) && !slices.Contains(f.libs, r.Mod.Path) {
+				t.Errorf("%s requires %s, which the pin gate does not list for it", f.path, r.Mod.Path)
+			}
 		}
 	}
 }
