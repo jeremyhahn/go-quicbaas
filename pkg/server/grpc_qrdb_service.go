@@ -16,6 +16,7 @@ package server
 import (
 	ggrpc "google.golang.org/grpc"
 
+	qrdbgrpc "github.com/jeremyhahn/go-qrdb/pkg/api/grpc"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	grpcapi "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
@@ -46,7 +47,7 @@ import (
 func (s *Server) registerQRDBService(grpcServer *ggrpc.Server) {
 	opts := s.buildQRDBRegisterOptions()
 	qrdbsdk.RegisterGRPCService(grpcServer, nil, nil, opts...)
-	s.logger.Info("Registered qrdb.v1.QRDBService on gRPC server (credential/barrier/ceremony/user/user-auth-factor surface)")
+	s.logger.Info("Registered qrdb.v1.QRDBService on gRPC server (credential/barrier/ceremony/user/user-auth-factor/backup surface)")
 }
 
 // buildQRDBRegisterOptions assembles the qrdbsdk.GRPCRegisterOption slice from
@@ -89,6 +90,9 @@ func (s *Server) buildQRDBRegisterOptions() []qrdbsdk.GRPCRegisterOption {
 		// instead of being captured as nil at registration time.
 		qrdbsdk.WithRegisterUserService(newQRDBUserServicerProxy(s)),
 		qrdbsdk.WithRegisterUserAuthFactorService(newQRDBUserAuthFactorServicerProxy(s)),
+		// The backup proxy resolves the node's own backup service per call, the one the node's TCP
+		// transports already serve, so the Unix socket and sealed-window servers carry the same backup surface.
+		qrdbgrpc.WithRegisterBackupService(newQRDBBackupServicerProxy(s)),
 	)
 
 	return opts

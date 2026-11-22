@@ -66,11 +66,12 @@ var qrdbUserSurfaceMethods = map[string]bool{
 
 // qrdbWiredMethod reports whether a qrdb.v1.QRDBService method belongs to a
 // family whose servicer quicbaasd wires in buildQRDBRegisterOptions (barrier,
-// ceremony, credential, user) or to the shared health/status surface. Every
+// backup, ceremony, credential, user) or to the shared health/status surface. Every
 // other QRDBService method dispatches to codes.Unimplemented server-side and
 // must remain default-denied by the authz gate.
 func qrdbWiredMethod(name string) bool {
 	if strings.HasPrefix(name, "Barrier") ||
+		strings.HasPrefix(name, "Backup") ||
 		strings.HasPrefix(name, "Ceremony") ||
 		strings.HasPrefix(name, "Credential") {
 		return true
@@ -228,6 +229,13 @@ func TestGRPCResourceAndAction_QRDBMapped(t *testing.T) {
 		{"/qrdb.v1.QRDBService/EnableUser", "users", "enable"},
 		// Admin status.
 		{"/qrdb.v1.QRDBService/Status", "admin", "status"},
+		// Backup: the existing backup permissions.
+		{"/qrdb.v1.QRDBService/BackupCreate", "backup", "create"},
+		{"/qrdb.v1.QRDBService/BackupList", "backup", "list"},
+		{"/qrdb.v1.QRDBService/BackupGet", "backup", "read"},
+		{"/qrdb.v1.QRDBService/BackupDelete", "backup", "delete"},
+		{"/qrdb.v1.QRDBService/BackupRestore", "backup", "restore"},
+		{"/qrdb.v1.QRDBService/BackupVerify", "backup", "verify"},
 		// UserAuthFactorService.
 		{"/qrdb.v1.UserAuthFactorService/Add", "user_authfactors", "add"},
 		{"/qrdb.v1.UserAuthFactorService/List", "user_authfactors", "list"},

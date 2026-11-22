@@ -1533,15 +1533,17 @@ func Restore(ctx context.Context, req *RestoreRequest) (*RestoreResponse, error)
 
 | Field | Type | Description |
 |-------|------|-------------|
-| BackupID | string | Backup ID to restore |
-| Source | string | Alternative: source path |
+| BackupID | string | Backup ID to restore (required) |
+| Source | string | Not supported: the service restores only by backup ID, so a non-empty Source is refused with an invalid-input error before any call; restore by BackupID |
 
 **RestoreResponse:**
 
 | Field | Type | Description |
 |-------|------|-------------|
-| Restored | bool | Whether restore succeeded |
-| Duration | time.Duration | Time taken to restore |
+| Restored | bool | True only when the service reports the restore as completed (status "completed") |
+| JobID | string | Restore job ID, as the service reports it |
+| Status | string | Restore job status, as the service reports it; a restore still running returns Restored false and no error |
+| Duration | time.Duration | Always zero: the service reports no restore duration |
 
 ### List
 

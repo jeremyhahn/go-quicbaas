@@ -983,7 +983,7 @@ var grpcMethodPermissions = map[string]methodPermission{
 	// verb identically on a direct qrdb node and through the broker.
 	//
 	// Scope: ONLY the families whose servicers buildQRDBRegisterOptions
-	// actually wires — barrier, ceremony, credential, user, user-auth-factor
+	// actually wires — barrier, backup, ceremony, credential, user, user-auth-factor
 	// — plus Health (public, above) and Status. Every other qrdb.v1 method
 	// (KV, lease, lock, index, timeseries, vector, ...) dispatches to
 	// codes.Unimplemented server-side and stays default-denied here; the
@@ -1072,6 +1072,16 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/qrdb.v1.QRDBService/ListUsers":               {"users", "list"},
 	"/qrdb.v1.QRDBService/EnableUser":              {"users", "enable"},
 	"/qrdb.v1.QRDBService/DisableUser":             {"users", "disable"},
+
+	// ---- qrdb.v1.QRDBService: backup ----
+	// The same permissions the quicbaas.v1 backup RPCs (above) and go-qrdb's
+	// own transports use for these verbs.
+	"/qrdb.v1.QRDBService/BackupCreate":  {"backup", "create"},
+	"/qrdb.v1.QRDBService/BackupList":    {"backup", "list"},
+	"/qrdb.v1.QRDBService/BackupGet":     {"backup", "read"},
+	"/qrdb.v1.QRDBService/BackupDelete":  {"backup", "delete"},
+	"/qrdb.v1.QRDBService/BackupRestore": {"backup", "restore"},
+	"/qrdb.v1.QRDBService/BackupVerify":  {"backup", "verify"},
 
 	// ---- qrdb.v1.UserAuthFactorService (user-login factor surface) ----
 	// Registered as a separate proto service by qrdbsdk.RegisterGRPCService

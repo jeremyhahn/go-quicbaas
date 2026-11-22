@@ -2021,6 +2021,19 @@ func (s *Server) GetQRDBAdminServicer() qrdbsdk.AdminServicer {
 	return svcs.Admin
 }
 
+// GetQRDBBackupServicer returns the embedded qrdb node's backup service, or nil when the node is absent.
+func (s *Server) GetQRDBBackupServicer() qrdbservice.BackupServicer {
+	node := s.getQRDBNode()
+	if node == nil {
+		return nil
+	}
+	svcs := node.Services()
+	if svcs == nil {
+		return nil
+	}
+	return svcs.Backup
+}
+
 // GetQRDBUserServicer returns the qrdb user.UserServicer exposed by the
 // embedded engine node. Composers wire this into the SDK's embedded qrdb
 // transport so user-login factor enrollment can resolve a subject
