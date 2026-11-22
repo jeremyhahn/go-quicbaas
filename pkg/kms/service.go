@@ -15,6 +15,7 @@ package kms
 
 import (
 	"context"
+	"crypto"
 	"crypto/x509"
 	stderrors "errors"
 	"time"
@@ -1131,6 +1132,81 @@ func (s *KMSService) Sign(ctx context.Context, keyID string, digest []byte, algo
 	}
 
 	// Update usage counter
+	if err := s.store.IncrementUsage(keyID); err != nil {
+		if s.logger != nil {
+			s.logger.WithFields(map[string]interface{}{
+				"key_id": keyID,
+				"error":  err.Error(),
+			}).Warn("Failed to increment usage counter")
+		}
+	}
+
+	return signature, nil
+}
+
+// PSSBackend is implemented by backends that can sign with RSA-PSS padding.
+type PSSBackend interface {
+	SignPSS(ctx context.Context, keyID string, digest []byte, hash crypto.Hash, saltLength int) ([]byte, error)
+}
+
+// SignPSS signs a pre-hashed digest with an RSA key using RSA-PSS padding.
+// A saltLength of 0 means the salt length equals the hash length.
+func (s *KMSService) SignPSS(ctx context.Context, keyID string, digest []byte, hash crypto.Hash, saltLength int) ([]byte, error) {
+	if keyID == "" {
+		return nil, &errors.QBError{
+			Code: errors.ErrInvalidInput,
+			Op:   "KMSService.SignPSS",
+			Err:  ErrKeyIDEmpty,
+		}
+	}
+
+	if len(digest) == 0 {
+		return nil, &errors.QBError{
+			Code: errors.ErrInvalidInput,
+			Op:   "KMSService.SignPSS",
+			Err:  ErrDigestEmpty,
+		}
+	}
+
+	if ctx.Err() != nil {
+		return nil, &errors.QBError{
+			Code: errors.ErrTimeout,
+			Op:   "KMSService.SignPSS",
+			Err:  ctx.Err(),
+		}
+	}
+
+	if err := s.validateKeyForOperation(keyID, OpSign); err != nil {
+		return nil, &errors.QBError{
+			Code: errors.ErrInvalidInput,
+			Op:   "KMSService.SignPSS",
+			Err:  err,
+		}
+	}
+
+	backend, err := s.getBackendByKeyID(ctx, keyID)
+	if err != nil {
+		return nil, api.NewBackendRoutingError("KMSService.SignPSS", err)
+	}
+
+	pssBackend, ok := backend.(PSSBackend)
+	if !ok {
+		return nil, &errors.QBError{
+			Code: errors.ErrInvalidInput,
+			Op:   "KMSService.SignPSS",
+			Err:  ErrPSSNotSupported,
+		}
+	}
+
+	signature, err := pssBackend.SignPSS(ctx, keyID, digest, hash, saltLength)
+	if err != nil {
+		return nil, &errors.QBError{
+			Code: errors.ErrInternal,
+			Op:   "KMSService.SignPSS",
+			Err:  err,
+		}
+	}
+
 	if err := s.store.IncrementUsage(keyID); err != nil {
 		if s.logger != nil {
 			s.logger.WithFields(map[string]interface{}{

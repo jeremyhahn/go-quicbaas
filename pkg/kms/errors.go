@@ -71,6 +71,9 @@ var (
 	// ErrDigestEmpty indicates digest is empty.
 	ErrDigestEmpty = errors.New("digest cannot be empty")
 
+	// ErrPSSNotSupported indicates the backend or key cannot produce an RSA-PSS signature.
+	ErrPSSNotSupported = errors.New("RSA-PSS signing is not supported")
+
 	// ErrSignatureEmpty indicates signature is empty.
 	ErrSignatureEmpty = errors.New("signature cannot be empty")
 

@@ -867,6 +867,43 @@ func (kb *XKMSBackend) Sign(ctx context.Context, keyID string, digest []byte, al
 	return sig, nil
 }
 
+// SignPSS signs a pre-hashed digest with an RSA key using RSA-PSS padding.
+// A saltLength of 0 means the salt length equals the hash length. Non-RSA
+// keys are refused with ErrPSSNotSupported.
+func (kb *XKMSBackend) SignPSS(ctx context.Context, keyID string, digest []byte, hash crypto.Hash, saltLength int) ([]byte, error) {
+	if !kb.IsAvailable(ctx) {
+		return nil, ErrBackendNotReady
+	}
+
+	meta, err := kb.GetKeyMetadata(ctx, keyID)
+	if err != nil {
+		return nil, api.NewKeyMetadataRetrievalError("XKMSBackend.SignPSS", err)
+	}
+
+	kid := kb.buildSigningKeyID(keyID, meta.Algorithm)
+
+	signer, err := xkms.SignerByID(ctx, kid)
+	if err != nil {
+		return nil, api.NewSignerRetrievalError("XKMSBackend.SignPSS", err)
+	}
+
+	if _, ok := signer.Public().(*rsa.PublicKey); !ok {
+		return nil, fmt.Errorf("%w: key type %T", ErrPSSNotSupported, signer.Public())
+	}
+
+	salt := saltLength
+	if salt == 0 {
+		salt = rsa.PSSSaltLengthEqualsHash
+	}
+
+	sig, err := signer.Sign(rand.Reader, digest, &rsa.PSSOptions{SaltLength: salt, Hash: hash})
+	if err != nil {
+		return nil, api.NewSigningOperationError("XKMSBackend.SignPSS", err)
+	}
+
+	return sig, nil
+}
+
 // Verify verifies a digital signature.
 // The digest parameter is expected to be a pre-hashed value.
 func (kb *XKMSBackend) Verify(ctx context.Context, keyID string, digest, signature []byte, algorithm string) (bool, error) {
