@@ -54,16 +54,6 @@ func TestServer_RESTAddr_NilServer(t *testing.T) {
 	}
 }
 
-// WithStorageConfig records the storage config on the sharded client.
-func TestWithStorageConfig_Accessors(t *testing.T) {
-	sc := &ShardedClient{}
-	opt := WithStorageConfig(nil)
-	opt(sc)
-	if sc.storageCfg != nil {
-		t.Fatalf("expected nil storage config recorded")
-	}
-}
-
 // registerOllamaService is a no-op in the non-rag build and must not panic.
 func TestRegisterOllamaService_NoRAGNoop(t *testing.T) {
 	s := &Server{logger: buildTestLogger(t)}

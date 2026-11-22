@@ -5705,6 +5705,11 @@ DEVCONTAINER_DOCKER_BUILD = DOCKER_BUILDKIT=1 $(DOCKER) build -f $(DEVCONTAINER_
 # the compose plugin (#2503) builds each service with plain `docker build`,
 # with the target, build args, secret and tag compose.yaml gives it. On both
 # paths the toolchain image is skipped when the daemon already holds its tag.
+# compose hands the build to buildx bake, which refuses to read the
+# GOMODAUTH_ENV secret file outside the build context unless the caller grants
+# it, and compose has no flag for that. BUILDX_BAKE_ENTITLEMENTS_FS=0 turns the
+# check off for this one compose build alone: the file is a build secret,
+# mounted for one RUN step, and never lands in a layer.
 DEVCONTAINER_BUILD = $(if $(strip $(MODULE_ENV_FILE)),,trap '$(GOMODAUTH_CLEAR)' EXIT; \
 	$(MAKE) --no-print-directory stage-gomodauth;) \
 	devcontainer_build() { \
@@ -5718,7 +5723,7 @@ DEVCONTAINER_BUILD = $(if $(strip $(MODULE_ENV_FILE)),,trap '$(GOMODAUTH_CLEAR)'
 		[ -n "$$svcs" ] || return 0; \
 		set -- $$svcs; \
 		if $(DOCKER) compose version >/dev/null 2>&1; then \
-			$(DEVCONTAINER_COMPOSE) build "$$@"; return; \
+			BUILDX_BAKE_ENTITLEMENTS_FS=0 $(DEVCONTAINER_COMPOSE) build "$$@"; return; \
 		fi; \
 		for svc in "$$@"; do \
 			case $$svc in \
