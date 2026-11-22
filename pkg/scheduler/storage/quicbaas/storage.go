@@ -62,11 +62,6 @@ const (
 	// index lives in the reserved namespace, so a tenant cannot enumerate
 	// other tenants' jobs through it.
 	TenantJobIndexPrefix = "__sys:scheduler/tenant-jobs/"
-
-	// TenantJobIndexBackfillKey records that the one-time backfill of
-	// TenantJobIndexPrefix has indexed every tenant job stored before the
-	// index existed (see backfillTenantJobIndex).
-	TenantJobIndexBackfillKey = "__sys:scheduler/meta/tenant_job_index_backfilled"
 )
 
 // Storage implements scheduler.JobStorage using QuicBaaS's KVStore interface.
@@ -632,9 +627,9 @@ func (s *Storage) GetExecutions(ctx context.Context, jobID uint64, tenantID stri
 // guess: an ID reissued after a restart is the key of a live job, and
 // CreateJob would overwrite it.
 //
-// It is also where the store opens, so it completes the one-time tenant-job
-// index backfill (backfillTenantJobIndex) before the first due scan; a
-// backfill that fails stops the engine from starting for the same reason.
+// It is also where the store opens, so it reconciles the tenant-job index
+// (backfillTenantJobIndex) before the first due scan; a reconcile that fails
+// stops the engine from starting for the same reason.
 func (s *Storage) InitializeJobIDCounter(ctx context.Context) error {
 	if err := s.ids.initialize(ctx); err != nil {
 		return err
@@ -642,22 +637,13 @@ func (s *Storage) InitializeJobIDCounter(ctx context.Context) error {
 	return s.backfillTenantJobIndex(ctx)
 }
 
-// backfillTenantJobIndex is the one-time migration that indexes the tenant
-// jobs stored before TenantJobIndexPrefix existed: CreateJob indexes every
-// job it writes, but a job written by an earlier release has no entry, and
-// the due scan reads the index alone. It scans the tenant job records once,
-// writes each one's entry (a Put of the same entry, so a run interrupted
-// before its marker is safely repeated), then writes
-// TenantJobIndexBackfillKey so later opens skip it.
+// backfillTenantJobIndex reconciles the tenant-job index at every store
+// open: CreateJob and UpdateJob index every job they write, but a node still
+// on an earlier release does not, and the due scan reads the index alone.
+// Each open indexes every tenant job record it finds (a Put of the same
+// entry, so repeating it is safe); once every node has restarted on this
+// release, every job an old writer stored is indexed.
 func (s *Storage) backfillTenantJobIndex(ctx context.Context) error {
-	done, err := s.kv.Exists(ctx, TenantJobIndexBackfillKey)
-	if err != nil {
-		return &scheduler.ErrStorageError{Op: "backfillTenantJobIndex.marker", Cause: err}
-	}
-	if done {
-		return nil
-	}
-
 	// Entries are collected first and written after the scan, so no write
 	// runs inside the store's iteration.
 	type tenantJobRef struct {
@@ -665,7 +651,7 @@ func (s *Storage) backfillTenantJobIndex(ctx context.Context) error {
 		tenantID string
 	}
 	var refs []tenantJobRef
-	err = s.kv.Scan(ctx, tenantKeyPrefix, func(key string, _ []byte) error {
+	err := s.kv.Scan(ctx, tenantKeyPrefix, func(key string, _ []byte) error {
 		if tenantID, id, ok := splitTenantJobKey(key); ok {
 			refs = append(refs, tenantJobRef{id: id, tenantID: tenantID})
 		}
@@ -678,9 +664,6 @@ func (s *Storage) backfillTenantJobIndex(ctx context.Context) error {
 		if err := s.kv.Put(ctx, keyForTenantJobIndex(ref.id, ref.tenantID), []byte(ref.tenantID)); err != nil {
 			return &scheduler.ErrStorageError{Op: "backfillTenantJobIndex.index", Cause: err}
 		}
-	}
-	if err := s.kv.Put(ctx, TenantJobIndexBackfillKey, []byte{1}); err != nil {
-		return &scheduler.ErrStorageError{Op: "backfillTenantJobIndex.marker", Cause: err}
 	}
 	return nil
 }

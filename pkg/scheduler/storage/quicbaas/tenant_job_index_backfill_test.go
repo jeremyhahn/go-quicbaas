@@ -36,11 +36,11 @@ func dueJobNames(t *testing.T, storage *Storage, before time.Time) map[string]bo
 	return names
 }
 
-// TestTenantJobIndexBackfill_UnindexedJobsRunAfterOpen is the upgrade
+// TestTenantJobIndexBackfill_EveryOpenIndexesUnindexedJobs is the upgrade
 // fixture: a delayed and a cron tenant job stored before the index existed
-// are due once the storage opens, the backfill is recorded so it runs once,
-// and a second open changes nothing.
-func TestTenantJobIndexBackfill_UnindexedJobsRunAfterOpen(t *testing.T) {
+// are due once the storage opens, and a job an old writer stores without an
+// index entry after that first open is due once the next open runs.
+func TestTenantJobIndexBackfill_EveryOpenIndexesUnindexedJobs(t *testing.T) {
 	ctx := context.Background()
 	kv := newMockKVStore()
 	now := time.Now()
@@ -71,12 +71,8 @@ func TestTenantJobIndexBackfill_UnindexedJobsRunAfterOpen(t *testing.T) {
 	if len(names) != 2 || !names["legacy-delayed"] || !names["legacy-cron"] {
 		t.Fatalf("after open, due jobs = %v, want legacy-delayed and legacy-cron", names)
 	}
-	if done, err := kv.Exists(ctx, TenantJobIndexBackfillKey); err != nil || !done {
-		t.Fatalf("backfill marker present = %v (%v), want true", done, err)
-	}
-
-	// The marker makes the migration one-time: a later open does not rescan,
-	// and it leaves the index it built intact.
+	// A job an old writer stores after the first open is indexed by the next
+	// open: the reconcile runs at every open.
 	late := createTestJob("written-after-backfill", scheduler.OwnerTypeTenant, "acme")
 	late.ID = 43
 	late.NextRun = now.Add(-time.Minute)
@@ -85,13 +81,13 @@ func TestTenantJobIndexBackfill_UnindexedJobsRunAfterOpen(t *testing.T) {
 		t.Fatalf("second open: %v", err)
 	}
 	names = dueJobNames(t, storage, now)
-	if len(names) != 2 || names["written-after-backfill"] {
-		t.Fatalf("after second open, due jobs = %v, want only the backfilled two", names)
+	if len(names) != 3 || !names["legacy-delayed"] || !names["legacy-cron"] || !names["written-after-backfill"] {
+		t.Fatalf("after second open, due jobs = %v, want legacy-delayed, legacy-cron and written-after-backfill", names)
 	}
 }
 
-// TestTenantJobIndexBackfill_IsIdempotent proves a backfill interrupted
-// before its marker is written can run again: indexed and unindexed jobs
+// TestTenantJobIndexBackfill_IsIdempotent proves the reconcile can run at
+// every open: across repeated runs, indexed and unindexed jobs
 // each end with exactly one entry.
 func TestTenantJobIndexBackfill_IsIdempotent(t *testing.T) {
 	ctx := context.Background()
@@ -109,9 +105,6 @@ func TestTenantJobIndexBackfill_IsIdempotent(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		if err := storage.backfillTenantJobIndex(ctx); err != nil {
 			t.Fatalf("backfill %d: %v", i, err)
-		}
-		if err := kv.Delete(ctx, TenantJobIndexBackfillKey); err != nil {
-			t.Fatalf("drop marker: %v", err)
 		}
 	}
 	entries, err := kv.List(ctx, TenantJobIndexPrefix)
