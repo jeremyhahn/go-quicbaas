@@ -237,7 +237,7 @@ func hasAnyBuiltInGrant(p qrdbsdk.Permission) bool {
 func contributeGRPCPermissions(set map[string]struct{}) {
 	seen := map[string]struct{}{}
 	for _, entry := range grpcRegistrations {
-		// The unixOnly legacy xkms wrappers (CertificateService,
+		// The unixOnly legacy xkms wrappers (Crypto, CertificateService,
 		// TrustService, PIVService) contribute nothing: serving them to
 		// Unix-socket peers must not change the derived permission set or
 		// the role grants built from it.

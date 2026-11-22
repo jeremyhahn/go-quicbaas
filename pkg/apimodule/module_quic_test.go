@@ -81,6 +81,7 @@ func TestModule_RegisterQUIC_RegistersTheGRPCSurface(t *testing.T) {
 	}
 	assert.Equal(t, grpcSurface, quicSurface)
 	for _, desc := range []*grpc.ServiceDesc{
+		&pb.Crypto_ServiceDesc,
 		&pb.CertificateService_ServiceDesc,
 		&pb.TrustService_ServiceDesc,
 		&pb.PIVService_ServiceDesc,
