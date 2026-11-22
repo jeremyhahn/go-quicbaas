@@ -91,6 +91,7 @@
 
   // CLUSTER views
   import ClusterDashboard from './cluster/ClusterDashboard.svelte';
+  import ConnectionView from './settings/ConnectionView.svelte';
 
   // New session management views
   import SessionList from '../components/orchestrator/SessionList.svelte';
@@ -273,7 +274,7 @@
     {
       title: 'Settings',
       items: [
-        { id: 'connection', label: 'Connection', icon: Settings, implemented: false },
+        { id: 'connection', label: 'Connection', icon: Settings, implemented: true },
       ],
     },
   ];
@@ -775,6 +776,9 @@
             {:else if routerStore.name === 'cluster'}
               <li class="text-base-content/40">Cluster</li>
               <li class="font-medium">Dashboard</li>
+            {:else if routerStore.name === 'connection'}
+              <li class="text-base-content/40">Settings</li>
+              <li class="font-medium">Connection</li>
             {:else if activeViewLabel}
               <li class="font-medium">{activeViewLabel}</li>
             {/if}
@@ -1136,6 +1140,11 @@
       {:else if routerStore.name === 'cluster'}
         <div class="flex-1 overflow-y-auto">
           <ClusterDashboard />
+        </div>
+
+      {:else if routerStore.name === 'connection'}
+        <div class="flex-1 overflow-y-auto">
+          <ConnectionView />
         </div>
 
       {:else}

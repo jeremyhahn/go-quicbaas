@@ -53,6 +53,7 @@ const views: ViewEntry[] = [
   { name: 'EmbeddingsView',        path: 'src/views/ai/EmbeddingsView.svelte',                     title: 'Embedding' },
   { name: 'RAGView',               path: 'src/views/ai/RAGView.svelte',                            title: 'RAG' },
   { name: 'MessagingView',         path: 'src/views/async/MessagingView.svelte',                   title: 'Messaging' },
+  { name: 'ConnectionView',        path: 'src/views/settings/ConnectionView.svelte',               title: 'Connection' },
   { name: 'SchedulerView',         path: 'src/views/async/SchedulerView.svelte',                   title: 'Scheduler' },
   { name: 'KMSView',               path: 'src/views/security/KMSView.svelte',                      title: 'KMS' },
   { name: 'SecretsView',           path: 'src/views/security/SecretsView.svelte',                  title: 'Secrets' },
