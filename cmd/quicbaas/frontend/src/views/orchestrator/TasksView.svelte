@@ -266,18 +266,22 @@
     routeTaskDetail(task.id);
   }
 
-  async function handleDecompose(taskID: string, e: Event): Promise<void> {
+  // handleDecompose asks the orchestrator to break the task's text into work
+  // items: the decompose route takes the task text (its description, or its
+  // subject when it has none), not a task ID, and answers with work_items.
+  async function handleDecompose(task: Task, e: Event): Promise<void> {
     e.stopPropagation();
-    decomposingID = taskID;
+    decomposingID = task.id;
     const req: DecomposeTaskRequest = {
       tenant_id: orchestratorStore.activeTenantID,
-      task_id: taskID,
+      task: task.description || task.subject,
+      ...(task.project_id ? { project_ids: [task.project_id] } : {}),
     };
     try {
       const client = await getSDKClient();
       const resp = await client.orchestrator.decomposeTask(req);
-      const count = resp.tasks?.length ?? 0;
-      showToast('success', `Task decomposed into ${count} sub-task${count === 1 ? '' : 's'}`);
+      const count = resp.work_items?.length ?? 0;
+      showToast('success', `Task decomposed into ${count} work item${count === 1 ? '' : 's'}`);
       refreshTasks();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -549,7 +553,7 @@
               {/if}
               <button
                 class="btn btn-ghost btn-xs font-medium text-base-content/80"
-                onclick={(e) => { void handleDecompose(task.id, e); }}
+                onclick={(e) => { void handleDecompose(task, e); }}
                 disabled={decomposingID === task.id}
                 aria-label="Decompose task {task.subject}"
                 title="Decompose"
@@ -619,7 +623,7 @@
                 <div class="mt-2">
                   <button
                     class="btn btn-ghost btn-xs w-full"
-                    onclick={(e) => { void handleDecompose(task.id, e); }}
+                    onclick={(e) => { void handleDecompose(task, e); }}
                     disabled={decomposingID === task.id}
                   >
                     {#if decomposingID === task.id}

@@ -583,6 +583,29 @@ describe('TasksView — row click', () => {
     expect(mockRouteTaskDetail).not.toHaveBeenCalled();
     expect(mockDecomposeTask).toHaveBeenCalled();
   });
+
+  it('decomposes the task text and counts the work items the route returns', async () => {
+    mockDecomposeTask.mockResolvedValue({ work_items: [{}, {}], timestamp: 1 });
+    storeTasks = [
+      makeTask({ id: 'task-abc', description: 'Split the importer', project_id: 'proj-1' }),
+      makeTask({ id: 'task-def', subject: 'Only a subject' }),
+    ];
+    await renderTasks();
+    await fireEvent.click(
+      await waitFor(() => screen.getByRole('button', { name: 'Decompose task Test task' })),
+    );
+    await waitFor(() => expect(mockShowToast).toHaveBeenCalledWith('success', 'Task decomposed into 2 work items'));
+    const req = mockDecomposeTask.mock.calls[0][0];
+    expect(req.task).toBe('Split the importer');
+    expect(req.project_ids).toEqual(['proj-1']);
+    expect(req).not.toHaveProperty('task_id');
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Decompose task Only a subject' }));
+    await waitFor(() => expect(mockDecomposeTask).toHaveBeenCalledTimes(2));
+    const second = mockDecomposeTask.mock.calls[1][0];
+    expect(second.task).toBe('Only a subject');
+    expect(second).not.toHaveProperty('project_ids');
+  });
 });
 
 describe('TasksView — faceted filters', () => {
