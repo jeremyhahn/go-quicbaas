@@ -24,11 +24,13 @@ import (
 // --- Mock Transport ---
 
 type sdkMockTransport struct {
-	resp interface{}
-	err  error
+	resp     interface{}
+	err      error
+	lastBody interface{}
 }
 
-func (m *sdkMockTransport) Request(_ context.Context, _, _ string, _ interface{}) (interface{}, error) {
+func (m *sdkMockTransport) Request(_ context.Context, _, _ string, body interface{}) (interface{}, error) {
+	m.lastBody = body
 	return m.resp, m.err
 }
 

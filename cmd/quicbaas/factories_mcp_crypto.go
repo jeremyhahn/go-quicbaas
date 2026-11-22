@@ -82,6 +82,18 @@ func (c *mcpCryptoClient) KMSSign(ctx context.Context, req *service.SignRequest)
 	if req.HashAlgorithm != "" {
 		args["hash_algorithm"] = string(req.HashAlgorithm)
 	}
+	if req.PreHashed {
+		args["pre_hashed"] = true
+	}
+	if req.Padding != "" {
+		args["padding"] = string(req.Padding)
+	}
+	if req.PSSSaltLength != 0 {
+		args["pss_salt_length"] = req.PSSSaltLength
+	}
+	if req.MGF1Hash != "" {
+		args["mgf1_hash"] = string(req.MGF1Hash)
+	}
 
 	result, err := c.callTool(ctx, "quicbaas_crypto_sign", args)
 	if err != nil {

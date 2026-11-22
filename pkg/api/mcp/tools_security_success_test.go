@@ -631,6 +631,32 @@ func TestCryptoToolsSuccess(t *testing.T) {
 			},
 		},
 		{
+			name:     "Sign with PSS padding",
+			toolName: "quicbaas_crypto_sign",
+			args: map[string]interface{}{
+				"key_id":          "key-123",
+				"message":         "bWVzc2FnZSB0byBzaWdu", // base64 of "message to sign"
+				"hash_algorithm":  "SHA256",
+				"padding":         "PSS",
+				"pss_salt_length": float64(32),
+				"mgf1_hash":       "SHA256",
+			},
+			setupMock: func(m *testutil.MockQuicBaaS) {
+				m.On("Sign", mock.Anything, mock.MatchedBy(func(r *service.SignRequest) bool {
+					return r.Padding == service.SignaturePaddingPSS && r.PSSSaltLength == 32 && r.MGF1Hash == "SHA256"
+				})).Return(&service.SignResponse{
+					KeyID:      "key-123",
+					KeyVersion: 1,
+					Signature:  []byte("signature-data"),
+					Timestamp:  time.Now(),
+				}, nil)
+			},
+			validateFn: func(t *testing.T, result interface{}, err error) {
+				assert.NoError(t, err)
+				assert.NotNil(t, result)
+			},
+		},
+		{
 			name:     "Verify success",
 			toolName: "quicbaas_crypto_verify",
 			args: map[string]interface{}{

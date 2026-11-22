@@ -701,6 +701,14 @@ func TestCryptoSignCommandFlags(t *testing.T) {
 	algorithmFlag := cmd.Flags().Lookup("algorithm")
 	assert.NotNil(t, algorithmFlag)
 	assert.Equal(t, "SHA256", algorithmFlag.DefValue)
+
+	paddingFlag := cmd.Flags().Lookup("padding")
+	assert.NotNil(t, paddingFlag)
+	assert.Equal(t, "", paddingFlag.DefValue)
+
+	saltFlag := cmd.Flags().Lookup("pss-salt-length")
+	assert.NotNil(t, saltFlag)
+	assert.Equal(t, "0", saltFlag.DefValue)
 }
 
 func TestCryptoSignCommand(t *testing.T) {
