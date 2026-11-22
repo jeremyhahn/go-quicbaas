@@ -13,11 +13,12 @@
 import { adoptPage, } from './page.js';
 import { APIError, ConnectionError } from './errors.js';
 import { unsupportedClient } from './unsupported.js';
-// wailsUnsupported is why projects, sdlc and accounts refuse here: the
-// desktop app binds no Go struct for them (cmd/quicbaas/bindings_*.go binds
-// orchestrator, sessions, fleet, SSH, agents and cost settings only), so there
-// is no window.go method to call. The desktop SPA reaches them over REST
-// against the embedded server.
+// wailsUnsupported is why projects, sdlc, accounts and the data, security and
+// cluster families refuse here: the desktop app binds no Go struct for them
+// (cmd/quicbaas/bindings_*.go binds orchestrator, sessions, fleet, SSH, agents
+// and cost settings only), so there is no window.go method to call. Reaching
+// them in desktop mode needs the REST transport against the embedded server,
+// which the SPA does not build yet.
 const wailsUnsupported = 'the desktop app exposes no Wails binding for this family; ' +
     'use the rest transport against the embedded server';
 // wailsGo returns the window.go namespace cast to a two-level map.
@@ -734,60 +735,35 @@ export class WailsClient {
     connection;
     orchestrator;
     auth;
-    // Data sub-clients delegate to REST over the embedded server. The Wails
-    // desktop mode runs the full QuicBaaS server in-process so REST calls
-    // resolve against localhost without a network round-trip.
-    // These are intentionally null until Wails Go bindings are generated;
-    // desktop users can also access data surfaces through the REST transport.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    data = null;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    vectors = null;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    timeseries = null;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    objects = null;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    rag = null;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    embeddings = null;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    messaging = null;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    scheduler = null;
+    // The desktop app binds no Go struct for the families below, so each one
+    // refuses every call with a TransportNotSupportedError naming the family
+    // and the verb. Reaching them in desktop mode needs the REST transport
+    // against the embedded server, which the SPA does not build yet.
+    data = unsupportedClient('wails', 'data', wailsUnsupported);
+    vectors = unsupportedClient('wails', 'vectors', wailsUnsupported);
+    timeseries = unsupportedClient('wails', 'timeseries', wailsUnsupported);
+    objects = unsupportedClient('wails', 'objects', wailsUnsupported);
+    rag = unsupportedClient('wails', 'rag', wailsUnsupported);
+    embeddings = unsupportedClient('wails', 'embeddings', wailsUnsupported);
+    messaging = unsupportedClient('wails', 'messaging', wailsUnsupported);
+    scheduler = unsupportedClient('wails', 'scheduler', wailsUnsupported);
     projects = unsupportedClient('wails', 'projects', wailsUnsupported);
     sdlc = unsupportedClient('wails', 'sdlc', wailsUnsupported);
     accounts = unsupportedClient('wails', 'accounts', wailsUnsupported);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    agents = null;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    iam = null;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    kms = null;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    secrets = null;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ca = null;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    trust = null;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    crypto = null;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    dek = null;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    dynamicSecrets = null;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    barrier = null;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    tenantBarrier = null;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ceremony = null;
-    // cluster status/management resolves through the REST transport in desktop
-    // mode (the embedded server runs in-process); no Wails Go binding yet.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    cluster = null;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    seal = null;
+    agents = unsupportedClient('wails', 'agents', wailsUnsupported);
+    iam = unsupportedClient('wails', 'iam', wailsUnsupported);
+    kms = unsupportedClient('wails', 'kms', wailsUnsupported);
+    secrets = unsupportedClient('wails', 'secrets', wailsUnsupported);
+    ca = unsupportedClient('wails', 'ca', wailsUnsupported);
+    trust = unsupportedClient('wails', 'trust', wailsUnsupported);
+    crypto = unsupportedClient('wails', 'crypto', wailsUnsupported);
+    dek = unsupportedClient('wails', 'dek', wailsUnsupported);
+    dynamicSecrets = unsupportedClient('wails', 'dynamicSecrets', wailsUnsupported);
+    barrier = unsupportedClient('wails', 'barrier', wailsUnsupported);
+    tenantBarrier = unsupportedClient('wails', 'tenantBarrier', wailsUnsupported);
+    ceremony = unsupportedClient('wails', 'ceremony', wailsUnsupported);
+    cluster = unsupportedClient('wails', 'cluster', wailsUnsupported);
+    seal = unsupportedClient('wails', 'seal', wailsUnsupported);
     /**
      * sshKeys is the legacy backward-compat accessor.
      * Points to ssh.keys — the same WailsSSHKeysClient instance.
