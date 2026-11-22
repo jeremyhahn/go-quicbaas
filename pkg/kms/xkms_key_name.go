@@ -82,7 +82,7 @@ var ErrXKMSKeyIDTooLong = errors.New("kms: key ID too long for a go-xkms key nam
 // later crypto operations would reject.
 func checkXKMSKeyName(keyID string) error {
 	if err := validation.ValidateKeyID(xkmsKeyName(keyID)); err != nil {
-		return fmt.Errorf("%w: %v", ErrXKMSKeyIDTooLong, err)
+		return fmt.Errorf("%w: %w", ErrXKMSKeyIDTooLong, err)
 	}
 	return nil
 }
