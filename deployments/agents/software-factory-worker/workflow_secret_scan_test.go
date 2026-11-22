@@ -145,6 +145,9 @@ func secretScanProblems(raw []byte) []string {
 					add("step layer-scan's trivy fs line has no %s", want)
 				}
 			}
+			if fields := strings.Fields(l); fields[len(fields)-1] != `"$work/layers"` {
+				add("step layer-scan's trivy fs does not scan the whole layer root \"$work/layers\": %q", l)
+			}
 			break
 		}
 	}
@@ -227,8 +230,9 @@ func commandLineProblems(step, run, want, mention string) ([]string, int) {
 // how many { }, ( ), if/fi, while/until/for/select ... done and case/esac
 // blocks are open when the line starts. Only whole words outside quotes and
 // comments count, so $( ), ${ }, $(( )) and case patterns like a) do not. A
-// line that starts inside an open quote or a here-document is data, not a
-// command, and gets one extra level. A negative depth means the closers
+// line that starts inside an open quote, command substitution or
+// here-document is data or runs without errexit, not a top-level command,
+// and gets one extra level. A negative depth means the closers
 // outnumber the openers.
 func blockDepths(lines []string) []int {
 	depths := make([]int, len(lines))
@@ -236,6 +240,7 @@ func blockDepths(lines []string) []int {
 	var quote byte       // the open quote character carried across lines, or 0
 	heredoc := ""        // the delimiter of the open here-document
 	var pending []string // here-documents that start on the next line
+	cmdsub := 0          // the paren depth of the open $( ), carried across lines
 	for i, line := range lines {
 		depths[i] = depth
 		if heredoc != "" {
@@ -248,12 +253,12 @@ func blockDepths(lines []string) []int {
 			}
 			continue
 		}
-		if quote != 0 {
+		if quote != 0 || cmdsub > 0 {
 			depths[i]++
 		}
 		var words []string
 		var word strings.Builder
-		inWord, cmdsub := false, 0
+		inWord := false
 		flush := func() {
 			if inWord {
 				words = append(words, word.String())
@@ -491,6 +496,24 @@ func TestSecretScanProblems_Mutations(t *testing.T) {
 			old:  indent + imageScanLine + "\n",
 			new:  indent + "set +o errexit\n" + indent + imageScanLine + "\n",
 			want: "turns off errexit",
+		},
+		{
+			name: "check in a multiline command substitution",
+			old:  indent + secretCheckLine + "\n",
+			new:  indent + "result=$(\n" + indent + secretCheckLine + "\n" + indent + "printf ignored)\n",
+			want: "inside a shell block",
+		},
+		{
+			name: "image scan in a multiline command substitution",
+			old:  indent + imageScanLine + "\n",
+			new:  indent + "result=$(\n" + indent + imageScanLine + "\n" + indent + "printf ignored)\n",
+			want: "inside a shell block",
+		},
+		{
+			name: "layer scan narrowed to one directory",
+			old:  `--no-progress "$work/layers"`,
+			new:  `--no-progress "$work/layers/config"`,
+			want: "does not scan the whole layer root",
 		},
 	}
 	for _, tc := range cases {
