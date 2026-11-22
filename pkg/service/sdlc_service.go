@@ -165,6 +165,10 @@ type SDLCService struct {
 	// bindLeaseTicks is a test seam: the ticks a bind or unbind renews its
 	// lease on. Nil means a ticker every bindLeaseRenewEvery.
 	bindLeaseTicks <-chan time.Time
+
+	// bindLeaseRenewed is a test seam: when set, the heartbeat sends the
+	// result of each tick's renewal on it once that renewal has finished.
+	bindLeaseRenewed chan<- error
 }
 
 type nudgerHolder struct {
@@ -662,6 +666,7 @@ func (s *SDLCService) acquireBindLease(ctx context.Context, tenantID, projectID 
 	go func() {
 		defer close(hold.done)
 		ticks := s.bindLeaseTicks
+		renewed := s.bindLeaseRenewed
 		if ticks == nil {
 			ticker := time.NewTicker(bindLeaseRenewEvery)
 			defer ticker.Stop()
@@ -675,6 +680,9 @@ func (s *SDLCService) acquireBindLease(ctx context.Context, tenantID, projectID 
 				renewCtx, renewCancel := context.WithTimeout(leaseCtx, bindLeaseRenewEvery)
 				err := s.store.RenewBindLease(renewCtx, tenantID, projectID, token)
 				renewCancel()
+				if renewed != nil {
+					renewed <- err
+				}
 				if err != nil {
 					cancel(err)
 					s.logger.Warn("sdlc: a bind lease could not be renewed; the holder stops",

@@ -568,6 +568,10 @@ type projectServiceImpl struct {
 	// fenceRenewTicks is a test seam: the ticks a delete renews its fence
 	// on. Nil means a ticker every deleteFenceRenewEvery.
 	fenceRenewTicks <-chan time.Time
+
+	// fenceRenewed is a test seam: when set, the heartbeat sends the result
+	// of each tick's fence renewal on it once that renewal has finished.
+	fenceRenewed chan<- error
 }
 
 // projectStoreContext binds the request's tenant to the context the project
@@ -742,6 +746,7 @@ func (s *projectServiceImpl) fenceDelete(ctx context.Context, tenantID, projectI
 	go func() {
 		defer close(done)
 		ticks := s.fenceRenewTicks
+		renewed := s.fenceRenewed
 		if ticks == nil {
 			ticker := time.NewTicker(deleteFenceRenewEvery)
 			defer ticker.Stop()
@@ -752,7 +757,11 @@ func (s *projectServiceImpl) fenceDelete(ctx context.Context, tenantID, projectI
 			case <-stop:
 				return
 			case <-ticks:
-				if err := fence.RenewProjectDeleteFence(ctx, tenantID, projectID, token); err != nil {
+				err := fence.RenewProjectDeleteFence(ctx, tenantID, projectID, token)
+				if renewed != nil {
+					renewed <- err
+				}
+				if err != nil {
 					slog.Default().Warn("project: a delete could not renew its fence; it stops before its next step",
 						"tenant_id", tenantID, "project_id", projectID, "error", err)
 					return
