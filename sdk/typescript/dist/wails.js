@@ -750,6 +750,7 @@ export class WailsClient {
     projects = unsupportedClient('wails', 'projects', wailsUnsupported);
     sdlc = unsupportedClient('wails', 'sdlc', wailsUnsupported);
     accounts = unsupportedClient('wails', 'accounts', wailsUnsupported);
+    prompts = unsupportedClient('wails', 'prompts', wailsUnsupported);
     agents = unsupportedClient('wails', 'agents', wailsUnsupported);
     iam = unsupportedClient('wails', 'iam', wailsUnsupported);
     kms = unsupportedClient('wails', 'kms', wailsUnsupported);

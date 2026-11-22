@@ -10,6 +10,7 @@ import type { RAGClient } from './rag.js';
 import type { SchedulerClient } from './scheduler_sdk.js';
 import type { TrustClient } from './trust.js';
 import type { AccountsClient } from './accounts.js';
+import type { PromptsClient } from './prompts.js';
 import type { ProjectsClient } from './projects.js';
 import type { SdlcClient } from './sdlc.js';
 export declare function wailsError(reason: unknown): unknown;
@@ -28,6 +29,7 @@ export declare class WailsClient implements Client {
     readonly projects: ProjectsClient;
     readonly sdlc: SdlcClient;
     readonly accounts: AccountsClient;
+    readonly prompts: PromptsClient;
     readonly agents: AgentsClient;
     readonly iam: IAMClient;
     readonly kms: KMSClient;
