@@ -325,3 +325,85 @@ func TestWithoutSignatureAnnotations(t *testing.T) {
 		t.Error("withoutSignatureAnnotations modified its input")
 	}
 }
+
+// ecdsaTestVerifier checks manifest signatures against the fake KMS's
+// public keys.
+type ecdsaTestVerifier struct {
+	t      *testing.T
+	sdkKMS *fakeSDKKMS
+}
+
+func (v ecdsaTestVerifier) Verify(_ context.Context, keyID, _ string, digest, signature []byte) error {
+	if !ecdsa.VerifyASN1(v.sdkKMS.publicKey(v.t, keyID), digest, signature) {
+		return errors.New("ecdsa signature does not verify")
+	}
+	return nil
+}
+
+func TestRegistryPull_VerifySignature(t *testing.T) {
+	ctx := context.Background()
+	const ref = "apps/web:v1"
+
+	newVerifyingRegistry := func(t *testing.T) (*Registry, *fakeSDKKMS) {
+		t.Helper()
+		reg, sdkKMS := newSigningTestRegistry(t)
+		WithVerifier(ecdsaTestVerifier{t: t, sdkKMS: sdkKMS})(reg)
+		return reg, sdkKMS
+	}
+	assertVerifyFailed := func(t *testing.T, err error) {
+		t.Helper()
+		var target SignatureVerificationFailedError
+		if !errors.As(err, &target) {
+			t.Fatalf("Pull error = %v, want SignatureVerificationFailedError", err)
+		}
+	}
+
+	t.Run("signed and untouched", func(t *testing.T) {
+		reg, _ := newVerifyingRegistry(t)
+		if err := reg.Push(ctx, ref, signTestImage(nil, []byte("layer-one")), PushOptions{SignImage: true}); err != nil {
+			t.Fatalf("Push: %v", err)
+		}
+		img, err := reg.Pull(ctx, ref, PullOptions{VerifySignature: true})
+		if err != nil {
+			t.Fatalf("Pull: %v", err)
+		}
+		if !bytes.Equal(img.Layers[0].Content, []byte("layer-one")) {
+			t.Fatalf("pulled layer = %q", img.Layers[0].Content)
+		}
+	})
+
+	t.Run("annotation changed in storage", func(t *testing.T) {
+		reg, _ := newVerifyingRegistry(t)
+		if err := reg.Push(ctx, ref, signTestImage(map[string]string{"team": "web"}, []byte("layer-one")), PushOptions{SignImage: true}); err != nil {
+			t.Fatalf("Push: %v", err)
+		}
+		m, err := reg.storage.GetManifest(ctx, ref)
+		if err != nil {
+			t.Fatalf("GetManifest: %v", err)
+		}
+		m.Annotations["team"] = "attacker"
+		if err := reg.storage.StoreManifest(ctx, ref, m); err != nil {
+			t.Fatalf("StoreManifest: %v", err)
+		}
+		_, err = reg.Pull(ctx, ref, PullOptions{VerifySignature: true})
+		assertVerifyFailed(t, err)
+	})
+
+	t.Run("unsigned manifest", func(t *testing.T) {
+		reg, _ := newVerifyingRegistry(t)
+		if err := reg.Push(ctx, ref, signTestImage(nil, []byte("layer-one")), PushOptions{}); err != nil {
+			t.Fatalf("Push: %v", err)
+		}
+		_, err := reg.Pull(ctx, ref, PullOptions{VerifySignature: true})
+		assertVerifyFailed(t, err)
+	})
+
+	t.Run("no verifier configured", func(t *testing.T) {
+		reg, _ := newSigningTestRegistry(t)
+		if err := reg.Push(ctx, ref, signTestImage(nil, []byte("layer-one")), PushOptions{SignImage: true}); err != nil {
+			t.Fatalf("Push: %v", err)
+		}
+		_, err := reg.Pull(ctx, ref, PullOptions{VerifySignature: true})
+		assertVerifyFailed(t, err)
+	})
+}

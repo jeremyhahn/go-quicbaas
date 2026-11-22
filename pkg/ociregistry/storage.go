@@ -91,10 +91,12 @@ type Descriptor struct {
 
 // ListOptions configures manifest listing behavior.
 type ListOptions struct {
-	// Repository filters by repository name.
+	// Repository filters by repository name: only its tag references
+	// ("repo:tag") are listed, not its digest references.
 	Repository string
 
-	// Prefix filters by reference prefix.
+	// Prefix filters by tag prefix when Repository is set, and by
+	// whole-reference prefix otherwise.
 	Prefix string
 
 	// Limit is the maximum number of results to return.
@@ -105,6 +107,11 @@ type ListOptions struct {
 
 	// IncludeTags includes tag information in results.
 	IncludeTags bool
+
+	// Strict fails the listing when a listed manifest cannot be read or
+	// decoded instead of skipping it. Garbage collection needs the
+	// complete reference set, so it lists strictly.
+	Strict bool
 }
 
 // ListResult contains the results of a manifest list operation.
@@ -383,14 +390,14 @@ func (s *QuicBaaSStorage) ListManifests(ctx context.Context, opts ListOptions) (
 		return nil, RegistryClosedError{}
 	}
 
-	// Build prefix for listing
-	prefix := s.namespace
+	// Manifests live under manifestKey(ref), ref being "repo:tag" or
+	// "repo@digest". A repository filter selects that repository's tags;
+	// Prefix then narrows the tag, or the whole ref with no repository.
+	prefix := s.manifestKey("")
 	if opts.Repository != "" {
-		prefix = s.namespace + "/" + opts.Repository
+		prefix += opts.Repository + ":"
 	}
-	if opts.Prefix != "" {
-		prefix = prefix + "/" + opts.Prefix
-	}
+	prefix += opts.Prefix
 
 	limit := opts.Limit
 	if limit <= 0 {
@@ -408,14 +415,21 @@ func (s *QuicBaaSStorage) ListManifests(ctx context.Context, opts ListOptions) (
 	for _, key := range keys {
 		data, found, err := s.client.Get(ctx, entityTypeManifest, key)
 		if err != nil {
+			if opts.Strict {
+				return nil, ErrStorageError{Operation: "list_manifests", Key: key, Cause: err}
+			}
 			continue
 		}
 		if !found {
+			// Deleted since it was listed: it references nothing.
 			continue
 		}
 
 		var manifest ImageManifest
 		if err := json.Unmarshal(data, &manifest); err != nil {
+			if opts.Strict {
+				return nil, ErrStorageError{Operation: "unmarshal_manifest", Key: key, Cause: err}
+			}
 			continue
 		}
 		manifests = append(manifests, manifest)

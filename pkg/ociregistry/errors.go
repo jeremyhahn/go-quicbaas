@@ -522,6 +522,26 @@ func (e ManifestSigningFailedError) Unwrap() error {
 	return e.Err
 }
 
+// SignatureVerificationFailedError is returned by a Pull that asked for a
+// verified manifest when the signature cannot be verified: no verifier is
+// configured, the manifest is unsigned, or the signature does not match.
+// Pull returns no content with it.
+type SignatureVerificationFailedError struct {
+	Reason string
+	Cause  error
+}
+
+func (e SignatureVerificationFailedError) Error() string {
+	if e.Cause == nil {
+		return "registry: manifest signature verification failed: " + e.Reason
+	}
+	return fmt.Sprintf("registry: manifest signature verification failed: %s: %v", e.Reason, e.Cause)
+}
+
+func (e SignatureVerificationFailedError) Unwrap() error {
+	return e.Cause
+}
+
 // SigningClientRequiredError is returned by NewSDKSigner when the SDK KMS or
 // crypto client is nil.
 type SigningClientRequiredError struct{}

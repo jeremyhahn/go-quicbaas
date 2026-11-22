@@ -20,6 +20,7 @@ import (
 	"errors"
 	"log/slog"
 	"regexp"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -299,11 +300,11 @@ func NewRegistry(config RegistryConfig, logger *slog.Logger, opts ...RegistryOpt
 // supplied reference, and a tag entry is written so List() can find
 // the image by ref.
 //
-// Phase 5 first-ship intentionally skips encryption and signing — the
-// opts fields are honored to the extent the underlying storage
-// supports them today (none, both are deferred). Callers that pass
-// Encrypt=true receive EncryptionNotConfiguredError rather than a
-// silently-unencrypted push.
+// Every layer digest, and the config digest when a config is given,
+// must be the sha256 of the pushed bytes, and the manifest's layer
+// descriptors must name the pushed layers in order. The image is
+// encrypted when opts.Encrypt or the EncryptByDefault setting asks for
+// it; without an encryptor that push is refused, never stored in plain.
 func (r *Registry) Push(ctx context.Context, ref string, image *Image, opts PushOptions) error {
 	if err := r.checkState(); err != nil {
 		return err
@@ -323,7 +324,8 @@ func (r *Registry) Push(ctx context.Context, ref string, image *Image, opts Push
 	if r.storage == nil {
 		return StorageNotConfiguredError{Op: "Push"}
 	}
-	if opts.Encrypt && r.encryptor == nil {
+	encrypt := opts.Encrypt || r.config.Encryption.EncryptByDefault
+	if encrypt && r.encryptor == nil {
 		return EncryptionNotConfiguredError{Reference: ref}
 	}
 	if opts.SignImage && r.signer == nil {
@@ -334,6 +336,9 @@ func (r *Registry) Push(ctx context.Context, ref string, image *Image, opts Push
 	if len(image.Layers) == 0 {
 		return ImageEmptyError{}
 	}
+	if err := validateImageDigests(ref, image); err != nil {
+		return err
+	}
 	// Only the registry's signer sets the signature annotations.
 	image.Manifest.Annotations = withoutSignatureAnnotations(image.Manifest.Annotations)
 
@@ -342,6 +347,10 @@ func (r *Registry) Push(ctx context.Context, ref string, image *Image, opts Push
 		defer func() { <-r.pushSemaphore }()
 	case <-ctx.Done():
 		return ctx.Err()
+	}
+	// Close may have run while this push waited for a slot.
+	if err := r.checkState(); err != nil {
+		return err
 	}
 	if err := ctx.Err(); err != nil {
 		return err
@@ -368,7 +377,7 @@ func (r *Registry) Push(ctx context.Context, ref string, image *Image, opts Push
 	// in storage; the manifest carries an "encrypted=true" annotation
 	// plus the wrapped DEK + nonce so Pull can reverse the operation.
 	var encLayers []EncryptedLayer
-	if opts.Encrypt {
+	if encrypt {
 		keyID := opts.KeyID
 		if keyID == "" {
 			keyID = "registry-default"
@@ -399,7 +408,7 @@ func (r *Registry) Push(ctx context.Context, ref string, image *Image, opts Push
 			return InvalidManifestError{Reference: ref, Reason: "layer with empty digest"}
 		}
 		var blob []byte
-		if opts.Encrypt {
+		if encrypt {
 			env, err := encodeEncryptedLayer(&encLayers[i])
 			if err != nil {
 				return err
@@ -453,6 +462,34 @@ func (r *Registry) signManifest(ctx context.Context, ref string, m *ImageManifes
 	m.Annotations[ManifestAnnotationSigningKeyID] = keyID
 	m.Annotations[ManifestAnnotationSignatureAlgorithm] = algorithm
 	m.Annotations[ManifestAnnotationSignature] = base64.StdEncoding.EncodeToString(sig)
+	return nil
+}
+
+// verifyManifest checks the signature signManifest put on m, over the
+// same payload, with the configured verifier. Any failure, including a
+// missing verifier or an unsigned manifest, is a
+// SignatureVerificationFailedError.
+func (r *Registry) verifyManifest(ctx context.Context, ref string, m *ImageManifest) error {
+	if r.verifier == nil {
+		return SignatureVerificationFailedError{Reason: "no signature verifier configured"}
+	}
+	if m.Annotations[ManifestAnnotationSigned] != "true" || m.Annotations[ManifestAnnotationSignature] == "" {
+		return SignatureVerificationFailedError{Reason: "manifest is not signed"}
+	}
+	sig, err := base64.StdEncoding.DecodeString(m.Annotations[ManifestAnnotationSignature])
+	if err != nil {
+		return SignatureVerificationFailedError{Reason: "signature is not valid base64", Cause: err}
+	}
+	payload, err := manifestSigningPayload(ref, m)
+	if err != nil {
+		return SignatureVerificationFailedError{Reason: "cannot build the signing payload", Cause: err}
+	}
+	digest := sha256.Sum256(payload)
+	keyID := m.Annotations[ManifestAnnotationSigningKeyID]
+	algorithm := m.Annotations[ManifestAnnotationSignatureAlgorithm]
+	if err := r.verifier.Verify(ctx, keyID, algorithm, digest[:], sig); err != nil {
+		return SignatureVerificationFailedError{Reason: "signature does not verify", Cause: err}
+	}
 	return nil
 }
 
@@ -514,6 +551,10 @@ func (r *Registry) Pull(ctx context.Context, ref string, opts PullOptions) (*Ima
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+	// Close may have run while this pull waited for a slot.
+	if err := r.checkState(); err != nil {
+		return nil, err
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -534,6 +575,11 @@ func (r *Registry) Pull(ctx context.Context, ref string, opts PullOptions) (*Ima
 	}
 	if manifest == nil {
 		return nil, ImageNotFoundError{Reference: ref}
+	}
+	if opts.VerifySignature {
+		if err := r.verifyManifest(ctx, ref, manifest); err != nil {
+			return nil, err
+		}
 	}
 
 	img := &Image{Manifest: manifest}
@@ -668,6 +714,7 @@ func (r *Registry) referencedBlobs(ctx context.Context) (map[string]struct{}, er
 		res, err := r.storage.ListManifests(ctx, ListOptions{
 			Limit:  500,
 			Cursor: cursor,
+			Strict: true,
 		})
 		if err != nil {
 			return nil, err
@@ -898,9 +945,8 @@ func (r *Registry) Close() error {
 		return true
 	})
 
-	// Close semaphores
-	close(r.pullSemaphore)
-	close(r.pushSemaphore)
+	// The semaphores stay open: a Push or Pull waiting on one would panic
+	// on a closed channel. Each re-checks the state once it has a slot.
 
 	r.initialized.Store(false)
 
@@ -983,6 +1029,36 @@ func validateImageRef(ref string) error {
 		return InvalidImageRefError{Reference: ref, Reason: "invalid format"}
 	}
 
+	return nil
+}
+
+// validateImageDigests checks that every layer and the config are stored
+// under the sha256 of their plaintext bytes and that the manifest's layer
+// descriptors name exactly the pushed layers, so a push cannot write
+// bytes under a digest another image references.
+func validateImageDigests(ref string, image *Image) error {
+	for i := range image.Layers {
+		l := &image.Layers[i]
+		if !strings.HasPrefix(l.Digest, "sha256:") {
+			return InvalidDigestError{Digest: l.Digest, Reason: "layer digest must be sha256"}
+		}
+		if actual := sha256Digest(l.Content); l.Digest != actual {
+			return DigestMismatchError{Expected: l.Digest, Actual: actual}
+		}
+	}
+	if len(image.Manifest.Layers) != len(image.Layers) {
+		return InvalidManifestError{Reference: ref, Reason: "manifest layers do not match the pushed layers"}
+	}
+	for i := range image.Layers {
+		if image.Manifest.Layers[i].Digest != image.Layers[i].Digest {
+			return InvalidManifestError{Reference: ref, Reason: "manifest layer descriptor does not match the pushed layer"}
+		}
+	}
+	if len(image.Config) > 0 {
+		if actual := sha256Digest(image.Config); image.Manifest.Config.Digest != actual {
+			return DigestMismatchError{Expected: image.Manifest.Config.Digest, Actual: actual}
+		}
+	}
 	return nil
 }
 

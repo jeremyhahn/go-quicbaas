@@ -39,6 +39,8 @@ func validTestConfig() RegistryConfig {
 	cfg := DefaultRegistryConfig()
 	cfg.TLS.Enabled = false // Disable TLS for tests
 	cfg.Storage.Encrypted = false
+	// Tests opt in to encryption; the encrypt-by-default path has its own test.
+	cfg.Encryption.EncryptByDefault = false
 	return cfg
 }
 
@@ -149,8 +151,8 @@ func TestRegistryPush(t *testing.T) {
 			name: "valid push",
 			ref:  "myrepo/myimage:v1",
 			image: &Image{
-				Manifest: &ImageManifest{Layers: []Descriptor{{Digest: "sha256:" + repeat64("c"), Size: 5}}},
-				Layers:   []Layer{{Digest: "sha256:" + repeat64("c"), Size: 5, Content: []byte("layer")}},
+				Manifest: &ImageManifest{Layers: []Descriptor{{Digest: sha256Digest([]byte("layer")), Size: 5}}},
+				Layers:   []Layer{{Digest: sha256Digest([]byte("layer")), Size: 5, Content: []byte("layer")}},
 			},
 			opts:        PushOptions{},
 			expectError: nil,
@@ -385,7 +387,7 @@ func TestRegistryPushPullRoundTrip(t *testing.T) {
 
 	const ref = "myrepo/myimage:v1"
 	layer := Layer{
-		Digest:    "sha256:" + repeat64("a"),
+		Digest:    sha256Digest([]byte("hello world")),
 		MediaType: "application/vnd.oci.image.layer.v1.tar",
 		Size:      11,
 		Content:   []byte("hello world"),
@@ -396,7 +398,7 @@ func TestRegistryPushPullRoundTrip(t *testing.T) {
 		MediaType:     "application/vnd.oci.image.manifest.v1+json",
 		Config: Descriptor{
 			MediaType: "application/vnd.oci.image.config.v1+json",
-			Digest:    "sha256:" + repeat64("b"),
+			Digest:    sha256Digest(configBlob),
 			Size:      int64(len(configBlob)),
 		},
 		Layers: []Descriptor{{
@@ -519,14 +521,14 @@ func TestRegistry_EncryptedRoundTrip(t *testing.T) {
 
 	ctx := context.Background()
 	plaintext := []byte("secret payload that must survive a round trip")
-	digest := "sha256:" + repeat64("f")
+	digest := sha256Digest(plaintext)
 	image := &Image{
 		Manifest: &ImageManifest{
 			SchemaVersion: 2,
 			MediaType:     "application/vnd.oci.image.manifest.v1+json",
 			Config: Descriptor{
 				MediaType: "application/vnd.oci.image.config.v1+json",
-				Digest:    "sha256:" + repeat64("0"),
+				Digest:    sha256Digest([]byte("cfg!")),
 				Size:      4,
 			},
 			Layers: []Descriptor{{
@@ -606,7 +608,7 @@ func TestRegistry_DeleteGCsOrphanBlobs(t *testing.T) {
 				SchemaVersion: 2,
 				MediaType:     "application/vnd.oci.image.manifest.v1+json",
 				Config: Descriptor{
-					Digest: "sha256:" + repeat64("c"),
+					Digest: sha256Digest([]byte("cfg!")),
 					Size:   4,
 				},
 				Layers: []Descriptor{{
@@ -625,8 +627,8 @@ func TestRegistry_DeleteGCsOrphanBlobs(t *testing.T) {
 		}
 	}
 
-	uniqueLayer := "sha256:" + repeat64("d")
-	sharedLayer := "sha256:" + repeat64("e")
+	uniqueLayer := sha256Digest([]byte("helloA"))
+	sharedLayer := sha256Digest([]byte("helloshared"))
 
 	// Image A: unique layer only.
 	if err := reg.Push(ctx, "img-a:v1", mkImage(uniqueLayer, "A"), PushOptions{}); err != nil {
@@ -665,6 +667,227 @@ func TestRegistry_DeleteGCsOrphanBlobs(t *testing.T) {
 	}
 	if exists, _ := reg.storage.BlobExists(ctx, sharedLayer); exists {
 		t.Errorf("sharedLayer should be GC'd after all referencing images are deleted")
+	}
+}
+
+// digestImage builds an image whose layer and config digests are the
+// sha256 of their content.
+func digestImage(layer, config string) *Image {
+	const layerType = "application/vnd.oci.image.layer.v1.tar"
+	ld := sha256Digest([]byte(layer))
+	return &Image{
+		Manifest: &ImageManifest{
+			SchemaVersion: 2,
+			MediaType:     "application/vnd.oci.image.manifest.v1+json",
+			Config:        Descriptor{Digest: sha256Digest([]byte(config)), Size: int64(len(config))},
+			Layers:        []Descriptor{{MediaType: layerType, Digest: ld, Size: int64(len(layer))}},
+		},
+		Config: []byte(config),
+		Layers: []Layer{{Digest: ld, MediaType: layerType, Size: int64(len(layer)), Content: []byte(layer)}},
+	}
+}
+
+func TestRegistryPush_RejectsDigestMismatch(t *testing.T) {
+	victim := []byte("victim layer")
+	victimDigest := sha256Digest(victim)
+
+	tests := []struct {
+		name   string
+		mutate func(img *Image)
+		check  func(t *testing.T, err error)
+	}{
+		{
+			name: "layer digest is not the content hash",
+			mutate: func(img *Image) {
+				img.Layers[0].Digest = victimDigest
+				img.Manifest.Layers[0].Digest = victimDigest
+			},
+			check: func(t *testing.T, err error) {
+				var target DigestMismatchError
+				assert.ErrorAs(t, err, &target)
+			},
+		},
+		{
+			name: "config digest is not the config hash",
+			mutate: func(img *Image) {
+				img.Manifest.Config.Digest = victimDigest
+			},
+			check: func(t *testing.T, err error) {
+				var target DigestMismatchError
+				assert.ErrorAs(t, err, &target)
+			},
+		},
+		{
+			name: "manifest descriptor names another layer",
+			mutate: func(img *Image) {
+				img.Manifest.Layers[0].Digest = victimDigest
+			},
+			check: func(t *testing.T, err error) {
+				var target InvalidManifestError
+				assert.ErrorAs(t, err, &target)
+			},
+		},
+		{
+			name: "non-sha256 layer digest",
+			mutate: func(img *Image) {
+				img.Layers[0].Digest = "sha512:" + repeat64("a")
+				img.Manifest.Layers[0].Digest = img.Layers[0].Digest
+			},
+			check: func(t *testing.T, err error) {
+				var target InvalidDigestError
+				assert.ErrorAs(t, err, &target)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reg := newTestRegistry(t)
+			ctx := context.Background()
+			require.NoError(t, reg.storage.StoreBlob(ctx, victimDigest, victim))
+
+			img := digestImage("attacker bytes", "cfg")
+			tt.mutate(img)
+			err := reg.Push(ctx, "evil/img:v1", img, PushOptions{})
+			require.Error(t, err)
+			tt.check(t, err)
+
+			got, err := reg.storage.GetBlob(ctx, victimDigest)
+			require.NoError(t, err)
+			assert.Equal(t, victim, got, "the blob under the targeted digest changed")
+			exists, err := reg.storage.ManifestExists(ctx, "evil/img:v1")
+			require.NoError(t, err)
+			assert.False(t, exists)
+		})
+	}
+}
+
+func TestRegistryPush_EncryptByDefault(t *testing.T) {
+	cfg := DefaultRegistryConfig()
+	cfg.TLS.Enabled = false
+	cfg.Storage.Encrypted = false
+	require.True(t, cfg.Encryption.EncryptByDefault)
+	ctx := context.Background()
+
+	storage, err := NewQuicBaaSStorage(newMockStorageClient())
+	require.NoError(t, err)
+	kmsClient, _ := newTestSDKKMSClient(t)
+	enc, err := NewImageEncryptor(kmsClient)
+	require.NoError(t, err)
+	reg, err := NewRegistry(cfg, testLogger(), WithStorage(storage), WithEncryptor(enc))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = reg.Close() })
+
+	img := digestImage("plain layer", "cfg")
+	require.NoError(t, reg.Push(ctx, "enc/img:v1", img, PushOptions{}))
+	m, err := storage.GetManifest(ctx, "enc/img:v1")
+	require.NoError(t, err)
+	assert.Equal(t, "true", m.Annotations[ManifestAnnotationEncrypted])
+	blob, err := storage.GetBlob(ctx, img.Layers[0].Digest)
+	require.NoError(t, err)
+	assert.NotEqual(t, []byte("plain layer"), blob, "default push stored the plaintext")
+
+	plainStorage, err := NewQuicBaaSStorage(newMockStorageClient())
+	require.NoError(t, err)
+	noEnc, err := NewRegistry(cfg, testLogger(), WithStorage(plainStorage))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = noEnc.Close() })
+	err = noEnc.Push(ctx, "enc/img:v1", digestImage("plain layer", "cfg"), PushOptions{})
+	var target EncryptionNotConfiguredError
+	assert.ErrorAs(t, err, &target)
+}
+
+func TestRegistry_DeleteKeepsSharedBlobWhenScanFails(t *testing.T) {
+	client := newMockStorageClient()
+	storage, err := NewQuicBaaSStorage(client)
+	require.NoError(t, err)
+	reg, err := NewRegistry(validTestConfig(), testLogger(), WithStorage(storage))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = reg.Close() })
+	ctx := context.Background()
+
+	a := digestImage("shared layer", "cfg")
+	b := digestImage("shared layer", "cfg")
+	require.NoError(t, reg.Push(ctx, "img-a:v1", a, PushOptions{}))
+	require.NoError(t, reg.Push(ctx, "img-b:v1", b, PushOptions{}))
+	shared := a.Layers[0].Digest
+
+	// img-b's manifest still exists but can no longer be read.
+	client.data[entityTypeManifest+":"+storage.manifestKey("img-b:v1")] = []byte("corrupt{")
+
+	require.NoError(t, reg.Delete(ctx, "img-a:v1"))
+	exists, err := storage.BlobExists(ctx, shared)
+	require.NoError(t, err)
+	assert.True(t, exists, "a blob an unreadable manifest may reference was collected")
+}
+
+func TestRegistryList_FiltersByRepository(t *testing.T) {
+	reg := newTestRegistry(t)
+	ctx := context.Background()
+	for _, ref := range []string{"apps/web:v1", "apps/web:v2", "apps/web:latest", "apps/db:v1"} {
+		require.NoError(t, reg.Push(ctx, ref, digestImage("layer "+ref, "cfg"), PushOptions{}))
+	}
+
+	refs := func(opts RegistryListOptions) []string {
+		t.Helper()
+		list, err := reg.List(ctx, opts)
+		require.NoError(t, err)
+		out := make([]string, 0, len(list))
+		for _, m := range list {
+			out = append(out, m.Reference)
+		}
+		return out
+	}
+	assert.ElementsMatch(t, []string{"apps/web:v1", "apps/web:v2", "apps/web:latest"},
+		refs(RegistryListOptions{Repository: "apps/web"}))
+	assert.ElementsMatch(t, []string{"apps/web:v1", "apps/web:v2"},
+		refs(RegistryListOptions{Repository: "apps/web", TagPrefix: "v"}))
+	assert.ElementsMatch(t, []string{"apps/db:v1"}, refs(RegistryListOptions{Repository: "apps/db"}))
+}
+
+func TestRegistryClose_PushBlockedOnSemaphore(t *testing.T) {
+	cfg := validTestConfig()
+	cfg.MaxConcurrentPushes = 1
+	cfg.MaxConcurrentPulls = 1
+	storage, err := NewQuicBaaSStorage(newMockStorageClient())
+	require.NoError(t, err)
+	reg, err := NewRegistry(cfg, testLogger(), WithStorage(storage))
+	require.NoError(t, err)
+	ctx := context.Background()
+	require.NoError(t, reg.Push(ctx, "apps/web:v1", digestImage("layer", "cfg"), PushOptions{}))
+
+	// Hold the only slot of each semaphore so Push and Pull block on it.
+	reg.pushSemaphore <- struct{}{}
+	reg.pullSemaphore <- struct{}{}
+
+	pushErr := make(chan error, 1)
+	pullErr := make(chan error, 1)
+	go func() {
+		pushErr <- reg.Push(ctx, "apps/web:v2", digestImage("layer 2", "cfg"), PushOptions{})
+	}()
+	go func() {
+		_, err := reg.Pull(ctx, "apps/web:v1", PullOptions{})
+		pullErr <- err
+	}()
+	// Give both goroutines time to reach the semaphore.
+	time.Sleep(50 * time.Millisecond)
+
+	require.NoError(t, reg.Close())
+	<-reg.pushSemaphore
+	<-reg.pullSemaphore
+
+	var closed RegistryClosedError
+	select {
+	case err := <-pushErr:
+		assert.ErrorAs(t, err, &closed)
+	case <-time.After(5 * time.Second):
+		t.Fatal("Push did not return after Close")
+	}
+	select {
+	case err := <-pullErr:
+		assert.ErrorAs(t, err, &closed)
+	case <-time.After(5 * time.Second):
+		t.Fatal("Pull did not return after Close")
 	}
 }
 

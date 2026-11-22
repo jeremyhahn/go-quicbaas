@@ -954,28 +954,82 @@ func TestListManifests_StorageError(t *testing.T) {
 }
 
 func TestListManifests_Filters(t *testing.T) {
-	tests := map[string]ListOptions{
-		"repository":            {Repository: "myrepo"},
-		"prefix":                {Prefix: "app"},
-		"repository and prefix": {Repository: "myrepo", Prefix: "app"},
+	tests := map[string]struct {
+		opts ListOptions
+		want []string
+	}{
+		"none":                  {ListOptions{}, []string{"myrepo:app-1", "myrepo:web", "other:app-2"}},
+		"repository":            {ListOptions{Repository: "myrepo"}, []string{"myrepo:app-1", "myrepo:web"}},
+		"prefix":                {ListOptions{Prefix: "other"}, []string{"other:app-2"}},
+		"repository and prefix": {ListOptions{Repository: "myrepo", Prefix: "app"}, []string{"myrepo:app-1"}},
+		"tag prefix elsewhere":  {ListOptions{Repository: "other", Prefix: "web"}, nil},
 	}
-	for name, opts := range tests {
+	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			storage, _ := NewQuicBaaSStorage(newMockStorageClient())
 			ctx := context.Background()
-			for _, ref := range []string{"myrepo/app/image1:latest", "myrepo/other/image:latest", "app/image:v1"} {
-				_ = storage.StoreManifest(ctx, ref, &ImageManifest{SchemaVersion: 2})
+			for _, ref := range []string{"myrepo:app-1", "myrepo:web", "other:app-2"} {
+				if err := storage.StoreManifest(ctx, ref, &ImageManifest{SchemaVersion: 2}); err != nil {
+					t.Fatalf("StoreManifest %s: %v", ref, err)
+				}
 			}
 
-			result, err := storage.ListManifests(ctx, opts)
+			result, err := storage.ListManifests(ctx, tt.opts)
 			if err != nil {
 				t.Fatalf("expected no error, got: %v", err)
 			}
-			if result == nil {
-				t.Fatal("expected non-nil result")
+			var got []string
+			for _, m := range result.Manifests {
+				got = append(got, m.Reference)
+			}
+			sort.Strings(got)
+			if strings.Join(got, ",") != strings.Join(tt.want, ",") {
+				t.Errorf("refs = %v, want %v", got, tt.want)
 			}
 		})
 	}
+}
+
+func TestListManifests_StrictReturnsErrors(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("get error", func(t *testing.T) {
+		client := newMockStorageClient()
+		storage, _ := NewQuicBaaSStorage(client)
+		_ = storage.StoreManifest(ctx, "repo:v1", &ImageManifest{SchemaVersion: 2})
+		client.getErr = errors.New("backend down")
+
+		if _, err := storage.ListManifests(ctx, ListOptions{Strict: true}); err == nil {
+			t.Error("strict list: expected an error on a failed read")
+		}
+		res, err := storage.ListManifests(ctx, ListOptions{})
+		if err != nil {
+			t.Fatalf("non-strict list: %v", err)
+		}
+		if len(res.Manifests) != 0 {
+			t.Errorf("non-strict list returned %d manifests, want 0", len(res.Manifests))
+		}
+	})
+
+	t.Run("corrupt manifest", func(t *testing.T) {
+		client := newMockStorageClient()
+		storage, _ := NewQuicBaaSStorage(client)
+		_ = storage.StoreManifest(ctx, "repo:v1", &ImageManifest{SchemaVersion: 2})
+		client.data[entityTypeManifest+":"+storage.manifestKey("repo:bad")] = []byte("not json{")
+
+		_, err := storage.ListManifests(ctx, ListOptions{Strict: true})
+		var storageErr ErrStorageError
+		if !errors.As(err, &storageErr) {
+			t.Errorf("strict list: want ErrStorageError, got %v", err)
+		}
+		res, err := storage.ListManifests(ctx, ListOptions{})
+		if err != nil {
+			t.Fatalf("non-strict list: %v", err)
+		}
+		if len(res.Manifests) != 1 {
+			t.Errorf("non-strict list returned %d manifests, want 1", len(res.Manifests))
+		}
+	})
 }
 
 func TestListManifests_SkipsInvalidManifests(t *testing.T) {
