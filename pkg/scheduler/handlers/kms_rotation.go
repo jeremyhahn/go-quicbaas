@@ -70,6 +70,15 @@ func (h *KMSRotationHandler) Name() string {
 
 // Handle runs one rotation scan.
 func (h *KMSRotationHandler) Handle(ctx context.Context, job *scheduler.Job) (*scheduler.JobResult, error) {
+	// The scan rotates due keys across every tenant, so only a system or
+	// delegated job may run it; a tenant-owned job naming this handler is
+	// refused before the scan.
+	if scheduler.JobTenantID(job) != "" {
+		return nil, &scheduler.InvalidJobError{
+			Field:   "owner_type",
+			Message: "the KMS rotation scan runs only as a system job, not as a tenant-owned job",
+		}
+	}
 	result, err := h.rotator.RotateDueKeys(ctx)
 	if err != nil {
 		return nil, &scheduler.HandlerFailedError{
