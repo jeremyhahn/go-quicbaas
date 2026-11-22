@@ -525,18 +525,29 @@ func (h *timeseriesHandler) transformListMetricsResponse(resp interface{}) (inte
 
 // transformSetRetention turns the SDK's typed SetRetentionRequest into the
 // arguments of the server's qrdb_ts_set_retention_policy tool: whole
-// seconds and the lower-case aggregation name.
+// seconds (a sub-second duration or resolution is refused) and the
+// lower-case aggregation name.
 func (h *timeseriesHandler) transformSetRetention(req interface{}) (map[string]interface{}, error) {
 	r, ok := req.(*timeseries.SetRetentionRequest)
 	if !ok || r == nil {
 		return nil, errors.NewInvalidInput("mcp.timeseries.SetRetention", "invalid request type")
 	}
+	dur, err := qtsWholeSeconds("mcp.timeseries.SetRetention", "retention duration", int64(r.Policy.Duration))
+	if err != nil {
+		return nil, err
+	}
+	var res int64
+	if r.Policy.Resolution > 0 {
+		if res, err = qtsWholeSeconds("mcp.timeseries.SetRetention", "retention resolution", int64(r.Policy.Resolution)); err != nil {
+			return nil, err
+		}
+	}
 	args := map[string]interface{}{
 		"metric":           r.Metric,
-		"duration_seconds": int64(r.Policy.Duration / time.Second),
+		"duration_seconds": dur,
 	}
 	if r.Policy.Resolution > 0 {
-		args["resolution_seconds"] = int64(r.Policy.Resolution / time.Second)
+		args["resolution_seconds"] = res
 	}
 	if name := r.Policy.Aggregation.WireName(); name != "" {
 		args["aggregation"] = name

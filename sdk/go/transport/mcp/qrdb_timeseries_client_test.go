@@ -16,6 +16,7 @@ import (
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/timeseries"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
 
@@ -233,4 +234,52 @@ func TestMCPQRDBTimeSeriesClientRoundTripsWithBearer(t *testing.T) {
 	if n := len(calls()); n != len(want) {
 		t.Errorf("calls after Close = %d, want %d", n, len(want))
 	}
+}
+
+// MCP's retention tool takes whole seconds: a sub-second duration or
+// resolution is refused before the tool is called, never truncated.
+func TestMCPQRDBTimeSeriesSetRetentionRejectsSubsecond(t *testing.T) {
+	url, calls := newQTSServer(t, []string{"qrdb_ts_set_retention_policy"},
+		func(string, map[string]interface{}) string { return `{"success":true}` })
+	tr, err := New(&transport.Config{Address: url, Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = tr.Close() })
+	c := tr.QRDBTimeSeries()
+	ctx := context.Background()
+
+	refused := []struct {
+		name   string
+		policy *qrdbtransport.TSRetentionPolicy
+	}{
+		{"subsecond duration", &qrdbtransport.TSRetentionPolicy{DurationNs: int64(500 * time.Millisecond)}},
+		{"fractional resolution", &qrdbtransport.TSRetentionPolicy{DurationNs: int64(time.Hour), ResolutionNs: int64(1500 * time.Millisecond)}},
+	}
+	for _, tc := range refused {
+		t.Run(tc.name, func(t *testing.T) {
+			err := c.TSSetRetention(ctx, &qrdbtransport.TSSetRetentionRequest{Metric: "cpu", Policy: tc.policy})
+			if !errors.IsInvalidInput(err) {
+				t.Fatalf("TSSetRetention error = %v, want InvalidInput", err)
+			}
+			if n := len(calls()); n != 0 {
+				t.Errorf("calls = %d, want 0", n)
+			}
+		})
+	}
+
+	t.Run("whole seconds", func(t *testing.T) {
+		err := c.TSSetRetention(ctx, &qrdbtransport.TSSetRetentionRequest{Metric: "cpu",
+			Policy: &qrdbtransport.TSRetentionPolicy{DurationNs: int64(2 * time.Hour), ResolutionNs: int64(time.Minute)}})
+		if err != nil {
+			t.Fatalf("TSSetRetention: %v", err)
+		}
+		got := calls()
+		if len(got) != 1 || got[0].tool != "qrdb_ts_set_retention_policy" {
+			t.Fatalf("calls = %+v", got)
+		}
+		if got[0].args["duration_seconds"] != float64(7200) || got[0].args["resolution_seconds"] != float64(60) {
+			t.Errorf("args = %v", got[0].args)
+		}
+	})
 }

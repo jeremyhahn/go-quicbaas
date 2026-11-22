@@ -519,6 +519,9 @@ func handleWriteBatch(ctx context.Context, svc service.QuicBaaS, req interface{}
 	return svc.WriteBatch(ctx, r)
 }
 
+// handleTSQuery runs a time-series query on the service. An aggregation
+// interval that is not a whole number of seconds is refused, because the
+// service takes the interval in seconds.
 func handleTSQuery(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	switch r := req.(type) {
 	case *timeseries.QueryRequest:
@@ -532,8 +535,11 @@ func handleTSQuery(ctx context.Context, svc service.QuicBaaS, req interface{}) (
 			EndTime:   r.End,
 		}
 		if r.Aggregate != timeseries.AggregateNone {
+			if r.Interval%time.Second != 0 {
+				return nil, errors.NewInvalidInput("quicbaas.TimeSeries.Query", "aggregation interval must be a whole number of seconds")
+			}
 			in.Aggregation = r.Aggregate.String()
-			in.IntervalSec = int64(r.Interval.Seconds())
+			in.IntervalSec = int64(r.Interval / time.Second)
 		}
 		resp, err := svc.TSQuery(ctx, in)
 		if err != nil {

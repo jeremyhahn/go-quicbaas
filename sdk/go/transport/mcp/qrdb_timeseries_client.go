@@ -180,6 +180,17 @@ func qtsUnsupportedAgg(method string) error {
 	return errors.NewInvalidInput("mcp."+method, "unsupported aggregation function")
 }
 
+// qtsWholeSeconds converts a nanosecond duration to the whole seconds MCP's
+// retention tool takes. MCP cannot carry sub-second precision, so a
+// sub-second value is refused rather than truncated: a 500ms retention would
+// otherwise become 0, which the server reads as keep forever.
+func qtsWholeSeconds(op, field string, ns int64) (int64, error) {
+	if ns%int64(time.Second) != 0 {
+		return 0, errors.NewInvalidInput(op, field+" must be a whole number of seconds: MCP sends retention in seconds")
+	}
+	return ns / int64(time.Second), nil
+}
+
 // writeArgs builds the qrdb_ts_write / qrdb_ts_write_point arguments.
 func qtsWriteArgs(method string, point *qrdbtransport.TSDataPoint) (map[string]interface{}, error) {
 	args := map[string]interface{}{
@@ -439,17 +450,28 @@ func (c *QRDBTimeSeriesClient) TSGetRetention(ctx context.Context, req *qrdbtran
 	}, nil
 }
 
-// TSSetRetention calls qrdb_ts_set_retention_policy (durations in seconds).
+// TSSetRetention calls qrdb_ts_set_retention_policy (whole seconds; a
+// sub-second duration or resolution is refused).
 func (c *QRDBTimeSeriesClient) TSSetRetention(ctx context.Context, req *qrdbtransport.TSSetRetentionRequest) error {
 	if req.Policy == nil {
 		return errors.NewInvalidInput("mcp.TSSetRetention", "policy is required")
 	}
+	dur, err := qtsWholeSeconds("mcp.TSSetRetention", "retention duration", req.Policy.DurationNs)
+	if err != nil {
+		return err
+	}
+	var res int64
+	if req.Policy.ResolutionNs > 0 {
+		if res, err = qtsWholeSeconds("mcp.TSSetRetention", "retention resolution", req.Policy.ResolutionNs); err != nil {
+			return err
+		}
+	}
 	args := map[string]interface{}{
 		"metric":           req.Metric,
-		"duration_seconds": req.Policy.DurationNs / int64(time.Second),
+		"duration_seconds": dur,
 	}
 	if req.Policy.ResolutionNs > 0 {
-		args["resolution_seconds"] = req.Policy.ResolutionNs / int64(time.Second)
+		args["resolution_seconds"] = res
 	}
 	if req.Policy.Aggregation != qrdbtransport.AggNone {
 		funcName, ok := qtsAggFuncNames[req.Policy.Aggregation]
@@ -458,7 +480,7 @@ func (c *QRDBTimeSeriesClient) TSSetRetention(ctx context.Context, req *qrdbtran
 		}
 		args["aggregation"] = funcName
 	}
-	_, err := c.t.callQRDBTool(ctx, "qrdb_ts_set_retention_policy", args)
+	_, err = c.t.callQRDBTool(ctx, "qrdb_ts_set_retention_policy", args)
 	return err
 }
 

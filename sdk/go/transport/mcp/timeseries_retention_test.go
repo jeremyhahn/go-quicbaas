@@ -65,6 +65,21 @@ func TestTimeseriesSetRetention_ToolArguments(t *testing.T) {
 	}
 }
 
+// The tool takes whole seconds: a sub-second duration or resolution is
+// refused, never truncated (500ms would become 0, keep forever).
+func TestTimeseriesSetRetention_RejectsSubsecond(t *testing.T) {
+	h := newTSHandler(t)
+	for _, p := range []timeseries.RetentionPolicy{
+		{Duration: 500 * time.Millisecond},
+		{Duration: time.Hour, Resolution: 1500 * time.Millisecond},
+	} {
+		args, err := h.transformRequest("SetRetention", &timeseries.SetRetentionRequest{Metric: "cpu", Policy: p})
+		if args != nil || !errors.IsInvalidInput(err) {
+			t.Errorf("policy %+v: got %v, %v; want nil args and InvalidInput", p, args, err)
+		}
+	}
+}
+
 func TestTimeseriesGetRetention_ToolArgumentsAndResult(t *testing.T) {
 	h := newTSHandler(t)
 	args, err := h.transformRequest("GetRetention", &timeseries.GetRetentionRequest{Metric: "cpu"})

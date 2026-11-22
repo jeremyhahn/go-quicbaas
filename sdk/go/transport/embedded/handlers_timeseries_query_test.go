@@ -8,6 +8,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/timeseries"
+	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
 
 // queryMock records the query the embedded transport makes on the service and
@@ -69,6 +70,28 @@ func TestTSQuery_SDKRequestReachesTheServiceAndIsTyped(t *testing.T) {
 	for i := range want {
 		if !resp.Series[i].Timestamp.Equal(want[i].Timestamp) || resp.Series[i].Value != want[i].Value {
 			t.Errorf("Series[%d] = %+v, want %+v", i, resp.Series[i], want[i])
+		}
+	}
+}
+
+// The service takes the aggregation interval in seconds: a fractional
+// interval is refused before the service is asked, never truncated.
+func TestTSQuery_FractionalIntervalIsRefused(t *testing.T) {
+	t0 := time.Unix(1_700_000_000, 0).UTC()
+	for _, iv := range []time.Duration{500 * time.Millisecond, 1500 * time.Millisecond} {
+		m := &queryMock{}
+		_, err := newQueryClient(t, m).Query(context.Background(), &timeseries.QueryRequest{
+			Metric:    "cpu",
+			Start:     t0,
+			End:       t0.Add(time.Hour),
+			Aggregate: timeseries.AggregateAvg,
+			Interval:  iv,
+		})
+		if !sdkerrors.IsInvalidInput(err) {
+			t.Errorf("interval %v: error = %v, want InvalidInput", iv, err)
+		}
+		if m.got != nil {
+			t.Errorf("interval %v: service was asked %+v", iv, m.got)
 		}
 	}
 }
