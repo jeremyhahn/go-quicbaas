@@ -15,6 +15,7 @@ package server
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"crypto/x509"
 	"errors"
 	"fmt"
@@ -61,6 +62,10 @@ var errAVRNoTransport = errors.New("the avr backend has no serial transport: thi
 // errAVRNoDevice is returned when the avr backend is built without a port.
 var errAVRNoDevice = errors.New("kms.avr.device is required for the avr backend")
 
+// errAVRAliasNotDeviceSigned is returned when the alias certificate's
+// signature does not verify with the DeviceID key read from the device.
+var errAVRAliasNotDeviceSigned = errors.New("avr: the alias certificate is not signed by this device's DeviceID key")
+
 // avrKeyProvider is the go-xkms AVR backend plus the serial port QuicBaaS
 // opened for it. go-xkms's backend does not own its device, so the port's
 // lifetime is the composition's: Close closes the backend, then the port.
@@ -76,8 +81,14 @@ func (p *avrKeyProvider) Close() error {
 
 // AttestKey attests the device key and returns the result in the form the
 // go-xkms service requires. The AVR backend returns its own *AVRAttestation,
-// which XKMSService.AttestKey refuses as an unexpected result type; the
-// alias certificate it carries is the statement, signed on the device.
+// which XKMSService.AttestKey refuses as an unexpected result type.
+//
+// The alias certificate is signed by the DeviceID key over its TBS bytes, so
+// the statement carries the certificate's signature over RawTBSCertificate,
+// with the DeviceID public key (read from the element by GetKey) as the
+// attesting key and the alias key as the attested key. The certificate stays
+// in the chain as the DICE evidence. The adapter verifies the pair before it
+// returns and refuses an alias certificate this device did not sign.
 func (p *avrKeyProvider) AttestKey(ctx context.Context, attrs *xkmssdk.KeyAttributes, nonce []byte) (interface{}, error) {
 	res, err := p.AVRBackend.AttestKey(ctx, attrs, nonce)
 	if err != nil {
@@ -87,20 +98,36 @@ func (p *avrKeyProvider) AttestKey(ctx context.Context, attrs *xkmssdk.KeyAttrib
 	if !ok || att == nil || att.Certificate == nil {
 		return nil, fmt.Errorf("avr: unexpected attestation result %T", res)
 	}
+	key, err := p.AVRBackend.GetKey(ctx, attrs)
+	if err != nil {
+		return nil, fmt.Errorf("avr: read the DeviceID key: %w", err)
+	}
+	dk, ok := key.(*xkmssdk.AVRDeviceKey)
+	if !ok || dk == nil {
+		return nil, fmt.Errorf("avr: unexpected device key %T", key)
+	}
+	pub, ok := dk.Public().(*ecdsa.PublicKey)
+	if !ok || pub == nil {
+		return nil, fmt.Errorf("avr: unexpected device key %T", key)
+	}
 	cert := att.Certificate
-	return &attestation.AttestationStatement{
+	stmt := &attestation.AttestationStatement{
 		Format:                att.Format,
-		AttestingKeyAlgorithm: cert.PublicKeyAlgorithm,
-		AttestingKeyPublic:    cert.PublicKey,
+		AttestingKeyAlgorithm: x509.ECDSA,
+		AttestingKeyPublic:    pub,
 		Signature:             cert.Signature,
 		SignatureAlgorithm:    cert.SignatureAlgorithm,
 		CertificateChain:      []*x509.Certificate{cert},
 		AttestedKeyPublic:     cert.PublicKey,
-		AttestationData:       att.CertificateDER,
+		AttestationData:       cert.RawTBSCertificate,
 		CreatedAt:             time.Now().UTC().Format(time.RFC3339),
 		Backend:               string(xkmssdk.BackendTypeAVR),
 		Nonce:                 att.Nonce,
-	}, nil
+	}
+	if err := attestation.NewVerifier(nil).VerifySignature(stmt, nil); err != nil {
+		return nil, fmt.Errorf("%w: %w", errAVRAliasNotDeviceSigned, err)
+	}
+	return stmt, nil
 }
 
 // buildAVRServiceBackend opens cfg.KMS.AVR.Device, connects go-xkms's AVR

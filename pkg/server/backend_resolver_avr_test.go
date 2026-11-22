@@ -16,15 +16,24 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"io"
+	"math/big"
 	"net"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/attestation"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/dice"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	tfw "github.com/jeremyhahn/trusted-firmware/sdk/go"
 
@@ -46,6 +55,9 @@ type fakeAVRDevice struct {
 	// attest feature and serves cert, page by page, to CmdAttestCert.
 	se   bool
 	cert []byte
+	// point is the 64-byte X||Y DeviceID public point served to
+	// CmdProvPubKey for SlotDeviceID.
+	point []byte
 
 	mu     sync.Mutex
 	closed bool
@@ -69,10 +81,10 @@ func capsPayload() []byte {
 
 // newSecureElementAVRDevice is a fake secure-element device whose attestation
 // answer is cert, the alias certificate it hands out for any challenge.
-func newSecureElementAVRDevice(t *testing.T, cert []byte) *fakeAVRDevice {
+func newSecureElementAVRDevice(t *testing.T, cert, point []byte) *fakeAVRDevice {
 	t.Helper()
 	host, dev := net.Pipe()
-	f := &fakeAVRDevice{host: host, dev: dev, se: true, cert: cert}
+	f := &fakeAVRDevice{host: host, dev: dev, se: true, cert: cert, point: point}
 	go f.serve()
 	t.Cleanup(func() { _ = dev.Close(); _ = host.Close() })
 	return f
@@ -128,6 +140,8 @@ func (f *fakeAVRDevice) answer(fr tfw.Frame) (tfw.Status, []byte) {
 		return tfw.StatusOK, capsPayload()
 	case fr.Cmd() == tfw.CmdAttestCert && f.se:
 		return f.attestCertAnswer(fr.Payload)
+	case fr.Cmd() == tfw.CmdProvPubKey && f.se && bytes.Equal(fr.Payload, []byte{tfw.SlotDeviceID}) && f.point != nil:
+		return tfw.StatusOK, f.point
 	default:
 		return tfw.Status(1), nil
 	}
@@ -332,9 +346,9 @@ func avrTestVectors(t *testing.T) (nonce, der []byte) {
 // startAVRService composes an AVR service backend over a secure-element fake
 // device that answers with der, and installs it as the go-xkms service's only
 // backend.
-func startAVRService(t *testing.T, der []byte) xkmssdk.ServiceBackend {
+func startAVRService(t *testing.T, der, point []byte) xkmssdk.ServiceBackend {
 	t.Helper()
-	dev := newSecureElementAVRDevice(t, der)
+	dev := newSecureElementAVRDevice(t, der, point)
 	withAVRPort(t, func(string, int) (io.ReadWriteCloser, error) { return dev.hostPort(), nil })
 
 	sb, err := NewBackendResolver(avrConfig()).ServiceBackendWithStore(BackendSpec{Backend: config.BackendTypeAVR}, nil)
@@ -362,8 +376,9 @@ func startAVRService(t *testing.T, der []byte) xkmssdk.ServiceBackend {
 // service and gets the device's alias certificate back. On BASE this call
 // failed with "unexpected attestation result type *avr.Attestation".
 func TestBackendResolver_AVRAttestThroughService(t *testing.T) {
-	nonce, der := avrTestVectors(t)
-	startAVRService(t, der)
+	nonce, _ := avrTestVectors(t)
+	der, point, devPub := mintAVRAlias(t, nonce)
+	startAVRService(t, der, point)
 
 	svc, err := xkmssdk.Get()
 	if err != nil {
@@ -379,8 +394,19 @@ func TestBackendResolver_AVRAttestThroughService(t *testing.T) {
 	if len(resp.CertificateChain) != 1 || !bytes.Equal(resp.CertificateChain[0], der) {
 		t.Fatalf("CertificateChain has %d entries, want the alias certificate only", len(resp.CertificateChain))
 	}
-	if !bytes.Equal(resp.AttestationData, der) {
-		t.Fatal("AttestationData is not the device's alias certificate")
+	leaf, err := x509.ParseCertificate(resp.CertificateChain[0])
+	if err != nil {
+		t.Fatalf("parse the returned alias certificate: %v", err)
+	}
+	if !bytes.Equal(resp.AttestationData, leaf.RawTBSCertificate) {
+		t.Fatal("AttestationData is not the alias certificate's TBS bytes")
+	}
+	if !bytes.Equal(resp.Signature, leaf.Signature) {
+		t.Fatal("Signature is not the alias certificate's signature")
+	}
+	digest := sha256.Sum256(resp.AttestationData)
+	if !ecdsa.VerifyASN1(devPub, digest[:], resp.Signature) {
+		t.Fatal("the signature does not verify with the DeviceID key over AttestationData")
 	}
 	if !bytes.Equal(resp.Nonce, nonce) {
 		t.Fatalf("Nonce = %x, want %x", resp.Nonce, nonce)
@@ -393,12 +419,132 @@ func TestBackendResolver_AVRAttestThroughService(t *testing.T) {
 	}
 }
 
+// mintAVRAlias mints what a genuine device holds and sends: a P-256 DeviceID
+// key with its self-signed CA certificate, and an alias certificate for a
+// fresh alias key, signed by the DeviceID key and carrying the challenge in
+// its tcg-dice-UCCS-evidence extension. It returns the alias DER, the DeviceID
+// public point as the 64-byte X||Y the element answers to ProvPubKey, and the
+// DeviceID public key.
+func mintAVRAlias(t *testing.T, nonce []byte) (der, point []byte, devPub *ecdsa.PublicKey) {
+	t.Helper()
+	devKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate the DeviceID key: %v", err)
+	}
+	aliasKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate the alias key: %v", err)
+	}
+	notBefore := time.Now().Add(-time.Hour)
+	notAfter := notBefore.Add(24 * time.Hour)
+
+	caTmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "ag DeviceID"},
+		NotBefore:             notBefore,
+		NotAfter:              notAfter,
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageCertSign,
+	}
+	caDER, err := x509.CreateCertificate(rand.Reader, caTmpl, caTmpl, &devKey.PublicKey, devKey)
+	if err != nil {
+		t.Fatalf("mint the DeviceID certificate: %v", err)
+	}
+	ca, err := x509.ParseCertificate(caDER)
+	if err != nil {
+		t.Fatalf("parse the DeviceID certificate: %v", err)
+	}
+
+	ext, err := dice.CreateUccsEvidenceExtension(&dice.ClaimsSet{Nonce: nonce})
+	if err != nil {
+		t.Fatalf("CreateUccsEvidenceExtension: %v", err)
+	}
+	aliasTmpl := &x509.Certificate{
+		SerialNumber:    big.NewInt(2),
+		Subject:         pkix.Name{CommonName: "ag Alias"},
+		NotBefore:       notBefore,
+		NotAfter:        notAfter,
+		ExtraExtensions: []pkix.Extension{ext},
+	}
+	der, err = x509.CreateCertificate(rand.Reader, aliasTmpl, ca, &aliasKey.PublicKey, devKey)
+	if err != nil {
+		t.Fatalf("mint the alias certificate: %v", err)
+	}
+	return der, ecdhPoint(t, &devKey.PublicKey), &devKey.PublicKey
+}
+
+// ecdhPoint returns pub as the 64-byte X||Y the element sends on the wire.
+func ecdhPoint(t *testing.T, pub *ecdsa.PublicKey) []byte {
+	t.Helper()
+	k, err := pub.ECDH()
+	if err != nil {
+		t.Fatalf("ECDH: %v", err)
+	}
+	return k.Bytes()[1:]
+}
+
+// avrAttestDirect calls the composed provider's AttestKey, bypassing the
+// service, so the statement itself can be inspected.
+func avrAttestDirect(t *testing.T, sb xkmssdk.ServiceBackend, nonce []byte) (interface{}, error) {
+	t.Helper()
+	ap, ok := sb.KeyProvider().(xkmssdk.AttestingKeyProvider)
+	if !ok {
+		t.Fatalf("the avr key provider %T is not an AttestingKeyProvider", sb.KeyProvider())
+	}
+	return ap.AttestKey(context.Background(), &xkmssdk.KeyAttributes{CN: "avr-device-id"}, nonce)
+}
+
+// TestBackendResolver_AVRAttestationVerifies: the statement verifies under
+// the go-xkms Verifier with the device's DeviceID key as the attesting key.
+func TestBackendResolver_AVRAttestationVerifies(t *testing.T) {
+	nonce, _ := avrTestVectors(t)
+	der, point, devPub := mintAVRAlias(t, nonce)
+	sb := startAVRService(t, der, point)
+
+	res, err := avrAttestDirect(t, sb, nonce)
+	if err != nil {
+		t.Fatalf("AttestKey = %v, want nil", err)
+	}
+	stmt, ok := res.(*attestation.AttestationStatement)
+	if !ok || stmt == nil {
+		t.Fatalf("AttestKey returned %T, want *attestation.AttestationStatement", res)
+	}
+	got, ok := stmt.AttestingKeyPublic.(*ecdsa.PublicKey)
+	if !ok || !got.Equal(devPub) {
+		t.Fatal("AttestingKeyPublic is not the device's DeviceID key")
+	}
+	if err := attestation.NewVerifier(nil).VerifySignature(stmt, nil); err != nil {
+		t.Fatalf("VerifySignature = %v, want nil", err)
+	}
+}
+
+// TestBackendResolver_AVRRefusesAnAliasNotSignedByTheDevice: an alias
+// certificate the device's DeviceID key did not sign is refused.
+func TestBackendResolver_AVRRefusesAnAliasNotSignedByTheDevice(t *testing.T) {
+	nonce, _ := avrTestVectors(t)
+	der, _, _ := mintAVRAlias(t, nonce)
+	other, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate a foreign key: %v", err)
+	}
+	sb := startAVRService(t, der, ecdhPoint(t, &other.PublicKey))
+
+	res, err := avrAttestDirect(t, sb, nonce)
+	if !errors.Is(err, errAVRAliasNotDeviceSigned) {
+		t.Fatalf("AttestKey = %v, want errAVRAliasNotDeviceSigned", err)
+	}
+	if res != nil {
+		t.Fatalf("AttestKey returned %T, want no statement", res)
+	}
+}
+
 // TestBackendResolver_AVRRegistersNoAlgorithms checks the KMS registry gives
 // the attest-only AVR backend no algorithm to route on. On BASE AVR fell into
 // the defaults and registered AES, RSA, ECDSA, Ed25519 and HMAC.
 func TestBackendResolver_AVRRegistersNoAlgorithms(t *testing.T) {
 	_, der := avrTestVectors(t)
-	startAVRService(t, der)
+	startAVRService(t, der, nil)
 
 	f, err := kms.NewBackendFactory(&kms.BackendFactoryConfig{})
 	if err != nil {
