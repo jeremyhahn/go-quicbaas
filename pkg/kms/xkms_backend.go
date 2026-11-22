@@ -707,7 +707,12 @@ func (kb *XKMSBackend) DeleteKey(ctx context.Context, keyID string) error {
 	if meta != nil && meta.Algorithm != "" {
 		attrs = kb.xkmsKeyAttributes(keyID, meta.Algorithm)
 	} else {
-		// Default to AES-256-GCM if we don't have algorithm info
+		// No algorithm is known. An encoded name is deleted only under the
+		// identity its record vouches for, so with none known there is no
+		// owned key to delete. A literal name keeps the AES-256-GCM default.
+		if _, encoded := decodeXKMSKeyName(xkmsKeyName(keyID)); encoded {
+			return ErrKeyNotFound
+		}
 		attrs = &kctypes.KeyAttributes{
 			CN:                 xkmsKeyName(keyID),
 			StoreType:          kctypes.StoreType(string(kb.backendType)),
@@ -716,9 +721,7 @@ func (kb *XKMSBackend) DeleteKey(ctx context.Context, keyID string) error {
 		}
 	}
 
-	// Delete from go-xkms using attributes, tracking the attributes of the
-	// key go-xkms actually deleted.
-	deleted := attrs
+	// Delete from go-xkms using attributes.
 	if err := xkms.DeleteKey(ctx, attrs); err != nil {
 		if stderrors.Is(err, xkms.ErrKeyNotFound) || stderrors.Is(err, kctypes.ErrBackendKeyNotFound) {
 			// The material is already gone: this is the retry of a delete
@@ -737,25 +740,15 @@ func (kb *XKMSBackend) DeleteKey(ctx context.Context, keyID string) error {
 			}
 			return ErrKeyNotFound
 		}
-		// Try with default format as fallback
-		defaultAttrs := &kctypes.KeyAttributes{
-			CN:                 xkmsKeyName(keyID),
-			StoreType:          kctypes.StoreType(string(kb.backendType)),
-			KeyType:            kctypes.KeyTypeEncryption,
-			SymmetricAlgorithm: kctypes.SymmetricAES256GCM,
-		}
-		if err2 := xkms.DeleteKey(ctx, defaultAttrs); err2 != nil {
-			if stderrors.Is(err2, xkms.ErrKeyNotFound) {
-				return ErrKeyNotFound
-			}
-			return api.NewKeyDeletionError("XKMSBackend.DeleteKey", err)
-		}
-		deleted = defaultAttrs
+		// No other identity is tried: a fallback identity is not the one
+		// this key's record vouches for, and deleting it could remove
+		// another writer's key.
+		return api.NewKeyDeletionError("XKMSBackend.DeleteKey", err)
 	}
 
 	// Drop the ownership record of the deleted key's identity, or a later
 	// native key stored under it would resolve as the deleted key.
-	if _, err := kb.releaseXKMSKey(ctx, deleted); err != nil {
+	if _, err := kb.releaseXKMSKey(ctx, attrs); err != nil {
 		return err
 	}
 
