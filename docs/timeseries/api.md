@@ -42,7 +42,11 @@ with, and talks straight to the go-qrdb node: `TSWrite`, `TSWriteBatch`,
 go-qrdb's `/v1/ts/*` routes (`/ts/write`, `/ts/query`,
 `/ts/series/{metric}/retention`, ...). A go-qrdb client that cannot be built
 (for example the embedded transport without go-qrdb servicers) is returned as
-an error. Test: `sdk/go/qrdb_timeseries_reexport_test.go`.
+an error. Each transport takes an authenticated path: REST and MCP ride the
+SDK's own transport, QUIC uses its REST adapter over HTTP/3 with the bearer,
+gRPC and Unix add the bearer as metadata; a selection without an
+authenticated adapter is refused rather than dialed unauthenticated. Tests:
+`sdk/go/qrdb_timeseries_reexport_test.go`, `sdk/go/qrdb_quic_h3_test.go`.
 
 ### `quicbaas.TimeSeries` — SDK package `sdk/go/client/timeseries`
 
@@ -60,7 +64,8 @@ MCP tools: `qrdb_ts_delete_series`, `qrdb_ts_get_retention_policy`, `qrdb_ts_lis
 `SetRetention` and `GetRetention` carry a typed `RetentionPolicy` (`Duration`,
 `Resolution`, `Aggregation`). On the REST, gRPC and MCP wires durations travel
 as whole seconds and the aggregation as its lower-case name; `GetRetention`
-returns a nil `Policy` for a metric without one. `POST /api/v1/timeseries/query`
+returns a nil `Policy` for a metric without one; a zero policy (infinite
+duration, no downsampling) is the same thing and also reads nil. `POST /api/v1/timeseries/query`
 needs `timeseries:write`, as the generated permission table states; a query is
 a read, so that row is a candidate for review.
 

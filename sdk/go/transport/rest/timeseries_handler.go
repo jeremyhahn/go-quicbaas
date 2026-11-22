@@ -211,6 +211,10 @@ func (h *timeseriesRESTHandler) handleSetRetention(ctx context.Context, req inte
 	return nil, nil
 }
 
+// handleGetRetention reads a metric's policy through GET
+// /api/v1/timeseries/retention/{metric}; a metric without a policy has a nil
+// Policy. A zero policy from the server is reported as nil by the client
+// (timeseries.Client.GetRetention).
 func (h *timeseriesRESTHandler) handleGetRetention(ctx context.Context, req interface{}) (interface{}, error) {
 	r, ok := req.(*timeseriesclient.GetRetentionRequest)
 	if !ok || r == nil {

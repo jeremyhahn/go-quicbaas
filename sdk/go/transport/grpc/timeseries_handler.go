@@ -131,7 +131,8 @@ func handleTimeSeriesSetRetention(ctx context.Context, client pb.QuicBaaSClient,
 
 // handleTimeSeriesGetRetention sends a typed GetRetentionRequest as
 // TSGetRetentionPolicy and returns the policy typed; a metric without a
-// policy has a nil Policy.
+// policy has a nil Policy. A zero policy from the server is reported as nil
+// by the client (timeseries.Client.GetRetention).
 func handleTimeSeriesGetRetention(ctx context.Context, client pb.QuicBaaSClient, req interface{}) (interface{}, error) {
 	const op = "grpc.timeseries.GetRetention"
 	r, ok := req.(*timeseries.GetRetentionRequest)

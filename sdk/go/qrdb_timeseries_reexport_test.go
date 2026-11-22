@@ -67,6 +67,12 @@ func TestSearchQRDBTimeSeries_ReExportsGoQRDBClient(t *testing.T) {
 	opts.tlsEnabled = true
 	opts.tlsConfig = stubTLSConfig(t, srv)
 	c := &client{opts: opts, address: strings.TrimPrefix(srv.URL, "https://")}
+	tr, err := createRESTTransport(c.address, c.opts)
+	if err != nil {
+		t.Fatalf("createRESTTransport: %v", err)
+	}
+	c.transport = tr
+	t.Cleanup(func() { _ = tr.Close() })
 
 	ts, err := c.Search().QRDBTimeSeries()
 	if err != nil {
@@ -138,5 +144,36 @@ func TestSearchQRDBTimeSeries_BuildErrorReturned(t *testing.T) {
 	}
 	if !sdkerrors.IsInvalidInput(err) {
 		t.Errorf("want InvalidInput, got %T: %v", err, err)
+	}
+}
+
+// TestSearchQRDBTimeSeries_NoUnauthenticatedFallback pins that a REST, QUIC or
+// MCP selection without its concrete transport is refused rather than dialed
+// through go-qrdb's unauthenticated sub-client.
+func TestSearchQRDBTimeSeries_NoUnauthenticatedFallback(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		tt   TransportType
+	}{
+		{"REST", TransportREST},
+		{"QUIC", TransportQUIC},
+		{"MCP", TransportMCP},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := defaultOptions()
+			opts.transportType = tc.tt
+			c := &client{opts: opts, address: "127.0.0.1:1"}
+
+			ts, err := c.Search().QRDBTimeSeries()
+			if err == nil {
+				t.Fatal("Search().QRDBTimeSeries(): want an error without an authenticated adapter")
+			}
+			if ts != nil {
+				t.Errorf("want a nil client with the error, got %T", ts)
+			}
+			if !sdkerrors.IsInvalidInput(err) {
+				t.Errorf("want InvalidInput, got %T: %v", err, err)
+			}
+		})
 	}
 }

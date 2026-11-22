@@ -134,7 +134,8 @@ type Client interface {
 	SetRetention(ctx context.Context, req *SetRetentionRequest) error
 
 	// GetRetention returns the retention policy of a metric. Policy is
-	// nil when the metric has none.
+	// nil when the metric has none; a zero policy (infinite duration, no
+	// downsampling) is the same thing and also reads nil.
 	GetRetention(ctx context.Context, req *GetRetentionRequest) (*GetRetentionResponse, error)
 }
 
@@ -174,7 +175,9 @@ type GetRetentionResponse struct {
 	// Metric is the metric name.
 	Metric string
 
-	// Policy is the metric's retention policy, nil when it has none.
+	// Policy is the metric's retention policy. Policy is nil when the metric
+	// has none; a zero policy (infinite duration, no downsampling) is the
+	// same thing and also reads nil.
 	Policy *RetentionPolicy
 }
 
@@ -327,7 +330,16 @@ func (c *client) GetRetention(ctx context.Context, req *GetRetentionRequest) (*G
 	if !ok {
 		return nil, errors.NewInternal("timeseries.GetRetention", "invalid response type")
 	}
+	if out.Policy != nil && out.Policy.isZero() {
+		out.Policy = nil
+	}
 	return out, nil
+}
+
+// isZero reports whether p is the zero policy (infinite duration, no
+// downsampling), which means the same as no policy.
+func (p *RetentionPolicy) isZero() bool {
+	return p.Duration == 0 && p.Resolution == 0 && p.Aggregation == AggregateNone
 }
 
 func validateSetRetentionRequest(req *SetRetentionRequest) error {

@@ -114,6 +114,21 @@ func TestTimeSeriesGetRetention_NoPolicyIsNil(t *testing.T) {
 	}
 }
 
+// TestTimeSeriesGetRetention_ZeroPolicyIsNil pins that a zero policy from the
+// server (the backend's representation of "no policy") reads nil.
+func TestTimeSeriesGetRetention_ZeroPolicyIsNil(t *testing.T) {
+	client := newRetentionClient(t, &fakeRetentionServer{getResp: &pb.TSGetRetentionPolicyResponse{
+		Metric: "m", Policy: &pb.TSRetentionPolicy{},
+	}})
+	resp, err := client.GetRetention(context.Background(), &timeseries.GetRetentionRequest{Metric: "m"})
+	if err != nil {
+		t.Fatalf("GetRetention: %v", err)
+	}
+	if resp.Policy != nil {
+		t.Fatalf("GetRetention: got policy %+v, want nil", resp.Policy)
+	}
+}
+
 func TestTimeSeriesRetention_ServerErrorIsTyped(t *testing.T) {
 	client := newRetentionClient(t, &fakeRetentionServer{fail: true})
 	ctx := context.Background()

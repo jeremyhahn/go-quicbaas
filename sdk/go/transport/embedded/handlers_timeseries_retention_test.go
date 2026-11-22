@@ -97,6 +97,25 @@ func TestGetRetention_NoPolicyIsNil(t *testing.T) {
 	}
 }
 
+// TestGetRetention_ZeroPolicyIsNil pins that a zero policy from the service
+// (the backend's representation of "no policy") reads nil.
+func TestGetRetention_ZeroPolicyIsNil(t *testing.T) {
+	for name, policy := range map[string]*service.TSRetentionPolicy{
+		"empty":            {},
+		"aggregation none": {Aggregation: "none"},
+	} {
+		resp, err := newRetentionClient(t, &retentionMock{getResp: &service.TSGetRetentionPolicyResponse{
+			Metric: "cpu.usage", Policy: policy,
+		}}).GetRetention(context.Background(), &timeseries.GetRetentionRequest{Metric: "cpu.usage"})
+		if err != nil {
+			t.Fatalf("%s: GetRetention: %v", name, err)
+		}
+		if resp.Policy != nil {
+			t.Errorf("%s: got policy %+v, want nil", name, resp.Policy)
+		}
+	}
+}
+
 func TestRetention_ServiceErrorIsReturned(t *testing.T) {
 	boom := errors.New("boom")
 	c := newRetentionClient(t, &retentionMock{err: boom})

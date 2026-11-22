@@ -19,6 +19,7 @@ import (
 	qrdbsecret "github.com/jeremyhahn/go-qrdb/sdk/go/secret"
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 
+	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport/mcp"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport/quic"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport/rest"
@@ -585,6 +586,9 @@ func (c *client) Share() (QRDBShareClient, error) {
 //   - REST: the verbs ride the SDK's own REST transport, which sends the
 //     platform bearer set by WithAuthToken on every request; go-qrdb's REST
 //     sub-client cannot add an Authorization header (go-quicbaas#2500).
+//   - QUIC: the embedded REST adapter over HTTP/3, carrying the bearer, as
+//     Security().Barrier() does; go-qrdb's REST sub-client would dial TCP
+//     without it.
 //   - MCP: the verbs call go-qrdb's native qrdb_ts_* tools through the SDK's
 //     own MCP session, which carries WithMCPAuthToken or the configured login
 //     credentials. No second MCP session is opened.
@@ -595,6 +599,10 @@ func (c *client) Share() (QRDBShareClient, error) {
 //   - WithEmbeddedQRDB: qrdb calls dispatch in-process. An embedded client
 //     whose time-series servicer implements QRDBTimeSeriesContextReader reads
 //     retention and lists metrics through it, in the caller's scope.
+//
+// Any other selection without its concrete transport (REST, QUIC or MCP
+// without one, or no options) is refused with InvalidInput rather than
+// dialed through an unauthenticated go-qrdb client.
 func (c *client) qrdbTimeSeries() (QRDBTimeSeriesClient, error) {
 	embedded := c.opts != nil && c.opts.embeddedQRDB != nil
 	if !embedded {
@@ -603,6 +611,14 @@ func (c *client) qrdbTimeSeries() (QRDBTimeSeriesClient, error) {
 			return t.QRDBTimeSeries(), nil
 		case *mcp.Transport:
 			return t.QRDBTimeSeries(), nil
+		case *quic.Transport:
+			return t.Transport.QRDBTimeSeries(), nil
+		}
+		if c.opts == nil || (c.opts.transportType != TransportGRPC &&
+			c.opts.transportType != TransportUnix &&
+			c.opts.transportType != TransportEmbedded) {
+			return nil, sdkerrors.NewInvalidInput("Search().QRDBTimeSeries",
+				"the selected transport has no authenticated time-series adapter")
 		}
 	}
 	qrdbClient, err := c.qrdbClient()

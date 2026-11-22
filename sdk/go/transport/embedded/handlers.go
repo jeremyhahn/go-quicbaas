@@ -600,7 +600,8 @@ func handleTSSetRetention(ctx context.Context, svc service.QuicBaaS, req interfa
 
 // handleTSGetRetention serves the SDK's typed GetRetentionRequest through
 // the service's GetRetentionPolicy and returns the policy typed; a metric
-// without a policy has a nil Policy.
+// without a policy has a nil Policy. A zero policy from the server is
+// reported as nil by the client (timeseries.Client.GetRetention).
 func handleTSGetRetention(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*timeseries.GetRetentionRequest)
 	if !ok || r == nil {

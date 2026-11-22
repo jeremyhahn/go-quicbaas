@@ -78,6 +78,35 @@ func TestClient_GetRetention(t *testing.T) {
 	}
 }
 
+// TestClient_GetRetention_ZeroPolicyIsNil pins that a zero policy from any
+// transport reads nil, while a policy with any field set stays non-nil.
+func TestClient_GetRetention_ZeroPolicyIsNil(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		policy  *RetentionPolicy
+		wantNil bool
+	}{
+		{"zero", &RetentionPolicy{}, true},
+		{"aggregation only", &RetentionPolicy{Aggregation: AggregateAvg}, false},
+		{"resolution only", &RetentionPolicy{Resolution: time.Minute}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := NewClient(&mockTransport{
+				requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
+					return &GetRetentionResponse{Metric: "m", Policy: tc.policy}, nil
+				},
+			})
+			got, err := c.GetRetention(context.Background(), &GetRetentionRequest{Metric: "m"})
+			if err != nil {
+				t.Fatalf("GetRetention: %v", err)
+			}
+			if (got.Policy == nil) != tc.wantNil {
+				t.Fatalf("GetRetention policy: got %+v, want nil=%v", got.Policy, tc.wantNil)
+			}
+		})
+	}
+}
+
 func TestClient_GetRetention_NilAndBadResponse(t *testing.T) {
 	var resp interface{}
 	c := NewClient(&mockTransport{
