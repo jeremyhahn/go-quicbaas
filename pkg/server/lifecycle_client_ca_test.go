@@ -173,6 +173,41 @@ func TestInitializeCA_OperatorTLSCAFileUnchanged_OptionalMTLS(t *testing.T) {
 	assertPlatformCATrusted(t, srv, srv.tlsConfig.ClientCAs)
 }
 
+// TestInitializeCA_OperatorTLSCAFileAtDefaultPathUnchanged pins that an
+// operator tls_ca_file at the data-dir chain path is theirs: it loads as client
+// trust anchors and the self-issued boot never overwrites it. BASE decided
+// ownership by path equality, skipped the file and overwrote it.
+func TestInitializeCA_OperatorTLSCAFileAtDefaultPathUnchanged(t *testing.T) {
+	t.Parallel()
+
+	cfg := createFTConfig(t)
+	cfg.Security.TLSEnabled = true
+	dataDir := t.TempDir()
+	cfg.Storage.DataDir = dataDir
+	cfg.CA.KeysDir = filepath.Join(t.TempDir(), "ca-keys")
+
+	operator := newTestAnchorCA(t, "operator CA")
+	path := filepath.Join(dataDir, "certs", "ca-chain.crt")
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
+	data := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: operator.cert.Raw})
+	require.NoError(t, os.WriteFile(path, data, 0o600))
+	cfg.Security.TLSCAFile = path
+	before, err := os.ReadFile(path)
+	require.NoError(t, err)
+
+	srv, err := NewServer(cfg)
+	require.NoError(t, err)
+	require.NoError(t, srv.initializeCA())
+
+	after, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, before, after, "an operator tls_ca_file at the default path must never be overwritten")
+	_, verifyErr := operator.cert.Verify(x509.VerifyOptions{Roots: srv.tlsConfig.ClientCAs})
+	require.NoError(t, verifyErr)
+	require.NotNil(t, srv.clientTrustAnchors)
+	assertPlatformCATrusted(t, srv, srv.tlsConfig.ClientCAs)
+}
+
 // serverHandshake runs one TLS handshake against the unified listener config
 // and returns the number of client chains the server verified, with the
 // server side's handshake error. A nil clientCert sends no certificate.

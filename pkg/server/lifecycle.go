@@ -642,6 +642,7 @@ func (s *Server) initializeCA() error {
 	}
 	if s.config.Security.TLSCAFile == "" {
 		s.config.Security.TLSCAFile = s.defaultTLSCAFile()
+		s.tlsCAFileDefaulted = true
 	}
 	s.config.Security.TLSEnabled = true
 
@@ -776,9 +777,10 @@ func (s *Server) initializeCA() error {
 			return err
 		}
 
-		// The chain is written only to the defaulted path: an operator's
-		// tls_ca_file is their trust-anchor set and is never overwritten.
-		if s.config.Security.TLSCAFile == s.defaultTLSCAFile() {
+		// The chain is written only to the path this boot defaulted: an
+		// operator's tls_ca_file, even at the same path, is their trust-anchor
+		// set and is never overwritten.
+		if s.tlsCAFileDefaulted {
 			caBundle, err := xkmsCA.CABundle()
 			if err != nil {
 				return api.NewOperationFailedError("get CA bundle", err)

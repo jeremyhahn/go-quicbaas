@@ -15,6 +15,7 @@ package grpc
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"testing"
 	"time"
@@ -1855,4 +1856,78 @@ func TestSessionServiceAdapter_RevokeOtherSessions_ListError(t *testing.T) {
 	adapter := NewSessionServiceAdapter(storage)
 	_, err := adapter.RevokeOtherSessions(context.Background(), "t1", "keep")
 	require.Error(t, err)
+}
+
+// TestIAMServiceAdapter_ListPagesContinue walks the user and role lists page
+// by page the way the SDK does (iamPagination: another page while
+// offset+returned < total). On BASE the walk stopped after the first page
+// because total equalled the page length.
+func TestIAMServiceAdapter_ListPagesContinue(t *testing.T) {
+	const limit = 2
+
+	t.Run("users", func(t *testing.T) {
+		a := createTestIAMAdapter91(t)
+		ctx := context.Background()
+		for i := 0; i < 5; i++ {
+			_, _, _, err := a.CreateUser(ctx, &iam.User{
+				TenantID: "tenant-1", Email: fmt.Sprintf("page%d@example.com", i), Name: "Pager",
+			}, 0)
+			require.NoError(t, err)
+		}
+		all, _, err := a.ListUsers(ctx, "tenant-1", 0, 0, nil)
+		require.NoError(t, err)
+		var want []string
+		for _, u := range all {
+			want = append(want, fmt.Sprint(u.ID))
+		}
+		require.GreaterOrEqual(t, len(want), 5)
+
+		var got []string
+		offset := 0
+		for i := 0; ; i++ {
+			require.Less(t, i, 10, "the walk must end")
+			page, total, err := a.ListUsers(ctx, "tenant-1", limit, offset, nil)
+			require.NoError(t, err)
+			for _, u := range page {
+				got = append(got, fmt.Sprint(u.ID))
+			}
+			if total <= offset+len(page) {
+				break
+			}
+			offset += len(page)
+		}
+		require.Equal(t, want, got)
+	})
+
+	t.Run("roles", func(t *testing.T) {
+		a := createTestIAMAdapter91(t)
+		ctx := context.Background()
+		for i := 0; i < 5; i++ {
+			_, err := a.CreateRole(ctx, &iam.Role{TenantID: "tenant-1", Name: fmt.Sprintf("pager-%d", i)})
+			require.NoError(t, err)
+		}
+		all, _, err := a.ListRoles(ctx, "tenant-1", 0, 0)
+		require.NoError(t, err)
+		var want []string
+		for _, r := range all {
+			want = append(want, fmt.Sprint(r.ID))
+		}
+		require.GreaterOrEqual(t, len(want), 5)
+
+		var got []string
+		offset := 0
+		for i := 0; ; i++ {
+			require.Less(t, i, 10, "the walk must end")
+			page, total, err := a.ListRoles(ctx, "tenant-1", limit, offset)
+			require.NoError(t, err)
+			for _, r := range page {
+				got = append(got, fmt.Sprint(r.ID))
+			}
+			if total <= offset+len(page) {
+				break
+			}
+			offset += len(page)
+		}
+		require.Equal(t, want, got)
+	})
 }

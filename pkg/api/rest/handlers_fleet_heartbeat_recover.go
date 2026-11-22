@@ -142,15 +142,11 @@ func (h *IAMHeartbeatRecoverer) Recover(ctx context.Context, r *http.Request, te
 			certTenant, tenantID, nodeID)
 		return false
 	}
-	// The SPIFFE SAN must name the OU's tenant and the agent kind (#1388,
-	// ruling 62(a)). A certificate with no tenant SAN is the one enrolment
-	// tolerates (warned there); recovery tolerates it too.
+	// The SPIFFE SAN must name the OU's tenant and the agent kind (#1388).
+	// A certificate with no tenant SAN is refused, as enrolment refuses it.
 	if err := assertCertAuthenticatesInto(peer, certTenant); err != nil {
-		var noTenantSAN *FleetNodeCertNoSPIFFETenantError
-		if !errors.As(err, &noTenantSAN) {
-			h.logger.Warnf("agent heartbeat recover: %v: agent=%s tenant=%s", err, nodeID, tenantID)
-			return false
-		}
+		h.logger.Warnf("agent heartbeat recover: %v: agent=%s tenant=%s", err, nodeID, tenantID)
+		return false
 	}
 
 	expected := iam.FleetNodeAppName(certTenant, peer.Subject.CommonName)

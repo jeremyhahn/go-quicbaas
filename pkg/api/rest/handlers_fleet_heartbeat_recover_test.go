@@ -25,6 +25,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -108,7 +109,8 @@ type recoveryServer struct {
 func (m *recoveryServer) Agent() orchestration.AgentService { return m.agentService }
 
 // recoverPeerCert mints a self-signed certificate carrying the OU=tenant
-// (#1388) + ClientAuth EKU the recoverer validates.
+// (#1388) + ClientAuth EKU + tenant-scoped svc SPIFFE SAN the recoverer
+// validates.
 func recoverPeerCert(t *testing.T, tenantID, cn string) *x509.Certificate {
 	t.Helper()
 	tmpl := &x509.Certificate{
@@ -119,6 +121,7 @@ func recoverPeerCert(t *testing.T, tenantID, cn string) *x509.Certificate {
 			OrganizationalUnit: []string{tenantID},
 		},
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		URIs:        []*url.URL{fleetNodeSPIFFEURI(t, tenantID, cn)},
 	}
 	return tmpl
 }
@@ -377,6 +380,27 @@ func TestHeartbeat_RejectsUnknownIDWithMissingOU(t *testing.T) {
 	}
 	if calls := registrar.snapshot(); len(calls) != 0 {
 		t.Errorf("registrar must not be called without OU=agents")
+	}
+}
+
+// TestHeartbeat_RejectsUnknownIDWithoutSPIFFESAN pins that recovery refuses
+// a certificate with no tenant SPIFFE SAN, as enrollment does. On BASE the
+// recoverer tolerated it and re-registered the node.
+func TestHeartbeat_RejectsUnknownIDWithoutSPIFFESAN(t *testing.T) {
+	const tenantID = "acme"
+	const cn = "198.51.100.91"
+	cert := recoverPeerCert(t, tenantID, cn)
+	cert.URIs = nil
+	agentID := iam.FleetNodeAppName(tenantID, cn)
+
+	srv, _, registrar := newRecoveryTestServer(t, 100)
+	rec := makeHeartbeatRequest(t, srv, tenantID, agentID, cert)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 without a tenant SPIFFE SAN, got %d", rec.Code)
+	}
+	if calls := registrar.snapshot(); len(calls) != 0 {
+		t.Errorf("registrar must not be called without a tenant SPIFFE SAN")
 	}
 }
 

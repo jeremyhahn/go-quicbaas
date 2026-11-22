@@ -50,6 +50,15 @@ import (
 // every heartbeat was refused 403.
 // =============================================================================
 
+// fleetNodeSPIFFEURI is the tenant-scoped svc SAN the fleet issuer mints
+// (pkg/service/fleet_cert_issuer.go).
+func fleetNodeSPIFFEURI(t *testing.T, tenantID, commonName string) *url.URL {
+	t.Helper()
+	u, err := url.Parse("spiffe://burnin.example.internal/tenant/" + tenantID + "/svc/" + commonName)
+	require.NoError(t, err)
+	return u
+}
+
 // agentSPIFFEPeerCert mints an agent certificate shaped like the deploy
 // service's: Organization = tenant, OU = agents, ClientAuth EKU, and the
 // tenant-scoped SPIFFE SAN go-qrdb derives the identity's tenant from.
@@ -62,9 +71,7 @@ func agentSPIFFEPeerCert(t *testing.T, certOrg, spiffeTenant, commonName string)
 	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	require.NoError(t, err)
 
-	spiffeID, err := url.Parse("spiffe://burnin.example.internal/tenant/" +
-		spiffeTenant + "/svc/" + commonName)
-	require.NoError(t, err)
+	spiffeID := fleetNodeSPIFFEURI(t, spiffeTenant, commonName)
 
 	tmpl := &x509.Certificate{
 		SerialNumber: serial,
@@ -194,6 +201,25 @@ func TestHandleAgentRegister_RefusesTheOldAgentsOU(t *testing.T) {
 	w := f.postRegister(t, cert)
 	require.Equal(t, http.StatusForbidden, w.Code, "register body: %s", w.Body.String())
 	require.Contains(t, w.Body.String(), "tenant_mismatch")
+}
+
+// TestHandleAgentRegister_RefusesACertificateWithoutASPIFFESAN pins that a
+// certificate with no tenant SPIFFE SAN authenticates into no tenant and is
+// refused. On BASE this registered with 201 and only logged a warning.
+func TestHandleAgentRegister_RefusesACertificateWithoutASPIFFESAN(t *testing.T) {
+	f := newAgentOAuthFixture(t)
+
+	cert := agentSPIFFEPeerCert(t, agentOAuthTestTenant, agentOAuthTestTenant, "agent-agent-07")
+	cert.URIs = nil
+
+	w := f.postRegister(t, cert)
+	require.Equal(t, http.StatusForbidden, w.Code, "register body: %s", w.Body.String())
+	require.Contains(t, w.Body.String(), "tenant_mismatch")
+	require.Contains(t, w.Body.String(), "SPIFFE SAN")
+
+	users, err := f.identity.ListUsers(context.Background(), agentOAuthTestTenant, iam.ListOptions{})
+	require.NoError(t, err)
+	require.Empty(t, users, "a refused registration must enroll no identity")
 }
 
 // TestHandleAgentRegister_FailsClosedWithoutAnIdentityStore proves the

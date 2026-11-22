@@ -146,16 +146,42 @@ func TestLoadOperatorClientTrustAnchors_EmptyFileIsBootError(t *testing.T) {
 
 func TestLoadOperatorClientTrustAnchors_DefaultPathIsNotAnAnchorSet(t *testing.T) {
 	s := newTrustAnchorTestServer(t, "")
-	// The server's own chain from an earlier boot sits at the default path.
+	// The server's own chain from an earlier boot sits at the default path,
+	// and initializeCA defaulted security.tls_ca_file to it.
 	defaultPath := s.defaultTLSCAFile()
 	require.NoError(t, os.MkdirAll(filepath.Dir(defaultPath), 0o700))
 	ca := newTestAnchorCA(t, "own CA")
 	data := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: ca.cert.Raw})
 	require.NoError(t, os.WriteFile(defaultPath, data, 0o600))
 	s.config.Security.TLSCAFile = defaultPath
+	s.tlsCAFileDefaulted = true
 
 	require.NoError(t, s.loadOperatorClientTrustAnchors())
 	require.Nil(t, s.clientTrustAnchors, "the defaulted path must not load as operator anchors")
+}
+
+// TestLoadOperatorClientTrustAnchors_OperatorFileAtDefaultPathLoads pins that
+// an operator who configures the data-dir chain path gets their anchors. BASE
+// skipped this file because its path matched the default.
+func TestLoadOperatorClientTrustAnchors_OperatorFileAtDefaultPathLoads(t *testing.T) {
+	s := newTrustAnchorTestServer(t, "")
+	ca := newTestAnchorCA(t, "operator CA")
+	path := s.defaultTLSCAFile()
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
+	data := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: ca.cert.Raw})
+	require.NoError(t, os.WriteFile(path, data, 0o600))
+	s.config.Security.TLSCAFile = path
+
+	require.NoError(t, s.loadOperatorClientTrustAnchors())
+
+	pool := s.clientTrustAnchors.certPool()
+	require.NotNil(t, pool, "an operator file at the default path must load")
+	client := ca.issueClient(t, "agent")
+	_, err := client.Leaf.Verify(x509.VerifyOptions{
+		Roots:     pool,
+		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	})
+	require.NoError(t, err)
 }
 
 func TestLoadOperatorClientTrustAnchors_EmptyPathLeavesSetNil(t *testing.T) {

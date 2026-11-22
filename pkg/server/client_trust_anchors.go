@@ -38,14 +38,16 @@ func (e *ClientTrustAnchorsError) Unwrap() error { return e.Cause }
 
 // loadOperatorClientTrustAnchors loads security.tls_ca_file into
 // s.clientTrustAnchors once, before any listener or authenticator is built.
-// It must run before initializeCA defaults the path, so only a file the
-// operator configured is loaded. An empty path leaves the set nil. A file that
+// Only a file the operator configured is loaded, wherever it lives: a path
+// initializeCA defaulted (tlsCAFileDefaulted) is the server's own chain and is
+// skipped. An empty path leaves the set nil. A file that
 // cannot be read or parses to no certificate is a boot error.
 func (s *Server) loadOperatorClientTrustAnchors() error {
 	path := s.config.Security.TLSCAFile
-	// The defaulted path holds the chain this server's own CA wrote on an
-	// earlier boot, not an operator anchor set.
-	if path == "" || path == s.defaultTLSCAFile() || s.clientTrustAnchors != nil {
+	// A path initializeCA defaulted holds the chain this server's own CA
+	// wrote, not an operator anchor set. The same path set by the operator is
+	// theirs.
+	if path == "" || s.tlsCAFileDefaulted || s.clientTrustAnchors != nil {
 		return nil
 	}
 	certs, err := loadCertificates(path)

@@ -487,6 +487,11 @@ type Server struct {
 	// authenticators share it; nil when no tls_ca_file is configured.
 	clientTrustAnchors *clientTrustAnchors
 
+	// tlsCAFileDefaulted is true once initializeCA filled an empty
+	// security.tls_ca_file with defaultTLSCAFile(). Only then is that file the
+	// server's own chain; an operator may configure the same path.
+	tlsCAFileDefaulted bool
+
 	// Barrier management - uses the interfaces.BarrierManager abstraction
 	// backed by qrdb's StorageBarrier via the BarrierSealManager adapter.
 	barrierManager interfaces.BarrierManager

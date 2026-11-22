@@ -179,19 +179,13 @@ func (s *Server) HandleFleetEnroll(w http.ResponseWriter, r *http.Request) {
 	// tenant-scoped SPIFFE SAN (pkg/auth MTLSAuthenticator.TenantFromCert), so
 	// that SAN — not the Organization claim cross-checked above — is the
 	// authority when both are present.
+	// A certificate with no tenant SPIFFE SAN is refused like any other
+	// mismatch: it authenticates into no tenant, and the issuer never mints
+	// one, so enrolling it would hand credentials to an identity nothing can
+	// authorize.
 	if err := assertCertAuthenticatesInto(peer, req.TenantID); err != nil {
-		// A certificate carrying NO tenant SPIFFE SAN is reported, not
-		// refused: it is a certificate this build's issuer would not mint, and
-		// turning it into a registration failure would lock out a fleet that
-		// enrolled with one. Its consequence is stated instead, because the
-		// enrollment below cannot help it.
-		var noTenantSAN *FleetNodeCertNoSPIFFETenantError
-		if !errors.As(err, &noTenantSAN) {
-			respondFleetEnrollError(w, r, http.StatusForbidden, "tenant_mismatch", err.Error())
-			return
-		}
-		s.logger.Warnf("agent register: %v; re-issue the certificate with a tenant-scoped SPIFFE SAN or its"+
-			" control-plane calls will stay unauthorized", err)
+		respondFleetEnrollError(w, r, http.StatusForbidden, "tenant_mismatch", err.Error())
+		return
 	}
 
 	// The address is checked before anything is issued: a node the control
@@ -577,7 +571,7 @@ func registerMTLSApp(ctx context.Context, log interface {
 // requires OU=fleet nodes, so that fallback can never name a tenant: a certificate
 // carrying no SPIFFE SAN authenticates into a tenant called "agents" and its
 // principal is unresolvable wherever this enrollment writes it. Both
-// conditions are reported rather than papered over.
+// conditions refuse the certificate.
 //
 // A malformed SAN fails closed, exactly as qrdb's authenticator does with it.
 func assertCertAuthenticatesInto(peer *x509.Certificate, tenantID string) error {
