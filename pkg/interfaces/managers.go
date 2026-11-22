@@ -72,6 +72,13 @@ type BackupManager interface {
 	Close() error
 }
 
+// PSSSigner is implemented by KMS managers that can sign a pre-hashed digest
+// with RSA-PSS padding. A saltLength of 0 means the salt length equals the
+// hash length.
+type PSSSigner interface {
+	SignPSS(ctx context.Context, keyID string, digest []byte, hash crypto.Hash, saltLength int) ([]byte, error)
+}
+
 // KMSManager defines the interface for Key Management Service operations.
 // This interface provides a unified abstraction over various KMS backends
 // (local, Vault, AWS KMS, Azure Key Vault, GCP Cloud KMS, HSM, TPM).
