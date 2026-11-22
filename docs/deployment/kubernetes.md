@@ -86,8 +86,8 @@ certificate for the names clients use, such as `quicbaas.quicbaas.svc`.
 go-quicraft admits a founding member only by its identity. Without the
 `member-identities` key the cluster could not bootstrap, so the start command
 refuses to launch `quicbaasd` when the key is missing, malformed or lacks a
-peer. Regenerate the key, and restart the pods, whenever a replica certificate
-is reissued with a new key. The format matches `raft.member_identities` in
+peer. See [Renewing a Raft certificate](#renewing-a-raft-certificate). The
+format matches `raft.member_identities` in
 [cluster architecture](../cluster/architecture.md).
 Keep the seal passphrase outside the cluster as well. Without it, a node's
 data cannot be unsealed.
@@ -174,6 +174,56 @@ build. They run under Docker in CI.
 Change `newTag` in `kustomization.yaml`, together with `VERSION`, and apply.
 The StatefulSet's `RollingUpdate` replaces one pod at a time, highest ordinal
 first, and waits for each to be ready. The PDB holds the quorum throughout.
+
+## Renewing a Raft certificate
+
+The first formation commits each replica's identity, its `spki:` value, into
+the Raft membership. On every restart go-quicraft refuses a replica whose
+certificate presents a different key, and refuses a `member-identities` entry
+that contradicts a committed one. A replica certificate can therefore be
+renewed, for expiry, a SAN change or a reissue from the same CA, but only for
+the replica's existing private key. A certificate reissued for the same key
+has the same SubjectPublicKeyInfo, so its `spki:` identity does not change.
+This section covers a reissue from the same CA.
+
+For replica *n*, keep the current files in `old/` and run:
+
+```bash
+# A CSR made with the replica's existing private key.
+openssl req -new -key quicbaas-<n>.key \
+  -subj "/CN=quicbaas-<n>.quicbaas-raft.quicbaas.svc.cluster.local" \
+  -out quicbaas-<n>.csr
+# Sign quicbaas-<n>.csr with the cluster CA into quicbaas-<n>.crt, with the
+# SAN quicbaas-<n>.quicbaas-raft.quicbaas.svc.cluster.local, as in Secrets.
+
+# The identity must be unchanged before going on.
+[ "$(spki quicbaas-<n>.crt)" = "$(spki old/quicbaas-<n>.crt)" ] &&
+  echo "identity unchanged" || echo "the key changed: stop here" >&2
+
+# The new certificate; every other file, member-identities included, unchanged.
+kubectl -n quicbaas create secret generic quicbaas-raft-tls \
+  --from-file=ca.crt --from-file=member-identities \
+  --from-file=quicbaas-0.crt --from-file=quicbaas-0.key \
+  --from-file=quicbaas-1.crt --from-file=quicbaas-1.key \
+  --from-file=quicbaas-2.crt --from-file=quicbaas-2.key \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+# One pod at a time; the PDB holds the quorum.
+kubectl -n quicbaas delete pod quicbaas-<n>
+kubectl -n quicbaas wait --for=condition=Ready pod/quicbaas-<n> --timeout=5m
+```
+
+Restart the other replicas the same way, one at a time, each only after the
+previous one is ready.
+
+A new key is not a renewal. Do not generate a new key for a replica, rebuild
+`member-identities` and restart the pods: every restarted replica then
+refuses to start ("the committed identity for this replica is ... but this
+host presents ..."). Changing a member's key means removing that member and
+adding it back under its new identity while the other two hold the quorum.
+These manifests fix each node ID to its ordinal and do not do that. Treat a
+compromised replica key as an incident that needs that membership change, and
+keep the keys on the replicas they were issued for.
 
 ## Security
 

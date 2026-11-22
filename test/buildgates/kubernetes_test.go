@@ -421,3 +421,32 @@ func TestKubernetesPortsMatchTheNodeConfig(t *testing.T) {
 		}
 	}
 }
+
+// TestKubernetesGuideRenewsRaftCertificatesOnTheirKey holds the guide to the
+// renewal procedure: go-quicraft refuses, on restart, a replica whose key
+// differs from its committed identity, so a certificate is renewed on the
+// existing private key. It also keeps the rekey-and-restart instruction from
+// coming back.
+func TestKubernetesGuideRenewsRaftCertificatesOnTheirKey(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(repoRoot, "docs", "deployment", "kubernetes.md"))
+	if err != nil {
+		t.Fatalf("read kubernetes guide: %v", err)
+	}
+	guide := string(data)
+	for _, want := range []string{
+		"## Renewing a Raft certificate",
+		"-key quicbaas-",
+		"existing private key",
+	} {
+		if !strings.Contains(guide, want) {
+			t.Errorf("kubernetes guide lacks %q", want)
+		}
+	}
+	for i, line := range strings.Split(guide, "\n") {
+		lower := strings.ToLower(line)
+		if strings.Contains(lower, "restart") && strings.Contains(line, "Regenerate") &&
+			!strings.Contains(lower, "do not") {
+			t.Errorf("kubernetes.md:%d tells operators to regenerate and restart: %q", i+1, line)
+		}
+	}
+}

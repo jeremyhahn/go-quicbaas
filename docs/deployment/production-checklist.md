@@ -139,7 +139,7 @@ raft:
 
 - [ ] Certificate Authority (CA) established or external CA selected
 - [ ] Private keys protected with restrictive permissions (`chmod 600`)
-- [ ] Certificate rotation procedure documented
+- [ ] Certificate rotation procedure documented (Raft replica certificates are renewed on their existing key; see [Kubernetes](kubernetes.md#renewing-a-raft-certificate))
 - [ ] Automated certificate renewal configured (Let's Encrypt, cert-manager)
 - [ ] Certificate expiration alerts configured (minimum 30 days before expiry)
 
