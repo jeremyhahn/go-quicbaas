@@ -1,4 +1,4 @@
-# ci-template: v1.53 + v1.52 + v1.51 + v1.50 + v1.48 + v1.49 (delta port onto v1.34.1 + v1.42 hermetic gate + v1.43 hosted first + v1.46 runner rule; customized)
+# ci-template: v1.53 (handbook 3110a0b) + v1.52 + v1.51 + v1.50 + v1.48 + v1.49 (delta port onto v1.34.1 + v1.42 hermetic gate + v1.43 hosted first + v1.46 runner rule; customized)
 # v1.53 (2026-11-21, Tenant Agent ruling 1087, owner order: remove the
 # bottlenecks): main has one concurrency group per event again, `main-{event}`,
 # so a newer push to main cancels the older main run still queued or in
@@ -1185,10 +1185,14 @@ jobs:
       # runner the variables are unset and the script prints nothing.
       - name: Mask the LAN addresses
         env:
-          # v1.53: a registry a later step takes from `vars` is masked here.
-          # CUSTOMIZE: one VARS_<NAME> line per vars.<NAME> ending in _REGISTRY
-          # that this job reads (testdata/ci-mask-lan-tests.py M1 to M3).
-          VARS_CI_IMAGE_REGISTRY: ${{ vars.CI_IMAGE_REGISTRY }}
+          # v1.53: the internal registry is the Actions secret CI_IMAGE_REGISTRY,
+          # never a `vars` value. Actions prints a step's env in its log header
+          # before the run body, so an add-mask comes too late for a variable;
+          # the runner masks a secret from its first byte. A GitHub-hosted run
+          # receives none. ci-mask-lan.sh also masks the bare host name.
+          # CUSTOMIZE: one such line per other *_REGISTRY secret this job reads
+          # (testdata/ci-mask-lan-tests.py M1 to M5).
+          CI_IMAGE_REGISTRY: ${{ runner.environment != 'github-hosted' && secrets.CI_IMAGE_REGISTRY || '' }}
         run: scripts/ci-mask-lan.sh
 
       - name: Publish the toolchain image when the registry lacks its hash
@@ -1246,10 +1250,14 @@ jobs:
       # runner the variables are unset and the script prints nothing.
       - name: Mask the LAN addresses
         env:
-          # v1.53: a registry a later step takes from `vars` is masked here.
-          # CUSTOMIZE: one VARS_<NAME> line per vars.<NAME> ending in _REGISTRY
-          # that this job reads (testdata/ci-mask-lan-tests.py M1 to M3).
-          VARS_CI_IMAGE_REGISTRY: ${{ vars.CI_IMAGE_REGISTRY }}
+          # v1.53: the internal registry is the Actions secret CI_IMAGE_REGISTRY,
+          # never a `vars` value. Actions prints a step's env in its log header
+          # before the run body, so an add-mask comes too late for a variable;
+          # the runner masks a secret from its first byte. A GitHub-hosted run
+          # receives none. ci-mask-lan.sh also masks the bare host name.
+          # CUSTOMIZE: one such line per other *_REGISTRY secret this job reads
+          # (testdata/ci-mask-lan-tests.py M1 to M5).
+          CI_IMAGE_REGISTRY: ${{ runner.environment != 'github-hosted' && secrets.CI_IMAGE_REGISTRY || '' }}
         run: scripts/ci-mask-lan.sh
 
       # go-quicbaas: the merge result, against the base the run's event
@@ -1271,7 +1279,7 @@ jobs:
       # registry, falls through to the local build below.
       - name: Pull the toolchain image from the registry cache
         env:
-          CI_IMAGE_REGISTRY: ${{ vars.CI_IMAGE_REGISTRY }}
+          CI_IMAGE_REGISTRY: ${{ runner.environment != 'github-hosted' && secrets.CI_IMAGE_REGISTRY || '' }}
         run: scripts/ci-image-cache.sh pull || true
 
       # v1.30: the toolchain image alone (`make docker-build-toolchain`,
@@ -1291,7 +1299,7 @@ jobs:
       - name: Push the toolchain image to the registry cache
         if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         env:
-          CI_IMAGE_REGISTRY: ${{ vars.CI_IMAGE_REGISTRY }}
+          CI_IMAGE_REGISTRY: ${{ runner.environment != 'github-hosted' && secrets.CI_IMAGE_REGISTRY || '' }}
           CI_IMAGE_REGISTRY_USER: ${{ secrets.CI_IMAGE_REGISTRY_USER }}
           CI_IMAGE_REGISTRY_TOKEN: ${{ secrets.CI_IMAGE_REGISTRY_TOKEN }}
         run: |
@@ -1527,10 +1535,14 @@ jobs:
       # runner the variables are unset and the script prints nothing.
       - name: Mask the LAN addresses
         env:
-          # v1.53: a registry a later step takes from `vars` is masked here.
-          # CUSTOMIZE: one VARS_<NAME> line per vars.<NAME> ending in _REGISTRY
-          # that this job reads (testdata/ci-mask-lan-tests.py M1 to M3).
-          VARS_CI_IMAGE_REGISTRY: ${{ vars.CI_IMAGE_REGISTRY }}
+          # v1.53: the internal registry is the Actions secret CI_IMAGE_REGISTRY,
+          # never a `vars` value. Actions prints a step's env in its log header
+          # before the run body, so an add-mask comes too late for a variable;
+          # the runner masks a secret from its first byte. A GitHub-hosted run
+          # receives none. ci-mask-lan.sh also masks the bare host name.
+          # CUSTOMIZE: one such line per other *_REGISTRY secret this job reads
+          # (testdata/ci-mask-lan-tests.py M1 to M5).
+          CI_IMAGE_REGISTRY: ${{ runner.environment != 'github-hosted' && secrets.CI_IMAGE_REGISTRY || '' }}
         run: scripts/ci-mask-lan.sh
 
       - name: Reap stale CI stacks
@@ -1558,7 +1570,7 @@ jobs:
       # make docker-build builds the integration image alone.
       - name: Pull the toolchain image from the registry cache
         env:
-          CI_IMAGE_REGISTRY: ${{ vars.CI_IMAGE_REGISTRY }}
+          CI_IMAGE_REGISTRY: ${{ runner.environment != 'github-hosted' && secrets.CI_IMAGE_REGISTRY || '' }}
         run: scripts/ci-image-cache.sh pull || true
 
       - name: Build the devcontainer images
@@ -1576,7 +1588,7 @@ jobs:
       - name: Push the toolchain image to the registry cache
         if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         env:
-          CI_IMAGE_REGISTRY: ${{ vars.CI_IMAGE_REGISTRY }}
+          CI_IMAGE_REGISTRY: ${{ runner.environment != 'github-hosted' && secrets.CI_IMAGE_REGISTRY || '' }}
           CI_IMAGE_REGISTRY_USER: ${{ secrets.CI_IMAGE_REGISTRY_USER }}
           CI_IMAGE_REGISTRY_TOKEN: ${{ secrets.CI_IMAGE_REGISTRY_TOKEN }}
         run: |
@@ -1692,10 +1704,14 @@ jobs:
       # runner the variables are unset and the script prints nothing.
       - name: Mask the LAN addresses
         env:
-          # v1.53: a registry a later step takes from `vars` is masked here.
-          # CUSTOMIZE: one VARS_<NAME> line per vars.<NAME> ending in _REGISTRY
-          # that this job reads (testdata/ci-mask-lan-tests.py M1 to M3).
-          VARS_CI_IMAGE_REGISTRY: ${{ vars.CI_IMAGE_REGISTRY }}
+          # v1.53: the internal registry is the Actions secret CI_IMAGE_REGISTRY,
+          # never a `vars` value. Actions prints a step's env in its log header
+          # before the run body, so an add-mask comes too late for a variable;
+          # the runner masks a secret from its first byte. A GitHub-hosted run
+          # receives none. ci-mask-lan.sh also masks the bare host name.
+          # CUSTOMIZE: one such line per other *_REGISTRY secret this job reads
+          # (testdata/ci-mask-lan-tests.py M1 to M5).
+          CI_IMAGE_REGISTRY: ${{ runner.environment != 'github-hosted' && secrets.CI_IMAGE_REGISTRY || '' }}
         run: scripts/ci-mask-lan.sh
 
       - name: Validate the merge result, not the head alone
@@ -1783,10 +1799,14 @@ jobs:
       # runner the variables are unset and the script prints nothing.
       - name: Mask the LAN addresses
         env:
-          # v1.53: a registry a later step takes from `vars` is masked here.
-          # CUSTOMIZE: one VARS_<NAME> line per vars.<NAME> ending in _REGISTRY
-          # that this job reads (testdata/ci-mask-lan-tests.py M1 to M3).
-          VARS_CI_IMAGE_REGISTRY: ${{ vars.CI_IMAGE_REGISTRY }}
+          # v1.53: the internal registry is the Actions secret CI_IMAGE_REGISTRY,
+          # never a `vars` value. Actions prints a step's env in its log header
+          # before the run body, so an add-mask comes too late for a variable;
+          # the runner masks a secret from its first byte. A GitHub-hosted run
+          # receives none. ci-mask-lan.sh also masks the bare host name.
+          # CUSTOMIZE: one such line per other *_REGISTRY secret this job reads
+          # (testdata/ci-mask-lan-tests.py M1 to M5).
+          CI_IMAGE_REGISTRY: ${{ runner.environment != 'github-hosted' && secrets.CI_IMAGE_REGISTRY || '' }}
         run: scripts/ci-mask-lan.sh
 
       - name: Check out (bigdisk pool)
@@ -1896,10 +1916,14 @@ jobs:
       # runner the variables are unset and the script prints nothing.
       - name: Mask the LAN addresses
         env:
-          # v1.53: a registry a later step takes from `vars` is masked here.
-          # CUSTOMIZE: one VARS_<NAME> line per vars.<NAME> ending in _REGISTRY
-          # that this job reads (testdata/ci-mask-lan-tests.py M1 to M3).
-          VARS_CI_IMAGE_REGISTRY: ${{ vars.CI_IMAGE_REGISTRY }}
+          # v1.53: the internal registry is the Actions secret CI_IMAGE_REGISTRY,
+          # never a `vars` value. Actions prints a step's env in its log header
+          # before the run body, so an add-mask comes too late for a variable;
+          # the runner masks a secret from its first byte. A GitHub-hosted run
+          # receives none. ci-mask-lan.sh also masks the bare host name.
+          # CUSTOMIZE: one such line per other *_REGISTRY secret this job reads
+          # (testdata/ci-mask-lan-tests.py M1 to M5).
+          CI_IMAGE_REGISTRY: ${{ runner.environment != 'github-hosted' && secrets.CI_IMAGE_REGISTRY || '' }}
         run: scripts/ci-mask-lan.sh
 
       - name: Check out (bigdisk pool)
@@ -2028,10 +2052,14 @@ jobs:
       # runner the variables are unset and the script prints nothing.
       - name: Mask the LAN addresses
         env:
-          # v1.53: a registry a later step takes from `vars` is masked here.
-          # CUSTOMIZE: one VARS_<NAME> line per vars.<NAME> ending in _REGISTRY
-          # that this job reads (testdata/ci-mask-lan-tests.py M1 to M3).
-          VARS_CI_IMAGE_REGISTRY: ${{ vars.CI_IMAGE_REGISTRY }}
+          # v1.53: the internal registry is the Actions secret CI_IMAGE_REGISTRY,
+          # never a `vars` value. Actions prints a step's env in its log header
+          # before the run body, so an add-mask comes too late for a variable;
+          # the runner masks a secret from its first byte. A GitHub-hosted run
+          # receives none. ci-mask-lan.sh also masks the bare host name.
+          # CUSTOMIZE: one such line per other *_REGISTRY secret this job reads
+          # (testdata/ci-mask-lan-tests.py M1 to M5).
+          CI_IMAGE_REGISTRY: ${{ runner.environment != 'github-hosted' && secrets.CI_IMAGE_REGISTRY || '' }}
         run: scripts/ci-mask-lan.sh
 
       # A source check on the runner's shell: no make recipe runs here.
@@ -2067,7 +2095,7 @@ jobs:
       - name: Pull the toolchain image from the registry cache
         if: ${{ steps.probe.outputs.has_target == 'true' }}
         env:
-          CI_IMAGE_REGISTRY: ${{ vars.CI_IMAGE_REGISTRY }}
+          CI_IMAGE_REGISTRY: ${{ runner.environment != 'github-hosted' && secrets.CI_IMAGE_REGISTRY || '' }}
         run: scripts/ci-image-cache.sh pull || true
 
       - name: Build the toolchain image
@@ -2086,7 +2114,7 @@ jobs:
       - name: Push the toolchain image to the registry cache
         if: ${{ steps.probe.outputs.has_target == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         env:
-          CI_IMAGE_REGISTRY: ${{ vars.CI_IMAGE_REGISTRY }}
+          CI_IMAGE_REGISTRY: ${{ runner.environment != 'github-hosted' && secrets.CI_IMAGE_REGISTRY || '' }}
           CI_IMAGE_REGISTRY_USER: ${{ secrets.CI_IMAGE_REGISTRY_USER }}
           CI_IMAGE_REGISTRY_TOKEN: ${{ secrets.CI_IMAGE_REGISTRY_TOKEN }}
         run: |
@@ -2170,10 +2198,14 @@ jobs:
       # runner the variables are unset and the script prints nothing.
       - name: Mask the LAN addresses
         env:
-          # v1.53: a registry a later step takes from `vars` is masked here.
-          # CUSTOMIZE: one VARS_<NAME> line per vars.<NAME> ending in _REGISTRY
-          # that this job reads (testdata/ci-mask-lan-tests.py M1 to M3).
-          VARS_CI_IMAGE_REGISTRY: ${{ vars.CI_IMAGE_REGISTRY }}
+          # v1.53: the internal registry is the Actions secret CI_IMAGE_REGISTRY,
+          # never a `vars` value. Actions prints a step's env in its log header
+          # before the run body, so an add-mask comes too late for a variable;
+          # the runner masks a secret from its first byte. A GitHub-hosted run
+          # receives none. ci-mask-lan.sh also masks the bare host name.
+          # CUSTOMIZE: one such line per other *_REGISTRY secret this job reads
+          # (testdata/ci-mask-lan-tests.py M1 to M5).
+          CI_IMAGE_REGISTRY: ${{ runner.environment != 'github-hosted' && secrets.CI_IMAGE_REGISTRY || '' }}
         run: scripts/ci-mask-lan.sh
 
       - name: Reap stale CI stacks
@@ -2226,6 +2258,23 @@ jobs:
   # job's shape and joins CI Gate's needs list and check lines. v1.30: such a
   # job adds `preflight` to its needs and `needs.preflight.outputs.verdict ==
   # 'run'` to its `if:`.
+  # v1.53 (the Tenant Agent's read of the Codex P1 on go-trusted-platform
+  # #2311): a job output never carries a registry address. The LAN mask
+  # registers each internal registry as a secret, and GitHub drops a job
+  # output that contains a masked value, so a consumer would read an empty
+  # reference. A CUSTOMIZE job that hands an image to another job exports
+  # only an unmasked identifier (the tag, the digest or its hex suffix), and
+  # each consumer rebuilds the reference from the secret CI_IMAGE_REGISTRY
+  # after its own mask step. The registry is never read from `vars`: a step's
+  # env is printed in its log header before the run body, and only a secret
+  # is masked from the first byte. A GitHub-hosted run receives none, so it
+  # takes the artifact path as before:
+  #   producer:  echo "image_tag=$tag" >> "$GITHUB_OUTPUT"
+  #   consumer:  env: { IT_REGISTRY: ${{ runner.environment != 'github-hosted' && secrets.CI_IMAGE_REGISTRY || '' }},
+  #                     IT_IMAGE_TAG: ${{ needs.<producer>.outputs.image_tag }} }
+  #              run: ref="$IT_REGISTRY/<repo>/it-image:$IT_IMAGE_TAG"
+  # testdata/job-output-handoff-tests.py H1 to H5 holds the rule; run it
+  # with a copy's path to check that copy.
 
   # The single required check (devops.md §1). Every job above must appear in
   # BOTH the needs list and the results check — a gate that can pass vacuously
