@@ -98,7 +98,7 @@ func (p *avrKeyProvider) AttestKey(ctx context.Context, attrs *xkmssdk.KeyAttrib
 	if !ok || att == nil || att.Certificate == nil {
 		return nil, fmt.Errorf("avr: unexpected attestation result %T", res)
 	}
-	key, err := p.AVRBackend.GetKey(ctx, attrs)
+	key, err := p.GetKey(ctx, attrs)
 	if err != nil {
 		return nil, fmt.Errorf("avr: read the DeviceID key: %w", err)
 	}
