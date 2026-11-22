@@ -131,7 +131,7 @@ func TestBarrierClient_MethodPathAndBearer(t *testing.T) {
 				method, path, auth string
 				hits               int
 			)
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == "/health" {
 					w.WriteHeader(http.StatusOK)
 					return
@@ -145,7 +145,7 @@ func TestBarrierClient_MethodPathAndBearer(t *testing.T) {
 			}))
 			t.Cleanup(srv.Close)
 
-			tr, err := New(&transport.Config{Address: srv.URL, MaxRetries: 0}, WithAuthToken(token))
+			tr, err := New(&transport.Config{Address: srv.URL, TLSConfig: trustServer(srv), MaxRetries: 0}, WithAuthToken(token))
 			if err != nil {
 				t.Fatalf("New: %v", err)
 			}
@@ -257,7 +257,7 @@ func TestBarrierClient_EmptyResponseIsAnError(t *testing.T) {
 
 	emptyBarrier := func(t *testing.T, status int) *BarrierClient {
 		t.Helper()
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/health" {
 				w.WriteHeader(http.StatusOK)
 				return
@@ -266,7 +266,7 @@ func TestBarrierClient_EmptyResponseIsAnError(t *testing.T) {
 		}))
 		t.Cleanup(srv.Close)
 
-		tr, err := New(&transport.Config{Address: srv.URL, MaxRetries: 0})
+		tr, err := New(&transport.Config{Address: srv.URL, TLSConfig: trustServer(srv), MaxRetries: 0})
 		if err != nil {
 			t.Fatalf("New: %v", err)
 		}
@@ -771,7 +771,8 @@ func TestBarrierClient_ShareClaimWire(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			ws, tr := newWireServer(t, false, string(reply))
+			// TLS: a claim completion returns a share, so it needs https.
+			ws, tr := newWireServer(t, true, string(reply))
 			req := &qrdbtransport.ShareClaimCompleteRequest{Username: "officer-a", NonceHex: "a1b2c3", Signature: signature}
 			var got *qrdbtransport.ShareClaimCompleteResponse
 			if recovery {

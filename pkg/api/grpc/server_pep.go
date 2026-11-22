@@ -105,6 +105,17 @@ func (s *PEPServer) Check(ctx context.Context, req *iampb.CheckRequest) (*iampb.
 		return nil, status.Error(codes.InvalidArgument, "resource is required")
 	}
 
+	// The check acts only in the caller's bound tenant: the request tenant,
+	// falling back to the subject's, must be empty or that tenant.
+	requested := req.GetTenantId()
+	if requested == "" {
+		requested = req.Subject.GetTenantId()
+	}
+	tenantID, err := tenantctx.Target(ctx, "pep.Check", requested)
+	if err != nil {
+		return nil, convertPEPError(err)
+	}
+
 	// Convert proto request to domain request
 	checkReq := &iam.CheckRequest{
 		Subject:  *convertProtoToSubject(req.Subject),
@@ -112,6 +123,7 @@ func (s *PEPServer) Check(ctx context.Context, req *iampb.CheckRequest) (*iampb.
 		Resource: req.Resource,
 		Context:  make(map[string]interface{}),
 	}
+	checkReq.Subject.TenantID = tenantID
 
 	// Convert context
 	for k, v := range req.Context {
