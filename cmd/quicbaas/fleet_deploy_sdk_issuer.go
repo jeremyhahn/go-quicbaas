@@ -181,7 +181,8 @@ func (i *sdkFleetNodeCertIssuer) IssueFleetNodeCertificate(ctx context.Context, 
 	}
 	ou := subject.OrganizationalUnit
 	if ou == "" {
-		ou = "agents"
+		// The subject OU carries the tenant, as the fleet enrollment endpoint requires.
+		ou = req.TenantID
 	}
 	ttl := req.ValidityDays
 	if ttl <= 0 {
@@ -243,6 +244,10 @@ func (i *sdkFleetNodeCertIssuer) IssueFleetNodeCertificate(ctx context.Context, 
 	if err != nil {
 		keyBuf.Destroy()
 		return nil, &OpError{Op: "agent deploy: parse issued certificate", Cause: err}
+	}
+	if err := service.CheckFleetNodeCertIdentity(parsed, req.TenantID); err != nil {
+		keyBuf.Destroy()
+		return nil, err
 	}
 
 	return &service.IssuedFleetNodeCertificate{

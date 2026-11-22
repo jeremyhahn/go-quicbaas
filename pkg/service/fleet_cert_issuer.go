@@ -408,6 +408,10 @@ func NewSDKFleetNodeCertIssuer(ca xkmstransport.CAService) (*SDKFleetNodeCertIss
 // into the signing options for the request's TenantID (pkg/server
 // caServiceAdapter.signOptionsWithSPIFFE), so a client cannot name the trust
 // domain its certificate is bound under.
+//
+// The returned certificate is checked against the fleet enrollment identity
+// rule (CheckFleetNodeCertIdentity), and a provider that cannot issue a
+// svc-kind tenant SPIFFE SAN gets *FleetNodeCertKindUnavailableError.
 func (i *SDKFleetNodeCertIssuer) IssueFleetNodeCertificate(ctx context.Context, req *FleetNodeCertificateRequest) (*IssuedFleetNodeCertificate, error) {
 	if err := req.Validate(); err != nil {
 		return nil, err
@@ -516,6 +520,10 @@ func (i *SDKFleetNodeCertIssuer) IssueFleetNodeCertificate(ctx context.Context, 
 		keyBuf.Destroy()
 		return nil, &FleetNodeCertIssueError{Op: "parse issued certificate", Cause: parseErr}
 	}
+	if err := CheckFleetNodeCertIdentity(parsed, req.TenantID); err != nil {
+		keyBuf.Destroy()
+		return nil, err
+	}
 
 	return &IssuedFleetNodeCertificate{
 		CertPEM:    append([]byte(nil), resp.CertificatePEM...),
@@ -610,6 +618,53 @@ func (e *FleetNodeCertIssueError) Error() string {
 // Unwrap exposes the underlying cause for errors.Is / errors.As.
 func (e *FleetNodeCertIssueError) Unwrap() error {
 	return e.Cause
+}
+
+// FleetNodeCertKindUnavailableError reports that the certificate provider
+// issued a fleet node certificate the fleet enrollment endpoint would refuse:
+// its tenant SPIFFE SAN is missing, names another tenant, or names a kind
+// other than svc. The pinned go-xkms CSR-signing request carries no SPIFFE
+// kind (#1772), so a remote provider cannot be asked for svc; the deploy
+// refuses before anything is installed rather than install a daemon that
+// can never enroll.
+type FleetNodeCertKindUnavailableError struct {
+	// TenantID is the tenant the node was being deployed into.
+	TenantID string
+	// CertificateTenant and Kind are what the issued SAN named; empty when
+	// it had none.
+	CertificateTenant string
+	Kind              string
+	// Cause is the SAN parse error, when there was one.
+	Cause error
+}
+
+func (e *FleetNodeCertKindUnavailableError) Error() string {
+	msg := fmt.Sprintf("agent cert issuer: the certificate provider cannot issue a fleet node certificate for tenant %q: issued SPIFFE tenant %q kind %q, want kind %q",
+		e.TenantID, e.CertificateTenant, e.Kind, qrdbsdk.SpiffeKindService)
+	if e.Cause != nil {
+		msg += ": " + e.Cause.Error()
+	}
+	return msg
+}
+
+func (e *FleetNodeCertKindUnavailableError) Unwrap() error {
+	return e.Cause
+}
+
+// CheckFleetNodeCertIdentity applies the fleet enrollment endpoint's identity
+// rule to an issued leaf: a tenant SPIFFE SAN for tenantID, kind svc.
+func CheckFleetNodeCertIdentity(leaf *x509.Certificate, tenantID string) error {
+	id, err := qrdbsdk.TenantFromCert(leaf, "")
+	if err != nil {
+		if errors.Is(err, qrdbsdk.ErrSpiffeNoTenantID) {
+			err = nil
+		}
+		return &FleetNodeCertKindUnavailableError{TenantID: tenantID, Cause: err}
+	}
+	if id.TenantID != tenantID || id.Kind != qrdbsdk.SpiffeKindService {
+		return &FleetNodeCertKindUnavailableError{TenantID: tenantID, CertificateTenant: id.TenantID, Kind: id.Kind}
+	}
+	return nil
 }
 
 // UnexpectedPEMTypeError indicates a PEM block had an unexpected type when a
