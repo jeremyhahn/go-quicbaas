@@ -69,3 +69,16 @@ func TestBatchPut_ReservedEntityTypeStaysInvalidInput(t *testing.T) {
 	require.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	require.Contains(t, qbErr.Error(), "validate entity type __reserved")
 }
+
+func TestBatchDelete_ReservedEntityTypeStaysInvalidInput(t *testing.T) {
+	bs := newBatchTenantTestService(t)
+	resp, err := bs.BatchDelete(tenantctx.WithSystem(context.Background()), &BatchDeleteRequest{
+		Requests: []*DeleteRequest{{EntityType: "__reserved", ID: 1}},
+	})
+	require.Nil(t, resp)
+	require.Error(t, err)
+	qbErr, ok := err.(*errors.QBError)
+	require.True(t, ok, "outermost error is %T, want *errors.QBError", err)
+	require.Equal(t, errors.ErrInvalidInput, qbErr.Code)
+	require.Contains(t, qbErr.Error(), "validate entity type __reserved")
+}
