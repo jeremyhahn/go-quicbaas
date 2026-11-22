@@ -417,6 +417,23 @@ orchestration:
   sockets_root: /run/user/1000/quicbaas/3f0a1c9d24b7
 ```
 
+The `start`, `node` and `cluster` commands of `quicbaasd` take a flag for
+each of the section's scalar keys. A key resolves flag > env > file >
+defaults, and an unset flag never masks the file or the environment.
+
+| Flag | Key | Environment |
+|------|-----|-------------|
+| `--sdlc-enabled` | `sdlc.enabled` | `QUICBAAS_SDLC_ENABLED` |
+| `--sdlc-issue-page-limit` | `sdlc.issue_page_limit` | `QUICBAAS_SDLC_ISSUE_PAGE_LIMIT` |
+| `--sdlc-checkout-root` | `sdlc.checkout_root` | `QUICBAAS_SDLC_CHECKOUT_ROOT` |
+| `--sdlc-merge-attempts` | `sdlc.merge_attempts` | `QUICBAAS_SDLC_MERGE_ATTEMPTS` |
+| `--sdlc-webhook-max-body` | `sdlc.webhook.max_body` | `QUICBAAS_SDLC_WEBHOOK_MAX_BODY` |
+| `--sdlc-webhook-public-url` | `sdlc.webhook.public_url` | `QUICBAAS_SDLC_WEBHOOK_PUBLIC_URL` |
+
+The list and map keys (`repo_hosts`, `rulers`, `triage_agent`,
+`worker_image`, `surfacing`, `label_reconcile`, `forge`) have no flag: they
+are file-only or env-only, as the comments in the YAML above say.
+
 ### The signing socket's root
 
 The worker's commit is signed inside its container against an ephemeral
