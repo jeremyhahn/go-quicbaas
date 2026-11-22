@@ -65,6 +65,7 @@ type IAMService interface {
 	// token and its record; both are empty for any other lifecycle.
 	CreateUser(ctx context.Context, user *iam.User, inviteTTL time.Duration) (*iam.User, string, *iam.InviteRecord, error)
 	GetUser(ctx context.Context, tenantID, userID string) (*iam.User, error)
+	GetUserByUsername(ctx context.Context, tenantID, username string) (*iam.User, error)
 	UpdateUser(ctx context.Context, user *iam.User) (*iam.User, error)
 	ApproveUser(ctx context.Context, tenantID string, userID uint64) (*iam.User, error)
 	DeleteUser(ctx context.Context, tenantID, userID string) error
@@ -369,7 +370,8 @@ func (s *IAMServer) CreateUser(ctx context.Context, req *iampb.CreateUserRequest
 	return resp, nil
 }
 
-// GetUser retrieves a user by ID.
+// GetUser retrieves a user by ID. The RPC takes users:read, and
+// requireCallerTenant refuses a foreign or absent tenant.
 func (s *IAMServer) GetUser(ctx context.Context, req *iampb.GetUserRequest) (*iampb.User, error) {
 	s.logger.WithFields(map[string]interface{}{
 		"tenant_id": req.TenantId,
@@ -387,6 +389,31 @@ func (s *IAMServer) GetUser(ctx context.Context, req *iampb.GetUserRequest) (*ia
 	}
 
 	user, err := s.iamService.GetUser(ctx, req.TenantId, req.UserId)
+	if err != nil {
+		return nil, convertIAMError(err)
+	}
+
+	return convertUserToProto(user), nil
+}
+
+// GetUserByUsername is the tenant-scoped username lookup. Like GetUser the RPC
+// takes users:read. An empty tenant_id names the caller's own tenant; a foreign
+// or absent caller tenant is refused.
+func (s *IAMServer) GetUserByUsername(ctx context.Context, req *iampb.GetUserByUsernameRequest) (*iampb.User, error) {
+	s.logger.WithFields(map[string]interface{}{
+		"tenant_id": req.TenantId,
+		"username":  req.Username,
+	}).Debug("Processing GetUserByUsername request")
+
+	tenantID, err := targetTenant(ctx, "grpc.IAM", req.TenantId)
+	if err != nil {
+		return nil, err
+	}
+	if req.Username == "" {
+		return nil, status.Error(codes.InvalidArgument, "username is required")
+	}
+
+	user, err := s.iamService.GetUserByUsername(ctx, tenantID, req.Username)
 	if err != nil {
 		return nil, convertIAMError(err)
 	}
