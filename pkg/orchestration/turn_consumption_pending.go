@@ -234,12 +234,6 @@ func (p *pendingConsumption) stopDrainer() {
 	p.drainCancel()
 }
 
-// waitDrainer waits for every drainer goroutine to end. Call it only after
-// stopDrainer, so that none can start meanwhile.
-func (p *pendingConsumption) waitDrainer() {
-	p.drainers.Wait()
-}
-
 // recordingContext returns a context for writing a turn's consumption: it
 // keeps ctx's values (the tenant, the attribution) but not its cancellation,
 // and it is bounded by consumptionRecordTimeout.
@@ -403,7 +397,16 @@ func (s *agentServiceImpl) drainPendingConsumption() {
 			s.pendingLedger.releaseDrainerIfEmpty()
 			return
 		}
-		failed, lastErr := s.retryPendingEntries(rctx, s.pendingLedger.all())
+		var failed int
+		var lastErr error
+		if closed := guardStoreClosed("consumption-drain", "", func() {
+			failed, lastErr = s.retryPendingEntries(rctx, s.pendingLedger.all())
+		}); closed != nil {
+			// Shutdown gave up on this write and storage closed under it.
+			s.logger.Warnf("orchestration: pending consumption drain ended by a closed store: %v", closed)
+			s.pendingLedger.releaseDrainerIfEmpty()
+			return
+		}
 		if rctx.Err() != nil {
 			// Shutdown stopped the drainer mid-retry.
 			s.pendingLedger.releaseDrainerIfEmpty()

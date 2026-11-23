@@ -614,6 +614,88 @@ func TestShutdown_JoinsTheDrainerWhenTheJobsDrainTimesOut(t *testing.T) {
 	}
 }
 
+// stuckLedger is a ledger whose write, once stuck is set, ignores its context:
+// it returns only when release closes, as a write queued behind a stalled
+// proposal does.
+type stuckLedger struct {
+	ConsumptionLedger
+	failing   atomic.Bool
+	stuck     atomic.Bool
+	entered   chan struct{}
+	release   chan struct{}
+	panicWith string
+}
+
+func (l *stuckLedger) Record(ctx context.Context, entry ConsumptionEntry) error {
+	if l.stuck.Load() {
+		select {
+		case l.entered <- struct{}{}:
+		default:
+		}
+		<-l.release
+		if l.panicWith != "" {
+			panic(l.panicWith)
+		}
+		return nil
+	}
+	if l.failing.Load() {
+		return stderrors.New("quota plane unavailable")
+	}
+	return l.ConsumptionLedger.Record(ctx, entry)
+}
+
+func TestShutdown_ADrainerWriteThatIgnoresCancellationKeepsTheDeadline(t *testing.T) {
+	svc, inner, _ := newConsumptionRecorder(t)
+	ledger := &stuckLedger{
+		ConsumptionLedger: inner,
+		entered:           make(chan struct{}, 8),
+		release:           make(chan struct{}),
+	}
+	ledger.failing.Store(true)
+	svc.SetConsumptionLedger(ledger)
+	svc.pendingLedger.firstRetry = 10 * time.Millisecond
+
+	if svc.recordLedgerEntry(context.Background(), goneSessionEntry(time.Now().UTC())) {
+		t.Fatal("recordLedgerEntry reported the entry recorded while the ledger fails")
+	}
+	// Set before the write sticks: the drainer reads it only after release.
+	ledger.panicWith = "pebble: closed"
+	ledger.stuck.Store(true)
+	ledger.failing.Store(false)
+	select {
+	case <-ledger.entered:
+	case <-time.After(5 * time.Second):
+		close(ledger.release)
+		t.Fatal("the drainer never retried the pending entry")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	result := make(chan error, 1)
+	go func() { result <- svc.Shutdown(ctx) }()
+	var err error
+	select {
+	case err = <-result:
+	case <-time.After(3 * time.Second):
+		close(ledger.release)
+		t.Fatal("Shutdown blocked past its deadline on a drainer write that ignores cancellation")
+	}
+	var drainErr *DrainTimeoutError
+	if !stderrors.As(err, &drainErr) || drainErr.Phase != DrainPhaseConsumption {
+		close(ledger.release)
+		t.Fatalf("Shutdown = %v, want a consumption-phase *DrainTimeoutError", err)
+	}
+
+	// Storage closes under the abandoned write: the drainer ends through the
+	// store-closed guard rather than crashing the process.
+	close(ledger.release)
+	select {
+	case <-waitGroupDone(&svc.pendingLedger.drainers):
+	case <-time.After(5 * time.Second):
+		t.Fatal("the drainer never ended after its abandoned write returned")
+	}
+}
+
 // A turn whose usage record fails must not release the next turn against a
 // spend sum without it: 950 of 1000 recorded, a 150-token turn whose write
 // fails, and the next prompt is refused until the entry is in the ledger —

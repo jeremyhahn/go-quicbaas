@@ -36,7 +36,16 @@ const (
 
 	// DrainPhaseTurns is the wait for asynchronous agent turns.
 	DrainPhaseTurns = "turns"
+
+	// DrainPhaseConsumption is the wait for the background consumption
+	// drainer.
+	DrainPhaseConsumption = "consumption"
 )
+
+// drainerJoinGrace is the consumption drainer join's window when the jobs or
+// turns phase already used the deadline, so that a drainer whose cancelled
+// write returns promptly is still joined.
+const drainerJoinGrace = time.Second
 
 // Shutdown drains the service's running control loops and returns when they
 // are done or when the bound expires, whichever comes first.
@@ -60,8 +69,12 @@ const (
 //
 // Once the jobs and turns have drained, or the window has closed, the
 // background consumption drainer is stopped (a retry in flight is cancelled)
-// and waited for. Then, if the turns drained, consumption still pending in
-// memory gets one last ledger write attempt within the same deadline.
+// and then joined within the deadline (or a short grace when the deadline has
+// already passed). If the join times out, the abandoned write is left
+// running, no last retry runs, and the error is a consumption-phase
+// *DrainTimeoutError. Otherwise, if the turns drained, consumption still
+// pending in memory gets one last ledger write attempt within the same
+// deadline.
 //
 // It is safe to call more than once; only the first call drains.
 func (s *agentServiceImpl) Shutdown(ctx context.Context) error {
@@ -84,7 +97,20 @@ func (s *agentServiceImpl) Shutdown(ctx context.Context) error {
 	// The drainer is stopped and joined before anything else touches the
 	// ledger, and before the caller closes storage.
 	s.pendingLedger.stopDrainer()
-	s.pendingLedger.waitDrainer()
+	joinCtx := ctx
+	if ctx.Err() != nil {
+		var cancelJoin context.CancelFunc
+		joinCtx, cancelJoin = context.WithTimeout(context.WithoutCancel(ctx), drainerJoinGrace)
+		defer cancelJoin()
+	}
+	if joinErr := s.drainPhase(joinCtx, DrainPhaseConsumption, &s.pendingLedger.drainers, nil); joinErr != nil {
+		// A write that ignores cancellation is still running: no last retry
+		// beside it, and the caller is told the drain did not finish.
+		if err == nil {
+			err = joinErr
+		}
+		return err
+	}
 	if err == nil && s.ledger != nil && s.pendingLedger.size() > 0 {
 		// Last write of consumption still pending: no turn retries it now.
 		if failed, lastErr := s.retryPendingEntries(ctx, s.pendingLedger.all()); failed > 0 {
