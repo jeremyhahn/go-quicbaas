@@ -1305,8 +1305,8 @@ jobs:
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
       CI_IMAGE_NAMESPACE: ${{ vars.CI_IMAGE_NAMESPACE }}
-      # gpu-host's and the Dells' 8g sidecar cap (#2200); no cap only on a GitHub-hosted runner (the preflight runner_docker output is "ubuntu-latest").
-      IN_IMAGE_MEMORY: ${{ (github.server_url != 'https://github.com' || needs.preflight.outputs.runner_docker != '"ubuntu-latest"') && '8g' || 'none' }}
+      # 16g on self-hosted runners: golangci-lint is killed at 8g (#2657); no cap only on a GitHub-hosted runner (the preflight runner_docker output is "ubuntu-latest").
+      IN_IMAGE_MEMORY: ${{ (github.server_url != 'https://github.com' || needs.preflight.outputs.runner_docker != '"ubuntu-latest"') && '16g' || 'none' }}
     steps:
       # No credential reaches a job. A runner that injects a git credential
       # through GIT_CONFIG_* stops the job here, before any later step can
@@ -1584,8 +1584,8 @@ jobs:
     env:
       CI_IMAGE_NAMESPACE: ${{ vars.CI_IMAGE_NAMESPACE }}   # v1.30
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
-      # gpu-host's and the Dells' 8g sidecar cap (#2200); no cap only on a GitHub-hosted runner (the preflight runner_docker output is "ubuntu-latest").
-      IN_IMAGE_MEMORY: ${{ (github.server_url != 'https://github.com' || needs.preflight.outputs.runner_docker != '"ubuntu-latest"') && '8g' || 'none' }}
+      # 16g on self-hosted runners: golangci-lint is killed at 8g (#2657); no cap only on a GitHub-hosted runner (the preflight runner_docker output is "ubuntu-latest").
+      IN_IMAGE_MEMORY: ${{ (github.server_url != 'https://github.com' || needs.preflight.outputs.runner_docker != '"ubuntu-latest"') && '16g' || 'none' }}
       # v1.22: the cache volumes' trust class. Only a push to main writes the
       # caches main's build reads; every other event, pull requests included,
       # gets the `pr` set (ci-standard.md §6).
