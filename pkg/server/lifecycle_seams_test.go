@@ -18,6 +18,8 @@ package server
 import (
 	"context"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -128,6 +130,62 @@ func TestFT2_StopRESTServer_Error(t *testing.T) {
 	err = srv.stopRESTServer(context.Background())
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "REST")
+}
+
+// stopRESTServer shuts down both REST instances when an early module request
+// built one before startRESTServer ran: each owns live WebSocket sessions.
+func TestStopRESTServer_ShutsDownModuleRESTToo(t *testing.T) {
+	saveAndRestoreSeams(t)
+
+	srv, err := NewServer(createFTConfig(t))
+	require.NoError(t, err)
+	started, early := &restapi.Server{}, &restapi.Server{}
+	srv.restServer = started
+	srv.moduleREST = early
+
+	var mu sync.Mutex
+	var shut []*restapi.Server
+	seamMu.Lock()
+	restShutdownFn = func(s *restapi.Server, _ context.Context) error {
+		mu.Lock()
+		defer mu.Unlock()
+		shut = append(shut, s)
+		return nil
+	}
+	seamMu.Unlock()
+
+	require.NoError(t, srv.stopRESTServer(context.Background()))
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, shut, 2)
+	assert.Same(t, started, shut[0])
+	assert.Same(t, early, shut[1])
+}
+
+// startRESTServer adopts the instance an early module request built instead
+// of building a second one.
+func TestStartRESTServer_AdoptsModuleREST(t *testing.T) {
+	saveAndRestoreSeams(t)
+
+	cfg := createFTConfig(t)
+	cfg.Server.Embedded = false
+	cfg.Server.REST.Enabled = true
+	srv, err := NewServer(cfg)
+	require.NoError(t, err)
+	early := &restapi.Server{}
+	srv.moduleREST = early
+
+	var built atomic.Int32
+	seamMu.Lock()
+	newREST = func(service.QuicBaaS, *restapi.Config, *logger.Logger) (*restapi.Server, error) {
+		built.Add(1)
+		return nil, &ft2TestError{msg: "newREST must not be called"}
+	}
+	seamMu.Unlock()
+
+	require.NoError(t, srv.startRESTServer())
+	assert.Same(t, early, srv.getRESTServer())
+	assert.Zero(t, built.Load(), "startRESTServer built a second REST instance")
 }
 
 // =============================================================================
