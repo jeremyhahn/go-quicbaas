@@ -19,6 +19,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -457,5 +459,70 @@ func TestOCIDistBackend_DeleteByDigestRemovesTags(t *testing.T) {
 	}
 	if _, _, err := reg.GetManifest(ctx, "alpine", "c"); err != nil {
 		t.Fatalf("GetManifest c: %v", err)
+	}
+}
+
+// retagAfterListClient runs afterList once, right after the first read
+// of a manifest key ending in tagKey that follows arming it. Delete by
+// digest lists the keys and then reads each manifest, so a test arms it
+// before the delete to move the tag between the scan reading it and the
+// deletes.
+type retagAfterListClient struct {
+	*mockStorageClient
+	tagKey    string
+	armed     atomic.Bool
+	afterList func()
+}
+
+func (c *retagAfterListClient) Get(ctx context.Context, entityType, key string) ([]byte, bool, error) {
+	value, found, err := c.mockStorageClient.Get(ctx, entityType, key)
+	if entityType == entityTypeManifest && strings.HasSuffix(key, c.tagKey) && c.armed.CompareAndSwap(true, false) {
+		c.afterList()
+	}
+	return value, found, err
+}
+
+// TestOCIDistBackend_DeleteByDigestKeepsRetaggedTag moves a tag to other
+// content after delete-by-digest listed it: the tag now names other
+// content and must survive.
+func TestOCIDistBackend_DeleteByDigestKeepsRetaggedTag(t *testing.T) {
+	ctx := context.Background()
+	const mediaType = "application/vnd.oci.image.manifest.v1+json"
+	body := []byte(`{"schemaVersion":2,"mediaType":"` + mediaType + `","layers":[]}`)
+	other := []byte(`{"schemaVersion":2,"mediaType":"` + mediaType + `","layers":[],"annotations":{"k":"v"}}`)
+
+	client := &retagAfterListClient{mockStorageClient: newMockStorageClient(), tagKey: "alpine:v1", afterList: func() {}}
+	storage, err := NewQuicBaaSStorage(client)
+	if err != nil {
+		t.Fatalf("NewQuicBaaSStorage: %v", err)
+	}
+	reg, err := NewRegistry(validTestConfig(), testLogger(), WithStorage(storage))
+	if err != nil {
+		t.Fatalf("NewRegistry: %v", err)
+	}
+	t.Cleanup(func() { _ = reg.Close() })
+
+	digest, err := reg.PutManifest(ctx, "alpine", "v1", mediaType, body)
+	if err != nil {
+		t.Fatalf("PutManifest v1: %v", err)
+	}
+	client.afterList = func() {
+		if _, err := reg.PutManifest(ctx, "alpine", "v1", mediaType, other); err != nil {
+			t.Errorf("retag v1: %v", err)
+		}
+	}
+	client.armed.Store(true)
+	if err := reg.DeleteManifest(ctx, "alpine", digest); err != nil {
+		t.Fatalf("DeleteManifest by digest: %v", err)
+	}
+	_, got, err := reg.GetManifest(ctx, "alpine", "v1")
+	if err != nil {
+		t.Fatalf("GetManifest v1 after retag: %v", err)
+	}
+	if string(got) != string(other) {
+		t.Fatalf("v1 = %s, want the retagged manifest", got)
+	}
+	if _, _, err := reg.GetManifest(ctx, "alpine", digest); err == nil {
+		t.Error("the deleted digest still resolves")
 	}
 }

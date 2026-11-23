@@ -15,6 +15,7 @@ package ociregistry
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"strings"
 )
@@ -188,11 +189,32 @@ func (r *Registry) DeleteManifest(ctx context.Context, name, reference string) e
 		cursor = res.NextCursor
 	}
 	for _, ref := range tags {
-		if err := r.storage.DeleteManifest(ctx, ref); err != nil {
+		if err := r.deleteTagIfDigest(ctx, ref, reference); err != nil {
 			return err
 		}
 	}
 	return r.storage.DeleteManifest(ctx, refJoin(name, reference))
+}
+
+// deleteTagIfDigest deletes the tag ref only while it still names
+// digest. It holds ref's lock across the re-read and the delete, so a
+// push or PUT that moved the tag to other content since the listing
+// keeps it.
+func (r *Registry) deleteTagIfDigest(ctx context.Context, ref, digest string) error {
+	unlock := r.refLocks.lock(ref)
+	defer unlock()
+	m, err := r.storage.GetManifest(ctx, ref)
+	if err != nil {
+		var notFound ManifestNotFoundError
+		if errors.As(err, &notFound) {
+			return nil
+		}
+		return err
+	}
+	if m.ContentDigest != digest {
+		return nil
+	}
+	return r.storage.DeleteManifest(ctx, ref)
 }
 
 // ListRepositories enumerates known repositories. We walk all
