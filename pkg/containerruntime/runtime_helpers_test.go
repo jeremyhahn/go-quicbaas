@@ -67,6 +67,19 @@ func TestGenerateOCIConfig_PrivilegedKeepsAllCapabilities(t *testing.T) {
 
 	assert.Nil(t, oci.Process.Capabilities)
 	assert.False(t, oci.Process.NoNewPrivileges)
+	assert.Nil(t, oci.Linux.Seccomp)
+}
+
+func TestGenerateOCIConfig_SeccompProfile(t *testing.T) {
+	rt := newTestRuntime(t)
+	oci := rt.generateOCIConfig(&ContainerConfig{}, "/rootfs")
+	require.NotNil(t, oci.Linux.Seccomp)
+	assert.Equal(t, "SCMP_ACT_ERRNO", oci.Linux.Seccomp.DefaultAction)
+	assert.False(t, allowed(oci.Linux.Seccomp, "mount"))
+
+	admin := rt.generateOCIConfig(&ContainerConfig{CapAdd: []string{"SYS_ADMIN"}}, "/rootfs")
+	require.NotNil(t, admin.Linux.Seccomp)
+	assert.True(t, allowed(admin.Linux.Seccomp, "mount"))
 }
 
 func TestStopProcess_AFinishedProcessWaitsForItsExitRecord(t *testing.T) {
@@ -246,6 +259,27 @@ func TestGenerateOCIConfig_SandboxDropsAllCapabilities(t *testing.T) {
 	assert.Equal(t, "1000:1000", config.User)
 }
 
+func TestGenerateOCIConfig_SandboxSecuritySeccomp(t *testing.T) {
+	ociFor := func(policy orchestration.SandboxSecurity) *ociConfig {
+		t.Helper()
+		spec := &orchestration.ContainerSpec{Network: "none", Image: "alpine:latest", User: "1000:1000"}
+		require.NoError(t, policy.Apply(spec))
+		config, err := jobContainerConfig(spec)
+		require.NoError(t, err)
+		oci := newTestRuntime(t).generateOCIConfig(config, "/rootfs")
+		require.NotNil(t, oci.Linux.Seccomp)
+		return oci
+	}
+
+	// CAP_SYS_CHROOT and CAP_SYS_ADMIN are dropped, so are their syscalls.
+	sandboxed := ociFor(orchestration.SandboxSecurity{})
+	assert.False(t, allowed(sandboxed.Linux.Seccomp, "chroot"))
+	assert.False(t, allowed(sandboxed.Linux.Seccomp, "mount"))
+
+	withChroot := ociFor(orchestration.SandboxSecurity{CapAdd: []string{"SYS_CHROOT"}})
+	assert.True(t, allowed(withChroot.Linux.Seccomp, "chroot"))
+}
+
 func TestCapabilitySet(t *testing.T) {
 	defaults := []string{"CAP_CHOWN", "CAP_KILL", "CAP_NET_RAW"}
 	assert.Equal(t, defaults, capabilitySet(defaults, nil, nil))
@@ -283,6 +317,23 @@ func TestJobContainerConfig_HostMountsAreBound(t *testing.T) {
 	assert.Equal(t, ociMount{Destination: "/home/agent/.creds", Type: "bind", Source: "/srv/creds", Options: []string{"rbind", "ro", "rro"}}, mounts[1])
 	assert.Equal(t, "tmpfs", mounts[2].Type)
 	assert.NotContains(t, mounts[2].Options, "rbind")
+}
+
+func TestJobContainerConfig_UntypedNamedSourceIsAVolume(t *testing.T) {
+	config, err := jobContainerConfig(&orchestration.ContainerSpec{
+		Network: "none",
+		Image:   "alpine:latest",
+		Mounts: []orchestration.ContainerMount{
+			{Source: "cache", Target: "/cache"},
+			{Source: "/srv/x", Target: "/x"},
+			{Source: "cache", Target: "/c2", Type: "bind"},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, config.Mounts, 3)
+	assert.Equal(t, "volume", config.Mounts[0].Type, "an untyped named source is a managed volume")
+	assert.Equal(t, "bind", config.Mounts[1].Type, "an untyped absolute source is a host bind")
+	assert.Equal(t, "bind", config.Mounts[2].Type, "an explicit type is kept")
 }
 
 func TestGenerateOCIConfig_ReadOnlyRbindIsRecursive(t *testing.T) {

@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -410,7 +411,7 @@ func jobContainerConfig(spec *orchestration.ContainerSpec) (*ContainerConfig, er
 		config.Ulimits = append(config.Ulimits, Ulimit{Name: u.Name, Soft: u.Soft, Hard: u.Hard})
 	}
 	for _, m := range spec.Mounts {
-		mount := Mount{Source: m.Source, Target: m.Target, Type: m.Type, ReadOnly: m.ReadOnly}
+		mount := Mount{Source: m.Source, Target: m.Target, Type: jobMountType(m), ReadOnly: m.ReadOnly}
 		if m.TmpfsSizeBytes > 0 {
 			mount.Options = append(mount.Options, "size="+strconv.FormatInt(m.TmpfsSizeBytes, 10))
 		}
@@ -433,6 +434,19 @@ func jobContainerConfig(spec *orchestration.ContainerSpec) (*ContainerConfig, er
 		return nil, fmt.Errorf("%w: job asks to publish ports %q", ErrNetworkUnsupported, spec.Ports)
 	}
 	return config, nil
+}
+
+// jobMountType is the runtime mount kind for a ContainerSpec mount. An
+// untyped mount keeps the docker/podman short form (-v source:target):
+// an absolute source is a host bind, anything else names a managed volume.
+func jobMountType(m orchestration.ContainerMount) string {
+	if m.Type != "" {
+		return m.Type
+	}
+	if filepath.IsAbs(m.Source) {
+		return orchestration.MountTypeBind
+	}
+	return orchestration.MountTypeVolume
 }
 
 // parsePortMapping parses the "[hostIP:]host:container[/proto]" form of a

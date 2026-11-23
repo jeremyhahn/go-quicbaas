@@ -518,6 +518,34 @@ func TestJobRuntime_RunWithNamedVolume(t *testing.T) {
 	require.NoError(t, jr.Remove(t.Context(), id))
 }
 
+func TestJobRuntime_RunWithUntypedNamedVolume(t *testing.T) {
+	jr, doubles := newTestJobRuntime(t)
+
+	id, err := jr.Run(t.Context(), &orchestration.ContainerSpec{
+		Network: "none",
+		Image:   "alpine:latest",
+		Mounts:  []orchestration.ContainerMount{{Source: "cache", Target: "/cache"}},
+	})
+	require.NoError(t, err)
+
+	m := mountAt(t, doubles, id, "/cache")
+	assert.Equal(t, "bind", m.Type)
+	assert.Equal(t, filepath.Join(jr.runtime.Config().VolumePath, "cache"), m.Source)
+	assert.Contains(t, m.Options, "rbind")
+	require.NoError(t, jr.Remove(t.Context(), id))
+}
+
+func TestJobRuntime_RunRefusesUntypedBadVolumeName(t *testing.T) {
+	jr, _ := newTestJobRuntime(t)
+
+	_, err := jr.Run(t.Context(), &orchestration.ContainerSpec{
+		Network: "none",
+		Image:   "alpine:latest",
+		Mounts:  []orchestration.ContainerMount{{Source: "../x", Target: "/x"}},
+	})
+	require.ErrorIs(t, err, ErrInvalidVolumeName)
+}
+
 func TestJobRuntime_SupportsOnlyNetworkNone(t *testing.T) {
 	jr, _ := newTestJobRuntime(t)
 

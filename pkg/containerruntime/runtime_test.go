@@ -634,3 +634,138 @@ func TestRuntime_NamedVolumeBadNameRefused(t *testing.T) {
 		})
 	}
 }
+
+// seedImageData returns a rootfs seed that ships, as an image would, a data
+// directory at /data holding a file with the given content, a private
+// subdirectory and a symbolic link to the file.
+func seedImageData(content string) func(dir string) error {
+	return func(dir string) error {
+		data := filepath.Join(dir, "data")
+		if err := os.MkdirAll(filepath.Join(data, "sub"), 0o700); err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(data, "seed.txt"), []byte(content), 0o640); err != nil {
+			return err
+		}
+		if err := os.Symlink("seed.txt", filepath.Join(data, "link")); err != nil {
+			return err
+		}
+		for name, mode := range map[string]os.FileMode{"sub": 0o700, "seed.txt": 0o640, ".": 0o750} {
+			if err := os.Chmod(filepath.Join(data, name), mode); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+}
+
+func setRootfsSeed(doubles *testBackends, seed func(dir string) error) {
+	doubles.rootfs.mu.Lock()
+	defer doubles.rootfs.mu.Unlock()
+	doubles.rootfs.seed = seed
+}
+
+func TestRuntime_NamedVolumeIsInitializedFromTheImage(t *testing.T) {
+	rt, doubles := newTestRuntimeWithBackends(t)
+	setRootfsSeed(doubles, seedImageData("from-image"))
+	dir := filepath.Join(rt.Config().VolumePath, "dataset")
+
+	first, err := rt.CreateContainer(t.Context(), &ContainerConfig{
+		Name: "volume-init-a", Image: "alpine:latest",
+		Mounts: []Mount{{Type: "volume", Source: "dataset", Target: "/data"}},
+	})
+	require.NoError(t, err)
+	m := mountAt(t, doubles, first.ID, "/data")
+	assert.Equal(t, "bind", m.Type)
+	assert.Equal(t, dir, m.Source)
+
+	content, err := os.ReadFile(filepath.Join(dir, "seed.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, "from-image", string(content), "the volume holds the image's file")
+	for name, mode := range map[string]os.FileMode{".": 0o750, "seed.txt": 0o640, "sub": 0o700} {
+		info, err := os.Lstat(filepath.Join(dir, name))
+		require.NoError(t, err)
+		assert.Equal(t, mode, info.Mode().Perm(), "mode of %s", name)
+	}
+	target, err := os.Readlink(filepath.Join(dir, "link"))
+	require.NoError(t, err)
+	assert.Equal(t, "seed.txt", target)
+	entries, err := os.ReadDir(rt.Config().VolumePath)
+	require.NoError(t, err)
+	for _, e := range entries {
+		assert.NotEqual(t, '.', rune(e.Name()[0]), "a temporary directory was left: %s", e.Name())
+	}
+
+	setRootfsSeed(doubles, seedImageData("changed"))
+	second, err := rt.CreateContainer(t.Context(), &ContainerConfig{
+		Name: "volume-init-b", Image: "alpine:latest",
+		Mounts: []Mount{{Type: "volume", Source: "dataset", Target: "/data"}},
+	})
+	require.NoError(t, err)
+	content, err = os.ReadFile(filepath.Join(dir, "seed.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, "from-image", string(content), "a volume with content is not filled again")
+
+	require.NoError(t, rt.RemoveContainer(t.Context(), first.ID, true))
+	require.NoError(t, rt.RemoveContainer(t.Context(), second.ID, true))
+}
+
+func TestRuntime_NamedVolumeWithoutImageContentIsEmpty(t *testing.T) {
+	rt, doubles := newTestRuntimeWithBackends(t)
+	setRootfsSeed(doubles, seedImageData("from-image"))
+	dir := filepath.Join(rt.Config().VolumePath, "scratch")
+
+	_, err := rt.CreateContainer(t.Context(), &ContainerConfig{
+		Name: "volume-empty", Image: "alpine:latest",
+		Mounts: []Mount{{Type: "volume", Source: "scratch", Target: "/scratch"}},
+	})
+	require.NoError(t, err)
+	info, err := os.Stat(dir)
+	require.NoError(t, err)
+	assert.True(t, info.IsDir())
+	assert.Equal(t, os.FileMode(0o750), info.Mode().Perm())
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	assert.Empty(t, entries, "the image has nothing at the target")
+}
+
+func TestRuntime_EmptyNamedVolumeIsFilledFromTheImage(t *testing.T) {
+	rt, doubles := newTestRuntimeWithBackends(t)
+	setRootfsSeed(doubles, seedImageData("from-image"))
+	dir := filepath.Join(rt.Config().VolumePath, "dataset")
+	require.NoError(t, os.MkdirAll(dir, 0o750))
+
+	_, err := rt.CreateContainer(t.Context(), &ContainerConfig{
+		Name: "volume-prefilled", Image: "alpine:latest",
+		Mounts: []Mount{{Type: "volume", Source: "dataset", Target: "/data"}},
+	})
+	require.NoError(t, err)
+	content, err := os.ReadFile(filepath.Join(dir, "seed.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, "from-image", string(content), "an empty volume is filled from the image")
+}
+
+func TestRuntime_NamedVolumeInitFailureRemovesTheRootfs(t *testing.T) {
+	rt, doubles := newTestRuntimeWithBackends(t)
+	setRootfsSeed(doubles, func(dir string) error {
+		return os.MkdirAll(filepath.Join(dir, "data"), 0o750)
+	})
+	require.NoError(t, os.RemoveAll(rt.Config().VolumePath))
+	require.NoError(t, os.WriteFile(rt.Config().VolumePath, []byte("x"), 0o600))
+
+	_, err := rt.CreateContainer(t.Context(), &ContainerConfig{
+		Name: "volume-init-fails", Image: "alpine:latest",
+		Mounts: []Mount{{Type: "volume", Source: "dataset", Target: "/data"}},
+	})
+	require.Error(t, err)
+	var rtErr *RuntimeError
+	require.True(t, errors.As(err, &rtErr), "got %v", err)
+	assert.Equal(t, "initialize volume dataset", rtErr.Operation)
+
+	doubles.rootfs.mu.Lock()
+	assert.Len(t, doubles.rootfs.removed, 1, "the unpacked rootfs is removed")
+	doubles.rootfs.mu.Unlock()
+	doubles.engine.mu.Lock()
+	defer doubles.engine.mu.Unlock()
+	assert.Empty(t, doubles.engine.created, "the engine created nothing")
+}

@@ -8,7 +8,9 @@
 # also the container init.
 #
 # busybox-static supplies the one file of the test image the tests push to
-# the compose file's registry.
+# the compose file's registry. libseccomp-dev and the seccomp build tag give
+# the test binary runc's seccomp support, which every unprivileged container
+# needs (pkg-config locates libseccomp for the cgo build).
 #
 # Used by test/integration/containerruntime/docker-compose.yml; run it with
 # `make integration-test-containerruntime`. The container must be privileged.
@@ -16,7 +18,7 @@
 FROM golang:1.27.4
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends busybox-static \
+    && apt-get install -y --no-install-recommends busybox-static libseccomp-dev pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workspace/go-quicbaas
@@ -35,7 +37,7 @@ RUN --mount=type=secret,id=gomodauth \
 COPY . .
 
 RUN CGO_ENABLED=1 go test -c -race -buildvcs=false \
-    -tags 'integration containers_image_openpgp exclude_graphdriver_btrfs' \
+    -tags 'integration containers_image_openpgp exclude_graphdriver_btrfs seccomp' \
     -o /usr/local/bin/containerruntime.test ./test/integration/containerruntime
 
 ENV CONTAINERRUNTIME_BUSYBOX=/bin/busybox

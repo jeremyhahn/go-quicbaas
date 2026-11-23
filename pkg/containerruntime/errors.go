@@ -96,6 +96,12 @@ var (
 	// cgroup v2 sub-cgroup with cgroup.kill (Linux 5.14 or later), so its
 	// descendants could not be killed once its leader exits.
 	ErrExecNotKillable = errors.New("exec refused: no killable per-exec cgroup")
+
+	// ErrSeccompUnsupported is returned when a container's configuration
+	// carries a seccomp profile and this build has no seccomp support (runc's
+	// seccomp build tag and libseccomp), so the container is refused rather
+	// than run unconfined.
+	ErrSeccompUnsupported = errors.New("seccomp profile requested but this build has no seccomp support")
 )
 
 // OCIRuntimeNotFoundError provides details about a missing OCI runtime.

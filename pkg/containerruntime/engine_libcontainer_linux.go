@@ -37,6 +37,7 @@ import (
 	_ "github.com/opencontainers/cgroups/devices"
 	"github.com/opencontainers/runc/libcontainer"
 	"github.com/opencontainers/runc/libcontainer/configs"
+	"github.com/opencontainers/runc/libcontainer/seccomp"
 	"github.com/opencontainers/runc/libcontainer/specconv"
 	"github.com/opencontainers/runc/libcontainer/utils"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
@@ -62,9 +63,18 @@ func newLibcontainerEngine(root string) *libcontainerEngine {
 	}
 }
 
+// seccompSupported reports whether this build can install a seccomp
+// filter. Tests override it.
+var seccompSupported = seccomp.Enabled
+
 // Create converts the OCI configuration to a libcontainer one and registers
-// the container.
+// the container. A configuration with a seccomp profile is refused with
+// ErrSeccompUnsupported on a build without seccomp support, before anything
+// is registered.
 func (e *libcontainerEngine) Create(id string, oci *ociConfig) error {
+	if oci != nil && oci.Linux != nil && oci.Linux.Seccomp != nil && !seccompSupported {
+		return ErrSeccompUnsupported
+	}
 	spec, err := toRuntimeSpec(oci)
 	if err != nil {
 		return err
