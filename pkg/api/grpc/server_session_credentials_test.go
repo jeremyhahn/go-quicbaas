@@ -18,6 +18,7 @@ import (
 	cryptorand "crypto/rand"
 	"crypto/rsa"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -35,6 +36,25 @@ const (
 	credentialsUserID    = uint64(71)
 	credentialsSessionID = "sess-user-42"
 )
+
+// revokeCall is one RevokeSubjectCredentials call a recordingCredentialRevoker saw.
+type revokeCall struct{ tenantID, subject string }
+
+// recordingCredentialRevoker is a CredentialRevoker that records each call and
+// returns err. It lives in this file, which has no build constraint, because
+// session tests built under the integration tag use it too.
+type recordingCredentialRevoker struct {
+	mu    sync.Mutex
+	calls []revokeCall
+	err   error
+}
+
+func (r *recordingCredentialRevoker) RevokeSubjectCredentials(_ context.Context, tenantID, subject string) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls = append(r.calls, revokeCall{tenantID: tenantID, subject: subject})
+	return len(r.calls), r.err
+}
 
 // credentialsFixture builds a SessionServer whose caller is credentialsSubject
 // in credentialsTenant, with one session record seeded for that caller. A nil

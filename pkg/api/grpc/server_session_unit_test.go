@@ -18,7 +18,6 @@ package grpc
 import (
 	"context"
 	"strconv"
-	"sync"
 	"testing"
 	"time"
 
@@ -31,24 +30,6 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 )
-
-// revokeCall is one RevokeSubjectCredentials call a recordingCredentialRevoker saw.
-type revokeCall struct{ tenantID, subject string }
-
-// recordingCredentialRevoker is a CredentialRevoker that records each call and
-// returns err.
-type recordingCredentialRevoker struct {
-	mu    sync.Mutex
-	calls []revokeCall
-	err   error
-}
-
-func (r *recordingCredentialRevoker) RevokeSubjectCredentials(_ context.Context, tenantID, subject string) (int, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.calls = append(r.calls, revokeCall{tenantID: tenantID, subject: subject})
-	return len(r.calls), r.err
-}
 
 func createTestSessionServer(t *testing.T) (*SessionServer, *MemorySessionService) {
 	t.Helper()
