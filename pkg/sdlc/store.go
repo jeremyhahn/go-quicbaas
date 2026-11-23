@@ -126,7 +126,9 @@ func (s *Store) GetBinding(ctx context.Context, tenantID, projectID string) (*Pr
 // lose the response of a committed write. In that case PutBinding returns
 // the record that write would have replaced, and binding.WriteToken carries
 // the token stamped on the attempt, so the caller can withdraw exactly that
-// write. Every other error returns a nil record.
+// write. Every other error returns a nil record. A caller whose write
+// returned an error must settle it with SettleBindingWrite before treating
+// the binding as absent, because the write may still commit later.
 func (s *Store) PutBinding(ctx context.Context, tenantID string, binding *ProjectBinding) (*ProjectBinding, error) {
 	if err := binding.Validate(); err != nil {
 		return nil, err
@@ -181,7 +183,8 @@ func (s *Store) PutBinding(ctx context.Context, tenantID string, binding *Projec
 // stored record still carries that token, it is swapped back to prior (the
 // record that put replaced) or, when prior is nil, removed. A record carrying
 // another token (a later bind's, or none) is left alone and withdrawn is
-// false; so is an absent record.
+// false; so is an absent record. It undoes a write known to have landed: a
+// write whose outcome is unknown is first settled with SettleBindingWrite.
 func (s *Store) WithdrawBinding(ctx context.Context, tenantID, projectID, writeToken string, prior *ProjectBinding) (bool, error) {
 	if err := validateKeySegment("project_id", projectID); err != nil {
 		return false, err
@@ -310,10 +313,17 @@ func (s *Store) ListBindings(ctx context.Context, tenantID string) ([]*ProjectBi
 	if err != nil {
 		return nil, err
 	}
+	// A record with no ProjectID is a void marker SettleBindingWrite left in
+	// a slot a pending write might otherwise have filled: it binds nothing.
+	listed := bindings[:0]
 	for _, binding := range bindings {
+		if binding.ProjectID == "" {
+			continue
+		}
 		binding.ID = entityIDFor(binding.ProjectID)
+		listed = append(listed, binding)
 	}
-	return bindings, nil
+	return listed, nil
 }
 
 // listPageSize bounds one page of a listing.
