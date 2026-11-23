@@ -24,6 +24,7 @@ package main
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 
@@ -84,24 +85,35 @@ func TestMCPTimeSeriesClient_TSDeleteSeries_NotImplemented(t *testing.T) {
 	assert.Contains(t, err.Error(), "not yet implemented")
 }
 
-func TestMCPTimeSeriesClient_TSGetRetentionPolicy_NotImplemented(t *testing.T) {
+func TestMCPTimeSeriesClient_TSGetRetentionPolicy_NilTimeSeries(t *testing.T) {
 	client := &MCPTimeSeriesClient{client: &mockClient{}}
 	resp, err := client.TSGetRetentionPolicy(context.Background(), &cli.TSGetRetentionPolicyRequest{
 		Metric: "cpu.usage",
 	})
 	assert.Nil(t, resp)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not yet implemented")
+	assert.Contains(t, err.Error(), "timeseries client not available")
 }
 
-func TestMCPTimeSeriesClient_TSSetRetentionPolicy_NotImplemented(t *testing.T) {
+func TestMCPTimeSeriesClient_TSSetRetentionPolicy_NoPolicy(t *testing.T) {
 	client := &MCPTimeSeriesClient{client: &mockClient{}}
 	resp, err := client.TSSetRetentionPolicy(context.Background(), &cli.TSSetRetentionPolicyRequest{
 		Metric: "cpu.usage",
 	})
 	assert.Nil(t, resp)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not yet implemented")
+	assert.Contains(t, err.Error(), "a retention policy is required")
+}
+
+func TestMCPTimeSeriesClient_TSSetRetentionPolicy_NilTimeSeries(t *testing.T) {
+	client := &MCPTimeSeriesClient{client: &mockClient{}}
+	resp, err := client.TSSetRetentionPolicy(context.Background(), &cli.TSSetRetentionPolicyRequest{
+		Metric: "cpu.usage",
+		Policy: &cli.TSRetentionPolicy{Duration: time.Hour},
+	})
+	assert.Nil(t, resp)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "timeseries client not available")
 }
 
 func TestMCPTimeSeriesClient_TSListMetrics_NotImplemented(t *testing.T) {
