@@ -1927,6 +1927,22 @@ export interface ClusterStatusResponse {
     healthy: boolean;
     timestamp: string;
 }
+/** ClusterNodeInfo is one cluster member as GET /api/v1/cluster/nodes reports it. */
+export interface ClusterNodeInfo {
+    node_id: number;
+    address: string;
+    raft_address: string;
+    is_leader: boolean;
+    health_status: string;
+    version: string;
+    uptime_seconds: number;
+}
+/** ListClusterNodesResponse is the wire shape returned by GET /api/v1/cluster/nodes. */
+export interface ListClusterNodesResponse {
+    nodes: ClusterNodeInfo[];
+    total_count: number;
+    timestamp: string;
+}
 /** @deprecated Use BarrierStatusResponse. */
 export type SealStatusResponse = BarrierStatusResponse;
 /** @deprecated Use BarrierInitRequest. */

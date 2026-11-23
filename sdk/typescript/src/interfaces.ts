@@ -183,6 +183,7 @@ import type {
   BootstrapBundleRequest,
   BootstrapBundleResponse,
   ClusterStatusResponse,
+  ListClusterNodesResponse,
   BackupStatusResponse,
   CreateBackupRequest,
   CreateBackupResponse,
@@ -1209,6 +1210,11 @@ export interface ClusterClient {
   // health). In standalone (non-Raft) mode `shards` is empty and total_nodes
   // is 1. Maps to GET /api/v1/cluster/status.
   status(): Promise<ClusterStatusResponse>;
+  // listNodes returns the cluster's members with their address, Raft
+  // address, leadership, health, version and uptime. `nodes` is always an
+  // array (empty when the server reports none). Maps to
+  // GET /api/v1/cluster/nodes.
+  listNodes(): Promise<ListClusterNodesResponse>;
 }
 
 // BackupClient manages cluster backups under /api/v1/backups.
