@@ -1,0 +1,178 @@
+# worker-image-variants — build, scan and publish each project's worker image
+# variant to ghcr.io, FROM the worker image's digest (issue #2700).
+#
+# A variant is deployments/agents/software-factory-worker/variants/<v>.Dockerfile:
+# `ARG BASE` + `FROM ${BASE}` plus the project's own tools, no COPY/ADD. It
+# runs after every successful worker-image run that moved `current` (the
+# schedule), and on dispatch (optionally for one base digest). The base is
+# always pinned BY DIGEST, so a variant names exactly the base it was built on.
+# Tags: ghcr.io/<owner>/quicbaas-software-factory-worker-<v>:<base12> (never
+# pushed twice) and `current`, moved only after both secret scans pass and the
+# push resolves. The push uses the job's own GITHUB_TOKEN under
+# `packages: write` (G1: no PAT, no other secret), like worker-image.
+name: worker-image-variants
+
+on:
+  workflow_run:
+    workflows: [worker-image]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      base_digest:
+        description: 'Base worker image digest (sha256:...); empty = the digest `current` names now'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  variant:
+    name: Build, scan and publish ${{ matrix.variant }}
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'schedule') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [go-xkms, trusted-firmware]
+    permissions:
+      contents: read
+      packages: write
+    concurrency: { group: worker-image-variant-${{ matrix.variant }}, cancel-in-progress: false }
+    env:
+      IMAGE: quicbaas-software-factory-worker
+      VARIANT: ${{ matrix.variant }}
+      INPUT_DIGEST: ${{ github.event.inputs.base_digest }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Free runner disk
+        if: ${{ runner.environment == 'github-hosted' }}
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          docker image prune --all --force
+
+      - name: Log in to ghcr.io
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          export DOCKER_CONFIG="$RUNNER_TEMP/docker-config"
+          ( umask 077; mkdir -p "$DOCKER_CONFIG" )
+          echo "DOCKER_CONFIG=$DOCKER_CONFIG" >> "$GITHUB_ENV"
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+      - name: Resolve the base digest and the variant tag
+        id: resolve
+        run: |
+          set -euo pipefail
+          df="deployments/agents/software-factory-worker/variants/${VARIANT}.Dockerfile"
+          [ -f "$df" ] || { echo "::error::no $df"; exit 1; }
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          base="ghcr.io/${owner}/${IMAGE}"
+          if [ -n "$INPUT_DIGEST" ]; then digest="$INPUT_DIGEST"; else
+            digest="$(docker buildx imagetools inspect "${base}:current" --format '{{json .Manifest}}' | jq -r .digest)"
+          fi
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::no base digest (got '${digest}')"; exit 1; }
+          repo="ghcr.io/${owner}/${IMAGE}-${VARIANT}"
+          tag="base-${digest:7:12}"
+          printf 'df=%s\nbase=%s@%s\nrepo=%s\ntag=%s\n' "$df" "$base" "$digest" "$repo" "$tag" >> "$GITHUB_OUTPUT"
+          echo "variant ${VARIANT} FROM ${base}@${digest} -> ${repo}:${tag}"
+
+      - name: Is this variant tag already published?
+        id: existing
+        env:
+          REPO: ${{ steps.resolve.outputs.repo }}
+          TAG: ${{ steps.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+          err="$(mktemp)"
+          if manifest="$(docker buildx imagetools inspect "${REPO}:${TAG}" --format '{{json .Manifest}}' 2>"$err")"; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"; echo "digest=$(printf '%s' "$manifest" | jq -r .digest)" >> "$GITHUB_OUTPUT"
+            echo "${REPO}:${TAG} is already published; pushing nothing"
+          elif grep -qiE 'not found|manifest unknown|name unknown|denied' "$err"; then
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          else
+            cat "$err" >&2; echo "::error::could not tell whether ${REPO}:${TAG} exists"; exit 1
+          fi
+
+      - name: Build the variant
+        if: ${{ steps.existing.outputs.exists != 'true' }}
+        env:
+          DF: ${{ steps.resolve.outputs.df }}
+          BASE: ${{ steps.resolve.outputs.base }}
+          REPO: ${{ steps.resolve.outputs.repo }}
+          TAG: ${{ steps.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+          DOCKER_BUILDKIT=1 docker build --pull -f "$DF" --build-arg "BASE=${BASE}" \
+            --label "org.opencontainers.image.base.name=${BASE}" -t "${REPO}:${TAG}" "$(dirname "$DF")"
+
+      - name: Install Trivy
+        if: ${{ steps.existing.outputs.exists != 'true' }}
+        run: |
+          set -euo pipefail
+          GOBIN="$RUNNER_TEMP/bin" make install-trivy
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - name: Scan the image for secrets
+        if: ${{ steps.existing.outputs.exists != 'true' }}
+        env:
+          REF: ${{ steps.resolve.outputs.repo }}:${{ steps.resolve.outputs.tag }}
+        run: trivy image --scanners secret --image-config-scanners secret --exit-code 1 --no-progress "$REF"
+
+      - name: Scan every layer tarball for secrets
+        if: ${{ steps.existing.outputs.exists != 'true' }}
+        env:
+          REF: ${{ steps.resolve.outputs.repo }}:${{ steps.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/image-layers"; rm -rf "$work"; mkdir -p "$work/image" "$work/layers"
+          trap 'rm -rf "$work"' EXIT
+          docker save "$REF" -o "$work/image.tar"
+          tar -xf "$work/image.tar" -C "$work/image"
+          i=0
+          while IFS= read -r layer; do
+            i=$((i + 1)); mkdir -p "$work/layers/$i"
+            tar -xf "$work/image/$layer" -C "$work/layers/$i" --no-same-owner --no-same-permissions
+          done < <(jq -r '.[0].Layers[]' "$work/image/manifest.json")
+          [ "$i" -gt 0 ] || { echo "::error::no layers in $REF"; exit 1; }
+          mkdir -p "$work/layers/config"; cp "$work/image/$(jq -r '.[0].Config' "$work/image/manifest.json")" "$work/layers/config/config.json"
+          trivy fs --scanners secret --exit-code 0 --format json --output "$work/secrets.json" --no-progress "$work/layers"
+          bash deployments/agents/software-factory-worker/check-secret-findings.sh "$work/secrets.json" "$work/layers"
+
+      - name: Push and check the digest resolves
+        id: push
+        if: ${{ steps.existing.outputs.exists != 'true' }}
+        env:
+          REPO: ${{ steps.resolve.outputs.repo }}
+          TAG: ${{ steps.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+          docker push "${REPO}:${TAG}"
+          digest="$(docker buildx imagetools inspect "${REPO}:${TAG}" --format '{{json .Manifest}}' | jq -r .digest)"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::${REPO}:${TAG} does not resolve"; exit 1; }
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Move current to this variant
+        env:
+          REPO: ${{ steps.resolve.outputs.repo }}
+          TAG: ${{ steps.resolve.outputs.tag }}
+          DIGEST: ${{ steps.push.outputs.digest || steps.existing.outputs.digest }}
+        run: |
+          set -euo pipefail
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::no digest to move current to"; exit 1; }
+          docker buildx imagetools create --prefer-index=false --tag "${REPO}:current" "${REPO}@${DIGEST}"
+          after="$(docker buildx imagetools inspect "${REPO}:current" --format '{{json .Manifest}}' | jq -r .digest)"
+          [ "$after" = "$DIGEST" ] || { echo "::error::${REPO}:current names '${after}', not ${DIGEST}"; exit 1; }
+          line="WORKER-VARIANT-DIGEST ${REPO}:${TAG}@${DIGEST} current"
+          echo "$line"; printf '```\n%s\n```\n' "$line" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Log out of ghcr.io
+        if: ${{ always() }}
+        run: |
+          docker logout ghcr.io || true
+          rm -rf "$RUNNER_TEMP/docker-config"
