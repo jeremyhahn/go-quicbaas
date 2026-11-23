@@ -21,7 +21,7 @@
   the user activate their account via FIDO2/WebAuthn or a PIV certificate.
 -->
 <script lang="ts">
-  import { getSDKClient } from '../../stores/sdkClient.ts';
+  import { getOriginSDKClient } from '../../stores/sdkClient.ts';
   import { navigateTo } from '../../stores/router.svelte.ts';
   import { parseCreationOptions, encodeAttestationResponse } from '../../lib/webauthn.ts';
   import type { InviteMetadata, ActivationResponse } from '@quicbaas/sdk';
@@ -73,7 +73,7 @@
       return;
     }
     try {
-      const client = await getSDKClient();
+      const client = await getOriginSDKClient();
       invite = await client.iam.getInvite(tenant, token);
       // Default to first method offered by the server, if available.
       if (invite.auth_methods.length > 0) {
@@ -102,7 +102,7 @@
     activationError = null;
     phase = 'activating';
     try {
-      const client = await getSDKClient();
+      const client = await getOriginSDKClient();
 
       // Begin: fetch credential creation options from the server. The server
       // emits the go-webauthn `{ publicKey: { challenge, ... } }` envelope with
@@ -147,7 +147,7 @@
     }
     phase = 'activating';
     try {
-      const client = await getSDKClient();
+      const client = await getOriginSDKClient();
       const result: ActivationResponse = await client.iam.activatePIV(tenant, token, pivPEM.trim());
       successMessage = result.message || 'Account activated successfully';
       phase = 'done';

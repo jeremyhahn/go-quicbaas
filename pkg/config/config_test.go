@@ -210,6 +210,31 @@ func TestLoadFromFile_RESTRateLimit(t *testing.T) {
 	}
 }
 
+func TestServerRESTConfig_OriginKeysDecode(t *testing.T) {
+	t.Run("both lists decode", func(t *testing.T) {
+		configFile := filepath.Join(t.TempDir(), "origins.yaml")
+		yamlContent := "server:\n  rest:\n    port: 7777\n" +
+			"    cors_origins:\n      - https://ui.example.com\n      - http://localhost:18080\n" +
+			"    ui_connect_origins:\n      - https://remote.example:8443\n"
+		require.NoError(t, os.WriteFile(configFile, []byte(yamlContent), 0o644))
+
+		cfg, err := LoadFromFile(configFile)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"https://ui.example.com", "http://localhost:18080"}, cfg.Server.REST.CORSOrigins)
+		assert.Equal(t, []string{"https://remote.example:8443"}, cfg.Server.REST.UIConnectOrigins)
+	})
+
+	t.Run("omitted keys decode empty", func(t *testing.T) {
+		configFile := filepath.Join(t.TempDir(), "no-origins.yaml")
+		require.NoError(t, os.WriteFile(configFile, []byte("server:\n  rest:\n    port: 7777\n"), 0o644))
+
+		cfg, err := LoadFromFile(configFile)
+		require.NoError(t, err)
+		assert.Empty(t, cfg.Server.REST.CORSOrigins)
+		assert.Empty(t, cfg.Server.REST.UIConnectOrigins)
+	})
+}
+
 func TestLoadFromFile(t *testing.T) {
 	t.Run("non-existent file returns defaults", func(t *testing.T) {
 		cfg, err := LoadFromFile("/non/existent/config.yaml")

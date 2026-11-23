@@ -35,7 +35,7 @@
 -->
 <script lang="ts">
   import { showToast } from '../../stores/toast.svelte.ts';
-  import { getSDKClient } from '../../stores/sdkClient.ts';
+  import { getOriginSDKClient } from '../../stores/sdkClient.ts';
   import PageHeader from '../../components/core/PageHeader.svelte';
   import { Lock } from 'lucide-svelte';
   import {
@@ -69,8 +69,9 @@
   // The per-tenant barrier is a REST-only surface, so the view constructs a
   // RestTenantBarrierClient against the current origin rather than going
   // through the auto-detected SDK singleton (which may be a Wails client whose
-  // tenantBarrier accessor is intentionally null). The IAM tenant list still
-  // comes from the shared singleton.
+  // tenantBarrier accessor is intentionally null). The IAM tenant list comes
+  // from getOriginSDKClient, so the tenants offered are the ones this barrier
+  // client can act on, whatever the Connection view points other calls at.
   // ---------------------------------------------------------------------------
 
   const baseURL = typeof window !== 'undefined' ? window.location.origin : '';
@@ -169,7 +170,7 @@
     tenantsLoading = true;
     tenantsError = null;
     try {
-      const client = await getSDKClient();
+      const client = await getOriginSDKClient();
       const resp = await client.iam.listTenants();
       const seen = new Set<string>();
       tenants = resp.tenants.filter((t) => {

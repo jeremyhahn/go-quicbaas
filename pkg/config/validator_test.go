@@ -48,6 +48,33 @@ func TestValidateNilConfig(t *testing.T) {
 	assert.Contains(t, err.Error(), "configuration is nil")
 }
 
+// restCORSOrigin returns a config modifier that enables REST and sets one
+// server.rest.cors_origins entry.
+func restCORSOrigin(o string) func(*Config) {
+	return func(cfg *Config) {
+		cfg.Server.REST.Enabled = true
+		cfg.Server.REST.CORSOrigins = []string{o}
+	}
+}
+
+// restUIConnectOrigin returns a config modifier that enables REST and sets
+// one server.rest.ui_connect_origins entry.
+func restUIConnectOrigin(o string) func(*Config) {
+	return func(cfg *Config) {
+		cfg.Server.REST.Enabled = true
+		cfg.Server.REST.UIConnectOrigins = []string{o}
+	}
+}
+
+// TestValidateRESTOrigin_Valid accepts exact http and https origins for both
+// server.rest origin lists. It calls the helper directly because a whole REST
+// config in this table also needs TLS material to validate cleanly.
+func TestValidateRESTOrigin_Valid(t *testing.T) {
+	for _, o := range []string{"https://ui.example.com", "http://localhost:18080", "https://remote.example:8443"} {
+		assert.NoError(t, validateRESTOrigin(o), o)
+	}
+}
+
 func TestValidateServerConfig(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -112,6 +139,18 @@ func TestValidateServerConfig(t *testing.T) {
 			expectError: true,
 			errorField:  "server.rest.rate_limit",
 		},
+		{name: "CORS origin with a path", modify: restCORSOrigin("https://a.example/x"), expectError: true, errorField: "server.rest.cors_origins"},
+		{name: "CORS origin with a wildcard", modify: restCORSOrigin("https://*.example.com"), expectError: true, errorField: "server.rest.cors_origins"},
+		{name: "CORS origin with a trailing slash", modify: restCORSOrigin("https://a.example/"), expectError: true, errorField: "server.rest.cors_origins"},
+		{name: "CORS origin with a policy injection", modify: restCORSOrigin("https://a.example; script-src *"), expectError: true, errorField: "server.rest.cors_origins"},
+		{name: "CORS origin with a non-http scheme", modify: restCORSOrigin("ftp://a.example"), expectError: true, errorField: "server.rest.cors_origins"},
+		{name: "CORS origin with an empty host", modify: restCORSOrigin("https://"), expectError: true, errorField: "server.rest.cors_origins"},
+		{name: "UI connect origin with a path", modify: restUIConnectOrigin("https://a.example/x"), expectError: true, errorField: "server.rest.ui_connect_origins"},
+		{name: "UI connect origin with a wildcard", modify: restUIConnectOrigin("https://*.example.com"), expectError: true, errorField: "server.rest.ui_connect_origins"},
+		{name: "UI connect origin with a trailing slash", modify: restUIConnectOrigin("https://a.example/"), expectError: true, errorField: "server.rest.ui_connect_origins"},
+		{name: "UI connect origin with a policy injection", modify: restUIConnectOrigin("https://a.example; script-src *"), expectError: true, errorField: "server.rest.ui_connect_origins"},
+		{name: "UI connect origin with a non-http scheme", modify: restUIConnectOrigin("ftp://a.example"), expectError: true, errorField: "server.rest.ui_connect_origins"},
+		{name: "UI connect origin with an empty host", modify: restUIConnectOrigin("https://"), expectError: true, errorField: "server.rest.ui_connect_origins"},
 		{
 			name: "invalid gRPC port",
 			modify: func(cfg *Config) {

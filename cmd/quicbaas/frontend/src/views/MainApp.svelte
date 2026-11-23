@@ -98,6 +98,7 @@
   // CLUSTER views
   import ClusterDashboard from './cluster/ClusterDashboard.svelte';
   import NodesView from './cluster/NodesView.svelte';
+  import ConnectionView from './settings/ConnectionView.svelte';
 
   // New session management views
   import SessionList from '../components/orchestrator/SessionList.svelte';
@@ -121,7 +122,7 @@
   import { tenantOptionsOf, withRequiredTenants, type TenantOption } from '../lib/tenantOptions.ts';
   import { fleetStore, refreshFleet } from '../stores/fleetStore.svelte.ts';
   import { isWailsRuntime } from '@quicbaas/sdk';
-  import { getSDKClient } from '../stores/sdkClient.ts';
+  import { getSDKClient, getOriginSDKClient } from '../stores/sdkClient.ts';
 
   // Components
   import StatusBadge from '../components/core/StatusBadge.svelte';
@@ -294,7 +295,7 @@
     {
       title: 'Settings',
       items: [
-        { id: 'connection', label: 'Connection', icon: Settings, implemented: false },
+        { id: 'connection', label: 'Connection', icon: Settings, implemented: true },
       ],
     },
   ];
@@ -496,7 +497,7 @@
     if (typeof window === 'undefined') return;
     const token = readAuthToken();
     try {
-      const client = await getSDKClient();
+      const client = await getOriginSDKClient();
       await client.auth.logout(token);
     } catch {
       // Server-side revoke errors shouldn't block the UI from clearing local
@@ -832,6 +833,9 @@
             {:else if routerStore.name === 'nodes'}
               <li class="text-base-content/40">Cluster</li>
               <li class="font-medium">Nodes</li>
+            {:else if routerStore.name === 'connection'}
+              <li class="text-base-content/40">Settings</li>
+              <li class="font-medium">Connection</li>
             {:else if activeViewLabel}
               <li class="font-medium">{activeViewLabel}</li>
             {/if}
@@ -1231,6 +1235,11 @@
       {:else if routerStore.name === 'nodes'}
         <div class="flex-1 overflow-y-auto">
           <NodesView />
+        </div>
+
+      {:else if routerStore.name === 'connection'}
+        <div class="flex-1 overflow-y-auto">
+          <ConnectionView />
         </div>
 
       {:else}

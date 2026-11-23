@@ -68,6 +68,7 @@ const mockClient = {
 
 vi.mock('../src/stores/sdkClient.ts', () => ({
   getSDKClient: vi.fn().mockImplementation(() => Promise.resolve(mockClient)),
+  getOriginSDKClient: vi.fn().mockImplementation(() => Promise.resolve(mockClient)),
   resetSDKClient: vi.fn(),
 }));
 
