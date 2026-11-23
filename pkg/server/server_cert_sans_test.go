@@ -85,6 +85,8 @@ func (m *sanCAMock) isRevoked(serial *big.Int) bool {
 
 func (m *sanCAMock) CertStore() xkmssdk.CertStore { return m.certs }
 
+func (m *sanCAMock) CABundle() ([]byte, error) { return nil, nil }
+
 func (m *sanCAMock) ServerTLSConfig(context.Context, *xkmssdk.KeyAttributes, bool) (*tls.Config, error) {
 	return &tls.Config{}, nil
 }

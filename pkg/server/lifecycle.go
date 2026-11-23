@@ -171,6 +171,36 @@ func (s *Server) appendPlatformClientCAs(tlsConfig *tls.Config) error {
 	return nil
 }
 
+// applyClientCertPosture trusts the operator's client trust anchors and the
+// platform xkms CA on tlsConfig and sets its client-auth mode: every client
+// must present a certificate with Security.TLSClientAuth, otherwise one is
+// requested whenever a client CA is configured.
+func (s *Server) applyClientCertPosture(tlsConfig *tls.Config) error {
+	// Trust the operator's security.tls_ca_file set in the handshake,
+	// with optional mTLS unless full mTLS is configured.
+	if s.clientTrustAnchors != nil {
+		s.appendClientTrustAnchors(tlsConfig)
+		if !s.config.Security.TLSClientAuth {
+			tlsConfig.ClientAuth = s.optionalMTLSClientAuth()
+		}
+	}
+	// Both postures trust the platform xkms CA alongside the operator's
+	// client CAs, so the certificates this node issues (agent mTLS certs,
+	// cert-mode tenant admins) verify on its own listener. Full-mTLS
+	// clusters also require every client to present a cert
+	// (go-quicbaas#1727).
+	if s.config.Security.TLSClientAuth {
+		return s.appendPlatformClientCAs(tlsConfig)
+	}
+	if err := s.trustPlatformClientCAs(tlsConfig); err != nil {
+		return err
+	}
+	if tlsConfig.ClientCAs != nil {
+		tlsConfig.ClientAuth = s.optionalMTLSClientAuth()
+	}
+	return nil
+}
+
 // trustPlatformClientCAs appends the platform xkms CA bundle to
 // tlsConfig.ClientCAs without changing the client-auth mode. The CA signs the
 // certificates this node hands out itself (cert-mode tenant admins, agent mTLS
@@ -661,30 +691,8 @@ func (s *Server) initializeCA() error {
 			MinVersion:   tls.VersionTLS13,
 			NextProtos:   []string{"h2", "http/1.1"},
 		}
-		// Trust the operator's security.tls_ca_file set in the handshake,
-		// with optional mTLS unless full mTLS is configured.
-		if s.clientTrustAnchors != nil {
-			s.appendClientTrustAnchors(s.tlsConfig)
-			if !s.config.Security.TLSClientAuth {
-				s.tlsConfig.ClientAuth = s.optionalMTLSClientAuth()
-			}
-		}
-		// Both postures trust the platform xkms CA alongside the operator's
-		// client CAs, so the certificates this node issues (agent mTLS certs,
-		// cert-mode tenant admins) verify on its own listener. Full-mTLS
-		// clusters also require every client to present a cert
-		// (go-quicbaas#1727).
-		if s.config.Security.TLSClientAuth {
-			if err := s.appendPlatformClientCAs(s.tlsConfig); err != nil {
-				return err
-			}
-		} else {
-			if err := s.trustPlatformClientCAs(s.tlsConfig); err != nil {
-				return err
-			}
-			if s.tlsConfig.ClientCAs != nil {
-				s.tlsConfig.ClientAuth = s.optionalMTLSClientAuth()
-			}
+		if err := s.applyClientCertPosture(s.tlsConfig); err != nil {
+			return err
 		}
 		s.logger.Infof("TLS configured from operator-provided cert: %s", s.config.Security.TLSCertFile)
 		return nil
@@ -843,7 +851,7 @@ func (s *Server) issueTLSCertFromExternalCA() error {
 			MinVersion:   tls.VersionTLS13,
 			NextProtos:   []string{"h2", "http/1.1"},
 		}
-		return nil
+		return s.applyClientCertPosture(s.tlsConfig)
 	}
 
 	// Issue a server TLS certificate through the external CA
@@ -913,6 +921,9 @@ func (s *Server) issueTLSCertFromExternalCA() error {
 	// the gRPC server's TLS handshake completes for clients that
 	// negotiate HTTP/2.
 	s.tlsConfig.NextProtos = []string{"h2", "http/1.1"}
+	if err := s.applyClientCertPosture(s.tlsConfig); err != nil {
+		return err
+	}
 
 	s.logger.Info("TLS certificate issued from external CA")
 	return nil

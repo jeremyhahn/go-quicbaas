@@ -229,3 +229,75 @@ func TestTLSClientAuth_TrustsTLSCAFile(t *testing.T) {
 	var verifyErr *iam.MTLSCertVerificationError
 	require.ErrorAs(t, err, &verifyErr, "a client cert from an unlisted CA must be refused")
 }
+
+// With an external CA, the server TLS config, pre-issued or issued, trusts the
+// operator's client trust anchors and asks for a client certificate, so a
+// client cert from the tls_ca_file CA verifies in the handshake.
+func TestExternalCATLS_RequestsOperatorClientCert(t *testing.T) {
+	tests := []struct {
+		name       string
+		issued     bool
+		fullMTLS   bool
+		clientAuth tls.ClientAuthType
+	}{
+		{name: "pre-issued", clientAuth: tls.VerifyClientCertIfGiven},
+		{name: "issued", issued: true, clientAuth: tls.VerifyClientCertIfGiven},
+		{name: "full mTLS", fullMTLS: true, clientAuth: tls.RequireAndVerifyClientCert},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			operator := newTestAnchorCA(t, "operator CA")
+			s := newTrustAnchorTestServer(t, operator.writePEM(t))
+			require.NoError(t, s.loadOperatorClientTrustAnchors())
+			serverCert := buildSelfSignedTLSCert(t)
+			s.config.Security.TLSClientAuth = tt.fullMTLS
+			if tt.issued {
+				s.config.Server.Host = "127.0.0.1"
+				s.xkmsCA = &externalCAMock{serverCfg: &tls.Config{Certificates: []tls.Certificate{serverCert}}}
+			} else {
+				s.opts.tlsCertificate = &serverCert
+			}
+
+			require.NoError(t, s.issueTLSCertFromExternalCA())
+			require.Equal(t, tt.clientAuth, s.tlsConfig.ClientAuth)
+
+			ln, err := tls.Listen("tcp", "127.0.0.1:0", s.tlsConfig.Clone())
+			require.NoError(t, err)
+			defer func() { _ = ln.Close() }()
+
+			type result struct {
+				chains int
+				err    error
+			}
+			done := make(chan result, 1)
+			go func() {
+				conn, err := ln.Accept()
+				if err != nil {
+					done <- result{err: err}
+					return
+				}
+				defer func() { _ = conn.Close() }()
+				tlsConn := conn.(*tls.Conn)
+				if err := tlsConn.Handshake(); err != nil {
+					done <- result{err: err}
+					return
+				}
+				done <- result{chains: len(tlsConn.ConnectionState().VerifiedChains)}
+			}()
+
+			client, err := tls.Dial("tcp", ln.Addr().String(), &tls.Config{
+				MinVersion:   tls.VersionTLS13,
+				Certificates: []tls.Certificate{operator.issueClient(t, "operator-admin")},
+				// #nosec G402 -- the server's verification of the client certificate is under test
+				InsecureSkipVerify: true,
+			})
+			require.NoError(t, err)
+			require.NoError(t, client.Handshake())
+			defer func() { _ = client.Close() }()
+
+			got := <-done
+			require.NoError(t, got.err)
+			require.GreaterOrEqual(t, got.chains, 1, "the server must verify the operator client certificate")
+		})
+	}
+}

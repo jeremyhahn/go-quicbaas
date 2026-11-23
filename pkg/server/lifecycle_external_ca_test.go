@@ -26,17 +26,20 @@ import (
 )
 
 // externalCAMock is a controllable TrustedCA for issueTLSCertFromExternalCA.
-// Only IssueCertificate and ServerTLSConfig are exercised; every other method
-// is the embedded nil interface and must not be called.
+// Only IssueCertificate, ServerTLSConfig and CABundle are exercised; every
+// other method is the embedded nil interface and must not be called.
 type externalCAMock struct {
 	xkmsca.TrustedCA
 	issueErr  error
+	caBundle  []byte
 	serverCfg *tls.Config
 	serverErr error
 	certs     xkmssdk.CertStore
 }
 
 func (m *externalCAMock) CertStore() xkmssdk.CertStore { return m.certs }
+
+func (m *externalCAMock) CABundle() ([]byte, error) { return m.caBundle, nil }
 
 func (m *externalCAMock) IssueCertificate(_ context.Context, _ *xkmsca.CertificateRequest) (*xkmsca.IssuedCertificate, error) {
 	if m.issueErr != nil {
