@@ -131,14 +131,30 @@ func TestDeleteProject_BindAfterTheCheckIsWithdrawn(t *testing.T) {
 	}
 }
 
-// sendTick hands one renewal tick to a heartbeat. Two sends in a row on an
-// unbuffered channel prove the first renewal finished.
+// sendTick hands one renewal tick to a heartbeat. The heartbeat starts a
+// renewal on it, so a returned send does not prove any renewal finished; use
+// renewOnce to wait for one.
 func sendTick(t *testing.T, ticks chan time.Time) {
 	t.Helper()
 	select {
 	case ticks <- time.Now():
 	case <-time.After(5 * time.Second):
 		t.Fatalf("no heartbeat took the renewal tick")
+	}
+}
+
+// renewOnce hands one tick to a heartbeat and waits until the renewal it
+// started has finished, so no renewal is running when it returns.
+func renewOnce(t *testing.T, ticks chan time.Time, renewed <-chan error) {
+	t.Helper()
+	sendTick(t, ticks)
+	select {
+	case err := <-renewed:
+		if err != nil {
+			t.Fatalf("renewal: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("the heartbeat never finished its renewal")
 	}
 }
 
@@ -150,11 +166,12 @@ func TestDeleteProject_RenewedFenceRefusesABindAcrossALongTeardown(t *testing.T)
 	rig := newBindDeleteRig(t)
 	ticks := make(chan time.Time)
 	rig.projects.(*projectServiceImpl).fenceRenewTicks = ticks
+	renewed := make(chan error)
+	rig.projects.(*projectServiceImpl).fenceRenewed = renewed
 	var bindErr error
 	rig.hookCheck(func() {
 		ageSDLCRecord(t, rig.sdlc, "sdlc_delete_fence", rig.projectID, sdlc.DeleteFenceTTL-10*time.Second)
-		sendTick(t, ticks)
-		sendTick(t, ticks)
+		renewOnce(t, ticks, renewed)
 		// Without the renewal the fence would now be DeleteFenceTTL+1m old.
 		ageSDLCRecord(t, rig.sdlc, "sdlc_delete_fence", rig.projectID, 70*time.Second)
 		bindErr = rig.bind(context.Background())

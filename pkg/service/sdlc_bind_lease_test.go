@@ -175,11 +175,12 @@ func TestSDLCService_RenewedLeaseRefusesUnbindWhileBindOnboards(t *testing.T) {
 	ctx := context.Background()
 	ticks := make(chan time.Time)
 	rig.svc.bindLeaseTicks = ticks
+	renewed := make(chan error)
+	rig.svc.bindLeaseRenewed = renewed
 	var unbindErr error
 	hookAfterBindWrite(t, rig, func() {
 		ageSDLCRecord(t, rig, "sdlc_bind_lease", sdlcTestProject, sdlc.BindLeaseTTL-10*time.Second)
-		sendTick(t, ticks)
-		sendTick(t, ticks)
+		renewOnce(t, ticks, renewed)
 		// Without the renewal the lease would now be BindLeaseTTL+30s old.
 		ageSDLCRecord(t, rig, "sdlc_bind_lease", sdlcTestProject, 40*time.Second)
 		unbindErr = rig.svc.Unbind(ctx, sdlcTestTenant, sdlcTestProject)
