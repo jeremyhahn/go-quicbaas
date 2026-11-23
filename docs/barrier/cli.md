@@ -75,7 +75,7 @@ in-process embedded transport** — the locked architecture requires it
 Pick a transport with `--transport` and the barrier surface is identical.
 
 This is a guarantee, not a caveat to check before scripting. A transport that
-returns `BaasTransportNotSupportedError` or `not yet supported by SDK` for a
+returns a transport-not-supported error or `not yet supported by SDK` for a
 barrier verb is a **blocking release regression** and must be fixed before the
 change ships — file it as a defect rather than routing around it. The
 integration suite at `test/integration/cli/` exercises every CLI command over

@@ -3479,6 +3479,13 @@ export class RestClusterClient {
             method: 'GET',
         });
     }
+    async listNodes() {
+        const resp = await this.http.fetchJSON('/api/v1/cluster/nodes', {
+            method: 'GET',
+        });
+        // A nil Go slice encodes as null; callers always get an array.
+        return { ...resp, nodes: resp.nodes ?? [] };
+    }
 }
 // ---------------------------------------------------------------------------
 // RestBootstrapClient — /api/v1/bootstrap surface.
