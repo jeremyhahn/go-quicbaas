@@ -99,11 +99,13 @@ type (
 
 // NewSecret seals src into a new Secret. On return src is wiped — the caller
 // must not reuse the slice.
-func NewSecret(src []byte) (*Secret, error) { return xkmssecure.NewSecret(src) }
+func NewSecret(ctx context.Context, src []byte) (*Secret, error) {
+	return xkmssecure.NewSecret(ctx, src)
+}
 
 // NewSecretFromBuffer seals buf into a new Secret, consuming buf.
-func NewSecretFromBuffer(buf *Buffer) (*Secret, error) {
-	return xkmssecure.NewSecretFromBuffer(buf)
+func NewSecretFromBuffer(ctx context.Context, buf *Buffer) (*Secret, error) {
+	return xkmssecure.NewSecretFromBuffer(ctx, buf)
 }
 
 // NewBuffer allocates a zero-filled mlocked Buffer of the given size.
@@ -142,4 +144,4 @@ func NewCallbackProvider(fn func(ctx context.Context, prompt string) ([]byte, er
 // orderly exit; library code never calls it. It replaces the memguard-era
 // CatchInterrupt/EnablePurge/Purge lifecycle: the binary drives its own
 // signal handling and graceful shutdown, which runs the deferred WipeAll.
-func WipeAll() (int, error) { return xkmssecure.WipeAll() }
+func WipeAll(ctx context.Context) (int, error) { return xkmssecure.WipeAll(ctx) }

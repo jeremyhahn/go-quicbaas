@@ -139,8 +139,8 @@ func TestGitea_MintToken_UsesTheCustodyCredential(t *testing.T) {
 	}
 
 	defer minted.Secret.Destroy()
-	if string(minted.Secret.Bytes()) != "the-new-secret" {
-		t.Errorf("secret = %q, want the minted one", minted.Secret.Bytes())
+	if ok, err := minted.Secret.EqualBytes([]byte("the-new-secret")); err != nil || !ok {
+		t.Errorf("secret does not match the minted one (err=%v)", err)
 	}
 	if minted.ID != "7" || minted.Name != "rotating" {
 		t.Errorf("minted = %+v, want id 7 named rotating", minted)

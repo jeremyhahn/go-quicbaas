@@ -117,7 +117,7 @@ func Build(cfg Config) (xkmssdk.TrustedCA, error) {
 	}
 
 	identity := caIdentity(cfg)
-	keyAttrs, err := identity.ToKeyAttributes()
+	keyAttrs, err := identity.ToKeyAttributes(context.Background())
 	if err != nil {
 		return nil, err
 	}

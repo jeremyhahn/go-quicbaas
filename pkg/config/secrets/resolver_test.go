@@ -133,8 +133,8 @@ func TestResolverRegistry_Resolve_LiteralValue(t *testing.T) {
 	if value.Strategy != StrategyLiteral {
 		t.Errorf("Expected StrategyLiteral, got %v", value.Strategy)
 	}
-	if value.String() != "plaintext-value" {
-		t.Errorf("Expected 'plaintext-value', got %s", value.String())
+	if secretValueString(t, value) != "plaintext-value" {
+		t.Errorf("Expected 'plaintext-value', got %s", secretValueString(t, value))
 	}
 	if value.Raw != "plaintext-value" {
 		t.Errorf("Expected raw 'plaintext-value', got %s", value.Raw)
@@ -151,7 +151,7 @@ func TestResolverRegistry_Resolve_MatchingResolver(t *testing.T) {
 			return len(raw) > 7 && raw[:7] == "test://"
 		},
 		resolveFunc: func(ctx context.Context, raw string) (*SecretValue, error) {
-			return NewSecretValue(raw, []byte("resolved-value"), StrategyLocalKMS)
+			return NewSecretValue(ctx, raw, []byte("resolved-value"), StrategyLocalKMS)
 		},
 	}
 	registry.Register(resolver)
@@ -160,8 +160,8 @@ func TestResolverRegistry_Resolve_MatchingResolver(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	if value.String() != "resolved-value" {
-		t.Errorf("Expected 'resolved-value', got %s", value.String())
+	if secretValueString(t, value) != "resolved-value" {
+		t.Errorf("Expected 'resolved-value', got %s", secretValueString(t, value))
 	}
 	if value.Strategy != StrategyLocalKMS {
 		t.Errorf("Expected StrategyLocalKMS, got %v", value.Strategy)
@@ -206,14 +206,14 @@ func TestResolverRegistry_Resolve_FirstMatchWins(t *testing.T) {
 		schemeName:     "first",
 		canResolveFunc: func(raw string) bool { return true },
 		resolveFunc: func(ctx context.Context, raw string) (*SecretValue, error) {
-			return NewSecretValue(raw, []byte("from-first"), StrategyLiteral)
+			return NewSecretValue(ctx, raw, []byte("from-first"), StrategyLiteral)
 		},
 	}
 	resolver2 := &testResolver{
 		schemeName:     "second",
 		canResolveFunc: func(raw string) bool { return true },
 		resolveFunc: func(ctx context.Context, raw string) (*SecretValue, error) {
-			return NewSecretValue(raw, []byte("from-second"), StrategyLiteral)
+			return NewSecretValue(ctx, raw, []byte("from-second"), StrategyLiteral)
 		},
 	}
 	registry.Register(resolver1)
@@ -223,8 +223,8 @@ func TestResolverRegistry_Resolve_FirstMatchWins(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	if value.String() != "from-first" {
-		t.Errorf("Expected 'from-first', got %s", value.String())
+	if secretValueString(t, value) != "from-first" {
+		t.Errorf("Expected 'from-first', got %s", secretValueString(t, value))
 	}
 }
 

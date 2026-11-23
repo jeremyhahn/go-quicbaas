@@ -729,7 +729,15 @@ func (p *sshBufferProvider) Passphrase(_ context.Context, _ string) (*secure.Buf
 	if err != nil {
 		return nil, err
 	}
-	//secure:unborrowed allocates-protected copy moves bytes between protected buffers for caller-owned cloning.
-	copy(cloned.Bytes(), p.buf.Bytes())
+	// The two borrows are on different Buffers, so nesting them is safe.
+	if err := p.buf.WithBytes(func(src []byte) error {
+		return cloned.WithBytes(func(dst []byte) error {
+			copy(dst, src)
+			return nil
+		})
+	}); err != nil {
+		cloned.Destroy()
+		return nil, err
+	}
 	return cloned, nil
 }

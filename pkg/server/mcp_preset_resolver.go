@@ -372,8 +372,9 @@ func writeAgentSessionMaterial(dir string, issued *service.IssuedFleetNodeCertif
 
 	// Write the private key at 0600, then destroy the mlocked buffer
 	// immediately so no plaintext key lingers in resident memory.
-	//secure:unborrowed injected-interface os.WriteFile requires a byte slice and returns before the key buffer is destroyed.
-	keyErr := os.WriteFile(material.keyPath, issued.PrivateKey.Bytes(), 0600)
+	keyErr := issued.PrivateKey.WithBytes(func(key []byte) error {
+		return os.WriteFile(material.keyPath, key, 0600)
+	})
 	issued.PrivateKey.Destroy()
 	if keyErr != nil {
 		return nil, &MCPPresetResolveError{Op: "write agent private key", Cause: keyErr}

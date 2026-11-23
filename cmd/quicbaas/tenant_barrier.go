@@ -277,13 +277,17 @@ func runTenantBarrierInitCommand(cmd *cobra.Command, _ []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
-	resp, err := client.TenantBarrierInit(ctx, &qrdbtransport.TenantBarrierInitRequest{
-		TenantID: tenantBarrierTenantID,
-		Strategy: tenantBarrierStrategy,
-		//secure:unborrowed injected-interface tenant-barrier transport request must carry bytes; the client owns the request lifetime.
-		Passphrase: secret.Bytes(),
-		Threshold:  tenantBarrierThreshold,
-		Shares:     tenantBarrierShares,
+	var resp *qrdbtransport.TenantBarrierInitResponse
+	err = secret.WithBytes(func(s []byte) error {
+		var reqErr error
+		resp, reqErr = client.TenantBarrierInit(ctx, &qrdbtransport.TenantBarrierInitRequest{
+			TenantID:   tenantBarrierTenantID,
+			Strategy:   tenantBarrierStrategy,
+			Passphrase: s,
+			Threshold:  tenantBarrierThreshold,
+			Shares:     tenantBarrierShares,
+		})
+		return reqErr
 	})
 	if err != nil {
 		return formatError(err)
@@ -368,10 +372,11 @@ func runTenantBarrierUnsealCommand(cmd *cobra.Command, _ []string) error {
 	// is done with the memory. Note this is an invariant of a module this
 	// repo does not own — if a transport ever becomes asynchronous or gains
 	// a replay buffer, this must go back to a wiped copy.
-	if err := client.TenantBarrierUnseal(ctx, &qrdbtransport.TenantBarrierUnsealRequest{
-		TenantID: tenantBarrierTenantID,
-		//secure:unborrowed injected-interface tenant-barrier transport request must carry bytes; the client owns the request lifetime.
-		Key: secret.Bytes(),
+	if err := secret.WithBytes(func(s []byte) error {
+		return client.TenantBarrierUnseal(ctx, &qrdbtransport.TenantBarrierUnsealRequest{
+			TenantID: tenantBarrierTenantID,
+			Key:      s,
+		})
 	}); err != nil {
 		return formatError(err)
 	}
@@ -425,10 +430,15 @@ func runTenantBarrierUnsealShareCommand(cmd *cobra.Command, _ []string) error {
 	ctx, cancel := context.WithTimeout(tenantBarrierActingContext(), globalTimeout)
 	defer cancel()
 
-	progress, err := client.TenantBarrierUnsealShare(ctx, &qrdbtransport.TenantBarrierUnsealShareRequest{
-		TenantID: tenantBarrierTenantID,
-		//secure:unwiped injected-interface the go-qrdb TenantBarrierUnsealShareRequest.Share field is a string, so the copy is unwipeable (#237).
-		Share: string(share.Bytes()), //secure:unborrowed injected-interface the protected share is opened only for the unseal-share call.
+	var progress *qrdbtransport.TenantBarrierUnsealProgress
+	err = share.WithBytes(func(s []byte) error {
+		var reqErr error
+		progress, reqErr = client.TenantBarrierUnsealShare(ctx, &qrdbtransport.TenantBarrierUnsealShareRequest{
+			TenantID: tenantBarrierTenantID,
+			//secure:unwiped injected-interface the go-qrdb TenantBarrierUnsealShareRequest.Share field is a string, so the copy is unwipeable (#237).
+			Share: string(s),
+		})
+		return reqErr
 	})
 	if err != nil {
 		return formatError(err)
