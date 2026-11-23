@@ -46,17 +46,17 @@ func TestAuthorizeGRPCArguments_UserWriteWithRolesRequiresRolesAssign(t *testing
 	for _, tc := range tests {
 		t.Run(tc.name+" without roles:assign is denied", func(t *testing.T) {
 			authz := &scopeSetAuthorizer{token: "tok", scp: map[string]bool{"users:update": true, "users:create": true}}
-			err := authorizeGRPCArguments(bearerContext("tok"), tc.method, tc.req, authz)
+			err := authorizeGRPCArguments(bearerContext("tok"), tc.method, tc.req, authz, authzInterceptorConfig{})
 			require.Error(t, err)
 			assert.Equal(t, codes.PermissionDenied, status.Code(err))
 		})
 		t.Run(tc.name+" with roles:assign is allowed", func(t *testing.T) {
 			authz := &scopeSetAuthorizer{token: "tok", scp: map[string]bool{"roles:assign": true}}
-			require.NoError(t, authorizeGRPCArguments(bearerContext("tok"), tc.method, tc.req, authz))
+			require.NoError(t, authorizeGRPCArguments(bearerContext("tok"), tc.method, tc.req, authz, authzInterceptorConfig{}))
 		})
 		t.Run(tc.name+" without a token is unauthenticated", func(t *testing.T) {
 			authz := &scopeSetAuthorizer{token: "tok", scp: map[string]bool{"roles:assign": true}}
-			err := authorizeGRPCArguments(context.Background(), tc.method, tc.req, authz)
+			err := authorizeGRPCArguments(context.Background(), tc.method, tc.req, authz, authzInterceptorConfig{})
 			assert.Equal(t, codes.Unauthenticated, status.Code(err))
 		})
 	}
@@ -68,9 +68,9 @@ func TestAuthorizeGRPCArguments_NoExtraPermission(t *testing.T) {
 	authz := &scopeSetAuthorizer{token: "tok", scp: map[string]bool{}}
 	ctx := bearerContext("tok")
 
-	require.NoError(t, authorizeGRPCArguments(ctx, iampb.IAMService_CreateUser_FullMethodName, &iampb.CreateUserRequest{}, authz))
-	require.NoError(t, authorizeGRPCArguments(ctx, iampb.IAMService_UpdateUser_FullMethodName, &iampb.UpdateUserRequest{Roles: []string{}}, authz))
-	require.NoError(t, authorizeGRPCArguments(ctx, "/quicbaas.iam.v1.IAMService/GetUser", &iampb.CreateUserRequest{Roles: []string{"admin"}}, authz))
+	require.NoError(t, authorizeGRPCArguments(ctx, iampb.IAMService_CreateUser_FullMethodName, &iampb.CreateUserRequest{}, authz, authzInterceptorConfig{}))
+	require.NoError(t, authorizeGRPCArguments(ctx, iampb.IAMService_UpdateUser_FullMethodName, &iampb.UpdateUserRequest{Roles: []string{}}, authz, authzInterceptorConfig{}))
+	require.NoError(t, authorizeGRPCArguments(ctx, "/quicbaas.iam.v1.IAMService/GetUser", &iampb.CreateUserRequest{Roles: []string{"admin"}}, authz, authzInterceptorConfig{}))
 	assert.Nil(t, grpcArgumentPermissionsFor(iampb.IAMService_CreateUser_FullMethodName, struct{}{}))
 }
 
@@ -130,7 +130,7 @@ func TestAuthorizeGRPCArguments_UpdateUserLifecycleRequiresEnableOrDisable(t *te
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			authz := &scopeSetAuthorizer{token: "tok", scp: tc.scp}
-			err := authorizeGRPCArguments(bearerContext("tok"), method, tc.req, authz)
+			err := authorizeGRPCArguments(bearerContext("tok"), method, tc.req, authz, authzInterceptorConfig{})
 			if tc.allowed {
 				require.NoError(t, err)
 				return
@@ -158,13 +158,13 @@ func TestAuthorizeGRPCArguments_UpdateUserAttributesRequireRolesAssign(t *testin
 
 	t.Run("attributes with users:update only is denied", func(t *testing.T) {
 		authz := &scopeSetAuthorizer{token: "tok", scp: map[string]bool{"users:update": true}}
-		err := authorizeGRPCArguments(bearerContext("tok"), method, attrsOnly, authz)
+		err := authorizeGRPCArguments(bearerContext("tok"), method, attrsOnly, authz, authzInterceptorConfig{})
 		require.Error(t, err)
 		assert.Equal(t, codes.PermissionDenied, status.Code(err))
 	})
 	t.Run("attributes with roles:assign is allowed", func(t *testing.T) {
 		authz := &scopeSetAuthorizer{token: "tok", scp: map[string]bool{"users:update": true, "roles:assign": true}}
-		require.NoError(t, authorizeGRPCArguments(bearerContext("tok"), method, attrsOnly, authz))
+		require.NoError(t, authorizeGRPCArguments(bearerContext("tok"), method, attrsOnly, authz, authzInterceptorConfig{}))
 	})
 	t.Run("roles and attributes ask roles:assign once", func(t *testing.T) {
 		req := &iampb.UpdateUserRequest{Roles: []string{"admin"}, Attributes: map[string]string{"department": "finance"}}
@@ -181,13 +181,13 @@ func TestAuthorizeGRPCArguments_CreateUserAttributesRequireRolesAssign(t *testin
 
 	t.Run("attributes with users:create only is denied", func(t *testing.T) {
 		authz := &scopeSetAuthorizer{token: "tok", scp: map[string]bool{"users:create": true}}
-		err := authorizeGRPCArguments(bearerContext("tok"), method, attrsOnly, authz)
+		err := authorizeGRPCArguments(bearerContext("tok"), method, attrsOnly, authz, authzInterceptorConfig{})
 		require.Error(t, err)
 		assert.Equal(t, codes.PermissionDenied, status.Code(err))
 	})
 	t.Run("attributes with roles:assign is allowed", func(t *testing.T) {
 		authz := &scopeSetAuthorizer{token: "tok", scp: map[string]bool{"users:create": true, "roles:assign": true}}
-		require.NoError(t, authorizeGRPCArguments(bearerContext("tok"), method, attrsOnly, authz))
+		require.NoError(t, authorizeGRPCArguments(bearerContext("tok"), method, attrsOnly, authz, authzInterceptorConfig{}))
 	})
 	t.Run("roles and attributes ask roles:assign once", func(t *testing.T) {
 		req := &iampb.CreateUserRequest{Roles: []string{"admin"}, Attributes: map[string]string{"department": "finance"}}

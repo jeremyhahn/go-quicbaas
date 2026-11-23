@@ -23,7 +23,6 @@ import (
 	"google.golang.org/grpc/status"
 
 	iampb "github.com/jeremyhahn/go-quicbaas/api/proto/iam"
-	"github.com/jeremyhahn/go-quicbaas/pkg/api/sealedwindow"
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
@@ -76,19 +75,21 @@ func bearerFromContext(ctx context.Context) string {
 // point, backed by the central platform-token Validator: ONE Authorize call does
 // offline signature / iss / aud / exp verification, DPoP sender-constraint for
 // cnf.jkt-bound tokens, the offline scp -> permission decision, and the
-// per-tenant liveness/revocation check. This REPLACES the prior online qrdb
-// role-PDP two-step (validate token + authorize).
+// per-tenant liveness/revocation check. The validator thus authenticates the
+// token and caps it by scp; then go-qrdb's authorizer (cfg.rbac, the embedded
+// node's RBAC with its ABAC decorator) decides for the token's subject, tenant
+// and roles. Both must allow.
 //
 // On allow it returns the context enriched with the authenticated Subject
 // reconstructed from the verified AuthorizedContext; on deny it returns a gRPC
-// status error mapped by validatorGRPCStatus.
+// status error mapped by validatorGRPCStatus or rbacGRPCStatus.
 //
 // The decision is default-deny under RequireAuthz: a public method bypasses; a
 // missing token, an unmapped method, an invalid/inactive token, or a missing
 // scope all reject the call. The gRPC metadata path carries no DPoP proof, so
 // the empty dpopProof / htm / htu args are passed deliberately (see
 // GRPCValidatorAuthorizer).
-func authorizeGRPCRequest(ctx context.Context, fullMethod string, authorizer GRPCValidatorAuthorizer, sealedBypass *sealedwindow.AuthBypass) (context.Context, error) {
+func authorizeGRPCRequest(ctx context.Context, fullMethod string, authorizer GRPCValidatorAuthorizer, cfg authzInterceptorConfig) (context.Context, error) {
 	if isPublicGRPCMethod(fullMethod) {
 		return ctx, nil
 	}
@@ -103,7 +104,7 @@ func authorizeGRPCRequest(ctx context.Context, fullMethod string, authorizer GRP
 	// admit. Unsealed, the predicate is always false and enforcement below
 	// is unchanged; the handlers keep their own credential checks (officer
 	// cert + nonce verification) on the share-claim verbs.
-	if sealedBypass.BypassesGRPC(fullMethod) {
+	if cfg.sealedBypass.BypassesGRPC(fullMethod) {
 		return ctx, nil
 	}
 
@@ -144,7 +145,13 @@ func authorizeGRPCRequest(ctx context.Context, fullMethod string, authorizer GRP
 		return ctx, validatorGRPCStatus(err)
 	}
 
-	return contextWithAuthorizedSubject(ctx, authzCtx), nil
+	// The token allows it; go-qrdb decides. The authenticated context binds
+	// the caller's tenant, which go-qrdb's authorizer reads.
+	authedCtx := contextWithAuthorizedSubject(ctx, authzCtx)
+	if err := rbacAuthorize(authedCtx, cfg, authzCtx, resource+":"+action); err != nil {
+		return ctx, err
+	}
+	return authedCtx, nil
 }
 
 // contextWithAuthorizedSubject reconstructs the principal from the verified
@@ -184,15 +191,17 @@ func contextWithAuthorizedSubject(ctx context.Context, authzCtx *platformtoken.A
 // unary RPC. It is installed only when RequireAuthz=true; when authz is off this
 // interceptor is never added to the chain, so behavior is unchanged. Both the
 // TCP gRPC listener and the Unix-domain-socket gRPC listener share this chain,
-// so a single installation covers both the gRPC and Unix transports.
+// so a single installation covers both the gRPC and Unix transports. The
+// validator authenticates the token and caps it by scp, then go-qrdb's
+// authorizer (WithRBACAuthorizer) decides; both must allow.
 func UnaryAuthorizationInterceptor(authorizer GRPCValidatorAuthorizer, opts ...AuthzInterceptorOption) grpc.UnaryServerInterceptor {
 	cfg := resolveAuthzInterceptorOptions(opts)
 	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
-		authedCtx, err := authorizeGRPCRequest(ctx, info.FullMethod, authorizer, cfg.sealedBypass)
+		authedCtx, err := authorizeGRPCRequest(ctx, info.FullMethod, authorizer, cfg)
 		if err != nil {
 			return nil, err
 		}
-		if err := authorizeGRPCArguments(ctx, info.FullMethod, req, authorizer); err != nil {
+		if err := authorizeGRPCArguments(authedCtx, info.FullMethod, req, authorizer, cfg); err != nil {
 			return nil, err
 		}
 		return handler(authedCtx, req)
@@ -276,8 +285,10 @@ func grpcArgumentPermissionsFor(fullMethod string, req interface{}) []string {
 
 // authorizeGRPCArguments checks each argument-dependent permission of the
 // request, after the method's own permission was granted. It fails closed: a
-// missing token is refused, and any denial maps through validatorGRPCStatus.
-func authorizeGRPCArguments(ctx context.Context, fullMethod string, req interface{}, authorizer GRPCValidatorAuthorizer) error {
+// missing token is refused, and each permission the validator allows is then
+// asked of go-qrdb's authorizer (cfg.rbac). ctx is the authenticated context
+// authorizeGRPCRequest returned, so go-qrdb reads the caller's tenant from it.
+func authorizeGRPCArguments(ctx context.Context, fullMethod string, req interface{}, authorizer GRPCValidatorAuthorizer, cfg authzInterceptorConfig) error {
 	perms := grpcArgumentPermissionsFor(fullMethod, req)
 	if len(perms) == 0 {
 		return nil
@@ -287,8 +298,12 @@ func authorizeGRPCArguments(ctx context.Context, fullMethod string, req interfac
 		return status.Error(codes.Unauthenticated, (&MissingTokenError{Method: fullMethod}).Error())
 	}
 	for _, perm := range perms {
-		if _, err := authorizer.Authorize(ctx, token, perm, "", "", ""); err != nil {
+		authzCtx, err := authorizer.Authorize(ctx, token, perm, "", "", "")
+		if err != nil {
 			return validatorGRPCStatus(err)
+		}
+		if err := rbacAuthorize(ctx, cfg, authzCtx, perm); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -296,11 +311,12 @@ func authorizeGRPCArguments(ctx context.Context, fullMethod string, req interfac
 
 // StreamAuthorizationInterceptor is the streaming counterpart of
 // UnaryAuthorizationInterceptor. It authorizes the stream open and wraps the
-// stream so downstream handlers observe the authenticated context.
+// stream so downstream handlers observe the authenticated context. As on the
+// unary path, the token's scp and go-qrdb's authorizer must both allow.
 func StreamAuthorizationInterceptor(authorizer GRPCValidatorAuthorizer, opts ...AuthzInterceptorOption) grpc.StreamServerInterceptor {
 	cfg := resolveAuthzInterceptorOptions(opts)
 	return func(srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
-		authedCtx, err := authorizeGRPCRequest(ss.Context(), info.FullMethod, authorizer, cfg.sealedBypass)
+		authedCtx, err := authorizeGRPCRequest(ss.Context(), info.FullMethod, authorizer, cfg)
 		if err != nil {
 			return err
 		}
