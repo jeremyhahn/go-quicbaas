@@ -744,6 +744,76 @@ func TestOCIDist_IdleSessionsAreEvicted(t *testing.T) {
 	assert.Equal(t, int64(0), h.inFlight.Load())
 }
 
+// TestOCIDist_EmptySessionsAreBounded opens upload sessions that never
+// send a byte until MaxSessions is reached: the next POST is refused with
+// 429 and the table does not grow; every way a session leaves the table
+// (DELETE, commit, idle eviction) frees a slot again.
+func TestOCIDist_EmptySessionsAreBounded(t *testing.T) {
+	h := NewOCIDistHandlers(slog.Default(), newFakeOCIBackend(), OCIDistLimits{SessionIdle: time.Minute, MaxSessions: 3})
+	base := time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)
+	now := base
+	h.now = func() time.Time { return now }
+	root := mux.NewRouter()
+	h.registerRoutes(root, openGates())
+
+	ids := make([]string, 0, 3)
+	for i := 0; i < 3; i++ {
+		ids = append(ids, startUploadFor(t, root, "apps/web"))
+	}
+	assert.Equal(t, int64(3), h.sessions.Load())
+	assert.Equal(t, int64(0), h.inFlight.Load())
+
+	for i := 0; i < 5; i++ {
+		rec := do(root, http.MethodPost, "/v2/apps/web/blobs/uploads/", nil, nil)
+		require.Equal(t, http.StatusTooManyRequests, rec.Code, rec.Body.String())
+	}
+	count := 0
+	h.uploads.Range(func(_, _ any) bool { count++; return true })
+	assert.Equal(t, 3, count)
+	assert.Equal(t, int64(3), h.sessions.Load())
+
+	// DELETE frees a slot.
+	rec := do(root, http.MethodDelete, "/v2/apps/web/blobs/uploads/"+ids[0], nil, nil)
+	require.Equal(t, http.StatusNoContent, rec.Code)
+	assert.Equal(t, int64(2), h.sessions.Load())
+	next := startUploadFor(t, root, "apps/web")
+
+	// Committing a session frees a slot.
+	blob := []byte("abcd")
+	rec = do(root, http.MethodPut, "/v2/apps/web/blobs/uploads/"+next+"?digest="+sha256Of(blob), blob, nil)
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	assert.Equal(t, int64(2), h.sessions.Load())
+	startUploadFor(t, root, "apps/web")
+
+	// At the cap, a POST past the idle window evicts the idle sessions
+	// and is admitted.
+	rec = do(root, http.MethodPost, "/v2/apps/web/blobs/uploads/", nil, nil)
+	require.Equal(t, http.StatusTooManyRequests, rec.Code)
+	now = now.Add(2 * time.Minute)
+	startUploadFor(t, root, "apps/web")
+	assert.Equal(t, int64(1), h.sessions.Load())
+}
+
+// TestOCIDist_SweepIsRateLimited checks upload starts inside the sweep
+// interval do not rescan the session table.
+func TestOCIDist_SweepIsRateLimited(t *testing.T) {
+	h := NewOCIDistHandlers(slog.Default(), newFakeOCIBackend(), OCIDistLimits{SessionIdle: time.Minute})
+	base := time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)
+	now := base
+	h.now = func() time.Time { return now }
+	root := mux.NewRouter()
+	h.registerRoutes(root, openGates())
+
+	startUploadFor(t, root, "apps/web")
+	assert.Equal(t, base.UnixNano(), h.lastSweep.Load())
+	now = base.Add(5 * time.Second)
+	startUploadFor(t, root, "apps/web")
+	assert.Equal(t, base.UnixNano(), h.lastSweep.Load(), "swept again inside the interval")
+	now = base.Add(h.sweepInterval())
+	startUploadFor(t, root, "apps/web")
+	assert.Equal(t, now.UnixNano(), h.lastSweep.Load())
+}
+
 func TestOCIDistLimits_Defaults(t *testing.T) {
 	got := OCIDistLimits{}.withDefaults()
 	assert.Equal(t, DefaultOCIDistLimits(), got)

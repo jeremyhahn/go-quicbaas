@@ -78,6 +78,11 @@ type OCIDistHandlers struct {
 	// inFlight is the number of upload bytes currently buffered across
 	// every open session; the MaxInFlightBytes cap is enforced on it.
 	inFlight atomic.Int64
+	// sessions is the number of entries in uploads; the MaxSessions cap
+	// is enforced on it, so empty sessions cannot grow the table.
+	sessions atomic.Int64
+	// lastSweep is the UnixNano time of the last idle sweep.
+	lastSweep atomic.Int64
 	// now is the clock idle eviction reads; tests substitute it.
 	now func() time.Time
 }
@@ -111,6 +116,9 @@ type OCIDistLimits struct {
 	// SessionIdle is how long a session may go without a chunk before it
 	// is evicted and its bytes released.
 	SessionIdle time.Duration
+	// MaxSessions caps the number of open upload sessions, including
+	// sessions that have buffered no bytes.
+	MaxSessions int64
 }
 
 const (
@@ -119,6 +127,7 @@ const (
 	defaultMaxBlobBytes     int64 = 4 << 30
 	defaultMaxInFlightBytes int64 = 8 << 30
 	defaultSessionIdle            = 15 * time.Minute
+	defaultMaxSessions      int64 = 1024
 )
 
 // DefaultOCIDistLimits returns the limits used when a field is left zero:
@@ -131,6 +140,7 @@ func DefaultOCIDistLimits() OCIDistLimits {
 		MaxBlobBytes:     defaultMaxBlobBytes,
 		MaxInFlightBytes: defaultMaxInFlightBytes,
 		SessionIdle:      defaultSessionIdle,
+		MaxSessions:      defaultMaxSessions,
 	}
 }
 
@@ -151,6 +161,9 @@ func (l OCIDistLimits) withDefaults() OCIDistLimits {
 	}
 	if l.SessionIdle <= 0 {
 		l.SessionIdle = d.SessionIdle
+	}
+	if l.MaxSessions <= 0 {
+		l.MaxSessions = d.MaxSessions
 	}
 	return l
 }
@@ -504,7 +517,7 @@ func (h *OCIDistHandlers) getBlob(w http.ResponseWriter, r *http.Request) {
 
 func (h *OCIDistHandlers) startUpload(w http.ResponseWriter, r *http.Request) {
 	name := mux.Vars(r)["name"]
-	h.evictIdle()
+	h.sweepIdle()
 
 	// Spec § monolithic upload: clients may send the entire blob in
 	// the POST body along with ?digest= to commit immediately. It never
@@ -541,6 +554,10 @@ func (h *OCIDistHandlers) startUpload(w http.ResponseWriter, r *http.Request) {
 	id, err := newUploadID()
 	if err != nil {
 		writeOCIError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+		return
+	}
+	if err := h.reserveSession(); err != nil {
+		writeBodyError(w, err, "BLOB_UPLOAD_INVALID")
 		return
 	}
 	h.uploads.Store(id, &uploadSession{name: name, lastActive: h.now()})
@@ -737,6 +754,7 @@ func (h *OCIDistHandlers) takeSession(uuid string, sess *uploadSession) ([]byte,
 	if _, loaded := h.uploads.LoadAndDelete(uuid); !loaded {
 		return nil, false
 	}
+	h.sessions.Add(-1)
 	sess.mu.Lock()
 	sess.released = true
 	buf := sess.buffer
@@ -842,6 +860,45 @@ func (h *OCIDistHandlers) evictIdle() int {
 	return evicted
 }
 
+// sweepInterval is the least time between two idle sweeps started by
+// upload starts, so a busy table is not scanned on every POST.
+func (h *OCIDistHandlers) sweepInterval() time.Duration {
+	if d := h.limits.SessionIdle / 4; d > 0 {
+		return d
+	}
+	return time.Second
+}
+
+// sweepIdle runs evictIdle when sweepInterval has passed since the last
+// sweep; concurrent callers run it at most once.
+func (h *OCIDistHandlers) sweepIdle() {
+	now := h.now().UnixNano()
+	last := h.lastSweep.Load()
+	if now-last < int64(h.sweepInterval()) {
+		return
+	}
+	if !h.lastSweep.CompareAndSwap(last, now) {
+		return
+	}
+	h.evictIdle()
+}
+
+// reserveSession counts one new session against MaxSessions. At the cap
+// it sweeps idle sessions once and retries; still full, it refuses, so
+// sessions that never send a byte cannot grow the table without bound.
+// takeSession releases the count on every removal.
+func (h *OCIDistHandlers) reserveSession() error {
+	for attempt := 0; ; attempt++ {
+		if h.sessions.Add(1) <= h.limits.MaxSessions {
+			return nil
+		}
+		h.sessions.Add(-1)
+		if attempt > 0 || h.evictIdle() == 0 {
+			return &UploadSessionsSaturatedError{Limit: h.limits.MaxSessions}
+		}
+	}
+}
+
 // UploadTooLargeError is returned when a body or a session exceeds its cap.
 type UploadTooLargeError struct {
 	Limit int64
@@ -871,6 +928,17 @@ func (e *UploadsSaturatedError) Error() string {
 	return fmt.Sprintf("uploads in flight exceed the %d byte limit; retry later", e.Limit)
 }
 
+// UploadSessionsSaturatedError is returned when the open session count is
+// at MaxSessions.
+type UploadSessionsSaturatedError struct {
+	Limit int64
+}
+
+// Error implements the error interface.
+func (e *UploadSessionsSaturatedError) Error() string {
+	return fmt.Sprintf("open upload sessions exceed the limit of %d; retry later", e.Limit)
+}
+
 // readBounded reads at most limit bytes of the request body, reporting
 // an UploadTooLargeError when the body is longer.
 func readBounded(w http.ResponseWriter, r *http.Request, limit int64) ([]byte, error) {
@@ -891,13 +959,14 @@ func readBounded(w http.ResponseWriter, r *http.Request, limit int64) ([]byte, e
 func writeBodyError(w http.ResponseWriter, err error, code string) {
 	var tooLarge *UploadTooLargeError
 	var saturated *UploadsSaturatedError
+	var sessionsFull *UploadSessionsSaturatedError
 	var unknown *UploadUnknownError
 	switch {
 	case errors.As(err, &unknown):
 		writeOCIError(w, http.StatusNotFound, "BLOB_UPLOAD_UNKNOWN", err.Error())
 	case errors.As(err, &tooLarge):
 		writeOCIError(w, http.StatusRequestEntityTooLarge, code, err.Error())
-	case errors.As(err, &saturated):
+	case errors.As(err, &saturated), errors.As(err, &sessionsFull):
 		writeOCIError(w, http.StatusTooManyRequests, "TOOMANYREQUESTS", err.Error())
 	default:
 		writeOCIError(w, http.StatusBadRequest, code, err.Error())
