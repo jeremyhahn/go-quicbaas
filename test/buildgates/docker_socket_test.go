@@ -20,12 +20,11 @@ import (
 	"testing"
 )
 
-// IS-12 (#1171, go-xkms#1332): a job that bind-mounts the runner host's
-// Docker socket into a container hands that container the host daemon, so
-// code the job runs can re-tag a cached base or scanner image a later
-// release build then uses. Owner ruling 130 option A: release.yml runs on
-// the forge's dedicated `release` runner and pins the images it runs by
-// digest. Runner-side isolation of PR jobs (option B) is Infrastructure's.
+// A job that bind-mounts the runner host's Docker socket into a container
+// hands that container the host daemon, so code the job runs can re-tag a
+// cached base or scanner image a later release build then uses. release.yml
+// runs on the forge's dedicated `release` runner and pins the images it runs
+// by digest; no workflow mounts the socket (#1171).
 
 var (
 	releaseWorkflowPath = filepath.Join(workflowsDir, "release.yml")
@@ -74,7 +73,7 @@ func TestNoWorkflowMountsTheHostDockerSocket(t *testing.T) {
 	for _, path := range workflowFiles(t) {
 		for i, line := range strings.Split(readFile(t, path), "\n") {
 			if dockerSocketMountRe.MatchString(line) {
-				t.Errorf("%s:%d bind-mounts the host Docker socket (IS-12, #1171): %s",
+				t.Errorf("%s:%d bind-mounts the host Docker socket (#1171): %s",
 					filepath.Base(path), i+1, strings.TrimSpace(line))
 			}
 		}
@@ -91,7 +90,7 @@ func TestReleaseJobsRunOnTheReleaseRunner(t *testing.T) {
 			continue
 		}
 		if m[1] != releaseRunsOn {
-			t.Errorf("release.yml job %s runs-on %q, want %q (ruling 130 A, #1171)", job, m[1], releaseRunsOn)
+			t.Errorf("release.yml job %s runs-on %q, want %q (#1171)", job, m[1], releaseRunsOn)
 		}
 	}
 }
