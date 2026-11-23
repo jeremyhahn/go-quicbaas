@@ -89,15 +89,31 @@ func (s *Server) SetSealedWindowHandler(h http.Handler) {
 	s.setupRouter()
 }
 
+// sealedWindowNativeAliases are the sealed allowlist paths go-qrdb's sealed
+// REST handler cannot answer: it is built without an admin service, so it
+// registers neither /health nor /status, and it has no /v1/health. This
+// server answers them itself, each with a response an allowlisted route
+// already serves while sealed: the health aliases are /api/v1/health, and
+// /status is the barrier status of /v1/barrier/status.
+func (s *Server) sealedWindowNativeAliases() map[string]http.HandlerFunc {
+	return map[string]http.HandlerFunc{
+		"/health":    s.HandleHealth,
+		"/v1/health": s.HandleHealth,
+		"/status":    s.HandleBarrierStatus,
+	}
+}
+
 // mountSealedWindowRoutes mounts s.sealedWindowHandler on every sealed
 // allowlist entry r does not already route. An entry is "METHOD /path"
 // (that method only), "/path" (every method) or "/prefix/" (the subtree).
 // Called by setupRouter after the native routes are registered, so a native
-// handler is never shadowed.
+// handler is never shadowed. The health and status aliases go-qrdb's handler
+// cannot answer are served natively instead (sealedWindowNativeAliases).
 func (s *Server) mountSealedWindowRoutes(r *chi.Mux) {
 	if s.sealedWindowHandler == nil {
 		return
 	}
+	aliases := s.sealedWindowNativeAliases()
 	for _, entry := range s.sealedAllowlist {
 		methods := sealedWindowAnyMethod
 		path := entry
@@ -111,6 +127,10 @@ func (s *Server) mountSealedWindowRoutes(r *chi.Mux) {
 			matchPath = path + "sealed-window"
 		}
 		if sealedWindowRouted(r, methods, matchPath) {
+			continue
+		}
+		if h, ok := aliases[path]; ok {
+			r.Get(path, h)
 			continue
 		}
 		if len(methods) == 1 {

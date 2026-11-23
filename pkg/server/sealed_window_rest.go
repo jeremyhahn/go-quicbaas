@@ -91,7 +91,10 @@ func (s *Server) startSealedRESTServer() error {
 	// Allowlisted routes quicbaas does not serve natively (officer
 	// registration, the ceremony flows) are served by qrdb's sealed REST
 	// surface over the node's OWN seal services, the same instances the
-	// sealed gRPC qrdb.v1 service is registered with.
+	// sealed gRPC qrdb.v1 service is registered with. The /health, /v1/health
+	// and /status aliases, which qrdb's sealed handler cannot answer without
+	// an admin service, are served by the REST server's own health and
+	// barrier-status handlers.
 	restServer.SetSealedWindowHandler(qrdbsdk.NewSealedWindowHandler(
 		s.qrdbBarrierServicer(), s.qrdbCeremonyServicer(), s.qrdbCredentialServicer(),
 		qrdbsdk.NewSealedWindowListenerProbe(constantSealedProbe{}, s.qrdbCeremonyServicer())))
