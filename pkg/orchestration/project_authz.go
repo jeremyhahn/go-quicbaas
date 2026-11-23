@@ -136,12 +136,18 @@ func NewProjectAuthz(store ProjectStore) *ProjectAuthz {
 //   - Actual role weight < required role weight → denied.
 //   - Project cannot be read → ProjectUnresolvedError. A check that cannot
 //     read the rule refuses; it never passes.
+//   - An empty agentID on a named project → denied: a project-scoped check
+//     with no agent never passes.
+//   - An empty projectID → allowed: an unscoped task has no matrix to consult.
 func (a *ProjectAuthz) AuthorizeFleetNode(ctx context.Context, projectID, agentID string, requiredRole ProjectRole) error {
-	if projectID == "" || agentID == "" {
-		return nil // unscoped call — legacy path
+	if projectID == "" {
+		return nil // unscoped task: no matrix to consult
 	}
 	if _, ok := validProjectRoles[requiredRole]; !ok {
 		return &ProjectRoleInvalidError{Role: string(requiredRole)}
+	}
+	if agentID == "" {
+		return &ProjectAccessDeniedError{ProjectID: projectID, RequiredRole: requiredRole, ActualRole: ProjectRoleDenied}
 	}
 
 	project, err := a.findProject(ctx, projectID)
@@ -201,13 +207,18 @@ func (a *ProjectAuthz) findProject(ctx context.Context, projectID string) (*Proj
 
 // AuthorizeFleetNodeForTenant is like AuthorizeFleetNode but uses a tenant-scoped
 // lookup which is more efficient when the tenantID is known. A project the
-// store cannot produce refuses with ProjectUnresolvedError.
+// store cannot produce refuses with ProjectUnresolvedError. An empty agentID
+// on a named project is denied: a project-scoped check with no agent never
+// passes. An empty projectID is unscoped and allowed.
 func (a *ProjectAuthz) AuthorizeFleetNodeForTenant(ctx context.Context, tenantID, projectID, agentID string, requiredRole ProjectRole) error {
-	if projectID == "" || agentID == "" {
-		return nil
+	if projectID == "" {
+		return nil // unscoped task: no matrix to consult
 	}
 	if _, ok := validProjectRoles[requiredRole]; !ok {
 		return &ProjectRoleInvalidError{Role: string(requiredRole)}
+	}
+	if agentID == "" {
+		return &ProjectAccessDeniedError{ProjectID: projectID, RequiredRole: requiredRole, ActualRole: ProjectRoleDenied}
 	}
 
 	project, err := a.store.Get(ctx, tenantID, projectID)

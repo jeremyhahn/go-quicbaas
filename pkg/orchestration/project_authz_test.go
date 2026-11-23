@@ -244,3 +244,42 @@ func TestProjectAuthz_EmptyProjectIDSkipsCheck(t *testing.T) {
 		t.Fatalf("empty projectID should be a no-op: %v", err)
 	}
 }
+
+// TestProjectAuthz_EmptyAgentOnNamedProjectIsDenied: a project-scoped check
+// that names no agent is refused, even on a project whose matrix is empty.
+func TestProjectAuthz_EmptyAgentOnNamedProjectIsDenied(t *testing.T) {
+	ctx := context.Background()
+	store := orchestration.NewInMemoryProjectStore()
+	projects := []*orchestration.Project{
+		newScopedProject("proj-1", "tenant-1", map[string]orchestration.ProjectRole{
+			"agent-A": orchestration.ProjectRoleWorker,
+		}),
+		newScopedProject("proj-2", "tenant-1", map[string]orchestration.ProjectRole{}),
+	}
+	projects[1].Name = "test-project-empty-matrix"
+	for _, p := range projects {
+		if err := store.Create(ctx, p); err != nil {
+			t.Fatalf("create %s: %v", p.ID, err)
+		}
+	}
+	authz := orchestration.NewProjectAuthz(store)
+
+	for _, p := range projects {
+		t.Run(p.ID, func(t *testing.T) {
+			err := authz.AuthorizeFleetNodeForTenant(ctx, "tenant-1", p.ID, "", orchestration.ProjectRoleObserver)
+			var denied *orchestration.ProjectAccessDeniedError
+			if !errors.As(err, &denied) {
+				t.Fatalf("expected *ProjectAccessDeniedError, got %T: %v", err, err)
+			}
+			if denied.ActualRole != orchestration.ProjectRoleDenied {
+				t.Errorf("ActualRole = %q, want %q", denied.ActualRole, orchestration.ProjectRoleDenied)
+			}
+			if denied.ProjectID != p.ID {
+				t.Errorf("ProjectID = %q, want %q", denied.ProjectID, p.ID)
+			}
+			if !errors.Is(err, orchestration.ErrProjectAccessDenied) {
+				t.Errorf("errors.Is(err, ErrProjectAccessDenied) = false for %v", err)
+			}
+		})
+	}
+}
