@@ -21,6 +21,7 @@ import (
 	"errors"
 	"maps"
 	"net/http"
+	"slices"
 	"strings"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -61,7 +62,9 @@ func WithAuthorizedContext(ctx context.Context, ac *AuthorizedContext) context.C
 //   - requires the permission among the token's granted scopes, then the
 //     liveness check the validator's mode asks for, then asks
 //     Options.Authorizer (go-qrdb RBAC with its ABAC policies) for the
-//     permission as the token's subject, roles and authentication claims, in the token's tenant.
+//     permission as the token's subject, roles and authentication claims,
+//     in the token's tenant. The token's scope bounds every grant: a role
+//     never admits a permission outside it.
 //
 // A missing or invalid credential is 401 with a WWW-Authenticate challenge, a
 // missing permission 403, a permission the authorizer denies 403, and a guard
@@ -113,57 +116,79 @@ func (v *Validator) AuthorizeRequest(r *http.Request, permission string) (*Autho
 
 // authorizePermission asks the go-qrdb authorizer for permission's resource
 // and action as the token's principal, in the token's tenant. It fails
-// closed: no authorizer is a configuration error, and any error from the
-// authorizer is a refusal.
+// closed: a permission outside the token's scope is refused before any
+// authorizer is asked, no authorizer is a configuration error, and any error
+// from the authorizer is a refusal.
 //
-// The authorizer sees the token's roles, so an ABAC policy that selects one
-// of the caller's roles with a deny refuses the request. The role-bearing
-// decision is only ever added to the role-less one: the request is admitted
-// only when the authorizer allows it both without and with the roles, so a
-// role-selected ABAC allow (decisive in go-qrdb) cannot admit a request the
-// role-less decision refuses.
+// The token's scope bounds every grant. go-qrdb's RBAC unions a role's
+// permissions with Identity.ScopePermissions, so the authorizer alone would
+// let a role grant beyond the token. The scope check therefore runs here,
+// where the authorizer is asked, and not only in AuthorizeRequest: a
+// request is admitted only when its permission is in the token's scope AND
+// the authorizer, given the token's roles, allows it.
 //
-// The authorizer also sees the token's authentication claims (auth_method,
-// attest_method, attest_level, attest_aaguid, amr) as Identity.Metadata, so
-// an attribute-selected ABAC deny refuses the request. That decision too is
-// only ever added to the others, so an attribute-selected allow cannot admit
-// a request they refuse.
+// The verified token's roles populate the identity the authorizer
+// evaluates, so an ABAC policy that denies one of the caller's roles
+// refuses the request. authorizerIdentities lists the decisions asked.
 func (v *Validator) authorizePermission(ctx context.Context, ac *AuthorizedContext, permission string) error {
+	if err := ac.RequireScope(permission); err != nil {
+		return err
+	}
 	if v.authorizer == nil {
 		return &ConfigError{Detail: "a permission route needs Options.Authorizer"}
 	}
 	ctx = qrdbsdk.ContextWithTenant(ctx, qrdbsdk.NormalizeTenantID(ac.TenantID))
 	perm := qrdbsdk.Permission(permission)
 	resource, action := qrdbsdk.PermissionResource(perm), qrdbsdk.PermissionAction(perm)
-
-	identity := &qrdbsdk.Identity{Subject: ac.Subject, TenantID: ac.TenantID, ScopePermissions: ac.Scopes}
-	if err := v.authorizer.Authorize(ctx, identity, resource, action); err != nil {
-		return &PolicyDeniedError{Required: permission, Cause: err}
-	}
-	if len(ac.Roles) > 0 {
-		withRoles := &qrdbsdk.Identity{
-			Subject:          ac.Subject,
-			TenantID:         ac.TenantID,
-			Roles:            append([]string(nil), ac.Roles...),
-			ScopePermissions: ac.Scopes,
-		}
-		if err := v.authorizer.Authorize(ctx, withRoles, resource, action); err != nil {
-			return &PolicyDeniedError{Required: permission, Cause: err}
-		}
-	}
-	if len(ac.AuthAttributes) > 0 {
-		withAttributes := &qrdbsdk.Identity{
-			Subject:          ac.Subject,
-			TenantID:         ac.TenantID,
-			Roles:            append([]string(nil), ac.Roles...),
-			ScopePermissions: ac.Scopes,
-			Metadata:         maps.Clone(ac.AuthAttributes),
-		}
-		if err := v.authorizer.Authorize(ctx, withAttributes, resource, action); err != nil {
+	for _, identity := range authorizerIdentities(ac) {
+		if err := v.authorizer.Authorize(ctx, identity, resource, action); err != nil {
 			return &PolicyDeniedError{Required: permission, Cause: err}
 		}
 	}
 	return nil
+}
+
+// authorizerIdentities are the identities the guard asks the authorizer
+// about, in order. A request is admitted only when the authorizer allows
+// every one, so each added identity can only refuse more:
+//
+//   - the token's subject and scope, without roles or claims. This is the
+//     floor: in go-qrdb a matched ABAC allow is decisive and skips the
+//     inner RBAC check (the SO deny-list and the tenant scope rules), so an
+//     allow that selects a role or a claim is never the only decision;
+//   - with the token's roles, when it has any, so a role-selected deny
+//     matches;
+//   - with the roles and the token's authentication claims as
+//     Identity.Metadata, when it has any, so an attribute-selected deny
+//     matches.
+//
+// Every identity carries the token's scope as ScopePermissions and no other
+// grant. The slices and the map are copies, so the authorizer cannot change
+// the authorised principal.
+func authorizerIdentities(ac *AuthorizedContext) []*qrdbsdk.Identity {
+	ids := []*qrdbsdk.Identity{{
+		Subject:          ac.Subject,
+		TenantID:         ac.TenantID,
+		ScopePermissions: slices.Clone(ac.Scopes),
+	}}
+	if len(ac.Roles) > 0 {
+		ids = append(ids, &qrdbsdk.Identity{
+			Subject:          ac.Subject,
+			TenantID:         ac.TenantID,
+			Roles:            slices.Clone(ac.Roles),
+			ScopePermissions: slices.Clone(ac.Scopes),
+		})
+	}
+	if len(ac.AuthAttributes) > 0 {
+		ids = append(ids, &qrdbsdk.Identity{
+			Subject:          ac.Subject,
+			TenantID:         ac.TenantID,
+			Roles:            slices.Clone(ac.Roles),
+			ScopePermissions: slices.Clone(ac.Scopes),
+			Metadata:         maps.Clone(ac.AuthAttributes),
+		})
+	}
+	return ids
 }
 
 // requestToken reads the access token from the Authorization header.

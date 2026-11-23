@@ -259,3 +259,128 @@ func TestDaemonRESTGuard_AttributeSelectedDenyRefusesNodeToken(t *testing.T) {
 		})
 	}
 }
+
+// daemonGuardCountingAuthorizer counts the decisions the guard asks inner for.
+type daemonGuardCountingAuthorizer struct {
+	inner qrdbsdk.Authorizer
+	calls int
+}
+
+func (c *daemonGuardCountingAuthorizer) Authorize(ctx context.Context, id *qrdbsdk.Identity, resource, action string) error {
+	c.calls++
+	return c.inner.Authorize(ctx, id, resource, action)
+}
+
+// TestDaemonRESTGuard_TokenRolesDenyMatchesAndScopeBoundsGrants: on a token
+// this node issues, the token's roles reach the guard's authorizer, so a deny
+// on the token's role refuses, and the token's scope bounds every grant, so a
+// role-selected allow outside the scope is refused before the authorizer is
+// asked.
+func TestDaemonRESTGuard_TokenRolesDenyMatchesAndScopeBoundsGrants(t *testing.T) {
+	const issuer = "https://broker.example.com"
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("issuer key: %v", err)
+	}
+	rbac := &fakeRBACClient{permsByRole: map[string][]string{"keyholder": {"keys:get"}}}
+	svc := newKIDTokenService(t, priv, &OIDCConfig{
+		Issuer:           issuer,
+		SigningAlgorithm: "ES256",
+		AccessTokenTTL:   time.Hour,
+		RefreshTokenTTL:  24 * time.Hour,
+		IDTokenTTL:       time.Hour,
+		AuthCodeTTL:      10 * time.Minute,
+	}, &fakePermissionResolver{client: rbac})
+
+	set, err := svc.IssueHardwareTokens(context.Background(), HardwareTokenOptions{
+		User:        &User{ID: 42, TenantID: "system", Email: "k@example.com", Name: "K", Roles: []string{"keyholder"}},
+		AMR:         []string{"webauthn", "hwk"},
+		Attestation: testHardwareAttestation("cb69481e"),
+	})
+	if err != nil {
+		t.Fatalf("IssueHardwareTokens: %v", err)
+	}
+	token := set.AccessToken
+
+	keyholderPolicy := func(effect qrdbsdk.ABACEffect, actions []string) *qrdbsdk.ABACPolicy {
+		return &qrdbsdk.ABACPolicy{
+			APIVersion: "abac.qrdb.io/v1",
+			Kind:       "Policy",
+			Metadata:   qrdbsdk.ABACPolicyMetadata{Name: "keyholder-keys", Tenant: "system"},
+			Spec: qrdbsdk.ABACPolicySpec{
+				Subjects: qrdbsdk.ABACSubjectSelector{Roles: []string{"keyholder"}},
+				Rules: []qrdbsdk.ABACRule{{
+					Name: "keyholder-keys", Effect: effect,
+					Actions: actions, Resources: []string{"keys"},
+				}},
+			},
+		}
+	}
+	echo := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ac, ok := platformtoken.FromContext(r.Context())
+		if !ok {
+			t.Error("the guard passed a request without binding its principal")
+			return
+		}
+		_, _ = w.Write([]byte(ac.TenantID + "/" + ac.Subject))
+	})
+
+	for _, tc := range []struct {
+		name       string
+		effect     qrdbsdk.ABACEffect
+		actions    []string
+		permission string
+		wantStatus int
+		wantBody   string
+		wantError  string
+		wantCalls  bool
+	}{
+		{name: "a deny on the token's role refuses", effect: qrdbsdk.ABACEffectDeny, actions: []string{"get"},
+			permission: "keys:get", wantStatus: http.StatusForbidden, wantError: "access_denied", wantCalls: true},
+		{name: "a role grant outside the token scope is refused", effect: qrdbsdk.ABACEffectAllow,
+			actions: []string{"get", "delete"}, permission: "keys:delete",
+			wantStatus: http.StatusForbidden, wantError: "insufficient_scope"},
+		{name: "a role grant inside the token scope is admitted", effect: qrdbsdk.ABACEffectAllow,
+			actions: []string{"get", "delete"}, permission: "keys:get",
+			wantStatus: http.StatusOK, wantBody: "system/42", wantCalls: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			decorated, err := qrdbsdk.DecorateAuthorizer(&qrdbsdk.NoopAuthorizer{},
+				qrdbsdk.ABACWithPolicies([]*qrdbsdk.ABACPolicy{keyholderPolicy(tc.effect, tc.actions)}))
+			if err != nil {
+				t.Fatalf("DecorateAuthorizer: %v", err)
+			}
+			counter := &daemonGuardCountingAuthorizer{inner: decorated}
+			validator, err := platformtoken.NewValidator(platformtoken.Options{
+				Issuer:       issuer,
+				Audience:     issuer,
+				JWKS:         svc.keyManager.JWKS(),
+				ModeResolver: func(string) platformtoken.AuthzMode { return platformtoken.AuthzModeOffline },
+				Authorizer:   counter,
+			})
+			if err != nil {
+				t.Fatalf("NewValidator: %v", err)
+			}
+			req := httptest.NewRequest(http.MethodGet, "https://daemon.example/v1/keys", nil)
+			req.Header.Set("Authorization", "Bearer "+token)
+			w := httptest.NewRecorder()
+			validator.Middleware(tc.permission)(echo).ServeHTTP(w, req)
+
+			if w.Code != tc.wantStatus {
+				t.Fatalf("status %d, want %d (body %q)", w.Code, tc.wantStatus, w.Body.String())
+			}
+			if tc.wantBody != "" && w.Body.String() != tc.wantBody {
+				t.Fatalf("principal %q, want %q", w.Body.String(), tc.wantBody)
+			}
+			if tc.wantError != "" && !strings.Contains(w.Body.String(), tc.wantError) {
+				t.Fatalf("refusal body %q, want %s", w.Body.String(), tc.wantError)
+			}
+			if tc.wantCalls && counter.calls == 0 {
+				t.Fatal("the guard never asked the authorizer")
+			}
+			if !tc.wantCalls && counter.calls != 0 {
+				t.Fatalf("the authorizer was asked %d times for an out-of-scope permission", counter.calls)
+			}
+		})
+	}
+}

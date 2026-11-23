@@ -23,9 +23,11 @@ import (
 	"crypto/x509/pkix"
 	"encoding/base64"
 	"errors"
+	"maps"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -442,5 +444,199 @@ func TestMiddleware_AuthorizerSeesAuthAttributes(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// identityRecorder records a copy of every identity the guard asks inner
+// about, and returns inner's decision.
+type identityRecorder struct {
+	inner qrdbsdk.Authorizer
+	seen  []qrdbsdk.Identity
+}
+
+func (r *identityRecorder) Authorize(ctx context.Context, id *qrdbsdk.Identity, resource, action string) error {
+	r.seen = append(r.seen, *id)
+	return r.inner.Authorize(ctx, id, resource, action)
+}
+
+// abacRoleKeys decorates inner with one tenant-1 policy that selects the
+// role "role-auditor" with one rule of effect on actions over keys.
+func abacRoleKeys(t *testing.T, effect qrdbsdk.ABACEffect, actions []string, inner qrdbsdk.Authorizer) qrdbsdk.Authorizer {
+	t.Helper()
+	policy := &qrdbsdk.ABACPolicy{
+		APIVersion: "abac.qrdb.io/v1",
+		Kind:       "Policy",
+		Metadata:   qrdbsdk.ABACPolicyMetadata{Name: "auditor-keys", Tenant: "tenant-1"},
+		Spec: qrdbsdk.ABACPolicySpec{
+			Subjects: qrdbsdk.ABACSubjectSelector{Roles: []string{"role-auditor"}},
+			Rules: []qrdbsdk.ABACRule{{
+				Name: "auditor-keys", Effect: effect,
+				Actions: actions, Resources: []string{"keys"},
+			}},
+		},
+	}
+	a, err := qrdbsdk.DecorateAuthorizer(inner, qrdbsdk.ABACWithPolicies([]*qrdbsdk.ABACPolicy{policy}))
+	if err != nil {
+		t.Fatalf("DecorateAuthorizer: %v", err)
+	}
+	return a
+}
+
+// TestMiddleware_TokenRolesDenyMatchesAndScopeBoundsGrants: the verified
+// token's roles reach the authorizer, so a deny on one of them refuses, and
+// the token's scope bounds every grant, so a role that would grant an action
+// outside the scope is refused before the authorizer is asked.
+func TestMiddleware_TokenRolesDenyMatchesAndScopeBoundsGrants(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	key := newIssuerKey(t, testKID)
+	offline := func(string) AuthzMode { return AuthzModeOffline }
+	allowGetDelete := func() qrdbsdk.Authorizer {
+		return abacRoleKeys(t, qrdbsdk.ABACEffectAllow, []string{"get", "delete"}, &qrdbsdk.NoopAuthorizer{})
+	}
+
+	for _, tc := range []struct {
+		name       string
+		permission string
+		inner      qrdbsdk.Authorizer
+		wantStatus int
+		wantBody   string
+		wantError  string
+		wantCalls  bool
+	}{
+		{name: "a deny on a token role refuses", permission: "keys:get",
+			inner:      abacRoleKeys(t, qrdbsdk.ABACEffectDeny, []string{"get"}, &qrdbsdk.NoopAuthorizer{}),
+			wantStatus: http.StatusForbidden, wantError: "access_denied", wantCalls: true},
+		{name: "a role grant outside the token scope is refused", permission: "keys:delete",
+			inner: allowGetDelete(), wantStatus: http.StatusForbidden, wantError: "insufficient_scope"},
+		{name: "a role grant inside the token scope is admitted", permission: "keys:get",
+			inner: allowGetDelete(), wantStatus: http.StatusOK, wantBody: "tenant-1/user-1", wantCalls: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := &identityRecorder{inner: tc.inner}
+			guard := newAuthzValidator(t, key, now, Options{ModeResolver: offline, Authorizer: rec}).
+				Middleware(tc.permission)(principalEcho(t))
+			token := key.sign(t, tokenClaims{
+				iss: testIssuer, aud: []string{testAudience}, sub: "user-1", tid: "tenant-1",
+				scp: []string{"keys:get"}, roles: []string{"role-auditor"}, exp: now.Add(10 * time.Minute), iat: now,
+			})
+			req := httptest.NewRequest(http.MethodGet, "https://daemon.example/v1/keys", nil)
+			req.Header.Set("Authorization", "Bearer "+token)
+			w := httptest.NewRecorder()
+			guard.ServeHTTP(w, req)
+
+			if w.Code != tc.wantStatus {
+				t.Fatalf("status %d, want %d (body %q)", w.Code, tc.wantStatus, w.Body.String())
+			}
+			if tc.wantBody != "" && w.Body.String() != tc.wantBody {
+				t.Fatalf("principal %q, want %q", w.Body.String(), tc.wantBody)
+			}
+			if tc.wantStatus != http.StatusOK {
+				if !strings.Contains(w.Body.String(), tc.wantError) {
+					t.Fatalf("refusal body %q, want %s", w.Body.String(), tc.wantError)
+				}
+				if strings.Contains(w.Body.String(), "platformtoken:") {
+					t.Fatalf("the validator's detail reached the caller: %q", w.Body.String())
+				}
+			}
+			if !tc.wantCalls {
+				if len(rec.seen) != 0 {
+					t.Fatalf("the authorizer was asked %d times for an out-of-scope permission", len(rec.seen))
+				}
+				return
+			}
+			found := false
+			for _, id := range rec.seen {
+				if slices.Equal(id.Roles, []string{"role-auditor"}) {
+					found = true
+					if tc.wantStatus == http.StatusOK {
+						if !slices.Equal(id.ScopePermissions, []string{"keys:get"}) || id.Subject != "user-1" || id.TenantID != "tenant-1" {
+							t.Fatalf("role identity %+v, want subject user-1, tenant tenant-1, scope [keys:get]", id)
+						}
+					}
+				}
+			}
+			if !found {
+				t.Fatalf("no identity the authorizer saw carried the token's roles: %+v", rec.seen)
+			}
+		})
+	}
+}
+
+// TestAuthorizerIdentities_TokenRolesPopulateTheIdentity pins the identities
+// the guard asks the authorizer about: the role-less floor, then the token's
+// roles, then the roles with the authentication claims; each with only the
+// token's scope, and each a copy.
+func TestAuthorizerIdentities_TokenRolesPopulateTheIdentity(t *testing.T) {
+	t.Run("roles and claims", func(t *testing.T) {
+		ac := &AuthorizedContext{
+			Subject: "user-1", TenantID: "tenant-1", Scopes: []string{"keys:get"},
+			Roles: []string{"role-auditor"}, AuthAttributes: map[string]string{"attest_method": "tpm"},
+		}
+		ids := authorizerIdentities(ac)
+		if len(ids) != 3 {
+			t.Fatalf("%d identities, want 3", len(ids))
+		}
+		if ids[0].Roles != nil || ids[0].Metadata != nil {
+			t.Fatalf("floor identity %+v, want no roles and no metadata", ids[0])
+		}
+		if !slices.Equal(ids[1].Roles, []string{"role-auditor"}) || ids[1].Metadata != nil {
+			t.Fatalf("role identity %+v, want roles [role-auditor] and no metadata", ids[1])
+		}
+		if !slices.Equal(ids[2].Roles, []string{"role-auditor"}) ||
+			!maps.Equal(ids[2].Metadata, map[string]string{"attest_method": "tpm"}) {
+			t.Fatalf("claims identity %+v, want roles [role-auditor] and attest_method tpm", ids[2])
+		}
+		for i, id := range ids {
+			if !slices.Equal(id.ScopePermissions, []string{"keys:get"}) || id.Subject != "user-1" || id.TenantID != "tenant-1" {
+				t.Fatalf("identity %d %+v, want subject user-1, tenant tenant-1, scope [keys:get]", i, id)
+			}
+		}
+
+		ids[1].Roles[0] = "role-admin"
+		ids[0].ScopePermissions[0] = "*:*"
+		ids[2].Metadata["attest_method"] = "manual"
+		if ac.Roles[0] != "role-auditor" || ac.Scopes[0] != "keys:get" || ac.AuthAttributes["attest_method"] != "tpm" {
+			t.Fatalf("changing an identity changed the authorised principal: %+v", ac)
+		}
+	})
+	t.Run("no roles and no claims", func(t *testing.T) {
+		ids := authorizerIdentities(&AuthorizedContext{Subject: "user-1", TenantID: "tenant-1", Scopes: []string{"keys:get"}})
+		if len(ids) != 1 {
+			t.Fatalf("%d identities, want 1", len(ids))
+		}
+		if ids[0].Roles != nil {
+			t.Fatalf("identity roles %v, want nil", ids[0].Roles)
+		}
+	})
+}
+
+// TestAuthorizePermission_ScopeBoundsEveryGrant: the scope bound sits in the
+// function that asks the authorizer, not only in its caller's order, so an
+// out-of-scope permission never reaches the authorizer.
+func TestAuthorizePermission_ScopeBoundsEveryGrant(t *testing.T) {
+	rec := &identityRecorder{inner: &qrdbsdk.NoopAuthorizer{}}
+	v := &Validator{authorizer: rec}
+	ac := &AuthorizedContext{
+		Subject: "user-1", TenantID: "tenant-1", Scopes: []string{"keys:get"}, Roles: []string{"role-auditor"},
+	}
+
+	err := v.authorizePermission(context.Background(), ac, "keys:delete")
+	if !errors.As(err, new(*ScopeDeniedError)) {
+		t.Fatalf("out-of-scope permission: err %v, want a ScopeDeniedError", err)
+	}
+	if len(rec.seen) != 0 {
+		t.Fatalf("the authorizer was asked %d times for an out-of-scope permission", len(rec.seen))
+	}
+
+	if err := v.authorizePermission(context.Background(), ac, "keys:get"); err != nil {
+		t.Fatalf("in-scope permission: %v", err)
+	}
+	if len(rec.seen) != 2 {
+		t.Fatalf("the authorizer was asked %d times, want 2 (role-less, then with roles)", len(rec.seen))
+	}
+
+	ac.Scopes = []string{"keys:*"}
+	if err := v.authorizePermission(context.Background(), ac, "keys:delete"); err != nil {
+		t.Fatalf("a whole-segment wildcard scope must cover keys:delete: %v", err)
 	}
 }
