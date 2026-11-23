@@ -361,6 +361,12 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 		return t.requestToolVerb(ctx, "mcp.batch."+method, verb, reqBody)
 	}
 
+	// The Trust verbs adapt to the server's quicbaas_trust_* tool shapes
+	// (a PEM bundle in, PEM strings out).
+	if verb, ok := trustVerbs[method]; ok && isMCPTrustService(service) {
+		return t.requestToolVerb(ctx, "mcp.trust."+method, verb, reqBody)
+	}
+
 	// These KMS verbs decode into the client types; the rest keep the
 	// generic path below.
 	if verb, ok := kmsVerbs[method]; ok && isMCPKMSService(service) {
