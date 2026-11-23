@@ -507,14 +507,23 @@ func (kb *XKMSBackend) CurrentVersion(ctx context.Context, keyID string) (int, e
 	if err != nil {
 		return 0, err
 	}
+	// A key's versions only grow. The durable read above ran without kb.mu,
+	// so a version lower than the cached one is a read taken before a
+	// rotation this backend has since recorded: it neither lowers the cache
+	// nor is returned, or the rotation would be rolled back.
 	kb.mu.Lock()
-	if meta, ok := kb.metadata[keyID]; ok && meta.Version != version {
-		refreshed := *meta
-		refreshed.Version = version
-		refreshed.Updated = time.Now()
-		kb.metadata[keyID] = &refreshed
+	defer kb.mu.Unlock()
+	if meta, ok := kb.metadata[keyID]; ok {
+		if meta.Version > version {
+			return meta.Version, nil
+		}
+		if meta.Version < version {
+			refreshed := *meta
+			refreshed.Version = version
+			refreshed.Updated = time.Now()
+			kb.metadata[keyID] = &refreshed
+		}
 	}
-	kb.mu.Unlock()
 	return version, nil
 }
 
@@ -866,16 +875,12 @@ func (kb *XKMSBackend) recordOwner(ctx context.Context, keyID, name string) erro
 // it is the contiguous stored run keyID_v2..vN.
 func (kb *XKMSBackend) storedVersion(ctx context.Context, keyID string) (int, error) {
 	if reg := kb.keyRegistry(); reg != nil {
-		v, ok, err := readRegistryRecord(ctx, reg, kb.versionRecordKey(keyID))
+		n, ok, err := kb.readVersionRecord(ctx, reg, keyID)
 		if err != nil {
 			return 0, err
 		}
 		if !ok {
 			return kb.migrateVersionRecord(ctx, reg, keyID)
-		}
-		n, err := strconv.Atoi(v)
-		if err != nil || n < 1 {
-			return 0, fmt.Errorf("xkms key registry: version record of %q is not a positive integer: %q", keyID, v)
 		}
 		return n, nil
 	}
@@ -906,23 +911,57 @@ func (kb *XKMSBackend) migrateVersionRecord(ctx context.Context, reg interfaces.
 		return 1, nil
 	}
 	version := kb.highestContiguousVersion(stored, keyID)
-	// A rotation on another node may have recorded a version since the read
-	// above: never overwrite a record with the migrated one.
-	v, ok, err := readRegistryRecord(ctx, reg, kb.versionRecordKey(keyID))
-	if err != nil {
-		return 0, err
-	}
-	if ok {
-		n, err := strconv.Atoi(v)
-		if err != nil || n < 1 {
-			return 0, fmt.Errorf("xkms key registry: version record of %q is not a positive integer: %q", keyID, v)
+	recordKey := kb.versionRecordKey(keyID)
+	value := []byte(strconv.Itoa(version))
+	// A rotation on another node may record a version between the listing
+	// above and this write: the migrated record never overwrites one. A
+	// store with a guarded insert makes the absence check and the write one
+	// step; a lost insert re-reads the record that won.
+	if guarded, ok := reg.(interface {
+		PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error)
+	}); ok {
+		stored, err := guarded.PutIfAbsent(ctx, recordKey, value)
+		if err != nil {
+			return 0, fmt.Errorf("xkms key registry: record migrated version %d of %q: %w", version, keyID, err)
+		}
+		if stored {
+			return version, nil
+		}
+		n, found, err := kb.readVersionRecord(ctx, reg, keyID)
+		if err != nil {
+			return 0, err
+		}
+		if !found {
+			return 0, fmt.Errorf("xkms key registry: version record of %q vanished after a lost insert", keyID)
 		}
 		return n, nil
 	}
-	if err := reg.Put(ctx, kb.versionRecordKey(keyID), []byte(strconv.Itoa(version))); err != nil {
+	// A store without a guarded insert can only check for a record first.
+	n, found, err := kb.readVersionRecord(ctx, reg, keyID)
+	if err != nil {
+		return 0, err
+	}
+	if found {
+		return n, nil
+	}
+	if err := reg.Put(ctx, recordKey, value); err != nil {
 		return 0, fmt.Errorf("xkms key registry: record migrated version %d of %q: %w", version, keyID, err)
 	}
 	return version, nil
+}
+
+// readVersionRecord reads keyID's durable version record, reporting whether
+// one exists. A record that is not a positive integer is an error.
+func (kb *XKMSBackend) readVersionRecord(ctx context.Context, reg interfaces.KVStore, keyID string) (int, bool, error) {
+	v, ok, err := readRegistryRecord(ctx, reg, kb.versionRecordKey(keyID))
+	if err != nil || !ok {
+		return 0, false, err
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 {
+		return 0, false, fmt.Errorf("xkms key registry: version record of %q is not a positive integer: %q", keyID, v)
+	}
+	return n, true, nil
 }
 
 // refuseHidingName refuses to create keyID when an ordinary key already
@@ -1065,6 +1104,11 @@ func (kb *XKMSBackend) DeleteKey(ctx context.Context, keyID string) error {
 		var err error
 		meta, err = kb.GetKeyMetadata(ctx, keyID)
 		if err != nil {
+			if stderrors.Is(err, ErrKeyNotFound) {
+				// The material may be gone with the registry cleanup
+				// of an earlier deletion left undone: finish it.
+				return kb.resumeRegistryCleanup(ctx, keyID)
+			}
 			return ErrKeyNotFound
 		}
 	}
@@ -1141,10 +1185,12 @@ func (kb *XKMSBackend) DeleteKey(ctx context.Context, keyID string) error {
 		}
 	}
 
-	// Delete from go-xkms using attributes
+	// Delete from go-xkms using attributes. A base already gone is an earlier
+	// deletion whose registry cleanup failed (or another node's): its
+	// cleanup resumes.
 	if err := deleteXKMSKey(ctx, attrs); err != nil {
 		if stderrors.Is(err, xkms.ErrKeyNotFound) {
-			return ErrKeyNotFound
+			return kb.resumeRegistryCleanup(ctx, keyID)
 		}
 		// Try with default format as fallback
 		defaultAttrs := &kctypes.KeyAttributes{
@@ -1155,31 +1201,73 @@ func (kb *XKMSBackend) DeleteKey(ctx context.Context, keyID string) error {
 		}
 		if err2 := deleteXKMSKey(ctx, defaultAttrs); err2 != nil {
 			if stderrors.Is(err2, xkms.ErrKeyNotFound) {
-				return ErrKeyNotFound
+				return kb.resumeRegistryCleanup(ctx, keyID)
 			}
 			return api.NewKeyDeletionError("XKMSBackend.DeleteKey", err)
 		}
 	}
 
-	// The key and its versions are gone: drop their registry records, version
-	// first, so a failure leaves at worst an owner record for a missing key.
-	if reg := kb.keyRegistry(); reg != nil {
-		if err := reg.Delete(ctx, kb.versionRecordKey(keyID)); err != nil && !qberrors.IsNotFound(err) {
-			return fmt.Errorf("xkms key registry: delete version record of %q: %w", keyID, err)
-		}
-		if name != keyID {
-			if err := reg.Delete(ctx, kb.ownerRecordKey(name)); err != nil && !qberrors.IsNotFound(err) {
-				return fmt.Errorf("xkms key registry: delete owner record of %q: %w", keyID, err)
-			}
-		}
-	}
+	kb.dropCachedMetadata(keyID)
+	return kb.deleteRegistryRecords(ctx, keyID, name)
+}
 
-	// Remove from cache
+// dropCachedMetadata removes keyID's cached metadata. Once its key material is
+// gone the cache must not outlive it, whether or not the registry cleanup that
+// follows succeeds: a key recreated under the ID starts from version 1.
+func (kb *XKMSBackend) dropCachedMetadata(keyID string) {
 	kb.mu.Lock()
 	delete(kb.metadata, keyID)
 	kb.mu.Unlock()
+}
 
+// deleteRegistryRecords drops a deleted key's registry records, version first,
+// so a failure leaves at worst an owner record for a missing key. A failure is
+// returned; a retried DeleteKey resumes it (resumeRegistryCleanup).
+func (kb *XKMSBackend) deleteRegistryRecords(ctx context.Context, keyID, name string) error {
+	reg := kb.keyRegistry()
+	if reg == nil {
+		return nil
+	}
+	if err := reg.Delete(ctx, kb.versionRecordKey(keyID)); err != nil && !qberrors.IsNotFound(err) {
+		return fmt.Errorf("xkms key registry: delete version record of %q: %w", keyID, err)
+	}
+	if name != keyID {
+		if err := reg.Delete(ctx, kb.ownerRecordKey(name)); err != nil && !qberrors.IsNotFound(err) {
+			return fmt.Errorf("xkms key registry: delete owner record of %q: %w", keyID, err)
+		}
+	}
 	return nil
+}
+
+// resumeRegistryCleanup completes the deletion of a key whose base key material
+// is already gone: an earlier DeleteKey deleted the material and then failed to
+// drop its registry records. With records left it drops the cache and the
+// records, and the deletion succeeds; with none the key does not exist.
+func (kb *XKMSBackend) resumeRegistryCleanup(ctx context.Context, keyID string) error {
+	reg := kb.keyRegistry()
+	if reg == nil {
+		kb.dropCachedMetadata(keyID)
+		return ErrKeyNotFound
+	}
+	name, err := xkmsKeyName(keyID)
+	if err != nil {
+		return err
+	}
+	_, leftover, err := readRegistryRecord(ctx, reg, kb.versionRecordKey(keyID))
+	if err != nil {
+		return err
+	}
+	if !leftover && name != keyID {
+		_, leftover, err = readRegistryRecord(ctx, reg, kb.ownerRecordKey(name))
+		if err != nil {
+			return err
+		}
+	}
+	kb.dropCachedMetadata(keyID)
+	if !leftover {
+		return ErrKeyNotFound
+	}
+	return kb.deleteRegistryRecords(ctx, keyID, name)
 }
 
 // versionKeyDeleteAttributes builds the go-xkms attributes DeleteKey uses to

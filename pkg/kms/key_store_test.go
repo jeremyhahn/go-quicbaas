@@ -922,6 +922,21 @@ func TestKeyStore_SetVersion(t *testing.T) {
 	require.Error(t, store.SetVersion("", 2))
 }
 
+// TestKeyStore_SetVersionNeverLowers proves a stale refresh, read before a
+// rotation that has since been recorded, does not roll the version back.
+func TestKeyStore_SetVersionNeverLowers(t *testing.T) {
+	store := NewKeyStore()
+	metadata := createTestMetadata("key-1")
+	metadata.Version = 2
+	require.NoError(t, store.Put(metadata))
+
+	require.NoError(t, store.SetVersion("key-1", 1))
+
+	got, err := store.Get("key-1")
+	require.NoError(t, err)
+	assert.Equal(t, 2, got.Version, "a lower version is a stale refresh")
+}
+
 func TestKeyStore_GetState(t *testing.T) {
 	t.Run("returns current state", func(t *testing.T) {
 		store := NewKeyStore()
