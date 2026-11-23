@@ -2049,6 +2049,18 @@ type ServerRESTConfig struct {
 	// omitted key decodes to, means the REST default of 1000. -1 disables
 	// the global limiter; the endpoint-scoped OAuth2 limiter stays on.
 	RateLimit int `mapstructure:"rate_limit"`
+
+	// CORSOrigins lists the web origins allowed to call this daemon
+	// cross-origin, for example a web UI served by another daemon whose
+	// Connection view points here. Each entry is an exact origin such as
+	// "https://ui.example.com". Empty means no CORS headers are sent.
+	CORSOrigins []string `mapstructure:"cors_origins"`
+
+	// UIConnectOrigins lists the daemon origins the web UI served by this
+	// daemon may connect to. They are added to the page's Content Security
+	// Policy as connect-src entries. Empty keeps the policy at
+	// default-src 'self', so the UI reaches only its own origin.
+	UIConnectOrigins []string `mapstructure:"ui_connect_origins"`
 }
 
 // ServerMCPConfig contains MCP (Model Context Protocol) server configuration.

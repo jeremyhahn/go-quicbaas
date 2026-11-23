@@ -73,7 +73,7 @@
       const reachable = await probeDaemon(origin);
       checking = false;
       if (!reachable) {
-        applyError = `${origin} cannot be reached from this page. The page only connects to its own origin unless its content security policy allows another, and that daemon must list this page's origin in its CORS origins.`;
+        applyError = `${origin} cannot be reached from this page. Add it to server.rest.ui_connect_origins on the daemon serving this page, and add this page's origin to server.rest.cors_origins on ${origin}.`;
         return;
       }
     }

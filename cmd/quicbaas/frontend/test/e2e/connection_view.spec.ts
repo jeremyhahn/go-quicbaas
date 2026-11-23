@@ -4,7 +4,9 @@
  * Settings > Connection: the view shows the REST transport and the page
  * origin, validates the daemon address inline, resets a saved override,
  * refuses to save another origin the page cannot reach (the page's content
- * security policy blocks it), and its sidebar entry is no longer marked "soon".
+ * security policy blocks it), saves another origin the policy's connect-src
+ * allows (as server.rest.ui_connect_origins configures it), and its sidebar
+ * entry is no longer marked "soon".
  *
  * Runs in the chromium-no-backend project (daemon at QUICBAAS_UI_URL).
  */
@@ -71,6 +73,47 @@ test.describe('Connection view', () => {
     await expect(page.getByTestId('connection-apply-error')).toBeVisible({ timeout: 10_000 });
     expect(await storedOverride(page)).toBeNull();
     await expect(page.getByTestId('connection-source')).toHaveText('Default');
+  });
+
+  test("another origin allowed by the page's connect-src is saved", async ({ page }) => {
+    const REMOTE = 'https://remote.quicbaas.test:8443';
+    // Serve the /ui/ document with exactly the policy SecurityHeadersMiddleware
+    // emits when server.rest.ui_connect_origins lists REMOTE. Chromium enforces
+    // a fulfilled response's CSP, so a wrong policy shape blocks the probe.
+    await page.route(
+      (url) => url.pathname === '/ui/' || url.pathname === '/ui/index.html',
+      async (route) => {
+        const response = await route.fetch();
+        await route.fulfill({
+          response,
+          headers: {
+            ...response.headers(),
+            'content-security-policy': `default-src 'self'; connect-src 'self' ${REMOTE}`,
+          },
+        });
+      },
+    );
+    await navigateTo(page, '#/connection');
+    const origin = await page.evaluate(() => window.location.origin);
+    // REMOTE stands in for a daemon whose server.rest.cors_origins lists this page.
+    await page.route(`${REMOTE}/**`, (route) =>
+      route.fulfill({
+        status: 200,
+        headers: { 'access-control-allow-origin': origin, 'content-type': 'application/json' },
+        body: '{}',
+      }),
+    );
+
+    page.once('dialog', (d) => d.accept());
+    await page.locator('#connection-address').fill(REMOTE);
+    await page.getByRole('button', { name: 'Apply' }).click();
+    await expect
+      .poll(async () => {
+        const raw = await storedOverride(page);
+        return raw ? (JSON.parse(raw) as { baseURL?: string }).baseURL : null;
+      }, { timeout: 10_000 })
+      .toBe(REMOTE);
+    await expect(page.getByTestId('connection-apply-error')).not.toBeVisible();
   });
 
   test('the Connection sidebar item has no "soon" badge', async ({ page }) => {

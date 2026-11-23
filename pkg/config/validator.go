@@ -105,6 +105,35 @@ type Validator struct {
 }
 
 // NewValidator creates a new configuration validator.
+// validateRESTOrigin checks one server.rest cors_origins or
+// ui_connect_origins entry. The entry must be exactly a lowercase http or
+// https origin (scheme, host and optional port) with no wildcard, user
+// info, path, query, fragment or trailing slash. The exact-match rule also
+// keeps ';', ',' and spaces out of the Content-Security-Policy header the
+// entry is written into.
+func validateRESTOrigin(o string) error {
+	if strings.Contains(o, "*") {
+		return errors.New("wildcards are not allowed; list each origin")
+	}
+	u, err := url.Parse(o)
+	if err != nil {
+		return fmt.Errorf("not a valid URL: %w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return errors.New("scheme must be http or https")
+	}
+	if u.Hostname() == "" {
+		return errors.New("host is required")
+	}
+	if u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" || u.Opaque != "" {
+		return errors.New("must be an origin only, with no user, path, query or fragment")
+	}
+	if o != u.Scheme+"://"+u.Host {
+		return errors.New("must be exactly scheme://host[:port] in lowercase with no trailing slash")
+	}
+	return nil
+}
+
 func NewValidator() *Validator {
 	return &Validator{
 		errors: make(ValidationErrors, 0),
@@ -179,6 +208,16 @@ func (v *Validator) validateServer(cfg *ServerConfig) {
 		// typo whose meaning the operator did not state.
 		if cfg.REST.RateLimit < -1 {
 			v.addError("server.rest.rate_limit", fmt.Sprintf("REST rate limit must be -1 (disabled), 0 (default) or positive, got %d", cfg.REST.RateLimit))
+		}
+		for i, o := range cfg.REST.CORSOrigins {
+			if err := validateRESTOrigin(o); err != nil {
+				v.addError("server.rest.cors_origins", fmt.Sprintf("entry %d (%q): %v", i, o, err))
+			}
+		}
+		for i, o := range cfg.REST.UIConnectOrigins {
+			if err := validateRESTOrigin(o); err != nil {
+				v.addError("server.rest.ui_connect_origins", fmt.Sprintf("entry %d (%q): %v", i, o, err))
+			}
 		}
 	}
 

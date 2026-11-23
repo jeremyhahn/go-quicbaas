@@ -83,6 +83,11 @@ type Config struct {
 	// CORSOrigins is a list of allowed CORS origins
 	CORSOrigins []string
 
+	// UIConnectOrigins lists the daemon origins the web UI served here may
+	// connect to. SecurityHeadersMiddleware adds them to the page's CSP
+	// connect-src. Empty keeps the policy at default-src 'self'.
+	UIConnectOrigins []string
+
 	// RequestTimeout is the maximum duration for request processing
 	RequestTimeout time.Duration
 
@@ -507,7 +512,7 @@ func (s *Server) setupRouter() {
 	r.Use(ClientIPMiddleware(s.clientIP))
 	r.Use(TracingMiddleware())
 	r.Use(RequestIDMiddleware())
-	r.Use(SecurityHeadersMiddleware())
+	r.Use(SecurityHeadersMiddleware(s.config.UIConnectOrigins...))
 	r.Use(RecoveryMiddleware(s.logger))
 	r.Use(LoggingMiddleware(s.logger))
 	r.Use(MetricsMiddleware())
