@@ -781,13 +781,33 @@ func TestCIPreflightAgentToken(t *testing.T) {
 	}
 }
 
-// inImageMemoryExpr is IN_IMAGE_MEMORY on every job that runs a stage in the
-// toolchain image: the 8g cap everywhere but a GitHub-hosted runner, keyed on
-// the preflight runner_docker output (the runner context is not available in
-// jobs.<id>.env).
-const inImageMemoryExpr = `${{ (github.server_url != 'https://github.com' || needs.preflight.outputs.runner_docker != '"ubuntu-latest"') && '8g' || 'none' }}`
+// inImageMemoryExpr8g and inImageMemoryExpr16g are IN_IMAGE_MEMORY on the jobs
+// that run a stage in the toolchain image: a cap everywhere but a GitHub-hosted
+// runner, keyed on the preflight runner_docker output (the runner context is
+// not available in jobs.<id>.env). Lint and image take 16g, since
+// golangci-lint is killed at 8g on a self-hosted runner (#2657); lint-gates
+// and integration keep 8g.
+const (
+	inImageMemoryExpr8g  = `${{ (github.server_url != 'https://github.com' || needs.preflight.outputs.runner_docker != '"ubuntu-latest"') && '8g' || 'none' }}`
+	inImageMemoryExpr16g = `${{ (github.server_url != 'https://github.com' || needs.preflight.outputs.runner_docker != '"ubuntu-latest"') && '16g' || 'none' }}`
+)
 
-var inImageMemoryJobs = []string{"lint", "image", "lint-gates", "integration"}
+// inImageMemoryJobs maps each job to its wanted IN_IMAGE_MEMORY expression:
+// 16g on lint and image, 8g on lint-gates and integration.
+var inImageMemoryJobs = map[string]string{
+	"lint":        inImageMemoryExpr16g,
+	"image":       inImageMemoryExpr16g,
+	"lint-gates":  inImageMemoryExpr8g,
+	"integration": inImageMemoryExpr8g,
+}
+
+// inImageMemoryCap is the cap a wanted expression sets on a self-hosted runner.
+func inImageMemoryCap(expr string) string {
+	if expr == inImageMemoryExpr16g {
+		return "16g"
+	}
+	return "8g"
+}
 
 // ciJobNode is ci.yml's job <name>, or nil.
 func ciJobNode(body []byte, name string) *yaml.Node {
@@ -800,7 +820,8 @@ func ciJobNode(body []byte, name string) *yaml.Node {
 
 func inImageMemoryProblems(body []byte) []string {
 	var problems []string
-	for _, name := range inImageMemoryJobs {
+	for _, name := range slices.Sorted(maps.Keys(inImageMemoryJobs)) {
+		want := inImageMemoryJobs[name]
 		j := ciJobNode(body, name)
 		if j == nil {
 			problems = append(problems, "ci.yml has no job "+name)
@@ -809,44 +830,62 @@ func inImageMemoryProblems(body []byte) []string {
 		switch v := mapValue(mapValue(j, "env"), "IN_IMAGE_MEMORY"); {
 		case v == nil:
 			problems = append(problems, "job "+name+" sets no env.IN_IMAGE_MEMORY")
-		case v.Value != inImageMemoryExpr:
-			problems = append(problems, "job "+name+" sets IN_IMAGE_MEMORY to "+strconv.Quote(v.Value)+"; want "+strconv.Quote(inImageMemoryExpr)+" (8g on every runner that is not GitHub-hosted)")
+		case v.Value != want:
+			problems = append(problems, "job "+name+" sets IN_IMAGE_MEMORY to "+strconv.Quote(v.Value)+"; want "+strconv.Quote(want)+" ("+inImageMemoryCap(want)+" on every runner that is not GitHub-hosted)")
 		}
 	}
 	return problems
 }
 
-// TestCIInImageMemory: an overflow stage on a Dell keeps the 8g cap.
+// TestCIInImageMemory: an overflow stage on a Dell keeps its cap, 16g on lint
+// and image, 8g on lint-gates and integration.
 func TestCIInImageMemory(t *testing.T) {
 	for _, p := range inImageMemoryProblems(readCI(t)) {
 		t.Error(p)
 	}
 }
 
+// replaceInImageMemory is ci.yml body with job's IN_IMAGE_MEMORY value set to
+// expr.
+func replaceInImageMemory(t *testing.T, body, job, expr string) string {
+	t.Helper()
+	start := strings.Index(body, "\n  "+job+":\n")
+	if start < 0 {
+		t.Fatalf("ci.yml has no job %s", job)
+	}
+	i := strings.Index(body[start:], "      IN_IMAGE_MEMORY: ")
+	if i < 0 {
+		t.Fatalf("job %s has no IN_IMAGE_MEMORY line", job)
+	}
+	i += start
+	end := strings.Index(body[i:], "\n") + i
+	mutated := body[:i] + "      IN_IMAGE_MEMORY: " + expr + body[end:]
+	if mutated == body {
+		t.Fatal("the mutation changed nothing")
+	}
+	return mutated
+}
+
 // TestCIInImageMemory_Mutations: the server-only expression, which leaves an
-// overflow stage on a Dell uncapped, is reported.
+// overflow stage on a Dell uncapped, is reported on every job, and the 8g
+// expression is reported on a 16g job.
 func TestCIInImageMemory_Mutations(t *testing.T) {
 	body := string(readCI(t))
 	const old = `${{ github.server_url != 'https://github.com' && '8g' || 'none' }}`
-	for _, job := range inImageMemoryJobs {
+	for _, job := range slices.Sorted(maps.Keys(inImageMemoryJobs)) {
 		t.Run(job, func(t *testing.T) {
-			start := strings.Index(body, "\n  "+job+":\n")
-			if start < 0 {
-				t.Fatalf("ci.yml has no job %s", job)
-			}
-			i := strings.Index(body[start:], "      IN_IMAGE_MEMORY: ")
-			if i < 0 {
-				t.Fatalf("job %s has no IN_IMAGE_MEMORY line", job)
-			}
-			i += start
-			end := strings.Index(body[i:], "\n") + i
-			mutated := body[:i] + "      IN_IMAGE_MEMORY: " + old + body[end:]
-			if mutated == body {
-				t.Fatal("the mutation changed nothing")
-			}
-			p := inImageMemoryProblems([]byte(mutated))
+			p := inImageMemoryProblems([]byte(replaceInImageMemory(t, body, job, old)))
 			if len(p) != 1 || !strings.Contains(p[0], "job "+job+" sets IN_IMAGE_MEMORY") {
 				t.Fatalf("want one problem for job %s, got %v", job, p)
+			}
+		})
+		if inImageMemoryJobs[job] != inImageMemoryExpr16g {
+			continue
+		}
+		t.Run(job+"-at-8g", func(t *testing.T) {
+			p := inImageMemoryProblems([]byte(replaceInImageMemory(t, body, job, inImageMemoryExpr8g)))
+			if len(p) != 1 || !strings.Contains(p[0], "job "+job+" sets IN_IMAGE_MEMORY") || !strings.Contains(p[0], "(16g on") {
+				t.Fatalf("want one 16g problem for job %s, got %v", job, p)
 			}
 		})
 	}

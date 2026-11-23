@@ -1999,8 +1999,8 @@ func (s *Server) GetQRDBClient() *ShardedClient {
 // Returns nil when the server has not yet been started or when no qrdb node was
 // constructed (e.g. test stubs with only a mock ShardedClient). Callers should
 // prefer GetQRDBNodeClient over GetQRDBClient().ForShard(1) for barrier/ceremony
-// operations so that the SDK client is used directly rather than via the
-// BaasTransport layer.
+// operations so that the SDK client is used directly rather than through a
+// per-shard transport.
 func (s *Server) GetQRDBNodeClient() *qrdbsdk.Client {
 	node := s.getQRDBNode()
 	if node == nil {
