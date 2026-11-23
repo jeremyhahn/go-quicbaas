@@ -40,11 +40,11 @@ func newWebSocketTestServer(t *testing.T) *Server {
 }
 
 // TestHandleWebSocket_NotRunning: with no WebSocket handler set, the upgrade
-// route answers 503.
+// route answers 503 to a caller authenticated with a verified tenant.
 func TestHandleWebSocket_NotRunning(t *testing.T) {
 	srv := newWebSocketTestServer(t)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/ws", nil)
+	req := asTenantCaller(httptest.NewRequest(http.MethodGet, "/api/v1/ws", nil), "tenant-a")
 	rec := httptest.NewRecorder()
 	srv.HandleWebSocket(rec, req)
 
@@ -68,14 +68,15 @@ func (h *closeRecordingHandler) Close() error {
 }
 
 // TestHandleWebSocket_ClosedOnShutdown: Shutdown closes the WebSocket handler,
-// and a set handler serves the route.
+// and a set handler serves the route to a request that carries a verified
+// identity and tenant, as go-qrdb's AuthMiddleware leaves it.
 func TestHandleWebSocket_ClosedOnShutdown(t *testing.T) {
 	srv := newWebSocketTestServer(t)
 	h := &closeRecordingHandler{}
 	srv.SetWebSocketHandler(h)
 
 	rec := httptest.NewRecorder()
-	srv.HandleWebSocket(rec, httptest.NewRequest(http.MethodGet, "/api/v1/ws", nil))
+	srv.HandleWebSocket(rec, asTenantCaller(httptest.NewRequest(http.MethodGet, "/api/v1/ws", nil), "tenant-a"))
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNoContent)
 	}
@@ -83,5 +84,20 @@ func TestHandleWebSocket_ClosedOnShutdown(t *testing.T) {
 	_ = srv.Shutdown(context.Background())
 	if got := h.closed.Load(); got != 1 {
 		t.Fatalf("Close called %d times, want 1", got)
+	}
+}
+
+// TestHandleWebSocket_NoTenantIsForbidden: a request with no verified tenant
+// is refused with 403 and never reaches the WebSocket handler.
+func TestHandleWebSocket_NoTenantIsForbidden(t *testing.T) {
+	srv := newWebSocketTestServer(t)
+	h := &closeRecordingHandler{}
+	srv.SetWebSocketHandler(h)
+	t.Cleanup(func() { _ = srv.Shutdown(context.Background()) })
+
+	rec := httptest.NewRecorder()
+	srv.HandleWebSocket(rec, httptest.NewRequest(http.MethodGet, "/api/v1/ws", nil))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
 	}
 }
