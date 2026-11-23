@@ -152,14 +152,13 @@ The seal/barrier system is the foundation - nothing else works without it. We im
 6. **SDK gaps** - Add recovery key + root token operations to Go SDK seal client
 
 #### What Already Exists (keep, extend):
-- `pkg/seal/barrier_seal_manager.go` - delegates to go-qrdb BarrierClient
 - `pkg/service/seal_service.go` - service layer with request/response types
 - `pkg/api/rest/handlers_seal.go` - REST handlers
 - `pkg/api/grpc/server_seal_methods.go` - gRPC handlers
 - `Security().Barrier()` - the go-qrdb `BarrierClient` re-export; the SDK seal client was removed (#1559)
 - `cmd/quicbaas/barrier.go` - barrier CLI commands; the CLI seal command was removed (#1559)
 - `pkg/config/config.go` - SealConfig struct
-- `pkg/server/lifecycle.go` - initBarrier() server integration
+- The barrier is go-qrdb's, served through `Security().Barrier()`; go-quicbaas has no seal manager of its own (#1650)
 
 #### Reference Files (go-qrdb):
 - `<go-qrdb-checkout>/cmd/qrdb/bindings_seal.go` - GUI seal bindings pattern

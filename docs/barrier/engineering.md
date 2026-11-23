@@ -35,9 +35,13 @@ go-xkms (KMS layer)
   └── pkg/seal/CloudKMSStrategy         ← AWS/GCP/Azure KMS sealing
         │
         ▼
-go-quicbaas (application layer — SDK adapter only)
-  └── pkg/seal/BarrierSealManager       ← thin adapter over transport.BarrierClient
+go-quicbaas (application layer — no seal service of its own)
+  └── Security().Barrier()              ← go-qrdb's BarrierClient, served by
+                                          pkg/server/qrdb_barrier_servicer_proxy.go
 ```
+
+The `pkg/seal/*` and `pkg/dek/*` names above are go-qrdb's, go-quicraft's
+and go-xkms's packages. go-quicbaas has no `pkg/seal` or `pkg/barrier`.
 
 ### Key Hierarchy
 
@@ -57,20 +61,18 @@ Root Key (per node, sealed to strategy)
     └── Recovery Keys (optional, split root key via Shamir)
 ```
 
-### BarrierSealManager
+### No QuicBaaS seal service
 
-`pkg/seal/BarrierSealManager` is a thin SDK adapter that implements `interfaces.BarrierManager` by delegating operations to `transport.BarrierClient` from the go-qrdb SDK. It:
-
-- Delegates seal lifecycle operations (init, unseal, seal, rekey) to the SDK client for non-EE paths
-- Does NOT import `go-qrdb/pkg/seal` directly
-- Does NOT perform share accumulation — that is handled by go-qrdb's `ExtendedBarrier`
-- Does NOT expose root keys through the transport layer (`GetRootKey` was removed for security)
-- Generates root tokens during initialization via the SDK
-- Tracks version numbers across rekey operations
+go-quicbaas keeps no seal manager, seal adapter or `BarrierManager` interface
+of its own (#1650). The system barrier is go-qrdb's `BarrierClient`, reached
+through `Security().Barrier()` and served over gRPC by the qrdb barrier
+servicer proxy (`pkg/server/qrdb_barrier_servicer_proxy.go`). The QuicBaaS
+gRPC service declares no Seal RPCs and the TS SDK has no `SealClient`;
+callers use the `Barrier*` verbs and `client.barrier`.
 
 **Enable-encryption (EE) is embedded-node-driven:** The service layer (`pkg/service/barrier_service.go`) dispatches enable-encryption operations to the embedded qrdb node (`s.qrdbNode` wired as an `EncryptionMigrator`), not to `transport.BarrierClient`. This ensures EE has direct access to cluster state, DEK provisioning, and fail-safe coordination without round-tripping through a network transport.
 
-All barrier logic (Shamir reconstruction, quorum tracking, encryption) lives in go-qrdb. QuicBaaS only adapts the SDK transport interface to its internal `SealManager` contract.
+All barrier logic (Shamir reconstruction, quorum tracking, encryption) lives in go-qrdb. QuicBaaS authorizes, audits and forwards; it adds no seal logic.
 
 ## Enable-Encryption (Barrier Migration)
 
@@ -510,7 +512,7 @@ status, err := barrierClient.Status(ctx)
 TypeScript SDK:
 
 ```ts
-// Old (still works for one release with console.warn)
+// Old (removed, #1650)
 import { SealClient } from '@quicbaas/sdk';
 const seal: SealClient = client.seal;
 
@@ -571,7 +573,8 @@ plaintext data dir would silently mask a corrupt-data scenario.
 
 ### Sunset timeline
 
-The legacy `/api/v1/seal/*` paths, the `SealClient` interfaces and the
-`quicbaas seal …` CLI verbs are removed (#1559); `Security().Barrier()` and
+The legacy `/api/v1/seal/*` paths, the Go SDK seal client and the
+`quicbaas seal …` CLI verbs are removed (#1559); the QuicBaaS Seal RPCs, the
+QuicBaaS seal manager and the TS `SealClient` are removed (#1650); `Security().Barrier()` and
 the `quicbaas barrier` group are the only seal and barrier paths. The
 `seal:` YAML key is covered under Daemon configuration above.

@@ -209,7 +209,7 @@ Server seal/unseal operations with Shamir secret sharing.
 | `Unseal` | Provides an unseal key to progress toward unsealing |
 | `Seal` | Seals the server, requiring unseal keys to access data |
 
-**SealStatus Fields:**
+**Barrier status fields:**
 - `Sealed` - Whether the server is currently sealed
 - `Initialized` - Whether the server has been initialized
 - `Progress` - Number of unseal keys provided so far
