@@ -15,6 +15,7 @@ package quicbaas
 
 import (
 	qrdbservice "github.com/jeremyhahn/go-qrdb/pkg/service"
+	qrdbtimeseries "github.com/jeremyhahn/go-qrdb/pkg/timeseries"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
@@ -65,6 +66,11 @@ type QRDBCustodianGroupServicer = qrdbsdk.CustodianGroupServicer
 // interface. Required to enable Shamir share submission and tracking
 // through the embedded transport.
 type QRDBShareServicer = qrdbsdk.ShareServicer
+
+// QRDBTimeSeriesServicer is a re-export of the qrdb
+// timeseries.TimeSeriesServicer interface. Required to serve
+// Search().QRDBTimeSeries() through the embedded transport.
+type QRDBTimeSeriesServicer = qrdbtimeseries.TimeSeriesServicer
 
 // QRDBUserAuthFactorServicer is a re-export of the qrdb
 // service.UserAuthFactorServicer interface. Required to enable per-user
@@ -187,4 +193,9 @@ type QRDBEmbeddedServicers struct {
 	// nil, the embedded client's embedding calls fail as unavailable in
 	// go-qrdb.
 	Embedding QRDBEmbeddingServicer
+
+	// TimeSeries exposes the qrdb time-series service that backs
+	// Search().QRDBTimeSeries(). Optional: without it the time-series
+	// calls return an error.
+	TimeSeries QRDBTimeSeriesServicer
 }
