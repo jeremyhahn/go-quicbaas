@@ -476,6 +476,7 @@ func spawnFreshBarrierDaemon(t *testing.T, opts barrierDaemonOptions) (*barrierD
 	// chosen strategy. The runtime client never re-inits over the network.
 	initArgs := []string{
 		"init",
+		"--config", writeBarrierInitConfig(t, dataDir),
 		"--barrier-strategy", opts.Strategy,
 		"--data-dir", dataDir,
 	}
@@ -603,6 +604,23 @@ security:
 	path := filepath.Join(dataDir, "insecure-posture.yaml")
 	if err := os.WriteFile(path, []byte(insecurePosture), 0o600); err != nil {
 		t.Fatalf("write insecure posture config %s: %v", path, err)
+	}
+	return path
+}
+
+// barrierTrustDomain is the SPIFFE trust domain the per-test barrier daemon
+// is initialised under. quicbaasd init refuses to run without one, and it is
+// read only from a config file.
+const barrierTrustDomain = "quicbaas.barrier.test"
+
+// writeBarrierInitConfig writes the config file quicbaasd init needs (the
+// trust domain) into dataDir and returns its path for --config.
+func writeBarrierInitConfig(t *testing.T, dataDir string) string {
+	t.Helper()
+	path := filepath.Join(dataDir, "init-config.yaml")
+	body := "iam:\n  spiffe_trust_domain: " + barrierTrustDomain + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("write barrier init config %s: %v", path, err)
 	}
 	return path
 }
