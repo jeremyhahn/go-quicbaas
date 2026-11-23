@@ -133,6 +133,23 @@ type Manager struct {
 	mu        sync.RWMutex
 	closed    bool
 	closeOnce sync.Once
+
+	// expireHook, guarded by mu, runs for each expired lease before the
+	// reaper revokes it.
+	expireHook ExpireHook
+}
+
+// ExpireHook runs for each expired lease before the reaper revokes it. It
+// tears down what the lease governed. An error leaves the lease active, so
+// the next pass retries it; a nil error lets the revoke proceed.
+type ExpireHook func(ctx context.Context, l *Lease) error
+
+// SetExpireHook sets the hook ReapExpired runs for each expired lease before
+// revoking it. A nil hook clears it.
+func (m *Manager) SetExpireHook(hook ExpireHook) {
+	m.mu.Lock()
+	m.expireHook = hook
+	m.mu.Unlock()
 }
 
 // Compile-time interface satisfaction check.
@@ -658,6 +675,18 @@ func (m *Manager) ReapExpired(ctx context.Context) (int, int, error) {
 
 		if lease.State() != LeaseStateExpired {
 			continue
+		}
+		m.mu.RLock()
+		hook := m.expireHook
+		m.mu.RUnlock()
+		if hook != nil {
+			if err := hook(ctx, lease); err != nil {
+				m.logger.WithFields(map[string]interface{}{
+					"lease_id": lease.LeaseID,
+					"error":    err,
+				}).Warn("Expire hook failed; lease kept for retry")
+				continue
+			}
 		}
 		if err := m.revoke(ctx, "Manager.ReapExpired", lease.LeaseID, "expired"); err != nil {
 			m.logger.WithFields(map[string]interface{}{
