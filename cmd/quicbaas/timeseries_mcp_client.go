@@ -213,12 +213,29 @@ func (c *MCPTimeSeriesClient) TSGetRetentionPolicy(ctx context.Context, req *cli
 		)
 	}
 
-	// For now, return not implemented as the SDK client doesn't expose retention policy
-	return nil, errors.New(
-		errors.ErrNotImplemented,
-		"MCPTimeSeriesClient.TSGetRetentionPolicy",
-		"get retention policy is not yet implemented for MCP transport",
-	)
+	tsClient := c.client.TimeSeries()
+	if tsClient == nil {
+		return nil, errors.New(
+			errors.ErrUnavailable,
+			"MCPTimeSeriesClient.TSGetRetentionPolicy",
+			"timeseries client not available",
+		)
+	}
+
+	resp, err := tsClient.GetRetention(ctx, &timeseries.GetRetentionRequest{Metric: req.Metric})
+	if err != nil {
+		return nil, err
+	}
+
+	out := &cli.TSGetRetentionPolicyResponse{Metric: resp.Metric, Timestamp: time.Now()}
+	if resp.Policy != nil {
+		out.Policy = &cli.TSRetentionPolicy{
+			Duration:    resp.Policy.Duration,
+			Resolution:  resp.Policy.Resolution,
+			Aggregation: resp.Policy.Aggregation.WireName(),
+		}
+	}
+	return out, nil
 }
 
 // TSSetRetentionPolicy sets the retention policy for a metric via MCP.
@@ -230,13 +247,43 @@ func (c *MCPTimeSeriesClient) TSSetRetentionPolicy(ctx context.Context, req *cli
 			"MCP client not initialized",
 		)
 	}
+	if req == nil || req.Policy == nil {
+		return nil, errors.New(
+			errors.ErrInvalidInput,
+			"MCPTimeSeriesClient.TSSetRetentionPolicy",
+			"a retention policy is required",
+		)
+	}
 
-	// For now, return not implemented as the SDK client doesn't expose retention policy
-	return nil, errors.New(
-		errors.ErrNotImplemented,
-		"MCPTimeSeriesClient.TSSetRetentionPolicy",
-		"set retention policy is not yet implemented for MCP transport",
-	)
+	tsClient := c.client.TimeSeries()
+	if tsClient == nil {
+		return nil, errors.New(
+			errors.ErrUnavailable,
+			"MCPTimeSeriesClient.TSSetRetentionPolicy",
+			"timeseries client not available",
+		)
+	}
+
+	// A policy without a resolution does not downsample: the CLI's
+	// --aggregation default (avg) only applies when --resolution is set,
+	// so a duration-only policy is sent with AggregateNone.
+	aggregation := timeseries.AggregateNone
+	if req.Policy.Resolution != 0 {
+		aggregation = timeseries.ParseAggregateFunction(req.Policy.Aggregation)
+	}
+
+	if err := tsClient.SetRetention(ctx, &timeseries.SetRetentionRequest{
+		Metric: req.Metric,
+		Policy: timeseries.RetentionPolicy{
+			Duration:    req.Policy.Duration,
+			Resolution:  req.Policy.Resolution,
+			Aggregation: aggregation,
+		},
+	}); err != nil {
+		return nil, err
+	}
+
+	return &cli.TSSetRetentionPolicyResponse{Success: true, Timestamp: time.Now()}, nil
 }
 
 // TSListMetrics lists all available metrics via MCP.

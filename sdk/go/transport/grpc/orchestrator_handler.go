@@ -83,6 +83,8 @@ var orchestratorMethodMap = map[string]orchestratorHandlerFunc{
 	"ListJobs":                    handleOrchestratorListJobs,
 	"CancelJob":                   handleOrchestratorCancelJob,
 	"ListTaskArtifacts":           handleOrchestratorListTaskArtifacts,
+	"SubmitTaskArtifacts":         handleOrchestratorSubmitTaskArtifacts,
+	"GetTaskArtifact":             handleOrchestratorGetTaskArtifact,
 	"GetSessionHistory":           handleOrchestratorGetSessionHistory,
 	"GetSessionConversation":      handleOrchestratorGetSessionConversation,
 	"GetSpendReport":              handleOrchestratorGetSpendReport,
@@ -157,6 +159,78 @@ func protoArtifactToSDK(artifact *pb.Artifact) *orchestrator.TaskArtifact {
 		}
 	}
 	return out
+}
+
+// sdkArtifactToProto is the inverse of protoArtifactToSDK. A nil artifact
+// maps to nil, and Ref is set only when the SDK artifact carries one.
+func sdkArtifactToProto(a *orchestrator.TaskArtifact) *pb.Artifact {
+	if a == nil {
+		return nil
+	}
+	out := &pb.Artifact{
+		Kind:     a.Kind,
+		Name:     a.Name,
+		MimeType: a.MIMEType,
+		Size:     a.Size,
+		Content:  a.Content,
+		Metadata: a.Metadata,
+	}
+	if a.Ref != nil {
+		out.Ref = &pb.ArtifactRef{
+			AgentId: a.Ref.AgentID,
+			Path:    a.Ref.Path,
+			Sha:     a.Ref.SHA,
+			Branch:  a.Ref.Branch,
+		}
+	}
+	return out
+}
+
+func handleOrchestratorSubmitTaskArtifacts(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.SubmitTaskArtifactsRequest)
+	if !ok || sdkReq == nil {
+		return nil, errors.NewInvalidInput("grpc.orchestrator.SubmitTaskArtifacts", "invalid request type")
+	}
+	artifacts := make([]*pb.Artifact, 0, len(sdkReq.Artifacts))
+	for _, artifact := range sdkReq.Artifacts {
+		if artifact == nil {
+			continue
+		}
+		artifacts = append(artifacts, sdkArtifactToProto(artifact))
+	}
+	protoReq := &pb.SubmitTaskArtifactsRequest{
+		TenantId:  sdkReq.TenantID,
+		TaskId:    sdkReq.TaskID,
+		Artifacts: artifacts,
+	}
+	protoResp := &pb.SubmitTaskArtifactsResponse{}
+	if err := conn.Invoke(ctx, pb.OrchestratorService_SubmitTaskArtifacts_FullMethodName, protoReq, protoResp); err != nil {
+		return nil, convertGRPCError(err, "grpc.orchestrator.SubmitTaskArtifacts")
+	}
+	return &orchestrator.SubmitTaskArtifactsResponse{
+		TaskID: protoResp.GetTaskId(),
+		Stored: int(protoResp.GetStored()),
+	}, nil
+}
+
+func handleOrchestratorGetTaskArtifact(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.GetTaskArtifactRequest)
+	if !ok || sdkReq == nil {
+		return nil, errors.NewInvalidInput("grpc.orchestrator.GetTaskArtifact", "invalid request type")
+	}
+	protoReq := &pb.GetTaskArtifactRequest{
+		TenantId: sdkReq.TenantID,
+		TaskId:   sdkReq.TaskID,
+		Name:     sdkReq.Name,
+	}
+	protoResp := &pb.GetTaskArtifactResponse{}
+	if err := conn.Invoke(ctx, pb.OrchestratorService_GetTaskArtifact_FullMethodName, protoReq, protoResp); err != nil {
+		return nil, convertGRPCError(err, "grpc.orchestrator.GetTaskArtifact")
+	}
+	if protoResp.GetArtifact() == nil {
+		return nil, errors.NewNotFound("grpc.orchestrator.GetTaskArtifact", "artifact not found")
+	}
+	return protoArtifactToSDK(protoResp.GetArtifact()), nil
 }
 
 func handleOrchestratorGetSessionHistory(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error) {
