@@ -13,6 +13,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
+import { tick } from 'svelte';
 import type { IAMApplication } from '@quicbaas/sdk';
 
 // ---------------------------------------------------------------------------
@@ -240,6 +241,77 @@ describe('OAuthAppsView', () => {
     await waitFor(() => {
       expect(mockDeleteApp).toHaveBeenCalledWith('t1', 'client-web');
       expect(mockListApps.mock.calls.length).toBeGreaterThan(before);
+    });
+  });
+
+  describe('session change', () => {
+    afterEach(() => {
+      setUnauthenticated();
+    });
+
+    it('drops a register response that lands after the session changed', async () => {
+      setAuthenticated({ access_token: sessionToken('t1') });
+      let resolveRegister: (v: unknown) => void = () => {};
+      mockRegisterApp.mockReturnValue(
+        new Promise((r) => {
+          resolveRegister = r;
+        }),
+      );
+      render(OAuthAppsView);
+      await waitFor(() => screen.getByText('web-portal'));
+
+      await fireEvent.input(screen.getByLabelText('Application name'), { target: { value: 'new-app' } });
+      await fireEvent.click(screen.getByRole('button', { name: /Register Application/i }));
+      await waitFor(() => expect(mockRegisterApp).toHaveBeenCalled());
+
+      setAuthenticated({ access_token: sessionToken('t2') });
+      resolveRegister({ ...webApp, client_id: 'client-new', name: 'new-app', client_secret: 's3cr3t-stale' });
+      await new Promise((r) => setTimeout(r, 0));
+      await tick();
+
+      expect(screen.queryByRole('dialog', { name: /Client secret/i })).not.toBeInTheDocument();
+      expect(screen.queryByText('s3cr3t-stale')).not.toBeInTheDocument();
+    });
+
+    it('drops a rotate response that lands after the session changed', async () => {
+      setAuthenticated({ access_token: sessionToken('t1') });
+      let resolveRotate: (v: unknown) => void = () => {};
+      mockRotateAppSecret.mockReturnValue(
+        new Promise((r) => {
+          resolveRotate = r;
+        }),
+      );
+      render(OAuthAppsView);
+      await waitFor(() => screen.getByText('web-portal'));
+
+      await fireEvent.click(screen.getByRole('button', { name: /Rotate secret of web-portal/i }));
+      await fireEvent.click(screen.getByRole('button', { name: /^Rotate$/ }));
+      await waitFor(() => expect(mockRotateAppSecret).toHaveBeenCalledWith('t1', 'client-web'));
+
+      setAuthenticated({ access_token: sessionToken('t2') });
+      resolveRotate({ ...webApp, client_secret: 's3cr3t-stale' });
+      await new Promise((r) => setTimeout(r, 0));
+      await tick();
+
+      expect(screen.queryByRole('dialog', { name: /Client secret/i })).not.toBeInTheDocument();
+      expect(screen.queryByText('s3cr3t-stale')).not.toBeInTheDocument();
+    });
+
+    it('clears a shown secret when the session changes', async () => {
+      setAuthenticated({ access_token: sessionToken('t1') });
+      render(OAuthAppsView);
+      await waitFor(() => screen.getByText('web-portal'));
+
+      await fireEvent.input(screen.getByLabelText('Application name'), { target: { value: 'new-app' } });
+      await fireEvent.click(screen.getByRole('button', { name: /Register Application/i }));
+      const dialog = await screen.findByRole('dialog', { name: /Client secret/i });
+      expect(dialog).toHaveTextContent('s3cr3t-new');
+
+      setAuthenticated({ access_token: sessionToken('t2') });
+      await waitFor(() => {
+        expect(screen.queryByRole('dialog', { name: /Client secret/i })).not.toBeInTheDocument();
+      });
+      expect(screen.queryByText('s3cr3t-new')).not.toBeInTheDocument();
     });
   });
 
