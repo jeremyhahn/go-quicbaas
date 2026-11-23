@@ -736,7 +736,11 @@ func (m *Module) bind() (*grpcServers, error) {
 		built.scheduler = grpcapi.NewSchedulerServer(schedulerSvc, placementSvc, m.log)
 	}
 	if agentSvc := svc.Agent(); agentSvc != nil {
-		built.orchestrator = grpcapi.NewOrchestratorServer(agentSvc, m.log)
+		orchestratorServer := grpcapi.NewOrchestratorServer(agentSvc, m.log)
+		if provider, ok := svc.(service.FleetPlacementProvider); ok {
+			orchestratorServer.WithFleetPlacement(provider)
+		}
+		built.orchestrator = orchestratorServer
 		built.agentCatalog = grpcapi.NewAgentCatalogServer(agentSvc, m.log)
 	}
 	if projectSvc := svc.Project(); projectSvc != nil {
