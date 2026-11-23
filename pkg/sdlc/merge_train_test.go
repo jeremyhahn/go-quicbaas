@@ -237,8 +237,9 @@ func TestTrainText_ClosesEveryIssueOnceAndNamesEveryHead(t *testing.T) {
 	train := planTrain(3)
 	train.Cars[1].Closes = []int{2, 20}
 	train.Cars[2].Closes = []int{20, 3}
-	body := trainBody(train, 3)
-	for _, want := range []string{"#101", "#102", "#103", "Closes #1", "Closes #2", "Closes #20", "Closes #3"} {
+	body := trainBody(train, 3, trainNotes{})
+	for _, want := range []string{"#101", "#102", "#103", "Closes #1", "Closes #2", "Closes #20", "Closes #3",
+		"Docs changed:\n\nNone.\n", "Open questions:\n\nNone.\n"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("body lacks %q:\n%s", want, body)
 		}
@@ -258,6 +259,56 @@ func TestTrainText_ClosesEveryIssueOnceAndNamesEveryHead(t *testing.T) {
 	}
 	if !strings.Contains(body, "reviews this pull request as a whole") {
 		t.Fatalf("the body does not say the train is reviewed before it lands:\n%s", body)
+	}
+}
+
+func TestTrainBody_ListsDocsAndOpenQuestions(t *testing.T) {
+	train := planTrain(2)
+	body := trainBody(train, 2, trainNotes{
+		Docs:      []string{"README.md", "docs/guide.md"},
+		Questions: []trainQuestion{{Issue: 2, Label: "needs-info", Title: " which port? "}},
+	})
+	order := []string{
+		"- #102 change 2 at",
+		"Docs changed:\n\n- `README.md`\n- `docs/guide.md`\n",
+		"Open questions:\n\n- #2 which port? (needs-info)\n",
+		"Closes #1\nCloses #2\n",
+	}
+	at := 0
+	for _, want := range order {
+		i := strings.Index(body[at:], want)
+		if i < 0 {
+			t.Fatalf("body lacks %q after offset %d:\n%s", want, at, body)
+		}
+		at += i + len(want)
+	}
+	if at != len(body) {
+		t.Fatalf("the closing lines are not last:\n%s", body)
+	}
+	if strings.Contains(body, "None.") {
+		t.Fatalf("a filled section says None:\n%s", body)
+	}
+}
+
+func TestDocsPath(t *testing.T) {
+	for _, tc := range []struct {
+		path string
+		want bool
+	}{
+		{"docs/guide.txt", true},
+		{"docs/software-factory/requirements.md", true},
+		{"README.md", true},
+		{"pkg/sdlc/NOTES.MD", true},
+		{"CHANGELOG.Md", true},
+		{"pkg/sdlc/merge_train.go", false},
+		{"mydocs/guide.txt", false},
+		{"docs", false},
+		{"pkg/docs/x.go", false},
+		{"", false},
+	} {
+		if got := docsPath(tc.path); got != tc.want {
+			t.Errorf("docsPath(%q) = %v, want %v", tc.path, got, tc.want)
+		}
 	}
 }
 

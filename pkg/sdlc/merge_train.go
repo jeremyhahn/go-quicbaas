@@ -646,7 +646,7 @@ func trainTitle(t *MergeTrain, length int) string {
 // THE CLOSING LINES ARE THE CONTRACT. The train's merge is what puts every
 // change on the target, so it is the train that closes their issues, exactly
 // as each change's own merge would have.
-func trainBody(t *MergeTrain, length int) string {
+func trainBody(t *MergeTrain, length int, notes trainNotes) string {
 	var b strings.Builder
 	b.WriteString("Merge train #" + strconv.Itoa(t.Number) + " onto `" + t.Target + "`, built by the Software Factory.\n\n")
 	b.WriteString("Each change below was approved by the project's reviewer at the head named, and is merged here on top of every change before it. " +
@@ -655,6 +655,20 @@ func trainBody(t *MergeTrain, length int) string {
 		b.WriteString("- #" + strconv.Itoa(car.PullRequest) + " " + strings.TrimSpace(car.Title) +
 			" at `" + shortSHA(car.HeadSHA) + "`\n")
 	}
+	b.WriteString("\nDocs changed:\n\n")
+	if len(notes.Docs) == 0 {
+		b.WriteString("None.\n")
+	}
+	for _, path := range notes.Docs {
+		b.WriteString("- `" + path + "`\n")
+	}
+	b.WriteString("\nOpen questions:\n\n")
+	if len(notes.Questions) == 0 {
+		b.WriteString("None.\n")
+	}
+	for _, q := range notes.Questions {
+		b.WriteString("- #" + strconv.Itoa(q.Issue) + " " + strings.TrimSpace(q.Title) + " (" + q.Label + ")\n")
+	}
 	if closes := trainCloses(t.Cars[:length]); len(closes) > 0 {
 		b.WriteString("\n")
 		for _, issue := range closes {
@@ -662,6 +676,29 @@ func trainBody(t *MergeTrain, length int) string {
 		}
 	}
 	return b.String()
+}
+
+// trainNotes is what a train's pull request tells its reviewer besides the
+// cars: the docs the train changes and the questions still open on the
+// issues it closes.
+type trainNotes struct {
+	Docs      []string
+	Questions []trainQuestion
+}
+
+// trainQuestion is one issue the train closes that still waits on a person:
+// open, and carrying the label that says why.
+type trainQuestion struct {
+	Issue int
+	Label string
+	Title string
+}
+
+// docsPath reports whether a changed file is documentation: anything under
+// docs/, and any Markdown file wherever it lives.
+func docsPath(path string) bool {
+	path = strings.TrimPrefix(strings.TrimSpace(path), "./")
+	return strings.HasPrefix(path, "docs/") || strings.HasSuffix(strings.ToLower(path), ".md")
 }
 
 // trainCommitMessage is the message the train lands under: every change's
