@@ -45,13 +45,16 @@ GOTEST := $(GOCMD) test
 # Test CPU budget. go test -p runs TEST_P test binaries at once, and each one
 # otherwise takes the job's full GOMAXPROCS (and -parallel defaults to it), so
 # a job used about TEST_P times its CPU quota. The budget is the cgroup v2
-# quota (ceil(quota/period) from /sys/fs/cgroup/cpu.max), else $GOMAXPROCS,
-# else nproc, else 1; each binary gets budget/TEST_P CPUs, never fewer than 1.
-# Override with TEST_CPU_BUDGET=<n> and TEST_P=<n>.
+# quota (ceil(quota/period) from $(TEST_CPU_MAX_FILE), the cgroup v2 cpu.max),
+# else $GOMAXPROCS, else nproc, else 1; each binary gets budget/TEST_P CPUs,
+# never fewer than 1.
+# Override with TEST_CPU_BUDGET=<n> and TEST_P=<n>; TEST_CPU_MAX_FILE names
+# another cpu.max (tests).
+TEST_CPU_MAX_FILE ?= /sys/fs/cgroup/cpu.max
 TEST_P ?= 2
 ifeq ($(origin TEST_CPU_BUDGET),undefined)
 TEST_CPU_BUDGET := $(shell q=max; p=100000; \
-	if [ -r /sys/fs/cgroup/cpu.max ]; then read q p < /sys/fs/cgroup/cpu.max; fi; \
+	if [ -r $(TEST_CPU_MAX_FILE) ]; then read q p < $(TEST_CPU_MAX_FILE); fi; \
 	if [ "$$q" != max ] && [ "$$p" -gt 0 ] 2>/dev/null; then echo $$(( (q + p - 1) / p )); \
 	elif [ -n "$$GOMAXPROCS" ]; then echo "$$GOMAXPROCS"; \
 	else nproc 2>/dev/null || echo 1; fi)

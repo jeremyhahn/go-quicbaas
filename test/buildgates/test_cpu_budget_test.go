@@ -16,6 +16,8 @@ package buildgates
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -87,6 +89,92 @@ func TestEveryCITestTargetCarriesTheSplit(t *testing.T) {
 			}
 			if found == 0 {
 				t.Errorf("%s: no go test line in make -n output:\n%s", target, out)
+			}
+		})
+	}
+}
+
+// makePrint runs `make -s print-<variable>` in the repository with exactly
+// env plus GOPROXY=off, and returns the trimmed output.
+func makePrint(t *testing.T, env []string, variable string, vars ...string) string {
+	t.Helper()
+	strip := []string{"GOMAXPROCS=", "TEST_CPU_BUDGET=", "TEST_P=", "TEST_CPU_MAX_FILE=", "MAKEFLAGS=", "MFLAGS=", "MAKELEVEL="}
+	var cmdEnv []string
+	for _, kv := range os.Environ() {
+		keep := true
+		for _, prefix := range strip {
+			if strings.HasPrefix(kv, prefix) {
+				keep = false
+				break
+			}
+		}
+		if keep {
+			cmdEnv = append(cmdEnv, kv)
+		}
+	}
+	cmdEnv = append(cmdEnv, "GOPROXY=off")
+	cmdEnv = append(cmdEnv, env...)
+	args := append([]string{"-s", "--no-print-directory", "-C", repoRoot, "print-" + variable}, vars...)
+	cmd := exec.Command("make", args...)
+	cmd.Env = cmdEnv
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("make -s print-%s %v (env %v): %v\n%s", variable, vars, env, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// TestCPUBudgetDerivation pins how the Makefile derives the test CPU budget:
+// the budget is the cgroup v2 cpu.max quota rounded up, else GOMAXPROCS, else
+// nproc, and each test binary gets budget/TEST_P CPUs, never fewer than 1.
+func TestCPUBudgetDerivation(t *testing.T) {
+	nprocOut, err := exec.Command("nproc").Output()
+	if err != nil {
+		t.Fatalf("nproc: %v", err)
+	}
+	nprocStr := strings.TrimSpace(string(nprocOut))
+	nproc, err := strconv.Atoi(nprocStr)
+	if err != nil {
+		t.Fatalf("nproc printed %q: %v", nprocStr, err)
+	}
+	nprocBin := nproc / 2
+	if nprocBin < 1 {
+		nprocBin = 1
+	}
+
+	cases := []struct {
+		name       string
+		cpuMax     string
+		env        []string
+		testP      string
+		wantBudget string
+		wantBin    string
+	}{
+		{"16-CPU quota", "1600000 100000\n", nil, "", "16", "8"},
+		{"fractional quota rounds up", "150000 100000\n", nil, "", "2", "1"},
+		{"half a CPU", "50000 100000\n", nil, "", "1", "1"},
+		{"4 binaries", "1600000 100000\n", nil, "4", "16", "4"},
+		{"no quota uses GOMAXPROCS", "max 100000\n", []string{"GOMAXPROCS=6"}, "", "6", "3"},
+		{"no file uses GOMAXPROCS", "", []string{"GOMAXPROCS=5"}, "", "5", "2"},
+		{"no file and no GOMAXPROCS uses nproc", "", nil, "", nprocStr, strconv.Itoa(nprocBin)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "cpu.max")
+			if tc.cpuMax != "" {
+				if err := os.WriteFile(path, []byte(tc.cpuMax), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			vars := []string{"TEST_CPU_MAX_FILE=" + path}
+			if tc.testP != "" {
+				vars = append(vars, "TEST_P="+tc.testP)
+			}
+			if got := makePrint(t, tc.env, "TEST_CPU_BUDGET", vars...); got != tc.wantBudget {
+				t.Errorf("TEST_CPU_BUDGET = %q, want %q", got, tc.wantBudget)
+			}
+			if got := makePrint(t, tc.env, "TEST_BIN_CPUS", vars...); got != tc.wantBin {
+				t.Errorf("TEST_BIN_CPUS = %q, want %q", got, tc.wantBin)
 			}
 		})
 	}
