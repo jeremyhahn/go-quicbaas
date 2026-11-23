@@ -178,12 +178,14 @@ func (e *libcontainerEngine) run(id string, spec processSpec, init bool) (contai
 	var workload string
 	if !init {
 		// An exec runs in its own sub-cgroup, so its descendants can be
-		// killed after its leader has exited and been reaped. Without one
-		// it runs in the container's cgroup.
-		if dir, err := newExecWorkload(execCgroupBase(container)); err == nil && dir != "" {
-			workload = dir
-			process.SubCgroupPaths = map[string]string{"": filepath.Base(dir)}
+		// killed after its leader has exited and been reaped. One that
+		// cannot get a killable sub-cgroup is refused, not run in the
+		// container's cgroup where nothing could reach its orphans.
+		workload, err = newKillableExecWorkload(execCgroupBase(container))
+		if err != nil {
+			return nil, err
 		}
+		process.SubCgroupPaths = map[string]string{"": filepath.Base(workload)}
 	}
 	if !spec.TTY {
 		p, err := runPiped(container, process, workload)
@@ -328,9 +330,10 @@ type libcontainerProcess struct {
 	// guard serializes Wait's reap with KillTree's signalling by PID.
 	guard reapGuard
 
-	// workload is the exec's own cgroup v2 sub-cgroup, or "" when it runs
-	// in its container's cgroup. Every descendant stays in it however it
-	// is reparented, so KillTree reaches them after the leader is reaped.
+	// workload is an exec's own cgroup v2 sub-cgroup; it is "" only for a
+	// container's init, whose descendants die with its PID namespace. Every
+	// descendant of an exec stays in it however it is reparented, so
+	// KillTree reaches them after the leader is reaped.
 	workload string
 }
 
@@ -445,17 +448,17 @@ func (p *libcontainerProcess) Signal(sig os.Signal) error {
 // KillTree kills the process and every descendant it has, so none of them
 // keeps the process's output pipes open after it dies. With a workload
 // sub-cgroup, the kernel kills everything in it through cgroup.kill, the
-// leader's orphans included, even after Wait has reaped the leader. Without
-// one, it walks the tree by PID only while the leader is unreaped: a leader
-// Wait has already reaped is never signalled by PID, since the host may have
-// reused it.
+// leader's orphans included, even after Wait has reaped the leader. A
+// container's init has none and is walked by PID only while it is unreaped:
+// a leader Wait has already reaped is never signalled by PID, since the host
+// may have reused it.
 func (p *libcontainerProcess) KillTree() error {
 	if p.workload != "" {
 		err := killWorkload(p.workload)
 		if err == nil || !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
-		// No cgroup.kill (Linux before 5.14), or the sub-cgroup is gone.
+		// The sub-cgroup is gone: Wait removes it only once it is empty.
 	}
 	pid, err := p.process.Pid()
 	if err != nil {
@@ -577,6 +580,25 @@ func newExecWorkload(base string) (string, error) {
 	dir := filepath.Join(base, execWorkloadPrefix+hex.EncodeToString(name[:]))
 	if err := os.Mkdir(dir, 0o750); err != nil {
 		return "", err
+	}
+	return dir, nil
+}
+
+// newKillableExecWorkload creates an exec's sub-cgroup under base and
+// requires its cgroup.kill, so every descendant of the exec can be killed
+// after its leader is reaped. Anything less is ErrExecNotKillable, and a
+// sub-cgroup it created is removed.
+func newKillableExecWorkload(base string) (string, error) {
+	dir, err := newExecWorkload(base)
+	if err != nil {
+		return "", errors.Join(ErrExecNotKillable, err)
+	}
+	if dir == "" {
+		return "", ErrExecNotKillable
+	}
+	if _, err := os.Stat(filepath.Join(dir, "cgroup.kill")); err != nil {
+		removeExecWorkload(dir)
+		return "", errors.Join(ErrExecNotKillable, err)
 	}
 	return dir, nil
 }

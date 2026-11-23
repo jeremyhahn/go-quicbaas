@@ -91,6 +91,11 @@ var (
 	// ErrConsoleNotReceived is returned when a TTY process's console socket
 	// does not deliver the pseudo-terminal master.
 	ErrConsoleNotReceived = errors.New("console not received")
+
+	// ErrExecNotKillable is returned when an exec cannot be given its own
+	// cgroup v2 sub-cgroup with cgroup.kill (Linux 5.14 or later), so its
+	// descendants could not be killed once its leader exits.
+	ErrExecNotKillable = errors.New("exec refused: no killable per-exec cgroup")
 )
 
 // OCIRuntimeNotFoundError provides details about a missing OCI runtime.

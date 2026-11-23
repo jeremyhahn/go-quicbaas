@@ -47,6 +47,10 @@
 //   - Containers: runc libcontainer creates, starts, signals and destroys the
 //     container. Its init process is the agent binary itself, re-executed
 //     through libcontainer's nsenter.
+//   - Execs: every exec runs in its own cgroup v2 sub-cgroup of its
+//     container, and a cancelled one is killed with all its descendants
+//     through cgroup.kill. A host without the unified hierarchy or
+//     cgroup.kill (Linux before 5.14) refuses exec with ErrExecNotKillable.
 //
 // The libcontainer engine needs linux and cgo (its files are
 // `//go:build linux && cgo`); the storage-backed image and rootfs stores also

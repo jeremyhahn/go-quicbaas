@@ -178,6 +178,10 @@ per-container metrics, with their tests. It was moved from go-trusted-platform
   `ErrRuntimeRequiresLinuxCgo`. The agent builds also pass the tags
   `containers_image_openpgp exclude_graphdriver_btrfs` (`CONTAINER_LIB_TAGS`
   in the Makefile).
+- **An exec is always killable.** Each exec runs in its own cgroup v2
+  sub-cgroup, so cancelling it kills every process it started, even after its
+  leader exits. A host without the unified hierarchy or cgroup.kill (Linux
+  before 5.14) refuses exec with `ErrExecNotKillable`.
 - **The agent is its own container init.** libcontainer re-executes the
   agent as `quicbaas init` with `_LIBCONTAINER_INITPIPE` set, and the agent's
   `main` calls `containerruntime.RunContainerInit` before anything else. The

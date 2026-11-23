@@ -203,6 +203,55 @@ func TestContainerLifecycle_ForcedDelete(t *testing.T) {
 	assert.NoDirExists(t, manager.bundleDir(container.ID))
 }
 
+func TestExec_CancelKillsTheDescendantsOfAnExitedLeader(t *testing.T) {
+	ctx := testContext(t)
+	manager := newTestManager(t)
+	image, _ := pushShellImage(t, "containerruntime/exec-cancel")
+	require.NoError(t, manager.PullImage(ctx, image))
+
+	container, err := manager.CreateContainer(ctx, &containerruntime.ContainerConfig{
+		Name:    "exec-cancel",
+		Image:   image,
+		Command: []string{"/bin/sh", "-c", "exec /bin/busybox sleep 600"},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = manager.RemoveContainer(context.Background(), container.ID, true)
+	})
+	require.NoError(t, manager.StartContainer(ctx, container.ID))
+
+	executor, ok := manager.PodmanManager.(containerruntime.Executor)
+	require.True(t, ok)
+
+	// The exec runs in its own sub-cgroup, not in its container's cgroup.
+	res, err := executor.ExecContainer(ctx, container.ID, containerruntime.ExecOptions{
+		Command: []string{"/bin/busybox", "cat", "/proc/self/cgroup"},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 0, res.ExitCode)
+	require.Contains(t, string(res.Stdout), "/exec-")
+
+	// The shell exits at once and is reaped; its subshell holds stdout, so
+	// the exec runs until the deadline and its cancellation must reach the
+	// subshell.
+	cancelCtx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	start := time.Now()
+	_, err = executor.ExecContainer(cancelCtx, container.ID, containerruntime.ExecOptions{
+		Command: []string{"/bin/sh", "-c", "(/bin/busybox sleep 3; /bin/busybox touch /late) & exit 0"},
+	})
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.NotErrorIs(t, err, containerruntime.ErrExecOutlivedItsKill)
+	require.Less(t, time.Since(start), 5*time.Second)
+
+	time.Sleep(4 * time.Second)
+	res, err = executor.ExecContainer(ctx, container.ID, containerruntime.ExecOptions{
+		Command: []string{"/bin/busybox", "test", "-e", "/late"},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, res.ExitCode, "the cancelled exec's child survived and wrote /late")
+}
+
 // A digest-pinned reference pulls when the registry serves the pinned
 // manifest, and fails when it does not.
 func TestPullImage_PinnedDigest(t *testing.T) {

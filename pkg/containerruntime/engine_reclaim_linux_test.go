@@ -193,6 +193,27 @@ func TestNewExecWorkload_CreatesASubCgroupUnderTheBase(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestNewKillableExecWorkload_RefusesWhatCannotBeKilled(t *testing.T) {
+	// No cgroup v2 base (not unified, or no container cgroup).
+	dir, err := newKillableExecWorkload("")
+	require.ErrorIs(t, err, ErrExecNotKillable)
+	require.Empty(t, dir)
+
+	// A plain directory: the sub-directory it makes has no cgroup.kill, as
+	// on Linux before 5.14, and is removed again.
+	base := t.TempDir()
+	dir, err = newKillableExecWorkload(base)
+	require.ErrorIs(t, err, ErrExecNotKillable)
+	require.Empty(t, dir)
+	entries, err := os.ReadDir(base)
+	require.NoError(t, err)
+	require.Empty(t, entries)
+
+	// The sub-cgroup cannot be created.
+	_, err = newKillableExecWorkload(filepath.Join(base, "missing"))
+	require.ErrorIs(t, err, ErrExecNotKillable)
+}
+
 func TestLibcontainerProcess_KillTreeKillsTheWorkloadAfterTheLeaderIsReaped(t *testing.T) {
 	dir := t.TempDir()
 	kill := filepath.Join(dir, "cgroup.kill")
