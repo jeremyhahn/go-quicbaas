@@ -20,6 +20,10 @@ type memGuard struct {
 	kv *kvstore.Store
 	// loseSwaps makes every Swap lose, as a racing node's write would.
 	loseSwaps bool
+	// loseAfter, when positive, makes every Swap lose once that many
+	// Swaps have succeeded; swaps counts the successful ones.
+	loseAfter int
+	swaps     int
 }
 
 func (g *memGuard) Create(ctx context.Context, key string, value []byte) (bool, error) {
@@ -38,10 +42,21 @@ func (g *memGuard) Swap(ctx context.Context, key string, held, next []byte) (boo
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.loseSwaps {
+	if g.loseSwaps || (g.loseAfter > 0 && g.swaps >= g.loseAfter) {
 		return false, nil
 	}
-	return g.kv.CompareAndSwap(ctx, key, held, next)
+	ok, err := g.kv.CompareAndSwap(ctx, key, held, next)
+	if ok && err == nil {
+		g.swaps++
+	}
+	return ok, err
+}
+
+// setLoseAfter makes Swaps lose once n more have succeeded; 0 turns it off.
+func (g *memGuard) setLoseAfter(n int) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.swaps, g.loseAfter = 0, n
 }
 
 type launcher struct {

@@ -126,8 +126,10 @@ func (p *Plane) List(ctx context.Context, tenant string) ([]*Service, error) {
 // certificate, registered name, RBAC and secrets, and launches it. A failed
 // grant revokes the ones made and releases the name; if a revoke fails too,
 // the service stays deployed and halted holding the grants still in force,
-// so undeploy can retry their revocation. A failed launch leaves the service
-// deployed and halted.
+// so undeploy can retry their revocation. Each grant is stored before the
+// next one starts, so a deploy interrupted after granting (a lost write, a
+// crash) leaves a record that MarkHalted and Undeploy can act on. A failed
+// launch leaves the service deployed and halted.
 func (p *Plane) Deploy(ctx context.Context, tenant string, sm *SignedManifest) (*Service, error) {
 	m, err := p.verify(VerbDeploy, tenant, sm)
 	if err != nil {
@@ -141,10 +143,10 @@ func (p *Plane) Deploy(ctx context.Context, tenant string, sm *SignedManifest) (
 	if err != nil {
 		return nil, err
 	}
-	grants, outstanding, err := p.grant(ctx, m, nil)
+	cur, grants, outstanding, err := p.grant(ctx, VerbDeploy, cur, svc, m, nil)
 	if err != nil {
 		if len(outstanding) > 0 {
-			next := *svc
+			next := *cur.svc
 			next.Grants = outstanding
 			return nil, p.settleNext(ctx, VerbDeploy, cur, &next, ErrGrant, err)
 		}
@@ -155,7 +157,7 @@ func (p *Plane) Deploy(ctx context.Context, tenant string, sm *SignedManifest) (
 		}
 		return nil, p.fail(string(VerbDeploy), svc, ErrGrant, err)
 	}
-	next := *svc
+	next := *cur.svc
 	next.Grants = grants
 	return p.launch(ctx, VerbDeploy, cur, &next, false)
 }
@@ -172,7 +174,7 @@ func (p *Plane) Redeploy(ctx context.Context, tenant string, sm *SignedManifest)
 		return nil, err
 	}
 	prior := cur.svc.Grants
-	grants, outstanding, err := p.grant(ctx, m, prior)
+	cur, grants, outstanding, err := p.grant(ctx, VerbRedeploy, cur, cur.svc, m, prior)
 	if err != nil {
 		// Keep, beside the prior grants, any new one still in force.
 		next := *cur.svc
@@ -363,34 +365,65 @@ func (p *Plane) settleNext(ctx context.Context, verb Verb, cur *stored, next *Se
 	return p.fail(string(verb), next, sentinel, cause)
 }
 
-// grant ensures every grant kind for m in order. On a failure it revokes
+// grant ensures every grant kind for m in order. Each grant is stored, as
+// a transitioning checkpoint of base swapped against the latest record,
+// before the next one starts, so an interrupted deploy leaves a record
+// that MarkHalted and Undeploy can act on; the only window left is a Grant
+// that succeeded right before a crash, ahead of its checkpoint write. A
+// lost checkpoint is handled as a failed grant. On a failure grant revokes
 // the grants this call made (not the ones prior already held) and returns
 // the error, with outstanding holding each made grant whose revoke failed,
-// by its reference: grants still in force that a later undeploy must revoke.
-func (p *Plane) grant(ctx context.Context, m *Manifest, prior map[GrantKind]string) (refs, outstanding map[GrantKind]string, err error) {
+// by its reference: grants still in force that a later undeploy must
+// revoke. last is always the latest stored record.
+func (p *Plane) grant(ctx context.Context, verb Verb, cur *stored, base *Service, m *Manifest, prior map[GrantKind]string) (last *stored, refs, outstanding map[GrantKind]string, err error) {
 	out := make(map[GrantKind]string, len(GrantKinds))
 	var made []GrantKind
+	rollback := func(cause error) (*stored, map[GrantKind]string, map[GrantKind]string, error) {
+		errs := []error{cause}
+		rctx, cancel := settleCtx(ctx)
+		defer cancel()
+		outstanding := map[GrantKind]string{}
+		for i := len(made) - 1; i >= 0; i-- {
+			if rerr := p.grants[made[i]].Revoke(rctx, m, out[made[i]]); rerr != nil {
+				errs = append(errs, fmt.Errorf("revoke %s: %w", made[i], rerr))
+				outstanding[made[i]] = out[made[i]]
+			}
+		}
+		return cur, nil, outstanding, errors.Join(errs...)
+	}
 	for _, k := range GrantKinds {
 		ref, err := p.grants[k].Grant(ctx, m, prior[k])
 		if err != nil {
-			errs := []error{fmt.Errorf("grant %s: %w", k, err)}
-			rctx, cancel := settleCtx(ctx)
-			outstanding = map[GrantKind]string{}
-			for i := len(made) - 1; i >= 0; i-- {
-				if rerr := p.grants[made[i]].Revoke(rctx, m, out[made[i]]); rerr != nil {
-					errs = append(errs, fmt.Errorf("revoke %s: %w", made[i], rerr))
-					outstanding[made[i]] = out[made[i]]
-				}
-			}
-			cancel()
-			return nil, outstanding, errors.Join(errs...)
+			return rollback(fmt.Errorf("grant %s: %w", k, err))
 		}
 		out[k] = ref
 		if _, held := prior[k]; !held {
 			made = append(made, k)
 		}
+		st, err := p.checkpoint(ctx, verb, cur, base, prior, out)
+		if err != nil {
+			return rollback(fmt.Errorf("grant %s: checkpoint: %w", k, err))
+		}
+		cur = st
 	}
-	return out, nil, nil
+	return cur, out, nil, nil
+}
+
+// checkpoint stores base, still transitioning, holding prior overlaid with
+// the grants made so far.
+func (p *Plane) checkpoint(ctx context.Context, verb Verb, cur *stored, base *Service, prior, made map[GrantKind]string) (*stored, error) {
+	next := *base
+	next.Grants = make(map[GrantKind]string, len(prior)+len(made))
+	for k, ref := range prior {
+		next.Grants[k] = ref
+	}
+	for k, ref := range made {
+		next.Grants[k] = ref
+	}
+	next.State, next.UpdatedAt = StateTransitioning, p.now()
+	sctx, cancel := settleCtx(ctx)
+	defer cancel()
+	return p.store.swap(sctx, string(verb), cur, &next)
 }
 
 // settleTimeout bounds a cleanup or settlement write.

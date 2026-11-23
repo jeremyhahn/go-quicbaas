@@ -21,12 +21,14 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/kvstore"
 	"github.com/jeremyhahn/go-quicbaas/pkg/registry"
 	"github.com/jeremyhahn/go-quicbaas/pkg/registry/registrytest"
 	"github.com/jeremyhahn/go-quicbaas/pkg/secrets"
@@ -480,6 +482,95 @@ func TestPlane_AFailedGrantRevokesTheOnesMade(t *testing.T) {
 	names, _, err := e.reg.Resolve(acme, "web")
 	require.NoError(t, err)
 	assert.Empty(t, names)
+}
+
+// losingGuard arbitrates writes over an in-memory store, as
+// serviceplanetest's guard does, and loses every Swap while lose is set.
+type losingGuard struct {
+	mu   sync.Mutex
+	kv   *kvstore.Store
+	lose bool
+}
+
+func (g *losingGuard) Create(ctx context.Context, key string, value []byte) (bool, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if ok, err := g.kv.Exists(ctx, key); err != nil || ok {
+		return false, err
+	}
+	return true, g.kv.Put(ctx, key, value)
+}
+
+func (g *losingGuard) Swap(ctx context.Context, key string, held, next []byte) (bool, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.lose {
+		return false, nil
+	}
+	return g.kv.CompareAndSwap(ctx, key, held, next)
+}
+
+func (g *losingGuard) setLose(lose bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.lose = lose
+}
+
+// losingLauncher launches by making the guard lose the settlement write.
+type losingLauncher struct{ guard *losingGuard }
+
+func (l losingLauncher) Launch(context.Context, *serviceplane.Service) error {
+	l.guard.setLose(true)
+	return nil
+}
+
+func (losingLauncher) Halt(context.Context, *serviceplane.Service) error { return nil }
+
+// TestPlane_ALostDeploySettlementStillRevokesOnUndeploy checks a deploy
+// whose final write is lost leaves every real grant on the record, so the
+// recovered service's undeploy revokes them all.
+func TestPlane_ALostDeploySettlementStillRevokesOnUndeploy(t *testing.T) {
+	e := newEnv(t)
+	rt := serviceplanetest.NewRuntime(t)
+	kv := kvstore.NewMemory()
+	guard := &losingGuard{kv: kv}
+	store, err := serviceplane.NewStore(guard, kv)
+	require.NoError(t, err)
+	var clockMu sync.Mutex
+	clock := time.Unix(1_800_000_000, 0).UTC()
+	now := func() time.Time {
+		clockMu.Lock()
+		defer clockMu.Unlock()
+		return clock
+	}
+	plane, err := serviceplane.NewPlane(serviceplane.Config{
+		Store: store, Verifier: rt.Verifier, Launcher: losingLauncher{guard: guard}, Grants: e.grants, Now: now,
+	})
+	require.NoError(t, err)
+	ctx := context.Background()
+	acme := tenantctx.WithTenant(ctx, "acme")
+
+	_, err = plane.Deploy(ctx, "acme", rt.Sign(t, "acme", "web"))
+	require.Error(t, err, "the settlement write is lost")
+	guard.setLose(false)
+	svid := e.kept(t, "acme", "tenant/acme/services/web/svid")
+	leaf := e.kept(t, "acme", "tenant/acme/services/web/tls")
+
+	clockMu.Lock()
+	clock = clock.Add(serviceplane.DefaultStaleClaim + time.Second)
+	clockMu.Unlock()
+	_, err = plane.MarkHalted(ctx, "acme", "web", "claim abandoned")
+	require.NoError(t, err)
+	require.NoError(t, plane.Undeploy(ctx, "acme", "web"))
+
+	assert.True(t, e.revoked(t, svid), "undeploy revokes the SVID")
+	assert.True(t, e.revoked(t, leaf), "undeploy revokes the certificate")
+	names, _, err := e.reg.Resolve(acme, "web")
+	require.NoError(t, err)
+	assert.Empty(t, names, "undeploy deregisters the name")
+	assert.Empty(t, e.roles.bound, "undeploy unbinds the role")
+	_, _, err = e.secrets.Get(acme, "tenant/acme/services/web/binding")
+	assert.Error(t, err, "undeploy unbinds the secrets")
 }
 
 func TestIdentity_RevokeTwiceSucceeds(t *testing.T) {

@@ -218,6 +218,56 @@ func TestMarkHalted_RecoversAStaleClaim(t *testing.T) {
 	}
 }
 
+func TestDeploy_ALostSettlementKeepsEveryGrantForUndeploy(t *testing.T) {
+	f := newFixture(t)
+	f.launcher.onLaunch = func(context.Context) error {
+		f.guard.setLoseSwaps(true) // the final write is lost
+		return nil
+	}
+	m := validManifest()
+	if _, err := f.plane.Deploy(ctx, "acme", f.sign(t, m)); err == nil {
+		t.Fatal("deploy: want the lost settlement write")
+	}
+	f.guard.setLoseSwaps(false)
+	f.launcher.onLaunch = nil
+	svc, err := f.plane.Get(ctx, "acme", "web")
+	if err != nil || svc.State != StateTransitioning || len(svc.Grants) != len(GrantKinds) {
+		t.Fatalf("after a lost settlement = %+v, %v", svc, err)
+	}
+
+	f.advance(DefaultStaleClaim + time.Second)
+	svc, err = f.plane.MarkHalted(ctx, "acme", "web", "claim abandoned")
+	if err != nil || svc.State != StateHalted || len(svc.Grants) != len(GrantKinds) {
+		t.Fatalf("mark halted = %+v, %v", svc, err)
+	}
+	if err := f.plane.Undeploy(ctx, "acme", "web"); err != nil {
+		t.Fatal(err)
+	}
+	want := "revoke secrets:web:operator,revoke rbac:web:operator,revoke name:web:operator," +
+		"revoke certificate:web:operator,revoke identity:web:operator"
+	if got := f.ledger.String(); !strings.HasSuffix(got, want) {
+		t.Fatalf("ledger = %s, want it to end with %s", got, want)
+	}
+}
+
+func TestDeploy_AFailedCheckpointRollsBackTheGrant(t *testing.T) {
+	f := newFixture(t)
+	// The identity checkpoint is written; the certificate's is lost.
+	f.guard.setLoseAfter(1)
+	_, err := f.plane.Deploy(ctx, "acme", f.sign(t, validManifest()))
+	wantErr(t, err, ErrGrant)
+	want := "grant identity prior=,grant certificate prior=," +
+		"revoke certificate:web:operator,revoke identity:web:operator"
+	if got := f.ledger.String(); got != want {
+		t.Fatalf("ledger = %s, want %s", got, want)
+	}
+	f.guard.setLoseAfter(0)
+	if _, err := f.plane.Get(ctx, "acme", "web"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("the name is released: get = %v", err)
+	}
+	f.deploy(t, "web")
+}
+
 func TestStopStartRestart(t *testing.T) {
 	f := newFixture(t)
 	f.deploy(t, "web")
