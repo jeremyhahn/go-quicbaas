@@ -27,6 +27,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service/mocks"
@@ -217,7 +218,7 @@ func TestSessionRoutes_UserIDQueryAcceptsOnlyTheCallersOwnIdentifiers(t *testing
 		for _, tc := range userIDQueryCases {
 			t.Run(route.name+"/"+tc.name, func(t *testing.T) {
 				mgr := &mockSessionManager{}
-				svc := &mockServiceWithSessions{QuicBaaS: testutil.NewMockQuicBaaS(), mgr: mgr}
+				svc := &mockServiceWithSessions{QuicBaaS: testutil.NewMockQuicBaaS(), mgr: mgr, oidc: newLogoutOIDCProvider(t, iam.NewMemoryStorage())}
 				handler, cleanup := setupHandlerWithService(t, svc)
 				defer cleanup()
 
