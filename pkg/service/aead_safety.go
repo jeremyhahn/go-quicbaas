@@ -797,7 +797,8 @@ func (t *AEADSafetyTracker) chargeKeyVersion(keyID string, version, operations, 
 		if !charge {
 			return retired, false
 		}
-		return retired, retired.IncrementUsageBy(operations, bytesProcessed)
+		exceeded := retired.IncrementUsageBy(operations, bytesProcessed)
+		return retired, exceeded
 	}
 	if version > usage.Version {
 		previous := usage.Version
@@ -815,5 +816,6 @@ func (t *AEADSafetyTracker) chargeKeyVersion(keyID string, version, operations, 
 	if !charge {
 		return usage, false
 	}
-	return usage, usage.incrementLocked(operations, bytesProcessed)
+	exceeded := usage.incrementLocked(operations, bytesProcessed)
+	return usage, exceeded
 }
