@@ -229,11 +229,56 @@ officer CSR signatures, and the CA bundle / SPKI pin the operator
 verifies. Leave it nil and every CA-dependent ceremony verb fails
 closed — there is no fallback.
 
+## Device backend adapters (SPEC row hardware-backend-composition)
+
+A device backend adapter is a go-xkms backend for a piece of hardware.
+QuicBaaS composes it, and only QuicBaaS: the resolver in
+[`pkg/server/backend_resolver.go`](../../pkg/server/backend_resolver.go)
+turns the configured `kms.backend` (or `crypto.backend`) into the
+`xkmssdk.ServiceBackend` that `startKMS` passes into go-xkms. Each adapter
+is one `backend_resolver_<type>.go` file whose `init()` registers its
+factory; a configured type with no registered factory is a
+`BackendNotCompiledError`, never a silent software fallback.
+go-trusted-platform and xkey never import an adapter: they reach the keys
+it holds through the QuicBaaS SDK.
+
+| Adapter | Backend | go-xkms package | Config | File |
+|---------|---------|-----------------|--------|------|
+| trusted-firmware device | `avr` | `pkg/backend/avr` (`xkmssdk.NewAVRBackend`) | `kms.avr.device` (serial port, required), `kms.avr.baud` (default 115200), `kms.avr.key_cn`, `kms.avr.request_timeout` | [`backend_resolver_avr.go`](../../pkg/server/backend_resolver_avr.go) |
+| SE052F secure element | — | not yet in go-xkms | — | — |
+| i.MX 95 (EdgeLock enclave) | — | not yet in go-xkms | — | — |
+
+The `avr` factory is tag-free. It opens the serial port, connects go-xkms's
+AVR backend to the trusted-firmware device on it (construction reads CAPS,
+so an absent or silent device fails startup with a `BackendConstructError`)
+and closes the port when the backend closes. The device holds one fixed
+identity key, so it signs with that key and has no CA `StoreType`.
+
+The serial transport is composed in `cmd/quicbaasd`
+([`device_transports.go`](../../cmd/quicbaasd/device_transports.go) calls
+`server.SetAVRPortOpener(serialport.Open)`), not in `pkg/server`. The QuicBaaS
+SDK links `pkg/server` as its embedded server, so its consumer,
+go-trusted-platform, would otherwise link the device transport too. It reaches
+device-backed keys through the SDK's KMS client instead. A binary that
+composes no transport fails `avr` with a `BackendConstructError`.
+`sdk/go/device_adapter_isolation_test.go` proves the SDK's dependency graph
+carries no device transport. go-xkms's own SDK re-exports its AVR backend and
+the trusted-firmware protocol package; that is go-xkms's graph, not a QuicBaaS
+composition.
+
+```yaml
+kms:
+  enabled: true
+  backend: avr
+  avr:
+    device: /dev/ttyUSB0
+```
+
 ## Phase B: standalone mode embeds the real qrdb engine
 
 Since Phase B of the unified-engine refactor, **standalone mode** (the
 default `server.mode` when no Raft cluster is configured) no longer runs a
-no-op Raft node backed by quicbaas's own per-shard `baasTransport` stores.
+no-op Raft node backed by the per-shard stores of quicbaas's former in-process transport (deleted).
 Instead it calls `qrdbnode.NewStandaloneNode` to embed the real qrdb engine
 in-process.
 
@@ -241,10 +286,10 @@ in-process.
 
 | Before Phase B | After Phase B |
 |----------------|---------------|
-| `standaloneRaftNode` (no-op) + `baasTransport` per-shard Pebble stores | `qrdbnode.NewStandaloneNode` — real qrdb engine, no Raft SM |
+| `standaloneRaftNode` (no-op) + per-shard Pebble stores of the former in-process transport (deleted) | `qrdbnode.NewStandaloneNode` — real qrdb engine, no Raft SM |
 | quicbaas built its own `dataPlaneBarrier` + `atrest.Encryptor` (duplicate) | qrdb node owns the barrier + at-rest encryptor end-to-end |
 | `XKMSCryptoOptions` result was built but never passed anywhere | Result is passed as `serverOpts` to `NewStandaloneNode` — hardware crypto is live |
-| Per-shard `ShardedClient.ForShard` created new `baasTransport` clients | `ForShard` returns `node.Client()` — the same in-process embedded transport client for every shard ID |
+| Per-shard `ShardedClient.ForShard` created new clients of the former in-process transport (deleted) | `ForShard` returns `node.Client()` — the same in-process embedded transport client for every shard ID |
 
 ### How it works
 
@@ -294,14 +339,14 @@ per-tenant barriers actually apply to the quicbaas data plane.
 ## Phase C: clustered mode embeds the real qrdb Raft host
 
 Since Phase C, **clustered mode** (`server.mode = "cluster"`) no longer runs
-a no-op `standaloneRaftNode` + `baasTransport` stack. It calls
+a no-op `standaloneRaftNode` + former in-process transport (deleted) stack. It calls
 `qrdbnode.NewClusteredNode` to embed a real quicraft Raft host in-process.
 
 ### What changes (Phase C)
 
 | Before Phase C | After Phase C |
 |----------------|---------------|
-| `standaloneRaftNode` (no-op) + legacy `baasTransport` per-shard stores | `qrdbnode.NewClusteredNode` — real quicraft host, MVCC SM factory |
+| `standaloneRaftNode` (no-op) + per-shard stores of the former in-process transport (deleted) | `qrdbnode.NewClusteredNode` — real quicraft host, MVCC SM factory |
 | quicbaas built its own barrier + at-rest encryptor for cluster mode | qrdb node owns barrier + at-rest end-to-end |
 | No real Raft consensus | Full quicraft Raft consensus (multi-node or single-node-clustered) |
 | Ceremony/credential built separately via `buildBootstrapCeremonyServices` | Node's `Services().Ceremony` / `.Credential` wired for both modes |
@@ -340,19 +385,19 @@ and clustered), creates a `nodeBackedShardedClient`, and populates
 | `cfg.Discovery.Multicast.ClusterSecret` | `qcfg.Discovery.MulticastSecret` | HMAC secret for multicast |
 | `cfg.Raft.TLSCertFile` / `TLSKeyFile` / `TLSCAFile` | `quicraftconfig.MTLSConfig` | Loaded and passed via `WithRaftMTLS` |
 
-### `baasTransport` (deleted)
+### The former in-process transport (deleted)
 
-Phase E completed: the `baasTransport` type, its per-shard Pebble stores, the
+Phase E completed: the former in-process transport type (deleted), its per-shard Pebble stores, the
 `BaasKVAdapter` / `BaasAdminAdapter` service-layer adapters,
-`ShardedClient.EmbeddedTransportForShard`, and `BaasTransportNotSupportedError`
+`ShardedClient.EmbeddedTransportForShard`, and the transport's not-supported error
 are all gone from `pkg/server`. The only survivor of the `Baas*` naming is
 `pkg/server/interfaces_baas.go`, which is a set of type aliases onto the qrdb
 SDK (`BaasBarrierService = qrdbsdk.BarrierServicer`), not a transport.
 
-A few stale `baasTransport` mentions remain in Go comments
+No Go comment names the deleted type any more; the comments that once did
 (`lifecycle_databases.go`, `ceremony_wiring.go`, `lifecycle.go`,
-`cmd/quicbaas/client.go`); they describe a layer that no longer exists. Do not
-reintroduce it — see embedded-mode.md for the node-servicer
+`cmd/quicbaas/client.go`) now describe the qrdb node servicers. Do not
+reintroduce that layer — see embedded-mode.md for the node-servicer
 path that replaced it.
 
 ## Wire path: composer → qrdb server → SDK consumer
