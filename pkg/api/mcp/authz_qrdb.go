@@ -13,7 +13,13 @@
 
 package mcp
 
-import "strings"
+import (
+	"strings"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
+	quicbaaspermission "github.com/jeremyhahn/go-quicbaas/pkg/permission"
+)
 
 // This file maps MCP tool names onto qrdb-canonical (resource, action)
 // permission tuples. The qrdb policy decision point joins the tuple into the
@@ -53,10 +59,19 @@ import "strings"
 // an explicit entry is default-denied, not silently admitted at a read
 // permission.
 
-// qrdbToolResource is a qrdb-canonical (resource, action) tuple.
+// qrdbToolResource is a qrdb-canonical (resource, action) tuple. An entry
+// guarded by a registered permission is written with toolPerm, so its resource
+// and action come from the constant.
 type qrdbToolResource struct {
 	resource string
 	action   string
+}
+
+// toolPerm is the table entry for a tool guarded by one registered
+// permission: resource and action are that permission's own halves, so
+// the table cannot spell a permission go-qrdb does not know.
+func toolPerm(p qrdbsdk.Permission) qrdbToolResource {
+	return qrdbToolResource{resource: qrdbsdk.PermissionResource(p), action: qrdbsdk.PermissionAction(p)}
 }
 
 // qrdbToolExactMapping maps exact MCP tool names to the qrdb permission they
@@ -66,11 +81,11 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	// renew and deregister carry the write verb, resolve and the watch long
 	// poll the read verb. Values MUST match pkg/api/grpc/authz_mapping.go and
 	// the REST frozen route table.
-	"quicbaas_registry_register":   {"service_registry", "register"},
-	"quicbaas_registry_renew":      {"service_registry", "register"},
-	"quicbaas_registry_deregister": {"service_registry", "register"},
-	"quicbaas_registry_resolve":    {"service_registry", "read"},
-	"quicbaas_registry_watch":      {"service_registry", "read"},
+	"quicbaas_registry_register":   toolPerm(quicbaaspermission.ServiceRegistryRegister),
+	"quicbaas_registry_renew":      toolPerm(quicbaaspermission.ServiceRegistryRegister),
+	"quicbaas_registry_deregister": toolPerm(quicbaaspermission.ServiceRegistryRegister),
+	"quicbaas_registry_resolve":    toolPerm(quicbaaspermission.ServiceRegistryRead),
+	"quicbaas_registry_watch":      toolPerm(quicbaaspermission.ServiceRegistryRead),
 
 	// KV. The quicbaas_ names here are the ones the registry actually
 	// registers; the quicbaas_get / quicbaas_put / quicbaas_set /
@@ -104,24 +119,24 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	"quicbaas_transaction": {"transaction", "execute"},
 
 	// Cluster admin
-	"quicbaas_cluster_status":     {"admin", "status"},
-	"quicbaas_get_leader":         {"admin", "status"},
-	"quicbaas_add_node":           {"admin", "add_member"},
-	"quicbaas_remove_node":        {"admin", "remove_member"},
-	"quicbaas_create_shard":       {"admin", "start_shard"},
-	"quicbaas_rebalance_cluster":  {"rebalance", "execute"},
-	"quicbaas_rebalance_status":   {"rebalance", "report"},
-	"quicbaas_migrate_data":       {"admin", "drain"},
-	"quicbaas_migration_progress": {"admin", "status"},
-	"quicbaas_replace_node":       {"admin", "add_member"},
-	"quicbaas_upgrade_node":       {"admin", "drain"},
+	"quicbaas_cluster_status":     toolPerm(qrdbsdk.PermissionAdminStatus),
+	"quicbaas_get_leader":         toolPerm(qrdbsdk.PermissionAdminStatus),
+	"quicbaas_add_node":           toolPerm(qrdbsdk.PermissionAdminAddMember),
+	"quicbaas_remove_node":        toolPerm(qrdbsdk.PermissionAdminRemoveMember),
+	"quicbaas_create_shard":       toolPerm(qrdbsdk.PermissionAdminStartShard),
+	"quicbaas_rebalance_cluster":  toolPerm(qrdbsdk.PermissionRebalanceExecute),
+	"quicbaas_rebalance_status":   toolPerm(qrdbsdk.PermissionRebalanceReport),
+	"quicbaas_migrate_data":       toolPerm(qrdbsdk.PermissionAdminDrain),
+	"quicbaas_migration_progress": toolPerm(qrdbsdk.PermissionAdminStatus),
+	"quicbaas_replace_node":       toolPerm(qrdbsdk.PermissionAdminAddMember),
+	"quicbaas_upgrade_node":       toolPerm(qrdbsdk.PermissionAdminDrain),
 
 	// Backup
-	"quicbaas_backup_create":  {"backup", "create"},
-	"quicbaas_backup_list":    {"backup", "list"},
-	"quicbaas_backup_restore": {"backup", "restore"},
-	"quicbaas_backup_delete":  {"backup", "delete"},
-	"quicbaas_backup_verify":  {"backup", "verify"},
+	"quicbaas_backup_create":  toolPerm(qrdbsdk.PermissionBackupCreate),
+	"quicbaas_backup_list":    toolPerm(qrdbsdk.PermissionBackupList),
+	"quicbaas_backup_restore": toolPerm(qrdbsdk.PermissionBackupRestore),
+	"quicbaas_backup_delete":  toolPerm(qrdbsdk.PermissionBackupDelete),
+	"quicbaas_backup_verify":  toolPerm(qrdbsdk.PermissionBackupVerify),
 
 	// Role management. ROLES ONLY: user administration is the quicbaas_iam_user_*
 	// family further down, which is the single user surface. The eight entries
@@ -160,22 +175,22 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	"qrdb_barrier_initialize":               {"tenant_barrier", "init"},
 	"qrdb_barrier_unseal":                   {"tenant_barrier", "unseal"},
 	"qrdb_barrier_seal":                     {"tenant_barrier", "seal"},
-	"qrdb_barrier_shamir_initialize":        {"seal", "initialize_shamir"},
-	"qrdb_barrier_shamir_unseal_share":      {"barrier", "unseal-share"},
-	"qrdb_barrier_shamir_unseal_shares":     {"barrier", "unseal-share"},
-	"qrdb_barrier_rekey":                    {"seal", "rekey"},
-	"qrdb_barrier_recovery_generate":        {"seal", "generate_recovery"},
-	"qrdb_barrier_recovery_recover":         {"seal", "recover_with_keys"},
-	"qrdb_barrier_recovery_delete":          {"seal", "generate_recovery"},
+	"qrdb_barrier_shamir_initialize":        toolPerm(qrdbsdk.PermissionSealInitializeShamir),
+	"qrdb_barrier_shamir_unseal_share":      toolPerm(qrdbsdk.PermissionBarrierUnsealShare),
+	"qrdb_barrier_shamir_unseal_shares":     toolPerm(qrdbsdk.PermissionBarrierUnsealShare),
+	"qrdb_barrier_rekey":                    toolPerm(qrdbsdk.PermissionSealRekey),
+	"qrdb_barrier_recovery_generate":        toolPerm(qrdbsdk.PermissionSealGenerateRecovery),
+	"qrdb_barrier_recovery_recover":         toolPerm(qrdbsdk.PermissionSealRecoverWithKeys),
+	"qrdb_barrier_recovery_delete":          toolPerm(qrdbsdk.PermissionSealGenerateRecovery),
 	"qrdb_barrier_recovery_status":          {"seal", "status"},
-	"qrdb_barrier_root_token":               {"seal", "bootstrap"},
-	"qrdb_barrier_enable_encryption":        {"seal", "enable_encryption"},
+	"qrdb_barrier_root_token":               toolPerm(qrdbsdk.PermissionSealBootstrap),
+	"qrdb_barrier_enable_encryption":        toolPerm(qrdbsdk.PermissionSealEnableEncryption),
 	"qrdb_tenant_barrier_enable_encryption": {"tenant_barrier", "enable_encryption"},
-	"qrdb_tenant_update_quotas":             {"tenants", "set_quotas"},
-	"qrdb_tenant_update_entitlements":       {"tenants", "set_entitlements"},
+	"qrdb_tenant_update_quotas":             toolPerm(qrdbsdk.PermissionTenantsSetQuotas),
+	"qrdb_tenant_update_entitlements":       toolPerm(qrdbsdk.PermissionTenantsSetEntitlements),
 
 	// Cache (admin capabilities)
-	"quicbaas_cache_stats": {"admin", "status"},
+	"quicbaas_cache_stats": toolPerm(qrdbsdk.PermissionAdminStatus),
 	"quicbaas_cache_clear": {"admin", "capabilities"},
 
 	// Aggregate / time-series
@@ -232,27 +247,27 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	"quicbaas_orchestrator_status":               {"orchestrator", "status"},
 	"quicbaas_orchestrator_session_history":      {"orchestrator", "status"},
 	"quicbaas_orchestrator_session_conversation": {"orchestrator", "status"},
-	"quicbaas_orchestrator_cost":                 {"spend_report", "read"},
+	"quicbaas_orchestrator_cost":                 toolPerm(quicbaaspermission.SpendReportRead),
 	"quicbaas_orchestrator_spend_policy_get":     {"orchestrator", "status"},
-	"quicbaas_orchestrator_spend_policy_set":     {"spend_policy", "write"},
+	"quicbaas_orchestrator_spend_policy_set":     toolPerm(quicbaaspermission.SpendPolicyWrite),
 	// A tenant's runtime cost settings (go-quicbaas#1058). Replacing them is
 	// a QuicBaaS family: go-qrdb owns the orchestrator family outright.
 	"quicbaas_orchestrator_cost_settings_get": {"orchestrator", "status"},
-	"quicbaas_orchestrator_cost_settings_set": {"cost_settings", "write"},
+	"quicbaas_orchestrator_cost_settings_set": toolPerm(quicbaaspermission.CostSettingsWrite),
 	// The tenant AI agent catalog, mirroring /api/v1/agents and
 	// /api/v1/agent-pools: reads agents:read, every change agents:write.
-	"quicbaas_agents_list":         {"agents", "read"},
-	"quicbaas_agents_get":          {"agents", "read"},
-	"quicbaas_agents_used_by":      {"agents", "read"},
-	"quicbaas_agents_create":       {"agents", "write"},
-	"quicbaas_agents_update":       {"agents", "write"},
-	"quicbaas_agents_delete":       {"agents", "write"},
-	"quicbaas_agent_pools_list":    {"agents", "read"},
-	"quicbaas_agent_pools_get":     {"agents", "read"},
-	"quicbaas_agent_pools_used_by": {"agents", "read"},
-	"quicbaas_agent_pools_create":  {"agents", "write"},
-	"quicbaas_agent_pools_update":  {"agents", "write"},
-	"quicbaas_agent_pools_delete":  {"agents", "write"},
+	"quicbaas_agents_list":         toolPerm(quicbaaspermission.AgentsRead),
+	"quicbaas_agents_get":          toolPerm(quicbaaspermission.AgentsRead),
+	"quicbaas_agents_used_by":      toolPerm(quicbaaspermission.AgentsRead),
+	"quicbaas_agents_create":       toolPerm(quicbaaspermission.AgentsWrite),
+	"quicbaas_agents_update":       toolPerm(quicbaaspermission.AgentsWrite),
+	"quicbaas_agents_delete":       toolPerm(quicbaaspermission.AgentsWrite),
+	"quicbaas_agent_pools_list":    toolPerm(quicbaaspermission.AgentsRead),
+	"quicbaas_agent_pools_get":     toolPerm(quicbaaspermission.AgentsRead),
+	"quicbaas_agent_pools_used_by": toolPerm(quicbaaspermission.AgentsRead),
+	"quicbaas_agent_pools_create":  toolPerm(quicbaaspermission.AgentsWrite),
+	"quicbaas_agent_pools_update":  toolPerm(quicbaaspermission.AgentsWrite),
+	"quicbaas_agent_pools_delete":  toolPerm(quicbaaspermission.AgentsWrite),
 	"quicbaas_orchestrator_close":  {"orchestrator", "close"},
 	// Rotation closes the session's agent process and reconstitutes it against
 	// a newly selected pooled credential — a spawn's authority, not a close's.
@@ -343,18 +358,18 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	// Workload placement carries its own "placement" family (qrdb owns
 	// "scheduler"), with the same read / place / manage split as the gRPC
 	// and REST tables.
-	"quicbaas_scheduler_get_node":        {"placement", "read"},
-	"quicbaas_scheduler_list_nodes":      {"placement", "read"},
-	"quicbaas_scheduler_get_placement":   {"placement", "read"},
-	"quicbaas_scheduler_list_placements": {"placement", "read"},
-	"quicbaas_scheduler_place":           {"placement", "place"},
-	"quicbaas_scheduler_release":         {"placement", "place"},
-	"quicbaas_scheduler_register_node":   {"placement", "manage"},
-	"quicbaas_scheduler_renew_node":      {"placement", "manage"},
-	"quicbaas_scheduler_deregister_node": {"placement", "manage"},
-	"quicbaas_scheduler_cordon_node":     {"placement", "manage"},
-	"quicbaas_scheduler_uncordon_node":   {"placement", "manage"},
-	"quicbaas_scheduler_drain_node":      {"placement", "manage"},
+	"quicbaas_scheduler_get_node":        toolPerm(quicbaaspermission.PlacementRead),
+	"quicbaas_scheduler_list_nodes":      toolPerm(quicbaaspermission.PlacementRead),
+	"quicbaas_scheduler_get_placement":   toolPerm(quicbaaspermission.PlacementRead),
+	"quicbaas_scheduler_list_placements": toolPerm(quicbaaspermission.PlacementRead),
+	"quicbaas_scheduler_place":           toolPerm(quicbaaspermission.PlacementPlace),
+	"quicbaas_scheduler_release":         toolPerm(quicbaaspermission.PlacementPlace),
+	"quicbaas_scheduler_register_node":   toolPerm(quicbaaspermission.PlacementManage),
+	"quicbaas_scheduler_renew_node":      toolPerm(quicbaaspermission.PlacementManage),
+	"quicbaas_scheduler_deregister_node": toolPerm(quicbaaspermission.PlacementManage),
+	"quicbaas_scheduler_cordon_node":     toolPerm(quicbaaspermission.PlacementManage),
+	"quicbaas_scheduler_uncordon_node":   toolPerm(quicbaaspermission.PlacementManage),
+	"quicbaas_scheduler_drain_node":      toolPerm(quicbaaspermission.PlacementManage),
 
 	// Parameter store -> parameters
 	"quicbaas_parameter_get":          {"parameters", "read"},
@@ -389,48 +404,48 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	// SDLC module -> sdlc (tools are registered without a quicbaas_ prefix).
 	// Mirrors the REST rules for /api/v1/sdlc/projects/{projectID}/binding,
 	// /api/v1/sdlc/tasks/{taskID}/delivery and /api/v1/sdlc/forges.
-	"sdlc_bind":     {"sdlc", "bind"},
-	"sdlc_unbind":   {"sdlc", "unbind"},
-	"sdlc_binding":  {"sdlc", "read"},
-	"sdlc_delivery": {"sdlc", "read"},
-	"sdlc_forges":   {"sdlc", "read"},
+	"sdlc_bind":     toolPerm(quicbaaspermission.SDLCBind),
+	"sdlc_unbind":   toolPerm(quicbaaspermission.SDLCUnbind),
+	"sdlc_binding":  toolPerm(quicbaaspermission.SDLCRead),
+	"sdlc_delivery": toolPerm(quicbaaspermission.SDLCRead),
+	"sdlc_forges":   toolPerm(quicbaaspermission.SDLCRead),
 	// sdlc_onboard WRITES to the forge, so it carries the same bind
 	// permission as PUT .../binding; sdlc_conformance only reads. The split
 	// is the point: a reader may ask what state a repository is in without
 	// being able to change it.
-	"sdlc_onboard":         {"sdlc", "bind"},
-	"sdlc_project_onboard": {"sdlc", "bind"},
-	"sdlc_conformance":     {"sdlc", "read"},
-	"sdlc_open_work":       {"sdlc", "read"},
+	"sdlc_onboard":         toolPerm(quicbaaspermission.SDLCBind),
+	"sdlc_project_onboard": toolPerm(quicbaaspermission.SDLCBind),
+	"sdlc_conformance":     toolPerm(quicbaaspermission.SDLCRead),
+	"sdlc_open_work":       toolPerm(quicbaaspermission.SDLCRead),
 	// Choosing which reviewer judges a pull request is a decision about the
 	// project's review: writing an override carries sdlc:bind like the
 	// binding it refines, reading one sdlc:read.
-	"sdlc_reviewer":       {"sdlc", "read"},
-	"sdlc_reviewer_set":   {"sdlc", "bind"},
-	"sdlc_reviewer_clear": {"sdlc", "bind"},
+	"sdlc_reviewer":       toolPerm(quicbaaspermission.SDLCRead),
+	"sdlc_reviewer_set":   toolPerm(quicbaaspermission.SDLCBind),
+	"sdlc_reviewer_clear": toolPerm(quicbaaspermission.SDLCBind),
 	// Filing an issue on the bound forge is an audited operator write with
 	// its own action, as POST .../issues is; the collaborator listing reads.
-	"sdlc_issue_create":  {"sdlc", "issue_create"},
-	"sdlc_collaborators": {"sdlc", "read"},
+	"sdlc_issue_create":  toolPerm(quicbaaspermission.SDLCIssueCreate),
+	"sdlc_collaborators": toolPerm(quicbaaspermission.SDLCRead),
 	// Prompt sets carry the permissions the REST routes and the gRPC
 	// PromptService declare: reads prompts:read, the revision listing
 	// prompts:history, and every change prompts:write.
-	"prompt_list":      {"prompts", "read"},
-	"prompt_get":       {"prompts", "read"},
-	"prompt_effective": {"prompts", "read"},
-	"prompt_diff":      {"prompts", "read"},
-	"prompt_history":   {"prompts", "history"},
-	"prompt_put":       {"prompts", "write"},
-	"prompt_rollback":  {"prompts", "write"},
-	"prompt_reset":     {"prompts", "write"},
+	"prompt_list":      toolPerm(quicbaaspermission.PromptsRead),
+	"prompt_get":       toolPerm(quicbaaspermission.PromptsRead),
+	"prompt_effective": toolPerm(quicbaaspermission.PromptsRead),
+	"prompt_diff":      toolPerm(quicbaaspermission.PromptsRead),
+	"prompt_history":   toolPerm(quicbaaspermission.PromptsHistory),
+	"prompt_put":       toolPerm(quicbaaspermission.PromptsWrite),
+	"prompt_rollback":  toolPerm(quicbaaspermission.PromptsWrite),
+	"prompt_reset":     toolPerm(quicbaaspermission.PromptsWrite),
 	// Adopting an issue creates its task, and is gated as task creation is,
 	// mirroring POST /api/v1/sdlc/projects/{projectID}/adopt.
 	"sdlc_adopt_issue": {"orchestrator", "task_create"},
 	// The worker image refresh: a host verb over every tenant's bindings,
 	// gated on the cross-tenant worker_images:* family exactly as
 	// GET /api/v1/sdlc/worker-image and POST .../refresh are.
-	"quicbaas_sdlc_worker_image":         {"worker_images", "read"},
-	"quicbaas_sdlc_worker_image_refresh": {"worker_images", "refresh"},
+	"quicbaas_sdlc_worker_image":         toolPerm(quicbaaspermission.WorkerImageRead),
+	"quicbaas_sdlc_worker_image_refresh": toolPerm(quicbaaspermission.WorkerImageRefresh),
 
 	// Pooled provider accounts -> agent_accounts. Every account is tenant
 	// data in the caller's own orchestration keyspace, so the surface takes
@@ -438,24 +453,24 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	// than qrdb's ScopeCross credentials:*, which no tenant principal may hold
 	// (go-quicbaas#1355). This matches the REST PEP map and the gRPC method
 	// options (api/proto/account.proto) exactly.
-	"quicbaas_agent_account_create": {"agent_accounts", "write"},
-	"quicbaas_agent_account_get":    {"agent_accounts", "read"},
-	"quicbaas_agent_account_list":   {"agent_accounts", "list"},
-	"quicbaas_agent_account_update": {"agent_accounts", "write"},
-	"quicbaas_agent_account_delete": {"agent_accounts", "delete"},
-	"quicbaas_agent_account_rotate": {"agent_accounts", "rotate"},
+	"quicbaas_agent_account_create": toolPerm(quicbaaspermission.AgentAccountWrite),
+	"quicbaas_agent_account_get":    toolPerm(quicbaaspermission.AgentAccountRead),
+	"quicbaas_agent_account_list":   toolPerm(quicbaaspermission.AgentAccountList),
+	"quicbaas_agent_account_update": toolPerm(quicbaaspermission.AgentAccountWrite),
+	"quicbaas_agent_account_delete": toolPerm(quicbaaspermission.AgentAccountDelete),
+	"quicbaas_agent_account_rotate": toolPerm(quicbaaspermission.AgentAccountRotate),
 	// Materializing RELEASES the envelope, so it takes QuicBaaS's own
 	// agent_accounts:materialize rather than a credentials:* grant — which is
 	// registered ScopeCross (system tenant only) and would deny the
 	// tenant-scoped fleet node daemon this verb exists for.
-	"quicbaas_agent_account_materialize": {"agent_accounts", "materialize"},
+	"quicbaas_agent_account_materialize": toolPerm(quicbaaspermission.AgentAccountMaterialize),
 	// The session reservation is the release's companion; see
 	// pkg/api/grpc/authz_mapping.go.
-	"quicbaas_agent_account_reserve_session": {"agent_accounts", "materialize"},
-	"quicbaas_agent_account_release_session": {"agent_accounts", "materialize"},
-	"quicbaas_agent_account_revoke":          {"agent_accounts", "write"},
-	"quicbaas_agent_account_set_default":     {"agent_accounts", "write"},
-	"quicbaas_agent_account_usage":           {"agent_accounts", "read"},
+	"quicbaas_agent_account_reserve_session": toolPerm(quicbaaspermission.AgentAccountMaterialize),
+	"quicbaas_agent_account_release_session": toolPerm(quicbaaspermission.AgentAccountMaterialize),
+	"quicbaas_agent_account_revoke":          toolPerm(quicbaaspermission.AgentAccountWrite),
+	"quicbaas_agent_account_set_default":     toolPerm(quicbaaspermission.AgentAccountWrite),
+	"quicbaas_agent_account_usage":           toolPerm(quicbaaspermission.AgentAccountRead),
 
 	// Certificate extensions -> ca / certs. The mapping MUST match the gRPC
 	// mapping (pkg/api/grpc/authz_mapping.go), the REST PEP mapping
@@ -469,7 +484,7 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	// quicbaas_trust_auto_import_aia performs, so it carries the same
 	// write-strength verb. Device identity issuance mints END-ENTITY TCG
 	// EK / AK / IDevID certificates and stays on certs:generate.
-	"quicbaas_certificate_cross_sign":            {"ca", "create"},
+	"quicbaas_certificate_cross_sign":            toolPerm(qrdbsdk.PermissionCACreate),
 	"quicbaas_certificate_chain":                 {"certs", "generate"},
 	"quicbaas_certificate_issue_device_identity": {"certs", "generate"},
 
@@ -491,14 +506,14 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	// sibling prefixes swallowed list_versions and retrieve_version, so five
 	// distinct verbs authorized under a permission that was not theirs. All five
 	// are registered qrdb permissions, so there is nothing to approximate.
-	"qrdb_credential_submit":           {"credentials", "submit"},
-	"qrdb_credential_strategy":         {"credentials", "strategy"},
-	"qrdb_credential_delete":           {"credentials", "delete"},
-	"qrdb_credential_list":             {"credentials", "list"},
-	"qrdb_credential_rotate":           {"credentials", "rotate"},
-	"qrdb_credential_retrieve_version": {"credentials", "retrieve_version"},
-	"qrdb_credential_list_versions":    {"credentials", "list_versions"},
-	"qrdb_credential_gc_expired":       {"credentials", "gc_expired"},
+	"qrdb_credential_submit":           toolPerm(qrdbsdk.PermissionCredentialsSubmit),
+	"qrdb_credential_strategy":         toolPerm(qrdbsdk.PermissionCredentialsStrategy),
+	"qrdb_credential_delete":           toolPerm(qrdbsdk.PermissionCredentialsDelete),
+	"qrdb_credential_list":             toolPerm(qrdbsdk.PermissionCredentialsList),
+	"qrdb_credential_rotate":           toolPerm(qrdbsdk.PermissionCredentialsRotate),
+	"qrdb_credential_retrieve_version": toolPerm(qrdbsdk.PermissionCredentialsRetrieveVersion),
+	"qrdb_credential_list_versions":    toolPerm(qrdbsdk.PermissionCredentialsListVersions),
+	"qrdb_credential_gc_expired":       toolPerm(qrdbsdk.PermissionCredentialsGCExpired),
 
 	// Certificate (base surface) -> certs. These six tools front exactly the
 	// six quicbaas.certificate.v1.CertificateService RPCs, so they carry the
@@ -529,14 +544,14 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	// exclusive. A reader could therefore mint the CA, sign arbitrary certs and
 	// subvert the Shamir quorum. A future ceremony tool must fail closed here,
 	// not inherit a read.
-	"qrdb_ceremony_initialize":              {"ceremony", "initialize"},
+	"qrdb_ceremony_initialize":              toolPerm(qrdbsdk.PermissionCeremonyInitialize),
 	"qrdb_ceremony_status":                  {"ceremony", "status"},
 	"qrdb_ceremony_claim_cert_begin":        {"ceremony", "claim_cert"},
 	"qrdb_ceremony_claim_cert_complete":     {"ceremony", "claim_cert"},
 	"qrdb_ceremony_begin_claim_share":       {"ceremony", "claim_share_begin"},
 	"qrdb_ceremony_complete_claim_share":    {"ceremony", "claim_share_complete"},
-	"qrdb_ceremony_sign_csr":                {"ceremony", "sign_csr"},
-	"qrdb_ceremony_enroll_external_officer": {"ceremony", "enroll_custodian"},
+	"qrdb_ceremony_sign_csr":                toolPerm(qrdbsdk.PermissionCeremonySignCSR),
+	"qrdb_ceremony_enroll_external_officer": toolPerm(qrdbsdk.PermissionCeremonyEnrollCustodian),
 	// Officer listing is a read (quicbaas.ceremony.v1.Ceremony/
 	// CeremonyListOfficers, and the GET /officers REST rule). It keeps the
 	// quicbaas_ prefix because it has no qrdb mirror.
@@ -544,7 +559,7 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 
 	// Cache configuration -> admin, matching
 	// /quicbaas.v1.QuicBaaS/GetCacheConfig and UpdateCacheConfig.
-	"quicbaas_cache_config_get":    {"admin", "status"},
+	"quicbaas_cache_config_get":    toolPerm(qrdbsdk.PermissionAdminStatus),
 	"quicbaas_cache_config_update": {"admin", "capabilities"},
 
 	// Fleet node lifecycle admin. Mirrors the REST rules for
@@ -555,13 +570,13 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	"quicbaas_fleet_enable":  {"orchestrator", "agent_register"},
 
 	// Fleet placement specs (go-quicbaas#1681), as on REST and gRPC.
-	"quicbaas_fleet_placement_declare":        {"placement", "manage"},
-	"quicbaas_fleet_placement_get":            {"placement", "read"},
-	"quicbaas_fleet_placement_list":           {"placement", "read"},
-	"quicbaas_fleet_placement_withdraw":       {"placement", "manage"},
-	"quicbaas_fleet_placement_drift":          {"placement", "read"},
-	"quicbaas_fleet_placement_consent_list":   {"placement", "read"},
-	"quicbaas_fleet_placement_consent_answer": {"placement", "consent"},
+	"quicbaas_fleet_placement_declare":        toolPerm(quicbaaspermission.PlacementManage),
+	"quicbaas_fleet_placement_get":            toolPerm(quicbaaspermission.PlacementRead),
+	"quicbaas_fleet_placement_list":           toolPerm(quicbaaspermission.PlacementRead),
+	"quicbaas_fleet_placement_withdraw":       toolPerm(quicbaaspermission.PlacementManage),
+	"quicbaas_fleet_placement_drift":          toolPerm(quicbaaspermission.PlacementRead),
+	"quicbaas_fleet_placement_consent_list":   toolPerm(quicbaaspermission.PlacementRead),
+	"quicbaas_fleet_placement_consent_answer": toolPerm(quicbaaspermission.PlacementConsent),
 
 	// PEP access checks -> permissions:resolve, matching the REST rules for
 	// POST /api/v1/iam/check and /check/batch.
@@ -776,15 +791,15 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	// author a role may converge the built-in ones.
 	"quicbaas_iam_role_reconcile": {"roles", "create"},
 
-	"quicbaas_iam_tenant_create": {"tenants", "create"},
+	"quicbaas_iam_tenant_create": toolPerm(qrdbsdk.PermissionTenantsCreate),
 	"quicbaas_iam_tenant_get":    {"tenants", "read"},
 	"quicbaas_iam_tenant_list":   {"tenants", "list"},
 	"quicbaas_iam_tenant_update": {"tenants", "update"},
 	"quicbaas_iam_tenant_delete": {"tenants", "delete"},
 	// Provisioning creates the tenant and its first admin in one call.
-	"quicbaas_iam_tenant_provision": {"tenants", "create"},
+	"quicbaas_iam_tenant_provision": toolPerm(qrdbsdk.PermissionTenantsCreate),
 
-	"quicbaas_iam_app_register":      {"tenants", "create"},
+	"quicbaas_iam_app_register":      toolPerm(qrdbsdk.PermissionTenantsCreate),
 	"quicbaas_iam_app_get":           {"tenants", "read"},
 	"quicbaas_iam_app_list":          {"tenants", "list"},
 	"quicbaas_iam_app_update":        {"tenants", "update"},
@@ -838,8 +853,8 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	"xkms.saveCertChain": {"certs", "generate"},
 	"xkms.deleteCert":    {"certs", "revoke"},
 
-	"xkms.ca.getBundle":   {"ca", "read"},
-	"xkms.ca.getCert":     {"ca", "read"},
+	"xkms.ca.getBundle":   toolPerm(qrdbsdk.PermissionCARead),
+	"xkms.ca.getCert":     toolPerm(qrdbsdk.PermissionCARead),
 	"xkms.ca.isRevoked":   {"certs", "read"},
 	"xkms.ca.signCSR":     {"certs", "generate"},
 	"xkms.ca.issueCert":   {"certs", "generate"},
@@ -888,19 +903,19 @@ var qrdbToolPrefixMapping = map[string]qrdbToolResource{
 	// state we approved?", and driving a TPM quote is not a certificate
 	// operation. Values MUST match pkg/api/grpc/authz_mapping.go and
 	// pkg/api/quic/handler_authz_qrdb.go.
-	"quicbaas_attestation_verify":           {"attestation", "verify"},
-	"quicbaas_attestation_verify_chain":     {"attestation", "verify"},
-	"quicbaas_attestation_attest_container": {"attestation", "attest"},
+	"quicbaas_attestation_verify":           toolPerm(quicbaaspermission.AttestationVerify),
+	"quicbaas_attestation_verify_chain":     toolPerm(quicbaaspermission.AttestationVerify),
+	"quicbaas_attestation_attest_container": toolPerm(quicbaaspermission.AttestationAttest),
 	// The Verifier: provision (Admin) manages what it trusts; verify reads
 	// those records and appraises evidence against them.
-	"quicbaas_attestation_put_endorsement":         {"attestation", "provision"},
-	"quicbaas_attestation_list_endorsements":       {"attestation", "verify"},
-	"quicbaas_attestation_delete_endorsement":      {"attestation", "provision"},
-	"quicbaas_attestation_put_reference_values":    {"attestation", "provision"},
-	"quicbaas_attestation_get_reference_values":    {"attestation", "verify"},
-	"quicbaas_attestation_list_reference_values":   {"attestation", "verify"},
-	"quicbaas_attestation_delete_reference_values": {"attestation", "provision"},
-	"quicbaas_attestation_appraise_quote":          {"attestation", "verify"},
+	"quicbaas_attestation_put_endorsement":         toolPerm(quicbaaspermission.AttestationProvision),
+	"quicbaas_attestation_list_endorsements":       toolPerm(quicbaaspermission.AttestationVerify),
+	"quicbaas_attestation_delete_endorsement":      toolPerm(quicbaaspermission.AttestationProvision),
+	"quicbaas_attestation_put_reference_values":    toolPerm(quicbaaspermission.AttestationProvision),
+	"quicbaas_attestation_get_reference_values":    toolPerm(quicbaaspermission.AttestationVerify),
+	"quicbaas_attestation_list_reference_values":   toolPerm(quicbaaspermission.AttestationVerify),
+	"quicbaas_attestation_delete_reference_values": toolPerm(quicbaaspermission.AttestationProvision),
+	"quicbaas_attestation_appraise_quote":          toolPerm(quicbaaspermission.AttestationVerify),
 
 	"quicbaas_trust_cross_signed_root_pool": {"certs", "read"},
 	"quicbaas_trust_auto_import_aia":        {"certs", "generate"},
