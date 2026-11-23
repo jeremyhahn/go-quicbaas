@@ -453,6 +453,13 @@ type runnerRun struct {
 	// replacement would leave the run charged for a fault it did not have.
 	credentialReplaced      bool
 	credentialReplacedRound int
+
+	// lastState is the last state this run handled other than escalating:
+	// the stage its summary names.
+	lastState orchestration.JobState
+
+	// failedChecks are the failed checks of this run's latest verification.
+	failedChecks []orchestration.ValidationResult
 }
 
 // handler drives one state and answers the next.
@@ -460,7 +467,7 @@ type handler func(ctx context.Context) (orchestration.JobState, error)
 
 // drive is the dispatch loop. Map-based rather than a switch so a state
 // answers in constant time and the table reads as the sequence it is.
-func (s *runnerRun) drive(ctx context.Context) error {
+func (s *runnerRun) drive(ctx context.Context) (err error) {
 	handlers := map[orchestration.JobState]handler{
 		orchestration.JobStateInitializing: s.initialize,
 		orchestration.JobStateExecuting:    s.execute,
@@ -485,6 +492,9 @@ func (s *runnerRun) drive(ctx context.Context) error {
 	// Deferred so it also covers the panic, and it is the same teardownWorker
 	// a completion runs rather than a second, thinner copy of it.
 	defer s.abandonWorker(ctx)
+	// The run's public summary is recorded on every exit, and before the
+	// teardown above: deferred calls run last-in first-out.
+	defer func() { s.recordSummary(ctx, err) }()
 
 	state := s.job.StartState
 	if state == "" {
@@ -500,6 +510,9 @@ func (s *runnerRun) drive(ctx context.Context) error {
 		// in a run that lasts hours (go-quicbaas#1054, attempt_admission.go).
 		if err := s.runner.hooks.admitAttempt(ctx, s.job.TenantID, s.taskID(), s.job.JobID); err != nil {
 			return err
+		}
+		if state != orchestration.JobStateEscalating {
+			s.lastState = state
 		}
 		step, ok := handlers[state]
 		if !ok {
@@ -519,6 +532,28 @@ func (s *runnerRun) drive(ctx context.Context) error {
 			return err
 		}
 		state = next
+	}
+}
+
+// recordSummary records the run's structured public summary as a task
+// artifact. A cancelled run records none: it did not conclude, and the
+// run that resumes it will. A summary that cannot be recorded is put on
+// the job's audit trail and never replaces the run's own error.
+func (s *runnerRun) recordSummary(ctx context.Context, err error) {
+	if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return
+	}
+	job := s.job.Context()
+	if job == nil || job.TaskID == "" {
+		return
+	}
+	summary := summarizeRun(runSummaryInput{
+		TaskID: job.TaskID, JobID: s.job.JobID, Attempt: job.Attempt, Err: err,
+		LastState: s.lastState, ParkKind: s.parked.kind, FaultClass: s.parked.faultClass,
+		FailedChecks: s.failedChecks, Delivery: s.delivery,
+	})
+	if rerr := s.runner.hooks.recordRunSummary(ctx, job, summary); rerr != nil {
+		s.job.Audit(auditRunSummary, "the run summary was not recorded: "+rerr.Error())
 	}
 }
 
@@ -2338,6 +2373,7 @@ func (s *runnerRun) validate(ctx context.Context) (orchestration.JobState, error
 	// was misread as a vanished container, and nothing on the job said the
 	// build had run at all.
 	failed := auditVerificationResults(s.job, results)
+	s.failedChecks = failed
 	if err != nil {
 		return s.refusedVerification(err)
 	}

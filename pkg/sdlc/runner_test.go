@@ -1286,6 +1286,28 @@ func TestRunner_DeliversTheIssueThroughExactlyOneSession(t *testing.T) {
 	}
 }
 
+func TestRunner_ADeliveredRunRecordsACompletedSummary(t *testing.T) {
+	rig := newRunnerRig(t)
+	rig.rebindVerification(t, "true")
+	rig.workerWrote()
+	rig.verdictOnPublish("APPROVED", "lgtm")
+
+	if err := rig.runner.Run(context.Background(), rig.job(t)); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	delivery, err := rig.store.GetDelivery(context.Background(), testTenant, testTask)
+	if err != nil {
+		t.Fatal(err)
+	}
+	summary := submittedRunSummary(t, rig, "run_summary@a1")
+	if summary.Outcome != RunOutcomeCompleted || summary.Cause != "" {
+		t.Fatalf("summary = %+v, want a completed run", summary)
+	}
+	if !delivery.PullRequest.Opened() || summary.PullRequest != delivery.PullRequest.Number {
+		t.Fatalf("pull request = %d, want the delivery's %d", summary.PullRequest, delivery.PullRequest.Number)
+	}
+}
+
 // TestRunner_WorkspaceSpecNamesTheProjectAndItsContextRepos: what the
 // container is told to clone is the project plus every context repository the
 // project names, on the planned branch.
@@ -1991,6 +2013,58 @@ func TestRunner_AFailedVerificationRecordsAndEscalatesItsFailingLines(t *testing
 	// Output that happens to spell a marker must not become a condition.
 	if condition, err := ParseUnblockCondition(escalated.Reason); err != nil || condition.Kind != UnblockOwnerRuling {
 		t.Errorf("the escalation's condition = %+v, %v; want the owner ruling it was composed with", condition, err)
+	}
+}
+
+// submittedRunSummary decodes the named run_summary artifact the run
+// submitted for the test task.
+func submittedRunSummary(t *testing.T, rig *runnerRig, name string) RunSummary {
+	t.Helper()
+	for _, artifact := range rig.tasks.submitted(testTask) {
+		if artifact.Name != name {
+			continue
+		}
+		var summary RunSummary
+		if err := json.Unmarshal(artifact.Content, &summary); err != nil {
+			t.Fatalf("decode %s: %v", name, err)
+		}
+		return summary
+	}
+	t.Fatalf("the run submitted no %s artifact", name)
+	return RunSummary{}
+}
+
+func TestRunner_AFailedVerificationRecordsARunSummary(t *testing.T) {
+	rig := newRunnerRig(t)
+	rig.rebindVerification(t, "make test")
+	if err := rig.rebind(context.Background(), func(b *ProjectBinding) {
+		b.Verification = []string{"make test"}
+		b.MaxReviewRounds = 1
+		b.Forge.Labels[LabelEscalated] = "factory:escalated"
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rig.container.scriptVerification("make test", &orchestration.ExecResult{
+		ExitCode: 2,
+		Stdout:   "--- FAIL: TestOpenVolume (0.01s)\nFAIL\n",
+		Stderr:   "make: *** [Makefile:12: test] Error 1\n",
+	})
+	rig.workerWrote()
+
+	err := rig.runner.Run(context.Background(), rig.job(t, "make test"))
+	var escalated *EscalatedError
+	if !errors.As(err, &escalated) {
+		t.Fatalf("Run err = %v, want an escalation", err)
+	}
+	summary := submittedRunSummary(t, rig, "run_summary@a1")
+	if summary.Outcome != RunOutcomeParked || summary.Stage != StageVerification {
+		t.Fatalf("summary = %+v, want a park at verification", summary)
+	}
+	if len(summary.Checks) == 0 || summary.Checks[0].Program != checkProgram("make test") || summary.Checks[0].ExitCode != 2 {
+		t.Fatalf("checks = %+v, want the failing command", summary.Checks)
+	}
+	if summary.AuditRecord != auditVerification {
+		t.Fatalf("audit record = %q, want %q", summary.AuditRecord, auditVerification)
 	}
 }
 

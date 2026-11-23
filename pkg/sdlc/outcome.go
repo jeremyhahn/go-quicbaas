@@ -592,13 +592,17 @@ func (h *Hooks) resolveConcluded(ctx context.Context, tenantID string, task *orc
 }
 
 // conclusionEvidence is what the concluded task itself says about why it
-// stopped: the park reason for a parked task, and otherwise the last attempt's
-// result — which is where the runner records the failure that ended the
-// attempt, and where a worker's final reply is carried when the attempt kept
-// one.
+// stopped: the park reason for a parked task, and otherwise the last
+// attempt's structured run summary. The summary replaces the raw result
+// output, which can carry command output, hosts, paths and tokens; the
+// result output is quoted only for a task with no summary, one concluded
+// before summaries existed.
 func conclusionEvidence(task *orchestration.Task) string {
 	if reason := strings.TrimSpace(task.BlockedReason); reason != "" {
 		return reason
+	}
+	if summary, ok := latestRunSummary(task); ok {
+		return summary.Render()
 	}
 	if task.Result != nil {
 		return strings.TrimSpace(task.Result.Output)
