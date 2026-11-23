@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -165,5 +166,48 @@ func TestFlushPendingHistory_UnderStripeLock(t *testing.T) {
 				tc.check(t, storage.mockJobStorage, job)
 			}
 		})
+	}
+}
+
+// TestGetJobHistory_FlushesPendingOfCompletedJob completes a one-shot remote
+// job while its history write fails, so the record stays pending on a job
+// that never runs again. Reading the job's history writes it.
+func TestGetJobHistory_FlushesPendingOfCompletedJob(t *testing.T) {
+	storage := newMockJobStorage()
+	engine := New(DefaultConfig(), storage)
+	oneShot := remoteJob(time.Minute)
+	oneShot.Type, oneShot.Schedule, oneShot.ExecuteAt = JobTypeOneShot, "", oneShot.NextRun
+	job := seedRunningJob(t, storage, oneShot)
+
+	done := fire(engine, job)
+	run := openRun(t, engine, job.ID)
+	storage.errMu.Lock()
+	storage.saveExecutionErr = errors.New("disk full")
+	storage.errMu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	output := []byte{0x00, 0x01, 'o', 'k'}
+	if err := engine.CompleteRemoteRun(ctx, run.RemoteRunRef, &JobResult{Success: true, Message: "renewed", Output: output}, nil); err != nil {
+		t.Fatalf("a completion whose history was kept pending: %v", err)
+	}
+	waitDone(t, done)
+	storage.errMu.Lock()
+	storage.saveExecutionErr = nil
+	storage.errMu.Unlock()
+
+	if stored := storedJob(t, storage, job.ID); stored.Status != JobStatusCompleted || len(stored.PendingHistory) != 1 {
+		t.Fatalf("job is %s with %d pending records, want completed with 1", stored.Status, len(stored.PendingHistory))
+	}
+
+	executions, err := engine.GetJobHistory(ctx, job.ID, "tenant-a", 10)
+	if err != nil {
+		t.Fatalf("GetJobHistory: %v", err)
+	}
+	if len(executions) != 1 || string(executions[0].Result) != string(output) {
+		t.Fatalf("history is %+v, want the completed run with the worker's output bytes", executions)
+	}
+	if pending := storedJob(t, storage, job.ID).PendingHistory; len(pending) != 0 {
+		t.Fatalf("job still holds %d pending records after its history was read", len(pending))
 	}
 }

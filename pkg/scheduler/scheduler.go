@@ -1044,6 +1044,18 @@ func (s *SchedulerEngine) GetJobHistory(ctx context.Context, jobID uint64, tenan
 		return nil, JobNotFoundError{JobID: jobID}
 	}
 
+	// History left pending on the job is written first. A terminal job never
+	// runs again, so no execution would ever write it. A failed flush leaves
+	// it pending, and the read returns what storage holds.
+	if len(job.PendingHistory) > 0 {
+		lock := s.jobLock(job.ID)
+		lock.Lock()
+		if err := s.flushPendingHistory(ctx, job); err != nil {
+			s.logWarn("Job %d: pending history could not be written on read: %v; it stays pending on the job", job.ID, err)
+		}
+		lock.Unlock()
+	}
+
 	executions, err := s.storage.GetExecutions(ctx, jobID, tenantID, limit)
 	if err != nil {
 		return nil, ErrStorageError{Op: "GetExecutions", Cause: err}
