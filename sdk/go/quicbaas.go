@@ -1647,6 +1647,8 @@ const (
 
 	// AccountStatusError marks an account whose last refresh failed.
 	AccountStatusError = account.StatusError
+	// AccountStatusAwaitingCredential marks an account waiting for its first credential.
+	AccountStatusAwaitingCredential = account.StatusAwaitingCredential
 
 	// AccountRefreshNone marks a credential that never needs refreshing.
 	AccountRefreshNone = account.RefreshNone
