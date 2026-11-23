@@ -31,6 +31,10 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
 )
 
+// DueJobFilter reports whether this node may run a due job. A nil filter
+// accepts every due job.
+type DueJobFilter func(job *Job) bool
+
 // JobStorage defines the interface for job persistence.
 type JobStorage interface {
 	CreateJob(ctx context.Context, job *Job) error
@@ -38,7 +42,12 @@ type JobStorage interface {
 	UpdateJob(ctx context.Context, job *Job) error
 	DeleteJob(ctx context.Context, id uint64, tenantID string) error
 	ListJobs(ctx context.Context, query *JobQuery) ([]*Job, string, error)
-	GetJobsDueForExecution(ctx context.Context, before time.Time, limit int) ([]*Job, error)
+
+	// GetJobsDueForExecution returns up to limit jobs due before before that
+	// eligible accepts. The limit counts only accepted jobs, so jobs this
+	// node cannot run never crowd out ones it can.
+	GetJobsDueForExecution(ctx context.Context, before time.Time, limit int, eligible DueJobFilter) ([]*Job, error)
+
 	SaveExecution(ctx context.Context, exec *JobExecution) error
 	GetExecutions(ctx context.Context, jobID uint64, tenantID string, limit int) ([]*JobExecution, error)
 
@@ -1142,7 +1151,7 @@ func (s *SchedulerEngine) processDueJobs(ctx context.Context) {
 	storageCtx, cancel := context.WithTimeout(ctx, s.config.DefaultTimeout)
 	defer cancel()
 
-	jobs, err := s.storage.GetJobsDueForExecution(storageCtx, now, s.config.MaxConcurrentJobs)
+	jobs, err := s.storage.GetJobsDueForExecution(storageCtx, now, s.config.MaxConcurrentJobs, s.dueJobFilter())
 	if err != nil {
 		s.logError(sweepLogPrefix+" failed: component=scheduler error=%q", err.Error())
 		s.storageErrors.Add(1)
@@ -1294,6 +1303,32 @@ func (s *SchedulerEngine) shouldExecute(job *Job) bool {
 		return false
 	}
 	return true
+}
+
+// placementAllows is shouldExecute's decision, without logging, for a
+// leadership state sampled by the caller: a job with affinity runs only on
+// its node, any other job only on the leader.
+func (s *SchedulerEngine) placementAllows(job *Job, isLeader bool) bool {
+	if job.NodeAffinity != "" && s.nodeID != "" {
+		return job.NodeAffinity == s.nodeID
+	}
+	return isLeader
+}
+
+// dueJobFilter returns the filter a due-job sweep hands its storage so the
+// batch limit counts only jobs this node may run. Leadership is sampled once
+// per sweep; shouldExecute re-checks it before each job fires.
+func (s *SchedulerEngine) dueJobFilter() DueJobFilter {
+	isLeader := true
+	if s.leader != nil {
+		leader, err := s.leader.IsLeader()
+		if err != nil {
+			s.logWarn("Due-job sweep treats this node as a follower: leader check failed: %v", err)
+			leader = false
+		}
+		isLeader = leader
+	}
+	return func(job *Job) bool { return s.placementAllows(job, isLeader) }
 }
 
 // triggerRequest is one queued manual trigger: the job, the scope it was

@@ -454,15 +454,18 @@ func (s *Storage) ListJobs(ctx context.Context, query *scheduler.JobQuery) ([]*s
 }
 
 // GetJobsDueForExecution returns jobs that need to run.
-func (s *Storage) GetJobsDueForExecution(ctx context.Context, before time.Time, limit int) ([]*scheduler.Job, error) {
+func (s *Storage) GetJobsDueForExecution(ctx context.Context, before time.Time, limit int, eligible scheduler.DueJobFilter) ([]*scheduler.Job, error) {
 	if limit <= 0 {
 		limit = 100
 	}
 
+	// A job the caller cannot run is not counted against the limit, so a
+	// batch of such jobs never hides the runnable ones behind it.
 	isDue := func(job *scheduler.Job) bool {
 		return job.Status == scheduler.JobStatusPending &&
 			!job.NextRun.IsZero() &&
-			job.NextRun.Before(before)
+			job.NextRun.Before(before) &&
+			(eligible == nil || eligible(job))
 	}
 
 	// Scan system jobs prefix for pending jobs
