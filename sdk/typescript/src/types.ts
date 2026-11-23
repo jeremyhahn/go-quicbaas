@@ -2479,78 +2479,10 @@ export interface SetDefaultKeyResponse {
   timestamp: string;
 }
 
-// RotateRootKeyResponse confirms root key rotation.
-export interface RotateRootKeyResponse {
-  success: boolean;
-  message: string;
-  timestamp: string;
-}
-
-// RekeyRequest initiates a Shamir secret sharing rekey operation.
-export interface RekeyRequest {
-  new_threshold: number;
-  new_total_shares: number;
-}
-
-// RekeyResponse contains the new Shamir shares after a rekey.
-export interface RekeyResponse {
-  // shares are base64-encoded Shamir share bytes.
-  shares: string[];
-  version: number;
-  timestamp: string;
-}
-
-// =============================================================================
-// Seal Types
-// Mirrors /api/v1/seal REST routes.
-// =============================================================================
-
-// SealStatus represents the current sealed/unsealed state of the database.
-// Field names match the daemon's SealStatusResponse JSON shape.
-export interface SealStatus {
-  sealed: boolean;
-  initialized: boolean;
-  mode?: string;
-  threshold: number;
-  total_shares: number;
-  shares_provided: number;
-  shares_received?: number;
-  tpm_available?: boolean;
-  cluster_nodes?: number;
-  version: number;
-  timestamp?: string;
-  cluster_name?: string;
-}
-
-// SealInitRequest initialises the seal with Shamir secret sharing parameters.
-export interface SealInitRequest {
-  secret_shares: number;
-  secret_threshold: number;
-}
-
-// SealInitResponse contains the generated key shares and root token.
-export interface SealInitResponse {
-  keys: string[];
-  root_token: string;
-}
-
-// UnsealRequest submits one key share toward unsealing.
-export interface UnsealRequest {
-  key: string;
-}
-
-// UnsealResponse reports the updated seal state after submitting a share.
-export interface UnsealResponse {
-  sealed: boolean;
-  progress: number;
-  threshold: number;
-}
-
 // =============================================================================
 // Barrier Types
 // Mirrors /api/v1/barrier REST routes and go-qrdb transport/barrier_types.go.
-// Replaces the legacy Seal* surface; Seal* aliases below are kept for one
-// release as deprecated re-exports.
+// The barrier is go-qrdb's; the SDK has no seal surface of its own.
 // =============================================================================
 
 // BarrierStatusResponse describes the current state of the cryptographic
@@ -3119,38 +3051,6 @@ export interface ListClusterNodesResponse {
   total_count: number;
   timestamp: string;
 }
-
-// =============================================================================
-// Seal* Deprecation Aliases
-// Re-export Seal* names that point at the new Barrier* shapes so existing
-// callers continue to compile. New code should use Barrier* directly. These
-// aliases will be removed one release after the unification ships.
-// =============================================================================
-
-/** @deprecated Use BarrierStatusResponse. */
-export type SealStatusResponse = BarrierStatusResponse;
-/** @deprecated Use BarrierInitRequest. */
-export type SealBarrierInitRequest = BarrierInitRequest;
-/** @deprecated Use BarrierUnsealRequest. */
-export type SealBarrierUnsealRequest = BarrierUnsealRequest;
-/** @deprecated Use BarrierShamirInitRequest. */
-export type SealShamirInitRequest = BarrierShamirInitRequest;
-/** @deprecated Use BarrierShamirInitResponse. */
-export type SealShamirInitResponse = BarrierShamirInitResponse;
-/** @deprecated Use BarrierUnsealShareRequest. */
-export type SealUnsealShareRequest = BarrierUnsealShareRequest;
-/** @deprecated Use BarrierUnsealShareResponse. */
-export type SealUnsealShareResponse = BarrierUnsealShareResponse;
-/** @deprecated Use BarrierRekeyRequest. */
-export type SealRekeyRequest = BarrierRekeyRequest;
-/** @deprecated Use BarrierRekeyResponse. */
-export type SealRekeyResponse = BarrierRekeyResponse;
-/** @deprecated Use BarrierGenerateRecoveryKeysRequest. */
-export type SealGenerateRecoveryKeysRequest = BarrierGenerateRecoveryKeysRequest;
-/** @deprecated Use BarrierRecoveryKeysResponse. */
-export type SealRecoveryKeysResponse = BarrierRecoveryKeysResponse;
-/** @deprecated Use BarrierRootTokenResponse. */
-export type SealRootTokenResponse = BarrierRootTokenResponse;
 
 // =============================================================================
 // Inference Types

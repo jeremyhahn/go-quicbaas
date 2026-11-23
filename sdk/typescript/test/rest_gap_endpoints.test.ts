@@ -249,56 +249,6 @@ describe('RestSecretsClient.listVersions', () => {
 });
 
 // =============================================================================
-// Gap 4: Seal rekey + rotateRootKey
-// =============================================================================
-
-describe('RestSealClient.rekey', () => {
-  it('POSTs to /api/v1/seal/rekey with threshold and shares', async () => {
-    const body = { shares: ['aGVsbG8=', 'd29ybGQ='], version: 2, timestamp: '2026-04-25T00:00:00Z' };
-    fetchMock.mockResolvedValue(makeResponse(body));
-
-    const client = new RestClient('http://localhost');
-    const result = await client.seal.rekey({ new_threshold: 2, new_total_shares: 5 });
-
-    expect(result.version).toBe(2);
-    expect(result.shares).toHaveLength(2);
-
-    const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe('http://localhost/api/v1/seal/rekey');
-    expect(init.method).toBe('POST');
-    expect(JSON.parse(init.body)).toEqual({ new_threshold: 2, new_total_shares: 5 });
-  });
-
-  it('throws APIError on 503 when sealed', async () => {
-    fetchMock.mockResolvedValue(makeErrorResponse(503, 'database is sealed'));
-    const client = new RestClient('http://localhost');
-    await expect(client.seal.rekey({ new_threshold: 1, new_total_shares: 1 })).rejects.toBeInstanceOf(APIError);
-  });
-});
-
-describe('RestSealClient.rotateRootKey', () => {
-  it('POSTs to /api/v1/seal/rotate-root with no body', async () => {
-    const body = { success: true, message: 'root key rotated', timestamp: '2026-04-25T00:00:00Z' };
-    fetchMock.mockResolvedValue(makeResponse(body));
-
-    const client = new RestClient('http://localhost');
-    const result = await client.seal.rotateRootKey();
-
-    expect(result.success).toBe(true);
-
-    const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe('http://localhost/api/v1/seal/rotate-root');
-    expect(init.method).toBe('POST');
-  });
-
-  it('throws APIError on 503 when sealed', async () => {
-    fetchMock.mockResolvedValue(makeErrorResponse(503, 'database is sealed'));
-    const client = new RestClient('http://localhost');
-    await expect(client.seal.rotateRootKey()).rejects.toBeInstanceOf(APIError);
-  });
-});
-
-// =============================================================================
 // Gap 5: Embeddings setProviderStatus
 // =============================================================================
 

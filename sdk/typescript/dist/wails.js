@@ -788,7 +788,6 @@ export class WailsClient {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     cluster = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    seal = null;
     /**
      * sshKeys is the legacy backward-compat accessor.
      * Points to ssh.keys — the same WailsSSHKeysClient instance.

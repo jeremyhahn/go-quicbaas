@@ -63,7 +63,6 @@ export declare class GrpcWebClient implements Client {
     readonly tenantBarrier: any;
     readonly ceremony: CeremonyClient;
     readonly cluster: any;
-    readonly seal: any;
     readonly sshKeys: any;
     readonly ssh: any;
     constructor(baseUrl: string, _config?: ClientConfig);

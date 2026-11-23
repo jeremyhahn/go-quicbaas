@@ -546,32 +546,3 @@ describe('McpBarrierClient.seal', () => {
     await expect(new McpClient(tlsEndpoint).barrier.seal({ so_pin: 'wrong' })).rejects.toBeInstanceOf(McpError);
   });
 });
-
-// =============================================================================
-// Deprecated SealClient still works and warns once
-// =============================================================================
-
-describe('Deprecated SealClient alias', () => {
-  it('routes legacy seal calls to the legacy /api/v1/seal endpoints', async () => {
-    fetchMock.mockResolvedValue(
-      jsonResponse({
-        sealed: true,
-        initialized: true,
-        threshold: 2,
-        total_shares: 3,
-        shares_provided: 0,
-        version: 1,
-      }),
-    );
-
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const client = new RestClient('http://localhost');
-    const status = await client.seal.status();
-    warnSpy.mockRestore();
-
-    expect(status.sealed).toBe(true);
-
-    const [url] = fetchMock.mock.calls[0];
-    expect(url).toBe('http://localhost/api/v1/seal/status');
-  });
-});

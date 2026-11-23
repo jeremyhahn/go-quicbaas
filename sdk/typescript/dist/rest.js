@@ -3519,57 +3519,6 @@ export class RestBootstrapClient {
         return this.fetchMethod('spki', req);
     }
 }
-// ---------------------------------------------------------------------------
-// RestSealClient — deprecated alias preserved for one release.
-//
-// This class warns once per construction and delegates directly to the new
-// RestBarrierClient. The legacy /api/v1/seal endpoints remain available on
-// the daemon (with Deprecation/Sunset headers) so existing callers that
-// instantiate RestSealClient out-of-band continue to work, but new code
-// should migrate to client.barrier directly.
-// ---------------------------------------------------------------------------
-let sealDeprecationWarned = false;
-// emitSealDeprecationWarning prints a single console warning describing the
-// rename. Repeated constructions are no-ops to avoid log spam.
-function emitSealDeprecationWarning() {
-    if (sealDeprecationWarned) {
-        return;
-    }
-    sealDeprecationWarned = true;
-    // eslint-disable-next-line no-console
-    console.warn('SealClient is deprecated, use BarrierClient (client.barrier). ' +
-        'The Seal* surface will be removed one release after the unification ships.');
-}
-class RestSealClient {
-    http;
-    constructor(baseUrl, config = {}) {
-        emitSealDeprecationWarning();
-        this.http = newFetchHelper(baseUrl, config);
-    }
-    async status() {
-        return this.http.fetchJSON('/api/v1/seal/status');
-    }
-    async unseal(req) {
-        return this.http.fetchJSON('/api/v1/seal/unseal', {
-            method: 'POST',
-            body: JSON.stringify(req),
-        });
-    }
-    async seal() {
-        await this.http.fetchVoid('/api/v1/seal/seal', { method: 'POST' });
-    }
-    async rekey(req) {
-        return this.http.fetchJSON('/api/v1/seal/rekey', {
-            method: 'POST',
-            body: JSON.stringify(req),
-        });
-    }
-    async rotateRootKey() {
-        return this.http.fetchJSON('/api/v1/seal/rotate-root', {
-            method: 'POST',
-        });
-    }
-}
 // throwSSHError maps an HTTP response onto a typed SSH error and throws it.
 // The caller must ensure resp.ok is false before calling this.
 async function throwSSHError(resp) {
@@ -3898,8 +3847,6 @@ export class RestClient {
     ceremony;
     bootstrap;
     cluster;
-    /** @deprecated Use barrier. The legacy seal accessor is kept for one release. */
-    seal;
     /**
      * sshKeys is the legacy backward-compat accessor.
      * Points to the same RestSSHKeysClient instance as ssh.keys.
@@ -3940,20 +3887,6 @@ export class RestClient {
         this.ceremony = new RestCeremonyClient(baseUrl, config);
         this.bootstrap = new RestBootstrapClient(baseUrl, config);
         this.cluster = new RestClusterClient(baseUrl, config);
-        // RestSealClient is a deprecated alias retained for one release. Construction
-        // is lazy via a getter so apps that never touch `client.seal` (which is the
-        // expected case after the unification) don't pay for the deprecation
-        // warning on every client instantiation. New code must use client.barrier;
-        // this accessor will be removed one release post-cutover.
-        let _seal = null;
-        Object.defineProperty(this, 'seal', {
-            get: () => {
-                if (_seal === null)
-                    _seal = new RestSealClient(baseUrl, config);
-                return _seal;
-            },
-            enumerable: true,
-        });
         // Build the scoped SSH client group first, then alias sshKeys to ssh.keys
         // so both accessors point at the same RestSSHKeysClient instance.
         this.ssh = new RestSSHClient(baseUrl, config);

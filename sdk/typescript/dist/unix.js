@@ -197,7 +197,6 @@ export class UnixClient {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     cluster = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    seal = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     sshKeys = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

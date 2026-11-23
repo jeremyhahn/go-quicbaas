@@ -1518,50 +1518,6 @@ export interface SetDefaultKeyResponse {
     previous_default?: string;
     timestamp: string;
 }
-export interface RotateRootKeyResponse {
-    success: boolean;
-    message: string;
-    timestamp: string;
-}
-export interface RekeyRequest {
-    new_threshold: number;
-    new_total_shares: number;
-}
-export interface RekeyResponse {
-    shares: string[];
-    version: number;
-    timestamp: string;
-}
-export interface SealStatus {
-    sealed: boolean;
-    initialized: boolean;
-    mode?: string;
-    threshold: number;
-    total_shares: number;
-    shares_provided: number;
-    shares_received?: number;
-    tpm_available?: boolean;
-    cluster_nodes?: number;
-    version: number;
-    timestamp?: string;
-    cluster_name?: string;
-}
-export interface SealInitRequest {
-    secret_shares: number;
-    secret_threshold: number;
-}
-export interface SealInitResponse {
-    keys: string[];
-    root_token: string;
-}
-export interface UnsealRequest {
-    key: string;
-}
-export interface UnsealResponse {
-    sealed: boolean;
-    progress: number;
-    threshold: number;
-}
 export interface BarrierStatusResponse {
     /** True when the barrier is in sealed state. */
     sealed: boolean;
@@ -1947,30 +1903,6 @@ export interface ListClusterNodesResponse {
     total_count: number;
     timestamp: string;
 }
-/** @deprecated Use BarrierStatusResponse. */
-export type SealStatusResponse = BarrierStatusResponse;
-/** @deprecated Use BarrierInitRequest. */
-export type SealBarrierInitRequest = BarrierInitRequest;
-/** @deprecated Use BarrierUnsealRequest. */
-export type SealBarrierUnsealRequest = BarrierUnsealRequest;
-/** @deprecated Use BarrierShamirInitRequest. */
-export type SealShamirInitRequest = BarrierShamirInitRequest;
-/** @deprecated Use BarrierShamirInitResponse. */
-export type SealShamirInitResponse = BarrierShamirInitResponse;
-/** @deprecated Use BarrierUnsealShareRequest. */
-export type SealUnsealShareRequest = BarrierUnsealShareRequest;
-/** @deprecated Use BarrierUnsealShareResponse. */
-export type SealUnsealShareResponse = BarrierUnsealShareResponse;
-/** @deprecated Use BarrierRekeyRequest. */
-export type SealRekeyRequest = BarrierRekeyRequest;
-/** @deprecated Use BarrierRekeyResponse. */
-export type SealRekeyResponse = BarrierRekeyResponse;
-/** @deprecated Use BarrierGenerateRecoveryKeysRequest. */
-export type SealGenerateRecoveryKeysRequest = BarrierGenerateRecoveryKeysRequest;
-/** @deprecated Use BarrierRecoveryKeysResponse. */
-export type SealRecoveryKeysResponse = BarrierRecoveryKeysResponse;
-/** @deprecated Use BarrierRootTokenResponse. */
-export type SealRootTokenResponse = BarrierRootTokenResponse;
 export interface InferenceRequest {
     backend: string;
     model?: string;

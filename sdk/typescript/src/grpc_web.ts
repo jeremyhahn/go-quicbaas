@@ -408,7 +408,6 @@ export class GrpcWebClient implements Client {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly cluster: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly seal: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly sshKeys: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

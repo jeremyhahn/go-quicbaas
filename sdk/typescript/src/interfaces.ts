@@ -129,18 +129,12 @@ import type {
   DisableFleetNodeResponse,
   EnableFleetNodeRequest,
   EnableFleetNodeResponse,
-  RekeyRequest,
-  RekeyResponse,
   RotateKeyResponse,
-  RotateRootKeyResponse,
   RotateSecretResponse,
   RotateSessionAccountRequest,
   RotateSessionAccountResponse,
   ListSecretVersionsResponse,
   SetDefaultKeyResponse,
-  SealInitRequest,
-  SealInitResponse,
-  SealStatus,
   BarrierStatusResponse,
   BarrierInitRequest,
   BarrierUnsealRequest,
@@ -197,8 +191,6 @@ import type {
   StoreSecretRequest,
   SubscribeSessionEventsRequest,
   Task,
-  UnsealRequest,
-  UnsealResponse,
   WorkflowDefinition,
   AttentionItem,
   AttentionResolveRequest,
@@ -1009,13 +1001,12 @@ export interface SecretsClient {
 }
 
 // ---------------------------------------------------------------------------
-// Barrier sub-client (replaces SealClient)
+// Barrier sub-client
 // ---------------------------------------------------------------------------
 
 // BarrierClient manages the cryptographic barrier that protects data at
 // rest. Paths: /api/v1/barrier. Mirrors go-qrdb's transport.BarrierClient
-// surface. Replaces the legacy SealClient interface; existing
-// SealClient-typed callers continue to work via the deprecation alias below.
+// surface. The barrier is go-qrdb's; the SDK has no seal client of its own.
 export interface BarrierClient {
   // status returns the current sealed/unsealed state of the barrier.
   // Maps to GET /api/v1/barrier/status.
@@ -1118,25 +1109,6 @@ export interface TenantBarrierClient {
   // tenantBarrierStatus returns the current state of the tenant's barrier.
   // Maps to GET /api/v1/tenants/{id}/barrier/status.
   tenantBarrierStatus(tenantId: string): Promise<TenantBarrierStatusResponse>;
-}
-
-/**
- * SealClient is the legacy alias for BarrierClient. Its surface is preserved
- * for one release so existing callers continue to compile. New code must use
- * BarrierClient directly.
- *
- * The runtime RestSealClient wraps RestBarrierClient and emits a single
- * deprecation warning per construction. See rest.ts for the implementation.
- *
- * @deprecated Use BarrierClient. The Seal* surface will be removed one
- *   release after the Barrier unification ships.
- */
-export interface SealClient {
-  status(): Promise<SealStatus>;
-  unseal(req: UnsealRequest): Promise<UnsealResponse>;
-  seal(): Promise<void>;
-  rekey(req: RekeyRequest): Promise<RekeyResponse>;
-  rotateRootKey(): Promise<RotateRootKeyResponse>;
 }
 
 // ---------------------------------------------------------------------------
@@ -1399,7 +1371,7 @@ export interface Client {
   readonly dynamicSecrets: DynamicSecretsClient;
   /**
    * barrier is the canonical surface for sealed-storage operations.
-   * Replaces the legacy seal accessor; new code must use barrier.
+   * The barrier is go-qrdb's; there is no separate seal accessor.
    */
   readonly barrier: BarrierClient;
   /**
@@ -1418,11 +1390,6 @@ export interface Client {
    * and rebalance writes when a caller needs them). Path: /api/v1/cluster.
    */
   readonly cluster: ClusterClient;
-  /**
-   * @deprecated Use barrier. Kept for one release so existing callers
-   * continue to compile. The seal accessor proxies to barrier.
-   */
-  readonly seal: SealClient;
   /**
    * sshKeys is the legacy flat accessor for backward compatibility.
    * Existing callers using client.sshKeys.list()/create()/get()/remove()
