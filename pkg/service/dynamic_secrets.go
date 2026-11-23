@@ -28,6 +28,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/lease"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	"github.com/jeremyhahn/go-quicbaas/pkg/util/metrics"
 )
 
@@ -51,6 +52,10 @@ const (
 	// only thing this constant can unlock is a map lookup.
 	leaseMetaCredentialID = "credential_id"
 	leaseMetaGenerator    = "generator"
+	// leaseMetaTenantID is the tenant the credential was generated in. The
+	// reaper runs with no request context, so expiry teardown reads the
+	// tenant from here.
+	leaseMetaTenantID = "tenant_id"
 
 	// MinRoleTTL is the minimum allowed default TTL for a role.
 	MinRoleTTL = 1 * time.Minute
@@ -155,6 +160,12 @@ func NewDynamicSecretsHandler(ctx context.Context, config *DynamicSecretsConfig)
 	// Load existing roles from storage
 	if err := svc.loadRoles(ctx); err != nil {
 		return nil, err
+	}
+
+	// Expiry reaches the material: a lease manager that offers an expire
+	// hook tears down an expired lease's credential before tombstoning it.
+	if hs, ok := config.LeaseManager.(interface{ SetExpireHook(lease.ExpireHook) }); ok {
+		hs.SetExpireHook(svc.destroyExpiredCredential)
 	}
 
 	svc.logger.Info("Dynamic secrets service initialized")
@@ -545,6 +556,9 @@ func (s *dynamicSecretsHandler) GenerateCredential(ctx context.Context, req *Gen
 			leaseMetaGenerator:    role.GeneratorType,
 		},
 	}
+	if tenantID, ok := tenantctx.Lookup(ctx); ok && tenantID != "" {
+		leaseOpts.Metadata[leaseMetaTenantID] = tenantID
+	}
 
 	credLease, err := s.leaseManager.CreateLease(ctx, leasePath, ttl, leaseOpts)
 	if err != nil {
@@ -556,7 +570,16 @@ func (s *dynamicSecretsHandler) GenerateCredential(ctx context.Context, req *Gen
 	credential.LeaseID = credLease.LeaseID
 
 	// Store credential
-	if err := s.storeCredential(ctx, credential); err != nil {
+	// A generator that keeps its own material (credentials.MaterialKeeper)
+	// gets a record with the IDs and times only: the secret Data goes to the
+	// caller once, in this response, and is never written to the store.
+	record := credential
+	if keepsMaterial(generator) {
+		stripped := *credential
+		stripped.Data = nil
+		record = &stripped
+	}
+	if err := s.storeCredential(ctx, record); err != nil {
 		s.metrics.credentialsGenerated.With(role.GeneratorType, "error").Inc()
 		return nil, err
 	}
@@ -748,6 +771,21 @@ func (s *dynamicSecretsHandler) destroyLeasedCredential(ctx context.Context, lea
 	return nil
 }
 
+// destroyExpiredCredential is the lease manager's expiry hook: it tears
+// down the credential an expired lease governed, in the tenant the lease
+// was issued in, before the reaper marks the lease revoked.
+func (s *dynamicSecretsHandler) destroyExpiredCredential(ctx context.Context, l *lease.Lease) error {
+	if l == nil || l.Metadata[leaseMetaCredentialID] == "" || l.Metadata[leaseMetaGenerator] == "" {
+		// Not a generated credential (an account delivery grant shares this
+		// manager): nothing to tear down.
+		return nil
+	}
+	if tenantID := l.Metadata[leaseMetaTenantID]; tenantID != "" {
+		ctx = tenantctx.WithTenant(ctx, tenantID)
+	}
+	return s.destroyLeasedCredential(ctx, l.LeaseID)
+}
+
 // loadCredential reads one generated credential record, reporting a nil
 // credential for one that is not there.
 func (s *dynamicSecretsHandler) loadCredential(
@@ -829,7 +867,15 @@ func (s *dynamicSecretsHandler) storeRole(ctx context.Context, role *credentials
 	return nil
 }
 
-// storeCredential persists a credential to storage.
+// keepsMaterial reports whether generator keeps the secret material it
+// generates in its own store (credentials.MaterialKeeper).
+func keepsMaterial(generator credentials.CredentialGenerator) bool {
+	keeper, ok := generator.(credentials.MaterialKeeper)
+	return ok && keeper.KeepsMaterial()
+}
+
+// storeCredential persists a credential to storage. GenerateCredential hands
+// it a record without Data for a generator that keeps its own material.
 func (s *dynamicSecretsHandler) storeCredential(ctx context.Context, credential *credentials.Credential) error {
 	data, err := json.Marshal(credential)
 	if err != nil {
