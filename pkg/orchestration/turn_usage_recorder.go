@@ -228,6 +228,10 @@ type completedTurn struct {
 	// still draws on its account's cap.
 	admittedAccountID string
 
+	// admission is the turn's hold on its session's shared admission
+	// record; nil when the ledger keeps none.
+	admission *turnAdmissionHold
+
 	// engine is the backend registry name that served the turn; model is the
 	// model it resolved to.
 	engine string

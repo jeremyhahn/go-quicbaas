@@ -2216,6 +2216,10 @@ type promptTurnPlan struct {
 	// turn against. runPromptTurn sets it; the turn is recorded against it
 	// when this node's registry misses the session.
 	admittedAccountID string
+
+	// admission is the turn's hold on its session's shared admission
+	// record, nil when the ledger keeps none. runPromptTurn sets it.
+	admission *turnAdmissionHold
 }
 
 // planPromptTurn validates a prompt request and resolves everything the turn
@@ -2360,6 +2364,7 @@ func (p *promptTurnPlan) completedTurn(sessionID, servedModel string, duration t
 		sessionID:         sessionID,
 		projectID:         p.request.ProjectID,
 		admittedAccountID: p.admittedAccountID,
+		admission:         p.admission,
 		engine:            p.backendName,
 		model:             resolveTurnModel(servedModel, p.model, p.backend),
 		duration:          duration,
@@ -2442,6 +2447,23 @@ func (s *agentServiceImpl) runPromptTurn(ctx context.Context, plan *promptTurnPl
 	// this one. While the retry fails the turn is refused.
 	if err := s.flushPendingConsumption(ctx, plan.request.SessionID); err != nil {
 		return nil, err
+	}
+	// ONE TURN AT A TIME PER SESSION ACROSS NODES. The lock above is this
+	// node's; the admission record is in the ledger's shared store, held
+	// from before the spend check until the turn's consumption is visible
+	// to every node. See turn_admission.go.
+	admission, waited, err := s.admitTurn(ctx, plan.request.SessionID, plan.turnID)
+	if err != nil {
+		return nil, err
+	}
+	defer admission.releaseUnlessKept(ctx)
+	plan.admission = admission
+	if waited {
+		// Another node's turn on this session finished while this one waited;
+		// its consumption is in the ledger or the shared pending list now.
+		if err := s.flushPendingConsumption(ctx, plan.request.SessionID); err != nil {
+			return nil, err
+		}
 	}
 	accountID, err := s.authorizeTurnSpend(ctx, plan.request.SessionID)
 	if err != nil {
