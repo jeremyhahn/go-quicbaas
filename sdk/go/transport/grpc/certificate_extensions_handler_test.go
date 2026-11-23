@@ -19,7 +19,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
 
+	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/certificate"
 )
 
@@ -77,4 +79,29 @@ func TestCertificateExtensionsRejectWrongRequestType(t *testing.T) {
 // conn.Invoke path.
 func TestCertificateExtensionsRouteThroughCertificateService(t *testing.T) {
 	assert.True(t, isCertificateService("quicbaas.Certificate"))
+}
+
+// iakCertClient answers IssueDeviceIdentity with an IDevID and its IAK.
+type iakCertClient struct{ pb.CertificateServiceClient }
+
+func (iakCertClient) IssueDeviceIdentity(context.Context, *pb.IssueDeviceIdentityRequest, ...grpc.CallOption) (*pb.IssueDeviceIdentityResponse, error) {
+	return &pb.IssueDeviceIdentityResponse{
+		CertificatePem:    []byte("idevid-cert"),
+		IakCertificatePem: []byte("iak-cert"),
+	}, nil
+}
+
+func TestHandleIssueDeviceIdentity_CarriesTheIAK(t *testing.T) {
+	resp, err := (&certificateHandler{}).handleIssueDeviceIdentity(context.Background(), iakCertClient{},
+		&certificate.DeviceIdentityRequest{
+			Type:     certificate.DeviceIdentityIDevID,
+			DeviceID: "dev",
+			CSRPEM:   []byte("csr"),
+		})
+	require.NoError(t, err)
+
+	typed, ok := resp.(*certificate.DeviceIdentityResponse)
+	require.True(t, ok, "got %T", resp)
+	assert.Equal(t, []byte("idevid-cert"), typed.CertificatePEM)
+	assert.Equal(t, []byte("iak-cert"), typed.IAKCertificatePEM)
 }

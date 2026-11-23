@@ -276,3 +276,29 @@ func TestCrossSignIsNotReachableWithLeafIssuanceVerb(t *testing.T) {
 	assert.NotEqual(t, "certs:generate", resource+":"+action,
 		"cross-signing must require ca:create, not the leaf-issuance verb")
 }
+
+func TestHandleCertificateDeviceIdentity_ReturnsTheIAK(t *testing.T) {
+	w := postCertExt(t, "/api/v1/certificate/device-identity",
+		DeviceIdentityRESTRequest{
+			Type:     "idevid",
+			DeviceID: "device-1",
+			CSRPEM:   []byte("tcg-csr"),
+		},
+		func(m *testutil.MockQuicBaaS) {
+			m.CertificateSvc = &MockCertificateService{
+				IssueDeviceIdentityFunc: func(context.Context, *service.IssueDeviceIdentityRequest) (*service.IssueDeviceIdentityResponse, error) {
+					return &service.IssueDeviceIdentityResponse{
+						CertificatePEM:    []byte("idevid-cert"),
+						IAKCertificatePEM: []byte("iak-cert"),
+					}, nil
+				},
+			}
+		},
+		(*Server).HandleCertificateDeviceIdentity)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp DeviceIdentityRESTResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal(t, []byte("idevid-cert"), resp.CertificatePEM)
+	assert.Equal(t, []byte("iak-cert"), resp.IAKCertificatePEM)
+}

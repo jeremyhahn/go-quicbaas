@@ -196,3 +196,32 @@ func TestCertificateExtensionEndpointMapping(t *testing.T) {
 		assert.Equal(t, http.MethodPost, gotMethod, "method %s", method)
 	}
 }
+
+func TestCertificateRESTHandler_IssueDeviceIdentity_CarriesTheIAK(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req deviceIdentityRESTWireRequest
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+		assert.Equal(t, "idevid", req.Type)
+
+		w.Header().Set("Content-Type", "application/json")
+		require.NoError(t, json.NewEncoder(w).Encode(deviceIdentityRESTWireResponse{
+			CertificatePEM:    []byte("idevid-cert"),
+			IAKCertificatePEM: []byte("iak-cert"),
+		}))
+	}))
+	defer server.Close()
+
+	tr := newTestTransport(t, server)
+	resp, err := tr.Request(context.Background(), "quicbaas.Certificate", "IssueDeviceIdentity",
+		&certificate.DeviceIdentityRequest{
+			Type:     certificate.DeviceIdentityIDevID,
+			DeviceID: "device-rest",
+			CSRPEM:   []byte("tcg-csr"),
+		})
+	require.NoError(t, err)
+
+	typed, ok := resp.(*certificate.DeviceIdentityResponse)
+	require.True(t, ok, "got %T", resp)
+	assert.Equal(t, []byte("idevid-cert"), typed.CertificatePEM)
+	assert.Equal(t, []byte("iak-cert"), typed.IAKCertificatePEM)
+}

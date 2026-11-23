@@ -98,9 +98,12 @@ type DeviceIdentityRequest struct {
 
 // DeviceIdentityResponse is the issued device identity certificate.
 type DeviceIdentityResponse struct {
-	CertificatePEM []byte    `json:"certificate_pem"`
-	ChainPEM       []byte    `json:"chain_pem"`
-	SerialNumber   string    `json:"serial_number"`
-	NotBefore      time.Time `json:"not_before"`
-	NotAfter       time.Time `json:"not_after"`
+	CertificatePEM []byte `json:"certificate_pem"`
+	ChainPEM       []byte `json:"chain_pem"`
+	// IAKCertificatePEM is the IAK certificate an IDevID issuance returns;
+	// empty for EK, AK and LDevID.
+	IAKCertificatePEM []byte    `json:"iak_certificate_pem,omitempty"`
+	SerialNumber      string    `json:"serial_number"`
+	NotBefore         time.Time `json:"not_before"`
+	NotAfter          time.Time `json:"not_after"`
 }

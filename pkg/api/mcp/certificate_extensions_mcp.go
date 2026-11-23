@@ -225,11 +225,15 @@ func (r *ToolRegistry) handleCertificateDeviceIdentity(ctx context.Context, svc 
 		return nil, api.NewOperationFailedError("issue device identity certificate", err)
 	}
 
-	return map[string]interface{}{
+	result := map[string]interface{}{
 		"certificate_pem": string(resp.CertificatePEM),
 		"chain_pem":       string(resp.ChainPEM),
 		"serial_number":   resp.SerialNumber,
 		"not_before":      resp.NotBefore,
 		"not_after":       resp.NotAfter,
-	}, nil
+	}
+	if len(resp.IAKCertificatePEM) > 0 {
+		result["iak_certificate_pem"] = string(resp.IAKCertificatePEM)
+	}
+	return result, nil
 }

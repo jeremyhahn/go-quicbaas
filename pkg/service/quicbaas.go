@@ -996,8 +996,29 @@ func (k *kvService) PutIfAbsent(ctx context.Context, req *PutIfAbsentRequest) (*
 	return k.conditionalPut(ctx, "PutIfAbsent", req.EntityType, req.ID, req.ShardID, nil, req.Data)
 }
 
+// guardedOrCoordinatedPut performs the conditional write. A nil expect means
+// put-if-absent (CompareAndSwap normalizes its nil Expect to the empty value,
+// so only PutIfAbsent passes nil). When the KV client offers qrdb's guarded
+// verbs, the condition is evaluated inside the storage engine, which every
+// backend supports; the file and objstore engines reject the revision
+// compares the Coordinator issues, so the Coordinator is only the fallback.
+// Either way an absent entity never matches a CompareAndSwap.
+func guardedOrCoordinatedPut(ctx context.Context, client *qrdbsdk.Client, key string, expect, set []byte) (bool, error) {
+	if g, ok := client.KV().(qrdbtransport.GuardedKVClient); ok {
+		if expect == nil {
+			return g.PutIfAbsent(ctx, key, set)
+		}
+		return g.CompareAndSwap(ctx, key, expect, set)
+	}
+	coordinator, err := client.Coordination()
+	if err != nil {
+		return false, err
+	}
+	return coordinator.CompareAndSwap(ctx, key, expect, set)
+}
+
 // conditionalPut builds the tenant-aware key for the entity and delegates the
-// conditional write to qrdb's Coordinator.CompareAndSwap.
+// conditional write to guardedOrCoordinatedPut.
 func (k *kvService) conditionalPut(ctx context.Context, method, entityType string, id, shardID uint64, expect, set []byte) (*ConditionalPutResponse, error) {
 	op := "service." + method
 	start := time.Now()
@@ -1030,12 +1051,7 @@ func (k *kvService) conditionalPut(ctx context.Context, method, entityType strin
 		k.countRequest(method, "error")
 		return nil, &errors.QBError{Code: errors.ErrRaft, Op: op, Err: err}
 	}
-	coordinator, err := client.Coordination()
-	if err != nil {
-		k.countRequest(method, "error")
-		return nil, &errors.QBError{Code: errors.ErrRaft, Op: op, Err: err}
-	}
-	applied, err := coordinator.CompareAndSwap(ctx, string(key), expect, set)
+	applied, err := guardedOrCoordinatedPut(ctx, client, string(key), expect, set)
 	if err != nil {
 		k.countRequest(method, "error")
 		return nil, &errors.QBError{Code: errors.ErrRaft, Op: op, Err: err}

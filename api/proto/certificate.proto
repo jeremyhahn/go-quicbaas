@@ -485,6 +485,10 @@ message IssueDeviceIdentityResponse {
 
   // Timestamp is when the request was processed.
   google.protobuf.Timestamp timestamp = 6;
+
+  // IAKCertificatePEM is the PEM certificate of the IAK an IDevID issuance
+  // certifies; empty for the other identity kinds.
+  bytes iak_certificate_pem = 7;
 }
 
 // =============================================================================

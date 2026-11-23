@@ -121,11 +121,12 @@ func (s *Server) IssueDeviceIdentity(ctx context.Context, req *pb.IssueDeviceIde
 	}
 
 	return &pb.IssueDeviceIdentityResponse{
-		CertificatePem: resp.CertificatePEM,
-		ChainPem:       resp.ChainPEM,
-		SerialNumber:   resp.SerialNumber,
-		NotBefore:      timestamppb.New(resp.NotBefore),
-		NotAfter:       timestamppb.New(resp.NotAfter),
-		Timestamp:      timestamppb.New(time.Now()),
+		CertificatePem:    resp.CertificatePEM,
+		ChainPem:          resp.ChainPEM,
+		IakCertificatePem: resp.IAKCertificatePEM,
+		SerialNumber:      resp.SerialNumber,
+		NotBefore:         timestamppb.New(resp.NotBefore),
+		NotAfter:          timestamppb.New(resp.NotAfter),
+		Timestamp:         timestamppb.New(time.Now()),
 	}, nil
 }
