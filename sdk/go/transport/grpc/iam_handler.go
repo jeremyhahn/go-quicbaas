@@ -113,6 +113,10 @@ func (h *iamHandler) handleUserRequest(ctx context.Context, method string, req i
 		return h.handleCreateUser(ctx, client, req)
 	case "Get":
 		return h.handleGetUser(ctx, client, req)
+	case "GetByEmail":
+		return h.handleGetUserByEmail(ctx, client, req)
+	case "FindByUsername":
+		return h.handleFindUserByUsername(ctx, client, req)
 	case "Update":
 		return h.handleUpdateUser(ctx, client, req)
 	case "Delete":
