@@ -27,6 +27,7 @@ import (
 // account whose display name differed from its username, and the account could
 // no longer be found by the name an administrator types.
 func TestExportImportRoundTrip_PreservesTheHandle(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	source := NewMemoryStorage()
 	sourceStore := NewIdentityStore(IdentityStoreOptions{
@@ -78,6 +79,7 @@ func TestExportImportRoundTrip_PreservesTheHandle(t *testing.T) {
 // export left the account answering to its old handle while the file said
 // otherwise — and the two silently disagreed from then on.
 func TestImportUsers_UpdateExistingAppliesTheHandle(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	mem := NewMemoryStorage()
 	store := NewIdentityStore(IdentityStoreOptions{

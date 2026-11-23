@@ -44,6 +44,7 @@ func metadataTestOptions(method string) RegisterAppOptions {
 // TestRegisterApp_MetadataRefusalIsAppMetadataError proves a register refused
 // for its metadata is an AppMetadataError that still matches its own sentinel.
 func TestRegisterApp_MetadataRefusalIsAppMetadataError(t *testing.T) {
+	t.Parallel()
 	m := NewAppManager(newMockAppStorage(), nil)
 
 	_, err := m.RegisterApp(context.Background(), "t1", metadataTestOptions("invalid_method"))
@@ -63,6 +64,7 @@ func TestRegisterApp_MetadataRefusalIsAppMetadataError(t *testing.T) {
 // TestRegisterApp_StorageFailureIsNotAppMetadataError proves a register whose
 // store fails is not reported as a metadata refusal.
 func TestRegisterApp_StorageFailureIsNotAppMetadataError(t *testing.T) {
+	t.Parallel()
 	m := NewAppManager(&failingWriteAppStorage{newMockAppStorage()}, nil)
 
 	_, err := m.RegisterApp(context.Background(), "t1", metadataTestOptions(AuthMethodClientSecretPost))
@@ -80,6 +82,7 @@ func TestRegisterApp_StorageFailureIsNotAppMetadataError(t *testing.T) {
 // refused for its method is an AppMetadataError, while an update whose store
 // fails is not.
 func TestUpdateAppInTenant_AuthMethodRefusalIsAppMetadataError(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	storage := newMockAppStorage()
 	app, err := NewAppManager(storage, nil).RegisterApp(ctx, "t1", metadataTestOptions(""))
@@ -111,6 +114,7 @@ func TestUpdateAppInTenant_AuthMethodRefusalIsAppMetadataError(t *testing.T) {
 // so every transport answers it as the client's error, not a server error
 // (#1512).
 func TestResponseTypeRefusalIsAppMetadataError(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	storage := newMockAppStorage()
 	m := NewAppManager(storage, nil)

@@ -47,6 +47,7 @@ import (
 // the two paths produce DIFFERENT records from the same credential, which is
 // what "the ceremony does not go through the stamp" means in observable terms.
 func TestWriteThrough_CeremonyProofSurvivesTheUnattestedStamp(t *testing.T) {
+	t.Parallel()
 	factors := &fakeUserAuthFactorClient{}
 	gate := NewWebAuthnAttestationGate(
 		WebAuthnAssuranceAny,
@@ -94,6 +95,7 @@ func TestWriteThrough_CeremonyProofSurvivesTheUnattestedStamp(t *testing.T) {
 // choosing and produce a field a consumer could not tell from one a ceremony
 // proved. Attested facts belong in one namespace, under one rule.
 func TestWriteThrough_ModelIsRecordedUnderTheReservedKey(t *testing.T) {
+	t.Parallel()
 	factors := &fakeUserAuthFactorClient{}
 	gate := NewWebAuthnAttestationGate(
 		WebAuthnAssuranceAny,

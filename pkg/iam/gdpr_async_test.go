@@ -68,6 +68,7 @@ func newCompletionFailingGDPRManager(t *testing.T) *GDPRManager {
 }
 
 func TestProcessExportAsync_UnrecordedErrorMarksExportFailed(t *testing.T) {
+	t.Parallel()
 	manager := newCompletionFailingGDPRManager(t)
 	ctx := context.Background()
 	createTestUser(t, manager.deps.UserStorage, "tenant-async-export", 51)
@@ -87,6 +88,7 @@ func TestProcessExportAsync_UnrecordedErrorMarksExportFailed(t *testing.T) {
 }
 
 func TestMarkExportFailed_KeepsFinalStatus(t *testing.T) {
+	t.Parallel()
 	manager, _ := createTestGDPRManager(t)
 	ctx := context.Background()
 
@@ -106,6 +108,7 @@ func TestMarkExportFailed_KeepsFinalStatus(t *testing.T) {
 }
 
 func TestProcessDeletionAsync_UnrecordedErrorMarksDeletionFailed(t *testing.T) {
+	t.Parallel()
 	manager := newCompletionFailingGDPRManager(t)
 	ctx := context.Background()
 	createTestUser(t, manager.deps.UserStorage, "tenant-async-deletion", 53)
@@ -125,6 +128,7 @@ func TestProcessDeletionAsync_UnrecordedErrorMarksDeletionFailed(t *testing.T) {
 }
 
 func TestMarkDeletionFailed_KeepsCancelledStatus(t *testing.T) {
+	t.Parallel()
 	manager, _ := createTestGDPRManager(t)
 	ctx := context.Background()
 

@@ -39,6 +39,7 @@ import (
 // the offending bundle is refused at LOAD time, with the subject named, rather
 // than silently producing a pool that trusts a leaf.
 func TestParseCertPool_RefusesAnEndEntityCertificateAsAnAnchor(t *testing.T) {
+	t.Parallel()
 	pivChain := newPIVTestChain(t)
 	webauthnPKI := newAttestationTestPKI(t, yubiKey5AAGUID)
 
@@ -101,6 +102,7 @@ func TestParseCertPool_RefusesAnEndEntityCertificateAsAnAnchor(t *testing.T) {
 // the test above while breaking every real deployment. Both trust paths must
 // still LOAD and still VERIFY a genuine chain.
 func TestParseCertPool_StillAcceptsGenuineCAAnchors(t *testing.T) {
+	t.Parallel()
 	t.Run("PIV verifies a real slot attestation", func(t *testing.T) {
 		chain := newPIVTestChain(t)
 		verifier, err := NewPIVAttestationVerifier(chain.rootPEM, certPEM(chain.intermediate))
@@ -140,6 +142,7 @@ func TestParseCertPool_StillAcceptsGenuineCAAnchors(t *testing.T) {
 // more often than it is a compromise, and an error that does not say WHICH file
 // sends the operator hunting a verification failure reported nowhere.
 func TestAttestationTrustBundle_NamesTheOffendingFile(t *testing.T) {
+	t.Parallel()
 	chain := newPIVTestChain(t)
 	dir := t.TempDir()
 

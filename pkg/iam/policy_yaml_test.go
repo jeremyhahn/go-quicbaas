@@ -24,6 +24,7 @@ import (
 )
 
 func TestParsePolicyYAML_SpecOnly(t *testing.T) {
+	t.Parallel()
 	data := []byte(`rules:
   - name: r1
     effect: allow
@@ -44,6 +45,7 @@ func TestParsePolicyYAML_SpecOnly(t *testing.T) {
 }
 
 func TestParsePolicyYAML_FullDocument(t *testing.T) {
+	t.Parallel()
 	data := []byte(`apiVersion: iam.quicbaas.io/v1
 kind: Policy
 metadata:
@@ -78,11 +80,13 @@ spec:
 }
 
 func TestParsePolicyYAML_InvalidYAML(t *testing.T) {
+	t.Parallel()
 	for name, data := range map[string][]byte{
 		"syntax":      []byte("rules: [unclosed"),
 		"wrong shape": []byte("rules: not-a-list"),
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			policy, err := ParsePolicyYAML(data, PolicyMetadata{Tenant: "t1"})
 			assert.Nil(t, policy)
 			var yamlErr *PolicyYAMLError
@@ -96,6 +100,7 @@ func TestParsePolicyYAML_InvalidYAML(t *testing.T) {
 }
 
 func TestParsePolicyYAML_UnknownKeysRefused(t *testing.T) {
+	t.Parallel()
 	for name, data := range map[string][]byte{
 		// all:, any: and none: are not condition keys. Decoded loosely, the
 		// first two became empty conditions and the third dropped its
@@ -110,6 +115,7 @@ func TestParsePolicyYAML_UnknownKeysRefused(t *testing.T) {
 		"bare string condition":   []byte("rules:\n  - name: r1\n    effect: allow\n    when:\n      - a == 1\n"),
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			policy, err := ParsePolicyYAML(data, PolicyMetadata{Tenant: "t1"})
 			assert.Nil(t, policy)
 			var yamlErr *PolicyYAMLError
@@ -122,6 +128,7 @@ func TestParsePolicyYAML_UnknownKeysRefused(t *testing.T) {
 }
 
 func TestParsePolicyYAML_EmptyDocument(t *testing.T) {
+	t.Parallel()
 	policy, err := ParsePolicyYAML(nil, PolicyMetadata{Name: "p1", Tenant: "t1"})
 	require.NoError(t, err)
 	assert.Empty(t, policy.Spec.Rules)

@@ -50,6 +50,7 @@ func (s orderedPromptSeeder) SeedTenant(_ context.Context, tenantID string) erro
 // TestCreateTenant_SeedsPromptsAfterRoles proves the prompt set is copied
 // into a new tenant, and only once its roles exist.
 func TestCreateTenant_SeedsPromptsAfterRoles(t *testing.T) {
+	t.Parallel()
 	mgr := newTestTenantManager()
 	order := &seedOrder{}
 	mgr.SetRoleSeeder(orderedRoleSeeder{order: order})
@@ -66,6 +67,7 @@ func TestCreateTenant_SeedsPromptsAfterRoles(t *testing.T) {
 // TestCreateTenant_PromptSeedFailureRollsBack proves a prompt-seed failure
 // fails the creation and leaves no tenant behind.
 func TestCreateTenant_PromptSeedFailureRollsBack(t *testing.T) {
+	t.Parallel()
 	mgr := newTestTenantManager()
 	boom := errors.New("prompt store sealed")
 	mgr.SetPromptSeeder(orderedPromptSeeder{order: &seedOrder{}, err: boom})
@@ -88,6 +90,7 @@ func TestCreateTenant_PromptSeedFailureRollsBack(t *testing.T) {
 // TestCreateTenant_PromptSeedFailureUnseedsRoles proves the rollback of a
 // failed prompt seed undoes the role seed that succeeded before it.
 func TestCreateTenant_PromptSeedFailureUnseedsRoles(t *testing.T) {
+	t.Parallel()
 	mgr := newTestTenantManager()
 	order := &seedOrder{}
 	mgr.SetRoleSeeder(orderedRoleSeeder{order: order})
@@ -105,6 +108,7 @@ func TestCreateTenant_PromptSeedFailureUnseedsRoles(t *testing.T) {
 // TestSetPromptSeeder_Accessor proves the setter/accessor round-trips the
 // wired seeder and that an unwired one leaves CreateTenant working.
 func TestSetPromptSeeder_Accessor(t *testing.T) {
+	t.Parallel()
 	mgr := newTestTenantManager()
 	if mgr.PromptSeeder() != nil {
 		t.Fatal("a fresh manager reports a prompt seeder")

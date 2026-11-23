@@ -34,6 +34,7 @@ func newTestSession(id string, userID uint64, expires time.Time) *Session {
 }
 
 func TestMemorySessionStorage_CreateGet(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := NewMemorySessionStorage()
 
@@ -46,6 +47,7 @@ func TestMemorySessionStorage_CreateGet(t *testing.T) {
 }
 
 func TestMemorySessionStorage_Create_Duplicate(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := NewMemorySessionStorage()
 
@@ -57,6 +59,7 @@ func TestMemorySessionStorage_Create_Duplicate(t *testing.T) {
 }
 
 func TestMemorySessionStorage_Get_NotFound(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := NewMemorySessionStorage()
 
@@ -65,6 +68,7 @@ func TestMemorySessionStorage_Get_NotFound(t *testing.T) {
 }
 
 func TestMemorySessionStorage_Update(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := NewMemorySessionStorage()
 
@@ -80,6 +84,7 @@ func TestMemorySessionStorage_Update(t *testing.T) {
 }
 
 func TestMemorySessionStorage_Update_NotFound(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := NewMemorySessionStorage()
 
@@ -88,6 +93,7 @@ func TestMemorySessionStorage_Update_NotFound(t *testing.T) {
 }
 
 func TestMemorySessionStorage_DeleteExpiredSessions(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := NewMemorySessionStorage()
 
@@ -105,6 +111,7 @@ func TestMemorySessionStorage_DeleteExpiredSessions(t *testing.T) {
 }
 
 func TestMemorySessionStorage_DeleteExpiredSessions_None(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := NewMemorySessionStorage()
 
