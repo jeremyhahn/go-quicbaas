@@ -269,6 +269,13 @@ func TestXKMSBackend_ImportKey_OwnershipWriteFailureRollsBack(t *testing.T) {
 // the key storage of each.
 func newTwoBackendXKMS(t *testing.T) (defaultStore, targetStore xkmssdk.StorageBackend) {
 	t.Helper()
+	return newTwoBackendXKMSNamed(t, "software", string(config.BackendTypePKCS11))
+}
+
+// newTwoBackendXKMSNamed initializes go-xkms with two software service
+// backends registered as defaultName, the default, and targetName.
+func newTwoBackendXKMSNamed(t *testing.T, defaultName, targetName string) (defaultStore, targetStore xkmssdk.StorageBackend) {
+	t.Helper()
 	dbxkms.Reset()
 	t.Cleanup(dbxkms.Reset)
 
@@ -286,10 +293,10 @@ func newTwoBackendXKMS(t *testing.T) (defaultStore, targetStore xkmssdk.StorageB
 	defaultStore, defaultKS := newKS()
 	targetStore, targetKS := newKS()
 	require.NoError(t, dbxkms.Initialize(&dbxkms.Config{
-		DefaultBackend: "software",
+		DefaultBackend: defaultName,
 		Backends: map[string]xkmssdk.ServiceBackend{
-			"software":                       defaultKS,
-			string(config.BackendTypePKCS11): targetKS,
+			defaultName: defaultKS,
+			targetName:  targetKS,
 		},
 		Logger: &mockLogger{},
 	}))
@@ -369,6 +376,70 @@ func TestXKMSBackend_OwnershipRollbackDeletesFromItsOwnBackend(t *testing.T) {
 		_, err = kb.RotateKey(ctx, id)
 		require.NoError(t, err)
 	})
+}
+
+// TestXKMSBackend_DeleteKeyDeletesFromItsOwnBackend checks that DeleteKey
+// removes the key from this backend, not from go-xkms's default backend.
+func TestXKMSBackend_DeleteKeyDeletesFromItsOwnBackend(t *testing.T) {
+	ctx := context.Background()
+	for _, name := range []string{"cached", "uncached"} {
+		t.Run(name, func(t *testing.T) {
+			_, targetStore := newTwoBackendXKMS(t)
+			kb, def := newTwoBackendTestBackends(t, targetStore)
+			const id = "tenant/acme/delete-k"
+			_, err := kb.CreateKey(ctx, kb.algorithmToKeyAttributes(id, AlgAES256GCM))
+			require.NoError(t, err)
+			decoyKept := plantDefaultBackendDecoy(t, ctx, kb, def, id)
+
+			deleter := kb
+			if name == "uncached" {
+				deleter, _ = newTwoBackendTestBackends(t, targetStore)
+			}
+			require.NoError(t, deleter.DeleteKey(ctx, id))
+			requireNoXKMSKey(t, ctx, kb, targetStore, id, AlgAES256GCM)
+			decoyKept()
+		})
+	}
+}
+
+// TestXKMSBackend_LegacyLookupReadsItsOwnBackend checks that a literal key
+// name resolves only from this backend: a key of that name in go-xkms's
+// default backend is not this backend's key, and a key of that name in this
+// backend resolves. The backend under test is
+// "software" and the default is a second keystore named "pkcs11", because a
+// software keystore refuses signing kids that name another backend type, so
+// the metadata probes of a "pkcs11" backend never reach the legacy lookup.
+func TestXKMSBackend_LegacyLookupReadsItsOwnBackend(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name, id, alg string
+		generate      func(ctx context.Context, backend string, attrs *xkmssdk.KeyAttributes) error
+	}{
+		{"symmetric", "legacy-sym-key", AlgAES256GCM, func(ctx context.Context, backend string, attrs *xkmssdk.KeyAttributes) error {
+			_, err := dbxkms.GenerateSymmetricKey(ctx, backend, attrs)
+			return err
+		}},
+		{"signing", "legacy-sign-key", AlgRSA2048, func(ctx context.Context, backend string, attrs *xkmssdk.KeyAttributes) error {
+			_, err := dbxkms.GenerateKeyWithBackend(ctx, backend, attrs)
+			return err
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pkcs11 := string(config.BackendTypePKCS11)
+			_, targetStore := newTwoBackendXKMSNamed(t, pkcs11, "software")
+			def, kb := newTwoBackendTestBackends(t, targetStore)
+			require.Equal(t, tc.id, xkmsKeyName(tc.id))
+			require.NoError(t, tc.generate(ctx, pkcs11, def.xkmsKeyAttributes(tc.id, tc.alg)))
+
+			_, err := kb.GetKeyMetadata(ctx, tc.id)
+			require.ErrorIs(t, err, ErrKeyNotFound)
+
+			require.NoError(t, tc.generate(ctx, "software", kb.xkmsKeyAttributes(tc.id, tc.alg)))
+			_, fresh := newTwoBackendTestBackends(t, targetStore)
+			_, err = fresh.GetKeyMetadata(ctx, tc.id)
+			require.NoError(t, err)
+		})
+	}
 }
 
 func TestXKMSBackend_EverySymmetricAlgorithmResolvesAfterRestart(t *testing.T) {

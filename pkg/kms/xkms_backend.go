@@ -475,15 +475,17 @@ func (kb *XKMSBackend) GetKeyMetadata(ctx context.Context, keyID string) (*KeyMe
 
 	// If still not found, try legacy lookup methods
 	if foundAlgorithm == "" {
+		// Pin the lookup to this backend; go-xkms falls back to its default backend when attrs and kid name none.
 		attrs := &kctypes.KeyAttributes{
 			CN:        xkmsName,
 			StoreType: kctypes.StoreType(string(kb.backendType)),
+			Backend:   string(kb.backendType),
 		}
 
 		// Try to get signer with just CN
 		if _, err := xkms.Signer(ctx, attrs); err != nil {
 			// Try symmetric key by ID
-			if _, err := xkms.GetSymmetricKey(ctx, xkmsName); err != nil {
+			if _, err := xkms.GetSymmetricKey(ctx, string(kb.backendType)+":::"+xkmsName); err != nil {
 				return nil, ErrKeyNotFound
 			}
 			foundAlgorithm = "AES-256-GCM" // Default for symmetric
@@ -845,7 +847,11 @@ func (kb *XKMSBackend) DeleteKey(ctx context.Context, keyID string) error {
 	}
 
 	// Delete from go-xkms using attributes.
-	if err := xkms.DeleteKey(ctx, attrs); err != nil {
+	// go-xkms resolves the backend from attrs.Backend and falls back to its
+	// default backend, not to StoreType; delete from this backend.
+	del := *attrs
+	del.Backend = string(kb.backendType)
+	if err := xkms.DeleteKey(ctx, &del); err != nil {
 		if stderrors.Is(err, xkms.ErrKeyNotFound) || stderrors.Is(err, kctypes.ErrBackendKeyNotFound) {
 			// The material is already gone: this is the retry of a delete
 			// whose release failed, or the key never existed. The record,
