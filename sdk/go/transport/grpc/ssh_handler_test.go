@@ -15,11 +15,13 @@ package grpc
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	sshclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/ssh"
@@ -105,4 +107,42 @@ func TestSSHKeyFromProto(t *testing.T) {
 	_, err = sshKeyFromProto("op", nil)
 	require.Error(t, err)
 	assert.Equal(t, errors.CodeInternal, errors.Code(err))
+}
+
+// recordingSSHSignServer records the last SignSSHDigest request it served.
+type recordingSSHSignServer struct {
+	pb.UnimplementedSSHServiceServer
+	mu   sync.Mutex
+	last *pb.SSHSignDigestRequest
+}
+
+func (s *recordingSSHSignServer) SignSSHDigest(_ context.Context, req *pb.SSHSignDigestRequest) (*pb.SSHSignDigestResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.last = req
+	return &pb.SSHSignDigestResponse{Format: req.GetAlgorithm()}, nil
+}
+
+func (s *recordingSSHSignServer) lastAlgorithm() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.last.GetAlgorithm()
+}
+
+func TestSSHHandler_SignDigestSendsAlgorithm(t *testing.T) {
+	fake := &recordingSSHSignServer{}
+	hs := newHandlerServer(t, func(s *grpc.Server) { pb.RegisterSSHServiceServer(s, fake) })
+	conn := hs.dial(t)
+
+	_, err := handleSSHSignDigest(context.Background(), conn, &sshclient.SignRequest{
+		Name: "rsa", Digest: []byte("digest"), Algorithm: "rsa-sha2-512",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "rsa-sha2-512", fake.lastAlgorithm())
+
+	_, err = handleSSHSignDigest(context.Background(), conn, &sshclient.SignRequest{
+		Name: "rsa", Digest: []byte("digest"),
+	})
+	require.NoError(t, err)
+	assert.Empty(t, fake.lastAlgorithm())
 }

@@ -100,6 +100,12 @@ func TestSSHMCPHandler_SignCarriesAlgorithm(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "rsa-sha2-512", args["algorithm"])
+
+	args, err = h.transformRequest(sshclient.MethodSignDigest, &sshclient.SignRequest{
+		Name: "rsa", Digest: []byte("digest"),
+	})
+	require.NoError(t, err)
+	assert.NotContains(t, args, "algorithm")
 }
 
 func TestSSHMCPHandler_GenericRequestUsesJSONTags(t *testing.T) {

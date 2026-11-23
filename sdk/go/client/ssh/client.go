@@ -260,6 +260,8 @@ type remoteSigner struct {
 	ctx context.Context
 }
 
+var _ gossh.AlgorithmSigner = (*remoteSigner)(nil)
+
 // PublicKey returns the signer's public half.
 func (s *remoteSigner) PublicKey() gossh.PublicKey { return s.pub }
 
