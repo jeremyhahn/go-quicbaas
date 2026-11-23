@@ -50,7 +50,12 @@ func (u *qrdbUsageWire) usage() *qrdbtransport.UsageInfo {
 
 // call runs one go-qrdb embedding tool and decodes its JSON result into out.
 func (c *QRDBEmbeddingClient) call(ctx context.Context, op, tool string, args map[string]interface{}, out interface{}) error {
-	t := c.t
+	return callQRDBTool(ctx, c.t, op, tool, args, out)
+}
+
+// callQRDBTool runs one go-qrdb tool on t's authenticated MCP session and
+// decodes its JSON result into out.
+func callQRDBTool(ctx context.Context, t *Transport, op, tool string, args map[string]interface{}, out interface{}) error {
 	if t.closed.Load() {
 		return errors.NewConnection(op, "transport is closed")
 	}

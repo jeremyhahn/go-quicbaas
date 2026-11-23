@@ -76,8 +76,11 @@ The client is the qrdb sub-client's `Audit()`:
 - **Embedded**: backed by `QRDBEmbeddedServicers.Audit`, which the `quicbaas`
   CLI fills with the daemon's node audit sink (`(*Server).GetQRDBAuditSink`).
   Without a sink the accessor answers `Unavailable`.
-- **Network transports**: reached through the qrdb sub-client. Over go-qrdb's
-  REST transport, `QueryAudit` is `GET /v1/audit/events` and `EmitAudit`
-  answers `NotImplemented`.
+- **Network transports**: reached with the client's platform bearer. Over
+  REST and QUIC, `QueryAudit` is `GET /v1/audit/events` sent by the SDK's REST
+  transport with its `Authorization` header; over MCP it is the
+  `qrdb_audit_query` tool on the authenticated MCP session; over gRPC and Unix
+  the bearer goes as `authorization` metadata. `EmitAudit` answers
+  `NotImplemented` over REST, QUIC and MCP.
 - A transport with no audit surface answers `Unavailable`.
 

@@ -857,10 +857,20 @@ func (c *client) qrdbEmbedding() (QRDBEmbeddingClient, error) {
 
 // qrdbAudit returns go-qrdb's audit service client (EmitAudit / QueryAudit)
 // from the qrdb sub-client. On the embedded transport it is backed by
-// QRDBEmbeddedServicers.Audit; network transports reach it through the qrdb
-// sub-client. It answers Unavailable when the qrdb client is not configured
-// or its transport does not serve the audit service.
+// QRDBEmbeddedServicers.Audit; network transports send the platform bearer:
+// REST and QUIC through the REST transport's audit client, MCP through the
+// MCP transport's, gRPC and Unix as gRPC metadata. It answers Unavailable
+// when the qrdb client is not configured or its transport does not serve the
+// audit service.
 func (c *client) qrdbAudit() (QRDBAuditClient, error) {
+	if rt, ok := c.transport.(interface {
+		QRDBAudit() *rest.QRDBAuditClient
+	}); ok && (c.opts == nil || (c.opts.embeddedQRDB == nil && (c.opts.transportType == TransportREST || c.opts.transportType == TransportQUIC))) {
+		return rt.QRDBAudit(), nil
+	}
+	if mt, ok := c.transport.(*qbmcp.Transport); ok && (c.opts == nil || (c.opts.embeddedQRDB == nil && c.opts.transportType == TransportMCP)) {
+		return mt.QRDBAudit(), nil
+	}
 	qrdb, err := c.qrdbClient()
 	if err != nil {
 		return nil, err
@@ -871,6 +881,9 @@ func (c *client) qrdbAudit() (QRDBAuditClient, error) {
 	ac := qrdb.Audit()
 	if ac == nil {
 		return nil, sdkerrors.NewUnavailable("qrdbAudit", "the qrdb transport does not serve the audit service")
+	}
+	if c.opts != nil && c.opts.embeddedQRDB == nil && c.opts.authToken != "" && qrdbSubClientSpeaksGRPC(c.opts.transportType) {
+		return &qrdbBearerAuditClient{inner: ac, bearer: "Bearer " + c.opts.authToken}, nil
 	}
 	return ac, nil
 }
