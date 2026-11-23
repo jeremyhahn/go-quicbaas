@@ -15,6 +15,7 @@
 package main
 
 import (
+	"crypto/tls"
 	"os"
 	"path/filepath"
 	"testing"
@@ -113,6 +114,36 @@ func TestBuildTLSConfig_WithClientCert(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 	assert.Len(t, cfg.Certificates, 1)
+}
+
+// TestBuildTLSConfig_ClientCertWithoutCAUsesSystemRoots covers an officer on
+// another machine: no --tls-ca and no local ca-chain.crt, but a client pair.
+// The pair must still be presented, and the server verified by the system
+// roots.
+func TestBuildTLSConfig_ClientCertWithoutCAUsesSystemRoots(t *testing.T) {
+	withClientTLSGlobals(t)
+	dataDir = t.TempDir() // no certs directory
+	dir := t.TempDir()
+	certPath := filepath.Join(dir, "officer.crt")
+	keyPath := filepath.Join(dir, "officer.key")
+	writeSelfSignedKeyPair(t, certPath, keyPath)
+	tlsCA = ""
+	tlsCert = certPath
+	tlsKey = keyPath
+
+	cfg, err := buildTLSConfig()
+	require.NoError(t, err)
+	require.NotNil(t, cfg, "a client pair without a CA file must still yield a TLS config")
+	assert.Len(t, cfg.Certificates, 1, "the client certificate must be presented")
+	assert.Nil(t, cfg.RootCAs, "without a CA file the system roots verify the server")
+	assert.Equal(t, uint16(tls.VersionTLS13), cfg.MinVersion)
+
+	// A missing pair without a CA file is an error, not silently ignored.
+	tlsCert = filepath.Join(dir, "missing.crt")
+	tlsKey = filepath.Join(dir, "missing.key")
+	cfg, err = buildTLSConfig()
+	require.Error(t, err, "missing client cert files must be reported")
+	assert.Nil(t, cfg)
 }
 
 func TestBuildTLSConfig_BadClientCert(t *testing.T) {
