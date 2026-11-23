@@ -79,6 +79,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
 	"math/big"
 	"net"
 	"net/http"
@@ -744,10 +745,13 @@ func waitForBarrierDaemonReady(ctx context.Context, d *barrierDaemon) error {
 	ticker := time.NewTicker(daemonReadyPollInterval)
 	defer ticker.Stop()
 	caPath := filepath.Join(d.dataDir, "certs", "ca-chain.crt")
+	// lastErr keeps the most recent probe failure so a timeout names the
+	// gate that never opened.
+	var lastErr error
 	for {
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("barrier daemon not ready within %s: %w", daemonStartTimeout, ctx.Err())
+			return fmt.Errorf("barrier daemon not ready within %s: %w; last probe: %v", daemonStartTimeout, ctx.Err(), lastErr)
 		case <-d.Done():
 			return fmt.Errorf("barrier daemon exited before ready: wait_err=%v", d.WaitErr())
 		case <-ticker.C:
@@ -756,21 +760,27 @@ func waitForBarrierDaemonReady(ctx context.Context, d *barrierDaemon) error {
 			// missing/empty chain as "not ready yet" and keep polling.
 			tlsCfg, err := barrierProbeTLSConfig(caPath)
 			if err != nil {
+				lastErr = err
 				continue
 			}
 			if err := probeBarrierREST(ctx, d.ports.REST, tlsCfg); err != nil {
+				lastErr = err
 				continue
 			}
 			if err := probeBarrierTCP(ctx, d.ports.GRPC); err != nil {
+				lastErr = err
 				continue
 			}
 			if err := probeBarrierUDP(ctx, d.ports.QUIC); err != nil {
+				lastErr = err
 				continue
 			}
 			if err := probeBarrierTLS(ctx, d.ports.MCP, tlsCfg); err != nil {
+				lastErr = err
 				continue
 			}
 			if err := probeBarrierUnix(ctx, d.ports.Unix); err != nil {
+				lastErr = err
 				continue
 			}
 			return nil
@@ -910,7 +920,8 @@ func probeBarrierREST(ctx context.Context, port int, tlsCfg *tls.Config) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("probeBarrierREST: %s -> %d", url, resp.StatusCode)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("probeBarrierREST: %s -> %d: %s", url, resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	return nil
 }
