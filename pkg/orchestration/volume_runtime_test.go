@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -952,5 +953,37 @@ func TestVolumeRuntimeRefusesAVolumeLaunchWithoutTheOwnerLabel(t *testing.T) {
 	plain := &ContainerSpec{Name: "plain", Image: "registry.example.com/plain:1"}
 	if _, err := vr.Run(ctx, plain); err != nil {
 		t.Fatalf("Run without volumes: %v", err)
+	}
+}
+
+// A failed Attach that will not detach stays journaled and pending, and a
+// later retry releases it.
+func TestVolumeRuntimeKeepsAFailedAttachThatWillNotRelease(t *testing.T) {
+	ctx := context.Background()
+	vr, _, prov, staging := newTestVolumeRuntime(t)
+	prov.failOn["attach data"] = errors.New("activated, then failed")
+	prov.failOn["detach data"] = errors.New("busy")
+	if _, err := vr.Run(ctx, dataSpec("a")); err == nil {
+		t.Fatal("Run with a failing Attach: err = nil")
+	}
+	if st := readStateFile(t, staging); len(st.Volumes) != 1 || st.Volumes[0].Claim.Name != "data" || st.Volumes[0].VolumeID != "data" {
+		t.Fatalf("state = %+v, want data journaled", st)
+	}
+	vr.mu.Lock()
+	pending := slices.ContainsFunc(vr.pending, func(v AttachedVolume) bool { return v.Claim.Name == "data" })
+	vr.mu.Unlock()
+	if !pending {
+		t.Fatal("data is not pending")
+	}
+	delete(prov.failOn, "attach data")
+	delete(prov.failOn, "detach data")
+	if err := vr.RetryPendingReleases(ctx); err != nil {
+		t.Fatalf("RetryPendingReleases: %v", err)
+	}
+	if st := readStateFile(t, staging); len(st.Volumes) != 0 {
+		t.Fatalf("state after the retry = %+v, want none", st)
+	}
+	if _, err := vr.Run(ctx, dataSpec("b")); err != nil {
+		t.Fatalf("Run after the retry: %v", err)
 	}
 }

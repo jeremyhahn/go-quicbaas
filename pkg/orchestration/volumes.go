@@ -376,8 +376,9 @@ func (a *VolumeAttacher) attach(ctx context.Context, claims []VolumeClaim, journ
 	return attached, nil, nil
 }
 
-// attachOne returns the partly attached volume with the error when a step
-// after the provider's Attach fails, so the caller can release it. HostPath is
+// attachOne returns the partly attached volume with the error when the
+// provider's Attach, or a step after it, fails, so the caller can release it:
+// an Attach may activate the volume before it fails. HostPath is
 // recorded before Mount, so a Mount that fails after mounting is still
 // unmounted.
 //
@@ -406,7 +407,11 @@ func (a *VolumeAttacher) attachOne(ctx context.Context, claim VolumeClaim, journ
 	}
 	info, err := a.provider.Attach(ctx, id, a.node)
 	if err != nil {
-		return AttachedVolume{}, fmt.Errorf("volume %q: attach to node %q: %w", claim.Name, a.node, err)
+		// The provider may have activated the volume before failing, and its own
+		// compensation may not have run: return it (with no HostPath, nothing was
+		// mounted) so the rollback detaches it on its own context, and what does
+		// not detach stays journaled and pending.
+		return AttachedVolume{Claim: claim, VolumeID: id}, fmt.Errorf("volume %q: attach to node %q: %w", claim.Name, a.node, err)
 	}
 	v := AttachedVolume{Claim: claim, VolumeID: id, DevicePath: info.DevicePath}
 	if journal != nil {

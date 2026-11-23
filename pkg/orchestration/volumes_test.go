@@ -329,6 +329,32 @@ func TestVolumeAttacherAttachRollsBackOnFailure(t *testing.T) {
 	}
 }
 
+// An Attach that fails may have activated the volume, so the rollback
+// detaches it too (with no unmount: nothing was mounted).
+func TestVolumeAttacherReleasesAFailedAttach(t *testing.T) {
+	ctx := context.Background()
+	p := newFakeVolumeProvider()
+	boom := errors.New("activated, then failed")
+	p.failOn["attach second"] = boom
+	a := newTestAttacher(t, p)
+	claims := []VolumeClaim{
+		{Name: "first", SizeBytes: 10, FSType: "ext4", Target: "/a"},
+		{Name: "second", SizeBytes: 10, FSType: "ext4", Target: "/b"},
+	}
+	vols, err := a.Attach(ctx, claims)
+	if !errors.Is(err, boom) || vols != nil {
+		t.Fatalf("Attach = %v, %v; want nil, the attach error", vols, err)
+	}
+	want := []string{
+		"provision first", "attach first", "mount first",
+		"provision second", "attach second",
+		"detach second", "unmount first", "detach first",
+	}
+	if !reflect.DeepEqual(p.calls, want) {
+		t.Fatalf("calls = %v, want %v", p.calls, want)
+	}
+}
+
 // TestVolumeAttacherUnmountsAfterAFailedMount: a Mount that fails may have
 // left a live mount (the provider mounted, refused a later check and failed
 // its own unmount), so the volume is held with its target and a release
