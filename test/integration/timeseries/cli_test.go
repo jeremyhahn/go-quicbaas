@@ -122,6 +122,53 @@ func TestTimeSeriesCLIErrorHandling(t *testing.T) {
 	})
 }
 
+// TestTimeSeriesCLIRoundTrip proves write, query and retention end to end on
+// every transport the time-series CLI supports (gRPC, Unix over gRPC, MCP):
+// a written value comes back from query, and the retention policy set is
+// the one get-retention prints. Its commands carry no SkipTransports, so a
+// transport that cannot do them fails rather than skipping silently. QUIC
+// has no time-series CLI client and REST's is not implemented yet.
+func TestTimeSeriesCLIRoundTrip(t *testing.T) {
+	cli.RunForTransports(t, "RoundTrip", []cli.Transport{cli.TransportREST, cli.TransportQUIC}, func(t *testing.T, runner *cli.TestRunner) {
+		if !runner.RequireTimeseriesAvailable() {
+			return
+		}
+		metric := fmt.Sprintf("cli.roundtrip.%d", time.Now().UnixNano())
+		start := time.Now().Add(-time.Hour).Format(time.RFC3339)
+
+		runner.RunAndAssert(cli.CommandDef{
+			Name:           "write " + metric,
+			Args:           []string{"timeseries", "write", "--metric", metric, "--value", "42.5"},
+			ExpectSuccess:  true,
+			Timeout:        10 * time.Second,
+			RequiresUnseal: true,
+		})
+		runner.RunAndAssert(cli.CommandDef{
+			Name:           "query " + metric,
+			Args:           []string{"timeseries", "query", "--metric", metric, "--start", start, "--end", time.Now().Add(time.Hour).Format(time.RFC3339)},
+			ExpectSuccess:  true,
+			ExpectOutput:   []string{"Points: 1", "42.5000"},
+			Timeout:        30 * time.Second,
+			RequiresUnseal: true,
+		})
+		runner.RunAndAssert(cli.CommandDef{
+			Name:           "set-retention " + metric,
+			Args:           []string{"timeseries", "set-retention", metric, "--duration", "86400", "--resolution", "300", "--aggregation", "max"},
+			ExpectSuccess:  true,
+			Timeout:        10 * time.Second,
+			RequiresUnseal: true,
+		})
+		runner.RunAndAssert(cli.CommandDef{
+			Name:           "get-retention " + metric,
+			Args:           []string{"timeseries", "get-retention", metric},
+			ExpectSuccess:  true,
+			ExpectOutput:   []string{"Metric: " + metric, "Duration: 24h0m0s", "Resolution: 5m0s", "Aggregation: max"},
+			Timeout:        10 * time.Second,
+			RequiresUnseal: true,
+		})
+	})
+}
+
 // =============================================================================
 // Time Series Lifecycle Test
 // =============================================================================

@@ -171,8 +171,8 @@ describe('navigate() sets window.location.hash', () => {
 
   it('navigate() on a view with no hash mapping is a no-op', () => {
     window.location.hash = '#/dashboard';
-    // 'cluster' has no hash path in viewHashPaths — should not change the hash.
-    navigate('nodes' as Parameters<typeof navigate>[0]);
+    // 'no-such-view' has no hash path in viewHashPaths — should not change the hash.
+    navigate('no-such-view' as Parameters<typeof navigate>[0]);
     expect(window.location.hash).toBe('#/dashboard');
   });
 
