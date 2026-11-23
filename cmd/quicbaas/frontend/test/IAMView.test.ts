@@ -12,6 +12,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
+import { tick } from 'svelte';
 import type { IAMUser, IAMTenant, IAMRole, IAMPolicy } from '@quicbaas/sdk';
 
 // ---------------------------------------------------------------------------
@@ -996,6 +997,79 @@ describe('IAMView', () => {
         expect(get).toHaveBeenCalledTimes(2);
       });
       expect(screen.queryByRole('dialog', { name: 'Regenerate backup codes confirmation' })).not.toBeInTheDocument();
+    });
+
+    async function confirmRegenerate(): Promise<void> {
+      await fireEvent.click(await screen.findByRole('button', { name: 'Regenerate backup codes' }));
+      const confirm = screen.getByRole('dialog', { name: 'Regenerate backup codes confirmation' });
+      const confirmButton = Array.from(confirm.querySelectorAll('button')).find((b) => b.textContent === 'Regenerate');
+      expect(confirmButton).toBeDefined();
+      if (confirmButton) await fireEvent.click(confirmButton);
+    }
+
+    it('clears the shown backup codes when the session changes', async () => {
+      stubMFA({
+        getMFAStatus: vi.fn().mockResolvedValue(enabled),
+        generateBackupCodes: vi.fn().mockResolvedValue({ codes: ['aaaa-1111'] }),
+      });
+      await openMFADialog('alice');
+      await confirmRegenerate();
+      await screen.findByRole('list', { name: 'Backup codes' });
+      expect(screen.getByText('aaaa-1111')).toBeInTheDocument();
+
+      setAuthenticated({ access_token: sessionToken('globex') });
+      await waitFor(() => {
+        expect(screen.queryByRole('dialog', { name: /^MFA dialog$/ })).toBeNull();
+        expect(screen.queryByText('aaaa-1111')).toBeNull();
+      });
+    });
+
+    it('clears the shown enrollment secret when the session changes', async () => {
+      stubMFA({
+        getMFAStatus: vi.fn().mockResolvedValue(disabled),
+        beginMFAEnrollment: vi.fn().mockResolvedValue(enrollment),
+        cancelMFAEnrollment: vi.fn().mockResolvedValue(undefined),
+      });
+      await beginEnrollment();
+      expect(screen.getByTestId('mfa-secret').textContent).toBe(enrollment.secret);
+
+      setAuthenticated({ access_token: sessionToken('globex') });
+      await waitFor(() => {
+        expect(screen.queryByTestId('mfa-secret')).toBeNull();
+        expect(screen.queryByRole('dialog', { name: /^MFA dialog$/ })).toBeNull();
+      });
+    });
+
+    it('drops a backup-codes response that lands after the session changed', async () => {
+      let resolve!: (v: { codes: string[] }) => void;
+      const generate = vi.fn().mockReturnValue(
+        new Promise<{ codes: string[] }>((r) => {
+          resolve = r;
+        }),
+      );
+      stubMFA({ getMFAStatus: vi.fn().mockResolvedValue(enabled), generateBackupCodes: generate });
+      await openMFADialog('alice');
+      await confirmRegenerate();
+      await waitFor(() => expect(generate).toHaveBeenCalled());
+
+      setAuthenticated({ access_token: sessionToken('globex') });
+      await waitFor(() => {
+        expect(screen.queryByRole('dialog', { name: /^MFA dialog$/ })).toBeNull();
+      });
+      // The new session reopens the same user's dialog before the old response lands.
+      await fireEvent.click(await screen.findByRole('button', { name: 'MFA of alice' }));
+      expect(screen.getByRole('dialog', { name: /^MFA dialog$/ })).toBeInTheDocument();
+
+      resolve({ codes: ['stale-0000'] });
+      await new Promise((r) => setTimeout(r, 0));
+      await tick();
+
+      expect(screen.queryByRole('list', { name: 'Backup codes' })).toBeNull();
+      expect(screen.queryByText('stale-0000')).toBeNull();
+      expect(mockShowToast).not.toHaveBeenCalledWith({
+        message: 'Backup codes regenerated for "alice"',
+        type: 'success',
+      });
     });
 
     it('shows the SDK error in the dialog when the enrollment begin is rejected', async () => {

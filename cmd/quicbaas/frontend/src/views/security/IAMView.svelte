@@ -23,6 +23,7 @@
     Policies  — ABAC policy list per tenant: create / edit / delete.
 -->
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { getSDKClient } from '../../stores/sdkClient.ts';
   import { authStore } from '../../stores/auth.svelte.ts';
   import { tenantOptionsOf, withRequiredTenants, type TenantOption } from '../../lib/tenantOptions.ts';
@@ -299,6 +300,39 @@
   let mfaBusy = $state(false);
   let confirmRegenerateCodes = $state(false);
   let mfaBackupCodes: string[] | null = $state(null);
+
+  // An MFA response is shown only to the session and user it was asked for:
+  // a login replacing this one (here or in another tab) must never see the
+  // previous principal's enrollment secret or backup codes.
+  function mfaCurrent(user: IAMUser, forSession: string): boolean {
+    return forSession === authStore.sessionKey && userForMFA?.id === user.id;
+  }
+
+  function resetMFA(): void {
+    userForMFA = null;
+    mfaStatus = null;
+    mfaLoading = false;
+    mfaError = null;
+    confirmDisableMFA = false;
+    disablingMFA = false;
+    mfaEnrollment = null;
+    mfaEnrollCode = '';
+    mfaBusy = false;
+    confirmRegenerateCodes = false;
+    mfaBackupCodes = null;
+  }
+
+  // A change of session identity drops the MFA dialog and every secret it
+  // showed. No cancel is sent: the new session is not the one that began it.
+  let lastMFASession = authStore.sessionKey;
+  $effect(() => {
+    const key = authStore.sessionKey;
+    if (key === lastMFASession) return;
+    lastMFASession = key;
+    untrack(() => {
+      resetMFA();
+    });
+  });
 
   // ---------------------------------------------------------------------------
   // Passkeys (WebAuthn credentials) dialog state
@@ -880,16 +914,18 @@
   }
 
   async function loadUserMFA(user: IAMUser): Promise<void> {
+    const forSession = authStore.sessionKey;
     mfaLoading = true;
     try {
       const client = await getSDKClient();
       const status = await client.iam.getMFAStatus(selectedTenantID, user.id);
-      // Drop a response that lands after the dialog closed or moved to another user.
-      if (userForMFA?.id === user.id) {
+      // Drop a response that lands after the dialog closed, moved to another
+      // user, or the session changed.
+      if (mfaCurrent(user, forSession)) {
         mfaStatus = status;
       }
     } catch (e) {
-      if (userForMFA?.id === user.id) {
+      if (mfaCurrent(user, forSession)) {
         mfaError = e instanceof Error ? e.message : 'Failed to load MFA status';
       }
     } finally {
@@ -932,18 +968,19 @@
 
   async function submitBeginEnrollment(): Promise<void> {
     if (!userForMFA) return;
+    const forSession = authStore.sessionKey;
     const user = userForMFA;
     mfaError = null;
     mfaBusy = true;
     try {
       const client = await getSDKClient();
       const enrollment = await client.iam.beginMFAEnrollment(selectedTenantID, user.id, 'totp');
-      if (userForMFA?.id === user.id) {
+      if (mfaCurrent(user, forSession)) {
         mfaEnrollment = enrollment;
         mfaEnrollCode = '';
       }
     } catch (e) {
-      if (userForMFA?.id === user.id) {
+      if (mfaCurrent(user, forSession)) {
         mfaError = e instanceof Error ? e.message : 'Failed to begin MFA enrollment';
       }
     } finally {
@@ -953,6 +990,7 @@
 
   async function submitCompleteEnrollment(): Promise<void> {
     if (!userForMFA || !mfaEnrollment) return;
+    const forSession = authStore.sessionKey;
     const user = userForMFA;
     const enrollment = mfaEnrollment;
     mfaError = null;
@@ -965,7 +1003,7 @@
     try {
       const client = await getSDKClient();
       const res = await client.iam.completeMFAEnrollment(selectedTenantID, user.id, enrollment.enrollment_id, code);
-      if (userForMFA?.id !== user.id) return;
+      if (!mfaCurrent(user, forSession)) return;
       if (!res.success) {
         mfaError = 'The verification code was not accepted';
         return;
@@ -975,7 +1013,7 @@
       mfaEnrollCode = '';
       await loadUserMFA(user);
     } catch (e) {
-      if (userForMFA?.id === user.id) {
+      if (mfaCurrent(user, forSession)) {
         mfaError = e instanceof Error ? e.message : 'Failed to verify MFA enrollment';
       }
     } finally {
@@ -985,6 +1023,7 @@
 
   async function submitCancelEnrollment(): Promise<void> {
     if (!userForMFA || !mfaEnrollment) return;
+    const forSession = authStore.sessionKey;
     const user = userForMFA;
     const enrollment = mfaEnrollment;
     mfaError = null;
@@ -992,12 +1031,12 @@
     try {
       const client = await getSDKClient();
       await client.iam.cancelMFAEnrollment(selectedTenantID, user.id, enrollment.enrollment_id);
-      if (userForMFA?.id === user.id) {
+      if (mfaCurrent(user, forSession)) {
         mfaEnrollment = null;
         mfaEnrollCode = '';
       }
     } catch (e) {
-      if (userForMFA?.id === user.id) {
+      if (mfaCurrent(user, forSession)) {
         mfaError = e instanceof Error ? e.message : 'Failed to cancel MFA enrollment';
       }
     } finally {
@@ -1007,20 +1046,21 @@
 
   async function submitRegenerateBackupCodes(): Promise<void> {
     if (!userForMFA) return;
+    const forSession = authStore.sessionKey;
     const user = userForMFA;
     mfaError = null;
     mfaBusy = true;
     try {
       const client = await getSDKClient();
       const res = await client.iam.generateBackupCodes(selectedTenantID, user.id);
+      if (!mfaCurrent(user, forSession)) return;
       confirmRegenerateCodes = false;
-      if (userForMFA?.id !== user.id) return;
       mfaBackupCodes = res.codes ?? [];
       showToast({ message: `Backup codes regenerated for "${user.username}"`, type: 'success' });
       await loadUserMFA(user);
     } catch (e) {
       confirmRegenerateCodes = false;
-      if (userForMFA?.id === user.id) {
+      if (mfaCurrent(user, forSession)) {
         mfaError = e instanceof Error ? e.message : 'Failed to regenerate backup codes';
       }
     } finally {
@@ -1030,20 +1070,21 @@
 
   async function submitDisableMFA(): Promise<void> {
     if (!userForMFA) return;
+    const forSession = authStore.sessionKey;
     const user = userForMFA;
     mfaError = null;
     disablingMFA = true;
     try {
       const client = await getSDKClient();
       await client.iam.disableMFA(selectedTenantID, user.id);
-      showToast({ message: `MFA disabled for "${user.username}"`, type: 'success' });
       confirmDisableMFA = false;
-      if (userForMFA?.id === user.id) {
+      if (mfaCurrent(user, forSession)) {
+        showToast({ message: `MFA disabled for "${user.username}"`, type: 'success' });
         await loadUserMFA(user);
       }
     } catch (e) {
       confirmDisableMFA = false;
-      if (userForMFA?.id === user.id) {
+      if (mfaCurrent(user, forSession)) {
         mfaError = e instanceof Error ? e.message : 'Failed to disable MFA';
       }
     } finally {
