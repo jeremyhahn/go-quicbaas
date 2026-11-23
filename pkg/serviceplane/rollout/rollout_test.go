@@ -48,13 +48,15 @@ func (g *memGuard) Swap(ctx context.Context, key string, held, next []byte) (boo
 }
 
 // slotRig records every slot, appraisal and name call. failAppraise fails
-// appraisal of a version; failDrain fails every drain; block, when set,
-// holds every fill until it is closed, after signalling filling.
+// appraisal of a version; failDrain fails every drain; failSwitch fails a
+// switch to that slot; block, when set, holds every fill until it is
+// closed, after signalling filling.
 type slotRig struct {
 	mu           sync.Mutex
 	calls        []string
 	failAppraise string
 	failDrain    bool
+	failSwitch   string
 	filling      chan struct{}
 	block        chan struct{}
 }
@@ -98,6 +100,9 @@ func (r *slotRig) Appraise(_ context.Context, _, _ string, slot Slot, rel *servi
 
 func (r *slotRig) Switch(_ context.Context, _, _ string, slot Slot) error {
 	r.log("switch " + string(slot))
+	if string(slot) == r.failSwitch {
+		return errors.New("the switch took effect but did not answer")
+	}
 	return nil
 }
 
@@ -214,6 +219,29 @@ func TestABSwitch_AFailedRollbackIsRecorded(t *testing.T) {
 	stored, _ := c.Slots(context.Background(), "acme", "web")
 	if stored.Rollout.Phase != PhaseFailed || stored.Active != "" {
 		t.Fatalf("after failed rollback: %+v", stored.Rollout)
+	}
+}
+
+func TestABSwitch_AFailedSwitchPointsTheNameBack(t *testing.T) {
+	w, rig := newWorld(t), &slotRig{}
+	c := w.controller("node-1", rig, true)
+	ctx := context.Background()
+	if _, err := c.Roll(ctx, "acme", w.release(t, "acme", "1", serviceplane.ReleaseService)); err != nil {
+		t.Fatal(err)
+	}
+	rig.failSwitch = "b"
+	_, err := c.Roll(ctx, "acme", w.release(t, "acme", "2", serviceplane.ReleaseService))
+	var step *StepError
+	if !errors.Is(err, ErrRolledBack) || !errors.As(err, &step) || step.Phase != PhaseSwitch {
+		t.Fatalf("roll = %v", err)
+	}
+	wantCalls(t, rig, "fill a 1", "appraise a 1", "switch a", "fill b 2", "appraise b 2", "switch b", "switch a", "drain b")
+	stored, err := c.Slots(ctx, "acme", "web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Active != SlotA || stored.Rollout.Phase != PhaseRolledBack {
+		t.Fatalf("after a failed switch: %+v %+v", stored, stored.Rollout)
 	}
 }
 

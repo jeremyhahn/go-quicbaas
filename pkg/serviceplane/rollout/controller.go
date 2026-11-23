@@ -152,11 +152,15 @@ func (c *Controller) drive(ctx context.Context, slots *Slots, raw []byte) (*Slot
 		if stepErr != nil {
 			sentinel := ErrRolledBack
 			ro.Reason = stepErr.Error()
-			ro.Phase = PhaseRolledBack
+			// Rollback sees the phase that failed: what it undoes depends
+			// on it (a failed switch points the name back). The terminal
+			// phase is set after.
 			if rbErr := c.Strategy.Rollback(ctx, ro); rbErr != nil {
 				sentinel = ErrRollback
 				ro.Phase = PhaseFailed
 				ro.Reason += "; rollback: " + rbErr.Error()
+			} else {
+				ro.Phase = PhaseRolledBack
 			}
 			if _, err := c.write(ctx, slots, raw); err != nil {
 				return slots, errors.Join(fmt.Errorf("%w: %w", sentinel, stepErr), err)
