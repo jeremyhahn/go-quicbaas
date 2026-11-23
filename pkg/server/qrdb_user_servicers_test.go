@@ -273,8 +273,8 @@ func TestBuildQRDBRegisterOptions_AlwaysIncludesUserSurface(t *testing.T) {
 	s := &Server{}
 
 	opts := s.buildQRDBRegisterOptions()
-	if len(opts) != 3 {
-		t.Fatalf("expected exactly the 3 always-on proxy options (barrier, user, user-auth-factor) on a bare server, got %d", len(opts))
+	if len(opts) != 4 {
+		t.Fatalf("expected exactly the 4 always-on proxy options (barrier, user, user-auth-factor, timeseries) on a bare server, got %d", len(opts))
 	}
 	for i, opt := range opts {
 		if opt == nil {
