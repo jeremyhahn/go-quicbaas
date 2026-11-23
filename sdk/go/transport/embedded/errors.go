@@ -16,6 +16,7 @@ package embedded
 import (
 	"context"
 	stderrors "errors"
+	"io"
 	"strconv"
 
 	"google.golang.org/grpc/status"
@@ -45,7 +46,9 @@ var (
 	ErrSendOnClosedStream = errors.NewConnection("embedded.stream.Send", "cannot send on closed stream")
 
 	// ErrRecvOnClosedStream indicates an attempt to receive on a closed stream.
-	ErrRecvOnClosedStream = errors.NewConnection("embedded.stream.Recv", "cannot receive on closed stream")
+	// It wraps io.EOF: a stream the handler finished and closed has ended
+	// cleanly, and subscribers treat it as such.
+	ErrRecvOnClosedStream = errors.Wrap(io.EOF, errors.CodeConnection, "embedded.stream.Recv", "cannot receive on closed stream")
 )
 
 // UnknownMethodError indicates the method is not supported.

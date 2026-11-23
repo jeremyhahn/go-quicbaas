@@ -16,6 +16,7 @@ package orchestrator
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -152,7 +153,7 @@ func TestSubscribeJobEventsSuccess(t *testing.T) {
 	ms := &mockStream{
 		recvFn: func() (interface{}, error) {
 			if idx >= len(events) {
-				return nil, errors.NewInternal("mock", "stream ended")
+				return nil, io.EOF
 			}
 			evt := events[idx]
 			idx++

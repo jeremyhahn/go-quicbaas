@@ -15,6 +15,8 @@ package orchestrator
 
 import (
 	"context"
+	stderrors "errors"
+	"io"
 	"sync/atomic"
 	"time"
 
@@ -151,6 +153,9 @@ type Client interface {
 	// CancelJob cancels a running orchestration job.
 	CancelJob(ctx context.Context, req *CancelJobRequest) (*CancelJobResponse, error)
 	// SubscribeJobEvents returns a channel of real-time events for a running job.
+	// If the stream fails, the last value on the channel carries the error in
+	// Err before the channel closes; a clean end or a cancelled context closes
+	// the channel with no such value.
 	SubscribeJobEvents(ctx context.Context, req *SubscribeJobEventsRequest) (<-chan *JobEvent, error)
 
 	// GetSessionHistory fetches a page of historical session events. Used
@@ -186,7 +191,9 @@ type Client interface {
 	// stream begins with a historical replay from req.FromSequence
 	// (inclusive; 0 replays from the first event), then transitions to
 	// live tail when Follow is true. The returned channel closes when the stream is done or the
-	// context is cancelled.
+	// context is cancelled. If the stream fails, the last value on the
+	// channel carries the error in Err before the channel closes; a clean
+	// end or a cancelled context closes the channel with no such value.
 	SubscribeSessionEvents(ctx context.Context, req *SubscribeSessionEventsRequest) (<-chan *SessionEventEnvelope, error)
 
 	// Inference runs a stateless fleet-routed inference call against a named
@@ -693,6 +700,10 @@ type SessionEventEnvelope struct {
 	PayloadJSON []byte    `json:"payload_json"`
 	Timestamp   time.Time `json:"timestamp"`
 	FromReplay  bool      `json:"from_replay,omitempty"`
+	// Err is set only on the last value a subscription delivers, when the
+	// stream failed rather than ended. SessionID names the session; every
+	// other field is zero. The channel closes right after it.
+	Err error `json:"-"`
 }
 
 // Session management types
@@ -3499,6 +3510,7 @@ func (c *client) SubscribeJobEvents(ctx context.Context, req *SubscribeJobEvents
 	sub := &jobEventSubscription{
 		stream: stream,
 		events: make(chan *JobEvent, 64),
+		jobID:  req.JobID,
 	}
 
 	go sub.receiveLoop(ctx)
@@ -3506,11 +3518,22 @@ func (c *client) SubscribeJobEvents(ctx context.Context, req *SubscribeJobEvents
 	return sub.events, nil
 }
 
-// jobEventSubscription manages the lifecycle of a job event stream.
+// jobEventSubscription manages the lifecycle of a job event stream. The
+// channel closes when the stream ends or ctx is cancelled; a failed stream
+// first delivers one value carrying Err.
 type jobEventSubscription struct {
 	stream transport.Stream
 	events chan *JobEvent
+	jobID  string
 	closed atomic.Bool
+}
+
+// fail delivers err as the subscription's last value, unless ctx ends first.
+func (s *jobEventSubscription) fail(ctx context.Context, err error) {
+	select {
+	case s.events <- &JobEvent{JobID: s.jobID, Err: err}:
+	case <-ctx.Done():
+	}
 }
 
 // receiveLoop reads events from the stream and forwards them to the channel.
@@ -3528,6 +3551,16 @@ func (s *jobEventSubscription) receiveLoop(ctx context.Context) {
 		default:
 			msg, err := s.stream.Recv()
 			if err != nil {
+				if !streamEnded(ctx, err) {
+					s.fail(ctx, err)
+				}
+				return
+			}
+			// The embedded transport hands a handler's error over as a message.
+			if msgErr, isErr := msg.(error); isErr {
+				if ctx.Err() == nil {
+					s.fail(ctx, msgErr)
+				}
 				return
 			}
 
@@ -3624,8 +3657,9 @@ func (c *client) SubscribeSessionEvents(ctx context.Context, req *SubscribeSessi
 		return nil, err
 	}
 	sub := &sessionEventSubscription{
-		stream: stream,
-		events: make(chan *SessionEventEnvelope, 64),
+		stream:    stream,
+		events:    make(chan *SessionEventEnvelope, 64),
+		sessionID: req.SessionID,
 	}
 	go sub.receiveLoop(ctx)
 	return sub.events, nil
@@ -3633,12 +3667,29 @@ func (c *client) SubscribeSessionEvents(ctx context.Context, req *SubscribeSessi
 
 // sessionEventSubscription wraps a transport.Stream and forwards each
 // received SessionEventEnvelope to its buffered channel. The channel is
-// closed when the stream errors or the context is cancelled; consumers
-// detect end-of-stream via the closed-channel signal.
+// closed when the stream ends or the context is cancelled; a failed stream
+// first delivers one value carrying Err, so consumers can tell a broken
+// stream from a finished one.
 type sessionEventSubscription struct {
-	stream transport.Stream
-	events chan *SessionEventEnvelope
-	closed atomic.Bool
+	stream    transport.Stream
+	events    chan *SessionEventEnvelope
+	sessionID string
+	closed    atomic.Bool
+}
+
+// streamEnded reports whether a subscription stream's Recv error is a clean
+// end — the server finished the stream, or the caller cancelled ctx — rather
+// than a failure the subscriber must see.
+func streamEnded(ctx context.Context, err error) bool {
+	return ctx.Err() != nil || stderrors.Is(err, io.EOF)
+}
+
+// fail delivers err as the subscription's last value, unless ctx ends first.
+func (s *sessionEventSubscription) fail(ctx context.Context, err error) {
+	select {
+	case s.events <- &SessionEventEnvelope{SessionID: s.sessionID, Err: err}:
+	case <-ctx.Done():
+	}
 }
 
 func (s *sessionEventSubscription) receiveLoop(ctx context.Context) {
@@ -3655,6 +3706,16 @@ func (s *sessionEventSubscription) receiveLoop(ctx context.Context) {
 		}
 		msg, err := s.stream.Recv()
 		if err != nil {
+			if !streamEnded(ctx, err) {
+				s.fail(ctx, err)
+			}
+			return
+		}
+		// The embedded transport hands a handler's error over as a message.
+		if msgErr, isErr := msg.(error); isErr {
+			if ctx.Err() == nil {
+				s.fail(ctx, msgErr)
+			}
 			return
 		}
 		env, ok := msg.(*SessionEventEnvelope)
@@ -4022,6 +4083,10 @@ type JobEvent struct {
 	Iteration int               `json:"iteration"`
 	Metadata  map[string]string `json:"metadata,omitempty"`
 	Timestamp int64             `json:"timestamp"`
+	// Err is set only on the last value a subscription delivers, when the
+	// stream failed rather than ended. JobID names the job; every other
+	// field is zero. The channel closes right after it.
+	Err error `json:"-"`
 }
 
 // TaskSpec is an inline task definition supplied when spawning a child job.
