@@ -177,6 +177,33 @@ func TestFollowPromptTurn_StreamEndsMidTurn(t *testing.T) {
 	}
 }
 
+// A stream that fails mid-turn returns a TurnStreamEndedError carrying the
+// stream error as its cause, with the reattach hint.
+func TestFollowPromptTurn_StreamErrorMidTurn(t *testing.T) {
+	cause := errors.New("connection reset by peer")
+	client := &mockOrchestratorClient{}
+	setSubscribeSessionEventsFn(client, func(_ context.Context, _ *orchestratorSDK.SubscribeSessionEventsRequest) (<-chan *orchestratorSDK.SessionEventEnvelope, error) {
+		ch := make(chan *orchestratorSDK.SessionEventEnvelope, 1)
+		ch <- &orchestratorSDK.SessionEventEnvelope{SessionID: "sess-1", Err: cause}
+		close(ch)
+		return ch, nil
+	})
+
+	var out bytes.Buffer
+	err := followPromptTurn(client, acceptedAck(), "table", &out)
+	var ended *TurnStreamEndedError
+	if !errors.As(err, &ended) {
+		t.Fatalf("err = %v, want *TurnStreamEndedError", err)
+	}
+	if !errors.Is(err, cause) {
+		t.Fatalf("err = %v, want it to wrap the stream error", err)
+	}
+	msg := ended.Error()
+	if !strings.Contains(msg, "orchestrator attach sess-1") || !strings.Contains(msg, "connection reset by peer") {
+		t.Fatalf("the error must carry the cause and the reattach hint; got %q", msg)
+	}
+}
+
 // TestFollowPromptTurn_SubscribeFailure asserts a transport that cannot open
 // the stream surfaces its error instead of exiting zero.
 func TestFollowPromptTurn_SubscribeFailure(t *testing.T) {

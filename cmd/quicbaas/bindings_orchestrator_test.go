@@ -22,6 +22,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -860,6 +861,51 @@ func TestOrchestratorBinding_SubscribeJobEvents_HappyPath(t *testing.T) {
 		JobID:    "job-1",
 	})
 	require.NoError(t, err)
+}
+
+// A failed job stream reaches the GUI as a "job-event" carrying "error".
+func TestOrchestratorBinding_SubscribeJobEvents_StreamErrorEmitted(t *testing.T) {
+	rec := recordGUIEmits(t)
+	mock := &mockOrchestratorClient{
+		subscribeJobEventsFn: func(ctx context.Context, req *orchestratorSDK.SubscribeJobEventsRequest) (<-chan *orchestratorSDK.JobEvent, error) {
+			ch := make(chan *orchestratorSDK.JobEvent, 1)
+			ch <- &orchestratorSDK.JobEvent{JobID: req.JobID, Err: errors.New("stream reset")}
+			close(ch)
+			return ch, nil
+		},
+	}
+	binding := newTestOrchestratorBinding(t, mock)
+	ctx, cancel := context.WithCancel(context.Background())
+	binding.ctx = ctx
+	defer cancel()
+
+	require.NoError(t, binding.SubscribeJobEvents(&orchestratorSDK.SubscribeJobEventsRequest{
+		TenantID: "acme",
+		JobID:    "job-1",
+	}))
+
+	deadline := time.After(5 * time.Second)
+	for {
+		for _, call := range rec.snapshot() {
+			if call.topic != "job-event" || len(call.data) != 1 {
+				continue
+			}
+			payload, ok := call.data[0].(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if msg, has := payload["error"].(string); has {
+				assert.Equal(t, "job-1", payload["job_id"])
+				assert.Contains(t, msg, "stream reset")
+				return
+			}
+		}
+		select {
+		case <-deadline:
+			t.Fatal("no job-event carrying an error was emitted")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
 }
 
 func TestOrchestratorBinding_SubscribeJobEvents_NilRequest(t *testing.T) {

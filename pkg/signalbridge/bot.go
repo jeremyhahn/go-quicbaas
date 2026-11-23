@@ -474,6 +474,10 @@ func (b *OrchestratorBot) forwardLoop(ctx context.Context, sessionID string, ch 
 			if !ok {
 				return
 			}
+			if env.Err != nil {
+				b.logger.WithError(env.Err).Warn("signalbridge: session event stream failed", "session_id", sessionID)
+				return
+			}
 			for _, conv := range b.manager.ConversationsForSession(sessionID) {
 				// Exactly-once: skip envelopes at or below watermark.
 				if env.Sequence <= conv.LastDeliveredSeq {

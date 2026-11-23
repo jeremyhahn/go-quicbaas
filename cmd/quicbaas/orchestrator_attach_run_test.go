@@ -89,3 +89,27 @@ func TestRunOrchAttach_HappyEmptyStream(t *testing.T) {
 
 	require.NoError(t, runOrchAttach(cmd, []string{"sess-1"}))
 }
+
+// A stream that fails delivers its error as the last channel value; attach
+// exits with that error instead of 0.
+func TestRunOrchAttach_StreamErrorFails(t *testing.T) {
+	wantErr := stderrors.New("stream reset by peer")
+	mc := &mockOrchestratorClient{}
+	setSubscribeSessionEventsFn(mc, func(_ context.Context, _ *orchestratorSDK.SubscribeSessionEventsRequest) (<-chan *orchestratorSDK.SessionEventEnvelope, error) {
+		ch := make(chan *orchestratorSDK.SessionEventEnvelope, 1)
+		ch <- &orchestratorSDK.SessionEventEnvelope{SessionID: "sess-1", Err: wantErr}
+		close(ch)
+		return ch, nil
+	})
+	t.Cleanup(func() { clearSessionOverrides(mc) })
+	withMockOrchestrator(t, mc)
+
+	cmd := newOrchAttachCommand()
+	orig := attachFormat
+	attachFormat = "pretty"
+	t.Cleanup(func() { attachFormat = orig })
+
+	err := runOrchAttach(cmd, []string{"sess-1"})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, wantErr)
+}

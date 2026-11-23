@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -70,6 +71,70 @@ func newTestSessionBinding(t *testing.T, mock *mockOrchestratorClient) (*Session
 	})
 
 	return binding, cancel
+}
+
+// guiEmit is one recorded emitGUIEvent call.
+type guiEmit struct {
+	topic string
+	data  []interface{}
+}
+
+// guiEmitRecorder replaces emitGUIEvent for a test and records every call.
+type guiEmitRecorder struct {
+	mu    sync.Mutex
+	calls []guiEmit
+}
+
+func recordGUIEmits(t *testing.T) *guiEmitRecorder {
+	t.Helper()
+	rec := &guiEmitRecorder{}
+	orig := emitGUIEvent
+	emitGUIEvent = func(_ context.Context, topic string, data ...interface{}) {
+		rec.mu.Lock()
+		defer rec.mu.Unlock()
+		rec.calls = append(rec.calls, guiEmit{topic: topic, data: data})
+	}
+	t.Cleanup(func() { emitGUIEvent = orig })
+	return rec
+}
+
+func (r *guiEmitRecorder) snapshot() []guiEmit {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]guiEmit(nil), r.calls...)
+}
+
+// A failed session stream emits one value on the topic's error channel and
+// stops the forwarder, even though the events channel is never closed.
+func TestSessionBinding_ForwardEvents_StreamErrorEmitsAndStops(t *testing.T) {
+	rec := recordGUIEmits(t)
+	binding, _ := newTestSessionBinding(t, &mockOrchestratorClient{})
+
+	ch := make(chan *orchestratorSDK.SessionEventEnvelope, 1)
+	ch <- &orchestratorSDK.SessionEventEnvelope{SessionID: "sess-err", Err: errors.New("boom")}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		binding.forwardEvents(ctx, "sess-err", &sessionSubscription{cancel: func() {}}, "session-event:sess-err", ch)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("forwardEvents did not return after a stream error")
+	}
+
+	calls := rec.snapshot()
+	require.Len(t, calls, 1)
+	assert.Equal(t, "session-event:sess-err:error", calls[0].topic)
+	require.Len(t, calls[0].data, 1)
+	payload, ok := calls[0].data[0].(map[string]string)
+	require.True(t, ok, "payload type = %T", calls[0].data[0])
+	assert.Equal(t, "sess-err", payload["session_id"])
+	assert.Contains(t, payload["error"], "boom")
 }
 
 // -----------------------------------------------------------------------------

@@ -120,6 +120,9 @@ func runOrchAttach(_ *cobra.Command, args []string) error {
 	}
 
 	for env := range events {
+		if env.Err != nil {
+			return formatError(env.Err)
+		}
 		if err := renderer.Render(env); err != nil {
 			return formatError(err)
 		}

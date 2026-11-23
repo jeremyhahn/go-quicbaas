@@ -52,13 +52,22 @@ type TurnStreamEndedError struct {
 	SessionID string
 	// TurnID identifies the turn that was still in flight.
 	TurnID string
+	// Cause is the stream error, nil when the stream simply closed.
+	Cause error
 }
 
 // Error implements the error interface.
 func (e *TurnStreamEndedError) Error() string {
+	if e.Cause != nil {
+		return fmt.Sprintf("event stream for session %s failed while turn %s was still running: %v; reattach with: quicbaas orchestrator attach %s",
+			e.SessionID, e.TurnID, e.Cause, e.SessionID)
+	}
 	return fmt.Sprintf("event stream for session %s ended while turn %s was still running; reattach with: quicbaas orchestrator attach %s",
 		e.SessionID, e.TurnID, e.SessionID)
 }
+
+// Unwrap returns the stream error, so errors.Is reaches it.
+func (e *TurnStreamEndedError) Unwrap() error { return e.Cause }
 
 // turnLifecycleEvent is the slice of a session event the follower needs to
 // decide whether the turn it is watching has ended. Decoding only these fields
@@ -119,6 +128,9 @@ func followPromptTurn(client OrchestratorClient, ack *orchestratorSDK.PromptSess
 	}
 
 	for env := range events {
+		if env.Err != nil {
+			return &TurnStreamEndedError{SessionID: ack.SessionID, TurnID: ack.TurnID, Cause: env.Err}
+		}
 		if renderErr := renderer.Render(env); renderErr != nil {
 			return formatError(renderErr)
 		}
