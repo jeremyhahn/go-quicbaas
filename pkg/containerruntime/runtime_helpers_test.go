@@ -319,6 +319,23 @@ func TestJobContainerConfig_HostMountsAreBound(t *testing.T) {
 	assert.NotContains(t, mounts[2].Options, "rbind")
 }
 
+func TestJobContainerConfig_UntypedNamedSourceIsAVolume(t *testing.T) {
+	config, err := jobContainerConfig(&orchestration.ContainerSpec{
+		Network: "none",
+		Image:   "alpine:latest",
+		Mounts: []orchestration.ContainerMount{
+			{Source: "cache", Target: "/cache"},
+			{Source: "/srv/x", Target: "/x"},
+			{Source: "cache", Target: "/c2", Type: "bind"},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, config.Mounts, 3)
+	assert.Equal(t, "volume", config.Mounts[0].Type, "an untyped named source is a managed volume")
+	assert.Equal(t, "bind", config.Mounts[1].Type, "an untyped absolute source is a host bind")
+	assert.Equal(t, "bind", config.Mounts[2].Type, "an explicit type is kept")
+}
+
 func TestGenerateOCIConfig_ReadOnlyRbindIsRecursive(t *testing.T) {
 	tests := []struct {
 		name  string
