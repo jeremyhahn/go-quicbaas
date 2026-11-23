@@ -14,6 +14,7 @@
 package buildgates
 
 import (
+	"fmt"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -57,29 +58,61 @@ func nonCommentLines(body string) []string {
 	return out
 }
 
+// dockerSocketMounts returns each line of the workflow at path that
+// bind-mounts the host Docker socket, as "file:line: text".
+func dockerSocketMounts(t *testing.T, path string) []string {
+	t.Helper()
+	var out []string
+	for i, line := range strings.Split(readFile(t, path), "\n") {
+		if dockerSocketMountRe.MatchString(line) {
+			out = append(out, fmt.Sprintf("%s:%d: %s", filepath.Base(path), i+1, strings.TrimSpace(line)))
+		}
+	}
+	return out
+}
+
 // skipUntilReleaseWorkflowFix skips a check release.yml does not meet yet.
 // The fix (docs/plans/1171.md slice 1: release runner, digest-pinned images,
 // Trivy scanning a saved tarball) edits .github/workflows/release.yml, a
 // protected path the row lane that folded this test could not change. Remove
-// the call in the commit that lands the workflow fix; the test then goes red
-// on any regression.
+// its three calls (the release.yml socket, runs-on and digest checks) in the
+// commit that lands the workflow fix; those tests then go red on any
+// regression.
 func skipUntilReleaseWorkflowFix(t *testing.T) {
 	t.Helper()
 	t.Skip("release.yml still mounts the host Docker socket and runs unpinned images; #1171 lands the workflow fix")
 }
 
+// TestNoWorkflowMountsTheHostDockerSocket proves no workflow other than
+// release.yml bind-mounts the host Docker socket; release.yml is checked by
+// TestReleaseWorkflowMountsNoDockerSocket.
 func TestNoWorkflowMountsTheHostDockerSocket(t *testing.T) {
-	skipUntilReleaseWorkflowFix(t)
+	checked := 0
 	for _, path := range workflowFiles(t) {
-		for i, line := range strings.Split(readFile(t, path), "\n") {
-			if dockerSocketMountRe.MatchString(line) {
-				t.Errorf("%s:%d bind-mounts the host Docker socket (#1171): %s",
-					filepath.Base(path), i+1, strings.TrimSpace(line))
-			}
+		if filepath.Base(path) == filepath.Base(releaseWorkflowPath) {
+			continue
 		}
+		checked++
+		for _, m := range dockerSocketMounts(t, path) {
+			t.Errorf("bind-mounts the host Docker socket (#1171): %s", m)
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no workflow besides release.yml was checked; discovery has broken")
 	}
 }
 
+// TestReleaseWorkflowMountsNoDockerSocket proves release.yml does not
+// bind-mount the host Docker socket.
+func TestReleaseWorkflowMountsNoDockerSocket(t *testing.T) {
+	skipUntilReleaseWorkflowFix(t)
+	for _, m := range dockerSocketMounts(t, releaseWorkflowPath) {
+		t.Errorf("bind-mounts the host Docker socket (#1171): %s", m)
+	}
+}
+
+// TestReleaseJobsRunOnTheReleaseRunner proves every release.yml job runs on
+// the release runner.
 func TestReleaseJobsRunOnTheReleaseRunner(t *testing.T) {
 	skipUntilReleaseWorkflowFix(t)
 	order, bodies := ciJobs(t, readFile(t, releaseWorkflowPath))
@@ -95,6 +128,8 @@ func TestReleaseJobsRunOnTheReleaseRunner(t *testing.T) {
 	}
 }
 
+// TestReleaseImagesArePinnedByDigest proves every image release.yml runs
+// carries a @sha256 digest.
 func TestReleaseImagesArePinnedByDigest(t *testing.T) {
 	skipUntilReleaseWorkflowFix(t)
 	found := 0
@@ -115,6 +150,8 @@ func TestReleaseImagesArePinnedByDigest(t *testing.T) {
 	}
 }
 
+// TestTheReleaseImageCheckCatchesATag proves the image and socket checks
+// catch the forms they guard against and pass the forms they allow.
 func TestTheReleaseImageCheckCatchesATag(t *testing.T) {
 	for _, tc := range []struct {
 		line   string
@@ -132,7 +169,20 @@ func TestTheReleaseImageCheckCatchesATag(t *testing.T) {
 			t.Errorf("%q: pinned=%v, want %v", tc.line, got, tc.pinned)
 		}
 	}
-	if !dockerSocketMountRe.MatchString("-v /var/run/docker.sock:/var/run/docker.sock \\") {
-		t.Error("the socket check misses a -v bind mount")
+	for _, line := range []string{
+		"-v /var/run/docker.sock:/var/run/docker.sock \\",
+		"--volume=/run/docker.sock:/var/run/docker.sock",
+		"      - /var/run/docker.sock:/var/run/docker.sock",
+	} {
+		if !dockerSocketMountRe.MatchString(line) {
+			t.Errorf("the socket check misses %q", line)
+		}
+	}
+	for _, line := range []string{
+		"for s in /var/run/docker.sock /run/docker.sock; do",
+	} {
+		if dockerSocketMountRe.MatchString(line) {
+			t.Errorf("the socket check flags %q, which mounts nothing", line)
+		}
 	}
 }
