@@ -67,6 +67,8 @@ func outcomeTransition(run RunConclusion, outcome *Job, owner string) RunTransit
 			return nil, false
 		}
 		next := *outcome
+		// Pending history the execution never saw is kept.
+		next.PendingHistory = held.PendingHistory
 		switch held.Status {
 		case JobStatusRunning:
 		case JobStatusCanceled, JobStatusCompleted:

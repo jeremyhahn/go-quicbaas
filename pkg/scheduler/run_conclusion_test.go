@@ -525,3 +525,64 @@ func TestClusteredUpdate_AStaleUpdateKeepsARecoverysConclusion(t *testing.T) {
 		t.Fatalf("STORED job has %d failures and name %q, want 1 and \"renamed\"", stored.FailCount, stored.Name)
 	}
 }
+
+// TestRecoverAbandonedRun_AFailedHistoryWriteSurvivesTheNextRun: a recovery
+// whose history write failed keeps the record on the job; a new run of the
+// job does not lose it, and a later attempt writes it once.
+func TestRecoverAbandonedRun_AFailedHistoryWriteSurvivesTheNextRun(t *testing.T) {
+	ctx := context.Background()
+	storage := newConcludingStorage()
+	recoverer := clusteredNode(t, storage, "node-1")
+	executor := clusteredNode(t, storage, "node-2")
+	if err := executor.RegisterHandler("sdlc.reconcile", func(context.Context, *Job) (*JobResult, error) {
+		return &JobResult{Message: "next run"}, nil
+	}); err != nil {
+		t.Fatalf("RegisterHandler: %v", err)
+	}
+	job := seedRunningJob(t, storage.mockJobStorage, runningRecoveryJob())
+
+	storage.errMu.Lock()
+	storage.saveExecutionErr = errors.New("raft: no quorum")
+	storage.errMu.Unlock()
+	if _, err := recoverer.RecoverAbandonedRun(ctx, job, goodAttestation()); err == nil {
+		t.Fatal("RecoverAbandonedRun with a failing history write reported success")
+	}
+	if stored := storedJob(t, storage.mockJobStorage, job.ID); stored.Status != JobStatusPending || len(stored.PendingHistory) != 1 {
+		t.Fatalf("STORED job is %s with %d pending records, want pending with 1", stored.Status, len(stored.PendingHistory))
+	}
+
+	// The next run starts and concludes before the recovery is retried,
+	// with the history still failing.
+	executor.executeJob(context.Background(), storedJob(t, storage.mockJobStorage, job.ID), time.Time{})
+	if stored := storedJob(t, storage.mockJobStorage, job.ID); stored.ConcludedBy != "execution@node-2" || len(stored.PendingHistory) != 1 {
+		t.Fatalf("STORED job concluded by %q with %d pending records, want the next run's conclusion and 1",
+			stored.ConcludedBy, len(stored.PendingHistory))
+	}
+
+	storage.errMu.Lock()
+	storage.saveExecutionErr = nil
+	storage.errMu.Unlock()
+	_, err := recoverer.RecoverAbandonedRun(ctx, job, goodAttestation())
+	var refused RecoveryRefusedError
+	if !errors.As(err, &refused) || refused.Refusal != RefusedConcluded {
+		t.Fatalf("the retried recovery after the next run: err = %v, want refused as concluded", err)
+	}
+
+	executions, err := storage.GetExecutions(ctx, job.ID, "", 10)
+	if err != nil {
+		t.Fatalf("GetExecutions: %v", err)
+	}
+	evidence := renderAttestation(goodAttestation())
+	found := 0
+	for _, exec := range executions {
+		if exec.Status == JobStatusFailed && exec.StartedAt.Equal(recoveryFiring) && exec.Error == evidence {
+			found++
+		}
+	}
+	if found != 1 {
+		t.Fatalf("history holds %d records of the abandoned run, want 1: %+v", found, executions)
+	}
+	if stored := storedJob(t, storage.mockJobStorage, job.ID); len(stored.PendingHistory) != 0 {
+		t.Fatalf("STORED job still holds %d pending records", len(stored.PendingHistory))
+	}
+}

@@ -268,6 +268,13 @@ func (s *SchedulerEngine) RecoverAbandonedRun(
 	// recovery of it is refused as concluded whatever status the conclusion
 	// left — or, retried on the node whose recovery concluded it, finishes
 	// the history record that attempt failed to write.
+	// Every recovery attempt first completes the history a clustered
+	// recovery left pending on the job, on whichever node it runs.
+	if s.concluder != nil && len(current.PendingHistory) > 0 {
+		if err := s.flushPendingHistory(storageCtx, current); err != nil {
+			return "", err
+		}
+	}
 	if s.concluder != nil && runConcluded(current) {
 		return s.revisitConcludedRun(storageCtx, current, att)
 	}
@@ -389,6 +396,15 @@ func (s *SchedulerEngine) recoverThroughGuard(
 ) (JobStatus, error) {
 	run := RunConclusion{JobID: current.ID, TenantID: JobTenantID(current), Firing: current.NextRun, StartedAt: startedAt}
 	owner := s.recoveryOwner()
+	exec := &JobExecution{
+		TenantID:  JobTenantID(current),
+		JobID:     current.ID,
+		Status:    JobStatusFailed,
+		StartedAt: startedAt,
+		EndedAt:   now,
+		Duration:  now.Sub(startedAt),
+		Error:     evidence,
+	}
 	var written *Job
 	won, err := s.concluder.ConcludeRun(ctx, &run, func(held *Job) (*Job, bool) {
 		written = nil
@@ -400,6 +416,9 @@ func (s *SchedulerEngine) recoverThroughGuard(
 		// The write stamps UpdatedAt, so the run's identity is pinned in
 		// RunStartedAt for a record that only carried it in UpdatedAt.
 		next.RunStartedAt, next.ConcludedRunAt, next.ConcludedBy = startedAt, startedAt, owner
+		// The run's history record is written with its conclusion, so a
+		// failed history write leaves it on the job for any node to finish.
+		next.PendingHistory = append(append([]*JobExecution(nil), held.PendingHistory...), exec)
 		written = &next
 		return &next, true
 	})
@@ -415,7 +434,7 @@ func (s *SchedulerEngine) recoverThroughGuard(
 		}
 	}
 	s.failureCount.Add(1)
-	if err := s.saveAbandonedRun(ctx, written, startedAt, evidence, now); err != nil {
+	if err := s.flushPendingHistory(ctx, written); err != nil {
 		return "", err
 	}
 	return written.Status, nil
@@ -430,7 +449,8 @@ func runConcluded(job *Job) bool {
 // revisitConcludedRun answers a recovery of a run that was already concluded.
 // It is refused as concluded, unless this node's recovery concluded it with
 // the same evidence: that is a retry of a recovery whose history write
-// failed after its transition, and it finishes the record, once.
+// failed after its transition. Its history record was kept on the job in
+// PendingHistory, and the caller has already completed it from there.
 func (s *SchedulerEngine) revisitConcludedRun(ctx context.Context, current *Job, att AbandonedRunAttestation) (JobStatus, error) {
 	startedAt := runStartedAt(current)
 	if att.ObservedAt.IsZero() {
@@ -444,37 +464,69 @@ func (s *SchedulerEngine) revisitConcludedRun(ctx context.Context, current *Job,
 			Status:  current.Status,
 		}
 	}
-	if err := s.saveAbandonedRun(ctx, current, startedAt, evidence, time.Now()); err != nil {
-		return "", err
-	}
 	return current.Status, nil
 }
 
-// saveAbandonedRun writes the abandoned run's history record unless it is
-// already recorded (same evidence, same StartedAt).
-func (s *SchedulerEngine) saveAbandonedRun(ctx context.Context, job *Job, startedAt time.Time, evidence string, endedAt time.Time) error {
-	already, err := s.abandonedRunRecorded(ctx, job.ID, JobTenantID(job), startedAt, evidence)
-	if err != nil {
-		s.storageErrors.Add(1)
-		return ErrStorageError{Op: "GetExecutions", Cause: err}
+// flushPendingHistory writes each of job's pending history records unless it
+// is already recorded (same evidence, same StartedAt), then removes the
+// written records from the job through a guarded write. A record that could
+// not be written stays pending on the job.
+func (s *SchedulerEngine) flushPendingHistory(ctx context.Context, job *Job) error {
+	var flushed []*JobExecution
+	for _, rec := range job.PendingHistory {
+		if rec == nil {
+			continue
+		}
+		already, err := s.abandonedRunRecorded(ctx, job.ID, JobTenantID(job), rec.StartedAt, rec.Error)
+		if err != nil {
+			s.storageErrors.Add(1)
+			return ErrStorageError{Op: "GetExecutions", Cause: err}
+		}
+		if !already {
+			exec := *rec
+			if err := s.storage.SaveExecution(ctx, &exec); err != nil {
+				s.storageErrors.Add(1)
+				return ErrStorageError{Op: "SaveExecution", Cause: err}
+			}
+		}
+		flushed = append(flushed, rec)
 	}
-	if already {
+	written, err := s.mutateJob(ctx, job.ID, JobTenantID(job), func(held *Job) (*Job, error) {
+		next := *held
+		next.PendingHistory = withoutRecords(held.PendingHistory, flushed)
+		return &next, nil
+	})
+	if err != nil {
+		return err
+	}
+	if written == nil {
+		job.PendingHistory = nil
 		return nil
 	}
-	exec := &JobExecution{
-		TenantID:  JobTenantID(job),
-		JobID:     job.ID,
-		Status:    JobStatusFailed,
-		StartedAt: startedAt,
-		EndedAt:   endedAt,
-		Duration:  endedAt.Sub(startedAt),
-		Error:     evidence,
-	}
-	if err := s.storage.SaveExecution(ctx, exec); err != nil {
-		s.storageErrors.Add(1)
-		return ErrStorageError{Op: "SaveExecution", Cause: err}
-	}
+	job.PendingHistory = written.PendingHistory
 	return nil
+}
+
+// withoutRecords returns the held records that no flushed record matches on
+// StartedAt and Error, or nil when none remain.
+func withoutRecords(held, flushed []*JobExecution) []*JobExecution {
+	var kept []*JobExecution
+	for _, rec := range held {
+		if rec == nil {
+			continue
+		}
+		matched := false
+		for _, done := range flushed {
+			if done.StartedAt.Equal(rec.StartedAt) && done.Error == rec.Error {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			kept = append(kept, rec)
+		}
+	}
+	return kept
 }
 
 // abandonedRunRecorded reports whether a previous recovery attempt already

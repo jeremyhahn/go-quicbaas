@@ -1474,6 +1474,14 @@ func (s *SchedulerEngine) executeJob(ctx context.Context, job *Job, claimedFirin
 	}
 	lock.Unlock()
 
+	// A recovered run's history left pending on the job is completed by the
+	// next execution, on whichever node it runs.
+	if len(job.PendingHistory) > 0 {
+		if err := s.flushPendingHistory(storageCtx, job); err != nil {
+			s.logWarn("Job %d: a recovered run's history could not be written: %v; it stays pending on the job", job.ID, err)
+		}
+	}
+
 	// Create execution record
 	exec := &JobExecution{
 		TenantID:  JobTenantID(job),

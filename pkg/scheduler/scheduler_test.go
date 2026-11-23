@@ -44,6 +44,17 @@ func copyJob(job *Job) *Job {
 			cp.Labels[k] = v
 		}
 	}
+	// Deep copy pending history
+	if job.PendingHistory != nil {
+		cp.PendingHistory = make([]*JobExecution, 0, len(job.PendingHistory))
+		for _, rec := range job.PendingHistory {
+			if rec != nil {
+				recCopy := *rec
+				rec = &recCopy
+			}
+			cp.PendingHistory = append(cp.PendingHistory, rec)
+		}
+	}
 	return &cp
 }
 
