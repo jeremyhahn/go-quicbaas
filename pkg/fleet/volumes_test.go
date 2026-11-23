@@ -62,22 +62,67 @@ func TestWrapVolumeRuntimeWrapsWithDefaults(t *testing.T) {
 
 // TestWrapVolumeRuntimeRefusesDRBD: the node agent does not promote or demote
 // drbd volumes on launch, so it refuses the provider before building one.
-func TestWrapVolumeRuntimeRefusesDRBD(t *testing.T) {
+func TestWrapVolumeRuntimeAcceptsDRBD(t *testing.T) {
 	var name string
 	stubVolumeProvider(t, &name)
-	old := hostname
-	hostname = func() (string, error) { return "node-7", nil }
-	t.Cleanup(func() { hostname = old })
+	stubHostname(t, "node-7")
 
 	got, err := WrapVolumeRuntime(VolumeConfig{Provider: "drbd"}, t.TempDir(), &nopRuntime{})
-	if !errors.Is(err, orchestration.ErrVolumeUnsupported) {
-		t.Fatalf("WrapVolumeRuntime(drbd) = %v, %v; want ErrVolumeUnsupported", got, err)
+	if err != nil {
+		t.Fatalf("WrapVolumeRuntime(drbd): %v", err)
 	}
-	if got != nil {
-		t.Errorf("runtime = %T, want none", got)
+	if _, ok := got.(*orchestration.VolumeRuntime); !ok {
+		t.Fatalf("runtime = %T, want *orchestration.VolumeRuntime", got)
 	}
-	if name != "" {
-		t.Errorf("provider %q was built, want none", name)
+	if name != "drbd" {
+		t.Errorf("provider built = %q, want drbd", name)
+	}
+}
+
+// drbd's node identity is node_name; its node_id is a DRBD integer id that
+// neither names the attacher's node nor has to match NodeID.
+func TestWrapVolumeRuntimeDRBDNodeIsNodeName(t *testing.T) {
+	var settings map[string]string
+	stubVolumeProviderSettings(t, &settings)
+	stubHostname(t, "host-x")
+	in := map[string]string{"node_name": "node-a", "node_id": "1"}
+	got, err := WrapVolumeRuntime(VolumeConfig{Provider: "drbd", Settings: in}, t.TempDir(), &nopRuntime{})
+	if err != nil {
+		t.Fatalf("WrapVolumeRuntime: %v", err)
+	}
+	if n := got.(*orchestration.VolumeRuntime).Attacher().Node(); n != "node-a" {
+		t.Errorf("attacher node = %q, want node-a", n)
+	}
+	if !reflect.DeepEqual(settings, map[string]string{"node_name": "node-a", "node_id": "1"}) {
+		t.Errorf("provider settings = %v, want them unchanged", settings)
+	}
+	if _, err := WrapVolumeRuntime(VolumeConfig{Provider: "drbd", NodeID: "node-a", Settings: in}, t.TempDir(), &nopRuntime{}); err != nil {
+		t.Errorf("NodeID node-a with node_id 1: %v, want no mismatch", err)
+	}
+}
+
+func TestWrapVolumeRuntimeDRBDRejectsNodeNameMismatch(t *testing.T) {
+	var settings map[string]string
+	stubVolumeProviderSettings(t, &settings)
+	_, err := WrapVolumeRuntime(VolumeConfig{Provider: "drbd", NodeID: "node-a", Settings: map[string]string{"node_name": "node-b"}}, t.TempDir(), &nopRuntime{})
+	if !errors.Is(err, orchestration.ErrVolumeInvalidArgument) {
+		t.Fatalf("err = %v, want ErrVolumeInvalidArgument", err)
+	}
+}
+
+func TestWrapVolumeRuntimeDRBDDefaultsToHostName(t *testing.T) {
+	var settings map[string]string
+	stubVolumeProviderSettings(t, &settings)
+	stubHostname(t, "node-7")
+	got, err := WrapVolumeRuntime(VolumeConfig{Provider: "drbd", Settings: map[string]string{"node_id": "2"}}, t.TempDir(), &nopRuntime{})
+	if err != nil {
+		t.Fatalf("WrapVolumeRuntime: %v", err)
+	}
+	if n := got.(*orchestration.VolumeRuntime).Attacher().Node(); n != "node-7" {
+		t.Errorf("attacher node = %q, want node-7", n)
+	}
+	if _, ok := settings["node_name"]; ok || settings["node_id"] != "2" {
+		t.Errorf("provider settings = %v, want them unchanged", settings)
 	}
 }
 

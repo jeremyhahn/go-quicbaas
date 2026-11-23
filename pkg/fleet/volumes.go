@@ -16,17 +16,21 @@ import (
 // VolumeConfig selects the go-blockstore provider the node agent attaches
 // workload volumes with.
 type VolumeConfig struct {
-	// Provider names the go-blockstore provider: "local". "drbd" is refused
-	// until launches promote and demote its volumes. Empty disables volumes
-	// on this node.
+	// Provider names the go-blockstore provider: "local" or "drbd". A
+	// replicated (drbd) volume is promoted to primary for each launch and
+	// demoted on release. Empty disables volumes on this node.
 	Provider string `json:"provider,omitempty" yaml:"provider,omitempty"`
 
-	// Settings are the provider's snake_case settings.
+	// Settings are the provider's snake_case settings. The drbd settings are
+	// passed to the provider unchanged.
 	Settings map[string]string `json:"settings,omitempty" yaml:"settings,omitempty"`
 
 	// NodeID is this node's identity to the attacher and, for the local
 	// provider, to the provider (as its node_id setting). Empty means
-	// settings.node_id, then the host name. settings.node_id must not differ.
+	// settings.node_id, then the host name, and settings.node_id must not
+	// differ. For drbd, whose node_id is a DRBD integer id, the default is
+	// settings.node_name, then the host name, and settings.node_name must not
+	// differ.
 	NodeID string `json:"node_id,omitempty" yaml:"node_id,omitempty"`
 
 	// StagingDir is the absolute directory filesystem volumes are mounted
@@ -88,15 +92,17 @@ func WrapVolumeRuntime(cfg VolumeConfig, workDir string, inner orchestration.Con
 	if !cfg.Enabled() || inner == nil {
 		return inner, nil
 	}
+	// The provider's own name for this node: drbd's Attach accepts only
+	// node_name (uname -n by default), and its node_id is a DRBD integer id
+	// left alone; the local provider takes node_id.
+	nodeKey := "node_id"
 	if cfg.Provider == "drbd" {
-		// A drbd volume is Secondary after Provision and Attach, and Mount
-		// needs Primary: until a launch promotes and demotes, refuse it.
-		return nil, fmt.Errorf("%w: fleet volumes: the drbd provider needs a launch that promotes and demotes its volumes, which the node agent does not do yet", orchestration.ErrVolumeUnsupported)
+		nodeKey = "node_name"
 	}
-	settingsNode := cfg.Settings["node_id"]
+	settingsNode := cfg.Settings[nodeKey]
 	if cfg.NodeID != "" && settingsNode != "" && settingsNode != cfg.NodeID {
-		return nil, fmt.Errorf("%w: fleet volumes: node_id %q and settings.node_id %q differ",
-			orchestration.ErrVolumeInvalidArgument, cfg.NodeID, settingsNode)
+		return nil, fmt.Errorf("%w: fleet volumes: node_id %q and settings.%s %q differ",
+			orchestration.ErrVolumeInvalidArgument, cfg.NodeID, nodeKey, settingsNode)
 	}
 	if cfg.LockDir != "" && !filepath.IsAbs(cfg.LockDir) {
 		return nil, fmt.Errorf("%w: fleet volumes: lock_dir %q is not absolute",
