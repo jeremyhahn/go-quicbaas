@@ -108,6 +108,13 @@ type PendingVolumeReleaser interface {
 	RetryPendingReleases(ctx context.Context) error
 }
 
+// ContainerVolumeReconciler lists owner's containers through lister and
+// releases the volumes of the containers it launched that the listing no
+// longer shows; the fleet reaper lists through it each pass.
+type ContainerVolumeReconciler interface {
+	ReconcileVolumes(ctx context.Context, owner string, lister OwnedContainerLister) ([]OwnedContainer, error)
+}
+
 // RuntimeAs returns the first runtime in rt's wrapper chain, rt itself
 // first, that implements T. The walk follows Unwrap and stops after 8 hops.
 func RuntimeAs[T any](rt ContainerRuntime) (T, bool) {

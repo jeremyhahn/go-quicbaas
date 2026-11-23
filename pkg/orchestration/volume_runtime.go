@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 )
 
 // VolumeStateFile is the file in the attacher's staging dir where the
@@ -27,6 +28,9 @@ const VolumeStateLockFile = ".quicbaas-attachments.lock"
 // the inner runtime a copy of the spec with the volumes resolved into bind
 // mounts, and release the volumes again when the start fails. Stop and Remove
 // release a container's volumes after the inner runtime has stopped it.
+// ReconcileVolumes releases those of a container that is gone without
+// either, such as an interactive container that exited and was removed by
+// --rm.
 //
 // A volume has one owner on the node, from the start of its launch until its
 // release: a launch claiming a volume another container holds, or one a
@@ -78,6 +82,9 @@ type VolumeRuntime struct {
 	// owner, when set, is the ContainerOwnerLabel every volume launch must
 	// carry.
 	owner string
+	// reconcileGrace is how old a launch must be before ReconcileVolumes may
+	// release it for missing from the owner listing.
+	reconcileGrace time.Duration
 }
 
 // WithVolumeOwner refuses a volume launch whose ContainerOwnerLabel is not
@@ -98,6 +105,15 @@ func WithVolumeLockDir(dir string) VolumeRuntimeOption {
 	return func(r *VolumeRuntime) { r.lockDir = dir }
 }
 
+// WithVolumeReconcileGrace sets how old a launch must be before
+// ReconcileVolumes releases its volumes for missing from the owner listing:
+// an interactive container is created asynchronously, after its launch
+// returns, so a younger one may not be listed yet. The default is
+// DefaultContainerReapGrace; a negative d means 0.
+func WithVolumeReconcileGrace(d time.Duration) VolumeRuntimeOption {
+	return func(r *VolumeRuntime) { r.reconcileGrace = max(d, 0) }
+}
+
 // volumeRecord is one container's held volumes, filed under each of keys. Its
 // own mutex serialises concurrent teardowns of that container, so a volume is
 // never released twice.
@@ -105,6 +121,9 @@ type volumeRecord struct {
 	mu   sync.Mutex
 	keys []string
 	vols []AttachedVolume
+	// tracked is when the launch was tracked; set once, before the record is
+	// filed.
+	tracked time.Time
 }
 
 // volumeState is the state file's content.
@@ -113,10 +132,11 @@ type volumeState struct {
 }
 
 var (
-	_ RuntimeUnwrapper        = (*VolumeRuntime)(nil)
-	_ ContainerVolumeReleaser = (*VolumeRuntime)(nil)
-	_ RecoveredVolumeReleaser = (*VolumeRuntime)(nil)
-	_ PendingVolumeReleaser   = (*VolumeRuntime)(nil)
+	_ RuntimeUnwrapper          = (*VolumeRuntime)(nil)
+	_ ContainerVolumeReleaser   = (*VolumeRuntime)(nil)
+	_ RecoveredVolumeReleaser   = (*VolumeRuntime)(nil)
+	_ PendingVolumeReleaser     = (*VolumeRuntime)(nil)
+	_ ContainerVolumeReconciler = (*VolumeRuntime)(nil)
 )
 
 // NewVolumeRuntime wraps inner with the attacher's volumes. It reads the
@@ -150,6 +170,7 @@ func NewVolumeRuntime(inner ContainerRuntime, attacher *VolumeAttacher, opts ...
 		attached:         make(map[string]*volumeRecord),
 		owned:            make(map[string]AttachedVolume),
 		volLocks:         make(map[string]*os.File),
+		reconcileGrace:   DefaultContainerReapGrace,
 	}
 	for _, opt := range opts {
 		opt(r)
@@ -563,6 +584,55 @@ func (r *VolumeRuntime) RetryPendingReleases(ctx context.Context) error {
 	return errors.Join(err, werr)
 }
 
+// ReconcileVolumes lists owner's containers through lister and releases the
+// volumes of every launch at least reconcileGrace old whose container the
+// listing no longer shows. An interactive container runs with --rm, so one
+// that exits between two reaper passes is gone before the reaper lists it
+// and nothing else would release its volumes. It reconciles only when the
+// runtime checks the owner label and owner is that label, since only then
+// does the listing show every container it launched; otherwise it only
+// lists. A release that fails moves to pending, for RetryPendingReleases.
+// The listing and its error are returned as lister gave them.
+func (r *VolumeRuntime) ReconcileVolumes(ctx context.Context, owner string, lister OwnedContainerLister) ([]OwnedContainer, error) {
+	if r.owner == "" || strings.TrimSpace(owner) != r.owner {
+		return lister.ListOwned(ctx, owner)
+	}
+	cutoff := time.Now().Add(-r.reconcileGrace)
+	var due []*volumeRecord
+	r.mu.Lock()
+	for _, rec := range r.attached {
+		if !rec.tracked.After(cutoff) && !slices.Contains(due, rec) {
+			due = append(due, rec)
+		}
+	}
+	r.mu.Unlock()
+	cs, err := lister.ListOwned(ctx, owner)
+	if err != nil {
+		return cs, err
+	}
+	cctx, cancel := cleanupContext(ctx)
+	defer cancel()
+	for _, rec := range due {
+		if !listsRecord(cs, rec) {
+			_ = r.releaseRecord(cctx, rec, true)
+		}
+	}
+	return cs, nil
+}
+
+// listsRecord reports whether any listed container is rec's: by full ID,
+// by name, or by a short ID (12 or more characters) the full ID starts with.
+func listsRecord(cs []OwnedContainer, rec *volumeRecord) bool {
+	for _, c := range cs {
+		for _, k := range rec.keys {
+			if k == c.ID || k == c.Name || (len(k) >= 12 && strings.HasPrefix(c.ID, k)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // track files the container's record under each of its non-empty keys.
 func (r *VolumeRuntime) track(vols []AttachedVolume, keys ...string) {
 	var uniq []string
@@ -571,7 +641,7 @@ func (r *VolumeRuntime) track(vols []AttachedVolume, keys ...string) {
 			uniq = append(uniq, k)
 		}
 	}
-	rec := &volumeRecord{keys: uniq, vols: vols}
+	rec := &volumeRecord{keys: uniq, vols: vols, tracked: time.Now()}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, k := range uniq {
@@ -591,6 +661,11 @@ func (r *VolumeRuntime) release(ctx context.Context, id string, gone bool) error
 	if rec == nil {
 		return nil
 	}
+	return r.releaseRecord(ctx, rec, gone)
+}
+
+// releaseRecord releases what is still held on rec; see release.
+func (r *VolumeRuntime) releaseRecord(ctx context.Context, rec *volumeRecord, gone bool) error {
 	rec.mu.Lock()
 	defer rec.mu.Unlock()
 	if len(rec.vols) == 0 {

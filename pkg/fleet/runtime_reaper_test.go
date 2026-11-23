@@ -342,6 +342,61 @@ func TestRuntime_ReaperReleasesVolumesOfAnInteractiveContainer(t *testing.T) {
 	}
 }
 
+// TestRuntime_ReaperReleasesVolumesOfAContainerGoneBeforeTheFirstListing: an
+// interactive container that exits, and is removed by --rm, before the
+// reaper's first pass is never listed, and the pass still releases its
+// volumes. Not parallel: volumes_test.go stubs package variables.
+func TestRuntime_ReaperReleasesVolumesOfAContainerGoneBeforeTheFirstListing(t *testing.T) {
+	ctx := context.Background()
+	workDir := t.TempDir()
+	inner := &nameIDContainerRuntime{}
+	inner.available = true
+	prov := &detachCountingProvider{}
+	att, err := orchestration.NewVolumeAttacher(prov, "n", t.TempDir())
+	if err != nil {
+		t.Fatalf("NewVolumeAttacher: %v", err)
+	}
+	vr, err := orchestration.NewVolumeRuntime(inner, att,
+		orchestration.WithVolumeOwner(workDir), orchestration.WithVolumeReconcileGrace(0))
+	if err != nil {
+		t.Fatalf("NewVolumeRuntime: %v", err)
+	}
+	t.Cleanup(func() { _ = vr.Close() })
+	spec := volumeSvcSpec()
+	spec.Labels = map[string]string{orchestration.ContainerOwnerLabel: workDir}
+	if _, err := vr.RunInteractive(ctx, spec); err != nil {
+		t.Fatalf("RunInteractive: %v", err)
+	}
+	runtime, err := NewRuntime(RuntimeConfig{
+		Backends:         map[string]orchestration.AgentBackend{"mock": &mockBackend{}},
+		ContainerRuntime: vr,
+		Logger:           &testLogger{t: t},
+		WorkDir:          workDir,
+	})
+	if err != nil {
+		t.Fatalf("NewRuntime: %v", err)
+	}
+	reaper, err := runtime.ContainerReaper(time.Minute)
+	if err != nil || reaper == nil {
+		t.Fatalf("ContainerReaper = %v, %v; want a reaper", reaper, err)
+	}
+	if _, err := reaper.Reap(ctx); err != nil {
+		t.Fatalf("Reap: %v", err)
+	}
+	if len(inner.removed) != 0 {
+		t.Errorf("inner removed %v, want none", inner.removed)
+	}
+	if got := prov.detachCount(); got != 1 {
+		t.Errorf("detaches = %d, want 1", got)
+	}
+	if got := vr.Attached("svc"); len(got) != 0 {
+		t.Errorf("Attached(svc) = %+v, want none", got)
+	}
+	if _, err := vr.RunInteractive(ctx, spec); err != nil {
+		t.Fatalf("RunInteractive again: %v", err)
+	}
+}
+
 // TestRuntime_ReaperRetriesPendingVolumeReleases: a reaped container whose
 // volume release failed is gone from the next listing, and the next reaper
 // pass still releases its volumes. Not parallel: volumes_test.go stubs package

@@ -1022,14 +1022,23 @@ type ownedListerVia struct {
 // ListOwned first retries the volume releases that failed earlier, then lists
 // through the inner lister and remembers each container's name. A container
 // whose volumes failed to release is gone from the list, so the retry cannot
-// hang off it: it runs on every reaper pass instead.
+// hang off it: it runs on every reaper pass instead. When the runtime
+// reconciles volumes, the listing goes through it, so the volumes of a
+// container gone before any pass listed it (an interactive container removed
+// by --rm) are released too.
 func (o *ownedListerVia) ListOwned(ctx context.Context, owner string) ([]orchestration.OwnedContainer, error) {
 	if p, ok := orchestration.RuntimeAs[orchestration.PendingVolumeReleaser](o.rt); ok {
 		if err := p.RetryPendingReleases(ctx); err != nil && o.logger != nil {
 			o.logger.Warnf("fleet reaper: retry volume releases: %v", err)
 		}
 	}
-	cs, err := o.OwnedContainerLister.ListOwned(ctx, owner)
+	var cs []orchestration.OwnedContainer
+	var err error
+	if rc, ok := orchestration.RuntimeAs[orchestration.ContainerVolumeReconciler](o.rt); ok {
+		cs, err = rc.ReconcileVolumes(ctx, owner, o.OwnedContainerLister)
+	} else {
+		cs, err = o.OwnedContainerLister.ListOwned(ctx, owner)
+	}
 	if err != nil {
 		return cs, err
 	}
