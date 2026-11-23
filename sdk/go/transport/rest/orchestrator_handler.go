@@ -103,6 +103,14 @@ func (h *orchestratorHandler) handleRequest(ctx context.Context, service, method
 		"ListTaskArtifacts":      h.handleListTaskArtifacts,
 		"GetCostSettings":        h.handleGetCostSettings,
 		"SetCostSettings":        h.handleSetCostSettings,
+
+		"DeclareFleetPlacementSpec":   h.handleDeclareFleetPlacementSpec,
+		"GetFleetPlacementSpec":       h.handleGetFleetPlacementSpec,
+		"ListFleetPlacementSpecs":     h.handleListFleetPlacementSpecs,
+		"WithdrawFleetPlacementSpec":  h.handleWithdrawFleetPlacementSpec,
+		"GetFleetPlacementDrift":      h.handleGetFleetPlacementDrift,
+		"ListFleetPlacementConsents":  h.handleListFleetPlacementConsents,
+		"AnswerFleetPlacementConsent": h.handleAnswerFleetPlacementConsent,
 	}
 
 	handler, ok := handlers[method]
@@ -864,7 +872,7 @@ func (h *orchestratorHandler) handleSubscribeJobEvents(ctx context.Context, req 
 		"streaming not supported over REST transport; use gRPC transport")
 }
 
-// handleDisableFleetNode handles POST /api/v1/agents/{id}/disable.
+// handleListWorkflows handles GET /api/v1/orchestrator/workflows.
 func (h *orchestratorHandler) handleListWorkflows(ctx context.Context, req interface{}) (interface{}, error) {
 	sdkReq, ok := req.(*orchestrator.ListWorkflowsRequest)
 	if !ok {
@@ -955,12 +963,13 @@ func (h *orchestratorHandler) handleDeleteWorkflow(ctx context.Context, req inte
 	return nil, nil
 }
 
+// handleDisableFleetNode handles POST /api/v1/fleet/{id}/disable.
 func (h *orchestratorHandler) handleDisableFleetNode(ctx context.Context, req interface{}) (interface{}, error) {
 	sdkReq, ok := req.(*orchestrator.DisableFleetNodeRequest)
 	if !ok {
 		return nil, errors.NewInvalidInput("orchestrator.DisableFleetNode", "invalid request type")
 	}
-	url := "/api/v1/agents/" + sdkReq.NodeID + "/disable?tenant_id=" + sdkReq.TenantID
+	url := "/api/v1/fleet/" + sdkReq.NodeID + "/disable?tenant_id=" + sdkReq.TenantID
 	var resp orchestrator.DisableFleetNodeResponse
 	if err := h.transport.doJSONRequest(ctx, http.MethodPost, url, nil, &resp); err != nil {
 		return nil, err
@@ -968,13 +977,13 @@ func (h *orchestratorHandler) handleDisableFleetNode(ctx context.Context, req in
 	return &resp, nil
 }
 
-// handleEnableFleetNode handles POST /api/v1/agents/{id}/enable.
+// handleEnableFleetNode handles POST /api/v1/fleet/{id}/enable.
 func (h *orchestratorHandler) handleEnableFleetNode(ctx context.Context, req interface{}) (interface{}, error) {
 	sdkReq, ok := req.(*orchestrator.EnableFleetNodeRequest)
 	if !ok {
 		return nil, errors.NewInvalidInput("orchestrator.EnableFleetNode", "invalid request type")
 	}
-	url := "/api/v1/agents/" + sdkReq.NodeID + "/enable?tenant_id=" + sdkReq.TenantID
+	url := "/api/v1/fleet/" + sdkReq.NodeID + "/enable?tenant_id=" + sdkReq.TenantID
 	var resp orchestrator.EnableFleetNodeResponse
 	if err := h.transport.doJSONRequest(ctx, http.MethodPost, url, nil, &resp); err != nil {
 		return nil, err

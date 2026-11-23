@@ -11,35 +11,38 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-package fleet
+// Package sandbox is the service-policy engine's sandbox kind: the daemon's
+// sandbox-mode resolver (moved from pkg/fleet) and the Evaluator that decides
+// a requested mode against a signed sandbox policy document.
+package sandbox
 
 import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
 
-// SandboxResolver resolves a client-supplied SandboxMode into an effective
+// Resolver resolves a client-supplied SandboxMode into an effective
 // mode, honoring the daemon's SandboxPolicy and any tenant-level override
 // surfaced by the control plane during enrollment.
 //
 // The daemon enforces the resolved mode before dispatching to ACPBackend or
 // OllamaBackend. A SandboxModeViolationError returned here is sent back to
 // the control plane as a PERMISSION_DENIED gRPC status code.
-type SandboxResolver struct {
+type Resolver struct {
 	policy         orchestration.SandboxPolicy
 	tenantOverride *orchestration.SandboxPolicy
 	hasContainerRT bool
 }
 
-// NewSandboxResolver builds a resolver from the daemon's effective policy.
+// NewResolver builds a resolver from the daemon's effective policy.
 // hasContainerRT reflects whether the daemon could actually start a
 // containerized session right now.
-func NewSandboxResolver(policy orchestration.SandboxPolicy, hasContainerRT bool) *SandboxResolver {
-	return &SandboxResolver{policy: policy, hasContainerRT: hasContainerRT}
+func NewResolver(policy orchestration.SandboxPolicy, hasContainerRT bool) *Resolver {
+	return &Resolver{policy: policy, hasContainerRT: hasContainerRT}
 }
 
 // WithTenantOverride returns a resolver copy with the given tenant-level
 // override applied. Pass nil to clear a previously-set override.
-func (r *SandboxResolver) WithTenantOverride(override *orchestration.SandboxPolicy) *SandboxResolver {
+func (r *Resolver) WithTenantOverride(override *orchestration.SandboxPolicy) *Resolver {
 	clone := *r
 	clone.tenantOverride = override
 	return &clone
@@ -48,17 +51,17 @@ func (r *SandboxResolver) WithTenantOverride(override *orchestration.SandboxPoli
 // Resolve turns a requested mode into an effective mode. Returns a
 // *orchestration.SandboxModeViolationError when the request cannot be
 // honored under the current policy.
-func (r *SandboxResolver) Resolve(requested orchestration.SandboxMode) (orchestration.SandboxMode, error) {
+func (r *Resolver) Resolve(requested orchestration.SandboxMode) (orchestration.SandboxMode, error) {
 	return orchestration.ResolveSandboxMode(requested, r.policy, r.tenantOverride, r.hasContainerRT)
 }
 
 // Policy returns the daemon's configured policy (no tenant override applied).
-func (r *SandboxResolver) Policy() orchestration.SandboxPolicy {
+func (r *Resolver) Policy() orchestration.SandboxPolicy {
 	return r.policy
 }
 
 // HasContainerRuntime reports whether the daemon believes it can satisfy a
 // SandboxModeRequired request right now.
-func (r *SandboxResolver) HasContainerRuntime() bool {
+func (r *Resolver) HasContainerRuntime() bool {
 	return r.hasContainerRT
 }
