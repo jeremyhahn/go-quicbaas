@@ -1755,6 +1755,102 @@ func TestSTOMPHandler_TransactionSendCommit(t *testing.T) {
 	}
 }
 
+// TestSTOMPHandler_TransactionCommitSameConnectionSubscriber commits a
+// transaction on the connection that subscribes to the committed destination:
+// the hub delivers to that connection's own callback while COMMIT runs.
+func TestSTOMPHandler_TransactionCommitSameConnectionSubscriber(t *testing.T) {
+	handler := NewSTOMPHandler(nil)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+
+		session := newGrantedSession("session-"+r.RemoteAddr, "stomp", conn)
+
+		_ = handler.HandleConnection(session.Context(), conn, session)
+	}))
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	client, resp, err := websocket.Dial(ctx, wsURL, nil)
+	if resp != nil && resp.Body != nil {
+		resp.Body.Close()
+	}
+	if err != nil {
+		t.Fatalf("Dial failed: %v", err)
+	}
+	defer client.Close(websocket.StatusNormalClosure, "test complete")
+
+	write := func(command string, headers map[string]string, body string) {
+		t.Helper()
+		if err := client.Write(ctx, websocket.MessageText, buildSTOMPFrame(command, headers, body)); err != nil {
+			t.Fatalf("write %s failed: %v", command, err)
+		}
+	}
+
+	write("CONNECT", map[string]string{"accept-version": "1.2", "host": "localhost"}, "")
+	if _, data, err := client.Read(ctx); err != nil || !bytes.HasPrefix(data, []byte("CONNECTED")) {
+		t.Fatalf("read CONNECTED failed: %v %q", err, data)
+	}
+
+	write("SUBSCRIBE", map[string]string{
+		"id":          "sub-1",
+		"destination": "/queue/self-tx",
+		"ack":         "auto",
+		"receipt":     "r-sub",
+	}, "")
+	for {
+		_, data, err := client.Read(ctx)
+		if err != nil {
+			t.Fatalf("read SUBSCRIBE receipt failed: %v", err)
+		}
+		if bytes.HasPrefix(data, []byte("RECEIPT")) {
+			break
+		}
+	}
+
+	write("BEGIN", map[string]string{"transaction": "tx-self"}, "")
+	write("SEND", map[string]string{
+		"destination": "/queue/self-tx",
+		"transaction": "tx-self",
+	}, "self committed")
+	write("COMMIT", map[string]string{"transaction": "tx-self", "receipt": "r-commit"}, "")
+
+	readCtx, readCancel := context.WithTimeout(ctx, 3*time.Second)
+	defer readCancel()
+	sawReceipt, sawMessage := false, false
+	for !sawReceipt || !sawMessage {
+		_, data, err := client.Read(readCtx)
+		if err != nil {
+			t.Fatalf("COMMIT on a connection subscribed to the committed destination did not complete: receipt=%v message=%v: %v",
+				sawReceipt, sawMessage, err)
+		}
+		switch {
+		case bytes.HasPrefix(data, []byte("RECEIPT")) && bytes.Contains(data, []byte("receipt-id:r-commit")):
+			sawReceipt = true
+		case bytes.HasPrefix(data, []byte("MESSAGE")) && bytes.Contains(data, []byte("self committed")):
+			sawMessage = true
+		}
+	}
+
+	write("SEND", map[string]string{"destination": "/queue/self-tx"}, "after commit")
+	for {
+		_, data, err := client.Read(ctx)
+		if err != nil {
+			t.Fatalf("connection stopped serving after COMMIT: %v", err)
+		}
+		if bytes.HasPrefix(data, []byte("MESSAGE")) && bytes.Contains(data, []byte("after commit")) {
+			break
+		}
+	}
+}
+
 func TestSTOMPHandler_TransactionAbortNoDelivery(t *testing.T) {
 	handler := NewSTOMPHandler(nil)
 	messageReceived := make(chan []byte, 1)

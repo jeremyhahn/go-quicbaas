@@ -1027,20 +1027,16 @@ func (h *STOMPHandler) handleCommit(ctx context.Context, frame *STOMPFrame, sess
 		return nil, &STOMPMissingHeaderError{Header: HeaderTransaction}
 	}
 
+	// Detach the transaction under the lock and publish after releasing it:
+	// the hub calls subscriber callbacks synchronously, and this connection's
+	// own callback takes state.mu when it subscribes to a committed destination.
 	state.mu.Lock()
 	tx, exists := state.transactions[txID]
 	if !exists {
 		state.mu.Unlock()
 		return nil, &STOMPInvalidTransactionError{TransactionID: txID, Reason: "transaction not found"}
 	}
-
-	// Process all queued messages atomically
-	for _, msg := range tx.messages {
-		if err := h.hub.Publish(msg.destination, msg.body, 0, false); err != nil {
-			state.mu.Unlock()
-			return nil, &ErrSTOMPProtocolError{Message: "transaction commit failed: " + err.Error()}
-		}
-	}
+	delete(state.transactions, txID)
 
 	// Process ACKs
 	for _, ackID := range tx.acks {
@@ -1051,9 +1047,14 @@ func (h *STOMPHandler) handleCommit(ctx context.Context, frame *STOMPFrame, sess
 	for _, nackID := range tx.nacks {
 		delete(state.pendingAcks, nackID)
 	}
-
-	delete(state.transactions, txID)
+	messages := tx.messages
 	state.mu.Unlock()
+
+	for _, msg := range messages {
+		if err := h.hub.Publish(msg.destination, msg.body, 0, false); err != nil {
+			return nil, &ErrSTOMPProtocolError{Message: "transaction commit failed: " + err.Error()}
+		}
+	}
 
 	// Send RECEIPT if requested
 	if receipt := frame.Headers[HeaderReceipt]; receipt != "" {
