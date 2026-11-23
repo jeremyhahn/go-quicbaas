@@ -378,6 +378,114 @@ func TestXKMSBackend_OwnershipRollbackDeletesFromItsOwnBackend(t *testing.T) {
 	})
 }
 
+// cancelOnOwnerPutStore ends the request when an ownership record is
+// written: it calls cancel and refuses the write with the context's error,
+// as a store does for a request that expired between key generation and
+// ownership claiming. Every other write goes through.
+type cancelOnOwnerPutStore struct {
+	xkmssdk.StorageBackend
+	cancel context.CancelFunc
+}
+
+func (s *cancelOnOwnerPutStore) Put(ctx context.Context, key string, value []byte) error {
+	if s.cancel != nil && strings.HasPrefix(key, xkmsKeyOwnerRecordPrefix) {
+		s.cancel()
+		s.cancel = nil
+		return ctx.Err()
+	}
+	return s.StorageBackend.Put(ctx, key, value)
+}
+
+// TestXKMSBackend_OwnershipRollbackSurvivesRequestCancellation: a request that
+// ends between key generation and ownership claiming still rolls the key back,
+// because the delete does not inherit the request's cancellation.
+func TestXKMSBackend_OwnershipRollbackSurvivesRequestCancellation(t *testing.T) {
+	cases := []struct {
+		name  string
+		id    string
+		setup func(t *testing.T, kb *XKMSBackend, id string)
+		run   func(ctx context.Context, kb *XKMSBackend, id string) error
+		keyID func(kb *XKMSBackend, id string) string
+	}{
+		{
+			name: "create",
+			id:   "tenant/acme/cancel-create-k",
+			run: func(ctx context.Context, kb *XKMSBackend, id string) error {
+				_, err := kb.CreateKey(ctx, kb.algorithmToKeyAttributes(id, AlgAES256GCM))
+				return err
+			},
+			keyID: func(_ *XKMSBackend, id string) string { return id },
+		},
+		{
+			name: "rotate",
+			id:   "tenant/acme/cancel-rotate-k",
+			setup: func(t *testing.T, kb *XKMSBackend, id string) {
+				_, err := kb.CreateKey(context.Background(), kb.algorithmToKeyAttributes(id, AlgAES256GCM))
+				require.NoError(t, err)
+			},
+			run: func(ctx context.Context, kb *XKMSBackend, id string) error {
+				_, err := kb.RotateKey(ctx, id)
+				return err
+			},
+			keyID: func(kb *XKMSBackend, id string) string { return kb.buildVersionedKeyID(id, 2) },
+		},
+		{
+			name: "import",
+			id:   "tenant/acme/cancel-import-k",
+			run: func(ctx context.Context, kb *XKMSBackend, id string) error {
+				_, err := kb.ImportKey(ctx, id, make([]byte, 32), AlgAES256GCM, nil)
+				return err
+			},
+			keyID: func(_ *XKMSBackend, id string) string { return id },
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &cancelOnOwnerPutStore{StorageBackend: newKeyNameGuardXKMS(t)}
+			kb := newOwnerTestBackend(t, context.Background(), store)
+
+			var calls int
+			var gotErr error
+			var hasDeadline bool
+			kb.deleteKey = func(ctx context.Context, attrs *xkmssdk.KeyAttributes) error {
+				calls++
+				gotErr = ctx.Err()
+				_, hasDeadline = ctx.Deadline()
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				return dbxkms.DeleteKey(ctx, attrs)
+			}
+
+			if tc.setup != nil {
+				tc.setup(t, kb, tc.id)
+			}
+
+			reqCtx, cancel := context.WithCancel(context.Background())
+			t.Cleanup(cancel)
+			store.cancel = cancel
+			err := tc.run(reqCtx, kb, tc.id)
+			require.ErrorIs(t, err, context.Canceled)
+			var ownErr *XKMSKeyOwnershipError
+			require.ErrorAs(t, err, &ownErr)
+			require.Equal(t, "write", ownErr.Op)
+			require.NotContains(t, err.Error(), "roll back")
+			require.Equal(t, 1, calls, "rollback delete calls")
+			require.NoError(t, gotErr, "rollback delete ran under a canceled context")
+			require.True(t, hasDeadline, "rollback delete has no deadline")
+
+			requireNoXKMSKey(t, context.Background(), kb, store, tc.keyID(kb, tc.id), AlgAES256GCM)
+			if tc.name == "rotate" {
+				meta, err := kb.GetKeyMetadata(context.Background(), tc.id)
+				require.NoError(t, err)
+				require.Equal(t, 1, meta.Version)
+			}
+
+			require.NoError(t, tc.run(context.Background(), kb, tc.id))
+		})
+	}
+}
+
 // TestXKMSBackend_DeleteKeyDeletesFromItsOwnBackend checks that DeleteKey
 // removes the key from this backend, not from go-xkms's default backend.
 func TestXKMSBackend_DeleteKeyDeletesFromItsOwnBackend(t *testing.T) {

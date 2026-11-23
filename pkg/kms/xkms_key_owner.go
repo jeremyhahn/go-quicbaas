@@ -24,6 +24,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"time"
 
 	kctypes "github.com/jeremyhahn/go-xkms/sdk/go"
 	"golang.org/x/crypto/chacha20poly1305"
@@ -135,6 +136,15 @@ func (kb *XKMSBackend) xkmsGetSymmetricKey(ctx context.Context, kid string) (kct
 		return kb.getSymmetricKey(ctx, kid)
 	}
 	return xkms.GetSymmetricKey(ctx, kid)
+}
+
+// xkmsDeleteKey deletes the key under attrs through the test seam when set,
+// and through xkms.DeleteKey otherwise.
+func (kb *XKMSBackend) xkmsDeleteKey(ctx context.Context, attrs *kctypes.KeyAttributes) error {
+	if kb.deleteKey != nil {
+		return kb.deleteKey(ctx, attrs)
+	}
+	return xkms.DeleteKey(ctx, attrs)
 }
 
 // xkmsAEADOpenErrors are the errors an AEAD returns when a ciphertext does
@@ -348,19 +358,28 @@ func (kb *XKMSBackend) claimXKMSKeyAs(ctx context.Context, attrs *kctypes.KeyAtt
 	return nil
 }
 
+// xkmsRollbackTimeout bounds the delete that rolls back an unclaimed key.
+const xkmsRollbackTimeout = 30 * time.Second
+
 // rollbackUnclaimedXKMSKey deletes the key material just created under attrs
 // after its ownership record could not be written. Without the rollback the
 // key would stay unowned: metadata lookups refuse it, and a retry fails because
 // the key already exists. The claim error is returned unchanged when the key is
 // gone; when the delete also fails, both errors are returned and the key stays
-// unowned and invisible.
+// unowned and invisible. The delete runs under its own bounded context, so a
+// request that ended mid-claim still rolls back.
 func (kb *XKMSBackend) rollbackUnclaimedXKMSKey(ctx context.Context, attrs *kctypes.KeyAttributes, claimErr error) error {
+	// The claim can fail because the request's context ended; the delete must
+	// still run, so it keeps the request's values but not its cancellation or
+	// deadline, and is bounded on its own.
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), xkmsRollbackTimeout)
+	defer cancel()
 	// go-xkms resolves the backend from attrs.Backend and falls back to its
 	// default backend, not to StoreType; delete from the backend that created
 	// the key.
 	cleanup := *attrs
 	cleanup.Backend = string(kb.backendType)
-	if delErr := xkms.DeleteKey(ctx, &cleanup); delErr != nil && !errors.Is(delErr, xkms.ErrKeyNotFound) {
+	if delErr := kb.xkmsDeleteKey(cleanupCtx, &cleanup); delErr != nil && !errors.Is(delErr, xkms.ErrKeyNotFound) {
 		return errors.Join(claimErr, &XKMSKeyOwnershipError{Op: "roll back", Name: attrs.CN, Err: delErr})
 	}
 	return claimErr

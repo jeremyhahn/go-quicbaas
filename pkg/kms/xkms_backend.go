@@ -65,6 +65,10 @@ type XKMSBackend struct {
 	// getSymmetricKey is a test seam for GetKeyMetadata's symmetric probes;
 	// nil means xkms.GetSymmetricKey.
 	getSymmetricKey func(ctx context.Context, kid string) (kctypes.SymmetricKey, error)
+
+	// deleteKey is a test seam for the delete that rolls back an unclaimed
+	// key; nil means xkms.DeleteKey.
+	deleteKey func(ctx context.Context, attrs *kctypes.KeyAttributes) error
 }
 
 // XKMSBackendConfig configures the XKMSBackend.
