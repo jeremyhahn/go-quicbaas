@@ -1,0 +1,63 @@
+/**
+ * backup_view.spec.ts
+ *
+ * Cluster > Backup: the sidebar entry is enabled, #/backup lists the backups
+ * GET /api/v1/backups returns, and Create is turned off.
+ * The backups API is stubbed with page.route so the spec does not depend on
+ * the daemon's backup store.
+ */
+
+import { test, expect, type Page } from '@playwright/test';
+
+test.use({ ignoreHTTPSErrors: true });
+
+async function navigateTo(page: Page, hash: string): Promise<void> {
+  await page.goto('/ui/', { waitUntil: 'networkidle' });
+  await page.evaluate((h: string) => { window.location.hash = h; }, hash);
+  await page.waitForLoadState('networkidle');
+}
+
+const BACKUPS = [
+  { backup_id: 'backup-1', name: 'full', timestamp: 1700000000000000000, size: 2048, status: 'completed', shards: [1, 2] },
+  { backup_id: 'backup-2', name: 'incremental', timestamp: 1700100000000000000, size: 4096, status: 'completed', shards: [1] },
+];
+
+test.describe('Cluster > Backup', () => {
+  test('lists backups and keeps creation off', async ({ page }) => {
+    const posted: unknown[] = [];
+    await page.route('**/api/v1/backups**', async (route) => {
+      const req = route.request();
+      if (req.method() === 'POST') {
+        posted.push(req.postDataJSON());
+        await route.fulfill({
+          status: 201,
+          contentType: 'application/json',
+          body: JSON.stringify({ backup_id: 'backup-3', timestamp: 1700200000, size: 0, status: 'pending' }),
+        });
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ backups: BACKUPS, total_count: BACKUPS.length }),
+      });
+    });
+
+    await navigateTo(page, '#/backup');
+    await expect(page.getByRole('heading', { name: 'Backup', level: 1 })).toBeVisible();
+
+    const table = page.getByRole('table', { name: 'Backups' });
+    await expect(table.locator('tbody tr')).toHaveCount(2);
+
+    await expect(page.getByRole('button', { name: 'Create', exact: true })).toBeDisabled();
+    await expect(page.getByText("does not capture the cluster's data yet")).toBeVisible();
+    expect(posted).toHaveLength(0);
+  });
+
+  test('the sidebar Backup entry is not marked soon', async ({ page }) => {
+    await navigateTo(page, '#/dashboard');
+    const entry = page.locator('button', { hasText: 'Backup' }).first();
+    await expect(entry).toBeVisible();
+    await expect(entry.locator('.badge', { hasText: 'soon' })).toHaveCount(0);
+  });
+});

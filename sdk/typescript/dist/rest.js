@@ -3996,13 +3996,6 @@ export class RestBackupsClient {
     constructor(baseUrl, config = {}) {
         this.http = newFetchHelper(baseUrl, config);
     }
-    // Maps to POST /api/v1/backups
-    async create(req = {}) {
-        return this.http.fetchJSON('/api/v1/backups', {
-            method: 'POST',
-            body: JSON.stringify(req),
-        });
-    }
     // Maps to GET /api/v1/backups[?limit=][&offset=]
     async list(opts = {}) {
         const params = {};
@@ -4011,8 +4004,8 @@ export class RestBackupsClient {
         if (opts.offset !== undefined)
             params.offset = String(opts.offset);
         const query = new URLSearchParams(params).toString();
-        const wire = await this.http.fetchJSON(`/api/v1/backups${query ? `?${query}` : ''}`);
-        return { ...wire, backups: wire.backups ?? [] };
+        const wire = await this.http.fetchJSON(`/api/v1/backups${query ? `?${query}` : ''}`, { method: 'GET' });
+        return { ...wire, backups: wire?.backups ?? [], total_count: wire?.total_count ?? 0 };
     }
     // Maps to POST /api/v1/backups/{id}/restore
     async restore(backupID, req = {}) {
@@ -4028,7 +4021,7 @@ export class RestBackupsClient {
     }
     // Maps to GET /api/v1/backups/{id}/status
     async status(backupID) {
-        return this.http.fetchJSON(`/api/v1/backups/${encodeURIComponent(backupID)}/status`);
+        return this.http.fetchJSON(`/api/v1/backups/${encodeURIComponent(backupID)}/status`, { method: 'GET' });
     }
 }
 /**

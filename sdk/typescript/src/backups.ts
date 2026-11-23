@@ -15,34 +15,22 @@
 // Backup domain types.
 //
 // Mirrors pkg/api/rest/handlers_backup.go (/api/v1/backups/*). BackupsClient
-// creates, lists, restores, verifies and deletes cluster backups.
+// lists, restores, verifies and deletes cluster backups. It has no create
+// until the daemon's backup service captures the cluster's data: today that
+// service stores a backup with no shards and reports it completed, so a
+// created backup could not restore the cluster.
 //
 // Wire note: `timestamp` is the Go int64 the server sends (unix seconds or
 // nanoseconds), passed through unchanged as a number. Shard IDs are numbers.
 // The backup ID is encoded with encodeURIComponent in every path.
 // ---------------------------------------------------------------------------
 
-/** BackupCreateRequest requests a new backup. */
-export interface BackupCreateRequest {
-  name?: string;
-  description?: string;
-  compression?: string;
-  encryption?: string;
-  include_shards?: number[];
-}
-
-/** BackupCreateResponse confirms a backup was started. */
-export interface BackupCreateResponse {
-  backup_id: string;
-  timestamp: number;
-  size: number;
-  status: string;
-}
-
 /** BackupInfo describes one backup. */
 export interface BackupInfo {
   backup_id: string;
+  /** The backup's type ('full' or 'incremental') as the server reports it; the server keeps no user label. */
   name?: string;
+  /** Text the server generates from the creation time. */
   description?: string;
   timestamp: number;
   size: number;
@@ -50,15 +38,22 @@ export interface BackupInfo {
   shards?: number[];
 }
 
-/** BackupListOptions paginates the backup listing. */
+/** BackupListOptions bounds the backup listing. */
 export interface BackupListOptions {
+  /** The server returns at most `limit` backups (default 100). */
   limit?: number;
+  /**
+   * Passed to the server, but the backup manager applies only `limit` today,
+   * so a caller that needs every backup asks again with `limit` set to
+   * `total_count`.
+   */
   offset?: number;
 }
 
 /** BackupListResponse enumerates backups. */
 export interface BackupListResponse {
   backups: BackupInfo[];
+  /** Number of backups stored; `backups` can hold fewer when a record's metadata is unreadable. */
   total_count: number;
 }
 
@@ -99,13 +94,11 @@ export interface BackupStatusResponse {
 // ---------------------------------------------------------------------------
 
 /**
- * BackupsClient exposes backup management. Maps to /api/v1/backups/* REST
- * endpoints.
+ * BackupsClient lists, restores, verifies and deletes backups. Maps to
+ * /api/v1/backups/* REST endpoints. It has no create until the daemon's
+ * backup service captures the cluster's data.
  */
 export interface BackupsClient {
-  /** create starts a new backup. POST /api/v1/backups */
-  create(req?: BackupCreateRequest): Promise<BackupCreateResponse>;
-
   /** list enumerates backups. GET /api/v1/backups */
   list(opts?: BackupListOptions): Promise<BackupListResponse>;
 

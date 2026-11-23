@@ -38,24 +38,10 @@ function lastCall(): { url: string; method: string; body: unknown } {
 }
 
 describe('RestBackupsClient', () => {
-  it('create POSTs the request to /api/v1/backups', async () => {
-    fetchMock.mockResolvedValue(jsonResponse({ backup_id: 'b1', timestamp: 1700000000, size: 0, status: 'pending' }, 201));
+  it('offers no create, so no request can report an empty backup as made', () => {
     const client = new RestClient('http://localhost');
-    const req = { name: 'nightly/full', compression: 'zstd', include_shards: [1, 2] };
-    const res = await client.backups.create(req);
-    const call = lastCall();
-    expect(call.url).toBe('http://localhost/api/v1/backups');
-    expect(call.method).toBe('POST');
-    expect(call.body).toEqual(req);
-    expect(res.backup_id).toBe('b1');
-    expect(res.timestamp).toBe(1700000000);
-  });
-
-  it('create with no request sends {}', async () => {
-    fetchMock.mockResolvedValue(jsonResponse({ backup_id: 'b1', timestamp: 1, size: 0, status: 'pending' }, 201));
-    const client = new RestClient('http://localhost');
-    await client.backups.create();
-    expect(lastCall().body).toEqual({});
+    expect('create' in client.backups).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('list sends no query when no options are given', async () => {

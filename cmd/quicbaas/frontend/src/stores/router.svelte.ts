@@ -126,6 +126,7 @@ export type RouteName =
   // CLUSTER
   | 'cluster'
   | 'nodes'
+  | 'backup'
   | 'connection'
   | 'invite-activate'
   | 'not-found';
@@ -355,6 +356,9 @@ function matchPath(path: string, hash: string): Route {
   }
   if (path === '/nodes') {
     return { name: 'nodes', params: {}, hash };
+  }
+  if (path === '/backup') {
+    return { name: 'backup', params: {}, hash };
   }
   if (path === '/connection') {
     return { name: 'connection', params: {}, hash };

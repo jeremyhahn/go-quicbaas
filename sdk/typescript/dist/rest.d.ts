@@ -13,7 +13,7 @@ import type { AttestationClient, Endorsement, EndorsementKind, ListEndorsementsR
 import type { XKMSKeysClient, XKMSKeyInfo, XKMSListKeysResponse, XKMSGenerateKeyRequest, XKMSGenerateKeyResponse, XKMSDeleteKeyResponse, XKMSRotateKeyResponse, XKMSEncryptRequest, XKMSEncryptResponse, XKMSDecryptRequest, XKMSDecryptResponse, XKMSSignRequest, XKMSSignResponse, XKMSVerifyRequest, XKMSVerifyResponse, XKMSListKeyVersionsResponse, XKMSBulkKeyVersionsResponse, XKMSKeyVersionStatusResponse } from './xkms_keys.js';
 import type { PIVClient, ListPIVSlotsResponse, GetPIVCertificateOptions, GetPIVCertificateResponse, StorePIVCertificateRequest, GeneratePIVKeyRequest, GeneratePIVKeyResponse, GeneratePIVCSRRequest, GeneratePIVCSRResponse } from './piv.js';
 import type { XKMSClient, XKMSBackendInfo, XKMSListBackendsResponse, XKMSHealthResponse, XKMSSealCapabilityResponse, XKMSSealRequest, XKMSSealResponse, XKMSUnsealRequest, XKMSUnsealResponse, XKMSListCertificatesResponse, XKMSCertificateResponse } from './xkms.js';
-import type { BackupsClient, BackupCreateRequest, BackupCreateResponse, BackupListOptions, BackupListResponse, BackupRestoreRequest, BackupRestoreResponse, BackupDeleteResponse, BackupVerifyResponse, BackupStatusResponse } from './backups.js';
+import type { BackupsClient, BackupListOptions, BackupListResponse, BackupRestoreRequest, BackupRestoreResponse, BackupDeleteResponse, BackupVerifyResponse, BackupStatusResponse } from './backups.js';
 import type { ClusterNodesClient, ListClusterNodesResponse, AddNodeRequest, AddNodeResponse, RemoveNodeResponse, ReplaceNodeRequest, ReplaceNodeResponse } from './cluster_nodes.js';
 import type { EntitiesClient, EntityList, EntityListOptions, EntityGetOptions, EntityWriteOptions, EntityRecord, PutEntityResponse, DeleteEntityResponse } from './entities.js';
 import type { KMSAdminClient, KMSKeyMetadataResponse, UpdateKMSKeyMetadataRequest, GetKMSKeyPolicyResponse, KMSKeyPolicyInput, SetKMSKeyPolicyResponse, GetKMSRotationPolicyResponse, KMSRotationPolicyInput, SetKMSRotationPolicyResponse, DeleteKMSRotationPolicyResponse } from './kms_admin.js';
@@ -233,7 +233,6 @@ export declare class RestPIVClient implements PIVClient {
 export declare class RestBackupsClient implements BackupsClient {
     private readonly http;
     constructor(baseUrl: string, config?: ClientConfig);
-    create(req?: BackupCreateRequest): Promise<BackupCreateResponse>;
     list(opts?: BackupListOptions): Promise<BackupListResponse>;
     restore(backupID: string, req?: BackupRestoreRequest): Promise<BackupRestoreResponse>;
     delete(backupID: string): Promise<BackupDeleteResponse>;

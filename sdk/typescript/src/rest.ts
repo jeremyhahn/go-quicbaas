@@ -258,8 +258,6 @@ import type {
 } from './xkms.js';
 import type {
   BackupsClient,
-  BackupCreateRequest,
-  BackupCreateResponse,
   BackupListOptions,
   BackupListResponse,
   BackupRestoreRequest,
@@ -5882,14 +5880,6 @@ export class RestBackupsClient implements BackupsClient {
     this.http = newFetchHelper(baseUrl, config);
   }
 
-  // Maps to POST /api/v1/backups
-  async create(req: BackupCreateRequest = {}): Promise<BackupCreateResponse> {
-    return this.http.fetchJSON<BackupCreateResponse>('/api/v1/backups', {
-      method: 'POST',
-      body: JSON.stringify(req),
-    });
-  }
-
   // Maps to GET /api/v1/backups[?limit=][&offset=]
   async list(opts: BackupListOptions = {}): Promise<BackupListResponse> {
     const params: Record<string, string> = {};
@@ -5898,8 +5888,9 @@ export class RestBackupsClient implements BackupsClient {
     const query = new URLSearchParams(params).toString();
     const wire = await this.http.fetchJSON<BackupListResponse>(
       `/api/v1/backups${query ? `?${query}` : ''}`,
+      { method: 'GET' },
     );
-    return { ...wire, backups: wire.backups ?? [] };
+    return { ...wire, backups: wire?.backups ?? [], total_count: wire?.total_count ?? 0 };
   }
 
   // Maps to POST /api/v1/backups/{id}/restore
@@ -5930,6 +5921,7 @@ export class RestBackupsClient implements BackupsClient {
   async status(backupID: string): Promise<BackupStatusResponse> {
     return this.http.fetchJSON<BackupStatusResponse>(
       `/api/v1/backups/${encodeURIComponent(backupID)}/status`,
+      { method: 'GET' },
     );
   }
 }

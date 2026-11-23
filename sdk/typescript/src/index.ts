@@ -405,8 +405,6 @@ export type {
 // Backups
 export type {
   BackupsClient,
-  BackupCreateRequest,
-  BackupCreateResponse,
   BackupInfo,
   BackupListOptions,
   BackupListResponse,
