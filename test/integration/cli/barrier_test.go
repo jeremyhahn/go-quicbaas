@@ -592,9 +592,13 @@ func sealBarrierDaemon(t *testing.T, d *barrierDaemon) {
 // require_authz=false with network transports enabled unless the dev-only
 // escape hatch is set, so both keys are required. NEVER use this posture in
 // production.
+//
+// The file also carries iam.spiffe_trust_domain, as the init config does:
+// on a non-durable engine start runs first-boot again, and first-boot
+// refuses to issue the admin certificate without a trust domain.
 func writeBarrierInsecurePostureConfig(t *testing.T, dataDir string) string {
 	t.Helper()
-	const insecurePosture = `# Test-only security posture for the hermetic per-test barrier daemon.
+	insecurePosture := "iam:\n  spiffe_trust_domain: " + barrierTrustDomain + "\n" + `# Test-only security posture for the hermetic per-test barrier daemon.
 # Mirrors test/integration/quicbaas.yaml: the daemon has no IAM bootstrap,
 # so post-unseal barrier verbs must be reachable without a bearer token.
 security:
@@ -631,7 +635,13 @@ func writeBarrierInitConfig(t *testing.T, dataDir string) string {
 // (QUICBAAS_SEAL_ENABLED/STRATEGY/PASSPHRASE) so it can decrypt the
 // encfs-encrypted data plane and auto-unseal — the same contract as
 // test/integration/init/helpers.go startDaemon.
-func startBarrierDaemonProcess(t *testing.T, binary, dataDir string, ports barrierDaemonPorts, opts barrierDaemonOptions) *barrierDaemon {
+// barrierStartArgs builds the `quicbaasd start` arguments of a per-test
+// barrier daemon. Every start reads a config file that carries
+// iam.spiffe_trust_domain, as init does: on a non-durable engine start runs
+// first-boot again, and first-boot refuses to issue the admin certificate
+// without a trust domain. An enforcing daemon reads the init config (trust
+// domain only); every other daemon reads the insecure-posture config.
+func barrierStartArgs(t *testing.T, dataDir string, ports barrierDaemonPorts, opts barrierDaemonOptions) []string {
 	t.Helper()
 
 	args := []string{
@@ -647,8 +657,15 @@ func startBarrierDaemonProcess(t *testing.T, binary, dataDir string, ports barri
 		// (bindEnvVars covers seal/server/raft/... but not security.require_
 		// authz), so the acknowledged insecure posture must travel via a
 		// --config file. See barrierDaemonOptions.EnforceAuthz.
-		args = append(args, "--config", writeBarrierInsecurePostureConfig(t, dataDir))
+		return append(args, "--config", writeBarrierInsecurePostureConfig(t, dataDir))
 	}
+	return append(args, "--config", writeBarrierInitConfig(t, dataDir))
+}
+
+func startBarrierDaemonProcess(t *testing.T, binary, dataDir string, ports barrierDaemonPorts, opts barrierDaemonOptions) *barrierDaemon {
+	t.Helper()
+
+	args := barrierStartArgs(t, dataDir, ports, opts)
 
 	env := []string{
 		"PATH=" + os.Getenv("PATH"),
