@@ -18,6 +18,7 @@ import (
 	"errors"
 	"log/slog"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -448,6 +449,111 @@ func TestRegistryPushPullRoundTrip(t *testing.T) {
 	}
 	if err := reg.Delete(ctx, ref); err == nil {
 		t.Error("expected ImageNotFoundError on second delete")
+	}
+}
+
+// gatedManifestClient parks the first manifest Get until release is
+// closed, so a test can hold one push inside its existence check.
+type gatedManifestClient struct {
+	*mockStorageClient
+	once    sync.Once
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (c *gatedManifestClient) Get(ctx context.Context, entityType, key string) ([]byte, bool, error) {
+	if entityType == entityTypeManifest {
+		first := false
+		c.once.Do(func() { first = true })
+		if first {
+			close(c.entered)
+			<-c.release
+		}
+	}
+	return c.mockStorageClient.Get(ctx, entityType, key)
+}
+
+func competingPushImage(content string) *Image {
+	layer := Layer{
+		Digest:    sha256Digest([]byte(content)),
+		MediaType: "application/vnd.oci.image.layer.v1.tar",
+		Size:      int64(len(content)),
+		Content:   []byte(content),
+	}
+	return &Image{
+		Manifest: &ImageManifest{
+			SchemaVersion: 2,
+			MediaType:     "application/vnd.oci.image.manifest.v1+json",
+			Layers:        []Descriptor{{MediaType: layer.MediaType, Digest: layer.Digest, Size: layer.Size}},
+		},
+		Layers: []Layer{layer},
+	}
+}
+
+// TestRegistryPushNoOverwriteIsAtomic holds push A inside its existence
+// check for an absent reference, starts push B (and a distribution PUT)
+// of the same reference, and lets A finish only once both are parked on
+// the reference: A succeeds, B is refused, and A's image stays.
+func TestRegistryPushNoOverwriteIsAtomic(t *testing.T) {
+	client := &gatedManifestClient{
+		mockStorageClient: newMockStorageClient(),
+		entered:           make(chan struct{}),
+		release:           make(chan struct{}),
+	}
+	storage, err := NewQuicBaaSStorage(client)
+	if err != nil {
+		t.Fatalf("NewQuicBaaSStorage: %v", err)
+	}
+	reg, err := NewRegistry(validTestConfig(), testLogger(), WithStorage(storage))
+	if err != nil {
+		t.Fatalf("NewRegistry: %v", err)
+	}
+	t.Cleanup(func() { _ = reg.Close() })
+	ctx := context.Background()
+	const ref = "myrepo/race:v1"
+
+	errA := make(chan error, 1)
+	go func() { errA <- reg.Push(ctx, ref, competingPushImage("image A"), PushOptions{}) }()
+	<-client.entered
+
+	errB := make(chan error, 1)
+	go func() { errB <- reg.Push(ctx, ref, competingPushImage("image B"), PushOptions{}) }()
+	const ociManifest = "application/vnd.oci.image.manifest.v1+json"
+	errPut := make(chan error, 1)
+	go func() {
+		_, err := reg.PutManifest(ctx, "myrepo/race", "v1", ociManifest,
+			[]byte(`{"schemaVersion":2,"mediaType":"`+ociManifest+`","layers":[]}`))
+		errPut <- err
+	}()
+	deadline := time.Now().Add(10 * time.Second)
+	for reg.refLocks.waiting.Load() < 2 {
+		if time.Now().After(deadline) {
+			t.Fatalf("competing writers did not wait on the reference (waiting=%d)", reg.refLocks.waiting.Load())
+		}
+		runtime.Gosched()
+	}
+	close(client.release)
+
+	if err := <-errA; err != nil {
+		t.Fatalf("push A: %v", err)
+	}
+	var exists ImageAlreadyExistsError
+	if err := <-errB; !errors.As(err, &exists) {
+		t.Fatalf("push B: want ImageAlreadyExistsError, got %v", err)
+	}
+	// The distribution PUT may overwrite a tag by design, but only after
+	// A's check and store, never between them.
+	if err := <-errPut; err != nil {
+		t.Fatalf("PutManifest: %v", err)
+	}
+	if n := reg.refLocks.waiting.Load(); n != 0 {
+		t.Errorf("waiting = %d after all writers finished", n)
+	}
+	reg.refLocks.mu.Lock()
+	left := len(reg.refLocks.locks)
+	reg.refLocks.mu.Unlock()
+	if left != 0 {
+		t.Errorf("%d reference locks left after all writers finished", left)
 	}
 }
 

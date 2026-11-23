@@ -109,6 +109,10 @@ func (r *Registry) PutManifest(ctx context.Context, name, reference, mediaType s
 		return "", err
 	}
 	manifest.ContentDigest = digest
+	// A push of the same reference holds it across its no-overwrite
+	// check; this store waits for it rather than landing in between.
+	unlock := r.refLocks.lock(ref)
+	defer unlock()
 	if err := r.storage.StoreManifest(ctx, ref, manifest); err != nil {
 		return "", err
 	}

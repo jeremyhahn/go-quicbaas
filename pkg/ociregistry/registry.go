@@ -158,6 +158,51 @@ type RegistrySessionView struct {
 }
 
 // Registry implements TrustedRegistry with QuicBaaS storage.
+// refLocker serialises the writers of one manifest reference, so a
+// no-overwrite push's existence check and its store are one step against
+// every other push or distribution PUT of the same reference.
+type refLocker struct {
+	mu    sync.Mutex
+	locks map[string]*refLock
+	// waiting counts callers blocked on a held reference; tests read it.
+	waiting atomic.Int64
+}
+
+type refLock struct {
+	mu   sync.Mutex
+	refs int
+}
+
+// lock takes the lock for ref and returns its release.
+func (l *refLocker) lock(ref string) func() {
+	l.mu.Lock()
+	if l.locks == nil {
+		l.locks = make(map[string]*refLock)
+	}
+	rl := l.locks[ref]
+	if rl == nil {
+		rl = &refLock{}
+		l.locks[ref] = rl
+	}
+	rl.refs++
+	l.mu.Unlock()
+
+	if !rl.mu.TryLock() {
+		l.waiting.Add(1)
+		rl.mu.Lock()
+		l.waiting.Add(-1)
+	}
+	return func() {
+		rl.mu.Unlock()
+		l.mu.Lock()
+		rl.refs--
+		if rl.refs == 0 {
+			delete(l.locks, ref)
+		}
+		l.mu.Unlock()
+	}
+}
+
 type Registry struct {
 	config RegistryConfig
 	logger *slog.Logger
@@ -201,6 +246,9 @@ type Registry struct {
 
 	// pushSemaphore limits concurrent pushes
 	pushSemaphore chan struct{}
+
+	// refLocks serialises the writers of each manifest reference.
+	refLocks refLocker
 
 	// now is time.Now in production; tests replace it to advance time (#284)
 	now func() time.Time
@@ -361,6 +409,12 @@ func (r *Registry) Push(ctx context.Context, ref string, image *Image, opts Push
 		"overwrite", opts.AllowOverwrite,
 		"layers", len(image.Layers),
 	)
+
+	// Hold the reference from the existence check to the manifest store,
+	// so two pushes (or a push and a distribution PUT) of the same absent
+	// reference cannot both pass the check.
+	unlock := r.refLocks.lock(ref)
+	defer unlock()
 
 	if !opts.AllowOverwrite {
 		exists, err := r.storage.ManifestExists(ctx, ref)
