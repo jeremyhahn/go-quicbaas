@@ -528,6 +528,45 @@ func TestVolumeRuntimeRefusesAVolumeAnotherContainerHolds(t *testing.T) {
 	}
 }
 
+// TestVolumeRuntimeMovesAFailedReleaseOfAGoneContainerToPending: once Remove
+// has removed the container nothing tears it down again, so a release that
+// fails then is retried from pending, not kept on the container's record.
+func TestVolumeRuntimeMovesAFailedReleaseOfAGoneContainerToPending(t *testing.T) {
+	ctx := context.Background()
+	vr, _, prov, staging := newTestVolumeRuntime(t)
+	id, err := vr.Run(ctx, dataSpec("a"))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	boom := errors.New("detach failed")
+	prov.failOn["detach data"] = boom
+	if err := vr.Remove(ctx, id); !errors.Is(err, boom) {
+		t.Fatalf("Remove = %v, want the detach error", err)
+	}
+	if got := vr.Attached(id); len(got) != 0 {
+		t.Errorf("Attached(%s) = %+v, want none: the container is gone", id, got)
+	}
+	if _, err := vr.Run(ctx, dataSpec("b")); !errors.Is(err, ErrVolumeInUse) {
+		t.Fatalf("Run while the release is pending = %v, want ErrVolumeInUse", err)
+	}
+
+	delete(prov.failOn, "detach data")
+	if err := vr.RetryPendingReleases(ctx); err != nil {
+		t.Fatalf("RetryPendingReleases: %v", err)
+	}
+	if n := len(prov.calls); n == 0 || prov.calls[n-1] != "detach data" {
+		t.Fatalf("calls = %v, want them to end with detach data", prov.calls)
+	}
+	for _, v := range readStateFile(t, staging).Volumes {
+		if v.Claim.Name == "data" {
+			t.Fatalf("state still lists data: %+v", v)
+		}
+	}
+	if _, err := vr.Run(ctx, dataSpec("b")); err != nil {
+		t.Fatalf("Run after the retry: %v", err)
+	}
+}
+
 func TestVolumeRuntimeFailedLaunchFreesOrKeepsItsVolumes(t *testing.T) {
 	ctx := context.Background()
 	vr, inner, prov, _ := newTestVolumeRuntime(t)

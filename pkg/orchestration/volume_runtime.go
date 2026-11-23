@@ -58,8 +58,9 @@ type VolumeRuntime struct {
 	lock *os.File
 	// attached maps a container's ID and its name to its record.
 	attached map[string]*volumeRecord
-	// pending holds volumes a failed launch's rollback could not release; they
-	// are retried before the next volume launch.
+	// pending holds volumes a failed launch's rollback, or a failed release of
+	// a gone container, could not release; they are retried before the next
+	// volume launch and by RetryPendingReleases.
 	pending []AttachedVolume
 	// owned maps a claim name to the volume its owner holds; a launch's entry
 	// has no VolumeID until the volume is attached.
@@ -87,6 +88,7 @@ var (
 	_ RuntimeUnwrapper        = (*VolumeRuntime)(nil)
 	_ ContainerVolumeReleaser = (*VolumeRuntime)(nil)
 	_ RecoveredVolumeReleaser = (*VolumeRuntime)(nil)
+	_ PendingVolumeReleaser   = (*VolumeRuntime)(nil)
 )
 
 // NewVolumeRuntime wraps inner with the attacher's volumes. It reads the
@@ -207,12 +209,12 @@ func (r *VolumeRuntime) RunInteractive(ctx context.Context, spec *ContainerSpec)
 
 // Stop stops the container, then releases its volumes.
 func (r *VolumeRuntime) Stop(ctx context.Context, containerID string) error {
-	return r.teardown(ctx, containerID, r.ContainerRuntime.Stop(ctx, containerID))
+	return r.teardown(ctx, containerID, r.ContainerRuntime.Stop(ctx, containerID), false)
 }
 
 // Remove removes the container, then releases its volumes if Stop has not.
 func (r *VolumeRuntime) Remove(ctx context.Context, containerID string) error {
-	return r.teardown(ctx, containerID, r.ContainerRuntime.Remove(ctx, containerID))
+	return r.teardown(ctx, containerID, r.ContainerRuntime.Remove(ctx, containerID), true)
 }
 
 // ReleaseContainer releases the volumes of the container filed under the
@@ -232,7 +234,7 @@ func (r *VolumeRuntime) ReleaseContainer(ctx context.Context, keys ...string) er
 	if key == "" {
 		return nil
 	}
-	return r.release(ctx, key)
+	return r.release(ctx, key, true)
 }
 
 // ReleaseRecovered releases the volumes an earlier run of the node left held.
@@ -260,12 +262,15 @@ func (r *VolumeRuntime) ReleaseRecovered(ctx context.Context) error {
 // are still released then. A release failure is returned alone, not joined
 // with the not-found error, so a caller that treats not-found as success
 // still sees it; when the release succeeds the inner error is returned as is.
-func (r *VolumeRuntime) teardown(ctx context.Context, containerID string, err error) error {
+// removed says the inner call was Remove: a removed or not-found container is
+// gone, so what fails to release moves to pending.
+func (r *VolumeRuntime) teardown(ctx context.Context, containerID string, err error, removed bool) error {
 	var notFound *ContainerNotFoundError
 	if err != nil && !errors.As(err, &notFound) {
 		return err
 	}
-	if rerr := r.release(ctx, containerID); rerr != nil {
+	gone := removed || errors.As(err, &notFound)
+	if rerr := r.release(ctx, containerID, gone); rerr != nil {
 		return rerr
 	}
 	return err
@@ -421,17 +426,24 @@ func (r *VolumeRuntime) releaseAfter(ctx context.Context, cause error, vols []At
 // retryPending retries the volumes an earlier rollback could not release. Its
 // errors are dropped: the launch that left them already returned that error.
 func (r *VolumeRuntime) retryPending(ctx context.Context) {
+	_ = r.RetryPendingReleases(ctx)
+}
+
+// RetryPendingReleases retries the volumes a failed rollback or a failed
+// release of a removed container left held, and returns what still fails.
+func (r *VolumeRuntime) RetryPendingReleases(ctx context.Context) error {
 	r.mu.Lock()
 	vols := r.pending
 	r.pending = nil
 	r.mu.Unlock()
 	if len(vols) == 0 {
-		return
+		return nil
 	}
 	cctx, cancel := cleanupContext(ctx)
 	defer cancel()
-	held, _ := r.attacher.release(cctx, vols)
-	_ = r.settle(vols, held, true)
+	held, err := r.attacher.release(cctx, vols)
+	werr := r.settle(vols, held, true)
+	return errors.Join(err, werr)
 }
 
 // track files the container's record under each of its non-empty keys.
@@ -450,10 +462,12 @@ func (r *VolumeRuntime) track(vols []AttachedVolume, keys ...string) {
 	}
 }
 
-// release releases what is still held for the container. What fails to
-// release stays on its record for the next Stop or Remove; the record goes
-// once nothing is held.
-func (r *VolumeRuntime) release(ctx context.Context, id string) error {
+// release releases what is still held for the container. When the container
+// is still there, what fails to release stays on its record for the next Stop
+// or Remove. When it is gone (removed, or not found), nothing would ever tear
+// it down again, so what fails moves to pending, which each reaper pass and
+// each volume launch retry. The record goes once nothing is left on it.
+func (r *VolumeRuntime) release(ctx context.Context, id string, gone bool) error {
 	r.mu.Lock()
 	rec := r.attached[id]
 	r.mu.Unlock()
@@ -467,9 +481,13 @@ func (r *VolumeRuntime) release(ctx context.Context, id string) error {
 	}
 	vols := rec.vols
 	remaining, err := r.attacher.release(ctx, vols)
+	pend := gone && len(remaining) > 0
+	werr := r.settle(vols, remaining, pend)
 	rec.vols = remaining
-	werr := r.settle(vols, remaining, false)
-	if len(remaining) == 0 {
+	if pend {
+		rec.vols = nil
+	}
+	if len(rec.vols) == 0 {
 		r.mu.Lock()
 		for _, k := range rec.keys {
 			if r.attached[k] == rec {

@@ -996,7 +996,7 @@ func (r *Runtime) ContainerReaper(grace time.Duration) (*orchestration.Container
 		return nil, nil
 	}
 	return orchestration.NewContainerReaper(orchestration.ContainerReaperConfig{
-		Runtime: &ownedListerVia{OwnedContainerLister: lister, rt: r.containerRuntime},
+		Runtime: &ownedListerVia{OwnedContainerLister: lister, rt: r.containerRuntime, logger: r.logger},
 		Owner:   r.workDir,
 		Live:    r.HoldsSession,
 		Grace:   grace,
@@ -1012,15 +1012,23 @@ func (r *Runtime) ContainerReaper(grace time.Duration) (*orchestration.Container
 // the ID.
 type ownedListerVia struct {
 	orchestration.OwnedContainerLister
-	rt orchestration.ContainerRuntime
+	rt     orchestration.ContainerRuntime
+	logger interfaces.Logger
 
 	mu    sync.Mutex
 	names map[string]string // container ID -> name, from the last listing
 }
 
-// ListOwned lists through the inner lister and remembers each container's
-// name.
+// ListOwned first retries the volume releases that failed earlier, then lists
+// through the inner lister and remembers each container's name. A container
+// whose volumes failed to release is gone from the list, so the retry cannot
+// hang off it: it runs on every reaper pass instead.
 func (o *ownedListerVia) ListOwned(ctx context.Context, owner string) ([]orchestration.OwnedContainer, error) {
+	if p, ok := orchestration.RuntimeAs[orchestration.PendingVolumeReleaser](o.rt); ok {
+		if err := p.RetryPendingReleases(ctx); err != nil && o.logger != nil {
+			o.logger.Warnf("fleet reaper: retry volume releases: %v", err)
+		}
+	}
 	cs, err := o.OwnedContainerLister.ListOwned(ctx, owner)
 	if err != nil {
 		return cs, err

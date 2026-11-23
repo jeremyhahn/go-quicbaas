@@ -58,7 +58,9 @@ orphan sweep, the reaper, trust tiers): callers find them through
 `RuntimeAs`, and the reaper still removes through the wrapper. Its teardown
 releases volumes even when the container is already gone (an interactive
 container runs with `--rm`) and keeps whatever failed to release for the next
-Stop or Remove. A rollback runs on a bounded context of its own, so a
+Stop or Remove. A release that fails after the container is gone (removed, by
+the agent or by the reaper) moves to the retry list instead, which each reaper
+pass and each volume launch retries. A rollback runs on a bounded context of its own, so a
 cancelled launch still releases; what it cannot release is retried before the
 next launch. After mounting a writable claim on an existing volume, the agent
 re-runs Resize at the volume's size, so a filesystem grow left undone while

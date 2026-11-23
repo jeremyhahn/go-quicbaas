@@ -102,6 +102,12 @@ type RecoveredVolumeReleaser interface {
 	ReleaseRecovered(ctx context.Context) error
 }
 
+// PendingVolumeReleaser retries volume releases that failed earlier; the
+// fleet reaper calls it each pass.
+type PendingVolumeReleaser interface {
+	RetryPendingReleases(ctx context.Context) error
+}
+
 // RuntimeAs returns the first runtime in rt's wrapper chain, rt itself
 // first, that implements T. The walk follows Unwrap and stops after 8 hops.
 func RuntimeAs[T any](rt ContainerRuntime) (T, bool) {

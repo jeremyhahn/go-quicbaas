@@ -245,6 +245,8 @@ type detachCountingProvider struct {
 
 	mu       sync.Mutex
 	detaches int
+	// failDetach fails that many Detach calls before they succeed.
+	failDetach int
 }
 
 func (p *detachCountingProvider) Status(context.Context, string) (orchestration.VolumeStatus, error) {
@@ -268,6 +270,10 @@ func (p *detachCountingProvider) Unmount(context.Context, string, string) error 
 func (p *detachCountingProvider) Detach(context.Context, string, orchestration.VolumeNodeID) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.failDetach > 0 {
+		p.failDetach--
+		return errors.New("detach: device busy")
+	}
 	p.detaches++
 	return nil
 }
@@ -333,6 +339,67 @@ func TestRuntime_ReaperReleasesVolumesOfAnInteractiveContainer(t *testing.T) {
 	}
 	if got := vr.Attached("svc"); len(got) != 0 {
 		t.Errorf("Attached(svc) = %+v, want none", got)
+	}
+}
+
+// TestRuntime_ReaperRetriesPendingVolumeReleases: a reaped container whose
+// volume release failed is gone from the next listing, and the next reaper
+// pass still releases its volumes. Not parallel: volumes_test.go stubs package
+// variables.
+func TestRuntime_ReaperRetriesPendingVolumeReleases(t *testing.T) {
+	ctx := context.Background()
+	inner := &nameIDContainerRuntime{}
+	inner.available = true
+	inner.containers = []orchestration.OwnedContainer{{
+		ID: "full-id-1", Name: "svc", CreatedAt: time.Now().Add(-time.Hour), SessionID: "ses-gone",
+	}}
+	prov := &detachCountingProvider{failDetach: 1}
+	att, err := orchestration.NewVolumeAttacher(prov, "n", t.TempDir())
+	if err != nil {
+		t.Fatalf("NewVolumeAttacher: %v", err)
+	}
+	vr, err := orchestration.NewVolumeRuntime(inner, att)
+	if err != nil {
+		t.Fatalf("NewVolumeRuntime: %v", err)
+	}
+	t.Cleanup(func() { _ = vr.Close() })
+	if _, err := vr.RunInteractive(ctx, volumeSvcSpec()); err != nil {
+		t.Fatalf("RunInteractive: %v", err)
+	}
+	runtime, err := NewRuntime(RuntimeConfig{
+		Backends:         map[string]orchestration.AgentBackend{"mock": &mockBackend{}},
+		ContainerRuntime: vr,
+		Logger:           &testLogger{t: t},
+		WorkDir:          t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("NewRuntime: %v", err)
+	}
+	reaper, err := runtime.ContainerReaper(time.Minute)
+	if err != nil || reaper == nil {
+		t.Fatalf("ContainerReaper = %v, %v; want a reaper", reaper, err)
+	}
+	if _, err := reaper.Reap(ctx); err == nil {
+		t.Fatal("first Reap = nil error, want the failed release")
+	}
+	if len(inner.removed) != 1 || inner.removed[0] != "full-id-1" {
+		t.Fatalf("inner removed %v, want full-id-1", inner.removed)
+	}
+	if got := prov.detachCount(); got != 0 {
+		t.Fatalf("detaches after the failed release = %d, want 0", got)
+	}
+
+	inner.mu.Lock()
+	inner.containers = nil // the reaper removed it
+	inner.mu.Unlock()
+	if _, err := reaper.Reap(ctx); err != nil {
+		t.Fatalf("second Reap: %v", err)
+	}
+	if got := prov.detachCount(); got != 1 {
+		t.Errorf("detaches after the second pass = %d, want 1", got)
+	}
+	if _, err := vr.RunInteractive(ctx, volumeSvcSpec()); err != nil {
+		t.Errorf("RunInteractive after the retry: %v", err)
 	}
 }
 
