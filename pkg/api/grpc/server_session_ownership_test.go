@@ -249,3 +249,37 @@ func TestSessionOwnership_RevokeOtherSessions_TokenSID(t *testing.T) {
 	require.Len(t, left, 1, "revoke-others keeps exactly the caller's session")
 	assert.Equal(t, "acme.0a1b2c3d", left[0].ID)
 }
+
+// A caller revokes one session by the raw sid its token carries; the session
+// manager stored it tenant-encoded.
+func TestSessionOwnership_RevokeSession_TokenSID(t *testing.T) {
+	kv := iamtest.NewTenantRoutingKV()
+	kv.BarrierTenant("acme")
+	ext := iam.NewBackendSessionExtStorage(kv, nil)
+	store := iam.NewBackendSessionStorage(kv, nil)
+	ctx := sessionOwnerContext("acme", ownerUserID)
+
+	now := time.Now()
+	require.NoError(t, ext.Create(ctx, &iam.SessionExt{
+		ID: "0a1b2c3d", UserID: ownerUserID, TenantID: "acme", TokenHash: "h-own",
+		Created: now, LastActive: now, ExpiresAt: now.Add(time.Hour),
+	}))
+	require.NoError(t, ext.Create(ctx, &iam.SessionExt{
+		ID: "0a1b2c3e", UserID: ownerUserID, TenantID: "acme", TokenHash: "h-other",
+		Created: now, LastActive: now, ExpiresAt: now.Add(time.Hour),
+	}))
+
+	server := NewSessionServer(NewSessionServiceAdapter(store), userIDCallerAccounts{}, newTestSessionLogger())
+
+	resp, err := server.RevokeSession(ctx, &iampb.RevokeSessionRequest{SessionId: "0a1b2c3d"})
+	require.NoError(t, err)
+	assert.True(t, resp.Success)
+
+	_, err = store.GetSession(ctx, "acme.0a1b2c3d")
+	require.Error(t, err, "the revoked session's record is gone")
+
+	left, err := store.GetSessionsByUser(ctx, "acme", ownerUserID)
+	require.NoError(t, err)
+	require.Len(t, left, 1, "revoke keeps the caller's other session")
+	assert.Equal(t, "acme.0a1b2c3e", left[0].ID)
+}

@@ -204,11 +204,14 @@ func (s *SessionServer) RevokeSession(ctx context.Context, req *iampb.RevokeSess
 		return nil, status.Error(codes.InvalidArgument, "session_id is required")
 	}
 
-	if _, err := s.ownedSession(ctx, req.SessionId); err != nil {
+	session, err := s.ownedSession(ctx, req.SessionId)
+	if err != nil {
 		return nil, err
 	}
 
-	err := s.sessionService.RevokeSession(ctx, req.SessionId)
+	// Revoke the stored record: a token's raw sid resolves to the
+	// tenant-encoded ID the session was stored under.
+	err = s.sessionService.RevokeSession(ctx, session.ID)
 	if err != nil {
 		s.logger.WithError(err).Error("Failed to revoke session")
 		return nil, status.Errorf(codes.Internal, "failed to revoke session: %v", err)
