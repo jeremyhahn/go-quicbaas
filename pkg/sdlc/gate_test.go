@@ -120,6 +120,7 @@ func TestGateBlockReason_Pending(t *testing.T) {
 		GateBlockedInsufficientApprovals: true, GateBlockedReviewerNotIndependent: true, GateBlockedNoChecks: true,
 		GateBlockedChecksIncomplete: true, GateBlockedReviewErrored: true,
 		GateBlockedChangesRequested: false, GateBlockedChecksFailed: false, GateBlockedPolicyInvalid: false, GateClear: false,
+		GateBlockedSelfApproval: false,
 	} {
 		if reason.Pending() != want {
 			t.Fatalf("%s.Pending() = %v", reason, reason.Pending())
@@ -127,6 +128,50 @@ func TestGateBlockReason_Pending(t *testing.T) {
 	}
 	if GateClear.String() != "clear" || !GateClear.Clear() {
 		t.Fatal("GateClear")
+	}
+}
+
+func TestEvaluateReviewGate_RefusesSelfApproval(t *testing.T) {
+	for _, independent := range []bool{false, true} {
+		policy := gatePolicy()
+		policy.RequireIndependentReviewer = independent
+		in := GateInput{Policy: policy, PullRequestState: PullRequestOpen, HeadSHA: "h",
+			AuthorModelFamilies: []string{ModelFamilyAnthropic}, AuthorLogin: " Alice-Bot ",
+			Reviews: []ReviewRecord{approve("alice-bot", ModelFamilyOpenAI, "h", 1)},
+			Checks:  []CheckRecord{green("ci", "h")}}
+		got := EvaluateReviewGate(in)
+		if got.Reason != GateBlockedSelfApproval || got.Approvals != 0 {
+			t.Fatalf("independent=%v: %+v, want %s", independent, got, GateBlockedSelfApproval)
+		}
+		if !strings.Contains(got.Detail, "Alice-Bot") {
+			t.Fatalf("independent=%v: detail %q does not name the login", independent, got.Detail)
+		}
+		if got.Reason.Pending() {
+			t.Fatalf("self approval must be a refusal, not pending")
+		}
+	}
+}
+
+func TestEvaluateReviewGate_SelfApprovalDoesNotCountButOthersClear(t *testing.T) {
+	policy := gatePolicy()
+	policy.RequiredApprovals = 2
+	in := GateInput{Policy: policy, PullRequestState: PullRequestOpen, HeadSHA: "h",
+		AuthorModelFamilies: []string{ModelFamilyAnthropic}, AuthorLogin: "alice",
+		Reviews: []ReviewRecord{approve("ALICE", ModelFamilyOpenAI, "h", 1),
+			approve("codex", ModelFamilyOpenAI, "h", 1), approve("qwen-bot", ModelFamilyQwen, "h", 1)},
+		Checks: []CheckRecord{green("ci", "h")}}
+	if got := EvaluateReviewGate(in); !got.Mergeable() || got.Approvals != 2 {
+		t.Fatalf("self approval beside two others: %+v", got)
+	}
+}
+
+func TestEvaluateReviewGate_EmptyAuthorLoginChangesNothing(t *testing.T) {
+	in := GateInput{Policy: gatePolicy(), PullRequestState: PullRequestOpen, HeadSHA: "h",
+		AuthorModelFamilies: []string{ModelFamilyAnthropic},
+		Reviews:             []ReviewRecord{approve("", ModelFamilyOpenAI, "h", 1)},
+		Checks:              []CheckRecord{green("ci", "h")}}
+	if got := EvaluateReviewGate(in); !got.Mergeable() || got.Approvals != 1 {
+		t.Fatalf("empty author login: %+v", got)
 	}
 }
 
