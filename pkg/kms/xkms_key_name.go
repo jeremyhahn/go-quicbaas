@@ -21,8 +21,8 @@ import (
 )
 
 // xkmsEncodedKeyNamePrefix starts every go-xkms key name that carries an
-// encoded service key ID. It is NOT reserved: a valid name that starts with
-// it (an existing "qbx.production") is used unchanged.
+// encoded service key ID. A name with the prefix whose payload is not such an
+// encoding (an existing "qbx.production") is an ordinary literal name.
 const xkmsEncodedKeyNamePrefix = "qbx."
 
 // xkmsEncoding is strict so that each encoded payload has exactly one
@@ -35,41 +35,56 @@ var xkmsEncoding = base64.RawURLEncoding.Strict()
 // reference (a tenant's key is "tenant/<tenantID>/<name>"); go-xkms's own
 // validation is not loosened, the name is encoded instead.
 //
-// A name go-xkms accepts is used unchanged, always, so every existing key
-// keeps its name. Only an ID go-xkms rejects is encoded, as the prefix plus
-// its canonical unpadded base64url form.
-//
-// go-xkms has one key-name space, and an encoded name must live in it, so
-// the mapping cannot be injective over every ID: the literal valid name
-// "qbx.<canonical base64url of a rejected ID>" and that rejected ID share a
-// go-xkms name. That is the only overlap; keyIDFromXKMSName reads such a
-// name as the encoded ID.
+// The mapping is injective: two service IDs never share a go-xkms name, so
+// one ID can never reach another's key material. A valid ID is used
+// unchanged unless it has the encoded shape (decodeXKMSKeyName); every other
+// ID, rejected or of that shape, is the prefix plus its canonical unpadded
+// base64url form. A literal output therefore never has the encoded shape,
+// and an encoded output always has it.
 func xkmsKeyName(keyID string) string {
 	// An empty ID is refused before any go-xkms call (ErrKeyCNEmpty); it is
-	// not encoded, so "qbx." alone stays a literal name.
-	if keyID == "" || validation.ValidateKeyID(keyID) == nil {
+	// not encoded.
+	if keyID == "" {
 		return keyID
+	}
+	if validation.ValidateKeyID(keyID) == nil {
+		if _, encoded := decodeXKMSKeyName(keyID); !encoded {
+			return keyID
+		}
 	}
 	return xkmsEncodedKeyNamePrefix + xkmsEncoding.EncodeToString([]byte(keyID))
 }
 
-// keyIDFromXKMSName returns the service key ID behind a go-xkms key name. It
-// decodes a name only when the name is exactly what xkmsKeyName makes of an
-// ID go-xkms rejects; every other name is the key ID itself.
-func keyIDFromXKMSName(name string) string {
-	encoded, ok := strings.CutPrefix(name, xkmsEncodedKeyNamePrefix)
+// decodeXKMSKeyName reports whether name has the encoded shape, and the
+// service ID it encodes: the prefix plus the canonical encoding of a
+// non-empty ID that xkmsKeyName encodes, either one go-xkms rejects or a
+// valid ID that itself has this shape. A decoded ID is shorter than its
+// name, so the recursion ends.
+func decodeXKMSKeyName(name string) (string, bool) {
+	payload, ok := strings.CutPrefix(name, xkmsEncodedKeyNamePrefix)
 	if !ok {
-		return name
+		return "", false
 	}
-	decoded, err := xkmsEncoding.DecodeString(encoded)
-	if err != nil {
-		return name
+	decoded, err := xkmsEncoding.DecodeString(payload)
+	if err != nil || len(decoded) == 0 {
+		return "", false
 	}
 	keyID := string(decoded)
-	if keyID == "" || validation.ValidateKeyID(keyID) == nil {
-		// Neither an empty nor a valid ID is ever encoded, so this name is
-		// a literal.
-		return name
+	if validation.ValidateKeyID(keyID) != nil {
+		return keyID, true
 	}
-	return keyID
+	if _, nested := decodeXKMSKeyName(keyID); nested {
+		return keyID, true
+	}
+	return "", false
+}
+
+// keyIDFromXKMSName returns the service key ID behind a go-xkms key name:
+// the inverse of xkmsKeyName. A name of the encoded shape is decoded; every
+// other name is the key ID itself.
+func keyIDFromXKMSName(name string) string {
+	if keyID, ok := decodeXKMSKeyName(name); ok {
+		return keyID
+	}
+	return name
 }
