@@ -100,5 +100,24 @@ func (s *Server) buildSessionServer(getter iamComponentsGetter) iampb.SessionSer
 	if !ok {
 		s.logger.Warn("QuicBaaS service does not resolve caller accounts; gRPC session RPCs will refuse every caller")
 	}
-	return grpcapi.NewSessionServer(grpcapi.NewSessionServiceAdapter(sessionStorage), callers, s.logger)
+	server := grpcapi.NewSessionServer(grpcapi.NewSessionServiceAdapter(sessionStorage), callers, s.logger)
+	// Logout-all has to end the caller's login credentials, which live in the
+	// OIDC provider's token storage. Without the provider the revoker stays
+	// unset and RevokeAllSessions refuses rather than leave them usable.
+	var provider *iam.OIDCProvider
+	if providers, ok := s.quicBaaSServiceRef().(grpcOIDCProviderGetter); ok {
+		var perr error
+		provider, perr = providers.GetOIDCProvider(context.Background())
+		if perr != nil {
+			s.logger.WithError(perr).Warn("Failed to get OIDC provider for gRPC logout-all")
+		}
+	}
+	if provider == nil {
+		s.logger.Warn("OIDC provider unavailable; gRPC logout-all will refuse every caller")
+		return server
+	}
+	return server.WithCredentialRevoker(provider)
 }
+
+// The OIDC provider is what ends a caller's credentials on gRPC logout-all.
+var _ grpcapi.CredentialRevoker = (*iam.OIDCProvider)(nil)
