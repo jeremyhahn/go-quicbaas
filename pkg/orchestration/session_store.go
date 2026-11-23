@@ -876,6 +876,42 @@ func (s *sessionStore) ListAllSessions(ctx context.Context) ([]*SessionRecord, e
 // whose body names a different owner is skipped as defence in depth against a
 // corrupted key.
 func (s *sessionStore) scan(ctx context.Context, prefix, wantTenant string) ([]*SessionRecord, error) {
+	return s.scanRecords(ctx, prefix, func(key string, record *SessionRecord) bool {
+		if wantTenant != "" && record.TenantID != wantTenant {
+			return false
+		}
+		// A cross-tenant scan derives the owner from the key so a record with
+		// an unset body tenant is still attributable.
+		if record.TenantID == "" {
+			record.TenantID = tenantFromSessionKey(key)
+		}
+		return true
+	})
+}
+
+// observeTenantSessions returns every record under tenantID's subtree,
+// with each body tenant exactly as stored: a record whose body names no
+// tenant or another tenant is returned, not skipped, so a caller that must
+// not under-report (the placement drift report) can refuse it.
+func (s *sessionStore) observeTenantSessions(ctx context.Context, tenantID string) ([]*SessionRecord, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := s.ready(); err != nil {
+		return nil, err
+	}
+	tenantID = normalizeStoreTenant(tenantID)
+	prefix, err := tenantPrefix(sessionKeyspace, tenantID)
+	if err != nil {
+		return nil, sessionKeyError(err)
+	}
+	return s.scanRecords(ctx, prefix, func(string, *SessionRecord) bool { return true })
+}
+
+// scanRecords decodes every record under prefix and keeps those accept
+// returns true for, ordered by CreatedAt, then SessionID. A record that does
+// not decode fails the scan; accept may adjust the record it keeps.
+func (s *sessionStore) scanRecords(ctx context.Context, prefix string, accept func(key string, record *SessionRecord) bool) ([]*SessionRecord, error) {
 	var (
 		records   []*SessionRecord
 		decodeErr error
@@ -890,15 +926,9 @@ func (s *sessionStore) scan(ctx context.Context, prefix, wantTenant string) ([]*
 			decodeErr = err
 			return err
 		}
-		if wantTenant != "" && record.TenantID != wantTenant {
-			return nil
+		if accept(key, record) {
+			records = append(records, record)
 		}
-		// A cross-tenant scan derives the owner from the key so a record with
-		// an unset body tenant is still attributable.
-		if record.TenantID == "" {
-			record.TenantID = tenantFromSessionKey(key)
-		}
-		records = append(records, record)
 		return nil
 	})
 	if decodeErr != nil {
