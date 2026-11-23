@@ -91,7 +91,7 @@ func sessionOwnershipFixture(t *testing.T) (*SessionServer, *iam.MemorySessionSt
 		require.NoError(t, storage.CreateSession(context.Background(), s))
 	}
 	callers := fakeCallerAccounts{"t1/alice": ownerUserID}
-	return NewSessionServer(NewSessionServiceAdapter(storage), callers, newTestSessionLogger()), storage
+	return NewSessionServer(NewSessionServiceAdapter(storage), callers, newTestSessionLogger()).WithCredentialRevoker(&recordingCredentialRevoker{}), storage
 }
 
 // sessionCallerContext is what the authorization interceptor leaves for the
@@ -238,7 +238,7 @@ func TestSessionOwnership_RevokeOtherSessions_TokenSID(t *testing.T) {
 		Created: now, LastActive: now, ExpiresAt: now.Add(time.Hour),
 	}))
 
-	server := NewSessionServer(NewSessionServiceAdapter(store), userIDCallerAccounts{}, newTestSessionLogger())
+	server := NewSessionServer(NewSessionServiceAdapter(store), userIDCallerAccounts{}, newTestSessionLogger()).WithCredentialRevoker(&recordingCredentialRevoker{})
 
 	resp, err := server.RevokeOtherSessions(ctx, &iampb.RevokeOtherSessionsRequest{TenantId: "acme", KeepSessionId: "0a1b2c3d"})
 	require.NoError(t, err)
@@ -269,7 +269,7 @@ func TestSessionOwnership_RevokeSession_TokenSID(t *testing.T) {
 		Created: now, LastActive: now, ExpiresAt: now.Add(time.Hour),
 	}))
 
-	server := NewSessionServer(NewSessionServiceAdapter(store), userIDCallerAccounts{}, newTestSessionLogger())
+	server := NewSessionServer(NewSessionServiceAdapter(store), userIDCallerAccounts{}, newTestSessionLogger()).WithCredentialRevoker(&recordingCredentialRevoker{})
 
 	resp, err := server.RevokeSession(ctx, &iampb.RevokeSessionRequest{SessionId: "0a1b2c3d"})
 	require.NoError(t, err)

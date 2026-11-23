@@ -16,6 +16,7 @@ package grpc
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 	"testing"
 	"time"
@@ -1862,6 +1863,58 @@ func TestSessionServiceAdapter_RevokeOtherSessions_ListError(t *testing.T) {
 // by page the way the SDK does (iamPagination: another page while
 // offset+returned < total). On BASE the walk stopped after the first page
 // because total equalled the page length.
+// orderedListStorage lists policies and apps in name order. MemoryStorage
+// lists them in map order, which changes between calls, so a page walk over
+// it can repeat or skip items whatever total the adapter reports.
+type orderedListStorage struct{ *iam.MemoryStorage }
+
+func orderedPage[T any](items []T, opts iam.ListOptions, less func(a, b T) bool) []T {
+	sort.Slice(items, func(i, j int) bool { return less(items[i], items[j]) })
+	if opts.Offset >= len(items) {
+		return []T{}
+	}
+	end := len(items)
+	if opts.Limit > 0 && opts.Offset+opts.Limit < end {
+		end = opts.Offset + opts.Limit
+	}
+	return items[opts.Offset:end]
+}
+
+func (s orderedListStorage) ListPolicies(ctx context.Context, tenantID string, opts iam.ListOptions) ([]*iam.Policy, error) {
+	all, err := s.MemoryStorage.ListPolicies(ctx, tenantID, iam.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return orderedPage(all, opts, func(a, b *iam.Policy) bool { return a.Metadata.Name < b.Metadata.Name }), nil
+}
+
+func (s orderedListStorage) ListApps(ctx context.Context, tenantID string, opts iam.ListOptions) ([]*iam.Application, error) {
+	all, err := s.MemoryStorage.ListApps(ctx, tenantID, iam.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return orderedPage(all, opts, func(a, b *iam.Application) bool { return a.Name < b.Name }), nil
+}
+
+// createOrderedListAdapter is createTestIAMAdapter91 with its policy engine
+// and app manager backed by orderedListStorage.
+func createOrderedListAdapter(t *testing.T) *IAMServiceAdapter {
+	t.Helper()
+	a := createTestIAMAdapter91(t)
+	storage := orderedListStorage{iam.NewMemoryStorage()}
+	a.policyEngine = iam.NewPolicyEngine(iam.PolicyEngineOptions{
+		Storage: storage,
+		Cache: iam.NewPolicyCache(&iam.CacheConfig{
+			TTL:               5 * time.Minute,
+			MaxSize:           100,
+			BloomFilterSize:   1000,
+			BloomFilterHashes: 3,
+		}),
+	})
+	a.appManager = iam.NewAppManager(storage, &adapter91MockTenantManager{})
+	return a
+}
+
 func TestIAMServiceAdapter_ListPagesContinue(t *testing.T) {
 	const limit = 2
 
@@ -1929,5 +1982,69 @@ func TestIAMServiceAdapter_ListPagesContinue(t *testing.T) {
 			offset += len(page)
 		}
 		require.Equal(t, want, got)
+	})
+
+	t.Run("apps", func(t *testing.T) {
+		a := createOrderedListAdapter(t)
+		ctx := context.Background()
+		want := map[string]bool{}
+		for i := 0; i < 5; i++ {
+			name := fmt.Sprintf("pager-app-%d", i)
+			_, err := a.RegisterApp(ctx, &iam.Application{
+				TenantID: "tenant-1", Name: name,
+				RedirectURIs: []string{"http://localhost/callback"},
+				GrantTypes:   []string{"authorization_code"}, ResponseTypes: []string{"code"},
+			})
+			require.NoError(t, err)
+			want[name] = true
+		}
+
+		got := map[string]bool{}
+		offset, pages := 0, 0
+		for i := 0; ; i++ {
+			require.Less(t, i, 10, "the walk must end")
+			page, total, err := a.ListApps(ctx, "tenant-1", limit, offset)
+			require.NoError(t, err)
+			pages++
+			for _, app := range page {
+				got[app.Name] = true
+			}
+			if total <= offset+len(page) {
+				break
+			}
+			offset += len(page)
+		}
+		require.Equal(t, want, got)
+		require.Equal(t, 3, pages)
+	})
+
+	t.Run("policies", func(t *testing.T) {
+		a := createOrderedListAdapter(t)
+		ctx := context.Background()
+		want := map[string]bool{}
+		for i := 0; i < 5; i++ {
+			name := fmt.Sprintf("pager-policy-%d", i)
+			_, err := a.CreatePolicy(ctx, makeTestPolicy91(name, "tenant-1"))
+			require.NoError(t, err)
+			want[name] = true
+		}
+
+		got := map[string]bool{}
+		offset, pages := 0, 0
+		for i := 0; ; i++ {
+			require.Less(t, i, 10, "the walk must end")
+			page, total, err := a.ListPolicies(ctx, "tenant-1", limit, offset)
+			require.NoError(t, err)
+			pages++
+			for _, p := range page {
+				got[p.Metadata.Name] = true
+			}
+			if total <= offset+len(page) {
+				break
+			}
+			offset += len(page)
+		}
+		require.Equal(t, want, got)
+		require.Equal(t, 3, pages)
 	})
 }
