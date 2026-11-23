@@ -30,6 +30,7 @@ import (
 // It integrates with go-xkms to create backends based on the XKMS configuration.
 type BackendFactory struct {
 	logger   interfaces.Logger
+	keyNames goxkms.StorageBackend
 	registry *BackendRegistry
 	mu       sync.RWMutex
 }
@@ -45,6 +46,11 @@ type BackendFactoryConfig struct {
 
 	// HealthCheckInterval for the registry in seconds (default: 30)
 	HealthCheckInterval int
+
+	// KeyNames is the persistent store of go-xkms key-name ownership every
+	// XKMS backend shares (XKMSBackendConfig.KeyNames). Nil uses an
+	// in-memory store.
+	KeyNames goxkms.StorageBackend
 }
 
 // NewBackendFactory creates a new backend factory.
@@ -67,6 +73,7 @@ func NewBackendFactory(cfg *BackendFactoryConfig) (*BackendFactory, error) {
 
 	factory := &BackendFactory{
 		logger:   cfg.Logger,
+		keyNames: cfg.KeyNames,
 		registry: registry,
 	}
 
@@ -131,6 +138,7 @@ func (f *BackendFactory) InitializeFromXKMS(ctx context.Context, enabledBackends
 		backend, err := NewXKMSBackend(&XKMSBackendConfig{
 			BackendType: backendType,
 			Logger:      f.logger,
+			KeyNames:    f.keyNames,
 		})
 		if err != nil {
 			if f.logger != nil {

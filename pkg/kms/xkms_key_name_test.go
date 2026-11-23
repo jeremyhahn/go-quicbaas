@@ -20,8 +20,10 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/validation"
+	goxkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/xkms"
 )
 
@@ -65,71 +67,29 @@ func TestXKMSBackend_TenantScopedKeyID_EncryptsAndDecrypts(t *testing.T) {
 	require.NoError(t, backend.DeleteKey(ctx, keyID))
 }
 
-func TestXKMSKeyName_IsInjectiveAndKeepsValidNames(t *testing.T) {
-	require.Equal(t, "plain-key_1.v2", xkmsKeyName("plain-key_1.v2"), "a valid name is unchanged")
+func TestXKMSKeyName_ValidNamesAreLiteral(t *testing.T) {
+	tenantName := xkmsKeyName("tenant/acme/k")
+	for _, id := range []string{"plain-key_1.v2", "qbx.production", tenantName} {
+		require.NoError(t, validation.ValidateKeyID(id))
+		require.Equal(t, id, xkmsKeyName(id), "a name go-xkms accepts is its own name, as before the mapping")
+	}
 
-	ids := []string{"tenant/acme/k", "tenant/acme/k_v2", "tenant.acme.k", "a/b", "a.b"}
 	seen := map[string]string{}
-	for _, id := range ids {
+	for _, id := range []string{"tenant/acme/k", "tenant/acme/k2", "a/b", "a:b"} {
 		name := xkmsKeyName(id)
-		require.Regexp(t, `^[A-Za-z0-9._-]+$`, name)
-		require.NotContains(t, name, "..")
-		if prev, ok := seen[name]; ok {
-			t.Fatalf("%q and %q map to the same go-xkms name %q", prev, id, name)
-		}
+		require.NoError(t, validation.ValidateKeyID(name), "the encoded name of %q is a valid go-xkms name", id)
+		require.Equal(t, xkmsEncodedKeyNamePrefix+base64.RawURLEncoding.EncodeToString([]byte(id)), name)
+		_, dup := seen[name]
+		require.False(t, dup, "two IDs share the encoded name %q", name)
 		seen[name] = id
-		require.Equal(t, id, keyIDFromXKMSName(name), "the mapping round-trips")
 	}
 }
 
-// TestXKMSKeyName_EveryValidNameMapsToItself pins the upgrade contract: a
-// name go-xkms accepts is the go-xkms name, always, including one that
-// starts with the encoding's prefix, and ListKeys reads it back unchanged.
-func TestXKMSKeyName_EveryValidNameMapsToItself(t *testing.T) {
-	for _, id := range []string{
-		"qbx.production", "qbx.", "qbx.YS9i", "qbx.cHJvZA", "qbx.production.sign", "qbx-x", "QBX.prod",
-	} {
-		require.NoError(t, validation.ValidateKeyID(id), "fixture %q must be a valid go-xkms name", id)
-		if id == "qbx.YS9i" {
-			// The canonical encoding of the rejected ID "a/b": a literal in
-			// the encoded form is encoded again, so it never shares a
-			// go-xkms name with "a/b".
-			name := xkmsKeyName(id)
-			require.NotEqual(t, id, name)
-			require.NotEqual(t, xkmsKeyName("a/b"), name)
-			require.NoError(t, validation.ValidateKeyID(name))
-			require.Equal(t, id, keyIDFromXKMSName(name), "the mapping round-trips")
-			continue
-		}
-		require.Equal(t, id, xkmsKeyName(id), "a valid name maps to itself")
-		require.Equal(t, id, keyIDFromXKMSName(id), "ListKeys reads a literal name unchanged")
-	}
-}
-
-// TestXKMSKeyName_LiteralSpellingAnEncodingIsItsOwnName pins that a valid
-// literal ID spelling another ID's encoding, and that ID, map to different
-// go-xkms names, at any depth, and each round-trips.
-func TestXKMSKeyName_LiteralSpellingAnEncodingIsItsOwnName(t *testing.T) {
-	tenantID := "tenant/acme/k"
-	literal := xkmsKeyName(tenantID)
-	require.Equal(t, "qbx.dGVuYW50L2FjbWUvaw", literal)
-	require.NoError(t, validation.ValidateKeyID(literal), "the fixture is a valid system key name")
-
-	names := map[string]string{}
-	for _, id := range []string{tenantID, literal, xkmsKeyName(literal), "tenant/acme/k2"} {
-		name := xkmsKeyName(id)
-		if prev, ok := names[name]; ok {
-			t.Fatalf("%q and %q map to the same go-xkms name %q", prev, id, name)
-		}
-		names[name] = id
-		require.Equal(t, id, keyIDFromXKMSName(name), "the mapping round-trips for %q", id)
-	}
-}
-
-// TestXKMSBackend_SystemKeyNamedLikeATenantEncoding_IsIsolated stores a system
-// key under the literal name that spells tenant/acme/k's encoding and a tenant
-// key tenant/acme/k, and checks that neither ID reaches the other's key.
-func TestXKMSBackend_SystemKeyNamedLikeATenantEncoding_IsIsolated(t *testing.T) {
+// TestXKMSBackend_LegacyKeySpelledLikeATenantEncoding_StaysASystemKey seeds a
+// key the way the code before the mapping stored it (its go-xkms name is its
+// service ID) under a name that spells the encoding of a tenant ID. Its owner
+// keeps it, and the tenant ID never reaches it.
+func TestXKMSBackend_LegacyKeySpelledLikeATenantEncoding_StaysASystemKey(t *testing.T) {
 	cleanup := initXKMSForTest(t)
 	defer cleanup()
 
@@ -138,25 +98,27 @@ func TestXKMSBackend_SystemKeyNamedLikeATenantEncoding_IsIsolated(t *testing.T) 
 
 	const tenantKeyID = "tenant/acme/k"
 	systemKeyID := xkmsEncodedKeyNamePrefix + base64.RawURLEncoding.EncodeToString([]byte(tenantKeyID))
-
-	_, err := backend.CreateKey(ctx, backend.algorithmToKeyAttributes(systemKeyID, AlgAES256GCM))
-	require.NoError(t, err)
-	_, err = backend.CreateKey(ctx, backend.algorithmToKeyAttributes(tenantKeyID, AlgAES256GCM))
-	require.NoError(t, err, "the tenant key must not collide with the system key")
-
-	systemCT, err := backend.Encrypt(ctx, systemKeyID, []byte("system"), nil)
-	require.NoError(t, err)
-	tenantCT, err := backend.Encrypt(ctx, tenantKeyID, []byte("tenant"), nil)
+	_, err := xkms.GenerateSymmetricKey(ctx, string(backend.backendType),
+		backend.algorithmToKeyAttributes(systemKeyID, AlgAES256GCM))
 	require.NoError(t, err)
 
-	_, err = backend.Decrypt(ctx, tenantKeyID, systemCT, nil)
-	require.Error(t, err, "the tenant ID must not decrypt under the system key")
-	_, err = backend.Decrypt(ctx, systemKeyID, tenantCT, nil)
-	require.Error(t, err, "the system ID must not decrypt under the tenant key")
-
-	plaintext, err := backend.Decrypt(ctx, systemKeyID, systemCT, nil)
+	ciphertext, err := backend.Encrypt(ctx, systemKeyID, []byte("system"), nil)
+	require.NoError(t, err, "the existing key's owner keeps access")
+	plaintext, err := backend.Decrypt(ctx, systemKeyID, ciphertext, nil)
 	require.NoError(t, err)
 	require.Equal(t, []byte("system"), plaintext)
+
+	_, err = backend.GetKeyMetadata(ctx, tenantKeyID)
+	require.ErrorIs(t, err, ErrKeyNotFound, "the tenant ID must not resolve to the system key")
+	_, err = backend.Encrypt(ctx, tenantKeyID, []byte("tenant"), nil)
+	require.Error(t, err, "the tenant ID must not encrypt under the system key")
+	_, err = backend.Decrypt(ctx, tenantKeyID, ciphertext, nil)
+	require.Error(t, err, "the tenant ID must not decrypt under the system key")
+
+	_, err = backend.CreateKey(ctx, backend.algorithmToKeyAttributes(tenantKeyID, AlgAES256GCM))
+	require.ErrorIs(t, err, ErrKeyNameTaken, "a tenant key must not take over the system key's name")
+	_, err = backend.GetKeyMetadata(ctx, tenantKeyID)
+	require.ErrorIs(t, err, ErrKeyNotFound, "a refused create leaves no ownership record")
 
 	keys, _, err := backend.ListKeys(ctx, "", 0)
 	require.NoError(t, err)
@@ -165,35 +127,68 @@ func TestXKMSBackend_SystemKeyNamedLikeATenantEncoding_IsIsolated(t *testing.T) 
 		listed = append(listed, k.KeyID)
 	}
 	require.Contains(t, listed, systemKeyID, "the system key lists under its own ID")
-	require.Contains(t, listed, tenantKeyID, "the tenant key lists under its own ID")
+	require.NotContains(t, listed, tenantKeyID, "the system key is never relabelled a tenant key")
 
-	require.NoError(t, backend.DeleteKey(ctx, tenantKeyID))
-	plaintext, err = backend.Decrypt(ctx, systemKeyID, systemCT, nil)
-	require.NoError(t, err, "deleting the tenant key must leave the system key")
-	require.Equal(t, []byte("system"), plaintext)
 	require.NoError(t, backend.DeleteKey(ctx, systemKeyID))
 }
 
-// TestXKMSKeyName_DecodesOnlyEncodedOutputs: keyIDFromXKMSName decodes a name
-// only when it is exactly what xkmsKeyName makes of an ID go-xkms rejects.
-func TestXKMSKeyName_DecodesOnlyEncodedOutputs(t *testing.T) {
-	for _, id := range []string{"tenant/acme/k", "a/b", "has space", "colon:id", "tenant/é/k"} {
-		require.Error(t, validation.ValidateKeyID(id), "fixture %q must be rejected by go-xkms", id)
-		name := xkmsKeyName(id)
-		require.NoError(t, validation.ValidateKeyID(name), "the encoded name must be a valid go-xkms name")
-		require.Equal(t, id, keyIDFromXKMSName(name))
+// TestXKMSBackend_TenantKeyName_IsOwnedPersistently checks that a tenant
+// key's encoded name is held by its ownership record: across a restart that
+// keeps the record store, against a literal ID spelled like the encoding, and
+// failing closed when the record is gone.
+func TestXKMSBackend_TenantKeyName_IsOwnedPersistently(t *testing.T) {
+	cleanup := initXKMSForTest(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	store, err := goxkmssdk.NewMemoryBackend()
+	require.NoError(t, err)
+	newBackend := func(names goxkmssdk.StorageBackend) *XKMSBackend {
+		b, err := NewXKMSBackend(&XKMSBackendConfig{
+			BackendType: config.BackendTypeSoftware,
+			Logger:      &mockLogger{},
+			KeyNames:    names,
+		})
+		require.NoError(t, err)
+		return b
 	}
-	// A prefixed name whose payload decodes to a VALID ID is never an
-	// encoded output (a valid ID is not encoded), so it reads literally.
-	literal := xkmsEncodedKeyNamePrefix + base64.RawURLEncoding.EncodeToString([]byte("plain"))
-	require.Equal(t, literal, keyIDFromXKMSName(literal))
-	// A non-canonical payload is not an encoded output either.
-	require.Equal(t, "qbx.production", keyIDFromXKMSName("qbx.production"))
+
+	const tenantKeyID = "tenant/acme/owned"
+	literalID := xkmsKeyName(tenantKeyID)
+	backend := newBackend(store)
+	_, err = backend.CreateKey(ctx, backend.algorithmToKeyAttributes(tenantKeyID, AlgAES256GCM))
+	require.NoError(t, err)
+	ciphertext, err := backend.Encrypt(ctx, tenantKeyID, []byte("tenant"), nil)
+	require.NoError(t, err)
+
+	_, err = backend.CreateKey(ctx, backend.algorithmToKeyAttributes(literalID, AlgAES256GCM))
+	require.ErrorIs(t, err, ErrKeyNameTaken, "a literal ID must not take over a tenant key's name")
+
+	restarted := newBackend(store)
+	_, err = restarted.GetKeyMetadata(ctx, literalID)
+	require.ErrorIs(t, err, ErrKeyNotFound, "the literal ID must not resolve to the tenant key")
+	plaintext, err := restarted.Decrypt(ctx, tenantKeyID, ciphertext, nil)
+	require.NoError(t, err, "the tenant key resolves through its persisted record after a restart")
+	require.Equal(t, []byte("tenant"), plaintext)
+	keys, _, err := restarted.ListKeys(ctx, "tenant/acme/", 0)
+	require.NoError(t, err)
+	var listed []string
+	for _, k := range keys {
+		listed = append(listed, k.KeyID)
+	}
+	require.Contains(t, listed, tenantKeyID)
+
+	emptyStore, err := goxkmssdk.NewMemoryBackend()
+	require.NoError(t, err)
+	_, err = newBackend(emptyStore).GetKeyMetadata(ctx, tenantKeyID)
+	require.ErrorIs(t, err, ErrKeyNotFound, "without its record the encoded name fails closed")
+
+	require.NoError(t, restarted.DeleteKey(ctx, tenantKeyID))
+	owner, found, err := restarted.keyNames().owner(ctx, literalID)
+	require.NoError(t, err)
+	require.False(t, found, "deleting the key releases its name, owner %q", owner)
 }
 
-// TestXKMSBackend_LegacyQBXKeyName_StillWorks is the upgrade fixture: keys
-// stored in go-xkms under literal "qbx." names before the mapping existed
-// still encrypt, decrypt, sign, verify, list and delete by those names.
 func TestXKMSBackend_LegacyQBXKeyName_StillWorks(t *testing.T) {
 	cleanup := initXKMSForTest(t)
 	defer cleanup()

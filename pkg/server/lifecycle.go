@@ -1196,11 +1196,20 @@ func (s *Server) startKMS() error {
 		s.ownsXKMS = true
 	}
 
+	// The ownership records of encoded go-xkms key names persist next to
+	// the key-version records: a tenant key whose record is lost fails
+	// closed after a restart.
+	keyNames, err := s.kmsKeyNameStore()
+	if err != nil {
+		return api.NewOperationFailedError("create KMS key name store", err)
+	}
+
 	// Create BackendFactory to manage multiple backends via registry
 	factory, err := newKMSBackendFactory(&kms.BackendFactoryConfig{
 		Logger:              logAdapter,
 		EnabledBackends:     s.config.KMS.EnabledBackends,
 		HealthCheckInterval: 30,
+		KeyNames:            keyNames,
 	})
 	if err != nil {
 		return api.NewOperationFailedError("create backend factory", err)
@@ -2878,4 +2887,15 @@ func (s *Server) keyVersionStore() (*xkmssdk.KeyVersionStore, error) {
 	s.xkmsKeyVersionRouter = router
 	s.xkmsKeyVersions = store
 	return store, nil
+}
+
+// kmsKeyNameStore opens the store of go-xkms key-name ownership records the
+// KMS backends share: on disk under the data directory, so a tenant key's
+// name survives a restart, and in memory when there is no data directory
+// (where the keys themselves are in memory too).
+func (s *Server) kmsKeyNameStore() (xkmssdk.StorageBackend, error) {
+	if dataDir := s.config.Storage.DataDir; dataDir != "" {
+		return xkmssdk.NewFileStorageBackend(filepath.Join(dataDir, "kms-key-names"))
+	}
+	return xkmssdk.NewMemoryBackend()
 }
