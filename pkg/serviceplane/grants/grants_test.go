@@ -411,6 +411,89 @@ func TestPlane_AFailedGrantRevokesTheOnesMade(t *testing.T) {
 	assert.Empty(t, names)
 }
 
+func TestIdentity_RevokeTwiceSucceeds(t *testing.T) {
+	e := newEnv(t)
+	m := serviceplanetest.Manifest("acme", "web")
+	ctx := context.Background()
+	for _, k := range []serviceplane.GrantKind{serviceplane.GrantIdentity, serviceplane.GrantCertificate} {
+		g := e.grant(k)
+		ref, err := g.Grant(ctx, m, "")
+		require.NoError(t, err)
+		require.NoError(t, g.Revoke(ctx, m, ref))
+		assert.NoError(t, g.Revoke(ctx, m, ref), "%s: an already revoked, already dropped credential is revoked", k)
+	}
+}
+
+func TestSecrets_RevokeTwiceSucceeds(t *testing.T) {
+	e := newEnv(t)
+	m := serviceplanetest.Manifest("acme", "web")
+	g := e.grant(serviceplane.GrantSecrets)
+	ctx := context.Background()
+	ref, err := g.Grant(ctx, m, "")
+	require.NoError(t, err)
+	require.NoError(t, g.Revoke(ctx, m, ref))
+	assert.NoError(t, g.Revoke(ctx, m, ref), "a binding already gone is revoked")
+}
+
+// flakyRegistry fails Deregister with err while it is set.
+type flakyRegistry struct {
+	NameRegistry
+	mu  sync.Mutex
+	err error
+}
+
+func (r *flakyRegistry) fail(err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.err = err
+}
+
+func (r *flakyRegistry) Deregister(ctx context.Context, leaseID int64) error {
+	r.mu.Lock()
+	err := r.err
+	r.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	return r.NameRegistry.Deregister(ctx, leaseID)
+}
+
+// TestPlane_UndeployRetriesAfterPartialCleanup checks an undeploy that
+// failed part way can be retried once the outage clears.
+func TestPlane_UndeployRetriesAfterPartialCleanup(t *testing.T) {
+	e := newEnv(t)
+	flaky := &flakyRegistry{NameRegistry: e.reg}
+	e.grant(serviceplane.GrantName).(*Name).Registry = flaky
+	rt := serviceplanetest.NewRuntime(t)
+	rt.Grants = e.grants
+	plane := rt.Plane(t)
+	ctx := context.Background()
+	acme := tenantctx.WithTenant(ctx, "acme")
+
+	_, err := plane.Deploy(ctx, "acme", rt.Sign(t, "acme", "web"))
+	require.NoError(t, err)
+	svid := e.kept(t, "acme", "tenant/acme/services/web/svid")
+	leaf := e.kept(t, "acme", "tenant/acme/services/web/tls")
+
+	flaky.fail(errors.New("registry unavailable"))
+	err = plane.Undeploy(ctx, "acme", "web")
+	require.ErrorIs(t, err, serviceplane.ErrGrant)
+	svc, err := plane.Get(ctx, "acme", "web")
+	require.NoError(t, err)
+	assert.Equal(t, serviceplane.StateHalted, svc.State)
+	assert.Len(t, svc.Grants, len(serviceplane.GrantKinds), "a failed undeploy keeps every grant")
+
+	flaky.fail(nil)
+	require.NoError(t, plane.Undeploy(ctx, "acme", "web"), "the retry repeats the revocations already done")
+	_, err = plane.Get(ctx, "acme", "web")
+	assert.Error(t, err, "the record is gone")
+	assert.True(t, e.revoked(t, svid))
+	assert.True(t, e.revoked(t, leaf))
+	names, _, err := e.reg.Resolve(acme, "web")
+	require.NoError(t, err)
+	assert.Empty(t, names)
+}
+
 var _ CA = xkmssdk.TrustedCA(nil)
 
 func TestWithdraw_RefusesAMalformedSerial(t *testing.T) {

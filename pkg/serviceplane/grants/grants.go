@@ -44,7 +44,9 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
+	xkmsacme "github.com/jeremyhahn/go-xkms/sdk/go/acme"
 
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/registry"
 	"github.com/jeremyhahn/go-quicbaas/pkg/serviceplane"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
@@ -267,21 +269,36 @@ func issue(ctx context.Context, ca CA, store SecretStore, path, cn string, opts 
 	return serial, nil
 }
 
-// withdraw revokes a serial and destroys the kept credential.
+// withdraw revokes a serial and destroys the kept credential. A serial
+// already revoked and a credential already gone are done, so a partial
+// undeploy can be retried.
 func withdraw(ctx context.Context, ca CA, store SecretStore, path string, kind serviceplane.GrantKind, hexSerial string) error {
 	if _, ok := new(big.Int).SetString(hexSerial, 16); !ok {
 		return &RefError{Kind: kind, Ref: hexSerial}
 	}
-	return errors.Join(revokeSerial(ctx, ca, kind, hexSerial), store.Destroy(ctx, path))
+	return errors.Join(revokeSerial(ctx, ca, kind, hexSerial), destroyAbsent(ctx, store, path))
 }
 
-// revokeSerial revokes the certificate with the hex serial.
+// revokeSerial revokes the certificate with the hex serial. One the CA has
+// already revoked is revoked.
 func revokeSerial(ctx context.Context, ca CA, kind serviceplane.GrantKind, hexSerial string) error {
 	serial, ok := new(big.Int).SetString(hexSerial, 16)
 	if !ok {
 		return &RefError{Kind: kind, Ref: hexSerial}
 	}
-	return ca.Revoke(ctx, serial, reasonCessation)
+	if err := ca.Revoke(ctx, serial, reasonCessation); err != nil && !errors.Is(err, xkmsacme.CAErrAlreadyRevoked) {
+		return err
+	}
+	return nil
+}
+
+// destroyAbsent destroys the entry at path; one already absent is
+// destroyed.
+func destroyAbsent(ctx context.Context, store SecretStore, path string) error {
+	if err := store.Destroy(ctx, path); err != nil && !qberrors.IsNotFound(err) {
+		return err
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------
@@ -452,9 +469,9 @@ func (g *Secrets) Grant(ctx context.Context, m *serviceplane.Manifest, prior str
 	return SecretPrefix(m), nil
 }
 
-// Revoke removes the binding.
+// Revoke removes the binding. A binding already gone is removed.
 func (g *Secrets) Revoke(ctx context.Context, m *serviceplane.Manifest, _ string) error {
-	return g.Secrets.Destroy(tenantCtx(ctx, m), bindingPath(m))
+	return destroyAbsent(tenantCtx(ctx, m), g.Secrets, bindingPath(m))
 }
 
 // ---------------------------------------------------------------------------
