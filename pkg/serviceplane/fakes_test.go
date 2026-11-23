@@ -23,7 +23,10 @@ type memGuard struct {
 	// loseAfter, when positive, makes every Swap lose once that many
 	// Swaps have succeeded; swaps counts the successful ones.
 	loseAfter int
-	swaps     int
+	// loseOnce, when positive, makes the one Swap that follows that many
+	// successful ones lose; later Swaps succeed.
+	loseOnce int
+	swaps    int
 }
 
 func (g *memGuard) Create(ctx context.Context, key string, value []byte) (bool, error) {
@@ -45,6 +48,10 @@ func (g *memGuard) Swap(ctx context.Context, key string, held, next []byte) (boo
 	if g.loseSwaps || (g.loseAfter > 0 && g.swaps >= g.loseAfter) {
 		return false, nil
 	}
+	if g.loseOnce > 0 && g.swaps >= g.loseOnce {
+		g.loseOnce = 0
+		return false, nil
+	}
 	ok, err := g.kv.CompareAndSwap(ctx, key, held, next)
 	if ok && err == nil {
 		g.swaps++
@@ -59,6 +66,13 @@ func (g *memGuard) setLoseAfter(n int) {
 	g.swaps, g.loseAfter = 0, n
 }
 
+// setLoseOnce makes the Swap after the next n successful ones lose.
+func (g *memGuard) setLoseOnce(n int) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.swaps, g.loseOnce = 0, n
+}
+
 type launcher struct {
 	mu        sync.Mutex
 	calls     []string
@@ -66,6 +80,8 @@ type launcher struct {
 	haltErr   error
 	// onLaunch, when set, runs in Launch and its error is Launch's.
 	onLaunch func(ctx context.Context) error
+	// onHalt, when set, runs after a Halt that succeeds.
+	onHalt func()
 }
 
 func (l *launcher) Launch(ctx context.Context, svc *Service) error {
@@ -87,9 +103,13 @@ func (g *memGuard) setLoseSwaps(lose bool) {
 
 func (l *launcher) Halt(_ context.Context, svc *Service) error {
 	l.mu.Lock()
-	defer l.mu.Unlock()
 	l.calls = append(l.calls, "halt "+svc.Name)
-	return l.haltErr
+	err, hook := l.haltErr, l.onHalt
+	l.mu.Unlock()
+	if err == nil && hook != nil {
+		hook()
+	}
+	return err
 }
 
 // ledger records every grant and revoke of every kind, in order.
@@ -110,11 +130,20 @@ func (l *ledger) String() string {
 	return strings.Join(l.events, ",")
 }
 
+// reset clears the ledger.
+func (l *ledger) reset() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.events = nil
+}
+
 type grant struct {
 	kind    GrantKind
 	ledger  *ledger
 	fail    error
 	revoked error
+	// failRole, when set, fails a Grant for a manifest with that role.
+	failRole string
 }
 
 func (g *grant) Kind() GrantKind { return g.kind }
@@ -122,6 +151,9 @@ func (g *grant) Kind() GrantKind { return g.kind }
 func (g *grant) Grant(_ context.Context, m *Manifest, prior string) (string, error) {
 	if g.fail != nil {
 		return "", g.fail
+	}
+	if g.failRole != "" && m.Role == g.failRole {
+		return "", errors.New("grant refused for role " + m.Role)
 	}
 	ref := string(g.kind) + ":" + m.Name + ":" + m.Role
 	g.ledger.add("grant " + string(g.kind) + " prior=" + prior)

@@ -268,6 +268,145 @@ func TestDeploy_AFailedCheckpointRollsBackTheGrant(t *testing.T) {
 	f.deploy(t, "web")
 }
 
+// TestRedeploy_AFailedCheckpointRestoresAReplacedGrant checks a redeploy
+// that fails after replacing held grants (operator to admin) gives the prior
+// manifest's grants back, so the record holds what is in force.
+func TestRedeploy_AFailedCheckpointRestoresAReplacedGrant(t *testing.T) {
+	f := newFixture(t)
+	f.deploy(t, "web")
+	f.ledger.reset()
+	m := validManifest()
+	m.Role = "admin"
+	// The claim and the identity, certificate and name checkpoints are
+	// written; the RBAC one is lost.
+	f.guard.setLoseOnce(4)
+	_, err := f.plane.Redeploy(ctx, "acme", f.sign(t, m))
+	wantErr(t, err, ErrGrant)
+	want := "grant identity prior=identity:web:operator,grant certificate prior=certificate:web:operator," +
+		"grant name prior=name:web:operator,grant rbac prior=rbac:web:operator," +
+		"grant rbac prior=rbac:web:admin,grant name prior=name:web:admin," +
+		"grant certificate prior=certificate:web:admin,grant identity prior=identity:web:admin"
+	if got := f.ledger.String(); got != want {
+		t.Fatalf("ledger = %s, want %s", got, want)
+	}
+	svc, err := f.plane.Get(ctx, "acme", "web")
+	if err != nil || svc.State != StateHalted || svc.Cleanup || svc.Grants[GrantRBAC] != "rbac:web:operator" ||
+		svc.Grants[GrantName] != "name:web:operator" || len(svc.Grants) != len(GrantKinds) {
+		t.Fatalf("after a failed redeploy = %+v, %v", svc, err)
+	}
+	if _, err := f.plane.Resume(ctx, "acme", "web"); err != nil {
+		t.Fatalf("resume the restored service: %v", err)
+	}
+}
+
+// TestRedeploy_AFailedRestoreKeepsTheReplacementForUndeploy checks a
+// replacement grant whose restore fails stays recorded, so undeploy revokes
+// it, and the record is not launched with it.
+func TestRedeploy_AFailedRestoreKeepsTheReplacementForUndeploy(t *testing.T) {
+	f := newFixture(t)
+	f.deploy(t, "web")
+	m := validManifest()
+	m.Role = "admin"
+	// The name checkpoint is lost, and giving the operator name back fails.
+	f.guard.setLoseOnce(3)
+	f.grants[GrantName].failRole = "operator"
+	_, err := f.plane.Redeploy(ctx, "acme", f.sign(t, m))
+	wantErr(t, err, ErrGrant)
+	svc, err := f.plane.Get(ctx, "acme", "web")
+	if err != nil || svc.State != StateHalted || !svc.Cleanup || svc.Grants[GrantName] != "name:web:admin" ||
+		svc.Grants[GrantRBAC] != "rbac:web:operator" {
+		t.Fatalf("after a failed restore = %+v, %v", svc, err)
+	}
+	f.launcher.calls = nil
+	for name, verb := range map[string]func(context.Context, string, string) (*Service, error){
+		"resume": f.plane.Resume, "restart": f.plane.Restart,
+	} {
+		_, err := verb(ctx, "acme", "web")
+		wantErr(t, err, ErrGrant)
+		if got, _ := f.plane.Get(ctx, "acme", "web"); got.State != StateHalted {
+			t.Fatalf("a refused %s left the record %s", name, got.State)
+		}
+	}
+	if len(f.launcher.calls) != 0 {
+		t.Fatalf("launched a record whose grants are part way: %v", f.launcher.calls)
+	}
+	f.ledger.reset()
+	if err := f.plane.Undeploy(ctx, "acme", "web"); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.ledger.String(); !strings.Contains(got, "revoke name:web:admin") {
+		t.Fatalf("undeploy ledger = %s, want the replacement name revoked", got)
+	}
+}
+
+// TestRelaunch_RefusesARecordWithGrantsMissingOrPartlyRevoked checks start,
+// resume and restart refuse a record left by a rollback or an undeploy that
+// failed part way, and that undeploy still finishes it.
+func TestRelaunch_RefusesARecordWithGrantsMissingOrPartlyRevoked(t *testing.T) {
+	t.Run("deploy rollback", func(t *testing.T) {
+		f := newFixture(t)
+		f.grants[GrantRBAC].fail = errors.New("role store down")
+		f.grants[GrantName].revoked = errors.New("registry down")
+		_, err := f.plane.Deploy(ctx, "acme", f.sign(t, validManifest()))
+		wantErr(t, err, ErrGrant)
+		f.grants[GrantRBAC].fail = nil
+		_, err = f.plane.Resume(ctx, "acme", "web")
+		wantErr(t, err, ErrGrant)
+		if len(f.launcher.calls) != 0 {
+			t.Fatalf("launched without its grants: %v", f.launcher.calls)
+		}
+		f.grants[GrantName].revoked = nil
+		if err := f.plane.Undeploy(ctx, "acme", "web"); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("partial undeploy", func(t *testing.T) {
+		f := newFixture(t)
+		f.deploy(t, "web")
+		f.grants[GrantIdentity].revoked = errors.New("CA unreachable")
+		wantErr(t, f.plane.Undeploy(ctx, "acme", "web"), ErrGrant)
+		f.launcher.calls = nil
+		_, err := f.plane.Resume(ctx, "acme", "web")
+		wantErr(t, err, ErrGrant)
+		_, err = f.plane.Restart(ctx, "acme", "web")
+		wantErr(t, err, ErrGrant)
+		if len(f.launcher.calls) != 0 {
+			t.Fatalf("launched with revoked grants: %v", f.launcher.calls)
+		}
+		f.grants[GrantIdentity].revoked = nil
+		if err := f.plane.Undeploy(ctx, "acme", "web"); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("redeploy grants anew", func(t *testing.T) {
+		f := newFixture(t)
+		f.deploy(t, "web")
+		f.grants[GrantIdentity].revoked = errors.New("CA unreachable")
+		wantErr(t, f.plane.Undeploy(ctx, "acme", "web"), ErrGrant)
+		svc, err := f.plane.Redeploy(ctx, "acme", f.sign(t, validManifest()))
+		if err != nil || svc.State != StateRunning || svc.Cleanup {
+			t.Fatalf("redeploy = %+v, %v", svc, err)
+		}
+	})
+}
+
+// TestStop_ACancelledRequestStillSettlesStopped checks a request cancelled
+// after the containers halted still leaves the service stopped.
+func TestStop_ACancelledRequestStillSettlesStopped(t *testing.T) {
+	f := newFixture(t)
+	f.deploy(t, "web")
+	sctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	f.launcher.onHalt = cancel
+	if _, err := f.plane.Stop(sctx, "acme", "web"); err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+	svc, err := f.plane.Get(ctx, "acme", "web")
+	if err != nil || svc.State != StateStopped {
+		t.Fatalf("after a cancelled stop = %+v, %v", svc, err)
+	}
+}
+
 func TestStopStartRestart(t *testing.T) {
 	f := newFixture(t)
 	f.deploy(t, "web")

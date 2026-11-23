@@ -55,9 +55,16 @@ type Service struct {
 	Revision int64 `json:"revision"`
 	Restarts int64 `json:"restarts"`
 	// Grants holds, per kind, the reference the grant returned.
-	Grants    map[GrantKind]string `json:"grants,omitempty"`
-	Reason    string               `json:"reason,omitempty"`
-	UpdatedAt time.Time            `json:"updated_at"`
+	Grants map[GrantKind]string `json:"grants,omitempty"`
+	// Cleanup is set while the record's grants may not match its manifest:
+	// a verb granted or revoked part way and could not undo it. Grants then
+	// lists every reference that may still be in force, for undeploy to
+	// revoke, and
+	// start, resume and restart refuse the record until a redeploy grants
+	// it anew.
+	Cleanup   bool      `json:"cleanup,omitempty"`
+	Reason    string    `json:"reason,omitempty"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // Guard arbitrates writes: Create writes only an absent key, Swap replaces
