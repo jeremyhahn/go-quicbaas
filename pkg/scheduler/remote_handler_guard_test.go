@@ -120,16 +120,20 @@ func TestRemoteHandler_ReturnsWhenTheWaitClosesFirst(t *testing.T) {
 
 // Two tenants' jobs sharing an ID keep separate started-run bookkeeping.
 func TestRunKey_EqualJobIDsAcrossTenantsDoNotCollide(t *testing.T) {
-	node := clusteredNode(t, newConcludingStorage(), "node-1")
+	storage := newConcludingStorage()
+	node := clusteredNode(t, storage, "node-1")
 	now := time.Now()
-	a := &Job{ID: 7, OwnerType: OwnerTypeTenant, OwnerID: "tenant-a", NextRun: now, RunStartedAt: now}
+	a := seedRunningJob(t, storage.mockJobStorage, &Job{
+		ID: 7, OwnerType: OwnerTypeTenant, OwnerID: "tenant-a", Status: JobStatusRunning, NextRun: now, RunStartedAt: now,
+	})
+	a = copyJob(a)
 	b := &Job{ID: 7, OwnerType: OwnerTypeTenant, OwnerID: "tenant-b", NextRun: now.Add(time.Hour), RunStartedAt: now.Add(time.Hour)}
 	ctxA := node.noteRunStarted(context.Background(), a)
 	node.noteRunStarted(context.Background(), b)
 	if _, ok := node.startedRuns.Load(runKeyOf(a)); !ok {
 		t.Fatal("tenant-b's run overwrote tenant-a's started run")
 	}
-	if !node.concludeOwnRun(ctxA, a) {
+	if _, won := node.concludeOwnRun(ctxA, a); !won {
 		t.Fatal("tenant-a's run did not conclude")
 	}
 	if _, ok := node.startedRuns.Load(runKeyOf(b)); !ok {
@@ -147,9 +151,11 @@ func TestConcludeOwnRun_ASupersededRunLeavesTheNewerRun(t *testing.T) {
 	ctx1 := node.noteRunStarted(context.Background(), copyJob(r1))
 
 	// Another node completes R1.
-	if won, err := storage.ConcludeRun(context.Background(), &RunConclusion{
-		JobID: r1.ID, TenantID: JobTenantID(r1), Firing: r1.NextRun, StartedAt: started, Owner: "remote@node-2/1",
-	}); err != nil || !won {
+	r1Run := RunConclusion{JobID: r1.ID, TenantID: JobTenantID(r1), Firing: r1.NextRun, StartedAt: started}
+	r1Outcome := copyJob(r1)
+	r1Outcome.Status, r1Outcome.RunCount = JobStatusPending, 1
+	if won, err := storage.ConcludeRun(context.Background(), &r1Run,
+		outcomeTransition(r1Run, r1Outcome, "remote@node-2/1")); err != nil || !won {
 		t.Fatalf("remote conclusion of R1: won=%v err=%v", won, err)
 	}
 
@@ -157,6 +163,9 @@ func TestConcludeOwnRun_ASupersededRunLeavesTheNewerRun(t *testing.T) {
 	r2 := copyJob(r1)
 	r2.NextRun = r1.NextRun.Add(time.Hour)
 	r2.RunStartedAt = started.Add(30 * time.Second)
+	if err := storage.UpdateJob(context.Background(), copyJob(r2)); err != nil {
+		t.Fatalf("starting R2: %v", err)
+	}
 	ctx2 := node.noteRunStarted(context.Background(), r2)
 	r2.Status, r2.RunCount = JobStatusPending, 1
 	if !node.persistJobOutcome(ctx2, r2) {
