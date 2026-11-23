@@ -198,15 +198,39 @@ func (a *XKMSCAServicer) SignCSR(ctx context.Context, req *xkmstransport.SignCSR
 // spiffe.BuildURI synthesis site SignCSR uses. When the trust domain or tenant
 // is empty no SPIFFE SAN is requested (single-domain / pre-broker mode).
 func (a *XKMSCAServicer) applyKeypairSPIFFE(certReq *xkmssdk.TrustedCACertificateRequest, profile, tenantID string) {
+	stampKeypairSPIFFE(certReq, profile, tenantID, a.spiffeTrustDomain)
+}
+
+// stampKeypairSPIFFE sets the issuing tenant on certReq and, when
+// spiffeTrustDomain and tenantID are both set, the tenant SPIFFE SAN fields.
+func stampKeypairSPIFFE(certReq *xkmssdk.TrustedCACertificateRequest, profile, tenantID, spiffeTrustDomain string) {
 	certReq.TenantID = tenantID
-	if a.spiffeTrustDomain == "" || tenantID == "" {
+	if spiffeTrustDomain == "" || tenantID == "" {
 		return
 	}
-	certReq.SPIFFETrustDomain = a.spiffeTrustDomain
+	certReq.SPIFFETrustDomain = spiffeTrustDomain
 	certReq.SPIFFEKind = service.SPIFFEKindForProfile(profile)
 	// The subject CN is kept as requested; the SAN's workload name is derived
 	// from it as a valid SPIFFE path segment (#1894).
 	certReq.SPIFFEName = service.SPIFFEWorkloadName(certReq.Subject.CommonName)
+}
+
+// KeypairCertificateRequest builds the keypair-issuance request every
+// transport sends the CA: subject, prefixed SANs ("DNS:", "IP:", "Email:",
+// "URI:"), validity, the issuing tenant, and, when spiffeTrustDomain and
+// tenantID are both set, the tenant SPIFFE SAN fields (kind from the
+// profile, workload name from the common name).
+func KeypairCertificateRequest(commonName, organization string, sans []string, validityDays int, profile, tenantID, spiffeTrustDomain string) *xkmssdk.TrustedCACertificateRequest {
+	certReq := &xkmssdk.TrustedCACertificateRequest{
+		Subject: xkmssdk.TrustedCASubject{
+			CommonName:   commonName,
+			Organization: organization,
+		},
+		SANS:  parseSANs(sans),
+		Valid: validityDays,
+	}
+	stampKeypairSPIFFE(certReq, profile, tenantID, spiffeTrustDomain)
+	return certReq
 }
 
 // signOptionsWithSPIFFE builds the TrustedCASignOptions for a CSR signing
@@ -276,22 +300,12 @@ func (a *XKMSCAServicer) IssueCertificate(ctx context.Context, req *xkmstranspor
 		return nil, err
 	}
 
-	sans := parseSANs(req.SANs)
-	certReq := &xkmssdk.TrustedCACertificateRequest{
-		Subject: xkmssdk.TrustedCASubject{
-			CommonName:   req.CommonName,
-			Organization: req.Organization,
-		},
-		SANS:  sans,
-		Valid: req.ValidityDays,
-	}
-
 	// Stamp the tenant-scoped SPIFFE URI SAN on the generate-and-distribute
 	// (keypair) path, symmetric with signOptionsWithSPIFFE on the CSR-sign
 	// path. The CertificateRequest SPIFFE fields are forwarded by the CA into
 	// the same spiffe.BuildURI synthesis site SignCSR uses, so both paths emit
 	// the identical canonical SAN.
-	a.applyKeypairSPIFFE(certReq, req.Profile, tenantID)
+	certReq := KeypairCertificateRequest(req.CommonName, req.Organization, req.SANs, req.ValidityDays, req.Profile, tenantID, a.spiffeTrustDomain)
 
 	// Route through IssueCertificateWithProfile when a profile is named so
 	// the CA picks up the profile's KeyUsage/ExtKeyUsage/validity defaults.

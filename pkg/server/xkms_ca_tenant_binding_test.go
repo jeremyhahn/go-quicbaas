@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	qrdbspiffe "github.com/jeremyhahn/go-qrdb/pkg/auth/spiffe"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/ca/provider"
@@ -41,7 +42,7 @@ import (
 func TestCallerTenantCA_FillsTheCallersTenant(t *testing.T) {
 	inner, ok := newRealSoftwareCA(t).(provider.CA)
 	require.True(t, ok, "the fixture CA is a provider.CA")
-	wrapped := withCallerTenant(inner)
+	wrapped := withCallerTenant(inner, nil, "")
 
 	acmeCtx := qrdbsdk.WithIdentity(context.Background(), &qrdbsdk.Identity{Subject: "acme-user", TenantID: "acme"})
 	systemCtx := qrdbsdk.WithIdentity(context.Background(), &qrdbsdk.Identity{Subject: "platform-admin", TenantID: qrdbsdk.SystemTenantID})
@@ -83,14 +84,14 @@ func TestCallerTenantCA_FillsTheCallersTenant(t *testing.T) {
 func TestCallerTenantCA_KeepsTCGCA(t *testing.T) {
 	inner, ok := newRealSoftwareCA(t).(provider.CA)
 	require.True(t, ok)
-	wrapped := withCallerTenant(inner)
+	wrapped := withCallerTenant(inner, nil, "")
 
 	_, innerTCG := inner.(provider.TCGCA)
 	_, wrappedTCG := wrapped.(provider.TCGCA)
 	require.Equal(t, innerTCG, wrappedTCG, "the wrapper is a TCGCA exactly when the inner CA is")
 	require.True(t, wrappedTCG, "the software CA issues TCG certificates")
-	require.Equal(t, wrapped, withCallerTenant(wrapped), "wrapping twice is a no-op")
-	require.Nil(t, withCallerTenant(nil))
+	require.Equal(t, wrapped, withCallerTenant(wrapped, nil, ""), "wrapping twice is a no-op")
+	require.Nil(t, withCallerTenant(nil, nil, ""))
 }
 
 // callAs invokes service/method on the captured gRPC services as the caller
@@ -222,7 +223,7 @@ func TestCallerTenantCA_TCGRefusesNonSystem(t *testing.T) {
 	inner, ok := newRealSoftwareCA(t).(provider.CA)
 	require.True(t, ok)
 	calls := &atomic.Int32{}
-	wrapped, ok := withCallerTenant(tcgRecordingCA{CA: inner, calls: calls}).(provider.TCGCA)
+	wrapped, ok := withCallerTenant(tcgRecordingCA{CA: inner, calls: calls}, nil, "").(provider.TCGCA)
 	require.True(t, ok, "the wrapper keeps the TCG CA")
 
 	acmeCtx := qrdbsdk.WithIdentity(context.Background(), &qrdbsdk.Identity{Subject: "acme-user", TenantID: "acme"})
@@ -309,4 +310,93 @@ func TestKeystoreCA_TCGSystemTenantIssues(t *testing.T) {
 	got, ok := resp.(*xkmsv1.IssueEKCertificateResponse)
 	require.True(t, ok, "got %T", resp)
 	require.NotEmpty(t, got.CertificateDer)
+}
+
+// requireNoSPIFFEURI fails when leaf carries any spiffe:// URI SAN.
+func requireNoSPIFFEURI(t *testing.T, leaf *x509.Certificate) {
+	t.Helper()
+	for _, u := range leaf.URIs {
+		require.NotEqual(t, "spiffe", u.Scheme, "unexpected SPIFFE URI SAN %s", u)
+	}
+}
+
+// TestKeystoreCA_StampsConfiguredSPIFFETrustDomain: with a SPIFFE trust
+// domain configured, a tenant's certificate issued over the TCP
+// KeystoreService carries the tenant SPIFFE SAN, as on every other transport,
+// and is still owned by the tenant.
+func TestKeystoreCA_StampsConfiguredSPIFFETrustDomain(t *testing.T) {
+	srv := &Server{config: &config.Config{}}
+	srv.config.IAM.SPIFFETrustDomain = "example.com"
+	services := newKeystoreHarness(t, srv)
+	svc, err := xkmssdk.Get()
+	require.NoError(t, err)
+	const keystore = "xkms.v1.KeystoreService"
+	acmeCtx := qrdbsdk.WithIdentity(context.Background(), &qrdbsdk.Identity{Subject: "acme-user", TenantID: "acme"})
+
+	issuers := []struct {
+		name     string
+		wantKind string
+		issue    func(t *testing.T) []byte
+	}{
+		{name: "SignCSR", wantKind: qrdbspiffe.KindUser, issue: func(t *testing.T) []byte {
+			resp, err := callAs(t, services, acmeCtx, keystore, "SignCSR",
+				&xkmsv1.SignCSRRequest{CsrPem: newCSR(t, "alice"), Profile: "client"})
+			require.NoError(t, err)
+			got, ok := resp.(*xkmsv1.SignCSRResponse)
+			require.True(t, ok, "got %T", resp)
+			return got.CertificatePem
+		}},
+		{name: "IssueCertificate", wantKind: qrdbspiffe.KindService, issue: func(t *testing.T) []byte {
+			resp, err := callAs(t, services, acmeCtx, keystore, "IssueCertificate",
+				&xkmsv1.IssueCertificateRequest{CommonName: "acme-svc", Profile: "server"})
+			require.NoError(t, err)
+			got, ok := resp.(*xkmsv1.IssueCertificateResponse)
+			require.True(t, ok, "got %T", resp)
+			return got.CertificatePem
+		}},
+	}
+	for _, is := range issuers {
+		t.Run(is.name, func(t *testing.T) {
+			leaf := parseLeaf(t, is.issue(t))
+			id, err := qrdbspiffe.TenantFromCert(leaf, "example.com")
+			require.NoError(t, err)
+			require.Equal(t, "acme", id.TenantID)
+			require.Equal(t, is.wantKind, id.Kind)
+			owner, err := svc.CA().CertificateTenant(context.Background(), leaf.SerialNumber)
+			require.NoError(t, err)
+			require.Equal(t, "acme", owner)
+		})
+	}
+}
+
+// TestKeystoreCA_NoTrustDomainOmitsSPIFFE: with no trust domain configured, a
+// tenant's certificate over the TCP KeystoreService has no SPIFFE URI SAN.
+func TestKeystoreCA_NoTrustDomainOmitsSPIFFE(t *testing.T) {
+	services := newKeystoreHarness(t, &Server{config: &config.Config{}})
+	acmeCtx := qrdbsdk.WithIdentity(context.Background(), &qrdbsdk.Identity{Subject: "acme-user", TenantID: "acme"})
+	resp, err := callAs(t, services, acmeCtx, "xkms.v1.KeystoreService", "SignCSR",
+		&xkmsv1.SignCSRRequest{CsrPem: newCSR(t, "alice"), Profile: "client"})
+	require.NoError(t, err)
+	got, ok := resp.(*xkmsv1.SignCSRResponse)
+	require.True(t, ok, "got %T", resp)
+	requireNoSPIFFEURI(t, parseLeaf(t, got.CertificatePem))
+}
+
+// TestCallerTenantCA_SystemCallerGetsNoTenantSAN: a system caller keeps
+// platform scope, so even with a trust domain set its certificates carry no
+// tenant SPIFFE SAN.
+func TestCallerTenantCA_SystemCallerGetsNoTenantSAN(t *testing.T) {
+	raw := newRealSoftwareCA(t)
+	inner, ok := raw.(provider.CA)
+	require.True(t, ok)
+	wrapped := withCallerTenant(inner, raw, "example.com")
+	systemCtx := qrdbsdk.WithIdentity(context.Background(), &qrdbsdk.Identity{Subject: "platform-admin", TenantID: qrdbsdk.SystemTenantID})
+
+	leaf, err := wrapped.SignCSRWithSPIFFE(systemCtx, newCSR(t, "platform-admin"), "client", 0, "", "", "", "")
+	require.NoError(t, err)
+	requireNoSPIFFEURI(t, leaf)
+
+	certPEM, _, _, _, err := wrapped.IssueCertificateRaw(systemCtx, "platform-svc", "", nil, 0, "server", "", "")
+	require.NoError(t, err)
+	requireNoSPIFFEURI(t, parseLeaf(t, certPEM))
 }

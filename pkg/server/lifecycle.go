@@ -815,10 +815,16 @@ func (s *Server) adoptCA(ca xkmssdk.TrustedCA) {
 	// The KeystoreService installs its CA servicer from the global XKMS
 	// service, so the adopted CA must be set there too. Issuance over the
 	// go-xkms KeystoreService is bound to the caller's tenant (see
-	// callerTenantCA).
+	// callerTenantCA). The configured SPIFFE trust domain is set on the service
+	// and the wrapper, so a tenant's certificate carries its SPIFFE SAN there too.
 	if svc, err := xkmssdk.Get(); err == nil && svc != nil {
 		if p, ok := ca.(provider.CA); ok {
-			svc.SetCA(withCallerTenant(p))
+			td := ""
+			if s.config != nil {
+				td = s.config.IAM.SPIFFETrustDomain
+			}
+			svc.SetSPIFFETrustDomain(td)
+			svc.SetCA(withCallerTenant(p, ca, td))
 		} else {
 			slog.Debug("adopted CA does not implement provider.CA; the XKMS service keeps its CA")
 		}
