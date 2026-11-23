@@ -1,5 +1,6 @@
 import type { SpendLimits } from './spend.js';
 import type { AgentRef, AgentRole, AgentAttempt } from './agents.js';
+import type { PromptVersionRef } from './prompts.js';
 export type JobState = 'initializing' | 'decomposing' | 'scheduling' | 'assigning' | 'executing' | 'validating' | 'reviewing' | 're-delegating' | 'completing' | 'cleanup' | 'escalating' | 'completed' | 'failed';
 export interface JobAuditEvent {
     timestamp: number;
@@ -84,6 +85,12 @@ export interface JobStatus {
     runner?: string;
     /** prompt_append is the run-time prompt material the job appended to every session it spawned. */
     prompt_append?: string;
+    /**
+     * prompts is every prompt version the job ran with, resolved once at
+     * launch (set, name, the scope that answered, version and content hash).
+     * Absent for a runner that renders none.
+     */
+    prompts?: PromptVersionRef[];
     /** node names the daemon running the job's control loop. */
     node?: string;
     /** heartbeat_at is the nanosecond Unix instant the loop last proved alive. */
