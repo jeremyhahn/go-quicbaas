@@ -327,13 +327,12 @@ throwaway module that raises `GO_TOOL_DEPENDENCY_FLOORS`
 environment is raised the same way with `SERENA_DEPENDENCY_FLOORS`, through
 uv's `--overrides` rather than `--with` (serena-agent pins its dependencies
 exactly, so `--with` only adds a second, unsatisfiable constraint; `--overrides`
-replaces the pin instead) (go-quicbaas#1161: a fixable urllib3 finding in
-serena's Python environment; serena-agent 1.7.0 also pins filelock and mcp
-below their fixed releases, so its floors raise those two as well, mcp held
-below 2, the major serena 1.7.0 was built against).
+replaces the pin instead) (go-quicbaas#1161; serena-agent 2.1.0 pins filelock
+below its fixed release, so the floor raises it; its own urllib3 and mcp pins
+already meet theirs).
 The Go floors are applied in one `go get`, so a floor that requires another
 listed module above that module's floor fails the build instead of lowering it
-(x/net v0.62.0 requires x/text v0.43.0).
+(x/net v0.63.0 requires x/text v0.44.0).
 npm's own bundled packages are raised with `NPM_BUNDLED_DEPENDENCY_FLOORS`.
 npm 12.2.3 bundles fixed copies of brace-expansion and undici, so the list is
 empty (it has no line in `toolchain.mk`) until a future npm bundles a copy
