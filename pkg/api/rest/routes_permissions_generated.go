@@ -53,7 +53,7 @@ package rest
 // frozenRoutePermissions is the one-time codegen snapshot of every raw
 // route's deriveClassification result (routes.go), keyed by "METHOD
 // PATTERN". Routes() (routes.go applyFrozenPermissions) reads this table
-// instead of calling the PEP mapper live. 582 entries.
+// instead of calling the PEP mapper live. 583 entries.
 var frozenRoutePermissions = map[string]frozenPermission{
 	"DELETE /api/v1/admin/assignments/{assignment_id}":                                        {auth: RouteAuthPermission, resource: "roles", action: "unassign"},
 	"DELETE /api/v1/admin/object-backends/{name}":                                             {auth: RouteAuthPermission, resource: "roles", action: "unassign"},
@@ -76,6 +76,7 @@ var frozenRoutePermissions = map[string]frozenPermission{
 	"DELETE /api/v1/messaging/channels/{name}":                                                {auth: RouteAuthPermission, resource: "messaging", action: "channel_delete"},
 	"DELETE /api/v1/messaging/subscribe/{id}":                                                 {auth: RouteAuthPermission, resource: "messaging", action: "unsubscribe"},
 	"DELETE /api/v1/objects/*":                                                                {auth: RouteAuthPermission, resource: "objstore", action: "delete"},
+	"DELETE /api/v1/fleet/placements/{name}":                                                  {auth: RouteAuthPermission, resource: "placement", action: "manage"},
 	"DELETE /api/v1/fleet/{nodeID}":                                                           {auth: RouteAuthPermission, resource: "orchestrator", action: "close"},
 	"DELETE /api/v1/orchestrator/jobs/{jobID}":                                                {auth: RouteAuthPermission, resource: "orchestrator", action: "close"},
 	"DELETE /api/v1/orchestrator/sessions/{sessionID}":                                        {auth: RouteAuthPermission, resource: "orchestrator", action: "close"},
@@ -200,6 +201,10 @@ var frozenRoutePermissions = map[string]frozenPermission{
 	"GET /api/v1/ollama/models":                                                               {auth: RouteAuthPermission, resource: "ollama", action: "model_list"},
 	"GET /api/v1/ollama/models/{model}":                                                       {auth: RouteAuthPermission, resource: "ollama", action: "model_info"},
 	"GET /api/v1/fleet":                                                                       {auth: RouteAuthPermission, resource: "orchestrator", action: "status"},
+	"GET /api/v1/fleet/placement-consents":                                                    {auth: RouteAuthPermission, resource: "placement", action: "read"},
+	"GET /api/v1/fleet/placements":                                                            {auth: RouteAuthPermission, resource: "placement", action: "read"},
+	"GET /api/v1/fleet/placements/{name}":                                                     {auth: RouteAuthPermission, resource: "placement", action: "read"},
+	"GET /api/v1/fleet/placements/{name}/drift":                                               {auth: RouteAuthPermission, resource: "placement", action: "read"},
 	"GET /api/v1/fleet/{nodeID}":                                                              {auth: RouteAuthPermission, resource: "orchestrator", action: "status"},
 	"GET /api/v1/fleet/{nodeID}/backends/{backendName}/models":                                {auth: RouteAuthPermission, resource: "orchestrator", action: "backend_list"},
 	"GET /api/v1/orchestrator/attention":                                                      {auth: RouteAuthPermission, resource: "orchestrator", action: "status"},
@@ -285,6 +290,7 @@ var frozenRoutePermissions = map[string]frozenPermission{
 	"GET /api/v1/secrets/dynamic/leases":                                               {auth: RouteAuthPermission, resource: "dynamic_secrets", action: "lease_list"},
 	"GET /api/v1/secrets/dynamic/roles":                                                {auth: RouteAuthPermission, resource: "dynamic_secrets", action: "role_list"},
 	"GET /api/v1/secrets/dynamic/roles/{name}":                                         {auth: RouteAuthPermission, resource: "dynamic_secrets", action: "role_read"},
+	"GET /api/v1/server/capabilities":                                                  {auth: RouteAuthSession, resource: "", action: ""},
 	"GET /api/v1/ssh/authorized/keys":                                                  {auth: RouteAuthPermission, resource: "keys", action: "list"},
 	"GET /api/v1/ssh/authorized/keys/{scope}/{owner}/{name}":                           {auth: RouteAuthPermission, resource: "keys", action: "get"},
 	"GET /api/v1/ssh/keys":                                                             {auth: RouteAuthPermission, resource: "keys", action: "list"},
@@ -493,6 +499,7 @@ var frozenRoutePermissions = map[string]frozenPermission{
 	"POST /api/v1/ollama/embed":                                                        {auth: RouteAuthPermission, resource: "ollama", action: "embed"},
 	"POST /api/v1/ollama/embed/batch":                                                  {auth: RouteAuthPermission, resource: "ollama", action: "embed"},
 	"POST /api/v1/fleet":                                                               {auth: RouteAuthPermission, resource: "orchestrator", action: "agent_register"},
+	"POST /api/v1/fleet/placement-consents/{id}/answer":                                {auth: RouteAuthPermission, resource: "placement", action: "consent"},
 	"POST /api/v1/fleet/{nodeID}/disable":                                              {auth: RouteAuthPermission, resource: "orchestrator", action: "agent_remove"},
 	"POST /api/v1/fleet/{nodeID}/enable":                                               {auth: RouteAuthPermission, resource: "orchestrator", action: "agent_register"},
 	"POST /api/v1/fleet/{nodeID}/heartbeat":                                            {auth: RouteAuthPermission, resource: "orchestrator", action: "agent_heartbeat"},
@@ -694,6 +701,7 @@ var frozenRoutePermissions = map[string]frozenPermission{
 	"PUT /api/v1/embedding/providers/default":                                         {auth: RouteAuthPermission, resource: "embedding", action: "list_models"},
 	"PUT /api/v1/embedding/providers/{name}/status":                                   {auth: RouteAuthPermission, resource: "embedding", action: "list_models"},
 	"PUT /api/v1/entities/{type}/{id}":                                                {auth: RouteAuthPermission, resource: "kv", action: "put"},
+	"PUT /api/v1/fleet/placements/{name}":                                             {auth: RouteAuthPermission, resource: "placement", action: "manage"},
 	"PUT /api/v1/kms/deks/*":                                                          {auth: RouteAuthPermission, resource: "keys", action: "create"},
 	"PUT /api/v1/kms/deks/default":                                                    {auth: RouteAuthPermission, resource: "keys", action: "create"},
 	"PUT /api/v1/kms/keys/{name}/default":                                             {auth: RouteAuthPermission, resource: "keys", action: "create"},

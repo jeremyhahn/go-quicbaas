@@ -778,16 +778,27 @@ func (c *client) buildQRDBTransport() (qrdbtransport.Transport, error) {
 // qrdbSubClientAddress returns the address the go-qrdb sub-client transport
 // dials for the active quicbaas transport selection.
 //
-// gRPC dials a bare "host:port" and must not be handed a scheme.
-// REST (and QUIC, whose qrdb sub-client is the REST transport) needs a scheme-qualified origin because go-qrdb's REST transport
-// concatenates its request path onto the address; MCP needs the full
+// gRPC dials a bare "host:port" and must not be handed a scheme. REST and
+// QUIC need a scheme-qualified origin because both use go-qrdb's REST
+// transport, which concatenates its request path onto the address: a
+// quicbaasd node serves REST and HTTP/3 on its QUIC port and never offers
+// go-qrdb's frame-protocol ALPN (go-quicbaas#2554). MCP needs the full
 // Streamable HTTP endpoint URL, path included. Unix is resolved separately by
 // buildQRDBUnixTransport, which chooses between the gRPC and unix transports
 // on TLS posture, so it keeps the socket path verbatim here.
+//
+// QUIC always uses TLS, even for an explicit http:// address: the leading
+// http:// is stripped so the origin is always https://, and a secret-bearing
+// call such as BarrierUnseal never goes out as plaintext HTTP.
 func qrdbSubClientAddress(transportType TransportType, address string, tlsConfigured bool) string {
 	switch transportType {
-	case TransportREST, TransportQUIC:
+	case TransportREST:
 		return qbtransport.HTTPBaseURL(address, tlsConfigured)
+	case TransportQUIC:
+		if len(address) >= len("http://") && strings.EqualFold(address[:len("http://")], "http://") {
+			address = address[len("http://"):]
+		}
+		return qbtransport.HTTPBaseURL(address, true)
 	case TransportMCP:
 		return qbtransport.HTTPEndpoint(address, tlsConfigured, qbmcp.MCPEndpointPath)
 	default:

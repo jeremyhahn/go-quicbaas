@@ -27,6 +27,7 @@ import (
 	iampb "github.com/jeremyhahn/go-quicbaas/api/proto/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // pepTestService is a mock PEPService for coverage testing.
@@ -126,7 +127,7 @@ func TestPEPServerCoverage_Check(t *testing.T) {
 	})
 
 	t.Run("successful_check_returns_response", func(t *testing.T) {
-		resp, err := server.Check(context.Background(), &iampb.CheckRequest{
+		resp, err := server.Check(tenantctx.WithTenant(context.Background(), "t1"), &iampb.CheckRequest{
 			Subject:  &iampb.Subject{Id: "user-1"},
 			Action:   "read",
 			Resource: "/data/items",
@@ -146,7 +147,7 @@ func TestPEPServerCoverage_Check(t *testing.T) {
 		}
 		errServer := NewPEPServer(errSvc, newPEPTestLogger())
 
-		_, err := errServer.Check(context.Background(), &iampb.CheckRequest{
+		_, err := errServer.Check(tenantctx.WithTenant(context.Background(), "t1"), &iampb.CheckRequest{
 			Subject:  &iampb.Subject{Id: "user-1"},
 			Action:   "read",
 			Resource: "/data",
