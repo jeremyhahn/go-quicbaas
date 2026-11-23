@@ -223,13 +223,14 @@ publishes the image itself in its `build-publish` job. It runs nightly at
   second job, `post-digest`, needs `build-publish`, holds no permission, checks
   the digest is a `sha256:` digest that the reference names, and posts it to
   the run summary and as its `digest` and `ref` outputs.
-- **Visibility.** The `quicbaas-software-factory-worker` package is private (a
-  first container publish is private by default), and it must stay private.
-  Every run checks with an anonymous lookup of the digest and fails if that
-  lookup succeeds. Before the push, an anonymous token and tag lookup refuses
-  to publish when the package can be read without credentials; after the
-  push, the anonymous digest lookup checks it again.
-- **`current`.** This workflow does not move it.
+- **Visibility.** The `quicbaas-software-factory-worker` package is public,
+  like the repository. No step checks that it is private. After the push, the
+  job checks that ghcr.io resolves the recorded digest to itself, and fails if
+  it does not.
+- **`current`.** A third job, `move-current`, points `current` at the digest
+  the run published. It runs only on a scheduled run, after `build-publish`
+  and `post-digest` succeeded, and never on a dispatch. It is a registry-side
+  retag with `--prefer-index=false`, so `current` keeps the nightly's digest.
 
 ## Local mode and the fleet
 
@@ -378,7 +379,7 @@ make push-worker-image WORKER_IMAGE_REGISTRY=<host>/<owner>/software-factory-wor
 
 This repository's own worker image is published by
 `.github/workflows/worker-image.yml` to
-`ghcr.io/<owner>/quicbaas-software-factory-worker` to a private package with
+`ghcr.io/<owner>/quicbaas-software-factory-worker` to a public package with
 the workflow's `GITHUB_TOKEN`.
 
 `push-worker-image` runs `trivy image --severity CRITICAL,HIGH --ignore-unfixed
