@@ -962,8 +962,16 @@ type ForgeFactory func(cfg ForgeConfig, creds ForgeCredentials, transport ForgeT
 // This mirrors the GitCredentials factoring on the git side: same problem,
 // forge half.
 type ForgeCredentials struct {
-	// Token authenticates workflow calls. Required.
+	// Token authenticates workflow calls. Required unless TokenFunc is set.
 	Token string
+
+	// TokenFunc, when set, is asked for the token on EVERY API request and
+	// Token is ignored. It is how an adapter built on a token that expires
+	// (the node's forge token command) stays usable past that expiry: a
+	// caller holding the adapter across a long wait, such as a review
+	// polling a pull request, sends the current token rather than the one
+	// the adapter was built with.
+	TokenFunc ForgeTokenFunc
 
 	// Custody is the password-equivalent used to mint and revoke tokens.
 	//

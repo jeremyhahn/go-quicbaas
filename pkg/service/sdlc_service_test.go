@@ -1027,11 +1027,76 @@ func (f *sdlcFakeTokenSource) ForgeToken(_ context.Context, baseURL string) (str
 	return f.token, f.err
 }
 
+// sdlcTestGrants grants sdlcTestTenant the node's token command for the
+// binding's own repository.
+func sdlcTestGrants(cfg sdlc.ForgeConfig) map[sdlc.ForgeType]sdlc.ForgeTokenGrants {
+	return map[sdlc.ForgeType]sdlc.ForgeTokenGrants{
+		cfg.Type: {{TenantID: sdlcTestTenant, Repositories: []string{cfg.Owner + "/" + cfg.Repo}}},
+	}
+}
+
+func TestSDLCService_NodeForgeTokenRefusesAnUngrantedBinding(t *testing.T) {
+	rig := newSDLCServiceRig(t)
+	cfg := rig.binding().Forge
+	cases := map[string]struct {
+		tenant string
+		cfg    sdlc.ForgeConfig
+		grants map[sdlc.ForgeType]sdlc.ForgeTokenGrants
+	}{
+		"no grants at all":         {sdlcTestTenant, cfg, nil},
+		"another tenant's binding": {"other-tenant", cfg, sdlcTestGrants(cfg)},
+		"another repository":       {sdlcTestTenant, withRepo(cfg, cfg.Owner, "elsewhere"), sdlcTestGrants(cfg)},
+		"another owner":            {sdlcTestTenant, withRepo(cfg, "someone-else", cfg.Repo), sdlcTestGrants(cfg)},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			source := &sdlcFakeTokenSource{token: "command-token"}
+			rig.svc.forgeTokens = map[sdlc.ForgeType]sdlc.ForgeTokenSource{cfg.Type: source}
+			rig.svc.forgeGrants = tc.grants
+			// The tenant's own secret is readable: the refusal must not fall
+			// back to it either.
+			rig.secrets.err = nil
+			for _, call := range []func() error{
+				func() error { _, err := rig.svc.ForgeToken(context.Background(), tc.tenant, tc.cfg); return err },
+				func() error { _, err := rig.svc.ForgeFor(context.Background(), tc.tenant, tc.cfg); return err },
+			} {
+				err := call()
+				var grantErr *sdlc.ForgeTokenGrantError
+				if !errors.As(err, &grantErr) || !errors.Is(err, sdlc.ErrInvalidInput) {
+					t.Fatalf("err = %v, want *sdlc.ForgeTokenGrantError (ErrInvalidInput)", err)
+				}
+			}
+			if len(source.baseURLs) != 0 {
+				t.Fatalf("the node's command ran for an ungranted binding: %v", source.baseURLs)
+			}
+		})
+	}
+}
+
+func TestSDLCService_NodeForgeTokenOwnerWildcardGrant(t *testing.T) {
+	rig := newSDLCServiceRig(t)
+	cfg := withRepo(rig.binding().Forge, rig.binding().Forge.Owner, "any-repo")
+	rig.svc.forgeTokens = map[sdlc.ForgeType]sdlc.ForgeTokenSource{cfg.Type: &sdlcFakeTokenSource{token: "command-token"}}
+	rig.svc.forgeGrants = map[sdlc.ForgeType]sdlc.ForgeTokenGrants{
+		cfg.Type: {{TenantID: sdlcTestTenant, Repositories: []string{strings.ToUpper(cfg.Owner) + "/*"}}},
+	}
+	token, err := rig.svc.ForgeToken(context.Background(), sdlcTestTenant, cfg)
+	if err != nil || string(token) != "command-token" {
+		t.Fatalf("ForgeToken = %q, %v; want the command's token under an owner/* grant", token, err)
+	}
+}
+
+func withRepo(cfg sdlc.ForgeConfig, owner, repo string) sdlc.ForgeConfig {
+	cfg.Owner, cfg.Repo = owner, repo
+	return cfg
+}
+
 func TestSDLCService_ForgeTokenComesFromTheNodeCommandWithoutReadingTheSecret(t *testing.T) {
 	rig := newSDLCServiceRig(t)
 	source := &sdlcFakeTokenSource{token: "command-token"}
 	cfg := rig.binding().Forge
 	rig.svc.forgeTokens = map[sdlc.ForgeType]sdlc.ForgeTokenSource{cfg.Type: source}
+	rig.svc.forgeGrants = sdlcTestGrants(cfg)
 	// Any secret read fails, so a token that comes back came from the source.
 	rig.secrets.err = errors.New("the secret must not be read")
 	ctx := context.Background()
@@ -1056,6 +1121,7 @@ func TestSDLCService_ForgeTokenSourceErrorIsReturnedTyped(t *testing.T) {
 	cfg := rig.binding().Forge
 	sourceErr := &sdlc.ForgeTokenCommandError{Command: "/usr/local/bin/token-helper", ExitCode: 1}
 	rig.svc.forgeTokens = map[sdlc.ForgeType]sdlc.ForgeTokenSource{cfg.Type: &sdlcFakeTokenSource{err: sourceErr}}
+	rig.svc.forgeGrants = sdlcTestGrants(cfg)
 
 	_, err := rig.svc.ForgeFor(context.Background(), sdlcTestTenant, cfg)
 	var cmdErr *sdlc.ForgeTokenCommandError

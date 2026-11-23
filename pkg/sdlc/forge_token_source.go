@@ -165,6 +165,81 @@ func (e *ForgeTokenOriginError) Error() string {
 	return "forge token command: base URL " + e.BaseURL + " is not one of the node's allowed forge API origins"
 }
 
+// ForgeTokenGrant names one tenant and the repositories whose bindings may
+// use the node's forge token command. The node's credential acts as the
+// node's own forge account, so a tenant administrator's sdlc:bind alone never
+// reaches it: the node's operator grants each tenant its repositories.
+type ForgeTokenGrant struct {
+	// TenantID is the tenant the grant is for. Required.
+	TenantID string
+
+	// Repositories are "owner/repo" names, or "owner/*" for every
+	// repository of one owner, compared case-insensitively as the forges
+	// do. Required.
+	Repositories []string
+}
+
+// ForgeTokenGrants are the grants of one forge type's token command. The
+// zero value grants nothing.
+type ForgeTokenGrants []ForgeTokenGrant
+
+// Allows reports whether a binding of tenantID on owner/repo may use the
+// node's token command.
+func (g ForgeTokenGrants) Allows(tenantID, owner, repo string) bool {
+	if tenantID == "" || owner == "" || repo == "" {
+		return false
+	}
+	for _, grant := range g {
+		if grant.TenantID != tenantID {
+			continue
+		}
+		for _, pattern := range grant.Repositories {
+			if forgeTokenRepoMatches(pattern, owner, repo) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// ValidForgeTokenGrantRepo reports whether pattern is "owner/repo" or
+// "owner/*": a non-empty owner that is not a wildcard, a non-empty repo,
+// exactly one slash and no surrounding space.
+func ValidForgeTokenGrantRepo(pattern string) bool {
+	owner, repo, ok := strings.Cut(pattern, "/")
+	return ok && owner != "" && owner != "*" && repo != "" && !strings.Contains(repo, "/") &&
+		strings.TrimSpace(pattern) == pattern
+}
+
+func forgeTokenRepoMatches(pattern, owner, repo string) bool {
+	if !ValidForgeTokenGrantRepo(pattern) {
+		return false
+	}
+	pOwner, pRepo, _ := strings.Cut(pattern, "/")
+	if !strings.EqualFold(pOwner, owner) {
+		return false
+	}
+	return pRepo == "*" || strings.EqualFold(pRepo, repo)
+}
+
+// ForgeTokenGrantError reports a binding whose tenant and repository no
+// grant of the node's token command names. The command was not run, and the
+// tenant's own token secret was not read in its place.
+type ForgeTokenGrantError struct {
+	TenantID string
+	Owner    string
+	Repo     string
+}
+
+func (e *ForgeTokenGrantError) Error() string {
+	return "sdlc: the node's forge token command is not granted to tenant " + strconv.Quote(e.TenantID) +
+		" for repository " + strconv.Quote(e.Owner+"/"+e.Repo)
+}
+
+// Unwrap returns ErrInvalidInput: the binding names a repository the node's
+// operator has not granted the tenant.
+func (e *ForgeTokenGrantError) Unwrap() error { return ErrInvalidInput }
+
 // normalizeForgeBaseURL is the form base URLs are compared in: scheme and
 // host lower-cased, no trailing slash. ok is false for anything that is not
 // an absolute http(s) URL without credentials, query or fragment.

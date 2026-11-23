@@ -1019,6 +1019,9 @@ func (s *runnerRun) containerExec(ctx context.Context) func(*orchestration.ExecS
 // publisher is the git side of this attempt, bound to the worker's container.
 func (s *runnerRun) publisher(ctx context.Context) *publisher {
 	return &publisher{
+		refresh: func() error {
+			return s.workspace.forgeCredential().Refresh(ctx, s.containerExec(ctx), s.taskID(), s.sessionID)
+		},
 		exec:    s.containerExec(ctx),
 		cleanup: s.containerCleanupExec(ctx),
 		project: s.job.Project,

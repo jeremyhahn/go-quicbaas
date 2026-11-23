@@ -333,11 +333,36 @@ func TestOnboardRepo_MissingTokenIsAFindingAndBlocksTheProject(t *testing.T) {
 	}
 }
 
+func TestOnboardRepo_NodeTokenCommandNotGrantedIsAFinding(t *testing.T) {
+	// The node's credential is the node's forge account: a tenant onboarding
+	// a repository its grants do not name gets a finding, not the token.
+	rig := newOnboardRig(t)
+	rig.svc.forgeTokens = map[sdlc.ForgeType]sdlc.ForgeTokenSource{
+		rig.binding().Forge.Type: &sdlcFakeTokenSource{token: "web-token"},
+	}
+	rig.svc.forgeGrants = map[sdlc.ForgeType]sdlc.ForgeTokenGrants{
+		rig.binding().Forge.Type: {{TenantID: sdlcTestTenant, Repositories: []string{rig.binding().Forge.Owner + "/other"}}},
+	}
+
+	report := rig.onboard(t, onboardRequest())
+
+	step := requireStep(t, report, sdlc.OnboardStepForgeToken, sdlc.OnboardFinding)
+	if !strings.Contains(step.Detail, "not granted") {
+		t.Fatalf("detail = %q, want it to say the command is not granted", step.Detail)
+	}
+	if rig.projects.created != 0 {
+		t.Fatal("a project was created for a repository the node's token is not granted for")
+	}
+}
+
 func TestOnboardRepo_NodeTokenCommandNeedsNoForgeTokenSecret(t *testing.T) {
 	rig := newOnboardRig(t)
 	delete(rig.secrets.secrets, sdlc.ForgeTokenRef(onboardTestRepo))
 	rig.svc.forgeTokens = map[sdlc.ForgeType]sdlc.ForgeTokenSource{
 		rig.binding().Forge.Type: &sdlcFakeTokenSource{token: "web-token"},
+	}
+	rig.svc.forgeGrants = map[sdlc.ForgeType]sdlc.ForgeTokenGrants{
+		rig.binding().Forge.Type: {{TenantID: sdlcTestTenant, Repositories: []string{rig.binding().Forge.Owner + "/" + onboardTestRepo}}},
 	}
 
 	report := rig.onboard(t, onboardRequest())

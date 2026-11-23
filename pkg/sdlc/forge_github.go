@@ -67,6 +67,10 @@ type GitHubConfig struct {
 	// installation token. Never logged, never placed in an error.
 	Token string
 
+	// TokenFunc, when set, resolves the token per request; see
+	// ForgeCredentials.TokenFunc.
+	TokenFunc ForgeTokenFunc
+
 	// HTTPClient is optional; see GiteaConfig.HTTPClient.
 	HTTPClient *http.Client
 
@@ -93,7 +97,7 @@ func NewGitHubBackend(cfg GitHubConfig) (*GitHubBackend, error) {
 		base = githubDefaultBaseURL
 	}
 	core, err := newForgeHTTP(ForgeGitHub, githubDialect, forgeHTTPConfig{
-		baseURL: base, token: cfg.Token,
+		baseURL: base, token: cfg.Token, tokenFunc: cfg.TokenFunc,
 		client: cfg.HTTPClient, transport: cfg.Transport, waiter: cfg.Waiter,
 	})
 	if err != nil {
@@ -118,6 +122,7 @@ func init() {
 		return NewGitHubBackend(GitHubConfig{
 			BaseURL:   cfg.BaseURL,
 			Token:     creds.Token,
+			TokenFunc: creds.TokenFunc,
 			Transport: transport,
 		})
 	})

@@ -426,3 +426,57 @@ func TestCommandTokenSource_AllowedOriginsCompareNormalized(t *testing.T) {
 		}
 	}
 }
+
+func TestForgeTokenGrants_Allows(t *testing.T) {
+	grants := ForgeTokenGrants{
+		{TenantID: "acme", Repositories: []string{"acme/web", "Tools/*"}},
+		{TenantID: "beta", Repositories: []string{"beta/api", "*/*", "bad", "a/b/c"}},
+	}
+	cases := []struct {
+		tenant, owner, repo string
+		want                bool
+	}{
+		{"acme", "acme", "web", true},
+		{"acme", "ACME", "Web", true},
+		{"acme", "tools", "anything", true},
+		{"acme", "acme", "api", false},
+		{"acme", "beta", "api", false},
+		{"beta", "beta", "api", true},
+		{"beta", "acme", "web", false}, // "*/*" is never a valid grant
+		{"beta", "a", "b", false},
+		{"", "acme", "web", false},
+		{"acme", "", "web", false},
+		{"acme", "acme", "", false},
+		{"gamma", "acme", "web", false},
+	}
+	for _, tc := range cases {
+		if got := grants.Allows(tc.tenant, tc.owner, tc.repo); got != tc.want {
+			t.Errorf("Allows(%q, %q, %q) = %v, want %v", tc.tenant, tc.owner, tc.repo, got, tc.want)
+		}
+	}
+	if (ForgeTokenGrants)(nil).Allows("acme", "acme", "web") {
+		t.Error("nil grants allowed a binding")
+	}
+}
+
+func TestValidForgeTokenGrantRepo(t *testing.T) {
+	for pattern, want := range map[string]bool{
+		"acme/web": true, "acme/*": true,
+		"": false, "acme": false, "/web": false, "acme/": false, "*/web": false, "*/*": false,
+		"acme/web/x": false, " acme/web": false,
+	} {
+		if got := ValidForgeTokenGrantRepo(pattern); got != want {
+			t.Errorf("ValidForgeTokenGrantRepo(%q) = %v, want %v", pattern, got, want)
+		}
+	}
+}
+
+func TestForgeTokenGrantError_IsInvalidInputAndNamesTheRepo(t *testing.T) {
+	err := error(&ForgeTokenGrantError{TenantID: "acme", Owner: "other", Repo: "web"})
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("errors.Is(%v, ErrInvalidInput) = false", err)
+	}
+	if !strings.Contains(err.Error(), `"other/web"`) || !strings.Contains(err.Error(), `"acme"`) {
+		t.Fatalf("error %q does not name the tenant and repository", err)
+	}
+}

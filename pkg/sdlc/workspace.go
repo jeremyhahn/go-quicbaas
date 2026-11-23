@@ -329,6 +329,15 @@ func (a forgeAccess) Open(
 	// no host writes it to disk and no spawn surface carries it
 	// (go-quicbaas#899).
 	workspace.credential = newForgeCredential(token)
+	if workspace.credential != nil {
+		// A later fetch or push re-reads the token from the same source, so
+		// one minted by a node token command is replaced before it expires
+		// rather than presented stale (see forgeCredential.Refresh).
+		tenantID, forge := plan.TenantID, plan.Forge
+		workspace.credential.resolve = func(ctx context.Context) ([]byte, error) {
+			return a.tokens.ForgeToken(ctx, tenantID, forge)
+		}
+	}
 	req.Workspace = &orchestration.SessionWorkspace{
 		TenantID:  plan.TenantID,
 		ProjectID: plan.Project.ID,

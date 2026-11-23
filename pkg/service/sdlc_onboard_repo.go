@@ -150,6 +150,14 @@ func (s *SDLCService) onboardForgeToken(ctx context.Context, o *repoOnboarding) 
 	// A managed HTTPS clone still reads the forge token secret: project
 	// provisioning does not use the node's command.
 	if _, ok := s.forgeTokens[o.like.Forge.Type]; ok && !o.clonesWithForgeToken() {
+		owner := o.like.Forge.Owner
+		if !s.forgeGrants[o.like.Forge.Type].Allows(o.tenantID, owner, o.req.Repo) {
+			o.finding(sdlc.OnboardStepForgeToken,
+				"the node's forge token command is not granted to this tenant for "+owner+"/"+o.req.Repo,
+				"ask the node's operator to add the repository to sdlc.forge.token_commands."+
+					string(o.like.Forge.Type)+".grants for this tenant")
+			return nil
+		}
 		o.record(sdlc.OnboardStepForgeToken, sdlc.OnboardUnchanged, "the forge token comes from the node's token command", "")
 		return nil
 	}

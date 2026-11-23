@@ -129,6 +129,10 @@ type GiteaConfig struct {
 	// never rendered by String.
 	Token string
 
+	// TokenFunc, when set, resolves the token per request; see
+	// ForgeCredentials.TokenFunc.
+	TokenFunc ForgeTokenFunc
+
 	// Custody is the password-equivalent used to mint and revoke tokens.
 	//
 	// Optional: an adapter without it serves every workflow call normally and
@@ -180,7 +184,7 @@ type CustodyCredential struct {
 // first use, and failing at construction says so where an operator is looking.
 func NewGiteaBackend(cfg GiteaConfig) (*GiteaBackend, error) {
 	core, err := newForgeHTTP(ForgeGitea, giteaDialect, forgeHTTPConfig{
-		baseURL: cfg.BaseURL, token: cfg.Token, custody: cfg.Custody,
+		baseURL: cfg.BaseURL, token: cfg.Token, tokenFunc: cfg.TokenFunc, custody: cfg.Custody,
 		client: cfg.HTTPClient, transport: cfg.Transport, waiter: cfg.Waiter,
 	})
 	if err != nil {
@@ -202,6 +206,7 @@ func init() {
 		return NewGiteaBackend(GiteaConfig{
 			BaseURL:   cfg.BaseURL,
 			Token:     creds.Token,
+			TokenFunc: creds.TokenFunc,
 			Custody:   creds.Custody,
 			Transport: transport,
 		})

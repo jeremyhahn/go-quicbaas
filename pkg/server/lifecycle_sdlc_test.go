@@ -274,6 +274,25 @@ func TestNewSDLCForgeTokenSources_NoneIsNil(t *testing.T) {
 	}
 }
 
+func TestNewSDLCForgeTokenGrants_MapsEachCommandsGrants(t *testing.T) {
+	grants := newSDLCForgeTokenGrants(map[string]config.SDLCForgeTokenCommand{
+		"github": {Grants: []config.SDLCForgeTokenGrant{{Tenant: "acme", Repositories: []string{"acme/web"}}}},
+		"gitea":  {},
+	})
+	if !grants[sdlc.ForgeGitHub].Allows("acme", "acme", "web") {
+		t.Fatal("the github grant does not allow acme/web for tenant acme")
+	}
+	if grants[sdlc.ForgeGitHub].Allows("other", "acme", "web") {
+		t.Fatal("the github grant allows a tenant it does not name")
+	}
+	if grants[sdlc.ForgeGitea].Allows("acme", "acme", "web") {
+		t.Fatal("a command with no grants allows a binding")
+	}
+	if newSDLCForgeTokenGrants(nil) != nil {
+		t.Fatal("no commands should map to no grants")
+	}
+}
+
 func TestNewSDLCForgeTokenSources_RefusesARelativeCommand(t *testing.T) {
 	_, err := newSDLCForgeTokenSources(map[string]config.SDLCForgeTokenCommand{
 		"gitea": {Argv: []string{"forge-mint"}, AllowedBaseURLs: []string{"https://gitea.test"}},

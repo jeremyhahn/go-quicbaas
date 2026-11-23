@@ -66,6 +66,13 @@ func TestSDLCForge_TokenCommandRefusalsNameTheirKey(t *testing.T) {
 		"sdlc.forge.token_commands.github.timeout":           {"github": {Argv: []string{argv}, Timeout: -time.Second, AllowedBaseURLs: []string{api}}},
 		"sdlc.forge.token_commands.github.allowed_base_urls": {"github": {Argv: []string{argv}}},
 		"sdlc.forge.token_commands.gitea.allowed_base_urls":  {"gitea": {Argv: []string{argv}, AllowedBaseURLs: []string{"https://user:pw@gitea.test"}}},
+		"sdlc.forge.token_commands.github.grants":            {"github": {Argv: []string{argv}, AllowedBaseURLs: []string{api}}},
+		"sdlc.forge.token_commands.github.grants[0].tenant": {"github": {Argv: []string{argv}, AllowedBaseURLs: []string{api},
+			Grants: []SDLCForgeTokenGrant{{Repositories: []string{"acme/web"}}}}},
+		"sdlc.forge.token_commands.github.grants[0].repositories": {"github": {Argv: []string{argv}, AllowedBaseURLs: []string{api},
+			Grants: []SDLCForgeTokenGrant{{Tenant: "acme"}}}},
+		"sdlc.forge.token_commands.gitea.grants[1].repositories": {"gitea": {Argv: []string{argv}, AllowedBaseURLs: []string{api},
+			Grants: []SDLCForgeTokenGrant{{Tenant: "acme", Repositories: []string{"acme/web"}}, {Tenant: "beta", Repositories: []string{"*/*"}}}}},
 	}
 	for key, commands := range cases {
 		t.Run(key, func(t *testing.T) {
@@ -82,8 +89,10 @@ func TestSDLCForge_TokenCommandRefusalsNameTheirKey(t *testing.T) {
 
 	cfg := enabledSDLCSection()
 	cfg.Forge.TokenCommands = map[string]SDLCForgeTokenCommand{
-		"github": {Argv: []string{argv, "--app", "pilot"}, RefreshBefore: 5 * time.Minute, Timeout: 30 * time.Second, AllowedBaseURLs: []string{api}},
-		"gitea":  {Argv: []string{argv}, AllowedBaseURLs: []string{"https://gitea.test/api/v1"}},
+		"github": {Argv: []string{argv, "--app", "pilot"}, RefreshBefore: 5 * time.Minute, Timeout: 30 * time.Second, AllowedBaseURLs: []string{api},
+			Grants: []SDLCForgeTokenGrant{{Tenant: "acme", Repositories: []string{"acme/web", "acme-tools/*"}}}},
+		"gitea": {Argv: []string{argv}, AllowedBaseURLs: []string{"https://gitea.test/api/v1"},
+			Grants: []SDLCForgeTokenGrant{{Tenant: "acme", Repositories: []string{"acme/web"}}}},
 	}
 	v := NewValidator()
 	v.validateSDLC(cfg)

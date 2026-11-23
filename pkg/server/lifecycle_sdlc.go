@@ -631,6 +631,9 @@ func (s *Server) startSDLC() error {
 		// The node's forge token commands; a forge type without one reads
 		// each binding's token secret.
 		ForgeTokens: forgeTokens,
+		// The tenants and repositories each command may serve; a binding
+		// no grant names is refused the node's token.
+		ForgeTokenGrants: newSDLCForgeTokenGrants(cfg.Forge.TokenCommands),
 	})
 	if err != nil {
 		return &SDLCInitError{Component: "binding service", Cause: err}
@@ -906,6 +909,27 @@ func newSDLCForgeTokenSources(commands map[string]config.SDLCForgeTokenCommand) 
 		sources[sdlc.ForgeType(forgeType)] = source
 	}
 	return sources, nil
+}
+
+// newSDLCForgeTokenGrants maps each token command's configured grants to its
+// forge type. A command with no grants maps to none, so its type serves no
+// binding (the config validator refuses that shape at load).
+func newSDLCForgeTokenGrants(commands map[string]config.SDLCForgeTokenCommand) map[sdlc.ForgeType]sdlc.ForgeTokenGrants {
+	if len(commands) == 0 {
+		return nil
+	}
+	grants := make(map[sdlc.ForgeType]sdlc.ForgeTokenGrants, len(commands))
+	for forgeType, command := range commands {
+		typed := make(sdlc.ForgeTokenGrants, 0, len(command.Grants))
+		for _, grant := range command.Grants {
+			typed = append(typed, sdlc.ForgeTokenGrant{
+				TenantID:     grant.Tenant,
+				Repositories: append([]string(nil), grant.Repositories...),
+			})
+		}
+		grants[sdlc.ForgeType(forgeType)] = typed
+	}
+	return grants
 }
 
 func (s *Server) stopSDLC() {

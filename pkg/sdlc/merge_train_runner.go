@@ -772,6 +772,9 @@ func (s *trainRun) containerBuilder(ctx context.Context) trainBuilder {
 		publisher: &publisher{
 			exec: exec, project: s.job.Project, signing: s.workspace.signingSession(), taskID: taskID,
 			admit: func() error { return s.stillActive(ctx) },
+			refresh: func() error {
+				return s.workspace.forgeCredential().Refresh(ctx, exec, taskID, s.sessionID)
+			},
 		},
 		project: s.job.Project,
 		signing: s.workspace.signingSession(),

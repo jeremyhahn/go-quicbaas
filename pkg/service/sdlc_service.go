@@ -114,6 +114,13 @@ type SDLCServiceConfig struct {
 	// is not read. Optional: a type with no source reads the tenant secret.
 	ForgeTokens map[sdlc.ForgeType]sdlc.ForgeTokenSource
 
+	// ForgeTokenGrants are, per forge type, the tenants and repositories
+	// whose bindings may use that type's ForgeTokens source
+	// (sdlc.forge.token_commands.<type>.grants). sdlc:bind is a tenant
+	// permission and the node's credential is the node's forge account, so
+	// a binding no grant names is refused, never served the node's token.
+	ForgeTokenGrants map[sdlc.ForgeType]sdlc.ForgeTokenGrants
+
 	// Rulers is the node's configured ruler policy: the forge logins whose
 	// comment on a parked issue is an owner ruling, per tenant. The attention
 	// inbox's "ruling posted" flag reads it; a malformed policy is refused.
@@ -158,6 +165,7 @@ type SDLCService struct {
 	onboarder     *sdlc.Onboarder
 	transport     sdlc.ForgeTransport
 	forgeTokens   map[sdlc.ForgeType]sdlc.ForgeTokenSource
+	forgeGrants   map[sdlc.ForgeType]sdlc.ForgeTokenGrants
 	logger        *slog.Logger
 	agents        sdlc.AgentCatalog
 	sshKeys       SSHKeyGetter
@@ -220,6 +228,7 @@ func NewSDLCService(cfg SDLCServiceConfig) (*SDLCService, error) {
 		store: cfg.Store, routes: cfg.Routes, projects: cfg.Projects, projectWriter: cfg.ProjectWriter,
 		secrets: cfg.Secrets, guard: cfg.Guard, verification: cfg.Verification, transport: cfg.ForgeTransport, logger: logger,
 		auditor: cfg.Auditor, agents: cfg.Agents, sshKeys: cfg.SSHKeys, forgeTokens: cfg.ForgeTokens,
+		forgeGrants: cfg.ForgeTokenGrants,
 	}
 	onboarder, err := sdlc.NewOnboarder(svc, svc, cfg.WebhookPublicURL)
 	if err != nil {
@@ -907,7 +916,24 @@ func (s *SDLCService) ForgeFor(ctx context.Context, tenantID string, cfg sdlc.Fo
 	if err != nil {
 		return nil, err
 	}
-	return sdlc.NewForgeBackend(cfg, sdlc.ForgeCredentials{Token: token}, s.transport)
+	creds := sdlc.ForgeCredentials{Token: token}
+	if s.usesNodeForgeToken(cfg) {
+		// The node's token command mints short-lived tokens. The adapter
+		// may outlive one (a review validator polls for an hour), so it
+		// resolves the token per request; the source caches and refreshes,
+		// and the grant is checked again on every resolution.
+		creds.TokenFunc = func(ctx context.Context) (string, error) {
+			return s.forgeToken(ctx, tenantID, cfg)
+		}
+	}
+	return sdlc.NewForgeBackend(cfg, creds, s.transport)
+}
+
+// usesNodeForgeToken reports whether cfg's token comes from the node's forge
+// token command rather than a tenant secret.
+func (s *SDLCService) usesNodeForgeToken(cfg sdlc.ForgeConfig) bool {
+	_, ok := s.forgeTokens[cfg.Type]
+	return ok && !cfg.ReviewerIdentity
 }
 
 // ForgeToken implements sdlc.ForgeTokenReader: the forge token value the
@@ -929,8 +955,18 @@ func (s *SDLCService) ForgeToken(ctx context.Context, tenantID string, cfg sdlc.
 // command for its forge type when one is configured, else from the tenant
 // secret the binding names. A reviewer's config (ReviewerIdentity) always
 // reads its own secret: the node's command acts as the node's account.
+//
+// The node's command serves only a binding whose tenant and repository a
+// grant of that forge type names (ForgeTokenGrants). Any other binding is
+// refused with *sdlc.ForgeTokenGrantError before the command runs: it does
+// not fall back to the tenant's secret, so a node that mints its own tokens
+// never mixes the two custody models for one forge type.
 func (s *SDLCService) forgeToken(ctx context.Context, tenantID string, cfg sdlc.ForgeConfig) (string, error) {
-	if source, ok := s.forgeTokens[cfg.Type]; ok && !cfg.ReviewerIdentity {
+	if s.usesNodeForgeToken(cfg) {
+		source := s.forgeTokens[cfg.Type]
+		if !s.forgeGrants[cfg.Type].Allows(tenantID, cfg.Owner, cfg.Repo) {
+			return "", &sdlc.ForgeTokenGrantError{TenantID: tenantID, Owner: cfg.Owner, Repo: cfg.Repo}
+		}
 		return source.ForgeToken(ctx, cfg.BaseURL)
 	}
 	ref := cfg.TokenSecretRef

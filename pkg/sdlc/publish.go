@@ -181,6 +181,20 @@ type publisher struct {
 	// work is being committed still stops the publication. Required: a
 	// publisher with no way to ask pushes nothing. See attempt_admission.go.
 	admit func() error
+
+	// refresh re-resolves the forge token and redelivers it to the
+	// container before a fetch or push, nil when the session's credential
+	// cannot change. The checkout delivered the token once; a push an hour
+	// later must not present one a node token command has let expire.
+	refresh func() error
+}
+
+// refreshCredential runs refresh when there is one.
+func (p *publisher) refreshCredential() error {
+	if p == nil || p.refresh == nil {
+		return nil
+	}
+	return p.refresh()
 }
 
 // git runs one git command in the checkout and refuses on a non-zero exit.
@@ -479,6 +493,9 @@ func (p *publisher) Push(plan publishPlan) (string, error) {
 		return "", err
 	}
 	if err := p.admit(); err != nil {
+		return "", err
+	}
+	if err := p.refreshCredential(); err != nil {
 		return "", err
 	}
 	refspec := plan.Branch

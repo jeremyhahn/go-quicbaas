@@ -1107,6 +1107,7 @@ func (v *Validator) validateSDLCForgeTokenCommand(key, forgeType string, cmd SDL
 	if cmd.Timeout < 0 {
 		v.addError(key+".timeout", "must not be negative; zero takes 30s")
 	}
+	v.validateSDLCForgeTokenGrants(key+".grants", cmd.Grants)
 	if len(cmd.AllowedBaseURLs) == 0 {
 		v.addError(key+".allowed_base_urls", "must name the forge API origins the command may be run for")
 	}
@@ -1116,6 +1117,33 @@ func (v *Validator) validateSDLCForgeTokenCommand(key, forgeType string, cmd SDL
 			u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 			v.addError(key+".allowed_base_urls", "must hold absolute http(s) URLs with no credentials, query or fragment")
 			return
+		}
+	}
+}
+
+// validateSDLCForgeTokenGrants requires at least one grant, each naming a
+// tenant and at least one "owner/repo" or "owner/*" repository. The rule
+// matches sdlc.ValidForgeTokenGrantRepo, which the service applies.
+func (v *Validator) validateSDLCForgeTokenGrants(key string, grants []SDLCForgeTokenGrant) {
+	if len(grants) == 0 {
+		v.addError(key, "must name the tenants and repositories the node's forge token may serve")
+		return
+	}
+	for i, grant := range grants {
+		gkey := fmt.Sprintf("%s[%d]", key, i)
+		if strings.TrimSpace(grant.Tenant) == "" {
+			v.addError(gkey+".tenant", "must name a tenant")
+		}
+		if len(grant.Repositories) == 0 {
+			v.addError(gkey+".repositories", "must name at least one owner/repo or owner/*")
+		}
+		for _, repo := range grant.Repositories {
+			owner, name, ok := strings.Cut(repo, "/")
+			if !ok || owner == "" || owner == "*" || name == "" || strings.Contains(name, "/") ||
+				strings.TrimSpace(repo) != repo {
+				v.addError(gkey+".repositories", "must hold owner/repo or owner/* names")
+				break
+			}
 		}
 	}
 }

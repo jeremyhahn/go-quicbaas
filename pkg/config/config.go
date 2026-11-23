@@ -1201,6 +1201,23 @@ type SDLCForgeTokenCommand struct {
 	// so a tenant's binding cannot point the node's credential at a host of
 	// its choosing. Required.
 	AllowedBaseURLs []string `mapstructure:"allowed_base_urls"`
+
+	// Grants are the tenants and repositories whose bindings may use the
+	// command. The command's token is the node's own forge account, and
+	// sdlc:bind is a tenant permission, so a binding no grant names is
+	// refused rather than served the node's credential. Required.
+	Grants []SDLCForgeTokenGrant `mapstructure:"grants"`
+}
+
+// SDLCForgeTokenGrant grants one tenant the node's token command for the
+// repositories it lists.
+type SDLCForgeTokenGrant struct {
+	// Tenant is the tenant ID. Required.
+	Tenant string `mapstructure:"tenant"`
+
+	// Repositories are "owner/repo" names, or "owner/*" for every
+	// repository of one owner. Required.
+	Repositories []string `mapstructure:"repositories"`
 }
 
 // SDLCSurfacing is the retry behind a parked task's comment on its issue.

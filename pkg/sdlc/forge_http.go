@@ -164,6 +164,7 @@ type forgeHTTP struct {
 	dialect   forgeDialect
 	baseURL   string
 	token     string
+	tokenFunc ForgeTokenFunc
 	custody   CustodyCredential
 	client    *http.Client
 	transport ForgeTransport
@@ -171,9 +172,16 @@ type forgeHTTP struct {
 }
 
 // forgeHTTPConfig is what newForgeHTTP validates and resolves.
+// ForgeTokenFunc resolves the forge token for one API request. An adapter
+// configured with one calls it before every request, so a token that a
+// short-lived source (a node token command) refreshes is never used past
+// its expiry by a long-lived adapter.
+type ForgeTokenFunc func(ctx context.Context) (string, error)
+
 type forgeHTTPConfig struct {
 	baseURL   string
 	token     string
+	tokenFunc ForgeTokenFunc
 	custody   CustodyCredential
 	client    *http.Client
 	transport ForgeTransport
@@ -189,7 +197,7 @@ func newForgeHTTP(forge ForgeType, dialect forgeDialect, cfg forgeHTTPConfig) (f
 	if _, err := url.Parse(base); err != nil {
 		return forgeHTTP{}, &InvalidInputError{Field: "base_url", Message: "is not a valid URL"}
 	}
-	if cfg.token == "" {
+	if cfg.token == "" && cfg.tokenFunc == nil {
 		return forgeHTTP{}, &InvalidInputError{
 			Field:   "token",
 			Message: "must not be empty; an unauthenticated adapter can only fail on first use",
@@ -213,7 +221,7 @@ func newForgeHTTP(forge ForgeType, dialect forgeDialect, cfg forgeHTTPConfig) (f
 		waiter = backoffWaiter{base: transport.RetryBackoff}
 	}
 	return forgeHTTP{
-		forge: forge, dialect: dialect, baseURL: base, token: cfg.token, custody: cfg.custody,
+		forge: forge, dialect: dialect, baseURL: base, token: cfg.token, tokenFunc: cfg.tokenFunc, custody: cfg.custody,
 		client: client, transport: transport, waiter: waiter,
 	}, nil
 }
@@ -270,6 +278,22 @@ func (h *forgeHTTP) scrubCredentials(body []byte, secrets ...[]byte) []byte {
 // send performs one attempt at an API call, bounded by deadline, and decodes
 // its response. do decides whether an unanswered attempt is sent again.
 func (h *forgeHTTP) send(ctx context.Context, req forgeRequest, deadline time.Duration) error {
+	if h.tokenFunc != nil {
+		// Resolve the token for this request, then send with a copy that
+		// carries it, so the Authorization header, the read bound and the
+		// response scrubbing all use the token this request sent.
+		token, err := h.tokenFunc(ctx)
+		if err != nil {
+			return backendError(req.operation+".token", err)
+		}
+		if token == "" {
+			return backendError(req.operation+".token", errEmptyForgeToken)
+		}
+		current := *h
+		current.tokenFunc = nil
+		current.token = token
+		return current.send(ctx, req, deadline)
+	}
 	attemptCtx, cancel := context.WithTimeout(ctx, deadline)
 	defer cancel()
 
@@ -515,6 +539,8 @@ func nextLink(values []string) string {
 //
 // The adapter sends its token with every request, so following a link to any
 // other host would hand the credential to whoever wrote the header.
+var errEmptyForgeToken = errors.New("the forge token source returned an empty token")
+
 var errForeignPageLink = errors.New(
 	"next-page link points outside the configured API root")
 
