@@ -128,8 +128,8 @@ func buildBootstrapCeremonyServices(logger *slog.Logger, dataDir string) (*Cerem
 	}
 
 	// 4. Wrap each in the SDK service-layer types that the BaaS embedded
-	//    transport consumes via baasTransport.barrierSvc / .ceremonySvc /
-	//    .credentialSvc.
+	//    transport consumes as its barrier, ceremony and credential
+	//    services.
 	return &CeremonyServices{
 		Barrier:    qrdbsdk.NewBarrierService(barrier),
 		Credential: qrdbsdk.NewCredentialService(credCore),

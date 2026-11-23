@@ -476,7 +476,11 @@ Auto-detection from `--address`:
 | `host:port` (no scheme) | gRPC over TLS |
 | `quic://host:port` | QUIC |
 | `mcp://host:port` | MCP |
-| `/abs/path` (starts with `/`) | Unix socket |
+| `/abs/path` (starts with `/`) or `name.sock` | Unix socket |
+
+`quic://` and `mcp://` only name the transport: the client dials
+`host:port`. With no `--address`, the CLI dials the default Unix socket.
+The rule is `detectTransport` in `cmd/quicbaas/transport_select.go`.
 
 Override with `--transport <name>`. The CLI always uses the SDK
 abstraction internally — there is no transport-specific CLI code.
