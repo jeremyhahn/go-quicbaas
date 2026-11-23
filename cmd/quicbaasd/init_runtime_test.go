@@ -592,6 +592,30 @@ func TestBuildInitConfig_NoOperatorTrustDomainLeavesItEmpty(t *testing.T) {
 		"init must not synthesize a SPIFFE trust domain")
 }
 
+// TestBuildInitConfig_PropagatesBootstrapAdminEmail proves init's config
+// carries the operator's bootstrap admin address. Init is the boot that
+// creates the administrator; the following start finds its grant and skips
+// bootstrap, so an address dropped here would leave the synthetic default
+// in place for good.
+func TestBuildInitConfig_PropagatesBootstrapAdminEmail(t *testing.T) {
+	const configured = "platform-ops@acme.example"
+
+	prev := cfg
+	t.Cleanup(func() { cfg = prev })
+	cfg = config.Default()
+	cfg.IAM.BootstrapAdminEmail = configured
+
+	got := buildInitConfig(t.TempDir(), &inlineInitFlags{barrierStrategy: "none"}, false)
+	assert.Equal(t, configured, got.IAM.BootstrapAdminEmail,
+		"init must create the administrator under the operator's configured address")
+
+	cfg = config.Default()
+	cfg.IAM.BootstrapAdminEmail = ""
+	got = buildInitConfig(t.TempDir(), &inlineInitFlags{barrierStrategy: "none"}, false)
+	assert.Equal(t, config.Default().IAM.BootstrapAdminEmail, got.IAM.BootstrapAdminEmail,
+		"no configured address leaves the default")
+}
+
 // requireTestTrustDomain sets the SPIFFE trust domain on the daemon's loaded
 // configuration for the duration of the test.
 //
