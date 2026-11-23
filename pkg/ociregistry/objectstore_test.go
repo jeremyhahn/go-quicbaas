@@ -275,6 +275,39 @@ func TestObjectStoreClient_BackendKeyNotFound(t *testing.T) {
 	assert.False(t, errors.As(err, &ManifestNotFoundError{}))
 }
 
+// TestObjectStoreClient_CatalogFailureIsNotAbsence covers the object
+// store reporting every catalog lookup failure as not-found: only a
+// catalog entry-not-found cause is a missing object.
+func TestObjectStoreClient_CatalogFailureIsNotAbsence(t *testing.T) {
+	ctx := context.Background()
+	corrupt := errors.New("corrupt entry")
+	broken := api.NewNotFoundWithCauseError("objectstorage.GetObject", "object",
+		catalog.NewDecodingError("k", corrupt))
+
+	client, err := NewObjectStoreClient(failingObjectStore{err: broken})
+	require.NoError(t, err)
+	_, found, err := client.Get(ctx, entityTypeManifest, "k")
+	assert.ErrorIs(t, err, corrupt)
+	assert.False(t, found)
+	assert.ErrorIs(t, client.Delete(ctx, entityTypeManifest, "k"), corrupt)
+
+	storage, err := NewObjectStorage(failingObjectStore{err: broken}, nil)
+	require.NoError(t, err)
+	exists, err := storage.ManifestExists(ctx, "apps/web:v2")
+	assert.ErrorAs(t, err, &ErrStorageError{})
+	assert.False(t, exists)
+
+	miss := api.NewNotFoundWithCauseError("objectstorage.GetObject", "object",
+		catalog.NewEntryNotFoundError("k"))
+	missing, err := NewObjectStoreClient(failingObjectStore{err: miss})
+	require.NoError(t, err)
+	value, found, err := missing.Get(ctx, entityTypeManifest, "k")
+	require.NoError(t, err)
+	assert.False(t, found)
+	assert.Nil(t, value)
+	assert.NoError(t, missing.Delete(ctx, entityTypeManifest, "k"))
+}
+
 type failingObjectStore struct{ err error }
 
 func (f failingObjectStore) PutObject(context.Context, *service.PutObjectRequest) (*service.PutObjectResponse, error) {

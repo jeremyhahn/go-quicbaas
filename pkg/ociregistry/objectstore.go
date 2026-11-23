@@ -51,10 +51,17 @@ const (
 // objectStatusActive is the catalog status of a live object.
 var objectStatusActive = string(catalog.StatusActive)
 
-// isObjectNotFound reports whether err says the object is missing:
-// a not-found code, or a storage key-not-found anywhere in the chain
-// (the object store wraps a backend miss in a storage error).
+// isObjectNotFound reports whether err says the object is missing. The
+// object store reports every catalog lookup failure as not-found with
+// the catalog error as its cause, so that wrapper is a miss only when
+// the cause is a catalog entry-not-found. Otherwise a not-found code,
+// or a storage key-not-found anywhere in the chain (the object store
+// wraps a backend miss in a storage error), is a miss.
 func isObjectNotFound(err error) bool {
+	var withCause *api.NotFoundWithCauseError
+	if errors.As(err, &withCause) {
+		return withCause.Cause == nil || catalog.IsNotFound(withCause.Cause)
+	}
 	if qberrors.IsNotFound(err) {
 		return true
 	}
