@@ -285,10 +285,11 @@ func (r *ToolRegistry) registerTools() {
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
-				"entityType": map[string]interface{}{"type": "string", "description": "Entity type"},
-				"id":         map[string]interface{}{"type": []string{"integer", "string"}, "description": "Entity ID; a decimal string carries an ID above 2^53 exactly"},
-				"data":       map[string]interface{}{"type": "string", "description": "Base64-encoded (standard) data; the value alias is decoded the same way"},
-				"shardID":    map[string]interface{}{"type": "integer", "description": "Target shard ID"},
+				"entityType":      map[string]interface{}{"type": "string", "description": "Entity type"},
+				"id":              map[string]interface{}{"type": []string{"integer", "string"}, "description": "Entity ID; a decimal string carries an ID above 2^53 exactly"},
+				"data":            map[string]interface{}{"type": "string", "description": "Base64-encoded (standard) data; the value alias is decoded the same way"},
+				"shardID":         map[string]interface{}{"type": "integer", "description": "Target shard ID"},
+				"expectedVersion": map[string]interface{}{"type": []string{"integer", "string"}, "minimum": 0, "description": "Optional. Write only if the key's current version equals this value (0 = the key must not exist); otherwise the call fails with a version conflict and nothing changes."},
 			},
 			"required": []string{"entityType", "id", "data"},
 		},
@@ -313,9 +314,10 @@ func (r *ToolRegistry) registerTools() {
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
-				"entityType": map[string]interface{}{"type": "string", "description": "Entity type"},
-				"id":         map[string]interface{}{"type": []string{"integer", "string"}, "description": "Entity ID; a decimal string carries an ID above 2^53 exactly"},
-				"shardID":    map[string]interface{}{"type": "integer", "description": "Target shard ID"},
+				"entityType":      map[string]interface{}{"type": "string", "description": "Entity type"},
+				"id":              map[string]interface{}{"type": []string{"integer", "string"}, "description": "Entity ID; a decimal string carries an ID above 2^53 exactly"},
+				"shardID":         map[string]interface{}{"type": "integer", "description": "Target shard ID"},
+				"expectedVersion": map[string]interface{}{"type": []string{"integer", "string"}, "minimum": 0, "description": "Optional. Delete only if the key's current version equals this value (0 = the key must not exist); otherwise the call fails with a version conflict and nothing changes."},
 			},
 			"required": []string{"entityType", "id"},
 		},
@@ -1717,11 +1719,18 @@ func (r *ToolRegistry) executePut(ctx context.Context, args map[string]interface
 		return nil, err
 	}
 
+	// A malformed expectedVersion is refused, never read as unconditional.
+	expectedVersion, err := expectedVersionArg(args)
+	if err != nil {
+		return nil, err
+	}
+
 	req := &service.PutRequest{
-		EntityType: entityType,
-		ID:         id,
-		Data:       data,
-		ShardID:    getUint64(args, "shardID"),
+		EntityType:      entityType,
+		ID:              id,
+		Data:            data,
+		ShardID:         getUint64(args, "shardID"),
+		ExpectedVersion: expectedVersion,
 	}
 	resp, err := r.service.Put(ctx, req)
 	if err != nil {
@@ -1789,10 +1798,17 @@ func (r *ToolRegistry) executeDelete(ctx context.Context, args map[string]interf
 		return nil, err
 	}
 
+	// A malformed expectedVersion is refused, never read as unconditional.
+	expectedVersion, err := expectedVersionArg(args)
+	if err != nil {
+		return nil, err
+	}
+
 	req := &service.DeleteRequest{
-		EntityType: entityType,
-		ID:         id,
-		ShardID:    getUint64(args, "shardID"),
+		EntityType:      entityType,
+		ID:              id,
+		ShardID:         getUint64(args, "shardID"),
+		ExpectedVersion: expectedVersion,
 	}
 	resp, err := r.service.Delete(ctx, req)
 	if err != nil {

@@ -885,6 +885,44 @@ func contextError(ctx context.Context, op string) error {
 	return &errors.QBError{Code: code, Op: op, Err: err}
 }
 
+// expectedVersionCompare converts an expected key version to the int64 a
+// go-qrdb version compare takes. A value above math.MaxInt64 cannot match
+// any stored version, so it is refused as the conflict, before the store
+// is reached and without the conversion wrapping.
+func expectedVersionCompare(op string, expected uint64, conflict *KVVersionConflictError) (int64, error) {
+	if expected > math.MaxInt64 {
+		return 0, &errors.QBError{Code: errors.ErrConflict, Op: op, Err: conflict}
+	}
+	return int64(expected), nil
+}
+
+// conditionalWrite applies op to key only if the key's stored version
+// equals expected (an absent key has version 0), as one go-qrdb
+// transaction. A failed compare is a *KVVersionConflictError, and
+// nothing is applied.
+func conditionalWrite(ctx context.Context, client *qrdbsdk.Client, key []byte, expected int64, op qrdbtransport.Op, conflict *KVVersionConflictError) error {
+	resp, err := client.Transaction().ExecuteTransaction(ctx, &qrdbtransport.TransactionRequest{
+		Compares: []qrdbtransport.Compare{{
+			Key:     key,
+			Target:  qrdbtransport.CompareVersion,
+			Result:  qrdbtransport.CompareEqual,
+			Version: expected,
+		}},
+		SuccessOps: []qrdbtransport.Op{op},
+	})
+	var failed *qrdbtransport.TransactionFailedError
+	if stderrors.As(err, &failed) {
+		return conflict
+	}
+	if err != nil {
+		return err
+	}
+	if resp == nil || !resp.Succeeded {
+		return conflict
+	}
+	return nil
+}
+
 func (k *kvService) Put(ctx context.Context, req *PutRequest) (*PutResponse, error) {
 	start := time.Now()
 	if k.svc.metrics != nil {
@@ -925,6 +963,17 @@ func (k *kvService) Put(ctx context.Context, req *PutRequest) (*PutResponse, err
 		}
 		return nil, err
 	}
+	var conflict *KVVersionConflictError
+	var compareVersion int64
+	if req.ExpectedVersion != nil {
+		conflict = &KVVersionConflictError{EntityType: req.EntityType, ID: req.ID, Expected: *req.ExpectedVersion}
+		if compareVersion, err = expectedVersionCompare("service.Put", *req.ExpectedVersion, conflict); err != nil {
+			if k.svc.metrics != nil {
+				k.svc.metrics.requestsTotal.With("Put", "conflict").Inc()
+			}
+			return nil, err
+		}
+	}
 	// Propose to Raft via qrdb SDK
 	client, err := k.svc.qrdbForShard(shardID)
 	if err != nil {
@@ -938,16 +987,44 @@ func (k *kvService) Put(ctx context.Context, req *PutRequest) (*PutResponse, err
 			Err:  err,
 		}
 	}
-	if err := client.KV().Put(ctx, string(key), req.Data); err != nil {
-		if k.svc.metrics != nil {
-			k.svc.metrics.requestsTotal.With("Put", "error").Inc()
-			k.svc.metrics.errorsByType.With("raft_error").Inc()
+	// Version 1 is a placeholder on the unconditional path (MVCC revision
+	// tracking requires state machine changes). A successful conditional
+	// put moved the key from *ExpectedVersion to the next version, which
+	// under the mvcc engine is exactly the new stored version.
+	version := uint64(1)
+	if req.ExpectedVersion == nil {
+		if err := client.KV().Put(ctx, string(key), req.Data); err != nil {
+			if k.svc.metrics != nil {
+				k.svc.metrics.requestsTotal.With("Put", "error").Inc()
+				k.svc.metrics.errorsByType.With("raft_error").Inc()
+			}
+			return nil, &errors.QBError{
+				Code: errors.ErrRaft,
+				Op:   "service.Put",
+				Err:  err,
+			}
 		}
-		return nil, &errors.QBError{
-			Code: errors.ErrRaft,
-			Op:   "service.Put",
-			Err:  err,
+	} else {
+		op := qrdbtransport.Op{Type: qrdbtransport.OpPut, Key: []byte(key), Value: req.Data}
+		if err := conditionalWrite(ctx, client, []byte(key), compareVersion, op, conflict); err != nil {
+			var vc *KVVersionConflictError
+			if stderrors.As(err, &vc) {
+				if k.svc.metrics != nil {
+					k.svc.metrics.requestsTotal.With("Put", "conflict").Inc()
+				}
+				return nil, &errors.QBError{Code: errors.ErrConflict, Op: "service.Put", Err: err}
+			}
+			if k.svc.metrics != nil {
+				k.svc.metrics.requestsTotal.With("Put", "error").Inc()
+				k.svc.metrics.errorsByType.With("raft_error").Inc()
+			}
+			return nil, &errors.QBError{
+				Code: errors.ErrRaft,
+				Op:   "service.Put",
+				Err:  err,
+			}
 		}
+		version = *req.ExpectedVersion + 1
 	}
 
 	// Get leader ID via SDK
@@ -955,7 +1032,7 @@ func (k *kvService) Put(ctx context.Context, req *PutRequest) (*PutResponse, err
 
 	resp := &PutResponse{
 		ID:        req.ID,
-		Version:   1, // Initial version (MVCC revision tracking requires state machine changes)
+		Version:   version,
 		Timestamp: time.Now().UnixNano(),
 		LeaderID:  leaderID,
 	}
@@ -1159,6 +1236,17 @@ func (k *kvService) Delete(ctx context.Context, req *DeleteRequest) (*DeleteResp
 		}
 		return nil, err
 	}
+	var conflict *KVVersionConflictError
+	var compareVersion int64
+	if req.ExpectedVersion != nil {
+		conflict = &KVVersionConflictError{EntityType: req.EntityType, ID: req.ID, Expected: *req.ExpectedVersion}
+		if compareVersion, err = expectedVersionCompare("service.Delete", *req.ExpectedVersion, conflict); err != nil {
+			if k.svc.metrics != nil {
+				k.svc.metrics.requestsTotal.With("Delete", "conflict").Inc()
+			}
+			return nil, err
+		}
+	}
 	// Delete via qrdb SDK
 	client, err := k.svc.qrdbForShard(shardID)
 	if err != nil {
@@ -1172,15 +1260,37 @@ func (k *kvService) Delete(ctx context.Context, req *DeleteRequest) (*DeleteResp
 			Err:  err,
 		}
 	}
-	if err := client.KV().Delete(ctx, string(key)); err != nil {
-		if k.svc.metrics != nil {
-			k.svc.metrics.requestsTotal.With("Delete", "error").Inc()
-			k.svc.metrics.errorsByType.With("raft_error").Inc()
+	if req.ExpectedVersion == nil {
+		if err := client.KV().Delete(ctx, string(key)); err != nil {
+			if k.svc.metrics != nil {
+				k.svc.metrics.requestsTotal.With("Delete", "error").Inc()
+				k.svc.metrics.errorsByType.With("raft_error").Inc()
+			}
+			return nil, &errors.QBError{
+				Code: errors.ErrRaft,
+				Op:   "service.Delete",
+				Err:  err,
+			}
 		}
-		return nil, &errors.QBError{
-			Code: errors.ErrRaft,
-			Op:   "service.Delete",
-			Err:  err,
+	} else {
+		op := qrdbtransport.Op{Type: qrdbtransport.OpDelete, Key: []byte(key)}
+		if err := conditionalWrite(ctx, client, []byte(key), compareVersion, op, conflict); err != nil {
+			var vc *KVVersionConflictError
+			if stderrors.As(err, &vc) {
+				if k.svc.metrics != nil {
+					k.svc.metrics.requestsTotal.With("Delete", "conflict").Inc()
+				}
+				return nil, &errors.QBError{Code: errors.ErrConflict, Op: "service.Delete", Err: err}
+			}
+			if k.svc.metrics != nil {
+				k.svc.metrics.requestsTotal.With("Delete", "error").Inc()
+				k.svc.metrics.errorsByType.With("raft_error").Inc()
+			}
+			return nil, &errors.QBError{
+				Code: errors.ErrRaft,
+				Op:   "service.Delete",
+				Err:  err,
+			}
 		}
 	}
 
