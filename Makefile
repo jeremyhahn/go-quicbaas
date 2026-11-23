@@ -1572,6 +1572,16 @@ test-lean: check-insecure-tls check-build-tags check-local-keygen ## Run unit te
 	@echo "$(YELLOW)Build tags: $(LEAN_TEST_TAGS)$(NC)"
 	$(GOTEST) -p 2 -tags '$(LEAN_TEST_TAGS)' -timeout=$(TAG_PASS_TIMEOUT) ./pkg/... ./cmd/...
 
+INTEROP_LEGS := oidc http3 grpc mcp
+
+.PHONY: interop-test
+interop-test: $(addprefix interop-test-,$(INTEROP_LEGS)) ## Run every external-implementation interop leg (go-quicbaas#203)
+
+.PHONY: $(addprefix interop-test-,$(INTEROP_LEGS))
+$(addprefix interop-test-,$(INTEROP_LEGS)): interop-test-%: ## Run one interop leg: its baseline first, then its tests
+	@echo "$(BLUE)Running the $* interop leg...$(NC)"
+	INTEROP_TAGS='$(TEST_TAGS)' ./scripts/interop-legs.sh run $*
+
 .PHONY: test-tooling
 test-tooling: ## Run the unit tests of the repository tooling (scripts, build gates)
 	@echo "$(BLUE)Running the repository tooling unit tests...$(NC)"
@@ -4698,8 +4708,19 @@ integration-test-iam: ## Run IAM integration tests
 	@echo "$(BLUE)Running IAM integration tests...$(NC)"
 	@QUICBAAS_TEST_FILTER="./test/integration/iam/..." WITH_RAFT=1 WITH_REST=1 WITH_QUIC=1 WITH_MCP=1 $(MAKE) integration-test
 
+.PHONY: test-fleet-placement
+test-fleet-placement: ## Run fleet placement spec + drift unit tests (store, inventory, report, service, server binding, REST, route tables)
+	@echo "$(BLUE)Running fleet placement unit tests...$(NC)"
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -race -count=1 -tags '$(BUILD_TAGS)' ./pkg/orchestration/ -run 'Placement|Drift|FleetInventory|SessionWorkSource'
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -race -count=1 -tags '$(BUILD_TAGS)' ./pkg/service/ ./pkg/server/ -run 'FleetPlacement'
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -race -count=1 -tags '$(BUILD_TAGS)' ./pkg/api/rest/ -run 'FleetPlacement|Routes|RouteSurface|FrozenPermission|Authz|RouteLookup'
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -race -count=1 -tags '$(BUILD_TAGS)' ./pkg/api/grpc/
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -race -count=1 -tags '$(BUILD_TAGS)' ./pkg/api/mcp/ -run 'FleetPlacement|Authz|Permission'
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -race -count=1 -tags '$(BUILD_TAGS)' ./cmd/quicbaas/ -run 'FleetPlacement'
+	cd sdk/go && GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -race -count=1 ./client/orchestrator/ ./transport/rest/ ./transport/embedded/ ./transport/grpc/ ./transport/mcp/ ./transport/quic/ ./transport/unix/ -run 'FleetPlacement|Orchestrator'
+
 .PHONY: integration-test-placement
-integration-test-placement: ## Run scheduler placement + job integration tests over REST, gRPC, QUIC, Unix and MCP
+integration-test-placement: ## Run scheduler placement, fleet placement spec + job integration tests over REST, gRPC, QUIC, Unix and MCP
 	@echo "$(BLUE)Running scheduler placement integration tests...$(NC)"
 	@QUICBAAS_TEST_FILTER="./test/integration/placement/..." WITH_RAFT=1 WITH_REST=1 WITH_QUIC=1 WITH_MCP=1 $(MAKE) integration-test
 
