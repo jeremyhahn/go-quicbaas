@@ -307,7 +307,9 @@ var ceremonyToolNames = []string{
 
 func TestCeremonyMethodsEndToEnd(t *testing.T) {
 	ctx := context.Background()
-	tr, _, cleanup := newMultiToolMCPServer(t, ceremonyToolNames, func(t *testing.T, tool string, args map[string]interface{}) map[string]interface{} {
+	// CeremonyInitialize and CeremonySignCSR carry an SO PIN, which travels
+	// only over TLS.
+	tr, _ := newMultiToolMCPServerTLS(t, ceremonyToolNames, func(t *testing.T, tool string, args map[string]interface{}) map[string]interface{} {
 		switch tool {
 		case "qrdb_ceremony_initialize":
 			return map[string]interface{}{"session_id": "sess-1"}
@@ -329,7 +331,6 @@ func TestCeremonyMethodsEndToEnd(t *testing.T) {
 			return map[string]interface{}{"ok": true}
 		}
 	})
-	defer cleanup()
 
 	if _, err := tr.CeremonyInitialize(ctx, &qrdbtransport.CeremonyInitializeRequest{
 		SOPin:                  "so",
@@ -488,10 +489,10 @@ func TestStringsToInterfaces(t *testing.T) {
 	}
 }
 
-func TestRemarshalBarrierNil(t *testing.T) {
+func TestRemarshalBarrier_NilIsError(t *testing.T) {
 	var dst struct{ X int }
-	if err := remarshalBarrier(nil, &dst); err != nil {
-		t.Errorf("remarshalBarrier(nil) = %v", err)
+	if err := remarshalBarrier(nil, &dst); err == nil {
+		t.Error("remarshalBarrier(nil) = nil, want an error for a result with no content")
 	}
 	if err := remarshalBarrier(map[string]interface{}{"X": 5}, &dst); err != nil {
 		t.Fatalf("remarshalBarrier: %v", err)

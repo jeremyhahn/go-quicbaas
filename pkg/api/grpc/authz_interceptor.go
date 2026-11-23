@@ -259,6 +259,9 @@ func requireUserCreateArguments(req interface{}) []string {
 
 // grpcArgumentPermissions maps a full method name to the permissions its
 // request arguments demand on top of the method's own permission.
+// IAMService CreateUser and UpdateUser are not in grpcMethodPermissions, so
+// the gate refuses them before these rules run; the rules stand so that
+// mapping them can never skip roles:assign.
 var grpcArgumentPermissions = map[string]func(req interface{}) []string{
 	iampb.IAMService_CreateUser_FullMethodName: requireUserCreateArguments,
 	iampb.IAMService_UpdateUser_FullMethodName: requireUserUpdateArguments,

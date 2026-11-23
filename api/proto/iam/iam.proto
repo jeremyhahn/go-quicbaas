@@ -21,15 +21,19 @@ service IAMService {
   }
 
   // User management
-  rpc CreateUser(CreateUserRequest) returns (User) {
-      option (qrdb.v1.permission) = "users:create";
+  rpc CreateUser(CreateUserRequest) returns (User);
+  // GetUser is the tenant-scoped user lookup. It takes users:read, the grant QRDBService's user reads take.
+  rpc GetUser(GetUserRequest) returns (User) {
+      option (qrdb.v1.permission) = "users:read";
   }
-  rpc GetUser(GetUserRequest) returns (User);
-  rpc UpdateUser(UpdateUserRequest) returns (User) {
-      option (qrdb.v1.permission) = "users:update";
-  }
+  rpc UpdateUser(UpdateUserRequest) returns (User);
   rpc DeleteUser(DeleteUserRequest) returns (DeleteUserResponse);
   rpc ListUsers(ListUsersRequest) returns (ListUsersResponse);
+  // GetUserByUsername is the tenant-scoped username lookup. Like GetUser it
+  // takes users:read, the grant QRDBService's user reads take.
+  rpc GetUserByUsername(GetUserByUsernameRequest) returns (User) {
+      option (qrdb.v1.permission) = "users:read";
+  }
 
   // ApproveUser moves a pending user to active, as REST's
   // POST /api/v1/iam/users/{user_id}/approve does, and carries that route's
@@ -338,6 +342,9 @@ message CheckRequest {
   string action = 2;
   string resource = 3;
   map<string, string> context = 4;
+  // tenant_id is the tenant the check acts in. Empty means the caller's
+  // bound tenant; any other tenant than the caller's is refused.
+  string tenant_id = 5;
 }
 
 message CheckResponse {
@@ -559,6 +566,11 @@ message CreateUserRequest {
 message GetUserRequest {
   string tenant_id = 1;
   string user_id = 2;
+}
+
+message GetUserByUsernameRequest {
+  string tenant_id = 1;
+  string username = 2;
 }
 
 message UpdateUserRequest {

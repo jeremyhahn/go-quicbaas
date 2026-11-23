@@ -129,3 +129,80 @@ func TestQRDBUserStorage_UpdateUserFields_SendsOnlyNamedFields(t *testing.T) {
 		t.Errorf("request LastAuth = %v, want nil", req.LastAuth)
 	}
 }
+
+// An explicit empty roles list is a change that removes every role, so the
+// field-scoped write must send it as an empty, non-nil list rather than as
+// "roles unchanged".
+func TestIdentityStore_UpdateUser_EmptyRolesClearsThem(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeUserServicer()
+	storage := newTestUserStorage(t, fake)
+
+	user := newTestUser()
+	if len(user.Roles) == 0 {
+		user.Roles = []string{"role-admin"}
+	}
+	if err := storage.CreateUser(ctx, user); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	store := iam.NewIdentityStore(iam.IdentityStoreOptions{
+		UserStorage: storage,
+		RoleStorage: iam.NewMemoryStorage(),
+	})
+
+	empty := []string{}
+	if _, err := store.UpdateUser(ctx, testTenant, user.ID, iam.UpdateUserOptions{Roles: &empty}); err != nil {
+		t.Fatalf("UpdateUser: %v", err)
+	}
+
+	req := fake.lastUpdate
+	if req == nil {
+		t.Fatal("no UpdateUser request reached the store")
+	}
+	if req.RoleIDs == nil || len(req.RoleIDs) != 0 {
+		t.Errorf("request RoleIDs = %#v, want an empty non-nil list", req.RoleIDs)
+	}
+	if got := fake.users[user.ID].RoleIDs; len(got) != 0 {
+		t.Errorf("stored RoleIDs = %v, want none after clearing", got)
+	}
+}
+
+// An update that names no field writes nothing, so it cannot write back a
+// stale copy.
+func TestIdentityStore_UpdateUser_NoChangeWritesNothing(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeUserServicer()
+	storage := newTestUserStorage(t, fake)
+
+	user := newTestUser()
+	if len(user.Roles) == 0 {
+		user.Roles = []string{"role-admin"}
+	}
+	if err := storage.CreateUser(ctx, user); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	created := append([]string(nil), fake.users[user.ID].RoleIDs...)
+	store := iam.NewIdentityStore(iam.IdentityStoreOptions{
+		UserStorage: storage,
+		RoleStorage: iam.NewMemoryStorage(),
+	})
+
+	fake.lastUpdate = nil
+	if _, err := store.UpdateUser(ctx, testTenant, user.ID, iam.UpdateUserOptions{}); err != nil {
+		t.Fatalf("UpdateUser: %v", err)
+	}
+
+	if fake.lastUpdate != nil {
+		t.Errorf("an update naming no field sent %+v to the store", fake.lastUpdate)
+	}
+	got := fake.users[user.ID].RoleIDs
+	if len(got) != len(created) {
+		t.Fatalf("stored RoleIDs = %v, want %v unchanged", got, created)
+	}
+	for i := range created {
+		if got[i] != created[i] {
+			t.Errorf("stored RoleIDs = %v, want %v unchanged", got, created)
+			break
+		}
+	}
+}
