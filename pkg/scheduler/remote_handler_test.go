@@ -107,6 +107,95 @@ func TestRemoteHandler_TheWorkerCompletesTheRun(t *testing.T) {
 	}
 }
 
+// TestRemoteHandler_AStandaloneEngineReportsAFailedOutcomeWrite: a
+// single-node engine whose outcome write fails tells the worker, not
+// "recorded".
+func TestRemoteHandler_AStandaloneEngineReportsAFailedOutcomeWrite(t *testing.T) {
+	storage := newMockJobStorage()
+	engine := New(DefaultConfig(), storage)
+	job := seedRunningJob(t, storage, remoteJob(time.Minute))
+
+	done := fire(engine, job)
+	run := openRun(t, engine, job.ID)
+	storage.errMu.Lock()
+	storage.updateJobErr = errors.New("disk full")
+	storage.errMu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	err := engine.CompleteRemoteRun(ctx, run.RemoteRunRef, &JobResult{Success: true, Message: "renewed"}, nil)
+	var storageErr ErrStorageError
+	if !errors.As(err, &storageErr) {
+		t.Fatalf("a completion whose outcome failed to write: err = %v, want an ErrStorageError", err)
+	}
+
+	storage.errMu.Lock()
+	storage.updateJobErr = nil
+	storage.errMu.Unlock()
+	waitDone(t, done)
+}
+
+// TestRemoteHandler_AStandaloneEngineKeepsAFailedHistoryWritePending: a
+// failed history write is kept on the job and acknowledged; the record is
+// written later.
+func TestRemoteHandler_AStandaloneEngineKeepsAFailedHistoryWritePending(t *testing.T) {
+	storage := newMockJobStorage()
+	engine := New(DefaultConfig(), storage)
+	job := seedRunningJob(t, storage, remoteJob(time.Minute))
+
+	done := fire(engine, job)
+	run := openRun(t, engine, job.ID)
+	storage.errMu.Lock()
+	storage.saveExecutionErr = errors.New("disk full")
+	storage.errMu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := engine.CompleteRemoteRun(ctx, run.RemoteRunRef, &JobResult{Success: true, Message: "renewed"}, nil); err != nil {
+		t.Fatalf("a completion whose history was kept pending: %v", err)
+	}
+	waitDone(t, done)
+
+	assertHistoryKeptPending(t, storage, job.ID)
+	storage.errMu.Lock()
+	storage.saveExecutionErr = nil
+	storage.errMu.Unlock()
+	if err := engine.flushPendingHistory(context.Background(), storedJob(t, storage, job.ID)); err != nil {
+		t.Fatalf("flushPendingHistory: %v", err)
+	}
+	assertPendingHistoryWritten(t, storage, job.ID)
+}
+
+// assertHistoryKeptPending checks that the run's completed record is pending
+// on the job under a stable ID, and not in history.
+func assertHistoryKeptPending(t *testing.T, storage *mockJobStorage, jobID uint64) {
+	t.Helper()
+	stored := storedJob(t, storage, jobID)
+	if len(stored.PendingHistory) != 1 {
+		t.Fatalf("job holds %d pending records, want 1", len(stored.PendingHistory))
+	}
+	rec := stored.PendingHistory[0]
+	if rec.Status != JobStatusCompleted || rec.Output != "renewed" || rec.ID == 0 {
+		t.Fatalf("pending record is %+v, want the completed run with the worker's message and an ID", rec)
+	}
+	if executions := history(t, storage, jobID); len(executions) != 0 {
+		t.Fatalf("history holds %d records before the pending one was written", len(executions))
+	}
+}
+
+// assertPendingHistoryWritten checks that the pending record was written to
+// history and removed from the job.
+func assertPendingHistoryWritten(t *testing.T, storage *mockJobStorage, jobID uint64) {
+	t.Helper()
+	executions := history(t, storage, jobID)
+	if len(executions) != 1 || executions[0].Output != "renewed" {
+		t.Fatalf("history is %+v, want the worker's run", executions)
+	}
+	if pending := storedJob(t, storage, jobID).PendingHistory; len(pending) != 0 {
+		t.Fatalf("job still holds %d pending records", len(pending))
+	}
+}
+
 func TestRemoteHandler_TheWorkersErrorFailsTheRun(t *testing.T) {
 	storage := newMockJobStorage()
 	engine := New(DefaultConfig(), storage)

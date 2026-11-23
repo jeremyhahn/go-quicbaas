@@ -257,3 +257,68 @@ func TestRemoteHandler_TheFiringNodeReportsAFailedConclusion(t *testing.T) {
 	storage.errMu.Unlock()
 	waitDone(t, done)
 }
+
+// TestRemoteHandler_TheFiringNodeKeepsAFailedHistoryWritePending: on a
+// clustered engine a failed history write after the conclusion is kept on
+// the job and acknowledged; the record is written later.
+func TestRemoteHandler_TheFiringNodeKeepsAFailedHistoryWritePending(t *testing.T) {
+	storage := newConcludingStorage()
+	firing := clusteredNode(t, storage, "node-1")
+	job := seedRunningJob(t, storage.mockJobStorage, remoteJob(time.Minute))
+
+	done := fire(firing, job)
+	ref := openRun(t, firing, job.ID).RemoteRunRef
+	storage.errMu.Lock()
+	storage.saveExecutionErr = errors.New("raft: no quorum")
+	storage.errMu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := firing.CompleteRemoteRun(ctx, ref, &JobResult{Success: true, Message: "renewed"}, nil); err != nil {
+		t.Fatalf("a completion whose history was kept pending: %v", err)
+	}
+	waitDone(t, done)
+
+	assertHistoryKeptPending(t, storage.mockJobStorage, job.ID)
+	storage.mockJobStorage.errMu.Lock()
+	storage.mockJobStorage.saveExecutionErr = nil
+	storage.mockJobStorage.errMu.Unlock()
+	if err := firing.flushPendingHistory(context.Background(), storedJob(t, storage.mockJobStorage, job.ID)); err != nil {
+		t.Fatalf("flushPendingHistory: %v", err)
+	}
+	assertPendingHistoryWritten(t, storage.mockJobStorage, job.ID)
+}
+
+// TestRemoteHandler_TheFiringNodeReportsALostHistoryRecord: when neither the
+// history write nor keeping it pending succeeds, the worker is told.
+func TestRemoteHandler_TheFiringNodeReportsALostHistoryRecord(t *testing.T) {
+	storage := newConcludingStorage()
+	firing := clusteredNode(t, storage, "node-1")
+	job := seedRunningJob(t, storage.mockJobStorage, remoteJob(time.Minute))
+
+	done := fire(firing, job)
+	ref := openRun(t, firing, job.ID).RemoteRunRef
+	// The conclusion does not read through GetJob; keeping the record
+	// pending does, so only the latter fails.
+	storage.errMu.Lock()
+	storage.saveExecutionErr = errors.New("raft: no quorum")
+	storage.getJobErr = errors.New("raft: no quorum")
+	storage.errMu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	err := firing.CompleteRemoteRun(ctx, ref, &JobResult{Success: true, Message: "renewed"}, nil)
+	var storageErr ErrStorageError
+	if !errors.As(err, &storageErr) {
+		t.Fatalf("a completion whose history was lost: err = %v, want an ErrStorageError", err)
+	}
+
+	storage.errMu.Lock()
+	storage.saveExecutionErr = nil
+	storage.getJobErr = nil
+	storage.errMu.Unlock()
+	waitDone(t, done)
+	if stored := storedJob(t, storage.mockJobStorage, job.ID); stored.ConcludedBy != "execution@node-1" {
+		t.Fatalf("the outcome was not written: ConcludedBy = %q", stored.ConcludedBy)
+	}
+}

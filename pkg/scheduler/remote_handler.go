@@ -342,8 +342,10 @@ func (s *SchedulerEngine) completeRemoteRunElsewhere(ctx context.Context, ref Re
 }
 
 // remoteAnswer is what a remote completion is told once its result was
-// recorded: res is the guarded conclusion's outcome (nil on a single-node
-// engine, which has no guard to report), and interrupted means the engine
+// recorded: res is the guarded conclusion's outcome (nil only when no worker
+// waits on the run); its err is a write of the outcome or its history that
+// failed, and a history record kept pending on the job is recorded. And
+// interrupted means the engine
 // stopped before the result could be recorded.
 func remoteAnswer(ref RemoteRunRef, res *ownRunResult, interrupted bool) error {
 	switch {

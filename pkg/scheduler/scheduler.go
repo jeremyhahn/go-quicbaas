@@ -1460,13 +1460,17 @@ func (s *SchedulerEngine) executeJob(ctx context.Context, job *Job, claimedFirin
 	var waiter *remoteWaiter
 	var remoteRes *ownRunResult
 	if remote {
-		// The guarded conclusion's outcome is what the worker that reported
-		// the result is told.
-		if own, ok := ctx.Value(ownRunKey{}).(ownRun); ok {
-			remoteRes = &ownRunResult{}
-			own.result = remoteRes
-			ctx = withOwnRun(ctx, own)
+		// The worker that reported the result is told whether it was
+		// recorded: the guarded conclusion's outcome on a clustered engine,
+		// and on every engine any failed write of the outcome or its history.
+		remoteRes = &ownRunResult{}
+		own, ok := ctx.Value(ownRunKey{}).(ownRun)
+		if !ok {
+			// A single-node engine has no guard: its write is the outcome.
+			remoteRes.won = true
 		}
+		own.result = remoteRes
+		ctx = withOwnRun(ctx, own)
 		// A remote worker runs this job: the execution waits for the
 		// result it reports (see remote_handler.go).
 		waiter = s.openRemoteRun(job)
@@ -1645,6 +1649,7 @@ func (s *SchedulerEngine) handleInterruptedRun(ctx context.Context, job *Job, ex
 	}
 	if err := s.storage.SaveExecution(storageCtx, exec); err != nil {
 		s.storageErrors.Add(1)
+		s.historyWriteFailed(storageCtx, job, exec, err)
 	}
 }
 
@@ -1688,6 +1693,7 @@ func (s *SchedulerEngine) handleJobSuccess(ctx context.Context, job *Job, exec *
 	}
 	if err := s.storage.SaveExecution(storageCtx, exec); err != nil {
 		s.storageErrors.Add(1)
+		s.historyWriteFailed(storageCtx, job, exec, err)
 	}
 	s.successCount.Add(1)
 }
@@ -1703,7 +1709,8 @@ func (s *SchedulerEngine) handleJobSuccess(ctx context.Context, job *Job, exec *
 //     so completed executions never resurrect a deleted job.
 //
 // Writes remain best effort (errors are tracked via storageErrors),
-// matching the background-processing semantics of the callers.
+// matching the background-processing semantics of the callers. A failed
+// single-node write is reported to a caller waiting on the run.
 //
 // It reports whether this outcome concludes the run. False means another
 // writer concluded it (see concludeOwnRun), and the caller must write no
@@ -1733,6 +1740,7 @@ func (s *SchedulerEngine) persistJobOutcome(ctx context.Context, job *Job) bool 
 
 	if err := s.storage.UpdateJob(ctx, job); err != nil {
 		s.storageErrors.Add(1)
+		runResultOf(ctx).noteWriteError(ErrStorageError{Op: "UpdateJob", Cause: err})
 	}
 	return true
 }
@@ -1827,6 +1835,7 @@ func (s *SchedulerEngine) handleJobError(ctx context.Context, job *Job, exec *Jo
 	}
 	if storageErr := s.storage.SaveExecution(storageCtx, exec); storageErr != nil {
 		s.storageErrors.Add(1)
+		s.historyWriteFailed(storageCtx, job, exec, storageErr)
 	}
 	s.failureCount.Add(1)
 }

@@ -144,8 +144,9 @@ type Job struct {
 	// execution), so a recovery retried on the node that concluded the run
 	// can finish the history record its first attempt failed to write.
 	ConcludedBy string `json:"concluded_by,omitempty"`
-	// PendingHistory holds the history records of runs a clustered recovery
-	// concluded whose write to the execution history has not yet succeeded.
+	// PendingHistory holds history records whose write has not yet
+	// succeeded: those of runs a clustered recovery concluded, and those of
+	// remote runs whose history write failed after their outcome was written.
 	// They are written in the same guarded transition as the conclusion and
 	// removed once recorded, so a failed history write survives later runs
 	// and is completed by any node.

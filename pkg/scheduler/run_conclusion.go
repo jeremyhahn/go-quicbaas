@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"time"
 )
 
@@ -122,7 +123,7 @@ func (s *SchedulerEngine) concludeOwnRun(ctx context.Context, job *Job) (guarded
 		return false, false
 	}
 	own, ok := ctx.Value(ownRunKey{}).(ownRun)
-	if !ok {
+	if !ok || own.run == nil {
 		return false, false
 	}
 	// The execution carries the run it owns, so its conclusion always goes
@@ -179,6 +180,64 @@ type ownRunResult struct {
 
 func withOwnRun(ctx context.Context, own ownRun) context.Context {
 	return context.WithValue(ctx, ownRunKey{}, own)
+}
+
+// runResultOf returns the result an execution must report for the run it
+// owns, or nil when no caller waits on it.
+func runResultOf(ctx context.Context) *ownRunResult {
+	own, ok := ctx.Value(ownRunKey{}).(ownRun)
+	if !ok {
+		return nil
+	}
+	return own.result
+}
+
+// noteWriteError records a write of the run's outcome that failed, keeping
+// the first one. A nil result (no caller waits) ignores it.
+func (r *ownRunResult) noteWriteError(err error) {
+	if r != nil && err != nil && r.err == nil {
+		r.err = err
+	}
+}
+
+// historyWriteFailed handles a run's history write that failed after its
+// outcome was written. For a run whose result a caller waits on (a remote
+// worker's completion), the record is kept pending on the job, where the
+// next execution or any recovery writes it; only if that also fails is the
+// caller told the result was not recorded. Other runs keep the best-effort
+// history they had.
+func (s *SchedulerEngine) historyWriteFailed(ctx context.Context, job *Job, exec *JobExecution, err error) {
+	res := runResultOf(ctx)
+	if res == nil {
+		return
+	}
+	if keepErr := s.keepHistoryPending(ctx, job, exec); keepErr != nil {
+		res.noteWriteError(ErrStorageError{Op: "SaveExecution", Cause: errors.Join(err, keepErr)})
+	}
+}
+
+// keepHistoryPending appends exec to the job's PendingHistory under a
+// stable ID. An absent job keeps nothing. The write is taken under the job's
+// stripe lock, as every other single-node write of the job is.
+func (s *SchedulerEngine) keepHistoryPending(ctx context.Context, job *Job, exec *JobExecution) error {
+	lock := s.jobLock(job.ID)
+	lock.Lock()
+	defer lock.Unlock()
+
+	rec := *exec
+	if rec.ID == 0 {
+		id, err := stableExecutionID(rec.EndedAt)
+		if err != nil {
+			return err
+		}
+		rec.ID = id
+	}
+	_, err := s.mutateJob(ctx, job.ID, JobTenantID(job), func(held *Job) (*Job, error) {
+		next := *held
+		next.PendingHistory = append(append([]*JobExecution(nil), held.PendingHistory...), &rec)
+		return &next, nil
+	})
+	return err
 }
 
 // runKey names a job across tenants: two tenants' jobs may share an ID, so
