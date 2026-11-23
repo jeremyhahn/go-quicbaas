@@ -115,7 +115,7 @@
   import { tenantOptionsOf, withRequiredTenants, type TenantOption } from '../lib/tenantOptions.ts';
   import { fleetStore, refreshFleet } from '../stores/fleetStore.svelte.ts';
   import { isWailsRuntime } from '@quicbaas/sdk';
-  import { getSDKClient } from '../stores/sdkClient.ts';
+  import { getSDKClient, getOriginSDKClient } from '../stores/sdkClient.ts';
 
   // Components
   import StatusBadge from '../components/core/StatusBadge.svelte';
@@ -464,7 +464,7 @@
     if (typeof window === 'undefined') return;
     const token = readAuthToken();
     try {
-      const client = await getSDKClient();
+      const client = await getOriginSDKClient();
       await client.auth.logout(token);
     } catch {
       // Server-side revoke errors shouldn't block the UI from clearing local

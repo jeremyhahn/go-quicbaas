@@ -20,6 +20,8 @@
   in a browser today, so the other transports are listed but disabled. Under
   Wails the transport is 'wails' and the view is read-only. An address on
   another origin is saved only after a probe of its readiness endpoint answers.
+  Applying or resetting the address reloads the page, so nothing loaded from
+  the previous daemon stays on screen or keeps streaming.
 -->
 <script lang="ts">
   import PageHeader from '../../components/core/PageHeader.svelte';
@@ -36,6 +38,7 @@
   } from '../../stores/connection.svelte.ts';
   import { activeConnection, resetSDKClient } from '../../stores/sdkClient.ts';
   import { showToast } from '../../stores/toast.svelte.ts';
+  import { reloadApp } from '../../lib/reloadApp.ts';
 
   const UNAVAILABLE = 'not available in the browser yet';
   const BROWSER_STUBS = ['grpc-web', 'quic', 'mcp'];
@@ -83,7 +86,7 @@
     resetSDKClient();
     setConnected(origin, 'rest');
     refresh();
-    showToast('success', 'Connection updated');
+    reloadApp();
   }
 
   function resetToDefault(): void {
@@ -92,7 +95,7 @@
     resetSDKClient();
     setConnected(window.location.origin, 'rest');
     refresh();
-    showToast('success', 'Connection reset to default');
+    reloadApp();
   }
 </script>
 

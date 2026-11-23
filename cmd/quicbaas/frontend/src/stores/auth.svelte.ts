@@ -39,7 +39,7 @@
  * propagate template updates across module boundaries in this Svelte 5 build.
  */
 
-import { getSDKClient } from './sdkClient.ts';
+import { getOriginSDKClient } from './sdkClient.ts';
 
 export type AuthStatus = 'pending' | 'authenticated' | 'unauthenticated';
 
@@ -1221,7 +1221,7 @@ export async function validateSession(): Promise<void> {
     return;
   }
   try {
-    const client = await getSDKClient();
+    const client = await getOriginSDKClient();
     const ok = await client.auth.authValidate(token);
     commit(
       ok ? 'authenticated' : 'unauthenticated',

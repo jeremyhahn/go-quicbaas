@@ -93,6 +93,13 @@ vi.mock('../src/stores/sdkClient.ts', () => ({
       loginPIV: mockLoginPIV,
     },
   })),
+  getOriginSDKClient: vi.fn(async () => ({
+    auth: {
+      webAuthnBeginLogin: mockWebAuthnBeginLogin,
+      webAuthnFinishLogin: mockWebAuthnFinishLogin,
+      loginPIV: mockLoginPIV,
+    },
+  })),
 }));
 
 // ---------------------------------------------------------------------------

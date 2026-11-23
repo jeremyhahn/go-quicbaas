@@ -35,6 +35,10 @@
  *
  * This is the single auth choke point for the SPA: no per-call header wiring
  * lives in the orchestrator/KMS/IAM stores.
+ *
+ * Two clients: getSDKClient follows the Connection view's override, while
+ * getOriginSDKClient always talks to the page's own daemon and carries the
+ * session calls (sign-in, validation, sign-out).
  */
 
 import { createClient, isWailsRuntime } from '@quicbaas/sdk';
@@ -107,4 +111,31 @@ export function activeConnection(): { transport: string; address: string; overri
 export function resetSDKClient(): void {
   _client = null;
   _initPromise = null;
+  _originClient = null;
+  _originInit = null;
+}
+
+let _originClient: Client | null = null;
+let _originInit: Promise<Client> | null = null;
+
+/**
+ * getOriginSDKClient returns the client for the page's own daemon. Sign-in,
+ * registration, invite activation, session validation and sign-out use it, so
+ * a session always lives on the daemon that issued it, whatever the
+ * Connection view points the other calls at. It never reads the connection
+ * override for its address. Under Wails, or with no override saved, both point
+ * at the same daemon, so it is the getSDKClient client.
+ */
+export async function getOriginSDKClient(): Promise<Client> {
+  if (isWailsRuntime() || connectionOverride() === null) return getSDKClient();
+  if (_originClient !== null) return _originClient;
+  if (_originInit !== null) return _originInit;
+
+  const token = async (): Promise<string> => getValidAccessToken();
+  _originInit = (async (): Promise<Client> => {
+    const baseURL = typeof window !== 'undefined' ? window.location.origin : '';
+    _originClient = await createClient({ transport: 'rest', baseURL, token });
+    return _originClient;
+  })();
+  return _originInit;
 }

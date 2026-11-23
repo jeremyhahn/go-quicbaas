@@ -46,7 +46,7 @@
   import { routeDashboard } from '../../stores/router.svelte.ts';
   import { setConnected } from '../../stores/connection.svelte.ts';
   import { setAuthenticated, authStore, clearSessionEndReason } from '../../stores/auth.svelte.ts';
-  import { getSDKClient } from '../../stores/sdkClient.ts';
+  import { getOriginSDKClient } from '../../stores/sdkClient.ts';
   import { parseRequestOptions, encodeAssertionResponse } from '../../lib/webauthn.ts';
   import type { AuthTokenResponse } from '@quicbaas/sdk';
 
@@ -248,7 +248,7 @@
     errorMessage = '';
 
     try {
-      const client = await getSDKClient();
+      const client = await getOriginSDKClient();
 
       // Step 1: Begin login — fetch WebAuthn challenge from server via SDK.
       //
@@ -329,7 +329,7 @@
     errorMessage = '';
     clearSessionEndReason();
     try {
-      const client = await getSDKClient();
+      const client = await getOriginSDKClient();
       const tokens = await client.auth.loginPIV();
       handleAuthSuccess(tokens);
     } catch (e: unknown) {

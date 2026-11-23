@@ -15,8 +15,13 @@ vi.mock('../src/stores/toast.svelte.ts', () => ({
   showToast: vi.fn(),
 }));
 
+vi.mock('../src/lib/reloadApp.ts', () => ({
+  reloadApp: vi.fn(),
+}));
+
 import ConnectionView from '../src/views/settings/ConnectionView.svelte';
 import { showToast } from '../src/stores/toast.svelte.ts';
+import { reloadApp } from '../src/lib/reloadApp.ts';
 import {
   connectionOverride,
   connectionStore,
@@ -96,7 +101,7 @@ describe('ConnectionView', () => {
     expect(confirmSpy).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
     expect(connectionOverride()).toEqual({ transport: 'rest', baseURL: window.location.origin });
-    expect(showToast).toHaveBeenCalledWith('success', 'Connection updated');
+    expect(reloadApp).toHaveBeenCalledTimes(1);
   });
 
   it('does not save another origin when the confirm is declined', async () => {
@@ -110,6 +115,7 @@ describe('ConnectionView', () => {
       'Requests and your session token will go to https://other.example:8443. Continue?',
     );
     expect(connectionOverride()).toBeNull();
+    expect(reloadApp).not.toHaveBeenCalled();
   });
 
   it('saves another origin when the confirm is accepted', async () => {
@@ -133,6 +139,7 @@ describe('ConnectionView', () => {
     await waitFor(() => {
       expect(screen.getByTestId('connection-source').textContent).toBe('Custom');
     });
+    await waitFor(() => expect(reloadApp).toHaveBeenCalledTimes(1));
   });
 
   it('does not save another origin the page cannot reach', async () => {
@@ -152,6 +159,7 @@ describe('ConnectionView', () => {
     expect(connectionStore.address).toBe(window.location.origin);
     expect(screen.getByTestId('connection-source').textContent).toBe('Default');
     expect(showToast).not.toHaveBeenCalledWith('success', expect.anything());
+    expect(reloadApp).not.toHaveBeenCalled();
   });
 
   it('clears the reach error when the address changes', async () => {
@@ -183,6 +191,7 @@ describe('ConnectionView', () => {
     await waitFor(() =>
       expect(showToast).toHaveBeenCalledWith('error', 'Browser storage is unavailable'),
     );
+    expect(reloadApp).not.toHaveBeenCalled();
   });
 
   it('resets a custom override to the default', async () => {
@@ -195,6 +204,7 @@ describe('ConnectionView', () => {
     await waitFor(() => {
       expect(screen.queryByRole('button', { name: 'Reset to default' })).toBeNull();
     });
+    await waitFor(() => expect(reloadApp).toHaveBeenCalledTimes(1));
   });
 
   it('hides Reset to default without an override', () => {

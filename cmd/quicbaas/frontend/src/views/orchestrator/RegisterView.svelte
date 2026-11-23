@@ -34,7 +34,7 @@
   import { routeLogin, routeDashboard } from '../../stores/router.svelte.ts';
   import { setConnected } from '../../stores/connection.svelte.ts';
   import { setAuthenticated } from '../../stores/auth.svelte.ts';
-  import { getSDKClient } from '../../stores/sdkClient.ts';
+  import { getOriginSDKClient } from '../../stores/sdkClient.ts';
   import { parseCreationOptions, encodeAttestationResponse } from '../../lib/webauthn.ts';
   import type { SelfRegisterFinishResponse } from '@quicbaas/sdk';
 
@@ -100,7 +100,7 @@
     stage = 'ceremony';
 
     try {
-      const client = await getSDKClient();
+      const client = await getOriginSDKClient();
 
       // Step 1: begin — server returns a WebAuthn challenge.
       const beginResp = await client.auth.registerBegin({
