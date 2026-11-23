@@ -566,6 +566,15 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	"quicbaas_fleet_disable": {"orchestrator", "agent_remove"},
 	"quicbaas_fleet_enable":  {"orchestrator", "agent_register"},
 
+	// Fleet placement specs (go-quicbaas#1681), as on REST and gRPC.
+	"quicbaas_fleet_placement_declare":        {"placement", "manage"},
+	"quicbaas_fleet_placement_get":            {"placement", "read"},
+	"quicbaas_fleet_placement_list":           {"placement", "read"},
+	"quicbaas_fleet_placement_withdraw":       {"placement", "manage"},
+	"quicbaas_fleet_placement_drift":          {"placement", "read"},
+	"quicbaas_fleet_placement_consent_list":   {"placement", "read"},
+	"quicbaas_fleet_placement_consent_answer": {"placement", "consent"},
+
 	// PEP access checks -> permissions:resolve, matching the REST rules for
 	// POST /api/v1/iam/check and /check/batch.
 	"quicbaas_pep_check":       {"permissions", "resolve"},

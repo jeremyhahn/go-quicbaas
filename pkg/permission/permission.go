@@ -290,6 +290,10 @@ const (
 	// deregisters node facts and cordons, uncordons and drains nodes: it
 	// changes the pool every placement decides over.
 	PlacementManage qrdbsdk.Permission = "placement:manage"
+
+	// PlacementConsent ("placement:consent") answers a per-move placement
+	// consent request: agrees to or refuses moving work that holds custody.
+	PlacementConsent qrdbsdk.Permission = "placement:consent"
 )
 
 // Service registry permissions.
@@ -772,6 +776,10 @@ var contributions = []contribution{
 	{permission: PlacementRead, roles: []string{qrdbsdk.PermissionRoleAdmin, qrdbsdk.PermissionRoleOperator}, duty: dutyOutsideSecurityOfficer, scope: scopeSelf},
 	{permission: PlacementPlace, roles: []string{qrdbsdk.PermissionRoleAdmin, qrdbsdk.PermissionRoleOperator}, duty: dutyOutsideSecurityOfficer, scope: scopeSelf},
 	{permission: PlacementManage, roles: []string{qrdbsdk.PermissionRoleAdmin}, duty: dutyOutsideSecurityOfficer, scope: scopeSelf},
+	// A consent grant lets custody-bearing work leave its host, so it is
+	// administrative and Admin's alone among the built-ins, like
+	// placement:manage. It touches no key material or module governance.
+	{permission: PlacementConsent, roles: []string{qrdbsdk.PermissionRoleAdmin}, duty: dutyOutsideSecurityOfficer, scope: scopeSelf},
 }
 
 // All returns every permission QuicBaaS contributes to qrdb's registry, in a

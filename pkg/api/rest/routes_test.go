@@ -157,9 +157,14 @@ import (
 // PLUS 9 for the service plane (/api/v1/services, handlers_services.go,
 // #1687): list, deploy, redeploy, get, undeploy, start, stop, resume and
 // restart under services:read, services:deploy and services:control.
+// PLUS 5 for the fleet placement specs (/api/v1/fleet/placements[/{name}
+// [/drift]], handlers_fleet_placement.go, go-quicbaas#1681) under
+// placement:read and placement:manage.
+// PLUS 2 for the fleet placement consents (GET /api/v1/fleet/placement-consents
+// and POST .../{id}/answer) under placement:read and placement:consent.
 // PLUS 1 for the capabilities report (GET /api/v1/server/capabilities,
 // handlers_capabilities.go), authenticated with no RBAC permission.
-const baseRouteTableSize = 682
+const baseRouteTableSize = 689
 
 // TestRoutes_SurfaceGuard asserts the table's structural invariants: exact
 // size, absolute patterns, no duplicate method+pattern, and a handler binder
