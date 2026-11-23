@@ -94,6 +94,7 @@ func (h *sshMCPHandler) transformRequest(method string, req interface{}) (map[st
 			"owner":      typed.Owner,
 			"name":       typed.Name,
 			"digest_b64": base64.StdEncoding.EncodeToString(typed.Digest),
+			"algorithm":  typed.Algorithm,
 		}, nil
 	}
 	return sshArgumentsFromRequest(method, req)

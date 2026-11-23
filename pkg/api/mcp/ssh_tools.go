@@ -133,6 +133,10 @@ func (r *ToolRegistry) registerSSHTools() {
 		InputSchema: scopeOwner(map[string]interface{}{
 			"name":       nameProp,
 			"digest_b64": map[string]interface{}{"type": "string", "description": "Base64-encoded digest to sign"},
+			"algorithm": map[string]interface{}{
+				"type":        "string",
+				"description": "SSH signature algorithm, e.g. rsa-sha2-256 or rsa-sha2-512 for an RSA key; empty uses the key's default",
+			},
 		}, "scope", "owner", "name", "digest_b64"),
 	})
 
@@ -317,10 +321,11 @@ func (r *ToolRegistry) executeSSHKeySign(ctx context.Context, args map[string]in
 		return nil, err
 	}
 	sig, err := r.sshService().SignDigest(ctx, service.SSHSignRequest{
-		Scope:  getString(args, "scope"),
-		Owner:  getString(args, "owner"),
-		Name:   getString(args, "name"),
-		Digest: digest,
+		Scope:     getString(args, "scope"),
+		Owner:     getString(args, "owner"),
+		Name:      getString(args, "name"),
+		Digest:    digest,
+		Algorithm: getString(args, "algorithm"),
 	})
 	if err != nil {
 		return nil, err

@@ -59,6 +59,10 @@ type Client struct {
 	// the signer reports a NotFoundError.
 	SignerPublicKey gossh.PublicKey
 
+	// KeySigner, when set, is returned by Keys().Signer as is, so a test
+	// can sign with a real key.
+	KeySigner gossh.Signer
+
 	// LastImportPassphrase records the plaintext passphrase the client was
 	// handed on the most recent Import, so tests can assert the base64
 	// passphrase survived the transport hop.
@@ -198,6 +202,9 @@ func (k *keysClient) ExportPublic(_ context.Context, req xkmsssh.ExportRequest) 
 func (k *keysClient) Signer(_ context.Context, req xkmsssh.GetKeyRequest) (gossh.Signer, error) {
 	if k.c.Err != nil {
 		return nil, k.c.Err
+	}
+	if k.c.KeySigner != nil {
+		return k.c.KeySigner, nil
 	}
 	if k.c.SignerPublicKey == nil {
 		return nil, &xkmsssh.NotFoundError{Resource: "key", Message: req.Name}

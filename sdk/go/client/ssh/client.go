@@ -231,6 +231,12 @@ func (k *keysClient) ExportPublic(ctx context.Context, req ExportRequest) (*Publ
 // once and every Sign call ships only the digest, so the private key never
 // leaves the server-side store.
 func (k *keysClient) Signer(ctx context.Context, req GetKeyRequest) (gossh.Signer, error) {
+	return k.newRemoteSigner(ctx, req)
+}
+
+// newRemoteSigner builds the server-held key's signer. Its signing RPCs run
+// under context.Background() unless the caller sets its ctx.
+func (k *keysClient) newRemoteSigner(ctx context.Context, req GetKeyRequest) (*remoteSigner, error) {
 	const op = "ssh.Keys.Signer"
 	pub, err := k.ExportPublic(ctx, ExportRequest{Scope: req.Scope, Owner: req.Owner, Name: req.Name})
 	if err != nil {
@@ -248,6 +254,10 @@ type remoteSigner struct {
 	t   transport.Transport
 	ref GetKeyRequest
 	pub gossh.PublicKey
+	// ctx bounds the signing RPC. Session.Dial sets it to the dial's
+	// deadline-bound context; a signer from Keys().Signer leaves it nil and
+	// signs under context.Background().
+	ctx context.Context
 }
 
 // PublicKey returns the signer's public half.
@@ -256,16 +266,29 @@ func (s *remoteSigner) PublicKey() gossh.PublicKey { return s.pub }
 // Sign ships the digest to the server and returns the resulting signature.
 // The io.Reader is ignored: randomness is the server's responsibility, which
 // is where the private key lives.
-func (s *remoteSigner) Sign(_ io.Reader, data []byte) (*gossh.Signature, error) {
+func (s *remoteSigner) Sign(r io.Reader, data []byte) (*gossh.Signature, error) {
+	return s.SignWithAlgorithm(r, data, "")
+}
+
+// SignWithAlgorithm signs data on the server with the named SSH signature
+// algorithm, e.g. rsa-sha2-256 or rsa-sha2-512 for an RSA key. An empty
+// algorithm signs with the key's default algorithm. Implementing
+// ssh.AlgorithmSigner lets an SSH client negotiate the RSA SHA-2 algorithms.
+func (s *remoteSigner) SignWithAlgorithm(_ io.Reader, data []byte, algorithm string) (*gossh.Signature, error) {
 	const op = "ssh.Keys.Signer.Sign"
 	if len(data) == 0 {
 		return nil, errors.NewInvalidInput(op, "digest is required")
 	}
-	resp, err := s.t.Request(context.Background(), ServiceName, MethodSignDigest, &SignRequest{
-		Scope:  s.ref.Scope,
-		Owner:  s.ref.Owner,
-		Name:   s.ref.Name,
-		Digest: data,
+	ctx := s.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	resp, err := s.t.Request(ctx, ServiceName, MethodSignDigest, &SignRequest{
+		Scope:     s.ref.Scope,
+		Owner:     s.ref.Owner,
+		Name:      s.ref.Name,
+		Digest:    data,
+		Algorithm: algorithm,
 	})
 	if err != nil {
 		return nil, err
@@ -569,28 +592,37 @@ func (s sessionClient) Dial(ctx context.Context, req SessionDialRequest) (Sessio
 	if req.TimeoutSeconds < 0 {
 		return nil, errors.NewInvalidInput(op, "timeout must not be negative")
 	}
-	signer, err := s.keys.Signer(ctx, GetKeyRequest{Scope: req.KeyScope, Owner: req.KeyOwner, Name: req.KeyName})
-	if err != nil {
-		return nil, err
-	}
-	pinScope, pinOwner := req.HostKeyScope, req.HostKeyOwner
-	if pinScope == "" && pinOwner == "" {
-		pinScope, pinOwner = req.KeyScope, req.KeyOwner
-	}
 	timeout := defaultDialTimeout
 	if req.TimeoutSeconds > 0 {
 		timeout = time.Duration(req.TimeoutSeconds) * time.Second
+	}
+	// The dial context bounds the whole handshake, including the signing
+	// and host-key pin RPCs its callbacks make, so a stalled RPC cannot
+	// hold Dial past its timeout.
+	dialCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	signer, err := s.keys.newRemoteSigner(dialCtx, GetKeyRequest{Scope: req.KeyScope, Owner: req.KeyOwner, Name: req.KeyName})
+	if err != nil {
+		return nil, err
+	}
+	signer.ctx = dialCtx
+	pinScope, pinOwner := req.HostKeyScope, req.HostKeyOwner
+	if pinScope == "" {
+		pinScope = req.KeyScope
+	}
+	if pinOwner == "" {
+		pinOwner = req.KeyOwner
 	}
 	port := req.Port
 	if port == 0 {
 		port = 22
 	}
-	conn, err := xkmssession.DialClient(ctx, xkmssession.ClientParams{
+	conn, err := xkmssession.DialClient(dialCtx, xkmssession.ClientParams{
 		Host:            req.Host,
 		Port:            port,
 		User:            req.User,
 		Signer:          signer,
-		HostKeyCallback: s.hosts.Callback(ctx, pinScope, pinOwner),
+		HostKeyCallback: s.hosts.Callback(dialCtx, pinScope, pinOwner),
 		Timeout:         timeout,
 	})
 	if err != nil {

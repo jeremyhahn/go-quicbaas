@@ -37,21 +37,38 @@ type dialTransport struct {
 
 	user gossh.Signer
 	pins []*Pin
+	// block names a method whose request waits until its context ends.
+	block string
 
-	mu        sync.Mutex
-	methods   []string
-	pinScopes []ListKnownHostsRequest
+	mu         sync.Mutex
+	methods    []string
+	pinScopes  []ListKnownHostsRequest
+	algorithms []string
 }
 
-func (d *dialTransport) Request(_ context.Context, _, method string, req interface{}) (interface{}, error) {
+func (d *dialTransport) Request(ctx context.Context, _, method string, req interface{}) (interface{}, error) {
 	d.mu.Lock()
 	d.methods = append(d.methods, method)
 	d.mu.Unlock()
+	if method == d.block {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
 	switch method {
 	case MethodExportPublicKey:
 		return &PublicKey{Line: string(gossh.MarshalAuthorizedKey(d.user.PublicKey()))}, nil
 	case MethodSignDigest:
-		sig, err := d.user.Sign(rand.Reader, req.(*SignRequest).Digest)
+		sr := req.(*SignRequest)
+		d.mu.Lock()
+		d.algorithms = append(d.algorithms, sr.Algorithm)
+		d.mu.Unlock()
+		var sig *gossh.Signature
+		var err error
+		if as, ok := d.user.(gossh.AlgorithmSigner); ok && sr.Algorithm != "" {
+			sig, err = as.SignWithAlgorithm(rand.Reader, sr.Digest, sr.Algorithm)
+		} else {
+			sig, err = d.user.Sign(rand.Reader, sr.Digest)
+		}
 		if err != nil {
 			return nil, err
 		}

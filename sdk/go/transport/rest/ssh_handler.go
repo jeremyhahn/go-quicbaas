@@ -175,8 +175,9 @@ func (h *sshRESTHandler) handleSignDigest(ctx context.Context, req interface{}) 
 		return nil, errors.NewInvalidInput("ssh.SignDigest", "invalid request type")
 	}
 	body := struct {
-		Digest []byte `json:"digest"`
-	}{Digest: sdkReq.Digest}
+		Digest    []byte `json:"digest"`
+		Algorithm string `json:"algorithm,omitempty"`
+	}{Digest: sdkReq.Digest, Algorithm: sdkReq.Algorithm}
 	var out sshclient.SignResponse
 	if err := h.transport.doJSONRequest(ctx, http.MethodPost,
 		sshKeyPath(sdkReq.Scope, sdkReq.Owner, sdkReq.Name, "/sign"), body, &out); err != nil {

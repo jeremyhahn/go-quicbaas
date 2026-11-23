@@ -188,6 +188,7 @@ func (s *SSHServer) SignSSHDigest(ctx context.Context, req *pb.SSHSignDigestRequ
 	}
 	sig, err := s.sshSvc.SignDigest(ctx, service.SSHSignRequest{
 		Scope: req.Scope, Owner: req.Owner, Name: req.Name, Digest: req.Digest,
+		Algorithm: req.GetAlgorithm(),
 	})
 	if err != nil {
 		return nil, convertSSHError(err)
@@ -411,6 +412,10 @@ func convertSSHError(err error) error {
 	}
 	var missingDigest *service.SSHMissingDigestError
 	if stderrors.As(err, &missingDigest) {
+		return status.Error(codes.InvalidArgument, err.Error())
+	}
+	var badAlgorithm *service.SSHSignAlgorithmError
+	if stderrors.As(err, &badAlgorithm) {
 		return status.Error(codes.InvalidArgument, err.Error())
 	}
 	var badPassphrase *service.SSHPassphraseDecodeError

@@ -196,6 +196,7 @@ func handleSSHSignDigest(ctx context.Context, conn *grpc.ClientConn, req interfa
 	}
 	resp, err := pb.NewSSHServiceClient(conn).SignSSHDigest(ctx, &pb.SSHSignDigestRequest{
 		Scope: sdkReq.Scope, Owner: sdkReq.Owner, Name: sdkReq.Name, Digest: sdkReq.Digest,
+		Algorithm: sdkReq.Algorithm,
 	})
 	if err != nil {
 		return nil, convertGRPCError(err, op)

@@ -115,6 +115,9 @@ type sshEmitResponse struct {
 // digest is raw bytes — clients base64-encode it per JSON conventions.
 type sshSignRequest struct {
 	Digest []byte `json:"digest"`
+	// Algorithm is the SSH signature algorithm to sign with; empty signs
+	// with the key's default algorithm.
+	Algorithm string `json:"algorithm,omitempty"`
 }
 
 // sshSignResponse mirrors *ssh.Signature.
@@ -362,10 +365,11 @@ func (s *Server) HandleSignSSHDigest(w http.ResponseWriter, r *http.Request) {
 	// (and QUIC, which serves through this handler) record the same
 	// ssh.key.sign event as gRPC, MCP and the embedded transport.
 	sig, err := service.SSHServiceFor(s.service).SignDigest(r.Context(), service.SSHSignRequest{
-		Scope:  chi.URLParam(r, "scope"),
-		Owner:  chi.URLParam(r, "owner"),
-		Name:   chi.URLParam(r, "name"),
-		Digest: req.Digest,
+		Scope:     chi.URLParam(r, "scope"),
+		Owner:     chi.URLParam(r, "owner"),
+		Name:      chi.URLParam(r, "name"),
+		Digest:    req.Digest,
+		Algorithm: req.Algorithm,
 	})
 	if err != nil {
 		writeSSHError(w, err)
@@ -684,6 +688,10 @@ func sshErrorStatus(err error) int {
 	}
 	var missingDigest *SSHMissingDigestError
 	if stderrors.As(err, &missingDigest) {
+		return http.StatusBadRequest
+	}
+	var badAlgorithm *service.SSHSignAlgorithmError
+	if stderrors.As(err, &badAlgorithm) {
 		return http.StatusBadRequest
 	}
 	var hostNotPinned *SSHHostNotPinnedError

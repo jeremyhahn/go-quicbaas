@@ -119,10 +119,11 @@ func handleSSHSignDigest(ctx context.Context, svc service.QuicBaaS, req interfac
 		return nil, sshTypeError(sshclient.MethodSignDigest, "*ssh.SignRequest", req)
 	}
 	sig, err := sshService(svc).SignDigest(ctx, service.SSHSignRequest{
-		Scope:  sdkReq.Scope,
-		Owner:  sdkReq.Owner,
-		Name:   sdkReq.Name,
-		Digest: sdkReq.Digest,
+		Scope:     sdkReq.Scope,
+		Owner:     sdkReq.Owner,
+		Name:      sdkReq.Name,
+		Digest:    sdkReq.Digest,
+		Algorithm: sdkReq.Algorithm,
 	})
 	if err != nil {
 		return nil, err
