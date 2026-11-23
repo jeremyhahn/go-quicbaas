@@ -150,6 +150,9 @@ type JobExecution struct {
 	Duration  time.Duration `json:"duration,omitempty"`
 	Error     string        `json:"error,omitempty"`
 	Output    string        `json:"output,omitempty"`
+	// Result is the run's output bytes (JobResult.Output), kept with its
+	// history so a handler or remote worker reporting only bytes loses nothing.
+	Result []byte `json:"result,omitempty"`
 }
 
 // JobResult is returned by job handlers after execution.

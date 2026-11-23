@@ -55,17 +55,19 @@ func (s *SchedulerEngine) executionOwner() string {
 // noteRunStarted remembers the identity of the run this node just moved to
 // Running, so its outcome can be concluded through the guard. Only a
 // clustered engine with a concluder needs it.
-func (s *SchedulerEngine) noteRunStarted(job *Job) {
+func (s *SchedulerEngine) noteRunStarted(ctx context.Context, job *Job) context.Context {
 	if s.concluder == nil {
-		return
+		return ctx
 	}
-	s.startedRuns.Store(runKeyOf(job), RunConclusion{
+	run := RunConclusion{
 		JobID:     job.ID,
 		TenantID:  JobTenantID(job),
 		Firing:    job.NextRun,
 		StartedAt: runStartedAt(job),
 		Owner:     s.executionOwner(),
-	})
+	}
+	s.startedRuns.Store(runKeyOf(job), run)
+	return withOwnRun(ctx, ownRun{run: &run})
 }
 
 // concludeOwnRun takes the guard for the run this node started on the job,
@@ -78,30 +80,21 @@ func (s *SchedulerEngine) concludeOwnRun(ctx context.Context, job *Job) bool {
 	if s.concluder == nil {
 		return true
 	}
-	key := runKeyOf(job)
-	v, ok := s.startedRuns.Load(key)
+	own, ok := ctx.Value(ownRunKey{}).(ownRun)
 	if !ok {
+		// No run was started by this execution (it failed before the
+		// Running transition): there is no run to conclude.
 		return true
 	}
-	run, ok := v.(RunConclusion)
-	if !ok {
-		s.logError("Job %d: started run is a %T, not a RunConclusion; its outcome is dropped", job.ID, v)
-		return false
+	if own.concluded {
+		return true // this execution's caller already won the run's mark
 	}
-	// The entry belongs to the run this outcome is for only when the run's
-	// start instant matches (the firing cannot be compared: a recurring
-	// job's outcome has already moved NextRun on). An old execution finishing
-	// after a newer run of the job started must neither consume the newer
-	// run's entry nor conclude it.
-	if !run.StartedAt.Equal(runStartedAt(job)) {
-		s.concludedElsewhere.Add(1)
-		s.logWarn("Job %d: outcome of a superseded run (firing %s) is dropped", job.ID, job.NextRun)
-		return false
-	}
-	if !s.startedRuns.CompareAndDelete(key, v) {
-		s.concludedElsewhere.Add(1)
-		return false
-	}
+	// The execution carries the run it started, so its conclusion always
+	// goes through the guard, whatever the job's bookkeeping now holds: an
+	// old execution finishing after a newer run concluded loses to that
+	// run's mark, and removes only its own entry.
+	run := *own.run
+	s.startedRuns.CompareAndDelete(runKeyOf(job), run)
 	won, err := s.concluder.ConcludeRun(ctx, &run)
 	if err != nil {
 		s.storageErrors.Add(1)
@@ -114,6 +107,20 @@ func (s *SchedulerEngine) concludeOwnRun(ctx context.Context, job *Job) bool {
 		return false
 	}
 	return true
+}
+
+// ownRunKey is the context key of the run an execution started.
+type ownRunKey struct{}
+
+// ownRun is an execution's authority over the run it started: the run to
+// conclude, or concluded when the caller already won the run's mark.
+type ownRun struct {
+	run       *RunConclusion
+	concluded bool
+}
+
+func withOwnRun(ctx context.Context, own ownRun) context.Context {
+	return context.WithValue(ctx, ownRunKey{}, own)
 }
 
 // runKey names a job across tenants: two tenants' jobs may share an ID, so

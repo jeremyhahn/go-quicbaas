@@ -1441,7 +1441,9 @@ func (s *SchedulerEngine) executeJob(ctx context.Context, job *Job, claimedFirin
 		s.storageErrors.Add(1)
 		return
 	}
-	s.noteRunStarted(job)
+	// From here the execution carries the run it started (its conclusion
+	// authority) through every outcome path.
+	ctx = s.noteRunStarted(ctx, job)
 	var waiter *remoteWaiter
 	if remote {
 		// A remote worker runs this job: the execution waits for the
@@ -1618,6 +1620,7 @@ func (s *SchedulerEngine) handleJobSuccess(ctx context.Context, job *Job, exec *
 	exec.Status = JobStatusCompleted
 	if result != nil {
 		exec.Output = result.Message
+		exec.Result = result.Output
 	}
 
 	job.LastRun = now

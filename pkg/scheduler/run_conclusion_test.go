@@ -145,7 +145,7 @@ func TestClusteredOutcome_LosesToARecoveryThatConcludedTheRun(t *testing.T) {
 	executor := clusteredNode(t, storage, "node-1")
 	recoverer := clusteredNode(t, storage, "node-2")
 	job := seedRunningJob(t, storage.mockJobStorage, runningRecoveryJob())
-	executor.noteRunStarted(job)
+	runCtx := executor.noteRunStarted(context.Background(), job)
 
 	if _, err := recoverer.RecoverAbandonedRun(context.Background(), job, goodAttestation()); err != nil {
 		t.Fatalf("RecoverAbandonedRun: %v", err)
@@ -154,7 +154,7 @@ func TestClusteredOutcome_LosesToARecoveryThatConcludedTheRun(t *testing.T) {
 
 	late := copyJob(job)
 	late.Status = JobStatusCompleted
-	executor.persistJobOutcome(context.Background(), late)
+	executor.persistJobOutcome(runCtx, late)
 
 	stored := storedJob(t, storage.mockJobStorage, job.ID)
 	if stored.Status != recovered.Status || stored.FailCount != recovered.FailCount {
@@ -175,13 +175,13 @@ func TestClusteredOutcome_ALosingOutcomeWritesNoHistory(t *testing.T) {
 	executor := clusteredNode(t, storage, "node-1")
 	recoverer := clusteredNode(t, storage, "node-2")
 	job := seedRunningJob(t, storage.mockJobStorage, runningRecoveryJob())
-	executor.noteRunStarted(job)
+	runCtx := executor.noteRunStarted(context.Background(), job)
 
 	if _, err := recoverer.RecoverAbandonedRun(context.Background(), job, goodAttestation()); err != nil {
 		t.Fatalf("RecoverAbandonedRun: %v", err)
 	}
 	exec := &JobExecution{JobID: job.ID, Status: JobStatusRunning, StartedAt: time.Now()}
-	executor.handleJobSuccess(context.Background(), copyJob(job), exec, &JobResult{Success: true})
+	executor.handleJobSuccess(runCtx, copyJob(job), exec, &JobResult{Success: true})
 
 	executions, err := storage.GetExecutions(context.Background(), job.ID, "", 10)
 	if err != nil {
@@ -200,8 +200,8 @@ func TestRecoverAbandonedRun_RefusedWhenTheExecutorConcludedFirst(t *testing.T) 
 	executor := clusteredNode(t, storage, "node-1")
 	recoverer := clusteredNode(t, storage, "node-2")
 	job := seedRunningJob(t, storage.mockJobStorage, runningRecoveryJob())
-	executor.noteRunStarted(job)
-	if !executor.concludeOwnRun(context.Background(), job) {
+	runCtx := executor.noteRunStarted(context.Background(), job)
+	if !executor.concludeOwnRun(runCtx, job) {
 		t.Fatal("the executor lost the guard for its own run with no contender")
 	}
 

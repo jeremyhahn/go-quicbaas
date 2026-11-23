@@ -124,12 +124,12 @@ func TestRunKey_EqualJobIDsAcrossTenantsDoNotCollide(t *testing.T) {
 	now := time.Now()
 	a := &Job{ID: 7, OwnerType: OwnerTypeTenant, OwnerID: "tenant-a", NextRun: now, RunStartedAt: now}
 	b := &Job{ID: 7, OwnerType: OwnerTypeTenant, OwnerID: "tenant-b", NextRun: now.Add(time.Hour), RunStartedAt: now.Add(time.Hour)}
-	node.noteRunStarted(a)
-	node.noteRunStarted(b)
+	ctxA := node.noteRunStarted(context.Background(), a)
+	node.noteRunStarted(context.Background(), b)
 	if _, ok := node.startedRuns.Load(runKeyOf(a)); !ok {
 		t.Fatal("tenant-b's run overwrote tenant-a's started run")
 	}
-	if !node.concludeOwnRun(context.Background(), a) {
+	if !node.concludeOwnRun(ctxA, a) {
 		t.Fatal("tenant-a's run did not conclude")
 	}
 	if _, ok := node.startedRuns.Load(runKeyOf(b)); !ok {
@@ -140,15 +140,53 @@ func TestRunKey_EqualJobIDsAcrossTenantsDoNotCollide(t *testing.T) {
 // An old execution finishing after a newer run started neither consumes the
 // newer run's entry nor concludes it.
 func TestConcludeOwnRun_ASupersededRunLeavesTheNewerRun(t *testing.T) {
-	node := clusteredNode(t, newConcludingStorage(), "node-1")
-	now := time.Now()
-	old := &Job{ID: 9, NextRun: now, RunStartedAt: now}
-	newer := &Job{ID: 9, NextRun: now.Add(time.Hour), RunStartedAt: now.Add(time.Hour)}
-	node.noteRunStarted(newer)
-	if node.concludeOwnRun(context.Background(), old) {
-		t.Fatal("the superseded run's outcome was accepted")
+	storage := newConcludingStorage()
+	node := clusteredNode(t, storage, "node-1")
+	started := time.Now().Add(-time.Minute)
+	r1 := runningRemoteJob(t, storage, time.Minute, started)
+	ctx1 := node.noteRunStarted(context.Background(), copyJob(r1))
+
+	// Another node completes R1.
+	if won, err := storage.ConcludeRun(context.Background(), &RunConclusion{
+		JobID: r1.ID, TenantID: JobTenantID(r1), Firing: r1.NextRun, StartedAt: started, Owner: "remote@node-2/1",
+	}); err != nil || !won {
+		t.Fatalf("remote conclusion of R1: won=%v err=%v", won, err)
 	}
-	if _, ok := node.startedRuns.Load(runKeyOf(newer)); !ok {
-		t.Fatal("the superseded run consumed the newer run's entry")
+
+	// R2 starts and completes locally, while R1's execution still waits.
+	r2 := copyJob(r1)
+	r2.NextRun = r1.NextRun.Add(time.Hour)
+	r2.RunStartedAt = started.Add(30 * time.Second)
+	ctx2 := node.noteRunStarted(context.Background(), r2)
+	r2.Status, r2.RunCount = JobStatusPending, 1
+	if !node.persistJobOutcome(ctx2, r2) {
+		t.Fatal("R2's outcome lost the guard with no contender")
+	}
+
+	// R1's execution times out: it holds no entry any more, yet its outcome
+	// must lose to R2's conclusion rather than overwrite it.
+	node.handleJobTimeout(ctx1, copyJob(r1), &JobExecution{JobID: r1.ID, StartedAt: started}, time.Minute)
+	stored := storedJob(t, storage.mockJobStorage, r1.ID)
+	if stored.Status != JobStatusPending || stored.RunCount != 1 || stored.FailCount != 0 {
+		t.Fatalf("R1's stale timeout overwrote R2: %s, %d runs, %d failures", stored.Status, stored.RunCount, stored.FailCount)
+	}
+	if executions := history(t, storage.mockJobStorage, r1.ID); len(executions) != 0 {
+		t.Fatalf("R1's stale timeout wrote %d history records, want none", len(executions))
+	}
+}
+
+// A worker's output bytes are kept with the run's history.
+func TestRemoteHandler_TheWorkersOutputIsKeptInHistory(t *testing.T) {
+	storage := newConcludingStorage()
+	node := clusteredNode(t, storage, "node-2")
+	job := runningRemoteJob(t, storage, time.Minute, time.Now())
+	ref := runRefOf(storedJob(t, storage.mockJobStorage, job.ID))
+	result := &JobResult{Success: true, Message: "renewed", Output: []byte("-----BEGIN CERTIFICATE-----")}
+	if err := node.CompleteRemoteRun(context.Background(), ref, result, nil); err != nil {
+		t.Fatalf("CompleteRemoteRun: %v", err)
+	}
+	executions := history(t, storage.mockJobStorage, job.ID)
+	if len(executions) != 1 || string(executions[0].Result) != string(result.Output) || executions[0].Output != "renewed" {
+		t.Fatalf("history %+v does not keep the worker's output", executions)
 	}
 }
