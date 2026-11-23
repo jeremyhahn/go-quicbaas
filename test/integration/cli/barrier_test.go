@@ -180,31 +180,6 @@ func allocBarrierPort(t *testing.T) int {
 	return 0
 }
 
-// allocBarrierUDPPort reserves a free UDP port for the QUIC listener.
-func allocBarrierUDPPort(t *testing.T) int {
-	t.Helper()
-	for attempt := 0; attempt < daemonPortRetries; attempt++ {
-		conn, err := net.ListenPacket("udp", "127.0.0.1:0")
-		if err != nil {
-			continue
-		}
-		port := conn.LocalAddr().(*net.UDPAddr).Port
-		if cerr := conn.Close(); cerr != nil {
-			t.Fatalf("close port-allocation packet conn: %v", cerr)
-		}
-		allocatedBarrierPortsMu.Lock()
-		_, taken := allocatedBarrierPorts[port]
-		if !taken {
-			allocatedBarrierPorts[port] = struct{}{}
-			allocatedBarrierPortsMu.Unlock()
-			return port
-		}
-		allocatedBarrierPortsMu.Unlock()
-	}
-	t.Fatalf("allocBarrierUDPPort: %d retries exhausted", daemonPortRetries)
-	return 0
-}
-
 // allocBarrierPorts reserves the full port set the per-test daemon needs
 // to serve every transport the barrier matrix exercises. Unix socket
 // lives under the data dir so it is removed automatically when t.TempDir
@@ -212,10 +187,15 @@ func allocBarrierUDPPort(t *testing.T) int {
 // AF_UNIX 108-byte limit when t.TempDir prefixes are long.
 func allocBarrierPorts(t *testing.T, dataDir string) barrierDaemonPorts {
 	t.Helper()
+	rest := allocBarrierPort(t)
 	return barrierDaemonPorts{
-		REST: allocBarrierPort(t),
+		REST: rest,
 		GRPC: allocBarrierPort(t),
-		QUIC: allocBarrierUDPPort(t),
+		// quicbaasd starts no QUIC listener of its own: it serves QUIC as
+		// REST over HTTP/3 on the UDP side of the REST port, and no config
+		// key gives QUIC a port. Probing a separately allocated UDP port
+		// therefore never succeeds.
+		QUIC: rest,
 		MCP:  allocBarrierPort(t),
 		Unix: filepath.Join(dataDir, "d.sock"),
 	}
@@ -676,9 +656,8 @@ func startBarrierDaemonProcess(t *testing.T, binary, dataDir string, ports barri
 		// Discovery + scheduler do not add coverage to barrier tests; off.
 		"QUICBAAS_DISCOVERY_ENABLED=false",
 		"QUICBAAS_ENABLE_SCHEDULER=false",
-		// QUIC + MCP listeners have no CLI flags; drive via env.
-		"QUICBAAS_SERVER_QUIC_ENABLED=true",
-		fmt.Sprintf("QUICBAAS_SERVER_QUIC_PORT=%d", ports.QUIC),
+		// MCP has no CLI flag; drive it via env. QUIC needs no switch:
+		// HTTP/3 comes up with REST on the REST port.
 		"QUICBAAS_SERVER_MCP_ENABLED=true",
 		fmt.Sprintf("QUICBAAS_SERVER_MCP_PORT=%d", ports.MCP),
 	}
@@ -746,8 +725,14 @@ func waitForBarrierDaemonReady(ctx context.Context, d *barrierDaemon) error {
 	defer ticker.Stop()
 	caPath := filepath.Join(d.dataDir, "certs", "ca-chain.crt")
 	// lastErr keeps the most recent probe failure so a timeout names the
-	// gate that never opened.
+	// gate that never opened. A probe the start deadline itself cut short
+	// does not overwrite it: that error would only repeat the deadline.
 	var lastErr error
+	noteProbe := func(err error) {
+		if lastErr == nil || ctx.Err() == nil {
+			lastErr = err
+		}
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -760,27 +745,27 @@ func waitForBarrierDaemonReady(ctx context.Context, d *barrierDaemon) error {
 			// missing/empty chain as "not ready yet" and keep polling.
 			tlsCfg, err := barrierProbeTLSConfig(caPath)
 			if err != nil {
-				lastErr = err
+				noteProbe(err)
 				continue
 			}
 			if err := probeBarrierREST(ctx, d.ports.REST, tlsCfg); err != nil {
-				lastErr = err
+				noteProbe(err)
 				continue
 			}
 			if err := probeBarrierTCP(ctx, d.ports.GRPC); err != nil {
-				lastErr = err
+				noteProbe(err)
 				continue
 			}
 			if err := probeBarrierUDP(ctx, d.ports.QUIC); err != nil {
-				lastErr = err
+				noteProbe(err)
 				continue
 			}
 			if err := probeBarrierTLS(ctx, d.ports.MCP, tlsCfg); err != nil {
-				lastErr = err
+				noteProbe(err)
 				continue
 			}
 			if err := probeBarrierUnix(ctx, d.ports.Unix); err != nil {
-				lastErr = err
+				noteProbe(err)
 				continue
 			}
 			return nil
