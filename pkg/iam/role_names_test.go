@@ -22,6 +22,7 @@ import (
 // TestIdentityStore_RoleNames covers the derivation behind the OIDC `groups`
 // claim: the names of the roles the user is bound to.
 func TestIdentityStore_RoleNames(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	mem := NewMemoryStorage()
 	store := NewIdentityStore(IdentityStoreOptions{

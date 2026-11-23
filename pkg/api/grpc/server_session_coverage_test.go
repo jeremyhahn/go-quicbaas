@@ -177,7 +177,7 @@ func TestSessionServerCoverage_ListSessions_Success(t *testing.T) {
 	svc := NewMemorySessionService()
 	svc.CreateTestSession("t1", 30001)
 	svc.CreateTestSession("t1", 30002)
-	server := NewSessionServer(svc, userIDCallerAccounts{}, newTestSessionLogger())
+	server := NewSessionServer(svc, userIDCallerAccounts{}, newTestSessionLogger()).WithCredentialRevoker(&recordingCredentialRevoker{})
 
 	resp, err := server.ListSessions(sessionOwnerContext("t1", 30001), &iampb.ListSessionsRequest{TenantId: "t1"})
 	require.NoError(t, err)
@@ -187,7 +187,7 @@ func TestSessionServerCoverage_ListSessions_Success(t *testing.T) {
 func TestSessionServerCoverage_GetSession_Success(t *testing.T) {
 	svc := NewMemorySessionService()
 	sess := svc.CreateTestSession("t1", 30001)
-	server := NewSessionServer(svc, userIDCallerAccounts{}, newTestSessionLogger())
+	server := NewSessionServer(svc, userIDCallerAccounts{}, newTestSessionLogger()).WithCredentialRevoker(&recordingCredentialRevoker{})
 
 	resp, err := server.GetSession(sessionOwnerContext("t1", 30001), &iampb.GetSessionRequest{SessionId: sess.ID})
 	require.NoError(t, err)
@@ -197,7 +197,7 @@ func TestSessionServerCoverage_GetSession_Success(t *testing.T) {
 func TestSessionServerCoverage_RevokeSession_Success(t *testing.T) {
 	svc := NewMemorySessionService()
 	sess := svc.CreateTestSession("t1", 30001)
-	server := NewSessionServer(svc, userIDCallerAccounts{}, newTestSessionLogger())
+	server := NewSessionServer(svc, userIDCallerAccounts{}, newTestSessionLogger()).WithCredentialRevoker(&recordingCredentialRevoker{})
 
 	resp, err := server.RevokeSession(sessionOwnerContext("t1", 30001), &iampb.RevokeSessionRequest{SessionId: sess.ID})
 	require.NoError(t, err)
@@ -209,7 +209,7 @@ func TestSessionServerCoverage_RevokeAllSessions_Success(t *testing.T) {
 	svc := NewMemorySessionService()
 	svc.AddSession(&iam.Session{ID: "a", TenantID: "t1", UserID: 30001, Created: now, LastActivity: now, Expires: now.Add(time.Hour)})
 	svc.AddSession(&iam.Session{ID: "b", TenantID: "t1", UserID: 30001, Created: now, LastActivity: now, Expires: now.Add(time.Hour)})
-	server := NewSessionServer(svc, userIDCallerAccounts{}, newTestSessionLogger())
+	server := NewSessionServer(svc, userIDCallerAccounts{}, newTestSessionLogger()).WithCredentialRevoker(&recordingCredentialRevoker{})
 
 	resp, err := server.RevokeAllSessions(sessionOwnerContext("t1", 30001), &iampb.RevokeAllSessionsRequest{TenantId: "t1", UserId: "30001"})
 	require.NoError(t, err)
@@ -222,7 +222,7 @@ func TestSessionServerCoverage_RevokeOtherSessions_Success(t *testing.T) {
 	keep := svc.CreateTestSession("t1", 30001)
 	svc.AddSession(&iam.Session{ID: "o1", TenantID: "t1", UserID: 30001, Created: now, LastActivity: now, Expires: now.Add(time.Hour)})
 	svc.AddSession(&iam.Session{ID: "o2", TenantID: "t1", UserID: 30001, Created: now, LastActivity: now, Expires: now.Add(time.Hour)})
-	server := NewSessionServer(svc, userIDCallerAccounts{}, newTestSessionLogger())
+	server := NewSessionServer(svc, userIDCallerAccounts{}, newTestSessionLogger()).WithCredentialRevoker(&recordingCredentialRevoker{})
 
 	resp, err := server.RevokeOtherSessions(sessionOwnerContext("t1", 30001), &iampb.RevokeOtherSessionsRequest{TenantId: "t1", KeepSessionId: keep.ID})
 	require.NoError(t, err)
@@ -249,7 +249,7 @@ func TestSessionServerCoverage_ListSessions_EmptyTenantId(t *testing.T) {
 // A caller whose account resolves to user 0 is refused rather than read as
 // the whole tenant (#1842).
 func TestSessionServerCoverage_ListSessions_UserZeroCallerRefused(t *testing.T) {
-	server := NewSessionServer(NewMemorySessionService(), userIDCallerAccounts{}, newTestSessionLogger())
+	server := NewSessionServer(NewMemorySessionService(), userIDCallerAccounts{}, newTestSessionLogger()).WithCredentialRevoker(&recordingCredentialRevoker{})
 	_, err := server.ListSessions(sessionOwnerContext("t1", 0), &iampb.ListSessionsRequest{})
 	require.Error(t, err)
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
@@ -259,7 +259,7 @@ func TestSessionServerCoverage_ListSessions_UserZeroCallerRefused(t *testing.T) 
 }
 
 func TestSessionServerCoverage_GetSession_EmptySessionId(t *testing.T) {
-	server := NewSessionServer(NewMemorySessionService(), userIDCallerAccounts{}, newTestSessionLogger())
+	server := NewSessionServer(NewMemorySessionService(), userIDCallerAccounts{}, newTestSessionLogger()).WithCredentialRevoker(&recordingCredentialRevoker{})
 	_, err := server.GetSession(callerContext("t1"), &iampb.GetSessionRequest{})
 	require.Error(t, err)
 	st, ok := status.FromError(err)
@@ -268,7 +268,7 @@ func TestSessionServerCoverage_GetSession_EmptySessionId(t *testing.T) {
 }
 
 func TestSessionServerCoverage_RevokeSession_EmptySessionId(t *testing.T) {
-	server := NewSessionServer(NewMemorySessionService(), userIDCallerAccounts{}, newTestSessionLogger())
+	server := NewSessionServer(NewMemorySessionService(), userIDCallerAccounts{}, newTestSessionLogger()).WithCredentialRevoker(&recordingCredentialRevoker{})
 	_, err := server.RevokeSession(callerContext("t1"), &iampb.RevokeSessionRequest{})
 	require.Error(t, err)
 	st, ok := status.FromError(err)
@@ -287,7 +287,7 @@ func TestSessionServerCoverage_RevokeAllSessions_EmptyTenantId(t *testing.T) {
 }
 
 func TestSessionServerCoverage_RevokeOtherSessions_EmptyTenantId(t *testing.T) {
-	server := NewSessionServer(NewMemorySessionService(), userIDCallerAccounts{}, newTestSessionLogger())
+	server := NewSessionServer(NewMemorySessionService(), userIDCallerAccounts{}, newTestSessionLogger()).WithCredentialRevoker(&recordingCredentialRevoker{})
 	_, err := server.RevokeOtherSessions(callerContext("t1"), &iampb.RevokeOtherSessionsRequest{})
 	require.Error(t, err)
 	st, ok := status.FromError(err)
@@ -296,7 +296,7 @@ func TestSessionServerCoverage_RevokeOtherSessions_EmptyTenantId(t *testing.T) {
 }
 
 func TestSessionServerCoverage_RevokeOtherSessions_EmptyKeepSessionId(t *testing.T) {
-	server := NewSessionServer(NewMemorySessionService(), userIDCallerAccounts{}, newTestSessionLogger())
+	server := NewSessionServer(NewMemorySessionService(), userIDCallerAccounts{}, newTestSessionLogger()).WithCredentialRevoker(&recordingCredentialRevoker{})
 	_, err := server.RevokeOtherSessions(callerContext("t1"), &iampb.RevokeOtherSessionsRequest{TenantId: "t1"})
 	require.Error(t, err)
 	st, ok := status.FromError(err)
@@ -305,7 +305,7 @@ func TestSessionServerCoverage_RevokeOtherSessions_EmptyKeepSessionId(t *testing
 }
 
 func TestSessionServerCoverage_GetSession_NotFound(t *testing.T) {
-	server := NewSessionServer(NewMemorySessionService(), userIDCallerAccounts{}, newTestSessionLogger())
+	server := NewSessionServer(NewMemorySessionService(), userIDCallerAccounts{}, newTestSessionLogger()).WithCredentialRevoker(&recordingCredentialRevoker{})
 	_, err := server.GetSession(sessionOwnerContext("t1", 30001), &iampb.GetSessionRequest{SessionId: "nonexistent-id"})
 	require.Error(t, err)
 	st, ok := status.FromError(err)

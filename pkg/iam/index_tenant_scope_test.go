@@ -33,6 +33,7 @@ import (
 // Scenario (e): OAuth app keys are tenant-scoped; the clientID encodes the
 // tenant (app_<tenant>_<suffix>), so two tenants' apps never collide.
 func TestAppKey_TenantScopedByClientID(t *testing.T) {
+	t.Parallel()
 	kv := newMockKVStore()
 	storage := NewBackendStorage(kv)
 	ctx := context.Background()
@@ -59,6 +60,7 @@ func TestAppKey_TenantScopedByClientID(t *testing.T) {
 // tenant_id claim — modeled here by the token record's TenantID being used to
 // scope the key, resolved on read via the tenant in context.
 func TestTokenKey_TenantScoped_DerivedFromClaim(t *testing.T) {
+	t.Parallel()
 	kv := newMockKVStore()
 	storage := NewBackendStorage(kv)
 

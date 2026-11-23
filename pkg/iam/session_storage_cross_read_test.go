@@ -25,6 +25,7 @@ import (
 // is read by the gRPC session store (Session: expires, last_activity) with its
 // real expiry, so it is listed and fetched rather than dropped as expired.
 func TestBackendSessionStorage_ReadsSessionManagerRecords(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	ext := NewBackendSessionExtStorage(kv, nil)
 	store := NewBackendSessionStorage(kv, nil)
@@ -79,6 +80,7 @@ func TestBackendSessionStorage_ReadsSessionManagerRecords(t *testing.T) {
 // A token's sid has no tenant prefix; the session manager stored it
 // tenant-encoded, so a read in the tenant's context must still find it.
 func TestBackendSessionStorage_GetSessionResolvesTokenSID(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	ext := NewBackendSessionExtStorage(kv, nil)

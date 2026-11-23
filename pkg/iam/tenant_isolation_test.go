@@ -49,6 +49,7 @@ func (p *recordingQRDBProvisioner) UpdateEntitlements(_ context.Context, _ strin
 // provisioner as "barrier", so qrdb creates a barrier-isolated tenant (own DEK
 // + "{tenantID}/" namespace) instead of silently degrading to prefix.
 func TestCreateTenant_BarrierIsolationReachesEngine(t *testing.T) {
+	t.Parallel()
 	mgr := newTestTenantManager()
 	prov := &recordingQRDBProvisioner{}
 	mgr.SetQRDBTenantProvisioner(prov)
@@ -74,6 +75,7 @@ func TestCreateTenant_BarrierIsolationReachesEngine(t *testing.T) {
 // (prefix) per TenantInfo.EffectiveIsolationType rather than the BaaS layer
 // hardcoding a value.
 func TestCreateTenant_EmptyIsolationReachesEngineAsEmpty(t *testing.T) {
+	t.Parallel()
 	mgr := newTestTenantManager()
 	prov := &recordingQRDBProvisioner{}
 	mgr.SetQRDBTenantProvisioner(prov)

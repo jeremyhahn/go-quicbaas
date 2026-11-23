@@ -35,6 +35,7 @@ func TestResolver_GlobalAndAlgorithm(t *testing.T) {
 
 // A nil-snapshot manager reports the default algorithm without panicking.
 func TestSigningKeyManager_AlgorithmDefault(t *testing.T) {
+	t.Parallel()
 	var mgr SigningKeyManager // zero value: no snapshot loaded
 	if alg := mgr.Algorithm(); alg != SigningAlgorithmES256 {
 		t.Fatalf("zero-value Algorithm() = %q, want ES256", alg)

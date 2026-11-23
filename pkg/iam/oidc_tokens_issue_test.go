@@ -22,6 +22,7 @@ import (
 
 // IssueHardwareTokens mints an access/id/refresh set and validates required input.
 func TestTokenService_IssueHardwareTokens(t *testing.T) {
+	t.Parallel()
 	service, privateKey := createTestTokenService(t)
 	ctx := context.Background()
 
@@ -66,6 +67,7 @@ func TestTokenService_IssueHardwareTokens(t *testing.T) {
 // IssueServiceAccountTokens mints an mTLS-bound access token with a cnf claim and
 // validates required input.
 func TestTokenService_IssueServiceAccountTokens(t *testing.T) {
+	t.Parallel()
 	service, privateKey := createTestTokenService(t)
 	ctx := context.Background()
 

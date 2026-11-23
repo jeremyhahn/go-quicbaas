@@ -23,6 +23,7 @@ import (
 
 // ListImpersonations returns every session, filters by active-only, and by admin.
 func TestAdminManager_ListImpersonations(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	manager, _ := createTestAdminManager(t)
 
@@ -75,6 +76,7 @@ func TestAdminManager_ListImpersonations(t *testing.T) {
 
 // GetImpersonationSession resolves a known session and reports not-found.
 func TestAdminManager_GetImpersonationSession(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	manager, _ := createTestAdminManager(t)
 
@@ -107,6 +109,7 @@ func TestAdminManager_GetImpersonationSession(t *testing.T) {
 
 // HasAdmin reflects whether any active admin assignment exists.
 func TestAdminManager_HasAdmin(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	manager, _ := createTestAdminManager(t)
 

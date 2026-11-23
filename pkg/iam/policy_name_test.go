@@ -9,6 +9,7 @@ import (
 )
 
 func TestCheckPolicyName(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name     string
 		docName  string
@@ -21,6 +22,7 @@ func TestCheckPolicyName(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			policy := &Policy{Metadata: PolicyMetadata{Name: tc.docName}}
 
 			require.NoError(t, CheckPolicyName(policy, tc.reqName))
@@ -30,6 +32,7 @@ func TestCheckPolicyName(t *testing.T) {
 }
 
 func TestCheckPolicyName_Mismatch(t *testing.T) {
+	t.Parallel()
 	policy := &Policy{Metadata: PolicyMetadata{Name: "p1"}}
 
 	err := CheckPolicyName(policy, "p2")
@@ -46,5 +49,6 @@ func TestCheckPolicyName_Mismatch(t *testing.T) {
 // TestCheckPolicyName_NilPolicy pins that a name with no policy does not
 // panic; the engine's ValidatePolicy reports the nil policy.
 func TestCheckPolicyName_NilPolicy(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, CheckPolicyName(nil, "p1"))
 }

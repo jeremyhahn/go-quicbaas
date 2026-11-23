@@ -602,10 +602,12 @@ func (a *IAMServiceAdapter) DeleteApp(ctx context.Context, tenantID, clientID st
 	return a.appManager.DeleteAppInTenant(ctx, tenantID, clientID)
 }
 
-// ListApps lists applications with pagination.
+// ListApps lists applications with pagination. The total is a continuation
+// bound: it exceeds offset plus the page length exactly when more
+// applications follow.
 func (a *IAMServiceAdapter) ListApps(ctx context.Context, tenantID string, limit, offset int) ([]*iam.Application, int, error) {
 	opts := iam.ListOptions{
-		Limit:  limit,
+		Limit:  lookaheadLimit(limit),
 		Offset: offset,
 	}
 
@@ -614,7 +616,8 @@ func (a *IAMServiceAdapter) ListApps(ctx context.Context, tenantID string, limit
 		return nil, 0, err
 	}
 
-	return apps, len(apps), nil
+	apps, total := trimLookahead(apps, limit, offset)
+	return apps, total, nil
 }
 
 // RotateAppSecret rotates an application's client secret.
@@ -668,10 +671,12 @@ func (a *IAMServiceAdapter) DeletePolicy(ctx context.Context, tenantID, policyNa
 	return a.policyEngine.DeletePolicy(ctx, tenantID, policyName)
 }
 
-// ListPolicies lists policies with pagination.
+// ListPolicies lists policies with pagination. The total is a continuation
+// bound: it exceeds offset plus the page length exactly when more policies
+// follow.
 func (a *IAMServiceAdapter) ListPolicies(ctx context.Context, tenantID string, limit, offset int) ([]*iam.Policy, int, error) {
 	opts := iam.ListOptions{
-		Limit:  limit,
+		Limit:  lookaheadLimit(limit),
 		Offset: offset,
 	}
 
@@ -680,7 +685,8 @@ func (a *IAMServiceAdapter) ListPolicies(ctx context.Context, tenantID string, l
 		return nil, 0, err
 	}
 
-	return policies, len(policies), nil
+	policies, total := trimLookahead(policies, limit, offset)
+	return policies, total, nil
 }
 
 // ValidatePolicy validates a policy YAML without creating it.
