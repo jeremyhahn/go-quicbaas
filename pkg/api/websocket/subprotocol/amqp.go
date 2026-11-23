@@ -21,6 +21,8 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -217,6 +219,23 @@ type AMQPHandler struct {
 
 	// clients maps session IDs to AMQP client state.
 	clients map[string]*amqpClientState
+
+	// routesMu protects exchangeTypes and routes.
+	routesMu sync.RWMutex
+
+	// exchangeTypes maps declared exchange names to their type. The handler
+	// serves one tenant, so this registry is tenant-wide, as a broker's is.
+	exchangeTypes map[string]string
+
+	// routes maps exchange names to the queue bindings made on them.
+	routes map[string][]amqpRoute
+}
+
+// amqpRoute is one Queue.Bind: messages published to the exchange with a
+// matching routing key go to queue.
+type amqpRoute struct {
+	queue      string
+	bindingKey string
 }
 
 // amqpClientState holds the state for an AMQP client connection.
@@ -249,6 +268,7 @@ type amqpChannelState struct {
 // opens it, the content header declares the body size, and body frames
 // append until that size is reached.
 type amqpPendingPublish struct {
+	exchange   string
 	routingKey string
 	headerSeen bool
 	bodySize   uint64
@@ -341,8 +361,10 @@ func NewAMQPHandler(hub PubSubHub) *AMQPHandler {
 		hub = NewInMemoryPubSubHub()
 	}
 	return &AMQPHandler{
-		hub:     hub,
-		clients: make(map[string]*amqpClientState),
+		hub:           hub,
+		clients:       make(map[string]*amqpClientState),
+		exchangeTypes: make(map[string]string),
+		routes:        make(map[string][]amqpRoute),
 	}
 }
 
@@ -924,6 +946,9 @@ func (h *AMQPHandler) handleExchangeDeclare(ctx context.Context, frame *AMQPFram
 		}
 	}
 	state.mu.Unlock()
+	if !passive {
+		h.recordExchange(exchangeName, exchangeType)
+	}
 
 	// Send Exchange.Declare-Ok if not no-wait
 	if noWait {
@@ -966,6 +991,7 @@ func (h *AMQPHandler) handleExchangeDelete(ctx context.Context, frame *AMQPFrame
 	}
 	delete(ch.exchanges, exchangeName)
 	state.mu.Unlock()
+	h.removeExchange(exchangeName)
 
 	// Send Exchange.Delete-Ok if not no-wait
 	if noWait {
@@ -1112,6 +1138,7 @@ func (h *AMQPHandler) handleQueueBind(ctx context.Context, frame *AMQPFrame, arg
 		}
 	}
 	state.mu.Unlock()
+	h.addRoute(exchangeName, amqpRoute{queue: string(queueName), bindingKey: routingKey})
 
 	// Send Queue.Bind-Ok if not no-wait
 	if noWait {
@@ -1177,6 +1204,7 @@ func (h *AMQPHandler) handleQueueUnbind(ctx context.Context, frame *AMQPFrame, a
 		}
 	}
 	state.mu.Unlock()
+	h.removeRoute(exchangeName, amqpRoute{queue: string(queueName), bindingKey: routingKey})
 
 	// Send Queue.Unbind-Ok (no fields)
 	return h.buildMethodFrame(frame.Channel, ClassQueue, MethodQueueUnbindOk, nil), nil
@@ -1269,6 +1297,7 @@ func (h *AMQPHandler) handleQueueDelete(ctx context.Context, frame *AMQPFrame, a
 		delete(ch.queues, queueName)
 	}
 	state.mu.Unlock()
+	h.removeQueueRoutes(queueName)
 
 	// Unsubscribe from hub
 	if err := h.hub.Unsubscribe(session.ID, queueName); err != nil {
@@ -1461,7 +1490,8 @@ func (h *AMQPHandler) handleBasicPublish(ctx context.Context, frame *AMQPFrame, 
 	if len(args) < offset+exchangeNameLen {
 		return nil, &ErrAMQPProtocolError{Message: "invalid exchange name"}
 	}
-	// Skip exchange name for now
+	// The exchange routes the message once its content is complete.
+	exchangeName := string(args[offset : offset+exchangeNameLen])
 	offset += exchangeNameLen
 
 	// Routing key (shortstring)
@@ -1491,7 +1521,7 @@ func (h *AMQPHandler) handleBasicPublish(ctx context.Context, frame *AMQPFrame, 
 		state.mu.Unlock()
 		return h.buildChannelClose(frame.Channel, ChannelError, "CHANNEL_ERROR channel not open", ClassBasic, MethodBasicPublish), nil
 	}
-	ch.pending = &amqpPendingPublish{routingKey: routingKey}
+	ch.pending = &amqpPendingPublish{exchange: exchangeName, routingKey: routingKey}
 	state.mu.Unlock()
 
 	// Basic.Publish doesn't have a response
@@ -1527,7 +1557,7 @@ func (h *AMQPHandler) handleContentHeader(frame *AMQPFrame, state *amqpClientSta
 	state.mu.Unlock()
 
 	if bodySize == 0 {
-		return nil, h.hub.Publish(p.routingKey, []byte{}, 0, false)
+		return nil, h.publishRouted(p.exchange, p.routingKey, []byte{})
 	}
 	return nil, nil
 }
@@ -1555,9 +1585,145 @@ func (h *AMQPHandler) handleContentBody(frame *AMQPFrame, state *amqpClientState
 	state.mu.Unlock()
 
 	if complete {
-		return nil, h.hub.Publish(p.routingKey, p.body, 0, false)
+		return nil, h.publishRouted(p.exchange, p.routingKey, p.body)
 	}
 	return nil, nil
+}
+
+// publishRouted publishes body to every queue a publication to exchange
+// with routingKey reaches. It tries every target and returns the first
+// error.
+func (h *AMQPHandler) publishRouted(exchange, routingKey string, body []byte) error {
+	var firstErr error
+	for _, queue := range h.routeTargets(exchange, routingKey) {
+		if err := h.hub.Publish(queue, body, 0, false); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+// recordExchange records a declared exchange's type in the tenant-wide
+// registry.
+func (h *AMQPHandler) recordExchange(name, typ string) {
+	h.routesMu.Lock()
+	defer h.routesMu.Unlock()
+	if h.exchangeTypes == nil {
+		h.exchangeTypes = make(map[string]string)
+	}
+	h.exchangeTypes[name] = typ
+}
+
+// removeExchange drops a deleted exchange's type and its bindings.
+func (h *AMQPHandler) removeExchange(name string) {
+	h.routesMu.Lock()
+	defer h.routesMu.Unlock()
+	delete(h.exchangeTypes, name)
+	delete(h.routes, name)
+}
+
+// addRoute records a Queue.Bind unless the same binding already exists.
+func (h *AMQPHandler) addRoute(exchange string, r amqpRoute) {
+	h.routesMu.Lock()
+	defer h.routesMu.Unlock()
+	if h.routes == nil {
+		h.routes = make(map[string][]amqpRoute)
+	}
+	if slices.Contains(h.routes[exchange], r) {
+		return
+	}
+	h.routes[exchange] = append(h.routes[exchange], r)
+}
+
+// removeRoute removes the binding a Queue.Unbind names.
+func (h *AMQPHandler) removeRoute(exchange string, r amqpRoute) {
+	h.routesMu.Lock()
+	defer h.routesMu.Unlock()
+	kept := slices.DeleteFunc(h.routes[exchange], func(x amqpRoute) bool { return x == r })
+	if len(kept) == 0 {
+		delete(h.routes, exchange)
+		return
+	}
+	h.routes[exchange] = kept
+}
+
+// removeQueueRoutes removes every binding to a deleted queue.
+func (h *AMQPHandler) removeQueueRoutes(queue string) {
+	h.routesMu.Lock()
+	defer h.routesMu.Unlock()
+	for exchange, rs := range h.routes {
+		kept := slices.DeleteFunc(rs, func(x amqpRoute) bool { return x.queue == queue })
+		if len(kept) == 0 {
+			delete(h.routes, exchange)
+			continue
+		}
+		h.routes[exchange] = kept
+	}
+}
+
+// routeTargets returns the queues a publication to exchange with
+// routingKey reaches, in sorted order without duplicates. The default
+// exchange ("") routes to the queue named by the routing key. A fanout
+// exchange routes to every bound queue, a topic exchange matches binding
+// keys with amqpTopicMatch, and every other exchange matches keys exactly.
+// An unroutable publication reaches no queue and is dropped.
+func (h *AMQPHandler) routeTargets(exchange, routingKey string) []string {
+	if exchange == "" {
+		return []string{routingKey}
+	}
+	h.routesMu.RLock()
+	typ := h.exchangeTypes[exchange]
+	var targets []string
+	for _, r := range h.routes[exchange] {
+		var match bool
+		switch typ {
+		case "fanout":
+			match = true
+		case "topic":
+			match = amqpTopicMatch(r.bindingKey, routingKey)
+		default:
+			match = r.bindingKey == routingKey
+		}
+		if match {
+			targets = append(targets, r.queue)
+		}
+	}
+	h.routesMu.RUnlock()
+	slices.Sort(targets)
+	return slices.Compact(targets)
+}
+
+// amqpTopicMatch reports whether routingKey matches the AMQP topic
+// binding key pattern: words are separated by '.', '*' matches exactly
+// one word and '#' matches zero or more words.
+func amqpTopicMatch(pattern, routingKey string) bool {
+	return amqpTopicMatchWords(strings.Split(pattern, "."), strings.Split(routingKey, "."))
+}
+
+// amqpTopicMatchWords matches pattern words against routing key words.
+func amqpTopicMatchWords(pattern, key []string) bool {
+	for len(pattern) > 0 {
+		switch pattern[0] {
+		case "#":
+			rest := pattern[1:]
+			for i := 0; i <= len(key); i++ {
+				if amqpTopicMatchWords(rest, key[i:]) {
+					return true
+				}
+			}
+			return false
+		case "*":
+			if len(key) == 0 {
+				return false
+			}
+		default:
+			if len(key) == 0 || key[0] != pattern[0] {
+				return false
+			}
+		}
+		pattern, key = pattern[1:], key[1:]
+	}
+	return len(key) == 0
 }
 
 // handleBasicGet handles Basic.Get.

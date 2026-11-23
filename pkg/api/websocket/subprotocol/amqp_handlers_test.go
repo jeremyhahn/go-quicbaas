@@ -1423,6 +1423,161 @@ func TestAMQPHandler_HandleFrame_CoalescedPublication(t *testing.T) {
 	})
 }
 
+// TestAMQPTopicMatch covers AMQP topic binding key matching.
+func TestAMQPTopicMatch(t *testing.T) {
+	tests := []struct {
+		pattern, key string
+		want         bool
+	}{
+		{"order.*", "order.created", true},
+		{"order.*", "order.created.eu", false},
+		{"order.*", "order", false},
+		{"order.#", "order", true},
+		{"order.#", "order.created.eu", true},
+		{"#", "anything.at.all", true},
+		{"#", "", true},
+		{"*.created", "order.created", true},
+		{"*.created", "order.deleted", false},
+		{"order.created", "order.created", true},
+		{"order.created", "order.deleted", false},
+		{"#.eu", "order.created.eu", true},
+	}
+	for _, tt := range tests {
+		if got := amqpTopicMatch(tt.pattern, tt.key); got != tt.want {
+			t.Errorf("amqpTopicMatch(%q, %q) = %v, want %v", tt.pattern, tt.key, got, tt.want)
+		}
+	}
+}
+
+// TestAMQPHandler_PublishRoutesThroughBindings: publications to a named
+// exchange reach the queues bound to it, by exchange type.
+func TestAMQPHandler_PublishRoutesThroughBindings(t *testing.T) {
+	session := newGrantedSession("test", "amqp", nil)
+
+	declareExchange := func(t *testing.T, h *AMQPHandler, state *amqpClientState, name, typ string) {
+		t.Helper()
+		frame := h.buildMethodFrame(1, ClassExchange, MethodExchangeDeclare, buildExchangeDeclareArgs(name, typ, 0))
+		if _, err := h.handleFrame(context.Background(), frame, session, state); err != nil {
+			t.Fatalf("Exchange.Declare: %v", err)
+		}
+	}
+	bind := func(t *testing.T, h *AMQPHandler, state *amqpClientState, method uint16, queue, exchange, key string) {
+		t.Helper()
+		frame := h.buildMethodFrame(1, ClassQueue, method, buildQueueBindArgs(queue, exchange, key, false))
+		if _, err := h.handleFrame(context.Background(), frame, session, state); err != nil {
+			t.Fatalf("Queue bind method %d: %v", method, err)
+		}
+	}
+	publish := func(t *testing.T, h *AMQPHandler, state *amqpClientState, exchange, key string, body []byte) {
+		t.Helper()
+		args := &bytes.Buffer{}
+		_ = binary.Write(args, binary.BigEndian, uint16(0))
+		writeShortString(args, exchange)
+		writeShortString(args, key)
+		args.WriteByte(0x00)
+		msg := h.buildMethodFrame(1, ClassBasic, MethodBasicPublish, args.Bytes())
+		msg = append(msg, h.buildFrame(FrameHeader, 1, amqpContentHeader(uint64(len(body))))...)
+		msg = append(msg, h.buildFrame(FrameBody, 1, body)...)
+		mustNoResponse(t, h, session, state, msg)
+	}
+	receive := func(t *testing.T, got <-chan []byte, want []byte) {
+		t.Helper()
+		select {
+		case p := <-got:
+			if !bytes.Equal(p, want) {
+				t.Fatalf("payload = %q, want %q", p, want)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("%q was not delivered", want)
+		}
+	}
+	nothing := func(t *testing.T, got <-chan []byte) {
+		t.Helper()
+		select {
+		case p := <-got:
+			t.Fatalf("unexpected delivery %q", p)
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+
+	t.Run("direct", func(t *testing.T) {
+		hub := NewInMemoryPubSubHub()
+		h := NewAMQPHandler(hub)
+		state := newTestAMQPState()
+		got := subscribeTestHub(t, hub, "sub", "orders")
+		declareExchange(t, h, state, "events", "direct")
+		bind(t, h, state, MethodQueueBind, "orders", "events", "order.created")
+
+		publish(t, h, state, "events", "order.created", []byte("created"))
+		receive(t, got, []byte("created"))
+		publish(t, h, state, "events", "order.deleted", []byte("deleted"))
+		nothing(t, got)
+	})
+
+	t.Run("fanout", func(t *testing.T) {
+		hub := NewInMemoryPubSubHub()
+		h := NewAMQPHandler(hub)
+		state := newTestAMQPState()
+		gotA := subscribeTestHub(t, hub, "sub-a", "audit")
+		gotB := subscribeTestHub(t, hub, "sub-b", "billing")
+		declareExchange(t, h, state, "broadcast", "fanout")
+		bind(t, h, state, MethodQueueBind, "audit", "broadcast", "")
+		bind(t, h, state, MethodQueueBind, "billing", "broadcast", "ignored")
+
+		publish(t, h, state, "broadcast", "any.key", []byte("all"))
+		receive(t, gotA, []byte("all"))
+		receive(t, gotB, []byte("all"))
+	})
+
+	t.Run("topic", func(t *testing.T) {
+		hub := NewInMemoryPubSubHub()
+		h := NewAMQPHandler(hub)
+		state := newTestAMQPState()
+		got := subscribeTestHub(t, hub, "sub", "orders")
+		declareExchange(t, h, state, "events", "topic")
+		bind(t, h, state, MethodQueueBind, "orders", "events", "order.*")
+
+		publish(t, h, state, "events", "order.created", []byte("created"))
+		receive(t, got, []byte("created"))
+		publish(t, h, state, "events", "invoice.created", []byte("invoice"))
+		nothing(t, got)
+	})
+
+	t.Run("default exchange", func(t *testing.T) {
+		hub := NewInMemoryPubSubHub()
+		h := NewAMQPHandler(hub)
+		state := newTestAMQPState()
+		got := subscribeTestHub(t, hub, "sub", "orders")
+
+		publish(t, h, state, "", "orders", []byte("direct to queue"))
+		receive(t, got, []byte("direct to queue"))
+	})
+
+	t.Run("unbind", func(t *testing.T) {
+		hub := NewInMemoryPubSubHub()
+		h := NewAMQPHandler(hub)
+		state := newTestAMQPState()
+		got := subscribeTestHub(t, hub, "sub", "orders")
+		declareExchange(t, h, state, "events", "direct")
+		bind(t, h, state, MethodQueueBind, "orders", "events", "order.created")
+		bind(t, h, state, MethodQueueUnbind, "orders", "events", "order.created")
+
+		publish(t, h, state, "events", "order.created", []byte("created"))
+		nothing(t, got)
+	})
+
+	t.Run("unroutable", func(t *testing.T) {
+		hub := NewInMemoryPubSubHub()
+		h := NewAMQPHandler(hub)
+		state := newTestAMQPState()
+		got := subscribeTestHub(t, hub, "sub", "order.created")
+		declareExchange(t, h, state, "events", "direct")
+
+		publish(t, h, state, "events", "order.created", []byte("dropped"))
+		nothing(t, got)
+	})
+}
+
 // TestAMQPHandler_BasicPublish_DeniedWithoutPublishPermission: a session
 // whose grant refuses messaging:publish gets Channel.Close ACCESS_REFUSED and
 // nothing reaches the hub, even when the content follows.
