@@ -12,6 +12,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/svelte';
+import { tick } from 'svelte';
 import type { IAMAuditEvent, IAMTenant } from '@quicbaas/sdk';
 
 // ---------------------------------------------------------------------------
@@ -76,14 +77,14 @@ vi.mock('../src/stores/toast.svelte.ts', () => ({
 import IAMAuditView from '../src/views/security/IAMAuditView.svelte';
 import { setAuthenticated, setUnauthenticated } from '../src/stores/auth.svelte.ts';
 
-function sessionToken(tenantID: string): string {
+function sessionToken(tenantID: string, sid = 'sid_1'): string {
   const b64url = (o: unknown): string =>
     btoa(JSON.stringify(o)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   const claims = {
     sub: 'usr_1',
     tenant_id: tenantID,
     roles: ['operator'],
-    sid: 'sid_1',
+    sid,
     exp: Math.floor(Date.now() / 1000) + 3600,
   };
   return `${b64url({ alg: 'none' })}.${b64url(claims)}.sig`;
@@ -237,6 +238,93 @@ describe('IAMAuditView', () => {
     render(IAMAuditView);
     await waitFor(() => {
       expect(screen.getByRole('alert')).toHaveTextContent('Audit store unavailable');
+    });
+  });
+
+  describe('when the session changes', () => {
+    const emptyPage = { events: [], total: 0, limit: 50, offset: 0 };
+
+    async function flush(): Promise<void> {
+      await new Promise((r) => setTimeout(r, 0));
+      await tick();
+    }
+
+    beforeEach(() => {
+      setAuthenticated({ access_token: sessionToken('tenant-a') });
+    });
+
+    afterEach(() => {
+      setUnauthenticated();
+    });
+
+    it('clears the previous session’s events and open detail and lists the new session tenant', async () => {
+      render(IAMAuditView);
+      await waitFor(() => screen.getByText('role.assign'));
+      await fireEvent.click(screen.getByText('role.assign'));
+      await screen.findByRole('dialog', { name: 'Audit event detail' });
+
+      mockListAuditEvents.mockResolvedValue(emptyPage);
+      setAuthenticated({ access_token: sessionToken('tenant-b', 'sid_2') });
+
+      await waitFor(() => {
+        expect(screen.queryByRole('dialog', { name: 'Audit event detail' })).toBeNull();
+        expect(screen.queryByText('role.assign')).toBeNull();
+        expect(screen.queryByText('session/s-1')).toBeNull();
+        expect(lastListOptions()).toMatchObject({ tenantID: 'tenant-b', offset: 0 });
+        expect((screen.getByLabelText('Tenant') as HTMLSelectElement).value).toBe('tenant-b');
+      });
+    });
+
+    it('reloads when a new login keeps the same tenant', async () => {
+      render(IAMAuditView);
+      await waitFor(() => screen.getByText('user.login'));
+
+      mockListAuditEvents.mockResolvedValue(emptyPage);
+      const before = mockListAuditEvents.mock.calls.length;
+      setAuthenticated({ access_token: sessionToken('tenant-a', 'sid_2') });
+
+      await waitFor(() => {
+        expect(mockListAuditEvents.mock.calls.length).toBeGreaterThan(before);
+        expect(lastListOptions()).toMatchObject({ tenantID: 'tenant-a' });
+        expect(screen.queryByText('user.login')).toBeNull();
+      });
+    });
+
+    it('drops a listAuditEvents response that lands after the session changed', async () => {
+      let resolve!: (v: unknown) => void;
+      mockListAuditEvents
+        .mockImplementationOnce(() => new Promise((r) => { resolve = r; }))
+        .mockResolvedValue(emptyPage);
+      render(IAMAuditView);
+      await waitFor(() => expect(mockListAuditEvents).toHaveBeenCalled());
+
+      setAuthenticated({ access_token: sessionToken('tenant-b', 'sid_2') });
+      await waitFor(() => expect(lastListOptions()).toMatchObject({ tenantID: 'tenant-b' }));
+
+      resolve({ events: [loginEvent], total: 1, limit: 50, offset: 0 });
+      await flush();
+      expect(screen.queryByText('user.login')).toBeNull();
+      expect(screen.queryByText('session/s-1')).toBeNull();
+    });
+
+    it('drops a getAuditEvent response that lands after the session changed', async () => {
+      let resolve!: (v: unknown) => void;
+      mockGetAuditEvent.mockImplementationOnce(() => new Promise((r) => { resolve = r; }));
+      render(IAMAuditView);
+      await waitFor(() => screen.getByText('role.assign'));
+      await fireEvent.click(screen.getByText('role.assign'));
+      await waitFor(() => expect(mockGetAuditEvent).toHaveBeenCalled());
+
+      mockListAuditEvents.mockResolvedValue(emptyPage);
+      setAuthenticated({ access_token: sessionToken('tenant-b', 'sid_2') });
+      await waitFor(() => {
+        expect(screen.queryByRole('dialog', { name: 'Audit event detail' })).toBeNull();
+      });
+
+      resolve(impersonatedEvent);
+      await flush();
+      expect(screen.queryByRole('dialog', { name: 'Audit event detail' })).toBeNull();
+      expect(screen.queryByText('corr-42')).toBeNull();
     });
   });
 });

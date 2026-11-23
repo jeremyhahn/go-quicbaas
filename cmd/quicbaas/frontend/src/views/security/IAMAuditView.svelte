@@ -87,6 +87,11 @@
   let pendingPrune: string | null = $state(null);
   let pruning = $state(false);
 
+  // Request sequence numbers: a response is applied only when no newer
+  // request (or session change) has superseded it.
+  let loadSeq = 0;
+  let detailSeq = 0;
+
   // ---------------------------------------------------------------------------
   // Helpers
   // ---------------------------------------------------------------------------
@@ -186,10 +191,13 @@
   }
 
   async function loadEvents(): Promise<void> {
+    const seq = ++loadSeq;
+    const forSession = authStore.sessionKey;
     const tenantID = selectedTenantID;
     if (tenantID === '') {
       events = [];
       total = 0;
+      loading = false;
       return;
     }
     loading = true;
@@ -197,12 +205,14 @@
     try {
       const client = await getSDKClient();
       const resp = await client.iam.listAuditEvents(buildOptions(tenantID, applied, offset));
+      if (seq !== loadSeq || forSession !== authStore.sessionKey) return;
       events = resp.events ?? [];
       total = resp.total ?? 0;
     } catch (e) {
+      if (seq !== loadSeq || forSession !== authStore.sessionKey) return;
       error = e instanceof Error ? e.message : 'Failed to load audit events';
     } finally {
-      loading = false;
+      if (seq === loadSeq && forSession === authStore.sessionKey) loading = false;
     }
   }
 
@@ -216,6 +226,44 @@
     untrack(() => {
       offset = 0;
       void loadEvents();
+    });
+  });
+
+  // Another tab can replace the login while this view stays mounted. The
+  // previous principal's events, detail and prune confirmation are cleared,
+  // responses still in flight for it are dropped, and the view reloads in
+  // the new session's tenant.
+  let lastSession = authStore.sessionKey;
+  $effect(() => {
+    const key = authStore.sessionKey;
+    if (key === lastSession) return;
+    lastSession = key;
+    untrack(() => {
+      loadSeq++;
+      detailSeq++;
+      events = [];
+      total = 0;
+      offset = 0;
+      error = null;
+      loading = false;
+      detailOpen = false;
+      detail = null;
+      detailError = null;
+      detailLoading = false;
+      pendingPrune = null;
+      pruneDate = '';
+      pruning = false;
+      draft = { ...EMPTY_FILTERS };
+      applied = { ...EMPTY_FILTERS };
+      discoveredTenants = [];
+      tenantsError = null;
+      const next = authStore.tenantID;
+      const tenantChanged = next !== selectedTenantID;
+      selectedTenantID = next;
+      // A new tenant reloads through the tenant effect; the same tenant
+      // under a new login reloads here.
+      if (!tenantChanged) void loadEvents();
+      void loadTenants();
     });
   });
 
@@ -248,21 +296,27 @@
   // ---------------------------------------------------------------------------
 
   async function openDetail(e: IAMAuditEvent): Promise<void> {
+    const seq = ++detailSeq;
+    const forSession = authStore.sessionKey;
     detailOpen = true;
     detail = null;
     detailError = null;
     detailLoading = true;
     try {
       const client = await getSDKClient();
-      detail = await client.iam.getAuditEvent(e.id, selectedTenantID || undefined);
+      const resp = await client.iam.getAuditEvent(e.id, selectedTenantID || undefined);
+      if (seq !== detailSeq || forSession !== authStore.sessionKey) return;
+      detail = resp;
     } catch (err) {
+      if (seq !== detailSeq || forSession !== authStore.sessionKey) return;
       detailError = err instanceof Error ? err.message : 'Failed to load the audit event';
     } finally {
-      detailLoading = false;
+      if (seq === detailSeq && forSession === authStore.sessionKey) detailLoading = false;
     }
   }
 
   function closeDetail(): void {
+    detailSeq++;
     detailOpen = false;
     detail = null;
     detailError = null;
@@ -280,6 +334,7 @@
 
   async function confirmPrune(): Promise<void> {
     if (!pendingPrune) return;
+    const forSession = authStore.sessionKey;
     pruning = true;
     try {
       const client = await getSDKClient();
@@ -287,14 +342,16 @@
         dateToRFC3339(pendingPrune),
         selectedTenantID || undefined,
       );
+      if (forSession !== authStore.sessionKey) return;
       showToast('success', `Deleted ${resp.deleted_count} audit events`);
       pendingPrune = null;
       offset = 0;
       void loadEvents();
     } catch (e) {
+      if (forSession !== authStore.sessionKey) return;
       showToast('error', e instanceof Error ? e.message : 'Deleting audit events failed');
     } finally {
-      pruning = false;
+      if (forSession === authStore.sessionKey) pruning = false;
     }
   }
 
