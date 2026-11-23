@@ -11,10 +11,13 @@
 #   - a feature of INTEGRATION_FEATURES has no FEATURE_PATHS_<feature> row;
 #   - a feature has neither an explicit integration-test-<feature> rule nor a
 #     directory test/integration/<feature>/ (the integration-test-% rule);
-#   - a path of a row, of INTEGRATION_SHARED_PATHS or of INTEGRATION_DOC_PATHS
-#     matches no file of `git ls-files`;
+#   - a path of a row, of INTEGRATION_SHARED_PATHS, INTEGRATION_DOC_PATHS or
+#     INTEGRATION_UNTARGETED_PATHS matches no file of `git ls-files`;
 #   - a tracked *_test.go or *.test.js under any test/integration/ directory
-#     (test/integration/, sdk/go/test/integration/, ...) matches no feature row and no shared path.
+#     (test/integration/, sdk/go/test/integration/, ...), or a tracked
+#     *_test.go anywhere whose //go:build line requires the integration tag
+#     (pkg/sdlc/forge_gitea_live_test.go, ...), matches no feature row, no
+#     shared path and no INTEGRATION_UNTARGETED_PATHS path.
 #
 # Exit 0 when the table is clean, 1 listing every problem, 2 when the table or
 # make's rule database cannot be read.
@@ -37,6 +40,10 @@ shared=$(mk print-INTEGRATION_SHARED_PATHS 2>/dev/null) || {
 }
 docs=$(mk print-INTEGRATION_DOC_PATHS 2>/dev/null) || {
 	echo "$0: cannot read INTEGRATION_DOC_PATHS" >&2
+	exit 2
+}
+untargeted=$(mk print-INTEGRATION_UNTARGETED_PATHS 2>/dev/null) || {
+	echo "$0: cannot read INTEGRATION_UNTARGETED_PATHS" >&2
 	exit 2
 }
 
@@ -138,14 +145,30 @@ done
 for p in $docs; do
 	tracked "$p" || problem "INTEGRATION_DOC_PATHS: path $p matches no tracked file"
 done
+# shellcheck disable=SC2086
+for p in $untargeted; do
+	tracked "$p" || problem "INTEGRATION_UNTARGETED_PATHS: path $p matches no tracked file"
+done
+
+# The tracked *_test.go files whose //go:build line requires the integration
+# tag (a term integration not negated by !), wherever they live.
+tagged=$(git -c core.quotePath=false grep -l -E '^//go:build.*[ (&|]integration([ )]|$)' -- '*_test.go') || {
+	[ $? -eq 1 ] || {
+		echo "$0: cannot search the build constraints (git grep)" >&2
+		exit 2
+	}
+}
 
 while IFS= read -r file; do
 	[ -n "$file" ] || continue
 	# shellcheck disable=SC2086
-	owns "$file" $owned $shared ||
+	owns "$file" $owned $shared $untargeted ||
 		problem "$file: in no feature of the mapping table (Makefile INTEGRATION_FEATURES)"
 done <<EOF
-$(git -c core.quotePath=false ls-files ':(glob)**/test/integration/**/*_test.go' ':(glob)**/test/integration/**/*.test.js')
+$({
+	git -c core.quotePath=false ls-files ':(glob)**/test/integration/**/*_test.go' ':(glob)**/test/integration/**/*.test.js'
+	printf '%s\n' "$tagged"
+} | sort -u)
 EOF
 
 if [ "$problems" -ne 0 ]; then

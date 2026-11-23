@@ -1790,23 +1790,29 @@ integration-test-orchestration-gpu: ## Run GPU-accelerated orchestration integra
 # (a recipe below, or the integration-test-% pattern rule for a directory
 # test/integration/<feature>/), and FEATURE_PATHS_<feature> lists the paths
 # it owns. A separately run suite outside test/integration/ is a feature too
-# (sdk-go and sdk-js, the SDK suites under sdk/*/test/integration/). A path is a shell pattern matched against a repository-relative
-# file name; a path ending in / owns everything under it; a path with no /
-# names a file at the repository root only (so *.md is the root's markdown,
-# not an embedded prompt under pkg/).
+# (sdk-go and sdk-js, the SDK suites under sdk/*/test/integration/). So is an
+# integration-tagged test inside a package that has its own target
+# (quicbaasd, forge-gitea, merge-result, storage-file). A path is a shell
+# pattern matched against a repository-relative file name; a path ending in /
+# owns everything under it; a path with no / names a file at the repository
+# root only (so *.md is the root's markdown, not an embedded prompt under
+# pkg/).
 #
 # scripts/touched-features.sh and scripts/touched-packages.sh read this table
 # through `make print-feature-map`; scripts/check-feature-map.sh (make
 # check-feature-map, in TEST_CHECKS) fails when an integration test (a test
-# file under any test/integration/ directory) belongs to no feature, a feature has no integration target, or a path matches no
-# tracked file. A change to a path no row owns runs every feature.
+# file under any test/integration/ directory, or a *_test.go anywhere whose
+# //go:build line requires the integration tag) belongs to no feature and is
+# not in INTEGRATION_UNTARGETED_PATHS, a feature has no integration target,
+# or a path matches no tracked file. A change to a path no row owns runs
+# every feature.
 INTEGRATION_FEATURES := account agent agents api attestation auth backup batch \
 	cache-redis cli cluster containerruntime dataplane dek durability embedded \
-	fleet-enrollment fleet-runtime iam init kms lifecycle login mcp messaging \
+	fleet-enrollment fleet-runtime forge-gitea iam init kms lifecycle login mcp merge-result messaging \
 	observability orchestration orchestration-gpu orchestrator parameter_store \
 	placement project quicbaasd raft rag registry routing scheduler sdk-go sdk-js seal \
 	seal-hardware secrets secrets-resolver server session-attach signalbridge \
-	standalone storage tenantbarrier timeseries transactions transport vector \
+	standalone storage storage-file tenantbarrier timeseries transactions transport vector \
 	workerimage
 FEATURE_PATHS_account           := test/integration/cli/account_test.go
 FEATURE_PATHS_agent             := test/integration/agent/
@@ -1826,12 +1832,14 @@ FEATURE_PATHS_durability        := test/integration/durability/
 FEATURE_PATHS_embedded          := test/integration/embedded/
 FEATURE_PATHS_fleet-enrollment  := test/integration/fleet_enrollment/
 FEATURE_PATHS_fleet-runtime     := test/integration/fleet_runtime/
+FEATURE_PATHS_forge-gitea       := pkg/sdlc/forge_gitea_live_test.go
 FEATURE_PATHS_iam               := test/integration/iam/
 FEATURE_PATHS_init              := test/integration/init/
 FEATURE_PATHS_kms               := test/integration/kms/
 FEATURE_PATHS_lifecycle         := test/integration/lifecycle/
 FEATURE_PATHS_login             := test/integration/login/
 FEATURE_PATHS_mcp               := test/integration/mcp/
+FEATURE_PATHS_merge-result      := pkg/sdlc/merge_result_snapshot_integration_test.go
 FEATURE_PATHS_messaging         := test/integration/messaging/
 FEATURE_PATHS_observability     := test/integration/observability/
 FEATURE_PATHS_orchestration     := test/integration/orchestration/
@@ -1857,6 +1865,7 @@ FEATURE_PATHS_session-attach    := test/integration/session_attach/
 FEATURE_PATHS_signalbridge      := test/integration/signalbridge/ pkg/signalbridge/
 FEATURE_PATHS_standalone        := test/integration/standalone/
 FEATURE_PATHS_storage           := test/integration/storage/
+FEATURE_PATHS_storage-file      := pkg/storage/file/integration_test.go
 FEATURE_PATHS_tenantbarrier     := test/integration/tenantbarrier/
 FEATURE_PATHS_timeseries        := test/integration/timeseries/
 FEATURE_PATHS_transactions      := test/integration/transactions/
@@ -1866,6 +1875,23 @@ FEATURE_PATHS_workerimage       := test/integration/workerimage/
 # Support code every feature uses: a change here runs every feature, and its
 # own tests belong to every feature (they run in `make integration-test`).
 INTEGRATION_SHARED_PATHS := test/integration/helpers/ test/integration/certfixture/ test/integration/authzfake/
+# Integration-tagged tests that no integration-test-<feature> target runs:
+# the pkg/ and cmd/ ones run only in `make test-integration-tagged`, which
+# also runs the live forge suite and so is no feature's target, and
+# test/benchmark/ holds benchmarks only. They belong to no feature, so a
+# change to one runs every feature; check-feature-map.sh accepts them.
+INTEGRATION_UNTARGETED_PATHS := cmd/quicbaas/main_integration_test.go \
+	pkg/api/grpc/client_integration_test.go \
+	pkg/backup/compression_integration_test.go \
+	pkg/backup/encryption_integration_test.go \
+	pkg/backup/manager_integration_test.go \
+	pkg/backup/storage_integration_test.go \
+	pkg/cache/manager_integration_test.go \
+	pkg/server/embedded_integration_test.go \
+	pkg/server/server_integration_test.go \
+	pkg/storage/memory/memory_integration_test.go \
+	pkg/watch/manager_integration_test.go \
+	test/benchmark/grpc_bench_test.go
 # Documentation: a change confined to these paths runs no feature.
 INTEGRATION_DOC_PATHS := docs/ changelog.d/ *.md
 

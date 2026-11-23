@@ -1,7 +1,8 @@
 #!/bin/sh
 # touched-features_test.sh proves scripts/touched-features.sh names the
 # features a change touched, and scripts/check-feature-map.sh finds an orphan
-# integration test, a feature with no target and a stale path. Both run
+# integration test (in a test/integration/ directory or integration-tagged
+# anywhere), a feature with no target and a stale path. Both run
 # against a temporary git repository with a small feature mapping table; then
 # touched-features.sh runs once on this repository.
 #
@@ -42,11 +43,13 @@ tab=$(printf '\t')
 makefile() {
 	{
 		printf '%s\n' \
-			'INTEGRATION_FEATURES := alpha beta sdk-go' \
+			'INTEGRATION_FEATURES := alpha beta live sdk-go' \
 			'FEATURE_PATHS_alpha := test/integration/alpha/ pkg/alpha/' \
 			'FEATURE_PATHS_beta := test/integration/cli/beta_test.go' \
 			'FEATURE_PATHS_sdk-go := sdk/go/test/integration/' \
+			'FEATURE_PATHS_live := pkg/live/live_test.go' \
 			'INTEGRATION_SHARED_PATHS := test/integration/helpers/' \
+			'INTEGRATION_UNTARGETED_PATHS := pkg/old/old_test.go' \
 			'INTEGRATION_DOC_PATHS := docs/ *.md' \
 			'print-feature-map:' \
 			"$tab"'@$(foreach f,$(INTEGRATION_FEATURES),echo '"'"'$(f) $(strip $(FEATURE_PATHS_$(f)))'"'"';)' \
@@ -54,6 +57,8 @@ makefile() {
 			"$tab"'@echo "$($*)"' \
 			'integration-test-beta:' \
 			"$tab"'@echo beta' \
+			'integration-test-live:' \
+			"$tab"'@echo live' \
 			'integration-test-sdk-go:' \
 			"$tab"'@echo sdk-go' \
 			'integration-test-%:' \
@@ -106,7 +111,7 @@ mkdir -p "$tree/scripts" "$tree/docs" "$tree/pkg/alpha" "$tree/pkg/shared" \
 	"$tree/pkg/alpha/prompts" "$tree/pkg/shared/prompts" \
 	"$tree/test/integration/alpha" "$tree/test/integration/cli" \
 	"$tree/test/integration/helpers" "$tree/.github/workflows" \
-	"$tree/sdk/go/test/integration"
+	"$tree/sdk/go/test/integration" "$tree/pkg/live" "$tree/pkg/old"
 for s in touched-features.sh touched-packages.sh check-feature-map.sh; do
 	cp "$root/scripts/$s" "$tree/scripts/$s"
 done
@@ -117,6 +122,12 @@ for f in docs/a.md README.md pkg/alpha/a.go pkg/shared/s.go \
 	sdk/go/test/integration/s_test.go; do
 	echo 0 >"$tree/$f"
 done
+# Integration-tagged tests outside test/integration/: one a feature owns, one
+# listed as having no target, and one that excludes the tag (no integration
+# test, so the check must not ask for a row for pkg/shared/).
+printf '//go:build integration\n\npackage live\n' >"$tree/pkg/live/live_test.go"
+printf '//go:build integration\n\npackage old\n' >"$tree/pkg/old/old_test.go"
+printf '//go:build !integration\n\npackage shared\n' >"$tree/pkg/shared/s_test.go"
 makefile
 prev=$(commit base)
 
@@ -158,6 +169,12 @@ step sdk/go/test/integration/s_test.go
 features "$prev" "$next" sdk-go
 prev=$next
 
+# An integration-tagged test inside a package, run by its own target, selects
+# that feature.
+step pkg/live/live_test.go
+features "$prev" "$next" live
+prev=$next
+
 step pkg/alpha/a.go test/integration/cli/beta_test.go docs/a.md
 features "$prev" "$next" "alpha
 beta"
@@ -186,11 +203,22 @@ tgit add sdk/javascript/test/integration/j.integration.test.js
 check 1 'sdk/javascript/test/integration/j.integration.test.js: in no feature'
 tgit rm -q --cached sdk/javascript/test/integration/j.integration.test.js
 rm -r "$tree/sdk/javascript"
+# An integration-tagged test outside test/integration/ must belong to a feature.
+mkdir -p "$tree/pkg/orphan"
+printf '//go:build integration\n\npackage orphan\n' >"$tree/pkg/orphan/o_test.go"
+printf '//go:build rest && (integration || quic)\n\npackage orphan\n' >"$tree/pkg/orphan/p_test.go"
+tgit add pkg/orphan
+check 1 'pkg/orphan/o_test.go: in no feature'
+check 1 'pkg/orphan/p_test.go: in no feature'
+tgit rm -q -r --cached pkg/orphan
+rm -r "$tree/pkg/orphan"
 cp "$tree/Makefile" "$tree/Makefile.keep"
 makefile 'INTEGRATION_FEATURES += delta' 'FEATURE_PATHS_delta := pkg/alpha/'
 check 1 'delta: no integration-test-delta rule'
 makefile 'FEATURE_PATHS_alpha += pkg/nope/'
 check 1 'alpha: path pkg/nope/ matches no tracked file'
+makefile 'INTEGRATION_UNTARGETED_PATHS += pkg/nope_test.go'
+check 1 'INTEGRATION_UNTARGETED_PATHS: path pkg/nope_test.go matches no tracked file'
 mv "$tree/Makefile.keep" "$tree/Makefile"
 check 0 'ok'
 
