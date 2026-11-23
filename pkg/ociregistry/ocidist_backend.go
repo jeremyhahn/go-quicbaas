@@ -137,9 +137,12 @@ func (r *Registry) GetManifest(ctx context.Context, name, reference string) (str
 	if err != nil {
 		return "", nil, err
 	}
+	// Only a manifest media type is ever served as Content-Type: a
+	// manifest stored through another path keeps its bytes, not a type a
+	// browser would render.
 	mediaType := manifest.MediaType
-	if mediaType == "" {
-		mediaType = "application/vnd.oci.image.manifest.v1+json"
+	if !isManifestMediaType(mediaType) {
+		mediaType = defaultManifestMediaType
 	}
 	return mediaType, body, nil
 }
@@ -376,10 +379,49 @@ func decodeOCIManifest(body []byte, mediaType string) (*ImageManifest, error) {
 	if err := jsonUnmarshal(body, &m); err != nil {
 		return nil, &WrappedError{Msg: "registry: decode manifest", Err: err}
 	}
-	if m.MediaType == "" {
+	// The body's mediaType is what GetManifest serves as Content-Type, so
+	// it must be a manifest type and agree with the push's header: a
+	// body declaring text/html would otherwise be served as HTML.
+	if m.MediaType != "" {
+		if !isManifestMediaType(m.MediaType) {
+			return nil, InvalidManifestError{Reason: "unsupported manifest mediaType: " + m.MediaType}
+		}
+		if mediaType != "" && manifestBaseType(m.MediaType) != manifestBaseType(mediaType) {
+			return nil, InvalidManifestError{Reason: "manifest mediaType " + m.MediaType + " does not match Content-Type " + mediaType}
+		}
+	} else {
 		m.MediaType = mediaType
 	}
+	if m.MediaType == "" {
+		m.MediaType = defaultManifestMediaType
+	}
+	if !isManifestMediaType(m.MediaType) {
+		return nil, InvalidManifestError{Reason: "unsupported manifest mediaType: " + m.MediaType}
+	}
 	return &m, nil
+}
+
+// defaultManifestMediaType is served for a manifest that names no type.
+const defaultManifestMediaType = "application/vnd.oci.image.manifest.v1+json"
+
+// manifestMediaTypes are the media types a manifest is stored and served
+// under; anything else is refused on push and never used as Content-Type.
+var manifestMediaTypes = map[string]bool{
+	"application/vnd.oci.image.manifest.v1+json":                true,
+	"application/vnd.oci.image.index.v1+json":                   true,
+	"application/vnd.docker.distribution.manifest.v2+json":      true,
+	"application/vnd.docker.distribution.manifest.list.v2+json": true,
+}
+
+// manifestBaseType is mediaType without parameters, lower-cased.
+func manifestBaseType(mediaType string) string {
+	base, _, _ := strings.Cut(mediaType, ";")
+	return strings.ToLower(strings.TrimSpace(base))
+}
+
+// isManifestMediaType reports whether mediaType is a manifest media type.
+func isManifestMediaType(mediaType string) bool {
+	return manifestMediaTypes[manifestBaseType(mediaType)]
 }
 
 // encodeOCIManifest emits the manifest in the spec's wire shape. We

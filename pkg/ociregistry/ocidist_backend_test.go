@@ -147,6 +147,83 @@ func TestOCIDistBackend_PutManifestDigestReferenceMismatch(t *testing.T) {
 	}
 }
 
+// TestOCIDistBackend_PutManifestRefusesBodyMediaType pushes, through the
+// real Registry backend, manifests whose JSON mediaType is not a manifest
+// type or disagrees with the push's Content-Type: each is refused and
+// nothing is served for the tag, so raw JSON is never served as HTML.
+func TestOCIDistBackend_PutManifestRefusesBodyMediaType(t *testing.T) {
+	reg := newTestRegistry(t)
+	ctx := context.Background()
+	const ociManifest = "application/vnd.oci.image.manifest.v1+json"
+	const ociIndex = "application/vnd.oci.image.index.v1+json"
+	body := func(mt string) []byte {
+		return []byte(`{"schemaVersion":2,"mediaType":"` + mt + `","config":{"mediaType":"application/vnd.oci.image.config.v1+json","digest":"sha256:` +
+			repeat64("a") + `","size":4},"layers":[],"annotations":{"x":"<script>alert(1)</script>"}}`)
+	}
+	cases := []struct {
+		name, header, bodyType string
+	}{
+		{"html body type", ociManifest, "text/html"},
+		{"html body type with params", ociManifest, "text/html; charset=utf-8"},
+		{"body disagrees with header", ociManifest, ociIndex},
+		{"html header and body", "text/html", "text/html"},
+	}
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tag := "bad" + string(rune('a'+i))
+			_, err := reg.PutManifest(ctx, "alpine", tag, tc.header, body(tc.bodyType))
+			var invalid InvalidManifestError
+			if !errors.As(err, &invalid) {
+				t.Fatalf("PutManifest: want InvalidManifestError, got %v", err)
+			}
+			if _, _, err := reg.GetManifest(ctx, "alpine", tag); err == nil {
+				t.Fatalf("GetManifest of refused tag %s succeeded", tag)
+			}
+		})
+	}
+
+	// An agreeing body type, with parameters on the header, is accepted
+	// and served under the body's type.
+	if _, err := reg.PutManifest(ctx, "alpine", "good", ociManifest+"; charset=utf-8", body(ociManifest)); err != nil {
+		t.Fatalf("PutManifest agreeing type: %v", err)
+	}
+	mt, _, err := reg.GetManifest(ctx, "alpine", "good")
+	if err != nil {
+		t.Fatalf("GetManifest good: %v", err)
+	}
+	if mt != ociManifest {
+		t.Errorf("Content-Type = %q, want %q", mt, ociManifest)
+	}
+}
+
+// TestOCIDistBackend_GetManifestServesOnlyManifestTypes stores a manifest
+// with a non-manifest media type behind the distribution API's back and
+// checks GetManifest never serves that type as Content-Type.
+func TestOCIDistBackend_GetManifestServesOnlyManifestTypes(t *testing.T) {
+	reg := newTestRegistry(t)
+	ctx := context.Background()
+	const ociManifest = "application/vnd.oci.image.manifest.v1+json"
+	content := []byte(`{"schemaVersion":2,"mediaType":"` + ociManifest + `","layers":[]}`)
+	if _, err := reg.PutManifest(ctx, "alpine", "v1", ociManifest, content); err != nil {
+		t.Fatalf("PutManifest: %v", err)
+	}
+	m, err := reg.storage.GetManifest(ctx, "alpine:v1")
+	if err != nil {
+		t.Fatalf("storage.GetManifest: %v", err)
+	}
+	m.MediaType = "text/html"
+	if err := reg.storage.StoreManifest(ctx, "alpine:v1", m); err != nil {
+		t.Fatalf("StoreManifest: %v", err)
+	}
+	mt, _, err := reg.GetManifest(ctx, "alpine", "v1")
+	if err != nil {
+		t.Fatalf("GetManifest: %v", err)
+	}
+	if mt != ociManifest {
+		t.Errorf("Content-Type = %q, want %q", mt, ociManifest)
+	}
+}
+
 // TestOCIDistBackend_ListReposAndTags walks repositories and tags.
 func TestOCIDistBackend_ListReposAndTags(t *testing.T) {
 	reg := newTestRegistry(t)
