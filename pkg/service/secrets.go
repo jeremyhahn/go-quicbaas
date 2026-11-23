@@ -211,6 +211,9 @@ func (s *secretsService) StoreSecret(ctx context.Context, req *StoreSecretReques
 		path = req.Name
 	}
 	scopedPath := secretsTenantScopedID(tenantID, path)
+	if err := s.enforceServiceBinding(ctx, tenantID, path, "StoreSecret", true); err != nil {
+		return nil, err
+	}
 
 	// Build StoreOptions if encryption options are specified
 	var opts *interfaces.StoreOptions
@@ -303,6 +306,9 @@ func (s *secretsService) GetSecret(ctx context.Context, req *GetSecretRequest) (
 
 	// Enforce tenant access on the scoped ID
 	if err := enforceSecretsTenantAccess(tenantID, scopedID, "GetSecret"); err != nil {
+		return nil, err
+	}
+	if err := s.enforceServiceBinding(ctx, tenantID, req.SecretID, "GetSecret", secretsWriteVerbs["GetSecret"]); err != nil {
 		return nil, err
 	}
 
@@ -498,7 +504,7 @@ func (s *secretsService) ListSecrets(ctx context.Context, req *ListSecretsReques
 	secrets := make([]*Secret, 0, len(paths))
 	for _, path := range paths {
 		// Filter: only include secrets that belong to this tenant
-		if !secretsTenantBelongsTo(tenantID, path) {
+		if !secretsTenantBelongsTo(tenantID, path) || !s.serviceBindingVisible(ctx, tenantID, path) {
 			continue
 		}
 
@@ -598,6 +604,9 @@ func (s *secretsService) DeleteSecret(ctx context.Context, req *DeleteSecretRequ
 	if err := enforceSecretsTenantAccess(tenantID, scopedID, "DeleteSecret"); err != nil {
 		return nil, err
 	}
+	if err := s.enforceServiceBinding(ctx, tenantID, req.SecretID, "DeleteSecret", secretsWriteVerbs["DeleteSecret"]); err != nil {
+		return nil, err
+	}
 
 	// Log operation
 	if s.logger != nil {
@@ -677,6 +686,9 @@ func (s *secretsService) GetSecretVersion(ctx context.Context, req *GetSecretVer
 
 	// Enforce tenant access on the scoped ID
 	if err := enforceSecretsTenantAccess(tenantID, scopedID, "GetSecretVersion"); err != nil {
+		return nil, err
+	}
+	if err := s.enforceServiceBinding(ctx, tenantID, req.SecretID, "GetSecretVersion", secretsWriteVerbs["GetSecretVersion"]); err != nil {
 		return nil, err
 	}
 
@@ -890,6 +902,9 @@ func (s *secretsService) ListSecretVersions(ctx context.Context, req *ListSecret
 	if err := enforceSecretsTenantAccess(tenantID, scopedID, "ListSecretVersions"); err != nil {
 		return nil, err
 	}
+	if err := s.enforceServiceBinding(ctx, tenantID, req.SecretID, "ListSecretVersions", secretsWriteVerbs["ListSecretVersions"]); err != nil {
+		return nil, err
+	}
 
 	// Log operation
 	if s.logger != nil {
@@ -970,6 +985,9 @@ func (s *secretsService) RollbackSecret(ctx context.Context, req *RollbackSecret
 	if err := enforceSecretsTenantAccess(tenantID, scopedID, "RollbackSecret"); err != nil {
 		return nil, err
 	}
+	if err := s.enforceServiceBinding(ctx, tenantID, req.SecretID, "RollbackSecret", secretsWriteVerbs["RollbackSecret"]); err != nil {
+		return nil, err
+	}
 
 	// Log operation
 	if s.logger != nil {
@@ -1042,6 +1060,9 @@ func (s *secretsService) RotateSecret(ctx context.Context, req *RotateSecretRequ
 
 	// Enforce tenant access on the scoped ID
 	if err := enforceSecretsTenantAccess(tenantID, scopedID, "RotateSecret"); err != nil {
+		return nil, err
+	}
+	if err := s.enforceServiceBinding(ctx, tenantID, req.SecretID, "RotateSecret", secretsWriteVerbs["RotateSecret"]); err != nil {
 		return nil, err
 	}
 
@@ -1152,6 +1173,9 @@ func (s *secretsService) SetRotationPolicy(ctx context.Context, req *SetRotation
 	if err := enforceSecretsTenantAccess(tenantID, scopedID, "SetRotationPolicy"); err != nil {
 		return nil, err
 	}
+	if err := s.enforceServiceBinding(ctx, tenantID, req.SecretID, "SetRotationPolicy", secretsWriteVerbs["SetRotationPolicy"]); err != nil {
+		return nil, err
+	}
 
 	// Log operation
 	if s.logger != nil {
@@ -1242,6 +1266,9 @@ func (s *secretsService) GetRotationPolicy(ctx context.Context, req *GetRotation
 	if err := enforceSecretsTenantAccess(tenantID, scopedID, "GetRotationPolicy"); err != nil {
 		return nil, err
 	}
+	if err := s.enforceServiceBinding(ctx, tenantID, req.SecretID, "GetRotationPolicy", secretsWriteVerbs["GetRotationPolicy"]); err != nil {
+		return nil, err
+	}
 
 	// Log operation
 	if s.logger != nil {
@@ -1319,6 +1346,9 @@ func (s *secretsService) UpdateSecretStatus(ctx context.Context, req *UpdateSecr
 
 	// Enforce tenant access on the scoped ID
 	if err := enforceSecretsTenantAccess(tenantID, scopedID, "UpdateSecretStatus"); err != nil {
+		return nil, err
+	}
+	if err := s.enforceServiceBinding(ctx, tenantID, req.SecretID, "UpdateSecretStatus", secretsWriteVerbs["UpdateSecretStatus"]); err != nil {
 		return nil, err
 	}
 
@@ -1734,7 +1764,7 @@ func (s *secretsService) GetSecretsByPrefix(ctx context.Context, req *GetSecrets
 
 	for _, path := range paths {
 		// Filter: only include secrets that belong to this tenant
-		if !secretsTenantBelongsTo(tenantID, path) {
+		if !secretsTenantBelongsTo(tenantID, path) || !s.serviceBindingVisible(ctx, tenantID, path) {
 			continue
 		}
 
@@ -1842,7 +1872,7 @@ func (s *secretsService) WatchSecretsByPrefix(ctx context.Context, req *WatchSec
 		// Track known secrets and their versions
 		knownSecrets := make(map[string]string) // path -> version
 		for _, path := range initialPaths {
-			if !secretsTenantBelongsTo(tenantID, path) {
+			if !secretsTenantBelongsTo(tenantID, path) || !s.serviceBindingVisible(ctx, tenantID, path) {
 				continue
 			}
 			_, meta, err := s.secretsManager.Get(ctx, path)
@@ -1869,7 +1899,7 @@ func (s *secretsService) WatchSecretsByPrefix(ctx context.Context, req *WatchSec
 				// Check for new and updated secrets
 				currentPathsSet := make(map[string]bool)
 				for _, path := range currentPaths {
-					if !secretsTenantBelongsTo(tenantID, path) {
+					if !secretsTenantBelongsTo(tenantID, path) || !s.serviceBindingVisible(ctx, tenantID, path) {
 						continue
 					}
 					currentPathsSet[path] = true
@@ -2006,6 +2036,9 @@ func (s *secretsService) EnsureSecret(ctx context.Context, req *EnsureSecretRequ
 		return nil, err
 	}
 	scopedPath := secretsTenantScopedID(tenantID, req.SecretID)
+	if err := s.enforceServiceBinding(ctx, tenantID, req.SecretID, "EnsureSecret", true); err != nil {
+		return nil, err
+	}
 
 	if s.logger != nil {
 		s.logger.WithFields(map[string]interface{}{
