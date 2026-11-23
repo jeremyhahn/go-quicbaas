@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	ggrpc "google.golang.org/grpc"
 
 	grpcapi "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
@@ -97,11 +98,12 @@ func (e *AuthzGateConstructionError) Unwrap() error { return e.Cause }
 // dependencies are guaranteed by ordering; while sealed, the sealed-window
 // allowlist interceptors are the control and no authz gate exists.
 //
-// The interceptors enforce authorization through the SAME central platform-token
+// The interceptors authenticate through the SAME central platform-token
 // Validator the REST gate uses (buildPlatformValidator): one Authorize call per
-// request does offline signature / iss / aud / exp verification, the offline
-// scp -> permission decision, and the per-tenant liveness/revocation check. This
-// REPLACES the prior online qrdb role-PDP two-step on the gRPC transport.
+// request does offline signature / iss / aud / exp verification, the per-tenant
+// liveness/revocation check, and caps the request by the token's scp. go-qrdb's
+// authorizer (qrdbGRPCRBACAuthorizer: the embedded node's RBAC with its ABAC
+// decorator) then decides; a request passes only when both allow.
 func (s *Server) grpcAuthorizationInterceptors() (ggrpc.UnaryServerInterceptor, ggrpc.StreamServerInterceptor, error) {
 	if s.config == nil || !s.config.Security.RequireAuthz {
 		return nil, nil, nil
@@ -151,6 +153,30 @@ func (s *Server) grpcAuthorizationInterceptors() (ggrpc.UnaryServerInterceptor, 
 		s.SealedWindowProbe(), s.OperationalProbe(),
 		qbsealedwindow.NewLoggerAuditSink(s.logger))
 
-	return grpcapi.UnaryAuthorizationInterceptor(validator, grpcapi.WithSealedWindowAuthBypass(sealedBypass)),
-		grpcapi.StreamAuthorizationInterceptor(validator, grpcapi.WithSealedWindowAuthBypass(sealedBypass)), nil
+	// go-qrdb decides each call the token's scp allows; the node is resolved
+	// per call and a call before it is up fails closed.
+	rbac := &qrdbGRPCRBACAuthorizer{server: s}
+
+	return grpcapi.UnaryAuthorizationInterceptor(validator,
+			grpcapi.WithSealedWindowAuthBypass(sealedBypass), grpcapi.WithRBACAuthorizer(rbac)),
+		grpcapi.StreamAuthorizationInterceptor(validator,
+			grpcapi.WithSealedWindowAuthBypass(sealedBypass), grpcapi.WithRBACAuthorizer(rbac)), nil
+}
+
+// qrdbGRPCRBACAuthorizer is go-qrdb's RBAC decision point for the gRPC and
+// Unix gate: the embedded node's RBACClient, resolved per call because the
+// node client is wired later than the gate is built. A call before the
+// node is ready fails closed with QRDBNodeClientUnavailableError.
+type qrdbGRPCRBACAuthorizer struct{ server *Server }
+
+var _ grpcapi.GRPCRBACAuthorizer = (*qrdbGRPCRBACAuthorizer)(nil)
+
+// Authorize asks the embedded node's RBAC authorizer whether identity may
+// perform action on resource, in the tenant bound to ctx.
+func (a *qrdbGRPCRBACAuthorizer) Authorize(ctx context.Context, identity *qrdbtransport.Identity, resource, action string) error {
+	node := a.server.GetQRDBNodeClient()
+	if node == nil {
+		return &QRDBNodeClientUnavailableError{}
+	}
+	return node.RBAC().Authorize(ctx, identity, resource, action)
 }
