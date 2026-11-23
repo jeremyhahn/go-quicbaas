@@ -596,6 +596,7 @@ func serviceExecutionToProto(exec *service.SchedulerJobExecution) *pb.JobExecuti
 		DurationMs: exec.Duration.Milliseconds(),
 		Error:      exec.Error,
 		Output:     exec.Output,
+		Result:     exec.Result,
 	}
 }
 

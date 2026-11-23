@@ -417,6 +417,7 @@ func (a *SchedulerAdapter) GetJobHistory(ctx context.Context, req *GetSchedulerJ
 			Duration:  exec.Duration,
 			Error:     exec.Error,
 			Output:    exec.Output,
+			Result:    exec.Result,
 		}
 	}
 

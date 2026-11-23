@@ -212,6 +212,8 @@ message JobExecution {
     int64 duration_ms = 6;
     string error = 7;
     string output = 8;
+    // The run's output bytes, such as a remote worker's result.
+    bytes result = 9;
 }
 
 message SchedulerStats {

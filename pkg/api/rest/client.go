@@ -1363,6 +1363,7 @@ func schedulerExecutionFromREST(restExec *SchedulerJobExecutionRESTResponse) *se
 		Duration:  restExec.Duration,
 		Error:     restExec.Error,
 		Output:    restExec.Output,
+		Result:    restExec.Result,
 	}
 }
 

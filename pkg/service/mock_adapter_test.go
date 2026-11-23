@@ -909,6 +909,29 @@ func TestSchedulerAdapter_GetJobHistory_Success(t *testing.T) {
 	mockEngine.AssertExpectations(t)
 }
 
+// TestSchedulerAdapter_GetJobHistoryCarriesResult keeps a run's output bytes,
+// which the engine stores apart from its message.
+func TestSchedulerAdapter_GetJobHistoryCarriesResult(t *testing.T) {
+	mockEngine := newTestMockSchedulerEngine()
+	adapter := NewSchedulerAdapter(mockEngine)
+
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
+	result := []byte{0x00, 0x01, 'o', 'k'}
+	mockEngine.On("GetJobHistory", ctx, uint64(701), "tenant-1", 10).
+		Return([]*scheduler.JobExecution{{
+			ID: 1, JobID: 701, Status: scheduler.JobStatusCompleted, Result: result,
+		}}, nil).Once()
+
+	resp, err := adapter.GetJobHistory(ctx, &GetSchedulerJobHistoryRequest{JobID: 701, TenantID: "tenant-1", Limit: 10})
+	if err != nil {
+		t.Fatalf("GetJobHistory: %v", err)
+	}
+	if len(resp.Executions) != 1 || string(resp.Executions[0].Result) != string(result) {
+		t.Fatalf("GetJobHistory executions %+v, want one carrying result %q", resp.Executions, result)
+	}
+	mockEngine.AssertExpectations(t)
+}
+
 func TestSchedulerAdapter_GetJobHistory_DefaultLimit(t *testing.T) {
 	mockEngine := newTestMockSchedulerEngine()
 	adapter := NewSchedulerAdapter(mockEngine)

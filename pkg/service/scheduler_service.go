@@ -210,6 +210,8 @@ type SchedulerJobExecution struct {
 	Duration  time.Duration      `json:"duration,omitempty"`
 	Error     string             `json:"error,omitempty"`
 	Output    string             `json:"output,omitempty"`
+	// Result is the run's output bytes, such as a remote worker's result.
+	Result []byte `json:"result,omitempty"`
 }
 
 // SchedulerStats contains scheduler statistics.
