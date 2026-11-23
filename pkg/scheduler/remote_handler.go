@@ -158,6 +158,10 @@ func runRefOf(job *Job) RemoteRunRef {
 // runStartedAt is the identity of the job's current run: the instant of its
 // Running transition. A record written before RunStartedAt existed falls back
 // to UpdatedAt, the only evidence it has.
+// remoteRunPageSize is how many running jobs ListRemoteRuns reads from
+// storage per page.
+const remoteRunPageSize = 100
+
 func runStartedAt(job *Job) time.Time {
 	if !job.RunStartedAt.IsZero() {
 		return job.RunStartedAt
@@ -218,29 +222,40 @@ func (s *SchedulerEngine) ListRemoteRuns(ctx context.Context, tenantID string, h
 		}
 		// The tenant's own namespace: storage scans a tenant's jobs only
 		// when the query names its owner, and the system namespace otherwise.
-		query := &JobQuery{Status: JobStatusRunning, Handler: handler}
+		query := &JobQuery{Status: JobStatusRunning, Handler: handler, Limit: remoteRunPageSize}
 		if tenantID != "" {
 			query.OwnerType, query.OwnerID = OwnerTypeTenant, tenantID
 		}
-		jobs, err := s.ListJobs(ctx, query)
-		if err != nil {
-			return nil, err
-		}
-		for _, job := range jobs {
-			if job.Handler != handler || JobTenantID(job) != tenantID {
-				continue
+		// Page through every running job: expired runs ahead of live ones
+		// in storage order must not hide the live ones.
+		for {
+			jobs, cursor, err := s.ListJobsWithCursor(ctx, query)
+			if err != nil {
+				return nil, err
 			}
-			deadline := s.runDeadline(job)
-			if time.Now().After(deadline) {
-				continue // expired: no completion of it would be accepted
+			for _, job := range jobs {
+				if job.Handler != handler || JobTenantID(job) != tenantID {
+					continue
+				}
+				deadline := s.runDeadline(job)
+				if time.Now().After(deadline) {
+					continue // expired: no completion of it would be accepted
+				}
+				runs = append(runs, &RemoteRun{
+					RemoteRunRef: runRefOf(job),
+					Name:         job.Name,
+					Handler:      job.Handler,
+					Payload:      job.Payload,
+					Deadline:     deadline,
+				})
 			}
-			runs = append(runs, &RemoteRun{
-				RemoteRunRef: runRefOf(job),
-				Name:         job.Name,
-				Handler:      job.Handler,
-				Payload:      job.Payload,
-				Deadline:     deadline,
-			})
+			if cursor == "" {
+				break
+			}
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			query.Cursor = cursor
 		}
 	}
 	return runs, nil

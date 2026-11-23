@@ -16,6 +16,7 @@ package quicbaas
 import (
 	"context"
 	"errors"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -85,7 +86,14 @@ func (m *mockKVStore) Scan(_ context.Context, prefix string, fn func(key string,
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	for k, v := range m.data {
+	// Scan in key order, as the real store does.
+	keys := make([]string, 0, len(m.data))
+	for k := range m.data {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		v := m.data[k]
 		if strings.HasPrefix(k, prefix) {
 			if err := fn(k, v); err != nil {
 				if err == ErrLimitReached {

@@ -424,10 +424,23 @@ func (s *Storage) ListJobs(ctx context.Context, query *scheduler.JobQuery) ([]*s
 		limit = 100
 	}
 
+	// The cursor is the last returned job's decimal ID. Keys are the prefix
+	// plus that ID and the scan runs in key order, so resume after its key.
+	var cursorKey string
+	if query.Cursor != "" {
+		if _, err := strconv.ParseUint(query.Cursor, 10, 64); err != nil {
+			return nil, "", &scheduler.ErrStorageError{Op: "ListJobs.cursor", Cause: err}
+		}
+		cursorKey = prefix + query.Cursor
+	}
+
 	jobs := make([]*scheduler.Job, 0)
 	var scanErr error
 
 	err := s.kv.Scan(ctx, prefix, func(key string, value []byte) error {
+		if cursorKey != "" && key <= cursorKey {
+			return nil
+		}
 		var job scheduler.Job
 		if err := json.Unmarshal(value, &job); err != nil {
 			// Skip malformed entries
