@@ -7,6 +7,7 @@ import (
 	"crypto/rsa"
 	"testing"
 
+	xkmsssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	gossh "golang.org/x/crypto/ssh"
@@ -54,10 +55,10 @@ func TestSSHService_SignDigestRejectsAlgorithmForOtherKeyType(t *testing.T) {
 	_, err = svc.SignDigest(context.Background(), SSHSignRequest{
 		Name: "laptop", Digest: []byte("d"), Algorithm: gossh.KeyAlgoRSASHA256,
 	})
-	var algErr *SSHSignAlgorithmError
+	var algErr *xkmsssh.InvalidRequestError
 	require.ErrorAs(t, err, &algErr)
-	assert.Equal(t, gossh.KeyAlgoRSASHA256, algErr.Algorithm)
-	assert.Equal(t, gossh.KeyAlgoED25519, algErr.KeyType)
+	assert.Contains(t, algErr.Message, gossh.KeyAlgoRSASHA256)
+	assert.Contains(t, algErr.Message, gossh.KeyAlgoED25519)
 }
 
 func TestSSHService_SignDigestKeyTypeAlgorithmWithPlainSigner(t *testing.T) {
@@ -80,6 +81,6 @@ func TestSSHService_SignDigestSHA2NeedsAlgorithmSigner(t *testing.T) {
 	_, err := svc.SignDigest(context.Background(), SSHSignRequest{
 		Name: "rsa", Digest: []byte("d"), Algorithm: gossh.KeyAlgoRSASHA512,
 	})
-	var algErr *SSHSignAlgorithmError
+	var algErr *xkmsssh.InvalidRequestError
 	require.ErrorAs(t, err, &algErr)
 }

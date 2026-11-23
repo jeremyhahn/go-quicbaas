@@ -414,10 +414,6 @@ func convertSSHError(err error) error {
 	if stderrors.As(err, &missingDigest) {
 		return status.Error(codes.InvalidArgument, err.Error())
 	}
-	var badAlgorithm *service.SSHSignAlgorithmError
-	if stderrors.As(err, &badAlgorithm) {
-		return status.Error(codes.InvalidArgument, err.Error())
-	}
 	var badPassphrase *service.SSHPassphraseDecodeError
 	if stderrors.As(err, &badPassphrase) {
 		return status.Error(codes.InvalidArgument, err.Error())

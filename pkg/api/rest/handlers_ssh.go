@@ -690,8 +690,10 @@ func sshErrorStatus(err error) int {
 	if stderrors.As(err, &missingDigest) {
 		return http.StatusBadRequest
 	}
-	var badAlgorithm *service.SSHSignAlgorithmError
-	if stderrors.As(err, &badAlgorithm) {
+	// A request the SSH service refuses, such as a signature algorithm that
+	// does not fit the key, is the caller's error.
+	var invalid *xkmsssh.InvalidRequestError
+	if stderrors.As(err, &invalid) {
 		return http.StatusBadRequest
 	}
 	var hostNotPinned *SSHHostNotPinnedError

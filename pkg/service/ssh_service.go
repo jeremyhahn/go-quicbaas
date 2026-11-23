@@ -17,7 +17,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
-	"fmt"
 	"strconv"
 	"time"
 
@@ -308,51 +307,37 @@ func (s *sshService) signDigest(ctx context.Context, req SSHSignRequest) (*SSHSi
 	return &SSHSignature{Format: sig.Format, Blob: sig.Blob, Rest: sig.Rest}, nil
 }
 
-// SSHSignAlgorithmError is returned by SignDigest when the requested
-// signature algorithm does not suit the key, or the key's signer cannot
-// sign with a chosen algorithm.
-type SSHSignAlgorithmError struct {
-	Algorithm string
-	KeyType   string
-}
-
-// Error implements error.
-func (e *SSHSignAlgorithmError) Error() string {
-	return fmt.Sprintf("service/ssh: signature algorithm %q is not supported for a %s key", e.Algorithm, e.KeyType)
-}
-
 // signWithAlgorithm signs digest with the named SSH signature algorithm, or
-// with the key's default algorithm when algorithm is empty. An RSA key signs
-// with ssh-rsa, rsa-sha2-256 or rsa-sha2-512; any other key only with its
-// own type.
+// with the key's default algorithm when algorithm is empty or the key's own
+// type. A SHA-2 algorithm for an RSA key needs a signer that implements
+// gossh.AlgorithmSigner; one that does not is refused rather than silently
+// signing ssh-rsa (SHA-1).
 func signWithAlgorithm(signer gossh.Signer, digest []byte, algorithm string) (*gossh.Signature, error) {
-	if algorithm == "" {
-		return signer.Sign(rand.Reader, digest)
-	}
 	keyType := signer.PublicKey().Type()
-	if !sshAlgorithmSuitsKey(algorithm, keyType) {
-		return nil, &SSHSignAlgorithmError{Algorithm: algorithm, KeyType: keyType}
+	if err := checkSSHSignAlgorithm(keyType, algorithm); err != nil {
+		return nil, err
+	}
+	if algorithm == "" || algorithm == keyType {
+		return signer.Sign(rand.Reader, digest)
 	}
 	algSigner, ok := signer.(gossh.AlgorithmSigner)
-	if !ok && algorithm == keyType {
-		return signer.Sign(rand.Reader, digest)
-	}
 	if !ok {
-		return nil, &SSHSignAlgorithmError{Algorithm: algorithm, KeyType: keyType}
+		return nil, &xkmsssh.InvalidRequestError{Message: "ssh: the key store cannot sign with algorithm " + algorithm}
 	}
 	return algSigner.SignWithAlgorithm(rand.Reader, digest, algorithm)
 }
 
-// sshAlgorithmSuitsKey reports whether a key of keyType can sign with
-// algorithm.
-func sshAlgorithmSuitsKey(algorithm, keyType string) bool {
-	if algorithm == keyType {
-		return true
+// checkSSHSignAlgorithm reports whether algorithm can sign with a key of
+// keyType. Empty and the key's own type always can; an RSA key also signs
+// rsa-sha2-256 and rsa-sha2-512.
+func checkSSHSignAlgorithm(keyType, algorithm string) error {
+	if algorithm == "" || algorithm == keyType {
+		return nil
 	}
-	if keyType == gossh.KeyAlgoRSA {
-		return algorithm == gossh.KeyAlgoRSASHA256 || algorithm == gossh.KeyAlgoRSASHA512
+	if keyType == gossh.KeyAlgoRSA && (algorithm == gossh.KeyAlgoRSASHA256 || algorithm == gossh.KeyAlgoRSASHA512) {
+		return nil
 	}
-	return false
+	return &xkmsssh.InvalidRequestError{Message: "ssh: algorithm " + algorithm + " does not fit a " + keyType + " key"}
 }
 
 // auditSign records a signature, or a refused one, against the principal that
