@@ -135,6 +135,9 @@
 #   - The integration job runs on every non-docs pull request as before and
 #     is not in CI Gate until row #1700 closes (CA m787); it then takes the
 #     template's full-tier `if:` and a `full` check line.
+#   - The e2e-ui job runs `make test-e2e-docker` (the Playwright
+#     chromium-no-backend suite against a real daemon, all in Docker) on
+#     every non-draft, non-docs pull request and does not gate (#2577).
 #   - The integration image keeps its per-run name (IT_IMAGE) with no lease,
 #     no content hash and no Alpine index sum (v1.23, v1.25, v1.29): every
 #     job runs on a single-use runner (a hosted VM),
@@ -2334,6 +2337,60 @@ jobs:
           rm -f "$RUNNER_TEMP/gomodauth.env"
           IT_IMAGE="$IT_IMAGE" docker compose -f build/docker/devcontainer/compose.yaml -p "$IT_PROJECT" down --volumes || true
           docker image rm "$IT_IMAGE" || true
+
+  # Playwright UI suite (#2577): `make test-e2e-docker` builds quicbaasd with
+  # the UI embedded on a Playwright base image and runs the chromium-no-backend
+  # project in that container, so the runner needs only Docker. It runs where
+  # the integration job runs and does not gate; it is in nonGatingJobs in
+  # test/buildgates/ci_gate_test.go, not in CI Gate's needs or check lines.
+  e2e-ui:
+    name: E2E UI [Playwright chromium-no-backend]
+    runs-on: ubuntu-latest
+    timeout-minutes: 50       # CUSTOMIZE: fits the pull request pipeline's one-hour budget
+    needs: preflight
+    if: ${{ !github.event.pull_request.draft && needs.preflight.outputs.verdict == 'run' && needs.preflight.outputs.docs_only != 'true' }}
+    steps:
+      # No credential reaches a job. A runner that injects a git credential
+      # through GIT_CONFIG_* stops the job here, before any later step can
+      # print it; only the variable names are logged.
+      - name: Refuse injected forge credentials
+        shell: bash
+        run: |
+          found=0
+          for v in $(compgen -e); do
+            case "$v" in
+              GIT_CONFIG_COUNT|GIT_CONFIG_KEY_*|GIT_CONFIG_VALUE_*)
+                echo "::error::the job environment carries $v; no credential may reach this job"
+                found=1
+                ;;
+            esac
+          done
+          exit "$found"
+
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Free runner disk
+        if: ${{ runner.environment == 'github-hosted' }}
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          docker image prune --all --force
+          df -h /
+
+      # The merge result, against the same pinned base as the image job (#436).
+      - name: Validate the merge result, not the head alone
+        run: .github/scripts/ci-merge-base.sh "${{ github.event_name }}" "${{ github.base_ref }}" "${{ github.event.pull_request.base.sha }}"
+
+      - name: make test-e2e-docker (Playwright chromium-no-backend)
+        run: make test-e2e-docker
+
+      - name: Upload the Playwright results (failure only)
+        if: failure()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: e2e-ui-results
+          path: test/e2e/.docker-results/
+          retention-days: 7
+          if-no-files-found: ignore
 
   # CUSTOMIZE: further stages run in the image job as steps of the same
   # shape (one `make` target in the toolchain image, `if: !cancelled()`). A

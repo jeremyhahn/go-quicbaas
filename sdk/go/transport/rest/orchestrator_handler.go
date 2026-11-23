@@ -89,6 +89,7 @@ func (h *orchestratorHandler) handleRequest(ctx context.Context, service, method
 		"ListJobs":               h.handleListJobs,
 		"CancelJob":              h.handleCancelJob,
 		"SubscribeJobEvents":     h.handleSubscribeJobEvents,
+		"GetSessionHistory":      h.handleGetSessionHistory,
 		"Inference":              h.handleInference,
 		"ListWorkflows":          h.handleListWorkflows,
 		"CreateWorkflow":         h.handleCreateWorkflow,
@@ -818,7 +819,17 @@ func (h *orchestratorHandler) handleSubscribeJobEvents(ctx context.Context, req 
 		"streaming not supported over REST transport; use gRPC transport")
 }
 
-// handleDisableFleetNode handles POST /api/v1/agents/{id}/disable.
+// handleGetSessionHistory returns Unimplemented: the REST API has no paged
+// session event-log route, and sending the generic fallback would post to a
+// path the server does not serve. GetSessionConversation (the /history
+// route) and SubscribeSessionEvents (the /events stream) carry the session
+// over REST; the gRPC transport carries GetSessionHistory.
+func (h *orchestratorHandler) handleGetSessionHistory(ctx context.Context, req interface{}) (interface{}, error) {
+	return nil, errors.NewUnimplemented("rest.orchestrator.GetSessionHistory",
+		"session event history is not carried over REST; use SubscribeSessionEvents or the gRPC transport")
+}
+
+// handleListWorkflows handles GET /api/v1/orchestrator/workflows.
 func (h *orchestratorHandler) handleListWorkflows(ctx context.Context, req interface{}) (interface{}, error) {
 	sdkReq, ok := req.(*orchestrator.ListWorkflowsRequest)
 	if !ok {
@@ -909,12 +920,13 @@ func (h *orchestratorHandler) handleDeleteWorkflow(ctx context.Context, req inte
 	return nil, nil
 }
 
+// handleDisableFleetNode handles POST /api/v1/fleet/{id}/disable.
 func (h *orchestratorHandler) handleDisableFleetNode(ctx context.Context, req interface{}) (interface{}, error) {
 	sdkReq, ok := req.(*orchestrator.DisableFleetNodeRequest)
 	if !ok {
 		return nil, errors.NewInvalidInput("orchestrator.DisableFleetNode", "invalid request type")
 	}
-	url := "/api/v1/agents/" + sdkReq.NodeID + "/disable?tenant_id=" + sdkReq.TenantID
+	url := "/api/v1/fleet/" + sdkReq.NodeID + "/disable?tenant_id=" + sdkReq.TenantID
 	var resp orchestrator.DisableFleetNodeResponse
 	if err := h.transport.doJSONRequest(ctx, http.MethodPost, url, nil, &resp); err != nil {
 		return nil, err
@@ -922,13 +934,13 @@ func (h *orchestratorHandler) handleDisableFleetNode(ctx context.Context, req in
 	return &resp, nil
 }
 
-// handleEnableFleetNode handles POST /api/v1/agents/{id}/enable.
+// handleEnableFleetNode handles POST /api/v1/fleet/{id}/enable.
 func (h *orchestratorHandler) handleEnableFleetNode(ctx context.Context, req interface{}) (interface{}, error) {
 	sdkReq, ok := req.(*orchestrator.EnableFleetNodeRequest)
 	if !ok {
 		return nil, errors.NewInvalidInput("orchestrator.EnableFleetNode", "invalid request type")
 	}
-	url := "/api/v1/agents/" + sdkReq.NodeID + "/enable?tenant_id=" + sdkReq.TenantID
+	url := "/api/v1/fleet/" + sdkReq.NodeID + "/enable?tenant_id=" + sdkReq.TenantID
 	var resp orchestrator.EnableFleetNodeResponse
 	if err := h.transport.doJSONRequest(ctx, http.MethodPost, url, nil, &resp); err != nil {
 		return nil, err
