@@ -33,6 +33,7 @@ import (
 	ggrpc "google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
 
+	xkmscaprovider "github.com/jeremyhahn/go-xkms/pkg/ca/provider"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -808,12 +809,36 @@ func (s *Server) initializeCA() error {
 // adoptCA makes ca the node's certificate authority. The CA adapter built
 // by NewServer takes it under its lock, so certificate logins already being
 // served (the unified listeners start before initializeCA) see either no CA
-// and fail closed, or this one.
+// and fail closed, or this one. It also hands the CA to the composed XKMS
+// service through bindCAToXKMSService.
 func (s *Server) adoptCA(ca xkmssdk.TrustedCA) {
 	s.xkmsCA = ca
 	if s.caAdapter != nil {
 		s.caAdapter.SetCA(ca)
 	}
+	s.bindCAToXKMSService()
+}
+
+// bindCAToXKMSService hands the node's adopted CA to the composed XKMS
+// service, so the canonical KeystoreService CA RPCs the go-xkms module serves
+// on the node (SignCSR, which PIV enrollment over gRPC uses) sign with the
+// same CA as the quicbaas CA adapter. It is a no-op until both the CA is
+// adopted and the XKMS service resolves, and it is called from both places,
+// whichever comes last.
+func (s *Server) bindCAToXKMSService() {
+	if s.xkmsCA == nil {
+		return
+	}
+	pc, ok := s.xkmsCA.(xkmscaprovider.CA)
+	if !ok {
+		s.logger.Warn("adopted CA does not implement the XKMS CA provider; canonical KeystoreService CA RPCs stay unconfigured")
+		return
+	}
+	x, err := xkmssdk.Get()
+	if err != nil || x == nil {
+		return
+	}
+	x.SetCA(pc)
 }
 
 // issueTLSCertFromExternalCA configures TLS using the externally injected CA.
@@ -2222,6 +2247,8 @@ func (s *Server) startService() error {
 	// dbxkms.Initialize has run, which happens independently of node
 	// construction ordering.
 	if xkmsService, getErr := xkmssdk.Get(); getErr == nil {
+		// The CA may have been adopted before the XKMS service resolved.
+		s.bindCAToXKMSService()
 		if client := s.GetQRDBNodeClient(); client != nil {
 			xkmsService.SetUserClients(client.Users(), client.Roles())
 			// UserAuthFactors returns nil when the transport predates the
