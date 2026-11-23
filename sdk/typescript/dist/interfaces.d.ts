@@ -19,7 +19,7 @@ import type { XKMSKeysClient } from './xkms_keys.js';
 import type { PIVClient } from './piv.js';
 import type { XKMSClient } from './xkms.js';
 import type { BackupsClient } from './backups.js';
-import type { ClusterNodesClient } from './cluster_nodes.js';
+import type { ClusterNodesClient, ListClusterNodesResponse } from './cluster_nodes.js';
 import type { EntitiesClient } from './entities.js';
 import type { KMSAdminClient } from './kms_admin.js';
 import type { ObjectStorageAdminClient } from './objectstorage_admin.js';
@@ -1127,6 +1127,7 @@ export interface CeremonyClient {
 }
 export interface ClusterClient {
     status(): Promise<ClusterStatusResponse>;
+    listNodes(): Promise<ListClusterNodesResponse>;
     leader(): Promise<ClusterLeaderResponse>;
     shardLeader(shardID: number): Promise<ShardLeaderResponse>;
     startRebalance(req?: RebalanceRequest): Promise<RebalanceResponse>;

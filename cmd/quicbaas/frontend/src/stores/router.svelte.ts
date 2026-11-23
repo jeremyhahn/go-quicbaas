@@ -125,6 +125,7 @@ export type RouteName =
   | 'attention'
   // CLUSTER
   | 'cluster'
+  | 'nodes'
   | 'invite-activate'
   | 'not-found';
 
@@ -350,6 +351,9 @@ function matchPath(path: string, hash: string): Route {
   }
   if (path === '/cluster') {
     return { name: 'cluster', params: {}, hash };
+  }
+  if (path === '/nodes') {
+    return { name: 'nodes', params: {}, hash };
   }
 
   // Parameterised: /sessions/:id

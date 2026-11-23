@@ -195,6 +195,10 @@ export declare class RestDEKClient implements DEKClient {
  * RestAttestationClient manages the attestation verifier's endorsements and
  * reference values over REST (/api/v1/attestation/*).
  */
+/** pemTextToBase64 encodes PEM text as the base64 of its UTF-8 bytes (a Go []byte on the wire). */
+export declare function pemTextToBase64(pem: string): string;
+/** base64ToPEMText decodes a Go []byte field back to the PEM text it carries. */
+export declare function base64ToPEMText(b64: string): string;
 export declare class RestAttestationClient implements AttestationClient {
     private readonly http;
     constructor(baseUrl: string, config?: ClientConfig);
@@ -398,6 +402,7 @@ export declare class RestClusterClient implements ClusterClient {
     startMigration(req: MigrationRequest): Promise<MigrationResponse>;
     migrationStatus(operationID: string): Promise<MigrationStatusResponse>;
     cancelMigration(operationID: string): Promise<CancelMigrationResponse>;
+    listNodes(): Promise<ListClusterNodesResponse>;
 }
 export declare class RestBootstrapClient implements BootstrapClient {
     private readonly http;

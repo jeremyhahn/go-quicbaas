@@ -3145,8 +3145,11 @@ export interface ClusterStatusResponse {
   timestamp: string;
 }
 
-// ClusterNodeInfo describes one cluster node, as returned inside
-// ClusterLeaderResponse. Mirrors the Go REST rest.ClusterNodeInfo.
+/**
+ * ClusterNodeInfo is one cluster member as GET /api/v1/cluster/nodes reports
+ * it, and the leader inside ClusterLeaderResponse. Mirrors the Go REST
+ * rest.ClusterNodeInfo.
+ */
 export interface ClusterNodeInfo {
   node_id: number;
   address: string;
@@ -3249,8 +3252,10 @@ export interface CancelMigrationResponse {
   operation_id: string;
   cancelled: boolean;
   message: string;
-  timestamp: string;
 }
+
+// ListClusterNodesResponse (GET /api/v1/cluster/nodes) is declared in
+// cluster_nodes.ts with the rest of the node-membership types.
 
 // =============================================================================
 // Seal* Deprecation Aliases

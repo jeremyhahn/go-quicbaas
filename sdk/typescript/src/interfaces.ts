@@ -53,7 +53,7 @@ import type { XKMSKeysClient } from './xkms_keys.js';
 import type { PIVClient } from './piv.js';
 import type { XKMSClient } from './xkms.js';
 import type { BackupsClient } from './backups.js';
-import type { ClusterNodesClient } from './cluster_nodes.js';
+import type { ClusterNodesClient, ListClusterNodesResponse } from './cluster_nodes.js';
 import type { EntitiesClient } from './entities.js';
 import type { KMSAdminClient } from './kms_admin.js';
 import type { ObjectStorageAdminClient } from './objectstorage_admin.js';
@@ -2512,6 +2512,11 @@ export interface ClusterClient {
   // health). In standalone (non-Raft) mode `shards` is empty and total_nodes
   // is 1. Maps to GET /api/v1/cluster/status.
   status(): Promise<ClusterStatusResponse>;
+  // listNodes returns the cluster's members with their address, Raft
+  // address, leadership, health, version and uptime. `nodes` is always an
+  // array (empty when the server reports none). Maps to
+  // GET /api/v1/cluster/nodes.
+  listNodes(): Promise<ListClusterNodesResponse>;
 
   // leader returns the cluster's leader node; it rejects with a 503
   // APIError when the cluster has no leader.

@@ -3840,20 +3840,50 @@ export class RestDEKClient {
  * RestAttestationClient manages the attestation verifier's endorsements and
  * reference values over REST (/api/v1/attestation/*).
  */
+/** pemTextToBase64 encodes PEM text as the base64 of its UTF-8 bytes (a Go []byte on the wire). */
+export function pemTextToBase64(pem) {
+    return bytesToBase64(new TextEncoder().encode(pem));
+}
+/** base64ToPEMText decodes a Go []byte field back to the PEM text it carries. */
+export function base64ToPEMText(b64) {
+    const binary = atob(b64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++)
+        bytes[i] = binary.charCodeAt(i);
+    return new TextDecoder().decode(bytes);
+}
+function endorsementFromWire(wire) {
+    const out = { ...wire };
+    if (wire.certificate_pem)
+        out.certificate_pem = base64ToPEMText(wire.certificate_pem);
+    if (wire.public_key_pem)
+        out.public_key_pem = base64ToPEMText(wire.public_key_pem);
+    return out;
+}
 export class RestAttestationClient {
     http;
     constructor(baseUrl, config = {}) {
         this.http = newFetchHelper(baseUrl, config);
     }
     // Maps to PUT /api/v1/attestation/endorsements/{name}
+    //
+    // The handler decodes certificate_pem and public_key_pem into Go []byte, so
+    // on the wire they are base64 of the PEM text; this client takes and returns
+    // the PEM text itself and does that encoding exactly once.
     async putEndorsement(name, req) {
-        return this.http.fetchJSON(`/api/v1/attestation/endorsements/${encodeURIComponent(name)}`, { method: 'PUT', body: JSON.stringify(req) });
+        const body = { kind: req.kind };
+        if (req.certificate_pem !== undefined)
+            body.certificate_pem = pemTextToBase64(req.certificate_pem);
+        if (req.public_key_pem !== undefined)
+            body.public_key_pem = pemTextToBase64(req.public_key_pem);
+        const wire = await this.http.fetchJSON(`/api/v1/attestation/endorsements/${encodeURIComponent(name)}`, { method: 'PUT', body: JSON.stringify(body) });
+        return endorsementFromWire(wire);
     }
     // Maps to GET /api/v1/attestation/endorsements[?kind=]
     async listEndorsements(kind) {
         const query = kind ? `?kind=${encodeURIComponent(kind)}` : '';
         const wire = await this.http.fetchJSON(`/api/v1/attestation/endorsements${query}`);
-        return { ...wire, endorsements: wire?.endorsements ?? [] };
+        return { ...wire, endorsements: (wire?.endorsements ?? []).map(endorsementFromWire) };
     }
     // Maps to DELETE /api/v1/attestation/endorsements/{name}
     async deleteEndorsement(name) {
@@ -4785,6 +4815,14 @@ export class RestClusterClient {
     // Maps to DELETE /api/v1/cluster/migrate/?operation_id=.
     async cancelMigration(operationID) {
         return this.http.fetchJSON(`/api/v1/cluster/migrate/?operation_id=${encodeURIComponent(operationID)}`, { method: 'DELETE' });
+    }
+    // Maps to GET /api/v1/cluster/nodes.
+    async listNodes() {
+        const resp = await this.http.fetchJSON('/api/v1/cluster/nodes', {
+            method: 'GET',
+        });
+        // A nil Go slice encodes as null; callers always get an array.
+        return { ...resp, nodes: resp.nodes ?? [] };
     }
 }
 // ---------------------------------------------------------------------------

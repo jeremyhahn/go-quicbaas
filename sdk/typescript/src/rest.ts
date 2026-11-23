@@ -7050,6 +7050,15 @@ export class RestClusterClient implements ClusterClient {
       { method: 'DELETE' },
     );
   }
+
+  // Maps to GET /api/v1/cluster/nodes.
+  async listNodes(): Promise<ListClusterNodesResponse> {
+    const resp = await this.http.fetchJSON<ListClusterNodesResponse>('/api/v1/cluster/nodes', {
+      method: 'GET',
+    });
+    // A nil Go slice encodes as null; callers always get an array.
+    return { ...resp, nodes: resp.nodes ?? [] };
+  }
 }
 
 // ---------------------------------------------------------------------------
