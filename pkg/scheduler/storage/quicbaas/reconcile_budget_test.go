@@ -309,6 +309,92 @@ func TestReconcile_ScanTimingOutBeforeFirstCallbackSplits(t *testing.T) {
 
 // withDeadline returns a context that expires after d and is cancelled when
 // the test ends.
+// slowExistsKVStore delays every Exists, modelling a store whose existence
+// checks are slow, and honours the caller's context.
+type slowExistsKVStore struct {
+	*mockKVStore
+	existsDelay time.Duration
+}
+
+func (s *slowExistsKVStore) Exists(ctx context.Context, key string) (bool, error) {
+	select {
+	case <-time.After(s.existsDelay):
+	case <-ctx.Done():
+		return false, ctx.Err()
+	}
+	return s.mockKVStore.Exists(ctx, key)
+}
+
+// TestReconcile_SlowExistsResumesInsideShard proves that when each existence
+// check is slow enough that one budget covers only part of a shard, the next
+// run resumes after the last record checked instead of rechecking the shard
+// from its start, so every legacy job becomes due.
+func TestReconcile_SlowExistsResumesInsideShard(t *testing.T) {
+	const (
+		legacyJobs  = 40
+		existsDelay = 10 * time.Millisecond
+		sweep       = 200 * time.Millisecond // ~100ms budget: about 10 checks per run
+	)
+	base := newMockKVStore()
+	now := time.Now()
+
+	for i := 0; i < legacyJobs; i++ {
+		job := createTestJob(fmt.Sprintf("legacy-%d", i), scheduler.OwnerTypeTenant, "acme")
+		job.ID = uint64(100 + i)
+		job.NextRun = now.Add(-time.Minute)
+		putUnindexedTenantJob(t, base, job)
+	}
+
+	// Seed the counter on the fast store, then drop the index entries that
+	// open wrote: the jobs are legacy again.
+	if err := NewStorage(base).InitializeJobIDCounter(context.Background()); err != nil {
+		t.Fatalf("seed counter: %v", err)
+	}
+	var indexKeys []string
+	if err := base.Scan(context.Background(), TenantJobIndexPrefix, func(key string, _ []byte) error {
+		indexKeys = append(indexKeys, key)
+		return nil
+	}); err != nil {
+		t.Fatalf("index scan: %v", err)
+	}
+	for _, key := range indexKeys {
+		if err := base.Delete(context.Background(), key); err != nil {
+			t.Fatalf("drop index entry: %v", err)
+		}
+	}
+	if n := countIndexEntries(t, base); n != 0 {
+		t.Fatalf("index entries after drop = %d, want 0", n)
+	}
+
+	kv := &slowExistsKVStore{mockKVStore: base, existsDelay: existsDelay}
+	storage := NewStorage(kv)
+	prev := 0
+	for i := 0; ; i++ {
+		if i >= 30 {
+			t.Fatalf("index never completed: %d of %d entries", prev, legacyJobs)
+		}
+		storage.reconcileWithinBudget(withDeadline(t, sweep))
+		n := countIndexEntries(t, base)
+		if n < prev {
+			t.Fatalf("run %d: index entries fell from %d to %d", i, prev, n)
+		}
+		prev = n
+		if n == legacyJobs {
+			break
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	due, err := storage.GetJobsDueForExecution(ctx, now, 100)
+	if err != nil {
+		t.Fatalf("due scan: %v", err)
+	}
+	if len(due) != legacyJobs {
+		t.Fatalf("due = %d jobs, want %d once the index is complete", len(due), legacyJobs)
+	}
+}
+
 func withDeadline(t *testing.T, d time.Duration) context.Context {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), d)

@@ -773,7 +773,9 @@ func (s *Storage) InitializeJobIDCounter(ctx context.Context) error {
 // reconcileShardLimit records, or whose scan the budget cuts short, is split
 // into one narrower shard per next key byte; the unfinished shards are kept
 // on the Storage, so the next run resumes the pass where this one stopped
-// even when scanning the whole keyspace takes longer than one budget.
+// even when scanning the whole keyspace takes longer than one budget. A run
+// cut short inside a shard's index checks keeps the key of the last record it
+// checked on the shard, and the next run resumes after it.
 func (s *Storage) reconcileTenantJobIndex(ctx context.Context) error {
 	if !s.reconcileRun.TryLock() {
 		return &scheduler.ErrStorageError{Op: "reconcileTenantJobIndex", Cause: errReconcileBusy}
@@ -798,18 +800,25 @@ func (s *Storage) reconcileTenantJobIndex(ctx context.Context) error {
 		if split {
 			continue
 		}
+		// A store need not deliver keys in order; the cursor needs them sorted.
+		slices.SortFunc(refs, func(a, b tenantJobRef) int { return strings.Compare(a.key, b.key) })
 		for _, ref := range refs {
+			if shard.after != "" && ref.key <= shard.after {
+				continue
+			}
 			indexKey := keyForTenantJobIndex(ref.id, ref.tenantID)
 			present, err := s.kv.Exists(ctx, indexKey)
 			if err != nil {
 				return &scheduler.ErrStorageError{Op: "reconcileTenantJobIndex.index", Cause: err}
 			}
 			if present {
+				s.reconcilePending[0].after = ref.key
 				continue
 			}
 			if err := s.kv.Put(ctx, indexKey, []byte(ref.tenantID)); err != nil {
 				return &scheduler.ErrStorageError{Op: "reconcileTenantJobIndex.index", Cause: err}
 			}
+			s.reconcilePending[0].after = ref.key
 		}
 		s.reconcilePending = s.reconcilePending[1:]
 	}
@@ -848,6 +857,9 @@ var errReconcileShardFull = errors.New("reconciliation shard full")
 type reconcileShard struct {
 	prefix string
 	exact  bool
+	// after is the key of the last record whose index entry a cut-short run
+	// already checked or wrote; the next run resumes after it.
+	after string
 }
 
 // children returns the shards that together cover s: the key equal to its
@@ -865,6 +877,8 @@ func (s reconcileShard) children() []reconcileShard {
 type tenantJobRef struct {
 	id       uint64
 	tenantID string
+	// key is the record's key, the shard's resume cursor.
+	key string
 }
 
 // scanReconcileShard returns the tenant job records shard covers. split
@@ -878,7 +892,7 @@ func (s *Storage) scanReconcileShard(ctx context.Context, shard reconcileShard) 
 			return nil, false, err
 		}
 		if tenantID, id, ok := splitTenantJobKey(shard.prefix); ok {
-			refs = append(refs, tenantJobRef{id: id, tenantID: tenantID})
+			refs = append(refs, tenantJobRef{id: id, tenantID: tenantID, key: shard.prefix})
 		}
 		return refs, false, nil
 	}
@@ -889,7 +903,7 @@ func (s *Storage) scanReconcileShard(ctx context.Context, shard reconcileShard) 
 				full = true
 				return errReconcileShardFull
 			}
-			refs = append(refs, tenantJobRef{id: id, tenantID: tenantID})
+			refs = append(refs, tenantJobRef{id: id, tenantID: tenantID, key: key})
 		}
 		return ctx.Err()
 	})
