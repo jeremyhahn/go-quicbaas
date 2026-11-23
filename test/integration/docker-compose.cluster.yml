@@ -93,7 +93,7 @@ services:
         aliases:
           - node1
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8080/api/v1/health/live"]
+      test: ["CMD", "curl", "-ksf", "https://localhost:8080/api/v1/health/live"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -151,7 +151,7 @@ services:
       quicbaas-node1:
         condition: service_started
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8080/api/v1/health/live"]
+      test: ["CMD", "curl", "-ksf", "https://localhost:8080/api/v1/health/live"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -211,7 +211,7 @@ services:
       quicbaas-node2:
         condition: service_started
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8080/api/v1/health/live"]
+      test: ["CMD", "curl", "-ksf", "https://localhost:8080/api/v1/health/live"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -283,7 +283,7 @@ services:
       quicbaas-node3:
         condition: service_started
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8080/api/v1/health/live"]
+      test: ["CMD", "curl", "-ksf", "https://localhost:8080/api/v1/health/live"]
       interval: 5s
       timeout: 3s
       retries: 20
