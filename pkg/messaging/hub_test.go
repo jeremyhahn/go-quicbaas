@@ -1065,12 +1065,19 @@ func TestNotificationHub_RegisterAlreadyRegisteredClient(t *testing.T) {
 		// Register the same client again - should not increase count
 		hub.RegisterClient(client)
 
-		// Registrations are processed in order, so once a second client is
-		// counted the duplicate ahead of it has been processed too.
 		hub.RegisterClient(NewClient("client-2", 256))
+
+		// The count alone cannot show the sentinel was processed: without the
+		// duplicate guard, the duplicate alone would make it 2. So wait until
+		// the loop has taken both registrations off its queue, then make a
+		// blocking round trip through the same loop. The loop is one goroutine,
+		// so it finishes a registration before it answers a later request:
+		// when the round trip returns, both registrations have been handled.
 		require.Eventually(t, func() bool {
-			return hub.ClientCount() >= 2
+			return len(hub.register) == 0
 		}, testTimeout, testPollInterval)
+		_, err := hub.listChannelsE()
+		require.NoError(t, err)
 
 		// The duplicate must not have been counted
 		assert.Equal(t, 2, hub.ClientCount())
