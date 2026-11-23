@@ -32,7 +32,8 @@ const VolumeStateLockFile = ".quicbaas-attachments.lock"
 // release: a launch claiming a volume another container holds, or one a
 // failed release left pending, is refused with ErrVolumeInUse before anything
 // is attached. The volumes held are written to VolumeStateFile in the staging
-// dir after every change, so a restarted node keeps refusing them and
+// dir after every change, each one before its Attach and again after it, so a
+// node killed part way through a launch, or a restarted one, keeps refusing them and
 // releases them through ReleaseRecovered once the startup sweep has removed
 // their containers.
 //
@@ -63,7 +64,7 @@ type VolumeRuntime struct {
 	// volume launch and by RetryPendingReleases.
 	pending []AttachedVolume
 	// owned maps a claim name to the volume its owner holds; a launch's entry
-	// has no VolumeID until the volume is attached.
+	// has no VolumeID until the volume is journaled, before its Attach.
 	owned map[string]AttachedVolume
 	// recovered holds the volumes read from the state file at start, owned by
 	// containers of an earlier run of the node.
@@ -301,7 +302,16 @@ func (r *VolumeRuntime) attach(ctx context.Context, spec *ContainerSpec) (*Conta
 	if err := r.reserve(spec.Volumes); err != nil {
 		return nil, nil, err
 	}
-	vols, held, err := r.attacher.attach(ctx, spec.Volumes)
+	// Each volume is journaled to the state file before its Attach and again
+	// after it, so a node killed part way through the batch recovers what it
+	// attached; the failure and success paths below rewrite the entries.
+	journal := func(v AttachedVolume) error {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		r.owned[v.Claim.Name] = v
+		return r.persistLocked()
+	}
+	vols, held, err := r.attacher.attach(ctx, spec.Volumes, journal)
 	if err != nil {
 		claims := make([]AttachedVolume, 0, len(spec.Volumes))
 		for _, c := range spec.Volumes {

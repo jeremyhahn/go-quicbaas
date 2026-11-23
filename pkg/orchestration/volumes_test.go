@@ -19,6 +19,8 @@ type fakeVolumeProvider struct {
 	calls     []string
 	failOn    map[string]error // "<op> <volume>" -> error
 	devPrefix string
+	// onCall, when set, sees each call's key before failOn is consulted.
+	onCall func(key string)
 }
 
 func newFakeVolumeProvider() *fakeVolumeProvider {
@@ -28,6 +30,9 @@ func newFakeVolumeProvider() *fakeVolumeProvider {
 func (f *fakeVolumeProvider) record(op, id string) error {
 	key := op + " " + id
 	f.calls = append(f.calls, key)
+	if f.onCall != nil {
+		f.onCall(key)
+	}
 	return f.failOn[key]
 }
 
@@ -336,7 +341,7 @@ func TestVolumeAttacherUnmountsAfterAFailedMount(t *testing.T) {
 	p.failOn["unmount only"] = errors.New("target busy")
 	a := newTestAttacher(t, p)
 	claims := []VolumeClaim{{Name: "only", SizeBytes: 10, FSType: "ext4", Target: "/a"}}
-	vols, held, err := a.attach(ctx, claims)
+	vols, held, err := a.attach(ctx, claims, nil)
 	if !errors.Is(err, boom) || vols != nil {
 		t.Fatalf("attach = %v, %v; want nil, the mount error", vols, err)
 	}
@@ -356,6 +361,18 @@ func TestVolumeAttacherUnmountsAfterAFailedMount(t *testing.T) {
 	}
 	if n := len(p.calls); n < 2 || p.calls[n-2] != "unmount only" || p.calls[n-1] != "detach only" {
 		t.Fatalf("calls = %v, want them to end with unmount only, detach only", p.calls)
+	}
+}
+
+// TestVolumeAttacherReleaseTreatsNotAttachedAsReleased: a recovered volume
+// whose Attach never happened is released, not held forever.
+func TestVolumeAttacherReleaseTreatsNotAttachedAsReleased(t *testing.T) {
+	p := newFakeVolumeProvider()
+	p.failOn["detach v"] = ErrVolumeNotAttached
+	a := newTestAttacher(t, p)
+	held, err := a.release(context.Background(), []AttachedVolume{{Claim: VolumeClaim{Name: "v"}, VolumeID: "v"}})
+	if err != nil || len(held) != 0 {
+		t.Fatalf("release = %+v, %v; want nothing held, nil", held, err)
 	}
 }
 
@@ -635,7 +652,7 @@ func TestVolumeAttacherRollsBackAFailedGrowAfterAttach(t *testing.T) {
 	p.failOn["resize data"] = errors.New("grow failed")
 	a := newTestAttacher(t, p)
 	claim := VolumeClaim{Name: "data", SizeBytes: 1 << 30, FSType: "ext4", Target: "/data"}
-	vols, held, err := a.attach(ctx, []VolumeClaim{claim})
+	vols, held, err := a.attach(ctx, []VolumeClaim{claim}, nil)
 	if err == nil || !strings.Contains(err.Error(), "grow failed") {
 		t.Fatalf("attach = %v, want the grow error", err)
 	}

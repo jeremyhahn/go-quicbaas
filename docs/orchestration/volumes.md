@@ -75,7 +75,10 @@ The owner is recorded under both the container's name and its ID, so the
 reaper, which lists full IDs, releases a container launched by name. Ownership
 is also written to `.quicbaas-attachments.json` in the staging directory; after
 a restart the agent holds those volumes until its startup orphan sweep has
-removed the old containers, then releases them. The state file lives in the
+removed the old containers, then releases them. Each attachment is written to
+the state file before its Attach and again after it, so a node killed part way
+through a launch recovers what it attached; a recovered volume that was never
+attached counts as released when Detach reports it not attached. The state file lives in the
 staging directory, which is scoped to the daemon's work dir and provider, and
 one volume runtime holds it exclusively (a lock on
 `.quicbaas-attachments.lock`): a second daemon given the same `staging_dir` is

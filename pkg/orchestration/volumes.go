@@ -337,20 +337,22 @@ func (a *VolumeAttacher) Demote(ctx context.Context, volID string) error {
 // released again and the error is returned, so a failed launch leaves nothing
 // attached.
 func (a *VolumeAttacher) Attach(ctx context.Context, claims []VolumeClaim) ([]AttachedVolume, error) {
-	vols, _, err := a.attach(ctx, claims)
+	vols, _, err := a.attach(ctx, claims, nil)
 	return vols, err
 }
 
 // attach is Attach, also returning the volumes its rollback could not
 // release. The rollback runs on a cleanupContext, so a launch cancelled part
-// way still releases what it attached.
-func (a *VolumeAttacher) attach(ctx context.Context, claims []VolumeClaim) (vols, held []AttachedVolume, err error) {
+// way still releases what it attached. journal, when set, is called with each
+// volume before its Attach and again after it (see attachOne), so a caller can
+// record what a launch killed part way left on the node.
+func (a *VolumeAttacher) attach(ctx context.Context, claims []VolumeClaim, journal func(AttachedVolume) error) (vols, held []AttachedVolume, err error) {
 	if err := validateClaims(claims); err != nil {
 		return nil, nil, err
 	}
 	attached := make([]AttachedVolume, 0, len(claims))
 	for _, claim := range claims {
-		v, err := a.attachOne(ctx, claim)
+		v, err := a.attachOne(ctx, claim, journal)
 		if v.VolumeID != "" {
 			attached = append(attached, v)
 		}
@@ -371,7 +373,14 @@ func (a *VolumeAttacher) attach(ctx context.Context, claims []VolumeClaim) (vols
 // after the provider's Attach fails, so the caller can release it. HostPath is
 // recorded before Mount, so a Mount that fails after mounting is still
 // unmounted.
-func (a *VolumeAttacher) attachOne(ctx context.Context, claim VolumeClaim) (AttachedVolume, error) {
+//
+// journal, when set, records the volume twice: before Attach, with its
+// planned HostPath, so a node killed during Attach or Mount still finds it to
+// release (an Unmount of an unmounted target and a Detach of an unattached
+// volume are both harmless); and after Attach, with its DevicePath. A journal
+// error before Attach returns nothing to release; after it, the attached
+// volume, so the rollback detaches it.
+func (a *VolumeAttacher) attachOne(ctx context.Context, claim VolumeClaim, journal func(AttachedVolume) error) (AttachedVolume, error) {
 	id, size, existed, grow, err := a.ensure(ctx, claim, true)
 	if err != nil {
 		return AttachedVolume{}, err
@@ -379,11 +388,29 @@ func (a *VolumeAttacher) attachOne(ctx context.Context, claim VolumeClaim) (Atta
 	if id == "" || id != filepath.Base(id) || id == "." || id == ".." {
 		return AttachedVolume{}, fmt.Errorf("%w: volume %q: provider returned unusable id %q", ErrVolumeInvalidArgument, claim.Name, id)
 	}
+	var host string
+	if claim.FSType != "" {
+		host = filepath.Join(a.stagingDir, id)
+	}
+	if journal != nil {
+		if err := journal(AttachedVolume{Claim: claim, VolumeID: id, HostPath: host}); err != nil {
+			return AttachedVolume{}, fmt.Errorf("volume %q: journal: %w", claim.Name, err)
+		}
+	}
 	info, err := a.provider.Attach(ctx, id, a.node)
 	if err != nil {
 		return AttachedVolume{}, fmt.Errorf("volume %q: attach to node %q: %w", claim.Name, a.node, err)
 	}
 	v := AttachedVolume{Claim: claim, VolumeID: id, DevicePath: info.DevicePath}
+	if journal != nil {
+		// Recorded with the planned HostPath too, so a kill during Mount is
+		// still unmounted on recovery.
+		planned := v
+		planned.HostPath = host
+		if err := journal(planned); err != nil {
+			return v, fmt.Errorf("volume %q: journal: %w", claim.Name, err)
+		}
+	}
 	// The grow ensure deferred because the provider refused it detached runs
 	// now, before Mount; a failure returns v so the rollback detaches it.
 	if grow {
@@ -394,7 +421,6 @@ func (a *VolumeAttacher) attachOne(ctx context.Context, claim VolumeClaim) (Atta
 	if claim.FSType == "" {
 		return v, nil
 	}
-	host := filepath.Join(a.stagingDir, id)
 	if err := os.MkdirAll(host, 0o700); err != nil {
 		return v, fmt.Errorf("volume %q: staging dir: %w", claim.Name, err)
 	}
@@ -431,7 +457,8 @@ func (a *VolumeAttacher) Release(ctx context.Context, vols []AttachedVolume) err
 // release is Release, also returning the volumes still held, in their
 // original order. A volume whose Unmount failed is kept as it was; one that
 // unmounted but did not detach is kept with no HostPath, so a retry only
-// detaches it.
+// detaches it. A Detach that reports the volume not attached
+// (ErrVolumeNotAttached) counts as released.
 func (a *VolumeAttacher) release(ctx context.Context, vols []AttachedVolume) ([]AttachedVolume, error) {
 	var errs []error
 	var held []AttachedVolume
@@ -444,7 +471,9 @@ func (a *VolumeAttacher) release(ctx context.Context, vols []AttachedVolume) ([]
 				continue
 			}
 		}
-		if err := a.provider.Detach(ctx, v.VolumeID, a.node); err != nil {
+		// A volume that is not attached is released: a journaled volume
+		// whose Attach never happened is then released cleanly on recovery.
+		if err := a.provider.Detach(ctx, v.VolumeID, a.node); err != nil && !errors.Is(err, ErrVolumeNotAttached) {
 			errs = append(errs, fmt.Errorf("volume %q: detach from node %q: %w", v.Claim.Name, a.node, err))
 			v.HostPath = ""
 			held = append(held, v)

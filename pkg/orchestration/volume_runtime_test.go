@@ -706,6 +706,85 @@ func TestVolumeRuntimeRecoversAttachmentsAfterRestart(t *testing.T) {
 	}
 }
 
+// TestVolumeRuntimeJournalsEachAttachment: each volume reaches the state file
+// around its Attach, not after the whole batch, so a node killed part way
+// through a multi-volume launch recovers and releases what it had attached.
+func TestVolumeRuntimeJournalsEachAttachment(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		snapshot string // the call the kill happens at
+		attached bool   // whether data was attached by then
+	}{
+		{name: "killed while provisioning the next claim", snapshot: "provision logs", attached: true},
+		{name: "killed before Attach", snapshot: "attach data", attached: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			vr, inner, prov, staging := newTestVolumeRuntime(t)
+			statePath := filepath.Join(staging, VolumeStateFile)
+			var snap []byte
+			var snapErr error
+			prov.onCall = func(key string) {
+				if key == tc.snapshot && snap == nil {
+					snap, snapErr = os.ReadFile(statePath)
+				}
+			}
+			boom := errors.New("provision failed")
+			prov.failOn["provision logs"] = boom
+			if _, err := vr.Run(ctx, volumeSpec()); !errors.Is(err, boom) {
+				t.Fatalf("Run = %v, want the provision error", err)
+			}
+			prov.onCall = nil
+			if snapErr != nil || snap == nil {
+				t.Fatalf("snapshot at %q: %v (taken %t)", tc.snapshot, snapErr, snap != nil)
+			}
+			var st volumeState
+			if err := json.Unmarshal(snap, &st); err != nil {
+				t.Fatalf("decode snapshot: %v", err)
+			}
+			if len(st.Volumes) != 1 || st.Volumes[0].Claim.Name != "data" || st.Volumes[0].VolumeID != "data" ||
+				st.Volumes[0].HostPath != filepath.Join(staging, "data") {
+				t.Fatalf("state at %q = %+v, want data with its volume id and mount target", tc.snapshot, st)
+			}
+			if got := readStateFile(t, staging); len(got.Volumes) != 0 {
+				t.Fatalf("state after the failed launch = %+v, want none", got)
+			}
+
+			// The kill: the rollback never ran, so the snapshot is what the
+			// node left behind.
+			if err := os.WriteFile(statePath, snap, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := vr.Close(); err != nil {
+				t.Fatalf("Close: %v", err)
+			}
+			restarted, err := NewVolumeRuntime(inner, vr.Attacher())
+			if err != nil {
+				t.Fatalf("NewVolumeRuntime after the kill: %v", err)
+			}
+			t.Cleanup(func() { _ = restarted.Close() })
+			if _, err := restarted.Run(ctx, dataSpec("b")); !errors.Is(err, ErrVolumeInUse) {
+				t.Fatalf("Run of a journaled volume = %v, want ErrVolumeInUse", err)
+			}
+			if !tc.attached {
+				prov.failOn["detach data"] = ErrVolumeNotAttached
+			}
+			n := len(prov.calls)
+			if err := restarted.ReleaseRecovered(ctx); err != nil {
+				t.Fatalf("ReleaseRecovered: %v", err)
+			}
+			if got, want := prov.calls[n:], []string{"unmount data", "detach data"}; !reflect.DeepEqual(got, want) {
+				t.Fatalf("recovery calls = %v, want %v", got, want)
+			}
+			delete(prov.failOn, "detach data")
+			delete(prov.failOn, "provision logs")
+			if _, err := restarted.Run(ctx, dataSpec("b")); err != nil {
+				t.Fatalf("Run after recovery: %v", err)
+			}
+		})
+	}
+}
+
 func TestNewVolumeRuntimeRefusesAMalformedStateFile(t *testing.T) {
 	staging := t.TempDir()
 	if err := os.WriteFile(filepath.Join(staging, VolumeStateFile), []byte("{not json"), 0o600); err != nil {
