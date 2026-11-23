@@ -75,6 +75,16 @@ type VolumeRuntime struct {
 	// volLocks holds the per-volume locks under lockDir, by claim name, from
 	// a volume's reservation until it is no longer owned.
 	volLocks map[string]*os.File
+	// owner, when set, is the ContainerOwnerLabel every volume launch must
+	// carry.
+	owner string
+}
+
+// WithVolumeOwner refuses a volume launch whose ContainerOwnerLabel is not
+// owner, so every volume container is one the owner's startup sweep removes
+// before ReleaseRecovered releases its volumes. Empty means no check.
+func WithVolumeOwner(owner string) VolumeRuntimeOption {
+	return func(r *VolumeRuntime) { r.owner = strings.TrimSpace(owner) }
 }
 
 // VolumeRuntimeOption configures a VolumeRuntime.
@@ -375,6 +385,10 @@ func (r *VolumeRuntime) attach(ctx context.Context, spec *ContainerSpec) (*Conta
 			return nil, nil, fmt.Errorf("%w: volume %q: a raw volume is passed through as a device, which only the %q class may have",
 				ErrDevicePassthroughDenied, c.Name, PrivilegeClassBroker)
 		}
+	}
+	if r.owner != "" && spec.Labels[ContainerOwnerLabel] != r.owner {
+		return nil, nil, fmt.Errorf("%w: spec %q has %s=%q, want %q",
+			ErrVolumeOwnerLabel, spec.Name, ContainerOwnerLabel, spec.Labels[ContainerOwnerLabel], r.owner)
 	}
 	r.retryPending(ctx)
 	if err := r.reserve(spec.Volumes); err != nil {

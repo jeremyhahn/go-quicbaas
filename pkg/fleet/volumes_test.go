@@ -153,10 +153,10 @@ func TestWrapVolumeRuntimeLocksAVolumeAcrossWorkDirs(t *testing.T) {
 	wa, wb := t.TempDir(), t.TempDir()
 	a, b := wrap("n1", wa), wrap("n2", wb)
 	ctx := context.Background()
-	if _, err := a.Run(ctx, volumeSvcSpec()); err != nil {
+	if _, err := a.Run(ctx, ownedVolumeSvcSpec(wa)); err != nil {
 		t.Fatalf("a.Run: %v", err)
 	}
-	if _, err := b.Run(ctx, volumeSvcSpec()); !errors.Is(err, orchestration.ErrVolumeInUse) {
+	if _, err := b.Run(ctx, ownedVolumeSvcSpec(wb)); !errors.Is(err, orchestration.ErrVolumeInUse) {
 		t.Fatalf("b.Run of a volume a holds = %v, want ErrVolumeInUse", err)
 	}
 	if volumeNamespace(map[string]string{"volume_group": "vg0"}) == volumeNamespace(map[string]string{"volume_group": "vg1"}) {
@@ -164,6 +164,35 @@ func TestWrapVolumeRuntimeLocksAVolumeAcrossWorkDirs(t *testing.T) {
 	}
 	if volumeNamespace(map[string]string{"volume_group": "vg0"}) != volumeNamespace(map[string]string{"volume_group": "vg0", "node_id": "n1"}) {
 		t.Error("node_id changes the lock namespace")
+	}
+}
+
+// ownedVolumeSvcSpec is volumeSvcSpec labelled with the owner workDir.
+func ownedVolumeSvcSpec(workDir string) *orchestration.ContainerSpec {
+	spec := volumeSvcSpec()
+	spec.Labels = map[string]string{orchestration.ContainerOwnerLabel: workDir}
+	return spec
+}
+
+// TestWrapVolumeRuntimeEnforcesTheOwnerLabel: every volume container carries
+// the daemon's owner label, so the startup sweep removes it before the
+// recovered volumes are released.
+func TestWrapVolumeRuntimeEnforcesTheOwnerLabel(t *testing.T) {
+	stubSharedVolumeProvider(t)
+	inner := &capableContainerRuntime{}
+	inner.available = true
+	w := t.TempDir()
+	got, err := WrapVolumeRuntime(VolumeConfig{Provider: "local", NodeID: "n", LockDir: t.TempDir()}, w, inner)
+	if err != nil {
+		t.Fatalf("WrapVolumeRuntime: %v", err)
+	}
+	t.Cleanup(func() { _ = got.(*orchestration.VolumeRuntime).Close() })
+	ctx := context.Background()
+	if _, err := got.Run(ctx, volumeSvcSpec()); !errors.Is(err, orchestration.ErrVolumeOwnerLabel) {
+		t.Fatalf("Run without the owner label = %v, want ErrVolumeOwnerLabel", err)
+	}
+	if _, err := got.Run(ctx, ownedVolumeSvcSpec(w)); err != nil {
+		t.Fatalf("Run with the owner label: %v", err)
 	}
 }
 

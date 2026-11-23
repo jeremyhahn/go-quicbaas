@@ -88,7 +88,10 @@ host-wide lock, `<lock_dir>/<provider>-<hash of the provider settings, node_id
 excluded>/<claim>.lock`, from its reservation until its release, so two
 daemons with their own work dirs over the same backing storage never own one
 volume at once: a launch whose volume another daemon holds is refused with
-`ErrVolumeInUse`, and so is a restart that recovers one.
+`ErrVolumeInUse`, and so is a restart that recovers one. The agent refuses a
+volume launch whose `quicbaas.owner` label is not its work dir
+(`ErrVolumeOwnerLabel`), so every volume container is one the startup sweep
+removes before the recovered volumes are released.
 
 Spawn requests are not volume launches: a sandboxed spawn whose
 `container_config` asks for a privilege class, a device or a volume is refused,

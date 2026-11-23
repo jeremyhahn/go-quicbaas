@@ -89,6 +89,12 @@ var (
 	// the host: a volume has one owner at a time.
 	ErrVolumeInUse = errors.New("volume: held by another owner")
 
+	// ErrVolumeOwnerLabel is returned when a runtime with an owner is asked to
+	// launch a volume-bearing spec whose ContainerOwnerLabel is not that owner:
+	// the startup sweep removes only containers it can claim by that label
+	// before releasing the volumes they held.
+	ErrVolumeOwnerLabel = errors.New("volume: a volume launch must carry this daemon's owner label")
+
 	// ErrVolumeStateLocked is returned when another volume runtime holds the
 	// staging dir: one runtime owns a staging dir's attachment state.
 	ErrVolumeStateLocked = errors.New("volume: the staging dir's attachment state is held by another volume runtime")

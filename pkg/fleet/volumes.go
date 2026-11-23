@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
@@ -79,7 +80,10 @@ var hostname = os.Hostname
 // stop, remove and a failed start. Its staging dir is cfg.StagingDir, or
 // `<workDir>/volumes` when that is empty, with the provider name appended, so
 // daemons with their own work dirs never share attachment state; the
-// runtime holds the dir exclusively.
+// runtime holds the dir exclusively. With a work dir, a volume launch whose
+// quicbaas.owner label is not that work dir is refused, so every volume
+// container is one the startup sweep removes before the recovered volumes are
+// released; without one the sweep never releases them.
 func WrapVolumeRuntime(cfg VolumeConfig, workDir string, inner orchestration.ContainerRuntime) (orchestration.ContainerRuntime, error) {
 	if !cfg.Enabled() || inner == nil {
 		return inner, nil
@@ -147,5 +151,9 @@ func WrapVolumeRuntime(cfg VolumeConfig, workDir string, inner orchestration.Con
 	if err != nil {
 		return nil, fmt.Errorf("fleet volumes: %w", err)
 	}
-	return orchestration.NewVolumeRuntime(inner, attacher, orchestration.WithVolumeLockDir(lockDir))
+	opts := []orchestration.VolumeRuntimeOption{orchestration.WithVolumeLockDir(lockDir)}
+	if strings.TrimSpace(workDir) != "" {
+		opts = append(opts, orchestration.WithVolumeOwner(workDir))
+	}
+	return orchestration.NewVolumeRuntime(inner, attacher, opts...)
 }

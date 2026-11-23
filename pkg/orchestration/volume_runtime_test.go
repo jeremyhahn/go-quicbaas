@@ -915,3 +915,42 @@ func TestNewVolumeRuntimeRefusesARecoveredVolumeAnotherRuntimeHolds(t *testing.T
 		t.Fatalf("restart over a volume b holds = %v, %v; want nil, ErrVolumeInUse", restarted, err)
 	}
 }
+
+// A runtime with an owner refuses a volume launch that does not carry its
+// owner label, before any provider call; a launch without volumes passes.
+func TestVolumeRuntimeRefusesAVolumeLaunchWithoutTheOwnerLabel(t *testing.T) {
+	ctx := context.Background()
+	prov := newFakeVolumeProvider()
+	att, err := NewVolumeAttacher(prov, "node-1", t.TempDir())
+	if err != nil {
+		t.Fatalf("NewVolumeAttacher: %v", err)
+	}
+	vr, err := NewVolumeRuntime(&launchRecorder{}, att, WithVolumeOwner(" /srv/agent "))
+	if err != nil {
+		t.Fatalf("NewVolumeRuntime: %v", err)
+	}
+	t.Cleanup(func() { _ = vr.Close() })
+	if _, err := vr.Run(ctx, dataSpec("a")); !errors.Is(err, ErrVolumeOwnerLabel) {
+		t.Fatalf("Run without a label = %v, want ErrVolumeOwnerLabel", err)
+	}
+	foreign := dataSpec("a")
+	foreign.Labels = map[string]string{ContainerOwnerLabel: "/srv/other"}
+	if _, err := vr.Run(ctx, foreign); !errors.Is(err, ErrVolumeOwnerLabel) {
+		t.Fatalf("Run with a foreign label = %v, want ErrVolumeOwnerLabel", err)
+	}
+	if _, err := vr.RunInteractive(ctx, dataSpec("a")); !errors.Is(err, ErrVolumeOwnerLabel) {
+		t.Fatalf("RunInteractive without a label = %v, want ErrVolumeOwnerLabel", err)
+	}
+	if len(prov.calls) != 0 {
+		t.Fatalf("provider calls = %v, want none", prov.calls)
+	}
+	owned := dataSpec("a")
+	owned.Labels = map[string]string{ContainerOwnerLabel: "/srv/agent"}
+	if _, err := vr.Run(ctx, owned); err != nil {
+		t.Fatalf("Run with the owner label: %v", err)
+	}
+	plain := &ContainerSpec{Name: "plain", Image: "registry.example.com/plain:1"}
+	if _, err := vr.Run(ctx, plain); err != nil {
+		t.Fatalf("Run without volumes: %v", err)
+	}
+}
