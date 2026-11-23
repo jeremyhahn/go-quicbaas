@@ -153,23 +153,6 @@ func TestPromptSession_ANodeWithoutTheLiveSessionStillChecksItsAccount(t *testin
 	var turns atomic.Int32
 	harness.backend.beforePrompt = func() { turns.Add(1) }
 
-	newNodeB := func(t *testing.T, store AgentStore) *agentServiceImpl {
-		t.Helper()
-		svc, err := NewAgentService(store, map[string]AgentBackend{"usage": harness.backend}, &agentTestLogger{})
-		if err != nil {
-			t.Fatalf("NewAgentService: %v", err)
-		}
-		nodeB, ok := svc.(*agentServiceImpl)
-		if !ok {
-			t.Fatalf("NewAgentService returned %T, want *agentServiceImpl", svc)
-		}
-		nodeB.SetAccountStore(harness.service.accountStore)
-		nodeB.SetSpendAuthority(harness.service.turnSpend)
-		if _, ok := nodeB.liveSessionRecord(sessionID); ok {
-			t.Fatalf("node b holds session %q live — the test needs a registry miss", sessionID)
-		}
-		return nodeB
-	}
 	promptThrough := func(nodeB *agentServiceImpl) error {
 		_, err := nodeB.PromptSession(ctx, &PromptSessionRequest{
 			SessionID: sessionID, Backend: "usage", ProjectID: "proj-1", Prompt: "do the thing",
@@ -177,7 +160,7 @@ func TestPromptSession_ANodeWithoutTheLiveSessionStillChecksItsAccount(t *testin
 		return err
 	}
 
-	nodeB := newNodeB(t, NewAgentStore(harness.kv))
+	nodeB := newTurnSpendNodeB(t, harness, NewAgentStore(harness.kv), sessionID)
 	err := promptThrough(nodeB)
 	var exhausted *AccountQuotaExhaustedError
 	if !stderrors.As(err, &exhausted) {
@@ -192,9 +175,9 @@ func TestPromptSession_ANodeWithoutTheLiveSessionStillChecksItsAccount(t *testin
 
 	t.Run("a record that cannot be read refuses the turn", func(t *testing.T) {
 		turns.Store(0)
-		nodeB := newNodeB(t, &getFailingStore{
+		nodeB := newTurnSpendNodeB(t, harness, &getFailingStore{
 			AgentStore: NewAgentStore(harness.kv), sessionID: sessionID, err: stderrors.New("session store down"),
-		})
+		}, sessionID)
 		err := promptThrough(nodeB)
 		var unavailable *SpendCheckUnavailableError
 		if !stderrors.As(err, &unavailable) {
@@ -204,6 +187,69 @@ func TestPromptSession_ANodeWithoutTheLiveSessionStillChecksItsAccount(t *testin
 			t.Errorf("backend ran %d turns, want 0", got)
 		}
 	})
+}
+
+// newTurnSpendNodeB builds a second control-plane node over store that shares
+// the harness's backend, account store and spend authority but does not hold
+// sessionID in its live registry.
+func newTurnSpendNodeB(t *testing.T, harness *turnSpendHarness, store AgentStore, sessionID string) *agentServiceImpl {
+	t.Helper()
+	svc, err := NewAgentService(store, map[string]AgentBackend{"usage": harness.backend}, &agentTestLogger{})
+	if err != nil {
+		t.Fatalf("NewAgentService: %v", err)
+	}
+	nodeB, ok := svc.(*agentServiceImpl)
+	if !ok {
+		t.Fatalf("NewAgentService returned %T, want *agentServiceImpl", svc)
+	}
+	nodeB.SetAccountStore(harness.service.accountStore)
+	nodeB.SetSpendAuthority(harness.service.turnSpend)
+	if _, ok := nodeB.liveSessionRecord(sessionID); ok {
+		t.Fatalf("node b holds session %q live — the test needs a registry miss", sessionID)
+	}
+	return nodeB
+}
+
+func TestPromptSession_ATurnAdmittedOnAnotherNodeIsChargedToItsAccount(t *testing.T) {
+	harness := newTurnSpendHarness(t, true)
+	ctx := ContextWithTenant(context.Background(), "tenant-a")
+	sessionID := harness.spawn(t, ctx)
+	harness.spendAccount1(t, 950)
+
+	var turns atomic.Int32
+	harness.backend.beforePrompt = func() { turns.Add(1) }
+
+	nodeB := newTurnSpendNodeB(t, harness, NewAgentStore(harness.kv), sessionID)
+	nodeB.SetConsumptionLedger(harness.ledger)
+	promptThrough := func() error {
+		_, err := nodeB.PromptSession(ctx, &PromptSessionRequest{
+			SessionID: sessionID, Backend: "usage", ProjectID: "proj-1", Prompt: "do the thing",
+		})
+		return err
+	}
+
+	if err := promptThrough(); err != nil {
+		t.Fatalf("first turn through node b = %v, want it admitted under the cap", err)
+	}
+	usage, err := harness.ledger.WindowUsage(ctx, "tenant-a", "acct-1", time.Now().Add(-5*time.Hour), time.Now().Add(time.Minute))
+	if err != nil {
+		t.Fatalf("WindowUsage: %v", err)
+	}
+	if usage.Entries != 2 {
+		t.Fatalf("acct-1 window holds %d entries, want 2 — node b recorded its turn with no account", usage.Entries)
+	}
+
+	err = promptThrough()
+	var exhausted *AccountQuotaExhaustedError
+	if !stderrors.As(err, &exhausted) {
+		t.Fatalf("second turn through node b = %v, want an *AccountQuotaExhaustedError — 1100 of 1000 tokens are spent", err)
+	}
+	if exhausted.AccountID != "acct-1" {
+		t.Errorf("refusal names account %q, want acct-1", exhausted.AccountID)
+	}
+	if got := turns.Load(); got != 1 {
+		t.Errorf("backend ran %d turns, want 1 — node b admitted a turn over the cap", got)
+	}
 }
 
 func TestPromptSession_AdmitsATurnUnderItsAccountsWindow(t *testing.T) {

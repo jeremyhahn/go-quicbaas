@@ -2211,6 +2211,11 @@ type promptTurnPlan struct {
 	// paths one identity: the async ack returns this value, and the entry the
 	// ledger holds for that turn is filed under the same one.
 	turnID string
+
+	// admittedAccountID is the pooled account the spend gate admitted the
+	// turn against. runPromptTurn sets it; the turn is recorded against it
+	// when this node's registry misses the session.
+	admittedAccountID string
 }
 
 // planPromptTurn validates a prompt request and resolves everything the turn
@@ -2351,12 +2356,13 @@ func (s *agentServiceImpl) planPromptTurn(ctx context.Context, req *PromptSessio
 // otherwise have its spend filed under a model that never ran.
 func (p *promptTurnPlan) completedTurn(sessionID, servedModel string, duration time.Duration) completedTurn {
 	return completedTurn{
-		turnID:    p.turnID,
-		sessionID: sessionID,
-		projectID: p.request.ProjectID,
-		engine:    p.backendName,
-		model:     resolveTurnModel(servedModel, p.model, p.backend),
-		duration:  duration,
+		turnID:            p.turnID,
+		sessionID:         sessionID,
+		projectID:         p.request.ProjectID,
+		admittedAccountID: p.admittedAccountID,
+		engine:            p.backendName,
+		model:             resolveTurnModel(servedModel, p.model, p.backend),
+		duration:          duration,
 	}
 }
 
@@ -2437,9 +2443,11 @@ func (s *agentServiceImpl) runPromptTurn(ctx context.Context, plan *promptTurnPl
 	if err := s.flushPendingConsumption(ctx, plan.request.SessionID); err != nil {
 		return nil, err
 	}
-	if err := s.authorizeTurnSpend(ctx, plan.request.SessionID); err != nil {
+	accountID, err := s.authorizeTurnSpend(ctx, plan.request.SessionID)
+	if err != nil {
 		return nil, err
 	}
+	plan.admittedAccountID = accountID
 
 	// A session restored from the durable store has no agent process until
 	// something needs one. Reconstituting it here — rather than at boot —

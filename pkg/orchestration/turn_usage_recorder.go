@@ -222,6 +222,12 @@ type completedTurn struct {
 	sessionID string
 	projectID string
 
+	// admittedAccountID is the pooled account the spend gate checked this
+	// turn against. sessionOfTurn charges it when this node's registry does
+	// not hold the session: a turn sent through another control-plane node
+	// still draws on its account's cap.
+	admittedAccountID string
+
 	// engine is the backend registry name that served the turn; model is the
 	// model it resolved to.
 	engine string
@@ -369,7 +375,10 @@ type turnSession struct {
 // sessionOfTurn resolves the account, project and host of a turn from its live
 // session record. The project the turn was planned under wins over the
 // session's; a session that ran on this node rather than a named worker host
-// is attributed to this node.
+// is attributed to this node. A live hit charges the record's current account,
+// since rotation may have moved it; on a registry miss the turn is charged to
+// the account the spend gate admitted it against (admittedAccountID), so a
+// turn sent through another control-plane node still draws on its cap.
 func (s *agentServiceImpl) sessionOfTurn(turn completedTurn) turnSession {
 	session := turnSession{projectID: turn.projectID}
 	if mem, ok := s.liveSessionRecord(turn.sessionID); ok {
@@ -379,6 +388,8 @@ func (s *agentServiceImpl) sessionOfTurn(turn completedTurn) turnSession {
 		if session.projectID == "" {
 			session.projectID = mem.ProjectID
 		}
+	} else {
+		session.accountID = turn.admittedAccountID
 	}
 	if session.host == "" {
 		session.host = s.node

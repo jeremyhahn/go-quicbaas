@@ -127,26 +127,30 @@ func (s *agentServiceImpl) SetSpendAuthority(spend SpendAuthority) {
 // refusal (quota exhausted, breaker, account limited, consumption pending)
 // keeps its own class, and a cancelled caller gets its context's error.
 //
+// It returns the pooled account it checked, or "" when it checked none. The
+// returned account is the one the turn is recorded against when this node's
+// registry misses the session.
+//
 // The estimate is zero, as at spawn: nothing measures what a turn will cost
 // before it runs, so the honest question is whether the account is ALREADY
 // over.
-func (s *agentServiceImpl) authorizeTurnSpend(ctx context.Context, sessionID string) error {
+func (s *agentServiceImpl) authorizeTurnSpend(ctx context.Context, sessionID string) (string, error) {
 	if s.turnSpend == nil || s.accountStore == nil || sessionID == "" {
-		return nil
+		return "", nil
 	}
 	tenantID, accountID, err := s.turnSessionAccount(ctx, sessionID)
 	if err != nil {
-		return spendCheckFault(ctx, sessionID, "", err)
+		return "", spendCheckFault(ctx, sessionID, "", err)
 	}
 	if accountID == "" {
-		return nil
+		return "", nil
 	}
 	account, err := s.accountStore.Get(ctx, tenantID, accountID)
 	if err != nil {
-		return spendCheckFault(ctx, sessionID, accountID, err)
+		return "", spendCheckFault(ctx, sessionID, accountID, err)
 	}
 	err = s.turnSpend.Authorize(ctx, SpendAuthorizeRequest{Account: account}, time.Now().UTC())
-	return spendCheckFault(ctx, sessionID, accountID, err)
+	return accountID, spendCheckFault(ctx, sessionID, accountID, err)
 }
 
 // turnSessionAccount names the tenant and pooled account serving sessionID.
