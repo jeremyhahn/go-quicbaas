@@ -27,7 +27,7 @@ import (
 const (
 	modulePath             = "github.com/jeremyhahn/go-quicbaas"
 	daemonImport           = modulePath + "/cmd/quicbaasd"
-	containerRuntimeImport = modulePath + "/pkg/containerruntime"
+	containerRuntimeImport = modulePath + "/internal/containerruntime"
 )
 
 // TestDaemonNeverLinksContainerRuntime pins where the runtime runs: in the

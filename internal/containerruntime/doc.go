@@ -16,8 +16,12 @@
 // per-container metrics.
 //
 // It was moved here, with its history and tests, from go-trusted-platform
-// pkg/compute/podman. The agent's job wiring arrives in a later change; today
-// only the agent's container init entry point (below) imports it.
+// pkg/compute/podman.
+//
+// It is internal to this module: no public package, SDK, CLI flag or
+// configuration value exposes it. The fleet node agent registers it as its
+// in-process runtime through internal/inprocessruntime; pkg/fleet resolves
+// it only through that registration and never imports this package.
 //
 // Where it runs:
 //

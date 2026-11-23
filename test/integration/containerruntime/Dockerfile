@@ -2,7 +2,7 @@
 # Container runtime integration test runner
 # ============================================================================
 #
-# Builds the pkg/containerruntime integration test binary with cgo, so that
+# Builds the internal/containerruntime integration test binary with cgo, so that
 # libcontainer's nsenter init is linked in, and runs it. libcontainer starts
 # each container by re-executing the current binary, so the test binary is
 # also the container init.

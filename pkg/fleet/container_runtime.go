@@ -44,11 +44,11 @@ type containerRuntimeFactory struct {
 type InProcessContainerRuntime func(root string, logger interfaces.Logger) (orchestration.ContainerRuntime, error)
 
 // inProcessContainerRuntime is the registered constructor, nil until the
-// agent's main registers one. pkg/fleet never imports pkg/containerruntime
+// agent's main registers one. pkg/fleet never imports internal/containerruntime
 // itself: quicbaasd links this package and must stay CGO_ENABLED=0.
 var inProcessContainerRuntime atomic.Pointer[InProcessContainerRuntime]
 
-// containerRuntimeInProcess keys the in-process runtime (pkg/containerruntime:
+// containerRuntimeInProcess keys the in-process runtime (internal/containerruntime:
 // runc libcontainer in this process, with no runtime binary and no daemon
 // socket) in the resolver table. It is not a --container-runtime value and no
 // exported call takes it: Config.Validate, ResolveContainerRuntime and

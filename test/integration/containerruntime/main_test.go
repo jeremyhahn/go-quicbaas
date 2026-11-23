@@ -13,7 +13,7 @@
 
 //go:build integration && linux && cgo && containers_image_openpgp && exclude_graphdriver_btrfs
 
-// Package containerruntime_test runs pkg/containerruntime end to end: images
+// Package containerruntime_test runs internal/containerruntime end to end: images
 // pulled from a real registry, root filesystems unpacked by go.podman.io/storage
 // and containers run by libcontainer. It needs root, so it runs in the
 // privileged container that `make integration-test-containerruntime` starts.
@@ -23,7 +23,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/containerruntime"
+	"github.com/jeremyhahn/go-quicbaas/internal/containerruntime"
 )
 
 // TestMain hands the process to libcontainer when it was re-executed as a

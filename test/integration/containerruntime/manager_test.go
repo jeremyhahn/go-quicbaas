@@ -29,7 +29,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/containerruntime"
+	"github.com/jeremyhahn/go-quicbaas/internal/containerruntime"
 )
 
 // testTimeout bounds every container operation a test waits on.
