@@ -14906,10 +14906,11 @@ const file_api_proto_iam_iam_proto_rawDesc = "" +
 	"users:read\x12p\n" +
 	"\rRevokeSession\x12%.quicbaas.iam.v1.RevokeSessionRequest\x1a&.quicbaas.iam.v1.RevokeSessionResponse\"\x10\xc2\xf3\x18\fusers:update\x12|\n" +
 	"\x11RevokeAllSessions\x12).quicbaas.iam.v1.RevokeAllSessionsRequest\x1a*.quicbaas.iam.v1.RevokeAllSessionsResponse\"\x10\xc2\xf3\x18\fusers:update\x12\x82\x01\n" +
-	"\x13RevokeOtherSessions\x12+.quicbaas.iam.v1.RevokeOtherSessionsRequest\x1a,.quicbaas.iam.v1.RevokeOtherSessionsResponse\"\x10\xc2\xf3\x18\fusers:update2\xb5\x02\n" +
-	"\fAuditService\x12g\n" +
-	"\x10QueryAuditEvents\x12(.quicbaas.iam.v1.QueryAuditEventsRequest\x1a).quicbaas.iam.v1.QueryAuditEventsResponse\x12S\n" +
-	"\rGetAuditEvent\x12%.quicbaas.iam.v1.GetAuditEventRequest\x1a\x1b.quicbaas.iam.v1.AuditEvent\x12g\n" +
+	"\x13RevokeOtherSessions\x12+.quicbaas.iam.v1.RevokeOtherSessionsRequest\x1a,.quicbaas.iam.v1.RevokeOtherSessionsResponse\"\x10\xc2\xf3\x18\fusers:update2\xd6\x02\n" +
+	"\fAuditService\x12x\n" +
+	"\x10QueryAuditEvents\x12(.quicbaas.iam.v1.QueryAuditEventsRequest\x1a).quicbaas.iam.v1.QueryAuditEventsResponse\"\x0f\xc2\xf3\x18\vaudit:query\x12c\n" +
+	"\rGetAuditEvent\x12%.quicbaas.iam.v1.GetAuditEventRequest\x1a\x1b.quicbaas.iam.v1.AuditEvent\"\x0e\xc2\xf3\x18\n" +
+	"audit:read\x12g\n" +
 	"\x10RecordAuditEvent\x12(.quicbaas.iam.v1.RecordAuditEventRequest\x1a).quicbaas.iam.v1.RecordAuditEventResponseB5Z3github.com/jeremyhahn/go-quicbaas/api/proto/iam;iamb\x06proto3"
 
 var (

@@ -94,15 +94,14 @@ var unixOnlyServices = map[string]string{
 	// IAMService is mounted (its six annotated RPCs carry their permissions,
 	// the four invite RPCs are public and the rest stay default-denied). The
 	// RPCs below carry no (qrdb.v1.permission) option in
-	// api/proto/iam/iam.proto (PEPService, MFAService and AuditService
-	// none): the node default-denies them and the
-	// QUIC projection assertion refuses them. The Unix listener has no
-	// permission for them either (pkg/api/grpc/authz_mapping.go leaves them
-	// unmapped, so it denies them too): annotating them is an owner
-	// authorization-policy decision, not a copy of an existing grant.
-	"quicbaas.iam.v1.PEPService":   "unannotated",
-	"quicbaas.iam.v1.MFAService":   "unannotated",
-	"quicbaas.iam.v1.AuditService": "unannotated",
+	// api/proto/iam/iam.proto (PEPService and MFAService none): the node
+	// default-denies them and the QUIC projection assertion refuses them.
+	// The Unix listener has no permission for them either
+	// (pkg/api/grpc/authz_mapping.go leaves them unmapped, so it denies them
+	// too): annotating them is an owner authorization-policy decision, not a
+	// copy of an existing grant.
+	"quicbaas.iam.v1.PEPService": "unannotated",
+	"quicbaas.iam.v1.MFAService": "unannotated",
 	// qrdb-proxy planes: go-qrdb's own server owns the canonical surface
 	// (pkg/apimodule TestModule_RegisterGRPC_ExcludesProxyPlanes).
 	"quicbaas.barrier.v1.Barrier":      "qrdb proxy plane",

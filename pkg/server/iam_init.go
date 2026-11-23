@@ -1883,22 +1883,12 @@ func (s *Server) registerIAMService(grpcServer *ggrpc.Server) {
 		s.logger.Info("Registered Session gRPC service")
 	}
 
-	// Register Audit service. The audit logger is ALWAYS the node-backed
-	// NodeAuditLogger (node_audit_logger.go) once IAM composes — there is
-	// no in-memory fallback (P5.2: a fallback that loses records on
-	// restart is the defect the unified audit plane exists to eliminate).
-	// A nil return here means IAM itself failed to compose, in which case
-	// skipping Audit gRPC registration is correct: nothing else registered
-	// either.
-	auditLogger, _ := getter.GetAuditLogger(ctx)
-	if auditLogger == nil {
-		s.logger.Error("Audit logger unavailable, skipping Audit gRPC registration")
-		return
+	// Register Audit service: the same instance the node mounts (see
+	// buildAuditServer).
+	if host.Audit != nil {
+		iampb.RegisterAuditServiceServer(grpcServer, host.Audit)
+		s.logger.Info("Registered Audit gRPC service")
 	}
-	auditAdapter := grpcapi.NewAuditServiceAdapter(auditLogger)
-	auditServer := grpcapi.NewAuditServer(auditAdapter, s.logger)
-	iampb.RegisterAuditServiceServer(grpcServer, auditServer)
-	s.logger.Info("Registered Audit gRPC service")
 }
 
 // buildIAMServer builds the IAMService server over the IAM components the
