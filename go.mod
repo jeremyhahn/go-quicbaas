@@ -8,7 +8,6 @@ exclude google.golang.org/genproto v0.0.0-20230410155749-daa745c078e1
 require (
 	cloud.google.com/go/kms v1.36.0 // held: v1.36.1 released 2026-10-28, under 7 days old (#1704)
 	connectrpc.com/connect v1.21.1
-	github.com/awnumar/memguard v0.23.0
 	github.com/aws/aws-sdk-go-v2 v1.47.5 // held: v1.48.0 also moves github.com/aws/aws-sdk-go-v2 and github.com/aws/smithy-go in sdk/go/go.mod (#2535)
 	github.com/aws/aws-sdk-go-v2/config v1.33.12 // held: v1.33.13 released 2026-10-30, under 7 days old (#1704)
 	github.com/aws/aws-sdk-go-v2/credentials v1.20.12 // held: v1.20.13 released 2026-10-30, under 7 days old (#1704)
@@ -38,6 +37,7 @@ require (
 	github.com/jeremyhahn/go-signal v0.2.0-alpha // held: #1389, the go-qrdb/go-xkms stack pin bump
 	github.com/jeremyhahn/go-xkms v0.49.1-alpha // held: #1389, the go-qrdb/go-xkms stack pin bump
 	github.com/jeremyhahn/go-xkms/sdk/go v0.49.1-alpha // held: #1389, the go-qrdb/go-xkms stack pin bump
+	github.com/jeremyhahn/trusted-firmware/sdk/go v0.3.0-alpha
 	github.com/klauspost/compress v1.20.4
 	github.com/lestrrat-go/jwx/v2 v2.1.7
 	github.com/mark3labs/mcp-go v0.45.0 // held: v1.3.0 released 2026-10-14, under 7 days old (#1704)
@@ -47,7 +47,7 @@ require (
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/image-spec v1.1.1
-	github.com/opencontainers/runc v1.5.2
+	github.com/opencontainers/runc v1.5.3
 	github.com/opencontainers/runtime-spec v1.3.0
 	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/pkg/sftp v1.13.11 // held: v1.13.12 is not yet in the offline module cache the lanes build from; next deps pass (#1958)
@@ -119,6 +119,7 @@ require (
 	github.com/acarl005/stripansi v0.0.0-20180116102854-5a71ef0e047d // indirect
 	github.com/aperturerobotics/protobuf-go-lite v0.14.0 // indirect
 	github.com/awnumar/memcall v0.5.0 // indirect
+	github.com/awnumar/memguard v0.23.0 // indirect
 	github.com/aws/aws-sdk-go v1.55.8 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.20.5 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.5.8 // indirect
@@ -161,6 +162,7 @@ require (
 	github.com/containers/libtrust v0.0.0-20230121012942-c1716e8a8d01 // indirect
 	github.com/containers/ocicrypt v1.3.2 // indirect
 	github.com/coreos/go-systemd/v22 v22.7.0 // indirect
+	github.com/creack/goselect v0.1.2 // indirect
 	github.com/cyberphone/json-canonicalization v0.0.0-20241213102144-19d51d7fe467 // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1 // indirect
 	github.com/distribution/reference v0.6.0 // indirect
@@ -225,7 +227,6 @@ require (
 	github.com/jeremyhahn/go-quicraft v0.15.0-alpha // indirect; hold lifted: go-qrdb v0.25.1-alpha declares the at-rest choice for in-process nodes (database.NewRaftWAL: barrier, or WithoutEncryption when seal is off), go-qrdb#566 — the real-node tests in pkg/scheduler/placement start a clustered in-process node on quicraft v0.15.0-alpha.
 	github.com/jeremyhahn/go-truststrap v0.4.0-alpha // indirect
 	github.com/jeremyhahn/go-xkms/xkey v0.49.1-alpha // indirect
-	github.com/jeremyhahn/trusted-firmware/sdk/go v0.3.0-alpha // indirect
 	github.com/jeroenrinzema/psql-wire v0.18.0 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
@@ -262,7 +263,7 @@ require (
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
 	github.com/mitchellh/mapstructure v1.5.1-0.20231216201459-8508981c8b6c // indirect
 	github.com/moby/moby/client v0.5.1 // indirect
-	github.com/moby/sys/capability v0.4.0 // indirect
+	github.com/moby/sys/capability v0.5.0 // indirect
 	github.com/moby/sys/mountinfo v0.7.2 // indirect
 	github.com/moby/sys/userns v0.2.1 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
@@ -328,6 +329,7 @@ require (
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78 // indirect
 	gitlab.com/yawning/secp256k1-voi v0.0.0-20230925100816-f2616030848b // indirect
+	go.bug.st/serial v1.6.4 // indirect
 	go.etcd.io/etcd/api/v3 v3.7.2 // indirect
 	go.mongodb.org/mongo-driver v1.17.10 // indirect
 	go.mongodb.org/mongo-driver/v2 v2.8.0 // indirect

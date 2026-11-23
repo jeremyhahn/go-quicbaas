@@ -10,6 +10,7 @@ export type { SchedulerClient, PlacementNodeFacts, PlacementNodeStatus, Placemen
 export type { ProjectsClient, Project, ProjectRole, ContextRepo, RetiredSigningKey, WorkspaceTier, SessionRotationPolicy, CreateProjectRequest, CreateProjectResponse, GetProjectResponse, UpdateProjectRequest, UpdateProjectResponse, DeleteProjectResponse, ListProjectsResponse, GrantFleetNodeRoleRequest, GrantFleetNodeRoleResponse, RevokeFleetNodeRoleRequest, RevokeFleetNodeRoleResponse, } from './projects.js';
 export type { SdlcClient, ForgeConfig, ReviewPolicy, RankingPolicy, ReviewerConfig, ReviewerSelection, AdoptIssueRequest, Adoption, MergeTrainPolicy, ClusteringPolicy, ProjectBinding, FileIssueRequest, ForgeIssue, ForgeUser, CollaboratorsResponse, DeliveryPullRequest, ReviewRecord, CheckRecord, Delivery, OnboardingConfig, OnboardingReport, ConformanceReport, ConformanceFinding, ConformanceCheckResult, OpenWork, OpenPullRequest, OpenIssue, } from './sdlc.js';
 export type { AccountsClient, Account, AccountProvider, AccountStatus, AccountRefreshPolicy, AccountCredential, AccountBilling, CreateAccountRequest, CreateAccountResponse, GetAccountResponse, ListAccountsRequest, ListAccountsResponse, UpdateAccountRequest, UpdateAccountResponse, DeleteAccountResponse, RotateAccountCredentialRequest, RotateAccountCredentialResponse, RevokeAccountRequest, RevokeAccountResponse, SetDefaultAccountResponse, AccountUsage, GetAccountUsageResponse, SpendHeadroom, } from './accounts.js';
+export type { PromptsClient, PromptAddress, ListPromptsRequest, GetPromptRequest, PutPromptRequest, RollbackPromptRequest, ResetPromptRequest, PromptVersionRef, PromptRecord, PromptListEntry, ListPromptsResponse, PromptLayer, EffectivePrompt, PromptDiffOp, PromptDiffLine, PromptDiff, PromptRevisionSummary, PromptHistory, } from './prompts.js';
 export type { AgentsClient, Agent, AgentRole, AgentRef, AgentPool, AgentUsage, AgentAttempt, ProviderEndpoint, AgentAccountPolicy, AgentPrompt, AgentPlacement, } from './agents.js';
 export { formatAgentRef, parseAgentRef } from './agents.js';
 export { parseJSONPreservingLargeIntegers, quoteUnrepresentableIntegers, } from './json.js';
@@ -24,12 +25,12 @@ export { SandboxMode } from './types.js';
 export { SPEND_UNATTRIBUTED } from './types.js';
 export type { PageParams, PageResult, PageFacets, JobPageParams, TaskPageParams, SessionPageParams, FleetNodePageParams, WorkflowPageParams, ProjectPageParams, AccountPageParams, } from './page.js';
 export { adoptPage, adoptFacets, appendPageParams, appendListParam, appendCSVParam, wholeSetPage, MalformedPageError, } from './page.js';
-export { QuicBaaSError, SOPINRequiresTLSError, ConnectionError, NotConnectedError, APIError, DeployNotSupportedError, TransportNotSupportedError, McpError, SSHError, SSHNotFoundError, SSHDuplicateError, SSHInvalidError, SSHUnavailableError, SSHServerError, SSHHostMismatchError, } from './errors.js';
+export { QuicBaaSError, SOPINRequiresTLSError, ConnectionError, NotConnectedError, APIError, DeployNotSupportedError, TransportNotSupportedError, UnsupportedArgumentError, McpError, SSHError, SSHNotFoundError, SSHDuplicateError, SSHInvalidError, SSHUnavailableError, SSHServerError, SSHHostMismatchError, } from './errors.js';
 export { RestSSHKeysClient, RestKnownHostsClient, RestAuthorizedKeysClient } from './rest.js';
 export { RestBarrierClient, RestTenantBarrierClient, RestCeremonyClient, RestBootstrapClient, RestClusterClient, } from './rest.js';
 export { RestCAClient, RestTrustClient, RestCryptoClient } from './rest.js';
 export { GrpcWebNotImplementedError } from './grpc_web.js';
-export { McpNotImplementedError, McpAccountsClient, McpProjectsClient, McpSdlcClient } from './mcp.js';
+export { McpNotImplementedError, McpAccountsClient, McpProjectsClient, McpPromptsClient, McpSdlcClient } from './mcp.js';
 export { McpSession } from './mcp_rpc.js';
 export { QuicNotImplementedError } from './quic.js';
 //# sourceMappingURL=index.d.ts.map

@@ -161,6 +161,7 @@ func TestCeremonyE2E_SealedDaemonServesTheCeremonyOverCLI(t *testing.T) {
 		t.Fatalf("sealed daemon never became reachable over REST: %v", err)
 	}
 
+	// The daemon's CA chain is written under its data dir; the CLI trusts it explicitly. TLS is never turned off.
 	address := fmt.Sprintf("https://127.0.0.1:%d", ports.REST)
 	// The sealed daemon serves with the CA chain its first boot wrote under
 	// the data dir (the same chain the readiness probe trusts). The CLI runs

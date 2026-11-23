@@ -15,6 +15,7 @@ package quicbaas
 
 import (
 	"crypto/tls"
+	stderrors "errors"
 	"strings"
 	"sync"
 
@@ -27,6 +28,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/backup"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/batch"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/cache"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/capabilities"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/certificate"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/cluster"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/crypto"
@@ -359,6 +361,24 @@ const (
 	QueryOpPrefix           = query.OpPrefix
 	QueryOpRange            = query.OpRange
 )
+
+// CapabilitiesClient is an alias for the capabilities.Client interface.
+type CapabilitiesClient = capabilities.Client
+
+// CapabilitiesReport is an alias for capabilities.Report.
+type CapabilitiesReport = capabilities.Report
+
+// CapabilitiesProvider is implemented by the client New returns. It is kept
+// apart from Client so code that implements Client itself need not change:
+// assert a Client to CapabilitiesProvider to read the capabilities report.
+type CapabilitiesProvider interface {
+	// Capabilities returns the client that reads the server's capabilities
+	// report.
+	Capabilities() CapabilitiesClient
+}
+
+// NewCapabilitiesClient returns a capabilities client over t.
+func NewCapabilitiesClient(t Transport) CapabilitiesClient { return capabilities.NewClient(t) }
 
 // ClusterClient is an alias for the cluster.Client interface.
 type ClusterClient = cluster.Client
@@ -2042,10 +2062,26 @@ func (c *client) Close() error {
 	}
 	c.closed = true
 
+	var transportErr error
 	if c.transport != nil {
-		return c.transport.Close()
+		transportErr = c.transport.Close()
 	}
-	return nil
+
+	// Close the lazily built go-qrdb sub-client (gRPC/Unix time series,
+	// SealStore, TenantMgmt). Running the sync.Once here waits for an
+	// initialization in progress and makes any later qrdbClient() call
+	// fail instead of dialing a new connection after Close.
+	c.qrdb.closed.Store(true)
+	c.qrdb.once.Do(func() {
+		c.qrdb.err = errQRDBClientClosed()
+	})
+	var qrdbErr error
+	// The embedded qrdb transport's Close only marks it closed; it never
+	// closes the caller-owned servicers, so closing it here is safe.
+	if c.qrdb.client != nil {
+		qrdbErr = c.qrdb.client.Close()
+	}
+	return stderrors.Join(transportErr, qrdbErr)
 }
 
 // KV returns the KV client.
@@ -2119,6 +2155,14 @@ func (c *client) Query() QueryClient {
 	}
 	return c.queryClient
 }
+
+// Capabilities returns the client that reads the server's capabilities
+// report. It holds no state, so each call returns a fresh one.
+func (c *client) Capabilities() CapabilitiesClient {
+	return capabilities.NewClient(c.transport)
+}
+
+var _ CapabilitiesProvider = (*client)(nil)
 
 // Cluster returns the Cluster client.
 func (c *client) Cluster() ClusterClient {

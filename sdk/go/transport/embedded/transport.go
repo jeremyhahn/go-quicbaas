@@ -18,9 +18,11 @@ import (
 	"sync/atomic"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
+	"github.com/jeremyhahn/go-quicbaas/pkg/capabilities"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
+	sdkcapabilities "github.com/jeremyhahn/go-quicbaas/sdk/go/client/capabilities"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
 
@@ -55,6 +57,9 @@ var unaryHandlers = map[string]handlerFunc{
 
 	// Transaction operations
 	"quicbaas.Transaction/Execute": handleTransaction,
+
+	// Capabilities report
+	"quicbaas.Capabilities/Get": handleCapabilitiesGet,
 
 	// Cluster operations
 	"quicbaas.Cluster/Status":             handleClusterStatus,
@@ -151,6 +156,8 @@ var unaryHandlers = map[string]handlerFunc{
 	"quicbaas.TimeSeries/GetRetentionPolicy": handleGetRetentionPolicy,
 	"quicbaas.TimeSeries/SetRetentionPolicy": handleSetRetentionPolicy,
 	"quicbaas.TimeSeries/ListMetrics":        handleListMetrics,
+	"quicbaas.TimeSeries/SetRetention":       handleTSSetRetention,
+	"quicbaas.TimeSeries/GetRetention":       handleTSGetRetention,
 
 	// Operations
 	"quicbaas.Operations/MigrateData":          handleMigrateData,
@@ -433,6 +440,14 @@ var unaryHandlers = map[string]handlerFunc{
 	"quicbaas.Orchestrator/GetCostSettings":   handleOrchestratorGetCostSettings,
 	"quicbaas.Orchestrator/SetCostSettings":   handleOrchestratorSetCostSettings,
 
+	"quicbaas.Orchestrator/DeclareFleetPlacementSpec":   handleOrchestratorDeclareFleetPlacementSpec,
+	"quicbaas.Orchestrator/GetFleetPlacementSpec":       handleOrchestratorGetFleetPlacementSpec,
+	"quicbaas.Orchestrator/ListFleetPlacementSpecs":     handleOrchestratorListFleetPlacementSpecs,
+	"quicbaas.Orchestrator/WithdrawFleetPlacementSpec":  handleOrchestratorWithdrawFleetPlacementSpec,
+	"quicbaas.Orchestrator/GetFleetPlacementDrift":      handleOrchestratorGetFleetPlacementDrift,
+	"quicbaas.Orchestrator/ListFleetPlacementConsents":  handleOrchestratorListFleetPlacementConsents,
+	"quicbaas.Orchestrator/AnswerFleetPlacementConsent": handleOrchestratorAnswerFleetPlacementConsent,
+
 	// Project operations
 	"quicbaas.Project/Create":              handleProjectCreate,
 	"quicbaas.Project/Get":                 handleProjectGet,
@@ -688,6 +703,23 @@ type Factory struct {
 // NewFactory creates a new embedded transport factory.
 func NewFactory(svc service.QuicBaaS) *Factory {
 	return &Factory{service: svc}
+}
+
+// handleCapabilitiesGet answers quicbaas.Capabilities/Get with the report
+// capabilities.Build makes from the embedded service, the same report every
+// network transport serves. This transport always compiles its time series
+// handlers and has no RAG handlers and no object transfer handlers. Its CA
+// probe is the check the embedded certificate handlers make: the facade's
+// Certificate service is wired.
+func handleCapabilitiesGet(_ context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	if _, ok := req.(*sdkcapabilities.GetRequest); !ok {
+		return nil, NewInvalidRequestTypeError(sdkcapabilities.ServiceName, sdkcapabilities.MethodGet, "*capabilities.GetRequest", typeNameOf(req))
+	}
+	report := capabilities.Build(svc, capabilities.Probes{
+		TimeSeriesServed:     true,
+		CertificateAuthority: func() bool { return svc.Certificate() != nil },
+	})
+	return &report, nil
 }
 
 // Create creates a new embedded transport.

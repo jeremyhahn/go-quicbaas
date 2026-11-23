@@ -3117,6 +3117,24 @@ export interface ClusterStatusResponse {
   timestamp: string;
 }
 
+/** ClusterNodeInfo is one cluster member as GET /api/v1/cluster/nodes reports it. */
+export interface ClusterNodeInfo {
+  node_id: number;
+  address: string;
+  raft_address: string;
+  is_leader: boolean;
+  health_status: string;
+  version: string;
+  uptime_seconds: number;
+}
+
+/** ListClusterNodesResponse is the wire shape returned by GET /api/v1/cluster/nodes. */
+export interface ListClusterNodesResponse {
+  nodes: ClusterNodeInfo[];
+  total_count: number;
+  timestamp: string;
+}
+
 // =============================================================================
 // Seal* Deprecation Aliases
 // Re-export Seal* names that point at the new Barrier* shapes so existing

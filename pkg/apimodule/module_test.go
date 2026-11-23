@@ -155,12 +155,12 @@ func TestModule_LifecycleNoOps(t *testing.T) {
 // all seven broker capability services, the five quicbaas-native broker
 // data-plane services (ParameterStore, DynamicSecretsService,
 // ObjectStorageService, ObjectStorageAdmin, OllamaService), PromptService,
-// SecretsManagement, KeyManagement, DEKManagement and Crypto
-// (quicbaas-native because the pinned go-xkms serves no DEK surface and no
-// quicbaas.kms.v1 name — CertificateService/TrustService/AttestationService/
-// PIVService moved to go-xkms's own ServiceModule, Phase 3
-// of the login-plane plan; see module.go's package doc and
-// TestModule_RegisterGRPC_ExcludesXKMSCanonicalSurface), each with a method
+// SecretsManagement, KeyManagement plus DEKManagement (quicbaas-native
+// because the pinned go-xkms serves no DEK surface and no quicbaas.kms.v1
+// name), and AttestationService (quicbaas-native because the pinned go-xkms
+// serves no Verifier RPCs), plus Crypto/CertificateService/TrustService/
+// PIVService served to Unix-socket peers only (see module.go's package doc
+// and TestModule_RegisterGRPC_LegacyXKMSWrappersAreUnixOnly), each with a method
 // set identical to its generated service descriptor — the same wire surface
 // pkg/server/lifecycle.go registers on the legacy transport (minus the
 // qrdb-proxy planes that qrdb's own unified server already owns natively,
@@ -192,7 +192,6 @@ func TestModule_RegisterGRPC_RegistersFullGRPCSurface(t *testing.T) {
 		&pb.SecretsManagement_ServiceDesc,
 		&pb.KeyManagement_ServiceDesc,
 		&pb.DEKManagement_ServiceDesc,
-		&pb.Crypto_ServiceDesc,
 		&pb.VectorDB_ServiceDesc,
 		&pb.VectorAdmin_ServiceDesc,
 		&pb.PromptService_ServiceDesc,
@@ -202,9 +201,14 @@ func TestModule_RegisterGRPC_RegistersFullGRPCSurface(t *testing.T) {
 		&pb.AttestationService_ServiceDesc,
 		&iampb.FederationService_ServiceDesc,
 		&iampb.SessionService_ServiceDesc,
+		&iampb.IAMService_ServiceDesc,
+		&pb.Crypto_ServiceDesc,
+		&pb.CertificateService_ServiceDesc,
+		&pb.TrustService_ServiceDesc,
+		&pb.PIVService_ServiceDesc,
 	}
 	info := server.GetServiceInfo()
-	require.Len(t, info, len(generated), "exactly the twenty-eight quicbaas-native and broker services must be registered")
+	require.Len(t, info, len(generated), "exactly the twenty-eight quicbaas-native and broker services and the four Unix-only legacy xkms wrappers must be registered")
 
 	for _, desc := range generated {
 		svcInfo, ok := info[desc.ServiceName]
@@ -254,21 +258,12 @@ func TestModule_RegisterGRPC_ExcludesProxyPlanes(t *testing.T) {
 	}
 }
 
-// TestModule_RegisterGRPC_ExcludesXKMSCanonicalSurface proves
-// CertificateService, TrustService, AttestationService, and PIVService stay
-// OFF the quicbaas module's surface (Phase 3 of the
-// login-plane plan, corrective to the prior design documented in
-// module.go's package doc): they were quicbaas.v1 wrappers over the SAME
-// composed go-xkms library go-xkms's OWN ServiceModule ("xkms") now serves
-// as its canonical xkms.v1 KeystoreService surface on this same unified
-// server — registering both would double-register a redundant proto
-// surface, exactly the failure mode go-qrdb's route/service-collision guard
-// exists to catch. SecretsManagement, KeyManagement, DEKManagement and
-// Crypto are deliberately absent from this exclusion list: they are
-// quicbaas-native on the node, because the pinned go-xkms serves no DEK
-// surface and no quicbaas.kms.v1 name (see
-// TestModule_RegisterGRPC_RegistersFullGRPCSurface).
-func TestModule_RegisterGRPC_ExcludesXKMSCanonicalSurface(t *testing.T) {
+// TestModule_RegisterGRPC_LegacyXKMSWrappersAreUnixOnly proves Crypto,
+// CertificateService, TrustService, and PIVService are registered for the
+// Unix SDK's legacy wire names and are unixOnly: unixPeerOnly refuses any
+// non-Unix peer with Unimplemented, so TCP callers keep using go-xkms's
+// canonical xkms.v1 surface (see module.go's package doc).
+func TestModule_RegisterGRPC_LegacyXKMSWrappersAreUnixOnly(t *testing.T) {
 	m, err := NewModule(func() service.QuicBaaS { return nil }, testLogger(t))
 	require.NoError(t, err)
 
@@ -276,15 +271,20 @@ func TestModule_RegisterGRPC_ExcludesXKMSCanonicalSurface(t *testing.T) {
 	m.RegisterGRPC(server)
 	info := server.GetServiceInfo()
 
-	excluded := []string{
+	unixOnly := map[string]bool{}
+	for _, entry := range grpcRegistrations {
+		unixOnly[entry.desc.ServiceName] = entry.unixOnly
+	}
+	legacy := []string{
+		pb.Crypto_ServiceDesc.ServiceName,
 		pb.CertificateService_ServiceDesc.ServiceName,
 		pb.TrustService_ServiceDesc.ServiceName,
 		pb.PIVService_ServiceDesc.ServiceName,
 	}
-	for _, name := range excluded {
+	for _, name := range legacy {
 		_, ok := info[name]
-		assert.False(t, ok, "service %s must NOT be registered on the quicbaas module: "+
-			"go-xkms's own ServiceModule now owns this canonical xkms.v1 surface", name)
+		assert.True(t, ok, "service %s must be registered for the Unix SDK's legacy wire name", name)
+		assert.True(t, unixOnly[name], "service %s must be unixOnly: TCP callers use go-xkms's canonical surface", name)
 	}
 }
 
@@ -516,6 +516,10 @@ var wantPublicGRPCMethods = map[string]bool{
 	"/quicbaas.fido2.v1.FIDO2Service/FinishAuthentication":       true,
 	"/quicbaas.iam.v1.FederationService/BeginFederatedLogin":     true,
 	"/quicbaas.iam.v1.FederationService/HandleFederatedCallback": true,
+	"/quicbaas.iam.v1.IAMService/GetInvite":                      true,
+	"/quicbaas.iam.v1.IAMService/ActivateFIDO2Begin":             true,
+	"/quicbaas.iam.v1.IAMService/ActivateFIDO2Finish":            true,
+	"/quicbaas.iam.v1.IAMService/ActivatePIV":                    true,
 }
 
 // TestModule_PublicGRPCMethods_ExactSet proves PublicGRPCMethods returns

@@ -46,51 +46,60 @@ type orchestratorHandlerFunc func(ctx context.Context, conn *grpc.ClientConn, re
 
 // orchestratorMethodMap maps SDK method names to handler functions for O(1) dispatch.
 var orchestratorMethodMap = map[string]orchestratorHandlerFunc{
-	"Health":                 handleOrchestratorHealth,
-	"ListBackends":           handleOrchestratorListBackends,
-	"ListRunners":            handleOrchestratorListRunners,
-	"ListWorkflows":          handleOrchestratorListWorkflows,
-	"CreateWorkflow":         handleOrchestratorCreateWorkflow,
-	"GetWorkflow":            handleOrchestratorGetWorkflow,
-	"UpdateWorkflow":         handleOrchestratorUpdateWorkflow,
-	"DeleteWorkflow":         handleOrchestratorDeleteWorkflow,
-	"SpawnSession":           handleOrchestratorSpawnSession,
-	"PromptSession":          handleOrchestratorPromptSession,
-	"SessionStatus":          handleOrchestratorSessionStatus,
-	"CloseSession":           handleOrchestratorCloseSession,
-	"RotateSessionAccount":   handleOrchestratorRotateSessionAccount,
-	"ListSessions":           handleOrchestratorListSessions,
-	"CreateTask":             handleOrchestratorCreateTask,
-	"GetTask":                handleOrchestratorGetTask,
-	"ListTasks":              handleOrchestratorListTasks,
-	"ClaimTask":              handleOrchestratorClaimTask,
-	"CompleteTask":           handleOrchestratorCompleteTask,
-	"BlockTask":              handleOrchestratorBlockTask,
-	"DeleteTask":             handleOrchestratorDeleteTask,
-	"ReadmitTask":            handleOrchestratorReadmitTask,
-	"AttentionList":          handleOrchestratorAttentionList,
-	"AttentionResolve":       handleOrchestratorAttentionResolve,
-	"RegisterFleetNode":      handleFleetRegister,
-	"GetFleetNode":           handleFleetGet,
-	"ListFleetNodes":         handleFleetList,
-	"RemoveFleetNode":        handleFleetRemove,
-	"FleetNodeHeartbeat":     handleFleetHeartbeat,
-	"ListBackendModels":      handleListBackendModels,
-	"DecomposeTask":          handleOrchestratorDecomposeTask,
-	"SpawnChildJob":          handleOrchestratorSpawnChildJob,
-	"StartJob":               handleOrchestratorStartJob,
-	"GetJobStatus":           handleOrchestratorGetJobStatus,
-	"ListJobs":               handleOrchestratorListJobs,
-	"CancelJob":              handleOrchestratorCancelJob,
-	"ListTaskArtifacts":      handleOrchestratorListTaskArtifacts,
-	"GetSessionHistory":      handleOrchestratorGetSessionHistory,
-	"GetSessionConversation": handleOrchestratorGetSessionConversation,
-	"GetSpendReport":         handleOrchestratorGetSpendReport,
-	"GetTenantSpendPolicy":   handleOrchestratorGetTenantSpendPolicy,
-	"SetTenantSpendPolicy":   handleOrchestratorSetTenantSpendPolicy,
-	"Inference":              handleOrchestratorInference,
-	"GetCostSettings":        handleOrchestratorGetCostSettings,
-	"SetCostSettings":        handleOrchestratorSetCostSettings,
+	"Health":                      handleOrchestratorHealth,
+	"ListBackends":                handleOrchestratorListBackends,
+	"ListRunners":                 handleOrchestratorListRunners,
+	"ListWorkflows":               handleOrchestratorListWorkflows,
+	"CreateWorkflow":              handleOrchestratorCreateWorkflow,
+	"GetWorkflow":                 handleOrchestratorGetWorkflow,
+	"UpdateWorkflow":              handleOrchestratorUpdateWorkflow,
+	"DeleteWorkflow":              handleOrchestratorDeleteWorkflow,
+	"SpawnSession":                handleOrchestratorSpawnSession,
+	"PromptSession":               handleOrchestratorPromptSession,
+	"SessionStatus":               handleOrchestratorSessionStatus,
+	"CloseSession":                handleOrchestratorCloseSession,
+	"RotateSessionAccount":        handleOrchestratorRotateSessionAccount,
+	"ListSessions":                handleOrchestratorListSessions,
+	"CreateTask":                  handleOrchestratorCreateTask,
+	"GetTask":                     handleOrchestratorGetTask,
+	"ListTasks":                   handleOrchestratorListTasks,
+	"ClaimTask":                   handleOrchestratorClaimTask,
+	"CompleteTask":                handleOrchestratorCompleteTask,
+	"BlockTask":                   handleOrchestratorBlockTask,
+	"DeleteTask":                  handleOrchestratorDeleteTask,
+	"ReadmitTask":                 handleOrchestratorReadmitTask,
+	"AttentionList":               handleOrchestratorAttentionList,
+	"AttentionResolve":            handleOrchestratorAttentionResolve,
+	"RegisterFleetNode":           handleFleetRegister,
+	"GetFleetNode":                handleFleetGet,
+	"ListFleetNodes":              handleFleetList,
+	"RemoveFleetNode":             handleFleetRemove,
+	"FleetNodeHeartbeat":          handleFleetHeartbeat,
+	"ListBackendModels":           handleListBackendModels,
+	"DecomposeTask":               handleOrchestratorDecomposeTask,
+	"SpawnChildJob":               handleOrchestratorSpawnChildJob,
+	"StartJob":                    handleOrchestratorStartJob,
+	"GetJobStatus":                handleOrchestratorGetJobStatus,
+	"ListJobs":                    handleOrchestratorListJobs,
+	"CancelJob":                   handleOrchestratorCancelJob,
+	"ListTaskArtifacts":           handleOrchestratorListTaskArtifacts,
+	"SubmitTaskArtifacts":         handleOrchestratorSubmitTaskArtifacts,
+	"GetTaskArtifact":             handleOrchestratorGetTaskArtifact,
+	"GetSessionHistory":           handleOrchestratorGetSessionHistory,
+	"GetSessionConversation":      handleOrchestratorGetSessionConversation,
+	"GetSpendReport":              handleOrchestratorGetSpendReport,
+	"GetTenantSpendPolicy":        handleOrchestratorGetTenantSpendPolicy,
+	"SetTenantSpendPolicy":        handleOrchestratorSetTenantSpendPolicy,
+	"Inference":                   handleOrchestratorInference,
+	"GetCostSettings":             handleOrchestratorGetCostSettings,
+	"SetCostSettings":             handleOrchestratorSetCostSettings,
+	"DeclareFleetPlacementSpec":   handleOrchestratorDeclareFleetPlacementSpec,
+	"GetFleetPlacementSpec":       handleOrchestratorGetFleetPlacementSpec,
+	"ListFleetPlacementSpecs":     handleOrchestratorListFleetPlacementSpecs,
+	"WithdrawFleetPlacementSpec":  handleOrchestratorWithdrawFleetPlacementSpec,
+	"GetFleetPlacementDrift":      handleOrchestratorGetFleetPlacementDrift,
+	"ListFleetPlacementConsents":  handleOrchestratorListFleetPlacementConsents,
+	"AnswerFleetPlacementConsent": handleOrchestratorAnswerFleetPlacementConsent,
 }
 
 // handleOrchestratorGetSessionHistory is the one-shot gRPC handler for a
@@ -150,6 +159,78 @@ func protoArtifactToSDK(artifact *pb.Artifact) *orchestrator.TaskArtifact {
 		}
 	}
 	return out
+}
+
+// sdkArtifactToProto is the inverse of protoArtifactToSDK. A nil artifact
+// maps to nil, and Ref is set only when the SDK artifact carries one.
+func sdkArtifactToProto(a *orchestrator.TaskArtifact) *pb.Artifact {
+	if a == nil {
+		return nil
+	}
+	out := &pb.Artifact{
+		Kind:     a.Kind,
+		Name:     a.Name,
+		MimeType: a.MIMEType,
+		Size:     a.Size,
+		Content:  a.Content,
+		Metadata: a.Metadata,
+	}
+	if a.Ref != nil {
+		out.Ref = &pb.ArtifactRef{
+			AgentId: a.Ref.AgentID,
+			Path:    a.Ref.Path,
+			Sha:     a.Ref.SHA,
+			Branch:  a.Ref.Branch,
+		}
+	}
+	return out
+}
+
+func handleOrchestratorSubmitTaskArtifacts(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.SubmitTaskArtifactsRequest)
+	if !ok || sdkReq == nil {
+		return nil, errors.NewInvalidInput("grpc.orchestrator.SubmitTaskArtifacts", "invalid request type")
+	}
+	artifacts := make([]*pb.Artifact, 0, len(sdkReq.Artifacts))
+	for _, artifact := range sdkReq.Artifacts {
+		if artifact == nil {
+			continue
+		}
+		artifacts = append(artifacts, sdkArtifactToProto(artifact))
+	}
+	protoReq := &pb.SubmitTaskArtifactsRequest{
+		TenantId:  sdkReq.TenantID,
+		TaskId:    sdkReq.TaskID,
+		Artifacts: artifacts,
+	}
+	protoResp := &pb.SubmitTaskArtifactsResponse{}
+	if err := conn.Invoke(ctx, pb.OrchestratorService_SubmitTaskArtifacts_FullMethodName, protoReq, protoResp); err != nil {
+		return nil, convertGRPCError(err, "grpc.orchestrator.SubmitTaskArtifacts")
+	}
+	return &orchestrator.SubmitTaskArtifactsResponse{
+		TaskID: protoResp.GetTaskId(),
+		Stored: int(protoResp.GetStored()),
+	}, nil
+}
+
+func handleOrchestratorGetTaskArtifact(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.GetTaskArtifactRequest)
+	if !ok || sdkReq == nil {
+		return nil, errors.NewInvalidInput("grpc.orchestrator.GetTaskArtifact", "invalid request type")
+	}
+	protoReq := &pb.GetTaskArtifactRequest{
+		TenantId: sdkReq.TenantID,
+		TaskId:   sdkReq.TaskID,
+		Name:     sdkReq.Name,
+	}
+	protoResp := &pb.GetTaskArtifactResponse{}
+	if err := conn.Invoke(ctx, pb.OrchestratorService_GetTaskArtifact_FullMethodName, protoReq, protoResp); err != nil {
+		return nil, convertGRPCError(err, "grpc.orchestrator.GetTaskArtifact")
+	}
+	if protoResp.GetArtifact() == nil {
+		return nil, errors.NewNotFound("grpc.orchestrator.GetTaskArtifact", "artifact not found")
+	}
+	return protoArtifactToSDK(protoResp.GetArtifact()), nil
 }
 
 func handleOrchestratorGetSessionHistory(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error) {

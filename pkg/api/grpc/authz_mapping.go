@@ -244,11 +244,12 @@ var grpcMethodPermissions = map[string]methodPermission{
 
 	// ---- quicbaas.iam.v1.IAMService: WebAuthn credential administration ----
 	//
-	// These three are the ONLY IAMService methods mapped here, and that needs
-	// saying out loud: the rest of quicbaas.iam.v1.IAMService is absent from
-	// brokerServiceDescs and unmapped, so under RequireAuthz it is denied
-	// wholesale. Mapping these three does not carve an exception into that
-	// posture — it is the minimum needed for the surface to exist at all.
+	// The IAMService methods mapped here are ApproveUser, GetUser,
+	// GetUserByUsername and the WebAuthn credential verbs, and only those;
+	// that needs saying out loud: the rest of quicbaas.iam.v1.IAMService is
+	// absent from brokerServiceDescs and unmapped, so under RequireAuthz it is
+	// denied wholesale. Mapping the WebAuthn verbs does not carve an exception
+	// into that posture — it is the minimum needed for the surface to exist.
 	// They are the operator's ONLY recovery path for a WebAuthn credential
 	// stranded by a deleted user (go-quicbaas#273): the credential blocks its
 	// email from ever registering an authenticator again, and every other way
@@ -270,7 +271,10 @@ var grpcMethodPermissions = map[string]methodPermission{
 	// the owner, not a wiring change; it is tracked separately. Until then it
 	// stays unmapped and default-denied.
 	// Mirrors REST POST /api/v1/iam/users/{user_id}/approve (users:enable).
-	"/quicbaas.iam.v1.IAMService/ApproveUser":               {"users", "enable"},
+	"/quicbaas.iam.v1.IAMService/ApproveUser": {"users", "enable"},
+	// Mirror QRDBService GetUser/GetUserByUsername (users:read).
+	"/quicbaas.iam.v1.IAMService/GetUser":                   {"users", "read"},
+	"/quicbaas.iam.v1.IAMService/GetUserByUsername":         {"users", "read"},
 	"/quicbaas.iam.v1.IAMService/ListWebAuthnCredentials":   {"users", "read"},
 	"/quicbaas.iam.v1.IAMService/DeleteWebAuthnCredential":  {"users", "delete"},
 	"/quicbaas.iam.v1.IAMService/DeleteWebAuthnCredentials": {"users", "delete"},
@@ -701,48 +705,55 @@ var grpcMethodPermissions = map[string]methodPermission{
 	// different account's credential. Mirrored on REST
 	// (/api/v1/orchestrator/.../rotate-account), QUIC (rotateSubOpPermissions)
 	// and MCP (quicbaas_orchestrator_rotate_account).
-	"/quicbaas.orchestrator.v1.OrchestratorService/RotateSessionAccount":   {"orchestrator", "spawn"},
-	"/quicbaas.orchestrator.v1.OrchestratorService/SubscribeSessionEvents": {"orchestrator", "status"},
-	"/quicbaas.orchestrator.v1.OrchestratorService/GetSessionConversation": {"orchestrator", "status"},
-	"/quicbaas.orchestrator.v1.OrchestratorService/GetSpendReport":         {"spend_report", "read"},
-	"/quicbaas.orchestrator.v1.OrchestratorService/GetTenantSpendPolicy":   {"orchestrator", "status"},
-	"/quicbaas.orchestrator.v1.OrchestratorService/SetTenantSpendPolicy":   {"spend_policy", "write"},
-	"/quicbaas.orchestrator.v1.OrchestratorService/GetCostSettings":        {"orchestrator", "status"},
-	"/quicbaas.orchestrator.v1.OrchestratorService/SetCostSettings":        {"cost_settings", "write"},
-	"/quicbaas.orchestrator.v1.OrchestratorService/CreateTask":             {"orchestrator", "task_create"},
-	"/quicbaas.orchestrator.v1.OrchestratorService/GetTask":                {"orchestrator", "task_read"},
-	"/quicbaas.orchestrator.v1.OrchestratorService/ListTasks":              {"orchestrator", "task_list"},
-	"/quicbaas.orchestrator.v1.OrchestratorService/ClaimTask":              {"orchestrator", "task_claim"},
-	"/quicbaas.orchestrator.v1.OrchestratorService/CompleteTask":           {"orchestrator", "task_complete"},
-	"/quicbaas.orchestrator.v1.OrchestratorService/BlockTask":              {"orchestrator", "task_block"},
-	"/quicbaas.orchestrator.v1.OrchestratorService/ReadmitTask":            {"orchestrator", "task_readmit"},
-	"/quicbaas.orchestrator.v1.OrchestratorService/DeleteTask":             {"orchestrator", "task_create"},
-	"/quicbaas.orchestrator.v1.OrchestratorService/DecomposeTask":          {"orchestrator", "task_decompose"},
-	"/quicbaas.orchestrator.v1.OrchestratorService/SubmitTaskArtifacts":    {"orchestrator", "artifact_submit"},
-	"/quicbaas.orchestrator.v1.OrchestratorService/GetTaskArtifact":        {"orchestrator", "artifact_read"},
-	"/quicbaas.orchestrator.v1.OrchestratorService/ListTaskArtifacts":      {"orchestrator", "artifact_read"},
-	"/quicbaas.orchestrator.v1.OrchestratorService/StartJob":               {"orchestrator", "job_start"},
-	"/quicbaas.orchestrator.v1.OrchestratorService/GetJobStatus":           {"orchestrator", "job_read"},
-	"/quicbaas.orchestrator.v1.OrchestratorService/ListJobs":               {"orchestrator", "job_list"},
-	"/quicbaas.orchestrator.v1.OrchestratorService/CancelJob":              {"orchestrator", "job_cancel"},
-	"/quicbaas.orchestrator.v1.OrchestratorService/SubscribeJobEvents":     {"orchestrator", "job_read"},
-	"/quicbaas.orchestrator.v1.OrchestratorService/ListBackends":           {"orchestrator", "backend_list"},
-	"/quicbaas.orchestrator.v1.OrchestratorService/ListRunners":            {"orchestrator", "status"},
-	"/quicbaas.orchestrator.v1.OrchestratorService/ListWorkflows":          {"orchestrator", "workflow_read"},
-	"/quicbaas.orchestrator.v1.OrchestratorService/CreateWorkflow":         {"orchestrator", "workflow_write"},
-	"/quicbaas.orchestrator.v1.OrchestratorService/GetWorkflow":            {"orchestrator", "workflow_read"},
-	"/quicbaas.orchestrator.v1.OrchestratorService/UpdateWorkflow":         {"orchestrator", "workflow_write"},
-	"/quicbaas.orchestrator.v1.OrchestratorService/DeleteWorkflow":         {"orchestrator", "workflow_write"},
-	"/quicbaas.orchestrator.v1.OrchestratorService/Health":                 {"orchestrator", "health"},
-	"/quicbaas.orchestrator.v1.OrchestratorService/Inference":              {"orchestrator", "inference"},
-	"/quicbaas.orchestrator.v1.OrchestratorService/InferenceStream":        {"orchestrator", "inference"},
-	"/quicbaas.orchestrator.v1.OrchestratorService/RegisterFleetNode":      {"orchestrator", "agent_register"},
-	"/quicbaas.orchestrator.v1.OrchestratorService/GetFleetNode":           {"orchestrator", "agent_read"},
-	"/quicbaas.orchestrator.v1.OrchestratorService/ListFleetNodes":         {"orchestrator", "agent_list"},
-	"/quicbaas.orchestrator.v1.OrchestratorService/RemoveFleetNode":        {"orchestrator", "agent_remove"},
-	"/quicbaas.orchestrator.v1.OrchestratorService/FleetNodeHeartbeat":     {"orchestrator", "agent_heartbeat"},
-	"/quicbaas.orchestrator.v1.OrchestratorService/ListBackendModels":      {"orchestrator", "backend_list"},
-	"/quicbaas.orchestrator.v1.OrchestratorService/PushEvents":             {"orchestrator", "hook"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/RotateSessionAccount":        {"orchestrator", "spawn"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/SubscribeSessionEvents":      {"orchestrator", "status"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/GetSessionConversation":      {"orchestrator", "status"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/GetSpendReport":              {"spend_report", "read"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/GetTenantSpendPolicy":        {"orchestrator", "status"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/SetTenantSpendPolicy":        {"spend_policy", "write"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/GetCostSettings":             {"orchestrator", "status"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/DeclareFleetPlacementSpec":   {"placement", "manage"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/GetFleetPlacementSpec":       {"placement", "read"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/ListFleetPlacementSpecs":     {"placement", "read"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/WithdrawFleetPlacementSpec":  {"placement", "manage"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/GetFleetPlacementDrift":      {"placement", "read"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/ListFleetPlacementConsents":  {"placement", "read"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/AnswerFleetPlacementConsent": {"placement", "consent"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/SetCostSettings":             {"cost_settings", "write"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/CreateTask":                  {"orchestrator", "task_create"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/GetTask":                     {"orchestrator", "task_read"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/ListTasks":                   {"orchestrator", "task_list"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/ClaimTask":                   {"orchestrator", "task_claim"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/CompleteTask":                {"orchestrator", "task_complete"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/BlockTask":                   {"orchestrator", "task_block"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/ReadmitTask":                 {"orchestrator", "task_readmit"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/DeleteTask":                  {"orchestrator", "task_create"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/DecomposeTask":               {"orchestrator", "task_decompose"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/SubmitTaskArtifacts":         {"orchestrator", "artifact_submit"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/GetTaskArtifact":             {"orchestrator", "artifact_read"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/ListTaskArtifacts":           {"orchestrator", "artifact_read"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/StartJob":                    {"orchestrator", "job_start"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/GetJobStatus":                {"orchestrator", "job_read"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/ListJobs":                    {"orchestrator", "job_list"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/CancelJob":                   {"orchestrator", "job_cancel"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/SubscribeJobEvents":          {"orchestrator", "job_read"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/ListBackends":                {"orchestrator", "backend_list"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/ListRunners":                 {"orchestrator", "status"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/ListWorkflows":               {"orchestrator", "workflow_read"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/CreateWorkflow":              {"orchestrator", "workflow_write"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/GetWorkflow":                 {"orchestrator", "workflow_read"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/UpdateWorkflow":              {"orchestrator", "workflow_write"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/DeleteWorkflow":              {"orchestrator", "workflow_write"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/Health":                      {"orchestrator", "health"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/Inference":                   {"orchestrator", "inference"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/InferenceStream":             {"orchestrator", "inference"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/RegisterFleetNode":           {"orchestrator", "agent_register"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/GetFleetNode":                {"orchestrator", "agent_read"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/ListFleetNodes":              {"orchestrator", "agent_list"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/RemoveFleetNode":             {"orchestrator", "agent_remove"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/FleetNodeHeartbeat":          {"orchestrator", "agent_heartbeat"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/ListBackendModels":           {"orchestrator", "backend_list"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/PushEvents":                  {"orchestrator", "hook"},
 
 	// ---- quicbaas.messaging.v1.MessagingService ----
 	"/quicbaas.messaging.v1.MessagingService/CreateChannel":       {"messaging", "channel_create"},
@@ -986,16 +997,17 @@ var grpcMethodPermissions = map[string]methodPermission{
 	// qrdb.v1.UserAuthFactorService) on the SAME grpc.Server as the quicbaas
 	// services (pkg/server/grpc_qrdb_service.go), so the qrdb SDK's gRPC and
 	// Unix transports (go-qrdb sdk/go buildQRDBTransport) can dial the
-	// barrier / ceremony / credential / user / user-auth-factor surfaces
-	// through the broker listener. The entries below mirror go-qrdb's OWN
-	// gRPC permission map (go-qrdb/pkg/auth/middleware/mapping.go
-	// grpcPermissions) verbatim, so a permission grant authorizes the same
-	// verb identically on a direct qrdb node and through the broker.
+	// barrier / ceremony / credential / user / user-auth-factor /
+	// time-series surfaces through the broker listener. The entries below
+	// mirror go-qrdb's OWN gRPC permission map (go-qrdb/pkg/auth/middleware/
+	// mapping.go grpcPermissions, and the (qrdb.v1.permission) method
+	// options) verbatim, so a permission grant authorizes the same verb
+	// identically on a direct qrdb node and through the broker.
 	//
 	// Scope: ONLY the families whose servicers buildQRDBRegisterOptions
-	// actually wires — barrier, ceremony, credential, user, user-auth-factor
-	// — plus Health (public, above) and Status. Every other qrdb.v1 method
-	// (KV, lease, lock, index, timeseries, vector, ...) dispatches to
+	// actually wires — barrier, ceremony, credential, user, user-auth-factor,
+	// timeseries — plus Health (public, above) and Status. Every other
+	// qrdb.v1 method (KV, lease, lock, index, vector, ...) dispatches to
 	// codes.Unimplemented server-side and stays default-denied here; the
 	// quicbaas-namespaced services are the canonical broker surface for
 	// those capabilities.
@@ -1007,6 +1019,20 @@ var grpcMethodPermissions = map[string]methodPermission{
 	// Health is public (see publicGRPCMethods). Status mirrors both qrdb's
 	// AdminStatus entry and the broker's own ClusterStatus mapping.
 	"/qrdb.v1.QRDBService/Status": {"admin", "status"},
+
+	// ---- qrdb.v1.QRDBService: time-series ----
+	// Each RPC carries the narrowest permission go-qrdb itself enforces, its
+	// (qrdb.v1.permission) method option in qrdbv1/qrdb.proto.
+	"/qrdb.v1.QRDBService/TSWrite":        {"timeseries", "write"},
+	"/qrdb.v1.QRDBService/TSWriteBatch":   {"timeseries", "write_batch"},
+	"/qrdb.v1.QRDBService/TSQuery":        {"timeseries", "query"},
+	"/qrdb.v1.QRDBService/TSAggregate":    {"timeseries", "aggregate"},
+	"/qrdb.v1.QRDBService/TSWritePoint":   {"timeseries", "write_point"},
+	"/qrdb.v1.QRDBService/TSRichQuery":    {"timeseries", "rich_query"},
+	"/qrdb.v1.QRDBService/TSDeleteSeries": {"timeseries", "delete_series"},
+	"/qrdb.v1.QRDBService/TSGetRetention": {"timeseries", "get_retention"},
+	"/qrdb.v1.QRDBService/TSSetRetention": {"timeseries", "set_retention"},
+	"/qrdb.v1.QRDBService/TSListMetrics":  {"timeseries", "list_metrics"},
 
 	// ---- qrdb.v1.QRDBService: system barrier lifecycle ----
 	"/qrdb.v1.QRDBService/BarrierInitialize":        {"seal", "bootstrap"},

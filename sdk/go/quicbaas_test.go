@@ -841,6 +841,14 @@ func (m *mockTimeSeriesClientForCoverage) Query(ctx context.Context, req *timese
 	return nil, nil
 }
 
+func (m *mockTimeSeriesClientForCoverage) SetRetention(ctx context.Context, req *timeseries.SetRetentionRequest) error {
+	return nil
+}
+
+func (m *mockTimeSeriesClientForCoverage) GetRetention(ctx context.Context, req *timeseries.GetRetentionRequest) (*timeseries.GetRetentionResponse, error) {
+	return nil, nil
+}
+
 type mockBackupClientForCoverage struct{}
 
 func (m *mockBackupClientForCoverage) Create(ctx context.Context, req *backup.BackupRequest) (*backup.BackupResponse, error) {

@@ -1748,8 +1748,24 @@ export interface BarrierEnableEncryptionResponse {
 export interface CeremonyOfficer {
     /** Unique username for the officer. */
     username: string;
+    /** Holder role: "so" (the server default) or "custodian". */
+    role?: string;
     /** PEM-encoded CSR submitted by the officer. */
     csr_pem: string;
+    /** KEM of a separate share-envelope recipient key. */
+    encryption_kem?: string;
+    /** Base64 share-envelope recipient public key; the certificate key when absent. */
+    encryption_key?: string;
+    /** Additional authentication factors to enrol ("mtls" is always enrolled). */
+    factors?: HolderFactorEnrolment[];
+    /** Factor fixed at enrolment under the designated factor policy; "mtls" when empty. */
+    designated?: string;
+}
+export interface HolderFactorEnrolment {
+    /** Factor name registered on the server. */
+    name: string;
+    /** The factor's own enrolment parameters. */
+    params?: Record<string, unknown>;
 }
 export interface CeremonyInitializeRequest {
     /** Security Officer PIN. */
@@ -1925,6 +1941,22 @@ export interface ClusterStatusResponse {
     total_nodes?: number;
     shards?: ClusterShard[];
     healthy: boolean;
+    timestamp: string;
+}
+/** ClusterNodeInfo is one cluster member as GET /api/v1/cluster/nodes reports it. */
+export interface ClusterNodeInfo {
+    node_id: number;
+    address: string;
+    raft_address: string;
+    is_leader: boolean;
+    health_status: string;
+    version: string;
+    uptime_seconds: number;
+}
+/** ListClusterNodesResponse is the wire shape returned by GET /api/v1/cluster/nodes. */
+export interface ListClusterNodesResponse {
+    nodes: ClusterNodeInfo[];
+    total_count: number;
     timestamp: string;
 }
 /** @deprecated Use BarrierStatusResponse. */
