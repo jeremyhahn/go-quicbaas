@@ -35,7 +35,7 @@ import (
 // Tenant isolation is achieved by embedding the tenant ID in the namespace
 // name at construction: physicalNamespace = tenantID + ":" + logicalNamespace
 // (or just logicalNamespace when tenantID is empty). This matches the
-// quicbaas convention used by baasTransport's namespace-key-based isolation
+// quicbaas convention of namespace-key-based tenant isolation
 // and avoids any reliance on the qrdb context-key-based tenant derivation
 // (which uses a different context key than the quicbaas iam package).
 //
@@ -142,7 +142,7 @@ func uint64ToBytes(v uint64) []byte {
 }
 
 // isAlreadyExists returns true for qrdb "already exists" error responses.
-// The baasTransport returns *VectorNamespaceExistsError; for network
+// The embedded transport returns *VectorNamespaceExistsError; for network
 // transports the error message carries an "already exists" phrase.
 func isAlreadyExists(err error) bool {
 	if err == nil {

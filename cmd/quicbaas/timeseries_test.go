@@ -570,6 +570,43 @@ func TestTSQueryCommandHelp(t *testing.T) {
 	assert.Contains(t, output, "--aggregation")
 }
 
+// TestTSQueryCommandDefaultsNoAggregation builds the whole timeseries group
+// (so set-retention's flags are registered too) and checks that a plain
+// query sends no aggregation and no interval.
+func TestTSQueryCommandDefaultsNoAggregation(t *testing.T) {
+	origFactory := timeSeriesClientFactory
+	origAggregation, origInterval := tsAggregation, tsInterval
+	origMetric, origStart, origEnd := tsMetric, tsStartTime, tsEndTime
+	origFormat := outputFormat
+	defer func() {
+		timeSeriesClientFactory = origFactory
+		tsAggregation, tsInterval = origAggregation, origInterval
+		tsMetric, tsStartTime, tsEndTime = origMetric, origStart, origEnd
+		outputFormat = origFormat
+	}()
+
+	var got *cli.TSQueryRequest
+	timeSeriesClientFactory = func() (TimeSeriesClient, error) {
+		return &MockTimeSeriesClient{
+			TSQueryFunc: func(_ context.Context, req *cli.TSQueryRequest) (*cli.TSQueryResponse, error) {
+				got = req
+				return &cli.TSQueryResponse{}, nil
+			},
+		}, nil
+	}
+
+	root := newTimeSeriesCommands()
+	var stdout, stderr bytes.Buffer
+	root.SetOut(&stdout)
+	root.SetErr(&stderr)
+	root.SetArgs([]string{"query", "--metric", "m", "--start", "2026-01-01T00:00:00Z", "--end", "2026-01-01T01:00:00Z"})
+
+	require.NoError(t, root.Execute())
+	require.NotNil(t, got)
+	assert.Equal(t, "", got.Aggregation)
+	assert.Equal(t, int32(0), got.IntervalSec)
+}
+
 // TestRunTSQueryCommand tests the query command.
 func TestRunTSQueryCommand(t *testing.T) {
 	// Save original factory
@@ -1262,7 +1299,7 @@ func TestRunTSSetRetentionCommand(t *testing.T) {
 			// Set global flags AFTER command creation
 			tsDurationSec = tt.duration
 			tsResolutionSec = tt.resolution
-			tsAggregation = tt.aggregation
+			tsRetentionAggregation = tt.aggregation
 			if tt.outputFormat != "" {
 				outputFormat = tt.outputFormat
 			} else {
@@ -1287,7 +1324,7 @@ func TestRunTSSetRetentionCommand(t *testing.T) {
 			// Reset flags
 			tsDurationSec = 0
 			tsResolutionSec = 0
-			tsAggregation = ""
+			tsRetentionAggregation = ""
 			outputFormat = "table"
 		})
 	}
