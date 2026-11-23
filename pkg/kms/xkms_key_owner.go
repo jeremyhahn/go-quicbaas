@@ -128,6 +128,15 @@ func (kb *XKMSBackend) xkmsDecrypt(ctx context.Context, kid string, data *kctype
 	return xkms.Decrypt(ctx, kid, data, opts)
 }
 
+// xkmsGetSymmetricKey reads the symmetric key kid through the test seam, or
+// through go-xkms when none is set.
+func (kb *XKMSBackend) xkmsGetSymmetricKey(ctx context.Context, kid string) (kctypes.SymmetricKey, error) {
+	if kb.getSymmetricKey != nil {
+		return kb.getSymmetricKey(ctx, kid)
+	}
+	return xkms.GetSymmetricKey(ctx, kid)
+}
+
 // xkmsAEADOpenErrors are the errors an AEAD returns when a ciphertext does
 // not authenticate under its key and additional data. Go and x/crypto keep
 // them unexported, so they are captured once from a failing Open.

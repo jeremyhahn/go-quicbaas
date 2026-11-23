@@ -61,6 +61,10 @@ type XKMSBackend struct {
 	// decrypt is a test seam for the ownership proof decrypt; nil means
 	// xkms.Decrypt.
 	decrypt func(ctx context.Context, kid string, data *kctypes.EncryptedData, opts *kctypes.DecryptOptions) ([]byte, error)
+
+	// getSymmetricKey is a test seam for GetKeyMetadata's symmetric probes;
+	// nil means xkms.GetSymmetricKey.
+	getSymmetricKey func(ctx context.Context, kid string) (kctypes.SymmetricKey, error)
 }
 
 // XKMSBackendConfig configures the XKMSBackend.
@@ -362,7 +366,10 @@ type xkmsKeyProbe struct {
 // algorithm whose attributes fall to a default mapping (HMAC, Ed448, X25519,
 // X448) names no key of its own and is dropped. Kids are unique, the first
 // algorithm keeping a shared kid (all RSA sizes share "rsa"); signing probes
-// come first, then symmetric ones.
+// come first, then symmetric ones. AES-256-GCM is the first symmetric probe:
+// it is the default, the only size cloud KMS creates, and a backend that
+// echoes the requested size (PKCS#11) labels a stored key with the first AES
+// probe that finds it.
 func (kb *XKMSBackend) xkmsKeyProbes(ctx context.Context, keyID string) []xkmsKeyProbe {
 	var signing, symmetric []xkmsKeyProbe
 	seen := make(map[string]bool)
@@ -381,12 +388,39 @@ func (kb *XKMSBackend) xkmsKeyProbes(ctx context.Context, keyID string) []xkmsKe
 		seen[kid] = true
 		p := xkmsKeyProbe{algorithm: alg, kid: kid, symmetric: sym}
 		if sym {
-			symmetric = append(symmetric, p)
+			if alg == AlgAES256GCM {
+				symmetric = append([]xkmsKeyProbe{p}, symmetric...)
+			} else {
+				symmetric = append(symmetric, p)
+			}
 		} else {
 			signing = append(signing, p)
 		}
 	}
 	return append(signing, symmetric...)
+}
+
+// xkmsProbedSymmetricAlgorithm names the algorithm of key, the material a
+// symmetric probe for probed returned. Cloud KMS backends look a symmetric
+// key up by name only and echo the requested algorithm, so any AES probe can
+// return a stored key of another size; the size is read from the key itself.
+// A non-AES probe, or a size that is not an AES size, keeps probed.
+func xkmsProbedSymmetricAlgorithm(probed string, key kctypes.SymmetricKey) string {
+	if key == nil {
+		return probed
+	}
+	switch probed {
+	case AlgAES128GCM, AlgAES192GCM, AlgAES256GCM:
+		switch key.KeySize() {
+		case 128:
+			return AlgAES128GCM
+		case 192:
+			return AlgAES192GCM
+		case 256:
+			return AlgAES256GCM
+		}
+	}
+	return probed
 }
 
 // GetKeyMetadata retrieves metadata for a key.
@@ -424,13 +458,16 @@ func (kb *XKMSBackend) GetKeyMetadata(ctx context.Context, keyID string) (*KeyMe
 	var probeErr error
 	for _, p := range kb.xkmsKeyProbes(ctx, keyID) {
 		var rsaBits int
+		var symKey kctypes.SymmetricKey
 		if p.symmetric {
-			if _, err := xkms.GetSymmetricKey(ctx, p.kid); err != nil {
+			key, err := kb.xkmsGetSymmetricKey(ctx, p.kid)
+			if err != nil {
 				if !isXKMSMaterialAbsent(err) && probeErr == nil {
 					probeErr = err
 				}
 				continue
 			}
+			symKey = key
 		} else {
 			signer, err := xkms.SignerByID(ctx, p.kid)
 			if err != nil {
@@ -453,7 +490,7 @@ func (kb *XKMSBackend) GetKeyMetadata(ctx context.Context, keyID string) (*KeyMe
 		if !owned {
 			continue
 		}
-		foundAlgorithm = p.algorithm
+		foundAlgorithm = xkmsProbedSymmetricAlgorithm(p.algorithm, symKey)
 		// Every RSA size shares the kid "rsa"; the key itself names its size.
 		if rsaBits > 0 {
 			foundAlgorithm = "RSA-" + strconv.Itoa(rsaBits)

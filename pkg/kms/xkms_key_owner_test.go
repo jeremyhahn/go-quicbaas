@@ -512,6 +512,90 @@ func TestXKMSBackend_MetadataProbesDeriveFromSupportedAlgorithms(t *testing.T) {
 		}
 	}
 	require.Equal(t, 5, symmetricSupported)
+	for _, p := range probes {
+		if p.symmetric {
+			require.Equal(t, AlgAES256GCM, p.algorithm, "the first symmetric probe is AES-256-GCM")
+			break
+		}
+	}
+}
+
+// awsStyleSymmetricKeys is a name-only symmetric lookup like the AWS KMS
+// backend's: any kid whose name segment is name returns the stored key,
+// whatever algorithm the kid asks for, and the key echoes the requested
+// algorithm while reporting the stored size.
+type awsStyleSymmetricKeys struct {
+	name string
+	bits int
+	kids []string
+}
+
+func (f *awsStyleSymmetricKeys) get(_ context.Context, kid string) (xkmssdk.SymmetricKey, error) {
+	f.kids = append(f.kids, kid)
+	seg := strings.Split(kid, ":")
+	if len(seg) == 4 && seg[3] == f.name {
+		return &awsStyleSymmetricKey{algorithm: seg[2], keySize: f.bits}, nil
+	}
+	return nil, xkmssdk.ErrBackendKeyNotFound
+}
+
+// awsStyleSymmetricKey carries no material, like the AWS KMS backend's key.
+type awsStyleSymmetricKey struct {
+	algorithm string
+	keySize   int
+}
+
+func (k *awsStyleSymmetricKey) Algorithm() string { return k.algorithm }
+func (k *awsStyleSymmetricKey) KeySize() int      { return k.keySize }
+func (k *awsStyleSymmetricKey) Raw() ([]byte, error) {
+	return nil, errors.New("key material does not leave the backend")
+}
+
+// A cold-cache lookup through a backend that matches symmetric keys by name
+// only records the stored key's size, and rotation asks for that size.
+func TestXKMSBackend_NameOnlySymmetricLookupRecordsStoredSize(t *testing.T) {
+	ctx := context.Background()
+	store := newKeyNameGuardXKMS(t)
+	kb := newOwnerTestBackend(t, ctx, store)
+
+	for _, tc := range []struct {
+		alg  string
+		bits int
+		id   string
+	}{
+		{AlgAES128GCM, 128, "sys-probe-aes128"},
+		{AlgAES192GCM, 192, "sys-probe-aes192"},
+		{AlgAES256GCM, 256, "sys-probe-aes256"},
+	} {
+		t.Run(tc.alg, func(t *testing.T) {
+			_, err := kb.CreateKey(ctx, kb.algorithmToKeyAttributes(tc.id, tc.alg))
+			require.NoError(t, err)
+
+			kbR := newOwnerTestBackend(t, ctx, store)
+			fake := &awsStyleSymmetricKeys{name: tc.id, bits: tc.bits}
+			kbR.getSymmetricKey = fake.get
+
+			meta, err := kbR.GetKeyMetadata(ctx, tc.id)
+			require.NoError(t, err)
+			require.Equal(t, tc.alg, meta.Algorithm)
+			require.NotEmpty(t, fake.kids)
+			require.Equal(t, kbR.buildFullKeyID(tc.id, AlgAES256GCM), fake.kids[0])
+
+			rotated, err := kbR.RotateKey(ctx, tc.id)
+			require.NoError(t, err)
+			require.Equal(t, 2, rotated.Version)
+			require.Equal(t, tc.alg, rotated.Algorithm)
+
+			v2 := kbR.buildVersionedKeyID(tc.id, 2)
+			_, err = dbxkms.GetSymmetricKey(ctx, kbR.buildFullKeyID(v2, tc.alg))
+			require.NoError(t, err)
+			if tc.alg == AlgAES256GCM {
+				_, err = dbxkms.GetSymmetricKey(ctx, kbR.buildFullKeyID(v2, AlgAES128GCM))
+				require.Error(t, err)
+				require.True(t, isXKMSMaterialAbsent(err), "unexpected error: %v", err)
+			}
+		})
+	}
 }
 
 // failOwnerDeleteStore fails the next fails Deletes of ownership records;
