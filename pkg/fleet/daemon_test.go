@@ -664,39 +664,5 @@ func TestRuntime_ImageFor_QualifiesWithRegistry(t *testing.T) {
 	}
 }
 
-// TestSandboxResolver_TenantOverride_Tightens mirrors the orchestration-level
-// test but verifies it goes through the agent-package wrapper.
-func TestSandboxResolver_TenantOverride_Tightens(t *testing.T) {
-	t.Parallel()
-	r := NewSandboxResolver(orchestration.SandboxPolicyOptIn, false)
-
-	// Baseline: opt-in + DEFAULT → NONE.
-	mode, err := r.Resolve(orchestration.SandboxModeDefault)
-	if err != nil {
-		t.Fatalf("resolve: %v", err)
-	}
-	if mode != orchestration.SandboxModeNone {
-		t.Errorf("opt-in default: got %v, want NONE", mode)
-	}
-
-	// Tenant override to REQUIRED without runtime → violation.
-	tightened := orchestration.SandboxPolicyRequired
-	_, err = r.WithTenantOverride(&tightened).Resolve(orchestration.SandboxModeDefault)
-	var v *orchestration.SandboxModeViolationError
-	if !errors.As(err, &v) {
-		t.Fatalf("expected violation, got %v", err)
-	}
-
-	// Same tenant override with runtime present → REQUIRED.
-	withRT := NewSandboxResolver(orchestration.SandboxPolicyOptIn, true).WithTenantOverride(&tightened)
-	mode, err = withRT.Resolve(orchestration.SandboxModeDefault)
-	if err != nil {
-		t.Fatalf("resolve: %v", err)
-	}
-	if mode != orchestration.SandboxModeRequired {
-		t.Errorf("got %v, want REQUIRED", mode)
-	}
-}
-
 // helper to eyeball the state enum for debugging.
 var _ = fmt.Sprintf
