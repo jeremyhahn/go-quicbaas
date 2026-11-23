@@ -990,6 +990,15 @@ node shares that store, so a write that failed on one node is visible to all of
 them. A turn on any node retries its account's pending entries before the spend
 check, and is refused while any of them still fails.
 
+A turn on a pooled account also holds `orch/turnadmit/{tenant}/{account}/{session}`
+from before its spend check until its consumption is in the ledger or on the
+pending list, and renews the record while it runs; a turn on the same session
+through another node waits for it, then checks the updated total. When neither
+the ledger write nor the pending marker lands, the record is kept and marked
+unrecorded until a retry lands one of them. While any record of an account is
+unrecorded or expired, every node refuses that account's turns as pending
+consumption. An expired record older than an hour is reclaimed.
+
 The **attribution plane** is the chain, so a roll-up at any level is a prefix
 scan of that level's subtree. The four **quota planes** are keyed by account,
 Agent, project and tenant, then by the moment consumption occurred. The hourly

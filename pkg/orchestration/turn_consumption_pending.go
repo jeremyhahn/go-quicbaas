@@ -99,6 +99,11 @@ type pendingConsumption struct {
 	// drainCtx is the drainer's retry context; stopDrainer cancels it.
 	drainCtx    context.Context
 	drainCancel context.CancelFunc
+
+	// unmarked holds, by entry id, the entries whose shared pending marker
+	// was not stored, each with the turn admission hold kept for it: while
+	// the marker is missing, the kept record is what other nodes see.
+	unmarked map[string]*turnAdmissionHold
 }
 
 // initLocked creates stop and the drainer's retry context if they are not
@@ -152,6 +157,36 @@ func (p *pendingConsumption) remove(entryID string) bool {
 		}
 	}
 	return false
+}
+
+// keepUnmarked notes that an entry's shared pending marker was not stored,
+// with the turn admission hold kept (marked unrecorded) until it is. A nil
+// hold is still noted, so a retry republishes the marker.
+func (p *pendingConsumption) keepUnmarked(entryID string, hold *turnAdmissionHold) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.unmarked == nil {
+		p.unmarked = make(map[string]*turnAdmissionHold)
+	}
+	p.unmarked[entryID] = hold
+}
+
+// isUnmarked reports whether an entry's shared pending marker is missing.
+func (p *pendingConsumption) isUnmarked(entryID string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	_, ok := p.unmarked[entryID]
+	return ok
+}
+
+// takeUnmarked forgets an entry's missing marker and returns its kept hold,
+// nil when there is none.
+func (p *pendingConsumption) takeUnmarked(entryID string) *turnAdmissionHold {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	hold := p.unmarked[entryID]
+	delete(p.unmarked, entryID)
+	return hold
 }
 
 // size reports how many entries wait for the ledger.
@@ -252,6 +287,15 @@ func recordingContext(ctx context.Context) (context.Context, context.CancelFunc)
 // write removed the entry: the caller counts the turn only then, because a
 // concurrent retry that removed it has already counted it.
 func (s *agentServiceImpl) recordLedgerEntry(ctx context.Context, entry ConsumptionEntry) bool {
+	return s.recordLedgerEntryHeld(ctx, entry, nil)
+}
+
+// recordLedgerEntryHeld is recordLedgerEntry for a turn holding its session's
+// admission record. The hold is released once the entry is visible to every
+// node (in the ledger, or on the shared pending list), and kept, marked
+// unrecorded, while it is in neither: then the kept record is the only thing
+// other nodes can see of it.
+func (s *agentServiceImpl) recordLedgerEntryHeld(ctx context.Context, entry ConsumptionEntry, hold *turnAdmissionHold) bool {
 	// Pending BEFORE the write: while it is in flight, a session sharing the
 	// account must see the entry (flushPendingConsumption retries it and the
 	// spend check waits for it) rather than a ledger sum that leaves it out.
@@ -261,19 +305,34 @@ func (s *agentServiceImpl) recordLedgerEntry(ctx context.Context, entry Consumpt
 	// The shared marker makes the entry visible to every node over the
 	// ledger's store, not only this one, until the ledger holds it.
 	shared := s.sharedPending()
+	marked := false
 	if shared != nil && entry.AccountID != "" {
 		if err := shared.MarkPending(rctx, entry); err != nil {
 			s.logger.Warnf("orchestration: pending consumption marker not stored; other nodes cannot see this entry until the ledger holds it: session=%s account=%s entry=%s err=%s",
 				entry.SessionID, entry.AccountID, entry.EntryID, err.Error())
+		} else {
+			marked = true
 		}
 	}
 	if err := s.ledger.Record(rctx, entry); err != nil {
+		if marked || shared == nil || entry.AccountID == "" {
+			// The marker shows the entry to every node; with no shared
+			// list there is nothing to republish.
+			hold.release(ctx)
+		} else {
+			// In neither the ledger nor the shared list: the admission
+			// record, kept and marked unrecorded, refuses the account's
+			// turns on every node until a retry lands one of them.
+			hold.keep(ctx)
+			s.pendingLedger.keepUnmarked(entry.EntryID, hold)
+		}
 		s.startPendingDrain()
 		s.logger.Warnf(
 			"orchestration: failed to record consumption; spend reports and caps are under-counting until it is retried, and the session's next turn waits for it: session=%s account=%s entry=%s err=%s",
 			entry.SessionID, entry.AccountID, entry.EntryID, err.Error())
 		return false
 	}
+	hold.release(ctx)
 	// Another session's retry may have stored and removed it meanwhile; that
 	// retry counted it, so this write reports it only when it removed it.
 	s.clearSharedPending(rctx, entry)
@@ -375,20 +434,41 @@ func (s *agentServiceImpl) flushPendingConsumption(ctx context.Context, sessionI
 		}
 		pending = mergePending(pending, others)
 	}
-	if len(pending) == 0 {
+	if len(pending) > 0 {
+		failed, lastErr := s.retryPendingEntries(ctx, pending)
+		if failed > 0 {
+			if err := ctx.Err(); err != nil {
+				// The caller went away or ran out of time: the turn ends
+				// with its own cancellation, not a pending-consumption
+				// fault. The entries not stored stay pending for the
+				// drainer.
+				return err
+			}
+			return &ConsumptionPendingError{SessionID: sessionID, AccountID: accountID, Pending: failed, Err: lastErr}
+		}
+	}
+	return s.refuseUnrecordedAdmissions(ctx, tenantID, sessionID, accountID)
+}
+
+// refuseUnrecordedAdmissions refuses a turn while its account has a turn
+// admission record kept for consumption in neither the ledger nor the shared
+// pending list, or one left expired by a turn that never finished: on any
+// node, that consumption is otherwise invisible to the spend check. A live
+// admission of another session is not counted; concurrent sessions on one
+// account stay concurrent.
+func (s *agentServiceImpl) refuseUnrecordedAdmissions(ctx context.Context, tenantID, sessionID, accountID string) error {
+	store, ok := s.ledger.(turnAdmissionStore)
+	if !ok || accountID == "" {
 		return nil
 	}
-	failed, lastErr := s.retryPendingEntries(ctx, pending)
-	if failed == 0 {
-		return nil
+	n, err := store.StaleTurnAdmissions(ctx, tenantID, accountID, time.Now().UTC())
+	if err != nil {
+		return spendCheckFault(ctx, sessionID, accountID, err)
 	}
-	if err := ctx.Err(); err != nil {
-		// The caller went away or ran out of time: the turn ends with its
-		// own cancellation, not a pending-consumption fault. The entries
-		// not stored stay pending for the drainer.
-		return err
+	if n > 0 {
+		return &ConsumptionPendingError{SessionID: sessionID, AccountID: accountID, Pending: n, Err: errTurnAdmissionUnrecorded}
 	}
-	return &ConsumptionPendingError{SessionID: sessionID, AccountID: accountID, Pending: failed, Err: lastErr}
+	return nil
 }
 
 // retryPendingEntries writes each pending entry once more, each under its own
@@ -408,10 +488,19 @@ func (s *agentServiceImpl) retryPendingEntries(ctx context.Context, entries []Co
 		ectx, cancel := context.WithTimeout(
 			ContextWithTenant(tenantctx.WithTenant(ctx, entry.TenantID), entry.TenantID),
 			consumptionRecordTimeout)
+		// An entry whose shared marker was never stored is republished
+		// first: once it is on the shared list every node sees it, and the
+		// admission record kept in its place is released.
+		if shared := s.sharedPending(); shared != nil && s.pendingLedger.isUnmarked(entry.EntryID) {
+			if markErr := shared.MarkPending(ectx, entry); markErr == nil {
+				s.pendingLedger.takeUnmarked(entry.EntryID).release(ectx)
+			}
+		}
 		err := s.ledger.Record(ectx, entry)
 		var conflict *ConsumptionConflictError
 		switch {
 		case err == nil:
+			s.pendingLedger.takeUnmarked(entry.EntryID).release(ectx)
 			// Counted once the ledger holds it, as recordConsumption does,
 			// and only by the retry that removes it: two sessions retrying
 			// one entry count it once. A shared entry another node wrote is
@@ -424,6 +513,7 @@ func (s *agentServiceImpl) retryPendingEntries(ctx context.Context, entries []Co
 			// The id is already stored with a different record: the
 			// ledger holds a consumption for it, and retrying cannot
 			// change that. Logged, not kept.
+			s.pendingLedger.takeUnmarked(entry.EntryID).release(ectx)
 			s.clearSharedPending(ectx, entry)
 			s.pendingLedger.remove(entry.EntryID)
 			s.logger.Warnf(

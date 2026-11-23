@@ -322,7 +322,9 @@ func (s *agentServiceImpl) recordConsumption(
 	// it would admit that turn against a sum that leaves these tokens out.
 	// recordLedgerEntry keeps it pending, and flushPendingConsumption retries
 	// it and refuses the next turn while it still fails.
-	if !s.recordLedgerEntry(ctx, entry) {
+	// The turn's admission record is released once the entry is visible
+	// to every node, and kept, marked unrecorded, while it is not.
+	if !s.recordLedgerEntryHeld(ctx, entry, turn.admission) {
 		return
 	}
 	// Counted only once the ledger holds the entry, so the metrics and the
