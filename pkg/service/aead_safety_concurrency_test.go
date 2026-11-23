@@ -43,9 +43,9 @@ func TestAEADSafety_RotateKeyUsageOrdersUsesAroundTheReset(t *testing.T) {
 		var rotated atomic.Bool
 		done := make(chan error, 1)
 		go func() {
-			done <- tracker.RotateKeyUsage(key, func() error {
+			done <- tracker.RotateKeyUsage(key, func() (uint64, error) {
 				rotated.Store(true)
-				return nil
+				return 2, nil
 			})
 		}()
 
@@ -80,10 +80,10 @@ func TestAEADSafety_RotateKeyUsageOrdersUsesAroundTheReset(t *testing.T) {
 		release := make(chan struct{})
 		rotateDone := make(chan error, 1)
 		go func() {
-			rotateDone <- tracker.RotateKeyUsage(key, func() error {
+			rotateDone <- tracker.RotateKeyUsage(key, func() (uint64, error) {
 				close(rotating)
 				<-release
-				return nil
+				return 2, nil
 			})
 		}()
 
@@ -131,7 +131,7 @@ func TestAEADSafety_RotateKeyUsageKeepsCountsWhenRotationFails(t *testing.T) {
 	}
 
 	errRotate := errors.New("rotation refused")
-	if err := tracker.RotateKeyUsage(key, func() error { return errRotate }); !errors.Is(err, errRotate) {
+	if err := tracker.RotateKeyUsage(key, func() (uint64, error) { return 2, errRotate }); !errors.Is(err, errRotate) {
 		t.Fatalf("RotateKeyUsage error = %v, want %v", err, errRotate)
 	}
 
@@ -143,7 +143,7 @@ func TestAEADSafety_RotateKeyUsageKeepsCountsWhenRotationFails(t *testing.T) {
 	// The gate is released: a later use and rotation proceed.
 	end := tracker.BeginKeyUse(key)
 	end()
-	if err := tracker.RotateKeyUsage(key, func() error { return nil }); err != nil {
+	if err := tracker.RotateKeyUsage(key, func() (uint64, error) { return 2, nil }); err != nil {
 		t.Fatalf("RotateKeyUsage after a failed one: %v", err)
 	}
 	if ops, _, _ := tracker.GetKeyUsage(key); ops != 0 {

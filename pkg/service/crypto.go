@@ -213,10 +213,13 @@ func (t *cryptoService) Encrypt(ctx context.Context, req *EncryptRequest) (*Encr
 		return nil, err
 	}
 
-	// Track key usage before encryption (if tracker configured)
+	// Track key usage before encryption (if tracker configured), against
+	// the key's current version.
+	var reserved uint64
 	if t.safetyTracker != nil {
 		defer t.safetyTracker.BeginKeyUse(scopedKeyID)()
-		if err := t.safetyTracker.RecordKeyEncrypt(ctx, scopedKeyID, uint64(len(req.Plaintext))); err != nil {
+		var err error
+		if reserved, err = t.reserveKeyVersion(ctx, scopedKeyID, 0, 1, uint64(len(req.Plaintext))); err != nil {
 			t.metrics.encryptOperationsTotal.With(req.KeyID, "safety_limit_exceeded").Inc()
 			t.metrics.errorsByType.With("safety_limit_error").Inc()
 			return nil, &errors.QBError{
@@ -233,6 +236,17 @@ func (t *cryptoService) Encrypt(ctx context.Context, req *EncryptRequest) (*Encr
 		t.metrics.encryptOperationsTotal.With(req.KeyID, "error").Inc()
 		t.metrics.errorsByType.With("encrypt_error").Inc()
 		return nil, keyOperationError(errors.ErrEncryption, "crypto.Encrypt", "encrypt data", err)
+	}
+	if t.safetyTracker != nil {
+		if err := t.chargeSealedVersions(ctx, scopedKeyID, reserved, ciphertext); err != nil {
+			t.metrics.encryptOperationsTotal.With(req.KeyID, "safety_limit_exceeded").Inc()
+			t.metrics.errorsByType.With("safety_limit_error").Inc()
+			return nil, &errors.QBError{
+				Code: errors.ErrEncryption,
+				Op:   "crypto.Encrypt",
+				Err:  err,
+			}
+		}
 	}
 
 	keyVersion := t.keyVersion(ctx, scopedKeyID)
@@ -378,11 +392,17 @@ func (t *cryptoService) Decrypt(ctx context.Context, req *DecryptRequest) (*Decr
 		return nil, err
 	}
 
-	// Track key usage before decryption (if tracker configured)
+	// Track key usage before decryption (if tracker configured), against the
+	// version the ciphertext is sealed under: a retained old version keeps
+	// its own count after a rotation.
 	// Note: For decryption we track the ciphertext size as an approximation
 	if t.safetyTracker != nil {
 		defer t.safetyTracker.BeginKeyUse(scopedKeyID)()
-		if err := t.safetyTracker.RecordKeyEncrypt(ctx, scopedKeyID, uint64(len(req.Ciphertext))); err != nil {
+		chargeVersion := sealedKeyVersion(req.Ciphertext)
+		if chargeVersion == 0 {
+			chargeVersion = req.KeyVersion
+		}
+		if err := t.safetyTracker.RecordKeyVersionUse(ctx, scopedKeyID, chargeVersion, 1, uint64(len(req.Ciphertext))); err != nil {
 			t.metrics.decryptOperationsTotal.With(req.KeyID, "safety_limit_exceeded").Inc()
 			t.metrics.errorsByType.With("safety_limit_error").Inc()
 			return nil, &errors.QBError{
@@ -456,17 +476,36 @@ func (t *cryptoService) Rewrap(ctx context.Context, req *RewrapRequest) (*Rewrap
 		}
 	}
 
-	// Track key usage for rewrap operation (if tracker configured)
+	// A rewrap opens the ciphertext under its source version: a disabled
+	// source version is refused here exactly as Decrypt refuses it, so a
+	// rewrap cannot carry disabled-version ciphertext onto a live version.
+	if err := t.refuseDisabledVersions(ctx, "crypto.Rewrap", req.KeyID, scopedKeyID, req.Ciphertext); err != nil {
+		return nil, err
+	}
+
+	// Track key usage for rewrap operation (if tracker configured): the
+	// decrypt half is charged to the ciphertext's sealed version and the
+	// encrypt half to the key's current version.
+	var reserved uint64
 	if t.safetyTracker != nil {
 		defer t.safetyTracker.BeginKeyUse(scopedKeyID)()
-		if err := t.safetyTracker.RecordKeyEncrypt(ctx, scopedKeyID, uint64(len(req.Ciphertext))); err != nil {
+		limitErr := func(err error) error {
 			t.metrics.encryptOperationsTotal.With(req.KeyID, "safety_limit_exceeded").Inc()
 			t.metrics.errorsByType.With("safety_limit_error").Inc()
-			return nil, &errors.QBError{
+			return &errors.QBError{
 				Code: errors.ErrEncryption,
 				Op:   "crypto.Rewrap",
 				Err:  err,
 			}
+		}
+		reserved = t.safetyTracker.currentKeyVersion(ctx, scopedKeyID)
+		if source := sealedKeyVersion(req.Ciphertext); source != 0 && source != reserved {
+			if err := t.safetyTracker.RecordKeyVersionUse(ctx, scopedKeyID, source, 1, uint64(len(req.Ciphertext))); err != nil {
+				return nil, limitErr(err)
+			}
+		}
+		if err := t.safetyTracker.RecordKeyVersionUse(ctx, scopedKeyID, reserved, 1, uint64(len(req.Ciphertext))); err != nil {
+			return nil, limitErr(err)
 		}
 	}
 
@@ -476,6 +515,17 @@ func (t *cryptoService) Rewrap(ctx context.Context, req *RewrapRequest) (*Rewrap
 		t.metrics.encryptOperationsTotal.With(req.KeyID, "error").Inc()
 		t.metrics.errorsByType.With("rewrap_error").Inc()
 		return nil, keyOperationError(errors.ErrEncryption, "crypto.Rewrap", "rewrap data", err)
+	}
+	if t.safetyTracker != nil {
+		if err := t.chargeSealedVersions(ctx, scopedKeyID, reserved, newCiphertext); err != nil {
+			t.metrics.encryptOperationsTotal.With(req.KeyID, "safety_limit_exceeded").Inc()
+			t.metrics.errorsByType.With("safety_limit_error").Inc()
+			return nil, &errors.QBError{
+				Code: errors.ErrEncryption,
+				Op:   "crypto.Rewrap",
+				Err:  err,
+			}
+		}
 	}
 
 	resp := &RewrapResponse{
@@ -534,7 +584,9 @@ func (t *cryptoService) EncryptBatch(ctx context.Context, req *EncryptBatchReque
 		return nil, err
 	}
 
-	// Track key usage for batch operation (if tracker configured)
+	// Track key usage for batch operation (if tracker configured), against
+	// the key's current version.
+	var reserved uint64
 	if t.safetyTracker != nil {
 		// Calculate total bytes in the batch
 		var totalBytes uint64
@@ -545,7 +597,8 @@ func (t *cryptoService) EncryptBatch(ctx context.Context, req *EncryptBatchReque
 		// Reserve one operation per item before processing the batch, so a
 		// batch cannot exceed the MaxOperations single calls honour.
 		defer t.safetyTracker.BeginKeyUse(scopedKeyID)()
-		if err := t.safetyTracker.RecordKeyEncryptBatch(ctx, scopedKeyID, uint64(len(req.Items)), totalBytes); err != nil {
+		var err error
+		if reserved, err = t.reserveKeyVersion(ctx, scopedKeyID, 0, uint64(len(req.Items)), totalBytes); err != nil {
 			t.metrics.encryptOperationsTotal.With(req.KeyID, "safety_limit_exceeded").Inc()
 			t.metrics.errorsByType.With("safety_limit_error").Inc()
 			return nil, &errors.QBError{
@@ -570,6 +623,17 @@ func (t *cryptoService) EncryptBatch(ctx context.Context, req *EncryptBatchReque
 		t.metrics.encryptOperationsTotal.With(req.KeyID, "error").Inc()
 		t.metrics.errorsByType.With("encrypt_batch_error").Inc()
 		return nil, keyOperationError(errors.ErrEncryption, "crypto.EncryptBatch", "encrypt batch", err)
+	}
+	if t.safetyTracker != nil {
+		if err := t.chargeSealedVersions(ctx, scopedKeyID, reserved, ciphertexts...); err != nil {
+			t.metrics.encryptOperationsTotal.With(req.KeyID, "safety_limit_exceeded").Inc()
+			t.metrics.errorsByType.With("safety_limit_error").Inc()
+			return nil, &errors.QBError{
+				Code: errors.ErrEncryption,
+				Op:   "crypto.EncryptBatch",
+				Err:  err,
+			}
+		}
 	}
 
 	// Build results
@@ -640,16 +704,34 @@ func (t *cryptoService) DecryptBatch(ctx context.Context, req *DecryptBatchReque
 
 	// Track key usage for batch operation (if tracker configured)
 	if t.safetyTracker != nil {
-		// Calculate total bytes in the batch
-		var totalBytes uint64
+		// Each item is charged to the version its ciphertext is sealed
+		// under (0, unknown, charges the latest version tracked).
+		type charge struct{ operations, bytes uint64 }
+		charges := make(map[uint64]*charge)
+		var order []uint64
 		for _, item := range req.Items {
-			totalBytes += uint64(len(item.Ciphertext))
+			version := sealedKeyVersion(item.Ciphertext)
+			c, ok := charges[version]
+			if !ok {
+				c = &charge{}
+				charges[version] = c
+				order = append(order, version)
+			}
+			c.operations++
+			c.bytes += uint64(len(item.Ciphertext))
 		}
 
 		// Reserve one operation per item before processing the batch, so a
 		// batch cannot exceed the MaxOperations single calls honour.
 		defer t.safetyTracker.BeginKeyUse(scopedKeyID)()
-		if err := t.safetyTracker.RecordKeyEncryptBatch(ctx, scopedKeyID, uint64(len(req.Items)), totalBytes); err != nil {
+		var err error
+		for _, version := range order {
+			c := charges[version]
+			if err = t.safetyTracker.RecordKeyVersionUse(ctx, scopedKeyID, version, c.operations, c.bytes); err != nil {
+				break
+			}
+		}
+		if err != nil {
 			t.metrics.decryptOperationsTotal.With(req.KeyID, "safety_limit_exceeded").Inc()
 			t.metrics.errorsByType.With("safety_limit_error").Inc()
 			return nil, &errors.QBError{
@@ -741,6 +823,61 @@ func (t *cryptoService) refuseDisabledVersions(ctx context.Context, op, keyID, s
 				Op:   op,
 				Err:  &KeyVersionDisabledError{KeyID: keyID, Version: v},
 			}
+		}
+	}
+	return nil
+}
+
+// sealedKeyVersion reports the key version a ciphertext is sealed under, 0
+// when its metadata does not say.
+func sealedKeyVersion(ciphertext []byte) uint64 {
+	if version, ok := kms.CiphertextKeyVersion(ciphertext); ok {
+		return conv.ClampIntToUint64(version)
+	}
+	return 0
+}
+
+// reserveKeyVersion charges operations to one version of a key's AEAD
+// allowance before the backend uses it: version is the sealed version of
+// the ciphertexts a decrypt opens, or 0 for an encrypt, which is charged to
+// the key's current version. It returns the version charged (0 when no
+// version is known).
+func (t *cryptoService) reserveKeyVersion(ctx context.Context, scopedKeyID string, version, operations, bytesProcessed uint64) (uint64, error) {
+	if version == 0 {
+		version = t.safetyTracker.currentKeyVersion(ctx, scopedKeyID)
+	}
+	return version, t.safetyTracker.RecordKeyVersionUse(ctx, scopedKeyID, version, operations, bytesProcessed)
+}
+
+// chargeSealedVersions charges each ciphertext the backend produced to the
+// version it is sealed under when that is not the version reserved before
+// the call (a backend whose key state differs from the replicated record).
+// A version over its limit refuses the call: its ciphertexts are discarded.
+func (t *cryptoService) chargeSealedVersions(ctx context.Context, scopedKeyID string, reserved uint64, ciphertexts ...[]byte) error {
+	if reserved == 0 {
+		return nil
+	}
+	type charge struct{ operations, bytes uint64 }
+	charges := make(map[uint64]*charge)
+	var order []uint64
+	for _, ciphertext := range ciphertexts {
+		sealed := sealedKeyVersion(ciphertext)
+		if sealed == 0 || sealed == reserved {
+			continue
+		}
+		c, ok := charges[sealed]
+		if !ok {
+			c = &charge{}
+			charges[sealed] = c
+			order = append(order, sealed)
+		}
+		c.operations++
+		c.bytes += uint64(len(ciphertext))
+	}
+	for _, version := range order {
+		c := charges[version]
+		if err := t.safetyTracker.RecordKeyVersionUse(ctx, scopedKeyID, version, c.operations, c.bytes); err != nil {
+			return err
 		}
 	}
 	return nil

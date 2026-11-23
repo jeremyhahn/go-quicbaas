@@ -10,6 +10,7 @@ import (
 	stderrors "errors"
 	"fmt"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -271,17 +272,70 @@ func newKMSService(kmsManager interfaces.KMSManager, logger interfaces.Logger) *
 // currentKeyVersion returns the current version of a tenant-scoped key from
 // the key manager.
 func (k *kmsServiceImpl) currentKeyVersion(ctx context.Context, scopedKeyID string) (uint64, error) {
+	// The replicated record is authoritative across nodes: a rotation on
+	// another node updates it, while this node's key manager may still
+	// answer from its process-local cache.
+	persisted := k.persistedKeyVersion(ctx, scopedKeyID)
 	result, err := k.kmsManager.GetKey(ctx, scopedKeyID)
 	if err != nil {
+		if persisted != 0 {
+			return persisted, nil
+		}
 		return 0, err
 	}
+	var local uint64
 	switch meta := result.(type) {
 	case *kms.KeyMetadata:
-		return kmsKeyVersion("kms.currentKeyVersion", meta.Version)
+		local, err = kmsKeyVersion("kms.currentKeyVersion", meta.Version)
+		if err != nil {
+			return 0, err
+		}
 	case *KeyMetadata:
-		return meta.Version, nil
+		local = meta.Version
 	}
-	return 0, nil
+	if persisted > local {
+		return persisted, nil
+	}
+	return local, nil
+}
+
+// keyVersionKey is the replicated record of a key's current version.
+func keyVersionKey(scopedKeyID string) string {
+	return fmt.Sprintf("__sys:kms/key_version/%s", scopedKeyID)
+}
+
+// persistedKeyVersion reads the replicated current version of a key; 0 when
+// there is no record or it cannot be read.
+func (k *kmsServiceImpl) persistedKeyVersion(ctx context.Context, scopedKeyID string) uint64 {
+	if k.kvStore == nil {
+		return 0
+	}
+	data, err := k.kvStore.Get(ctx, keyVersionKey(scopedKeyID))
+	if err != nil || len(data) == 0 {
+		return 0
+	}
+	v, err := strconv.ParseUint(string(data), 10, 64)
+	if err != nil {
+		return 0
+	}
+	return v
+}
+
+// persistKeyVersion records a key's current version in replicated storage so
+// every node charges new encryptions to it. A failed write is logged: the
+// encrypt path still charges each ciphertext to the version it is sealed
+// under.
+func (k *kmsServiceImpl) persistKeyVersion(ctx context.Context, scopedKeyID string, version uint64) {
+	if k.kvStore == nil || version == 0 {
+		return
+	}
+	if err := k.kvStore.Put(ctx, keyVersionKey(scopedKeyID), []byte(strconv.FormatUint(version, 10))); err != nil && k.logger != nil {
+		k.logger.WithFields(map[string]interface{}{
+			"key_id":  scopedKeyID,
+			"version": version,
+			"error":   err.Error(),
+		}).Warn("Failed to record the key's current version")
+	}
 }
 
 // SetScheduler sets the scheduler for scheduling grace period jobs.
@@ -1148,43 +1202,74 @@ func (k *kmsServiceImpl) RotateKey(ctx context.Context, req *RotateKeyRequest) (
 	// Scope the key ID with tenant prefix for storage lookup
 	scopedKeyID := tenantScopedKeyID(tenantID, req.KeyID)
 
-	// Get current version before rotation
-	oldResult, err := k.kmsManager.GetKey(ctx, scopedKeyID)
+	// The old version is read under the same gate as the backend rotation,
+	// so concurrent rotations each report, and schedule the grace job for,
+	// the version they superseded. AEAD usage is counted per key version:
+	// the old version keeps its count, since it stays decryptable, and new
+	// encryptions are counted against the new version from zero.
+	var oldVersion uint64
+	var notFound error
+	rotate := func() (uint64, error) {
+		oldResult, getErr := k.kmsManager.GetKey(ctx, scopedKeyID)
+		if getErr != nil {
+			notFound = getErr
+			return 0, getErr
+		}
+		oldMetadata, ok := oldResult.(*kms.KeyMetadata)
+		if !ok {
+			return 0, WrapError(nil, errors.ErrInternal, "kms.RotateKey", "unexpected key metadata type")
+		}
+		v, verr := kmsKeyVersion("kms.RotateKey", oldMetadata.Version)
+		if verr != nil {
+			return 0, verr
+		}
+		if current := k.persistedKeyVersion(ctx, scopedKeyID); current > v {
+			// This node's key metadata predates a rotation on another
+			// node: the version being superseded is the replicated one.
+			v = current
+		}
+		oldVersion = v
+
+		newResult, rotateErr := k.kmsManager.RotateKey(ctx, scopedKeyID)
+		if rotateErr != nil {
+			return 0, rotateErr
+		}
+		newMetadata, ok := newResult.(*kms.KeyMetadata)
+		if !ok {
+			return 0, WrapError(nil, errors.ErrInternal, "kms.RotateKey", "unexpected rotated key metadata type")
+		}
+		nv, verr := kmsKeyVersion("kms.RotateKey", newMetadata.Version)
+		if verr != nil {
+			return 0, verr
+		}
+		if nv > oldVersion+1 {
+			// The backend rotated past versions this node had not seen:
+			// this rotation superseded the one just below its own.
+			oldVersion = nv - 1
+		}
+		k.persistKeyVersion(ctx, scopedKeyID, nv)
+		return nv, nil
+	}
+	var newVersion uint64
+	if k.safetyTracker != nil {
+		err = k.safetyTracker.RotateKeyUsage(scopedKeyID, func() (uint64, error) {
+			v, rerr := rotate()
+			newVersion = v
+			return v, rerr
+		})
+	} else {
+		newVersion, err = rotate()
+	}
 	if err != nil {
 		if k.metrics != nil {
 			k.metrics.errorsByType.With("kms_error", "rotate_key").Inc()
 		}
-		return nil, WrapError(err, errors.ErrNotFound, "kms.RotateKey", "key not found")
-	}
-
-	oldMetadata, ok := oldResult.(*kms.KeyMetadata)
-	if !ok {
-		return nil, WrapError(nil, errors.ErrInternal, "kms.RotateKey", "unexpected key metadata type")
-	}
-	oldVersion, err := kmsKeyVersion("kms.RotateKey", oldMetadata.Version)
-	if err != nil {
-		return nil, err
-	}
-
-	// Call KMS manager to rotate key. AEAD usage is counted per key ID and
-	// new encryptions use the new version, so the old version's exhausted
-	// counter must not carry over: the tracker runs the rotation under the
-	// key's gate, which waits out in-flight crypto calls, and starts the new
-	// version's count from zero, keeping the key's limits.
-	var newResult interface{}
-	rotate := func() error {
-		var rotateErr error
-		newResult, rotateErr = k.kmsManager.RotateKey(ctx, scopedKeyID)
-		return rotateErr
-	}
-	if k.safetyTracker != nil {
-		err = k.safetyTracker.RotateKeyUsage(scopedKeyID, rotate)
-	} else {
-		err = rotate()
-	}
-	if err != nil {
-		if k.metrics != nil {
-			k.metrics.errorsByType.With("kms_error", "rotate_key").Inc()
+		if notFound != nil {
+			return nil, WrapError(err, errors.ErrNotFound, "kms.RotateKey", "key not found")
+		}
+		var qbErr *errors.QBError
+		if stderrors.As(err, &qbErr) && qbErr.Op == "kms.RotateKey" {
+			return nil, err
 		}
 		// A key outside the caller's tenant is absent from its scope and
 		// surfaces as not-found, mirroring GetKey and DeleteKey.
@@ -1192,15 +1277,6 @@ func (k *kmsServiceImpl) RotateKey(ctx context.Context, req *RotateKeyRequest) (
 			return nil, WrapError(err, errors.ErrNotFound, "kms.RotateKey", "key not found")
 		}
 		return nil, WrapError(err, errors.ErrInternal, "kms.RotateKey", "failed to rotate key")
-	}
-
-	newMetadata, ok := newResult.(*kms.KeyMetadata)
-	if !ok {
-		return nil, WrapError(nil, errors.ErrInternal, "kms.RotateKey", "unexpected rotated key metadata type")
-	}
-	newVersion, err := kmsKeyVersion("kms.RotateKey", newMetadata.Version)
-	if err != nil {
-		return nil, err
 	}
 
 	resp := &RotateKeyResponse{
