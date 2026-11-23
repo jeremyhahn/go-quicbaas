@@ -101,8 +101,7 @@ func TestEveryGoVersionIsTheToolchains(t *testing.T) {
 	}
 	checked := 0
 	for _, file := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		base := path.Base(file)
-		if base != "go.mod" && base != "Dockerfile" && !strings.HasPrefix(base, "Dockerfile.") {
+		if !isGoVersionFile(file) {
 			continue
 		}
 		checked++
@@ -141,5 +140,115 @@ func TestGoVersionProblems_Mutations(t *testing.T) {
 				t.Errorf("goVersionProblems(%q) = %v, want reported=%v", tc.body, got, tc.reported)
 			}
 		})
+	}
+}
+
+// isGoVersionFile reports whether a tracked path names Go's version: a
+// go.mod, a Dockerfile, a Dockerfile.<variant> or a <name>.Dockerfile.
+func isGoVersionFile(file string) bool {
+	base := path.Base(file)
+	return base == "go.mod" || base == "Dockerfile" ||
+		strings.HasPrefix(base, "Dockerfile.") || strings.HasSuffix(base, ".Dockerfile")
+}
+
+// workflowGoVersionProblems reports each literal Go version a workflow pins,
+// as a GO_VERSION: env value or a setup-go go-version: input, that is not
+// want. An expression such as ${{ env.GO_VERSION }} and comment lines do not
+// count.
+func workflowGoVersionProblems(name, body, want string) []string {
+	var problems []string
+	for i, raw := range strings.Split(body, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, value, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		key = strings.TrimPrefix(key, "- ")
+		if key != "GO_VERSION" && key != "go-version" {
+			continue
+		}
+		if before, _, found := strings.Cut(value, " #"); found {
+			value = before
+		}
+		value = strings.TrimSpace(value)
+		if len(value) >= 2 && (value[0] == '\'' || value[0] == '"') && value[len(value)-1] == value[0] {
+			value = value[1 : len(value)-1]
+		}
+		if value == "" || strings.Contains(value, "${{") {
+			continue
+		}
+		if value != want {
+			problems = append(problems, fmt.Sprintf("%s:%d: %s %s, want %s", name, i+1, key, value, want))
+		}
+	}
+	return problems
+}
+
+// TestWorkflowGoVersionIsTheToolchains checks that every workflow pins the
+// toolchain's Go version, so CI cannot build with a Go the images and go.mod
+// do not name.
+func TestWorkflowGoVersionIsTheToolchains(t *testing.T) {
+	want := toolchainGoVersion(t)
+	pinned := false
+	for _, f := range workflowFiles(t) {
+		body := readFile(t, f)
+		for _, p := range workflowGoVersionProblems(filepath.Base(f), body, want) {
+			t.Error(p)
+		}
+		if strings.Contains(body, "GO_VERSION: '"+want+"'") {
+			pinned = true
+		}
+	}
+	if !pinned {
+		t.Fatalf("no workflow sets GO_VERSION: '%s'; the env key may have been renamed", want)
+	}
+}
+
+func TestWorkflowGoVersionProblems_Mutations(t *testing.T) {
+	const want = "1.27.4"
+	cases := []struct {
+		name, body string
+		reported   bool
+	}{
+		{"floating minor", "env:\n  GO_VERSION: '1.27'\n", true},
+		{"old env", "env:\n  GO_VERSION: \"1.26.7\"\n", true},
+		{"old setup-go", "      - uses: actions/setup-go@v5\n        with:\n          go-version: 1.27.1\n", true},
+		{"old setup-go with comment", "          go-version: '1.27.1'  # old\n", true},
+		{"pinned env", "env:\n  GO_VERSION: '1.27.4'\n", false},
+		{"env reference", "          go-version: ${{ env.GO_VERSION }}\n", false},
+		{"comment", "# GO_VERSION: '1.20'\n", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := workflowGoVersionProblems("ci.yml", tc.body, want)
+			if (len(got) > 0) != tc.reported {
+				t.Errorf("workflowGoVersionProblems(%q) = %v, want reported=%v", tc.body, got, tc.reported)
+			}
+		})
+	}
+}
+
+func TestIsGoVersionFile(t *testing.T) {
+	cases := []struct {
+		file string
+		want bool
+	}{
+		{"go.mod", true},
+		{"sdk/go/go.mod", true},
+		{"Dockerfile", true},
+		{"test/integration/Dockerfile.node", true},
+		{"deployments/agents/software-factory-worker/variants/go-xkms.Dockerfile", true},
+		{"go.sum", false},
+		{"docs/Dockerfile-notes.md", false},
+		{"scripts/build.sh", false},
+		{"deployments/agents/software-factory-worker/testdata/serena/go/go.mod.fixture", false},
+	}
+	for _, tc := range cases {
+		if got := isGoVersionFile(tc.file); got != tc.want {
+			t.Errorf("isGoVersionFile(%q) = %v, want %v", tc.file, got, tc.want)
+		}
 	}
 }
