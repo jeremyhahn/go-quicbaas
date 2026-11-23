@@ -461,6 +461,32 @@ type UpdateUserOptions struct {
 	SPKICertThumbprint *string
 }
 
+// UserFields names the fields of a User an update changes, so a store can
+// write those fields alone.
+type UserFields uint16
+
+const (
+	UserFieldUsername UserFields = 1 << iota
+	UserFieldEmail
+	UserFieldName
+	UserFieldRoles
+	UserFieldAuthMethods
+	UserFieldAttributes
+	UserFieldCertBindings
+	UserFieldLifecycle
+)
+
+// PartialUserUpdater is the optional interface a store implements for an
+// update that is safe against concurrent writes. IdentityStore.UpdateUser
+// reads the user, applies the options and writes back; a full write of that
+// copy would overwrite anything changed in between (a role revoked or the
+// account disabled meanwhile). UpdateUserFields writes only the named fields
+// of user; every other stored field stays as the store holds it. A store
+// without it gets the full UpdateUser write.
+type PartialUserUpdater interface {
+	UpdateUserFields(ctx context.Context, user *User, fields UserFields) error
+}
+
 // CreateRoleOptions contains options for creating a role.
 type CreateRoleOptions struct {
 	// ID is an optional role ID. If empty, a UUID will be generated.

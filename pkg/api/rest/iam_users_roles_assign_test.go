@@ -118,9 +118,8 @@ func TestUpdateUser_RolesWithoutRolesAssignIsForbidden(t *testing.T) {
 	assert.Equal(t, scopeDecision{tenant: "acme", resource: "roles", action: "assign"}, decisions[0])
 }
 
-// TestUpdateUser_UnchangedRolesWithoutRolesAssignIsForbidden is the regression
-// for Codex 8269: resending the roles the user holds now still needs
-// roles:assign. An exemption decided on an earlier read would forward the
+// TestUpdateUser_UnchangedRolesWithoutRolesAssignIsForbidden pins that
+// resending the roles the user holds now still needs roles:assign. An exemption decided on an earlier read would forward the
 // roles to UpdateUser, so an administrator's revocation landing between that
 // read and the write would be undone without roles:assign ever being held.
 func TestUpdateUser_UnchangedRolesWithoutRolesAssignIsForbidden(t *testing.T) {
@@ -238,4 +237,18 @@ func TestUpdateUser_WithoutRolesNeedsNoRolesAssign(t *testing.T) {
 	w := f.updateUser(`{"name":"Mallory"}`)
 	assert.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	assert.Empty(t, f.authz.made(), "an update that assigns no role consulted roles:assign")
+}
+
+// TestCreateUser_WithoutRolesNeedsNoRolesAssign pins that a create that
+// carries no roles needs only the route's users:create: the roles:assign
+// authorizer is never consulted, even when it would deny.
+func TestCreateUser_WithoutRolesNeedsNoRolesAssign(t *testing.T) {
+	f := newRoleAssignFixture(t, true)
+
+	w := f.createUser(`{"email":"eve@acme.com","username":"eve"}`)
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	created, err := f.identity.GetUserByEmail(context.Background(), "acme", "eve@acme.com")
+	require.NoError(t, err)
+	assert.Empty(t, created.Roles)
+	assert.Empty(t, f.authz.made(), "a create that assigns no role consulted roles:assign")
 }
