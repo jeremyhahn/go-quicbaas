@@ -120,6 +120,46 @@ func TestHandleOrchestratorSessionEvents_JSONHistory(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "events")
 }
 
+// TestHandleOrchestratorSessionEvents_NextSeqEndsOnFullLastPage pins the
+// NextSeq contract on the REST history path: an exactly full last page ends
+// the history with next_seq 0, and a partial page names the next sequence.
+func TestHandleOrchestratorSessionEvents_NextSeqEndsOnFullLastPage(t *testing.T) {
+	server, log, cleanup := setupSessionEventsServer(t, true)
+	defer cleanup()
+
+	for i := uint64(1); i <= 2; i++ {
+		require.NoError(t, log.Append(tenantctx.WithSystem(context.Background()), &orchestration.SessionEvent{
+			Sequence: i, TenantID: qrdbsdk.SystemTenantID, SessionID: "s1",
+			Timestamp: time.Now().UTC(), Kind: orchestration.KindPromptSubmitted, Source: "test",
+			Prompt: &orchestration.PromptSubmittedPayload{Prompt: "hi"},
+		}))
+	}
+
+	type page struct {
+		Events  []json.RawMessage `json:"events"`
+		NextSeq uint64            `json:"next_seq"`
+	}
+	get := func(target string) page {
+		t.Helper()
+		req := sessionEventsReq(http.MethodGet, target, "s1")
+		req.Header.Set("Accept", "application/json")
+		w := httptest.NewRecorder()
+		server.HandleOrchestratorSessionEvents(w, req)
+		require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+		var p page
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &p), "body: %s", w.Body.String())
+		return p
+	}
+
+	full := get("/x?limit=2")
+	assert.Len(t, full.Events, 2)
+	assert.Equal(t, uint64(0), full.NextSeq, "an exactly full last page ends the history")
+
+	partial := get("/x?limit=1")
+	assert.Len(t, partial.Events, 1)
+	assert.Equal(t, uint64(2), partial.NextSeq, "a partial page names the next sequence")
+}
+
 // TestHandleOrchestratorSessionEvents_EnvelopeShape is the regression guard for
 // the session-events wire contract. The JSON history path MUST emit each event
 // as a SessionEventEnvelope — top-level session_id/sequence/timestamp plus the
