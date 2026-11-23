@@ -77,6 +77,7 @@ type SecretStore interface {
 type NameRegistry interface {
 	Register(ctx context.Context, inst registry.ServiceInstance, ttl time.Duration) (int64, error)
 	Deregister(ctx context.Context, leaseID int64) error
+	Renew(ctx context.Context, leaseID int64) (int64, error)
 }
 
 // RoleBinder binds a built-in role to a principal within a tenant. svid is
@@ -320,11 +321,11 @@ type Name struct {
 func (*Name) Kind() serviceplane.GrantKind { return serviceplane.GrantName }
 
 // Grant registers the name at <name>.<tenant>.<domain>:<first port>. Its
-// reference is the lease ID.
+// reference is <lease>@<address>. On a redeploy at the same address the
+// prior lease is renewed, or registered anew when it has expired; at a
+// new address the prior lease is deregistered first, so the name never
+// resolves to the old port.
 func (g *Name) Grant(ctx context.Context, m *serviceplane.Manifest, prior string) (string, error) {
-	if prior != "" {
-		return prior, nil
-	}
 	if g.Domain == "" {
 		return "", &ConfigError{Kind: serviceplane.GrantName, Reason: "no domain"}
 	}
@@ -336,28 +337,70 @@ func (g *Name) Grant(ctx context.Context, m *serviceplane.Manifest, prior string
 	if len(m.Ports) > 0 {
 		addr += ":" + strconv.Itoa(int(m.Ports[0].Port))
 	}
-	lease, err := g.Registry.Register(tenantCtx(ctx, m), registry.ServiceInstance{
+	tctx := tenantCtx(ctx, m)
+	stale := int64(0)
+	if prior != "" {
+		lease, priorAddr, err := parseNameRef(prior)
+		if err != nil {
+			return "", err
+		}
+		switch {
+		case priorAddr == addr:
+			if _, err := g.Registry.Renew(tctx, lease); err == nil {
+				return prior, nil
+			}
+			// The lease expired or cannot be renewed: register anew and
+			// drop the old lease after.
+			stale = lease
+		default:
+			if err := g.deregister(tctx, lease); err != nil {
+				return "", fmt.Errorf("name %s: %w", m.Name, err)
+			}
+		}
+	}
+	lease, err := g.Registry.Register(tctx, registry.ServiceInstance{
 		ID: m.Name, Service: m.Name, Address: addr,
 		Metadata: map[string]string{"spiffe_id": id},
 	}, g.TTL)
 	if err != nil {
 		return "", fmt.Errorf("name %s: %w", m.Name, err)
 	}
-	return strconv.FormatInt(lease, 10), nil
+	if stale != 0 {
+		// Best effort: the registration already moved to the new lease,
+		// and the old one's TTL removes it in any case.
+		_ = g.deregister(tctx, stale)
+	}
+	return strconv.FormatInt(lease, 10) + "@" + addr, nil
 }
 
-// Revoke deregisters the name. A lease already expired is gone.
-func (g *Name) Revoke(ctx context.Context, m *serviceplane.Manifest, ref string) error {
-	lease, err := strconv.ParseInt(ref, 10, 64)
-	if err != nil {
-		return &RefError{Kind: serviceplane.GrantName, Ref: ref}
-	}
-	err = g.Registry.Deregister(tenantCtx(ctx, m), lease)
+// deregister revokes a lease; one already expired is gone.
+func (g *Name) deregister(ctx context.Context, lease int64) error {
+	err := g.Registry.Deregister(ctx, lease)
 	var gone *registry.LeaseNotFoundError
 	if errors.As(err, &gone) {
 		return nil
 	}
 	return err
+}
+
+// parseNameRef splits a name reference into its lease and address. A bare
+// lease, as references were before they carried the address, has none.
+func parseNameRef(ref string) (int64, string, error) {
+	leasePart, addr, _ := strings.Cut(ref, "@")
+	lease, err := strconv.ParseInt(leasePart, 10, 64)
+	if err != nil {
+		return 0, "", &RefError{Kind: serviceplane.GrantName, Ref: ref}
+	}
+	return lease, addr, nil
+}
+
+// Revoke deregisters the name. A lease already expired is gone.
+func (g *Name) Revoke(ctx context.Context, m *serviceplane.Manifest, ref string) error {
+	lease, _, err := parseNameRef(ref)
+	if err != nil {
+		return err
+	}
+	return g.deregister(tenantCtx(ctx, m), lease)
 }
 
 // ---------------------------------------------------------------------------

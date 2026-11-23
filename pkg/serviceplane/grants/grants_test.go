@@ -236,6 +236,77 @@ func TestName_RegistersInTheTenantsRegistry(t *testing.T) {
 	assert.NoError(t, g.Revoke(ctx, m, ref), "a name already gone is revoked")
 }
 
+func TestName_RedeployMovesThePort(t *testing.T) {
+	e := newEnv(t)
+	m := serviceplanetest.Manifest("acme", "web")
+	g := e.grant(serviceplane.GrantName)
+	ctx := context.Background()
+	acme := tenantctx.WithTenant(ctx, "acme")
+
+	m.Ports = []serviceplane.Port{{Name: "https", Port: 8443, Protocol: "tcp"}}
+	ref, err := g.Grant(ctx, m, "")
+	require.NoError(t, err)
+	same, err := g.Grant(ctx, m, ref)
+	require.NoError(t, err)
+	assert.Equal(t, ref, same, "a redeploy at the same address renews the lease")
+
+	m.Ports[0].Port = 9443
+	moved, err := g.Grant(ctx, m, ref)
+	require.NoError(t, err)
+	assert.NotEqual(t, ref, moved)
+	got, _, err := e.reg.Resolve(acme, "web")
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "web.acme.svc.example:9443", got[0].Address)
+
+	require.NoError(t, g.Revoke(ctx, m, moved))
+	got, _, err = e.reg.Resolve(acme, "web")
+	require.NoError(t, err)
+	assert.Empty(t, got)
+}
+
+func TestName_AnExpiredLeaseIsRegisteredAgain(t *testing.T) {
+	e := newEnv(t)
+	m := serviceplanetest.Manifest("acme", "web")
+	g := e.grant(serviceplane.GrantName)
+	ctx := context.Background()
+	acme := tenantctx.WithTenant(ctx, "acme")
+
+	ref, err := g.Grant(ctx, m, "")
+	require.NoError(t, err)
+	lease, _, err := parseNameRef(ref)
+	require.NoError(t, err)
+	// The lease runs out while the service is down.
+	require.NoError(t, e.reg.Deregister(acme, lease))
+
+	again, err := g.Grant(ctx, m, ref)
+	require.NoError(t, err)
+	assert.NotEqual(t, ref, again, "an expired lease is replaced")
+	got, _, err := e.reg.Resolve(acme, "web")
+	require.NoError(t, err)
+	require.Len(t, got, 1, "the name resolves again")
+	require.NoError(t, g.Revoke(ctx, m, again))
+}
+
+func TestName_RevokeAcceptsABareLeaseRef(t *testing.T) {
+	e := newEnv(t)
+	m := serviceplanetest.Manifest("acme", "web")
+	g := e.grant(serviceplane.GrantName)
+	ctx := context.Background()
+	acme := tenantctx.WithTenant(ctx, "acme")
+
+	ref, err := g.Grant(ctx, m, "")
+	require.NoError(t, err)
+	bare, _, ok := strings.Cut(ref, "@")
+	require.True(t, ok, "the reference carries the address: %s", ref)
+	require.NoError(t, g.Revoke(ctx, m, bare))
+	got, _, err := e.reg.Resolve(acme, "web")
+	require.NoError(t, err)
+	assert.Empty(t, got)
+	var bad *RefError
+	assert.ErrorAs(t, g.Revoke(ctx, m, "x@web.acme.svc.example"), &bad)
+}
+
 func TestRBAC_BindsTheBuiltInRoleToTheIdentity(t *testing.T) {
 	e := newEnv(t)
 	m := serviceplanetest.Manifest("acme", "web")
