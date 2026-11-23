@@ -406,7 +406,7 @@ func TestShardedClient_IsEmbedded(t *testing.T) {
 
 func TestShardedClient_ForShard_EmbeddedReturnsError(t *testing.T) {
 	t.Run("bare embedded transport returns error for ForShard", func(t *testing.T) {
-		// Phase E removed the legacy in-memory baasTransport path. A bare
+		// Phase E removed the legacy in-process transport path. A bare
 		// ShardedClient (no node-backed client, no transport address) can no
 		// longer materialize a per-shard client: ForShard surfaces the
 		// "address is required for embedded qrdb transport" error from the

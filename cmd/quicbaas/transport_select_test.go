@@ -29,13 +29,21 @@ func TestDetectTransport(t *testing.T) {
 		explicit  bool
 		address   string
 		want      string
+		// wantAddr is the address the client dials; empty means address unchanged.
+		wantAddr string
 	}{
-		// Implicit: the address chooses.
+		// Implicit: the address chooses, as the transport model's
+		// "Selecting a transport" table states (docs/multiprotocol-api/architecture.md).
 		{name: "implicit https URL", requested: defaultTransport, address: "https://localhost:8443", want: "rest"},
 		{name: "implicit http URL", requested: defaultTransport, address: "http://localhost:8080", want: "rest"},
+		{name: "implicit quic URL", requested: defaultTransport, address: "quic://localhost:18080", want: "quic", wantAddr: "localhost:18080"},
+		{name: "implicit mcp URL", requested: defaultTransport, address: "mcp://localhost:11443", want: "mcp", wantAddr: "localhost:11443"},
 		{name: "implicit absolute socket path", requested: defaultTransport, address: "/run/quicbaas/quicbaas.sock", want: "unix"},
+		{name: "implicit absolute path lacking .sock", requested: defaultTransport, address: "/run/quicbaas/socket", want: "unix"},
 		{name: "implicit relative socket file", requested: defaultTransport, address: "quicbaas.sock", want: "unix"},
-		{name: "implicit host and port", requested: defaultTransport, address: "localhost:9090", want: defaultTransport},
+		{name: "implicit empty address", requested: defaultTransport, address: "", want: defaultTransport},
+		{name: "implicit host and port is gRPC", requested: defaultTransport, address: "localhost:9090", want: "grpc"},
+		{name: "implicit IPv6 host and port is gRPC", requested: defaultTransport, address: "[::1]:9090", want: "grpc"},
 		{name: "implicit empty request with https URL", requested: "", address: "https://localhost:8443", want: "rest"},
 		// Explicit: the flag wins.
 		{name: "explicit unix with https URL", requested: "unix", explicit: true, address: "https://localhost:8443", want: "unix"},
@@ -45,13 +53,21 @@ func TestDetectTransport(t *testing.T) {
 		{name: "explicit grpc with path lacking .sock", requested: "grpc", explicit: true, address: "/run/quicbaas/socket", want: "grpc"},
 		{name: "explicit rest with socket file", requested: "rest", explicit: true, address: "/run/quicbaas/quicbaas.sock", want: "rest"},
 		{name: "explicit quic with http URL", requested: "quic", explicit: true, address: "http://localhost:8080", want: "quic"},
+		{name: "explicit quic with quic URL drops the scheme", requested: "quic", explicit: true, address: "quic://localhost:18080", want: "quic", wantAddr: "localhost:18080"},
 		{name: "explicit mcp with host and port", requested: "mcp", explicit: true, address: "localhost:8090", want: "mcp"},
+		{name: "explicit mcp with mcp URL drops the scheme", requested: "mcp", explicit: true, address: "mcp://localhost:11443", want: "mcp", wantAddr: "localhost:11443"},
 		{name: "explicit unknown is passed through", requested: "carrier-pigeon", explicit: true, address: "https://localhost:8443", want: "carrier-pigeon"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, detectTransport(tt.requested, tt.explicit, tt.address))
+			gotTransport, gotAddr := detectTransport(tt.requested, tt.explicit, tt.address)
+			assert.Equal(t, tt.want, gotTransport)
+			wantAddr := tt.wantAddr
+			if wantAddr == "" {
+				wantAddr = tt.address
+			}
+			assert.Equal(t, wantAddr, gotAddr)
 		})
 	}
 }

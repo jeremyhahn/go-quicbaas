@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sort"
+	"strings"
 	"time"
 
 	qerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
@@ -326,6 +327,52 @@ func (r *fleetRegistry) ListFleetNodes(ctx context.Context, tenantID string, fil
 	}
 
 	return agents, nil
+}
+
+// observeTenantFleetNodes returns every record under tenantID's subtree with
+// each body tenant exactly as stored. Unlike ListFleetNodes it skips nothing:
+// a record that does not decode fails the scan, and a record whose body names
+// another tenant is returned, so a caller that must not under-report (the
+// placement drift report) can refuse it.
+func (r *fleetRegistry) observeTenantFleetNodes(ctx context.Context, tenantID string) ([]*FleetNode, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := r.checkStore(); err != nil {
+		return nil, err
+	}
+
+	ctx = fleetTenantContext(ctx, tenantID)
+
+	prefix, err := fleetNodePrefix(tenantID)
+	if err != nil {
+		return nil, err
+	}
+	nodes := make([]*FleetNode, 0)
+	var decodeErr error
+	err = r.kv.Scan(ctx, prefix, func(key string, value []byte) error {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		node := &FleetNode{}
+		if unmarshalErr := json.Unmarshal(value, node); unmarshalErr != nil {
+			decodeErr = &PlacementInventoryInvalidError{
+				TenantID: tenantID,
+				NodeID:   strings.TrimPrefix(key, prefix),
+				Reason:   "does not decode",
+			}
+			return decodeErr
+		}
+		nodes = append(nodes, node)
+		return nil
+	})
+	if decodeErr != nil {
+		return nil, decodeErr
+	}
+	if err != nil {
+		return nil, err
+	}
+	return nodes, nil
 }
 
 // UpdateFleetNode updates an existing fleet node registration. The supplied Version must

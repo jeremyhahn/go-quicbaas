@@ -218,6 +218,7 @@ export class QuicClient {
     projects = unsupportedClient('quic', 'projects', quicUnsupported);
     sdlc = unsupportedClient('quic', 'sdlc', quicUnsupported);
     accounts = unsupportedClient('quic', 'accounts', quicUnsupported);
+    prompts = unsupportedClient('quic', 'prompts', quicUnsupported);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     agents = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
