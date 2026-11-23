@@ -53,6 +53,7 @@ test/e2e-coverage-matrix.test.ts fails when a route has no row.
 | `attention` | #/attention | list | none |
 | `cluster` | #/cluster | detail | bug_regressions.spec.ts, light_theme_contrast.spec.ts |
 | `nodes` | #/nodes | list | nodes_view.spec.ts |
+| `backup` | #/backup | list | backup_view.spec.ts |
 | `invite-activate` | #/invite/:tenant/:token | detail, error state | bootstrap_activate.spec.ts |
 | `not-found` | any unmatched hash | error state | bootstrap_activate.spec.ts |
 
