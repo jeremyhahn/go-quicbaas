@@ -79,43 +79,6 @@ func (s *backupSealServer) VerifyBackup(_ context.Context, req *proto.VerifyBack
 	return &proto.VerifyBackupResponse{Valid: true, ChecksumValid: true, Message: "minor warning"}, nil
 }
 
-func (s *backupSealServer) SealStatus(_ context.Context, _ *proto.SealStatusRequest) (*proto.SealStatusResponse, error) {
-	if s.fail {
-		return nil, status.Error(codes.Internal, "boom")
-	}
-	return &proto.SealStatusResponse{
-		Sealed: false, Initialized: true, Threshold: 2, TotalShares: 3, SharesProvided: 2, Version: 1,
-	}, nil
-}
-
-func (s *backupSealServer) SealInit(_ context.Context, req *proto.SealInitRequest) (*proto.SealInitResponse, error) {
-	if s.fail {
-		return nil, status.Error(codes.Internal, "boom")
-	}
-	return &proto.SealInitResponse{RootToken: "root", Version: 1}, nil
-}
-
-func (s *backupSealServer) Unseal(_ context.Context, req *proto.UnsealRequest) (*proto.UnsealResponse, error) {
-	if s.fail {
-		return nil, status.Error(codes.Internal, "boom")
-	}
-	return &proto.UnsealResponse{Sealed: false, SharesProvided: 2, Threshold: 2}, nil
-}
-
-func (s *backupSealServer) Seal(_ context.Context, _ *proto.SealRequest) (*proto.SealResponse, error) {
-	if s.fail {
-		return nil, status.Error(codes.Internal, "boom")
-	}
-	return &proto.SealResponse{Sealed: true}, nil
-}
-
-func (s *backupSealServer) SealRekey(_ context.Context, req *proto.SealRekeyRequest) (*proto.SealRekeyResponse, error) {
-	if s.fail {
-		return nil, status.Error(codes.Internal, "boom")
-	}
-	return &proto.SealRekeyResponse{Version: 2}, nil
-}
-
 // setupConnectedBackupSealClient registers a backupSealServer and returns a
 // connected client wired to it.
 func setupConnectedBackupSealClient(t *testing.T, fail bool) *Client {

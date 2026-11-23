@@ -343,13 +343,6 @@ var grpcMethodPermissions = map[string]methodPermission{
 	// interceptor does, before this grant is checked.
 	"/quicbaas.v1.QuicBaaS/IntrospectToken": {"user_authfactors", "login"},
 
-	// ---- quicbaas.v1.QuicBaaS: seal ----
-	"/quicbaas.v1.QuicBaaS/Seal":       {"seal", "seal"},
-	"/quicbaas.v1.QuicBaaS/Unseal":     {"seal", "unseal"},
-	"/quicbaas.v1.QuicBaaS/SealInit":   {"seal", "bootstrap"},
-	"/quicbaas.v1.QuicBaaS/SealRekey":  {"seal", "rekey"},
-	"/quicbaas.v1.QuicBaaS/SealStatus": {"seal", "status"},
-
 	// ---- quicbaas.v1.QuicBaaS: time-series ----
 	"/quicbaas.v1.QuicBaaS/Aggregate":            {"timeseries", "aggregate"},
 	"/quicbaas.v1.QuicBaaS/TimeSeriesQuery":      {"timeseries", "query"},
