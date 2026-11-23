@@ -431,7 +431,7 @@ func TestKubernetesUpgradesGoThroughTheDisruptionBudget(t *testing.T) {
 		t.Fatalf("read kubernetes guide: %v", err)
 	}
 	guide := string(data)
-	for _, want := range []string{"## Upgrades", "rolling-upgrade.sh", "OnDelete"} {
+	for _, want := range []string{"## Upgrades", "rolling-upgrade.sh", "OnDelete", "observedGeneration"} {
 		if !strings.Contains(guide, want) {
 			t.Errorf("kubernetes guide lacks %q", want)
 		}
@@ -957,7 +957,9 @@ esac
 // kubectl: it evicts quicbaas-2, -1 and -0 in turn through the Eviction API
 // only after all three replicas are ready, stops when another replica is
 // unavailable or an eviction is refused, and skips replicas already on the
-// update revision.
+// update revision. It reads the update revision only once the controller has
+// observed the current generation, and fails when a replacement comes back on
+// another revision.
 func TestKubernetesRollingUpgradeScript(t *testing.T) {
 	for _, tool := range []string{"mktemp", "/bin/sh"} {
 		if _, err := exec.LookPath(tool); err != nil {
@@ -977,14 +979,31 @@ for a in "$@"; do
     */pods/quicbaas-*/eviction) pod="${a#*/pods/}"; pod="${pod%/eviction}" ;;
   esac
 done
-updated=no
-case " ${FAKE_UPDATED:-} " in *" $pod "*) updated=yes ;; esac
-if [ -n "$pod" ] && [ -e "$KUBECTL_LOG.evicted-$pod" ]; then updated=yes; fi
 case " $* " in
-  *updateRevision*) echo rev-new ;;
+  *observedGeneration*)
+    # The controller observes generation 2 only after FAKE_LAG reads.
+    n="$(cat "$KUBECTL_LOG.gen" 2>/dev/null || echo 0)"
+    n=$((n + 1))
+    echo "$n" > "$KUBECTL_LOG.gen"
+    if [ "$n" -gt "${FAKE_LAG:-0}" ]; then
+      : > "$KUBECTL_LOG.reconciled"
+      echo 2/2
+    else
+      echo 2/1
+    fi ;;
+  *updateRevision*)
+    # Until the controller reconciles, the update revision is the old one.
+    if [ -e "$KUBECTL_LOG.reconciled" ]; then echo rev-new; else echo rev-old; fi ;;
   *readyReplicas*) echo "${FAKE_READY:-3}" ;;
   *controller-revision-hash*)
-    if [ "$updated" = yes ]; then echo rev-new; else echo rev-old; fi ;;
+    if [ -n "$pod" ] && [ -e "$KUBECTL_LOG.evicted-$pod" ]; then
+      echo "${FAKE_REPLACED_REV:-rev-new}"
+    else
+      case " ${FAKE_UPDATED:-} " in
+        *" $pod "*) echo rev-new ;;
+        *) echo rev-old ;;
+      esac
+    fi ;;
   *metadata.uid*)
     if [ -e "$KUBECTL_LOG.evicted-$pod" ]; then echo uid-new; else echo uid-old; fi ;;
   *"create --raw"*)
@@ -1110,6 +1129,54 @@ esac
 		ordered(t, lines, []string{evict + "quicbaas-1/eviction", evict + "quicbaas-0/eviction"})
 		if !strings.Contains(stdout, "quicbaas-2 already runs rev-new") {
 			t.Errorf("stdout = %q, want it to skip quicbaas-2", stdout)
+		}
+	})
+
+	// kubectl apply returns before the controller reconciles; until it
+	// does, the update revision is the previous one and every pod matches it.
+	t.Run("controller reconciles late", func(t *testing.T) {
+		stdout, stderr, lines, err := run(t, "FAKE_LAG=3")
+		if err != nil {
+			t.Fatalf("upgrade failed: %v\n%s", err, stderr)
+		}
+		ordered(t, lines, []string{
+			"observedGeneration", "observedGeneration", "observedGeneration", "observedGeneration",
+			"updateRevision",
+			evict + "quicbaas-2/eviction",
+			evict + "quicbaas-1/eviction",
+			evict + "quicbaas-0/eviction",
+		})
+		if !strings.Contains(stdout, "all three replicas run rev-new") {
+			t.Errorf("stdout = %q, want it to report all three on rev-new", stdout)
+		}
+		if strings.Contains(stdout, "already runs") {
+			t.Errorf("stdout = %q: a replica was skipped on the stale revision", stdout)
+		}
+	})
+
+	t.Run("controller never reconciles", func(t *testing.T) {
+		_, stderr, lines, err := run(t, "FAKE_LAG=1000")
+		if err == nil {
+			t.Fatal("upgrade succeeded although the controller never observed the new generation")
+		}
+		if !strings.Contains(stderr, "has not observed generation 2 (observed 1)") {
+			t.Errorf("stderr = %q, want it to name the unobserved generation", stderr)
+		}
+		absent(t, lines, "updateRevision", "/eviction")
+	})
+
+	t.Run("replacement on the wrong revision", func(t *testing.T) {
+		stdout, stderr, lines, err := run(t, "FAKE_REPLACED_REV=rev-other")
+		if err == nil {
+			t.Fatal("upgrade succeeded although a replacement came back on another revision")
+		}
+		if !strings.Contains(stderr, "quicbaas-2 came back on rev-other, not rev-new") {
+			t.Errorf("stderr = %q, want it to name the replacement's revision", stderr)
+		}
+		ordered(t, lines, []string{evict + "quicbaas-2/eviction"})
+		absent(t, lines, "quicbaas-1/eviction")
+		if strings.Contains(stdout, "all three replicas run") {
+			t.Errorf("stdout = %q, want no success report", stdout)
 		}
 	})
 }

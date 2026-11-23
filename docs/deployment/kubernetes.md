@@ -205,12 +205,17 @@ To upgrade:
    `kubectl apply -k deployments/kubernetes`.
 2. Run `sh deployments/kubernetes/rolling-upgrade.sh`.
 
+- It first waits until the StatefulSet controller has observed the applied
+  template (`status.observedGeneration` equals `metadata.generation`), so
+  the update revision it reads is the new release, not the previous one.
 - The script replaces the replicas one at a time, highest ordinal first.
 - Before each one it waits until all three replicas are ready, and stops if
   they are not ready within 5 minutes.
 - It evicts the pod through the Eviction API, so the PodDisruptionBudget
   (`minAvailable: 2`) is enforced. A refused eviction stops the script.
-- It waits for the replacement pod to be Ready before it moves on.
+- It waits for the replacement pod to be Ready and checks that it runs the
+  update revision before it moves on; a pod on any other revision stops the
+  script.
 - It skips a replica already on the new revision. After a stop, wait until
   all three replicas are ready and run it again.
 

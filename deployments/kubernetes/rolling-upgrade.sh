@@ -11,7 +11,11 @@
 # PodDisruptionBudget (minAvailable: 2) decides whether the pod may go. A
 # refused eviction, or replicas that do not become ready, stop the script. A
 # replica already on the update revision is skipped, so running the script
-# again resumes the upgrade. See docs/deployment/kubernetes.md, "Upgrades".
+# again resumes the upgrade. It first waits until the StatefulSet controller
+# has observed the applied template (status.observedGeneration equals
+# metadata.generation), so the update revision it reads is the new one, and
+# it checks that each replacement runs that revision. See
+# docs/deployment/kubernetes.md, "Upgrades".
 set -eu
 
 ns=quicbaas
@@ -34,6 +38,26 @@ all_ready() {
     sleep 2
   done
 }
+
+# kubectl apply returns before the StatefulSet controller has seen the new
+# template, and until it has, status.updateRevision still names the previous
+# revision: every pod would match it and be skipped. Wait until the
+# controller has observed the current generation before reading it.
+tries=0
+while :; do
+  gens="$(kubectl -n "$ns" get statefulset "$sts" -o 'jsonpath={.metadata.generation}/{.status.observedGeneration}')"
+  gen="${gens%%/*}"
+  seen="${gens#*/}"
+  if [ -n "$gen" ] && [ "$gen" = "$seen" ]; then
+    break
+  fi
+  tries=$((tries + 1))
+  if [ "$tries" -ge 150 ]; then
+    echo "rolling-upgrade: StatefulSet $sts has not observed generation ${gen:-?} (observed ${seen:-none}) within 5 minutes" >&2
+    exit 1
+  fi
+  sleep 2
+done
 
 rev="$(kubectl -n "$ns" get statefulset "$sts" -o 'jsonpath={.status.updateRevision}')"
 if [ -z "$rev" ]; then
@@ -75,6 +99,11 @@ for n in 2 1 0; do
     sleep 2
   done
   kubectl -n "$ns" wait --for=condition=Ready "pod/$pod" --timeout=5m
+  got="$(kubectl -n "$ns" get pod "$pod" -o 'jsonpath={.metadata.labels.controller-revision-hash}')"
+  if [ "$got" != "$rev" ]; then
+    echo "rolling-upgrade: $pod came back on ${got:-no revision}, not $rev" >&2
+    exit 1
+  fi
   echo "$pod runs $rev and is ready"
 done
 
