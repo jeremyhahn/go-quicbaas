@@ -195,10 +195,10 @@ membership integration tests are planned for Phase F. Skeleton tests live in
 ## Legacy (pre-Phase C): deleted paths
 
 Before Phase C, clustered mode used a no-op `standaloneRaftNode` and a
-`baasTransport`-backed `ShardedClient` — no real Raft consensus ever ran.
-Phase C replaced that path with `initClusteredQRDBNode`. The
-`baasTransport*.go` files still compile (they are unreachable in cluster
-mode) and will be deleted in Phase E.
+`ShardedClient` backed by the former in-process transport (deleted) — no real
+Raft consensus ever ran. Phase C replaced that path with
+`initClusteredQRDBNode`. Phase E then deleted the former in-process
+transport's source files; `ShardedClient` is now backed by the qrdb node.
 
 ## Original QuicRaft Integration Reference (pre-Phase C)
 

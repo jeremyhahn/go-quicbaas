@@ -161,12 +161,13 @@ func TestCeremonyE2E_SealedDaemonServesTheCeremonyOverCLI(t *testing.T) {
 		t.Fatalf("sealed daemon never became reachable over REST: %v", err)
 	}
 
+	// The daemon's CA chain is written under its data dir; the CLI trusts it explicitly. TLS is never turned off.
 	address := fmt.Sprintf("https://127.0.0.1:%d", ports.REST)
 
 	// The ceremony status verb must answer while the barrier is sealed. If the
 	// sealed-window allowlist regressed, this is where it shows up.
 	statusOut, statusErr := runCLI(ctx, t, cliBinary,
-		"init", "status", "--address", address, "--output", "json")
+		"init", "status", "--address", address, "--tls-ca", caChainPath(dataDir), "--output", "json")
 	if statusErr != nil {
 		t.Fatalf("`quicbaas init status` against a SEALED daemon failed: %v\noutput:\n%s",
 			statusErr, statusOut)
@@ -186,6 +187,7 @@ func TestCeremonyE2E_SealedDaemonServesTheCeremonyOverCLI(t *testing.T) {
 	registerOut, registerErr := runCLI(ctx, t, cliBinary,
 		"init", "officer", "register",
 		"--address", address,
+		"--tls-ca", caChainPath(dataDir),
 		"--username", "alice",
 		"--csr", csrPath,
 		"--output", certPath,
