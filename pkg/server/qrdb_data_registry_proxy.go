@@ -14,6 +14,7 @@
 package server
 
 import (
+	"sync"
 	"sync/atomic"
 
 	qrdbserver "github.com/jeremyhahn/go-qrdb/pkg/server"
@@ -27,6 +28,12 @@ import (
 type qrdbDataRegistryProxy struct {
 	s      *Server
 	cached atomic.Pointer[qrdbDataRegistryForServer]
+	// mu serializes the cold path of current so one registry is built per
+	// server.
+	mu sync.Mutex
+	// build makes the registry; nil means (*qrdbserver.Server).ServiceRegistry.
+	// It exists so a test can count builds.
+	build func(*qrdbserver.Server) qrdbservice.Registry
 }
 
 // qrdbDataRegistryForServer pairs a go-qrdb server with the service registry
@@ -57,7 +64,19 @@ func (p *qrdbDataRegistryProxy) current() (qrdbservice.Registry, error) {
 	if c := p.cached.Load(); c != nil && c.srv == srv {
 		return c.reg, nil
 	}
-	reg := srv.ServiceRegistry()
+	// One registry per server: concurrent cold misses serialize here and the
+	// losers return the winner's registry, since each registry owns stateful
+	// per-collection caches and ID generators.
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if c := p.cached.Load(); c != nil && c.srv == srv {
+		return c.reg, nil
+	}
+	build := p.build
+	if build == nil {
+		build = (*qrdbserver.Server).ServiceRegistry
+	}
+	reg := build(srv)
 	if reg == nil {
 		return nil, &qrdbservice.CapabilityUnsupportedError{Message: "the embedded qrdb node has no database registry"}
 	}

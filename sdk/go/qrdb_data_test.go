@@ -606,6 +606,35 @@ func TestQRDBData_EmbeddedHonoursIdentityTenant(t *testing.T) {
 	if _, err := data.Collections().ListCollections(agree, "row1652db"); err != nil || coll.tenant != "row1652-tenant-b" {
 		t.Errorf("Collections().ListCollections with agreeing identity and SDK binding: err %v, node saw tenant %q, want %q", err, coll.tenant, "row1652-tenant-b")
 	}
+
+	t.Run("EmptyTenantIdentity", func(t *testing.T) {
+		batch.reached, coll.database, coll.tenant = false, "", ""
+		tenantless := qrdbsdk.WithIdentity(context.Background(), &qrdbsdk.Identity{Subject: "user", TenantID: ""})
+		refusedEmpty := func(name string, err error) {
+			t.Helper()
+			if !sdkerrors.IsForbidden(err) {
+				t.Errorf("%s with an authenticated identity that has no tenant: err %v, want Forbidden", name, err)
+			}
+		}
+		_, err := data.KV().Get(tenantless, "row1652/sys")
+		refusedEmpty("KV().Get", err)
+		refusedEmpty("KV().Put", data.KV().Put(tenantless, "row1652/sys", []byte("tenantless")))
+		_, err = data.Batch().ExecuteBatch(tenantless, []qrdbtransport.Op{put})
+		refusedEmpty("Batch().ExecuteBatch", err)
+		_, err = data.Collections().ListCollections(tenantless, "row1652db")
+		refusedEmpty("Collections().ListCollections", err)
+		if batch.reached || coll.database != "" {
+			t.Errorf("a refused tenantless call reached the node: batch %v, collections database %q", batch.reached, coll.database)
+		}
+		if got, err := kv.get("row1652/sys"); err != nil || string(got) != "system" {
+			t.Errorf("system record = %q, %v after a refused tenantless write, want %q", got, err, "system")
+		}
+
+		bound := qbtransport.ContextWithTenant(tenantless, "acme")
+		if _, err := data.Collections().ListCollections(bound, "row1652db"); err != nil || coll.tenant != "acme" {
+			t.Errorf("tenantless identity with an explicit SDK binding: err %v, node saw tenant %q, want %q", err, coll.tenant, "acme")
+		}
+	})
 }
 
 // TestQRDBData_EmbeddedKVKeepsGuardedWrites proves QRDBData().KV() keeps the

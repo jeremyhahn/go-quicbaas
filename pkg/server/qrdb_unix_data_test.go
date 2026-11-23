@@ -20,6 +20,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -28,6 +30,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	qrdbserver "github.com/jeremyhahn/go-qrdb/pkg/server"
 	qrdbservice "github.com/jeremyhahn/go-qrdb/pkg/service"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
@@ -150,4 +153,54 @@ func TestQRDBDataRegistryProxy_RefusesOutOfRowServices(t *testing.T) {
 	lock, err := p.LockService("system", "system")
 	require.Nil(t, lock)
 	require.True(t, errors.As(err, &unsupported), "lock: %v", err)
+}
+
+// TestQRDBDataRegistryProxy_ColdCacheBuildsOneRegistry pins that concurrent
+// first requests share one registry: each registry owns stateful collection
+// caches and ID generators, so two would let concurrent inserts collide.
+func TestQRDBDataRegistryProxy_ColdCacheBuildsOneRegistry(t *testing.T) {
+	srv := withTempServer(t)
+	require.NoError(t, srv.initStandaloneQRDBNode(), "initStandaloneQRDBNode")
+	t.Cleanup(func() { _ = srv.stopQRDBNode() })
+
+	race := func(t *testing.T, p *qrdbDataRegistryProxy) []qrdbservice.Registry {
+		t.Helper()
+		const callers = 16
+		start := make(chan struct{})
+		regs := make([]qrdbservice.Registry, callers)
+		errs := make([]error, callers)
+		var wg sync.WaitGroup
+		for i := 0; i < callers; i++ {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				<-start
+				regs[i], errs[i] = p.current()
+			}(i)
+		}
+		close(start)
+		wg.Wait()
+		for i := range regs {
+			require.NoError(t, errs[i], "caller %d", i)
+			require.NotNil(t, regs[i], "caller %d", i)
+			require.True(t, regs[i] == regs[0], "caller %d got a different registry", i)
+		}
+		return regs
+	}
+
+	t.Run("RealBuild", func(t *testing.T) {
+		race(t, newQRDBDataRegistryProxy(srv))
+	})
+
+	t.Run("CountedBuild", func(t *testing.T) {
+		var builds atomic.Int32
+		p := newQRDBDataRegistryProxy(srv)
+		p.build = func(s *qrdbserver.Server) qrdbservice.Registry {
+			builds.Add(1)
+			time.Sleep(20 * time.Millisecond)
+			return s.ServiceRegistry()
+		}
+		race(t, p)
+		require.Equal(t, int32(1), builds.Load(), "registries built for one server")
+	})
 }

@@ -552,6 +552,20 @@ func (c *client) qrdbClient() (*QRDBClient, error) {
 	return c.qrdb.client, c.qrdb.err
 }
 
+// closeQRDB closes the qrdb sub-client this client built, and makes any later
+// qrdbClient call fail, so Close and a first QRDBData call cannot race into a
+// client that is never closed. The embedded sub-client's transport only marks
+// itself closed; the servicers and node the caller passed in stay open.
+func (c *client) closeQRDB() error {
+	c.qrdb.once.Do(func() {
+		c.qrdb.err = sdkerrors.NewUnavailable("qrdbClient", "the client is closed")
+	})
+	if c.qrdb.client == nil {
+		return nil
+	}
+	return c.qrdb.client.Close()
+}
+
 // buildQRDBClient constructs the qrdb transport and client from the
 // existing clientOptions.
 //
@@ -879,7 +893,17 @@ func (c *client) qrdbEmbedding() (QRDBEmbeddingClient, error) {
 // token gets an Unimplemented error rather than anonymous data calls. MCP: a
 // client configured with WithMCPAuthToken or WithMCPCredentials gets the same
 // Unimplemented error, since go-qrdb's MCP client carries neither credential.
+//
+// The qrdb connection this opens is released by the parent client's Close;
+// after Close, QRDBData returns an error. A caller-supplied node client
+// (QRDBEmbeddedServicers.Data) stays the caller's and is not closed.
 func (c *client) QRDBData() (QRDBDataService, error) {
+	c.mu.Lock()
+	closed := c.closed
+	c.mu.Unlock()
+	if closed {
+		return nil, sdkerrors.NewUnavailable("QRDBData", "the client is closed")
+	}
 	if s := c.opts.embeddedQRDB; s != nil {
 		data := s.Data
 		if data == nil {
@@ -920,7 +944,9 @@ func (c *client) QRDBData() (QRDBDataService, error) {
 // same sources pkg/tenantctx.FromContext reads on the server). bound is false
 // when none is set. Two sources that name different tenants are refused as
 // Forbidden rather than one silently winning; otherwise the first set source
-// wins, in the order go-qrdb binding, SDK binding, identity.
+// wins, in the order go-qrdb binding, SDK binding, identity. An authenticated
+// identity with no tenant and no explicit binding is refused as Forbidden;
+// only a context with no identity is the host process.
 func qrdbCallTenant(ctx context.Context) (id string, bound bool, err error) {
 	qrdbID, qrdbBound := qrdbsdk.TenantFromContext(ctx)
 	if !qrdbBound {
@@ -951,6 +977,10 @@ func qrdbCallTenant(ctx context.Context) (id string, bound bool, err error) {
 		}
 	}
 	if first < 0 {
+		if qrdbsdk.IdentityFromContext(ctx) != nil {
+			return "", false, sdkerrors.NewForbidden("QRDBData",
+				"the call's authenticated identity carries no tenant")
+		}
 		return "", false, nil
 	}
 	return sources[first].id, true, nil

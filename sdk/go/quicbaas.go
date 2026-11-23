@@ -15,6 +15,7 @@ package quicbaas
 
 import (
 	"crypto/tls"
+	stderrors "errors"
 	"strings"
 	"sync"
 
@@ -2057,10 +2058,11 @@ func (c *client) Close() error {
 	}
 	c.closed = true
 
+	var terr error
 	if c.transport != nil {
-		return c.transport.Close()
+		terr = c.transport.Close()
 	}
-	return nil
+	return stderrors.Join(terr, c.closeQRDB())
 }
 
 // KV returns the KV client.
