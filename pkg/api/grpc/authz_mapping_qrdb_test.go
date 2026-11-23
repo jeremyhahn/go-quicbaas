@@ -66,14 +66,15 @@ var qrdbUserSurfaceMethods = map[string]bool{
 
 // qrdbWiredMethod reports whether a qrdb.v1.QRDBService method belongs to a
 // family whose servicer quicbaasd wires in buildQRDBRegisterOptions (barrier,
-// backup, ceremony, credential, user) or to the shared health/status surface. Every
-// other QRDBService method dispatches to codes.Unimplemented server-side and
+// backup, ceremony, credential, user, timeseries) or to the shared health/status
+// surface. Every other QRDBService method dispatches to codes.Unimplemented server-side and
 // must remain default-denied by the authz gate.
 func qrdbWiredMethod(name string) bool {
 	if strings.HasPrefix(name, "Barrier") ||
 		strings.HasPrefix(name, "Backup") ||
 		strings.HasPrefix(name, "Ceremony") ||
-		strings.HasPrefix(name, "Credential") {
+		strings.HasPrefix(name, "Credential") ||
+		strings.HasPrefix(name, "TS") {
 		return true
 	}
 	return qrdbUserSurfaceMethods[name] || name == "Health" || name == "Status"
@@ -236,6 +237,17 @@ func TestGRPCResourceAndAction_QRDBMapped(t *testing.T) {
 		{"/qrdb.v1.QRDBService/BackupDelete", "backup", "delete"},
 		{"/qrdb.v1.QRDBService/BackupRestore", "backup", "restore"},
 		{"/qrdb.v1.QRDBService/BackupVerify", "backup", "verify"},
+		// Time series.
+		{"/qrdb.v1.QRDBService/TSWrite", "timeseries", "write"},
+		{"/qrdb.v1.QRDBService/TSWriteBatch", "timeseries", "write_batch"},
+		{"/qrdb.v1.QRDBService/TSQuery", "timeseries", "query"},
+		{"/qrdb.v1.QRDBService/TSAggregate", "timeseries", "aggregate"},
+		{"/qrdb.v1.QRDBService/TSWritePoint", "timeseries", "write_point"},
+		{"/qrdb.v1.QRDBService/TSRichQuery", "timeseries", "rich_query"},
+		{"/qrdb.v1.QRDBService/TSDeleteSeries", "timeseries", "delete_series"},
+		{"/qrdb.v1.QRDBService/TSGetRetention", "timeseries", "get_retention"},
+		{"/qrdb.v1.QRDBService/TSSetRetention", "timeseries", "set_retention"},
+		{"/qrdb.v1.QRDBService/TSListMetrics", "timeseries", "list_metrics"},
 		// UserAuthFactorService.
 		{"/qrdb.v1.UserAuthFactorService/Add", "user_authfactors", "add"},
 		{"/qrdb.v1.UserAuthFactorService/List", "user_authfactors", "list"},
@@ -251,6 +263,30 @@ func TestGRPCResourceAndAction_QRDBMapped(t *testing.T) {
 		assert.Equal(t, c.resource, res, c.method)
 		assert.Equal(t, c.action, act, c.method)
 	}
+}
+
+// TestQRDBTimeSeriesPermissions_MatchProtoOption pins every qrdb.v1 TS* RPC
+// to go-qrdb's own (qrdb.v1.permission) method option, so the broker never
+// widens or renames the narrow timeseries permission go-qrdb enforces.
+func TestQRDBTimeSeriesPermissions_MatchProtoOption(t *testing.T) {
+	sd := qrdbServiceDescriptor(t, "qrdb.v1.QRDBService")
+	methods := sd.Methods()
+	seen := 0
+	for i := 0; i < methods.Len(); i++ {
+		m := methods.Get(i)
+		name := string(m.Name())
+		if !strings.HasPrefix(name, "TS") {
+			continue
+		}
+		seen++
+		full := "/qrdb.v1.QRDBService/" + name
+		want, ok := protoPermissionOption(t, m)
+		require.True(t, ok, "%s must carry a qrdb.v1.permission option", full)
+		res, act, mapped := grpcResourceAndAction(full)
+		require.True(t, mapped, "%s must be mapped", full)
+		assert.Equal(t, want, res+":"+act, full)
+	}
+	assert.Equal(t, 10, seen, "qrdb.v1 time-series RPC count")
 }
 
 // TestQRDBHealth_Public asserts the qrdb.v1 health probe bypasses the authz
@@ -299,6 +335,10 @@ func TestUnaryAuthorizationInterceptor_QRDBAdmitDeny(t *testing.T) {
 		{"authfactor_login", "/qrdb.v1.UserAuthFactorService/Login", "user_authfactors:login", "user_authfactors:list"},
 		{"authfactor_add", "/qrdb.v1.UserAuthFactorService/Add", "user_authfactors:add", "user_authfactors:login"},
 		{"admin_status", "/qrdb.v1.QRDBService/Status", "admin:status", "admin:health"},
+		{"ts_write", "/qrdb.v1.QRDBService/TSWrite", "timeseries:write", "timeseries:query"},
+		{"ts_query", "/qrdb.v1.QRDBService/TSQuery", "timeseries:query", "timeseries:write"},
+		{"ts_get_retention", "/qrdb.v1.QRDBService/TSGetRetention", "timeseries:get_retention", "timeseries:set_retention"},
+		{"ts_set_retention", "/qrdb.v1.QRDBService/TSSetRetention", "timeseries:set_retention", "timeseries:get_retention"},
 		{"placement_consent_answer", "/quicbaas.orchestrator.v1.OrchestratorService/AnswerFleetPlacementConsent", "placement:consent", "placement:read"},
 		{"placement_consent_list", "/quicbaas.orchestrator.v1.OrchestratorService/ListFleetPlacementConsents", "placement:read", "placement:consent"},
 	}

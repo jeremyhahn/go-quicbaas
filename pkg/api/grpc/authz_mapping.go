@@ -1008,16 +1008,17 @@ var grpcMethodPermissions = map[string]methodPermission{
 	// qrdb.v1.UserAuthFactorService) on the SAME grpc.Server as the quicbaas
 	// services (pkg/server/grpc_qrdb_service.go), so the qrdb SDK's gRPC and
 	// Unix transports (go-qrdb sdk/go buildQRDBTransport) can dial the
-	// barrier / ceremony / credential / user / user-auth-factor surfaces
-	// through the broker listener. The entries below mirror go-qrdb's OWN
-	// gRPC permission map (go-qrdb/pkg/auth/middleware/mapping.go
-	// grpcPermissions) verbatim, so a permission grant authorizes the same
-	// verb identically on a direct qrdb node and through the broker.
+	// barrier / ceremony / credential / user / user-auth-factor /
+	// time-series surfaces through the broker listener. The entries below
+	// mirror go-qrdb's OWN gRPC permission map (go-qrdb/pkg/auth/middleware/
+	// mapping.go grpcPermissions, and the (qrdb.v1.permission) method
+	// options) verbatim, so a permission grant authorizes the same verb
+	// identically on a direct qrdb node and through the broker.
 	//
 	// Scope: ONLY the families whose servicers buildQRDBRegisterOptions
-	// actually wires — barrier, backup, ceremony, credential, user, user-auth-factor
-	// — plus Health (public, above) and Status. Every other qrdb.v1 method
-	// (KV, lease, lock, index, timeseries, vector, ...) dispatches to
+	// actually wires — barrier, backup, ceremony, credential, user,
+	// user-auth-factor, timeseries — plus Health (public, above) and Status.
+	// Every other qrdb.v1 method (KV, lease, lock, index, vector, ...) dispatches to
 	// codes.Unimplemented server-side and stays default-denied here; the
 	// quicbaas-namespaced services are the canonical broker surface for
 	// those capabilities.
@@ -1029,6 +1030,20 @@ var grpcMethodPermissions = map[string]methodPermission{
 	// Health is public (see publicGRPCMethods). Status mirrors both qrdb's
 	// AdminStatus entry and the broker's own ClusterStatus mapping.
 	"/qrdb.v1.QRDBService/Status": {"admin", "status"},
+
+	// ---- qrdb.v1.QRDBService: time-series ----
+	// Each RPC carries the narrowest permission go-qrdb itself enforces, its
+	// (qrdb.v1.permission) method option in qrdbv1/qrdb.proto.
+	"/qrdb.v1.QRDBService/TSWrite":        {"timeseries", "write"},
+	"/qrdb.v1.QRDBService/TSWriteBatch":   {"timeseries", "write_batch"},
+	"/qrdb.v1.QRDBService/TSQuery":        {"timeseries", "query"},
+	"/qrdb.v1.QRDBService/TSAggregate":    {"timeseries", "aggregate"},
+	"/qrdb.v1.QRDBService/TSWritePoint":   {"timeseries", "write_point"},
+	"/qrdb.v1.QRDBService/TSRichQuery":    {"timeseries", "rich_query"},
+	"/qrdb.v1.QRDBService/TSDeleteSeries": {"timeseries", "delete_series"},
+	"/qrdb.v1.QRDBService/TSGetRetention": {"timeseries", "get_retention"},
+	"/qrdb.v1.QRDBService/TSSetRetention": {"timeseries", "set_retention"},
+	"/qrdb.v1.QRDBService/TSListMetrics":  {"timeseries", "list_metrics"},
 
 	// ---- qrdb.v1.QRDBService: system barrier lifecycle ----
 	"/qrdb.v1.QRDBService/BarrierInitialize":        {"seal", "bootstrap"},
