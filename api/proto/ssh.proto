@@ -173,6 +173,10 @@ message SSHSignDigestRequest {
     string owner  = 2;
     string name   = 3;
     bytes  digest = 4;
+    // algorithm is the SSH signature algorithm to sign with, e.g.
+    // rsa-sha2-256 or rsa-sha2-512 for an RSA key. Empty signs with the
+    // key's default algorithm.
+    string algorithm = 5;
 }
 
 message SSHKeyResponse {
