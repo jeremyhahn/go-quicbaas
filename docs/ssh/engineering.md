@@ -560,6 +560,13 @@ persistent byte stream no QuicBaaS transport carries. Tests:
 `sdk/go/client/ssh/client_dial_test.go` runs a real session against a
 loopback SSH server.
 
+The forward signer is an `ssh.AlgorithmSigner`, so an RSA key authenticates
+with rsa-sha2-256 or rsa-sha2-512 when the server asks for it, not with
+`ssh-rsa` (SHA-1). The chosen algorithm travels as `algorithm` on the sign
+request on every transport (`SSHSignDigestRequest.algorithm` on gRPC). The
+service refuses, as invalid argument, an algorithm that does not fit the key,
+or a SHA-2 algorithm that a remote go-xkms backend's signer cannot honour.
+
 `Close()` is a no-op: the transport belongs to the parent SDK client.
 
 ### Authorization
