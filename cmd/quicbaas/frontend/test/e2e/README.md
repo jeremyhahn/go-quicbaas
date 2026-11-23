@@ -47,6 +47,13 @@ test/e2e-coverage-matrix.test.ts fails when a route has no row.
 | `ceremony` | #/ceremony | detail, create | ceremony.spec.ts, rapid_nav_no_duplicate_keys.spec.ts, security_surfaces.spec.ts |
 | `bootstrap` | #/bootstrap | detail, create | bootstrap.spec.ts, rapid_nav_no_duplicate_keys.spec.ts, security_surfaces.spec.ts |
 | `ssh-keys` | #/ssh-keys, #/sshkeys | list, create, delete | rapid_nav_no_duplicate_keys.spec.ts, ssh_generate.spec.ts, ssh_keys.spec.ts |
+| `my-sessions` | #/my-sessions | list, detail, delete | none |
+| `attestation` | #/attestation | list, create, delete | none |
+| `oauth-apps` | #/oauth-apps | list, create, edit, delete | none |
+| `identity-providers` | #/identity-providers | list, create, edit, delete | none |
+| `policy-tester` | #/policy-tester | detail | none |
+| `impersonation` | #/impersonation | list, create, delete | none |
+| `iam-audit` | #/iam-audit | list, detail, delete | none |
 | `inference` | #/inference | list, create, error state | inference_no_provider.spec.ts, rapid_nav_no_duplicate_keys.spec.ts |
 | `projects` | #/projects | list, create, edit, delete | projects.spec.ts, ref_picker_secret_create.spec.ts, ref_picker_ssh_key.spec.ts, sidebar_nav.spec.ts |
 | `accounts` | #/accounts | list, create, delete | none |
@@ -54,6 +61,7 @@ test/e2e-coverage-matrix.test.ts fails when a route has no row.
 | `cluster` | #/cluster | detail | bug_regressions.spec.ts, light_theme_contrast.spec.ts |
 | `nodes` | #/nodes | list | nodes_view.spec.ts |
 | `backup` | #/backup | list | backup_view.spec.ts |
+| `connection` | #/connection | detail, edit, error state | connection_view.spec.ts |
 | `invite-activate` | #/invite/:tenant/:token | detail, error state | bootstrap_activate.spec.ts |
 | `not-found` | any unmatched hash | error state | bootstrap_activate.spec.ts |
 
@@ -67,6 +75,13 @@ test/e2e-coverage-matrix.test.ts fails when a route has no row.
 - `dynamic-secrets`
 - `accounts`
 - `attention`
+- `my-sessions`
+- `attestation`
+- `oauth-apps`
+- `identity-providers`
+- `policy-tester`
+- `impersonation`
+- `iam-audit`
 
 ## Mocked specs
 
