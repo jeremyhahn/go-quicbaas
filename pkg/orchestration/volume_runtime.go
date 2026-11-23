@@ -17,6 +17,10 @@ import (
 // lower-case letter or digit, so it cannot clash with a volume's mount point.
 const VolumeStateFile = ".quicbaas-attachments.json"
 
+// VolumeStateLockFile is the file in the staging dir a VolumeRuntime holds an
+// exclusive lock on, so one runtime at a time owns the dir's state file.
+const VolumeStateLockFile = ".quicbaas-attachments.lock"
+
 // VolumeRuntime is the node agent's launch path for workloads that declare
 // volumes. It wraps the node's ContainerRuntime: Run and RunInteractive
 // attach the spec's VolumeClaims (provisioning or growing them first), hand
@@ -50,6 +54,8 @@ type VolumeRuntime struct {
 	statePath string
 
 	mu sync.Mutex
+	// lock holds the staging dir's VolumeStateLockFile until Close.
+	lock *os.File
 	// attached maps a container's ID and its name to its record.
 	attached map[string]*volumeRecord
 	// pending holds volumes a failed launch's rollback could not release; they
@@ -87,6 +93,10 @@ var (
 // volumes an earlier run of the node left held from the staging dir's state
 // file: they stay owned until ReleaseRecovered releases them. A state file
 // that cannot be read is an error, so the node does not start blind.
+//
+// The runtime holds the staging dir exclusively, through a lock on its
+// VolumeStateLockFile, until Close or the process exits: a second runtime on
+// the same dir gets ErrVolumeStateLocked.
 func NewVolumeRuntime(inner ContainerRuntime, attacher *VolumeAttacher) (*VolumeRuntime, error) {
 	if inner == nil {
 		return nil, fmt.Errorf("%w: volume runtime: nil container runtime", ErrVolumeInvalidArgument)
@@ -94,15 +104,25 @@ func NewVolumeRuntime(inner ContainerRuntime, attacher *VolumeAttacher) (*Volume
 	if attacher == nil {
 		return nil, fmt.Errorf("%w: volume runtime: nil attacher", ErrVolumeInvalidArgument)
 	}
+	if err := os.MkdirAll(attacher.stagingDir, 0o700); err != nil {
+		return nil, fmt.Errorf("volume runtime: staging dir: %w", err)
+	}
+	lockPath := filepath.Join(attacher.stagingDir, VolumeStateLockFile)
+	lock, err := lockVolumeState(lockPath)
+	if err != nil {
+		return nil, fmt.Errorf("volume runtime: %s: %w", lockPath, err)
+	}
 	r := &VolumeRuntime{
 		ContainerRuntime: inner,
 		attacher:         attacher,
 		statePath:        filepath.Join(attacher.stagingDir, VolumeStateFile),
+		lock:             lock,
 		attached:         make(map[string]*volumeRecord),
 		owned:            make(map[string]AttachedVolume),
 	}
 	recovered, err := readVolumeState(r.statePath)
 	if err != nil {
+		_ = lock.Close()
 		return nil, fmt.Errorf("volume runtime: read %s: %w", r.statePath, err)
 	}
 	for _, v := range recovered {
@@ -110,6 +130,18 @@ func NewVolumeRuntime(inner ContainerRuntime, attacher *VolumeAttacher) (*Volume
 	}
 	r.recovered = recovered
 	return r, nil
+}
+
+// Close releases the staging dir's lock. It is idempotent.
+func (r *VolumeRuntime) Close() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.lock == nil {
+		return nil
+	}
+	err := r.lock.Close() // closing the only descriptor drops the flock
+	r.lock = nil
+	return err
 }
 
 func readVolumeState(path string) ([]AttachedVolume, error) {

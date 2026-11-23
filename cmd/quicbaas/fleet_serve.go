@@ -390,7 +390,7 @@ func buildFleetRuntime(cfg *fleet.Config, backends map[string]orchestration.Agen
 	// Workload volumes (go-quicbaas#1683): with a provider configured, every
 	// launch attaches the spec's go-blockstore volumes first. Outermost, so
 	// the volumes' bind mounts are what the launch measures.
-	containerRuntime, rtErr = fleet.WrapVolumeRuntime(cfg.Volumes, containerRuntime)
+	containerRuntime, rtErr = fleet.WrapVolumeRuntime(cfg.Volumes, cfg.WorkDir, containerRuntime)
 	if rtErr != nil {
 		return nil, rtErr
 	}

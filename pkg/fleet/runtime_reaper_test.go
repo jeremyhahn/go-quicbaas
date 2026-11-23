@@ -358,6 +358,9 @@ func TestRuntime_SweepReleasesRecoveredVolumes(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 
+	if err := before.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
 	att2, err := orchestration.NewVolumeAttacher(prov, "n", staging)
 	if err != nil {
 		t.Fatalf("NewVolumeAttacher: %v", err)

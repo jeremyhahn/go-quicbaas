@@ -4,13 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
-
-// DefaultVolumeStagingDir is where the node mounts filesystem volumes before
-// bind-mounting them into containers.
-const DefaultVolumeStagingDir = "/run/quicbaas/volumes"
 
 // VolumeConfig selects the go-blockstore provider the node agent attaches
 // workload volumes with.
@@ -29,7 +26,9 @@ type VolumeConfig struct {
 	NodeID string `json:"node_id,omitempty" yaml:"node_id,omitempty"`
 
 	// StagingDir is the absolute directory filesystem volumes are mounted
-	// under on the host. Empty means DefaultVolumeStagingDir.
+	// under on the host. Empty means `<work_dir>/volumes`. The provider name
+	// is appended in both cases, and one volume runtime holds the dir at a
+	// time.
 	StagingDir string `json:"staging_dir,omitempty" yaml:"staging_dir,omitempty"`
 }
 
@@ -46,8 +45,11 @@ var hostname = os.Hostname
 // volume provider is configured (a spec that claims volumes is then refused
 // by ContainerSpec.Validate), otherwise an orchestration.VolumeRuntime that
 // attaches each launch's volumes before inner runs it and releases them on
-// stop, remove and a failed start.
-func WrapVolumeRuntime(cfg VolumeConfig, inner orchestration.ContainerRuntime) (orchestration.ContainerRuntime, error) {
+// stop, remove and a failed start. Its staging dir is cfg.StagingDir, or
+// `<workDir>/volumes` when that is empty, with the provider name appended, so
+// daemons with their own work dirs never share attachment state; the
+// runtime holds the dir exclusively.
+func WrapVolumeRuntime(cfg VolumeConfig, workDir string, inner orchestration.ContainerRuntime) (orchestration.ContainerRuntime, error) {
 	if !cfg.Enabled() || inner == nil {
 		return inner, nil
 	}
@@ -75,10 +77,18 @@ func WrapVolumeRuntime(cfg VolumeConfig, inner orchestration.ContainerRuntime) (
 		}
 		node = h
 	}
-	staging := cfg.StagingDir
-	if staging == "" {
-		staging = DefaultVolumeStagingDir
+	base := cfg.StagingDir
+	if base == "" {
+		if workDir == "" {
+			return nil, fmt.Errorf("%w: fleet volumes: no staging_dir and no work dir", orchestration.ErrVolumeInvalidArgument)
+		}
+		abs, err := filepath.Abs(workDir)
+		if err != nil {
+			return nil, fmt.Errorf("fleet volumes: work dir: %w", err)
+		}
+		base = filepath.Join(abs, "volumes")
 	}
+	staging := filepath.Join(base, cfg.Provider)
 	settings := cfg.Settings
 	if cfg.Provider == "local" {
 		// The local provider refuses Attach for any node but its own, which it

@@ -2,6 +2,7 @@ package fleet
 
 import (
 	"errors"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -28,7 +29,7 @@ func stubVolumeProvider(t *testing.T, gotName *string) {
 
 func TestWrapVolumeRuntimeDisabledPassesThrough(t *testing.T) {
 	inner := &nopRuntime{}
-	got, err := WrapVolumeRuntime(VolumeConfig{}, inner)
+	got, err := WrapVolumeRuntime(VolumeConfig{}, t.TempDir(), inner)
 	if err != nil || got != inner {
 		t.Fatalf("WrapVolumeRuntime(disabled) = %v, %v; want inner, nil", got, err)
 	}
@@ -41,7 +42,7 @@ func TestWrapVolumeRuntimeWrapsWithDefaults(t *testing.T) {
 	hostname = func() (string, error) { return "node-7", nil }
 	t.Cleanup(func() { hostname = old })
 
-	got, err := WrapVolumeRuntime(VolumeConfig{Provider: "local"}, &nopRuntime{})
+	got, err := WrapVolumeRuntime(VolumeConfig{Provider: "local"}, t.TempDir(), &nopRuntime{})
 	if err != nil {
 		t.Fatalf("WrapVolumeRuntime: %v", err)
 	}
@@ -66,7 +67,7 @@ func TestWrapVolumeRuntimeRefusesDRBD(t *testing.T) {
 	hostname = func() (string, error) { return "node-7", nil }
 	t.Cleanup(func() { hostname = old })
 
-	got, err := WrapVolumeRuntime(VolumeConfig{Provider: "drbd"}, &nopRuntime{})
+	got, err := WrapVolumeRuntime(VolumeConfig{Provider: "drbd"}, t.TempDir(), &nopRuntime{})
 	if !errors.Is(err, orchestration.ErrVolumeUnsupported) {
 		t.Fatalf("WrapVolumeRuntime(drbd) = %v, %v; want ErrVolumeUnsupported", got, err)
 	}
@@ -78,16 +79,63 @@ func TestWrapVolumeRuntimeRefusesDRBD(t *testing.T) {
 	}
 }
 
+// TestWrapVolumeRuntimeScopesStagingToWorkDirAndProvider: two daemons with
+// their own work dirs never share a staging dir (and its attachment state),
+// and the provider name is appended to an explicit staging_dir too.
+func TestWrapVolumeRuntimeScopesStagingToWorkDirAndProvider(t *testing.T) {
+	var name string
+	stubVolumeProvider(t, &name)
+	cfg := VolumeConfig{Provider: "local", NodeID: "n"}
+	staging := func(c VolumeConfig, workDir string) string {
+		t.Helper()
+		got, err := WrapVolumeRuntime(c, workDir, &nopRuntime{})
+		if err != nil {
+			t.Fatalf("WrapVolumeRuntime: %v", err)
+		}
+		vr := got.(*orchestration.VolumeRuntime)
+		t.Cleanup(func() { _ = vr.Close() })
+		return vr.Attacher().StagingDir()
+	}
+	wa, wb := t.TempDir(), t.TempDir()
+	a, b := staging(cfg, wa), staging(cfg, wb)
+	if a == b {
+		t.Errorf("both daemons stage under %q", a)
+	}
+	if want := filepath.Join(wa, "volumes", "local"); a != want {
+		t.Errorf("staging = %q, want %q", a, want)
+	}
+	if want := filepath.Join(wb, "volumes", "local"); b != want {
+		t.Errorf("staging = %q, want %q", b, want)
+	}
+	explicit := t.TempDir()
+	c := cfg
+	c.StagingDir = explicit
+	if got, want := staging(c, t.TempDir()), filepath.Join(explicit, "local"); got != want {
+		t.Errorf("explicit staging = %q, want %q", got, want)
+	}
+}
+
+// TestWrapVolumeRuntimeNeedsAWorkDirOrStagingDir: with neither there is no
+// daemon-scoped place for the attachment state.
+func TestWrapVolumeRuntimeNeedsAWorkDirOrStagingDir(t *testing.T) {
+	var name string
+	stubVolumeProvider(t, &name)
+	_, err := WrapVolumeRuntime(VolumeConfig{Provider: "local", NodeID: "n"}, "", &nopRuntime{})
+	if !errors.Is(err, orchestration.ErrVolumeInvalidArgument) {
+		t.Fatalf("WrapVolumeRuntime(no dirs) = %v, want ErrVolumeInvalidArgument", err)
+	}
+}
+
 func TestWrapVolumeRuntimeRejectsBadConfig(t *testing.T) {
 	var name string
 	stubVolumeProvider(t, &name)
-	_, err := WrapVolumeRuntime(VolumeConfig{Provider: "local", NodeID: "n", StagingDir: "relative/dir"}, &nopRuntime{})
+	_, err := WrapVolumeRuntime(VolumeConfig{Provider: "local", NodeID: "n", StagingDir: "relative/dir"}, t.TempDir(), &nopRuntime{})
 	if !errors.Is(err, orchestration.ErrVolumeInvalidArgument) {
 		t.Errorf("relative staging dir: err = %v", err)
 	}
 
 	newVolumeProvider = orchestration.NewVolumeProvider
-	if _, err := WrapVolumeRuntime(VolumeConfig{Provider: "no-such-provider", NodeID: "n"}, &nopRuntime{}); err == nil {
+	if _, err := WrapVolumeRuntime(VolumeConfig{Provider: "no-such-provider", NodeID: "n"}, t.TempDir(), &nopRuntime{}); err == nil {
 		t.Error("unknown provider: err = nil")
 	}
 }
@@ -102,7 +150,7 @@ func TestWrapVolumeRuntimeNoHostName(t *testing.T) {
 		hostname = func() (string, error) { return "", errBoom }
 		t.Cleanup(func() { hostname = old })
 
-		_, err := WrapVolumeRuntime(VolumeConfig{Provider: "local"}, &nopRuntime{})
+		_, err := WrapVolumeRuntime(VolumeConfig{Provider: "local"}, t.TempDir(), &nopRuntime{})
 		if err == nil {
 			t.Fatal("WrapVolumeRuntime: want an error, got nil")
 		}
@@ -118,7 +166,7 @@ func TestWrapVolumeRuntimeNoHostName(t *testing.T) {
 		hostname = func() (string, error) { return "", nil }
 		t.Cleanup(func() { hostname = old })
 
-		_, err := WrapVolumeRuntime(VolumeConfig{Provider: "local"}, &nopRuntime{})
+		_, err := WrapVolumeRuntime(VolumeConfig{Provider: "local"}, t.TempDir(), &nopRuntime{})
 		if err == nil {
 			t.Fatal("WrapVolumeRuntime: want an error, got nil")
 		}
@@ -153,7 +201,7 @@ func TestWrapVolumeRuntimeNodeIDReachesLocalProvider(t *testing.T) {
 	stubVolumeProviderSettings(t, &settings)
 	stubHostname(t, "host-b")
 	cfgSettings := map[string]string{"x": "1"}
-	got, err := WrapVolumeRuntime(VolumeConfig{Provider: "local", NodeID: "fleet-a", Settings: cfgSettings}, &nopRuntime{})
+	got, err := WrapVolumeRuntime(VolumeConfig{Provider: "local", NodeID: "fleet-a", Settings: cfgSettings}, t.TempDir(), &nopRuntime{})
 	if err != nil {
 		t.Fatalf("WrapVolumeRuntime: %v", err)
 	}
@@ -171,7 +219,7 @@ func TestWrapVolumeRuntimeNodeIDReachesLocalProvider(t *testing.T) {
 func TestWrapVolumeRuntimeRejectsNodeIDMismatch(t *testing.T) {
 	var settings map[string]string
 	stubVolumeProviderSettings(t, &settings)
-	_, err := WrapVolumeRuntime(VolumeConfig{Provider: "local", NodeID: "a", Settings: map[string]string{"node_id": "b"}}, &nopRuntime{})
+	_, err := WrapVolumeRuntime(VolumeConfig{Provider: "local", NodeID: "a", Settings: map[string]string{"node_id": "b"}}, t.TempDir(), &nopRuntime{})
 	if !errors.Is(err, orchestration.ErrVolumeInvalidArgument) {
 		t.Fatalf("err = %v, want ErrVolumeInvalidArgument", err)
 	}
@@ -181,7 +229,7 @@ func TestWrapVolumeRuntimeTakesNodeIDFromSettings(t *testing.T) {
 	var settings map[string]string
 	stubVolumeProviderSettings(t, &settings)
 	stubHostname(t, "host-b")
-	got, err := WrapVolumeRuntime(VolumeConfig{Provider: "local", Settings: map[string]string{"node_id": "b"}}, &nopRuntime{})
+	got, err := WrapVolumeRuntime(VolumeConfig{Provider: "local", Settings: map[string]string{"node_id": "b"}}, t.TempDir(), &nopRuntime{})
 	if err != nil {
 		t.Fatalf("WrapVolumeRuntime: %v", err)
 	}

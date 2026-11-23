@@ -41,7 +41,7 @@ volumes:
   provider: local          # drbd is refused: launches do not promote yet
   settings: {}             # the provider's snake_case settings
   node_id: ""              # default: settings.node_id, then the host name; given to the local provider too
-  staging_dir: ""          # default: DefaultVolumeStagingDir
+  staging_dir: ""          # default: <work_dir>/volumes; the provider name is appended
 ```
 
 `fleet serve` wraps the node's container runtime in `VolumeRuntime`, the
@@ -73,7 +73,11 @@ The owner is recorded under both the container's name and its ID, so the
 reaper, which lists full IDs, releases a container launched by name. Ownership
 is also written to `.quicbaas-attachments.json` in the staging directory; after
 a restart the agent holds those volumes until its startup orphan sweep has
-removed the old containers, then releases them.
+removed the old containers, then releases them. The state file lives in the
+staging directory, which is scoped to the daemon's work dir and provider, and
+one volume runtime holds it exclusively (a lock on
+`.quicbaas-attachments.lock`): a second daemon given the same `staging_dir` is
+refused with `ErrVolumeStateLocked` at startup.
 
 Spawn requests are not volume launches: a sandboxed spawn whose
 `container_config` asks for a privilege class, a device or a volume is refused,

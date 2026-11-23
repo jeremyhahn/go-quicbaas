@@ -87,6 +87,10 @@ var (
 	// ErrVolumeInUse is returned when a launch claims a volume another
 	// container on this node holds: a volume has one owner at a time.
 	ErrVolumeInUse = errors.New("volume: held by another container on this node")
+
+	// ErrVolumeStateLocked is returned when another volume runtime holds the
+	// staging dir: one runtime owns a staging dir's attachment state.
+	ErrVolumeStateLocked = errors.New("volume: the staging dir's attachment state is held by another volume runtime")
 )
 
 // NewVolumeProvider constructs the named go-blockstore provider ("local", or
@@ -235,6 +239,9 @@ func (a *VolumeAttacher) Provider() VolumeProvider { return a.provider }
 
 // Node returns the node the attacher attaches to.
 func (a *VolumeAttacher) Node() VolumeNodeID { return a.node }
+
+// StagingDir returns the directory filesystem volumes are mounted under.
+func (a *VolumeAttacher) StagingDir() string { return a.stagingDir }
 
 // Ensure returns the ID of the claim's volume, provisioning it when it does not
 // exist and growing it when it is smaller than the claim.

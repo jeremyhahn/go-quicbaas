@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -80,6 +81,7 @@ func newTestVolumeRuntime(t *testing.T) (*VolumeRuntime, *launchRecorder, *fakeV
 	if err != nil {
 		t.Fatalf("NewVolumeRuntime: %v", err)
 	}
+	t.Cleanup(func() { _ = vr.Close() })
 	return vr, inner, prov, staging
 }
 
@@ -635,10 +637,14 @@ func TestVolumeRuntimeRecoversAttachmentsAfterRestart(t *testing.T) {
 		t.Fatalf("state = %+v, want data and logs", st)
 	}
 
+	if err := vr.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
 	restarted, err := NewVolumeRuntime(inner, vr.Attacher())
 	if err != nil {
 		t.Fatalf("NewVolumeRuntime after restart: %v", err)
 	}
+	t.Cleanup(func() { _ = restarted.Close() })
 	if _, err := restarted.Run(ctx, dataSpec("b")); !errors.Is(err, ErrVolumeInUse) {
 		t.Fatalf("Run of a recovered volume = %v, want ErrVolumeInUse", err)
 	}
@@ -672,5 +678,31 @@ func TestNewVolumeRuntimeRefusesAMalformedStateFile(t *testing.T) {
 	}
 	if _, err := NewVolumeRuntime(&launchRecorder{}, att); err == nil {
 		t.Fatal("NewVolumeRuntime = nil error, want the state file's")
+	}
+}
+
+// TestNewVolumeRuntimeRefusesALockedStagingDir: one runtime at a time owns a
+// staging dir's attachment state.
+func TestNewVolumeRuntimeRefusesALockedStagingDir(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the staging dir lock is a Linux flock")
+	}
+	first, _, _, _ := newTestVolumeRuntime(t)
+	second, err := NewVolumeRuntime(&launchRecorder{}, first.Attacher())
+	if !errors.Is(err, ErrVolumeStateLocked) || second != nil {
+		t.Fatalf("second NewVolumeRuntime = %v, %v; want nil, ErrVolumeStateLocked", second, err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatalf("second Close: %v", err)
+	}
+	third, err := NewVolumeRuntime(&launchRecorder{}, first.Attacher())
+	if err != nil {
+		t.Fatalf("NewVolumeRuntime after Close: %v", err)
+	}
+	if err := third.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
 	}
 }
