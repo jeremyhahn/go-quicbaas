@@ -321,6 +321,9 @@
           team_name: parent.team_name,
           description: item.description || undefined,
           metadata: { decomposed_from: parent.id },
+          // Keep the parent's project scope so claiming stays restricted to
+          // the project's fleet-node roles.
+          project_id: item.project_id || parent.project_id || undefined,
         };
         try {
           await client.orchestrator.createTask(req);

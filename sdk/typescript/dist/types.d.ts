@@ -1022,6 +1022,7 @@ export interface CreateTaskRequest {
     team_name: string;
     description?: string;
     metadata?: Record<string, string>;
+    project_id?: string;
     host_affinity?: string;
     host_affinity_strict?: boolean;
     gpu_required?: boolean;

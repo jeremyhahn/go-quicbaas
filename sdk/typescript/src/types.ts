@@ -1732,6 +1732,10 @@ export interface CreateTaskRequest {
   description?: string;
   metadata?: Record<string, string>;
 
+  // project_id scopes the task to a registered project: claiming it is then
+  // checked against the project's fleet-node roles. Empty means unscoped.
+  project_id?: string;
+
   // host_affinity pins the task to a specific agent name or hostname.
   // Empty means "any available agent".
   host_affinity?: string;
