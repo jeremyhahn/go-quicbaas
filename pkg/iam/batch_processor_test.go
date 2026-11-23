@@ -5,7 +5,6 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"errors"
-	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/poll"
 	"strconv"
 	"strings"
 	"sync"
@@ -13,6 +12,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/poll"
 )
 
 // Mock implementations for testing
