@@ -717,8 +717,9 @@ itself is go-xkms's: [TPM 2.0 — Architecture](../../../go-xkms/docs/tpm2/archi
 ### id_token Claims
 
 When a user authenticates, QuicBaaS issues an `id_token` (JWT). The example
-below is the ID token of a hardware-attested login; other ID tokens omit `acr`,
-`amr` and the attestation claims.
+below is the ID token of a hardware-attested login. An unattested PIV login
+(`iam.piv_login.allow_unattested`) reports `amr: ["mtls"]` and no `acr`; other
+ID tokens omit `acr`, `amr` and the attestation claims.
 
 ```json
 {

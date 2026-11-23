@@ -531,9 +531,11 @@ type IDTokenClaims struct {
 
 	// AMR is the Authentication Methods References (RFC 8176).
 	// Examples: ["webauthn","hwk"], ["smartcard","mfa"]
-	// It is set only on the ID token of a hardware-attested login
-	// (TokenService.IssueHardwareTokens, which also serves the PIV/mTLS and
-	// passkey logins). Every other ID token omits it (omitempty), and no
+	// It is set on the ID token of every login TokenService.IssueHardwareTokens
+	// issues (the PIV/mTLS and passkey logins), attested or not, and names
+	// what was proven: an unattested PIV login the operator admitted through
+	// iam.piv_login.allow_unattested reports ["mtls"], an attested one
+	// ["smartcard","mfa"]. Every other ID token omits it (omitempty), and no
 	// access token carries it, renewed ones included.
 	AMR []string `json:"amr,omitempty"`
 

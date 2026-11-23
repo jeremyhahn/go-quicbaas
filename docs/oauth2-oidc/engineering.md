@@ -180,8 +180,11 @@ the JWT:
 
 Both are omitted when the token carries no attestation. Absence means "no
 evidence", never hardware. The hardware-attested login's ID token reports `acr`
-(`urn:quicbaas:auth:hardware-attested`) and `amr` (the RFC 8176 methods). Other
-ID tokens and all access tokens omit both, and discovery lists both in
+(`urn:quicbaas:auth:hardware-attested`). The ID token of every PIV/mTLS or
+passkey login reports `amr` (the RFC 8176 methods), attested or not, naming what
+was proven: an unattested PIV login admitted through
+`iam.piv_login.allow_unattested` reports `["mtls"]` and no `acr`. Other ID
+tokens and all access tokens omit both, and discovery lists both in
 `claims_supported`. The userinfo endpoint never reports attestation: userinfo
 is profile data.
 

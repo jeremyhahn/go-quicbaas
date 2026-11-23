@@ -160,3 +160,41 @@ func TestAcrAmrContract_RenewedAccessTokenOmitsAcrAmr(t *testing.T) {
 	}
 	assertNoAcrAmr(t, "renewed access token", acrAmrContractPayload(t, tokens.AccessToken))
 }
+
+// An unattested PIV login, admitted through iam.piv_login.allow_unattested,
+// is issued through IssueHardwareTokens as well: its ID token names what was
+// proven -- amr ["mtls"] -- and carries no acr, and neither its access token
+// nor a renewed one carries either claim.
+func TestAcrAmrContract_UnattestedPIVLoginReportsMtlsAmr(t *testing.T) {
+	provider, storage := newSessionRefreshProvider(t, 15*time.Minute, 7*24*time.Hour)
+	ctx := context.Background()
+
+	user := seedCeremonyUser(t, storage, "acme", "piv-admin", []string{"admin"})
+
+	// The values the PIV login handler passes on its unattested path.
+	set, err := provider.tokenService.IssueHardwareTokens(ctx, HardwareTokenOptions{
+		User:        user,
+		AMR:         []string{"mtls"},
+		ACR:         "",
+		Attestation: UnattestedPIVCredential(),
+	})
+	if err != nil {
+		t.Fatalf("unattested PIV login was refused: %v", err)
+	}
+
+	id := acrAmrContractPayload(t, set.IDToken)
+	if _, ok := id["acr"]; ok {
+		t.Errorf("unattested ID token carries acr %v, want none", id["acr"])
+	}
+	amr, ok := id["amr"].([]any)
+	if !ok || len(amr) != 1 || amr[0] != "mtls" {
+		t.Errorf("unattested ID token amr = %v, want [mtls]", id["amr"])
+	}
+	assertNoAcrAmr(t, "unattested login access token", acrAmrContractPayload(t, set.AccessToken))
+
+	tokens, err := provider.RefreshSession(ctx, SessionRefreshRequest{RefreshToken: set.RefreshToken})
+	if err != nil {
+		t.Fatalf("RefreshSession: %v", err)
+	}
+	assertNoAcrAmr(t, "renewed unattested access token", acrAmrContractPayload(t, tokens.AccessToken))
+}

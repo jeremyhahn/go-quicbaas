@@ -1537,8 +1537,9 @@ re-authorize. The authentication context established at login is frozen into
 the stored record (`Token.Session`, a `TokenSessionContext`) and replayed onto
 every renewed access token: roles, groups, audience, profile claims,
 `auth_method`, `mfa_verified`, and the DPoP `cnf.jkt` binding. Access tokens
-never carry `acr` or `amr`: they are ID-token claims, set only by the
-hardware-attested login.
+never carry `acr` or `amr`: they are ID-token claims. `acr` is set only by the
+hardware-attested login; `amr` is set by every PIV/mTLS or passkey login,
+attested or not (an unattested PIV login reports `["mtls"]`).
 
 Authority changes take effect through the two mechanisms that already bound the
 session:
