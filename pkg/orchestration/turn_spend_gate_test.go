@@ -793,6 +793,100 @@ func TestPromptSession_RefusesTheNextTurnWhileAFailedUsageRecordIsPending(t *tes
 	}
 }
 
+// sharedFlakyLedger is a flakyLedger that keeps the wrapped ledger's
+// shared pending list, as the server's ledger does.
+type sharedFlakyLedger struct {
+	*flakyLedger
+	shared pendingConsumptionStore
+}
+
+func (l *sharedFlakyLedger) MarkPending(ctx context.Context, entry ConsumptionEntry) error {
+	return l.shared.MarkPending(ctx, entry)
+}
+
+func (l *sharedFlakyLedger) ClearPending(ctx context.Context, entry ConsumptionEntry) error {
+	return l.shared.ClearPending(ctx, entry)
+}
+
+func (l *sharedFlakyLedger) PendingFor(ctx context.Context, tenantID, accountID string) ([]ConsumptionEntry, error) {
+	return l.shared.PendingFor(ctx, tenantID, accountID)
+}
+
+func TestPromptSession_AFailedUsageRecordOnOneNodeRefusesTheTurnOnAnother(t *testing.T) {
+	harness := newTurnSpendHarness(t, true)
+	shared, ok := harness.ledger.(pendingConsumptionStore)
+	if !ok {
+		t.Fatalf("ledger %T keeps no shared pending list", harness.ledger)
+	}
+	ledgerA := &sharedFlakyLedger{flakyLedger: &flakyLedger{ConsumptionLedger: harness.ledger}, shared: shared}
+	harness.service.SetConsumptionLedger(ledgerA)
+	ctx := ContextWithTenant(context.Background(), "tenant-a")
+	sessionID := harness.spawn(t, ctx)
+	harness.spendAccount1(t, 950)
+
+	var turns atomic.Int32
+	harness.backend.beforePrompt = func() { turns.Add(1) }
+
+	ledgerA.failing.Store(true)
+	if err := harness.prompt(ctx, sessionID); err != nil {
+		t.Fatalf("turn through node a = %v, want it admitted under the cap", err)
+	}
+	marked, err := shared.PendingFor(ctx, "tenant-a", "acct-1")
+	if err != nil {
+		t.Fatalf("PendingFor: %v", err)
+	}
+	if len(marked) != 1 {
+		t.Fatalf("shared pending entries = %d, want 1 — node a's failed write is not visible to other nodes", len(marked))
+	}
+
+	nodeB := newTurnSpendNodeB(t, harness, NewAgentStore(harness.kv), sessionID)
+	ledgerB := &sharedFlakyLedger{flakyLedger: &flakyLedger{ConsumptionLedger: harness.ledger}, shared: shared}
+	ledgerB.failing.Store(true)
+	nodeB.SetConsumptionLedger(ledgerB)
+	t.Cleanup(func() {
+		harness.service.pendingLedger.stopDrainer()
+		nodeB.pendingLedger.stopDrainer()
+	})
+	promptThrough := func() error {
+		_, err := nodeB.PromptSession(ctx, &PromptSessionRequest{
+			SessionID: sessionID, Backend: "usage", ProjectID: "proj-1", Prompt: "do the thing",
+		})
+		return err
+	}
+
+	err = promptThrough()
+	var pending *ConsumptionPendingError
+	if !stderrors.As(err, &pending) {
+		t.Fatalf("turn through node b = %v, want a *ConsumptionPendingError — node b admitted the turn against 950 of the 1100 tokens spent", err)
+	}
+	if pending.AccountID != "acct-1" {
+		t.Errorf("refusal names account %q, want acct-1", pending.AccountID)
+	}
+	if got := turns.Load(); got != 1 {
+		t.Fatalf("backend ran %d turns, want 1 — the refused turn must not run", got)
+	}
+
+	// The quota plane recovers: node b's retry stores node a's entry, and
+	// the cap now sees 1100 of 1000.
+	ledgerA.failing.Store(false)
+	ledgerB.failing.Store(false)
+	err = promptThrough()
+	var exhausted *AccountQuotaExhaustedError
+	if !stderrors.As(err, &exhausted) {
+		t.Fatalf("turn through node b after the retry = %v, want an *AccountQuotaExhaustedError — node a's entry spent the account", err)
+	}
+	if got := turns.Load(); got != 1 {
+		t.Errorf("backend ran %d turns, want 1", got)
+	}
+	marked, err = shared.PendingFor(ctx, "tenant-a", "acct-1")
+	if err != nil {
+		t.Fatalf("PendingFor: %v", err)
+	}
+	if len(marked) != 0 {
+		t.Errorf("shared pending entries = %d, want 0 after node b's retry stored it", len(marked))
+	}
+}
+
 func TestPromptSession_APendingConsumptionRefusalIsRefundedNotCharged(t *testing.T) {
 	harness := newTurnSpendHarness(t, true)
 	ledger := &flakyLedger{ConsumptionLedger: harness.ledger}

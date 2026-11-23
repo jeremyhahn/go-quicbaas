@@ -32,6 +32,7 @@ const (
 	consumptionPlaneTenant  = "tenant-quota"
 	consumptionPlaneAgent   = "agent-quota"
 	consumptionPlaneChain   = "attribution"
+	consumptionPlanePending = "pending"
 )
 
 // consumptionChainDepth is how many chain levels a key carries: tenant,

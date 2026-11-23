@@ -984,6 +984,12 @@ orch/costtenant/{tenant}/{bucket}/{occurredAtNanos}/{entryID}             every 
 orch/costchain/{tenant}/{project}/{task}/{job}/{session}/{round}/{entryID}
 ```
 
+A pooled entry is also held at `orch/costpending/{tenant}/{account}/{entryID}`
+from before its ledger write until the ledger holds it. Every control-plane
+node shares that store, so a write that failed on one node is visible to all of
+them. A turn on any node retries its account's pending entries before the spend
+check, and is refused while any of them still fails.
+
 The **attribution plane** is the chain, so a roll-up at any level is a prefix
 scan of that level's subtree. The four **quota planes** are keyed by account,
 Agent, project and tenant, then by the moment consumption occurred. The hourly

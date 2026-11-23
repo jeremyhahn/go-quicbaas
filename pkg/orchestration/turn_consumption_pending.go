@@ -76,6 +76,8 @@ func (e *ConsumptionPendingError) Unwrap() error { return ErrConsumptionPending 
 // pendingConsumption holds the consumption entries whose ledger write
 // failed, until a retry stores them. Record is idempotent on the entry id,
 // so a retry after an ambiguous failure converges instead of double-charging.
+// This list is the node's own; the ledger's shared list
+// (account_ledger_pending.go) carries pooled entries across nodes.
 type pendingConsumption struct {
 	mu      sync.Mutex
 	entries []ConsumptionEntry
@@ -256,6 +258,15 @@ func (s *agentServiceImpl) recordLedgerEntry(ctx context.Context, entry Consumpt
 	s.pendingLedger.add(entry)
 	rctx, cancel := recordingContext(ctx)
 	defer cancel()
+	// The shared marker makes the entry visible to every node over the
+	// ledger's store, not only this one, until the ledger holds it.
+	shared := s.sharedPending()
+	if shared != nil && entry.AccountID != "" {
+		if err := shared.MarkPending(rctx, entry); err != nil {
+			s.logger.Warnf("orchestration: pending consumption marker not stored; other nodes cannot see this entry until the ledger holds it: session=%s account=%s entry=%s err=%s",
+				entry.SessionID, entry.AccountID, entry.EntryID, err.Error())
+		}
+	}
 	if err := s.ledger.Record(rctx, entry); err != nil {
 		s.startPendingDrain()
 		s.logger.Warnf(
@@ -265,7 +276,49 @@ func (s *agentServiceImpl) recordLedgerEntry(ctx context.Context, entry Consumpt
 	}
 	// Another session's retry may have stored and removed it meanwhile; that
 	// retry counted it, so this write reports it only when it removed it.
+	s.clearSharedPending(rctx, entry)
 	return s.pendingLedger.remove(entry.EntryID)
+}
+
+// sharedPending is the ledger's shared pending list, or nil when the ledger
+// keeps none.
+func (s *agentServiceImpl) sharedPending() pendingConsumptionStore {
+	shared, _ := s.ledger.(pendingConsumptionStore)
+	return shared
+}
+
+// clearSharedPending removes entry's shared pending marker once the ledger
+// holds it. It does nothing without a shared list or for an unpooled entry.
+// A marker left behind by a failed clear is retried, which is idempotent on
+// the entry id, and cleared by the next turn on its account on any node.
+func (s *agentServiceImpl) clearSharedPending(ctx context.Context, entry ConsumptionEntry) {
+	shared := s.sharedPending()
+	if shared == nil || entry.AccountID == "" {
+		return
+	}
+	if err := shared.ClearPending(ctx, entry); err != nil {
+		s.logger.Warnf("orchestration: pending consumption marker not cleared; the next turn on its account retries it: session=%s account=%s entry=%s err=%s",
+			entry.SessionID, entry.AccountID, entry.EntryID, err.Error())
+	}
+}
+
+// mergePending appends each shared entry whose id is not already in local.
+func mergePending(local, shared []ConsumptionEntry) []ConsumptionEntry {
+	if len(shared) == 0 {
+		return local
+	}
+	seen := make(map[string]struct{}, len(local))
+	for _, entry := range local {
+		seen[entry.EntryID] = struct{}{}
+	}
+	for _, entry := range shared {
+		if _, ok := seen[entry.EntryID]; ok {
+			continue
+		}
+		seen[entry.EntryID] = struct{}{}
+		local = append(local, entry)
+	}
+	return local
 }
 
 // flushPendingConsumption retries every pending entry of sessionID and of
@@ -284,6 +337,13 @@ func (s *agentServiceImpl) recordLedgerEntry(ctx context.Context, entry Consumpt
 // so it ends with the caller: a cancelled or expired ctx stops it, leaves the
 // entries it did not store pending for the drainer, and is returned as
 // ctx.Err().
+//
+// The account's entries on the ledger's shared pending list, written by any
+// control-plane node, are retried too, so a write that failed on another node
+// refuses this node's turn until the ledger holds it. A shared list that
+// cannot be read refuses the turn as a *SpendCheckUnavailableError. A shared
+// entry this node's retry stores is counted by the node that wrote it,
+// because only a local removal counts.
 func (s *agentServiceImpl) flushPendingConsumption(ctx context.Context, sessionID string) error {
 	if s.ledger == nil || sessionID == "" {
 		return nil
@@ -308,6 +368,13 @@ func (s *agentServiceImpl) flushPendingConsumption(ctx context.Context, sessionI
 		}
 	}
 	pending := s.pendingLedger.matching(tenantID, sessionID, accountID)
+	if shared := s.sharedPending(); shared != nil && accountID != "" {
+		others, err := shared.PendingFor(ctx, tenantID, accountID)
+		if err != nil {
+			return spendCheckFault(ctx, sessionID, accountID, err)
+		}
+		pending = mergePending(pending, others)
+	}
 	if len(pending) == 0 {
 		return nil
 	}
@@ -342,13 +409,14 @@ func (s *agentServiceImpl) retryPendingEntries(ctx context.Context, entries []Co
 			ContextWithTenant(tenantctx.WithTenant(ctx, entry.TenantID), entry.TenantID),
 			consumptionRecordTimeout)
 		err := s.ledger.Record(ectx, entry)
-		cancel()
 		var conflict *ConsumptionConflictError
 		switch {
 		case err == nil:
 			// Counted once the ledger holds it, as recordConsumption does,
 			// and only by the retry that removes it: two sessions retrying
-			// one entry count it once.
+			// one entry count it once. A shared entry another node wrote is
+			// not on this node's list, so its writer counts it.
+			s.clearSharedPending(ectx, entry)
 			if s.pendingLedger.remove(entry.EntryID) {
 				countFactoryTurn(metrics.GetMetrics(), entry, s.prices.Lists(entry.TenantID, entry.Engine, entry.Model))
 			}
@@ -356,6 +424,7 @@ func (s *agentServiceImpl) retryPendingEntries(ctx context.Context, entries []Co
 			// The id is already stored with a different record: the
 			// ledger holds a consumption for it, and retrying cannot
 			// change that. Logged, not kept.
+			s.clearSharedPending(ectx, entry)
 			s.pendingLedger.remove(entry.EntryID)
 			s.logger.Warnf(
 				"orchestration: pending consumption conflicts with the stored entry; dropped: session=%s entry=%s err=%s",
@@ -365,6 +434,7 @@ func (s *agentServiceImpl) retryPendingEntries(ctx context.Context, entries []Co
 			lastErr = err
 			failed++
 		}
+		cancel()
 	}
 	return failed, lastErr
 }
