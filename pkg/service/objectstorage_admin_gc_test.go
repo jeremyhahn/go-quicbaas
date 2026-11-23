@@ -16,6 +16,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	stderrors "errors"
 	"sync"
@@ -35,32 +36,78 @@ import (
 // runGCOperation Deep Path Tests
 // =============================================================================
 
-func TestRunGCOperation_CompletesSuccessfully(t *testing.T) {
+// gcFixture wires a backend storage and catalog entries for runGCOperation
+// tests: ListByStore lists every entry key in catalogMgr.
+func gcFixture(t *testing.T, backends ...string) (*objectStorageAdminService, *adminMockCatalogManager, map[string]*objstoreMockStorage) {
+	t.Helper()
 	svc, catalogMgr, backendMgr := createTestAdminService(t)
-
-	// Add backends
-	backendMgr.AddBackend("backend-1", nil, &catalog.BackendConfig{Type: "memory"})
-	backendMgr.AddBackend("backend-2", nil, &catalog.BackendConfig{Type: "memory"})
-
-	// Set store usage
-	catalogMgr.getStoreUsageFn = func(ctx context.Context, store string) (*catalog.StoreUsage, error) {
-		return &catalog.StoreUsage{Store: store, ObjectCount: 50, TotalSize: 5000}, nil
+	stores := make(map[string]*objstoreMockStorage, len(backends))
+	for _, name := range backends {
+		st := newObjstoreMockStorage()
+		stores[name] = st
+		backendMgr.AddBackend(name, st, &catalog.BackendConfig{Type: "memory"})
 	}
+	catalogMgr.listByStoreFn = func(ctx context.Context, store string, opts *catalog.ListOptions) (*catalog.ListResult, error) {
+		catalogMgr.mu.RLock()
+		defer catalogMgr.mu.RUnlock()
+		keys := make([]string, 0, len(catalogMgr.entries))
+		for key := range catalogMgr.entries {
+			keys = append(keys, key)
+		}
+		return &catalog.ListResult{Keys: keys}, nil
+	}
+	return svc, catalogMgr, stores
+}
 
-	op := &GCOperation{
-		ID:        "gc-test-001",
-		Backends:  []string{"backend-1", "backend-2"},
+// gcPutObject stores an object of size bytes on st, dated at.
+func gcPutObject(t *testing.T, st *objstoreMockStorage, ref string, size int, at time.Time) {
+	t.Helper()
+	require.NoError(t, st.PutWithContext(context.Background(), ref, bytes.NewReader(make([]byte, size))))
+	st.setLastModified(ref, at)
+}
+
+// gcCatalogRef records a catalog entry whose primary location is ref on store.
+func gcCatalogRef(catalogMgr *adminMockCatalogManager, key, store, ref string) *catalog.CatalogEntry {
+	entry := catalog.NewCatalogEntry(key, 1, nil)
+	entry.PrimaryStore = catalog.StoreLocation{Store: store, ObjectRef: ref}
+	catalogMgr.mu.Lock()
+	catalogMgr.entries[key] = entry
+	catalogMgr.mu.Unlock()
+	return entry
+}
+
+func gcOp(id string, backends ...string) *GCOperation {
+	return &GCOperation{
+		ID:        id,
+		Backends:  backends,
 		Status:    GCStatusRunning,
-		StartedAt: 1000000,
+		StartedAt: time.Now().UnixNano(),
 	}
+}
 
-	// Run synchronously
+func gcHas(st *objstoreMockStorage, ref string) bool {
+	ok, _ := st.Exists(context.Background(), ref)
+	return ok
+}
+
+func TestRunGCOperation_CompletesSuccessfully(t *testing.T) {
+	svc, catalogMgr, stores := gcFixture(t, "backend-1", "backend-2")
+	old := time.Now().Add(-2 * time.Hour)
+	gcPutObject(t, stores["backend-1"], "ref-1", 10, old)
+	gcPutObject(t, stores["backend-2"], "ref-2", 10, old)
+	gcCatalogRef(catalogMgr, "a.txt", "backend-1", "ref-1")
+	gcCatalogRef(catalogMgr, "b.txt", "backend-2", "ref-2")
+
+	op := gcOp("gc-test-001", "backend-1", "backend-2")
 	svc.runGCOperation(tenantctx.WithSystem(context.Background()), op)
 
 	assert.Equal(t, GCStatusCompleted, op.Status)
 	assert.NotZero(t, op.CompletedAt)
-	assert.Equal(t, int64(100), op.ObjectsScanned) // 50 per backend
+	assert.Equal(t, int64(2), op.ObjectsScanned) // one listed object per backend
+	assert.Equal(t, int64(0), op.ObjectsDeleted) // both are referenced
 	assert.Empty(t, op.Error)
+	assert.True(t, gcHas(stores["backend-1"], "ref-1"))
+	assert.True(t, gcHas(stores["backend-2"], "ref-2"))
 }
 
 func TestRunGCOperation_ContextCancelled(t *testing.T) {
@@ -86,32 +133,155 @@ func TestRunGCOperation_ContextCancelled(t *testing.T) {
 	assert.Contains(t, op.Error, "context canceled")
 }
 
-func TestRunGCOperation_StoreUsageError(t *testing.T) {
-	svc, catalogMgr, backendMgr := createTestAdminService(t)
-
-	backendMgr.AddBackend("backend-1", nil, &catalog.BackendConfig{Type: "memory"})
-	backendMgr.AddBackend("backend-2", nil, &catalog.BackendConfig{Type: "memory"})
-
-	// First backend fails, second succeeds
-	catalogMgr.getStoreUsageFn = func(ctx context.Context, store string) (*catalog.StoreUsage, error) {
-		if store == "backend-1" {
-			return nil, stderrors.New("store usage unavailable")
-		}
-		return &catalog.StoreUsage{Store: store, ObjectCount: 25, TotalSize: 2500}, nil
+func TestRunGCOperation_BackendListErrorFailsTheOperation(t *testing.T) {
+	svc, _, stores := gcFixture(t, "backend-1", "backend-2")
+	stores["backend-1"].listWithContextFn = func(ctx context.Context, prefix string) ([]string, error) {
+		return nil, stderrors.New("list unavailable")
 	}
+	gcPutObject(t, stores["backend-2"], "orphan", 10, time.Now().Add(-2*time.Hour))
 
-	op := &GCOperation{
-		ID:        "gc-partial-001",
-		Backends:  []string{"backend-1", "backend-2"},
-		Status:    GCStatusRunning,
-		StartedAt: 1000000,
-	}
-
+	op := gcOp("gc-partial-001", "backend-1", "backend-2")
 	svc.runGCOperation(tenantctx.WithSystem(context.Background()), op)
 
-	// Should complete despite one backend failing
-	assert.Equal(t, GCStatusCompleted, op.Status)
-	assert.Equal(t, int64(25), op.ObjectsScanned) // Only second backend counted
+	// A backend that cannot be listed fails the operation: it never reports
+	// a completed collection it did not do.
+	assert.Equal(t, GCStatusFailed, op.Status)
+	assert.NotZero(t, op.CompletedAt)
+	assert.Contains(t, op.Error, "backend-1")
+	assert.Contains(t, op.Error, "list unavailable")
+	assert.True(t, gcHas(stores["backend-2"], "orphan"))
+}
+
+func TestRunGCOperation_MissingBackendFailsTheOperation(t *testing.T) {
+	svc, _, _ := gcFixture(t)
+
+	op := gcOp("gc-missing-001", "nope")
+	svc.runGCOperation(tenantctx.WithSystem(context.Background()), op)
+
+	assert.Equal(t, GCStatusFailed, op.Status)
+	assert.Contains(t, op.Error, "nope")
+	assert.NotZero(t, op.CompletedAt)
+}
+
+func TestRunGCOperation_DeletesOnlyOldOrphans(t *testing.T) {
+	svc, catalogMgr, stores := gcFixture(t, "backend-1")
+	st := stores["backend-1"]
+	gcPutObject(t, st, "ref-live", 10, time.Now().Add(-3*time.Hour))
+	gcPutObject(t, st, "ref-old-orphan", 25, time.Now().Add(-3*time.Hour))
+	gcPutObject(t, st, "ref-young-orphan", 40, time.Now().Add(-10*time.Minute))
+	gcCatalogRef(catalogMgr, "live.txt", "backend-1", "ref-live")
+
+	op := gcOp("gc-orphans-001", "backend-1")
+	svc.runGCOperation(tenantctx.WithSystem(context.Background()), op)
+
+	require.Equal(t, GCStatusCompleted, op.Status, op.Error)
+	assert.Equal(t, int64(3), op.ObjectsScanned)
+	assert.Equal(t, int64(1), op.ObjectsDeleted)
+	assert.Equal(t, int64(25), op.BytesReclaimed)
+	assert.False(t, gcHas(st, "ref-old-orphan"))
+	assert.True(t, gcHas(st, "ref-live"))
+	assert.True(t, gcHas(st, "ref-young-orphan"))
+}
+
+func TestRunGCOperation_DryRunDeletesNothing(t *testing.T) {
+	svc, catalogMgr, stores := gcFixture(t, "backend-1")
+	st := stores["backend-1"]
+	gcPutObject(t, st, "ref-live", 10, time.Now().Add(-3*time.Hour))
+	gcPutObject(t, st, "ref-old-orphan", 25, time.Now().Add(-3*time.Hour))
+	gcPutObject(t, st, "ref-young-orphan", 40, time.Now().Add(-10*time.Minute))
+	gcCatalogRef(catalogMgr, "live.txt", "backend-1", "ref-live")
+
+	op := gcOp("gc-dry-001", "backend-1")
+	op.DryRun = true
+	svc.runGCOperation(tenantctx.WithSystem(context.Background()), op)
+
+	require.Equal(t, GCStatusCompleted, op.Status, op.Error)
+	assert.Equal(t, int64(3), op.ObjectsScanned)
+	assert.Equal(t, int64(1), op.ObjectsDeleted)
+	assert.Equal(t, int64(25), op.BytesReclaimed)
+	assert.True(t, gcHas(st, "ref-live"))
+	assert.True(t, gcHas(st, "ref-old-orphan"))
+	assert.True(t, gcHas(st, "ref-young-orphan"))
+}
+
+func TestRunGCOperation_AggressiveUsesTheShortGrace(t *testing.T) {
+	svc, _, stores := gcFixture(t, "backend-1")
+	st := stores["backend-1"]
+	gcPutObject(t, st, "ref-ten-minutes", 10, time.Now().Add(-10*time.Minute))
+	gcPutObject(t, st, "ref-one-minute", 10, time.Now().Add(-time.Minute))
+
+	op := gcOp("gc-aggr-001", "backend-1")
+	op.Aggressive = true
+	svc.runGCOperation(tenantctx.WithSystem(context.Background()), op)
+
+	require.Equal(t, GCStatusCompleted, op.Status, op.Error)
+	assert.Equal(t, int64(1), op.ObjectsDeleted)
+	assert.False(t, gcHas(st, "ref-ten-minutes"))
+	assert.True(t, gcHas(st, "ref-one-minute"))
+
+	// The same ten-minute-old orphan survives a normal run.
+	gcPutObject(t, st, "ref-ten-minutes", 10, time.Now().Add(-10*time.Minute))
+	op2 := gcOp("gc-aggr-002", "backend-1")
+	svc.runGCOperation(tenantctx.WithSystem(context.Background()), op2)
+	require.Equal(t, GCStatusCompleted, op2.Status, op2.Error)
+	assert.Equal(t, int64(0), op2.ObjectsDeleted)
+	assert.True(t, gcHas(st, "ref-ten-minutes"))
+}
+
+func TestRunGCOperation_UndatableOrphanIsKept(t *testing.T) {
+	svc, _, stores := gcFixture(t, "backend-1")
+	st := stores["backend-1"]
+	// No LastModified: the mock reports a zero time.
+	require.NoError(t, st.PutWithContext(context.Background(), "ref-undated", bytes.NewReader([]byte("x"))))
+
+	op := gcOp("gc-undated-001", "backend-1")
+	op.Aggressive = true
+	svc.runGCOperation(tenantctx.WithSystem(context.Background()), op)
+
+	require.Equal(t, GCStatusCompleted, op.Status, op.Error)
+	assert.Equal(t, int64(1), op.ObjectsScanned)
+	assert.Equal(t, int64(0), op.ObjectsDeleted)
+	assert.True(t, gcHas(st, "ref-undated"))
+}
+
+func TestRunGCOperation_ReplicaLocationIsReferenced(t *testing.T) {
+	svc, catalogMgr, stores := gcFixture(t, "backend-1", "backend-2")
+	old := time.Now().Add(-3 * time.Hour)
+	gcPutObject(t, stores["backend-1"], "ref-primary", 10, old)
+	gcPutObject(t, stores["backend-2"], "ref-replica", 10, old)
+	entry := gcCatalogRef(catalogMgr, "replicated.txt", "backend-1", "ref-primary")
+	entry.Replicas = []catalog.StoreLocation{{Store: "backend-2", ObjectRef: "ref-replica"}}
+
+	op := gcOp("gc-replica-001", "backend-1", "backend-2")
+	svc.runGCOperation(tenantctx.WithSystem(context.Background()), op)
+
+	require.Equal(t, GCStatusCompleted, op.Status, op.Error)
+	assert.Equal(t, int64(0), op.ObjectsDeleted)
+	assert.True(t, gcHas(stores["backend-1"], "ref-primary"))
+	assert.True(t, gcHas(stores["backend-2"], "ref-replica"))
+}
+
+func TestRunGCOperation_CatalogPagesAreFollowed(t *testing.T) {
+	svc, catalogMgr, stores := gcFixture(t, "backend-1")
+	st := stores["backend-1"]
+	old := time.Now().Add(-3 * time.Hour)
+	gcPutObject(t, st, "ref-page-1", 10, old)
+	gcPutObject(t, st, "ref-page-2", 10, old)
+	gcCatalogRef(catalogMgr, "p1.txt", "backend-1", "ref-page-1")
+	gcCatalogRef(catalogMgr, "p2.txt", "backend-1", "ref-page-2")
+	catalogMgr.listByStoreFn = func(ctx context.Context, store string, opts *catalog.ListOptions) (*catalog.ListResult, error) {
+		if opts.Cursor == "" {
+			return &catalog.ListResult{Keys: []string{"p1.txt"}, HasMore: true, NextCursor: "next"}, nil
+		}
+		return &catalog.ListResult{Keys: []string{"p2.txt"}}, nil
+	}
+
+	op := gcOp("gc-pages-001", "backend-1")
+	svc.runGCOperation(tenantctx.WithSystem(context.Background()), op)
+
+	require.Equal(t, GCStatusCompleted, op.Status, op.Error)
+	assert.Equal(t, int64(0), op.ObjectsDeleted)
+	assert.True(t, gcHas(st, "ref-page-2"))
 }
 
 func TestRunGCOperation_EmptyBackendList(t *testing.T) {

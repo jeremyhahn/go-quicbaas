@@ -176,6 +176,7 @@ type adminMockCatalogManager struct {
 
 	getFn           func(ctx context.Context, key string) (*catalog.CatalogEntry, error)
 	getStoreUsageFn func(ctx context.Context, store string) (*catalog.StoreUsage, error)
+	listByStoreFn   func(ctx context.Context, store string, opts *catalog.ListOptions) (*catalog.ListResult, error)
 }
 
 func newAdminMockCatalogManager() *adminMockCatalogManager {
@@ -249,6 +250,9 @@ func (m *adminMockCatalogManager) UpdateLocationStatus(ctx context.Context, key,
 }
 
 func (m *adminMockCatalogManager) ListByStore(ctx context.Context, store string, opts *catalog.ListOptions) (*catalog.ListResult, error) {
+	if m.listByStoreFn != nil {
+		return m.listByStoreFn(ctx, store, opts)
+	}
 	return &catalog.ListResult{Keys: []string{}}, nil
 }
 

@@ -430,10 +430,15 @@ type GCOperation struct {
 	// ID is the operation ID.
 	ID string
 
+	// TenantID is the tenant that started the operation ("" for the system
+	// scope). Only that tenant and the system scope can read its progress.
+	TenantID string
+
 	// Backends is the list of backends being processed.
 	Backends []string
 
-	// DryRun indicates if this is a dry run.
+	// DryRun reports what would be deleted: ObjectsDeleted and
+	// BytesReclaimed count the collectable orphans, and nothing is deleted.
 	DryRun bool
 
 	// Aggressive indicates if aggressive mode is enabled.
@@ -445,10 +450,12 @@ type GCOperation struct {
 	// ObjectsScanned is the count of scanned objects.
 	ObjectsScanned int64
 
-	// ObjectsDeleted is the count of deleted objects.
+	// ObjectsDeleted is the count of deleted orphans (in a dry run, of the
+	// orphans that would be deleted).
 	ObjectsDeleted int64
 
-	// BytesReclaimed is the storage reclaimed.
+	// BytesReclaimed is the storage reclaimed (in a dry run, the storage that
+	// would be reclaimed).
 	BytesReclaimed int64
 
 	// StartedAt is when the operation started (Unix nanoseconds).

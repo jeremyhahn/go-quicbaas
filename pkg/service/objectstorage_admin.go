@@ -637,7 +637,8 @@ func (s *objectStorageAdminService) RunGarbageCollection(ctx context.Context, re
 		return nil, err
 	}
 
-	if _, err := prepareTenantContext(ctx); err != nil {
+	tenantID, err := prepareTenantContext(ctx)
+	if err != nil {
 		return nil, err
 	}
 
@@ -656,6 +657,7 @@ func (s *objectStorageAdminService) RunGarbageCollection(ctx context.Context, re
 
 	gcOp := &GCOperation{
 		ID:         opID,
+		TenantID:   tenantID,
 		Backends:   backends,
 		DryRun:     req.DryRun,
 		Aggressive: req.Aggressive,
@@ -686,7 +688,18 @@ func (s *objectStorageAdminService) RunGarbageCollection(ctx context.Context, re
 	}, nil
 }
 
-// runGCOperation performs the actual garbage collection.
+// Grace windows for garbage collection. An orphaned backend object is
+// collected only if it was last modified at least this long before the
+// operation started, so a PutObject still between its backend write and its
+// catalog write is never collected.
+const (
+	gcOrphanGrace           = time.Hour
+	gcOrphanGraceAggressive = 5 * time.Minute
+)
+
+// runGCOperation collects orphaned objects on each of op's backends in
+// order: objects no catalog entry references and that are older than the
+// grace window. The first backend or catalog error fails the operation.
 func (s *objectStorageAdminService) runGCOperation(ctx context.Context, op *GCOperation) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -698,39 +711,36 @@ func (s *objectStorageAdminService) runGCOperation(ctx context.Context, op *GCOp
 		}
 	}()
 
+	fail := func(msg string) {
+		s.mu.Lock()
+		op.Status = GCStatusFailed
+		op.Error = msg
+		op.CompletedAt = time.Now().UnixNano()
+		s.mu.Unlock()
+		s.logger.WithFields(map[string]interface{}{
+			"operation_id": op.ID,
+			"error":        msg,
+		}).Error("garbage collection failed")
+	}
+
+	grace := gcOrphanGrace
+	if op.Aggressive {
+		grace = gcOrphanGraceAggressive
+	}
+	cutoff := time.Unix(0, op.StartedAt).Add(-grace)
+
 	for _, backendName := range op.Backends {
 		select {
 		case <-ctx.Done():
-			s.mu.Lock()
-			op.Status = GCStatusFailed
-			op.Error = ctx.Err().Error()
-			op.CompletedAt = time.Now().UnixNano()
-			s.mu.Unlock()
+			fail(ctx.Err().Error())
 			return
 		default:
 		}
 
-		// Get objects in this backend that might be orphaned
-		storeUsage, err := s.catalogMgr.GetStoreUsage(ctx, backendName)
-		if err != nil {
-			continue
+		if err := s.collectBackendOrphans(ctx, op, backendName, cutoff); err != nil {
+			fail(err.Error())
+			return
 		}
-
-		s.mu.Lock()
-		op.ObjectsScanned += storeUsage.ObjectCount
-		s.mu.Unlock()
-
-		// In a real implementation, this would:
-		// 1. List all objects in the backend
-		// 2. Check each object against the catalog
-		// 3. Delete orphaned objects (objects in backend but not in catalog)
-		// 4. Track statistics
-
-		s.logger.WithFields(map[string]interface{}{
-			"operation_id": op.ID,
-			"backend":      backendName,
-			"scanned":      storeUsage.ObjectCount,
-		}).Debug("processed backend for GC")
 	}
 
 	s.mu.Lock()
@@ -744,7 +754,106 @@ func (s *objectStorageAdminService) runGCOperation(ctx context.Context, op *GCOp
 		"objects_scanned": scanned,
 		"objects_deleted": deleted,
 		"bytes_reclaimed": reclaimed,
+		"dry_run":         op.DryRun,
 	}).Info("garbage collection completed")
+}
+
+// collectBackendOrphans deletes (or, in a dry run, counts) the objects in one
+// backend that no catalog entry references and that were last modified before
+// cutoff. The backend is listed before the catalog is read: PutObject writes
+// the backend before the catalog, so a ref listed before its entry exists is
+// young and protected by the grace window. An object whose age cannot be read
+// is never deleted.
+func (s *objectStorageAdminService) collectBackendOrphans(ctx context.Context, op *GCOperation, backendName string, cutoff time.Time) error {
+	storage, err := s.backendMgr.GetBackend(backendName)
+	if err != nil {
+		return fmt.Errorf("backend %s: %w", backendName, err)
+	}
+	if storage == nil {
+		return fmt.Errorf("backend %s: no storage", backendName)
+	}
+
+	refs, err := storage.ListWithContext(ctx, "")
+	if err != nil {
+		return fmt.Errorf("backend %s: list objects: %w", backendName, err)
+	}
+
+	referenced, err := s.referencedRefs(ctx, backendName)
+	if err != nil {
+		return fmt.Errorf("backend %s: %w", backendName, err)
+	}
+
+	s.mu.Lock()
+	op.ObjectsScanned += int64(len(refs))
+	s.mu.Unlock()
+
+	var deleted int64
+	for _, ref := range refs {
+		if _, ok := referenced[ref]; ok {
+			continue
+		}
+		meta, err := storage.GetMetadata(ctx, ref)
+		if err != nil || meta == nil || meta.LastModified.IsZero() {
+			continue
+		}
+		if !meta.LastModified.Before(cutoff) {
+			continue
+		}
+		if !op.DryRun {
+			if err := storage.DeleteWithContext(ctx, ref); err != nil {
+				return fmt.Errorf("backend %s: delete orphan %s: %w", backendName, ref, err)
+			}
+		}
+		deleted++
+		s.mu.Lock()
+		op.ObjectsDeleted++
+		op.BytesReclaimed += meta.Size
+		s.mu.Unlock()
+	}
+
+	s.logger.WithFields(map[string]interface{}{
+		"operation_id": op.ID,
+		"backend":      backendName,
+		"scanned":      len(refs),
+		"orphans":      deleted,
+		"dry_run":      op.DryRun,
+	}).Debug("processed backend for GC")
+	return nil
+}
+
+// referencedRefs returns the set of object refs that catalog entries locate
+// on the named backend, primary and replica locations alike.
+func (s *objectStorageAdminService) referencedRefs(ctx context.Context, backendName string) (map[string]struct{}, error) {
+	referenced := make(map[string]struct{})
+	cursor := ""
+	for {
+		page, err := s.catalogMgr.ListByStore(ctx, backendName, &catalog.ListOptions{Limit: 1000, Cursor: cursor})
+		if err != nil {
+			return nil, fmt.Errorf("list catalog entries: %w", err)
+		}
+		if page == nil {
+			return referenced, nil
+		}
+		for _, key := range page.Keys {
+			entry, err := s.catalogMgr.Get(ctx, key)
+			if err != nil {
+				if catalog.IsNotFound(err) {
+					// Deleted since the listing.
+					continue
+				}
+				return nil, fmt.Errorf("read catalog entry %s: %w", key, err)
+			}
+			for _, loc := range entry.GetAllLocations() {
+				if loc.Store == backendName {
+					referenced[loc.ObjectRef] = struct{}{}
+				}
+			}
+		}
+		if !page.HasMore || page.NextCursor == "" {
+			return referenced, nil
+		}
+		cursor = page.NextCursor
+	}
 }
 
 // GetGarbageCollectionProgress returns GC progress.
