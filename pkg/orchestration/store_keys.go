@@ -89,6 +89,10 @@ const (
 	// agentPoolKeyspace holds AgentPool records — an ordered failover list of
 	// Agent IDs.
 	agentPoolKeyspace = "orch/agentpool/"
+
+	// tenantAgentKeyspace holds each tenant's TenantAgent appointment: one
+	// record per tenant, under a fixed identifier.
+	tenantAgentKeyspace = "orch/tenantagent/"
 )
 
 // =============================================================================
@@ -304,6 +308,9 @@ const (
 
 	// AuditResourceAgentPool identifies an AgentPool record.
 	AuditResourceAgentPool = "orchestration_agent_pool"
+
+	// AuditResourceTenantAgent identifies a tenant's TenantAgent appointment.
+	AuditResourceTenantAgent = "orchestration_tenant_agent"
 )
 
 // StoreAuditEvent describes a single mutation of a durable orchestration
