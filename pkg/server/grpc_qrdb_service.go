@@ -44,7 +44,7 @@ import (
 // coexist with the quicbaas.v1 services already registered on the same
 // grpc.Server. Sub-services are conditionally wired based on which
 // implementations are available. The data services (KV, MVCC, batch,
-// transaction, collections and the rest) resolve the embedded node's
+// transaction, collections and index) resolve the embedded node's
 // per-(tenant, database) registry on each call, and fail closed while the
 // node is absent or sealed.
 func (s *Server) registerQRDBService(grpcServer *ggrpc.Server) {

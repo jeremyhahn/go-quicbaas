@@ -135,7 +135,7 @@ func TestServer_QRDBServiceOnUnixSocket_RefusesUnboundTenant(t *testing.T) {
 }
 
 // TestQRDBDataRegistryProxy_RefusesOutOfRowServices pins that the registry
-// proxy refuses the watch, lease and lock services: they are outside the
+// proxy refuses the watch, lease, lock, time-series and vector services: they are outside the
 // data-services surface, so the Unix socket never serves them, whether or not
 // authorization is on.
 func TestQRDBDataRegistryProxy_RefusesOutOfRowServices(t *testing.T) {
@@ -153,6 +153,14 @@ func TestQRDBDataRegistryProxy_RefusesOutOfRowServices(t *testing.T) {
 	lock, err := p.LockService("system", "system")
 	require.Nil(t, lock)
 	require.True(t, errors.As(err, &unsupported), "lock: %v", err)
+
+	ts, err := p.TimeSeriesService("system", "system")
+	require.Nil(t, ts)
+	require.True(t, errors.As(err, &unsupported), "time-series: %v", err)
+
+	vec, err := p.VectorService("system", "system")
+	require.Nil(t, vec)
+	require.True(t, errors.As(err, &unsupported), "vector: %v", err)
 }
 
 // TestQRDBDataRegistryProxy_ColdCacheBuildsOneRegistry pins that concurrent

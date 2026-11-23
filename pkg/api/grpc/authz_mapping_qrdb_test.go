@@ -81,8 +81,8 @@ func qrdbWiredMethod(name string) bool {
 
 // qrdbDataSurfaceMethods is the registry-dispatched QRDBService data
 // surface the server serves on the Unix socket through its data-registry
-// proxy: KV, MVCC, transaction, batch, index, timeseries, vector and
-// collection calls. Watch, lease and lock calls are not part of it: they stay
+// proxy: KV, MVCC, transaction, batch, index and collection calls. Watch,
+// lease, lock, time-series and vector calls are not part of it: they stay
 // default-denied.
 var qrdbDataSurfaceMethods = map[string]bool{
 	// KV
@@ -97,21 +97,6 @@ var qrdbDataSurfaceMethods = map[string]bool{
 	// Index
 	"IndexCreate": true, "IndexDrop": true, "IndexQuery": true,
 	"IndexScan": true, "IndexList": true,
-	// Timeseries
-	"TSWrite": true, "TSWriteBatch": true, "TSQuery": true,
-	"TSAggregate": true, "TSWritePoint": true, "TSRichQuery": true,
-	"TSDeleteSeries": true, "TSGetRetention": true, "TSSetRetention": true,
-	"TSListMetrics": true,
-	// Vector
-	"VectorCreateNamespace": true, "VectorDeleteNamespace": true,
-	"VectorListNamespaces": true, "VectorGetNamespaceInfo": true,
-	"VectorUpsert": true, "VectorGet": true, "VectorDelete": true,
-	"VectorBatchUpsert": true, "VectorBatchDelete": true, "VectorList": true,
-	"VectorUpdateMetadata": true, "VectorSearchSimilar": true,
-	"VectorSearchByMetadata": true, "VectorHybridSearch": true,
-	"VectorSearchByID": true, "VectorRebuildIndex": true,
-	"VectorGetRebuildProgress": true, "VectorGetIndexStats": true,
-	"VectorCompactNamespace": true, "VectorGetCompactionProgress": true,
 	// Collections
 	"CreateCollection": true, "GetCollectionInfo": true,
 	"ListCollections": true, "DropCollection": true, "InsertDocument": true,
@@ -123,7 +108,7 @@ var qrdbDataSurfaceMethods = map[string]bool{
 // method to the permission qrdb itself declares in the method's
 // (qrdb.v1.permission) proto option.
 func TestQRDBGRPCPermissions_DataMethodsMatchQRDBProto(t *testing.T) {
-	require.Len(t, qrdbDataSurfaceMethods, 62)
+	require.Len(t, qrdbDataSurfaceMethods, 32)
 	sd := qrdbServiceDescriptor(t, "qrdb.v1.QRDBService")
 	for name := range qrdbDataSurfaceMethods {
 		md := sd.Methods().ByName(protoreflect.Name(name))
@@ -566,9 +551,10 @@ func TestQRDBIdentityGatedMethods_FailClosedWithoutAuthenticator(t *testing.T) {
 }
 
 // TestQRDBUnwiredSurface_DefaultDenied asserts representative qrdb.v1 methods
-// from UNWIRED families (KV, lease, lock, vector) stay default-denied even for
-// a caller with a valid token: the broker's canonical surface for those
-// capabilities is the quicbaas.* service namespace.
+// from UNWIRED families (lease, lock, watch, time-series, vector, and the
+// admin and SQL surface) stay default-denied even for a caller with a valid
+// token: the broker's canonical surface for those capabilities is the
+// quicbaas.* service namespace.
 func TestQRDBUnwiredSurface_DefaultDenied(t *testing.T) {
 	for _, method := range []string{
 		"/qrdb.v1.QRDBService/DatabaseCreate",
@@ -582,6 +568,8 @@ func TestQRDBUnwiredSurface_DefaultDenied(t *testing.T) {
 		"/qrdb.v1.QRDBService/LeaseKeepAlive",
 		"/qrdb.v1.QRDBService/LockAcquire",
 		"/qrdb.v1.QRDBService/LockRelease",
+		"/qrdb.v1.QRDBService/TSWrite",
+		"/qrdb.v1.QRDBService/VectorUpsert",
 	} {
 		_, _, mapped := grpcResourceAndAction(method)
 		assert.False(t, mapped, method)

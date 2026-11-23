@@ -124,22 +124,18 @@ func (p *qrdbDataRegistryProxy) IndexService(tenant, db string) (qrdbservice.Ind
 	return reg.IndexService(tenant, db)
 }
 
-// TimeSeriesService resolves the node's time-series service for (tenant, db).
-func (p *qrdbDataRegistryProxy) TimeSeriesService(tenant, db string) (qrdbservice.TimeSeriesServicer, error) {
-	reg, err := p.current()
-	if err != nil {
-		return nil, err
-	}
-	return reg.TimeSeriesService(tenant, db)
+// TimeSeriesService refuses: time-series is outside the data-services surface
+// (KV, batch, transaction, MVCC, collections and index), so the socket never
+// serves the node's time-series service, even with authorization off.
+func (p *qrdbDataRegistryProxy) TimeSeriesService(_, _ string) (qrdbservice.TimeSeriesServicer, error) {
+	return nil, &qrdbservice.CapabilityUnsupportedError{Message: "time-series service is not served on this socket: outside the data-services surface"}
 }
 
-// VectorService resolves the node's vector service for (tenant, db).
-func (p *qrdbDataRegistryProxy) VectorService(tenant, db string) (qrdbservice.VectorServicer, error) {
-	reg, err := p.current()
-	if err != nil {
-		return nil, err
-	}
-	return reg.VectorService(tenant, db)
+// VectorService refuses: vector search is outside the data-services surface
+// (KV, batch, transaction, MVCC, collections and index), so the socket never
+// serves the node's vector service, even with authorization off.
+func (p *qrdbDataRegistryProxy) VectorService(_, _ string) (qrdbservice.VectorServicer, error) {
+	return nil, &qrdbservice.CapabilityUnsupportedError{Message: "vector service is not served on this socket: outside the data-services surface"}
 }
 
 // TransactionService resolves the node's transaction service for (tenant, db).
