@@ -135,6 +135,12 @@ one explicit list of environment variables and no DEK key appears in it.
 - The keyring re-export is proven by `sdk/go/qrdb_dek_reexport_test.go`,
   `sdk/go/qrdb_embedded_dek_test.go` and `cmd/quicbaas/embedded_qrdb_test.go`
   (rotation on a real node's keyring).
+- `TestDEKTenantKeyring` (`test/integration/cli/dek_tenant_test.go`) drives
+  `quicbaas dek tenant` on every enabled transport as a fresh tenant's admin.
+  It proves rotate, encrypt, decrypt and rewrap against the node's own
+  keyring; that a wrong AAD is refused and the current version cannot be
+  retired; and that after retirement a ciphertext under the retired version is
+  unreadable while its rewrapped copy opens.
 - The re-encryption progress path needs an integration test with a real barrier;
   a unit test cannot exercise the asynchronous handoff meaningfully.
 - Any test that deletes a DEK must assert that data encrypted under it becomes
