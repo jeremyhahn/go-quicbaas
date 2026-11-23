@@ -154,6 +154,13 @@ type Runtime struct {
 	idCounter   atomic.Uint64
 	initialized atomic.Bool
 	closed      atomic.Bool
+	volumeMu    sync.Mutex // serializes first-use initialization of named volumes
+}
+
+// namedVolume is a named volume a container mounts: its name, its directory
+// under VolumePath and its path in the container.
+type namedVolume struct {
+	Name, Dir, Target string
 }
 
 // containerState tracks runtime state of a container. mu guards the fields
@@ -331,7 +338,7 @@ func (r *Runtime) CreateContainer(ctx context.Context, config *ContainerConfig) 
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
-	config, err := r.resolveVolumes(config)
+	config, volumes, err := r.resolveVolumes(config)
 	if err != nil {
 		return nil, err
 	}
@@ -357,7 +364,7 @@ func (r *Runtime) CreateContainer(ctx context.Context, config *ContainerConfig) 
 		return nil, &RuntimeError{Operation: "create bundle", Err: err}
 	}
 
-	state, err := r.createInBundle(ctx, id, bundleDir, image.ID, config)
+	state, err := r.createInBundle(ctx, id, bundleDir, image.ID, config, volumes)
 	if err != nil {
 		if rmErr := os.RemoveAll(bundleDir); rmErr != nil {
 			r.logger.Warn("failed to remove bundle after failed create", "id", id, "error", rmErr)
@@ -378,42 +385,50 @@ func (r *Runtime) CreateContainer(ctx context.Context, config *ContainerConfig) 
 var volumeNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
 
 // resolveVolumes returns config with each named volume mount turned into a
-// bind of the volume's directory under VolumePath, creating the directory
-// the first time a container names it. The caller's config is not changed.
+// bind of the volume's directory under VolumePath, and the named volumes it
+// mounts; the directory is created, and filled from the image, when the
+// container is created. The caller's config is not changed.
 // A volume outlives the containers that mount it: removing a container
 // never removes its volumes.
-func (r *Runtime) resolveVolumes(config *ContainerConfig) (*ContainerConfig, error) {
+func (r *Runtime) resolveVolumes(config *ContainerConfig) (*ContainerConfig, []namedVolume, error) {
 	if !slices.ContainsFunc(config.Mounts, func(m Mount) bool { return m.Type == "volume" }) {
-		return config, nil
+		return config, nil, nil
 	}
 	resolved := *config
 	resolved.Mounts = slices.Clone(config.Mounts)
+	var volumes []namedVolume
 	for i, m := range resolved.Mounts {
 		if m.Type != "volume" {
 			continue
 		}
 		if !volumeNamePattern.MatchString(m.Source) {
-			return nil, fmt.Errorf("%w: %q", ErrInvalidVolumeName, m.Source)
+			return nil, nil, fmt.Errorf("%w: %q", ErrInvalidVolumeName, m.Source)
 		}
 		dir := filepath.Join(r.config.VolumePath, m.Source)
-		if err := os.MkdirAll(dir, 0o750); err != nil {
-			return nil, &RuntimeError{Operation: "create volume", Err: err}
-		}
+		volumes = append(volumes, namedVolume{Name: m.Source, Dir: dir, Target: m.Target})
 		m.Type = "bind"
 		m.Source = dir
 		m.Options = slices.Clone(m.Options)
 		resolved.Mounts[i] = m
 	}
-	return &resolved, nil
+	return &resolved, volumes, nil
 }
 
 // createInBundle unpacks the image into the container's root filesystem,
-// writes the OCI configuration into the bundle and registers the container
-// with the engine. On failure it removes the root filesystem it created.
-func (r *Runtime) createInBundle(ctx context.Context, id, bundleDir, imageID string, config *ContainerConfig) (*containerState, error) {
+// fills each new or empty named volume from the unpacked image, writes the
+// OCI configuration into the bundle and registers the container with the
+// engine. On failure it removes the root filesystem it created.
+func (r *Runtime) createInBundle(ctx context.Context, id, bundleDir, imageID string, config *ContainerConfig, volumes []namedVolume) (*containerState, error) {
 	rootfsDir, err := r.backends.rootfs.Create(ctx, id, imageID)
 	if err != nil {
 		return nil, &RuntimeError{Operation: "unpack rootfs", Err: err}
+	}
+
+	if err := r.initVolumes(rootfsDir, volumes); err != nil {
+		if rmErr := r.backends.rootfs.Remove(id); rmErr != nil {
+			r.logger.Warn("failed to remove rootfs after failed create", "id", id, "error", rmErr)
+		}
+		return nil, err
 	}
 
 	state, err := r.configureContainer(id, bundleDir, rootfsDir, config)

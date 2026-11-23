@@ -491,6 +491,8 @@ type fakeRootfs struct {
 	createErr error
 	removeErr error
 	removed   []string
+	// seed, when set, fills each new root filesystem as an image would.
+	seed func(dir string) error
 }
 
 func (s *fakeRootfs) Create(ctx context.Context, containerID, imageID string) (string, error) {
@@ -502,6 +504,11 @@ func (s *fakeRootfs) Create(ctx context.Context, containerID, imageID string) (s
 	dir := filepath.Join(s.root, containerID)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
+	}
+	if s.seed != nil {
+		if err := s.seed(dir); err != nil {
+			return "", err
+		}
 	}
 	return dir, nil
 }
