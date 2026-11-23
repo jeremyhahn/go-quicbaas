@@ -3,6 +3,8 @@ package quicbaas
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -272,6 +274,202 @@ func TestClusteredScheduler_FollowerRunsItsPinnedJobBehindLeaderOnlyJobs(t *test
 		case <-deadline:
 			t.Fatal("zzz job pinned to node-a was not run on the follower within 5s")
 		}
+	}
+}
+
+// countingKV counts the job-record reads the due scan makes and can fail
+// job-record writes.
+type countingKV struct {
+	*mockKVStore
+	recordGets    atomic.Int32
+	failRecordPut bool
+}
+
+func newCountingKV() *countingKV { return &countingKV{mockKVStore: newMockKVStore()} }
+
+func (c *countingKV) Get(ctx context.Context, key string) ([]byte, error) {
+	if _, _, ok := splitTenantJobKey(key); ok {
+		c.recordGets.Add(1)
+	}
+	return c.mockKVStore.Get(ctx, key)
+}
+
+func (c *countingKV) Put(ctx context.Context, key string, value []byte) error {
+	if _, _, ok := splitTenantJobKey(key); ok && c.failRecordPut {
+		return errors.New("record write refused")
+	}
+	return c.mockKVStore.Put(ctx, key, value)
+}
+
+// dueIDs runs the due scan and returns the IDs it found.
+func dueIDs(t *testing.T, s *Storage, now time.Time) map[uint64]bool {
+	t.Helper()
+	jobs, err := s.GetJobsDueForExecution(context.Background(), now, 10, nil)
+	if err != nil {
+		t.Fatalf("GetJobsDueForExecution: %v", err)
+	}
+	ids := map[uint64]bool{}
+	for _, j := range jobs {
+		ids[j.ID] = true
+	}
+	return ids
+}
+
+// newTenantJob builds a tenant job of acme with the given status and next run.
+func newTenantJob(name string, status scheduler.JobStatus, nextRun time.Time) *scheduler.Job {
+	j := createTestJob(name, scheduler.OwnerTypeTenant, "acme")
+	j.Status = status
+	j.ExecuteAt = nextRun
+	j.NextRun = nextRun
+	return j
+}
+
+// TestGetJobsDueForExecution_SkipsTenantJobsThatCannotBeDue proves the due
+// scan reads only the record of a tenant job its index summary says may be
+// due: completed, canceled and future jobs are passed over unread.
+func TestGetJobsDueForExecution_SkipsTenantJobsThatCannotBeDue(t *testing.T) {
+	ctx := context.Background()
+	kv := newCountingKV()
+	s := NewStorage(kv)
+	now := time.Now()
+	past, future := now.Add(-time.Hour), now.Add(time.Hour)
+
+	jobs := []*scheduler.Job{
+		newTenantJob("completed", scheduler.JobStatusCompleted, past),
+		newTenantJob("future", scheduler.JobStatusPending, future),
+		newTenantJob("canceled", scheduler.JobStatusCanceled, past),
+	}
+	due := newTenantJob("due", scheduler.JobStatusPending, past)
+	jobs = append(jobs, due)
+	for _, j := range jobs {
+		if err := s.CreateJob(ctx, j); err != nil {
+			t.Fatalf("CreateJob(%s): %v", j.Name, err)
+		}
+	}
+
+	kv.recordGets.Store(0)
+	ids := dueIDs(t, s, now)
+	if len(ids) != 1 || !ids[due.ID] {
+		t.Fatalf("due jobs = %v, want only %d", ids, due.ID)
+	}
+	if got := kv.recordGets.Load(); got != 1 {
+		t.Fatalf("job records read = %d, want 1 (only the due job)", got)
+	}
+}
+
+// TestGetJobsDueForExecution_AnUpdateMovesTheSummary proves UpdateJob keeps
+// the summary in step with the record, in both directions.
+func TestGetJobsDueForExecution_AnUpdateMovesTheSummary(t *testing.T) {
+	ctx := context.Background()
+	kv := newCountingKV()
+	s := NewStorage(kv)
+	now := time.Now()
+	past := now.Add(-time.Hour)
+
+	j := newTenantJob("moves", scheduler.JobStatusPending, past)
+	if err := s.CreateJob(ctx, j); err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+	j.Status = scheduler.JobStatusCompleted
+	if err := s.UpdateJob(ctx, j); err != nil {
+		t.Fatalf("UpdateJob(completed): %v", err)
+	}
+	kv.recordGets.Store(0)
+	if ids := dueIDs(t, s, now); len(ids) != 0 {
+		t.Fatalf("after completion, due jobs = %v, want none", ids)
+	}
+	if got := kv.recordGets.Load(); got != 0 {
+		t.Fatalf("after completion, job records read = %d, want 0", got)
+	}
+
+	j.Status = scheduler.JobStatusPending
+	j.NextRun = past
+	if err := s.UpdateJob(ctx, j); err != nil {
+		t.Fatalf("UpdateJob(pending): %v", err)
+	}
+	if ids := dueIDs(t, s, now); len(ids) != 1 || !ids[j.ID] {
+		t.Fatalf("after re-pending, due jobs = %v, want %d", ids, j.ID)
+	}
+}
+
+// TestGetJobsDueForExecution_ABareIndexValueStillFindsItsJob proves an index
+// value with no summary (a bare tenant ID) makes the scan read the record.
+func TestGetJobsDueForExecution_ABareIndexValueStillFindsItsJob(t *testing.T) {
+	ctx := context.Background()
+	kv := newCountingKV()
+	s := NewStorage(kv)
+	now := time.Now()
+
+	j := newTenantJob("bare", scheduler.JobStatusPending, now.Add(-time.Hour))
+	if err := s.CreateJob(ctx, j); err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+	if err := kv.mockKVStore.Put(ctx, keyForTenantJobIndex(j.ID, "acme"), []byte("acme")); err != nil {
+		t.Fatalf("overwrite index entry: %v", err)
+	}
+	if ids := dueIDs(t, s, now); len(ids) != 1 || !ids[j.ID] {
+		t.Fatalf("due jobs = %v, want %d", ids, j.ID)
+	}
+}
+
+// TestTenantJobIndexBackfill_WritesTheSummary proves the open-time
+// reconcile summarizes each record, so the scan skips the completed one.
+func TestTenantJobIndexBackfill_WritesTheSummary(t *testing.T) {
+	ctx := context.Background()
+	kv := newCountingKV()
+	now := time.Now()
+	past := now.Add(-time.Hour)
+
+	done := newTenantJob("legacy-done", scheduler.JobStatusCompleted, past)
+	done.ID = 51
+	putUnindexedTenantJob(t, kv.mockKVStore, done)
+	due := newTenantJob("legacy-due", scheduler.JobStatusPending, past)
+	due.ID = 52
+	putUnindexedTenantJob(t, kv.mockKVStore, due)
+
+	s := NewStorage(kv)
+	if err := s.InitializeJobIDCounter(ctx); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	kv.recordGets.Store(0)
+	if ids := dueIDs(t, s, now); len(ids) != 1 || !ids[due.ID] {
+		t.Fatalf("due jobs = %v, want only %d", ids, due.ID)
+	}
+	if got := kv.recordGets.Load(); got != 1 {
+		t.Fatalf("job records read = %d, want 1", got)
+	}
+}
+
+// TestUpdateJob_AFailedRecordWriteLeavesNoSummary proves a summary never
+// claims a state its record does not hold: when the record write fails, the
+// entry falls back to the bare tenant ID and the job is still found.
+func TestUpdateJob_AFailedRecordWriteLeavesNoSummary(t *testing.T) {
+	ctx := context.Background()
+	kv := newCountingKV()
+	s := NewStorage(kv)
+	now := time.Now()
+
+	j := newTenantJob("unwritten", scheduler.JobStatusPending, now.Add(-time.Hour))
+	if err := s.CreateJob(ctx, j); err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+	kv.failRecordPut = true
+	update := *j
+	update.Status = scheduler.JobStatusCompleted
+	if err := s.UpdateJob(ctx, &update); err == nil {
+		t.Fatal("UpdateJob with a failing record write returned nil")
+	}
+	kv.failRecordPut = false
+
+	value, err := kv.mockKVStore.Get(ctx, keyForTenantJobIndex(j.ID, "acme"))
+	if err != nil {
+		t.Fatalf("read index entry: %v", err)
+	}
+	if string(value) != "acme" {
+		t.Fatalf("index value = %q, want the bare tenant ID", value)
+	}
+	if ids := dueIDs(t, s, now); len(ids) != 1 || !ids[j.ID] {
+		t.Fatalf("due jobs = %v, want %d", ids, j.ID)
 	}
 }
 
