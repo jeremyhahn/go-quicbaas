@@ -1,6 +1,6 @@
 # Certificate Authority — API
 
-> **Status: NORMATIVE** · Last verified: 2026-10-14
+> **Status: NORMATIVE** · Last verified: 2026-11-23
 > The capability on every transport, with permissions. Feature folder: `docs/certificate-authority/`.
 
 The CA, ACME and trust APIs are go-xkms's and are documented there:
@@ -72,12 +72,15 @@ Dedicated transport handlers: rest=no, grpc=no, mcp=no; embedded routes register
 
 ### `quicbaas.Trust` — SDK package `sdk/go/client/trust`
 
-Dedicated transport handlers: rest=no, grpc=yes, mcp=no; embedded routes registered: 3; MCP tools registered server-side: 3.
+Dedicated transport handlers: rest=yes, grpc=yes, mcp=yes; embedded routes registered: 3; MCP tools registered server-side: 3.
 
 MCP tools: `quicbaas_trust_auto_import_aia`, `quicbaas_trust_cross_signed_root_pool`, `quicbaas_trust_publish_dane`
 
 | SDK method | REST route (transport) | Served? | gRPC | MCP | Embedded | Permission |
 |---|---|---|---|---|---|---|
+| `AutoImportAIA` | `POST /api/v1/trust/auto-import-aia` | yes | yes | yes | yes | `trust:write` |
+| `CrossSignedRootPool` | `GET /api/v1/trust/cross-signed-roots` | yes | yes | yes | yes | `trust:read` |
+| `PublishDANE` | `POST /api/v1/trust/publish-dane` | yes | yes | yes | yes | `trust:write` |
 
 ### `quicbaas.Attestation` — SDK package `sdk/go/client/attestation`
 
