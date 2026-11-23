@@ -661,13 +661,15 @@ func TestBarrierClient_SOPINUnboundPassesThrough(t *testing.T) {
 	}
 }
 
-// wireCall is one request a wireServer received: its method, path and the
-// JSON body decoded field by field, so a test asserts the exact wire value of
-// each field (a PEM string, not its base64 form).
+// wireCall is one request a wireServer received: its method, path, SO PIN
+// header and the JSON body decoded field by field, so a test asserts the exact
+// wire value of each field (a PEM string, not its base64 form).
 type wireCall struct {
 	method string
 	path   string
 	body   map[string]any
+	// soPINHeader is the request's X-QRDB-SO-PIN header, "" when absent.
+	soPINHeader string
 }
 
 // wireServer answers every non-health request with the fixed JSON reply and
@@ -691,7 +693,7 @@ func newWireServer(t *testing.T, useTLS bool, reply string) (*wireServer, *Trans
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		call := wireCall{method: r.Method, path: r.URL.Path}
+		call := wireCall{method: r.Method, path: r.URL.Path, soPINHeader: r.Header.Get(qrdbtransport.SOPINHeader)}
 		raw, err := io.ReadAll(r.Body)
 		if err != nil {
 			t.Errorf("reading request body: %v", err)
@@ -930,9 +932,10 @@ func TestBarrierClient_ShareClaimWire(t *testing.T) {
 }
 
 // TestBarrierClient_SOPINInBodyWire checks each SO PIN-carrying barrier call
-// over TLS puts the bound PIN in the body's so_pin field next to the
-// request's own fields, and that a request PIN conflicting with the bound one
-// is refused with the upstream *SOPINConflictError before anything is sent.
+// over TLS sends the PIN, whether bound with WithSOPIN or given only in the
+// request's SOPin field, in the X-QRDB-SO-PIN header and the body's so_pin
+// field next to the request's own fields, and that a request PIN conflicting
+// with a bound one is refused with *SOPINConflictError before anything is sent.
 func TestBarrierClient_SOPINInBodyWire(t *testing.T) {
 	const boundPIN = "so-pin-2538"
 	secret := []byte("barrier-secret")
@@ -952,6 +955,17 @@ func TestBarrierClient_SOPINInBodyWire(t *testing.T) {
 				return nil, b.BarrierSeal(ctx)
 			},
 			wantBody: map[string]any{"so_pin": boundPIN},
+		},
+		{
+			name: "BarrierInitialize", path: "/v1/barrier/initialize", reply: `{}`,
+			call: func(ctx context.Context, b *BarrierClient, pin string) (any, error) {
+				return nil, b.BarrierInitialize(ctx, &qrdbtransport.BarrierInitializeRequest{
+					Secret: secret, SOPin: pin, UserPin: "user-pin",
+				})
+			},
+			wantBody: map[string]any{
+				"secret": base64.StdEncoding.EncodeToString(secret), "so_pin": boundPIN, "user_pin": "user-pin",
+			},
 		},
 		{
 			name: "BarrierInitializeShamir", path: "/v1/barrier/shamir/initialize",
@@ -993,7 +1007,11 @@ func TestBarrierClient_SOPINInBodyWire(t *testing.T) {
 			if err != nil {
 				t.Fatalf("%s with a bound PIN over TLS: %v", tc.name, err)
 			}
-			wantBody(t, onlyCall(t, ws, http.MethodPost, tc.path), tc.wantBody)
+			call := onlyCall(t, ws, http.MethodPost, tc.path)
+			wantBody(t, call, tc.wantBody)
+			if call.soPINHeader != boundPIN {
+				t.Fatalf("%s %s header: got %q, want the bound PIN", tc.name, qrdbtransport.SOPINHeader, call.soPINHeader)
+			}
 			if tc.wantResp != nil && !reflect.DeepEqual(got, tc.wantResp) {
 				t.Fatalf("%s response: got %+v, want %+v", tc.name, got, tc.wantResp)
 			}
@@ -1001,6 +1019,21 @@ func TestBarrierClient_SOPINInBodyWire(t *testing.T) {
 		if tc.name == "BarrierSeal" {
 			continue // takes no request, so no request PIN can conflict
 		}
+		t.Run(tc.name+"/request", func(t *testing.T) {
+			ws, tr := newWireServer(t, true, tc.reply)
+			got, err := tc.call(context.Background(), tr.Barrier(), boundPIN)
+			if err != nil {
+				t.Fatalf("%s with a request-field PIN over TLS: %v", tc.name, err)
+			}
+			call := onlyCall(t, ws, http.MethodPost, tc.path)
+			wantBody(t, call, tc.wantBody)
+			if call.soPINHeader != boundPIN {
+				t.Fatalf("%s %s header: got %q, want the request-field PIN", tc.name, qrdbtransport.SOPINHeader, call.soPINHeader)
+			}
+			if tc.wantResp != nil && !reflect.DeepEqual(got, tc.wantResp) {
+				t.Fatalf("%s response: got %+v, want %+v", tc.name, got, tc.wantResp)
+			}
+		})
 		t.Run(tc.name+"/conflict", func(t *testing.T) {
 			ws, tr := newWireServer(t, true, tc.reply)
 			_, err := tc.call(bindSOPIN(t), tr.Barrier(), "another-pin")
