@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/backup"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/cluster"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/health"
@@ -740,11 +741,11 @@ func TestBackupClient_CreateCompressedEncrypted(t *testing.T) {
 		t.Fatal("expected non-nil client")
 	}
 
-	expectedResp := &backup.BackupResponse{
+	expectedResp := &service.CreateBackupResponse{
 		BackupID:  "backup-20251227-001",
 		Size:      1024 * 1024 * 100, // 100MB
-		Duration:  5 * time.Second,
-		CreatedAt: time.Now(),
+		Timestamp: time.Now().UnixNano(),
+		Status:    "completed",
 	}
 	mt.SetResponse("quicbaas.Backup", "Create", expectedResp, nil)
 
@@ -765,21 +766,21 @@ func TestBackupClient_CreateCompressedEncrypted(t *testing.T) {
 	if resp.BackupID != expectedResp.BackupID {
 		t.Errorf("expected backup ID %q, got %q", expectedResp.BackupID, resp.BackupID)
 	}
-	if resp.Size != expectedResp.Size {
+	if uint64(resp.Size) != expectedResp.Size {
 		t.Errorf("expected size %d, got %d", expectedResp.Size, resp.Size)
 	}
 
-	// Verify request was captured with correct flags
+	// Verify the service request carries the compression and encryption choices
 	requests := mt.Requests()
-	payload, ok := requests[0].Payload.(*backup.BackupRequest)
+	payload, ok := requests[0].Payload.(*service.CreateBackupRequest)
 	if !ok {
-		t.Fatal("expected BackupRequest payload")
+		t.Fatal("expected CreateBackupRequest payload")
 	}
-	if !payload.Compress {
-		t.Error("expected Compress to be true")
+	if payload.Compression != "gzip" {
+		t.Errorf("expected Compression %q, got %q", "gzip", payload.Compression)
 	}
-	if !payload.Encrypt {
-		t.Error("expected Encrypt to be true")
+	if payload.Encryption != "aes-256-gcm" {
+		t.Errorf("expected Encryption %q, got %q", "aes-256-gcm", payload.Encryption)
 	}
 }
 
@@ -787,11 +788,11 @@ func TestBackupClient_CreateUncompressed(t *testing.T) {
 	mt := mock.NewTransport()
 	client := backup.NewClient(mt)
 
-	expectedResp := &backup.BackupResponse{
+	expectedResp := &service.CreateBackupResponse{
 		BackupID:  "backup-20251227-002",
 		Size:      1024 * 1024 * 500, // 500MB (larger because uncompressed)
-		Duration:  3 * time.Second,
-		CreatedAt: time.Now(),
+		Timestamp: time.Now().UnixNano(),
+		Status:    "completed",
 	}
 	mt.SetResponse("quicbaas.Backup", "Create", expectedResp, nil)
 
@@ -815,9 +816,10 @@ func TestBackupClient_RestoreFromBackupID(t *testing.T) {
 	mt := mock.NewTransport()
 	client := backup.NewClient(mt)
 
-	expectedResp := &backup.RestoreResponse{
-		Restored: true,
-		Duration: 10 * time.Second,
+	expectedResp := &service.RestoreBackupResponse{
+		JobID:    "restore-backup-20251227-001",
+		Status:   "completed",
+		Progress: 100,
 	}
 	mt.SetResponse("quicbaas.Backup", "Restore", expectedResp, nil)
 
@@ -836,42 +838,30 @@ func TestBackupClient_RestoreFromBackupID(t *testing.T) {
 	if !resp.Restored {
 		t.Error("expected Restored to be true")
 	}
-	if resp.Duration != expectedResp.Duration {
-		t.Errorf("expected duration %v, got %v", expectedResp.Duration, resp.Duration)
+
+	// Verify the service request names the backup
+	requests := mt.Requests()
+	payload, ok := requests[0].Payload.(*service.RestoreBackupRequest)
+	if !ok {
+		t.Fatal("expected RestoreBackupRequest payload")
+	}
+	if payload.BackupID != req.BackupID {
+		t.Errorf("expected backup ID %q, got %q", req.BackupID, payload.BackupID)
 	}
 }
 
-func TestBackupClient_RestoreFromExternalSource(t *testing.T) {
+func TestBackupClient_RestoreStillRunning(t *testing.T) {
 	mt := mock.NewTransport()
 	client := backup.NewClient(mt)
 
-	expectedResp := &backup.RestoreResponse{
-		Restored: true,
-		Duration: 30 * time.Second,
-	}
-	mt.SetResponse("quicbaas.Backup", "Restore", expectedResp, nil)
+	mt.SetResponse("quicbaas.Backup", "Restore", &service.RestoreBackupResponse{Status: "running", Progress: 40}, nil)
 
-	ctx := context.Background()
-	req := &backup.RestoreRequest{
-		Source: "s3://external-bucket/backups/snapshot-2025-12-27.tar.gz",
-	}
-
-	resp, err := client.Restore(ctx, req)
+	resp, err := client.Restore(context.Background(), &backup.RestoreRequest{BackupID: "backup-20251227-001"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !resp.Restored {
-		t.Error("expected Restored to be true")
-	}
-
-	// Verify request was captured with Source
-	requests := mt.Requests()
-	payload, ok := requests[0].Payload.(*backup.RestoreRequest)
-	if !ok {
-		t.Fatal("expected RestoreRequest payload")
-	}
-	if payload.Source != req.Source {
-		t.Errorf("expected source %q, got %q", req.Source, payload.Source)
+	if resp.Restored {
+		t.Error("expected Restored to be false while the restore is running")
 	}
 }
 
@@ -880,12 +870,13 @@ func TestBackupClient_ListWithResults(t *testing.T) {
 	client := backup.NewClient(mt)
 
 	now := time.Now()
-	expectedResp := &backup.ListBackupsResponse{
-		Backups: []backup.BackupInfo{
-			{ID: "backup-001", Size: 100 * 1024 * 1024, CreatedAt: now.Add(-24 * time.Hour), Encrypted: true},
-			{ID: "backup-002", Size: 95 * 1024 * 1024, CreatedAt: now.Add(-48 * time.Hour), Encrypted: true},
-			{ID: "backup-003", Size: 110 * 1024 * 1024, CreatedAt: now.Add(-72 * time.Hour), Encrypted: false},
+	expectedResp := &service.ListBackupsResponse{
+		Backups: []*service.BackupMetadata{
+			{BackupID: "backup-001", Size: 100 * 1024 * 1024, Timestamp: now.Add(-24 * time.Hour).UnixNano()},
+			{BackupID: "backup-002", Size: 95 * 1024 * 1024, Timestamp: now.Add(-48 * time.Hour).UnixNano()},
+			{BackupID: "backup-003", Size: 110 * 1024 * 1024, Timestamp: now.Add(-72 * time.Hour).UnixNano()},
 		},
+		TotalCount: 3,
 	}
 	mt.SetResponse("quicbaas.Backup", "List", expectedResp, nil)
 
@@ -898,15 +889,15 @@ func TestBackupClient_ListWithResults(t *testing.T) {
 		t.Fatal("expected non-nil response")
 	}
 	if len(resp.Backups) != 3 {
-		t.Errorf("expected 3 backups, got %d", len(resp.Backups))
+		t.Fatalf("expected 3 backups, got %d", len(resp.Backups))
 	}
 
 	// Verify backup info
 	if resp.Backups[0].ID != "backup-001" {
 		t.Errorf("expected first backup ID %q, got %q", "backup-001", resp.Backups[0].ID)
 	}
-	if !resp.Backups[0].Encrypted {
-		t.Error("expected first backup to be encrypted")
+	if !resp.Backups[0].CreatedAt.Equal(now.Add(-24 * time.Hour)) {
+		t.Errorf("expected first backup CreatedAt %v, got %v", now.Add(-24*time.Hour), resp.Backups[0].CreatedAt)
 	}
 }
 
