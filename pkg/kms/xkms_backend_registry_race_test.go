@@ -202,6 +202,60 @@ func TestXKMSBackend_MigrationRacingRotationKeepsRotatedRecord(t *testing.T) {
 	assert.Equal(t, []byte("sealed under v2"), plaintext)
 }
 
+// TestXKMSBackend_MigrationPausedBeforeListingDoesNotExposeRotatedVersion:
+// node A's migration reads no version record and pauses before listing the
+// stored names while node B migrates and rotates the key. When A lists, it sees
+// B's rotated ledger_v2; A must not classify it as an independent key: the
+// rotated version stays hidden and is deleted with its parent.
+func TestXKMSBackend_MigrationPausedBeforeListingDoesNotExposeRotatedVersion(t *testing.T) {
+	cleanup := initXKMSForTest(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	// A key created before the registry: it has no version record.
+	legacy := newKeyNameTestBackend(t)
+	createKeyNameTestKey(t, legacy, "ledger")
+
+	registry := newRaceRegistry()
+	nodeA := newRegistryTestBackend(t, registry)
+	nodeB := newRegistryTestBackend(t, registry)
+
+	// A Get pause: A reads the record absent, pauses, and returns that read
+	// when released, so it lists only after B's rotation.
+	registry.armPause(nodeA.versionRecordKey("ledger"), true)
+	type result struct {
+		version int
+		err     error
+	}
+	migrated := make(chan result, 1)
+	go func() {
+		v, err := nodeA.CurrentVersion(ctx, "ledger")
+		migrated <- result{v, err}
+	}()
+	registry.waitPaused(t)
+
+	_, err := nodeB.GetKeyMetadata(ctx, "ledger")
+	require.NoError(t, err)
+	rotated, err := nodeB.RotateKey(ctx, "ledger")
+	require.NoError(t, err)
+	require.Equal(t, 2, rotated.Version)
+
+	close(registry.release)
+	got := <-migrated
+	require.NoError(t, got.err)
+	assert.Equal(t, 2, got.version, "the paused migration reads the record the rotation wrote")
+
+	_, err = nodeA.GetKeyMetadata(ctx, "ledger_v2")
+	assert.ErrorIs(t, err, ErrKeyNotFound, "the rotated version stays hidden on node A")
+	_, err = newRegistryTestBackend(t, registry).GetKeyMetadata(ctx, "ledger_v2")
+	assert.ErrorIs(t, err, ErrKeyNotFound, "the rotated version stays hidden on a fresh node")
+
+	require.NoError(t, nodeA.DeleteKey(ctx, "ledger"))
+	stored, err := nodeA.listStoredKeyIDs(ctx, "ledger")
+	require.NoError(t, err)
+	assert.Empty(t, stored, "the rotated version is deleted with its parent")
+}
+
 // TestXKMSBackend_DeleteResumesRegistryCleanupOnRetry fails the registry
 // Delete after a rotated key's material is deleted: the cache is dropped all
 // the same, a retried DeleteKey completes the registry cleanup, and a key

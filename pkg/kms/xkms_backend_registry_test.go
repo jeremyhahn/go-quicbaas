@@ -175,10 +175,6 @@ func TestXKMSBackend_PreRegistryIndependentVersionNamedKeyIsPreserved(t *testing
 	_, err = fresh.GetKeyMetadata(ctx, "report_v2")
 	require.NoError(t, err, "deleting report keeps the independent report_v2")
 	assertKeyRoundTrips(t, fresh, "report_v2")
-
-	exists, err := registry.Exists(ctx, upgraded.legacyRunRecordKey("report"))
-	require.NoError(t, err)
-	assert.False(t, exists, "DeleteKey drops the legacy run record")
 }
 
 // TestXKMSBackend_MissingKeyWritesNoVersionRecord: a version lookup of a key
