@@ -22,6 +22,7 @@ import (
 // through the context the SessionIssuer reads, so a session bearer can be
 // sender-constrained without changing the qrdb login-ceremony signature.
 func TestLoginDPoPContext_RoundTrip(t *testing.T) {
+	t.Parallel()
 	d := &LoginDPoP{
 		Proof:  "eyJ0eXAiOiJkcG9wK2p3dCJ9.payload.sig",
 		Method: "POST",
@@ -42,6 +43,7 @@ func TestLoginDPoPContext_RoundTrip(t *testing.T) {
 // context and that a nil or empty-proof value is a no-op (the context is
 // unchanged), so transport handlers need not branch on header presence.
 func TestLoginDPoPContext_AbsentAndNoOp(t *testing.T) {
+	t.Parallel()
 	if got := LoginDPoPFromContext(context.Background()); got != nil {
 		t.Fatalf("expected nil on bare context, got %+v", got)
 	}
