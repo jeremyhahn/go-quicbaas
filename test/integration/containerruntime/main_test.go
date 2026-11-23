@@ -28,10 +28,15 @@ import (
 
 // TestMain hands the process to libcontainer when it was re-executed as a
 // container init: libcontainer starts every container by re-executing the
-// current binary, which here is this test binary.
+// current binary, which here is this test binary. It also runs a
+// leftover-reclaim test's owner process, which starts a container and is then
+// killed.
 func TestMain(m *testing.M) {
 	if containerruntime.RunContainerInit() {
 		return
+	}
+	if os.Getenv(leftoverOwnerDirEnv) != "" {
+		os.Exit(runLeftoverOwner())
 	}
 	os.Exit(m.Run())
 }
