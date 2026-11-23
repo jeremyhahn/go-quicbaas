@@ -164,8 +164,9 @@ func gateChecks(gate string) map[string]string {
 //   - a NEW JOB is added and not wired into `needs`. The gate goes green while
 //     that job is red.
 //   - a job IS in `needs` but has no `check` line. `needs` only orders
-//     execution; with `if: always()` the gate runs regardless of the
-//     dependency's result, so an unchecked dependency is decorative.
+//     execution; the gate's `if:` runs it whatever a dependency did
+//     (always() on a pull request, !cancelled() otherwise), so an unchecked
+//     dependency is decorative.
 func TestCIGateDependsOnEveryJobAndChecksEveryDependency(t *testing.T) {
 	order, bodies := ciJobs(t, readFile(t, ciWorkflowPath))
 	gate, ok := bodies[gateJobName]
@@ -202,8 +203,9 @@ func TestCIGateDependsOnEveryJobAndChecksEveryDependency(t *testing.T) {
 	}
 	if diff := missing(needs, checked); len(diff) > 0 {
 		t.Errorf("jobs are in %s's needs but have NO `check` line: %v\n\n"+
-			"`needs` only orders execution. With `if: always()` the gate runs whatever "+
-			"the dependency did, so an unchecked dependency gates nothing.", gateJobName, diff)
+			"`needs` only orders execution. The gate's `if:` (always() on a pull request, "+
+			"!cancelled() otherwise) runs it whatever the dependency did, so an unchecked "+
+			"dependency gates nothing.", gateJobName, diff)
 	}
 	if diff := missing(checked, needs); len(diff) > 0 {
 		t.Errorf("jobs have a `check` line but are NOT in %s's needs: %v\n\n"+
@@ -241,22 +243,63 @@ func TestNonGatingJobsCannotHideAJob(t *testing.T) {
 	}
 }
 
-// TestCIGateRunsEvenWhenADependencyFails pins `if: always()` and the
+// ciGateIf is CI Gate's job-level `if:` (ci-template v1.53).
+const ciGateIf = "${{ (startsWith(github.event_name, 'pull_request') && always() || !cancelled()) && (github.event_name != 'schedule' || needs.preflight.outputs.verdict != 'busy') }}"
+
+// TestCIGateRunsEvenWhenADependencyFails pins the gate's `if:` and the
 // fail-closed comparison.
 //
-// Without `if: always()` the gate is SKIPPED when any dependency fails. A
-// skipped job publishes no status, so the required context never arrives and
-// the merge blocks on silence rather than failing on a verdict.
+// On a pull request (pull_request or pull_request_target) the gate runs on
+// always(): a skipped required check counts as passed, so a failed or
+// cancelled PR run must still post a failing gate. On every other event it
+// runs on !cancelled(): a main run that a newer one superseded posts a
+// skipped gate, not a red one. A schedule run whose guard read main as busy
+// skips the gate, as before.
 func TestCIGateRunsEvenWhenADependencyFails(t *testing.T) {
 	_, bodies := ciJobs(t, readFile(t, ciWorkflowPath))
 	gate := bodies[gateJobName]
 	if gate == "" {
 		t.Fatalf("could not isolate the %s job body", gateJobName)
 	}
-	// v1.29.3: always(), except that a schedule run whose guard read main as
-	// busy skips the gate.
-	if !regexp.MustCompile(`(?m)^    if: \$\{\{ always\(\) && \(github\.event_name != 'schedule' \|\| needs\.preflight\.outputs\.verdict != 'busy'\) \}\}\s*$`).MatchString(gate) {
-		t.Errorf("%s is missing the ci-template's always() `if:`:\n%s", gateJobName, gate)
+	// always() on a pull request, !cancelled() on other events, and the
+	// schedule busy guard.
+	if !strings.Contains(gate, "\n    if: "+ciGateIf+"\n") {
+		t.Errorf("%s is missing the ci-template's `if:` %s:\n%s", gateJobName, ciGateIf, gate)
+	}
+	for _, c := range []struct {
+		event, verdict string
+		cancelled      bool
+		want           bool
+	}{
+		{"pull_request", "run", false, true},
+		{"pull_request", "run", true, true},
+		{"pull_request", "busy", false, true},
+		{"pull_request", "busy", true, true},
+		{"pull_request_target", "run", false, true},
+		{"pull_request_target", "run", true, true},
+		{"pull_request_target", "busy", false, true},
+		{"pull_request_target", "busy", true, true},
+		{"push", "run", false, true},
+		{"push", "run", true, false},
+		{"workflow_dispatch", "run", false, true},
+		{"workflow_dispatch", "run", true, false},
+		{"schedule", "run", false, true},
+		{"schedule", "run", true, false},
+		{"schedule", "busy", false, false},
+	} {
+		ctx := map[string]any{
+			"github":      map[string]any{"event_name": c.event},
+			"needs":       map[string]any{"preflight": map[string]any{"outputs": map[string]any{"verdict": c.verdict}}},
+			"__cancelled": c.cancelled,
+		}
+		v, err := ghEval(ciGateIf, ctx)
+		if err != nil {
+			t.Errorf("%s, verdict %s, cancelled %v: %v", c.event, c.verdict, c.cancelled, err)
+			continue
+		}
+		if got, ok := v.(bool); !ok || got != c.want {
+			t.Errorf("%s, verdict %s, cancelled %v: the gate's if = %v, want %v", c.event, c.verdict, c.cancelled, v, c.want)
+		}
 	}
 	// The ci-template's check(): only success passes, a skip passes only for
 	// its class's reason (a proven tree, a docs-only PR for `code`, no
@@ -371,12 +414,15 @@ func TestCIIgnoresLabelChanges(t *testing.T) {
 // in-progress runs.
 var cancelsInProgress = regexp.MustCompile(`(?m)^\s*cancel-in-progress:\s*true\s*$`)
 
-// mainRunKey is the group-key term that gives each main commit its own group,
-// so a literal cancel-in-progress never cancels a main run. ciMainRunKey is
-// ci.yml's form, the ci-template's (v1.26.2, v1.29.3): main-{event}-{sha}.
+// mainRunKey is the group-key term that gives each main commit of the other
+// workflows its own group, so a literal cancel-in-progress never cancels a
+// main run. ciMainRunKey is ci.yml's ci-template v1.53 form, main-{event}: a
+// newer main run of the same event cancels the older one, while a schedule
+// run keeps schedule-{repository} and a dispatch run keeps
+// main-workflow_dispatch.
 const (
 	mainRunKey   = "github.ref == 'refs/heads/main' && github.sha"
-	ciMainRunKey = "github.ref == 'refs/heads/main' && format('main-{0}-{1}', github.event_name, github.sha)"
+	ciMainRunKey = "github.ref == 'refs/heads/main' && format('main-{0}', github.event_name)"
 )
 
 func TestPullRequestWorkflowsCancelSupersededRuns(t *testing.T) {
@@ -386,7 +432,8 @@ func TestPullRequestWorkflowsCancelSupersededRuns(t *testing.T) {
 	const want = "concurrency:\n" +
 		"  group: ${{ github.workflow }}-${{ github.ref }}-${{ " + mainRunKey + " || 'latest' }}\n" +
 		"  cancel-in-progress: true\n"
-	// ci.yml carries the ci-template's canonical block (v1.29.3).
+	// ci.yml carries the ci-template's canonical block (v1.53): one group per
+	// main event, one per schedule repository, one per other ref.
 	const ciWant = "concurrency:\n" +
 		"  group: ${{ github.workflow }}-${{ github.event_name == 'schedule' && format('schedule-{0}', github.repository) || " + ciMainRunKey + " || github.ref }}\n" +
 		"  cancel-in-progress: true\n"
@@ -395,6 +442,12 @@ func TestPullRequestWorkflowsCancelSupersededRuns(t *testing.T) {
 		if path == ciWorkflowPath {
 			if !strings.Contains(body, "\n"+ciWant) {
 				t.Errorf("%s lacks the ci-template's concurrency block:\n%s", path, ciWant)
+			}
+			if _, rest, ok := strings.Cut(body, "\nconcurrency:\n"); ok {
+				group, _, _ := strings.Cut(rest, "\n")
+				if strings.Contains(group, "github.sha") {
+					t.Errorf("%s's main concurrency group must be per event, not per commit (ci-template v1.53): %s", path, group)
+				}
 			}
 			continue
 		}
@@ -672,8 +725,10 @@ func TestMakeStageTagCheckCatchesALostTagArgument(t *testing.T) {
 // scheduleExempt names the workflows that may carry a `schedule:` trigger.
 // automerge.yml is under owner hold and keeps its sweep. worker-image.yml keeps
 // its nightly build and publish of the worker image, an owner exception (owner
-// ruling 2026-10-15, go-quicbaas#1385).
-var scheduleExempt = map[string]bool{"automerge.yml": true, "worker-image.yml": true}
+// ruling 2026-10-15, go-quicbaas#1385). nightly.yml runs on a daily schedule at
+// 04:05 UTC by the owner order of 2026-11-22, which supersedes the 2026-10-11
+// rule for that workflow only.
+var scheduleExempt = map[string]bool{"automerge.yml": true, "worker-image.yml": true, "nightly.yml": true}
 
 // TestNoWorkflowRunsOnASchedule pins the owner ruling of 2026-10-11: the
 // coordinator dispatches the nightly full tier, no workflow schedules itself,
