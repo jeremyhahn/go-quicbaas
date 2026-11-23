@@ -28,6 +28,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
 )
@@ -37,6 +38,10 @@ type OrchestratorServer struct {
 	pb.UnimplementedOrchestratorServiceServer
 	agentSvc orchestration.AgentService
 	logger   *logger.Logger
+
+	// fleetPlacement serves the fleet placement verbs (go-quicbaas#1681);
+	// nil answers them Unavailable. See WithFleetPlacement.
+	fleetPlacement service.FleetPlacementProvider
 }
 
 // NewOrchestratorServer creates a new gRPC server for orchestrator operations.

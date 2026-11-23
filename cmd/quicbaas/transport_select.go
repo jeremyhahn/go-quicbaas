@@ -20,8 +20,9 @@ import "strings"
 const defaultTransport = "unix"
 
 // selectTransport returns the transport every command dials for the current
-// --transport and --address. It is the CLI's one transport-selection rule.
-func selectTransport() string {
+// --transport and --address, and the address that transport dials. It is the
+// CLI's one transport-selection rule.
+func selectTransport() (string, string) {
 	return detectTransport(transport, transportExplicit(), address)
 }
 
@@ -35,19 +36,52 @@ func transportExplicit() bool {
 	return transport != "" && transport != defaultTransport
 }
 
-// detectTransport chooses a transport. An explicit choice wins, except that
-// gRPC to a ".sock" address is gRPC over that Unix socket. Otherwise the
-// address decides: an http:// or https:// URL selects REST, and anything else
-// (a socket path included) keeps the default, unix.
-func detectTransport(requested string, explicit bool, addr string) string {
+// Address schemes that exist only in --address: they name the transport and
+// are dropped before the client dials.
+const (
+	quicAddressScheme = "quic://"
+	mcpAddressScheme  = "mcp://"
+)
+
+// detectTransport chooses a transport and the address it dials, following the
+// transport model's "Selecting a transport" table
+// (docs/multiprotocol-api/architecture.md). An explicit choice wins, except
+// that gRPC to a ".sock" address is gRPC over that Unix socket. Otherwise the
+// address decides:
+//
+//   - http:// or https:// selects REST;
+//   - quic://host:port selects QUIC and mcp://host:port selects MCP, each
+//     dialing host:port;
+//   - a path (leading "/" or a ".sock" file) and an empty address keep the
+//     default, unix;
+//   - anything else is host:port and selects gRPC over TLS.
+//
+// The quic:// and mcp:// schemes are dropped whichever way the transport was
+// chosen: they belong to the CLI's address syntax, not to the SDK's.
+func detectTransport(requested string, explicit bool, addr string) (string, string) {
+	dial := addr
+	scheme := ""
+	switch {
+	case strings.HasPrefix(addr, quicAddressScheme):
+		dial, scheme = strings.TrimPrefix(addr, quicAddressScheme), "quic"
+	case strings.HasPrefix(addr, mcpAddressScheme):
+		dial, scheme = strings.TrimPrefix(addr, mcpAddressScheme), "mcp"
+	}
+
 	if explicit {
 		if requested == "grpc" && strings.HasSuffix(addr, ".sock") {
-			return "unix"
+			return "unix", dial
 		}
-		return requested
+		return requested, dial
 	}
-	if strings.HasPrefix(addr, "http://") || strings.HasPrefix(addr, "https://") {
-		return "rest"
+	switch {
+	case scheme != "":
+		return scheme, dial
+	case strings.HasPrefix(addr, "http://") || strings.HasPrefix(addr, "https://"):
+		return "rest", dial
+	case addr == "" || strings.HasPrefix(addr, "/") || strings.HasSuffix(addr, ".sock"):
+		return defaultTransport, dial
+	default:
+		return "grpc", dial
 	}
-	return defaultTransport
 }
