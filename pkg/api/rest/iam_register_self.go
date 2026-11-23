@@ -197,6 +197,11 @@ type registrationSession struct {
 	// reaper discards the tenant and account when the session expires
 	// unfinished; a finish that takes the session stops it.
 	reaper *time.Timer
+
+	// claimHolder names this finish's claim on the tenant's registration
+	// record, so its own failure path can move the claim to discarding. It is
+	// a fresh random value, never the session ID, which is a bearer secret.
+	claimHolder string
 }
 
 // registrationSessionStore is a minimal in-memory store for Phase 2.
@@ -601,6 +606,37 @@ func (h *IAMHandler) RegisterSelfFinish(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Claim the registration before the ceremony. Cleanup on any node claims
+	// it before it reads the registrant, so while this finish holds the claim
+	// no cleanup deletes the account it is completing, and once cleanup holds
+	// it this finish does not complete an account about to be deleted.
+	// A server without a tenant manager provisioned no tenant, so there is no
+	// registration record to claim; it is refused below, after the ceremony,
+	// as before.
+	tenantMgr, err := h.getTenantManager(ctx)
+	if err != nil {
+		h.discardRegistration(ctx, sess)
+		RespondIAMError(w, r, http.StatusInternalServerError,
+			NewIAMAPIError(ErrInternalError, "tenant manager not available"))
+		return
+	}
+	if tenantMgr != nil {
+		if refused, claimErr := h.claimRegistrationForFinish(ctx, tenantMgr, sess); claimErr != nil {
+			if refused {
+				// Cleanup owns the registration, or nothing is left to finish.
+				RespondIAMError(w, r, http.StatusBadRequest,
+					NewIAMAPIError(ErrRegistrationSessionExpired,
+						"registration session not found or expired"))
+				return
+			}
+			h.discardRegistration(ctx, sess)
+			h.server.logger.WithError(claimErr).Error("iam.self_registration: claiming the registration failed, registration refused")
+			RespondIAMError(w, r, http.StatusInternalServerError,
+				NewIAMAPIError(ErrInternalError, "registration could not be claimed"))
+			return
+		}
+	}
+
 	// Complete WebAuthn ceremony.
 	webAuthnMgr, ok2 := h.server.service.(interface {
 		GetWebAuthnManager(ctx context.Context) (WebAuthnManager, error)
@@ -640,8 +676,7 @@ func (h *IAMHandler) RegisterSelfFinish(w http.ResponseWriter, r *http.Request) 
 			NewIAMAPIError(ErrInternalError, "identity store not available"))
 		return
 	}
-	tenantMgr, err := h.getTenantManager(ctx)
-	if err != nil || tenantMgr == nil {
+	if tenantMgr == nil {
 		h.discardRegistration(ctx, sess)
 		RespondIAMError(w, r, http.StatusInternalServerError,
 			NewIAMAPIError(ErrInternalError, "tenant manager not available"))
@@ -1041,7 +1076,9 @@ func (h *IAMHandler) discardRegistrationTenant(ctx context.Context, tenants iam.
 	if tenant.SelfRegistration == nil {
 		return &SelfRegistrationTenantInUseError{TenantID: sess.tenantID}
 	}
-	return discardUnfinishedTenant(ctx, tenants, store, sess.tenantID)
+	// The session's own holder, so a finish that claimed the registration
+	// moves its claim to discarding rather than being refused by itself.
+	return discardUnfinishedTenant(ctx, tenants, store, sess.tenantID, sess.claimHolder)
 }
 
 // removeRegistration deletes the registration's account and tenant, and

@@ -91,6 +91,12 @@ func (m *testTenantManager) GetTenant(ctx context.Context, id string) (*iam.Tena
 	return m.storage.GetTenant(ctx, id)
 }
 
+// ClaimSelfRegistration takes the claim through the in-memory storage, as
+// production's DefaultTenantManager does through its storage.
+func (m *testTenantManager) ClaimSelfRegistration(ctx context.Context, id string, claim iam.SelfRegistrationClaim) (*iam.Tenant, error) {
+	return m.storage.ClaimSelfRegistration(ctx, id, claim)
+}
+
 func (m *testTenantManager) UpdateTenant(ctx context.Context, id string, opts iam.UpdateTenantOptions) (*iam.Tenant, error) {
 	if m.onUpdate != nil {
 		m.onUpdate(id, opts)
