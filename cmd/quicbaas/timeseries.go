@@ -48,6 +48,11 @@ var (
 	// Retention policy flags.
 	tsDurationSec   int64
 	tsResolutionSec int64
+	// tsRetentionAggregation is set-retention's --aggregation. It is kept
+	// apart from query's tsAggregation: cobra writes a flag's default into
+	// its variable at registration, so a shared variable would leak
+	// set-retention's "avg" default into every plain query.
+	tsRetentionAggregation string
 )
 
 // validAggregations defines the set of valid aggregation function names.
@@ -458,7 +463,7 @@ Examples:
 
 	cmd.Flags().Int64Var(&tsDurationSec, "duration", 0, "Retention duration in seconds (required)")
 	cmd.Flags().Int64Var(&tsResolutionSec, "resolution", 0, "Data resolution in seconds")
-	cmd.Flags().StringVar(&tsAggregation, "aggregation", "avg", "Aggregation function for downsampling")
+	cmd.Flags().StringVar(&tsRetentionAggregation, "aggregation", "avg", "Aggregation function for downsampling")
 
 	if err := cmd.MarkFlagRequired("duration"); err != nil {
 		stdlog.Fatalf("failed to mark 'duration' flag as required: %v", err)
@@ -483,7 +488,7 @@ func runTSSetRetentionCommand(cmd *cobra.Command, args []string) error {
 		Policy: &cli.TSRetentionPolicy{
 			Duration:    time.Duration(tsDurationSec) * time.Second,
 			Resolution:  time.Duration(tsResolutionSec) * time.Second,
-			Aggregation: tsAggregation,
+			Aggregation: tsRetentionAggregation,
 		},
 	}
 
