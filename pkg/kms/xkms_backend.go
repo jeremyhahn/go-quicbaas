@@ -223,29 +223,22 @@ func (kb *XKMSBackend) CreateKey(ctx context.Context, attrs *kctypes.KeyAttribut
 
 	// go-xkms stores the key under its go-xkms name; the caller's attrs keep
 	// the service key ID.
-	names := kb.keyNames()
-	xkmsName, claimed, err := names.claim(ctx, attrs.CN, kb.xkmsKeyExists(ctx))
+	err := kb.keyNames().claim(ctx, attrs.CN, kb.xkmsKeyExists(ctx), func(xkmsName string) error {
+		xattrs := *attrs
+		xattrs.CN = xkmsName
+		if isSymmetric {
+			if _, err := xkms.GenerateSymmetricKey(ctx, string(kb.backendType), &xattrs); err != nil {
+				return api.NewSymmetricKeyGenerationError("XKMSBackend.CreateKey", err)
+			}
+			return nil
+		}
+		if _, err := xkms.GenerateKeyWithBackend(ctx, string(kb.backendType), &xattrs); err != nil {
+			return api.NewAsymmetricKeyGenerationError("XKMSBackend.CreateKey", err)
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, err
-	}
-	xattrs := *attrs
-	xattrs.CN = xkmsName
-
-	// Generate key using go-xkms
-	if isSymmetric {
-		// Generate symmetric key
-		_, err := xkms.GenerateSymmetricKey(ctx, string(kb.backendType), &xattrs)
-		if err != nil {
-			names.unclaim(ctx, attrs.CN, claimed)
-			return nil, api.NewSymmetricKeyGenerationError("XKMSBackend.CreateKey", err)
-		}
-	} else {
-		// Generate asymmetric key
-		_, err := xkms.GenerateKeyWithBackend(ctx, string(kb.backendType), &xattrs)
-		if err != nil {
-			names.unclaim(ctx, attrs.CN, claimed)
-			return nil, api.NewAsymmetricKeyGenerationError("XKMSBackend.CreateKey", err)
-		}
 	}
 
 	// Build metadata
@@ -301,14 +294,14 @@ func (kb *XKMSBackend) ImportKey(ctx context.Context, keyID string, material []b
 		kind = "asymmetric"
 	}
 
-	names := kb.keyNames()
-	_, claimed, err := names.claim(ctx, keyID, kb.xkmsKeyExists(ctx))
+	err := kb.keyNames().claim(ctx, keyID, kb.xkmsKeyExists(ctx), func(string) error {
+		if err := xkms.ImportKeyMaterial(ctx, string(kb.backendType), attrs, material); err != nil {
+			return api.NewKeyImportError("XKMSBackend.ImportKey", kind, err)
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, err
-	}
-	if err := xkms.ImportKeyMaterial(ctx, string(kb.backendType), attrs, material); err != nil {
-		names.unclaim(ctx, keyID, claimed)
-		return nil, api.NewKeyImportError("XKMSBackend.ImportKey", kind, err)
 	}
 
 	// Build metadata
@@ -415,8 +408,10 @@ func (kb *XKMSBackend) probeXKMSKey(ctx context.Context, xkmsName string) string
 		format string
 	}{
 		{"AES-256-GCM", "aes256-gcm"},
+		{"AES-192-GCM", "aes192-gcm"},
 		{"AES-128-GCM", "aes128-gcm"},
 		{"CHACHA20-POLY1305", "chacha20-poly1305"},
+		{"XCHACHA20-POLY1305", "xchacha20-poly1305"},
 	}
 
 	for _, sf := range symmetricFormats {
@@ -445,9 +440,22 @@ func (kb *XKMSBackend) probeXKMSKey(ctx context.Context, xkmsName string) string
 
 // xkmsKeyExists returns a check of whether go-xkms holds a key under a name,
 // for xkmsNameOwners.claim.
-func (kb *XKMSBackend) xkmsKeyExists(ctx context.Context) func(name string) bool {
-	return func(name string) bool {
-		return kb.probeXKMSKey(ctx, name) != ""
+func (kb *XKMSBackend) xkmsKeyExists(ctx context.Context) func(name string) (bool, error) {
+	return func(name string) (bool, error) {
+		// go-xkms's own listing carries every stored key's attributes,
+		// whatever its algorithm. A failed listing is inconclusive and fails
+		// the lookup: it is never taken for absence.
+		keys, err := xkms.ListKeys(ctx, string(kb.backendType))
+		if err != nil {
+			return false, fmt.Errorf("list go-xkms keys: %w", err)
+		}
+		for _, attrs := range keys {
+			if attrs != nil && attrs.CN == name {
+				return true, nil
+			}
+		}
+		// A key the listing missed is still found by the probe.
+		return kb.probeXKMSKey(ctx, name) != "", nil
 	}
 }
 
@@ -570,26 +578,22 @@ func (kb *XKMSBackend) RotateKey(ctx context.Context, keyID string) (*KeyMetadat
 	// Build attributes for the new versioned key
 	versionedKeyID := kb.buildVersionedKeyID(keyID, newVersion)
 	attrs := kb.xkmsKeyAttributes(versionedKeyID, meta.Algorithm)
-	names := kb.keyNames()
-	_, claimed, err := names.claim(ctx, versionedKeyID, kb.xkmsKeyExists(ctx))
-	if err != nil {
-		return nil, err
-	}
-
 	// Generate new key with versioned ID
 	// This backend's own version scheme (see the method comment).
-	if kb.isSymmetricAlgorithm(meta.Algorithm) {
-		_, err := xkms.GenerateSymmetricKey(ctx, string(kb.backendType), attrs)
-		if err != nil {
-			names.unclaim(ctx, versionedKeyID, claimed)
-			return nil, api.NewKeyVersionGenerationError("XKMSBackend.RotateKey", err)
+	err := kb.keyNames().claim(ctx, versionedKeyID, kb.xkmsKeyExists(ctx), func(string) error {
+		if kb.isSymmetricAlgorithm(meta.Algorithm) {
+			if _, err := xkms.GenerateSymmetricKey(ctx, string(kb.backendType), attrs); err != nil {
+				return api.NewKeyVersionGenerationError("XKMSBackend.RotateKey", err)
+			}
+			return nil
 		}
-	} else {
-		_, err := xkms.GenerateKeyWithBackend(ctx, string(kb.backendType), attrs)
-		if err != nil {
-			names.unclaim(ctx, versionedKeyID, claimed)
-			return nil, api.NewKeyVersionGenerationError("XKMSBackend.RotateKey", err)
+		if _, err := xkms.GenerateKeyWithBackend(ctx, string(kb.backendType), attrs); err != nil {
+			return api.NewKeyVersionGenerationError("XKMSBackend.RotateKey", err)
 		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	// Update cached metadata
@@ -893,6 +897,12 @@ func (kb *XKMSBackend) Decrypt(ctx context.Context, keyID string, ciphertext, aa
 		actualKeyID = keyID
 	} else {
 		actualKeyID = kb.buildVersionedKeyID(keyID, version)
+	}
+	// The version comes from caller-controlled ciphertext metadata, so the
+	// versioned ID must be keyID's own: its go-xkms name is resolved through
+	// the ownership records, never taken from the name alone.
+	if _, err := kb.keyNames().resolve(ctx, actualKeyID); err != nil {
+		return nil, api.NewKeyMetadataRetrievalError("XKMSBackend.Decrypt", err)
 	}
 
 	// Build the full key ID with algorithm info for go-xkms

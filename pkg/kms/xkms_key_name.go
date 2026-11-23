@@ -119,49 +119,53 @@ func (o *xkmsNameOwners) resolve(ctx context.Context, keyID string) (string, err
 	return name, nil
 }
 
-// claim reserves the go-xkms name of keyID before a key is created under it,
-// recording ownership of an encoded name. exists reports whether go-xkms
-// already holds a key under a name; an encoded name that does, without a
-// record, is an existing literal key, and claiming it would make keyID an
-// alias of that key, so claim refuses it with ErrKeyNameTaken. created
-// reports whether this call wrote the record, so a caller whose key creation
-// then fails can drop it again (see unclaim).
-func (o *xkmsNameOwners) claim(ctx context.Context, keyID string, exists func(name string) bool) (name string, created bool, err error) {
+// claim reserves the go-xkms name of keyID and creates its key under it, as
+// one step: reservation, creation and the rollback of a failed creation all
+// hold the same lock, so a failed request can never drop a record another
+// request's successful creation relies on.
+//
+// exists reports, authoritatively, whether go-xkms already holds a key under
+// a name; its error fails the claim, as an inconclusive lookup is never taken
+// for absence. An encoded name go-xkms holds without a record is an existing
+// literal key, and claiming it would make keyID an alias of that key, so
+// claim refuses it with ErrKeyNameTaken. The record is written before create
+// runs, and is dropped again only when this call wrote it and create failed.
+func (o *xkmsNameOwners) claim(ctx context.Context, keyID string, exists func(name string) (bool, error), create func(name string) error) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
-	name = xkmsKeyName(keyID)
+	name := xkmsKeyName(keyID)
 	owner, found, err := o.owner(ctx, name)
 	if err != nil {
-		return "", false, err
+		return err
 	}
 	if name == keyID {
 		if found {
-			return "", false, ErrKeyNameTaken
+			return ErrKeyNameTaken
 		}
-		return name, false, nil
+		return create(name)
 	}
 	if found {
-		if owner == keyID {
-			return name, false, nil
+		if owner != keyID {
+			return ErrKeyNameTaken
 		}
-		return "", false, ErrKeyNameTaken
+		return create(name)
 	}
-	if exists(name) {
-		return "", false, ErrKeyNameTaken
+	held, err := exists(name)
+	if err != nil {
+		return err
+	}
+	if held {
+		return ErrKeyNameTaken
 	}
 	if err := o.store.Put(ctx, o.recordKey(name), []byte(keyID)); err != nil {
-		return "", false, err
+		return err
 	}
-	return name, true, nil
-}
-
-// unclaim drops a record claim just created, when the key it reserved the
-// name for was not created after all.
-func (o *xkmsNameOwners) unclaim(ctx context.Context, keyID string, created bool) {
-	if created {
-		_ = o.release(ctx, keyID)
+	if err := create(name); err != nil {
+		_ = o.dropLocked(ctx, keyID, name)
+		return err
 	}
+	return nil
 }
 
 // release drops the ownership record of keyID's encoded name, once its key
@@ -173,6 +177,11 @@ func (o *xkmsNameOwners) release(ctx context.Context, keyID string) error {
 	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	return o.dropLocked(ctx, keyID, name)
+}
+
+// dropLocked deletes name's record if keyID owns it; o.mu is held.
+func (o *xkmsNameOwners) dropLocked(ctx context.Context, keyID, name string) error {
 	owner, found, err := o.owner(ctx, name)
 	if err != nil || !found || owner != keyID {
 		return err
