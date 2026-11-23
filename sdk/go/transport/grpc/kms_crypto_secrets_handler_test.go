@@ -19,6 +19,8 @@ import (
 
 	"google.golang.org/grpc"
 
+	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
+
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	dekclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/dek"
@@ -60,39 +62,26 @@ func TestKMSCryptoSecretsServiceClassifiers(t *testing.T) {
 // KMS: KeyManagement / DEKManagement fakes
 // =============================================================================
 
-// fakeKeyManagementServer implements the KeyManagement proto service. It
-// records the most recent GenerateKey request so the test can assert the
-// correct proto message was produced from the SDK struct.
+// fakeKeyManagementServer implements the go-xkms xkms.v1 KeystoreService the
+// node serves for KMS keys. It records the most recent GenerateKey request so
+// the test can assert the correct proto message was produced from the SDK
+// struct.
 type fakeKeyManagementServer struct {
-	pb.UnimplementedKeyManagementServer
-	fail        bool
-	lastGenName string
-	lastGenAlg  pb.KeyAlgorithm
+	xkmssdk.ProtoUnimplementedKeystoreServiceServer
+	fail             bool
+	lastGenName      string
+	lastGenAlgorithm string
 }
 
-func (f *fakeKeyManagementServer) GenerateKey(_ context.Context, req *pb.GenerateKeyRequest) (*pb.GenerateKeyResponse, error) {
+func (f *fakeKeyManagementServer) GenerateKey(_ context.Context, req *xkmssdk.ProtoGenerateKeyRequest) (*xkmssdk.ProtoGenerateKeyResponse, error) {
 	if err := failErr(f.fail); err != nil {
 		return nil, err
 	}
-	f.lastGenName = req.Name
-	if req.KeySpec != nil {
-		f.lastGenAlg = req.KeySpec.Algorithm
-	}
-	return &pb.GenerateKeyResponse{
-		Key: &pb.KeyHandle{
-			KeyId:     "key-123",
-			Version:   1,
-			Algorithm: pb.KeyAlgorithm_KEY_ALG_AES_256_GCM,
-			Status:    pb.KeyStatus_KEY_STATUS_ENABLED,
-		},
-		Metadata: &pb.KeyMetadata{
-			KeyId:     "key-123",
-			Name:      req.Name,
-			Algorithm: pb.KeyAlgorithm_KEY_ALG_AES_256_GCM,
-			Status:    pb.KeyStatus_KEY_STATUS_ENABLED,
-			Version:   1,
-		},
-		Timestamp: 1,
+	f.lastGenName = req.GetKeyId()
+	f.lastGenAlgorithm = req.GetAlgorithm()
+	return &xkmssdk.ProtoGenerateKeyResponse{
+		KeyId:   "key-123",
+		KeyType: req.GetKeyType(),
 	}, nil
 }
 
@@ -100,7 +89,7 @@ func newKMSHandlerWithServer(t *testing.T, fail bool) (*kmsHandler, *fakeKeyMana
 	t.Helper()
 	fake := &fakeKeyManagementServer{fail: fail}
 	srv := newHandlerServer(t, func(s *grpc.Server) {
-		pb.RegisterKeyManagementServer(s, fake)
+		xkmssdk.ProtoRegisterKeystoreServiceServer(s, fake)
 	})
 	h, err := newKMSHandler(srv.dial(t))
 	if err != nil {
@@ -122,13 +111,13 @@ func TestKMSHandler_GenerateKey_Success(t *testing.T) {
 		t.Fatalf("GenerateKey: unexpected error: %v", err)
 	}
 
-	// The handler must hit the KeyManagement proto service, not the generic
+	// The handler must hit the xkms.v1 KeystoreService, not the generic
 	// fallback. Assert the fake recorded the converted request.
 	if fake.lastGenName != "my-key" {
-		t.Errorf("server saw name %q, want %q", fake.lastGenName, "my-key")
+		t.Errorf("server saw key id %q, want %q", fake.lastGenName, "my-key")
 	}
-	if fake.lastGenAlg != pb.KeyAlgorithm_KEY_ALG_AES_256_GCM {
-		t.Errorf("server saw algorithm %v, want AES_256_GCM", fake.lastGenAlg)
+	if fake.lastGenAlgorithm != "aes256-gcm" {
+		t.Errorf("server saw algorithm %q, want aes256-gcm", fake.lastGenAlgorithm)
 	}
 
 	// The response must round-trip as the canonical service type the SDK
