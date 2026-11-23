@@ -438,14 +438,14 @@ RestOrchestratorClient builds these paths from `API_PREFIX` (`/api/v1/orchestrat
 
 | Method | Path | Handler | SDK file | Console |
 |---|---|---|---|---|
-| GET | `/api/v1/prompts/{set}` | HandleListPrompts | - | not covered |
-| DELETE | `/api/v1/prompts/{set}/{name}` | HandleResetPrompt | - | not covered |
-| GET | `/api/v1/prompts/{set}/{name}` | HandleGetPrompt | - | not covered |
-| PUT | `/api/v1/prompts/{set}/{name}` | HandlePutPrompt | - | not covered |
-| GET | `/api/v1/prompts/{set}/{name}/diff` | HandleDiffPrompt | - | not covered |
-| GET | `/api/v1/prompts/{set}/{name}/effective` | HandleGetEffectivePrompt | - | not covered |
-| GET | `/api/v1/prompts/{set}/{name}/history` | HandleGetPromptHistory | - | not covered |
-| POST | `/api/v1/prompts/{set}/{name}/rollback` | HandleRollbackPrompt | - | not covered |
+| GET | `/api/v1/prompts/{set}` | HandleListPrompts | prompts.ts | covered: views/orchestrator/PromptsView.svelte |
+| DELETE | `/api/v1/prompts/{set}/{name}` | HandleResetPrompt | prompts.ts | covered: views/orchestrator/PromptsView.svelte |
+| GET | `/api/v1/prompts/{set}/{name}` | HandleGetPrompt | prompts.ts | covered: views/orchestrator/PromptsView.svelte |
+| PUT | `/api/v1/prompts/{set}/{name}` | HandlePutPrompt | prompts.ts | covered: views/orchestrator/PromptsView.svelte |
+| GET | `/api/v1/prompts/{set}/{name}/diff` | HandleDiffPrompt | prompts.ts | covered: views/orchestrator/PromptsView.svelte |
+| GET | `/api/v1/prompts/{set}/{name}/effective` | HandleGetEffectivePrompt | prompts.ts | covered: views/orchestrator/PromptsView.svelte |
+| GET | `/api/v1/prompts/{set}/{name}/history` | HandleGetPromptHistory | prompts.ts | covered: views/orchestrator/PromptsView.svelte |
+| POST | `/api/v1/prompts/{set}/{name}/rollback` | HandleRollbackPrompt | prompts.ts | covered: views/orchestrator/PromptsView.svelte |
 
 ### query
 
