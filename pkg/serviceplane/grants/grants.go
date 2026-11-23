@@ -147,6 +147,8 @@ type Identity struct {
 	TrustDomain string
 	// Validity is the SVID lifetime; zero takes the profile's default.
 	Validity time.Duration
+	// Now is the clock renewal is judged by; nil is time.Now.
+	Now func() time.Time
 }
 
 // Kind answers identity.
@@ -160,8 +162,19 @@ func (g *Identity) Grant(ctx context.Context, m *serviceplane.Manifest, prior st
 	if err != nil {
 		return "", err
 	}
-	if strings.HasPrefix(prior, id+"#") {
-		return prior, nil
+	if held, ok := strings.CutPrefix(prior, id+"#"); ok {
+		// Keep the SVID while it is the stored one and not yet due for
+		// renewal; otherwise issue its successor, which replaces it in
+		// the store, and revoke it below. The RBAC grant then rebinds the
+		// principal to the new key.
+		cert, err := storedSVID(tenantCtx(ctx, m), g.Secrets, m)
+		now := time.Now
+		if g.Now != nil {
+			now = g.Now
+		}
+		if err == nil && svidFresh(cert, held, now()) {
+			return prior, nil
+		}
 	}
 	serial, err := issue(tenantCtx(ctx, m), g.CA, g.Secrets, svidPath(m), id, &xkmssdk.TrustedCASignOptions{
 		Profile:  xkmssdk.ProfileNameX509SVID,
@@ -425,16 +438,19 @@ func (g *RBAC) Grant(ctx context.Context, m *serviceplane.Manifest, prior string
 		return "", err
 	}
 	ref := m.Role + "@" + id
-	if prior == ref {
-		return ref, nil
-	}
 	ctx = tenantCtx(ctx, m)
 	svid, err := g.svid(ctx, m)
 	if err != nil {
 		return "", fmt.Errorf("rbac %s: %w", ref, err)
 	}
+	// Assign even when the reference is unchanged: the identity grant may
+	// have renewed the SVID, and the principal's certificate binding must
+	// follow the new key. Assigning a held role rebinds it in place.
 	if err := g.Roles.AssignRole(ctx, m.Tenant, id, m.Role, svid); err != nil {
 		return "", fmt.Errorf("rbac %s: %w", ref, err)
+	}
+	if prior == ref {
+		return ref, nil
 	}
 	if prior != "" {
 		if err := g.revoke(ctx, m, prior); err != nil {
@@ -449,7 +465,12 @@ func (g *RBAC) svid(ctx context.Context, m *serviceplane.Manifest) (*x509.Certif
 	if g.Secrets == nil {
 		return nil, &ConfigError{Kind: serviceplane.GrantRBAC, Reason: "no secret store"}
 	}
-	data, _, err := g.Secrets.Get(ctx, svidPath(m))
+	return storedSVID(ctx, g.Secrets, m)
+}
+
+// storedSVID reads the certificate of the SVID the identity grant keeps for m.
+func storedSVID(ctx context.Context, store SecretStore, m *serviceplane.Manifest) (*x509.Certificate, error) {
+	data, _, err := store.Get(ctx, svidPath(m))
 	if err != nil {
 		return nil, fmt.Errorf("read the SVID: %w", err)
 	}
@@ -462,6 +483,17 @@ func (g *RBAC) svid(ctx context.Context, m *serviceplane.Manifest) (*x509.Certif
 		return nil, fmt.Errorf("read the SVID: %w", err)
 	}
 	return cert, nil
+}
+
+// svidFresh reports whether the stored SVID is the one serial names and
+// has more than a third of its lifetime left: past that, the identity grant
+// renews it, so a long-running service never holds an expired credential.
+func svidFresh(cert *x509.Certificate, serial string, now time.Time) bool {
+	if cert == nil || cert.SerialNumber == nil || cert.SerialNumber.Text(16) != serial {
+		return false
+	}
+	life := cert.NotAfter.Sub(cert.NotBefore)
+	return now.Before(cert.NotAfter.Add(-life / 3))
 }
 
 // Revoke unbinds the role.

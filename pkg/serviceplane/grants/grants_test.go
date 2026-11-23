@@ -341,6 +341,65 @@ func TestRBAC_BindsTheBuiltInRoleToTheIdentity(t *testing.T) {
 	assert.Empty(t, e.roles.bound)
 }
 
+// TestIdentity_RenewsAnSVIDBeforeItExpires keeps a fresh SVID, renews one
+// past two thirds of its lifetime or already expired, revokes the renewed
+// one, and has the RBAC grant rebind the principal to the new key while its
+// role reference is unchanged.
+func TestIdentity_RenewsAnSVIDBeforeItExpires(t *testing.T) {
+	e := newEnv(t)
+	m := serviceplanetest.Manifest("acme", "web")
+	id, ok := e.grant(serviceplane.GrantIdentity).(*Identity)
+	require.True(t, ok)
+	rbac := e.grant(serviceplane.GrantRBAC)
+	ctx := context.Background()
+	const principal = "acme|spiffe://quicbaas.test/tenant/acme/svc/web"
+
+	first, err := id.Grant(ctx, m, "")
+	require.NoError(t, err)
+	role, err := rbac.Grant(ctx, m, "")
+	require.NoError(t, err)
+	issued := e.kept(t, "acme", "tenant/acme/services/web/svid")
+
+	// Fresh: the SVID is kept.
+	id.Now = func() time.Time { return issued.NotBefore.Add(time.Second) }
+	again, err := id.Grant(ctx, m, first)
+	require.NoError(t, err)
+	assert.Equal(t, first, again, "a fresh SVID is kept")
+
+	for name, at := range map[string]time.Time{
+		"due for renewal": issued.NotAfter.Add(-issued.NotAfter.Sub(issued.NotBefore) / 4),
+		"expired":         issued.NotAfter.Add(time.Hour),
+	} {
+		t.Run(name, func(t *testing.T) {
+			held := e.kept(t, "acme", "tenant/acme/services/web/svid")
+			prior := SPIFFEID(trustDomain, m) + "#" + held.SerialNumber.Text(16)
+			id.Now = func() time.Time { return at }
+			if name == "expired" {
+				id.Now = func() time.Time { return held.NotAfter.Add(time.Hour) }
+			} else {
+				id.Now = func() time.Time { return held.NotAfter.Add(-held.NotAfter.Sub(held.NotBefore) / 4) }
+			}
+			ref, err := id.Grant(ctx, m, prior)
+			require.NoError(t, err)
+			assert.NotEqual(t, prior, ref, "the SVID is renewed")
+			renewed := e.kept(t, "acme", "tenant/acme/services/web/svid")
+			assert.NotEqual(t, held.SerialNumber, renewed.SerialNumber)
+			assert.Equal(t, SPIFFEID(trustDomain, m)+"#"+renewed.SerialNumber.Text(16), ref)
+			assert.True(t, e.revoked(t, held), "the renewed SVID is revoked")
+			assert.False(t, e.revoked(t, renewed))
+
+			// The role is unchanged, so its reference is too, but the
+			// principal's binding follows the new key.
+			ref2, err := rbac.Grant(ctx, m, role)
+			require.NoError(t, err)
+			assert.Equal(t, role, ref2)
+			bound := e.roles.svids[principal]
+			require.NotNil(t, bound)
+			assert.Equal(t, renewed.SerialNumber, bound.SerialNumber, "the binding is refreshed to the renewed SVID")
+		})
+	}
+}
+
 func TestSecrets_BindsTheNamespaceToTheIdentity(t *testing.T) {
 	e := newEnv(t)
 	m := serviceplanetest.Manifest("acme", "web")
