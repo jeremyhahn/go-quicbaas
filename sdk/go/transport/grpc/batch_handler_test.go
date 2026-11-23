@@ -96,9 +96,37 @@ func TestBatchClient_ServerErrorOverGRPC(t *testing.T) {
 	}
 }
 
+func TestBatchClient_ExecuteOverGRPC(t *testing.T) {
+	c := newBatchClient(t, false)
+	resp, err := c.Execute(context.Background(), &batch.BatchRequest{
+		Operations: []batch.BatchOperation{
+			{Type: batch.OpPut, EntityType: "users", Key: "u1", Value: []byte("v")},
+			{Type: batch.OpDelete, EntityType: "users", Key: "u2"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	// The fake server marks puts as succeeded and deletes as not, so the
+	// results prove both operation types crossed the wire in order.
+	if len(resp.Results) != 2 || !resp.Results[0].Success || resp.Results[1].Success {
+		t.Fatalf("Execute response = %+v", resp)
+	}
+}
+
+func TestBatchClient_ExecuteServerErrorOverGRPC(t *testing.T) {
+	c := newBatchClient(t, true)
+	_, err := c.Execute(context.Background(), &batch.BatchRequest{
+		Operations: []batch.BatchOperation{{Type: batch.OpDelete, EntityType: "users", Key: "u1"}},
+	})
+	if err == nil {
+		t.Fatal("Execute: expected the server error")
+	}
+}
+
 func TestKVHandler_BatchServiceRejectsWrongRequestType(t *testing.T) {
 	h := newKVHandler(newQuicBaaSConn(t, false))
-	for _, method := range []string{"Put", "Get", "Delete"} {
+	for _, method := range []string{"Put", "Get", "Delete", "Execute"} {
 		_, err := h.handleRequest(context.Background(), batchServicePrefix, method, &service.PutRequest{})
 		if !errors.IsInvalidInput(err) {
 			t.Errorf("%s: err = %v, want invalid input", method, err)

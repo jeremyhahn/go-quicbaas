@@ -85,6 +85,16 @@ func (f *fakeQuicBaaSServer) BatchDelete(context.Context, *pb.BatchDeleteRequest
 	}
 	return &pb.BatchDeleteResponse{Responses: []*pb.DeleteResponse{{Deleted: true}}, Timestamp: 3}, nil
 }
+func (f *fakeQuicBaaSServer) BatchExecute(_ context.Context, req *pb.BatchExecuteRequest) (*pb.BatchExecuteResponse, error) {
+	if err := f.e(); err != nil {
+		return nil, err
+	}
+	results := make([]*pb.BatchExecuteResult, len(req.Operations))
+	for i, op := range req.Operations {
+		results[i] = &pb.BatchExecuteResult{Succeeded: op.Type == pb.BatchExecuteOpType_BATCH_EXECUTE_OP_TYPE_PUT}
+	}
+	return &pb.BatchExecuteResponse{Results: results}, nil
+}
 func (f *fakeQuicBaaSServer) Transaction(context.Context, *pb.TransactionRequest) (*pb.TransactionResponse, error) {
 	if err := f.e(); err != nil {
 		return nil, err

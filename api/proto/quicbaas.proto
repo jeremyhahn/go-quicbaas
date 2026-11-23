@@ -167,6 +167,12 @@ service QuicBaaS {
       option (qrdb.v1.permission) = "batch:execute";
   }
 
+  // BatchExecute applies a mixed list of puts and deletes atomically.
+  // Either all operations succeed or all fail.
+  rpc BatchExecute(BatchExecuteRequest) returns (BatchExecuteResponse) {
+      option (qrdb.v1.permission) = "batch:execute";
+  }
+
   // StreamBatchPut performs bidirectional streaming for large batch operations.
   // Enables processing millions of records with progress tracking, back-pressure,
   // and the ability to abort mid-stream. Supports chunked transfer with validation.
@@ -1022,6 +1028,51 @@ message BatchDeleteResponse {
 
   // timestamp when the batch was committed (Unix nanoseconds).
   int64 timestamp = 2;
+}
+
+// BatchExecuteOpType names the kind of a BatchExecuteOperation.
+enum BatchExecuteOpType {
+  // BATCH_EXECUTE_OP_TYPE_UNSPECIFIED is rejected.
+  BATCH_EXECUTE_OP_TYPE_UNSPECIFIED = 0;
+
+  // BATCH_EXECUTE_OP_TYPE_PUT writes value at key.
+  BATCH_EXECUTE_OP_TYPE_PUT = 1;
+
+  // BATCH_EXECUTE_OP_TYPE_DELETE removes key.
+  BATCH_EXECUTE_OP_TYPE_DELETE = 2;
+}
+
+// BatchExecuteOperation is one put or delete in a BatchExecuteRequest.
+message BatchExecuteOperation {
+  // type is the kind of operation.
+  BatchExecuteOpType type = 1;
+
+  // entity_type names the keyspace that holds key.
+  string entity_type = 2;
+
+  // key names the entry within the keyspace of entity_type.
+  string key = 3;
+
+  // value is the data to write; empty for a delete.
+  bytes value = 4;
+}
+
+// BatchExecuteRequest applies a mixed list of puts and deletes atomically.
+message BatchExecuteRequest {
+  // operations are applied in order, all or none.
+  repeated BatchExecuteOperation operations = 1;
+}
+
+// BatchExecuteResult is the outcome of one BatchExecuteOperation.
+message BatchExecuteResult {
+  // succeeded reports whether the operation was applied.
+  bool succeeded = 1;
+}
+
+// BatchExecuteResponse carries one result per operation, in request order.
+message BatchExecuteResponse {
+  // results holds one entry per operation.
+  repeated BatchExecuteResult results = 1;
 }
 
 // Streaming Batch Operations Messages (Phase 6)

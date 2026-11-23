@@ -201,6 +201,7 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.v1.QuicBaaS/BatchGet":       {"batch", "execute"},
 	"/quicbaas.v1.QuicBaaS/BatchPut":       {"batch", "execute"},
 	"/quicbaas.v1.QuicBaaS/BatchDelete":    {"batch", "execute"},
+	"/quicbaas.v1.QuicBaaS/BatchExecute":   {"batch", "execute"},
 	"/quicbaas.v1.QuicBaaS/StreamBatchPut": {"batch", "execute"},
 	"/quicbaas.v1.QuicBaaS/Transaction":    {"transaction", "execute"},
 	"/quicbaas.v1.QuicBaaS/Watch":          {"watch", "watch"},
