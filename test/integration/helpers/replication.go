@@ -1,0 +1,137 @@
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//go:build integration
+
+package helpers
+
+import (
+	"context"
+	"slices"
+	"strconv"
+	"sync"
+	"time"
+)
+
+// EntityReader reads entity from the node with index node and reports
+// whether the node has it.
+type EntityReader func(ctx context.Context, node int, entity TestEntity) (bool, error)
+
+// ReplicationWait tracks, for each node, the entities not yet seen there.
+// Check is a PollCondition: an entity found on a node is never read from
+// that node again, so a sweep cut short by its context still counts.
+type ReplicationWait struct {
+	read           EntityReader
+	requestTimeout time.Duration
+	pending        [][]TestEntity // per node; each slice is touched only by its node's goroutine during Check
+}
+
+// NewReplicationWait waits for every entity on each of nodes nodes. Each
+// read is bounded by requestTimeout.
+func NewReplicationWait(nodes int, entities []TestEntity, read EntityReader, requestTimeout time.Duration) *ReplicationWait {
+	pending := make([][]TestEntity, nodes)
+	for node := range pending {
+		pending[node] = slices.Clone(entities)
+	}
+	return &ReplicationWait{read: read, requestTimeout: requestTimeout, pending: pending}
+}
+
+// Pending returns how many (node, entity) pairs have not been seen yet.
+func (w *ReplicationWait) Pending() int {
+	n := 0
+	for _, p := range w.pending {
+		n += len(p)
+	}
+	return n
+}
+
+// Check reads every pending pair once, one goroutine per node, and drops
+// each pair found. It returns true once nothing is pending. A read error
+// leaves the pair pending; Check then returns a *ReplicationPendingError
+// carrying the last read error. When ctx ends, each node stops its sweep and
+// keeps what it has found so far.
+//
+// Check is not safe to call concurrently with itself; Poll never does.
+func (w *ReplicationWait) Check(ctx context.Context) (bool, error) {
+	errs := make([]error, len(w.pending))
+	var wg sync.WaitGroup
+	for node := range w.pending {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs[node] = w.sweep(ctx, node)
+		}()
+	}
+	wg.Wait()
+
+	pending := w.Pending()
+	if pending == 0 {
+		return true, nil
+	}
+	var lastErr error
+	for _, err := range errs {
+		if err != nil {
+			lastErr = err
+		}
+	}
+	if lastErr != nil {
+		return false, &ReplicationPendingError{Pending: pending, LastErr: lastErr}
+	}
+	return false, nil
+}
+
+// sweep reads node's pending entities once and keeps those not found. It
+// returns the last read error.
+func (w *ReplicationWait) sweep(ctx context.Context, node int) error {
+	var lastErr error
+	todo := w.pending[node]
+	still := make([]TestEntity, 0, len(todo))
+	for i, e := range todo {
+		if ctx.Err() != nil {
+			still = append(still, todo[i:]...)
+			break
+		}
+		rctx, cancel := context.WithTimeout(ctx, w.requestTimeout)
+		found, err := w.read(rctx, node, e)
+		cancel()
+		if err != nil {
+			lastErr = err
+			still = append(still, e)
+			continue
+		}
+		if !found {
+			still = append(still, e)
+		}
+	}
+	w.pending[node] = still
+	return lastErr
+}
+
+// ReplicationPendingError reports pairs still pending after a sweep and the
+// last read error seen.
+type ReplicationPendingError struct {
+	// Pending is the number of (node, entity) pairs not yet seen.
+	Pending int
+
+	// LastErr is the last read error of the sweep.
+	LastErr error
+}
+
+func (e *ReplicationPendingError) Error() string {
+	msg := strconv.Itoa(e.Pending) + " entity reads pending"
+	if e.LastErr != nil {
+		msg += ": " + e.LastErr.Error()
+	}
+	return msg
+}
+
+func (e *ReplicationPendingError) Unwrap() error { return e.LastErr }
