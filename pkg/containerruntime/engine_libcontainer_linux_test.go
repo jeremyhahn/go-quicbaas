@@ -20,8 +20,11 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
+	"github.com/opencontainers/runc/libcontainer/specconv"
+	specs "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/unix"
@@ -35,6 +38,42 @@ func TestLibcontainerEngine_UnknownContainer(t *testing.T) {
 	_, err = engine.Exec("ghost", processSpec{Args: []string{"/bin/true"}})
 	require.ErrorIs(t, err, ErrContainerNotFound)
 	require.ErrorIs(t, engine.Destroy("ghost"), ErrContainerNotFound)
+}
+
+func TestLibcontainerEngine_CreateRefusesSeccompWithoutSupport(t *testing.T) {
+	saved := seccompSupported
+	seccompSupported = false
+	t.Cleanup(func() { seccompSupported = saved })
+
+	engine := newLibcontainerEngine(t.TempDir())
+	err := engine.Create("seccomp", &ociConfig{
+		OCIVersion: "1.0.2",
+		Process:    &ociProcess{Args: []string{"/bin/true"}},
+		Root:       &ociRoot{Path: t.TempDir()},
+		Linux:      &ociLinux{Seccomp: defaultSeccompProfile(nil, runtime.GOARCH)},
+	})
+	require.ErrorIs(t, err, ErrSeccompUnsupported)
+
+	_, err = engine.Start("seccomp", processSpec{Args: []string{"/bin/true"}})
+	require.ErrorIs(t, err, ErrContainerNotFound, "a refused container is never registered")
+}
+
+func TestToRuntimeSpec_SeccompConverts(t *testing.T) {
+	spec, err := toRuntimeSpec(&ociConfig{
+		OCIVersion: "1.0.2",
+		Linux:      &ociLinux{Seccomp: defaultSeccompProfile([]string{"CAP_CHOWN"}, runtime.GOARCH)},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, spec.Linux)
+	require.NotNil(t, spec.Linux.Seccomp)
+	assert.Equal(t, specs.ActErrno, spec.Linux.Seccomp.DefaultAction)
+	require.NotNil(t, spec.Linux.Seccomp.DefaultErrnoRet)
+	assert.Equal(t, uint(1), *spec.Linux.Seccomp.DefaultErrnoRet)
+
+	cfg, err := specconv.SetupSeccomp(spec.Linux.Seccomp)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	assert.NotEmpty(t, cfg.Syscalls)
 }
 
 func TestLibcontainerEngine_CreateRejectsAConfigWithoutRoot(t *testing.T) {

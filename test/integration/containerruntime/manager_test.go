@@ -252,6 +252,40 @@ func TestExec_CancelKillsTheDescendantsOfAnExitedLeader(t *testing.T) {
 	require.Equal(t, 1, res.ExitCode, "the cancelled exec's child survived and wrote /late")
 }
 
+// TestContainer_SeccompRefusesAProfileDeniedSyscall shows that an
+// unprivileged container runs under the default seccomp filter, which
+// refuses a user namespace without CAP_SYS_ADMIN although no capability is
+// needed for it.
+func TestContainer_SeccompRefusesAProfileDeniedSyscall(t *testing.T) {
+	ctx := testContext(t)
+	manager := newTestManager(t)
+	image, _ := pushShellImage(t, "containerruntime/seccomp")
+	require.NoError(t, manager.PullImage(ctx, image))
+
+	container, err := manager.CreateContainer(ctx, &containerruntime.ContainerConfig{
+		Name:  "seccomp",
+		Image: image,
+		Command: []string{"/bin/sh", "-c",
+			"/bin/busybox cat /proc/self/status; /bin/busybox unshare -U /bin/busybox true; echo unshare-rc=$?"},
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, manager.StartContainer(ctx, container.ID))
+	code, err := manager.WaitContainer(ctx, container.ID)
+	require.NoError(t, err)
+	assert.Equal(t, 0, code)
+
+	logs, err := manager.GetContainerLogs(ctx, container.ID, false, nil)
+	require.NoError(t, err)
+	stdout, stderr := string(logs.Stdout), string(logs.Stderr)
+	assert.Regexp(t, `(?m)^Seccomp:\s+2$`, stdout, "the process runs in seccomp filter mode")
+	assert.Regexp(t, `unshare-rc=[1-9]`, stdout)
+	assert.NotContains(t, stdout, "unshare-rc=0")
+	assert.Contains(t, stderr, "Operation not permitted", "the profile's errno")
+
+	require.NoError(t, manager.RemoveContainer(ctx, container.ID, false))
+}
+
 // A digest-pinned reference pulls when the registry serves the pinned
 // manifest, and fails when it does not.
 func TestPullImage_PinnedDigest(t *testing.T) {
