@@ -542,7 +542,7 @@ func TestPlacement_PermissionsAreRegisteredWithTheRightRolePlacement(t *testing.
 	for _, c := range contributions {
 		contributed[c.permission] = c
 	}
-	for _, perm := range []qrdbsdk.Permission{PlacementRead, PlacementPlace, PlacementManage} {
+	for _, perm := range []qrdbsdk.Permission{PlacementRead, PlacementPlace, PlacementManage, PlacementConsent} {
 		c, ok := contributed[perm]
 		require.Truef(t, ok, "%s is not contributed", perm)
 		assert.Equalf(t, dutyOutsideSecurityOfficer, c.duty, "%s carries a governance or crypto duty", perm)
@@ -554,6 +554,10 @@ func TestPlacement_PermissionsAreRegisteredWithTheRightRolePlacement(t *testing.
 	assert.Contains(t, contributed[PlacementPlace].roles, qrdbsdk.PermissionRoleOperator)
 	assert.NotContainsf(t, contributed[PlacementManage].roles, qrdbsdk.PermissionRoleOperator,
 		"placement:manage reshapes the node pool and must not be Operator's")
+	assert.Equal(t, []string{qrdbsdk.PermissionRoleAdmin}, contributed[PlacementConsent].roles,
+		"placement:consent lets custody-bearing work leave its host and must be Admin's alone")
+	assert.NotContainsf(t, contributed[PlacementConsent].roles, qrdbsdk.PermissionRoleOperator,
+		"placement:consent must not be Operator's")
 }
 
 // TestAgentAccountWrites_AreTheTenantAdminsAlone pins the go-quicbaas#1355
