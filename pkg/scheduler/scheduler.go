@@ -1135,7 +1135,7 @@ func (s *SchedulerEngine) processDueJobs(ctx context.Context) {
 	storageCtx, cancel := context.WithTimeout(ctx, s.config.DefaultTimeout)
 	defer cancel()
 
-	jobs, err := s.storage.GetJobsDueForExecution(storageCtx, now, s.config.MaxConcurrentJobs, s.runnableHere)
+	jobs, err := s.storage.GetJobsDueForExecution(storageCtx, now, s.config.MaxConcurrentJobs, s.executableNow())
 	if err != nil {
 		s.logError(sweepLogPrefix+" failed: component=scheduler error=%q", err.Error())
 		s.storageErrors.Add(1)
@@ -1289,10 +1289,29 @@ func (s *SchedulerEngine) shouldExecute(job *Job) bool {
 	return true
 }
 
-// runnableHere reports whether this node may ever run job. It looks at
-// node affinity only; leadership is left to shouldExecute.
-func (s *SchedulerEngine) runnableHere(job *Job) bool {
-	return job.NodeAffinity == "" || s.nodeID == "" || job.NodeAffinity == s.nodeID
+// executableNow returns the filter one sweep hands the due scan: the jobs
+// this node may execute right now, so that jobs it would refuse never use
+// up the MaxConcurrentJobs batch. Leadership is read once per sweep. A
+// leader, or a node with no leader check, may run every job its affinity
+// allows. A follower, or a node whose leader check failed, may run only
+// jobs pinned to it. shouldExecute still decides each job.
+func (s *SchedulerEngine) executableNow() func(*Job) bool {
+	affinityAllows := func(job *Job) bool {
+		return job.NodeAffinity == "" || s.nodeID == "" || job.NodeAffinity == s.nodeID
+	}
+	if s.leader == nil {
+		return affinityAllows
+	}
+	isLeader, err := s.leader.IsLeader()
+	if err != nil {
+		s.logWarn("Due scan limited to jobs pinned to this node: leader check failed: %v", err)
+	}
+	if err == nil && isLeader {
+		return affinityAllows
+	}
+	return func(job *Job) bool {
+		return job.NodeAffinity != "" && s.nodeID != "" && job.NodeAffinity == s.nodeID
+	}
 }
 
 // triggerRequest is one queued manual trigger: the job, the scope it was

@@ -100,11 +100,12 @@ func TestProcessDueJobs_FoundJobsEmitsOneRecordWithCount(t *testing.T) {
 	past := time.Now().Add(-time.Minute)
 	for id := uint64(1); id <= 3; id++ {
 		storage.jobs[id] = &Job{
-			ID:      id,
-			Name:    fmt.Sprintf("job-%d", id),
-			Handler: "noop",
-			Status:  JobStatusPending,
-			NextRun: past,
+			ID:           id,
+			Name:         fmt.Sprintf("job-%d", id),
+			Handler:      "noop",
+			Status:       JobStatusPending,
+			NextRun:      past,
+			NodeAffinity: "node-a",
 		}
 	}
 	engine, logger := newSweepLoggingEngine(storage)

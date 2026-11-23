@@ -209,6 +209,72 @@ func TestClusteredScheduler_ForeignAffinityJobsDoNotStarveOtherTenants(t *testin
 	}
 }
 
+// neverLeader is a leader check that always reports a follower.
+type neverLeader struct{}
+
+func (neverLeader) IsLeader() (bool, error) { return false, nil }
+
+// TestClusteredScheduler_FollowerRunsItsPinnedJobBehindLeaderOnlyJobs proves
+// a follower's due batch holds only jobs it may run: a full batch of due
+// unpinned tenant jobs (leader-only on a follower) ordered before a tenant
+// job pinned to this node does not keep the pinned job from running.
+func TestClusteredScheduler_FollowerRunsItsPinnedJobBehindLeaderOnlyJobs(t *testing.T) {
+	kv := newMockKVStore()
+	store := newClusteredStoreOver(t, kv)
+
+	cfg := scheduler.DefaultConfig()
+	cfg.TickInterval = 10 * time.Millisecond
+	cfg.MaxConcurrentJobs = 2
+
+	engine, err := scheduler.NewWithClustering(cfg, store, "node-a", neverLeader{})
+	if err != nil {
+		t.Fatalf("NewWithClustering: %v", err)
+	}
+	ran := make(chan uint64, 16)
+	engine.RegisterHandler("noop", func(_ context.Context, job *scheduler.Job) (*scheduler.JobResult, error) {
+		ran <- job.ID
+		return &scheduler.JobResult{}, nil
+	})
+	startEngine(t, engine)
+
+	ctx := context.Background()
+	past := time.Now().Add(-time.Hour)
+	leaderOnly := map[uint64]bool{}
+	for i := 0; i < 2; i++ {
+		j := createTestJob("aaa-unpinned", scheduler.OwnerTypeTenant, "aaa")
+		j.Handler = "noop"
+		j.ExecuteAt = past
+		j.NextRun = past
+		if err := store.CreateJob(ctx, j); err != nil {
+			t.Fatalf("CreateJob(aaa): %v", err)
+		}
+		leaderOnly[j.ID] = true
+	}
+	z := createTestJob("zzz-local", scheduler.OwnerTypeTenant, "zzz")
+	z.Handler = "noop"
+	z.ExecuteAt = past
+	z.NextRun = past
+	z.NodeAffinity = "node-a"
+	if err := store.CreateJob(ctx, z); err != nil {
+		t.Fatalf("CreateJob(zzz): %v", err)
+	}
+
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case id := <-ran:
+			if leaderOnly[id] {
+				t.Fatalf("unpinned job %d ran on follower node-a", id)
+			}
+			if id == z.ID {
+				return
+			}
+		case <-deadline:
+			t.Fatal("zzz job pinned to node-a was not run on the follower within 5s")
+		}
+	}
+}
+
 // TestGetJobsDueForExecution_IneligibleJobsDoNotConsumeLimit checks that a
 // job the eligible predicate rejects is skipped without using up the limit.
 func TestGetJobsDueForExecution_IneligibleJobsDoNotConsumeLimit(t *testing.T) {
