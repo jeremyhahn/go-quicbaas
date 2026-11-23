@@ -19,6 +19,8 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/ca/provider"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/api/caadapter"
 )
 
 // callerTenantCA is the CA the go-xkms service issues through. The go-xkms
@@ -90,24 +92,51 @@ func (c callerTenantCA) IssueCertificateRaw(
 	return c.CA.IssueCertificateRaw(ctx, commonName, organization, sans, validityDays, profile, algorithm, callerTenant(ctx, tenantID))
 }
 
-// IssueEKCertificateRaw forwards to the wrapped TCG CA.
+// tcgCallerAllowed refuses TCG issuance for any caller but the system
+// tenant, as caadapter.tcgRequest does on every other transport: the pinned
+// go-xkms records no issuing tenant on TCG certificates, so a tenant could
+// never revoke one. An absent identity is refused too (fail closed).
+func tcgCallerAllowed(ctx context.Context) error {
+	id := qrdbsdk.IdentityFromContext(ctx)
+	if id != nil && qrdbsdk.IdentityIsSystemTenant(id) {
+		return nil
+	}
+	return caadapter.ErrXKMSCATCGTenantUnsupported
+}
+
+// IssueEKCertificateRaw forwards to the wrapped TCG CA, for the system tenant
+// only.
 func (c callerTenantTCGCA) IssueEKCertificateRaw(ctx context.Context, commonName, organization string, ekPubDER []byte) ([]byte, error) {
+	if err := tcgCallerAllowed(ctx); err != nil {
+		return nil, err
+	}
 	return c.tcg.IssueEKCertificateRaw(ctx, commonName, organization, ekPubDER)
 }
 
-// IssueAKCertificateRaw forwards to the wrapped TCG CA.
+// IssueAKCertificateRaw forwards to the wrapped TCG CA, for the system tenant
+// only.
 func (c callerTenantTCGCA) IssueAKCertificateRaw(ctx context.Context, commonName, organization string, pubDER []byte) ([]byte, error) {
+	if err := tcgCallerAllowed(ctx); err != nil {
+		return nil, err
+	}
 	return c.tcg.IssueAKCertificateRaw(ctx, commonName, organization, pubDER)
 }
 
-// SignTCGCSRIDevIDRaw forwards to the wrapped TCG CA.
+// SignTCGCSRIDevIDRaw forwards to the wrapped TCG CA, for the system tenant
+// only.
 func (c callerTenantTCGCA) SignTCGCSRIDevIDRaw(ctx context.Context, commonName, organization string, packedCSR []byte) (iakDER, idevidDER []byte, err error) {
+	if err := tcgCallerAllowed(ctx); err != nil {
+		return nil, nil, err
+	}
 	return c.tcg.SignTCGCSRIDevIDRaw(ctx, commonName, organization, packedCSR)
 }
 
-// EnrollDeviceRaw forwards to the wrapped TCG CA.
+// EnrollDeviceRaw forwards to the wrapped TCG CA, for the system tenant only.
 func (c callerTenantTCGCA) EnrollDeviceRaw(ctx context.Context, commonName, organization string, packedCSR []byte) (
 	iakDER, idevidDER, credBlob, encSecret, plainSecret []byte, err error,
 ) {
+	if err := tcgCallerAllowed(ctx); err != nil {
+		return nil, nil, nil, nil, nil, err
+	}
 	return c.tcg.EnrollDeviceRaw(ctx, commonName, organization, packedCSR)
 }
