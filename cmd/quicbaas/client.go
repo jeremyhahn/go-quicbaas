@@ -124,8 +124,10 @@ func buildSDKClientOptionsWithToken(authToken string) ([]quicbaas.Option, error)
 		opts = append(opts, quicbaas.WithTenant(globalTenantID))
 	}
 
-	// Settle the transport from --transport and --address (selectTransport).
-	transport = selectTransport()
+	// Settle the transport from --transport and --address (selectTransport),
+	// and the address it dials: quic:// and mcp:// name the transport and are
+	// dropped here, before NewClient(address, ...) dials.
+	transport, address = selectTransport()
 
 	// Configure transport type
 	switch transport {
@@ -159,8 +161,8 @@ func buildSDKClientOptionsWithToken(authToken string) ([]quicbaas.Option, error)
 		}
 		opts = append(opts, quicbaas.WithEmbedded(es.service))
 		// Wire the qrdb sub-client to dispatch in-process against the
-		// embedded server's per-shard baasTransport (via the BaaS KV +
-		// Admin adapters) plus the bootstrap ceremony services. Without
+		// embedded server's qrdb node servicers (KV, Admin, User and
+		// Tenant) plus the bootstrap ceremony services. Without
 		// WithEmbeddedQRDB, the qrdb sub-client has no listener to dial
 		// in embedded mode and Security().Ceremony() / Security().Barrier()
 		// would fail with a "produced zero addresses" transport error.

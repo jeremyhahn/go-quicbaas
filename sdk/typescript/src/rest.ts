@@ -211,6 +211,21 @@ import type {
   SetDefaultAccountResponse,
   GetAccountUsageResponse,
 } from './accounts.js';
+import { promptPath, promptScopeQuery } from './prompts.js';
+import type {
+  EffectivePrompt,
+  GetPromptRequest,
+  ListPromptsRequest,
+  ListPromptsResponse,
+  PromptAddress,
+  PromptDiff,
+  PromptHistory,
+  PromptRecord,
+  PromptsClient,
+  PutPromptRequest,
+  ResetPromptRequest,
+  RollbackPromptRequest,
+} from './prompts.js';
 import type { AgentsClient, Agent, AgentPool, AgentUsage } from './agents.js';
 import { parseJSONPreservingLargeIntegers } from './json.js';
 import type {
@@ -351,6 +366,7 @@ import type {
   BootstrapBundleRequest,
   BootstrapBundleResponse,
   ClusterStatusResponse,
+  ListClusterNodesResponse,
   SecretEntry,
   SessionEventEnvelope,
   SessionInfo,
@@ -3001,6 +3017,84 @@ export class RestAccountsClient implements AccountsClient {
   }
 }
 
+// RestPromptsClient carries the prompts family over /api/v1/prompts, the same
+// routes the Go SDK's REST prompt handler (sdk/go/transport/rest) sends.
+export class RestPromptsClient implements PromptsClient {
+  private readonly baseUrl: string;
+  private readonly config: ClientConfig;
+
+  constructor(baseUrl: string, config: ClientConfig = {}) {
+    this.baseUrl = baseUrl.replace(/\/$/, '');
+    this.config = config;
+  }
+
+  private async fetchJSON<T>(path: string, init: RequestInit = {}): Promise<T> {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const tok = await resolveToken(this.config.token);
+    if (tok) headers['Authorization'] = `Bearer ${tok}`;
+    const resp = await fetch(`${this.baseUrl}${path}`, {
+      ...init,
+      headers: { ...headers, ...(init.headers as Record<string, string> ?? {}) },
+    });
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => resp.statusText);
+      throw new APIError(resp.status, text);
+    }
+    return parseResponseBody<T>(resp);
+  }
+
+  // listPrompts maps to GET /api/v1/prompts/{set}?tenant_id&scope&project_id
+  async listPrompts(req: ListPromptsRequest): Promise<ListPromptsResponse> {
+    return this.fetchJSON(promptPath(req, '', promptScopeQuery(req), 'listPrompts'));
+  }
+
+  // getPrompt maps to GET /api/v1/prompts/{set}/{name}[?version]
+  async getPrompt(req: GetPromptRequest): Promise<PromptRecord> {
+    const query = promptScopeQuery(req);
+    if (req.version) query.set('version', String(req.version));
+    return this.fetchJSON(promptPath(req, '', query, 'getPrompt'));
+  }
+
+  // getEffectivePrompt maps to GET /api/v1/prompts/{set}/{name}/effective
+  async getEffectivePrompt(addr: PromptAddress): Promise<EffectivePrompt> {
+    return this.fetchJSON(promptPath(addr, '/effective', promptScopeQuery(addr), 'getEffectivePrompt'));
+  }
+
+  // diffPrompt maps to GET /api/v1/prompts/{set}/{name}/diff
+  async diffPrompt(addr: PromptAddress): Promise<PromptDiff> {
+    return this.fetchJSON(promptPath(addr, '/diff', promptScopeQuery(addr), 'diffPrompt'));
+  }
+
+  // getPromptHistory maps to GET /api/v1/prompts/{set}/{name}/history
+  async getPromptHistory(addr: PromptAddress): Promise<PromptHistory> {
+    return this.fetchJSON(promptPath(addr, '/history', promptScopeQuery(addr), 'getPromptHistory'));
+  }
+
+  // putPrompt maps to PUT /api/v1/prompts/{set}/{name}
+  async putPrompt(req: PutPromptRequest): Promise<PromptRecord> {
+    return this.fetchJSON(promptPath(req, '', promptScopeQuery(req), 'putPrompt'), {
+      method: 'PUT',
+      body: JSON.stringify({ content: req.content, note: req.note, expected_version: req.expected_version }),
+    });
+  }
+
+  // rollbackPrompt maps to POST /api/v1/prompts/{set}/{name}/rollback
+  async rollbackPrompt(req: RollbackPromptRequest): Promise<PromptRecord> {
+    return this.fetchJSON(promptPath(req, '/rollback', promptScopeQuery(req), 'rollbackPrompt'), {
+      method: 'POST',
+      body: JSON.stringify({ to_version: req.to_version, note: req.note ?? '', expected_version: req.expected_version }),
+    });
+  }
+
+  // resetPrompt maps to DELETE /api/v1/prompts/{set}/{name}?expected_version[&note]
+  async resetPrompt(req: ResetPromptRequest): Promise<PromptRecord> {
+    const query = promptScopeQuery(req);
+    query.set('expected_version', String(req.expected_version));
+    if (req.note) query.set('note', req.note);
+    return this.fetchJSON(promptPath(req, '', query, 'resetPrompt'), { method: 'DELETE' });
+  }
+}
+
 // RestAgentsClient implements AgentsClient over the tenant AI agent catalog:
 // /api/v1/agents and /api/v1/agent-pools. See handlers_agents.go for the
 // server-side shapes this mirrors. Every route takes ?tenant_id=; without it
@@ -4775,6 +4869,14 @@ export class RestClusterClient implements ClusterClient {
       method: 'GET',
     });
   }
+
+  async listNodes(): Promise<ListClusterNodesResponse> {
+    const resp = await this.http.fetchJSON<ListClusterNodesResponse>('/api/v1/cluster/nodes', {
+      method: 'GET',
+    });
+    // A nil Go slice encodes as null; callers always get an array.
+    return { ...resp, nodes: resp.nodes ?? [] };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -5250,6 +5352,7 @@ export class RestClient implements Client {
   readonly projects: ProjectsClient;
   readonly sdlc: SdlcClient;
   readonly accounts: AccountsClient;
+  readonly prompts: PromptsClient;
   readonly agents: AgentsClient;
   readonly iam: IAMClient;
   readonly kms: KMSClient;
@@ -5292,6 +5395,7 @@ export class RestClient implements Client {
     this.projects = new RestProjectsClient(baseUrl, config);
     this.sdlc = new RestSdlcClient(baseUrl, config);
     this.accounts = new RestAccountsClient(baseUrl, config);
+    this.prompts = new RestPromptsClient(baseUrl, config);
     this.agents = new RestAgentsClient(baseUrl, config);
     this.iam = new RestIAMClient(baseUrl, config);
     this.kms = new RestKMSClient(baseUrl, config);
