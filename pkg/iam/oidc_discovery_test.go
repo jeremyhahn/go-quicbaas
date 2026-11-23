@@ -66,6 +66,7 @@ func newDiscoveryProvider(t *testing.T) *iam.OIDCProvider {
 // TestGetConfiguration_MTLSAuthMethods verifies that the discovery document
 // includes the two mTLS client auth methods (RFC 8705 §2).
 func TestGetConfiguration_MTLSAuthMethods(t *testing.T) {
+	t.Parallel()
 	provider := newDiscoveryProvider(t)
 	doc := provider.GetConfiguration()
 
@@ -92,6 +93,7 @@ func TestGetConfiguration_MTLSAuthMethods(t *testing.T) {
 // TestGetConfiguration_TLSCertBoundTokens verifies that the discovery document
 // advertises tls_client_certificate_bound_access_tokens: true (RFC 8705 §5.1).
 func TestGetConfiguration_TLSCertBoundTokens(t *testing.T) {
+	t.Parallel()
 	provider := newDiscoveryProvider(t)
 	doc := provider.GetConfiguration()
 
@@ -107,6 +109,7 @@ func TestGetConfiguration_TLSCertBoundTokens(t *testing.T) {
 // TestGetConfiguration_MTLSEndpointAlias verifies that the mTLS endpoint alias
 // for token_endpoint is present (RFC 8705 §5).
 func TestGetConfiguration_MTLSEndpointAlias(t *testing.T) {
+	t.Parallel()
 	provider := newDiscoveryProvider(t)
 	doc := provider.GetConfiguration()
 
@@ -123,6 +126,7 @@ func TestGetConfiguration_MTLSEndpointAlias(t *testing.T) {
 // TestGetOAuthASMetadata_TLSCertBoundTokens verifies the AS metadata endpoint
 // also advertises mTLS support.
 func TestGetOAuthASMetadata_TLSCertBoundTokens(t *testing.T) {
+	t.Parallel()
 	provider := newDiscoveryProvider(t)
 	meta := provider.GetOAuthASMetadata()
 
@@ -134,6 +138,7 @@ func TestGetOAuthASMetadata_TLSCertBoundTokens(t *testing.T) {
 // TestGetOAuthASMetadata_MTLSAuthMethods verifies the AS metadata endpoint
 // includes both mTLS auth methods.
 func TestGetOAuthASMetadata_MTLSAuthMethods(t *testing.T) {
+	t.Parallel()
 	provider := newDiscoveryProvider(t)
 	meta := provider.GetOAuthASMetadata()
 

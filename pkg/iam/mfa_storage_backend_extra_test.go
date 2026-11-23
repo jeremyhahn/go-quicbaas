@@ -22,6 +22,7 @@ import (
 
 // DeleteSecret removes the per-user secret in the owning tenant.
 func TestBackendMFAStorage_DeleteSecret(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	store := NewBackendMFAStorage(kv, nil)
@@ -40,6 +41,7 @@ func TestBackendMFAStorage_DeleteSecret(t *testing.T) {
 
 // DeleteEnrollment and DeleteEnrollmentsByUser clear records plus their indexes.
 func TestBackendMFAStorage_DeleteEnrollment(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	store := NewBackendMFAStorage(kv, nil)
@@ -84,6 +86,7 @@ func TestBackendMFAStorage_DeleteEnrollment(t *testing.T) {
 
 // DeleteChallenge removes a single challenge plus its index.
 func TestBackendMFAStorage_DeleteChallenge(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	store := NewBackendMFAStorage(kv, nil)
@@ -107,6 +110,7 @@ func TestBackendMFAStorage_DeleteChallenge(t *testing.T) {
 
 // Backup codes round-trip: save, read, delete, plus validation errors.
 func TestBackendMFAStorage_BackupCodes(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	store := NewBackendMFAStorage(kv, nil)

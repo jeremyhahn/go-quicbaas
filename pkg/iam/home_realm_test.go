@@ -25,6 +25,7 @@ import (
 // control-plane store readable regardless of any tenant barrier state — so the
 // resolution has no chicken-and-egg dependency on the target tenant's barrier.
 func TestHomeRealm_DomainResolvesBrowserLogin(t *testing.T) {
+	t.Parallel()
 	shared := newMockKVStore() // stands in for the shared/system control-plane store
 	dir, err := NewHomeRealmDirectory(shared)
 	if err != nil {
@@ -56,6 +57,7 @@ func TestHomeRealm_DomainResolvesBrowserLogin(t *testing.T) {
 // Scenario (d): SNI/host resolution, including a subdomain falling back to the
 // registered parent domain.
 func TestHomeRealm_HostAndSubdomain(t *testing.T) {
+	t.Parallel()
 	shared := newMockKVStore()
 	dir, _ := NewHomeRealmDirectory(shared)
 	ctx := context.Background()
@@ -81,6 +83,7 @@ func TestHomeRealm_HostAndSubdomain(t *testing.T) {
 
 // Fail-closed: an unregistered login resolves to no tenant.
 func TestHomeRealm_FailClosed(t *testing.T) {
+	t.Parallel()
 	shared := newMockKVStore()
 	dir, _ := NewHomeRealmDirectory(shared)
 	ctx := context.Background()
@@ -94,6 +97,7 @@ func TestHomeRealm_FailClosed(t *testing.T) {
 // An explicit tenant hint is honored only when it matches a registered entry —
 // a caller cannot assert an arbitrary tenant.
 func TestHomeRealm_ExplicitHintMustMatchRegistration(t *testing.T) {
+	t.Parallel()
 	shared := newMockKVStore()
 	dir, _ := NewHomeRealmDirectory(shared)
 	ctx := context.Background()
@@ -119,6 +123,7 @@ func TestHomeRealm_ExplicitHintMustMatchRegistration(t *testing.T) {
 
 // Registering a domain already owned by another tenant is rejected.
 func TestHomeRealm_DomainConflict(t *testing.T) {
+	t.Parallel()
 	shared := newMockKVStore()
 	dir, _ := NewHomeRealmDirectory(shared)
 	ctx := context.Background()
@@ -139,6 +144,7 @@ func TestHomeRealm_DomainConflict(t *testing.T) {
 
 // Unregister is owner-gated.
 func TestHomeRealm_UnregisterOwnerGated(t *testing.T) {
+	t.Parallel()
 	shared := newMockKVStore()
 	dir, _ := NewHomeRealmDirectory(shared)
 	ctx := context.Background()

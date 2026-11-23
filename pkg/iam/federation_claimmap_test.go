@@ -25,6 +25,7 @@ func provWithMappings(mappings []GroupRoleMapping, defaults []string) *ExternalP
 }
 
 func TestResolveRoles_MappedGroupsMatch(t *testing.T) {
+	t.Parallel()
 	p := provWithMappings([]GroupRoleMapping{
 		{Group: "Acme Administrators", RoleID: "role-admin"},
 		{Group: "Acme Auditors", RoleID: "role-auditor"},
@@ -46,6 +47,7 @@ func TestResolveRoles_MappedGroupsMatch(t *testing.T) {
 }
 
 func TestResolveRoles_MultipleMatches(t *testing.T) {
+	t.Parallel()
 	p := provWithMappings([]GroupRoleMapping{
 		{Group: "admins", RoleID: "role-admin"},
 		{Group: "devs", RoleID: "role-dev"},
@@ -63,6 +65,7 @@ func TestResolveRoles_MultipleMatches(t *testing.T) {
 }
 
 func TestResolveRoles_RolesClaimMatch(t *testing.T) {
+	t.Parallel()
 	p := provWithMappings([]GroupRoleMapping{
 		{Group: "platform-admin", RoleID: "role-admin"},
 	}, nil)
@@ -78,6 +81,7 @@ func TestResolveRoles_RolesClaimMatch(t *testing.T) {
 }
 
 func TestResolveRoles_PrefixMatch(t *testing.T) {
+	t.Parallel()
 	p := provWithMappings([]GroupRoleMapping{
 		{Group: "acme-", RoleID: "role-tenant", Prefix: true},
 	}, nil)
@@ -92,6 +96,7 @@ func TestResolveRoles_PrefixMatch(t *testing.T) {
 }
 
 func TestResolveRoles_FailClosedNoMatch(t *testing.T) {
+	t.Parallel()
 	p := provWithMappings([]GroupRoleMapping{
 		{Group: "Acme Administrators", RoleID: "role-admin"},
 	}, []string{"role-default"})
@@ -108,6 +113,7 @@ func TestResolveRoles_FailClosedNoMatch(t *testing.T) {
 }
 
 func TestResolveRoles_DefaultsFallback(t *testing.T) {
+	t.Parallel()
 	// No GroupRoleMappings configured: fall back to DefaultRoles.
 	p := &ExternalProvider{
 		ID:           "provider-1",
@@ -130,6 +136,7 @@ func TestResolveRoles_DefaultsFallback(t *testing.T) {
 }
 
 func TestResolveRoles_DefaultsFallbackNilMappings(t *testing.T) {
+	t.Parallel()
 	p := &ExternalProvider{ID: "p", DefaultRoles: []string{"role-default"}}
 	res, err := resolveRoles(p, map[string]interface{}{})
 	if err != nil {
@@ -141,6 +148,7 @@ func TestResolveRoles_DefaultsFallbackNilMappings(t *testing.T) {
 }
 
 func TestClaimStringSlice(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		in   interface{}
@@ -155,6 +163,7 @@ func TestClaimStringSlice(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			got := claimStringSlice(tc.in)
 			if len(got) != len(tc.want) {
 				t.Fatalf("got %v, want %v", got, tc.want)

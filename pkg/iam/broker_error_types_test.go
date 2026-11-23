@@ -23,6 +23,7 @@ import (
 // federation_idtoken_errors.go: every error type renders a message and unwraps
 // its cause where applicable.
 func TestIDTokenErrorTypes_MessagesAndUnwrap(t *testing.T) {
+	t.Parallel()
 	cause := errors.New("boom")
 
 	cases := []struct {
@@ -50,6 +51,7 @@ func TestIDTokenErrorTypes_MessagesAndUnwrap(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			if msg := tc.err.Error(); !strings.Contains(msg, tc.want) {
 				t.Fatalf("Error() = %q, want substring %q", msg, tc.want)
 			}
@@ -62,6 +64,7 @@ func TestIDTokenErrorTypes_MessagesAndUnwrap(t *testing.T) {
 
 // oidc_keymanager.go error types.
 func TestKeyManagerErrorTypes(t *testing.T) {
+	t.Parallel()
 	if msg := (&UnknownKeyIDError{KID: "abc"}).Error(); !strings.Contains(msg, "abc") {
 		t.Fatalf("UnknownKeyIDError = %q", msg)
 	}
@@ -80,6 +83,7 @@ func TestKeyManagerErrorTypes(t *testing.T) {
 
 // oktaonboard.go error types.
 func TestOktaOnboardErrorTypes(t *testing.T) {
+	t.Parallel()
 	cause := errors.New("step-cause")
 	onboard := &OktaOnboardingError{Step: "register_domain", Err: cause}
 	if !strings.Contains(onboard.Error(), "register_domain") || !strings.Contains(onboard.Error(), "step-cause") {
@@ -98,6 +102,7 @@ func TestOktaOnboardErrorTypes(t *testing.T) {
 
 // operator_sso.go BootstrapNotReadyError.
 func TestBootstrapNotReadyError(t *testing.T) {
+	t.Parallel()
 	if msg := (&BootstrapNotReadyError{}).Error(); !strings.Contains(msg, "bootstrap admin") {
 		t.Fatalf("BootstrapNotReadyError = %q", msg)
 	}
@@ -105,6 +110,7 @@ func TestBootstrapNotReadyError(t *testing.T) {
 
 // oidc_tenant_signing.go TenantSigningKeyUnavailableError.
 func TestTenantSigningKeyUnavailableError(t *testing.T) {
+	t.Parallel()
 	cause := errors.New("sealed")
 	err := &TenantSigningKeyUnavailableError{TenantID: "acme", Cause: cause}
 	if !strings.Contains(err.Error(), "acme") || !strings.Contains(err.Error(), "sealed") {
@@ -121,6 +127,7 @@ func TestTenantSigningKeyUnavailableError(t *testing.T) {
 
 // TenantManagerOIDCSettings adapter: OIDCSettingsFor and DedicatedSigningTenants.
 func TestTenantManagerOIDCSettings_Adapter(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	// Nil adapter / nil manager returns (nil, nil) for both methods.
