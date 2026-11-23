@@ -108,6 +108,31 @@ func TestDeploy_AFailedGrantRevokesTheMadeOnesAndReleasesTheName(t *testing.T) {
 	}
 }
 
+func TestDeploy_AFailedRollbackKeepsTheRecordForUndeploy(t *testing.T) {
+	f := newFixture(t)
+	f.grants[GrantRBAC].fail = errors.New("role store down")
+	f.grants[GrantIdentity].revoked = errors.New("CA unreachable")
+	_, err := f.plane.Deploy(ctx, "acme", f.sign(t, validManifest()))
+	wantErr(t, err, ErrGrant)
+	svc, err := f.plane.Get(ctx, "acme", "web")
+	if err != nil {
+		t.Fatalf("the record holding an outstanding grant was removed: %v", err)
+	}
+	if svc.State != StateHalted || len(svc.Grants) != 1 || svc.Grants[GrantIdentity] != "identity:web:operator" || svc.Reason == "" {
+		t.Fatalf("after a failed rollback = %+v", svc)
+	}
+	f.grants[GrantIdentity].revoked = nil
+	if err := f.plane.Undeploy(ctx, "acme", "web"); err != nil {
+		t.Fatalf("undeploy: %v", err)
+	}
+	if got := f.ledger.String(); !strings.HasSuffix(got, ",revoke identity:web:operator,revoke identity:web:operator") {
+		t.Fatalf("ledger = %s, want the undeploy to revoke the identity again", got)
+	}
+	if _, err := f.plane.Get(ctx, "acme", "web"); err == nil {
+		t.Fatal("undeploy left the record")
+	}
+}
+
 func TestDeploy_AFailedLaunchHaltsAndResumeRecovers(t *testing.T) {
 	f := newFixture(t)
 	f.launcher.launchErr = errors.New("image pull failed")

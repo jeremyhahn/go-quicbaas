@@ -112,8 +112,10 @@ func (p *Plane) List(ctx context.Context, tenant string) ([]*Service, error) {
 
 // Deploy verifies sm, claims its name, grants the service its identity,
 // certificate, registered name, RBAC and secrets, and launches it. A failed
-// grant revokes the ones made and releases the name; a failed launch leaves
-// the service deployed and halted.
+// grant revokes the ones made and releases the name; if a revoke fails too,
+// the service stays deployed and halted holding the grants still in force,
+// so undeploy can retry their revocation. A failed launch leaves the service
+// deployed and halted.
 func (p *Plane) Deploy(ctx context.Context, tenant string, sm *SignedManifest) (*Service, error) {
 	m, err := p.verify(VerbDeploy, tenant, sm)
 	if err != nil {
@@ -127,9 +129,16 @@ func (p *Plane) Deploy(ctx context.Context, tenant string, sm *SignedManifest) (
 	if err != nil {
 		return nil, err
 	}
-	grants, err := p.grant(ctx, m, nil)
+	grants, outstanding, err := p.grant(ctx, m, nil)
 	if err != nil {
-		if rmErr := p.store.remove(ctx, string(VerbDeploy), svc); rmErr != nil {
+		if len(outstanding) > 0 {
+			next := *svc
+			next.Grants = outstanding
+			return nil, p.settleNext(ctx, VerbDeploy, cur, &next, ErrGrant, err)
+		}
+		sctx, cancel := settleCtx(ctx)
+		defer cancel()
+		if rmErr := p.store.remove(sctx, string(VerbDeploy), svc); rmErr != nil {
 			err = errors.Join(err, rmErr)
 		}
 		return nil, p.fail(string(VerbDeploy), svc, ErrGrant, err)
@@ -151,9 +160,20 @@ func (p *Plane) Redeploy(ctx context.Context, tenant string, sm *SignedManifest)
 		return nil, err
 	}
 	prior := cur.svc.Grants
-	grants, err := p.grant(ctx, m, prior)
+	grants, outstanding, err := p.grant(ctx, m, prior)
 	if err != nil {
-		return nil, p.settle(ctx, VerbRedeploy, cur, ErrGrant, err)
+		// Keep, beside the prior grants, any new one still in force.
+		next := *cur.svc
+		next.Grants = make(map[GrantKind]string, len(prior)+len(outstanding))
+		for k, ref := range prior {
+			next.Grants[k] = ref
+		}
+		for k, ref := range outstanding {
+			if _, held := prior[k]; !held {
+				next.Grants[k] = ref
+			}
+		}
+		return nil, p.settleNext(ctx, VerbRedeploy, cur, &next, ErrGrant, err)
 	}
 	next := *cur.svc
 	next.Signed, next.Manifest, next.Grants = *sm, *m, grants
@@ -322,27 +342,42 @@ func (p *Plane) settleNext(ctx context.Context, verb Verb, cur *stored, next *Se
 
 // grant ensures every grant kind for m in order. On a failure it revokes
 // the grants this call made (not the ones prior already held) and returns
-// the error.
-func (p *Plane) grant(ctx context.Context, m *Manifest, prior map[GrantKind]string) (map[GrantKind]string, error) {
+// the error, with outstanding holding each made grant whose revoke failed,
+// by its reference: grants still in force that a later undeploy must revoke.
+func (p *Plane) grant(ctx context.Context, m *Manifest, prior map[GrantKind]string) (refs, outstanding map[GrantKind]string, err error) {
 	out := make(map[GrantKind]string, len(GrantKinds))
 	var made []GrantKind
 	for _, k := range GrantKinds {
 		ref, err := p.grants[k].Grant(ctx, m, prior[k])
 		if err != nil {
 			errs := []error{fmt.Errorf("grant %s: %w", k, err)}
+			rctx, cancel := settleCtx(ctx)
+			defer cancel()
+			outstanding = map[GrantKind]string{}
 			for i := len(made) - 1; i >= 0; i-- {
-				if rerr := p.grants[made[i]].Revoke(ctx, m, out[made[i]]); rerr != nil {
+				if rerr := p.grants[made[i]].Revoke(rctx, m, out[made[i]]); rerr != nil {
 					errs = append(errs, fmt.Errorf("revoke %s: %w", made[i], rerr))
+					outstanding[made[i]] = out[made[i]]
 				}
 			}
-			return nil, errors.Join(errs...)
+			return nil, outstanding, errors.Join(errs...)
 		}
 		out[k] = ref
 		if _, held := prior[k]; !held {
 			made = append(made, k)
 		}
 	}
-	return out, nil
+	return out, nil, nil
+}
+
+// settleTimeout bounds a cleanup or settlement write.
+const settleTimeout = 10 * time.Second
+
+// settleCtx is the context cleanup and settlement run on: ctx's values
+// without its cancellation, bounded by settleTimeout, so a request cancelled
+// mid-verb still leaves the record in a state the next verb can act on.
+func settleCtx(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), settleTimeout)
 }
 
 func (p *Plane) fail(op string, svc *Service, sentinel, cause error) error {
