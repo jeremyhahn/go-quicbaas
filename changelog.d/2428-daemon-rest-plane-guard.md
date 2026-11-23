@@ -13,8 +13,9 @@
   authentication claims (`attest_method`, `attest_level` and the like), so an
   ABAC policy that denies one of the caller's roles or authentication claims
   refuses the request, and a role- or attribute-selected allow never admits a
-  request that the role-less decision refuses. It binds the token's tenant and subject onto the
-  request's context (`platformtoken.FromContext`), never a tenant or user
-  named in the request. A refusal is 401 with a `Bearer` challenge, 403
+  request that the role-less decision refuses. The token's scope bounds every
+  grant: a role never admits a permission outside it. It binds the token's
+  tenant and subject onto the request's context (`platformtoken.FromContext`),
+  never a tenant or user named in the request. A refusal is 401 with a `Bearer` challenge, 403
   `insufficient_scope` or `access_denied`, or 503 when the guard cannot
   decide, and the validator's error text is never sent to the caller (#2428).
