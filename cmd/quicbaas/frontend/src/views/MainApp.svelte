@@ -88,7 +88,6 @@
   import CeremonyView from './security/CeremonyView.svelte';
   import BootstrapView from './security/BootstrapView.svelte';
   import SSHKeysView from './security/SSHKeysView.svelte';
-  import MySessionsView from './security/MySessionsView.svelte';
   import AttestationView from './security/AttestationView.svelte';
   import OAuthAppsView from './security/OAuthAppsView.svelte';
   import IdentityProvidersView from './security/IdentityProvidersView.svelte';
@@ -273,7 +272,9 @@
         { id: 'ceremony',  label: 'Ceremony',  icon: Users,    implemented: true },
         { id: 'bootstrap', label: 'Bootstrap', icon: Compass,  implemented: true },
         { id: 'ssh-keys',  label: 'SSH Keys',  icon: KeyRound, implemented: true },
-        { id: 'my-sessions', label: 'My Sessions', icon: Timer, implemented: true },
+        // Withheld until login and revocation share one session lifecycle:
+        // revoking these records does not end a login's access or refresh tokens.
+        { id: 'my-sessions', label: 'My Sessions', icon: Timer, implemented: false },
         { id: 'attestation', label: 'Attestation', icon: BadgeCheck, implemented: true },
         { id: 'oauth-apps', label: 'OAuth Apps', icon: AppWindow, implemented: true },
         { id: 'identity-providers', label: 'Identity Providers', icon: Fingerprint, implemented: true },
@@ -297,6 +298,18 @@
       ],
     },
   ];
+
+  // These pages call the SDK's iam or attestation client, which the desktop
+  // (Wails) transport does not provide. On desktop they are disabled in the
+  // navigation and a direct route shows a notice instead of a broken page.
+  const WEB_ONLY_VIEWS: ReadonlySet<string> = new Set([
+    'my-sessions', 'attestation', 'oauth-apps', 'identity-providers',
+    'policy-tester', 'impersonation', 'iam-audit',
+  ]);
+  const desktopRuntime = isWailsRuntime();
+  function available(item: NavItem): boolean {
+    return item.implemented && !(desktopRuntime && WEB_ONLY_VIEWS.has(item.id));
+  }
 
   // ---------------------------------------------------------------------------
   // Orchestrator polling — single poller for all orchestrator resources.
@@ -938,8 +951,8 @@
               class:bg-base-300={isActive}
               class:text-base-content={true}
               class:font-medium={isActive}
-              class:opacity-40={!item.implemented}
-              onclick={() => { if (item.implemented) { navigate(item.id as ViewID); closeDrawerOnPhone(); } }}
+              class:opacity-40={!available(item)}
+              onclick={() => { if (available(item)) { navigate(item.id as ViewID); closeDrawerOnPhone(); } }}
               title={navStore.sidebarCollapsed ? item.label : undefined}
               aria-current={isActive ? 'page' : undefined}
             >
@@ -949,7 +962,7 @@
               />
               {#if !navStore.sidebarCollapsed}
                 <span class="truncate">{item.label}</span>
-                {#if !item.implemented}
+                {#if !available(item)}
                   <span class="badge badge-xs badge-ghost ml-auto">soon</span>
                 {:else if item.id === 'attention' && attentionStore.total > 0}
                   <span class="badge badge-xs badge-error ml-auto" data-testid="attention-nav-badge">{attentionStore.total}</span>
@@ -975,7 +988,14 @@
            'login' / 'register' / 'invite-activate' never reach this router: they
            render in the minimal auth shell above (showAppShell is false for
            every PUBLIC_ROUTES entry), so there are no branches for them here. -->
-      {#if routerStore.name === 'dashboard'}
+      {#if desktopRuntime && WEB_ONLY_VIEWS.has(routerStore.name)}
+        <div class="flex-1 overflow-y-auto">
+          <div class="p-6" role="status" data-testid="web-only-notice">
+            <p class="text-sm text-base-content/70">{activeViewLabel || 'This page'} is available in the web console only; the desktop app does not provide it yet.</p>
+          </div>
+        </div>
+
+      {:else if routerStore.name === 'dashboard'}
         <div class="flex-1 overflow-y-auto">
           <SystemDashboard />
         </div>
@@ -1165,11 +1185,6 @@
       {:else if routerStore.name === 'ssh-keys'}
         <div class="flex-1 overflow-y-auto">
           <SSHKeysView />
-        </div>
-
-      {:else if routerStore.name === 'my-sessions'}
-        <div class="flex-1 overflow-y-auto">
-          <MySessionsView />
         </div>
 
       {:else if routerStore.name === 'attestation'}
