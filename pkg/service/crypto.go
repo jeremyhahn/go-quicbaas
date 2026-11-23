@@ -101,8 +101,8 @@ func scopeKeyID(ctx context.Context, keyID string) (string, error) {
 
 // keyOperationError wraps a failed key operation. A key absent from the
 // caller's tenant surfaces as not-found, mirroring the KMS verbs.
-// KeyVersionDisabledError reports a decrypt refused because the
-// ciphertext's key version is disabled.
+// KeyVersionDisabledError reports an operation refused because the key
+// version it would use, or that sealed its input, is disabled.
 type KeyVersionDisabledError struct {
 	KeyID   string
 	Version uint64
@@ -247,6 +247,9 @@ func (t *cryptoService) Encrypt(ctx context.Context, req *EncryptRequest) (*Encr
 				Err:  err,
 			}
 		}
+	}
+	if err := t.refuseDisabledOutputVersions(ctx, "crypto.Encrypt", req.KeyID, scopedKeyID, ciphertext); err != nil {
+		return nil, err
 	}
 
 	keyVersion := t.keyVersion(ctx, scopedKeyID)
@@ -527,6 +530,9 @@ func (t *cryptoService) Rewrap(ctx context.Context, req *RewrapRequest) (*Rewrap
 			}
 		}
 	}
+	if err := t.refuseDisabledOutputVersions(ctx, "crypto.Rewrap", req.KeyID, scopedKeyID, newCiphertext); err != nil {
+		return nil, err
+	}
 
 	resp := &RewrapResponse{
 		KeyID:         req.KeyID,
@@ -634,6 +640,9 @@ func (t *cryptoService) EncryptBatch(ctx context.Context, req *EncryptBatchReque
 				Err:  err,
 			}
 		}
+	}
+	if err := t.refuseDisabledOutputVersions(ctx, "crypto.EncryptBatch", req.KeyID, scopedKeyID, ciphertexts...); err != nil {
+		return nil, err
 	}
 
 	// Build results
@@ -790,6 +799,22 @@ func (t *cryptoService) DecryptBatch(ctx context.Context, req *DecryptBatchReque
 // the decrypt. A ciphertext the backend cannot parse is skipped: the backend
 // refuses it anyway.
 func (t *cryptoService) refuseDisabledVersions(ctx context.Context, op, keyID, scopedKeyID string, ciphertexts ...[]byte) error {
+	return t.refuseVersions(ctx, t.metrics.decryptOperationsTotal, op, keyID, scopedKeyID, ciphertexts...)
+}
+
+// refuseDisabledOutputVersions refuses an encrypt, rewrap or data-key result
+// sealed under a disabled key version: the backend key stays usable after its
+// version is disabled, and its output would be refused on decrypt.
+func (t *cryptoService) refuseDisabledOutputVersions(ctx context.Context, op, keyID, scopedKeyID string, outputs ...[]byte) error {
+	return t.refuseVersions(ctx, t.metrics.encryptOperationsTotal, op, keyID, scopedKeyID, outputs...)
+}
+
+// refuseVersions returns a precondition error when any ciphertext or wrapped
+// key was sealed under a key version the KMS service has disabled, counting
+// the refusal on counter. The status comes from replicated storage, not this
+// node's cache, and a failed lookup refuses the operation. A ciphertext the
+// backend cannot parse is skipped: the backend refuses it anyway.
+func (t *cryptoService) refuseVersions(ctx context.Context, counter *metrics.CounterVec, op, keyID, scopedKeyID string, ciphertexts ...[]byte) error {
 	if t.kmsSvc == nil {
 		return nil
 	}
@@ -807,7 +832,7 @@ func (t *cryptoService) refuseDisabledVersions(ctx context.Context, op, keyID, s
 		status, err := t.kmsSvc.authoritativeVersionStatus(ctx, scopedKeyID, v)
 		if err != nil {
 			// Fail closed: a version whose status cannot be read is refused.
-			t.metrics.decryptOperationsTotal.With(keyID, "version_status_error").Inc()
+			counter.With(keyID, "version_status_error").Inc()
 			t.metrics.errorsByType.With("version_status_error").Inc()
 			return &errors.QBError{
 				Code: errors.ErrStorage,
@@ -816,7 +841,7 @@ func (t *cryptoService) refuseDisabledVersions(ctx context.Context, op, keyID, s
 			}
 		}
 		if status == KeyStatusDisabled {
-			t.metrics.decryptOperationsTotal.With(keyID, "version_disabled").Inc()
+			counter.With(keyID, "version_disabled").Inc()
 			t.metrics.errorsByType.With("version_disabled_error").Inc()
 			return &errors.QBError{
 				Code: errors.ErrPreconditionFailed,
@@ -957,6 +982,10 @@ func (t *cryptoService) GenerateDataKey(ctx context.Context, req *GenerateDataKe
 			return nil, &errors.QBError{Code: errors.ErrEncryption, Op: "crypto.GenerateDataKey", Err: err}
 		}
 	}
+	if err := t.refuseDisabledOutputVersions(ctx, "crypto.GenerateDataKey", req.KeyID, scopedKeyID, wrapped); err != nil {
+		clear(plaintext)
+		return nil, err
+	}
 
 	resp := &GenerateDataKeyResponse{
 		KeyID:          req.KeyID,
@@ -1044,6 +1073,9 @@ func (t *cryptoService) GenerateWrappedDataKey(ctx context.Context, req *Generat
 			t.metrics.errorsByType.With("safety_limit_error").Inc()
 			return nil, &errors.QBError{Code: errors.ErrEncryption, Op: "crypto.GenerateWrappedDataKey", Err: err}
 		}
+	}
+	if err := t.refuseDisabledOutputVersions(ctx, "crypto.GenerateWrappedDataKey", req.KeyID, scopedKeyID, wrapped); err != nil {
+		return nil, err
 	}
 
 	resp := &GenerateWrappedDataKeyResponse{

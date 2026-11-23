@@ -123,6 +123,84 @@ func TestCryptoDecrypt_DisabledKeyVersionRefused_RealXKMS(t *testing.T) {
 	require.Equal(t, []byte("sealed under v2"), batch.Results[0].Plaintext)
 }
 
+// TestCryptoEncrypt_DisabledVersionRefused_RealXKMS proves that disabling the
+// current key version refuses every encrypt and key-wrapping path, older
+// ciphertext still decrypts, and re-enabling the version lets encryption
+// succeed again.
+func TestCryptoEncrypt_DisabledVersionRefused_RealXKMS(t *testing.T) {
+	manager, cleanup := realKMSManagerForTest(t)
+	defer cleanup()
+
+	logger := newMockLogger()
+	kmsSvc := newKMSService(manager, logger)
+	cs := newCryptoService(crypto.NewMemoryCryptoManager(manager), manager, logger, kmsSvc.GetSafetyTracker())
+	cs.kmsSvc = kmsSvc
+	ctx := systemTenantCtx()
+
+	const keyID = "vstatus-enc-key"
+	_, err := kmsSvc.GenerateKey(ctx, &GenerateKeyRequest{
+		Name:  keyID,
+		Usage: []KeyUsage{KeyUsageEncrypt, KeyUsageDecrypt},
+		KeyAttributes: &xkmssdk.KeyAttributes{
+			StoreType:          xkmssdk.StoreType("software"),
+			KeyType:            xkmssdk.KeyTypeEncryption,
+			SymmetricAlgorithm: xkmssdk.SymmetricAES256GCM,
+		},
+	})
+	require.NoError(t, err)
+
+	v1, err := cs.Encrypt(ctx, &EncryptRequest{KeyID: keyID, Plaintext: []byte("sealed under v1")})
+	require.NoError(t, err)
+
+	rot, err := kmsSvc.RotateKey(ctx, &RotateKeyRequest{KeyID: keyID})
+	require.NoError(t, err)
+	require.Equal(t, uint64(2), rot.NewVersion)
+
+	_, err = kmsSvc.UpdateKeyStatus(ctx, &UpdateKeyStatusRequest{KeyID: keyID, Version: 2, Status: KeyStatusDisabled})
+	require.NoError(t, err)
+
+	requireVersionDisabled := func(t *testing.T, err error, version uint64) {
+		t.Helper()
+		require.Error(t, err)
+		var vErr *KeyVersionDisabledError
+		require.ErrorAs(t, err, &vErr)
+		require.Equal(t, version, vErr.Version)
+		var qb *dberrors.QBError
+		require.ErrorAs(t, err, &qb)
+		require.Equal(t, dberrors.ErrPreconditionFailed, qb.Code)
+	}
+
+	_, err = cs.Encrypt(ctx, &EncryptRequest{KeyID: keyID, Plaintext: []byte("under disabled v2")})
+	requireVersionDisabled(t, err, 2)
+
+	_, err = cs.EncryptBatch(ctx, &EncryptBatchRequest{KeyID: keyID, Items: []BatchEncryptItem{{Plaintext: []byte("batch under disabled v2")}}})
+	requireVersionDisabled(t, err, 2)
+
+	dk, err := cs.GenerateDataKey(ctx, &GenerateDataKeyRequest{KeyID: keyID})
+	requireVersionDisabled(t, err, 2)
+	require.Nil(t, dk)
+
+	_, err = cs.GenerateWrappedDataKey(ctx, &GenerateWrappedDataKeyRequest{KeyID: keyID})
+	requireVersionDisabled(t, err, 2)
+
+	_, err = cs.Rewrap(ctx, &RewrapRequest{KeyID: keyID, Ciphertext: v1.Ciphertext})
+	requireVersionDisabled(t, err, 2)
+
+	// Ciphertext sealed under the still-enabled v1 decrypts.
+	got, err := cs.Decrypt(ctx, &DecryptRequest{KeyID: keyID, Ciphertext: v1.Ciphertext})
+	require.NoError(t, err)
+	require.Equal(t, []byte("sealed under v1"), got.Plaintext)
+
+	// Re-enabling v2 lets encryption succeed again.
+	_, err = kmsSvc.UpdateKeyStatus(ctx, &UpdateKeyStatusRequest{KeyID: keyID, Version: 2, Status: KeyStatusEnabled})
+	require.NoError(t, err)
+	v2, err := cs.Encrypt(ctx, &EncryptRequest{KeyID: keyID, Plaintext: []byte("sealed under v2")})
+	require.NoError(t, err)
+	got, err = cs.Decrypt(ctx, &DecryptRequest{KeyID: keyID, Ciphertext: v2.Ciphertext})
+	require.NoError(t, err)
+	require.Equal(t, []byte("sealed under v2"), got.Plaintext)
+}
+
 // getFailingKVStore is a shared KVStore whose Get can be made to fail.
 type getFailingKVStore struct {
 	*mockKVStore
