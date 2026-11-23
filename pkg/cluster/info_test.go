@@ -17,7 +17,6 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -577,10 +576,7 @@ func TestClusterInfo_LastSeenUpdated(t *testing.T) {
 	node1 := ci.LocalNode()
 	lastSeen1 := node1.LastSeen
 
-	// Wait a tiny bit
-	time.Sleep(time.Millisecond)
-
-	// Get it again - LastSeen should be updated
+	// Get it again - LastSeen never moves backwards
 	node2 := ci.LocalNode()
 	assert.True(t, node2.LastSeen.After(lastSeen1) || node2.LastSeen.Equal(lastSeen1))
 }

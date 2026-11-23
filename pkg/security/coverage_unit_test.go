@@ -907,10 +907,12 @@ func TestAL_AutoFlushStopsOnClose(t *testing.T) {
 
 	require.NoError(t, al.Log(context.Background(), &AuditEvent{Action: ActionRead, Resource: "d", Result: ResultSuccess}))
 
-	// Let autoFlush run at least once
-	time.Sleep(100 * time.Millisecond)
-
+	// Close stops the flusher whether or not a tick has fired yet (no tick
+	// has an observable effect beyond fsync), and the event is on disk.
 	assert.NoError(t, al.Close())
+	data, err := os.ReadFile(logFile)
+	require.NoError(t, err)
+	assert.NotEmpty(t, data, "the logged event never reached the audit file")
 }
 
 // ---------------------------------------------------------------------------

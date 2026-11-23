@@ -804,10 +804,8 @@ func TestGetGarbageCollectionProgress_Success(t *testing.T) {
 	gcResp, err := svc.RunGarbageCollection(ctx, gcReq)
 	require.NoError(t, err)
 
-	// Wait a bit for GC to make progress
-	time.Sleep(50 * time.Millisecond)
-
-	// Get progress
+	// Progress is readable as soon as the operation is started; the test
+	// checks the lookup, not how far the GC got.
 	req := &GetGarbageCollectionProgressRequest{
 		OperationID: gcResp.OperationID,
 	}

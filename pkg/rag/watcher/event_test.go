@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/stretchr/testify/assert"
@@ -932,34 +933,50 @@ func TestWatcher_NonRecursive(t *testing.T) {
 	require.NoError(t, err)
 	defer w.Stop()
 
-	time.Sleep(500 * time.Millisecond)
+	// Start registers its watches before it returns, so no settling wait.
 
 	// Create file in subdirectory - should NOT be watched
 	testFile := filepath.Join(subDir, "test.txt")
 	err = os.WriteFile(testFile, []byte("content"), 0644)
 	require.NoError(t, err)
 
-	// Should not receive event
-	select {
-	case event := <-w.Events():
-		t.Fatalf("unexpected event from subdirectory in non-recursive mode: %+v", event)
-	case <-time.After(1 * time.Second):
-		// Expected - no event
-	}
-
 	// A chmod in the root produces no event.
 	require.NoError(t, os.Chmod(subDir, 0700))
 
-	// But file in root should be watched
+	// But file in root should be watched. The kernel queues events in order,
+	// so a subdirectory event would be read before the root file's and
+	// flushed in its batch or an earlier one. The second root file lands in
+	// a later batch, after the first one is fully flushed: once it arrives,
+	// any subdirectory event has been delivered and would have failed here.
 	rootFile := filepath.Join(tmpDir, "root.txt")
-	err = os.WriteFile(rootFile, []byte("content"), 0644)
-	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(rootFile, []byte("content"), 0644))
+	awaitEventFor(t, w, rootFile, subDir)
 
-	select {
-	case event := <-w.Events():
-		assert.Equal(t, rootFile, event.Path)
-	case <-time.After(5 * time.Second):
-		t.Fatal("timeout waiting for event from root directory")
+	marker := filepath.Join(tmpDir, "marker.txt")
+	require.NoError(t, os.WriteFile(marker, []byte("content"), 0644))
+	awaitEventFor(t, w, marker, subDir)
+}
+
+// awaitEventFor drains w's events until one for path arrives. It fails the
+// test on an event for a path under forbidden, or a chmod-only event.
+func awaitEventFor(t *testing.T, w Watcher, path, forbidden string) {
+	t.Helper()
+	deadline := time.After(10 * time.Second)
+	for {
+		select {
+		case event := <-w.Events():
+			if forbidden != "" && strings.HasPrefix(event.Path, forbidden+string(filepath.Separator)) {
+				t.Fatalf("unexpected event from %s: %+v", forbidden, event)
+			}
+			if event.Path == forbidden {
+				t.Fatalf("unexpected chmod event on %s: %+v", forbidden, event)
+			}
+			if event.Path == path {
+				return
+			}
+		case <-deadline:
+			t.Fatalf("timeout waiting for an event for %s", path)
+		}
 	}
 }
 
@@ -1012,20 +1029,17 @@ func TestWatcher_CreateDirectory(t *testing.T) {
 	require.NoError(t, err)
 	defer w.Stop()
 
-	time.Sleep(500 * time.Millisecond)
-
 	// Create a new directory
 	newDir := filepath.Join(tmpDir, "newdir")
 	err = os.Mkdir(newDir, 0755)
 	require.NoError(t, err)
 
-	// May or may not receive an event depending on OS
-	select {
-	case <-w.Events():
-		// Got event, that's fine
-	case <-time.After(1 * time.Second):
-		// No event, also fine - directories might not trigger events
-	}
+	// A directory create may or may not produce an event depending on the
+	// OS; either way the watcher keeps delivering: a file written after it
+	// arrives.
+	after := filepath.Join(tmpDir, "after-mkdir.txt")
+	require.NoError(t, os.WriteFile(after, []byte("content"), 0644))
+	awaitEventFor(t, w, after, "")
 }
 
 // TestAddPath_StatError tests that AddPath rejects a path that does not exist.

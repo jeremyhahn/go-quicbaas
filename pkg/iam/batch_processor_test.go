@@ -5,6 +5,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/poll"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,9 +26,40 @@ func newMockBatchStorage() *mockBatchStorage {
 	return &mockBatchStorage{}
 }
 
+// SaveOperation and UpdateOperation store a snapshot, as a real store
+// would: the processor goes on mutating its own copy in its goroutine, and
+// a test that polls the stored operation must not race with it.
 func (m *mockBatchStorage) SaveOperation(ctx context.Context, op *BatchOperation) error {
-	m.operations.Store(op.ID, op)
+	snap := *op
+	snap.Errors = append([]BatchError(nil), op.Errors...)
+	m.operations.Store(op.ID, &snap)
 	return nil
+}
+
+// batchOperationGetter is the part of a batch store waitBatchDone reads.
+type batchOperationGetter interface {
+	GetOperation(ctx context.Context, operationID string) (*BatchOperation, error)
+}
+
+// waitBatchDone polls the stored operation until the processor has
+// finalized it (completed, failed, partial success or cancelled) and
+// returns that snapshot.
+func waitBatchDone(t *testing.T, storage batchOperationGetter, id string) *BatchOperation {
+	t.Helper()
+	var saved *BatchOperation
+	poll.Until(t, 10*time.Second, func() bool {
+		op, err := storage.GetOperation(context.Background(), id)
+		if err != nil {
+			return false
+		}
+		saved = op
+		switch op.Status {
+		case BatchStatusCompleted, BatchStatusFailed, BatchStatusPartialSuccess, BatchStatusCancelled:
+			return true
+		}
+		return false
+	}, "batch operation %s to finish", id)
+	return saved
 }
 
 func (m *mockBatchStorage) GetOperation(ctx context.Context, operationID string) (*BatchOperation, error) {
@@ -38,8 +70,7 @@ func (m *mockBatchStorage) GetOperation(ctx context.Context, operationID string)
 }
 
 func (m *mockBatchStorage) UpdateOperation(ctx context.Context, op *BatchOperation) error {
-	m.operations.Store(op.ID, op)
-	return nil
+	return m.SaveOperation(ctx, op)
 }
 
 func (m *mockBatchStorage) ListOperations(ctx context.Context, tenantID string, status *BatchStatus, limit int) ([]*BatchOperation, error) {
@@ -191,14 +222,7 @@ func TestBatchProcessor_ImportUsers(t *testing.T) {
 			t.Errorf("expected tenant %s, got %s", tenantID, op.TenantID)
 		}
 
-		// Wait for processing
-		time.Sleep(100 * time.Millisecond)
-
-		// Check operation was saved
-		saved, err := storage.GetOperation(ctx, op.ID)
-		if err != nil {
-			t.Fatalf("failed to get saved operation: %v", err)
-		}
+		saved := waitBatchDone(t, storage, op.ID)
 		if saved.Status == BatchStatusPending {
 			t.Error("operation still pending after processing")
 		}
@@ -216,9 +240,7 @@ func TestBatchProcessor_ImportUsers(t *testing.T) {
 			t.Fatalf("ImportUsers failed: %v", err)
 		}
 
-		time.Sleep(100 * time.Millisecond)
-
-		saved, _ := storage.GetOperation(ctx, op.ID)
+		saved := waitBatchDone(t, storage, op.ID)
 		if saved.Progress.Failed == 0 {
 			t.Error("expected validation failures")
 		}
@@ -249,9 +271,7 @@ func TestBatchProcessor_ImportRoles(t *testing.T) {
 		t.Errorf("expected type %s, got %s", BatchOperationTypeRoles, op.Type)
 	}
 
-	time.Sleep(100 * time.Millisecond)
-
-	saved, _ := storage.GetOperation(ctx, op.ID)
+	saved := waitBatchDone(t, storage, op.ID)
 	if saved.Status == BatchStatusPending {
 		t.Error("operation still pending")
 	}
@@ -299,9 +319,7 @@ func TestBatchProcessor_ImportPolicies(t *testing.T) {
 		t.Errorf("expected type %s, got %s", BatchOperationTypePolicies, op.Type)
 	}
 
-	time.Sleep(100 * time.Millisecond)
-
-	saved, _ := storage.GetOperation(ctx, op.ID)
+	saved := waitBatchDone(t, storage, op.ID)
 	if saved.Status == BatchStatusPending {
 		t.Error("operation still pending")
 	}
@@ -486,8 +504,11 @@ func TestBatchProcessor_CancelOperation(t *testing.T) {
 		t.Fatalf("ImportUsers failed: %v", err)
 	}
 
-	// Give it a moment to start
-	time.Sleep(50 * time.Millisecond)
+	// Wait until the processor has started the operation
+	poll.Until(t, 10*time.Second, func() bool {
+		cur, err := storage.GetOperation(ctx, op.ID)
+		return err == nil && cur.Status == BatchStatusProcessing
+	}, "operation %s to start processing", op.ID)
 
 	// Cancel the operation
 	err = bp.CancelOperation(ctx, op.ID)
@@ -527,7 +548,12 @@ func TestBatchProcessor_ListOperations(t *testing.T) {
 		_, _ = bp.ImportUsers(ctx, tenantID, items, BatchOptions{DryRun: true})
 	}
 
-	time.Sleep(100 * time.Millisecond)
+	// Wait until all five dry runs have completed
+	poll.Until(t, 10*time.Second, func() bool {
+		done := BatchStatusCompleted
+		ops, err := bp.ListOperations(ctx, tenantID, &done, 10)
+		return err == nil && len(ops) == 5
+	}, "the five operations to complete")
 
 	// List all operations
 	ops, err := bp.ListOperations(ctx, tenantID, nil, 10)
@@ -574,9 +600,7 @@ func TestBatchProcessor_AtomicOperation(t *testing.T) {
 		t.Fatalf("ImportUsers failed: %v", err)
 	}
 
-	time.Sleep(100 * time.Millisecond)
-
-	saved, _ := storage.GetOperation(ctx, op.ID)
+	saved := waitBatchDone(t, storage, op.ID)
 
 	// With atomic=true, if validation fails, the whole operation should fail
 	if saved.Status != BatchStatusFailed {
@@ -612,9 +636,7 @@ func TestBatchProcessor_ContinueOnError(t *testing.T) {
 		t.Fatalf("ImportUsers failed: %v", err)
 	}
 
-	time.Sleep(100 * time.Millisecond)
-
-	saved, _ := storage.GetOperation(ctx, op.ID)
+	saved := waitBatchDone(t, storage, op.ID)
 
 	// With continue on error, should process all items
 	if saved.Progress.Processed != len(items) {
@@ -659,9 +681,7 @@ func TestBatchProcessor_UpdateExisting(t *testing.T) {
 		t.Fatalf("ImportUsers failed: %v", err)
 	}
 
-	time.Sleep(100 * time.Millisecond)
-
-	saved, _ := storage.GetOperation(ctx, op.ID)
+	saved := waitBatchDone(t, storage, op.ID)
 	if saved.Progress.Successful != 1 {
 		t.Error("expected successful update")
 	}
@@ -702,9 +722,7 @@ func TestBatchProcessor_SkipDuplicates(t *testing.T) {
 		t.Fatalf("ImportUsers failed: %v", err)
 	}
 
-	time.Sleep(100 * time.Millisecond)
-
-	saved, _ := storage.GetOperation(ctx, op.ID)
+	saved := waitBatchDone(t, storage, op.ID)
 	if saved.Progress.Skipped != 1 {
 		t.Errorf("expected 1 skipped item, got %d", saved.Progress.Skipped)
 	}
@@ -1008,9 +1026,7 @@ func TestBatchProcessor_ProcessRoles_RateLimitPath(t *testing.T) {
 		t.Fatalf("ImportRoles failed: %v", err)
 	}
 
-	time.Sleep(300 * time.Millisecond)
-
-	saved, _ := storage.GetOperation(ctx, op.ID)
+	saved := waitBatchDone(t, storage, op.ID)
 	if saved.Status == BatchStatusPending {
 		t.Error("expected operation to complete with rate limiting")
 	}
@@ -1131,9 +1147,7 @@ func TestBatchProcessor_ProcessUsers_WithRateLimit(t *testing.T) {
 		t.Fatalf("ImportUsers failed: %v", err)
 	}
 
-	time.Sleep(300 * time.Millisecond)
-
-	saved, _ := storage.GetOperation(ctx, op.ID)
+	saved := waitBatchDone(t, storage, op.ID)
 	if saved.Status == BatchStatusPending {
 		t.Error("expected operation to complete")
 	}
@@ -1277,10 +1291,7 @@ func TestBatchProcessor_ProcessRoles_WithActualCreation(t *testing.T) {
 		t.Fatalf("ImportRoles failed: %v", err)
 	}
 
-	// Wait for async processing
-	time.Sleep(200 * time.Millisecond)
-
-	saved, _ := storage.GetOperation(ctx, op.ID)
+	saved := waitBatchDone(t, storage, op.ID)
 	if saved.Status == BatchStatusPending {
 		t.Error("operation still pending after processing")
 	}
@@ -1306,9 +1317,7 @@ func TestBatchProcessor_ProcessRoles_ValidationError(t *testing.T) {
 		t.Fatalf("ImportRoles failed: %v", err)
 	}
 
-	time.Sleep(150 * time.Millisecond)
-
-	saved, _ := storage.GetOperation(ctx, op.ID)
+	saved := waitBatchDone(t, storage, op.ID)
 	if saved.Progress.Failed == 0 {
 		t.Error("expected validation failure")
 	}
@@ -1354,9 +1363,7 @@ func TestBatchProcessor_ProcessPolicies_WithActualCreation(t *testing.T) {
 		t.Fatalf("ImportPolicies failed: %v", err)
 	}
 
-	time.Sleep(200 * time.Millisecond)
-
-	saved, _ := storage.GetOperation(ctx, op.ID)
+	saved := waitBatchDone(t, storage, op.ID)
 	if saved.Status == BatchStatusPending {
 		t.Error("operation still pending after processing")
 	}
@@ -1392,9 +1399,7 @@ func TestBatchProcessor_ProcessPolicies_WithDirectConstruction(t *testing.T) {
 		t.Fatalf("ImportPolicies failed: %v", err)
 	}
 
-	time.Sleep(200 * time.Millisecond)
-
-	saved, _ := storage.GetOperation(ctx, op.ID)
+	saved := waitBatchDone(t, storage, op.ID)
 	if saved.Status == BatchStatusPending {
 		t.Error("operation still pending after processing")
 	}
@@ -1429,8 +1434,7 @@ func TestBatchProcessor_CancelCompletedOperation(t *testing.T) {
 		t.Fatalf("ImportUsers failed: %v", err)
 	}
 
-	// Wait for completion
-	time.Sleep(200 * time.Millisecond)
+	waitBatchDone(t, storage, op.ID)
 
 	// Try to cancel a completed operation
 	err = bp.CancelOperation(ctx, op.ID)
@@ -1864,9 +1868,7 @@ func TestBatchProcessor_ProcessRoles_CreateError(t *testing.T) {
 		t.Fatalf("ImportRoles failed: %v", err)
 	}
 
-	time.Sleep(200 * time.Millisecond)
-
-	saved, _ := storage.GetOperation(ctx, op.ID)
+	saved := waitBatchDone(t, storage, op.ID)
 	if saved.Progress.Failed == 0 {
 		t.Error("expected failure due to create error")
 	}
@@ -1898,9 +1900,7 @@ func TestBatchProcessor_ProcessPolicies_CreateError(t *testing.T) {
 		t.Fatalf("ImportPolicies failed: %v", err)
 	}
 
-	time.Sleep(200 * time.Millisecond)
-
-	saved, _ := storage.GetOperation(ctx, op.ID)
+	saved := waitBatchDone(t, storage, op.ID)
 	if saved.Progress.Failed == 0 {
 		t.Error("expected failure due to create error")
 	}

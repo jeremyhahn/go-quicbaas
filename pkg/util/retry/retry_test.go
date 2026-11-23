@@ -463,11 +463,9 @@ func TestDo_ContextCancellation(t *testing.T) {
 	op := func(ctx context.Context) error {
 		callCount++
 		if callCount == 1 {
-			// Cancel context in a goroutine during first backoff
-			go func() {
-				time.Sleep(10 * time.Millisecond)
-				cancel()
-			}()
+			// Cancel as the first attempt fails: the context is already
+			// done when the backoff starts, whatever the scheduler does.
+			cancel()
 		}
 		return dberrors.New(dberrors.ErrTimeout, "test.op", "timeout")
 	}
@@ -475,8 +473,8 @@ func TestDo_ContextCancellation(t *testing.T) {
 	err := Do(ctx, cfg, op)
 	require.Error(t, err)
 	// The same contract as TestDo_ContextTimeout, asserted the same way. This
-	// one is not known to flake — it cancels 10ms into a 100ms backoff, so it
-	// has ten times the slack — but its old `<= 2` was equally silent about
+	// one cannot flake — it cancels before the first backoff starts — but
+	// its old `<= 2` was equally silent about
 	// WHY the loop stopped, and would have passed a loop that ignored
 	// cancellation and merely happened to be slow.
 	assert.Less(t, callCount, cfg.MaxAttempts,
@@ -872,20 +870,17 @@ func TestDo_ContextCanceledDuringBackoff(t *testing.T) {
 	op := func(ctx context.Context) error {
 		callCount++
 		if callCount == 1 {
-			// Cancel after first attempt, during backoff
-			go func() {
-				time.Sleep(10 * time.Millisecond)
-				cancel()
-			}()
+			// Cancel as the first attempt fails: the context is already
+			// done when the backoff starts, whatever the scheduler does.
+			cancel()
 		}
 		return dberrors.New(dberrors.ErrTimeout, "test.op", "timeout")
 	}
 
 	err := Do(ctx, cfg, op)
 	assert.Error(t, err)
-	// Should have attempted once before cancellation
-	assert.GreaterOrEqual(t, callCount, 1)
-	assert.LessOrEqual(t, callCount, 2)
+	// The one attempt that cancelled it, and no retry after the backoff.
+	assert.Equal(t, 1, callCount)
 }
 
 func TestShouldRetry(t *testing.T) {

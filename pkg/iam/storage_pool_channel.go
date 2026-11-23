@@ -46,6 +46,11 @@ type storagePool struct {
 	closedChan chan struct{}
 	wg         sync.WaitGroup
 
+	// ageSkew is added to the clock that ages connections (max lifetime,
+	// max idle time). It is zero in production; a test advances it to age
+	// connections without waiting.
+	ageSkew atomic.Int64
+
 	// Statistics (atomic for lock-free access)
 	waitCount          atomic.Int64
 	waitDuration       atomic.Int64 // nanoseconds
@@ -443,9 +448,15 @@ func (p *storagePool) closeConnection(conn *storageConnection, reason string) {
 	}
 }
 
+// ageClock is the time against which connection age and idleness are
+// measured: the wall clock plus ageSkew.
+func (p *storagePool) ageClock() time.Time {
+	return time.Now().Add(time.Duration(p.ageSkew.Load()))
+}
+
 // needsRecycling checks if a connection needs to be recycled.
 func (p *storagePool) needsRecycling(conn *storageConnection) bool {
-	now := time.Now()
+	now := p.ageClock()
 
 	// Check max lifetime
 	if p.config.MaxLifetime > 0 && now.Sub(conn.createdAt) > p.config.MaxLifetime {
@@ -532,7 +543,7 @@ func (p *storagePool) maintenanceLoop() {
 
 // performMaintenance cleans up idle connections and maintains min pool size.
 func (p *storagePool) performMaintenance() {
-	now := time.Now()
+	now := p.ageClock()
 
 	// Collect connections that need cleanup
 	var toClose []*storageConnection

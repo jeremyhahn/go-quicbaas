@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/poll"
 )
 
 func TestNewMockL2Cache(t *testing.T) {
@@ -56,12 +57,12 @@ func TestMockL2Cache_SetAndGet(t *testing.T) {
 		err := cache.Set(ctx, "key1", []byte("value1"), 1*time.Millisecond)
 		require.NoError(t, err)
 
-		// Wait for expiration
-		time.Sleep(10 * time.Millisecond)
-
-		_, err = cache.Get(ctx, "key1")
-		require.Error(t, err)
-		assert.True(t, errors.IsNotFound(err))
+		// Once the clock passes the TTL, Get reports the key missing.
+		poll.Until(t, 5*time.Second, func() bool {
+			_, err = cache.Get(ctx, "key1")
+			return err != nil
+		}, "key1 never expired")
+		assert.True(t, errors.IsNotFound(err), "an expired key is not-found, got %v", err)
 	})
 
 	t.Run("get non-existent key returns not found", func(t *testing.T) {

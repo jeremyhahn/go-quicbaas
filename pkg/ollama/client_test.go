@@ -152,7 +152,8 @@ func TestClientDoRequest_ServerError(t *testing.T) {
 
 func TestClientDoRequest_ContextCanceled(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(100 * time.Millisecond)
+		// Answer only once the client has given up on the request.
+		<-r.Context().Done()
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
@@ -627,7 +628,8 @@ func TestClientDoRequestOnce_ConnectionRefused(t *testing.T) {
 // TestClientDoRequestOnce_ContextDeadlineExceeded tests doRequestOnce with deadline exceeded.
 func TestClientDoRequestOnce_ContextDeadlineExceeded(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(200 * time.Millisecond)
+		// Answer only once the client has given up on the request.
+		<-r.Context().Done()
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()

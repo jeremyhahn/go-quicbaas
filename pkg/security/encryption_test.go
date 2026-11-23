@@ -26,7 +26,6 @@ import (
 	"io"
 	"net"
 	"sync"
-	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -721,10 +720,8 @@ func TestEncryption_AdditionalEdgeCases(t *testing.T) {
 		kr, err := NewKeyring(config, log)
 		require.NoError(t, err)
 
+		// NewKeyring arms the timer before it returns; nothing to wait for.
 		assert.NotNil(t, kr.rotationTimer)
-
-		// Give it a moment to set up
-		time.Sleep(10 * time.Millisecond)
 
 		kr.Close()
 	})
