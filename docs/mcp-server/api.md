@@ -1,99 +1,101 @@
 # MCP Server — API
 
-> **Status: NORMATIVE** · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Last verified: 2026-11-23
 > The capability on every transport, with permissions. Feature folder: `docs/mcp-server/`.
 
 Model Context Protocol (MCP) interface for AI agent integration.
 
-> **Breaking Change (v1.1.0):** Token parameters in request body (`_token`, `accessToken`) are no longer supported. Use `Authorization: Bearer <token>` header. See MCP Authorization.
-
 ## Overview
 
-MCP enables AI assistants like Claude to interact with QuicBaaS using JSON-RPC 2.0 protocol. It exposes database operations as tools and live data as resources.
+MCP lets AI assistants call QuicBaaS operations as tools, over JSON-RPC 2.0.
 
-**Key Features:**
-- 46 database operations exposed as MCP tools
-- Live data views as MCP resources
-- Stdio and HTTP transports
-- Stdio transport for MCP hosts such as Claude Desktop (no MCP client other than mark3labs/mcp-go is run against it yet)
-- HTTP transport tested with the official MCP Go SDK client (initialize, tools/list, tools/call); no other independent client is run against it
-- Vector similarity search for RAG workflows
-- OAuth 2.1 token endpoint with mandatory PKCE (S256); the authorization-code step does not complete yet (see [the known gap](../oauth2-oidc/api.md#authorization-code-flow-with-pkce))
+- **Streamable HTTP over TLS.** The tools are served by go-qrdb's unified MCP
+  server, on the daemon's own MCP listener at `/mcp`. The listener starts only
+  when `server.mcp.enabled` is `true`; it listens on `server.mcp.port`, and
+  `server.mcp.bind_address` overrides `server.host` for this listener alone.
+- **stdio only through the CLI bridge.** An MCP host that spawns a child
+  process (Claude Desktop, Claude Code, opencode) runs
+  `quicbaas mcp serve --stdio`, which relays each message to the HTTP
+  listener. See [`cli.md`](cli.md).
+- **Tools only.** The server registers tools. It registers no MCP resources
+  and no prompts.
 
 ## Authorization
 
-MCP requests require OAuth 2.1 authentication. See MCP Authorization for complete details.
+Every request carries an identity: a bearer token in
+`Authorization: Bearer <token>`, or a verified mTLS client certificate.
 
-**Quick Start:**
-1. Discover authorization server: `GET /.well-known/oauth-authorization-server`
-2. Obtain access token via OAuth 2.1 with PKCE (S256 mandatory)
-3. Include Bearer token in all requests: `Authorization: Bearer <token>`
+Each `tools/call` is authorized against the tool's qrdb permission
+(resource and action). The decision is default deny: a tool with no permission
+mapping is refused, and so is a caller that lacks the mapped permission.
 
-**HTTP Transport Example:**
-```bash
-curl -X POST http://localhost:8888/mcp \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer eyJhbGciOiJSUzI1NiI..." \
-  -H "MCP-Protocol-Version: 2024-11-05" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
-```
+**Public tools.** Three tools are public by design and need no permission:
 
-**Public Tools (no auth required):**
-- `qrdb_health` - Health check
-- `quicbaas_liveness` - Liveness probe
-- `quicbaas_readiness` - Readiness probe
+- `qrdb_health` — health check
+- `quicbaas_liveness` — liveness probe
+- `quicbaas_readiness` — readiness probe
 
-Not yet reachable without a credential: see the known gap in
-[`user.md`](user.md#what-an-assistant-can-and-cannot-see).
-`quicbaas_login_begin` and `quicbaas_login_finish` are refused on MCP (see [`engineering.md`](engineering.md#public-tools)); log in over REST or gRPC.
+> **Known gap.** The gate in front of the tools is go-qrdb's MCP server, and
+> the pinned go-qrdb does not yet behave as the public set requires. With
+> authentication on, it answers any request that carries no credential with
+> `401` before `initialize`, so the public tools are not reachable
+> anonymously. It also has no per-principal `tools/list` filter: an
+> authenticated principal is shown every registered tool, and each call is
+> still authorized per tool. See
+> [what an assistant can and cannot see](user.md#what-an-assistant-can-and-cannot-see).
+
+`quicbaas_login_begin` and `quicbaas_login_finish` are refused on MCP (see
+[`engineering.md`](engineering.md#public-tools)); log in over REST or gRPC.
 
 ## Architecture
 
 ```
-AI Assistant (Claude)
+AI assistant (MCP host)
        |
-       | JSON-RPC 2.0
+       | stdio (quicbaas mcp serve --stdio)   or   Streamable HTTP over TLS
        |
-    MCP Server
+go-qrdb unified MCP server  (/mcp on server.mcp.port)
        |
-       | service.QuicBaaS
+       | authorization per tool, then dispatch
        |
-    QuicBaaS Core
+QuicBaaS tool handlers (pkg/api/mcp) and go-qrdb's own tools
 ```
 
 ## Transports
 
-### Stdio Transport
+### HTTP (Streamable HTTP over TLS)
 
-For integration with AI assistants:
-
-```bash
-# Start QuicBaaS with MCP on stdio
-./quicbaas --mcp-transport=stdio
+```yaml
+server:
+  mcp:
+    enabled: true
+    port: 11443
+    # bind_address: 10.0.0.5   # optional; defaults to server.host
 ```
 
-The stdio transport communicates via stdin/stdout and is designed for Claude Desktop and similar tools.
-
-### HTTP Transport
-
-For testing and debugging:
+A session starts with `initialize`; the reply carries an `Mcp-Session-Id`
+header that every later request in the session sends back.
 
 ```bash
-# Start QuicBaaS with MCP on HTTP
-./quicbaas --mcp-transport=http --mcp-addr=127.0.0.1:8888
-
-# Test with curl (authenticated request)
-curl -X POST http://127.0.0.1:8888/mcp \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <access_token>" \
-  -H "MCP-Protocol-Version: 2024-11-05" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
-
-# Test public endpoint (no auth required)
-curl -X POST http://127.0.0.1:8888/mcp \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"quicbaas_readiness"}}'
+curl -sS -i --cacert server-ca.crt --cert agent.crt --key agent.key \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"curl","version":"0"}}}' \
+  https://quicbaas.example.com:11443/mcp
 ```
+
+A `404 page not found` means MCP is not served at that address; see
+[troubleshooting a 404](cli.md#troubleshooting-a-404).
+
+### stdio (CLI bridge)
+
+```bash
+quicbaas mcp serve --stdio --address quicbaas.example.com:11443
+```
+
+The bridge forwards `initialize`, `tools/list` and `tools/call` verbatim and
+uses the CLI's stored credentials and TLS material. See
+[connecting an assistant](user.md#connecting-an-assistant).
 
 ## JSON-RPC Protocol
 
@@ -102,43 +104,31 @@ curl -X POST http://127.0.0.1:8888/mcp \
 ```json
 {
   "jsonrpc": "2.0",
-  "id": 1,
+  "id": 2,
   "method": "tools/call",
   "params": {
-    "name": "quicbaas_put",
-    "arguments": {
-      "entityType": "user",
-      "id": 123,
-      "data": "eyJuYW1lIjoiSm9obiJ9"
-    }
+    "name": "quicbaas_readiness",
+    "arguments": {}
   }
 }
 ```
 
-### Response Format
+`arguments` is a JSON object whose shape is the tool's `inputSchema`, as
+`tools/list` returns it (`quicbaas mcp tools` prints it).
+
+### Tool Errors
+
+A tool that fails returns a `tools/call` result with `isError: true`, a
+message in its text content, and a numeric code in its structured content:
 
 ```json
 {
   "jsonrpc": "2.0",
-  "id": 1,
+  "id": 2,
   "result": {
-    "id": 123,
-    "version": 1,
-    "timestamp": 1700000000
-  }
-}
-```
-
-### Error Format
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 1,
-  "error": {
-    "code": -32603,
-    "message": "Internal error",
-    "data": "entity not found"
+    "isError": true,
+    "content": [{"type": "text", "text": "..."}],
+    "structuredContent": {"code": -32003}
   }
 }
 ```
@@ -147,344 +137,167 @@ curl -X POST http://127.0.0.1:8888/mcp \
 
 | Method | Description |
 |--------|-------------|
-| `initialize` | Initialize MCP connection and exchange capabilities |
-| `tools/list` | List all available tools |
-| `tools/call` | Execute a specific tool |
-| `resources/list` | List all available resources |
-| `resources/read` | Read a specific resource |
-| `ping` | Health check |
+| `initialize` | Open an MCP session and exchange capabilities |
+| `ping` | Liveness of the session |
+| `tools/list` | List the registered tools |
+| `tools/call` | Call one tool |
 
 ## Available Tools
 
-### KV Operations
+The names below are the names a client calls. A name written `prefix_*` is a
+family: every served tool whose name starts with that prefix. Each tool's
+arguments are in its `inputSchema` from `tools/list`.
 
-- `quicbaas_put` - Store a key-value pair
-- `quicbaas_get` - Retrieve a value
-- `quicbaas_delete` - Delete a key
-- `quicbaas_list` - List entities with pagination
+### Health
 
-### Batch Operations
+- `qrdb_health` — go-qrdb node health (public)
+- `quicbaas_liveness` — liveness probe (public)
+- `quicbaas_readiness` — readiness probe (public)
 
-- `quicbaas_batch_put` - Atomic multi-put
-- `quicbaas_batch_get` - Multi-get operation
-- `quicbaas_batch_delete` - Atomic multi-delete
+### Data
 
-### Transaction Operations
+- `qrdb_put`, `qrdb_get`, `qrdb_delete`, `qrdb_list` — go-qrdb's entity
+  store, served by go-qrdb itself
+- `quicbaas_kv_*` — key-value get, put, delete and list
+- `quicbaas_batch_*` — atomic multi-put, multi-get and multi-delete
+- `quicbaas_transaction` — atomic compare-and-swap transaction
+- `quicbaas_query` — query through secondary indexes
+- `quicbaas_scan_index` — full index scan
+- `quicbaas_aggregate` — aggregate over entities
+- `quicbaas_cache_*` — cache statistics, configuration and clearing
+- `qrdb_ts_*` — time series write, query and retention, served by go-qrdb
+- `qrdb_vector_*` — vector namespaces, upsert and similarity search, served
+  by go-qrdb
+- `quicbaas_vector_*` — vector search, statistics, health and administration
+- `quicbaas_object_*` — object storage, backends, policies, quotas and
+  administration
+- `quicbaas_parameter_*` — parameter store
+- `quicbaas_msg_*` — messaging channels, publish and subscribe
 
-- `quicbaas_transaction` - Atomic compare-and-swap transaction
+### Cluster and operations
 
-### Query Operations
+- `quicbaas_cluster_status` — cluster status
+- `quicbaas_get_leader` — shard leader
+- `quicbaas_add_node`, `quicbaas_remove_node`, `quicbaas_replace_node`,
+  `quicbaas_upgrade_node` — shard membership and rolling upgrade
+- `quicbaas_create_shard` — create a shard
+- `quicbaas_rebalance_cluster`, `quicbaas_rebalance_status` — rebalance and
+  its progress
+- `quicbaas_migrate_data`, `quicbaas_migration_progress` — data migration and
+  its progress
+- `quicbaas_backup_*` — create, list, restore, verify and delete backups
+- `quicbaas_fleet_*` — fleet nodes and placement declarations
+- `quicbaas_scheduler_*` — scheduler nodes, jobs and placements
+- `quicbaas_registry_*` — service registry: register, renew, resolve, watch
 
-- `quicbaas_query` - Query using secondary indexes
-- `quicbaas_scan_index` - Full index scan
+### Identity, sessions and access
 
-### Cluster Operations
+- `quicbaas_logout` — end the caller's session
+- `quicbaas_login_begin`, `quicbaas_login_finish` — registered, but refused on
+  MCP (see [Authorization](#authorization))
+- `quicbaas_introspecttoken` — token introspection
+- `quicbaas_iam_*` — IAM: users, roles, policies, tenants, apps, sessions,
+  federation, identities, impersonation, audit, GDPR, WebAuthn credentials
+  and admin assignments
+- `quicbaas_mfa_*` — MFA enrolment, challenges and backup codes
+- `quicbaas_pep_*` — policy enforcement point checks
+- `quicbaas_role_revoke` — revoke a role from a user
+- `qrdb_role_*` — go-qrdb roles: create, delete, list, assign
+- `qrdb_user_*` — go-qrdb user lookups and user authentication factors
+- `qrdb_tenant_*` — tenant barrier, quotas and entitlements
+- `qrdb_credential_*` — service credentials: submit, rotate, versions
 
-- `quicbaas_cluster_status` - Get cluster status
-- `quicbaas_get_leader` - Get shard leader
-- `quicbaas_add_node` - Add node to shard
-- `quicbaas_remove_node` - Remove node from shard
-- `quicbaas_create_shard` - Create new shard
-- `quicbaas_rebalance_cluster` - Rebalance data
+### Barrier and ceremonies
 
-### Backup Operations
+- `qrdb_barrier_*` — barrier status, seal, unseal, Shamir shares, rekey and
+  recovery, served by go-qrdb
+- `qrdb_ceremony_*` — key ceremonies and officer enrolment
+- `quicbaas_ceremony_list_officers` — list ceremony officers
 
-- `quicbaas_backup_create` - Create backup
-- `quicbaas_backup_list` - List backups
-- `quicbaas_backup_restore` - Restore from backup
-- `quicbaas_backup_delete` - Delete backup
-- `quicbaas_backup_verify` - Verify backup integrity
+### Keys, secrets and certificates
 
-### Authentication and RBAC
+- `quicbaas_kms_*` — KMS keys, policies, rotation, safety and backends
+- `quicbaas_dek_*` — data encryption keys and re-encryption
+- `quicbaas_crypto_*` — encrypt, decrypt, sign, verify, hash, HMAC, random and
+  data keys
+- `quicbaas_secrets_*` — secrets store, versions, rotation and watch
+- `quicbaas_dynamic_secrets_*` — dynamic secret roles and leases
+- `quicbaas_ssh_*` — SSH keys, authorized keys and known hosts
+- `quicbaas_certificate_*` — certificate issuance, signing, revocation and
+  verification
+- `quicbaas_trust_*` — trust store: AIA import, cross-signed roots, DANE
+- `quicbaas_attestation_*` — attestation, endorsements and reference values
+- `xkms_ca_*` — the embedded CA: bundle, certificate, sign CSR, issue,
+  revoke, CRL and revocation check
 
-- `quicbaas_login` - Authenticate and obtain tokens
-- `quicbaas_logout` - Invalidate session
-- `qrdb_role_create` - Create role
-- `qrdb_role_delete` - Delete role
-- `qrdb_role_list` - List roles
-- `qrdb_role_assign` - Assign role to user
-- `quicbaas_role_revoke` - Revoke role from user
+The other xkms key, PIV, PIN and FIDO2 tools are go-xkms's own MCP surface,
+served by go-xkms's module and documented there:
+[Key Management — API](../../../go-xkms/docs/key-management/api.md).
 
-There are no user tools in this family. User administration is the single
-`quicbaas_iam_user_*` family (see IAM Operations); read-only qrdb-native user
-lookups are `qrdb_user_get`, `qrdb_user_get_by_username` and
-`qrdb_user_get_by_cert_thumbprint`. The `quicbaas_user_*` names this section
-used to list were never registered as tools, and `qrdb_user_create` /
-`qrdb_user_delete` / `qrdb_user_list` dispatched to an auth manager production
-never wired, so they always failed; issue #905 removed all of them.
+### AI and orchestration
 
-### Operations Management
+- `quicbaas_ollama_*` — Ollama health, models and embeddings
+- `quicbaas_embedding_*` — embedding providers, generation and cache
+- `quicbaas_rag_*` — RAG query, context building and indexing (see
+  [RAG](../rag/api.md))
+- `quicbaas_orchestrator_*` — orchestrator jobs, workflows, sessions, tasks,
+  runners, backends and cost
+- `quicbaas_task_*` — task artifacts
+- `quicbaas_agents_*` — agent definitions
+- `quicbaas_agent_account_*` — agent accounts and their sessions
+- `quicbaas_agent_pools_*` — agent pools
+- `prompt_get`, `prompt_put`, `prompt_list`, `prompt_history`, `prompt_diff`,
+  `prompt_effective`, `prompt_reset`, `prompt_rollback` — the prompt store
 
-- `quicbaas_migrate_data` - Migrate data between shards
-- `quicbaas_migration_progress` - Get migration progress
-- `quicbaas_replace_node` - Replace failed node
-- `quicbaas_upgrade_node` - Perform rolling upgrade
+### Projects and SDLC
 
-### Ollama Operations
-
-- `quicbaas_ollama_health` - Check Ollama connectivity
-- `quicbaas_ollama_model_list` - List available Ollama models
-- `quicbaas_ollama_model_info` - Get model details
-- `quicbaas_ollama_embed` - Generate embedding for text
-- `quicbaas_ollama_embed_batch` - Generate embeddings for multiple texts
-
-### RAG Operations
-
-- `quicbaas_rag_query` - All-in-one: embed → search → build context
-- `quicbaas_rag_build_context` - Build context from user-provided results
-
-See [RAG MCP Tools Reference](../rag/api.md) for detailed RAG tool documentation.
-
-## Available Resources
-
-| URI | Description |
-|-----|-------------|
-| `quicbaas://cluster/status` | Current cluster status |
-| `quicbaas://cluster/nodes` | All cluster nodes |
-| `quicbaas://cluster/shards` | All shards |
-| `quicbaas://metrics/summary` | Performance metrics |
-| `quicbaas://cache/stats` | Cache statistics |
-| `quicbaas://health` | Health status |
-| `quicbaas://backups` | Available backups |
-| `quicbaas://users` | User list |
-| `quicbaas://roles` | Role list |
-| `quicbaas://entities/{type}` | Entities by type |
-| `quicbaas://entities/{type}/{id}` | Specific entity |
+- `project_create`, `project_get`, `project_get_by_name`, `project_list`,
+  `project_update`, `project_delete`, `project_grant_fleet_node`,
+  `project_revoke_fleet_node` — projects and their fleet nodes
+- `sdlc_forges`, `sdlc_bind`, `sdlc_unbind`, `sdlc_binding`,
+  `sdlc_onboard`, `sdlc_project_onboard` — forge bindings and onboarding
+- `sdlc_issue_create`, `sdlc_adopt_issue`, `sdlc_open_work`,
+  `sdlc_delivery`, `sdlc_conformance`, `sdlc_collaborators` — issues,
+  work and delivery
+- `sdlc_reviewer`, `sdlc_reviewer_set`, `sdlc_reviewer_clear` — the
+  reviewer setting
+- `quicbaas_sdlc_*` — the SDLC worker image
 
 ## Examples
 
-### Initialize Connection
+### Initialize
 
 Request:
 ```json
 {
   "jsonrpc": "2.0",
   "id": 1,
-  "method": "initialize"
-}
-```
-
-Response:
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 1,
-  "result": {
+  "method": "initialize",
+  "params": {
     "protocolVersion": "2024-11-05",
-    "serverInfo": {
-      "name": "QuicBaaS MCP Server",
-      "version": "1.0.0"
-    },
-    "capabilities": {
-      "tools": {},
-      "resources": {}
-    }
+    "capabilities": {},
+    "clientInfo": {"name": "example", "version": "0"}
   }
 }
 ```
 
-### Store Data
+The reply's `capabilities` advertises `tools`.
 
-Request:
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 2,
-  "method": "tools/call",
-  "params": {
-    "name": "quicbaas_put",
-    "arguments": {
-      "entityType": "user",
-      "id": 100,
-      "data": "eyJuYW1lIjoiSm9obiBEb2UiLCJlbWFpbCI6ImpvaG5AZXhhbXBsZS5jb20ifQ=="
-    }
-  }
-}
+### Readiness
+
+```bash
+curl -sS --cacert server-ca.crt --cert agent.crt --key agent.key \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -H "Mcp-Session-Id: $SESSION" \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"quicbaas_readiness","arguments":{}}}' \
+  https://quicbaas.example.com:11443/mcp
 ```
 
-Response:
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 2,
-  "result": {
-    "id": 100,
-    "version": 1,
-    "timestamp": 1700000000,
-    "leaderID": 1
-  }
-}
-```
+Or through the CLI, which opens the session itself:
 
-### Retrieve Data
-
-Request:
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 3,
-  "method": "tools/call",
-  "params": {
-    "name": "quicbaas_get",
-    "arguments": {
-      "entityType": "user",
-      "id": 100
-    }
-  }
-}
-```
-
-Response:
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 3,
-  "result": {
-    "id": 100,
-    "data": "eyJuYW1lIjoiSm9obiBEb2UiLCJlbWFpbCI6ImpvaG5AZXhhbXBsZS5jb20ifQ==",
-    "version": 1,
-    "timestamp": 1700000000,
-    "found": true
-  }
-}
-```
-
-### Read Cluster Status Resource
-
-Request:
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 4,
-  "method": "resources/read",
-  "params": {
-    "uri": "quicbaas://cluster/status"
-  }
-}
-```
-
-Response:
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 4,
-  "result": {
-    "contents": [
-      {
-        "uri": "quicbaas://cluster/status",
-        "mimeType": "application/json",
-        "text": "{\"clusterID\":\"quicbaas-cluster-1\",\"nodes\":[...]}"
-      }
-    ]
-  }
-}
-```
-
-### Batch Operations
-
-Request:
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 5,
-  "method": "tools/call",
-  "params": {
-    "name": "quicbaas_batch_put",
-    "arguments": {
-      "operations": [
-        {
-          "entityType": "user",
-          "id": 101,
-          "data": "eyJuYW1lIjoiQWxpY2UifQ=="
-        },
-        {
-          "entityType": "user",
-          "id": 102,
-          "data": "eyJuYW1lIjoiQm9iIn0="
-        }
-      ]
-    }
-  }
-}
-```
-
-### Transaction
-
-Request:
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 6,
-  "method": "tools/call",
-  "params": {
-    "name": "quicbaas_transaction",
-    "arguments": {
-      "compare": [
-        {
-          "entityType": "counter",
-          "id": 1,
-          "target": 0,
-          "operator": 1,
-          "version": 5
-        }
-      ],
-      "success": [
-        {
-          "opType": 1,
-          "entityType": "counter",
-          "id": 1,
-          "data": "eyJ2YWx1ZSI6IDZ9"
-        }
-      ],
-      "failure": []
-    }
-  }
-}
-```
-
-## AI Assistant Integration
-
-### Claude Integration
-
-Claude can interact with QuicBaaS through MCP:
-
-**User:** "Create a new user with ID 100"
-
-**Claude's Process:**
-1. Encodes user data as base64 JSON
-2. Calls `quicbaas_put` tool
-3. Returns confirmation
-
-**User:** "What's the cluster status?"
-
-**Claude's Process:**
-1. Reads `quicbaas://cluster/status` resource
-2. Parses JSON response
-3. Formats for human readability
-
-**Claude's Response:** "The cluster has 3 nodes (all healthy), 1 shard with leader on node 1, and total data size of 1.2 GB."
-
-### Example Workflows
-
-**Storing user data:**
-```
-User: Store a user named Alice with email alice@example.com
-Claude: [Calls quicbaas_put]
-Claude: I've stored the user data successfully.
-```
-
-**Querying by index:**
-```
-User: Find the user with email john@example.com
-Claude: [Calls quicbaas_query with email index]
-Claude: Found user John Doe (ID: 100).
-```
-
-**Checking cluster health:**
-```
-User: Is the cluster healthy?
-Claude: [Reads quicbaas://cluster/status]
-Claude: Yes, all 3 nodes are healthy and operational.
+```bash
+quicbaas mcp call quicbaas_readiness
 ```
 
 ## Error Codes
@@ -497,182 +310,43 @@ Claude: Yes, all 3 nodes are healthy and operational.
 | -32600 | Invalid Request | Invalid JSON-RPC format |
 | -32601 | Method Not Found | Unknown method |
 | -32602 | Invalid Params | Invalid parameters |
-| -32603 | Internal Error | Server error |
+| -32603 | Internal Error | Server error; also the tool error code for a failure with no closer class |
 
-### Authorization Errors
+### Tool Error Codes
 
-| Code | Name | HTTP Status | Description |
-|------|------|-------------|-------------|
-| -32001 | AuthenticationRequired | 401 | No valid token provided |
-| -32002 | InvalidToken | 401 | Token is malformed or expired |
-| -32003 | PermissionDenied | 403 | Insufficient permissions |
+A failed tool call carries one of these in `structuredContent.code`:
 
-Authorization errors include `WWW-Authenticate` header per RFC 6750.
+| Code | Name | Meaning |
+|------|------|---------|
+| -32001 | AuthenticationRequired | The call has no authenticated caller |
+| -32003 | PermissionDenied | Forbidden, cross-tenant or system-keyspace access |
+| -32004 | ResourceNotFound | The target does not exist |
+| -32005 | ResourceConflict | Conflicting state |
+| -32006 | ServiceUnavailable | The backing service is not available (not wired, no leader, quorum lost, storage) |
+| -32007 | RequestTimeout | Timeout or deadline exceeded |
+| -32008 | ResourceExhausted | Quota or rate limit |
+| -32009 | PreconditionFailed | A precondition does not hold |
+| -32010 | OperationNotAllowed | The operation is not allowed in this state |
+| -32011 | OperationCanceled | The call was canceled |
+| -32012 | InvalidInput | Invalid or missing arguments, tenant or user context |
+| -32013 | AlreadyExists | The target already exists |
+| -32014 | Unimplemented | The operation is not implemented |
 
-## Configuration
-
-### Go Server
-
-```go
-package main
-
-import (
-    "github.com/jeremyhahn/go-quicbaas/pkg/api/mcp"
-    "github.com/jeremyhahn/go-quicbaas/pkg/logger"
-    "time"
-)
-
-func main() {
-    log, _ := logger.New(logger.LogConfig{
-        Level:  "info",
-        Format: "json",
-        Output: "stderr", // stderr for stdio transport
-    })
-
-    svc := initializeQuicBaaS(log)
-
-    config := &mcp.Config{
-        ServerName:            "QuicBaaS MCP Server",
-        ServerVersion:         "1.0.0",
-        Transport:             "stdio",
-        RequestTimeout:        30 * time.Second,
-        MaxConcurrentRequests: 100,
-    }
-
-    server := mcp.NewServer(svc, config, log)
-    server.Start()
-}
-```
-
-### Python Client
-
-```python
-import json
-import requests
-
-MCP_URL = "http://localhost:8888/mcp"
-
-def mcp_call(method, params=None):
-    payload = {
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": method,
-    }
-    if params:
-        payload["params"] = params
-
-    response = requests.post(MCP_URL, json=payload)
-    return response.json()
-
-# Store data
-result = mcp_call("tools/call", {
-    "name": "quicbaas_put",
-    "arguments": {
-        "entityType": "user",
-        "id": 100,
-        "data": "eyJuYW1lIjoiSm9obiJ9"
-    }
-})
-print(result)
-```
+A request with no valid credential is refused with HTTP `401` before any
+JSON-RPC processing (see [Authorization](#authorization)).
 
 ## Security
 
-### Authentication
-
-MCP uses OAuth 2.1 with mandatory PKCE. See MCP Authorization for complete flow.
-
-**OAuth 2.1 Flow:**
-1. Discover AS metadata: `GET /.well-known/oauth-authorization-server`
-2. Authorization request with PKCE (S256)
-3. Token exchange with code verifier
-4. Include Bearer token in requests
-
-**Discovery Endpoints:**
-- `/.well-known/oauth-authorization-server` - OAuth AS Metadata (RFC 8414)
-- `/.well-known/oauth-protected-resource` - Protected Resource Metadata (RFC 9728)
-- `/.well-known/openid-configuration` - OIDC Discovery
-- `/.well-known/jwks.json` - JSON Web Key Set
-
-**Dynamic Client Registration (RFC 7591):**
-```bash
-POST /oauth2/register
-Content-Type: application/json
-
-{
-  "redirect_uris": ["https://client.example.com/callback"],
-  "client_name": "My MCP Client",
-  "grant_types": ["authorization_code"]
-}
-```
-
-### Authorization
-
-Operations are subject to RBAC/ABAC:
-- Read operations require `read` permission
-- Write operations require `write` permission
-- Admin operations require `admin` role
-- Token audience must match MCP resource URI
-
-### External IdP Federation
-
-QuicBaaS can delegate authentication to external providers (Okta, Auth0, etc.):
-- MCP server inherits IAM federation configuration
-- External tokens validated via JWKS
-- Claims mapped to QuicBaaS permissions
-
-### TLS
-
-All OAuth/MCP endpoints require HTTPS in production. HTTP allowed only for localhost development.
-
-## Performance
-
-### Benchmarks
-
-- Stdio Transport: ~0.5ms latency per request
-- HTTP Transport: ~1-2ms latency per request
-- Concurrent Requests: 100+ concurrent requests
-
-### Optimizations
-
-- Connection pooling (HTTP transport)
-- Request pipelining (stdio transport)
-- Streaming responses for large datasets
-- Efficient JSON marshaling
-- Context-based timeouts
-
-## Testing
-
-### Ping Test
-
-```bash
-curl -X POST http://localhost:8888/mcp \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"ping"}'
-```
-
-### Health Check
-
-```bash
-curl http://localhost:8888/health
-```
-
-Response:
-```json
-{
-  "status": "healthy",
-  "version": "1.0.0",
-  "mcp": "2024-11-05"
-}
-```
+- Bearer tokens or mTLS client certificates identify the caller; see
+  [Authorization](#authorization).
+- Every tool call is authorized per tool against its qrdb permission, default
+  deny.
+- The listener serves TLS only; use `https://` URLs.
 
 ## See Also
 
-- MCP Authorization - OAuth 2.1 authentication
-- MCP IAM Integration - IdP federation, role mapping
-- gRPC API - Binary protocol
-- REST API - HTTP/JSON interface
-- IAM Configuration - Identity management
-- [Architecture](../multiprotocol-api/architecture.md) - System design
+- [CLI](cli.md) — `quicbaas mcp serve --stdio`, `tools`, `call`
+- [User guide](user.md) — connecting an assistant and what it can see
+- [Engineering](engineering.md) — registering tools, public tools, transport
+- [Architecture](../multiprotocol-api/architecture.md) — system design
 - [Model Context Protocol Specification](https://modelcontextprotocol.io/)
-- [MCP Authorization Spec](https://modelcontextprotocol.io/specification/2025-03-26/basic/authorization)
