@@ -43,7 +43,14 @@ type SessionServer struct {
 	iampb.UnimplementedSessionServiceServer
 	sessionService SessionService
 	callers        service.CallerAccountResolver
+	credentials    CredentialRevoker
 	logger         *logger.Logger
+}
+
+// CredentialRevoker ends the login credentials a subject holds in a
+// tenant. The OIDC provider implements it.
+type CredentialRevoker interface {
+	RevokeSubjectCredentials(ctx context.Context, tenantID, subject string) (int, error)
 }
 
 // SessionService defines the interface for session operations.
@@ -62,6 +69,13 @@ func NewSessionServer(sessionService SessionService, callers service.CallerAccou
 		callers:        callers,
 		logger:         log.WithField("component", "session-grpc-server"),
 	}
+}
+
+// WithCredentialRevoker sets what RevokeAllSessions uses to end the caller's
+// access and refresh credentials, and returns the server.
+func (s *SessionServer) WithCredentialRevoker(r CredentialRevoker) *SessionServer {
+	s.credentials = r
+	return s
 }
 
 // sessionCaller resolves the authenticated caller to its tenant and qrdb
@@ -220,11 +234,27 @@ func (s *SessionServer) RevokeSession(ctx context.Context, req *iampb.RevokeSess
 	return &iampb.RevokeSessionResponse{Success: true}, nil
 }
 
-// RevokeAllSessions revokes all sessions for a user/tenant.
+// RevokeAllSessions logs the caller out everywhere: it ends the caller's
+// access and refresh credentials in the tenant, then deletes the caller's
+// session records. A login keeps no session record, so deleting the records
+// alone would leave its bearer and refresh credential usable. Without a
+// credential revoker it refuses, rather than report a logout that left
+// credentials usable, and a revocation failure leaves the records in place.
 func (s *SessionServer) RevokeAllSessions(ctx context.Context, req *iampb.RevokeAllSessionsRequest) (*iampb.RevokeAllSessionsResponse, error) {
 	tenantID, userID, err := s.callerSessionScope(ctx, req.TenantId, req.UserId)
 	if err != nil {
 		return nil, err
+	}
+
+	if s.credentials == nil {
+		return nil, status.Error(codes.Unavailable, "credential revocation not available")
+	}
+	// callerSessionScope already refused an unauthenticated caller, and the
+	// scope it resolved is the caller's own tenant and account.
+	subject, _ := auth.SubjectFromContext(ctx)
+	if _, err := s.credentials.RevokeSubjectCredentials(ctx, tenantID, subject.ID); err != nil {
+		s.logger.WithError(err).Error("Failed to revoke login credentials")
+		return nil, status.Error(codes.Internal, "failed to revoke login credentials")
 	}
 
 	count, err := s.sessionService.RevokeAllSessions(ctx, tenantID, userID)
