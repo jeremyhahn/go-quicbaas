@@ -232,6 +232,10 @@ type Registry struct {
 	// WithAttestor; nil refuses every client when attestation is required.
 	attestor Attestor
 
+	// challenges holds the attestation nonces IssueChallenge has handed
+	// out and VerifyClient has not yet consumed.
+	challenges challengeStore
+
 	// initialized tracks whether the registry is ready
 	initialized atomic.Bool
 
@@ -442,6 +446,9 @@ func (r *Registry) Push(ctx context.Context, ref string, image *Image, opts Push
 			return err
 		}
 		encLayers = encImage.EncryptedLayers
+		if len(encLayers) != len(image.Layers) {
+			return InvalidManifestError{Reference: ref, Reason: "encryptor returned a different number of layers"}
+		}
 		if image.Manifest.Annotations == nil {
 			image.Manifest.Annotations = make(map[string]string)
 		}
@@ -784,6 +791,21 @@ func (r *Registry) List(ctx context.Context, opts RegistryListOptions) ([]*Image
 }
 
 // VerifyClient verifies a client's attestation evidence.
+// IssueChallenge returns a fresh single-use attestation nonce for clientID,
+// valid for the configured NonceValidityDuration. The client quotes it as
+// the TPM qualifying data and presents the quote, with the nonce, to
+// VerifyClient. Challenges are held in this instance's memory, so the
+// quote must come back to the instance that issued it.
+func (r *Registry) IssueChallenge(ctx context.Context, clientID string) ([]byte, error) {
+	if err := r.checkState(); err != nil {
+		return nil, err
+	}
+	if clientID == "" {
+		return nil, AttestationFailedError{Reason: "missing client ID"}
+	}
+	return r.challenges.issue(clientID, r.now(), r.config.Attestation.NonceValidityDuration), nil
+}
+
 func (r *Registry) VerifyClient(ctx context.Context, attestation *AttestationEvidence) error {
 	if err := r.checkState(); err != nil {
 		return err
@@ -815,9 +837,17 @@ func (r *Registry) VerifyClient(ctx context.Context, attestation *AttestationEvi
 		"client_id", attestation.ClientID,
 	)
 
-	// The quote signature is checked against the AIK; only the PCR values
-	// the attestor verified are trusted, never the caller's own claim.
-	verified, err := r.attestor.VerifyQuote(ctx, attestation.Quote, attestation.Signature, attestation.AIK)
+	// Freshness comes from the server's challenge, never the caller's
+	// Timestamp: the nonce must be one IssueChallenge gave this client,
+	// unexpired and unused, and it is spent here whatever the outcome.
+	if reason := r.challenges.consume(attestation.ClientID, attestation.Nonce, r.now()); reason != "" {
+		return InvalidQuoteError{Reason: reason}
+	}
+
+	// The quote signature is checked against the AIK and its qualifying
+	// data against the nonce; only the PCR values the attestor verified
+	// are trusted, never the caller's own claim.
+	verified, err := r.attestor.VerifyQuote(ctx, attestation.Quote, attestation.Signature, attestation.AIK, attestation.Nonce)
 	if err != nil {
 		return InvalidQuoteError{Cause: err}
 	}
@@ -834,13 +864,6 @@ func (r *Registry) VerifyClient(ctx context.Context, attestation *AttestationEvi
 		}
 		if !allowed {
 			return AIKNotAllowedError{AIK: aikStr}
-		}
-	}
-
-	// Check quote age
-	if r.config.Attestation.QuoteMaxAge > 0 {
-		if r.now().Sub(attestation.Timestamp) > r.config.Attestation.QuoteMaxAge {
-			return InvalidQuoteError{Reason: "quote has expired"}
 		}
 	}
 

@@ -671,6 +671,9 @@ func TestRegistry_EncryptedRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetBlob envelope: %v", err)
 	}
+	if got := sha256Digest(storedBlob); got != envDigest {
+		t.Fatalf("stored envelope hashes to %s, stored under %s", got, envDigest)
+	}
 	if string(storedBlob) == string(plaintext) {
 		t.Fatal("encrypted push left plaintext in storage")
 	}
@@ -1011,14 +1014,17 @@ func TestRegistryVerifyClient(t *testing.T) {
 			expectError: false,
 		},
 		{
-			name:               "quote expired",
+			// A fresh-looking Timestamp does not make a quote fresh: only
+			// a nonce the registry issued does.
+			name:               "nonce never issued",
 			requireAttestation: true,
 			attestation: &AttestationEvidence{
 				ClientID:  "client-1",
 				Quote:     []byte("quote"),
 				Signature: []byte("sig"),
 				AIK:       []byte("aik-1-bytes"),
-				Timestamp: time.Now().Add(-1 * time.Hour), // Old timestamp
+				Nonce:     []byte("never-issued"),
+				Timestamp: time.Now().Add(time.Hour),
 			},
 			quoteMaxAge:       10 * time.Minute,
 			expectError:       true,
@@ -1094,6 +1100,9 @@ func TestRegistryVerifyClient(t *testing.T) {
 			defer func() { _ = reg.Close() }()
 
 			ctx := context.Background()
+			if tt.attestation != nil && tt.attestation.Nonce == nil {
+				issueNonce(t, reg, tt.attestation)
+			}
 			err = reg.VerifyClient(ctx, tt.attestation)
 
 			if tt.expectError {
@@ -1136,6 +1145,63 @@ func pcrAttestor(pcrs map[int][]byte) *mockAttestor {
 	return &mockAttestor{verifyFunc: func(context.Context, []byte, []byte, []byte) (map[int][]byte, error) {
 		return pcrs, nil
 	}}
+}
+
+// issueNonce sets ev.Nonce to a challenge reg issued to ev.ClientID.
+func issueNonce(t *testing.T, reg *Registry, ev *AttestationEvidence) {
+	t.Helper()
+	nonce, err := reg.IssueChallenge(context.Background(), ev.ClientID)
+	require.NoError(t, err)
+	ev.Nonce = nonce
+}
+
+// TestRegistryVerifyClient_ChallengeIsSingleUse proves freshness comes from
+// the registry's challenge and not the caller's Timestamp: a verified quote
+// replayed with a new Timestamp is refused, as are an expired challenge, one
+// issued to another client, and one the quote does not carry.
+func TestRegistryVerifyClient_ChallengeIsSingleUse(t *testing.T) {
+	cfg := validTestConfig()
+	cfg.Attestation.RequireAttestation = true
+	cfg.Attestation.NonceValidityDuration = time.Minute
+
+	attestor := &mockAttestor{verifyFunc: func(context.Context, []byte, []byte, []byte) (map[int][]byte, error) {
+		return map[int][]byte{}, nil
+	}}
+	reg, err := NewRegistry(cfg, testLogger(), WithAttestor(attestor))
+	require.NoError(t, err)
+	defer func() { _ = reg.Close() }()
+	current := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	reg.now = func() time.Time { return current }
+	ctx := context.Background()
+
+	ev := &AttestationEvidence{
+		ClientID: "client-1", Quote: []byte("quote"), Signature: []byte("sig"),
+		AIK: []byte("aik-1-bytes"), Timestamp: current,
+	}
+	issueNonce(t, reg, ev)
+	require.NoError(t, reg.VerifyClient(ctx, ev))
+
+	var quoteErr InvalidQuoteError
+	replay := *ev
+	replay.Timestamp = current.Add(time.Hour)
+	assert.ErrorAs(t, reg.VerifyClient(ctx, &replay), &quoteErr, "replayed quote")
+
+	issueNonce(t, reg, ev)
+	current = current.Add(time.Minute + time.Nanosecond)
+	assert.ErrorAs(t, reg.VerifyClient(ctx, ev), &quoteErr, "expired challenge")
+
+	other := *ev
+	other.ClientID = "client-2"
+	issueNonce(t, reg, &other)
+	ev.Nonce = other.Nonce
+	assert.ErrorAs(t, reg.VerifyClient(ctx, ev), &quoteErr, "another client's challenge")
+
+	ev.Nonce = nil
+	assert.ErrorAs(t, reg.VerifyClient(ctx, ev), &quoteErr, "no challenge")
+
+	_, err = reg.IssueChallenge(ctx, "")
+	var failed AttestationFailedError
+	assert.ErrorAs(t, err, &failed)
 }
 
 func TestRegistryVerifyClient_FailsClosed(t *testing.T) {
@@ -1211,6 +1277,7 @@ func TestRegistryVerifyClient_FailsClosed(t *testing.T) {
 			require.NoError(t, err)
 			defer func() { _ = reg.Close() }()
 
+			issueNonce(t, reg, tt.evidence)
 			err = reg.VerifyClient(context.Background(), tt.evidence)
 			require.Error(t, err)
 			tt.check(t, err)
@@ -1242,6 +1309,7 @@ func TestRegistrySessionManagement(t *testing.T) {
 	}
 
 	ctx := context.Background()
+	issueNonce(t, reg, attestation)
 	if err := reg.VerifyClient(ctx, attestation); err != nil {
 		t.Fatalf("failed to verify client: %v", err)
 	}
@@ -1290,6 +1358,7 @@ func TestRegistrySessionExpiration(t *testing.T) {
 	}
 
 	ctx := context.Background()
+	issueNonce(t, reg, attestation)
 	if err := reg.VerifyClient(ctx, attestation); err != nil {
 		t.Fatalf("failed to verify client: %v", err)
 	}

@@ -54,10 +54,12 @@ type AttestationEvidence struct {
 	// PCRs is the map of PCR index to PCR value included in the quote.
 	PCRs map[int][]byte `json:"pcrs"`
 
-	// Nonce is the challenge nonce used in the quote.
+	// Nonce is the server-issued challenge (IssueChallenge) the quote
+	// carries as its qualifying data. Each nonce is accepted once.
 	Nonce []byte `json:"nonce"`
 
-	// Timestamp is when the evidence was generated.
+	// Timestamp is when the client says the evidence was generated. It is
+	// not authenticated and is never used to judge freshness: the nonce is.
 	Timestamp time.Time `json:"timestamp"`
 }
 
@@ -105,8 +107,12 @@ func (s *RegistrySession) RemainingTime() time.Duration {
 
 // Attestor defines the interface for verifying TPM attestation quotes.
 type Attestor interface {
-	// VerifyQuote verifies a TPM quote and returns the verified PCR values.
-	VerifyQuote(ctx context.Context, quote, signature, aik []byte) (map[int][]byte, error)
+	// VerifyQuote verifies a TPM quote's signature against aik, checks that
+	// the quote's qualifying data (extraData) equals nonce, and returns the
+	// verified PCR values. The nonce is the server-issued challenge; an
+	// implementation must refuse a quote that does not carry it, or a
+	// captured quote could be replayed.
+	VerifyQuote(ctx context.Context, quote, signature, aik, nonce []byte) (map[int][]byte, error)
 
 	// GenerateNonce generates a cryptographic nonce for quote challenges.
 	GenerateNonce(ctx context.Context) ([]byte, error)
@@ -153,6 +159,31 @@ type RegistryAuthHandler struct {
 	requiredPCRs    map[int][]byte
 	allowedAIKs     map[string]struct{}
 	policyName      string
+
+	// challenges holds the issued, unused attestation nonces.
+	challenges   challengeStore
+	challengeTTL time.Duration
+}
+
+// DefaultChallengeTTL is how long an issued attestation challenge stays
+// valid before a quote over it must be presented.
+const DefaultChallengeTTL = 5 * time.Minute
+
+// WithChallengeTTL sets how long an issued attestation challenge stays valid.
+func WithChallengeTTL(d time.Duration) AuthHandlerOption {
+	return func(h *RegistryAuthHandler) {
+		h.challengeTTL = d
+	}
+}
+
+// IssueChallenge returns a fresh single-use nonce for clientID. The client
+// quotes it as the TPM qualifying data and presents the quote, with the
+// nonce, to Authenticate within the challenge TTL.
+func (h *RegistryAuthHandler) IssueChallenge(clientID string) ([]byte, error) {
+	if clientID == "" {
+		return nil, AttestationFailedError{Reason: "missing client ID"}
+	}
+	return h.challenges.issue(clientID, time.Now(), h.challengeTTL), nil
 }
 
 // AuthHandlerOption is a functional option for configuring RegistryAuthHandler.
@@ -212,6 +243,7 @@ func NewRegistryAuthHandler(
 		quicBaaS:        quicBaaS,
 		sessionDuration: DefaultSessionDuration,
 		policyName:      "registry.access",
+		challengeTTL:    DefaultChallengeTTL,
 	}
 
 	for _, opt := range opts {
@@ -239,8 +271,14 @@ func (h *RegistryAuthHandler) Authenticate(ctx context.Context, req *http.Reques
 		return nil, err
 	}
 
-	// Verify TPM quote
-	verifiedPCRs, err := h.attestor.VerifyQuote(ctx, evidence.Quote, evidence.Signature, evidence.AIK)
+	// The nonce must be one this handler issued to this client and nobody
+	// has used; it is spent here whatever the quote's outcome.
+	if reason := h.challenges.consume(evidence.ClientID, evidence.Nonce, time.Now()); reason != "" {
+		return nil, InvalidQuoteError{Reason: reason}
+	}
+
+	// Verify TPM quote, including that it carries the nonce
+	verifiedPCRs, err := h.attestor.VerifyQuote(ctx, evidence.Quote, evidence.Signature, evidence.AIK, evidence.Nonce)
 	if err != nil {
 		return nil, InvalidQuoteError{Cause: err}
 	}
@@ -276,14 +314,13 @@ func (h *RegistryAuthHandler) Authenticate(ctx context.Context, req *http.Reques
 
 	// Evaluate access policy
 	policyInput := map[string]any{
-		"pcrs":        verifiedPCRs,
-		"aik":         base64.StdEncoding.EncodeToString(evidence.AIK),
-		"client_id":   evidence.ClientID,
-		"client_ip":   req.RemoteAddr,
-		"requested":   req.URL.Path,
-		"method":      req.Method,
-		"timestamp":   time.Now().UTC().Format(time.RFC3339),
-		"evidence_ts": evidence.Timestamp.Format(time.RFC3339),
+		"pcrs":      verifiedPCRs,
+		"aik":       base64.StdEncoding.EncodeToString(evidence.AIK),
+		"client_id": evidence.ClientID,
+		"client_ip": req.RemoteAddr,
+		"requested": req.URL.Path,
+		"method":    req.Method,
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
 	}
 
 	decision, err := h.policyEngine.Evaluate(ctx, h.policyName, policyInput)
