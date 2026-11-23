@@ -34,8 +34,10 @@ import (
 // The sample size makes the ~16% per-id failure rate a certainty, not a flake:
 // a single "_" anywhere in a suffix fails the run.
 func TestGenerateClientID_RoundTripsThroughTenantFromClientID(t *testing.T) {
+	t.Parallel()
 	for _, tenantID := range []string{"automatethethings", "acme", "system", "with_underscore"} {
 		t.Run(tenantID, func(t *testing.T) {
+			t.Parallel()
 			for i := 0; i < 4096; i++ {
 				clientID, err := generateClientID(tenantID)
 				if err != nil {
@@ -53,6 +55,7 @@ func TestGenerateClientID_RoundTripsThroughTenantFromClientID(t *testing.T) {
 // trip depends on: the separator character must not appear in the random
 // suffix, or the last-separator split is ambiguous.
 func TestGenerateClientID_SuffixCarriesNoSeparator(t *testing.T) {
+	t.Parallel()
 	const tenantID = "acme"
 	for i := 0; i < 4096; i++ {
 		clientID, err := generateClientID(tenantID)
@@ -71,6 +74,7 @@ func TestGenerateClientID_SuffixCarriesNoSeparator(t *testing.T) {
 
 // TestTenantFromClientID covers the parser's accepted and rejected shapes.
 func TestTenantFromClientID(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name     string
 		clientID string
@@ -86,6 +90,7 @@ func TestTenantFromClientID(t *testing.T) {
 		{"separator only after prefix", "app__", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			if got := TenantFromClientID(tc.clientID); got != tc.want {
 				t.Fatalf("TenantFromClientID(%q) = %q, want %q", tc.clientID, got, tc.want)
 			}

@@ -10,6 +10,7 @@ import (
 )
 
 func TestRefusePolicyVersion_ZeroOrAbsentPasses(t *testing.T) {
+	t.Parallel()
 	for name, value := range map[string]interface{}{
 		"absent":         nil,
 		"float zero":     float64(0),
@@ -19,12 +20,14 @@ func TestRefusePolicyVersion_ZeroOrAbsentPasses(t *testing.T) {
 		"json zero frac": json.Number("0.0"),
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			assert.NoError(t, RefusePolicyVersion(value))
 		})
 	}
 }
 
 func TestRefusePolicyVersion_NonZeroRefused(t *testing.T) {
+	t.Parallel()
 	for name, tc := range map[string]struct {
 		value interface{}
 		text  string
@@ -38,6 +41,7 @@ func TestRefusePolicyVersion_NonZeroRefused(t *testing.T) {
 		"bool":        {value: true, text: "true"},
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			err := RefusePolicyVersion(tc.value)
 			var versionErr *PolicyVersionUnsupportedError
 			require.True(t, errors.As(err, &versionErr), "got %v", err)
@@ -48,6 +52,7 @@ func TestRefusePolicyVersion_NonZeroRefused(t *testing.T) {
 }
 
 func TestRefusePolicyVersionIn(t *testing.T) {
+	t.Parallel()
 	for name, tc := range map[string]struct {
 		doc     map[string]interface{}
 		refused bool
@@ -60,6 +65,7 @@ func TestRefusePolicyVersionIn(t *testing.T) {
 		"inside policy":        {doc: map[string]interface{}{"policy": map[string]interface{}{"version": float64(4)}}, refused: true},
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			err := RefusePolicyVersionIn(tc.doc)
 			if !tc.refused {
 				assert.NoError(t, err)

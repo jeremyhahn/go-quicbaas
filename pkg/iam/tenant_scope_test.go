@@ -32,6 +32,7 @@ import (
 // reach exists only behind permissions registered ScopeCross, and no
 // surface routed through this helper is gated on one).
 func TestResolveRequestTenant(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		// callerTenant is bound into the context; on a denial it is also
@@ -81,6 +82,7 @@ func TestResolveRequestTenant(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			ctx := tenantctx.WithTenant(context.Background(), tt.callerTenant)
 			got, err := ResolveRequestTenant(ctx, tt.requested)
 
@@ -115,6 +117,7 @@ func TestResolveRequestTenant(t *testing.T) {
 // tenant it asked for, and nothing else — no hint about whether the target
 // tenant exists or holds events.
 func TestTenantScopeMismatchError_Message(t *testing.T) {
+	t.Parallel()
 	err := &TenantScopeMismatchError{CallerTenant: "tenant-a", RequestedTenant: "tenant-b"}
 	want := "tenant scope: caller tenant tenant-a may not access tenant tenant-b"
 	if err.Error() != want {
@@ -128,6 +131,7 @@ func TestTenantScopeMismatchError_Message(t *testing.T) {
 // which read an unknown caller as the platform principal; an empty tenant
 // still never reaches storage as an unscoped filter, because nothing does.
 func TestResolveRequestTenant_UnboundCallerIsRefused(t *testing.T) {
+	t.Parallel()
 	for _, requested := range []string{"", "tenant-b", qrdbsdk.SystemTenantID} {
 		got, err := ResolveRequestTenant(context.Background(), requested)
 		var missing *tenantctx.MissingTenantError
