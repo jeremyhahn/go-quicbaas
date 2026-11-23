@@ -19,6 +19,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -265,7 +266,18 @@ func (s *BackendStorage) put(ctx context.Context, key string, value []byte) erro
 
 // get retrieves a value using the KVStore.
 func (s *BackendStorage) get(ctx context.Context, key string) ([]byte, error) {
-	return s.kv.Get(ctx, key)
+	data, err := s.kv.Get(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	// Some stores (the qrdb in-memory store among them) answer a missing key
+	// with no value and no error. A nil value is not found, so the creates'
+	// existence checks do not read it as a record. An empty, non-nil value is
+	// still a stored value.
+	if data == nil {
+		return nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.storage.get", Err: fmt.Errorf("key %q not found", key)}
+	}
+	return data, nil
 }
 
 // delete removes a value using the KVStore.

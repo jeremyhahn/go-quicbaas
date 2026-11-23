@@ -38,6 +38,7 @@ import (
 // =============================================================================
 
 func TestMapQRDBRoleError_ClientErrorsAreNotInternal(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name     string
 		op       string
@@ -80,6 +81,7 @@ func TestMapQRDBRoleError_ClientErrorsAreNotInternal(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			err := mapQRDBRoleError(tc.op, tc.src)
 			require.Error(t, err)
 
@@ -107,6 +109,7 @@ func TestMapQRDBRoleError_ClientErrorsAreNotInternal(t *testing.T) {
 // collided with an existing role or is retrying a create. Collapsing them would
 // tell an operator "role already exists" when the name they picked is free.
 func TestMapQRDBRoleError_DuplicateIDIsDistinctFromDuplicateName(t *testing.T) {
+	t.Parallel()
 	byID := mapQRDBRoleError("create", &qrdbrole.RoleIDExistsError{ID: "role-1", TenantID: "acme"})
 	byName := mapQRDBRoleError("create", &qrdbrole.RoleNameExistsError{Name: "auditor", TenantID: "acme"})
 
@@ -125,6 +128,7 @@ func TestMapQRDBRoleError_DuplicateIDIsDistinctFromDuplicateName(t *testing.T) {
 // does not recognise is still internal, because pretending to classify it would
 // be worse than admitting it is unexpected.
 func TestMapQRDBRoleError_UnknownErrorsStayInternal(t *testing.T) {
+	t.Parallel()
 	err := mapQRDBRoleError("create", assert.AnError)
 
 	var qbErr *dberrors.QBError

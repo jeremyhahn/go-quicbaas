@@ -35,6 +35,7 @@ func userInfoServer(t *testing.T, claims string) *httptest.Server {
 // LinkAccount succeeds when userinfo yields a subject, then rejects a second
 // link of the same external identity to the same user (idempotent guard).
 func TestLinkAccount_SuccessAndAlreadyLinked(t *testing.T) {
+	t.Parallel()
 	manager, providerStorage, _, _, identityStore, _ := setupTestFederationManager(t)
 	ctx := context.Background()
 
@@ -82,6 +83,7 @@ func TestLinkAccount_SuccessAndAlreadyLinked(t *testing.T) {
 
 // LinkAccount fails closed when the userinfo response carries no subject claim.
 func TestLinkAccount_NoSubjectClaim(t *testing.T) {
+	t.Parallel()
 	manager, providerStorage, _, _, identityStore, _ := setupTestFederationManager(t)
 	ctx := context.Background()
 

@@ -23,6 +23,7 @@ import (
 
 // UpdateProvider reconciles the name index; DeleteProvider clears record + index.
 func TestBackendProviderStorage_UpdateDeleteList(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	store := NewBackendProviderStorage(kv)
@@ -88,6 +89,7 @@ func TestBackendProviderStorage_UpdateDeleteList(t *testing.T) {
 
 // UpdateLink reconciles external + user indexes; DeleteLink clears everything.
 func TestBackendFederationStorage_UpdateDeleteLink(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	store := NewBackendFederationStorage(kv)

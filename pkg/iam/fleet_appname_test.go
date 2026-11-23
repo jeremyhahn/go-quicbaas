@@ -20,6 +20,7 @@ import "testing"
 // orchestrator both rely on. The behaviour is part of the agent
 // register contract and changing it requires coordinated rollouts.
 func TestSanitizeAppName_TrimsAndReplacesReservedRunes(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		in   string
@@ -37,6 +38,7 @@ func TestSanitizeAppName_TrimsAndReplacesReservedRunes(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			if got := SanitizeAppName(tc.in); got != tc.want {
 				t.Fatalf("SanitizeAppName(%q) = %q, want %q", tc.in, got, tc.want)
 			}
@@ -49,6 +51,7 @@ func TestSanitizeAppName_TrimsAndReplacesReservedRunes(t *testing.T) {
 // orchestrator's wait-online matcher. Drift between the two would
 // re-introduce the very production bug this code path eliminates.
 func TestAgentAppName_Composes(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name   string
 		tenant string
@@ -63,6 +66,7 @@ func TestAgentAppName_Composes(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			if got := FleetNodeAppName(tc.tenant, tc.cn); got != tc.want {
 				t.Fatalf("FleetNodeAppName(%q,%q) = %q, want %q", tc.tenant, tc.cn, got, tc.want)
 			}

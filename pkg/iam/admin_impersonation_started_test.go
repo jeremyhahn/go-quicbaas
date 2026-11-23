@@ -29,6 +29,7 @@ func grantImpersonation(t *testing.T, manager *AdminManager, userID uint64) {
 // the session StartImpersonation returns, the one it stores, and the JSON a
 // transport writes all carry the start time, and ExpiresAt follows it.
 func TestAdminManager_StartImpersonation_StampsStartedAt(t *testing.T) {
+	t.Parallel()
 	manager, _ := createTestAdminManager(t)
 	grantImpersonation(t, manager, 30001)
 
@@ -68,6 +69,7 @@ func TestAdminManager_StartImpersonation_StampsStartedAt(t *testing.T) {
 // TestAdminManager_StartImpersonation_MissingReasonHasNoSession pins the error
 // path: no reason is a typed invalid-input error and no session is created.
 func TestAdminManager_StartImpersonation_MissingReasonHasNoSession(t *testing.T) {
+	t.Parallel()
 	manager, _ := createTestAdminManager(t)
 	grantImpersonation(t, manager, 30001)
 

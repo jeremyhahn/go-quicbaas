@@ -39,6 +39,7 @@ import (
 // TestAgentRuntimeGrant_MatchesTheContributedVocabulary pins the credential-plane
 // literal against the permission it names.
 func TestAgentRuntimeGrant_MatchesTheContributedVocabulary(t *testing.T) {
+	t.Parallel()
 	if iam.FleetScopeAccountMaterialize != string(quicbaaspermission.AgentAccountMaterialize) {
 		t.Fatalf("iam.FleetScopeAccountMaterialize = %q, permission.AgentAccountMaterialize = %q; the two spellings must agree",
 			iam.FleetScopeAccountMaterialize, quicbaaspermission.AgentAccountMaterialize)
@@ -50,6 +51,7 @@ func TestAgentRuntimeGrant_MatchesTheContributedVocabulary(t *testing.T) {
 // A role cannot hold an unregistered permission — qrdb's role store rejects it
 // at write time — so an unregistered member would make enrollment itself fail.
 func TestAgentRuntimeGrant_IsRegisteredVocabulary(t *testing.T) {
+	t.Parallel()
 	quicbaaspermission.Register()
 
 	for _, granted := range iam.FleetRuntimeGrant() {

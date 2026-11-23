@@ -23,6 +23,7 @@ import (
 
 // UpdateSession/DeleteSession round-trip plus not-found and invalid-input paths.
 func TestBackendSessionStorage_UpdateDelete(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	store := NewBackendSessionStorage(kv, nil)
@@ -74,6 +75,7 @@ func TestBackendSessionStorage_UpdateDelete(t *testing.T) {
 
 // SessionExt Update reconciles token indexes; Delete is idempotent.
 func TestBackendSessionExtStorage_UpdateDelete(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	store := NewBackendSessionExtStorage(kv, nil)
@@ -130,6 +132,7 @@ func TestBackendSessionExtStorage_UpdateDelete(t *testing.T) {
 
 // ListByUserActive filters expired; DeleteByUser and CleanupExpired clear records.
 func TestBackendSessionExtStorage_ActiveDeleteByUserCleanup(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	store := NewBackendSessionExtStorage(kv, staticTenantLister{ids: []string{"acme"}})

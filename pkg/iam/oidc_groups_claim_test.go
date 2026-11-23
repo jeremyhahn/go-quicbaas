@@ -54,6 +54,7 @@ var wantGroupsClaim = []string{"developers", "team-leads"}
 // authorization-code path: the ID token and the access token (which userinfo
 // answers from) state the names of the roles the user is bound to.
 func TestGroupsClaim_CodeGrantDerivesFromRoleBindings(t *testing.T) {
+	t.Parallel()
 	provider, _, _, _, storage := createTestOIDCProvider(t)
 	user := seedGroupsClaimUser(t, storage)
 	ctx := context.Background()
@@ -91,6 +92,7 @@ func TestGroupsClaim_CodeGrantDerivesFromRoleBindings(t *testing.T) {
 // TestGroupsClaim_HardwareLoginDerivesFromRoleBindings covers the hardware
 // issuance path, which resolves the claim in the provider before minting.
 func TestGroupsClaim_HardwareLoginDerivesFromRoleBindings(t *testing.T) {
+	t.Parallel()
 	provider, _, _, _, storage := createTestOIDCProvider(t)
 	user := seedGroupsClaimUser(t, storage)
 	ctx := context.Background()
@@ -116,6 +118,7 @@ func TestGroupsClaim_HardwareLoginDerivesFromRoleBindings(t *testing.T) {
 // lookup stops issuance rather than minting a token whose groups claim
 // silently under-states the account.
 func TestGroupsClaim_UnresolvableRolesRefuseIssuance(t *testing.T) {
+	t.Parallel()
 	provider, _, _, _, _ := createTestOIDCProvider(t)
 	ctx := context.Background()
 

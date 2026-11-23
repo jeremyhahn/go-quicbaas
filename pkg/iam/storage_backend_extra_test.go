@@ -28,6 +28,7 @@ import (
 // GetSettings returns empty settings for an unset tenant and surfaces a decode
 // error for corrupt data; UpdateSettings rejects an unknown tenant.
 func TestBackendStorage_SettingsEdgeCases(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	kv := newMockKVStore()
 	storage := NewBackendStorage(kv)
@@ -51,6 +52,7 @@ func TestBackendStorage_SettingsEdgeCases(t *testing.T) {
 // GetQuota returns empty quota when unset and decodes corrupt data as an error;
 // IncrementQuotaUsage covers the policy and app counters.
 func TestBackendStorage_QuotaEdgeCases(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	kv := newMockKVStore()
 	storage := NewBackendStorage(kv)
@@ -77,6 +79,7 @@ func TestBackendStorage_QuotaEdgeCases(t *testing.T) {
 // StoreToken writes the refresh-token value index and RevokeUserTokens revokes
 // every token a user owns.
 func TestBackendStorage_RefreshTokenIndexAndRevokeUser(t *testing.T) {
+	t.Parallel()
 	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 	kv := newMockKVStore()
 	storage := NewBackendStorage(kv)

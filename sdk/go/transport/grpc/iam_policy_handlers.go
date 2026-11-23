@@ -15,6 +15,7 @@ package grpc
 
 import (
 	"context"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -165,11 +166,16 @@ func (h *iamHandler) handleListPolicies(ctx context.Context, client iampb.IAMSer
 	tenantID, _ := getString(reqMap, "tenant_id")
 	requestData, _ := getMap(reqMap, "request")
 
-	pageSize, _ := getInt(requestData, "page_size")
+	limit, _ := getInt(requestData, "limit")
+	offset, err := policyCursorOffset("handleListPolicies", requestData)
+	if err != nil {
+		return nil, err
+	}
 
 	pbReq := &iampb.ListPoliciesRequest{
 		TenantId: tenantID,
-		Limit:    int32(pageSize),
+		Limit:    int32(limit),
+		Offset:   offset,
 	}
 
 	resp, err := client.ListPolicies(ctx, pbReq)
@@ -184,10 +190,27 @@ func (h *iamHandler) handleListPolicies(ctx context.Context, client iampb.IAMSer
 		}
 	}
 
+	p := iamPagination(offset, limit, len(resp.Policies), resp.Total)
 	return &iam.ListPoliciesResponse{
 		Policies:   policies,
+		NextCursor: p.NextPageToken,
+		HasMore:    p.HasMore,
 		TotalCount: int64(resp.Total),
 	}, nil
+}
+
+// policyCursorOffset reads the policy list's "cursor": the decimal offset a
+// previous page returned as its next cursor. Empty means the first page.
+func policyCursorOffset(op string, m map[string]interface{}) (int32, error) {
+	cursor, _ := getString(m, "cursor")
+	if cursor == "" {
+		return 0, nil
+	}
+	n, err := strconv.ParseInt(cursor, 10, 32)
+	if err != nil || n < 0 {
+		return 0, errors.NewInvalidInput(op, "invalid cursor")
+	}
+	return int32(n), nil
 }
 
 // handleValidatePolicy handles ValidatePolicy requests.

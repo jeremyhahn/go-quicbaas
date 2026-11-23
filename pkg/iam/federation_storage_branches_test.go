@@ -24,6 +24,7 @@ import (
 
 // SaveState rejects an empty nonce; GetState reports not-found and expired.
 func TestBackendStateStorage_ValidationAndExpiry(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	store := NewBackendStateStorage(kv, nil)
@@ -52,6 +53,7 @@ func TestBackendStateStorage_ValidationAndExpiry(t *testing.T) {
 // GetLinksByUser skips a dangling index entry whose record was deleted, and
 // DeleteUserLinks clears multiple links.
 func TestBackendFederationStorage_LinksByUserAndDeleteAll(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	store := NewBackendFederationStorage(kv)
@@ -93,6 +95,7 @@ func TestBackendFederationStorage_LinksByUserAndDeleteAll(t *testing.T) {
 
 // CleanupExpired sweeps expired states across every tenant in the lister.
 func TestBackendStateStorage_CleanupAcrossTenants(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	kv.barrierTenant("globex")
