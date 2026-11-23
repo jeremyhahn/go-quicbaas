@@ -57,6 +57,7 @@ encrypt backup data.
 Over a network transport `CreateBackup` returns `Unimplemented`, because a
 quicbaas node's go-qrdb backup service keeps backups in memory only; use
 `sdk/go/client/backup` for durable backups.
+QuicBaaS's own gRPC servers (the Unix socket and the sealed-window server) refuse a direct qrdb.v1 `BackupCreate` RPC with `Unimplemented` for the same reason.
 Over gRPC and Unix the `WithAuthToken` bearer is sent on every call; over
 REST, QUIC and MCP a client with credentials gets `Unimplemented` from
 `QRDBBackup()`.

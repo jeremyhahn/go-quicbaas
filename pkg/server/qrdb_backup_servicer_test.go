@@ -117,7 +117,7 @@ func TestQRDBBackupServicerProxy_DelegatesToResolvedServicer(t *testing.T) {
 		verify:   &qrdbservice.VerifyResult{Valid: true, ChecksumMatch: true},
 		deleteEr: errors.New("delete refused"),
 	}
-	p := &qrdbBackupServicerProxy{resolve: func() qrdbservice.BackupServicer { return stub }}
+	p := &qrdbBackupServicerProxy{resolve: func() qrdbservice.BackupServicer { return stub }, durableSink: true}
 	ctx := context.Background()
 
 	createOpts := qrdbservice.BackupOptions{Destination: "dest", Metadata: map[string]string{"k": "v"}}
@@ -206,7 +206,7 @@ func TestQRDBBackupOverQuicBaaSGRPC_UnimplementedWithoutNode(t *testing.T) {
 
 func TestQRDBBackupServicerProxy_RefusesEncryption(t *testing.T) {
 	stub := &stubBackupServicer{info: &qrdbservice.BackupInfo{ID: "bk-1"}}
-	p := &qrdbBackupServicerProxy{resolve: func() qrdbservice.BackupServicer { return stub }}
+	p := &qrdbBackupServicerProxy{resolve: func() qrdbservice.BackupServicer { return stub }, durableSink: true}
 	ctx := context.Background()
 
 	_, err := p.CreateBackup(ctx, qrdbservice.BackupOptions{Encryption: qrdbservice.EncryptionAES256})
@@ -251,4 +251,41 @@ func TestQRDBBackupOverQuicBaaSGRPC_RefusesEncryption(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, codes.Unimplemented, status.Code(err), "restore with key: %v", err)
 	assert.Contains(t, status.Convert(err).Message(), "backup encryption is not supported")
+}
+
+func TestQRDBBackupServicerProxy_RefusesCreateWithoutDurableSink(t *testing.T) {
+	stub := &stubBackupServicer{
+		info: &qrdbservice.BackupInfo{ID: "bk-1"},
+		list: []qrdbservice.BackupInfo{{ID: "bk-1"}},
+	}
+	p := &qrdbBackupServicerProxy{resolve: func() qrdbservice.BackupServicer { return stub }}
+	ctx := context.Background()
+
+	info, err := p.CreateBackup(ctx, qrdbservice.BackupOptions{Destination: "/var/backups/x"})
+	assert.Nil(t, info)
+	assert.True(t, errors.As(err, new(*qrdbBackupNotDurableError)), "create without a durable sink: got %v", err)
+	assert.Empty(t, stub.calls, "a refused create must never reach the node")
+
+	_, err = p.ListBackups(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"ListBackups"}, stub.calls)
+}
+
+func TestQRDBBackupOverQuicBaaSGRPC_RefusesNonDurableCreate(t *testing.T) {
+	srv := withTempServer(t)
+	require.NoError(t, srv.initStandaloneQRDBNode())
+	t.Cleanup(func() { _ = srv.stopQRDBNode() })
+
+	client := serveQuicBaaSQRDBOverTCP(t, srv)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	_, err := client.BackupCreate(ctx, &qrdbv1.BackupCreateRequest{Destination: t.TempDir()})
+	require.Error(t, err)
+	assert.Equal(t, codes.Unimplemented, status.Code(err), "non-durable create: %v", err)
+	assert.Contains(t, status.Convert(err).Message(), "would not survive a restart")
+
+	resp, err := client.BackupList(ctx, &emptypb.Empty{})
+	require.NoError(t, err)
+	assert.Empty(t, resp.GetBackups(), "a refused create must not leave a backup behind")
 }

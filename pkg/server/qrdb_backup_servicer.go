@@ -32,8 +32,16 @@ import (
 // ServiceNotConfiguredError: go-qrdb classifies delegate errors, so a typed
 // error keeps the answer Unimplemented, exactly as an unregistered backup
 // service answers, rather than a raw status coming out as Internal.
+//
+// CreateBackup is refused while no durable backup sink is configured, because
+// the node's backup service would keep the backup in memory only.
 type qrdbBackupServicerProxy struct {
 	resolve func() qrdbservice.BackupServicer
+	// durableSink reports that the node's backup service writes to a
+	// durable backup sink. No quicbaas node configures one, so
+	// newQRDBBackupServicerProxy leaves it false and CreateBackup is
+	// refused.
+	durableSink bool
 }
 
 var _ qrdbservice.BackupServicer = (*qrdbBackupServicerProxy)(nil)
@@ -78,8 +86,26 @@ func (e *qrdbBackupEncryptionUnsupportedError) ErrorClass() errclass.Class {
 	return errclass.Unimplemented
 }
 
+// qrdbBackupNotDurableError refuses a backup create while the node's
+// backup service has no durable sink: go-qrdb would keep the backup in
+// memory only, so it would not survive a restart. Its class is
+// Unimplemented, so go-qrdb answers codes.Unimplemented.
+type qrdbBackupNotDurableError struct{}
+
+func (*qrdbBackupNotDurableError) Error() string {
+	return "backup create: this node's qrdb backup service keeps backups in memory only, " +
+		"so the backup would not survive a restart; use the QuicBaaS backup service for durable backups"
+}
+
+// ErrorClass classes the refusal as Unimplemented.
+func (*qrdbBackupNotDurableError) ErrorClass() errclass.Class {
+	return errclass.Unimplemented
+}
+
 // CreateBackup delegates to the node's backup service. A request for
-// encryption is refused before the node is resolved.
+// encryption is refused before the node is resolved; an absent node answers
+// ServiceNotConfiguredError; a create while no durable sink is configured is
+// refused and never reaches the node.
 func (p *qrdbBackupServicerProxy) CreateBackup(ctx context.Context, opts qrdbservice.BackupOptions) (*qrdbservice.BackupInfo, error) {
 	if (opts.Encryption != "" && opts.Encryption != qrdbservice.EncryptionNone) || len(opts.EncryptionKey) > 0 {
 		return nil, &qrdbBackupEncryptionUnsupportedError{Op: "create"}
@@ -87,6 +113,9 @@ func (p *qrdbBackupServicerProxy) CreateBackup(ctx context.Context, opts qrdbser
 	svc, err := p.servicer()
 	if err != nil {
 		return nil, err
+	}
+	if !p.durableSink {
+		return nil, &qrdbBackupNotDurableError{}
 	}
 	return svc.CreateBackup(ctx, opts)
 }
