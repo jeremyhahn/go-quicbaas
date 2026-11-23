@@ -34,7 +34,7 @@
   import { routeLogin, routeDashboard } from '../../stores/router.svelte.ts';
   import { setConnected } from '../../stores/connection.svelte.ts';
   import { setAuthenticated } from '../../stores/auth.svelte.ts';
-  import { getOriginSDKClient } from '../../stores/sdkClient.ts';
+  import { activeConnection, getOriginSDKClient } from '../../stores/sdkClient.ts';
   import { parseCreationOptions, encodeAttestationResponse } from '../../lib/webauthn.ts';
   import type { SelfRegisterFinishResponse } from '@quicbaas/sdk';
 
@@ -153,7 +153,8 @@
 
       if (finishResp.status === 'active') {
         persistTokens(finishResp);
-        setConnected(window.location.origin, 'rest');
+        const active = activeConnection();
+        setConnected(active.address || window.location.origin, active.transport);
         stage = 'done';
         // Redirect to dashboard after a short moment so the user sees the confirmation.
         setTimeout(() => { routeDashboard(); }, 1500);

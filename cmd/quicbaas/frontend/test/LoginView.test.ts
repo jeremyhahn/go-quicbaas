@@ -48,6 +48,7 @@ const {
   mockWebAuthnBeginLogin,
   mockWebAuthnFinishLogin,
   mockLoginPIV,
+  mockActiveConnection,
 } = vi.hoisted(() => ({
   mockRouteDashboard: vi.fn(),
   mockSetConnected: vi.fn(),
@@ -60,6 +61,7 @@ const {
   mockWebAuthnBeginLogin: vi.fn(),
   mockWebAuthnFinishLogin: vi.fn(),
   mockLoginPIV: vi.fn(),
+  mockActiveConnection: vi.fn(),
 }));
 
 vi.mock('../src/stores/router.svelte.ts', () => ({
@@ -100,6 +102,7 @@ vi.mock('../src/stores/sdkClient.ts', () => ({
       loginPIV: mockLoginPIV,
     },
   })),
+  activeConnection: mockActiveConnection,
 }));
 
 // ---------------------------------------------------------------------------
@@ -234,6 +237,11 @@ describe('LoginView', () => {
     vi.clearAllMocks();
     localStore = {};
     mockAuthStore.endReason = '';
+    mockActiveConnection.mockReturnValue({
+      transport: 'rest',
+      address: window.location.origin,
+      overridden: false,
+    });
   });
 
   afterEach(() => {
@@ -354,6 +362,26 @@ describe('LoginView', () => {
 
     // No error alert on success.
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it("on successful sign-in with a saved override: marks the override's daemon connected", async () => {
+    mockActiveConnection.mockReturnValue({
+      transport: 'rest',
+      address: 'https://remote.example:8443',
+      overridden: true,
+    });
+    mockWebAuthnBeginLogin.mockResolvedValueOnce(makeChallengeEnvelope());
+    mockCredentialsGet.mockResolvedValueOnce(makeCredentialStub());
+    mockWebAuthnFinishLogin.mockResolvedValueOnce(makeFinishTokens());
+
+    render(LoginView);
+    await submitPasskey('bob@example.com');
+
+    await waitFor(() => {
+      expect(mockSetConnected).toHaveBeenCalledWith('https://remote.example:8443', 'rest');
+      expect(mockRouteDashboard).toHaveBeenCalledTimes(1);
+    });
+    expect(mockSetConnected).not.toHaveBeenCalledWith(window.location.origin, 'rest');
   });
 
   // --------------------------------------------------------------------------
