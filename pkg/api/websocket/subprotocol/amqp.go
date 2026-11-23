@@ -580,13 +580,48 @@ func (h *AMQPHandler) buildFrame(frameType byte, channel uint16, payload []byte)
 	return buf.Bytes()
 }
 
-// handleFrame parses and handles an AMQP frame.
+// handleFrame parses and handles every AMQP frame in one WebSocket message,
+// in order, and returns their responses concatenated. Frames that follow a
+// Channel.Close the message produced on the same channel are discarded, as
+// AMQP requires until the client's Close-Ok.
 func (h *AMQPHandler) handleFrame(ctx context.Context, data []byte, session *ws.Session, state *amqpClientState) ([]byte, error) {
-	frame, err := h.parseFrame(data)
-	if err != nil {
-		return nil, err
+	var out []byte
+	var closed map[uint16]bool
+	for {
+		frame, n, err := h.nextFrame(data)
+		if err != nil {
+			return out, err
+		}
+		data = data[n:]
+		if !closed[frame.Channel] {
+			resp, err := h.dispatchFrame(ctx, frame, session, state)
+			out = append(out, resp...)
+			if err != nil {
+				return out, err
+			}
+			if isChannelClose(resp) {
+				if closed == nil {
+					closed = make(map[uint16]bool)
+				}
+				closed[frame.Channel] = true
+			}
+		}
+		if len(data) == 0 {
+			return out, nil
+		}
 	}
+}
 
+// isChannelClose reports whether resp starts with a Channel.Close method
+// frame.
+func isChannelClose(resp []byte) bool {
+	return len(resp) >= 11 && resp[0] == FrameMethod &&
+		binary.BigEndian.Uint16(resp[7:9]) == ClassChannel &&
+		binary.BigEndian.Uint16(resp[9:11]) == MethodChannelClose
+}
+
+// dispatchFrame handles one parsed AMQP frame according to its type.
+func (h *AMQPHandler) dispatchFrame(ctx context.Context, frame *AMQPFrame, session *ws.Session, state *amqpClientState) ([]byte, error) {
 	switch frame.Type {
 	case FrameMethod:
 		return h.handleMethodFrame(ctx, frame, session, state)
@@ -603,8 +638,15 @@ func (h *AMQPHandler) handleFrame(ctx context.Context, data []byte, session *ws.
 
 // parseFrame parses raw data into an AMQPFrame.
 func (h *AMQPHandler) parseFrame(data []byte) (*AMQPFrame, error) {
+	frame, _, err := h.nextFrame(data)
+	return frame, err
+}
+
+// nextFrame parses the first AMQP frame in data and returns it with the
+// number of bytes it occupies.
+func (h *AMQPHandler) nextFrame(data []byte) (*AMQPFrame, int, error) {
 	if len(data) < 8 {
-		return nil, &ErrAMQPProtocolError{Message: "frame too short"}
+		return nil, 0, &ErrAMQPProtocolError{Message: "frame too short"}
 	}
 
 	frameType := data[0]
@@ -614,12 +656,12 @@ func (h *AMQPHandler) parseFrame(data []byte) (*AMQPFrame, error) {
 	// Compare before adding: 7+size+1 in uint32 wraps for sizes near the
 	// maximum, which would let the indexing below run past the data.
 	if uint64(size) > uint64(len(data)-8) {
-		return nil, &ErrAMQPProtocolError{Message: "frame payload incomplete"}
+		return nil, 0, &ErrAMQPProtocolError{Message: "frame payload incomplete"}
 	}
 
 	// Verify frame-end marker
 	if data[7+size] != FrameEnd {
-		return nil, &ErrAMQPProtocolError{Message: "invalid frame-end marker"}
+		return nil, 0, &ErrAMQPProtocolError{Message: "invalid frame-end marker"}
 	}
 
 	payload := data[7 : 7+size]
@@ -628,7 +670,7 @@ func (h *AMQPHandler) parseFrame(data []byte) (*AMQPFrame, error) {
 		Type:    frameType,
 		Channel: channel,
 		Payload: payload,
-	}, nil
+	}, int(8 + size), nil
 }
 
 // methodKey is used for method dispatch lookup.

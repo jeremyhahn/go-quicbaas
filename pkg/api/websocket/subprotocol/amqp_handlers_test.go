@@ -1304,6 +1304,125 @@ func TestAMQPHandler_HandleFrame_HeaderAndBodyFrames(t *testing.T) {
 	})
 }
 
+// basicPublishFrame builds a Basic.Publish method frame on channel 1 to the
+// default exchange with the given routing key.
+func basicPublishFrame(handler *AMQPHandler, routingKey string) []byte {
+	args := &bytes.Buffer{}
+	_ = binary.Write(args, binary.BigEndian, uint16(0))
+	writeShortString(args, "")
+	writeShortString(args, routingKey)
+	args.WriteByte(0x00)
+	return handler.buildMethodFrame(1, ClassBasic, MethodBasicPublish, args.Bytes())
+}
+
+// coalescedPublication concatenates Basic.Publish, its content header and
+// one body frame per part, as a client sends them in one WebSocket message.
+func coalescedPublication(handler *AMQPHandler, routingKey string, parts ...[]byte) []byte {
+	var size int
+	for _, p := range parts {
+		size += len(p)
+	}
+	msg := basicPublishFrame(handler, routingKey)
+	msg = append(msg, handler.buildFrame(FrameHeader, 1, amqpContentHeader(uint64(size)))...)
+	for _, p := range parts {
+		msg = append(msg, handler.buildFrame(FrameBody, 1, p)...)
+	}
+	return msg
+}
+
+func TestAMQPHandler_HandleFrame_CoalescedPublication(t *testing.T) {
+	session := newGrantedSession("test", "amqp", nil)
+
+	receive := func(t *testing.T, got <-chan []byte, want []byte) {
+		t.Helper()
+		select {
+		case p := <-got:
+			if !bytes.Equal(p, want) {
+				t.Fatalf("payload = %q, want %q", p, want)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("%q was not published", want)
+		}
+	}
+
+	t.Run("publish, header and body in one message are published", func(t *testing.T) {
+		hub := NewInMemoryPubSubHub()
+		handler := NewAMQPHandler(hub)
+		state := newTestAMQPState()
+		got := subscribeTestHub(t, hub, "sub", "orders")
+
+		body := []byte("coalesced body")
+		mustNoResponse(t, handler, session, state, coalescedPublication(handler, "orders", body))
+		receive(t, got, body)
+	})
+
+	t.Run("two publications in one message are both published", func(t *testing.T) {
+		hub := NewInMemoryPubSubHub()
+		handler := NewAMQPHandler(hub)
+		state := newTestAMQPState()
+		got := subscribeTestHub(t, hub, "sub", "orders")
+
+		msg := coalescedPublication(handler, "orders", []byte("one"))
+		msg = append(msg, coalescedPublication(handler, "orders", []byte("two"))...)
+		mustNoResponse(t, handler, session, state, msg)
+		receive(t, got, []byte("one"))
+		receive(t, got, []byte("two"))
+	})
+
+	t.Run("a body split over two body frames in one message", func(t *testing.T) {
+		hub := NewInMemoryPubSubHub()
+		handler := NewAMQPHandler(hub)
+		state := newTestAMQPState()
+		got := subscribeTestHub(t, hub, "sub", "orders")
+
+		body := []byte("hello, split amqp body")
+		mustNoResponse(t, handler, session, state, coalescedPublication(handler, "orders", body[:6], body[6:]))
+		receive(t, got, body)
+	})
+
+	t.Run("trailing partial frame is a protocol error", func(t *testing.T) {
+		handler := NewAMQPHandler(NewInMemoryPubSubHub())
+		state := newTestAMQPState()
+
+		msg := basicPublishFrame(handler, "orders")
+		msg = append(msg, handler.buildFrame(FrameHeader, 1, amqpContentHeader(4))[:5]...)
+		if _, err := handler.handleFrame(context.Background(), msg, session, state); err == nil {
+			t.Fatal("a trailing partial frame was accepted")
+		}
+	})
+
+	t.Run("frames after a denied publish are discarded", func(t *testing.T) {
+		hub := NewInMemoryPubSubHub()
+		handler := NewAMQPHandler(hub)
+		state := newTestAMQPState()
+		got := subscribeTestHub(t, hub, "sub", "orders")
+		denied := newDeniedSession("denied", "amqp", nil)
+
+		response, err := handler.handleFrame(context.Background(), coalescedPublication(handler, "orders", []byte("refused")), denied, state)
+		if err != nil {
+			t.Fatalf("handleFrame error = %v", err)
+		}
+		if !isChannelClose(response) || len(response) < 13 {
+			t.Fatalf("response is not a Channel.Close: %x", response)
+		}
+		if code := binary.BigEndian.Uint16(response[11:13]); code != AccessRefused {
+			t.Fatalf("reply code = %d, want %d", code, AccessRefused)
+		}
+		_, n, err := handler.nextFrame(response)
+		if err != nil {
+			t.Fatalf("response does not parse: %v", err)
+		}
+		if n != len(response) {
+			t.Fatalf("response carries %d bytes after the Channel.Close: %x", len(response)-n, response[n:])
+		}
+		select {
+		case p := <-got:
+			t.Fatalf("denied publication reached the subscriber: %q", p)
+		case <-time.After(200 * time.Millisecond):
+		}
+	})
+}
+
 // TestAMQPHandler_BasicPublish_DeniedWithoutPublishPermission: a session
 // whose grant refuses messaging:publish gets Channel.Close ACCESS_REFUSED and
 // nothing reaches the hub, even when the content follows.
