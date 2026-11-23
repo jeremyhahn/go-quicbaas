@@ -804,8 +804,15 @@ func TestGetGarbageCollectionProgress_Success(t *testing.T) {
 	gcResp, err := svc.RunGarbageCollection(ctx, gcReq)
 	require.NoError(t, err)
 
-	// Progress is readable as soon as the operation is started; the test
-	// checks the lookup, not how far the GC got.
+	// Wait, under the service lock the GC goroutine writes under, for the
+	// operation to leave the running state, so the progress read below sees
+	// its final fields rather than racing the goroutine's writes.
+	require.Eventually(t, func() bool {
+		svc.mu.RLock()
+		defer svc.mu.RUnlock()
+		return svc.gcOperations[gcResp.OperationID].Status != GCStatusRunning
+	}, 5*time.Second, time.Millisecond)
+
 	req := &GetGarbageCollectionProgressRequest{
 		OperationID: gcResp.OperationID,
 	}
@@ -814,6 +821,7 @@ func TestGetGarbageCollectionProgress_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
 	assert.Equal(t, gcResp.OperationID, resp.OperationID)
+	assert.Equal(t, GCStatusCompleted, resp.Status)
 }
 
 func TestGetGarbageCollectionProgress_NotFound(t *testing.T) {
