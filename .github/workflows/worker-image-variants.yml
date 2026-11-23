@@ -7,9 +7,10 @@
 # schedule), and on dispatch (optionally for one base digest). The base is
 # always pinned BY DIGEST, so a variant names exactly the base it was built on.
 # Tags: ghcr.io/<owner>/quicbaas-software-factory-worker-<v>:<base12> (never
-# pushed twice) and `current`, moved only after both secret scans pass and the
-# push resolves. The push uses the job's own GITHUB_TOKEN under
-# `packages: write` (G1: no PAT, no other secret), like worker-image.
+# pushed twice) and `current`, moved only after both secret scans and the
+# CRITICAL/HIGH vulnerability scan pass and the push resolves. The push uses
+# the job's own GITHUB_TOKEN under `packages: write` (G1: no PAT, no other
+# secret), like worker-image.
 name: worker-image-variants
 
 on:
@@ -39,7 +40,9 @@ jobs:
     permissions:
       contents: read
       packages: write
-    concurrency: { group: worker-image-variant-${{ matrix.variant }}, cancel-in-progress: false }
+    concurrency:
+      group: worker-image-variant-${{ matrix.variant }}
+      cancel-in-progress: false
     env:
       IMAGE: quicbaas-software-factory-worker
       VARIANT: ${{ matrix.variant }}
@@ -143,6 +146,12 @@ jobs:
           mkdir -p "$work/layers/config"; cp "$work/image/$(jq -r '.[0].Config' "$work/image/manifest.json")" "$work/layers/config/config.json"
           trivy fs --scanners secret --exit-code 0 --format json --output "$work/secrets.json" --no-progress "$work/layers"
           bash deployments/agents/software-factory-worker/check-secret-findings.sh "$work/secrets.json" "$work/layers"
+
+      - name: Scan the image for vulnerabilities
+        if: ${{ steps.existing.outputs.exists != 'true' }}
+        env:
+          REF: ${{ steps.resolve.outputs.repo }}:${{ steps.resolve.outputs.tag }}
+        run: trivy image --scanners vuln --severity CRITICAL,HIGH --ignore-unfixed --exit-code 1 --no-progress "$REF"
 
       - name: Push and check the digest resolves
         id: push
