@@ -337,6 +337,7 @@ func TestQueueCI_ParsesAndGatesQueueHeadsOnBreakCI(t *testing.T) {
 			Name  string `yaml:"name"`
 			If    string `yaml:"if"`
 			Steps []struct {
+				If  string `yaml:"if"`
 				Run string `yaml:"run"`
 			} `yaml:"steps"`
 		} `yaml:"jobs"`
@@ -351,12 +352,20 @@ func TestQueueCI_ParsesAndGatesQueueHeadsOnBreakCI(t *testing.T) {
 	if !ok || job.Name != QueueCICheck {
 		t.Fatalf("no job named %s: %+v", QueueCICheck, workflow.Jobs)
 	}
-	if !strings.Contains(job.If, "startsWith(github.head_ref, 'queue/')") {
-		t.Fatalf("if = %q, want a queue/* head guard", job.If)
+	// The job runs on every pull request: a car's own pull request must
+	// report ci-gate, or a project requiring green checks never merges it.
+	if job.If != "" {
+		t.Fatalf("job if = %q, want none: the job must report on every pull request", job.If)
 	}
 	var breaks bool
 	for _, step := range job.Steps {
-		breaks = breaks || strings.Contains(step.Run, BreakCIFile)
+		if !strings.Contains(step.Run, BreakCIFile) {
+			continue
+		}
+		breaks = true
+		if !strings.Contains(step.If, "startsWith(github.head_ref, 'queue/')") {
+			t.Fatalf("the %s step's if = %q, want a queue/* head guard", BreakCIFile, step.If)
+		}
 	}
 	if !breaks {
 		t.Fatalf("no step tests for %s", BreakCIFile)

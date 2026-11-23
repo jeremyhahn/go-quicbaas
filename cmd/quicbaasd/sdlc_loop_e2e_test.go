@@ -39,6 +39,7 @@ import (
 
 	xkmsssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
@@ -1067,6 +1068,15 @@ func readSpawnWorkspaceSpec(req *orchestration.SpawnRequest) (orchestration.Work
 // names the node on its leases.
 func startFactoryNode(t *testing.T, dataDir string, init bool, reapTTL time.Duration, nodeID uint64, opts ...server.ServerOption) *server.Server {
 	t.Helper()
+	return startFactoryNodeWith(t, dataDir, init, reapTTL, nodeID, nil, opts...)
+}
+
+// startFactoryNodeWith is startFactoryNode with configure applied to the
+// node's configuration before it starts: a test whose forge is not local
+// (the GitHub train) names its host in sdlc.repo_hosts there, as an operator
+// would, since the module refuses to bind a repository on any other host.
+func startFactoryNodeWith(t *testing.T, dataDir string, init bool, reapTTL time.Duration, nodeID uint64, configure func(*config.Config), opts ...server.ServerOption) *server.Server {
+	t.Helper()
 	requireTestTrustDomain(t)
 	f := &inlineInitFlags{
 		barrierStrategy: "passphrase", secret: "test-barrier-secret-12345",
@@ -1099,6 +1109,9 @@ func startFactoryNode(t *testing.T, dataDir string, init bool, reapTTL time.Dura
 	cfg.SDLC.Webhook.PublicURL = "https://factory.e2e"
 	cfg.SDLC.AllowLocalRepos = true
 	cfg.SDLC.Surfacing.RetryInterval = 10 * time.Millisecond
+	if configure != nil {
+		configure(cfg)
+	}
 
 	srv, err := server.NewServer(cfg, append([]server.ServerOption{server.WithSealPassphrase([]byte(f.secret))}, opts...)...)
 	require.NoError(t, err)

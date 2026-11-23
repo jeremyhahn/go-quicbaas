@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,7 @@ import (
 
 	xkmsssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/server"
@@ -64,7 +66,13 @@ func startGitHubTrain(t *testing.T, env githubitest.Env) *githubTrainRig {
 	_, err = scratch.InstallQueueCI(ctx, base)
 	require.NoError(t, err, "installing the queue CI on the base")
 
-	srv := startFactoryNode(t, t.TempDir(), true, time.Hour, 1)
+	// The scratch repository is on GitHub, not a local path: the operator
+	// names its host in sdlc.repo_hosts, or binding the project is refused.
+	cloneURL, err := url.Parse(env.CloneURL())
+	require.NoError(t, err, "parsing the scratch clone URL")
+	srv := startFactoryNodeWith(t, t.TempDir(), true, time.Hour, 1, func(cfg *config.Config) {
+		cfg.SDLC.RepoHosts = append(cfg.SDLC.RepoHosts, cloneURL.Host)
+	})
 	t.Cleanup(func() {
 		if err := srv.Shutdown(context.Background()); err != nil {
 			t.Logf("node shutdown: %v", err)
@@ -132,10 +140,13 @@ func registerGitHubTrainProject(t *testing.T, srv *server.Server, backend *e2eAg
 			},
 			TokenSecretRef: githubTrainTokenRef,
 		},
-		Strategy:        sdlc.GitHubFlowName,
-		Worker:          workerRef,
-		Verification:    []string{"test -f WORK.md"},
-		Review:          sdlc.ReviewPolicy{RequiredApprovals: 1},
+		Strategy:     sdlc.GitHubFlowName,
+		Worker:       workerRef,
+		Verification: []string{"test -f WORK.md"},
+		// Green checks are required, as on any real project: each car's own
+		// pull request must pass ci-gate before it boards, and the queue head
+		// is gated on it again.
+		Review:          sdlc.ReviewPolicy{RequiredApprovals: 1, RequireGreenChecks: true},
 		MaxReviewRounds: 3,
 		Discovery:       sdlc.DiscoveryPoll,
 		MergeTrain:      sdlc.MergeTrainPolicy{MaxSize: 4},
