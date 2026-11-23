@@ -15,7 +15,8 @@
 
 <!--
   NodesView lists the members of the Raft cluster from GET
-  /api/v1/cluster/nodes: address, Raft address, role, and the version and
+  /api/v1/cluster/nodes: address, Raft address, whether it leads any Raft
+  shard (several nodes can, one per shard), and the version and
   uptime when the daemon reports them. The endpoint's health field is not
   shown: the daemon fills it from Raft membership, not from a liveness
   check. Read-only: no node is added or removed from here.
@@ -26,6 +27,7 @@
   import type { Column } from '../../lib/dataTable.ts';
   import StatCard from '../../components/core/StatCard.svelte';
   import { getSDKClient } from '../../stores/sdkClient.ts';
+  import { authStore } from '../../stores/auth.svelte.ts';
   import { Network, Server, Crown } from 'lucide-svelte';
   import type { ClusterNodeInfo, ListClusterNodesResponse } from '@quicbaas/sdk';
   import type { Component } from 'svelte';
@@ -50,24 +52,37 @@
   let loading = $state(false);
   let error = $state<string | null>(null);
 
-  async function load(): Promise<void> {
+  async function load(forSession: string): Promise<void> {
     loading = true;
     error = null;
     try {
       const client = await getSDKClient();
+      if (forSession !== authStore.sessionKey) return;
       if (!client.cluster) { result = null; error = UNAVAILABLE; return; }
-      result = await client.cluster.listNodes();
+      const resp = await client.cluster.listNodes();
+      // An answer for a session that has since been replaced belongs to the
+      // principal who asked for it, not to whoever is signed in now.
+      if (forSession !== authStore.sessionKey) return;
+      result = resp;
     } catch (e) {
+      if (forSession !== authStore.sessionKey) return;
       error = e instanceof Error ? e.message : 'Failed to load cluster nodes';
     } finally {
-      loading = false;
+      if (forSession === authStore.sessionKey) loading = false;
     }
   }
 
-  $effect(() => { void load(); });
+  $effect(() => {
+    // Read synchronously so the effect re-runs when the session changes, and
+    // clear first so a new principal never sees the previous one's nodes.
+    const forSession = authStore.sessionKey;
+    result = null;
+    error = null;
+    void load(forSession);
+  });
 
   const nodes = $derived(result?.nodes ?? []);
-  const leader = $derived(nodes.find((n) => n.is_leader));
+  const leaderIDs = $derived(nodes.filter((n) => n.is_leader).map((n) => n.node_id).sort((a, b) => a - b));
 
   /** formatUptime renders seconds as `Xd Yh`, `Yh Zm` or `Zm`. */
   function formatUptime(seconds: number): string {
@@ -82,12 +97,12 @@
 </script>
 
 <div class="p-6 space-y-6">
-  <PageHeader title="Nodes" subtitle="Raft cluster membership and leadership. Liveness, version and uptime are not measured by the daemon and show as not reported when absent." icon={HEADER_ICON} />
+  <PageHeader title="Nodes" subtitle="Raft cluster membership and which nodes lead a shard. Liveness, version and uptime are not measured by the daemon and show as not reported when absent." icon={HEADER_ICON} />
 
   {#if error}
     <div class="alert alert-error text-sm flex items-center justify-between" role="alert">
       <span>{error}</span>
-      <button class="btn btn-xs btn-ghost" onclick={() => { void load(); }}>Retry</button>
+      <button class="btn btn-xs btn-ghost" onclick={() => { void load(authStore.sessionKey); }}>Retry</button>
     </div>
   {/if}
 
@@ -98,7 +113,7 @@
   {:else if result}
     <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
       <StatCard label="Total" value={String(result.total_count)} icon={Server} />
-      <StatCard label="Leader" value={leader ? String(leader.node_id) : 'none'} icon={Crown} />
+      <StatCard label="Shard leaders" value={String(leaderIDs.length)} description={leaderIDs.length > 0 ? `Nodes ${leaderIDs.join(', ')}` : 'No shard leader reported'} icon={Crown} />
     </div>
 
     <DataTable
@@ -115,7 +130,7 @@
           <td class="font-mono text-xs">{node.raft_address}</td>
           <td>
             {#if node.is_leader}
-              <span class="badge badge-primary badge-xs">Leader</span>
+              <span class="badge badge-primary badge-xs">Shard leader</span>
             {:else}
               <span class="text-xs text-base-content/60">Follower</span>
             {/if}
