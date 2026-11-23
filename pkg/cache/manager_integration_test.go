@@ -72,6 +72,36 @@ func TestCacheManager_TTLExpiration(t *testing.T) {
 	assert.Greater(t, metrics.Get("l1_expired"), int64(0))
 }
 
+// TestCacheManager_CleanupLifecycle checks that the background cleanup loop
+// removes expired entries that nothing reads. It never calls Get or
+// performCleanup: Get removes an expired entry itself and counts it, so only
+// an entry left untouched shows that the periodic cleanup ran.
+func TestCacheManager_CleanupLifecycle(t *testing.T) {
+	config := Config{
+		L1Size:          10,
+		L1TTL:           50 * time.Millisecond,
+		CleanupInterval: 20 * time.Millisecond,
+	}
+
+	cm, err := NewManager(config, testLogger(t))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = cm.Close() })
+
+	ctx := context.Background()
+	keys := []string{"cleanup-a", "cleanup-b", "cleanup-c"}
+	for _, key := range keys {
+		require.NoError(t, cm.Set(ctx, key, []byte("v-"+key)))
+	}
+
+	// Only the cleanup loop (or a Get, which this test never makes) counts
+	// l1_expired, so the count proves the loop removed the untouched entries.
+	require.Eventually(t, func() bool {
+		return cm.Stats().L1Size == 0 &&
+			cm.GetMetrics().Get("l1_expired") >= int64(len(keys))
+	}, 5*time.Second, 10*time.Millisecond,
+		"the cleanup loop never removed the expired, unread entries")
+}
+
 func TestCacheManager_ConcurrentStress(t *testing.T) {
 	config := Config{
 		L1Size: 50,
