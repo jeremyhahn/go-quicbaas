@@ -22,6 +22,7 @@ import (
 // UpdateProvider rejects renaming a provider onto a name another provider owns,
 // and reports not-found for an unknown provider.
 func TestFederationManager_UpdateProvider_NameCollision(t *testing.T) {
+	t.Parallel()
 	manager, providerStorage, _, _, _, _ := setupTestFederationManager(t)
 	ctx := context.Background()
 
@@ -55,6 +56,7 @@ func TestFederationManager_UpdateProvider_NameCollision(t *testing.T) {
 
 // DeleteProvider validates input and reports not-found for an unknown provider.
 func TestFederationManager_DeleteProvider_Errors(t *testing.T) {
+	t.Parallel()
 	manager, _, _, _, _, _ := setupTestFederationManager(t)
 	ctx := context.Background()
 
