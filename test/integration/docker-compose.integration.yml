@@ -466,7 +466,6 @@ services:
       - QUICBAAS_AUTH_ENABLED=true
       - QUICBAAS_AUTH_BOOTSTRAP_ADMIN_PIV_CERT_PATH=/etc/quicbaas/certs/admin.crt
       - QUICBAAS_IAM_PIV_LOGIN_ENABLED=true
-      - QUICBAAS_IAM_PIV_LOGIN_CA_FILE=/etc/quicbaas/certs/ca.crt
       # Fixtures use ordinary PKI client certificates, not smartcards, so no
       # slot attestation exists to verify. The token then records
       # attest_level=software and omits the hardware-attested ACR. Never set
@@ -595,7 +594,6 @@ services:
       - QUICBAAS_AUTH_ENABLED=true
       - QUICBAAS_AUTH_BOOTSTRAP_ADMIN_PIV_CERT_PATH=/etc/quicbaas/certs/admin.crt
       - QUICBAAS_IAM_PIV_LOGIN_ENABLED=true
-      - QUICBAAS_IAM_PIV_LOGIN_CA_FILE=/etc/quicbaas/certs/ca.crt
       # Fixtures use ordinary PKI client certificates, not smartcards, so no
       # slot attestation exists to verify. The token then records
       # attest_level=software and omits the hardware-attested ACR. Never set
@@ -726,7 +724,6 @@ services:
       - QUICBAAS_AUTH_ENABLED=true
       - QUICBAAS_AUTH_BOOTSTRAP_ADMIN_PIV_CERT_PATH=/etc/quicbaas/certs/admin.crt
       - QUICBAAS_IAM_PIV_LOGIN_ENABLED=true
-      - QUICBAAS_IAM_PIV_LOGIN_CA_FILE=/etc/quicbaas/certs/ca.crt
       # Fixtures use ordinary PKI client certificates, not smartcards, so no
       # slot attestation exists to verify. The token then records
       # attest_level=software and omits the hardware-attested ACR. Never set
@@ -842,7 +839,6 @@ services:
       - QUICBAAS_AUTH_ENABLED=true
       - QUICBAAS_AUTH_BOOTSTRAP_ADMIN_PIV_CERT_PATH=/etc/quicbaas/certs/admin.crt
       - QUICBAAS_IAM_PIV_LOGIN_ENABLED=true
-      - QUICBAAS_IAM_PIV_LOGIN_CA_FILE=/etc/quicbaas/certs/ca.crt
       # Fixture client certificates carry no slot attestation; see test-node1.
       - QUICBAAS_IAM_PIV_LOGIN_ALLOW_UNATTESTED=true
       - QUICBAAS_AUTH_JWT_SECRET=integration-test-secret-key-at-least-32-characters-long
@@ -962,7 +958,6 @@ services:
       - QUICBAAS_AUTH_ENABLED=true
       - QUICBAAS_AUTH_BOOTSTRAP_ADMIN_PIV_CERT_PATH=/etc/quicbaas/certs/admin.crt
       - QUICBAAS_IAM_PIV_LOGIN_ENABLED=true
-      - QUICBAAS_IAM_PIV_LOGIN_CA_FILE=/etc/quicbaas/certs/ca.crt
       # Fixtures use ordinary PKI client certificates, not smartcards, so no
       # slot attestation exists to verify. The token then records
       # attest_level=software and omits the hardware-attested ACR. Never set
@@ -1081,7 +1076,6 @@ services:
       - QUICBAAS_AUTH_ENABLED=true
       - QUICBAAS_AUTH_BOOTSTRAP_ADMIN_PIV_CERT_PATH=/etc/quicbaas/certs/admin.crt
       - QUICBAAS_IAM_PIV_LOGIN_ENABLED=true
-      - QUICBAAS_IAM_PIV_LOGIN_CA_FILE=/etc/quicbaas/certs/ca.crt
       # Fixtures use ordinary PKI client certificates, not smartcards, so no
       # slot attestation exists to verify. The token then records
       # attest_level=software and omits the hardware-attested ACR. Never set
