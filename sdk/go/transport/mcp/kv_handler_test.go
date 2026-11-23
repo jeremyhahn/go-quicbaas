@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"sync"
 	"testing"
@@ -69,10 +70,10 @@ func (s *quicbaasKVServer) put(_ context.Context, req mcp.CallToolRequest) (*mcp
 	s.store[key] = value
 	s.mu.Unlock()
 	return jsonAnswer(map[string]interface{}{
-		"id":        mcp.ParseString(req, "id", ""),
-		"version":   "18446744073709551615",
+		"id":        json.Number(mcp.ParseString(req, "id", "")),
+		"version":   json.Number("18446744073709551615"),
 		"timestamp": 1700000000,
-		"leader_id": "9223372036854775813",
+		"leader_id": json.Number("9223372036854775813"),
 	})
 }
 
@@ -86,16 +87,16 @@ func (s *quicbaasKVServer) get(_ context.Context, req mcp.CallToolRequest) (*mcp
 	if s.getAnswer != "" {
 		return mcp.NewToolResultText(s.getAnswer), nil
 	}
-	id := mcp.ParseString(req, "id", "")
+	id := json.Number(mcp.ParseString(req, "id", ""))
 	value, ok := s.store[key]
 	if !ok {
-		return jsonAnswer(map[string]interface{}{"id": id, "found": false, "version": "0", "timestamp": 0})
+		return jsonAnswer(map[string]interface{}{"id": id, "found": false, "version": 0, "timestamp": 0})
 	}
 	return jsonAnswer(map[string]interface{}{
 		"id":        id,
 		"found":     true,
 		"data":      base64.StdEncoding.EncodeToString(value),
-		"version":   "3",
+		"version":   3,
 		"timestamp": 1700000000,
 	})
 }
@@ -149,15 +150,13 @@ func TestKV_PutGetDelete_RoundTripOverQuicbaasKVTools(t *testing.T) {
 	wantPut := map[string]interface{}{
 		"entity_type": "users",
 		"id":          "7",
-		"shard_id":    "0",
-		"consistency": "0",
 		"data":        base64.StdEncoding.EncodeToString(data),
 	}
 	if len(kv.args["quicbaas_kv_put"]) != len(wantPut) {
 		t.Errorf("quicbaas_kv_put args = %v, want %v", kv.args["quicbaas_kv_put"], wantPut)
 	}
 	for key, want := range wantPut {
-		if kv.args["quicbaas_kv_put"][key] != want {
+		if fmt.Sprint(kv.args["quicbaas_kv_put"][key]) != want {
 			t.Errorf("quicbaas_kv_put %s = %v, want %v", key, kv.args["quicbaas_kv_put"][key], want)
 		}
 	}
@@ -200,10 +199,10 @@ func TestKV_ShardAndConsistencyForwarded(t *testing.T) {
 		t.Fatalf("Delete: %v", err)
 	}
 	for _, tool := range []string{"quicbaas_kv_put", "quicbaas_kv_get", "quicbaas_kv_delete"} {
-		if kv.args[tool]["shard_id"] != "3" {
-			t.Errorf("%s shard_id = %v, want \"3\"", tool, kv.args[tool]["shard_id"])
+		if fmt.Sprint(kv.args[tool]["shardID"]) != "3" {
+			t.Errorf("%s shardID = %v, want 3", tool, kv.args[tool]["shardID"])
 		}
-		if kv.args[tool]["consistency"] != strconv.Itoa(int(service.ConsistencyLevelLinearizable)) {
+		if fmt.Sprint(kv.args[tool]["consistency"]) != strconv.Itoa(int(service.ConsistencyLevelLinearizable)) {
 			t.Errorf("%s consistency = %v, want linearizable", tool, kv.args[tool]["consistency"])
 		}
 	}
@@ -261,8 +260,8 @@ func TestKV_Errors(t *testing.T) {
 		t.Error("Get with a non-JSON answer succeeded, want an error")
 	}
 
-	kv.getAnswer = `{"id":7,"found":true}`
+	kv.getAnswer = `{"id":"7","found":true}`
 	if _, err := tr.Request(ctx, "quicbaas.KV", "Get", &service.GetRequest{EntityType: "users", ID: 1}); err == nil {
-		t.Error("Get with a numeric id succeeded, want an error: ids are decimal strings")
+		t.Error("Get with a string id succeeded, want an error: the entity tools answer ids as JSON numbers")
 	}
 }
