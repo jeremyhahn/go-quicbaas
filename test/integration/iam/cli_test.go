@@ -704,11 +704,8 @@ func TestCLIAuditMissingTenant(t *testing.T) {
 
 // TestCLIPEPCheck tests the PEP check command for allowed access.
 func TestCLIPEPCheck(t *testing.T) {
-	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
-
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	tenantID := generateUniqueTenantIDForCLI()
+	cli := newIAMCLITenantSessionContext(t, tenantID)
 
 	t.Run("check-access-allowed", func(t *testing.T) {
 		subject := `{"id":"user1","type":"user"}`
@@ -734,11 +731,8 @@ func TestCLIPEPCheck(t *testing.T) {
 
 // TestCLIPEPCheckDeny tests the PEP check command for denied access.
 func TestCLIPEPCheckDeny(t *testing.T) {
-	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
-
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	tenantID := generateUniqueTenantIDForCLI()
+	cli := newIAMCLITenantSessionContext(t, tenantID)
 
 	t.Run("check-access-denied", func(t *testing.T) {
 		// Use an invalid or unauthorized subject/resource combination
@@ -767,11 +761,8 @@ func TestCLIPEPCheckDeny(t *testing.T) {
 
 // TestCLIPEPCheckBatch tests the PEP check-batch command.
 func TestCLIPEPCheckBatch(t *testing.T) {
-	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
-
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	tenantID := generateUniqueTenantIDForCLI()
+	cli := newIAMCLITenantSessionContext(t, tenantID)
 
 	t.Run("check-batch", func(t *testing.T) {
 		// Create a temporary file with batch requests
@@ -1142,11 +1133,8 @@ func TestCLIIAMAuditWorkflow(t *testing.T) {
 
 // TestCLIIAMPEPWorkflow tests a complete PEP access check workflow.
 func TestCLIIAMPEPWorkflow(t *testing.T) {
-	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
-
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	tenantID := generateUniqueTenantIDForCLI()
+	cli := newIAMCLITenantSessionContext(t, tenantID)
 
 	// Step 1: Check read access
 	t.Run("workflow-check-read", func(t *testing.T) {

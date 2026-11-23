@@ -102,6 +102,7 @@ func TestModule_NodeMountedServices_ContributeTheirPermissions(t *testing.T) {
 		"users:read", "users:update",
 		"tenants:create", "tenants:read", "tenants:delete",
 		"audit:query", "audit:read",
+		"permissions:resolve",
 	} {
 		_, ok := set[perm]
 		assert.True(t, ok, "the gRPC registrations must contribute %s", perm)
@@ -178,6 +179,41 @@ func TestModule_ServesTheHostAuditService(t *testing.T) {
 	_, err = iampb.NewAuditServiceClient(startBufconnModule(t, nilAudit)).
 		QueryAuditEvents(context.Background(), &iampb.QueryAuditEventsRequest{})
 	assert.Equal(t, codes.Unavailable, status.Code(err), "nil Audit: got %v", err)
+}
+
+// hostPEPServer is a host-built PEPService whose Check answers a marker
+// policy, so a test can tell the host's instance served the call.
+type hostPEPServer struct {
+	iampb.UnimplementedPEPServiceServer
+}
+
+func (hostPEPServer) Check(_ context.Context, _ *iampb.CheckRequest) (*iampb.CheckResponse, error) {
+	return &iampb.CheckResponse{MatchedPolicy: "host-pep"}, nil
+}
+
+// TestModule_ServesTheHostPEPService verifies the node mounts the host-built
+// PEPService, and that a nil PEP field answers Unavailable.
+func TestModule_ServesTheHostPEPService(t *testing.T) {
+	composed := &mocks.MockQuicBaaS{}
+	m, err := NewModule(func() service.QuicBaaS { return composed }, testLogger(t),
+		WithHostGRPCServers(func() (HostGRPCServers, error) {
+			return HostGRPCServers{PEP: hostPEPServer{}}, nil
+		}))
+	require.NoError(t, err)
+
+	resp, err := iampb.NewPEPServiceClient(startBufconnModule(t, m)).
+		Check(context.Background(), &iampb.CheckRequest{})
+	require.NoError(t, err)
+	assert.Equal(t, "host-pep", resp.GetMatchedPolicy(), "the host's PEPService must answer")
+
+	nilPEP, err := NewModule(func() service.QuicBaaS { return composed }, testLogger(t),
+		WithHostGRPCServers(func() (HostGRPCServers, error) {
+			return HostGRPCServers{Session: hostSessionServer{}}, nil
+		}))
+	require.NoError(t, err)
+	_, err = iampb.NewPEPServiceClient(startBufconnModule(t, nilPEP)).
+		Check(context.Background(), &iampb.CheckRequest{})
+	assert.Equal(t, codes.Unavailable, status.Code(err), "nil PEP: got %v", err)
 }
 
 // TestModule_IAMInviteMethodsArePublic pins that the four IAMService invite

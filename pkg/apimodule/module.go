@@ -134,10 +134,11 @@
 // four invite RPCs are public (PublicGRPCMethods), and the rest are
 // default-denied, as on the legacy server. AuditService is mounted too:
 // QueryAuditEvents and GetAuditEvent carry their REST twins' grants
-// (audit:query, audit:read), and RecordAuditEvent stays default-denied. The
-// other iam.v1 services (PEPService, MFAService) stay off: most of their RPCs
-// carry no (qrdb.v1.permission) option, and an unannotated RPC is
-// default-denied here.
+// (audit:query, audit:read), and RecordAuditEvent stays default-denied.
+// PEPService is mounted too: Check and CheckBatch carry their REST twins'
+// grant (permissions:resolve), and Subscribe stays default-denied. Only
+// MFAService stays off: most of its RPCs carry no (qrdb.v1.permission)
+// option, and an unannotated RPC is default-denied here.
 //
 // ObjectTransferService is deliberately NOT registered here. Unlike the five
 // above, it has no facade-backed gRPC implementation to reuse: the only
@@ -313,8 +314,8 @@ func WithSPIFFETrustDomain(trustDomain string) Option {
 }
 
 // WithHostGRPCServers mounts the host-built FederationService,
-// SessionService, IAMService and AuditService servers (see HostGRPCServers)
-// on the node's gRPC server.
+// SessionService, IAMService, AuditService and PEPService servers (see
+// HostGRPCServers) on the node's gRPC server. MFAService stays off.
 // Without it those services answer Unavailable.
 func WithHostGRPCServers(resolve HostGRPCResolver) Option {
 	return func(m *Module) {
@@ -417,15 +418,16 @@ type grpcServers struct {
 
 // HostGRPCServers carries the gRPC servers the host builds from IAM state
 // the service facade does not expose: the federation manager, the session
-// storage, the IAM components behind IAMService and the audit logger behind
-// AuditService. The host builds them once and registers the SAME instances on
-// its Unix-socket gRPC server, so both listeners serve one session store. A
-// nil field answers Unavailable.
+// storage, the IAM components behind IAMService, the audit logger behind
+// AuditService and the policy engine behind PEPService. The host builds them
+// once and registers the SAME instances on its Unix-socket gRPC server, so
+// both listeners serve one session store. A nil field answers Unavailable.
 type HostGRPCServers struct {
 	Federation iampb.FederationServiceServer
 	Session    iampb.SessionServiceServer
 	IAM        iampb.IAMServiceServer
 	Audit      iampb.AuditServiceServer
+	PEP        iampb.PEPServiceServer
 }
 
 // HostGRPCResolver returns the host's gRPC servers. The module calls it on
@@ -513,6 +515,7 @@ var grpcRegistrations = []grpcRegistration{
 	{desc: &iampb.SessionService_ServiceDesc, capability: "session", hostPick: func(h HostGRPCServers) any { return h.Session }},
 	{desc: &iampb.IAMService_ServiceDesc, capability: "iam", hostPick: func(h HostGRPCServers) any { return h.IAM }, grpcOnly: true},
 	{desc: &iampb.AuditService_ServiceDesc, capability: "audit", hostPick: func(h HostGRPCServers) any { return h.Audit }, grpcOnly: true},
+	{desc: &iampb.PEPService_ServiceDesc, capability: "pep", hostPick: func(h HostGRPCServers) any { return h.PEP }, grpcOnly: true},
 	{desc: &pb.CertificateService_ServiceDesc, capability: "certificate", pick: func(s *grpcServers) any { return s.certificate }, unixOnly: true},
 	{desc: &pb.TrustService_ServiceDesc, capability: "trust", pick: func(s *grpcServers) any { return s.trust }, unixOnly: true},
 	{desc: &pb.PIVService_ServiceDesc, capability: "piv", pick: func(s *grpcServers) any { return s.piv }, unixOnly: true},

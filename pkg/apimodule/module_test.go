@@ -205,12 +205,13 @@ func TestModule_RegisterGRPC_RegistersFullGRPCSurface(t *testing.T) {
 		&iampb.SessionService_ServiceDesc,
 		&iampb.IAMService_ServiceDesc,
 		&iampb.AuditService_ServiceDesc,
+		&iampb.PEPService_ServiceDesc,
 		&pb.CertificateService_ServiceDesc,
 		&pb.TrustService_ServiceDesc,
 		&pb.PIVService_ServiceDesc,
 	}
 	info := server.GetServiceInfo()
-	require.Len(t, info, len(generated), "exactly the thirty quicbaas-native and broker services and the three Unix-only legacy xkms wrappers must be registered")
+	require.Len(t, info, len(generated), "exactly the thirty-one quicbaas-native and broker services and the three Unix-only legacy xkms wrappers must be registered")
 
 	for _, desc := range generated {
 		svcInfo, ok := info[desc.ServiceName]

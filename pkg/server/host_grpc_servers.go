@@ -33,7 +33,7 @@ func (e *HostGRPCNotReadyError) GRPCStatus() *status.Status {
 // Unix-socket gRPC server registers them, and the quicbaas module mounts the
 // same instances on the node's TCP gRPC server (WithHostGRPCServers), so both
 // listeners serve one session store. The servers are FederationService,
-// SessionService, IAMService and AuditService.
+// SessionService, IAMService, AuditService and PEPService.
 //
 // The node accepts requests before startService attaches IAM, so a call can
 // arrive while the facade has no federation manager, session storage, audit
@@ -66,6 +66,7 @@ func (s *Server) buildHostGRPCServers() *apimodule.HostGRPCServers {
 		built.Session = s.buildSessionServer(getter)
 		built.IAM = s.buildIAMServer(getter)
 		built.Audit = s.buildAuditServer(getter)
+		built.PEP = s.buildPEPServer(getter)
 	}
 	return built
 }
@@ -119,4 +120,15 @@ func (s *Server) buildAuditServer(getter iamComponentsGetter) iampb.AuditService
 		return nil
 	}
 	return grpcapi.NewAuditServer(grpcapi.NewAuditServiceAdapter(auditLogger), s.logger)
+}
+
+// buildPEPServer builds the PEPService server over the IAM policy engine.
+// It returns nil when the policy engine is unavailable.
+func (s *Server) buildPEPServer(getter iamComponentsGetter) iampb.PEPServiceServer {
+	engine, err := getter.GetPolicyEngine(context.Background())
+	if err != nil || engine == nil {
+		s.logger.WithError(err).Warn("Policy engine unavailable, PEPService is not served")
+		return nil
+	}
+	return grpcapi.NewPEPServer(grpcapi.NewPEPServiceAdapter(engine), s.logger)
 }

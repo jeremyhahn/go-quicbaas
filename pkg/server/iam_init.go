@@ -1820,7 +1820,8 @@ type inviteActivationGetter interface {
 
 // registerIAMService registers IAM-related gRPC services with the gRPC server.
 // It retrieves IAM components from the QuicBaaS service via the iamComponentsGetter
-// interface and creates gRPC server adapters for IAM, MFA, PEP, Session, and Audit.
+// interface. It builds the MFA server locally and registers the host-built
+// IAM, Federation, PEP, Session and Audit servers the node also mounts.
 func (s *Server) registerIAMService(grpcServer *ggrpc.Server) {
 	if s.quicBaaSService == nil {
 		return
@@ -1840,7 +1841,7 @@ func (s *Server) registerIAMService(grpcServer *ggrpc.Server) {
 	s.logger.Info("Registered IAM gRPC service")
 
 	ctx := context.Background()
-	policyEngine, err := getter.GetPolicyEngine(ctx)
+	_, err := getter.GetPolicyEngine(ctx)
 	if err != nil {
 		s.logger.WithError(err).Warn("Failed to get policy engine, skipping the remaining IAM gRPC registrations")
 		return
@@ -1870,11 +1871,12 @@ func (s *Server) registerIAMService(grpcServer *ggrpc.Server) {
 		}
 	}
 
-	// Register PEP (Policy Enforcement Point) service
-	pepAdapter := grpcapi.NewPEPServiceAdapter(policyEngine)
-	pepServer := grpcapi.NewPEPServer(pepAdapter, s.logger)
-	iampb.RegisterPEPServiceServer(grpcServer, pepServer)
-	s.logger.Info("Registered PEP gRPC service")
+	// Register PEP service: the same instance the node mounts (see
+	// buildPEPServer).
+	if host.PEP != nil {
+		iampb.RegisterPEPServiceServer(grpcServer, host.PEP)
+		s.logger.Info("Registered PEP gRPC service")
+	}
 
 	// Register Session service (in-memory storage fallback: see
 	// buildSessionServer)
