@@ -18,7 +18,9 @@ package service
 import (
 	"context"
 	stderrors "errors"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -236,4 +238,61 @@ func TestGetGarbageCollectionProgress_NilRequest(t *testing.T) {
 	resp, err := svc.GetGarbageCollectionProgress(tenantctx.WithSystem(context.Background()), nil)
 	require.Error(t, err)
 	assert.Nil(t, resp)
+}
+
+// TestGetGarbageCollectionProgress_ConcurrentWithRunIsRaceFree reads the
+// progress of an operation while runGCOperation updates it in its own
+// goroutine. Run with -race: every read of the operation's fields must happen
+// under the service lock.
+func TestGetGarbageCollectionProgress_ConcurrentWithRunIsRaceFree(t *testing.T) {
+	svc, catalogMgr, backendMgr := createTestAdminService(t)
+	backendMgr.AddBackend("backend-1", nil, &catalog.BackendConfig{Type: "memory"})
+	backendMgr.AddBackend("backend-2", nil, &catalog.BackendConfig{Type: "memory"})
+
+	catalogMgr.getStoreUsageFn = func(ctx context.Context, store string) (*catalog.StoreUsage, error) {
+		time.Sleep(time.Millisecond)
+		return &catalog.StoreUsage{Store: store, ObjectCount: 7, TotalSize: 70}, nil
+	}
+
+	op := &GCOperation{
+		ID:        "gc-race-001",
+		Backends:  []string{"backend-1", "backend-2"},
+		Status:    GCStatusRunning,
+		StartedAt: time.Now().UnixNano(),
+	}
+	svc.mu.Lock()
+	svc.gcOperations[op.ID] = op
+	svc.mu.Unlock()
+
+	go svc.runGCOperation(tenantctx.WithSystem(context.Background()), op)
+
+	ctx := tenantctx.WithSystem(context.Background())
+	deadline := time.Now().Add(5 * time.Second)
+	var wg sync.WaitGroup
+	finals := make([]GCStatus, 4)
+	errs := make([]error, 4)
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			for time.Now().Before(deadline) {
+				resp, err := svc.GetGarbageCollectionProgress(ctx, &GetGarbageCollectionProgressRequest{OperationID: op.ID})
+				if err != nil {
+					errs[i] = err
+					return
+				}
+				finals[i] = resp.Status
+				if resp.Status != GCStatusRunning {
+					return
+				}
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	for i := 0; i < 4; i++ {
+		require.NoError(t, errs[i])
+		assert.Contains(t, []GCStatus{GCStatusCompleted, GCStatusFailed}, finals[i],
+			"reader %d did not see a terminal status within 5s", i)
+	}
 }

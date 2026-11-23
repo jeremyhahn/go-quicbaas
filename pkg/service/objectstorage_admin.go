@@ -738,13 +738,14 @@ func (s *objectStorageAdminService) runGCOperation(ctx context.Context, op *GCOp
 	s.mu.Lock()
 	op.Status = GCStatusCompleted
 	op.CompletedAt = time.Now().UnixNano()
+	scanned, deleted, reclaimed := op.ObjectsScanned, op.ObjectsDeleted, op.BytesReclaimed
 	s.mu.Unlock()
 
 	s.logger.WithFields(map[string]interface{}{
 		"operation_id":    op.ID,
-		"objects_scanned": op.ObjectsScanned,
-		"objects_deleted": op.ObjectsDeleted,
-		"bytes_reclaimed": op.BytesReclaimed,
+		"objects_scanned": scanned,
+		"objects_deleted": deleted,
+		"bytes_reclaimed": reclaimed,
 	}).Info("garbage collection completed")
 }
 
@@ -773,8 +774,32 @@ func (s *objectStorageAdminService) GetGarbageCollectionProgress(ctx context.Con
 		return nil, err
 	}
 
+	// runGCOperation updates op's fields under s.mu in its own goroutine, so
+	// the response is built from them while the read lock is held.
 	s.mu.RLock()
 	op, exists := s.gcOperations[req.OperationID]
+	var resp *GetGarbageCollectionProgressResponse
+	if exists {
+		// Calculate percent complete
+		var percentComplete float64
+		if op.ObjectsScanned > 0 {
+			// Simple estimate based on backends processed
+			percentComplete = 100.0
+			if op.Status == GCStatusRunning {
+				percentComplete = 50.0
+			}
+		}
+		resp = &GetGarbageCollectionProgressResponse{
+			OperationID:     op.ID,
+			Status:          op.Status,
+			ObjectsScanned:  op.ObjectsScanned,
+			ObjectsDeleted:  op.ObjectsDeleted,
+			BytesReclaimed:  op.BytesReclaimed,
+			PercentComplete: percentComplete,
+			Error:           op.Error,
+			CompletedAt:     op.CompletedAt,
+		}
+	}
 	s.mu.RUnlock()
 
 	if !exists {
@@ -784,26 +809,7 @@ func (s *objectStorageAdminService) GetGarbageCollectionProgress(ctx context.Con
 		return nil, api.NewGCOperationNotFoundError("admin.GetGarbageCollectionProgress", req.OperationID)
 	}
 
-	// Calculate percent complete
-	var percentComplete float64
-	if op.ObjectsScanned > 0 {
-		// Simple estimate based on backends processed
-		percentComplete = 100.0
-		if op.Status == GCStatusRunning {
-			percentComplete = 50.0 // Placeholder - real implementation would track progress
-		}
-	}
-
-	return &GetGarbageCollectionProgressResponse{
-		OperationID:     op.ID,
-		Status:          op.Status,
-		ObjectsScanned:  op.ObjectsScanned,
-		ObjectsDeleted:  op.ObjectsDeleted,
-		BytesReclaimed:  op.BytesReclaimed,
-		PercentComplete: percentComplete,
-		Error:           op.Error,
-		CompletedAt:     op.CompletedAt,
-	}, nil
+	return resp, nil
 }
 
 // =============================================================================
