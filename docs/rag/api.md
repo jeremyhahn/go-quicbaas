@@ -55,8 +55,39 @@ configured), on every transport.
 The node also serves go-qrdb's own RAG service (`qrdb.v1` RAG) on REST,
 gRPC, QUIC, Unix, MCP and the embedded transport, built over its go-qrdb
 embedding service; each caller's documents live in the caller's own
-(tenant, database). The SDK re-export of go-qrdb's `RAGClient` comes next;
-until then `Client.RAG()` is the SDK's RAG surface.
+(tenant, database). The Go SDK re-exports go-qrdb's `RAGClient` as
+`quicbaas.QRDBRAGClient` (built with the `qrdb_vector` tag), reached with
+`quicbaas.QRDBRAG(client)`: over REST and QUIC it uses the SDK's REST
+transport, over MCP the SDK's MCP session, over gRPC and Unix go-qrdb's
+client with the `WithAuthToken` bearer as authorization metadata, and
+in-process the embedded servicer. `Client.RAG()` remains QuicBaaS's own RAG
+pipeline.
+
+```go
+// Build with -tags qrdb_vector.
+rc, err := quicbaas.QRDBRAG(client)
+if err != nil {
+	return err
+}
+if _, err := rc.RAGIngestDocument(ctx, &quicbaas.QRDBRAGIngestRequest{
+	DocumentID: "handbook",
+	Namespace:  "docs",
+	Text:       handbookText,
+}); err != nil {
+	return err
+}
+resp, err := rc.RAGQuery(ctx, &quicbaas.QRDBRAGQueryRequest{
+	Query:     "How do I rotate a key?",
+	Namespace: "docs",
+	TopK:      3,
+})
+if err != nil {
+	return err
+}
+for _, r := range resp.Results {
+	fmt.Printf("%s#%d %.2f %s\n", r.DocumentID, r.ChunkIndex, r.Score, r.ChunkText)
+}
+```
 
 ## Overview
 

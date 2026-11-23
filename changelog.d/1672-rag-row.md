@@ -5,6 +5,9 @@
   the same results and error codes. The node now serves the gRPC
   `quicbaas.rag.v1.RAGService`, and in `rag` builds the embedded transport
   serves `quicbaas.RAG/Query` and `quicbaas.RAG/BuildContext`.
+- The Go SDK re-exports go-qrdb's RAG service as `QRDBRAGClient` through
+  `quicbaas.QRDBRAG(client)` on every transport, carrying the platform
+  credentials (go-quicbaas#1672).
 
 ### Fixed
 
