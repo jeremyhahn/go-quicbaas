@@ -137,11 +137,37 @@ func exerciseTenantDEK(t *testing.T, c QRDBDEKClient) {
 // TestTenantDEK_REST_SendsPlatformBearer proves every keyring verb over REST
 // carries the bearer set by WithAuthToken.
 func TestTenantDEK_REST_SendsPlatformBearer(t *testing.T) {
+	mux, recorded := tenantDEKRecordingMux()
+	srv := httptest.NewTLSServer(mux)
+	t.Cleanup(srv.Close)
+
+	c, err := NewClient(srv.URL, WithREST(), WithAuthToken("t-dek"), WithTLSConfig(stubTLSConfig(t, srv)))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = c.Close() })
+
+	keyring, err := c.Security().TenantDEK()
+	require.NoError(t, err)
+	exerciseTenantDEK(t, keyring)
+
+	assert.Equal(t, map[string]string{
+		"GET /v1/dek/status":   "Bearer t-dek",
+		"POST /v1/dek/rotate":  "Bearer t-dek",
+		"POST /v1/dek/retire":  "Bearer t-dek",
+		"POST /v1/dek/encrypt": "Bearer t-dek",
+		"POST /v1/dek/decrypt": "Bearer t-dek",
+		"POST /v1/dek/rewrap":  "Bearer t-dek",
+	}, recorded())
+}
+
+// tenantDEKRecordingMux serves the six tenant DEK routes with canned
+// responses and records the Authorization header of every call it receives;
+// recorded returns a copy of that map.
+func tenantDEKRecordingMux() (mux *http.ServeMux, recorded func() map[string]string) {
 	var (
 		mu    sync.Mutex
 		auths = map[string]string{}
 	)
-	mux := http.NewServeMux()
+	mux = http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	respond := func(v any) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
@@ -159,6 +185,23 @@ func TestTenantDEK_REST_SendsPlatformBearer(t *testing.T) {
 	mux.HandleFunc("/v1/dek/encrypt", respond(&QRDBTenantDEKEncryptResponse{Ciphertext: []byte("ct"), Version: 2}))
 	mux.HandleFunc("/v1/dek/decrypt", respond(&QRDBTenantDEKDecryptResponse{Plaintext: []byte("hi"), Version: 2}))
 	mux.HandleFunc("/v1/dek/rewrap", respond(&QRDBTenantDEKRewrapResponse{Ciphertext: []byte("ct"), FromVersion: 1, ToVersion: 2}))
+	recorded = func() map[string]string {
+		mu.Lock()
+		defer mu.Unlock()
+		out := make(map[string]string, len(auths))
+		for k, v := range auths {
+			out[k] = v
+		}
+		return out
+	}
+	return mux, recorded
+}
+
+// TestTenantDEK_REST_RefusesPlaintextHTTP: over a plain http address the
+// REST keyring refuses to send plaintext data and the bearer, so nothing
+// reaches the server.
+func TestTenantDEK_REST_RefusesPlaintextHTTP(t *testing.T) {
+	mux, recorded := tenantDEKRecordingMux()
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 
@@ -168,18 +211,9 @@ func TestTenantDEK_REST_SendsPlatformBearer(t *testing.T) {
 
 	keyring, err := c.Security().TenantDEK()
 	require.NoError(t, err)
-	exerciseTenantDEK(t, keyring)
-
-	mu.Lock()
-	defer mu.Unlock()
-	assert.Equal(t, map[string]string{
-		"GET /v1/dek/status":   "Bearer t-dek",
-		"POST /v1/dek/rotate":  "Bearer t-dek",
-		"POST /v1/dek/retire":  "Bearer t-dek",
-		"POST /v1/dek/encrypt": "Bearer t-dek",
-		"POST /v1/dek/decrypt": "Bearer t-dek",
-		"POST /v1/dek/rewrap":  "Bearer t-dek",
-	}, auths)
+	_, err = keyring.TenantDEKEncrypt(context.Background(), &QRDBTenantDEKEncryptRequest{Plaintext: []byte("hi"), AAD: []byte("a")})
+	require.Error(t, err)
+	assert.Empty(t, recorded(), "no request may reach the server")
 }
 
 // TestTenantDEK_MCP_SendsBearer proves the MCP session's initialize and every
