@@ -58,6 +58,7 @@ const (
 	ErrCodeAuditConfigNil        = "AUDIT_CONFIG_NIL"
 	ErrCodeAuditSignKeyRequired  = "AUDIT_SIGN_KEY_REQUIRED"
 	ErrCodeAuditSignKeyTooShort  = "AUDIT_SIGN_KEY_TOO_SHORT"
+	ErrCodeAuditSignKeyInline    = "AUDIT_SIGN_KEY_INLINE"
 	ErrCodeAuditFileOpen         = "AUDIT_FILE_OPEN"
 	ErrCodeAuditFileRotate       = "AUDIT_FILE_ROTATE"
 	ErrCodeAuditEventSign        = "AUDIT_EVENT_SIGN"
@@ -1461,7 +1462,6 @@ const (
 	ResultDenied  = "denied"
 )
 
-// NewAuditLogger creates a new audit logger.
 // sealSignKey validates the configured HMAC key and seals the logger's own
 // copy of it. The plaintext is read only through WithBytes, so it is checked
 // and copied in mlocked memory and never becomes a Go string or heap slice.
@@ -1470,6 +1470,9 @@ const (
 // key all fail as AUDIT_SIGN_KEY_REQUIRED: signing with no key would be a
 // silent failure. A key shorter than MinAuditSignKeyLen fails as
 // AUDIT_SIGN_KEY_TOO_SHORT.
+// A value that carries the key inline (a literal or a reference with no
+// scheme) fails as AUDIT_SIGN_KEY_INLINE: its Raw is the key, which the
+// sealed copy would keep in plain memory.
 func sealSignKey(src *secret.SecretValue) (*secret.SecretValue, error) {
 	required := &AuditError{
 		Code:    ErrCodeAuditSignKeyRequired,
@@ -1483,6 +1486,12 @@ func sealSignKey(src *secret.SecretValue) (*secret.SecretValue, error) {
 	err := src.WithBytes(func(key []byte) error {
 		if len(key) == 0 {
 			return required
+		}
+		if signKeyInline(src) {
+			return &AuditError{
+				Code:    ErrCodeAuditSignKeyInline,
+				Message: "sign_key must reference a secret held elsewhere (credential://, kms://), not carry the key inline",
+			}
 		}
 		if len(key) < MinAuditSignKeyLen {
 			return newSignKeyTooShortError(len(key))
@@ -1504,6 +1513,20 @@ func sealSignKey(src *secret.SecretValue) (*secret.SecretValue, error) {
 	return sealed, nil
 }
 
+// signKeyInline reports whether v's reference is the key itself rather than
+// a pointer to it: a literal value (StrategyLiteral or a "literal://"
+// reference) or a reference with no scheme. Its Raw is then the plaintext,
+// and the logger would keep it in an ordinary string that Clear leaves and
+// JSON emits. An unresolved reference (no strategy, no key) is not inline:
+// it fails as AUDIT_SIGN_KEY_REQUIRED.
+func signKeyInline(v *secret.SecretValue) bool {
+	if v.Strategy == secret.StrategyLiteral || strings.HasPrefix(v.Raw, "literal://") {
+		return true
+	}
+	return strings.Index(v.Raw, "://") <= 0
+}
+
+// NewAuditLogger creates a new audit logger.
 func NewAuditLogger(cfg *AuditConfig, log *logger.Logger) (*AuditLogger, error) {
 	if cfg == nil {
 		return nil, &AuditError{
