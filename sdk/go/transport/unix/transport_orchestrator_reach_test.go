@@ -17,6 +17,7 @@ import (
 	"context"
 	"net"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -50,20 +51,15 @@ type reachCase struct {
 	rpc    string
 }
 
-// wantOrchestratorMethods is every method the orchestrator client calls.
-var wantOrchestratorMethods = []string{
-	"AttentionList", "AttentionResolve", "BlockTask", "CancelJob",
-	"ClaimTask", "CloseSession", "CompleteTask", "CreateTask",
-	"CreateWorkflow", "DecomposeTask", "DeleteTask", "DeleteWorkflow",
-	"DisableFleetNode", "EnableFleetNode", "FleetNodeHeartbeat", "GetFleetNode",
-	"GetJobStatus", "GetSessionConversation", "GetSessionHistory", "GetSpendReport",
-	"GetTask", "GetTaskArtifact", "GetWorkflow", "Health",
-	"Inference", "InferenceStream", "ListBackendModels", "ListBackends",
-	"ListFleetNodes", "ListJobs", "ListRunners", "ListSessions",
-	"ListTaskArtifacts", "ListTasks", "ListWorkflows", "PromptSession",
-	"ReadmitTask", "RegisterFleetNode", "RemoveFleetNode", "RotateSessionAccount",
-	"SessionStatus", "SpawnChildJob", "SpawnSession", "StartJob",
-	"SubmitTaskArtifacts", "SubscribeJobEvents", "SubscribeSessionEvents", "UpdateWorkflow",
+// clientMethods is every method of orchestratorclient.Client, read from the
+// interface itself so a method added there without a case fails this test.
+func clientMethods() []string {
+	ct := reflect.TypeOf((*orchestratorclient.Client)(nil)).Elem()
+	names := make([]string, 0, ct.NumMethod())
+	for i := 0; i < ct.NumMethod(); i++ {
+		names = append(names, ct.Method(i).Name)
+	}
+	return names // reflect returns them sorted
 }
 
 // notCarriedOverGRPC are client methods the gRPC dialect has no handler for.
@@ -98,31 +94,42 @@ func orchestratorReachCases() map[string]reachCase {
 		"GetTaskArtifact":        {req: &orchestratorclient.GetTaskArtifactRequest{}, rpc: "/GetTaskArtifact"},
 		"GetWorkflow":            {req: &orchestratorclient.GetWorkflowRequest{}, rpc: "/GetWorkflow"},
 		// The client's Health request type is unexported; both dialects ignore it.
-		"Health":                 {req: nil, rpc: "/Health"},
-		"Inference":              {req: &orchestratorclient.InferenceRequest{}, rpc: "/Inference"},
-		"InferenceStream":        {req: &orchestratorclient.InferenceRequest{}, stream: true, rpc: "/InferenceStream"},
-		"ListBackendModels":      {req: &orchestratorclient.ListBackendModelsRequest{BackendName: "claude"}, rpc: "/ListBackendModels"},
-		"ListBackends":           {req: &orchestratorclient.ListBackendsRequest{}, rpc: "/ListBackends"},
-		"ListFleetNodes":         {req: &orchestratorclient.ListFleetNodesRequest{}, rpc: "/ListFleetNodes"},
-		"ListJobs":               {req: &orchestratorclient.ListJobsRequest{}, rpc: "/ListJobs"},
-		"ListRunners":            {req: &orchestratorclient.ListRunnersRequest{}, rpc: "/ListRunners"},
-		"ListSessions":           {req: &orchestratorclient.ListSessionsRequest{}, rpc: "/ListSessions"},
-		"ListTaskArtifacts":      {req: &orchestratorclient.ListTaskArtifactsRequest{}, rpc: "/ListTaskArtifacts"},
-		"ListTasks":              {req: &orchestratorclient.ListTasksRequest{}, rpc: "/ListTasks"},
-		"ListWorkflows":          {req: &orchestratorclient.ListWorkflowsRequest{}, rpc: "/ListWorkflows"},
-		"PromptSession":          {req: &orchestratorclient.PromptSessionRequest{}, rpc: "/PromptSession"},
-		"ReadmitTask":            {req: &orchestratorclient.ReadmitTaskRequest{}, rpc: "/ReadmitTask"},
-		"RegisterFleetNode":      {req: &orchestratorclient.RegisterFleetNodeRequest{}, rpc: "/RegisterFleetNode"},
-		"RemoveFleetNode":        {req: &orchestratorclient.RemoveFleetNodeRequest{}, rpc: "/RemoveFleetNode"},
-		"RotateSessionAccount":   {req: &orchestratorclient.RotateSessionAccountRequest{SessionID: "s1"}, rpc: "/RotateSessionAccount"},
-		"SessionStatus":          {req: &orchestratorclient.SessionStatusRequest{}, rpc: "/SessionStatus"},
-		"SpawnChildJob":          {req: &orchestratorclient.SpawnChildJobRequest{}, rpc: "/SpawnChildJob"},
-		"SpawnSession":           {req: &orchestratorclient.SpawnSessionRequest{Backend: "claude"}, rpc: "/SpawnSession"},
-		"StartJob":               {req: &orchestratorclient.StartJobRequest{}, rpc: "/StartJob"},
-		"SubmitTaskArtifacts":    {req: &orchestratorclient.SubmitTaskArtifactsRequest{}, rpc: "/SubmitTaskArtifacts"},
-		"SubscribeJobEvents":     {req: &orchestratorclient.SubscribeJobEventsRequest{}, stream: true, rpc: "/SubscribeJobEvents"},
-		"SubscribeSessionEvents": {req: &orchestratorclient.SubscribeSessionEventsRequest{SessionID: "s1"}, stream: true, rpc: "/SubscribeSessionEvents"},
-		"UpdateWorkflow":         {req: &orchestratorclient.UpdateWorkflowRequest{Name: "w1", Definition: def}, rpc: "/UpdateWorkflow"},
+		"Health":                      {req: nil, rpc: "/Health"},
+		"Inference":                   {req: &orchestratorclient.InferenceRequest{}, rpc: "/Inference"},
+		"InferenceStream":             {req: &orchestratorclient.InferenceRequest{}, stream: true, rpc: "/InferenceStream"},
+		"ListBackendModels":           {req: &orchestratorclient.ListBackendModelsRequest{BackendName: "claude"}, rpc: "/ListBackendModels"},
+		"ListBackends":                {req: &orchestratorclient.ListBackendsRequest{}, rpc: "/ListBackends"},
+		"ListFleetNodes":              {req: &orchestratorclient.ListFleetNodesRequest{}, rpc: "/ListFleetNodes"},
+		"ListJobs":                    {req: &orchestratorclient.ListJobsRequest{}, rpc: "/ListJobs"},
+		"ListRunners":                 {req: &orchestratorclient.ListRunnersRequest{}, rpc: "/ListRunners"},
+		"ListSessions":                {req: &orchestratorclient.ListSessionsRequest{}, rpc: "/ListSessions"},
+		"ListTaskArtifacts":           {req: &orchestratorclient.ListTaskArtifactsRequest{}, rpc: "/ListTaskArtifacts"},
+		"ListTasks":                   {req: &orchestratorclient.ListTasksRequest{}, rpc: "/ListTasks"},
+		"ListWorkflows":               {req: &orchestratorclient.ListWorkflowsRequest{}, rpc: "/ListWorkflows"},
+		"PromptSession":               {req: &orchestratorclient.PromptSessionRequest{}, rpc: "/PromptSession"},
+		"ReadmitTask":                 {req: &orchestratorclient.ReadmitTaskRequest{}, rpc: "/ReadmitTask"},
+		"RegisterFleetNode":           {req: &orchestratorclient.RegisterFleetNodeRequest{}, rpc: "/RegisterFleetNode"},
+		"RemoveFleetNode":             {req: &orchestratorclient.RemoveFleetNodeRequest{}, rpc: "/RemoveFleetNode"},
+		"RotateSessionAccount":        {req: &orchestratorclient.RotateSessionAccountRequest{SessionID: "s1"}, rpc: "/RotateSessionAccount"},
+		"SessionStatus":               {req: &orchestratorclient.SessionStatusRequest{}, rpc: "/SessionStatus"},
+		"SpawnChildJob":               {req: &orchestratorclient.SpawnChildJobRequest{}, rpc: "/SpawnChildJob"},
+		"SpawnSession":                {req: &orchestratorclient.SpawnSessionRequest{Backend: "claude"}, rpc: "/SpawnSession"},
+		"StartJob":                    {req: &orchestratorclient.StartJobRequest{}, rpc: "/StartJob"},
+		"SubmitTaskArtifacts":         {req: &orchestratorclient.SubmitTaskArtifactsRequest{}, rpc: "/SubmitTaskArtifacts"},
+		"SubscribeJobEvents":          {req: &orchestratorclient.SubscribeJobEventsRequest{}, stream: true, rpc: "/SubscribeJobEvents"},
+		"SubscribeSessionEvents":      {req: &orchestratorclient.SubscribeSessionEventsRequest{SessionID: "s1"}, stream: true, rpc: "/SubscribeSessionEvents"},
+		"UpdateWorkflow":              {req: &orchestratorclient.UpdateWorkflowRequest{Name: "w1", Definition: def}, rpc: "/UpdateWorkflow"},
+		"GetTenantSpendPolicy":        {req: &orchestratorclient.GetTenantSpendPolicyRequest{}, rpc: "/GetTenantSpendPolicy"},
+		"SetTenantSpendPolicy":        {req: &orchestratorclient.SetTenantSpendPolicyRequest{}, rpc: "/SetTenantSpendPolicy"},
+		"GetCostSettings":             {req: &orchestratorclient.GetCostSettingsRequest{}, rpc: "/GetCostSettings"},
+		"SetCostSettings":             {req: &orchestratorclient.SetCostSettingsRequest{}, rpc: "/SetCostSettings"},
+		"DeclareFleetPlacementSpec":   {req: &orchestratorclient.DeclareFleetPlacementSpecRequest{Spec: &orchestratorclient.FleetPlacementSpec{Name: "p1"}}, rpc: "/DeclareFleetPlacementSpec"},
+		"GetFleetPlacementSpec":       {req: &orchestratorclient.FleetPlacementSpecRequest{Name: "p1"}, rpc: "/GetFleetPlacementSpec"},
+		"ListFleetPlacementSpecs":     {req: &orchestratorclient.ListFleetPlacementSpecsRequest{}, rpc: "/ListFleetPlacementSpecs"},
+		"WithdrawFleetPlacementSpec":  {req: &orchestratorclient.FleetPlacementSpecRequest{Name: "p1"}, rpc: "/WithdrawFleetPlacementSpec"},
+		"GetFleetPlacementDrift":      {req: &orchestratorclient.FleetPlacementSpecRequest{Name: "p1"}, rpc: "/GetFleetPlacementDrift"},
+		"ListFleetPlacementConsents":  {req: &orchestratorclient.ListFleetPlacementConsentsRequest{}, rpc: "/ListFleetPlacementConsents"},
+		"AnswerFleetPlacementConsent": {req: &orchestratorclient.AnswerFleetPlacementConsentRequest{ID: "c1", State: "granted"}, rpc: "/AnswerFleetPlacementConsent"},
 	}
 }
 
@@ -195,13 +202,13 @@ func TestOrchestratorReach_Unix(t *testing.T) {
 		got = append(got, name)
 	}
 	sort.Strings(got)
-	want := append([]string(nil), wantOrchestratorMethods...)
+	want := clientMethods()
 	sort.Strings(want)
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("case table does not cover the client's methods\n got: %v\nwant: %v", got, want)
 	}
 
-	for _, name := range wantOrchestratorMethods {
+	for _, name := range clientMethods() {
 		name, c := name, cases[name]
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
