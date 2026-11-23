@@ -40,6 +40,35 @@ func (t *Transport) Barrier() *BarrierClient {
 	return &BarrierClient{t: t}
 }
 
+// bindRequestSOPIN resolves the SO PIN a call carries (its request's own
+// SOPin field, or the PIN bound by WithSOPIN) and, when the PIN came from the
+// request field alone, binds it to the returned context with WithSOPIN. The
+// transport's SOPINRoundTripper then guards every hop of the call, so a
+// request-field PIN is refused over http:// and across a redirect to a plain
+// or foreign host exactly as a bound one is. The caller defers release.
+func bindRequestSOPIN(ctx context.Context, method, requestPIN string) (context.Context, string, func(), error) {
+	noop := func() {}
+	pin, err := qrdbtransport.ResolveSOPIN(ctx, method, requestPIN)
+	if err != nil || pin == "" {
+		return ctx, pin, noop, err
+	}
+	boundPIN, bound, err := qrdbtransport.SOPINFromContext(ctx)
+	clear(boundPIN)
+	if err != nil {
+		return ctx, "", noop, err
+	}
+	if bound {
+		return ctx, pin, noop, nil
+	}
+	pinBytes := []byte(pin)
+	boundCtx, release, err := qrdbtransport.WithSOPIN(ctx, pinBytes)
+	clear(pinBytes)
+	if err != nil {
+		return ctx, "", noop, err
+	}
+	return boundCtx, pin, release, nil
+}
+
 // doJSONResult sends the barrier request of verb (go-qrdb's method name)
 // and, when result is non-nil, decodes the response into it. A status of
 // 400 or more comes back as a *qrdbtransport.RequestError carrying verb,
@@ -156,7 +185,14 @@ type officersWireResponse struct {
 // BarrierInitialize maps to POST /v1/barrier/initialize.
 func (b *BarrierClient) BarrierInitialize(ctx context.Context, req *qrdbtransport.BarrierInitializeRequest) error {
 	ctx = withSecretHop(ctx, "BarrierInitialize")
-	return b.doJSONResult(ctx, "BarrierInitialize", http.MethodPost, "/v1/barrier/initialize", req, nil)
+	ctx, soPIN, release, err := bindRequestSOPIN(ctx, "BarrierInitialize", req.SOPin)
+	if err != nil {
+		return err
+	}
+	defer release()
+	body := *req
+	body.SOPin = soPIN
+	return b.doJSONResult(ctx, "BarrierInitialize", http.MethodPost, "/v1/barrier/initialize", &body, nil)
 }
 
 // BarrierUnseal maps to POST /v1/barrier/unseal.
@@ -192,10 +228,11 @@ func (b *BarrierClient) BarrierStatus(ctx context.Context) (*qrdbtransport.Barri
 // BarrierInitializeShamir maps to POST /v1/barrier/shamir/initialize.
 func (b *BarrierClient) BarrierInitializeShamir(ctx context.Context, req *qrdbtransport.BarrierInitializeShamirRequest) (*qrdbtransport.BarrierInitializeShamirResponse, error) {
 	ctx = withSecretHop(ctx, "BarrierInitializeShamir")
-	soPIN, err := qrdbtransport.ResolveSOPIN(ctx, "BarrierInitializeShamir", req.SOPin)
+	ctx, soPIN, release, err := bindRequestSOPIN(ctx, "BarrierInitializeShamir", req.SOPin)
 	if err != nil {
 		return nil, err
 	}
+	defer release()
 	body := *req
 	body.SOPin = soPIN
 
@@ -225,10 +262,11 @@ func (b *BarrierClient) BarrierUnsealWithShares(ctx context.Context, req *qrdbtr
 // BarrierRekey maps to POST /v1/barrier/rekey.
 func (b *BarrierClient) BarrierRekey(ctx context.Context, req *qrdbtransport.BarrierRekeyRequest) (*qrdbtransport.BarrierRekeyResponse, error) {
 	ctx = withSecretHop(ctx, "BarrierRekey")
-	soPIN, err := qrdbtransport.ResolveSOPIN(ctx, "BarrierRekey", req.SOPin)
+	ctx, soPIN, release, err := bindRequestSOPIN(ctx, "BarrierRekey", req.SOPin)
 	if err != nil {
 		return nil, err
 	}
+	defer release()
 	body := *req
 	body.SOPin = soPIN
 
@@ -251,10 +289,11 @@ func (b *BarrierClient) BarrierEnableEncryption(ctx context.Context, req *qrdbtr
 // BarrierGenerateRecoveryKeys maps to POST /v1/barrier/recovery/generate.
 func (b *BarrierClient) BarrierGenerateRecoveryKeys(ctx context.Context, req *qrdbtransport.BarrierGenerateRecoveryKeysRequest) (*qrdbtransport.BarrierRecoveryKeysResponse, error) {
 	ctx = withSecretHop(ctx, "BarrierGenerateRecoveryKeys")
-	soPIN, err := qrdbtransport.ResolveSOPIN(ctx, "BarrierGenerateRecoveryKeys", req.SOPin)
+	ctx, soPIN, release, err := bindRequestSOPIN(ctx, "BarrierGenerateRecoveryKeys", req.SOPin)
 	if err != nil {
 		return nil, err
 	}
+	defer release()
 	body := *req
 	body.SOPin = soPIN
 
