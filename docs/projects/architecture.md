@@ -133,6 +133,18 @@ whose tombstone cannot be written returns `service.ProjectDeleteUnsettledError`
 (`500`) with the project already deleted; its fence goes stale, and the late
 bind's project re-read still keeps a binding off the deleted project.
 
+A binding write whose response is lost has an unknown outcome: it may have
+landed, or may still land after the bind has returned. The bind settles it
+first (`sdlc.Store.SettleBindingWrite`). If the stored record carries the
+write's token, the write landed and the fence read follows as usual. Otherwise
+the bind moves the binding slot to bytes the pending write did not read: a void
+marker in an empty slot, or the held record with a fresh write token. Every
+binding write is a compare-and-swap on the bytes it read, so the pending write
+can no longer apply. A fresh bind that did not land forgets its route, and the
+bind returns the write's own error. A settle that cannot be written returns
+`sdlc.BindWithdrawError`. A void marker reads as no binding, listing skips it,
+and the next bind of the project replaces it.
+
 ## Identity: id, name and source repository
 
 ### A project id is a UUID

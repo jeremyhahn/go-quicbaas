@@ -413,14 +413,34 @@ func (s *SDLCService) Bind(ctx context.Context, tenantID string, binding *sdlc.P
 			return nil, err
 		}
 		// A WRITE ERROR IS AN UNKNOWN OUTCOME: the backend can lose the
-		// response of a committed write. A bind that may have landed must
-		// not skip the fence, or a delete that fenced after the pre-check
-		// finishes with this binding and its route in place. The withdrawal
-		// is token-checked, so it is a no-op when the write never landed.
+		// response of a committed write, and a proposal still pending can
+		// commit after this call has returned. So the bind settles the write
+		// first. A write that landed goes through the fence read like any
+		// other, or a delete that fenced after the pre-check would finish
+		// with this binding and its route in place. A write that did not
+		// land is made unable to land, so neither a delete nor a later read
+		// can be overtaken by it.
 		detached, cancel := context.WithTimeout(context.WithoutCancel(ctx), bindWithdrawTimeout)
-		withdrawErr := s.withdrawIfDeleting(detached, tenantID, binding, prior)
-		cancel()
-		if withdrawErr != nil {
+		defer cancel()
+		landed, settleErr := s.store.SettleBindingWrite(detached, tenantID, binding.ProjectID, binding.WriteToken)
+		if settleErr != nil {
+			s.logger.Error("sdlc: a binding write with an unknown outcome could not be settled; it may still land",
+				"tenant_id", tenantID, "project_id", binding.ProjectID, "error", settleErr)
+			return nil, &sdlc.BindWithdrawError{TenantID: tenantID, ProjectID: binding.ProjectID, Cause: settleErr}
+		}
+		if !landed {
+			// Nothing was written, and nothing can be now. A fresh bind
+			// recorded the route of a project with no binding: forget it.
+			if prior == nil {
+				if forgetErr := s.routes.Forget(detached, binding.ProjectID, tenantID); forgetErr != nil {
+					s.logger.Error("sdlc: a binding write that did not land left its route behind",
+						"tenant_id", tenantID, "project_id", binding.ProjectID, "error", forgetErr)
+					return nil, &sdlc.BindWithdrawError{TenantID: tenantID, ProjectID: binding.ProjectID, Cause: forgetErr}
+				}
+			}
+			return nil, err
+		}
+		if withdrawErr := s.withdrawIfDeleting(detached, tenantID, binding, prior); withdrawErr != nil {
 			return nil, withdrawErr
 		}
 		return nil, err
@@ -478,7 +498,8 @@ const bindLeaseRenewEvery = sdlc.BindLeaseTTL / 3
 // the record goes back to prior, or is removed when the bind created it. A
 // record another bind wrote since is left alone. The route is forgotten only
 // when this bind created the binding and its withdrawal removed it; a rebind
-// keeps the route the prior binding uses.
+// keeps the route the prior binding uses. It is only called for a write known
+// to have landed: a write whose outcome is unknown is settled first.
 func (s *SDLCService) withdrawIfDeleting(ctx context.Context, tenantID string, binding *sdlc.ProjectBinding, prior *sdlc.ProjectBinding) error {
 	projectID := binding.ProjectID
 	fenced, readErr := s.store.ProjectDeleteFenced(ctx, tenantID, projectID)
