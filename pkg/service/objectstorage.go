@@ -19,6 +19,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"hash/fnv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -53,6 +54,10 @@ type objectStorageService struct {
 	closed         atomic.Bool
 	mu             sync.RWMutex
 	objectIDGen    atomic.Uint64
+	// putLocks serialise the writers of one key (striped by key hash), so
+	// an overwrite reads the entry it replaces and removes that entry's
+	// backend copies before another writer of the key can replace it.
+	putLocks [64]sync.Mutex
 }
 
 // objectStorageMetrics holds Prometheus metrics for object storage operations.
@@ -187,6 +192,32 @@ func (s *objectStorageService) checkClosed() error {
 	return nil
 }
 
+// putLock returns the stripe lock that serialises the writers of key.
+func (s *objectStorageService) putLock(key string) *sync.Mutex {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(key))
+	return &s.putLocks[h.Sum32()%uint32(len(s.putLocks))]
+}
+
+// deleteSuperseded removes the backend copies of previous, the entry a
+// put of key has just replaced, except keep (the new object). A failure
+// is logged: the new object is already stored and catalogued.
+func (s *objectStorageService) deleteSuperseded(ctx context.Context, key string, previous *catalog.CatalogEntry, keep string) {
+	for _, loc := range previous.GetAllLocations() {
+		if loc.ObjectRef == "" || loc.ObjectRef == keep {
+			continue
+		}
+		backend, err := s.backendMgr.GetBackend(loc.Store)
+		if err != nil {
+			s.logger.WithFields(map[string]interface{}{"key": key, "store": loc.Store, "error": err.Error()}).Warn("failed to get backend for superseded object")
+			continue
+		}
+		if err := backend.DeleteWithContext(ctx, loc.ObjectRef); err != nil {
+			s.logger.WithFields(map[string]interface{}{"key": key, "store": loc.Store, "error": err.Error()}).Warn("failed to delete superseded object from backend")
+		}
+	}
+}
+
 // =============================================================================
 // Object CRUD Operations
 // =============================================================================
@@ -217,6 +248,10 @@ func (s *objectStorageService) PutObject(ctx context.Context, req *PutObjectRequ
 	if err := s.checkClosed(); err != nil {
 		return nil, err
 	}
+
+	keyLock := s.putLock(req.Key)
+	keyLock.Lock()
+	defer keyLock.Unlock()
 
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -286,6 +321,12 @@ func (s *objectStorageService) PutObject(ctx context.Context, req *PutObjectRequ
 	}
 
 	// Generate object reference for backend storage
+	// The entry this put replaces, if any; its backend copies are removed
+	// once the new entry is catalogued. A failed lookup removes nothing.
+	previous, prevErr := s.catalogMgr.Get(ctx, req.Key)
+	if prevErr != nil {
+		previous = nil
+	}
 	objectRef := s.generateObjectRef(req.Key)
 
 	// Write to backend
@@ -346,6 +387,9 @@ func (s *objectStorageService) PutObject(ctx context.Context, req *PutObjectRequ
 			s.metrics.operationErrors.WithLabelValues("put_object", "catalog_error").Inc()
 		}
 		return nil, api.NewStorageOperationError("objectstorage.PutObject", "store catalog entry", err)
+	}
+	if previous != nil {
+		s.deleteSuperseded(ctx, req.Key, previous, objectRef)
 	}
 
 	// Enqueue async replication if configured

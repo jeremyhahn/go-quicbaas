@@ -33,6 +33,39 @@ func TestObjectStorage_OverwriteReadsNewValue(t *testing.T) {
 	assert.Equal(t, []byte("second"), putThenGet(t, svc, ctx, "overwrite:key", []byte("second")))
 }
 
+// backendObjectCount is the number of objects the mock backend holds.
+func backendObjectCount(s *objstoreMockStorage) int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.objects)
+}
+
+// TestObjectStorage_OverwriteRemovesSupersededBackendObject checks that
+// overwriting a key, sequentially or from concurrent writers, leaves one
+// backend object per key.
+func TestObjectStorage_OverwriteRemovesSupersededBackendObject(t *testing.T) {
+	svc, _, _, storage := createObjstoreTestService(t)
+	ctx := tenantctx.WithTenant(context.Background(), "tenant1")
+
+	for i := 0; i < 3; i++ {
+		assert.Equal(t, []byte("same"), putThenGet(t, svc, ctx, "overwrite:key", []byte("same")))
+	}
+	assert.Equal(t, 1, backendObjectCount(storage))
+
+	const writers = 16
+	var wg sync.WaitGroup
+	for w := 0; w < writers; w++ {
+		wg.Add(1)
+		go func(w int) {
+			defer wg.Done()
+			_, err := svc.PutObject(ctx, &PutObjectRequest{Key: "race:key", Value: []byte(strconv.Itoa(w)), TenantID: "tenant1"})
+			assert.NoError(t, err)
+		}(w)
+	}
+	wg.Wait()
+	assert.Equal(t, 2, backendObjectCount(storage))
+}
+
 func TestObjectStorage_SpecialCharacterKeyRoundTrips(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
 	ctx := tenantctx.WithTenant(context.Background(), "tenant1")
