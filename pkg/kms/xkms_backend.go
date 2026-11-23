@@ -707,33 +707,50 @@ func (kb *XKMSBackend) DeleteKey(ctx context.Context, keyID string) error {
 		}
 	}
 
-	// Delete from go-xkms using attributes
-	if err := xkms.DeleteKey(ctx, attrs); err != nil {
-		if stderrors.Is(err, xkms.ErrKeyNotFound) {
+	// The backend key and the name's ownership record go under one lock, so
+	// a concurrent import or create of the same key ID cannot land between
+	// them and lose its record (xkmsNameOwners.release).
+	var deleteErr error
+	del := func() error {
+		deleteErr = kb.deleteXKMSKey(ctx, keyID, attrs)
+		if deleteErr != nil {
+			return deleteErr
+		}
+		kb.mu.Lock()
+		delete(kb.metadata, keyID)
+		kb.mu.Unlock()
+		return nil
+	}
+	if err := kb.keyNames().release(ctx, keyID, del); err != nil {
+		if deleteErr != nil {
+			return deleteErr
+		}
+		// The name is free again once the key is gone.
+		return api.NewKeyDeletionError("XKMSBackend.DeleteKey", err)
+	}
+	return nil
+}
+
+// deleteXKMSKey deletes keyID's go-xkms key by attrs, falling back to the
+// default AES-256-GCM attributes.
+func (kb *XKMSBackend) deleteXKMSKey(ctx context.Context, keyID string, attrs *kctypes.KeyAttributes) error {
+	err := xkms.DeleteKey(ctx, attrs)
+	if err == nil {
+		return nil
+	}
+	if stderrors.Is(err, xkms.ErrKeyNotFound) {
+		return ErrKeyNotFound
+	}
+	defaultAttrs := &kctypes.KeyAttributes{
+		CN:                 xkmsKeyName(keyID),
+		StoreType:          kctypes.StoreType(string(kb.backendType)),
+		KeyType:            kctypes.KeyTypeEncryption,
+		SymmetricAlgorithm: kctypes.SymmetricAES256GCM,
+	}
+	if err2 := xkms.DeleteKey(ctx, defaultAttrs); err2 != nil {
+		if stderrors.Is(err2, xkms.ErrKeyNotFound) {
 			return ErrKeyNotFound
 		}
-		// Try with default format as fallback
-		defaultAttrs := &kctypes.KeyAttributes{
-			CN:                 xkmsKeyName(keyID),
-			StoreType:          kctypes.StoreType(string(kb.backendType)),
-			KeyType:            kctypes.KeyTypeEncryption,
-			SymmetricAlgorithm: kctypes.SymmetricAES256GCM,
-		}
-		if err2 := xkms.DeleteKey(ctx, defaultAttrs); err2 != nil {
-			if stderrors.Is(err2, xkms.ErrKeyNotFound) {
-				return ErrKeyNotFound
-			}
-			return api.NewKeyDeletionError("XKMSBackend.DeleteKey", err)
-		}
-	}
-
-	// Remove from cache
-	kb.mu.Lock()
-	delete(kb.metadata, keyID)
-	kb.mu.Unlock()
-
-	// The name is free again once the key is gone.
-	if err := kb.keyNames().release(ctx, keyID); err != nil {
 		return api.NewKeyDeletionError("XKMSBackend.DeleteKey", err)
 	}
 	return nil

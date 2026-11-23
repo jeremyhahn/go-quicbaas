@@ -328,6 +328,10 @@ type Server struct {
 	// which it sends to the replicated shard KV once that key's backend is
 	// registered (useReplicatedOIDCSigningStore).
 	xkmsKeyVersionRouter *keyVersionRouter
+	// kmsKeyNames holds the KMS backends' go-xkms key-name ownership
+	// records: node-local until the service has its datastore, replicated
+	// after (useReplicatedKMSKeyNames).
+	kmsKeyNames *kmsKeyNameRouter
 
 	// Fleet registry - shared between IAM enrollment (publisher on
 	// redeem) and orchestration (publisher on heartbeat + consumer for

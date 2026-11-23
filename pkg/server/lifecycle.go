@@ -1936,6 +1936,9 @@ func (s *Server) startService() error {
 		// embedded transport — no duplicate construction needed here.
 		s.qrdbClient = newNodeBackedShardedClient(node)
 		s.logger.Info("qrdb ShardedClient backed by real qrdb engine node")
+		if err := s.useReplicatedKMSKeyNames(); err != nil {
+			return api.NewOperationFailedError("replicate KMS key name records", err)
+		}
 
 		// Populate s.ceremonyServices from the node's services so that the
 		// gRPC barrier/ceremony adapters and REST /api/v1/init/* routes can
@@ -2893,12 +2896,26 @@ func (s *Server) keyVersionStore() (*xkmssdk.KeyVersionStore, error) {
 }
 
 // kmsKeyNameStore opens the store of go-xkms key-name ownership records the
-// KMS backends share: on disk under the data directory, so a tenant key's
-// name survives a restart, and in memory when there is no data directory
-// (where the keys themselves are in memory too).
+// KMS backends share. KMS starts before the embedded datastore, so the store
+// begins node-local (on disk under the data directory, or in memory when there
+// is none, where the keys themselves are in memory too) and moves to the
+// platform shard's replicated keyspace when the service starts
+// (useReplicatedKMSKeyNames), so every node sharing a KMS backend resolves
+// the same tenant keys.
 func (s *Server) kmsKeyNameStore() (xkmssdk.StorageBackend, error) {
-	if dataDir := s.config.Storage.DataDir; dataDir != "" {
-		return xkmssdk.NewFileStorageBackend(filepath.Join(dataDir, "kms-key-names"))
+	if s.kmsKeyNames != nil {
+		return s.kmsKeyNames, nil
 	}
-	return xkmssdk.NewMemoryBackend()
+	var local xkmssdk.StorageBackend
+	var err error
+	if dataDir := s.config.Storage.DataDir; dataDir != "" {
+		local, err = xkmssdk.NewFileStorageBackend(filepath.Join(dataDir, "kms-key-names"))
+	} else {
+		local, err = xkmssdk.NewMemoryBackend()
+	}
+	if err != nil {
+		return nil, err
+	}
+	s.kmsKeyNames = newKMSKeyNameRouter(local)
+	return s.kmsKeyNames, nil
 }

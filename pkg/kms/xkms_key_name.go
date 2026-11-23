@@ -168,15 +168,21 @@ func (o *xkmsNameOwners) claim(ctx context.Context, keyID string, exists func(na
 	return nil
 }
 
-// release drops the ownership record of keyID's encoded name, once its key
-// is deleted.
-func (o *xkmsNameOwners) release(ctx context.Context, keyID string) error {
+// release deletes keyID's key with del and then drops the ownership record of
+// its encoded name. Both run under the lock claim holds, so a concurrent
+// create of the same key ID either finishes before the delete starts or
+// starts after the record is gone: the delete never drops the record a
+// recreated key relies on.
+func (o *xkmsNameOwners) release(ctx context.Context, keyID string, del func() error) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if err := del(); err != nil {
+		return err
+	}
 	name := xkmsKeyName(keyID)
 	if name == keyID {
 		return nil
 	}
-	o.mu.Lock()
-	defer o.mu.Unlock()
 	return o.dropLocked(ctx, keyID, name)
 }
 

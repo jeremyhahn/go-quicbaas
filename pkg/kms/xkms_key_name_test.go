@@ -261,6 +261,55 @@ func TestXKMSNameOwners_FailedConcurrentCreate_KeepsTheWinnersRecord(t *testing.
 	require.ErrorIs(t, err, ErrKeyNotFound)
 }
 
+// TestXKMSNameOwners_DeleteThenConcurrentImport_KeepsTheImportsRecord drives
+// a delete and an import of the same tenant key ID: the import starts while
+// the delete's backend deletion runs. Release holds the ownership lock across
+// the backend deletion and the record removal, so the import waits, then
+// claims a fresh record, and the key it created still resolves.
+func TestXKMSNameOwners_DeleteThenConcurrentImport_KeepsTheImportsRecord(t *testing.T) {
+	ctx := context.Background()
+	store, err := goxkmssdk.NewMemoryBackend()
+	require.NoError(t, err)
+	names := &xkmsNameOwners{backend: "software", store: store}
+	const keyID = "tenant/acme/k"
+	var held bool
+	exists := func(string) (bool, error) { return held, nil }
+	require.NoError(t, names.claim(ctx, keyID, exists, func(string) error { held = true; return nil }))
+
+	inDelete := make(chan struct{})
+	importDone := make(chan struct{})
+	var importRanDuringDelete bool
+	delErr := make(chan error, 1)
+	go func() {
+		delErr <- names.release(ctx, keyID, func() error {
+			close(inDelete)
+			select {
+			case <-importDone:
+				importRanDuringDelete = true
+			case <-time.After(200 * time.Millisecond):
+			}
+			held = false
+			return nil
+		})
+	}()
+	<-inDelete
+	importErr := names.claim(ctx, keyID, exists, func(string) error { held = true; return nil })
+	close(importDone)
+
+	require.NoError(t, <-delErr)
+	require.NoError(t, importErr)
+	require.False(t, importRanDuringDelete, "an import must not run while a delete of the same key holds its record")
+	name, err := names.resolve(ctx, keyID)
+	require.NoError(t, err, "the recreated key's ownership record must survive the delete")
+	require.Equal(t, xkmsKeyName(keyID), name)
+
+	// A failed backend deletion keeps the record: the key is still there.
+	boom := stderrors.New("backend unavailable")
+	require.ErrorIs(t, names.release(ctx, keyID, func() error { return boom }), boom)
+	_, err = names.resolve(ctx, keyID)
+	require.NoError(t, err)
+}
+
 // TestXKMSBackend_TenantKeyName_IsOwnedPersistently checks that a tenant
 // key's encoded name is held by its ownership record: across a restart that
 // keeps the record store, against a literal ID spelled like the encoding, and
