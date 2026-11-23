@@ -790,7 +790,6 @@ func (r *Registry) List(ctx context.Context, opts RegistryListOptions) ([]*Image
 	return out, nil
 }
 
-// VerifyClient verifies a client's attestation evidence.
 // IssueChallenge returns a fresh single-use attestation nonce for clientID,
 // valid for the configured NonceValidityDuration. The client quotes it as
 // the TPM qualifying data and presents the quote, with the nonce, to
@@ -806,6 +805,7 @@ func (r *Registry) IssueChallenge(ctx context.Context, clientID string) ([]byte,
 	return r.challenges.issue(clientID, r.now(), r.config.Attestation.NonceValidityDuration), nil
 }
 
+// VerifyClient verifies a client's attestation evidence.
 func (r *Registry) VerifyClient(ctx context.Context, attestation *AttestationEvidence) error {
 	if err := r.checkState(); err != nil {
 		return err
