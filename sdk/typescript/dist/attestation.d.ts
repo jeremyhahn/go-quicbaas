@@ -12,6 +12,7 @@ export interface Endorsement {
 /** Body of PUT /api/v1/attestation/endorsements/{name}. */
 export interface PutEndorsementRequest {
     kind: EndorsementKind;
+    /** PEM text; the client base64-encodes it for the server's []byte field. */
     certificate_pem?: string;
     public_key_pem?: string;
 }
