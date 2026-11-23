@@ -118,6 +118,15 @@ var (
 	// is not signed by the attempt's signing key.
 	ErrUnsignedCommit = errors.New("sdlc: an outgoing commit is not signed by the attempt's key")
 
+	// ErrUntracedBrief is returned when a lane brief is asked for from a
+	// spec that names neither a SPEC row nor the owner's words.
+	ErrUntracedBrief = errors.New("sdlc: a lane brief names neither a SPEC row nor the owner's words")
+
+	// ErrBriefIncomplete is returned when a lane brief lacks a line the
+	// worker needs: turn budget, file map, expected edit, acceptance, or a
+	// resume reason on a resume.
+	ErrBriefIncomplete = errors.New("sdlc: a lane brief is missing a required line")
+
 	// ErrDeliveryAbsent indicates a lifecycle moment ran for a task whose
 	// attempt has no Delivery record, so Prepare never completed.
 	ErrDeliveryAbsent = errors.New("sdlc: no delivery recorded for this attempt")
@@ -702,6 +711,36 @@ func (e *UnsignedCommitError) Error() string {
 
 // Unwrap returns the sentinel for errors.Is support.
 func (e *UnsignedCommitError) Unwrap() error { return ErrUnsignedCommit }
+
+// UntracedBriefError reports a lane brief spec that traces to neither a
+// SPEC row nor the owner's words, so no brief is rendered from it.
+type UntracedBriefError struct {
+	// Objective is the spec's objective, naming the brief refused.
+	Objective string
+}
+
+// Error implements the error interface.
+func (e *UntracedBriefError) Error() string {
+	return "sdlc: lane brief " + strconv.Quote(e.Objective) + " names neither a SPEC row nor the owner's words"
+}
+
+// Unwrap returns the sentinel for errors.Is support.
+func (e *UntracedBriefError) Unwrap() error { return ErrUntracedBrief }
+
+// MissingBriefLineError reports every required line a lane brief lacks, in
+// the order ValidateLaneBrief checks them.
+type MissingBriefLineError struct {
+	// Missing names each gap, e.g. "Turn budget" or "Expected edit".
+	Missing []string
+}
+
+// Error implements the error interface.
+func (e *MissingBriefLineError) Error() string {
+	return "sdlc: lane brief is missing a required line: " + strings.Join(e.Missing, ", ")
+}
+
+// Unwrap returns the sentinel for errors.Is support.
+func (e *MissingBriefLineError) Unwrap() error { return ErrBriefIncomplete }
 
 // TaskNotForgeIssueError reports a task the module was asked to act on that
 // did not originate from a forge issue.

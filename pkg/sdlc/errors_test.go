@@ -72,6 +72,8 @@ func TestTypedErrors_NameTheirSubjectAndUnwrap(t *testing.T) {
 		{&ReviewerNotConfiguredError{ProjectID: "p"}, ErrReview, `project "p" binds no reviewer`},
 		{&ReviewerNotIndependentError{ProjectID: "p", Family: "anthropic"}, ErrReview, `both "anthropic"`},
 		{&ReviewSessionError{PullRequest: 41, Message: "no session"}, ErrReview, "pull request #41: no session"},
+		{&UntracedBriefError{Objective: "port the brief"}, ErrUntracedBrief, `"port the brief" names neither a SPEC row`},
+		{&MissingBriefLineError{Missing: []string{"Turn budget", "Acceptance"}}, ErrBriefIncomplete, "Turn budget, Acceptance"},
 	}
 	for _, tc := range cases {
 		if !strings.Contains(tc.err.Error(), tc.contains) {
