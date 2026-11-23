@@ -18,6 +18,7 @@ package subprotocol
 import (
 	"bytes"
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -564,6 +565,180 @@ func TestMQTTHandler_HandleConnection_SubscribePublish(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Error("Handler did not complete")
+	}
+}
+
+// startMQTTConn serves an MQTT handler on hub and dials it. The returned
+// channel delivers HandleConnection's result.
+func startMQTTConn(t *testing.T, ctx context.Context, hub PubSubHub) (*websocket.Conn, <-chan error) {
+	t.Helper()
+	handler := NewMQTTHandler(hub)
+	handlerDone := make(chan error, 1)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		session := newGrantedSession("test-session", "mqtt", conn)
+		handlerDone <- handler.HandleConnection(session.Context(), conn, session)
+	}))
+	t.Cleanup(server.Close)
+
+	conn, resp, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http"), nil)
+	if resp != nil && resp.Body != nil {
+		resp.Body.Close()
+	}
+	if err != nil {
+		t.Fatalf("WebSocket dial failed: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.CloseNow() })
+	return conn, handlerDone
+}
+
+// mqttWrite sends one binary WebSocket message.
+func mqttWrite(t *testing.T, ctx context.Context, conn *websocket.Conn, data []byte) {
+	t.Helper()
+	if err := conn.Write(ctx, websocket.MessageBinary, data); err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+}
+
+// mqttExpect reads one WebSocket message and checks its first byte.
+func mqttExpect(t *testing.T, ctx context.Context, conn *websocket.Conn, first byte, what string) {
+	t.Helper()
+	_, data, err := conn.Read(ctx)
+	if err != nil {
+		t.Fatalf("Read %s failed: %v", what, err)
+	}
+	if len(data) == 0 || data[0] != first {
+		t.Fatalf("Expected %s (0x%02x), got % x", what, first, data)
+	}
+}
+
+// buildMQTTPublishQoS0 builds a QoS 0 PUBLISH packet with a one-byte
+// Remaining Length.
+func buildMQTTPublishQoS0(topic string, payload []byte) []byte {
+	body := []byte{byte(len(topic) >> 8), byte(len(topic))}
+	body = append(body, topic...)
+	body = append(body, payload...)
+	return append([]byte{0x30, byte(len(body))}, body...)
+}
+
+// TestMQTTHandler_HandleConnection_CoalescedPackets: every packet of a
+// WebSocket message carrying several MQTT packets is handled, in order.
+func TestMQTTHandler_HandleConnection_CoalescedPackets(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, handlerDone := startMQTTConn(t, ctx, NewInMemoryPubSubHub())
+
+	mqttWrite(t, ctx, conn, buildMQTTConnectPacket("coalesced-client", 4))
+	mqttExpect(t, ctx, conn, 0x20, "CONNACK")
+
+	mqttWrite(t, ctx, conn, []byte{0xC0, 0x00, 0xC0, 0x00})
+	mqttExpect(t, ctx, conn, 0xD0, "first PINGRESP")
+	mqttExpect(t, ctx, conn, 0xD0, "second PINGRESP")
+
+	mqttWrite(t, ctx, conn, append(buildMQTTPingreqPacket(), buildMQTTDisconnectPacket()...))
+	mqttExpect(t, ctx, conn, 0xD0, "PINGRESP before DISCONNECT")
+	select {
+	case err := <-handlerDone:
+		if err != nil {
+			t.Errorf("Handler returned error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("Handler did not complete")
+	}
+}
+
+// TestMQTTHandler_HandleConnection_PacketSplitAcrossMessages: a PUBLISH split
+// across two WebSocket messages reaches a hub subscriber once, whole.
+func TestMQTTHandler_HandleConnection_PacketSplitAcrossMessages(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	hub := NewInMemoryPubSubHub()
+	got := subscribeTestHub(t, hub, "split-subscriber", "split/topic")
+	conn, _ := startMQTTConn(t, ctx, hub)
+
+	mqttWrite(t, ctx, conn, buildMQTTConnectPacket("split-client", 4))
+	mqttExpect(t, ctx, conn, 0x20, "CONNACK")
+
+	payload := []byte("the whole payload")
+	pkt := buildMQTTPublishQoS0("split/topic", payload)
+	mqttWrite(t, ctx, conn, pkt[:6])
+	mqttWrite(t, ctx, conn, pkt[6:])
+
+	select {
+	case p := <-got:
+		if !bytes.Equal(p, payload) {
+			t.Fatalf("payload = %q, want %q", p, payload)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("split PUBLISH did not reach the subscriber")
+	}
+
+	// A PINGREQ round trip after the publish proves the handler has
+	// processed everything; the subscriber must not see a second delivery.
+	mqttWrite(t, ctx, conn, buildMQTTPingreqPacket())
+	mqttExpect(t, ctx, conn, 0xD0, "PINGRESP")
+	select {
+	case p := <-got:
+		t.Fatalf("unexpected second delivery %q", p)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+// TestMQTTHandler_HandleConnection_OversizePacket: a fixed header declaring
+// more than the packet size bound ends the connection with a protocol error.
+func TestMQTTHandler_HandleConnection_OversizePacket(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, handlerDone := startMQTTConn(t, ctx, NewInMemoryPubSubHub())
+
+	mqttWrite(t, ctx, conn, buildMQTTConnectPacket("oversize-client", 4))
+	mqttExpect(t, ctx, conn, 0x20, "CONNACK")
+
+	// A PUBLISH declaring a 2 MiB Remaining Length.
+	mqttWrite(t, ctx, conn, []byte{0x30, 0x80, 0x80, 0x80, 0x01})
+
+	select {
+	case err := <-handlerDone:
+		var perr *ErrMQTTProtocolError
+		if !errors.As(err, &perr) {
+			t.Fatalf("Handler returned %v, want *ErrMQTTProtocolError", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Handler did not complete")
+	}
+}
+
+// TestMQTTPacketLength covers the Remaining Length decoding.
+func TestMQTTPacketLength(t *testing.T) {
+	tests := []struct {
+		name    string
+		buf     []byte
+		wantN   int
+		wantOK  bool
+		wantErr bool
+	}{
+		{"empty", nil, 0, false, false},
+		{"header byte only", []byte{0xC0}, 0, false, false},
+		{"one-byte length", []byte{0xC0, 0x00}, 2, true, false},
+		{"one-byte length, payload pending", []byte{0x30, 0x05, 0x00}, 7, true, false},
+		{"two-byte length 321", []byte{0x30, 0xC1, 0x02}, 1 + 2 + 321, true, false},
+		{"incomplete length", []byte{0x30, 0xC1}, 0, false, false},
+		{"five length bytes", []byte{0x30, 0x80, 0x80, 0x80, 0x80, 0x01}, 0, false, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			n, ok, err := mqttPacketLength(tt.buf)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
+			}
+			if n != tt.wantN || ok != tt.wantOK {
+				t.Fatalf("mqttPacketLength = (%d, %v), want (%d, %v)", n, ok, tt.wantN, tt.wantOK)
+			}
+		})
 	}
 }
 

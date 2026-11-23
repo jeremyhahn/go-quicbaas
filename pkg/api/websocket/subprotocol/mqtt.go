@@ -106,6 +106,7 @@ func (h *MQTTHandler) HandleConnection(ctx context.Context, conn *websocket.Conn
 
 	go h.deliverMessages(deliveryCtx, conn, clientState, deliveryChan)
 
+	var pending []byte
 	for {
 		select {
 		case <-ctx.Done():
@@ -125,21 +126,40 @@ func (h *MQTTHandler) HandleConnection(ctx context.Context, conn *websocket.Conn
 		h.messagesReceived.Add(1)
 		session.UpdateActivity()
 
-		// Parse and handle MQTT packet
-		response, err := h.handlePacket(ctx, data, session, clientState, deliveryChan)
-		if err != nil {
-			if errors.Is(err, ErrMQTTDisconnect) {
-				return nil
-			}
-			return err
-		}
-
-		// Send response if any
-		if response != nil {
-			if err := conn.Write(ctx, websocket.MessageBinary, response); err != nil {
+		// MQTT packets are a byte stream: one WebSocket message may carry
+		// several packets, or part of one. Buffer across messages and handle
+		// each complete packet in order.
+		pending = append(pending, data...)
+		for {
+			n, ok, err := mqttPacketLength(pending)
+			if err != nil {
 				return err
 			}
-			h.messagesSent.Add(1)
+			if ok && n > mqttMaxPacketSize {
+				return &ErrMQTTProtocolError{Message: "packet too large"}
+			}
+			if !ok || len(pending) < n {
+				break
+			}
+			response, err := h.handlePacket(ctx, pending[:n], session, clientState, deliveryChan)
+			pending = pending[n:]
+			if err != nil {
+				if errors.Is(err, ErrMQTTDisconnect) {
+					return nil
+				}
+				return err
+			}
+
+			// Send response if any
+			if response != nil {
+				if err := conn.Write(ctx, websocket.MessageBinary, response); err != nil {
+					return err
+				}
+				h.messagesSent.Add(1)
+			}
+		}
+		if len(pending) == 0 {
+			pending = nil
 		}
 	}
 }
@@ -230,6 +250,32 @@ type ErrMQTTProtocolError struct {
 
 func (e *ErrMQTTProtocolError) Error() string {
 	return "mqtt protocol error: " + e.Message
+}
+
+// mqttMaxPacketSize bounds one MQTT control packet. It matches the
+// WebSocket server's default message size limit.
+const mqttMaxPacketSize = 1024 * 1024
+
+// mqttPacketLength returns the total length of the MQTT control packet at
+// the start of buf: the fixed header byte, the Remaining Length bytes and
+// the remaining length. ok is false when buf does not yet hold the whole
+// fixed header. A Remaining Length longer than four bytes is a protocol
+// error.
+func mqttPacketLength(buf []byte) (n int, ok bool, err error) {
+	remaining, mult := 0, 1
+	for i := 1; i <= 4; i++ {
+		if i >= len(buf) {
+			return 0, false, nil
+		}
+		b := buf[i]
+		remaining += int(b&0x7f) * mult
+		if b&0x80 == 0 {
+			return 1 + i + remaining, true, nil
+		}
+		mult *= 128
+	}
+	// All four length bytes carried the continuation bit.
+	return 0, false, &ErrMQTTProtocolError{Message: "invalid remaining length"}
 }
 
 // handlePacket parses and handles an MQTT packet.
