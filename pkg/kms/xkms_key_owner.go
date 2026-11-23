@@ -17,6 +17,8 @@ import (
 	"bytes"
 	"context"
 	"crypto"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/hex"
@@ -24,6 +26,7 @@ import (
 	"errors"
 
 	kctypes "github.com/jeremyhahn/go-xkms/sdk/go"
+	"golang.org/x/crypto/chacha20poly1305"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/xkms"
 )
@@ -125,26 +128,45 @@ func (kb *XKMSBackend) xkmsDecrypt(ctx context.Context, kid string, data *kctype
 	return xkms.Decrypt(ctx, kid, data, opts)
 }
 
-// errXKMSKeyOwnerProbeMismatch reports a round trip whose decrypt returned
-// something other than what was encrypted.
-var errXKMSKeyOwnerProbeMismatch = errors.New("xkms key material round trip returned different plaintext")
+// xkmsAEADOpenErrors are the errors an AEAD returns when a ciphertext does
+// not authenticate under its key and additional data. Go and x/crypto keep
+// them unexported, so they are captured once from a failing Open.
+// NewGCMWithRandomNonce is used because it also works under fips140=only.
+var xkmsAEADOpenErrors = captureXKMSAEADOpenErrors()
 
-// xkmsSymmetricRoundTrip encrypts and decrypts fresh data under identity and
-// reports whether the key's material works now. It writes nothing to storage.
-func (kb *XKMSBackend) xkmsSymmetricRoundTrip(ctx context.Context, identity, record string) error {
-	aad := []byte(record + "#probe")
-	encrypted, err := xkms.Encrypt(ctx, identity, xkmsKeyOwnerCheckPlaintext, &kctypes.EncryptOptions{AdditionalData: aad})
-	if err != nil {
-		return err
+func captureXKMSAEADOpenErrors() []error {
+	var openErrs []error
+	if block, err := aes.NewCipher(make([]byte, 16)); err == nil {
+		if gcm, err := cipher.NewGCMWithRandomNonce(block); err == nil {
+			for _, n := range []int{gcm.Overhead(), gcm.Overhead() - 1} {
+				if _, err := gcm.Open(nil, nil, make([]byte, n), nil); err != nil {
+					openErrs = append(openErrs, err)
+				}
+			}
+		}
 	}
-	plaintext, err := kb.xkmsDecrypt(ctx, identity, encrypted, &kctypes.DecryptOptions{AdditionalData: aad})
-	if err != nil {
-		return err
+	if c, err := chacha20poly1305.New(make([]byte, chacha20poly1305.KeySize)); err == nil {
+		if _, err := c.Open(nil, make([]byte, c.NonceSize()), make([]byte, c.Overhead()), nil); err != nil {
+			openErrs = append(openErrs, err)
+		}
 	}
-	if !bytes.Equal(plaintext, xkmsKeyOwnerCheckPlaintext) {
-		return errXKMSKeyOwnerProbeMismatch
+	return openErrs
+}
+
+// isXKMSProofMismatch reports whether err from decrypting an ownership
+// proof is an authentication failure: the material under the identity is
+// not the material the proof was made with. Any other error (a throttled,
+// denied or unreachable backend) says nothing about ownership.
+func isXKMSProofMismatch(err error) bool {
+	if errors.Is(err, kctypes.AESGCMErrDecryptionFailed) {
+		return true
 	}
-	return nil
+	for _, openErr := range xkmsAEADOpenErrors {
+		if errors.Is(err, openErr) {
+			return true
+		}
+	}
+	return false
 }
 
 // xkmsKeyOwnerRecord returns the ownership record key for a go-xkms key
@@ -194,9 +216,10 @@ func (e *XKMSKeyOwnershipError) Unwrap() error { return e.Err }
 // recreates under the same identity is not owned. A missing, unreadable or
 // non-matching proof means not owned; a material read error that is not a
 // confirmed absence is returned. A symmetric proof that fails to decrypt
-// means not owned only when the key still round-trips fresh data; otherwise
-// the call returns an *XKMSKeyOwnershipError with Op "verify", since a
-// throttled or denied decrypt says nothing about ownership. ownsXKMSKey asks whether the key is owned
+// means not owned only when the failure is an AEAD authentication failure;
+// any other decrypt error returns an *XKMSKeyOwnershipError with Op
+// "verify", since a throttled or denied decrypt says nothing about
+// ownership. ownsXKMSKey asks whether the key is owned
 // as a standalone key; a rotated version is owned only through
 // ownsXKMSKeyAs with its parent.
 func (kb *XKMSBackend) ownsXKMSKey(ctx context.Context, name, identity string, symmetric bool) (bool, error) {
@@ -268,13 +291,13 @@ func (kb *XKMSBackend) ownsXKMSKeyAs(ctx context.Context, name, identity string,
 	}
 	plaintext, err := kb.xkmsDecrypt(ctx, identity, encrypted, &kctypes.DecryptOptions{AdditionalData: []byte(record)})
 	if err != nil {
-		// The material is present (GetSymmetricKey succeeded). A proof that
-		// fails while the same key still round-trips fresh data is a confirmed
-		// mismatch; if the key cannot decrypt at all, ownership is unknown.
-		if rtErr := kb.xkmsSymmetricRoundTrip(ctx, identity, record); rtErr != nil {
-			return false, &XKMSKeyOwnershipError{Op: "verify", Name: identity, Err: errors.Join(err, rtErr)}
+		// The material is present (GetSymmetricKey succeeded). Only an
+		// authentication failure proves it is not the material this backend
+		// wrote; any other error leaves ownership unknown.
+		if isXKMSProofMismatch(err) {
+			return false, nil
 		}
-		return false, nil
+		return false, &XKMSKeyOwnershipError{Op: "verify", Name: identity, Err: err}
 	}
 	return bytes.Equal(plaintext, xkmsKeyOwnerCheckPlaintext), nil
 }

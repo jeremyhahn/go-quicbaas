@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -687,7 +688,7 @@ func TestXKMSBackend_NativeDeleteAndRecreateIsNotOwned(t *testing.T) {
 var errTransientDecrypt = errors.New("decrypt throttled")
 
 // TestXKMSBackend_TransientProofDecryptFailureKeepsRotatedKey checks that a
-// proof decrypt failing while the key cannot decrypt at all is a verify error,
+// proof decrypt failing with a non-authentication error is a verify error,
 // not a missing key: the rotated key's cached version survives, and once the
 // decrypt recovers the key encrypts under its current version.
 func TestXKMSBackend_TransientProofDecryptFailureKeepsRotatedKey(t *testing.T) {
@@ -744,39 +745,119 @@ func TestXKMSBackend_TransientProofDecryptFailureKeepsRotatedKey(t *testing.T) {
 	require.Equal(t, []byte("after"), pt)
 }
 
-// TestXKMSBackend_ProofMismatchIsNotOwnedWhileMaterialWorks checks that a
-// proof that cannot decrypt under its record, while the key's material
-// round-trips fresh data, is a confirmed mismatch: not owned, no error.
-func TestXKMSBackend_ProofMismatchIsNotOwnedWhileMaterialWorks(t *testing.T) {
+// TestXKMSBackend_FirstProofDecryptFailureKeepsRotatedKey checks that a proof
+// decrypt failing once with a non-authentication error is a verify error even
+// though the key's material works again right after: the check makes no
+// second decrypt, the rotated key's cached version survives, and the next
+// lookup serves the key under its current version.
+func TestXKMSBackend_FirstProofDecryptFailureKeepsRotatedKey(t *testing.T) {
 	ctx := context.Background()
 	store := newKeyNameGuardXKMS(t)
 	kb := newOwnerTestBackend(t, ctx, store)
-	const id = "tenant/acme/k"
+	const id = "tenant/acme/k1"
 	_, err := kb.CreateKey(ctx, kb.algorithmToKeyAttributes(id, AlgAES256GCM))
 	require.NoError(t, err)
-
-	attrs := kb.xkmsKeyAttributes(id, AlgAES256GCM)
-	attrs.StoreType = xkmssdk.StoreType(string(config.BackendTypeSoftware))
-	identity := kb.xkmsKeyIdentity(attrs)
-	require.Equal(t, kb.buildFullKeyID(id, AlgAES256GCM), identity)
-	proof, err := kb.xkmsKeyOwnerProofFor(ctx, identity, xkmsKeyOwnerRecord(identity)+"#other", true)
+	_, err = kb.RotateKey(ctx, id)
 	require.NoError(t, err)
-	raw, err := json.Marshal(proof)
+	meta, err := kb.GetKeyMetadata(ctx, id)
 	require.NoError(t, err)
-	require.NoError(t, kb.keyNames.Put(ctx, xkmsKeyOwnerRecord(identity), raw))
+	require.Equal(t, 2, int(meta.Version))
 
 	var calls atomic.Int64
 	kb.decrypt = func(ctx context.Context, kid string, data *xkmssdk.EncryptedData, opts *xkmssdk.DecryptOptions) ([]byte, error) {
-		calls.Add(1)
+		if calls.Add(1) == 1 {
+			return nil, errTransientDecrypt
+		}
 		return dbxkms.Decrypt(ctx, kid, data, opts)
 	}
-	owned, err := kb.ownsXKMSKey(ctx, attrs.CN, identity, true)
-	require.NoError(t, err)
-	require.False(t, owned)
-	require.GreaterOrEqual(t, calls.Load(), int64(2), "the proof decrypt and the round trip")
 
-	_, err = newOwnerTestBackend(t, ctx, store).GetKeyMetadata(ctx, id)
-	require.ErrorIs(t, err, ErrKeyNotFound)
+	_, err = kb.GetKeyMetadata(ctx, id)
+	require.Error(t, err)
+	require.False(t, errors.Is(err, ErrKeyNotFound), "a transient decrypt failure is not a missing key: %v", err)
+	var ownErr *XKMSKeyOwnershipError
+	require.ErrorAs(t, err, &ownErr)
+	require.Equal(t, "verify", ownErr.Op)
+	require.ErrorIs(t, err, errTransientDecrypt)
+	require.Equal(t, int64(1), calls.Load(), "the check makes no second decrypt")
+
+	kb.mu.RLock()
+	cached, ok := kb.metadata[id]
+	var cachedVersion int
+	if ok {
+		cachedVersion = int(cached.Version)
+	}
+	kb.mu.RUnlock()
+	require.True(t, ok, "the live key's cached metadata is kept")
+	require.Equal(t, 2, cachedVersion)
+
+	meta, err = kb.GetKeyMetadata(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, 2, int(meta.Version))
+	ct, err := kb.Encrypt(ctx, id, []byte("after"), nil)
+	require.NoError(t, err)
+	enc, err := kb.deserializeEncryptedData(ct)
+	require.NoError(t, err)
+	require.Equal(t, "2", string(enc.Metadata[keyVersionMetadataKey]))
+	pt, err := kb.Decrypt(ctx, id, ct, nil)
+	require.NoError(t, err)
+	require.Equal(t, []byte("after"), pt)
+}
+
+// TestXKMSBackend_ProofMismatchIsNotOwned checks, for every symmetric
+// algorithm, that a proof which does not authenticate under its record is a
+// confirmed mismatch from the one proof decrypt: not owned, no error.
+func TestXKMSBackend_ProofMismatchIsNotOwned(t *testing.T) {
+	for _, alg := range []string{AlgAES128GCM, AlgAES192GCM, AlgAES256GCM, AlgChaCha20Poly1305, AlgXChaCha20Poly1305} {
+		t.Run(alg, func(t *testing.T) {
+			ctx := context.Background()
+			store := newKeyNameGuardXKMS(t)
+			kb := newOwnerTestBackend(t, ctx, store)
+			id := "tenant/acme/mismatch-" + strings.ToLower(alg)
+			_, err := kb.CreateKey(ctx, kb.algorithmToKeyAttributes(id, alg))
+			require.NoError(t, err)
+
+			attrs := kb.xkmsKeyAttributes(id, alg)
+			attrs.StoreType = xkmssdk.StoreType(string(config.BackendTypeSoftware))
+			identity := kb.xkmsKeyIdentity(attrs)
+			require.Equal(t, kb.buildFullKeyID(id, alg), identity)
+			proof, err := kb.xkmsKeyOwnerProofFor(ctx, identity, xkmsKeyOwnerRecord(identity)+"#other", true)
+			require.NoError(t, err)
+			raw, err := json.Marshal(proof)
+			require.NoError(t, err)
+			require.NoError(t, kb.keyNames.Put(ctx, xkmsKeyOwnerRecord(identity), raw))
+
+			var calls atomic.Int64
+			kb.decrypt = func(ctx context.Context, kid string, data *xkmssdk.EncryptedData, opts *xkmssdk.DecryptOptions) ([]byte, error) {
+				calls.Add(1)
+				return dbxkms.Decrypt(ctx, kid, data, opts)
+			}
+			owned, err := kb.ownsXKMSKey(ctx, attrs.CN, identity, true)
+			require.NoError(t, err)
+			require.False(t, owned)
+			require.Equal(t, int64(1), calls.Load(), "only the proof decrypt")
+
+			_, err = newOwnerTestBackend(t, ctx, store).GetKeyMetadata(ctx, id)
+			require.ErrorIs(t, err, ErrKeyNotFound)
+		})
+	}
+}
+
+// TestIsXKMSProofMismatch checks that only AEAD authentication failures
+// classify as a proof mismatch.
+func TestIsXKMSProofMismatch(t *testing.T) {
+	require.Len(t, xkmsAEADOpenErrors, 3)
+	for _, e := range xkmsAEADOpenErrors {
+		require.Error(t, e)
+	}
+	for _, err := range []error{nil, errTransientDecrypt, context.DeadlineExceeded, &api.XKMSDecryptionError{Cause: errTransientDecrypt}} {
+		require.False(t, isXKMSProofMismatch(err), "%v", err)
+	}
+	for _, err := range []error{
+		&api.XKMSDecryptionError{Cause: fmt.Errorf("decryption failed (authentication error): %w", xkmsAEADOpenErrors[0])},
+		xkmssdk.AESGCMErrDecryptionFailed,
+	} {
+		require.True(t, isXKMSProofMismatch(err), "%v", err)
+	}
 }
 
 // TestXKMSBackend_NativeRecreatedSigningKeyIsNotOwned is the signing-key
