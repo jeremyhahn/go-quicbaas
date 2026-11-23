@@ -145,9 +145,11 @@ Recovery is layered so that each failure heals at the lowest layer that can:
 
 ## Container runtime
 
-`pkg/containerruntime` is the stack's one container runtime: the
+`internal/containerruntime` is the stack's one container runtime: the
 `PodmanManager` lifecycle model, attestor hooks, exec, attach and pty, and
-per-container metrics, with their tests. It was moved from go-trusted-platform
+per-container metrics, with their tests. It is internal to this module and is
+not a public API: no exported package, SDK, CLI flag or configuration value
+exposes it. It was moved from go-trusted-platform
 `pkg/compute/podman` with its history (design:
 [trusted service plane: container runtime](../service-plane/architecture.md#container-runtime)).
 
@@ -157,8 +159,8 @@ per-container metrics, with their tests. It was moved from go-trusted-platform
   package.
 - **The agent runs jobs through it.** `containerruntime.JobRuntime` serves
   `orchestration.ContainerRuntime` in-process. The agent's `main` registers
-  it with `fleet.SetInProcessContainerRuntime`; `pkg/fleet` never imports
-  the package, because `quicbaasd` links `pkg/fleet`. No
+  it through `internal/inprocessruntime`; `pkg/fleet` never imports the
+  runtime, because `quicbaasd` links `pkg/fleet`. No
   `--container-runtime` value selects it yet. `auto` never takes it: it
   probes Docker, then Podman, through `ExecContainerRuntime` (removed in a
   later slice of row #1682), because the in-process runtime has no container
