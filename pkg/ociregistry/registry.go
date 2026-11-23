@@ -377,10 +377,11 @@ func (r *Registry) Push(ctx context.Context, ref string, image *Image, opts Push
 	}
 
 	// Encrypted push: route each layer through the encryptor before
-	// persisting. The encrypted blob bytes land at the layer digest
-	// in storage; the manifest carries an "encrypted=true" annotation
-	// plus the wrapped DEK + nonce so Pull can reverse the operation.
-	var encLayers []EncryptedLayer
+	// persisting. Each layer's envelope (ciphertext and wrapped DEK) is
+	// stored under the digest of the envelope itself, which its layer
+	// descriptor records; the manifest carries an "encrypted=true"
+	// annotation so Pull can reverse the operation.
+	var envelopes [][]byte
 	if encrypt {
 		keyID := opts.KeyID
 		if keyID == "" {
@@ -390,7 +391,22 @@ func (r *Registry) Push(ctx context.Context, ref string, image *Image, opts Push
 		if err != nil {
 			return err
 		}
-		encLayers = encImage.EncryptedLayers
+		if len(encImage.EncryptedLayers) != len(image.Layers) {
+			return InvalidManifestError{Reference: ref, Reason: "encryptor returned a different number of layers"}
+		}
+		envelopes = make([][]byte, len(image.Layers))
+		for i := range encImage.EncryptedLayers {
+			env, err := encodeEncryptedLayer(&encImage.EncryptedLayers[i])
+			if err != nil {
+				return err
+			}
+			envelopes[i] = env
+			d := &image.Manifest.Layers[i]
+			if d.Annotations == nil {
+				d.Annotations = make(map[string]string)
+			}
+			d.Annotations[LayerAnnotationEncryptedBlob] = sha256Digest(env)
+		}
 		if image.Manifest.Annotations == nil {
 			image.Manifest.Annotations = make(map[string]string)
 		}
@@ -411,17 +427,11 @@ func (r *Registry) Push(ctx context.Context, ref string, image *Image, opts Push
 		if l.Digest == "" {
 			return InvalidManifestError{Reference: ref, Reason: "layer with empty digest"}
 		}
-		var blob []byte
+		digest, blob := l.Digest, l.Content
 		if encrypt {
-			env, err := encodeEncryptedLayer(&encLayers[i])
-			if err != nil {
-				return err
-			}
-			blob = env
-		} else {
-			blob = l.Content
+			digest, blob = image.Manifest.Layers[i].Annotations[LayerAnnotationEncryptedBlob], envelopes[i]
 		}
-		if err := r.storage.StoreBlob(ctx, l.Digest, blob); err != nil {
+		if err := r.storage.StoreBlob(ctx, digest, blob); err != nil {
 			return err
 		}
 	}
@@ -505,6 +515,13 @@ const (
 	ManifestAnnotationEncrypted = "org.letstrust.registry.encrypted"
 	// ManifestAnnotationKeyID names the key the layers were encrypted with.
 	ManifestAnnotationKeyID = "org.letstrust.registry.key-id"
+	// LayerAnnotationEncryptedBlob, on a layer descriptor of an encrypted
+	// manifest, is the sha256 digest of the encrypted envelope the layer
+	// is stored as. The envelope is stored under its own digest, never the
+	// plaintext layer's, so it cannot replace or be replaced by a
+	// plaintext blob of the same layer, and every stored blob hashes to
+	// the digest it is stored under.
+	LayerAnnotationEncryptedBlob = "org.letstrust.registry.encrypted-blob"
 
 	// ManifestAnnotationSigned is "true" on a manifest the registry signed
 	// on push.
@@ -604,9 +621,19 @@ func (r *Registry) Pull(ctx context.Context, ref string, opts PullOptions) (*Ima
 
 	img.Layers = make([]Layer, 0, len(manifest.Layers))
 	for _, d := range manifest.Layers {
-		data, err := r.storage.GetBlob(ctx, d.Digest)
+		blobDigest := d.Digest
+		if encrypted {
+			blobDigest = d.Annotations[LayerAnnotationEncryptedBlob]
+			if blobDigest == "" {
+				return nil, InvalidManifestError{Reference: ref, Reason: "encrypted layer names no envelope blob"}
+			}
+		}
+		data, err := r.storage.GetBlob(ctx, blobDigest)
 		if err != nil {
 			return nil, err
+		}
+		if actual := sha256Digest(data); actual != blobDigest {
+			return nil, DigestMismatchError{Expected: blobDigest, Actual: actual}
 		}
 		if !encrypted {
 			img.Layers = append(img.Layers, Layer{

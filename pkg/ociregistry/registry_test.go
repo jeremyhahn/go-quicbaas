@@ -552,7 +552,12 @@ func TestRegistry_EncryptedRoundTrip(t *testing.T) {
 	}
 
 	// Confirm what landed on disk is NOT the plaintext.
-	storedBlob, err := storage.GetBlob(ctx, digest)
+	// The envelope is stored under its own digest, not the plaintext's.
+	_, err = storage.GetBlob(ctx, digest)
+	require.Error(t, err, "nothing may be stored at the plaintext digest")
+	envDigest := image.Manifest.Layers[0].Annotations[LayerAnnotationEncryptedBlob]
+	storedBlob, err := storage.GetBlob(ctx, envDigest)
+	require.Equal(t, envDigest, sha256Digest(storedBlob))
 	if err != nil {
 		t.Fatalf("GetBlob: %v", err)
 	}
@@ -741,7 +746,7 @@ func TestRegistryPush_EncryptByDefault(t *testing.T) {
 	m, err := storage.GetManifest(ctx, "enc/img:v1")
 	require.NoError(t, err)
 	assert.Equal(t, "true", m.Annotations[ManifestAnnotationEncrypted])
-	blob, err := storage.GetBlob(ctx, img.Layers[0].Digest)
+	blob, err := storage.GetBlob(ctx, img.Manifest.Layers[0].Annotations[LayerAnnotationEncryptedBlob])
 	require.NoError(t, err)
 	assert.NotEqual(t, []byte("plain layer"), blob, "default push stored the plaintext")
 
