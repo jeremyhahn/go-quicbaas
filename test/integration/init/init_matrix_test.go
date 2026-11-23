@@ -69,6 +69,13 @@ import (
 	"time"
 )
 
+// Barrier strategies the matrix initialises with.
+const (
+	strategyNone       = "none"
+	strategyPassphrase = "passphrase"
+	strategyShamir     = "shamir"
+)
+
 // matrixCell is one (strategy, transport) combination the matrix runs.
 type matrixCell struct {
 	strategy  string
@@ -80,9 +87,9 @@ type matrixCell struct {
 // serves those transports only after its officers' ceremony unseals it,
 // and this matrix does not drive the ceremony.
 var matrixCells = []matrixCell{
-	{"none", "rest"}, {"none", "grpc"}, {"none", "quic"}, {"none", "mcp"}, {"none", "unix"},
-	{"passphrase", "rest"}, {"passphrase", "grpc"}, {"passphrase", "quic"}, {"passphrase", "mcp"}, {"passphrase", "unix"},
-	{"shamir", "rest"}, {"shamir", "grpc"}, {"shamir", "unix"},
+	{strategyNone, "rest"}, {strategyNone, "grpc"}, {strategyNone, "quic"}, {strategyNone, "mcp"}, {strategyNone, "unix"},
+	{strategyPassphrase, "rest"}, {strategyPassphrase, "grpc"}, {strategyPassphrase, "quic"}, {strategyPassphrase, "mcp"}, {strategyPassphrase, "unix"},
+	{strategyShamir, "rest"}, {strategyShamir, "grpc"}, {strategyShamir, "unix"},
 }
 
 // TestCanonicalInit_Matrix runs every (strategy, transport) cell. The
