@@ -2044,3 +2044,31 @@ func TestAEADSafetyTracker_ClearDEKConfig_EnforceDefaultsFalse(t *testing.T) {
 	assert.Equal(t, uint64(0), config.MaxOperations)
 	assert.Equal(t, uint64(0), config.MaxBytes)
 }
+
+// TestAEADSafety_ConfigChangeAppliesToRetainedVersion checks that a key's
+// safety config change, made after a rotation, bounds its retained version.
+func TestAEADSafety_ConfigChangeAppliesToRetainedVersion(t *testing.T) {
+	tr := NewAEADSafetyTracker()
+	ctx := context.Background()
+	const key = "retained-cfg"
+
+	tr.SetKeyConfig(key, AEADSafetyConfig{MaxOperations: 100, MaxBytes: 1 << 30})
+	require.NoError(t, tr.RecordKeyVersionUse(ctx, key, 1, 5, 10))
+	require.NoError(t, tr.RotateKeyUsage(key, func() (uint64, error) { return 2, nil }))
+
+	// Lowering the limit bounds the retained v1 (at 10 of 10).
+	tr.SetKeyConfig(key, AEADSafetyConfig{MaxOperations: 10, MaxBytes: 1 << 30})
+	require.Error(t, tr.RecordKeyVersionUse(ctx, key, 1, 5, 10))
+
+	// Raising it releases v1.
+	tr.SetKeyConfig(key, AEADSafetyConfig{MaxOperations: 1000, MaxBytes: 1 << 30})
+	require.NoError(t, tr.RecordKeyVersionUse(ctx, key, 1, 1, 10))
+
+	// Clearing it leaves no limit without enforced defaults.
+	tr.SetKeyConfig(key, AEADSafetyConfig{MaxOperations: 10, MaxBytes: 1 << 30})
+	tr.ClearKeyConfig(key)
+	require.NoError(t, tr.RecordKeyVersionUse(ctx, key, 1, 1, 10))
+
+	// v2 is unaffected.
+	require.NoError(t, tr.RecordKeyVersionUse(ctx, key, 2, 1, 10))
+}

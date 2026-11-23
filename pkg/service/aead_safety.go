@@ -794,10 +794,15 @@ func (t *AEADSafetyTracker) chargeKeyVersion(keyID string, version, operations, 
 			Config:  usage.Config,
 			Version: version,
 		})
-		if !charge {
-			return retired, false
+		// A retained version is held to the key's current config, which
+		// SetKeyConfig and ClearKeyConfig write under usage.mu (held here).
+		retired.mu.Lock()
+		retired.Config = usage.Config
+		var exceeded bool
+		if charge {
+			exceeded = retired.incrementLocked(operations, bytesProcessed)
 		}
-		exceeded := retired.IncrementUsageBy(operations, bytesProcessed)
+		retired.mu.Unlock()
 		return retired, exceeded
 	}
 	if version > usage.Version {
