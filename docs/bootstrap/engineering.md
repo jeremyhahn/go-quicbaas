@@ -70,11 +70,11 @@ start again — first-boot has not completed and will resume from where it stopp
 Restarting resumes; it does not corrupt. Because the grant is written last,
 there is nothing half-granted to clean up.
 
-The one cause that is **not** resumable is an undelivered admin bundle, and the
-message withholds the closing reassurance for it alone: that cause carries its
-own terminal remedy (wipe and re-bootstrap — see below), and telling the operator
-in the same sentence that a restart would resume sends them round a loop that
-refuses identically every time.
+An undelivered admin credential is resumable too: a restart reissues and
+delivers it (see below). Only when even the reissue delivers nothing does the
+boot fail with `AdminBundleNotDeliveredError`, whose message withholds the
+closing reassurance and names its own terminal remedy (wipe and re-bootstrap),
+since a restart would then refuse identically every time.
 
 ### A count is not an administrator
 
@@ -89,15 +89,21 @@ any of them.
 A lookup that cannot answer is **not** read as absence: it is reported, and the
 boot fails closed.
 
-### A re-entry that cannot deliver a credential refuses
+### A re-entry reissues the admin credential
 
 qrdb's first-boot is idempotent and issues no certificate once the admin user
-exists. So a re-entry on a CA-backed deployment has no bundle to write, and the
-operator would be left without the private key for a certificate already bound to
-them. That case fails with `AdminBundleNotDeliveredError` rather than completing:
-reissue-on-re-entry is not implemented, so the remedy is to wipe and
-re-bootstrap. A CA-less deployment is unaffected — there was never a certificate
-to deliver, and that is its completed state.
+exists. So a re-entry on a CA-backed deployment (a boot that stopped after the
+user was created but before the bundle was delivered or the grant written)
+issues a fresh admin credential itself: it binds the new certificate's SPKI to
+the admin in place of the undelivered one, writes the bundle (certificate and
+private key) to the data directory, and only then writes the grant. Restarting
+after an undelivered credential is therefore the remedy; do not wipe.
+
+Only if that reissue still delivers nothing (for example no data directory to
+write the bundle to) does the boot fail with `AdminBundleNotDeliveredError`,
+and wiping and re-bootstrapping is the remedy then. A CA-less deployment is
+unaffected — there was never a certificate to deliver, and that is its
+completed state.
 
 ### How the refusal is tested
 
@@ -116,7 +122,8 @@ reverted. They run against the fresh-install fixture in
 |---|---|
 | A failed first-boot refuses the boot (`*NoAdministratorError`) | `TestInitializeIAMComponents_RefusesWhenFirstBootFailsOnAFreshInstall` |
 | A failure inside qrdb's first-boot resumes through the role-name resolver (`RoleAdapter.GetRoleByName`) | `TestFirstBootBootstrap_ResumesAfterAFailureInsideQRDBFirstBoot` |
-| A CA-backed re-entry with no reissued certificate refuses (`AdminBundleNotDeliveredError`) | `TestFirstBootBootstrap_ReEntryWithoutAReissuedCertRefuses` |
+| A CA-backed re-entry reissues, binds and delivers the admin credential before the grant | `TestFirstBootBootstrap_ReEntryReissuesTheAdminCredential` |
+| A CA-less re-entry completes without a bundle | `TestFirstBootBootstrap_CALessReEntryStillCompletes` |
 
 The `startService` tests stub the IAM seam. They prove the caller refuses a
 `*NoAdministratorError`, not that one is produced; producing one is the first

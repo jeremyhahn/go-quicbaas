@@ -172,8 +172,9 @@ func NewClusteredStorage(kv interfaces.KVStore, claims ClaimTransactor, marks Cl
 	}
 	return &ClusteredStorage{
 		Storage: &Storage{
-			kv:  kv,
-			ids: &clusterJobIDs{kv: kv, reader: marks, writer: idWriter},
+			kv:         kv,
+			ids:        &clusterJobIDs{kv: kv, reader: marks, writer: idWriter},
+			sweepEvery: tenantJobIndexSweepInterval,
 		},
 		writer: writer,
 		marks:  marks,
