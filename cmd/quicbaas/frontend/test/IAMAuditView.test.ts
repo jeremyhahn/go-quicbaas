@@ -10,7 +10,7 @@
  * 2. Commercial License
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/svelte';
 import type { IAMAuditEvent, IAMTenant } from '@quicbaas/sdk';
 
@@ -74,6 +74,20 @@ vi.mock('../src/stores/toast.svelte.ts', () => ({
 }));
 
 import IAMAuditView from '../src/views/security/IAMAuditView.svelte';
+import { setAuthenticated, setUnauthenticated } from '../src/stores/auth.svelte.ts';
+
+function sessionToken(tenantID: string): string {
+  const b64url = (o: unknown): string =>
+    btoa(JSON.stringify(o)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const claims = {
+    sub: 'usr_1',
+    tenant_id: tenantID,
+    roles: ['operator'],
+    sid: 'sid_1',
+    exp: Math.floor(Date.now() / 1000) + 3600,
+  };
+  return `${b64url({ alg: 'none' })}.${b64url(claims)}.sig`;
+}
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -103,6 +117,28 @@ describe('IAMAuditView', () => {
         getAuditEvent: mockGetAuditEvent,
         deleteAuditEventsBefore: mockDeleteAuditEventsBefore,
       },
+    });
+  });
+
+  describe('own tenant without tenants:list', () => {
+    beforeEach(() => {
+      setAuthenticated({ access_token: sessionToken('acme') });
+      mockListTenants.mockRejectedValue(new Error('403 Forbidden'));
+    });
+
+    afterEach(() => {
+      setUnauthenticated();
+    });
+
+    it('lists the session tenant’s events when listTenants is refused', async () => {
+      render(IAMAuditView);
+      await waitFor(() => {
+        expect(mockListAuditEvents).toHaveBeenCalledWith(expect.objectContaining({ tenantID: 'acme' }));
+      });
+      const select = screen.getByLabelText('Tenant') as HTMLSelectElement;
+      expect(select).toBeEnabled();
+      expect(select.value).toBe('acme');
+      expect(screen.queryByText('403 Forbidden')).toBeNull();
     });
   });
 

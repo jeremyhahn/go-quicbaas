@@ -10,7 +10,7 @@
  * 2. Commercial License
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
 import type { IAMPolicyDocument } from '@quicbaas/sdk';
 
@@ -56,6 +56,20 @@ vi.mock('../src/stores/toast.svelte.ts', () => ({
 }));
 
 import PolicyTesterView from '../src/views/security/PolicyTesterView.svelte';
+import { setAuthenticated, setUnauthenticated } from '../src/stores/auth.svelte.ts';
+
+function sessionToken(tenantID: string): string {
+  const b64url = (o: unknown): string =>
+    btoa(JSON.stringify(o)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const claims = {
+    sub: 'usr_1',
+    tenant_id: tenantID,
+    roles: ['operator'],
+    sid: 'sid_1',
+    exp: Math.floor(Date.now() / 1000) + 3600,
+  };
+  return `${b64url({ alg: 'none' })}.${b64url(claims)}.sig`;
+}
 
 async function renderReady(): Promise<void> {
   render(PolicyTesterView);
@@ -97,6 +111,39 @@ describe('PolicyTesterView', () => {
         simulatePolicy: mockSimulatePolicy,
         getEffectivePermissions: mockGetEffectivePermissions,
       },
+    });
+  });
+
+  describe('own tenant without tenants:list', () => {
+    beforeEach(() => {
+      setAuthenticated({ access_token: sessionToken('acme') });
+      mockListTenants.mockRejectedValue(new Error('403 Forbidden'));
+    });
+
+    afterEach(() => {
+      setUnauthenticated();
+    });
+
+    it('checks the built subject in the session tenant when listTenants is refused', async () => {
+      mockTestPolicy.mockResolvedValue({
+        allowed: true,
+        matched_policy: 'readers',
+        matched_rule: 'read',
+        reason: 'rule matched',
+      });
+      await renderReady();
+      await fillCheck();
+      await fireEvent.click(screen.getByRole('button', { name: 'Check' }));
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Check result')).toHaveTextContent('Allowed');
+      });
+      expect(mockTestPolicy).toHaveBeenCalledWith('acme', {
+        subject: expectedSubject,
+        action: 'read',
+        resource: 'kv:orders/*',
+      });
+      expect(screen.queryByText('403 Forbidden')).toBeNull();
     });
   });
 

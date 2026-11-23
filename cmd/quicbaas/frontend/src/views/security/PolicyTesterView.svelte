@@ -27,6 +27,8 @@
 -->
 <script lang="ts">
   import { getSDKClient } from '../../stores/sdkClient.ts';
+  import { authStore } from '../../stores/auth.svelte.ts';
+  import { tenantOptionsOf, withRequiredTenants, type TenantOption } from '../../lib/tenantOptions.ts';
   import PageHeader from '../../components/core/PageHeader.svelte';
   import type {
     IAMSubject,
@@ -42,14 +44,19 @@
   // State
   // ---------------------------------------------------------------------------
 
-  let tenantIDs: string[] = $state([]);
+  // The session's own tenant is always offered, so a caller allowed to test
+  // policies in its tenant but not to list tenants still uses the page.
+  let discoveredTenants: TenantOption[] = $state([]);
   let tenantsLoading = $state(false);
   let tenantsError: string | null = $state(null);
-  let selectedTenantID = $state('');
+  let selectedTenantID = $state(authStore.tenantID);
+  const tenantIDs = $derived(
+    withRequiredTenants(discoveredTenants, [selectedTenantID, authStore.tenantID]).map((t) => t.id),
+  );
 
   // Subject (shared by every panel)
   let subjectID = $state('');
-  let subjectTenantID = $state('');
+  let subjectTenantID = $state(authStore.tenantID);
   let subjectRoles = $state('');
   let subjectAuthenticated = $state(true);
   let subjectMFA = $state(false);
@@ -85,25 +92,26 @@
   // ---------------------------------------------------------------------------
 
   async function loadTenants(): Promise<void> {
+    const forSession = authStore.sessionKey;
     tenantsLoading = true;
     tenantsError = null;
     try {
       const client = await getSDKClient();
       const resp = await client.iam.listTenants();
-      const seen = new Set<string>();
-      tenantIDs = [];
-      for (const t of resp.tenants) {
-        if (seen.has(t.id)) continue;
-        seen.add(t.id);
-        tenantIDs.push(t.id);
-      }
+      if (forSession !== authStore.sessionKey) return;
+      discoveredTenants = tenantOptionsOf(resp.tenants);
       if (selectedTenantID === '' && tenantIDs.length > 0) {
         selectTenant(tenantIDs[0] ?? '');
       }
     } catch (e) {
-      tenantsError = e instanceof Error ? e.message : 'Failed to load tenants';
+      if (forSession !== authStore.sessionKey) return;
+      // A principal without tenants:list keeps its own tenant selected; the
+      // error is only shown when there is no tenant to work in at all.
+      if (selectedTenantID === '') {
+        tenantsError = e instanceof Error ? e.message : 'Failed to load tenants';
+      }
     } finally {
-      tenantsLoading = false;
+      if (forSession === authStore.sessionKey) tenantsLoading = false;
     }
   }
 

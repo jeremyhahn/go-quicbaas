@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
 import type { IAMApplication } from '@quicbaas/sdk';
 
@@ -73,6 +73,20 @@ vi.mock('../src/stores/toast.svelte.ts', () => ({
 }));
 
 import OAuthAppsView from '../src/views/security/OAuthAppsView.svelte';
+import { setAuthenticated, setUnauthenticated } from '../src/stores/auth.svelte.ts';
+
+function sessionToken(tenantID: string): string {
+  const b64url = (o: unknown): string =>
+    btoa(JSON.stringify(o)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const claims = {
+    sub: 'usr_1',
+    tenant_id: tenantID,
+    roles: ['operator'],
+    sid: 'sid_1',
+    exp: Math.floor(Date.now() / 1000) + 3600,
+  };
+  return `${b64url({ alg: 'none' })}.${b64url(claims)}.sig`;
+}
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -102,6 +116,26 @@ describe('OAuthAppsView', () => {
         deleteApp: mockDeleteApp,
         rotateAppSecret: mockRotateAppSecret,
       },
+    });
+  });
+
+  describe('own tenant without tenants:list', () => {
+    beforeEach(() => {
+      setAuthenticated({ access_token: sessionToken('acme') });
+      mockListTenants.mockRejectedValue(new Error('403 Forbidden'));
+    });
+
+    afterEach(() => {
+      setUnauthenticated();
+    });
+
+    it('lists the applications of the session tenant when listTenants is refused', async () => {
+      render(OAuthAppsView);
+      await waitFor(() => {
+        expect(mockListApps).toHaveBeenCalledWith('acme');
+      });
+      expect((screen.getByLabelText('Tenant') as HTMLSelectElement).value).toBe('acme');
+      expect(screen.queryByText('403 Forbidden')).toBeNull();
     });
   });
 

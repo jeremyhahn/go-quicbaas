@@ -29,6 +29,8 @@
 -->
 <script lang="ts">
   import { getSDKClient } from '../../stores/sdkClient.ts';
+  import { authStore } from '../../stores/auth.svelte.ts';
+  import { tenantOptionsOf, withRequiredTenants, type TenantOption } from '../../lib/tenantOptions.ts';
   import { showToast } from '../../stores/toast.svelte.ts';
   import PageHeader from '../../components/core/PageHeader.svelte';
   import DataTable from '../../components/core/DataTable.svelte';
@@ -37,7 +39,6 @@
   import type {
     IAMExternalProvider,
     IAMProviderType,
-    IAMTenant,
     RegisterIAMProviderRequest,
     UpdateIAMProviderRequest,
   } from '@quicbaas/sdk';
@@ -79,8 +80,11 @@
   // State
   // ---------------------------------------------------------------------------
 
-  let tenants: IAMTenant[] = $state([]);
-  let selectedTenantID = $state('');
+  // The session's own tenant is always offered: reading providers needs only
+  // tenants:read, so a caller without tenants:list still works in its tenant.
+  let discoveredTenants: TenantOption[] = $state([]);
+  let selectedTenantID = $state(authStore.tenantID);
+  const tenants = $derived(withRequiredTenants(discoveredTenants, [selectedTenantID, authStore.tenantID]));
   let tenantsLoading = $state(false);
   let tenantsError: string | null = $state(null);
 
@@ -117,24 +121,26 @@
   // ---------------------------------------------------------------------------
 
   async function loadTenants(): Promise<void> {
+    const forSession = authStore.sessionKey;
     tenantsLoading = true;
     tenantsError = null;
     try {
       const client = await getSDKClient();
       const resp = await client.iam.listTenants();
-      const seen = new Set<string>();
-      tenants = resp.tenants.filter((t) => {
-        if (seen.has(t.id)) return false;
-        seen.add(t.id);
-        return true;
-      });
+      if (forSession !== authStore.sessionKey) return;
+      discoveredTenants = tenantOptionsOf(resp.tenants);
       if (selectedTenantID === '' && tenants.length > 0) {
         selectedTenantID = tenants[0]?.id ?? '';
       }
     } catch (e) {
-      tenantsError = e instanceof Error ? e.message : 'Failed to load tenants';
+      if (forSession !== authStore.sessionKey) return;
+      // A principal without tenants:list keeps its own tenant selected; the
+      // error is only shown when there is no tenant to work in at all.
+      if (selectedTenantID === '') {
+        tenantsError = e instanceof Error ? e.message : 'Failed to load tenants';
+      }
     } finally {
-      tenantsLoading = false;
+      if (forSession === authStore.sessionKey) tenantsLoading = false;
     }
     void loadProviders();
   }
