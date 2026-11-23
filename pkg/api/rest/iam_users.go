@@ -419,7 +419,7 @@ func (h *IAMHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	// Any explicit roles array is a role assignment, so it needs roles:assign
 	// on top of the route's users:update, even when it equals the roles the
 	// user holds now: an equality exemption decided on an earlier read would
-	// let a concurrent revocation be undone by this write (Codex 8269).
+	// let a concurrent revocation be undone by this write.
 	if req.Roles != nil && !h.authorizeRoleAssignment(w, r, tenantID) {
 		return
 	}
@@ -463,7 +463,7 @@ const (
 // tenantID, and answers the request when it may not. A user create or update
 // that carries roles assigns them as surely as AssignRole does, so it needs
 // the same roles:assign: without it, a caller holding only users:update could
-// write the tenant Admin role into its own account (Codex 8243). The decision
+// write the tenant Admin role into its own account. The decision
 // is go-qrdb's RBAC authorizer's, the one the route permissions use. It fails
 // closed: with no authorizer wired, a role-bearing request is refused.
 func (h *IAMHandler) authorizeRoleAssignment(w http.ResponseWriter, r *http.Request, tenantID string) bool {

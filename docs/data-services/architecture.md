@@ -2202,7 +2202,7 @@ Server (lifecycle_rag.go)
         └── factory → indexing.NewVectorIndexFromConfig(..., WithVectorClient(client))
               └── qrdbVectorIndex (pkg/rag/indexing/vector_qrdb.go)
                     └── transport.VectorClient (via ShardedClient.ForShard(vectorShardID))
-                          └── baasTransport → PebbleVectorStorage (barrier-encrypted)
+                          └── qrdb node embedded transport (node.Client()) → qrdb vector storage (barrier-encrypted)
 ```
 
 #### Components
@@ -2230,7 +2230,7 @@ Server (lifecycle_rag.go)
 
 Tenant isolation is encoded into the qrdb **namespace name** at construction time:
 - Physical namespace: `{tenantID}:{logicalNamespace}` (or just `logicalNamespace` for system tenant).
-- The `baasTransport.VectorClient` uses the namespace string as the KV key prefix, providing complete storage isolation between tenants without relying on the `tenant.FromContext(ctx)` context key (which uses a different context slot than quicbaas's `iam.tenantContextKey{}`).
+- The embedded transport's `VectorClient` uses the namespace string as the KV key prefix, providing complete storage isolation between tenants without relying on the `tenant.FromContext(ctx)` context key (which uses a different context slot than quicbaas's `iam.tenantContextKey{}`).
 - The system-level RAG operates under the system tenant. Per-tenant RAG requires a separate `rag.System` per tenant, constructed with `WithRAGTenantID(tenantID)` propagated through the server's per-tenant initialization flow.
 
 #### In-Memory Fallback
