@@ -941,7 +941,7 @@ func TestExecuteIAMTool_Routes(t *testing.T) {
 			callCtx := ctx
 			if _, ok := tt.args["roles"]; ok {
 				// A user write carrying roles needs an authenticated caller
-				// holding roles:assign (#2064).
+				// holding roles:assign (#2068).
 				callCtx = withCaller(ctx)
 			}
 			result, err := reg.executeIAMTool(callCtx, tt.toolName, tt.args)

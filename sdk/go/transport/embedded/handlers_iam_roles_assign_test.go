@@ -82,9 +82,9 @@ func createUserWithRoles(t *testing.T, ctx context.Context, svc service.QuicBaaS
 }
 
 // TestHandleIAMUserCreate_RolesRequireRolesAssign proves a user create that
-// carries roles needs roles:assign from a bound caller, as on REST, gRPC
-// and MCP (go-quicbaas#2064), while an unbound context stays the host
-// process calling its own service.
+// carries roles needs roles:assign from a bound caller, as on REST and MCP
+// (go-quicbaas#2068), while an unbound context stays the host process
+// calling its own service.
 func TestHandleIAMUserCreate_RolesRequireRolesAssign(t *testing.T) {
 	base, store := newIAMTestService()
 	svc := &mockQuicBaaSForIAMWithPolicy{
