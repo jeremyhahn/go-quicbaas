@@ -289,6 +289,9 @@ func TestCryptoDecrypt_VersionStatusAcrossNodes_RealXKMS(t *testing.T) {
 	_, err = csB.Decrypt(ctx, &DecryptRequest{KeyID: keyID, Ciphertext: v1.Ciphertext})
 	require.Error(t, err, "a failed status lookup must refuse the decrypt")
 	require.NotErrorAs(t, err, &disabled)
+	var qbErr *dberrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	require.Equal(t, dberrors.ErrStorage, qbErr.Code)
 	_, err = csB.DecryptBatch(ctx, &DecryptBatchRequest{KeyID: keyID, Items: []BatchDecryptItem{{Ciphertext: v1.Ciphertext}}})
 	require.Error(t, err)
 	shared.failGet = false
