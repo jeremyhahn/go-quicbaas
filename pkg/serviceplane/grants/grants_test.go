@@ -659,14 +659,146 @@ func TestSecrets_RevokeTwiceSucceeds(t *testing.T) {
 // flakyRegistry fails Deregister with err while it is set.
 type flakyRegistry struct {
 	NameRegistry
-	mu  sync.Mutex
-	err error
+	mu     sync.Mutex
+	err    error
+	regErr error
 }
 
 func (r *flakyRegistry) fail(err error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.err = err
+}
+
+func (r *flakyRegistry) failRegister(err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.regErr = err
+}
+
+func (r *flakyRegistry) Register(ctx context.Context, inst registry.ServiceInstance, ttl time.Duration) (int64, error) {
+	r.mu.Lock()
+	err := r.regErr
+	r.mu.Unlock()
+	if err != nil {
+		return 0, err
+	}
+	return r.NameRegistry.Register(ctx, inst, ttl)
+}
+
+func keys(m map[serviceplane.GrantKind]string) []serviceplane.GrantKind {
+	var out []serviceplane.GrantKind
+	for _, k := range serviceplane.GrantKinds {
+		if _, ok := m[k]; ok {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+// A redeploy after an undeploy that failed part way grants anew what the
+// undeploy revoked: a live TLS leaf and secrets binding, not dead references.
+func TestPlane_RedeployAfterAPartialUndeployGrantsAnew(t *testing.T) {
+	e := newEnv(t)
+	flaky := &flakyRegistry{NameRegistry: e.reg}
+	e.grant(serviceplane.GrantName).(*Name).Registry = flaky
+	rt := serviceplanetest.NewRuntime(t)
+	rt.Grants = e.grants
+	plane := rt.Plane(t)
+	ctx := context.Background()
+
+	_, err := plane.Deploy(ctx, "acme", rt.Sign(t, "acme", "web"))
+	require.NoError(t, err)
+	leaf := e.kept(t, "acme", "tenant/acme/services/web/tls")
+
+	flaky.fail(errors.New("registry unavailable"))
+	require.ErrorIs(t, plane.Undeploy(ctx, "acme", "web"), serviceplane.ErrGrant)
+	require.True(t, e.revoked(t, leaf))
+	_, err = plane.Resume(ctx, "acme", "web")
+	require.ErrorIs(t, err, serviceplane.ErrGrant, "a partly revoked service is not launched")
+	flaky.fail(nil)
+
+	svc, err := plane.Redeploy(ctx, "acme", rt.Sign(t, "acme", "web"))
+	require.NoError(t, err)
+	assert.Equal(t, serviceplane.StateRunning, svc.State)
+	assert.False(t, svc.Cleanup)
+	renewed := e.kept(t, "acme", "tenant/acme/services/web/tls")
+	assert.NotEqual(t, leaf.SerialNumber, renewed.SerialNumber, "a new TLS leaf is issued")
+	assert.False(t, e.revoked(t, renewed))
+	assert.Equal(t, renewed.SerialNumber.Text(16), svc.Grants[serviceplane.GrantCertificate])
+	m := serviceplanetest.Manifest("acme", "web")
+	data, _, err := e.secrets.Get(tenantctx.WithTenant(ctx, "acme"), bindingPath(m))
+	require.NoError(t, err, "the secrets binding is bound again")
+	assert.Equal(t, SPIFFEID(trustDomain, m), string(data["spiffe_id"]))
+}
+
+// A held leaf is kept while fresh and renewed, its stored key and
+// certificate replaced and the old one revoked, once due or expired.
+func TestCertificate_RenewsTheLeafBeforeItExpires(t *testing.T) {
+	e := newEnv(t)
+	m := serviceplanetest.Manifest("acme", "web")
+	g, ok := e.grant(serviceplane.GrantCertificate).(*Certificate)
+	require.True(t, ok)
+	ctx := context.Background()
+
+	first, err := g.Grant(ctx, m, "")
+	require.NoError(t, err)
+	issued := e.kept(t, "acme", "tenant/acme/services/web/tls")
+	g.Now = func() time.Time { return issued.NotBefore.Add(time.Second) }
+	again, err := g.Grant(ctx, m, first)
+	require.NoError(t, err)
+	assert.Equal(t, first, again, "a fresh leaf is kept")
+
+	for _, name := range []string{"due for renewal", "expired"} {
+		t.Run(name, func(t *testing.T) {
+			held := e.kept(t, "acme", "tenant/acme/services/web/tls")
+			prior := held.SerialNumber.Text(16)
+			if name == "expired" {
+				g.Now = func() time.Time { return held.NotAfter.Add(time.Hour) }
+			} else {
+				g.Now = func() time.Time { return held.NotAfter.Add(-held.NotAfter.Sub(held.NotBefore) / 4) }
+			}
+			ref, err := g.Grant(ctx, m, prior)
+			require.NoError(t, err)
+			assert.NotEqual(t, prior, ref, "the leaf is renewed")
+			renewed := e.kept(t, "acme", "tenant/acme/services/web/tls")
+			assert.Equal(t, renewed.SerialNumber.Text(16), ref)
+			assert.True(t, e.revoked(t, held), "the replaced leaf is revoked")
+			assert.False(t, e.revoked(t, renewed))
+		})
+	}
+}
+
+// A replacement registration that fails leaves the prior name registered.
+func TestName_AFailedReplacementKeepsThePriorName(t *testing.T) {
+	e := newEnv(t)
+	flaky := &flakyRegistry{NameRegistry: e.reg}
+	g := e.grant(serviceplane.GrantName).(*Name)
+	g.Registry = flaky
+	m := serviceplanetest.Manifest("acme", "web")
+	ctx := context.Background()
+	acme := tenantctx.WithTenant(ctx, "acme")
+
+	m.Ports = []serviceplane.Port{{Name: "https", Port: 8443, Protocol: "tcp"}}
+	ref, err := g.Grant(ctx, m, "")
+	require.NoError(t, err)
+	flaky.failRegister(errors.New("registry unavailable"))
+	m.Ports[0].Port = 9443
+	_, err = g.Grant(ctx, m, ref)
+	require.Error(t, err)
+	got, _, err := e.reg.Resolve(acme, "web")
+	require.NoError(t, err)
+	require.Len(t, got, 1, "the prior registration is still in force")
+	assert.Equal(t, "web.acme.svc.example:8443", got[0].Address)
+
+	flaky.failRegister(nil)
+	moved, err := g.Grant(ctx, m, ref)
+	require.NoError(t, err)
+	got, _, err = e.reg.Resolve(acme, "web")
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "web.acme.svc.example:9443", got[0].Address)
+	require.NoError(t, g.Revoke(ctx, m, moved))
 }
 
 func (r *flakyRegistry) Deregister(ctx context.Context, leaseID int64) error {
@@ -702,7 +834,9 @@ func TestPlane_UndeployRetriesAfterPartialCleanup(t *testing.T) {
 	svc, err := plane.Get(ctx, "acme", "web")
 	require.NoError(t, err)
 	assert.Equal(t, serviceplane.StateHalted, svc.State)
-	assert.Len(t, svc.Grants, len(serviceplane.GrantKinds), "a failed undeploy keeps every grant")
+	assert.Equal(t, []serviceplane.GrantKind{serviceplane.GrantName}, keys(svc.Grants),
+		"a failed undeploy keeps only the grants whose revoke failed")
+	assert.True(t, svc.Cleanup)
 
 	flaky.fail(nil)
 	require.NoError(t, plane.Undeploy(ctx, "acme", "web"), "the retry repeats the revocations already done")

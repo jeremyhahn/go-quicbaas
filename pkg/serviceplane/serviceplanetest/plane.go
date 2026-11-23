@@ -12,7 +12,9 @@ import (
 	"crypto/ed25519"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/kvstore"
 	"github.com/jeremyhahn/go-quicbaas/pkg/serviceplane"
@@ -94,6 +96,36 @@ type Runtime struct {
 	Grants   []serviceplane.Grant
 	Verifier serviceplane.Keyring
 	Key      ed25519.PrivateKey
+	// Now is the clock of the planes Plane builds; nil is time.Now.
+	Now func() time.Time
+	// writes is how many more store swaps land before every later one is
+	// lost, as a crashed node's would be; negative is no limit.
+	writes atomic.Int64
+	once   sync.Once
+}
+
+// LoseWritesAfter lets n more store swaps land and loses every later one,
+// as if the node crashed; a negative n lands every swap again.
+func (r *Runtime) LoseWritesAfter(n int64) {
+	r.once.Do(func() {})
+	r.writes.Store(n)
+}
+
+// landWrite reports whether one more swap lands.
+func (r *Runtime) landWrite() bool {
+	r.once.Do(func() { r.writes.Store(-1) })
+	for {
+		n := r.writes.Load()
+		if n < 0 {
+			return true
+		}
+		if n == 0 {
+			return false
+		}
+		if r.writes.CompareAndSwap(n, n-1) {
+			return true
+		}
+	}
 }
 
 // NewRuntime makes a runtime with a fresh key.
@@ -148,8 +180,9 @@ func (r *Runtime) Sign(t testing.TB, tenant, name string) *serviceplane.SignedMa
 // guard arbitrates writes over an in-memory store, as cas.Writer does over
 // go-qrdb.
 type guard struct {
-	mu sync.Mutex
-	kv *kvstore.Store
+	mu   sync.Mutex
+	kv   *kvstore.Store
+	land func() bool
 }
 
 func (g *guard) Create(ctx context.Context, key string, value []byte) (bool, error) {
@@ -162,6 +195,9 @@ func (g *guard) Create(ctx context.Context, key string, value []byte) (bool, err
 }
 
 func (g *guard) Swap(ctx context.Context, key string, held, next []byte) (bool, error) {
+	if g.land != nil && !g.land() {
+		return false, nil
+	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return g.kv.CompareAndSwap(ctx, key, held, next)
@@ -171,12 +207,13 @@ func (g *guard) Swap(ctx context.Context, key string, held, next []byte) (bool, 
 func (r *Runtime) Plane(t testing.TB) *serviceplane.Plane {
 	t.Helper()
 	kv := kvstore.NewMemory()
-	store, err := serviceplane.NewStore(&guard{kv: kv}, kv)
+	store, err := serviceplane.NewStore(&guard{kv: kv, land: r.landWrite}, kv)
 	if err != nil {
 		t.Fatal(err)
 	}
 	plane, err := serviceplane.NewPlane(serviceplane.Config{
 		Store: store, Verifier: r.Verifier, Launcher: r.Launcher, Grants: r.Grants,
+		Now: r.Now,
 	})
 	if err != nil {
 		t.Fatal(err)

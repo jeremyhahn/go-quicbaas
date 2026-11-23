@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 
 	ggrpc "google.golang.org/grpc"
 
@@ -57,6 +58,68 @@ func (s *Server) servicePlaneResolver(rt service.ServicePlaneRuntime) service.Se
 		plane = built
 		return plane, nil
 	}
+}
+
+// servicePlaneRecoveryInterval is how often the node settles abandoned
+// service claims: a verb whose holder crashed, or whose settlement write
+// failed, leaves its service transitioning until this recovers it halted.
+const servicePlaneRecoveryInterval = time.Minute
+
+// startServicePlaneRecovery runs Plane.Recover now and every
+// servicePlaneRecoveryInterval until shutdown. A plane that cannot be built
+// yet (the platform shard is not up) is retried on the next tick.
+func (s *Server) startServicePlaneRecovery(resolve service.ServicePlaneResolver) {
+	s.stopServicePlaneRecovery()
+	ctx, stop := context.WithCancel(context.Background())
+	loop := &orchestrationSweeps{stop: stop, done: make(chan struct{})}
+	s.servicePlaneRecovery = loop
+	go func() {
+		defer close(loop.done)
+		ticker := time.NewTicker(servicePlaneRecoveryInterval)
+		defer ticker.Stop()
+		s.runServicePlaneRecovery(ctx, resolve, ticker.C)
+	}()
+}
+
+// runServicePlaneRecovery recovers once, then once per tick until ctx is done.
+func (s *Server) runServicePlaneRecovery(ctx context.Context, resolve service.ServicePlaneResolver, tick <-chan time.Time) {
+	for {
+		s.recoverServicePlane(ctx, resolve)
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick:
+		}
+	}
+}
+
+// recoverServicePlane runs one recovery. A failure is logged; the next tick
+// retries it.
+func (s *Server) recoverServicePlane(ctx context.Context, resolve service.ServicePlaneResolver) {
+	plane, err := resolve(ctx)
+	if err != nil {
+		if !errors.Is(err, errServicePlaneStore) {
+			s.logger.WithError(err).Warn("service plane: recovery could not build the plane")
+		}
+		return
+	}
+	recovered, err := plane.Recover(ctx)
+	if err != nil {
+		s.logger.WithError(err).Warn("service plane: abandoned claims not all recovered")
+	}
+	for _, svc := range recovered {
+		s.logger.Infof("service plane: recovered %s/%s halted: %s", svc.Tenant, svc.Name, svc.Reason)
+	}
+}
+
+// stopServicePlaneRecovery stops the recovery loop and waits for it.
+func (s *Server) stopServicePlaneRecovery() {
+	if s.servicePlaneRecovery == nil {
+		return
+	}
+	s.servicePlaneRecovery.stop()
+	<-s.servicePlaneRecovery.done
+	s.servicePlaneRecovery = nil
 }
 
 // registerServicesService registers the service plane's gRPC service. It is

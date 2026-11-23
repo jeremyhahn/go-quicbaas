@@ -425,6 +425,9 @@ type Server struct {
 	// orchWorkspaceSweep is the periodic sweep of concluded tasks' session
 	// workspaces, stopped at shutdown.
 	orchWorkspaceSweep *orchestrationSweeps
+	// servicePlaneRecovery settles abandoned service claims, stopped at
+	// shutdown.
+	servicePlaneRecovery *orchestrationSweeps
 
 	// sdlcLabelSweeps is the SDLC module's forge-label reconciliation
 	// goroutine, started by startSDLC and stopped before the module detaches.
@@ -1353,6 +1356,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		s.stopOrchestrationSweeps()
 		s.stopContainerReaper()
 		s.stopWorkspaceSweep()
+		s.stopServicePlaneRecovery()
 
 		// Nothing starts new jobs from here on, so the running ones can be
 		// drained: they get a bounded window to conclude while the stores

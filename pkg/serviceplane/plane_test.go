@@ -483,6 +483,65 @@ func TestUndeploy_AFailedRevokeKeepsTheServiceHalted(t *testing.T) {
 	}
 }
 
+func TestUndeploy_AFailedRevokeDropsTheRevokedGrants(t *testing.T) {
+	f := newFixture(t)
+	f.deploy(t, "web")
+	f.grants[GrantCertificate].revoked = errors.New("ca unavailable")
+	wantErr(t, f.plane.Undeploy(ctx, "acme", "web"), ErrGrant)
+	svc, err := f.plane.Get(ctx, "acme", "web")
+	if err != nil || !svc.Cleanup || len(svc.Grants) != 1 || svc.Grants[GrantCertificate] == "" {
+		t.Fatalf("after a failed revoke = %+v, %v; want only the certificate kept", svc, err)
+	}
+	f.grants[GrantCertificate].revoked = nil
+	f.ledger.reset()
+	if _, err := f.plane.Redeploy(ctx, "acme", f.sign(t, validManifest())); err != nil {
+		t.Fatalf("redeploy: %v", err)
+	}
+	want := "grant identity prior=,grant certificate prior=certificate:web:operator,grant name prior=,grant rbac prior=,grant secrets prior="
+	if got := f.ledger.String(); got != want {
+		t.Fatalf("redeploy grants = %s, want %s", got, want)
+	}
+}
+
+// An undeploy interrupted between revokes (a crash: every later write is
+// lost) leaves a record that stale recovery settles halted but never
+// launchable: resume and restart refuse it, redeploy grants it anew.
+func TestUndeploy_AnInterruptedRevocationIsNotLaunchedAfterRecovery(t *testing.T) {
+	f := newFixture(t)
+	f.deploy(t, "web")
+	f.deploy(t, "api")
+	f.guard.setLoseAfter(2) // the claim and the Cleanup mark, then the crash
+	if err := f.plane.Undeploy(ctx, "acme", "web"); err == nil {
+		t.Fatal("undeploy: want the lost writes")
+	}
+	f.guard.setLoseAfter(0)
+	svc, err := f.plane.Get(ctx, "acme", "web")
+	if err != nil || svc.State != StateTransitioning || !svc.Cleanup {
+		t.Fatalf("after an interrupted undeploy = %+v, %v", svc, err)
+	}
+
+	got, err := f.plane.Recover(ctx)
+	if err != nil || len(got) != 0 {
+		t.Fatalf("recover a fresh claim = %+v, %v; want none", got, err)
+	}
+	f.advance(DefaultStaleClaim + time.Second)
+	got, err = f.plane.Recover(ctx)
+	if err != nil || len(got) != 1 || got[0].Name != "web" || got[0].State != StateHalted || !got[0].Cleanup {
+		t.Fatalf("recover = %+v, %v; want web halted for cleanup", got, err)
+	}
+	_, err = f.plane.Resume(ctx, "acme", "web")
+	wantErr(t, err, ErrGrant)
+	_, err = f.plane.Restart(ctx, "acme", "web")
+	wantErr(t, err, ErrGrant)
+	if svc, err := f.plane.Get(ctx, "acme", "api"); err != nil || svc.State != StateRunning {
+		t.Fatalf("a running service is untouched by recovery = %+v, %v", svc, err)
+	}
+	m := validManifest()
+	if svc, err := f.plane.Redeploy(ctx, "acme", f.sign(t, m)); err != nil || svc.State != StateRunning || svc.Cleanup {
+		t.Fatalf("redeploy after recovery = %+v, %v", svc, err)
+	}
+}
+
 func TestVerbs_TheStateMachine(t *testing.T) {
 	verbs := map[Verb]func(f *fixture) error{
 		VerbUndeploy: func(f *fixture) error { return f.plane.Undeploy(ctx, "acme", "web") },

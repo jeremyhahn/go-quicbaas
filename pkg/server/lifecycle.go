@@ -2080,7 +2080,11 @@ func (s *Server) startService() error {
 		s.logger.Info("Container attestor attached to service builder")
 	}
 	if s.opts.servicePlane != nil {
-		builder = builder.WithServicePlane(s.servicePlaneResolver(*s.opts.servicePlane))
+		resolve := s.servicePlaneResolver(*s.opts.servicePlane)
+		builder = builder.WithServicePlane(resolve)
+		// Abandoned claims (a crash mid-verb, a lost settlement) are
+		// settled halted, so their owners can act on them again.
+		s.startServicePlaneRecovery(resolve)
 	}
 
 	// Wire the Certificate Authority into the service builder so the

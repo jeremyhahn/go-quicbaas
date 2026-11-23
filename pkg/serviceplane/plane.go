@@ -205,30 +205,57 @@ func (p *Plane) Undeploy(ctx context.Context, tenant, name string) error {
 	if err != nil {
 		return err
 	}
-	svc := cur.svc
-	if err := p.launcher.Halt(ctx, svc); err != nil {
+	if err := p.launcher.Halt(ctx, cur.svc); err != nil {
 		return p.settle(ctx, VerbUndeploy, cur, ErrLaunch, err)
+	}
+	// Mark the record Cleanup before the first revoke, so a record left
+	// part way (a crash, a lost write) is never launched with grants
+	// revoked; each revoke that succeeds is then dropped from the record,
+	// so a redeploy grants it anew rather than reusing a dead reference.
+	next := *cur.svc
+	next.Grants = make(map[GrantKind]string, len(cur.svc.Grants))
+	for k, ref := range cur.svc.Grants {
+		next.Grants[k] = ref
+	}
+	next.Cleanup, next.UpdatedAt = true, p.now()
+	sctx, cancel := settleCtx(ctx)
+	defer cancel()
+	cur, err = p.store.swap(sctx, string(VerbUndeploy), cur, &next)
+	if err != nil {
+		return err
 	}
 	var errs []error
 	for i := len(GrantKinds) - 1; i >= 0; i-- {
 		k := GrantKinds[i]
-		if ref, ok := svc.Grants[k]; ok {
-			if err := p.grants[k].Revoke(ctx, &svc.Manifest, ref); err != nil {
-				errs = append(errs, fmt.Errorf("revoke %s: %w", k, err))
+		ref, ok := next.Grants[k]
+		if !ok {
+			continue
+		}
+		if err := p.grants[k].Revoke(ctx, &next.Manifest, ref); err != nil {
+			errs = append(errs, fmt.Errorf("revoke %s: %w", k, err))
+			continue
+		}
+		step := next
+		step.Grants = make(map[GrantKind]string, len(next.Grants))
+		for held, r := range next.Grants {
+			if held != k {
+				step.Grants[held] = r
 			}
 		}
+		step.UpdatedAt = p.now()
+		st, err := p.store.swap(sctx, string(VerbUndeploy), cur, &step)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("revoke %s: checkpoint: %w", k, err))
+			break
+		}
+		cur, next = st, step
 	}
 	if len(errs) > 0 {
-		// Keep every grant for a retried undeploy (a revoke of one
-		// already gone is a no-op), and, as some are revoked, the record
-		// out of start, resume and restart.
-		next := *svc
-		next.Cleanup = true
+		// Keep the grants still in force for a retried undeploy, and the
+		// record out of start, resume and restart.
 		return p.settleNext(ctx, VerbUndeploy, cur, &next, ErrGrant, errors.Join(errs...))
 	}
-	sctx, cancel := settleCtx(ctx)
-	defer cancel()
-	return p.store.remove(sctx, string(VerbUndeploy), svc)
+	return p.store.remove(sctx, string(VerbUndeploy), &next)
 }
 
 // Start launches a service an operator stopped.
@@ -289,6 +316,37 @@ func (p *Plane) MarkHalted(ctx context.Context, tenant, name, reason string) (*S
 		return nil, err
 	}
 	return st.svc, nil
+}
+
+// Recover settles every abandoned claim on the plane: each service, of any
+// tenant, transitioning since longer than Config.StaleClaim is marked
+// halted through MarkHalted, so its owner can resume, redeploy or undeploy
+// it. The node runs it at start and on a timer. It answers the services it
+// recovered; a service another node settled first is skipped.
+func (p *Plane) Recover(ctx context.Context) ([]*Service, error) {
+	all, err := p.store.listAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+	cutoff := p.now().Add(-p.staleClaim)
+	var out []*Service
+	var errs []error
+	for _, svc := range all {
+		if svc.State != StateTransitioning || !svc.UpdatedAt.Before(cutoff) {
+			continue
+		}
+		reason := fmt.Sprintf("recovered: %s was interrupted before it settled", svc.Verb)
+		got, err := p.MarkHalted(ctx, svc.Tenant, svc.Name, reason)
+		if err != nil {
+			if errors.Is(err, ErrConflict) || errors.Is(err, ErrTransition) || errors.Is(err, ErrNotFound) {
+				continue
+			}
+			errs = append(errs, err)
+			continue
+		}
+		out = append(out, got)
+	}
+	return out, errors.Join(errs...)
 }
 
 func (p *Plane) relaunch(ctx context.Context, verb Verb, tenant, name string, restart bool) (*Service, error) {

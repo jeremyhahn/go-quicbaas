@@ -194,6 +194,23 @@ func (s *Store) List(ctx context.Context, tenant string) ([]*Service, error) {
 	return out, nil
 }
 
+// listAll returns every tenant's services, for recovery of abandoned claims.
+func (s *Store) listAll(ctx context.Context) ([]*Service, error) {
+	var out []*Service
+	err := s.kv.Scan(ctx, keyPrefix, func(_ string, value []byte) error {
+		svc, err := decodeService(value)
+		if err != nil {
+			return err
+		}
+		out = append(out, svc)
+		return nil
+	})
+	if err != nil {
+		return nil, s.fail("recover", "", "", ErrStore, err)
+	}
+	return out, nil
+}
+
 func (s *Store) fail(op, tenant, name string, sentinel, cause error) error {
 	return &ServiceError{Op: op, Tenant: tenant, Name: name, Sentinel: sentinel, Cause: cause}
 }

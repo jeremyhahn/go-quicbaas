@@ -213,6 +213,11 @@ type Certificate struct {
 	Secrets SecretStore
 	// Domain is the DNS zone service names live under: <name>.<tenant>.<Domain>.
 	Domain string
+	// Validity is the leaf lifetime; zero takes the profile's default.
+	Validity time.Duration
+	// Now is the clock renewal is judged by; nil is time.Now. A held leaf
+	// is renewed once two thirds of its lifetime have passed.
+	Now func() time.Time
 }
 
 // Kind answers certificate.
@@ -226,20 +231,38 @@ func (g *Certificate) DNSName(m *serviceplane.Manifest) string {
 // Grant issues the leaf and keeps it with its key. Its reference is the hex
 // serial.
 func (g *Certificate) Grant(ctx context.Context, m *serviceplane.Manifest, prior string) (string, error) {
-	if prior != "" {
-		return prior, nil
-	}
 	if g.Domain == "" {
 		return "", &ConfigError{Kind: serviceplane.GrantCertificate, Reason: "no domain"}
 	}
 	dns := g.DNSName(m)
-	serial, err := issue(tenantCtx(ctx, m), g.CA, g.Secrets, tlsPath(m), dns, &xkmssdk.TrustedCASignOptions{
+	tctx := tenantCtx(ctx, m)
+	if prior != "" {
+		// Keep the leaf while it is the stored one, for this name, and
+		// not yet due for renewal; otherwise issue its successor, which
+		// replaces its key and certificate in the store, and revoke it.
+		now := time.Now
+		if g.Now != nil {
+			now = g.Now
+		}
+		cert, err := storedCert(tctx, g.Secrets, tlsPath(m))
+		if err == nil && svidFresh(cert, prior, now()) && cert.Subject.CommonName == dns {
+			return prior, nil
+		}
+	}
+	serial, err := issue(tctx, g.CA, g.Secrets, tlsPath(m), dns, &xkmssdk.TrustedCASignOptions{
 		Profile:  xkmssdk.ProfileNameACMELeaf,
+		Validity: g.Validity,
 		TenantID: m.Tenant,
 		SANS:     &xkmssdk.TrustedCASubjectAlternativeNames{DNS: []string{dns}},
 	})
 	if err != nil {
 		return "", fmt.Errorf("certificate %s: %w", dns, err)
+	}
+	if prior != "" && prior != serial {
+		if err := revokeSerial(tctx, g.CA, serviceplane.GrantCertificate, prior); err != nil {
+			return "", errors.Join(fmt.Errorf("certificate %s: revoke the prior leaf: %w", dns, err),
+				revokeSerial(tctx, g.CA, serviceplane.GrantCertificate, serial))
+		}
 	}
 	return serial, nil
 }
@@ -361,12 +384,11 @@ func (g *Name) Grant(ctx context.Context, m *serviceplane.Manifest, prior string
 			if _, err := g.Registry.Renew(tctx, lease); err == nil {
 				return prior, nil
 			}
-			// The lease expired or cannot be renewed: register anew and
-			// drop the old lease after.
-			stale = lease
-		} else if err := g.deregister(tctx, lease); err != nil {
-			return "", fmt.Errorf("name %s: %w", m.Name, err)
 		}
+		// The lease expired or cannot be renewed, or the address moved:
+		// register anew first and drop the old lease after, so a failed
+		// registration leaves the prior one in force and discoverable.
+		stale = lease
 	}
 	lease, err := g.Registry.Register(tctx, registry.ServiceInstance{
 		ID: m.Name, Service: m.Name, Address: addr,
@@ -470,19 +492,27 @@ func (g *RBAC) svid(ctx context.Context, m *serviceplane.Manifest) (*x509.Certif
 
 // storedSVID reads the certificate of the SVID the identity grant keeps for m.
 func storedSVID(ctx context.Context, store SecretStore, m *serviceplane.Manifest) (*x509.Certificate, error) {
-	data, _, err := store.Get(ctx, svidPath(m))
-	if err != nil {
-		return nil, fmt.Errorf("read the SVID: %w", err)
-	}
-	block, _ := pem.Decode(data["certificate"])
-	if block == nil || block.Type != "CERTIFICATE" {
-		return nil, fmt.Errorf("read the SVID: no certificate PEM at %s", svidPath(m))
-	}
-	cert, err := x509.ParseCertificate(block.Bytes)
+	cert, err := storedCert(ctx, store, svidPath(m))
 	if err != nil {
 		return nil, fmt.Errorf("read the SVID: %w", err)
 	}
 	return cert, nil
+}
+
+// storedCert reads the certificate issue stored at path.
+func storedCert(ctx context.Context, store SecretStore, path string) (*x509.Certificate, error) {
+	data, _, err := store.Get(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	block, _ := pem.Decode(data["certificate"])
+	if block == nil || block.Type != "CERTIFICATE" {
+		return nil, fmt.Errorf("no certificate PEM at %s", path)
+	}
+	if _, ok := data["private_key"]; !ok {
+		return nil, fmt.Errorf("no private key at %s", path)
+	}
+	return x509.ParseCertificate(block.Bytes)
 }
 
 // svidFresh reports whether the stored SVID is the one serial names and
@@ -525,14 +555,24 @@ func (*Secrets) Kind() serviceplane.GrantKind { return serviceplane.GrantSecrets
 
 // Grant writes the binding. Its reference is the namespace.
 func (g *Secrets) Grant(ctx context.Context, m *serviceplane.Manifest, prior string) (string, error) {
-	if prior != "" {
-		return prior, nil
-	}
 	id, err := workloadID(serviceplane.GrantSecrets, g.TrustDomain, m)
 	if err != nil {
 		return "", err
 	}
-	err = g.Secrets.Store(tenantCtx(ctx, m), bindingPath(m),
+	tctx := tenantCtx(ctx, m)
+	if prior == SecretPrefix(m) {
+		// Keep the binding only while it is in the store, bound to this
+		// identity: a revoked one (an undeploy that failed part way) is
+		// bound anew.
+		data, _, err := g.Secrets.Get(tctx, bindingPath(m))
+		if err == nil && string(data["spiffe_id"]) == id {
+			return prior, nil
+		}
+		if err != nil && !qberrors.IsNotFound(err) {
+			return "", fmt.Errorf("secrets %s: %w", SecretPrefix(m), err)
+		}
+	}
+	err = g.Secrets.Store(tctx, bindingPath(m),
 		map[string][]byte{"spiffe_id": []byte(id)},
 		map[string]string{"bound_to": id, "namespace": SecretPrefix(m)})
 	if err != nil {
