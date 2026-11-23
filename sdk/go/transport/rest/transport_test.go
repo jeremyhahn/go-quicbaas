@@ -22,8 +22,10 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	neturl "net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -955,6 +957,9 @@ func TestEndpointMapping(t *testing.T) {
 		{"KV", "Transaction", "/api/v1/transaction", http.MethodPost},
 		{"KV", "CustomKV", "/api/v1/kv/customkv", http.MethodPost},
 
+		// Capabilities methods
+		{"Capabilities", "Get", "/api/v1/server/capabilities", http.MethodGet},
+
 		// Cluster methods
 		{"Cluster", "Status", "/api/v1/cluster/status", http.MethodGet},
 		{"Cluster", "GetLeader", "/api/v1/cluster/leader/{shardID}", http.MethodGet},
@@ -1442,6 +1447,49 @@ func TestRetryWithMaxBackoff(t *testing.T) {
 	}
 }
 
+// TestRequestWithRetry_ContextEndsDuringBackoffKeepsLastError checks that a
+// retry ended by its context still reports why the attempt before it failed:
+// the error keeps CodeCanceled and names the last attempt's error.
+func TestRequestWithRetry_ContextEndsDuringBackoffKeepsLastError(t *testing.T) {
+	const attemptMsg = "shard-7 leader unreachable"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": attemptMsg, "message": attemptMsg})
+	}))
+	defer server.Close()
+
+	tr, err := New(
+		&transport.Config{
+			Address:         server.Listener.Addr().String(),
+			Timeout:         time.Second,
+			MaxRetries:      10,
+			RetryBackoff:    5 * time.Second, // the context ends during this wait
+			MaxRetryBackoff: 5 * time.Second,
+		},
+		WithBaseURL(server.URL),
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer tr.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	_, err = tr.requestWithRetry(ctx, "test.Service", "Method", nil)
+	if err == nil {
+		t.Fatal("expected an error once the context ended")
+	}
+	if got := errors.Code(err); got != errors.CodeCanceled {
+		t.Errorf("errors.Code(err) = %v, want %v (err: %v)", got, errors.CodeCanceled, err)
+	}
+	if !strings.Contains(err.Error(), attemptMsg) {
+		t.Errorf("error %q does not name the last attempt's error %q", err.Error(), attemptMsg)
+	}
+}
+
 func TestConvertHTTPError(t *testing.T) {
 	tr, err := New(&transport.Config{
 		Address: "localhost:8080",
@@ -1476,6 +1524,21 @@ func TestConvertHTTPError(t *testing.T) {
 		}
 		if errors.Code(result) != errors.CodeTimeout {
 			t.Errorf("expected timeout error, got: %v", result)
+		}
+	})
+
+	t.Run("QBError inside url.Error keeps its code", func(t *testing.T) {
+		refusal := &neturl.Error{
+			Op:  "Post",
+			URL: "http://127.0.0.1/v1/barrier/unseal",
+			Err: errors.New(errors.CodeForbidden, "rest.BarrierUnseal", "refused"),
+		}
+		result := tr.convertHTTPError(refusal, "test.op")
+		if got := errors.Code(result); got != errors.CodeForbidden {
+			t.Errorf("code = %v, want CodeForbidden: %v", got, result)
+		}
+		if errors.IsRetryable(result) {
+			t.Errorf("refusal is retryable: %v", result)
 		}
 	})
 }

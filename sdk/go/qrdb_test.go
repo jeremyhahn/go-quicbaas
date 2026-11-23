@@ -15,13 +15,21 @@
 package quicbaas
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport/rest"
 )
 
 // testTLSConfig builds a minimal tls.Config with an empty (but
@@ -157,4 +165,111 @@ func TestDataStore_InvalidTransport(t *testing.T) {
 	// depending on the transport implementation. We just verify it
 	// doesn't panic.
 	_ = err
+}
+
+// TestQRDBClient_QUIC_ReachesRESTOrigin pins go-quicbaas#2554: a quicbaasd
+// node serves REST over TCP and HTTP/3 ("h3") on the same port, and never
+// the go-qrdb frame protocol ALPN. The qrdb sub-client of a WithQUIC()
+// client must therefore speak HTTPS to the node's REST origin; dialing the
+// frame protocol fails with "tls: no application protocol".
+func TestQRDBClient_QUIC_ReachesRESTOrigin(t *testing.T) {
+	// Only the barrier unseal request is counted: the REST transport's
+	// Connect sends GET /health, which must not satisfy the assertion.
+	var hits atomic.Int32
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/barrier/unseal" {
+			if r.TLS != nil {
+				hits.Add(1)
+			}
+			// go-qrdb's REST BarrierUnseal expects 204 No Content.
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	pool := x509.NewCertPool()
+	pool.AddCert(srv.Certificate())
+	address := strings.TrimPrefix(srv.URL, "https://")
+
+	c, err := NewClient(address, WithQUIC(), WithTLSConfig(&tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}), WithTimeout(5*time.Second))
+	require.NoError(t, err)
+	defer func() { _ = c.Close() }()
+
+	qc, err := c.(*client).qrdbClient()
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, qc.Barrier().BarrierUnseal(ctx, &qrdbtransport.BarrierUnsealRequest{}))
+
+	assert.Equal(t, int32(1), hits.Load(), "the QUIC client's qrdb sub-client must reach the node's REST origin over HTTPS")
+}
+
+// A QUIC client's Security().Barrier() is the SDK's REST barrier client,
+// whose secret-carrying verbs refuse redirects and plaintext hops; go-qrdb's
+// REST sub-client follows redirects with net/http's default policy.
+func TestSecurityBarrier_QUIC_UsesSDKRESTBarrierClient(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	pool := x509.NewCertPool()
+	pool.AddCert(srv.Certificate())
+	address := strings.TrimPrefix(srv.URL, "https://")
+
+	c, err := NewClient(address, WithQUIC(), WithTLSConfig(&tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}), WithTimeout(5*time.Second))
+	require.NoError(t, err)
+	defer func() { _ = c.Close() }()
+
+	b, err := c.Security().Barrier()
+	require.NoError(t, err)
+	assert.IsType(t, &rest.BarrierClient{}, b, "a QUIC client's barrier calls must ride the SDK's REST barrier client")
+}
+
+func TestQRDBSubClientAddress_QUICUsesRESTOrigin(t *testing.T) {
+	assert.Equal(t, "https://host:8080", qrdbSubClientAddress(TransportQUIC, "host:8080", true))
+}
+
+// TestQRDBSubClientAddress_QUICUpgradesPlainHTTP verifies that the QUIC
+// transport never yields a plaintext http:// origin for the qrdb sub-client:
+// QUIC always uses TLS, so an explicit http:// scheme is upgraded to https://.
+func TestQRDBSubClientAddress_QUICUpgradesPlainHTTP(t *testing.T) {
+	assert.Equal(t, "https://host:8080", qrdbSubClientAddress(TransportQUIC, "http://host:8080", true))
+	assert.Equal(t, "https://host:8080", qrdbSubClientAddress(TransportQUIC, "http://host:8080", false))
+	assert.Equal(t, "https://host:8080", qrdbSubClientAddress(TransportQUIC, "https://host:8080", true))
+}
+
+// TestQRDBClient_QUIC_NeverSendsPlaintext verifies that a QUIC client built
+// from an http:// address never sends a secret-bearing qrdb call, such as
+// BarrierUnseal, over plaintext HTTP.
+func TestQRDBClient_QUIC_NeverSendsPlaintext(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+	require.True(t, strings.HasPrefix(srv.URL, "http://"))
+
+	c, err := NewClient(srv.URL, WithQUIC(), WithTLSConfig(&tls.Config{MinVersion: tls.VersionTLS12}), WithTimeout(2*time.Second))
+	if err != nil {
+		assert.Zero(t, hits.Load(), "nothing may reach the server over plaintext HTTP")
+		return
+	}
+	defer func() { _ = c.Close() }()
+
+	qc, err := c.(*client).qrdbClient()
+	if err == nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = qc.Barrier().BarrierUnseal(ctx, &qrdbtransport.BarrierUnsealRequest{})
+	}
+
+	assert.Zero(t, hits.Load(), "a QUIC client's qrdb sub-client must never send plaintext HTTP")
 }

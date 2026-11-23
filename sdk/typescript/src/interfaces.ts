@@ -27,6 +27,7 @@ import type { SchedulerClient } from './scheduler_sdk.js';
 import type { ProjectsClient } from './projects.js';
 import type { SdlcClient } from './sdlc.js';
 import type { AccountsClient } from './accounts.js';
+import type { PromptsClient } from './prompts.js';
 import type { AgentsClient } from './agents.js';
 import type { CAClient } from './ca.js';
 import type { TrustClient } from './trust.js';
@@ -182,6 +183,7 @@ import type {
   BootstrapBundleRequest,
   BootstrapBundleResponse,
   ClusterStatusResponse,
+  ListClusterNodesResponse,
   SessionEventEnvelope,
   SessionInfo,
   SpawnSessionRequest,
@@ -1199,6 +1201,11 @@ export interface ClusterClient {
   // health). In standalone (non-Raft) mode `shards` is empty and total_nodes
   // is 1. Maps to GET /api/v1/cluster/status.
   status(): Promise<ClusterStatusResponse>;
+  // listNodes returns the cluster's members with their address, Raft
+  // address, leadership, health, version and uptime. `nodes` is always an
+  // array (empty when the server reports none). Maps to
+  // GET /api/v1/cluster/nodes.
+  listNodes(): Promise<ListClusterNodesResponse>;
 }
 
 // advertises a different verification mechanism. Paths: /api/v1/bootstrap.
@@ -1347,6 +1354,12 @@ export interface Client {
    * OpenAI/Codex, OpenCode) an agent session can be spawned against.
    */
   readonly accounts: AccountsClient;
+  /**
+   * prompts reads and edits the layered prompt library (platform, tenant,
+   * project): listings, the effective body and its chain, diff, history,
+   * and the guarded put, rollback and reset.
+   */
+  readonly prompts: PromptsClient;
   /**
    * agents manages the tenant's AI Agents — named runtime + model + provider
    * that role slots reference — and the pools slots fail over along.

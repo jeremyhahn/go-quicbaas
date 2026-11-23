@@ -21,6 +21,14 @@ import (
 // of the matching method in go-qrdb sdk/go transport/rest
 // (transport_barrier.go), including the SO PIN resolution of the verbs
 // that carry one.
+//
+// The verbs that carry a secret mark their request context with
+// withSecretHop, so the transport refuses any redirect hop and any non-https
+// hop before the secret is sent: BarrierInitialize, BarrierUnseal,
+// BarrierUnsealWithShare, BarrierUnsealWithShares, BarrierSeal,
+// BarrierInitializeShamir, BarrierRekey, BarrierGenerateRecoveryKeys,
+// BarrierRecoverWithKeys, BarrierGenerateRootToken, ShareClaimComplete and
+// RecoveryShareClaimComplete (whose responses carry a Shamir share).
 type BarrierClient struct {
 	t *Transport
 }
@@ -38,26 +46,33 @@ func (t *Transport) Barrier() *BarrierClient {
 // a zero value (a BarrierStatusResponse with Sealed=false, an empty officer
 // list) would report a state the server never sent (go-quicbaas#2538).
 func (b *BarrierClient) doJSONResult(ctx context.Context, method, path string, reqBody, result any) error {
+	return doJSONResult(ctx, b.t, "rest.BarrierClient", method, path, reqBody, result)
+}
+
+// doJSONResult sends a JSON request through t and decodes the response into
+// result, refusing an empty body. component names the caller in the errors
+// it returns.
+func doJSONResult(ctx context.Context, t *Transport, component, method, path string, reqBody, result any) error {
 	var body []byte
 	if reqBody != nil {
 		data, err := json.Marshal(reqBody)
 		if err != nil {
-			return errors.Wrap(err, errors.CodeInvalidInput, "rest.BarrierClient",
+			return errors.Wrap(err, errors.CodeInvalidInput, component,
 				"failed to encode request body")
 		}
 		body = data
 	}
 
-	resp, err := b.t.doRawRequest(ctx, method, path, body, nil)
+	resp, err := t.doRawRequest(ctx, method, path, body, nil)
 	if err != nil {
 		return err
 	}
 	if len(resp.Body) == 0 {
-		return errors.New(errors.CodeInternal, "rest.BarrierClient",
+		return errors.New(errors.CodeInternal, component,
 			"empty response from "+path)
 	}
 	if err := json.Unmarshal(resp.Body, result); err != nil {
-		return errors.Wrap(err, errors.CodeInternal, "rest.BarrierClient",
+		return errors.Wrap(err, errors.CodeInternal, component,
 			"failed to decode response")
 	}
 	return nil
@@ -96,17 +111,20 @@ type officersWireResponse struct {
 
 // BarrierInitialize maps to POST /v1/barrier/initialize.
 func (b *BarrierClient) BarrierInitialize(ctx context.Context, req *qrdbtransport.BarrierInitializeRequest) error {
+	ctx = withSecretHop(ctx, "BarrierInitialize")
 	return b.t.doJSONRequest(ctx, http.MethodPost, "/v1/barrier/initialize", req, nil)
 }
 
 // BarrierUnseal maps to POST /v1/barrier/unseal.
 func (b *BarrierClient) BarrierUnseal(ctx context.Context, req *qrdbtransport.BarrierUnsealRequest) error {
+	ctx = withSecretHop(ctx, "BarrierUnseal")
 	return b.t.doJSONRequest(ctx, http.MethodPost, "/v1/barrier/unseal", req, nil)
 }
 
 // BarrierSeal maps to POST /v1/barrier/seal. The SO PIN, when one is
 // configured, comes from the PIN bound by qrdbtransport.WithSOPIN.
 func (b *BarrierClient) BarrierSeal(ctx context.Context) error {
+	ctx = withSecretHop(ctx, "BarrierSeal")
 	soPIN, err := qrdbtransport.ResolveSOPIN(ctx, "BarrierSeal", "")
 	if err != nil {
 		return err
@@ -129,6 +147,7 @@ func (b *BarrierClient) BarrierStatus(ctx context.Context) (*qrdbtransport.Barri
 
 // BarrierInitializeShamir maps to POST /v1/barrier/shamir/initialize.
 func (b *BarrierClient) BarrierInitializeShamir(ctx context.Context, req *qrdbtransport.BarrierInitializeShamirRequest) (*qrdbtransport.BarrierInitializeShamirResponse, error) {
+	ctx = withSecretHop(ctx, "BarrierInitializeShamir")
 	soPIN, err := qrdbtransport.ResolveSOPIN(ctx, "BarrierInitializeShamir", req.SOPin)
 	if err != nil {
 		return nil, err
@@ -145,6 +164,7 @@ func (b *BarrierClient) BarrierInitializeShamir(ctx context.Context, req *qrdbtr
 
 // BarrierUnsealWithShare maps to POST /v1/barrier/shamir/unseal-share.
 func (b *BarrierClient) BarrierUnsealWithShare(ctx context.Context, req *qrdbtransport.BarrierUnsealShareRequest) (*qrdbtransport.BarrierUnsealShareResponse, error) {
+	ctx = withSecretHop(ctx, "BarrierUnsealWithShare")
 	var resp qrdbtransport.BarrierUnsealShareResponse
 	if err := b.doJSONResult(ctx, http.MethodPost, "/v1/barrier/shamir/unseal-share", req, &resp); err != nil {
 		return nil, err
@@ -154,11 +174,13 @@ func (b *BarrierClient) BarrierUnsealWithShare(ctx context.Context, req *qrdbtra
 
 // BarrierUnsealWithShares maps to POST /v1/barrier/shamir/unseal-shares.
 func (b *BarrierClient) BarrierUnsealWithShares(ctx context.Context, req *qrdbtransport.BarrierUnsealSharesRequest) error {
+	ctx = withSecretHop(ctx, "BarrierUnsealWithShares")
 	return b.t.doJSONRequest(ctx, http.MethodPost, "/v1/barrier/shamir/unseal-shares", req, nil)
 }
 
 // BarrierRekey maps to POST /v1/barrier/rekey.
 func (b *BarrierClient) BarrierRekey(ctx context.Context, req *qrdbtransport.BarrierRekeyRequest) (*qrdbtransport.BarrierRekeyResponse, error) {
+	ctx = withSecretHop(ctx, "BarrierRekey")
 	soPIN, err := qrdbtransport.ResolveSOPIN(ctx, "BarrierRekey", req.SOPin)
 	if err != nil {
 		return nil, err
@@ -184,6 +206,7 @@ func (b *BarrierClient) BarrierEnableEncryption(ctx context.Context, req *qrdbtr
 
 // BarrierGenerateRecoveryKeys maps to POST /v1/barrier/recovery/generate.
 func (b *BarrierClient) BarrierGenerateRecoveryKeys(ctx context.Context, req *qrdbtransport.BarrierGenerateRecoveryKeysRequest) (*qrdbtransport.BarrierRecoveryKeysResponse, error) {
+	ctx = withSecretHop(ctx, "BarrierGenerateRecoveryKeys")
 	soPIN, err := qrdbtransport.ResolveSOPIN(ctx, "BarrierGenerateRecoveryKeys", req.SOPin)
 	if err != nil {
 		return nil, err
@@ -200,6 +223,7 @@ func (b *BarrierClient) BarrierGenerateRecoveryKeys(ctx context.Context, req *qr
 
 // BarrierRecoverWithKeys maps to POST /v1/barrier/recovery/recover.
 func (b *BarrierClient) BarrierRecoverWithKeys(ctx context.Context, req *qrdbtransport.BarrierRecoverWithKeysRequest) error {
+	ctx = withSecretHop(ctx, "BarrierRecoverWithKeys")
 	return b.t.doJSONRequest(ctx, http.MethodPost, "/v1/barrier/recovery/recover", req, nil)
 }
 
@@ -219,6 +243,7 @@ func (b *BarrierClient) BarrierHasRecoveryKeys(ctx context.Context) (*qrdbtransp
 
 // BarrierGenerateRootToken maps to POST /v1/barrier/root-token.
 func (b *BarrierClient) BarrierGenerateRootToken(ctx context.Context, req *qrdbtransport.BarrierGenerateRootTokenRequest) (*qrdbtransport.BarrierRootTokenResponse, error) {
+	ctx = withSecretHop(ctx, "BarrierGenerateRootToken")
 	var resp qrdbtransport.BarrierRootTokenResponse
 	if err := b.doJSONResult(ctx, http.MethodPost, "/v1/barrier/root-token", req, &resp); err != nil {
 		return nil, err
@@ -248,6 +273,7 @@ func (b *BarrierClient) ShareClaimBegin(ctx context.Context, req *qrdbtransport.
 
 // ShareClaimComplete maps to POST /v1/barrier/officers/{username}/claim/complete.
 func (b *BarrierClient) ShareClaimComplete(ctx context.Context, req *qrdbtransport.ShareClaimCompleteRequest) (*qrdbtransport.ShareClaimCompleteResponse, error) {
+	ctx = withSecretHop(ctx, "ShareClaimComplete")
 	return b.claimComplete(ctx, "/v1/barrier/officers/"+req.Username+"/claim/complete", req)
 }
 
@@ -274,6 +300,7 @@ func (b *BarrierClient) RecoveryShareClaimBegin(ctx context.Context, req *qrdbtr
 // RecoveryShareClaimComplete maps to
 // POST /v1/barrier/recovery/officers/{username}/claim/complete.
 func (b *BarrierClient) RecoveryShareClaimComplete(ctx context.Context, req *qrdbtransport.ShareClaimCompleteRequest) (*qrdbtransport.ShareClaimCompleteResponse, error) {
+	ctx = withSecretHop(ctx, "RecoveryShareClaimComplete")
 	return b.claimComplete(ctx, "/v1/barrier/recovery/officers/"+req.Username+"/claim/complete", req)
 }
 

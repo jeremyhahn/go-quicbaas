@@ -47,6 +47,11 @@ const (
 	MCPInvalidInput        = -32012
 	MCPAlreadyExists       = -32013
 	MCPUnimplemented       = -32014
+	// go-qrdb's native application codes beyond the shared set above.
+	MCPAborted    = -32015
+	MCPOutOfRange = -32016
+	MCPDataLoss   = -32017
+	MCPUnknown    = -32018
 )
 
 // JSONRPCError represents a JSON-RPC 2.0 error returned by the server.
@@ -122,6 +127,14 @@ func (e *JSONRPCError) mapToErrorCode() errors.ErrorCode {
 		return errors.CodeAlreadyExists
 	case MCPUnimplemented:
 		return errors.CodeUnimplemented
+	case MCPAborted:
+		return errors.CodeConflict
+	case MCPOutOfRange:
+		return errors.CodeInvalidInput
+	case MCPDataLoss:
+		return errors.CodeInternal
+	case MCPUnknown:
+		return errors.CodeUnknown
 
 	default:
 		// Check for server-defined error range
@@ -135,13 +148,24 @@ func (e *JSONRPCError) mapToErrorCode() errors.ErrorCode {
 // ToolError is the structured content of a tool result whose isError flag is
 // set. Code is one of the error codes above and classifies the failure, so a
 // tool refusal reaches the SDK caller with its typed code instead of as an
-// internal error. The result's text content carries the message.
+// internal error. The result's text content carries the message. The
+// quicbaas server sends it flat ({"code": N}); go-qrdb's native tools nest
+// it under "error" (see toolErrorEnvelope).
 type ToolError struct {
 	Code int `json:"code"`
 }
 
+// toolErrorEnvelope is the nested structured content go-qrdb's native MCP
+// tools set on a failed result: {"error": {"code": N, "status": "...",
+// "message": "...", "tool": "..."}}. Only the code is read.
+type toolErrorEnvelope struct {
+	Error *ToolError `json:"error"`
+}
+
 // toolErrorCode reads the error code from a failed tool result's structured
-// content. A result that carries none is an internal error.
+// content: the flat {"code": N} shape of the quicbaas server first, then the
+// nested {"error": {"code": N}} envelope of go-qrdb's native tools. A result
+// that carries no non-zero integer code in either shape is an internal error.
 func toolErrorCode(structured interface{}) int {
 	if structured == nil {
 		return JSONRPCInternalError
@@ -151,10 +175,14 @@ func toolErrorCode(structured interface{}) int {
 		return JSONRPCInternalError
 	}
 	var toolErr ToolError
-	if err := json.Unmarshal(raw, &toolErr); err != nil || toolErr.Code == 0 {
+	if err := json.Unmarshal(raw, &toolErr); err == nil && toolErr.Code != 0 {
+		return toolErr.Code
+	}
+	var envelope toolErrorEnvelope
+	if err := json.Unmarshal(raw, &envelope); err != nil || envelope.Error == nil || envelope.Error.Code == 0 {
 		return JSONRPCInternalError
 	}
-	return toolErr.Code
+	return envelope.Error.Code
 }
 
 // ParseError represents an error parsing MCP responses.

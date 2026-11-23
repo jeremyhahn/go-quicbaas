@@ -92,6 +92,15 @@ var orchestratorMethodTools = map[string]string{
 	"GetCostSettings": "quicbaas_orchestrator_cost_settings_get",
 	"SetCostSettings": "quicbaas_orchestrator_cost_settings_set",
 
+	// Fleet placement specs (go-quicbaas#1681).
+	"DeclareFleetPlacementSpec":   "quicbaas_fleet_placement_declare",
+	"GetFleetPlacementSpec":       "quicbaas_fleet_placement_get",
+	"ListFleetPlacementSpecs":     "quicbaas_fleet_placement_list",
+	"WithdrawFleetPlacementSpec":  "quicbaas_fleet_placement_withdraw",
+	"GetFleetPlacementDrift":      "quicbaas_fleet_placement_drift",
+	"ListFleetPlacementConsents":  "quicbaas_fleet_placement_consent_list",
+	"AnswerFleetPlacementConsent": "quicbaas_fleet_placement_consent_answer",
+
 	// The heartbeat tool is named after the fleet, not the RPC.
 	"FleetNodeHeartbeat": "quicbaas_fleet_heartbeat",
 }
@@ -133,6 +142,14 @@ var orchestratorMCPTransforms = map[string]orchestratorMCPTransform{
 
 	"GetCostSettings": decodeMCPCostSettings,
 	"SetCostSettings": decodeMCPCostSettings,
+
+	"DeclareFleetPlacementSpec":   decodeMCPPlacement[orchestrator.FleetPlacementSpec],
+	"GetFleetPlacementSpec":       decodeMCPPlacement[orchestrator.FleetPlacementSpec],
+	"ListFleetPlacementSpecs":     decodeMCPPlacement[orchestrator.ListFleetPlacementSpecsResponse],
+	"WithdrawFleetPlacementSpec":  decodeMCPPlacement[orchestrator.WithdrawFleetPlacementSpecResponse],
+	"GetFleetPlacementDrift":      decodeMCPPlacement[orchestrator.FleetPlacementDrift],
+	"ListFleetPlacementConsents":  decodeMCPPlacement[orchestrator.ListFleetPlacementConsentsResponse],
+	"AnswerFleetPlacementConsent": decodeMCPPlacement[orchestrator.FleetPlacementConsentRequest],
 
 	"FleetNodeHeartbeat": decodeMCPFleetNodeHeartbeat,
 	"GetFleetNode":       decodeMCPGetFleetNode,
@@ -708,6 +725,17 @@ func decodeMCPCostSettings(raw []byte) (interface{}, error) {
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return nil, errors.Wrap(err, errors.CodeInternal,
 			"mcp.orchestrator.CostSettings", "failed to decode MCP cost settings result")
+	}
+	return &out, nil
+}
+
+// decodeMCPPlacement decodes a tool result into a T, for the fleet placement
+// results whose JSON names match the server's (go-quicbaas#1681).
+func decodeMCPPlacement[T any](raw []byte) (interface{}, error) {
+	var out T
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal,
+			"mcp.orchestrator.decode", "failed to decode MCP fleet placement result")
 	}
 	return &out, nil
 }
