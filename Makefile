@@ -4755,7 +4755,7 @@ integration-test-fleet-enrollment: ## Run the fleet enrollment E2E (register -> 
 	@echo "$(GREEN)Fleet enrollment E2E passed$(NC)"
 
 .PHONY: integration-test-init
-integration-test-init: build-daemon ## Run canonical init/start/transport matrix (15 software-only cells + negative)
+integration-test-init: build-daemon ## Run canonical init/start/transport matrix (13 software-only cells + negative)
 	@echo "$(BLUE)Running canonical init matrix integration tests...$(NC)"
 	@INTEGRATION_TEST=1 QUICBAASD_BINARY="$(abspath $(BIN_DIR)/$(APP_NAME)d)" \
 		go test -v -tags integration -timeout 5m -count 1 ./test/integration/init/...

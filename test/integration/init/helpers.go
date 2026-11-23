@@ -25,7 +25,7 @@
 //	            ×
 //	{ rest, grpc, quic, mcp, unix }   transport under test
 //
-// for a total of 15 software-only combinations. Hardware-backed
+// for 13 software-only combinations (shamir runs no mcp or quic cell). Hardware-backed
 // strategies (pkcs11/tpm2/awskms/gcpkms/azurekv/vault) are NOT exercised
 // here — their factory wiring is gated on operator-supplied hardware that
 // belongs in dedicated env-gated suites.
