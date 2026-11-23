@@ -32,6 +32,10 @@ func (g *memGuard) Create(ctx context.Context, key string, value []byte) (bool, 
 }
 
 func (g *memGuard) Swap(ctx context.Context, key string, held, next []byte) (bool, error) {
+	// A write on a cancelled request fails, as it does over the network.
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if g.loseSwaps {
@@ -45,13 +49,25 @@ type launcher struct {
 	calls     []string
 	launchErr error
 	haltErr   error
+	// onLaunch, when set, runs in Launch and its error is Launch's.
+	onLaunch func(ctx context.Context) error
 }
 
-func (l *launcher) Launch(_ context.Context, svc *Service) error {
+func (l *launcher) Launch(ctx context.Context, svc *Service) error {
 	l.mu.Lock()
-	defer l.mu.Unlock()
 	l.calls = append(l.calls, "launch "+svc.Name)
-	return l.launchErr
+	err, hook := l.launchErr, l.onLaunch
+	l.mu.Unlock()
+	if hook != nil {
+		return hook(ctx)
+	}
+	return err
+}
+
+func (g *memGuard) setLoseSwaps(lose bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.loseSwaps = lose
 }
 
 func (l *launcher) Halt(_ context.Context, svc *Service) error {
@@ -109,6 +125,21 @@ type fixture struct {
 	ledger   *ledger
 	grants   map[GrantKind]*grant
 	key      ed25519.PrivateKey
+	clockMu  sync.Mutex
+	clock    time.Time
+}
+
+// advance moves the plane's clock on by d.
+func (f *fixture) advance(d time.Duration) {
+	f.clockMu.Lock()
+	defer f.clockMu.Unlock()
+	f.clock = f.clock.Add(d)
+}
+
+func (f *fixture) now() time.Time {
+	f.clockMu.Lock()
+	defer f.clockMu.Unlock()
+	return f.clock
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -123,6 +154,7 @@ func newFixture(t *testing.T) *fixture {
 		ledger:   &ledger{},
 		grants:   map[GrantKind]*grant{},
 		key:      key,
+		clock:    time.Unix(1_800_000_000, 0).UTC(),
 	}
 	store, err := NewStore(f.guard, f.guard.kv)
 	if err != nil {
@@ -135,7 +167,7 @@ func newFixture(t *testing.T) *fixture {
 	}
 	f.plane, err = NewPlane(Config{
 		Store: store, Verifier: Keyring{"k1": pub}, Launcher: f.launcher, Grants: gs,
-		Now: func() time.Time { return time.Unix(1_800_000_000, 0).UTC() },
+		Now: f.now,
 	})
 	if err != nil {
 		t.Fatal(err)

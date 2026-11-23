@@ -59,15 +59,23 @@ type Config struct {
 	Grants   []Grant
 	// Now defaults to time.Now.
 	Now func() time.Time
+	// StaleClaim is how long a service may stay transitioning before
+	// MarkHalted treats the claim as abandoned (its holder crashed, or its
+	// settlement write failed) and recovers it. Zero is DefaultStaleClaim.
+	StaleClaim time.Duration
 }
+
+// DefaultStaleClaim is Config.StaleClaim's default.
+const DefaultStaleClaim = 15 * time.Minute
 
 // Plane serves the seven lifecycle verbs.
 type Plane struct {
-	store    *Store
-	verifier Verifier
-	launcher Launcher
-	grants   map[GrantKind]Grant
-	now      func() time.Time
+	store      *Store
+	verifier   Verifier
+	launcher   Launcher
+	grants     map[GrantKind]Grant
+	now        func() time.Time
+	staleClaim time.Duration
 }
 
 // NewPlane checks cfg and returns the Plane.
@@ -97,7 +105,11 @@ func NewPlane(cfg Config) (*Plane, error) {
 	if now == nil {
 		now = time.Now
 	}
-	return &Plane{store: cfg.Store, verifier: cfg.Verifier, launcher: cfg.Launcher, grants: grants, now: now}, nil
+	stale := cfg.StaleClaim
+	if stale <= 0 {
+		stale = DefaultStaleClaim
+	}
+	return &Plane{store: cfg.Store, verifier: cfg.Verifier, launcher: cfg.Launcher, grants: grants, now: now, staleClaim: stale}, nil
 }
 
 // Get returns a deployed service.
@@ -203,7 +215,9 @@ func (p *Plane) Undeploy(ctx context.Context, tenant, name string) error {
 	if len(errs) > 0 {
 		return p.settle(ctx, VerbUndeploy, cur, ErrGrant, errors.Join(errs...))
 	}
-	return p.store.remove(ctx, string(VerbUndeploy), svc)
+	sctx, cancel := settleCtx(ctx)
+	defer cancel()
+	return p.store.remove(sctx, string(VerbUndeploy), svc)
 }
 
 // Start launches a service an operator stopped.
@@ -240,17 +254,22 @@ func (p *Plane) Stop(ctx context.Context, tenant, name string) (*Service, error)
 }
 
 // MarkHalted records that the platform halted a running service (a crash,
-// a lost node), so resume or restart can launch it again.
+// a lost node), so resume or restart can launch it again. It also recovers
+// a stale claim: a service transitioning since longer than Config.StaleClaim,
+// whose verb was interrupted before it settled, is settled halted with its
+// grants kept. A fresher transitioning service is refused with
+// ErrTransition.
 func (p *Plane) MarkHalted(ctx context.Context, tenant, name, reason string) (*Service, error) {
 	cur, err := p.store.load(ctx, "halt", tenant, name)
 	if err != nil {
 		return nil, err
 	}
-	if cur.svc.State != StateRunning {
+	stale := cur.svc.State == StateTransitioning && cur.svc.UpdatedAt.Before(p.now().Add(-p.staleClaim))
+	if cur.svc.State != StateRunning && !stale {
 		return nil, p.fail("halt", cur.svc, ErrTransition, &TransitionError{Verb: "halt", State: cur.svc.State})
 	}
 	next := *cur.svc
-	next.State, next.Reason, next.UpdatedAt = StateHalted, reason, p.now()
+	next.State, next.Verb, next.Reason, next.UpdatedAt = StateHalted, "", reason, p.now()
 	st, err := p.store.swap(ctx, "halt", cur, &next)
 	if err != nil {
 		return nil, err
@@ -319,7 +338,9 @@ func (p *Plane) launch(ctx context.Context, verb Verb, cur *stored, next *Servic
 		return nil, p.settleNext(ctx, verb, cur, next, ErrLaunch, err)
 	}
 	next.State, next.Verb, next.Reason, next.UpdatedAt = StateRunning, "", "", p.now()
-	st, err := p.store.swap(ctx, string(verb), cur, next)
+	sctx, cancel := settleCtx(ctx)
+	defer cancel()
+	st, err := p.store.swap(sctx, string(verb), cur, next)
 	if err != nil {
 		return nil, err
 	}
@@ -334,7 +355,9 @@ func (p *Plane) settle(ctx context.Context, verb Verb, cur *stored, sentinel, ca
 
 func (p *Plane) settleNext(ctx context.Context, verb Verb, cur *stored, next *Service, sentinel, cause error) error {
 	next.State, next.Verb, next.Reason, next.UpdatedAt = StateHalted, "", cause.Error(), p.now()
-	if _, err := p.store.swap(ctx, string(verb), cur, next); err != nil {
+	sctx, cancel := settleCtx(ctx)
+	defer cancel()
+	if _, err := p.store.swap(sctx, string(verb), cur, next); err != nil {
 		cause = errors.Join(cause, err)
 	}
 	return p.fail(string(verb), next, sentinel, cause)

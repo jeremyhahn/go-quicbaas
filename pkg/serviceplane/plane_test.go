@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 var ctx = context.Background()
@@ -145,6 +146,74 @@ func TestDeploy_AFailedLaunchHaltsAndResumeRecovers(t *testing.T) {
 	f.launcher.launchErr = nil
 	svc, err = f.plane.Resume(ctx, "acme", "web")
 	if err != nil || svc.State != StateRunning || svc.Reason != "" {
+		t.Fatalf("resume = %+v, %v", svc, err)
+	}
+}
+
+// TestLaunch_ACancelledRequestStillSettles checks a request cancelled
+// during its launch still leaves the service halted, not transitioning.
+func TestLaunch_ACancelledRequestStillSettles(t *testing.T) {
+	f := newFixture(t)
+	cancelling := func(cancel context.CancelFunc) func(context.Context) error {
+		return func(c context.Context) error {
+			cancel()
+			return c.Err()
+		}
+	}
+
+	dctx, cancel := context.WithCancel(ctx)
+	f.launcher.onLaunch = cancelling(cancel)
+	if _, err := f.plane.Deploy(dctx, "acme", f.sign(t, validManifest())); err == nil {
+		t.Fatal("deploy: want the cancellation")
+	}
+	svc, err := f.plane.Get(ctx, "acme", "web")
+	if err != nil || svc.State != StateHalted || len(svc.Grants) != len(GrantKinds) {
+		t.Fatalf("after a cancelled deploy = %+v, %v", svc, err)
+	}
+
+	f.launcher.onLaunch = nil
+	if _, err := f.plane.Resume(ctx, "acme", "web"); err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	rctx, cancel := context.WithCancel(ctx)
+	f.launcher.onLaunch = cancelling(cancel)
+	if _, err := f.plane.Restart(rctx, "acme", "web"); err == nil {
+		t.Fatal("restart: want the cancellation")
+	}
+	svc, err = f.plane.Get(ctx, "acme", "web")
+	if err != nil || svc.State != StateHalted {
+		t.Fatalf("after a cancelled restart = %+v, %v", svc, err)
+	}
+}
+
+// TestMarkHalted_RecoversAStaleClaim checks a claim whose settlement write
+// failed is recovered once it is older than the stale bound, and not before.
+func TestMarkHalted_RecoversAStaleClaim(t *testing.T) {
+	f := newFixture(t)
+	f.deploy(t, "web")
+	f.launcher.onLaunch = func(context.Context) error {
+		f.guard.setLoseSwaps(true) // the final write is lost
+		return nil
+	}
+	if _, err := f.plane.Restart(ctx, "acme", "web"); err == nil {
+		t.Fatal("restart: want the lost settlement write")
+	}
+	f.guard.setLoseSwaps(false)
+	f.launcher.onLaunch = nil
+	svc, err := f.plane.Get(ctx, "acme", "web")
+	if err != nil || svc.State != StateTransitioning {
+		t.Fatalf("after a lost settlement = %+v, %v", svc, err)
+	}
+
+	_, err = f.plane.MarkHalted(ctx, "acme", "web", "lost node")
+	wantErr(t, err, ErrTransition)
+	f.advance(DefaultStaleClaim + time.Second)
+	svc, err = f.plane.MarkHalted(ctx, "acme", "web", "claim abandoned")
+	if err != nil || svc.State != StateHalted || svc.Verb != "" || svc.Reason != "claim abandoned" || len(svc.Grants) != len(GrantKinds) {
+		t.Fatalf("mark halted a stale claim = %+v, %v", svc, err)
+	}
+	svc, err = f.plane.Resume(ctx, "acme", "web")
+	if err != nil || svc.State != StateRunning {
 		t.Fatalf("resume = %+v, %v", svc, err)
 	}
 }
