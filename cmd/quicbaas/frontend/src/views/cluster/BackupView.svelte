@@ -15,8 +15,8 @@
 
 <!--
   BackupView lists every backup from /api/v1/backups with its ID and type,
-  takes full or incremental backups with the server's configured
-  compression and encryption, verifies and deletes them, and marks backups
+  keeps backup creation turned off until the daemon's backup service
+  captures the cluster's data, verifies and deletes them, and marks backups
   that captured no shards. Restore is in the SDK client but
   has no button here: it overwrites shards and needs its own confirmation.
 -->
@@ -28,7 +28,7 @@
   import { showToast } from '../../stores/toast.svelte.ts';
   import { HardDrive } from 'lucide-svelte';
   import { formatDateTime } from '../../lib/time.ts';
-  import type { BackupInfo, BackupType, VerifyBackupResponse } from '@quicbaas/sdk';
+  import type { BackupInfo, VerifyBackupResponse } from '@quicbaas/sdk';
   import type { Component } from 'svelte';
 
   /** The lucide-svelte icon typed as the component PageHeader takes. */
@@ -36,6 +36,9 @@
 
   /** Shown when the connection's SDK client has no backups client. */
   const UNAVAILABLE = 'Backups are not available over this connection';
+
+  /** Why Create is off: the daemon's backup service captures no cluster data yet. */
+  const CREATE_OFF = "Creating backups is turned off: this daemon's backup service does not capture the cluster's data yet, so a new backup could not restore it.";
 
   const COLUMNS: Column<BackupInfo>[] = [
     { key: 'backup_id', label: 'Backup ID', sortable: true, searchable: true },
@@ -61,8 +64,6 @@
   /** totalCount is the number of backups the server stores. */
   let totalCount = $state(0);
 
-  let backupType: BackupType = $state('full');
-  let creating = $state(false);
 
   /** verifyResults holds the last verify outcome per backup id. */
   let verifyResults: Record<string, VerifyBackupResponse> = $state({});
@@ -95,23 +96,6 @@
   }
 
   $effect(() => { void loadBackups(); });
-
-  async function createBackup(): Promise<void> {
-    if (creating) return;
-    creating = true;
-    try {
-      const client = await getSDKClient();
-      if (!client.backups) { showToast('error', UNAVAILABLE); return; }
-      const resp = await client.backups.create({ type: backupType });
-      showToast('success', `Backup ${resp.backup_id} created`);
-      backupType = 'full';
-      await loadBackups();
-    } catch (e) {
-      showToast('error', e instanceof Error ? e.message : 'Failed to create backup');
-    } finally {
-      creating = false;
-    }
-  }
 
   async function verifyBackup(b: BackupInfo): Promise<void> {
     busyId = b.backup_id;
@@ -181,29 +165,15 @@
     A backup lists the shards it captured. A backup with 0 shards holds no shard data and cannot restore the cluster's data.
   </div>
 
-  <form
-    class="card bg-base-200 shadow-sm"
-    aria-label="Create backup"
-    onsubmit={(e) => { e.preventDefault(); void createBackup(); }}
-  >
+  <section class="card bg-base-200 shadow-sm" aria-label="Create backup">
     <div class="card-body py-4 gap-3">
       <h2 class="font-medium">Create backup</h2>
-      <div class="flex flex-wrap gap-3 items-end">
-        <label class="form-control">
-          <span class="label-text text-sm">Type</span>
-          <select class="select select-bordered select-sm" name="type" bind:value={backupType}>
-            <option value="full">Full</option>
-            <option value="incremental">Incremental</option>
-          </select>
-        </label>
-        <button class="btn btn-primary btn-sm" type="submit" disabled={creating}>
-          {#if creating}<span class="loading loading-spinner loading-xs"></span>{/if}
-          Create
-        </button>
+      <p id="backup-create-off" class="text-sm text-base-content/70">{CREATE_OFF}</p>
+      <div>
+        <button class="btn btn-primary btn-sm" type="button" disabled aria-describedby="backup-create-off">Create</button>
       </div>
-      <p class="text-xs text-base-content/60">Compression and encryption are the server's configured defaults.</p>
     </div>
-  </form>
+  </section>
 
   {#if error}
     <div class="alert alert-error text-sm flex items-center justify-between" role="alert">

@@ -3,7 +3,7 @@
  *
  * Verifies that BackupView lists every backup through client.backups.list
  * (asking again with total_count), shows ID and type, marks backups with no
- * shards, shows the empty state, creates a typed backup from the form, verifies one inline and
+ * shards, shows the empty state, keeps creation turned off and says why, verifies one inline and
  * deletes one only after confirmation, and that its error alert retries.
  * Also checks that #/backup is routed to the view.
  */
@@ -112,20 +112,17 @@ describe('BackupView', () => {
     await waitFor(() => expect(screen.getByText('No backups yet')).toBeInTheDocument());
   });
 
-  it('creates a backup from the form and reloads', async () => {
+  it('turns creation off and says why', async () => {
     render(BackupView);
     await waitFor(() => expect(mockList).toHaveBeenCalledTimes(1));
-    expect(screen.queryByLabelText('Name')).toBeNull();
-    expect(screen.queryByLabelText('Description')).toBeNull();
     const button = screen.getByRole('button', { name: /^create$/i });
-    expect(button).not.toBeDisabled();
-
-    await fireEvent.change(screen.getByLabelText('Type'), { target: { value: 'incremental' } });
+    expect(button).toBeDisabled();
+    expect(screen.getByText(/does not capture the cluster's data yet/)).toBeInTheDocument();
+    expect(screen.queryByLabelText('Type')).toBeNull();
     await fireEvent.click(button);
-
-    await waitFor(() => expect(mockCreate).toHaveBeenCalledWith({ type: 'incremental' }));
-    await waitFor(() => expect(showToast).toHaveBeenCalledWith('success', 'Backup backup-3 created'));
-    await waitFor(() => expect(mockList).toHaveBeenCalledTimes(2));
+    expect(mockCreate).not.toHaveBeenCalled();
+    expect(showToast).not.toHaveBeenCalled();
+    expect(mockList).toHaveBeenCalledTimes(1);
   });
 
   it('shows Valid after verify', async () => {

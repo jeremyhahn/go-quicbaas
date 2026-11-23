@@ -2,7 +2,7 @@
  * backup_view.spec.ts
  *
  * Cluster > Backup: the sidebar entry is enabled, #/backup lists the backups
- * GET /api/v1/backups returns, and the Create form POSTs the chosen type.
+ * GET /api/v1/backups returns, and Create is turned off.
  * The backups API is stubbed with page.route so the spec does not depend on
  * the daemon's backup store.
  */
@@ -23,7 +23,7 @@ const BACKUPS = [
 ];
 
 test.describe('Cluster > Backup', () => {
-  test('lists backups and creates one', async ({ page }) => {
+  test('lists backups and keeps creation off', async ({ page }) => {
     const posted: unknown[] = [];
     await page.route('**/api/v1/backups**', async (route) => {
       const req = route.request();
@@ -49,10 +49,9 @@ test.describe('Cluster > Backup', () => {
     const table = page.getByRole('table', { name: 'Backups' });
     await expect(table.locator('tbody tr')).toHaveCount(2);
 
-    await page.getByLabel('Type', { exact: true }).selectOption('incremental');
-    await page.getByRole('button', { name: 'Create', exact: true }).click();
-    await expect.poll(() => posted.length).toBe(1);
-    expect(posted[0]).toEqual({ name: 'incremental' });
+    await expect(page.getByRole('button', { name: 'Create', exact: true })).toBeDisabled();
+    await expect(page.getByText("does not capture the cluster's data yet")).toBeVisible();
+    expect(posted).toHaveLength(0);
   });
 
   test('the sidebar Backup entry is not marked soon', async ({ page }) => {
