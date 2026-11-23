@@ -32,9 +32,10 @@
   import DataTable from '../../components/core/DataTable.svelte';
   import type { Column } from '../../lib/dataTable.ts';
   import EmptyState from '../../components/core/EmptyState.svelte';
+  import { authStore } from '../../stores/auth.svelte.ts';
+  import { tenantOptionsOf, withRequiredTenants, type TenantOption } from '../../lib/tenantOptions.ts';
   import type {
     IAMApplication,
-    IAMTenant,
     RegisterIAMAppRequest,
     UpdateIAMAppRequest,
   } from '@quicbaas/sdk';
@@ -56,8 +57,14 @@
   // State
   // ---------------------------------------------------------------------------
 
-  let tenants: IAMTenant[] = $state([]);
-  let selectedTenantID = $state('');
+  // The session's own tenant is always an option, so an operator who may
+  // manage applications in their tenant but not enumerate tenants (403 from
+  // listTenants) still has a usable selector. The listing only adds options.
+  let discoveredTenants: TenantOption[] = $state([]);
+  let selectedTenantID = $state(authStore.tenantID);
+  const tenants = $derived(
+    withRequiredTenants(discoveredTenants, [selectedTenantID, authStore.tenantID]),
+  );
   let tenantsLoading = $state(false);
   let tenantsError: string | null = $state(null);
 
@@ -97,38 +104,63 @@
   // ---------------------------------------------------------------------------
 
   async function loadTenants(): Promise<void> {
+    const forSession = authStore.sessionKey;
     tenantsLoading = true;
     tenantsError = null;
     try {
       const client = await getSDKClient();
       const resp = await client.iam.listTenants();
-      const seen = new Set<string>();
-      tenants = resp.tenants.filter((t) => {
-        if (seen.has(t.id)) return false;
-        seen.add(t.id);
-        return true;
-      });
-      if (selectedTenantID === '' && tenants.length > 0) {
-        selectedTenantID = tenants[0]?.id ?? '';
+      if (forSession !== authStore.sessionKey) return;
+      discoveredTenants = tenantOptionsOf(resp.tenants);
+      if (selectedTenantID === '' && discoveredTenants.length > 0) {
+        selectedTenantID = discoveredTenants[0]?.id ?? '';
       }
     } catch (e) {
-      tenantsError = e instanceof Error ? e.message : 'Failed to load tenants';
+      if (forSession !== authStore.sessionKey) return;
+      // A principal without tenants:list keeps its own tenant selected; the
+      // error is only shown when there is no tenant to work in at all.
+      if (selectedTenantID === '') {
+        tenantsError = e instanceof Error ? e.message : 'Failed to load tenants';
+      }
     } finally {
-      tenantsLoading = false;
+      if (forSession === authStore.sessionKey) tenantsLoading = false;
     }
   }
+
+  // A change of session identity (sign-out, another login replacing the
+  // bearer in another tab, a tenant switch) drops everything the previous
+  // session saw, the one-time client secret first, and starts over in the new
+  // session's tenant.
+  let lastSession = authStore.sessionKey;
+  $effect(() => {
+    const key = authStore.sessionKey;
+    if (key === lastSession) return;
+    lastSession = key;
+    untrack(() => {
+      secret = null;
+      pending = null;
+      editing = null;
+      apps = [];
+      appsError = null;
+      discoveredTenants = [];
+      tenantsError = null;
+      selectedTenantID = authStore.tenantID;
+      void loadTenants();
+    });
+  });
 
   async function loadApps(tenantID: string): Promise<void> {
     if (tenantID === '') {
       apps = [];
       return;
     }
+    const forSession = authStore.sessionKey;
     appsLoading = true;
     appsError = null;
     try {
       const client = await getSDKClient();
       const resp = await client.iam.listApps(tenantID);
-      if (tenantID !== selectedTenantID) return;
+      if (forSession !== authStore.sessionKey || tenantID !== selectedTenantID) return;
       apps = resp.applications ?? resp.apps ?? [];
     } catch (e) {
       appsError = e instanceof Error ? e.message : 'Failed to load OAuth applications';
@@ -162,6 +194,7 @@
     event.preventDefault();
     const name = regName.trim();
     if (!name || selectedTenantID === '') return;
+    const forSession = authStore.sessionKey;
     registering = true;
     try {
       const client = await getSDKClient();
@@ -173,6 +206,9 @@
         token_endpoint_auth_method: regAuthMethod,
       };
       const app = await client.iam.registerApp(selectedTenantID, req);
+      // A response that lands after the session changed belongs to the
+      // previous identity: its secret is never shown to the new one.
+      if (forSession !== authStore.sessionKey) return;
       showToast('success', `Application ${name} registered`);
       regName = '';
       regRedirects = '';
@@ -239,11 +275,13 @@
   async function confirmPending(): Promise<void> {
     if (!pending) return;
     const p = pending;
+    const forSession = authStore.sessionKey;
     working = true;
     try {
       const client = await getSDKClient();
       if (p.kind === 'rotate') {
         const app = await client.iam.rotateAppSecret(selectedTenantID, p.clientID);
+        if (forSession !== authStore.sessionKey) return;
         showToast('success', `Secret of ${p.name} rotated`);
         pending = null;
         if (app.client_secret) {
