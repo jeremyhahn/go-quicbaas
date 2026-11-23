@@ -22,10 +22,84 @@ type concludingStorage struct {
 	// beforeConclude, when set, runs as a conclusion arrives at the store:
 	// whatever it does happened between the caller's read and the swap.
 	beforeConclude func()
+
+	// interleave, when set, runs once, between a mutation's read and its
+	// write: whatever it does happened while the writer held a stale read.
+	hookMu     sync.Mutex
+	interleave func()
 }
 
 func newConcludingStorage() *concludingStorage {
 	return &concludingStorage{mockJobStorage: newMockJobStorage()}
+}
+
+// takeInterleave returns the interleave hook and clears it, so it runs once.
+func (c *concludingStorage) takeInterleave() func() {
+	c.hookMu.Lock()
+	defer c.hookMu.Unlock()
+	hook := c.interleave
+	c.interleave = nil
+	return hook
+}
+
+// GetJob reads as the mock does, then runs the interleave hook, so a
+// read-then-write of the job can be interleaved like a guarded mutation.
+func (c *concludingStorage) GetJob(ctx context.Context, id uint64, tenantID string) (*Job, error) {
+	job, err := c.mockJobStorage.GetJob(ctx, id, tenantID)
+	if hook := c.takeInterleave(); hook != nil {
+		hook()
+	}
+	return job, err
+}
+
+// MutateJob is the guarded job write the quicbaas ClusteredStorage
+// performs, in memory: the result is stored only while the job record is
+// the one the mutation decided against, and re-decided otherwise.
+func (c *concludingStorage) MutateJob(ctx context.Context, jobID uint64, _ string, mutate JobMutation) (*Job, error) {
+	for attempt := 0; attempt < 8; attempt++ {
+		if c.honorCancel.Load() && ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		c.errMu.RLock()
+		getErr, writeErr := c.getJobErr, c.updateJobErr
+		c.errMu.RUnlock()
+		if getErr != nil {
+			return nil, getErr
+		}
+		if writeErr != nil {
+			return nil, writeErr
+		}
+		c.mu.RLock()
+		stored, ok := c.jobs[jobID]
+		c.mu.RUnlock()
+		if !ok {
+			return nil, nil
+		}
+		next, err := mutate(copyJob(stored))
+		if err != nil {
+			return nil, err
+		}
+		if hook := c.takeInterleave(); hook != nil {
+			hook()
+		}
+		c.guard.Lock()
+		c.mu.Lock()
+		if c.jobs[jobID] != stored {
+			c.mu.Unlock()
+			c.guard.Unlock()
+			continue
+		}
+		written := copyJob(next)
+		written.UpdatedAt = time.Now()
+		c.jobs[jobID] = written
+		c.mu.Unlock()
+		c.guard.Unlock()
+		if c.afterUpdateJob != nil {
+			c.afterUpdateJob(copyJob(written))
+		}
+		return copyJob(written), nil
+	}
+	return nil, errors.New("mock job mutation contended")
 }
 
 func (c *concludingStorage) ConcludeRun(_ context.Context, run *RunConclusion, transition RunTransition) (bool, error) {
@@ -414,5 +488,40 @@ func TestClusteredOutcome_AnEarlyTriggersRetryConcludes(t *testing.T) {
 	}
 	if stored := storedJob(t, storage.mockJobStorage, job.ID); stored.Status != JobStatusPending || stored.FailCount != 0 {
 		t.Fatalf("STORED %s with %d failures, want the retry's pending with 0", stored.Status, stored.FailCount)
+	}
+}
+
+// TestClusteredUpdate_AStaleUpdateKeepsARecoverysConclusion: a rename that
+// read the job Running before another node recovered the run cannot write
+// its stale snapshot over the recovery's conclusion.
+func TestClusteredUpdate_AStaleUpdateKeepsARecoverysConclusion(t *testing.T) {
+	storage := newConcludingStorage()
+	updater := clusteredNode(t, storage, "node-1")
+	updater.running.Store(true)
+	recoverer := clusteredNode(t, storage, "node-2")
+	job := seedRunningJob(t, storage.mockJobStorage, runningRecoveryJob())
+
+	recovered := false
+	storage.interleave = func() {
+		if _, err := recoverer.RecoverAbandonedRun(context.Background(), job, goodAttestation()); err != nil {
+			t.Errorf("recovery between the rename's read and its write: %v", err)
+			return
+		}
+		recovered = true
+	}
+
+	if _, err := updater.UpdateJob(context.Background(), job.ID, "", &JobUpdateParams{Name: "renamed"}); err != nil {
+		t.Fatalf("UpdateJob: %v", err)
+	}
+	if !recovered {
+		t.Fatal("the recovery did not run between the rename's read and its write")
+	}
+	stored := storedJob(t, storage.mockJobStorage, job.ID)
+	if stored.Status != JobStatusPending || stored.ConcludedBy != "recovery@node-2" || !runConcluded(stored) {
+		t.Fatalf("STORED job is %s concluded by %q (concluded=%v), want the recovery's pending conclusion",
+			stored.Status, stored.ConcludedBy, runConcluded(stored))
+	}
+	if stored.FailCount != 1 || stored.Name != "renamed" {
+		t.Fatalf("STORED job has %d failures and name %q, want 1 and \"renamed\"", stored.FailCount, stored.Name)
 	}
 }

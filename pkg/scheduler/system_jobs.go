@@ -15,6 +15,7 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"time"
 )
 
@@ -139,36 +140,49 @@ func (s *SchedulerEngine) ensureSystemJob(ctx context.Context, definition *Job) 
 		return false, ErrStorageError{Op: "GetJob", Cause: err}
 	}
 
-	if current.Status == JobStatusRunning {
-		return false, nil
-	}
+	running := false
+	written, err := s.mutateJob(ctx, definition.ID, "", func(held *Job) (*Job, error) {
+		running = false
+		if held.Status == JobStatusRunning {
+			running = true
+			return nil, errNoJobWrite
+		}
 
-	reschedule := current.Status == JobStatusFailed
-	if current.Type != definition.Type ||
-		current.Schedule != definition.Schedule ||
-		current.Handler != definition.Handler ||
-		current.Timeout != definition.Timeout ||
-		current.MaxRetries != definition.MaxRetries {
-		current.Type = definition.Type
-		current.Schedule = definition.Schedule
-		current.Handler = definition.Handler
-		current.Timeout = definition.Timeout
-		current.MaxRetries = definition.MaxRetries
-		reschedule = true
-	}
-	if !reschedule {
-		return true, nil
-	}
+		next := *held
+		reschedule := next.Status == JobStatusFailed
+		if next.Type != definition.Type ||
+			next.Schedule != definition.Schedule ||
+			next.Handler != definition.Handler ||
+			next.Timeout != definition.Timeout ||
+			next.MaxRetries != definition.MaxRetries {
+			next.Type = definition.Type
+			next.Schedule = definition.Schedule
+			next.Handler = definition.Handler
+			next.Timeout = definition.Timeout
+			next.MaxRetries = definition.MaxRetries
+			reschedule = true
+		}
+		if !reschedule {
+			return nil, errNoJobWrite
+		}
 
-	if current.Status == JobStatusFailed {
-		current.Status = JobStatusPending
+		if next.Status == JobStatusFailed {
+			next.Status = JobStatusPending
+		}
+		if err := s.startNextFiring(&next); err != nil {
+			return nil, err
+		}
+		next.UpdatedAt = now
+		return &next, nil
+	})
+	if errors.Is(err, errNoJobWrite) {
+		return !running, nil
 	}
-	if err := s.startNextFiring(current); err != nil {
+	if err != nil {
 		return false, err
 	}
-	current.UpdatedAt = now
-	if err := s.storage.UpdateJob(ctx, current); err != nil {
-		return false, ErrStorageError{Op: "UpdateJob", Cause: err}
+	if written == nil {
+		return false, nil
 	}
 	return true, nil
 }

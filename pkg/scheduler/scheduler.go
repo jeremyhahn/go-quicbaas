@@ -98,6 +98,13 @@ type SchedulerEngine struct {
 	// a clustered engine without it refuses abandoned-run recovery.
 	concluder RunConcluder
 
+	// jobWriter guards every job change that is not a run conclusion across
+	// nodes: a clustered engine writes cancels, pauses, resumes, updates,
+	// system job repairs and the Running transition through it, so a write
+	// prepared before another node changed the record is re-decided. It is
+	// nil on a single-node engine, which writes as it always has.
+	jobWriter GuardedJobWriter
+
 	// startedRuns holds, per job (tenant and ID: two tenants' jobs can share
 	// an ID), the identity of the run this node moved to Running, so its
 	// outcome is concluded through the guard.
@@ -275,6 +282,9 @@ func NewWithClustering(config *SchedulerConfig, storage JobStorage, nodeID strin
 	engine := newEngine(config, storage, nodeID, leader, claimer)
 	if concluder, ok := storage.(RunConcluder); ok {
 		engine.concluder = concluder
+	}
+	if w, ok := storage.(GuardedJobWriter); ok {
+		engine.jobWriter = w
 	}
 	return engine, nil
 }
@@ -524,34 +534,33 @@ func (s *SchedulerEngine) CancelJob(ctx context.Context, jobID uint64) error {
 	lock.Lock()
 	defer lock.Unlock()
 
-	job, err := s.storage.GetJob(ctx, jobID, "")
+	job, err := s.mutateJob(ctx, jobID, "", func(held *Job) (*Job, error) {
+		next := *held
+
+		// Only pending or paused jobs can be canceled
+		if next.Status == JobStatusRunning {
+			return nil, InvalidJobError{
+				Field:   "status",
+				Message: "cannot cancel a running job",
+			}
+		}
+
+		if next.Status == JobStatusCanceled || next.Status == JobStatusCompleted {
+			return nil, InvalidJobError{
+				Field:   "status",
+				Message: "job is already in terminal state",
+			}
+		}
+
+		next.Status = JobStatusCanceled
+		next.UpdatedAt = time.Now()
+		return &next, nil
+	})
 	if err != nil {
-		return ErrStorageError{Op: "GetJob", Cause: err}
+		return err
 	}
 	if job == nil {
 		return JobNotFoundError{JobID: jobID}
-	}
-
-	// Only pending or paused jobs can be canceled
-	if job.Status == JobStatusRunning {
-		return InvalidJobError{
-			Field:   "status",
-			Message: "cannot cancel a running job",
-		}
-	}
-
-	if job.Status == JobStatusCanceled || job.Status == JobStatusCompleted {
-		return InvalidJobError{
-			Field:   "status",
-			Message: "job is already in terminal state",
-		}
-	}
-
-	job.Status = JobStatusCanceled
-	job.UpdatedAt = time.Now()
-
-	if err := s.storage.UpdateJob(ctx, job); err != nil {
-		return ErrStorageError{Op: "UpdateJob", Cause: err}
 	}
 
 	return nil
@@ -569,39 +578,38 @@ func (s *SchedulerEngine) CancelJobWithTenant(ctx context.Context, jobID uint64,
 	lock.Lock()
 	defer lock.Unlock()
 
-	job, err := s.storage.GetJob(ctx, jobID, tenantID)
+	var oldStatus JobStatus
+	job, err := s.mutateJob(ctx, jobID, tenantID, func(held *Job) (*Job, error) {
+		next := *held
+		oldStatus = held.Status
+
+		// Only pending or paused jobs can be canceled
+		if next.Status == JobStatusRunning {
+			return nil, InvalidJobError{
+				Field:   "status",
+				Message: "cannot cancel a running job",
+			}
+		}
+
+		if next.Status == JobStatusCanceled || next.Status == JobStatusCompleted {
+			return nil, InvalidJobError{
+				Field:   "status",
+				Message: "job is already in terminal state",
+			}
+		}
+
+		next.Status = JobStatusCanceled
+		next.UpdatedAt = time.Now()
+		if reason != "" {
+			next.LastError = reason
+		}
+		return &next, nil
+	})
 	if err != nil {
-		return "", ErrStorageError{Op: "GetJob", Cause: err}
+		return oldStatus, err
 	}
 	if job == nil {
 		return "", JobNotFoundError{JobID: jobID}
-	}
-
-	oldStatus := job.Status
-
-	// Only pending or paused jobs can be canceled
-	if job.Status == JobStatusRunning {
-		return oldStatus, InvalidJobError{
-			Field:   "status",
-			Message: "cannot cancel a running job",
-		}
-	}
-
-	if job.Status == JobStatusCanceled || job.Status == JobStatusCompleted {
-		return oldStatus, InvalidJobError{
-			Field:   "status",
-			Message: "job is already in terminal state",
-		}
-	}
-
-	job.Status = JobStatusCanceled
-	job.UpdatedAt = time.Now()
-	if reason != "" {
-		job.LastError = reason
-	}
-
-	if err := s.storage.UpdateJob(ctx, job); err != nil {
-		return oldStatus, ErrStorageError{Op: "UpdateJob", Cause: err}
 	}
 
 	return oldStatus, nil
@@ -730,26 +738,25 @@ func (s *SchedulerEngine) PauseJob(ctx context.Context, jobID uint64, tenantID s
 	lock.Lock()
 	defer lock.Unlock()
 
-	job, err := s.storage.GetJob(ctx, jobID, tenantID)
+	job, err := s.mutateJob(ctx, jobID, tenantID, func(held *Job) (*Job, error) {
+		next := *held
+
+		if next.Status != JobStatusPending {
+			return nil, InvalidJobError{
+				Field:   "status",
+				Message: "only pending jobs can be paused",
+			}
+		}
+
+		next.Status = JobStatusPaused
+		next.UpdatedAt = time.Now()
+		return &next, nil
+	})
 	if err != nil {
-		return ErrStorageError{Op: "GetJob", Cause: err}
+		return err
 	}
 	if job == nil {
 		return JobNotFoundError{JobID: jobID}
-	}
-
-	if job.Status != JobStatusPending {
-		return InvalidJobError{
-			Field:   "status",
-			Message: "only pending jobs can be paused",
-		}
-	}
-
-	job.Status = JobStatusPaused
-	job.UpdatedAt = time.Now()
-
-	if err := s.storage.UpdateJob(ctx, job); err != nil {
-		return ErrStorageError{Op: "UpdateJob", Cause: err}
 	}
 
 	return nil
@@ -765,28 +772,27 @@ func (s *SchedulerEngine) PauseJobWithStatus(ctx context.Context, jobID uint64, 
 	lock.Lock()
 	defer lock.Unlock()
 
-	job, err := s.storage.GetJob(ctx, jobID, tenantID)
+	var oldStatus JobStatus
+	job, err := s.mutateJob(ctx, jobID, tenantID, func(held *Job) (*Job, error) {
+		next := *held
+		oldStatus = held.Status
+
+		if next.Status != JobStatusPending {
+			return nil, InvalidJobError{
+				Field:   "status",
+				Message: "only pending jobs can be paused",
+			}
+		}
+
+		next.Status = JobStatusPaused
+		next.UpdatedAt = time.Now()
+		return &next, nil
+	})
 	if err != nil {
-		return "", ErrStorageError{Op: "GetJob", Cause: err}
+		return oldStatus, err
 	}
 	if job == nil {
 		return "", JobNotFoundError{JobID: jobID}
-	}
-
-	oldStatus := job.Status
-
-	if job.Status != JobStatusPending {
-		return oldStatus, InvalidJobError{
-			Field:   "status",
-			Message: "only pending jobs can be paused",
-		}
-	}
-
-	job.Status = JobStatusPaused
-	job.UpdatedAt = time.Now()
-
-	if err := s.storage.UpdateJob(ctx, job); err != nil {
-		return oldStatus, ErrStorageError{Op: "UpdateJob", Cause: err}
 	}
 
 	return oldStatus, nil
@@ -802,33 +808,32 @@ func (s *SchedulerEngine) ResumeJob(ctx context.Context, jobID uint64, tenantID 
 	lock.Lock()
 	defer lock.Unlock()
 
-	job, err := s.storage.GetJob(ctx, jobID, tenantID)
+	job, err := s.mutateJob(ctx, jobID, tenantID, func(held *Job) (*Job, error) {
+		next := *held
+
+		if next.Status != JobStatusPaused {
+			return nil, InvalidJobError{
+				Field:   "status",
+				Message: "only paused jobs can be resumed",
+			}
+		}
+
+		next.Status = JobStatusPending
+		next.UpdatedAt = time.Now()
+
+		// Recalculate next run if needed
+		if next.NextRun.Before(time.Now()) {
+			if err := s.rescheduleResumed(&next); err != nil {
+				return nil, err
+			}
+		}
+		return &next, nil
+	})
 	if err != nil {
-		return ErrStorageError{Op: "GetJob", Cause: err}
+		return err
 	}
 	if job == nil {
 		return JobNotFoundError{JobID: jobID}
-	}
-
-	if job.Status != JobStatusPaused {
-		return InvalidJobError{
-			Field:   "status",
-			Message: "only paused jobs can be resumed",
-		}
-	}
-
-	job.Status = JobStatusPending
-	job.UpdatedAt = time.Now()
-
-	// Recalculate next run if needed
-	if job.NextRun.Before(time.Now()) {
-		if err := s.rescheduleResumed(job); err != nil {
-			return err
-		}
-	}
-
-	if err := s.storage.UpdateJob(ctx, job); err != nil {
-		return ErrStorageError{Op: "UpdateJob", Cause: err}
 	}
 
 	return nil
@@ -844,35 +849,34 @@ func (s *SchedulerEngine) ResumeJobWithStatus(ctx context.Context, jobID uint64,
 	lock.Lock()
 	defer lock.Unlock()
 
-	job, err := s.storage.GetJob(ctx, jobID, tenantID)
+	var oldStatus JobStatus
+	job, err := s.mutateJob(ctx, jobID, tenantID, func(held *Job) (*Job, error) {
+		next := *held
+		oldStatus = held.Status
+
+		if next.Status != JobStatusPaused {
+			return nil, InvalidJobError{
+				Field:   "status",
+				Message: "only paused jobs can be resumed",
+			}
+		}
+
+		next.Status = JobStatusPending
+		next.UpdatedAt = time.Now()
+
+		// Recalculate next run if needed
+		if next.NextRun.Before(time.Now()) {
+			if err := s.rescheduleResumed(&next); err != nil {
+				return nil, err
+			}
+		}
+		return &next, nil
+	})
 	if err != nil {
-		return "", ErrStorageError{Op: "GetJob", Cause: err}
+		return oldStatus, err
 	}
 	if job == nil {
 		return "", JobNotFoundError{JobID: jobID}
-	}
-
-	oldStatus := job.Status
-
-	if job.Status != JobStatusPaused {
-		return oldStatus, InvalidJobError{
-			Field:   "status",
-			Message: "only paused jobs can be resumed",
-		}
-	}
-
-	job.Status = JobStatusPending
-	job.UpdatedAt = time.Now()
-
-	// Recalculate next run if needed
-	if job.NextRun.Before(time.Now()) {
-		if err := s.rescheduleResumed(job); err != nil {
-			return oldStatus, err
-		}
-	}
-
-	if err := s.storage.UpdateJob(ctx, job); err != nil {
-		return oldStatus, ErrStorageError{Op: "UpdateJob", Cause: err}
 	}
 
 	return oldStatus, nil
@@ -912,64 +916,63 @@ func (s *SchedulerEngine) UpdateJob(ctx context.Context, jobID uint64, tenantID 
 	lock.Lock()
 	defer lock.Unlock()
 
-	job, err := s.storage.GetJob(ctx, jobID, tenantID)
+	job, err := s.mutateJob(ctx, jobID, tenantID, func(held *Job) (*Job, error) {
+		next := *held
+
+		// Apply updates to mutable fields
+		if updates.Name != "" {
+			next.Name = updates.Name
+		}
+		if updates.Description != "" {
+			next.Description = updates.Description
+		}
+		if updates.Schedule != "" {
+			// Validate new cron schedule
+			if _, err := s.cronParser.Parse(updates.Schedule); err != nil {
+				return nil, InvalidScheduleError{Schedule: updates.Schedule, Cause: err}
+			}
+			next.Schedule = updates.Schedule
+			// A recurring job's new schedule starts a new firing
+			if next.Type == JobTypeRecurring {
+				if err := s.startNextFiring(&next); err != nil {
+					return nil, err
+				}
+			}
+		}
+		if !updates.ExecuteAt.IsZero() {
+			next.ExecuteAt = updates.ExecuteAt
+			if next.Type == JobTypeOneShot {
+				next.NextRun = updates.ExecuteAt
+			}
+		}
+		if updates.Handler != "" {
+			// Handler existence is validated at execution time, not update time
+			next.Handler = updates.Handler
+		}
+		if updates.Payload != nil {
+			next.Payload = json.RawMessage(updates.Payload)
+		}
+		if updates.Priority != 0 {
+			next.Priority = updates.Priority
+		}
+		if updates.Timeout != 0 {
+			next.Timeout = updates.Timeout
+		}
+		if updates.MaxRetries != 0 {
+			next.MaxRetries = updates.MaxRetries
+		}
+		if updates.Labels != nil {
+			next.Labels = updates.Labels
+		}
+
+		next.UpdatedAt = time.Now()
+		return &next, nil
+	})
 	if err != nil {
-		return nil, ErrStorageError{Op: "GetJob", Cause: err}
+		return nil, err
 	}
 	if job == nil {
 		return nil, JobNotFoundError{JobID: jobID}
-	}
-
-	// Apply updates to mutable fields
-	if updates.Name != "" {
-		job.Name = updates.Name
-	}
-	if updates.Description != "" {
-		job.Description = updates.Description
-	}
-	if updates.Schedule != "" {
-		// Validate new cron schedule
-		if _, err := s.cronParser.Parse(updates.Schedule); err != nil {
-			return nil, InvalidScheduleError{Schedule: updates.Schedule, Cause: err}
-		}
-		job.Schedule = updates.Schedule
-		// A recurring job's new schedule starts a new firing
-		if job.Type == JobTypeRecurring {
-			if err := s.startNextFiring(job); err != nil {
-				return nil, err
-			}
-		}
-	}
-	if !updates.ExecuteAt.IsZero() {
-		job.ExecuteAt = updates.ExecuteAt
-		if job.Type == JobTypeOneShot {
-			job.NextRun = updates.ExecuteAt
-		}
-	}
-	if updates.Handler != "" {
-		// Handler existence is validated at execution time, not update time
-		job.Handler = updates.Handler
-	}
-	if updates.Payload != nil {
-		job.Payload = json.RawMessage(updates.Payload)
-	}
-	if updates.Priority != 0 {
-		job.Priority = updates.Priority
-	}
-	if updates.Timeout != 0 {
-		job.Timeout = updates.Timeout
-	}
-	if updates.MaxRetries != 0 {
-		job.MaxRetries = updates.MaxRetries
-	}
-	if updates.Labels != nil {
-		job.Labels = updates.Labels
-	}
-
-	job.UpdatedAt = time.Now()
-
-	if err := s.storage.UpdateJob(ctx, job); err != nil {
-		return nil, ErrStorageError{Op: "UpdateJob", Cause: err}
 	}
 
 	return job, nil
@@ -1383,64 +1386,74 @@ func (s *SchedulerEngine) executeJob(ctx context.Context, job *Job, claimedFirin
 	// same lock so it cannot clobber a concurrent transition.
 	lock := s.jobLock(job.ID)
 	lock.Lock()
-	current, err := s.storage.GetJob(storageCtx, job.ID, JobTenantID(job))
-	if err != nil || current == nil {
+	var (
+		skip  string
+		stale bool
+	)
+	written, err := s.mutateJob(storageCtx, job.ID, JobTenantID(job), func(current *Job) (*Job, error) {
+		skip, stale = "", false
+		if current.Status == JobStatusCanceled || current.Status == JobStatusCompleted || current.Status == JobStatusPaused {
+			skip = fmt.Sprintf("Skipping job %d (%s): status is %s", current.ID, current.Name, current.Status)
+			return nil, errNoJobWrite
+		}
+		// A RUNNING JOB IS NEVER DOUBLE-RUN, whatever dispatched us. Claimed
+		// dispatches already require Pending below; this closes the manual and
+		// repair paths, whose TriggerJob-time precheck races the execution that
+		// can begin in between. Without it, a zero-firing dispatch would write
+		// Running over Running and invoke the handler concurrently with the
+		// live execution.
+		if current.Status == JobStatusRunning {
+			skip, stale = fmt.Sprintf("Skipping job %d (%s): already running", current.ID, current.Name), true
+			return nil, errNoJobWrite
+		}
+
+		// The claim authorised ONE firing. Between the due-list read and here the
+		// job may have moved on — completed and rescheduled, retried onto a new
+		// backoff time, or been updated — and the record now in front of us is a
+		// DIFFERENT firing that another node may already have claimed and be
+		// running. Executing it would double-fire through the back door: the claim
+		// was won honestly, for a firing that no longer exists.
+		//
+		// So the firing identity is re-checked here, under the same lock that
+		// guards the running-status write, and a mismatch declines. Found by
+		// review; the claim alone is not sufficient because claiming and executing
+		// are separated by a goroutine hop.
+		if !claimedFiring.IsZero() {
+			if current.Status != JobStatusPending || !current.NextRun.Equal(claimedFiring) {
+				skip = fmt.Sprintf("Skipping job %d (%s): claimed firing %s, record now %s at %s",
+					current.ID, current.Name, claimedFiring, current.Status, current.NextRun)
+				stale = true
+				return nil, errNoJobWrite
+			}
+		}
+
+		// Update job status to running
+		next := *current
+		next.Status = JobStatusRunning
+		next.UpdatedAt = time.Now()
+		next.RunStartedAt = next.UpdatedAt
+		return &next, nil
+	})
+	if errors.Is(err, errNoJobWrite) {
 		lock.Unlock()
-		if err != nil && !isJobNotFound(err) {
+		if stale {
+			s.staleDispatches.Add(1)
+		}
+		s.logDebug("%s", skip)
+		return
+	}
+	if err != nil {
+		lock.Unlock()
+		if !isJobNotFound(err) {
 			s.storageErrors.Add(1)
 		}
 		return
 	}
-	if current.Status == JobStatusCanceled || current.Status == JobStatusCompleted || current.Status == JobStatusPaused {
+	if written == nil {
 		lock.Unlock()
-		s.logDebug("Skipping job %d (%s): status is %s", current.ID, current.Name, current.Status)
 		return
 	}
-	// A RUNNING JOB IS NEVER DOUBLE-RUN, whatever dispatched us. Claimed
-	// dispatches already require Pending below; this closes the manual and
-	// repair paths, whose TriggerJob-time precheck races the execution that
-	// can begin in between. Without it, a zero-firing dispatch would write
-	// Running over Running and invoke the handler concurrently with the
-	// live execution.
-	if current.Status == JobStatusRunning {
-		lock.Unlock()
-		s.staleDispatches.Add(1)
-		s.logDebug("Skipping job %d (%s): already running", current.ID, current.Name)
-		return
-	}
-
-	// The claim authorised ONE firing. Between the due-list read and here the
-	// job may have moved on — completed and rescheduled, retried onto a new
-	// backoff time, or been updated — and the record now in front of us is a
-	// DIFFERENT firing that another node may already have claimed and be
-	// running. Executing it would double-fire through the back door: the claim
-	// was won honestly, for a firing that no longer exists.
-	//
-	// So the firing identity is re-checked here, under the same lock that
-	// guards the running-status write, and a mismatch declines. Found by
-	// review; the claim alone is not sufficient because claiming and executing
-	// are separated by a goroutine hop.
-	if !claimedFiring.IsZero() {
-		if current.Status != JobStatusPending || !current.NextRun.Equal(claimedFiring) {
-			lock.Unlock()
-			s.staleDispatches.Add(1)
-			s.logDebug("Skipping job %d (%s): claimed firing %s, record now %s at %s",
-				current.ID, current.Name, claimedFiring, current.Status, current.NextRun)
-			return
-		}
-	}
-
-	job = current
-
-	// Update job status to running
-	job.Status = JobStatusRunning
-	job.UpdatedAt = time.Now()
-	job.RunStartedAt = job.UpdatedAt
-	if err := s.storage.UpdateJob(storageCtx, job); err != nil {
-		lock.Unlock()
-		s.storageErrors.Add(1)
-		return
-	}
+	job = written
 	// From here the execution carries the run it started (its conclusion
 	// authority) through every outcome path.
 	ctx = s.noteRunStarted(ctx, job)
