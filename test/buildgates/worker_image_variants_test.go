@@ -16,6 +16,7 @@ package buildgates
 import (
 	"archive/tar"
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,8 +28,9 @@ import (
 // worker image variants (#2700).
 var variantsWorkflowPath = filepath.Join(workflowsDir, "worker-image-variants.yml")
 
-// variantSteps are the variant job's steps the publish-path test runs, in
-// job order. A renamed or removed step fails the test, so no gate can drop
+// variantSteps are the variant job's steps the publish-path test selects; the
+// harness runs them in the workflow's YAML order, and checkVariantStepOrder
+// fails unless every gate precedes the push. A renamed or removed step fails the test, so no gate can drop
 // out of the path unnoticed.
 var variantSteps = []string{
 	"Is this variant tag already published?",
@@ -141,24 +143,41 @@ type variantStepDef struct {
 	env               map[string]string
 }
 
-// variantStep returns the variant job's step named name: its env, its `if:`
-// and its run body.
-func variantStep(t *testing.T, name string) (env map[string]string, ifExpr, run string) {
+// variantJobSteps walks the variant job's steps in YAML order. all is every
+// step's name in that order ("" for an unnamed step); defs is the steps named
+// in variantSteps, in that same YAML order, with their env, `if:` and run
+// body. A variantSteps name that is missing or appears twice fails the test.
+func variantJobSteps(t *testing.T) (all []string, defs []variantStepDef) {
 	t.Helper()
 	steps := mapValue(ciJobNode([]byte(readFile(t, variantsWorkflowPath)), "variant"), "steps")
 	if steps == nil {
 		t.Fatalf("%s has no variant job with steps", variantsWorkflowPath)
 	}
+	want := map[string]bool{}
+	for _, name := range variantSteps {
+		want[name] = true
+	}
+	seen := map[string]bool{}
 	for _, s := range steps.Content {
-		if n := mapValue(s, "name"); n == nil || n.Value != name {
+		name := ""
+		if n := mapValue(s, "name"); n != nil {
+			name = n.Value
+		}
+		all = append(all, name)
+		if !want[name] {
 			continue
 		}
-		env = map[string]string{}
+		if seen[name] {
+			t.Fatalf("%s's variant job has step %q twice", variantsWorkflowPath, name)
+		}
+		seen[name] = true
+		env := map[string]string{}
 		if e := mapValue(s, "env"); e != nil {
 			for i := 0; i+1 < len(e.Content); i += 2 {
 				env[e.Content[i].Value] = e.Content[i+1].Value
 			}
 		}
+		ifExpr := ""
 		if i := mapValue(s, "if"); i != nil {
 			ifExpr = i.Value
 		}
@@ -166,10 +185,47 @@ func variantStep(t *testing.T, name string) (env map[string]string, ifExpr, run 
 		if r == nil || r.Value == "" {
 			t.Fatalf("step %q has no run body", name)
 		}
-		return env, ifExpr, r.Value
+		defs = append(defs, variantStepDef{name: name, ifExpr: ifExpr, run: r.Value, env: env})
 	}
-	t.Fatalf("%s's variant job has no step %q", variantsWorkflowPath, name)
-	return nil, "", ""
+	for _, name := range variantSteps {
+		if !seen[name] {
+			t.Fatalf("%s's variant job has no step %q", variantsWorkflowPath, name)
+		}
+	}
+	return all, defs
+}
+
+// checkVariantStepOrder returns an error unless every gate that must pass
+// before publishing (the existence check, the build, both secret scans and
+// the vulnerability scan) comes before the push step, and the push comes
+// before current moves. names is the variant job's step names in YAML order.
+func checkVariantStepOrder(names []string) error {
+	pos := map[string]int{}
+	for i, n := range names {
+		if _, dup := pos[n]; dup && n != "" {
+			return fmt.Errorf("step %q appears twice", n)
+		}
+		pos[n] = i
+	}
+	push, move := variantSteps[5], variantSteps[6]
+	for _, n := range []string{push, move} {
+		if _, ok := pos[n]; !ok {
+			return fmt.Errorf("no step %q", n)
+		}
+	}
+	for _, gate := range variantSteps[:5] {
+		p, ok := pos[gate]
+		if !ok {
+			return fmt.Errorf("no step %q", gate)
+		}
+		if p > pos[push] {
+			return fmt.Errorf("step %q runs after %q: a failing gate would not stop the push", gate, push)
+		}
+	}
+	if pos[move] < pos[push] {
+		return fmt.Errorf("step %q runs before %q", move, push)
+	}
+	return nil
 }
 
 // variantImageTar builds the tarball the fake `docker save` writes: a
@@ -228,10 +284,9 @@ func runVariantJob(t *testing.T, c variantCase) variantResult {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var defs []variantStepDef
-	for _, name := range variantSteps {
-		env, ifExpr, run := variantStep(t, name)
-		defs = append(defs, variantStepDef{name: name, ifExpr: ifExpr, run: run, env: env})
+	all, defs := variantJobSteps(t)
+	if err := checkVariantStepOrder(all); err != nil {
+		t.Fatalf("%s: %v", variantsWorkflowPath, err)
 	}
 	dir := t.TempDir()
 	bin, state, tmp, runner := filepath.Join(dir, "bin"), filepath.Join(dir, "state"), filepath.Join(dir, "tmp"), filepath.Join(dir, "runner")
@@ -410,6 +465,58 @@ func TestWorkerImageVariantsPublishPath(t *testing.T) {
 				}
 			} else if len(ghCalls) != 0 {
 				t.Errorf("gh calls %q, want none", ghCalls)
+			}
+		})
+	}
+}
+
+// TestWorkerImageVariantsStepOrder checks the workflow's real step order and
+// proves the check bites: a push moved ahead of any gate, current moved ahead
+// of the push, or a missing push step is an error.
+func TestWorkerImageVariantsStepOrder(t *testing.T) {
+	all, _ := variantJobSteps(t)
+	if err := checkVariantStepOrder(all); err != nil {
+		t.Fatalf("%s: %v", variantsWorkflowPath, err)
+	}
+	push, move := variantSteps[5], variantSteps[6]
+	without := func(name string) []string {
+		out := make([]string, 0, len(all))
+		for _, n := range all {
+			if n != name {
+				out = append(out, n)
+			}
+		}
+		return out
+	}
+	moved := func(name, before string) []string {
+		rest := without(name)
+		out := make([]string, 0, len(all))
+		for _, n := range rest {
+			if n == before {
+				out = append(out, name)
+			}
+			out = append(out, n)
+		}
+		return out
+	}
+	for _, c := range []struct {
+		name  string
+		names []string
+	}{
+		{"push before the existence check", moved(push, variantSteps[0])},
+		{"push before the build", moved(push, variantSteps[1])},
+		{"push before the image secret scan", moved(push, variantSteps[2])},
+		{"push before the layer secret scan", moved(push, variantSteps[3])},
+		{"push before the vulnerability scan", moved(push, variantSteps[4])},
+		{"move current before push", moved(move, push)},
+		{"no push step", without(push)},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if strings.Join(c.names, "\x00") == strings.Join(all, "\x00") {
+				t.Fatalf("reordered list %q is the workflow's own order", c.names)
+			}
+			if err := checkVariantStepOrder(c.names); err == nil {
+				t.Fatalf("order %q passed the check, want an error", c.names)
 			}
 		})
 	}
