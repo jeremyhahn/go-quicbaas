@@ -38,6 +38,8 @@
   import { readFilters, selected, type FilterValues } from '../../lib/filters.ts';
   import { showToast } from '../../stores/toast.svelte.ts';
   import { getSDKClient } from '../../stores/sdkClient.ts';
+  import { onSessionScopeChange, sessionGeneration } from '../../stores/auth.svelte.ts';
+  import { untrack } from 'svelte';
   import PageHeader from '../../components/core/PageHeader.svelte';
   import StatusBadge from '../../components/core/StatusBadge.svelte';
   import { statusToVariant } from '../../components/core/statusVariant.ts';
@@ -78,8 +80,32 @@
   // decomposition holds the work items the last decompose returned. The
   // decompose route only proposes them (it saves nothing), so they are shown
   // here until the operator creates them as tasks or dismisses them.
-  let decomposition: { parent: Task; items: WorkItem[] } | null = $state(null);
+  //
+  // A decomposition is bound to the scope it was made in: the tenant the
+  // header had selected and the login session. Adoption writes into that
+  // captured tenant, never the live one, and a scope change discards the
+  // panel (and stops an adoption in flight), so one tenant's task text is
+  // never created under another.
+  type DecompositionScope = { tenantID: string; generation: number };
+  let decomposition: { parent: Task; items: WorkItem[]; scope: DecompositionScope } | null = $state(null);
   let adopting = $state(false);
+
+  function currentScope(): DecompositionScope {
+    return { tenantID: orchestratorStore.activeTenantID, generation: sessionGeneration() };
+  }
+
+  function inScope(scope: DecompositionScope): boolean {
+    const now = currentScope();
+    return now.tenantID === scope.tenantID && now.generation === scope.generation;
+  }
+
+  $effect(() => {
+    const tenantID = orchestratorStore.activeTenantID;
+    const held = untrack(() => decomposition);
+    if (held !== null && held.scope.tenantID !== tenantID) decomposition = null;
+  });
+
+  $effect(() => onSessionScopeChange(() => { decomposition = null; }));
   let claimingID = $state('');
   let completingID = $state('');
 
@@ -283,17 +309,21 @@
   async function handleDecompose(task: Task, e: Event): Promise<void> {
     e.stopPropagation();
     decomposingID = task.id;
+    const scope = currentScope();
     const req: DecomposeTaskRequest = {
-      tenant_id: orchestratorStore.activeTenantID,
+      tenant_id: scope.tenantID,
       task: task.description || task.subject,
       ...(task.project_id ? { project_ids: [task.project_id] } : {}),
     };
     try {
       const client = await getSDKClient();
       const resp = await client.orchestrator.decomposeTask(req);
+      // The tenant or session changed while the request was out: the answer
+      // belongs to a scope this page no longer shows, so it is dropped.
+      if (!inScope(scope)) return;
       const items = resp.work_items ?? [];
       const count = items.length;
-      decomposition = count > 0 ? { parent: task, items } : null;
+      decomposition = count > 0 ? { parent: task, items, scope } : null;
       showToast('success', `Task decomposed into ${count} work item${count === 1 ? '' : 's'}`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -307,16 +337,29 @@
   // parent's team and tagged with the parent it came from, then refreshes
   // the list. Items that fail to create stay in the panel so none is lost.
   async function adoptDecomposition(): Promise<void> {
-    if (decomposition === null) return;
-    const { parent, items } = decomposition;
+    if (decomposition === null || adopting) return;
+    const { parent, items, scope } = decomposition;
+    if (!inScope(scope)) {
+      decomposition = null;
+      return;
+    }
     adopting = true;
     const failed: WorkItem[] = [];
     let created = 0;
     try {
       const client = await getSDKClient();
       for (const item of items) {
+        if (!inScope(scope)) {
+          // The header moved to another tenant (or the session ended) mid
+          // batch: stop, rather than split one batch across two scopes.
+          adopting = false;
+          decomposition = null;
+          showToast('error', `Stopped after ${created} task${created === 1 ? '' : 's'}: the tenant or session changed`);
+          refreshTasks();
+          return;
+        }
         const req: CreateTaskRequest = {
-          tenant_id: orchestratorStore.activeTenantID,
+          tenant_id: scope.tenantID,
           subject: item.title,
           team_name: parent.team_name,
           description: item.description || undefined,
@@ -339,7 +382,7 @@
       return;
     }
     adopting = false;
-    decomposition = failed.length > 0 ? { parent, items: failed } : null;
+    decomposition = failed.length > 0 && inScope(scope) ? { parent, items: failed, scope } : null;
     if (failed.length > 0) {
       showToast('error', `Created ${created} task${created === 1 ? '' : 's'}; ${failed.length} failed`);
     } else {
