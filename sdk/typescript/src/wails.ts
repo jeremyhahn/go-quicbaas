@@ -24,14 +24,35 @@ import {
 } from './page.js';
 import type {
   AuthClient,
+  BarrierClient,
+  CeremonyClient,
   Client,
+  ClusterClient,
   ConnectionClient,
+  DataClient,
+  IAMClient,
+  KMSClient,
+  ObjectsClient,
   OrchestratorClient,
+  SecretsClient,
   SSHKeysClient,
   SSHClient,
   SSHKnownHostsClient,
   SSHAuthorizedKeysClient,
+  TenantBarrierClient,
+  TimeSeriesClient,
+  VectorsClient,
 } from './interfaces.js';
+import type { AgentsClient } from './agents.js';
+import type { CAClient } from './ca.js';
+import type { CryptoClient } from './crypto.js';
+import type { DEKClient } from './dek.js';
+import type { DynamicSecretsClient } from './dynamicsecrets.js';
+import type { EmbeddingsClient } from './embedding_sdk.js';
+import type { MessagingClient } from './messaging_sdk.js';
+import type { RAGClient } from './rag.js';
+import type { SchedulerClient } from './scheduler_sdk.js';
+import type { TrustClient } from './trust.js';
 import type {
   AgentBackendInfo,
   JobRunnerInfo,
@@ -129,11 +150,12 @@ import type { ProjectsClient } from './projects.js';
 import type { SdlcClient } from './sdlc.js';
 import { unsupportedClient } from './unsupported.js';
 
-// wailsUnsupported is why projects, sdlc and accounts refuse here: the
-// desktop app binds no Go struct for them (cmd/quicbaas/bindings_*.go binds
-// orchestrator, sessions, fleet, SSH, agents and cost settings only), so there
-// is no window.go method to call. The desktop SPA reaches them over REST
-// against the embedded server.
+// wailsUnsupported is why projects, sdlc, accounts and the data, security and
+// cluster families refuse here: the desktop app binds no Go struct for them
+// (cmd/quicbaas/bindings_*.go binds orchestrator, sessions, fleet, SSH, agents
+// and cost settings only), so there is no window.go method to call. Reaching
+// them in desktop mode needs the REST transport against the embedded server,
+// which the SPA does not build yet.
 const wailsUnsupported =
   'the desktop app exposes no Wails binding for this family; ' +
   'use the rest transport against the embedded server';
@@ -951,89 +973,50 @@ export class WailsClient implements Client {
   readonly connection: ConnectionClient;
   readonly orchestrator: OrchestratorClient;
   readonly auth: AuthClient;
-  // Data sub-clients delegate to REST over the embedded server. The Wails
-  // desktop mode runs the full QuicBaaS server in-process so REST calls
-  // resolve against localhost without a network round-trip.
-  // These are intentionally null until Wails Go bindings are generated;
-  // desktop users can also access data surfaces through the REST transport.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly data: any = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly vectors: any = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly timeseries: any = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly objects: any = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly rag: any = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly embeddings: any = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly messaging: any = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly scheduler: any = null;
+  // The desktop app binds no Go struct for the families below, so each one
+  // refuses every call with a TransportNotSupportedError naming the family
+  // and the verb. Reaching them in desktop mode needs the REST transport
+  // against the embedded server, which the SPA does not build yet.
+  readonly data = unsupportedClient<DataClient>('wails', 'data', wailsUnsupported);
+  readonly vectors = unsupportedClient<VectorsClient>('wails', 'vectors', wailsUnsupported);
+  readonly timeseries = unsupportedClient<TimeSeriesClient>('wails', 'timeseries', wailsUnsupported);
+  readonly objects = unsupportedClient<ObjectsClient>('wails', 'objects', wailsUnsupported);
+  readonly rag = unsupportedClient<RAGClient>('wails', 'rag', wailsUnsupported);
+  readonly embeddings = unsupportedClient<EmbeddingsClient>('wails', 'embeddings', wailsUnsupported);
+  readonly messaging = unsupportedClient<MessagingClient>('wails', 'messaging', wailsUnsupported);
+  readonly scheduler = unsupportedClient<SchedulerClient>('wails', 'scheduler', wailsUnsupported);
   readonly projects = unsupportedClient<ProjectsClient>('wails', 'projects', wailsUnsupported);
   readonly sdlc = unsupportedClient<SdlcClient>('wails', 'sdlc', wailsUnsupported);
   readonly accounts = unsupportedClient<AccountsClient>('wails', 'accounts', wailsUnsupported);
   readonly prompts = unsupportedClient<PromptsClient>('wails', 'prompts', wailsUnsupported);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly agents: any = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly iam: any = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly kms: any = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly secrets: any = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly ca: any = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly trust: any = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly crypto: any = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly dek: any = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly entities: any = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly attestation: any = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly xkmsKeys: any = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly piv: any = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly xkms: any = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly backups: any = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly clusterNodes: any = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly kmsAdmin: any = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly objectStorageAdmin: any = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly parameters: any = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly vectorAdmin: any = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly xkmsFido2: any = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly registry: any = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly cache: any = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly dynamicSecrets: any = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly barrier: any = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly tenantBarrier: any = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly ceremony: any = null;
-  // cluster status/management resolves through the REST transport in desktop
-  // mode (the embedded server runs in-process); no Wails Go binding yet.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly cluster: any = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly seal: any = null;
+  readonly agents = unsupportedClient<AgentsClient>('wails', 'agents', wailsUnsupported);
+  readonly iam = unsupportedClient<IAMClient>('wails', 'iam', wailsUnsupported);
+  readonly kms = unsupportedClient<KMSClient>('wails', 'kms', wailsUnsupported);
+  readonly secrets = unsupportedClient<SecretsClient>('wails', 'secrets', wailsUnsupported);
+  readonly ca = unsupportedClient<CAClient>('wails', 'ca', wailsUnsupported);
+  readonly trust = unsupportedClient<TrustClient>('wails', 'trust', wailsUnsupported);
+  readonly crypto = unsupportedClient<CryptoClient>('wails', 'crypto', wailsUnsupported);
+  readonly dek = unsupportedClient<DEKClient>('wails', 'dek', wailsUnsupported);
+  readonly entities = unsupportedClient<Client['entities']>('wails', 'entities', wailsUnsupported);
+  readonly attestation = unsupportedClient<Client['attestation']>('wails', 'attestation', wailsUnsupported);
+  readonly xkmsKeys = unsupportedClient<Client['xkmsKeys']>('wails', 'xkmsKeys', wailsUnsupported);
+  readonly piv = unsupportedClient<Client['piv']>('wails', 'piv', wailsUnsupported);
+  readonly xkms = unsupportedClient<Client['xkms']>('wails', 'xkms', wailsUnsupported);
+  readonly backups = unsupportedClient<Client['backups']>('wails', 'backups', wailsUnsupported);
+  readonly clusterNodes = unsupportedClient<Client['clusterNodes']>('wails', 'clusterNodes', wailsUnsupported);
+  readonly kmsAdmin = unsupportedClient<Client['kmsAdmin']>('wails', 'kmsAdmin', wailsUnsupported);
+  readonly objectStorageAdmin = unsupportedClient<Client['objectStorageAdmin']>('wails', 'objectStorageAdmin', wailsUnsupported);
+  readonly parameters = unsupportedClient<Client['parameters']>('wails', 'parameters', wailsUnsupported);
+  readonly vectorAdmin = unsupportedClient<Client['vectorAdmin']>('wails', 'vectorAdmin', wailsUnsupported);
+  readonly xkmsFido2 = unsupportedClient<Client['xkmsFido2']>('wails', 'xkmsFido2', wailsUnsupported);
+  readonly registry = unsupportedClient<Client['registry']>('wails', 'registry', wailsUnsupported);
+  readonly cache = unsupportedClient<Client['cache']>('wails', 'cache', wailsUnsupported);
+  readonly dynamicSecrets = unsupportedClient<DynamicSecretsClient>('wails', 'dynamicSecrets', wailsUnsupported);
+  readonly barrier = unsupportedClient<BarrierClient>('wails', 'barrier', wailsUnsupported);
+  readonly tenantBarrier = unsupportedClient<TenantBarrierClient>('wails', 'tenantBarrier', wailsUnsupported);
+  readonly ceremony = unsupportedClient<CeremonyClient>('wails', 'ceremony', wailsUnsupported);
+  readonly cluster = unsupportedClient<ClusterClient>('wails', 'cluster', wailsUnsupported);
+  readonly seal = unsupportedClient<Client['seal']>('wails', 'seal', wailsUnsupported);
   /**
    * sshKeys is the legacy backward-compat accessor.
    * Points to ssh.keys — the same WailsSSHKeysClient instance.
