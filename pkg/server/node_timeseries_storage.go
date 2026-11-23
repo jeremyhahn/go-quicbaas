@@ -115,7 +115,10 @@ func (n *nodeTimeSeriesStorage) GetRetentionPolicy(metric string) (*interfaces.R
 	if err != nil {
 		return nil, err
 	}
-	if resp.Policy == nil {
+	// The backend returns a zero policy for a metric without one; a zero
+	// policy (infinite duration, no downsampling) is "no policy" and reads nil.
+	if resp.Policy == nil || (resp.Policy.DurationNs == 0 && resp.Policy.ResolutionNs == 0 &&
+		interfaces.AggFunc(resp.Policy.Aggregation) == interfaces.AggNone) {
 		return nil, nil
 	}
 	return &interfaces.RetentionPolicy{
