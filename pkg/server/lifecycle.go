@@ -1196,9 +1196,9 @@ func (s *Server) startKMS() error {
 		s.ownsXKMS = true
 	}
 
-	// The ownership records of encoded go-xkms key names persist next to
-	// the key-version records: a tenant key whose record is lost fails
-	// closed after a restart.
+	// The ownership records of encoded go-xkms key names persist, and are
+	// replicated once the service has its datastore: a tenant key whose
+	// record is lost fails closed.
 	keyNames, err := s.kmsKeyNameStore()
 	if err != nil {
 		return api.NewOperationFailedError("create KMS key name store", err)
