@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/serviceplane"
 	"github.com/jeremyhahn/go-quicbaas/pkg/serviceplane/serviceplanetest"
 )
@@ -16,7 +17,11 @@ import (
 // settlement write lost, as in a crash) halted once it is stale, so its
 // owner can resume it; until the plane can be built it retries quietly.
 func TestServicePlaneRecovery_SettlesAnAbandonedClaim(t *testing.T) {
-	srv := newTestServer(t)
+	log, err := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
+	if err != nil {
+		t.Fatalf("logger: %v", err)
+	}
+	srv := &Server{logger: log}
 	var mu sync.Mutex
 	clock := time.Unix(1_800_000_000, 0).UTC()
 	now := func() time.Time {
@@ -33,7 +38,7 @@ func TestServicePlaneRecovery_SettlesAnAbandonedClaim(t *testing.T) {
 	}
 	// The restart's settlement write is lost: web stays transitioning.
 	rt.LoseWritesAfter(1) // the claim lands, the settlement does not
-	_, err := plane.Restart(ctx, "acme", "web")
+	_, err = plane.Restart(ctx, "acme", "web")
 	rt.LoseWritesAfter(-1)
 	if err == nil {
 		t.Fatal("restart: want the lost settlement")
