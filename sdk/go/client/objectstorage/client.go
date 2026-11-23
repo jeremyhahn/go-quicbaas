@@ -968,9 +968,13 @@ func (r *streamGetReader) Read(p []byte) (n int, err error) {
 		return 0, errors.NewInternal("streamGetReader.Read", "invalid chunk type")
 	}
 
-	// Update metadata from first chunk if not set.
-	if r.metadata == nil && chunk.TotalSize > 0 {
+	// A chunk may advertise the object size in the first or the last chunk;
+	// record it whenever it is present, also after ReadMetadata.
+	if chunk.TotalSize > 0 {
 		r.totalSize = chunk.TotalSize
+		if r.metadata != nil && r.metadata.Size == 0 {
+			r.metadata.Size = chunk.TotalSize
+		}
 	}
 
 	// The last chunk ends the stream; its data, if any, is still returned.
@@ -993,7 +997,6 @@ func (r *streamGetReader) Read(p []byte) (n int, err error) {
 	return n, nil
 }
 
-// Close closes the stream.
 // endOfStream is the result of a Read at the end of the stream: io.EOF
 // once the advertised object size has been delivered, io.ErrUnexpectedEOF
 // for a stream that ended short of it.
@@ -1004,6 +1007,7 @@ func (r *streamGetReader) endOfStream() error {
 	return io.EOF
 }
 
+// Close closes the stream.
 func (r *streamGetReader) Close() error {
 	if r.closed {
 		return nil
@@ -1039,11 +1043,13 @@ func (r *streamGetReader) ReadMetadata() (*ObjectMetadata, error) {
 	}
 
 	// Store metadata.
+	if chunk.TotalSize > 0 {
+		r.totalSize = chunk.TotalSize
+	}
 	r.metadata = &ObjectMetadata{
 		Key:  r.req.Key,
-		Size: chunk.TotalSize,
+		Size: r.totalSize,
 	}
-	r.totalSize = chunk.TotalSize
 
 	// Buffer the data from first chunk.
 	if len(chunk.Data) > 0 {

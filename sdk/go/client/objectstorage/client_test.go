@@ -3078,6 +3078,91 @@ func TestStreamGetReader_ReadMetadata_RecvEOFBeforeTotalSize(t *testing.T) {
 	}
 }
 
+// TestStreamGetReader_ReadMetadata_SizeInEmptyLastChunk covers a stream where
+// ReadMetadata consumed a size-less first chunk and the size arrives only in
+// an empty last chunk: a stream short of it fails with io.ErrUnexpectedEOF.
+func TestStreamGetReader_ReadMetadata_SizeInEmptyLastChunk(t *testing.T) {
+	reader := newChunkReader(chunkStream(errStreamBroken,
+		&ObjectChunk{Data: []byte("hello")},
+		&ObjectChunk{IsLast: true, TotalSize: 11},
+	))
+	if _, err := reader.ReadMetadata(); err != nil {
+		t.Fatalf("ReadMetadata: %v", err)
+	}
+
+	got, err := io.ReadAll(reader)
+	if !stderrors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("io.ReadAll: expected io.ErrUnexpectedEOF, got %v", err)
+	}
+	if string(got) != "hello" {
+		t.Errorf("expected %q, got %q", "hello", string(got))
+	}
+	if reader.TotalSize() != 11 {
+		t.Errorf("expected TotalSize 11, got %d", reader.TotalSize())
+	}
+}
+
+// TestStreamGetReader_ReadMetadata_SizeInDataLastChunk covers the same
+// truncation when the last chunk carrying the size also carries data.
+func TestStreamGetReader_ReadMetadata_SizeInDataLastChunk(t *testing.T) {
+	reader := newChunkReader(chunkStream(errStreamBroken,
+		&ObjectChunk{Data: []byte("hello")},
+		&ObjectChunk{Data: []byte("wor"), Offset: 5, IsLast: true, TotalSize: 11},
+	))
+	if _, err := reader.ReadMetadata(); err != nil {
+		t.Fatalf("ReadMetadata: %v", err)
+	}
+
+	got, err := io.ReadAll(reader)
+	if !stderrors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("io.ReadAll: expected io.ErrUnexpectedEOF, got %v", err)
+	}
+	if string(got) != "hellowor" {
+		t.Errorf("expected %q, got %q", "hellowor", string(got))
+	}
+}
+
+// TestStreamGetReader_ReadMetadata_SizeInLastChunkComplete covers a complete
+// download whose size arrives only in the last chunk: it ends cleanly and the
+// metadata picks up the size.
+func TestStreamGetReader_ReadMetadata_SizeInLastChunkComplete(t *testing.T) {
+	reader := newChunkReader(chunkStream(errStreamBroken,
+		&ObjectChunk{Data: []byte("hello ")},
+		&ObjectChunk{Data: []byte("world"), Offset: 6, IsLast: true, TotalSize: 11},
+	))
+	if _, err := reader.ReadMetadata(); err != nil {
+		t.Fatalf("ReadMetadata: %v", err)
+	}
+
+	got, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("io.ReadAll: %v", err)
+	}
+	if string(got) != "hello world" {
+		t.Errorf("expected %q, got %q", "hello world", string(got))
+	}
+	if size := reader.Metadata().Size; size != 11 {
+		t.Errorf("expected metadata Size 11, got %d", size)
+	}
+}
+
+// TestStreamGetReader_ReadAll_SizeOnlyInLastChunk covers a stream read without
+// ReadMetadata: the size in the last chunk alone is honoured.
+func TestStreamGetReader_ReadAll_SizeOnlyInLastChunk(t *testing.T) {
+	reader := newChunkReader(chunkStream(errStreamBroken,
+		&ObjectChunk{Data: []byte("hello")},
+		&ObjectChunk{IsLast: true, TotalSize: 11},
+	))
+
+	got, err := io.ReadAll(reader)
+	if !stderrors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("io.ReadAll: expected io.ErrUnexpectedEOF, got %v", err)
+	}
+	if string(got) != "hello" {
+		t.Errorf("expected %q, got %q", "hello", string(got))
+	}
+}
+
 func TestStreamGetReader_ReadAll_RecvFailure(t *testing.T) {
 	stream := chunkStream(errStreamBroken,
 		&ObjectChunk{Data: []byte("hello "), TotalSize: 11},
