@@ -1,9 +1,10 @@
 # Agent Fleet — Placement, Drift and Actuation (design note)
 
-> **Status: DESIGN** · Last verified: 2026-10-15
-> The plan for salvaging the archived wp13 placement and wp14 actuation work
-> (go-quicbaas#761) onto today's fleet code. Nothing
-> here is built yet. Where a question needs the owner or the CA it is listed
+> **Status: DESIGN** · Last verified: 2026-11-13
+> The design for SPEC row `declarative-placement` (go-quicbaas#28, row issue
+> #1681), built by salvaging the archived wp13 placement and wp14 actuation
+> work (go-quicbaas#761) onto today's fleet code. P0 to P2 (the spec, its
+> store, the host inventory and the drift report) are built; the rest is not. Where a question needs the owner or the CA it is listed
 > under [Open questions](#open-questions), not decided.
 
 Placement says **where a class of work may run**, reports where it actually
@@ -19,11 +20,11 @@ A `PlacementSpec` places a workload class onto **hosts**:
 | Field | Meaning |
 |---|---|
 | `name` | Identifies the spec within its tenant |
-| `workload_class` | What it places (see [classes](#actuation)) |
+| `role` | What it places (see [classes](#actuation)); the archive's `workload_class` |
 | `hosts` | The admissible hosts; empty means any host that passes the capability check |
 | `required_capabilities` | All must be present on a host. A hard match, never a score |
 | `actuate` | False: report drift only. True: the actuator may move work |
-| `generation` | Orders edits. A put that read generation N writes N+1 by compare-and-swap, so two racing edits cannot lose one silently |
+| `generation` | Orders edits. A put that read generation N writes N+1 by compare-and-swap, so two racing edits cannot lose one silently. A withdraw leaves a tombstone, so a recreated spec continues the name's generations and never matches an old client's edit or an old grant |
 
 The archive called the target a **node** (`PlacementNode`). This note says
 **host**, because "fleet node" already names a registry record and bare "nodes"
@@ -34,9 +35,16 @@ is the Raft cluster's word ([naming](architecture.md#naming)).
 daemon: who registered, which backend it serves, its capabilities, health and
 `MaxConcurrentJobs`. A spec is *desired* state written by an operator. The
 registry answers "what exists", the spec answers "where should this work be".
-A registry record is not a host: several records can name one `Host`, so
+A registry record is not a host: several records can sit on one machine, so
 placement reads the registry through an inventory adapter that groups records
-by `Host` before it compares anything (archive d40b48d1).
+by host before it compares anything (archive d40b48d1). The host is the host
+component of `FleetNode.Host`, which is a daemon's dialable host:port
+(`PlacementHostIdentity`), so daemons on one machine that differ only in port
+are one host. Session locations (`HostAffinity`, also a daemon endpoint) map
+through the same rule, and a spec's `hosts` name hosts, not endpoints: an
+entry with a port is refused. One machine enrolled once under an IP and once
+under a DNS name still counts as two hosts, because the registry holds no
+verified machine identity to join them.
 
 **Host affinity.** Today `WorkItem.HostAffinity` and `WithHostAffinity` /
 `WithHostAffinityStrict` (`pkg/orchestration/host_affinity.go`,
@@ -53,6 +61,62 @@ destinations, and the actuator asks admission about the destination
 immediately before it orders a move. A refusal becomes a recorded outcome, never
 an override.
 
+## Roles, counts and profiles
+
+The owner's shape (issue #28, 2026-08-18) is *"2 nodes for running agents and 5
+nodes for running PRs and code reviews"*: a spec the operator tunes as hosts
+are added, which the orchestrator then carries out. A `PlacementSpec` therefore
+names its target in one of two ways, and never both:
+
+| Field | Meaning |
+|---|---|
+| `role` | The workload class the spec places: `agent`, `ci`, `review`, … (the owner's word for the archive's `workload_class`) |
+| `host_count` | How many admissible hosts carry the role. The actuator picks them, ordered by measured room |
+| `hosts` | The named hosts that carry the role. A count is then implied by the list |
+
+A spec with both, or with neither and no capability filter, is refused at
+validation. Raising `host_count` from 5 to 6 when a host joins is the whole
+operator action. No runner configuration is edited by hand.
+
+**Resource profiles are measured, not assumed.** Each role carries a
+`FleetJobProfile` (`CPUCores`, `MemoryBytes`, `pkg/orchestration/fleet_admission.go`)
+that admission divides a host's measured room by. Today there is one profile
+for every job (`DefaultFleetJobProfile`, 1 core and 2 GiB). Under this design
+there is one per role, recalibrated from the role's own run samples through
+`SetProfile`. The POC's measured starting points (handbook
+`software/docs/20-sdlc-automation-reference.md` §8 cost models) are about
+0.02 core and 3.4 GiB for an agent session and 3 to 4 cores for a CI run. A
+role with no samples yet uses its seed profile and says so in the drift
+report. It is never treated as free.
+
+**Admission sees every host before it assigns.** This was the POC's largest
+gap: the forge gives work to whichever runner polls first, and a busy runner
+cannot hand it on. Here the decision is the scheduler's. It reads every live
+host's facts, status and allocation in one snapshot (the placement engine's
+[decision](../scheduler/architecture.md#decision)), filters by the spec and
+by `FleetAdmission`, and commits to the host with the most measured room in
+one go-qrdb transaction. A host is never offered work that another host has
+room for.
+
+## Credential custody
+
+An agent host needs per-host AI-account credentials with strict refresh
+rotation: one refresh lineage per host, renewed by a human login about once a
+month (proven 2026-08-17). Placement owns this, because a host that cannot hold
+the credential cannot carry the role, however much room it has.
+
+- The credential is held in go-xkms KMS custody, reached through `sdk/go`. It is
+  not copied over SSH or tracked on a calendar. go-quicbaas keeps no credential
+  store of its own for it (SPEC [Boundaries](../SPEC.md#boundaries)).
+- Adding an agent host is a declaration plus at most one human consent step:
+  the login that starts the host's lineage, raised as a
+  `PlacementConsentRequest` like any custody move.
+- **Until the custody seam lands, the actuator moves only the fungible roles
+  (ci, review).** A spec for the `agent` role is accepted and reported in the
+  drift report, but it is never actuated. Actuating it without custody would
+  misrepresent the knob: the count would say six agent hosts while only the
+  hand-provisioned ones could run agents.
+
 ## Drift report
 
 `ReportDrift(tenant, spec)` compares three inputs:
@@ -65,9 +129,25 @@ an override.
 3. the live work of the spec's class: on main, `SessionRecord` (tenant, session
    id, `HostAffinity`), which replaces the archive's `WorkLease`.
 
-Findings come from one closed set of kinds: `node_not_admitted`,
-`capability_missing`, `node_unregistered`, `node_unrecorded`,
-`spec_node_absent`, `no_admissible_node`, `workload_class_unclassified`. Each
+The session store has no role on a record yet (open question 2), so its
+adapter (`SessionWorkSource`) takes the caller's `SessionRoleFunc`.
+
+The server classifies a remote session as `agent` work and a local one
+(`BackendLocal`) as no role. A remote session with no recorded host is still
+`agent` work, so the report refuses it as unnameable rather than dropping it.
+The server's source observes only `agent`: a drift report for a role the
+session store does not record (`ci`, `review`) is refused
+(`PlacementRoleUnobservedError`, precondition failed) until sessions carry a
+role.
+
+Findings come from one closed set of kinds: `host_not_admitted`,
+`capability_missing`, `host_unregistered`, `spec_host_absent`,
+`no_admissible_host`, `host_count_short` (fewer admissible hosts than
+`host_count`), `host_count_exceeded` (the role's work runs on more hosts
+than `host_count`), `host_count_underfilled` (enough admissible hosts, but
+the role's work runs on fewer of them than `host_count`) and
+`role_unclassified`. The archive's `node_unrecorded` is
+gone: work with no recorded host is refused (below), not reported. Each
 finding carries a remedy (`relocate` with its admissible destinations,
 `no_candidate`, `operator_decision`) and the spec's disposition.
 
@@ -86,17 +166,21 @@ never mentions it.
 - **A duplicate host description is refused** (`PlacementInventoryAmbiguousError`).
   If two inventory entries describe one host, keeping the last picks a
   capability set at random, union over-credits and intersection
-  under-credits. Grouping records by `Host` happens in the adapter, before the
+  under-credits. Grouping records by host happens in the adapter, before the
   reporter sees them, so an ordinary multi-daemon host never trips this. Only
   a broken adapter does.
-- **Unnameable work is refused** (`PlacementLeaseAmbiguousError`, to be renamed
-  for sessions). Two pieces of work the report cannot tell apart would produce
+- **Unnameable work is refused** (`PlacementWorkUnnameableError`, naming the
+  work and the field). Two pieces of work the report cannot tell apart would produce
   one finding that an actuator could apply to the wrong one. In the archive
   this was a lease with no tenant. On main a `SessionRecord` carries its
   tenant, so the rule becomes: work with no tenant, no id or no recorded host
-  is refused with the work named.
-- A spec whose class is not in the classification table reports
-  `workload_class_unclassified` and is never actuated.
+  is refused with the work named, as is an id seen twice.
+- **A live session record under the tenant whose body names no tenant or
+  another tenant is refused as unnameable** (field `tenant_id`), not skipped:
+  the report reads the tenant's records as stored, without the session list's
+  tenant filter.
+- A spec whose role is not in the classification table reports
+  `role_unclassified` and is never actuated.
 - An edit written against a stale generation is refused
   (`PlacementSpecStaleError`), not merged.
 
@@ -201,8 +285,8 @@ Each slice is one lane (≤ ~150 turns), lands green and leaves main shippable.
 | # | Slice | Tests and verification |
 |---|---|---|
 | P0 | **Landed.** Re-apply 3f7eb214: every `RequiredCapabilities` entry is a hard match in `matchFleetNodeForTask` (`persistent_sessions` stays backend-scoped) | Table test per capability. A regression test that a `docker` requirement no longer dispatches to an agent without it. `make test-orchestration` |
-| P1 | `PlacementSpec`, validation, tenant-scoped store with CAS generation, `FleetInventory` grouping by host, the refusal error types | Lost-edit test (two racing declares, one `PlacementSpecStaleError`), using `pkg/testutil/qrdbnode` under the consensus-arbitration carve-out. A control test feeding the same records through a one-for-one inventory (refused) and through the adapter (reported). `make test-orchestration` |
-| P2 | Read-only `DriftReporter` over specs, the inventory and `SessionRecord`, the field-coverage check, the unnameable-work refusal | One test per finding kind. Mutation checks that an unclassified field fails construction. Duplicate-host and tenantless-session refusals. `make test-orchestration` |
+| P1 | **Landed on the row branch** (`placement.go`, `placement_store.go`, `placement_inventory.go`; the lost-edit test runs on `NewMemoryTaskKV`'s guarded writes). `PlacementSpec` with `role` and `host_count` or `hosts`, a per-role `FleetJobProfile`, validation, tenant-scoped store with CAS generation, `FleetInventory` grouping by host, the refusal error types | Lost-edit test (two racing declares, one `PlacementSpecStaleError`), using `pkg/testutil/qrdbnode` under the consensus-arbitration carve-out. A control test feeding the same records through a one-for-one inventory (refused) and through the adapter (reported). `make test-orchestration` |
+| P2 | **Landed on the row branch** (`placement_drift.go`). Read-only `DriftReporter` over specs, the inventory and `SessionRecord`, the field-coverage check, the unnameable-work refusal | One test per finding kind. Mutation checks that an unclassified field fails construction. Duplicate-host and tenantless-session refusals. `make test-orchestration` |
 | P3a | `PlacementService` (declare/get/list/withdraw/drift), `placement:read`/`write` contributions, REST + gRPC + embedded + SDK client | Service tests with error paths. Authz table tests (denied without the permission, cross-tenant refused). `make test-service`, `test-api-rest`, `test-api-grpc` and the SDK client's package target |
 | P3b | The same verbs on QUIC, MCP, Unix and the CLI. Docs in `api.md` / `cli.md` | Per-transport handler tests. Parity test across transports. A new `integration-test-fleet-placement` E2E over every transport (CI runs it, since it needs Docker) |
 | P4 | `ConsentLedger` (raise/answer/get), `placement:consent`, list/answer verbs on all transports | Guarded-create race (one request, answer survives a re-raise). Generation change voids a grant. Unreadable ledger refuses. `By` taken from the subject |
@@ -215,7 +299,15 @@ For the owner or the CA. None is decided here.
 1. **Home package and SPEC row.** Does placement live in `pkg/orchestration`
    (beside the registry and admission, as this note assumes) or under the
    scheduler, where SPEC's `declarative-placement` row and ROADMAP #28 point?
-   Which row does #761 trace to?
+   Which row does #761 trace to? **Answered** (owner ruling 191, 2026-10-26):
+   workload placement is go-quicbaas's own scheduler. The row is
+   `declarative-placement`, and #761 and #28 trace to it. The decision runs on
+   the scheduler's placement engine (`pkg/scheduler/placement`). The spec
+   store, drift report and actuator sit beside the fleet registry and
+   admission they read.
+8. **The custody seam's provider row.** Which go-xkms row holds per-host
+   AI-account credential custody with refresh rotation? Until one is named, the
+   `agent` role is reported, not actuated ([Credential custody](#credential-custody)).
 2. **Workload classes on main.** The archive classified `ci`, `review` and
    `agent` on a `WorkLease`. Main has no workload class on `SessionRecord`.
    What are the classes, and where is a session's class recorded?
@@ -241,4 +333,4 @@ For the owner or the CA. None is decided here.
 [architecture.md](architecture.md) · [api.md](api.md) ·
 [orchestration](../orchestration/architecture.md) ·
 [scheduler](../scheduler/architecture.md) ·
-[authorization](../authorization/api.md#contributing-permissions-to-the-qrdb-registry)
+[authorization](../authorization/api.md#permissions-go-quicbaas-contributes-to-go-qrdb)
