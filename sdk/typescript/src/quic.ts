@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// QuicClient is the transport implementation for QUIC (pkg/server/baas_transport.go).
+// QuicClient is the transport implementation for QUIC.
 //
 // OPERATOR NOTE: WebTransport (the W3C standard that exposes QUIC streams to
 // browsers) is available in Chrome 97+ and Node.js 21+ via the
@@ -33,6 +33,7 @@ import type {
   OrchestratorClient,
 } from './interfaces.js';
 import type { AccountsClient } from './accounts.js';
+import type { PromptsClient } from './prompts.js';
 import type { ProjectsClient } from './projects.js';
 import type { SdlcClient } from './sdlc.js';
 import { unsupportedClient } from './unsupported.js';
@@ -368,6 +369,7 @@ export class QuicClient implements Client {
   readonly projects = unsupportedClient<ProjectsClient>('quic', 'projects', quicUnsupported);
   readonly sdlc = unsupportedClient<SdlcClient>('quic', 'sdlc', quicUnsupported);
   readonly accounts = unsupportedClient<AccountsClient>('quic', 'accounts', quicUnsupported);
+  readonly prompts = unsupportedClient<PromptsClient>('quic', 'prompts', quicUnsupported);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly agents: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
