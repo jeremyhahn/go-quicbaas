@@ -17,6 +17,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { RestClient } from '../src/rest';
 
+// The server's byte fields are Go []byte, so the wire carries them as base64.
+const PEM = '-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n';
+
 const originalFetch = globalThis.fetch;
 let fetchMock: ReturnType<typeof vi.fn>;
 
@@ -85,19 +88,27 @@ describe('RestPIVClient', () => {
   });
 
   it('getCertificate sends no query without options', async () => {
-    fetchMock.mockResolvedValue(jsonResponse(200, { slot: '9c', certificate: 'PEM', format: 'pem' }));
-    await client().getCertificate('9c');
+    fetchMock.mockResolvedValue(jsonResponse(200, { slot: '9c', certificate: btoa(PEM), format: 'pem' }));
+    const res = await client().getCertificate('9c');
     expect(call().url).toBe('http://localhost/api/v1/xkms/piv/slots/9c/cert');
+    expect(res.certificate).toBe(PEM);
   });
 
   it('storeCertificate PUTs the body and resolves on a 200 with an empty body', async () => {
     fetchMock.mockResolvedValue(emptyResponse(200));
-    const req = { backend: 'pkcs11', certificate: '-----BEGIN CERTIFICATE-----', format: 'pem' as const };
+    const req = { backend: 'pkcs11', certificate: PEM, format: 'pem' as const };
     await expect(client().storeCertificate('9 d', req)).resolves.toBeUndefined();
     const c = call();
     expect(c.method).toBe('PUT');
     expect(c.url).toBe('http://localhost/api/v1/xkms/piv/slots/9%20d/cert');
-    expect(c.body).toEqual(req);
+    expect(c.body).toEqual({ ...req, certificate: btoa(PEM) });
+  });
+
+  it('storeCertificate sends a DER certificate’s base64 unchanged', async () => {
+    fetchMock.mockResolvedValue(emptyResponse(200));
+    const req = { certificate: 'Zm9v', format: 'der' as const };
+    await client().storeCertificate('9a', req);
+    expect(call().body).toEqual(req);
   });
 
   it('deleteCertificate DELETEs with the backend query and resolves on a 200 with an empty body', async () => {
@@ -110,7 +121,13 @@ describe('RestPIVClient', () => {
 
   it('generateKey POSTs the body and returns the 201 answer', async () => {
     fetchMock.mockResolvedValue(
-      jsonResponse(201, { slot: '9a', certificate: 'CERT', public_key: 'PUB', csr: 'CSR' }),
+      jsonResponse(201, {
+        slot: '9a',
+        certificate: btoa('CERT PEM'),
+        public_key: btoa('PUB PEM'),
+        csr: btoa('CSR PEM'),
+        chain_pem: btoa('CHAIN PEM'),
+      }),
     );
     const req = {
       algorithm: 'ecdsap256' as const,
@@ -123,12 +140,23 @@ describe('RestPIVClient', () => {
     expect(c.method).toBe('POST');
     expect(c.url).toBe('http://localhost/api/v1/xkms/piv/slots/9a%3F/key');
     expect(c.body).toEqual(req);
-    expect(res.public_key).toBe('PUB');
-    expect(res.csr).toBe('CSR');
+    expect(res.certificate).toBe('CERT PEM');
+    expect(res.public_key).toBe('PUB PEM');
+    expect(res.csr).toBe('CSR PEM');
+    expect(res.chain_pem).toBe('CHAIN PEM');
+  });
+
+  it('generateKey leaves absent optional byte fields absent', async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse(201, { slot: '9a', certificate: btoa('CERT PEM'), public_key: btoa('PUB PEM') }),
+    );
+    const res = await client().generateKey('9a', { algorithm: 'ecdsap256' as const, subject: 'CN=alice' });
+    expect(res.csr).toBeUndefined();
+    expect(res.chain_pem).toBeUndefined();
   });
 
   it('generateCSR POSTs the body and returns the 201 answer', async () => {
-    fetchMock.mockResolvedValue(jsonResponse(201, { slot: '9c', csr: 'CSRPEM' }));
+    fetchMock.mockResolvedValue(jsonResponse(201, { slot: '9c', csr: btoa('CSRPEM') }));
     const req = { backend: 'pkcs11', subject: 'CN=bob', organizational_unit: 'Ops', locality: 'Austin' };
     const res = await client().generateCSR('9c', req);
     const c = call();

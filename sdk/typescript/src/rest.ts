@@ -5794,6 +5794,11 @@ function pivQuery(params: Record<string, string | undefined>): string {
 /**
  * RestPIVClient manages xkms PIV slots over REST
  * (/api/v1/xkms/piv/slots*, pkg/api/rest/handlers_xkms.go).
+ *
+ * The server's certificate, key, CSR and chain fields are Go []byte, so JSON
+ * carries them as base64. This client base64-encodes PEM text on writes and
+ * decodes the PEM fields of responses; a DER certificate is already base64
+ * and passes through unchanged.
  */
 export class RestPIVClient implements PIVClient {
   private readonly http: FetchHelper;
@@ -5816,16 +5821,22 @@ export class RestPIVClient implements PIVClient {
 
   // Maps to GET /api/v1/xkms/piv/slots/{slot}/cert[?backend=&format=]
   async getCertificate(slot: string, opts: GetPIVCertificateOptions = {}): Promise<GetPIVCertificateResponse> {
-    return this.http.fetchJSON<GetPIVCertificateResponse>(
+    const wire = await this.http.fetchJSON<GetPIVCertificateResponse>(
       `${this.slotPath(slot)}/cert${pivQuery({ backend: opts.backend, format: opts.format })}`,
     );
+    return wire.format === 'pem' && wire.certificate
+      ? { ...wire, certificate: base64ToPEMText(wire.certificate) }
+      : wire;
   }
 
   // Maps to PUT /api/v1/xkms/piv/slots/{slot}/cert (200, empty body)
   async storeCertificate(slot: string, req: StorePIVCertificateRequest): Promise<void> {
     await this.http.fetchVoid(`${this.slotPath(slot)}/cert`, {
       method: 'PUT',
-      body: JSON.stringify(req),
+      body: JSON.stringify({
+        ...req,
+        certificate: req.format === 'pem' ? pemTextToBase64(req.certificate) : req.certificate,
+      }),
     });
   }
 
@@ -5838,18 +5849,25 @@ export class RestPIVClient implements PIVClient {
 
   // Maps to POST /api/v1/xkms/piv/slots/{slot}/key (201)
   async generateKey(slot: string, req: GeneratePIVKeyRequest): Promise<GeneratePIVKeyResponse> {
-    return this.http.fetchJSON<GeneratePIVKeyResponse>(`${this.slotPath(slot)}/key`, {
+    const wire = await this.http.fetchJSON<GeneratePIVKeyResponse>(`${this.slotPath(slot)}/key`, {
       method: 'POST',
       body: JSON.stringify(req),
     });
+    const out: GeneratePIVKeyResponse = { ...wire };
+    if (wire.certificate) out.certificate = base64ToPEMText(wire.certificate);
+    if (wire.public_key) out.public_key = base64ToPEMText(wire.public_key);
+    if (wire.csr) out.csr = base64ToPEMText(wire.csr);
+    if (wire.chain_pem) out.chain_pem = base64ToPEMText(wire.chain_pem);
+    return out;
   }
 
   // Maps to POST /api/v1/xkms/piv/slots/{slot}/csr (201)
   async generateCSR(slot: string, req: GeneratePIVCSRRequest): Promise<GeneratePIVCSRResponse> {
-    return this.http.fetchJSON<GeneratePIVCSRResponse>(`${this.slotPath(slot)}/csr`, {
+    const wire = await this.http.fetchJSON<GeneratePIVCSRResponse>(`${this.slotPath(slot)}/csr`, {
       method: 'POST',
       body: JSON.stringify(req),
     });
+    return wire.csr ? { ...wire, csr: base64ToPEMText(wire.csr) } : wire;
   }
 }
 

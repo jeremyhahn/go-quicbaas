@@ -213,6 +213,11 @@ export declare class RestAttestationClient implements AttestationClient {
 /**
  * RestPIVClient manages xkms PIV slots over REST
  * (/api/v1/xkms/piv/slots*, pkg/api/rest/handlers_xkms.go).
+ *
+ * The server's certificate, key, CSR and chain fields are Go []byte, so JSON
+ * carries them as base64. This client base64-encodes PEM text on writes and
+ * decodes the PEM fields of responses; a DER certificate is already base64
+ * and passes through unchanged.
  */
 export declare class RestPIVClient implements PIVClient {
     private readonly http;
