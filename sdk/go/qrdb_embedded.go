@@ -14,6 +14,8 @@
 package quicbaas
 
 import (
+	qrdbservice "github.com/jeremyhahn/go-qrdb/pkg/service"
+	qrdbtimeseries "github.com/jeremyhahn/go-qrdb/pkg/timeseries"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
@@ -60,6 +62,11 @@ type QRDBCustodianGroupServicer = qrdbsdk.CustodianGroupServicer
 // through the embedded transport.
 type QRDBShareServicer = qrdbsdk.ShareServicer
 
+// QRDBTimeSeriesServicer is a re-export of the qrdb
+// timeseries.TimeSeriesServicer interface. Required to serve
+// Search().QRDBTimeSeries() through the embedded transport.
+type QRDBTimeSeriesServicer = qrdbtimeseries.TimeSeriesServicer
+
 // QRDBUserAuthFactorServicer is a re-export of the qrdb
 // service.UserAuthFactorServicer interface. Required to enable per-user
 // multi-factor auth operations through the embedded transport.
@@ -69,6 +76,10 @@ type QRDBUserAuthFactorServicer = qrdbsdk.UserAuthFactorServicer
 // Required so the embedded transport can resolve a subject (tenant +
 // username) to a uint64 user id during user-login factor enrollment.
 type QRDBUserServicer = qrdbsdk.UserServicer
+
+// QRDBEmbeddingServicer is a re-export of the qrdb service.EmbeddingServicer
+// interface. It serves the embedded transport's text embedding calls.
+type QRDBEmbeddingServicer = qrdbservice.EmbeddingServicer
 
 // QRDBAuthFactorServicer is a re-export of the qrdb service.AuthFactorServicer
 // interface. Required to enable authentication factor enrollment and
@@ -167,4 +178,14 @@ type QRDBEmbeddedServicers struct {
 	// can resolve a subject (tenant + username) to a uint64 user id and
 	// enroll the factor for that exact user. Optional otherwise.
 	User QRDBUserServicer
+
+	// Embedding serves AI().QRDBEmbedding() on the embedded transport. When
+	// nil, the embedded client's embedding calls fail as unavailable in
+	// go-qrdb.
+	Embedding QRDBEmbeddingServicer
+
+	// TimeSeries exposes the qrdb time-series service that backs
+	// Search().QRDBTimeSeries(). Optional: without it the time-series
+	// calls return an error.
+	TimeSeries QRDBTimeSeriesServicer
 }
