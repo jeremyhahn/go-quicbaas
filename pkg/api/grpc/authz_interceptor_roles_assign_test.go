@@ -74,37 +74,37 @@ func TestAuthorizeGRPCArguments_NoExtraPermission(t *testing.T) {
 	assert.Nil(t, grpcArgumentPermissionsFor(iampb.IAMService_CreateUser_FullMethodName, struct{}{}))
 }
 
-// TestUnaryAuthorizationInterceptor_UserWriteMappedAndRolesAssignReached
-// proves IAMService CreateUser and UpdateUser are mapped to the grants their
-// REST twins require, so the interceptor reaches the roles:assign argument
-// check instead of default-denying the method (go-quicbaas#2064).
-func TestUnaryAuthorizationInterceptor_UserWriteMappedAndRolesAssignReached(t *testing.T) {
-	assert.Equal(t, methodPermission{"users", "create"}, grpcMethodPermissions[iampb.IAMService_CreateUser_FullMethodName])
-	assert.Equal(t, methodPermission{"users", "update"}, grpcMethodPermissions[iampb.IAMService_UpdateUser_FullMethodName])
+// TestUnaryAuthorizationInterceptor_UserWriteStaysUnmapped proves IAMService
+// CreateUser and UpdateUser are not mapped, so the interceptor refuses them
+// whatever the caller holds and the handler never runs: a write that sets
+// roles cannot reach the store over gRPC.
+func TestUnaryAuthorizationInterceptor_UserWriteStaysUnmapped(t *testing.T) {
+	_, mapped := grpcMethodPermissions[iampb.IAMService_CreateUser_FullMethodName]
+	assert.False(t, mapped, "IAMService CreateUser must stay unmapped")
+	_, mapped = grpcMethodPermissions[iampb.IAMService_UpdateUser_FullMethodName]
+	assert.False(t, mapped, "IAMService UpdateUser must stay unmapped")
 
 	tests := []struct {
-		name    string
-		scp     map[string]bool
-		req     interface{}
-		allowed bool
+		name   string
+		method string
+		req    interface{}
 	}{
-		{"users:create without roles:assign is refused", map[string]bool{"users:create": true}, &iampb.CreateUserRequest{Roles: []string{"admin"}}, false},
-		{"users:create with roles:assign is allowed", map[string]bool{"users:create": true, "roles:assign": true}, &iampb.CreateUserRequest{Roles: []string{"admin"}}, true},
-		{"users:create without roles in the request is allowed", map[string]bool{"users:create": true}, &iampb.CreateUserRequest{}, true},
+		{"create with roles", iampb.IAMService_CreateUser_FullMethodName, &iampb.CreateUserRequest{Roles: []string{"admin"}}},
+		{"create without roles", iampb.IAMService_CreateUser_FullMethodName, &iampb.CreateUserRequest{}},
+		{"update with roles", iampb.IAMService_UpdateUser_FullMethodName, &iampb.UpdateUserRequest{Roles: []string{"admin"}}},
+		{"update without roles", iampb.IAMService_UpdateUser_FullMethodName, &iampb.UpdateUserRequest{}},
 	}
-	info := &grpc.UnaryServerInfo{FullMethod: iampb.IAMService_CreateUser_FullMethodName}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			called := false
 			handler := func(context.Context, interface{}) (interface{}, error) { called = true; return nil, nil }
-			authz := &scopeSetAuthorizer{token: "tok", scp: tc.scp}
+			authz := &scopeSetAuthorizer{token: "tok", scp: map[string]bool{
+				"users:create": true, "users:update": true, "roles:assign": true,
+				"users:enable": true, "users:disable": true,
+			}}
 
-			_, err := UnaryAuthorizationInterceptor(authz)(bearerContext("tok"), tc.req, info, handler)
-			assert.Equal(t, tc.allowed, called)
-			if tc.allowed {
-				require.NoError(t, err)
-				return
-			}
+			_, err := UnaryAuthorizationInterceptor(authz)(bearerContext("tok"), tc.req, &grpc.UnaryServerInfo{FullMethod: tc.method}, handler)
+			assert.False(t, called, "handler must not run for an unmapped method")
 			assert.Equal(t, codes.PermissionDenied, status.Code(err))
 		})
 	}
