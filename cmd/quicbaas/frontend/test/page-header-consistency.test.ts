@@ -67,6 +67,7 @@ const views: ViewEntry[] = [
   { name: 'IAMView',               path: 'src/views/security/IAMView.svelte',                      title: 'IAM' },
   { name: 'SSHKeysView',           path: 'src/views/security/SSHKeysView.svelte',                  title: 'SSH' },
   { name: 'ClusterDashboard',      path: 'src/views/cluster/ClusterDashboard.svelte',              title: 'Cluster' },
+  { name: 'NodesView',             path: 'src/views/cluster/NodesView.svelte',                     title: 'Nodes' },
 
   // SessionList lives under components/ but is the route component for the
   // /sessions URL — it must satisfy the same header contract.
