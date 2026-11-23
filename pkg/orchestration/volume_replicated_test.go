@@ -59,6 +59,24 @@ func assertOrder(t *testing.T, calls []string, order ...string) {
 	}
 }
 
+// newReplicatedVolumeRuntime is newTestVolumeRuntime over a roleProvider.
+func newReplicatedVolumeRuntime(t *testing.T) (*VolumeRuntime, *launchRecorder, *roleProvider, string) {
+	t.Helper()
+	inner := &launchRecorder{}
+	prov := newRoleProvider()
+	staging := t.TempDir()
+	att, err := NewVolumeAttacher(prov, "node-1", staging)
+	if err != nil {
+		t.Fatalf("NewVolumeAttacher: %v", err)
+	}
+	vr, err := NewVolumeRuntime(inner, att)
+	if err != nil {
+		t.Fatalf("NewVolumeRuntime: %v", err)
+	}
+	t.Cleanup(func() { _ = vr.Close() })
+	return vr, inner, prov, staging
+}
+
 var dataClaim = VolumeClaim{Name: "data", SizeBytes: 100, FSType: "xfs", Target: "/d"}
 
 func TestReplicatedVolumeAttachPromotesBeforeMount(t *testing.T) {

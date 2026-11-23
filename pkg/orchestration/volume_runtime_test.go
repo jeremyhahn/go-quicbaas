@@ -786,6 +786,88 @@ func TestVolumeRuntimeJournalsEachAttachment(t *testing.T) {
 	}
 }
 
+// The promotion of a replicated volume reaches the state file before
+// Promote runs, so a node killed during Promote demotes it on recovery.
+func TestVolumeRuntimeJournalsThePromotion(t *testing.T) {
+	vr, _, prov, staging := newReplicatedVolumeRuntime(t)
+	var seen []AttachedVolume
+	prov.onCall = func(key string) {
+		if key == "promote data" && seen == nil {
+			seen = readStateFile(t, staging).Volumes
+		}
+	}
+	if _, err := vr.Run(context.Background(), dataSpec("a")); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	prov.onCall = nil
+	if len(seen) != 1 || seen[0].Claim.Name != "data" || !seen[0].Promoted {
+		t.Fatalf("state during promote = %+v, want data promoted", seen)
+	}
+}
+
+func TestVolumeRuntimeDemotesARecoveredPromotedVolume(t *testing.T) {
+	ctx := context.Background()
+	vr, inner, prov, staging := newReplicatedVolumeRuntime(t)
+	if _, err := vr.Run(ctx, dataSpec("a")); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if st := readStateFile(t, staging); len(st.Volumes) != 1 || !st.Volumes[0].Promoted {
+		t.Fatalf("state = %+v, want data promoted", st)
+	}
+	if err := vr.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	restarted, err := NewVolumeRuntime(inner, vr.Attacher())
+	if err != nil {
+		t.Fatalf("NewVolumeRuntime after restart: %v", err)
+	}
+	t.Cleanup(func() { _ = restarted.Close() })
+	n := len(prov.calls)
+	if err := restarted.ReleaseRecovered(ctx); err != nil {
+		t.Fatalf("ReleaseRecovered: %v", err)
+	}
+	if got, want := prov.calls[n:], []string{"unmount data", "demote data", "detach data"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("recovery calls = %v, want %v", got, want)
+	}
+}
+
+func TestVolumeRuntimeRetriesAFailedDemote(t *testing.T) {
+	ctx := context.Background()
+	vr, _, prov, staging := newReplicatedVolumeRuntime(t)
+	id, err := vr.Run(ctx, dataSpec("a"))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	busy := errors.New("device busy")
+	prov.failOn["demote data"] = busy
+	if err := vr.Remove(ctx, id); !errors.Is(err, busy) {
+		t.Fatalf("Remove = %v, want the demote error", err)
+	}
+	vr.mu.Lock()
+	pending := slices.Clone(vr.pending)
+	vr.mu.Unlock()
+	if len(pending) != 1 || !pending[0].Promoted || pending[0].HostPath != "" {
+		t.Fatalf("pending = %+v, want data promoted and unmounted", pending)
+	}
+	if st := readStateFile(t, staging); len(st.Volumes) != 1 || !st.Volumes[0].Promoted {
+		t.Fatalf("state = %+v, want data still promoted", st)
+	}
+	if callIndex(prov.calls, "detach data") >= 0 {
+		t.Fatalf("calls = %v, want no detach of a primary", prov.calls)
+	}
+	delete(prov.failOn, "demote data")
+	n := len(prov.calls)
+	if err := vr.RetryPendingReleases(ctx); err != nil {
+		t.Fatalf("RetryPendingReleases: %v", err)
+	}
+	if got, want := prov.calls[n:], []string{"demote data", "detach data"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("retry calls = %v, want %v", got, want)
+	}
+	if _, err := vr.Run(ctx, dataSpec("b")); err != nil {
+		t.Fatalf("Run after the retry: %v", err)
+	}
+}
+
 func TestNewVolumeRuntimeRefusesAMalformedStateFile(t *testing.T) {
 	staging := t.TempDir()
 	if err := os.WriteFile(filepath.Join(staging, VolumeStateFile), []byte("{not json"), 0o600); err != nil {
