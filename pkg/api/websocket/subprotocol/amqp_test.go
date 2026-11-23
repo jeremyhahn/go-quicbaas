@@ -27,8 +27,6 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-
-	ws "github.com/jeremyhahn/go-quicbaas/pkg/api/websocket"
 )
 
 // waitForCounter polls a counter function until it reaches or exceeds the expected value.
@@ -675,7 +673,7 @@ func TestAMQPHandler_HandleConnection_ProtocolHeader(t *testing.T) {
 			return
 		}
 
-		session := ws.NewSession("test-session", "amqp", conn)
+		session := newGrantedSession("test-session", "amqp", conn)
 
 		err = handler.HandleConnection(session.Context(), conn, session)
 		handlerDone <- err
@@ -734,7 +732,7 @@ func TestAMQPHandler_HandleConnection_FullHandshake(t *testing.T) {
 			return
 		}
 
-		session := ws.NewSession("test-session", "amqp", conn)
+		session := newGrantedSession("test-session", "amqp", conn)
 
 		err = handler.HandleConnection(session.Context(), conn, session)
 		handlerDone <- err
@@ -831,7 +829,7 @@ func TestAMQPHandler_HandleConnection_ChannelOpen(t *testing.T) {
 			return
 		}
 
-		session := ws.NewSession("test-session", "amqp", conn)
+		session := newGrantedSession("test-session", "amqp", conn)
 
 		_ = handler.HandleConnection(session.Context(), conn, session)
 	}))
@@ -907,7 +905,7 @@ func TestAMQPHandler_HandleConnection_QueueDeclare(t *testing.T) {
 			return
 		}
 
-		session := ws.NewSession("test-session", "amqp", conn)
+		session := newGrantedSession("test-session", "amqp", conn)
 
 		_ = handler.HandleConnection(session.Context(), conn, session)
 	}))
@@ -987,7 +985,7 @@ func TestAMQPHandler_HandleConnection_NormalClosure(t *testing.T) {
 			return
 		}
 
-		session := ws.NewSession("test-session", "amqp", conn)
+		session := newGrantedSession("test-session", "amqp", conn)
 
 		err = handler.HandleConnection(session.Context(), conn, session)
 		handlerErr <- err
@@ -1031,7 +1029,7 @@ func TestAMQPHandler_HandleConnection_ContextCancel(t *testing.T) {
 			return
 		}
 
-		session := ws.NewSession("test-session", "amqp", conn)
+		session := newGrantedSession("test-session", "amqp", conn)
 
 		go func() {
 			_ = handler.HandleConnection(session.Context(), conn, session)
@@ -1073,7 +1071,7 @@ func TestAMQPHandler_HandleFrame_UnknownFrameType(t *testing.T) {
 		channels:  make(map[uint16]*amqpChannelState),
 		consumers: make(map[string]amqpConsumer),
 	}
-	session := ws.NewSession("test", "amqp", nil)
+	session := newGrantedSession("test", "amqp", nil)
 
 	// Build a frame with unknown type (99)
 	buf := &bytes.Buffer{}
@@ -1094,7 +1092,7 @@ func TestAMQPHandler_HandleMethodFrame_UnsupportedMethod(t *testing.T) {
 		channels:  make(map[uint16]*amqpChannelState),
 		consumers: make(map[string]amqpConsumer),
 	}
-	session := ws.NewSession("test", "amqp", nil)
+	session := newGrantedSession("test", "amqp", nil)
 
 	// Build a method frame with unsupported class/method
 	frame := &AMQPFrame{
@@ -1115,7 +1113,7 @@ func TestAMQPHandler_HandleMethodFrame_TooShort(t *testing.T) {
 		channels:  make(map[uint16]*amqpChannelState),
 		consumers: make(map[string]amqpConsumer),
 	}
-	session := ws.NewSession("test", "amqp", nil)
+	session := newGrantedSession("test", "amqp", nil)
 
 	frame := &AMQPFrame{
 		Type:    FrameMethod,
@@ -1165,7 +1163,7 @@ func TestAMQPHandler_HandleConnectionOpen_MissingVhost(t *testing.T) {
 		channels:  make(map[uint16]*amqpChannelState),
 		consumers: make(map[string]amqpConsumer),
 	}
-	session := ws.NewSession("test", "amqp", nil)
+	session := newGrantedSession("test", "amqp", nil)
 
 	frame := &AMQPFrame{
 		Type:    FrameMethod,
@@ -1185,7 +1183,7 @@ func TestAMQPHandler_HandleConnectionOpen_InvalidVhost(t *testing.T) {
 		channels:  make(map[uint16]*amqpChannelState),
 		consumers: make(map[string]amqpConsumer),
 	}
-	session := ws.NewSession("test", "amqp", nil)
+	session := newGrantedSession("test", "amqp", nil)
 
 	frame := &AMQPFrame{
 		Type:    FrameMethod,
@@ -1206,7 +1204,7 @@ func TestAMQPHandler_HandleQueueDeclare_ChannelNotOpen(t *testing.T) {
 		channels:  make(map[uint16]*amqpChannelState),
 		consumers: make(map[string]amqpConsumer),
 	}
-	session := ws.NewSession("test", "amqp", nil)
+	session := newGrantedSession("test", "amqp", nil)
 
 	frame := &AMQPFrame{
 		Type:    FrameMethod,
@@ -1232,7 +1230,7 @@ func TestAMQPHandler_HandleQueueDeclare_ArgsTooShort(t *testing.T) {
 		channels:  make(map[uint16]*amqpChannelState),
 		consumers: make(map[string]amqpConsumer),
 	}
-	session := ws.NewSession("test", "amqp", nil)
+	session := newGrantedSession("test", "amqp", nil)
 
 	frame := &AMQPFrame{
 		Type:    FrameMethod,
@@ -1252,7 +1250,7 @@ func TestAMQPHandler_HandleBasicPublish_ArgsTooShort(t *testing.T) {
 		channels:  make(map[uint16]*amqpChannelState),
 		consumers: make(map[string]amqpConsumer),
 	}
-	session := ws.NewSession("test", "amqp", nil)
+	session := newGrantedSession("test", "amqp", nil)
 
 	frame := &AMQPFrame{
 		Type:    FrameMethod,
@@ -1272,7 +1270,7 @@ func TestAMQPHandler_HandleBasicConsume_ArgsTooShort(t *testing.T) {
 		channels:  make(map[uint16]*amqpChannelState),
 		consumers: make(map[string]amqpConsumer),
 	}
-	session := ws.NewSession("test", "amqp", nil)
+	session := newGrantedSession("test", "amqp", nil)
 
 	frame := &AMQPFrame{
 		Type:    FrameMethod,
@@ -1296,7 +1294,7 @@ func TestAMQPHandler_InvalidProtocolHeader(t *testing.T) {
 			return
 		}
 
-		session := ws.NewSession("test-session", "amqp", conn)
+		session := newGrantedSession("test-session", "amqp", conn)
 
 		err = handler.HandleConnection(session.Context(), conn, session)
 		handlerDone <- err
@@ -1343,7 +1341,7 @@ func TestAMQPHandler_ConcurrentClients(t *testing.T) {
 			return
 		}
 
-		session := ws.NewSession("session-"+r.RemoteAddr, "amqp", conn)
+		session := newGrantedSession("session-"+r.RemoteAddr, "amqp", conn)
 
 		_ = handler.HandleConnection(session.Context(), conn, session)
 	}))

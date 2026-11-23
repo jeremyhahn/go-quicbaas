@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/binary"
 	"testing"
+	"time"
 
 	ws "github.com/jeremyhahn/go-quicbaas/pkg/api/websocket"
 )
@@ -73,7 +74,7 @@ func TestErrAMQPConnectionError(t *testing.T) {
 func TestAMQPHandler_HandleChannelFlow(t *testing.T) {
 	handler := NewAMQPHandler(nil)
 	state := newTestAMQPState()
-	session := ws.NewSession("test", "amqp", nil)
+	session := newGrantedSession("test", "amqp", nil)
 
 	tests := []struct {
 		name       string
@@ -114,7 +115,7 @@ func TestAMQPHandler_HandleChannelFlow(t *testing.T) {
 func TestAMQPHandler_HandleChannelClose(t *testing.T) {
 	handler := NewAMQPHandler(nil)
 	state := newTestAMQPState()
-	session := ws.NewSession("test", "amqp", nil)
+	session := newGrantedSession("test", "amqp", nil)
 
 	frame := &AMQPFrame{Type: FrameMethod, Channel: 1}
 	args := &bytes.Buffer{}
@@ -143,7 +144,7 @@ func TestAMQPHandler_HandleChannelClose(t *testing.T) {
 func TestAMQPHandler_HandleConnectionSecureOk(t *testing.T) {
 	handler := NewAMQPHandler(nil)
 	state := newTestAMQPState()
-	session := ws.NewSession("test", "amqp", nil)
+	session := newGrantedSession("test", "amqp", nil)
 
 	frame := &AMQPFrame{Type: FrameMethod, Channel: 0}
 	response, err := handler.handleConnectionSecureOk(context.Background(), frame, []byte{}, session, state)
@@ -171,7 +172,7 @@ func buildExchangeDeclareArgs(exchangeName, exchangeType string, flags byte) []b
 
 func TestAMQPHandler_HandleExchangeDeclare(t *testing.T) {
 	handler := NewAMQPHandler(nil)
-	session := ws.NewSession("test", "amqp", nil)
+	session := newGrantedSession("test", "amqp", nil)
 
 	t.Run("declare new exchange", func(t *testing.T) {
 		state := newTestAMQPState()
@@ -268,7 +269,7 @@ func TestAMQPHandler_HandleExchangeDeclare(t *testing.T) {
 
 func TestAMQPHandler_HandleExchangeDelete(t *testing.T) {
 	handler := NewAMQPHandler(nil)
-	session := ws.NewSession("test", "amqp", nil)
+	session := newGrantedSession("test", "amqp", nil)
 
 	t.Run("delete existing exchange", func(t *testing.T) {
 		state := newTestAMQPState()
@@ -359,7 +360,7 @@ func buildQueueBindArgs(queueName, exchangeName, routingKey string, noWait bool)
 
 func TestAMQPHandler_HandleQueueBind(t *testing.T) {
 	handler := NewAMQPHandler(nil)
-	session := ws.NewSession("test", "amqp", nil)
+	session := newGrantedSession("test", "amqp", nil)
 
 	t.Run("bind queue to exchange", func(t *testing.T) {
 		state := newTestAMQPState()
@@ -421,7 +422,7 @@ func TestAMQPHandler_HandleQueueBind(t *testing.T) {
 
 func TestAMQPHandler_HandleQueueUnbind(t *testing.T) {
 	handler := NewAMQPHandler(nil)
-	session := ws.NewSession("test", "amqp", nil)
+	session := newGrantedSession("test", "amqp", nil)
 
 	t.Run("unbind existing binding", func(t *testing.T) {
 		state := newTestAMQPState()
@@ -474,7 +475,7 @@ func TestAMQPHandler_HandleQueueUnbind(t *testing.T) {
 
 func TestAMQPHandler_HandleQueuePurge(t *testing.T) {
 	handler := NewAMQPHandler(nil)
-	session := ws.NewSession("test", "amqp", nil)
+	session := newGrantedSession("test", "amqp", nil)
 
 	t.Run("purge queue with messages", func(t *testing.T) {
 		state := newTestAMQPState()
@@ -538,7 +539,7 @@ func TestAMQPHandler_HandleQueuePurge(t *testing.T) {
 
 func TestAMQPHandler_HandleQueueDelete(t *testing.T) {
 	handler := NewAMQPHandler(nil)
-	session := ws.NewSession("test", "amqp", nil)
+	session := newGrantedSession("test", "amqp", nil)
 
 	t.Run("delete existing queue", func(t *testing.T) {
 		state := newTestAMQPState()
@@ -602,7 +603,7 @@ func TestAMQPHandler_HandleQueueDelete(t *testing.T) {
 
 func TestAMQPHandler_HandleBasicQos(t *testing.T) {
 	handler := NewAMQPHandler(nil)
-	session := ws.NewSession("test", "amqp", nil)
+	session := newGrantedSession("test", "amqp", nil)
 
 	t.Run("set prefetch parameters", func(t *testing.T) {
 		state := newTestAMQPState()
@@ -649,7 +650,7 @@ func TestAMQPHandler_HandleBasicQos(t *testing.T) {
 
 func TestAMQPHandler_HandleBasicConsume(t *testing.T) {
 	handler := NewAMQPHandler(nil)
-	session := ws.NewSession("test", "amqp", nil)
+	session := newGrantedSession("test", "amqp", nil)
 
 	t.Run("consume with explicit tag", func(t *testing.T) {
 		state := newTestAMQPState()
@@ -741,7 +742,7 @@ func TestAMQPHandler_HandleBasicConsume(t *testing.T) {
 
 func TestAMQPHandler_HandleBasicCancel(t *testing.T) {
 	handler := NewAMQPHandler(nil)
-	session := ws.NewSession("test", "amqp", nil)
+	session := newGrantedSession("test", "amqp", nil)
 
 	t.Run("cancel existing consumer", func(t *testing.T) {
 		state := newTestAMQPState()
@@ -804,7 +805,7 @@ func TestAMQPHandler_HandleBasicCancel(t *testing.T) {
 
 func TestAMQPHandler_HandleBasicPublish(t *testing.T) {
 	handler := NewAMQPHandler(nil)
-	session := ws.NewSession("test", "amqp", nil)
+	session := newGrantedSession("test", "amqp", nil)
 
 	t.Run("publish to routing key", func(t *testing.T) {
 		state := newTestAMQPState()
@@ -842,7 +843,7 @@ func TestAMQPHandler_HandleBasicPublish(t *testing.T) {
 
 func TestAMQPHandler_HandleBasicGet(t *testing.T) {
 	handler := NewAMQPHandler(nil)
-	session := ws.NewSession("test", "amqp", nil)
+	session := newGrantedSession("test", "amqp", nil)
 
 	t.Run("get from empty queue returns Get-Empty", func(t *testing.T) {
 		state := newTestAMQPState()
@@ -941,7 +942,7 @@ func TestAMQPHandler_HandleBasicGet(t *testing.T) {
 
 func TestAMQPHandler_HandleBasicAck(t *testing.T) {
 	handler := NewAMQPHandler(nil)
-	session := ws.NewSession("test", "amqp", nil)
+	session := newGrantedSession("test", "amqp", nil)
 
 	t.Run("single ack", func(t *testing.T) {
 		state := newTestAMQPState()
@@ -1013,7 +1014,7 @@ func TestAMQPHandler_HandleBasicAck(t *testing.T) {
 
 func TestAMQPHandler_HandleBasicReject(t *testing.T) {
 	handler := NewAMQPHandler(nil)
-	session := ws.NewSession("test", "amqp", nil)
+	session := newGrantedSession("test", "amqp", nil)
 
 	t.Run("reject without requeue", func(t *testing.T) {
 		state := newTestAMQPState()
@@ -1074,7 +1075,7 @@ func TestAMQPHandler_HandleBasicReject(t *testing.T) {
 
 func TestAMQPHandler_HandleBasicRecoverAsync(t *testing.T) {
 	handler := NewAMQPHandler(nil)
-	session := ws.NewSession("test", "amqp", nil)
+	session := newGrantedSession("test", "amqp", nil)
 	state := newTestAMQPState()
 	frame := &AMQPFrame{Type: FrameMethod, Channel: 1}
 
@@ -1089,7 +1090,7 @@ func TestAMQPHandler_HandleBasicRecoverAsync(t *testing.T) {
 
 func TestAMQPHandler_HandleBasicRecover(t *testing.T) {
 	handler := NewAMQPHandler(nil)
-	session := ws.NewSession("test", "amqp", nil)
+	session := newGrantedSession("test", "amqp", nil)
 	state := newTestAMQPState()
 	frame := &AMQPFrame{Type: FrameMethod, Channel: 1}
 
@@ -1104,7 +1105,7 @@ func TestAMQPHandler_HandleBasicRecover(t *testing.T) {
 
 func TestAMQPHandler_HandleTxSelect(t *testing.T) {
 	handler := NewAMQPHandler(nil)
-	session := ws.NewSession("test", "amqp", nil)
+	session := newGrantedSession("test", "amqp", nil)
 	state := newTestAMQPState()
 	frame := &AMQPFrame{Type: FrameMethod, Channel: 1}
 
@@ -1127,7 +1128,7 @@ func TestAMQPHandler_HandleTxSelect(t *testing.T) {
 
 func TestAMQPHandler_HandleTxCommit(t *testing.T) {
 	handler := NewAMQPHandler(nil)
-	session := ws.NewSession("test", "amqp", nil)
+	session := newGrantedSession("test", "amqp", nil)
 
 	t.Run("commit on transacted channel", func(t *testing.T) {
 		state := newTestAMQPState()
@@ -1159,7 +1160,7 @@ func TestAMQPHandler_HandleTxCommit(t *testing.T) {
 
 func TestAMQPHandler_HandleTxRollback(t *testing.T) {
 	handler := NewAMQPHandler(nil)
-	session := ws.NewSession("test", "amqp", nil)
+	session := newGrantedSession("test", "amqp", nil)
 
 	t.Run("rollback on transacted channel", func(t *testing.T) {
 		state := newTestAMQPState()
@@ -1208,31 +1209,186 @@ func TestAMQPHandler_BuildChannelClose(t *testing.T) {
 }
 
 func TestAMQPHandler_HandleFrame_HeaderAndBodyFrames(t *testing.T) {
-	handler := NewAMQPHandler(nil)
+	session := newGrantedSession("test", "amqp", nil)
+
+	t.Run("body split over two frames is published byte for byte", func(t *testing.T) {
+		hub := NewInMemoryPubSubHub()
+		handler := NewAMQPHandler(hub)
+		state := newTestAMQPState()
+		got := subscribeTestHub(t, hub, "sub", "orders")
+
+		publishAMQPMethod(t, handler, session, state, "orders")
+		body := []byte("hello, amqp body")
+		mustNoResponse(t, handler, session, state, handler.buildFrame(FrameHeader, 1, amqpContentHeader(uint64(len(body)))))
+		select {
+		case p := <-got:
+			t.Fatalf("published before the body was complete: %q", p)
+		default:
+		}
+		mustNoResponse(t, handler, session, state, handler.buildFrame(FrameBody, 1, body[:5]))
+		mustNoResponse(t, handler, session, state, handler.buildFrame(FrameBody, 1, body[5:]))
+		select {
+		case p := <-got:
+			if !bytes.Equal(p, body) {
+				t.Fatalf("payload = %q, want %q", p, body)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("body was not published")
+		}
+	})
+
+	t.Run("zero body size publishes at the header", func(t *testing.T) {
+		hub := NewInMemoryPubSubHub()
+		handler := NewAMQPHandler(hub)
+		state := newTestAMQPState()
+		got := subscribeTestHub(t, hub, "sub", "orders")
+		publishAMQPMethod(t, handler, session, state, "orders")
+		mustNoResponse(t, handler, session, state, handler.buildFrame(FrameHeader, 1, amqpContentHeader(0)))
+		select {
+		case p := <-got:
+			if len(p) != 0 {
+				t.Fatalf("payload = %q, want empty", p)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("empty body was not published")
+		}
+	})
+
+	t.Run("over-long body is refused", func(t *testing.T) {
+		handler := NewAMQPHandler(NewInMemoryPubSubHub())
+		state := newTestAMQPState()
+		publishAMQPMethod(t, handler, session, state, "orders")
+		mustNoResponse(t, handler, session, state, handler.buildFrame(FrameHeader, 1, amqpContentHeader(3)))
+		if _, err := handler.handleFrame(context.Background(), handler.buildFrame(FrameBody, 1, []byte("four")), session, state); err == nil {
+			t.Fatal("a body longer than declared was accepted")
+		}
+	})
+
+	t.Run("declared size over the maximum is refused", func(t *testing.T) {
+		handler := NewAMQPHandler(NewInMemoryPubSubHub())
+		state := newTestAMQPState()
+		publishAMQPMethod(t, handler, session, state, "orders")
+		if _, err := handler.handleFrame(context.Background(), handler.buildFrame(FrameHeader, 1, amqpContentHeader(amqpMaxBodySize+1)), session, state); err == nil {
+			t.Fatal("an oversized declared body was accepted")
+		}
+	})
+
+	t.Run("orphan header and body frames answer UNEXPECTED_FRAME", func(t *testing.T) {
+		handler := NewAMQPHandler(NewInMemoryPubSubHub())
+		state := newTestAMQPState()
+		for _, data := range [][]byte{
+			handler.buildFrame(FrameHeader, 1, amqpContentHeader(2)),
+			handler.buildFrame(FrameBody, 1, []byte{0x01, 0x02}),
+		} {
+			response, err := handler.handleFrame(context.Background(), data, session, state)
+			if err != nil {
+				t.Fatalf("handleFrame error = %v", err)
+			}
+			want := handler.buildChannelClose(1, UnexpectedFrame, "", 0, 0)[:13]
+			if len(response) < 13 || !bytes.Equal(response[7:11], want[7:11]) {
+				t.Fatalf("response is not a Channel.Close: %x", response)
+			}
+			if code := binary.BigEndian.Uint16(response[11:13]); code != UnexpectedFrame {
+				t.Fatalf("reply code = %d, want %d", code, UnexpectedFrame)
+			}
+		}
+	})
+
+	t.Run("short content header is a protocol error", func(t *testing.T) {
+		handler := NewAMQPHandler(NewInMemoryPubSubHub())
+		state := newTestAMQPState()
+		publishAMQPMethod(t, handler, session, state, "orders")
+		if _, err := handler.handleFrame(context.Background(), handler.buildFrame(FrameHeader, 1, []byte{0x01, 0x02}), session, state); err == nil {
+			t.Fatal("a short content header was accepted")
+		}
+	})
+}
+
+// TestAMQPHandler_BasicPublish_DeniedWithoutPublishPermission: a session
+// whose grant refuses messaging:publish gets Channel.Close ACCESS_REFUSED and
+// nothing reaches the hub, even when the content follows.
+func TestAMQPHandler_BasicPublish_DeniedWithoutPublishPermission(t *testing.T) {
+	hub := NewInMemoryPubSubHub()
+	handler := NewAMQPHandler(hub)
 	state := newTestAMQPState()
-	session := ws.NewSession("test", "amqp", nil)
+	got := subscribeTestHub(t, hub, "sub", "orders")
+	session := newDeniedSession("test", "amqp", nil)
 
-	t.Run("header frame returns nil", func(t *testing.T) {
-		data := handler.buildFrame(FrameHeader, 1, []byte{0x01, 0x02})
-		response, err := handler.handleFrame(context.Background(), data, session, state)
-		if err != nil {
-			t.Fatalf("handleFrame(header) error = %v", err)
-		}
-		if response != nil {
-			t.Error("Header frame should return nil response")
-		}
-	})
+	args := &bytes.Buffer{}
+	_ = binary.Write(args, binary.BigEndian, uint16(0))
+	writeShortString(args, "")
+	writeShortString(args, "orders")
+	args.WriteByte(0x00)
+	response, err := handler.handleBasicPublish(context.Background(), &AMQPFrame{Type: FrameMethod, Channel: 1}, args.Bytes(), session, state)
+	if err != nil {
+		t.Fatalf("handleBasicPublish error = %v", err)
+	}
+	if len(response) < 13 || binary.BigEndian.Uint16(response[11:13]) != AccessRefused {
+		t.Fatalf("response is not Channel.Close ACCESS_REFUSED: %x", response)
+	}
+	_, _ = handler.handleFrame(context.Background(), handler.buildFrame(FrameHeader, 1, amqpContentHeader(2)), session, state)
+	_, _ = handler.handleFrame(context.Background(), handler.buildFrame(FrameBody, 1, []byte("hi")), session, state)
+	select {
+	case p := <-got:
+		t.Fatalf("a denied publish reached the hub: %q", p)
+	case <-time.After(200 * time.Millisecond):
+	}
+}
 
-	t.Run("body frame returns nil", func(t *testing.T) {
-		data := handler.buildFrame(FrameBody, 1, []byte{0x01, 0x02})
-		response, err := handler.handleFrame(context.Background(), data, session, state)
-		if err != nil {
-			t.Fatalf("handleFrame(body) error = %v", err)
-		}
-		if response != nil {
-			t.Error("Body frame should return nil response")
-		}
-	})
+// TestAMQPHandler_ParseFrame_OversizedDeclaredLength: a declared payload
+// size beyond the data, including sizes where 7+size+1 wraps in uint32, is
+// an error and never an out-of-range index.
+func TestAMQPHandler_ParseFrame_OversizedDeclaredLength(t *testing.T) {
+	handler := NewAMQPHandler(nil)
+	cases := map[string][]byte{
+		"size 0xfffffff8 wraps to zero": {0x01, 0x00, 0x00, 0xff, 0xff, 0xff, 0xf8, 0xce},
+		"size 0xffffffff":               {0x01, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xce},
+		"size one larger than the data": {0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xaa, 0xce},
+	}
+	for name, data := range cases {
+		t.Run(name, func(t *testing.T) {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf("parseFrame panicked: %v", r)
+				}
+			}()
+			if _, err := handler.parseFrame(data); err == nil {
+				t.Fatal("parseFrame accepted a frame whose declared size exceeds the data")
+			}
+		})
+	}
+}
+
+// amqpContentHeader builds a Basic content-header payload: class 60,
+// weight 0, the body size and empty property flags.
+func amqpContentHeader(bodySize uint64) []byte {
+	buf := &bytes.Buffer{}
+	_ = binary.Write(buf, binary.BigEndian, uint16(ClassBasic))
+	_ = binary.Write(buf, binary.BigEndian, uint16(0))
+	_ = binary.Write(buf, binary.BigEndian, bodySize)
+	_ = binary.Write(buf, binary.BigEndian, uint16(0))
+	return buf.Bytes()
+}
+
+func publishAMQPMethod(t *testing.T, handler *AMQPHandler, session *ws.Session, state *amqpClientState, routingKey string) {
+	t.Helper()
+	args := &bytes.Buffer{}
+	_ = binary.Write(args, binary.BigEndian, uint16(0))
+	writeShortString(args, "")
+	writeShortString(args, routingKey)
+	args.WriteByte(0x00)
+	response, err := handler.handleBasicPublish(context.Background(), &AMQPFrame{Type: FrameMethod, Channel: 1}, args.Bytes(), session, state)
+	if err != nil || response != nil {
+		t.Fatalf("handleBasicPublish = %x, %v; want no response", response, err)
+	}
+}
+
+func mustNoResponse(t *testing.T, handler *AMQPHandler, session *ws.Session, state *amqpClientState, data []byte) {
+	t.Helper()
+	response, err := handler.handleFrame(context.Background(), data, session, state)
+	if err != nil || response != nil {
+		t.Fatalf("handleFrame = %x, %v; want no response", response, err)
+	}
 }
 
 func TestWriteTable_Int32Value(t *testing.T) {
@@ -1299,7 +1455,7 @@ func TestWriteTable_UnknownTypeSkipped(t *testing.T) {
 
 func TestAMQPHandler_HandleQueueDeclare_PassiveNonExistent(t *testing.T) {
 	handler := NewAMQPHandler(nil)
-	session := ws.NewSession("test", "amqp", nil)
+	session := newGrantedSession("test", "amqp", nil)
 	state := newTestAMQPState()
 	frame := &AMQPFrame{Type: FrameMethod, Channel: 1}
 
@@ -1319,7 +1475,7 @@ func TestAMQPHandler_HandleQueueDeclare_PassiveNonExistent(t *testing.T) {
 
 func TestAMQPHandler_HandleQueueDeclare_NoWait(t *testing.T) {
 	handler := NewAMQPHandler(nil)
-	session := ws.NewSession("test", "amqp", nil)
+	session := newGrantedSession("test", "amqp", nil)
 	state := newTestAMQPState()
 	frame := &AMQPFrame{Type: FrameMethod, Channel: 1}
 

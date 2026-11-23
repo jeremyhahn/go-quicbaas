@@ -27,8 +27,6 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-
-	ws "github.com/jeremyhahn/go-quicbaas/pkg/api/websocket"
 )
 
 func TestNewSTOMPHandler(t *testing.T) {
@@ -638,7 +636,7 @@ func TestSTOMPHandler_HandleConnection_ConnectDisconnect(t *testing.T) {
 			return
 		}
 
-		session := ws.NewSession("test-session", "stomp", conn)
+		session := newGrantedSession("test-session", "stomp", conn)
 
 		err = handler.HandleConnection(session.Context(), conn, session)
 		handlerDone <- err
@@ -717,7 +715,7 @@ func TestSTOMPHandler_HandleConnection_SubscribeUnsubscribe(t *testing.T) {
 			return
 		}
 
-		session := ws.NewSession("test-session", "stomp", conn)
+		session := newGrantedSession("test-session", "stomp", conn)
 
 		_ = handler.HandleConnection(session.Context(), conn, session)
 	}))
@@ -803,7 +801,7 @@ func TestSTOMPHandler_HandleConnection_DisconnectWithReceipt(t *testing.T) {
 			return
 		}
 
-		session := ws.NewSession("test-session", "stomp", conn)
+		session := newGrantedSession("test-session", "stomp", conn)
 
 		err = handler.HandleConnection(session.Context(), conn, session)
 		handlerDone <- err
@@ -879,7 +877,7 @@ func TestSTOMPHandler_HandleConnection_StompCommand(t *testing.T) {
 			return
 		}
 
-		session := ws.NewSession("test-session", "stomp", conn)
+		session := newGrantedSession("test-session", "stomp", conn)
 
 		_ = handler.HandleConnection(session.Context(), conn, session)
 	}))
@@ -943,7 +941,7 @@ func TestSTOMPHandler_HandleConnection_VersionNegotiation(t *testing.T) {
 					return
 				}
 
-				session := ws.NewSession("test-session", "stomp", conn)
+				session := newGrantedSession("test-session", "stomp", conn)
 
 				_ = handler.HandleConnection(session.Context(), conn, session)
 			}))
@@ -999,7 +997,7 @@ func TestSTOMPHandler_HandleConnection_NotConnectedError(t *testing.T) {
 			return
 		}
 
-		session := ws.NewSession("test-session", "stomp", conn)
+		session := newGrantedSession("test-session", "stomp", conn)
 
 		err = handler.HandleConnection(session.Context(), conn, session)
 		handlerErr <- err
@@ -1129,7 +1127,7 @@ func TestSTOMPHandler_HandleConnection_MissingHeaders(t *testing.T) {
 					return
 				}
 
-				session := ws.NewSession("test-session", "stomp", conn)
+				session := newGrantedSession("test-session", "stomp", conn)
 
 				err = handler.HandleConnection(session.Context(), conn, session)
 				handlerErr <- err
@@ -1197,7 +1195,7 @@ func TestSTOMPHandler_HandleConnection_UnknownCommand(t *testing.T) {
 			return
 		}
 
-		session := ws.NewSession("test-session", "stomp", conn)
+		session := newGrantedSession("test-session", "stomp", conn)
 
 		err = handler.HandleConnection(session.Context(), conn, session)
 		handlerErr <- err
@@ -1249,7 +1247,7 @@ func TestSTOMPHandler_HandleConnection_NormalClosure(t *testing.T) {
 			return
 		}
 
-		session := ws.NewSession("test-session", "stomp", conn)
+		session := newGrantedSession("test-session", "stomp", conn)
 
 		err = handler.HandleConnection(session.Context(), conn, session)
 		handlerErr <- err
@@ -1293,7 +1291,7 @@ func TestSTOMPHandler_HandleConnection_ContextCancel(t *testing.T) {
 			return
 		}
 
-		session := ws.NewSession("test-session", "stomp", conn)
+		session := newGrantedSession("test-session", "stomp", conn)
 
 		go func() {
 			_ = handler.HandleConnection(session.Context(), conn, session)
@@ -1338,7 +1336,7 @@ func TestSTOMPHandler_ConcurrentClients(t *testing.T) {
 			return
 		}
 
-		session := ws.NewSession("session-"+r.RemoteAddr, "stomp", conn)
+		session := newGrantedSession("session-"+r.RemoteAddr, "stomp", conn)
 
 		_ = handler.HandleConnection(session.Context(), conn, session)
 	}))
@@ -1444,7 +1442,7 @@ func TestSTOMPHandler_AckNackCommands(t *testing.T) {
 			return
 		}
 
-		session := ws.NewSession("test-session", "stomp", conn)
+		session := newGrantedSession("test-session", "stomp", conn)
 
 		_ = handler.HandleConnection(session.Context(), conn, session)
 	}))
@@ -1524,7 +1522,7 @@ func TestSTOMPHandler_TransactionCommands(t *testing.T) {
 			return
 		}
 
-		session := ws.NewSession("test-session", "stomp", conn)
+		session := newGrantedSession("test-session", "stomp", conn)
 
 		_ = handler.HandleConnection(session.Context(), conn, session)
 	}))
@@ -1631,7 +1629,7 @@ func TestSTOMPHandler_TransactionSendCommit(t *testing.T) {
 			return
 		}
 
-		session := ws.NewSession("session-"+r.RemoteAddr, "stomp", conn)
+		session := newGrantedSession("session-"+r.RemoteAddr, "stomp", conn)
 
 		_ = handler.HandleConnection(session.Context(), conn, session)
 	}))
@@ -1767,7 +1765,7 @@ func TestSTOMPHandler_TransactionAbortNoDelivery(t *testing.T) {
 			return
 		}
 
-		session := ws.NewSession("session-"+r.RemoteAddr, "stomp", conn)
+		session := newGrantedSession("session-"+r.RemoteAddr, "stomp", conn)
 
 		_ = handler.HandleConnection(session.Context(), conn, session)
 	}))
@@ -1894,7 +1892,7 @@ func TestSTOMPHandler_MessageDeliveryBetweenClients(t *testing.T) {
 		}
 
 		// Use a unique session ID per connection
-		session := ws.NewSession("session-"+r.RemoteAddr, "stomp", conn)
+		session := newGrantedSession("session-"+r.RemoteAddr, "stomp", conn)
 
 		_ = handler.HandleConnection(session.Context(), conn, session)
 	}))
@@ -2048,7 +2046,7 @@ func TestSTOMPHandler_SendWithReceipt(t *testing.T) {
 			return
 		}
 
-		session := ws.NewSession("test-session", "stomp", conn)
+		session := newGrantedSession("test-session", "stomp", conn)
 
 		_ = handler.HandleConnection(session.Context(), conn, session)
 	}))
@@ -2132,7 +2130,7 @@ func TestSTOMPHandler_CommandsNotConnected(t *testing.T) {
 					return
 				}
 
-				session := ws.NewSession("test-session", "stomp", conn)
+				session := newGrantedSession("test-session", "stomp", conn)
 
 				err = handler.HandleConnection(session.Context(), conn, session)
 				handlerErr <- err
@@ -2197,7 +2195,7 @@ func TestSTOMPHandler_AckNackNoReceipt(t *testing.T) {
 			return
 		}
 
-		session := ws.NewSession("test-session", "stomp", conn)
+		session := newGrantedSession("test-session", "stomp", conn)
 
 		_ = handler.HandleConnection(session.Context(), conn, session)
 	}))
@@ -2280,7 +2278,7 @@ func TestSTOMPHandler_TransactionCommandsNoReceipt(t *testing.T) {
 			return
 		}
 
-		session := ws.NewSession("test-session", "stomp", conn)
+		session := newGrantedSession("test-session", "stomp", conn)
 
 		_ = handler.HandleConnection(session.Context(), conn, session)
 	}))
@@ -2432,7 +2430,7 @@ func TestSTOMPHandler_SubscribeWithoutAckMode(t *testing.T) {
 			return
 		}
 
-		session := ws.NewSession("test-session", "stomp", conn)
+		session := newGrantedSession("test-session", "stomp", conn)
 
 		_ = handler.HandleConnection(session.Context(), conn, session)
 	}))
@@ -2496,7 +2494,7 @@ func TestSTOMPHandler_SubscribeInvalidAckMode(t *testing.T) {
 			return
 		}
 
-		session := ws.NewSession("test-session", "stomp", conn)
+		session := newGrantedSession("test-session", "stomp", conn)
 
 		_ = handler.HandleConnection(session.Context(), conn, session)
 	}))
@@ -2565,7 +2563,7 @@ func TestSTOMPHandler_UnsubscribeNonexistent(t *testing.T) {
 			return
 		}
 
-		session := ws.NewSession("test-session", "stomp", conn)
+		session := newGrantedSession("test-session", "stomp", conn)
 
 		_ = handler.HandleConnection(session.Context(), conn, session)
 	}))
@@ -2628,7 +2626,7 @@ func TestSTOMPHandler_TransactionErrors(t *testing.T) {
 			return
 		}
 
-		session := ws.NewSession("test-session", "stomp", conn)
+		session := newGrantedSession("test-session", "stomp", conn)
 
 		_ = handler.HandleConnection(session.Context(), conn, session)
 	}))
@@ -2694,7 +2692,7 @@ func TestSTOMPHandler_DuplicateTransaction(t *testing.T) {
 			return
 		}
 
-		session := ws.NewSession("test-session", "stomp", conn)
+		session := newGrantedSession("test-session", "stomp", conn)
 
 		_ = handler.HandleConnection(session.Context(), conn, session)
 	}))
@@ -2768,7 +2766,7 @@ func TestSTOMPHandler_SendInNonExistentTransaction(t *testing.T) {
 			return
 		}
 
-		session := ws.NewSession("test-session", "stomp", conn)
+		session := newGrantedSession("test-session", "stomp", conn)
 
 		_ = handler.HandleConnection(session.Context(), conn, session)
 	}))
@@ -2861,7 +2859,7 @@ func TestSTOMPHandler_AckWithinTransaction(t *testing.T) {
 		if err != nil {
 			return
 		}
-		session := ws.NewSession("test-ack-tx", "stomp", conn)
+		session := newGrantedSession("test-ack-tx", "stomp", conn)
 		_ = handler.HandleConnection(session.Context(), conn, session)
 	}))
 	defer server.Close()
@@ -2954,7 +2952,7 @@ func TestSTOMPHandler_NackWithinTransaction(t *testing.T) {
 		if err != nil {
 			return
 		}
-		session := ws.NewSession("test-nack-tx", "stomp", conn)
+		session := newGrantedSession("test-nack-tx", "stomp", conn)
 		_ = handler.HandleConnection(session.Context(), conn, session)
 	}))
 	defer server.Close()
@@ -3041,7 +3039,7 @@ func TestSTOMPHandler_AckInvalidTransaction(t *testing.T) {
 		if err != nil {
 			return
 		}
-		session := ws.NewSession("test-ack-invalid-tx", "stomp", conn)
+		session := newGrantedSession("test-ack-invalid-tx", "stomp", conn)
 		_ = handler.HandleConnection(session.Context(), conn, session)
 	}))
 	defer server.Close()
@@ -3103,7 +3101,7 @@ func TestSTOMPHandler_NackInvalidTransaction(t *testing.T) {
 		if err != nil {
 			return
 		}
-		session := ws.NewSession("test-nack-invalid-tx", "stomp", conn)
+		session := newGrantedSession("test-nack-invalid-tx", "stomp", conn)
 		_ = handler.HandleConnection(session.Context(), conn, session)
 	}))
 	defer server.Close()

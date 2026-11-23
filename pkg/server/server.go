@@ -1466,7 +1466,10 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		}
 
 		// Shutdown REST server
-		if s.getRESTServer() != nil {
+		s.mu.RLock()
+		hasModuleREST := s.moduleREST != nil
+		s.mu.RUnlock()
+		if s.getRESTServer() != nil || hasModuleREST {
 			s.logger.Info("Shutting down REST server...")
 			if err := s.stopRESTServer(ctx); err != nil {
 				errs = append(errs, err)

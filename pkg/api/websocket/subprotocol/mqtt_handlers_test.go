@@ -26,8 +26,6 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/mochi-mqtt/server/v2/packets"
-
-	ws "github.com/jeremyhahn/go-quicbaas/pkg/api/websocket"
 )
 
 // newTestMQTTState creates a connected MQTT client state for testing.
@@ -88,7 +86,7 @@ func buildMQTTSubscribePacket(packetID uint16, filters []struct {
 func TestMQTTHandler_HandlePublish_QoS0(t *testing.T) {
 	handler := NewMQTTHandler(nil)
 	state := newTestMQTTState()
-	session := ws.NewSession("test", "mqtt", nil)
+	session := newGrantedSession("test", "mqtt", nil)
 	deliveryChan := make(chan mqttDelivery, 10)
 	defer close(deliveryChan)
 
@@ -125,7 +123,7 @@ func TestMQTTHandler_HandlePublish_QoS0(t *testing.T) {
 func TestMQTTHandler_HandlePublish_QoS1(t *testing.T) {
 	handler := NewMQTTHandler(nil)
 	state := newTestMQTTState()
-	session := ws.NewSession("test", "mqtt", nil)
+	session := newGrantedSession("test", "mqtt", nil)
 	deliveryChan := make(chan mqttDelivery, 10)
 	defer close(deliveryChan)
 
@@ -166,7 +164,7 @@ func TestMQTTHandler_HandlePublish_QoS1(t *testing.T) {
 func TestMQTTHandler_HandlePublish_QoS2(t *testing.T) {
 	handler := NewMQTTHandler(nil)
 	state := newTestMQTTState()
-	session := ws.NewSession("test", "mqtt", nil)
+	session := newGrantedSession("test", "mqtt", nil)
 	deliveryChan := make(chan mqttDelivery, 10)
 	defer close(deliveryChan)
 
@@ -207,7 +205,7 @@ func TestMQTTHandler_HandlePublish_QoS2(t *testing.T) {
 func TestMQTTHandler_HandleSubscribe(t *testing.T) {
 	handler := NewMQTTHandler(nil)
 	state := newTestMQTTState()
-	session := ws.NewSession("test", "mqtt", nil)
+	session := newGrantedSession("test", "mqtt", nil)
 	deliveryChan := make(chan mqttDelivery, 10)
 	defer close(deliveryChan)
 
@@ -261,7 +259,7 @@ func TestMQTTHandler_HandleUnsubscribe(t *testing.T) {
 	state := newTestMQTTState()
 	state.subscriptions["test/topic1"] = 0
 	state.subscriptions["test/topic2"] = 1
-	session := ws.NewSession("test", "mqtt", nil)
+	session := newGrantedSession("test", "mqtt", nil)
 	deliveryChan := make(chan mqttDelivery, 10)
 	defer close(deliveryChan)
 
@@ -313,7 +311,7 @@ func TestMQTTHandler_HandleUnsubscribe(t *testing.T) {
 func TestMQTTHandler_HandleUnsubscribe_NonExistent(t *testing.T) {
 	handler := NewMQTTHandler(nil)
 	state := newTestMQTTState()
-	session := ws.NewSession("test", "mqtt", nil)
+	session := newGrantedSession("test", "mqtt", nil)
 	deliveryChan := make(chan mqttDelivery, 10)
 	defer close(deliveryChan)
 
@@ -352,7 +350,7 @@ func TestMQTTHandler_HandleUnsubscribe_NonExistent(t *testing.T) {
 func TestMQTTHandler_HandlePuback(t *testing.T) {
 	handler := NewMQTTHandler(nil)
 	state := newTestMQTTState()
-	session := ws.NewSession("test", "mqtt", nil)
+	session := newGrantedSession("test", "mqtt", nil)
 	deliveryChan := make(chan mqttDelivery, 10)
 	defer close(deliveryChan)
 
@@ -382,7 +380,7 @@ func TestMQTTHandler_HandlePuback(t *testing.T) {
 func TestMQTTHandler_HandlePubrec(t *testing.T) {
 	handler := NewMQTTHandler(nil)
 	state := newTestMQTTState()
-	session := ws.NewSession("test", "mqtt", nil)
+	session := newGrantedSession("test", "mqtt", nil)
 	deliveryChan := make(chan mqttDelivery, 10)
 	defer close(deliveryChan)
 
@@ -415,7 +413,7 @@ func TestMQTTHandler_HandlePubrec(t *testing.T) {
 func TestMQTTHandler_HandlePubrel(t *testing.T) {
 	handler := NewMQTTHandler(nil)
 	state := newTestMQTTState()
-	session := ws.NewSession("test", "mqtt", nil)
+	session := newGrantedSession("test", "mqtt", nil)
 	deliveryChan := make(chan mqttDelivery, 10)
 	defer close(deliveryChan)
 
@@ -448,7 +446,7 @@ func TestMQTTHandler_HandlePubrel(t *testing.T) {
 func TestMQTTHandler_HandlePubcomp(t *testing.T) {
 	handler := NewMQTTHandler(nil)
 	state := newTestMQTTState()
-	session := ws.NewSession("test", "mqtt", nil)
+	session := newGrantedSession("test", "mqtt", nil)
 	deliveryChan := make(chan mqttDelivery, 10)
 	defer close(deliveryChan)
 
@@ -484,7 +482,7 @@ func TestMQTTHandler_HandleConnection_SubscribePublish(t *testing.T) {
 		if err != nil {
 			return
 		}
-		session := ws.NewSession("test-session", "mqtt", conn)
+		session := newGrantedSession("test-session", "mqtt", conn)
 		err = handler.HandleConnection(session.Context(), conn, session)
 		handlerDone <- err
 	}))
@@ -577,7 +575,7 @@ func TestMQTTHandler_HandleConnection_PublishQoS1(t *testing.T) {
 		if err != nil {
 			return
 		}
-		session := ws.NewSession("test-session", "mqtt", conn)
+		session := newGrantedSession("test-session", "mqtt", conn)
 		_ = handler.HandleConnection(session.Context(), conn, session)
 	}))
 	defer server.Close()
@@ -643,7 +641,7 @@ func TestMQTTHandler_DeliverMessages(t *testing.T) {
 		if err != nil {
 			return
 		}
-		session := ws.NewSession("test-session", "mqtt", conn)
+		session := newGrantedSession("test-session", "mqtt", conn)
 		_ = handler.HandleConnection(session.Context(), conn, session)
 	}))
 	defer server.Close()

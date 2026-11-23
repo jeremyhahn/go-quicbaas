@@ -240,7 +240,24 @@ type amqpChannelState struct {
 	prefetchGlobal  bool
 	unackedMessages map[uint64]*amqpUnackedMessage
 	nextDeliveryTag uint64
+	// pending is the Basic.Publish whose content header and body frames
+	// are still arriving; nil when none is.
+	pending *amqpPendingPublish
 }
+
+// amqpPendingPublish accumulates one publication's content: Basic.Publish
+// opens it, the content header declares the body size, and body frames
+// append until that size is reached.
+type amqpPendingPublish struct {
+	routingKey string
+	headerSeen bool
+	bodySize   uint64
+	body       []byte
+}
+
+// amqpMaxBodySize bounds the body size a content header may declare. It
+// matches the WebSocket server's default message size limit.
+const amqpMaxBodySize = 1024 * 1024
 
 // amqpQueueState holds the state for an AMQP queue.
 type amqpQueueState struct {
@@ -574,11 +591,9 @@ func (h *AMQPHandler) handleFrame(ctx context.Context, data []byte, session *ws.
 	case FrameMethod:
 		return h.handleMethodFrame(ctx, frame, session, state)
 	case FrameHeader:
-		// Content header - part of publish flow
-		return nil, nil
+		return h.handleContentHeader(frame, state)
 	case FrameBody:
-		// Content body - part of publish flow
-		return nil, nil
+		return h.handleContentBody(frame, state)
 	case FrameHeartbeat:
 		return h.handleHeartbeat(frame)
 	default:
@@ -596,7 +611,9 @@ func (h *AMQPHandler) parseFrame(data []byte) (*AMQPFrame, error) {
 	channel := binary.BigEndian.Uint16(data[1:3])
 	size := binary.BigEndian.Uint32(data[3:7])
 
-	if len(data) < int(7+size+1) {
+	// Compare before adding: 7+size+1 in uint32 wraps for sizes near the
+	// maximum, which would let the indexing below run past the data.
+	if uint64(size) > uint64(len(data)-8) {
 		return nil, &ErrAMQPProtocolError{Message: "frame payload incomplete"}
 	}
 
@@ -1418,14 +1435,86 @@ func (h *AMQPHandler) handleBasicPublish(ctx context.Context, frame *AMQPFrame, 
 
 	// Flags (1 byte): mandatory, immediate - parsed but not used in this simplified implementation
 
-	// Note: The actual content comes in Header and Body frames
-	// For now, we'll publish an empty message; a full implementation
-	// would accumulate Header+Body frames for the complete message
-	if err := h.hub.Publish(routingKey, nil, 0, false); err != nil {
-		return nil, err
+	// Publishing needs messaging:publish on top of the upgrade's
+	// messaging:subscribe.
+	if err := session.Authorize("messaging", "publish"); err != nil {
+		return h.buildChannelClose(frame.Channel, AccessRefused, "ACCESS_REFUSED messaging:publish", ClassBasic, MethodBasicPublish), nil
 	}
 
+	// The content arrives in the header and body frames that follow; the
+	// message is published once the declared body is complete.
+	state.mu.Lock()
+	ch := state.channels[frame.Channel]
+	if ch == nil {
+		state.mu.Unlock()
+		return h.buildChannelClose(frame.Channel, ChannelError, "CHANNEL_ERROR channel not open", ClassBasic, MethodBasicPublish), nil
+	}
+	ch.pending = &amqpPendingPublish{routingKey: routingKey}
+	state.mu.Unlock()
+
 	// Basic.Publish doesn't have a response
+	return nil, nil
+}
+
+// handleContentHeader reads the body size of the pending publication on the
+// frame's channel. A zero size publishes at once.
+func (h *AMQPHandler) handleContentHeader(frame *AMQPFrame, state *amqpClientState) ([]byte, error) {
+	// class-id (2), weight (2), body-size (8)
+	if len(frame.Payload) < 12 {
+		return nil, &ErrAMQPProtocolError{Message: "content header too short"}
+	}
+	bodySize := binary.BigEndian.Uint64(frame.Payload[4:12])
+
+	state.mu.Lock()
+	ch := state.channels[frame.Channel]
+	if ch == nil || ch.pending == nil || ch.pending.headerSeen {
+		state.mu.Unlock()
+		return h.buildChannelClose(frame.Channel, UnexpectedFrame, "UNEXPECTED_FRAME content header without Basic.Publish", ClassBasic, MethodBasicPublish), nil
+	}
+	if bodySize > amqpMaxBodySize {
+		ch.pending = nil
+		state.mu.Unlock()
+		return nil, &ErrAMQPProtocolError{Message: "content body size exceeds the maximum message size"}
+	}
+	p := ch.pending
+	p.headerSeen = true
+	p.bodySize = bodySize
+	if bodySize == 0 {
+		ch.pending = nil
+	}
+	state.mu.Unlock()
+
+	if bodySize == 0 {
+		return nil, h.hub.Publish(p.routingKey, []byte{}, 0, false)
+	}
+	return nil, nil
+}
+
+// handleContentBody appends a body frame to the pending publication on the
+// frame's channel and publishes the body when it reaches the declared size.
+func (h *AMQPHandler) handleContentBody(frame *AMQPFrame, state *amqpClientState) ([]byte, error) {
+	state.mu.Lock()
+	ch := state.channels[frame.Channel]
+	if ch == nil || ch.pending == nil || !ch.pending.headerSeen {
+		state.mu.Unlock()
+		return h.buildChannelClose(frame.Channel, UnexpectedFrame, "UNEXPECTED_FRAME content body without content header", ClassBasic, MethodBasicPublish), nil
+	}
+	p := ch.pending
+	if uint64(len(p.body))+uint64(len(frame.Payload)) > p.bodySize {
+		ch.pending = nil
+		state.mu.Unlock()
+		return nil, &ErrAMQPProtocolError{Message: "content body exceeds the declared body size"}
+	}
+	p.body = append(p.body, frame.Payload...)
+	complete := uint64(len(p.body)) == p.bodySize
+	if complete {
+		ch.pending = nil
+	}
+	state.mu.Unlock()
+
+	if complete {
+		return nil, h.hub.Publish(p.routingKey, p.body, 0, false)
+	}
 	return nil, nil
 }
 

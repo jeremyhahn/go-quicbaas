@@ -196,6 +196,33 @@ func (h *MQTTHandler) deliverMessages(ctx context.Context, conn *websocket.Conn,
 // ErrMQTTDisconnect indicates a clean MQTT disconnect.
 var ErrMQTTDisconnect = errors.New("mqtt: client disconnected")
 
+// ErrMQTTPublishNotAuthorized closes a connection whose PUBLISH the session's
+// grant refuses and that the protocol gives no other way to refuse.
+var ErrMQTTPublishNotAuthorized = errors.New("mqtt: publish not authorized (messaging:publish)")
+
+// mqttReasonNotAuthorized is the MQTT 5 reason code Not authorized.
+const mqttReasonNotAuthorized = 0x87
+
+// buildRefusedPublishAck answers an MQTT 5 QoS 1 or 2 PUBLISH with a PUBACK
+// or PUBREC carrying the Not authorized reason code.
+func (h *MQTTHandler) buildRefusedPublishAck(qos byte, packetID uint16) []byte {
+	pk := packets.Packet{
+		ProtocolVersion: 5,
+		PacketID:        packetID,
+		ReasonCode:      mqttReasonNotAuthorized,
+	}
+	buf := &bytes.Buffer{}
+	// Encoding into a bytes.Buffer cannot fail.
+	if qos == 1 {
+		pk.FixedHeader.Type = packets.Puback
+		_ = pk.PubackEncode(buf)
+	} else {
+		pk.FixedHeader.Type = packets.Pubrec
+		_ = pk.PubrecEncode(buf)
+	}
+	return buf.Bytes()
+}
+
 // ErrMQTTProtocolError indicates an MQTT protocol violation.
 type ErrMQTTProtocolError struct {
 	Message string
@@ -322,6 +349,16 @@ func (h *MQTTHandler) handlePublish(ctx context.Context, payload []byte, pk *pac
 
 	if err := pk.PublishDecode(payload); err != nil {
 		return nil, &ErrMQTTProtocolError{Message: err.Error()}
+	}
+
+	// Publishing needs messaging:publish on top of the upgrade's
+	// messaging:subscribe. MQTT 5 can refuse a QoS 1 or 2 publication with
+	// the Not authorized reason; otherwise the connection is closed.
+	if err := session.Authorize("messaging", "publish"); err != nil {
+		if state.protocolVersion == 5 && pk.FixedHeader.Qos > 0 {
+			return h.buildRefusedPublishAck(pk.FixedHeader.Qos, pk.PacketID), nil
+		}
+		return nil, ErrMQTTPublishNotAuthorized
 	}
 
 	// Publish to hub

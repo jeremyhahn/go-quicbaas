@@ -137,6 +137,9 @@ func (s *Server) HandleHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Create session
 	session := NewSession(sessionID, protocol, conn)
+	if grant, ok := GrantFromContext(r.Context()); ok {
+		session.grant = grant
+	}
 
 	// Add to session manager
 	s.sessions.Add(session)
@@ -168,6 +171,13 @@ func (s *Server) handleConnection(session *Session) {
 		}
 		s.sessions.Remove(session.ID)
 		s.logger.Debugf("WebSocket session closed: %s", session.ID)
+	}()
+	// A panicking subprotocol handler ends its own session, not the process:
+	// this deferred recover runs before the close above.
+	defer func() {
+		if rec := recover(); rec != nil {
+			s.logger.Errorf("WebSocket subprotocol handler panic: session=%s subprotocol=%s: %v", session.ID, session.Subprotocol, rec)
+		}
 	}()
 
 	// Get the handler for this session's subprotocol

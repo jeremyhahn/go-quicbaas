@@ -812,6 +812,13 @@ func (h *STOMPHandler) handleSend(ctx context.Context, frame *STOMPFrame, sessio
 		return nil, &STOMPMissingHeaderError{Header: HeaderDestination}
 	}
 
+	// Publishing needs messaging:publish on top of the upgrade's
+	// messaging:subscribe. A SEND inside a transaction is checked here too,
+	// so the denial is immediate rather than at COMMIT.
+	if err := session.Authorize("messaging", "publish"); err != nil {
+		return h.buildErrorFrame("not authorized: messaging:publish", frame.Headers[HeaderReceipt], nil), nil
+	}
+
 	// OPTIONAL: transaction
 	txID := frame.Headers[HeaderTransaction]
 	if txID != "" {
