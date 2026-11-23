@@ -33,6 +33,12 @@ var (
 	// ErrTenant marks a verified manifest whose tenant is not the one the
 	// caller acts in, or a verb called with no tenant.
 	ErrTenant = errors.New("serviceplane: manifest is for another tenant")
+	// ErrFenced marks a slot change asked under a rollout claim that a
+	// newer claim superseded.
+	ErrFenced = errors.New("serviceplane: a newer rollout claim fences this one")
+	// ErrRollout marks a redeploy whose rollout did not complete: it was
+	// refused, rolled back, or its rollback failed.
+	ErrRollout = errors.New("serviceplane: the rollout did not complete")
 )
 
 // ManifestError names the manifest field that failed validation.

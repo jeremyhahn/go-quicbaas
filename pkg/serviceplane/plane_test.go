@@ -53,7 +53,7 @@ func TestDeploy_RefusesAManifestForAnotherTenant(t *testing.T) {
 	for _, tenant := range []string{"", "acme2"} {
 		_, err := f.plane.Deploy(ctx, tenant, sm)
 		wantErr(t, err, ErrTenant)
-		_, err = f.plane.Redeploy(ctx, tenant, sm)
+		_, err = f.plane.Replace(ctx, tenant, sm)
 		wantErr(t, err, ErrTenant)
 	}
 	if _, err := f.plane.Get(ctx, "acme", "web"); !errors.Is(err, ErrNotFound) {
@@ -280,7 +280,7 @@ func TestRedeploy_AFailedCheckpointRestoresAReplacedGrant(t *testing.T) {
 	// The claim and the identity, certificate and name checkpoints are
 	// written; the RBAC one is lost.
 	f.guard.setLoseOnce(4)
-	_, err := f.plane.Redeploy(ctx, "acme", f.sign(t, m))
+	_, err := f.plane.Replace(ctx, "acme", f.sign(t, m))
 	wantErr(t, err, ErrGrant)
 	want := "grant identity prior=identity:web:operator,grant certificate prior=certificate:web:operator," +
 		"grant name prior=name:web:operator,grant rbac prior=rbac:web:operator," +
@@ -310,7 +310,7 @@ func TestRedeploy_AFailedRestoreKeepsTheReplacementForUndeploy(t *testing.T) {
 	// The name checkpoint is lost, and giving the operator name back fails.
 	f.guard.setLoseOnce(3)
 	f.grants[GrantName].failRole = "operator"
-	_, err := f.plane.Redeploy(ctx, "acme", f.sign(t, m))
+	_, err := f.plane.Replace(ctx, "acme", f.sign(t, m))
 	wantErr(t, err, ErrGrant)
 	svc, err := f.plane.Get(ctx, "acme", "web")
 	if err != nil || svc.State != StateHalted || !svc.Cleanup || svc.Grants[GrantName] != "name:web:admin" ||
@@ -383,7 +383,7 @@ func TestRelaunch_RefusesARecordWithGrantsMissingOrPartlyRevoked(t *testing.T) {
 		f.deploy(t, "web")
 		f.grants[GrantIdentity].revoked = errors.New("CA unreachable")
 		wantErr(t, f.plane.Undeploy(ctx, "acme", "web"), ErrGrant)
-		svc, err := f.plane.Redeploy(ctx, "acme", f.sign(t, validManifest()))
+		svc, err := f.plane.Replace(ctx, "acme", f.sign(t, validManifest()))
 		if err != nil || svc.State != StateRunning || svc.Cleanup {
 			t.Fatalf("redeploy = %+v, %v", svc, err)
 		}
@@ -440,7 +440,7 @@ func TestRedeploy_ReplacesTheManifestAndReappliesGrants(t *testing.T) {
 	m := validManifest()
 	m.Role = "user"
 	m.Image.Digest = "sha256:" + strings.Repeat("cd", 32)
-	svc, err := f.plane.Redeploy(ctx, "acme", f.sign(t, m))
+	svc, err := f.plane.Replace(ctx, "acme", f.sign(t, m))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -452,7 +452,7 @@ func TestRedeploy_ReplacesTheManifestAndReappliesGrants(t *testing.T) {
 	}
 	other := validManifest()
 	other.Name = "api"
-	_, err = f.plane.Redeploy(ctx, "acme", f.sign(t, other))
+	_, err = f.plane.Replace(ctx, "acme", f.sign(t, other))
 	wantErr(t, err, ErrNotFound)
 }
 
@@ -494,7 +494,7 @@ func TestUndeploy_AFailedRevokeDropsTheRevokedGrants(t *testing.T) {
 	}
 	f.grants[GrantCertificate].revoked = nil
 	f.ledger.reset()
-	if _, err := f.plane.Redeploy(ctx, "acme", f.sign(t, validManifest())); err != nil {
+	if _, err := f.plane.Replace(ctx, "acme", f.sign(t, validManifest())); err != nil {
 		t.Fatalf("redeploy: %v", err)
 	}
 	want := "grant identity prior=,grant certificate prior=certificate:web:operator,grant name prior=,grant rbac prior=,grant secrets prior="
@@ -537,7 +537,7 @@ func TestUndeploy_AnInterruptedRevocationIsNotLaunchedAfterRecovery(t *testing.T
 		t.Fatalf("a running service is untouched by recovery = %+v, %v", svc, err)
 	}
 	m := validManifest()
-	if svc, err := f.plane.Redeploy(ctx, "acme", f.sign(t, m)); err != nil || svc.State != StateRunning || svc.Cleanup {
+	if svc, err := f.plane.Replace(ctx, "acme", f.sign(t, m)); err != nil || svc.State != StateRunning || svc.Cleanup {
 		t.Fatalf("redeploy after recovery = %+v, %v", svc, err)
 	}
 }
@@ -546,7 +546,7 @@ func TestVerbs_TheStateMachine(t *testing.T) {
 	verbs := map[Verb]func(f *fixture) error{
 		VerbUndeploy: func(f *fixture) error { return f.plane.Undeploy(ctx, "acme", "web") },
 		VerbRedeploy: func(f *fixture) error {
-			_, err := f.plane.Redeploy(ctx, "acme", f.sign(t, validManifest()))
+			_, err := f.plane.Replace(ctx, "acme", f.sign(t, validManifest()))
 			return err
 		},
 		VerbStart:   func(f *fixture) error { _, err := f.plane.Start(ctx, "acme", "web"); return err },

@@ -41,7 +41,7 @@ func TestPlane_RefusesBrokerClassUntilGranted(t *testing.T) {
 
 		m := validManifest()
 		m.Class = ClassBroker
-		_, err := f.plane.Redeploy(ctx, "acme", f.sign(t, m))
+		_, err := f.plane.Replace(ctx, "acme", f.sign(t, m))
 		wantErr(t, err, ErrBrokerClass)
 
 		svc, err := f.plane.Get(ctx, "acme", "web")

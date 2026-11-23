@@ -100,7 +100,7 @@ func TestServices_TheSevenVerbsOnARealNode(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, step.state, rec.State)
 	}
-	rec, err = plane.Redeploy(acme, signed(t, rt, "acme", "web"))
+	rec, err = plane.Replace(acme, signed(t, rt, "acme", "web"))
 	require.NoError(t, err)
 	assert.EqualValues(t, 2, rec.Revision)
 

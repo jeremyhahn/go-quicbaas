@@ -47,7 +47,9 @@ var (
 	// ErrStore marks a slot record read or write that failed.
 	ErrStore = errors.New("rollout: store unavailable")
 	// ErrFenced marks a side effect of a claim a newer claim superseded.
-	ErrFenced = errors.New("rollout: a newer claim fences this one")
+	// It is the plane's sentinel, so a refusal by the plane's slots
+	// matches it too.
+	ErrFenced = serviceplane.ErrFenced
 )
 
 // Slot names one of a service's two slots.

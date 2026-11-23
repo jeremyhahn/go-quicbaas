@@ -35,7 +35,10 @@ var allowed = map[Verb][]State{
 }
 
 // Launcher runs a service's containers on its node. The node agent's
-// container runtime implements it.
+// container runtime implements it. svc.Slot names the rollout slot the
+// instance runs in ("" for the instance Deploy launched); a service has
+// one instance per slot, so the launcher keys its instances by tenant,
+// name and slot.
 type Launcher interface {
 	Launch(ctx context.Context, svc *Service) error
 	Halt(ctx context.Context, svc *Service) error
@@ -63,6 +66,10 @@ type Config struct {
 	// MarkHalted treats the claim as abandoned (its holder crashed, or its
 	// settlement write failed) and recovers it. Zero is DefaultStaleClaim.
 	StaleClaim time.Duration
+	// Rollout rolls a served Redeploy out through the rollout controller;
+	// a plane without one refuses Redeploy with ErrConfig. SetRoller sets
+	// it after construction, for a controller built over the plane.
+	Rollout Roller
 }
 
 // DefaultStaleClaim is Config.StaleClaim's default.
@@ -76,6 +83,7 @@ type Plane struct {
 	grants     map[GrantKind]Grant
 	now        func() time.Time
 	staleClaim time.Duration
+	roller     Roller
 }
 
 // NewPlane checks cfg and returns the Plane.
@@ -109,8 +117,12 @@ func NewPlane(cfg Config) (*Plane, error) {
 	if stale <= 0 {
 		stale = DefaultStaleClaim
 	}
-	return &Plane{store: cfg.Store, verifier: cfg.Verifier, launcher: cfg.Launcher, grants: grants, now: now, staleClaim: stale}, nil
+	return &Plane{store: cfg.Store, verifier: cfg.Verifier, launcher: cfg.Launcher, grants: grants, now: now, staleClaim: stale, roller: cfg.Rollout}, nil
 }
+
+// SetRoller sets the Roller Redeploy rolls out through. Call it before the
+// plane serves.
+func (p *Plane) SetRoller(r Roller) { p.roller = r }
 
 // Get returns a deployed service.
 func (p *Plane) Get(ctx context.Context, tenant, name string) (*Service, error) {
@@ -164,9 +176,13 @@ func (p *Plane) Deploy(ctx context.Context, tenant string, sm *SignedManifest) (
 	return p.launch(ctx, VerbDeploy, cur, &next, false)
 }
 
-// Redeploy replaces a deployed service's manifest with sm, re-applies its
-// grants for the new manifest and launches it.
-func (p *Plane) Redeploy(ctx context.Context, tenant string, sm *SignedManifest) (*Service, error) {
+// Replace replaces a deployed service's manifest with sm in place: it
+// re-applies its grants for the new manifest, halts the service and
+// launches it, with no appraisal and no second slot. It is the library
+// form for an embedder that drives its own launches; the served redeploy
+// is Redeploy, which rolls a signed Release out through the rollout
+// controller.
+func (p *Plane) Replace(ctx context.Context, tenant string, sm *SignedManifest) (*Service, error) {
 	m, err := p.verify(VerbRedeploy, tenant, sm)
 	if err != nil {
 		return nil, err
@@ -207,6 +223,15 @@ func (p *Plane) Undeploy(ctx context.Context, tenant, name string) error {
 	}
 	if err := p.launcher.Halt(ctx, cur.svc); err != nil {
 		return p.settle(ctx, VerbUndeploy, cur, ErrLaunch, err)
+	}
+	// A rollout's filled slots that are not active run beside it.
+	for slot, rel := range cur.svc.Slots {
+		if slot == cur.svc.Slot {
+			continue
+		}
+		if err := p.launcher.Halt(ctx, slotInstance(cur.svc, slot, &rel)); err != nil {
+			return p.settle(ctx, VerbUndeploy, cur, ErrLaunch, fmt.Errorf("halt slot %s: %w", slot, err))
+		}
 	}
 	// Mark the record Cleanup before the first revoke, so a record left
 	// part way (a crash, a lost write) is never launched with grants

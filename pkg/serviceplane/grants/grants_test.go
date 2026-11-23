@@ -467,7 +467,7 @@ func TestPlane_DeployGrantsAndUndeployRevokesThemAll(t *testing.T) {
 	require.Len(t, names, 1)
 	require.Len(t, e.roles.bound, 1)
 
-	again, err := plane.Redeploy(ctx, "acme", rt.Sign(t, "acme", "web"))
+	again, err := plane.Replace(ctx, "acme", rt.Sign(t, "acme", "web"))
 	require.NoError(t, err)
 	assert.Equal(t, svc.Grants, again.Grants, "a redeploy keeps every grant")
 	assert.False(t, e.revoked(t, svid))
@@ -718,7 +718,7 @@ func TestPlane_RedeployAfterAPartialUndeployGrantsAnew(t *testing.T) {
 	require.ErrorIs(t, err, serviceplane.ErrGrant, "a partly revoked service is not launched")
 	flaky.fail(nil)
 
-	svc, err := plane.Redeploy(ctx, "acme", rt.Sign(t, "acme", "web"))
+	svc, err := plane.Replace(ctx, "acme", rt.Sign(t, "acme", "web"))
 	require.NoError(t, err)
 	assert.Equal(t, serviceplane.StateRunning, svc.State)
 	assert.False(t, svc.Cleanup)

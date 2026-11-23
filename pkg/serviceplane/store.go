@@ -65,6 +65,18 @@ type Service struct {
 	Cleanup   bool      `json:"cleanup,omitempty"`
 	Reason    string    `json:"reason,omitempty"`
 	UpdatedAt time.Time `json:"updated_at"`
+	// Release is the release the service runs once a rollout switched it;
+	// its manifest is then the service's Manifest. Nil for a service that
+	// runs the manifest it was deployed with.
+	Release *Release `json:"release,omitempty"`
+	// Slot is the A/B slot the service's running instance occupies; empty
+	// for the instance Deploy launched.
+	Slot string `json:"slot,omitempty"`
+	// Slots is the release each filled slot runs, the active one included.
+	Slots map[string]Release `json:"slots,omitempty"`
+	// Epoch is the newest rollout claim a slot change was made under; a
+	// slot change under an older one is refused (ErrFenced).
+	Epoch uint64 `json:"epoch,omitempty"`
 }
 
 // Guard arbitrates writes: Create writes only an absent key, Swap replaces
@@ -219,6 +231,10 @@ func decodeService(raw []byte) (*Service, error) {
 	var svc Service
 	if err := json.Unmarshal(raw, &svc); err != nil {
 		return nil, err
+	}
+	if svc.Release != nil {
+		svc.Manifest = svc.Release.Manifest
+		return &svc, nil
 	}
 	if err := json.Unmarshal(svc.Signed.Payload, &svc.Manifest); err != nil {
 		return nil, err

@@ -135,7 +135,7 @@ func (s *servicesService) deploy(ctx context.Context, req *DeployServiceRequest,
 	// The plane checks the caller's tenant against the verified payload.
 	act := p.Deploy
 	if verb == serviceplane.VerbRedeploy {
-		act = p.Redeploy
+		act = p.Replace
 	}
 	svc, err := act(ctx, tenant, req.Manifest)
 	if err != nil {
