@@ -842,6 +842,62 @@ func TestSaveExecution_Success(t *testing.T) {
 	}
 }
 
+// TestSaveExecution_TenantExecutionIsReadInTenantKeyspace pins that a
+// tenant-owned execution is stored where tenant history is read, and that a
+// system execution stays in the system keyspace.
+func TestSaveExecution_TenantExecutionIsReadInTenantKeyspace(t *testing.T) {
+	ctx := context.Background()
+	kv := newMockKVStore()
+	storage := NewStorage(kv)
+
+	const jobID uint64 = 7
+	tenantExec := &scheduler.JobExecution{
+		JobID:     jobID,
+		TenantID:  "acme",
+		Status:    scheduler.JobStatusCompleted,
+		StartedAt: time.Now().Add(-2 * time.Minute),
+		EndedAt:   time.Now().Add(-time.Minute),
+		Output:    "tenant",
+	}
+	if err := storage.SaveExecution(ctx, tenantExec); err != nil {
+		t.Fatalf("SaveExecution(tenant): %v", err)
+	}
+
+	tenantHistory, err := storage.GetExecutions(ctx, jobID, "acme", 10)
+	if err != nil {
+		t.Fatalf("GetExecutions(acme): %v", err)
+	}
+	if len(tenantHistory) != 1 || tenantHistory[0].ID != tenantExec.ID {
+		t.Fatalf("GetExecutions(acme) = %+v, want the tenant execution %d", tenantHistory, tenantExec.ID)
+	}
+
+	systemHistory, err := storage.GetExecutions(ctx, jobID, "", 10)
+	if err != nil {
+		t.Fatalf("GetExecutions(system): %v", err)
+	}
+	if len(systemHistory) != 0 {
+		t.Fatalf("GetExecutions(system) = %+v, want no tenant execution in the system keyspace", systemHistory)
+	}
+
+	systemExec := &scheduler.JobExecution{
+		JobID:     jobID,
+		Status:    scheduler.JobStatusCompleted,
+		StartedAt: time.Now().Add(-time.Minute),
+		EndedAt:   time.Now(),
+		Output:    "system",
+	}
+	if err := storage.SaveExecution(ctx, systemExec); err != nil {
+		t.Fatalf("SaveExecution(system): %v", err)
+	}
+	systemHistory, err = storage.GetExecutions(ctx, jobID, "", 10)
+	if err != nil {
+		t.Fatalf("GetExecutions(system): %v", err)
+	}
+	if len(systemHistory) != 1 || systemHistory[0].ID != systemExec.ID {
+		t.Fatalf("GetExecutions(system) = %+v, want the system execution %d", systemHistory, systemExec.ID)
+	}
+}
+
 func TestSaveExecution_WithExistingID(t *testing.T) {
 	ctx := context.Background()
 	kv := newMockKVStore()

@@ -3,6 +3,8 @@ package quicbaas
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -75,8 +77,8 @@ func TestTenantJobIndexBackfill_UnindexedJobsRunAfterOpen(t *testing.T) {
 		t.Fatalf("backfill marker present = %v (%v), want true", done, err)
 	}
 
-	// The marker makes the migration one-time: a later open does not rescan,
-	// and it leaves the index it built intact.
+	// The marker no longer ends reconciliation: a later open indexes a job
+	// an older writer stored without an entry.
 	late := createTestJob("written-after-backfill", scheduler.OwnerTypeTenant, "acme")
 	late.ID = 43
 	late.NextRun = now.Add(-time.Minute)
@@ -85,8 +87,8 @@ func TestTenantJobIndexBackfill_UnindexedJobsRunAfterOpen(t *testing.T) {
 		t.Fatalf("second open: %v", err)
 	}
 	names = dueJobNames(t, storage, now)
-	if len(names) != 2 || names["written-after-backfill"] {
-		t.Fatalf("after second open, due jobs = %v, want only the backfilled two", names)
+	if len(names) != 3 || !names["written-after-backfill"] {
+		t.Fatalf("after second open, due jobs = %v, want all three", names)
 	}
 }
 
@@ -107,7 +109,7 @@ func TestTenantJobIndexBackfill_IsIdempotent(t *testing.T) {
 	putUnindexedTenantJob(t, kv, legacy)
 
 	for i := 0; i < 2; i++ {
-		if err := storage.backfillTenantJobIndex(ctx); err != nil {
+		if err := storage.reconcileTenantJobIndex(ctx); err != nil {
 			t.Fatalf("backfill %d: %v", i, err)
 		}
 		if err := kv.Delete(ctx, TenantJobIndexBackfillKey); err != nil {
@@ -144,5 +146,140 @@ func TestUpdateJob_KeepsTenantJobIndex(t *testing.T) {
 	}
 	if names := dueJobNames(t, storage, now); !names["tenant-job"] {
 		t.Fatalf("due jobs = %v, want tenant-job", names)
+	}
+}
+
+// TestReconcileTenantJobIndex_OpenIndexesOlderWriterJobs checks that the
+// backfill marker no longer ends reconciliation: a job an older node writes
+// without an index entry after the marker exists is indexed at open.
+func TestReconcileTenantJobIndex_OpenIndexesOlderWriterJobs(t *testing.T) {
+	ctx := context.Background()
+	kv := newMockKVStore()
+	if err := kv.Put(ctx, TenantJobIndexBackfillKey, []byte{1}); err != nil {
+		t.Fatalf("put marker: %v", err)
+	}
+	job := createTestJob("older-writer", scheduler.OwnerTypeTenant, "acme")
+	job.ID = 7
+	putUnindexedTenantJob(t, kv, job)
+
+	if err := NewStorage(kv).InitializeJobIDCounter(ctx); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if ok, err := kv.Exists(ctx, keyForTenantJobIndex(job.ID, "acme")); err != nil || !ok {
+		t.Fatalf("index entry present = %v (%v), want true", ok, err)
+	}
+}
+
+// TestGetJobsDueForExecution_ReconcilesPeriodically checks that the due scan
+// reconciles the index once reconcileInterval has elapsed, and not before.
+func TestGetJobsDueForExecution_ReconcilesPeriodically(t *testing.T) {
+	ctx := context.Background()
+	kv := newMockKVStore()
+	storage := NewStorage(kv)
+	if err := storage.InitializeJobIDCounter(ctx); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	now := time.Now()
+	job := createTestJob("older-writer", scheduler.OwnerTypeTenant, "acme")
+	job.ID = 9
+	job.NextRun = now.Add(-time.Minute)
+	putUnindexedTenantJob(t, kv, job)
+
+	if names := dueJobNames(t, storage, now); names["older-writer"] {
+		t.Fatalf("before the interval, due jobs = %v, want no older-writer", names)
+	}
+
+	storage.reconcileMu.Lock()
+	storage.lastReconcile = time.Now().Add(-storage.reconcileInterval)
+	storage.reconcileMu.Unlock()
+
+	if names := dueJobNames(t, storage, now); !names["older-writer"] {
+		t.Fatalf("after the interval, due jobs = %v, want older-writer", names)
+	}
+}
+
+// reconcileFailingKV fails the reads only the tenant job index reconcile
+// makes: the scan over every tenant's keys and lookups of index entries.
+type reconcileFailingKV struct {
+	*mockKVStore
+}
+
+func (f *reconcileFailingKV) Scan(ctx context.Context, prefix string, fn func(key string, value []byte) error) error {
+	if prefix == tenantKeyPrefix {
+		return context.DeadlineExceeded
+	}
+	return f.mockKVStore.Scan(ctx, prefix, fn)
+}
+
+func (f *reconcileFailingKV) Exists(ctx context.Context, key string) (bool, error) {
+	if strings.HasPrefix(key, TenantJobIndexPrefix) {
+		return false, context.DeadlineExceeded
+	}
+	return f.mockKVStore.Exists(ctx, key)
+}
+
+func TestGetJobsDueForExecution_ReconcileErrorDoesNotFailDueScan(t *testing.T) {
+	ctx := context.Background()
+	kv := newMockKVStore()
+	now := time.Now()
+
+	seed := NewStorage(kv)
+	system := createTestJob("due-system", scheduler.OwnerTypeSystem, "")
+	system.ID = 7
+	system.NextRun = now.Add(-time.Minute)
+	if err := seed.CreateJob(ctx, system); err != nil {
+		t.Fatalf("create system job: %v", err)
+	}
+	tenant := createTestJob("due-tenant", scheduler.OwnerTypeTenant, "acme")
+	tenant.ID = 8
+	tenant.NextRun = now.Add(-time.Minute)
+	if err := seed.CreateJob(ctx, tenant); err != nil {
+		t.Fatalf("create tenant job: %v", err)
+	}
+
+	storage := NewStorage(&reconcileFailingKV{mockKVStore: kv})
+	for i := range 2 {
+		storage.reconcileMu.Lock()
+		storage.lastReconcile = time.Now().Add(-storage.reconcileInterval)
+		storage.reconcileMu.Unlock()
+
+		due, err := storage.GetJobsDueForExecution(ctx, now, 100)
+		if err != nil {
+			t.Fatalf("sweep %d: GetJobsDueForExecution: %v, want nil", i, err)
+		}
+		names := make(map[string]bool, len(due))
+		for _, job := range due {
+			names[job.Name] = true
+		}
+		if len(names) != 2 || !names["due-system"] || !names["due-tenant"] {
+			t.Fatalf("sweep %d: due jobs = %v, want due-system and due-tenant", i, names)
+		}
+		if err := storage.TakeReconcileError(); !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("sweep %d: last reconcile error = %v, want DeadlineExceeded", i, err)
+		}
+	}
+}
+
+// A backfill that fails at open fails the open, so the engine does not start
+// with tenant jobs the due scan cannot see; a healthy reopen indexes them.
+func TestInitializeJobIDCounter_ReconcileFailureFailsOpen(t *testing.T) {
+	ctx := context.Background()
+	kv := newMockKVStore()
+	legacy := createTestJob("legacy-tenant", scheduler.OwnerTypeTenant, "acme")
+	legacy.ID = 9
+	legacy.NextRun = time.Now().Add(-time.Minute)
+	putUnindexedTenantJob(t, kv, legacy)
+
+	err := NewStorage(&reconcileFailingKV{mockKVStore: kv}).InitializeJobIDCounter(ctx)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("open with failing reconcile = %v, want DeadlineExceeded", err)
+	}
+
+	storage := NewStorage(kv)
+	if err := storage.InitializeJobIDCounter(ctx); err != nil {
+		t.Fatalf("healthy open: %v", err)
+	}
+	if !dueJobNames(t, storage, time.Now())["legacy-tenant"] {
+		t.Fatalf("legacy tenant job not due after a healthy open")
 	}
 }
