@@ -209,6 +209,10 @@ of kind `node`. It claims the service by writing the rollout into the slot
 record through the `Guard`, and writes each phase against the record it
 read; a controller that finds a rollout in flight refuses, and one whose
 write loses stops. `Resume` lets a new leader take over a rollout in flight.
+Each claim takes the service's next `Epoch`, and every fill, drain and
+switch carries it as a `Fence`: the runtime and the registry refuse
+(`ErrFenced`) an epoch older than the newest they took for the service
+(`EpochGate`), so a superseded leader's delayed side effect never lands.
 A failed step rolls back (`rolled_back`); a failed rollback is recorded as
 `failed`. Not built: slot runtime, appraiser and name switch backed by the
 container runtime, the Verifier and the registry.

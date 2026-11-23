@@ -51,10 +51,14 @@ func (g *memGuard) Swap(ctx context.Context, key string, held, next []byte) (boo
 // slotRig records every slot, appraisal and name call. failAppraise fails
 // appraisal of a version; failDrain fails every drain; failSwitch fails a
 // switch to that slot; block, when set, holds every fill until it is
-// closed, after signalling filling.
+// closed, after signalling filling. Fills, drains and switches pass its
+// EpochGate, as a runtime and a registry do; routed is the slot the name
+// points at.
 type slotRig struct {
 	mu           sync.Mutex
+	gate         EpochGate
 	calls        []string
+	routed       Slot
 	failAppraise string
 	failDrain    bool
 	failFill     bool
@@ -75,38 +79,68 @@ func (r *slotRig) Calls() []string {
 	return append([]string(nil), r.calls...)
 }
 
-func (r *slotRig) Fill(_ context.Context, _, _ string, slot Slot, rel *serviceplane.Release) error {
-	r.log("fill " + string(slot) + " " + rel.Version)
+func (r *slotRig) Routed() Slot {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.routed
+}
+
+func (r *slotRig) Fill(_ context.Context, f Fence, slot Slot, rel *serviceplane.Release) error {
 	if r.block != nil {
 		r.filling <- struct{}{}
 		<-r.block
 	}
-	if r.failFill {
-		return errors.New("slot fill failed")
-	}
-	return nil
+	return r.gate.Do(f, func() error {
+		r.log("fill " + string(slot) + " " + rel.Version)
+		if r.failFill {
+			return errors.New("slot fill failed")
+		}
+		return nil
+	})
 }
 
-func (r *slotRig) Drain(_ context.Context, _, _ string, slot Slot) error {
-	r.log("drain " + string(slot))
-	if r.failDrain {
-		return errors.New("slot will not stop")
-	}
-	return nil
+func (r *slotRig) Drain(_ context.Context, f Fence, slot Slot) error {
+	return r.gate.Do(f, func() error {
+		r.log("drain " + string(slot))
+		if r.failDrain {
+			return errors.New("slot will not stop")
+		}
+		return nil
+	})
+}
+
+func (r *slotRig) Switch(_ context.Context, f Fence, slot Slot) error {
+	return r.gate.Do(f, func() error {
+		r.log("switch " + string(slot))
+		r.mu.Lock()
+		r.routed = slot
+		r.mu.Unlock()
+		if string(slot) == r.failSwitch {
+			return errors.New("the switch took effect but did not answer")
+		}
+		return nil
+	})
+}
+
+// delayedSwitch holds a controller's switch on its way to the shared
+// registry until release is closed, after signalling switching: the
+// superseded leader's delayed side effect.
+type delayedSwitch struct {
+	*slotRig
+	switching chan struct{}
+	release   chan struct{}
+}
+
+func (d delayedSwitch) Switch(ctx context.Context, f Fence, slot Slot) error {
+	d.switching <- struct{}{}
+	<-d.release
+	return d.slotRig.Switch(ctx, f, slot)
 }
 
 func (r *slotRig) Appraise(_ context.Context, _, _ string, slot Slot, rel *serviceplane.Release) error {
 	r.log("appraise " + string(slot) + " " + rel.Version)
 	if rel.Version == r.failAppraise {
 		return errors.New("measurement does not match the reference value")
-	}
-	return nil
-}
-
-func (r *slotRig) Switch(_ context.Context, _, _ string, slot Slot) error {
-	r.log("switch " + string(slot))
-	if string(slot) == r.failSwitch {
-		return errors.New("the switch took effect but did not answer")
 	}
 	return nil
 }
@@ -344,6 +378,73 @@ func TestController_ASupersededStepThatFailsNeverRollsBack(t *testing.T) {
 	after, err := c2.Resume(ctx, "acme", "web")
 	if err != nil || after.Active != SlotA || after.Rollout.Phase != PhaseDone || after.Rollout.Owner != "node-2" {
 		t.Fatalf("after the superseded failure = %+v, %v", after, err)
+	}
+}
+
+// TestController_ADelayedSwitchOfASupersededLeaderNeverRoutes delays the
+// old leader's switch to A at the registry's door while a new leader takes
+// the rollout over, finishes it and rolls the service on to B: the stale
+// switch is fenced, so the name stays on B, where the record says it is.
+func TestController_ADelayedSwitchOfASupersededLeaderNeverRoutes(t *testing.T) {
+	w := newWorld(t)
+	shared := &slotRig{}
+	late := delayedSwitch{slotRig: shared, switching: make(chan struct{}, 1), release: make(chan struct{})}
+	c1 := &Controller{
+		ID: "node-1", Guard: w.guard, KV: w.kv, Leader: leader(true), Verifier: w.rt.Verifier,
+		Strategy: ABSwitch{Slots: shared, Appraiser: shared, Names: late},
+	}
+	c2 := w.controller("node-2", shared, true)
+	ctx := context.Background()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := c1.Roll(ctx, "acme", w.release(t, "acme", "1", serviceplane.ReleaseService))
+		done <- err
+	}()
+	<-late.switching
+
+	if slots, err := c2.Resume(ctx, "acme", "web"); err != nil || slots.Active != SlotA || slots.Rollout.Phase != PhaseDone {
+		t.Fatalf("takeover = %+v, %v", slots, err)
+	}
+	slots, err := c2.Roll(ctx, "acme", w.release(t, "acme", "2", serviceplane.ReleaseService))
+	if err != nil || slots.Active != SlotB {
+		t.Fatalf("roll to b = %+v, %v", slots, err)
+	}
+
+	close(late.release)
+	err = <-done
+	if !errors.Is(err, ErrFenced) || !errors.Is(err, ErrBusy) || errors.Is(err, ErrRolledBack) {
+		t.Fatalf("the superseded leader = %v, want its switch fenced and no rollback", err)
+	}
+	if got := shared.Routed(); got != SlotB {
+		t.Fatalf("the name routes to %q, want b", got)
+	}
+	stored, err := c2.Slots(ctx, "acme", "web")
+	if err != nil || stored.Active != SlotB {
+		t.Fatalf("stored = %+v, %v", stored, err)
+	}
+	wantCalls(t, shared, "fill a 1", "appraise a 1", "switch a", "fill b 2", "appraise b 2", "switch b")
+}
+
+func TestEpochGate_RefusesAnOlderClaim(t *testing.T) {
+	var g EpochGate
+	ran := 0
+	apply := func() error { ran++; return nil }
+	web := func(epoch uint64) Fence { return Fence{Tenant: "acme", Service: "web", Epoch: epoch} }
+	for _, epoch := range []uint64{1, 3, 3} {
+		if err := g.Do(web(epoch), apply); err != nil {
+			t.Fatalf("epoch %d: %v", epoch, err)
+		}
+	}
+	if err := g.Do(web(2), apply); !errors.Is(err, ErrFenced) {
+		t.Fatalf("an older epoch = %v, want ErrFenced", err)
+	}
+	// Each service has its own newest claim.
+	if err := g.Do(Fence{Tenant: "acme", Service: "api", Epoch: 1}, apply); err != nil {
+		t.Fatalf("another service: %v", err)
+	}
+	if ran != 4 {
+		t.Fatalf("applied %d times, want 4", ran)
 	}
 }
 

@@ -24,6 +24,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/serviceplane"
 )
@@ -45,6 +46,8 @@ var (
 	ErrConfig = errors.New("rollout: incomplete configuration")
 	// ErrStore marks a slot record read or write that failed.
 	ErrStore = errors.New("rollout: store unavailable")
+	// ErrFenced marks a side effect of a claim a newer claim superseded.
+	ErrFenced = errors.New("rollout: a newer claim fences this one")
 )
 
 // Slot names one of a service's two slots.
@@ -148,12 +151,71 @@ type Strategy interface {
 	Rollback(ctx context.Context, r *Rollout) error
 }
 
-// SlotRuntime fills and drains a service's slots.
+// Fence is the claim a rollout side effect is made under: the service and
+// the claim's Epoch. A SlotRuntime and a NameSwitch refuse, with ErrFenced,
+// an effect whose epoch is older than the newest they have taken for the
+// service, so a superseded controller whose call was delayed past a
+// takeover never changes the slots or the name. EpochGate implements it.
+type Fence struct {
+	Tenant  string
+	Service string
+	Epoch   uint64
+}
+
+// Fence answers the claim the rollout's side effects are made under.
+func (r *Rollout) Fence() Fence {
+	return Fence{Tenant: r.Tenant, Service: r.Service, Epoch: r.Epoch}
+}
+
+// SlotRuntime fills and drains a service's slots. Each call is fenced by
+// its claim: one older than the newest taken for the service is refused
+// with ErrFenced and changes nothing.
 type SlotRuntime interface {
 	// Fill starts release r in the slot, replacing what it held.
-	Fill(ctx context.Context, tenant, service string, slot Slot, r *serviceplane.Release) error
+	Fill(ctx context.Context, f Fence, slot Slot, r *serviceplane.Release) error
 	// Drain stops what the slot runs.
-	Drain(ctx context.Context, tenant, service string, slot Slot) error
+	Drain(ctx context.Context, f Fence, slot Slot) error
+}
+
+// EpochGate fences side effects at the boundary that makes them. Do runs
+// apply only when f's epoch is at least the newest Do has taken for f's
+// service, records it as the newest, and holds the service while apply
+// runs: an effect of a superseded claim that arrives after a newer claim's
+// is refused, and one already under way finishes before the newer one
+// starts. The zero value is ready; an EpochGate must not be copied after
+// first use.
+type EpochGate struct {
+	mu      sync.Mutex
+	newest  map[string]uint64
+	holding map[string]*sync.Mutex
+}
+
+// Do runs apply under the fence f.
+func (g *EpochGate) Do(f Fence, apply func() error) error {
+	key := f.Tenant + "/" + f.Service
+	g.mu.Lock()
+	if g.holding == nil {
+		g.holding = map[string]*sync.Mutex{}
+		g.newest = map[string]uint64{}
+	}
+	held, ok := g.holding[key]
+	if !ok {
+		held = &sync.Mutex{}
+		g.holding[key] = held
+	}
+	g.mu.Unlock()
+
+	held.Lock()
+	defer held.Unlock()
+	g.mu.Lock()
+	newest := g.newest[key]
+	if f.Epoch < newest {
+		g.mu.Unlock()
+		return fmt.Errorf("%w: %s epoch %d, the newest is %d", ErrFenced, key, f.Epoch, newest)
+	}
+	g.newest[key] = f.Epoch
+	g.mu.Unlock()
+	return apply()
 }
 
 // Appraiser checks a filled slot's evidence against the release's
@@ -162,9 +224,10 @@ type Appraiser interface {
 	Appraise(ctx context.Context, tenant, service string, slot Slot, r *serviceplane.Release) error
 }
 
-// NameSwitch points the service's registered name at a slot.
+// NameSwitch points the service's registered name at a slot. A switch is
+// fenced by its claim, as SlotRuntime's calls are.
 type NameSwitch interface {
-	Switch(ctx context.Context, tenant, service string, slot Slot) error
+	Switch(ctx context.Context, f Fence, slot Slot) error
 }
 
 // StepError says which phase of a rollout failed.
@@ -215,11 +278,11 @@ func (s ABSwitch) Step(ctx context.Context, r *Rollout) (Phase, error) {
 	)
 	switch r.Phase {
 	case PhaseFill:
-		err, next = s.Slots.Fill(ctx, r.Tenant, r.Service, r.To, &r.Target), PhaseAppraise
+		err, next = s.Slots.Fill(ctx, r.Fence(), r.To, &r.Target), PhaseAppraise
 	case PhaseAppraise:
 		err, next = s.Appraiser.Appraise(ctx, r.Tenant, r.Service, r.To, &r.Target), PhaseSwitch
 	case PhaseSwitch:
-		err, next = s.Names.Switch(ctx, r.Tenant, r.Service, r.To), PhaseDone
+		err, next = s.Names.Switch(ctx, r.Fence(), r.To), PhaseDone
 	default:
 		return r.Phase, &StepError{Phase: r.Phase, Cause: errors.New("no step for this phase")}
 	}
@@ -234,8 +297,8 @@ func (s ABSwitch) Step(ctx context.Context, r *Rollout) (Phase, error) {
 func (s ABSwitch) Rollback(ctx context.Context, r *Rollout) error {
 	var errs []error
 	if r.Phase == PhaseSwitch && r.From != "" {
-		errs = append(errs, s.Names.Switch(ctx, r.Tenant, r.Service, r.From))
+		errs = append(errs, s.Names.Switch(ctx, r.Fence(), r.From))
 	}
-	errs = append(errs, s.Slots.Drain(ctx, r.Tenant, r.Service, r.To))
+	errs = append(errs, s.Slots.Drain(ctx, r.Fence(), r.To))
 	return errors.Join(errs...)
 }
