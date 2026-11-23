@@ -17,6 +17,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
 )
 
 // =============================================================================
@@ -396,7 +398,12 @@ func (s *SchedulerEngine) recoverThroughGuard(
 ) (JobStatus, error) {
 	run := RunConclusion{JobID: current.ID, TenantID: JobTenantID(current), Firing: current.NextRun, StartedAt: startedAt}
 	owner := s.recoveryOwner()
+	id, err := stableExecutionID(now)
+	if err != nil {
+		return "", ErrStorageError{Op: "ExecutionID", Cause: err}
+	}
 	exec := &JobExecution{
+		ID:        id,
 		TenantID:  JobTenantID(current),
 		JobID:     current.ID,
 		Status:    JobStatusFailed,
@@ -470,7 +477,8 @@ func (s *SchedulerEngine) revisitConcludedRun(ctx context.Context, current *Job,
 // flushPendingHistory writes each of job's pending history records unless it
 // is already recorded (same evidence, same StartedAt), then removes the
 // written records from the job through a guarded write. A record that could
-// not be written stays pending on the job.
+// not be written stays pending on the job. Each record is written under its
+// stable ID, so two nodes flushing the same record write one history entry.
 func (s *SchedulerEngine) flushPendingHistory(ctx context.Context, job *Job) error {
 	var flushed []*JobExecution
 	for _, rec := range job.PendingHistory {
@@ -484,6 +492,14 @@ func (s *SchedulerEngine) flushPendingHistory(ctx context.Context, job *Job) err
 		}
 		if !already {
 			exec := *rec
+			if exec.ID == 0 {
+				id, err := stableExecutionID(exec.EndedAt)
+				if err != nil {
+					s.storageErrors.Add(1)
+					return ErrStorageError{Op: "SaveExecution", Cause: err}
+				}
+				exec.ID = id
+			}
 			if err := s.storage.SaveExecution(ctx, &exec); err != nil {
 				s.storageErrors.Add(1)
 				return ErrStorageError{Op: "SaveExecution", Cause: err}
@@ -505,6 +521,14 @@ func (s *SchedulerEngine) flushPendingHistory(ctx context.Context, job *Job) err
 	}
 	job.PendingHistory = written.PendingHistory
 	return nil
+}
+
+// stableExecutionID is the history ID of a record kept pending on a job. It
+// is derived from the run, not from the write, so every flush of the record
+// (on any node, any number of times) writes the same history entry instead
+// of a new one per attempt.
+func stableExecutionID(endedAt time.Time) (uint64, error) {
+	return conv.SafeInt64ToUint64(endedAt.UnixNano())
 }
 
 // withoutRecords returns the held records that no flushed record matches on
