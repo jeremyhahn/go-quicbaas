@@ -1,9 +1,11 @@
 package fleet
 
 import (
+	"context"
 	"errors"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -112,6 +114,65 @@ func TestWrapVolumeRuntimeScopesStagingToWorkDirAndProvider(t *testing.T) {
 	c.StagingDir = explicit
 	if got, want := staging(c, t.TempDir()), filepath.Join(explicit, "local"); got != want {
 		t.Errorf("explicit staging = %q, want %q", got, want)
+	}
+}
+
+// stubSharedVolumeProvider makes every built provider the one backing store.
+func stubSharedVolumeProvider(t *testing.T) *detachCountingProvider {
+	t.Helper()
+	prov := &detachCountingProvider{}
+	old := newVolumeProvider
+	newVolumeProvider = func(string, map[string]string) (orchestration.VolumeProvider, error) { return prov, nil }
+	t.Cleanup(func() { newVolumeProvider = old })
+	return prov
+}
+
+// TestWrapVolumeRuntimeLocksAVolumeAcrossWorkDirs: two daemons with their own
+// work dirs and node IDs over the same backing storage never own one volume
+// at once.
+func TestWrapVolumeRuntimeLocksAVolumeAcrossWorkDirs(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the volume lock is a Linux flock")
+	}
+	stubSharedVolumeProvider(t)
+	locks := t.TempDir()
+	wrap := func(node, workDir string) orchestration.ContainerRuntime {
+		t.Helper()
+		inner := &capableContainerRuntime{}
+		inner.available = true
+		got, err := WrapVolumeRuntime(VolumeConfig{
+			Provider: "local", NodeID: node, LockDir: locks,
+			Settings: map[string]string{"volume_group": "vg0"},
+		}, workDir, inner)
+		if err != nil {
+			t.Fatalf("WrapVolumeRuntime: %v", err)
+		}
+		t.Cleanup(func() { _ = got.(*orchestration.VolumeRuntime).Close() })
+		return got
+	}
+	wa, wb := t.TempDir(), t.TempDir()
+	a, b := wrap("n1", wa), wrap("n2", wb)
+	ctx := context.Background()
+	if _, err := a.Run(ctx, volumeSvcSpec()); err != nil {
+		t.Fatalf("a.Run: %v", err)
+	}
+	if _, err := b.Run(ctx, volumeSvcSpec()); !errors.Is(err, orchestration.ErrVolumeInUse) {
+		t.Fatalf("b.Run of a volume a holds = %v, want ErrVolumeInUse", err)
+	}
+	if volumeNamespace(map[string]string{"volume_group": "vg0"}) == volumeNamespace(map[string]string{"volume_group": "vg1"}) {
+		t.Error("vg0 and vg1 share a lock namespace")
+	}
+	if volumeNamespace(map[string]string{"volume_group": "vg0"}) != volumeNamespace(map[string]string{"volume_group": "vg0", "node_id": "n1"}) {
+		t.Error("node_id changes the lock namespace")
+	}
+}
+
+func TestWrapVolumeRuntimeRejectsARelativeLockDir(t *testing.T) {
+	var name string
+	stubVolumeProvider(t, &name)
+	_, err := WrapVolumeRuntime(VolumeConfig{Provider: "local", NodeID: "n", LockDir: "relative/locks"}, t.TempDir(), &nopRuntime{})
+	if !errors.Is(err, orchestration.ErrVolumeInvalidArgument) {
+		t.Fatalf("relative lock dir: err = %v, want ErrVolumeInvalidArgument", err)
 	}
 }
 

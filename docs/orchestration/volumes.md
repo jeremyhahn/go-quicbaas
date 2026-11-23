@@ -42,6 +42,7 @@ volumes:
   settings: {}             # the provider's snake_case settings
   node_id: ""              # default: settings.node_id, then the host name; given to the local provider too
   staging_dir: ""          # default: <work_dir>/volumes; the provider name is appended
+  lock_dir: ""             # default: /run/lock/quicbaas/volumes; must be the same for every daemon on the host
 ```
 
 `fleet serve` wraps the node's container runtime in `VolumeRuntime`, the
@@ -82,7 +83,12 @@ attached counts as released when Detach reports it not attached. The state file 
 staging directory, which is scoped to the daemon's work dir and provider, and
 one volume runtime holds it exclusively (a lock on
 `.quicbaas-attachments.lock`): a second daemon given the same `staging_dir` is
-refused with `ErrVolumeStateLocked` at startup.
+refused with `ErrVolumeStateLocked` at startup. Each owned volume also holds a
+host-wide lock, `<lock_dir>/<provider>-<hash of the provider settings, node_id
+excluded>/<claim>.lock`, from its reservation until its release, so two
+daemons with their own work dirs over the same backing storage never own one
+volume at once: a launch whose volume another daemon holds is refused with
+`ErrVolumeInUse`, and so is a restart that recovers one.
 
 Spawn requests are not volume launches: a sandboxed spawn whose
 `container_config` asks for a privilege class, a device or a volume is refused,

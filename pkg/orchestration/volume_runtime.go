@@ -69,6 +69,23 @@ type VolumeRuntime struct {
 	// recovered holds the volumes read from the state file at start, owned by
 	// containers of an earlier run of the node.
 	recovered []AttachedVolume
+	// lockDir is the host-wide directory each owned volume's lock is held
+	// under; empty means no cross-process lock.
+	lockDir string
+	// volLocks holds the per-volume locks under lockDir, by claim name, from
+	// a volume's reservation until it is no longer owned.
+	volLocks map[string]*os.File
+}
+
+// VolumeRuntimeOption configures a VolumeRuntime.
+type VolumeRuntimeOption func(*VolumeRuntime)
+
+// WithVolumeLockDir makes each owned volume hold a host-wide lock,
+// <dir>/<claim name>.lock, from its reservation until its release, so two
+// runtimes over the same backing storage never own one volume at once. dir
+// names the storage namespace; empty means no cross-process lock.
+func WithVolumeLockDir(dir string) VolumeRuntimeOption {
+	return func(r *VolumeRuntime) { r.lockDir = dir }
 }
 
 // volumeRecord is one container's held volumes, filed under each of keys. Its
@@ -100,7 +117,7 @@ var (
 // The runtime holds the staging dir exclusively, through a lock on its
 // VolumeStateLockFile, until Close or the process exits: a second runtime on
 // the same dir gets ErrVolumeStateLocked.
-func NewVolumeRuntime(inner ContainerRuntime, attacher *VolumeAttacher) (*VolumeRuntime, error) {
+func NewVolumeRuntime(inner ContainerRuntime, attacher *VolumeAttacher, opts ...VolumeRuntimeOption) (*VolumeRuntime, error) {
 	if inner == nil {
 		return nil, fmt.Errorf("%w: volume runtime: nil container runtime", ErrVolumeInvalidArgument)
 	}
@@ -122,29 +139,90 @@ func NewVolumeRuntime(inner ContainerRuntime, attacher *VolumeAttacher) (*Volume
 		lock:             lock,
 		attached:         make(map[string]*volumeRecord),
 		owned:            make(map[string]AttachedVolume),
+		volLocks:         make(map[string]*os.File),
+	}
+	for _, opt := range opts {
+		opt(r)
 	}
 	recovered, err := readVolumeState(r.statePath)
 	if err != nil {
 		_ = lock.Close()
 		return nil, fmt.Errorf("volume runtime: read %s: %w", r.statePath, err)
 	}
+	names := make([]string, 0, len(recovered))
 	for _, v := range recovered {
 		r.owned[v.Claim.Name] = v
+		names = append(names, v.Claim.Name)
 	}
 	r.recovered = recovered
+	// A recovered volume another runtime now holds fails the start closed.
+	r.mu.Lock()
+	err = r.lockVolumesLocked(names)
+	r.mu.Unlock()
+	if err != nil {
+		_ = r.Close()
+		return nil, fmt.Errorf("volume runtime: recovered volumes: %w", err)
+	}
 	return r, nil
 }
 
-// Close releases the staging dir's lock. It is idempotent.
+// lockVolumesLocked takes the host-wide lock of each named volume this
+// runtime does not hold yet, or of none: on failure the locks this call took
+// are dropped. r.mu must be held.
+func (r *VolumeRuntime) lockVolumesLocked(names []string) error {
+	if r.lockDir == "" || len(names) == 0 {
+		return nil
+	}
+	if err := os.MkdirAll(r.lockDir, 0o700); err != nil {
+		return fmt.Errorf("volume runtime: lock dir: %w", err)
+	}
+	var took []string
+	for _, name := range names {
+		if _, ok := r.volLocks[name]; ok {
+			continue
+		}
+		f, err := lockVolumeState(filepath.Join(r.lockDir, name+".lock"))
+		if err != nil {
+			for _, n := range took {
+				r.unlockVolumeLocked(n)
+			}
+			if errors.Is(err, ErrVolumeStateLocked) {
+				return fmt.Errorf("%w: volume %q: held by another volume runtime on this host", ErrVolumeInUse, name)
+			}
+			return fmt.Errorf("volume %q: lock: %w", name, err)
+		}
+		r.volLocks[name] = f
+		took = append(took, name)
+	}
+	return nil
+}
+
+// unlockVolumeLocked drops the named volume's host-wide lock. The lock file
+// stays: removing it would race another runtime taking it. r.mu must be held.
+func (r *VolumeRuntime) unlockVolumeLocked(name string) {
+	if f, ok := r.volLocks[name]; ok {
+		_ = f.Close()
+		delete(r.volLocks, name)
+	}
+}
+
+// Close releases the staging dir's lock and every volume's host-wide lock. It
+// is idempotent.
 func (r *VolumeRuntime) Close() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.lock == nil {
-		return nil
+	var errs []error
+	for name, f := range r.volLocks {
+		if err := f.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("volume %q: unlock: %w", name, err))
+		}
 	}
-	err := r.lock.Close() // closing the only descriptor drops the flock
-	r.lock = nil
-	return err
+	r.volLocks = make(map[string]*os.File)
+	if r.lock != nil {
+		errs = append(errs, r.lock.Close()) // closing the only descriptor drops the flock
+		r.lock = nil
+	}
+	return errors.Join(errs...)
 }
 
 func readVolumeState(path string) ([]AttachedVolume, error) {
@@ -343,12 +421,22 @@ func (r *VolumeRuntime) attach(ctx context.Context, spec *ContainerSpec) (*Conta
 // reserve makes the launch the owner of every claim, or of none when another
 // owner holds one of them.
 func (r *VolumeRuntime) reserve(claims []VolumeClaim) error {
+	// Validated here, before the attacher does, so a claim name cannot
+	// escape the lock dir.
+	if err := validateClaims(claims); err != nil {
+		return err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	names := make([]string, 0, len(claims))
 	for _, c := range claims {
 		if _, ok := r.owned[c.Name]; ok {
 			return fmt.Errorf("%w: volume %q", ErrVolumeInUse, c.Name)
 		}
+		names = append(names, c.Name)
+	}
+	if err := r.lockVolumesLocked(names); err != nil {
+		return err
 	}
 	for _, c := range claims {
 		r.owned[c.Name] = AttachedVolume{Claim: c}
@@ -367,6 +455,11 @@ func (r *VolumeRuntime) settle(vols, held []AttachedVolume, pend bool) error {
 	}
 	for _, v := range held {
 		r.owned[v.Claim.Name] = v
+	}
+	for _, v := range vols {
+		if _, ok := r.owned[v.Claim.Name]; !ok {
+			r.unlockVolumeLocked(v.Claim.Name)
+		}
 	}
 	if pend {
 		r.pending = append(r.pending, held...)

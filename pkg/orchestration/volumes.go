@@ -84,9 +84,10 @@ var (
 	// ErrVolumeClaim is returned when a VolumeClaim is malformed.
 	ErrVolumeClaim = errors.New("volume: invalid claim")
 
-	// ErrVolumeInUse is returned when a launch claims a volume another
-	// container on this node holds: a volume has one owner at a time.
-	ErrVolumeInUse = errors.New("volume: held by another container on this node")
+	// ErrVolumeInUse is returned when a launch claims a volume another owner
+	// holds, another container on this runtime or another volume runtime on
+	// the host: a volume has one owner at a time.
+	ErrVolumeInUse = errors.New("volume: held by another owner")
 
 	// ErrVolumeStateLocked is returned when another volume runtime holds the
 	// staging dir: one runtime owns a staging dir's attachment state.

@@ -1,10 +1,13 @@
 package fleet
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
@@ -30,6 +33,34 @@ type VolumeConfig struct {
 	// is appended in both cases, and one volume runtime holds the dir at a
 	// time.
 	StagingDir string `json:"staging_dir,omitempty" yaml:"staging_dir,omitempty"`
+
+	// LockDir is the absolute host-wide directory each owned volume's lock is
+	// held under, so two daemons whose provider settings name the same backing
+	// storage never own one volume at once. Empty means
+	// DefaultVolumeLockDir. Every daemon on a host must use the same value.
+	LockDir string `json:"lock_dir,omitempty" yaml:"lock_dir,omitempty"`
+}
+
+// DefaultVolumeLockDir is the host-wide volume lock directory used when
+// VolumeConfig.LockDir is empty.
+const DefaultVolumeLockDir = "/run/lock/quicbaas/volumes"
+
+// volumeNamespace names the backing storage a provider's settings select:
+// the first 16 hex characters of a sha256 over the sorted "k=v" lines of
+// every setting but node_id, which is per daemon.
+func volumeNamespace(settings map[string]string) string {
+	keys := make([]string, 0, len(settings))
+	for k := range settings {
+		if k != "node_id" {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	h := sha256.New()
+	for _, k := range keys {
+		fmt.Fprintf(h, "%s=%s\n", k, settings[k])
+	}
+	return hex.EncodeToString(h.Sum(nil))[:16]
 }
 
 // Enabled reports whether a provider is configured.
@@ -63,6 +94,10 @@ func WrapVolumeRuntime(cfg VolumeConfig, workDir string, inner orchestration.Con
 		return nil, fmt.Errorf("%w: fleet volumes: node_id %q and settings.node_id %q differ",
 			orchestration.ErrVolumeInvalidArgument, cfg.NodeID, settingsNode)
 	}
+	if cfg.LockDir != "" && !filepath.IsAbs(cfg.LockDir) {
+		return nil, fmt.Errorf("%w: fleet volumes: lock_dir %q is not absolute",
+			orchestration.ErrVolumeInvalidArgument, cfg.LockDir)
+	}
 	node := cfg.NodeID
 	if node == "" {
 		node = settingsNode
@@ -89,6 +124,11 @@ func WrapVolumeRuntime(cfg VolumeConfig, workDir string, inner orchestration.Con
 		base = filepath.Join(abs, "volumes")
 	}
 	staging := filepath.Join(base, cfg.Provider)
+	lockBase := cfg.LockDir
+	if lockBase == "" {
+		lockBase = DefaultVolumeLockDir
+	}
+	lockDir := filepath.Join(lockBase, cfg.Provider+"-"+volumeNamespace(cfg.Settings))
 	settings := cfg.Settings
 	if cfg.Provider == "local" {
 		// The local provider refuses Attach for any node but its own, which it
@@ -107,5 +147,5 @@ func WrapVolumeRuntime(cfg VolumeConfig, workDir string, inner orchestration.Con
 	if err != nil {
 		return nil, fmt.Errorf("fleet volumes: %w", err)
 	}
-	return orchestration.NewVolumeRuntime(inner, attacher)
+	return orchestration.NewVolumeRuntime(inner, attacher, orchestration.WithVolumeLockDir(lockDir))
 }

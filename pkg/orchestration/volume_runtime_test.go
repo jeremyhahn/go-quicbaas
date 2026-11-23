@@ -824,3 +824,94 @@ func TestNewVolumeRuntimeRefusesALockedStagingDir(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 }
+
+// newLockedVolumeRuntime builds a runtime over prov with its own staging dir
+// (or staging, when set) and the host-wide volume locks under locks.
+func newLockedVolumeRuntime(t *testing.T, prov *fakeVolumeProvider, staging, locks string) (*VolumeRuntime, error) {
+	t.Helper()
+	if staging == "" {
+		staging = t.TempDir()
+	}
+	att, err := NewVolumeAttacher(prov, "node-1", staging)
+	if err != nil {
+		t.Fatalf("NewVolumeAttacher: %v", err)
+	}
+	vr, err := NewVolumeRuntime(&launchRecorder{}, att, WithVolumeLockDir(locks))
+	if vr != nil {
+		t.Cleanup(func() { _ = vr.Close() })
+	}
+	return vr, err
+}
+
+// Two runtimes with their own staging dirs over one backing provider never
+// own one volume at once, while distinct volumes stay independent.
+func TestVolumeRuntimeRefusesAVolumeAnotherRuntimeHolds(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the volume lock is a Linux flock")
+	}
+	ctx := context.Background()
+	prov := newFakeVolumeProvider()
+	locks := t.TempDir()
+	a, err := newLockedVolumeRuntime(t, prov, "", locks)
+	if err != nil {
+		t.Fatalf("NewVolumeRuntime a: %v", err)
+	}
+	b, err := newLockedVolumeRuntime(t, prov, "", locks)
+	if err != nil {
+		t.Fatalf("NewVolumeRuntime b: %v", err)
+	}
+	id, err := a.Run(ctx, dataSpec("a"))
+	if err != nil {
+		t.Fatalf("a.Run: %v", err)
+	}
+	attaches := countCalls(prov.calls, "attach data")
+	if _, err := b.Run(ctx, dataSpec("b")); !errors.Is(err, ErrVolumeInUse) {
+		t.Fatalf("b.Run of a volume a holds = %v, want ErrVolumeInUse", err)
+	}
+	if got := countCalls(prov.calls, "attach data"); got != attaches {
+		t.Fatalf("attach data calls = %d, want %d (calls %v)", got, attaches, prov.calls)
+	}
+	other := dataSpec("b-other")
+	other.Volumes = []VolumeClaim{{Name: "other", SizeBytes: 1 << 30, FSType: "ext4", Target: "/data"}}
+	if _, err := b.Run(ctx, other); err != nil {
+		t.Fatalf("b.Run of another volume: %v", err)
+	}
+	if err := a.Remove(ctx, id); err != nil {
+		t.Fatalf("a.Remove: %v", err)
+	}
+	if _, err := b.Run(ctx, dataSpec("b2")); err != nil {
+		t.Fatalf("b.Run once a released data: %v", err)
+	}
+}
+
+// A restart that recovers a volume another runtime now holds fails closed.
+func TestNewVolumeRuntimeRefusesARecoveredVolumeAnotherRuntimeHolds(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the volume lock is a Linux flock")
+	}
+	ctx := context.Background()
+	prov := newFakeVolumeProvider()
+	locks := t.TempDir()
+	staging := t.TempDir()
+	a, err := newLockedVolumeRuntime(t, prov, staging, locks)
+	if err != nil {
+		t.Fatalf("NewVolumeRuntime a: %v", err)
+	}
+	if _, err := a.Run(ctx, dataSpec("a")); err != nil {
+		t.Fatalf("a.Run: %v", err)
+	}
+	if err := a.Close(); err != nil {
+		t.Fatalf("a.Close: %v", err)
+	}
+	b, err := newLockedVolumeRuntime(t, prov, "", locks)
+	if err != nil {
+		t.Fatalf("NewVolumeRuntime b: %v", err)
+	}
+	if _, err := b.Run(ctx, dataSpec("b")); err != nil {
+		t.Fatalf("b.Run: %v", err)
+	}
+	restarted, err := newLockedVolumeRuntime(t, prov, staging, locks)
+	if !errors.Is(err, ErrVolumeInUse) || restarted != nil {
+		t.Fatalf("restart over a volume b holds = %v, %v; want nil, ErrVolumeInUse", restarted, err)
+	}
+}
