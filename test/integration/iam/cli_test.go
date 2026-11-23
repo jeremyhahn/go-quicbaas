@@ -1082,11 +1082,8 @@ func TestCLIIAMSessionWorkflow(t *testing.T) {
 
 // TestCLIIAMAuditWorkflow tests a complete audit query workflow.
 func TestCLIIAMAuditWorkflow(t *testing.T) {
-	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
-
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	tenantID := generateUniqueTenantIDForCLI()
+	cli := newIAMCLITenantSessionContext(t, tenantID)
 
 	// Step 1: Query all events
 	t.Run("workflow-query-all", func(t *testing.T) {
