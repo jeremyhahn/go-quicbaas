@@ -15,6 +15,7 @@ package grpc
 
 import (
 	"context"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -241,6 +242,12 @@ func (h *iamHandler) handleDeleteUser(ctx context.Context, client iampb.IAMServi
 	return nil, nil
 }
 
+// defaultListUsersPageSize is the page size of a user List that names none, the server's own default.
+const defaultListUsersPageSize = 100
+
+// maxListUsersPageSize keeps the lookahead request (pageSize+1) inside the int32 Limit.
+const maxListUsersPageSize = math.MaxInt32 - 1
+
 // handleListUsers handles ListUsers requests.
 func (h *iamHandler) handleListUsers(ctx context.Context, client iampb.IAMServiceClient, req interface{}) (interface{}, error) {
 	reqMap, ok := toMap(req)
@@ -252,6 +259,12 @@ func (h *iamHandler) handleListUsers(ctx context.Context, client iampb.IAMServic
 	requestData, _ := getMap(reqMap, "request")
 
 	pageSize, _ := getInt(requestData, "page_size")
+	if pageSize <= 0 {
+		pageSize = defaultListUsersPageSize
+	}
+	if pageSize > maxListUsersPageSize {
+		pageSize = maxListUsersPageSize
+	}
 	roleID, _ := getString(requestData, "role_id")
 	offset, err := iamPageOffset("handleListUsers", requestData)
 	if err != nil {
@@ -260,9 +273,11 @@ func (h *iamHandler) handleListUsers(ctx context.Context, client iampb.IAMServic
 
 	pbReq := &iampb.ListUsersRequest{
 		TenantId: tenantID,
-		Limit:    int32(pageSize),
-		Offset:   offset,
-		Role:     roleID,
+		// One row past the page tells whether another page follows; the
+		// server's Total counts only the rows it returned.
+		Limit:  int32(pageSize + 1),
+		Offset: offset,
+		Role:   roleID,
 	}
 
 	resp, err := client.ListUsers(ctx, pbReq)
@@ -270,16 +285,38 @@ func (h *iamHandler) handleListUsers(ctx context.Context, client iampb.IAMServic
 		return nil, convertGRPCError(err, "handleListUsers")
 	}
 
-	users := make([]iam.User, 0, len(resp.Users))
-	for _, u := range resp.Users {
+	page := resp.Users
+	hasMore := len(page) > pageSize
+	if hasMore {
+		page = page[:pageSize]
+	}
+
+	users := make([]iam.User, 0, len(page))
+	for _, u := range page {
 		if converted := convertProtoUserToSDK(u); converted != nil {
 			users = append(users, *converted)
 		}
 	}
 
+	// A server that reports only the rows it returned (the production
+	// adapter) gets the page's own count, without the lookahead row; a
+	// server that reports a real total keeps it.
+	total := int(resp.Total)
+	if total <= len(resp.Users) {
+		total = len(page)
+	}
+	pagination := iam.PaginationInfo{
+		TotalCount: total,
+		PageSize:   pageSize,
+	}
+	if hasMore {
+		pagination.NextPageToken = strconv.Itoa(int(offset) + pageSize)
+		pagination.HasMore = true
+	}
+
 	return &iam.ListUsersResponse{
 		Users:      users,
-		Pagination: iamPagination(offset, pageSize, len(resp.Users), resp.Total),
+		Pagination: pagination,
 	}, nil
 }
 
