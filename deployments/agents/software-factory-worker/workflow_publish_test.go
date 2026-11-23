@@ -71,18 +71,23 @@ func loadWorkflow(t *testing.T) (string, workflowFile) {
 	return string(raw), wf
 }
 
-// The workflow is two jobs. build-publish holds only GITHUB_TOKEN with
+// The workflow is three jobs. build-publish holds only GITHUB_TOKEN with
 // contents: read and packages: write (G1): no registry secret, no PAT, and no
 // job may write issues. post-digest needs it and holds no permission at all.
+// move-current needs both and moves `current` with the same token scope as
+// build-publish.
 func TestWorkflowBuildPublish_Jobs(t *testing.T) {
 	raw, wf := loadWorkflow(t)
-	if len(wf.Jobs) != 2 {
+	_, hasBuild := wf.Jobs["build-publish"]
+	_, hasPost := wf.Jobs["post-digest"]
+	_, hasMove := wf.Jobs["move-current"]
+	if len(wf.Jobs) != 3 || !hasBuild || !hasPost || !hasMove {
 		names := make([]string, 0, len(wf.Jobs))
 		for name := range wf.Jobs {
 			names = append(names, name)
 		}
 		sort.Strings(names)
-		t.Fatalf("jobs = %v, want exactly [build-publish post-digest]", names)
+		t.Fatalf("jobs = %v, want exactly [build-publish move-current post-digest]", names)
 	}
 	job, ok := wf.Jobs["build-publish"]
 	if !ok {
@@ -129,6 +134,25 @@ func TestWorkflowBuildPublish_Jobs(t *testing.T) {
 		if strings.Contains(step.Run, "GITHUB_TOKEN") || strings.Contains(step.Run, "docker") {
 			t.Errorf("post-digest step %q touches a token or the registry; it only posts", step.Name)
 		}
+	}
+	move := wf.Jobs["move-current"]
+	if len(move.Permissions) != len(wantPerms) {
+		t.Errorf("move-current permissions = %v, want %v", move.Permissions, wantPerms)
+	}
+	for k, v := range wantPerms {
+		if move.Permissions[k] != v {
+			t.Errorf("move-current permissions = %v, want %v", move.Permissions, wantPerms)
+			break
+		}
+	}
+	needs, _ := move.Needs.([]any)
+	gotNeeds := make([]string, 0, len(needs))
+	for _, n := range needs {
+		s, _ := n.(string)
+		gotNeeds = append(gotNeeds, s)
+	}
+	if strings.Join(gotNeeds, ",") != "build-publish,post-digest" {
+		t.Errorf("move-current needs = %v, want [build-publish post-digest]", move.Needs)
 	}
 	for _, s := range []string{"REGISTRY_TOKEN", "REGISTRY_USER", "secrets["} {
 		if strings.Contains(raw, s) {
@@ -1082,151 +1106,45 @@ func TestWorkflowBuildPublish_DevcacheArgsMustBeEmpty(t *testing.T) {
 	}
 }
 
-const fakeAnonDockerScript = `#!/bin/sh
-if [ -e "$DOCKER_CONFIG/config.json" ]; then exit 9; fi
+// fakeResolveDockerScript stands in for docker in the resolves step. It prints
+// $FAKE_DOCKER_STDOUT and exits with $FAKE_DOCKER_EXIT.
+const fakeResolveDockerScript = `#!/bin/sh
 printf '%s' "$FAKE_DOCKER_STDOUT"
-printf '%s' "$FAKE_DOCKER_STDERR" >&2
-exit "$FAKE_DOCKER_EXIT"
+exit "${FAKE_DOCKER_EXIT:-0}"
 `
 
-// After the digest is recorded, an anonymous lookup of it must be refused:
-// a public package fails the job, and so does an answer that is not a refusal.
-func TestWorkflowBuildPublish_PackageMustBePrivate(t *testing.T) {
+// TestWorkflowBuildPublish_DigestResolvesAfterRecord pins the resolves step:
+// after the digest is recorded, ghcr.io must resolve it to the same digest; a
+// lookup that fails or names another digest fails the job.
+func TestWorkflowBuildPublish_DigestResolvesAfterRecord(t *testing.T) {
 	_, wf := loadWorkflow(t)
 	job := wf.Jobs["build-publish"]
-	priv, record, upload := -1, -1, -1
+	resolves, record, upload := -1, -1, -1
 	for i, step := range job.Steps {
 		switch {
-		case step.ID == "private":
-			priv = i
+		case step.ID == "resolves":
+			resolves = i
 		case step.ID == "record":
 			record = i
 		case step.Name == "Upload the digest":
 			upload = i
 		}
 	}
-	if priv < 0 || record < 0 || upload < 0 {
-		t.Fatalf("build-publish steps: private #%d, record #%d, upload #%d; want all three", priv, record, upload)
+	if resolves < 0 || record < 0 || upload < 0 {
+		t.Fatalf("build-publish steps: resolves #%d, record #%d, upload #%d; want all three", resolves, record, upload)
 	}
-	if priv <= record || priv >= upload {
-		t.Errorf("step private (#%d) is not between record (#%d) and the upload (#%d)", priv, record, upload)
+	if resolves <= record || resolves >= upload {
+		t.Errorf("step resolves (#%d) is not between record (#%d) and the upload (#%d)", resolves, record, upload)
 	}
-
-	bash, err := exec.LookPath("bash")
-	if err != nil {
-		t.Skip("bash is not on PATH")
+	if got, want := job.Steps[resolves].If, "${{ steps.record.outcome == 'success' }}"; got != want {
+		t.Errorf("step resolves if = %q, want %q", got, want)
 	}
-	script := stepRun(t, "private")
-	cases := []struct {
-		name   string
-		stderr string
-		exit   string
-		wantOK bool
-	}{
-		{name: "public", exit: "0"},
-		{name: "denied", stderr: "denied: denied\n", exit: "1", wantOK: true},
-		{name: "unauthorized", stderr: "unauthorized: authentication required\n", exit: "1", wantOK: true},
-		{name: "server error", stderr: "503 Service Unavailable\n", exit: "1"},
-		{name: "server error naming a digest", stderr: "failed to fetch ghcr.io/example/img@sha256:ab401cd403ef0123456789abcdef0123456789abcdef0123456789abcdef0123: 503 Service Unavailable\n", exit: "1"},
-		{name: "403", stderr: "unexpected status: 403 Forbidden\n", exit: "1", wantOK: true},
-		{name: "401", stderr: "unexpected status: 401 Unauthorized\n", exit: "1", wantOK: true},
-		{name: "empty stderr", exit: "1"},
+	run := job.Steps[resolves].Run
+	if !strings.Contains(run, `docker buildx imagetools inspect "${REPO}@${DIGEST}"`) {
+		t.Errorf("step resolves run does not inspect ${REPO}@${DIGEST}:\n%s", run)
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
-			binDir := filepath.Join(dir, "bin")
-			if err := os.Mkdir(binDir, 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(filepath.Join(binDir, "docker"), []byte(fakeAnonDockerScript), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			cfg := filepath.Join(dir, "docker-config")
-			if err := os.Mkdir(cfg, 0o700); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(filepath.Join(cfg, "config.json"), []byte(`{"auths":{}}`), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			cmd := exec.Command(bash, "-c", script)
-			cmd.Env = append(os.Environ(),
-				"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
-				"DOCKER_CONFIG="+cfg,
-				"REPO=ghcr.io/example/img",
-				"DIGEST=sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-				"FAKE_DOCKER_STDERR="+tc.stderr,
-				"FAKE_DOCKER_EXIT="+tc.exit,
-			)
-			combined, runErr := cmd.CombinedOutput()
-			if tc.wantOK && runErr != nil {
-				t.Fatalf("step failed: %v\n%s", runErr, combined)
-			}
-			if !tc.wantOK && runErr == nil {
-				t.Fatalf("step exited 0:\n%s", combined)
-			}
-		})
-	}
-}
-
-// fakeAnonCurlScript stands in for curl in the private-before step. It
-// refuses credentials and a bearer token on argv, logs each URL to
-// $FAKE_CURL_LOG, writes the case's body to the -o file and prints the
-// case's -w code. The tags lookup must send "Authorization: Bearer anon"
-// from a header file.
-const fakeAnonCurlScript = `#!/bin/sh
-for a in "$@"; do
-  case "$a" in -u|--user|*Bearer*|*anon*) exit 9 ;; esac
-done
-out=""; url=""; hdr=""
-while [ $# -gt 0 ]; do
-  case "$1" in
-    -o|-w|-H) [ "$1" = -o ] && out="$2"; [ "$1" = -H ] && hdr="$2"; shift 2 ;;
-    -*) shift ;;
-    *) url="$1"; shift ;;
-  esac
-done
-printf '%s\n' "$url" >> "$FAKE_CURL_LOG"
-case "$url" in
-  "https://ghcr.io/token?service=ghcr.io&scope=repository:example/img:pull")
-    printf '%s' "$FAKE_TOKEN_BODY" > "$out"
-    printf '%s' "$FAKE_TOKEN_CODE" ;;
-  "https://ghcr.io/v2/example/img/tags/list")
-    case "$hdr" in @*) ;; *) exit 8 ;; esac
-    [ "$(cat "${hdr#@}")" = "Authorization: Bearer anon" ] || exit 8
-    : > "$out"
-    printf '%s' "$FAKE_TAGS_CODE" ;;
-  *) exit 7 ;;
-esac
-`
-
-func TestWorkflowBuildPublish_PrivateBeforePush(t *testing.T) {
-	_, wf := loadWorkflow(t)
-	job := wf.Jobs["build-publish"]
-	before, layer, push := -1, -1, -1
-	for i, step := range job.Steps {
-		switch {
-		case step.ID == "private-before":
-			before = i
-		case step.ID == "layer-scan":
-			layer = i
-		case push < 0 && strings.Contains(step.Run, "make push-worker-image"):
-			push = i
-		}
-	}
-	if before < 0 || layer < 0 || push < 0 {
-		t.Fatalf("build-publish steps: private-before #%d, layer-scan #%d, push #%d; want all three", before, layer, push)
-	}
-	if before <= layer || before >= push {
-		t.Errorf("step private-before (#%d) is not between layer-scan (#%d) and the push (#%d)", before, layer, push)
-	}
-	if got, want := job.Steps[before].If, job.Steps[push].If; got != want {
-		t.Errorf("step private-before if = %q, want the push step's %q", got, want)
-	}
-	for _, s := range []string{"GITHUB_TOKEN", "secrets.", " -u "} {
-		if strings.Contains(job.Steps[before].Run, s) {
-			t.Errorf("step private-before run: contains %q", s)
-		}
+	if strings.Contains(run, "DOCKER_CONFIG=") {
+		t.Errorf("step resolves run sets DOCKER_CONFIG; the lookup is not anonymous:\n%s", run)
 	}
 
 	bash, err := exec.LookPath("bash")
@@ -1236,50 +1154,37 @@ func TestWorkflowBuildPublish_PrivateBeforePush(t *testing.T) {
 	if _, err := exec.LookPath("jq"); err != nil {
 		t.Skip("jq is not on PATH")
 	}
-	script := stepRun(t, "private-before")
-	const tagsURL = "https://ghcr.io/v2/example/img/tags/list"
+	script := stepRun(t, "resolves")
+	const digest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	const other = "sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
 	cases := []struct {
-		name      string
-		tokenCode string
-		tokenBody string
-		tagsCode  string
-		wantOK    bool
-		want      string
-		noTags    bool
+		name   string
+		stdout string
+		exit   string
+		wantOK bool
+		want   string
 	}{
-		{name: "public", tokenCode: "200", tagsCode: "200", want: "must be private"},
-		{name: "tags 401", tokenCode: "200", tagsCode: "401", wantOK: true},
-		{name: "tags 403", tokenCode: "200", tagsCode: "403", wantOK: true},
-		{name: "tags 404", tokenCode: "200", tagsCode: "404", wantOK: true},
-		{name: "tags 500", tokenCode: "200", tagsCode: "500"},
-		{name: "token 403", tokenCode: "403", wantOK: true, noTags: true},
-		{name: "token 401", tokenCode: "401", wantOK: true, noTags: true},
-		{name: "token 502", tokenCode: "502", noTags: true},
-		{name: "token body without a token", tokenCode: "200", tokenBody: "{}", noTags: true},
+		{name: "match", stdout: `{"digest":"` + digest + `"}`, exit: "0", wantOK: true, want: "resolves on ghcr.io"},
+		{name: "other digest", stdout: `{"digest":"` + other + `"}`, exit: "0", want: "resolves ghcr.io/example/img@"},
+		{name: "lookup error", exit: "1"},
+		{name: "no digest field", stdout: "{}", exit: "0"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
-			binDir := filepath.Join(dir, "bin")
+			binDir := filepath.Join(t.TempDir(), "bin")
 			if err := os.Mkdir(binDir, 0o755); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(filepath.Join(binDir, "curl"), []byte(fakeAnonCurlScript), 0o755); err != nil {
+			if err := os.WriteFile(filepath.Join(binDir, "docker"), []byte(fakeResolveDockerScript), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			body := tc.tokenBody
-			if body == "" {
-				body = `{"token":"anon"}`
-			}
-			curlLog := filepath.Join(dir, "curl.log")
 			cmd := exec.Command(bash, "-c", script)
 			cmd.Env = append(os.Environ(),
 				"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
 				"REPO=ghcr.io/example/img",
-				"FAKE_CURL_LOG="+curlLog,
-				"FAKE_TOKEN_CODE="+tc.tokenCode,
-				"FAKE_TOKEN_BODY="+body,
-				"FAKE_TAGS_CODE="+tc.tagsCode,
+				"DIGEST="+digest,
+				"FAKE_DOCKER_STDOUT="+tc.stdout,
+				"FAKE_DOCKER_EXIT="+tc.exit,
 			)
 			combined, runErr := cmd.CombinedOutput()
 			if tc.wantOK && runErr != nil {
@@ -1291,16 +1196,30 @@ func TestWorkflowBuildPublish_PrivateBeforePush(t *testing.T) {
 			if tc.want != "" && !strings.Contains(string(combined), tc.want) {
 				t.Errorf("output lacks %q:\n%s", tc.want, combined)
 			}
-			if strings.Contains(string(combined), "Bearer anon") {
-				t.Errorf("output carries the bearer token:\n%s", combined)
-			}
-			calls, err := os.ReadFile(curlLog)
-			if err != nil {
-				t.Fatalf("curl was never called: %v\n%s", err, combined)
-			}
-			if called := strings.Contains(string(calls), tagsURL); called == tc.noTags {
-				t.Errorf("tags URL called = %v, want %v; curl calls:\n%s", called, !tc.noTags, calls)
-			}
 		})
+	}
+}
+
+// TestWorkflowBuildPublish_NoPrivatePackageStep pins that the package is
+// public like the repository, so no step may refuse a push or fail a run
+// because an anonymous pull succeeds.
+func TestWorkflowBuildPublish_NoPrivatePackageStep(t *testing.T) {
+	raw, wf := loadWorkflow(t)
+	for _, step := range wf.Jobs["build-publish"].Steps {
+		if step.ID == "private" || step.ID == "private-before" {
+			t.Errorf("build-publish has a private-package step %q (id %s)", step.Name, step.ID)
+		}
+	}
+	for _, s := range []string{"must be private", "the package must be private"} {
+		if strings.Contains(raw, s) {
+			t.Errorf("%s contains %q", workflowPath, s)
+		}
+	}
+	for name, job := range wf.Jobs {
+		for _, step := range job.Steps {
+			if strings.Contains(step.Run, "ghcr.io/token?service=ghcr.io") {
+				t.Errorf("%s step %q looks up an anonymous ghcr.io token", name, step.Name)
+			}
+		}
 	}
 }
