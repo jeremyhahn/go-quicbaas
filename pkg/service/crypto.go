@@ -922,9 +922,10 @@ func (t *cryptoService) GenerateDataKey(ctx context.Context, req *GenerateDataKe
 
 	// Track key usage for DEK generation (if tracker configured)
 	// The wrapped DEK is what gets encrypted with the KEK
+	var reserved uint64
 	if t.safetyTracker != nil {
 		defer t.safetyTracker.BeginKeyUse(scopedKeyID)()
-		if err := t.safetyTracker.RecordKeyEncrypt(ctx, scopedKeyID, conv.ClampIntToUint64(keyBytes)); err != nil {
+		if reserved, err = t.reserveKeyVersion(ctx, scopedKeyID, 0, 1, conv.ClampIntToUint64(keyBytes)); err != nil {
 			t.metrics.encryptOperationsTotal.With(req.KeyID, "safety_limit_exceeded").Inc()
 			t.metrics.errorsByType.With("safety_limit_error").Inc()
 			return nil, &errors.QBError{
@@ -943,6 +944,18 @@ func (t *cryptoService) GenerateDataKey(ctx context.Context, req *GenerateDataKe
 		t.metrics.encryptOperationsTotal.With(req.KeyID, "error").Inc()
 		t.metrics.errorsByType.With("generate_data_key_error").Inc()
 		return nil, keyOperationError(errors.ErrEncryption, "crypto.GenerateDataKey", "generate data key", err)
+	}
+
+	// Charge the version that actually wrapped the key when the backend's
+	// key state differs from the replicated record (a rotation on another
+	// node not yet seen here); a version over its limit refuses the call.
+	if t.safetyTracker != nil {
+		if err := t.chargeSealedVersions(ctx, scopedKeyID, reserved, wrapped); err != nil {
+			clear(plaintext)
+			t.metrics.encryptOperationsTotal.With(req.KeyID, "safety_limit_exceeded").Inc()
+			t.metrics.errorsByType.With("safety_limit_error").Inc()
+			return nil, &errors.QBError{Code: errors.ErrEncryption, Op: "crypto.GenerateDataKey", Err: err}
+		}
 	}
 
 	resp := &GenerateDataKeyResponse{
@@ -998,9 +1011,10 @@ func (t *cryptoService) GenerateWrappedDataKey(ctx context.Context, req *Generat
 	keyBytes := keySizeFromAttributes(req.KeyAttributes)
 
 	// Track key usage for wrapped DEK generation (if tracker configured)
+	var reserved uint64
 	if t.safetyTracker != nil {
 		defer t.safetyTracker.BeginKeyUse(scopedKeyID)()
-		if err := t.safetyTracker.RecordKeyEncrypt(ctx, scopedKeyID, conv.ClampIntToUint64(keyBytes)); err != nil {
+		if reserved, err = t.reserveKeyVersion(ctx, scopedKeyID, 0, 1, conv.ClampIntToUint64(keyBytes)); err != nil {
 			t.metrics.encryptOperationsTotal.With(req.KeyID, "safety_limit_exceeded").Inc()
 			t.metrics.errorsByType.With("safety_limit_error").Inc()
 			return nil, &errors.QBError{
@@ -1019,6 +1033,17 @@ func (t *cryptoService) GenerateWrappedDataKey(ctx context.Context, req *Generat
 		t.metrics.encryptOperationsTotal.With(req.KeyID, "error").Inc()
 		t.metrics.errorsByType.With("generate_wrapped_data_key_error").Inc()
 		return nil, keyOperationError(errors.ErrEncryption, "crypto.GenerateWrappedDataKey", "generate wrapped data key", err)
+	}
+
+	// Charge the version that actually wrapped the key when the backend's
+	// key state differs from the replicated record (a rotation on another
+	// node not yet seen here); a version over its limit refuses the call.
+	if t.safetyTracker != nil {
+		if err := t.chargeSealedVersions(ctx, scopedKeyID, reserved, wrapped); err != nil {
+			t.metrics.encryptOperationsTotal.With(req.KeyID, "safety_limit_exceeded").Inc()
+			t.metrics.errorsByType.With("safety_limit_error").Inc()
+			return nil, &errors.QBError{Code: errors.ErrEncryption, Op: "crypto.GenerateWrappedDataKey", Err: err}
+		}
 	}
 
 	resp := &GenerateWrappedDataKeyResponse{

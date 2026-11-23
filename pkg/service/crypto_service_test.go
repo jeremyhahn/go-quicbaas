@@ -19,7 +19,10 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
+	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -2096,5 +2099,80 @@ func TestCryptoService_GenerateWrappedDataKey_SafetyTracker_LimitExceeded(t *tes
 			assert.Equal(t, quicbaasErrors.ErrEncryption, qbErr.Code)
 		}
 		assert.Nil(t, resp)
+	}
+}
+
+// TestCryptoService_GenerateDataKey_ChargesSealedVersion models a node whose
+// version source reports the replicated current version while its own
+// backend still wraps under the previous one: a data key wrapped under an
+// exhausted version must be refused.
+func TestCryptoService_GenerateDataKey_ChargesSealedVersion(t *testing.T) {
+	methods := []struct {
+		name string
+		call func(svc CryptoService, ctx context.Context) (any, error)
+	}{
+		{"GenerateDataKey", func(svc CryptoService, ctx context.Context) (any, error) {
+			resp, err := svc.GenerateDataKey(ctx, &GenerateDataKeyRequest{KeyID: "dk-sealed"})
+			if resp == nil {
+				return nil, err
+			}
+			return resp, err
+		}},
+		{"GenerateWrappedDataKey", func(svc CryptoService, ctx context.Context) (any, error) {
+			resp, err := svc.GenerateWrappedDataKey(ctx, &GenerateWrappedDataKeyRequest{KeyID: "dk-sealed"})
+			if resp == nil {
+				return nil, err
+			}
+			return resp, err
+		}},
+	}
+	for _, m := range methods {
+		t.Run(m.name, func(t *testing.T) {
+			tracker := NewAEADSafetyTracker()
+			var current, sealed atomic.Uint64
+			current.Store(1)
+			sealed.Store(1)
+			tracker.SetKeyVersionSource(func(context.Context, string) (uint64, error) {
+				return current.Load(), nil
+			})
+
+			ctx := systemTenantCtx()
+			scoped, err := scopeKeyID(ctx, "dk-sealed")
+			require.NoError(t, err)
+			tracker.SetKeyConfig(scoped, AEADSafetyConfig{MaxOperations: 3, MaxBytes: 1 << 30})
+
+			kmsMgr := newMockKMSManager()
+			kmsMgr.generateDataKeyFn = func(_ context.Context, _ *xkmssdk.KeyAttributes, n int) ([]byte, []byte, error) {
+				blob, err := json.Marshal(&xkmssdk.EncryptedData{Metadata: map[string][]byte{
+					"kv": []byte(strconv.FormatUint(sealed.Load(), 10)),
+				}})
+				return make([]byte, n), blob, err
+			}
+			svc := newCryptoService(newMockCryptoManager(), kmsMgr, newMockLogger(), tracker)
+			call := func() (any, error) { return m.call(svc, ctx) }
+
+			for i := 1; i <= 2; i++ {
+				resp, err := call()
+				require.NoError(t, err, "call %d", i)
+				require.NotNil(t, resp, "call %d", i)
+			}
+			_, err = call()
+			require.Error(t, err, "call 3: v1 is at its limit")
+
+			// Another node rotated; this backend still wraps under v1.
+			current.Store(2)
+			resp, err := call()
+			require.Error(t, err, "call 4: wrapped under the exhausted v1")
+			var qbErr *quicbaasErrors.QBError
+			require.True(t, errors.As(err, &qbErr))
+			assert.Equal(t, quicbaasErrors.ErrEncryption, qbErr.Code)
+			assert.Nil(t, resp)
+
+			// The backend catches up.
+			sealed.Store(2)
+			resp, err = call()
+			require.NoError(t, err, "call 5")
+			require.NotNil(t, resp)
+		})
 	}
 }
