@@ -18,6 +18,8 @@ import (
 	"crypto"
 	"errors"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -321,6 +323,35 @@ func startBufconnModule(t *testing.T, m *Module, opts ...grpc.ServerOption) *grp
 		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
 			return listener.DialContext(ctx)
 		}))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+
+	return conn
+}
+
+// startUnixSocketModule serves the module's gRPC registrations on a real
+// Unix socket and dials it, so the server sees a "unix" peer: the legacy
+// xkms wrappers (unixOnly in grpcRegistrations) answer only such a peer. The
+// socket lives under a short temp dir to stay inside the sun_path limit.
+func startUnixSocketModule(t *testing.T, m *Module, opts ...grpc.ServerOption) *grpc.ClientConn {
+	t.Helper()
+
+	dir, err := os.MkdirTemp("", "qbm")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	socket := filepath.Join(dir, "g.sock")
+
+	listener, err := net.Listen("unix", socket)
+	require.NoError(t, err)
+	server := grpc.NewServer(opts...)
+	m.RegisterGRPC(server)
+	go func() {
+		_ = server.Serve(listener)
+	}()
+	t.Cleanup(server.Stop)
+
+	conn, err := grpc.NewClient("unix://"+socket,
+		grpc.WithTransportCredentials(insecure.NewCredentials()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = conn.Close() })
 
@@ -724,7 +755,7 @@ func TestModule_Crypto_LateBinding(t *testing.T) {
 	}, testLogger(t))
 	require.NoError(t, err)
 
-	client := pb.NewCryptoClient(startBufconnModule(t, m))
+	client := pb.NewCryptoClient(startUnixSocketModule(t, m))
 	ctx := context.Background()
 	req := &pb.CryptoEncryptRequest{KeyId: "app-key", Plaintext: []byte("hello")}
 
@@ -755,7 +786,7 @@ func TestModule_Crypto_DisabledAnswersUnavailable(t *testing.T) {
 	m, err := NewModule(func() service.QuicBaaS { return &mocks.MockQuicBaaS{} }, testLogger(t))
 	require.NoError(t, err)
 
-	client := pb.NewCryptoClient(startBufconnModule(t, m))
+	client := pb.NewCryptoClient(startUnixSocketModule(t, m))
 	_, err = client.Encrypt(context.Background(), &pb.CryptoEncryptRequest{KeyId: "app-key", Plaintext: []byte("x")})
 	requireUnavailable(t, err, "the node's gRPC service")
 }
