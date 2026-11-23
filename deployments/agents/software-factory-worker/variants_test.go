@@ -16,8 +16,11 @@ package softwarefactoryworker
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/version"
 )
 
 // variantFixedPackageFloors is every package the variant vulnerability scan
@@ -76,5 +79,33 @@ func TestVariantDockerfiles_UpgradeAndCheckFixedPackages(t *testing.T) {
 				t.Errorf("want the dpkg --compare-versions floor check before the apt lists are removed; got offsets %d, %d", checkAt, cleanAt)
 			}
 		})
+	}
+}
+
+// variantTrivyArgPattern captures the trusted-firmware variant's trivy pin.
+var variantTrivyArgPattern = regexp.MustCompile(`(?m)^ARG (TRIVY_VERSION|TRIVY_SHA256_AMD64|TRIVY_SHA256_ARM64)=(\S+)$`)
+
+// TestTrustedFirmwareVariant_TrivyPinIsTheToolchainPin proves the variant's
+// trivy is the repository's one trivy pin (pkg/version/toolchain.mk): the
+// same release and the same two release SHA-256s.
+func TestTrustedFirmwareVariant_TrivyPinIsTheToolchainPin(t *testing.T) {
+	dockerfile := readVariantDockerfile(t, "trusted-firmware.Dockerfile")
+	args := map[string]string{}
+	for _, match := range variantTrivyArgPattern.FindAllStringSubmatch(dockerfile, -1) {
+		args[match[1]] = match[2]
+	}
+	toolchain, err := version.Toolchain()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, pair := range [][2]string{
+		{"TRIVY_VERSION", "TRIVY_VERSION"},
+		{"TRIVY_SHA256_AMD64", "TRIVY_SHA256_X86_64"},
+		{"TRIVY_SHA256_ARM64", "TRIVY_SHA256_AARCH64"},
+	} {
+		variant, pin := args[pair[0]], toolchain[pair[1]]
+		if variant == "" || variant != pin {
+			t.Errorf("trusted-firmware.Dockerfile ARG %s = %q, toolchain.mk %s = %q", pair[0], variant, pair[1], pin)
+		}
 	}
 }

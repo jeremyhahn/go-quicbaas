@@ -7,8 +7,9 @@
 # `make optee-qemu`, with bc, bison, cpio, device-tree-compiler, flex,
 # libslirp-dev, ninja-build, python3-cryptography, python3-pyelftools and wget
 # for the rest of that build.
-# trivy is the CI image's trivy pin, checked against its release sha256;
-# change both together.
+# trivy is pinned to the same release and SHA-256s as pkg/version/toolchain.mk
+# (TRIVY_VERSION, TRIVY_SHA256_X86_64, TRIVY_SHA256_AARCH64): change them
+# together; variants_test.go fails when they differ.
 # A project that needs more than the default worker image builds FROM it.
 # The variant runs `apt-get upgrade` because the base image's packages can
 # predate Debian security fixes the vulnerability scan reads, and the floor
@@ -28,9 +29,9 @@
 ARG BASE=ghcr.io/jeremyhahn/quicbaas-software-factory-worker:current
 FROM ${BASE}
 USER root
-ARG TRIVY_VERSION=v0.75.0
-ARG TRIVY_SHA256_AMD64=c6e65abddb348e25f10549df887045629cf28cc72453cd1c63acb717316b3f3f
-ARG TRIVY_SHA256_ARM64=a1ee9f6ffb7d112b64ff726a2a0717c21175c1114361391f4a132956751a13b3
+ARG TRIVY_VERSION=v0.76.2
+ARG TRIVY_SHA256_AMD64=bc0fc726e017b8927a62b2d3531d7a84ee01769daf5c99ed866dced54089fdbf
+ARG TRIVY_SHA256_ARM64=ab9d51f86e6a5fb936f605faff6b593ac51bc378fff4d3e8b9d58358b9c367c3
 RUN apt-get -o Acquire::ForceIPv4=true update \
  && DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::ForceIPv4=true upgrade -y \
  && DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::ForceIPv4=true install -y --no-install-recommends cppcheck ca-certificates curl \
