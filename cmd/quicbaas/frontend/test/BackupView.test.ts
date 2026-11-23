@@ -97,6 +97,26 @@ describe('BackupView', () => {
     expect(mockList.mock.calls).toEqual([[{ limit: 100 }], [{ limit: 150 }]]);
   });
 
+  it('asks again when unreadable records shorten the first page', async () => {
+    mockList
+      .mockResolvedValueOnce({ backups: rows(99), total_count: 150 })
+      .mockResolvedValueOnce({ backups: rows(149), total_count: 150 });
+    render(BackupView);
+    await waitFor(() =>
+      expect(screen.getByText('149 of 150 backups; 1 could not be read')).toBeInTheDocument(),
+    );
+    expect(mockList.mock.calls).toEqual([[{ limit: 100 }], [{ limit: 150 }]]);
+  });
+
+  it('does not ask again when total_count fits the first page', async () => {
+    mockList.mockResolvedValue({ backups: rows(99), total_count: 100 });
+    render(BackupView);
+    await waitFor(() =>
+      expect(screen.getByText('99 of 100 backups; 1 could not be read')).toBeInTheDocument(),
+    );
+    expect(mockList).toHaveBeenCalledTimes(1);
+  });
+
   it('says how many backups could not be read', async () => {
     mockList.mockResolvedValue({ backups: BACKUPS, total_count: 3 });
     render(BackupView);

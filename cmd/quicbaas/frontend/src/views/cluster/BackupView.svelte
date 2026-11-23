@@ -80,10 +80,12 @@
     try {
       const client = await getSDKClient();
       if (!client.backups) { backups = []; error = UNAVAILABLE; return; }
-      // The server has no offset, so the whole collection is fetched by
-      // asking again with limit set to total_count.
+      // The server has no offset and applies the limit before it drops
+      // unreadable records, so a short first page does not mean the list is
+      // complete. Ask again with limit set to total_count whenever it exceeds
+      // the first limit.
       let resp = await client.backups.list({ limit: PAGE });
-      if (resp.total_count > resp.backups.length && resp.backups.length >= PAGE) {
+      if (resp.total_count > PAGE) {
         resp = await client.backups.list({ limit: resp.total_count });
       }
       backups = resp.backups ?? [];
