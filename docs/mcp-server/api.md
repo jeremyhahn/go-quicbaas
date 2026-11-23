@@ -163,6 +163,8 @@ curl -X POST http://127.0.0.1:8888/mcp \
 - `quicbaas_delete` - Delete a key
 - `quicbaas_list` - List entities with pagination
 
+The put and delete tools (`qrdb_put` / `quicbaas_kv_put`, `qrdb_delete` / `quicbaas_kv_delete`) take an optional `expectedVersion`. When it is given, the write is applied only if the key's current version equals it; a key that does not exist has version 0, so `expectedVersion` 0 means create-only. On a mismatch the call fails with a resource-conflict tool error and nothing changes. When it is omitted, the write is unconditional. A successful conditional put returns the new version, `expectedVersion` + 1.
+
 ### Batch Operations
 
 - `quicbaas_batch_put` - Atomic multi-put
