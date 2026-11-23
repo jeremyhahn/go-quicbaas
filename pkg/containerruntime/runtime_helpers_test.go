@@ -67,6 +67,19 @@ func TestGenerateOCIConfig_PrivilegedKeepsAllCapabilities(t *testing.T) {
 
 	assert.Nil(t, oci.Process.Capabilities)
 	assert.False(t, oci.Process.NoNewPrivileges)
+	assert.Nil(t, oci.Linux.Seccomp)
+}
+
+func TestGenerateOCIConfig_SeccompProfile(t *testing.T) {
+	rt := newTestRuntime(t)
+	oci := rt.generateOCIConfig(&ContainerConfig{}, "/rootfs")
+	require.NotNil(t, oci.Linux.Seccomp)
+	assert.Equal(t, "SCMP_ACT_ERRNO", oci.Linux.Seccomp.DefaultAction)
+	assert.False(t, allowed(oci.Linux.Seccomp, "mount"))
+
+	admin := rt.generateOCIConfig(&ContainerConfig{CapAdd: []string{"SYS_ADMIN"}}, "/rootfs")
+	require.NotNil(t, admin.Linux.Seccomp)
+	assert.True(t, allowed(admin.Linux.Seccomp, "mount"))
 }
 
 func TestStopProcess_AFinishedProcessWaitsForItsExitRecord(t *testing.T) {
@@ -244,6 +257,27 @@ func TestGenerateOCIConfig_SandboxDropsAllCapabilities(t *testing.T) {
 	}
 	assert.False(t, oci.Process.NoNewPrivileges, "no_new_privs would stop a setuid sudo")
 	assert.Equal(t, "1000:1000", config.User)
+}
+
+func TestGenerateOCIConfig_SandboxSecuritySeccomp(t *testing.T) {
+	ociFor := func(policy orchestration.SandboxSecurity) *ociConfig {
+		t.Helper()
+		spec := &orchestration.ContainerSpec{Network: "none", Image: "alpine:latest", User: "1000:1000"}
+		require.NoError(t, policy.Apply(spec))
+		config, err := jobContainerConfig(spec)
+		require.NoError(t, err)
+		oci := newTestRuntime(t).generateOCIConfig(config, "/rootfs")
+		require.NotNil(t, oci.Linux.Seccomp)
+		return oci
+	}
+
+	// CAP_SYS_CHROOT and CAP_SYS_ADMIN are dropped, so are their syscalls.
+	sandboxed := ociFor(orchestration.SandboxSecurity{})
+	assert.False(t, allowed(sandboxed.Linux.Seccomp, "chroot"))
+	assert.False(t, allowed(sandboxed.Linux.Seccomp, "mount"))
+
+	withChroot := ociFor(orchestration.SandboxSecurity{CapAdd: []string{"SYS_CHROOT"}})
+	assert.True(t, allowed(withChroot.Linux.Seccomp, "chroot"))
 }
 
 func TestCapabilitySet(t *testing.T) {

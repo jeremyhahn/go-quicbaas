@@ -27,6 +27,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -531,6 +532,7 @@ type ociLinux struct {
 	CgroupsPath   string           `json:"cgroupsPath,omitempty"`
 	MaskedPaths   []string         `json:"maskedPaths,omitempty"`
 	ReadonlyPaths []string         `json:"readonlyPaths,omitempty"`
+	Seccomp       *ociSeccomp      `json:"seccomp,omitempty"`
 }
 
 type ociNamespace struct {
@@ -751,6 +753,11 @@ func (r *Runtime) generateOCIConfig(config *ContainerConfig, rootfsPath string) 
 			Effective: slices.Clone(caps),
 			Permitted: slices.Clone(caps),
 		}
+		// Every unprivileged container gets Docker's default seccomp
+		// profile, resolved for its final capability set, as docker and
+		// podman apply it to sandboxed jobs; a privileged container gets
+		// none, as with `docker run --privileged`.
+		oci.Linux.Seccomp = defaultSeccompProfile(caps, runtime.GOARCH)
 	}
 
 	return oci
