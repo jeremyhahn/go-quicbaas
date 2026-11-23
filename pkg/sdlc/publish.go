@@ -15,6 +15,7 @@ package sdlc
 
 import (
 	"path"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -381,6 +382,43 @@ func (p *publisher) verifyRange(workDir, rangeSpec string) error {
 	return nil
 }
 
+// verifyTrailersFormat is the git log format VerifyTrailers reads: each
+// commit's SHA, a unit separator, its raw message, and a record separator,
+// so a message of several lines stays one record.
+const verifyTrailersFormat = "--format=%H%x1f%B%x1e"
+
+// attributionTrailer matches a message line that credits an AI tool: a
+// Co-Authored-By trailer naming one, or a "Generated with/by" footer. It is
+// the manual factory's rule, case-insensitive and tested per line.
+var attributionTrailer = regexp.MustCompile(`(?im)` +
+	`^[[:space:]]*co-authored-by:.*(claude|anthropic|openai|codex|chatgpt|gpt-|copilot|gemini|opencode|cursor)` +
+	`|generated (with|by) .*(claude|codex|chatgpt|copilot|gemini|opencode|\bai\b)`)
+
+// VerifyTrailers refuses a push whose outgoing commits carry an AI
+// attribution trailer in their messages. It reads the same range as
+// VerifySigned, ending at the ref being pushed, and runs whether or not the
+// project signs its commits. An empty range passes.
+func (p *publisher) VerifyTrailers(plan publishPlan) error {
+	result, err := p.git(publishPlan{WorkDir: plan.WorkDir},
+		"log", verifyTrailersFormat, gitRemote+"/"+plan.Base+".."+pushSource(plan))
+	if err != nil {
+		return err
+	}
+	for _, record := range strings.Split(result.Output(), "\x1e") {
+		sha, body, found := strings.Cut(record, "\x1f")
+		if !found {
+			continue
+		}
+		sha = strings.TrimSpace(sha)
+		for _, line := range strings.Split(body, "\n") {
+			if attributionTrailer.MatchString(line) {
+				return &AttributionTrailerError{TaskID: p.taskID, Commit: sha, Line: strings.TrimSpace(line)}
+			}
+		}
+	}
+	return nil
+}
+
 // signedCommit is one line of verifySignedFormat.
 type signedCommit struct {
 	SHA, Status, Committer, Signer string
@@ -479,10 +517,11 @@ func sshKeyFingerprint(authorizedKey string) (string, error) {
 // EVERY PUSH IS VERIFIED HERE, not by its callers: the end-of-turn publish,
 // the teardown publish of a failed attempt and anything added later share
 // this one path, so no route to the forge can carry a commit the attempt's
-// key did not sign.
+// key did not sign, nor one whose message carries an AI attribution trailer
+// (VerifyTrailers, which runs whether or not the project signs).
 //
 // THE TASK IS RE-READ LAST, immediately before the push (admit). The
-// verification runs a command in the container, and a block that lands on
+// verifications run commands in the container, and a block that lands on
 // another node while it runs must still stop the push. A read made before the
 // verification would miss that block.
 func (p *publisher) Push(plan publishPlan) (string, error) {
@@ -490,6 +529,9 @@ func (p *publisher) Push(plan publishPlan) (string, error) {
 		return "", &InvalidInputError{Field: "admit", Message: "a publisher that cannot re-read its task must not push"}
 	}
 	if err := p.VerifySigned(plan); err != nil {
+		return "", err
+	}
+	if err := p.VerifyTrailers(plan); err != nil {
 		return "", err
 	}
 	if err := p.admit(); err != nil {

@@ -3041,6 +3041,34 @@ func TestRunner_AnUnsignedCommitRefusedAtPublishIsNotPushedAtTeardown(t *testing
 	}
 }
 
+func TestRunner_AnAttributionTrailerRefusedAtPublishParksEscalated(t *testing.T) {
+	rig := newRunnerRig(t)
+	if err := rig.rebind(context.Background(), func(b *ProjectBinding) {
+		b.Verification = []string{"true"}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rig.workerWrote()
+	rig.container.ahead = true
+	rig.container.outgoing = []outgoingCommit{{SHA: "trailer-1", Status: "G", Signer: testSigningFingerprint,
+		Message: "fix: a thing\n\nCo-Authored-By: Claude <noreply@anthropic.com>\n"}}
+
+	job := rig.job(t, "true")
+	err := rig.runner.Run(context.Background(), job)
+	var escalated *EscalatedError
+	if !errors.As(err, &escalated) {
+		t.Fatalf("err = %v, want the attempt parked", err)
+	}
+	parked := job.Parked()
+	if parked == nil || parked.Kind != orchestration.TaskBlockKindEscalated ||
+		parked.FaultClass != orchestration.FaultUntrustedSigner || !strings.Contains(parked.Message, "trailer-1") {
+		t.Fatalf("parked = %+v, want escalated naming the commit", parked)
+	}
+	if len(rig.container.pushes) != 0 {
+		t.Fatalf("pushes = %+v, want none: the trailer commit was published", rig.container.pushes)
+	}
+}
+
 // TestRunnerRun_DecorateAndTaskIDTolerateAnEmptyRun: the snapshot decorator
 // and the task accessor are called from the envelope on a run that may not
 // have reached its first state yet.

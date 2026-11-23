@@ -1563,6 +1563,9 @@ type outgoingCommit struct {
 
 	// Time is the committer time (%ct); zero is testCommitTime.
 	Time time.Time
+
+	// Message is the commit's raw message (%B); empty is a clean message.
+	Message string
 }
 
 // testCommitTime is when a scripted commit was made unless it says otherwise.
@@ -1749,7 +1752,11 @@ type fakeContainer struct {
 	// logRange is the revision range the last "git log" named, which is how a
 	// test proves the signature check reads the ref being pushed.
 	logRange string
-	pushes   []pushedRef
+
+	// trailerRange is the revision range the last trailer "git log" named,
+	// which is how a test proves the trailer check reads the ref being pushed.
+	trailerRange string
+	pushes       []pushedRef
 
 	// diverged models a local branch that no longer descends from what the
 	// remote holds: a worker that rewrote a published commit. Git refuses a
@@ -2149,13 +2156,20 @@ func (c *fakeContainer) exec(containerID string, spec *orchestration.ExecSpec) (
 		if c.logErr != nil {
 			return &orchestration.ExecResult{ExitCode: 128, Stderr: c.logErr.Error()}, nil
 		}
-		c.logConfig = config
-		c.logRange = args[len(args)-1]
 		outgoing := c.outgoing
 		if c.ahead && len(outgoing) == 0 {
 			outgoing = []outgoingCommit{{SHA: "worker-1", Status: "G", Signer: testSigningFingerprint}}
 		}
 		var out strings.Builder
+		if slices.Contains(args, verifyTrailersFormat) {
+			c.trailerRange = args[len(args)-1]
+			for _, commit := range outgoing {
+				out.WriteString(commit.SHA + "\x1f" + commit.Message + "\x1e")
+			}
+			return &orchestration.ExecResult{Stdout: out.String()}, nil
+		}
+		c.logConfig = config
+		c.logRange = args[len(args)-1]
 		for _, commit := range outgoing {
 			out.WriteString(commit.logLine() + "\n")
 		}

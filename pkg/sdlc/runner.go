@@ -1422,8 +1422,9 @@ func (s *runnerRun) conversationToCarry(ctx context.Context) (carriedConversatio
 }
 
 // refusedPush answers a publication that failed: a push the publisher refused
-// for an untrusted signature parks the task escalated for a person, and any
-// other failure is returned as it was.
+// for an untrusted signature, or for an AI attribution trailer in a commit
+// message, parks the task escalated for a person, and any other failure is
+// returned as it was.
 //
 // PARKED, NOT RETRIED. The factory never rewrites a pushed branch to re-sign
 // a commit, so every later attempt would verify the same commits and refuse
@@ -1433,10 +1434,14 @@ func (s *runnerRun) conversationToCarry(ctx context.Context) (carriedConversatio
 // ejected car the same way (trainEjected).
 func (s *runnerRun) refusedPush(err error) (orchestration.JobState, error) {
 	var unsigned *UnsignedCommitError
-	if !errors.As(err, &unsigned) {
-		return "", err
+	if errors.As(err, &unsigned) {
+		return s.park(orchestration.TaskBlockKindEscalated, untrustedSignerReason(unsigned), orchestration.FaultUntrustedSigner), nil
 	}
-	return s.park(orchestration.TaskBlockKindEscalated, untrustedSignerReason(unsigned), orchestration.FaultUntrustedSigner), nil
+	var trailer *AttributionTrailerError
+	if errors.As(err, &trailer) {
+		return s.park(orchestration.TaskBlockKindEscalated, attributionTrailerReason(trailer), orchestration.FaultUntrustedSigner), nil
+	}
+	return "", err
 }
 
 // untrustedSignerReason is what a person reads on a park for an untrusted
@@ -1449,6 +1454,14 @@ func untrustedSignerReason(unsigned *UnsignedCommitError) string {
 	}
 	return detail + "). The factory never rewrites a pushed branch. Record the signing key in the project's trusted " +
 		"signing history if it was the project's, or replace the commit, then readmit the task."
+}
+
+// attributionTrailerReason is the escalation a person reads when a push was
+// refused for an AI attribution trailer: the commit, the line, and the way out.
+func attributionTrailerReason(trailer *AttributionTrailerError) string {
+	return "Commit `" + shortSHA(trailer.Commit) + "` carries an AI attribution trailer in its message (" +
+		strconv.Quote(trailer.Line) + "). The factory never rewrites a pushed branch. Replace the commit with one " +
+		"whose message carries no attribution trailer, then readmit the task."
 }
 
 // refusedVerification answers a verification command the operator's allowlist

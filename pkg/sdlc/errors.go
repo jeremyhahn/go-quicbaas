@@ -118,6 +118,7 @@ var (
 	// is not signed by the attempt's signing key.
 	ErrUnsignedCommit = errors.New("sdlc: an outgoing commit is not signed by the attempt's key")
 
+<<<<<<< e56de5c3892a4b2d0342f0cada026d9b696d1a14
 	// ErrUntracedBrief is returned when a lane brief is asked for from a
 	// spec that names neither a SPEC row nor the owner's words.
 	ErrUntracedBrief = errors.New("sdlc: a lane brief names neither a SPEC row nor the owner's words")
@@ -126,6 +127,11 @@ var (
 	// worker needs: turn budget, file map, expected edit, acceptance, or a
 	// resume reason on a resume.
 	ErrBriefIncomplete = errors.New("sdlc: a lane brief is missing a required line")
+=======
+	// ErrAttributionTrailer is returned when a commit the attempt would
+	// publish carries an AI attribution trailer in its message.
+	ErrAttributionTrailer = errors.New("sdlc: an outgoing commit carries an AI attribution trailer")
+>>>>>>> 4ddba0a5cf228b926519f38a6673e962fc710624
 
 	// ErrDeliveryAbsent indicates a lifecycle moment ran for a task whose
 	// attempt has no Delivery record, so Prepare never completed.
@@ -712,6 +718,7 @@ func (e *UnsignedCommitError) Error() string {
 // Unwrap returns the sentinel for errors.Is support.
 func (e *UnsignedCommitError) Unwrap() error { return ErrUnsignedCommit }
 
+<<<<<<< e56de5c3892a4b2d0342f0cada026d9b696d1a14
 // UntracedBriefError reports a lane brief spec that traces to neither a
 // SPEC row nor the owner's words, so no brief is rendered from it.
 type UntracedBriefError struct {
@@ -741,6 +748,29 @@ func (e *MissingBriefLineError) Error() string {
 
 // Unwrap returns the sentinel for errors.Is support.
 func (e *MissingBriefLineError) Unwrap() error { return ErrBriefIncomplete }
+=======
+// AttributionTrailerError reports an outgoing commit whose message carries an
+// AI attribution trailer (a Co-Authored-By naming an AI tool, or a "Generated
+// with" footer). The push is refused before it reaches the forge.
+type AttributionTrailerError struct {
+	TaskID string
+
+	// Commit is the first outgoing commit whose message matched.
+	Commit string
+
+	// Line is the offending message line, trimmed.
+	Line string
+}
+
+// Error implements the error interface.
+func (e *AttributionTrailerError) Error() string {
+	return "sdlc: task " + e.TaskID + ": commit " + e.Commit +
+		" carries an AI attribution trailer: " + strconv.Quote(e.Line)
+}
+
+// Unwrap returns the sentinel for errors.Is support.
+func (e *AttributionTrailerError) Unwrap() error { return ErrAttributionTrailer }
+>>>>>>> 4ddba0a5cf228b926519f38a6673e962fc710624
 
 // TaskNotForgeIssueError reports a task the module was asked to act on that
 // did not originate from a forge issue.
