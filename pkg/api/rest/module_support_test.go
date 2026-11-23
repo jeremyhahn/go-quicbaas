@@ -291,6 +291,65 @@ func TestBindRoute_NoUpstreamIdentityPassesThrough(t *testing.T) {
 	}
 }
 
+// TestBindRoute_CORSOrigins pins that module routes, which the unified
+// listener serves through BindRoute rather than setupRouter's chain, carry
+// the configured CORS headers for an allow-listed origin only.
+func TestBindRoute_CORSOrigins(t *testing.T) {
+	newCORSServer := func(t *testing.T) *Server {
+		t.Helper()
+		log, err := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg := DefaultConfig()
+		cfg.CORSOrigins = []string{"https://ui.example.com"}
+		srv, err := NewServer(testutil.NewMockQuicBaaS(), cfg, log)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return srv
+	}
+	spec := RouteSpec{Method: "GET", Pattern: "/api/v1/health", Auth: RouteAuthPublic,
+		Handler: func(*Server) http.HandlerFunc {
+			return func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			}
+		},
+	}
+	serve := func(srv *Server, origin string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("GET", "/api/v1/health", nil)
+		req.Header.Set("Origin", origin)
+		w := httptest.NewRecorder()
+		srv.BindRoute(spec).ServeHTTP(w, req)
+		return w
+	}
+
+	t.Run("allow-listed origin", func(t *testing.T) {
+		w := serve(newCORSServer(t), "https://ui.example.com")
+		if w.Code != http.StatusOK {
+			t.Errorf("status = %d, want 200", w.Code)
+		}
+		if got := w.Header().Get("Access-Control-Allow-Origin"); got != "https://ui.example.com" {
+			t.Errorf("Access-Control-Allow-Origin = %q, want %q", got, "https://ui.example.com")
+		}
+	})
+	t.Run("other origin", func(t *testing.T) {
+		w := serve(newCORSServer(t), "https://evil.example")
+		if w.Code != http.StatusOK {
+			t.Errorf("status = %d, want 200", w.Code)
+		}
+		if got := w.Header().Get("Access-Control-Allow-Origin"); got != "" {
+			t.Errorf("Access-Control-Allow-Origin = %q, want empty", got)
+		}
+	})
+	t.Run("no origins configured", func(t *testing.T) {
+		w := serve(newModuleSupportServer(t), "https://ui.example.com")
+		if got := w.Header().Get("Access-Control-Allow-Origin"); got != "" {
+			t.Errorf("Access-Control-Allow-Origin = %q, want empty", got)
+		}
+	})
+}
+
 // TestServer_AuthenticateHTTP_UserToken proves a platform token whose
 // subject is (or may be) a qrdb user is authenticated with Subject/TenantID
 // projected: qrdb's own finalizeIdentity resolves the real Roles from its
