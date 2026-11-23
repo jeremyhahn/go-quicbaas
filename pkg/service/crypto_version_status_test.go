@@ -420,6 +420,7 @@ func TestCryptoService_Decrypt_VersionDisabledOnAnotherNodeIsRefused(t *testing.
 func TestCryptoService_Decrypt_ReportsCiphertextKeyVersion(t *testing.T) {
 	f := newVersionedCryptoFixture(t)
 	f.version.Store(2)
+	f.kmsMgr.keys[versionStatusKeyID].version = 2
 	v2 := f.encrypt(t, "sealed under v2")
 
 	resp, err := f.svc.Decrypt(systemTenantCtx(), &DecryptRequest{KeyID: versionStatusKeyID, Ciphertext: v2})
