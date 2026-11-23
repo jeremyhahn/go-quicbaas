@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -222,7 +223,7 @@ func TestMCPQRDBTimeSeriesClientRoundTripsWithBearer(t *testing.T) {
 			t.Errorf("%s Authorization = %q, want %q", call.tool, call.auth, "Bearer "+token)
 		}
 	}
-	if got[0].args["tags"] != `{"h":"a"}` || got[0].args["timestamp"] != float64(ts.UnixNano()) {
+	if got[0].args["tags"] != `{"h":"a"}` || got[0].args["timestamp"] != strconv.FormatInt(ts.UnixNano(), 10) {
 		t.Errorf("TSWrite args = %v", got[0].args)
 	}
 	if got[2].args["func"] != "avg" || got[2].args["interval_ns"] != float64(time.Minute) {
@@ -371,7 +372,7 @@ func TestMCPQRDBTimeSeriesClientRemainingMethods(t *testing.T) {
 			t.Fatalf("calls = %+v, want one qrdb_ts_write_point", got)
 		}
 		a := got[0].args
-		if a["metric"] != "cpu" || a["value"] != 3.25 || a["timestamp"] != float64(ts.UnixNano()) || a["tags"] != `{"h":"b"}` {
+		if a["metric"] != "cpu" || a["value"] != 3.25 || a["timestamp"] != strconv.FormatInt(ts.UnixNano(), 10) || a["tags"] != `{"h":"b"}` {
 			t.Errorf("TSWritePoint args = %v", a)
 		}
 	})
@@ -415,7 +416,7 @@ func TestMCPQRDBTimeSeriesClientRemainingMethods(t *testing.T) {
 		}
 		a := got[0].args
 		want := map[string]interface{}{
-			"metric": "cpu", "start": float64(1), "end": float64(ts.UnixNano()), "tags": `{"dc":"x"}`,
+			"metric": "cpu", "start": "1", "end": strconv.FormatInt(ts.UnixNano(), 10), "tags": `{"dc":"x"}`,
 			"aggregation": "max", "interval_ns": float64(time.Minute), "group_by": `["host"]`,
 			"limit": float64(10), "percentile": 0.95, "consistency": "linearizable",
 		}
@@ -481,7 +482,7 @@ func TestMCPQRDBTimeSeriesClientRemainingMethods(t *testing.T) {
 			t.Fatalf("calls = %+v, want 2", got)
 		}
 		a := got[0].args
-		if a["metric"] != "cpu" || a["tags"] != `{"h":"a"}` || a["start"] != float64(5) || a["end"] != float64(9) {
+		if a["metric"] != "cpu" || a["tags"] != `{"h":"a"}` || a["start"] != "5" || a["end"] != "9" {
 			t.Errorf("TSDeleteSeries args = %v", a)
 		}
 		for _, k := range []string{"start", "end", "tags"} {
@@ -594,4 +595,86 @@ func TestMCPQRDBTimeSeriesClientRemainingMethods(t *testing.T) {
 			})
 		}
 	})
+}
+
+// qtsExactArg requires args[key] to be a decimal string that parses, as
+// go-qrdb parses it, to exactly want.
+func qtsExactArg(t *testing.T, args map[string]interface{}, key string, want int64) {
+	t.Helper()
+	s, ok := args[key].(string)
+	if !ok {
+		t.Errorf("args[%q] = %v (%T), want decimal string %d", key, args[key], args[key], want)
+		return
+	}
+	got, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		t.Errorf("args[%q] = %q: %v", key, s, err)
+		return
+	}
+	if got != want {
+		t.Errorf("args[%q] = %d, want %d", key, got, want)
+	}
+}
+
+func TestMCPQRDBTimeSeriesClientPreservesNanoseconds(t *testing.T) {
+	const (
+		ns1 int64 = 1_700_000_000_000_000_001
+		ns2 int64 = 1_700_000_000_000_000_002
+	)
+	// JSON numbers decode as float64, which cannot tell these apart.
+	if float64(ns1) != float64(ns2) {
+		t.Fatal("test values must collide as float64")
+	}
+
+	url, calls := newQTSServer(t,
+		[]string{"qrdb_ts_write", "qrdb_ts_write_point", "qrdb_ts_query", "qrdb_ts_aggregate", "qrdb_ts_rich_query", "qrdb_ts_delete_series"},
+		func(tool string, _ map[string]interface{}) string {
+			switch tool {
+			case "qrdb_ts_query", "qrdb_ts_aggregate":
+				return `[]`
+			case "qrdb_ts_rich_query":
+				return `{"metric":"cpu","points":[]}`
+			}
+			return `{"success":true}`
+		})
+	tr, err := New(&transport.Config{Address: url, Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = tr.Close() })
+	c := tr.QRDBTimeSeries()
+	ctx := context.Background()
+
+	if err := c.TSWrite(ctx, &qrdbtransport.TSDataPoint{Metric: "cpu", Value: 1, TimestampNs: ns1}); err != nil {
+		t.Fatalf("TSWrite: %v", err)
+	}
+	if err := c.TSWritePoint(ctx, &qrdbtransport.TSDataPoint{Metric: "cpu", Value: 2, TimestampNs: ns2}); err != nil {
+		t.Fatalf("TSWritePoint: %v", err)
+	}
+	if _, err := c.TSQuery(ctx, &qrdbtransport.TSQueryRequest{Metric: "cpu", StartNs: ns1, EndNs: ns2}); err != nil {
+		t.Fatalf("TSQuery: %v", err)
+	}
+	if _, err := c.TSAggregate(ctx, &qrdbtransport.TSAggregateRequest{Metric: "cpu", StartNs: ns1, EndNs: ns2,
+		Function: qrdbtransport.AggAvg, IntervalNs: int64(time.Second)}); err != nil {
+		t.Fatalf("TSAggregate: %v", err)
+	}
+	if _, err := c.TSRichQuery(ctx, &qrdbtransport.TSRichQueryRequest{Metric: "cpu", StartNs: ns1, EndNs: ns2}); err != nil {
+		t.Fatalf("TSRichQuery: %v", err)
+	}
+	if _, err := c.TSDeleteSeries(ctx, &qrdbtransport.TSDeleteRequest{Metric: "cpu", StartNs: ns1, EndNs: ns2}); err != nil {
+		t.Fatalf("TSDeleteSeries: %v", err)
+	}
+
+	got := calls()
+	if len(got) != 6 {
+		t.Fatalf("calls = %+v, want 6", got)
+	}
+	qtsExactArg(t, got[0].args, "timestamp", ns1)
+	qtsExactArg(t, got[1].args, "timestamp", ns2)
+	for _, call := range got[2:] {
+		t.Run(call.tool, func(t *testing.T) {
+			qtsExactArg(t, call.args, "start", ns1)
+			qtsExactArg(t, call.args, "end", ns2)
+		})
+	}
 }

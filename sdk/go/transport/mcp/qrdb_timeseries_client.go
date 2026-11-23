@@ -6,6 +6,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"time"
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
@@ -196,7 +197,7 @@ func qtsWriteArgs(method string, point *qrdbtransport.TSDataPoint) (map[string]i
 	args := map[string]interface{}{
 		"metric":    point.Metric,
 		"value":     point.Value,
-		"timestamp": point.TimestampNs,
+		"timestamp": qtsExactNs(point.TimestampNs),
 	}
 	tagsJSON, err := qtsTagsToJSON(point.Tags)
 	if err != nil {
@@ -206,6 +207,14 @@ func qtsWriteArgs(method string, point *qrdbtransport.TSDataPoint) (map[string]i
 		args["tags"] = tagsJSON
 	}
 	return args, nil
+}
+
+// qtsExactNs renders a Unix-nanosecond value as a decimal string. MCP
+// arguments decode JSON numbers as float64, which cannot hold current
+// Unix nanoseconds (above 2^53) exactly; go-qrdb parses the string form
+// back to the exact int64.
+func qtsExactNs(ns int64) string {
+	return strconv.FormatInt(ns, 10)
 }
 
 // TSWrite calls qrdb_ts_write.
@@ -249,8 +258,8 @@ func (c *QRDBTimeSeriesClient) TSWriteBatch(ctx context.Context, points []qrdbtr
 func (c *QRDBTimeSeriesClient) TSQuery(ctx context.Context, req *qrdbtransport.TSQueryRequest) (*qrdbtransport.TSQueryResponse, error) {
 	args := map[string]interface{}{
 		"metric": req.Metric,
-		"start":  req.StartNs,
-		"end":    req.EndNs,
+		"start":  qtsExactNs(req.StartNs),
+		"end":    qtsExactNs(req.EndNs),
 	}
 	tagsJSON, err := qtsTagsToJSON(req.Tags)
 	if err != nil {
@@ -292,8 +301,8 @@ func (c *QRDBTimeSeriesClient) TSAggregate(ctx context.Context, req *qrdbtranspo
 	}
 	args := map[string]interface{}{
 		"metric":      req.Metric,
-		"start":       req.StartNs,
-		"end":         req.EndNs,
+		"start":       qtsExactNs(req.StartNs),
+		"end":         qtsExactNs(req.EndNs),
 		"func":        funcName,
 		"interval_ns": req.IntervalNs,
 	}
@@ -335,8 +344,8 @@ func (c *QRDBTimeSeriesClient) TSWritePoint(ctx context.Context, point *qrdbtran
 func (c *QRDBTimeSeriesClient) TSRichQuery(ctx context.Context, req *qrdbtransport.TSRichQueryRequest) (*qrdbtransport.TSRichQueryResponse, error) {
 	args := map[string]interface{}{
 		"metric": req.Metric,
-		"start":  req.StartNs,
-		"end":    req.EndNs,
+		"start":  qtsExactNs(req.StartNs),
+		"end":    qtsExactNs(req.EndNs),
 	}
 	tagsJSON, err := qtsTagsToJSON(req.Tags)
 	if err != nil {
@@ -418,10 +427,10 @@ func (c *QRDBTimeSeriesClient) TSDeleteSeries(ctx context.Context, req *qrdbtran
 		args["tags"] = tagsJSON
 	}
 	if req.StartNs != 0 {
-		args["start"] = req.StartNs
+		args["start"] = qtsExactNs(req.StartNs)
 	}
 	if req.EndNs != 0 {
-		args["end"] = req.EndNs
+		args["end"] = qtsExactNs(req.EndNs)
 	}
 	if _, err := c.t.callQRDBTool(ctx, "qrdb_ts_delete_series", args); err != nil {
 		return nil, err
