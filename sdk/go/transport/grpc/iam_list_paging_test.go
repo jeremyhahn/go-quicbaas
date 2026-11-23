@@ -22,6 +22,7 @@ import (
 
 	iampb "github.com/jeremyhahn/go-quicbaas/api/proto/iam"
 	iam "github.com/jeremyhahn/go-quicbaas/sdk/go/client/iam"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
 
 const pagingTotal = 5
@@ -67,6 +68,34 @@ func (pagingIAMServer) ListTenants(_ context.Context, req *iampb.ListTenantsRequ
 	resp := &iampb.ListTenantsResponse{Total: pagingTotal}
 	for i := lo; i < hi; i++ {
 		resp.Tenants = append(resp.Tenants, &iampb.Tenant{Id: fmt.Sprintf("t%d", i)})
+	}
+	return resp, nil
+}
+
+// continuationTotal is the total the IAM server reports for the app and
+// policy lists: one past the page while more items follow, else the end of
+// the page.
+func continuationTotal(hi int) int32 {
+	if hi < pagingTotal {
+		return int32(hi + 1)
+	}
+	return int32(hi)
+}
+
+func (pagingIAMServer) ListPolicies(_ context.Context, req *iampb.ListPoliciesRequest) (*iampb.ListPoliciesResponse, error) {
+	lo, hi := pageBounds(req.Offset, req.Limit)
+	resp := &iampb.ListPoliciesResponse{Total: continuationTotal(hi)}
+	for i := lo; i < hi; i++ {
+		resp.Policies = append(resp.Policies, &iampb.Policy{Name: fmt.Sprintf("p%d", i), TenantId: req.TenantId})
+	}
+	return resp, nil
+}
+
+func (pagingIAMServer) ListApps(_ context.Context, req *iampb.ListAppsRequest) (*iampb.ListAppsResponse, error) {
+	lo, hi := pageBounds(req.Offset, req.Limit)
+	resp := &iampb.ListAppsResponse{Total: continuationTotal(hi)}
+	for i := lo; i < hi; i++ {
+		resp.Apps = append(resp.Apps, &iampb.Application{ClientId: fmt.Sprintf("a%d", i), Name: fmt.Sprintf("app%d", i)})
 	}
 	return resp, nil
 }
@@ -194,6 +223,73 @@ func TestIAMListPaging_RejectsBadToken(t *testing.T) {
 	for _, l := range pagingLists {
 		if _, err := h.handleRequest(context.Background(), l.service, "List", l.req("x")); err == nil {
 			t.Errorf("%s: page_token \"x\" returned no error", l.name)
+		}
+	}
+}
+
+func policyListRequest(cursor string) map[string]interface{} {
+	return map[string]interface{}{"tenant_id": "t1", "request": map[string]interface{}{"limit": 2, "cursor": cursor}}
+}
+
+func TestIAMListPaging_PoliciesWalkEveryPage(t *testing.T) {
+	h := newPagingIAMHandler(t)
+	ctx := context.Background()
+	seen := map[string]int{}
+	cursor := ""
+	calls := 0
+	for {
+		if calls >= 10 {
+			t.Fatalf("the walk did not end after %d calls", calls)
+		}
+		resp, err := h.handleRequest(ctx, iamPolicyServicePrefix, "List", policyListRequest(cursor))
+		if err != nil {
+			t.Fatalf("call %d: %v", calls, err)
+		}
+		calls++
+		r, ok := resp.(*iam.ListPoliciesResponse)
+		if !ok {
+			t.Fatalf("response is %T, want *iam.ListPoliciesResponse", resp)
+		}
+		if len(r.Policies) > 2 {
+			t.Fatalf("call %d returned %d policies, want at most 2", calls, len(r.Policies))
+		}
+		for _, p := range r.Policies {
+			seen[p.Name]++
+		}
+		if !r.HasMore {
+			if r.NextCursor != "" {
+				t.Errorf("last page NextCursor = %q, want empty", r.NextCursor)
+			}
+			break
+		}
+		if r.NextCursor == "" {
+			t.Fatalf("call %d: HasMore with no NextCursor", calls)
+		}
+		cursor = r.NextCursor
+	}
+	if calls != 3 {
+		t.Errorf("calls = %d, want 3", calls)
+	}
+	if len(seen) != pagingTotal {
+		t.Errorf("saw %d distinct policies, want %d: %v", len(seen), pagingTotal, seen)
+	}
+	for name, n := range seen {
+		if n != 1 {
+			t.Errorf("policy %s seen %d times, want 1", name, n)
+		}
+	}
+}
+
+func TestIAMListPaging_PoliciesRejectBadCursor(t *testing.T) {
+	h := newPagingIAMHandler(t)
+	for _, cursor := range []string{"x", "-1"} {
+		_, err := h.handleRequest(context.Background(), iamPolicyServicePrefix, "List", policyListRequest(cursor))
+		if err == nil {
+			t.Errorf("cursor %q returned no error", cursor)
+			continue
+		}
+		if !errors.IsInvalidInput(err) {
+			t.Errorf("cursor %q: error %v is not invalid input", cursor, err)
 		}
 	}
 }
