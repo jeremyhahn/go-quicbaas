@@ -37,7 +37,7 @@ func revokeAllCtx() context.Context {
 // RevokeAllSessions with no except param revokes all sessions for the user.
 func TestRevokeAllSessions_All(t *testing.T) {
 	mgr := &mockSessionManager{}
-	svc := &mockServiceWithSessions{QuicBaaS: testutil.NewMockQuicBaaS(), mgr: mgr}
+	svc := &mockServiceWithSessions{QuicBaaS: testutil.NewMockQuicBaaS(), mgr: mgr, oidc: newLogoutOIDCProvider(t, iam.NewMemoryStorage())}
 	handler, cleanup := setupHandlerWithService(t, svc)
 	defer cleanup()
 
@@ -60,7 +60,7 @@ func numericUsernameCtx() context.Context {
 // spells: the self-service list and revoke act on the verified account.
 func TestSelfServiceSessions_ANumericUsernameActsOnItsOwnAccount(t *testing.T) {
 	mgr := &mockSessionManager{}
-	svc := &mockServiceWithSessions{QuicBaaS: testutil.NewMockQuicBaaS(), mgr: mgr}
+	svc := &mockServiceWithSessions{QuicBaaS: testutil.NewMockQuicBaaS(), mgr: mgr, oidc: newLogoutOIDCProvider(t, iam.NewMemoryStorage())}
 	handler, cleanup := setupHandlerWithService(t, svc)
 	defer cleanup()
 
@@ -145,7 +145,7 @@ func TestRevokeAllSessions_QueryParamsNotIdentity(t *testing.T) {
 // transport emits them) still succeed.
 func TestRevokeAllSessions_QueryParamsMatchingSubject(t *testing.T) {
 	mgr := &mockSessionManager{}
-	svc := &mockServiceWithSessions{QuicBaaS: testutil.NewMockQuicBaaS(), mgr: mgr}
+	svc := &mockServiceWithSessions{QuicBaaS: testutil.NewMockQuicBaaS(), mgr: mgr, oidc: newLogoutOIDCProvider(t, iam.NewMemoryStorage())}
 	handler, cleanup := setupHandlerWithService(t, svc)
 	defer cleanup()
 
