@@ -48,10 +48,14 @@ const githubSignaturePrefix = "sha256="
 // VerifyWebhook authenticates a delivery, fail-closed and in constant time,
 // exactly as the Gitea adapter does once GitHub's "sha256=" prefix is removed.
 // A signature without the prefix is refused: it is either the legacy SHA-1
-// header or something nobody signed.
+// header or something nobody signed. In FIPS mode a secret shorter than 14
+// bytes is refused.
 func (g *GitHubBackend) VerifyWebhook(payload []byte, signature string, secret []byte) error {
 	if len(secret) == 0 {
 		return &WebhookUnverifiedError{Type: ForgeGitHub, Reason: "no signing secret is configured"}
+	}
+	if fipsEnabled() && len(secret) < minFIPSWebhookSecretBytes {
+		return &WebhookUnverifiedError{Type: ForgeGitHub, Reason: "signing secret is shorter than the 14 bytes FIPS 140-3 requires"}
 	}
 	if signature == "" {
 		return &WebhookUnverifiedError{Type: ForgeGitHub, Reason: "delivery carried no signature"}

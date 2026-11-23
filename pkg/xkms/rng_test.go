@@ -2613,7 +2613,7 @@ func TestJWTVerifyHMAC_Success(t *testing.T) {
 func TestJWTVerifyHMAC_WrongSecret(t *testing.T) {
 	claims := JWTClaims{"sub": "user123"}
 	secret := []byte("correct-secret")
-	wrongSecret := []byte("wrong-secret")
+	wrongSecret := []byte("wrong-secret-hmac-key")
 
 	token, err := JWTSignHMAC(claims, secret)
 	require.NoError(t, err)
@@ -2625,7 +2625,7 @@ func TestJWTVerifyHMAC_WrongSecret(t *testing.T) {
 
 func TestJWTVerifyHMACWithAlgorithm_Success(t *testing.T) {
 	claims := JWTClaims{"sub": "user123"}
-	secret := []byte("my-secret-key")
+	secret := []byte("my-secret-key-for-hmac")
 
 	token, err := JWTSignHMACWithAlgorithm(claims, secret, "HS256")
 	require.NoError(t, err)
@@ -2637,7 +2637,7 @@ func TestJWTVerifyHMACWithAlgorithm_Success(t *testing.T) {
 
 func TestJWTVerifyHMACWithAlgorithm_WrongAlgorithm(t *testing.T) {
 	claims := JWTClaims{"sub": "user123"}
-	secret := []byte("my-secret-key")
+	secret := []byte("my-secret-key-for-hmac")
 
 	token, err := JWTSignHMACWithAlgorithm(claims, secret, "HS256")
 	require.NoError(t, err)
@@ -2664,7 +2664,7 @@ func TestJWTVerifyHMACWithAlgorithm_NotHMAC(t *testing.T) {
 
 func TestJWTVerifyHMACWithAlgorithm_EmptyAlgorithm(t *testing.T) {
 	claims := JWTClaims{"sub": "user123"}
-	secret := []byte("my-secret-key")
+	secret := []byte("my-secret-key-for-hmac")
 
 	token, err := JWTSignHMAC(claims, secret)
 	require.NoError(t, err)

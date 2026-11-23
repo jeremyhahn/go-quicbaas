@@ -26,7 +26,7 @@ import (
 )
 
 // githubWebhookSecret signs every delivery in these tests.
-var githubWebhookSecret = []byte("s3cret")
+var githubWebhookSecret = []byte("github-webhook-s3cret")
 
 // githubSign is the X-Hub-Signature-256 value GitHub sends for payload.
 func githubSign(payload, secret []byte) string {
@@ -58,7 +58,7 @@ func TestGitHubVerifyWebhook_RefusesEveryUnprovenDelivery(t *testing.T) {
 		"no signature":        {payload, "", githubWebhookSecret},
 		"the legacy sha1":     {payload, "sha1=" + strings.TrimPrefix(valid, githubSignaturePrefix), githubWebhookSecret},
 		"not hex":             {payload, "sha256=zz", githubWebhookSecret},
-		"another secret":      {payload, githubSign(payload, []byte("other")), githubWebhookSecret},
+		"another secret":      {payload, githubSign(payload, []byte("another-webhook-secret")), githubWebhookSecret},
 		"a tampered payload":  {[]byte(`{"action":"closed"}`), valid, githubWebhookSecret},
 		"a truncated digest":  {payload, valid[:len(valid)-2], githubWebhookSecret},
 		"an unprefixed match": {payload, strings.TrimPrefix(valid, githubSignaturePrefix), githubWebhookSecret},
@@ -70,6 +70,35 @@ func TestGitHubVerifyWebhook_RefusesEveryUnprovenDelivery(t *testing.T) {
 				t.Fatalf("err = %v, want ErrWebhookUnverified", err)
 			}
 		})
+	}
+}
+
+// TestGitHubVerifyWebhook_FIPSRefusesAShortSecret: in FIPS mode a secret
+// shorter than 14 bytes is refused with the usual unverified error, never
+// passed to HMAC (which would panic the process).
+func TestGitHubVerifyWebhook_FIPSRefusesAShortSecret(t *testing.T) {
+	original := fipsEnabled
+	fipsEnabled = func() bool { return true }
+	t.Cleanup(func() { fipsEnabled = original })
+
+	backend, _ := newGitHubStub(t)
+
+	err := backend.VerifyWebhook([]byte("{}"), "sha256="+strings.Repeat("00", 32), []byte("thirteen-byte"))
+	if !errors.Is(err, ErrWebhookUnverified) {
+		t.Fatalf("a 13-byte secret in FIPS mode: err = %v, want ErrWebhookUnverified", err)
+	}
+	var unverified *WebhookUnverifiedError
+	if !errors.As(err, &unverified) {
+		t.Fatalf("err = %T, want *WebhookUnverifiedError", err)
+	}
+	if !strings.Contains(unverified.Reason, "14 bytes") {
+		t.Errorf("Reason = %q, want it to name the 14-byte minimum", unverified.Reason)
+	}
+
+	payload := []byte(`{"action":"opened"}`)
+	secret := []byte("fourteen-bytes")
+	if err := backend.VerifyWebhook(payload, githubSign(payload, secret), secret); err != nil {
+		t.Fatalf("a 14-byte secret in FIPS mode must verify: %v", err)
 	}
 }
 

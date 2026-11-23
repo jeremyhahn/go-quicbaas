@@ -1765,6 +1765,7 @@ func JWTSignHMAC(claims JWTClaims, secret []byte) (string, error) {
 
 // JWTSignHMACWithAlgorithm signs a JWT using HMAC with a specific algorithm.
 // Supported algorithms: HS256, HS384, HS512.
+// In FIPS mode a secret shorter than 14 bytes is refused with a signing error.
 // Note: This function does not require xkms initialization.
 //
 // Example:
@@ -1779,6 +1780,10 @@ func JWTSignHMACWithAlgorithm(claims JWTClaims, secret []byte, algorithm string)
 	// Verify it's an HMAC method
 	if _, ok := method.(*jwt.SigningMethodHMAC); !ok {
 		return "", &api.JWTSigningError{Detail: "algorithm " + algorithm + " is not HMAC"}
+	}
+
+	if d := checkFIPSHMACSecret(secret); d != "" {
+		return "", &api.JWTSigningError{Detail: d}
 	}
 
 	token := jwt.NewWithClaims(method, claims)
@@ -1803,6 +1808,8 @@ func JWTVerifyHMAC(tokenString string, secret []byte) (JWTClaims, error) {
 
 // JWTVerifyHMACWithAlgorithm verifies an HMAC-signed JWT with algorithm validation.
 // If expectedAlgorithm is empty, any HMAC algorithm is accepted.
+// In FIPS mode a secret shorter than 14 bytes is refused with a verification
+// error, after the token's form and algorithm are checked.
 // Note: This function does not require xkms initialization.
 //
 // Example:
@@ -1818,6 +1825,10 @@ func JWTVerifyHMACWithAlgorithm(tokenString string, secret []byte, expectedAlgor
 		// Verify specific algorithm if specified
 		if expectedAlgorithm != "" && token.Method.Alg() != expectedAlgorithm {
 			return nil, &api.UnexpectedSigningMethodError{Algorithm: fmt.Sprintf("%v, expected %s", token.Header["alg"], expectedAlgorithm)}
+		}
+
+		if d := checkFIPSHMACSecret(secret); d != "" {
+			return nil, &api.JWTVerificationError{Detail: d}
 		}
 
 		return secret, nil

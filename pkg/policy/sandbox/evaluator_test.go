@@ -33,7 +33,7 @@ func (k hmacKey) Verify(ctx context.Context, tenant, _ string, payload, sig []by
 func load(t *testing.T, spec string) (*policy.Engine, *policy.Loaded, error) {
 	t.Helper()
 	ctx := context.Background()
-	key := hmacKey("k")
+	key := hmacKey("sandbox-policy-test-key")
 	e, err := policy.NewEngine(key, Evaluator{})
 	if err != nil {
 		t.Fatal(err)
