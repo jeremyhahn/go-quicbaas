@@ -28,10 +28,11 @@ import (
 )
 
 // reachCase is one orchestrator client method: the request its client hands
-// the transport, and whether it is a server stream.
+// the transport, whether it is a server stream, and the route it must reach.
 type reachCase struct {
 	req    interface{}
 	stream bool
+	route  string // "VERB /path" the server must see; empty for notCarriedOverREST
 }
 
 // clientMethods is every method of orchestratorclient.Client, read from the
@@ -52,71 +53,71 @@ var notCarriedOverREST = map[string]bool{"InferenceStream": true, "SubscribeJobE
 func orchestratorReachCases() map[string]reachCase {
 	def := &orchestratorclient.WorkflowDefinition{Name: "w1", Mode: orchestratorclient.WorkflowModeCanned}
 	return map[string]reachCase{
-		"AttentionList":          {req: &orchestratorclient.AttentionListRequest{}},
-		"AttentionResolve":       {req: &orchestratorclient.AttentionResolveRequest{}},
-		"BlockTask":              {req: &orchestratorclient.BlockTaskRequest{}},
-		"CancelJob":              {req: &orchestratorclient.CancelJobRequest{}},
-		"ClaimTask":              {req: &orchestratorclient.ClaimTaskRequest{}},
-		"CloseSession":           {req: &orchestratorclient.CloseSessionRequest{}},
-		"CompleteTask":           {req: &orchestratorclient.CompleteTaskRequest{}},
-		"CreateTask":             {req: &orchestratorclient.CreateTaskRequest{}},
-		"CreateWorkflow":         {req: &orchestratorclient.CreateWorkflowRequest{Definition: def}},
-		"DecomposeTask":          {req: &orchestratorclient.DecomposeTaskRequest{}},
-		"DeleteTask":             {req: &orchestratorclient.DeleteTaskRequest{}},
-		"DeleteWorkflow":         {req: &orchestratorclient.DeleteWorkflowRequest{}},
-		"DisableFleetNode":       {req: &orchestratorclient.DisableFleetNodeRequest{}},
-		"EnableFleetNode":        {req: &orchestratorclient.EnableFleetNodeRequest{}},
-		"FleetNodeHeartbeat":     {req: &orchestratorclient.FleetNodeHeartbeatRequest{}},
-		"GetFleetNode":           {req: &orchestratorclient.GetFleetNodeRequest{}},
-		"GetJobStatus":           {req: &orchestratorclient.GetJobStatusRequest{}},
-		"GetSessionConversation": {req: &orchestratorclient.GetSessionConversationRequest{SessionID: "s1"}},
-		"GetSessionHistory":      {req: &orchestratorclient.GetSessionHistoryRequest{}},
-		"GetSpendReport":         {req: &orchestratorclient.GetSpendReportRequest{}},
-		"GetTask":                {req: &orchestratorclient.GetTaskRequest{}},
-		"GetTaskArtifact":        {req: &orchestratorclient.GetTaskArtifactRequest{}},
-		"GetWorkflow":            {req: &orchestratorclient.GetWorkflowRequest{}},
+		"AttentionList":          {req: &orchestratorclient.AttentionListRequest{}, route: "GET /api/v1/orchestrator/attention"},
+		"AttentionResolve":       {req: &orchestratorclient.AttentionResolveRequest{TaskID: "t1"}, route: "POST /api/v1/orchestrator/attention/t1/resolve"},
+		"BlockTask":              {req: &orchestratorclient.BlockTaskRequest{TaskID: "t1"}, route: "POST /api/v1/orchestrator/tasks/t1/block"},
+		"CancelJob":              {req: &orchestratorclient.CancelJobRequest{JobID: "j1"}, route: "DELETE /api/v1/orchestrator/jobs/j1"},
+		"ClaimTask":              {req: &orchestratorclient.ClaimTaskRequest{TaskID: "t1"}, route: "POST /api/v1/orchestrator/tasks/t1/claim"},
+		"CloseSession":           {req: &orchestratorclient.CloseSessionRequest{SessionID: "s1"}, route: "DELETE /api/v1/orchestrator/sessions/s1"},
+		"CompleteTask":           {req: &orchestratorclient.CompleteTaskRequest{TaskID: "t1"}, route: "POST /api/v1/orchestrator/tasks/t1/complete"},
+		"CreateTask":             {req: &orchestratorclient.CreateTaskRequest{}, route: "POST /api/v1/orchestrator/tasks"},
+		"CreateWorkflow":         {req: &orchestratorclient.CreateWorkflowRequest{Definition: def}, route: "POST /api/v1/orchestrator/workflows"},
+		"DecomposeTask":          {req: &orchestratorclient.DecomposeTaskRequest{}, route: "POST /api/v1/orchestrator/tasks/decompose"},
+		"DeleteTask":             {req: &orchestratorclient.DeleteTaskRequest{TaskID: "t1"}, route: "DELETE /api/v1/orchestrator/tasks/t1"},
+		"DeleteWorkflow":         {req: &orchestratorclient.DeleteWorkflowRequest{Name: "w1"}, route: "DELETE /api/v1/orchestrator/workflows/w1"},
+		"DisableFleetNode":       {req: &orchestratorclient.DisableFleetNodeRequest{NodeID: "n1"}, route: "POST /api/v1/fleet/n1/disable"},
+		"EnableFleetNode":        {req: &orchestratorclient.EnableFleetNodeRequest{NodeID: "n1"}, route: "POST /api/v1/fleet/n1/enable"},
+		"FleetNodeHeartbeat":     {req: &orchestratorclient.FleetNodeHeartbeatRequest{NodeID: "n1"}, route: "POST /api/v1/fleet/n1/heartbeat"},
+		"GetFleetNode":           {req: &orchestratorclient.GetFleetNodeRequest{NodeID: "n1"}, route: "GET /api/v1/fleet/n1"},
+		"GetJobStatus":           {req: &orchestratorclient.GetJobStatusRequest{JobID: "j1"}, route: "GET /api/v1/orchestrator/jobs/j1"},
+		"GetSessionConversation": {req: &orchestratorclient.GetSessionConversationRequest{SessionID: "s1"}, route: "GET /api/v1/orchestrator/sessions/s1/history"},
+		"GetSessionHistory":      {req: &orchestratorclient.GetSessionHistoryRequest{SessionID: "s1"}},
+		"GetSpendReport":         {req: &orchestratorclient.GetSpendReportRequest{}, route: "GET /api/v1/orchestrator/cost"},
+		"GetTask":                {req: &orchestratorclient.GetTaskRequest{TaskID: "t1"}, route: "GET /api/v1/orchestrator/tasks/t1"},
+		"GetTaskArtifact":        {req: &orchestratorclient.GetTaskArtifactRequest{TaskID: "t1", Name: "a1"}, route: "GET /api/v1/orchestrator/tasks/t1/artifacts/a1"},
+		"GetWorkflow":            {req: &orchestratorclient.GetWorkflowRequest{Name: "w1"}, route: "GET /api/v1/orchestrator/workflows/w1"},
 		// The client's Health request type is unexported; both dialects ignore it.
-		"Health":                      {req: nil},
-		"Inference":                   {req: &orchestratorclient.InferenceRequest{}},
+		"Health":                      {req: nil, route: "GET /api/v1/orchestrator/health"},
+		"Inference":                   {req: &orchestratorclient.InferenceRequest{}, route: "POST /api/v1/orchestrator/inference"},
 		"InferenceStream":             {req: &orchestratorclient.InferenceRequest{}, stream: true},
-		"ListBackendModels":           {req: &orchestratorclient.ListBackendModelsRequest{BackendName: "claude"}},
-		"ListBackends":                {req: &orchestratorclient.ListBackendsRequest{}},
-		"ListFleetNodes":              {req: &orchestratorclient.ListFleetNodesRequest{}},
-		"ListJobs":                    {req: &orchestratorclient.ListJobsRequest{}},
-		"ListRunners":                 {req: &orchestratorclient.ListRunnersRequest{}},
-		"ListSessions":                {req: &orchestratorclient.ListSessionsRequest{}},
-		"ListTaskArtifacts":           {req: &orchestratorclient.ListTaskArtifactsRequest{}},
-		"ListTasks":                   {req: &orchestratorclient.ListTasksRequest{}},
-		"ListWorkflows":               {req: &orchestratorclient.ListWorkflowsRequest{}},
-		"PromptSession":               {req: &orchestratorclient.PromptSessionRequest{}},
-		"ReadmitTask":                 {req: &orchestratorclient.ReadmitTaskRequest{}},
-		"RegisterFleetNode":           {req: &orchestratorclient.RegisterFleetNodeRequest{}},
-		"RemoveFleetNode":             {req: &orchestratorclient.RemoveFleetNodeRequest{}},
-		"RotateSessionAccount":        {req: &orchestratorclient.RotateSessionAccountRequest{SessionID: "s1"}},
-		"SessionStatus":               {req: &orchestratorclient.SessionStatusRequest{}},
-		"SpawnChildJob":               {req: &orchestratorclient.SpawnChildJobRequest{}},
-		"SpawnSession":                {req: &orchestratorclient.SpawnSessionRequest{Backend: "claude"}},
-		"StartJob":                    {req: &orchestratorclient.StartJobRequest{}},
-		"SubmitTaskArtifacts":         {req: &orchestratorclient.SubmitTaskArtifactsRequest{}},
+		"ListBackendModels":           {req: &orchestratorclient.ListBackendModelsRequest{NodeID: "n1", BackendName: "claude"}, route: "GET /api/v1/fleet/n1/backends/claude/models"},
+		"ListBackends":                {req: &orchestratorclient.ListBackendsRequest{}, route: "GET /api/v1/orchestrator/backends"},
+		"ListFleetNodes":              {req: &orchestratorclient.ListFleetNodesRequest{}, route: "GET /api/v1/fleet"},
+		"ListJobs":                    {req: &orchestratorclient.ListJobsRequest{}, route: "GET /api/v1/orchestrator/jobs"},
+		"ListRunners":                 {req: &orchestratorclient.ListRunnersRequest{}, route: "GET /api/v1/orchestrator/runners"},
+		"ListSessions":                {req: &orchestratorclient.ListSessionsRequest{}, route: "GET /api/v1/orchestrator/sessions"},
+		"ListTaskArtifacts":           {req: &orchestratorclient.ListTaskArtifactsRequest{TaskID: "t1"}, route: "GET /api/v1/orchestrator/tasks/t1/artifacts"},
+		"ListTasks":                   {req: &orchestratorclient.ListTasksRequest{}, route: "GET /api/v1/orchestrator/tasks"},
+		"ListWorkflows":               {req: &orchestratorclient.ListWorkflowsRequest{}, route: "GET /api/v1/orchestrator/workflows"},
+		"PromptSession":               {req: &orchestratorclient.PromptSessionRequest{SessionID: "s1"}, route: "POST /api/v1/orchestrator/sessions/s1/prompt"},
+		"ReadmitTask":                 {req: &orchestratorclient.ReadmitTaskRequest{TaskID: "t1"}, route: "POST /api/v1/orchestrator/tasks/t1/readmit"},
+		"RegisterFleetNode":           {req: &orchestratorclient.RegisterFleetNodeRequest{}, route: "POST /api/v1/fleet"},
+		"RemoveFleetNode":             {req: &orchestratorclient.RemoveFleetNodeRequest{NodeID: "n1"}, route: "DELETE /api/v1/fleet/n1"},
+		"RotateSessionAccount":        {req: &orchestratorclient.RotateSessionAccountRequest{SessionID: "s1"}, route: "POST /api/v1/orchestrator/sessions/s1/rotate-account"},
+		"SessionStatus":               {req: &orchestratorclient.SessionStatusRequest{SessionID: "s1"}, route: "GET /api/v1/orchestrator/sessions/s1"},
+		"SpawnChildJob":               {req: &orchestratorclient.SpawnChildJobRequest{ParentJobID: "j1"}, route: "POST /api/v1/orchestrator/jobs/j1/children"},
+		"SpawnSession":                {req: &orchestratorclient.SpawnSessionRequest{Backend: "claude"}, route: "POST /api/v1/orchestrator/sessions"},
+		"StartJob":                    {req: &orchestratorclient.StartJobRequest{}, route: "POST /api/v1/orchestrator/jobs"},
+		"SubmitTaskArtifacts":         {req: &orchestratorclient.SubmitTaskArtifactsRequest{TaskID: "t1"}, route: "POST /api/v1/orchestrator/tasks/t1/artifacts"},
 		"SubscribeJobEvents":          {req: &orchestratorclient.SubscribeJobEventsRequest{}, stream: true},
-		"SubscribeSessionEvents":      {req: &orchestratorclient.SubscribeSessionEventsRequest{SessionID: "s1"}, stream: true},
-		"UpdateWorkflow":              {req: &orchestratorclient.UpdateWorkflowRequest{Name: "w1", Definition: def}},
-		"GetTenantSpendPolicy":        {req: &orchestratorclient.GetTenantSpendPolicyRequest{}},
-		"SetTenantSpendPolicy":        {req: &orchestratorclient.SetTenantSpendPolicyRequest{}},
-		"GetCostSettings":             {req: &orchestratorclient.GetCostSettingsRequest{}},
-		"SetCostSettings":             {req: &orchestratorclient.SetCostSettingsRequest{}},
-		"DeclareFleetPlacementSpec":   {req: &orchestratorclient.DeclareFleetPlacementSpecRequest{Spec: &orchestratorclient.FleetPlacementSpec{Name: "p1"}}},
-		"GetFleetPlacementSpec":       {req: &orchestratorclient.FleetPlacementSpecRequest{Name: "p1"}},
-		"ListFleetPlacementSpecs":     {req: &orchestratorclient.ListFleetPlacementSpecsRequest{}},
-		"WithdrawFleetPlacementSpec":  {req: &orchestratorclient.FleetPlacementSpecRequest{Name: "p1"}},
-		"GetFleetPlacementDrift":      {req: &orchestratorclient.FleetPlacementSpecRequest{Name: "p1"}},
-		"ListFleetPlacementConsents":  {req: &orchestratorclient.ListFleetPlacementConsentsRequest{}},
-		"AnswerFleetPlacementConsent": {req: &orchestratorclient.AnswerFleetPlacementConsentRequest{ID: "c1", State: "granted"}},
+		"SubscribeSessionEvents":      {req: &orchestratorclient.SubscribeSessionEventsRequest{SessionID: "s1"}, stream: true, route: "GET /api/v1/orchestrator/sessions/s1/events"},
+		"UpdateWorkflow":              {req: &orchestratorclient.UpdateWorkflowRequest{Name: "w1", Definition: def}, route: "PUT /api/v1/orchestrator/workflows/w1"},
+		"GetTenantSpendPolicy":        {req: &orchestratorclient.GetTenantSpendPolicyRequest{}, route: "GET /api/v1/orchestrator/spend-policy"},
+		"SetTenantSpendPolicy":        {req: &orchestratorclient.SetTenantSpendPolicyRequest{}, route: "PUT /api/v1/orchestrator/spend-policy"},
+		"GetCostSettings":             {req: &orchestratorclient.GetCostSettingsRequest{}, route: "GET /api/v1/orchestrator/cost-settings"},
+		"SetCostSettings":             {req: &orchestratorclient.SetCostSettingsRequest{}, route: "PUT /api/v1/orchestrator/cost-settings"},
+		"DeclareFleetPlacementSpec":   {req: &orchestratorclient.DeclareFleetPlacementSpecRequest{Spec: &orchestratorclient.FleetPlacementSpec{Name: "p1"}}, route: "PUT /api/v1/fleet/placements/p1"},
+		"GetFleetPlacementSpec":       {req: &orchestratorclient.FleetPlacementSpecRequest{Name: "p1"}, route: "GET /api/v1/fleet/placements/p1"},
+		"ListFleetPlacementSpecs":     {req: &orchestratorclient.ListFleetPlacementSpecsRequest{}, route: "GET /api/v1/fleet/placements"},
+		"WithdrawFleetPlacementSpec":  {req: &orchestratorclient.FleetPlacementSpecRequest{Name: "p1"}, route: "DELETE /api/v1/fleet/placements/p1"},
+		"GetFleetPlacementDrift":      {req: &orchestratorclient.FleetPlacementSpecRequest{Name: "p1"}, route: "GET /api/v1/fleet/placements/p1/drift"},
+		"ListFleetPlacementConsents":  {req: &orchestratorclient.ListFleetPlacementConsentsRequest{}, route: "GET /api/v1/fleet/placement-consents"},
+		"AnswerFleetPlacementConsent": {req: &orchestratorclient.AnswerFleetPlacementConsentRequest{ID: "c1", State: "granted"}, route: "POST /api/v1/fleet/placement-consents/c1/answer"},
 	}
 }
 
 // TestOrchestratorReach_QUIC calls every orchestrator client method over
-// HTTP/3 and asserts that each one reaches the server under /api/v1/, except
+// HTTP/3 and asserts that every request it sends equals its route, except
 // the streams the REST dialect does not carry, which must fail Unimplemented
 // without sending anything.
 func TestOrchestratorReach_QUIC(t *testing.T) {
@@ -150,6 +151,12 @@ func TestOrchestratorReach_QUIC(t *testing.T) {
 	sort.Strings(want)
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("case table does not cover the client's methods\n got: %v\nwant: %v", got, want)
+	}
+
+	for name, c := range cases {
+		if !notCarriedOverREST[name] && c.route == "" {
+			t.Fatalf("%s: case has no route", name)
+		}
 	}
 
 	for _, name := range clientMethods() {
@@ -188,14 +195,13 @@ func TestOrchestratorReach_QUIC(t *testing.T) {
 				}
 				return
 			}
-			reached := false
-			for _, r := range sent {
-				if _, path, ok := strings.Cut(r, " "); ok && strings.HasPrefix(path, "/api/v1/") {
-					reached = true
-				}
+			if len(sent) == 0 {
+				t.Fatalf("%s: nothing reached the server (err %v)", name, err)
 			}
-			if !reached {
-				t.Errorf("%s: no request under /api/v1/ reached the server (sent %v, err %v)", name, sent, err)
+			for _, r := range sent {
+				if r != c.route {
+					t.Errorf("%s: server saw %q, want %q (all: %v)", name, r, c.route, sent)
+				}
 			}
 		})
 	}
