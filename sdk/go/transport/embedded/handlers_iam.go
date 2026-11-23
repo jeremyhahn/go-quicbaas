@@ -1179,13 +1179,15 @@ func handleIAMAppRegister(ctx context.Context, svc service.QuicBaaS, req interfa
 		RedirectURIs:            sdkReq.RedirectURIs,
 		GrantTypes:              grants,
 		ResponseTypes:           sdkReq.ResponseTypes,
-		ResourcePrefix:          "",
+		ResourcePrefix:          sdkReq.ResourcePrefix,
 		TokenEndpointAuthMethod: sdkReq.TokenEndpointAuthMethod.String(),
 	})
 	if err != nil {
 		return nil, err
 	}
 	out := sdkAppFromInternal(a)
+	// RegisterApp returns the plaintext secret only on this call.
+	out.ClientSecret = a.ClientSecret
 	return &out, nil
 }
 
