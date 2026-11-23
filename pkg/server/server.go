@@ -269,9 +269,10 @@ type Server struct {
 
 	// Backup manager - handles backup and restore operations
 	backupManager *backup.BackupManager
-	// backupStorage provides the interfaces.Storage needed by the backup manager.
-	// Created during startBackupManager and closed during stopBackupManager.
-	backupStorage *backupStorageAdapter
+	// backupStorage is the backup manager's data store: the embedded qrdb
+	// node's live platform-shard keyspace. Created during startBackupManager
+	// and cleared during stopBackupManager.
+	backupStorage *backupLiveStorage
 
 	// Object storage catalog components
 	catalogManager catalog.CatalogManager
