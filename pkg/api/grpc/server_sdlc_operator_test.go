@@ -39,6 +39,17 @@ func TestSDLCConverters_RulersSurviveTheWire(t *testing.T) {
 	}
 }
 
+func TestSDLCConverters_ProfileSurvivesTheWire(t *testing.T) {
+	binding := profiledProtoBinding()
+	binding.Profile = sdlc.ProfileAINative
+	if back := bindingFromProto(bindingToProto(binding)); back.Profile != sdlc.ProfileAINative {
+		t.Fatalf("profile = %q, want ai-native: a rebind through gRPC would drop it", back.Profile)
+	}
+	if none := bindingFromProto(bindingToProto(&sdlc.ProjectBinding{ProjectID: "p"})); none.Profile != sdlc.ProfileStandard {
+		t.Fatalf("an empty profile became %q", none.Profile)
+	}
+}
+
 func TestSDLCConverters_ForgeIssue(t *testing.T) {
 	if forgeIssueToProto(nil) != nil {
 		t.Fatal("a nil issue became a message")

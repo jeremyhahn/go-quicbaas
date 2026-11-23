@@ -371,6 +371,11 @@ type ProjectBinding struct {
 	// whole record.
 	Rulers []string `json:"rulers,omitempty" yaml:"rulers,omitempty"`
 
+	// Profile is the SDLC profile the binding is held to: empty for the
+	// standard profile, or "ai-native". Carried for the reason Reviewers is:
+	// a bind replaces the whole record.
+	Profile string `json:"profile,omitempty" yaml:"profile,omitempty"`
+
 	CreatedAt time.Time `json:"created_at,omitempty" yaml:"created_at,omitempty"`
 	UpdatedAt time.Time `json:"updated_at,omitempty" yaml:"updated_at,omitempty"`
 }

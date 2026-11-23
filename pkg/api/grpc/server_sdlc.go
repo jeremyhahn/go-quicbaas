@@ -452,6 +452,7 @@ func bindingFromProto(p *pb.ProjectBinding) *sdlc.ProjectBinding {
 	b.WorkerPromptAppend = p.WorkerPromptAppend
 	b.TriagePromptAppend = p.TriagePromptAppend
 	b.Rulers = append([]string(nil), p.Rulers...)
+	b.Profile = sdlc.SDLCProfile(p.Profile)
 	if p.MergeTrain != nil {
 		b.MergeTrain = sdlc.MergeTrainPolicy{Disabled: p.MergeTrain.Disabled, MaxSize: int(p.MergeTrain.MaxSize)}
 	}
@@ -501,6 +502,7 @@ func bindingToProto(b *sdlc.ProjectBinding) *pb.ProjectBinding {
 		WorkerPromptAppend: b.WorkerPromptAppend,
 		TriagePromptAppend: b.TriagePromptAppend,
 		Rulers:             append([]string(nil), b.Rulers...),
+		Profile:            string(b.Profile),
 		MergeTrain:         &pb.MergeTrainPolicy{Disabled: b.MergeTrain.Disabled, MaxSize: int32(b.MergeTrain.MaxSize)},
 		Clustering:         &pb.ClusteringPolicy{Disabled: b.Clustering.Disabled, MaxSize: int32(b.Clustering.MaxSize)},
 		Triage:             AgentRefToProto(b.Triage),

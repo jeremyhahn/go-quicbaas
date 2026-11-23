@@ -55,3 +55,15 @@ func TestSDLCEmbedded_RulersSurviveTheInProcessHop(t *testing.T) {
 		t.Fatalf("from domain: %v", back.Rulers)
 	}
 }
+
+func TestSDLCEmbedded_ProfileSurvivesTheInProcessHop(t *testing.T) {
+	if domain := sdlcBindingToDomain(&sdlc.ProjectBinding{ProjectID: "p1", Profile: "ai-native"}); domain.Profile != pkgsdlc.ProfileAINative {
+		t.Fatalf("to domain: %q", domain.Profile)
+	}
+	if back := sdlcBindingFromDomain(&pkgsdlc.ProjectBinding{ProjectID: "p1", Profile: pkgsdlc.ProfileAINative}); back.Profile != "ai-native" {
+		t.Fatalf("from domain: %q", back.Profile)
+	}
+	if empty := sdlcBindingFromDomain(sdlcBindingToDomain(&sdlc.ProjectBinding{ProjectID: "p2"})); empty.Profile != "" {
+		t.Fatalf("the hop invented a profile: %q", empty.Profile)
+	}
+}

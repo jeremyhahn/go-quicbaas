@@ -72,6 +72,10 @@ var sdlcBindingSchema = map[string]interface{}{
 			"type":        "string",
 			"description": "The registered SDLC the project follows: github-flow, trunk-based or gitflow",
 		},
+		"profile": map[string]interface{}{
+			"type":        "string",
+			"description": "The SDLC profile the binding is held to: empty for the standard profile, or ai-native, which refuses a binding that leaves any link of the factory's artifact chain off",
+		},
 		"worker": agentRefSchema("The Agent or pool that writes the code; every Agent it names declares the coding role."),
 		"worker_prompt_append": map[string]interface{}{
 			"type":        "string",
