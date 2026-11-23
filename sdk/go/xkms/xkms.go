@@ -225,6 +225,7 @@ var (
 	ErrCertNotFound                   = xkmssdk.ErrCertNotFound
 	ErrInvalidKeyAlgorithm            = xkmssdk.ErrInvalidKeyAlgorithm
 	ErrInvalidKeyStore                = xkmssdk.ErrInvalidKeyStore
+	ErrPIVImportNotSupported          = xkmssdk.ErrPIVImportNotSupported
 	ErrPlatformSRKAlreadyEnrolled     = xkmssdk.ErrPlatformSRKAlreadyEnrolled
 	ErrPlatformSRKEnrollEmptyPIN      = xkmssdk.ErrPlatformSRKEnrollEmptyPIN
 	ErrTPMEndorsementCertNotFound     = xkmssdk.ErrTPMEndorsementCertNotFound
@@ -232,6 +233,7 @@ var (
 	ErrTPMNotInitialized              = xkmssdk.ErrTPMNotInitialized
 	ErrTPMStoreCertNotFound           = xkmssdk.ErrTPMStoreCertNotFound
 	IDevIDAttributesFromConfig        = xkmssdk.IDevIDAttributesFromConfig
+	ImportPIVKey                      = xkmssdk.ImportPIVKey
 	LDevIDAttributesFromConfig        = xkmssdk.LDevIDAttributesFromConfig
 	KeyAttributesFromConfig           = xkmssdk.KeyAttributesFromConfig
 	MinimalInstallOptions             = xkmssdk.MinimalInstallOptions
@@ -382,6 +384,8 @@ type (
 	HealthResponse                     = xkmssdk.HealthResponse
 	ImportKeyRequest                   = xkmssdk.ImportKeyRequest
 	ImportKeyResponse                  = xkmssdk.ImportKeyResponse
+	ImportPIVKeyRequest                = xkmssdk.ImportPIVKeyRequest
+	ImportPIVKeyResponse               = xkmssdk.ImportPIVKeyResponse
 	InitStatusResponse                 = xkmssdk.InitStatusResponse
 	IsRevokedRequest                   = xkmssdk.IsRevokedRequest
 	IsRevokedResponse                  = xkmssdk.IsRevokedResponse
