@@ -36,7 +36,10 @@ type mockAttestor struct {
 	generateNonce func(ctx context.Context) ([]byte, error)
 }
 
-func (m *mockAttestor) VerifyQuote(ctx context.Context, quote, signature, aik []byte) (map[int][]byte, error) {
+func (m *mockAttestor) VerifyQuote(ctx context.Context, quote, signature, aik, nonce []byte) (map[int][]byte, error) {
+	if len(nonce) == 0 {
+		return nil, errors.New("quote carries no nonce")
+	}
 	if m.verifyFunc != nil {
 		return m.verifyFunc(ctx, quote, signature, aik)
 	}
@@ -112,8 +115,12 @@ func (m *mockQuicBaaSClient) Delete(ctx context.Context, entityType, key string)
 }
 
 // Helper to create valid attestation evidence.
-func createTestEvidence(t *testing.T, clientID string) string {
+func createTestEvidence(t *testing.T, h *RegistryAuthHandler, clientID string) string {
 	t.Helper()
+	nonce, err := h.IssueChallenge(clientID)
+	if err != nil {
+		t.Fatalf("issue challenge: %v", err)
+	}
 	evidence := AttestationEvidence{
 		Quote:     []byte("test-quote-data"),
 		Signature: []byte("test-signature"),
@@ -123,7 +130,7 @@ func createTestEvidence(t *testing.T, clientID string) string {
 			0: {0x00, 0x01, 0x02, 0x03},
 			7: {0x07, 0x08, 0x09, 0x0a},
 		},
-		Nonce:     []byte("test-nonce"),
+		Nonce:     nonce,
 		Timestamp: time.Now().UTC(),
 	}
 	data, err := json.Marshal(evidence)
@@ -239,7 +246,7 @@ func TestAuthenticate_Success(t *testing.T) {
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/v2/test/manifests/latest", nil)
-	req.Header.Set(HeaderAttestationEvidence, createTestEvidence(t, "test-client-1"))
+	req.Header.Set(HeaderAttestationEvidence, createTestEvidence(t, handler, "test-client-1"))
 
 	ctx := context.Background()
 	session, err := handler.Authenticate(ctx, req)
@@ -257,6 +264,67 @@ func TestAuthenticate_Success(t *testing.T) {
 	}
 	if !session.IsValid() {
 		t.Error("expected session to be valid")
+	}
+}
+
+// TestAuthenticate_ReplayRefused proves a captured quote cannot be presented
+// twice, that a nonce the handler never issued is refused, and that a nonce
+// issued to one client does not admit another.
+func TestAuthenticate_ReplayRefused(t *testing.T) {
+	handler, err := NewRegistryAuthHandler(&mockAttestor{}, &mockPolicyEngine{}, newMockQuicBaaSClient())
+	if err != nil {
+		t.Fatalf("failed to create handler: %v", err)
+	}
+	ctx := context.Background()
+	authWith := func(header string) error {
+		req := httptest.NewRequest(http.MethodGet, "/v2/test/manifests/latest", nil)
+		req.Header.Set(HeaderAttestationEvidence, header)
+		_, err := handler.Authenticate(ctx, req)
+		return err
+	}
+
+	captured := createTestEvidence(t, handler, "client-a")
+	if err := authWith(captured); err != nil {
+		t.Fatalf("first presentation refused: %v", err)
+	}
+	var quoteErr InvalidQuoteError
+	if err := authWith(captured); !errors.As(err, &quoteErr) {
+		t.Fatalf("replayed evidence: got %v, want InvalidQuoteError", err)
+	}
+
+	forged := func(clientID string, nonce []byte) string {
+		data, err := json.Marshal(AttestationEvidence{
+			Quote: []byte("q"), Signature: []byte("s"), AIK: []byte("aik"),
+			ClientID: clientID, Nonce: nonce, Timestamp: time.Now().Add(time.Hour),
+		})
+		if err != nil {
+			t.Fatalf("marshal evidence: %v", err)
+		}
+		return base64.StdEncoding.EncodeToString(data)
+	}
+	if err := authWith(forged("client-a", []byte("never-issued"))); !errors.As(err, &quoteErr) {
+		t.Fatalf("unissued nonce: got %v, want InvalidQuoteError", err)
+	}
+	if err := authWith(forged("client-a", nil)); !errors.As(err, &quoteErr) {
+		t.Fatalf("missing nonce: got %v, want InvalidQuoteError", err)
+	}
+	nonceB, err := handler.IssueChallenge("client-b")
+	if err != nil {
+		t.Fatalf("issue challenge: %v", err)
+	}
+	if err := authWith(forged("client-a", nonceB)); !errors.As(err, &quoteErr) {
+		t.Fatalf("another client's nonce: got %v, want InvalidQuoteError", err)
+	}
+
+	expiring, err := NewRegistryAuthHandler(&mockAttestor{}, &mockPolicyEngine{}, newMockQuicBaaSClient(),
+		WithChallengeTTL(-time.Second))
+	if err != nil {
+		t.Fatalf("failed to create handler: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/v2/test/manifests/latest", nil)
+	req.Header.Set(HeaderAttestationEvidence, createTestEvidence(t, expiring, "client-a"))
+	if _, err := expiring.Authenticate(ctx, req); !errors.As(err, &quoteErr) {
+		t.Fatalf("expired nonce: got %v, want InvalidQuoteError", err)
 	}
 }
 
@@ -300,6 +368,9 @@ func TestAuthenticate_AIKPrefixCollisionRejected(t *testing.T) {
 		ClientID:  "client",
 		Timestamp: time.Now().UTC(),
 	}
+	if evidence.Nonce, err = handler.IssueChallenge("client"); err != nil {
+		t.Fatalf("issue challenge: %v", err)
+	}
 	data, err := json.Marshal(evidence)
 	if err != nil {
 		t.Fatalf("marshal evidence: %v", err)
@@ -314,6 +385,9 @@ func TestAuthenticate_AIKPrefixCollisionRejected(t *testing.T) {
 	}
 
 	evidence.AIK = keyA
+	if evidence.Nonce, err = handler.IssueChallenge("client"); err != nil {
+		t.Fatalf("issue challenge: %v", err)
+	}
 	data, err = json.Marshal(evidence)
 	if err != nil {
 		t.Fatalf("marshal evidence: %v", err)
@@ -465,7 +539,7 @@ func TestAuthenticate_QuoteVerificationFailed(t *testing.T) {
 	handler, _ := NewRegistryAuthHandler(attestor, policy, db)
 
 	req := httptest.NewRequest(http.MethodGet, "/v2/test/manifests/latest", nil)
-	req.Header.Set(HeaderAttestationEvidence, createTestEvidence(t, "test-client"))
+	req.Header.Set(HeaderAttestationEvidence, createTestEvidence(t, handler, "test-client"))
 
 	ctx := context.Background()
 	_, err := handler.Authenticate(ctx, req)
@@ -493,7 +567,7 @@ func TestAuthenticate_PolicyDenied(t *testing.T) {
 	handler, _ := NewRegistryAuthHandler(attestor, policy, db)
 
 	req := httptest.NewRequest(http.MethodGet, "/v2/test/manifests/latest", nil)
-	req.Header.Set(HeaderAttestationEvidence, createTestEvidence(t, "test-client"))
+	req.Header.Set(HeaderAttestationEvidence, createTestEvidence(t, handler, "test-client"))
 
 	ctx := context.Background()
 	_, err := handler.Authenticate(ctx, req)
@@ -524,7 +598,7 @@ func TestAuthenticate_PCRMismatch(t *testing.T) {
 	handler, _ := NewRegistryAuthHandler(attestor, policy, db, WithRequiredPCRs(requiredPCRs))
 
 	req := httptest.NewRequest(http.MethodGet, "/v2/test/manifests/latest", nil)
-	req.Header.Set(HeaderAttestationEvidence, createTestEvidence(t, "test-client"))
+	req.Header.Set(HeaderAttestationEvidence, createTestEvidence(t, handler, "test-client"))
 
 	ctx := context.Background()
 	_, err := handler.Authenticate(ctx, req)
@@ -548,7 +622,7 @@ func TestValidateSession_Success(t *testing.T) {
 
 	// First authenticate to create a session
 	req := httptest.NewRequest(http.MethodGet, "/v2/test/manifests/latest", nil)
-	req.Header.Set(HeaderAttestationEvidence, createTestEvidence(t, "test-client"))
+	req.Header.Set(HeaderAttestationEvidence, createTestEvidence(t, handler, "test-client"))
 
 	ctx := context.Background()
 	session, err := handler.Authenticate(ctx, req)
