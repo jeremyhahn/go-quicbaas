@@ -259,6 +259,7 @@ func (r *ToolRegistry) registerTools() {
 
 	// Register Agent Admin tools (global disable/enable)
 	r.registerFleetAdminTools()
+	r.registerFleetPlacementTools()
 
 	// Register Barrier lifecycle tools (mirrors REST /api/v1/barrier surface)
 	r.registerBarrierTools()
@@ -1460,6 +1461,9 @@ func (r *ToolRegistry) ExecuteTool(ctx context.Context, name string, args map[st
 		// Check if it is an Agent Admin tool (disable/enable globally)
 		if isFleetAdminTool(name) {
 			return r.executeFleetAdminTool(ctx, name, args)
+		}
+		if isFleetPlacementTool(name) {
+			return r.executeFleetPlacementTool(ctx, name, args)
 		}
 
 		// Check if it is a Barrier lifecycle tool.

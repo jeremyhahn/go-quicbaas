@@ -159,9 +159,14 @@ import (
 // (/api/v1/kv/{type}/{key}/compare-and-swap and /put-if-absent,
 // go-quicbaas#2029) under kv:put. PLUS 4 for the go-xkms TCG CA routes
 // (/api/v1/xkms/ca/tcg/{ak,ek,enroll,sign-csr}, #1330) under certs:generate.
+// PLUS 5 for the fleet placement specs (/api/v1/fleet/placements[/{name}
+// [/drift]], handlers_fleet_placement.go, go-quicbaas#1681) under
+// placement:read and placement:manage.
+// PLUS 2 for the fleet placement consents (GET /api/v1/fleet/placement-consents
+// and POST .../{id}/answer) under placement:read and placement:consent.
 // PLUS 1 for the capabilities report (GET /api/v1/server/capabilities,
 // handlers_capabilities.go), authenticated with no RBAC permission.
-const baseRouteTableSize = 680
+const baseRouteTableSize = 687
 
 // TestRoutes_SurfaceGuard asserts the table's structural invariants: exact
 // size, absolute patterns, no duplicate method+pattern, and a handler binder

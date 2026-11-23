@@ -19,6 +19,8 @@ import (
 	qrdbsecret "github.com/jeremyhahn/go-qrdb/sdk/go/secret"
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 
+	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport/mcp"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport/quic"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport/rest"
 )
@@ -144,6 +146,20 @@ type IdentityService interface {
 type SearchService interface {
 	Vector() VectorClient
 	TimeSeries() TimeSeriesClient
+
+	// QRDBTimeSeries returns go-qrdb's own time-series client
+	// (QRDBTimeSeriesClient, a re-export of go-qrdb's TimeSeriesClient):
+	// write, query, aggregate, delete and retention straight against the
+	// go-qrdb node, over the transport the client was built with. The
+	// go-qrdb client is built lazily on first use; its build error is
+	// returned here.
+	//
+	// Over REST the verbs ride the SDK's own REST transport, so they carry
+	// the platform bearer set by WithAuthToken; every other transport, and a
+	// client wired WithEmbeddedQRDB, keeps the qrdb sub-client. An embedded
+	// client whose time-series servicer implements
+	// QRDBTimeSeriesContextReader reads retention and lists metrics through it.
+	QRDBTimeSeries() (QRDBTimeSeriesClient, error)
 }
 
 // StorageService provides object storage, backup, and parameter store operations.
@@ -330,9 +346,13 @@ func (s *securityService) SSH() SSHService {
 // Over REST the barrier verbs ride the SDK's own REST transport, which
 // sends the platform bearer set by WithAuthToken on every request; go-qrdb's
 // REST sub-client cannot add an Authorization header, so the server's
-// default-deny gate refused it with 401 (go-quicbaas#2538). Every other
-// transport, and a client wired WithEmbeddedQRDB (whose qrdb calls always
-// dispatch in-process), keeps the qrdb sub-client.
+// default-deny gate refused it with 401 (go-quicbaas#2538). Over MCP the
+// barrier verbs likewise ride the SDK's own MCP transport, which sends the
+// bearer set by WithMCPAuthToken (or WithAuthToken); go-qrdb's MCP
+// sub-client cannot, so the node's /mcp gate refused its initialize with 401
+// (go-quicbaas#2556). Every other transport, and a client wired
+// WithEmbeddedQRDB (whose qrdb calls always dispatch in-process), keeps the
+// qrdb sub-client.
 //
 // QUIC takes the SDK's REST barrier client too: *quic.Transport embeds
 // *rest.Transport, and go-qrdb's REST sub-client (which QUIC clients' qrdb
@@ -344,7 +364,7 @@ func (s *securityService) SSH() SSHService {
 // Over the SDK QUIC transport the barrier verbs go through that transport's
 // own HTTP/3 client: go-qrdb's REST transport dials TCP, which a node serving
 // only its QUIC (UDP) listener refuses (go-quicbaas#2533). An embedded QRDB
-// takes precedence over that shortcut too.
+// takes precedence over the REST, QUIC and MCP shortcuts.
 func (s *securityService) Barrier() (QRDBBarrierClient, error) {
 	if s.c.opts == nil || s.c.opts.embeddedQRDB == nil {
 		if rt, ok := s.c.transport.(*rest.Transport); ok {
@@ -352,6 +372,9 @@ func (s *securityService) Barrier() (QRDBBarrierClient, error) {
 		}
 		if qt, ok := s.c.transport.(*quic.Transport); ok {
 			return qt.Transport.Barrier(), nil
+		}
+		if mt, ok := s.c.transport.(*mcp.Transport); ok {
+			return mt, nil
 		}
 	}
 	qrdbClient, err := s.c.qrdbClient()
@@ -363,6 +386,12 @@ func (s *securityService) Barrier() (QRDBBarrierClient, error) {
 
 // Ceremony returns the QRDB CeremonyClient. The QRDB transport is
 // lazily initialized on first call (delegated to client.qrdbClient).
+//
+// Over MCP, Ceremony, and likewise Credentials, SealStore, TenantMgmt,
+// CustodianGroup and Share, still use go-qrdb's MCP sub-client, which carries
+// no platform bearer, so a node whose /mcp gate requires one refuses its
+// initialize with 401. Only Barrier rides the SDK's own MCP transport; moving
+// the rest is tracked on go-quicbaas#2556.
 func (s *securityService) Ceremony() (QRDBCeremonyClient, error) {
 	qrdbClient, err := s.c.qrdbClient()
 	if err != nil {
@@ -409,6 +438,10 @@ type searchService struct {
 
 func (s *searchService) Vector() VectorClient         { return s.c.Vector() }
 func (s *searchService) TimeSeries() TimeSeriesClient { return s.c.TimeSeries() }
+
+func (s *searchService) QRDBTimeSeries() (QRDBTimeSeriesClient, error) {
+	return s.c.qrdbTimeSeries()
+}
 
 // storageService delegates StorageService methods to the underlying client.
 type storageService struct {
@@ -610,6 +643,69 @@ func (c *client) Share() (QRDBShareClient, error) {
 		return nil, err
 	}
 	return qrdbClient.Shares(), nil
+}
+
+// qrdbTimeSeries returns go-qrdb's TimeSeriesClient for this client.
+// Search().QRDBTimeSeries() is its public entry point. Each transport
+// authenticates the time-series verbs as follows:
+//
+//   - REST: the verbs ride the SDK's own REST transport, which sends the
+//     platform bearer set by WithAuthToken on every request; go-qrdb's REST
+//     sub-client cannot add an Authorization header (go-quicbaas#2500).
+//   - QUIC: the embedded REST adapter over HTTP/3, carrying the bearer, as
+//     Security().Barrier() does; go-qrdb's REST sub-client would dial TCP
+//     without it.
+//   - MCP: the verbs call go-qrdb's native qrdb_ts_* tools through the SDK's
+//     own MCP session, which carries WithMCPAuthToken or the configured login
+//     credentials. No second MCP session is opened.
+//   - gRPC and Unix: the verbs use the lazily built go-qrdb sub-client, whose
+//     transports install no bearer interceptor; when WithAuthToken is set the
+//     client is wrapped so every RPC carries `authorization: Bearer <token>`
+//     metadata. client.Close() closes the sub-client.
+//   - WithEmbeddedQRDB: qrdb calls dispatch in-process. An embedded client
+//     whose time-series servicer implements QRDBTimeSeriesContextReader reads
+//     retention and lists metrics through it, in the caller's scope.
+//
+// Any other selection without its concrete transport (REST, QUIC or MCP
+// without one, or no options) is refused with InvalidInput rather than
+// dialed through an unauthenticated go-qrdb client.
+func (c *client) qrdbTimeSeries() (QRDBTimeSeriesClient, error) {
+	if c.qrdb.closed.Load() {
+		return nil, errQRDBClientClosed()
+	}
+	embedded := c.opts != nil && c.opts.embeddedQRDB != nil
+	if !embedded {
+		switch t := c.transport.(type) {
+		case *rest.Transport:
+			return t.QRDBTimeSeries(), nil
+		case *mcp.Transport:
+			return t.QRDBTimeSeries(), nil
+		case *quic.Transport:
+			return t.Transport.QRDBTimeSeries(), nil
+		}
+		if c.opts == nil || (c.opts.transportType != TransportGRPC &&
+			c.opts.transportType != TransportUnix &&
+			c.opts.transportType != TransportEmbedded) {
+			return nil, sdkerrors.NewInvalidInput("Search().QRDBTimeSeries",
+				"the selected transport has no authenticated time-series adapter")
+		}
+	}
+	qrdbClient, err := c.qrdbClient()
+	if err != nil {
+		return nil, err
+	}
+	ts := qrdbClient.TimeSeries()
+	if embedded {
+		if scoped, ok := c.opts.embeddedQRDB.TimeSeries.(QRDBTimeSeriesContextReader); ok {
+			return &embeddedQRDBTimeSeries{QRDBTimeSeriesClient: ts, scoped: scoped, closed: &c.qrdb.closed}, nil
+		}
+		return ts, nil
+	}
+	if c.opts != nil && c.opts.authToken != "" &&
+		(c.opts.transportType == TransportGRPC || c.opts.transportType == TransportUnix) {
+		return &qrdbTimeSeriesBearer{next: ts, token: c.opts.authToken}, nil
+	}
+	return ts, nil
 }
 
 // =============================================================================

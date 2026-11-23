@@ -194,6 +194,7 @@ type quicBaaS struct {
 	projectService            ProjectService
 	accountService            AccountService
 	fleetAdminService         FleetAdminService
+	fleetPlacementService     FleetPlacementService
 	agentService              orchestration.AgentService
 	sdlcService               *SDLCService
 	promptService             atomic.Pointer[PromptService]
@@ -765,6 +766,10 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 
 	svc.projectService = NewProjectService(orchestration.NewProjectStore(orchKV, orchOpts...))
 	svc.fleetAdminService = NewFleetAdminService(orchestration.NewFleetRegistry(orchKV, orchOpts...))
+	// Fleet placement needs the shared fleet registry and the session store,
+	// which the server builds after the facade; it binds them then
+	// (FleetPlacementBinder). Until it does, every verb is unavailable.
+	svc.fleetPlacementService = NewFleetPlacementService(nil, nil)
 	svc.wireProjectReferences()
 
 	// Pooled provider accounts. Metadata lives in the same orchestration KV
@@ -4341,8 +4346,10 @@ func (t *timeSeriesService) GetRetentionPolicy(ctx context.Context, req *TSGetRe
 	}
 
 	// Convert to service response
+	// A zero policy (infinite duration, no downsampling) is "no policy": the
+	// backend returns one for a metric without a policy, so it reads nil.
 	var servicePolicy *TSRetentionPolicy
-	if policy != nil {
+	if policy != nil && (policy.Duration != 0 || policy.Resolution != 0 || policy.Aggregation != interfaces.AggNone) {
 		servicePolicy = &TSRetentionPolicy{
 			Duration:    policy.Duration,
 			Resolution:  policy.Resolution,
@@ -5251,6 +5258,13 @@ func (s *quicBaaS) Account() AccountService {
 func (s *quicBaaS) FleetAdmin() FleetAdminService {
 	return s.fleetAdminService
 }
+
+// FleetPlacement implements FleetPlacementProvider.
+func (s *quicBaaS) FleetPlacement() FleetPlacementService {
+	return s.fleetPlacementService
+}
+
+var _ FleetPlacementProvider = (*quicBaaS)(nil)
 
 // Agent returns the Agent service (returns nil if not configured).
 // Agent provides AI agent orchestration across multiple backends.

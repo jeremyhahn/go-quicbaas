@@ -139,6 +139,12 @@ func (kb *XKMSBackend) SupportedAlgorithms(ctx context.Context) []string {
 	// If capabilities report no support for basic operations, use defaults
 	// This handles cases where go-xkms doesn't recognize the backend type
 	if !supportsSymmetric && !supportsSign {
+		// A backend that reports attestation has stated what it does, and it is
+		// neither signing nor encryption (AVR): it offers no algorithm to route
+		// on. The defaults are only for a backend whose capabilities say nothing.
+		if caps.Attestation {
+			return []string{}
+		}
 		return kb.defaultAlgorithms()
 	}
 

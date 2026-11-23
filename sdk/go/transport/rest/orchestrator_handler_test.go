@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/orchestrator"
@@ -133,10 +134,10 @@ func TestOrchestratorHandlerHappyPaths(t *testing.T) {
 			http.MethodDelete, "/api/v1/orchestrator/jobs/job1"},
 		{"DisableFleetNode", "DisableFleetNode",
 			&orchestrator.DisableFleetNodeRequest{TenantID: "t1", NodeID: "a1"},
-			http.MethodPost, "/api/v1/agents/a1/disable"},
+			http.MethodPost, "/api/v1/fleet/a1/disable"},
 		{"EnableFleetNode", "EnableFleetNode",
 			&orchestrator.EnableFleetNodeRequest{TenantID: "t1", NodeID: "a1"},
-			http.MethodPost, "/api/v1/agents/a1/enable"},
+			http.MethodPost, "/api/v1/fleet/a1/enable"},
 		{"SubmitTaskArtifacts", "SubmitTaskArtifacts",
 			&orchestrator.SubmitTaskArtifactsRequest{TenantID: "t1", TaskID: "task1",
 				Artifacts: []*orchestrator.TaskArtifact{{Name: "out"}}},
@@ -212,6 +213,31 @@ func TestOrchestratorHandlerSubscribeJobEvents(t *testing.T) {
 		&orchestrator.SubscribeJobEventsRequest{TenantID: "t1", JobID: "j1"})
 	if err == nil {
 		t.Fatal("expected unimplemented error for SubscribeJobEvents over REST")
+	}
+}
+
+// TestOrchestratorHandlerGetSessionHistoryReachesEventsRoute pins that
+// GetSessionHistory over REST reads the session-events route in its JSON
+// history mode (follow=false), the page the server serves.
+func TestOrchestratorHandlerGetSessionHistoryReachesEventsRoute(t *testing.T) {
+	var reached atomic.Value
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached.Store(r.Method + " " + r.URL.Path + " follow=" + r.URL.Query().Get("follow"))
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"events":[],"next_seq":0}`))
+	}))
+	defer server.Close()
+
+	tr := newTestTransport(t, server)
+	_, err := tr.Request(context.Background(), "Orchestrator", "GetSessionHistory",
+		&orchestrator.GetSessionHistoryRequest{TenantID: "t1", SessionID: "s1"})
+	if err != nil {
+		t.Fatalf("GetSessionHistory over REST: %v", err)
+	}
+	want := "GET /api/v1/orchestrator/sessions/s1/events follow=false"
+	if got, _ := reached.Load().(string); got != want {
+		t.Fatalf("GetSessionHistory over REST sent %q, want %q", got, want)
 	}
 }
 
