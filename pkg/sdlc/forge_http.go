@@ -171,13 +171,17 @@ type forgeHTTP struct {
 	waiter    RetryWaiter
 }
 
-// forgeHTTPConfig is what newForgeHTTP validates and resolves.
 // ForgeTokenFunc resolves the forge token for one API request. An adapter
 // configured with one calls it before every request, so a token that a
 // short-lived source (a node token command) refreshes is never used past
 // its expiry by a long-lived adapter.
 type ForgeTokenFunc func(ctx context.Context) (string, error)
 
+// errEmptyForgeToken is what a request answers when its ForgeTokenFunc
+// resolves no token: sending it unauthenticated could only fail.
+var errEmptyForgeToken = errors.New("the forge token source returned an empty token")
+
+// forgeHTTPConfig is what newForgeHTTP validates and resolves.
 type forgeHTTPConfig struct {
 	baseURL   string
 	token     string
@@ -539,8 +543,6 @@ func nextLink(values []string) string {
 //
 // The adapter sends its token with every request, so following a link to any
 // other host would hand the credential to whoever wrote the header.
-var errEmptyForgeToken = errors.New("the forge token source returned an empty token")
-
 var errForeignPageLink = errors.New(
 	"next-page link points outside the configured API root")
 
