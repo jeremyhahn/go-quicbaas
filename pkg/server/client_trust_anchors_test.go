@@ -26,6 +26,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"math/big"
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
@@ -85,6 +86,28 @@ func (ca *testAnchorCA) issueClient(t *testing.T, commonName string) tls.Certifi
 		NotAfter:     time.Now().Add(time.Hour),
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, ca.cert, &key.PublicKey, ca.key)
+	require.NoError(t, err)
+	leaf, err := x509.ParseCertificate(der)
+	require.NoError(t, err)
+	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key, Leaf: leaf}
+}
+
+// issueServer issues a TLS server certificate for the loopback address, so a
+// client can verify the server it dials.
+func (ca *testAnchorCA) issueServer(t *testing.T) tls.Certificate {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(3),
+		Subject:      pkix.Name{CommonName: "127.0.0.1"},
+		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1")},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}
 	der, err := x509.CreateCertificate(rand.Reader, template, ca.cert, &key.PublicKey, ca.key)
 	require.NoError(t, err)
@@ -249,7 +272,10 @@ func TestExternalCATLS_RequestsOperatorClientCert(t *testing.T) {
 			operator := newTestAnchorCA(t, "operator CA")
 			s := newTrustAnchorTestServer(t, operator.writePEM(t))
 			require.NoError(t, s.loadOperatorClientTrustAnchors())
-			serverCert := buildSelfSignedTLSCert(t)
+			serverCA := newTestAnchorCA(t, "server CA")
+			serverCert := serverCA.issueServer(t)
+			serverRoots := x509.NewCertPool()
+			serverRoots.AddCert(serverCA.cert)
 			s.config.Security.TLSClientAuth = tt.fullMTLS
 			if tt.issued {
 				s.config.Server.Host = "127.0.0.1"
@@ -288,8 +314,8 @@ func TestExternalCATLS_RequestsOperatorClientCert(t *testing.T) {
 			client, err := tls.Dial("tcp", ln.Addr().String(), &tls.Config{
 				MinVersion:   tls.VersionTLS13,
 				Certificates: []tls.Certificate{operator.issueClient(t, "operator-admin")},
-				// #nosec G402 -- the server's verification of the client certificate is under test
-				InsecureSkipVerify: true,
+				RootCAs:      serverRoots,
+				ServerName:   "127.0.0.1",
 			})
 			require.NoError(t, err)
 			require.NoError(t, client.Handshake())
