@@ -10,7 +10,8 @@
 # pushed twice) and `current`, moved only after both secret scans and the
 # CRITICAL/HIGH vulnerability scan pass and the push resolves. The push uses
 # the job's own GITHUB_TOKEN under `packages: write` (G1: no PAT, no other
-# secret), like worker-image.
+# secret), like worker-image. A registry denial on the lookup counts as an
+# absent tag only when the packages API answers 404 for the package.
 name: worker-image-variants
 
 on:
@@ -90,14 +91,37 @@ jobs:
         env:
           REPO: ${{ steps.resolve.outputs.repo }}
           TAG: ${{ steps.resolve.outputs.tag }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER_TYPE: ${{ github.event.repository.owner.type }}
         run: |
           set -euo pipefail
           err="$(mktemp)"
           if manifest="$(docker buildx imagetools inspect "${REPO}:${TAG}" --format '{{json .Manifest}}' 2>"$err")"; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"; echo "digest=$(printf '%s' "$manifest" | jq -r .digest)" >> "$GITHUB_OUTPUT"
-            echo "${REPO}:${TAG} is already published; pushing nothing"
-          elif grep -qiE 'not found|manifest unknown|name unknown|denied' "$err"; then
+            digest="$(printf '%s' "$manifest" | jq -r .digest)"
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::${REPO}:${TAG} exists but names no sha256 digest"; exit 1; }
+            echo "${REPO}:${TAG} is already published at ${digest}; pushing nothing"
+            { echo "exists=true"; echo "digest=$digest"; } >> "$GITHUB_OUTPUT"
+          elif grep -qiE 'not found|manifest unknown|name unknown' "$err"; then
+            cat "$err" >&2
+            echo "${REPO}:${TAG} is not published yet"
             echo "exists=false" >> "$GITHUB_OUTPUT"
+          elif grep -qi 'denied' "$err"; then
+            # A container package that has never been pushed answers `denied`.
+            # Only the packages API saying 404 for the package proves that;
+            # any other answer fails closed.
+            cat "$err" >&2
+            case "$OWNER_TYPE" in Organization) scope=orgs ;; *) scope=users ;; esac
+            pkg="${REPO##*/}"
+            apierr="$(mktemp)"
+            if gh api "/${scope}/${GITHUB_REPOSITORY_OWNER}/packages/container/${pkg}" --silent 2>"$apierr"; then
+              echo "::error::${REPO}:${TAG}: the registry denied the lookup but package ${pkg} exists; pushing nothing"; exit 1
+            elif grep -q 'HTTP 404' "$apierr"; then
+              echo "package ${pkg} does not exist yet; first publish of ${REPO}:${TAG}"
+              echo "exists=false" >> "$GITHUB_OUTPUT"
+            else
+              cat "$apierr" >&2
+              echo "::error::${REPO}:${TAG}: the registry denied the lookup and the packages API did not answer 404; pushing nothing"; exit 1
+            fi
           else
             cat "$err" >&2; echo "::error::could not tell whether ${REPO}:${TAG} exists"; exit 1
           fi
@@ -178,7 +202,9 @@ jobs:
           after="$(docker buildx imagetools inspect "${REPO}:current" --format '{{json .Manifest}}' | jq -r .digest)"
           [ "$after" = "$DIGEST" ] || { echo "::error::${REPO}:current names '${after}', not ${DIGEST}"; exit 1; }
           line="WORKER-VARIANT-DIGEST ${REPO}:${TAG}@${DIGEST} current"
-          echo "$line"; printf '```\n%s\n```\n' "$line" >> "$GITHUB_STEP_SUMMARY"
+          echo "$line"
+          # shellcheck disable=SC2016 # the backticks are a literal Markdown code fence, not a command substitution
+          printf '```\n%s\n```\n' "$line" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Log out of ghcr.io
         if: ${{ always() }}
