@@ -14,6 +14,7 @@
 package iam
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"crypto/x509"
@@ -337,6 +338,49 @@ func (e *CertLoginFactorEnroller) Remove(ctx context.Context, factorID string) e
 	}
 	if err := e.factors.Remove(ctx, factorID, true); err != nil {
 		return &CertLoginFactorRemoveError{FactorID: factorID, Cause: err}
+	}
+	return nil
+}
+
+// RevokeSupersededCertFactors revokes every active mtls login factor of
+// userID that bindingSource created for a certificate other than current.
+// A factor whose cert credential or SPKI credential is current's stays: it
+// is the current certificate's own factor (a renewal over the same key
+// shares its SPKI credential). Any listing or revocation failure is
+// returned, so a caller can fail closed rather than leave an older
+// certificate able to log in.
+func (e *CertLoginFactorEnroller) RevokeSupersededCertFactors(ctx context.Context, userID uint64, current *x509.Certificate, bindingSource string) error {
+	if e == nil || e.factors == nil {
+		return &CertLoginFactorConfigError{Field: "UserAuthFactorServicer"}
+	}
+	if userID == 0 {
+		return &CertLoginFactorConfigError{Field: "UserID"}
+	}
+	certKey := MTLSCredentialKey(current)
+	if len(certKey) == 0 {
+		return &CertLoginFactorConfigError{Field: "Certificate"}
+	}
+	if bindingSource == "" {
+		return &CertLoginFactorConfigError{Field: "BindingSource"}
+	}
+	spkiKey := MTLSSPKICredentialKey(current)
+
+	factors, err := e.factors.List(ctx, userID)
+	if err != nil {
+		return &CertLoginFactorRemoveError{Cause: err}
+	}
+	for _, f := range factors {
+		if f == nil || !f.IsActive() || f.Type != qrdbsdk.AuthFactorMTLS || f.UserID != userID || f.Metadata["binding_source"] != bindingSource {
+			continue
+		}
+		if bytes.Equal(f.Credential, certKey) || (len(f.SPKICredential) > 0 && bytes.Equal(f.SPKICredential, spkiKey)) {
+			continue
+		}
+		// Non-forced: the current factor is active, so a refusal as the
+		// user's last factor means something is wrong and must fail.
+		if err := e.factors.Remove(ctx, f.ID, false); err != nil {
+			return &CertLoginFactorRemoveError{FactorID: f.ID, Cause: err}
+		}
 	}
 	return nil
 }

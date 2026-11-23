@@ -1339,10 +1339,7 @@ var ErrNoDataDirForAdminBundle = errors.New("first-boot: storage.data_dir is req
 // hold, so the bootstrap fails closed instead.
 var ErrEmptyAdminCSR = errors.New("first-boot: configured admin CSR file is empty")
 
-// enrollFirstBootAdminCert enrolls the certificate first-boot issued as an mtls
-// login factor. It is a no-op when no certificate was issued (no CA wired, or
-// an idempotent re-run where the admin already existed).
-// reissueAdminCredentialOnReEntry is the #64 ruling: reissue. qrdb's
+// reissueAdminCredentialOnReEntry reissues the admin credential on re-entry. qrdb's
 // idempotent first boot issues no certificate for an admin that already
 // exists, so a re-entered bootstrap (an earlier boot created the admin but
 // never completed) holds no credential to deliver; the certificate bound by
@@ -1351,7 +1348,8 @@ var ErrEmptyAdminCSR = errors.New("first-boot: configured admin CSR file is empt
 // undelivered private key at rest. Instead the re-entry issues a fresh
 // credential through the same path first boot chose — CSR-sign when the
 // operator supplied a CSR, generate-and-distribute otherwise — binds its
-// SPKI thumbprint in place of the undelivered one, and fills result so the
+// SPKI thumbprint in place of the undelivered one (enrollFirstBootAdminCert
+// then revokes the old certificate's login factor), and fills result so the
 // enrollment and delivery steps that follow treat it as this run's issue.
 //
 // It does nothing when there is no CA, when this run created the admin, or
@@ -1396,6 +1394,10 @@ func (s *Server) reissueAdminCredentialOnReEntry(
 	return nil
 }
 
+// enrollFirstBootAdminCert enrolls the certificate first-boot issued as an mtls
+// login factor. It is a no-op when no certificate was issued (no CA wired, or
+// an idempotent re-run where the admin already existed). It then revokes the
+// factors earlier boots enrolled for superseded first-boot certificates.
 func (s *Server) enrollFirstBootAdminCert(
 	ctx context.Context,
 	c *iamComponents,
@@ -1412,6 +1414,11 @@ func (s *Server) enrollFirstBootAdminCert(
 	}
 	if err := enrollAdminCertLoginFactor(ctx, c, tenantID, userID, cert, adminCertBindingSourceFirstBoot); err != nil {
 		return &FirstBootBootstrapError{Op: "enroll admin mtls login factor", Cause: err}
+	}
+	// A re-entered bootstrap reissued the credential: the factor an earlier
+	// boot enrolled for the previous certificate must not keep logging in.
+	if err := c.certLoginFactors.RevokeSupersededCertFactors(qrdbsdk.ContextWithTenant(ctx, tenantID), userID, cert, adminCertBindingSourceFirstBoot); err != nil {
+		return &FirstBootBootstrapError{Op: "revoke superseded admin login factors", Cause: err}
 	}
 	// go-quicbaas#2132: the issued cert logs in only if mtls is a permitted method.
 	if _, err := c.identityStore.PermitCertificateLogin(ctx, tenantID, userID); err != nil {
