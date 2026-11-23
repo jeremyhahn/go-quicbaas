@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"sync"
 	"time"
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
@@ -92,6 +93,13 @@ type ToolRegistry struct {
 	// embedded-node proxy; nil during early boot and unit tests, in which
 	// case those tools return UserAuthFactorServiceUnavailableError.
 	userAuthFactorSvc qrdbsdk.UserAuthFactorServicer
+
+	// xkmsHandlers is this registry's xkms.* dispatch table. Each entry is
+	// a method value bound to this registry, so the table must never be
+	// shared between registries. xkmsHandlersOnce builds it on first use,
+	// which keeps registries made as struct literals working too.
+	xkmsHandlersOnce sync.Once
+	xkmsHandlers     map[string]XKMSToolHandler
 }
 
 // ToolDefinition describes an MCP tool.

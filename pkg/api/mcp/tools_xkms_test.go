@@ -877,24 +877,25 @@ func TestXKMSVerifyUninitialized(t *testing.T) {
 // executeXKMSTool Dispatch Tests
 // =============================================================================
 
-// TestExecuteXKMSToolInitializesHandlerMap verifies the handler map is lazily
-// initialized on first call.
+// TestExecuteXKMSToolInitializesHandlerMap verifies each registry builds its
+// own handler table on first call.
 func TestExecuteXKMSToolInitializesHandlerMap(t *testing.T) {
 	log := newTestLogger(t)
 	svc := newMinimalMockService()
 	registry := NewToolRegistry(svc, log)
 	ctx := context.Background()
 
-	// Reset global handler map to test lazy initialization
-	xkmsHandlerMap = nil
-
 	// Any xkms tool call should initialize the map
 	_, err := registry.executeXKMSTool(ctx, "xkms.canSeal", map[string]interface{}{})
 	require.NoError(t, err)
 
 	// Map should now be initialized
-	assert.NotNil(t, xkmsHandlerMap)
-	assert.Greater(t, len(xkmsHandlerMap), 0)
+	assert.NotNil(t, registry.xkmsHandlers)
+	assert.Len(t, registry.xkmsHandlers, len(registry.initXKMSHandlers()))
+
+	// Another registry has not built its own table until its first call.
+	other := NewToolRegistry(svc, log)
+	assert.Nil(t, other.xkmsHandlers)
 }
 
 // TestSaveCertChainInvalidCertificateParse verifies that saveCertChain returns

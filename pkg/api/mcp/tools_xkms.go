@@ -40,10 +40,6 @@ const xkmsToolPrefix = "xkms."
 // XKMSToolHandler is the function signature for xkms tool handlers.
 type XKMSToolHandler func(ctx context.Context, args map[string]interface{}) (interface{}, error)
 
-// xkmsHandlers maps xkms tool names to their handler functions.
-// Initialized lazily on first call to avoid allocating until needed.
-var xkmsHandlerMap map[string]XKMSToolHandler
-
 // ensureXKMSInitialized checks that the xkms service is initialized.
 func ensureXKMSInitialized() error {
 	if !xkmssdk.ServiceIsInitialized() {
@@ -150,13 +146,16 @@ func isXKMSTool(name string) bool {
 	return strings.HasPrefix(name, xkmsToolPrefix)
 }
 
+// xkmsHandlerTable returns this registry's xkms dispatch table, building
+// it once per registry. It is safe for concurrent use.
+func (r *ToolRegistry) xkmsHandlerTable() map[string]XKMSToolHandler {
+	r.xkmsHandlersOnce.Do(func() { r.xkmsHandlers = r.initXKMSHandlers() })
+	return r.xkmsHandlers
+}
+
 // executeXKMSTool dispatches an xkms tool call to the appropriate handler.
 func (r *ToolRegistry) executeXKMSTool(ctx context.Context, name string, args map[string]interface{}) (interface{}, error) {
-	if xkmsHandlerMap == nil {
-		xkmsHandlerMap = r.initXKMSHandlers()
-	}
-
-	handler, ok := xkmsHandlerMap[name]
+	handler, ok := r.xkmsHandlerTable()[name]
 	if !ok {
 		return nil, api.NewUnknownToolError(name)
 	}
