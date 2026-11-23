@@ -14,7 +14,9 @@
 package errors
 
 // QRDBRebalanceUnsupportedError is returned by Client.QRDBRebalance when the
-// active qrdb transport does not implement go-qrdb's rebalance service.
+// active qrdb transport does not implement go-qrdb's rebalance service, or
+// when the qrdb sub-client is the in-process embedded transport, which carries
+// no rebalance servicer.
 //
 // FAIL CLOSED, NAMED: go-qrdb's Client.Rebalance returns nil on such a
 // transport; the QuicBaaS SDK turns that nil into this refusal so a caller

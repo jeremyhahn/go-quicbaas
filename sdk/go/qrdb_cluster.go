@@ -129,17 +129,25 @@ func (c *client) QRDBMembership() (QRDBMembershipClient, error) {
 	return qrdbClient, nil
 }
 
-// QRDBRebalance returns go-qrdb's RebalanceClient. When the active qrdb
-// transport does not implement the rebalance service it returns a
-// *errors.QRDBRebalanceUnsupportedError, never a nil client.
+// QRDBRebalance returns go-qrdb's RebalanceClient. Over gRPC and Unix, a
+// WithAuthToken bearer rides each call as authorization metadata. It returns
+// a *errors.QRDBRebalanceUnsupportedError, never a nil client, when the
+// active qrdb transport does not implement the rebalance service, and on the
+// in-process WithEmbeddedQRDB path, which installs no rebalance servicer.
 func (c *client) QRDBRebalance() (QRDBRebalanceClient, error) {
 	qrdbClient, err := c.qrdbClient()
 	if err != nil {
 		return nil, err
 	}
+	if c.opts != nil && c.opts.embeddedQRDB != nil {
+		return nil, sdkerrors.NewQRDBRebalanceUnsupported("QRDBRebalance")
+	}
 	rc := qrdbClient.Rebalance()
 	if rc == nil {
 		return nil, sdkerrors.NewQRDBRebalanceUnsupported("QRDBRebalance")
+	}
+	if c.opts != nil && c.opts.authToken != "" && qrdbSubClientSpeaksGRPC(c.opts.transportType) {
+		return &qrdbBearerRebalanceClient{inner: rc, bearer: "Bearer " + c.opts.authToken}, nil
 	}
 	return rc, nil
 }

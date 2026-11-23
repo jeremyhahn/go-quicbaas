@@ -184,6 +184,82 @@ func TestQRDBRebalance_NilFromTransportIsATypedError(t *testing.T) {
 	}
 }
 
+// TestQRDBRebalance_EmbeddedIsATypedRefusal: on the in-process path the qrdb
+// embedded transport has no rebalance servicer, so QRDBRebalance refuses with
+// the typed error instead of a client whose calls all fail.
+func TestQRDBRebalance_EmbeddedIsATypedRefusal(t *testing.T) {
+	c := buildEmbeddedQRDBClient(t, QRDBEmbeddedServicers{KV: stubKVService{}, Admin: stubAdminService{}})
+
+	rc, err := c.QRDBRebalance()
+	if rc != nil {
+		t.Fatalf("QRDBRebalance returned client %v, want nil", rc)
+	}
+	var unsupported *sdkerrors.QRDBRebalanceUnsupportedError
+	if !errors.As(err, &unsupported) {
+		t.Fatalf("QRDBRebalance err = %T %v, want *QRDBRebalanceUnsupportedError", err, err)
+	}
+	if !sdkerrors.IsUnimplemented(err) {
+		t.Errorf("QRDBRebalance err = %v, want CodeUnimplemented", err)
+	}
+}
+
+// TestQRDBRebalance_BearerOnlyOverGRPCAndUnix: the WithAuthToken bearer wraps
+// the rebalance client only where the qrdb sub-client speaks gRPC.
+func TestQRDBRebalance_BearerOnlyOverGRPCAndUnix(t *testing.T) {
+	base, err := qrdbembedded.New(stubKVService{}, stubAdminService{})
+	if err != nil {
+		t.Fatalf("qrdbembedded.New: %v", err)
+	}
+	qc, err := qrdbsdk.NewClient(base)
+	if err != nil {
+		t.Fatalf("qrdbsdk.NewClient: %v", err)
+	}
+
+	cases := []struct {
+		tt         TransportType
+		token      string
+		wantBearer bool
+	}{
+		{TransportGRPC, "t-1649", true},
+		{TransportUnix, "t-1649", true},
+		{TransportREST, "t-1649", false},
+		{TransportMCP, "t-1649", false},
+		{TransportGRPC, "", false},
+	}
+	for _, tc := range cases {
+		opts := defaultOptions()
+		if tc.token != "" {
+			if err := WithAuthToken(tc.token)(opts); err != nil {
+				t.Fatalf("WithAuthToken: %v", err)
+			}
+		}
+		opts.transportType = tc.tt
+		c := &client{opts: opts, address: "127.0.0.1:1"}
+		c.qrdb.once.Do(func() { c.qrdb.client = qc })
+
+		rc, err := c.QRDBRebalance()
+		if err != nil {
+			t.Fatalf("%v token=%q: QRDBRebalance: %v", tc.tt, tc.token, err)
+		}
+		b, ok := rc.(*qrdbBearerRebalanceClient)
+		if !tc.wantBearer {
+			if ok {
+				t.Errorf("%v token=%q: rebalance client carries a bearer, want none", tc.tt, tc.token)
+			}
+			continue
+		}
+		if !ok {
+			t.Fatalf("%v token=%q: rebalance client is %T, want *qrdbBearerRebalanceClient", tc.tt, tc.token, rc)
+		}
+		if b.bearer != "Bearer t-1649" {
+			t.Errorf("%v: bearer = %q, want %q", tc.tt, b.bearer, "Bearer t-1649")
+		}
+		if b.inner != QRDBRebalanceClient(base) {
+			t.Errorf("%v: inner = %v, want the qrdb transport's rebalance client", tc.tt, b.inner)
+		}
+	}
+}
+
 func TestQRDBClusterAccessors_EmbeddedWithoutServicersFailFast(t *testing.T) {
 	newClient := func() *client {
 		c := &client{opts: defaultOptions(), address: "embedded://local"}
