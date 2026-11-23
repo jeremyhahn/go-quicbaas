@@ -55,6 +55,7 @@ package rest
 
 import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	quicbaaspermission "github.com/jeremyhahn/go-quicbaas/pkg/permission"
 )
 
