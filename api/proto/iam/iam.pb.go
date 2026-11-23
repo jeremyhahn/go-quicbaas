@@ -14866,12 +14866,12 @@ const file_api_proto_iam_iam_proto_rawDesc = "" +
 	"\x0fRequestDeletion\x12'.quicbaas.iam.v1.RequestDeletionRequest\x1a$.quicbaas.iam.v1.DataDeletionRequest\x12a\n" +
 	"\x0eCancelDeletion\x12&.quicbaas.iam.v1.CancelDeletionRequest\x1a'.quicbaas.iam.v1.CancelDeletionResponse\x12\\\n" +
 	"\x0fProcessDeletion\x12'.quicbaas.iam.v1.ProcessDeletionRequest\x1a .quicbaas.iam.v1.DeletionSummary\x12d\n" +
-	"\x11GetDeletionStatus\x12).quicbaas.iam.v1.GetDeletionStatusRequest\x1a$.quicbaas.iam.v1.DataDeletionRequest2\xfc\x01\n" +
+	"\x11GetDeletionStatus\x12).quicbaas.iam.v1.GetDeletionStatusRequest\x1a$.quicbaas.iam.v1.DataDeletionRequest2\xae\x02\n" +
 	"\n" +
-	"PEPService\x12F\n" +
-	"\x05Check\x12\x1d.quicbaas.iam.v1.CheckRequest\x1a\x1e.quicbaas.iam.v1.CheckResponse\x12U\n" +
+	"PEPService\x12_\n" +
+	"\x05Check\x12\x1d.quicbaas.iam.v1.CheckRequest\x1a\x1e.quicbaas.iam.v1.CheckResponse\"\x17\xc2\xf3\x18\x13permissions:resolve\x12n\n" +
 	"\n" +
-	"CheckBatch\x12\".quicbaas.iam.v1.CheckBatchRequest\x1a#.quicbaas.iam.v1.CheckBatchResponse\x12O\n" +
+	"CheckBatch\x12\".quicbaas.iam.v1.CheckBatchRequest\x1a#.quicbaas.iam.v1.CheckBatchResponse\"\x17\xc2\xf3\x18\x13permissions:resolve\x12O\n" +
 	"\tSubscribe\x12!.quicbaas.iam.v1.SubscribeRequest\x1a\x1d.quicbaas.iam.v1.PolicyUpdate0\x012\x89\t\n" +
 	"\n" +
 	"MFAService\x12j\n" +

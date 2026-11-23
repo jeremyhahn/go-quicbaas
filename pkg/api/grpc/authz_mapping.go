@@ -344,6 +344,16 @@ var grpcMethodPermissions = map[string]methodPermission{
 	// GET /api/v1/iam/audit/{id}
 	"/quicbaas.iam.v1.AuditService/GetAuditEvent": {"audit", "read"},
 
+	// ---- quicbaas.iam.v1.PEPService ----
+	//
+	// Each RPC takes the grant its REST twin requires. Subscribe stays
+	// unmapped, so it is default-denied on the node.
+	//
+	// POST /api/v1/iam/check
+	"/quicbaas.iam.v1.PEPService/Check": {"permissions", "resolve"},
+	// POST /api/v1/iam/check/batch
+	"/quicbaas.iam.v1.PEPService/CheckBatch": {"permissions", "resolve"},
+
 	// ---- quicbaas.v1.QuicBaaS: auth (token lifecycle) ----
 	"/quicbaas.v1.QuicBaaS/Logout":        {"user_authfactors", "login"},
 	"/quicbaas.v1.QuicBaaS/RefreshToken":  {"user_authfactors", "login"},

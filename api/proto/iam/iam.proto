@@ -138,12 +138,19 @@ service IAMService {
 }
 
 // Policy Enforcement Point Service
+//
+// Check and CheckBatch take the grant their REST twins take
+// (permissions:resolve). Subscribe carries none and is default-denied.
 service PEPService {
   // Single authorization check
-  rpc Check(CheckRequest) returns (CheckResponse);
+  rpc Check(CheckRequest) returns (CheckResponse) {
+      option (qrdb.v1.permission) = "permissions:resolve";
+  }
 
   // Batch authorization check
-  rpc CheckBatch(CheckBatchRequest) returns (CheckBatchResponse);
+  rpc CheckBatch(CheckBatchRequest) returns (CheckBatchResponse) {
+      option (qrdb.v1.permission) = "permissions:resolve";
+  }
 
   // Subscribe to policy updates (streaming)
   rpc Subscribe(SubscribeRequest) returns (stream PolicyUpdate);
