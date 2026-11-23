@@ -3,6 +3,7 @@ package quicbaas
 import (
 	"context"
 	"fmt"
+	"sort"
 	"testing"
 	"time"
 
@@ -179,6 +180,109 @@ func TestReconcile_ScanLongerThanBudgetResumes(t *testing.T) {
 	prev := countIndexEntries(t, base)
 	for i := 0; ; i++ {
 		if i >= 60 {
+			t.Fatalf("index never completed: %d of %d entries", prev, legacyJobs)
+		}
+		storage.reconcileWithinBudget(withDeadline(t, sweep))
+		n := countIndexEntries(t, base)
+		if n < prev {
+			t.Fatalf("run %d: index entries fell from %d to %d", i, prev, n)
+		}
+		prev = n
+		if n == legacyJobs {
+			break
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	due, err := storage.GetJobsDueForExecution(ctx, now, 100)
+	if err != nil {
+		t.Fatalf("due scan: %v", err)
+	}
+	if len(due) != legacyJobs {
+		t.Fatalf("due = %d jobs, want %d once the index is complete", len(due), legacyJobs)
+	}
+}
+
+// fetchFirstKVStore fetches every record under the prefix before its first
+// callback, as the SDK-backed store does, taking perKey per record and
+// honouring the caller's context while it fetches.
+type fetchFirstKVStore struct {
+	*mockKVStore
+	perKey time.Duration
+}
+
+func (s *fetchFirstKVStore) Scan(ctx context.Context, prefix string, fn func(key string, value []byte) error) error {
+	type pair struct {
+		key   string
+		value []byte
+	}
+	var pairs []pair
+	if err := s.mockKVStore.Scan(ctx, prefix, func(key string, value []byte) error {
+		pairs = append(pairs, pair{key: key, value: append([]byte(nil), value...)})
+		return nil
+	}); err != nil {
+		return err
+	}
+	select {
+	case <-time.After(s.perKey * time.Duration(len(pairs))):
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	sort.Slice(pairs, func(i, j int) bool { return pairs[i].key < pairs[j].key })
+	for _, p := range pairs {
+		if err := fn(p.key, p.value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// TestReconcile_ScanTimingOutBeforeFirstCallbackSplits covers a store that
+// fetches the whole prefix before its first callback: a scan the budget cuts
+// delivers no record, and the shard must still split so later runs finish.
+func TestReconcile_ScanTimingOutBeforeFirstCallbackSplits(t *testing.T) {
+	const (
+		legacyJobs = 40
+		perKey     = 5 * time.Millisecond
+		sweep      = 200 * time.Millisecond // ~100ms budget: all 40 take 200ms, 10 take 50ms
+	)
+	base := newMockKVStore()
+	kv := &fetchFirstKVStore{mockKVStore: base, perKey: perKey}
+	now := time.Now()
+
+	for i := 0; i < legacyJobs; i++ {
+		job := createTestJob(fmt.Sprintf("legacy-%d", i), scheduler.OwnerTypeTenant, "acme")
+		job.ID = uint64(100 + i)
+		job.NextRun = now.Add(-time.Minute)
+		putUnindexedTenantJob(t, base, job)
+	}
+
+	// Seed the counter on the fast store, then drop the index entries that
+	// open wrote: the jobs are legacy again.
+	if err := NewStorage(base).InitializeJobIDCounter(context.Background()); err != nil {
+		t.Fatalf("seed counter: %v", err)
+	}
+	var indexKeys []string
+	if err := base.Scan(context.Background(), TenantJobIndexPrefix, func(key string, _ []byte) error {
+		indexKeys = append(indexKeys, key)
+		return nil
+	}); err != nil {
+		t.Fatalf("index scan: %v", err)
+	}
+	for _, key := range indexKeys {
+		if err := base.Delete(context.Background(), key); err != nil {
+			t.Fatalf("drop index entry: %v", err)
+		}
+	}
+	if n := countIndexEntries(t, base); n != 0 {
+		t.Fatalf("index entries after drop = %d, want 0", n)
+	}
+
+	storage := NewStorage(kv)
+	prev := 0
+	for i := 0; ; i++ {
+		if i >= 100 {
 			t.Fatalf("index never completed: %d of %d entries", prev, legacyJobs)
 		}
 		storage.reconcileWithinBudget(withDeadline(t, sweep))

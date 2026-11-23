@@ -831,6 +831,11 @@ func (s *Storage) reconcileTenantJobIndex(ctx context.Context) error {
 // holds; a larger shard is split before any of it is written.
 const reconcileShardLimit = 1024
 
+// reconcileMaxSplitPrefix bounds how long a shard prefix splitting on a
+// timed-out scan may grow; a shard at the bound is retried whole, so a
+// store too slow for any scan cannot grow the pending list without end.
+const reconcileMaxSplitPrefix = 512
+
 // errReconcileBusy reports that another reconciliation run is in progress.
 var errReconcileBusy = errors.New("tenant job index reconciliation already running")
 
@@ -892,11 +897,11 @@ func (s *Storage) scanReconcileShard(ctx context.Context, shard reconcileShard) 
 		return nil, true, nil
 	}
 	if err != nil {
-		// A scan the budget cut after it had seen several records is split
-		// so the next run scans less; one cut before then is only retried,
-		// as narrower shards would not be any faster.
+		// A prefix scan the budget cut is split so the next run scans less,
+		// also when no record reached the callback: a store may fetch the
+		// whole prefix before its first callback.
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, len(refs) > 1, ctxErr
+			return nil, len(shard.prefix) < reconcileMaxSplitPrefix, ctxErr
 		}
 		return nil, false, err
 	}
