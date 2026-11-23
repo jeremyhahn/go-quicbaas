@@ -45,8 +45,7 @@ type JobStorage interface {
 	// before the engine allocates from it. The engine calls it at Start and
 	// refuses to start when it fails: a counter that restarts from a guess
 	// reissues the IDs of jobs that already exist, and creating a job under a
-	// reissued ID overwrites the job that holds it. It is the store's open
-	// step, so a store also completes its one-time migrations here.
+	// reissued ID overwrites the job that holds it.
 	InitializeJobIDCounter(ctx context.Context) error
 }
 

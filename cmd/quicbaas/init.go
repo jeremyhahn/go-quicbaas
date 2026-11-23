@@ -67,6 +67,8 @@ var (
 	initUsername     string
 	initCSRKeyPath   string
 	initOutputPath   string
+	initTLSCertPath  string
+	initTLSKeyPath   string
 	initSOPin        string
 	initCSRPath      string
 	initRole         string
@@ -459,12 +461,9 @@ Example:
 	}
 	cmd.Flags().StringVar(&initServer, "server", "",
 		"Override the global --address for this call (optional)")
-	// The officer's certificate is the client's mTLS identity: these flags
-	// fill the same tlsCert/tlsKey the SDK client's TLS config is built
-	// from (buildTLSConfig), so the claim's handshake presents it.
-	cmd.Flags().StringVar(&tlsCert, "tls-cert", "",
+	cmd.Flags().StringVar(&initTLSCertPath, "tls-cert", "",
 		"Path to the officer's mTLS client certificate (required)")
-	cmd.Flags().StringVar(&tlsKey, "tls-key", "",
+	cmd.Flags().StringVar(&initTLSKeyPath, "tls-key", "",
 		"Path to the officer's mTLS client key (required)")
 	cmd.Flags().StringVar(&initUsername, "username", "",
 		"Officer username (required)")
@@ -478,10 +477,10 @@ func runInitClaimShareCommand(_ *cobra.Command, _ []string) error {
 	if initUsername == "" {
 		return errors.Newf(errors.ErrInvalidInput, "init.claim-share", "--username is required")
 	}
-	if tlsCert == "" {
+	if initTLSCertPath == "" {
 		return errors.Newf(errors.ErrInvalidInput, "init.claim-share", "--tls-cert is required")
 	}
-	if tlsKey == "" {
+	if initTLSKeyPath == "" {
 		return errors.Newf(errors.ErrInvalidInput, "init.claim-share", "--tls-key is required")
 	}
 	if initOutputPath == "" {
@@ -503,7 +502,7 @@ func runInitClaimShareCommand(_ *cobra.Command, _ []string) error {
 		return formatError(err)
 	}
 
-	signature, err := signNonceWithKeyFile(tlsKey, begin.NonceHex)
+	signature, err := signNonceWithKeyFile(initTLSKeyPath, begin.NonceHex)
 	if err != nil {
 		return formatError(err)
 	}

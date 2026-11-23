@@ -16,9 +16,6 @@ package server
 import (
 	"context"
 	"log/slog"
-	"net/http"
-	"net/http/httptest"
-	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -166,41 +163,6 @@ func TestSealedServicerProxies_FailClosedWhileSealed(t *testing.T) {
 // sealed for the listener's whole lifetime.
 func TestConstantSealedProbe(t *testing.T) {
 	assert.True(t, constantSealedProbe{}.IsSealed())
-}
-
-// TestLiveSealedWindowProbe_RefusesAfterUnseal: qrdb's anonymous sealed REST
-// handler, gated by the live probe, serves while the barrier is sealed and
-// answers 503 on every route once it unseals, before the listener is torn
-// down.
-func TestLiveSealedWindowProbe_RefusesAfterUnseal(t *testing.T) {
-	var unsealed atomic.Bool
-	probe := liveSealedWindowProbe{sealed: func() bool { return !unsealed.Load() }}
-	handler := qrdbsdk.NewSealedWindowHandler(nil, nil, nil, qrdbsdk.NewSealedWindowListenerProbe(probe, nil))
-
-	routes := []struct{ method, path string }{
-		{http.MethodGet, "/v1/barrier/status"},
-		{http.MethodGet, "/v1/barrier/officers/claim-status"},
-		{http.MethodPost, "/v1/barrier/officers/alice/claim/begin"},
-	}
-	serve := func(method, path string) int {
-		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, httptest.NewRequest(method, path, nil))
-		return rec.Code
-	}
-
-	require.True(t, probe.IsSealed())
-	unsealed.Store(true) // the barrier unseals; teardown has not happened yet
-	require.False(t, probe.IsSealed())
-	for _, r := range routes {
-		assert.Equal(t, http.StatusServiceUnavailable, serve(r.method, r.path), "%s %s after unseal", r.method, r.path)
-	}
-}
-
-// TestSealedWindowNodeSealed_NoNodeFailsClosed: with no node the live probe
-// reports unsealed, so the anonymous listener refuses.
-func TestSealedWindowNodeSealed_NoNodeFailsClosed(t *testing.T) {
-	s := &Server{}
-	assert.False(t, s.sealedWindowNodeSealed())
 }
 
 // TestSealedWindowBootError_Unwrap asserts error wrapping semantics.

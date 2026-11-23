@@ -27,7 +27,6 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbembedded "github.com/jeremyhahn/go-qrdb/sdk/go/transport/embedded"
 
-	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	grpcapi "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/sealedwindow"
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
@@ -128,26 +127,6 @@ type constantSealedProbe struct{}
 
 // IsSealed implements the sealed-window probe contract.
 func (constantSealedProbe) IsSealed() bool { return true }
-
-// liveSealedWindowProbe reports the barrier's live state to a sealed-window
-// listener that has no authentication behind it (qrdb's sealed REST
-// handler). Unlike constantSealedProbe it turns unsealed the moment the
-// barrier unseals, so that listener refuses every request (503) between the
-// unseal and its teardown.
-type liveSealedWindowProbe struct {
-	sealed func() bool
-}
-
-// IsSealed implements the sealed-window probe contract.
-func (p liveSealedWindowProbe) IsSealed() bool { return p.sealed() }
-
-// sealedWindowNodeSealed reports whether the node that owns the sealed
-// window's barrier is still sealed. With no node it reports unsealed, so an
-// anonymous listener fails closed.
-func (s *Server) sealedWindowNodeSealed() bool {
-	node := s.getQRDBNode()
-	return node != nil && node.IsSealed()
-}
 
 // newSealedWindowClient composes the in-process qrdb SDK client for the
 // sealed-window phase: the node's OWN Barrier / Ceremony / Credential
@@ -395,17 +374,6 @@ func (s *Server) startSealedGRPCServer() error {
 	// node's seal services in this phase.
 	s.registerBarrierCeremonyServices(grpcServer)
 	s.registerQRDBService(grpcServer)
-
-	// quicbaas.v1.QuicBaaS over the sealed-window facade: its Health verb is
-	// on the sealed-window allowlist, so a sealed node answers liveness on
-	// every gRPC listener; the interceptor above keeps every other verb
-	// refused until unseal, when the full boot registers the operational
-	// service.
-	quicbaasService, err := newGRPCAPI(s.sealedWindowFacade, s.logger, s.config.Raft.NodeID, s.config.Server.Host)
-	if err != nil {
-		return &SealedWindowBootError{Stage: "sealed quicbaas grpc service", Cause: err}
-	}
-	pb.RegisterQuicBaaSServer(grpcServer, quicbaasService)
 
 	s.grpcServer = grpcServer
 

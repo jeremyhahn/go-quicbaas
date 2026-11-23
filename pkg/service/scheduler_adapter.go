@@ -70,17 +70,10 @@ func (a *SchedulerAdapter) CreateJob(ctx context.Context, req *CreateSchedulerJo
 	if err != nil {
 		return nil, err
 	}
-	// A tenant caller that names no owner type creates a job its own tenant
-	// owns; only an explicit system or delegated owner names the system
-	// namespace.
-	ownerType := req.OwnerType
-	if ownerType == "" && tenantID != "" {
-		ownerType = SchedulerOwnerTypeTenant
-	}
 	// A tenant-owned job is filed in its owner's namespace, so naming an
 	// owner is naming a tenant and is held to the same rule.
 	ownerID := req.OwnerID
-	if ownerType == SchedulerOwnerTypeTenant {
+	if req.OwnerType == SchedulerOwnerTypeTenant {
 		if ownerID, err = schedulerTenantResolveID(ctx, "CreateJob", req.OwnerID); err != nil {
 			return nil, err
 		}
@@ -96,7 +89,7 @@ func (a *SchedulerAdapter) CreateJob(ctx context.Context, req *CreateSchedulerJo
 	job := &scheduler.Job{
 		Name:           req.Name,
 		Description:    req.Description,
-		OwnerType:      scheduler.OwnerType(ownerType),
+		OwnerType:      scheduler.OwnerType(req.OwnerType),
 		OwnerID:        ownerID,
 		TargetTenantID: tenantID,
 		Type:           scheduler.JobType(req.Type),
@@ -215,22 +208,10 @@ func (a *SchedulerAdapter) ListJobs(ctx context.Context, req *ListSchedulerJobsR
 		return nil, err
 	}
 
-	// A tenant caller that names no owner type lists the jobs its own tenant
-	// owns, the namespace CreateJob files them in by the same default; a
-	// tenant-owned listing always reads the resolved caller tenant's namespace.
-	ownerType := req.OwnerType
-	if ownerType == "" && tenantID != "" {
-		ownerType = SchedulerOwnerTypeTenant
-	}
-	ownerID := req.OwnerID
-	if ownerType == SchedulerOwnerTypeTenant && tenantID != "" {
-		ownerID = tenantID
-	}
-
 	// Convert request to scheduler.JobQuery
 	query := &scheduler.JobQuery{
-		OwnerType:      scheduler.OwnerType(ownerType),
-		OwnerID:        ownerID,
+		OwnerType:      scheduler.OwnerType(req.OwnerType),
+		OwnerID:        req.OwnerID,
 		TargetTenantID: targetTenantID,
 		Status:         scheduler.JobStatus(req.Status),
 		Handler:        req.Handler,
@@ -502,10 +483,6 @@ func (a *SchedulerAdapter) GetCompletedGracePeriodVersions(ctx context.Context, 
 		Handler: "kms.grace_period",
 		Status:  scheduler.JobStatusCompleted,
 		Limit:   100,
-	}
-	// A tenant's grace jobs are filed in its own namespace (see RotateKey).
-	if tenantID, ok := tenantctx.Lookup(ctx); ok {
-		query.OwnerID = schedulerEngineTenant(tenantID)
 	}
 
 	jobs, _, err := a.scheduler.ListJobsWithCursor(ctx, query)
