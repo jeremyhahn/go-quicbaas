@@ -39,6 +39,15 @@ type Server struct {
 	// closed indicates if the server has been shut down.
 	closed atomic.Bool
 
+	// admitMu serializes session admission in HandleHTTP with Close: a
+	// session is registered only while the server is open, and Close's
+	// CloseAll sees every session admitted before it.
+	admitMu sync.Mutex
+
+	// beforeAdmit, when set, runs after the upgrade and before admission.
+	// It is a test hook and is nil in production.
+	beforeAdmit func()
+
 	// mu protects subprotocols map during registration.
 	mu sync.RWMutex
 }
@@ -141,8 +150,20 @@ func (s *Server) HandleHTTP(w http.ResponseWriter, r *http.Request) {
 		session.grant = grant
 	}
 
-	// Add to session manager
+	// Admit under admitMu: a Close that ran after the check at the top of
+	// this function has already closed every session, so this one is closed
+	// instead of registered.
+	if s.beforeAdmit != nil {
+		s.beforeAdmit()
+	}
+	s.admitMu.Lock()
+	if s.closed.Load() {
+		s.admitMu.Unlock()
+		_ = conn.Close(websocket.StatusGoingAway, "server closed")
+		return
+	}
 	s.sessions.Add(session)
+	s.admitMu.Unlock()
 
 	s.logger.Debugf("WebSocket connection established: session=%s, subprotocol=%s", sessionID, protocol)
 
@@ -276,7 +297,9 @@ func (s *Server) BroadcastToChannel(ctx context.Context, channel string, msgType
 // Close shuts down the server and closes all sessions.
 func (s *Server) Close() error {
 	if s.closed.CompareAndSwap(false, true) {
+		s.admitMu.Lock()
 		s.sessions.CloseAll()
+		s.admitMu.Unlock()
 		s.logger.Debugf("WebSocket server closed")
 	}
 	return nil

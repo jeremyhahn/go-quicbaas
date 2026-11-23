@@ -376,6 +376,78 @@ func TestServer_CloseClosesSessions(t *testing.T) {
 	}
 }
 
+// TestServer_UpgradeRacingCloseIsClosed: an upgrade paused before admission
+// while Close runs is closed rather than registered, and its subprotocol
+// handler never runs.
+func TestServer_UpgradeRacingCloseIsClosed(t *testing.T) {
+	server := handshakeServer(t, DefaultServerConfig(), nil, testLogger(t))
+	if server == nil {
+		return
+	}
+	handler := &mockSubprotocolHandler{name: "test"}
+	server.RegisterSubprotocol(handler)
+
+	reached := make(chan struct{})
+	release := make(chan struct{})
+	server.beforeAdmit = func() {
+		close(reached)
+		<-release
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(server.HandleHTTP))
+	defer ts.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	type dialResult struct {
+		conn *websocket.Conn
+		err  error
+	}
+	dialed := make(chan dialResult, 1)
+	go func() {
+		conn, resp, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(ts.URL, "http"),
+			&websocket.DialOptions{Subprotocols: []string{"test"}})
+		if resp != nil && resp.Body != nil {
+			resp.Body.Close()
+		}
+		dialed <- dialResult{conn, err}
+	}()
+
+	select {
+	case <-reached:
+	case <-time.After(5 * time.Second):
+		t.Fatal("upgrade did not reach admission")
+	}
+
+	// The paused upgrade does not hold the admission lock, so Close returns.
+	if err := server.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	close(release)
+
+	res := <-dialed
+	if res.err != nil {
+		t.Fatalf("WebSocket dial failed: %v", res.err)
+	}
+	defer res.conn.CloseNow()
+
+	readCtx, readCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer readCancel()
+	_, _, err := res.conn.Read(readCtx)
+	if err == nil {
+		t.Fatal("Read succeeded, want the server to close the connection")
+	}
+	if got := websocket.CloseStatus(err); got != -1 && got != websocket.StatusGoingAway {
+		t.Fatalf("close status = %d, want %d", got, websocket.StatusGoingAway)
+	}
+	if n := server.GetSessionCount(); n != 0 {
+		t.Fatalf("Session count = %d, want 0", n)
+	}
+	if handler.WasCalled() {
+		t.Fatal("subprotocol handler ran for an upgrade that lost the race with Close")
+	}
+}
+
 func TestServer_IsClosed(t *testing.T) {
 	log := testLogger(t)
 	server := newServer(DefaultServerConfig(), nil, log)
