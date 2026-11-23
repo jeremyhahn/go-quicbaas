@@ -89,6 +89,20 @@ Four absences are tolerated, each for its own reason:
 What is **not** tolerated is the generator refusing. That is live material still
 standing, and it fails the call.
 
+## Expiry reaches the thing that was leased
+
+A lease that lapses is torn down the same way. `NewDynamicSecretsHandler` sets
+the lease manager's **expire hook** (`lease.Manager.SetExpireHook`), and
+`ReapExpired` calls it for each expired lease **before** it writes the
+tombstone. The hook runs the same teardown as `RevokeLease`, in the tenant the
+lease was issued in: `GenerateCredential` records the caller's tenant in the
+lease metadata as `tenant_id`, because the reaper runs with no request context.
+
+The order is the same, for the same reason. A failed teardown leaves the lease
+`active` and uncounted, and the next pass retries it. A lease with no
+`credential_id`/`generator` metadata (an account delivery grant) passes through
+the hook untouched.
+
 ## Enforcement, not bookkeeping
 
 Two verbs, deliberately different:
@@ -131,8 +145,15 @@ lease in the platform is therefore in one keyspace, visible to one
 
 ### The generator registry
 
-`composeDynamicSecrets` builds a real `credentials.GeneratorRegistry` and
-registers **nothing**. `pkg/credentials/database` ships PostgreSQL and MySQL
+`composeDynamicSecrets` builds a real `credentials.GeneratorRegistry`, and
+`startDynamicSecrets` registers one production generator into it, `credential`
+(`pkg/credentials/credstore`), when the node has a credential service, which
+means seal enabled. Without one the type stays unregistered and `CreateRole`
+refuses it as "generator not found". A `credential` role takes two optional
+config keys: `length`, in bytes from 16 to 1024 (default 32), and `encoding`,
+`base64` (the default, URL-safe without padding) or `hex`.
+
+`pkg/credentials/database` ships PostgreSQL and MySQL
 generators, but both take a `DBConnector` and this repository has no production
 implementation of one; registering them against a nil connector would give an
 operator a role that fails at generation time rather than at creation time. An
@@ -142,6 +163,26 @@ is the correct answer.
 Nothing else about the capability depends on a generator. Leases, their renewal,
 their revocation and their listing — which is what the agent credential
 lifecycle is built on — work with an empty registry.
+
+### Secret material lives in go-qrdb
+
+The `credential` generator writes the random secret it mints to go-qrdb's
+barrier-backed credential store, as `dynamic-<credential_id>`: in the caller's
+tenant's store for a tenant call, and in the system credential service for a
+system call. A tenant with no registered, unsealed barrier is refused; the call
+never falls back to the system store. The tenant's credential service is built
+fresh on every call, as go-qrdb's own tenant-scoped retrieve does, because a
+rekey can replace a tenant barrier.
+
+The secret is returned **once**, in the generate response, as `Data["value"]`
+next to `Data["reference"]`. It is never written to the dynamic-secrets KV
+record (the generator is a `credentials.MaterialKeeper`, so its record carries
+the IDs and times only), never put in a lease, and never logged.
+
+A consumer resolves it as `credential://dynamic-<credential_id>` through the
+server's secret registry, in the same tenant it was generated in. Revoking or
+expiring the lease deletes it from the credential store, and a revoke of one
+that is already gone succeeds.
 
 ## Related
 
