@@ -125,8 +125,11 @@ func TestReplicationWait_SweepCutByContextKeepsProgress(t *testing.T) {
 	if !done || err != nil {
 		t.Fatalf("second Check = (%v, %v), want (true, nil)", done, err)
 	}
-	if got := reads.Load(); got > 202 {
-		t.Fatalf("reads over both Checks = %d, want at most 202: the cut sweep's finds were read again", got)
+	// Every pair is read once, plus the reads in flight on each node when
+	// ctx ended (they fail and are read again). Re-reading the cut sweep's
+	// finds would cost at least 50+200 reads.
+	if limit := int64(200 + 2*replicationReadsPerNode); reads.Load() > limit {
+		t.Fatalf("reads over both Checks = %d, want at most %d: the cut sweep's finds were read again", reads.Load(), limit)
 	}
 }
 
@@ -212,6 +215,59 @@ func TestReplicationWait_NodesAreReadConcurrently(t *testing.T) {
 	done, err := w.Check(ctx)
 	if !done || err != nil {
 		t.Fatalf("Check = (%v, %v), want (true, nil): node 0's read waited on node 1's", done, err)
+	}
+}
+
+// TestReplicationWait_ReadsWithinANodeAreConcurrent pins that one node's
+// pending entities are read concurrently, so a sweep is not bound by one
+// round trip per entity.
+func TestReplicationWait_ReadsWithinANodeAreConcurrent(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var inFlight, peak atomic.Int64
+	gate := make(chan struct{})
+	w := NewReplicationWait(1, testEntities(2*replicationReadsPerNode), func(rctx context.Context, _ int, _ TestEntity) (bool, error) {
+		n := inFlight.Add(1)
+		defer inFlight.Add(-1)
+		for {
+			p := peak.Load()
+			if n <= p || peak.CompareAndSwap(p, n) {
+				break
+			}
+		}
+		select {
+		case <-gate:
+			return true, nil
+		case <-rctx.Done():
+			return false, rctx.Err()
+		}
+	}, 5*time.Second)
+
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(gate) }) }
+	defer release()
+	go func() {
+		deadline := time.After(2 * time.Second)
+		tick := time.NewTicker(time.Millisecond)
+		defer tick.Stop()
+		for peak.Load() < replicationReadsPerNode {
+			select {
+			case <-deadline:
+				release()
+				return
+			case <-tick.C:
+			}
+		}
+		release()
+	}()
+
+	done, err := w.Check(ctx)
+	got := peak.Load()
+	if got <= 1 || got > replicationReadsPerNode {
+		t.Fatalf("peak reads in flight on one node = %d, want 2..%d", got, replicationReadsPerNode)
+	}
+	if !done || err != nil {
+		t.Fatalf("Check = (%v, %v), want (true, nil)", done, err)
 	}
 }
 

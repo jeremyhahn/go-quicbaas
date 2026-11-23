@@ -26,6 +26,10 @@ import (
 // whether the node has it.
 type EntityReader func(ctx context.Context, node int, entity TestEntity) (bool, error)
 
+// replicationReadsPerNode is the most reads in flight per node during a
+// sweep, so a sweep of N entities takes about N/16 round trips instead of N.
+const replicationReadsPerNode = 16
+
 // ReplicationWait tracks, for each node, the entities not yet seen there.
 // Check is a PollCondition: an entity found on a node is never read from
 // that node again, so a sweep cut short by its context still counts.
@@ -55,10 +59,11 @@ func (w *ReplicationWait) Pending() int {
 }
 
 // Check reads every pending pair once, one goroutine per node, and drops
-// each pair found. It returns true once nothing is pending. A read error
-// leaves the pair pending; Check then returns a *ReplicationPendingError
-// carrying the last read error. When ctx ends, each node stops its sweep and
-// keeps what it has found so far.
+// each pair found. Reads within a node are concurrent too, bounded by
+// replicationReadsPerNode. It returns true once nothing is pending. A read
+// error leaves the pair pending; Check then returns a
+// *ReplicationPendingError carrying a read error. When ctx ends, each node
+// stops its sweep and keeps what it has found so far.
 //
 // Check is not safe to call concurrently with itself; Poll never does.
 func (w *ReplicationWait) Check(ctx context.Context) (bool, error) {
@@ -89,26 +94,58 @@ func (w *ReplicationWait) Check(ctx context.Context) (bool, error) {
 	return false, nil
 }
 
-// sweep reads node's pending entities once and keeps those not found. It
-// returns the last read error.
+// sweep reads node's pending entities once, at most replicationReadsPerNode
+// at a time, and keeps those not found or whose read errored, in their
+// original order. It returns a read error from this sweep (any one, when
+// several fail). Once ctx ends no new read starts, and every entity not yet
+// read stays pending. Only sweep's goroutine writes w.pending[node], after
+// all its reads have finished.
 func (w *ReplicationWait) sweep(ctx context.Context, node int) error {
-	var lastErr error
 	todo := w.pending[node]
-	still := make([]TestEntity, 0, len(todo))
+	found := make([]bool, len(todo))
+	var (
+		mu      sync.Mutex
+		lastErr error
+		wg      sync.WaitGroup
+	)
+	sem := make(chan struct{}, replicationReadsPerNode)
 	for i, e := range todo {
+		// Wait for a free read slot, unless ctx ends first; once it has
+		// ended no new read starts.
+		select {
+		case sem <- struct{}{}:
+		case <-ctx.Done():
+		}
 		if ctx.Err() != nil {
-			still = append(still, todo[i:]...)
+			// A slot taken just as ctx ended stays in the buffer unused;
+			// the entities not read stay pending.
 			break
 		}
-		rctx, cancel := context.WithTimeout(ctx, w.requestTimeout)
-		found, err := w.read(rctx, node, e)
-		cancel()
-		if err != nil {
-			lastErr = err
-			still = append(still, e)
-			continue
-		}
-		if !found {
+		wg.Add(1)
+		go func(i int, e TestEntity) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			if ctx.Err() != nil {
+				// ctx ended before this read began: it stays pending.
+				return
+			}
+			rctx, cancel := context.WithTimeout(ctx, w.requestTimeout)
+			ok, err := w.read(rctx, node, e)
+			cancel()
+			if err != nil {
+				mu.Lock()
+				lastErr = err
+				mu.Unlock()
+				return
+			}
+			found[i] = ok
+		}(i, e)
+	}
+	wg.Wait()
+
+	still := make([]TestEntity, 0, len(todo))
+	for i, e := range todo {
+		if !found[i] {
 			still = append(still, e)
 		}
 	}
