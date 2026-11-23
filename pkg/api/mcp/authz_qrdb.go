@@ -89,6 +89,16 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	"qrdb_list":             {"kv", "list"},
 	"qrdb_put":              {"kv", "put"},
 	"qrdb_delete":           {"kv", "delete"},
+	// The quicbaas_kv_* names of the same entity tools (addKVEntityTool): a
+	// full node serves them in place of the qrdb_* names go-qrdb owns there
+	// (CA ruling 574). quicbaas_kv_list answers every entity's Data, so it
+	// is gated on kv:range, the value-scan permission go-qrdb's qrdb_scan and
+	// quicbaas_query require; kv:list (go-qrdb's keys-only qrdb_list) does
+	// not reach values.
+	"quicbaas_kv_get":    {"kv", "get"},
+	"quicbaas_kv_list":   {"kv", "range"},
+	"quicbaas_kv_put":    {"kv", "put"},
+	"quicbaas_kv_delete": {"kv", "delete"},
 
 	// Transaction
 	"quicbaas_transaction": {"transaction", "execute"},
@@ -543,6 +553,15 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	// transports use the nearest registered pair.
 	"quicbaas_fleet_disable": {"orchestrator", "agent_remove"},
 	"quicbaas_fleet_enable":  {"orchestrator", "agent_register"},
+
+	// Fleet placement specs (go-quicbaas#1681), as on REST and gRPC.
+	"quicbaas_fleet_placement_declare":        {"placement", "manage"},
+	"quicbaas_fleet_placement_get":            {"placement", "read"},
+	"quicbaas_fleet_placement_list":           {"placement", "read"},
+	"quicbaas_fleet_placement_withdraw":       {"placement", "manage"},
+	"quicbaas_fleet_placement_drift":          {"placement", "read"},
+	"quicbaas_fleet_placement_consent_list":   {"placement", "read"},
+	"quicbaas_fleet_placement_consent_answer": {"placement", "consent"},
 
 	// PEP access checks -> permissions:resolve, matching the REST rules for
 	// POST /api/v1/iam/check and /check/batch.

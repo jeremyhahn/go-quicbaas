@@ -41,6 +41,7 @@ func (h *iamHandler) handlePEPCheck(ctx context.Context, client iampb.PEPService
 	action, _ := getString(reqMap, "action")
 	resource, _ := getString(reqMap, "resource")
 	contextMap, _ := getStringMap(reqMap, "context")
+	tenantID, _ := getString(reqMap, "tenant_id")
 
 	var subject *iampb.Subject
 	if subjectMap != nil {
@@ -52,6 +53,7 @@ func (h *iamHandler) handlePEPCheck(ctx context.Context, client iampb.PEPService
 		Action:   action,
 		Resource: resource,
 		Context:  contextMap,
+		TenantId: tenantID,
 	}
 
 	resp, err := client.Check(ctx, pbReq)
