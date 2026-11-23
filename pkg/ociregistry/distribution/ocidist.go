@@ -468,7 +468,26 @@ func (h *OCIDistHandlers) putManifest(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Location", fmt.Sprintf("/v2/%s/manifests/%s", vars["name"], vars["reference"]))
 	w.Header().Set("Docker-Content-Digest", digest)
+	// OCI 1.1: a registry serving the referrers API echoes the accepted
+	// subject, so clients do not fall back to the referrers tag schema.
+	if subject := manifestSubject(body); subject != "" {
+		w.Header().Set("OCI-Subject", subject)
+	}
 	w.WriteHeader(http.StatusCreated)
+}
+
+// manifestSubject returns the subject digest of a manifest body, or ""
+// when it has none or the body does not name a valid digest.
+func manifestSubject(body []byte) string {
+	var m struct {
+		Subject *struct {
+			Digest string `json:"digest"`
+		} `json:"subject"`
+	}
+	if err := json.Unmarshal(body, &m); err != nil || m.Subject == nil || !validDigest(m.Subject.Digest) {
+		return ""
+	}
+	return m.Subject.Digest
 }
 
 func (h *OCIDistHandlers) deleteManifest(w http.ResponseWriter, r *http.Request) {

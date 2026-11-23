@@ -60,6 +60,7 @@ func TestOCIDist_Referrers(t *testing.T) {
 	for _, m := range [][]byte{sig, sbom} {
 		rec = do(router, http.MethodPut, "/v2/apps/web/manifests/"+sha256Of(m), m, nil)
 		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+		assert.Equal(t, subject, rec.Header().Get("OCI-Subject"))
 	}
 
 	t.Run("all referrers", func(t *testing.T) {
@@ -104,6 +105,23 @@ func TestOCIDist_Referrers(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, rec.Code)
 		assert.Contains(t, rec.Body.String(), "DIGEST_INVALID")
 	})
+}
+
+// TestOCIDist_PutManifestReturnsOCISubject checks that a manifest PUT
+// with a subject answers with OCI-Subject, and one without does not.
+func TestOCIDist_PutManifestReturnsOCISubject(t *testing.T) {
+	router := newTestRouter(t, newFakeOCIBackend(), openGates(), OCIDistLimits{})
+
+	image := []byte(`{"schemaVersion":2,"config":{"mediaType":"application/vnd.oci.image.config.v1+json"}}`)
+	rec := do(router, http.MethodPut, "/v2/apps/web/manifests/v1", image, nil)
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	assert.Empty(t, rec.Header().Get("OCI-Subject"))
+
+	subject := sha256Of(image)
+	sig := referrerManifest(sigType, subject)
+	rec = do(router, http.MethodPut, "/v2/apps/web/manifests/"+sha256Of(sig), sig, nil)
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	assert.Equal(t, subject, rec.Header().Get("OCI-Subject"))
 }
 
 // TestOCIDist_ReferrersBackendError maps a backend failure to a 500.
