@@ -397,7 +397,9 @@ func (s *SchedulerEngine) recoverThroughGuard(
 		}
 		next := *held
 		s.applyRunFailure(&next, evidence, now)
-		next.ConcludedRunAt, next.ConcludedBy = startedAt, owner
+		// The write stamps UpdatedAt, so the run's identity is pinned in
+		// RunStartedAt for a record that only carried it in UpdatedAt.
+		next.RunStartedAt, next.ConcludedRunAt, next.ConcludedBy = startedAt, startedAt, owner
 		written = &next
 		return &next, true
 	})
@@ -442,7 +444,7 @@ func (s *SchedulerEngine) revisitConcludedRun(ctx context.Context, current *Job,
 			Status:  current.Status,
 		}
 	}
-	if err := s.saveAbandonedRun(ctx, current, startedAt, evidence, current.LastRun); err != nil {
+	if err := s.saveAbandonedRun(ctx, current, startedAt, evidence, time.Now()); err != nil {
 		return "", err
 	}
 	return current.Status, nil

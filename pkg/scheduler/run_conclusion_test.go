@@ -9,38 +9,60 @@ import (
 )
 
 // concludingStorage is the mock store with the guarded run transition: the
-// same forward-only mark the quicbaas ClusteredStorage keeps, in memory. Two
-// engines over one concludingStorage are two nodes over one cluster.
+// same compare-and-swap of the job record the quicbaas ClusteredStorage
+// performs, in memory. Two engines over one concludingStorage are two nodes
+// over one cluster.
 type concludingStorage struct {
 	*mockJobStorage
 
-	mu    sync.Mutex
-	marks map[uint64]RunConclusion
+	// guard serializes conclusions, the way the store's swap does.
+	guard sync.Mutex
 	calls int
+
+	// beforeConclude, when set, runs as a conclusion arrives at the store:
+	// whatever it does happened between the caller's read and the swap.
+	beforeConclude func()
 }
 
 func newConcludingStorage() *concludingStorage {
-	return &concludingStorage{mockJobStorage: newMockJobStorage(), marks: map[uint64]RunConclusion{}}
+	return &concludingStorage{mockJobStorage: newMockJobStorage()}
 }
 
-func runBefore(a, b RunConclusion) bool {
-	if !a.Firing.Equal(b.Firing) {
-		return a.Firing.Before(b.Firing)
+func (c *concludingStorage) ConcludeRun(_ context.Context, run *RunConclusion, transition RunTransition) (bool, error) {
+	if hook := c.beforeConclude; hook != nil {
+		hook()
 	}
-	return a.StartedAt.Before(b.StartedAt)
-}
-
-func (c *concludingStorage) ConcludeRun(_ context.Context, run *RunConclusion) (bool, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.guard.Lock()
+	defer c.guard.Unlock()
 	c.calls++
-	held, ok := c.marks[run.JobID]
-	switch {
-	case !ok, runBefore(held, *run):
-	case runBefore(*run, held), held.Owner != run.Owner:
+	c.errMu.RLock()
+	writeErr := c.updateJobErr
+	c.errMu.RUnlock()
+	if writeErr != nil {
+		return false, writeErr
+	}
+	c.mu.RLock()
+	stored, ok := c.jobs[run.JobID]
+	var held *Job
+	if ok {
+		held = copyJob(stored)
+	}
+	c.mu.RUnlock()
+	if !ok {
 		return false, nil
 	}
-	c.marks[run.JobID] = *run
+	next, take := transition(held)
+	if !take {
+		return false, nil
+	}
+	written := copyJob(next)
+	written.UpdatedAt = time.Now()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, ok := c.jobs[run.JobID]; !ok {
+		return false, nil
+	}
+	c.jobs[run.JobID] = written
 	return true, nil
 }
 
@@ -193,16 +215,18 @@ func TestClusteredOutcome_ALosingOutcomeWritesNoHistory(t *testing.T) {
 }
 
 // TestRecoverAbandonedRun_RefusedWhenTheExecutorConcludedFirst is the other
-// order: the executing node won the guard for its run, so a recovery that
-// still reads the record as Running is refused and writes nothing.
+// order: the executing node concluded its run, so a recovery that still read
+// the record as Running is refused and writes nothing.
 func TestRecoverAbandonedRun_RefusedWhenTheExecutorConcludedFirst(t *testing.T) {
 	storage := newConcludingStorage()
 	executor := clusteredNode(t, storage, "node-1")
 	recoverer := clusteredNode(t, storage, "node-2")
 	job := seedRunningJob(t, storage.mockJobStorage, runningRecoveryJob())
 	runCtx := executor.noteRunStarted(context.Background(), job)
-	if !executor.concludeOwnRun(runCtx, job) {
-		t.Fatal("the executor lost the guard for its own run with no contender")
+	done := copyJob(job)
+	done.Status = JobStatusPending
+	if guarded, won := executor.concludeOwnRun(runCtx, done); !guarded || !won {
+		t.Fatalf("the executor's own conclusion: guarded=%v won=%v, want both", guarded, won)
 	}
 
 	_, err := recoverer.RecoverAbandonedRun(context.Background(), job, goodAttestation())
@@ -210,8 +234,8 @@ func TestRecoverAbandonedRun_RefusedWhenTheExecutorConcludedFirst(t *testing.T) 
 	if !errors.As(err, &refused) || refused.Refusal != RefusedConcluded {
 		t.Fatalf("RecoverAbandonedRun = %v, want a concluded_elsewhere refusal", err)
 	}
-	if stored := storedJob(t, storage.mockJobStorage, job.ID); stored.Status != JobStatusRunning || stored.FailCount != 0 {
-		t.Fatalf("a refused recovery wrote: STORED %s with %d failures", stored.Status, stored.FailCount)
+	if stored := storedJob(t, storage.mockJobStorage, job.ID); stored.Status != JobStatusPending || stored.FailCount != 0 {
+		t.Fatalf("STORED %s with %d failures, want the executor's pending with 0", stored.Status, stored.FailCount)
 	}
 	executions, _ := storage.GetExecutions(context.Background(), job.ID, "", 10)
 	if len(executions) != 0 {
@@ -219,10 +243,10 @@ func TestRecoverAbandonedRun_RefusedWhenTheExecutorConcludedFirst(t *testing.T) 
 	}
 }
 
-// TestRecoverAbandonedRun_RetryOnTheSameNodeWinsAgain keeps the retry
-// contract on a clustered engine: a recovery whose transition failed after it
-// took the guard completes on retry rather than refusing itself.
-func TestRecoverAbandonedRun_RetryOnTheSameNodeWinsAgain(t *testing.T) {
+// TestRecoverAbandonedRun_AFailedTransitionIsRetried: a recovery whose
+// guarded write failed concluded nothing, so the job stays Running and its
+// retry concludes the run once.
+func TestRecoverAbandonedRun_AFailedTransitionIsRetried(t *testing.T) {
 	storage := newConcludingStorage()
 	engine := clusteredNode(t, storage, "node-1")
 	job := seedRunningJob(t, storage.mockJobStorage, runningRecoveryJob())
@@ -232,11 +256,163 @@ func TestRecoverAbandonedRun_RetryOnTheSameNodeWinsAgain(t *testing.T) {
 		t.Fatal("the transition failure was not reported")
 	}
 	storage.updateJobErr = nil
+	if stored := storedJob(t, storage.mockJobStorage, job.ID); stored.Status != JobStatusRunning {
+		t.Fatalf("a failed transition left the job %s, want running", stored.Status)
+	}
 	if _, err := engine.RecoverAbandonedRun(context.Background(), job, goodAttestation()); err != nil {
-		t.Fatalf("the retry on the node that holds the guard: %v", err)
+		t.Fatalf("the retry: %v", err)
 	}
 	executions, _ := storage.GetExecutions(context.Background(), job.ID, "", 10)
 	if len(executions) != 1 {
 		t.Fatalf("history holds %d records, want 1", len(executions))
+	}
+}
+
+// TestRecoverAbandonedRun_SameNodeRetryFinishesTheHistory: the transition
+// was written, then the history record failed. The job names this node's
+// recovery, so a retry writes the record once and spends no second failure;
+// another node is refused.
+func TestRecoverAbandonedRun_SameNodeRetryFinishesTheHistory(t *testing.T) {
+	storage := newConcludingStorage()
+	engine := clusteredNode(t, storage, "node-1")
+	other := clusteredNode(t, storage, "node-2")
+	job := seedRunningJob(t, storage.mockJobStorage, runningRecoveryJob())
+
+	storage.saveExecutionErr = errors.New("history unreachable")
+	if _, err := engine.RecoverAbandonedRun(context.Background(), job, goodAttestation()); err == nil {
+		t.Fatal("the history failure was not reported")
+	}
+	storage.saveExecutionErr = nil
+	var refused RecoveryRefusedError
+	if _, err := other.RecoverAbandonedRun(context.Background(), job, goodAttestation()); !errors.As(err, &refused) || refused.Refusal != RefusedConcluded {
+		t.Fatalf("another node's recovery = %v, want a concluded refusal", err)
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := engine.RecoverAbandonedRun(context.Background(), job, goodAttestation()); err != nil {
+			t.Fatalf("retry %d on the concluding node: %v", i, err)
+		}
+	}
+	executions, _ := storage.GetExecutions(context.Background(), job.ID, "", 10)
+	if len(executions) != 1 {
+		t.Fatalf("history holds %d records, want 1", len(executions))
+	}
+	if stored := storedJob(t, storage.mockJobStorage, job.ID); stored.FailCount != 1 {
+		t.Fatalf("STORED fail count %d, want 1", stored.FailCount)
+	}
+}
+
+// TestRecoverAbandonedRun_DoesNotRecreateAForceDeletedJob: the job is
+// deleted by another node after this recovery read it Running. The guarded
+// transition finds no job and writes nothing.
+func TestRecoverAbandonedRun_DoesNotRecreateAForceDeletedJob(t *testing.T) {
+	storage := newConcludingStorage()
+	engine := clusteredNode(t, storage, "node-1")
+	job := seedRunningJob(t, storage.mockJobStorage, runningRecoveryJob())
+	storage.beforeConclude = func() {
+		if err := storage.DeleteJob(context.Background(), job.ID, ""); err != nil {
+			t.Errorf("DeleteJob: %v", err)
+		}
+	}
+
+	_, err := engine.RecoverAbandonedRun(context.Background(), job, goodAttestation())
+	var refused RecoveryRefusedError
+	if !errors.As(err, &refused) || refused.Refusal != RefusedConcluded {
+		t.Fatalf("RecoverAbandonedRun = %v, want a concluded refusal", err)
+	}
+	if got, _ := storage.GetJob(context.Background(), job.ID, ""); got != nil {
+		t.Fatalf("the deleted job was recreated as %s", got.Status)
+	}
+	executions, _ := storage.GetExecutions(context.Background(), job.ID, "", 10)
+	if len(executions) != 0 {
+		t.Fatalf("a recovery of a deleted job wrote %d history records", len(executions))
+	}
+}
+
+// TestClusteredOutcome_DoesNotRecreateADeletedJob is the same race on the
+// executing node's outcome.
+func TestClusteredOutcome_DoesNotRecreateADeletedJob(t *testing.T) {
+	storage := newConcludingStorage()
+	executor := clusteredNode(t, storage, "node-1")
+	job := seedRunningJob(t, storage.mockJobStorage, runningRecoveryJob())
+	runCtx := executor.noteRunStarted(context.Background(), job)
+	if err := storage.DeleteJob(context.Background(), job.ID, ""); err != nil {
+		t.Fatalf("DeleteJob: %v", err)
+	}
+	done := copyJob(job)
+	done.Status = JobStatusPending
+	if executor.persistJobOutcome(runCtx, done) {
+		t.Fatal("the outcome of a deleted job won")
+	}
+	if got, _ := storage.GetJob(context.Background(), job.ID, ""); got != nil {
+		t.Fatalf("the deleted job was recreated as %s", got.Status)
+	}
+}
+
+// TestClusteredOutcome_AFailedWriteLeavesTheRunRecoverable is the winner
+// that fails before its write: no conclusion is recorded without the
+// outcome, so the job stays Running and another node's recovery concludes
+// it.
+func TestClusteredOutcome_AFailedWriteLeavesTheRunRecoverable(t *testing.T) {
+	storage := newConcludingStorage()
+	executor := clusteredNode(t, storage, "node-1")
+	recoverer := clusteredNode(t, storage, "node-2")
+	job := seedRunningJob(t, storage.mockJobStorage, runningRecoveryJob())
+	runCtx := executor.noteRunStarted(context.Background(), job)
+
+	storage.updateJobErr = errors.New("job store unreachable")
+	done := copyJob(job)
+	done.Status = JobStatusPending
+	if executor.persistJobOutcome(runCtx, done) {
+		t.Fatal("an outcome whose write failed won")
+	}
+	storage.updateJobErr = nil
+	if stored := storedJob(t, storage.mockJobStorage, job.ID); stored.Status != JobStatusRunning || runConcluded(stored) {
+		t.Fatalf("STORED %s (concluded=%v), want an open running run", stored.Status, runConcluded(stored))
+	}
+	if _, err := recoverer.RecoverAbandonedRun(context.Background(), job, goodAttestation()); err != nil {
+		t.Fatalf("recovery after the executor's failed write: %v", err)
+	}
+	if stored := storedJob(t, storage.mockJobStorage, job.ID); stored.Status != JobStatusPending || stored.FailCount != 1 {
+		t.Fatalf("STORED %s with %d failures, want pending with 1", stored.Status, stored.FailCount)
+	}
+}
+
+// TestClusteredOutcome_AnEarlyTriggersRetryConcludes: a job due an hour
+// ahead is triggered now and fails, and its retry is due at now plus the
+// backoff, BEFORE the firing the first run carried. The retry is a newer
+// run all the same, and its outcome concludes it.
+func TestClusteredOutcome_AnEarlyTriggersRetryConcludes(t *testing.T) {
+	storage := newConcludingStorage()
+	executor := clusteredNode(t, storage, "node-1")
+	now := time.Now().Truncate(time.Second)
+	first := runningRecoveryJob()
+	first.NextRun = now.Add(time.Hour)
+	first.RunStartedAt = now
+	job := seedRunningJob(t, storage.mockJobStorage, first)
+
+	runCtx := executor.noteRunStarted(context.Background(), job)
+	failed := copyJob(job)
+	failed.Status = JobStatusPending
+	failed.FailCount = 1
+	failed.NextRun = now.Add(time.Minute)
+	if !executor.persistJobOutcome(runCtx, failed) {
+		t.Fatal("the triggered run's outcome lost")
+	}
+
+	retry := storedJob(t, storage.mockJobStorage, job.ID)
+	retry.Status = JobStatusRunning
+	retry.RunStartedAt = now.Add(time.Minute)
+	if err := storage.UpdateJob(context.Background(), retry); err != nil {
+		t.Fatalf("UpdateJob: %v", err)
+	}
+	retryCtx := executor.noteRunStarted(context.Background(), retry)
+	done := copyJob(retry)
+	done.Status = JobStatusPending
+	done.FailCount = 0
+	if !executor.persistJobOutcome(retryCtx, done) {
+		t.Fatal("the retry's outcome lost to the earlier run's later firing")
+	}
+	if stored := storedJob(t, storage.mockJobStorage, job.ID); stored.Status != JobStatusPending || stored.FailCount != 0 {
+		t.Fatalf("STORED %s with %d failures, want the retry's pending with 0", stored.Status, stored.FailCount)
 	}
 }

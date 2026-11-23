@@ -74,7 +74,7 @@ func outcomeTransition(run RunConclusion, outcome *Job, owner string) RunTransit
 		default:
 			return nil, false
 		}
-		next.ConcludedRunAt, next.ConcludedBy = run.StartedAt, owner
+		next.RunStartedAt, next.ConcludedRunAt, next.ConcludedBy = run.StartedAt, run.StartedAt, owner
 		return &next, true
 	}
 }
