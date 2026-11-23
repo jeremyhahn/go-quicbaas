@@ -47,7 +47,6 @@ func TestOrchestratorStartJob_CarriesTheSDKFieldsAndTenant(t *testing.T) {
 		"lead_agent_id": "node-a",
 		"poll_interval": "30s",
 		"workflow_name": "wf",
-		"workflow_file": "wf.yaml",
 		"task_id":       "task-1",
 		"attempt":       2,
 	})
@@ -58,7 +57,7 @@ func TestOrchestratorStartJob_CarriesTheSDKFieldsAndTenant(t *testing.T) {
 	assert.Equal(t, "node-a", start.LeadAgentID)
 	assert.Equal(t, "30s", start.PollInterval)
 	assert.Equal(t, "wf", start.WorkflowName)
-	assert.Equal(t, "wf.yaml", start.WorkflowFile)
+	assert.Empty(t, start.WorkflowFile)
 	assert.Equal(t, "task-1", start.TaskID)
 	assert.Equal(t, 2, start.Attempt)
 }

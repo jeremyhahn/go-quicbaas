@@ -29,8 +29,9 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
-// A start-job whose workflow_file does not load is refused before any job
-// runs, so a job never starts without the definition the caller asked for.
+// MCP refuses a start-job that names any workflow_file before any job runs
+// or any file is read: a workflow file is a path on the daemon's own
+// filesystem, and loading it would register a workflow for the tenant.
 
 const startJobWorkflowFileYAML = `name: file-workflow
 description: "loaded from a file"
@@ -89,4 +90,90 @@ func TestOrchestratorStartJob_WorkflowFileWithoutLoaderRefused(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "wf.yaml")
 	require.NoError(t, os.WriteFile(path, []byte(startJobWorkflowFileYAML), 0o600))
 	requireStartJobWorkflowFileRefused(t, svc, path)
+}
+
+// A valid workflow file, a symlink to one and a system file are each refused,
+// and none registers a workflow. The context carries no permission grants, as
+// for a caller allowed only to start jobs: the tool refuses regardless.
+func TestOrchestratorStartJob_WorkflowFileRefusedOverMCP(t *testing.T) {
+	cases := []struct {
+		name string
+		path func(t *testing.T) string
+	}{
+		{"valid file", func(t *testing.T) string {
+			path := filepath.Join(t.TempDir(), "wf.yaml")
+			require.NoError(t, os.WriteFile(path, []byte(startJobWorkflowFileYAML), 0o600))
+			return path
+		}},
+		{"symlink to a valid file", func(t *testing.T) string {
+			dir := t.TempDir()
+			target := filepath.Join(dir, "wf.yaml")
+			require.NoError(t, os.WriteFile(target, []byte(startJobWorkflowFileYAML), 0o600))
+			link := filepath.Join(dir, "link.yaml")
+			require.NoError(t, os.Symlink(target, link))
+			return link
+		}},
+		{"system file", func(*testing.T) string { return "/etc/hostname" }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := newAsyncTurnOrchestrator(t, false)
+			inst, ok := svc.(interface {
+				SetWorkflowLoader(*orchestration.WorkflowLoader)
+			})
+			require.True(t, ok, "agent service must accept a workflow loader")
+			loader := orchestration.NewWorkflowLoader()
+			inst.SetWorkflowLoader(loader)
+
+			requireStartJobWorkflowFileRefused(t, svc, tc.path(t))
+			assert.Empty(t, loader.List("t1"), "no workflow may be registered")
+		})
+	}
+}
+
+// A workflow_file naming another tenant's path is refused before the service
+// is reached, whether or not tenant_id also names that tenant.
+func TestOrchestratorStartJob_WorkflowFileForeignTenantRefused(t *testing.T) {
+	svc := &fleetMockAgentService{
+		startJobFn: func(context.Context, *orchestration.StartJobRequest) (*orchestration.StartJobResponse, error) {
+			t.Fatal("the service must not be reached")
+			return nil, nil
+		},
+	}
+	reg := newFleetRegistry(t, svc)
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
+
+	t.Run("foreign path", func(t *testing.T) {
+		_, err := reg.executeAgentTool(ctx, "quicbaas_orchestrator_start_job", map[string]interface{}{
+			"description":   "d",
+			"workflow_file": "/data/tenants/t2/wf.yaml",
+		})
+		require.Error(t, err)
+		assert.True(t, errors.Is(err, orchestration.ErrInvalidInput), "want ErrInvalidInput, got %T: %v", err, err)
+	})
+	t.Run("foreign path and tenant", func(t *testing.T) {
+		_, err := reg.executeAgentTool(ctx, "quicbaas_orchestrator_start_job", map[string]interface{}{
+			"description":   "d",
+			"workflow_file": "/data/tenants/t2/wf.yaml",
+			"tenant_id":     "t2",
+		})
+		require.Error(t, err)
+	})
+}
+
+// The start-job tool's schema offers workflow_name and no workflow_file.
+func TestOrchestratorStartJob_SchemaHasNoWorkflowFile(t *testing.T) {
+	reg := newFleetRegistry(t, &fleetMockAgentService{})
+	found := false
+	for _, tool := range reg.tools {
+		if tool.Name != "quicbaas_orchestrator_start_job" {
+			continue
+		}
+		found = true
+		properties, ok := tool.InputSchema["properties"].(map[string]interface{})
+		require.True(t, ok, "properties is %T, want a map", tool.InputSchema["properties"])
+		assert.NotContains(t, properties, "workflow_file")
+		assert.Contains(t, properties, "workflow_name")
+	}
+	require.True(t, found, "quicbaas_orchestrator_start_job is not registered")
 }

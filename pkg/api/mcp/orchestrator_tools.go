@@ -790,10 +790,6 @@ func (r *ToolRegistry) registerAgentTools() {
 					"type":        "string",
 					"description": "Registered workflow the job runs (optional)",
 				},
-				"workflow_file": map[string]interface{}{
-					"type":        "string",
-					"description": "Workflow definition file the job runs (optional)",
-				},
 				"task_id": map[string]interface{}{
 					"type":        "string",
 					"description": "Task the job is an attempt at (optional)",
@@ -2341,6 +2337,17 @@ func (r *ToolRegistry) executeOrchestratorStartJob(ctx context.Context, args map
 		return nil, api.NewRequiredFieldError("description")
 	}
 
+	// A workflow file is a path on the daemon's own filesystem, and loading
+	// it registers a workflow for the tenant. A network caller may not name
+	// one: register the workflow with the create_workflow tool and start the
+	// job by workflow_name.
+	if getString(args, "workflow_file") != "" {
+		return nil, &orchestration.AgentServiceError{
+			Sentinel: orchestration.ErrInvalidInput,
+			Message:  "workflow_file is not accepted over MCP; register the workflow with quicbaas_orchestrator_create_workflow and pass workflow_name",
+		}
+	}
+
 	// The job is the caller's tenant's: tenant_id may name only that tenant,
 	// as on get_job_status, and the service's tenant guard reads it off the
 	// context (go-quicbaas#1644).
@@ -2358,7 +2365,6 @@ func (r *ToolRegistry) executeOrchestratorStartJob(ctx context.Context, args map
 		MaxIterations: getInt(args, "max_iterations"),
 		PollInterval:  getString(args, "poll_interval"),
 		WorkflowName:  getString(args, "workflow_name"),
-		WorkflowFile:  getString(args, "workflow_file"),
 		Runner:        getString(args, "runner"),
 		TaskID:        getString(args, "task_id"),
 		Attempt:       getInt(args, "attempt"),
