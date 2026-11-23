@@ -375,7 +375,6 @@ func (p *Plane) grant(ctx context.Context, m *Manifest, prior map[GrantKind]stri
 		if err != nil {
 			errs := []error{fmt.Errorf("grant %s: %w", k, err)}
 			rctx, cancel := settleCtx(ctx)
-			defer cancel()
 			outstanding = map[GrantKind]string{}
 			for i := len(made) - 1; i >= 0; i-- {
 				if rerr := p.grants[made[i]].Revoke(rctx, m, out[made[i]]); rerr != nil {
@@ -383,6 +382,7 @@ func (p *Plane) grant(ctx context.Context, m *Manifest, prior map[GrantKind]stri
 					outstanding[made[i]] = out[made[i]]
 				}
 			}
+			cancel()
 			return nil, outstanding, errors.Join(errs...)
 		}
 		out[k] = ref

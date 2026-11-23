@@ -344,18 +344,15 @@ func (g *Name) Grant(ctx context.Context, m *serviceplane.Manifest, prior string
 		if err != nil {
 			return "", err
 		}
-		switch {
-		case priorAddr == addr:
+		if priorAddr == addr {
 			if _, err := g.Registry.Renew(tctx, lease); err == nil {
 				return prior, nil
 			}
 			// The lease expired or cannot be renewed: register anew and
 			// drop the old lease after.
 			stale = lease
-		default:
-			if err := g.deregister(tctx, lease); err != nil {
-				return "", fmt.Errorf("name %s: %w", m.Name, err)
-			}
+		} else if err := g.deregister(tctx, lease); err != nil {
+			return "", fmt.Errorf("name %s: %w", m.Name, err)
 		}
 	}
 	lease, err := g.Registry.Register(tctx, registry.ServiceInstance{
