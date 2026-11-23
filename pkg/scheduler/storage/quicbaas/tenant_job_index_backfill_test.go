@@ -60,8 +60,10 @@ func TestTenantJobIndexBackfill_UnindexedJobsRunAfterOpen(t *testing.T) {
 	putUnindexedTenantJob(t, kv, cron)
 
 	storage := NewStorage(kv)
-	if names := dueJobNames(t, storage, now); len(names) != 0 {
-		t.Fatalf("before open, due jobs = %v, want none (no fallback scan)", names)
+	// The due scan's own discovery sweep indexes unindexed jobs, so they
+	// are found even before the store is opened.
+	if names := dueJobNames(t, storage, now); len(names) != 2 {
+		t.Fatalf("before open, due jobs = %v, want both unindexed jobs", names)
 	}
 
 	if err := storage.InitializeJobIDCounter(ctx); err != nil {
@@ -120,6 +122,37 @@ func TestTenantJobIndexBackfill_IsIdempotent(t *testing.T) {
 	}
 	if len(entries) != 2 {
 		t.Fatalf("index entries = %v, want one per tenant job", entries)
+	}
+}
+
+// TestGetJobsDueForExecution_FindsAnOlderWritersJobAfterTheBackfill is the
+// rolling-upgrade case: the first upgraded node backfills and sets the
+// shared marker, then a node that predates the index writes a tenant job
+// with no index entry. A later upgraded node sees the marker and skips the
+// backfill; its due scan must still find the job.
+func TestGetJobsDueForExecution_FindsAnOlderWritersJobAfterTheBackfill(t *testing.T) {
+	ctx := context.Background()
+	kv := newMockKVStore()
+	first := NewStorage(kv)
+	if err := first.InitializeJobIDCounter(ctx); err != nil {
+		t.Fatalf("first node: %v", err)
+	}
+
+	old := createTestJob("written-by-an-older-node", scheduler.OwnerTypeTenant, "acme")
+	old.ID = 4242
+	old.NextRun = time.Now().Add(-time.Minute)
+	putUnindexedTenantJob(t, kv, old)
+
+	later := NewStorage(kv)
+	if err := later.InitializeJobIDCounter(ctx); err != nil {
+		t.Fatalf("later node: %v", err)
+	}
+	due, err := later.GetJobsDueForExecution(ctx, time.Now(), 10, nil)
+	if err != nil {
+		t.Fatalf("GetJobsDueForExecution: %v", err)
+	}
+	if len(due) != 1 || due[0].Name != old.Name {
+		t.Fatalf("due = %v, want the older writer's job", jobNames(due))
 	}
 }
 
