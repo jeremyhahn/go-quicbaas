@@ -461,30 +461,6 @@ type GCOperation struct {
 	Error string
 }
 
-// CompactOperation represents an ongoing compaction operation.
-type CompactOperation struct {
-	// ID is the operation ID.
-	ID string
-
-	// Backend is the backend being compacted.
-	Backend string
-
-	// Aggressive indicates if aggressive mode is enabled.
-	Aggressive bool
-
-	// Status is the current status.
-	Status string
-
-	// StartedAt is when the operation started (Unix nanoseconds).
-	StartedAt int64
-
-	// CompletedAt is when the operation completed (Unix nanoseconds).
-	CompletedAt int64
-
-	// Error contains error message if failed.
-	Error string
-}
-
 // convertStorageTier converts service StorageTier to catalog StorageTier.
 func convertStorageTier(tier StorageTier) catalog.StorageTier {
 	switch tier {

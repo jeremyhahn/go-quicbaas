@@ -569,6 +569,28 @@ func NewKeyDerivationNotImplementedError(op string) *dberrors.QBError {
 	}
 }
 
+// CompactionUnsupportedError indicates a backend has no compaction verb, so
+// a compaction request cannot run.
+type CompactionUnsupportedError struct {
+	// Backend is the backend the request named.
+	Backend string
+}
+
+// Error implements the error interface.
+func (e *CompactionUnsupportedError) Error() string {
+	return "compaction is not supported by backend " + e.Backend
+}
+
+// NewCompactionUnsupportedError creates a QBError for a compaction request
+// on a backend that has no compaction verb.
+func NewCompactionUnsupportedError(op, backend string) *dberrors.QBError {
+	return &dberrors.QBError{
+		Code: dberrors.ErrUnimplemented,
+		Op:   op,
+		Err:  &CompactionUnsupportedError{Backend: backend},
+	}
+}
+
 // EmptyPasswordError indicates an empty password was provided for key derivation.
 type EmptyPasswordError struct{}
 

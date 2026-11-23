@@ -25,7 +25,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/catalog"
+	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
@@ -128,43 +130,44 @@ func TestRunGCOperation_EmptyBackendList(t *testing.T) {
 	assert.Equal(t, int64(0), op.ObjectsScanned)
 }
 
-// =============================================================================
-// runCompaction Deep Path Tests
-// =============================================================================
+func TestCompactBackend_UnsupportedBackendIsTypedError(t *testing.T) {
+	svc, _, backendMgr := createTestAdminService(t)
+	backendMgr.AddBackend("test-backend", nil, &catalog.BackendConfig{Type: "local", Enabled: true})
 
-func TestRunCompaction_CompletesSuccessfully(t *testing.T) {
-	svc, _, _ := createTestAdminService(t)
-
-	op := &CompactOperation{
-		ID:        "compact-test-001",
-		Backend:   "test-backend",
-		Status:    "running",
-		StartedAt: 1000000,
-	}
-
-	svc.runCompaction(tenantctx.WithSystem(context.Background()), op)
-
-	assert.Equal(t, "completed", op.Status)
-	assert.NotZero(t, op.CompletedAt)
-	assert.Empty(t, op.Error)
-}
-
-func TestRunCompaction_AggressiveMode(t *testing.T) {
-	svc, _, _ := createTestAdminService(t)
-
-	op := &CompactOperation{
-		ID:         "compact-aggressive-001",
-		Backend:    "test-backend",
+	resp, err := svc.CompactBackend(tenantctx.WithSystem(context.Background()), &CompactBackendRequest{
+		Name:       "test-backend",
 		Aggressive: true,
-		Status:     "running",
-		StartedAt:  1000000,
-	}
+	})
+	require.Error(t, err)
+	assert.Nil(t, resp)
 
-	svc.runCompaction(tenantctx.WithSystem(context.Background()), op)
+	var unsupported *api.CompactionUnsupportedError
+	require.ErrorAs(t, err, &unsupported)
+	assert.Equal(t, "test-backend", unsupported.Backend)
 
-	assert.Equal(t, "completed", op.Status)
-	assert.NotZero(t, op.CompletedAt)
+	var qbErr *dberrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, dberrors.ErrUnimplemented, qbErr.Code)
 }
+
+func TestCompactBackend_UnknownBackendIsNotFound(t *testing.T) {
+	svc, _, _ := createTestAdminService(t)
+
+	resp, err := svc.CompactBackend(tenantctx.WithSystem(context.Background()), &CompactBackendRequest{Name: "missing"})
+	require.Error(t, err)
+	assert.Nil(t, resp)
+
+	var unsupported *api.CompactionUnsupportedError
+	assert.False(t, stderrors.As(err, &unsupported))
+
+	var qbErr *dberrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, dberrors.ErrNotFound, qbErr.Code)
+}
+
+// =============================================================================
+// CompactBackend Tests
+// =============================================================================
 
 // =============================================================================
 // GetGarbageCollectionProgress Deep Path Tests

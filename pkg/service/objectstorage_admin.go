@@ -44,15 +44,14 @@ var (
 
 // objectStorageAdminService implements ObjectStorageAdminService.
 type objectStorageAdminService struct {
-	catalogMgr        catalog.CatalogManager
-	backendMgr        catalog.BackendManager
-	configResolver    config.ObjectStoreConfigResolver
-	logger            interfaces.Logger
-	metrics           *objectStorageAdminMetrics
-	closed            atomic.Bool
-	mu                sync.RWMutex
-	gcOperations      map[string]*GCOperation
-	compactOperations map[string]*CompactOperation
+	catalogMgr     catalog.CatalogManager
+	backendMgr     catalog.BackendManager
+	configResolver config.ObjectStoreConfigResolver
+	logger         interfaces.Logger
+	metrics        *objectStorageAdminMetrics
+	closed         atomic.Bool
+	mu             sync.RWMutex
+	gcOperations   map[string]*GCOperation
 }
 
 // objectStorageAdminMetrics holds Prometheus metrics for admin operations.
@@ -86,12 +85,11 @@ func NewObjectStorageAdminService(
 	}
 
 	svc := &objectStorageAdminService{
-		catalogMgr:        catalogMgr,
-		backendMgr:        backendMgr,
-		configResolver:    configResolver,
-		logger:            logger.WithField("component", "objectstorage_admin_service"),
-		gcOperations:      make(map[string]*GCOperation),
-		compactOperations: make(map[string]*CompactOperation),
+		catalogMgr:     catalogMgr,
+		backendMgr:     backendMgr,
+		configResolver: configResolver,
+		logger:         logger.WithField("component", "objectstorage_admin_service"),
+		gcOperations:   make(map[string]*GCOperation),
 	}
 
 	// Initialize metrics (only once across all instances)
@@ -1000,7 +998,9 @@ func (s *objectStorageAdminService) RepairObject(ctx context.Context, req *Repai
 // Compaction Operations
 // =============================================================================
 
-// CompactBackend triggers compaction on a backend.
+// CompactBackend validates a compaction request and returns a
+// CompactionUnsupportedError (ErrUnimplemented): no backend has a compaction
+// verb, so nothing is recorded and no operation starts.
 func (s *objectStorageAdminService) CompactBackend(ctx context.Context, req *CompactBackendRequest) (*CompactBackendResponse, error) {
 	start := time.Now()
 	defer func() {
@@ -1025,88 +1025,24 @@ func (s *objectStorageAdminService) CompactBackend(ctx context.Context, req *Com
 		return nil, err
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	s.logger.WithFields(map[string]interface{}{
 		"name":       req.Name,
 		"aggressive": req.Aggressive,
-	}).Debug("triggering compaction")
+	}).Debug("compaction requested")
 
 	// Verify backend exists
-	_, err := s.backendMgr.GetBackendConfig(req.Name)
-	if err != nil {
+	if _, err := s.backendMgr.GetBackendConfig(req.Name); err != nil {
 		if s.metrics != nil && s.metrics.operationErrors != nil {
 			s.metrics.operationErrors.WithLabelValues("compact_backend", "not_found").Inc()
 		}
 		return nil, api.NewNotFoundByNameError("admin.CompactBackend", "backend", req.Name)
 	}
 
-	// Create compaction operation
-	opID := uuid.New().String()
-	now := time.Now().UnixNano()
-
-	compactOp := &CompactOperation{
-		ID:         opID,
-		Backend:    req.Name,
-		Aggressive: req.Aggressive,
-		Status:     "running",
-		StartedAt:  now,
+	// No object-storage backend has a compaction verb (common.Storage has
+	// none), so the request is refused before anything is recorded, rather
+	// than reported as a compaction that never ran.
+	if s.metrics != nil && s.metrics.operationErrors != nil {
+		s.metrics.operationErrors.WithLabelValues("compact_backend", "unsupported").Inc()
 	}
-
-	s.compactOperations[opID] = compactOp
-
-	// Update metrics
-	if s.metrics != nil && s.metrics.compactionsTotal != nil {
-		s.metrics.compactionsTotal.Inc()
-	}
-
-	// Start compaction in background
-	go s.runCompaction(context.WithoutCancel(ctx), compactOp)
-
-	s.logger.WithFields(map[string]interface{}{
-		"operation_id": opID,
-		"backend":      req.Name,
-		"aggressive":   req.Aggressive,
-	}).Info("compaction initiated")
-
-	return &CompactBackendResponse{
-		Name:        req.Name,
-		OperationID: opID,
-		StartedAt:   now,
-	}, nil
-}
-
-// runCompaction performs the actual compaction operation.
-func (s *objectStorageAdminService) runCompaction(ctx context.Context, op *CompactOperation) {
-	defer func() {
-		if r := recover(); r != nil {
-			s.mu.Lock()
-			op.Status = "failed"
-			op.Error = fmt.Sprintf("panic: %v", r)
-			op.CompletedAt = time.Now().UnixNano()
-			s.mu.Unlock()
-		}
-	}()
-
-	// Get the backend - for backends that support compaction, trigger it
-	// Most object storage backends don't need explicit compaction
-	// This is mainly relevant for local/embedded storage engines
-
-	s.logger.WithFields(map[string]interface{}{
-		"operation_id": op.ID,
-		"backend":      op.Backend,
-	}).Debug("running compaction")
-
-	// Simulated compaction completion
-	// In a real implementation, this would interact with the storage backend
-	s.mu.Lock()
-	op.Status = "completed"
-	op.CompletedAt = time.Now().UnixNano()
-	s.mu.Unlock()
-
-	s.logger.WithFields(map[string]interface{}{
-		"operation_id": op.ID,
-		"backend":      op.Backend,
-	}).Info("compaction completed")
+	return nil, api.NewCompactionUnsupportedError("admin.CompactBackend", req.Name)
 }

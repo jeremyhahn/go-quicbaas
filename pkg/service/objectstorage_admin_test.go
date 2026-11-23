@@ -1244,12 +1244,12 @@ func TestCompactBackend_Success(t *testing.T) {
 		Aggressive: false,
 	}
 
+	// No backend has a compaction verb: the request is refused, not faked.
 	resp, err := svc.CompactBackend(ctx, req)
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-	assert.Equal(t, "test-backend", resp.Name)
-	assert.NotEmpty(t, resp.OperationID)
-	assert.NotZero(t, resp.StartedAt)
+	var qbErr *dberrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, dberrors.ErrUnimplemented, qbErr.Code)
+	assert.Nil(t, resp)
 }
 
 func TestCompactBackend_Aggressive(t *testing.T) {
@@ -1264,9 +1264,10 @@ func TestCompactBackend_Aggressive(t *testing.T) {
 	}
 
 	resp, err := svc.CompactBackend(ctx, req)
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-	assert.NotEmpty(t, resp.OperationID)
+	var qbErr *dberrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, dberrors.ErrUnimplemented, qbErr.Code)
+	assert.Nil(t, resp)
 }
 
 func TestCompactBackend_ValidationError_NilRequest(t *testing.T) {
