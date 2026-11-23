@@ -27,6 +27,7 @@ func TestVolumeTypesCrossBoundary(t *testing.T) {
 		VolumeID:   "root-node7",
 		DevicePath: "/dev/mapper/root-node7",
 		HostPath:   "/run/volumes/root-node7",
+		Promoted:   true,
 	}
 	var pkgVol pkgorch.AttachedVolume = sdkVol // no conversion
 	raw, err := json.Marshal(sdkVol)

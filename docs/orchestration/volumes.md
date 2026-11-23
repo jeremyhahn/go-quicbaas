@@ -38,9 +38,9 @@ The fleet node agent enables volumes with a `volumes` block in its config
 
 ```yaml
 volumes:
-  provider: local          # drbd is refused: launches do not promote yet
+  provider: local          # or drbd
   settings: {}             # the provider's snake_case settings
-  node_id: ""              # default: settings.node_id, then the host name; given to the local provider too
+  node_id: ""              # default: settings.node_id (drbd: settings.node_name), then the host name; given to the local provider too
   staging_dir: ""          # default: <work_dir>/volumes; the provider name is appended
   lock_dir: ""             # default: /run/lock/quicbaas/volumes; must be the same for every daemon on the host
 ```
@@ -118,9 +118,24 @@ volume's primary through a `VolumeCoordinator`:
 
 A standalone go-qrdb keeps no leases; use the local coordinator there.
 
-The fleet node agent does not start an HA controller, and its launches do not
-promote or demote a volume, so it refuses the `drbd` provider at startup
-(`ErrVolumeUnsupported`).
+A launch over the `drbd` provider promotes each of its volumes itself. A drbd
+volume attaches as a Secondary, whose device cannot be opened, so the order is
+attach, promote, grow, mount, for raw and read-only claims too. On release the
+order is unmount, demote, detach, because Detach refuses a Primary.
+
+- The promotion is journaled before `Promote` runs, so a node that stops part
+  way demotes the volume when it recovers (a demote of a Secondary is
+  harmless).
+- A failed demote keeps the volume held, unmounted and still promoted, and the
+  reaper retries the demote and detach. A demote that fails while the volume
+  reports a role other than primary counts as done.
+- Cross-node exclusion for a launch is DRBD's single-primary rule: `Promote`
+  fails while the peer is Primary, and the launch rolls back.
+
+The drbd provider's node is `settings.node_name` (default: the host name);
+its `node_id` is a DRBD integer id and is passed through unchanged. The fleet
+node agent runs no HA controller, so failover belongs to the `services`
+rollout.
 
 ## The NBD volume store and diskless boot
 
