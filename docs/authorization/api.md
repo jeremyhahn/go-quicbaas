@@ -18,7 +18,7 @@ contributes to go-qrdb's registry.
 |---|---|---|
 | REST | `frozenRoutePermissions` (`pkg/api/rest/routes_permissions_generated.go`) gives every route its `RouteAuth` class and `resource:action`; `applyFrozenPermissions` (`pkg/api/rest/routes.go`) applies it, and `pkg/apimodule` registers each route with go-qrdb's API server (`RegisterHTTP`) | go-qrdb's authorizer |
 | QUIC | the REST route table carried over HTTP/3; see [multiprotocol-api](../multiprotocol-api/architecture.md#authentication--authorization) | as REST |
-| gRPC | go-qrdb RPCs carry their permission on the wire descriptor, read by `pkg/apimodule/module_grants.go`; go-quicbaas RPCs map through `pkg/api/grpc/authz_mapping.go` | **Departure (SPEC D4):** `pkg/api/grpc/authz_interceptor.go` decides locally |
+| gRPC | go-qrdb RPCs carry their permission on the wire descriptor, read by `pkg/apimodule/module_grants.go`; go-quicbaas RPCs map through `pkg/api/grpc/authz_mapping.go` | `pkg/api/grpc/authz_interceptor.go` checks the token's scp, then go-qrdb's authorizer decides |
 | Unix | delegates to the gRPC services | as gRPC |
 | MCP | tool name → `resource:action` in `pkg/api/mcp/authz_qrdb.go`; OAuth 2.1 bearer and audience rules in [mcp-server/api.md](../mcp-server/api.md#authorization) | go-qrdb's authorizer |
 | Embedded | none: linking the SDK into a process is the grant (go-quicbaas#329, go-quicbaas#301) | — |

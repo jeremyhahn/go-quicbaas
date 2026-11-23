@@ -25,11 +25,14 @@ go-qrdb permission is in [api.md](api.md#how-each-transport-reaches-the-decision
 
 ```
 REST · QUIC · MCP ─► resource:action ─► go-qrdb authorizer (RBAC + ABAC decorator)
-gRPC · Unix       ─► resource:action ─► pkg/api/grpc/authz_interceptor.go   (SPEC D4)
+gRPC · Unix       ─► resource:action ─► platform-token validator (scp ceiling) ─► go-qrdb authorizer (RBAC + ABAC decorator)
 ```
 
-**Departure (SPEC D4):** the gRPC interceptor decides locally instead of
-calling go-qrdb's authorizer.
+The gRPC and Unix gate authenticates the token with the platform-token
+Validator and caps it by the token's scp, then asks go-qrdb's authorizer
+through the embedded node (`qrdbGRPCRBACAuthorizer`,
+`pkg/server/lifecycle_grpc_authz.go`); a request passes only when both allow,
+and a node that is not up refuses.
 
 ## The ABAC policy store
 
