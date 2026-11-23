@@ -291,6 +291,7 @@ func (h *IAMHandler) RegisterProvider(w http.ResponseWriter, r *http.Request) {
 		AuthURL:      req.AuthURL,
 		TokenURL:     req.TokenURL,
 		UserInfoURL:  req.UserInfoURL,
+		JWKSURL:      req.JWKSURL,
 		Scopes:       req.Scopes,
 		Created:      time.Now(),
 		Updated:      time.Now(),
@@ -490,6 +491,9 @@ func (h *IAMHandler) UpdateProvider(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.UserInfoURL != nil {
 		existing.UserInfoURL = *req.UserInfoURL
+	}
+	if req.JWKSURL != nil {
+		existing.JWKSURL = *req.JWKSURL
 	}
 	if req.Scopes != nil {
 		existing.Scopes = *req.Scopes
