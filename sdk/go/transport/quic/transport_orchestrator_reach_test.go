@@ -49,8 +49,9 @@ var wantOrchestratorMethods = []string{
 	"SubmitTaskArtifacts", "SubscribeJobEvents", "SubscribeSessionEvents", "UpdateWorkflow",
 }
 
-// notCarriedOverREST are client streams the REST dialect has no route for.
-var notCarriedOverREST = map[string]bool{"InferenceStream": true, "SubscribeJobEvents": true}
+// notCarriedOverREST are the methods the REST dialect has no route for: they
+// fail Unimplemented without sending anything.
+var notCarriedOverREST = map[string]bool{"InferenceStream": true, "SubscribeJobEvents": true, "GetSessionHistory": true}
 
 func orchestratorReachCases() map[string]reachCase {
 	def := &orchestratorclient.WorkflowDefinition{Name: "w1", Mode: orchestratorclient.WorkflowModeCanned}
