@@ -34,6 +34,7 @@ func seedWebAuthnUser(t *testing.T, store *IdentityStore) *User {
 }
 
 func TestPermitCertificateLogin_AddsMTLS(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 	user := seedWebAuthnUser(t, store)
@@ -57,6 +58,7 @@ func TestPermitCertificateLogin_AddsMTLS(t *testing.T) {
 }
 
 func TestPermitCertificateLogin_IsIdempotent(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 	user := seedWebAuthnUser(t, store)
@@ -76,6 +78,7 @@ func TestPermitCertificateLogin_IsIdempotent(t *testing.T) {
 
 // An empty policy already permits every method, so adding mtls would narrow it.
 func TestPermitCertificateLogin_LeavesEmptyPolicyAlone(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 	user := seedWebAuthnUser(t, store)
@@ -94,6 +97,7 @@ func TestPermitCertificateLogin_LeavesEmptyPolicyAlone(t *testing.T) {
 }
 
 func TestPermitCertificateLogin_RefusesBadInput(t *testing.T) {
+	t.Parallel()
 	store := newTestIdentityStore()
 	ctx := context.Background()
 	user := seedWebAuthnUser(t, store)

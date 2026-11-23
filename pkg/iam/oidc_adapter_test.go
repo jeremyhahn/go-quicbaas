@@ -23,6 +23,7 @@ import (
 )
 
 func TestNewOIDCProviderAdapter(t *testing.T) {
+	t.Parallel()
 	t.Run("creates adapter with nil provider", func(t *testing.T) {
 		adapter := NewOIDCProviderAdapter(nil)
 		require.NotNil(t, adapter)
@@ -31,6 +32,7 @@ func TestNewOIDCProviderAdapter(t *testing.T) {
 }
 
 func TestOIDCProviderAdapter_GetProvider(t *testing.T) {
+	t.Parallel()
 	t.Run("returns underlying provider", func(t *testing.T) {
 		// Create a nil adapter to test the getter
 		adapter := &OIDCProviderAdapter{provider: nil}
@@ -39,6 +41,7 @@ func TestOIDCProviderAdapter_GetProvider(t *testing.T) {
 }
 
 func TestOIDCProviderAdapter_GetConfiguration(t *testing.T) {
+	t.Parallel()
 	t.Run("returns nil when provider is nil", func(t *testing.T) {
 		adapter := NewOIDCProviderAdapter(nil)
 		// This will panic if the provider is nil and we call a method on it
@@ -53,6 +56,7 @@ func TestOIDCProviderAdapter_GetConfiguration(t *testing.T) {
 }
 
 func TestOIDCProviderAdapter_GetOAuthASMetadata(t *testing.T) {
+	t.Parallel()
 	t.Run("returns nil when provider is nil", func(t *testing.T) {
 		adapter := NewOIDCProviderAdapter(nil)
 		// This will panic if the provider is nil
@@ -66,6 +70,7 @@ func TestOIDCProviderAdapter_GetOAuthASMetadata(t *testing.T) {
 }
 
 func TestOIDCProviderAdapter_InterfaceCompliance(t *testing.T) {
+	t.Parallel()
 	// Compile-time interface compliance check
 	var _ interfaces.OIDCProvider = (*OIDCProviderAdapter)(nil)
 }

@@ -27,6 +27,7 @@ import (
 // opened for the account the user id names: the creation options carry that
 // account's user handle and a session id the finish leg can redeem.
 func TestBeginAddCredential_TargetsTheCallersAccount(t *testing.T) {
+	t.Parallel()
 	mgr, _ := newCredentialAdminManager(t)
 
 	creation, sessionID, err := mgr.Factory().BeginAddCredential(context.Background(), testWriteThroughTenant, 42)
@@ -53,6 +54,7 @@ func TestBeginAddCredential_TargetsTheCallersAccount(t *testing.T) {
 // no WebAuthn account in the tenant is refused with the typed mismatch error,
 // not an untyped lookup failure.
 func TestBeginAddCredential_UnknownAccountIsTypedMismatch(t *testing.T) {
+	t.Parallel()
 	mgr, _ := newCredentialAdminManager(t)
 
 	_, _, err := mgr.Factory().BeginAddCredential(context.Background(), testWriteThroughTenant, 7)
@@ -71,6 +73,7 @@ func TestBeginAddCredential_UnknownAccountIsTypedMismatch(t *testing.T) {
 // TestBeginAddCredential_EmptyTenantIsRefused pins that the tenant scope is
 // mandatory: an empty tenant never resolves a relying party.
 func TestBeginAddCredential_EmptyTenantIsRefused(t *testing.T) {
+	t.Parallel()
 	mgr, _ := newCredentialAdminManager(t)
 
 	_, _, err := mgr.Factory().BeginAddCredential(context.Background(), "", 42)
