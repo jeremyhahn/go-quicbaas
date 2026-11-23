@@ -559,6 +559,9 @@ func sealBarrierDaemon(t *testing.T, d *barrierDaemon) {
 		"barrier", "seal", "-y",
 	}
 	cmd := exec.CommandContext(ctx, binary, args...) // #nosec G204 - args produced by the test
+	// A network seal is authenticated by the SO PIN that init provisioned;
+	// the env var keeps it off argv.
+	cmd.Env = append(os.Environ(), "QUICBAAS_BARRIER_SO_PIN="+defaultBarrierSOPin)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("seal per-test daemon (barrier seal -y over REST) failed: %v\noutput:\n%s", err, out)
