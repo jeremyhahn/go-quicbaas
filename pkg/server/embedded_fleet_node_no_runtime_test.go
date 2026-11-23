@@ -21,6 +21,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
 
 // Containers run in the fleet node agent co-located with quicbaasd, which
@@ -76,6 +78,76 @@ func TestStartEmbeddedFleetNode_StartsNothingWhenEveryBackendIsSandboxed(t *test
 	srv.config.Server.EmbeddedFleetNode.Backends = []string{"claude"}
 	require.NoError(t, srv.startEmbeddedFleetNode())
 
+	require.Nil(t, srv.embeddedFleetNodeState)
+	requireWorkDirFree(t, workDir)
+}
+
+// thisHostEmbeddedID is the id startEmbeddedFleetNode registers under here.
+func thisHostEmbeddedID() string {
+	hostname, err := os.Hostname()
+	if err != nil || hostname == "" {
+		hostname = "localhost"
+	}
+	return embeddedFleetNodeID(hostname)
+}
+
+// registerIdleFleetNode writes an idle registration as a previous run left it.
+func registerIdleFleetNode(t *testing.T, registry orchestration.FleetRegistry, id string, kind orchestration.FleetNodeKind) {
+	t.Helper()
+	require.NoError(t, registry.RegisterFleetNode(context.Background(), &orchestration.FleetNode{
+		ID:           id,
+		TenantID:     embeddedFleetNodeTenantID,
+		Name:         id,
+		Host:         "h",
+		Backend:      "claude",
+		NodeType:     "embedded",
+		Kind:         kind,
+		Status:       orchestration.FleetNodeStatusIdle,
+		Capabilities: []string{"claude"},
+	}))
+}
+
+func TestStartEmbeddedFleetNode_StartsNothingRemovesThePreviousRegistration(t *testing.T) {
+	srv := embeddedFleetNodeServer(t, t.TempDir())
+	srv.config.Server.EmbeddedFleetNode.SandboxPolicy = "required"
+	srv.config.Server.EmbeddedFleetNode.Backends = []string{"claude"}
+	other := embeddedFleetNodeID("another-host")
+	registerIdleFleetNode(t, srv.fleetRegistry, thisHostEmbeddedID(), orchestration.FleetNodeKindEmbedded)
+	registerIdleFleetNode(t, srv.fleetRegistry, other, orchestration.FleetNodeKindEmbedded)
+
+	require.NoError(t, srv.startEmbeddedFleetNode())
+
+	require.Nil(t, srv.embeddedFleetNodeState)
+	ctx := context.Background()
+	_, err := srv.fleetRegistry.GetFleetNode(ctx, embeddedFleetNodeTenantID, thisHostEmbeddedID())
+	require.ErrorIs(t, err, orchestration.ErrFleetNodeNotFound)
+	_, err = srv.fleetRegistry.GetFleetNode(ctx, embeddedFleetNodeTenantID, other)
+	require.NoError(t, err, "another host's registration is not this node's")
+}
+
+func TestStartEmbeddedFleetNode_StartsNothingKeepsAnotherKindUnderTheID(t *testing.T) {
+	srv := embeddedFleetNodeServer(t, t.TempDir())
+	srv.config.Server.EmbeddedFleetNode.SandboxPolicy = "required"
+	srv.config.Server.EmbeddedFleetNode.Backends = []string{"claude"}
+	registerIdleFleetNode(t, srv.fleetRegistry, thisHostEmbeddedID(), orchestration.FleetNodeKindDaemon)
+
+	require.NoError(t, srv.startEmbeddedFleetNode())
+
+	_, err := srv.fleetRegistry.GetFleetNode(context.Background(), embeddedFleetNodeTenantID, thisHostEmbeddedID())
+	require.NoError(t, err)
+}
+
+func TestStartEmbeddedFleetNode_StartsNothingFailsWhenTheRegistrationCannotBeRemoved(t *testing.T) {
+	workDir := t.TempDir()
+	srv := embeddedFleetNodeServer(t, workDir)
+	srv.config.Server.EmbeddedFleetNode.SandboxPolicy = "required"
+	srv.config.Server.EmbeddedFleetNode.Backends = []string{"claude"}
+	registerIdleFleetNode(t, srv.fleetRegistry, thisHostEmbeddedID(), orchestration.FleetNodeKindEmbedded)
+	srv.fleetRegistry = removeErrRegistry{srv.fleetRegistry}
+
+	err := srv.startEmbeddedFleetNode()
+
+	require.ErrorContains(t, err, "remove the previous embedded registration")
 	require.Nil(t, srv.embeddedFleetNodeState)
 	requireWorkDirFree(t, workDir)
 }

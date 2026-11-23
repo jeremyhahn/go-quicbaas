@@ -266,6 +266,9 @@ func (s *Server) startEmbeddedFleetNode() error {
 	if sandboxPolicy != orchestration.SandboxPolicyOptIn {
 		kinds = containerFreeEmbeddedBackends(kinds)
 		if len(kinds) == 0 {
+			if err := s.removeStaleEmbeddedRegistration(context.Background(), nodeID); err != nil {
+				return &ServerCauseError{Message: "embedded agent: remove the previous embedded registration", Cause: err}
+			}
 			log.Infof("Embedded agent: not started: sandbox policy %q puts every configured backend %v on the co-located fleet node agent",
 				sandboxPolicy, cfg.Backends)
 			return nil
@@ -500,6 +503,30 @@ func (s *Server) stopEmbeddedFleetNode(ctx context.Context) {
 
 	s.embeddedFleetNodeState = nil
 	s.logger.Infof("Embedded agent stopped: id=%s", ea.nodeID)
+}
+
+// removeStaleEmbeddedRegistration removes the embedded registration a
+// previous run on this host left in the fleet registry, when this run
+// registers none. An abrupt shutdown never deregisters, and an embedded
+// registration is exempt from heartbeat expiry, so placement would keep
+// choosing a backend nothing serves. A record of another kind under the
+// same id is not this node's and is left alone.
+func (s *Server) removeStaleEmbeddedRegistration(ctx context.Context, nodeID string) error {
+	node, err := s.fleetRegistry.GetFleetNode(ctx, embeddedFleetNodeTenantID, nodeID)
+	if errors.Is(err, orchestration.ErrFleetNodeNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if node.Kind != orchestration.FleetNodeKindEmbedded {
+		return nil
+	}
+	if err := s.fleetRegistry.RemoveFleetNode(ctx, embeddedFleetNodeTenantID, nodeID); err != nil &&
+		!errors.Is(err, orchestration.ErrFleetNodeNotFound) {
+		return err
+	}
+	return nil
 }
 
 // installEmbeddedBackendDialer registers the embedded fleet node's bufconn dialer
