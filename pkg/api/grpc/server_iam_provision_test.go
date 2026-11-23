@@ -20,11 +20,11 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
 	stderrors "errors"
+	"os"
 	"testing"
 	"time"
 
@@ -128,6 +128,16 @@ func newProvisionCSR(t *testing.T, key crypto.Signer) string {
 	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: der}))
 }
 
+// weakProvisionCSR returns the shared RSA-1024 CSR fixture in pkg/service's
+// testdata. It is generated once outside FIPS mode, because FIPS-only mode
+// refuses to generate a key below the admin key policy.
+func weakProvisionCSR(t *testing.T) string {
+	t.Helper()
+	data, err := os.ReadFile("../../service/testdata/admin_csr_rsa1024.pem")
+	require.NoError(t, err)
+	return string(data)
+}
+
 func TestIAMServer_ProvisionTenant_CertMode(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
@@ -155,9 +165,6 @@ func TestIAMServer_ProvisionTenant_CertModeRefusesBadCSR(t *testing.T) {
 	require.NoError(t, err)
 	other, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
-	weak, err := rsa.GenerateKey(rand.Reader, 1024)
-	require.NoError(t, err)
-
 	tests := []struct {
 		name string
 		csr  string
@@ -180,7 +187,7 @@ func TestIAMServer_ProvisionTenant_CertModeRefusesBadCSR(t *testing.T) {
 		},
 		{
 			name: "key below policy",
-			csr:  newProvisionCSR(t, weak),
+			csr:  weakProvisionCSR(t),
 			want: &service.ProvisionAdminCSRKeyError{Key: "RSA-1024"},
 		},
 	}

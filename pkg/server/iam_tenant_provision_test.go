@@ -20,12 +20,12 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
 	"math/big"
+	"os"
 	"testing"
 	"time"
 
@@ -564,9 +564,9 @@ func (s *contextBoundUserStorage) DeleteUser(ctx context.Context, tenantID strin
 }
 
 func TestTenantProvisioner_InvalidCSRIsRefusedBeforeAnyWrite(t *testing.T) {
-	weakKey, err := rsa.GenerateKey(rand.Reader, 1024)
-	require.NoError(t, err)
-	weakDER, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{Subject: pkix.Name{CommonName: "admin"}}, weakKey)
+	// An RSA-1024 CSR generated once outside FIPS mode: FIPS-only mode
+	// refuses to generate a key below the admin key policy.
+	weakPEM, err := os.ReadFile("../service/testdata/admin_csr_rsa1024.pem")
 	require.NoError(t, err)
 
 	tests := map[string]struct {
@@ -574,7 +574,7 @@ func TestTenantProvisioner_InvalidCSRIsRefusedBeforeAnyWrite(t *testing.T) {
 		target any
 	}{
 		"malformed": {csr: "-----BEGIN CERTIFICATE REQUEST-----\nAA==\n-----END CERTIFICATE REQUEST-----\n", target: new(*service.ProvisionAdminCSRInvalidError)},
-		"weak key":  {csr: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: weakDER})), target: new(*service.ProvisionAdminCSRKeyError)},
+		"weak key":  {csr: string(weakPEM), target: new(*service.ProvisionAdminCSRKeyError)},
 		"not a CSR": {csr: "admin", target: new(*service.ProvisionAdminCSRInvalidError)},
 	}
 	for name, tt := range tests {
