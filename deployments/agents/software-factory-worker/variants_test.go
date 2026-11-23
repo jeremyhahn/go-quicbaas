@@ -14,7 +14,9 @@
 package softwarefactoryworker
 
 import (
+	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -77,6 +79,111 @@ func TestVariantDockerfiles_UpgradeAndCheckFixedPackages(t *testing.T) {
 			cleanAt := strings.Index(dockerfile, "rm -rf /var/lib/apt/lists/*")
 			if checkAt == -1 || cleanAt == -1 || checkAt > cleanAt {
 				t.Errorf("want the dpkg --compare-versions floor check before the apt lists are removed; got offsets %d, %d", checkAt, cleanAt)
+			}
+		})
+	}
+}
+
+// variantFloorCheckScript cuts the `for floor in ... done` loop out of a
+// variant Dockerfile and joins its backslash-newline continuations, as Docker
+// does before it hands RUN text to /bin/sh -c.
+func variantFloorCheckScript(t *testing.T, dockerfile string) string {
+	t.Helper()
+	start := strings.Index(dockerfile, "for floor in")
+	if start == -1 {
+		t.Fatalf("the Dockerfile has no `for floor in` loop")
+	}
+	end := strings.Index(dockerfile[start:], "done")
+	if end == -1 {
+		t.Fatalf("the `for floor in` loop has no `done`")
+	}
+	script := strings.ReplaceAll(dockerfile[start:start+end+len("done")], "\\\n", " ")
+	if !strings.Contains(script, "exit 1") {
+		t.Fatalf("the floor check loop does not exit 1 on a below-floor package:\n%s", script)
+	}
+	return script
+}
+
+// runVariantFloorCheck runs a floor check script with a stub dpkg-query that
+// reports installed's versions (and knows no other package); the real dpkg
+// compares the versions.
+func runVariantFloorCheck(t *testing.T, script string, installed map[string]string) (string, error) {
+	t.Helper()
+	bin := t.TempDir()
+	pkgs := t.TempDir()
+	for pkg, v := range installed {
+		if err := os.WriteFile(filepath.Join(pkgs, pkg), []byte(v), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stub := "#!/bin/sh\nfor last; do :; done\n[ -f \"$FAKE_PKG_DIR/$last\" ] || exit 1\ncat \"$FAKE_PKG_DIR/$last\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "dpkg-query"), []byte(stub), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("sh", "-c", script)
+	cmd.Env = append(os.Environ(),
+		"PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"FAKE_PKG_DIR="+pkgs)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	return stderr.String(), err
+}
+
+// TestVariantDockerfiles_FloorCheckRejectsBelowFloor runs each variant's
+// floor check against controlled package versions, so a build with a package
+// below its fixed version fails and one at or above every floor passes.
+func TestVariantDockerfiles_FloorCheckRejectsBelowFloor(t *testing.T) {
+	if _, err := exec.LookPath("dpkg"); err != nil {
+		t.Fatalf("dpkg is required to run the variant floor check: %v", err)
+	}
+	type floor struct{ pkg, min string }
+	var floors []floor
+	for _, entry := range variantFixedPackageFloors {
+		pkg, min, _ := strings.Cut(entry, "=")
+		floors = append(floors, floor{pkg, min})
+	}
+	at := func(suffix func(f floor) string) map[string]string {
+		installed := map[string]string{}
+		for _, f := range floors {
+			installed[f.pkg] = f.min + suffix(f)
+		}
+		return installed
+	}
+	for _, name := range []string{"go-xkms.Dockerfile", "trusted-firmware.Dockerfile"} {
+		t.Run(name, func(t *testing.T) {
+			script := variantFloorCheckScript(t, readVariantDockerfile(t, name))
+			for _, pass := range []struct {
+				name      string
+				installed map[string]string
+			}{
+				{"equal", at(func(floor) string { return "" })},
+				{"newer", at(func(floor) string { return "+1" })},
+				{"not installed", map[string]string{}},
+			} {
+				t.Run(pass.name, func(t *testing.T) {
+					if stderr, err := runVariantFloorCheck(t, script, pass.installed); err != nil {
+						t.Errorf("floor check failed: %v\n%s", err, stderr)
+					}
+				})
+			}
+			for _, below := range floors {
+				t.Run("below/"+below.pkg, func(t *testing.T) {
+					installed := at(func(f floor) string {
+						if f.pkg == below.pkg {
+							return "~"
+						}
+						return ""
+					})
+					stderr, err := runVariantFloorCheck(t, script, installed)
+					if err == nil {
+						t.Fatalf("floor check passed with %s at %s~", below.pkg, below.min)
+					}
+					want := below.pkg + " " + below.min + "~ is below its fixed version " + below.min
+					if !strings.Contains(stderr, want) {
+						t.Errorf("stderr = %q, want it to contain %q", stderr, want)
+					}
+				})
 			}
 		})
 	}
