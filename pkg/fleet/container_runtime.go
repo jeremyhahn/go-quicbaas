@@ -16,8 +16,8 @@ package fleet
 import (
 	"errors"
 	"fmt"
-	"sync/atomic"
 
+	"github.com/jeremyhahn/go-quicbaas/internal/inprocessruntime"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
@@ -35,18 +35,12 @@ type containerRuntimeFactory struct {
 	detect func(logger interfaces.Logger) (orchestration.ContainerRuntime, error)
 
 	// inProcess builds the in-process runtime, or is nil when this binary
-	// has none (see SetInProcessContainerRuntime).
+	// has none (see internal/inprocessruntime).
 	inProcess func(logger interfaces.Logger) (orchestration.ContainerRuntime, error)
 }
 
-// InProcessContainerRuntime builds the in-process container runtime with all
-// of its state under root, a directory no other runtime uses.
-type InProcessContainerRuntime func(root string, logger interfaces.Logger) (orchestration.ContainerRuntime, error)
-
-// inProcessContainerRuntime is the registered constructor, nil until the
-// agent's main registers one. pkg/fleet never imports internal/containerruntime
-// itself: quicbaasd links this package and must stay CGO_ENABLED=0.
-var inProcessContainerRuntime atomic.Pointer[InProcessContainerRuntime]
+// pkg/fleet never imports internal/containerruntime itself: quicbaasd links
+// this package and must stay CGO_ENABLED=0.
 
 // containerRuntimeInProcess keys the in-process runtime (internal/containerruntime:
 // runc libcontainer in this process, with no runtime binary and no daemon
@@ -56,26 +50,13 @@ var inProcessContainerRuntime atomic.Pointer[InProcessContainerRuntime]
 // runtime.
 const containerRuntimeInProcess ContainerRuntimeSelector = "libcontainer"
 
-// SetInProcessContainerRuntime registers the agent's in-process runtime. No
-// --container-runtime value selects it yet, no exported resolver takes its
-// key, and "auto" never takes it. Only
-// the fleet node agent, built for linux with cgo, registers one; nil
-// unregisters it.
-func SetInProcessContainerRuntime(build InProcessContainerRuntime) {
-	if build == nil {
-		inProcessContainerRuntime.Store(nil)
-		return
-	}
-	inProcessContainerRuntime.Store(&build)
-}
-
-// ErrInProcessRuntimeUnavailable reports the in-process runtime resolved on a
+// errInProcessRuntimeUnavailable reports the in-process runtime resolved on a
 // binary without one: not the agent, or not linux with cgo.
-var ErrInProcessRuntimeUnavailable = errors.New("agent: the in-process container runtime is not built into this binary")
+var errInProcessRuntimeUnavailable = errors.New("agent: the in-process container runtime is not built into this binary")
 
-// ErrInProcessRuntimeNoRoot reports an in-process runtime asked for with no
+// errInProcessRuntimeNoRoot reports an in-process runtime asked for with no
 // directory to keep its state in.
-var ErrInProcessRuntimeNoRoot = errors.New("agent: the in-process container runtime needs a state directory")
+var errInProcessRuntimeNoRoot = errors.New("agent: the in-process container runtime needs a state directory")
 
 // ErrContainerRuntimeNetworkUnsupported reports a container runtime that
 // cannot give a sandbox the network this agent is configured to give it.
@@ -103,18 +84,19 @@ func CheckContainerRuntimeNetwork(rt orchestration.ContainerRuntime, network orc
 	return fmt.Errorf("%w: --sandbox-network %q", ErrContainerRuntimeNetworkUnsupported, string(network))
 }
 
-// withInProcess returns factory with the registered in-process runtime bound
-// to root, or factory unchanged when none is registered.
+// withInProcess returns factory with the in-process runtime registered
+// through internal/inprocessruntime bound to root, or factory unchanged when
+// none is registered.
 func (factory containerRuntimeFactory) withInProcess(root string) containerRuntimeFactory {
-	build := inProcessContainerRuntime.Load()
+	build := inprocessruntime.Registered()
 	if build == nil {
 		return factory
 	}
 	factory.inProcess = func(logger interfaces.Logger) (orchestration.ContainerRuntime, error) {
 		if root == "" {
-			return nil, ErrInProcessRuntimeNoRoot
+			return nil, errInProcessRuntimeNoRoot
 		}
-		return (*build)(root, logger)
+		return build(root, logger)
 	}
 	return factory
 }
@@ -151,9 +133,8 @@ var execContainerRuntimeFactory = containerRuntimeFactory{
 //     confinement yet; no --container-runtime value selects it.
 //   - "none" resolves to no runtime without probing anything.
 //
-// ResolveContainerRuntime resolves without a state directory, so its
-// in-process runtime is never chosen; the agent resolves through
-// ResolveContainerRuntimeIn.
+// ResolveContainerRuntime resolves without a state directory; the fleet node
+// agent resolves through ResolveContainerRuntimeIn.
 //
 // The outcome is logged at INFO because it decides whether this daemon can run
 // a container at all, and an operator must be able to read that from the boot
@@ -171,10 +152,10 @@ func ResolveContainerRuntime(selector ContainerRuntimeSelector, logger interface
 	return resolveContainerRuntime(selector, logger, execContainerRuntimeFactory)
 }
 
-// ResolveContainerRuntimeIn is ResolveContainerRuntime with root as the
-// in-process runtime's state directory. root must belong to this agent alone:
-// two runtimes never share one. Like ResolveContainerRuntime, it refuses the
-// in-process runtime's key: no exported call takes it.
+// ResolveContainerRuntimeIn is ResolveContainerRuntime for the fleet node
+// agent, with root as the agent's own container state directory. root must
+// belong to this agent alone. Like ResolveContainerRuntime, it accepts only
+// the --container-runtime values Config.Validate accepts.
 func ResolveContainerRuntimeIn(selector ContainerRuntimeSelector, root string, logger interfaces.Logger) (orchestration.ContainerRuntime, error) {
 	if err := refuseInProcessSelector(selector); err != nil {
 		return nil, err
@@ -252,7 +233,7 @@ func resolveDetectedContainerRuntime(logger interfaces.Logger, factory container
 // error naming why there is none.
 func resolveInProcessContainerRuntime(logger interfaces.Logger, factory containerRuntimeFactory) (orchestration.ContainerRuntime, error) {
 	if factory.inProcess == nil {
-		return nil, ErrInProcessRuntimeUnavailable
+		return nil, errInProcessRuntimeUnavailable
 	}
 	rt, err := factory.inProcess(logger)
 	if err != nil {

@@ -19,17 +19,18 @@ import (
 	"context"
 
 	"github.com/jeremyhahn/go-quicbaas/internal/containerruntime"
-	"github.com/jeremyhahn/go-quicbaas/pkg/fleet"
+	"github.com/jeremyhahn/go-quicbaas/internal/inprocessruntime"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
 
-// registerInProcessContainerRuntime makes internal/containerruntime the runtime
-// the agent registers (no --container-runtime value selects it yet, and "auto" never takes it). It lives here,
+// registerInProcessContainerRuntime registers internal/containerruntime as the
+// agent's in-process runtime through internal/inprocessruntime (no
+// --container-runtime value selects it, and "auto" never takes it). It lives here,
 // in the agent's main package, because quicbaasd links pkg/fleet too and
 // must never link the runtime.
 func registerInProcessContainerRuntime() {
-	fleet.SetInProcessContainerRuntime(newInProcessContainerRuntime)
+	inprocessruntime.Register(newInProcessContainerRuntime)
 }
 
 // newInProcessContainerRuntime starts the in-process runtime with all of its

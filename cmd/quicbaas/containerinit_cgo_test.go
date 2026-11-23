@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/internal/containerruntime"
+	"github.com/jeremyhahn/go-quicbaas/internal/inprocessruntime"
 	"github.com/jeremyhahn/go-quicbaas/pkg/fleet"
 )
 
@@ -30,7 +31,7 @@ import (
 // this host lets it start, never "not built into this binary".
 func TestRegisterInProcessContainerRuntime_BuildsTheJobRuntimeButNoSelectorTakesIt(t *testing.T) {
 	registerInProcessContainerRuntime()
-	t.Cleanup(func() { fleet.SetInProcessContainerRuntime(nil) })
+	t.Cleanup(func() { inprocessruntime.Register(nil) })
 
 	rt, err := fleet.ResolveContainerRuntimeIn(fleet.ContainerRuntimeSelector("libcontainer"), t.TempDir(), newFleetServeLogger())
 	require.ErrorIs(t, err, fleet.ErrConfigUnknownRuntime, "no exported resolver takes the in-process runtime's key")

@@ -17,6 +17,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/jeremyhahn/go-quicbaas/internal/inprocessruntime"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
@@ -34,23 +35,23 @@ type inProcessRuntime struct {
 func registerInProcess(t *testing.T, buildErr error) *[]string {
 	t.Helper()
 	var roots []string
-	SetInProcessContainerRuntime(func(root string, _ interfaces.Logger) (orchestration.ContainerRuntime, error) {
+	inprocessruntime.Register(func(root string, _ interfaces.Logger) (orchestration.ContainerRuntime, error) {
 		roots = append(roots, root)
 		if buildErr != nil {
 			return nil, buildErr
 		}
 		return &inProcessRuntime{fakeContainerRuntime: fakeContainerRuntime{available: true}, root: root}, nil
 	})
-	t.Cleanup(func() { SetInProcessContainerRuntime(nil) })
+	t.Cleanup(func() { inprocessruntime.Register(nil) })
 	return &roots
 }
 
 func TestResolveContainerRuntime_InProcessWithoutTheRuntimeIsRefused(t *testing.T) {
-	SetInProcessContainerRuntime(nil)
+	inprocessruntime.Register(nil)
 
 	rt, err := resolveContainerRuntime(containerRuntimeInProcess, newSignalLogger(t, ""), execContainerRuntimeFactory.withInProcess(t.TempDir()))
-	if !errors.Is(err, ErrInProcessRuntimeUnavailable) {
-		t.Fatalf("expected ErrInProcessRuntimeUnavailable, got %v", err)
+	if !errors.Is(err, errInProcessRuntimeUnavailable) {
+		t.Fatalf("expected errInProcessRuntimeUnavailable, got %v", err)
 	}
 	if rt != nil {
 		t.Fatalf("expected no runtime, got %T", rt)
@@ -86,8 +87,8 @@ func TestResolveContainerRuntime_InProcessThatCannotStartIsAnError(t *testing.T)
 func TestResolveContainerRuntime_InProcessNeedsARoot(t *testing.T) {
 	roots := registerInProcess(t, nil)
 
-	if _, err := resolveContainerRuntime(containerRuntimeInProcess, newSignalLogger(t, ""), execContainerRuntimeFactory.withInProcess("")); !errors.Is(err, ErrInProcessRuntimeNoRoot) {
-		t.Fatalf("expected ErrInProcessRuntimeNoRoot, got %v", err)
+	if _, err := resolveContainerRuntime(containerRuntimeInProcess, newSignalLogger(t, ""), execContainerRuntimeFactory.withInProcess("")); !errors.Is(err, errInProcessRuntimeNoRoot) {
+		t.Fatalf("expected errInProcessRuntimeNoRoot, got %v", err)
 	}
 	if len(*roots) != 0 {
 		t.Fatalf("no runtime may be built without a root, built under %v", *roots)

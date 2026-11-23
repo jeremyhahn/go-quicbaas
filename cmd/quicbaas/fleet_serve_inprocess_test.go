@@ -17,6 +17,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/jeremyhahn/go-quicbaas/internal/inprocessruntime"
 	"github.com/jeremyhahn/go-quicbaas/pkg/fleet"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
@@ -39,10 +40,10 @@ func (noneOnlyRuntime) SupportsSandboxNetwork(n orchestration.SandboxNetwork) bo
 // using it are not parallel.
 func registerNoneOnlyRuntime(t *testing.T) {
 	t.Helper()
-	fleet.SetInProcessContainerRuntime(func(string, interfaces.Logger) (orchestration.ContainerRuntime, error) {
+	inprocessruntime.Register(func(string, interfaces.Logger) (orchestration.ContainerRuntime, error) {
 		return noneOnlyRuntime{}, nil
 	})
-	t.Cleanup(func() { fleet.SetInProcessContainerRuntime(nil) })
+	t.Cleanup(func() { inprocessruntime.Register(nil) })
 }
 
 // The agent resolves its runtime without validating its configuration first,
