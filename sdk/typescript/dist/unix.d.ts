@@ -1,5 +1,6 @@
 import type { AuthClient, Client, ConnectionClient, OrchestratorClient } from './interfaces.js';
 import type { AccountsClient } from './accounts.js';
+import type { PromptsClient } from './prompts.js';
 import type { ProjectsClient } from './projects.js';
 import type { SdlcClient } from './sdlc.js';
 import type { ClientConfig } from './types.js';
@@ -18,6 +19,7 @@ export declare class UnixClient implements Client {
     readonly projects: ProjectsClient;
     readonly sdlc: SdlcClient;
     readonly accounts: AccountsClient;
+    readonly prompts: PromptsClient;
     readonly agents: any;
     readonly iam: any;
     readonly kms: any;
