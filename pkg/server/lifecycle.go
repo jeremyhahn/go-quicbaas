@@ -630,6 +630,13 @@ func (s *Server) initializeCA() error {
 	if err != nil {
 		return err
 	}
+	// Record the listener's certificate source for the token exchange; the
+	// CA file is read before the embedded chain default below fills it in.
+	s.operatorListenerCert = certSource == serverCertOperator
+	s.operatorListenerCAFile = ""
+	if s.operatorListenerCert {
+		s.operatorListenerCAFile = s.config.Security.TLSCAFile
+	}
 	if certSource == serverCertUnconfigured {
 		s.config.Security.TLSCertFile = filepath.Join(certsDir, "server.crt")
 		s.config.Security.TLSKeyFile = filepath.Join(certsDir, "server.key")
