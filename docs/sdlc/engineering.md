@@ -387,12 +387,22 @@ sdlc:
     #     refresh_before: 5m        # run again this long before expires_at
     #     timeout: 30s              # one run
     #     allowed_base_urls: ["https://api.github.com"]   # required
+    #     grants:                   # required: at least one
+    #       - tenant: acme
+    #         repositories: ["acme/web", "acme-tools/*"]  # owner/repo or owner/*
     #
     # A token command is node configuration only: no tenant, project or binding
     # can name one, and a binding of a listed forge type never reads its
     # token_secret_ref. The command runs only for a binding whose base URL is one
     # of allowed_base_urls; any other is refused before the command runs, so a
-    # binding cannot send the node's credential to a host it chose. A reviewer
+    # binding cannot send the node's credential to a host it chose. The token
+    # is the node's own forge account and sdlc:bind is a tenant permission, so
+    # the command also runs only for a binding whose tenant and owner/repo a
+    # grant names (matched case-insensitively; "*/*" is not a grant). Any
+    # other binding is refused with an invalid-input error, and onboarding
+    # reports it as a finding. The grant is checked again on every forge
+    # request, and a worker re-resolves the token before it pushes, so a token
+    # that expires during a long session is replaced, not reused. A reviewer
     # with its own token_secret_ref keeps that identity. The command runs without a shell, with the daemon's
     # environment plus QUICBAAS_FORGE_TYPE and QUICBAAS_FORGE_BASE_URL, and
     # prints one JSON object on stdout: {"token": "...", "expires_at":
