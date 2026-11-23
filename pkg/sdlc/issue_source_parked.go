@@ -132,7 +132,7 @@ func (s *IssueSource) parkedSpec(
 		},
 		Subject:     strings.TrimSpace(issue.Title),
 		Description: contract,
-		Priority:    inputs.ComputedFor(issue.Labels),
+		Priority:    inputs.ComputedForIssue(issue),
 		Runner:      JobRunnerName,
 		Park:        &orchestration.BlockReason{Kind: park.kind, Message: reason},
 		Metadata:    issueSpecMetadata(repo, binding, issue.Number, nil),
