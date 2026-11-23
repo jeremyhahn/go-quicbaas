@@ -89,6 +89,9 @@ func TestXKMSKeyName_IsInjectiveAndKeepsValidNames(t *testing.T) {
 func TestXKMSKeyName_ValidNamesWithoutTheEncodedShapeMapToThemselves(t *testing.T) {
 	for _, id := range []string{
 		"qbx.production", "qbx.", "qbx.cHJvZA", "qbx.production.sign", "qbx-x", "QBX.prod",
+		// Untagged encodings of "a/b" and "tenant/acme/k": names a key may
+		// have been stored under before the encoding existed.
+		"qbx.YS9i", "qbx.dGVuYW50L2FjbWUvaw",
 	} {
 		require.NoError(t, validation.ValidateKeyID(id), "fixture %q must be a valid go-xkms name", id)
 		require.Equal(t, id, xkmsKeyName(id), "a valid name maps to itself")
@@ -100,10 +103,8 @@ func TestXKMSKeyName_ValidNamesWithoutTheEncodedShapeMapToThemselves(t *testing.
 // injectivity: a valid ID spelled like the encoding of a rejected ID gets a
 // go-xkms name of its own, and each name reads back as its own ID.
 func TestXKMSKeyName_ALiteralOfTheEncodedShapeDoesNotAliasTheIDItEncodes(t *testing.T) {
-	for _, pair := range []struct{ literal, rejected string }{
-		{"qbx.dGVuYW50L2FjbWUvaw", "tenant/acme/k"},
-		{"qbx.YS9i", "a/b"},
-	} {
+	for _, rejected := range []string{"tenant/acme/k", "a/b"} {
+		pair := struct{ literal, rejected string }{xkmsKeyName(rejected), rejected}
 		require.NoError(t, validation.ValidateKeyID(pair.literal), "fixture %q must be a valid go-xkms name", pair.literal)
 		require.Equal(t, pair.literal, xkmsKeyName(pair.rejected), "the rejected ID keeps its encoding")
 		require.NotEqual(t, xkmsKeyName(pair.literal), xkmsKeyName(pair.rejected),
@@ -115,7 +116,7 @@ func TestXKMSKeyName_ALiteralOfTheEncodedShapeDoesNotAliasTheIDItEncodes(t *test
 
 	n2 := xkmsKeyName(xkmsKeyName("a/b"))
 	require.NotEqual(t, xkmsKeyName("a/b"), n2, "an encoding of an encoding is a name of its own")
-	require.Equal(t, "qbx.YS9i", keyIDFromXKMSName(n2))
+	require.Equal(t, xkmsKeyName("a/b"), keyIDFromXKMSName(n2))
 }
 
 // TestXKMSBackend_TenantKeyAndSystemKeyOfTheEncodedShapeAreDistinct proves on
@@ -129,7 +130,8 @@ func TestXKMSBackend_TenantKeyAndSystemKeyOfTheEncodedShapeAreDistinct(t *testin
 	backend := newRealXKMSBackendForTest(t)
 	ctx := context.Background()
 
-	const systemID = "qbx.dGVuYW50L2FjbWUvaw"
+	// A valid system ID equal to the tenant ID's encoded name.
+	var systemID = xkmsKeyName("tenant/acme/k")
 	const tenantID = "tenant/acme/k"
 	_, err := backend.CreateKey(ctx, backend.algorithmToKeyAttributes(systemID, AlgAES256GCM))
 	require.NoError(t, err)
@@ -180,6 +182,20 @@ func TestXKMSKeyName_DecodesOnlyEncodedOutputs(t *testing.T) {
 	// encoded output (a valid ID is not encoded), so it reads literally.
 	literal := xkmsEncodedKeyNamePrefix + base64.RawURLEncoding.EncodeToString([]byte("plain"))
 	require.Equal(t, literal, keyIDFromXKMSName(literal))
+	// Even with the payload's tag, a payload that decodes to a valid ID is
+	// not an encoded output.
+	tagged := xkmsEncodedKeyNamePrefix + base64.RawURLEncoding.EncodeToString([]byte("plain")) + "." + xkmsKeyNameTag("plain")
+	require.Equal(t, tagged, keyIDFromXKMSName(tagged))
+	// A name whose tag does not match its payload reads literally.
+	encoded := xkmsKeyName("a/b")
+	last := encoded[len(encoded)-1]
+	swap := byte('A')
+	if last == swap {
+		swap = 'B'
+	}
+	wrongTag := encoded[:len(encoded)-1] + string(swap)
+	require.NotEqual(t, encoded, wrongTag)
+	require.Equal(t, wrongTag, keyIDFromXKMSName(wrongTag), "a name with a wrong tag is a literal")
 	// A non-canonical payload is not an encoded output either.
 	require.Equal(t, "qbx.production", keyIDFromXKMSName("qbx.production"))
 }
@@ -229,4 +245,59 @@ func TestXKMSBackend_LegacyQBXKeyName_StillWorks(t *testing.T) {
 
 	require.NoError(t, backend.DeleteKey(ctx, encKeyID), "the legacy key must still delete")
 	require.NoError(t, backend.DeleteKey(ctx, signKeyID), "the legacy key must still delete")
+}
+
+// TestXKMSBackend_LegacyLiteralOfTheUntaggedEncodedShape_StillWorks stores a
+// key under "qbx.YS9i" as the pre-mapping code did. The name is the untagged
+// base64url of "a/b", so it must keep naming its own key, and a new "a/b" key
+// must get a go-xkms name of its own.
+func TestXKMSBackend_LegacyLiteralOfTheUntaggedEncodedShape_StillWorks(t *testing.T) {
+	cleanup := initXKMSForTest(t)
+	defer cleanup()
+
+	backend := newRealXKMSBackendForTest(t)
+	ctx := context.Background()
+
+	const legacyID = "qbx.YS9i"
+	_, err := xkms.GenerateSymmetricKey(ctx, string(backend.backendType),
+		backend.algorithmToKeyAttributes(legacyID, AlgAES256GCM))
+	require.NoError(t, err)
+
+	legacyCiphertext, err := backend.Encrypt(ctx, legacyID, []byte("legacy-secret"), nil)
+	require.NoError(t, err, "the legacy key must still encrypt through its own ID")
+	plaintext, err := backend.Decrypt(ctx, legacyID, legacyCiphertext, nil)
+	require.NoError(t, err, "the legacy key must still decrypt through its own ID")
+	require.Equal(t, []byte("legacy-secret"), plaintext)
+
+	const otherID = "a/b"
+	_, err = backend.CreateKey(ctx, backend.algorithmToKeyAttributes(otherID, AlgAES256GCM))
+	require.NoError(t, err, "the ID the legacy name decodes to gets a key of its own")
+	otherCiphertext, err := backend.Encrypt(ctx, otherID, []byte("other-secret"), nil)
+	require.NoError(t, err)
+	_, err = backend.Decrypt(ctx, legacyID, otherCiphertext, nil)
+	require.Error(t, err, "the legacy key must not decrypt the a/b key's ciphertext")
+	_, err = backend.Decrypt(ctx, otherID, legacyCiphertext, nil)
+	require.Error(t, err, "the a/b key must not decrypt the legacy key's ciphertext")
+
+	// A new backend has an empty metadata cache, so its ListKeys reads only
+	// go-xkms names.
+	fresh := newRealXKMSBackendForTest(t)
+	listIDs := func(prefix string) []string {
+		keys, _, err := fresh.ListKeys(ctx, prefix, 0)
+		require.NoError(t, err)
+		var ids []string
+		for _, k := range keys {
+			ids = append(ids, k.KeyID)
+		}
+		return ids
+	}
+	all := listIDs("")
+	require.Contains(t, all, legacyID, "the legacy key lists under its own name")
+	require.Contains(t, all, otherID)
+	ab := listIDs("a/")
+	require.Contains(t, ab, otherID)
+	require.NotContains(t, ab, legacyID, "the legacy key must not list as a/b")
+
+	require.NoError(t, backend.DeleteKey(ctx, legacyID))
+	require.NoError(t, backend.DeleteKey(ctx, otherID))
 }
