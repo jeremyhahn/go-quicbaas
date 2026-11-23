@@ -55,12 +55,20 @@ const BASE = 'http://localhost';
 const NAME = 'tpm/root ca';
 const ENC = encodeURIComponent(NAME);
 
+// The Go handler's certificate_pem and public_key_pem are []byte, which
+// encoding/json carries as base64 of the PEM text: `wireEndorsement` is what
+// the server writes, `endorsement` what the client hands its caller.
+const PEM = '-----BEGIN CERTIFICATE-----\nMIIBszCCAVmgAwIBAgIU\n-----END CERTIFICATE-----\n';
+const PEM_B64 = Buffer.from(PEM, 'utf8').toString('base64');
+
 const endorsement = {
   name: NAME,
   kind: 'ak-root',
-  certificate_pem: '-----BEGIN CERTIFICATE-----',
+  certificate_pem: PEM,
   created_at: '2026-11-12T00:00:00Z',
 };
+
+const wireEndorsement = { ...endorsement, certificate_pem: PEM_B64 };
 
 const refValues = {
   name: NAME,
@@ -72,20 +80,33 @@ const refValues = {
 
 describe('RestAttestationClient', () => {
   it('putEndorsement PUTs the body to the encoded name', async () => {
-    fetchMock.mockResolvedValueOnce(respond(200, endorsement));
+    fetchMock.mockResolvedValueOnce(respond(200, wireEndorsement));
     const client = new RestClient(BASE);
-    const req = { kind: 'ak-root' as const, certificate_pem: '-----BEGIN CERTIFICATE-----' };
+    const req = { kind: 'ak-root' as const, certificate_pem: PEM };
     const got = await client.attestation.putEndorsement(NAME, req);
     expect(got).toEqual(endorsement);
     const c = lastCall();
     expect(c.url).toBe(`${BASE}/api/v1/attestation/endorsements/${ENC}`);
     expect(c.url).toContain('tpm%2Froot%20ca');
     expect(c.method).toBe('PUT');
-    expect(c.body).toEqual(req);
+    // The body is what Go's json.Unmarshal into []byte accepts: base64 of the
+    // PEM bytes, encoded once.
+    expect(c.body).toEqual({ kind: 'ak-root', certificate_pem: PEM_B64 });
+    expect(Buffer.from(PEM_B64, 'base64').toString('utf8')).toBe(PEM);
+  });
+
+  it('putEndorsement base64-encodes a public key PEM', async () => {
+    const keyPEM = '-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQ\n-----END PUBLIC KEY-----\n';
+    const keyB64 = Buffer.from(keyPEM, 'utf8').toString('base64');
+    fetchMock.mockResolvedValueOnce(respond(200, { name: NAME, kind: 'reference-signer', public_key_pem: keyB64, created_at: '2026-11-12T00:00:00Z' }));
+    const client = new RestClient(BASE);
+    const got = await client.attestation.putEndorsement(NAME, { kind: 'reference-signer', public_key_pem: keyPEM });
+    expect(lastCall().body).toEqual({ kind: 'reference-signer', public_key_pem: keyB64 });
+    expect(got.public_key_pem).toBe(keyPEM);
   });
 
   it('listEndorsements GETs without a query', async () => {
-    fetchMock.mockResolvedValueOnce(respond(200, { endorsements: [endorsement] }));
+    fetchMock.mockResolvedValueOnce(respond(200, { endorsements: [wireEndorsement] }));
     const client = new RestClient(BASE);
     const got = await client.attestation.listEndorsements();
     expect(got.endorsements).toEqual([endorsement]);

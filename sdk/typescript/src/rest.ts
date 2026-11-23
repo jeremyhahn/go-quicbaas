@@ -5689,6 +5689,26 @@ export class RestDEKClient implements DEKClient {
  * RestAttestationClient manages the attestation verifier's endorsements and
  * reference values over REST (/api/v1/attestation/*).
  */
+/** pemTextToBase64 encodes PEM text as the base64 of its UTF-8 bytes (a Go []byte on the wire). */
+export function pemTextToBase64(pem: string): string {
+  return bytesToBase64(new TextEncoder().encode(pem));
+}
+
+/** base64ToPEMText decodes a Go []byte field back to the PEM text it carries. */
+export function base64ToPEMText(b64: string): string {
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+}
+
+function endorsementFromWire(wire: Endorsement): Endorsement {
+  const out: Endorsement = { ...wire };
+  if (wire.certificate_pem) out.certificate_pem = base64ToPEMText(wire.certificate_pem);
+  if (wire.public_key_pem) out.public_key_pem = base64ToPEMText(wire.public_key_pem);
+  return out;
+}
+
 export class RestAttestationClient implements AttestationClient {
   private readonly http: FetchHelper;
 
@@ -5697,11 +5717,19 @@ export class RestAttestationClient implements AttestationClient {
   }
 
   // Maps to PUT /api/v1/attestation/endorsements/{name}
+  //
+  // The handler decodes certificate_pem and public_key_pem into Go []byte, so
+  // on the wire they are base64 of the PEM text; this client takes and returns
+  // the PEM text itself and does that encoding exactly once.
   async putEndorsement(name: string, req: PutEndorsementRequest): Promise<Endorsement> {
-    return this.http.fetchJSON<Endorsement>(
+    const body: PutEndorsementRequest = { kind: req.kind };
+    if (req.certificate_pem !== undefined) body.certificate_pem = pemTextToBase64(req.certificate_pem);
+    if (req.public_key_pem !== undefined) body.public_key_pem = pemTextToBase64(req.public_key_pem);
+    const wire = await this.http.fetchJSON<Endorsement>(
       `/api/v1/attestation/endorsements/${encodeURIComponent(name)}`,
-      { method: 'PUT', body: JSON.stringify(req) },
+      { method: 'PUT', body: JSON.stringify(body) },
     );
+    return endorsementFromWire(wire);
   }
 
   // Maps to GET /api/v1/attestation/endorsements[?kind=]
@@ -5710,7 +5738,7 @@ export class RestAttestationClient implements AttestationClient {
     const wire = await this.http.fetchJSON<ListEndorsementsResponse>(
       `/api/v1/attestation/endorsements${query}`,
     );
-    return { ...wire, endorsements: wire?.endorsements ?? [] };
+    return { ...wire, endorsements: (wire?.endorsements ?? []).map(endorsementFromWire) };
   }
 
   // Maps to DELETE /api/v1/attestation/endorsements/{name}
