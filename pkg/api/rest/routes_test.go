@@ -154,12 +154,17 @@ import (
 // PLUS 8 for the prompt store's verbs (/api/v1/prompts/{set}[/{name}...],
 // handlers_prompt.go, go-quicbaas#805) under prompts:read, prompts:history
 // and prompts:write.
+// PLUS 5 for the fleet placement specs (/api/v1/fleet/placements[/{name}
+// [/drift]], handlers_fleet_placement.go, go-quicbaas#1681) under
+// placement:read and placement:manage.
+// PLUS 2 for the fleet placement consents (GET /api/v1/fleet/placement-consents
+// and POST .../{id}/answer) under placement:read and placement:consent.
 // PLUS 2 for the scheduler's remote handlers (/api/v1/scheduler/remote-runs
 // and /remote-runs/complete, handlers_scheduler_remote.go, go-quicbaas#1955)
 // under scheduler:read and scheduler:trigger.
 // PLUS 1 for the capabilities report (GET /api/v1/server/capabilities,
 // handlers_capabilities.go), authenticated with no RBAC permission.
-const baseRouteTableSize = 675
+const baseRouteTableSize = 682
 
 // TestRoutes_SurfaceGuard asserts the table's structural invariants: exact
 // size, absolute patterns, no duplicate method+pattern, and a handler binder

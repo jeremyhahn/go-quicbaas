@@ -291,6 +291,8 @@ func TestUnaryAuthorizationInterceptor_QRDBAdmitDeny(t *testing.T) {
 		{"authfactor_login", "/qrdb.v1.UserAuthFactorService/Login", "user_authfactors:login", "user_authfactors:list"},
 		{"authfactor_add", "/qrdb.v1.UserAuthFactorService/Add", "user_authfactors:add", "user_authfactors:login"},
 		{"admin_status", "/qrdb.v1.QRDBService/Status", "admin:status", "admin:health"},
+		{"placement_consent_answer", "/quicbaas.orchestrator.v1.OrchestratorService/AnswerFleetPlacementConsent", "placement:consent", "placement:read"},
+		{"placement_consent_list", "/quicbaas.orchestrator.v1.OrchestratorService/ListFleetPlacementConsents", "placement:read", "placement:consent"},
 	}
 
 	for _, c := range cases {
