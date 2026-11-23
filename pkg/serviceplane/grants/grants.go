@@ -66,6 +66,7 @@ type CA interface {
 // *secrets.Manager satisfies it.
 type SecretStore interface {
 	Store(ctx context.Context, path string, data map[string][]byte, metadata map[string]string) error
+	Get(ctx context.Context, path string) (map[string][]byte, map[string]string, error)
 	Destroy(ctx context.Context, path string) error
 }
 
@@ -76,10 +77,11 @@ type NameRegistry interface {
 	Deregister(ctx context.Context, leaseID int64) error
 }
 
-// RoleBinder binds a built-in role to a principal within a tenant. It has
-// the shape of the IAM role assignment in pkg/service.
+// RoleBinder binds a built-in role to a principal within a tenant. svid is
+// the principal's current SVID, the certificate it logs in with.
+// iam.WorkloadRoleBinder satisfies it.
 type RoleBinder interface {
-	AssignRole(ctx context.Context, tenantID, principal, role string) error
+	AssignRole(ctx context.Context, tenantID, principal, role string, svid *x509.Certificate) error
 	RevokeRole(ctx context.Context, tenantID, principal, role string) error
 }
 
@@ -347,6 +349,9 @@ func (g *Name) Revoke(ctx context.Context, m *serviceplane.Manifest, ref string)
 // RBAC binds the manifest's built-in role to the workload identity.
 type RBAC struct {
 	Roles RoleBinder
+	// Secrets is where the identity grant keeps the SVID the role's
+	// principal logs in with.
+	Secrets SecretStore
 	// TrustDomain is the operator's SPIFFE trust domain.
 	TrustDomain string
 }
@@ -355,7 +360,8 @@ type RBAC struct {
 func (*RBAC) Kind() serviceplane.GrantKind { return serviceplane.GrantRBAC }
 
 // Grant binds the role. Its reference is <role>@<spiffe id>. A redeploy
-// that changes the role binds the new one and unbinds the prior.
+// that changes the role binds the new one and unbinds the prior. The
+// principal is bound with the SVID the identity grant kept, its login key.
 func (g *RBAC) Grant(ctx context.Context, m *serviceplane.Manifest, prior string) (string, error) {
 	id, err := workloadID(serviceplane.GrantRBAC, g.TrustDomain, m)
 	if err != nil {
@@ -366,7 +372,11 @@ func (g *RBAC) Grant(ctx context.Context, m *serviceplane.Manifest, prior string
 		return ref, nil
 	}
 	ctx = tenantCtx(ctx, m)
-	if err := g.Roles.AssignRole(ctx, m.Tenant, id, m.Role); err != nil {
+	svid, err := g.svid(ctx, m)
+	if err != nil {
+		return "", fmt.Errorf("rbac %s: %w", ref, err)
+	}
+	if err := g.Roles.AssignRole(ctx, m.Tenant, id, m.Role, svid); err != nil {
 		return "", fmt.Errorf("rbac %s: %w", ref, err)
 	}
 	if prior != "" {
@@ -375,6 +385,26 @@ func (g *RBAC) Grant(ctx context.Context, m *serviceplane.Manifest, prior string
 		}
 	}
 	return ref, nil
+}
+
+// svid reads the SVID the identity grant kept, the principal's login key.
+func (g *RBAC) svid(ctx context.Context, m *serviceplane.Manifest) (*x509.Certificate, error) {
+	if g.Secrets == nil {
+		return nil, &ConfigError{Kind: serviceplane.GrantRBAC, Reason: "no secret store"}
+	}
+	data, _, err := g.Secrets.Get(ctx, svidPath(m))
+	if err != nil {
+		return nil, fmt.Errorf("read the SVID: %w", err)
+	}
+	block, _ := pem.Decode(data["certificate"])
+	if block == nil || block.Type != "CERTIFICATE" {
+		return nil, fmt.Errorf("read the SVID: no certificate PEM at %s", svidPath(m))
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("read the SVID: %w", err)
+	}
+	return cert, nil
 }
 
 // Revoke unbinds the role.
@@ -468,7 +498,7 @@ func All(c Config) ([]serviceplane.Grant, error) {
 		&Identity{CA: c.CA, Secrets: c.Secrets, TrustDomain: td, Validity: c.SVIDValidity},
 		&Certificate{CA: c.CA, Secrets: c.Secrets, Domain: c.Domain},
 		&Name{Registry: c.Registry, TTL: c.NameTTL, Domain: c.Domain, TrustDomain: td},
-		&RBAC{Roles: c.Roles, TrustDomain: td},
+		&RBAC{Roles: c.Roles, Secrets: c.Secrets, TrustDomain: td},
 		&Secrets{Secrets: c.Secrets, TrustDomain: td},
 	}, nil
 }

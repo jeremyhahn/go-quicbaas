@@ -36,20 +36,23 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/xkmsca"
 )
 
-// roles records role bindings: tenant|principal -> role.
+// roles records role bindings: tenant|principal|role -> role, and the SVID
+// each tenant|principal was last bound with.
 type roles struct {
 	mu    sync.Mutex
 	bound map[string]string
+	svids map[string]*x509.Certificate
 	err   error
 }
 
-func (r *roles) AssignRole(_ context.Context, tenant, principal, role string) error {
+func (r *roles) AssignRole(_ context.Context, tenant, principal, role string, svid *x509.Certificate) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.err != nil {
 		return r.err
 	}
 	r.bound[tenant+"|"+principal+"|"+role] = role
+	r.svids[tenant+"|"+principal] = svid
 	return nil
 }
 
@@ -79,7 +82,7 @@ func newEnv(t *testing.T) *env {
 		ca:      xkmsca.New(t, "serviceplane grants "+t.Name()),
 		secrets: mgr,
 		reg:     registry.New(registrytest.NewMemoryBackend()),
-		roles:   &roles{bound: map[string]string{}},
+		roles:   &roles{bound: map[string]string{}, svids: map[string]*x509.Certificate{}},
 	}
 	e.grants, err = All(Config{CA: e.ca, Secrets: e.secrets, Registry: e.reg, Roles: e.roles, Domain: "svc.example", TrustDomain: trustDomain})
 	require.NoError(t, err)
@@ -239,10 +242,19 @@ func TestRBAC_BindsTheBuiltInRoleToTheIdentity(t *testing.T) {
 	g := e.grant(serviceplane.GrantRBAC)
 	ctx := context.Background()
 
+	_, err := g.Grant(ctx, m, "")
+	require.Error(t, err, "no SVID yet: the principal has no login key")
+	assert.Empty(t, e.roles.bound)
+
+	_, err = e.grant(serviceplane.GrantIdentity).Grant(ctx, m, "")
+	require.NoError(t, err)
 	ref, err := g.Grant(ctx, m, "")
 	require.NoError(t, err)
 	assert.Equal(t, m.Role+"@spiffe://quicbaas.test/tenant/acme/svc/web", ref)
 	assert.Contains(t, e.roles.bound, "acme|spiffe://quicbaas.test/tenant/acme/svc/web|"+m.Role)
+	bound := e.roles.svids["acme|spiffe://quicbaas.test/tenant/acme/svc/web"]
+	require.NotNil(t, bound, "the principal is bound with the identity grant's SVID")
+	assert.Equal(t, e.kept(t, "acme", "tenant/acme/services/web/svid").SerialNumber, bound.SerialNumber)
 
 	moved := *m
 	moved.Role = "auditor"
