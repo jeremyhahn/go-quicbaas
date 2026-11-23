@@ -943,19 +943,17 @@ func (r *streamGetReader) Read(p []byte) (n int, err error) {
 	}
 
 	if r.ended {
-		return 0, io.EOF
+		return 0, r.endOfStream()
 	}
 
 	// Receive next chunk from stream.
 	resp, err := r.stream.Recv()
 	if stderrors.Is(err, io.EOF) {
-		// A transport EOF before the advertised object size has arrived is
-		// a truncated download, not a complete one.
-		if r.totalSize > 0 && atomic.LoadInt64(&r.bytesRead) < r.totalSize {
-			return 0, io.ErrUnexpectedEOF
-		}
+		// A transport EOF ends the stream; the end of stream is checked
+		// against the advertised object size, so a truncated download is
+		// not reported as a complete one.
 		r.ended = true
-		return 0, io.EOF
+		return 0, r.endOfStream()
 	}
 	if err != nil {
 		return 0, errors.Wrap(err, errors.CodeConnection, "streamGetReader.Read", "failed to receive chunk")
@@ -979,7 +977,7 @@ func (r *streamGetReader) Read(p []byte) (n int, err error) {
 	if chunk.IsLast {
 		r.ended = true
 		if len(chunk.Data) == 0 {
-			return 0, io.EOF
+			return 0, r.endOfStream()
 		}
 	}
 
@@ -996,6 +994,16 @@ func (r *streamGetReader) Read(p []byte) (n int, err error) {
 }
 
 // Close closes the stream.
+// endOfStream is the result of a Read at the end of the stream: io.EOF
+// once the advertised object size has been delivered, io.ErrUnexpectedEOF
+// for a stream that ended short of it.
+func (r *streamGetReader) endOfStream() error {
+	if r.totalSize > 0 && atomic.LoadInt64(&r.bytesRead) < r.totalSize {
+		return io.ErrUnexpectedEOF
+	}
+	return io.EOF
+}
+
 func (r *streamGetReader) Close() error {
 	if r.closed {
 		return nil

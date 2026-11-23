@@ -2999,6 +2999,66 @@ func TestStreamGetReader_ReadAll_RecvEOFBeforeTotalSize(t *testing.T) {
 	}
 }
 
+// TestStreamGetReader_ReadAll_EmptyLastChunkBeforeTotalSize covers an empty
+// last chunk that arrives before the advertised object size: the download is
+// truncated and must fail with io.ErrUnexpectedEOF, never a clean EOF.
+func TestStreamGetReader_ReadAll_EmptyLastChunkBeforeTotalSize(t *testing.T) {
+	stream := chunkStream(errStreamBroken,
+		&ObjectChunk{Data: []byte("hello"), TotalSize: 11},
+		&ObjectChunk{IsLast: true},
+	)
+
+	got, err := io.ReadAll(newChunkReader(stream))
+	if !stderrors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("io.ReadAll: expected io.ErrUnexpectedEOF, got %v", err)
+	}
+	if string(got) != "hello" {
+		t.Errorf("expected the %q received before the last chunk, got %q", "hello", string(got))
+	}
+}
+
+// TestStreamGetReader_ReadAll_DataLastChunkBeforeTotalSize covers a
+// data-bearing last chunk that ends short of the advertised object size, read
+// whole and through a 1-byte buffer that drains the chunk before the check.
+func TestStreamGetReader_ReadAll_DataLastChunkBeforeTotalSize(t *testing.T) {
+	newStream := func() StreamGetReader {
+		return newChunkReader(chunkStream(errStreamBroken,
+			&ObjectChunk{Data: []byte("hello "), TotalSize: 11},
+			&ObjectChunk{Data: []byte("wor"), Offset: 6, IsLast: true},
+		))
+	}
+	tests := []struct {
+		name string
+		read func(r StreamGetReader) ([]byte, error)
+	}{
+		{name: "ReadAll", read: func(r StreamGetReader) ([]byte, error) {
+			return io.ReadAll(r)
+		}},
+		{name: "OneByteBuffer", read: func(r StreamGetReader) ([]byte, error) {
+			var got []byte
+			buf := make([]byte, 1)
+			for {
+				n, err := r.Read(buf)
+				got = append(got, buf[:n]...)
+				if err != nil {
+					return got, err
+				}
+			}
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := tt.read(newStream())
+			if !stderrors.Is(err, io.ErrUnexpectedEOF) {
+				t.Fatalf("expected io.ErrUnexpectedEOF, got %v", err)
+			}
+			if string(got) != "hello wor" {
+				t.Errorf("expected %q, got %q", "hello wor", string(got))
+			}
+		})
+	}
+}
+
 // TestStreamGetReader_ReadMetadata_RecvEOFBeforeTotalSize covers the same
 // truncation when the size was advertised by the chunk ReadMetadata consumed.
 func TestStreamGetReader_ReadMetadata_RecvEOFBeforeTotalSize(t *testing.T) {
