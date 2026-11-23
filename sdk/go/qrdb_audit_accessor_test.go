@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
+	qbtransport "github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
 
 // TestSecurityQRDBAudit_EmbeddedRoundTrip proves Security().QRDBAudit()
@@ -66,6 +67,67 @@ func TestSecurityQRDBAudit_EmbeddedRoundTrip(t *testing.T) {
 	assert.Equal(t, ev.Resource, got.Resource)
 	assert.Equal(t, ev.Action, got.Action)
 	assert.Equal(t, ev.Outcome, got.Outcome)
+}
+
+// TestSecurityQRDBAudit_EmbeddedSDKTenantContext: an embedded caller that
+// names its tenant with the public SDK helper sees only its own tenant's
+// events and may filter on its own tenant.
+func TestSecurityQRDBAudit_EmbeddedSDKTenantContext(t *testing.T) {
+	c := buildEmbeddedQRDBClient(t, QRDBEmbeddedServicers{
+		KV:    stubKVService{},
+		Admin: stubAdminService{},
+		Audit: qrdbsdk.NewAuditRingBuffer(16),
+	})
+
+	ac, err := c.Security().QRDBAudit()
+	require.NoError(t, err)
+	require.NotNil(t, ac)
+
+	ctxA := qbtransport.ContextWithTenant(context.Background(), "tenant-a")
+	ctxB := qbtransport.ContextWithTenant(context.Background(), "tenant-b")
+	require.NoError(t, ac.EmitAudit(ctxA, QRDBAuditEvent{
+		Timestamp: time.Now().UTC(),
+		Actor:     "alice",
+		TenantID:  "tenant-a",
+		Resource:  "kv/key-1",
+		Action:    "kv.put",
+		Outcome:   "success",
+	}))
+	require.NoError(t, ac.EmitAudit(ctxB, QRDBAuditEvent{
+		Timestamp: time.Now().UTC(),
+		Actor:     "bob",
+		TenantID:  "tenant-b",
+		Resource:  "kv/key-1",
+		Action:    "kv.put",
+		Outcome:   "success",
+	}))
+
+	t.Run("empty filter", func(t *testing.T) {
+		var page *QRDBAuditPage
+		var err error
+		require.Eventually(t, func() bool {
+			page, err = ac.QueryAudit(ctxA, QRDBAuditFilter{})
+			return err == nil && page != nil && len(page.Events) == 1
+		}, 5*time.Second, 10*time.Millisecond, "QueryAudit did not return tenant-a's event only (err=%v)", err)
+		assert.Equal(t, "alice", page.Events[0].Actor)
+	})
+
+	t.Run("own tenant filter", func(t *testing.T) {
+		page, err := ac.QueryAudit(ctxA, QRDBAuditFilter{TenantID: "tenant-a"})
+		require.NoError(t, err)
+		require.NotNil(t, page)
+		require.Len(t, page.Events, 1)
+		assert.Equal(t, "alice", page.Events[0].Actor)
+	})
+
+	t.Run("existing qrdb binding wins", func(t *testing.T) {
+		ctx := qbtransport.ContextWithTenant(qrdbtenant.WithTenantID(context.Background(), "tenant-b"), "tenant-a")
+		page, err := ac.QueryAudit(ctx, QRDBAuditFilter{})
+		require.NoError(t, err)
+		require.NotNil(t, page)
+		require.Len(t, page.Events, 1)
+		assert.Equal(t, "bob", page.Events[0].Actor)
+	})
 }
 
 // TestSecurityQRDBAudit_EmbeddedWithoutSinkIsUnavailable proves that an
