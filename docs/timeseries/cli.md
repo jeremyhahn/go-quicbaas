@@ -1,13 +1,13 @@
 # Time Series — CLI
 
-> **Status: NORMATIVE** · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Last verified: 2026-11-14
 > Every verb and flag, with runnable examples. Feature folder: `docs/timeseries/`.
 
 Time series data commands for QuicBaaS.
 
 ## Overview
 
-These commands allow you to write, query, and manage time series data. All commands connect to a running QuicBaaS server via gRPC.
+These commands allow you to write, query, and manage time series data. All commands connect to a running QuicBaaS server over `--transport grpc` (the default, also over a Unix socket) or `--transport mcp`. Over MCP, write, write-batch, query, get-retention and set-retention work; delete and list-metrics are gRPC-only. `--transport rest` and `--transport quic` are not supported yet for time series. `test/integration/timeseries/cli_test.go` `TestTimeSeriesCLIRoundTrip` proves write, query and retention on gRPC, Unix and MCP.
 
 Alias: `ts`
 
@@ -156,50 +156,47 @@ quicbaas ts delete --metric cpu.usage \
 
 ### get-retention
 
-Get retention policy for a metric.
+Get the retention policy of a metric. A metric without one prints only its name.
 
 ```bash
-quicbaas ts get-retention
+quicbaas ts get-retention <metric>
 ```
-
-#### Flags
-- `--metric string`: Metric name (required)
 
 #### Examples
 
 ```bash
 # Get retention policy
-quicbaas ts get-retention --metric cpu.usage
+quicbaas ts get-retention cpu.usage
+# Metric: cpu.usage
+# Duration: 24h0m0s
+# Resolution: 5m0s
+# Aggregation: max
 
 # Get retention as JSON
-quicbaas ts get-retention --metric cpu.usage --output json
+quicbaas ts get-retention cpu.usage --output json
 ```
 
 ### set-retention
 
-Set retention policy for a metric.
+Set the retention policy of a metric.
 
 ```bash
-quicbaas ts set-retention
+quicbaas ts set-retention <metric> --duration <seconds>
 ```
 
 #### Flags
-- `--metric string`: Metric name (required)
-- `--duration-sec int64`: Retention duration in seconds (required)
-- `--resolution-sec int64`: Data resolution in seconds (required)
+- `--duration int64`: Retention duration in seconds (required)
+- `--resolution int64`: Data resolution in seconds
+- `--aggregation string`: Downsampling function: avg (default), sum, min, max, count
 
 #### Examples
 
 ```bash
-# Set 30-day retention with 1-minute resolution
-quicbaas ts set-retention --metric cpu.usage \
-  --duration-sec 2592000 \
-  --resolution-sec 60
+# Keep one day at 5-minute resolution, downsampled by max
+quicbaas ts set-retention cpu.usage --duration 86400 --resolution 300 --aggregation max
 
 # Set 90-day retention with 5-minute resolution
-quicbaas ts set-retention --metric memory.used \
-  --duration-sec 7776000 \
-  --resolution-sec 300
+quicbaas ts set-retention memory.used --duration 7776000 --resolution 300
 ```
 
 ### list-metrics

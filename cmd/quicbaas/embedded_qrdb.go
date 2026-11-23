@@ -48,8 +48,9 @@ func (e *EmbeddedQRDBWiringError) Unwrap() error {
 // Node path (qrdbNode is running): KV and Admin come directly from the node's
 // service graph via GetQRDBKVServicer/GetQRDBAdminServicer; the node's SDK
 // client provides barrier, ceremony, credential, and tenant servicers via
-// its embedded transport. This path no longer relies on the legacy BaasTransport
-// or EmbeddedTransportForShard/BaasKVAdapter/BaasAdminAdapter machinery.
+// its embedded transport. This path no longer relies on the former in-process
+// transport (deleted) or EmbeddedTransportForShard/BaasKVAdapter/
+// BaasAdminAdapter machinery.
 //
 // The function is safe to call only after the embedded server has been
 // started — the caller must hold a valid *embeddedServer reference.
@@ -62,7 +63,7 @@ func buildEmbeddedQRDBServicers(es *embeddedServer) (quicbaas.QRDBEmbeddedServic
 	// The node's KV and Admin servicers are the canonical service-layer
 	// implementations backed by the in-process engine. All barrier/ceremony/
 	// credential operations route through the node's SDK client embedded
-	// transport without any intermediate BaasTransport layer.
+	// transport, with no intermediate transport layer.
 	kv := es.server.GetQRDBKVServicer()
 	admin := es.server.GetQRDBAdminServicer()
 
@@ -90,6 +91,11 @@ func buildEmbeddedQRDBServicers(es *embeddedServer) (quicbaas.QRDBEmbeddedServic
 	if uafSvc := es.server.GetQRDBUserAuthFactorServicer(); uafSvc != nil {
 		servicers.UserAuthFactor = uafSvc
 	}
+	// Wire the time-series service behind Search().QRDBTimeSeries(). The
+	// server hands out a proxy that resolves the node's servicer per call,
+	// so the surface comes online after Unseal instead of being captured
+	// as nil here.
+	servicers.TimeSeries = es.server.QRDBTimeSeriesServicer()
 
 	// Wire the server's tenant servicer so the SDK's TenantMgmt() and the
 	// per-tenant barrier verbs dispatch against the node's canonical tenant
@@ -143,7 +149,7 @@ func embeddedQRDBOption(es *embeddedServer) (quicbaas.Option, error) {
 // getServerForEmbeddedWiring is a compile-time assertion that *server.Server
 // exposes the accessor surface the CLI needs. This avoids the previous
 // dependency on server.NewBaasKVAdapter, server.NewBaasAdminAdapter,
-// sharded.EmbeddedTransportForShard, and baasTransport.
+// sharded.EmbeddedTransportForShard, and the legacy in-process transport.
 var _ interface {
 	GetQRDBKVServicer() quicbaas.QRDBKVServicer
 	GetQRDBAdminServicer() quicbaas.QRDBAdminServicer

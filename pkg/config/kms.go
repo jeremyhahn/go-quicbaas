@@ -49,6 +49,9 @@ var (
 	BackendTypeSymmetric = kctypes.BackendTypeSymmetric
 	// BackendTypePhone uses a paired phone as the key custodian.
 	BackendTypePhone = kctypes.BackendTypePhone
+	// BackendTypeAVR uses a trusted-firmware device (go-xkms pkg/backend/avr)
+	// reached over its serial port.
+	BackendTypeAVR = kctypes.BackendTypeAVR
 )
 
 // BackendTypeThreshold IS DELIBERATELY ABSENT. go-xkms deleted it in
@@ -71,6 +74,7 @@ var validBackendTypes = map[BackendType]struct{}{
 	BackendTypeQuantum:   {},
 	BackendTypeSymmetric: {},
 	BackendTypePhone:     {},
+	BackendTypeAVR:       {},
 }
 
 // backendValidator is a function that validates backend-specific configuration.
@@ -78,6 +82,21 @@ type backendValidator func(c *KMSConfig) error
 
 // backendValidators maps backend types to their validation functions.
 var backendValidators = map[BackendType]backendValidator{
+	BackendTypeAVR: func(c *KMSConfig) error {
+		if c.AVR.Device == "" {
+			return &ValidationError{
+				Field:   "kms.avr.device",
+				Message: "trusted-firmware device serial port is required",
+			}
+		}
+		if c.AVR.Baud < 0 {
+			return &ValidationError{
+				Field:   "kms.avr.baud",
+				Message: "baud rate cannot be negative",
+			}
+		}
+		return nil
+	},
 	BackendTypeTPM2: func(c *KMSConfig) error {
 		if c.TPM2.Device == "" {
 			return &ValidationError{
@@ -183,6 +202,26 @@ type KMSConfig struct {
 	AWSKMS   AWSKMSBackendConfig   `yaml:"aws_kms" json:"aws_kms" mapstructure:"aws_kms"`
 	AzureKV  AzureKVBackendConfig  `yaml:"azure_kv" json:"azure_kv" mapstructure:"azure_kv"`
 	GCPKMS   GCPKMSBackendConfig   `yaml:"gcp_kms" json:"gcp_kms" mapstructure:"gcp_kms"`
+	AVR      AVRBackendConfig      `yaml:"avr" json:"avr" mapstructure:"avr"`
+}
+
+// DefaultAVRBaud is the serial line rate a trusted-firmware device speaks
+// when kms.avr.baud is unset.
+const DefaultAVRBaud = 115200
+
+// AVRBackendConfig configures the trusted-firmware device backend (go-xkms
+// pkg/backend/avr). The device holds one fixed identity key.
+type AVRBackendConfig struct {
+	// Device is the serial port the device is attached to (e.g. /dev/ttyUSB0).
+	Device string `yaml:"device" json:"device" mapstructure:"device"`
+	// Baud is the serial line rate. Zero selects DefaultAVRBaud.
+	Baud int `yaml:"baud" json:"baud" mapstructure:"baud"`
+	// KeyCN is the common name the device's identity key is addressed by.
+	// Empty selects go-xkms's default.
+	KeyCN string `yaml:"key_cn" json:"key_cn" mapstructure:"key_cn"`
+	// RequestTimeout bounds one command against the device. Zero selects
+	// go-xkms's default.
+	RequestTimeout time.Duration `yaml:"request_timeout" json:"request_timeout" mapstructure:"request_timeout"`
 }
 
 // KMSRaftConfig contains Raft-specific settings for KMS.
