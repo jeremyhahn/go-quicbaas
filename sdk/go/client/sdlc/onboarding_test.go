@@ -94,7 +94,7 @@ func TestClient_OnboardingVerbsRefuseBadInputAndBadAnswers(t *testing.T) {
 // TestClient_OnboardingVerbsFailClosedOnAnUnwiredTransport.
 //
 // A transport that does not declare the service must refuse by NAME rather
-// than surface a routing miss — the "BaasTransportNotSupportedError anywhere
+// than surface a routing miss — the "a transport-not-supported error anywhere
 // is a regression" rule only works if the refusal is legible.
 func TestClient_OnboardingVerbsFailClosedOnAnUnwiredTransport(t *testing.T) {
 	c := NewClient(&fakeTransport{capable: false})

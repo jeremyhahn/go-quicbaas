@@ -86,6 +86,7 @@ Examples:
 	cmd.AddCommand(newFleetStatusCommand())
 	cmd.AddCommand(newFleetRemoveCommand())
 	cmd.AddCommand(newFleetHeartbeatCommand())
+	cmd.AddCommand(newFleetPlacementCommand())
 	cmd.AddCommand(newFleetServeCommand())
 	cmd.AddCommand(newFleetDeployCommand())
 	cmd.AddCommand(newFleetUndeployCommand())
