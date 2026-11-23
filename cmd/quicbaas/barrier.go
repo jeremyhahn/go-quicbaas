@@ -89,7 +89,11 @@ var barrierStrategyInit = map[string]struct{}{
 // =============================================================================
 
 var (
-	barrierSecret         string
+	barrierSecret string
+	// barrierShares and barrierRecoveryShares hold the --share argv values
+	// only until a share verb reads them: resolveShares moves each share into
+	// protected memory and clears the variable, so no package global keeps a
+	// share or recovery key for the life of the process.
 	barrierShares         []string
 	barrierSharesFile     string
 	barrierThreshold      int
@@ -654,10 +658,11 @@ Examples:
 
 // runBarrierUnsealSharesCommand executes 'barrier unseal-shares'.
 func runBarrierUnsealSharesCommand(_ *cobra.Command, _ []string) error {
-	shares, err := resolveUnsealShares(barrierShares, barrierSharesFile, "barrier unseal-shares")
+	shares, release, err := resolveShares(&barrierShares, barrierSharesFile, "barrier unseal-shares")
 	if err != nil {
 		return formatError(err)
 	}
+	defer release()
 
 	client, err := barrierClientFactory()
 	if err != nil {
@@ -668,66 +673,8 @@ func runBarrierUnsealSharesCommand(_ *cobra.Command, _ []string) error {
 	defer cancel()
 
 	return formatError(client.BarrierUnsealWithShares(ctx, &qrdbtransport.BarrierUnsealSharesRequest{
-		Shares: shares,
+		Shares: shares.fields(),
 	}))
-}
-
-// resolveUnsealShares enforces the --share / --shares-file invariants
-// and returns the flattened share list. op names the invoking verb so the
-// error points at the command the operator actually ran.
-func resolveUnsealShares(shares []string, sharesFile, op string) ([]string, error) {
-	hasFlag := len(shares) > 0
-	hasFile := sharesFile != ""
-	if hasFlag && hasFile {
-		return nil, &BarrierShareInputError{
-			Op:     op,
-			Reason: "exactly one of --share (repeatable) or --shares-file is allowed",
-		}
-	}
-	if !hasFlag && !hasFile {
-		return nil, &BarrierShareInputError{
-			Op:     op,
-			Reason: "one of --share (repeatable) or --shares-file is required",
-		}
-	}
-	if hasFlag {
-		return shares, nil
-	}
-	return readSharesFile(sharesFile, op)
-}
-
-// readSharesFile reads one share per line from path. Blank lines and
-// '#' comments are skipped. The literal path "-" reads from stdin. op names
-// the invoking verb and rides on the returned errors.
-func readSharesFile(path, op string) ([]string, error) {
-	var src io.Reader
-	if path == "-" {
-		src = os.Stdin
-	} else {
-		f, err := os.Open(path)
-		if err != nil {
-			return nil, &BarrierSharesFileError{Path: path, Op: op, Err: err}
-		}
-		defer func() { _ = f.Close() }()
-		src = f
-	}
-
-	var shares []string
-	scanner := bufio.NewScanner(src)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		shares = append(shares, line)
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, &BarrierSharesFileError{Path: path, Op: op, Err: err}
-	}
-	if len(shares) == 0 {
-		return nil, &BarrierSharesFileEmptyError{Path: path, Op: op}
-	}
-	return shares, nil
 }
 
 // =============================================================================
@@ -1011,11 +958,12 @@ Examples:
 
 // runBarrierRecoveryRecoverCommand executes 'barrier recovery recover'.
 func runBarrierRecoveryRecoverCommand(_ *cobra.Command, _ []string) error {
-	keys, err := resolveUnsealShares(barrierRecoveryShares, barrierRecoverySharesFile,
+	keys, release, err := resolveShares(&barrierRecoveryShares, barrierRecoverySharesFile,
 		"barrier recovery recover")
 	if err != nil {
 		return formatError(err)
 	}
+	defer release()
 
 	client, err := barrierClientFactory()
 	if err != nil {
@@ -1026,7 +974,7 @@ func runBarrierRecoveryRecoverCommand(_ *cobra.Command, _ []string) error {
 	defer cancel()
 
 	return formatError(client.BarrierRecoverWithKeys(ctx, &qrdbtransport.BarrierRecoverWithKeysRequest{
-		Keys: keys,
+		Keys: keys.fields(),
 	}))
 }
 
@@ -1205,10 +1153,11 @@ Example:
 
 // runBarrierRootTokenCommand executes 'barrier root-token'.
 func runBarrierRootTokenCommand(cmd *cobra.Command, _ []string) error {
-	shares, err := resolveUnsealShares(barrierShares, barrierSharesFile, "barrier root-token")
+	shares, release, err := resolveShares(&barrierShares, barrierSharesFile, "barrier root-token")
 	if err != nil {
 		return formatError(err)
 	}
+	defer release()
 
 	client, err := barrierClientFactory()
 	if err != nil {
@@ -1219,7 +1168,7 @@ func runBarrierRootTokenCommand(cmd *cobra.Command, _ []string) error {
 	defer cancel()
 
 	resp, err := client.BarrierGenerateRootToken(ctx, &qrdbtransport.BarrierGenerateRootTokenRequest{
-		Shares: shares,
+		Shares: shares.fields(),
 	})
 	if err != nil {
 		return formatError(err)

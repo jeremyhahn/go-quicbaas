@@ -163,7 +163,7 @@ func TestReadSharesFile_AllCommentsTreatedAsEmpty(t *testing.T) {
 	body := "# top\n\n   \n# bottom\n"
 	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
 
-	_, err := readSharesFile(path, "barrier unseal-shares")
+	_, _, err := readSharesFile(path, "barrier unseal-shares")
 	require.Error(t, err)
 	var typed *BarrierSharesFileEmptyError
 	require.ErrorAs(t, err, &typed)
@@ -179,19 +179,20 @@ func TestReadSharesFile_TrimsAndIgnoresComments(t *testing.T) {
 	body := "  alpha\n# comment\n\nbeta  \n"
 	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
 
-	shares, err := readSharesFile(path, "barrier unseal-shares")
+	shares, release, err := readSharesFile(path, "barrier unseal-shares")
 	require.NoError(t, err)
-	assert.Equal(t, []string{"alpha", "beta"}, shares)
+	defer release()
+	assert.Equal(t, []string{"alpha", "beta"}, shares.fields())
 }
 
 // TestReadSharesFile_ScannerError wraps an in-flight read error from the
 // underlying *os.File. Pointing readSharesFile at a directory succeeds
-// at os.Open but fails on the first scanner.Scan with an "is a directory"
-// errno, exercising the scanner.Err() branch.
+// at os.Open but fails on the first read with an "is a directory"
+// errno, exercising the read-error branch.
 func TestReadSharesFile_ScannerError(t *testing.T) {
 	dir := t.TempDir()
 
-	_, err := readSharesFile(dir, "barrier unseal-shares")
+	_, _, err := readSharesFile(dir, "barrier unseal-shares")
 	require.Error(t, err)
 	var typed *BarrierSharesFileError
 	require.ErrorAs(t, err, &typed)
