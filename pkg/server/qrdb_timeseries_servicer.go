@@ -278,7 +278,7 @@ func (p *qrdbTimeSeriesServicerProxy) ListMetricsWithConsistency(ctx context.Con
 // which the embedded qrdb transport uses so that an in-process caller reads
 // the policy of its own database; a scope failure is returned unchanged.
 func (p *qrdbTimeSeriesServicerProxy) GetRetentionPolicyContext(ctx context.Context, metric string) (*timeseries.RetentionPolicy, error) {
-	ctx, svc, err := p.servicer(ctx)
+	_, svc, err := p.servicer(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -290,7 +290,7 @@ func (p *qrdbTimeSeriesServicerProxy) GetRetentionPolicyContext(ctx context.Cont
 // uses so that an in-process caller lists the metrics of its own database; a
 // scope failure is returned unchanged.
 func (p *qrdbTimeSeriesServicerProxy) ListMetricsContext(ctx context.Context, prefix string, limit int) ([]string, error) {
-	ctx, svc, err := p.servicer(ctx)
+	_, svc, err := p.servicer(ctx)
 	if err != nil {
 		return nil, err
 	}
