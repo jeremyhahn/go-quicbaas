@@ -58,6 +58,15 @@ const (
 	integrationAdminKeyPath  = "/etc/quicbaas/certs/admin.key"
 )
 
+// presentsAdminClientCert reports whether a runner for transport presents
+// the fixture's admin client certificate. gRPC and Unix both speak gRPC to
+// the node's listeners, whose authentication chain admits the system admin
+// by that certificate; the go-qrdb gRPC sub-client behind Security().Barrier()
+// and the other qrdb verb groups carries no platform bearer.
+func presentsAdminClientCert(transport Transport) bool {
+	return transport == TransportGRPC || transport == TransportUnix
+}
+
 const (
 	// TransportGRPC uses gRPC protocol.
 	TransportGRPC Transport = "grpc"
@@ -157,11 +166,11 @@ func NewTestRunner(t *testing.T, transport Transport, address string) *TestRunne
 	// test container mounts the cluster's CA at /etc/quicbaas/certs/ca.crt.
 	baseArgs = append(baseArgs, "--tls-ca", integrationCAPath)
 
-	// The system admin's gRPC calls authenticate by the fixture's admin
-	// client certificate. Its tenant SAN is what binds the call's tenant on
-	// the unified server; with no certificate a tenant-scoped verb is
-	// refused (go-quicbaas#1699).
-	if transport == TransportGRPC {
+	// The system admin's gRPC and Unix calls authenticate by the fixture's
+	// admin client certificate (the Unix runner speaks gRPC over the socket).
+	// Its tenant SAN is what binds the call's tenant on the unified server;
+	// with no certificate a tenant-scoped verb is refused (go-quicbaas#1699).
+	if presentsAdminClientCert(transport) {
 		baseArgs = append(baseArgs, "--tls-cert", integrationAdminCertPath, "--tls-key", integrationAdminKeyPath)
 	}
 

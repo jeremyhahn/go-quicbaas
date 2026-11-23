@@ -86,3 +86,4 @@ Layer 4 of the stack, one product in layers: the application-layer framework and
 - Seam waits on go-qrdb#1128: the compliance-mode switch, read through sdk/go, that the iam row's SO separation of duties follows (owner ruling 132)
 - Seam waits on go-xkms#1697: the per-repository signing-key binding, tenant release key by default, that the release-signing-key row re-exports (owner rulings 133 (a), 134)
 - Standards watch: draft-ietf-oauth-v2-1 (The OAuth 2.1 Authorization Framework), pinned at revision -16, implemented by `pkg/iam` ([copy and index](docs/reference/README.md))
+- Standards watch: draft-ietf-webtrans-http3 (WebTransport over HTTP/3), pinned at revision -16, for the server endpoint and the sdk/typescript QUIC client (#1534) ([copy and index](docs/reference/README.md))
