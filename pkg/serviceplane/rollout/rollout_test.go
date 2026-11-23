@@ -57,6 +57,7 @@ type slotRig struct {
 	calls        []string
 	failAppraise string
 	failDrain    bool
+	failFill     bool
 	failSwitch   string
 	filling      chan struct{}
 	block        chan struct{}
@@ -79,6 +80,9 @@ func (r *slotRig) Fill(_ context.Context, _, _ string, slot Slot, rel *servicepl
 	if r.block != nil {
 		r.filling <- struct{}{}
 		<-r.block
+	}
+	if r.failFill {
+		return errors.New("slot fill failed")
 	}
 	return nil
 }
@@ -306,6 +310,41 @@ func TestController_ATakenOverRolloutStopsTheFirstController(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantCalls(t, second, "fill a 1", "appraise a 1", "switch a")
+}
+
+// TestController_ASupersededStepThatFailsNeverRollsBack has the old leader's
+// blocked step fail only after the new leader finished the rollout: the old
+// controller must not roll back (drain the slot, point the name back) what
+// the new leader made active.
+func TestController_ASupersededStepThatFailsNeverRollsBack(t *testing.T) {
+	w := newWorld(t)
+	first := &slotRig{filling: make(chan struct{}, 1), block: make(chan struct{}), failFill: true}
+	second := &slotRig{}
+	c1, c2 := w.controller("node-1", first, true), w.controller("node-2", second, true)
+	ctx := context.Background()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := c1.Roll(ctx, "acme", w.release(t, "acme", "1", serviceplane.ReleaseService))
+		done <- err
+	}()
+	<-first.filling
+
+	slots, err := c2.Resume(ctx, "acme", "web")
+	if err != nil || slots.Active != SlotA || slots.Rollout.Phase != PhaseDone {
+		t.Fatalf("resume = %+v, %v", slots, err)
+	}
+	close(first.block)
+	if err := <-done; !errors.Is(err, ErrBusy) || errors.Is(err, ErrRolledBack) {
+		t.Fatalf("the superseded controller = %v, want busy and no rollback", err)
+	}
+	wantCalls(t, first, "fill a 1")
+	wantCalls(t, second, "fill a 1", "appraise a 1", "switch a")
+
+	after, err := c2.Resume(ctx, "acme", "web")
+	if err != nil || after.Active != SlotA || after.Rollout.Phase != PhaseDone || after.Rollout.Owner != "node-2" {
+		t.Fatalf("after the superseded failure = %+v, %v", after, err)
+	}
 }
 
 // stepDown answers leader to the first check only, so a Roll claims its

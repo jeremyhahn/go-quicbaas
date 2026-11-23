@@ -197,6 +197,21 @@ func (c *Controller) drive(ctx context.Context, slots *Slots, raw []byte) (*Slot
 		if stepErr != nil {
 			sentinel := ErrRolledBack
 			ro.Reason = stepErr.Error()
+			// Fence the rollback with this claim's epoch: the step may
+			// have blocked while a new leader took the rollout over and
+			// finished it. Recording the failure against the record this
+			// controller holds succeeds only if no one claimed it since,
+			// and after it any new claim loads a record that says the
+			// rollout is failing; a superseded controller stops here,
+			// before undoing what the new owner made active.
+			if err := c.leader(); err != nil {
+				return slots, errors.Join(fmt.Errorf("%w: %w", ErrBusy, stepErr), err)
+			}
+			fenced, err := c.write(ctx, slots, raw)
+			if err != nil {
+				return slots, errors.Join(stepErr, err)
+			}
+			raw = fenced
 			// Rollback sees the phase that failed: what it undoes depends
 			// on it (a failed switch points the name back). The terminal
 			// phase is set after.
