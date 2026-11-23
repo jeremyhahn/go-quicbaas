@@ -57,6 +57,10 @@ type XKMSBackend struct {
 	metadata    map[string]*KeyMetadata // cached metadata
 	keyNames    kctypes.StorageBackend  // ownership records of encoded names
 	mu          sync.RWMutex
+
+	// decrypt is a test seam for the ownership proof decrypt; nil means
+	// xkms.Decrypt.
+	decrypt func(ctx context.Context, kid string, data *kctypes.EncryptedData, opts *kctypes.DecryptOptions) ([]byte, error)
 }
 
 // XKMSBackendConfig configures the XKMSBackend.

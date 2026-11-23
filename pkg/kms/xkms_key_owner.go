@@ -116,6 +116,37 @@ func (kb *XKMSBackend) xkmsKeyOwnerProofFor(ctx context.Context, identity, recor
 	return xkmsKeyOwnerProof{Check: check}, nil
 }
 
+// xkmsDecrypt decrypts data under kid through the backend's decrypt seam,
+// xkms.Decrypt when none is set.
+func (kb *XKMSBackend) xkmsDecrypt(ctx context.Context, kid string, data *kctypes.EncryptedData, opts *kctypes.DecryptOptions) ([]byte, error) {
+	if kb.decrypt != nil {
+		return kb.decrypt(ctx, kid, data, opts)
+	}
+	return xkms.Decrypt(ctx, kid, data, opts)
+}
+
+// errXKMSKeyOwnerProbeMismatch reports a round trip whose decrypt returned
+// something other than what was encrypted.
+var errXKMSKeyOwnerProbeMismatch = errors.New("xkms key material round trip returned different plaintext")
+
+// xkmsSymmetricRoundTrip encrypts and decrypts fresh data under identity and
+// reports whether the key's material works now. It writes nothing to storage.
+func (kb *XKMSBackend) xkmsSymmetricRoundTrip(ctx context.Context, identity, record string) error {
+	aad := []byte(record + "#probe")
+	encrypted, err := xkms.Encrypt(ctx, identity, xkmsKeyOwnerCheckPlaintext, &kctypes.EncryptOptions{AdditionalData: aad})
+	if err != nil {
+		return err
+	}
+	plaintext, err := kb.xkmsDecrypt(ctx, identity, encrypted, &kctypes.DecryptOptions{AdditionalData: aad})
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(plaintext, xkmsKeyOwnerCheckPlaintext) {
+		return errXKMSKeyOwnerProbeMismatch
+	}
+	return nil
+}
+
 // xkmsKeyOwnerRecord returns the ownership record key for a go-xkms key
 // identity. The identity is the full go-xkms key ID,
 // <backend>:<type>:<algo>:<name>, so a record vouches for exactly one stored
@@ -162,7 +193,10 @@ func (e *XKMSKeyOwnershipError) Unwrap() error { return e.Err }
 // wrote, not just the identity, so a key that native go-xkms deletes and
 // recreates under the same identity is not owned. A missing, unreadable or
 // non-matching proof means not owned; a material read error that is not a
-// confirmed absence is returned. ownsXKMSKey asks whether the key is owned
+// confirmed absence is returned. A symmetric proof that fails to decrypt
+// means not owned only when the key still round-trips fresh data; otherwise
+// the call returns an *XKMSKeyOwnershipError with Op "verify", since a
+// throttled or denied decrypt says nothing about ownership. ownsXKMSKey asks whether the key is owned
 // as a standalone key; a rotated version is owned only through
 // ownsXKMSKeyAs with its parent.
 func (kb *XKMSBackend) ownsXKMSKey(ctx context.Context, name, identity string, symmetric bool) (bool, error) {
@@ -232,8 +266,14 @@ func (kb *XKMSBackend) ownsXKMSKeyAs(ctx context.Context, name, identity string,
 	if err != nil {
 		return false, nil
 	}
-	plaintext, err := xkms.Decrypt(ctx, identity, encrypted, &kctypes.DecryptOptions{AdditionalData: []byte(record)})
+	plaintext, err := kb.xkmsDecrypt(ctx, identity, encrypted, &kctypes.DecryptOptions{AdditionalData: []byte(record)})
 	if err != nil {
+		// The material is present (GetSymmetricKey succeeded). A proof that
+		// fails while the same key still round-trips fresh data is a confirmed
+		// mismatch; if the key cannot decrypt at all, ownership is unknown.
+		if rtErr := kb.xkmsSymmetricRoundTrip(ctx, identity, record); rtErr != nil {
+			return false, &XKMSKeyOwnershipError{Op: "verify", Name: identity, Err: errors.Join(err, rtErr)}
+		}
 		return false, nil
 	}
 	return bytes.Equal(plaintext, xkmsKeyOwnerCheckPlaintext), nil
