@@ -98,6 +98,11 @@ func buildEmbeddedQRDBServicers(es *embeddedServer) (quicbaas.QRDBEmbeddedServic
 	if uafSvc := es.server.GetQRDBUserAuthFactorServicer(); uafSvc != nil {
 		servicers.UserAuthFactor = uafSvc
 	}
+	// Wire the time-series service behind Search().QRDBTimeSeries(). The
+	// server hands out a proxy that resolves the node's servicer per call,
+	// so the surface comes online after Unseal instead of being captured
+	// as nil here.
+	servicers.TimeSeries = es.server.QRDBTimeSeriesServicer()
 
 	// Wire the server's tenant servicer so the SDK's TenantMgmt() and the
 	// per-tenant barrier verbs dispatch against the node's canonical tenant
