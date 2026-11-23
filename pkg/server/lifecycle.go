@@ -813,10 +813,12 @@ func (s *Server) initializeCA() error {
 func (s *Server) adoptCA(ca xkmssdk.TrustedCA) {
 	s.xkmsCA = ca
 	// The KeystoreService installs its CA servicer from the global XKMS
-	// service, so the adopted CA must be set there too.
+	// service, so the adopted CA must be set there too. Issuance over the
+	// go-xkms KeystoreService is bound to the caller's tenant (see
+	// callerTenantCA).
 	if svc, err := xkmssdk.Get(); err == nil && svc != nil {
 		if p, ok := ca.(provider.CA); ok {
-			svc.SetCA(p)
+			svc.SetCA(withCallerTenant(p))
 		} else {
 			slog.Debug("adopted CA does not implement provider.CA; the XKMS service keeps its CA")
 		}
