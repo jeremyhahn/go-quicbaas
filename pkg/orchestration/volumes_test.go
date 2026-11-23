@@ -315,11 +315,47 @@ func TestVolumeAttacherAttachRollsBackOnFailure(t *testing.T) {
 	want := []string{
 		"provision first", "attach first", "mount first",
 		"provision second", "attach second", "mount second",
-		// The half-attached second volume is detached, then the first.
-		"detach second", "unmount first", "detach first",
+		// The second volume, whose mount failed, is unmounted and detached,
+		// then the first.
+		"unmount second", "detach second", "unmount first", "detach first",
 	}
 	if !reflect.DeepEqual(p.calls, want) {
 		t.Fatalf("calls = %v, want %v", p.calls, want)
+	}
+}
+
+// TestVolumeAttacherUnmountsAfterAFailedMount: a Mount that fails may have
+// left a live mount (the provider mounted, refused a later check and failed
+// its own unmount), so the volume is held with its target and a release
+// unmounts it before detaching.
+func TestVolumeAttacherUnmountsAfterAFailedMount(t *testing.T) {
+	ctx := context.Background()
+	p := newFakeVolumeProvider()
+	boom := errors.New("left a live mount")
+	p.failOn["mount only"] = boom
+	p.failOn["unmount only"] = errors.New("target busy")
+	a := newTestAttacher(t, p)
+	claims := []VolumeClaim{{Name: "only", SizeBytes: 10, FSType: "ext4", Target: "/a"}}
+	vols, held, err := a.attach(ctx, claims)
+	if !errors.Is(err, boom) || vols != nil {
+		t.Fatalf("attach = %v, %v; want nil, the mount error", vols, err)
+	}
+	if len(held) != 1 || held[0].HostPath != filepath.Join(a.StagingDir(), "only") {
+		t.Fatalf("held = %+v, want the volume with its mount target", held)
+	}
+	for _, c := range p.calls {
+		if c == "detach only" {
+			t.Fatalf("calls = %v: detached while still mounted", p.calls)
+		}
+	}
+
+	delete(p.failOn, "unmount only")
+	held, err = a.release(ctx, held)
+	if err != nil || len(held) != 0 {
+		t.Fatalf("release = %+v, %v; want nothing held", held, err)
+	}
+	if n := len(p.calls); n < 2 || p.calls[n-2] != "unmount only" || p.calls[n-1] != "detach only" {
+		t.Fatalf("calls = %v, want them to end with unmount only, detach only", p.calls)
 	}
 }
 

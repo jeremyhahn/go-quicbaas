@@ -368,7 +368,9 @@ func (a *VolumeAttacher) attach(ctx context.Context, claims []VolumeClaim) (vols
 }
 
 // attachOne returns the partly attached volume with the error when a step
-// after the provider's Attach fails, so the caller can release it.
+// after the provider's Attach fails, so the caller can release it. HostPath is
+// recorded before Mount, so a Mount that fails after mounting is still
+// unmounted.
 func (a *VolumeAttacher) attachOne(ctx context.Context, claim VolumeClaim) (AttachedVolume, error) {
 	id, size, existed, grow, err := a.ensure(ctx, claim, true)
 	if err != nil {
@@ -396,10 +398,14 @@ func (a *VolumeAttacher) attachOne(ctx context.Context, claim VolumeClaim) (Atta
 	if err := os.MkdirAll(host, 0o700); err != nil {
 		return v, fmt.Errorf("volume %q: staging dir: %w", claim.Name, err)
 	}
+	// The target is recorded before Mount: a provider can mount, fail a later
+	// check and fail its own compensating unmount, so a failed Mount may leave
+	// a live mount. The rollback's Unmount (idempotent at the provider) then
+	// clears it before Detach.
+	v.HostPath = host
 	if err := a.provider.Mount(ctx, id, host, VolumeMountOptions{ReadOnly: claim.ReadOnly}); err != nil {
 		return v, fmt.Errorf("volume %q: mount at %s: %w", claim.Name, host, err)
 	}
-	v.HostPath = host
 	// A grow made while the volume was unmounted may leave the filesystem at
 	// its old size (XFS grows only mounted), and an equal-size Resize finishes
 	// it, so this also recovers a grow an earlier launch left undone. The local
