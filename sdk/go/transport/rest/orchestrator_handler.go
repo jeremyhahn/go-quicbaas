@@ -90,7 +90,6 @@ func (h *orchestratorHandler) handleRequest(ctx context.Context, service, method
 		"ListJobs":               h.handleListJobs,
 		"CancelJob":              h.handleCancelJob,
 		"SubscribeJobEvents":     h.handleSubscribeJobEvents,
-		"GetSessionHistory":      h.handleGetSessionHistory,
 		"Inference":              h.handleInference,
 		"ListWorkflows":          h.handleListWorkflows,
 		"CreateWorkflow":         h.handleCreateWorkflow,
@@ -871,16 +870,6 @@ func (h *orchestratorHandler) handleCancelJob(ctx context.Context, req interface
 func (h *orchestratorHandler) handleSubscribeJobEvents(ctx context.Context, req interface{}) (interface{}, error) {
 	return nil, errors.NewUnimplemented("rest.orchestrator.SubscribeJobEvents",
 		"streaming not supported over REST transport; use gRPC transport")
-}
-
-// handleGetSessionHistory returns Unimplemented: the REST API has no paged
-// session event-log route, and sending the generic fallback would post to a
-// path the server does not serve. GetSessionConversation (the /history
-// route) and SubscribeSessionEvents (the /events stream) carry the session
-// over REST; the gRPC transport carries GetSessionHistory.
-func (h *orchestratorHandler) handleGetSessionHistory(ctx context.Context, req interface{}) (interface{}, error) {
-	return nil, errors.NewUnimplemented("rest.orchestrator.GetSessionHistory",
-		"session event history is not carried over REST; use SubscribeSessionEvents or the gRPC transport")
 }
 
 // handleListWorkflows handles GET /api/v1/orchestrator/workflows.

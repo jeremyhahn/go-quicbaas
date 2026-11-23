@@ -10,11 +10,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync/atomic"
+	"sync"
 	"testing"
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/orchestrator"
-	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
 
 // TestOrchestratorHandlerHappyPaths drives every orchestrator method through
@@ -217,25 +216,43 @@ func TestOrchestratorHandlerSubscribeJobEvents(t *testing.T) {
 	}
 }
 
-// TestOrchestratorHandlerGetSessionHistoryUnimplemented pins that
-// GetSessionHistory fails Unimplemented over REST without sending anything:
-// the server has no route for it.
-func TestOrchestratorHandlerGetSessionHistoryUnimplemented(t *testing.T) {
-	var reached atomic.Bool
+// TestOrchestratorHandlerGetSessionHistoryReadsEventsRoute pins that
+// GetSessionHistory over REST reads one page of the session's event log from
+// GET /api/v1/orchestrator/sessions/{id}/events as JSON, with follow off.
+func TestOrchestratorHandlerGetSessionHistoryReadsEventsRoute(t *testing.T) {
+	var (
+		mu     sync.Mutex
+		seen   []string
+		follow string
+		accept string
+	)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		reached.Store(true)
-		w.WriteHeader(http.StatusOK)
+		mu.Lock()
+		seen = append(seen, r.Method+" "+r.URL.Path)
+		follow = r.URL.Query().Get("follow")
+		accept = r.Header.Get("Accept")
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"events":[],"next_seq":0,"session_id":"s1"}`))
 	}))
 	defer server.Close()
 
 	tr := newTestTransport(t, server)
 	_, err := tr.Request(context.Background(), "Orchestrator", "GetSessionHistory",
 		&orchestrator.GetSessionHistoryRequest{TenantID: "t1", SessionID: "s1"})
-	if !sdkerrors.IsUnimplemented(err) {
-		t.Fatalf("GetSessionHistory over REST: err = %v, want Unimplemented", err)
+	if err != nil {
+		t.Fatalf("GetSessionHistory over REST: %v", err)
 	}
-	if reached.Load() {
-		t.Fatal("GetSessionHistory over REST sent a request; want none")
+	mu.Lock()
+	defer mu.Unlock()
+	if len(seen) != 1 || seen[0] != "GET /api/v1/orchestrator/sessions/s1/events" {
+		t.Fatalf("GetSessionHistory over REST sent %v, want one GET /api/v1/orchestrator/sessions/s1/events", seen)
+	}
+	if follow != "false" {
+		t.Errorf("follow = %q, want \"false\"", follow)
+	}
+	if accept != "application/json" {
+		t.Errorf("Accept = %q, want application/json", accept)
 	}
 }
 
