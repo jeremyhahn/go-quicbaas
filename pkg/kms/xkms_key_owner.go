@@ -346,7 +346,12 @@ func (kb *XKMSBackend) claimXKMSKeyAs(ctx context.Context, attrs *kctypes.KeyAtt
 // gone; when the delete also fails, both errors are returned and the key stays
 // unowned and invisible.
 func (kb *XKMSBackend) rollbackUnclaimedXKMSKey(ctx context.Context, attrs *kctypes.KeyAttributes, claimErr error) error {
-	if delErr := xkms.DeleteKey(ctx, attrs); delErr != nil && !errors.Is(delErr, xkms.ErrKeyNotFound) {
+	// go-xkms resolves the backend from attrs.Backend and falls back to its
+	// default backend, not to StoreType; delete from the backend that created
+	// the key.
+	cleanup := *attrs
+	cleanup.Backend = string(kb.backendType)
+	if delErr := xkms.DeleteKey(ctx, &cleanup); delErr != nil && !errors.Is(delErr, xkms.ErrKeyNotFound) {
 		return errors.Join(claimErr, &XKMSKeyOwnershipError{Op: "roll back", Name: attrs.CN, Err: delErr})
 	}
 	return claimErr

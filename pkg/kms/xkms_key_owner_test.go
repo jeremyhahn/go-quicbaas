@@ -264,6 +264,113 @@ func TestXKMSBackend_ImportKey_OwnershipWriteFailureRollsBack(t *testing.T) {
 	require.ErrorIs(t, err, ErrKeyNotFound)
 }
 
+// newTwoBackendXKMS initializes go-xkms with two software service backends:
+// "software", the default, and "pkcs11", the backend under test. It returns
+// the key storage of each.
+func newTwoBackendXKMS(t *testing.T) (defaultStore, targetStore xkmssdk.StorageBackend) {
+	t.Helper()
+	dbxkms.Reset()
+	t.Cleanup(dbxkms.Reset)
+
+	newKS := func() (xkmssdk.StorageBackend, xkmssdk.ServiceBackend) {
+		keyStorage, err := xkmssdk.NewMemoryBackend()
+		require.NoError(t, err)
+		certStorage, err := xkmssdk.NewMemoryBackend()
+		require.NoError(t, err)
+		swBackend, err := xkmssdk.NewSoftwareBackend(&xkmssdk.SoftwareBackendConfig{KeyStorage: keyStorage})
+		require.NoError(t, err)
+		ks, err := xkmssdk.NewServiceBackend(&xkmssdk.ServiceBackendConfig{Backend: swBackend, CertStorage: certStorage})
+		require.NoError(t, err)
+		return keyStorage, ks
+	}
+	defaultStore, defaultKS := newKS()
+	targetStore, targetKS := newKS()
+	require.NoError(t, dbxkms.Initialize(&dbxkms.Config{
+		DefaultBackend: "software",
+		Backends: map[string]xkmssdk.ServiceBackend{
+			"software":                       defaultKS,
+			string(config.BackendTypePKCS11): targetKS,
+		},
+		Logger: &mockLogger{},
+	}))
+	return defaultStore, targetStore
+}
+
+// newTwoBackendTestBackends returns an XKMSBackend on the "pkcs11" backend and
+// one on the default "software" backend, both over store.
+func newTwoBackendTestBackends(t *testing.T, store xkmssdk.StorageBackend) (target, def *XKMSBackend) {
+	t.Helper()
+	target, err := NewXKMSBackend(&XKMSBackendConfig{BackendType: config.BackendTypePKCS11, Logger: &mockLogger{}, KeyNameStore: store})
+	require.NoError(t, err)
+	def, err = NewXKMSBackend(&XKMSBackendConfig{BackendType: config.BackendTypeSoftware, Logger: &mockLogger{}, KeyNameStore: store})
+	require.NoError(t, err)
+	return target, def
+}
+
+// plantDefaultBackendDecoy stores an AES-256-GCM key under the go-xkms name of
+// keyID in the default backend and returns a check that it is still there.
+func plantDefaultBackendDecoy(t *testing.T, ctx context.Context, kb, def *XKMSBackend, keyID string) func() {
+	t.Helper()
+	require.Equal(t, kb.xkmsKeyAttributes(keyID, AlgAES256GCM).CN, def.xkmsKeyAttributes(keyID, AlgAES256GCM).CN)
+	_, err := dbxkms.GenerateSymmetricKey(ctx, "software", def.xkmsKeyAttributes(keyID, AlgAES256GCM))
+	require.NoError(t, err)
+	decoyID := def.buildFullKeyID(keyID, AlgAES256GCM)
+	require.True(t, strings.HasPrefix(decoyID, "software:"), decoyID)
+	kept := func() {
+		t.Helper()
+		_, err := dbxkms.GetSymmetricKey(ctx, decoyID)
+		require.NoError(t, err, "the default backend's key is untouched")
+	}
+	kept()
+	return kept
+}
+
+// TestXKMSBackend_OwnershipRollbackDeletesFromItsOwnBackend checks that when
+// the ownership record cannot be written, the rollback deletes the new key
+// from the backend that created it, not from go-xkms's default backend.
+func TestXKMSBackend_OwnershipRollbackDeletesFromItsOwnBackend(t *testing.T) {
+	ctx := context.Background()
+	t.Run("create", func(t *testing.T) {
+		_, targetStore := newTwoBackendXKMS(t)
+		store := &failOwnerPutStore{StorageBackend: targetStore}
+		kb, def := newTwoBackendTestBackends(t, store)
+		const id = "tenant/acme/rollback-create-k"
+		decoyKept := plantDefaultBackendDecoy(t, ctx, kb, def, id)
+
+		store.fails.Store(1)
+		_, err := kb.CreateKey(ctx, kb.algorithmToKeyAttributes(id, AlgAES256GCM))
+		var ownErr *XKMSKeyOwnershipError
+		require.ErrorAs(t, err, &ownErr)
+		require.Equal(t, "write", ownErr.Op)
+		requireNoXKMSKey(t, ctx, kb, store, id, AlgAES256GCM)
+		decoyKept()
+
+		_, err = kb.CreateKey(ctx, kb.algorithmToKeyAttributes(id, AlgAES256GCM))
+		require.NoError(t, err)
+	})
+	t.Run("rotate", func(t *testing.T) {
+		_, targetStore := newTwoBackendXKMS(t)
+		store := &failOwnerPutStore{StorageBackend: targetStore}
+		kb, def := newTwoBackendTestBackends(t, store)
+		const id = "tenant/acme/rollback-rotate-k"
+		_, err := kb.CreateKey(ctx, kb.algorithmToKeyAttributes(id, AlgAES256GCM))
+		require.NoError(t, err)
+		v2 := kb.buildVersionedKeyID(id, 2)
+		decoyKept := plantDefaultBackendDecoy(t, ctx, kb, def, v2)
+
+		store.fails.Store(1)
+		_, err = kb.RotateKey(ctx, id)
+		var ownErr *XKMSKeyOwnershipError
+		require.ErrorAs(t, err, &ownErr)
+		require.Equal(t, "write", ownErr.Op)
+		requireNoXKMSKey(t, ctx, kb, store, v2, AlgAES256GCM)
+		decoyKept()
+
+		_, err = kb.RotateKey(ctx, id)
+		require.NoError(t, err)
+	})
+}
+
 func TestXKMSBackend_EverySymmetricAlgorithmResolvesAfterRestart(t *testing.T) {
 	ctx := context.Background()
 	store := newKeyNameGuardXKMS(t)
