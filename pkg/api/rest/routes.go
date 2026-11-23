@@ -226,6 +226,8 @@ type RouteSpec struct {
 // authorization contract the REST PEP mapper computed for a route the LAST
 // time the freeze was regenerated, before the mapper was deleted (see the
 // package-level provenance comment in routes_permissions_generated.go).
+// Entries guarded by a registered permission are written with permEntry, so
+// their resource and action come from the constant.
 type frozenPermission struct {
 	auth     RouteAuth
 	resource string
