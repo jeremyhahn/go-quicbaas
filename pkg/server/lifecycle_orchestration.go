@@ -390,6 +390,11 @@ func (s *Server) startOrchestration() error {
 			}); fleetOK {
 				fleetWirer.SetFleetNodes(s.fleetRegistry)
 			}
+			// Fleet placement specs live in the same tenant-routed KV, and
+			// their drift is read against this registry and session store.
+			if bindErr := bindFleetPlacement(s.quicBaaSService, orchKV, s.fleetRegistry, store); bindErr != nil {
+				s.logger.Warnf("Fleet placement disabled: %v", bindErr)
+			}
 		}
 
 		// Wire workflow loader backed by the QuicBaaS internal KV store. Workflow
