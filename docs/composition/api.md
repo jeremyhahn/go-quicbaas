@@ -411,7 +411,6 @@ not a security boundary — see
 | `pkg/api/grpc/server_xkms.go` | Compat gRPC service |
 | [`pkg/api/rest/handlers_kms.go`](../../pkg/api/rest/handlers_kms.go) | Native KMS handler (Security().KMS) |
 | [`pkg/server/grpc_barrier_ceremony.go`](../../pkg/server/grpc_barrier_ceremony.go) | Native gRPC Barrier + Ceremony services |
-| `pkg/server/baas_transport_ceremony.go` | Native QUIC Barrier + Ceremony handlers |
 | [`cmd/quicbaas/ca.go`](../../cmd/quicbaas/ca.go) | Native CA verb tree (CAInfo + ListCertificates verbs landed Phase 8e) |
 | [`cmd/quicbaas/credential.go`](../../cmd/quicbaas/credential.go) | Native credential verb tree (versioned rotation landed Phase 8e) |
 
