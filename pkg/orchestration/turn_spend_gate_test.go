@@ -140,6 +140,72 @@ func TestPromptSession_RefusesTheNextTurnOfASessionOverItsAccountsWindow(t *test
 	}
 }
 
+// TestPromptSession_ANodeWithoutTheLiveSessionStillChecksItsAccount: node B
+// shares node A's storage and worker but never spawned the session, so its
+// registry misses it. A turn sent through B is still checked against the
+// account the durable record names, and a record B cannot read refuses it.
+func TestPromptSession_ANodeWithoutTheLiveSessionStillChecksItsAccount(t *testing.T) {
+	harness := newTurnSpendHarness(t, true)
+	ctx := ContextWithTenant(context.Background(), "tenant-a")
+	sessionID := harness.spawn(t, ctx)
+	harness.spendAccount1(t, 1200)
+
+	var turns atomic.Int32
+	harness.backend.beforePrompt = func() { turns.Add(1) }
+
+	newNodeB := func(t *testing.T, store AgentStore) *agentServiceImpl {
+		t.Helper()
+		svc, err := NewAgentService(store, map[string]AgentBackend{"usage": harness.backend}, &agentTestLogger{})
+		if err != nil {
+			t.Fatalf("NewAgentService: %v", err)
+		}
+		nodeB, ok := svc.(*agentServiceImpl)
+		if !ok {
+			t.Fatalf("NewAgentService returned %T, want *agentServiceImpl", svc)
+		}
+		nodeB.SetAccountStore(harness.service.accountStore)
+		nodeB.SetSpendAuthority(harness.service.turnSpend)
+		if _, ok := nodeB.liveSessionRecord(sessionID); ok {
+			t.Fatalf("node b holds session %q live — the test needs a registry miss", sessionID)
+		}
+		return nodeB
+	}
+	promptThrough := func(nodeB *agentServiceImpl) error {
+		_, err := nodeB.PromptSession(ctx, &PromptSessionRequest{
+			SessionID: sessionID, Backend: "usage", ProjectID: "proj-1", Prompt: "do the thing",
+		})
+		return err
+	}
+
+	nodeB := newNodeB(t, NewAgentStore(harness.kv))
+	err := promptThrough(nodeB)
+	var exhausted *AccountQuotaExhaustedError
+	if !stderrors.As(err, &exhausted) {
+		t.Fatalf("turn through node b = %v, want an *AccountQuotaExhaustedError — 1200 of 1000 tokens are spent", err)
+	}
+	if exhausted.AccountID != "acct-1" {
+		t.Errorf("refusal names account %q, want acct-1", exhausted.AccountID)
+	}
+	if got := turns.Load(); got != 0 {
+		t.Errorf("backend ran %d turns, want 0 — node b admitted the turn over the cap", got)
+	}
+
+	t.Run("a record that cannot be read refuses the turn", func(t *testing.T) {
+		turns.Store(0)
+		nodeB := newNodeB(t, &getFailingStore{
+			AgentStore: NewAgentStore(harness.kv), sessionID: sessionID, err: stderrors.New("session store down"),
+		})
+		err := promptThrough(nodeB)
+		var unavailable *SpendCheckUnavailableError
+		if !stderrors.As(err, &unavailable) {
+			t.Fatalf("turn through node b = %v, want a *SpendCheckUnavailableError", err)
+		}
+		if got := turns.Load(); got != 0 {
+			t.Errorf("backend ran %d turns, want 0", got)
+		}
+	})
+}
+
 func TestPromptSession_AdmitsATurnUnderItsAccountsWindow(t *testing.T) {
 	harness := newTurnSpendHarness(t, true)
 	ctx := ContextWithTenant(context.Background(), "tenant-a")

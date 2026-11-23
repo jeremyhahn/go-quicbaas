@@ -275,7 +275,9 @@ func (s *agentServiceImpl) recordLedgerEntry(ctx context.Context, entry Consumpt
 }
 
 // flushPendingConsumption retries every pending entry of sessionID and of
-// its pooled account. It returns a *ConsumptionPendingError while any of
+// its pooled account (on a registry miss, the account its durable record
+// names; a record that cannot be read refuses the turn as a
+// *SpendCheckUnavailableError). It returns a *ConsumptionPendingError while any of
 // them is still not in the ledger: the turn is refused rather than admitted
 // against a spend sum that leaves those tokens out. An entry stays pending
 // while it is retried, so a session that finds an entry another session is
@@ -300,6 +302,16 @@ func (s *agentServiceImpl) flushPendingConsumption(ctx context.Context, sessionI
 		}
 		accountID = mem.AccountID()
 		tenantID = mem.TenantID
+	} else {
+		// A registry miss: the durable record names the account, so a turn
+		// sent through a node that does not hold the session live still
+		// waits for its account's pending entries. The record is read from
+		// the caller's own tenant namespace, so it is never another tenant's.
+		var err error
+		tenantID, accountID, err = s.turnSessionAccount(ctx, sessionID)
+		if err != nil {
+			return spendCheckFault(ctx, sessionID, "", err)
+		}
 	}
 	pending := s.pendingLedger.matching(tenantID, sessionID, accountID)
 	if len(pending) == 0 {

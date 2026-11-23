@@ -116,8 +116,11 @@ func (s *agentServiceImpl) SetSpendAuthority(spend SpendAuthority) {
 // serving sessionID may run one more turn.
 //
 // A session with no pooled account, or a service with no authority or account
-// store wired, is admitted: there is no cap to check. An account record or a
-// spend ledger that cannot be read refuses the turn — a cap that cannot be
+// store wired, is admitted: there is no cap to check. On a registry miss the
+// durable session record names the account (turnSessionAccount), so a turn
+// sent through a node that does not hold the session live is still checked.
+// A session record, an account record or a spend ledger that cannot be read
+// refuses the turn — a cap that cannot be
 // checked is not a cap that was met, the same fail-closed rule the authority
 // applies — as a *SpendCheckUnavailableError: a spend_check_unavailable
 // environment fault, requeued and never charged, since no turn ran. A typed
@@ -131,20 +134,44 @@ func (s *agentServiceImpl) authorizeTurnSpend(ctx context.Context, sessionID str
 	if s.turnSpend == nil || s.accountStore == nil || sessionID == "" {
 		return nil
 	}
-	mem, ok := s.liveSessionRecord(sessionID)
-	if !ok {
-		return nil
+	tenantID, accountID, err := s.turnSessionAccount(ctx, sessionID)
+	if err != nil {
+		return spendCheckFault(ctx, sessionID, "", err)
 	}
-	accountID := mem.AccountID()
 	if accountID == "" {
 		return nil
 	}
-	account, err := s.accountStore.Get(ctx, mem.TenantID, accountID)
+	account, err := s.accountStore.Get(ctx, tenantID, accountID)
 	if err != nil {
 		return spendCheckFault(ctx, sessionID, accountID, err)
 	}
 	err = s.turnSpend.Authorize(ctx, SpendAuthorizeRequest{Account: account}, time.Now().UTC())
 	return spendCheckFault(ctx, sessionID, accountID, err)
+}
+
+// turnSessionAccount names the tenant and pooled account serving sessionID.
+// The live registry answers first. On a miss the durable record answers: a
+// session spawned through another node of the cluster has a record but no
+// entry in this node's registry, and its turn is still capped. A record
+// that does not exist means no node spawned the session, so it has no
+// account. A record that cannot be read is returned as the error.
+func (s *agentServiceImpl) turnSessionAccount(ctx context.Context, sessionID string) (tenantID, accountID string, err error) {
+	if mem, ok := s.liveSessionRecord(sessionID); ok {
+		return mem.TenantID, mem.AccountID(), nil
+	}
+	tenantID = TenantFromContext(ctx)
+	if s.store == nil {
+		return tenantID, "", nil
+	}
+	record, err := s.store.GetSession(ctx, StorageTenant(ctx), sessionID)
+	switch {
+	case err == nil:
+		return record.TenantID, record.AccountID, nil
+	case errors.Is(err, ErrAgentStoreNotFound):
+		return tenantID, "", nil
+	default:
+		return tenantID, "", err
+	}
 }
 
 // lockSessionTurn waits until no other turn is running on sessionID and
