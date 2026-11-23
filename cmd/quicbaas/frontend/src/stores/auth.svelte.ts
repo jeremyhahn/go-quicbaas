@@ -39,6 +39,7 @@
  * propagate template updates across module boundaries in this Svelte 5 build.
  */
 
+import type { Client } from '@quicbaas/sdk';
 import { getOriginSDKClient } from './sdkClient.ts';
 
 export type AuthStatus = 'pending' | 'authenticated' | 'unauthenticated';
@@ -1184,6 +1185,17 @@ export async function validateSession(): Promise<void> {
   // it belongs to are read TOGETHER, after every await that could move either.
   // Reading them at different moments is what let a stale token be validated
   // against a fresh identity.
+  // The client is resolved before the credential. The first call builds the
+  // origin client, which loads the REST transport, and every await between
+  // reading the credential and sending it is a window in which another tab
+  // can replace the session. After the read, the only await left is the
+  // validation request itself.
+  let client: Client | null = null;
+  try {
+    client = await getOriginSDKClient();
+  } catch {
+    client = null;
+  }
   await getValidAccessToken();
   reconcileSessionIdentity();
 
@@ -1229,8 +1241,11 @@ export async function validateSession(): Promise<void> {
     commit('unauthenticated');
     return;
   }
+  if (client === null) {
+    commit('unauthenticated', 'Your session could not be confirmed. Please sign in again.');
+    return;
+  }
   try {
-    const client = await getOriginSDKClient();
     const ok = await client.auth.authValidate(token);
     commit(
       ok ? 'authenticated' : 'unauthenticated',
