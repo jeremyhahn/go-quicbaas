@@ -32,6 +32,7 @@ import (
 
 	qrdbserver "github.com/jeremyhahn/go-qrdb/pkg/server"
 	qrdbservice "github.com/jeremyhahn/go-qrdb/pkg/service"
+	"github.com/jeremyhahn/go-qrdb/pkg/tenant"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	unixtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport/unix"
@@ -135,9 +136,10 @@ func TestServer_QRDBServiceOnUnixSocket_RefusesUnboundTenant(t *testing.T) {
 }
 
 // TestQRDBDataRegistryProxy_RefusesOutOfRowServices pins that the registry
-// proxy refuses the watch, lease, lock, time-series and vector services: they are outside the
-// data-services surface, so the Unix socket never serves them, whether or not
-// authorization is on.
+// proxy refuses the watch, lease, lock and vector services: they are outside
+// the data-services surface, so the Unix socket never serves them, whether or
+// not authorization is on. Time-series is served through the scoped registry
+// holder, which fails closed while there is no node.
 func TestQRDBDataRegistryProxy_RefusesOutOfRowServices(t *testing.T) {
 	p := newQRDBDataRegistryProxy(&Server{})
 	var unsupported *qrdbservice.CapabilityUnsupportedError
@@ -154,9 +156,10 @@ func TestQRDBDataRegistryProxy_RefusesOutOfRowServices(t *testing.T) {
 	require.Nil(t, lock)
 	require.True(t, errors.As(err, &unsupported), "lock: %v", err)
 
-	ts, err := p.TimeSeriesService("system", "system")
+	ts, err := p.TimeSeriesService("acme", tenant.DefaultDatabase)
 	require.Nil(t, ts)
-	require.True(t, errors.As(err, &unsupported), "time-series: %v", err)
+	var unavailable *QRDBUserServiceUnavailableError
+	require.True(t, errors.As(err, &unavailable), "time-series: %v", err)
 
 	vec, err := p.VectorService("system", "system")
 	require.Nil(t, vec)

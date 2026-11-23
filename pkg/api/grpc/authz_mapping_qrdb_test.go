@@ -82,9 +82,9 @@ func qrdbWiredMethod(name string) bool {
 
 // qrdbDataSurfaceMethods is the registry-dispatched QRDBService data
 // surface the server serves on the Unix socket through its data-registry
-// proxy: KV, MVCC, transaction, batch, index and collection calls. Watch,
-// lease, lock, time-series and vector calls are not part of it: they stay
-// default-denied.
+// proxy: KV, MVCC, transaction, batch, index and collection calls.
+// Time-series calls are mapped by their own table. Watch, lease, lock and
+// vector calls are not part of it: they stay default-denied.
 var qrdbDataSurfaceMethods = map[string]bool{
 	// KV
 	"Put": true, "PutIfAbsent": true, "CompareAndSwap": true, "Get": true,
@@ -591,7 +591,7 @@ func TestQRDBIdentityGatedMethods_FailClosedWithoutAuthenticator(t *testing.T) {
 }
 
 // TestQRDBUnwiredSurface_DefaultDenied asserts representative qrdb.v1 methods
-// from UNWIRED families (lease, lock, watch, time-series, vector, and the
+// from UNWIRED families (lease, lock, watch, vector, and the
 // admin and SQL surface) stay default-denied even for a caller with a valid
 // token: the broker's canonical surface for those capabilities is the
 // quicbaas.* service namespace.
@@ -608,7 +608,6 @@ func TestQRDBUnwiredSurface_DefaultDenied(t *testing.T) {
 		"/qrdb.v1.QRDBService/LeaseKeepAlive",
 		"/qrdb.v1.QRDBService/LockAcquire",
 		"/qrdb.v1.QRDBService/LockRelease",
-		"/qrdb.v1.QRDBService/TSWrite",
 		"/qrdb.v1.QRDBService/VectorUpsert",
 	} {
 		_, _, mapped := grpcResourceAndAction(method)

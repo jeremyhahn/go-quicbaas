@@ -996,11 +996,12 @@ var grpcMethodPermissions = map[string]methodPermission{
 	//
 	// Scope: ONLY the families whose servicers buildQRDBRegisterOptions
 	// actually wires — barrier, ceremony, credential, user, user-auth-factor,
-	// timeseries — plus Health (public, above) and Status. Every other
-	// qrdb.v1 method (KV, lease, lock, index, vector, ...) dispatches to
-	// codes.Unimplemented server-side and stays default-denied here; the
-	// quicbaas-namespaced services are the canonical broker surface for
-	// those capabilities.
+	// timeseries — plus Health (public, above) and Status. The KV, MVCC,
+	// batch, transaction, collection and index methods dispatch through the
+	// node's registry, and time-series through its scoped registry. Every
+	// other qrdb.v1 method (lease, lock, watch, vector, ...) is refused
+	// server-side and stays default-denied here; the quicbaas-namespaced
+	// services are the canonical broker surface for those capabilities.
 	//
 	// These mappings apply POST-unseal. While the daemon is sealed the authz
 	// gate is not in force and the sealed-window allowlist governs instead.

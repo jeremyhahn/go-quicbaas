@@ -26,7 +26,11 @@ import (
 // go-qrdb node on every call, so it follows the node across init, seal and
 // unseal, and fails closed while the node, or its server, is absent.
 type qrdbDataRegistryProxy struct {
-	s      *Server
+	s *Server
+	// ts resolves the time-series service through the node's scoped,
+	// quota-checked registry, the same path the time-series surface uses
+	// elsewhere.
+	ts     *qrdbScopedRegistryHolder
 	cached atomic.Pointer[qrdbDataRegistryForServer]
 	// mu serializes the cold path of current so one registry is built per
 	// server.
@@ -46,7 +50,7 @@ type qrdbDataRegistryForServer struct {
 
 // newQRDBDataRegistryProxy returns a registry proxy over s's embedded node.
 func newQRDBDataRegistryProxy(s *Server) *qrdbDataRegistryProxy {
-	return &qrdbDataRegistryProxy{s: s}
+	return &qrdbDataRegistryProxy{s: s, ts: &qrdbScopedRegistryHolder{s: s}}
 }
 
 // current returns the registry of the node's running server. It fails closed
@@ -102,8 +106,8 @@ func (p *qrdbDataRegistryProxy) MVCCService(tenant, db string) (qrdbservice.MVCC
 	return reg.MVCCService(tenant, db)
 }
 
-// WatchService refuses: watch is outside the data-services surface (KV,
-// batch, transaction, MVCC, collections and index), so the socket never
+// WatchService refuses: watch is outside what this proxy serves (KV, batch,
+// transaction, MVCC, collections, index and time-series), so the socket never
 // serves the node's watch service, even with authorization off.
 func (p *qrdbDataRegistryProxy) WatchService(_, _ string) (qrdbservice.WatchServicer, error) {
 	return nil, &qrdbservice.CapabilityUnsupportedError{Message: "watch service is not served on this socket: outside the data-services surface"}
@@ -124,15 +128,18 @@ func (p *qrdbDataRegistryProxy) IndexService(tenant, db string) (qrdbservice.Ind
 	return reg.IndexService(tenant, db)
 }
 
-// TimeSeriesService refuses: time-series is outside the data-services surface
-// (KV, batch, transaction, MVCC, collections and index), so the socket never
-// serves the node's time-series service, even with authorization off.
-func (p *qrdbDataRegistryProxy) TimeSeriesService(_, _ string) (qrdbservice.TimeSeriesServicer, error) {
-	return nil, &qrdbservice.CapabilityUnsupportedError{Message: "time-series service is not served on this socket: outside the data-services surface"}
+// TimeSeriesService resolves the time-series service of (tenant, db) through
+// the scoped registry holder, so a shared-shard tenant gets a namespaced,
+// quota-checked servicer. It fails closed with QRDBUserServiceUnavailableError
+// while the node is absent or sealed. Because this proxy is the registry
+// go-qrdb uses, it must serve time-series, or it would switch off the
+// time-series surface registered before it.
+func (p *qrdbDataRegistryProxy) TimeSeriesService(tenant, db string) (qrdbservice.TimeSeriesServicer, error) {
+	return p.ts.timeSeriesService(tenant, db)
 }
 
-// VectorService refuses: vector search is outside the data-services surface
-// (KV, batch, transaction, MVCC, collections and index), so the socket never
+// VectorService refuses: vector search is outside what this proxy serves
+// (KV, batch, transaction, MVCC, collections, index and time-series), so the socket never
 // serves the node's vector service, even with authorization off.
 func (p *qrdbDataRegistryProxy) VectorService(_, _ string) (qrdbservice.VectorServicer, error) {
 	return nil, &qrdbservice.CapabilityUnsupportedError{Message: "vector service is not served on this socket: outside the data-services surface"}

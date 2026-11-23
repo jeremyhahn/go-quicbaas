@@ -50,12 +50,15 @@ import (
 // implementations are available. The data services (KV, MVCC, batch,
 // transaction, collections and index) resolve the embedded node's
 // per-(tenant, database) registry on each call, and fail closed while the
-// node is absent or sealed.
+// node is absent or sealed. go-qrdb keeps the service registry option
+// appended last, so the data proxy is the registry it uses and it also
+// serves time-series, through the same scoped holder as the time-series
+// registry buildQRDBRegisterOptions supplies.
 func (s *Server) registerQRDBService(grpcServer *ggrpc.Server) {
 	opts := s.buildQRDBRegisterOptions()
 	opts = append(opts, qrdbgrpc.WithRegisterServiceRegistry(newQRDBDataRegistryProxy(s)))
 	qrdbsdk.RegisterGRPCService(grpcServer, nil, nil, opts...)
-	s.logger.Info("Registered qrdb.v1.QRDBService on gRPC server (data/credential/barrier/ceremony/user/user-auth-factor surface)")
+	s.logger.Info("Registered qrdb.v1.QRDBService on gRPC server (data/time-series/credential/barrier/ceremony/user/user-auth-factor surface)")
 }
 
 // buildQRDBRegisterOptions assembles the qrdbsdk.GRPCRegisterOption slice from

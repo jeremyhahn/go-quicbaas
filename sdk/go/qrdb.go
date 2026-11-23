@@ -547,9 +547,10 @@ type qrdbState struct {
 	closed atomic.Bool
 }
 
-// errQRDBClientClosed is the error a qrdb accessor returns after Close.
+// errQRDBClientClosed is the error a qrdb accessor returns after Close: an
+// Unavailable error, so callers can retry with a new client.
 func errQRDBClientClosed() error {
-	return sdkerrors.NewConnection("client.Close", "client is closed")
+	return sdkerrors.NewUnavailable("client.Close", "client is closed")
 }
 
 // qrdbClient returns the lazily-initialized QRDB SDK client. The transport is
@@ -571,10 +572,12 @@ func (c *client) qrdbClient() (*QRDBClient, error) {
 // closeQRDB closes the qrdb sub-client this client built, and makes any later
 // qrdbClient call fail, so Close and a first QRDBData call cannot race into a
 // client that is never closed. The embedded sub-client's transport only marks
-// itself closed; the servicers and node the caller passed in stay open.
+// itself closed; the servicers and node the caller passed in stay open. It
+// also marks the client closed for the embedded time-series readers.
 func (c *client) closeQRDB() error {
+	c.qrdb.closed.Store(true)
 	c.qrdb.once.Do(func() {
-		c.qrdb.err = sdkerrors.NewUnavailable("qrdbClient", "the client is closed")
+		c.qrdb.err = errQRDBClientClosed()
 	})
 	if c.qrdb.client == nil {
 		return nil
