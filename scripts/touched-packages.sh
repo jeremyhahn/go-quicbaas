@@ -8,7 +8,8 @@
 # with `go list`. A changed file belongs to the nearest directory at or above
 # it, within its top-level directory, that holds a .go file (so testdata and
 # embedded files count for their package); a file outside every package names
-# none. Stems follow the Makefile's targets: pkg/api/grpc -> api-grpc (test-%),
+# none. A directory that held a .go file at BASE counts as a package too, so
+# deleting a package still selects its importers. Stems follow the Makefile's targets: pkg/api/grpc -> api-grpc (test-%),
 # sdk/go/x/y -> sdk-go-x-y (test-sdk-go-%), scripts/... and test/buildgates/...
 # -> tooling (test-tooling). A package with no unit target is reported on
 # stderr only. go list runs with TOUCHED_TAGS when set, else the Makefile's
@@ -68,6 +69,19 @@ hasgo() {
 	done
 }
 
+# basego DIR exits 0 when DIR held a .go file at BASE: a package the change
+# deleted still names its surviving importers.
+basego() {
+	while IFS= read -r n; do
+		case $n in
+		*.go) return 0 ;;
+		esac
+	done <<EOF
+$(git -c core.quotePath=false ls-tree --name-only "$base" -- "$1/")
+EOF
+	return 1
+}
+
 # pkgdir FILE prints the package directory FILE belongs to, if any.
 pkgdir() {
 	case $1 in
@@ -77,7 +91,7 @@ pkgdir() {
 	top=${1%%/*}
 	d=${1%/*}
 	while :; do
-		if [ -d "$d" ] && hasgo "$d"; then
+		if { [ -d "$d" ] && hasgo "$d"; } || basego "$d"; then
 			echo "$d"
 			return 0
 		fi

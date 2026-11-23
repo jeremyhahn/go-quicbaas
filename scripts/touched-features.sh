@@ -9,7 +9,9 @@
 # It prints the touched features, one per line, sorted. A changed file under a
 # documentation path is skipped; a changed file under a shared path, or owned
 # by no feature, means every feature: the output is then the single line ALL.
-# A change confined to documentation, or no change, prints nothing.
+# A change confined to documentation, or no change, prints nothing. A table
+# path with no / names a file at the repository root only (so *.md is the
+# root's markdown, not an embedded prompt under pkg/).
 #
 # The table is read from the working tree's Makefile. Exit 0 on success, 2 on
 # a bad argument or an unreadable table (nothing is printed on stdout then).
@@ -61,9 +63,17 @@ owns() {
 			"$p"*) return 0 ;;
 			esac
 			;;
-		*)
+		*/*)
 			# shellcheck disable=SC2254 # PATH is a shell pattern
 			case $file in
+			$p) return 0 ;;
+			esac
+			;;
+		*)
+			# A path with no / names a repository-root file only.
+			# shellcheck disable=SC2254 # PATH is a shell pattern
+			case $file in
+			*/*) ;;
 			$p) return 0 ;;
 			esac
 			;;

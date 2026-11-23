@@ -82,6 +82,8 @@ gofile api/v1/v.go v1
 gofile pkg/e/e.go e example.com/m/api/v1
 gofile pkg/f/f.go f example.com/m/sdk/go/client/k
 gofile sdk/go/client/k/k.go k
+gofile pkg/g/g.go g
+gofile pkg/h/h.go h example.com/m/pkg/g
 prev=$(commit base)
 
 # step FILE WANT changes FILE, commits and checks the output is WANT.
@@ -107,6 +109,12 @@ step sdk/go/client/k/k.go "f
 sdk-go-client-k"
 step docs/x.md ''
 step Makefile ''
+
+# Deleting a package's last Go file still selects its surviving importers.
+rm "$tree/pkg/g/g.go"
+next=$(commit "delete pkg/g")
+packages "$prev" "$next" h
+prev=$next
 
 # The importers come from the working tree, so TIP must be checked out.
 packages "$prev~2" "$prev~1" "exit 2"

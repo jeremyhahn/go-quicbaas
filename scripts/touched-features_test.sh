@@ -100,6 +100,7 @@ check() {
 
 tgit init -q
 mkdir -p "$tree/scripts" "$tree/docs" "$tree/pkg/alpha" "$tree/pkg/shared" \
+	"$tree/pkg/alpha/prompts" "$tree/pkg/shared/prompts" \
 	"$tree/test/integration/alpha" "$tree/test/integration/cli" \
 	"$tree/test/integration/helpers" "$tree/.github/workflows"
 for s in touched-features.sh touched-packages.sh check-feature-map.sh; do
@@ -107,7 +108,8 @@ for s in touched-features.sh touched-packages.sh check-feature-map.sh; do
 done
 for f in docs/a.md README.md pkg/alpha/a.go pkg/shared/s.go \
 	test/integration/alpha/a_test.go test/integration/cli/beta_test.go \
-	test/integration/helpers/h.go .github/workflows/ci.yml; do
+	test/integration/helpers/h.go .github/workflows/ci.yml \
+	pkg/alpha/prompts/p.md pkg/shared/prompts/p.md; do
 	echo 0 >"$tree/$f"
 done
 makefile
@@ -134,6 +136,16 @@ done
 
 step pkg/alpha/a.go
 features "$prev" "$next" alpha
+prev=$next
+
+# An embedded prompt is not documentation: it belongs to its package's feature.
+step pkg/alpha/prompts/p.md
+features "$prev" "$next" alpha
+prev=$next
+
+# An embedded prompt no row owns runs every feature.
+step pkg/shared/prompts/p.md
+features "$prev" "$next" ALL
 prev=$next
 
 step pkg/alpha/a.go test/integration/cli/beta_test.go docs/a.md

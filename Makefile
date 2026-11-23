@@ -1790,7 +1790,9 @@ integration-test-orchestration-gpu: ## Run GPU-accelerated orchestration integra
 # (a recipe below, or the integration-test-% pattern rule for a directory
 # test/integration/<feature>/), and FEATURE_PATHS_<feature> lists the paths
 # it owns. A path is a shell pattern matched against a repository-relative
-# file name; a path ending in / owns everything under it.
+# file name; a path ending in / owns everything under it; a path with no /
+# names a file at the repository root only (so *.md is the root's markdown,
+# not an embedded prompt under pkg/).
 #
 # scripts/touched-features.sh and scripts/touched-packages.sh read this table
 # through `make print-feature-map`; scripts/check-feature-map.sh (make
@@ -5027,7 +5029,8 @@ integration-test-orchestration: ## Run orchestrator E2E integration tests in Doc
 	@$(MAKE) integration-test QUICBAAS_TEST_FILTER="./test/integration/orchestration/..." OLLAMA_CPU=$${OLLAMA_CPU:-1}
 
 .PHONY: integration-test-orchestrator
-integration-test-orchestrator: ## Run multi-protocol CLI orchestrator inference tests (Ollama via local CPU container; pass GPU_HOST=<host> for a remote GPU)
+integration-test-orchestrator: ## Run the orchestrator integration suite and the multi-protocol CLI orchestrator inference tests (Ollama via local CPU container; pass GPU_HOST=<host> for a remote GPU)
+	@$(MAKE) integration-test QUICBAAS_TEST_FILTER="./test/integration/orchestrator/..."
 	@$(MAKE) integration-test QUICBAAS_TEST_FILTER="-run TestOrchestratorInference ./test/integration/cli/..." OLLAMA_CPU=$${OLLAMA_CPU:-1}
 
 .PHONY: integration-test-agents

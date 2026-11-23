@@ -2,7 +2,8 @@
 # check-feature-map.sh checks the feature mapping table in the Makefile
 # (testing-guidelines section 4): every integration test belongs to a feature,
 # every feature has an integration target, and every path of the table names
-# a tracked file.
+# a tracked file. A table path with no / names a file at the repository root
+# only (so *.md is the root's markdown, not an embedded prompt under pkg/).
 #
 # Usage: scripts/check-feature-map.sh
 #
@@ -85,9 +86,17 @@ owns() {
 			"$p"*) return 0 ;;
 			esac
 			;;
-		*)
+		*/*)
 			# shellcheck disable=SC2254 # PATH is a shell pattern
 			case $file in
+			$p) return 0 ;;
+			esac
+			;;
+		*)
+			# A path with no / names a repository-root file only.
+			# shellcheck disable=SC2254 # PATH is a shell pattern
+			case $file in
+			*/*) ;;
 			$p) return 0 ;;
 			esac
 			;;
