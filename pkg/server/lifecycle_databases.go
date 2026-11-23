@@ -30,7 +30,7 @@ import (
 //	qrdb database.Manager
 //	  → qrdb service.DatabaseService (DatabaseServicer)
 //	    → QuicBaaS service.DatabaseService
-//	      → baasTransport.dbService (SDK transport layer)
+//	      → SDK embedded transport (database service)
 //
 // Database recovery of existing tenant databases occurs automatically
 // via the qrdb Manager.OpenAll call during initialization.

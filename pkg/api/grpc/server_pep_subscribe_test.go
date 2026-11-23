@@ -30,6 +30,7 @@ import (
 	iampb "github.com/jeremyhahn/go-quicbaas/api/proto/iam"
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // mockPEPSubscribeStream implements iampb.PEPService_SubscribeServer for testing.
@@ -210,7 +211,7 @@ func TestPEPServiceAdapter_Check(t *testing.T) {
 	}
 	srv := newTestPEPServer(t, svc)
 
-	resp, err := srv.Check(context.Background(), &iampb.CheckRequest{
+	resp, err := srv.Check(tenantctx.WithTenant(context.Background(), "t1"), &iampb.CheckRequest{
 		Subject:  &iampb.Subject{Id: "user1", TenantId: "t1"},
 		Action:   "read",
 		Resource: "doc:1",
