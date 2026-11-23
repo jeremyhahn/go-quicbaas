@@ -187,6 +187,7 @@ func init() {
 	rootCmd.AddCommand(newDEKCommand())
 	rootCmd.AddCommand(newDynamicSecretsCommand())
 	rootCmd.AddCommand(newTrustCommand())
+	rootCmd.AddCommand(newTrustedCACommand())
 	rootCmd.AddCommand(newACMECommand())
 
 	rootCmd.AddCommand(newSSHCommand())
