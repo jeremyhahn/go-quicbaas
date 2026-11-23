@@ -58,16 +58,14 @@ const (
 	// TenantJobIndexPrefix indexes every tenant-owned job so the due scan can
 	// find it. A tenant job lives in the tenant's own namespace, which the
 	// platform scan of SystemJobsPrefix never reaches; one entry per job,
-	// "<prefix><tenantID>/<jobID>", whose value is a JSON summary of the job
-	// (tenant, status, next run; see tenantJobIndexEntry). The due scan reads
-	// only the records of entries that are pending and due, or whose value
-	// is a bare tenant ID with no summary. The index lives in the reserved
-	// namespace, so a tenant cannot enumerate other tenants' jobs through it.
-	//
-	// A node still on an earlier release updates a record without updating
-	// its summary. An entry it left pending makes the scan read that record
-	// each tick until the next store open reconciles the summary, which is
-	// no worse than reading every record.
+	// "<prefix><tenantID>/<jobID>", with the tenant ID as its value. The
+	// value is a membership marker, never a summary of the job: the store
+	// has no atomic multi-key write, so a summary written beside the record
+	// could go stale (a backfill snapshot landing after a requeue, a failed
+	// record write whose cleanup also failed) and hide a pending job. The
+	// due scan reads every indexed record, and the record decides. The
+	// index lives in the reserved namespace, so a tenant cannot enumerate
+	// other tenants' jobs through it.
 	TenantJobIndexPrefix = "__sys:scheduler/tenant-jobs/"
 )
 
@@ -250,30 +248,6 @@ func parseTenantJobIndexKey(key string) (uint64, bool) {
 	return id, true
 }
 
-// tenantJobIndexEntry is a tenant-job index value: the job's tenant and
-// enough of its state for the due scan to pass over a job that cannot be
-// due without reading its record.
-type tenantJobIndexEntry struct {
-	TenantID string              `json:"tenant"`
-	Status   scheduler.JobStatus `json:"status"`
-	NextRun  time.Time           `json:"next_run"`
-}
-
-func tenantJobIndexValue(job *scheduler.Job, tenantID string) ([]byte, error) {
-	return json.Marshal(tenantJobIndexEntry{TenantID: tenantID, Status: job.Status, NextRun: job.NextRun})
-}
-
-// parseTenantJobIndexValue reads an index value. A value with no summary
-// (a bare tenant ID) reports summarized false: its job is read to decide.
-func parseTenantJobIndexValue(value []byte) (entry tenantJobIndexEntry, summarized bool) {
-	if len(value) > 0 && value[0] == '{' {
-		if err := json.Unmarshal(value, &entry); err == nil && entry.TenantID != "" {
-			return entry, true
-		}
-	}
-	return tenantJobIndexEntry{TenantID: string(value)}, false
-}
-
 // keyForExecution returns the storage key for an execution record.
 func keyForExecution(exec *scheduler.JobExecution, tenantID string) string {
 	if tenantID == "" {
@@ -316,7 +290,6 @@ func (s *Storage) CreateJob(ctx context.Context, job *scheduler.Job) error {
 	// Store in QuicBaaS
 	key := keyForJob(job)
 	if err := s.kv.Put(ctx, key, data); err != nil {
-		s.unsummarizeTenantJob(ctx, job)
 		return &scheduler.ErrStorageError{Op: "CreateJob.put", Cause: err}
 	}
 
@@ -374,7 +347,6 @@ func (s *Storage) UpdateJob(ctx context.Context, job *scheduler.Job) error {
 
 	key := keyForJob(job)
 	if err := s.kv.Put(ctx, key, data); err != nil {
-		s.unsummarizeTenantJob(ctx, job)
 		return &scheduler.ErrStorageError{Op: "UpdateJob.put", Cause: err}
 	}
 
@@ -482,10 +454,8 @@ func (s *Storage) ListJobs(ctx context.Context, query *scheduler.JobQuery) ([]*s
 }
 
 // GetJobsDueForExecution returns jobs that need to run. The scan covers the
-// system namespace and then the tenant jobs the tenant-job index names,
-// under one limit. An index value is a JSON summary (tenant, status, next
-// run): only the records of entries that are pending and due, or that have
-// no summary, are read, and the record decides. A due
+// system namespace and then every tenant job the tenant-job index names,
+// under one limit. A due
 // job that eligible rejects is skipped and does not use up the limit, so jobs
 // the caller can never run cannot crowd out others; a nil eligible admits
 // every job.
@@ -553,13 +523,7 @@ func (s *Storage) GetJobsDueForExecution(ctx context.Context, before time.Time, 
 		if !ok || len(value) == 0 {
 			return nil
 		}
-		entry, summarized := parseTenantJobIndexValue(value)
-		if summarized && (entry.Status != scheduler.JobStatusPending ||
-			entry.NextRun.IsZero() || !entry.NextRun.Before(before)) {
-			// The summary says this job cannot be due: its record is not read.
-			return nil
-		}
-		refs = append(refs, tenantJobRef{id: id, tenantID: entry.TenantID})
+		refs = append(refs, tenantJobRef{id: id, tenantID: string(value)})
 		return nil
 	})
 	if err != nil {
@@ -686,35 +650,23 @@ func (s *Storage) InitializeJobIDCounter(ctx context.Context) error {
 // release, every job an old writer stored is indexed.
 func (s *Storage) backfillTenantJobIndex(ctx context.Context) error {
 	// Entries are collected first and written after the scan, so no write
-	// runs inside the store's iteration. Each entry carries the summary of
-	// the record it indexes; a record that does not decode gets the bare
-	// tenant ID, so the due scan reads it.
+	// runs inside the store's iteration.
 	type tenantJobRef struct {
 		id       uint64
 		tenantID string
-		value    []byte
 	}
 	var refs []tenantJobRef
-	err := s.kv.Scan(ctx, tenantKeyPrefix, func(key string, record []byte) error {
-		tenantID, id, ok := splitTenantJobKey(key)
-		if !ok {
-			return nil
+	err := s.kv.Scan(ctx, tenantKeyPrefix, func(key string, _ []byte) error {
+		if tenantID, id, ok := splitTenantJobKey(key); ok {
+			refs = append(refs, tenantJobRef{id: id, tenantID: tenantID})
 		}
-		value := []byte(tenantID)
-		var job scheduler.Job
-		if err := json.Unmarshal(record, &job); err == nil {
-			if summary, err := tenantJobIndexValue(&job, tenantID); err == nil {
-				value = summary
-			}
-		}
-		refs = append(refs, tenantJobRef{id: id, tenantID: tenantID, value: value})
 		return nil
 	})
 	if err != nil {
 		return &scheduler.ErrStorageError{Op: "backfillTenantJobIndex.scan", Cause: err}
 	}
 	for _, ref := range refs {
-		if err := s.kv.Put(ctx, keyForTenantJobIndex(ref.id, ref.tenantID), ref.value); err != nil {
+		if err := s.kv.Put(ctx, keyForTenantJobIndex(ref.id, ref.tenantID), []byte(ref.tenantID)); err != nil {
 			return &scheduler.ErrStorageError{Op: "backfillTenantJobIndex.index", Cause: err}
 		}
 	}
@@ -729,26 +681,10 @@ func (s *Storage) indexTenantJob(ctx context.Context, op string, job *scheduler.
 	if tenantID == "" {
 		return nil
 	}
-	value, err := tenantJobIndexValue(job, tenantID)
-	if err != nil {
-		return &scheduler.ErrStorageError{Op: op + ".index_marshal", Cause: err}
-	}
-	if err := s.kv.Put(ctx, keyForTenantJobIndex(job.ID, tenantID), value); err != nil {
+	if err := s.kv.Put(ctx, keyForTenantJobIndex(job.ID, tenantID), []byte(tenantID)); err != nil {
 		return &scheduler.ErrStorageError{Op: op + ".index", Cause: err}
 	}
 	return nil
-}
-
-// unsummarizeTenantJob rewrites a tenant job's index entry as the bare
-// tenant ID after its record write failed, so the summary never claims a
-// state the record does not hold: a bare value makes the due scan read the
-// record. It is best-effort; its own error is ignored.
-func (s *Storage) unsummarizeTenantJob(ctx context.Context, job *scheduler.Job) {
-	tenantID := scheduler.JobTenantID(job)
-	if tenantID == "" {
-		return
-	}
-	_ = s.kv.Put(ctx, keyForTenantJobIndex(job.ID, tenantID), []byte(tenantID))
 }
 
 // Close performs cleanup operations.
