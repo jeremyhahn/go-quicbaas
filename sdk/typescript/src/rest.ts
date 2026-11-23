@@ -366,6 +366,7 @@ import type {
   BootstrapBundleRequest,
   BootstrapBundleResponse,
   ClusterStatusResponse,
+  ListClusterNodesResponse,
   SecretEntry,
   SessionEventEnvelope,
   SessionInfo,
@@ -4867,6 +4868,14 @@ export class RestClusterClient implements ClusterClient {
     return this.http.fetchJSON<ClusterStatusResponse>('/api/v1/cluster/status', {
       method: 'GET',
     });
+  }
+
+  async listNodes(): Promise<ListClusterNodesResponse> {
+    const resp = await this.http.fetchJSON<ListClusterNodesResponse>('/api/v1/cluster/nodes', {
+      method: 'GET',
+    });
+    // A nil Go slice encodes as null; callers always get an array.
+    return { ...resp, nodes: resp.nodes ?? [] };
   }
 }
 

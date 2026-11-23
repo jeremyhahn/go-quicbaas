@@ -358,6 +358,8 @@ func TestUnaryAuthorizationInterceptor_QRDBAdmitDeny(t *testing.T) {
 		{"kv_put", "/qrdb.v1.QRDBService/Put", "kv:put", "kv:get"},
 		{"kv_get", "/qrdb.v1.QRDBService/Get", "kv:get", "kv:put"},
 		{"collection_insert", "/qrdb.v1.QRDBService/InsertDocument", "collections:insert", "collections:read"},
+		{"placement_consent_answer", "/quicbaas.orchestrator.v1.OrchestratorService/AnswerFleetPlacementConsent", "placement:consent", "placement:read"},
+		{"placement_consent_list", "/quicbaas.orchestrator.v1.OrchestratorService/ListFleetPlacementConsents", "placement:read", "placement:consent"},
 	}
 
 	for _, c := range cases {
