@@ -2284,6 +2284,72 @@ func (s *Server) startService() error {
 
 // startGRPCServer initializes and starts the gRPC server.
 // In embedded mode, this creates the service without starting any listeners.
+// grpcServerInterceptors builds the broker gRPC server's unary and stream
+// interceptor chains, in order. The same chain backs the Unix-domain-socket
+// listener. Under RequireAuthz a validator that cannot be built is returned as
+// a typed construction error.
+func (s *Server) grpcServerInterceptors() ([]ggrpc.UnaryServerInterceptor, []ggrpc.StreamServerInterceptor, error) {
+	// Add interceptors. The tenant interceptor runs after recovery so a panic
+	// is still trapped, and before the handlers so tenant-scoped operations
+	// observe the caller's qrdb tenant.
+	trustDomain := s.config.IAM.SPIFFETrustDomain
+	unaryInterceptors := []ggrpc.UnaryServerInterceptor{
+		grpcapi.UnaryTimeoutInterceptor(30 * time.Second),
+		grpcapi.UnaryLoggingInterceptor(s.logger),
+		grpcapi.UnaryMetricsInterceptor(),
+		grpcapi.UnaryRecoveryInterceptor(s.logger),
+		grpcapi.UnaryTenantInterceptor(trustDomain),
+		qrdbDatabaseScopeInterceptor,
+	}
+	streamInterceptors := []ggrpc.StreamServerInterceptor{
+		grpcapi.StreamTimeoutInterceptor(5 * time.Minute),
+		grpcapi.StreamLoggingInterceptor(s.logger),
+		grpcapi.StreamMetricsInterceptor(),
+		grpcapi.StreamRecoveryInterceptor(s.logger),
+		grpcapi.StreamTenantInterceptor(trustDomain),
+	}
+
+	// Install the sealed-window interceptors (qrdb's own, consumed via the
+	// SDK re-export) ahead of the tenant and authz interceptors. They are
+	// probe-driven: a pass-through while the barrier is unsealed, and a
+	// deny-everything-off-allowlist gate the instant the barrier is sealed
+	// (e.g. a post-boot barrier seal). The allowlist is derived from the
+	// single canonical table in pkg/api/sealedwindow, service-qualified so a
+	// same-named method on another co-registered service (e.g.
+	// "/quicbaas.tenant.v1.TenantBarrier/Status") stays sealed. The same chain
+	// backs the Unix-domain-socket listener, so one installation covers both
+	// the gRPC and Unix transports.
+	sealedProbe := s.SealedWindowProbe()
+	sealedAllow := qbsealedwindow.GRPCFullMethodAllowlist()
+	unaryInterceptors = append(unaryInterceptors,
+		qrdbsdk.SealedWindowUnaryInterceptor(sealedProbe, sealedAllow))
+	streamInterceptors = append(streamInterceptors,
+		qrdbsdk.SealedWindowStreamInterceptor(sealedProbe, sealedAllow))
+
+	// Gate the canonical qrdb.v1 BarrierSeal on the SO PIN, as the
+	// BarrierService facade gates REST, MCP and quicbaas.v1 seal (#946).
+	unaryInterceptors = append(unaryInterceptors, s.qrdbSealSOPINInterceptor())
+
+	// Install the platform-token authorization interceptors after the sealed
+	// gate (so sealed-window denials never require a token) when
+	// RequireAuthz=true. Post-unseal gate construction is FAIL-CLOSED: under
+	// RequireAuthz a validator that cannot be built is a typed construction
+	// error that aborts startup (refuse-to-start posture) — never a silent
+	// nil gate. When authz is off the builder returns (nil, nil, nil) and
+	// the chain is unchanged. The same chain backs the Unix-domain-socket
+	// gRPC listener, so this one installation covers both transports.
+	unaryAuthz, streamAuthz, authzErr := s.grpcAuthorizationInterceptors()
+	if authzErr != nil {
+		return nil, nil, authzErr
+	}
+	if unaryAuthz != nil {
+		unaryInterceptors = append(unaryInterceptors, unaryAuthz)
+		streamInterceptors = append(streamInterceptors, streamAuthz)
+		s.logger.Info("gRPC platform-token validator authorization installed (RequireAuthz=true)")
+	}
+	return unaryInterceptors, streamInterceptors, nil
+}
+
 func (s *Server) startGRPCServer() error {
 	// Check for embedded mode - skip all listeners but still initialize services
 	if s.config.Server.Embedded {
@@ -2327,62 +2393,9 @@ func (s *Server) startGRPCServer() error {
 		s.logger.Info("Mutual TLS (client authentication) enabled")
 	}
 
-	// Add interceptors. The tenant interceptor runs after recovery so a panic
-	// is still trapped, and before the handlers so tenant-scoped operations
-	// observe the caller's qrdb tenant.
-	trustDomain := s.config.IAM.SPIFFETrustDomain
-	unaryInterceptors := []ggrpc.UnaryServerInterceptor{
-		grpcapi.UnaryTimeoutInterceptor(30 * time.Second),
-		grpcapi.UnaryLoggingInterceptor(s.logger),
-		grpcapi.UnaryMetricsInterceptor(),
-		grpcapi.UnaryRecoveryInterceptor(s.logger),
-		grpcapi.UnaryTenantInterceptor(trustDomain),
-	}
-	streamInterceptors := []ggrpc.StreamServerInterceptor{
-		grpcapi.StreamTimeoutInterceptor(5 * time.Minute),
-		grpcapi.StreamLoggingInterceptor(s.logger),
-		grpcapi.StreamMetricsInterceptor(),
-		grpcapi.StreamRecoveryInterceptor(s.logger),
-		grpcapi.StreamTenantInterceptor(trustDomain),
-	}
-
-	// Install the sealed-window interceptors (qrdb's own, consumed via the
-	// SDK re-export) ahead of the tenant and authz interceptors. They are
-	// probe-driven: a pass-through while the barrier is unsealed, and a
-	// deny-everything-off-allowlist gate the instant the barrier is sealed
-	// (e.g. a post-boot barrier seal). The allowlist is derived from the
-	// single canonical table in pkg/api/sealedwindow, service-qualified so a
-	// same-named method on another co-registered service (e.g.
-	// "/quicbaas.tenant.v1.TenantBarrier/Status") stays sealed. The same chain
-	// backs the Unix-domain-socket listener, so one installation covers both
-	// the gRPC and Unix transports.
-	sealedProbe := s.SealedWindowProbe()
-	sealedAllow := qbsealedwindow.GRPCFullMethodAllowlist()
-	unaryInterceptors = append(unaryInterceptors,
-		qrdbsdk.SealedWindowUnaryInterceptor(sealedProbe, sealedAllow))
-	streamInterceptors = append(streamInterceptors,
-		qrdbsdk.SealedWindowStreamInterceptor(sealedProbe, sealedAllow))
-
-	// Gate the canonical qrdb.v1 BarrierSeal on the SO PIN, as the
-	// BarrierService facade gates REST, MCP and quicbaas.v1 seal (#946).
-	unaryInterceptors = append(unaryInterceptors, s.qrdbSealSOPINInterceptor())
-
-	// Install the platform-token authorization interceptors after the sealed
-	// gate (so sealed-window denials never require a token) when
-	// RequireAuthz=true. Post-unseal gate construction is FAIL-CLOSED: under
-	// RequireAuthz a validator that cannot be built is a typed construction
-	// error that aborts startup (refuse-to-start posture) — never a silent
-	// nil gate. When authz is off the builder returns (nil, nil, nil) and
-	// the chain is unchanged. The same chain backs the Unix-domain-socket
-	// gRPC listener, so this one installation covers both transports.
-	unaryAuthz, streamAuthz, authzErr := s.grpcAuthorizationInterceptors()
-	if authzErr != nil {
-		return authzErr
-	}
-	if unaryAuthz != nil {
-		unaryInterceptors = append(unaryInterceptors, unaryAuthz)
-		streamInterceptors = append(streamInterceptors, streamAuthz)
-		s.logger.Info("gRPC platform-token validator authorization installed (RequireAuthz=true)")
+	unaryInterceptors, streamInterceptors, err := s.grpcServerInterceptors()
+	if err != nil {
+		return err
 	}
 
 	grpcOpts = append(grpcOpts,
