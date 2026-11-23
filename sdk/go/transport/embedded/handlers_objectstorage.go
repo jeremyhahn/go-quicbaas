@@ -78,7 +78,7 @@ func handleObjGetObject(ctx context.Context, svc service.QuicBaaS, req interface
 	}
 
 	// Accept service type directly
-	if r, ok := req.(*service.GetObjectRequest); ok {
+	if r, ok := req.(*service.GetObjectRequest); ok && r != nil {
 		svcResp, err := objSvc.GetObject(ctx, r)
 		if err != nil {
 			return nil, err
@@ -88,7 +88,7 @@ func handleObjGetObject(ctx context.Context, svc service.QuicBaaS, req interface
 
 	// Accept SDK client type and convert
 	sdkReq, ok := req.(*objclient.GetObjectRequest)
-	if !ok {
+	if !ok || sdkReq == nil {
 		return nil, NewInvalidRequestTypeError(
 			"quicbaas.ObjectStorage", "GetObject",
 			"*objectstorage.GetObjectRequest",
@@ -107,57 +107,6 @@ func handleObjGetObject(ctx context.Context, svc service.QuicBaaS, req interface
 		return nil, err
 	}
 	return convertSvcGetObjectResponse(svcResp), nil
-}
-
-// objStreamChunkSize matches the 64 KiB chunks the gRPC StreamGetObject sends.
-const objStreamChunkSize = 64 * 1024
-
-// handleObjStreamGetObject serves StreamGetObject: it reads the object through
-// the same service method as the gRPC server and delivers it as
-// *objectstorage.ObjectChunk messages. An empty object is one empty chunk
-// marked last.
-func handleObjStreamGetObject(ctx context.Context, svc service.QuicBaaS, req interface{}, s *stream) error {
-	objSvc := svc.ObjectStorageService()
-	if objSvc == nil {
-		return NewServiceNotConfiguredError("ObjectStorage")
-	}
-
-	sdkReq, ok := req.(*objclient.GetObjectRequest)
-	if !ok || sdkReq == nil {
-		return NewInvalidRequestTypeError(
-			"quicbaas.ObjectStorage", "StreamGetObject",
-			"*objectstorage.GetObjectRequest",
-			typeNameOf(req),
-		)
-	}
-
-	svcResp, err := objSvc.GetObject(ctx, &service.GetObjectRequest{
-		Key:      sdkReq.Key,
-		TenantID: sdkReq.TenantID,
-	})
-	if err != nil {
-		return err
-	}
-
-	data := svcResp.Value
-	totalSize := int64(len(data))
-	if totalSize == 0 {
-		return s.deliver(&objclient.ObjectChunk{IsLast: true})
-	}
-
-	for offset := int64(0); offset < totalSize; offset += objStreamChunkSize {
-		end := min(offset+objStreamChunkSize, totalSize)
-		chunk := &objclient.ObjectChunk{
-			Data:      data[offset:end],
-			Offset:    offset,
-			IsLast:    end == totalSize,
-			TotalSize: totalSize,
-		}
-		if err := s.deliver(chunk); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func handleObjDeleteObject(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
