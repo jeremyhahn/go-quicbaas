@@ -43,6 +43,7 @@ func pivTestAuthMethods(t *testing.T, rt *pivRollbackTest) []string {
 // An activated PIV user must be able to log in with the activated
 // certificate, which go-xkms admits only when the policy permits mtls.
 func TestPIVActivator_PermitsMTLSBesidePIV(t *testing.T) {
+	t.Parallel()
 	rt := newPIVPolicyTest(t, []string{AuthMethodPIV})
 	_, certPEM := rt.leaf(t)
 	if err := rt.act.Activate(context.Background(), "t1", rt.token, certPEM); err != nil {
@@ -55,6 +56,7 @@ func TestPIVActivator_PermitsMTLSBesidePIV(t *testing.T) {
 }
 
 func TestPIVActivator_PermitMTLSIsIdempotent(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	rt := newPIVPolicyTest(t, []string{AuthMethodPIV, AuthMethodMTLS})
 	_, firstPEM := rt.leaf(t)
@@ -89,6 +91,7 @@ func TestPIVActivator_PermitMTLSIsIdempotent(t *testing.T) {
 
 // An empty policy permits every method; adding mtls would narrow it.
 func TestPIVActivator_EmptyPolicyStaysEmpty(t *testing.T) {
+	t.Parallel()
 	rt := newPIVPolicyTest(t, nil)
 	_, certPEM := rt.leaf(t)
 	if err := rt.act.Activate(context.Background(), "t1", rt.token, certPEM); err != nil {
@@ -100,6 +103,7 @@ func TestPIVActivator_EmptyPolicyStaysEmpty(t *testing.T) {
 }
 
 func TestPIVActivator_FailedActivationPermitsNothing(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		activate func(t *testing.T, rt *pivRollbackTest) error
@@ -125,6 +129,7 @@ func TestPIVActivator_FailedActivationPermitsNothing(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			rt := newPIVPolicyTest(t, []string{AuthMethodPIV})
 			if err := tt.activate(t, rt); !errors.Is(err, tt.wantErr) {
 				t.Fatalf("Activate error = %v, want %v", err, tt.wantErr)

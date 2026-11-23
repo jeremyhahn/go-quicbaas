@@ -39,6 +39,7 @@ func (s *recordingRoleSeeder) SeedBuiltInRoles(_ context.Context, tenantID strin
 // roles at all and cannot hold a user until an operator recreates them by
 // their exact, undocumented names (#269).
 func TestCreateTenant_SeedsBuiltInRoles(t *testing.T) {
+	t.Parallel()
 	mgr := newTestTenantManager()
 	seeder := &recordingRoleSeeder{}
 	mgr.SetRoleSeeder(seeder)
@@ -61,6 +62,7 @@ func TestCreateTenant_SeedsBuiltInRoles(t *testing.T) {
 // TestCreateTenant_SeedsGeneratedTenantID proves the seeder is handed the ID
 // the manager generated, not the empty one the caller supplied.
 func TestCreateTenant_SeedsGeneratedTenantID(t *testing.T) {
+	t.Parallel()
 	mgr := newTestTenantManager()
 	seeder := &recordingRoleSeeder{}
 	mgr.SetRoleSeeder(seeder)
@@ -79,6 +81,7 @@ func TestCreateTenant_SeedsGeneratedTenantID(t *testing.T) {
 // hold a user is exactly the trap #269 reports, so half-created is worse than
 // not created.
 func TestCreateTenant_RoleSeedFailureRollsBack(t *testing.T) {
+	t.Parallel()
 	mgr := newTestTenantManager()
 	boom := errors.New("role store unavailable")
 	mgr.SetRoleSeeder(&recordingRoleSeeder{err: boom})
@@ -101,6 +104,7 @@ func TestCreateTenant_RoleSeedFailureRollsBack(t *testing.T) {
 // CreateTenant working, so embedded consumers that never wire one are not
 // broken by the new step.
 func TestCreateTenant_NoRoleSeederIsANoOp(t *testing.T) {
+	t.Parallel()
 	mgr := newTestTenantManager()
 	// Deliberately do NOT call SetRoleSeeder.
 	if _, err := mgr.CreateTenant(context.Background(), CreateTenantOptions{ID: "burnin", Name: "Burn-in"}); err != nil {
@@ -111,6 +115,7 @@ func TestCreateTenant_NoRoleSeederIsANoOp(t *testing.T) {
 // TestSetRoleSeeder_Accessor proves the setter/accessor round-trips the wired
 // seeder and tolerates nil.
 func TestSetRoleSeeder_Accessor(t *testing.T) {
+	t.Parallel()
 	mgr := newTestTenantManager()
 	if mgr.RoleSeeder() != nil {
 		t.Fatal("a fresh manager reports a role seeder")

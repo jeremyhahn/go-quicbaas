@@ -35,6 +35,7 @@ func newTenantAuthzProvider(t *testing.T) (*OIDCProvider, *DefaultTenantManager)
 }
 
 func TestOIDCProviderTenantAuthzMode_Override(t *testing.T) {
+	t.Parallel()
 	provider, tm := newTenantAuthzProvider(t)
 	ctx := context.Background()
 
@@ -51,6 +52,7 @@ func TestOIDCProviderTenantAuthzMode_Override(t *testing.T) {
 }
 
 func TestOIDCProviderTenantAuthzMode_EmptyWhenUnset(t *testing.T) {
+	t.Parallel()
 	provider, tm := newTenantAuthzProvider(t)
 	ctx := context.Background()
 
@@ -68,6 +70,7 @@ func TestOIDCProviderTenantAuthzMode_EmptyWhenUnset(t *testing.T) {
 }
 
 func TestOIDCProviderTenantAuthzMode_EmptyTenantID(t *testing.T) {
+	t.Parallel()
 	provider, _ := newTenantAuthzProvider(t)
 	mode, err := provider.TenantAuthzMode(context.Background(), "")
 	require.NoError(t, err)
@@ -75,6 +78,7 @@ func TestOIDCProviderTenantAuthzMode_EmptyTenantID(t *testing.T) {
 }
 
 func TestOIDCProviderTenantAuthzMode_LookupErrorSurfaced(t *testing.T) {
+	t.Parallel()
 	provider, _ := newTenantAuthzProvider(t)
 	// No tenant created -> GetTenant returns a not-found error which is surfaced
 	// to the caller. The server-side resolver is responsible for failing SAFE to
@@ -109,6 +113,7 @@ func (nilTenantManager) UpdateEngineEntitlements(context.Context, string, qrdbsd
 }
 
 func TestOIDCProviderTenantAuthzMode_NilTenant(t *testing.T) {
+	t.Parallel()
 	store := NewIdentityStore(IdentityStoreOptions{Tenants: nilTenantManager{}})
 	provider := &OIDCProvider{identityStore: store}
 
