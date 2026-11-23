@@ -68,7 +68,6 @@ func saveAndRestoreSeams(t *testing.T) {
 	origNewKMSBackendFactory := newKMSBackendFactory
 	origNewKMSServiceFn := newKMSServiceFn
 	origNewCacheManagerFn := newCacheManagerFn
-	origInitSealManagerFn := initSealManagerFn
 	origNewWatchBridgeFn := newWatchBridgeFn
 	origInitIAMComponentsFn := initIAMComponentsFn
 	origNewKMSDEKProviderFn := newKMSDEKProviderFn
@@ -81,7 +80,6 @@ func saveAndRestoreSeams(t *testing.T) {
 	origPushServiceStartFn := pushServiceStartFn
 	origWatchBridgeStartFn := watchBridgeStartFn
 	origNewCAFn := newCAFn
-	origNewBarrierManagerFn := newBarrierManagerFn
 	origInitializeCAFn := initializeCAFn
 
 	// REST seams from lifecycle_rest.go
@@ -119,7 +117,6 @@ func saveAndRestoreSeams(t *testing.T) {
 		newKMSBackendFactory = origNewKMSBackendFactory
 		newKMSServiceFn = origNewKMSServiceFn
 		newCacheManagerFn = origNewCacheManagerFn
-		initSealManagerFn = origInitSealManagerFn
 		newWatchBridgeFn = origNewWatchBridgeFn
 		initIAMComponentsFn = origInitIAMComponentsFn
 		newKMSDEKProviderFn = origNewKMSDEKProviderFn
@@ -132,7 +129,6 @@ func saveAndRestoreSeams(t *testing.T) {
 		pushServiceStartFn = origPushServiceStartFn
 		watchBridgeStartFn = origWatchBridgeStartFn
 		newCAFn = origNewCAFn
-		newBarrierManagerFn = origNewBarrierManagerFn
 		initializeCAFn = origInitializeCAFn
 
 		// Restore REST seams

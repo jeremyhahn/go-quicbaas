@@ -290,64 +290,6 @@ type CryptoManager interface {
 	Close() error
 }
 
-// BarrierManager defines the interface for cryptographic barrier operations.
-// The barrier protects the master encryption key at rest using a strategy
-// chain (software passphrase, Shamir secret sharing, TPM2, PKCS#11, AWS
-// KMS, GCP KMS, Azure Key Vault, HashiCorp Vault). Concrete implementations
-// live in pkg/barrier and forward to a go-qrdb StorageBarrier.
-type BarrierManager interface {
-	// Status returns the current barrier status. The returned value carries
-	// the active strategy ID so that callers can distinguish software,
-	// shamir, and hardware-backed deployments without further probing.
-	Status(ctx context.Context) (interface{}, error)
-
-	// IsSealed returns true if the barrier is currently sealed.
-	IsSealed() bool
-
-	// IsInitialized returns true if the barrier has been initialized.
-	IsInitialized() bool
-
-	// Initialize sets up the barrier with the specified number of shares
-	// and threshold. Returns the key shares (which must be distributed to
-	// operators). The barrier is left in the sealed state so the caller
-	// must drive an explicit unseal flow.
-	Initialize(ctx context.Context, shares, threshold int) (interface{}, error)
-
-	// Unseal submits a key share toward the quorum threshold and returns
-	// progress information.
-	Unseal(ctx context.Context, share []byte) (interface{}, error)
-
-	// Seal re-seals the barrier, clearing the master key from memory.
-	Seal(ctx context.Context) error
-
-	// Rekey generates new key shares with potentially different parameters.
-	// Requires the barrier to be unsealed.
-	Rekey(ctx context.Context, shares, threshold int) (interface{}, error)
-
-	// GenerateRecoveryKeys generates new recovery keys using Shamir secret
-	// sharing. Recovery keys provide an emergency unseal path if the
-	// primary key shares are lost. threshold is the minimum keys needed
-	// and totalKeys is the total number of recovery keys to generate.
-	GenerateRecoveryKeys(ctx context.Context, threshold, totalKeys int) ([][]byte, error)
-
-	// DeleteRecoveryKeys removes all stored recovery key metadata. This is
-	// a destructive operation that cannot be undone.
-	DeleteRecoveryKeys(ctx context.Context) error
-
-	// GenerateRootToken derives a new root token by proving knowledge of
-	// the master key through key shares. strategy selects between
-	// "recovery_keys" and "shamir_shares".
-	GenerateRootToken(ctx context.Context, strategy string, shares [][]byte) (string, error)
-
-	// RotateRootKey rotates the root encryption key used to protect master
-	// key shares. Returns an error if the underlying barrier does not
-	// support a standalone rotation primitive.
-	RotateRootKey(ctx context.Context) error
-
-	// Close releases any resources held by the barrier manager.
-	Close() error
-}
-
 // ParameterManager defines the interface for parameter storage operations.
 // Parameters are tenant-scoped key-value pairs with optional encryption, TTL, and tagging.
 // This interface provides low-level storage operations used by the ParameterStoreService.

@@ -28,7 +28,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
@@ -63,7 +62,6 @@ func TestBootOrder_CARunsAfterStandaloneNodeInit(t *testing.T) {
 	// Stub seams that would require external infrastructure.
 	seamMu.Lock()
 	initIAMComponentsFn = func(_ *Server) (service.IAMComponents, error) { return nil, nil }
-	initSealManagerFn = func(_ *logger.Logger) error { return nil }
 	validateRoutingFn = func(_ []uint64, _ map[string]uint64) error { return nil }
 	seamMu.Unlock()
 

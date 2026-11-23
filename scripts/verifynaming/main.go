@@ -86,11 +86,9 @@ var sealScanPruned = map[string]bool{
 // aliasFiles are the files ALLOWED to mention Seal* — the documented alias
 // surface.
 var aliasFiles = map[string]bool{
-	"pkg/seal/types.go":                           true, // SealMode legacy enum
 	"pkg/seal/barrier_seal_manager.go":            true, // legacy adapter (test-only at runtime)
 	"pkg/seal/barrier_seal_manager_test.go":       true,
 	"pkg/api/grpc/client_seal.go":                 true, // deprecated thin wrappers
-	"pkg/api/grpc/seal_manager_compat.go":         true, // noop SealManager shim
 	"cmd/quicbaas/seal.go":                        true, // deprecation alias forwarder
 	"cmd/quicbaas/seal_test.go":                   true,
 	"cmd/quicbaas/seal_alias_test.go":             true,
@@ -112,7 +110,6 @@ var aliasDirs = []string{
 	"cmd/quicbaas",        // CLI tests still reference SealClient/MockSealClient via aliases
 	"sdk/typescript/test", // TS tests cover the deprecation aliases
 	"sdk/go",              // Go SDK retains Seal*/SealClient aliases for one release
-	"pkg/seal",            // legacy seal package retained as compat layer
 	"pkg/service",         // legacy seal_service.go and SealService aliases on the interface aggregator
 	"pkg/testutil",        // MockSealClient kept for legacy tests
 	"pkg/server",          // gRPC no-op seal shim seam and SealService wiring on the lifecycle layer

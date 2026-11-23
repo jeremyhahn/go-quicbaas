@@ -121,17 +121,6 @@ func TestServer_StartIndexes_NoOp(t *testing.T) {
 }
 
 // =============================================================================
-// lifecycle.go — initBarrier seal-disabled branch
-// =============================================================================
-
-func TestServer_InitBarrier_DisabledReturnsNil(t *testing.T) {
-	srv := withTempServer(t)
-	srv.config.Seal.Enabled = false
-	require.NoError(t, srv.initBarrier())
-	assert.Nil(t, srv.barrierManager)
-}
-
-// =============================================================================
 // lifecycle.go — fileExists helper
 // =============================================================================
 
