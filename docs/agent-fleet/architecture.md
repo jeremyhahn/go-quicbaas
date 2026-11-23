@@ -81,13 +81,15 @@ A node's identity is its certificate, and nothing else bootstraps it. The
 deploy generates a key pair on the operator's host, has the server CA sign
 the CSR (the CA never sees the private key), and so obtains an X.509 client
 certificate with
-`OU=agents`, `O=<tenant>`, `CN=agent-<hostname>` and the `ClientAuth` EKU
-(365-day default validity). The enrollment handler:
+`OU=<tenant>`, `CN=agent-<hostname>`, a tenant-scoped SPIFFE SAN and the
+`ClientAuth` EKU (365-day default validity). The enrollment handler:
 
-1. requires the `OU` and EKU stamps (401 `invalid_client` otherwise);
-2. takes the tenant from the certificate Organization and refuses a body
-   `tenant_id` that disagrees (403 `tenant_mismatch`), and cross-checks the
-   tenant-scoped SPIFFE SAN;
+1. requires the `ClientAuth` EKU and a tenant in the `OU` (401
+   `invalid_client` otherwise);
+2. takes the tenant from the certificate `OU` and refuses a body `tenant_id`
+   that disagrees (403 `tenant_mismatch`), and refuses a certificate whose
+   tenant-scoped SPIFFE SAN is missing or names another tenant (403
+   `tenant_mismatch`);
 3. registers an agent application for tenant + CN with the fleet runtime
    grant, plus a `self_signed_tls_client_auth` client pinned to the
    certificate, and grants the same authority to the certificate's identity;
