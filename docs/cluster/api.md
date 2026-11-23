@@ -65,6 +65,26 @@ Dedicated transport handlers: rest=no, grpc=yes, mcp=no; embedded routes registe
 | `ReplaceNode` | `POST /api/v1/operations/node/replace` | **no** | yes | MISSING | yes | — |
 | `UpgradeNode` | `POST /api/v1/operations/node/upgrade` | **no** | yes | MISSING | yes | — |
 
+### go-qrdb re-exports — `sdk/go` `Client` accessors
+
+These accessors return go-qrdb's own clients over the lazily built qrdb
+sub-client, the one `SealStore` and `TenantMgmt` use. QuicBaaS adds no logic
+between the caller and go-qrdb. The types are aliases declared in
+`sdk/go/qrdb_cluster.go`.
+
+| Accessor | go-qrdb type | REST / QUIC / MCP | gRPC / Unix | Embedded (`WithEmbeddedQRDB`) |
+|---|---|---|---|---|
+| `QRDBCluster()` | `*sdk.ClusterClient` (`QRDBClusterClient`) | yes, no bearer | yes, no bearer | yes; `AddReplica`, `RemoveReplica`, `Members` and `Leader` go to the Admin servicer |
+| `QRDBMembership()` | `*sdk.Client` as `QRDBMembershipClient` | yes, no bearer | yes, no bearer | reconfigurer only. The membership store, manager and node advertiser need lease, watch and MVCC servicers, which `QRDBEmbeddedServicers` does not carry, so their calls fail with go-qrdb's `NilServiceError` |
+| `QRDBRebalance()` | `transport.RebalanceClient` (`QRDBRebalanceClient`) | yes, no bearer | yes; the `WithAuthToken` bearer rides each call as `authorization` metadata | refused with `errors.QRDBRebalanceUnsupportedError` (`CodeUnimplemented`) |
+
+- "no bearer": go-qrdb's SDK transport config has no auth option, so a server
+  that requires a bearer refuses these calls on that transport.
+- `TransportEmbedded` without `WithEmbeddedQRDB` fails all three accessors with
+  an InvalidInput error.
+- Membership managers are built over a network transport, or on the node
+  itself.
+
 
 
 
