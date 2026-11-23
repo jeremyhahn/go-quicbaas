@@ -439,6 +439,11 @@ type IAMConfig struct {
 	// on home-realm discovery. This value is also propagated to the embedded
 	// qrdb mTLS authenticator and the xkms CA at startup.
 	SPIFFETrustDomain string `mapstructure:"spiffe_trust_domain"`
+
+	// LoginRatePerMin caps per-client login and refresh attempts per minute
+	// on the hosted xkms login plane. Zero keeps the module default; a
+	// negative value is refused at boot.
+	LoginRatePerMin int `mapstructure:"login_rate_per_min"`
 }
 
 // Config represents the complete QuicBaaS configuration.

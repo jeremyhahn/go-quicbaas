@@ -712,7 +712,9 @@ func (s *Server) unifiedModuleServerOptions(serverOpts []qrdbsdk.ServerOption, s
 		xkmssdk.WithServiceModuleQRDBClient(func() *qrdbsdk.Client { return s.GetQRDBNodeClient() }),
 		xkmssdk.WithServiceModuleWebAuthn(quicbaasWebAuthnConfigToXKMS(s.config.IAM.WebAuthn)),
 		xkmssdk.WithServiceModuleWebAuthnCredentialStoreDecorator(webauthnCredentialStoreDecorator),
-		xkmssdk.WithServiceModuleSession(&xkmssdk.ServiceModuleSessionOptions{}),
+		// The session options (issuer, token lifetimes, login rate) come
+		// from quicbaas config.
+		xkmssdk.WithServiceModuleSession(s.xkmsModuleSessionOptions()),
 		// The xkms module serves its OWN PIV login at /api/v1/auth/login/piv.
 		// Since go-xkms v0.49.0-alpha it checks the slot attestation itself,
 		// so it has to be told that the operator accepted unattested login.
