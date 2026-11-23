@@ -227,7 +227,9 @@ func secretScanProblems(raw []byte) []string {
 // continued from the previous line, with errexit on from the first line and
 // never turned off. Comments are dropped before the continuation check, and
 // comment-only lines are skipped like blank lines, so a trailing ||, && or |
-// behind a comment still counts. Every other line that mentions mention is reported: it
+// behind a comment still counts. A previous line whose last word is a
+// standalone ! is also rejected, because a negated command never fails the
+// step. Every other line that mentions mention is reported: it
 // runs the command in a form whose exit may not fail the step. It returns
 // the problems and the index of the accepted line in the run's lines, or -1.
 func commandLineProblems(step, run, want, mention string) ([]string, int) {
@@ -272,11 +274,17 @@ func commandLineProblems(step, run, want, mention string) ([]string, int) {
 					break
 				}
 			}
+			negated := false
+			if f := strings.Fields(prev); len(f) > 0 && f[len(f)-1] == "!" {
+				negated = true
+			}
 			switch {
 			case depths[i] != 0:
 				add("step %s runs %s inside a shell block (depth %d)", step, mention, depths[i])
 			case continued:
 				add("step %s runs %s as a continuation of the previous line: %q", step, mention, prev)
+			case negated:
+				add("step %s runs %s after a standalone ! on the previous line: %q", step, mention, strings.TrimSpace(prev))
 			default:
 				accepted = i
 			}
@@ -645,6 +653,30 @@ func TestSecretScanProblems_Mutations(t *testing.T) {
 			name: "image scan short-circuited across a comment line",
 			old:  indent + imageScanLine + "\n",
 			new:  indent + "true ||\n" + indent + "# tolerate findings\n" + indent + imageScanLine + "\n",
+			want: "as a continuation of the previous line",
+		},
+		{
+			name: "check negated by a standalone ! line",
+			old:  indent + secretCheckLine + "\n",
+			new:  indent + "!\n" + indent + secretCheckLine + "\n",
+			want: "after a standalone ! on the previous line",
+		},
+		{
+			name: "check negated by a ! continuation",
+			old:  indent + secretCheckLine + "\n",
+			new:  indent + "! \\\n" + indent + secretCheckLine + "\n",
+			want: "as a continuation of the previous line",
+		},
+		{
+			name: "image scan negated by a standalone ! line",
+			old:  indent + imageScanLine + "\n",
+			new:  indent + "!\n" + indent + imageScanLine + "\n",
+			want: "after a standalone ! on the previous line",
+		},
+		{
+			name: "image scan negated by a ! continuation",
+			old:  indent + imageScanLine + "\n",
+			new:  indent + "! \\\n" + indent + imageScanLine + "\n",
 			want: "as a continuation of the previous line",
 		},
 		{
