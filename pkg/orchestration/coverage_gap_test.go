@@ -575,7 +575,7 @@ func TestProjectAuthz_AuthorizeFleetNode(t *testing.T) {
 	}{
 		{"role at or above required is allowed", scoped, "p1", "agent-A", ProjectRoleWorker, wantNoErr},
 		{"empty project ID is unscoped", scoped, "", "agent", ProjectRoleLead, wantNoErr},
-		{"empty agent ID is unscoped", scoped, "p", "", ProjectRoleLead, wantNoErr},
+		{"empty agent ID on a named project is denied", scoped, "p1", "", ProjectRoleWorker, wantErrAs[*ProjectAccessDeniedError]},
 		{"role below required is denied", scoped, "p2", "agent-B", ProjectRoleLead, wantErrAs[*ProjectAccessDeniedError]},
 		{"invalid required role", scoped, "p", "a", ProjectRole("root"), wantErrAs[*ProjectRoleInvalidError]},
 		{
