@@ -15,6 +15,7 @@ package quicbaas
 
 import (
 	"crypto/tls"
+	stderrors "errors"
 	"strings"
 	"sync"
 
@@ -2052,10 +2053,26 @@ func (c *client) Close() error {
 	}
 	c.closed = true
 
+	var transportErr error
 	if c.transport != nil {
-		return c.transport.Close()
+		transportErr = c.transport.Close()
 	}
-	return nil
+
+	// Close the lazily built go-qrdb sub-client (gRPC/Unix time series,
+	// SealStore, TenantMgmt). Running the sync.Once here waits for an
+	// initialization in progress and makes any later qrdbClient() call
+	// fail instead of dialing a new connection after Close.
+	c.qrdb.closed.Store(true)
+	c.qrdb.once.Do(func() {
+		c.qrdb.err = errQRDBClientClosed()
+	})
+	var qrdbErr error
+	// The embedded qrdb transport's Close only marks it closed; it never
+	// closes the caller-owned servicers, so closing it here is safe.
+	if c.qrdb.client != nil {
+		qrdbErr = c.qrdb.client.Close()
+	}
+	return stderrors.Join(transportErr, qrdbErr)
 }
 
 // KV returns the KV client.
