@@ -25,7 +25,7 @@ func putUnindexedTenantJob(t *testing.T, kv *mockKVStore, job *scheduler.Job) {
 
 func dueJobNames(t *testing.T, storage *Storage, before time.Time) map[string]bool {
 	t.Helper()
-	due, err := storage.GetJobsDueForExecution(context.Background(), before, 100)
+	due, err := storage.GetJobsDueForExecution(context.Background(), before, 100, nil)
 	if err != nil {
 		t.Fatalf("GetJobsDueForExecution: %v", err)
 	}
