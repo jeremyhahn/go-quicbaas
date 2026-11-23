@@ -941,7 +941,7 @@ func (s *BackendStorage) GetApp(ctx context.Context, clientID string) (*Applicat
 
 	var app Application
 	if err := json.Unmarshal(data, &app); err != nil {
-		return nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.app.get", Err: err}
+		return nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.app.get", Err: &AppRecordCorruptError{ClientID: clientID, Cause: err}}
 	}
 
 	return &app, nil
@@ -1079,11 +1079,25 @@ func (s *BackendStorage) ValidateClientSecret(ctx context.Context, clientID, cli
 		// reacting to. Nor is there anything to hide: a backend failure is not
 		// a per-client signal, so answering fast reveals nothing about which
 		// client IDs exist (Codex review of #118).
-		if dberrors.IsNotFound(err) {
+		//
+		// A record that does not decode IS a per-client signal (the id exists),
+		// so it is equalized like a missing one. A store outage is returned as
+		// ClientStoreUnavailableError, so the token endpoint can answer
+		// server_error instead of telling the client its credentials are wrong.
+		switch {
+		case dberrors.IsNotFound(err):
 			_ = verifySecret(timingEqualizerDigest, clientSecret)
 			s.warnClientAuthFailed(clientID, contextTenant(ctx), clientAuthReasonUnknownClient)
+			return false, err
+		case errors.As(err, new(*AppRecordCorruptError)):
+			_ = verifySecret(timingEqualizerDigest, clientSecret)
+			s.warnClientAuthFailed(clientID, contextTenant(ctx), clientAuthReasonRecordCorrupt)
+			return false, err
+		case errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded):
+			return false, err
+		default:
+			return false, &ClientStoreUnavailableError{ClientID: clientID, Cause: err}
 		}
-		return false, err
 	}
 
 	// A record resolved out of a different tenant than the request was scoped
@@ -1125,6 +1139,7 @@ const (
 	clientAuthReasonSecretMismatch = "client_secret mismatch"
 	clientAuthReasonSecretUnusable = "stored client_secret unusable"
 	clientAuthReasonTenantMismatch = "tenant mismatch"
+	clientAuthReasonRecordCorrupt  = "client record does not decode"
 )
 
 // warnClientAuthFailed records which check refused a client authentication.
