@@ -498,12 +498,34 @@ rest. Typical scenarios:
 |------|---------|
 | `auto` | Try methods in priority order (DANE → Noise → SPKI → Direct) |
 | `dane` | DANE TLSA verification (DNSSEC required) |
-| `noise` | Noise IK channel with pre-shared static public key |
+| `noise` | Noise channel: Noise_NK or the approved P-256 suite |
 | `spki` | SPKI-pin verification against a known SHA-256 pin |
-| `direct` | Direct HTTPS fetch (warning: trust-on-first-use) |
+| `direct` | Plain HTTPS fetch, for a transport that already enforces trust |
 
-(Verb-level flag pages are emitted by `--help`; this page documents
-the cross-cutting behaviour.)
+Every verb is a **client-side fetch**: it runs go-xkms `Fetch` on
+this machine, before any trust exists. It needs no running session,
+no stored credentials and no QuicBaaS API call — only `--server-url`
+and the chosen method's material.
+
+### Flags
+
+Every verb takes the same flags; each method reads only its own
+material.
+
+| Flag | Method | Meaning |
+|------|--------|---------|
+| `--server-url` | all | https URL of the server (required) |
+| `--bundle-output` | all | Write the CA bundle PEM to this path instead of stdout |
+| `--hostname` | DANE | DNSSEC zone the TLSA records are published under |
+| `--dns-server` | DANE | Resolver for the TLSA lookup, e.g. `8.8.8.8:53` |
+| `--noise-addr` | Noise | Bootstrap `host:port`; derived from `--server-url` when empty |
+| `--noise-static-key` | Noise | Server Curve25519 public key, hex, for Noise_NK |
+| `--noise-p256-static-key` | Noise | Server P-256 public key (uncompressed point, 130 hex characters), for the approved suite |
+| `--noise-suite` | Noise | Pin the suite: `noise_nk` or `p256_aesgcm`; empty selects by policy |
+| `--spki-pin` | SPKI | SHA-256 SPKI pin of the server certificate, hex |
+| `--method` | `auto` only | Pin one method: `auto`, `dane`, `noise`, `spki`, `direct` |
+
+The global `--timeout` bounds the whole run and each method attempt.
 
 ### auto
 
@@ -513,43 +535,62 @@ Trust-bootstrap by trying methods in priority order:
 DANE  →  Noise  →  SPKI  →  Direct
 ```
 
-Each method is attempted with its own configuration; the first to
-succeed wins. The verb supports `--method` to pin a single method,
-which is equivalent to running the per-method verb directly.
+Each method is attempted with the material you supply for it; the
+first to succeed wins. `--method` pins a single method, which is
+equivalent to running the per-method verb directly.
 
 ```bash
-quicbaas bootstrap auto --server https://quicbaas.local
+quicbaas bootstrap auto \
+  --server-url https://quicbaas.example.com:8443 \
+  --hostname quicbaas.example.com \
+  --spki-pin <sha256-hex>
 ```
 
 ### dane
 
-DANE TLSA verification requires DNSSEC and a published `_443._tcp.<host>`
-TLSA record. The bootstrap client resolves the TLSA record via the
-configured resolver, then verifies the TLS certificate the server
-presents against the TLSA hash.
+DANE TLSA verification requires DNSSEC and published TLSA records
+for the server. The client resolves the TLSA records under
+`--hostname`, optionally through `--dns-server`, then verifies the
+certificate the server presents against them.
 
 ```bash
 quicbaas bootstrap dane \
-  --server https://quicbaas.local \
-  --resolver 8.8.8.8:53
+  --server-url https://quicbaas.example.com:8443 \
+  --hostname quicbaas.example.com \
+  --dns-server 8.8.8.8:53
 ```
 
 ### noise
 
-Noise IK uses a pre-shared static public key out-of-band; the
-bootstrap channel dials a Noise listener (separate from the main
-TLS listener) and verifies the server identity against the
-pre-shared key before downloading the bundle.
+The Noise channel dials a bootstrap listener (separate from the main
+TLS listener), authenticates the server against a static public key
+obtained out-of-band, and downloads the bundle over it. Two suites
+exist:
+
+- **Noise_NK** (`noise_nk`) — Curve25519, keyed by
+  `--noise-static-key`. Unavailable in a FIPS build.
+- **The approved P-256 suite** (`p256_aesgcm`,
+  TSBOOT1_P256_AESGCM_SHA256) — keyed by `--noise-p256-static-key`,
+  and runs in every build. A FIPS client needs this key to use Noise
+  at all.
+
+Supply either key or both. With no `--noise-suite` the suite is
+chosen by policy: the approved suite whenever FIPS is enforced,
+otherwise Noise_NK when its key is given, else P-256. A pinned suite
+whose key is missing, or which this build cannot run, fails with an
+error; it never falls through to the other suite. Any other
+`--noise-suite` value is refused before the fetch.
 
 ```bash
 quicbaas bootstrap noise \
-  --server https://quicbaas.local \
-  --static-key <base64-noise-public-key>
+  --server-url https://quicbaas.example.com:8443 \
+  --noise-p256-static-key <130-hex-uncompressed-point> \
+  --noise-suite p256_aesgcm
 ```
 
-Use `Security().Trust().Bootstrap().DeriveNoiseAddr(serverURL)` to
-compute the canonical Noise host:port from the server URL when
-scripting; the CLI does the same derivation internally.
+When `--noise-addr` is empty the bootstrap address is derived from
+`--server-url`; use `DeriveNoiseAddr(serverURL)` from the SDK to
+compute the same `host:port` when scripting.
 
 ### spki
 
@@ -558,46 +599,53 @@ Subject Public Key Info against an operator-supplied pin.
 
 ```bash
 quicbaas bootstrap spki \
-  --server https://quicbaas.local \
-  --pin sha256:abcd1234...
+  --server-url https://quicbaas.example.com:8443 \
+  --spki-pin <sha256-hex>
 ```
 
 The pin is typically published alongside the server hostname (in
 documentation, a configuration management system, or a previous
-bundle exchange).
+bundle exchange). The result echoes the pin the bundle was verified
+against.
 
 ### direct
 
-Direct HTTPS fetch with no out-of-band verification. **Trust on
-first use** — the client accepts whatever certificate the server
-presents on the first call and pins it for the lifetime of the
-local bundle store.
+Plain HTTPS fetch with no out-of-band verification of its own. Use
+it only where the transport already enforces trust (for example a
+pre-provisioned trust store or a private network path); otherwise
+prefer DANE, Noise or SPKI.
 
 ```bash
-quicbaas bootstrap direct --server https://quicbaas.local
+quicbaas bootstrap direct --server-url https://quicbaas.example.com:8443
 ```
-
-The CLI emits a `WARNING: trust-on-first-use` line to stderr so the
-operator notices.
 
 ### TrustBootstrapClient SDK contract
 
-The CLI is a thin wrapper around `Security().Trust().Bootstrap()`:
+The CLI is a thin wrapper around the SDK's go-xkms re-export,
+`sdk/go/xkms/trust/bootstrap` (also reachable as
+`Security().Trust().Bootstrap()`):
 
 ```go
-boot := sdk.Security().Trust().Bootstrap()
-bundle, err := boot.Fetch(ctx, trustbootstrap.Config{
-    ServerURL:  "https://quicbaas.local",
-    Method:     trustbootstrap.MethodDANE,
-    DANEConfig: &trustbootstrap.DANEConfig{ Resolver: "8.8.8.8:53" },
+bundle, err := trustbootstrap.Fetch(ctx, trustbootstrap.Config{
+    Mode:      trustbootstrap.ModeNoise,
+    ServerURL: "https://quicbaas.example.com:8443",
+    Noise: &trustbootstrap.NoiseConfig{
+        ServerP256StaticKey: serverP256KeyHex,
+        Suite:               trustbootstrap.SuiteP256AESGCM,
+    },
 })
 ```
 
 `bundle` is a `*trustbootstrap.CABundle` carrying the PEM-encoded
-chain, the verification method that succeeded, and a timestamp. The
-caller is responsible for writing the bundle to disk (the CLI does
-this under `~/.quicbaas/trust/` by default; programmatic callers
-pick their own destination).
+chain and the parsed certificates. The caller decides where to store
+it; the CLI writes it to `--bundle-output` or prints it.
+
+The re-export also carries the approved-suite surface: the
+`P256StaticKey` type, `P256PublicKeySize` and `P256HexKeySize`, the
+`SuiteNoiseNK` and `SuiteP256AESGCM` bytes, `GenerateP256StaticKey`,
+`NewP256StaticKey`, `EncodeP256StaticKey`, `DecodeP256StaticKey`,
+`EnsureSuiteAvailable`, and the `SuiteError`, `NoSuiteError` and
+`ErrSuite*` / `ErrNoSuite` errors.
 
 `Fetch` is a **local-only** call: it performs a direct outbound
 network fetch from the caller, not a transport hop through the
@@ -605,15 +653,22 @@ configured QuicBaaS backend. The SDK acts as a library facade here.
 
 ### Output
 
-Successful runs print the bundle path and the method that succeeded:
+The default table output names the method that succeeded, the SPKI
+pin when one was used, and — unless `--bundle-output` is set — the
+bundle PEM:
 
 ```
-bundle: /home/operator/.quicbaas/trust/quicbaas.local/ca-bundle.pem
-method: dane
-fetched_at: 2026-05-25T10:14:33Z
+BOOTSTRAP RESULT
+============================================================
+Method:  noise
+
+--- CA Bundle PEM ---
+-----BEGIN CERTIFICATE-----
+...
 ```
 
-`--output json` returns the same fields as a JSON object.
+`--output json` returns `method`, `ca_bundle_pem` and `spki_pin` as
+a JSON object.
 
 ### See also
 

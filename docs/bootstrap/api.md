@@ -38,12 +38,22 @@ cannot be a single round trip when a human has to touch a device in the middle.
 |---|---|---|
 | `POST /api/v1/bootstrap/auto` | `HandleBootstrapAuto` | Pick a mechanism automatically |
 | `POST /api/v1/bootstrap/dane` | `HandleBootstrapDane` | DANE / DNSSEC-anchored trust |
-| `POST /api/v1/bootstrap/noise` | `HandleBootstrapNoise` | Noise_NK handshake |
+| `POST /api/v1/bootstrap/noise` | `HandleBootstrapNoise` | Noise handshake (Noise_NK or the approved P-256 suite) |
 | `POST /api/v1/bootstrap/spki` | `HandleBootstrapSpki` | SPKI-pinned TLS |
 
 Trust bootstrap is the answer to "how does a node that trusts nothing obtain a
 trust anchor it can verify". The three named mechanisms are alternatives, not
 layers: `auto` selects among them.
+
+The `noise` and `auto` requests carry the Noise key material in three
+optional fields: `noise_static_key` (the server's Curve25519 public key, hex,
+for Noise_NK), `noise_p256_static_key` (the server's uncompressed P-256 public
+point, 130 hex characters, for the approved TSBOOT1_P256_AESGCM_SHA256 suite)
+and `noise_suite` (`noise_nk` or `p256_aesgcm`; empty selects by policy, which
+prefers the approved suite whenever FIPS is enforced). Either key is enough; a
+FIPS deployment needs `noise_p256_static_key`. An unknown `noise_suite`, a
+pinned suite whose key is missing or will not decode, a suite this build cannot
+run, or no usable suite at all is a client error and answers **400**.
 
 ## The sealed window
 
