@@ -816,7 +816,7 @@ func (p *OIDCProvider) AuthenticateClient(ctx context.Context, clientID, clientS
 	}
 	valid, err := p.appStorage.ValidateClientSecret(ctx, clientID, clientSecret)
 	if err != nil || !valid {
-		return NewOAuthError(ErrOAuthInvalidClient, "client authentication failed")
+		return clientAuthOAuthError(err)
 	}
 	return nil
 }
@@ -1125,7 +1125,7 @@ func (p *OIDCProvider) handleAuthorizationCodeGrant(ctx context.Context, req *To
 	// Validate client
 	valid, err := p.appStorage.ValidateClientSecret(ctx, req.ClientID, req.ClientSecret)
 	if err != nil || !valid {
-		return nil, NewOAuthError(ErrOAuthInvalidClient, "client authentication failed")
+		return nil, clientAuthOAuthError(err)
 	}
 	if err := p.requireGrantType(ctx, req.ClientID, GrantTypeAuthorizationCode); err != nil {
 		return nil, err
@@ -1189,7 +1189,7 @@ func (p *OIDCProvider) handleClientCredentialsGrant(ctx context.Context, req *To
 	// unknown client from a wrong secret could enumerate the client ids.
 	valid, err := p.appStorage.ValidateClientSecret(ctx, req.ClientID, req.ClientSecret)
 	if err != nil {
-		return nil, NewOAuthError(ErrOAuthInvalidClient, "client authentication failed")
+		return nil, clientAuthOAuthError(err)
 	}
 	if !valid {
 		return nil, NewOAuthError(ErrOAuthInvalidClient, "client authentication failed")
@@ -1198,7 +1198,7 @@ func (p *OIDCProvider) handleClientCredentialsGrant(ctx context.Context, req *To
 	// Get application
 	app, err := p.appStorage.GetApp(ctx, req.ClientID)
 	if err != nil {
-		return nil, NewOAuthError(ErrOAuthInvalidClient, "invalid client")
+		return nil, clientLoadOAuthError(err)
 	}
 
 	// Check if grant type is allowed
@@ -1278,7 +1278,7 @@ func (p *OIDCProvider) handleRefreshTokenGrant(ctx context.Context, req *TokenRe
 	// Validate client
 	valid, err := p.appStorage.ValidateClientSecret(ctx, req.ClientID, req.ClientSecret)
 	if err != nil || !valid {
-		return nil, NewOAuthError(ErrOAuthInvalidClient, "client authentication failed")
+		return nil, clientAuthOAuthError(err)
 	}
 	if err := p.requireGrantType(ctx, req.ClientID, GrantTypeRefreshToken); err != nil {
 		return nil, err
