@@ -1574,15 +1574,17 @@ func (s *SchedulerEngine) executeJob(ctx context.Context, job *Job, claimedFirin
 		waiter = s.openRemoteRun(job)
 		handler = s.remoteHandler(waiter)
 	}
-	lock.Unlock()
 
 	// A recovered run's history left pending on the job is completed by the
-	// next execution, on whichever node it runs.
+	// next execution, on whichever node it runs. The flush reads and writes
+	// the job, so it runs under the stripe lock: a concurrent update or
+	// force delete is never overwritten or undone.
 	if len(job.PendingHistory) > 0 {
 		if err := s.flushPendingHistory(storageCtx, job); err != nil {
 			s.logWarn("Job %d: a recovered run's history could not be written: %v; it stays pending on the job", job.ID, err)
 		}
 	}
+	lock.Unlock()
 
 	// Create execution record
 	exec := &JobExecution{

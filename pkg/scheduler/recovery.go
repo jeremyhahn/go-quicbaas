@@ -479,6 +479,7 @@ func (s *SchedulerEngine) revisitConcludedRun(ctx context.Context, current *Job,
 // written records from the job through a guarded write. A record that could
 // not be written stays pending on the job. Each record is written under its
 // stable ID, so two nodes flushing the same record write one history entry.
+// Callers hold the job's stripe lock.
 func (s *SchedulerEngine) flushPendingHistory(ctx context.Context, job *Job) error {
 	var flushed []*JobExecution
 	for _, rec := range job.PendingHistory {
