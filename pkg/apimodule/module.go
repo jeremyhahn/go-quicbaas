@@ -74,6 +74,10 @@
 // authz chain as every other service here; their permissions were already in
 // this module's derived set, because kms.proto also declares
 // SecretsManagement (module_grants.go reads options per proto file).
+// AttestationService is mounted beside KeyManagement/DEKManagement because the
+// pinned go-xkms serves only KeystoreService.AttestKey and none of the
+// Verifier RPCs (endorsements, reference values, AppraiseQuote) the CLI calls
+// by the quicbaas.attestation.v1 name.
 //
 // Crypto (quicbaas.kms.v1.Crypto, built with NewCryptoServer and gated on
 // the facade's Crypto(), as lifecycle.go does) is mounted for the same
@@ -83,7 +87,7 @@
 // (qrdb.v1.permission) option in kms.proto, already in this module's
 // derived set, and passes the same authz chain.
 //
-// CertificateService, TrustService, AttestationService, and PIVService are
+// CertificateService, TrustService, and PIVService are
 // DELIBERATELY NOT registered here
 // (Phase 3 of the login-plane plan, corrective to the prior design): they
 // were quicbaas.v1 wrappers over the SAME composed go-xkms library
@@ -103,6 +107,11 @@
 // its own quicbaas.v1 handlers for these services, so a caller already
 // dialing the legacy listener directly (not through the unified server or
 // the SDK) keeps working exactly as before.
+//
+// AttestationService IS registered here: the pinned go-xkms ServiceModule
+// serves no endorsement or reference-values RPC, and the SDK's gRPC
+// attestation client dials quicbaas.attestation.v1, so the Verifier's
+// quicbaas handlers are the only gRPC surface for it.
 //
 // FIDO2Service is the other xkms-backed surface registered here: quicbaas's
 // own tenant-scoped LOGIN ceremony (the WebAuthn analogue of the Login
@@ -405,6 +414,7 @@ type grpcServers struct {
 	agentCatalog       pb.AgentCatalogServiceServer
 	sdlc               pb.SDLCServiceServer
 	registry           pb.RegistryServiceServer
+	attestation        pb.AttestationServiceServer
 }
 
 // HostGRPCServers carries the gRPC servers the host builds from IAM state
@@ -487,6 +497,7 @@ var grpcRegistrations = []grpcRegistration{
 	{desc: &pb.AgentCatalogService_ServiceDesc, capability: "agent-catalog", pick: func(s *grpcServers) any { return s.agentCatalog }},
 	{desc: &pb.SDLCService_ServiceDesc, capability: "sdlc", pick: func(s *grpcServers) any { return s.sdlc }},
 	{desc: &pb.RegistryService_ServiceDesc, capability: "registry", pick: func(s *grpcServers) any { return s.registry }},
+	{desc: &pb.AttestationService_ServiceDesc, capability: "attestation", pick: func(s *grpcServers) any { return s.attestation }},
 	{desc: &iampb.FederationService_ServiceDesc, capability: "federation", hostPick: func(h HostGRPCServers) any { return h.Federation }},
 	{desc: &iampb.SessionService_ServiceDesc, capability: "session", hostPick: func(h HostGRPCServers) any { return h.Session }},
 }
@@ -643,6 +654,12 @@ func (m *Module) bind() (*grpcServers, error) {
 		// The prompt server resolves Prompts() per call and answers
 		// Unavailable while no store is mounted, as on the Unix listener.
 		prompt: grpcapi.NewPromptServer(svc, m.log),
+		// The attestation Verifier's handlers live on the facade, as on the
+		// legacy transport (lifecycle_certificate_register.go); the pinned
+		// go-xkms ServiceModule serves no endorsement or reference-values
+		// RPC, so without this the SDK's quicbaas.attestation.v1 client
+		// gets Unimplemented on the node's network gRPC port.
+		attestation: facade,
 	}
 	if schedulerSvc, placementSvc := svc.Scheduler(), svc.Placement(); schedulerSvc != nil || placementSvc != nil {
 		built.scheduler = grpcapi.NewSchedulerServer(schedulerSvc, placementSvc, m.log)
@@ -692,10 +709,11 @@ func (m *Module) bind() (*grpcServers, error) {
 	// capability services above, with the SAME nil-gating
 	// pkg/server/lifecycle.go applies on the legacy transport.
 	//
-	// CertificateService, TrustService, AttestationService, and PIVService
-	// are deliberately NOT bound here: see the package doc comment (Phase 3
-	// of the login-plane plan) — go-xkms's own ServiceModule serves that
-	// canonical surface on this same unified server. Crypto is bound below:
+	// CertificateService, TrustService, and PIVService are deliberately NOT
+	// bound here: see the package doc comment (Phase 3 of the login-plane
+	// plan) — go-xkms's own ServiceModule serves that canonical surface on
+	// this same unified server. AttestationService is bound above and
+	// Crypto below:
 	// go-xkms serves no quicbaas.kms.v1 name, and the CLI calls it.
 	if secretsSvc := svc.Secrets(); secretsSvc != nil {
 		built.secretsManagement = grpcapi.NewSecretsServer(secretsSvc, m.log)

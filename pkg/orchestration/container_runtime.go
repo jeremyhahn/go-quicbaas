@@ -65,6 +65,15 @@ type ExecContainerRuntime struct {
 	// container_image.go). A field for the same reason inspect is one; nil
 	// means exec the real engine.
 	runImageCommand imageCommandRunner
+
+	// keptMu guards keptIDRefs, each image ID this runtime's builds returned
+	// mapped to the build-ID references (see BuildImage) those builds
+	// applied, one per build, until ReleaseImage removes them; and
+	// pendingRefs, the references whose removal the engine refused, retried
+	// by the next BuildImage or ReleaseImage.
+	keptMu      sync.Mutex
+	keptIDRefs  map[string][]string
+	pendingRefs []string
 }
 
 // inspectFunc runs a docker/podman inspect query and returns its trimmed

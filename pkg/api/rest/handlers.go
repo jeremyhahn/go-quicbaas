@@ -593,29 +593,6 @@ func (s *Server) HandlePutIfAbsent(w http.ResponseWriter, r *http.Request) {
 	RespondJSON(w, r, http.StatusOK, ConditionalPutResponse{Applied: resp.Applied})
 }
 
-// entityPathParams reads the {type} and {id} URL parameters of an entity
-// route, responding 400 and returning false when either is missing or invalid.
-func entityPathParams(w http.ResponseWriter, r *http.Request) (string, uint64, bool) {
-	entityType := chi.URLParam(r, "type")
-	if entityType == "" {
-		RespondError(w, r, http.StatusBadRequest, &ValidationError{
-			Field:   "type",
-			Message: "entity type is required",
-		})
-		return "", 0, false
-	}
-
-	entityID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 64)
-	if err != nil {
-		RespondError(w, r, http.StatusBadRequest, &ValidationError{
-			Field:   "id",
-			Message: "invalid entity ID",
-		})
-		return "", 0, false
-	}
-	return entityType, entityID, true
-}
-
 // kvConditionalPathParams reads the {type} and {key} URL parameters of a KV
 // conditional route and the ID HandleKVPut stores that key under, responding
 // 400 and returning false when either is missing or the key is malformed.

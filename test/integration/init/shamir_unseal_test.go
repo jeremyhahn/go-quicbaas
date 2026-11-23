@@ -54,6 +54,21 @@ func requireMCPRefusedWhileSealed(t *testing.T, ports PortBundle) {
 	}
 }
 
+// requireQUICRefusedWhileSealed pins the sealed window's surface: it serves
+// REST and gRPC only, so nothing is bound on the QUIC port and a datagram to
+// it draws the loopback's port-unreachable (connection refused). probeUDP
+// reads that refusal as its error; a silent or answering port is bound.
+func requireQUICRefusedWhileSealed(ctx context.Context, t *testing.T, ports PortBundle) {
+	t.Helper()
+	err := probeUDP(ctx, ports.QUIC)
+	if err == nil {
+		t.Fatalf("a sealed node has a listener on its QUIC port %d; it must not serve QUIC until unsealed", ports.QUIC)
+	}
+	if !errors.Is(err, syscall.ECONNREFUSED) {
+		t.Fatalf("probe of the sealed node's QUIC port %d: got %v, want the connection refused", ports.QUIC, err)
+	}
+}
+
 // unsealShamirByCeremony runs the M-of-N ceremony against the sealed node's
 // REST listener: the barrier is split with one share sealed per officer,
 // threshold officers claim their certificate and then their share, and the

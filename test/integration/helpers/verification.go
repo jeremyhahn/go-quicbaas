@@ -17,7 +17,6 @@ package helpers
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strconv"
 	"sync/atomic"
@@ -60,6 +59,12 @@ func WaitForClusterHealthy(t *testing.T, cluster *TestCluster) error {
 	})
 }
 
+// findLeaderTimeout is the time one FindLeader call over cluster may take:
+// each node's own status bound, once per node.
+func findLeaderTimeout(cluster *TestCluster) time.Duration {
+	return time.Duration(len(cluster.Clients)) * nodeStatusTimeout
+}
+
 // WaitForLeaderElection waits for a leader to be elected in the cluster.
 func WaitForLeaderElection(t *testing.T, cluster *TestCluster, timeout time.Duration) (*TestNode, quicbaas.Client, error) {
 	t.Helper()
@@ -68,16 +73,10 @@ func WaitForLeaderElection(t *testing.T, cluster *TestCluster, timeout time.Dura
 	var leader *TestNode
 	var leaderClient quicbaas.Client
 	err := Poll(context.Background(), time.Second, timeout, func(ctx context.Context) (bool, error) {
-		findCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		findCtx, cancel := context.WithTimeout(ctx, findLeaderTimeout(cluster))
 		node, client, err := cluster.FindLeader(findCtx)
 		cancel()
 
-		// A refused status will be refused again: stop now rather than
-		// wait out the timeout with the refusal hidden.
-		var refused *ClusterStatusRefusedError
-		if errors.As(err, &refused) {
-			return false, &FinalPollError{Cause: err}
-		}
 		if err != nil || node == nil {
 			return false, err
 		}
@@ -325,7 +324,7 @@ func VerifyLeaderStability(t *testing.T, cluster *TestCluster, duration time.Dur
 		case <-ticker.C:
 			checkCount++
 
-			queryCtx, queryCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			queryCtx, queryCancel := context.WithTimeout(context.Background(), findLeaderTimeout(cluster))
 			currentLeader, _, queryErr := cluster.FindLeader(queryCtx)
 			queryCancel()
 

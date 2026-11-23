@@ -39,13 +39,6 @@ const (
 	xkmsKeystoreDeleteKey = "/xkms.v1.KeystoreService/DeleteKey"
 )
 
-// xkmsKeyPurposeSecret and xkmsKeyPurposeSigning are the key purposes an
-// xkms.v1 GenerateKeyRequest carries in key_type.
-const (
-	xkmsKeyPurposeSecret  = "secret"
-	xkmsKeyPurposeSigning = "signing"
-)
-
 // xkmsListedKey is the shape of an xkms.v1 KeyInfo that names its key: the
 // algorithm, with key_size for RSA and curve for ECDSA. key_type is the key's
 // purpose and names no algorithm.

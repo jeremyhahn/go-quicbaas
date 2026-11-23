@@ -15,6 +15,7 @@ package server
 
 import (
 	"context"
+	"crypto"
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
@@ -43,6 +44,8 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	qbshards "github.com/jeremyhahn/go-quicbaas/pkg/shards"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
+	dbxkms "github.com/jeremyhahn/go-quicbaas/pkg/xkms"
 )
 
 type iamComponents struct {
@@ -453,6 +456,12 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 			s.logger.WithError(tkErr).Warn("iam.oidc: per-tenant signing-key resolver unavailable; using global key only")
 		} else {
 			tenantManager.AddSettingsObserver(tenantSigningKeys)
+		}
+		if storeType == oidcSigningBackendName {
+			// The hosted xkms rotate route rotates the replicated OIDC
+			// signing keys through their managers, under the rotation lease.
+			dbxkms.RegisterRotationDelegate(oidcSigningBackendName,
+				oidcRotationDelegate(signingKeyManager, tenantSigningKeys))
 		}
 		oidcProvider, err = iam.NewOIDCProvider(
 			&iam.OIDCConfig{
@@ -2153,4 +2162,81 @@ func loadPIVActivationRoots(path string) (*x509.CertPool, error) {
 		return nil, &PIVActivationRootsError{Path: path, Reason: "no certificates parsed"}
 	}
 	return pool, nil
+}
+
+// oidcRotationOp names the hosted OIDC signing key rotation in tenant-binding
+// errors.
+const oidcRotationOp = "xkms.rotateKey"
+
+// OIDCSigningKeyNotDedicatedError reports a hosted rotation of the OIDC
+// signing key by a caller acting for a tenant with no dedicated signing key:
+// that tenant's tokens are signed with the platform key, which only the
+// system tenant rotates.
+type OIDCSigningKeyNotDedicatedError struct {
+	TenantID string
+}
+
+// Error implements error.
+func (e *OIDCSigningKeyNotDedicatedError) Error() string {
+	return "server: tenant " + e.TenantID + " has no dedicated oidc signing key to rotate; the platform key rotates only for the system tenant"
+}
+
+// ErrorCode classifies the refusal as forbidden.
+func (e *OIDCSigningKeyNotDedicatedError) ErrorCode() dberrors.ErrorCode {
+	return dberrors.ErrForbidden
+}
+
+// OIDCSigningKeyNameError reports a hosted rotation of a key in the OIDC
+// signing backend that is not the OIDC signing key.
+type OIDCSigningKeyNameError struct {
+	KID string
+}
+
+// Error implements error.
+func (e *OIDCSigningKeyNameError) Error() string {
+	return "server: " + e.KID + " names no oidc signing key; the keys in backend " +
+		oidcSigningBackendName + " are named " + iam.OIDCSigningKeyCN
+}
+
+// ErrorCode classifies the error as invalid input.
+func (e *OIDCSigningKeyNameError) ErrorCode() dberrors.ErrorCode {
+	return dberrors.ErrInvalidInput
+}
+
+// oidcRotationDelegate is the hosted rotation of the replicated OIDC signing
+// keys (ruling 725 (b)): it rotates through the signing key manager, which
+// takes the cluster rotation lease, the key of the tenant the caller acts
+// for: the platform key for the system tenant, a dedicated tenant's own key
+// for that tenant. tenants may be nil, when only the platform key exists.
+func oidcRotationDelegate(global *iam.SigningKeyManager, tenants *iam.TenantSigningKeyResolver) dbxkms.RotationDelegate {
+	return func(ctx context.Context, kid string) (crypto.PrivateKey, error) {
+		parts := strings.Split(kid, ":")
+		if !strings.EqualFold(strings.TrimSpace(parts[len(parts)-1]), iam.OIDCSigningKeyCN) {
+			return nil, &OIDCSigningKeyNameError{KID: kid}
+		}
+		tenantID, err := tenantctx.FromContext(ctx, oidcRotationOp)
+		if err != nil {
+			return nil, err
+		}
+		mgr := global
+		if !tenantctx.IsSystem(tenantID) {
+			if tenants == nil {
+				return nil, &OIDCSigningKeyNotDedicatedError{TenantID: tenantID}
+			}
+			if mgr, err = tenants.ManagerFor(ctx, tenantID); err != nil {
+				return nil, err
+			}
+			if mgr == tenants.Global() {
+				return nil, &OIDCSigningKeyNotDedicatedError{TenantID: tenantID}
+			}
+		}
+		if err := mgr.Rotate(); err != nil {
+			return nil, err
+		}
+		_, signer, _ := mgr.Current()
+		if signer == nil {
+			return nil, &iam.SigningKeyUnavailableError{}
+		}
+		return signer, nil
+	}
 }

@@ -17,11 +17,11 @@ import (
 	"context"
 	"testing"
 
+	dbxkms "github.com/jeremyhahn/go-xkms/pkg/xkms"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
-	dbxkms "github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // GetKeyMetadata on a cold cache probes a fixed table of kid formats. A key
