@@ -42,6 +42,8 @@ const layerExtractLine = `tar -xf "$work/image/$layer" -C "$work/layers/$i" --no
 // layerExtractLoop is the top-level loop, as trimmed lines in order, that
 // extracts every layer listed in manifest.json (layerListLine) into the
 // scanned root "$work/layers", with no other command in the loop body.
+// Neither the loop nor layerListLine may be continued from, or negated by,
+// the previous line.
 var layerExtractLoop = []string{
 	`while IFS= read -r layer; do`,
 	`i=$((i + 1))`,
@@ -77,7 +79,8 @@ type secretScanStep struct {
 // that both scans run before the push. The push and both scans must have no
 // status function (success(), failure(), always(), cancelled()) in their if,
 // so GitHub's implicit success() gate stays and a failed scan stops the push.
-// It returns one line per problem.
+// The layer list and the extraction loop are held to the same previous-line
+// rule as the scan commands (see joinedPrev). It returns one line per problem.
 func secretScanProblems(raw []byte) []string {
 	var wf secretScanWorkflow
 	if err := yaml.Unmarshal(raw, &wf); err != nil {
@@ -182,14 +185,28 @@ func secretScanProblems(raw []byte) []string {
 		}
 	}
 	if extracted {
-		listed := false
+		listIdx := -1
 		for l := 0; l < w; l++ {
 			if strings.TrimSpace(lines[l]) == layerListLine && depths[l] == 0 {
-				listed = true
+				listIdx = l
 				break
 			}
 		}
-		extracted = listed
+		extracted = listIdx >= 0
+		if extracted {
+			for _, at := range []struct {
+				idx  int
+				what string
+			}{{listIdx, "the layer list"}, {w, "the layer extraction loop"}} {
+				prev, continued, negated := joinedPrev(lines, at.idx)
+				switch {
+				case continued:
+					add("step layer-scan runs %s as a continuation of the previous line: %q", at.what, prev)
+				case negated:
+					add("step layer-scan runs %s after a standalone ! on the previous line: %q", at.what, strings.TrimSpace(prev))
+				}
+			}
+		}
 	}
 	if !extracted {
 		add("step layer-scan does not extract every layer listed in manifest.json into \"$work/layers\" with %q", layerExtractLine)
@@ -220,6 +237,31 @@ func secretScanProblems(raw []byte) []string {
 		add("step layer-scan does not run check-secret-findings.sh on the report after trivy fs")
 	}
 	return problems
+}
+
+// joinedPrev returns the line before lines[i] that is not blank once its
+// shell comment is dropped (see stripShellComment), right-trimmed, and how
+// it joins lines[i]: continued when it ends in \, &&, || or |, so lines[i]
+// only runs as part of its list, and negated when its last word is a
+// standalone !, so a failure in lines[i] never fails the step.
+func joinedPrev(lines []string, i int) (prev string, continued, negated bool) {
+	for j := i - 1; j >= 0; j-- {
+		s := strings.TrimRight(stripShellComment(lines[j]), " \t\r")
+		if strings.TrimSpace(s) != "" {
+			prev = s
+			break
+		}
+	}
+	for _, op := range []string{`\`, "&&", "||", "|"} {
+		if strings.HasSuffix(prev, op) {
+			continued = true
+			break
+		}
+	}
+	if f := strings.Fields(prev); len(f) > 0 && f[len(f)-1] == "!" {
+		negated = true
+	}
+	return prev, continued, negated
 }
 
 // commandLineProblems checks that the run script of step runs want as one
@@ -259,25 +301,7 @@ func commandLineProblems(step, run, want, mention string) ([]string, int) {
 		raw := strings.TrimRight(l, " \t\r")
 		if raw == want && !seen {
 			seen = true
-			prev := ""
-			for j := i - 1; j >= 0; j-- {
-				s := strings.TrimRight(stripShellComment(lines[j]), " \t\r")
-				if strings.TrimSpace(s) != "" {
-					prev = s
-					break
-				}
-			}
-			continued := false
-			for _, op := range []string{`\`, "&&", "||", "|"} {
-				if strings.HasSuffix(prev, op) {
-					continued = true
-					break
-				}
-			}
-			negated := false
-			if f := strings.Fields(prev); len(f) > 0 && f[len(f)-1] == "!" {
-				negated = true
-			}
+			prev, continued, negated := joinedPrev(lines, i)
 			switch {
 			case depths[i] != 0:
 				add("step %s runs %s inside a shell block (depth %d)", step, mention, depths[i])
@@ -708,6 +732,36 @@ func TestSecretScanProblems_Mutations(t *testing.T) {
 			old:  indent + "  " + layerExtractLine + "\n",
 			new:  indent + "  # " + layerExtractLine + "\n",
 			want: "does not extract every layer listed in manifest.json",
+		},
+		{
+			name: "layer extraction short-circuited by the previous line",
+			old:  indent + layerExtractLoop[0] + "\n",
+			new:  indent + "true ||\n" + indent + layerExtractLoop[0] + "\n",
+			want: "the layer extraction loop as a continuation of the previous line",
+		},
+		{
+			name: "layer extraction short-circuited behind a trailing comment",
+			old:  indent + layerExtractLoop[0] + "\n",
+			new:  indent + "true || # skip layers\n" + indent + layerExtractLoop[0] + "\n",
+			want: "the layer extraction loop as a continuation of the previous line",
+		},
+		{
+			name: "layer extraction short-circuited across a comment line",
+			old:  indent + layerExtractLoop[0] + "\n",
+			new:  indent + "true ||\n" + indent + "# skip layers\n" + indent + layerExtractLoop[0] + "\n",
+			want: "the layer extraction loop as a continuation of the previous line",
+		},
+		{
+			name: "layer extraction negated by a standalone ! line",
+			old:  indent + layerExtractLoop[0] + "\n",
+			new:  indent + "!\n" + indent + layerExtractLoop[0] + "\n",
+			want: "the layer extraction loop after a standalone ! on the previous line",
+		},
+		{
+			name: "layer list short-circuited by the previous line",
+			old:  indent + layerListLine + "\n",
+			new:  indent + "true ||\n" + indent + layerListLine + "\n",
+			want: "the layer list as a continuation of the previous line",
 		},
 		{
 			name:     "scan and push conditions with always()",
