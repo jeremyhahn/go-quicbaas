@@ -1013,7 +1013,8 @@ func awaitExited(ctx context.Context, exited <-chan struct{}) error {
 
 // RemoveContainer removes a container: its engine state, its root
 // filesystem and its bundle. A running container is refused unless force is
-// set, in which case it is stopped first.
+// set, in which case it is stopped first. A remove that failed after the
+// engine destroyed the container can be retried, and resumes from there.
 func (r *Runtime) RemoveContainer(ctx context.Context, id string, force bool) error {
 	state, err := r.lookupContainer(id)
 	if err != nil {
@@ -1035,7 +1036,10 @@ func (r *Runtime) RemoveContainer(ctx context.Context, id string, force bool) er
 		}
 	}
 
-	if err := r.backends.engine.Destroy(state.ID); err != nil {
+	// The runtime still holds the record, so an engine that no longer
+	// knows the container destroyed it in an earlier remove whose rootfs
+	// or bundle cleanup failed. Resume that cleanup.
+	if err := r.backends.engine.Destroy(state.ID); err != nil && !errors.Is(err, ErrContainerNotFound) {
 		return NewContainerError(id, "remove", err)
 	}
 	if err := r.backends.rootfs.Remove(state.ID); err != nil {

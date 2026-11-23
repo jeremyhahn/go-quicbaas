@@ -361,6 +361,29 @@ func TestRuntime_DeleteFailsWhenTheRootfsCannotBeRemoved(t *testing.T) {
 	require.ErrorIs(t, err, errTestBackend)
 }
 
+func TestRuntime_DeleteResumesAfterTheEngineDestroyed(t *testing.T) {
+	ctx := context.Background()
+	rt, doubles := newTestRuntimeWithBackends(t)
+	id := createTestContainer(t, rt, "delete-resume")
+	state, err := rt.InspectContainer(ctx, id)
+	require.NoError(t, err)
+	require.ErrorIs(t, doubles.engine.Destroy("ghost"), ErrContainerNotFound,
+		"the test engine refuses an id it does not hold, as the real one does")
+
+	doubles.rootfs.removeErr = errTestBackend
+	require.ErrorIs(t, rt.RemoveContainer(ctx, id, false), errTestBackend)
+	assert.Equal(t, []string{id}, doubles.engine.destroyed)
+	assert.DirExists(t, state.BundleDir)
+
+	doubles.rootfs.removeErr = nil
+	require.NoError(t, rt.RemoveContainer(ctx, id, false))
+	assert.Equal(t, []string{id}, doubles.engine.destroyed, "the second Destroy is refused, not repeated")
+	assert.Equal(t, []string{id}, doubles.rootfs.removed)
+	assert.NoDirExists(t, state.BundleDir)
+	_, err = rt.InspectContainer(ctx, id)
+	require.ErrorIs(t, err, ErrContainerNotFound)
+}
+
 func TestRuntime_DeleteOfAMissingContainer(t *testing.T) {
 	rt := newTestRuntime(t)
 	err := rt.RemoveContainer(context.Background(), "ghost", false)

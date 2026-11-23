@@ -247,10 +247,10 @@ func (j *JobRuntime) Remove(ctx context.Context, containerID string) error {
 		return &orchestration.InputValidationError{Field: "containerID", Message: "cannot be empty"}
 	}
 	err := j.runtime.RemoveContainer(ctx, containerID, true)
-	if errors.Is(err, ErrContainerNotFound) {
-		// A container an earlier agent left is not registered in this
-		// process; only its bundle record names it. The reaper removes those
-		// through here too.
+	if isLookupMiss(err) {
+		// The runtime does not know the container. One an earlier agent
+		// left is named only by its bundle record, and the reaper removes
+		// those through here too.
 		reclaimed, reclaimErr := j.reclaimLeftover(containerID)
 		if reclaimErr != nil {
 			return &orchestration.ContainerStopError{ContainerID: containerID, Cause: reclaimErr}
@@ -277,6 +277,15 @@ func (j *JobRuntime) reclaimLeftover(id string) (bool, error) {
 		return false, nil
 	}
 	return true, j.runtime.ReclaimLeftover(id)
+}
+
+// isLookupMiss reports whether err is the runtime not knowing the
+// container at all, as opposed to a not-found from a later step of a
+// removal, which leaves resources behind and is an error.
+func isLookupMiss(err error) bool {
+	var containerErr *ContainerError
+	return errors.As(err, &containerErr) && containerErr.Operation == "lookup" &&
+		errors.Is(err, ErrContainerNotFound)
 }
 
 // Logs returns what the container wrote, stdout then stderr.

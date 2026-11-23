@@ -153,6 +153,35 @@ func TestJobRuntime_Lifecycle(t *testing.T) {
 	require.ErrorAs(t, err, &notFound)
 }
 
+func TestJobRuntime_RemoveRetriesAPartialRemoval(t *testing.T) {
+	jr, doubles := newTestJobRuntime(t)
+	id, err := jr.Run(t.Context(), &orchestration.ContainerSpec{Network: "none", Image: "alpine:latest"})
+	require.NoError(t, err)
+
+	doubles.rootfs.removeErr = errTestBackend
+	err = jr.Remove(t.Context(), id)
+	var stopErr *orchestration.ContainerStopError
+	require.ErrorAs(t, err, &stopErr)
+	require.ErrorIs(t, err, errTestBackend)
+	assert.Len(t, doubles.engine.destroyed, 1)
+	assert.True(t, bundleExists(t, jr, id))
+
+	doubles.rootfs.removeErr = nil
+	require.NoError(t, jr.Remove(t.Context(), id), "the retry resumes instead of reporting the container absent")
+	assert.Contains(t, doubles.rootfs.removed, id)
+	assert.False(t, bundleExists(t, jr, id))
+
+	var notFound *orchestration.ContainerNotFoundError
+	require.ErrorAs(t, jr.Remove(t.Context(), id), &notFound)
+}
+
+func TestIsLookupMiss(t *testing.T) {
+	assert.True(t, isLookupMiss(NewContainerError("x", "lookup", ErrContainerNotFound)))
+	assert.False(t, isLookupMiss(NewContainerError("x", "remove", ErrContainerNotFound)))
+	assert.False(t, isLookupMiss(ErrContainerNotFound))
+	assert.False(t, isLookupMiss(nil))
+}
+
 func TestJobRuntime_RunFailures(t *testing.T) {
 	t.Run("PullFails", func(t *testing.T) {
 		jr, doubles := newTestJobRuntime(t)

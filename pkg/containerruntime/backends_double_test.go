@@ -336,6 +336,11 @@ func (e *fakeEngine) Destroy(id string) error {
 	if e.destroyErr != nil {
 		return e.destroyErr
 	}
+	if _, ok := e.created[id]; !ok {
+		// libcontainerEngine refuses an id it does not hold, including
+		// one it already destroyed.
+		return ErrContainerNotFound
+	}
 	delete(e.created, id)
 	e.destroyed = append(e.destroyed, id)
 	return nil
