@@ -27,6 +27,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
@@ -317,8 +318,10 @@ func (h *IAMHandler) dcrConfig() config.IAMDynamicClientRegistrationConfig {
 // Precedence, fail-closed at every step:
 //
 //  1. The surface must be enabled by the operator (403 otherwise).
-//  2. The verified principal's tenant (the RFC 7591 initial access token) wins.
-//     The authz middleware on the route group put it there; a caller cannot
+//  2. The verified caller's tenant (the RFC 7591 initial access token) wins:
+//     the platform AuthorizedContext when a direct injector set one, otherwise
+//     the authenticated Subject the unified server projected from the identity
+//     go-qrdb authenticated and authorized for this route. A caller cannot
 //     forge or override it, and cannot name another tenant.
 //  3. Only if no verified tenant exists may an explicitly configured ANONYMOUS
 //     landing tenant be used — never the control-plane system tenant, which is
@@ -338,6 +341,9 @@ func (h *IAMHandler) dcrRegistrationTenant(r *http.Request) (string, *dcrGateErr
 
 	if ac := AuthorizedContextFromRequest(r.Context()); ac != nil && ac.TenantID != "" {
 		return ac.TenantID, nil
+	}
+	if subject, ok := auth.SubjectFromContext(r.Context()); ok && subject.Authenticated && subject.TenantID != "" {
+		return subject.TenantID, nil
 	}
 
 	if cfg.AnonymousTenantID != "" {
