@@ -5,6 +5,15 @@
 
 QuicBaaS supports a credentials file for managing multiple storage backend profiles.
 
+## What a Backup Contains
+
+A server backup holds the embedded qrdb node's platform keyspace: every
+key and value the node stores, tenant data included, written as one
+shard. A restore writes those keys back, overwriting their current
+values. Keys created after the backup are left in place. When no qrdb node
+is running, creating or restoring a backup fails with "backup store
+unavailable" and changes nothing.
+
 ## Credentials File Location
 
 Default location: `~/.quicbaas/backup-credentials.yaml`

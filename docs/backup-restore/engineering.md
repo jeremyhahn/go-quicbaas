@@ -5,6 +5,29 @@
 
 QuicBaaS supports multiple storage backends for backup operations.
 
+## What Is Backed Up
+
+The server builds the backup manager (`pkg/backup`) on
+`backupLiveStorage` (`pkg/server/backup_live_storage.go`), an
+`interfaces.Storage` over the embedded qrdb node's platform shard
+(`qbshards.PlatformShardID`, raw keys, so tenant-routed keys under their
+prefixes are included). The adapter resolves the node's key/value store on
+every call, so the manager can start before the node and always reads
+the running node. With no qrdb client it returns
+`BackupStoreUnavailableError` instead of panicking.
+
+The server passes no raft node, so `CreateBackup` takes one whole-store
+snapshot as shard 0 (`wholeStoreShardID`, `NumShards` 1) with zero Raft
+index and term. The iterator is a sorted scan taken at call time. With a
+raft node the manager still snapshots each shard the node reports.
+`RestoreBackup` writes each record back with `Set`, honouring
+`SkipExisting`, and deletes nothing, so keys created after the backup
+remain. `Compact`, `Flush` and `Close` are no-ops: the node owns its
+storage.
+
+The qrdb.v1 `BackupCreate` proxy is separate and still refuses until
+go-qrdb gains a durable backup sink.
+
 ## Supported Backends
 
 | Backend | Type Flag | Description |
