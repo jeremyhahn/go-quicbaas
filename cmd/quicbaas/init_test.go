@@ -21,6 +21,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/pem"
@@ -392,13 +393,24 @@ func TestInitClaimShare_OfficerCertificateReachesTransport(t *testing.T) {
 	dir := t.TempDir()
 	keyPath := filepath.Join(dir, "alice.key")
 	certPath := filepath.Join(dir, "alice.crt")
-	writeECPEM(t, keyPath)
+	writeSelfSignedKeyPair(t, certPath, keyPath)
+	// No --tls-ca and no data-dir CA: the server is trusted by the system
+	// roots, and the officer certificate must still be presented.
+	origCA, origDataDir := tlsCA, dataDir
+	defer func() { tlsCA, dataDir = origCA, origDataDir }()
+	tlsCA, dataDir = "", ""
 
 	var dialCert, dialKey string
+	var dialTLS *tls.Config
 	fc := &fakeCeremonyClient{}
 	orig := ceremonyClientFactory
 	ceremonyClientFactory = func() (CeremonyClient, error) {
 		dialCert, dialKey = tlsCert, tlsKey
+		cfg, err := buildTLSConfig()
+		if err != nil {
+			return nil, err
+		}
+		dialTLS = cfg
 		return fc, nil
 	}
 	defer func() { ceremonyClientFactory = orig }()
@@ -417,6 +429,12 @@ func TestInitClaimShare_OfficerCertificateReachesTransport(t *testing.T) {
 	require.NoError(t, cmd.Execute())
 	assert.Equal(t, certPath, dialCert, "the officer certificate must be the client's mTLS certificate")
 	assert.Equal(t, keyPath, dialKey, "the officer key must be the client's mTLS key")
+	require.NotNil(t, dialTLS, "the client's TLS config must carry the officer identity")
+	assert.Nil(t, dialTLS.RootCAs, "with no CA file the system roots verify the server")
+	require.Len(t, dialTLS.Certificates, 1, "the handshake must present the officer certificate")
+	want, err := tls.LoadX509KeyPair(certPath, keyPath)
+	require.NoError(t, err)
+	assert.Equal(t, want.Certificate, dialTLS.Certificates[0].Certificate)
 }
 
 // TestInitClaimShare_UnreadableKey rejects a signing key that cannot be
