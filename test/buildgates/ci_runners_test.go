@@ -31,25 +31,27 @@ import (
 
 const (
 	// hostedRunner is the standard GitHub-hosted runner (ci-template v1.43
-	// and v1.46). Since v1.48 it is still where every ci.yml job runs unless
-	// the hosted pool is full: the jobs on overflowRunnerDocker and
-	// overflowRunnerGate take it from the preflight output then too.
+	// and v1.46). Since v1.54 (ruling 1137) the jobs on overflowRunnerDocker
+	// and overflowRunnerGate take it from the preflight output whenever the
+	// balanced selector picks the hosted pool.
 	hostedRunner = "ubuntu-latest"
 	// overflowRunnerDocker is ci-template v1.48's runs-on for a job that
 	// builds or runs images: the preflight `runner_docker` output on
-	// github.com ("ubuntu-latest" unless the hosted pool is full, then the
-	// Dells' bigdisk-docker labels), and the forge label bigdisk elsewhere.
+	// github.com ("ubuntu-latest", or the Dells' bigdisk-docker labels when
+	// v1.54's balanced selector picks them), and the forge label bigdisk
+	// elsewhere.
 	overflowRunnerDocker = `${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner_docker) || 'bigdisk' }}`
 	// overflowRunnerGate is ci-template v1.48's runs-on for CI Gate: the
 	// preflight `runner` output on github.com, and ci-gate elsewhere.
 	overflowRunnerGate = `${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner || '"ubuntu-latest"') || 'ci-gate' }}`
-	// preflightRunner is preflight's runs-on (ci-template v1.49): on
+	// preflightRunner is preflight's runs-on (ci-template v1.52): on
 	// github.com the Dells' bigdisk pool unless the repository variable
 	// CI_PREFLIGHT_RUNS_ON (runs-on JSON) overrides it, and off github.com
-	// ubuntu-latest. The fork arm is go-quicbaas's own: this preflight runs
-	// the pull request's scripts/docs-only.sh, so a fork pull request (or
-	// one whose head repository is gone) stays hosted.
-	preflightRunner = `${{ github.server_url == 'https://github.com' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.CI_PREFLIGHT_RUNS_ON || '["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}`
+	// ubuntu-latest. A pull request (pull_request or pull_request_target)
+	// whose head repository is not this one, a deleted fork included, takes
+	// ubuntu-latest whatever CI_PREFLIGHT_RUNS_ON holds: this preflight runs
+	// the pull request's scripts/docs-only.sh.
+	preflightRunner = `${{ github.server_url == 'https://github.com' && (!startsWith(github.event_name, 'pull_request') || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.CI_PREFLIGHT_RUNS_ON || '["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}`
 	// selfHostedWaiver opens the waiver a job that leaves hostedRunner
 	// carries in its runs-on line comment, followed by a category and a
 	// measured reason.
@@ -109,8 +111,8 @@ func waiverProblem(comment string) string {
 // runnerProblems lists every ci.yml job whose runs-on breaks the runner
 // rule, given the workflow's text: a job runs on hostedRunner, on one of
 // ci-template v1.48's two runs-on expressions exactly (overflowRunnerDocker,
-// overflowRunnerGate: hosted first, the Dells only when the hosted pool is
-// full), or on a self-hosted label with a categorised waiver, and never on
+// overflowRunnerGate: the pool v1.54's balanced selector picks), or on a
+// self-hosted label with a categorised waiver, and never on
 // any other expression, which can pick a self-hosted label.
 func runnerProblems(body []byte) []string {
 	jobs, problem := runnerJobs(body)
@@ -409,7 +411,11 @@ func ghTokenize(s string) ([]ghToken, error) {
 }
 
 // ghParser evaluates a token list against a context while it parses. With
-// eval false it only parses: the operand a short circuit skips.
+// eval false it only parses: the operand a short circuit skips. It calls
+// four functions: fromJSON, startsWith (case-insensitive, its arguments cast
+// to strings), always() and cancelled(). The context key `__cancelled`
+// stands for the run's cancelled status; a context without it is a run that
+// is not cancelled.
 type ghParser struct {
 	toks []ghToken
 	pos  int
@@ -484,21 +490,51 @@ func (p *ghParser) primary(eval bool) (any, error) {
 	case t.kind == 's':
 		return t.text, nil
 	case t.kind == 'i' && p.peek("("):
-		if !strings.EqualFold(t.text, "fromJSON") {
+		p.pos++
+		var args []any
+		if p.peek(")") {
+			p.pos++
+		} else {
+			for {
+				arg, err := p.or(eval)
+				if err != nil {
+					return nil, err
+				}
+				args = append(args, arg)
+				if p.peek(",") {
+					p.pos++
+					continue
+				}
+				if !p.peek(")") {
+					return nil, fmt.Errorf("%s: missing )", t.text)
+				}
+				p.pos++
+				break
+			}
+		}
+		want := map[string]int{"fromjson": 1, "startswith": 2, "always": 0, "cancelled": 0}
+		name := strings.ToLower(t.text)
+		n, ok := want[name]
+		if !ok {
 			return nil, fmt.Errorf("unsupported function %s", t.text)
 		}
-		p.pos++
-		arg, err := p.or(eval)
-		if err == nil && !p.peek(")") {
-			err = fmt.Errorf("fromJSON: missing )")
+		if len(args) != n {
+			return nil, fmt.Errorf("%s: want %d arguments, got %d", t.text, n, len(args))
 		}
-		p.pos++
-		if err != nil || !eval {
-			return nil, err
+		if !eval {
+			return nil, nil
 		}
-		s, ok := arg.(string)
+		switch name {
+		case "always":
+			return true, nil
+		case "cancelled":
+			return ghTruthy(p.ctx["__cancelled"]), nil
+		case "startswith":
+			return strings.HasPrefix(strings.ToLower(ghString(args[0])), strings.ToLower(ghString(args[1]))), nil
+		}
+		s, ok := args[0].(string)
 		if !ok {
-			return nil, fmt.Errorf("fromJSON of a non-string %v", arg)
+			return nil, fmt.Errorf("fromJSON of a non-string %v", args[0])
 		}
 		var v any
 		if err := json.Unmarshal([]byte(s), &v); err != nil {
@@ -528,6 +564,21 @@ func (p *ghParser) primary(eval bool) (any, error) {
 }
 
 // ghTruthy is GitHub's truthiness: null, false, 0 and ” are falsy.
+// ghString casts a value to a string as GitHub's string functions do.
+func ghString(v any) string {
+	switch x := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return x
+	case bool:
+		return strconv.FormatBool(x)
+	case float64:
+		return strconv.FormatFloat(x, 'f', -1, 64)
+	}
+	return fmt.Sprint(v)
+}
+
 func ghTruthy(v any) bool {
 	switch x := v.(type) {
 	case nil:
@@ -583,18 +634,34 @@ func ghEval(value string, ctx map[string]any) (any, error) {
 
 func TestGHEval(t *testing.T) {
 	ctx := map[string]any{"a": map[string]any{"b": "X"}, "e": ""}
-	for _, c := range []struct{ expr, want string }{
-		{"${{ a.b == 'x' }}", "true"},
-		{"${{ a.c == null }}", "true"},
-		{"${{ a.c == '' }}", "false"},
-		{"${{ e || 'd' }}", `"d"`},
-		{"${{ a.b && 'y' }}", `"y"`},
-		{"${{ !a.b }}", "false"},
-		{"${{ a.c && fromJSON('bad') || 'z' }}", `"z"`},
-		{"${{ fromJSON('[1, \"it''s\"]') }}", `[1,"it's"]`},
-		{"plain", `"plain"`},
+	for _, c := range []struct {
+		expr, want string
+		ctx        map[string]any
+	}{
+		{"${{ a.b == 'x' }}", "true", nil},
+		{"${{ a.c == null }}", "true", nil},
+		{"${{ a.c == '' }}", "false", nil},
+		{"${{ e || 'd' }}", `"d"`, nil},
+		{"${{ a.b && 'y' }}", `"y"`, nil},
+		{"${{ !a.b }}", "false", nil},
+		{"${{ a.c && fromJSON('bad') || 'z' }}", `"z"`, nil},
+		{"${{ fromJSON('[1, \"it''s\"]') }}", `[1,"it's"]`, nil},
+		{"plain", `"plain"`, nil},
+		{"${{ startsWith('pull_request_target', 'pull_request') }}", "true", nil},
+		{"${{ startsWith('Pull_Request', 'pull_') }}", "true", nil},
+		{"${{ startsWith('push', 'pull_request') }}", "false", nil},
+		{"${{ !startsWith(a.b, 'y') }}", "true", nil},
+		{"${{ a.c && startsWith(a.c, 'x') || 'z' }}", `"z"`, nil},
+		{"${{ always() }}", "true", nil},
+		{"${{ !cancelled() }}", "true", nil},
+		{"${{ e && always() || !cancelled() }}", "true", nil},
+		{"${{ !cancelled() }}", "false", map[string]any{"__cancelled": true}},
 	} {
-		v, err := ghEval(c.expr, ctx)
+		cx := ctx
+		if c.ctx != nil {
+			cx = c.ctx
+		}
+		v, err := ghEval(c.expr, cx)
 		if err != nil {
 			t.Errorf("%s: %v", c.expr, err)
 			continue
@@ -603,15 +670,26 @@ func TestGHEval(t *testing.T) {
 			t.Errorf("%s = %s, want %s", c.expr, got, c.want)
 		}
 	}
+	for _, c := range []struct{ expr, want string }{
+		{"${{ contains('ab', 'a') }}", "unsupported function contains"},
+		{"${{ startsWith('a') }}", "startsWith"},
+		{"${{ fromJSON('1', '2') }}", "fromJSON"},
+		{"${{ always(1) }}", "always"},
+	} {
+		_, err := ghEval(c.expr, ctx)
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: want an error containing %q, got %v", c.expr, c.want, err)
+		}
+	}
 }
 
 // ghContext is the expression context of one ci.yml run. repository is
-// o/r; for a pull request, head is the head repository's full name, and
+// o/r; for a pull request (pull_request or pull_request_target), head is the head repository's full name, and
 // "" a head repository that is gone (null). preflightVar "" leaves
 // CI_PREFLIGHT_RUNS_ON unset.
 func ghContext(server, event, ref, head, preflightVar string) map[string]any {
 	gh := map[string]any{"server_url": server, "event_name": event, "ref": ref, "repository": "o/r"}
-	if event == "pull_request" {
+	if strings.HasPrefix(event, "pull_request") {
 		var repo any
 		if head != "" {
 			repo = map[string]any{"full_name": head}
@@ -651,6 +729,10 @@ func TestCIPreflightRunsOn(t *testing.T) {
 		{"github.com fork pull request", githubCom, "pull_request", prRef, "fork/r", "", `"ubuntu-latest"`},
 		{"github.com fork pull request, variable bigdisk", githubCom, "pull_request", prRef, "fork/r", bigdiskJSON, `"ubuntu-latest"`},
 		{"github.com deleted fork pull request", githubCom, "pull_request", prRef, "", "", `"ubuntu-latest"`},
+		{"github.com same-repository pull_request_target", githubCom, "pull_request_target", mainRef, "o/r", "", bigdiskJSON},
+		{"github.com fork pull_request_target", githubCom, "pull_request_target", mainRef, "fork/r", "", `"ubuntu-latest"`},
+		{"github.com fork pull_request_target, variable bigdisk", githubCom, "pull_request_target", mainRef, "fork/r", bigdiskJSON, `"ubuntu-latest"`},
+		{"github.com deleted fork pull_request_target", githubCom, "pull_request_target", mainRef, "", "", `"ubuntu-latest"`},
 		{"off github.com, variable unset", forge, "push", mainRef, "", "", `"ubuntu-latest"`},
 		{"off github.com, variable bigdisk", forge, "push", mainRef, "", bigdiskJSON, `"ubuntu-latest"`},
 	} {
@@ -809,8 +891,9 @@ func TestCIInImageMemory_Mutations(t *testing.T) {
 	}
 }
 
-// selectorStepName is the preflight step that picks hosted or overflow.
-const selectorStepName = "Hosted or overflow runner (ruling 1024)"
+// selectorStepName is the preflight step that picks the hosted or the
+// self-hosted pool (ci-template v1.54, ruling 1137).
+const selectorStepName = "Balanced runner pool (ruling 1137)"
 
 // selectorStep is the selector step's env and run body.
 func selectorStep(t *testing.T) (map[string]string, string) {
@@ -1009,30 +1092,47 @@ func runSelector(t *testing.T, env map[string]string, fix apiFixture) selectRun 
 	return r
 }
 
-// TestRunnerSelect runs the selector step's script against a fake Actions API.
+// TestRunnerSelect runs the selector step's script against a fake Actions API
+// (ci-template v1.54, ruling 1137: the pool this repository uses less wins).
+// The base limits are HS=12 hosted, C1=4 bigdisk and C2=4 bigdisk-docker.
 func TestRunnerSelect(t *testing.T) {
 	const (
-		limit  = 12
+		hs     = 12
+		units  = 4
 		runID  = 1000
 		hosted = "ubuntu-latest"
 	)
 	hostedOut := "runner=\"ubuntu-latest\"\nrunner_docker=\"ubuntu-latest\"\n"
 	overflowOut := "runner=[\"self-hosted\",\"linux\",\"x64\",\"bigdisk\"]\nrunner_docker=[\"self-hosted\",\"linux\",\"x64\",\"bigdisk-docker\"]\n"
-	running := func(n int) []map[string]any { return repeatJob(n, selJob(1, "in_progress", time.Minute, hosted)) }
+	bigdisk := []string{"self-hosted", "linux", "x64", "bigdisk"}
+	bigdiskDocker := []string{"self-hosted", "linux", "x64", "bigdisk-docker"}
+	// h, s1, s2: n jobs with status st on hosted (run 1), bigdisk (run 2)
+	// and bigdisk-docker (run 3).
+	h := func(n int, st string) []map[string]any { return repeatJob(n, selJob(1, st, time.Minute, hosted)) }
+	s1 := func(n int, st string) []map[string]any { return repeatJob(n, selJob(2, st, time.Minute, bigdisk...)) }
+	s2 := func(n int, st string) []map[string]any {
+		return repeatJob(n, selJob(3, st, time.Minute, bigdiskDocker...))
+	}
+	load := func(parts ...[]map[string]any) apiFixture { return loadFixture(t, slices.Concat(parts...)...) }
 	baseEnv := map[string]string{
 		"SERVER": "https://github.com", "API": selectAPI, "RUN_ID": strconv.Itoa(runID), "JOB_TOKEN": "job-token",
-		"LIMIT": strconv.Itoa(limit), "GRACE": "60", "EVENT": "push", "REPO": "o/r", "HEAD_REPO": "",
+		"HS": strconv.Itoa(hs), "C1": strconv.Itoa(units), "C2": strconv.Itoa(units),
+		"EVENT": "push", "REPO": "o/r", "HEAD_REPO": "",
 	}
+	const (
+		toDells  = "this run's jobs run on the Dells"
+		toHosted = "this run's jobs take the GitHub-hosted default"
+	)
 
-	// 150 in-progress runs over two pages; only run 150, on page 2, has the
-	// LIMIT hosted jobs.
+	// 150 in-progress runs over two pages; only run 150, on page 2, has jobs:
+	// HS hosted ones, a full hosted pool.
 	paged := apiFixture{}
 	paged.list(t, runsURL("queued", 1), "workflow_runs", 0, nil)
 	var page1, page2 []any
 	for id := 1; id <= 150; id++ {
 		var jobs []any
 		if id == 150 {
-			for range limit {
+			for range hs {
 				jobs = append(jobs, selJob(150, "in_progress", time.Minute, hosted))
 			}
 		}
@@ -1050,37 +1150,91 @@ func TestRunnerSelect(t *testing.T) {
 	short.list(t, runsURL("queued", 1), "workflow_runs", 0, nil)
 	short.list(t, runsURL("in_progress", 1), "workflow_runs", 150, page1)
 	short.list(t, runsURL("in_progress", 2), "workflow_runs", 150, nil)
+	for id := 1; id <= 100; id++ {
+		short.list(t, jobsURL(id, 1), "jobs", 0, nil)
+	}
 
-	notOK := loadFixture(t, running(limit)...)
+	// v1.50 and v1.59: a short listing is a lower bound. Each fixture below
+	// lists fewer entries than its total_count.
+	shortRuns := func(base apiFixture, id int) apiFixture {
+		f := maps.Clone(base)
+		f.list(t, runsURL("in_progress", 1), "workflow_runs", 2, []any{map[string]any{"id": id}})
+		f.list(t, runsURL("in_progress", 2), "workflow_runs", 2, nil)
+		return f
+	}
+	shortRunsHostedFull := shortRuns(load(h(hs, "in_progress")), 1)
+	shortRunsBelow := shortRuns(load(h(3, "in_progress")), 1)
+	shortJobsHostedFull := load(h(hs, "in_progress"))
+	var hsJobs []any
+	for _, j := range h(hs, "in_progress") {
+		hsJobs = append(hsJobs, j)
+	}
+	shortJobsHostedFull.list(t, jobsURL(1, 1), "jobs", hs+5, hsJobs)
+	shortJobsHostedFull.list(t, jobsURL(1, 2), "jobs", hs+5, nil)
+
+	hostedFull := load(h(hs, "in_progress"))
+	notOK := load(h(hs, "in_progress"))
 	notOK[runsURL("queued", 1)] = apiReply{502, ""}
-	noTotal := loadFixture(t, running(limit)...)
+	noTotal := load(h(hs, "in_progress"))
 	noTotal[runsURL("queued", 1)] = apiReply{200, `{"workflow_runs":[]}`}
 
 	for _, c := range []struct {
 		name     string
 		env      map[string]string
 		fix      apiFixture
-		overflow bool
+		overflow bool   // the Dells' labels; false for the hosted default
 		warning  string // a ::warning:: line contains it; "" for no warning
+		warning2 string // a ::warning:: line contains it too
 		notice   string // a ::notice:: line contains it
+		notice2  string // a ::notice:: line contains it too
 		call     string // a called URL contains it
+		notCall  string // no called URL contains it
 		noCall   bool
 	}{
-		{name: "in progress below LIMIT", fix: loadFixture(t, running(limit-1)...)},
-		{name: "in progress at LIMIT", fix: loadFixture(t, running(limit)...), overflow: true, notice: "12 hosted jobs in progress, HOSTED_JOBS_PER_REPO=12"},
-		{name: "another run's job queued GRACE", fix: loadFixture(t, selJob(7, "queued", 61*time.Second, hosted)), overflow: true, notice: "1 hosted job(s) queued 60s or more"},
-		{name: "another run's job queued less than GRACE", fix: loadFixture(t, selJob(7, "queued", 10*time.Second, hosted))},
-		{name: "this run's own job queued long", fix: loadFixture(t, selJob(runID, "queued", time.Hour, hosted))},
-		{name: "self-hosted jobs are not counted", fix: loadFixture(t, append(running(2), repeatJob(limit+1, selJob(3, "in_progress", time.Minute, "self-hosted", "linux", "x64", "bigdisk"))...)...)},
-		{name: "a run list over two pages", fix: paged, overflow: true, call: "page=2"},
-		{name: "a run list short of its total_count", fix: short, warning: "100 of 150 entries"},
+		// Both pools below their limit: the lower use wins, a tie goes hosted.
+		{name: "an idle repository: a tie goes hosted", fix: load(), notice: "use hosted 0/12, bigdisk 0/4, bigdisk-docker 0/4; " + toHosted},
+		{name: "hosted busier than the Dells", fix: load(h(3, "in_progress")), overflow: true, notice: "use hosted 3/12, bigdisk 0/4, bigdisk-docker 0/4; " + toDells},
+		{name: "equal use: a tie goes hosted", fix: load(h(3, "in_progress"), s1(1, "in_progress")), notice: toHosted},
+		{name: "the Dells busier than hosted", fix: load(h(1, "in_progress"), s1(1, "in_progress")), notice: toHosted},
+		{name: "both kinds below hosted use", fix: load(h(6, "in_progress"), s1(1, "in_progress"), s2(1, "in_progress")), overflow: true, notice: toDells},
+		{name: "bigdisk-docker alone at hosted use", fix: load(h(6, "in_progress"), s2(2, "in_progress")), notice: toHosted},
+		{name: "queued jobs count as use", fix: load(h(3, "queued")), overflow: true, notice: "use hosted 3/12"},
+		{name: "completed jobs are not counted", fix: load(h(hs, "completed"), s1(units, "completed")), notice: "use hosted 0/12, bigdisk 0/4"},
+		{name: "a self-hosted job off bigdisk is not counted", fix: load(h(1, "in_progress"), repeatJob(units, selJob(4, "in_progress", time.Minute, "self-hosted", "ci-gate"))), overflow: true, notice: "bigdisk 0/4, bigdisk-docker 0/4"},
+		{name: "this run's own jobs are not counted", fix: load(repeatJob(hs, selJob(runID, "queued", time.Hour, hosted))), notice: "use hosted 0/12", notCall: "/runs/1000/jobs"},
+		// One pool full: the other pool.
+		{name: "the hosted pool full", fix: hostedFull, overflow: true, notice: "the hosted pool is full (12 of 12); " + toDells},
+		{name: "bigdisk full", fix: load(h(11, "in_progress"), s1(units, "in_progress")), notice: "the self-hosted pool is full (bigdisk 4 of 4, bigdisk-docker 0 of 4); " + toHosted},
+		{name: "bigdisk-docker full", fix: load(h(11, "in_progress"), s2(units, "in_progress")), notice: "the self-hosted pool is full (bigdisk 0 of 4, bigdisk-docker 4 of 4)"},
+		// Both full: fewer queued wins, a tie goes hosted.
+		{name: "both full, hosted more queued", fix: load(h(hs, "in_progress"), h(2, "queued"), s1(units, "in_progress"), s2(1, "queued")), overflow: true, notice: "both pools full: hosted 2 queued, self-hosted 1 queued; " + toDells},
+		{name: "both full, the Dells more queued", fix: load(h(hs, "in_progress"), h(1, "queued"), s1(units, "in_progress"), s1(1, "queued"), s2(2, "queued")), notice: "both pools full: hosted 1 queued, self-hosted 3 queued; " + toHosted},
+		{name: "both full, a tie goes hosted", fix: load(h(hs, "in_progress"), s1(units, "in_progress")), notice: "both pools full: hosted 0 queued, self-hosted 0 queued"},
+		// The limits.
+		{name: "CI_HOSTED_SHARE unset is 12", env: map[string]string{"HS": ""}, fix: hostedFull, overflow: true, warning: "CI_HOSTED_SHARE='' is unset, 0 or not a whole number; HS=12", notice: "the hosted pool is full (12 of 12)"},
+		{name: "CI_HOSTED_SHARE with a leading zero is decimal", env: map[string]string{"HS": "08"}, fix: load(h(8, "in_progress")), overflow: true, notice: "the hosted pool is full (8 of 8)"},
+		{name: "CI_HOSTED_SHARE over 6 digits", env: map[string]string{"HS": "1234567"}, fix: hostedFull, overflow: true, warning: "CI_HOSTED_SHARE='1234567'"},
+		{name: "CI_SELF_HOSTED_BIGDISK unset", env: map[string]string{"C1": ""}, fix: hostedFull, warning: "CI_SELF_HOSTED_BIGDISK='' is unset", noCall: true},
+		{name: "CI_SELF_HOSTED_BIGDISK not a number", env: map[string]string{"C1": "four"}, fix: hostedFull, warning: "CI_SELF_HOSTED_BIGDISK='four'", noCall: true},
+		{name: "CI_SELF_HOSTED_BIGDISK_DOCKER 0", env: map[string]string{"C2": "0"}, fix: hostedFull, warning: "CI_SELF_HOSTED_BIGDISK_DOCKER='0'", noCall: true},
+		// The listing.
+		{name: "a run list over two pages", fix: paged, overflow: true, call: "page=2", notice: "the hosted pool is full"},
+		// v1.59: a listing short of its total_count is a lower bound, named in a
+		// ::notice, and the choice still uses it; only a failed call goes hosted.
+		{name: "a run list short of its total_count is a lower bound", fix: short, notice: "runs?status=in_progress: 100 of 150 entries); the counts are a lower bound", notice2: "use hosted 0/12, bigdisk 0/4, bigdisk-docker 0/4; " + toHosted},
+		{name: "a short run list at the hosted share goes to the Dells", fix: shortRunsHostedFull, overflow: true, notice: "runs?status=in_progress: 1 of 2 entries", notice2: "the hosted pool is full (12 of 12); " + toDells},
+		{name: "a short job list at the hosted share goes to the Dells", fix: shortJobsHostedFull, overflow: true, notice: "runs/1/jobs?filter=latest: 12 of 17 entries", notice2: "the hosted pool is full (12 of 12); " + toDells},
+		{name: "a short run list below every limit still chooses", fix: shortRunsBelow, overflow: true, notice: "1 of 2 entries", notice2: "use hosted 3/12, bigdisk 0/4, bigdisk-docker 0/4; " + toDells},
 		{name: "a reply that is not 200", fix: notOK, warning: "/runs?status=queued: 502"},
 		{name: "a 200 with no total_count", fix: noTotal, warning: "200 with no total_count"},
-		{name: "LIMIT not a number", env: map[string]string{"LIMIT": "twelve"}, fix: loadFixture(t, running(limit)...), warning: "HOSTED_JOBS_PER_REPO='twelve'", noCall: true},
-		{name: "not github.com", env: map[string]string{"SERVER": "https://gitea.example"}, fix: loadFixture(t, running(limit)...), noCall: true},
-		{name: "a fork pull request at overflow load", env: map[string]string{"EVENT": "pull_request", "HEAD_REPO": "someone/r"}, fix: loadFixture(t, running(limit)...), notice: "a pull request from someone/r;", noCall: true},
-		{name: "a deleted fork's pull request at overflow load", env: map[string]string{"EVENT": "pull_request", "HEAD_REPO": ""}, fix: loadFixture(t, running(limit)...), notice: "a pull request from a deleted fork;", noCall: true},
-		{name: "a same-repository pull request at overflow load", env: map[string]string{"EVENT": "pull_request", "HEAD_REPO": "o/r"}, fix: loadFixture(t, running(limit)...), overflow: true},
+		// No selection.
+		{name: "not github.com", env: map[string]string{"SERVER": "https://gitea.example"}, fix: hostedFull, noCall: true},
+		{name: "a fork pull request with the hosted pool full", env: map[string]string{"EVENT": "pull_request", "HEAD_REPO": "someone/r"}, fix: hostedFull, notice: "head repository is not this repository (a fork)", noCall: true},
+		{name: "a deleted fork's pull request with the hosted pool full", env: map[string]string{"EVENT": "pull_request", "HEAD_REPO": ""}, fix: hostedFull, notice: "head repository is not this repository (a fork)", noCall: true},
+		{name: "a same-repository pull request with the hosted pool full", env: map[string]string{"EVENT": "pull_request", "HEAD_REPO": "o/r"}, fix: hostedFull, overflow: true},
+		{name: "a fork's pull_request_target with the hosted pool full", env: map[string]string{"EVENT": "pull_request_target", "HEAD_REPO": "someone/r"}, fix: hostedFull, notice: "head repository is not this repository (a fork)", noCall: true},
+		{name: "a deleted fork's pull_request_target with the hosted pool full", env: map[string]string{"EVENT": "pull_request_target", "HEAD_REPO": ""}, fix: hostedFull, notice: "head repository is not this repository (a fork)", noCall: true},
+		{name: "a same-repository pull_request_target with the hosted pool full", env: map[string]string{"EVENT": "pull_request_target", "HEAD_REPO": "o/r"}, fix: hostedFull, overflow: true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			env := maps.Clone(baseEnv)
@@ -1103,8 +1257,13 @@ func TestRunnerSelect(t *testing.T) {
 			if c.warning != "" && !hasLine("::warning::", c.warning) {
 				t.Errorf("want a ::warning containing %q, got\n%s", c.warning, r.stdout)
 			}
-			if c.notice != "" && !hasLine("::notice::", c.notice) {
-				t.Errorf("want a ::notice containing %q, got\n%s", c.notice, r.stdout)
+			if c.warning2 != "" && !hasLine("::warning::", c.warning2) {
+				t.Errorf("want a ::warning containing %q, got\n%s", c.warning2, r.stdout)
+			}
+			for _, n := range []string{c.notice, c.notice2} {
+				if n != "" && !hasLine("::notice::", n) {
+					t.Errorf("want a ::notice containing %q, got\n%s", n, r.stdout)
+				}
 			}
 			if c.noCall && len(r.calls) != 0 {
 				t.Errorf("want no API call, got %v", r.calls)
@@ -1114,6 +1273,9 @@ func TestRunnerSelect(t *testing.T) {
 			}
 			if c.call != "" && !slices.ContainsFunc(r.calls, func(u string) bool { return strings.Contains(u, c.call) }) {
 				t.Errorf("want a call containing %q, got %v", c.call, r.calls)
+			}
+			if c.notCall != "" && slices.ContainsFunc(r.calls, func(u string) bool { return strings.Contains(u, c.notCall) }) {
+				t.Errorf("want no call containing %q, got %v", c.notCall, r.calls)
 			}
 		})
 	}
@@ -1130,6 +1292,38 @@ func TestRunnerSelect_ForkEnv(t *testing.T) {
 	} {
 		if env[k] != want {
 			t.Errorf("step %q env %s = %q; want %q", selectorStepName, k, env[k], want)
+		}
+	}
+}
+
+// TestRunnerSelect_LimitVars: the balanced selector's limits are the
+// repository variables the Infra Department sets (ci-template v1.54), and
+// ci.yml no longer carries v1.48's HOSTED_* env.
+func TestRunnerSelect_LimitVars(t *testing.T) {
+	env, _ := selectorStep(t)
+	for k, want := range map[string]string{
+		"HS": "${{ vars.CI_HOSTED_SHARE }}",
+		"C1": "${{ vars.CI_SELF_HOSTED_BIGDISK }}",
+		"C2": "${{ vars.CI_SELF_HOSTED_BIGDISK_DOCKER }}",
+	} {
+		if env[k] != want {
+			t.Errorf("step %q env %s = %q; want %q", selectorStepName, k, env[k], want)
+		}
+	}
+	for _, k := range []string{"LIMIT", "GRACE"} {
+		if _, ok := env[k]; ok {
+			t.Errorf("step %q still reads env %s (removed in ci-template v1.54)", selectorStepName, k)
+		}
+	}
+	var wf struct {
+		Env map[string]any `yaml:"env"`
+	}
+	if err := yaml.Unmarshal(readCI(t), &wf); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"HOSTED_JOBS_PER_REPO", "HOSTED_QUEUE_GRACE_SECONDS"} {
+		if _, ok := wf.Env[k]; ok {
+			t.Errorf("ci.yml env still sets %s (removed in ci-template v1.54)", k)
 		}
 	}
 }
