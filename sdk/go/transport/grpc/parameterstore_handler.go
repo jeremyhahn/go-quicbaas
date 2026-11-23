@@ -132,7 +132,7 @@ func parametersFromProto(params []*pb.Parameter) []*parameterstore.ParameterValu
 
 func handleParameterStoreGetParameter(ctx context.Context, client pb.ParameterStoreClient, req interface{}) (interface{}, error) {
 	const op = "grpc.parameterstore.GetParameter"
-	r, err := promptRequest[parameterstore.GetParameterRequest](op, req)
+	r, err := sdkRequest[parameterstore.GetParameterRequest](op, req)
 	if err != nil {
 		return nil, err
 	}
@@ -147,7 +147,7 @@ func handleParameterStoreGetParameter(ctx context.Context, client pb.ParameterSt
 
 func handleParameterStoreSetParameter(ctx context.Context, client pb.ParameterStoreClient, req interface{}) (interface{}, error) {
 	const op = "grpc.parameterstore.SetParameter"
-	r, err := promptRequest[parameterstore.SetParameterRequest](op, req)
+	r, err := sdkRequest[parameterstore.SetParameterRequest](op, req)
 	if err != nil {
 		return nil, err
 	}
@@ -165,7 +165,7 @@ func handleParameterStoreSetParameter(ctx context.Context, client pb.ParameterSt
 
 func handleParameterStoreDeleteParameter(ctx context.Context, client pb.ParameterStoreClient, req interface{}) (interface{}, error) {
 	const op = "grpc.parameterstore.DeleteParameter"
-	r, err := promptRequest[parameterstore.DeleteParameterRequest](op, req)
+	r, err := sdkRequest[parameterstore.DeleteParameterRequest](op, req)
 	if err != nil {
 		return nil, err
 	}
@@ -180,7 +180,7 @@ func handleParameterStoreDeleteParameter(ctx context.Context, client pb.Paramete
 
 func handleParameterStoreGetParameters(ctx context.Context, client pb.ParameterStoreClient, req interface{}) (interface{}, error) {
 	const op = "grpc.parameterstore.GetParameters"
-	r, err := promptRequest[parameterstore.GetParametersRequest](op, req)
+	r, err := sdkRequest[parameterstore.GetParametersRequest](op, req)
 	if err != nil {
 		return nil, err
 	}
@@ -195,7 +195,7 @@ func handleParameterStoreGetParameters(ctx context.Context, client pb.ParameterS
 
 func handleParameterStoreSetParameters(ctx context.Context, client pb.ParameterStoreClient, req interface{}) (interface{}, error) {
 	const op = "grpc.parameterstore.SetParameters"
-	r, err := promptRequest[parameterstore.SetParametersRequest](op, req)
+	r, err := sdkRequest[parameterstore.SetParametersRequest](op, req)
 	if err != nil {
 		return nil, err
 	}
@@ -224,7 +224,7 @@ func handleParameterStoreSetParameters(ctx context.Context, client pb.ParameterS
 
 func handleParameterStoreDeleteParameters(ctx context.Context, client pb.ParameterStoreClient, req interface{}) (interface{}, error) {
 	const op = "grpc.parameterstore.DeleteParameters"
-	r, err := promptRequest[parameterstore.DeleteParametersRequest](op, req)
+	r, err := sdkRequest[parameterstore.DeleteParametersRequest](op, req)
 	if err != nil {
 		return nil, err
 	}
@@ -245,7 +245,7 @@ func handleParameterStoreDeleteParameters(ctx context.Context, client pb.Paramet
 
 func handleParameterStoreListParameters(ctx context.Context, client pb.ParameterStoreClient, req interface{}) (interface{}, error) {
 	const op = "grpc.parameterstore.ListParameters"
-	r, err := promptRequest[parameterstore.ListParametersRequest](op, req)
+	r, err := sdkRequest[parameterstore.ListParametersRequest](op, req)
 	if err != nil {
 		return nil, err
 	}
@@ -268,7 +268,7 @@ func handleParameterStoreListParameters(ctx context.Context, client pb.Parameter
 
 func handleParameterStoreSearchByTags(ctx context.Context, client pb.ParameterStoreClient, req interface{}) (interface{}, error) {
 	const op = "grpc.parameterstore.SearchByTags"
-	r, err := promptRequest[parameterstore.SearchByTagsRequest](op, req)
+	r, err := sdkRequest[parameterstore.SearchByTagsRequest](op, req)
 	if err != nil {
 		return nil, err
 	}
