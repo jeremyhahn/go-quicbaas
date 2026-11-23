@@ -18,6 +18,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/kvstore"
@@ -305,6 +306,78 @@ func TestController_ATakenOverRolloutStopsTheFirstController(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantCalls(t, second, "fill a 1", "appraise a 1", "switch a")
+}
+
+// stepDown answers leader to the first check only, so a Roll claims its
+// rollout and then strands it before the first phase.
+type stepDown struct{ checks atomic.Int32 }
+
+func (s *stepDown) IsLeader() (bool, error) { return s.checks.Add(1) == 1, nil }
+
+func TestController_ConcurrentResumesRunEachPhaseOnce(t *testing.T) {
+	w := newWorld(t)
+	ctx := context.Background()
+	if _, err := w.controller("node-0", &slotRig{}, true).Roll(ctx, "acme", w.release(t, "acme", "1", serviceplane.ReleaseService)); err != nil {
+		t.Fatal(err)
+	}
+	stranded := w.controller("node-0", &slotRig{}, true)
+	stranded.Leader = &stepDown{}
+	if _, err := stranded.Roll(ctx, "acme", w.release(t, "acme", "2", serviceplane.ReleaseService)); !errors.Is(err, ErrNotLeader) {
+		t.Fatalf("stranded roll = %v", err)
+	}
+
+	first := &slotRig{filling: make(chan struct{}, 1), block: make(chan struct{})}
+	second := &slotRig{}
+	c1 := w.controller("node-1", first, true)
+	c2 := w.controller("node-1", second, true)
+	done := make(chan error, 1)
+	go func() {
+		_, err := c1.Resume(ctx, "acme", "web")
+		done <- err
+	}()
+	<-first.filling
+
+	// The same controller is fenced in process: it runs no phase twice.
+	if _, err := c1.Resume(ctx, "acme", "web"); !errors.Is(err, ErrBusy) {
+		t.Fatalf("second resume on the same controller = %v", err)
+	}
+	// Another controller with the same id takes over under a new epoch,
+	// so the first one's next write loses even though the owner matches.
+	slots, err := c2.Resume(ctx, "acme", "web")
+	if err != nil || slots.Active != SlotB || slots.Rollout.Phase != PhaseDone {
+		t.Fatalf("takeover = %+v, %v", slots, err)
+	}
+	close(first.block)
+	if err := <-done; !errors.Is(err, ErrBusy) {
+		t.Fatalf("the superseded resume went on: %v", err)
+	}
+	wantCalls(t, first, "fill b 2")
+	wantCalls(t, second, "fill b 2", "appraise b 2", "switch b")
+}
+
+func TestController_ResumeDuringRollIsBusy(t *testing.T) {
+	w := newWorld(t)
+	rig := &slotRig{filling: make(chan struct{}, 1), block: make(chan struct{})}
+	c := w.controller("node-1", rig, true)
+	ctx := context.Background()
+	done := make(chan error, 1)
+	go func() {
+		_, err := c.Roll(ctx, "acme", w.release(t, "acme", "1", serviceplane.ReleaseService))
+		done <- err
+	}()
+	<-rig.filling
+	if _, err := c.Resume(ctx, "acme", "web"); !errors.Is(err, ErrBusy) {
+		t.Fatalf("resume during roll = %v", err)
+	}
+	close(rig.block)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	wantCalls(t, rig, "fill a 1", "appraise a 1", "switch a")
+	slots, err := c.Slots(ctx, "acme", "web")
+	if err != nil || slots.Rollout.Epoch != 1 {
+		t.Fatalf("slots = %+v, %v", slots, err)
+	}
 }
 
 func TestController_RefusesWhenNotLeader(t *testing.T) {

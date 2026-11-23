@@ -105,6 +105,9 @@ type Rollout struct {
 	Phase  Phase                `json:"phase"`
 	// Owner is the controller that claimed the rollout.
 	Owner string `json:"owner"`
+	// Epoch counts the claims on the service's rollouts; each Roll and
+	// Resume takes the next one, so a stale claim can never write.
+	Epoch uint64 `json:"epoch"`
 	// Reason says why a rollout rolled back or failed.
 	Reason string `json:"reason,omitempty"`
 }

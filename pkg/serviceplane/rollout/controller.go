@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
@@ -32,8 +33,14 @@ func slotsKey(tenant, service string) string { return keyPrefix + tenant + "/" +
 
 // Controller drives rollouts. Only the leader runs one, and each phase is
 // written through the Guard against the record the controller read, so of
-// two controllers that race on a service exactly one runs it.
+// two controllers that race on a service exactly one runs it. Each claim
+// bumps the rollout's Epoch, so two claims never write the same record,
+// and calls on one controller are fenced per service in process. A
+// Controller must not be copied after first use.
 type Controller struct {
+	mu      sync.Mutex
+	running map[string]bool
+
 	// ID names this controller in the rollouts it claims.
 	ID string
 	// Guard arbitrates every slot record write.
@@ -94,18 +101,28 @@ func (c *Controller) Roll(ctx context.Context, tenant string, sr *serviceplane.S
 	if target.Kind != serviceplane.ReleaseService {
 		return nil, fmt.Errorf("%w: a %s release is staged by the node, not rolled out here", ErrRelease, target.Kind)
 	}
+	release, err := c.claim(tenant, target.Manifest.Name)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	slots, raw, err := c.load(ctx, tenant, target.Manifest.Name)
 	if err != nil {
 		return nil, err
 	}
-	if slots.Rollout != nil && !slots.Rollout.Phase.Terminal() {
-		return nil, fmt.Errorf("%w: %s is %s under %s", ErrBusy, target.Manifest.Name, slots.Rollout.Phase, slots.Rollout.Owner)
+	var epoch uint64
+	if slots.Rollout != nil {
+		if !slots.Rollout.Phase.Terminal() {
+			return nil, fmt.Errorf("%w: %s is %s under %s", ErrBusy, target.Manifest.Name, slots.Rollout.Phase, slots.Rollout.Owner)
+		}
+		epoch = slots.Rollout.Epoch
 	}
 	ro, err := c.Strategy.Plan(slots, target)
 	if err != nil {
 		return nil, err
 	}
 	ro.Owner = c.ID
+	ro.Epoch = epoch + 1
 	slots.Rollout = ro
 	if raw, err = c.write(ctx, slots, raw); err != nil {
 		return nil, err
@@ -122,6 +139,11 @@ func (c *Controller) Resume(ctx context.Context, tenant, service string) (*Slots
 	if err := c.leader(); err != nil {
 		return nil, err
 	}
+	release, err := c.claim(tenant, service)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	slots, raw, err := c.load(ctx, tenant, service)
 	if err != nil {
 		return nil, err
@@ -134,10 +156,33 @@ func (c *Controller) Resume(ctx context.Context, tenant, service string) (*Slots
 		return nil, fmt.Errorf("%w: the rollout runs %s, this controller %s", ErrConfig, ro.Strategy, c.Strategy.Name())
 	}
 	ro.Owner = c.ID
+	// A new epoch makes this claim's record differ from the one it took
+	// over, even when the same controller id claims it again.
+	ro.Epoch++
 	if raw, err = c.write(ctx, slots, raw); err != nil {
 		return nil, err
 	}
 	return c.drive(ctx, slots, raw)
+}
+
+// claim fences the service in this process until release is called; a
+// second call while it is held is refused with ErrBusy.
+func (c *Controller) claim(tenant, service string) (func(), error) {
+	key := slotsKey(tenant, service)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.running[key] {
+		return nil, fmt.Errorf("%w: %s/%s is being driven by this controller", ErrBusy, tenant, service)
+	}
+	if c.running == nil {
+		c.running = map[string]bool{}
+	}
+	c.running[key] = true
+	return func() {
+		c.mu.Lock()
+		delete(c.running, key)
+		c.mu.Unlock()
+	}, nil
 }
 
 // drive steps the claimed rollout to a terminal phase, writing each phase.
