@@ -369,8 +369,6 @@ import type {
   ClusterStatusResponse,
   ListClusterNodesResponse,
   BackupStatusResponse,
-  CreateBackupRequest,
-  CreateBackupResponse,
   DeleteBackupResponse,
   ListBackupsOptions,
   ListBackupsResponse,
@@ -4906,15 +4904,6 @@ export class RestBackupClient implements BackupClient {
       { method: 'GET' },
     );
     return { ...resp, backups: resp?.backups ?? [], total_count: resp?.total_count ?? 0 };
-  }
-
-  async create(req: CreateBackupRequest = {}): Promise<CreateBackupResponse> {
-    return this.http.fetchJSON<CreateBackupResponse>('/api/v1/backups', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      // The wire field `name` is the server's full/incremental type selector.
-      body: JSON.stringify({ name: req.type ?? 'full' }),
-    });
   }
 
   async delete(id: string): Promise<DeleteBackupResponse> {

@@ -3427,9 +3427,6 @@ export interface WorkerImageStatus {
 
 // Backups
 
-/** BackupType is the kind of backup the server takes. */
-export type BackupType = 'full' | 'incremental';
-
 /** BackupInfo is one backup as listed by GET /api/v1/backups. */
 export interface BackupInfo {
   backup_id: string;
@@ -3458,24 +3455,6 @@ export interface ListBackupsResponse {
   backups: BackupInfo[];
   /** Number of backups stored; `backups` can hold fewer when a record's metadata is unreadable. */
   total_count: number;
-}
-
-/**
- * CreateBackupRequest is the body of POST /api/v1/backups. Compression,
- * encryption and the shard set are the server's configured defaults; this
- * request cannot choose them.
- */
-export interface CreateBackupRequest {
-  /** Full or incremental; the server takes a full backup when absent. */
-  type?: BackupType;
-}
-
-/** CreateBackupResponse is the 201 body of POST /api/v1/backups. */
-export interface CreateBackupResponse {
-  backup_id: string;
-  timestamp: number;
-  size: number;
-  status: string;
 }
 
 /** RestoreBackupRequest is the body of POST /api/v1/backups/{id}/restore. */

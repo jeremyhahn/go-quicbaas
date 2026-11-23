@@ -5,7 +5,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { RestClient } from '../src/rest.js';
-import type { BackupInfo, CreateBackupRequest } from '../src/types.js';
+import type { BackupInfo } from '../src/types.js';
 
 const sample: BackupInfo[] = [
   { backup_id: 'b1', name: 'full', timestamp: 1700000000, size: 2048, status: 'completed', shards: [1, 2] },
@@ -67,25 +67,14 @@ describe('RestBackupClient', () => {
     expect(resp.backups).toEqual([]);
   });
 
-  it('create() POSTs the type as the server\'s name selector', async () => {
-    const f = makeFetch({ backup_id: 'b2', timestamp: 1, size: 0, status: 'pending' }, 201);
-    const c = client(f);
-    const resp = await c.create({ type: 'incremental' });
-    await c.create();
-    const { url, init } = call(f);
-    expect(url.endsWith('/api/v1/backups')).toBe(true);
-    expect(init.method).toBe('POST');
-    expect(JSON.parse(String(init.body))).toEqual({ name: 'incremental' });
-    expect((init.headers as Record<string, string>)['Content-Type']).toBe('application/json');
-    expect(resp.backup_id).toBe('b2');
-    expect(JSON.parse(String(call(f, 1).init.body))).toEqual({ name: 'full' });
-  });
-
-  it('create() forwards no option the server ignores', async () => {
-    const f = makeFetch({ backup_id: 'b3', timestamp: 1, size: 0, status: 'pending' }, 201);
-    const req = { type: 'full', encryption: 'aes256', description: 'd' } as unknown as CreateBackupRequest;
-    await client(f).create(req);
-    expect(JSON.parse(String(call(f).init.body))).toEqual({ name: 'full' });
+  it('offers no create, so no request can report an empty backup as made', async () => {
+    const f = makeFetch({});
+    const c = client(f) as unknown as Record<string, unknown>;
+    expect('create' in c).toBe(false);
+    expect(c.create).toBeUndefined();
+    const dist = await import('../dist/rest.js');
+    expect('create' in (new dist.RestClient('https://example').backups as object)).toBe(false);
+    expect(f).not.toHaveBeenCalled();
   });
 
   it('delete() sends DELETE /api/v1/backups/{id}', async () => {

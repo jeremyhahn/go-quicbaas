@@ -185,8 +185,6 @@ import type {
   ClusterStatusResponse,
   ListClusterNodesResponse,
   BackupStatusResponse,
-  CreateBackupRequest,
-  CreateBackupResponse,
   DeleteBackupResponse,
   ListBackupsOptions,
   ListBackupsResponse,
@@ -1218,13 +1216,11 @@ export interface ClusterClient {
 }
 
 // BackupClient manages cluster backups under /api/v1/backups.
+// It has no create: the daemon's backup service does not yet capture the cluster's data, so a created backup could not restore it.
 export interface BackupClient {
   // list returns up to opts.limit backups (default 100) and total_count; there
   // is no offset. Maps to GET /api/v1/backups.
   list(opts?: ListBackupsOptions): Promise<ListBackupsResponse>;
-  // create takes a full or incremental backup with the server's configured
-  // compression and encryption. Maps to POST /api/v1/backups.
-  create(req?: CreateBackupRequest): Promise<CreateBackupResponse>;
   // delete removes a backup. Maps to DELETE /api/v1/backups/{id}.
   delete(id: string): Promise<DeleteBackupResponse>;
   // restore restores a backup onto shards. Maps to POST /api/v1/backups/{id}/restore.
