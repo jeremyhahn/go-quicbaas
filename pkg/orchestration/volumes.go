@@ -203,6 +203,13 @@ type AttachedVolume struct {
 	// HostPath is where the volume is mounted on the host; empty for a raw
 	// volume.
 	HostPath string `json:"host_path,omitempty"`
+
+	// Promoted reports that this node's copy of a replicated volume was
+	// promoted to primary for the launch, so release demotes it before
+	// Detach. It is set before Promote is called, so a launch killed during
+	// Promote is still demoted on recovery: a Demote of a Secondary is
+	// harmless.
+	Promoted bool `json:"promoted,omitempty"`
 }
 
 // ContainerMount returns the bind mount that hands the volume to the
@@ -342,7 +349,8 @@ func (a *VolumeAttacher) Demote(ctx context.Context, volID string) error {
 // order. The claims are validated together first: two claims may not share a
 // name or a target. If any claim fails, the volumes already attached are
 // released again and the error is returned, so a failed launch leaves nothing
-// attached.
+// attached. A replicated volume is promoted to primary after Attach, before
+// any grow and Mount.
 func (a *VolumeAttacher) Attach(ctx context.Context, claims []VolumeClaim) ([]AttachedVolume, error) {
 	vols, _, err := a.attach(ctx, claims, nil)
 	return vols, err
@@ -352,7 +360,8 @@ func (a *VolumeAttacher) Attach(ctx context.Context, claims []VolumeClaim) ([]At
 // release. The rollback runs on a cleanupContext, so a launch cancelled part
 // way still releases what it attached. journal, when set, is called with each
 // volume before its Attach and again after it (see attachOne), so a caller can
-// record what a launch killed part way left on the node.
+// record what a launch killed part way left on the node. The entry after
+// Attach carries the promotion of a replicated volume, recorded before Promote.
 func (a *VolumeAttacher) attach(ctx context.Context, claims []VolumeClaim, journal func(AttachedVolume) error) (vols, held []AttachedVolume, err error) {
 	if err := validateClaims(claims); err != nil {
 		return nil, nil, err
@@ -414,13 +423,25 @@ func (a *VolumeAttacher) attachOne(ctx context.Context, claim VolumeClaim, journ
 		return AttachedVolume{Claim: claim, VolumeID: id}, fmt.Errorf("volume %q: attach to node %q: %w", claim.Name, a.node, err)
 	}
 	v := AttachedVolume{Claim: claim, VolumeID: id, DevicePath: info.DevicePath}
+	// A replicated volume attaches as a Secondary, whose device cannot be
+	// opened at all, and a grow and Mount need the primary: the order is
+	// Attach, Promote, grow, Mount, for raw and read-only claims too.
+	rp, replicated := a.provider.(ReplicatedVolumeProvider)
+	if replicated {
+		v.Promoted = true
+	}
 	if journal != nil {
-		// Recorded with the planned HostPath too, so a kill during Mount is
-		// still unmounted on recovery.
+		// Recorded with the planned HostPath and the promotion too, so a kill
+		// during Promote or Mount is still demoted and unmounted on recovery.
 		planned := v
 		planned.HostPath = host
 		if err := journal(planned); err != nil {
 			return v, fmt.Errorf("volume %q: journal: %w", claim.Name, err)
+		}
+	}
+	if replicated {
+		if err := rp.Promote(ctx, id); err != nil {
+			return v, fmt.Errorf("volume %q: promote on node %q: %w", claim.Name, a.node, err)
 		}
 	}
 	// The grow ensure deferred because the provider refused it detached runs
@@ -460,7 +481,8 @@ func (a *VolumeAttacher) attachOne(ctx context.Context, claim VolumeClaim, journ
 
 // Release unmounts and detaches the volumes in reverse order. It carries on
 // past a failure so one stuck volume does not keep the others attached, and
-// returns every failure joined. VolumeRuntime retries what is still held.
+// returns every failure joined. VolumeRuntime retries what is still held. A
+// promoted replicated volume is demoted after Unmount, before Detach.
 func (a *VolumeAttacher) Release(ctx context.Context, vols []AttachedVolume) error {
 	_, err := a.release(ctx, vols)
 	return err
@@ -470,7 +492,9 @@ func (a *VolumeAttacher) Release(ctx context.Context, vols []AttachedVolume) err
 // original order. A volume whose Unmount failed is kept as it was; one that
 // unmounted but did not detach is kept with no HostPath, so a retry only
 // detaches it. A Detach that reports the volume not attached
-// (ErrVolumeNotAttached) counts as released.
+// (ErrVolumeNotAttached) counts as released. One that unmounted but did not
+// demote is kept with no HostPath and Promoted set, so a retry demotes and
+// detaches it.
 func (a *VolumeAttacher) release(ctx context.Context, vols []AttachedVolume) ([]AttachedVolume, error) {
 	var errs []error
 	var held []AttachedVolume
@@ -483,6 +507,18 @@ func (a *VolumeAttacher) release(ctx context.Context, vols []AttachedVolume) ([]
 				continue
 			}
 		}
+		// A promoted volume is demoted before Detach, which refuses a primary.
+		// A volume that fails to demote is held unmounted and still promoted,
+		// so a retry demotes and detaches it only.
+		if v.Promoted {
+			if err := a.demote(ctx, v); err != nil {
+				errs = append(errs, fmt.Errorf("volume %q: demote on node %q: %w", v.Claim.Name, a.node, err))
+				v.HostPath = ""
+				held = append(held, v)
+				continue
+			}
+			v.Promoted = false
+		}
 		// A volume that is not attached is released: a journaled volume
 		// whose Attach never happened is then released cleanly on recovery.
 		if err := a.provider.Detach(ctx, v.VolumeID, a.node); err != nil && !errors.Is(err, ErrVolumeNotAttached) {
@@ -493,6 +529,24 @@ func (a *VolumeAttacher) release(ctx context.Context, vols []AttachedVolume) ([]
 	}
 	slices.Reverse(held)
 	return held, errors.Join(errs...)
+}
+
+// demote makes this node's copy of v a secondary. A Demote that fails while
+// the provider reports the local role is not primary (a secondary, or a
+// resource that is down) counts as demoted: Detach then succeeds.
+func (a *VolumeAttacher) demote(ctx context.Context, v AttachedVolume) error {
+	rp, ok := a.provider.(ReplicatedVolumeProvider)
+	if !ok {
+		return fmt.Errorf("%w: volume %q: demote needs a replicated provider", ErrVolumeUnsupported, v.VolumeID)
+	}
+	err := rp.Demote(ctx, v.VolumeID)
+	if err == nil {
+		return nil
+	}
+	if st, serr := rp.ReplicationState(ctx, v.VolumeID); serr == nil && st.Role != bscommon.ReplRolePrimary {
+		return nil
+	}
+	return err
 }
 
 // cleanupContext bounds a rollback on its own clock: the launch that failed
