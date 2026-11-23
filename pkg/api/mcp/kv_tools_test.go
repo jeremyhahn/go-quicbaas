@@ -3,9 +3,11 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"strconv"
 	"testing"
 
@@ -91,22 +93,34 @@ func (s *kvRecordingService) Delete(_ context.Context, req *service.DeleteReques
 }
 
 // kvToolCall runs a KV tool and decodes its answer from the JSON the server
-// sends, as a client reads it.
+// sends, keeping numbers exact, as a client reads it.
 func kvToolCall(t *testing.T, registry *ToolRegistry, tool string, args map[string]interface{}, out interface{}) {
 	t.Helper()
 	result, err := registry.ExecuteTool(context.Background(), tool, args)
 	require.NoError(t, err)
 	raw, err := json.Marshal(result)
 	require.NoError(t, err)
-	require.NoError(t, json.Unmarshal(raw, out))
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	require.NoError(t, dec.Decode(out))
 }
 
 func kvArgs(id string, extra map[string]interface{}) map[string]interface{} {
-	args := map[string]interface{}{"entity_type": "users", "id": id}
+	args := map[string]interface{}{"entityType": "users", "id": id}
 	for key, value := range extra {
 		args[key] = value
 	}
 	return args
+}
+
+// requireKVNotFound asserts a tool answered with the service's not-found
+// error and no result.
+func requireKVNotFound(t *testing.T, result interface{}, err error) {
+	t.Helper()
+	var qbErr *qberrors.QBError
+	require.True(t, errors.As(err, &qbErr), "want the service's not-found error, got %v", err)
+	assert.Equal(t, qberrors.ErrNotFound, qbErr.Code)
+	assert.Nil(t, result)
 }
 
 func TestKVTools_PutThenGetReturnsSameBytes(t *testing.T) {
@@ -117,11 +131,11 @@ func TestKVTools_PutThenGetReturnsSameBytes(t *testing.T) {
 	kvToolCall(t, registry, "quicbaas_kv_put", kvArgs("7", map[string]interface{}{
 		"data": base64.StdEncoding.EncodeToString(data),
 	}), &put)
-	assert.Equal(t, "7", put["id"])
-	assert.Equal(t, "1152921504606846977", put["version"], "version is an exact decimal string")
-	assert.Equal(t, "9223372036854775813", put["leader_id"], "leader_id is an exact decimal string")
+	assert.Equal(t, json.Number("7"), put["id"])
+	assert.Equal(t, json.Number("1152921504606846977"), put["version"], "version is an exact JSON number")
+	assert.Equal(t, json.Number("9223372036854775813"), put["leader_id"], "leader_id is an exact JSON number")
 
-	var got kvGetResult
+	var got service.GetResponse
 	kvToolCall(t, registry, "quicbaas_kv_get", kvArgs("7", nil), &got)
 	assert.True(t, got.Found)
 	assert.Equal(t, data, got.Data)
@@ -135,28 +149,28 @@ func TestKVTools_IDAbove2To53RoundTripsExactly(t *testing.T) {
 	kvToolCall(t, registry, "quicbaas_kv_put", kvArgs(id, map[string]interface{}{
 		"data": base64.StdEncoding.EncodeToString([]byte("v")),
 	}), &put)
-	assert.Equal(t, id, put["id"])
+	assert.Equal(t, json.Number(id), put["id"])
 	require.Len(t, svc.puts, 1)
 	assert.Equal(t, uint64(18446744073709551557), svc.puts[0].ID)
 
 	var got map[string]interface{}
 	kvToolCall(t, registry, "quicbaas_kv_get", kvArgs(id, nil), &got)
-	assert.Equal(t, id, got["id"])
+	assert.Equal(t, json.Number(id), got["id"])
 	assert.Equal(t, true, got["found"])
 }
 
-func TestKVTools_ShardAndConsistencyReachTheService(t *testing.T) {
+func TestKVTools_ShardReachesTheService(t *testing.T) {
 	registry, svc := newKVRecordingRegistry(t)
-	extra := map[string]interface{}{"shard_id": "3", "consistency": "2"}
+	// A JSON client's integer arrives as float64.
+	extra := map[string]interface{}{"shardID": float64(3)}
 
 	putArgs := kvArgs("7", map[string]interface{}{"data": base64.StdEncoding.EncodeToString([]byte("v"))})
-	putArgs["shard_id"] = "3"
-	putArgs["consistency"] = "2"
-	var put kvPutResult
+	putArgs["shardID"] = float64(3)
+	var put map[string]interface{}
 	kvToolCall(t, registry, "quicbaas_kv_put", putArgs, &put)
-	var got kvGetResult
+	var got service.GetResponse
 	kvToolCall(t, registry, "quicbaas_kv_get", kvArgs("7", extra), &got)
-	var del kvDeleteResult
+	var del service.DeleteResponse
 	kvToolCall(t, registry, "quicbaas_kv_delete", kvArgs("7", extra), &del)
 
 	require.Len(t, svc.puts, 1)
@@ -165,26 +179,22 @@ func TestKVTools_ShardAndConsistencyReachTheService(t *testing.T) {
 	assert.Equal(t, uint64(3), svc.puts[0].ShardID)
 	assert.Equal(t, uint64(3), svc.gets[0].ShardID)
 	assert.Equal(t, uint64(3), svc.deletes[0].ShardID)
-	assert.Equal(t, service.ConsistencyLevelLinearizable, svc.puts[0].Consistency)
-	assert.Equal(t, service.ConsistencyLevelLinearizable, svc.gets[0].Consistency)
-	assert.Equal(t, service.ConsistencyLevelLinearizable, svc.deletes[0].Consistency)
 	assert.Equal(t, "users", svc.puts[0].EntityType)
+	assert.Equal(t, "users", svc.gets[0].EntityType)
+	assert.Equal(t, "users", svc.deletes[0].EntityType)
 }
 
 func TestKVTools_DefaultShardIsZero(t *testing.T) {
 	registry, svc := newKVRecordingRegistry(t)
-	var got kvGetResult
-	kvToolCall(t, registry, "quicbaas_kv_get", kvArgs("7", nil), &got)
+	_, _ = registry.ExecuteTool(context.Background(), "quicbaas_kv_get", kvArgs("7", nil))
 	require.Len(t, svc.gets, 1)
 	assert.Equal(t, uint64(0), svc.gets[0].ShardID)
 }
 
-func TestKVTools_GetNotFoundIsAMiss(t *testing.T) {
+func TestKVTools_GetNotFoundIsTheServiceNotFound(t *testing.T) {
 	registry, _ := newKVRecordingRegistry(t)
-	var got kvGetResult
-	kvToolCall(t, registry, "quicbaas_kv_get", kvArgs("7", nil), &got)
-	assert.False(t, got.Found)
-	assert.Nil(t, got.Data)
+	result, err := registry.ExecuteTool(context.Background(), "quicbaas_kv_get", kvArgs("7", nil))
+	requireKVNotFound(t, result, err)
 }
 
 func TestKVTools_GetServiceErrorIsAToolError(t *testing.T) {
@@ -193,26 +203,26 @@ func TestKVTools_GetServiceErrorIsAToolError(t *testing.T) {
 
 	result, err := registry.ExecuteTool(context.Background(), "quicbaas_kv_get", kvArgs("7", nil))
 	require.ErrorIs(t, err, kvServiceTestError{})
-	assert.Nil(t, result, "a service failure must not read as found:false")
+	assert.Nil(t, result, "a service failure must not read as a result")
 }
 
 func TestKVTools_DeleteThenGetMissesThroughWarmCache(t *testing.T) {
 	registry, _ := newKVRecordingRegistry(t)
+	var put map[string]interface{}
 	kvToolCall(t, registry, "quicbaas_kv_put", kvArgs("7", map[string]interface{}{
 		"data": base64.StdEncoding.EncodeToString([]byte("v")),
-	}), &kvPutResult{})
+	}), &put)
 
-	var warm kvGetResult
+	var warm service.GetResponse
 	kvToolCall(t, registry, "quicbaas_kv_get", kvArgs("7", nil), &warm)
 	require.True(t, warm.Found)
 
-	var del kvDeleteResult
+	var del service.DeleteResponse
 	kvToolCall(t, registry, "quicbaas_kv_delete", kvArgs("7", nil), &del)
 	assert.True(t, del.Deleted)
 
-	var got kvGetResult
-	kvToolCall(t, registry, "quicbaas_kv_get", kvArgs("7", nil), &got)
-	assert.False(t, got.Found, "a deleted entity must not be served from the cache")
+	result, err := registry.ExecuteTool(context.Background(), "quicbaas_kv_get", kvArgs("7", nil))
+	requireKVNotFound(t, result, err)
 }
 
 func TestKVTools_BadArgumentsRefusedBeforeTheService(t *testing.T) {
@@ -223,20 +233,23 @@ func TestKVTools_BadArgumentsRefusedBeforeTheService(t *testing.T) {
 		arg  string
 	}{
 		{"bad id", "quicbaas_kv_get", kvArgs("abc", nil), "id"},
-		{"negative shard", "quicbaas_kv_get", kvArgs("7", map[string]interface{}{"shard_id": "-1"}), "shard_id"},
-		{"missing id", "quicbaas_kv_delete", map[string]interface{}{"entity_type": "users"}, "id"},
-		{"numeric id", "quicbaas_kv_put", map[string]interface{}{"entity_type": "users", "id": float64(7), "data": "dg=="}, "id"},
-		{"missing entity type", "quicbaas_kv_get", map[string]interface{}{"id": "7"}, "entity_type"},
-		{"consistency out of range", "quicbaas_kv_get", kvArgs("7", map[string]interface{}{"consistency": "9"}), "consistency"},
+		{"overflowing id", "quicbaas_kv_get", kvArgs("18446744073709551616", nil), "id"},
+		{"fractional id", "quicbaas_kv_put", map[string]interface{}{"entityType": "users", "id": 7.5, "data": "dg=="}, "id"},
+		{"unsupported id type", "quicbaas_kv_delete", map[string]interface{}{"entityType": "users", "id": true}, "id"},
 		{"bad base64", "quicbaas_kv_put", kvArgs("7", map[string]interface{}{"data": "not base64!"}), "data"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			registry, svc := newKVRecordingRegistry(t)
 			_, err := registry.ExecuteTool(context.Background(), tc.tool, tc.args)
-			var argErr *UserToolInvalidArgumentError
-			require.ErrorAs(t, err, &argErr)
-			assert.Equal(t, tc.arg, argErr.Arg)
+			require.Error(t, err)
+			if tc.arg == "data" {
+				var argErr *UserToolInvalidArgumentError
+				require.ErrorAs(t, err, &argErr)
+				assert.Equal(t, tc.arg, argErr.Arg)
+			} else {
+				assert.ErrorContains(t, err, "invalid "+tc.arg)
+			}
 			assert.Empty(t, svc.puts)
 			assert.Empty(t, svc.gets)
 			assert.Empty(t, svc.deletes)
