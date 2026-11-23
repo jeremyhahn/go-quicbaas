@@ -26,9 +26,11 @@
     shamir      → Shamir unseal flow with quorum progress (when sealed)
 
   Before initialization the BarrierStrategyPicker lets the admin provision any
-  of the three strategies. A shamir init reveals the minted shares behind a
-  save-acknowledgement gate (ShamirSharesReveal) — the shares are the only copy
-  of the unseal material and are returned exactly once.
+  of the three strategies. A shamir init is share-free: go-qrdb seals every
+  share to a Security Officer enclave and the response carries only the
+  threshold, the total and the sealed-share count. The view shows that
+  summary; each officer claims their share on the Ceremony page, so no
+  plaintext share ever reaches this page.
 
   All barrier traffic flows through the typed @quicbaas/sdk TenantBarrierClient
   (RestTenantBarrierClient under the hood); the view never builds raw URLs.
@@ -52,7 +54,6 @@
   import {
     BarrierStatusBadge,
     BarrierStrategyPicker,
-    ShamirSharesReveal,
     ShamirShareInput,
     BarrierUnsealForm,
   } from '@quicbaas/svelte-security';
@@ -127,13 +128,15 @@
       },
       // init is unused by ShamirShareInput (we drive init via the picker), but
       // the structural contract requires it. Route it through the shamir init.
+      // The tenant init is share-free (the shares are sealed to officers), so
+      // no share material is ever returned to the caller.
       async init(req) {
-        const resp = await tb.tenantBarrierInit(tenantId, {
+        await tb.tenantBarrierInit(tenantId, {
           strategy: 'shamir',
           threshold: req.threshold,
           shares: req.total_shares,
         });
-        return { shares: resp?.shares ?? [] };
+        return { shares: [] };
       },
       async unseal(req) {
         const resp = await tb.tenantBarrierUnsealShare(tenantId, req.share);
@@ -161,11 +164,11 @@
   let loading = $state(false);
   let statusError: string | null = $state(null);
 
-  // Init state — the freshly minted shares are held here until the operator
-  // acknowledges saving them via ShamirSharesReveal.
+  // Init state — a shamir init's share-free summary (threshold, total, shares
+  // sealed to officers) is held here until the operator dismisses it.
   let initing = $state(false);
-  let revealedShares: string[] | null = $state(null);
-  let revealedThreshold = $state(0);
+  let initSummary: { threshold: number; total: number; share_count: number } | null =
+    $state(null);
   let sealing = $state(false);
 
   async function loadTenants(): Promise<void> {
@@ -220,7 +223,7 @@
   $effect(() => {
     void selectedTenantID;
     // Reset transient init state when switching tenants.
-    revealedShares = null;
+    initSummary = null;
     void loadStatus();
   });
 
@@ -244,13 +247,16 @@
         encodeInitParams(params),
       );
       if (params.strategy === 'shamir' && resp !== undefined) {
-        // Shamir returns the shares exactly once — reveal them behind the
-        // save-acknowledgement gate before refreshing status.
-        revealedShares = resp.shares;
-        revealedThreshold = resp.threshold;
+        // The shamir init is share-free: the shares are sealed to officer
+        // enclaves. Show the summary before refreshing status.
+        initSummary = {
+          threshold: Number(resp.threshold ?? 0),
+          total: Number(resp.total_shares ?? 0),
+          share_count: Number(resp.share_count ?? 0),
+        };
         showToast({
-          message: 'Tenant barrier initialized — store the Shamir shares securely!',
-          type: 'warning',
+          message: `Tenant barrier initialized: ${initSummary.share_count} shares sealed to officers`,
+          type: 'success',
         });
       } else {
         showToast({ message: 'Tenant barrier initialized', type: 'success' });
@@ -332,9 +338,11 @@
     }
   }
 
-  async function dismissShares(): Promise<void> {
-    revealedShares = null;
+  async function dismissInitSummary(): Promise<void> {
+    // Reload first so the strategy picker never flashes between the notice
+    // and the initialized status.
     await loadStatus();
+    initSummary = null;
   }
 
   async function handlePassphraseUnseal(passphrase: string): Promise<void> {
@@ -430,13 +438,27 @@
                Not initialized → strategy picker
                ================================================================= -->
           {#if !status.initialized}
-            {#if revealedShares !== null}
-              <div data-testid="tenant-barrier-shares-reveal">
-                <ShamirSharesReveal
-                  shares={revealedShares}
-                  threshold={revealedThreshold}
-                  ondismiss={() => { void dismissShares(); }}
-                />
+            {#if initSummary !== null}
+              <div
+                class="alert alert-success text-sm flex flex-col items-start gap-2"
+                role="status"
+                data-testid="tenant-barrier-shamir-sealed"
+              >
+                <span>
+                  Tenant barrier initialized: any {initSummary.threshold} of {initSummary.total}
+                  shares unseal it, and {initSummary.share_count} shares are sealed to
+                  Security Officer enclaves.
+                </span>
+                <span class="text-base-content/70">
+                  No share is shown here: each officer claims their share on the Ceremony page.
+                </span>
+                <button
+                  class="btn btn-sm btn-primary"
+                  data-testid="tenant-barrier-shamir-sealed-dismiss"
+                  onclick={() => { void dismissInitSummary(); }}
+                >
+                  Dismiss
+                </button>
               </div>
             {:else}
               <div class="space-y-3" data-testid="tenant-barrier-init">

@@ -2742,20 +2742,22 @@ export interface TenantBarrierInitRequest {
   shares?: number;
 }
 
-// TenantBarrierInitResponse is returned for the shamir strategy and carries
-// the freshly minted shares. The "none" and "passphrase" strategies return
-// 204 No Content, so callers receive undefined for those.
+// TenantBarrierInitResponse is returned for the shamir strategy. It is
+// share-free (it mirrors go-qrdb's transport.TenantBarrierInitResponse): the
+// shares are sealed to Security Officer enclaves and each officer claims an
+// individual share. The "none" and "passphrase" strategies return 204 No
+// Content, so callers receive undefined for those.
 export interface TenantBarrierInitResponse {
   /** Tenant whose barrier was initialized. */
   tenant_id: string;
   /** Sealing strategy that was provisioned. */
   strategy: TenantBarrierStrategy;
-  /** Shamir shares for distribution — returned exactly once. */
-  shares: string[];
   /** Threshold required for reconstruction. */
   threshold: number;
   /** Total shares generated. */
   total_shares: number;
+  /** Number of shares sealed to Security Officer enclaves; no share is returned. */
+  share_count: number;
 }
 
 // TenantBarrierUnsealShareResponse reports progress toward the tenant's unseal
