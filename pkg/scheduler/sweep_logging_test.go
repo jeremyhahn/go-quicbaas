@@ -138,3 +138,123 @@ func TestProcessDueJobs_SweepErrorEmitsRecordNamingError(t *testing.T) {
 	assert.Contains(t, records[0].msg, "component=scheduler")
 	assert.Equal(t, uint64(1), engine.storageErrors.Load())
 }
+
+// reconcileReportingStorage is a mockJobStorage whose due scan reports one
+// failed index reconcile pass through ReconcileErrorReporter.
+type reconcileReportingStorage struct {
+	*mockJobStorage
+	mu  sync.Mutex
+	err error
+}
+
+func (r *reconcileReportingStorage) TakeReconcileError() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	err := r.err
+	r.err = nil
+	return err
+}
+
+func TestProcessDueJobs_ReconcileErrorEmitsRecordAndCountsOnce(t *testing.T) {
+	storage := &reconcileReportingStorage{
+		mockJobStorage: newMockJobStorage(),
+		err:            errors.New("index scan deadline exceeded"),
+	}
+	engine, logger := newSweepLoggingEngine(storage)
+
+	engine.processDueJobs(context.Background())
+
+	records := logger.sweepRecords()
+	require.Len(t, records, 1)
+	assert.Equal(t, "error", records[0].level)
+	assert.Contains(t, records[0].msg, "tenant job index reconcile failed")
+	assert.Contains(t, records[0].msg, "index scan deadline exceeded")
+	assert.Contains(t, records[0].msg, "component=scheduler")
+	assert.Equal(t, uint64(1), engine.storageErrors.Load())
+
+	// The error was taken: a second sweep reports nothing new.
+	engine.processDueJobs(context.Background())
+	assert.Len(t, logger.sweepRecords(), 1)
+	assert.Equal(t, uint64(1), engine.storageErrors.Load())
+}
+
+// filterHonoringStorage applies the context's due filter to the mock's scan,
+// as the quicbaas store does inside GetJobsDueForExecution.
+type filterHonoringStorage struct {
+	*mockJobStorage
+}
+
+func (s filterHonoringStorage) GetJobsDueForExecution(ctx context.Context, before time.Time, limit int) ([]*Job, error) {
+	jobs, err := s.mockJobStorage.GetJobsDueForExecution(ctx, before, limit)
+	if err != nil {
+		return nil, err
+	}
+	filter := DueJobFilterFrom(ctx)
+	if filter == nil {
+		return jobs, nil
+	}
+	kept := make([]*Job, 0, len(jobs))
+	for _, j := range jobs {
+		if filter(j) {
+			kept = append(kept, j)
+		}
+	}
+	return kept, nil
+}
+
+func TestProcessDueJobs_ReportsLeadershipLookupError(t *testing.T) {
+	mock := newMockJobStorage()
+	past := time.Now().Add(-time.Minute)
+	for id := uint64(1); id <= 3; id++ {
+		mock.jobs[id] = &Job{
+			ID:      id,
+			Name:    fmt.Sprintf("job-%d", id),
+			Handler: "noop",
+			Status:  JobStatusPending,
+			NextRun: past,
+		}
+	}
+	storage := filterHonoringStorage{mockJobStorage: mock}
+	leader := &slowLeader{err: errors.New("membership lookup failed")}
+	logger := &renderingLogger{}
+	config := DefaultConfig()
+	config.Logger = logger
+	engine := newEngine(config, storage, "node-a", leader, nil)
+
+	leaderRecords := func() []loggedRecord {
+		var out []loggedRecord
+		for _, r := range logger.all() {
+			if strings.Contains(r.msg, leaderCheckFailedReason) {
+				out = append(out, r)
+			}
+		}
+		return out
+	}
+	assertRefused := func() {
+		t.Helper()
+		mock.mu.RLock()
+		defer mock.mu.RUnlock()
+		for id := uint64(1); id <= 3; id++ {
+			assert.Equal(t, JobStatusPending, mock.jobs[id].Status, "job %d must not be dispatched", id)
+		}
+		assert.Empty(t, mock.executions)
+	}
+
+	engine.processDueJobs(context.Background())
+	engine.wg.Wait()
+
+	assertRefused()
+	assert.Equal(t, int32(1), leader.calls.Load())
+	records := leaderRecords()
+	require.Len(t, records, 1, "a failed leadership lookup is reported once per sweep")
+	assert.Equal(t, "warn", records[0].level)
+	assert.Contains(t, records[0].msg, "membership lookup failed")
+	assert.Contains(t, records[0].msg, "component=scheduler")
+
+	engine.processDueJobs(context.Background())
+	engine.wg.Wait()
+
+	assertRefused()
+	assert.Equal(t, int32(2), leader.calls.Load())
+	assert.Len(t, leaderRecords(), 2, "each sweep reports its own failed lookup once")
+}

@@ -15,6 +15,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -70,6 +71,15 @@ func (h *KMSRotationHandler) Name() string {
 
 // Handle runs one rotation scan.
 func (h *KMSRotationHandler) Handle(ctx context.Context, job *scheduler.Job) (*scheduler.JobResult, error) {
+	// The handler sweeps every tenant's keys, so it runs only as the reserved
+	// system job; a tenant job naming it is refused before the rotator runs.
+	if job.ID != KMSRotationJobID || job.OwnerType != scheduler.OwnerTypeSystem || scheduler.JobTenantID(job) != "" {
+		return nil, &scheduler.HandlerFailedError{
+			Handler: HandlerKMSRotation,
+			JobID:   job.ID,
+			Cause:   errors.New("kms rotation runs only as its reserved system job"),
+		}
+	}
 	result, err := h.rotator.RotateDueKeys(ctx)
 	if err != nil {
 		return nil, &scheduler.HandlerFailedError{

@@ -91,10 +91,11 @@ func TestSchedulerAdapter_CrossTenantJob_Denied(t *testing.T) {
 
 	t.Run("UpdateJob", func(t *testing.T) {
 		eng := newTestMockSchedulerEngine()
-		eng.On("UpdateJob", mock.Anything, uint64(1), "tenant-a", mock.Anything).Return(foreignJob, nil)
+		eng.On("GetJobWithTenant", mock.Anything, uint64(1), "tenant-a").Return(foreignJob, nil)
 		a := &SchedulerAdapter{scheduler: eng}
 		_, err := a.UpdateJob(ctx, &UpdateSchedulerJobRequest{JobID: 1})
 		require.Error(t, err)
+		eng.AssertNotCalled(t, "UpdateJob", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 	})
 
 	t.Run("TriggerJob", func(t *testing.T) {
@@ -135,6 +136,7 @@ func TestSchedulerAdapter_EngineErrors(t *testing.T) {
 
 	t.Run("UpdateJob", func(t *testing.T) {
 		eng := newTestMockSchedulerEngine()
+		eng.On("GetJobWithTenant", mock.Anything, uint64(1), "").Return(&scheduler.Job{ID: 1}, nil)
 		eng.On("UpdateJob", mock.Anything, uint64(1), "", mock.Anything).Return(nil, boom)
 		a := &SchedulerAdapter{scheduler: eng}
 		_, err := a.UpdateJob(ctx, &UpdateSchedulerJobRequest{JobID: 1})

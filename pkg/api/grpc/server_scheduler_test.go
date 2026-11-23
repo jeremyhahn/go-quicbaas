@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
@@ -1783,7 +1784,7 @@ func TestSchedulerServer_TypeConversions(t *testing.T) {
 			{pb.OwnerType_OWNER_TYPE_SYSTEM, service.SchedulerOwnerTypeSystem},
 			{pb.OwnerType_OWNER_TYPE_TENANT, service.SchedulerOwnerTypeTenant},
 			{pb.OwnerType_OWNER_TYPE_DELEGATED, service.SchedulerOwnerTypeDelegated},
-			{pb.OwnerType_OWNER_TYPE_UNSPECIFIED, service.SchedulerOwnerTypeSystem},
+			{pb.OwnerType_OWNER_TYPE_UNSPECIFIED, ""},
 		}
 
 		for _, tc := range tests {
@@ -2089,6 +2090,63 @@ func TestNewSchedulerServer(t *testing.T) {
 		assert.NotNil(t, server.schedulerSvc)
 		assert.NotNil(t, server.logger)
 	})
+}
+
+// A tenant caller's CreateJob that names no owner type is not refused as
+// acting for the system tenant: the job is owned by the caller's tenant.
+func TestSchedulerServer_CreateJob_TenantCallerUnspecifiedOwnerIsTenantOwned(t *testing.T) {
+	client, _, _ := startLegacySchedulerListener(t, "tenant-a")
+	ctx := metadata.AppendToOutgoingContext(context.Background(), "authorization", "Bearer good")
+
+	created, err := client.CreateJob(ctx, &pb.CreateJobRequest{
+		Name: "report", Type: pb.JobType_JOB_TYPE_ONE_SHOT, Handler: "h",
+		OwnerType: pb.OwnerType_OWNER_TYPE_UNSPECIFIED, ExecuteAt: time.Now().Add(time.Hour).Unix(),
+	})
+	require.NoError(t, err)
+	job := created.GetJob()
+	require.NotNil(t, job)
+	assert.Equal(t, pb.OwnerType_OWNER_TYPE_TENANT, job.GetOwnerType())
+	assert.Equal(t, "tenant-a", job.GetOwnerId())
+	assert.Equal(t, "tenant-a", job.GetTargetTenantId())
+
+	// An explicit system owner from the same tenant caller is still refused.
+	_, err = client.CreateJob(ctx, &pb.CreateJobRequest{
+		Name: "rotation", Type: pb.JobType_JOB_TYPE_ONE_SHOT, Handler: "h",
+		OwnerType: pb.OwnerType_OWNER_TYPE_SYSTEM, ExecuteAt: time.Now().Add(time.Hour).Unix(),
+	})
+	require.Error(t, err)
+}
+
+// A metadata-only UpdateJob (no execute_at) keeps a one-shot job's deadline:
+// an omitted execute_at is not the 1970 epoch, which would run the job (a KMS
+// grace job) at once.
+func TestSchedulerServer_UpdateJob_MetadataOnlyKeepsExecuteAt(t *testing.T) {
+	client, _, _ := startLegacySchedulerListener(t, "tenant-a")
+	ctx := metadata.AppendToOutgoingContext(context.Background(), "authorization", "Bearer good")
+
+	executeAt := time.Now().Add(time.Hour).Unix()
+	created, err := client.CreateJob(ctx, &pb.CreateJobRequest{
+		Name: "grace", Type: pb.JobType_JOB_TYPE_ONE_SHOT, Handler: "h",
+		ExecuteAt: executeAt,
+	})
+	require.NoError(t, err)
+	jobID := created.GetJob().GetId()
+
+	updated, err := client.UpdateJob(ctx, &pb.UpdateJobRequest{
+		JobId: jobID, Name: "renamed", Labels: map[string]string{"k": "v"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "renamed", updated.GetJob().GetName())
+	assert.Equal(t, executeAt, updated.GetJob().GetExecuteAt(), "execute_at is unchanged")
+
+	got, err := client.GetJob(ctx, &pb.GetJobRequest{JobId: jobID})
+	require.NoError(t, err)
+	assert.Equal(t, executeAt, got.GetJob().GetExecuteAt(), "the stored deadline is unchanged")
+}
+
+func TestProtoUpdateExecuteAt(t *testing.T) {
+	assert.True(t, schedulerTimeFromUnix(0).IsZero(), "an omitted execute_at is the zero time")
+	assert.Equal(t, int64(1700000000), schedulerTimeFromUnix(1700000000).Unix())
 }
 
 // =============================================================================
