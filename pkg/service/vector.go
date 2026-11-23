@@ -2945,8 +2945,9 @@ func (v *vectorService) UpdateMetadata(ctx context.Context, req *UpdateVectorMet
 	}
 
 	// Update vector using upsert with existing embedding values
+	// UpsertVector scopes the namespace to the tenant itself, so it takes the caller's unscoped name.
 	upsertReq := &UpsertVectorRequest{
-		Namespace: scopedNamespace,
+		Namespace: req.Namespace,
 		ID:        req.ID,
 		Vector:    existingVector.Embedding,
 		Metadata:  newMetadata,

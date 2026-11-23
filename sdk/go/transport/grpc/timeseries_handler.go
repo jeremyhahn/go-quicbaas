@@ -40,6 +40,10 @@ type timeSeriesHandlerFunc func(ctx context.Context, client pb.QuicBaaSClient, r
 var timeSeriesMethodMap = map[string]timeSeriesHandlerFunc{
 	"Write": handleTimeSeriesWrite,
 	"Query": handleTimeSeriesQuery,
+	// SetRetention and GetRetention carry the typed retention requests of
+	// sdk/go/client/timeseries to TSSetRetentionPolicy / TSGetRetentionPolicy.
+	"SetRetention": handleTimeSeriesSetRetention,
+	"GetRetention": handleTimeSeriesGetRetention,
 }
 
 // handleTimeSeriesRequest routes one TimeSeries method over conn.
@@ -95,6 +99,60 @@ func handleTimeSeriesQuery(ctx context.Context, client pb.QuicBaaSClient, req in
 			Timestamp: time.Unix(0, p.GetTimestamp()),
 			Value:     p.GetValue(),
 		})
+	}
+	return out, nil
+}
+
+// handleTimeSeriesSetRetention sends a typed SetRetentionRequest as
+// TSSetRetentionPolicy: whole seconds and the server's lower-case
+// aggregation name.
+func handleTimeSeriesSetRetention(ctx context.Context, client pb.QuicBaaSClient, req interface{}) (interface{}, error) {
+	const op = "grpc.timeseries.SetRetention"
+	r, ok := req.(*timeseries.SetRetentionRequest)
+	if !ok || r == nil {
+		return nil, errors.NewInvalidInput(op, "invalid request type")
+	}
+	resp, err := client.TSSetRetentionPolicy(ctx, &pb.TSSetRetentionPolicyRequest{
+		Metric: r.Metric,
+		Policy: &pb.TSRetentionPolicy{
+			DurationSeconds:   int64(r.Policy.Duration / time.Second),
+			ResolutionSeconds: int64(r.Policy.Resolution / time.Second),
+			Aggregation:       r.Policy.Aggregation.WireName(),
+		},
+	})
+	if err != nil {
+		return nil, convertGRPCError(err, op)
+	}
+	if !resp.GetSuccess() {
+		return nil, errors.NewInternal(op, "server did not apply the retention policy")
+	}
+	return nil, nil
+}
+
+// handleTimeSeriesGetRetention sends a typed GetRetentionRequest as
+// TSGetRetentionPolicy and returns the policy typed; a metric without a
+// policy has a nil Policy. A zero policy from the server is reported as nil
+// by the client (timeseries.Client.GetRetention).
+func handleTimeSeriesGetRetention(ctx context.Context, client pb.QuicBaaSClient, req interface{}) (interface{}, error) {
+	const op = "grpc.timeseries.GetRetention"
+	r, ok := req.(*timeseries.GetRetentionRequest)
+	if !ok || r == nil {
+		return nil, errors.NewInvalidInput(op, "invalid request type")
+	}
+	resp, err := client.TSGetRetentionPolicy(ctx, &pb.TSGetRetentionPolicyRequest{Metric: r.Metric})
+	if err != nil {
+		return nil, convertGRPCError(err, op)
+	}
+	out := &timeseries.GetRetentionResponse{Metric: resp.GetMetric()}
+	if out.Metric == "" {
+		out.Metric = r.Metric
+	}
+	if p := resp.GetPolicy(); p != nil {
+		out.Policy = &timeseries.RetentionPolicy{
+			Duration:    time.Duration(p.GetDurationSeconds()) * time.Second,
+			Resolution:  time.Duration(p.GetResolutionSeconds()) * time.Second,
+			Aggregation: timeseries.ParseAggregateFunction(p.GetAggregation()),
+		}
 	}
 	return out, nil
 }
