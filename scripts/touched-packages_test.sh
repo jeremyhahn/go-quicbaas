@@ -119,6 +119,13 @@ prev=$next
 # The importers come from the working tree, so TIP must be checked out.
 packages "$prev~2" "$prev~1" "exit 2"
 
+# A package that fails to load (a malformed import) has an incomplete import
+# list: the selector refuses rather than leave its tests out.
+mkdir -p "$tree/pkg/m"
+cp "$root/scripts/testdata/touched-packages/malformed.go.txt" "$tree/pkg/m/m.go"
+prev=$(commit "malformed pkg/m")
+step pkg/a/a.go "exit 2"
+
 # Every package under pkg/ and cmd/ of this repository: its stem must lead
 # make test-<stem> (scripts/resolve-package.sh) back to the same directory.
 dirs=$(cd "$root" && git ls-files -- 'pkg/*.go' 'cmd/*.go' | while IFS= read -r f; do

@@ -1789,21 +1789,22 @@ integration-test-orchestration-gpu: ## Run GPU-accelerated orchestration integra
 # INTEGRATION_FEATURES has an integration target, integration-test-<feature>
 # (a recipe below, or the integration-test-% pattern rule for a directory
 # test/integration/<feature>/), and FEATURE_PATHS_<feature> lists the paths
-# it owns. A path is a shell pattern matched against a repository-relative
+# it owns. A separately run suite outside test/integration/ is a feature too
+# (sdk-go and sdk-js, the SDK suites under sdk/*/test/integration/). A path is a shell pattern matched against a repository-relative
 # file name; a path ending in / owns everything under it; a path with no /
 # names a file at the repository root only (so *.md is the root's markdown,
 # not an embedded prompt under pkg/).
 #
 # scripts/touched-features.sh and scripts/touched-packages.sh read this table
 # through `make print-feature-map`; scripts/check-feature-map.sh (make
-# check-feature-map, in TEST_CHECKS) fails when an integration test belongs
-# to no feature, a feature has no integration target, or a path matches no
+# check-feature-map, in TEST_CHECKS) fails when an integration test (a test
+# file under any test/integration/ directory) belongs to no feature, a feature has no integration target, or a path matches no
 # tracked file. A change to a path no row owns runs every feature.
 INTEGRATION_FEATURES := account agent agents api attestation auth backup batch \
 	cache-redis cli cluster containerruntime dataplane dek durability embedded \
 	fleet-enrollment fleet-runtime iam init kms lifecycle login mcp messaging \
 	observability orchestration orchestration-gpu orchestrator parameter_store \
-	placement project quicbaasd raft rag registry routing scheduler seal \
+	placement project quicbaasd raft rag registry routing scheduler sdk-go sdk-js seal \
 	seal-hardware secrets secrets-resolver server session-attach signalbridge \
 	standalone storage tenantbarrier timeseries transactions transport vector \
 	workerimage
@@ -1845,6 +1846,8 @@ FEATURE_PATHS_rag               := test/integration/rag/
 FEATURE_PATHS_registry          := test/integration/cli/registry_test.go pkg/registry/ sdk/go/client/registry/
 FEATURE_PATHS_routing           := test/integration/routing/
 FEATURE_PATHS_scheduler         := test/integration/scheduler/
+FEATURE_PATHS_sdk-go            := sdk/go/test/integration/
+FEATURE_PATHS_sdk-js            := sdk/javascript/test/integration/
 FEATURE_PATHS_seal              := test/integration/seal/
 FEATURE_PATHS_seal-hardware     := test/integration/seal/
 FEATURE_PATHS_secrets           := test/integration/secrets/

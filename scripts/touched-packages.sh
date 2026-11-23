@@ -16,8 +16,9 @@
 # TEST_TAGS.
 #
 # It prints the stems, one per line, sorted. Exit 0 on success, 2 on a bad
-# argument, a TIP that is not checked out or a go list failure (nothing is
-# printed on stdout then).
+# argument, a TIP that is not checked out, a go list failure or a package that
+# fails to load (a .Error, or a .DepsErrors entry that names no package the
+# change deleted); nothing is printed on stdout then.
 set -euf
 
 usage() {
@@ -101,13 +102,17 @@ pkgdir() {
 }
 
 changed=" "
+deleted=" "
 while IFS= read -r file; do
 	[ -n "$file" ] || continue
 	d=$(pkgdir "$file")
 	[ -n "$d" ] || continue
 	case $changed in
 	*" $mod/$d "*) ;;
-	*) changed="$changed$mod/$d " ;;
+	*)
+		changed="$changed$mod/$d "
+		{ [ -d "$d" ] && hasgo "$d"; } || deleted="$deleted$mod/$d "
+		;;
 	esac
 done <<EOF
 $(git -c core.quotePath=false diff --name-only --no-renames "$base" "$tip")
@@ -123,7 +128,10 @@ else
 		exit 2
 	}
 fi
-format='{{.ImportPath}} {{join .Imports " "}} {{join .TestImports " "}} {{join .XTestImports " "}}'
+# A package's own load error, then each error of its dependencies, comes
+# first on a line starting with !, so a package that failed to load is never
+# read as a complete import list.
+format='{{if .Error}}!error {{.ImportPath}}: {{printf "%q" .Error.Err}}{{"\n"}}{{end}}{{range .DepsErrors}}!deps {{$.ImportPath}}: {{printf "%q" .Err}}{{"\n"}}{{end}}{{.ImportPath}} {{join .Imports " "}} {{join .TestImports " "}} {{join .XTestImports " "}}'
 listing=$(go list -e -tags "$tags" -f "$format" ./...) || {
 	echo "$0: go list failed" >&2
 	exit 2
@@ -137,9 +145,48 @@ if [ -f sdk/go/go.mod ]; then
 $more"
 fi
 
+# Refuse to select from a graph with a load error. The one error accepted is a
+# dependency error naming a package this change deleted: its importers are
+# what the selection is for.
+bad=0
+while IFS= read -r line; do
+	case $line in
+	'!error '*)
+		echo "$0: ${line#!error }" >&2
+		bad=1
+		;;
+	'!deps '*)
+		err=${line#*: }
+		ok=0
+		# shellcheck disable=SC2086 # word-split the package list (set -f is on)
+		for p in $deleted; do
+			case $err in
+			*" $p:"* | *" $p;"* | *" $p\""*)
+				ok=1
+				break
+				;;
+			esac
+		done
+		if [ "$ok" -eq 0 ]; then
+			echo "$0: ${line#!deps }" >&2
+			bad=1
+		fi
+		;;
+	esac
+done <<EOF
+$listing
+EOF
+if [ "$bad" -ne 0 ]; then
+	echo "$0: a package failed to load; no selection" >&2
+	exit 2
+fi
+
 dirs=
 while read -r pkg imports; do
 	[ -n "$pkg" ] || continue
+	case $pkg in
+	'!'*) continue ;;
+	esac
 	# shellcheck disable=SC2086 # word-split the import list (set -f is on)
 	for p in "$pkg" $imports; do
 		case $changed in

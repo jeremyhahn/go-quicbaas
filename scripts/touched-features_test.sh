@@ -42,9 +42,10 @@ tab=$(printf '\t')
 makefile() {
 	{
 		printf '%s\n' \
-			'INTEGRATION_FEATURES := alpha beta' \
+			'INTEGRATION_FEATURES := alpha beta sdk-go' \
 			'FEATURE_PATHS_alpha := test/integration/alpha/ pkg/alpha/' \
 			'FEATURE_PATHS_beta := test/integration/cli/beta_test.go' \
+			'FEATURE_PATHS_sdk-go := sdk/go/test/integration/' \
 			'INTEGRATION_SHARED_PATHS := test/integration/helpers/' \
 			'INTEGRATION_DOC_PATHS := docs/ *.md' \
 			'print-feature-map:' \
@@ -53,6 +54,8 @@ makefile() {
 			"$tab"'@echo "$($*)"' \
 			'integration-test-beta:' \
 			"$tab"'@echo beta' \
+			'integration-test-sdk-go:' \
+			"$tab"'@echo sdk-go' \
 			'integration-test-%:' \
 			"$tab"'@echo $*'
 		for line in "$@"; do
@@ -102,14 +105,16 @@ tgit init -q
 mkdir -p "$tree/scripts" "$tree/docs" "$tree/pkg/alpha" "$tree/pkg/shared" \
 	"$tree/pkg/alpha/prompts" "$tree/pkg/shared/prompts" \
 	"$tree/test/integration/alpha" "$tree/test/integration/cli" \
-	"$tree/test/integration/helpers" "$tree/.github/workflows"
+	"$tree/test/integration/helpers" "$tree/.github/workflows" \
+	"$tree/sdk/go/test/integration"
 for s in touched-features.sh touched-packages.sh check-feature-map.sh; do
 	cp "$root/scripts/$s" "$tree/scripts/$s"
 done
 for f in docs/a.md README.md pkg/alpha/a.go pkg/shared/s.go \
 	test/integration/alpha/a_test.go test/integration/cli/beta_test.go \
 	test/integration/helpers/h.go .github/workflows/ci.yml \
-	pkg/alpha/prompts/p.md pkg/shared/prompts/p.md; do
+	pkg/alpha/prompts/p.md pkg/shared/prompts/p.md \
+	sdk/go/test/integration/s_test.go; do
 	echo 0 >"$tree/$f"
 done
 makefile
@@ -148,6 +153,11 @@ step pkg/shared/prompts/p.md
 features "$prev" "$next" ALL
 prev=$next
 
+# A suite run by its own target outside test/integration/ selects that feature.
+step sdk/go/test/integration/s_test.go
+features "$prev" "$next" sdk-go
+prev=$next
+
 step pkg/alpha/a.go test/integration/cli/beta_test.go docs/a.md
 features "$prev" "$next" "alpha
 beta"
@@ -170,6 +180,12 @@ tgit add test/integration/gamma/g_test.go
 check 1 'test/integration/gamma/g_test.go: in no feature'
 tgit rm -q --cached test/integration/gamma/g_test.go
 rm -r "$tree/test/integration/gamma"
+mkdir -p "$tree/sdk/javascript/test/integration"
+echo 0 >"$tree/sdk/javascript/test/integration/j.integration.test.js"
+tgit add sdk/javascript/test/integration/j.integration.test.js
+check 1 'sdk/javascript/test/integration/j.integration.test.js: in no feature'
+tgit rm -q --cached sdk/javascript/test/integration/j.integration.test.js
+rm -r "$tree/sdk/javascript"
 cp "$tree/Makefile" "$tree/Makefile.keep"
 makefile 'INTEGRATION_FEATURES += delta' 'FEATURE_PATHS_delta := pkg/alpha/'
 check 1 'delta: no integration-test-delta rule'

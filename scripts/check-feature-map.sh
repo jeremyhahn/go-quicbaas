@@ -13,8 +13,8 @@
 #     directory test/integration/<feature>/ (the integration-test-% rule);
 #   - a path of a row, of INTEGRATION_SHARED_PATHS or of INTEGRATION_DOC_PATHS
 #     matches no file of `git ls-files`;
-#   - a tracked test/integration/**/*_test.go matches no feature row and no
-#     shared path.
+#   - a tracked *_test.go or *.test.js under any test/integration/ directory
+#     (test/integration/, sdk/go/test/integration/, ...) matches no feature row and no shared path.
 #
 # Exit 0 when the table is clean, 1 listing every problem, 2 when the table or
 # make's rule database cannot be read.
@@ -145,7 +145,7 @@ while IFS= read -r file; do
 	owns "$file" $owned $shared ||
 		problem "$file: in no feature of the mapping table (Makefile INTEGRATION_FEATURES)"
 done <<EOF
-$(git -c core.quotePath=false ls-files 'test/integration/*_test.go')
+$(git -c core.quotePath=false ls-files ':(glob)**/test/integration/**/*_test.go' ':(glob)**/test/integration/**/*.test.js')
 EOF
 
 if [ "$problems" -ne 0 ]; then
