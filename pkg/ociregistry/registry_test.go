@@ -657,13 +657,25 @@ func TestRegistry_EncryptedRoundTrip(t *testing.T) {
 		t.Fatalf("Push: %v", err)
 	}
 
-	// Confirm what landed on disk is NOT the plaintext.
-	storedBlob, err := storage.GetBlob(ctx, digest)
+	// The envelope is stored under the digest the layer descriptor
+	// records, never the plaintext under the layer digest.
+	stored, err := storage.GetManifest(ctx, ref)
 	if err != nil {
-		t.Fatalf("GetBlob: %v", err)
+		t.Fatalf("GetManifest: %v", err)
+	}
+	envDigest := stored.Layers[0].Annotations[LayerAnnotationEncryptedBlob]
+	if envDigest == "" || envDigest == digest {
+		t.Fatalf("layer descriptor envelope digest = %q, want a digest other than %q", envDigest, digest)
+	}
+	storedBlob, err := storage.GetBlob(ctx, envDigest)
+	if err != nil {
+		t.Fatalf("GetBlob envelope: %v", err)
 	}
 	if string(storedBlob) == string(plaintext) {
 		t.Fatal("encrypted push left plaintext in storage")
+	}
+	if exists, err := storage.BlobExists(ctx, digest); err != nil || exists {
+		t.Fatalf("blob under the plaintext layer digest: exists=%v err=%v", exists, err)
 	}
 
 	got, err := reg.Pull(ctx, ref, PullOptions{})
@@ -847,9 +859,14 @@ func TestRegistryPush_EncryptByDefault(t *testing.T) {
 	m, err := storage.GetManifest(ctx, "enc/img:v1")
 	require.NoError(t, err)
 	assert.Equal(t, "true", m.Annotations[ManifestAnnotationEncrypted])
-	blob, err := storage.GetBlob(ctx, img.Layers[0].Digest)
+	envDigest := m.Layers[0].Annotations[LayerAnnotationEncryptedBlob]
+	require.NotEmpty(t, envDigest)
+	blob, err := storage.GetBlob(ctx, envDigest)
 	require.NoError(t, err)
 	assert.NotEqual(t, []byte("plain layer"), blob, "default push stored the plaintext")
+	exists, err := storage.BlobExists(ctx, img.Layers[0].Digest)
+	require.NoError(t, err)
+	assert.False(t, exists, "default push stored a blob under the plaintext layer digest")
 
 	plainStorage, err := NewQuicBaaSStorage(newMockStorageClient())
 	require.NoError(t, err)

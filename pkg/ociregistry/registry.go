@@ -427,8 +427,8 @@ func (r *Registry) Push(ctx context.Context, ref string, image *Image, opts Push
 	}
 
 	// Encrypted push: route each layer through the encryptor before
-	// persisting. The encrypted blob bytes land at the layer digest
-	// in storage; the manifest carries an "encrypted=true" annotation
+	// persisting. Each envelope is stored under its own digest (see
+	// below); the manifest carries an "encrypted=true" annotation
 	// plus the wrapped DEK + nonce so Pull can reverse the operation.
 	var encLayers []EncryptedLayer
 	var envelopes [][]byte
