@@ -588,6 +588,11 @@ func runInitSignCSRCommand(cmd *cobra.Command, _ []string) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
+	ctx, releaseSO, err := bindSOPIN(ctx, "init.sign-csr", pins[0])
+	if err != nil {
+		return formatError(err)
+	}
+	defer releaseSO()
 
 	resp, err := client.CeremonySignCSR(ctx, &qrdbtransport.SignCSRInitRequest{
 		Username: initUsername,

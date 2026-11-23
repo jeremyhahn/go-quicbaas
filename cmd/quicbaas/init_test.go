@@ -459,8 +459,21 @@ func TestInitSignCSR_HappyPath(t *testing.T) {
 	csrPath := filepath.Join(dir, "alice.csr")
 	require.NoError(t, os.WriteFile(csrPath, []byte("-----BEGIN CERTIFICATE REQUEST-----\nx\n-----END CERTIFICATE REQUEST-----\n"), 0o600))
 
-	fc := &fakeCeremonyClient{}
+	bound := false
+	fc := &fakeCeremonyClient{
+		signCSRFunc: func(ctx context.Context, _ *qrdbtransport.SignCSRInitRequest) (*qrdbtransport.SignCSRInitResponse, error) {
+			// The SO PIN is bound to the call so the SDK's TLS and
+			// redirect guard runs for it.
+			pin, ok, err := qrdbtransport.SOPINFromContext(ctx)
+			assert.NoError(t, err)
+			assert.True(t, ok, "the SO PIN must be bound to the call context")
+			assert.Equal(t, "secret", string(pin))
+			bound = ok
+			return &qrdbtransport.SignCSRInitResponse{CertPEM: "-----BEGIN CERTIFICATE-----\nx\n-----END CERTIFICATE-----\n"}, nil
+		},
+	}
 	defer withFakeCeremony(fc)()
+	t.Cleanup(func() { assert.True(t, bound, "signCSRFunc must run") })
 
 	cmd := newInitSignCSRCommand()
 	cmd.SetArgs([]string{

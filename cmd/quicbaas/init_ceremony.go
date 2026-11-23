@@ -172,6 +172,11 @@ func runInitInitializeCommand(cmd *cobra.Command, _ []string) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
+	ctx, releaseSO, err := bindSOPIN(ctx, "init.initialize", pins[0])
+	if err != nil {
+		return formatError(err)
+	}
+	defer releaseSO()
 
 	resp, err := client.CeremonyInitialize(ctx, &qrdbtransport.CeremonyInitializeRequest{
 		SOPin:                  pins.field(0),
