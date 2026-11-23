@@ -50,6 +50,10 @@ func (h *timeseriesHandler) transformRequest(method string, req interface{}) (ma
 		return h.transformSetRetentionPolicy(req)
 	case "ListMetrics", "TSListMetrics":
 		return h.transformListMetrics(req)
+	case "SetRetention":
+		return h.transformSetRetention(req)
+	case "GetRetention":
+		return h.transformGetRetention(req)
 	default:
 		// Fall back to generic conversion
 		return h.transport.convertToArguments(req), nil
@@ -57,7 +61,7 @@ func (h *timeseriesHandler) transformRequest(method string, req interface{}) (ma
 }
 
 // transformResponse transforms MCP tool response to SDK timeseries types.
-func (h *timeseriesHandler) transformResponse(method string, resp interface{}) (interface{}, error) {
+func (h *timeseriesHandler) transformResponse(method string, req, resp interface{}) (interface{}, error) {
 	switch method {
 	case "Write", "TSWritePoint":
 		return h.transformWritePointResponse(resp)
@@ -68,11 +72,15 @@ func (h *timeseriesHandler) transformResponse(method string, resp interface{}) (
 	case "DeleteSeries", "TSDeleteSeries":
 		return h.transformDeleteSeriesResponse(resp)
 	case "GetRetentionPolicy", "TSGetRetentionPolicy":
-		return h.transformGetRetentionPolicyResponse(resp)
+		return h.transformGetRetentionPolicyResponse(req, resp)
 	case "SetRetentionPolicy", "TSSetRetentionPolicy":
 		return h.transformSetRetentionPolicyResponse(resp)
 	case "ListMetrics", "TSListMetrics":
 		return h.transformListMetricsResponse(resp)
+	case "SetRetention":
+		return nil, nil
+	case "GetRetention":
+		return h.transformGetRetentionResponse(req, resp)
 	default:
 		return resp, nil
 	}
@@ -97,7 +105,8 @@ func (h *timeseriesHandler) transformWritePoint(req interface{}) (map[string]int
 	}
 
 	if !sdkReq.Timestamp.IsZero() {
-		args["timestamp"] = sdkReq.Timestamp.UnixNano()
+		// A decimal string: MCP decodes JSON numbers as float64, which cannot hold current Unix nanoseconds exactly.
+		args["timestamp"] = strconv.FormatInt(sdkReq.Timestamp.UnixNano(), 10)
 	}
 
 	if len(sdkReq.Tags) > 0 {
@@ -124,9 +133,9 @@ func (h *timeseriesHandler) transformWritePointFromMap(req map[string]interface{
 		args["value"] = value
 	}
 	if ts, ok := req["timestamp"].(time.Time); ok {
-		args["timestamp"] = ts.UnixNano()
+		args["timestamp"] = strconv.FormatInt(ts.UnixNano(), 10)
 	} else if tsNano, ok := req["timestamp"].(int64); ok {
-		args["timestamp"] = tsNano
+		args["timestamp"] = strconv.FormatInt(tsNano, 10)
 	}
 	if tags, ok := req["tags"].(map[string]string); ok && len(tags) > 0 {
 		tagsJSON, err := json.Marshal(tags)
@@ -159,6 +168,9 @@ func (h *timeseriesHandler) transformWriteBatch(req interface{}) (map[string]int
 	return h.transport.convertToArguments(req), nil
 }
 
+// transformQuery builds the arguments of go-qrdb's qrdb_ts_query tool: metric,
+// start and end (Unix nanoseconds, end exclusive) and tags as a JSON object,
+// plus aggregation and interval_seconds when an aggregate is requested.
 func (h *timeseriesHandler) transformQuery(req interface{}) (map[string]interface{}, error) {
 	sdkReq, ok := req.(*timeseries.QueryRequest)
 	if !ok {
@@ -171,9 +183,9 @@ func (h *timeseriesHandler) transformQuery(req interface{}) (map[string]interfac
 	}
 
 	args := map[string]interface{}{
-		"metric":     sdkReq.Metric,
-		"start_time": sdkReq.Start.UnixNano(),
-		"end_time":   sdkReq.End.UnixNano(),
+		"metric": sdkReq.Metric,
+		"start":  strconv.FormatInt(sdkReq.Start.UnixNano(), 10),
+		"end":    strconv.FormatInt(sdkReq.End.UnixNano(), 10),
 	}
 
 	if len(sdkReq.Tags) > 0 {
@@ -189,13 +201,18 @@ func (h *timeseriesHandler) transformQuery(req interface{}) (map[string]interfac
 		args["aggregation"] = strings.ToLower(sdkReq.Aggregate.String())
 	}
 
+	// qrdb_ts_rich_query (the tool aggregate queries dispatch to) takes
+	// the bucket width in nanoseconds.
 	if sdkReq.Interval > 0 {
-		args["interval_seconds"] = int64(sdkReq.Interval.Seconds())
+		args["interval_ns"] = sdkReq.Interval.Nanoseconds()
 	}
 
 	return args, nil
 }
 
+// transformQueryFromMap builds the qrdb_ts_query arguments from a map request.
+// It reads the input keys start_time and end_time (time.Time or Unix
+// nanoseconds) and sends them as go-qrdb's start and end arguments.
 func (h *timeseriesHandler) transformQueryFromMap(req map[string]interface{}) (map[string]interface{}, error) {
 	args := map[string]interface{}{}
 
@@ -203,14 +220,14 @@ func (h *timeseriesHandler) transformQueryFromMap(req map[string]interface{}) (m
 		args["metric"] = metric
 	}
 	if start, ok := req["start_time"].(time.Time); ok {
-		args["start_time"] = start.UnixNano()
+		args["start"] = strconv.FormatInt(start.UnixNano(), 10)
 	} else if startNano, ok := req["start_time"].(int64); ok {
-		args["start_time"] = startNano
+		args["start"] = strconv.FormatInt(startNano, 10)
 	}
 	if end, ok := req["end_time"].(time.Time); ok {
-		args["end_time"] = end.UnixNano()
+		args["end"] = strconv.FormatInt(end.UnixNano(), 10)
 	} else if endNano, ok := req["end_time"].(int64); ok {
-		args["end_time"] = endNano
+		args["end"] = strconv.FormatInt(endNano, 10)
 	}
 	if tags, ok := req["tags"].(map[string]string); ok && len(tags) > 0 {
 		tagsJSON, err := json.Marshal(tags)
@@ -223,10 +240,12 @@ func (h *timeseriesHandler) transformQueryFromMap(req map[string]interface{}) (m
 	if agg, ok := req["aggregation"].(string); ok {
 		args["aggregation"] = agg
 	}
-	if interval, ok := req["interval_seconds"].(int64); ok {
-		args["interval_seconds"] = interval
+	if intervalNs, ok := req["interval_ns"].(int64); ok {
+		args["interval_ns"] = intervalNs
+	} else if interval, ok := req["interval_seconds"].(int64); ok {
+		args["interval_ns"] = interval * int64(time.Second)
 	} else if interval, ok := req["interval_sec"].(int32); ok {
-		args["interval_seconds"] = int64(interval)
+		args["interval_ns"] = int64(interval) * int64(time.Second)
 	}
 	if groupBy, ok := req["group_by"].([]string); ok && len(groupBy) > 0 {
 		groupByJSON, err := json.Marshal(groupBy)
@@ -244,6 +263,17 @@ func (h *timeseriesHandler) transformQueryFromMap(req map[string]interface{}) (m
 	}
 
 	return args, nil
+}
+
+// timeseriesQueryTool picks the go-qrdb MCP tool for a time-series query.
+// qrdb_ts_query returns raw samples and ignores aggregation fields, so a
+// query that carries an aggregation goes to qrdb_ts_rich_query, which
+// downsamples into interval_ns buckets.
+func timeseriesQueryTool(args map[string]interface{}) string {
+	if agg, ok := args["aggregation"].(string); ok && agg != "" {
+		return "qrdb_ts_rich_query"
+	}
+	return "qrdb_ts_query"
 }
 
 func (h *timeseriesHandler) transformDeleteSeries(req interface{}) (map[string]interface{}, error) {
@@ -370,29 +400,34 @@ func (h *timeseriesHandler) transformWriteBatchResponse(resp interface{}) (inter
 	}, nil
 }
 
+// transformQueryResponse decodes a qrdb_ts_query result. go-qrdb returns a bare
+// JSON array of {"metric","value","timestamp"} points (timestamp as RFC 3339),
+// or null when nothing matched; a {"points": [...]} map is read as well.
+
 func (h *timeseriesHandler) transformQueryResponse(resp interface{}) (interface{}, error) {
 	if resp == nil {
 		return &timeseries.QueryResponse{Series: []timeseries.Point{}}, nil
 	}
 
-	m, ok := resp.(map[string]interface{})
-	if !ok {
+	var points []interface{}
+	switch v := resp.(type) {
+	case []interface{}:
+		points = v
+	case map[string]interface{}:
+		points, _ = v["points"].([]interface{})
+	default:
 		return resp, nil
 	}
 
 	response := &timeseries.QueryResponse{
 		Series: []timeseries.Point{},
 	}
-
-	if points, ok := m["points"].([]interface{}); ok {
-		for _, p := range points {
-			if pm, ok := p.(map[string]interface{}); ok {
-				point := timeseries.Point{
-					Timestamp: tsGetTime(pm, "timestamp"),
-					Value:     tsGetFloat64(pm, "value"),
-				}
-				response.Series = append(response.Series, point)
-			}
+	for _, p := range points {
+		if pm, ok := p.(map[string]interface{}); ok {
+			response.Series = append(response.Series, timeseries.Point{
+				Timestamp: tsGetTime(pm, "timestamp"),
+				Value:     tsGetFloat64(pm, "value"),
+			})
 		}
 	}
 
@@ -415,7 +450,7 @@ func (h *timeseriesHandler) transformDeleteSeriesResponse(resp interface{}) (int
 	}, nil
 }
 
-func (h *timeseriesHandler) transformGetRetentionPolicyResponse(resp interface{}) (interface{}, error) {
+func (h *timeseriesHandler) transformGetRetentionPolicyResponse(req, resp interface{}) (interface{}, error) {
 	if resp == nil {
 		return nil, nil
 	}
@@ -425,12 +460,23 @@ func (h *timeseriesHandler) transformGetRetentionPolicyResponse(resp interface{}
 		return resp, nil
 	}
 
+	// The result is read by decodeRetentionResult: go-qrdb's native
+	// top-level policy, the nested policy, or the older *_seconds fields.
+	// The native result names no metric, so the request's metric stands in.
+	policy := decodeRetentionResult(m)
+	metric := tsGetString(m, "metric")
+	if metric == "" {
+		if mapReq, ok := req.(map[string]interface{}); ok {
+			metric, _ = mapReq["metric"].(string)
+		}
+	}
+
 	return map[string]interface{}{
-		"metric": tsGetString(m, "metric"),
+		"metric": metric,
 		"policy": map[string]interface{}{
-			"duration":    tsGetInt64(m, "duration_seconds"),
-			"resolution":  tsGetInt64(m, "resolution_seconds"),
-			"aggregation": tsGetString(m, "aggregation"),
+			"duration":    int64(policy.duration / time.Second),
+			"resolution":  int64(policy.resolution / time.Second),
+			"aggregation": policy.aggregation,
 		},
 		"timestamp": tsGetTime(m, "timestamp"),
 	}, nil
@@ -476,6 +522,146 @@ func (h *timeseriesHandler) transformListMetricsResponse(resp interface{}) (inte
 		"next_cursor": tsGetString(m, "next_cursor"),
 		"timestamp":   tsGetTime(m, "timestamp"),
 	}, nil
+}
+
+// transformSetRetention turns the SDK's typed SetRetentionRequest into the
+// arguments of the server's qrdb_ts_set_retention_policy tool: whole
+// seconds (a sub-second duration or resolution is refused) and the
+// lower-case aggregation name.
+func (h *timeseriesHandler) transformSetRetention(req interface{}) (map[string]interface{}, error) {
+	r, ok := req.(*timeseries.SetRetentionRequest)
+	if !ok || r == nil {
+		return nil, errors.NewInvalidInput("mcp.timeseries.SetRetention", "invalid request type")
+	}
+	dur, err := qtsWholeSeconds("mcp.timeseries.SetRetention", "retention duration", int64(r.Policy.Duration))
+	if err != nil {
+		return nil, err
+	}
+	var res int64
+	if r.Policy.Resolution > 0 {
+		if res, err = qtsWholeSeconds("mcp.timeseries.SetRetention", "retention resolution", int64(r.Policy.Resolution)); err != nil {
+			return nil, err
+		}
+	}
+	args := map[string]interface{}{
+		"metric":           r.Metric,
+		"duration_seconds": dur,
+	}
+	if r.Policy.Resolution > 0 {
+		args["resolution_seconds"] = res
+	}
+	if name := r.Policy.Aggregation.WireName(); name != "" {
+		args["aggregation"] = name
+	}
+	return args, nil
+}
+
+// transformGetRetention turns the SDK's typed GetRetentionRequest into the
+// arguments of the server's qrdb_ts_get_retention_policy tool.
+func (h *timeseriesHandler) transformGetRetention(req interface{}) (map[string]interface{}, error) {
+	r, ok := req.(*timeseries.GetRetentionRequest)
+	if !ok || r == nil {
+		return nil, errors.NewInvalidInput("mcp.timeseries.GetRetention", "invalid request type")
+	}
+	return map[string]interface{}{"metric": r.Metric}, nil
+}
+
+// transformGetRetentionResponse decodes the qrdb_ts_get_retention_policy
+// result with decodeRetentionResult and always reports the requested
+// metric, since go-qrdb's native result names none. A nil result, or one
+// with no duration, resolution or aggregation, has a nil Policy.
+func (h *timeseriesHandler) transformGetRetentionResponse(req, resp interface{}) (interface{}, error) {
+	m, _ := resp.(map[string]interface{})
+	out := &timeseries.GetRetentionResponse{Metric: tsGetString(m, "metric")}
+	if r, ok := req.(*timeseries.GetRetentionRequest); ok && r != nil && r.Metric != "" {
+		out.Metric = r.Metric
+	}
+	if m == nil {
+		return out, nil
+	}
+	policy := decodeRetentionResult(m)
+	if policy.isZero() {
+		return out, nil
+	}
+	out.Policy = &timeseries.RetentionPolicy{
+		Duration:    policy.duration,
+		Resolution:  policy.resolution,
+		Aggregation: timeseries.ParseAggregateFunction(policy.aggregation),
+	}
+	return out, nil
+}
+
+// retentionResult is a decoded qrdb_ts_get_retention_policy result.
+// aggregation is go-qrdb's lower-case aggregation name, empty for none.
+type retentionResult struct {
+	duration    time.Duration
+	resolution  time.Duration
+	aggregation string
+}
+
+func (r retentionResult) isZero() bool {
+	return r.duration == 0 && r.resolution == 0 && r.aggregation == ""
+}
+
+// qrdbAggFuncNames maps go-qrdb's timeseries.AggFunc numbers to their
+// names. go-qrdb orders AggFunc avg, sum, min, max, count, percentile,
+// first, last from 1; the SDK's AggregateFunction is ordered differently,
+// so the number is mapped by name and never cast.
+var qrdbAggFuncNames = map[int64]string{
+	1: "avg", 2: "sum", 3: "min", 4: "max", 5: "count",
+	6: "percentile", 7: "first", 8: "last",
+}
+
+// retentionAggregationName reads an aggregation that is either go-qrdb's
+// AggFunc number or a name string.
+func retentionAggregationName(v interface{}) string {
+	switch a := v.(type) {
+	case string:
+		return strings.ToLower(a)
+	case float64:
+		return qrdbAggFuncNames[int64(a)]
+	case int64:
+		return qrdbAggFuncNames[a]
+	case int:
+		return qrdbAggFuncNames[int64(a)]
+	default:
+		return ""
+	}
+}
+
+// decodeRetentionResult reads the qrdb_ts_get_retention_policy tool result.
+// The unified server serves go-qrdb's own tool, which answers with
+// json.Marshal of *timeseries.RetentionPolicy at the top level:
+// {"duration": <ns>, "resolution": <ns>, "aggregation": <AggFunc number>},
+// no metric, and {"duration":0} for a metric with no policy. It also reads
+// a nested {"policy": {"duration": <ns>, "resolution": <ns>, "aggregation":
+// <name>}} and the older top-level duration_seconds / resolution_seconds.
+//
+// go-qrdb's percentile, first and last aggregations have no SDK
+// AggregateFunction: the typed GetRetention reports them as AggregateNone,
+// while the untyped reader keeps their names.
+func decodeRetentionResult(m map[string]interface{}) retentionResult {
+	if p, ok := m["policy"].(map[string]interface{}); ok && p != nil {
+		return retentionResult{
+			duration:    time.Duration(tsGetInt64(p, "duration")),
+			resolution:  time.Duration(tsGetInt64(p, "resolution")),
+			aggregation: retentionAggregationName(p["aggregation"]),
+		}
+	}
+	_, hasDurationSec := m["duration_seconds"]
+	_, hasResolutionSec := m["resolution_seconds"]
+	if hasDurationSec || hasResolutionSec {
+		return retentionResult{
+			duration:    time.Duration(tsGetInt64(m, "duration_seconds")) * time.Second,
+			resolution:  time.Duration(tsGetInt64(m, "resolution_seconds")) * time.Second,
+			aggregation: retentionAggregationName(m["aggregation"]),
+		}
+	}
+	return retentionResult{
+		duration:    time.Duration(tsGetInt64(m, "duration")),
+		resolution:  time.Duration(tsGetInt64(m, "resolution")),
+		aggregation: retentionAggregationName(m["aggregation"]),
+	}
 }
 
 // Helper functions
@@ -546,8 +732,10 @@ func isMCPTimeseriesService(service string) bool {
 func mapTimeseriesMethodToTool(method string) string {
 	timeseriesToolMap := map[string]string{
 		// SDK client methods
-		"Write": "qrdb_ts_write_point",
-		"Query": "qrdb_ts_query",
+		"Write":        "qrdb_ts_write_point",
+		"Query":        "qrdb_ts_query",
+		"SetRetention": "qrdb_ts_set_retention_policy",
+		"GetRetention": "qrdb_ts_get_retention_policy",
 		// CLI interface methods
 		"TSWritePoint":         "qrdb_ts_write_point",
 		"TSWriteBatch":         "qrdb_ts_write_batch",

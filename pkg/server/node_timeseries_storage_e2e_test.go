@@ -152,13 +152,23 @@ func TestNodeTimeSeriesStorage_GetRetention_Missing(t *testing.T) {
 	ts := newNodeTimeSeriesStorage(client)
 
 	// qrdb returns a zero-valued policy (not an error) for a metric that has
-	// never had a policy set; the meaningful assertion is the absence of an
-	// error and the successful response conversion.
+	// never had a policy set; the adapter reports it as no policy.
 	policy, err := ts.GetRetentionPolicy("never.written")
 	require.NoError(t, err)
-	if policy != nil {
-		assert.Equal(t, time.Duration(0), policy.Duration)
-	}
+	require.Nil(t, policy)
+}
+
+func TestNodeTimeSeriesStorage_GetRetention_SetThenGet(t *testing.T) {
+	client := newEmbeddedTSClient(t)
+	ts := newNodeTimeSeriesStorage(client)
+
+	require.NoError(t, ts.SetRetentionPolicy("duration.only", &interfaces.RetentionPolicy{
+		Duration: time.Hour,
+	}))
+	policy, err := ts.GetRetentionPolicy("duration.only")
+	require.NoError(t, err)
+	require.NotNil(t, policy)
+	assert.Equal(t, time.Hour, policy.Duration)
 }
 
 // TestNodeTimeSeriesStorage_QueryRich_EmptyMetricError covers the QueryRich
