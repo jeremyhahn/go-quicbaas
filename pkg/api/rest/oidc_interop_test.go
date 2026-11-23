@@ -119,9 +119,9 @@ func newInteropRouter(t *testing.T, issuer string) (http.Handler, *iam.OIDCProvi
 	})
 	require.NoError(t, err)
 
-	secret, err := secure.NewSecret([]byte(interopSecret))
+	secret, err := secure.NewSecret(context.Background(), []byte(interopSecret))
 	require.NoError(t, err)
-	hashed, err := iam.HashClientSecret(secret)
+	hashed, err := iam.HashClientSecret(context.Background(), secret)
 	secret.Destroy()
 	require.NoError(t, err)
 	require.NoError(t, backend.CreateApp(context.Background(), &iam.Application{

@@ -448,7 +448,7 @@ func TestDestroyedSharedSecretFailsClosed(t *testing.T) {
 		Period:    30,
 		Algorithm: MFAAlgorithmSHA1,
 	})
-	submitted, err := enclave.NewMemoryEnclaveFromString(code)
+	submitted, err := enclave.NewMemoryEnclave([]byte(code))
 	require.NoError(t, err)
 	defer submitted.Destroy()
 

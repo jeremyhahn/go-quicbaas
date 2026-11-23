@@ -189,9 +189,9 @@ func newIntrospectFixture(t *testing.T) *introspectFixture {
 	// The stored form is the PBKDF2 digest since the #37 migration; a bcrypt
 	// digest here fails closed under GODEBUG=fips140=only, which this package
 	// is gated on.
-	introspectSec, err := secure.NewSecret([]byte(introspectSecret))
+	introspectSec, err := secure.NewSecret(context.Background(), []byte(introspectSecret))
 	require.NoError(t, err)
-	hashed, err := iam.HashClientSecret(introspectSec)
+	hashed, err := iam.HashClientSecret(context.Background(), introspectSec)
 	introspectSec.Destroy()
 	require.NoError(t, err)
 	require.NoError(t, backend.CreateApp(context.Background(), &iam.Application{

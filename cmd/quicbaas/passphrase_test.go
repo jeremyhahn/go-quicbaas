@@ -40,6 +40,19 @@ import (
 
 // TestTrimOneTrailingNewline covers the exact-one-terminator contract that
 // makes `printf '%s'` and `echo` deliver the same passphrase.
+// assertBorrowHolds asserts that a protected buffer lends exactly want.
+func assertBorrowHolds(t *testing.T, buf interface {
+	WithBytes(func([]byte) error) error
+}, want string) {
+	t.Helper()
+	var got string
+	require.NoError(t, buf.WithBytes(func(b []byte) error {
+		got = string(b)
+		return nil
+	}))
+	assert.Equal(t, want, got)
+}
+
 func TestTrimOneTrailingNewline(t *testing.T) {
 	cases := []struct {
 		name string
@@ -406,7 +419,7 @@ func TestReadPassphraseLimited_StopsAtTheFirstNewline(t *testing.T) {
 	// A test fixture, not a live secret, so reading it back is fine — and
 	// checking the bytes rather than only the length is what catches a read
 	// that returns the right number of wrong bytes.
-	assert.Equal(t, "first-line", string(buf.Bytes()))
+	assertBorrowHolds(t, buf, "first-line")
 
 	rest, err := io.ReadAll(r)
 	require.NoError(t, err)
@@ -707,7 +720,7 @@ func TestReadPassphrase_DeadlineReadersWorkWithoutPollSupport(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, buf)
 	defer buf.Destroy()
-	assert.Equal(t, "still-works", string(buf.Bytes()))
+	assertBorrowHolds(t, buf, "still-works")
 }
 
 // TestReadPassphrase_NonBlockingReadersWorkWithoutPollSupport keeps the
@@ -720,7 +733,7 @@ func TestReadPassphrase_NonBlockingReadersWorkWithoutPollSupport(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, buf)
 	defer buf.Destroy()
-	assert.Equal(t, "plain-reader", string(buf.Bytes()))
+	assertBorrowHolds(t, buf, "plain-reader")
 }
 
 // TestBarrierUnseal_UnboundableStdinRefusedEndToEnd checks the operator
@@ -766,7 +779,7 @@ func TestReadPassphrase_PollPathDeliversALine(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, buf)
 	defer buf.Destroy()
-	assert.Equal(t, "polled-passphrase", string(buf.Bytes()))
+	assertBorrowHolds(t, buf, "polled-passphrase")
 }
 
 // TestReadPassphrase_DeliversWithABudget pins the ordinary path: given a
@@ -778,7 +791,7 @@ func TestReadPassphrase_DeliversWithABudget(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, buf)
 	defer buf.Destroy()
-	assert.Equal(t, "delivered-whole", string(buf.Bytes()))
+	assertBorrowHolds(t, buf, "delivered-whole")
 }
 
 // TestPassphraseReadTimeout_UsesTheCommandBudget asserts the fallback rather

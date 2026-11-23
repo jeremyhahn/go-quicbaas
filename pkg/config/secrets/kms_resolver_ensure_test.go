@@ -65,7 +65,7 @@ func TestKMSResolverEnsureGeneratesOnFirstUse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve with ensure=true against empty store: %v", err)
 	}
-	if got == nil || len(got.Bytes()) == 0 {
+	if got == nil || len(secretValueString(t, got)) == 0 {
 		t.Fatalf("Resolve returned no secret value")
 	}
 
@@ -82,9 +82,22 @@ func TestKMSResolverEnsureGeneratesOnFirstUse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second Resolve: %v", err)
 	}
-	if string(again.Bytes()) != string(got.Bytes()) {
-		t.Errorf("ensure is not idempotent: %q != %q", again.Bytes(), got.Bytes())
+	if secretValueString(t, again) != secretValueString(t, got) {
+		t.Errorf("ensure is not idempotent: %q != %q", secretValueString(t, again), secretValueString(t, got))
 	}
+}
+
+// secretValueString copies v's plaintext out for an assertion.
+func secretValueString(t *testing.T, v *SecretValue) string {
+	t.Helper()
+	var s string
+	if err := v.WithBytes(context.Background(), func(p []byte) error {
+		s = string(p)
+		return nil
+	}); err != nil {
+		t.Fatalf("SecretValue.WithBytes: %v", err)
+	}
+	return s
 }
 
 // TestKMSResolverEnsureDefaultsAndVariants covers len/enc defaults and encodings.
@@ -126,8 +139,8 @@ func TestKMSResolverWithoutEnsureStillReads(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	if string(got.Bytes()) != "stored" {
-		t.Errorf("got %q, want %q", got.Bytes(), "stored")
+	if secretValueString(t, got) != "stored" {
+		t.Errorf("got %q, want %q", secretValueString(t, got), "stored")
 	}
 	if stub.ensureCall != 0 {
 		t.Errorf("EnsureSecret must not be called without ensure=true (called %d times)", stub.ensureCall)

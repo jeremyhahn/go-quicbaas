@@ -16,7 +16,6 @@
 package secureio
 
 import (
-	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"runtime"
@@ -50,7 +49,7 @@ func TestPasswordFieldCanaryNoPlaintextEscape(t *testing.T) {
 	if err := json.Unmarshal([]byte(`"`+encoded+`"`), &f); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if !bytes.Equal(f.Buffer().Bytes(), plaintext) {
+	if eq, err := f.Buffer().EqualBytes(plaintext); err != nil || !eq {
 		t.Fatalf("plaintext mismatch in buffer before destroy")
 	}
 	f.Destroy()

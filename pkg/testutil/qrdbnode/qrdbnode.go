@@ -135,7 +135,7 @@ func boot(dir string) (*Node, error) {
 	cfg := &qrdbsdk.DaemonConfig{}
 	cfg.Raft.DataDir = dir
 	cfg.Databases = []qrdbsdk.DaemonDatabaseConfig{
-		{Name: "default", Engine: "mvcc", Backend: "memory"},
+		{Name: "default", Backend: "memory"},
 	}
 	// Every listener off: only the embedded transport is needed.
 	cfg.Protocols.REST = false
