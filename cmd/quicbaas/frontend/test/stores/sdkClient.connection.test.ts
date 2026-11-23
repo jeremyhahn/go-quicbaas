@@ -17,7 +17,9 @@
  * the next authenticated request to the new daemon, Reset moves it back, and
  * a persisted override is used from the first client. It also proves the
  * session calls (validation, sign-out) stay on the page's own daemon while an
- * override points the other calls elsewhere.
+ * override points the other calls elsewhere, even after another tab changes
+ * or clears that override; that another tab's change reloads this tab; and
+ * that a remote daemon's 401 never renews or ends the page's session.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -40,20 +42,30 @@ import { reloadApp } from '../../src/lib/reloadApp.ts';
 import {
   getOriginSDKClient,
   getSDKClient,
+  installConnectionWatch,
   resetSDKClient,
 } from '../../src/stores/sdkClient.ts';
 import {
+  REFRESH_PATH,
+  TOKEN_KEY,
+  authStore,
   setAuthenticated,
   setUnauthenticated,
   validateSession,
 } from '../../src/stores/auth.svelte.ts';
-import { saveConnectionOverride } from '../../src/stores/connection.svelte.ts';
+import { installAuthFetch, uninstallAuthFetch } from '../../src/stores/authFetch.ts';
+import {
+  CONNECTION_OVERRIDE_KEY,
+  clearConnectionOverride,
+  saveConnectionOverride,
+} from '../../src/stores/connection.svelte.ts';
 
 const ORIGIN = window.location.origin;
 const OTHER = 'https://other.example:8443';
 const JOBS = '/api/v1/orchestrator/jobs';
 
 let fetchMock: ReturnType<typeof vi.fn>;
+let stopWatch: (() => void) | null = null;
 
 function urls(): string[] {
   return fetchMock.mock.calls.map((c) => String(c[0]));
@@ -90,6 +102,9 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  stopWatch?.();
+  stopWatch = null;
+  uninstallAuthFetch();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   resetSDKClient();
@@ -144,5 +159,73 @@ describe('SDK client routing follows the Connection view', () => {
     expect(lastURL()).toBe(`${ORIGIN}/api/v1/iam/logout`);
 
     expect(await getOriginSDKClient()).not.toBe(await getSDKClient());
+  });
+
+  it('the origin client ignores an override cleared by another tab', async () => {
+    saveConnectionOverride({ transport: 'rest', baseURL: OTHER });
+    setAuthenticated({ access_token: 'tok-3' });
+    const remote = await getSDKClient();
+    const origin = await getOriginSDKClient();
+    expect(origin).not.toBe(remote);
+
+    // Another tab's Reset removes the key but leaves this tab's clients alone.
+    clearConnectionOverride();
+    expect(await getOriginSDKClient()).toBe(origin);
+
+    await (await getOriginSDKClient()).auth.logout('tok-3');
+    expect(lastURL()).toBe(`${ORIGIN}/api/v1/iam/logout`);
+
+    await validateSession();
+    expect(urls().some((u) => u.startsWith(OTHER))).toBe(false);
+  });
+
+  it('the origin client is separate even with no override', async () => {
+    expect(await getOriginSDKClient()).not.toBe(await getSDKClient());
+
+    // Another tab applies an address; this tab has not reset its clients.
+    saveConnectionOverride({ transport: 'rest', baseURL: OTHER });
+    await (await getOriginSDKClient()).auth.logout('x');
+    expect(lastURL()).toBe(`${ORIGIN}/api/v1/iam/logout`);
+  });
+
+  it('another tab changing the address reloads this tab', async () => {
+    stopWatch = installConnectionWatch();
+    const before = await getSDKClient();
+
+    window.dispatchEvent(new StorageEvent('storage', { key: CONNECTION_OVERRIDE_KEY }));
+    expect(reloadApp).toHaveBeenCalledTimes(1);
+    expect(await getSDKClient()).not.toBe(before);
+
+    window.dispatchEvent(new StorageEvent('storage', { key: 'unrelated' }));
+    expect(reloadApp).toHaveBeenCalledTimes(1);
+  });
+
+  it("a remote daemon's 401 leaves the page session alone", async () => {
+    let refreshCalls = 0;
+    fetchMock = vi.fn(async (url: string) => {
+      const u = String(url);
+      if (u.includes(REFRESH_PATH)) {
+        refreshCalls++;
+        return json({ access_token: 'renewed' });
+      }
+      if (u.startsWith(`${OTHER}${JOBS}`)) {
+        return new Response(JSON.stringify({ error: 'Invalid or expired token' }), {
+          status: 401,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return json({ jobs: [] });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    installAuthFetch();
+
+    setAuthenticated({ access_token: 'tok-4', refresh_token: 'r-4' });
+    saveConnectionOverride({ transport: 'rest', baseURL: OTHER });
+    resetSDKClient();
+
+    await expect((await getSDKClient()).orchestrator.listJobs('system')).rejects.toBeTruthy();
+    expect(refreshCalls).toBe(0);
+    expect(authStore.status).toBe('authenticated');
+    expect(window.localStorage.getItem(TOKEN_KEY)).toBe('tok-4');
   });
 });

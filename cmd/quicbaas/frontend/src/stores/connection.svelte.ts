@@ -69,7 +69,7 @@ export interface ConnectionOverride {
   baseURL: string;
 }
 
-const OVERRIDE_KEY = 'quicbaas.connection.v1';
+export const CONNECTION_OVERRIDE_KEY = 'quicbaas.connection.v1';
 
 /**
  * isValidBaseURL reports whether s is an absolute http or https URL with a
@@ -132,7 +132,7 @@ export async function probeDaemon(origin: string, timeoutMs = 5000): Promise<boo
 export function connectionOverride(): ConnectionOverride | null {
   let raw: string | null;
   try {
-    raw = window.localStorage.getItem(OVERRIDE_KEY);
+    raw = window.localStorage.getItem(CONNECTION_OVERRIDE_KEY);
   } catch {
     return null;
   }
@@ -153,7 +153,7 @@ export function connectionOverride(): ConnectionOverride | null {
 export function saveConnectionOverride(o: ConnectionOverride): void {
   try {
     window.localStorage.setItem(
-      OVERRIDE_KEY,
+      CONNECTION_OVERRIDE_KEY,
       JSON.stringify({ transport: o.transport, baseURL: o.baseURL }),
     );
   } catch {
@@ -164,7 +164,7 @@ export function saveConnectionOverride(o: ConnectionOverride): void {
 /** clearConnectionOverride removes the persisted override, if any. */
 export function clearConnectionOverride(): void {
   try {
-    window.localStorage.removeItem(OVERRIDE_KEY);
+    window.localStorage.removeItem(CONNECTION_OVERRIDE_KEY);
   } catch {
     // Storage blocked: nothing is stored, so there is nothing to clear.
   }

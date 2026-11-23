@@ -58,6 +58,9 @@
  *   • unauthenticated requests (no Authorization header and no stored session)
  *     are passed straight through: a 401 from a public endpoint is a real
  *     answer, not a stale-token symptom.
+ *   • requests to another origin (a daemon chosen in the Connection view, or
+ *     the Connection view's readiness probe) are passed straight through.
+ *     Their 401 never renews, replays or ends the page's session.
  */
 
 import {
@@ -100,13 +103,16 @@ function isRenewable(input: RequestInfo | URL, init?: RequestInit): boolean {
   const url = requestURL(input);
   if (url.includes(REFRESH_PATH)) return false;
 
-  let path: string;
+  let u: URL;
   try {
-    path = new URL(url, window.location.origin).pathname;
+    u = new URL(url, window.location.origin);
   } catch {
     return false;
   }
-  if (!path.startsWith(API_PREFIX)) return false;
+  // Only the page's own daemon issued this session: a 401 from any other
+  // origin is that daemon's answer, not a sign the session went stale.
+  if (u.origin !== window.location.origin) return false;
+  if (!u.pathname.startsWith(API_PREFIX)) return false;
 
   // Something must identify the caller as a signed-in user: either the request
   // already carried a bearer, or we hold one to attach on replay.

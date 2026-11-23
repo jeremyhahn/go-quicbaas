@@ -44,7 +44,8 @@
 import { createClient, isWailsRuntime } from '@quicbaas/sdk';
 import type { Client } from '@quicbaas/sdk';
 import { getValidAccessToken } from './auth.svelte.ts';
-import { connectionOverride } from './connection.svelte.ts';
+import { CONNECTION_OVERRIDE_KEY, connectionOverride } from './connection.svelte.ts';
+import { reloadApp } from '../lib/reloadApp.ts';
 
 // ---------------------------------------------------------------------------
 // Module-level singleton
@@ -52,6 +53,8 @@ import { connectionOverride } from './connection.svelte.ts';
 
 let _client: Client | null = null;
 let _initPromise: Promise<Client> | null = null;
+let _originClient: Client | null = null;
+let _originInit: Promise<Client> | null = null;
 
 /**
  * getSDKClient returns the singleton Client, initialising it on first call.
@@ -115,19 +118,17 @@ export function resetSDKClient(): void {
   _originInit = null;
 }
 
-let _originClient: Client | null = null;
-let _originInit: Promise<Client> | null = null;
-
 /**
  * getOriginSDKClient returns the client for the page's own daemon. Sign-in,
  * registration, invite activation, session validation and sign-out use it, so
  * a session always lives on the daemon that issued it, whatever the
- * Connection view points the other calls at. It never reads the connection
- * override for its address. Under Wails, or with no override saved, both point
- * at the same daemon, so it is the getSDKClient client.
+ * Connection view points the other calls at. Under Wails it is the
+ * getSDKClient client. In a browser it is always a separate client for the
+ * page's own origin, built without reading the override, so another tab
+ * changing or clearing the override cannot redirect session calls.
  */
 export async function getOriginSDKClient(): Promise<Client> {
-  if (isWailsRuntime() || connectionOverride() === null) return getSDKClient();
+  if (isWailsRuntime()) return getSDKClient();
   if (_originClient !== null) return _originClient;
   if (_originInit !== null) return _originInit;
 
@@ -138,4 +139,21 @@ export async function getOriginSDKClient(): Promise<Client> {
     return _originClient;
   })();
   return _originInit;
+}
+
+/**
+ * installConnectionWatch reloads this tab when another tab applies or resets
+ * the daemon address (or clears browser storage), so no tab keeps a client,
+ * cache or stream for the previous daemon. It does nothing under Wails. It
+ * returns a function that removes the watch.
+ */
+export function installConnectionWatch(): () => void {
+  if (typeof window === 'undefined' || isWailsRuntime()) return () => {};
+  const onStorage = (e: StorageEvent): void => {
+    if (e.key !== CONNECTION_OVERRIDE_KEY && e.key !== null) return;
+    resetSDKClient();
+    reloadApp();
+  };
+  window.addEventListener('storage', onStorage);
+  return () => window.removeEventListener('storage', onStorage);
 }

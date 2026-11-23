@@ -35,6 +35,7 @@ import {
   setAuthStatus,
 } from '../src/stores/auth.svelte.ts';
 import { installAuthFetch, uninstallAuthFetch } from '../src/stores/authFetch.ts';
+import { probeDaemon } from '../src/stores/connection.svelte.ts';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -241,6 +242,52 @@ describe('SPA session renewal', () => {
 
     expect(resp.status).toBe(401);
     expect(apiCalls).toBe(2);
+  });
+
+  it('a 401 from another origin is returned without renewal or sign-out', async () => {
+    const access = jwtExpiringIn(600);
+    setAuthenticated({ access_token: access, refresh_token: 'refresh-1' });
+    let refreshCalls = 0;
+    const base = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes(REFRESH_PATH)) {
+        refreshCalls++;
+        return jsonResponse(200, { access_token: jwtExpiringIn(900) });
+      }
+      return jsonResponse(401, { error: 'Invalid or expired token' });
+    });
+    vi.stubGlobal('fetch', base);
+    installAuthFetch();
+
+    for (let i = 0; i < 2; i++) {
+      const resp = await window.fetch('https://other.example:8443/api/v1/projects', {
+        headers: { Authorization: 'Bearer x' },
+      });
+      expect(resp.status).toBe(401);
+    }
+
+    expect(refreshCalls).toBe(0);
+    expect(base).toHaveBeenCalledTimes(2);
+    expect(authStore.status).toBe('authenticated');
+    expect(window.localStorage.getItem(TOKEN_KEY)).toBe(access);
+    expect(window.localStorage.getItem(REFRESH_TOKEN_KEY)).toBe('refresh-1');
+  });
+
+  it('the cross-origin readiness probe is never replayed with a bearer', async () => {
+    setAuthenticated({ access_token: jwtExpiringIn(600), refresh_token: 'refresh-1' });
+    const base = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes(REFRESH_PATH)) {
+        return jsonResponse(200, { access_token: jwtExpiringIn(900) });
+      }
+      return jsonResponse(401, { error: 'Invalid or expired token' });
+    });
+    vi.stubGlobal('fetch', base);
+    installAuthFetch();
+
+    await probeDaemon('https://other.example:8443');
+
+    expect(base).toHaveBeenCalledTimes(1);
+    const init = (base.mock.calls[0]?.[1] ?? {}) as RequestInit;
+    expect(new Headers(init.headers ?? {}).get('Authorization')).toBeNull();
   });
 
   // -------------------------------------------------------------------------
@@ -681,7 +728,8 @@ describe('session-validate endpoint', () => {
 // ===========================================================================
 
 describe('SDK-originated requests recover through the interceptor', () => {
-  const ORIGIN = 'https://baas.test';
+  // The page's own daemon: only its 401s are renewed and replayed.
+  const ORIGIN = window.location.origin;
 
   beforeEach(() => {
     window.localStorage.clear();
