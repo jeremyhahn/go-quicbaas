@@ -460,6 +460,13 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, req i
 		return handler.handleRequest(ctx, service, method, req)
 	}
 
+	// TPM-policy verbs carry go-xkms wire structs too; go-xkms serves them
+	// on the xkms.v1 KeystoreService, and pbconv.TPMPolicyClient converts.
+	// This branch also serves the Unix transport.
+	if isTPMPolicyService(service) {
+		return newTPMPolicyHandler(conn).handleRequest(ctx, method, req)
+	}
+
 	// Check if this is an Operations service request and route through the
 	// operations handler. The SDK operations client uses plain Go structs which
 	// don't implement proto.Message, so we need to convert them to the generated

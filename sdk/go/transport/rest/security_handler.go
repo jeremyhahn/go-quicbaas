@@ -66,7 +66,7 @@ const (
 // one of the Security() surface services routed through this handler.
 func isSecurityService(service string) bool {
 	switch trimRESTServicePrefix(service) {
-	case "ACME", "Trust", "FIDO2", "PIV", "Attestation":
+	case "ACME", "Trust", "FIDO2", "PIV", "TPMPolicy", "Attestation":
 		return true
 	default:
 		return false
@@ -93,6 +93,8 @@ func (h *securityRESTHandler) handleRequest(ctx context.Context, service, method
 		return h.handleFIDO2(ctx, method, req)
 	case "PIV":
 		return h.handlePIV(ctx, method, req)
+	case "TPMPolicy":
+		return h.handleTPMPolicy(ctx, method, req)
 	case "ACME":
 		return h.handleACME(ctx, method, req)
 	case "Trust":

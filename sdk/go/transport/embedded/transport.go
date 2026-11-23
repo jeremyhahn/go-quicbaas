@@ -344,6 +344,26 @@ var unaryHandlers = map[string]handlerFunc{
 	"quicbaas.PIV/ExportPIVCertificate": handlePIVExportCertificate,
 	"quicbaas.PIV/GeneratePIVCSR":       handlePIVGenerateCSR,
 
+	// TPMPolicy: Security().TPMPolicy(). The embedded node has no
+	// TPM-policy service, so every verb answers a typed Unimplemented.
+	"quicbaas.TPMPolicy/TPMPolicyCreate":          tpmPolicyRefusal("TPMPolicyCreate"),
+	"quicbaas.TPMPolicy/TPMPolicyGet":             tpmPolicyRefusal("TPMPolicyGet"),
+	"quicbaas.TPMPolicy/TPMPolicyList":            tpmPolicyRefusal("TPMPolicyList"),
+	"quicbaas.TPMPolicy/TPMPolicyUpdate":          tpmPolicyRefusal("TPMPolicyUpdate"),
+	"quicbaas.TPMPolicy/TPMPolicyRevoke":          tpmPolicyRefusal("TPMPolicyRevoke"),
+	"quicbaas.TPMPolicy/TPMPolicyVerify":          tpmPolicyRefusal("TPMPolicyVerify"),
+	"quicbaas.TPMPolicy/TPMPolicyDelete":          tpmPolicyRefusal("TPMPolicyDelete"),
+	"quicbaas.TPMPolicy/TPMPolicyObjects":         tpmPolicyRefusal("TPMPolicyObjects"),
+	"quicbaas.TPMPolicy/TPMPolicySetAutoUnseal":   tpmPolicyRefusal("TPMPolicySetAutoUnseal"),
+	"quicbaas.TPMPolicy/TPMPolicySetDescription":  tpmPolicyRefusal("TPMPolicySetDescription"),
+	"quicbaas.TPMPolicy/TPMObjectPolicy":          tpmPolicyRefusal("TPMObjectPolicy"),
+	"quicbaas.TPMPolicy/TPMPolicyRotateAuthority": tpmPolicyRefusal("TPMPolicyRotateAuthority"),
+	"quicbaas.TPMPolicy/GetTenantTPMMode":         tpmPolicyRefusal("GetTenantTPMMode"),
+	"quicbaas.TPMPolicy/SetTenantTPMMode":         tpmPolicyRefusal("SetTenantTPMMode"),
+	"quicbaas.TPMPolicy/TenantVTPMStatus":         tpmPolicyRefusal("TenantVTPMStatus"),
+	"quicbaas.TPMPolicy/TenantVTPMStart":          tpmPolicyRefusal("TenantVTPMStart"),
+	"quicbaas.TPMPolicy/TenantVTPMStop":           tpmPolicyRefusal("TenantVTPMStop"),
+
 	// FIDO2: the tenant-scoped WebAuthn ceremony surface
 	// (Security().Auth().FIDO2()), xkms wire types verbatim; the tenant
 	// rides the context (transport.ContextWithTenant).

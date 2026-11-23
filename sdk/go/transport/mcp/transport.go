@@ -327,6 +327,11 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 		return nil, errors.NewConnection("mcp.doRequest", "transport is closed")
 	}
 
+	// No MCP tool serves the TPM-policy verbs; refuse before any round trip.
+	if isMCPTPMPolicyService(service) {
+		return nil, newTPMPolicyUnsupportedError(method)
+	}
+
 	// Ensure MCP session is initialized
 	if err := t.ensureInitialized(ctx); err != nil {
 		return nil, err
