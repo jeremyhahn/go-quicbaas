@@ -536,6 +536,32 @@ func TestTimeSeriesService_GetRetentionPolicy_Success_WithStorage(t *testing.T) 
 	mockStorage.AssertExpectations(t)
 }
 
+// TestTimeSeriesService_GetRetentionPolicy_ZeroPolicyIsNil pins that the zero
+// policy the backend returns for a metric without one reads as nil, while a
+// policy with any field set stays non-nil.
+func TestTimeSeriesService_GetRetentionPolicy_ZeroPolicyIsNil(t *testing.T) {
+	log := createTestLogger(t)
+	svc := &quicBaaS{logger: log}
+	mockStorage := newTestMockTimeSeriesStorage()
+	tsSvc := &timeSeriesService{svc: svc, tsStorage: mockStorage}
+	ctx := tenantctx.WithSystem(context.Background())
+
+	mockStorage.On("GetRetentionPolicy", "cpu.usage").
+		Return(&interfaces.RetentionPolicy{}, nil).Once()
+	resp, err := tsSvc.GetRetentionPolicy(ctx, &TSGetRetentionPolicyRequest{Metric: "cpu.usage"})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.Nil(t, resp.Policy)
+
+	mockStorage.On("GetRetentionPolicy", "cpu.usage").
+		Return(&interfaces.RetentionPolicy{Duration: time.Hour}, nil).Once()
+	resp, err = tsSvc.GetRetentionPolicy(ctx, &TSGetRetentionPolicyRequest{Metric: "cpu.usage"})
+	require.NoError(t, err)
+	require.NotNil(t, resp.Policy)
+	assert.Equal(t, time.Hour, resp.Policy.Duration)
+	mockStorage.AssertExpectations(t)
+}
+
 func TestTimeSeriesService_GetRetentionPolicy_StorageError(t *testing.T) {
 	log := createTestLogger(t)
 	svc := &quicBaaS{logger: log}
