@@ -155,7 +155,7 @@ func (p *OIDCProvider) GetConfiguration() map[string]interface{} {
 		"claims_supported": []string{
 			"sub", "iss", "aud", "exp", "iat", "email", "name",
 			"tenant_id", "roles", "groups", "mfa_verified",
-			"cnf", "amr", "attest_method", "uid", "ptyp", "sid",
+			"cnf", "amr", "acr", "attest_method", "uid", "ptyp", "sid",
 		},
 		"code_challenge_methods_supported": []string{CodeChallengeMethodS256}, // OAuth 2.1 mandates S256 only
 		// Authorization responses carry iss (RFC 9207 §3).

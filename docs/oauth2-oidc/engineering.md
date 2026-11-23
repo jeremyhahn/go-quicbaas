@@ -179,8 +179,11 @@ the JWT:
 - `attest_aaguid` — the hex FIDO2 authenticator model; absent for PIV.
 
 Both are omitted when the token carries no attestation. Absence means "no
-evidence", never hardware. `acr` and `amr` are not reported yet (#392), and
-the userinfo endpoint never reports attestation: userinfo is profile data.
+evidence", never hardware. The hardware-attested login's ID token reports `acr`
+(`urn:quicbaas:auth:hardware-attested`) and `amr` (the RFC 8176 methods). Other
+ID tokens and all access tokens omit both, and discovery lists both in
+`claims_supported`. The userinfo endpoint never reports attestation: userinfo
+is profile data.
 
 #### Tenant derivation — no global table
 

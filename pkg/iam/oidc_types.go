@@ -531,10 +531,17 @@ type IDTokenClaims struct {
 
 	// AMR is the Authentication Methods References (RFC 8176).
 	// Examples: ["webauthn","hwk"], ["smartcard","mfa"]
+	// It is set only on the ID token of a hardware-attested login
+	// (TokenService.IssueHardwareTokens, which also serves the PIV/mTLS and
+	// passkey logins). Every other ID token omits it (omitempty), and no
+	// access token carries it, renewed ones included.
 	AMR []string `json:"amr,omitempty"`
 
 	// ACR is the Authentication Context Class Reference.
-	// For hardware-attested logins: "urn:quicbaas:auth:hardware-attested"
+	// It is set only on the ID token of a hardware-attested login
+	// (TokenService.IssueHardwareTokens), where it is ACRHardwareAttested
+	// ("urn:quicbaas:auth:hardware-attested"). Every other ID token omits it
+	// (omitempty), and no access token carries it, renewed ones included.
 	ACR string `json:"acr,omitempty"`
 
 	// AttestAAGUID is the FIDO2 authenticator AAGUID in hex string form (WebAuthn logins only).
