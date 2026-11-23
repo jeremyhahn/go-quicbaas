@@ -45,7 +45,9 @@ func newModuleSupportMCPServer(t *testing.T) *Server {
 // registry exactly, minus qrdbNativeDuplicateTools and the "xkms." family
 // (P6.1/item-C: both are deliberately excluded from the module surface --
 // go-qrdb and go-xkms each register the identical capability natively when
-// composed alongside this module, see ModuleTools's doc comment): every
+// composed alongside this module, see ModuleTools's doc comment), except
+// moduleServedXKMSTools, which the module lists because go-xkms's module
+// serves no FIDO2 ceremony tool: every
 // enumerated tool is still in the registry, every sanitized name is in the
 // MCP charset, sanitized names are unique, and every spec is classified
 // consistently with the canonical qrdb permission tables.
@@ -60,7 +62,7 @@ func TestModuleTools_SurfaceGuard(t *testing.T) {
 			excluded++
 			continue
 		}
-		if strings.HasPrefix(def.Name, "xkms.") {
+		if _, served := moduleServedXKMSTools[def.Name]; !served && strings.HasPrefix(def.Name, "xkms.") {
 			excluded++
 		}
 	}
@@ -202,6 +204,137 @@ func TestInvokeTool_EntityKVPutReachesEntityHandler(t *testing.T) {
 	if !errors.As(err, &invalid) || invalid.Arg != "data" {
 		t.Fatalf("expected the entity handler's *UserToolInvalidArgumentError on data, got %T: %v", err, err)
 	}
+}
+
+// TestModuleTools_FIDO2AddCredentialOnItsRESTGrant proves the module lists
+// exactly the passkey add-credential pair of the "xkms." family, under its
+// sanitized names and on user_authfactors:add, the grant its REST and gRPC
+// twins take, and leaves the other FIDO2 ceremony tools off.
+func TestModuleTools_FIDO2AddCredentialOnItsRESTGrant(t *testing.T) {
+	byName := map[string]ToolSpec{}
+	for _, spec := range ModuleTools() {
+		byName[spec.Name] = spec
+	}
+
+	want := map[string]string{
+		"xkms.fido2.beginAddCredential": "xkms_fido2_beginAddCredential",
+		"xkms.fido2.finishRegistration": "xkms_fido2_finishRegistration",
+	}
+	for name, tool := range want {
+		spec, ok := byName[name]
+		if !ok {
+			t.Errorf("%s is not listed", name)
+			continue
+		}
+		if spec.Tool != tool {
+			t.Errorf("%s registers as %q, want %q", name, spec.Tool, tool)
+		}
+		if spec.Public {
+			t.Errorf("%s must not be public", name)
+		}
+		if spec.Resource != "user_authfactors" || spec.Action != "add" {
+			t.Errorf("%s permission %s:%s, want user_authfactors:add", name, spec.Resource, spec.Action)
+		}
+	}
+	for name := range byName {
+		if _, ok := want[name]; !ok && strings.HasPrefix(name, "xkms.") {
+			t.Errorf("xkms tool %q is listed; only the add-credential pair may be", name)
+		}
+	}
+	for _, name := range []string{
+		"xkms.fido2.beginRegistration",
+		"xkms.fido2.beginAuthentication",
+		"xkms.fido2.finishAuthentication",
+	} {
+		if _, ok := byName[name]; ok {
+			t.Errorf("%s must stay off the module", name)
+		}
+	}
+}
+
+// TestInvokeTool_FIDO2AddCredentialActsInCallerTenant proves a module call
+// of the add-credential pair runs in the caller's bound tenant, and that a
+// call naming another tenant, or from a caller bound to no tenant, is refused
+// before the service is reached.
+func TestInvokeTool_FIDO2AddCredentialActsInCallerTenant(t *testing.T) {
+	caller := qrdbsdk.WithIdentity(context.Background(), &qrdbsdk.Identity{Subject: "admin", TenantID: "tenant-a"})
+	setup := func(t *testing.T) (*Server, *fido2FakeService) {
+		t.Helper()
+		fake := &fido2FakeService{}
+		srv := newModuleSupportMCPServer(t)
+		srv.tools = newFIDO2Registry(t, fake)
+		// The xkms dispatch table is package-global and bound to the
+		// registry that first dispatches; rebind it to this one.
+		xkmsHandlerMap = nil
+		t.Cleanup(func() { xkmsHandlerMap = nil })
+		return srv, fake
+	}
+	finishArgs := func(extra map[string]interface{}) map[string]interface{} {
+		args := map[string]interface{}{"session_id": "sess-1", "attestation_json": "{}"}
+		for k, v := range extra {
+			args[k] = v
+		}
+		return args
+	}
+
+	t.Run("begin_add_credential", func(t *testing.T) {
+		srv, fake := setup(t)
+		if _, err := srv.InvokeTool(caller, "xkms.fido2.beginAddCredential", nil); err != nil {
+			t.Fatalf("beginAddCredential: %v", err)
+		}
+		if fake.lastTenant != "tenant-a" {
+			t.Errorf("tenant %q, want tenant-a", fake.lastTenant)
+		}
+	})
+
+	t.Run("finish_unnamed", func(t *testing.T) {
+		srv, fake := setup(t)
+		if _, err := srv.InvokeTool(caller, "xkms.fido2.finishRegistration", finishArgs(nil)); err != nil {
+			t.Fatalf("finishRegistration: %v", err)
+		}
+		if fake.lastTenant != "tenant-a" {
+			t.Errorf("tenant %q, want tenant-a", fake.lastTenant)
+		}
+		if fake.lastFinishReg == nil || fake.lastFinishReg.SessionID != "sess-1" {
+			t.Errorf("finish request %+v, want session sess-1", fake.lastFinishReg)
+		}
+	})
+
+	t.Run("finish_own_tenant", func(t *testing.T) {
+		srv, fake := setup(t)
+		args := finishArgs(map[string]interface{}{"tenant_id": "tenant-a"})
+		if _, err := srv.InvokeTool(caller, "xkms.fido2.finishRegistration", args); err != nil {
+			t.Fatalf("finishRegistration: %v", err)
+		}
+		if fake.lastTenant != "tenant-a" {
+			t.Errorf("tenant %q, want tenant-a", fake.lastTenant)
+		}
+	})
+
+	t.Run("finish_other_tenant", func(t *testing.T) {
+		srv, fake := setup(t)
+		args := finishArgs(map[string]interface{}{"tenant_id": "tenant-b"})
+		_, err := srv.InvokeTool(caller, "xkms.fido2.finishRegistration", args)
+		var tenantErr *ModuleToolTenantError
+		if !errors.As(err, &tenantErr) || tenantErr.Named != "tenant-b" {
+			t.Fatalf("expected *ModuleToolTenantError naming tenant-b, got %T: %v", err, err)
+		}
+		if fake.lastFinishReg != nil {
+			t.Errorf("the service was reached: %+v", fake.lastFinishReg)
+		}
+	})
+
+	t.Run("unbound_caller", func(t *testing.T) {
+		srv, fake := setup(t)
+		_, err := srv.InvokeTool(context.Background(), "xkms.fido2.beginAddCredential", nil)
+		var tenantErr *ModuleToolTenantError
+		if !errors.As(err, &tenantErr) || tenantErr.Named != "" {
+			t.Fatalf("expected *ModuleToolTenantError naming no tenant, got %T: %v", err, err)
+		}
+		if fake.lastTenant != "" {
+			t.Errorf("the service was reached in tenant %q", fake.lastTenant)
+		}
+	})
 }
 
 // TestToolName covers the sanitization rules.

@@ -139,6 +139,27 @@ func TestMCPToolPermissions_LoginStaysRefused(t *testing.T) {
 	}
 }
 
+// TestMCPToolPermissions_FIDO2AddCredentialOnItsRESTGrant proves the module
+// declares the passkey add-credential pair on user_authfactors:add, the
+// permission its REST and gRPC routes take, and leaves the other FIDO2
+// ceremony tools undeclared (refused).
+func TestMCPToolPermissions_FIDO2AddCredentialOnItsRESTGrant(t *testing.T) {
+	backend := newMCPBackend(t)
+	m := newMCPModule(t, func() *mcpapi.Server { return backend })
+
+	perms := m.MCPToolPermissions()
+
+	for _, tool := range []string{"xkms_fido2_beginAddCredential", "xkms_fido2_finishRegistration"} {
+		perm, declared := perms[tool]
+		require.True(t, declared, "%s must be declared", tool)
+		assert.Equal(t, qrdbsdk.Permission("user_authfactors:add"), perm, "tool %q", tool)
+	}
+	for _, tool := range []string{"xkms_fido2_beginRegistration", "xkms_fido2_beginAuthentication", "xkms_fido2_finishAuthentication"} {
+		_, declared := perms[tool]
+		assert.False(t, declared, "%s must stay undeclared (refused)", tool)
+	}
+}
+
 // TestMCPToolHandler_LazyAndDispatch proves the tool handler answers a tool
 // error while unresolved and dispatches the real registry handler once
 // resolved — without re-registration. Uses quicbaas_liveness: every

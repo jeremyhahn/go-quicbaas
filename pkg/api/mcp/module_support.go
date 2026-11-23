@@ -18,9 +18,11 @@ package mcp
 import (
 	"context"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // ToolSpec describes one tool of the quicbaas MCP surface for the
@@ -177,6 +179,19 @@ var qrdbNativeDuplicateTools = map[string]struct{}{
 	"qrdb_vector_upsert":                 {},
 }
 
+// moduleServedXKMSTools are the "xkms." registry tools the module lists
+// although the family is otherwise go-xkms's (see ModuleTools). go-xkms's
+// module serves no WebAuthn ceremony tool, so without these an
+// authenticated caller could not add a passkey to its own account over
+// MCP. Each keeps the grant its REST and gRPC twins take
+// (user_authfactors:add), and InvokeTool binds each to the caller's own
+// tenant. Registration for another account and the authentication
+// ceremony stay off the node.
+var moduleServedXKMSTools = map[string]struct{}{
+	"xkms.fido2.beginAddCredential": {},
+	"xkms.fido2.finishRegistration": {},
+}
+
 // ModuleTools enumerates the full quicbaas MCP tool surface for the
 // unified-API-server module, sorted by registry tool name, EXCLUDING
 // qrdbNativeDuplicateTools (see its doc comment). The enumeration source is
@@ -204,8 +219,10 @@ func ModuleTools() []ToolSpec {
 		// and is a compatibility wrapper around the exact same capability
 		// (cert/key/seal/sign/verify/encrypt/decrypt), the MCP-surface twin
 		// of TestModule_RegisterGRPC_ExcludesXKMSCanonicalSurface
-		// (pkg/apimodule/module_test.go).
-		if strings.HasPrefix(def.Name, "xkms.") {
+		// (pkg/apimodule/module_test.go). The exception is
+		// moduleServedXKMSTools: go-xkms's module serves no FIDO2 ceremony
+		// tool.
+		if _, served := moduleServedXKMSTools[def.Name]; !served && strings.HasPrefix(def.Name, "xkms.") {
 			continue
 		}
 		spec := ToolSpec{
@@ -239,11 +256,57 @@ func ModuleTools() []ToolSpec {
 // projected into the quicbaas principal contract so service-layer per-key
 // authorization and tenant isolation observe the caller the unified server
 // authorized, exactly as the token path injects its validated Subject.
+// A module-served xkms tool acts only in the caller's own tenant
+// (moduleCallerTenantArgs).
 func (s *Server) InvokeTool(ctx context.Context, name string, args map[string]interface{}) (interface{}, error) {
 	if s.sealedWindowDeniesTool(name) {
 		return nil, &SealedWindowError{Tool: name}
 	}
-	return s.tools.ExecuteTool(upstreamToolContext(ctx), name, args)
+	ctx = upstreamToolContext(ctx)
+	if _, served := moduleServedXKMSTools[name]; served {
+		bound, err := moduleCallerTenantArgs(ctx, name, args)
+		if err != nil {
+			return nil, err
+		}
+		args = bound
+	}
+	return s.tools.ExecuteTool(ctx, name, args)
+}
+
+// ModuleToolTenantError reports a module-served xkms tool call from a
+// caller bound to no tenant, or one naming a tenant other than the
+// caller's own.
+type ModuleToolTenantError struct {
+	Tool  string
+	Named string
+}
+
+func (e *ModuleToolTenantError) Error() string {
+	if e.Named == "" {
+		return e.Tool + ": the caller is bound to no tenant"
+	}
+	return e.Tool + ": tenant " + strconv.Quote(e.Named) + " is not the caller's tenant"
+}
+
+// moduleCallerTenantArgs pins a module-served xkms tool call to the
+// caller's bound tenant. It returns a copy of args whose tenant_id is
+// that tenant, and refuses a call from a caller bound to no tenant or
+// one that names another tenant.
+func moduleCallerTenantArgs(ctx context.Context, name string, args map[string]interface{}) (map[string]interface{}, error) {
+	bound, ok := tenantctx.Lookup(ctx)
+	if !ok || bound == "" {
+		return nil, &ModuleToolTenantError{Tool: name}
+	}
+	named, _ := args["tenant_id"].(string) // comma-ok: an absent tenant_id names no tenant
+	if named != "" && named != bound {
+		return nil, &ModuleToolTenantError{Tool: name, Named: named}
+	}
+	out := make(map[string]interface{}, len(args)+1)
+	for k, v := range args {
+		out[k] = v
+	}
+	out["tenant_id"] = bound
+	return out, nil
 }
 
 // upstreamToolContext projects a qrdb identity already authenticated by the
