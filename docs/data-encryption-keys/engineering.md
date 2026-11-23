@@ -1,6 +1,6 @@
 # Data Encryption Keys — Engineering
 
-> **Status: NORMATIVE** · Last verified: 2026-11-14
+> **Status: NORMATIVE** · Last verified: 2026-11-23
 > Implementation contract for the DEK surface. Feature folder:
 > `docs/data-encryption-keys/`.
 
@@ -16,6 +16,12 @@ Two DEK surfaces reach users through `sdk/go`:
   `Server.GetQRDBDEKServicer`). Status, rotate, retire, encrypt, decrypt and
   rewrap; every call acts on the caller's own tenant. The CLI is
   `quicbaas dek tenant`, and `kms://` secret references resolve through it.
+  Over REST (`sdk/go/transport/rest/qrdb_dek_client.go`) every verb carries
+  the tenant bearer-hop guard: the platform bearer is never sent on a non-https
+  hop, nor across a redirect to http or to another host:port. Encrypt, decrypt
+  and rewrap also carry the secret-hop guard: their only allowed hop is the
+  configured https origin, and no redirect is followed. A refusal is a
+  non-retryable `CodeForbidden` error, and nothing reaches the network.
 - **QuicBaaS's own path-addressed DEK store** — `quicbaas.DEKClient`
   (`sdk/go/client/dek`), reached by `Security().DEK()`. It is a **parallel
   implementation** of the keyring above and is removed on the owner's word;
@@ -49,9 +55,10 @@ the bytes-per-key bound). `SetDEKSafety` sets that bound for one DEK —
 safety tracker (`pkg/service/aead_safety.go`); `ClearDEKSafety` drops the
 per-DEK bound back to the server default.
 
-- Each encryption under the DEK counts against the bound. Past the warning
-  percentage a warning is logged and counted; the use that reaches the bound
-  is **refused** (`AEAD limit exceeded`), and every later use is refused too.
+- Each use the tracker counts against the DEK (`RecordDEKEncrypt`) counts
+  against the bound. Past the warning percentage a warning is logged and
+  counted; the use that reaches the bound is **refused** (`AEAD limit
+  exceeded`), and every later use is refused too.
 - **Rotation is the remedy, not one of the guarded uses.** `RotateDEK` gives a
   new key version whose usage starts at zero, so the DEK is usable again under
   the same bound. Rotating is never refused by the interlock.
@@ -59,7 +66,16 @@ per-DEK bound back to the server default.
   `bytes_used`).
 
 The interlock is state on the server, not a CLI flag, so it holds against
-every path to the key, the API included.
+every path to the key, the API included. What it bounds today:
+
+- **It is `AEADSafetyTracker`'s per-DEK bound for a path-addressed DEK.**
+- **No QuicBaaS verb encrypts under a path-addressed DEK.** The store
+  (`pkg/service/kms.go`) has no encrypt verb, and no production path calls
+  `RecordDEKEncrypt`, so nothing counts a use against the bound today.
+- **go-qrdb's tenant keyring, which does the real encryption, has no
+  per-version use cap.** Its encrypt and rewrap are served by go-qrdb (by the
+  node itself on the network transports), so a cap there is go-qrdb's to add;
+  a QuicBaaS-side cap would not cover those transports.
 
 ## Re-encryption is asynchronous
 
@@ -86,7 +102,7 @@ never stored in the clear.
 
 - A DEK operation against a **sealed** barrier fails; it does not queue and does
   not degrade to an unencrypted path.
-- A use past a DEK's safety bound is refused with an AEAD-limit error. It is a
+- A use past a path-addressed DEK's safety bound is refused with an AEAD-limit error. It is a
   distinct error from a permission denial — do not treat them alike, because
   the remedy (rotate the DEK) is different.
 - Re-encryption failure leaves records under their existing version. It does not
@@ -101,9 +117,18 @@ one explicit list of environment variables and no DEK key appears in it.
 
 ## Test strategy
 
-- Unit tests cover the safety interlock's refusal paths and the path-addressing
-  rules: `pkg/service/kms_dek_interlock_test.go` walks set-safety, refusal at
-  the bound, rotation back to zero usage and clear-safety.
+- `pkg/service/kms_dek_interlock_test.go` proves the tracker's accounting:
+  set-safety, refusal at the bound, rotation back to zero usage and
+  clear-safety. It drives the tracker calls an encrypt path would make; it
+  does not prove a refused encryption, because no QuicBaaS verb encrypts
+  under a path-addressed DEK.
+- The REST hop guards are proven by
+  `sdk/go/transport/rest/qrdb_dek_client_test.go`
+  (`TestQRDBDEKClient_SecretVerbsRefusePlaintext`,
+  `TestQRDBDEKClient_BearerNeverSentOverPlaintext`,
+  `TestQRDBDEKClient_RefusesRedirects`, `TestQRDBDEKClient_HTTPSRoundTrip`)
+  and by `TestTenantDEK_REST_SendsPlatformBearer` (over TLS) and
+  `TestTenantDEK_REST_RefusesPlaintextHTTP` in `sdk/go/qrdb_dek_client_test.go`.
 - `make integration-test-dek` drives create, get, list, rotate, delete, status,
   set default, set and clear safety (rotating under the bound), start
   re-encryption and progress over REST, gRPC and the unix socket.

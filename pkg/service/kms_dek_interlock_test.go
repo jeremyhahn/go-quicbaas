@@ -19,10 +19,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestKMSService_DEKSafetyInterlock_Lifecycle walks a DEK through the safety
-// interlock: SetDEKSafety caps its AEAD usage, the use that reaches the cap is
-// refused, RotateDEK gives a fresh key version whose usage starts at zero so
-// it is accepted again, and ClearDEKSafety lifts the per-DEK cap.
+// TestKMSService_DEKSafetyInterlock_Lifecycle proves the AEAD safety tracker's
+// accounting for a path-addressed DEK. It drives the tracker calls an encrypt
+// path would make (RecordDEKEncrypt; no QuicBaaS verb encrypts under a
+// path-addressed DEK today) and proves that, under SetDEKSafety's cap, the use
+// that reaches the cap is refused, that RotateDEK starts the new version's
+// usage at zero so a use is accepted again, and that ClearDEKSafety lifts the
+// per-DEK cap. It does not prove a refused encryption.
 func TestKMSService_DEKSafetyInterlock_Lifecycle(t *testing.T) {
 	svc := newKMSService(newMockKMSManager(), newMockLogger())
 	ctx := systemTenantCtx()
