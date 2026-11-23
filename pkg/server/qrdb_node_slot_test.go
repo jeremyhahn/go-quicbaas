@@ -21,9 +21,10 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
-	"github.com/stretchr/testify/require"
 )
 
 // TestNodeSlot_RefusesASecondHolder pins the slot's claim/release contract:
