@@ -678,3 +678,46 @@ func TestMCPQRDBTimeSeriesClientPreservesNanoseconds(t *testing.T) {
 		})
 	}
 }
+
+func TestMCPTimeseriesRequestPreservesNanoseconds(t *testing.T) {
+	const (
+		ns1 int64 = 1_700_000_000_000_000_001
+		ns2 int64 = 1_700_000_000_000_000_002
+	)
+	if float64(ns1) != float64(ns2) {
+		t.Fatal("test values must collide as float64")
+	}
+
+	url, calls := newQTSServer(t, []string{"qrdb_ts_write_point", "qrdb_ts_query"},
+		func(tool string, _ map[string]interface{}) string {
+			if tool == "qrdb_ts_query" {
+				return `[]`
+			}
+			return `{"success":true}`
+		})
+	tr, err := New(&transport.Config{Address: url, Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = tr.Close() })
+	ctx := context.Background()
+
+	if _, err := tr.Request(ctx, "quicbaas.TimeSeries", "Write", &timeseries.WriteRequest{
+		Metric: "cpu", Value: 1, Timestamp: time.Unix(0, ns1),
+	}); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if _, err := tr.Request(ctx, "quicbaas.TimeSeries", "Query", &timeseries.QueryRequest{
+		Metric: "cpu", Start: time.Unix(0, ns1), End: time.Unix(0, ns2),
+	}); err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+
+	got := calls()
+	if len(got) != 2 || got[0].tool != "qrdb_ts_write_point" || got[1].tool != "qrdb_ts_query" {
+		t.Fatalf("calls = %+v", got)
+	}
+	qtsExactArg(t, got[0].args, "timestamp", ns1)
+	qtsExactArg(t, got[1].args, "start", ns1)
+	qtsExactArg(t, got[1].args, "end", ns2)
+}

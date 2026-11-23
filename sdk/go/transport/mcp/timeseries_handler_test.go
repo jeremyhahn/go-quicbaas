@@ -14,6 +14,7 @@
 package mcp
 
 import (
+	"strconv"
 	"testing"
 	"time"
 
@@ -188,7 +189,7 @@ func TestTimeseriesHandlerTransformWritePoint(t *testing.T) {
 		t.Errorf("value = %v, want 75.5", args["value"])
 	}
 
-	if args["timestamp"] != now.UnixNano() {
+	if args["timestamp"] != strconv.FormatInt(now.UnixNano(), 10) {
 		t.Errorf("timestamp = %v, want %v", args["timestamp"], now.UnixNano())
 	}
 
@@ -229,11 +230,11 @@ func TestTimeseriesHandlerTransformQuery(t *testing.T) {
 		t.Errorf("metric = %v, want cpu.usage", args["metric"])
 	}
 
-	if args["start"] != start.UnixNano() {
+	if args["start"] != strconv.FormatInt(start.UnixNano(), 10) {
 		t.Errorf("start = %v, want %v", args["start"], start.UnixNano())
 	}
 
-	if args["end"] != end.UnixNano() {
+	if args["end"] != strconv.FormatInt(end.UnixNano(), 10) {
 		t.Errorf("end = %v, want %v", args["end"], end.UnixNano())
 	}
 
@@ -277,10 +278,10 @@ func TestTimeseriesQueryArgsMatchQRDBTool(t *testing.T) {
 
 	assertKeys := func(t *testing.T, args map[string]interface{}) {
 		t.Helper()
-		if args["start"] != start.UnixNano() {
+		if args["start"] != strconv.FormatInt(start.UnixNano(), 10) {
 			t.Errorf("start = %v, want %v", args["start"], start.UnixNano())
 		}
-		if args["end"] != end.UnixNano() {
+		if args["end"] != strconv.FormatInt(end.UnixNano(), 10) {
 			t.Errorf("end = %v, want %v", args["end"], end.UnixNano())
 		}
 		for _, k := range []string{"start_time", "end_time"} {

@@ -105,7 +105,8 @@ func (h *timeseriesHandler) transformWritePoint(req interface{}) (map[string]int
 	}
 
 	if !sdkReq.Timestamp.IsZero() {
-		args["timestamp"] = sdkReq.Timestamp.UnixNano()
+		// A decimal string: MCP decodes JSON numbers as float64, which cannot hold current Unix nanoseconds exactly.
+		args["timestamp"] = strconv.FormatInt(sdkReq.Timestamp.UnixNano(), 10)
 	}
 
 	if len(sdkReq.Tags) > 0 {
@@ -132,9 +133,9 @@ func (h *timeseriesHandler) transformWritePointFromMap(req map[string]interface{
 		args["value"] = value
 	}
 	if ts, ok := req["timestamp"].(time.Time); ok {
-		args["timestamp"] = ts.UnixNano()
+		args["timestamp"] = strconv.FormatInt(ts.UnixNano(), 10)
 	} else if tsNano, ok := req["timestamp"].(int64); ok {
-		args["timestamp"] = tsNano
+		args["timestamp"] = strconv.FormatInt(tsNano, 10)
 	}
 	if tags, ok := req["tags"].(map[string]string); ok && len(tags) > 0 {
 		tagsJSON, err := json.Marshal(tags)
@@ -183,8 +184,8 @@ func (h *timeseriesHandler) transformQuery(req interface{}) (map[string]interfac
 
 	args := map[string]interface{}{
 		"metric": sdkReq.Metric,
-		"start":  sdkReq.Start.UnixNano(),
-		"end":    sdkReq.End.UnixNano(),
+		"start":  strconv.FormatInt(sdkReq.Start.UnixNano(), 10),
+		"end":    strconv.FormatInt(sdkReq.End.UnixNano(), 10),
 	}
 
 	if len(sdkReq.Tags) > 0 {
@@ -219,14 +220,14 @@ func (h *timeseriesHandler) transformQueryFromMap(req map[string]interface{}) (m
 		args["metric"] = metric
 	}
 	if start, ok := req["start_time"].(time.Time); ok {
-		args["start"] = start.UnixNano()
+		args["start"] = strconv.FormatInt(start.UnixNano(), 10)
 	} else if startNano, ok := req["start_time"].(int64); ok {
-		args["start"] = startNano
+		args["start"] = strconv.FormatInt(startNano, 10)
 	}
 	if end, ok := req["end_time"].(time.Time); ok {
-		args["end"] = end.UnixNano()
+		args["end"] = strconv.FormatInt(end.UnixNano(), 10)
 	} else if endNano, ok := req["end_time"].(int64); ok {
-		args["end"] = endNano
+		args["end"] = strconv.FormatInt(endNano, 10)
 	}
 	if tags, ok := req["tags"].(map[string]string); ok && len(tags) > 0 {
 		tagsJSON, err := json.Marshal(tags)
