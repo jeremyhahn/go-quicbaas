@@ -167,7 +167,7 @@ func startDaemonOnBackend(
 	ports PortBundle,
 ) *DaemonProcess {
 	t.Helper()
-	return startDaemonWithConfig(t, binary, dataDir, backendConfigPath(dataDir), "none", transport, ports)
+	return startDaemonWithConfig(t, binary, dataDir, backendConfigPath(dataDir), "none", transport, ports, "")
 }
 
 // verifyDataRoundTrip writes a key through the CLI and reads it back over the

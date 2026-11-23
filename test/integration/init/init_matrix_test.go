@@ -125,8 +125,15 @@ func runMatrixCell(t *testing.T, binary, cliBinary, strategy, transport string) 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
+	// A passphrase cell seals with a passphrase generated here; start
+	// (phase 2) auto-unseals with the same value.
+	var passphrase string
+	if strategy == strategyPassphrase {
+		passphrase = testSecret(t, "seal-")
+	}
+
 	// Phase 1: init.
-	initOutput, initErr := invokeInit(ctx, binary, strategy, dataDir)
+	initOutput, initErr := invokeInit(ctx, binary, strategy, dataDir, passphrase)
 	if initErr != nil {
 		t.Fatalf("`quicbaasd init --barrier-strategy %s` failed: %v\noutput:\n%s",
 			strategy, initErr, initOutput)
@@ -138,7 +145,7 @@ func runMatrixCell(t *testing.T, binary, cliBinary, strategy, transport string) 
 
 	// Phase 2: start daemon + wait for transport readiness.
 	ports := allocPortBundle(t, transport, dataDir)
-	daemon := startDaemon(t, binary, dataDir, strategy, transport, ports)
+	daemon := startDaemonWithConfig(t, binary, dataDir, "", strategy, transport, ports, passphrase)
 	if err := waitForTransportReady(ctx, t, daemon, transport, ports, dataDir); err != nil {
 		t.Fatalf("transport %q for strategy %q never became ready: %v",
 			transport, strategy, err)
@@ -194,11 +201,11 @@ func runMatrixCell(t *testing.T, binary, cliBinary, strategy, transport string) 
 
 // invokeInit dispatches to the appropriate init helper for the
 // requested strategy. Keeps the matrix body free of strategy-specific
-// branching.
-func invokeInit(ctx context.Context, binary, strategy, dataDir string) (string, error) {
+// branching. passphrase is the seal passphrase for the passphrase strategy.
+func invokeInit(ctx context.Context, binary, strategy, dataDir, passphrase string) (string, error) {
 	switch strategy {
 	case "none", "passphrase":
-		return runInit(ctx, binary, strategy, dataDir)
+		return runInit(ctx, binary, strategy, dataDir, passphrase)
 	case "shamir":
 		return runShamirInit(ctx, binary, dataDir)
 	}
@@ -298,7 +305,7 @@ func TestCanonicalInit_NoneRejectsPINs(t *testing.T) {
 	output, err := execInit(ctx, binary, []string{
 		"init",
 		"--barrier-strategy", "none",
-		"--so-pin", "should-fail",
+		"--so-pin", testSecret(t, "so-"),
 		"--data-dir", dataDir,
 	})
 	if err == nil {
@@ -334,8 +341,8 @@ func TestCanonicalInit_UnsupportedHardwareGracefulSkip(t *testing.T) {
 			output, err := execInit(ctx, binary, []string{
 				"init",
 				"--barrier-strategy", strategy,
-				"--so-pin", "p",
-				"--user-pin", "u",
+				"--so-pin", testSecret(t, "so-"),
+				"--user-pin", testSecret(t, "user-"),
 				"--data-dir", dataDir,
 			})
 			if err == nil {

@@ -39,8 +39,10 @@ package init
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -452,21 +454,44 @@ func splitLines(data []byte) []string {
 	return out
 }
 
+// testSecretBytes is how many random bytes a generated test credential carries.
+const testSecretBytes = 16
+
+// newTestSecret returns prefix followed by testSecretBytes bytes from
+// crypto/rand, hex-encoded. The init tests generate every passphrase, PIN and
+// token at run time, so no credential value lives in the source; each one
+// reaches only the test's own throwaway daemon under t.TempDir(). prefix only
+// names the value's role.
+func newTestSecret(prefix string) (string, error) {
+	buf := make([]byte, testSecretBytes)
+	if _, err := rand.Read(buf); err != nil {
+		return "", fmt.Errorf("newTestSecret: %w", err)
+	}
+	return prefix + hex.EncodeToString(buf), nil
+}
+
+// testSecret is newTestSecret for a test body; it fails t if it cannot generate one.
+func testSecret(t testing.TB, prefix string) string {
+	t.Helper()
+	secret, err := newTestSecret(prefix)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	return secret
+}
+
 // ---------------------------------------------------------------------------
 // Init invocation
 // ---------------------------------------------------------------------------
 
 // runInit invokes `quicbaasd init` with the given strategy + data dir.
-// PINs are supplied for strategies that require them; absent for "none".
+// For "passphrase", init seals with passphrase (the caller hands start the
+// same value) and gets SO and user PINs generated per call; "none" gets neither.
 // The function blocks until the init subcommand exits and returns the
 // process's combined output for assertion / diagnostic use.
 //
 // We deliberately use a fresh exec.Cmd (not spawnDaemon) because init is
 // short-lived and must exit cleanly before the test moves to start.
-// matrixPassphrase is the admin-supplied barrier passphrase shared between
-// the init phase (--passphrase) and the start phase
-// (QUICBAAS_SEAL_PASSPHRASE auto-unseal) of the passphrase matrix cells.
-const matrixPassphrase = "init-matrix-passphrase-2026"
 
 // matrixTrustDomain is the SPIFFE trust domain every matrix init runs under.
 // It is mandatory: the CA stamps spiffe://<trust-domain>/tenant/system/user/admin
@@ -512,7 +537,7 @@ func writeBackendConfig(dataDir, backend string) (string, error) {
 	return path, nil
 }
 
-func runInit(ctx context.Context, binary string, strategy string, dataDir string) (string, error) {
+func runInit(ctx context.Context, binary, strategy, dataDir, passphrase string) (string, error) {
 	if err := os.MkdirAll(dataDir, 0o750); err != nil {
 		return "", fmt.Errorf("runInit: mkdir data dir: %w", err)
 	}
@@ -528,8 +553,19 @@ func runInit(ctx context.Context, binary string, strategy string, dataDir string
 		// The passphrase barrier is sealed with an admin-supplied
 		// passphrase at init (security hardening removed the
 		// deployment-derived default), so --passphrase is REQUIRED.
-		args = append(args, "--so-pin", "so-pin-1234", "--user-pin", "user-pin-1234",
-			"--passphrase", matrixPassphrase)
+		if passphrase == "" {
+			return "", errors.New("runInit: the passphrase strategy needs a passphrase")
+		}
+		soPIN, err := newTestSecret("so-")
+		if err != nil {
+			return "", err
+		}
+		userPIN, err := newTestSecret("user-")
+		if err != nil {
+			return "", err
+		}
+		args = append(args, "--so-pin", soPIN, "--user-pin", userPIN,
+			"--passphrase", passphrase)
 	case "shamir":
 		// For shamir we expect officers + threshold/shares. The matrix
 		// drives this through the dedicated runShamirInit helper below
@@ -562,12 +598,20 @@ func runShamirInit(ctx context.Context, binary string, dataDir string) (string, 
 	if cfgErr != nil {
 		return "", cfgErr
 	}
+	soPIN, err := newTestSecret("so-")
+	if err != nil {
+		return "", err
+	}
+	userPIN, err := newTestSecret("user-")
+	if err != nil {
+		return "", err
+	}
 	args := []string{
 		"init",
 		"--config", cfgPath,
 		"--barrier-strategy", "shamir",
-		"--so-pin", "so-pin-1234",
-		"--user-pin", "user-pin-1234",
+		"--so-pin", soPIN,
+		"--user-pin", userPIN,
 		"--shares", "3",
 		"--threshold", "2",
 		"--data-dir", dataDir,
@@ -593,9 +637,12 @@ func runShamirInit(ctx context.Context, binary string, dataDir string) (string, 
 // explicitly disable the Unix socket only when our target transport is
 // gRPC or none of the gRPC-bearing transports; otherwise unix lives on a
 // per-subtest path under the data dir.
+//
+// It starts a strategy that needs no seal passphrase; a passphrase cell calls
+// startDaemonWithConfig.
 func startDaemon(t *testing.T, binary string, dataDir string, strategy string, transport string, ports PortBundle) *DaemonProcess {
 	t.Helper()
-	return startDaemonWithConfig(t, binary, dataDir, "", strategy, transport, ports)
+	return startDaemonWithConfig(t, binary, dataDir, "", strategy, transport, ports, "")
 }
 
 // unknownTransportError reports a transport the harness cannot start.
@@ -634,11 +681,14 @@ func daemonStartArgs(dataDir, cfgPath, transport string, ports PortBundle) ([]st
 }
 
 // startDaemonWithConfig is startDaemon with an optional config file: a
-// non-empty cfgPath is handed to `quicbaasd start --config`.
+// non-empty cfgPath is handed to `quicbaasd start --config`. For the
+// passphrase strategy, sealPassphrase is the passphrase init sealed with;
+// start auto-unseals with it.
 func startDaemonWithConfig(
 	t *testing.T,
 	binary, dataDir, cfgPath, strategy, transport string,
 	ports PortBundle,
+	sealPassphrase string,
 ) *DaemonProcess {
 	t.Helper()
 
@@ -657,6 +707,9 @@ func startDaemonWithConfig(
 		"HOME=" + dataDir,
 	}
 	if strategy == "passphrase" {
+		if sealPassphrase == "" {
+			t.Fatalf("startDaemon: the passphrase strategy needs the passphrase init sealed with")
+		}
 		// Init ran with seal enabled and an initialized passphrase barrier,
 		// so the data plane on disk is encrypted (encfs over the barrier
 		// KEK). Start must boot with the SAME seal posture and auto-unseal
@@ -665,7 +718,7 @@ func startDaemonWithConfig(
 		env = append(env,
 			"QUICBAAS_SEAL_ENABLED=true",
 			"QUICBAAS_SEAL_STRATEGY=passphrase",
-			"QUICBAAS_SEAL_PASSPHRASE="+matrixPassphrase,
+			"QUICBAAS_SEAL_PASSPHRASE="+sealPassphrase,
 		)
 	}
 	if transport == "mcp" {
