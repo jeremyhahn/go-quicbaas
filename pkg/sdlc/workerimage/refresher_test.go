@@ -156,7 +156,7 @@ func TestRefresh_PublishesThenBindsTheDigestPinnedReference(t *testing.T) {
 	if report.Outcome != OutcomePromoted {
 		t.Fatalf("outcome = %s (%s)", report.Outcome, report.Error)
 	}
-	if !slices.Equal(h.engine.pushes, []string{remote}) || h.engine.pushAuth[0] == nil {
+	if !slices.Equal(h.engine.pushes, []string{remote + CandidateTagSuffix, remote}) || h.engine.pushAuth[1] == nil {
 		t.Fatalf("pushes = %v auth = %v", h.engine.pushes, h.engine.pushAuth)
 	}
 	if report.Digest != testDigest || report.Reference != remote+"@"+testDigest {
@@ -404,8 +404,63 @@ func TestRefresh_AFailedGatePublishesNothing(t *testing.T) {
 
 	h.r.Refresh(t.Context(), TriggerManual)
 
-	if len(h.engine.pushes) != 0 || len(h.engine.tags) != 0 {
-		t.Fatalf("an image that failed its gate was published: tags=%v pushes=%v", h.engine.tags, h.engine.pushes)
+	// Only the staging tag the smokes pulled from is pushed; the release
+	// tag never moves for a build that failed its gate.
+	for _, pushed := range h.engine.pushes {
+		if !strings.HasSuffix(pushed, CandidateTagSuffix) {
+			t.Fatalf("an image that failed its gate was published: tags=%v pushes=%v", h.engine.tags, h.engine.pushes)
+		}
+	}
+	if len(h.engine.pushes) != 1 {
+		t.Fatalf("pushes = %v, want the staged candidate alone", h.engine.pushes)
+	}
+}
+
+// TestRefresh_SmokesTheStagedCandidateByDigest is the agent-store contract:
+// an agent's in-process runtime has its own image store, so the smokes take
+// the candidate pushed under the staging tag, pinned by the digest that push
+// returned, never a local tag the agent cannot see.
+func TestRefresh_SmokesTheStagedCandidateByDigest(t *testing.T) {
+	cfg := testConfig()
+	withRegistry(&cfg)
+	h := newHarness(t, cfg)
+
+	report := h.r.Refresh(t.Context(), TriggerManual)
+	if report.Outcome != OutcomePromoted {
+		t.Fatalf("outcome = %s (%s)", report.Outcome, report.Error)
+	}
+	staged := cfg.Registry + ":0.11.0-alpha-cc2.1.280-cx0.156.0" + CandidateTagSuffix
+	if len(h.engine.pushes) == 0 || h.engine.pushes[0] != staged {
+		t.Fatalf("pushes = %v, want %s staged first", h.engine.pushes, staged)
+	}
+	if len(h.smoker.requests) == 0 {
+		t.Fatal("no smoke ran")
+	}
+	for _, req := range h.smoker.requests {
+		if req.Image != staged+"@"+testDigest {
+			t.Fatalf("smoke image = %q, want the staged candidate %s@%s", req.Image, staged, testDigest)
+		}
+	}
+}
+
+// With no registry nothing is pushed, and the smokes take the built image ID.
+func TestRefresh_LocalModeSmokesTheBuiltIDAndPushesNothing(t *testing.T) {
+	h := newHarness(t, testConfig())
+
+	report := h.r.Refresh(t.Context(), TriggerManual)
+	if report.Outcome != OutcomePromoted {
+		t.Fatalf("outcome = %s (%s)", report.Outcome, report.Error)
+	}
+	if len(h.engine.pushes) != 0 {
+		t.Fatalf("pushes = %v, want none in local mode", h.engine.pushes)
+	}
+	if len(h.smoker.requests) == 0 {
+		t.Fatal("no smoke ran")
+	}
+	for _, req := range h.smoker.requests {
+		if req.Image != report.ImageID {
+			t.Fatalf("smoke image = %q, want the built ID %q", req.Image, report.ImageID)
+		}
 	}
 }
 

@@ -20,8 +20,11 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/opencontainers/runc/libcontainer/configs"
+	specs "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/unix"
@@ -127,6 +130,31 @@ func TestToLibcontainerProcess_TTYLeavesTheStreamsToTheConsole(t *testing.T) {
 	assert.Nil(t, process.Stderr)
 	assert.False(t, process.Init)
 	assert.Empty(t, process.AdditionalGroups)
+}
+
+func TestLibcontainerRlimits(t *testing.T) {
+	rlimits, err := libcontainerRlimits([]specs.POSIXRlimit{
+		{Type: "RLIMIT_NOFILE", Soft: 1024, Hard: 2048},
+		{Type: "RLIMIT_MEMLOCK", Soft: 4294967296, Hard: 4294967296},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []configs.Rlimit{
+		{Type: unix.RLIMIT_NOFILE, Soft: 1024, Hard: 2048},
+		{Type: unix.RLIMIT_MEMLOCK, Soft: 4294967296, Hard: 4294967296},
+	}, rlimits)
+
+	_, err = libcontainerRlimits([]specs.POSIXRlimit{{Type: "RLIMIT_BOGUS", Soft: 1, Hard: 1}})
+	require.ErrorContains(t, err, "RLIMIT_BOGUS")
+
+	rlimits, err = libcontainerRlimits(nil)
+	require.NoError(t, err)
+	assert.Empty(t, rlimits)
+
+	// Every ulimit the runtime accepts has a kernel resource.
+	for _, name := range ulimitResources {
+		_, err := libcontainerRlimits([]specs.POSIXRlimit{{Type: "RLIMIT_" + strings.ToUpper(name)}})
+		require.NoError(t, err, name)
+	}
 }
 
 func TestReceiveConsole(t *testing.T) {

@@ -93,7 +93,16 @@ func (s *storageImageStore) Pull(ctx context.Context, ref string) (record imageR
 		return imageRecord{}, err
 	}
 
-	source, err := docker.ParseReference("//" + named.String())
+	// The docker transport refuses a reference with both a tag and a digest,
+	// and the digest alone names the build.
+	pullRef := named
+	if canonical, ok := named.(reference.Canonical); ok {
+		pullRef, err = reference.WithDigest(reference.TrimNamed(named), canonical.Digest())
+		if err != nil {
+			return imageRecord{}, err
+		}
+	}
+	source, err := docker.ParseReference("//" + pullRef.String())
 	if err != nil {
 		return imageRecord{}, err
 	}
@@ -331,14 +340,14 @@ func (s *storageRootfsStore) Create(ctx context.Context, containerID, imageID st
 func (s *storageRootfsStore) Remove(containerID string) error {
 	// A reclaim retried after a removal that got this far finds nothing left.
 	// Unmount falls back from an unknown container to a layer lookup, so the
-	// store reports that absence as an unknown layer.
-	if _, err := s.store.Unmount(containerID, true); err != nil {
-		if errors.Is(err, storage.ErrContainerUnknown) || errors.Is(err, storage.ErrLayerUnknown) {
-			return nil
-		}
+	// store reports that absence as an unknown layer. A missing layer does
+	// not end the removal: the container record may outlive it.
+	if _, err := s.store.Unmount(containerID, true); err != nil &&
+		!errors.Is(err, storage.ErrContainerUnknown) && !errors.Is(err, storage.ErrLayerUnknown) {
 		return err
 	}
-	if err := s.store.DeleteContainer(containerID); err != nil && !errors.Is(err, storage.ErrContainerUnknown) {
+	if err := s.store.DeleteContainer(containerID); err != nil &&
+		!errors.Is(err, storage.ErrNotAContainer) && !errors.Is(err, storage.ErrContainerUnknown) {
 		return err
 	}
 	return nil
