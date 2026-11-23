@@ -36,6 +36,7 @@ Layer 4 of the stack, one product in layers: the application-layer framework and
 - **secrets** — rotation policies are performed, not only stored — DC: [#723](../../issues/723) — blocked: see issue
 - **security-hardening** — the scoped FIPS gate runs on push; webhook fixtures use FIPS-strength HMAC keys — DC: [#769](../../issues/769), [#524](../../issues/524) — blocked: see issue
 - **release-readiness** — no private host, path or lab value in the published tree; docs meet the handbook rules; CI mounts no host Docker socket — DC: [#1130](../../issues/1130), [#1258](../../issues/1258), [#1168](../../issues/1168) — open
+- **mcp-kv-expected-version** — compare-and-set put and conditional delete on the MCP key-value tools (owner ruling 1234) — [#2715](../../issues/2715)
 
 ## Next
 - **attestation** — no firmware module in the dependency graph — PDC: [#1185](../../issues/1185) — blocked: see issue
