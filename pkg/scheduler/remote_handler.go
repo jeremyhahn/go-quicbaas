@@ -89,6 +89,7 @@ func (e RemoteRunNotOpenError) Unwrap() error { return ErrRemoteRunNotOpen }
 type remoteOutcome struct {
 	result *JobResult
 	err    error
+	reply  chan error // buffered 1; answered once the outcome is recorded
 }
 
 // remoteWaiter is the execution of a remote run waiting on its result. It is
@@ -102,6 +103,7 @@ type remoteWaiter struct {
 	closed   bool
 	accepted bool               // a result was delivered (set with closed)
 	outcome  chan remoteOutcome // buffered 1
+	reply    chan error         // the accepted result's answer channel, until answered
 }
 
 // deliver hands the waiting execution its result, reporting false when the
@@ -114,8 +116,20 @@ func (w *remoteWaiter) deliver(o remoteOutcome) bool {
 	}
 	w.closed = true
 	w.accepted = true
+	w.reply = o.reply
 	w.outcome <- o
 	return true
+}
+
+// answer tells the completion whose result was delivered how its recording
+// ended. It answers at most once.
+func (w *remoteWaiter) answer(err error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.reply != nil {
+		w.reply <- err
+		w.reply = nil
+	}
 }
 
 // close ends the wait; it reports false when a result was delivered first.
@@ -234,7 +248,10 @@ func (s *SchedulerEngine) ListRemoteRuns(ctx context.Context, tenantID string, h
 
 // CompleteRemoteRun reports the result of one remote run: result on success,
 // or runErr when the worker's handler failed. A refused completion returns a
-// RemoteRunNotOpenError, and records nothing.
+// RemoteRunNotOpenError, and records nothing. On the firing node the call
+// returns once the run's outcome is written, with that write's result: a
+// refusal when another writer concluded the run, and a storage error when
+// the write failed.
 func (s *SchedulerEngine) CompleteRemoteRun(ctx context.Context, ref RemoteRunRef, result *JobResult, runErr error) error {
 	outcome := remoteOutcome{result: result, err: runErr}
 	if v, ok := s.remoteRuns.Load(runKey{TenantID: ref.TenantID, JobID: ref.JobID}); ok {
@@ -246,10 +263,16 @@ func (s *SchedulerEngine) CompleteRemoteRun(ctx context.Context, ref RemoteRunRe
 			if time.Now().After(w.deadline) {
 				return RemoteRunNotOpenError{Ref: ref, Reason: "the run's deadline passed"}
 			}
-			if w.deliver(outcome) {
-				return nil
+			outcome.reply = make(chan error, 1)
+			if !w.deliver(outcome) {
+				return RemoteRunNotOpenError{Ref: ref, Reason: "the run already ended"}
 			}
-			return RemoteRunNotOpenError{Ref: ref, Reason: "the run already ended"}
+			select {
+			case err := <-outcome.reply:
+				return err
+			case <-ctx.Done():
+				return ctx.Err()
+			}
 		}
 	}
 	return s.completeRemoteRunElsewhere(ctx, ref, outcome)
@@ -315,10 +338,22 @@ func (s *SchedulerEngine) completeRemoteRunElsewhere(ctx context.Context, ref Re
 	} else {
 		s.handleJobSuccess(ctx, job, exec, o.result)
 	}
-	if res.err != nil {
+	return remoteAnswer(ref, res, false)
+}
+
+// remoteAnswer is what a remote completion is told once its result was
+// recorded: res is the guarded conclusion's outcome (nil on a single-node
+// engine, which has no guard to report), and interrupted means the engine
+// stopped before the result could be recorded.
+func remoteAnswer(ref RemoteRunRef, res *ownRunResult, interrupted bool) error {
+	switch {
+	case interrupted:
+		return RemoteRunNotOpenError{Ref: ref, Reason: "the engine stopped before the result was recorded"}
+	case res == nil:
+		return nil
+	case res.err != nil:
 		return ErrStorageError{Op: "CompleteRemoteRun", Cause: res.err}
-	}
-	if !res.won {
+	case !res.won:
 		return RemoteRunNotOpenError{Ref: ref, Reason: "another writer concluded the run"}
 	}
 	return nil

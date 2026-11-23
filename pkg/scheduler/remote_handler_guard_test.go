@@ -199,3 +199,61 @@ func TestRemoteHandler_TheWorkersOutputIsKeptInHistory(t *testing.T) {
 		t.Fatalf("history %+v does not keep the worker's output", executions)
 	}
 }
+
+// TestRemoteHandler_TheFiringNodeRefusesARunConcludedElsewhere: a completion
+// offered to the firing node after another node concluded the run is
+// refused, and the other node's result stands.
+func TestRemoteHandler_TheFiringNodeRefusesARunConcludedElsewhere(t *testing.T) {
+	storage := newConcludingStorage()
+	firing := clusteredNode(t, storage, "node-1")
+	other := clusteredNode(t, storage, "node-2")
+	job := seedRunningJob(t, storage.mockJobStorage, remoteJob(time.Minute))
+
+	done := fire(firing, job)
+	ref := openRun(t, firing, job.ID).RemoteRunRef
+	if err := other.CompleteRemoteRun(context.Background(), ref, &JobResult{Message: "from node-2"}, nil); err != nil {
+		t.Fatalf("CompleteRemoteRun on another node: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := firing.CompleteRemoteRun(ctx, ref, &JobResult{Message: "from node-1"}, nil); !errors.Is(err, ErrRemoteRunNotOpen) {
+		t.Fatalf("a completion on the firing node of a run concluded elsewhere: err = %v, want ErrRemoteRunNotOpen", err)
+	}
+	waitDone(t, done)
+
+	executions := history(t, storage.mockJobStorage, job.ID)
+	if len(executions) != 1 || executions[0].Output != "from node-2" {
+		t.Fatalf("history is %+v, want the one record node-2 concluded", executions)
+	}
+}
+
+// TestRemoteHandler_TheFiringNodeReportsAFailedConclusion: a conclusion that
+// could not be written is reported to the worker, not acknowledged.
+func TestRemoteHandler_TheFiringNodeReportsAFailedConclusion(t *testing.T) {
+	storage := newConcludingStorage()
+	firing := clusteredNode(t, storage, "node-1")
+	job := seedRunningJob(t, storage.mockJobStorage, remoteJob(time.Minute))
+
+	done := fire(firing, job)
+	ref := openRun(t, firing, job.ID).RemoteRunRef
+	storage.errMu.Lock()
+	storage.updateJobErr = errors.New("raft: no quorum")
+	storage.errMu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	err := firing.CompleteRemoteRun(ctx, ref, &JobResult{Message: "renewed"}, nil)
+	var storageErr ErrStorageError
+	if !errors.As(err, &storageErr) {
+		t.Fatalf("a completion whose conclusion failed to write: err = %v, want an ErrStorageError", err)
+	}
+	if stored := storedJob(t, storage.mockJobStorage, job.ID); stored.Status != JobStatusRunning {
+		t.Fatalf("STORED job is %s after a failed conclusion, want running", stored.Status)
+	}
+
+	storage.errMu.Lock()
+	storage.updateJobErr = nil
+	storage.errMu.Unlock()
+	waitDone(t, done)
+}

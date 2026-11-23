@@ -1458,7 +1458,15 @@ func (s *SchedulerEngine) executeJob(ctx context.Context, job *Job, claimedFirin
 	// authority) through every outcome path.
 	ctx = s.noteRunStarted(ctx, job)
 	var waiter *remoteWaiter
+	var remoteRes *ownRunResult
 	if remote {
+		// The guarded conclusion's outcome is what the worker that reported
+		// the result is told.
+		if own, ok := ctx.Value(ownRunKey{}).(ownRun); ok {
+			remoteRes = &ownRunResult{}
+			own.result = remoteRes
+			ctx = withOwnRun(ctx, own)
+		}
 		// A remote worker runs this job: the execution waits for the
 		// result it reports (see remote_handler.go).
 		waiter = s.openRemoteRun(job)
@@ -1502,19 +1510,25 @@ func (s *SchedulerEngine) executeJob(ctx context.Context, job *Job, claimedFirin
 		result *JobResult
 		err    error
 	}) {
-		if res.err != nil {
+		interrupted := false
+		switch {
+		case res.err != nil && ctx.Err() != nil:
 			// A handler that honours cancellation returns its context's
 			// error the moment the engine stops, and that return races the
 			// Done case above. Either way the run was cut short by the
 			// shutdown, so it is the same outcome whichever case wins.
-			if ctx.Err() != nil {
-				s.handleInterruptedRun(ctx, job, exec)
-				return
-			}
+			interrupted = true
+			s.handleInterruptedRun(ctx, job, exec)
+		case res.err != nil:
 			s.handleJobError(ctx, job, exec, res.err)
-			return
+		default:
+			s.handleJobSuccess(ctx, job, exec, res.result)
 		}
-		s.handleJobSuccess(ctx, job, exec, res.result)
+		// Every delivered result is recorded here, so the completion that
+		// delivered it is always answered.
+		if waiter != nil && waiter.delivered() {
+			waiter.answer(remoteAnswer(waiter.ref, remoteRes, interrupted))
+		}
 	}
 	recordResultUnlessTimedOut := func(res struct {
 		result *JobResult
