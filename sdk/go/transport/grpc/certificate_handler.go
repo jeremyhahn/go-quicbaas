@@ -17,7 +17,10 @@ import (
 	"context"
 	"strings"
 
+	xkmsv1 "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/certificate"
@@ -149,6 +152,12 @@ func (h *certificateHandler) handleSignCSR(ctx context.Context, client pb.Certif
 	}
 
 	pbResp, err := client.SignCSR(ctx, pbReq)
+	if status.Code(err) == codes.Unimplemented {
+		// The node serves the legacy CertificateService to Unix-socket peers
+		// only; a TCP peer signs through go-xkms's canonical KeystoreService
+		// on the same server.
+		return h.signCSRCanonical(ctx, sdkReq)
+	}
 	if err != nil {
 		return nil, convertGRPCError(err, "certificateHandler.handleSignCSR")
 	}
@@ -161,6 +170,37 @@ func (h *certificateHandler) handleSignCSR(ctx context.Context, client pb.Certif
 		NotBefore:        pbResp.NotBefore.AsTime(),
 		NotAfter:         pbResp.NotAfter.AsTime(),
 	}, nil
+}
+
+// signCSRCanonical signs the CSR through go-xkms's canonical
+// xkms.v1.KeystoreService/SignCSR. That RPC returns no CA certificate and
+// no validity times, so those response fields stay empty.
+func (h *certificateHandler) signCSRCanonical(ctx context.Context, sdkReq *certificate.SignCSRRequest) (interface{}, error) {
+	resp, err := xkmsv1.NewKeystoreServiceClient(h.conn).SignCSR(ctx, &xkmsv1.SignCSRRequest{
+		CsrPem:       []byte(sdkReq.CSRPEM),
+		Profile:      certUsageToProfile(sdkReq.Usage),
+		ValidityDays: int32(sdkReq.ValidityDays),
+	})
+	if err != nil {
+		return nil, convertGRPCError(err, "certificateHandler.handleSignCSR")
+	}
+	return &certificate.SignCSRResponse{
+		CertificatePEM: string(resp.GetCertificatePem()),
+		ChainPEM:       string(resp.GetChainPem()),
+		SerialNumber:   resp.GetSerialNumber(),
+	}, nil
+}
+
+// certUsageToProfile maps the SDK usage string to the CA profile name, as
+// the server's legacy SignCSR does. Anything else leaves the profile to
+// the CA's default.
+func certUsageToProfile(usage string) string {
+	switch usage {
+	case "client", "server":
+		return usage
+	default:
+		return ""
+	}
 }
 
 // handleRevokeCertificate converts the SDK revoke request to proto, calls
