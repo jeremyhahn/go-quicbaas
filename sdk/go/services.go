@@ -372,14 +372,11 @@ func (s *securityService) Credentials() (QRDBCredentialClient, error) {
 }
 
 // TenantDEK returns the QRDB per-tenant DEK keyring client for the
-// caller's tenant. The QRDB transport is lazily initialized on first call
-// (delegated to client.qrdbClient).
+// caller's tenant. Every call carries the configured bearer, and an
+// embedded client binds the tenant named by WithTenant (see
+// client.qrdbTenantDEK).
 func (s *securityService) TenantDEK() (QRDBDEKClient, error) {
-	qrdbClient, err := s.c.qrdbClient()
-	if err != nil {
-		return nil, err
-	}
-	return qrdbClient.DEK(), nil
+	return s.c.qrdbTenantDEK()
 }
 
 // SecretResolver returns the unified secret resolver registry injected via
