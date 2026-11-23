@@ -144,6 +144,7 @@ type Job struct {
 type JobExecution struct {
 	ID        uint64        `json:"id"`
 	JobID     uint64        `json:"job_id"`
+	TenantID  string        `json:"tenant_id,omitempty"` // the job's tenant: its history lives in that namespace
 	Status    JobStatus     `json:"status"`
 	StartedAt time.Time     `json:"started_at"`
 	EndedAt   time.Time     `json:"ended_at,omitempty"`

@@ -345,6 +345,7 @@ func (s *SchedulerEngine) RecoverAbandonedRun(
 	}
 	if !already {
 		exec := &JobExecution{
+			TenantID:  JobTenantID(current),
 			JobID:     current.ID,
 			Status:    JobStatusFailed,
 			StartedAt: startedAt,

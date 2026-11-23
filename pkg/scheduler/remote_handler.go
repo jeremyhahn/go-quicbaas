@@ -316,7 +316,7 @@ func (s *SchedulerEngine) completeRemoteRunElsewhere(ctx context.Context, ref Re
 		return RemoteRunNotOpenError{Ref: ref, Reason: "another writer concluded the run"}
 	}
 	ctx = withOwnRun(ctx, ownRun{concluded: true})
-	exec := &JobExecution{JobID: job.ID, Status: JobStatusRunning, StartedAt: ref.StartedAt}
+	exec := &JobExecution{JobID: job.ID, TenantID: JobTenantID(job), Status: JobStatusRunning, StartedAt: ref.StartedAt}
 	if o.err != nil {
 		s.handleJobError(ctx, job, exec, o.err)
 		return nil

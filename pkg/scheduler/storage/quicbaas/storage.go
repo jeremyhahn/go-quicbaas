@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -419,10 +420,8 @@ func (s *Storage) GetJobsDueForExecution(ctx context.Context, before time.Time, 
 		limit = 100
 	}
 
-	// Scan system jobs prefix for pending jobs
 	dueJobs := make([]*scheduler.Job, 0)
-
-	err := s.kv.Scan(ctx, SystemJobsPrefix, func(key string, value []byte) error {
+	collect := func(key string, value []byte) error {
 		var job scheduler.Job
 		if err := json.Unmarshal(value, &job); err != nil {
 			// Skip malformed entries
@@ -442,7 +441,19 @@ func (s *Storage) GetJobsDueForExecution(ctx context.Context, before time.Time, 
 		}
 
 		return nil
-	})
+	}
+
+	// System jobs, then every tenant's: a tenant caller's jobs live in its
+	// own namespace (TenantJobsPrefixFmt), and are due there too.
+	err := s.kv.Scan(ctx, SystemJobsPrefix, collect)
+	if err == nil {
+		err = s.kv.Scan(ctx, tenantKeyPrefix, func(key string, value []byte) error {
+			if !strings.Contains(key, tenantJobsInfix) {
+				return nil
+			}
+			return collect(key, value)
+		})
+	}
 
 	if err != nil && !errors.Is(err, ErrLimitReached) {
 		return nil, &scheduler.ErrStorageError{Op: "GetJobsDueForExecution.scan", Cause: err}
@@ -450,6 +461,9 @@ func (s *Storage) GetJobsDueForExecution(ctx context.Context, before time.Time, 
 
 	return dueJobs, nil
 }
+
+// tenantJobsInfix follows the tenant ID in a tenant's job keys.
+const tenantJobsInfix = ":scheduler/jobs/"
 
 // SaveExecution stores a job execution record.
 // executionIDAt derives an execution ID from t in Unix nanoseconds. A time
@@ -476,9 +490,9 @@ func (s *Storage) SaveExecution(ctx context.Context, exec *scheduler.JobExecutio
 		return &scheduler.ErrStorageError{Op: "SaveExecution.marshal", Cause: err}
 	}
 
-	// Determine tenant ID from job ownership if we need to store in tenant keyspace
-	// For now, store in system keyspace
-	key := keyForExecution(exec, "")
+	// A tenant job's history lives in its tenant's keyspace, where
+	// GetExecutions reads it.
+	key := keyForExecution(exec, exec.TenantID)
 
 	if err := s.kv.Put(ctx, key, data); err != nil {
 		return &scheduler.ErrStorageError{Op: "SaveExecution.put", Cause: err}
