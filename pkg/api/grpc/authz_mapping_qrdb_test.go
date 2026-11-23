@@ -331,6 +331,8 @@ func TestUnaryAuthorizationInterceptor_QRDBAdmitDeny(t *testing.T) {
 		{"ts_query", "/qrdb.v1.QRDBService/TSQuery", "timeseries:query", "timeseries:write"},
 		{"ts_get_retention", "/qrdb.v1.QRDBService/TSGetRetention", "timeseries:get_retention", "timeseries:set_retention"},
 		{"ts_set_retention", "/qrdb.v1.QRDBService/TSSetRetention", "timeseries:set_retention", "timeseries:get_retention"},
+		{"placement_consent_answer", "/quicbaas.orchestrator.v1.OrchestratorService/AnswerFleetPlacementConsent", "placement:consent", "placement:read"},
+		{"placement_consent_list", "/quicbaas.orchestrator.v1.OrchestratorService/ListFleetPlacementConsents", "placement:read", "placement:consent"},
 	}
 
 	for _, c := range cases {

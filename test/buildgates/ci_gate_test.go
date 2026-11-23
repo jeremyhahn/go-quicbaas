@@ -726,9 +726,11 @@ func TestMakeStageTagCheckCatchesALostTagArgument(t *testing.T) {
 // coordinator dispatches the nightly full tier, no workflow schedules itself.
 // automerge.yml is under owner hold and keeps its sweep. worker-image.yml keeps
 // its nightly build and publish of the worker image, an owner exception.
+// nightly.yml runs on a daily schedule at 04:05 UTC by the owner order of
+// 2026-11-22, which supersedes the 2026-10-11 rule for that workflow only.
 func TestNoWorkflowRunsOnASchedule(t *testing.T) {
 	scheduleRe := regexp.MustCompile(`(?m)^  schedule:`)
-	exempt := map[string]bool{"automerge.yml": true, "worker-image.yml": true}
+	exempt := map[string]bool{"automerge.yml": true, "worker-image.yml": true, "nightly.yml": true}
 	for _, path := range workflowFiles(t) {
 		if exempt[filepath.Base(path)] {
 			continue
