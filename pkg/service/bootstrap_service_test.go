@@ -171,6 +171,147 @@ func TestBootstrapService_Spki_Success(t *testing.T) {
 	}
 }
 
+// A Noise request carrying only the P-256 key attaches the Noise config: the
+// approved suite does not need the Curve25519 key.
+func TestBootstrapService_Noise_P256KeyOnly(t *testing.T) {
+	fn, cfg := captureConfig(sampleBundle())
+	svc := newFakeBootstrapService(fn)
+
+	_, err := svc.Noise(context.Background(), &BootstrapRequest{
+		ServerURL:          "https://kms.example.com:8443",
+		NoiseP256StaticKey: "04abcdef",
+	})
+	if err != nil {
+		t.Fatalf("Noise returned error: %v", err)
+	}
+	if cfg.Noise == nil {
+		t.Fatal("cfg.Noise = nil, want the P-256 key attached")
+	}
+	if cfg.Noise.ServerP256StaticKey != "04abcdef" {
+		t.Errorf("cfg.Noise.ServerP256StaticKey = %q, want 04abcdef", cfg.Noise.ServerP256StaticKey)
+	}
+	if cfg.Noise.ServerStaticKey != "" {
+		t.Errorf("cfg.Noise.ServerStaticKey = %q, want empty", cfg.Noise.ServerStaticKey)
+	}
+	if cfg.Noise.Suite != 0 {
+		t.Errorf("cfg.Noise.Suite = %d, want 0 (policy)", cfg.Noise.Suite)
+	}
+}
+
+// A pinned suite name maps onto its go-xkms suite byte.
+func TestBootstrapService_Noise_PinnedSuite(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		want byte
+	}{
+		{BootstrapNoiseSuiteP256, xkbootstrap.SuiteP256AESGCM},
+		{BootstrapNoiseSuiteNK, xkbootstrap.SuiteNoiseNK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fn, cfg := captureConfig(sampleBundle())
+			svc := newFakeBootstrapService(fn)
+
+			_, err := svc.Noise(context.Background(), &BootstrapRequest{
+				ServerURL:          "https://kms.example.com:8443",
+				NoiseStaticKey:     "deadbeef",
+				NoiseP256StaticKey: "04abcdef",
+				NoiseSuite:         tc.name,
+			})
+			if err != nil {
+				t.Fatalf("Noise returned error: %v", err)
+			}
+			if cfg.Noise == nil || cfg.Noise.Suite != tc.want {
+				t.Fatalf("cfg.Noise = %+v, want Suite %d", cfg.Noise, tc.want)
+			}
+		})
+	}
+}
+
+// An unknown suite name is refused as invalid input before any fetch.
+func TestBootstrapService_Noise_UnknownSuite_IsInvalidInput(t *testing.T) {
+	svc := newFakeBootstrapService(func(context.Context, xkbootstrap.Config) (*xkbootstrap.CABundle, error) {
+		t.Fatal("fetch must not be called for an unknown noise suite")
+		return nil, nil
+	})
+
+	for name, call := range map[string]func(context.Context, *BootstrapRequest) (*BootstrapBundleResponse, error){
+		"noise": svc.Noise,
+		"auto":  svc.Auto,
+	} {
+		t.Run(name, func(t *testing.T) {
+			resp, err := call(context.Background(), &BootstrapRequest{
+				ServerURL:          "https://kms.example.com:8443",
+				NoiseP256StaticKey: "04abcdef",
+				NoiseSuite:         "noise_ik",
+			})
+			if resp != nil {
+				t.Errorf("resp = %v, want nil", resp)
+			}
+			var qbErr *errors.QBError
+			if !stderrors.As(err, &qbErr) || qbErr.Code != errors.ErrInvalidInput {
+				t.Fatalf("err = %v, want invalid-input QBError", err)
+			}
+			if !stderrors.Is(err, errBootstrapUnknownNoiseSuite) {
+				t.Errorf("err does not wrap errBootstrapUnknownNoiseSuite: %v", err)
+			}
+		})
+	}
+}
+
+// The Noise suite refusals are caller configuration, not server faults: each
+// maps to invalid input and keeps its sentinel reachable through errors.Is.
+func TestBootstrapService_SuiteErrors_AreInvalidInput(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		err      error
+		sentinel error
+	}{
+		{"key missing", &xkbootstrap.SuiteError{Suite: xkbootstrap.SuiteP256AESGCM, Cause: xkbootstrap.ErrSuiteKeyMissing}, xkbootstrap.ErrSuiteKeyMissing},
+		{"key invalid", &xkbootstrap.SuiteError{Suite: xkbootstrap.SuiteNoiseNK, Cause: xkbootstrap.ErrSuiteKeyInvalid}, xkbootstrap.ErrSuiteKeyInvalid},
+		{"unavailable", &xkbootstrap.SuiteError{Suite: xkbootstrap.SuiteNoiseNK, Cause: xkbootstrap.ErrSuiteUnavailable}, xkbootstrap.ErrSuiteUnavailable},
+		{"no suite", xkbootstrap.ErrNoSuite, xkbootstrap.ErrNoSuite},
+		{"no suite in fetch error", &xkbootstrap.FetchError{Mode: xkbootstrap.ModeNoise, Cause: xkbootstrap.ErrNoSuite}, xkbootstrap.ErrNoSuite},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := newFakeBootstrapService(func(context.Context, xkbootstrap.Config) (*xkbootstrap.CABundle, error) {
+				return nil, tc.err
+			})
+			_, err := svc.Noise(context.Background(), &BootstrapRequest{
+				ServerURL:          "https://kms.example.com:8443",
+				NoiseP256StaticKey: "04abcdef",
+			})
+			var qbErr *errors.QBError
+			if !stderrors.As(err, &qbErr) {
+				t.Fatalf("err = %v, want *errors.QBError", err)
+			}
+			if qbErr.Code != errors.ErrInvalidInput {
+				t.Errorf("code = %v, want ErrInvalidInput", qbErr.Code)
+			}
+			if !stderrors.Is(err, tc.sentinel) {
+				t.Errorf("err does not wrap %v: %v", tc.sentinel, err)
+			}
+		})
+	}
+}
+
+// Auto with only the P-256 key still offers the Noise strategy.
+func TestBootstrapService_Auto_P256Material(t *testing.T) {
+	fn, cfg := captureConfig(sampleBundle())
+	svc := newFakeBootstrapService(fn)
+
+	_, err := svc.Auto(context.Background(), &BootstrapRequest{
+		ServerURL:          "https://kms.example.com:8443",
+		NoiseP256StaticKey: "04abcdef",
+		NoiseSuite:         BootstrapNoiseSuiteP256,
+	})
+	if err != nil {
+		t.Fatalf("Auto returned error: %v", err)
+	}
+	if cfg.Noise == nil || cfg.Noise.ServerP256StaticKey != "04abcdef" || cfg.Noise.Suite != xkbootstrap.SuiteP256AESGCM {
+		t.Fatalf("auto cfg.Noise = %+v, want the P-256 key and pinned suite", cfg.Noise)
+	}
+}
+
 // -----------------------------------------------------------------------------
 // Error paths.
 // -----------------------------------------------------------------------------

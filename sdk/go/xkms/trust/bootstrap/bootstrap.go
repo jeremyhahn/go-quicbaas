@@ -157,3 +157,70 @@ var (
 	// DecodeNoiseStaticKey decodes a hex-encoded Noise static key.
 	DecodeNoiseStaticKey = xkmsbootstrap.DecodeNoiseStaticKey
 )
+
+// =============================================================================
+// P-256 approved suite and suite selection
+// =============================================================================
+
+// P256StaticKey is a P-256 static key pair for the approved handshake. Its
+// private scalar lives in protected memory; the owner must Destroy it.
+type P256StaticKey = xkmsbootstrap.P256StaticKey
+
+const (
+	// P256HexKeySize is the buffer length EncodeP256StaticKey requires.
+	P256HexKeySize = xkmsbootstrap.P256HexKeySize
+
+	// P256PublicKeySize is the length of the uncompressed P-256 point a
+	// client is provisioned with as the server's pinned responder key.
+	P256PublicKeySize = xkmsbootstrap.P256PublicKeySize
+
+	// SuiteNoiseNK identifies Noise_NK_25519_ChaChaPoly_SHA256 on the wire.
+	// It is not FIPS-approved and is unavailable in a `fips` build.
+	SuiteNoiseNK = xkmsbootstrap.SuiteNoiseNK
+
+	// SuiteP256AESGCM identifies the approved TSBOOT1_P256_AESGCM_SHA256 suite.
+	SuiteP256AESGCM = xkmsbootstrap.SuiteP256AESGCM
+)
+
+var (
+	// ErrSuiteUnavailable is returned when this binary cannot run a suite.
+	ErrSuiteUnavailable = xkmsbootstrap.ErrSuiteUnavailable
+
+	// ErrSuiteKeyMissing is returned when a suite has no server key configured.
+	ErrSuiteKeyMissing = xkmsbootstrap.ErrSuiteKeyMissing
+
+	// ErrSuiteKeyInvalid is returned when a server key is not hex or is the
+	// wrong length for its suite.
+	ErrSuiteKeyInvalid = xkmsbootstrap.ErrSuiteKeyInvalid
+
+	// ErrNoSuite is returned when no suite can be offered.
+	ErrNoSuite = xkmsbootstrap.ErrNoSuite
+)
+
+type (
+	// SuiteError names the suite a configuration problem belongs to.
+	SuiteError = xkmsbootstrap.SuiteError
+
+	// NoSuiteError carries the reason each suite was rejected.
+	NoSuiteError = xkmsbootstrap.NoSuiteError
+)
+
+var (
+	// GenerateP256StaticKey generates a P-256 static key pair in protected memory.
+	GenerateP256StaticKey = xkmsbootstrap.GenerateP256StaticKey
+
+	// NewP256StaticKey reconstructs a key from a scalar in protected memory.
+	NewP256StaticKey = xkmsbootstrap.NewP256StaticKey
+
+	// EncodeP256StaticKey hex-encodes a P-256 static private key into the
+	// caller's protected buffer of at least P256HexKeySize bytes.
+	EncodeP256StaticKey = xkmsbootstrap.EncodeP256StaticKey
+
+	// DecodeP256StaticKey decodes a hex-encoded P-256 static key into
+	// protected memory.
+	DecodeP256StaticKey = xkmsbootstrap.DecodeP256StaticKey
+
+	// EnsureSuiteAvailable reports, as a typed error, whether this binary can
+	// run a suite.
+	EnsureSuiteAvailable = xkmsbootstrap.EnsureSuiteAvailable
+)
