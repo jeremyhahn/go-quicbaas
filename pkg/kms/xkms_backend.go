@@ -752,10 +752,19 @@ func (kb *XKMSBackend) refuseVersionName(ctx context.Context, keyID string) erro
 	}
 	// Only base's versions base_v2..base_vk are rotation output (recorded at
 	// rotation with a registry, else the contiguous stored run); a name above
-	// them is an independent key.
+	// them is an independent key. A name in the run adopted from before the
+	// registry may be an independent key too, so it stays an ordinary key.
 	current, err := kb.storedVersion(ctx, base)
 	if err != nil {
 		return err
+	}
+	// storedVersion ran the migration, so a legacy run is recorded by now.
+	legacy, err := kb.legacyRunVersion(ctx, base)
+	if err != nil {
+		return err
+	}
+	if n <= legacy {
+		return nil
 	}
 	if n <= current {
 		return ErrKeyNotFound
@@ -794,6 +803,35 @@ func (kb *XKMSBackend) ownerRecordKey(name string) string {
 // version, in decimal.
 func (kb *XKMSBackend) versionRecordKey(keyID string) string {
 	return fmt.Sprintf("kms:xkms:version:%s:%s", kb.backendType, keyID)
+}
+
+// legacyRunRecordKey is the registry key holding the highest version of
+// keyID's contiguous run adopted from before the registry. Rotation and an
+// independent CreateKey wrote the same names then, so a name in that run may
+// be an independent key: it is never hidden or deleted as a version.
+func (kb *XKMSBackend) legacyRunRecordKey(keyID string) string {
+	return fmt.Sprintf("kms:xkms:legacy:%s:%s", kb.backendType, keyID)
+}
+
+// legacyRunVersion returns the highest version of keyID's adopted
+// pre-registry run, or 1 when there is no registry or no such run.
+func (kb *XKMSBackend) legacyRunVersion(ctx context.Context, keyID string) (int, error) {
+	reg := kb.keyRegistry()
+	if reg == nil {
+		return 1, nil
+	}
+	v, ok, err := readRegistryRecord(ctx, reg, kb.legacyRunRecordKey(keyID))
+	if err != nil {
+		return 0, err
+	}
+	if !ok {
+		return 1, nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 {
+		return 0, fmt.Errorf("xkms key registry: legacy run record of %q is not a positive integer: %q", keyID, v)
+	}
+	return n, nil
 }
 
 // readRegistryRecord reads a registry record; ok is false when it is absent.
@@ -896,7 +934,11 @@ func (kb *XKMSBackend) storedVersion(ctx context.Context, keyID string) (int, er
 // Rotation records every version it writes, so a stored key without a record
 // was never rotated under the registry: it predates it. Before the registry a
 // key's versions were its contiguous stored run keyID_v2..keyID_vk, so that
-// run is adopted as its versions and recorded. The record is written before
+// run is adopted as its versions and recorded. The adopted run serves
+// encryption and decryption, but a name in it may equally be an independent
+// key created before the registry, so the run is also recorded as a legacy
+// run: refuseVersionName does not hide its names and DeleteKey does not
+// delete them, they stay ordinary keys. The record is written before
 // any later name keyID_vN can be created: CreateKey and ImportKey resolve
 // keyID's version through refuseVersionName, which lands here, so an
 // independent key created under the registry lies above the recorded run and
@@ -913,13 +955,35 @@ func (kb *XKMSBackend) migrateVersionRecord(ctx context.Context, reg interfaces.
 	version := kb.highestContiguousVersion(stored, keyID)
 	recordKey := kb.versionRecordKey(keyID)
 	value := []byte(strconv.Itoa(version))
+	guarded, hasGuarded := reg.(interface {
+		PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error)
+	})
+	if version >= 2 {
+		// The legacy run is recorded first. Any rotation under the registry
+		// happens only after a migration has written it, so the first
+		// migration's run stands and a lost insert is not an error.
+		legacyKey := kb.legacyRunRecordKey(keyID)
+		if hasGuarded {
+			if _, err := guarded.PutIfAbsent(ctx, legacyKey, value); err != nil {
+				return 0, fmt.Errorf("xkms key registry: record legacy run %d of %q: %w", version, keyID, err)
+			}
+		} else {
+			_, found, err := readRegistryRecord(ctx, reg, legacyKey)
+			if err != nil {
+				return 0, fmt.Errorf("xkms key registry: record legacy run %d of %q: %w", version, keyID, err)
+			}
+			if !found {
+				if err := reg.Put(ctx, legacyKey, value); err != nil {
+					return 0, fmt.Errorf("xkms key registry: record legacy run %d of %q: %w", version, keyID, err)
+				}
+			}
+		}
+	}
 	// A rotation on another node may record a version between the listing
 	// above and this write: the migrated record never overwrites one. A
 	// store with a guarded insert makes the absence check and the write one
 	// step; a lost insert re-reads the record that won.
-	if guarded, ok := reg.(interface {
-		PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error)
-	}); ok {
+	if hasGuarded {
 		stored, err := guarded.PutIfAbsent(ctx, recordKey, value)
 		if err != nil {
 			return 0, fmt.Errorf("xkms key registry: record migrated version %d of %q: %w", version, keyID, err)
@@ -1127,7 +1191,10 @@ func (kb *XKMSBackend) DeleteKey(ctx context.Context, keyID string) error {
 	// may not know every version. A <keyID>_v<N> outside them (an independent key, or a version stranded by an
 	// out-of-band gap) is kept as an ordinary key. The run is deleted
 	// highest first, so a partial failure leaves a contiguous v2..vj that
-	// GetKeyMetadata's version walk and a retry still read.
+	// GetKeyMetadata's version walk and a retry still read. Only versions
+	// above the run adopted from before the registry are deleted: a name in
+	// that legacy run may be an independent key, so it is kept as an
+	// ordinary key.
 	algorithm := ""
 	if meta != nil {
 		algorithm = meta.Algorithm
@@ -1136,7 +1203,11 @@ func (kb *XKMSBackend) DeleteKey(ctx context.Context, keyID string) error {
 	if err != nil {
 		return err
 	}
-	for n := current; n >= 2; n-- {
+	legacy, err := kb.legacyRunVersion(ctx, keyID)
+	if err != nil {
+		return err
+	}
+	for n := current; n > legacy; n-- {
 		versionedID := kb.buildVersionedKeyID(keyID, n)
 		var versionAttrs *kctypes.KeyAttributes
 		if algorithm != "" {
@@ -1231,6 +1302,9 @@ func (kb *XKMSBackend) deleteRegistryRecords(ctx context.Context, keyID, name st
 	if err := reg.Delete(ctx, kb.versionRecordKey(keyID)); err != nil && !qberrors.IsNotFound(err) {
 		return fmt.Errorf("xkms key registry: delete version record of %q: %w", keyID, err)
 	}
+	if err := reg.Delete(ctx, kb.legacyRunRecordKey(keyID)); err != nil && !qberrors.IsNotFound(err) {
+		return fmt.Errorf("xkms key registry: delete legacy run record of %q: %w", keyID, err)
+	}
 	if name != keyID {
 		if err := reg.Delete(ctx, kb.ownerRecordKey(name)); err != nil && !qberrors.IsNotFound(err) {
 			return fmt.Errorf("xkms key registry: delete owner record of %q: %w", keyID, err)
@@ -1256,6 +1330,12 @@ func (kb *XKMSBackend) resumeRegistryCleanup(ctx context.Context, keyID string) 
 	_, leftover, err := readRegistryRecord(ctx, reg, kb.versionRecordKey(keyID))
 	if err != nil {
 		return err
+	}
+	if !leftover {
+		_, leftover, err = readRegistryRecord(ctx, reg, kb.legacyRunRecordKey(keyID))
+		if err != nil {
+			return err
+		}
 	}
 	if !leftover && name != keyID {
 		_, leftover, err = readRegistryRecord(ctx, reg, kb.ownerRecordKey(name))

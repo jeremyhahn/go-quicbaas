@@ -91,8 +91,10 @@ func TestXKMSBackend_DeleteKeepsIndependentVersionNamedKey(t *testing.T) {
 // TestXKMSBackend_PreRegistryRotatedKeyMigrates: a key rotated before the
 // registry has stored versions but no version record. Installing the registry
 // adopts its contiguous rotated run as its versions and records it, so its
-// version-2 ciphertext still decrypts, rotation continues at version 3 and
-// DeleteKey deletes every version.
+// version-2 ciphertext still decrypts and rotation continues at version 3.
+// DeleteKey deletes the registry-era version 3 but keeps the pre-registry
+// ledger_v2 as an ordinary key: it cannot be told apart from an independent
+// key of that name.
 func TestXKMSBackend_PreRegistryRotatedKeyMigrates(t *testing.T) {
 	cleanup := initXKMSForTest(t)
 	defer cleanup()
@@ -131,7 +133,43 @@ func TestXKMSBackend_PreRegistryRotatedKeyMigrates(t *testing.T) {
 	require.NoError(t, upgraded.DeleteKey(ctx, "ledger"))
 	stored, err := upgraded.listStoredKeyIDs(ctx, "ledger")
 	require.NoError(t, err)
-	assert.Empty(t, stored, "DeleteKey deletes every migrated version")
+	assert.Equal(t, map[string]struct{}{"ledger_v2": {}}, stored,
+		"DeleteKey deletes the registry-era version and keeps the pre-registry one as an ordinary key")
+}
+
+// TestXKMSBackend_PreRegistryIndependentVersionNamedKeyIsPreserved: before
+// the registry, report and report_v2 could be created as independent keys.
+// The migration cannot tell report_v2 from a rotated version, so it stays
+// addressable and survives the deletion of report.
+func TestXKMSBackend_PreRegistryIndependentVersionNamedKeyIsPreserved(t *testing.T) {
+	cleanup := initXKMSForTest(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	legacy := newKeyNameTestBackend(t)
+	createKeyNameTestKey(t, legacy, "report")
+	createKeyNameTestKey(t, legacy, "report_v2")
+
+	registry := kvstore.NewMemory()
+	upgraded := newRegistryTestBackend(t, registry)
+	_, err := upgraded.GetKeyMetadata(ctx, "report")
+	require.NoError(t, err)
+	_, err = upgraded.GetKeyMetadata(ctx, "report_v2")
+	require.NoError(t, err, "a pre-registry key named like a version stays addressable")
+	assertKeyRoundTrips(t, upgraded, "report_v2")
+
+	require.NoError(t, upgraded.DeleteKey(ctx, "report"))
+
+	fresh := newRegistryTestBackend(t, registry)
+	_, err = fresh.GetKeyMetadata(ctx, "report")
+	assert.ErrorIs(t, err, ErrKeyNotFound)
+	_, err = fresh.GetKeyMetadata(ctx, "report_v2")
+	require.NoError(t, err, "deleting report keeps the independent report_v2")
+	assertKeyRoundTrips(t, fresh, "report_v2")
+
+	exists, err := registry.Exists(ctx, upgraded.legacyRunRecordKey("report"))
+	require.NoError(t, err)
+	assert.False(t, exists, "DeleteKey drops the legacy run record")
 }
 
 // TestXKMSBackend_MissingKeyWritesNoVersionRecord: a version lookup of a key
