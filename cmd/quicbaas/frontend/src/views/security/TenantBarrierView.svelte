@@ -69,9 +69,11 @@
   // The per-tenant barrier is a REST-only surface, so the view constructs a
   // RestTenantBarrierClient against the current origin rather than going
   // through the auto-detected SDK singleton (which may be a Wails client whose
-  // tenantBarrier accessor is intentionally null). The IAM tenant list comes
-  // from getOriginSDKClient, so the tenants offered are the ones this barrier
-  // client can act on, whatever the Connection view points other calls at.
+  // tenantBarrier accessor is intentionally null). The IAM tenant list and the
+  // enable-encryption call go through getOriginSDKClient, so the tenants
+  // offered are the ones this barrier client can act on, and a migration starts
+  // on the daemon that listed the tenant, whatever the Connection view points
+  // other calls at.
   // ---------------------------------------------------------------------------
 
   const baseURL = typeof window !== 'undefined' ? window.location.origin : '';
@@ -310,7 +312,7 @@
       req.shamir_total = enableTotal;
     }
     try {
-      const client = await getSDKClient();
+      const client = await getOriginSDKClient();
       await client.barrier.enableEncryption(req);
       showToast({
         message: `Encryption migration started for tenant ${selectedTenantName}`,

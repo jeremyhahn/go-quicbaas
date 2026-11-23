@@ -17,7 +17,7 @@ vi.mock('../src/stores/toast.svelte.ts', () => ({
 }));
 
 vi.mock('../src/stores/sdkClient.ts', () => ({
-  getSDKClient: vi.fn(async () => ({
+  getOriginSDKClient: vi.fn(async () => ({
     iam: { listTenants },
     barrier: { enableEncryption },
   })),
