@@ -932,18 +932,6 @@ func (m *SigningKeyManager) runUnknownKIDRefresh(ctx context.Context, cancel con
 	}
 }
 
-// cnAliasKID returns the kid the xkms module writes into the tokens it
-// signs with this key -- the key's CN -- when this manager is the global
-// OIDC signing key, and "" otherwise. The xkms module names a key by CN,
-// not by the derived kid, so the global key is published under both:
-// a login token the module signed then verifies against this JWKS.
-func (m *SigningKeyManager) cnAliasKID() string {
-	if m.tenantID == "" && m.cn == OIDCSigningKeyCN {
-		return m.cn
-	}
-	return ""
-}
-
 // publicForKID looks kid up in the manager's snapshot.
 func (m *SigningKeyManager) publicForKID(kid string) (crypto.PublicKey, error) {
 	snap := m.load()
@@ -951,9 +939,6 @@ func (m *SigningKeyManager) publicForKID(kid string) (crypto.PublicKey, error) {
 		return nil, &SigningKeyUnavailableError{}
 	}
 	if snap.current.kid == kid {
-		return snap.current.pub, nil
-	}
-	if alias := m.cnAliasKID(); alias != "" && kid == alias {
 		return snap.current.pub, nil
 	}
 	for i := range snap.previous {
@@ -992,10 +977,7 @@ func (m *SigningKeyManager) liveAdopted(adopted []keyEntry) []keyEntry {
 
 // JWKS returns the JSON Web Key Set the OIDC provider publishes: one entry per
 // active kid (current first, then retained previous keys), each with Use "sig",
-// its algorithm, and KeyID set to the derived kid. The global OIDC signing key
-// manager also publishes its current key a second time, right after the
-// current entry, under the alias kid cnAliasKID returns; the alias always
-// names the current key.
+// its algorithm, and KeyID set to the derived kid.
 func (m *SigningKeyManager) JWKS() *jose.JSONWebKeySet {
 	// A refresh that times out leaves the keys the manager holds.
 	_ = m.maybeRefresh(context.Background(), signingKeyRefreshInterval)
@@ -1004,21 +986,13 @@ func (m *SigningKeyManager) JWKS() *jose.JSONWebKeySet {
 		return &jose.JSONWebKeySet{}
 	}
 
-	keys := make([]jose.JSONWebKey, 0, 2+len(snap.previous)+len(snap.adopted))
+	keys := make([]jose.JSONWebKey, 0, 1+len(snap.previous)+len(snap.adopted))
 	keys = append(keys, jose.JSONWebKey{
 		Key:       snap.current.pub,
 		KeyID:     snap.current.kid,
 		Algorithm: snap.current.alg,
 		Use:       "sig",
 	})
-	if alias := m.cnAliasKID(); alias != "" {
-		keys = append(keys, jose.JSONWebKey{
-			Key:       snap.current.pub,
-			KeyID:     alias,
-			Algorithm: snap.current.alg,
-			Use:       "sig",
-		})
-	}
 	for _, e := range slices.Concat(snap.previous, m.liveAdopted(snap.adopted)) {
 		keys = append(keys, jose.JSONWebKey{
 			Key:       e.pub,
