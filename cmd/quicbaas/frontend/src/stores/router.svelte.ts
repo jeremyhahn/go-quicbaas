@@ -61,6 +61,7 @@
  *   #/impersonation  → Impersonation (delegated-admin impersonation sessions)
  *   #/iam-audit      → IAM Audit (the selected tenant's IAM audit events)
  *   #/accounts       → Pooled provider accounts
+ *   #/prompts        → Prompt sets per scope (?set=&scope=&project=&name=&version= opens one version)
  *   #/invite/:token → Invite activation (passwordless)
  */
 
@@ -121,6 +122,8 @@ export type RouteName =
   | 'projects'
   // ORCHESTRATION — pooled provider accounts
   | 'accounts'
+  // ORCHESTRATION — the prompts jobs render from
+  | 'prompts'
   // OVERVIEW — the attention inbox
   | 'attention'
   // CLUSTER
@@ -351,6 +354,11 @@ function matchPath(path: string, hash: string): Route {
   if (path === '/accounts') {
     return { name: 'accounts', params: {}, hash };
   }
+  // The query (set, scope, project, name, version) reaches the page through
+  // parseHash, which merges it into params.
+  if (path === '/prompts') {
+    return { name: 'prompts', params: {}, hash };
+  }
   if (path === '/cluster') {
     return { name: 'cluster', params: {}, hash };
   }
@@ -561,6 +569,7 @@ export function routeScheduler(): void { navigateTo('/scheduler'); }
 export function routeInference(): void { navigateTo('/inference'); }
 export function routeProjects(): void { navigateTo('/projects'); }
 export function routeAccounts(): void { navigateTo('/accounts'); }
+export function routePrompts(): void { navigateTo('/prompts'); }
 export function routeAttention(): void { navigateTo('/attention'); }
 export function routeSessionDetail(id: string): void {
   navigateTo(`/sessions/${encodeURIComponent(id)}`);

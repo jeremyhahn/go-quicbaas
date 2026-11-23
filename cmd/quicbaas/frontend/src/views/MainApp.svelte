@@ -55,6 +55,7 @@
   import InferenceView from './orchestrator/InferenceView.svelte';
   import ProjectsView from './orchestrator/ProjectsView.svelte';
   import AccountsView from './orchestrator/AccountsView.svelte';
+  import PromptsView from './orchestrator/PromptsView.svelte';
   import ComingSoon from './ComingSoon.svelte';
   import LoginView from './orchestrator/LoginView.svelte';
   import RegisterView from './orchestrator/RegisterView.svelte';
@@ -161,6 +162,7 @@
     KeyRound,
     FolderKanban,
     UserCog,
+    FileText,
     Users,
     Compass,
     LogIn,
@@ -233,6 +235,7 @@
         { id: 'inference',     label: 'Inference',    icon: Sparkles,      implemented: true },
         { id: 'projects',      label: 'Projects',     icon: FolderKanban,  implemented: true },
         { id: 'accounts',      label: 'Accounts',     icon: UserCog,       implemented: true },
+        { id: 'prompts',       label: 'Prompts',      icon: FileText,      implemented: true },
       ],
     },
     {
@@ -828,6 +831,9 @@
             {:else if routerStore.name === 'accounts'}
               <li class="text-base-content/40">{FACTORY_CRUMB}</li>
               <li class="font-medium">Accounts</li>
+            {:else if routerStore.name === 'prompts'}
+              <li class="text-base-content/40">{FACTORY_CRUMB}</li>
+              <li class="font-medium">Prompts</li>
             {:else if routerStore.name === 'cluster'}
               <li class="text-base-content/40">Cluster</li>
               <li class="font-medium">Dashboard</li>
@@ -1229,6 +1235,11 @@
       {:else if routerStore.name === 'accounts'}
         <div class="flex-1 overflow-y-auto">
           <AccountsView />
+        </div>
+
+      {:else if routerStore.name === 'prompts'}
+        <div class="flex-1 overflow-y-auto">
+          <PromptsView />
         </div>
 
       {:else if routerStore.name === 'cluster'}

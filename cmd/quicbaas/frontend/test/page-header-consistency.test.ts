@@ -46,6 +46,7 @@ const views: ViewEntry[] = [
   { name: 'CostView',              path: 'src/views/orchestrator/CostView.svelte',                 title: 'Cost' },
   { name: 'InferenceView',         path: 'src/views/orchestrator/InferenceView.svelte',            title: 'Inference' },
   { name: 'ProjectsView',          path: 'src/views/orchestrator/ProjectsView.svelte',             title: 'Projects' },
+  { name: 'PromptsView',           path: 'src/views/orchestrator/PromptsView.svelte',              title: 'Prompts' },
   { name: 'KVStoreView',           path: 'src/views/data/KVStoreView.svelte',                      title: 'KV' },
   { name: 'VectorsView',           path: 'src/views/data/VectorsView.svelte',                      title: 'Vectors' },
   { name: 'TimeSeriesView',        path: 'src/views/data/TimeSeriesView.svelte',                   title: 'Time' },

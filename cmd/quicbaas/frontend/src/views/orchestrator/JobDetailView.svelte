@@ -26,6 +26,8 @@
     (go-quicbaas#794). Before that the tab held nothing but the gauge and a
     job-memory token panel no production writer populates, which is why #796
     hid it for the sdlc runner.
+  - Prompts: the prompt versions the job rendered, each linking to the
+    Prompts page at that version, for both runners
   - Live event stream, audit trail and a raw JSON drawer for both
 -->
 <script lang="ts">
@@ -87,6 +89,7 @@
     stageTimeline,
     terminalReason,
   } from '../../lib/jobDetail.ts';
+  import { jobPromptLines } from '../../lib/prompts.ts';
 
   // ---------------------------------------------------------------------------
   // State
@@ -118,6 +121,7 @@
   const conclusion = $derived(job ? terminalReason(job) : null);
   const canReadmit = $derived(job !== null && readmitAllowed(job));
   const workerTurn = $derived(job ? lastAgentTurn(job) : null);
+  const promptLines = $derived(job ? jobPromptLines(job) : []);
 
   // The DAG is the workflow runner's: an sdlc job has no work items to graph.
   //
@@ -932,6 +936,29 @@
               </summary>
               <pre class="mt-2 whitespace-pre-wrap break-words font-mono text-xs bg-base-200 rounded p-2">{job.prompt_append}</pre>
             </details>
+          {/if}
+
+          <!--
+            The prompt versions the job rendered, for both runners. Each line
+            opens the Prompts page on that prompt at that version; a set the
+            page does not browse shows its line unlinked. A job that recorded
+            no refs shows no group.
+          -->
+          {#if promptLines.length > 0}
+            <div class="mb-4 space-y-1" data-testid="job-prompts">
+              <div class="text-xs font-medium text-base-content/60">Prompts</div>
+              <ul class="space-y-1" aria-label="Prompt versions">
+                {#each promptLines as line (line.key)}
+                  <li class="text-xs font-mono">
+                    {#if line.href}
+                      <a href={line.href} class="link link-hover">{line.label}</a>
+                    {:else}
+                      <span>{line.label}</span>
+                    {/if}
+                  </li>
+                {/each}
+              </ul>
+            </div>
           {/if}
 
           <!-- Sessions the job holds: the lead first, then every worker. -->
