@@ -580,11 +580,8 @@ func TestCLISessionRevokeAllKeepCurrent(t *testing.T) {
 
 // TestCLIAuditQuery tests the audit query command.
 func TestCLIAuditQuery(t *testing.T) {
-	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
-
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	tenantID := generateUniqueTenantIDForCLI()
+	cli := newIAMCLITenantSessionContext(t, tenantID)
 
 	t.Run("query-audit-logs", func(t *testing.T) {
 		output, err := cli.run("iam", "audit", "query", "--tenant", tenantID)
@@ -604,11 +601,8 @@ func TestCLIAuditQuery(t *testing.T) {
 
 // TestCLIAuditQueryWithFilters tests the audit query command with filters.
 func TestCLIAuditQueryWithFilters(t *testing.T) {
-	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
-
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	tenantID := generateUniqueTenantIDForCLI()
+	cli := newIAMCLITenantSessionContext(t, tenantID)
 
 	testCases := []struct {
 		name   string
@@ -634,11 +628,8 @@ func TestCLIAuditQueryWithFilters(t *testing.T) {
 
 // TestCLIAuditQueryWithPagination tests the audit query command with pagination.
 func TestCLIAuditQueryWithPagination(t *testing.T) {
-	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
-
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	tenantID := generateUniqueTenantIDForCLI()
+	cli := newIAMCLITenantSessionContext(t, tenantID)
 
 	t.Run("query-with-limit", func(t *testing.T) {
 		output, err := cli.run("iam", "audit", "query", "--tenant", tenantID, "--limit", "10")
@@ -655,11 +646,8 @@ func TestCLIAuditQueryWithPagination(t *testing.T) {
 
 // TestCLIAuditGet tests the audit get command.
 func TestCLIAuditGet(t *testing.T) {
-	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
-
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	tenantID := generateUniqueTenantIDForCLI()
+	cli := newIAMCLITenantSessionContext(t, tenantID)
 
 	t.Run("get-audit-event", func(t *testing.T) {
 		// First, query to get an event ID
