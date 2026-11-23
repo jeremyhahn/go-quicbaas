@@ -210,6 +210,25 @@ func (e *InvalidInputError) Error() string {
 // Unwrap returns the sentinel for errors.Is support.
 func (e *InvalidInputError) Unwrap() error { return ErrInvalidInput }
 
+// ProfileConflictError reports a binding whose settings leave a link of its
+// SDLC profile's artifact chain off. It is a refused input, so it unwraps
+// to ErrInvalidInput and every transport answers it as one.
+type ProfileConflictError struct {
+	Profile SDLCProfile
+	Stage   ArtifactStage
+	Field   string
+	Want    string
+}
+
+// Error implements the error interface.
+func (e *ProfileConflictError) Error() string {
+	return "sdlc: invalid " + e.Field + ": the " + string(e.Profile) + " profile requires " + e.Want +
+		" (artifact chain link " + string(e.Stage) + ")"
+}
+
+// Unwrap returns the sentinel for errors.Is support.
+func (e *ProfileConflictError) Unwrap() error { return ErrInvalidInput }
+
 // RepoURLRefusedError reports a repository URL outside the operator's
 // allowlist of forge hosts.
 type RepoURLRefusedError struct {

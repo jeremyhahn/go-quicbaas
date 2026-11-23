@@ -466,6 +466,12 @@ type ProjectBinding struct {
 	// login that cannot see the repository is nobody the owner delegated to.
 	Rulers []string `json:"rulers,omitempty"`
 
+	// Profile is the SDLC profile the binding is held to; empty is the
+	// standard profile. See profile.go. A bind replaces the whole record, so
+	// every transport carries this field: one that dropped it would drop the
+	// profile on a rebind.
+	Profile SDLCProfile `json:"profile,omitempty"`
+
 	// Epoch identifies this binding of the project: the store draws it at
 	// random when the project is bound, keeps it across updates, and draws a
 	// new one when the project is bound again after an unbind. A reviewer
@@ -557,6 +563,9 @@ func (b *ProjectBinding) Validate() error {
 		return err
 	}
 	if err := validateRulerList("rulers", b.Rulers); err != nil {
+		return err
+	}
+	if err := b.validateProfile(); err != nil {
 		return err
 	}
 	return b.Ranking.Validate()
