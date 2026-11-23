@@ -915,6 +915,7 @@ func TestNotificationHub_ClientRegistration(t *testing.T) {
 		}, testTimeout, testPollInterval)
 
 		hub.RegisterClient(nil)
+		hub.UnregisterClient(nil)
 
 		// Should not crash and client count should remain 0
 		assert.Equal(t, 0, hub.ClientCount())
@@ -1064,11 +1065,22 @@ func TestNotificationHub_RegisterAlreadyRegisteredClient(t *testing.T) {
 		// Register the same client again - should not increase count
 		hub.RegisterClient(client)
 
-		// Small delay to let the duplicate registration be processed
-		time.Sleep(50 * time.Millisecond)
+		hub.RegisterClient(NewClient("client-2", 256))
 
-		// Count should still be 1
-		assert.Equal(t, 1, hub.ClientCount())
+		// The count alone cannot show the sentinel was processed: without the
+		// duplicate guard, the duplicate alone would make it 2. So wait until
+		// the loop has taken both registrations off its queue, then make a
+		// blocking round trip through the same loop. The loop is one goroutine,
+		// so it finishes a registration before it answers a later request:
+		// when the round trip returns, both registrations have been handled.
+		require.Eventually(t, func() bool {
+			return len(hub.register) == 0
+		}, testTimeout, testPollInterval)
+		_, err := hub.listChannelsE()
+		require.NoError(t, err)
+
+		// The duplicate must not have been counted
+		assert.Equal(t, 2, hub.ClientCount())
 	})
 }
 
@@ -1086,6 +1098,15 @@ func TestNotificationHub_DeleteNonExistentChannel(t *testing.T) {
 
 		err := hub.DeleteChannel("non-existent")
 		require.Error(t, err)
+	})
+
+	t.Run("returns error for empty channel name", func(t *testing.T) {
+		t.Parallel()
+		hub := NewNotificationHub(newTestLogger(t))
+
+		err := hub.DeleteChannel("")
+		require.Error(t, err)
+		assert.True(t, errors.Is(err, ErrEmptyChannelName))
 	})
 }
 

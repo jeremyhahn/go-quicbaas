@@ -478,64 +478,56 @@ func TestRotate_WritesTheIntentBeforeMinting(t *testing.T) {
 //
 // An unverified replacement plus a destroyed original is total access loss, and
 // nothing the agent can recover from on its own. The replacement is the thing
-// that gets thrown away.
-func TestRotate_VerificationFailureLeavesTheOldTokenALIVE(t *testing.T) {
-	lifecycle := &fakeLifecycle{verifyErr: errors.New("401 unauthorized")}
-	store := newFakeSecretStore()
-	seedCurrentToken(store, "sdlc-agent-quicbaas-v1", "1")
-
-	rotator, _ := NewTokenRotator(lifecycle, store)
-	_, err := rotator.Rotate(context.Background(), testSpec())
-	if err == nil {
-		t.Fatal("a replacement that cannot authenticate must fail the rotation")
-	}
-
-	var verifyErr *TokenVerificationError
-	if !errors.As(err, &verifyErr) {
-		t.Fatalf("err = %v, want a TokenVerificationError", err)
-	}
-
-	for _, revoked := range lifecycle.revoked {
-		if revoked == "sdlc-agent-quicbaas-v1" {
-			t.Fatal("THE OLD TOKEN WAS REVOKED after the replacement failed to " +
-				"verify; the account is now locked out with no working credential")
-		}
-	}
-
-	// The useless replacement is what gets destroyed, and the stored version
-	// rolls back so the in-force credential is the one that still works.
-	if len(lifecycle.revoked) != 1 || lifecycle.revoked[0] != "sdlc-agent-quicbaas-v2" {
-		t.Errorf("revoked = %v, want only the unverifiable replacement", lifecycle.revoked)
-	}
-	if store.rolledTo[testSecretPath] != 1 {
-		t.Errorf("rolled back to version %d, want 1", store.rolledTo[testSecretPath])
-	}
-}
-
-// TestRotate_WrongAccountIsAVerificationFailure covers the subtler case: the
-// token works, but it is somebody else's.
+// that gets thrown away, whichever way it failed to verify:
 //
-// A replacement that authenticates as the wrong account would pass any check
-// that only asked "did this call succeed".
-func TestRotate_WrongAccountIsAVerificationFailure(t *testing.T) {
-	lifecycle := &fakeLifecycle{verifyAs: "somebody-else"}
-	store := newFakeSecretStore()
-	seedCurrentToken(store, "sdlc-agent-quicbaas-v1", "1")
-
-	rotator, _ := NewTokenRotator(lifecycle, store)
-	_, err := rotator.Rotate(context.Background(), testSpec())
-	if err == nil {
-		t.Fatal("a token authenticating as another account must fail verification")
+//   - the forge refuses it outright;
+//   - it works, but it is somebody else's: a replacement that authenticates as
+//     the wrong account would pass any check that only asked "did this call
+//     succeed";
+//   - the adapter answers (nil, nil), which used to crash the rotation worker
+//     after the replacement was persisted. Removing the nil-identity guard
+//     panics that case.
+func TestRotate_VerificationFailureLeavesTheOldTokenALIVE(t *testing.T) {
+	cases := map[string]*fakeLifecycle{
+		"the forge refuses the replacement":  {verifyErr: errors.New("401 unauthorized")},
+		"the replacement is another account": {verifyAs: "somebody-else"},
+		"the adapter answers no identity":    {verifyNil: true},
 	}
+	for name, lifecycle := range cases {
+		t.Run(name, func(t *testing.T) {
+			store := newFakeSecretStore()
+			seedCurrentToken(store, "sdlc-agent-quicbaas-v1", "1")
 
-	for _, revoked := range lifecycle.revoked {
-		if revoked == "sdlc-agent-quicbaas-v1" {
-			t.Fatal("the old token was revoked for a replacement belonging to someone else")
-		}
+			rotator, _ := NewTokenRotator(lifecycle, store)
+			_, err := rotator.Rotate(context.Background(), testSpec())
+			var verifyErr *TokenVerificationError
+			if !errors.As(err, &verifyErr) {
+				t.Fatalf("err = %v, want a TokenVerificationError", err)
+			}
+
+			for _, revoked := range lifecycle.revoked {
+				if revoked == "sdlc-agent-quicbaas-v1" {
+					t.Fatal("THE OLD TOKEN WAS REVOKED after the replacement failed to " +
+						"verify; the account is now locked out with no working credential")
+				}
+			}
+
+			// The useless replacement is what gets destroyed, and the stored
+			// version rolls back so the in-force credential is the one that
+			// still works.
+			if len(lifecycle.revoked) != 1 || lifecycle.revoked[0] != "sdlc-agent-quicbaas-v2" {
+				t.Errorf("revoked = %v, want only the unverifiable replacement", lifecycle.revoked)
+			}
+			if store.rolledTo[testSecretPath] != 1 {
+				t.Errorf("rolled back to version %d, want 1", store.rolledTo[testSecretPath])
+			}
+		})
 	}
 }
 
-// TestRotate_FirstRotationRevokesNothing covers the empty-path case.
+// TestRotate_FirstRotationRevokesNothing covers the empty-path case. Failing
+// closed on an unreadable store is only correct if an ABSENT one still works;
+// otherwise no credential could ever be rotated for the first time.
 func TestRotate_FirstRotationRevokesNothing(t *testing.T) {
 	lifecycle := &fakeLifecycle{verifyAs: testAccount}
 	store := newFakeSecretStore()
@@ -644,16 +636,6 @@ func TestNewTokenRotator_RefusesMissingCollaborators(t *testing.T) {
 	if _, err := NewTokenRotator(&fakeLifecycle{}, nil); err == nil {
 		t.Error("a rotator without a store would mint tokens it cannot keep")
 	}
-}
-
-// TestTokenSecretStore_IsSatisfiedByTheRealManager proves the port is not a
-// shape invented for the fakes.
-//
-// A narrow port is only honest if the real implementation fits it: this fails
-// to compile the moment secrets.Manager and TokenSecretStore drift apart, which
-// is the failure a hand-written mock would otherwise hide indefinitely.
-func TestTokenSecretStore_IsSatisfiedByTheRealManager(t *testing.T) {
-	var _ TokenSecretStore = (*secrets.Manager)(nil)
 }
 
 // =============================================================================
@@ -881,25 +863,6 @@ func TestRotate_RefusesWhenTheCurrentTokenCannotBeRead(t *testing.T) {
 	}
 }
 
-// TestRotate_AbsentIsStillAnOrdinaryFirstRotation proves the fix did not turn
-// the ordinary case into a failure.
-//
-// Failing closed on unreadable is only correct if ABSENT still works — otherwise
-// no credential could ever be rotated for the first time.
-func TestRotate_AbsentIsStillAnOrdinaryFirstRotation(t *testing.T) {
-	lifecycle := &fakeLifecycle{verifyAs: testAccount}
-	store := newFakeSecretStore() // nothing stored at all
-
-	rotator, _ := NewTokenRotator(lifecycle, store)
-	result, err := rotator.Rotate(context.Background(), testSpec())
-	if err != nil {
-		t.Fatalf("a first rotation must succeed against an empty path: %v", err)
-	}
-	if result.Slot != 1 {
-		t.Errorf("slot = %d, want 1", result.Slot)
-	}
-}
-
 // TestRecoverOrphan_AbsentIntentIsNotAnError is the same guard on the intent
 // side: no intent recorded means nothing was in flight, which is the normal
 // steady state.
@@ -1009,34 +972,6 @@ func TestRotate_RollbackFailureStopsTheRevokeAndReportsBoth(t *testing.T) {
 	}
 }
 
-// TestRotate_NilIdentityIsAVerificationFailureNotAPanic: an adapter answering
-// (nil, nil) used to crash the rotation worker after the replacement was
-// persisted. It is the same class as a failed verification and takes the same
-// rollback path.
-//
-// Mutation evidence: removing the nil-identity guard panics this test.
-func TestRotate_NilIdentityIsAVerificationFailureNotAPanic(t *testing.T) {
-	lifecycle := &fakeLifecycle{verifyNil: true}
-	store := newFakeSecretStore()
-	seedCurrentToken(store, "agent-quicbaas-r1", "1")
-	rotator, err := NewTokenRotator(lifecycle, store)
-	if err != nil {
-		t.Fatalf("NewTokenRotator: %v", err)
-	}
-
-	_, err = rotator.Rotate(context.Background(), testSpec())
-	var verification *TokenVerificationError
-	if !errors.As(err, &verification) {
-		t.Fatalf("err = %v, want TokenVerificationError", err)
-	}
-	if store.rolledTo[testSecretPath] != 1 {
-		t.Fatalf("rolled back to %d, want the previous version 1", store.rolledTo[testSecretPath])
-	}
-	if len(lifecycle.revoked) != 1 || lifecycle.revoked[0] != RotationTokenName("agent-quicbaas", 2) {
-		t.Fatalf("revoked %v, want the unverified replacement", lifecycle.revoked)
-	}
-}
-
 // =============================================================================
 // The #102 findings (Codex round 1 on the token-rotation PR)
 // =============================================================================
@@ -1052,6 +987,8 @@ func TestRotate_NilIdentityIsAVerificationFailureNotAPanic(t *testing.T) {
 // test fails exactly as production would: the first rotation mints a token,
 // then revokes it without ever storing it.
 func TestRotate_FirstRotationThroughTheRealSecretsManager(t *testing.T) {
+	// Handing the real manager to NewTokenRotator is also the compile-time
+	// proof that TokenSecretStore is not a shape invented for the fakes.
 	manager, err := secrets.NewManager(&secrets.ManagerOptions{
 		Backend: secrets.NewKVBackend(kvstore.NewMemory()),
 	})

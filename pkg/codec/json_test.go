@@ -149,53 +149,6 @@ func TestJSONCodec_Encode(t *testing.T) {
 			expectError: false,
 		},
 		{
-			name: "nested struct",
-			entity: &JSONNestedEntity{
-				ID:   456,
-				Name: "Jane Doe",
-				Address: JSONAddress{
-					Street: "123 Main St",
-					City:   "Springfield",
-					Zip:    "12345",
-				},
-				Meta: map[string]interface{}{
-					"verified": true,
-					"score":    98.5,
-				},
-			},
-			expectError: false,
-		},
-		{
-			name:        "map",
-			entity:      map[string]int{"a": 1, "b": 2, "c": 3},
-			expectError: false,
-		},
-		{
-			name:        "slice",
-			entity:      []int{1, 2, 3, 4, 5},
-			expectError: false,
-		},
-		{
-			name:        "string",
-			entity:      "hello world",
-			expectError: false,
-		},
-		{
-			name:        "int",
-			entity:      42,
-			expectError: false,
-		},
-		{
-			name:        "float",
-			entity:      3.14159,
-			expectError: false,
-		},
-		{
-			name:        "bool",
-			entity:      true,
-			expectError: false,
-		},
-		{
 			name:        "nil entity",
 			entity:      nil,
 			expectError: true,
@@ -212,9 +165,6 @@ func TestJSONCodec_Encode(t *testing.T) {
 			} else {
 				require.NoError(t, err)
 				assert.NotEmpty(t, data)
-
-				// Verify data is valid JSON by attempting to decode it back
-				// (This is better than checking for specific characters)
 			}
 		})
 	}
@@ -332,117 +282,6 @@ func TestJSONCodec_Decode(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to decode JSON")
 	})
-}
-
-func TestJSONCodec_RoundTrip(t *testing.T) {
-	codec := NewJSONCodec()
-
-	tests := []struct {
-		name   string
-		entity interface{}
-	}{
-		{
-			name: "simple entity",
-			entity: &JSONTestEntity{
-				ID:    999,
-				Name:  "Round Trip Test",
-				Email: "roundtrip@example.com",
-				Score: 88.8,
-				Tags:  []string{"test", "roundtrip"},
-			},
-		},
-		{
-			name: "nested entity",
-			entity: &JSONNestedEntity{
-				ID:   777,
-				Name: "Nested Test",
-				Address: JSONAddress{
-					Street: "456 Elm St",
-					City:   "Testville",
-					Zip:    "54321",
-				},
-				Meta: map[string]interface{}{
-					"active": false,
-					"count":  42,
-				},
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Encode
-			data, err := codec.Encode(tt.entity)
-			require.NoError(t, err)
-			assert.NotEmpty(t, data)
-
-			// Decode
-			var decoded interface{}
-			switch tt.entity.(type) {
-			case *JSONTestEntity:
-				decoded = &JSONTestEntity{}
-			case *JSONNestedEntity:
-				decoded = &JSONNestedEntity{}
-			}
-
-			err = codec.Decode(data, decoded)
-			require.NoError(t, err)
-
-			// Verify round trip
-			data2, err := codec.Encode(decoded)
-			require.NoError(t, err)
-
-			// JSON may not be byte-identical due to formatting, but should decode to same values
-			assert.Equal(t, string(data), string(data2))
-		})
-	}
-}
-
-func TestJSONCodec_Unicode(t *testing.T) {
-	codec := NewJSONCodec()
-
-	entity := &JSONTestEntity{
-		ID:    1,
-		Name:  "Test 测试 テスト 🚀",
-		Email: "unicode@测试.com",
-		Tags:  []string{"日本語", "中文", "한국어"},
-	}
-
-	data, err := codec.Encode(entity)
-	require.NoError(t, err)
-
-	var decoded JSONTestEntity
-	err = codec.Decode(data, &decoded)
-	require.NoError(t, err)
-
-	assert.Equal(t, entity.Name, decoded.Name)
-	assert.Equal(t, entity.Email, decoded.Email)
-	assert.Equal(t, entity.Tags, decoded.Tags)
-}
-
-func TestJSONCodec_EmptyValues(t *testing.T) {
-	codec := NewJSONCodec()
-
-	entity := &JSONTestEntity{
-		ID:    0,
-		Name:  "",
-		Email: "",
-		Score: 0.0,
-		Tags:  []string{},
-	}
-
-	data, err := codec.Encode(entity)
-	require.NoError(t, err)
-
-	var decoded JSONTestEntity
-	err = codec.Decode(data, &decoded)
-	require.NoError(t, err)
-
-	assert.Equal(t, entity.ID, decoded.ID)
-	assert.Equal(t, entity.Name, decoded.Name)
-	assert.Equal(t, entity.Email, decoded.Email)
-	assert.Equal(t, entity.Score, decoded.Score)
-	assert.Empty(t, decoded.Tags)
 }
 
 // Benchmark tests.

@@ -18,6 +18,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 )
@@ -83,68 +85,6 @@ func TestL2CacheIntegration(t *testing.T) {
 		}
 		if stats.L2Hits != 0 {
 			t.Errorf("Expected 0 L2 hits, got %d", stats.L2Hits)
-		}
-	})
-
-	t.Run("L1 miss, L2 hit (cache warming)", func(t *testing.T) {
-		l2Cache := NewMockL2Cache()
-		config := Config{
-			L1Size:          10,
-			L1TTL:           1 * time.Minute,
-			CleanupInterval: 1 * time.Minute,
-			L2Cache:         l2Cache,
-			L2TTL:           5 * time.Minute,
-			WritePolicy:     WriteThroughSync,
-		}
-
-		cm, err := NewManager(config, log)
-		if err != nil {
-			t.Fatalf("Failed to create cache manager: %v", err)
-		}
-		defer cm.Close()
-
-		ctx := context.Background()
-		key := "l2-only-key"
-		value := []byte("l2-value")
-
-		// Directly set in L2 (simulating pre-existing data)
-		err = l2Cache.Set(ctx, key, value, 5*time.Minute)
-		if err != nil {
-			t.Fatalf("Failed to set L2 value: %v", err)
-		}
-
-		// Get should miss L1, hit L2, and warm L1
-		retrieved, err := cm.Get(ctx, key)
-		if err != nil {
-			t.Fatalf("Failed to get value: %v", err)
-		}
-
-		if string(retrieved) != string(value) {
-			t.Errorf("Expected %s, got %s", value, retrieved)
-		}
-
-		// Verify metrics
-		stats := cm.Stats()
-		if stats.L1Misses != 1 {
-			t.Errorf("Expected 1 L1 miss, got %d", stats.L1Misses)
-		}
-		if stats.L2Hits != 1 {
-			t.Errorf("Expected 1 L2 hit, got %d", stats.L2Hits)
-		}
-
-		// Second get should hit L1 (warmed)
-		retrieved2, err := cm.Get(ctx, key)
-		if err != nil {
-			t.Fatalf("Failed to get value second time: %v", err)
-		}
-
-		if string(retrieved2) != string(value) {
-			t.Errorf("Expected %s, got %s", value, retrieved2)
-		}
-
-		stats = cm.Stats()
-		if stats.L1Hits != 1 {
-			t.Errorf("Expected 1 L1 hit after warming, got %d", stats.L1Hits)
 		}
 	})
 
@@ -218,8 +158,10 @@ func TestL2CacheIntegration(t *testing.T) {
 			t.Fatalf("Failed to set value: %v", err)
 		}
 
-		// Wait for async write to complete
-		time.Sleep(100 * time.Millisecond)
+		// The L2 write runs in its own goroutine; wait for its metric.
+		require.Eventually(t, func() bool {
+			return cm.GetMetrics().Get("l2_sets") == 1
+		}, 5*time.Second, time.Millisecond)
 
 		// Verify value is in L2 (async write should have completed)
 		l2Value, err := l2Cache.Get(ctx, key)

@@ -23,135 +23,79 @@ import (
 	"testing"
 )
 
-func TestNewHealthChecker(t *testing.T) {
-	client := NewClient(DefaultClientConfig())
-	checker := NewHealthChecker(client)
-
-	if checker == nil {
-		t.Fatal("expected non-nil health checker")
+func TestHealthChecker_Check(t *testing.T) {
+	tests := []struct {
+		name        string
+		handler     http.HandlerFunc
+		wantErr     bool
+		wantVersion string
+	}{
+		{
+			name: "server answers version",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/api/version" {
+					t.Errorf("expected path /api/version, got %s", r.URL.Path)
+				}
+				resp := VersionResponse{Version: "0.1.0"}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(resp)
+			},
+			wantVersion: "0.1.0",
+		},
+		{
+			name: "server unavailable",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_, _ = w.Write([]byte(`{"error": "service unavailable"}`))
+			},
+			wantErr: true,
+		},
 	}
 
-	// Initial status should be unavailable
-	if checker.IsAvailable() {
-		t.Error("expected initial status to be unavailable")
-	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(tt.handler)
+			defer server.Close()
 
-func TestHealthChecker_Check_Success(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/version" {
-			t.Errorf("expected path /api/version, got %s", r.URL.Path)
-		}
+			client := NewClient(ClientConfig{
+				BaseURL:    server.URL,
+				MaxRetries: 0,
+			})
+			checker := NewHealthChecker(client)
 
-		resp := VersionResponse{Version: "0.1.0"}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(resp)
-	}))
-	defer server.Close()
+			// A new checker reports unavailable until its first check.
+			if checker.IsAvailable() {
+				t.Error("expected initial status to be unavailable")
+			}
+			if checker.LastStatus().Available {
+				t.Error("expected initial LastStatus to be unavailable")
+			}
 
-	client := NewClient(ClientConfig{BaseURL: server.URL})
-	checker := NewHealthChecker(client)
+			status, err := checker.Check(context.Background())
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("Check() error = %v, wantErr %v", err, tt.wantErr)
+			}
 
-	status, err := checker.Check(context.Background())
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
+			if status.Available == tt.wantErr {
+				t.Errorf("expected Available %v, got %v", !tt.wantErr, status.Available)
+			}
+			if status.Version != tt.wantVersion {
+				t.Errorf("expected version %q, got %q", tt.wantVersion, status.Version)
+			}
+			if (status.Error != "") != tt.wantErr {
+				t.Errorf("expected error message set %v, got %q", tt.wantErr, status.Error)
+			}
+			if status.LastChecked.IsZero() {
+				t.Error("expected LastChecked to be set")
+			}
 
-	if !status.Available {
-		t.Error("expected status to be available")
-	}
-
-	if status.Version != "0.1.0" {
-		t.Errorf("expected version '0.1.0', got %s", status.Version)
-	}
-
-	if status.Error != "" {
-		t.Errorf("expected no error, got %s", status.Error)
-	}
-
-	if status.LastChecked.IsZero() {
-		t.Error("expected LastChecked to be set")
-	}
-}
-
-func TestHealthChecker_Check_Unavailable(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_, _ = w.Write([]byte(`{"error": "service unavailable"}`))
-	}))
-	defer server.Close()
-
-	client := NewClient(ClientConfig{
-		BaseURL:    server.URL,
-		MaxRetries: 0,
-	})
-	checker := NewHealthChecker(client)
-
-	status, err := checker.Check(context.Background())
-	if err == nil {
-		t.Fatal("expected error")
-	}
-
-	if status.Available {
-		t.Error("expected status to be unavailable")
-	}
-
-	if status.Error == "" {
-		t.Error("expected error message to be set")
-	}
-}
-
-func TestHealthChecker_IsAvailable(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		resp := VersionResponse{Version: "0.1.0"}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(resp)
-	}))
-	defer server.Close()
-
-	client := NewClient(ClientConfig{BaseURL: server.URL})
-	checker := NewHealthChecker(client)
-
-	// Initially unavailable
-	if checker.IsAvailable() {
-		t.Error("expected initial status to be unavailable")
-	}
-
-	// After successful check
-	_, _ = checker.Check(context.Background())
-	if !checker.IsAvailable() {
-		t.Error("expected status to be available after check")
-	}
-}
-
-func TestHealthChecker_LastStatus(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		resp := VersionResponse{Version: "0.1.0"}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(resp)
-	}))
-	defer server.Close()
-
-	client := NewClient(ClientConfig{BaseURL: server.URL})
-	checker := NewHealthChecker(client)
-
-	// Get initial status
-	initialStatus := checker.LastStatus()
-	if initialStatus.Available {
-		t.Error("expected initial status to be unavailable")
-	}
-
-	// Perform check
-	_, _ = checker.Check(context.Background())
-
-	// Get updated status
-	updatedStatus := checker.LastStatus()
-	if !updatedStatus.Available {
-		t.Error("expected updated status to be available")
-	}
-
-	if updatedStatus.Version != "0.1.0" {
-		t.Errorf("expected version '0.1.0', got %s", updatedStatus.Version)
+			if checker.IsAvailable() != status.Available {
+				t.Errorf("expected IsAvailable %v after check", status.Available)
+			}
+			if checker.LastStatus() != status {
+				t.Error("expected LastStatus to return the status of the last check")
+			}
+		})
 	}
 }
 

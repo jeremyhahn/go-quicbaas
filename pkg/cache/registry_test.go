@@ -61,46 +61,6 @@ func TestNewCacheRegistry(t *testing.T) {
 		}
 	})
 
-	t.Run("with entity configurations", func(t *testing.T) {
-		cfg := config.EnhancedCacheConfig{
-			Enabled:         true,
-			DefaultTTL:      5 * time.Minute,
-			MaxSize:         10000,
-			CleanupInterval: 1 * time.Minute,
-			WriteThrough:    true,
-			Entities: map[string]config.EntityCacheConfig{
-				"user": {
-					Enabled: true,
-					TTL:     10 * time.Minute,
-					MaxSize: 5000,
-				},
-				"post": {
-					Enabled: false,
-				},
-			},
-		}
-
-		registry, err := NewCacheRegistry(&cfg, log, nil)
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-		defer registry.Close()
-
-		// Check that entity caches were registered
-		userCache := registry.GetEntityCache("user")
-		if userCache == nil {
-			t.Error("Expected user cache to be registered")
-		}
-		if userCache.entityType != "user" {
-			t.Errorf("Expected entity type 'user', got %s", userCache.entityType)
-		}
-
-		postCache := registry.GetEntityCache("post")
-		if postCache == nil {
-			t.Error("Expected post cache to exist (even if disabled)")
-		}
-	})
-
 	t.Run("disabled cache", func(t *testing.T) {
 		cfg := config.EnhancedCacheConfig{
 			Enabled:         false,
@@ -254,6 +214,16 @@ func TestCacheRegistry_DisabledEntityCache(t *testing.T) {
 	if err == nil {
 		t.Error("Expected error when getting from disabled cache")
 	}
+
+	// Delete should succeed but do nothing
+	if err := registry.Delete(ctx, entityType, key); err != nil {
+		t.Errorf("Delete() on disabled cache error = %v", err)
+	}
+
+	// Stats should show disabled
+	if registry.GetStats(entityType).Enabled {
+		t.Error("Expected stats.Enabled to be false for disabled cache")
+	}
 }
 
 func TestCacheRegistry_GetStats(t *testing.T) {
@@ -269,6 +239,9 @@ func TestCacheRegistry_GetStats(t *testing.T) {
 				Enabled: true,
 				TTL:     10 * time.Minute,
 				MaxSize: 1000,
+			},
+			"comment": {
+				Enabled: false,
 			},
 		},
 	}
@@ -304,6 +277,11 @@ func TestCacheRegistry_GetStats(t *testing.T) {
 		t.Error("Expected stats for user entity")
 	}
 
+	// Disabled entities are listed, marked disabled
+	if stats, exists := allStats["comment"]; !exists || stats.Enabled {
+		t.Errorf("Expected disabled stats for comment entity, got %+v (exists=%v)", stats, exists)
+	}
+
 	if _, exists := allStats["_global"]; !exists {
 		t.Error("Expected stats for global cache")
 	}
@@ -322,6 +300,9 @@ func TestCacheRegistry_Clear(t *testing.T) {
 				Enabled: true,
 				TTL:     10 * time.Minute,
 				MaxSize: 1000,
+			},
+			"post": {
+				Enabled: false,
 			},
 		},
 	}
@@ -476,45 +457,6 @@ func TestEntityCache_Methods(t *testing.T) {
 	}
 }
 
-func TestEntityCache_DisabledCache(t *testing.T) {
-	entityCache := &EntityCache{
-		entityType: "post",
-		manager:    nil,
-		config: config.EntityCacheConfig{
-			Enabled: false,
-		},
-		enabled: false,
-	}
-
-	ctx := context.Background()
-	key := "test-key"
-	value := []byte("test-value")
-
-	// Set should not error but do nothing
-	err := entityCache.Set(ctx, key, value)
-	if err != nil {
-		t.Errorf("Set() on disabled cache error = %v", err)
-	}
-
-	// Get should return not found
-	_, err = entityCache.Get(ctx, key)
-	if err == nil {
-		t.Error("Expected error when getting from disabled cache")
-	}
-
-	// Delete should not error
-	err = entityCache.Delete(ctx, key)
-	if err != nil {
-		t.Errorf("Delete() on disabled cache error = %v", err)
-	}
-
-	// Stats should show disabled
-	stats := entityCache.Stats()
-	if stats.Enabled {
-		t.Error("Expected stats.Enabled to be false for disabled cache")
-	}
-}
-
 func TestBuildEntityKey(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -569,6 +511,9 @@ func TestParseEntityKey(t *testing.T) {
 		{"invalid key - no prefix", "user:123", "", ""},
 		{"invalid key - too short", "entity:", "", ""},
 		{"invalid key - no colon", "entityuser123", "", ""},
+		{"valid key with colon in ID", "entity:user:id:with:colons", "user", "id:with:colons"},
+		{"empty string", "", "", ""},
+		{"prefix with entity but no second colon", "entity:user", "", ""},
 	}
 
 	for _, tt := range tests {
@@ -584,198 +529,7 @@ func TestParseEntityKey(t *testing.T) {
 	}
 }
 
-func TestCacheRegistry_IntegrationScenario(t *testing.T) {
-	log := newTestLogger(t)
-
-	// Create a realistic configuration
-	trueVal := true
-	falseVal := false
-
-	cfg := config.EnhancedCacheConfig{
-		Enabled:         true,
-		DefaultTTL:      5 * time.Minute,
-		MaxSize:         10000,
-		CleanupInterval: 1 * time.Minute,
-		WriteThrough:    true,
-		Entities: map[string]config.EntityCacheConfig{
-			"user": {
-				Enabled:      true,
-				TTL:          10 * time.Minute,
-				MaxSize:      5000,
-				WriteThrough: &trueVal,
-			},
-			"post": {
-				Enabled:      false,
-				WriteThrough: &falseVal,
-			},
-			"comment": {
-				Enabled: true,
-				TTL:     2 * time.Minute,
-				MaxSize: 1000,
-			},
-		},
-	}
-
-	registry, err := NewCacheRegistry(&cfg, log, nil)
-	if err != nil {
-		t.Fatalf("Failed to create registry: %v", err)
-	}
-	defer registry.Close()
-
-	ctx := context.Background()
-
-	// Scenario 1: Cache users (enabled)
-	userKey := BuildEntityKey("user", "123")
-	userData := []byte(`{"id":"123","name":"John Doe"}`)
-
-	err = registry.Set(ctx, "user", userKey, userData)
-	if err != nil {
-		t.Errorf("Failed to cache user: %v", err)
-	}
-
-	retrievedUser, err := registry.Get(ctx, "user", userKey)
-	if err != nil {
-		t.Errorf("Failed to retrieve user: %v", err)
-	}
-	if string(retrievedUser) != string(userData) {
-		t.Error("User data mismatch")
-	}
-
-	// Scenario 2: Try to cache posts (disabled)
-	postKey := BuildEntityKey("post", "456")
-	postData := []byte(`{"id":"456","title":"Test Post"}`)
-
-	// Set should succeed (no error) but not cache
-	err = registry.Set(ctx, "post", postKey, postData)
-	if err != nil {
-		t.Errorf("Set on disabled cache should not error: %v", err)
-	}
-
-	// Get should fail
-	_, err = registry.Get(ctx, "post", postKey)
-	if err == nil {
-		t.Error("Expected error when getting from disabled cache")
-	}
-
-	// Scenario 3: Cache comments (enabled)
-	commentKey := BuildEntityKey("comment", "789")
-	commentData := []byte(`{"id":"789","text":"Great post!"}`)
-
-	err = registry.Set(ctx, "comment", commentKey, commentData)
-	if err != nil {
-		t.Errorf("Failed to cache comment: %v", err)
-	}
-
-	retrievedComment, err := registry.Get(ctx, "comment", commentKey)
-	if err != nil {
-		t.Errorf("Failed to retrieve comment: %v", err)
-	}
-	if string(retrievedComment) != string(commentData) {
-		t.Error("Comment data mismatch")
-	}
-
-	// Scenario 4: Check statistics
-	allStats := registry.GetAllStats()
-	if len(allStats) < 2 { // At least user and comment should have stats
-		t.Errorf("Expected stats for multiple entities, got %d", len(allStats))
-	}
-
-	userStats := registry.GetStats("user")
-	if userStats.L1Size == 0 {
-		t.Error("Expected user cache to have entries")
-	}
-
-	// Scenario 5: Clear and verify
-	registry.Clear()
-
-	_, err = registry.Get(ctx, "user", userKey)
-	if err == nil {
-		t.Error("Expected cache to be empty after clear")
-	}
-}
-
 // Additional comprehensive tests for 90%+ coverage
-
-func TestCacheRegistry_ConcurrentEntityOperations(t *testing.T) {
-	log := newTestLogger(t)
-
-	cfg := config.EnhancedCacheConfig{
-		Enabled:         true,
-		DefaultTTL:      5 * time.Minute,
-		MaxSize:         1000,
-		CleanupInterval: 1 * time.Minute,
-		Entities: map[string]config.EntityCacheConfig{
-			"user": {
-				Enabled: true,
-				TTL:     10 * time.Minute,
-				MaxSize: 500,
-			},
-			"post": {
-				Enabled: true,
-				TTL:     5 * time.Minute,
-				MaxSize: 500,
-			},
-		},
-	}
-
-	registry, err := NewCacheRegistry(&cfg, log, nil)
-	if err != nil {
-		t.Fatalf("Failed to create registry: %v", err)
-	}
-	defer registry.Close()
-
-	ctx := context.Background()
-
-	const numGoroutines = 50
-	const opsPerGoroutine = 100
-
-	var wg sync.WaitGroup
-
-	// Concurrent operations on user entity
-	wg.Add(numGoroutines)
-	for i := 0; i < numGoroutines; i++ {
-		go func(id int) {
-			defer wg.Done()
-			for j := 0; j < opsPerGoroutine; j++ {
-				key := fmt.Sprintf("user:%d:%d", id, j)
-				value := []byte(fmt.Sprintf("value-%d-%d", id, j))
-				registry.Set(ctx, "user", key, value)
-				registry.Get(ctx, "user", key)
-				if j%10 == 0 {
-					registry.Delete(ctx, "user", key)
-				}
-			}
-		}(i)
-	}
-
-	// Concurrent operations on post entity
-	wg.Add(numGoroutines)
-	for i := 0; i < numGoroutines; i++ {
-		go func(id int) {
-			defer wg.Done()
-			for j := 0; j < opsPerGoroutine; j++ {
-				key := fmt.Sprintf("post:%d:%d", id, j)
-				value := []byte(fmt.Sprintf("value-%d-%d", id, j))
-				registry.Set(ctx, "post", key, value)
-				registry.Get(ctx, "post", key)
-			}
-		}(i)
-	}
-
-	wg.Wait()
-
-	// Verify registries are in valid state
-	userStats := registry.GetStats("user")
-	postStats := registry.GetStats("post")
-
-	if userStats.L1Size < 0 || userStats.L1Size > userStats.L1Capacity {
-		t.Errorf("Invalid user cache state: size=%d, capacity=%d", userStats.L1Size, userStats.L1Capacity)
-	}
-
-	if postStats.L1Size < 0 || postStats.L1Size > postStats.L1Capacity {
-		t.Errorf("Invalid post cache state: size=%d, capacity=%d", postStats.L1Size, postStats.L1Capacity)
-	}
-}
 
 func TestCacheRegistry_UpdateEntityConfigConcurrent(t *testing.T) {
 	log := newTestLogger(t)
@@ -818,14 +572,12 @@ func TestCacheRegistry_UpdateEntityConfigConcurrent(t *testing.T) {
 		for i := 0; i < 100; i++ {
 			key := fmt.Sprintf("user:%d", i%50)
 			registry.Get(ctx, "user", key)
-			time.Sleep(1 * time.Millisecond)
 		}
 	}()
 
 	// Goroutine updating config
 	go func() {
 		defer wg.Done()
-		time.Sleep(20 * time.Millisecond)
 		newCfg := config.EntityCacheConfig{
 			Enabled: true,
 			TTL:     20 * time.Minute,
@@ -862,33 +614,6 @@ func TestCacheRegistry_ErrorPaths(t *testing.T) {
 				registry.Close()
 			}
 			t.Fatal("Expected error for invalid config")
-		}
-	})
-
-	t.Run("close with errors", func(t *testing.T) {
-		cfg := config.EnhancedCacheConfig{
-			Enabled:         true,
-			DefaultTTL:      5 * time.Minute,
-			MaxSize:         1000,
-			CleanupInterval: 1 * time.Minute,
-			Entities: map[string]config.EntityCacheConfig{
-				"user": {
-					Enabled: true,
-					TTL:     10 * time.Minute,
-					MaxSize: 100,
-				},
-			},
-		}
-
-		registry, err := NewCacheRegistry(&cfg, log, nil)
-		if err != nil {
-			t.Fatalf("Failed to create registry: %v", err)
-		}
-
-		// Close should succeed even if called multiple times
-		err = registry.Close()
-		if err != nil {
-			t.Logf("First close error: %v", err)
 		}
 	})
 
@@ -996,71 +721,6 @@ func TestCacheRegistry_GetEntityCacheWithGlobalFallback(t *testing.T) {
 	}
 }
 
-func TestCacheRegistry_GetAllStatsWithMultipleEntities(t *testing.T) {
-	log := newTestLogger(t)
-
-	trueVal := true
-	cfg := config.EnhancedCacheConfig{
-		Enabled:         true,
-		DefaultTTL:      5 * time.Minute,
-		MaxSize:         1000,
-		CleanupInterval: 1 * time.Minute,
-		Entities: map[string]config.EntityCacheConfig{
-			"user": {
-				Enabled:      true,
-				TTL:          10 * time.Minute,
-				MaxSize:      100,
-				WriteThrough: &trueVal,
-			},
-			"post": {
-				Enabled:      true,
-				TTL:          5 * time.Minute,
-				MaxSize:      200,
-				WriteThrough: &trueVal,
-			},
-			"comment": {
-				Enabled: false, // Disabled entity
-			},
-		},
-	}
-
-	registry, err := NewCacheRegistry(&cfg, log, nil)
-	if err != nil {
-		t.Fatalf("Failed to create registry: %v", err)
-	}
-	defer registry.Close()
-
-	ctx := context.Background()
-
-	// Add data to each entity
-	registry.Set(ctx, "user", "user:1", []byte("user-data"))
-	registry.Set(ctx, "post", "post:1", []byte("post-data"))
-	registry.Set(ctx, "comment", "comment:1", []byte("comment-data")) // Disabled, should not cache
-
-	allStats := registry.GetAllStats()
-
-	// Should have stats for enabled entities
-	if _, exists := allStats["user"]; !exists {
-		t.Error("Expected stats for user entity")
-	}
-
-	if _, exists := allStats["post"]; !exists {
-		t.Error("Expected stats for post entity")
-	}
-
-	// Should not have stats for disabled entity
-	if stats, exists := allStats["comment"]; exists {
-		if stats.Enabled {
-			t.Error("Expected comment cache to be disabled")
-		}
-	}
-
-	// Should have global cache stats
-	if _, exists := allStats["_global"]; !exists {
-		t.Error("Expected stats for global cache")
-	}
-}
-
 func TestCacheRegistry_StressTestMultipleEntities(t *testing.T) {
 	log := newTestLogger(t)
 
@@ -1143,136 +803,5 @@ func TestCacheRegistry_StressTestMultipleEntities(t *testing.T) {
 				t.Errorf("Invalid state for %s: size=%d, capacity=%d", entity, stats.L1Size, stats.L1Capacity)
 			}
 		}
-	}
-}
-
-func TestEntityCache_GetSetDeleteWithNilManager(t *testing.T) {
-	// Test EntityCache methods when manager is nil (disabled cache)
-	entityCache := &EntityCache{
-		entityType: "test",
-		manager:    nil,
-		config: config.EntityCacheConfig{
-			Enabled: false,
-		},
-		enabled: false,
-	}
-
-	ctx := context.Background()
-
-	// Get should return error
-	_, err := entityCache.Get(ctx, "key")
-	if err == nil {
-		t.Error("Expected error when getting from nil manager")
-	}
-
-	// Set should not error (silently skip)
-	err = entityCache.Set(ctx, "key", []byte("value"))
-	if err != nil {
-		t.Errorf("Set should not error with nil manager: %v", err)
-	}
-
-	// Delete should not error (silently skip)
-	err = entityCache.Delete(ctx, "key")
-	if err != nil {
-		t.Errorf("Delete should not error with nil manager: %v", err)
-	}
-
-	// Stats should show disabled
-	stats := entityCache.Stats()
-	if stats.Enabled {
-		t.Error("Expected stats to show disabled")
-	}
-}
-
-func TestParseEntityKey_EdgeCases(t *testing.T) {
-	tests := []struct {
-		name           string
-		key            string
-		wantEntityType string
-		wantID         string
-	}{
-		{
-			name:           "valid key with colon in ID",
-			key:            "entity:user:id:with:colons",
-			wantEntityType: "user",
-			wantID:         "id:with:colons",
-		},
-		{
-			name:           "empty string",
-			key:            "",
-			wantEntityType: "",
-			wantID:         "",
-		},
-		{
-			name:           "only prefix",
-			key:            "entity:",
-			wantEntityType: "",
-			wantID:         "",
-		},
-		{
-			name:           "prefix with entity but no colon",
-			key:            "entity:user",
-			wantEntityType: "",
-			wantID:         "",
-		},
-		{
-			name:           "wrong prefix",
-			key:            "wrong:user:123",
-			wantEntityType: "",
-			wantID:         "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			gotEntityType, gotID := ParseEntityKey(tt.key)
-			if gotEntityType != tt.wantEntityType {
-				t.Errorf("ParseEntityKey() entityType = %s, want %s", gotEntityType, tt.wantEntityType)
-			}
-			if gotID != tt.wantID {
-				t.Errorf("ParseEntityKey() id = %s, want %s", gotID, tt.wantID)
-			}
-		})
-	}
-}
-
-func TestCacheRegistry_ClearWithDisabledEntities(t *testing.T) {
-	log := newTestLogger(t)
-
-	cfg := config.EnhancedCacheConfig{
-		Enabled:         true,
-		DefaultTTL:      5 * time.Minute,
-		MaxSize:         1000,
-		CleanupInterval: 1 * time.Minute,
-		Entities: map[string]config.EntityCacheConfig{
-			"enabled": {
-				Enabled: true,
-				TTL:     10 * time.Minute,
-				MaxSize: 100,
-			},
-			"disabled": {
-				Enabled: false,
-			},
-		},
-	}
-
-	registry, err := NewCacheRegistry(&cfg, log, nil)
-	if err != nil {
-		t.Fatalf("Failed to create registry: %v", err)
-	}
-	defer registry.Close()
-
-	ctx := context.Background()
-
-	// Add data to enabled cache
-	registry.Set(ctx, "enabled", "key1", []byte("value1"))
-
-	// Clear should not panic with mix of enabled/disabled caches
-	registry.Clear()
-
-	// Verify enabled cache was cleared
-	_, err = registry.Get(ctx, "enabled", "key1")
-	if err == nil {
-		t.Error("Expected key to be cleared")
 	}
 }

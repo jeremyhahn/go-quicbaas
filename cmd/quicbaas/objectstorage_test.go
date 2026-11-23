@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -34,169 +35,64 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/cluster"
 )
 
-func TestEmbeddedServerFailedError_Error(t *testing.T) {
-	err := &EmbeddedServerFailedError{Reason: "connection refused"}
-	assert.Contains(t, err.Error(), "embedded server failed")
-	assert.Contains(t, err.Error(), "connection refused")
-}
-
-func TestEmbeddedPortError_Error(t *testing.T) {
-	err := &EmbeddedPortError{}
-	assert.Contains(t, err.Error(), "listener address is not a TCP address")
-}
-
-func TestEmbeddedServer_ShutdownNotStarted(t *testing.T) {
-	es := &embeddedServer{}
-	err := es.shutdown()
-	assert.NoError(t, err)
-}
-
-func TestEmbeddedServer_ShutdownStartedNoServer(t *testing.T) {
-	es := &embeddedServer{}
-	es.started.Store(true)
-	es.tempDir = t.TempDir()
-
-	err := es.shutdown()
-	assert.NoError(t, err)
-	assert.False(t, es.started.Load(), "started should be false after shutdown")
-}
-
-// =============================================================================
-// factories.go coverage - GRPCBackupClientWrapper stubs
-// These wrapper methods delegate to the adapter, so they fail with nil adapter
-// but the code path through the wrapper method body is covered.
-// =============================================================================
-
-func TestGRPCBackupClientWrapper_CreateBackup_NilAdapter(t *testing.T) {
+// TestGRPCBackupClientWrapper_NilAdapter checks that every wrapper method
+// delegates to its adapter: with no adapter there is nothing to call.
+func TestGRPCBackupClientWrapper_NilAdapter(t *testing.T) {
 	wrapper := &GRPCBackupClientWrapper{adapter: nil}
-	assert.Panics(t, func() {
-		wrapper.CreateBackup(context.Background(), &BackupCreateRequest{})
-	})
+	ctx := context.Background()
+	tests := []struct {
+		name string
+		call func()
+	}{
+		{"create", func() { wrapper.CreateBackup(ctx, &BackupCreateRequest{}) }},
+		{"list", func() { wrapper.ListBackups(ctx, &BackupListRequest{}) }},
+		{"restore", func() { wrapper.RestoreBackup(ctx, &BackupRestoreRequest{}) }},
+		{"delete", func() { wrapper.DeleteBackup(ctx, &BackupDeleteRequest{}) }},
+		{"verify", func() { wrapper.VerifyBackup(ctx, &BackupVerifyRequest{}) }},
+		{"close", func() { wrapper.Close() }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Panics(t, tt.call)
+		})
+	}
 }
 
-func TestGRPCBackupClientWrapper_ListBackups_NilAdapter(t *testing.T) {
-	wrapper := &GRPCBackupClientWrapper{adapter: nil}
-	assert.Panics(t, func() {
-		wrapper.ListBackups(context.Background(), &BackupListRequest{})
-	})
-}
-
-func TestGRPCBackupClientWrapper_RestoreBackup_NilAdapter(t *testing.T) {
-	wrapper := &GRPCBackupClientWrapper{adapter: nil}
-	assert.Panics(t, func() {
-		wrapper.RestoreBackup(context.Background(), &BackupRestoreRequest{})
-	})
-}
-
-func TestGRPCBackupClientWrapper_DeleteBackup_NilAdapter(t *testing.T) {
-	wrapper := &GRPCBackupClientWrapper{adapter: nil}
-	assert.Panics(t, func() {
-		wrapper.DeleteBackup(context.Background(), &BackupDeleteRequest{})
-	})
-}
-
-func TestGRPCBackupClientWrapper_VerifyBackup_NilAdapter(t *testing.T) {
-	wrapper := &GRPCBackupClientWrapper{adapter: nil}
-	assert.Panics(t, func() {
-		wrapper.VerifyBackup(context.Background(), &BackupVerifyRequest{})
-	})
-}
-
-func TestGRPCBackupClientWrapper_Close_NilAdapter(t *testing.T) {
-	wrapper := &GRPCBackupClientWrapper{adapter: nil}
-	assert.Panics(t, func() {
-		wrapper.Close()
-	})
-}
-
-// =============================================================================
-// client.go coverage - loadStoredAuthToken
-// =============================================================================
-
-func TestLoadMCPAuthToken_EmptyTokenFile(t *testing.T) {
+func TestLoadStoredAuthToken(t *testing.T) {
 	origTokenFile := authTokenFile
-	defer func() { authTokenFile = origTokenFile }()
+	t.Cleanup(func() { authTokenFile = origTokenFile })
 
-	authTokenFile = "/nonexistent/path/token"
-	token := loadStoredAuthToken()
-	assert.Empty(t, token)
-}
-
-func TestLoadMCPAuthToken_ValidToken(t *testing.T) {
-	origTokenFile := authTokenFile
-	defer func() { authTokenFile = origTokenFile }()
-
-	tmpDir := t.TempDir()
-	tokenPath := filepath.Join(tmpDir, "token")
-
-	tokenData := &cli.TokenData{
-		AccessToken:  "test-access-token-123",
-		RefreshToken: "test-refresh-token",
-		ExpiresAt:    time.Now().Add(1 * time.Hour),
-		TokenType:    "Bearer",
+	saveToken := func(t *testing.T, access string, expiresAt time.Time) string {
+		t.Helper()
+		tokenPath := filepath.Join(t.TempDir(), "token")
+		require.NoError(t, cli.SaveToken(tokenPath, &cli.TokenData{
+			AccessToken:  access,
+			RefreshToken: "refresh",
+			ExpiresAt:    expiresAt,
+			TokenType:    "Bearer",
+		}))
+		return tokenPath
 	}
 
-	err := cli.SaveToken(tokenPath, tokenData)
-	require.NoError(t, err)
-
-	authTokenFile = tokenPath
-	token := loadStoredAuthToken()
-	assert.Equal(t, "test-access-token-123", token)
-}
-
-func TestLoadMCPAuthToken_ExpiredToken(t *testing.T) {
-	origTokenFile := authTokenFile
-	defer func() { authTokenFile = origTokenFile }()
-
-	tmpDir := t.TempDir()
-	tokenPath := filepath.Join(tmpDir, "token")
-
-	tokenData := &cli.TokenData{
-		AccessToken:  "expired-token",
-		RefreshToken: "refresh",
-		ExpiresAt:    time.Now().Add(-1 * time.Hour),
-		TokenType:    "Bearer",
+	tests := []struct {
+		name string
+		path func(t *testing.T) string
+		want string
+	}{
+		{"missing file", func(*testing.T) string { return "/nonexistent/path/token" }, ""},
+		{"valid token", func(t *testing.T) string {
+			return saveToken(t, "test-access-token-123", time.Now().Add(time.Hour))
+		}, "test-access-token-123"},
+		{"expired token", func(t *testing.T) string {
+			return saveToken(t, "expired-token", time.Now().Add(-time.Hour))
+		}, ""},
+		{"default path fallback", func(*testing.T) string { return "" }, ""},
 	}
-
-	err := cli.SaveToken(tokenPath, tokenData)
-	require.NoError(t, err)
-
-	authTokenFile = tokenPath
-	token := loadStoredAuthToken()
-	assert.Empty(t, token, "expired token should return empty string")
-}
-
-func TestLoadMCPAuthToken_DefaultPathFallback(t *testing.T) {
-	origTokenFile := authTokenFile
-	defer func() { authTokenFile = origTokenFile }()
-
-	authTokenFile = ""
-	token := loadStoredAuthToken()
-	assert.Empty(t, token)
-}
-
-// =============================================================================
-// client.go coverage - buildSDKClientOptions embedded transport
-// =============================================================================
-
-func TestBuildSDKClientOptions_EmbeddedTransport_NoServer(t *testing.T) {
-	savedTransport := transport
-	savedTimeout := globalTimeout
-	defer func() {
-		transport = savedTransport
-		globalTimeout = savedTimeout
-		embeddedServerHolder.Store(nil)
-	}()
-
-	embeddedServerHolder.Store(nil)
-	transport = "embedded"
-	globalTimeout = 5 * time.Second
-
-	opts, err := buildSDKClientOptions()
-	if err != nil {
-		assert.Nil(t, opts)
-	} else {
-		assert.NotNil(t, opts)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			authTokenFile = tt.path(t)
+			assert.Equal(t, tt.want, loadStoredAuthToken())
+		})
 	}
 }
 
@@ -227,275 +123,118 @@ func TestCloseSDKClient_WithEmbeddedServer(t *testing.T) {
 // rebalance.go coverage - display helper functions (new paths only)
 // =============================================================================
 
-func TestDisplayRebalanceReport_Table_NoMoves(t *testing.T) {
-	report := &RebalanceReport{
-		StartTime:       time.Now().Add(-1 * time.Minute),
-		EndTime:         time.Now(),
-		Duration:        1 * time.Minute,
-		MovesCompleted:  0,
-		MovesFailed:     0,
-		ImbalanceBefore: 0.01,
-		ImbalanceAfter:  0.01,
+func TestDisplayRebalanceReport_Table(t *testing.T) {
+	manyErrors := make([]string, 8)
+	for i := range manyErrors {
+		manyErrors[i] = errors.New(errors.ErrInternal, "test", "error").Error()
 	}
-
-	err := displayRebalanceReport(report, "table")
-	assert.NoError(t, err)
-}
-
-func TestDisplayRebalanceReport_Table_WithFailedMoves(t *testing.T) {
-	report := &RebalanceReport{
-		StartTime:       time.Now().Add(-3 * time.Minute),
-		EndTime:         time.Now(),
-		Duration:        3 * time.Minute,
-		MovesCompleted:  8,
-		MovesFailed:     2,
-		KeysRebalanced:  4000,
-		BytesRebalanced: 1024 * 1024,
-		ImbalanceBefore: 0.20,
-		ImbalanceAfter:  0.10,
-		Errors:          []string{errors.New(errors.ErrInternal, "test", "shard move failed").Error()},
+	tests := []struct {
+		name   string
+		format string
+		report *RebalanceReport
+	}{
+		{"no moves", "table", &RebalanceReport{Duration: time.Minute, ImbalanceBefore: 0.01, ImbalanceAfter: 0.01}},
+		{"with failed moves", "table", &RebalanceReport{
+			Duration: 3 * time.Minute, MovesCompleted: 8, MovesFailed: 2,
+			KeysRebalanced: 4000, BytesRebalanced: 1024 * 1024,
+			ImbalanceBefore: 0.20, ImbalanceAfter: 0.10,
+			Errors: []string{errors.New(errors.ErrInternal, "test", "shard move failed").Error()},
+		}},
+		{"many errors", "table", &RebalanceReport{
+			Duration: 2 * time.Minute, MovesCompleted: 5, MovesFailed: 8,
+			ImbalanceBefore: 0.30, ImbalanceAfter: 0.25, Errors: manyErrors,
+		}},
+		{"successful moves", "table", &RebalanceReport{
+			Duration: time.Minute, MovesCompleted: 5,
+			KeysRebalanced: 2500, BytesRebalanced: 1024 * 500,
+			ImbalanceBefore: 0.15, ImbalanceAfter: 0.02,
+		}},
+		{"zero improvement", "table", &RebalanceReport{Duration: time.Minute, MovesCompleted: 3, ImbalanceBefore: 0.05, ImbalanceAfter: 0.05}},
+		{"json", "json", &RebalanceReport{
+			Duration: time.Minute, MovesCompleted: 3,
+			KeysRebalanced: 1500, BytesRebalanced: 1024 * 1024,
+			ImbalanceBefore: 0.15, ImbalanceAfter: 0.02,
+		}},
 	}
-
-	err := displayRebalanceReport(report, "table")
-	assert.NoError(t, err)
-}
-
-func TestDisplayRebalanceReport_Table_ManyErrors(t *testing.T) {
-	errs := make([]string, 8)
-	for i := 0; i < 8; i++ {
-		errs[i] = errors.New(errors.ErrInternal, "test", "error").Error()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.report.EndTime = time.Now()
+			tt.report.StartTime = tt.report.EndTime.Add(-tt.report.Duration)
+			assert.NoError(t, displayRebalanceReport(tt.report, tt.format))
+		})
 	}
-	report := &RebalanceReport{
-		StartTime:       time.Now().Add(-2 * time.Minute),
-		EndTime:         time.Now(),
-		Duration:        2 * time.Minute,
-		MovesCompleted:  5,
-		MovesFailed:     8,
-		ImbalanceBefore: 0.30,
-		ImbalanceAfter:  0.25,
-		Errors:          errs,
-	}
-
-	err := displayRebalanceReport(report, "table")
-	assert.NoError(t, err)
-}
-
-func TestDisplayRebalanceReport_Table_SuccessfulMoves(t *testing.T) {
-	report := &RebalanceReport{
-		StartTime:       time.Now().Add(-1 * time.Minute),
-		EndTime:         time.Now(),
-		Duration:        1 * time.Minute,
-		MovesCompleted:  5,
-		MovesFailed:     0,
-		KeysRebalanced:  2500,
-		BytesRebalanced: 1024 * 500,
-		ImbalanceBefore: 0.15,
-		ImbalanceAfter:  0.02,
-	}
-
-	err := displayRebalanceReport(report, "table")
-	assert.NoError(t, err)
 }
 
 func TestDisplayRebalanceReport_InvalidFormat(t *testing.T) {
-	report := &RebalanceReport{}
-	err := displayRebalanceReport(report, "yaml")
-	assert.Error(t, err)
+	assert.Error(t, displayRebalanceReport(&RebalanceReport{}, "yaml"))
 }
 
 func TestDisplayRebalanceProgressSDK_InvalidFormat(t *testing.T) {
-	resp := &cluster.GetRebalanceProgressResponse{}
-	err := displayRebalanceProgressSDK(resp, "xml")
-	assert.Error(t, err)
+	assert.Error(t, displayRebalanceProgressSDK(&cluster.GetRebalanceProgressResponse{}, "xml"))
 }
 
-func TestDisplayRebalanceReport_Table_ZeroImprovement(t *testing.T) {
-	report := &RebalanceReport{
-		StartTime:       time.Now().Add(-1 * time.Minute),
-		EndTime:         time.Now(),
-		Duration:        1 * time.Minute,
-		MovesCompleted:  3,
-		MovesFailed:     0,
-		ImbalanceBefore: 0.05,
-		ImbalanceAfter:  0.05,
-	}
-
-	err := displayRebalanceReport(report, "table")
-	assert.NoError(t, err)
-}
-
-// =============================================================================
-// objectstorage.go coverage - createObjectStorageClient transport switch
-// =============================================================================
-
-func TestCreateObjectStorageClient_GRPCTransport(t *testing.T) {
+func TestCreateObjectStorageClient_Transports(t *testing.T) {
 	origTransport := transport
-	defer func() { transport = origTransport }()
+	t.Cleanup(func() { transport = origTransport })
 
-	transport = "grpc"
-	_, err := createObjectStorageClient()
-	assert.Error(t, err)
-}
-
-func TestCreateObjectStorageClient_EmptyTransport(t *testing.T) {
-	origTransport := transport
-	defer func() { transport = origTransport }()
-
-	transport = ""
-	_, err := createObjectStorageClient()
-	assert.Error(t, err)
-}
-
-func TestCreateObjectStorageClient_UnsupportedTransport(t *testing.T) {
-	origTransport := transport
-	defer func() { transport = origTransport }()
-
-	transport = "rest"
-	_, err := createObjectStorageClient()
-	require.Error(t, err)
-	var unsupportedErr *UnsupportedTransportError
-	assert.ErrorAs(t, err, &unsupportedErr)
-}
-
-// =============================================================================
-// objectstorage.go coverage - runObjectListByTagCommand invalid tag format
-// =============================================================================
-
-func TestRunObjectListByTagCommand_InvalidTagFormat(t *testing.T) {
-	origFactory := objectStorageClientFactory
-	origTagFilter := objectTagFilter
-	defer func() {
-		objectStorageClientFactory = origFactory
-		objectTagFilter = origTagFilter
-	}()
-
-	objectTagFilter = "invalidtag"
-
-	cmd := newObjectListByTagCommand()
-	err := runObjectListByTagCommand(cmd, []string{"bucket"})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid tag format")
-}
-
-// =============================================================================
-// objectstorage.go coverage - runObjectMetadataUpdateCommand invalid JSON
-// =============================================================================
-
-func TestRunObjectMetadataUpdateCommand_InvalidPolicyJSON(t *testing.T) {
-	origMetadata := objectMetadata
-	defer func() { objectMetadata = origMetadata }()
-
-	objectMetadata = "not-json"
-	cmd := newObjectMetadataUpdateCommand()
-	err := runObjectMetadataUpdateCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid policy JSON")
-}
-
-// =============================================================================
-// objectstorage.go coverage - runObjectLifecycleSetCommand invalid JSON
-// =============================================================================
-
-func TestRunObjectLifecycleSetCommand_InvalidPolicyJSON(t *testing.T) {
-	origPolicyJSON := objectPolicyJSON
-	defer func() { objectPolicyJSON = origPolicyJSON }()
-
-	objectPolicyJSON = "bad-json{"
-	cmd := newObjectLifecycleSetCommand()
-	err := runObjectLifecycleSetCommand(cmd, []string{"mybucket"})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid policy JSON")
-}
-
-// =============================================================================
-// objectstorage.go coverage - runObjectRestoreCommand tier parsing
-// =============================================================================
-
-func TestRunObjectRestoreCommand_HotTier(t *testing.T) {
-	origFactory := objectStorageClientFactory
-	origTier := objectRestoreTier
-	defer func() {
-		objectStorageClientFactory = origFactory
-		objectRestoreTier = origTier
-	}()
-
-	objectRestoreTier = "hot"
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "no server")
+	tests := []struct {
+		name            string
+		transport       string
+		wantUnsupported bool
+	}{
+		{name: "grpc without server", transport: "grpc"},
+		{name: "empty defaults to grpc", transport: ""},
+		{name: "unsupported transport", transport: "rest", wantUnsupported: true},
 	}
-
-	cmd := newObjectRestoreCommand()
-	err := runObjectRestoreCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			transport = tt.transport
+			_, err := createObjectStorageClient()
+			require.Error(t, err)
+			if tt.wantUnsupported {
+				var unsupportedErr *UnsupportedTransportError
+				assert.ErrorAs(t, err, &unsupportedErr)
+			}
+		})
+	}
 }
 
-func TestRunObjectRestoreCommand_WarmTier(t *testing.T) {
-	origFactory := objectStorageClientFactory
-	origTier := objectRestoreTier
-	defer func() {
-		objectStorageClientFactory = origFactory
-		objectRestoreTier = origTier
-	}()
+// TestRunObjectCommands_InvalidInput checks that malformed flag values are
+// rejected before any client is created.
+func TestRunObjectCommands_InvalidInput(t *testing.T) {
+	restore := saveAndRestoreObjectGlobals(t)
+	t.Cleanup(restore)
 
-	objectRestoreTier = "warm"
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "no server")
+	tests := []struct {
+		name    string
+		run     func(*cobra.Command, []string) error
+		newCmd  func() *cobra.Command
+		args    []string
+		setup   func()
+		wantMsg string
+	}{
+		{"list-by-tag without separator", runObjectListByTagCommand, newObjectListByTagCommand, []string{"bucket"},
+			func() { objectTagFilter = "invalidtag" }, "invalid tag format"},
+		{"metadata update malformed JSON", runObjectMetadataUpdateCommand, newObjectMetadataUpdateCommand, []string{"bucket/key"},
+			func() { objectMetadata = `{not valid json}` }, "invalid policy JSON"},
+		{"metadata update empty JSON", runObjectMetadataUpdateCommand, newObjectMetadataUpdateCommand, []string{"bucket/key"},
+			func() { objectMetadata = "" }, "invalid policy JSON"},
+		{"lifecycle set malformed JSON", runObjectLifecycleSetCommand, newObjectLifecycleSetCommand, []string{"mybucket"},
+			func() { objectPolicyJSON = "bad-json{" }, "invalid policy JSON"},
 	}
-
-	cmd := newObjectRestoreCommand()
-	err := runObjectRestoreCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestRunObjectRestoreCommand_UnspecifiedTier(t *testing.T) {
-	origFactory := objectStorageClientFactory
-	origTier := objectRestoreTier
-	defer func() {
-		objectStorageClientFactory = origFactory
-		objectRestoreTier = origTier
-	}()
-
-	objectRestoreTier = "unknown"
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "no server")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			objectStorageClientFactory = func() (*grpc.Client, error) {
+				t.Fatal("client factory must not be called for invalid input")
+				return nil, nil
+			}
+			cmd := tt.newCmd()
+			tt.setup()
+			err := tt.run(cmd, tt.args)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantMsg)
+		})
 	}
-
-	cmd := newObjectRestoreCommand()
-	err := runObjectRestoreCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-// =============================================================================
-// objectstorage.go coverage - runObjectPutCommand with valid file + metadata
-// =============================================================================
-
-func TestRunObjectPutCommand_ValidFileValidMetadata(t *testing.T) {
-	origFactory := objectStorageClientFactory
-	origFile := objectFile
-	origMeta := objectMetadata
-	origTags := objectTags
-	defer func() {
-		objectStorageClientFactory = origFactory
-		objectFile = origFile
-		objectMetadata = origMeta
-		objectTags = origTags
-	}()
-
-	tmpFile := filepath.Join(t.TempDir(), "testdata.txt")
-	err := os.WriteFile(tmpFile, []byte("test data content"), 0600)
-	require.NoError(t, err)
-
-	objectFile = tmpFile
-	objectMetadata = `{"env":"prod","tier":"hot"}`
-	objectTags = nil
-
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "no server")
-	}
-
-	cmd := newObjectPutCommand()
-	err = runObjectPutCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
 }
 
 // =============================================================================
@@ -685,812 +424,257 @@ func TestFollowRebalanceProgressSDK_ErrorThenComplete(t *testing.T) {
 // Helper
 // =============================================================================
 
-func createTestLoggerForCoverageNinetyOne(t *testing.T) *logger.Logger {
-	logConfig := logger.LogConfig{
-		Level:     "error",
-		Format:    "json",
-		Output:    "stderr",
-		Component: "test",
-	}
-	testLog, err := logger.New(logConfig)
-	if err != nil {
-		t.Fatalf("Failed to create test logger: %v", err)
-	}
-	return testLog
+// objectFormatCase is one row of a formatter table: the output format, the
+// response to render, and whether rendering must fail.
+type objectFormatCase[R any] struct {
+	name        string
+	format      string
+	includeMeta bool
+	resp        R
+	wantErr     bool
 }
 
-func TestFormatObjectPutResponse_DefaultOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	resp := &pb.PutObjectResponse{
-		Key:      "bucket/test-key",
-		Size:     1024,
-		Version:  1,
-		Checksum: []byte{0xaa, 0xbb, 0xcc},
-	}
-	err := formatObjectPutResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectPutResponse_WithTimestampAndReplicas(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	now := time.Now()
-	resp := &pb.PutObjectResponse{
-		Key:          "bucket/test-key",
-		Size:         2048,
-		Version:      3,
-		Checksum:     []byte{0xde, 0xad},
-		CreatedAt:    timestamppb.New(now),
-		ReplicatedTo: []string{"store-a", "store-b"},
-	}
-	err := formatObjectPutResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectPutResponse_JSONOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "json"
-
-	resp := &pb.PutObjectResponse{
-		Key:     "bucket/json-key",
-		Size:    512,
-		Version: 1,
-	}
-	err := formatObjectPutResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectPutResponse_YAMLOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "yaml"
-
-	resp := &pb.PutObjectResponse{
-		Key:     "bucket/yaml-key",
-		Size:    256,
-		Version: 1,
-	}
-	err := formatObjectPutResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectPutResponse_InvalidFormatErr(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "invalid-fmt"
-
-	resp := &pb.PutObjectResponse{Key: "bucket/key"}
-	err := formatObjectPutResponse(resp)
-	assert.Error(t, err)
-}
-
-func TestFormatObjectGetResponse_DefaultOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	resp := &pb.GetObjectResponse{
-		Key:   "bucket/get-key",
-		Found: true,
-		Value: []byte("hello world"),
-		Size:  11,
-	}
-	err := formatObjectGetResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectGetResponse_JSONWithMeta(t *testing.T) {
-	orig := objectOutputFormat
+// runObjectFormatCases renders each row with the given formatter under the
+// row's output format, restoring the package globals afterwards.
+func runObjectFormatCases[R any](t *testing.T, format func(R) error, cases []objectFormatCase[R]) {
+	t.Helper()
+	origFormat := objectOutputFormat
 	origMeta := objectIncludeMeta
-	defer func() {
-		objectOutputFormat = orig
+	t.Cleanup(func() {
+		objectOutputFormat = origFormat
 		objectIncludeMeta = origMeta
-	}()
-	objectOutputFormat = "json"
-	objectIncludeMeta = true
-
-	resp := &pb.GetObjectResponse{
-		Key:         "bucket/json-get",
-		Found:       true,
-		Value:       []byte("data"),
-		Size:        4,
-		Version:     2,
-		ContentType: "text/plain",
-		Checksum:    []byte{0x01, 0x02},
-		Tags:        map[string]string{"env": "prod"},
-		Metadata: &pb.ObjectMetadata{
-			Owner: "admin",
-		},
+	})
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			objectOutputFormat = tc.format
+			objectIncludeMeta = tc.includeMeta
+			err := format(tc.resp)
+			if tc.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+		})
 	}
-	err := formatObjectGetResponse(resp)
-	assert.NoError(t, err)
 }
 
-func TestFormatObjectGetResponse_YAMLOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "yaml"
-
-	resp := &pb.GetObjectResponse{
-		Key:   "bucket/yaml-get",
-		Found: true,
-		Tags:  map[string]string{"tier": "hot"},
-	}
-	err := formatObjectGetResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectGetResponse_RawOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "raw"
-
-	resp := &pb.GetObjectResponse{
-		Key:   "bucket/raw-get",
-		Found: true,
-		Value: []byte("raw binary content"),
-	}
-	err := formatObjectGetResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectDeleteResponse_DefaultDeleted(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
+func TestFormatObjectPutResponse_Formats(t *testing.T) {
 	now := time.Now()
-	resp := &pb.DeleteObjectResponse{
-		Key:       "bucket/del-key",
-		Deleted:   true,
-		Permanent: false,
-		DeletedAt: timestamppb.New(now),
-	}
-	err := formatObjectDeleteResponse(resp)
-	assert.NoError(t, err)
+	runObjectFormatCases(t, formatObjectPutResponse, []objectFormatCase[*pb.PutObjectResponse]{
+		{name: "default", resp: &pb.PutObjectResponse{Key: "bucket/test-key", Size: 1024, Version: 1, Checksum: []byte{0xaa, 0xbb, 0xcc}}},
+		{name: "default with timestamp and replicas", resp: &pb.PutObjectResponse{
+			Key: "bucket/test-key", Size: 2048, Version: 3, Checksum: []byte{0xde, 0xad},
+			CreatedAt: timestamppb.New(now), ReplicatedTo: []string{"store-a", "store-b"},
+		}},
+		{name: "json", format: "json", resp: &pb.PutObjectResponse{Key: "bucket/json-key", Size: 512, Version: 1}},
+		{name: "yaml", format: "yaml", resp: &pb.PutObjectResponse{Key: "bucket/yaml-key", Size: 256, Version: 1}},
+		{name: "invalid format", format: "invalid-fmt", resp: &pb.PutObjectResponse{Key: "bucket/key"}, wantErr: true},
+	})
 }
 
-func TestFormatObjectDeleteResponse_DefaultPermanent(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	resp := &pb.DeleteObjectResponse{
-		Key:       "bucket/del-perm",
-		Deleted:   true,
-		Permanent: true,
-	}
-	err := formatObjectDeleteResponse(resp)
-	assert.NoError(t, err)
+func TestFormatObjectGetResponse_Formats(t *testing.T) {
+	runObjectFormatCases(t, formatObjectGetResponse, []objectFormatCase[*pb.GetObjectResponse]{
+		{name: "default", resp: &pb.GetObjectResponse{Key: "bucket/get-key", Found: true, Value: []byte("hello world"), Size: 11}},
+		{name: "json with meta", format: "json", includeMeta: true, resp: &pb.GetObjectResponse{
+			Key: "bucket/json-get", Found: true, Value: []byte("data"), Size: 4, Version: 2,
+			ContentType: "text/plain", Checksum: []byte{0x01, 0x02},
+			Tags: map[string]string{"env": "prod"}, Metadata: &pb.ObjectMetadata{Owner: "admin"},
+		}},
+		{name: "yaml", format: "yaml", resp: &pb.GetObjectResponse{Key: "bucket/yaml-get", Found: true, Tags: map[string]string{"tier": "hot"}}},
+		{name: "raw", format: "raw", resp: &pb.GetObjectResponse{Key: "bucket/raw-get", Found: true, Value: []byte("raw binary content")}},
+	})
 }
 
-func TestFormatObjectDeleteResponse_DefaultNotFound(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	resp := &pb.DeleteObjectResponse{
-		Key:     "bucket/not-found",
-		Deleted: false,
-	}
-	err := formatObjectDeleteResponse(resp)
-	assert.NoError(t, err)
+func TestFormatObjectDeleteResponse_Formats(t *testing.T) {
+	runObjectFormatCases(t, formatObjectDeleteResponse, []objectFormatCase[*pb.DeleteObjectResponse]{
+		{name: "default deleted", resp: &pb.DeleteObjectResponse{Key: "bucket/del-key", Deleted: true, DeletedAt: timestamppb.New(time.Now())}},
+		{name: "default permanent", resp: &pb.DeleteObjectResponse{Key: "bucket/del-perm", Deleted: true, Permanent: true}},
+		{name: "default not found", resp: &pb.DeleteObjectResponse{Key: "bucket/not-found"}},
+		{name: "json", format: "json", resp: &pb.DeleteObjectResponse{Key: "bucket/del-json", Deleted: true}},
+		{name: "yaml", format: "yaml", resp: &pb.DeleteObjectResponse{Key: "bucket/del-yaml", Deleted: true}},
+	})
 }
 
-func TestFormatObjectDeleteResponse_JSONOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "json"
-
-	resp := &pb.DeleteObjectResponse{Key: "bucket/del-json", Deleted: true}
-	err := formatObjectDeleteResponse(resp)
-	assert.NoError(t, err)
+func TestFormatObjectHeadResponse_Formats(t *testing.T) {
+	runObjectFormatCases(t, formatObjectHeadResponse, []objectFormatCase[*pb.HeadObjectResponse]{
+		{name: "default exists", resp: &pb.HeadObjectResponse{
+			Key: "bucket/head-key", Exists: true, Size: 4096, ContentType: "application/json",
+			Version: 5, Checksum: []byte{0xff}, Status: pb.ObjectStatus_OBJECT_STATUS_ACTIVE,
+			Tier: pb.StorageTier_STORAGE_TIER_HOT, ModifiedAt: timestamppb.New(time.Now()),
+			Tags: map[string]string{"env": "staging"},
+		}},
+		{name: "default not found", resp: &pb.HeadObjectResponse{Key: "bucket/missing"}},
+		{name: "json", format: "json", resp: &pb.HeadObjectResponse{Key: "bucket/head-json", Exists: true, Size: 100}},
+		{name: "yaml", format: "yaml", resp: &pb.HeadObjectResponse{Key: "bucket/head-yaml", Exists: true}},
+	})
 }
 
-func TestFormatObjectDeleteResponse_YAMLOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "yaml"
-
-	resp := &pb.DeleteObjectResponse{Key: "bucket/del-yaml", Deleted: true}
-	err := formatObjectDeleteResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectHeadResponse_DefaultExists(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	now := time.Now()
-	resp := &pb.HeadObjectResponse{
-		Key:         "bucket/head-key",
-		Exists:      true,
-		Size:        4096,
-		ContentType: "application/json",
-		Version:     5,
-		Checksum:    []byte{0xff},
-		Status:      pb.ObjectStatus_OBJECT_STATUS_ACTIVE,
-		Tier:        pb.StorageTier_STORAGE_TIER_HOT,
-		ModifiedAt:  timestamppb.New(now),
-		Tags:        map[string]string{"env": "staging"},
-	}
-	err := formatObjectHeadResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectHeadResponse_DefaultNotFound(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	resp := &pb.HeadObjectResponse{
-		Key:    "bucket/missing",
-		Exists: false,
-	}
-	err := formatObjectHeadResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectHeadResponse_JSONOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "json"
-
-	resp := &pb.HeadObjectResponse{Key: "bucket/head-json", Exists: true, Size: 100}
-	err := formatObjectHeadResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectHeadResponse_YAMLOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "yaml"
-
-	resp := &pb.HeadObjectResponse{Key: "bucket/head-yaml", Exists: true}
-	err := formatObjectHeadResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectListResponse_DefaultOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	now := time.Now()
-	resp := &pb.ListObjectsResponse{
-		Objects: []*pb.ObjectInfo{
-			{Key: "bucket/obj1", Size: 100, Version: 1, ModifiedAt: timestamppb.New(now)},
-			{Key: "bucket/obj2", Size: 200, Version: 2},
-		},
-		Total:      2,
-		NextCursor: "cursor-abc",
-		HasMore:    true,
-	}
-	err := formatObjectListResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectListResponse_JSONOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "json"
-
-	resp := &pb.ListObjectsResponse{Total: 0}
-	err := formatObjectListResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectListResponse_YAMLOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "yaml"
-
-	resp := &pb.ListObjectsResponse{Total: 1, Objects: []*pb.ObjectInfo{{Key: "k"}}}
-	err := formatObjectListResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectListByTagResponse_DefaultOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	resp := &pb.ListByTagResponse{
-		Keys:       []string{"key1", "key2"},
-		Total:      2,
-		NextCursor: "next",
-		HasMore:    true,
-	}
-	err := formatObjectListByTagResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectListByTagResponse_JSONOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "json"
-
-	resp := &pb.ListByTagResponse{Keys: []string{"k"}, Total: 1}
-	err := formatObjectListByTagResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectListByTagResponse_YAMLOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "yaml"
-
-	resp := &pb.ListByTagResponse{Keys: []string{"k"}, Total: 1}
-	err := formatObjectListByTagResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectListByTenantResponse_DefaultWithObjects(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	resp := &pb.ListByTenantResponse{
-		Objects: []*pb.ObjectInfo{
-			{Key: "tenant/obj1", Size: 100, Version: 1},
-		},
-		Total:      1,
-		NextCursor: "c2",
-		HasMore:    true,
-	}
-	err := formatObjectListByTenantResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectListByTenantResponse_DefaultWithKeys(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	resp := &pb.ListByTenantResponse{
-		Keys:  []string{"key-a", "key-b"},
-		Total: 2,
-	}
-	err := formatObjectListByTenantResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectListByTenantResponse_JSONOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "json"
-
-	resp := &pb.ListByTenantResponse{Total: 0}
-	err := formatObjectListByTenantResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectListByTenantResponse_YAMLOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "yaml"
-
-	resp := &pb.ListByTenantResponse{Total: 0}
-	err := formatObjectListByTenantResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectCopyResponse_DefaultOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	now := time.Now()
-	resp := &pb.CopyObjectResponse{
-		Key:       "bucket/dest-key",
-		Version:   2,
-		Size:      512,
-		CreatedAt: timestamppb.New(now),
-	}
-	err := formatObjectCopyResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectCopyResponse_JSONOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "json"
-
-	resp := &pb.CopyObjectResponse{Key: "bucket/copy-json"}
-	err := formatObjectCopyResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectArchiveResponse_DefaultSuccess(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	now := time.Now()
-	resp := &pb.ArchiveObjectResponse{
-		Key:          "bucket/archive-key",
-		Success:      true,
-		ArchiveStore: "cold-store",
-		OriginalSize: 2048,
-		ArchivedSize: 1024,
-		ArchivedAt:   timestamppb.New(now),
-	}
-	err := formatObjectArchiveResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectArchiveResponse_DefaultFailed(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	resp := &pb.ArchiveObjectResponse{Key: "bucket/archive-fail", Success: false}
-	err := formatObjectArchiveResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectArchiveResponse_JSONOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "json"
-
-	resp := &pb.ArchiveObjectResponse{Key: "bucket/archive-json", Success: true}
-	err := formatObjectArchiveResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectRestoreResponse_DefaultSuccess(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	now := time.Now()
-	resp := &pb.RestoreObjectResponse{
-		Key:                 "bucket/restore-key",
-		Success:             true,
-		RestoredTo:          "hot-store",
-		OperationId:         "op-123",
-		EstimatedCompletion: timestamppb.New(now.Add(time.Hour)),
-	}
-	err := formatObjectRestoreResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectRestoreResponse_DefaultFailed(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	resp := &pb.RestoreObjectResponse{Key: "bucket/restore-fail", Success: false}
-	err := formatObjectRestoreResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectRestoreResponse_JSONOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "json"
-
-	resp := &pb.RestoreObjectResponse{Key: "bucket/restore-json", Success: true}
-	err := formatObjectRestoreResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectVerifyResponse_DefaultValid(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	resp := &pb.VerifyObjectResponse{
-		Key:      "bucket/verify-key",
-		Valid:    true,
-		Repaired: false,
-		Locations: []*pb.LocationVerification{
-			{Store: "store-a", Valid: true, Size: 100},
-			{Store: "store-b", Valid: false, Error: "checksum mismatch", Size: 100},
-		},
-	}
-	err := formatObjectVerifyResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectVerifyResponse_DefaultInvalid(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	resp := &pb.VerifyObjectResponse{Key: "bucket/verify-inv", Valid: false, Repaired: true}
-	err := formatObjectVerifyResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectVerifyResponse_JSONOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "json"
-
-	resp := &pb.VerifyObjectResponse{Key: "bucket/verify-json", Valid: true}
-	err := formatObjectVerifyResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectReplicateResponse_DefaultSuccess(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	resp := &pb.ReplicateObjectResponse{
-		Key:          "bucket/rep-key",
-		Success:      true,
-		ReplicatedTo: []string{"store-a", "store-b"},
-		OperationId:  "rep-op-1",
-	}
-	err := formatObjectReplicateResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectReplicateResponse_DefaultPartialFailed(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	resp := &pb.ReplicateObjectResponse{
-		Key:          "bucket/rep-fail",
-		Success:      false,
-		ReplicatedTo: []string{"store-a"},
-		FailedStores: []string{"store-c"},
-	}
-	err := formatObjectReplicateResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectReplicateResponse_JSONOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "json"
-
-	resp := &pb.ReplicateObjectResponse{Key: "bucket/rep-json", Success: true}
-	err := formatObjectReplicateResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectMigrateResponse_DefaultSuccess(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	resp := &pb.MigrateObjectResponse{
-		Key:           "bucket/mig-key",
-		Success:       true,
-		OldBackend:    "cold-store",
-		NewBackend:    "hot-store",
-		SourceDeleted: true,
-		Verified:      true,
-	}
-	err := formatObjectMigrateResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectMigrateResponse_DefaultFailed(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	resp := &pb.MigrateObjectResponse{
-		Key:        "bucket/mig-fail",
-		Success:    false,
-		OldBackend: "hot",
-		NewBackend: "cold",
-	}
-	err := formatObjectMigrateResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectMigrateResponse_JSONOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "json"
-
-	resp := &pb.MigrateObjectResponse{Key: "bucket/mig-json", Success: true}
-	err := formatObjectMigrateResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectPolicyResponse_DefaultOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	resp := &pb.GetObjectPolicyResponse{
-		Key: "bucket/pol-key",
-		Policy: &pb.ObjectPolicy{
-			ReplicationPolicy: &pb.ReplicationPolicy{
-				Enabled:      true,
-				MinReplicas:  3,
-				Mode:         pb.ReplicationMode_REPLICATION_MODE_SYNC,
-				TargetStores: []string{"store-a", "store-b"},
+func TestFormatObjectListResponse_Formats(t *testing.T) {
+	runObjectFormatCases(t, formatObjectListResponse, []objectFormatCase[*pb.ListObjectsResponse]{
+		{name: "default with cursor", resp: &pb.ListObjectsResponse{
+			Objects: []*pb.ObjectInfo{
+				{Key: "bucket/obj1", Size: 100, Version: 1, ModifiedAt: timestamppb.New(time.Now())},
+				{Key: "bucket/obj2", Size: 200, Version: 2},
 			},
-			ArchivePolicy: &pb.ArchivePolicy{
-				Enabled:           true,
-				ArchiveAfterDays:  30,
-				TargetStore:       "archive-store",
-				DeleteFromPrimary: true,
+			Total: 2, NextCursor: "cursor-abc", HasMore: true,
+		}},
+		{name: "json", format: "json", resp: &pb.ListObjectsResponse{}},
+		{name: "yaml", format: "yaml", resp: &pb.ListObjectsResponse{Total: 1, Objects: []*pb.ObjectInfo{{Key: "k"}}}},
+	})
+}
+
+func TestFormatObjectListByTagResponse_Formats(t *testing.T) {
+	runObjectFormatCases(t, formatObjectListByTagResponse, []objectFormatCase[*pb.ListByTagResponse]{
+		{name: "default with cursor", resp: &pb.ListByTagResponse{Keys: []string{"key1", "key2"}, Total: 2, NextCursor: "next", HasMore: true}},
+		{name: "json", format: "json", resp: &pb.ListByTagResponse{Keys: []string{"k"}, Total: 1}},
+		{name: "yaml", format: "yaml", resp: &pb.ListByTagResponse{Keys: []string{"k"}, Total: 1}},
+	})
+}
+
+func TestFormatObjectListByTenantResponse_Formats(t *testing.T) {
+	runObjectFormatCases(t, formatObjectListByTenantResponse, []objectFormatCase[*pb.ListByTenantResponse]{
+		{name: "default with objects", resp: &pb.ListByTenantResponse{
+			Objects: []*pb.ObjectInfo{{Key: "tenant/obj1", Size: 100, Version: 1}},
+			Total:   1, NextCursor: "c2", HasMore: true,
+		}},
+		{name: "default with keys", resp: &pb.ListByTenantResponse{Keys: []string{"key-a", "key-b"}, Total: 2}},
+		{name: "json", format: "json", resp: &pb.ListByTenantResponse{}},
+		{name: "yaml", format: "yaml", resp: &pb.ListByTenantResponse{}},
+	})
+}
+
+func TestFormatObjectCopyResponse_Formats(t *testing.T) {
+	runObjectFormatCases(t, formatObjectCopyResponse, []objectFormatCase[*pb.CopyObjectResponse]{
+		{name: "default", resp: &pb.CopyObjectResponse{Key: "bucket/dest-key", Version: 2, Size: 512, CreatedAt: timestamppb.New(time.Now())}},
+		{name: "json", format: "json", resp: &pb.CopyObjectResponse{Key: "bucket/copy-json"}},
+	})
+}
+
+func TestFormatObjectArchiveResponse_Formats(t *testing.T) {
+	runObjectFormatCases(t, formatObjectArchiveResponse, []objectFormatCase[*pb.ArchiveObjectResponse]{
+		{name: "default success", resp: &pb.ArchiveObjectResponse{
+			Key: "bucket/archive-key", Success: true, ArchiveStore: "cold-store",
+			OriginalSize: 2048, ArchivedSize: 1024, ArchivedAt: timestamppb.New(time.Now()),
+		}},
+		{name: "default failed", resp: &pb.ArchiveObjectResponse{Key: "bucket/archive-fail"}},
+		{name: "json", format: "json", resp: &pb.ArchiveObjectResponse{Key: "bucket/archive-json", Success: true}},
+	})
+}
+
+func TestFormatObjectRestoreResponse_Formats(t *testing.T) {
+	runObjectFormatCases(t, formatObjectRestoreResponse, []objectFormatCase[*pb.RestoreObjectResponse]{
+		{name: "default success", resp: &pb.RestoreObjectResponse{
+			Key: "bucket/restore-key", Success: true, RestoredTo: "hot-store", OperationId: "op-123",
+			EstimatedCompletion: timestamppb.New(time.Now().Add(time.Hour)),
+		}},
+		{name: "default failed", resp: &pb.RestoreObjectResponse{Key: "bucket/restore-fail"}},
+		{name: "json", format: "json", resp: &pb.RestoreObjectResponse{Key: "bucket/restore-json", Success: true}},
+	})
+}
+
+func TestFormatObjectVerifyResponse_Formats(t *testing.T) {
+	runObjectFormatCases(t, formatObjectVerifyResponse, []objectFormatCase[*pb.VerifyObjectResponse]{
+		{name: "default valid with locations", resp: &pb.VerifyObjectResponse{
+			Key: "bucket/verify-key", Valid: true,
+			Locations: []*pb.LocationVerification{
+				{Store: "store-a", Valid: true, Size: 100},
+				{Store: "store-b", Valid: false, Error: "checksum mismatch", Size: 100},
 			},
-			RetentionPolicy: &pb.RetentionPolicy{
-				Enabled:       true,
-				RetentionDays: 90,
-				MaxVersions:   5,
-				LegalHold:     false,
+		}},
+		{name: "default invalid repaired", resp: &pb.VerifyObjectResponse{Key: "bucket/verify-inv", Repaired: true}},
+		{name: "json", format: "json", resp: &pb.VerifyObjectResponse{Key: "bucket/verify-json", Valid: true}},
+	})
+}
+
+func TestFormatObjectReplicateResponse_Formats(t *testing.T) {
+	runObjectFormatCases(t, formatObjectReplicateResponse, []objectFormatCase[*pb.ReplicateObjectResponse]{
+		{name: "default success", resp: &pb.ReplicateObjectResponse{
+			Key: "bucket/rep-key", Success: true, ReplicatedTo: []string{"store-a", "store-b"}, OperationId: "rep-op-1",
+		}},
+		{name: "default partial failure", resp: &pb.ReplicateObjectResponse{
+			Key: "bucket/rep-fail", ReplicatedTo: []string{"store-a"}, FailedStores: []string{"store-c"},
+		}},
+		{name: "json", format: "json", resp: &pb.ReplicateObjectResponse{Key: "bucket/rep-json", Success: true}},
+	})
+}
+
+func TestFormatObjectMigrateResponse_Formats(t *testing.T) {
+	runObjectFormatCases(t, formatObjectMigrateResponse, []objectFormatCase[*pb.MigrateObjectResponse]{
+		{name: "default success", resp: &pb.MigrateObjectResponse{
+			Key: "bucket/mig-key", Success: true, OldBackend: "cold-store", NewBackend: "hot-store",
+			SourceDeleted: true, Verified: true,
+		}},
+		{name: "default failed", resp: &pb.MigrateObjectResponse{Key: "bucket/mig-fail", OldBackend: "hot", NewBackend: "cold"}},
+		{name: "json", format: "json", resp: &pb.MigrateObjectResponse{Key: "bucket/mig-json", Success: true}},
+	})
+}
+
+func TestFormatObjectPolicyResponse_Formats(t *testing.T) {
+	runObjectFormatCases(t, formatObjectPolicyResponse, []objectFormatCase[*pb.GetObjectPolicyResponse]{
+		{name: "default with effective explicit and inherited", resp: &pb.GetObjectPolicyResponse{
+			Key: "bucket/pol-key",
+			Policy: &pb.ObjectPolicy{
+				ReplicationPolicy: &pb.ReplicationPolicy{
+					Enabled: true, MinReplicas: 3, Mode: pb.ReplicationMode_REPLICATION_MODE_SYNC,
+					TargetStores: []string{"store-a", "store-b"},
+				},
+				ArchivePolicy: &pb.ArchivePolicy{
+					Enabled: true, ArchiveAfterDays: 30, TargetStore: "archive-store", DeleteFromPrimary: true,
+				},
+				RetentionPolicy: &pb.RetentionPolicy{Enabled: true, RetentionDays: 90, MaxVersions: 5},
 			},
-		},
-		ExplicitPolicy: &pb.ObjectPolicy{
-			RetentionPolicy: &pb.RetentionPolicy{
-				Enabled:       true,
-				RetentionDays: 30,
-				MaxVersions:   3,
+			ExplicitPolicy: &pb.ObjectPolicy{
+				RetentionPolicy: &pb.RetentionPolicy{Enabled: true, RetentionDays: 30, MaxVersions: 3, LegalHold: true},
 			},
-		},
-		InheritedPolicy: &pb.ObjectPolicy{
-			ReplicationPolicy: &pb.ReplicationPolicy{
-				Enabled:     true,
-				MinReplicas: 2,
+			InheritedPolicy: &pb.ObjectPolicy{
+				ReplicationPolicy: &pb.ReplicationPolicy{Enabled: true, MinReplicas: 2},
 			},
-		},
+		}},
+		{name: "json", format: "json", resp: &pb.GetObjectPolicyResponse{Key: "bucket/pol-json"}},
+		{name: "yaml", format: "yaml", resp: &pb.GetObjectPolicyResponse{Key: "bucket/pol-yaml"}},
+	})
+}
+
+func TestFormatObjectSetPolicyResponse_Formats(t *testing.T) {
+	runObjectFormatCases(t, formatObjectSetPolicyResponse, []objectFormatCase[*pb.SetObjectPolicyResponse]{
+		{name: "default", resp: &pb.SetObjectPolicyResponse{Key: "bucket/setpol-key", Version: 2, UpdatedAt: timestamppb.New(time.Now())}},
+		{name: "json", format: "json", resp: &pb.SetObjectPolicyResponse{Key: "bucket/setpol-json", Version: 1}},
+	})
+}
+
+func TestFormatObjectStatsResponse_Formats(t *testing.T) {
+	runObjectFormatCases(t, formatObjectStatsResponse, []objectFormatCase[*pb.ListBackendsResponse]{
+		{name: "default with healthy and unhealthy backends", resp: &pb.ListBackendsResponse{
+			Total: 2,
+			Backends: []*pb.BackendInfo{
+				{
+					Name: "primary-store", Type: pb.BackendType_BACKEND_TYPE_LOCAL, Tier: pb.StorageTier_STORAGE_TIER_HOT,
+					Enabled: true, Healthy: true, UsedBytes: 1073741824, CapacityBytes: 10737418240,
+				},
+				{
+					Name: "archive-store", Type: pb.BackendType_BACKEND_TYPE_S3, Tier: pb.StorageTier_STORAGE_TIER_ARCHIVE,
+					Enabled: true, UsedBytes: 536870912, CapacityBytes: 1099511627776,
+				},
+			},
+		}},
+		{name: "json", format: "json", resp: &pb.ListBackendsResponse{}},
+		{name: "yaml", format: "yaml", resp: &pb.ListBackendsResponse{}},
+	})
+}
+
+func TestFormatObjectLifecycleResponse_Formats(t *testing.T) {
+	formatBucket := func(resp *pb.GetObjectPolicyResponse) error {
+		return formatObjectLifecycleResponse("bucket", resp)
 	}
-	err := formatObjectPolicyResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectPolicyResponse_JSONOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "json"
-
-	resp := &pb.GetObjectPolicyResponse{Key: "bucket/pol-json"}
-	err := formatObjectPolicyResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectPolicyResponse_YAMLOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "yaml"
-
-	resp := &pb.GetObjectPolicyResponse{Key: "bucket/pol-yaml"}
-	err := formatObjectPolicyResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectSetPolicyResponse_DefaultOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	now := time.Now()
-	resp := &pb.SetObjectPolicyResponse{
-		Key:       "bucket/setpol-key",
-		Version:   2,
-		UpdatedAt: timestamppb.New(now),
-	}
-	err := formatObjectSetPolicyResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectSetPolicyResponse_JSONOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "json"
-
-	resp := &pb.SetObjectPolicyResponse{Key: "bucket/setpol-json", Version: 1}
-	err := formatObjectSetPolicyResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectStatsResponse_DefaultOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	resp := &pb.ListBackendsResponse{
-		Total: 2,
-		Backends: []*pb.BackendInfo{
-			{
-				Name:          "primary-store",
-				Type:          pb.BackendType_BACKEND_TYPE_LOCAL,
-				Tier:          pb.StorageTier_STORAGE_TIER_HOT,
-				Enabled:       true,
-				Healthy:       true,
-				UsedBytes:     1073741824,
-				CapacityBytes: 10737418240,
-			},
-			{
-				Name:          "archive-store",
-				Type:          pb.BackendType_BACKEND_TYPE_S3,
-				Tier:          pb.StorageTier_STORAGE_TIER_ARCHIVE,
-				Enabled:       true,
-				Healthy:       false,
-				UsedBytes:     536870912,
-				CapacityBytes: 1099511627776,
-			},
-		},
-	}
-	err := formatObjectStatsResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectStatsResponse_JSONOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "json"
-
-	resp := &pb.ListBackendsResponse{Total: 0}
-	err := formatObjectStatsResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectStatsResponse_YAMLOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "yaml"
-
-	resp := &pb.ListBackendsResponse{Total: 0}
-	err := formatObjectStatsResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectLifecycleResponse_DefaultOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	resp := &pb.GetObjectPolicyResponse{
-		Key: "bucket/*",
-		Policy: &pb.ObjectPolicy{
-			RetentionPolicy: &pb.RetentionPolicy{
-				Enabled:       true,
-				RetentionDays: 365,
-			},
-		},
-	}
-	err := formatObjectLifecycleResponse("bucket", resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectLifecycleResponse_DefaultNoPolicy(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	resp := &pb.GetObjectPolicyResponse{Key: "bucket/*"}
-	err := formatObjectLifecycleResponse("bucket", resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectLifecycleResponse_JSONOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "json"
-
-	resp := &pb.GetObjectPolicyResponse{Key: "bucket/*"}
-	err := formatObjectLifecycleResponse("bucket", resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectLifecycleResponse_YAMLOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "yaml"
-
-	resp := &pb.GetObjectPolicyResponse{Key: "bucket/*"}
-	err := formatObjectLifecycleResponse("bucket", resp)
-	assert.NoError(t, err)
+	runObjectFormatCases(t, formatBucket, []objectFormatCase[*pb.GetObjectPolicyResponse]{
+		{name: "default with retention", resp: &pb.GetObjectPolicyResponse{
+			Key:    "bucket/*",
+			Policy: &pb.ObjectPolicy{RetentionPolicy: &pb.RetentionPolicy{Enabled: true, RetentionDays: 365}},
+		}},
+		{name: "default no policy", resp: &pb.GetObjectPolicyResponse{Key: "bucket/*"}},
+		{name: "json", format: "json", resp: &pb.GetObjectPolicyResponse{Key: "bucket/*"}},
+		{name: "yaml", format: "yaml", resp: &pb.GetObjectPolicyResponse{Key: "bucket/*"}},
+	})
 }
 
 // =============================================================================
@@ -1543,429 +727,134 @@ func TestObjectFormatStorageSizeCoverage(t *testing.T) {
 // Object Storage Command Factory Error Tests
 // =============================================================================
 
-func TestRunObjectPutCommand_FactoryError(t *testing.T) {
-	origFactory := objectStorageClientFactory
-	defer func() { objectStorageClientFactory = origFactory }()
-
-	testErr := &errors.QBError{
-		Code: errors.ErrUnavailable,
-		Op:   "test",
-		Err:  errors.New(errors.ErrUnavailable, "test", "connection refused"),
-	}
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, testErr
-	}
-
-	cmd := newObjectPutCommand()
-	objectFile = ""
-	err := runObjectPutCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestRunObjectPutCommand_NoData(t *testing.T) {
-	origFile := objectFile
-	defer func() { objectFile = origFile }()
-	objectFile = ""
-
-	cmd := newObjectPutCommand()
-	err := runObjectPutCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestRunObjectPutCommand_BadFile(t *testing.T) {
-	origFile := objectFile
-	defer func() { objectFile = origFile }()
-	objectFile = "/nonexistent/path/to/file.dat"
-
-	cmd := newObjectPutCommand()
-	err := runObjectPutCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestRunObjectPutCommand_BadMetadataJSON(t *testing.T) {
+func TestRunObjectPutCommand_InvalidInput(t *testing.T) {
 	origFile := objectFile
 	origMeta := objectMetadata
 	origTags := objectTags
-	defer func() {
+	t.Cleanup(func() {
 		objectFile = origFile
 		objectMetadata = origMeta
 		objectTags = origTags
-	}()
+	})
 
-	objectFile = "/dev/null"
-	objectMetadata = "not-valid-json"
-	objectTags = nil
-
-	cmd := newObjectPutCommand()
-	err := runObjectPutCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
+	tests := []struct {
+		name     string
+		file     string
+		metadata string
+	}{
+		{name: "no data", file: ""},
+		{name: "unreadable file", file: "/nonexistent/path/to/file.dat"},
+		{name: "invalid metadata JSON", file: "/dev/null", metadata: "not-valid-json"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			objectFile = tt.file
+			objectMetadata = tt.metadata
+			objectTags = nil
+			err := runObjectPutCommand(newObjectPutCommand(), []string{"bucket/key"})
+			assert.Error(t, err)
+		})
+	}
 }
 
-func TestRunObjectGetCommand_FactoryError(t *testing.T) {
+// TestRunObjectCommands_FactoryError checks that every object verb returns
+// the client factory's error instead of proceeding without a client.
+func TestRunObjectCommands_FactoryError(t *testing.T) {
 	origFactory := objectStorageClientFactory
-	defer func() { objectStorageClientFactory = origFactory }()
+	origFile := objectFile
+	origTagFilter := objectTagFilter
+	origMeta := objectMetadata
+	origPolicy := objectPolicyJSON
+	t.Cleanup(func() {
+		objectStorageClientFactory = origFactory
+		objectFile = origFile
+		objectTagFilter = origTagFilter
+		objectMetadata = origMeta
+		objectPolicyJSON = origPolicy
+	})
 
+	factoryErr := &errors.QBError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "connection refused")}
 	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, &errors.QBError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
+		return nil, factoryErr
 	}
 
-	cmd := newObjectGetCommand()
-	err := runObjectGetCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
+	dataFile := filepath.Join(t.TempDir(), "data.bin")
+	require.NoError(t, os.WriteFile(dataFile, []byte("payload"), 0o600))
 
-func TestRunObjectDeleteCommand_FactoryError(t *testing.T) {
-	origFactory := objectStorageClientFactory
-	defer func() { objectStorageClientFactory = origFactory }()
-
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, &errors.QBError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
+	tests := []struct {
+		name   string
+		run    func(*cobra.Command, []string) error
+		newCmd func() *cobra.Command
+		args   []string
+	}{
+		{"put", runObjectPutCommand, newObjectPutCommand, []string{"bucket/key"}},
+		{"get", runObjectGetCommand, newObjectGetCommand, []string{"bucket/key"}},
+		{"delete", runObjectDeleteCommand, newObjectDeleteCommand, []string{"bucket/key"}},
+		{"head", runObjectHeadCommand, newObjectHeadCommand, []string{"bucket/key"}},
+		{"list", runObjectListCommand, newObjectListCommand, []string{"test-namespace"}},
+		{"list-by-tag", runObjectListByTagCommand, newObjectListByTagCommand, []string{"bucket"}},
+		{"list-by-tenant", runObjectListByTenantCommand, newObjectListByTenantCommand, []string{}},
+		{"copy", runObjectCopyCommand, newObjectCopyCommand, []string{"src/key", "dst/key"}},
+		{"archive", runObjectArchiveCommand, newObjectArchiveCommand, []string{"bucket/key"}},
+		{"restore", runObjectRestoreCommand, newObjectRestoreCommand, []string{"bucket/key"}},
+		{"verify", runObjectVerifyCommand, newObjectVerifyCommand, []string{"bucket/key"}},
+		{"replicate", runObjectReplicateCommand, newObjectReplicateCommand, []string{"bucket/key"}},
+		{"migrate", runObjectMigrateCommand, newObjectMigrateCommand, []string{"bucket/key"}},
+		{"metadata get", runObjectMetadataGetCommand, newObjectMetadataGetCommand, []string{"bucket/key"}},
+		{"metadata update", runObjectMetadataUpdateCommand, newObjectMetadataUpdateCommand, []string{"bucket/key"}},
+		{"stats", runObjectStatsCommand, newObjectStatsCommand, []string{}},
+		{"lifecycle set", runObjectLifecycleSetCommand, newObjectLifecycleSetCommand, []string{"bucket"}},
+		{"lifecycle get", runObjectLifecycleGetCommand, newObjectLifecycleGetCommand, []string{"bucket"}},
 	}
-
-	cmd := newObjectDeleteCommand()
-	err := runObjectDeleteCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestRunObjectHeadCommand_FactoryError(t *testing.T) {
-	origFactory := objectStorageClientFactory
-	defer func() { objectStorageClientFactory = origFactory }()
-
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, &errors.QBError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Building the command binds its flags to their defaults, so
+			// valid inputs are set afterwards to reach the client factory.
+			cmd := tt.newCmd()
+			objectFile = dataFile
+			objectTagFilter = "env=prod"
+			objectMetadata = "{}"
+			objectPolicyJSON = "{}"
+			err := tt.run(cmd, tt.args)
+			assert.ErrorIs(t, err, factoryErr)
+		})
 	}
-
-	cmd := newObjectHeadCommand()
-	err := runObjectHeadCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestRunObjectListCommand_FactoryError(t *testing.T) {
-	origFactory := objectStorageClientFactory
-	defer func() { objectStorageClientFactory = origFactory }()
-
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, &errors.QBError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
-	}
-
-	cmd := newObjectListCommand()
-	err := runObjectListCommand(cmd, []string{"test-namespace"})
-	assert.Error(t, err)
-}
-
-func TestRunObjectListByTagCommand_FactoryError(t *testing.T) {
-	origFactory := objectStorageClientFactory
-	defer func() { objectStorageClientFactory = origFactory }()
-
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, &errors.QBError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
-	}
-
-	cmd := newObjectListByTagCommand()
-	err := runObjectListByTagCommand(cmd, []string{"bucket"})
-	assert.Error(t, err)
-}
-
-func TestRunObjectListByTenantCommand_FactoryError(t *testing.T) {
-	origFactory := objectStorageClientFactory
-	defer func() { objectStorageClientFactory = origFactory }()
-
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, &errors.QBError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
-	}
-
-	cmd := newObjectListByTenantCommand()
-	err := runObjectListByTenantCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
-func TestRunObjectCopyCommand_FactoryError(t *testing.T) {
-	origFactory := objectStorageClientFactory
-	defer func() { objectStorageClientFactory = origFactory }()
-
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, &errors.QBError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
-	}
-
-	cmd := newObjectCopyCommand()
-	err := runObjectCopyCommand(cmd, []string{"src/key", "dst/key"})
-	assert.Error(t, err)
-}
-
-func TestRunObjectArchiveCommand_FactoryError(t *testing.T) {
-	origFactory := objectStorageClientFactory
-	defer func() { objectStorageClientFactory = origFactory }()
-
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, &errors.QBError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
-	}
-
-	cmd := newObjectArchiveCommand()
-	err := runObjectArchiveCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestRunObjectRestoreCommand_FactoryError(t *testing.T) {
-	origFactory := objectStorageClientFactory
-	defer func() { objectStorageClientFactory = origFactory }()
-
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, &errors.QBError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
-	}
-
-	cmd := newObjectRestoreCommand()
-	err := runObjectRestoreCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestRunObjectVerifyCommand_FactoryError(t *testing.T) {
-	origFactory := objectStorageClientFactory
-	defer func() { objectStorageClientFactory = origFactory }()
-
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, &errors.QBError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
-	}
-
-	cmd := newObjectVerifyCommand()
-	err := runObjectVerifyCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestRunObjectReplicateCommand_FactoryError(t *testing.T) {
-	origFactory := objectStorageClientFactory
-	defer func() { objectStorageClientFactory = origFactory }()
-
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, &errors.QBError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
-	}
-
-	cmd := newObjectReplicateCommand()
-	err := runObjectReplicateCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestRunObjectMigrateCommand_FactoryError(t *testing.T) {
-	origFactory := objectStorageClientFactory
-	defer func() { objectStorageClientFactory = origFactory }()
-
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, &errors.QBError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
-	}
-
-	cmd := newObjectMigrateCommand()
-	err := runObjectMigrateCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestRunObjectMetadataGetCommand_FactoryError(t *testing.T) {
-	origFactory := objectStorageClientFactory
-	defer func() { objectStorageClientFactory = origFactory }()
-
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, &errors.QBError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
-	}
-
-	cmd := newObjectMetadataGetCommand()
-	err := runObjectMetadataGetCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestRunObjectMetadataUpdateCommand_FactoryError(t *testing.T) {
-	origFactory := objectStorageClientFactory
-	defer func() { objectStorageClientFactory = origFactory }()
-
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, &errors.QBError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
-	}
-
-	cmd := newObjectMetadataUpdateCommand()
-	err := runObjectMetadataUpdateCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestRunObjectStatsCommand_FactoryError(t *testing.T) {
-	origFactory := objectStorageClientFactory
-	defer func() { objectStorageClientFactory = origFactory }()
-
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, &errors.QBError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
-	}
-
-	cmd := newObjectStatsCommand()
-	err := runObjectStatsCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
-func TestRunObjectLifecycleSetCommand_FactoryError(t *testing.T) {
-	origFactory := objectStorageClientFactory
-	defer func() { objectStorageClientFactory = origFactory }()
-
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, &errors.QBError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
-	}
-
-	cmd := newObjectLifecycleSetCommand()
-	err := runObjectLifecycleSetCommand(cmd, []string{"bucket"})
-	assert.Error(t, err)
-}
-
-func TestRunObjectLifecycleGetCommand_FactoryError(t *testing.T) {
-	origFactory := objectStorageClientFactory
-	defer func() { objectStorageClientFactory = origFactory }()
-
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, &errors.QBError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
-	}
-
-	cmd := newObjectLifecycleGetCommand()
-	err := runObjectLifecycleGetCommand(cmd, []string{"bucket"})
-	assert.Error(t, err)
-}
-
-// =============================================================================
-// PrintObjectPolicy Test
-// =============================================================================
-
-func TestPrintObjectPolicyAllPolicies(t *testing.T) {
-	policy := &pb.ObjectPolicy{
-		ReplicationPolicy: &pb.ReplicationPolicy{
-			Enabled:      true,
-			MinReplicas:  3,
-			Mode:         pb.ReplicationMode_REPLICATION_MODE_ASYNC,
-			TargetStores: []string{"store-x"},
-		},
-		ArchivePolicy: &pb.ArchivePolicy{
-			Enabled:           true,
-			ArchiveAfterDays:  60,
-			TargetStore:       "cold",
-			DeleteFromPrimary: false,
-		},
-		RetentionPolicy: &pb.RetentionPolicy{
-			Enabled:       true,
-			RetentionDays: 365,
-			MaxVersions:   10,
-			LegalHold:     true,
-		},
-	}
-	printObjectPolicy(policy)
-}
-
-func TestPrintObjectPolicyNilSubPolicies(t *testing.T) {
-	policy := &pb.ObjectPolicy{}
-	printObjectPolicy(policy)
 }
 
 // =============================================================================
 // New Command Builder Tests
 // =============================================================================
 
-func TestNewObjectStorageCommandsCoverage(t *testing.T) {
+func TestNewObjectStorageCommands(t *testing.T) {
 	cmd := newObjectStorageCommands()
 	require.NotNil(t, cmd)
 	assert.Equal(t, "object", cmd.Use)
-	assert.True(t, len(cmd.Commands()) > 0, "should have subcommands")
+	assert.NotEmpty(t, cmd.Commands(), "should have subcommands")
 }
 
-func TestNewObjectPutCommandCoverage(t *testing.T) {
-	cmd := newObjectPutCommand()
-	require.NotNil(t, cmd)
-	assert.Contains(t, cmd.Use, "put")
-}
-
-func TestNewObjectGetCommandCoverage(t *testing.T) {
-	cmd := newObjectGetCommand()
-	require.NotNil(t, cmd)
-	assert.Contains(t, cmd.Use, "get")
-}
-
-func TestNewObjectDeleteCommandCoverage(t *testing.T) {
-	cmd := newObjectDeleteCommand()
-	require.NotNil(t, cmd)
-	assert.Contains(t, cmd.Use, "delete")
-}
-
-func TestNewObjectHeadCommandCoverage(t *testing.T) {
-	cmd := newObjectHeadCommand()
-	require.NotNil(t, cmd)
-	assert.Contains(t, cmd.Use, "head")
-}
-
-func TestNewObjectListCommandCoverage(t *testing.T) {
-	cmd := newObjectListCommand()
-	require.NotNil(t, cmd)
-	assert.Contains(t, cmd.Use, "list")
-}
-
-func TestNewObjectCopyCommandCoverage(t *testing.T) {
-	cmd := newObjectCopyCommand()
-	require.NotNil(t, cmd)
-	assert.Contains(t, cmd.Use, "copy")
-}
-
-func TestNewObjectArchiveCommandCoverage(t *testing.T) {
-	cmd := newObjectArchiveCommand()
-	require.NotNil(t, cmd)
-	assert.Contains(t, cmd.Use, "archive")
-}
-
-func TestNewObjectRestoreCommandCoverage(t *testing.T) {
-	cmd := newObjectRestoreCommand()
-	require.NotNil(t, cmd)
-	assert.Contains(t, cmd.Use, "restore")
-}
-
-func TestNewObjectVerifyCommandCoverage(t *testing.T) {
-	cmd := newObjectVerifyCommand()
-	require.NotNil(t, cmd)
-	assert.Contains(t, cmd.Use, "verify")
-}
-
-func TestNewObjectReplicateCommandCoverage(t *testing.T) {
-	cmd := newObjectReplicateCommand()
-	require.NotNil(t, cmd)
-	assert.Contains(t, cmd.Use, "replicate")
-}
-
-func TestNewObjectMigrateCommandCoverage(t *testing.T) {
-	cmd := newObjectMigrateCommand()
-	require.NotNil(t, cmd)
-	assert.Contains(t, cmd.Use, "migrate")
-}
-
-func TestNewObjectStatsCommandCoverage(t *testing.T) {
-	cmd := newObjectStatsCommand()
-	require.NotNil(t, cmd)
-	assert.Contains(t, cmd.Use, "stats")
-}
-
-func TestNewObjectMetadataGetCommandCoverage(t *testing.T) {
-	cmd := newObjectMetadataGetCommand()
-	require.NotNil(t, cmd)
-}
-
-func TestNewObjectMetadataUpdateCommandCoverage(t *testing.T) {
-	cmd := newObjectMetadataUpdateCommand()
-	require.NotNil(t, cmd)
-}
-
-func TestNewObjectLifecycleSetCommandCoverage(t *testing.T) {
-	cmd := newObjectLifecycleSetCommand()
-	require.NotNil(t, cmd)
-}
-
-func TestNewObjectLifecycleGetCommandCoverage(t *testing.T) {
-	cmd := newObjectLifecycleGetCommand()
-	require.NotNil(t, cmd)
-}
-
-func TestNewObjectListByTagCommandCoverage(t *testing.T) {
-	cmd := newObjectListByTagCommand()
-	require.NotNil(t, cmd)
-}
-
-func TestNewObjectListByTenantCommandCoverage(t *testing.T) {
-	cmd := newObjectListByTenantCommand()
-	require.NotNil(t, cmd)
+func TestNewObjectCommands_Use(t *testing.T) {
+	tests := []struct {
+		verb   string
+		newCmd func() *cobra.Command
+	}{
+		{"put", newObjectPutCommand},
+		{"get", newObjectGetCommand},
+		{"delete", newObjectDeleteCommand},
+		{"head", newObjectHeadCommand},
+		{"list", newObjectListCommand},
+		{"copy", newObjectCopyCommand},
+		{"archive", newObjectArchiveCommand},
+		{"restore", newObjectRestoreCommand},
+		{"verify", newObjectVerifyCommand},
+		{"replicate", newObjectReplicateCommand},
+		{"migrate", newObjectMigrateCommand},
+		{"stats", newObjectStatsCommand},
+	}
+	for _, tt := range tests {
+		t.Run(tt.verb, func(t *testing.T) {
+			assert.Contains(t, tt.newCmd().Use, tt.verb)
+		})
+	}
 }
 
 func newDeadGRPCClient(t *testing.T) *grpc.Client {
@@ -2070,493 +959,125 @@ func saveAndRestoreObjectGlobals(t *testing.T) func() {
 // to its default value.
 // =============================================================================
 
-func TestObjectStorage91_PutCommand_RPCFailure(t *testing.T) {
+// TestRunObjectCommands_RPCFailure drives every object verb, with its flags
+// set, against a client whose server is unreachable, so the request is built
+// and the RPC error is returned through formatError.
+func TestRunObjectCommands_RPCFailure(t *testing.T) {
 	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
+	t.Cleanup(restore)
 
-	tmpFile := filepath.Join(t.TempDir(), "testdata.txt")
-	err := os.WriteFile(tmpFile, []byte("test content"), 0600)
-	require.NoError(t, err)
+	dataFile := filepath.Join(t.TempDir(), "testdata.txt")
+	require.NoError(t, os.WriteFile(dataFile, []byte("test content"), 0o600))
 
-	client := newDeadGRPCClient(t)
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return client, nil
+	tests := []struct {
+		name   string
+		run    func(*cobra.Command, []string) error
+		newCmd func() *cobra.Command
+		args   []string
+		setup  func()
+	}{
+		{"put with tags", runObjectPutCommand, newObjectPutCommand, []string{"bucket/key"}, func() {
+			objectFile = dataFile
+			objectContentType = "text/plain"
+			globalTenantID = "tenant-1"
+			objectTags = map[string]string{"env": "test"}
+		}},
+		{"put metadata ignored when tags set", runObjectPutCommand, newObjectPutCommand, []string{"bucket/key"}, func() {
+			objectFile = dataFile
+			objectMetadata = `{"key1":"val1"}`
+			objectTags = map[string]string{"existing": "tag"}
+		}},
+		{"put metadata without tags", runObjectPutCommand, newObjectPutCommand, []string{"bucket/key"}, func() {
+			objectFile = dataFile
+			objectMetadata = `{"key1":"val1"}`
+			objectTags = nil
+		}},
+		{"get with meta", runObjectGetCommand, newObjectGetCommand, []string{"bucket/key"}, func() {
+			globalTenantID = "tenant-1"
+			objectIncludeMeta = true
+		}},
+		{"delete", runObjectDeleteCommand, newObjectDeleteCommand, []string{"bucket/key"}, func() {
+			globalTenantID = "tenant-1"
+			objectDeleteSource = true
+		}},
+		{"head", runObjectHeadCommand, newObjectHeadCommand, []string{"bucket/key"}, func() {
+			globalTenantID = "tenant-1"
+		}},
+		{"list", runObjectListCommand, newObjectListCommand, []string{"mybucket"}, func() {
+			objectPrefix = "images/"
+			globalTenantID = "tenant-1"
+			objectLimit = 50
+			objectCursor = "cursor-abc"
+			objectIncludeMeta = true
+		}},
+		{"list-by-tag", runObjectListByTagCommand, newObjectListByTagCommand, []string{}, func() {
+			objectTagFilter = "type=document"
+			globalTenantID = "tenant-1"
+			objectLimit = 50
+		}},
+		{"list-by-tenant", runObjectListByTenantCommand, newObjectListByTenantCommand, []string{}, func() {
+			globalTenantID = "tenant-123"
+			objectLimit = 100
+			objectIncludeMeta = true
+		}},
+		{"copy with tags", runObjectCopyCommand, newObjectCopyCommand, []string{"src/key", "dst/key"}, func() {
+			objectCopyTags = true
+			globalTenantID = "tenant-1"
+		}},
+		{"archive", runObjectArchiveCommand, newObjectArchiveCommand, []string{"bucket/key"}, func() {
+			objectTargetStore = "cold-store"
+			objectDeleteFromPrimary = true
+			objectCompressionLevel = 6
+		}},
+		{"restore hot tier", runObjectRestoreCommand, newObjectRestoreCommand, []string{"bucket/key"}, func() {
+			objectDestBackend = "hot-backend"
+			objectRestoreDays = 14
+			objectRestoreTier = "hot"
+		}},
+		{"restore warm tier", runObjectRestoreCommand, newObjectRestoreCommand, []string{"bucket/key"}, func() {
+			objectRestoreTier = "warm"
+		}},
+		{"restore default tier", runObjectRestoreCommand, newObjectRestoreCommand, []string{"bucket/key"}, func() {
+			objectRestoreTier = ""
+		}},
+		{"verify with repair", runObjectVerifyCommand, newObjectVerifyCommand, []string{"bucket/key"}, func() {
+			objectCheckAll = true
+			objectRepair = true
+		}},
+		{"replicate to listed stores", runObjectReplicateCommand, newObjectReplicateCommand, []string{"bucket/key"}, func() {
+			objectDestBackend = "store-a, store-b"
+			objectSync = true
+		}},
+		{"migrate", runObjectMigrateCommand, newObjectMigrateCommand, []string{"bucket/key"}, func() {
+			objectDestBackend = "archive-backend"
+			objectDeleteSource = true
+		}},
+		{"metadata get", runObjectMetadataGetCommand, newObjectMetadataGetCommand, []string{"bucket/key"}, func() {}},
+		{"metadata update", runObjectMetadataUpdateCommand, newObjectMetadataUpdateCommand, []string{"bucket/key"}, func() {
+			objectMetadata = `{"replication":{"enabled":true,"min_replicas":3}}`
+		}},
+		{"stats", runObjectStatsCommand, newObjectStatsCommand, []string{}, func() {}},
+		{"lifecycle set", runObjectLifecycleSetCommand, newObjectLifecycleSetCommand, []string{"mybucket"}, func() {
+			objectPolicyJSON = `{"archive":{"enabled":true,"archive_after_days":30}}`
+		}},
+		{"lifecycle get", runObjectLifecycleGetCommand, newObjectLifecycleGetCommand, []string{"mybucket"}, func() {}},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := newDeadGRPCClient(t)
+			objectStorageClientFactory = func() (*grpc.Client, error) {
+				return client, nil
+			}
+			// Building the command resets the flag globals, so the row's
+			// inputs are set afterwards.
+			cmd := tt.newCmd()
+			tt.setup()
+			globalTimeout = 500 * time.Millisecond
 
-	// Create command first (registers flags, resets globals to defaults).
-	cmd := newObjectPutCommand()
-
-	// Set globals AFTER command creation so they are not reset.
-	objectFile = tmpFile
-	objectContentType = "text/plain"
-	globalTenantID = "tenant-1"
-	objectTags = map[string]string{"env": "test"}
-	globalTimeout = 500 * time.Millisecond
-
-	err = runObjectPutCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err, "RPC call to dead server should fail")
-}
-
-func TestObjectStorage91_PutCommand_MetadataWithExistingTags(t *testing.T) {
-	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
-
-	tmpFile := filepath.Join(t.TempDir(), "testdata.txt")
-	err := os.WriteFile(tmpFile, []byte("data"), 0600)
-	require.NoError(t, err)
-
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "mock error")
+			err := tt.run(cmd, tt.args)
+			assert.Error(t, err, "RPC call to dead server should fail")
+		})
 	}
-
-	// Create command first, then set globals.
-	cmd := newObjectPutCommand()
-	objectFile = tmpFile
-	objectMetadata = `{"key1":"val1"}`
-	objectTags = map[string]string{"existing": "tag"}
-	globalTimeout = 500 * time.Millisecond
-
-	err = runObjectPutCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestObjectStorage91_PutCommand_MetadataWithoutTags(t *testing.T) {
-	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
-
-	tmpFile := filepath.Join(t.TempDir(), "testdata.txt")
-	err := os.WriteFile(tmpFile, []byte("data"), 0600)
-	require.NoError(t, err)
-
-	client := newDeadGRPCClient(t)
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return client, nil
-	}
-
-	// Create command first, then set globals.
-	cmd := newObjectPutCommand()
-	objectFile = tmpFile
-	objectMetadata = `{"key1":"val1"}`
-	objectTags = nil
-	globalTimeout = 500 * time.Millisecond
-
-	err = runObjectPutCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestObjectStorage91_PutCommand_InvalidMetadataJSON(t *testing.T) {
-	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
-
-	tmpFile := filepath.Join(t.TempDir(), "testdata.txt")
-	err := os.WriteFile(tmpFile, []byte("data"), 0600)
-	require.NoError(t, err)
-
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return newDeadGRPCClient(t), nil
-	}
-
-	cmd := newObjectPutCommand()
-	objectFile = tmpFile
-	objectMetadata = `{invalid-json}`
-	objectTags = nil
-	globalTimeout = 500 * time.Millisecond
-
-	err = runObjectPutCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err, "invalid metadata JSON should return error")
-}
-
-func TestObjectStorage91_PutCommand_NoData(t *testing.T) {
-	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
-
-	cmd := newObjectPutCommand()
-	objectFile = ""
-	globalTimeout = 500 * time.Millisecond
-
-	// No file and stdin is a terminal => should error with "no data provided"
-	err := runObjectPutCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestObjectStorage91_GetCommand_RPCFailure(t *testing.T) {
-	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
-
-	client := newDeadGRPCClient(t)
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return client, nil
-	}
-
-	cmd := newObjectGetCommand()
-	globalTenantID = "tenant-1"
-	objectIncludeMeta = true
-	globalTimeout = 500 * time.Millisecond
-
-	err := runObjectGetCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err, "RPC call to dead server should fail")
-}
-
-func TestObjectStorage91_DeleteCommand_RPCFailure(t *testing.T) {
-	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
-
-	client := newDeadGRPCClient(t)
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return client, nil
-	}
-
-	cmd := newObjectDeleteCommand()
-	globalTenantID = "tenant-1"
-	objectDeleteSource = true
-	globalTimeout = 500 * time.Millisecond
-
-	err := runObjectDeleteCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestObjectStorage91_HeadCommand_RPCFailure(t *testing.T) {
-	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
-
-	client := newDeadGRPCClient(t)
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return client, nil
-	}
-
-	cmd := newObjectHeadCommand()
-	globalTenantID = "tenant-1"
-	globalTimeout = 500 * time.Millisecond
-
-	err := runObjectHeadCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestObjectStorage91_ListCommand_RPCFailure(t *testing.T) {
-	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
-
-	client := newDeadGRPCClient(t)
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return client, nil
-	}
-
-	cmd := newObjectListCommand()
-	objectPrefix = "images/"
-	globalTenantID = "tenant-1"
-	objectLimit = 50
-	objectCursor = "cursor-abc"
-	objectIncludeMeta = true
-	globalTimeout = 500 * time.Millisecond
-
-	err := runObjectListCommand(cmd, []string{"mybucket"})
-	assert.Error(t, err)
-}
-
-func TestObjectStorage91_ListByTagCommand_RPCFailure(t *testing.T) {
-	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
-
-	client := newDeadGRPCClient(t)
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return client, nil
-	}
-
-	cmd := newObjectListByTagCommand()
-	objectTagFilter = "type=document"
-	globalTenantID = "tenant-1"
-	objectLimit = 50
-	objectCursor = ""
-	globalTimeout = 500 * time.Millisecond
-
-	err := runObjectListByTagCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
-func TestObjectStorage91_ListByTagCommand_InvalidTagFormat(t *testing.T) {
-	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
-
-	cmd := newObjectListByTagCommand()
-	objectTagFilter = "invalidnoequals"
-	globalTimeout = 500 * time.Millisecond
-
-	err := runObjectListByTagCommand(cmd, []string{})
-	assert.Error(t, err, "tag without = separator should return error")
-}
-
-func TestObjectStorage91_ListByTenantCommand_RPCFailure(t *testing.T) {
-	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
-
-	client := newDeadGRPCClient(t)
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return client, nil
-	}
-
-	cmd := newObjectListByTenantCommand()
-	globalTenantID = "tenant-123"
-	objectLimit = 100
-	objectCursor = ""
-	objectIncludeMeta = true
-	globalTimeout = 500 * time.Millisecond
-
-	err := runObjectListByTenantCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
-func TestObjectStorage91_CopyCommand_RPCFailure(t *testing.T) {
-	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
-
-	client := newDeadGRPCClient(t)
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return client, nil
-	}
-
-	cmd := newObjectCopyCommand()
-	objectCopyTags = true
-	globalTenantID = "tenant-1"
-	globalTimeout = 500 * time.Millisecond
-
-	err := runObjectCopyCommand(cmd, []string{"src/key", "dst/key"})
-	assert.Error(t, err)
-}
-
-func TestObjectStorage91_ArchiveCommand_RPCFailure(t *testing.T) {
-	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
-
-	client := newDeadGRPCClient(t)
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return client, nil
-	}
-
-	cmd := newObjectArchiveCommand()
-	objectTargetStore = "cold-store"
-	objectDeleteFromPrimary = true
-	objectCompressionLevel = 6
-	globalTimeout = 500 * time.Millisecond
-
-	err := runObjectArchiveCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestObjectStorage91_RestoreCommand_RPCFailure_HotTier(t *testing.T) {
-	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
-
-	client := newDeadGRPCClient(t)
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return client, nil
-	}
-
-	cmd := newObjectRestoreCommand()
-	objectDestBackend = "hot-backend"
-	objectRestoreDays = 14
-	objectRestoreTier = "hot"
-	globalTimeout = 500 * time.Millisecond
-
-	err := runObjectRestoreCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestObjectStorage91_RestoreCommand_RPCFailure_WarmTier(t *testing.T) {
-	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
-
-	client := newDeadGRPCClient(t)
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return client, nil
-	}
-
-	cmd := newObjectRestoreCommand()
-	objectRestoreTier = "warm"
-	globalTimeout = 500 * time.Millisecond
-
-	err := runObjectRestoreCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestObjectStorage91_RestoreCommand_RPCFailure_DefaultTier(t *testing.T) {
-	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
-
-	client := newDeadGRPCClient(t)
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return client, nil
-	}
-
-	cmd := newObjectRestoreCommand()
-	objectRestoreTier = ""
-	globalTimeout = 500 * time.Millisecond
-
-	err := runObjectRestoreCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestObjectStorage91_VerifyCommand_RPCFailure(t *testing.T) {
-	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
-
-	client := newDeadGRPCClient(t)
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return client, nil
-	}
-
-	cmd := newObjectVerifyCommand()
-	objectCheckAll = true
-	objectRepair = true
-	globalTimeout = 500 * time.Millisecond
-
-	err := runObjectVerifyCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestObjectStorage91_ReplicateCommand_RPCFailure(t *testing.T) {
-	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
-
-	client := newDeadGRPCClient(t)
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return client, nil
-	}
-
-	cmd := newObjectReplicateCommand()
-	objectDestBackend = "store-a, store-b"
-	objectSync = true
-	globalTimeout = 500 * time.Millisecond
-
-	err := runObjectReplicateCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestObjectStorage91_MigrateCommand_RPCFailure(t *testing.T) {
-	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
-
-	client := newDeadGRPCClient(t)
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return client, nil
-	}
-
-	cmd := newObjectMigrateCommand()
-	objectDestBackend = "archive-backend"
-	objectDeleteSource = true
-	globalTimeout = 500 * time.Millisecond
-
-	err := runObjectMigrateCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestObjectStorage91_MetadataGetCommand_RPCFailure(t *testing.T) {
-	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
-
-	client := newDeadGRPCClient(t)
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return client, nil
-	}
-
-	cmd := newObjectMetadataGetCommand()
-	globalTimeout = 500 * time.Millisecond
-
-	err := runObjectMetadataGetCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestObjectStorage91_MetadataUpdateCommand_RPCFailure(t *testing.T) {
-	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
-
-	client := newDeadGRPCClient(t)
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return client, nil
-	}
-
-	// Create command first (resets objectMetadata to "").
-	cmd := newObjectMetadataUpdateCommand()
-	// Set globals after command creation.
-	objectMetadata = `{"replication":{"enabled":true,"min_replicas":3}}`
-	globalTimeout = 500 * time.Millisecond
-
-	err := runObjectMetadataUpdateCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestObjectStorage91_MetadataUpdateCommand_InvalidJSON(t *testing.T) {
-	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
-
-	cmd := newObjectMetadataUpdateCommand()
-	objectMetadata = `{not valid json}`
-	globalTimeout = 500 * time.Millisecond
-
-	err := runObjectMetadataUpdateCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err, "invalid metadata JSON should return error")
-}
-
-func TestObjectStorage91_StatsCommand_RPCFailure(t *testing.T) {
-	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
-
-	client := newDeadGRPCClient(t)
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return client, nil
-	}
-
-	cmd := newObjectStatsCommand()
-	globalTimeout = 500 * time.Millisecond
-
-	err := runObjectStatsCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
-func TestObjectStorage91_LifecycleSetCommand_RPCFailure(t *testing.T) {
-	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
-
-	client := newDeadGRPCClient(t)
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return client, nil
-	}
-
-	// Create command first (resets objectPolicyJSON to "").
-	cmd := newObjectLifecycleSetCommand()
-	// Set globals after command creation.
-	objectPolicyJSON = `{"archive":{"enabled":true,"archive_after_days":30}}`
-	globalTimeout = 500 * time.Millisecond
-
-	err := runObjectLifecycleSetCommand(cmd, []string{"mybucket"})
-	assert.Error(t, err)
-}
-
-func TestObjectStorage91_LifecycleSetCommand_InvalidJSON(t *testing.T) {
-	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
-
-	cmd := newObjectLifecycleSetCommand()
-	objectPolicyJSON = `{not valid}`
-	globalTimeout = 500 * time.Millisecond
-
-	err := runObjectLifecycleSetCommand(cmd, []string{"mybucket"})
-	assert.Error(t, err, "invalid policy JSON should return error")
-}
-
-func TestObjectStorage91_LifecycleGetCommand_RPCFailure(t *testing.T) {
-	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
-
-	client := newDeadGRPCClient(t)
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return client, nil
-	}
-
-	cmd := newObjectLifecycleGetCommand()
-	globalTimeout = 500 * time.Millisecond
-
-	err := runObjectLifecycleGetCommand(cmd, []string{"mybucket"})
-	assert.Error(t, err)
 }
 
 // =============================================================================
@@ -2625,167 +1146,74 @@ func TestEmbedded91_GetEmbeddedService_WithExistingServer(t *testing.T) {
 	assert.Nil(t, svc)
 }
 
-func TestEmbedded91_Shutdown_WithTempDir(t *testing.T) {
-	tmpDir := t.TempDir()
-	subDir := filepath.Join(tmpDir, "embedded-test")
-	err := os.MkdirAll(subDir, 0700)
-	require.NoError(t, err)
+func TestEmbeddedServer_Shutdown(t *testing.T) {
+	t.Run("not started", func(t *testing.T) {
+		es := &embeddedServer{}
+		assert.NoError(t, es.shutdown())
+	})
 
-	es := &embeddedServer{
-		tempDir: subDir,
-	}
-	es.started.Store(true)
+	t.Run("started removes temp dir", func(t *testing.T) {
+		subDir := filepath.Join(t.TempDir(), "embedded-test")
+		require.NoError(t, os.MkdirAll(subDir, 0o700))
 
-	err = es.shutdown()
-	assert.NoError(t, err)
-	assert.False(t, es.started.Load())
+		es := &embeddedServer{tempDir: subDir}
+		es.started.Store(true)
 
-	// Verify temp dir was cleaned up
-	_, statErr := os.Stat(subDir)
-	assert.True(t, os.IsNotExist(statErr))
+		assert.NoError(t, es.shutdown())
+		assert.False(t, es.started.Load(), "started should be false after shutdown")
+		_, statErr := os.Stat(subDir)
+		assert.True(t, os.IsNotExist(statErr), "temp dir should be removed")
+	})
 }
 
-func TestEmbedded91_ShutdownEmbeddedServer_NilHolder(t *testing.T) {
-	defer func() {
-		embeddedServerHolder.Store(nil)
-	}()
+func TestShutdownEmbeddedServer_WithServerClearsHolder(t *testing.T) {
+	t.Cleanup(func() { embeddedServerHolder.Store(nil) })
 
-	// Ensure holder is nil
-	embeddedServerHolder.Store(nil)
-
-	err := shutdownEmbeddedServer()
-	assert.NoError(t, err)
-}
-
-func TestEmbedded91_ShutdownEmbeddedServer_WithServer(t *testing.T) {
-	defer func() {
-		embeddedServerHolder.Store(nil)
-	}()
-
-	tmpDir := t.TempDir()
-	es := &embeddedServer{
-		tempDir: tmpDir,
-	}
+	es := &embeddedServer{tempDir: t.TempDir()}
 	es.started.Store(true)
 	embeddedServerHolder.Store(es)
 
-	err := shutdownEmbeddedServer()
-	assert.NoError(t, err)
+	assert.NoError(t, shutdownEmbeddedServer())
 	assert.Nil(t, embeddedServerHolder.Load())
 }
 
 // =============================================================================
-// Rebalance commands - RunE closure coverage through SDK client error
+// Rebalance commands - RunE returns the SDK client error
 // =============================================================================
 
-func TestRebalance91_StartCommand_SDKClientError(t *testing.T) {
+func TestRebalanceCommands_SDKClientError(t *testing.T) {
 	origAddress := address
 	origTransport := transport
 	origTimeout := globalTimeout
-	defer func() {
+	t.Cleanup(func() {
 		address = origAddress
 		transport = origTransport
 		globalTimeout = origTimeout
 		resetSDKClient()
-	}()
+	})
 
-	// Set address to empty to trigger ErrEmptyAddress in createSDKClient
-	address = ""
-	transport = "grpc"
-	globalTimeout = 1 * time.Second
-
-	cmd := newRebalanceStartCommand()
-	err := cmd.RunE(cmd, []string{})
-	assert.Error(t, err)
-}
-
-func TestRebalance91_StatusCommand_SDKClientError(t *testing.T) {
-	origAddress := address
-	origTransport := transport
-	origTimeout := globalTimeout
-	defer func() {
-		address = origAddress
-		transport = origTransport
-		globalTimeout = origTimeout
-		resetSDKClient()
-	}()
-
-	address = ""
-	transport = "grpc"
-	globalTimeout = 1 * time.Second
-
-	cmd := newRebalanceStatusCommand()
-	// Set the required flag
-	cmd.Flags().Set("operation", "op-123")
-	err := cmd.RunE(cmd, []string{})
-	assert.Error(t, err)
-}
-
-func TestRebalance91_PlanCommand_SDKClientError(t *testing.T) {
-	origAddress := address
-	origTransport := transport
-	origTimeout := globalTimeout
-	defer func() {
-		address = origAddress
-		transport = origTransport
-		globalTimeout = origTimeout
-		resetSDKClient()
-	}()
-
-	address = ""
-	transport = "grpc"
-	globalTimeout = 1 * time.Second
-
-	cmd := newRebalancePlanCommand()
-	err := cmd.RunE(cmd, []string{})
-	assert.Error(t, err)
-}
-
-// =============================================================================
-// Rebalance display helpers - additional output format paths
-// =============================================================================
-
-func TestRebalance91_DisplayRebalanceReport_JSON(t *testing.T) {
-	report := &RebalanceReport{
-		StartTime:       time.Now().Add(-1 * time.Minute),
-		EndTime:         time.Now(),
-		Duration:        1 * time.Minute,
-		MovesCompleted:  3,
-		MovesFailed:     0,
-		KeysRebalanced:  1500,
-		BytesRebalanced: 1024 * 1024,
-		ImbalanceBefore: 0.15,
-		ImbalanceAfter:  0.02,
+	tests := []struct {
+		name   string
+		newCmd func() *cobra.Command
+		flags  map[string]string
+	}{
+		{name: "start", newCmd: newRebalanceStartCommand},
+		{name: "status", newCmd: newRebalanceStatusCommand, flags: map[string]string{"operation": "op-123"}},
+		{name: "plan", newCmd: newRebalancePlanCommand},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// An empty address makes createSDKClient fail with ErrEmptyAddress.
+			address = ""
+			transport = "grpc"
+			globalTimeout = time.Second
+			resetSDKClient()
 
-	err := displayRebalanceReport(report, "json")
-	assert.NoError(t, err)
-}
-
-func TestRebalance91_DisplayProgressSDK_JSON(t *testing.T) {
-	resp := &cluster.GetRebalanceProgressResponse{
-		OperationID:     "op-123",
-		Status:          "in_progress",
-		PercentComplete: 55.5,
-		ShardsMoved:     3,
-		TotalShards:     6,
-		ElapsedTime:     int64(30 * time.Second),
+			cmd := tt.newCmd()
+			for name, value := range tt.flags {
+				require.NoError(t, cmd.Flags().Set(name, value))
+			}
+			assert.Error(t, cmd.RunE(cmd, []string{}))
+		})
 	}
-
-	err := displayRebalanceProgressSDK(resp, "json")
-	assert.NoError(t, err)
-}
-
-func TestRebalance91_DisplayProgressSDK_Table(t *testing.T) {
-	resp := &cluster.GetRebalanceProgressResponse{
-		OperationID:     "op-456",
-		Status:          "completed",
-		PercentComplete: 100.0,
-		ShardsMoved:     5,
-		TotalShards:     5,
-		ElapsedTime:     int64(2 * time.Minute),
-	}
-
-	err := displayRebalanceProgressSDK(resp, "table")
-	assert.NoError(t, err)
 }

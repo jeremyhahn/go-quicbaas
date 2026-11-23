@@ -206,30 +206,38 @@ func (m *mockSchedulerService) GetStatus(ctx context.Context) (*service.GetSched
 	}, nil
 }
 
-func TestNewHandlerNilService(t *testing.T) {
-	_, err := NewHandler(nil, &testLogger{})
-	require.Error(t, err)
-
-	var qbErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
+// serviceError returns the QBError a failing mock service method returns.
+func serviceError(code dberrors.ErrorCode) error {
+	return &dberrors.QBError{Code: code, Op: "test", Err: assert.AnError}
 }
 
-func TestNewHandlerNilLogger(t *testing.T) {
-	_, err := NewHandler(&mockSchedulerService{}, nil)
-	require.Error(t, err)
+func TestNewHandler(t *testing.T) {
+	tests := []struct {
+		name    string
+		svc     service.SchedulerService
+		logger  interfaces.Logger
+		wantErr bool
+	}{
+		{name: "success", svc: &mockSchedulerService{}, logger: &testLogger{}},
+		{name: "nil service", svc: nil, logger: &testLogger{}, wantErr: true},
+		{name: "nil logger", svc: &mockSchedulerService{}, logger: nil, wantErr: true},
+	}
 
-	var qbErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestNewHandlerSuccess(t *testing.T) {
-	handler, err := NewHandler(&mockSchedulerService{}, &testLogger{})
-	require.NoError(t, err)
-	require.NotNil(t, handler)
-
-	assert.NotNil(t, handler.Service())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler, err := NewHandler(tt.svc, tt.logger)
+			if tt.wantErr {
+				require.Error(t, err)
+				var qbErr *dberrors.QBError
+				require.True(t, dberrors.As(err, &qbErr))
+				assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, handler)
+			assert.NotNil(t, handler.Service())
+		})
+	}
 }
 
 func TestHandlerUnknownOpcode(t *testing.T) {
@@ -272,445 +280,339 @@ func TestHandleRequestNil(t *testing.T) {
 	assert.Equal(t, StatusInvalidRequest, resp.Status)
 }
 
-func TestHandleCreateJob(t *testing.T) {
-	svc := &mockSchedulerService{
-		createJobFunc: func(ctx context.Context, req *service.CreateSchedulerJobRequest) (*service.CreateSchedulerJobResponse, error) {
-			return &service.CreateSchedulerJobResponse{
-				Job: &service.SchedulerJob{
-					ID:      123,
-					Name:    req.Name,
-					Handler: req.Handler,
-					Status:  service.SchedulerJobStatusPending,
+// TestHandleRequestOpcodes drives every opcode through HandleRequest once
+// with a succeeding service and once with a failing one, so each row checks
+// the payload decoding, the service call and the response status mapping.
+func TestHandleRequestOpcodes(t *testing.T) {
+	tests := []struct {
+		name       string
+		opcode     byte
+		req        any
+		svc        *mockSchedulerService
+		wantStatus byte
+		check      func(t *testing.T, payload []byte)
+	}{
+		{
+			name:   "create job",
+			opcode: OpSchedulerCreateJob,
+			req: &service.CreateSchedulerJobRequest{
+				Name:    "test-job",
+				Handler: "test-handler",
+				Type:    service.SchedulerJobTypeOneShot,
+			},
+			svc:        &mockSchedulerService{},
+			wantStatus: StatusOK,
+			check: func(t *testing.T, payload []byte) {
+				var resp service.CreateSchedulerJobResponse
+				require.NoError(t, DecodePayload(payload, &resp))
+				assert.Equal(t, uint64(1), resp.Job.ID)
+				assert.Equal(t, "test-job", resp.Job.Name)
+			},
+		},
+		{
+			name:   "create job service error",
+			opcode: OpSchedulerCreateJob,
+			req:    &service.CreateSchedulerJobRequest{Name: "test-job", Handler: "test-handler"},
+			svc: &mockSchedulerService{
+				createJobFunc: func(ctx context.Context, req *service.CreateSchedulerJobRequest) (*service.CreateSchedulerJobResponse, error) {
+					return nil, serviceError(dberrors.ErrInvalidInput)
 				},
-				Timestamp: time.Now(),
-			}, nil
+			},
+			wantStatus: StatusInvalidArgument,
 		},
-	}
-
-	handler, err := NewHandler(svc, &testLogger{})
-	require.NoError(t, err)
-
-	reqPayload, err := EncodePayload(&service.CreateSchedulerJobRequest{
-		Name:    "test-job",
-		Handler: "test-handler",
-		Type:    service.SchedulerJobTypeOneShot,
-	})
-	require.NoError(t, err)
-
-	resp, err := handler.Handle(context.Background(), OpSchedulerCreateJob, reqPayload)
-	require.NoError(t, err)
-
-	var createResp service.CreateSchedulerJobResponse
-	err = DecodePayload(resp, &createResp)
-	require.NoError(t, err)
-
-	assert.Equal(t, uint64(123), createResp.Job.ID)
-	assert.Equal(t, "test-job", createResp.Job.Name)
-}
-
-func TestHandleGetJob(t *testing.T) {
-	svc := &mockSchedulerService{
-		getJobFunc: func(ctx context.Context, req *service.GetSchedulerJobRequest) (*service.GetSchedulerJobResponse, error) {
-			return &service.GetSchedulerJobResponse{
-				Job: &service.SchedulerJob{
-					ID:      req.JobID,
-					Name:    "retrieved-job",
-					Handler: "test-handler",
-					Status:  service.SchedulerJobStatusPending,
+		{
+			name:       "get job",
+			opcode:     OpSchedulerGetJob,
+			req:        &service.GetSchedulerJobRequest{JobID: 123},
+			svc:        &mockSchedulerService{},
+			wantStatus: StatusOK,
+			check: func(t *testing.T, payload []byte) {
+				var resp service.GetSchedulerJobResponse
+				require.NoError(t, DecodePayload(payload, &resp))
+				assert.Equal(t, uint64(123), resp.Job.ID)
+				assert.Equal(t, "test-job", resp.Job.Name)
+			},
+		},
+		{
+			name:   "get job service error",
+			opcode: OpSchedulerGetJob,
+			req:    &service.GetSchedulerJobRequest{JobID: 999},
+			svc: &mockSchedulerService{
+				getJobFunc: func(ctx context.Context, req *service.GetSchedulerJobRequest) (*service.GetSchedulerJobResponse, error) {
+					return nil, serviceError(dberrors.ErrNotFound)
 				},
-				Timestamp: time.Now(),
-			}, nil
+			},
+			wantStatus: StatusNotFound,
 		},
-	}
-
-	handler, err := NewHandler(svc, &testLogger{})
-	require.NoError(t, err)
-
-	reqPayload, err := EncodePayload(&service.GetSchedulerJobRequest{
-		JobID: 123,
-	})
-	require.NoError(t, err)
-
-	resp, err := handler.Handle(context.Background(), OpSchedulerGetJob, reqPayload)
-	require.NoError(t, err)
-
-	var getResp service.GetSchedulerJobResponse
-	err = DecodePayload(resp, &getResp)
-	require.NoError(t, err)
-
-	assert.Equal(t, uint64(123), getResp.Job.ID)
-	assert.Equal(t, "retrieved-job", getResp.Job.Name)
-}
-
-func TestHandleUpdateJob(t *testing.T) {
-	svc := &mockSchedulerService{
-		updateJobFunc: func(ctx context.Context, req *service.UpdateSchedulerJobRequest) (*service.UpdateSchedulerJobResponse, error) {
-			return &service.UpdateSchedulerJobResponse{
-				Job: &service.SchedulerJob{
-					ID:      req.JobID,
-					Name:    req.Name,
-					Handler: req.Handler,
-					Status:  service.SchedulerJobStatusPending,
+		{
+			name:   "update job",
+			opcode: OpSchedulerUpdateJob,
+			req: &service.UpdateSchedulerJobRequest{
+				JobID:   123,
+				Name:    "updated-job",
+				Handler: "updated-handler",
+			},
+			svc:        &mockSchedulerService{},
+			wantStatus: StatusOK,
+			check: func(t *testing.T, payload []byte) {
+				var resp service.UpdateSchedulerJobResponse
+				require.NoError(t, DecodePayload(payload, &resp))
+				assert.Equal(t, uint64(123), resp.Job.ID)
+				assert.Equal(t, "updated-job", resp.Job.Name)
+			},
+		},
+		{
+			name:   "update job service error",
+			opcode: OpSchedulerUpdateJob,
+			req:    &service.UpdateSchedulerJobRequest{JobID: 999, Name: "updated-job"},
+			svc: &mockSchedulerService{
+				updateJobFunc: func(ctx context.Context, req *service.UpdateSchedulerJobRequest) (*service.UpdateSchedulerJobResponse, error) {
+					return nil, serviceError(dberrors.ErrNotFound)
 				},
-				Timestamp: time.Now(),
-			}, nil
+			},
+			wantStatus: StatusNotFound,
 		},
-	}
-
-	handler, err := NewHandler(svc, &testLogger{})
-	require.NoError(t, err)
-
-	reqPayload, err := EncodePayload(&service.UpdateSchedulerJobRequest{
-		JobID:   123,
-		Name:    "updated-job",
-		Handler: "updated-handler",
-	})
-	require.NoError(t, err)
-
-	resp, err := handler.Handle(context.Background(), OpSchedulerUpdateJob, reqPayload)
-	require.NoError(t, err)
-
-	var updateResp service.UpdateSchedulerJobResponse
-	err = DecodePayload(resp, &updateResp)
-	require.NoError(t, err)
-
-	assert.Equal(t, uint64(123), updateResp.Job.ID)
-	assert.Equal(t, "updated-job", updateResp.Job.Name)
-}
-
-func TestHandleDeleteJob(t *testing.T) {
-	svc := &mockSchedulerService{
-		deleteJobFunc: func(ctx context.Context, req *service.DeleteSchedulerJobRequest) (*service.DeleteSchedulerJobResponse, error) {
-			return &service.DeleteSchedulerJobResponse{
-				JobID:     req.JobID,
-				Deleted:   true,
-				Timestamp: time.Now(),
-			}, nil
+		{
+			name:       "delete job",
+			opcode:     OpSchedulerDeleteJob,
+			req:        &service.DeleteSchedulerJobRequest{JobID: 123},
+			svc:        &mockSchedulerService{},
+			wantStatus: StatusOK,
+			check: func(t *testing.T, payload []byte) {
+				var resp service.DeleteSchedulerJobResponse
+				require.NoError(t, DecodePayload(payload, &resp))
+				assert.Equal(t, uint64(123), resp.JobID)
+				assert.True(t, resp.Deleted)
+			},
 		},
-	}
-
-	handler, err := NewHandler(svc, &testLogger{})
-	require.NoError(t, err)
-
-	reqPayload, err := EncodePayload(&service.DeleteSchedulerJobRequest{
-		JobID: 123,
-	})
-	require.NoError(t, err)
-
-	resp, err := handler.Handle(context.Background(), OpSchedulerDeleteJob, reqPayload)
-	require.NoError(t, err)
-
-	var delResp service.DeleteSchedulerJobResponse
-	err = DecodePayload(resp, &delResp)
-	require.NoError(t, err)
-
-	assert.Equal(t, uint64(123), delResp.JobID)
-	assert.True(t, delResp.Deleted)
-}
-
-func TestHandleListJobs(t *testing.T) {
-	svc := &mockSchedulerService{
-		listJobsFunc: func(ctx context.Context, req *service.ListSchedulerJobsRequest) (*service.ListSchedulerJobsResponse, error) {
-			return &service.ListSchedulerJobsResponse{
-				Jobs: []*service.SchedulerJob{
-					{ID: 1, Name: "job-1", Status: service.SchedulerJobStatusPending},
-					{ID: 2, Name: "job-2", Status: service.SchedulerJobStatusRunning},
+		{
+			name:   "delete job service error",
+			opcode: OpSchedulerDeleteJob,
+			req:    &service.DeleteSchedulerJobRequest{JobID: 999},
+			svc: &mockSchedulerService{
+				deleteJobFunc: func(ctx context.Context, req *service.DeleteSchedulerJobRequest) (*service.DeleteSchedulerJobResponse, error) {
+					return nil, serviceError(dberrors.ErrNotFound)
 				},
-				HasMore:    false,
-				TotalCount: 2,
-				Timestamp:  time.Now(),
-			}, nil
+			},
+			wantStatus: StatusNotFound,
 		},
-	}
-
-	handler, err := NewHandler(svc, &testLogger{})
-	require.NoError(t, err)
-
-	reqPayload, err := EncodePayload(&service.ListSchedulerJobsRequest{
-		Limit: 10,
-	})
-	require.NoError(t, err)
-
-	resp, err := handler.Handle(context.Background(), OpSchedulerListJobs, reqPayload)
-	require.NoError(t, err)
-
-	var listResp service.ListSchedulerJobsResponse
-	err = DecodePayload(resp, &listResp)
-	require.NoError(t, err)
-
-	assert.Len(t, listResp.Jobs, 2)
-	assert.Equal(t, 2, listResp.TotalCount)
-}
-
-func TestHandleTriggerJob(t *testing.T) {
-	svc := &mockSchedulerService{
-		triggerJobFunc: func(ctx context.Context, req *service.TriggerSchedulerJobRequest) (*service.TriggerSchedulerJobResponse, error) {
-			return &service.TriggerSchedulerJobResponse{
-				JobID:     req.JobID,
-				Status:    service.SchedulerJobStatusRunning,
-				Timestamp: time.Now(),
-			}, nil
-		},
-	}
-
-	handler, err := NewHandler(svc, &testLogger{})
-	require.NoError(t, err)
-
-	reqPayload, err := EncodePayload(&service.TriggerSchedulerJobRequest{
-		JobID: 123,
-	})
-	require.NoError(t, err)
-
-	resp, err := handler.Handle(context.Background(), OpSchedulerTriggerJob, reqPayload)
-	require.NoError(t, err)
-
-	var triggerResp service.TriggerSchedulerJobResponse
-	err = DecodePayload(resp, &triggerResp)
-	require.NoError(t, err)
-
-	assert.Equal(t, uint64(123), triggerResp.JobID)
-	assert.Equal(t, service.SchedulerJobStatusRunning, triggerResp.Status)
-}
-
-func TestHandlePauseJob(t *testing.T) {
-	svc := &mockSchedulerService{
-		pauseJobFunc: func(ctx context.Context, req *service.PauseSchedulerJobRequest) (*service.PauseSchedulerJobResponse, error) {
-			return &service.PauseSchedulerJobResponse{
-				JobID:     req.JobID,
-				OldStatus: service.SchedulerJobStatusPending,
-				NewStatus: service.SchedulerJobStatusPaused,
-				Timestamp: time.Now(),
-			}, nil
-		},
-	}
-
-	handler, err := NewHandler(svc, &testLogger{})
-	require.NoError(t, err)
-
-	reqPayload, err := EncodePayload(&service.PauseSchedulerJobRequest{
-		JobID: 123,
-	})
-	require.NoError(t, err)
-
-	resp, err := handler.Handle(context.Background(), OpSchedulerPauseJob, reqPayload)
-	require.NoError(t, err)
-
-	var pauseResp service.PauseSchedulerJobResponse
-	err = DecodePayload(resp, &pauseResp)
-	require.NoError(t, err)
-
-	assert.Equal(t, uint64(123), pauseResp.JobID)
-	assert.Equal(t, service.SchedulerJobStatusPaused, pauseResp.NewStatus)
-}
-
-func TestHandleResumeJob(t *testing.T) {
-	svc := &mockSchedulerService{
-		resumeJobFunc: func(ctx context.Context, req *service.ResumeSchedulerJobRequest) (*service.ResumeSchedulerJobResponse, error) {
-			return &service.ResumeSchedulerJobResponse{
-				JobID:     req.JobID,
-				OldStatus: service.SchedulerJobStatusPaused,
-				NewStatus: service.SchedulerJobStatusPending,
-				Timestamp: time.Now(),
-			}, nil
-		},
-	}
-
-	handler, err := NewHandler(svc, &testLogger{})
-	require.NoError(t, err)
-
-	reqPayload, err := EncodePayload(&service.ResumeSchedulerJobRequest{
-		JobID: 123,
-	})
-	require.NoError(t, err)
-
-	resp, err := handler.Handle(context.Background(), OpSchedulerResumeJob, reqPayload)
-	require.NoError(t, err)
-
-	var resumeResp service.ResumeSchedulerJobResponse
-	err = DecodePayload(resp, &resumeResp)
-	require.NoError(t, err)
-
-	assert.Equal(t, uint64(123), resumeResp.JobID)
-	assert.Equal(t, service.SchedulerJobStatusPending, resumeResp.NewStatus)
-}
-
-func TestHandleCancelJob(t *testing.T) {
-	svc := &mockSchedulerService{
-		cancelJobFunc: func(ctx context.Context, req *service.CancelSchedulerJobRequest) (*service.CancelSchedulerJobResponse, error) {
-			return &service.CancelSchedulerJobResponse{
-				JobID:     req.JobID,
-				OldStatus: service.SchedulerJobStatusPending,
-				NewStatus: service.SchedulerJobStatusCanceled,
-				Timestamp: time.Now(),
-			}, nil
-		},
-	}
-
-	handler, err := NewHandler(svc, &testLogger{})
-	require.NoError(t, err)
-
-	reqPayload, err := EncodePayload(&service.CancelSchedulerJobRequest{
-		JobID:  123,
-		Reason: "test cancellation",
-	})
-	require.NoError(t, err)
-
-	resp, err := handler.Handle(context.Background(), OpSchedulerCancelJob, reqPayload)
-	require.NoError(t, err)
-
-	var cancelResp service.CancelSchedulerJobResponse
-	err = DecodePayload(resp, &cancelResp)
-	require.NoError(t, err)
-
-	assert.Equal(t, uint64(123), cancelResp.JobID)
-	assert.Equal(t, service.SchedulerJobStatusCanceled, cancelResp.NewStatus)
-}
-
-func TestHandleGetJobHistory(t *testing.T) {
-	now := time.Now()
-	svc := &mockSchedulerService{
-		getJobHistoryFunc: func(ctx context.Context, req *service.GetSchedulerJobHistoryRequest) (*service.GetSchedulerJobHistoryResponse, error) {
-			return &service.GetSchedulerJobHistoryResponse{
-				Executions: []*service.SchedulerJobExecution{
-					{
-						ID:        1,
-						JobID:     req.JobID,
-						Status:    service.SchedulerJobStatusCompleted,
-						StartedAt: now.Add(-time.Hour),
-						EndedAt:   now.Add(-time.Hour + time.Minute),
-					},
+		{
+			name:   "list jobs",
+			opcode: OpSchedulerListJobs,
+			req:    &service.ListSchedulerJobsRequest{Limit: 10},
+			svc: &mockSchedulerService{
+				listJobsFunc: func(ctx context.Context, req *service.ListSchedulerJobsRequest) (*service.ListSchedulerJobsResponse, error) {
+					return &service.ListSchedulerJobsResponse{
+						Jobs: []*service.SchedulerJob{
+							{ID: 1, Name: "job-1", Status: service.SchedulerJobStatusPending},
+							{ID: 2, Name: "job-2", Status: service.SchedulerJobStatusRunning},
+						},
+						TotalCount: 2,
+						Timestamp:  time.Now(),
+					}, nil
 				},
-				HasMore:   false,
-				Timestamp: now,
-			}, nil
+			},
+			wantStatus: StatusOK,
+			check: func(t *testing.T, payload []byte) {
+				var resp service.ListSchedulerJobsResponse
+				require.NoError(t, DecodePayload(payload, &resp))
+				assert.Len(t, resp.Jobs, 2)
+				assert.Equal(t, 2, resp.TotalCount)
+			},
 		},
-	}
-
-	handler, err := NewHandler(svc, &testLogger{})
-	require.NoError(t, err)
-
-	reqPayload, err := EncodePayload(&service.GetSchedulerJobHistoryRequest{
-		JobID: 123,
-		Limit: 10,
-	})
-	require.NoError(t, err)
-
-	resp, err := handler.Handle(context.Background(), OpSchedulerGetJobHistory, reqPayload)
-	require.NoError(t, err)
-
-	var historyResp service.GetSchedulerJobHistoryResponse
-	err = DecodePayload(resp, &historyResp)
-	require.NoError(t, err)
-
-	assert.Len(t, historyResp.Executions, 1)
-	assert.Equal(t, uint64(123), historyResp.Executions[0].JobID)
-}
-
-func TestHandleGetStatus(t *testing.T) {
-	svc := &mockSchedulerService{
-		getStatusFunc: func(ctx context.Context) (*service.GetSchedulerStatusResponse, error) {
-			return &service.GetSchedulerStatusResponse{
-				Running: true,
-				Stats: &service.SchedulerStats{
-					JobCount:     100,
-					RunningJobs:  5,
-					SuccessCount: 500,
-					FailureCount: 10,
+		{
+			name:   "list jobs service error",
+			opcode: OpSchedulerListJobs,
+			req:    &service.ListSchedulerJobsRequest{Limit: 10},
+			svc: &mockSchedulerService{
+				listJobsFunc: func(ctx context.Context, req *service.ListSchedulerJobsRequest) (*service.ListSchedulerJobsResponse, error) {
+					return nil, serviceError(dberrors.ErrInternal)
 				},
-				Timestamp: time.Now(),
-			}, nil
+			},
+			wantStatus: StatusInternalError,
+		},
+		{
+			name:       "trigger job",
+			opcode:     OpSchedulerTriggerJob,
+			req:        &service.TriggerSchedulerJobRequest{JobID: 123},
+			svc:        &mockSchedulerService{},
+			wantStatus: StatusOK,
+			check: func(t *testing.T, payload []byte) {
+				var resp service.TriggerSchedulerJobResponse
+				require.NoError(t, DecodePayload(payload, &resp))
+				assert.Equal(t, uint64(123), resp.JobID)
+				assert.Equal(t, service.SchedulerJobStatusRunning, resp.Status)
+			},
+		},
+		{
+			name:   "trigger job service error",
+			opcode: OpSchedulerTriggerJob,
+			req:    &service.TriggerSchedulerJobRequest{JobID: 999},
+			svc: &mockSchedulerService{
+				triggerJobFunc: func(ctx context.Context, req *service.TriggerSchedulerJobRequest) (*service.TriggerSchedulerJobResponse, error) {
+					return nil, serviceError(dberrors.ErrNotFound)
+				},
+			},
+			wantStatus: StatusNotFound,
+		},
+		{
+			name:       "pause job",
+			opcode:     OpSchedulerPauseJob,
+			req:        &service.PauseSchedulerJobRequest{JobID: 123},
+			svc:        &mockSchedulerService{},
+			wantStatus: StatusOK,
+			check: func(t *testing.T, payload []byte) {
+				var resp service.PauseSchedulerJobResponse
+				require.NoError(t, DecodePayload(payload, &resp))
+				assert.Equal(t, uint64(123), resp.JobID)
+				assert.Equal(t, service.SchedulerJobStatusPaused, resp.NewStatus)
+			},
+		},
+		{
+			name:   "pause job service error",
+			opcode: OpSchedulerPauseJob,
+			req:    &service.PauseSchedulerJobRequest{JobID: 123},
+			svc: &mockSchedulerService{
+				pauseJobFunc: func(ctx context.Context, req *service.PauseSchedulerJobRequest) (*service.PauseSchedulerJobResponse, error) {
+					return nil, serviceError(dberrors.ErrInvalidInput)
+				},
+			},
+			wantStatus: StatusInvalidArgument,
+		},
+		{
+			name:       "resume job",
+			opcode:     OpSchedulerResumeJob,
+			req:        &service.ResumeSchedulerJobRequest{JobID: 123},
+			svc:        &mockSchedulerService{},
+			wantStatus: StatusOK,
+			check: func(t *testing.T, payload []byte) {
+				var resp service.ResumeSchedulerJobResponse
+				require.NoError(t, DecodePayload(payload, &resp))
+				assert.Equal(t, uint64(123), resp.JobID)
+				assert.Equal(t, service.SchedulerJobStatusPending, resp.NewStatus)
+			},
+		},
+		{
+			name:   "resume job service error",
+			opcode: OpSchedulerResumeJob,
+			req:    &service.ResumeSchedulerJobRequest{JobID: 123},
+			svc: &mockSchedulerService{
+				resumeJobFunc: func(ctx context.Context, req *service.ResumeSchedulerJobRequest) (*service.ResumeSchedulerJobResponse, error) {
+					return nil, serviceError(dberrors.ErrInvalidInput)
+				},
+			},
+			wantStatus: StatusInvalidArgument,
+		},
+		{
+			name:       "cancel job",
+			opcode:     OpSchedulerCancelJob,
+			req:        &service.CancelSchedulerJobRequest{JobID: 123, Reason: "test cancellation"},
+			svc:        &mockSchedulerService{},
+			wantStatus: StatusOK,
+			check: func(t *testing.T, payload []byte) {
+				var resp service.CancelSchedulerJobResponse
+				require.NoError(t, DecodePayload(payload, &resp))
+				assert.Equal(t, uint64(123), resp.JobID)
+				assert.Equal(t, service.SchedulerJobStatusCanceled, resp.NewStatus)
+			},
+		},
+		{
+			name:   "cancel job service error",
+			opcode: OpSchedulerCancelJob,
+			req:    &service.CancelSchedulerJobRequest{JobID: 999},
+			svc: &mockSchedulerService{
+				cancelJobFunc: func(ctx context.Context, req *service.CancelSchedulerJobRequest) (*service.CancelSchedulerJobResponse, error) {
+					return nil, serviceError(dberrors.ErrNotFound)
+				},
+			},
+			wantStatus: StatusNotFound,
+		},
+		{
+			name:   "get job history",
+			opcode: OpSchedulerGetJobHistory,
+			req:    &service.GetSchedulerJobHistoryRequest{JobID: 123, Limit: 10},
+			svc: &mockSchedulerService{
+				getJobHistoryFunc: func(ctx context.Context, req *service.GetSchedulerJobHistoryRequest) (*service.GetSchedulerJobHistoryResponse, error) {
+					now := time.Now()
+					return &service.GetSchedulerJobHistoryResponse{
+						Executions: []*service.SchedulerJobExecution{{
+							ID:        1,
+							JobID:     req.JobID,
+							Status:    service.SchedulerJobStatusCompleted,
+							StartedAt: now.Add(-time.Hour),
+							EndedAt:   now.Add(-time.Hour + time.Minute),
+						}},
+						Timestamp: now,
+					}, nil
+				},
+			},
+			wantStatus: StatusOK,
+			check: func(t *testing.T, payload []byte) {
+				var resp service.GetSchedulerJobHistoryResponse
+				require.NoError(t, DecodePayload(payload, &resp))
+				require.Len(t, resp.Executions, 1)
+				assert.Equal(t, uint64(123), resp.Executions[0].JobID)
+			},
+		},
+		{
+			name:   "get job history service error",
+			opcode: OpSchedulerGetJobHistory,
+			req:    &service.GetSchedulerJobHistoryRequest{JobID: 999},
+			svc: &mockSchedulerService{
+				getJobHistoryFunc: func(ctx context.Context, req *service.GetSchedulerJobHistoryRequest) (*service.GetSchedulerJobHistoryResponse, error) {
+					return nil, serviceError(dberrors.ErrNotFound)
+				},
+			},
+			wantStatus: StatusNotFound,
+		},
+		{
+			name:       "get status",
+			opcode:     OpSchedulerGetStatus,
+			svc:        &mockSchedulerService{},
+			wantStatus: StatusOK,
+			check: func(t *testing.T, payload []byte) {
+				var resp service.GetSchedulerStatusResponse
+				require.NoError(t, DecodePayload(payload, &resp))
+				assert.True(t, resp.Running)
+				assert.Equal(t, uint64(10), resp.Stats.JobCount)
+				assert.Equal(t, uint64(2), resp.Stats.RunningJobs)
+			},
+		},
+		{
+			name:   "get status service error",
+			opcode: OpSchedulerGetStatus,
+			svc: &mockSchedulerService{
+				getStatusFunc: func(ctx context.Context) (*service.GetSchedulerStatusResponse, error) {
+					return nil, serviceError(dberrors.ErrInternal)
+				},
+			},
+			wantStatus: StatusInternalError,
 		},
 	}
 
-	handler, err := NewHandler(svc, &testLogger{})
-	require.NoError(t, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler, err := NewHandler(tt.svc, &testLogger{})
+			require.NoError(t, err)
 
-	resp, err := handler.Handle(context.Background(), OpSchedulerGetStatus, nil)
-	require.NoError(t, err)
-
-	var statusResp service.GetSchedulerStatusResponse
-	err = DecodePayload(resp, &statusResp)
-	require.NoError(t, err)
-
-	assert.True(t, statusResp.Running)
-	assert.Equal(t, uint64(100), statusResp.Stats.JobCount)
-	assert.Equal(t, uint64(5), statusResp.Stats.RunningJobs)
-}
-
-func TestHandleServiceError(t *testing.T) {
-	svc := &mockSchedulerService{
-		getJobFunc: func(ctx context.Context, req *service.GetSchedulerJobRequest) (*service.GetSchedulerJobResponse, error) {
-			return nil, &dberrors.QBError{
-				Code: dberrors.ErrNotFound,
-				Op:   "test",
-				Err:  assert.AnError,
+			var payload []byte
+			if tt.req != nil {
+				payload, err = EncodePayload(tt.req)
+				require.NoError(t, err)
 			}
-		},
-	}
 
-	handler, err := NewHandler(svc, &testLogger{})
-	require.NoError(t, err)
-
-	reqPayload, err := EncodePayload(&service.GetSchedulerJobRequest{
-		JobID: 999,
-	})
-	require.NoError(t, err)
-
-	_, err = handler.Handle(context.Background(), OpSchedulerGetJob, reqPayload)
-	require.Error(t, err)
-
-	var qbErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrNotFound, qbErr.Code)
-}
-
-func TestHandleRequestSuccess(t *testing.T) {
-	handler, err := NewHandler(&mockSchedulerService{}, &testLogger{})
-	require.NoError(t, err)
-
-	reqPayload, err := EncodePayload(&service.GetSchedulerJobRequest{
-		JobID: 123,
-	})
-	require.NoError(t, err)
-
-	req := &Request{
-		Opcode:  OpSchedulerGetJob,
-		Token:   "test-token",
-		Payload: reqPayload,
-	}
-
-	resp := handler.HandleRequest(context.Background(), req)
-	assert.Equal(t, StatusOK, resp.Status)
-	assert.NotEmpty(t, resp.Payload)
-}
-
-func TestHandleRequestWithError(t *testing.T) {
-	svc := &mockSchedulerService{
-		getJobFunc: func(ctx context.Context, req *service.GetSchedulerJobRequest) (*service.GetSchedulerJobResponse, error) {
-			return nil, &dberrors.QBError{
-				Code: dberrors.ErrNotFound,
-				Op:   "test",
-				Err:  assert.AnError,
+			resp := handler.HandleRequest(context.Background(), &Request{
+				Opcode:  tt.opcode,
+				Payload: payload,
+			})
+			require.Equal(t, tt.wantStatus, resp.Status)
+			if tt.check == nil {
+				assert.NotEmpty(t, resp.Payload, "error response carries a message")
+				return
 			}
-		},
+			tt.check(t, resp.Payload)
+		})
 	}
-
-	handler, err := NewHandler(svc, &testLogger{})
-	require.NoError(t, err)
-
-	reqPayload, err := EncodePayload(&service.GetSchedulerJobRequest{
-		JobID: 999,
-	})
-	require.NoError(t, err)
-
-	req := &Request{
-		Opcode:  OpSchedulerGetJob,
-		Token:   "test-token",
-		Payload: reqPayload,
-	}
-
-	resp := handler.HandleRequest(context.Background(), req)
-	assert.Equal(t, StatusNotFound, resp.Status)
 }
 
 func TestHandleInvalidPayload(t *testing.T) {
@@ -719,273 +621,6 @@ func TestHandleInvalidPayload(t *testing.T) {
 
 	// Send invalid JSON payload
 	_, err = handler.Handle(context.Background(), OpSchedulerGetJob, []byte("invalid json"))
-	require.Error(t, err)
-
-	var qbErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInternal, qbErr.Code)
-}
-
-func TestHandleCreateJobServiceError(t *testing.T) {
-	svc := &mockSchedulerService{
-		createJobFunc: func(ctx context.Context, req *service.CreateSchedulerJobRequest) (*service.CreateSchedulerJobResponse, error) {
-			return nil, &dberrors.QBError{
-				Code: dberrors.ErrInvalidInput,
-				Op:   "test",
-				Err:  assert.AnError,
-			}
-		},
-	}
-
-	handler, err := NewHandler(svc, &testLogger{})
-	require.NoError(t, err)
-
-	reqPayload, err := EncodePayload(&service.CreateSchedulerJobRequest{
-		Name:    "test-job",
-		Handler: "test-handler",
-	})
-	require.NoError(t, err)
-
-	_, err = handler.Handle(context.Background(), OpSchedulerCreateJob, reqPayload)
-	require.Error(t, err)
-
-	var qbErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestHandleUpdateJobServiceError(t *testing.T) {
-	svc := &mockSchedulerService{
-		updateJobFunc: func(ctx context.Context, req *service.UpdateSchedulerJobRequest) (*service.UpdateSchedulerJobResponse, error) {
-			return nil, &dberrors.QBError{
-				Code: dberrors.ErrNotFound,
-				Op:   "test",
-				Err:  assert.AnError,
-			}
-		},
-	}
-
-	handler, err := NewHandler(svc, &testLogger{})
-	require.NoError(t, err)
-
-	reqPayload, err := EncodePayload(&service.UpdateSchedulerJobRequest{
-		JobID: 999,
-		Name:  "updated-job",
-	})
-	require.NoError(t, err)
-
-	_, err = handler.Handle(context.Background(), OpSchedulerUpdateJob, reqPayload)
-	require.Error(t, err)
-
-	var qbErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrNotFound, qbErr.Code)
-}
-
-func TestHandleDeleteJobServiceError(t *testing.T) {
-	svc := &mockSchedulerService{
-		deleteJobFunc: func(ctx context.Context, req *service.DeleteSchedulerJobRequest) (*service.DeleteSchedulerJobResponse, error) {
-			return nil, &dberrors.QBError{
-				Code: dberrors.ErrNotFound,
-				Op:   "test",
-				Err:  assert.AnError,
-			}
-		},
-	}
-
-	handler, err := NewHandler(svc, &testLogger{})
-	require.NoError(t, err)
-
-	reqPayload, err := EncodePayload(&service.DeleteSchedulerJobRequest{
-		JobID: 999,
-	})
-	require.NoError(t, err)
-
-	_, err = handler.Handle(context.Background(), OpSchedulerDeleteJob, reqPayload)
-	require.Error(t, err)
-
-	var qbErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrNotFound, qbErr.Code)
-}
-
-func TestHandleListJobsServiceError(t *testing.T) {
-	svc := &mockSchedulerService{
-		listJobsFunc: func(ctx context.Context, req *service.ListSchedulerJobsRequest) (*service.ListSchedulerJobsResponse, error) {
-			return nil, &dberrors.QBError{
-				Code: dberrors.ErrInternal,
-				Op:   "test",
-				Err:  assert.AnError,
-			}
-		},
-	}
-
-	handler, err := NewHandler(svc, &testLogger{})
-	require.NoError(t, err)
-
-	reqPayload, err := EncodePayload(&service.ListSchedulerJobsRequest{
-		Limit: 10,
-	})
-	require.NoError(t, err)
-
-	_, err = handler.Handle(context.Background(), OpSchedulerListJobs, reqPayload)
-	require.Error(t, err)
-
-	var qbErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInternal, qbErr.Code)
-}
-
-func TestHandleTriggerJobServiceError(t *testing.T) {
-	svc := &mockSchedulerService{
-		triggerJobFunc: func(ctx context.Context, req *service.TriggerSchedulerJobRequest) (*service.TriggerSchedulerJobResponse, error) {
-			return nil, &dberrors.QBError{
-				Code: dberrors.ErrNotFound,
-				Op:   "test",
-				Err:  assert.AnError,
-			}
-		},
-	}
-
-	handler, err := NewHandler(svc, &testLogger{})
-	require.NoError(t, err)
-
-	reqPayload, err := EncodePayload(&service.TriggerSchedulerJobRequest{
-		JobID: 999,
-	})
-	require.NoError(t, err)
-
-	_, err = handler.Handle(context.Background(), OpSchedulerTriggerJob, reqPayload)
-	require.Error(t, err)
-
-	var qbErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrNotFound, qbErr.Code)
-}
-
-func TestHandlePauseJobServiceError(t *testing.T) {
-	svc := &mockSchedulerService{
-		pauseJobFunc: func(ctx context.Context, req *service.PauseSchedulerJobRequest) (*service.PauseSchedulerJobResponse, error) {
-			return nil, &dberrors.QBError{
-				Code: dberrors.ErrInvalidInput,
-				Op:   "test",
-				Err:  assert.AnError,
-			}
-		},
-	}
-
-	handler, err := NewHandler(svc, &testLogger{})
-	require.NoError(t, err)
-
-	reqPayload, err := EncodePayload(&service.PauseSchedulerJobRequest{
-		JobID: 123,
-	})
-	require.NoError(t, err)
-
-	_, err = handler.Handle(context.Background(), OpSchedulerPauseJob, reqPayload)
-	require.Error(t, err)
-
-	var qbErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestHandleResumeJobServiceError(t *testing.T) {
-	svc := &mockSchedulerService{
-		resumeJobFunc: func(ctx context.Context, req *service.ResumeSchedulerJobRequest) (*service.ResumeSchedulerJobResponse, error) {
-			return nil, &dberrors.QBError{
-				Code: dberrors.ErrInvalidInput,
-				Op:   "test",
-				Err:  assert.AnError,
-			}
-		},
-	}
-
-	handler, err := NewHandler(svc, &testLogger{})
-	require.NoError(t, err)
-
-	reqPayload, err := EncodePayload(&service.ResumeSchedulerJobRequest{
-		JobID: 123,
-	})
-	require.NoError(t, err)
-
-	_, err = handler.Handle(context.Background(), OpSchedulerResumeJob, reqPayload)
-	require.Error(t, err)
-
-	var qbErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestHandleCancelJobServiceError(t *testing.T) {
-	svc := &mockSchedulerService{
-		cancelJobFunc: func(ctx context.Context, req *service.CancelSchedulerJobRequest) (*service.CancelSchedulerJobResponse, error) {
-			return nil, &dberrors.QBError{
-				Code: dberrors.ErrNotFound,
-				Op:   "test",
-				Err:  assert.AnError,
-			}
-		},
-	}
-
-	handler, err := NewHandler(svc, &testLogger{})
-	require.NoError(t, err)
-
-	reqPayload, err := EncodePayload(&service.CancelSchedulerJobRequest{
-		JobID: 999,
-	})
-	require.NoError(t, err)
-
-	_, err = handler.Handle(context.Background(), OpSchedulerCancelJob, reqPayload)
-	require.Error(t, err)
-
-	var qbErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrNotFound, qbErr.Code)
-}
-
-func TestHandleGetJobHistoryServiceError(t *testing.T) {
-	svc := &mockSchedulerService{
-		getJobHistoryFunc: func(ctx context.Context, req *service.GetSchedulerJobHistoryRequest) (*service.GetSchedulerJobHistoryResponse, error) {
-			return nil, &dberrors.QBError{
-				Code: dberrors.ErrNotFound,
-				Op:   "test",
-				Err:  assert.AnError,
-			}
-		},
-	}
-
-	handler, err := NewHandler(svc, &testLogger{})
-	require.NoError(t, err)
-
-	reqPayload, err := EncodePayload(&service.GetSchedulerJobHistoryRequest{
-		JobID: 999,
-	})
-	require.NoError(t, err)
-
-	_, err = handler.Handle(context.Background(), OpSchedulerGetJobHistory, reqPayload)
-	require.Error(t, err)
-
-	var qbErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrNotFound, qbErr.Code)
-}
-
-func TestHandleGetStatusServiceError(t *testing.T) {
-	svc := &mockSchedulerService{
-		getStatusFunc: func(ctx context.Context) (*service.GetSchedulerStatusResponse, error) {
-			return nil, &dberrors.QBError{
-				Code: dberrors.ErrInternal,
-				Op:   "test",
-				Err:  assert.AnError,
-			}
-		},
-	}
-
-	handler, err := NewHandler(svc, &testLogger{})
-	require.NoError(t, err)
-
-	_, err = handler.Handle(context.Background(), OpSchedulerGetStatus, nil)
 	require.Error(t, err)
 
 	var qbErr *dberrors.QBError

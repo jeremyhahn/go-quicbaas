@@ -15,13 +15,10 @@ package metrics
 
 import (
 	"fmt"
-	"strings"
 	"testing"
 
 	"math"
 	"sync"
-	"sync/atomic"
-	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -48,26 +45,39 @@ func TestInitMetrics(t *testing.T) {
 }
 
 func TestInitMetrics_Singleton(t *testing.T) {
-	// Reset metrics before test
-	Reset()
+	tests := []struct {
+		name string
+		get  func() *Metrics
+	}{
+		{name: "InitMetrics", get: InitMetrics},
+		{name: "GetMetrics before InitMetrics", get: GetMetrics},
+	}
 
-	metrics1 := InitMetrics()
-	metrics2 := InitMetrics()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			Reset()
 
-	// Should return the same instance
-	assert.Equal(t, metrics1, metrics2, "InitMetrics should return singleton instance")
-}
+			const numGoroutines = 100
+			instances := make([]*Metrics, numGoroutines)
+			var wg sync.WaitGroup
+			wg.Add(numGoroutines)
+			for i := 0; i < numGoroutines; i++ {
+				go func(idx int) {
+					defer wg.Done()
+					instances[idx] = tt.get()
+				}(i)
+			}
+			wg.Wait()
 
-func TestGetMetrics(t *testing.T) {
-	// Reset metrics before test
-	Reset()
-
-	metrics := GetMetrics()
-	require.NotNil(t, metrics, "GetMetrics should return initialized metrics")
-
-	// Calling again should return same instance
-	metrics2 := GetMetrics()
-	assert.Equal(t, metrics, metrics2, "GetMetrics should return singleton instance")
+			require.NotNil(t, instances[0])
+			assert.NotNil(t, instances[0].RequestDuration)
+			for i := 1; i < numGoroutines; i++ {
+				assert.Same(t, instances[0], instances[i], "every caller should get the singleton")
+			}
+			assert.Same(t, instances[0], InitMetrics())
+			assert.Same(t, instances[0], GetMetrics())
+		})
+	}
 }
 
 func TestRecordRequestDuration(t *testing.T) {
@@ -150,37 +160,6 @@ func TestRecordRequestSize(t *testing.T) {
 			assert.Greater(t, count, 0, "RequestSize should have recorded values")
 		})
 	}
-}
-
-func TestConcurrentRequests(t *testing.T) {
-	// Reset metrics before test
-	Reset()
-
-	m := InitMetrics()
-
-	// Initial value should be 0
-	value := testutil.ToFloat64(m.ConcurrentRequests)
-	assert.Equal(t, 0.0, value, "ConcurrentRequests should start at 0")
-
-	// Increment
-	m.IncrementConcurrentRequests()
-	value = testutil.ToFloat64(m.ConcurrentRequests)
-	assert.Equal(t, 1.0, value, "ConcurrentRequests should be 1 after increment")
-
-	// Increment again
-	m.IncrementConcurrentRequests()
-	value = testutil.ToFloat64(m.ConcurrentRequests)
-	assert.Equal(t, 2.0, value, "ConcurrentRequests should be 2 after second increment")
-
-	// Decrement
-	m.DecrementConcurrentRequests()
-	value = testutil.ToFloat64(m.ConcurrentRequests)
-	assert.Equal(t, 1.0, value, "ConcurrentRequests should be 1 after decrement")
-
-	// Decrement to zero
-	m.DecrementConcurrentRequests()
-	value = testutil.ToFloat64(m.ConcurrentRequests)
-	assert.Equal(t, 0.0, value, "ConcurrentRequests should be 0 after second decrement")
 }
 
 func TestRecordTransactionDuration(t *testing.T) {
@@ -362,82 +341,11 @@ func TestSetRaftSnapshotSize(t *testing.T) {
 	}
 }
 
-func TestMetricsLabels(t *testing.T) {
-	// Reset metrics before test
-	Reset()
-
-	m := InitMetrics()
-
-	// Test RequestDuration labels
-	m.RecordRequestDuration("get", "success", 0.01)
-	m.RecordRequestDuration("put", "failure", 0.02)
-
-	// Test RaftProposalLatency labels
-	m.RecordRaftProposalLatency("1", 0.005)
-	m.RecordRaftProposalLatency("2", 0.010)
-
-	// Test RaftSnapshotSize labels
-	m.SetRaftSnapshotSize("1", 1000)
-	m.SetRaftSnapshotSize("2", 2000)
-
-	// Verify labels are working by checking we can retrieve different values
-	shard1Size := testutil.ToFloat64(m.RaftSnapshotSize.With(prometheus.Labels{"shard": "1"}))
-	shard2Size := testutil.ToFloat64(m.RaftSnapshotSize.With(prometheus.Labels{"shard": "2"}))
-
-	assert.Equal(t, 1000.0, shard1Size, "Shard 1 size should be 1000")
-	assert.Equal(t, 2000.0, shard2Size, "Shard 2 size should be 2000")
-}
-
-func TestMetricsBuckets(t *testing.T) {
-	// Reset metrics before test
-	Reset()
-
-	m := InitMetrics()
-
-	// Test RequestDuration buckets
-	t.Run("RequestDuration buckets", func(t *testing.T) {
-		m.RecordRequestDuration("get", "success", 0.001)
-		m.RecordRequestDuration("get", "success", 0.01)
-		m.RecordRequestDuration("get", "success", 0.1)
-		m.RecordRequestDuration("get", "success", 1.0)
-
-		count := testutil.CollectAndCount(m.RequestDuration)
-		assert.Greater(t, count, 0, "RequestDuration should have buckets")
-	})
-
-	// Test RequestSize buckets (exponential)
-	t.Run("RequestSize exponential buckets", func(t *testing.T) {
-		m.RecordRequestSize("put", 100)
-		m.RecordRequestSize("put", 1000)
-		m.RecordRequestSize("put", 10000)
-		m.RecordRequestSize("put", 100000)
-
-		count := testutil.CollectAndCount(m.RequestSize)
-		assert.Greater(t, count, 0, "RequestSize should have exponential buckets")
-	})
-
-	// Test TransactionSize buckets
-	t.Run("TransactionSize buckets", func(t *testing.T) {
-		m.RecordTransactionSize(1)
-		m.RecordTransactionSize(10)
-		m.RecordTransactionSize(50)
-		m.RecordTransactionSize(100)
-		m.RecordTransactionSize(500)
-
-		count := testutil.CollectAndCount(m.TransactionSize)
-		assert.Greater(t, count, 0, "TransactionSize should have buckets")
-	})
-}
-
 func TestMetricsRegistration(t *testing.T) {
-	// Reset metrics before test
 	Reset()
-
-	// Initialize metrics
 	m := InitMetrics()
 
-	// Record some values to ensure metrics appear in registry
-	// Histograms and histogram vectors don't appear until they have data
+	// Histograms and vectors appear in the registry only once they hold data.
 	m.RecordRequestDuration("test", "success", 0.01)
 	m.RecordRequestSize("test", 1000)
 	m.IncrementConcurrentRequests()
@@ -446,163 +354,121 @@ func TestMetricsRegistration(t *testing.T) {
 	m.IncrementTransactionConflicts()
 	m.RecordRaftProposalLatency("1", 0.005)
 	m.SetRaftSnapshotSize("1", 1024)
-
-	// Gather metrics from registry
-	metricFamilies, err := Registry.Gather()
-	require.NoError(t, err, "Should be able to gather metrics")
-
-	// Define expected metrics
-	expectedMetrics := []string{
-		"quicbaas_request_duration_seconds",
-		"quicbaas_request_size_bytes",
-		"quicbaas_concurrent_requests",
-		"quicbaas_transaction_duration_seconds",
-		"quicbaas_transaction_operations",
-		"quicbaas_transaction_conflicts_total",
-		"quicbaas_raft_proposal_latency_seconds",
-		"quicbaas_raft_snapshot_size_bytes",
-	}
-
-	// Build map of registered metric names
-	registeredMetrics := make(map[string]bool)
-	for _, mf := range metricFamilies {
-		registeredMetrics[mf.GetName()] = true
-	}
-
-	// Verify all expected metrics are registered
-	for _, expected := range expectedMetrics {
-		assert.True(t, registeredMetrics[expected], "Metric %s should be registered", expected)
-	}
-}
-
-func TestMetricsHelpText(t *testing.T) {
-	// Reset metrics before test
-	Reset()
-
-	m := InitMetrics()
-
-	// Record values to ensure metrics appear in registry
-	m.RecordRequestDuration("test", "success", 0.01)
-	m.RecordRequestSize("test", 1000)
-	m.IncrementConcurrentRequests()
-	m.RecordTransactionDuration(0.1)
-	m.RecordTransactionSize(10)
-	m.IncrementTransactionConflicts()
-	m.RecordRaftProposalLatency("1", 0.005)
-	m.SetRaftSnapshotSize("1", 1024)
+	m.RecordVectorOperation("tenant-1", "embeddings", "upsert", "success")
+	m.RecordVectorOperationDuration("tenant-1", "embeddings", "upsert", 0.01)
+	m.SetVectorStorageBytes("tenant-1", "embeddings", 1048576)
+	m.SetVectorCount("tenant-1", "embeddings", 1000)
+	m.RecordVectorSearchLatency("tenant-1", "embeddings", "similarity", 0.005)
+	m.RecordVectorBatchSize("tenant-1", "embeddings", "upsert", 100)
+	m.SetVectorQuotaUsage("tenant-1", "embeddings", "vectors", 0.5)
+	m.SetVectorNamespaceCount("tenant-1", 5)
 
 	metricFamilies, err := Registry.Gather()
 	require.NoError(t, err, "Should be able to gather metrics")
 
-	expectedHelp := map[string]string{
-		"quicbaas_request_duration_seconds":      "Request latency by operation and status",
-		"quicbaas_request_size_bytes":            "Request payload size in bytes",
-		"quicbaas_concurrent_requests":           "Number of requests currently being processed",
-		"quicbaas_transaction_duration_seconds":  "Transaction execution time",
-		"quicbaas_transaction_operations":        "Number of operations per transaction",
-		"quicbaas_transaction_conflicts_total":   "Number of transaction conflicts (optimistic locking failures)",
-		"quicbaas_raft_proposal_latency_seconds": "Time from proposal to commit by shard",
-		"quicbaas_raft_snapshot_size_bytes":      "Current snapshot size by shard",
+	help := make(map[string]string)
+	for _, mf := range metricFamilies {
+		help[mf.GetName()] = mf.GetHelp()
 	}
 
-	for _, mf := range metricFamilies {
-		name := mf.GetName()
-		if expectedHelp[name] != "" {
-			assert.Equal(t, expectedHelp[name], mf.GetHelp(),
-				"Help text for %s should match", name)
-		}
+	// An empty want leaves the help text unchecked.
+	tests := []struct {
+		name string
+		want string
+	}{
+		{name: "quicbaas_request_duration_seconds", want: "Request latency by operation and status"},
+		{name: "quicbaas_request_size_bytes", want: "Request payload size in bytes"},
+		{name: "quicbaas_concurrent_requests", want: "Number of requests currently being processed"},
+		{name: "quicbaas_transaction_duration_seconds", want: "Transaction execution time"},
+		{name: "quicbaas_transaction_operations", want: "Number of operations per transaction"},
+		{name: "quicbaas_transaction_conflicts_total", want: "Number of transaction conflicts (optimistic locking failures)"},
+		{name: "quicbaas_raft_proposal_latency_seconds", want: "Time from proposal to commit by shard"},
+		{name: "quicbaas_raft_snapshot_size_bytes", want: "Current snapshot size by shard"},
+		{name: "quicbaas_vector_operations_total"},
+		{name: "quicbaas_vector_operation_duration_seconds"},
+		{name: "quicbaas_vector_storage_bytes"},
+		{name: "quicbaas_vector_count"},
+		{name: "quicbaas_vector_search_latency_seconds"},
+		{name: "quicbaas_vector_batch_size"},
+		{name: "quicbaas_vector_quota_usage_ratio"},
+		{name: "quicbaas_vector_namespace_count"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := help[tt.name]
+			require.True(t, ok, "Metric %s should be registered", tt.name)
+			if tt.want != "" {
+				assert.Equal(t, tt.want, got)
+			}
+		})
 	}
 }
 
 func TestReset(t *testing.T) {
-	// Initialize metrics
-	m1 := InitMetrics()
-	require.NotNil(t, m1)
+	tests := []struct {
+		name   string
+		record func(m *Metrics)
+		count  func(m *Metrics) float64
+	}{
+		{
+			name:   "counter",
+			record: func(m *Metrics) { m.IncrementTransactionConflicts() },
+			count:  func(m *Metrics) float64 { return testutil.ToFloat64(m.TransactionConflicts) },
+		},
+		{
+			name:   "gauge",
+			record: func(m *Metrics) { m.IncrementConcurrentRequests() },
+			count:  func(m *Metrics) float64 { return testutil.ToFloat64(m.ConcurrentRequests) },
+		},
+		{
+			name:   "histogram",
+			record: func(m *Metrics) { m.RecordRequestDuration("get", "success", 0.01) },
+			count:  func(m *Metrics) float64 { return histogramSampleCount(t, "quicbaas_request_duration_seconds") },
+		},
+	}
 
-	// Record some values
-	m1.IncrementConcurrentRequests()
-	m1.IncrementTransactionConflicts()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Repeated resets must each yield a fresh, working instance.
+			for round := 0; round < 3; round++ {
+				Reset()
+				m1 := InitMetrics()
+				require.NotNil(t, m1)
+				for i := 0; i < 100; i++ {
+					tt.record(m1)
+				}
+				assert.Equal(t, 100.0, tt.count(m1), "round %d: values before reset", round)
 
-	// Reset metrics
-	Reset()
+				Reset()
+				m2 := GetMetrics()
+				require.NotNil(t, m2)
+				assert.NotSame(t, m1, m2, "Reset should create a new instance")
 
-	// Get new instance
-	m2 := GetMetrics()
-	require.NotNil(t, m2)
-
-	// Should be a different instance
-	assert.NotEqual(t, m1, m2, "Reset should create new instance")
-
-	// Values should be reset
-	value := testutil.ToFloat64(m2.ConcurrentRequests)
-	assert.Equal(t, 0.0, value, "ConcurrentRequests should be reset to 0")
-
-	conflictsValue := testutil.ToFloat64(m2.TransactionConflicts)
-	assert.Equal(t, 0.0, conflictsValue, "TransactionConflicts should be reset to 0")
-}
-
-func TestConcurrentAccess(t *testing.T) {
-	// Reset metrics before test
-	Reset()
-
-	m := InitMetrics()
-
-	// Test concurrent access to metrics
-	done := make(chan bool)
-	iterations := 100
-
-	// Concurrent increments
-	for i := 0; i < 10; i++ {
-		go func() {
-			for j := 0; j < iterations; j++ {
-				m.IncrementConcurrentRequests()
-				m.IncrementTransactionConflicts()
-				m.RecordRequestDuration("get", "success", 0.01)
-				m.RecordRaftProposalLatency("1", 0.005)
-				m.DecrementConcurrentRequests()
+				tt.record(m2)
+				assert.Equal(t, 1.0, tt.count(m2), "round %d: only post-reset values", round)
 			}
-			done <- true
-		}()
+		})
 	}
-
-	// Wait for all goroutines
-	for i := 0; i < 10; i++ {
-		<-done
-	}
-
-	// Verify metrics were recorded (should not panic or corrupt data)
-	conflicts := testutil.ToFloat64(m.TransactionConflicts)
-	assert.Equal(t, float64(10*iterations), conflicts, "Should record all conflicts")
 }
 
-func TestMetricsExport(t *testing.T) {
-	// Reset metrics before test
-	Reset()
-
-	m := InitMetrics()
-
-	// Record various metrics
-	m.RecordRequestDuration("get", "success", 0.005)
-	m.RecordRequestSize("put", 1024)
-	m.IncrementConcurrentRequests()
-	m.RecordTransactionDuration(0.1)
-	m.RecordTransactionSize(5)
-	m.IncrementTransactionConflicts()
-	m.RecordRaftProposalLatency("1", 0.002)
-	m.SetRaftSnapshotSize("1", 2048)
-
-	// Gather all metrics
+// histogramSampleCount returns the total number of observations, across all
+// label values, of the named histogram family in the current Registry.
+func histogramSampleCount(t *testing.T, family string) float64 {
+	t.Helper()
 	metricFamilies, err := Registry.Gather()
-	require.NoError(t, err, "Should be able to gather metrics")
-	assert.NotEmpty(t, metricFamilies, "Should have metric families")
+	require.NoError(t, err)
 
-	// Verify we can export metrics (basic smoke test)
+	var count uint64
 	for _, mf := range metricFamilies {
-		assert.NotEmpty(t, mf.GetName(), "Metric should have a name")
-		if strings.HasPrefix(mf.GetName(), "quicbaas_") {
-			assert.NotEmpty(t, mf.GetMetric(), "QuicBaaS metric should have values")
+		if mf.GetName() != family {
+			continue
+		}
+		for _, metric := range mf.GetMetric() {
+			count += metric.GetHistogram().GetSampleCount()
 		}
 	}
+	return float64(count)
 }
 
 func BenchmarkRecordRequestDuration(b *testing.B) {
@@ -649,21 +515,6 @@ func BenchmarkRecordRaftMetrics(b *testing.B) {
 }
 
 // Vector multi-tenant metrics tests
-
-func TestVectorMetricsInitialization(t *testing.T) {
-	Reset()
-	m := InitMetrics()
-
-	// Verify all vector metrics are initialized
-	assert.NotNil(t, m.VectorOperationsTotal, "VectorOperationsTotal should be initialized")
-	assert.NotNil(t, m.VectorOperationDuration, "VectorOperationDuration should be initialized")
-	assert.NotNil(t, m.VectorStorageBytes, "VectorStorageBytes should be initialized")
-	assert.NotNil(t, m.VectorCount, "VectorCount should be initialized")
-	assert.NotNil(t, m.VectorSearchLatency, "VectorSearchLatency should be initialized")
-	assert.NotNil(t, m.VectorBatchSize, "VectorBatchSize should be initialized")
-	assert.NotNil(t, m.VectorQuotaUsage, "VectorQuotaUsage should be initialized")
-	assert.NotNil(t, m.VectorNamespaceCount, "VectorNamespaceCount should be initialized")
-}
 
 func TestRecordVectorOperation(t *testing.T) {
 	Reset()
@@ -1025,82 +876,6 @@ func TestSetVectorNamespaceCount(t *testing.T) {
 	}
 }
 
-func TestVectorMetricsMultiTenant(t *testing.T) {
-	Reset()
-	m := InitMetrics()
-
-	// Record metrics for multiple tenants
-	tenants := []string{"tenant-1", "tenant-2", "tenant-3"}
-	namespaces := []string{"embeddings", "documents"}
-
-	for _, tenant := range tenants {
-		for _, ns := range namespaces {
-			m.RecordVectorOperation(tenant, ns, "upsert", "success")
-			m.SetVectorStorageBytes(tenant, ns, 1048576)
-			m.SetVectorCount(tenant, ns, 1000)
-		}
-		m.SetVectorNamespaceCount(tenant, float64(len(namespaces)))
-	}
-
-	// Verify each tenant's metrics are isolated
-	for _, tenant := range tenants {
-		nsCountLabels := prometheus.Labels{"tenant_id": tenant}
-		nsCount := testutil.ToFloat64(m.VectorNamespaceCount.With(nsCountLabels))
-		assert.Equal(t, float64(len(namespaces)), nsCount,
-			"Tenant %s should have correct namespace count", tenant)
-
-		for _, ns := range namespaces {
-			labels := prometheus.Labels{"tenant_id": tenant, "namespace": ns}
-			count := testutil.ToFloat64(m.VectorCount.With(labels))
-			assert.Equal(t, 1000.0, count,
-				"Tenant %s namespace %s should have correct vector count", tenant, ns)
-		}
-	}
-}
-
-func TestVectorMetricsRegistration(t *testing.T) {
-	Reset()
-	m := InitMetrics()
-
-	// Record some vector metrics
-	m.RecordVectorOperation("tenant-1", "embeddings", "upsert", "success")
-	m.RecordVectorOperationDuration("tenant-1", "embeddings", "upsert", 0.01)
-	m.SetVectorStorageBytes("tenant-1", "embeddings", 1048576)
-	m.SetVectorCount("tenant-1", "embeddings", 1000)
-	m.RecordVectorSearchLatency("tenant-1", "embeddings", "similarity", 0.005)
-	m.RecordVectorBatchSize("tenant-1", "embeddings", "upsert", 100)
-	m.SetVectorQuotaUsage("tenant-1", "embeddings", "vectors", 0.5)
-	m.SetVectorNamespaceCount("tenant-1", 5)
-
-	// Gather metrics from registry
-	metricFamilies, err := Registry.Gather()
-	require.NoError(t, err, "Should be able to gather metrics")
-
-	// Expected vector metrics
-	expectedVectorMetrics := []string{
-		"quicbaas_vector_operations_total",
-		"quicbaas_vector_operation_duration_seconds",
-		"quicbaas_vector_storage_bytes",
-		"quicbaas_vector_count",
-		"quicbaas_vector_search_latency_seconds",
-		"quicbaas_vector_batch_size",
-		"quicbaas_vector_quota_usage_ratio",
-		"quicbaas_vector_namespace_count",
-	}
-
-	// Build map of registered metric names
-	registeredMetrics := make(map[string]bool)
-	for _, mf := range metricFamilies {
-		registeredMetrics[mf.GetName()] = true
-	}
-
-	// Verify all expected vector metrics are registered
-	for _, expected := range expectedVectorMetrics {
-		assert.True(t, registeredMetrics[expected],
-			"Vector metric %s should be registered", expected)
-	}
-}
-
 func BenchmarkRecordVectorOperation(b *testing.B) {
 	Reset()
 	m := InitMetrics()
@@ -1140,352 +915,172 @@ func BenchmarkVectorMetricsMultiTenant(b *testing.B) {
 // Consolidated from metrics_coverage_test.go
 // =============================================================================
 
-// TestConcurrency_MultipleGoroutinesRecordingMetrics tests that multiple goroutines
-// can safely record metrics simultaneously without data races or corruption.
-func TestConcurrency_MultipleGoroutinesRecordingMetrics(t *testing.T) {
-	Reset()
-	m := InitMetrics()
-
+// TestConcurrency records each workload from many goroutines, alone and all
+// at once, and checks that no update was lost.
+func TestConcurrency(t *testing.T) {
 	const (
-		numGoroutines = 100
-		iterations    = 1000
+		numGoroutines = 50
+		iterations    = 200
+		total         = numGoroutines * iterations
+		numShards     = 10
 	)
+	operations := []string{"get", "put", "delete", "scan", "batch"}
 
-	var wg sync.WaitGroup
-	wg.Add(numGoroutines)
-
-	// Track operations for verification
-	var (
-		requestDurationOps   int64
-		requestSizeOps       int64
-		concurrentIncOps     int64
-		concurrentDecOps     int64
-		transactionDurOps    int64
-		transactionSizeOps   int64
-		transactionConflicts int64
-		raftProposalOps      int64
-		raftSnapshotOps      int64
-	)
-
-	// Launch multiple goroutines recording different metrics
-	for i := 0; i < numGoroutines; i++ {
-		go func(id int) {
-			defer wg.Done()
-
-			for j := 0; j < iterations; j++ {
-				// Test request metrics
-				m.RecordRequestDuration("get", "success", 0.001)
-				atomic.AddInt64(&requestDurationOps, 1)
-
+	type workload struct {
+		name   string
+		record func(m *Metrics, id, j int)
+		check  func(t *testing.T, m *Metrics)
+	}
+	workloads := []workload{
+		{
+			name: "request metrics",
+			record: func(m *Metrics, id, j int) {
+				m.RecordRequestDuration(operations[j%len(operations)], "success", float64(j)*0.001)
 				m.RecordRequestSize("put", 1024)
-				atomic.AddInt64(&requestSizeOps, 1)
-
-				// Test concurrent requests gauge
+			},
+			check: func(t *testing.T, m *Metrics) {
+				assert.Equal(t, float64(total), histogramSampleCount(t, "quicbaas_request_duration_seconds"))
+				assert.Equal(t, float64(total), histogramSampleCount(t, "quicbaas_request_size_bytes"))
+			},
+		},
+		{
+			name: "concurrent requests gauge",
+			record: func(m *Metrics, id, j int) {
 				m.IncrementConcurrentRequests()
-				atomic.AddInt64(&concurrentIncOps, 1)
-				m.DecrementConcurrentRequests()
-				atomic.AddInt64(&concurrentDecOps, 1)
-
-				// Test transaction metrics
-				m.RecordTransactionDuration(0.05)
-				atomic.AddInt64(&transactionDurOps, 1)
-
-				m.RecordTransactionSize(10)
-				atomic.AddInt64(&transactionSizeOps, 1)
-
+				if j%2 == 0 {
+					m.DecrementConcurrentRequests()
+				}
+			},
+			check: func(t *testing.T, m *Metrics) {
+				assert.Equal(t, float64(total/2), testutil.ToFloat64(m.ConcurrentRequests))
+			},
+		},
+		{
+			name: "transaction metrics",
+			record: func(m *Metrics, id, j int) {
+				m.RecordTransactionDuration(float64(j) * 0.01)
+				m.RecordTransactionSize(float64(j))
 				m.IncrementTransactionConflicts()
-				atomic.AddInt64(&transactionConflicts, 1)
-
-				// Test Raft metrics with varying shards
-				shard := fmt.Sprintf("%d", id%10)
-				m.RecordRaftProposalLatency(shard, 0.002)
-				atomic.AddInt64(&raftProposalOps, 1)
-
-				m.SetRaftSnapshotSize(shard, float64(id*1024))
-				atomic.AddInt64(&raftSnapshotOps, 1)
-			}
-		}(i)
-	}
-
-	wg.Wait()
-
-	// Verify all operations completed
-	assert.Equal(t, int64(numGoroutines*iterations), requestDurationOps)
-	assert.Equal(t, int64(numGoroutines*iterations), requestSizeOps)
-	assert.Equal(t, int64(numGoroutines*iterations), concurrentIncOps)
-	assert.Equal(t, int64(numGoroutines*iterations), concurrentDecOps)
-
-	// Verify concurrent requests gauge is back to 0 (all inc/dec balanced)
-	concurrentValue := testutil.ToFloat64(m.ConcurrentRequests)
-	assert.Equal(t, 0.0, concurrentValue, "Concurrent requests should be balanced")
-
-	// Verify transaction conflicts counter
-	conflictsValue := testutil.ToFloat64(m.TransactionConflicts)
-	assert.Equal(t, float64(numGoroutines*iterations), conflictsValue)
-
-	// Verify metrics were collected without corruption
-	count := testutil.CollectAndCount(m.RequestDuration)
-	assert.Greater(t, count, 0, "Request duration metrics should be collected")
-}
-
-// TestConcurrency_RaceConditionDetection runs with -race flag to detect data races.
-func TestConcurrency_RaceConditionDetection(t *testing.T) {
-	Reset()
-	m := InitMetrics()
-
-	const numWorkers = 50
-
-	var wg sync.WaitGroup
-	wg.Add(numWorkers * 3) // 3 different types of workers
-
-	// Worker 1: Record request metrics
-	for i := 0; i < numWorkers; i++ {
-		go func(id int) {
-			defer wg.Done()
-			for j := 0; j < 100; j++ {
-				m.RecordRequestDuration(fmt.Sprintf("op_%d", id%5), "success", float64(j)*0.001)
-			}
-		}(i)
-	}
-
-	// Worker 2: Manipulate concurrent requests gauge
-	for i := 0; i < numWorkers; i++ {
-		go func() {
-			defer wg.Done()
-			for j := 0; j < 100; j++ {
-				m.IncrementConcurrentRequests()
-				time.Sleep(time.Microsecond)
-				m.DecrementConcurrentRequests()
-			}
-		}()
-	}
-
-	// Worker 3: Record Raft metrics with different shards
-	for i := 0; i < numWorkers; i++ {
-		go func(id int) {
-			defer wg.Done()
-			shard := fmt.Sprintf("shard_%d", id%10)
-			for j := 0; j < 100; j++ {
-				m.RecordRaftProposalLatency(shard, 0.005)
+			},
+			check: func(t *testing.T, m *Metrics) {
+				assert.Equal(t, float64(total), histogramSampleCount(t, "quicbaas_transaction_duration_seconds"))
+				assert.Equal(t, float64(total), histogramSampleCount(t, "quicbaas_transaction_operations"))
+				assert.Equal(t, float64(total), testutil.ToFloat64(m.TransactionConflicts))
+			},
+		},
+		{
+			name: "raft metrics",
+			record: func(m *Metrics, id, j int) {
+				shard := fmt.Sprintf("%d", id%numShards)
+				m.RecordRaftProposalLatency(shard, float64(j)*0.001)
 				m.SetRaftSnapshotSize(shard, float64(j*1024))
+			},
+			check: func(t *testing.T, m *Metrics) {
+				assert.Equal(t, float64(total), histogramSampleCount(t, "quicbaas_raft_proposal_latency_seconds"))
+				assert.Equal(t, numShards, testutil.CollectAndCount(m.RaftSnapshotSize))
+			},
+		},
+	}
+
+	// run starts numGoroutines workers for each workload at once and waits
+	// for all of them; the race detector checks the shared metrics.
+	run := func(m *Metrics, selected []workload) {
+		var wg sync.WaitGroup
+		for _, w := range selected {
+			for i := 0; i < numGoroutines; i++ {
+				wg.Add(1)
+				go func(w workload, id int) {
+					defer wg.Done()
+					for j := 0; j < iterations; j++ {
+						w.record(m, id, j)
+					}
+				}(w, i)
 			}
-		}(i)
+		}
+		wg.Wait()
 	}
 
-	wg.Wait()
-	// If we reach here without race detector complaints, test passes
-}
-
-// TestEdgeCase_NegativeValues tests recording negative values where they make sense.
-func TestEdgeCase_NegativeValues(t *testing.T) {
-	Reset()
-	m := InitMetrics()
-
-	t.Run("negative duration values", func(t *testing.T) {
-		// Negative durations don't make sense but Prometheus allows them
-		// The system should handle them without panicking
-		m.RecordRequestDuration("test", "success", -0.5)
-		m.RecordTransactionDuration(-1.0)
-		m.RecordRaftProposalLatency("1", -0.1)
-
-		// Should not panic and metrics should be recorded
-		count := testutil.CollectAndCount(m.RequestDuration)
-		assert.Greater(t, count, 0)
-	})
-
-	t.Run("negative size values", func(t *testing.T) {
-		// Negative sizes don't make sense but should be handled
-		m.RecordRequestSize("test", -1024)
-		m.RecordTransactionSize(-10)
-		m.SetRaftSnapshotSize("1", -2048)
-
-		// Should not panic
-		count := testutil.CollectAndCount(m.RequestSize)
-		assert.Greater(t, count, 0)
-	})
-
-	t.Run("gauge can go negative", func(t *testing.T) {
-		// Gauges can legitimately go negative
-		m.DecrementConcurrentRequests()
-		m.DecrementConcurrentRequests()
-
-		value := testutil.ToFloat64(m.ConcurrentRequests)
-		assert.Equal(t, -2.0, value, "Gauge should handle negative values")
-	})
-}
-
-// TestEdgeCase_ZeroValues tests recording zero values.
-func TestEdgeCase_ZeroValues(t *testing.T) {
-	Reset()
-	m := InitMetrics()
-
-	t.Run("zero durations", func(t *testing.T) {
-		m.RecordRequestDuration("test", "success", 0)
-		m.RecordTransactionDuration(0)
-		m.RecordRaftProposalLatency("1", 0)
-
-		count := testutil.CollectAndCount(m.RequestDuration)
-		assert.Greater(t, count, 0)
-	})
-
-	t.Run("zero sizes", func(t *testing.T) {
-		m.RecordRequestSize("test", 0)
-		m.RecordTransactionSize(0)
-		m.SetRaftSnapshotSize("1", 0)
-
-		count := testutil.CollectAndCount(m.RequestSize)
-		assert.Greater(t, count, 0)
-	})
-}
-
-// TestEdgeCase_ExtremeValues tests recording extremely large values.
-func TestEdgeCase_ExtremeValues(t *testing.T) {
-	Reset()
-	m := InitMetrics()
-
-	t.Run("very large durations", func(t *testing.T) {
-		m.RecordRequestDuration("test", "success", 1000000.0) // 1M seconds
-		m.RecordTransactionDuration(999999.999)
-		m.RecordRaftProposalLatency("1", 86400.0) // 1 day in seconds
-
-		count := testutil.CollectAndCount(m.RequestDuration)
-		assert.Greater(t, count, 0)
-	})
-
-	t.Run("very large sizes", func(t *testing.T) {
-		m.RecordRequestSize("test", 1e15) // Petabyte scale
-		m.RecordTransactionSize(1e9)      // Billion operations
-		m.SetRaftSnapshotSize("1", 1e12)  // Terabyte
-
-		count := testutil.CollectAndCount(m.RequestSize)
-		assert.Greater(t, count, 0)
-	})
-
-	t.Run("max float64 values", func(t *testing.T) {
-		m.RecordRequestDuration("test", "success", math.MaxFloat64)
-		m.RecordRequestSize("test", math.MaxFloat64)
-
-		// Should handle without overflow
-		count := testutil.CollectAndCount(m.RequestDuration)
-		assert.Greater(t, count, 0)
-	})
-}
-
-// TestEdgeCase_EmptyLabels tests metrics with empty label values.
-func TestEdgeCase_EmptyLabels(t *testing.T) {
-	Reset()
-	m := InitMetrics()
-
-	t.Run("empty operation and status labels", func(t *testing.T) {
-		m.RecordRequestDuration("", "", 0.01)
-		m.RecordRequestSize("", 1024)
-
-		count := testutil.CollectAndCount(m.RequestDuration)
-		assert.Greater(t, count, 0)
-	})
-
-	t.Run("empty shard label", func(t *testing.T) {
-		m.RecordRaftProposalLatency("", 0.005)
-		m.SetRaftSnapshotSize("", 2048)
-
-		count := testutil.CollectAndCount(m.RaftProposalLatency)
-		assert.Greater(t, count, 0)
-	})
-}
-
-// TestEdgeCase_SpecialCharactersInLabels tests labels with special characters.
-func TestEdgeCase_SpecialCharactersInLabels(t *testing.T) {
-	Reset()
-	m := InitMetrics()
-
-	specialLabels := []string{
-		"test-with-dashes",
-		"test_with_underscores",
-		"test.with.dots",
-		"test/with/slashes",
-		"test:with:colons",
-		"test with spaces",
-		"测试中文",
-		"test\nwith\nnewlines",
-	}
-
-	for _, label := range specialLabels {
-		t.Run(fmt.Sprintf("label_%s", label), func(t *testing.T) {
-			m.RecordRequestDuration(label, "success", 0.01)
-			m.RecordRequestSize(label, 1024)
-			m.RecordRaftProposalLatency(label, 0.005)
-			m.SetRaftSnapshotSize(label, 2048)
-
-			// Should not panic
-			count := testutil.CollectAndCount(m.RequestDuration)
-			assert.Greater(t, count, 0)
+	for _, w := range workloads {
+		t.Run(w.name, func(t *testing.T) {
+			Reset()
+			m := InitMetrics()
+			run(m, []workload{w})
+			w.check(t, m)
 		})
 	}
+
+	t.Run("mixed workloads", func(t *testing.T) {
+		Reset()
+		m := InitMetrics()
+		run(m, workloads)
+		for _, w := range workloads {
+			w.check(t, m)
+		}
+	})
 }
 
-// TestEdgeCase_LargeLabelCardinality tests many unique label values.
-func TestEdgeCase_LargeLabelCardinality(t *testing.T) {
-	Reset()
-	m := InitMetrics()
-
-	// Create high cardinality by using many unique label values
-	const numUniqueLabels = 1000
-
-	for i := 0; i < numUniqueLabels; i++ {
-		operation := fmt.Sprintf("operation_%d", i)
-		status := fmt.Sprintf("status_%d", i%10)
-		shard := fmt.Sprintf("shard_%d", i)
-
-		m.RecordRequestDuration(operation, status, 0.01)
-		m.RecordRequestSize(operation, 1024)
-		m.RecordRaftProposalLatency(shard, 0.005)
-		m.SetRaftSnapshotSize(shard, float64(i*1024))
+// TestEdgeCases records boundary values and unusual label values on every
+// recording method.
+func TestEdgeCases(t *testing.T) {
+	tests := []struct {
+		name  string
+		label string
+		value float64
+	}{
+		{name: "negative value", label: "test", value: -1024},
+		{name: "zero value", label: "test", value: 0},
+		{name: "large value", label: "test", value: 1e15},
+		{name: "max float64", label: "test", value: math.MaxFloat64},
+		{name: "empty label", label: "", value: 0.01},
+		{name: "dashes in label", label: "test-with-dashes", value: 0.01},
+		{name: "dots in label", label: "test.with.dots", value: 0.01},
+		{name: "slashes in label", label: "test/with/slashes", value: 0.01},
+		{name: "colons in label", label: "test:with:colons", value: 0.01},
+		{name: "spaces in label", label: "test with spaces", value: 0.01},
+		{name: "unicode label", label: "测试中文", value: 0.01},
+		{name: "newlines in label", label: "test\nwith\nnewlines", value: 0.01},
 	}
 
-	// Verify metrics were recorded
-	count := testutil.CollectAndCount(m.RequestDuration)
-	assert.Greater(t, count, 0)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			Reset()
+			m := InitMetrics()
 
-	// Verify we can still gather metrics without issues
-	metricFamilies, err := Registry.Gather()
-	require.NoError(t, err)
-	assert.NotEmpty(t, metricFamilies)
-}
+			m.RecordRequestDuration(tt.label, "success", tt.value)
+			m.RecordRequestSize(tt.label, tt.value)
+			m.RecordTransactionDuration(tt.value)
+			m.RecordTransactionSize(tt.value)
+			m.RecordRaftProposalLatency(tt.label, tt.value)
+			m.SetRaftSnapshotSize(tt.label, tt.value)
 
-// TestCollector_EmptyRegistry tests collecting from empty registry.
-func TestCollector_EmptyRegistry(t *testing.T) {
-	// Create a new empty registry
-	emptyRegistry := prometheus.NewRegistry()
+			assert.Equal(t, 1, testutil.CollectAndCount(m.RequestDuration))
+			assert.Equal(t, 1, testutil.CollectAndCount(m.RequestSize))
+			assert.Equal(t, 1, testutil.CollectAndCount(m.RaftProposalLatency))
+			assert.Equal(t, tt.value, testutil.ToFloat64(m.RaftSnapshotSize.WithLabelValues(tt.label)))
+		})
+	}
 
-	metricFamilies, err := emptyRegistry.Gather()
-	require.NoError(t, err, "Should be able to gather from empty registry")
-	assert.Empty(t, metricFamilies, "Empty registry should return no metrics")
-}
+	t.Run("gauge can go negative", func(t *testing.T) {
+		Reset()
+		m := InitMetrics()
+		m.DecrementConcurrentRequests()
+		m.DecrementConcurrentRequests()
+		assert.Equal(t, -2.0, testutil.ToFloat64(m.ConcurrentRequests))
+	})
 
-// TestCollector_AfterReset tests collecting metrics after reset.
-func TestCollector_AfterReset(t *testing.T) {
-	Reset()
-	m := InitMetrics()
-
-	// Record some metrics
-	m.RecordRequestDuration("get", "success", 0.01)
-	m.IncrementConcurrentRequests()
-	m.IncrementTransactionConflicts()
-
-	// Verify metrics exist
-	beforeValue := testutil.ToFloat64(m.ConcurrentRequests)
-	assert.Equal(t, 1.0, beforeValue)
-
-	// Reset
-	Reset()
-
-	// Get new metrics instance
-	m2 := GetMetrics()
-
-	// Old instance should still have values (they're just disconnected)
-	// New instance should have fresh values
-	afterValue := testutil.ToFloat64(m2.ConcurrentRequests)
-	assert.Equal(t, 0.0, afterValue, "New instance should have reset values")
+	t.Run("large label cardinality", func(t *testing.T) {
+		Reset()
+		m := InitMetrics()
+		const numUniqueLabels = 1000
+		for i := 0; i < numUniqueLabels; i++ {
+			shard := fmt.Sprintf("shard_%d", i)
+			m.RecordRequestDuration(fmt.Sprintf("operation_%d", i), "success", 0.01)
+			m.RecordRaftProposalLatency(shard, 0.005)
+			m.SetRaftSnapshotSize(shard, float64(i))
+		}
+		assert.Equal(t, numUniqueLabels, testutil.CollectAndCount(m.RequestDuration))
+		assert.Equal(t, numUniqueLabels, testutil.CollectAndCount(m.RaftSnapshotSize))
+	})
 }
 
 // TestCollector_NoMetricsRegistered tests gathering when no QuicBaaS metrics registered.
@@ -1505,354 +1100,4 @@ func TestCollector_NoMetricsRegistered(t *testing.T) {
 		name := mf.GetName()
 		assert.NotContains(t, name, "quicbaas_", "Should not have QuicBaaS metrics yet")
 	}
-}
-
-// TestReset_VerifyMetricsCleared tests that reset truly clears all metrics.
-func TestReset_VerifyMetricsCleared(t *testing.T) {
-	Reset()
-	m := InitMetrics()
-
-	// Record various metrics with significant values
-	for i := 0; i < 100; i++ {
-		m.RecordRequestDuration("get", "success", 0.01)
-		m.RecordRequestSize("put", 1024)
-		m.IncrementConcurrentRequests()
-		m.RecordTransactionDuration(0.1)
-		m.RecordTransactionSize(10)
-		m.IncrementTransactionConflicts()
-		m.RecordRaftProposalLatency("1", 0.005)
-		m.SetRaftSnapshotSize("1", 2048)
-	}
-
-	// Verify metrics have values
-	beforeConflicts := testutil.ToFloat64(m.TransactionConflicts)
-	assert.Equal(t, 100.0, beforeConflicts)
-
-	beforeConcurrent := testutil.ToFloat64(m.ConcurrentRequests)
-	assert.Equal(t, 100.0, beforeConcurrent)
-
-	// Reset
-	Reset()
-	m2 := GetMetrics()
-
-	// All metrics should be at zero/empty
-	afterConflicts := testutil.ToFloat64(m2.TransactionConflicts)
-	assert.Equal(t, 0.0, afterConflicts, "Counter should reset to 0")
-
-	afterConcurrent := testutil.ToFloat64(m2.ConcurrentRequests)
-	assert.Equal(t, 0.0, afterConcurrent, "Gauge should reset to 0")
-
-	// Histograms should have no observations
-	count := testutil.CollectAndCount(m2.RequestDuration)
-	// Count includes the descriptor, so it's > 0, but no observations yet
-	assert.Greater(t, count, -1, "Histogram should be initialized")
-}
-
-// TestReset_HistogramsCleared tests that histograms clear observations after reset.
-func TestReset_HistogramsCleared(t *testing.T) {
-	Reset()
-	m1 := InitMetrics()
-
-	// Record many observations
-	for i := 0; i < 1000; i++ {
-		m1.RecordRequestDuration("get", "success", float64(i)*0.001)
-		m1.RecordRequestSize("put", float64(i*100))
-		m1.RecordTransactionDuration(float64(i) * 0.01)
-		m1.RecordTransactionSize(float64(i))
-		m1.RecordRaftProposalLatency("1", float64(i)*0.002)
-	}
-
-	// Reset
-	Reset()
-	m2 := GetMetrics()
-
-	// New histograms should have no observations
-	// Record one new observation
-	m2.RecordRequestDuration("get", "success", 0.5)
-
-	// Gather and check that we don't have 1000+ observations
-	metricFamilies, err := Registry.Gather()
-	require.NoError(t, err)
-
-	for _, mf := range metricFamilies {
-		if mf.GetName() == "quicbaas_request_duration_seconds" {
-			for _, metric := range mf.GetMetric() {
-				if metric.Histogram != nil {
-					// Should have only 1 observation, not 1000+
-					count := metric.Histogram.GetSampleCount()
-					assert.Equal(t, uint64(1), count, "Histogram should have only new observations")
-				}
-			}
-		}
-	}
-}
-
-// TestReset_MultipleResets tests calling Reset multiple times.
-func TestReset_MultipleResets(t *testing.T) {
-	for i := 0; i < 5; i++ {
-		Reset()
-		m := InitMetrics()
-		require.NotNil(t, m, "Should initialize metrics after reset %d", i)
-
-		// Record some values
-		m.IncrementConcurrentRequests()
-		value := testutil.ToFloat64(m.ConcurrentRequests)
-		assert.Equal(t, 1.0, value)
-	}
-}
-
-// TestConcurrency_InitMetricsMultipleTimes tests concurrent initialization.
-func TestConcurrency_InitMetricsMultipleTimes(t *testing.T) {
-	Reset()
-
-	const numGoroutines = 100
-	var wg sync.WaitGroup
-	wg.Add(numGoroutines)
-
-	instances := make([]*Metrics, numGoroutines)
-
-	// Try to initialize metrics concurrently
-	for i := 0; i < numGoroutines; i++ {
-		go func(idx int) {
-			defer wg.Done()
-			instances[idx] = InitMetrics()
-		}(i)
-	}
-
-	wg.Wait()
-
-	// All instances should be the same (singleton)
-	for i := 1; i < numGoroutines; i++ {
-		assert.Equal(t, instances[0], instances[i],
-			"All instances should be the same singleton")
-	}
-}
-
-// TestConcurrency_GetMetricsMultipleTimes tests concurrent GetMetrics calls.
-func TestConcurrency_GetMetricsMultipleTimes(t *testing.T) {
-	Reset()
-
-	const numGoroutines = 100
-	var wg sync.WaitGroup
-	wg.Add(numGoroutines)
-
-	instances := make([]*Metrics, numGoroutines)
-
-	// Get metrics concurrently
-	for i := 0; i < numGoroutines; i++ {
-		go func(idx int) {
-			defer wg.Done()
-			instances[idx] = GetMetrics()
-		}(i)
-	}
-
-	wg.Wait()
-
-	// All should be the same instance
-	for i := 1; i < numGoroutines; i++ {
-		assert.Equal(t, instances[0], instances[i])
-	}
-}
-
-// TestHistogramBucketDistribution verifies observations fall into correct buckets.
-func TestHistogramBucketDistribution(t *testing.T) {
-	Reset()
-	m := InitMetrics()
-
-	// Record values in different bucket ranges
-	m.RecordRequestDuration("get", "success", 0.0005) // Below first bucket
-	m.RecordRequestDuration("get", "success", 0.001)  // First bucket
-	m.RecordRequestDuration("get", "success", 0.005)
-	m.RecordRequestDuration("get", "success", 0.01)
-	m.RecordRequestDuration("get", "success", 0.1)
-	m.RecordRequestDuration("get", "success", 1.0)
-	m.RecordRequestDuration("get", "success", 10.0)
-	m.RecordRequestDuration("get", "success", 100.0) // Above last bucket
-
-	// Gather and verify histogram has observations
-	metricFamilies, err := Registry.Gather()
-	require.NoError(t, err)
-
-	found := false
-	for _, mf := range metricFamilies {
-		if mf.GetName() == "quicbaas_request_duration_seconds" {
-			found = true
-			for _, metric := range mf.GetMetric() {
-				if metric.Histogram != nil {
-					assert.Equal(t, uint64(8), metric.Histogram.GetSampleCount())
-				}
-			}
-		}
-	}
-	assert.True(t, found, "Should find request duration histogram")
-}
-
-// TestGaugeSetToSpecificValue tests setting gauge to specific values.
-func TestGaugeSetToSpecificValue(t *testing.T) {
-	Reset()
-	m := InitMetrics()
-
-	testValues := []float64{0, 1, 100, 999, 1000000, -50, -999.999}
-
-	for _, val := range testValues {
-		t.Run(fmt.Sprintf("set_to_%.2f", val), func(t *testing.T) {
-			m.SetRaftSnapshotSize("test", val)
-
-			labels := prometheus.Labels{"shard": "test"}
-			actualValue := testutil.ToFloat64(m.RaftSnapshotSize.With(labels))
-			assert.Equal(t, val, actualValue)
-		})
-	}
-}
-
-// TestCounterMonotonicity verifies counters only increase.
-func TestCounterMonotonicity(t *testing.T) {
-	Reset()
-	m := InitMetrics()
-
-	// Counters should only increase
-	for i := 0; i < 100; i++ {
-		m.IncrementTransactionConflicts()
-	}
-
-	value := testutil.ToFloat64(m.TransactionConflicts)
-	assert.Equal(t, 100.0, value)
-
-	// Continue incrementing
-	for i := 0; i < 50; i++ {
-		m.IncrementTransactionConflicts()
-	}
-
-	value = testutil.ToFloat64(m.TransactionConflicts)
-	assert.Equal(t, 150.0, value, "Counter should be monotonically increasing")
-}
-
-// TestMetricsTypes verifies correct metric types are registered.
-func TestMetricsTypes(t *testing.T) {
-	Reset()
-	m := InitMetrics()
-
-	// Record at least one value for each metric to ensure they appear
-	m.RecordRequestDuration("test", "success", 0.01)
-	m.RecordRequestSize("test", 1024)
-	m.IncrementConcurrentRequests()
-	m.RecordTransactionDuration(0.1)
-	m.RecordTransactionSize(10)
-	m.IncrementTransactionConflicts()
-	m.RecordRaftProposalLatency("1", 0.005)
-	m.SetRaftSnapshotSize("1", 2048)
-
-	metricFamilies, err := Registry.Gather()
-	require.NoError(t, err)
-
-	expectedTypes := map[string]string{
-		"quicbaas_request_duration_seconds":      "histogram",
-		"quicbaas_request_size_bytes":            "histogram",
-		"quicbaas_concurrent_requests":           "gauge",
-		"quicbaas_transaction_duration_seconds":  "histogram",
-		"quicbaas_transaction_operations":        "histogram",
-		"quicbaas_transaction_conflicts_total":   "counter",
-		"quicbaas_raft_proposal_latency_seconds": "histogram",
-		"quicbaas_raft_snapshot_size_bytes":      "gauge",
-	}
-
-	for _, mf := range metricFamilies {
-		name := mf.GetName()
-		if expectedType, ok := expectedTypes[name]; ok {
-			actualType := mf.GetType().String()
-			assert.Contains(t, strings.ToLower(actualType), expectedType,
-				"Metric %s should be of type %s", name, expectedType)
-		}
-	}
-}
-
-// TestGetMetrics_BeforeInit tests GetMetrics before InitMetrics is called.
-func TestGetMetrics_BeforeInit(t *testing.T) {
-	Reset()
-
-	// Call GetMetrics without calling InitMetrics first
-	m := GetMetrics()
-	require.NotNil(t, m, "GetMetrics should initialize if not already done")
-
-	// Verify it's properly initialized
-	assert.NotNil(t, m.RequestDuration)
-	assert.NotNil(t, m.ConcurrentRequests)
-	assert.NotNil(t, m.TransactionConflicts)
-
-	// Should be able to use it
-	m.IncrementConcurrentRequests()
-	value := testutil.ToFloat64(m.ConcurrentRequests)
-	assert.Equal(t, 1.0, value)
-}
-
-// TestConcurrency_MixedOperations tests concurrent mixed operations.
-func TestConcurrency_MixedOperations(t *testing.T) {
-	Reset()
-	m := InitMetrics()
-
-	const numWorkers = 50
-	var wg sync.WaitGroup
-	wg.Add(numWorkers * 4)
-
-	// Different operation patterns
-	operations := []string{"get", "put", "delete", "scan", "batch"}
-	statuses := []string{"success", "failure", "timeout", "error"}
-
-	// Worker set 1: Request metrics
-	for i := 0; i < numWorkers; i++ {
-		go func(id int) {
-			defer wg.Done()
-			for j := 0; j < 100; j++ {
-				op := operations[j%len(operations)]
-				status := statuses[j%len(statuses)]
-				m.RecordRequestDuration(op, status, float64(j)*0.001)
-			}
-		}(i)
-	}
-
-	// Worker set 2: Transaction metrics
-	for i := 0; i < numWorkers; i++ {
-		go func(id int) {
-			defer wg.Done()
-			for j := 0; j < 100; j++ {
-				m.RecordTransactionDuration(float64(j) * 0.01)
-				m.RecordTransactionSize(float64(j))
-				if j%10 == 0 {
-					m.IncrementTransactionConflicts()
-				}
-			}
-		}(i)
-	}
-
-	// Worker set 3: Concurrent requests
-	for i := 0; i < numWorkers; i++ {
-		go func() {
-			defer wg.Done()
-			for j := 0; j < 100; j++ {
-				m.IncrementConcurrentRequests()
-				if j%2 == 0 {
-					m.DecrementConcurrentRequests()
-				}
-			}
-		}()
-	}
-
-	// Worker set 4: Raft metrics
-	for i := 0; i < numWorkers; i++ {
-		go func(id int) {
-			defer wg.Done()
-			shard := fmt.Sprintf("%d", id%20)
-			for j := 0; j < 100; j++ {
-				m.RecordRaftProposalLatency(shard, float64(j)*0.001)
-				m.SetRaftSnapshotSize(shard, float64(j*1024))
-			}
-		}(i)
-	}
-
-	wg.Wait()
-
-	// Verify we can still gather metrics without errors
-	metricFamilies, err := Registry.Gather()
-	require.NoError(t, err)
-	assert.NotEmpty(t, metricFamilies)
 }

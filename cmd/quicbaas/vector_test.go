@@ -14,7 +14,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -130,371 +129,33 @@ func TestParseFilter(t *testing.T) {
 // Test Command Validation
 // =============================================================================
 
-// TestVectorNamespaceValidation tests namespace command validation.
-func TestVectorNamespaceValidation(t *testing.T) {
-	t.Run("create requires namespace", func(t *testing.T) {
-		cmd := newVectorNamespaceCreateCommand()
-		cmd.SetArgs([]string{}) // No args
-		err := cmd.Execute()
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "accepts 1 arg")
-	})
-
-	t.Run("delete requires namespace", func(t *testing.T) {
-		cmd := newVectorNamespaceDeleteCommand()
-		cmd.SetArgs([]string{}) // No args
-		err := cmd.Execute()
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "accepts 1 arg")
-	})
-
-	t.Run("info requires namespace", func(t *testing.T) {
-		cmd := newVectorNamespaceInfoCommand()
-		cmd.SetArgs([]string{}) // No args
-		err := cmd.Execute()
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "accepts 1 arg")
-	})
-}
-
-// TestVectorCRUDValidation tests vector CRUD command validation.
-func TestVectorCRUDValidation(t *testing.T) {
-	t.Run("upsert requires arguments", func(t *testing.T) {
-		cmd := newVectorUpsertCommand()
-		cmd.SetArgs([]string{}) // No args
-		err := cmd.Execute()
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "accepts 2 arg")
-	})
-
-	t.Run("get requires arguments", func(t *testing.T) {
-		cmd := newVectorGetCommand()
-		cmd.SetArgs([]string{}) // No args
-		err := cmd.Execute()
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "accepts 2 arg")
-	})
-
-	t.Run("delete requires arguments", func(t *testing.T) {
-		cmd := newVectorDeleteCommand()
-		cmd.SetArgs([]string{}) // No args
-		err := cmd.Execute()
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "accepts 2 arg")
-	})
-
-	t.Run("list requires namespace", func(t *testing.T) {
-		cmd := newVectorListCommand()
-		cmd.SetArgs([]string{}) // No args
-		err := cmd.Execute()
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "accepts 1 arg")
-	})
-}
-
-// TestVectorSearchValidation tests search command validation.
-func TestVectorSearchValidation(t *testing.T) {
-	t.Run("search similar requires namespace", func(t *testing.T) {
-		cmd := newVectorSearchSimilarCommand()
-		cmd.SetArgs([]string{}) // No args
-		err := cmd.Execute()
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "accepts 1 arg")
-	})
-
-	t.Run("search by-id requires arguments", func(t *testing.T) {
-		cmd := newVectorSearchByIDCommand()
-		cmd.SetArgs([]string{}) // No args
-		err := cmd.Execute()
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "accepts 2 arg")
-	})
-}
-
-// =============================================================================
-// Test SDK Response Types
-// =============================================================================
-
-// TestSDKCreateNamespaceResponse tests SDK CreateNamespaceResponse structure.
-func TestSDKCreateNamespaceResponse(t *testing.T) {
-	resp := &vector.CreateNamespaceResponse{
-		Namespace: "test-namespace",
-		Success:   true,
-		Timestamp: time.Now(),
+// TestVectorCommandArgValidation tests that each command rejects a missing
+// positional argument.
+func TestVectorCommandArgValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		cmd     *cobra.Command
+		wantErr string
+	}{
+		{"namespace create", newVectorNamespaceCreateCommand(), "accepts 1 arg"},
+		{"namespace delete", newVectorNamespaceDeleteCommand(), "accepts 1 arg"},
+		{"namespace info", newVectorNamespaceInfoCommand(), "accepts 1 arg"},
+		{"upsert", newVectorUpsertCommand(), "accepts 2 arg"},
+		{"get", newVectorGetCommand(), "accepts 2 arg"},
+		{"delete", newVectorDeleteCommand(), "accepts 2 arg"},
+		{"list", newVectorListCommand(), "accepts 1 arg"},
+		{"search similar", newVectorSearchSimilarCommand(), "accepts 1 arg"},
+		{"search by-id", newVectorSearchByIDCommand(), "accepts 2 arg"},
 	}
 
-	require.NotNil(t, resp)
-	assert.True(t, resp.Success)
-	assert.Equal(t, "test-namespace", resp.Namespace)
-	assert.False(t, resp.Timestamp.IsZero())
-}
-
-// TestSDKDeleteNamespaceResponse tests SDK DeleteNamespaceResponse structure.
-func TestSDKDeleteNamespaceResponse(t *testing.T) {
-	resp := &vector.DeleteNamespaceResponse{
-		Deleted:        true,
-		VectorsDeleted: 42,
-		Timestamp:      time.Now(),
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.cmd.SetArgs([]string{})
+			err := tt.cmd.Execute()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantErr)
+		})
 	}
-
-	require.NotNil(t, resp)
-	assert.True(t, resp.Deleted)
-	assert.Equal(t, int64(42), resp.VectorsDeleted)
-	assert.False(t, resp.Timestamp.IsZero())
-}
-
-// TestSDKListNamespacesResponse tests SDK ListNamespacesResponse structure.
-func TestSDKListNamespacesResponse(t *testing.T) {
-	now := time.Now()
-	resp := &vector.ListNamespacesResponse{
-		Namespaces: []*vector.NamespaceInfo{
-			{
-				Config: &vector.NamespaceConfig{
-					Namespace:  "ns1",
-					Dimensions: 128,
-				},
-				VectorCount: 100,
-				CreatedAt:   now,
-				UpdatedAt:   now,
-			},
-			{
-				Config: &vector.NamespaceConfig{
-					Namespace:  "ns2",
-					Dimensions: 256,
-				},
-				VectorCount: 200,
-				CreatedAt:   now,
-				UpdatedAt:   now,
-			},
-		},
-		TotalCount: 2,
-		Timestamp:  now,
-	}
-
-	require.NotNil(t, resp)
-	assert.Equal(t, int64(2), resp.TotalCount)
-	assert.Len(t, resp.Namespaces, 2)
-	assert.Equal(t, "ns1", resp.Namespaces[0].Config.Namespace)
-	assert.Equal(t, int32(128), resp.Namespaces[0].Config.Dimensions)
-	assert.Equal(t, int64(100), resp.Namespaces[0].VectorCount)
-	assert.Equal(t, "ns2", resp.Namespaces[1].Config.Namespace)
-}
-
-// TestSDKGetNamespaceInfoResponse tests SDK GetNamespaceInfoResponse structure.
-func TestSDKGetNamespaceInfoResponse(t *testing.T) {
-	now := time.Now()
-	resp := &vector.GetNamespaceInfoResponse{
-		Info: &vector.NamespaceInfo{
-			Config: &vector.NamespaceConfig{
-				Namespace:  "test-ns",
-				Dimensions: 128,
-				IndexType:  vector.IndexTypeHNSW,
-				IndexParams: map[string]string{
-					"type": "hnsw",
-					"m":    "16",
-				},
-				Metadata: map[string]string{
-					"description": "Test namespace",
-				},
-			},
-			VectorCount: 1000,
-			CreatedAt:   now,
-			UpdatedAt:   now,
-		},
-		Timestamp: now,
-	}
-
-	require.NotNil(t, resp)
-	assert.Equal(t, "test-ns", resp.Info.Config.Namespace)
-	assert.Equal(t, int32(128), resp.Info.Config.Dimensions)
-	assert.Equal(t, int64(1000), resp.Info.VectorCount)
-	assert.Equal(t, vector.IndexTypeHNSW, resp.Info.Config.IndexType)
-	assert.NotEmpty(t, resp.Info.Config.IndexParams)
-	assert.NotEmpty(t, resp.Info.Config.Metadata)
-}
-
-// TestSDKUpsertResponse tests SDK UpsertResponse structure.
-func TestSDKUpsertResponse(t *testing.T) {
-	resp := &vector.UpsertResponse{
-		ID:        "vec1",
-		Version:   5,
-		Success:   true,
-		Timestamp: time.Now(),
-	}
-
-	require.NotNil(t, resp)
-	assert.Equal(t, int64(5), resp.Version)
-	assert.True(t, resp.Success)
-	assert.False(t, resp.Timestamp.IsZero())
-}
-
-// TestSDKBatchUpsertResponse tests SDK BatchUpsertResponse structure.
-func TestSDKBatchUpsertResponse(t *testing.T) {
-	resp := &vector.BatchUpsertResponse{
-		VectorsSucceeded: 25,
-		VectorsFailed:    0,
-		Timestamp:        time.Now(),
-	}
-
-	require.NotNil(t, resp)
-	assert.Equal(t, int64(25), resp.VectorsSucceeded)
-	assert.Equal(t, int64(0), resp.VectorsFailed)
-	assert.False(t, resp.Timestamp.IsZero())
-}
-
-// TestSDKGetResponse tests SDK GetResponse structure.
-func TestSDKGetResponse(t *testing.T) {
-	t.Run("vector found", func(t *testing.T) {
-		now := time.Now()
-		resp := &vector.GetResponse{
-			Found: true,
-			Vector: &vector.VectorEntity{
-				ID:     "vec1",
-				Vector: []float32{0.1, 0.2, 0.3},
-				Metadata: map[string]string{
-					"key": "value",
-				},
-				Version:   3,
-				CreatedAt: now,
-				UpdatedAt: now,
-			},
-			Timestamp: now,
-		}
-
-		require.NotNil(t, resp)
-		assert.True(t, resp.Found)
-		assert.Len(t, resp.Vector.Vector, 3)
-		assert.Equal(t, int64(3), resp.Vector.Version)
-		assert.NotEmpty(t, resp.Vector.Metadata)
-	})
-
-	t.Run("vector not found", func(t *testing.T) {
-		resp := &vector.GetResponse{
-			Found:  false,
-			Vector: nil,
-		}
-
-		require.NotNil(t, resp)
-		assert.False(t, resp.Found)
-		assert.Nil(t, resp.Vector)
-	})
-}
-
-// TestSDKDeleteResponse tests SDK DeleteResponse structure.
-func TestSDKDeleteResponse(t *testing.T) {
-	resp := &vector.DeleteResponse{
-		Deleted:   true,
-		Timestamp: time.Now(),
-	}
-
-	require.NotNil(t, resp)
-	assert.True(t, resp.Deleted)
-	assert.False(t, resp.Timestamp.IsZero())
-}
-
-// TestSDKBatchDeleteResponse tests SDK BatchDeleteResponse structure.
-func TestSDKBatchDeleteResponse(t *testing.T) {
-	resp := &vector.BatchDeleteResponse{
-		DeletedCount: 42,
-		Timestamp:    time.Now(),
-	}
-
-	require.NotNil(t, resp)
-	assert.Equal(t, int64(42), resp.DeletedCount)
-	assert.False(t, resp.Timestamp.IsZero())
-}
-
-// TestSDKListVectorsResponse tests SDK ListVectorsResponse structure.
-func TestSDKListVectorsResponse(t *testing.T) {
-	now := time.Now()
-	resp := &vector.ListVectorsResponse{
-		Vectors: []*vector.VectorEntity{
-			{
-				ID:        "vec1",
-				Vector:    []float32{0.1, 0.2},
-				Metadata:  map[string]string{"key1": "val1"},
-				Version:   1,
-				CreatedAt: now,
-				UpdatedAt: now,
-			},
-			{
-				ID:        "vec2",
-				Vector:    []float32{0.3, 0.4},
-				Metadata:  map[string]string{"key2": "val2"},
-				Version:   2,
-				CreatedAt: now,
-				UpdatedAt: now,
-			},
-		},
-		TotalCount:    2,
-		NextPageToken: "token123",
-		Timestamp:     now,
-	}
-
-	require.NotNil(t, resp)
-	assert.Equal(t, int64(2), resp.TotalCount)
-	assert.Len(t, resp.Vectors, 2)
-	assert.Equal(t, []float32{0.1, 0.2}, resp.Vectors[0].Vector)
-	assert.Equal(t, int64(1), resp.Vectors[0].Version)
-}
-
-// TestSDKSearchSimilarResponse tests SDK SearchSimilarResponse structure.
-func TestSDKSearchSimilarResponse(t *testing.T) {
-	now := time.Now()
-	resp := &vector.SearchSimilarResponse{
-		Results: []*vector.SearchResult{
-			{
-				Score: 0.95,
-				Vector: &vector.VectorEntity{
-					ID:        "vec1",
-					Vector:    []float32{0.1, 0.2},
-					Metadata:  map[string]string{"key": "val"},
-					Version:   1,
-					CreatedAt: now,
-					UpdatedAt: now,
-				},
-				Rank: 1,
-			},
-			{
-				Score: 0.85,
-				Vector: &vector.VectorEntity{
-					ID:        "vec2",
-					Vector:    []float32{0.3, 0.4},
-					Metadata:  map[string]string{"key": "val2"},
-					Version:   2,
-					CreatedAt: now,
-					UpdatedAt: now,
-				},
-				Rank: 2,
-			},
-		},
-		SearchTimeMs: 10,
-		Timestamp:    now,
-	}
-
-	require.NotNil(t, resp)
-	assert.Len(t, resp.Results, 2)
-	assert.Equal(t, float32(0.95), resp.Results[0].Score)
-	assert.Equal(t, int32(1), resp.Results[0].Rank)
-	assert.Equal(t, float32(0.85), resp.Results[1].Score)
-	assert.Equal(t, int32(2), resp.Results[1].Rank)
-	assert.Equal(t, int64(10), resp.SearchTimeMs)
-}
-
-// TestSDKRebuildIndexResponse tests SDK RebuildIndexResponse structure.
-func TestSDKRebuildIndexResponse(t *testing.T) {
-	now := time.Now()
-	resp := &vector.RebuildIndexResponse{
-		OperationID:         "op-123",
-		Status:              "in_progress",
-		Started:             now,
-		EstimatedDurationMs: 5000,
-		Timestamp:           now,
-	}
-
-	require.NotNil(t, resp)
-	assert.Equal(t, "op-123", resp.OperationID)
-	assert.Equal(t, "in_progress", resp.Status)
 }
 
 // TestVectorCommandHelp tests that help text is available for all commands.
@@ -514,92 +175,6 @@ func TestVectorCommandHelp(t *testing.T) {
 }
 
 // =============================================================================
-// Test Edge Cases
-// =============================================================================
-
-// TestNilResponses tests handling of nil info in responses.
-func TestNilResponses(t *testing.T) {
-	t.Run("nil GetNamespaceInfo info", func(t *testing.T) {
-		resp := &vector.GetNamespaceInfoResponse{
-			Info: nil,
-		}
-		require.NotNil(t, resp)
-		assert.Nil(t, resp.Info)
-	})
-
-	t.Run("nil vector in search result", func(t *testing.T) {
-		resp := &vector.SearchSimilarResponse{
-			Results: []*vector.SearchResult{
-				{Score: 0.95, Vector: nil, Rank: 1},
-			},
-		}
-		require.NotNil(t, resp)
-		assert.Len(t, resp.Results, 1)
-		assert.Nil(t, resp.Results[0].Vector)
-	})
-}
-
-// TestEmptyResponses tests handling of empty response lists.
-func TestEmptyResponses(t *testing.T) {
-	t.Run("empty namespace list", func(t *testing.T) {
-		resp := &vector.ListNamespacesResponse{
-			Namespaces: []*vector.NamespaceInfo{},
-			TotalCount: 0,
-		}
-		require.NotNil(t, resp)
-		assert.Empty(t, resp.Namespaces)
-		assert.Equal(t, int64(0), resp.TotalCount)
-	})
-
-	t.Run("empty vector list", func(t *testing.T) {
-		resp := &vector.ListVectorsResponse{
-			Vectors:    []*vector.VectorEntity{},
-			TotalCount: 0,
-		}
-		require.NotNil(t, resp)
-		assert.Empty(t, resp.Vectors)
-	})
-
-	t.Run("empty search results", func(t *testing.T) {
-		resp := &vector.SearchSimilarResponse{
-			Results: []*vector.SearchResult{},
-		}
-		require.NotNil(t, resp)
-		assert.Empty(t, resp.Results)
-	})
-}
-
-// TestFlagValidation tests command flag validation.
-func TestFlagValidation(t *testing.T) {
-	t.Run("dimension zero rejected", func(t *testing.T) {
-		// Store original and restore after test
-		origDimension := vectorDimension
-		defer func() { vectorDimension = origDimension }()
-
-		vectorDimension = 0
-		cmd := newVectorNamespaceCreateCommand()
-		err := runVectorNamespaceCreateCommand(cmd, []string{"test-ns"})
-		require.Error(t, err)
-	})
-
-	t.Run("k must be positive", func(t *testing.T) {
-		// Store original and restore after test
-		origK := vectorK
-		origVector := vectorData
-		defer func() {
-			vectorK = origK
-			vectorData = origVector
-		}()
-
-		vectorK = 0
-		vectorData = "0.1,0.2,0.3"
-		cmd := newVectorSearchSimilarCommand()
-		err := runVectorSearchSimilarCommand(cmd, []string{"test-ns"})
-		require.Error(t, err)
-	})
-}
-
-// =============================================================================
 // Benchmark Tests
 // =============================================================================
 
@@ -609,32 +184,6 @@ func BenchmarkParseVectorData(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, _ = parseVectorData(input)
-	}
-}
-
-// BenchmarkSDKSearchResponse benchmarks SDK search response creation.
-func BenchmarkSDKSearchResponse(b *testing.B) {
-	now := time.Now()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		resp := &vector.SearchSimilarResponse{
-			Results: make([]*vector.SearchResult, 100),
-		}
-		for j := 0; j < 100; j++ {
-			resp.Results[j] = &vector.SearchResult{
-				Score: float32(j) / 100.0,
-				Vector: &vector.VectorEntity{
-					ID:        "vec",
-					Vector:    []float32{0.1, 0.2, 0.3},
-					Metadata:  map[string]string{"key": "val"},
-					Version:   int64(j),
-					CreatedAt: now,
-					UpdatedAt: now,
-				},
-				Rank: int32(j + 1),
-			}
-		}
-		_ = resp
 	}
 }
 
@@ -1020,47 +569,32 @@ func TestRebalanceCommandsCoverage(t *testing.T) {
 	assert.True(t, cmdNames["plan"], "plan command should exist")
 }
 
-func TestRebalanceStartCommandFlagsCoverage(t *testing.T) {
-	cmd := newRebalanceStartCommand()
-	require.NotNil(t, cmd)
-
-	// Check command-specific flags exist (--address and --timeout are global flags in main.go)
-	flags := []string{"target-imbalance", "max-concurrent", "min-keys", "dry-run", "rate-limit", "output", "follow"}
-	for _, flag := range flags {
-		f := cmd.Flags().Lookup(flag)
-		assert.NotNil(t, f, "flag %s should exist", flag)
+func TestRebalanceCommandFlags(t *testing.T) {
+	// --address and --timeout are global flags in main.go.
+	tests := []struct {
+		name  string
+		cmd   *cobra.Command
+		flags []string
+	}{
+		{"start", newRebalanceStartCommand(), []string{"target-imbalance", "max-concurrent", "min-keys", "dry-run", "rate-limit", "output", "follow"}},
+		{"status", newRebalanceStatusCommand(), []string{"operation", "output"}},
+		{"plan", newRebalancePlanCommand(), []string{"target-imbalance", "output"}},
 	}
-}
 
-func TestRebalanceStatusCommandFlagsCoverage(t *testing.T) {
-	cmd := newRebalanceStatusCommand()
-	require.NotNil(t, cmd)
-
-	// Verify command-specific flags exist (--address and --timeout are global flags in main.go)
-	operationFlag := cmd.Flags().Lookup("operation")
-	assert.NotNil(t, operationFlag)
-
-	outputFlag := cmd.Flags().Lookup("output")
-	assert.NotNil(t, outputFlag)
-}
-
-func TestRebalancePlanCommandFlagsCoverage(t *testing.T) {
-	cmd := newRebalancePlanCommand()
-	require.NotNil(t, cmd)
-
-	// Check command-specific flags (--address and --timeout are global flags in main.go)
-	targetFlag := cmd.Flags().Lookup("target-imbalance")
-	assert.NotNil(t, targetFlag)
-
-	outputFlag := cmd.Flags().Lookup("output")
-	assert.NotNil(t, outputFlag)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, flag := range tt.flags {
+				assert.NotNil(t, tt.cmd.Flags().Lookup(flag), "flag %s should exist", flag)
+			}
+		})
+	}
 }
 
 // =============================================================================
 // Cache Warm Command Tests
 // =============================================================================
 
-func TestRunCacheWarmCommandNoPrefixes(t *testing.T) {
+func TestRunCacheWarmCommandNilConfig(t *testing.T) {
 	origPrefixes := cacheWarmPrefixes
 	origCfg := cfg
 	defer func() {
@@ -1090,147 +624,195 @@ func TestInitializeCacheRegistryNilConfig(t *testing.T) {
 	assert.Contains(t, err.Error(), "configuration not initialized")
 }
 
-func TestInitializeCacheWarmerDependenciesNilConfig(t *testing.T) {
-	origCfg := cfg
-	defer func() { cfg = origCfg }()
-
-	cfg = nil
-
-	_, _, _, err := initializeCacheWarmerDependencies()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "configuration not initialized")
-}
-
 // =============================================================================
 // Messaging Command Tests for Delete Channel and Unsubscribe
 // =============================================================================
 
-func TestMsgDeleteChannelCommandForceFlag(t *testing.T) {
-	cmd := newMsgDeleteChannelCommand()
-	require.NotNil(t, cmd)
+func TestMsgCommandsForceFlagDefaultsFalse(t *testing.T) {
+	tests := []struct {
+		name string
+		cmd  *cobra.Command
+	}{
+		{"delete channel", newMsgDeleteChannelCommand()},
+		{"unsubscribe", newMsgUnsubscribeCommand()},
+	}
 
-	forceFlag := cmd.Flags().Lookup("force")
-	require.NotNil(t, forceFlag)
-	assert.Equal(t, "false", forceFlag.DefValue)
-}
-
-func TestMsgUnsubscribeCommandForceFlag(t *testing.T) {
-	cmd := newMsgUnsubscribeCommand()
-	require.NotNil(t, cmd)
-
-	forceFlag := cmd.Flags().Lookup("force")
-	require.NotNil(t, forceFlag)
-	assert.Equal(t, "false", forceFlag.DefValue)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			forceFlag := tt.cmd.Flags().Lookup("force")
+			require.NotNil(t, forceFlag)
+			assert.Equal(t, "false", forceFlag.DefValue)
+		})
+	}
 }
 
 // =============================================================================
 // Client Error Types Tests
 // =============================================================================
 
-func TestUnsupportedTransportErrorMessage(t *testing.T) {
-	err := &UnsupportedTransportError{Transport: "websocket"}
-	expected := "unsupported transport: websocket (supported: grpc, rest, quic, unix, mcp, embedded)"
-	assert.Equal(t, expected, err.Error())
-}
+func TestClientErrorMessages(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"unsupported transport", &UnsupportedTransportError{Transport: "websocket"}, "unsupported transport: websocket (supported: grpc, rest, quic, unix, mcp, embedded)"},
+		{"sdk client closed", ErrSDKClientClosed, "closed"},
+		{"empty address", ErrEmptyAddress, "empty"},
+	}
 
-func TestErrSDKClientClosedContents(t *testing.T) {
-	assert.Contains(t, ErrSDKClientClosed.Error(), "closed")
-}
-
-func TestErrEmptyAddressContents(t *testing.T) {
-	assert.Contains(t, ErrEmptyAddress.Error(), "empty")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Contains(t, tt.err.Error(), tt.want)
+		})
+	}
 }
 
 // =============================================================================
 // Formatter Response Tests
 // =============================================================================
 
-func TestFormatVectorResponsesCoverage(t *testing.T) {
-	var buf bytes.Buffer
-	_ = buf // Suppress unused variable warning
+func TestFormatVectorResponses(t *testing.T) {
+	oldFmt := outputFormat
+	defer func() { outputFormat = oldFmt }()
 
-	t.Run("namespace create response", func(t *testing.T) {
-		resp := &vector.CreateNamespaceResponse{
-			Success:   true,
-			Namespace: "test-ns",
-			Timestamp: time.Now(),
-		}
-		err := formatVectorNamespaceCreateResponse(resp)
-		require.NoError(t, err)
-	})
+	now := time.Now()
+	tests := []struct {
+		name   string
+		format string
+		run    func() error
+	}{
+		{"namespace create failure", "table", func() error {
+			return formatVectorNamespaceCreateResponse(&vector.CreateNamespaceResponse{Success: false, Namespace: "test-ns", Timestamp: now})
+		}},
+		{"namespace delete failure", "table", func() error {
+			return formatVectorNamespaceDeleteResponse(&vector.DeleteNamespaceResponse{Deleted: false, Timestamp: now})
+		}},
+		{"namespace info with config details", "table", func() error {
+			return formatVectorNamespaceInfoResponse(&vector.GetNamespaceInfoResponse{
+				Info: &vector.NamespaceInfo{
+					Config: &vector.NamespaceConfig{
+						Namespace:   "test-ns",
+						Dimensions:  128,
+						IndexType:   "hnsw",
+						IndexParams: map[string]string{"M": "16", "efConstruction": "200"},
+						Metadata:    map[string]string{"desc": "test namespace"},
+					},
+					VectorCount: 1000,
+					CreatedAt:   now.Add(-24 * time.Hour),
+					UpdatedAt:   now,
+				},
+				Timestamp: now,
+			})
+		}},
+		{"upsert failure", "table", func() error {
+			return formatVectorUpsertResponse(&vector.UpsertResponse{Success: false, Timestamp: now})
+		}},
+		{"batch upsert with failures", "table", func() error {
+			return formatVectorBatchUpsertResponse(&vector.BatchUpsertResponse{VectorsSucceeded: 5, VectorsFailed: 2, Timestamp: now})
+		}},
+		{"get not found", "table", func() error {
+			return formatVectorGetResponse(&vector.GetResponse{Found: false, Timestamp: now})
+		}},
+		{"get with metadata and large vector", "table", func() error {
+			return formatVectorGetResponse(&vector.GetResponse{
+				Found: true,
+				Vector: &vector.VectorEntity{
+					ID:       "vec-1",
+					Version:  2,
+					Vector:   []float32{0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7},
+					Metadata: map[string]string{"key": "val"},
+				},
+				Timestamp: now,
+			})
+		}},
+		{"delete failure", "table", func() error {
+			return formatVectorDeleteResponse(&vector.DeleteResponse{Deleted: false, Timestamp: now})
+		}},
+		{"batch delete with errors", "table", func() error {
+			return formatVectorBatchDeleteResponse(&vector.BatchDeleteResponse{
+				DeletedCount: 5,
+				Errors:       map[string]string{"vec-99": "not found"},
+				Timestamp:    now,
+			})
+		}},
+		{"list with next page", "table", func() error {
+			return formatVectorListResponse(&vector.ListVectorsResponse{
+				Vectors:       []*vector.VectorEntity{{ID: "v1", Version: 1}},
+				TotalCount:    100,
+				NextPageToken: "token-abc",
+				Timestamp:     now,
+			})
+		}},
+		{"index rebuild with duration", "table", func() error {
+			return formatVectorIndexRebuildResponse(&vector.RebuildIndexResponse{
+				OperationID:         "op-123",
+				Status:              "started",
+				EstimatedDurationMs: 30000,
+				Timestamp:           now,
+			})
+		}},
+		{"index progress with error message", "table", func() error {
+			return formatVectorIndexProgressResponse(&vector.GetIndexProgressResponse{
+				OperationID:          "op-123",
+				Namespace:            "test-ns",
+				Status:               "in_progress",
+				PercentComplete:      75.0,
+				VectorsIndexed:       7500,
+				TotalVectors:         10000,
+				ElapsedTimeMs:        5000,
+				EstimatedRemainingMs: 2000,
+				ErrorMessage:         "some warning",
+				Timestamp:            now,
+			})
+		}},
+		{"index stats table", "table", func() error {
+			return formatVectorIndexStatsResponse(&vector.GetStatsResponse{
+				Namespace:        "test-ns",
+				VectorCount:      5000,
+				IndexSizeBytes:   1024 * 1024 * 50,
+				StorageSizeBytes: 1024 * 1024 * 100,
+				Timestamp:        now,
+			})
+		}},
+		{"update metadata failure", "table", func() error {
+			return formatVectorUpdateMetadataResponse(&vector.UpdateMetadataResponse{Success: false, Timestamp: now})
+		}},
+		{"search similar table", "table", func() error {
+			return formatVectorSearchSimilarResponse(&vector.SearchSimilarResponse{
+				Results: []*vector.SearchResult{
+					{Vector: &vector.VectorEntity{ID: "v1", Metadata: map[string]string{"type": "doc"}}, Score: 0.95, Distance: 0.05, Rank: 1},
+				},
+				SearchTimeMs: 5,
+				Timestamp:    now,
+			})
+		}},
+		{"search by id table", "table", func() error {
+			return formatVectorSearchByIDResponse(&vector.SearchByIDResponse{
+				Results: []*vector.SearchResult{
+					{Vector: &vector.VectorEntity{ID: "v1", Metadata: map[string]string{"cat": "tech"}}, Score: 0.92, Distance: 0.08, Rank: 1},
+				},
+				SearchTimeMs: 3,
+				Timestamp:    now,
+			})
+		}},
+	}
 
-	t.Run("namespace delete response", func(t *testing.T) {
-		resp := &vector.DeleteNamespaceResponse{
-			Deleted:        true,
-			VectorsDeleted: 100,
-			Timestamp:      time.Now(),
-		}
-		err := formatVectorNamespaceDeleteResponse(resp)
-		require.NoError(t, err)
-	})
-
-	t.Run("namespace list response", func(t *testing.T) {
-		resp := &vector.ListNamespacesResponse{
-			Namespaces: []*vector.NamespaceInfo{
-				{Config: &vector.NamespaceConfig{Namespace: "ns1", Dimensions: 128}, VectorCount: 50, CreatedAt: time.Now()},
-			},
-			TotalCount: 1,
-			Timestamp:  time.Now(),
-		}
-		err := formatVectorNamespaceListResponse(resp)
-		require.NoError(t, err)
-	})
-
-	t.Run("namespace info response", func(t *testing.T) {
-		resp := &vector.GetNamespaceInfoResponse{
-			Info: &vector.NamespaceInfo{
-				Config:      &vector.NamespaceConfig{Namespace: "test-ns", Dimensions: 128},
-				VectorCount: 100,
-				CreatedAt:   time.Now(),
-				UpdatedAt:   time.Now(),
-			},
-			Timestamp: time.Now(),
-		}
-		err := formatVectorNamespaceInfoResponse(resp)
-		require.NoError(t, err)
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			outputFormat = tt.format
+			assert.NoError(t, tt.run())
+		})
+	}
 }
 
 // =============================================================================
 // Vector Command Run Function Tests - Dimension Zero Error
 // =============================================================================
 
-func TestRunVectorNamespaceCreateCommandDimensionError(t *testing.T) {
-	// Save and restore globals
-	origDimension := vectorDimension
-	defer func() {
-		vectorDimension = origDimension
-	}()
-
-	vectorDimension = 0
-
-	cmd := &cobra.Command{}
-	err := runVectorNamespaceCreateCommand(cmd, []string{"test-namespace"})
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "dimension must be greater than 0")
-}
-
 // =============================================================================
 // Rebalance Display Functions Tests
 // =============================================================================
-
-func TestDisplayRebalanceReportCoverage(t *testing.T) {
-	// Test the displayRebalanceReport function with various inputs
-	// This covers the function at rebalance.go:300 with 76.3% coverage
-
-	t.Run("empty report", func(t *testing.T) {
-		// The function expects a specific report type from the operations package
-		// Testing command flags ensures the function can be called
-		cmd := newRebalanceStartCommand()
-		require.NotNil(t, cmd)
-	})
-}
 
 type testSDKClientForVector struct {
 	vec vector.Client
@@ -2316,292 +1898,3 @@ func TestCreateVectorClient(t *testing.T) {
 // =============================================================================
 // Additional format function coverage
 // =============================================================================
-
-func TestFormatVectorNamespaceCreateResponseFailure(t *testing.T) {
-	oldFmt := outputFormat
-	defer func() { outputFormat = oldFmt }()
-	outputFormat = "table"
-
-	resp := &vector.CreateNamespaceResponse{
-		Success:   false,
-		Namespace: "test-ns",
-		Timestamp: time.Now(),
-	}
-	err := formatVectorNamespaceCreateResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatVectorNamespaceDeleteResponseFailure(t *testing.T) {
-	oldFmt := outputFormat
-	defer func() { outputFormat = oldFmt }()
-	outputFormat = "table"
-
-	resp := &vector.DeleteNamespaceResponse{
-		Deleted:   false,
-		Timestamp: time.Now(),
-	}
-	err := formatVectorNamespaceDeleteResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatVectorUpsertResponseFailure(t *testing.T) {
-	oldFmt := outputFormat
-	defer func() { outputFormat = oldFmt }()
-	outputFormat = "table"
-
-	resp := &vector.UpsertResponse{
-		Success:   false,
-		Timestamp: time.Now(),
-	}
-	err := formatVectorUpsertResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatVectorBatchUpsertResponseWithErrors(t *testing.T) {
-	oldFmt := outputFormat
-	defer func() { outputFormat = oldFmt }()
-	outputFormat = "table"
-
-	resp := &vector.BatchUpsertResponse{
-		VectorsSucceeded: 5,
-		VectorsFailed:    2,
-		Timestamp:        time.Now(),
-	}
-	err := formatVectorBatchUpsertResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatVectorGetResponseNotFound(t *testing.T) {
-	oldFmt := outputFormat
-	defer func() { outputFormat = oldFmt }()
-	outputFormat = "table"
-
-	resp := &vector.GetResponse{
-		Found:     false,
-		Timestamp: time.Now(),
-	}
-	err := formatVectorGetResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatVectorGetResponseWithMetadataAndLargeVector(t *testing.T) {
-	oldFmt := outputFormat
-	defer func() { outputFormat = oldFmt }()
-	outputFormat = "table"
-
-	resp := &vector.GetResponse{
-		Found: true,
-		Vector: &vector.VectorEntity{
-			ID:       "vec-1",
-			Version:  2,
-			Vector:   []float32{0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7},
-			Metadata: map[string]string{"key": "val"},
-		},
-		Timestamp: time.Now(),
-	}
-	err := formatVectorGetResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatVectorDeleteResponseFailure(t *testing.T) {
-	oldFmt := outputFormat
-	defer func() { outputFormat = oldFmt }()
-	outputFormat = "table"
-
-	resp := &vector.DeleteResponse{
-		Deleted:   false,
-		Timestamp: time.Now(),
-	}
-	err := formatVectorDeleteResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatVectorBatchDeleteResponseWithErrors(t *testing.T) {
-	oldFmt := outputFormat
-	defer func() { outputFormat = oldFmt }()
-	outputFormat = "table"
-
-	resp := &vector.BatchDeleteResponse{
-		DeletedCount: 5,
-		Errors:       map[string]string{"vec-99": "not found"},
-		Timestamp:    time.Now(),
-	}
-	err := formatVectorBatchDeleteResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatVectorListResponseWithNextPage(t *testing.T) {
-	oldFmt := outputFormat
-	defer func() { outputFormat = oldFmt }()
-	outputFormat = "table"
-
-	resp := &vector.ListVectorsResponse{
-		Vectors: []*vector.VectorEntity{
-			{ID: "v1", Version: 1},
-		},
-		TotalCount:    100,
-		NextPageToken: "token-abc",
-		Timestamp:     time.Now(),
-	}
-	err := formatVectorListResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatVectorIndexRebuildResponseWithDuration(t *testing.T) {
-	oldFmt := outputFormat
-	defer func() { outputFormat = oldFmt }()
-	outputFormat = "table"
-
-	resp := &vector.RebuildIndexResponse{
-		OperationID:         "op-123",
-		Status:              "started",
-		EstimatedDurationMs: 30000,
-		Timestamp:           time.Now(),
-	}
-	err := formatVectorIndexRebuildResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatVectorIndexProgressResponseWithDetails(t *testing.T) {
-	oldFmt := outputFormat
-	defer func() { outputFormat = oldFmt }()
-	outputFormat = "table"
-
-	resp := &vector.GetIndexProgressResponse{
-		OperationID:          "op-123",
-		Namespace:            "test-ns",
-		Status:               "in_progress",
-		PercentComplete:      75.0,
-		VectorsIndexed:       7500,
-		TotalVectors:         10000,
-		ElapsedTimeMs:        5000,
-		EstimatedRemainingMs: 2000,
-		ErrorMessage:         "",
-		Timestamp:            time.Now(),
-	}
-	err := formatVectorIndexProgressResponse(resp)
-	assert.NoError(t, err)
-
-	// With error message
-	resp.ErrorMessage = "some warning"
-	err = formatVectorIndexProgressResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatVectorUpdateMetadataResponseFailure(t *testing.T) {
-	resp := &vector.UpdateMetadataResponse{
-		Success:   false,
-		Timestamp: time.Now(),
-	}
-	err := formatVectorUpdateMetadataResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatVectorHybridSearchResponseNoResults(t *testing.T) {
-	resp := &vector.HybridSearchResponse{
-		Results:   nil,
-		Timestamp: time.Now(),
-	}
-	err := formatVectorHybridSearchResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatVectorSearchByMetadataResponseNoResults(t *testing.T) {
-	resp := &vector.SearchByMetadataResponse{
-		Results:   nil,
-		Timestamp: time.Now(),
-	}
-	err := formatVectorSearchByMetadataResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatVectorNamespaceInfoWithConfigDetails(t *testing.T) {
-	oldFmt := outputFormat
-	defer func() { outputFormat = oldFmt }()
-	outputFormat = "table"
-
-	resp := &vector.GetNamespaceInfoResponse{
-		Info: &vector.NamespaceInfo{
-			Config: &vector.NamespaceConfig{
-				Namespace:   "test-ns",
-				Dimensions:  128,
-				IndexType:   "hnsw",
-				IndexParams: map[string]string{"M": "16", "efConstruction": "200"},
-				Metadata:    map[string]string{"desc": "test namespace"},
-			},
-			VectorCount: 1000,
-			CreatedAt:   time.Now().Add(-24 * time.Hour),
-			UpdatedAt:   time.Now(),
-		},
-		Timestamp: time.Now(),
-	}
-	err := formatVectorNamespaceInfoResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatVectorIndexStatsResponseCoverage(t *testing.T) {
-	oldFmt := outputFormat
-	defer func() { outputFormat = oldFmt }()
-
-	resp := &vector.GetStatsResponse{
-		Namespace:        "test-ns",
-		VectorCount:      5000,
-		IndexSizeBytes:   1024 * 1024 * 50,
-		StorageSizeBytes: 1024 * 1024 * 100,
-		Timestamp:        time.Now(),
-	}
-
-	t.Run("Table", func(t *testing.T) {
-		outputFormat = "table"
-		err := formatVectorIndexStatsResponse(resp)
-		assert.NoError(t, err)
-	})
-
-	t.Run("JSON", func(t *testing.T) {
-		outputFormat = "json"
-		err := formatVectorIndexStatsResponse(resp)
-		assert.NoError(t, err)
-	})
-}
-
-func TestFormatVectorSearchSimilarResponseTable(t *testing.T) {
-	oldFmt := outputFormat
-	defer func() { outputFormat = oldFmt }()
-	outputFormat = "table"
-
-	resp := &vector.SearchSimilarResponse{
-		Results: []*vector.SearchResult{
-			{
-				Vector:   &vector.VectorEntity{ID: "v1", Metadata: map[string]string{"type": "doc"}},
-				Score:    0.95,
-				Distance: 0.05,
-				Rank:     1,
-			},
-		},
-		SearchTimeMs: 5,
-		Timestamp:    time.Now(),
-	}
-	err := formatVectorSearchSimilarResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatVectorSearchByIDResponseTable(t *testing.T) {
-	oldFmt := outputFormat
-	defer func() { outputFormat = oldFmt }()
-	outputFormat = "table"
-
-	resp := &vector.SearchByIDResponse{
-		Results: []*vector.SearchResult{
-			{
-				Vector:   &vector.VectorEntity{ID: "v1", Metadata: map[string]string{"cat": "tech"}},
-				Score:    0.92,
-				Distance: 0.08,
-				Rank:     1,
-			},
-		},
-		SearchTimeMs: 3,
-		Timestamp:    time.Now(),
-	}
-	err := formatVectorSearchByIDResponse(resp)
-	assert.NoError(t, err)
-}

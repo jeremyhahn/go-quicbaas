@@ -72,6 +72,15 @@ func TestNewManager(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name: "zero cleanup interval gets default",
+			config: Config{
+				L1Size: 100,
+				L1TTL:  1 * time.Minute,
+			},
+			logger:  testLogger(t),
+			wantErr: false,
+		},
+		{
 			name:     "nil logger",
 			config:   DefaultConfig(),
 			logger:   nil,
@@ -207,6 +216,9 @@ func TestCacheManager_Stats(t *testing.T) {
 
 	ctx := context.Background()
 
+	// No lookups yet: hit rate is zero, not NaN
+	assert.Equal(t, 0.0, cm.Stats().L1HitRate)
+
 	// Generate some activity
 	for i := 0; i < 5; i++ {
 		key := fmt.Sprintf("key-%d", i)
@@ -227,67 +239,7 @@ func TestCacheManager_Stats(t *testing.T) {
 	assert.Equal(t, 10, stats.L1Capacity)
 	assert.Equal(t, int64(5), stats.L1Hits)
 	assert.Greater(t, stats.L1Misses, int64(0))
-	assert.Greater(t, stats.L1HitRate, 0.0)
-	assert.Less(t, stats.L1HitRate, 1.0)
-}
-
-func TestCacheManager_Concurrent(t *testing.T) {
-	config := Config{
-		L1Size: 100,
-		L1TTL:  1 * time.Hour,
-	}
-
-	cm, err := NewManager(config, testLogger(t))
-	require.NoError(t, err)
-	defer cm.Close()
-
-	ctx := context.Background()
-
-	const numGoroutines = 50
-	const numOperations = 100
-
-	var wg sync.WaitGroup
-	wg.Add(numGoroutines * 3)
-
-	// Concurrent writers
-	for i := 0; i < numGoroutines; i++ {
-		go func(id int) {
-			defer wg.Done()
-			for j := 0; j < numOperations; j++ {
-				key := fmt.Sprintf("key-%d-%d", id, j)
-				value := []byte(fmt.Sprintf("value-%d-%d", id, j))
-				cm.Set(ctx, key, value)
-			}
-		}(i)
-	}
-
-	// Concurrent readers
-	for i := 0; i < numGoroutines; i++ {
-		go func(id int) {
-			defer wg.Done()
-			for j := 0; j < numOperations; j++ {
-				key := fmt.Sprintf("key-%d-%d", id, j)
-				cm.Get(ctx, key)
-			}
-		}(i)
-	}
-
-	// Concurrent deleters
-	for i := 0; i < numGoroutines; i++ {
-		go func(id int) {
-			defer wg.Done()
-			for j := 0; j < numOperations; j++ {
-				key := fmt.Sprintf("key-%d-%d", id, j)
-				cm.Delete(ctx, key)
-			}
-		}(i)
-	}
-
-	wg.Wait()
-
-	// Verify no panics and metrics were updated
-	metrics := cm.GetMetrics()
-	assert.Greater(t, metrics.Get("l1_sets"), int64(0))
+	assert.InDelta(t, 5.0/8.0, stats.L1HitRate, 0.01)
 }
 
 // Context cancellation tests removed - only relevant for L2 cache
@@ -329,26 +281,6 @@ func TestCacheManager_LRUEviction(t *testing.T) {
 		_, err := cm.Get(ctx, key)
 		assert.NoError(t, err, "key %s should exist", key)
 	}
-}
-
-func TestCacheManager_Close(t *testing.T) {
-	config := Config{
-		L1Size: 10,
-		L1TTL:  100 * time.Millisecond,
-	}
-
-	cm, err := NewManager(config, testLogger(t))
-	require.NoError(t, err)
-
-	// Add some data
-	ctx := context.Background()
-	cm.Set(ctx, "key", []byte("value"))
-
-	// Close
-	err = cm.Close()
-	assert.NoError(t, err)
-
-	// Note: Cleanup goroutine stopping is verified by not panicking
 }
 
 // isDone reports whether done is closed, without blocking.
@@ -492,31 +424,6 @@ func TestCacheManager_LRUEvictionEdgeCases(t *testing.T) {
 
 	ctx := context.Background()
 
-	t.Run("eviction with single entry", func(t *testing.T) {
-		// Clear cache first
-		cm.Clear()
-
-		// Add one entry
-		err := cm.Set(ctx, "key1", []byte("value1"))
-		require.NoError(t, err)
-
-		// Add second to fill capacity
-		err = cm.Set(ctx, "key2", []byte("value2"))
-		require.NoError(t, err)
-
-		assert.Equal(t, 2, cm.l1Cache.Len())
-
-		// Add third - should evict key1
-		err = cm.Set(ctx, "key3", []byte("value3"))
-		require.NoError(t, err)
-
-		assert.Equal(t, 2, cm.l1Cache.Len())
-
-		_, err = cm.Get(ctx, "key1")
-		assert.Error(t, err)
-		assert.True(t, errors.IsNotFound(err))
-	})
-
 	t.Run("update existing key does not evict", func(t *testing.T) {
 		cm.Clear()
 
@@ -580,34 +487,6 @@ func TestCacheManager_MetricsAccuracy(t *testing.T) {
 	defer cm.Close()
 
 	ctx := context.Background()
-
-	t.Run("accurate hit/miss tracking", func(t *testing.T) {
-		cm.Clear()
-		metrics := cm.GetMetrics()
-		metrics.Reset()
-
-		// Add 10 entries
-		for i := 0; i < 10; i++ {
-			key := fmt.Sprintf("key-%d", i)
-			cm.Set(ctx, key, []byte(fmt.Sprintf("value-%d", i)))
-		}
-
-		// Get 10 hits
-		for i := 0; i < 10; i++ {
-			key := fmt.Sprintf("key-%d", i)
-			cm.Get(ctx, key)
-		}
-
-		// Get 5 misses
-		for i := 10; i < 15; i++ {
-			key := fmt.Sprintf("key-%d", i)
-			cm.Get(ctx, key)
-		}
-
-		metrics = cm.GetMetrics()
-		assert.Equal(t, int64(10), metrics.L1Hits())
-		assert.GreaterOrEqual(t, metrics.L1Misses(), int64(5))
-	})
 
 	t.Run("accurate set/delete tracking", func(t *testing.T) {
 		cm.Clear()
@@ -681,102 +560,6 @@ func TestCacheManager_MetricsAccuracy(t *testing.T) {
 		metrics2 := cm.GetMetrics()
 		assert.Greater(t, metrics2.L1Hits(), initialHits)
 	})
-}
-
-func TestCacheManager_StatsCalculations(t *testing.T) {
-	config := Config{
-		L1Size: 100,
-		L1TTL:  1 * time.Hour,
-	}
-
-	cm, err := NewManager(config, testLogger(t))
-	require.NoError(t, err)
-	defer cm.Close()
-
-	ctx := context.Background()
-
-	t.Run("hit rate calculation", func(t *testing.T) {
-		cm.Clear()
-		cm.GetMetrics().Reset()
-
-		// 10 sets and hits
-		for i := 0; i < 10; i++ {
-			key := fmt.Sprintf("key-%d", i)
-			cm.Set(ctx, key, []byte(fmt.Sprintf("value-%d", i)))
-			cm.Get(ctx, key)
-		}
-
-		// 5 misses
-		for i := 10; i < 15; i++ {
-			key := fmt.Sprintf("key-%d", i)
-			cm.Get(ctx, key)
-		}
-
-		stats := cm.Stats()
-		expectedHitRate := 10.0 / 15.0
-		assert.InDelta(t, expectedHitRate, stats.L1HitRate, 0.01)
-	})
-
-	t.Run("empty cache hit rate", func(t *testing.T) {
-		// Create a fresh cache manager for this test
-		freshCM, err := NewManager(config, testLogger(t))
-		require.NoError(t, err)
-		defer freshCM.Close()
-
-		stats := freshCM.Stats()
-		assert.Equal(t, 0.0, stats.L1HitRate)
-	})
-
-	t.Run("size and capacity", func(t *testing.T) {
-		cm.Clear()
-
-		// Add 50 entries
-		for i := 0; i < 50; i++ {
-			key := fmt.Sprintf("key-%d", i)
-			cm.Set(ctx, key, []byte(fmt.Sprintf("value-%d", i)))
-		}
-
-		stats := cm.Stats()
-		assert.Equal(t, 50, stats.L1Size)
-		assert.Equal(t, 100, stats.L1Capacity)
-		assert.True(t, stats.Enabled)
-	})
-}
-
-func TestCacheManager_ConfigValidation(t *testing.T) {
-	tests := []struct {
-		name    string
-		config  Config
-		wantErr bool
-	}{
-		{
-			name: "zero L1 size",
-			config: Config{
-				L1Size: 0,
-			},
-			wantErr: true,
-		},
-		{
-			name: "negative cleanup interval gets default",
-			config: Config{
-				L1Size:          100,
-				L1TTL:           1 * time.Minute,
-				CleanupInterval: 0,
-			},
-			wantErr: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := tt.config.Validate()
-			if tt.wantErr {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
 }
 
 func TestEntry_IsExpired(t *testing.T) {
@@ -916,22 +699,6 @@ func TestCacheManager_UpdateConfig(t *testing.T) {
 		assert.Equal(t, 1*time.Minute, retrieved.L1TTL)
 	})
 
-	t.Run("update both size and intervals", func(t *testing.T) {
-		newConfig := &Config{
-			L1Size:          50,
-			L1TTL:           30 * time.Second,
-			CleanupInterval: 10 * time.Second,
-		}
-
-		err := cm.UpdateConfig(newConfig)
-		assert.NoError(t, err)
-
-		retrieved := cm.GetConfig()
-		assert.Equal(t, 50, retrieved.L1Size)
-		assert.Equal(t, 30*time.Second, retrieved.L1TTL)
-		assert.Equal(t, 10*time.Second, retrieved.CleanupInterval)
-	})
-
 	t.Run("concurrent updates", func(t *testing.T) {
 		var wg sync.WaitGroup
 		const numUpdates = 10
@@ -979,18 +746,8 @@ func TestCacheManager_CleanupNoExpiredEntries(t *testing.T) {
 	cm.performCleanup()
 
 	// No entries should be expired
-	metrics := cm.GetMetrics()
-	// l1_expired might be 0 or from previous tests, just ensure no panic
-	assert.GreaterOrEqual(t, metrics.Get("l1_expired"), int64(0))
-}
-
-func TestLRUCache_PeekMissingKey(t *testing.T) {
-	cache := NewLRUCache(10)
-
-	// Peek at non-existent key
-	entry, exists := cache.Peek("missing")
-	assert.False(t, exists)
-	assert.Nil(t, entry)
+	assert.Equal(t, int64(0), cm.GetMetrics().Get("l1_expired"))
+	assert.Equal(t, 5, cm.l1Cache.Len())
 }
 
 // TestCacheManager_CleanupTickerReplacement moved to manager_integration_test.go

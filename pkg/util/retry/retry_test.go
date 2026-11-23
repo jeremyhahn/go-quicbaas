@@ -105,6 +105,41 @@ func TestExponentialBackoff_Next(t *testing.T) {
 			wantMin: 100 * time.Millisecond,
 			wantMax: 100 * time.Millisecond,
 		},
+		{
+			name: "full jitter stays within zero and the delay",
+			backoff: &ExponentialBackoff{
+				InitialDelay: 100 * time.Millisecond,
+				MaxDelay:     1 * time.Second,
+				Multiplier:   2.0,
+				Jitter:       1.0,
+			},
+			attempt: 0,
+			wantMin: 0,
+			wantMax: 100 * time.Millisecond,
+		},
+		{
+			name: "very high attempt caps at max delay",
+			backoff: &ExponentialBackoff{
+				InitialDelay: 10 * time.Millisecond,
+				MaxDelay:     1 * time.Second,
+				Multiplier:   2.0,
+				Jitter:       0,
+			},
+			attempt: 100,
+			wantMin: 1 * time.Second,
+			wantMax: 1 * time.Second,
+		},
+		{
+			name: "multiplier of 1 keeps the initial delay",
+			backoff: &ExponentialBackoff{
+				InitialDelay: 100 * time.Millisecond,
+				MaxDelay:     1 * time.Second,
+				Multiplier:   1.0,
+			},
+			attempt: 10,
+			wantMin: 100 * time.Millisecond,
+			wantMax: 100 * time.Millisecond,
+		},
 	}
 
 	for _, tt := range tests {
@@ -175,6 +210,54 @@ func TestLinearBackoff_Next(t *testing.T) {
 			wantMin: 50 * time.Millisecond,
 			wantMax: 100 * time.Millisecond,
 		},
+		{
+			name: "zero increment keeps the initial delay",
+			backoff: &LinearBackoff{
+				InitialDelay: 100 * time.Millisecond,
+				MaxDelay:     1 * time.Second,
+				Increment:    0,
+				Jitter:       0,
+			},
+			attempt: 5,
+			wantMin: 100 * time.Millisecond,
+			wantMax: 100 * time.Millisecond,
+		},
+		{
+			name: "negative attempt defaults to 0",
+			backoff: &LinearBackoff{
+				InitialDelay: 100 * time.Millisecond,
+				MaxDelay:     1 * time.Second,
+				Increment:    50 * time.Millisecond,
+				Jitter:       0,
+			},
+			attempt: -5,
+			wantMin: 100 * time.Millisecond,
+			wantMax: 100 * time.Millisecond,
+		},
+		{
+			name: "large increment below max delay",
+			backoff: &LinearBackoff{
+				InitialDelay: 100 * time.Millisecond,
+				MaxDelay:     500 * time.Millisecond,
+				Increment:    200 * time.Millisecond,
+				Jitter:       0,
+			},
+			attempt: 1,
+			wantMin: 300 * time.Millisecond,
+			wantMax: 300 * time.Millisecond,
+		},
+		{
+			name: "large increment capped at max delay",
+			backoff: &LinearBackoff{
+				InitialDelay: 100 * time.Millisecond,
+				MaxDelay:     500 * time.Millisecond,
+				Increment:    200 * time.Millisecond,
+				Jitter:       0,
+			},
+			attempt: 2,
+			wantMin: 500 * time.Millisecond,
+			wantMax: 500 * time.Millisecond,
+		},
 	}
 
 	for _, tt := range tests {
@@ -216,6 +299,36 @@ func TestConstantBackoff_Next(t *testing.T) {
 			wantMin: 100 * time.Millisecond,
 			wantMax: 200 * time.Millisecond,
 		},
+		{
+			name: "large attempt keeps the constant delay",
+			backoff: &ConstantBackoff{
+				Delay:  100 * time.Millisecond,
+				Jitter: 0,
+			},
+			attempt: 100,
+			wantMin: 100 * time.Millisecond,
+			wantMax: 100 * time.Millisecond,
+		},
+		{
+			name: "zero delay",
+			backoff: &ConstantBackoff{
+				Delay:  0,
+				Jitter: 0,
+			},
+			attempt: 5,
+			wantMin: 0,
+			wantMax: 0,
+		},
+		{
+			name: "jitter with zero delay",
+			backoff: &ConstantBackoff{
+				Delay:  0,
+				Jitter: 0.5,
+			},
+			attempt: 5,
+			wantMin: 0,
+			wantMax: 0,
+		},
 	}
 
 	for _, tt := range tests {
@@ -227,21 +340,6 @@ func TestConstantBackoff_Next(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestDo_SuccessFirstAttempt(t *testing.T) {
-	ctx := context.Background()
-	cfg := DefaultConfig()
-
-	callCount := 0
-	op := func(ctx context.Context) error {
-		callCount++
-		return nil
-	}
-
-	err := Do(ctx, cfg, op)
-	assert.NoError(t, err)
-	assert.Equal(t, 1, callCount, "operation should be called once")
 }
 
 func TestDo_SuccessAfterRetries(t *testing.T) {
@@ -434,127 +532,162 @@ func TestDo_ContextTimeout(t *testing.T) {
 }
 
 func TestDo_OnRetryCallback(t *testing.T) {
-	ctx := context.Background()
+	t.Run("called once per retry with the error and backoff", func(t *testing.T) {
+		var attempts []int
+		var errs []error
+		var backoffs []time.Duration
 
-	var retryAttempts []int
-	var retryErrors []error
-	var retryBackoffs []time.Duration
-
-	cfg := &Config{
-		MaxAttempts: 3,
-		Backoff: &ConstantBackoff{
-			Delay:  5 * time.Millisecond,
-			Jitter: 0,
-		},
-		OnRetry: func(attempt int, err error, backoff time.Duration) {
-			retryAttempts = append(retryAttempts, attempt)
-			retryErrors = append(retryErrors, err)
-			retryBackoffs = append(retryBackoffs, backoff)
-		},
-	}
-
-	callCount := 0
-	op := func(ctx context.Context) error {
-		callCount++
-		if callCount < 3 {
-			return dberrors.New(dberrors.ErrTimeout, "test.op", "timeout")
+		cfg := &Config{
+			MaxAttempts: 4,
+			Backoff: &ConstantBackoff{
+				Delay:  5 * time.Millisecond,
+				Jitter: 0,
+			},
+			OnRetry: func(attempt int, err error, backoff time.Duration) {
+				attempts = append(attempts, attempt)
+				errs = append(errs, err)
+				backoffs = append(backoffs, backoff)
+			},
 		}
-		return nil
-	}
 
-	err := Do(ctx, cfg, op)
-	assert.NoError(t, err)
-	assert.Equal(t, 3, callCount)
-	assert.Equal(t, []int{0, 1}, retryAttempts, "callback should be called for each retry")
-	assert.Len(t, retryErrors, 2)
-	assert.Len(t, retryBackoffs, 2)
+		callCount := 0
+		expectedErr := dberrors.New(dberrors.ErrTimeout, "test.op", "timeout")
+		op := func(ctx context.Context) error {
+			callCount++
+			if callCount < 3 {
+				return expectedErr
+			}
+			return nil
+		}
+
+		err := Do(context.Background(), cfg, op)
+		assert.NoError(t, err)
+		assert.Equal(t, 3, callCount)
+		assert.Equal(t, []int{0, 1}, attempts, "callback should be called for each retry")
+		assert.Equal(t, []error{expectedErr, expectedErr}, errs)
+		assert.Equal(t, []time.Duration{5 * time.Millisecond, 5 * time.Millisecond}, backoffs)
+	})
+
+	t.Run("not called on immediate success", func(t *testing.T) {
+		onRetryCalled := false
+		cfg := &Config{
+			MaxAttempts: 3,
+			Backoff:     DefaultConstantBackoff(),
+			OnRetry: func(attempt int, err error, backoff time.Duration) {
+				onRetryCalled = true
+			},
+		}
+
+		err := Do(context.Background(), cfg, func(ctx context.Context) error { return nil })
+		assert.NoError(t, err)
+		assert.False(t, onRetryCalled, "OnRetry should not be called on immediate success")
+	})
 }
 
 func TestDo_CustomRetryableFunc(t *testing.T) {
-	ctx := context.Background()
-
 	customErr := errors.New("custom error")
-	callCount := 0
 
-	cfg := &Config{
-		MaxAttempts: 3,
-		Backoff: &ConstantBackoff{
-			Delay:  1 * time.Millisecond,
-			Jitter: 0,
+	tests := []struct {
+		name      string
+		retryable func(err error) bool
+		wantCalls int
+	}{
+		{
+			name: "retries the error the func accepts",
+			retryable: func(err error) bool {
+				return errors.Is(err, customErr)
+			},
+			wantCalls: 3,
 		},
-		RetryableFunc: func(err error) bool {
-			// Retry only on our custom error.
-			return errors.Is(err, customErr)
+		{
+			name: "stops when the func rejects the error",
+			retryable: func(err error) bool {
+				return false
+			},
+			wantCalls: 1,
 		},
 	}
 
-	op := func(ctx context.Context) error {
-		callCount++
-		return customErr
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &Config{
+				MaxAttempts: 3,
+				Backoff: &ConstantBackoff{
+					Delay:  1 * time.Millisecond,
+					Jitter: 0,
+				},
+				RetryableFunc: tt.retryable,
+			}
 
-	err := Do(ctx, cfg, op)
-	assert.Error(t, err)
-	assert.Equal(t, 3, callCount, "should retry custom error")
+			callCount := 0
+			op := func(ctx context.Context) error {
+				callCount++
+				return customErr
+			}
+
+			err := Do(context.Background(), cfg, op)
+			assert.ErrorIs(t, err, customErr)
+			assert.Equal(t, tt.wantCalls, callCount)
+		})
+	}
 }
 
-func TestDo_CustomRetryableFuncNonRetryable(t *testing.T) {
-	ctx := context.Background()
-
-	customErr := errors.New("custom error")
-	callCount := 0
-
-	cfg := &Config{
-		MaxAttempts: 3,
-		Backoff: &ConstantBackoff{
-			Delay:  1 * time.Millisecond,
-			Jitter: 0,
+func TestDo_ConfigDefaults(t *testing.T) {
+	tests := []struct {
+		name      string
+		cfg       *Config
+		failures  int
+		wantCalls int
+		wantErr   bool
+	}{
+		{
+			name:      "nil config uses the default config",
+			cfg:       nil,
+			failures:  0,
+			wantCalls: 1,
 		},
-		RetryableFunc: func(err error) bool {
-			return false // Never retry
+		{
+			name:      "zero max attempts defaults to 1",
+			cfg:       &Config{MaxAttempts: 0, Backoff: DefaultConstantBackoff()},
+			failures:  5,
+			wantCalls: 1,
+			wantErr:   true,
+		},
+		{
+			name:      "negative max attempts defaults to 1",
+			cfg:       &Config{MaxAttempts: -5, Backoff: DefaultConstantBackoff()},
+			failures:  5,
+			wantCalls: 1,
+			wantErr:   true,
+		},
+		{
+			name:      "nil backoff uses the default backoff",
+			cfg:       &Config{MaxAttempts: 2, Backoff: nil},
+			failures:  1,
+			wantCalls: 2,
 		},
 	}
 
-	op := func(ctx context.Context) error {
-		callCount++
-		return customErr
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			callCount := 0
+			op := func(ctx context.Context) error {
+				callCount++
+				if callCount <= tt.failures {
+					return dberrors.New(dberrors.ErrTimeout, "test.op", "timeout")
+				}
+				return nil
+			}
+
+			err := Do(context.Background(), tt.cfg, op)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+			assert.Equal(t, tt.wantCalls, callCount)
+		})
 	}
-
-	err := Do(ctx, cfg, op)
-	assert.Error(t, err)
-	assert.Equal(t, 1, callCount, "should not retry when custom func returns false")
-}
-
-func TestDo_NilConfig(t *testing.T) {
-	ctx := context.Background()
-
-	callCount := 0
-	op := func(ctx context.Context) error {
-		callCount++
-		return nil
-	}
-
-	err := Do(ctx, nil, op)
-	assert.NoError(t, err)
-	assert.Equal(t, 1, callCount, "should use default config")
-}
-
-func TestDo_ZeroMaxAttempts(t *testing.T) {
-	ctx := context.Background()
-	cfg := &Config{
-		MaxAttempts: 0, // Invalid, should default to 1
-		Backoff:     DefaultConstantBackoff(),
-	}
-
-	callCount := 0
-	op := func(ctx context.Context) error {
-		callCount++
-		return nil
-	}
-
-	err := Do(ctx, cfg, op)
-	assert.NoError(t, err)
-	assert.Equal(t, 1, callCount, "zero max attempts should default to 1")
 }
 
 func TestDoExponential(t *testing.T) {
@@ -755,232 +888,33 @@ func TestDo_ContextCanceledDuringBackoff(t *testing.T) {
 	assert.LessOrEqual(t, callCount, 2)
 }
 
-func TestDo_NilBackoff(t *testing.T) {
-	ctx := context.Background()
-	cfg := &Config{
-		MaxAttempts: 2,
-		Backoff:     nil, // Should use default
-	}
-
-	callCount := 0
-	op := func(ctx context.Context) error {
-		callCount++
-		if callCount < 2 {
-			return dberrors.New(dberrors.ErrTimeout, "test.op", "timeout")
-		}
-		return nil
-	}
-
-	err := Do(ctx, cfg, op)
-	assert.NoError(t, err)
-	assert.Equal(t, 2, callCount)
-}
-
-func TestDo_NegativeMaxAttempts(t *testing.T) {
-	ctx := context.Background()
-	cfg := &Config{
-		MaxAttempts: -5, // Invalid, should default to 1
-		Backoff:     DefaultConstantBackoff(),
-	}
-
-	callCount := 0
-	op := func(ctx context.Context) error {
-		callCount++
-		return nil
-	}
-
-	err := Do(ctx, cfg, op)
-	assert.NoError(t, err)
-	assert.Equal(t, 1, callCount, "negative max attempts should default to 1")
-}
-
-func TestShouldRetry_NilError(t *testing.T) {
-	cfg := DefaultConfig()
-	result := shouldRetry(cfg, nil)
-	assert.False(t, result, "nil error should not be retryable")
-}
-
-func TestShouldRetry_WithCustomFunc(t *testing.T) {
-	cfg := &Config{
+func TestShouldRetry(t *testing.T) {
+	customCfg := &Config{
 		RetryableFunc: func(err error) bool {
 			return err.Error() == "retry me"
 		},
 	}
+	defaultCfg := &Config{RetryableFunc: nil} // Use default QuicBaaS error check
 
-	t.Run("retryable error", func(t *testing.T) {
-		err := errors.New("retry me")
-		result := shouldRetry(cfg, err)
-		assert.True(t, result)
-	})
-
-	t.Run("non-retryable error", func(t *testing.T) {
-		err := errors.New("don't retry")
-		result := shouldRetry(cfg, err)
-		assert.False(t, result)
-	})
-}
-
-func TestShouldRetry_WithQBError(t *testing.T) {
-	cfg := &Config{
-		RetryableFunc: nil, // Use default QuicBaaS error check
+	tests := []struct {
+		name string
+		cfg  *Config
+		err  error
+		want bool
+	}{
+		{name: "nil error", cfg: DefaultConfig(), err: nil, want: false},
+		{name: "custom func retryable error", cfg: customCfg, err: errors.New("retry me"), want: true},
+		{name: "custom func non-retryable error", cfg: customCfg, err: errors.New("don't retry"), want: false},
+		{name: "retryable QuicBaaS error", cfg: defaultCfg, err: dberrors.New(dberrors.ErrTimeout, "test", "timeout"), want: true},
+		{name: "non-retryable QuicBaaS error", cfg: defaultCfg, err: dberrors.New(dberrors.ErrInvalidInput, "test", "bad input"), want: false},
+		{name: "standard error", cfg: defaultCfg, err: errors.New("standard error"), want: false},
 	}
 
-	t.Run("retryable QuicBaaS error", func(t *testing.T) {
-		err := dberrors.New(dberrors.ErrTimeout, "test", "timeout")
-		result := shouldRetry(cfg, err)
-		assert.True(t, result)
-	})
-
-	t.Run("non-retryable QuicBaaS error", func(t *testing.T) {
-		err := dberrors.New(dberrors.ErrInvalidInput, "test", "bad input")
-		result := shouldRetry(cfg, err)
-		assert.False(t, result)
-	})
-
-	t.Run("standard error", func(t *testing.T) {
-		err := errors.New("standard error")
-		result := shouldRetry(cfg, err)
-		assert.False(t, result, "standard errors should not be retryable")
-	})
-}
-
-func TestExponentialBackoff_EdgeCases(t *testing.T) {
-	t.Run("zero jitter", func(t *testing.T) {
-		backoff := &ExponentialBackoff{
-			InitialDelay: 100 * time.Millisecond,
-			MaxDelay:     1 * time.Second,
-			Multiplier:   2.0,
-			Jitter:       0,
-		}
-
-		// Multiple calls should return same value
-		d1 := backoff.Next(0)
-		d2 := backoff.Next(0)
-		assert.Equal(t, d1, d2)
-	})
-
-	t.Run("full jitter", func(t *testing.T) {
-		backoff := &ExponentialBackoff{
-			InitialDelay: 100 * time.Millisecond,
-			MaxDelay:     1 * time.Second,
-			Multiplier:   2.0,
-			Jitter:       1.0, // 100% jitter
-		}
-
-		// Should vary between 0 and InitialDelay
-		d := backoff.Next(0)
-		assert.GreaterOrEqual(t, d, time.Duration(0))
-		assert.LessOrEqual(t, d, 100*time.Millisecond)
-	})
-
-	t.Run("very high attempt number", func(t *testing.T) {
-		backoff := &ExponentialBackoff{
-			InitialDelay: 10 * time.Millisecond,
-			MaxDelay:     1 * time.Second,
-			Multiplier:   2.0,
-			Jitter:       0,
-		}
-
-		// Should cap at MaxDelay
-		d := backoff.Next(100)
-		assert.Equal(t, 1*time.Second, d)
-	})
-
-	t.Run("multiplier of 1", func(t *testing.T) {
-		backoff := &ExponentialBackoff{
-			InitialDelay: 100 * time.Millisecond,
-			MaxDelay:     1 * time.Second,
-			Multiplier:   1.0,
-		}
-
-		// Should stay constant
-		d1 := backoff.Next(0)
-		d2 := backoff.Next(5)
-		d3 := backoff.Next(10)
-		assert.Equal(t, d1, d2)
-		assert.Equal(t, d2, d3)
-	})
-}
-
-func TestLinearBackoff_EdgeCases(t *testing.T) {
-	t.Run("zero increment", func(t *testing.T) {
-		backoff := &LinearBackoff{
-			InitialDelay: 100 * time.Millisecond,
-			MaxDelay:     1 * time.Second,
-			Increment:    0,
-			Jitter:       0,
-		}
-
-		// Should stay at InitialDelay
-		d1 := backoff.Next(0)
-		d2 := backoff.Next(5)
-		assert.Equal(t, 100*time.Millisecond, d1)
-		assert.Equal(t, 100*time.Millisecond, d2)
-	})
-
-	t.Run("negative attempt", func(t *testing.T) {
-		backoff := &LinearBackoff{
-			InitialDelay: 100 * time.Millisecond,
-			MaxDelay:     1 * time.Second,
-			Increment:    50 * time.Millisecond,
-			Jitter:       0,
-		}
-
-		d := backoff.Next(-5)
-		assert.Equal(t, 100*time.Millisecond, d)
-	})
-
-	t.Run("large increment quickly reaches max", func(t *testing.T) {
-		backoff := &LinearBackoff{
-			InitialDelay: 100 * time.Millisecond,
-			MaxDelay:     500 * time.Millisecond,
-			Increment:    200 * time.Millisecond,
-			Jitter:       0,
-		}
-
-		d0 := backoff.Next(0)
-		d1 := backoff.Next(1)
-		d2 := backoff.Next(2)
-		d10 := backoff.Next(10)
-
-		assert.Equal(t, 100*time.Millisecond, d0)
-		assert.Equal(t, 300*time.Millisecond, d1)
-		assert.Equal(t, 500*time.Millisecond, d2)  // Capped
-		assert.Equal(t, 500*time.Millisecond, d10) // Still capped
-	})
-}
-
-func TestConstantBackoff_EdgeCases(t *testing.T) {
-	t.Run("zero delay", func(t *testing.T) {
-		backoff := &ConstantBackoff{
-			Delay:  0,
-			Jitter: 0,
-		}
-
-		d := backoff.Next(5)
-		assert.Equal(t, time.Duration(0), d)
-	})
-
-	t.Run("jitter with zero delay", func(t *testing.T) {
-		backoff := &ConstantBackoff{
-			Delay:  0,
-			Jitter: 0.5,
-		}
-
-		d := backoff.Next(5)
-		assert.Equal(t, time.Duration(0), d)
-	})
-
-	t.Run("different attempt numbers same delay", func(t *testing.T) {
-		backoff := &ConstantBackoff{
-			Delay:  100 * time.Millisecond,
-			Jitter: 0,
-		}
-
-		d1 := backoff.Next(0)
-		d2 := backoff.Next(100)
-		assert.Equal(t, d1, d2)
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, shouldRetry(tt.cfg, tt.err))
+		})
+	}
 }
 
 func TestDoWithBackoff(t *testing.T) {
@@ -1003,70 +937,4 @@ func TestDoWithBackoff(t *testing.T) {
 	err := DoWithBackoff(ctx, 3, backoff, op)
 	assert.NoError(t, err)
 	assert.Equal(t, 2, callCount)
-}
-
-func TestDo_OnRetryNotCalledOnSuccess(t *testing.T) {
-	ctx := context.Background()
-
-	onRetryCalled := false
-	cfg := &Config{
-		MaxAttempts: 3,
-		Backoff:     DefaultConstantBackoff(),
-		OnRetry: func(attempt int, err error, backoff time.Duration) {
-			onRetryCalled = true
-		},
-	}
-
-	op := func(ctx context.Context) error {
-		return nil // Immediate success
-	}
-
-	err := Do(ctx, cfg, op)
-	assert.NoError(t, err)
-	assert.False(t, onRetryCalled, "OnRetry should not be called on immediate success")
-}
-
-func TestDo_OnRetryCalledCorrectly(t *testing.T) {
-	ctx := context.Background()
-
-	attempts := []int{}
-	errors := []error{}
-	backoffs := []time.Duration{}
-
-	cfg := &Config{
-		MaxAttempts: 4,
-		Backoff: &ConstantBackoff{
-			Delay:  5 * time.Millisecond,
-			Jitter: 0,
-		},
-		OnRetry: func(attempt int, err error, backoff time.Duration) {
-			attempts = append(attempts, attempt)
-			errors = append(errors, err)
-			backoffs = append(backoffs, backoff)
-		},
-	}
-
-	callCount := 0
-	expectedErr := dberrors.New(dberrors.ErrTimeout, "test.op", "timeout")
-
-	op := func(ctx context.Context) error {
-		callCount++
-		if callCount < 3 {
-			return expectedErr
-		}
-		return nil
-	}
-
-	err := Do(ctx, cfg, op)
-	assert.NoError(t, err)
-	assert.Equal(t, 3, callCount)
-
-	// OnRetry should be called twice (after 1st and 2nd failures)
-	assert.Equal(t, []int{0, 1}, attempts)
-	assert.Len(t, errors, 2)
-	assert.Len(t, backoffs, 2)
-
-	for _, b := range backoffs {
-		assert.Equal(t, 5*time.Millisecond, b)
-	}
 }

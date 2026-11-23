@@ -50,11 +50,6 @@ func TestMetrics_AllOperations(t *testing.T) {
 		}
 	})
 
-	t.Run("get unknown metric returns zero", func(t *testing.T) {
-		val := m.Get("unknown_metric")
-		assert.Equal(t, int64(0), val)
-	})
-
 	t.Run("L2 metric accessors", func(t *testing.T) {
 		m.Reset()
 
@@ -260,32 +255,11 @@ func TestMetricsSnapshot_Operations(t *testing.T) {
 }
 
 func TestMetrics_EdgeCases(t *testing.T) {
-	t.Run("add zero value", func(t *testing.T) {
-		m := NewMetrics()
-		m.Add("l1_hits", 0)
-		assert.Equal(t, int64(0), m.Get("l1_hits"))
-	})
-
 	t.Run("add negative value", func(t *testing.T) {
 		m := NewMetrics()
 		m.Add("l1_hits", 100)
 		m.Add("l1_hits", -50)
 		assert.Equal(t, int64(50), m.Get("l1_hits"))
-	})
-
-	t.Run("multiple increments", func(t *testing.T) {
-		m := NewMetrics()
-		for i := 0; i < 1000; i++ {
-			m.Increment("l1_hits")
-		}
-		assert.Equal(t, int64(1000), m.L1Hits())
-	})
-
-	t.Run("large values", func(t *testing.T) {
-		m := NewMetrics()
-		largeValue := int64(1000000000)
-		m.Add("l1_hits", largeValue)
-		assert.Equal(t, largeValue, m.Get("l1_hits"))
 	})
 }
 

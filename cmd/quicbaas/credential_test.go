@@ -19,11 +19,11 @@ import (
 	"bytes"
 	"context"
 	stderrors "errors"
-	"strings"
 	"testing"
 	"time"
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -179,20 +179,132 @@ func resetCredentialFlags() {
 	credentialOutputFmt = "table"
 }
 
-// =============================================================================
-// Error types
-// =============================================================================
-
-func TestCredentialNameRequiredError_Message(t *testing.T) {
-	err := &CredentialNameRequiredError{Verb: "submit"}
-	assert.Contains(t, err.Error(), "submit")
-	assert.Contains(t, err.Error(), "<name>")
+// failingCredentialClient returns a fake whose every verb fails with err.
+func failingCredentialClient(err error) *fakeCredentialClient {
+	return &fakeCredentialClient{
+		submitFunc: func(context.Context, *qrdbtransport.CredentialSubmitRequest) error { return err },
+		deleteFunc: func(context.Context, string) error { return err },
+		listFunc: func(context.Context, *qrdbtransport.CredentialListRequest) (*qrdbtransport.CredentialListResponse, error) {
+			return nil, err
+		},
+		rotateFunc: func(context.Context, *qrdbtransport.CredentialRotateRequest) (*qrdbtransport.CredentialRotateResponse, error) {
+			return nil, err
+		},
+		retrieveVersionFunc: func(context.Context, *qrdbtransport.CredentialRetrieveVersionRequest) (*qrdbtransport.CredentialRetrieveVersionResponse, error) {
+			return nil, err
+		},
+		listVersionsFunc: func(context.Context, *qrdbtransport.CredentialListVersionsRequest) (*qrdbtransport.CredentialListVersionsResponse, error) {
+			return nil, err
+		},
+		gcExpiredFunc: func(context.Context, *qrdbtransport.CredentialGCRequest) (*qrdbtransport.CredentialGCResponse, error) {
+			return nil, err
+		},
+	}
 }
 
-func TestCredentialValueRequiredError_Message(t *testing.T) {
-	err := &CredentialValueRequiredError{Verb: "rotate"}
-	assert.Contains(t, err.Error(), "rotate")
-	assert.Contains(t, err.Error(), "--value")
+// executeCredentialCmd runs cmd with args, discarding its output.
+func executeCredentialCmd(cmd *cobra.Command, args []string) error {
+	cmd.SetArgs(args)
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	return cmd.Execute()
+}
+
+// =============================================================================
+// Error paths shared by every verb
+// =============================================================================
+
+// TestCredentialVerbs_ClientErrors verifies every verb surfaces both a
+// client-factory error and a transport error unchanged.
+func TestCredentialVerbs_ClientErrors(t *testing.T) {
+	verbs := []struct {
+		verb   string
+		newCmd func() *cobra.Command
+		args   []string
+	}{
+		{"submit", newCredentialSubmitCmd, []string{"my-key", "--value", "v"}},
+		{"list", newCredentialListCmd, nil},
+		{"rotate", newCredentialRotateCmd, []string{"my-key", "--value", "v"}},
+		{"retrieve", newCredentialRetrieveCmd, []string{"my-key"}},
+		{"versions", newCredentialVersionsCmd, []string{"my-key"}},
+		{"delete", newCredentialDeleteCmd, []string{"my-key"}},
+		{"gc", newCredentialGCCmd, []string{"my-key"}},
+	}
+	factoryErr := stderrors.New("factory boom")
+	transportErr := stderrors.New("transport failed")
+	failures := []struct {
+		name    string
+		install func() func()
+		wantErr error
+	}{
+		{"factory", func() func() { return withFailingCredentialFactory(factoryErr) }, factoryErr},
+		{"transport", func() func() { return withFakeCredentialFactory(failingCredentialClient(transportErr)) }, transportErr},
+	}
+	for _, v := range verbs {
+		for _, f := range failures {
+			t.Run(v.verb+"/"+f.name, func(t *testing.T) {
+				defer resetCredentialFlags()
+				defer f.install()()
+
+				err := executeCredentialCmd(v.newCmd(), v.args)
+				assert.ErrorIs(t, err, f.wantErr)
+			})
+		}
+	}
+}
+
+// TestCredentialVerbs_MissingName verifies every named verb rejects a
+// whitespace-only name before it reaches the client.
+func TestCredentialVerbs_MissingName(t *testing.T) {
+	tests := []struct {
+		verb   string
+		newCmd func() *cobra.Command
+		args   []string
+	}{
+		{"submit", newCredentialSubmitCmd, []string{"  ", "--value", "x"}},
+		{"rotate", newCredentialRotateCmd, []string{"   ", "--value", "v"}},
+		{"retrieve", newCredentialRetrieveCmd, []string{"  "}},
+		{"versions", newCredentialVersionsCmd, []string{" "}},
+		{"delete", newCredentialDeleteCmd, []string{"  "}},
+		{"gc", newCredentialGCCmd, []string{"  "}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.verb, func(t *testing.T) {
+			defer resetCredentialFlags()
+
+			err := executeCredentialCmd(tt.newCmd(), tt.args)
+			var typed *CredentialNameRequiredError
+			require.ErrorAs(t, err, &typed)
+			assert.Equal(t, tt.verb, typed.Verb)
+			assert.Contains(t, err.Error(), tt.verb)
+			assert.Contains(t, err.Error(), "<name>")
+		})
+	}
+}
+
+// TestCredentialVerbs_MissingValue verifies the writing verbs reject an
+// empty --value before they reach the client.
+func TestCredentialVerbs_MissingValue(t *testing.T) {
+	tests := []struct {
+		verb   string
+		newCmd func() *cobra.Command
+	}{
+		{"submit", newCredentialSubmitCmd},
+		{"rotate", newCredentialRotateCmd},
+	}
+	for _, tt := range tests {
+		t.Run(tt.verb, func(t *testing.T) {
+			defer resetCredentialFlags()
+
+			err := executeCredentialCmd(tt.newCmd(), []string{"my-key"})
+			var typed *CredentialValueRequiredError
+			require.ErrorAs(t, err, &typed)
+			assert.Equal(t, tt.verb, typed.Verb)
+			assert.Contains(t, err.Error(), tt.verb)
+			assert.Contains(t, err.Error(), "--value")
+		})
+	}
 }
 
 // =============================================================================
@@ -218,77 +330,6 @@ func TestCredentialSubmit_Success(t *testing.T) {
 	assert.Contains(t, out.String(), `credential "my-key" submitted`)
 }
 
-// TestCredentialSubmit_MissingName rejects whitespace-only positional arg.
-func TestCredentialSubmit_MissingName(t *testing.T) {
-	defer resetCredentialFlags()
-	credentialValue = "x"
-	cmd := newCredentialSubmitCmd()
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-
-	err := runCredentialSubmit(cmd, []string{"  "})
-	require.Error(t, err)
-	var typed *CredentialNameRequiredError
-	require.ErrorAs(t, err, &typed)
-	assert.Equal(t, "submit", typed.Verb)
-}
-
-// TestCredentialSubmit_MissingValue rejects empty --value flag.
-func TestCredentialSubmit_MissingValue(t *testing.T) {
-	defer resetCredentialFlags()
-	cmd := newCredentialSubmitCmd()
-	cmd.SetArgs([]string{"my-key"})
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-
-	err := cmd.Execute()
-	require.Error(t, err)
-	var typed *CredentialValueRequiredError
-	require.ErrorAs(t, err, &typed)
-	assert.Equal(t, "submit", typed.Verb)
-}
-
-// TestCredentialSubmit_FactoryError surfaces typed factory errors.
-func TestCredentialSubmit_FactoryError(t *testing.T) {
-	defer resetCredentialFlags()
-	wantErr := stderrors.New("factory boom")
-	defer withFailingCredentialFactory(wantErr)()
-
-	cmd := newCredentialSubmitCmd()
-	cmd.SetArgs([]string{"my-key", "--value", "v"})
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-
-	err := cmd.Execute()
-	require.Error(t, err)
-	assert.ErrorIs(t, err, wantErr)
-}
-
-// TestCredentialSubmit_TransportError surfaces SDK errors.
-func TestCredentialSubmit_TransportError(t *testing.T) {
-	defer resetCredentialFlags()
-	wantErr := stderrors.New("submit failed")
-	fc := &fakeCredentialClient{
-		submitFunc: func(_ context.Context, _ *qrdbtransport.CredentialSubmitRequest) error {
-			return wantErr
-		},
-	}
-	defer withFakeCredentialFactory(fc)()
-
-	cmd := newCredentialSubmitCmd()
-	cmd.SetArgs([]string{"my-key", "--value", "v"})
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-
-	err := cmd.Execute()
-	require.Error(t, err)
-	assert.ErrorIs(t, err, wantErr)
-}
-
 // =============================================================================
 // list
 // =============================================================================
@@ -310,9 +351,7 @@ func TestCredentialList_Success(t *testing.T) {
 
 	require.NoError(t, cmd.Execute())
 	require.NotNil(t, fc.lastListReq)
-	got := out.String()
-	assert.Contains(t, got, "alpha")
-	assert.Contains(t, got, "beta")
+	assert.Equal(t, "alpha\nbeta\n", out.String())
 }
 
 // TestCredentialList_EmptyTable shows the friendly empty marker.
@@ -327,7 +366,7 @@ func TestCredentialList_EmptyTable(t *testing.T) {
 	cmd.SetErr(&out)
 
 	require.NoError(t, cmd.Execute())
-	assert.Contains(t, out.String(), "(no credentials)")
+	assert.Equal(t, "(no credentials)\n", out.String())
 }
 
 // TestCredentialList_JSON outputs a JSON envelope.
@@ -350,43 +389,6 @@ func TestCredentialList_JSON(t *testing.T) {
 	got := out.String()
 	assert.Contains(t, got, `"names"`)
 	assert.Contains(t, got, `"alpha"`)
-}
-
-// TestCredentialList_FactoryError surfaces factory errors.
-func TestCredentialList_FactoryError(t *testing.T) {
-	defer resetCredentialFlags()
-	wantErr := stderrors.New("factory boom")
-	defer withFailingCredentialFactory(wantErr)()
-
-	cmd := newCredentialListCmd()
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-
-	err := cmd.Execute()
-	require.Error(t, err)
-	assert.ErrorIs(t, err, wantErr)
-}
-
-// TestCredentialList_TransportError surfaces SDK errors.
-func TestCredentialList_TransportError(t *testing.T) {
-	defer resetCredentialFlags()
-	wantErr := stderrors.New("list failed")
-	fc := &fakeCredentialClient{
-		listFunc: func(_ context.Context, _ *qrdbtransport.CredentialListRequest) (*qrdbtransport.CredentialListResponse, error) {
-			return nil, wantErr
-		},
-	}
-	defer withFakeCredentialFactory(fc)()
-
-	cmd := newCredentialListCmd()
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-
-	err := cmd.Execute()
-	require.Error(t, err)
-	assert.ErrorIs(t, err, wantErr)
 }
 
 // =============================================================================
@@ -421,6 +423,7 @@ func TestCredentialRotate_Success(t *testing.T) {
 	assert.Equal(t, int64(24*60*60), fc.lastRotateReq.GracePeriodSeconds)
 	assert.Contains(t, out.String(), "rotated my-key")
 	assert.Contains(t, out.String(), "previous v3 -> new v4")
+	assert.Contains(t, out.String(), "retrievable until")
 }
 
 // TestCredentialRotate_NoGrace verifies the no-grace branch in formatting.
@@ -445,76 +448,6 @@ func TestCredentialRotate_NoGrace(t *testing.T) {
 
 	require.NoError(t, cmd.Execute())
 	assert.NotContains(t, out.String(), "retrievable until")
-}
-
-// TestCredentialRotate_MissingName rejects whitespace-only positional.
-func TestCredentialRotate_MissingName(t *testing.T) {
-	defer resetCredentialFlags()
-	credentialValue = "v"
-	cmd := newCredentialRotateCmd()
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-
-	err := runCredentialRotate(cmd, []string{"   "})
-	require.Error(t, err)
-	var typed *CredentialNameRequiredError
-	require.ErrorAs(t, err, &typed)
-	assert.Equal(t, "rotate", typed.Verb)
-}
-
-// TestCredentialRotate_MissingValue rejects empty --value.
-func TestCredentialRotate_MissingValue(t *testing.T) {
-	defer resetCredentialFlags()
-	cmd := newCredentialRotateCmd()
-	cmd.SetArgs([]string{"my-key"})
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-
-	err := cmd.Execute()
-	require.Error(t, err)
-	var typed *CredentialValueRequiredError
-	require.ErrorAs(t, err, &typed)
-}
-
-// TestCredentialRotate_FactoryError surfaces factory errors.
-func TestCredentialRotate_FactoryError(t *testing.T) {
-	defer resetCredentialFlags()
-	wantErr := stderrors.New("factory boom")
-	defer withFailingCredentialFactory(wantErr)()
-
-	cmd := newCredentialRotateCmd()
-	cmd.SetArgs([]string{"my-key", "--value", "v"})
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-
-	err := cmd.Execute()
-	require.Error(t, err)
-	assert.ErrorIs(t, err, wantErr)
-}
-
-// TestCredentialRotate_TransportError surfaces SDK errors.
-func TestCredentialRotate_TransportError(t *testing.T) {
-	defer resetCredentialFlags()
-	wantErr := stderrors.New("rotate failed")
-	fc := &fakeCredentialClient{
-		rotateFunc: func(_ context.Context, _ *qrdbtransport.CredentialRotateRequest) (*qrdbtransport.CredentialRotateResponse, error) {
-			return nil, wantErr
-		},
-	}
-	defer withFakeCredentialFactory(fc)()
-
-	cmd := newCredentialRotateCmd()
-	cmd.SetArgs([]string{"my-key", "--value", "v"})
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-
-	err := cmd.Execute()
-	require.Error(t, err)
-	assert.ErrorIs(t, err, wantErr)
 }
 
 // TestCredentialRotate_JSON exercises the JSON output branch.
@@ -588,60 +521,6 @@ func TestCredentialRetrieve_SpecificVersion(t *testing.T) {
 	assert.Equal(t, uint64(3), fc.lastRetrieveReq.Version)
 }
 
-// TestCredentialRetrieve_MissingName rejects whitespace-only positional.
-func TestCredentialRetrieve_MissingName(t *testing.T) {
-	defer resetCredentialFlags()
-	cmd := newCredentialRetrieveCmd()
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-
-	err := runCredentialRetrieve(cmd, []string{"  "})
-	require.Error(t, err)
-	var typed *CredentialNameRequiredError
-	require.ErrorAs(t, err, &typed)
-	assert.Equal(t, "retrieve", typed.Verb)
-}
-
-// TestCredentialRetrieve_FactoryError surfaces factory errors.
-func TestCredentialRetrieve_FactoryError(t *testing.T) {
-	defer resetCredentialFlags()
-	wantErr := stderrors.New("factory boom")
-	defer withFailingCredentialFactory(wantErr)()
-
-	cmd := newCredentialRetrieveCmd()
-	cmd.SetArgs([]string{"my-key"})
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-
-	err := cmd.Execute()
-	require.Error(t, err)
-	assert.ErrorIs(t, err, wantErr)
-}
-
-// TestCredentialRetrieve_TransportError surfaces SDK errors.
-func TestCredentialRetrieve_TransportError(t *testing.T) {
-	defer resetCredentialFlags()
-	wantErr := stderrors.New("retrieve failed")
-	fc := &fakeCredentialClient{
-		retrieveVersionFunc: func(_ context.Context, _ *qrdbtransport.CredentialRetrieveVersionRequest) (*qrdbtransport.CredentialRetrieveVersionResponse, error) {
-			return nil, wantErr
-		},
-	}
-	defer withFakeCredentialFactory(fc)()
-
-	cmd := newCredentialRetrieveCmd()
-	cmd.SetArgs([]string{"my-key"})
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-
-	err := cmd.Execute()
-	require.Error(t, err)
-	assert.ErrorIs(t, err, wantErr)
-}
-
 // =============================================================================
 // versions
 // =============================================================================
@@ -656,7 +535,7 @@ func TestCredentialVersions_Success(t *testing.T) {
 				Name: req.Name,
 				Versions: []qrdbtransport.CredentialVersionInfo{
 					{Version: 1, IsCurrent: false, CreatedAtUnix: now - 86400, GraceUntilUnix: now + 3600},
-					{Version: 2, IsCurrent: true, CreatedAtUnix: now},
+					{Version: 2, IsCurrent: true},
 				},
 			}, nil
 		},
@@ -720,60 +599,6 @@ func TestCredentialVersions_JSON(t *testing.T) {
 	assert.Contains(t, got, `"versions"`)
 }
 
-// TestCredentialVersions_MissingName rejects whitespace-only positional.
-func TestCredentialVersions_MissingName(t *testing.T) {
-	defer resetCredentialFlags()
-	cmd := newCredentialVersionsCmd()
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-
-	err := runCredentialVersions(cmd, []string{" "})
-	require.Error(t, err)
-	var typed *CredentialNameRequiredError
-	require.ErrorAs(t, err, &typed)
-	assert.Equal(t, "versions", typed.Verb)
-}
-
-// TestCredentialVersions_FactoryError surfaces factory errors.
-func TestCredentialVersions_FactoryError(t *testing.T) {
-	defer resetCredentialFlags()
-	wantErr := stderrors.New("factory boom")
-	defer withFailingCredentialFactory(wantErr)()
-
-	cmd := newCredentialVersionsCmd()
-	cmd.SetArgs([]string{"my-key"})
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-
-	err := cmd.Execute()
-	require.Error(t, err)
-	assert.ErrorIs(t, err, wantErr)
-}
-
-// TestCredentialVersions_TransportError surfaces SDK errors.
-func TestCredentialVersions_TransportError(t *testing.T) {
-	defer resetCredentialFlags()
-	wantErr := stderrors.New("versions failed")
-	fc := &fakeCredentialClient{
-		listVersionsFunc: func(_ context.Context, _ *qrdbtransport.CredentialListVersionsRequest) (*qrdbtransport.CredentialListVersionsResponse, error) {
-			return nil, wantErr
-		},
-	}
-	defer withFakeCredentialFactory(fc)()
-
-	cmd := newCredentialVersionsCmd()
-	cmd.SetArgs([]string{"my-key"})
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-
-	err := cmd.Execute()
-	require.Error(t, err)
-	assert.ErrorIs(t, err, wantErr)
-}
-
 // =============================================================================
 // delete
 // =============================================================================
@@ -793,58 +618,6 @@ func TestCredentialDelete_Success(t *testing.T) {
 	require.NoError(t, cmd.Execute())
 	assert.Equal(t, "my-key", fc.lastDeleteName)
 	assert.Contains(t, out.String(), `credential "my-key" deleted`)
-}
-
-// TestCredentialDelete_MissingName rejects whitespace-only positional.
-func TestCredentialDelete_MissingName(t *testing.T) {
-	defer resetCredentialFlags()
-	cmd := newCredentialDeleteCmd()
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-
-	err := runCredentialDelete(cmd, []string{"  "})
-	require.Error(t, err)
-	var typed *CredentialNameRequiredError
-	require.ErrorAs(t, err, &typed)
-	assert.Equal(t, "delete", typed.Verb)
-}
-
-// TestCredentialDelete_FactoryError surfaces factory errors.
-func TestCredentialDelete_FactoryError(t *testing.T) {
-	defer resetCredentialFlags()
-	wantErr := stderrors.New("factory boom")
-	defer withFailingCredentialFactory(wantErr)()
-
-	cmd := newCredentialDeleteCmd()
-	cmd.SetArgs([]string{"my-key"})
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-
-	err := cmd.Execute()
-	require.Error(t, err)
-	assert.ErrorIs(t, err, wantErr)
-}
-
-// TestCredentialDelete_TransportError surfaces SDK errors.
-func TestCredentialDelete_TransportError(t *testing.T) {
-	defer resetCredentialFlags()
-	wantErr := stderrors.New("delete failed")
-	fc := &fakeCredentialClient{
-		deleteFunc: func(_ context.Context, _ string) error { return wantErr },
-	}
-	defer withFakeCredentialFactory(fc)()
-
-	cmd := newCredentialDeleteCmd()
-	cmd.SetArgs([]string{"my-key"})
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-
-	err := cmd.Execute()
-	require.Error(t, err)
-	assert.ErrorIs(t, err, wantErr)
 }
 
 // =============================================================================
@@ -873,164 +646,11 @@ func TestCredentialGC_Success(t *testing.T) {
 	assert.Contains(t, out.String(), "reaped 7 expired version(s)")
 }
 
-// TestCredentialGC_MissingName rejects whitespace-only positional.
-func TestCredentialGC_MissingName(t *testing.T) {
-	defer resetCredentialFlags()
-	cmd := newCredentialGCCmd()
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-
-	err := runCredentialGC(cmd, []string{"  "})
-	require.Error(t, err)
-	var typed *CredentialNameRequiredError
-	require.ErrorAs(t, err, &typed)
-	assert.Equal(t, "gc", typed.Verb)
-}
-
-// TestCredentialGC_FactoryError surfaces factory errors.
-func TestCredentialGC_FactoryError(t *testing.T) {
-	defer resetCredentialFlags()
-	wantErr := stderrors.New("factory boom")
-	defer withFailingCredentialFactory(wantErr)()
-
-	cmd := newCredentialGCCmd()
-	cmd.SetArgs([]string{"my-key"})
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-
-	err := cmd.Execute()
-	require.Error(t, err)
-	assert.ErrorIs(t, err, wantErr)
-}
-
-// TestCredentialGC_TransportError surfaces SDK errors.
-func TestCredentialGC_TransportError(t *testing.T) {
-	defer resetCredentialFlags()
-	wantErr := stderrors.New("gc failed")
-	fc := &fakeCredentialClient{
-		gcExpiredFunc: func(_ context.Context, _ *qrdbtransport.CredentialGCRequest) (*qrdbtransport.CredentialGCResponse, error) {
-			return nil, wantErr
-		},
-	}
-	defer withFakeCredentialFactory(fc)()
-
-	cmd := newCredentialGCCmd()
-	cmd.SetArgs([]string{"my-key"})
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-
-	err := cmd.Execute()
-	require.Error(t, err)
-	assert.ErrorIs(t, err, wantErr)
-}
-
 // =============================================================================
 // Golden-output formatters (writeCredentialNames / writeCredentialRotateResult /
 // writeCredentialVersions). These exercise the format helpers directly so the
 // json + table branches are covered even when callers swap formats.
 // =============================================================================
-
-// TestWriteCredentialNames_TableNonEmpty prints one name per line.
-func TestWriteCredentialNames_TableNonEmpty(t *testing.T) {
-	var buf bytes.Buffer
-	require.NoError(t, writeCredentialNames(&buf, []string{"a", "b"}, "table"))
-	got := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
-	assert.Equal(t, []string{"a", "b"}, got)
-}
-
-// TestWriteCredentialNames_TableEmpty prints the friendly empty marker.
-func TestWriteCredentialNames_TableEmpty(t *testing.T) {
-	var buf bytes.Buffer
-	require.NoError(t, writeCredentialNames(&buf, nil, "table"))
-	assert.Equal(t, "(no credentials)\n", buf.String())
-}
-
-// TestWriteCredentialNames_JSON wraps the names in a map envelope.
-func TestWriteCredentialNames_JSON(t *testing.T) {
-	var buf bytes.Buffer
-	require.NoError(t, writeCredentialNames(&buf, []string{"a"}, "json"))
-	got := buf.String()
-	assert.Contains(t, got, `"names"`)
-	assert.Contains(t, got, `"a"`)
-}
-
-// TestWriteCredentialRotateResult_TableNoGrace omits the grace tail.
-func TestWriteCredentialRotateResult_TableNoGrace(t *testing.T) {
-	var buf bytes.Buffer
-	resp := &qrdbtransport.CredentialRotateResponse{
-		Name: "k", PreviousVersion: 1, NewVersion: 2,
-	}
-	require.NoError(t, writeCredentialRotateResult(&buf, resp, "table"))
-	got := buf.String()
-	assert.Contains(t, got, "rotated k")
-	assert.Contains(t, got, "previous v1 -> new v2")
-	assert.NotContains(t, got, "retrievable until")
-}
-
-// TestWriteCredentialRotateResult_TableWithGrace includes the grace tail.
-func TestWriteCredentialRotateResult_TableWithGrace(t *testing.T) {
-	var buf bytes.Buffer
-	resp := &qrdbtransport.CredentialRotateResponse{
-		Name: "k", PreviousVersion: 1, NewVersion: 2,
-		GraceUntilUnix: time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC).Unix(),
-	}
-	require.NoError(t, writeCredentialRotateResult(&buf, resp, "table"))
-	assert.Contains(t, buf.String(), "retrievable until")
-}
-
-// TestWriteCredentialRotateResult_JSON wraps the response in JSON.
-func TestWriteCredentialRotateResult_JSON(t *testing.T) {
-	var buf bytes.Buffer
-	resp := &qrdbtransport.CredentialRotateResponse{Name: "k", PreviousVersion: 1, NewVersion: 2}
-	require.NoError(t, writeCredentialRotateResult(&buf, resp, "json"))
-	got := buf.String()
-	assert.Contains(t, got, `"name": "k"`)
-	assert.Contains(t, got, `"new_version": 2`)
-}
-
-// TestWriteCredentialVersions_TableEmpty prints the friendly empty marker.
-func TestWriteCredentialVersions_TableEmpty(t *testing.T) {
-	var buf bytes.Buffer
-	resp := &qrdbtransport.CredentialListVersionsResponse{Name: "k"}
-	require.NoError(t, writeCredentialVersions(&buf, resp, "table"))
-	assert.Contains(t, buf.String(), "(no versions)")
-}
-
-// TestWriteCredentialVersions_TableRendered includes header + rows, with
-// "-" placeholders for missing timestamps.
-func TestWriteCredentialVersions_TableRendered(t *testing.T) {
-	var buf bytes.Buffer
-	resp := &qrdbtransport.CredentialListVersionsResponse{
-		Name: "k",
-		Versions: []qrdbtransport.CredentialVersionInfo{
-			{Version: 1, IsCurrent: true},
-			{Version: 2, IsCurrent: false, CreatedAtUnix: 100, GraceUntilUnix: 200},
-		},
-	}
-	require.NoError(t, writeCredentialVersions(&buf, resp, "table"))
-	got := buf.String()
-	assert.Contains(t, got, "VERSION")
-	assert.Contains(t, got, "yes")
-	assert.Contains(t, got, "no")
-}
-
-// TestWriteCredentialVersions_JSON wraps the response in JSON.
-func TestWriteCredentialVersions_JSON(t *testing.T) {
-	var buf bytes.Buffer
-	resp := &qrdbtransport.CredentialListVersionsResponse{
-		Name: "k",
-		Versions: []qrdbtransport.CredentialVersionInfo{
-			{Version: 1, IsCurrent: true},
-		},
-	}
-	require.NoError(t, writeCredentialVersions(&buf, resp, "json"))
-	got := buf.String()
-	assert.Contains(t, got, `"name": "k"`)
-	assert.Contains(t, got, `"versions"`)
-}
 
 // =============================================================================
 // SDK factory error path

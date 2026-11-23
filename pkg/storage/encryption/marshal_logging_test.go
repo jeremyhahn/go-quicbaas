@@ -35,6 +35,17 @@ type TestInvalidMarshalType struct {
 	Invalid int `json:"invalid" encrypt:"aes128"`
 }
 
+// newTestLogger returns a debug-level JSON logger for the logging variants.
+func newTestLogger(t *testing.T) *logger.Logger {
+	t.Helper()
+	log, err := logger.New(logger.LogConfig{
+		Level:  "debug",
+		Format: "json",
+	})
+	require.NoError(t, err)
+	return log
+}
+
 func TestMarshalWithEncryptionAndLogging_Success(t *testing.T) {
 	key := make([]byte, AES256KeySize)
 	_, err := rand.Read(key)
@@ -47,42 +58,24 @@ func TestMarshalWithEncryptionAndLogging_Success(t *testing.T) {
 		Password: "secret123",
 	}
 
-	// Create a test logger
-	log, err := logger.New(logger.LogConfig{
-		Level:  "debug",
-		Format: "json",
-	})
-	require.NoError(t, err)
-
-	// Test with logger
-	data, err := MarshalWithEncryptionAndLogging(user, key, log)
-	require.NoError(t, err)
-	assert.NotNil(t, data)
-
-	// Verify we can unmarshal it back
-	result := &TestUserForLogging{}
-	err = UnmarshalWithDecryption(data, result, key)
-	require.NoError(t, err)
-	assert.Equal(t, user.Email, result.Email)
-	assert.Equal(t, user.Password, result.Password)
-}
-
-func TestMarshalWithEncryptionAndLogging_NilLogger(t *testing.T) {
-	key := make([]byte, AES256KeySize)
-	_, err := rand.Read(key)
-	require.NoError(t, err)
-
-	user := &TestUserForLogging{
-		ID:       1,
-		Username: "alice",
-		Email:    "alice@example.com",
-		Password: "secret123",
+	tests := []struct {
+		name string
+		log  *logger.Logger
+	}{
+		{"with logger", newTestLogger(t)},
+		{"nil logger", nil},
 	}
 
-	// Test with nil logger (should not crash)
-	data, err := MarshalWithEncryptionAndLogging(user, key, nil)
-	require.NoError(t, err)
-	assert.NotNil(t, data)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data, err := MarshalWithEncryptionAndLogging(user, key, tt.log)
+			require.NoError(t, err)
+
+			result := &TestUserForLogging{}
+			require.NoError(t, UnmarshalWithDecryption(data, result, key))
+			assert.Equal(t, user, result)
+		})
+	}
 }
 
 func TestMarshalWithEncryptionAndLogging_Error(t *testing.T) {
@@ -90,11 +83,7 @@ func TestMarshalWithEncryptionAndLogging_Error(t *testing.T) {
 	_, err := rand.Read(key)
 	require.NoError(t, err)
 
-	log, err := logger.New(logger.LogConfig{
-		Level:  "debug",
-		Format: "json",
-	})
-	require.NoError(t, err)
+	log := newTestLogger(t)
 
 	// Test with invalid entity type (should log error)
 	invalid := &TestInvalidMarshalType{
@@ -116,46 +105,24 @@ func TestUnmarshalWithDecryptionAndLogging_Success(t *testing.T) {
 		Email:    "alice@example.com",
 		Password: "secret123",
 	}
-
-	log, err := logger.New(logger.LogConfig{
-		Level:  "debug",
-		Format: "json",
-	})
-	require.NoError(t, err)
-
-	// Marshal first
 	data, err := MarshalWithEncryption(user, key)
 	require.NoError(t, err)
 
-	// Test unmarshal with logging
-	result := &TestUserForLogging{}
-	err = UnmarshalWithDecryptionAndLogging(data, result, key, log)
-	require.NoError(t, err)
-	assert.Equal(t, user.Email, result.Email)
-	assert.Equal(t, user.Password, result.Password)
-}
-
-func TestUnmarshalWithDecryptionAndLogging_NilLogger(t *testing.T) {
-	key := make([]byte, AES256KeySize)
-	_, err := rand.Read(key)
-	require.NoError(t, err)
-
-	user := &TestUserForLogging{
-		ID:       1,
-		Username: "alice",
-		Email:    "alice@example.com",
-		Password: "secret123",
+	tests := []struct {
+		name string
+		log  *logger.Logger
+	}{
+		{"with logger", newTestLogger(t)},
+		{"nil logger", nil},
 	}
 
-	// Marshal first
-	data, err := MarshalWithEncryption(user, key)
-	require.NoError(t, err)
-
-	// Test unmarshal with nil logger (should not crash)
-	result := &TestUserForLogging{}
-	err = UnmarshalWithDecryptionAndLogging(data, result, key, nil)
-	require.NoError(t, err)
-	assert.Equal(t, user.Email, result.Email)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := &TestUserForLogging{}
+			require.NoError(t, UnmarshalWithDecryptionAndLogging(data, result, key, tt.log))
+			assert.Equal(t, user, result)
+		})
+	}
 }
 
 func TestUnmarshalWithDecryptionAndLogging_Error(t *testing.T) {
@@ -163,67 +130,10 @@ func TestUnmarshalWithDecryptionAndLogging_Error(t *testing.T) {
 	_, err := rand.Read(key)
 	require.NoError(t, err)
 
-	log, err := logger.New(logger.LogConfig{
-		Level:  "debug",
-		Format: "json",
-	})
-	require.NoError(t, err)
+	log := newTestLogger(t)
 
 	// Test with invalid data (should log error)
 	result := &TestUserForLogging{}
 	err = UnmarshalWithDecryptionAndLogging([]byte("invalid"), result, key, log)
 	assert.Error(t, err)
-}
-
-func TestMarshalWithEncryptionAndLogging_PointerType(t *testing.T) {
-	key := make([]byte, AES256KeySize)
-	_, err := rand.Read(key)
-	require.NoError(t, err)
-
-	user := &TestUserForLogging{
-		ID:       1,
-		Username: "alice",
-		Email:    "alice@example.com",
-		Password: "secret123",
-	}
-
-	log, err := logger.New(logger.LogConfig{
-		Level:  "debug",
-		Format: "json",
-	})
-	require.NoError(t, err)
-
-	// Test with pointer (should handle type name correctly)
-	data, err := MarshalWithEncryptionAndLogging(user, key, log)
-	require.NoError(t, err)
-	assert.NotNil(t, data)
-}
-
-func TestUnmarshalWithDecryptionAndLogging_PointerType(t *testing.T) {
-	key := make([]byte, AES256KeySize)
-	_, err := rand.Read(key)
-	require.NoError(t, err)
-
-	user := &TestUserForLogging{
-		ID:       1,
-		Username: "alice",
-		Email:    "alice@example.com",
-		Password: "secret123",
-	}
-
-	log, err := logger.New(logger.LogConfig{
-		Level:  "debug",
-		Format: "json",
-	})
-	require.NoError(t, err)
-
-	// Marshal first
-	data, err := MarshalWithEncryption(user, key)
-	require.NoError(t, err)
-
-	// Test unmarshal with pointer type logging
-	result := &TestUserForLogging{}
-	err = UnmarshalWithDecryptionAndLogging(data, result, key, log)
-	require.NoError(t, err)
-	assert.Equal(t, user.Email, result.Email)
 }

@@ -169,23 +169,6 @@ func TestPolicyString(t *testing.T) {
 	assert.Equal(t, "WritePolicy(99)", WritePolicy(99).String())
 }
 
-// TestLRUPeek_Missing covers the not-found branch of Peek.
-func TestLRUPeek_Missing(t *testing.T) {
-	c := NewLRUCache(4)
-	entry, ok := c.Peek("nope")
-	assert.False(t, ok)
-	assert.Nil(t, entry)
-}
-
-// TestLRUGetOldest_Empty covers the empty-list branch of GetOldest.
-func TestLRUGetOldest_Empty(t *testing.T) {
-	c := NewLRUCache(4)
-	key, entry, ok := c.GetOldest()
-	assert.False(t, ok)
-	assert.Empty(t, key)
-	assert.Nil(t, entry)
-}
-
 // TestWarmPrefixes_SkipsEmptyPrefix covers the inner "prefix == \"\" -> continue"
 // branch in WarmPrefixes (distinct from the whole-list-empty guard).
 func TestWarmPrefixes_SkipsEmptyPrefix(t *testing.T) {

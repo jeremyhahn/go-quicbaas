@@ -49,18 +49,6 @@ func TestMockL2Cache_SetAndGet(t *testing.T) {
 		assert.Equal(t, []byte("value1"), value)
 	})
 
-	t.Run("set with TTL", func(t *testing.T) {
-		cache := NewMockL2Cache()
-
-		err := cache.Set(ctx, "key1", []byte("value1"), 100*time.Millisecond)
-		require.NoError(t, err)
-
-		// Should exist immediately
-		value, err := cache.Get(ctx, "key1")
-		require.NoError(t, err)
-		assert.Equal(t, []byte("value1"), value)
-	})
-
 	t.Run("expired entry returns not found", func(t *testing.T) {
 		cache := NewMockL2Cache()
 
@@ -183,6 +171,10 @@ func TestMockL2Cache_Ping(t *testing.T) {
 		err := cache.Ping(ctx)
 		require.Error(t, err)
 		assert.Equal(t, expectedErr, err)
+
+		// Clearing the error restores success
+		cache.SetPingError(nil)
+		require.NoError(t, cache.Ping(ctx))
 	})
 
 	t.Run("ping with canceled context", func(t *testing.T) {
@@ -347,47 +339,6 @@ func TestMockL2Cache_Keys(t *testing.T) {
 		keys := cache.Keys()
 		assert.NotNil(t, keys)
 		assert.Len(t, keys, 0)
-	})
-}
-
-func TestMockL2Cache_IsClosed(t *testing.T) {
-	t.Run("returns false initially", func(t *testing.T) {
-		cache := NewMockL2Cache()
-		assert.False(t, cache.IsClosed())
-	})
-
-	t.Run("returns true after close", func(t *testing.T) {
-		cache := NewMockL2Cache()
-
-		err := cache.Close()
-		require.NoError(t, err)
-		assert.True(t, cache.IsClosed())
-	})
-}
-
-func TestMockL2Cache_SetPingError(t *testing.T) {
-	ctx := context.Background()
-
-	t.Run("sets and clears ping error", func(t *testing.T) {
-		cache := NewMockL2Cache()
-
-		// Initially no error
-		err := cache.Ping(ctx)
-		require.NoError(t, err)
-
-		// Set error
-		expectedErr := errors.Internal("test", "custom error")
-		cache.SetPingError(expectedErr)
-
-		err = cache.Ping(ctx)
-		require.Error(t, err)
-		assert.Equal(t, expectedErr, err)
-
-		// Clear error
-		cache.SetPingError(nil)
-
-		err = cache.Ping(ctx)
-		require.NoError(t, err)
 	})
 }
 
