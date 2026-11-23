@@ -1,6 +1,6 @@
 # Agent Fleet — API Reference
 
-> **Status: NORMATIVE** · Last verified: 2026-10-11
+> **Status: NORMATIVE** · Last verified: 2026-11-14
 > The fleet registry, enrollment, MCP and gRPC surfaces, checked against
 > `pkg/api/rest/routes_*.go` and `api/proto`. Conflicts with this document are
 > defects.
@@ -21,6 +21,13 @@ tenant header. Responses are JSON.
 | `POST /api/v1/fleet/{nodeID}/enable` | `orchestrator:agent_register` | re-enable |
 | `POST /api/v1/fleet/{nodeID}/heartbeat` | `orchestrator:agent_heartbeat` | `HandleFleetNodeHeartbeat` |
 | `POST /api/v1/fleet/enroll` | mTLS client certificate | `HandleFleetEnroll` |
+| `GET /api/v1/fleet/placements` | `placement:read` | list placement specs |
+| `GET /api/v1/fleet/placements/{name}` | `placement:read` | get a placement spec |
+| `PUT /api/v1/fleet/placements/{name}` | `placement:manage` | declare a placement spec |
+| `DELETE /api/v1/fleet/placements/{name}` | `placement:manage` | withdraw a placement spec |
+| `GET /api/v1/fleet/placements/{name}/drift` | `placement:read` | the spec's drift report |
+| `GET /api/v1/fleet/placement-consents` | `placement:read` | list per-move consent requests (`tenant_id`, `state`) |
+| `POST /api/v1/fleet/placement-consents/{id}/answer` | `placement:consent` | grant or refuse a pending consent request |
 
 ### List
 
@@ -92,6 +99,46 @@ Granted scopes: `agent:runtime:spawn`, `agent:runtime:prompt`,
 `agent_accounts:materialize`, `agent_accounts:read`, `agent_accounts:list`.
 Token endpoints are `/oauth2/token` and `/oauth2/token-mtls`.
 
+### Placement specs
+
+A placement spec says where a role's work may run across the fleet's hosts
+(go-quicbaas#1681; design in [docs/scheduler/](../scheduler/)). `tenant_id` is
+optional on these routes: empty is the caller's tenant, and naming another is
+403. The static `placements` segment shadows a node whose ID is literally
+`placements`; node IDs are generated, so none is.
+
+`PUT /api/v1/fleet/placements/{name}` takes the spec: `role`, either
+`host_count` or `hosts` (never both), `profile`, `required_capabilities`,
+`actuate` and `generation`. The body's `name`, if given, must be the path's.
+`generation` is the one the caller read, or 0 to create. The response is the
+stored spec at its new generation.
+
+`GET .../{name}/drift` is the read-only report of the role's work against the
+hosts the spec admits: `observed_work`, `admissible_hosts` and `findings`,
+each with a `kind`, the `host` and `work_id` it is about, and a `remedy`.
+Drift is reported and never acted on here; `actuate` is stored for the
+actuator, which is not built yet.
+
+`DELETE` answers `{ "name": "agents", "withdrawn": true }` and the list
+answers `{ "specs": [ ... ], "count": 1 }`.
+
+| Status | Cause |
+|---|---|
+| 400 | Invalid spec, or the body's name is not the path's |
+| 403 | Another tenant named |
+| 404 | No such spec |
+| 409 | A create of an existing spec, or a stale `generation` |
+| 412 | The drift report cannot be complete; the message names what to fix |
+| 503 | The server has no fleet placement service |
+
+Consent requests: an answer's body is
+`{"state":"granted"|"refused","reason":"..."}` and carries no answerer field;
+the answer is recorded as the authenticated subject's. The list answers
+`{ "requests": [ ... ], "count": n }`. The answer route answers 400 for an
+invalid state, 403 with no subject or for another tenant, 404 for no such
+request, 409 for a request already answered, 412 for an incoherent request
+and 503 when the server has no fleet placement service.
+
 ### Worker image
 
 `GET /api/v1/sdlc/worker-image` and `POST /api/v1/sdlc/worker-image/refresh`;
@@ -109,6 +156,19 @@ see [worker-image.md](worker-image.md).
 | `quicbaas_fleet_disable` | `orchestrator:agent_remove` |
 | `quicbaas_fleet_enable` | `orchestrator:agent_register` |
 | `project_grant_fleet_node`, `project_revoke_fleet_node` | project grants |
+| `quicbaas_fleet_placement_declare` | `placement:manage` |
+| `quicbaas_fleet_placement_get`, `quicbaas_fleet_placement_list` | `placement:read` |
+| `quicbaas_fleet_placement_withdraw` | `placement:manage` |
+| `quicbaas_fleet_placement_drift` | `placement:read` |
+| `quicbaas_fleet_placement_consent_list` | `placement:read` |
+| `quicbaas_fleet_placement_consent_answer` | `placement:consent` |
+
+The placement tools other than declare take `tenant_id` (optional, as on
+REST) and `name`. Declare takes `tenant_id` and `spec`, the REST body, which
+names the spec; a top-level `name`, when given, overrides `spec.name`. The
+consent list takes `tenant_id`
+and `state`, and the answer `tenant_id`, `id`, `state` and `reason`. Their
+results are the REST responses.
 
 `quicbaas_fleet_list` takes the same `status`, `backend` (membership), `host`
 and `node_type` filters as `GET /api/v1/fleet`, paged per
@@ -118,7 +178,14 @@ and `node_type` filters as `GET /api/v1/fleet`, paged per
 
 `OrchestratorService` (`api/proto/orchestrator.proto`): `RegisterFleetNode`,
 `GetFleetNode`, `ListFleetNodes`, `RemoveFleetNode`, `FleetNodeHeartbeat`,
-`ListBackendModels`, and `PushEvents` (the node's event stream). `ProjectService`
+`ListBackendModels`, and `PushEvents` (the node's event stream), plus the
+placement specs: `DeclareFleetPlacementSpec`, `GetFleetPlacementSpec`,
+`ListFleetPlacementSpecs`, `WithdrawFleetPlacementSpec`,
+`GetFleetPlacementDrift`, `ListFleetPlacementConsents` and
+`AnswerFleetPlacementConsent`, with the REST routes' permissions. A stale
+generation and a second answer are `ALREADY_EXISTS`, an incomplete report
+`FAILED_PRECONDITION`,
+and a server without the service `UNAVAILABLE`. `ProjectService`
 (`api/proto/project.proto`): `GrantFleetNodeRole`, `RevokeFleetNodeRole`.
 
 The node's own service, `quicbaas.fleet.runtime.v1.FleetRuntime`
