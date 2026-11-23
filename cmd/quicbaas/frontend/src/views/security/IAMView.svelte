@@ -357,6 +357,7 @@
   let unlinking = $state(false);
   let newLinkProviderID = $state('');
   let newLinkExternalID = $state('');
+  let newLinkAccessToken = $state('');
   let linking = $state(false);
 
   // ---------------------------------------------------------------------------
@@ -1206,6 +1207,7 @@
     linking = false;
     newLinkProviderID = '';
     newLinkExternalID = '';
+    newLinkAccessToken = '';
     void loadAccountLinks(user);
   }
 
@@ -1213,6 +1215,7 @@
     userForLinks = null;
     linksError = null;
     linkToRemove = null;
+    newLinkAccessToken = '';
   }
 
   async function submitUnlink(): Promise<void> {
@@ -1244,19 +1247,25 @@
     const user = userForLinks;
     const providerID = newLinkProviderID.trim();
     const externalID = newLinkExternalID.trim();
+    const accessToken = newLinkAccessToken.trim();
     linksError = null;
-    if (!providerID || !externalID) {
-      linksError = 'A provider id and an external id are required';
+    if (!providerID || !externalID || !accessToken) {
+      linksError = 'A provider id, an external id and the provider access token are required';
       return;
     }
     linking = true;
     try {
       const client = await getSDKClient();
-      await client.iam.createAccountLink(selectedTenantID, user.id, { provider_id: providerID, external_id: externalID });
+      await client.iam.createAccountLink(selectedTenantID, user.id, {
+        provider_id: providerID,
+        external_id: externalID,
+        access_token: accessToken,
+      });
       showToast({ message: `Linked "${providerID}" to "${user.username}"`, type: 'success' });
       if (userForLinks?.id === user.id) {
         newLinkProviderID = '';
         newLinkExternalID = '';
+        newLinkAccessToken = '';
         await loadAccountLinks(user);
       }
     } catch (e) {
@@ -2796,10 +2805,14 @@
           <label class="label label-text" for="link-external-id">External ID</label>
           <input id="link-external-id" class="input input-bordered input-sm" type="text" bind:value={newLinkExternalID} />
         </div>
+        <div class="form-control">
+          <label class="label label-text" for="link-access-token">Provider access token</label>
+          <input id="link-access-token" class="input input-bordered input-sm" type="password" autocomplete="off" bind:value={newLinkAccessToken} />
+        </div>
         <button
           class="btn btn-primary btn-sm"
           type="submit"
-          disabled={linking || !newLinkProviderID.trim() || !newLinkExternalID.trim()}
+          disabled={linking || !newLinkProviderID.trim() || !newLinkExternalID.trim() || !newLinkAccessToken.trim()}
         >{linking ? 'Linking…' : 'Link account'}</button>
       </form>
       <div class="modal-action">

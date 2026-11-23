@@ -48,6 +48,7 @@ type mockFederationManager struct {
 	getUserLinksErr     error
 	beginLoginRedirect  *iam.LoginRedirect
 	callbackResult      *iam.FederationResult
+	linkAccountToken    string
 }
 
 func newMockFederationManager() *mockFederationManager {
@@ -183,6 +184,7 @@ func (m *mockFederationManager) HandleCallback(ctx context.Context, stateToken, 
 }
 
 func (m *mockFederationManager) LinkAccount(ctx context.Context, userID uint64, tenantID, providerID, externalToken string) error {
+	m.linkAccountToken = externalToken
 	if m.linkAccountErr != nil {
 		return m.linkAccountErr
 	}
@@ -2202,6 +2204,35 @@ func TestLinkAccount_WithAccessToken(t *testing.T) {
 	err := json.Unmarshal(rec.Body.Bytes(), &resp)
 	require.NoError(t, err)
 	assert.Equal(t, "google_user_123", resp.ExternalID)
+}
+
+// TestLinkAccount_ForwardsAccessTokenToManager verifies that the handler
+// passes the request's access_token to the federation manager, which needs it
+// to read the provider's claims.
+func TestLinkAccount_ForwardsAccessTokenToManager(t *testing.T) {
+	fedMgr := newMockFederationManager()
+	handler, _ := createFederationTestHandler(fedMgr)
+
+	body := LinkAccountOptions{
+		ProviderID:  "prov_google",
+		ExternalID:  "google_user_123",
+		AccessToken: "provider_access_token",
+	}
+	bodyBytes, _ := json.Marshal(body)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant123/users/user123/links", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("tenant_id", "tenant123")
+	rctx.URLParams.Add("user_id", "10123")
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
+
+	rec := httptest.NewRecorder()
+	handler.LinkAccount(rec, req)
+
+	assert.Equal(t, http.StatusCreated, rec.Code)
+	assert.Equal(t, "provider_access_token", fedMgr.linkAccountToken)
 }
 
 // fedErrorReader is a reader that always returns an error.

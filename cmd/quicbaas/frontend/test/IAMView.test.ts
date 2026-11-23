@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import type { IAMUser, IAMTenant, IAMRole, IAMPolicy } from '@quicbaas/sdk';
 
@@ -1341,7 +1341,7 @@ describe('IAMView', () => {
       expect(screen.queryByRole('dialog', { name: 'Unlink account confirmation' })).not.toBeInTheDocument();
     });
 
-    it('links an account with both fields, toasts and reloads', async () => {
+    it('links an account with the provider, external id and access token, toasts and reloads', async () => {
       const list = vi.fn().mockResolvedValue({ links: [], limit: 50, offset: 0 });
       const create = vi.fn().mockResolvedValue({});
       stubLinks({ listAccountLinks: list, createAccountLink: create });
@@ -1354,14 +1354,30 @@ describe('IAMView', () => {
       await fireEvent.input(screen.getByLabelText('Provider ID'), { target: { value: 'github' } });
       expect(submit).toBeDisabled();
       await fireEvent.input(screen.getByLabelText('External ID'), { target: { value: 'gh-42' } });
+      expect(submit).toBeDisabled();
+      await fireEvent.input(screen.getByLabelText('Provider access token'), { target: { value: 'gho_token' } });
       expect(submit).not.toBeDisabled();
       await fireEvent.click(submit);
 
       await waitFor(() => {
-        expect(create).toHaveBeenCalledWith('acme', 'user-1', { provider_id: 'github', external_id: 'gh-42' });
+        expect(create).toHaveBeenCalledWith('acme', 'user-1', {
+          provider_id: 'github',
+          external_id: 'gh-42',
+          access_token: 'gho_token',
+        });
         expect(mockShowToast).toHaveBeenCalledWith({ message: 'Linked "github" to "alice"', type: 'success' });
         expect(list).toHaveBeenCalledTimes(2);
       });
+    });
+
+    it('clears the provider access token when the dialog is closed', async () => {
+      stubLinks({ listAccountLinks: vi.fn().mockResolvedValue({ links: [], limit: 50, offset: 0 }) });
+      const dialog = await openLinksDialog('alice');
+      await fireEvent.input(screen.getByLabelText('Provider access token'), { target: { value: 'gho_token' } });
+      await fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+      await fireEvent.click(await screen.findByRole('button', { name: 'Linked accounts of alice' }));
+      await screen.findByRole('dialog', { name: 'Linked accounts dialog' });
+      expect((screen.getByLabelText('Provider access token') as HTMLInputElement).value).toBe('');
     });
 
     it('shows the SDK error in the dialog when the list load fails', async () => {
