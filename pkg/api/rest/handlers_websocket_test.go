@@ -19,6 +19,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -100,4 +101,23 @@ func TestHandleWebSocket_NoTenantIsForbidden(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
 	}
+}
+
+// TestHandleWebSocket_UpgradeThroughRouter: an upgrade through the complete
+// router, with a nonzero request timeout, reaches the WebSocket handler,
+// switches protocols and echoes.
+func TestHandleWebSocket_UpgradeThroughRouter(t *testing.T) {
+	srv := newWebSocketTestServer(t)
+	t.Cleanup(func() { _ = srv.Shutdown(context.Background()) })
+	if srv.config.RequestTimeout <= 0 {
+		t.Fatalf("RequestTimeout = %v, want a nonzero timeout", srv.config.RequestTimeout)
+	}
+	srv.SetWebSocketHandler(wsEchoHandler(t))
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		srv.GetRouter().ServeHTTP(w, asTenantCaller(r, "tenant-a"))
+	}))
+	defer ts.Close()
+
+	dialWSEcho(t, "ws"+strings.TrimPrefix(ts.URL, "http")+"/api/v1/ws")
 }

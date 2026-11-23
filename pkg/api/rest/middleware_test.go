@@ -20,9 +20,11 @@ import (
 	"crypto/tls"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 
@@ -1000,6 +1002,102 @@ func TestTimeoutMiddleware_TimeoutFires503(t *testing.T) {
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code,
 		"server-side handler timeout must surface as 503 per RFC 7231 §6.5.7")
 	assert.Contains(t, w.Body.String(), "request timeout after")
+}
+
+// TestIsWebSocketUpgrade: a request is an upgrade only with Upgrade: websocket
+// and a Connection header carrying the upgrade token.
+func TestIsWebSocketUpgrade(t *testing.T) {
+	tests := []struct {
+		name       string
+		upgrade    string
+		connection string
+		want       bool
+	}{
+		{"plain GET", "", "", false},
+		{"upgrade", "websocket", "Upgrade", true},
+		{"mixed case and token list", "WebSocket", "keep-alive, Upgrade", true},
+		{"no connection header", "websocket", "", false},
+		{"other protocol", "h2c", "Upgrade", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/ws", nil)
+			if tt.upgrade != "" {
+				req.Header.Set("Upgrade", tt.upgrade)
+			}
+			if tt.connection != "" {
+				req.Header.Set("Connection", tt.connection)
+			}
+			assert.Equal(t, tt.want, isWebSocketUpgrade(req))
+		})
+	}
+}
+
+// wsEchoHandler accepts a WebSocket upgrade and echoes one message back.
+func wsEchoHandler(t *testing.T) http.Handler {
+	t.Helper()
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			t.Errorf("Accept: %v", err)
+			return
+		}
+		defer conn.CloseNow()
+		typ, data, err := conn.Read(r.Context())
+		if err != nil {
+			t.Errorf("Read: %v", err)
+			return
+		}
+		if err := conn.Write(r.Context(), typ, data); err != nil {
+			t.Errorf("Write: %v", err)
+			return
+		}
+		_ = conn.Close(websocket.StatusNormalClosure, "")
+	})
+}
+
+// dialWSEcho dials url, expects 101 Switching Protocols, sends one message
+// and expects it echoed back.
+func dialWSEcho(t *testing.T, url string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, resp, err := websocket.Dial(ctx, url, nil)
+	if resp != nil && resp.Body != nil {
+		defer resp.Body.Close()
+	}
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer conn.CloseNow()
+	if resp.StatusCode != http.StatusSwitchingProtocols {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusSwitchingProtocols)
+	}
+	if err := conn.Write(ctx, websocket.MessageText, []byte("hi")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	_, data, err := conn.Read(ctx)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if string(data) != "hi" {
+		t.Fatalf("Read = %q, want %q", data, "hi")
+	}
+}
+
+// TestTimeoutMiddleware_WebSocketUpgradeThroughChain: an upgrade through the
+// logging, metrics and timeout middleware switches protocols and echoes.
+func TestTimeoutMiddleware_WebSocketUpgradeThroughChain(t *testing.T) {
+	log, _ := logger.New(logger.LogConfig{
+		Level:  "error",
+		Format: "json",
+		Output: "stdout",
+	})
+	handler := LoggingMiddleware(log)(MetricsMiddleware()(TimeoutMiddleware(5 * time.Second)(wsEchoHandler(t))))
+	ts := httptest.NewServer(handler)
+	defer ts.Close()
+
+	dialWSEcho(t, "ws"+strings.TrimPrefix(ts.URL, "http"))
 }
 
 // TestSealedWindowMiddleware_Returns503NotRewritten is the regression guard
