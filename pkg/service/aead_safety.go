@@ -74,6 +74,10 @@ type AEADUsage struct {
 	// LastUpdated is the timestamp of the last operation
 	LastUpdated atomic.Int64
 
+	// keyVersion is the key version the counters belong to; 0 until one is
+	// observed.
+	keyVersion atomic.Uint64
+
 	// Config is the safety configuration for this key. Once the usage is
 	// shared, read it with config() and replace it with setConfig(): cfgMu
 	// guards it against a concurrent SetKeyConfig.
@@ -634,6 +638,47 @@ func (t *AEADSafetyTracker) ResetKeyUsage(keyID string) {
 		usage.OperationCount.Store(0)
 		usage.BytesProcessed.Store(0)
 	}
+}
+
+// resetUsageAt moves usage to key version version. A version newer than the
+// counted one (or always) zeroes the counters, unless no version was counted
+// yet: usage created by SetKeyConfig or a Decrypt before any version was
+// observed adopts the version without being erased (always still zeroes it).
+// The counted version never goes backwards. The caller holds the key's write
+// lock.
+func resetUsageAt(usage *AEADUsage, version uint64, always bool) {
+	counted := usage.keyVersion.Load()
+	if always || (version > counted && counted != 0) {
+		usage.OperationCount.Store(0)
+		usage.BytesProcessed.Store(0)
+	}
+	usage.keyVersion.Store(max(counted, version))
+}
+
+// ObserveKeyVersion records that keyID's current version is version. A
+// version newer than the one its usage was counted under means the key was
+// rotated, possibly on another node, so its budget starts over. Version 0 is
+// ignored. The caller must not hold keyID's KeyLock.
+func (t *AEADSafetyTracker) ObserveKeyVersion(keyID string, version uint64) {
+	if version == 0 {
+		return
+	}
+	usage := t.keyUsage.LoadOrStore(keyID, &AEADUsage{Config: t.getEffectiveConfig(keyID, false)})
+	if usage.keyVersion.Load() >= version {
+		return
+	}
+	lock := t.KeyLock(keyID)
+	lock.Lock()
+	defer lock.Unlock()
+	resetUsageAt(usage, version, false)
+}
+
+// resetKeyUsageForRotation starts keyID's budget over at version, the
+// version a rotation on this node just made current. The caller holds
+// keyID's KeyLock for writing.
+func (t *AEADSafetyTracker) resetKeyUsageForRotation(keyID string, version uint64) {
+	usage := t.keyUsage.LoadOrStore(keyID, &AEADUsage{Config: t.getEffectiveConfig(keyID, false)})
+	resetUsageAt(usage, version, true)
 }
 
 // ResetDEKUsage resets the usage counters for a DEK (called after rotation).

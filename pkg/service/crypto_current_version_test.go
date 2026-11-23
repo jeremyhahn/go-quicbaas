@@ -97,3 +97,68 @@ func TestCryptoService_Encrypt_WarmNodeAfterRotationOnAnotherNode(t *testing.T) 
 	require.NoError(t, err)
 	require.Equal(t, 2, meta.(*kms.KeyMetadata).Version, "node A's cached metadata is refreshed")
 }
+
+// TestCryptoService_Encrypt_BudgetResetsAfterRotationOnAnotherNode: node A
+// exhausts a key's AEAD budget and node B rotates the key. Node A's next
+// encrypting operation reads the new current version and starts its budget
+// over, so it is no longer refused.
+func TestCryptoService_Encrypt_BudgetResetsAfterRotationOnAnotherNode(t *testing.T) {
+	managerA, cleanup := realKMSManagerForTest(t)
+	defer cleanup()
+	ctx := systemTenantCtx()
+	shared := kvstore.NewMemory()
+
+	backendB, err := kms.NewXKMSBackend(&kms.XKMSBackendConfig{
+		BackendType: config.BackendTypeSoftware,
+		Logger:      newMockLogger(),
+	})
+	require.NoError(t, err)
+	registryB := kms.NewBackendRegistry(nil)
+	require.NoError(t, registryB.Register("software", backendB, 100))
+	managerB, err := kms.NewKMSService(&kms.KMSServiceOptions{Registry: registryB})
+	require.NoError(t, err)
+
+	logger := newMockLogger()
+	nodeA := newKMSService(managerA, logger)
+	nodeA.SetKVStore(shared)
+	nodeB := newKMSService(managerB, logger)
+	nodeB.SetKVStore(shared)
+
+	const keyID = "budget-rotate"
+	scoped, err := scopeKeyID(ctx, keyID)
+	require.NoError(t, err)
+	_, err = managerA.GenerateKey(ctx, &xkmssdk.KeyAttributes{
+		CN:                 scoped,
+		StoreType:          xkmssdk.StoreType("software"),
+		KeyType:            xkmssdk.KeyTypeEncryption,
+		SymmetricAlgorithm: xkmssdk.SymmetricAES256GCM,
+	})
+	require.NoError(t, err)
+
+	trackerA := NewAEADSafetyTracker()
+	svcA := newCryptoService(newMockCryptoManager(), managerA, logger, trackerA)
+	svcA.kmsSvc = nodeA
+	trackerA.SetKeyConfig(scoped, AEADSafetyConfig{MaxOperations: 3})
+
+	for i := 0; i < 2; i++ {
+		_, err = svcA.Encrypt(ctx, &EncryptRequest{KeyID: keyID, Plaintext: []byte("before")})
+		require.NoError(t, err)
+	}
+	_, err = svcA.Encrypt(ctx, &EncryptRequest{KeyID: keyID, Plaintext: []byte("before")})
+	require.Error(t, err, "budget exhausted on node A")
+
+	_, err = managerB.GetKey(ctx, scoped)
+	require.NoError(t, err)
+	rotated, err := managerB.RotateKey(ctx, scoped)
+	require.NoError(t, err)
+	require.Equal(t, 2, rotated.(*kms.KeyMetadata).Version)
+	nodeB.setVersionStatus(scoped, 1, KeyStatusDisabled, nil)
+
+	_, err = svcA.Encrypt(ctx, &EncryptRequest{KeyID: keyID, Plaintext: []byte("after")})
+	require.NoError(t, err, "node A starts the v2 budget")
+	_, err = svcA.GenerateDataKey(ctx, &GenerateDataKeyRequest{KeyID: keyID})
+	require.NoError(t, err)
+
+	ops, _, _ := trackerA.GetKeyUsage(scoped)
+	require.Equal(t, uint64(2), ops, "node A counts the v2 operations only")
+}

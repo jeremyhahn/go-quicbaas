@@ -1205,9 +1205,11 @@ func (k *kmsServiceImpl) RotateKey(ctx context.Context, req *RotateKeyRequest) (
 	}
 
 	// The new version starts with a fresh AEAD budget: clear the usage the
-	// Crypto service counted under the same tenant-scoped key ID.
+	// Crypto service counted under the same tenant-scoped key ID and count it
+	// under newVersion, so this node's later observation of newVersion does
+	// not reset it again. Other nodes start over when they observe it.
 	if tracker != nil {
-		tracker.ResetKeyUsage(scopedKeyID)
+		tracker.resetKeyUsageForRotation(scopedKeyID, newVersion)
 	}
 
 	resp := &RotateKeyResponse{

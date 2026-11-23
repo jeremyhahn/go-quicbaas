@@ -207,7 +207,8 @@ func (t *cryptoService) Encrypt(ctx context.Context, req *EncryptRequest) (*Encr
 		return nil, err
 	}
 
-	if err := t.checkCurrentVersionUsable(ctx, scopedKeyID, "service.Encrypt"); err != nil {
+	currentVersion, err := t.checkCurrentVersionUsable(ctx, scopedKeyID, "service.Encrypt")
+	if err != nil {
 		t.metrics.encryptOperationsTotal.With(req.KeyID, "version_disabled").Inc()
 		t.metrics.errorsByType.With("key_version_error").Inc()
 		return nil, err
@@ -217,6 +218,9 @@ func (t *cryptoService) Encrypt(ctx context.Context, req *EncryptRequest) (*Encr
 	if t.safetyTracker != nil {
 		// Held until the operation returns, so a concurrent rotation cannot
 		// reset the usage this operation records (AEADSafetyTracker.KeyLock).
+		// A newer current version than the usage was counted under is a
+		// rotation (possibly on another node): the budget starts over.
+		t.safetyTracker.ObserveKeyVersion(scopedKeyID, currentVersion)
 		keyLock := t.safetyTracker.KeyLock(scopedKeyID)
 		keyLock.RLock()
 		defer keyLock.RUnlock()
@@ -356,27 +360,27 @@ func (t *cryptoService) checkVersionUsable(ctx context.Context, scopedKeyID stri
 // key's current version when that version is not usable, so nothing is sealed
 // or wrapped under a version the Decrypt gate would then refuse. A version
 // whose status cannot be read is refused too.
-func (t *cryptoService) checkCurrentVersionUsable(ctx context.Context, scopedKeyID, op string) error {
+func (t *cryptoService) checkCurrentVersionUsable(ctx context.Context, scopedKeyID, op string) (uint64, error) {
 	if t.kmsSvc == nil {
-		return nil
+		return 0, nil
 	}
 	version, err := t.currentKeyVersion(ctx, scopedKeyID)
 	if err != nil {
 		if isKeyNotFound(err) {
 			// A key that does not exist is a permanent NotFound, not an outage to retry.
-			return keyOperationError(errors.ErrNotFound, op, "get key version", err)
+			return 0, keyOperationError(errors.ErrNotFound, op, "get key version", err)
 		}
-		return WrapError(err, errors.ErrUnavailable, op, "key version unavailable")
+		return 0, WrapError(err, errors.ErrUnavailable, op, "key version unavailable")
 	}
 	status, _, err := t.kmsSvc.lookupVersionStatus(ctx, scopedKeyID, version)
 	if err != nil {
-		return WrapError(err, errors.ErrUnavailable, op, "key version status unavailable")
+		return 0, WrapError(err, errors.ErrUnavailable, op, "key version status unavailable")
 	}
 	switch status {
 	case "", KeyStatusEnabled, KeyStatusRotating:
-		return nil
+		return version, nil
 	default:
-		return api.NewKeyDisabledError(op, scopedKeyID)
+		return 0, api.NewKeyDisabledError(op, scopedKeyID)
 	}
 }
 
@@ -555,7 +559,8 @@ func (t *cryptoService) Rewrap(ctx context.Context, req *RewrapRequest) (*Rewrap
 		}
 	}
 
-	if err := t.checkCurrentVersionUsable(ctx, scopedKeyID, "service.Rewrap"); err != nil {
+	currentVersion, err := t.checkCurrentVersionUsable(ctx, scopedKeyID, "service.Rewrap")
+	if err != nil {
 		t.metrics.encryptOperationsTotal.With(req.KeyID, "version_disabled").Inc()
 		t.metrics.errorsByType.With("key_version_error").Inc()
 		return nil, err
@@ -565,6 +570,9 @@ func (t *cryptoService) Rewrap(ctx context.Context, req *RewrapRequest) (*Rewrap
 	if t.safetyTracker != nil {
 		// Held until the operation returns, so a concurrent rotation cannot
 		// reset the usage this operation records (AEADSafetyTracker.KeyLock).
+		// A newer current version than the usage was counted under is a
+		// rotation (possibly on another node): the budget starts over.
+		t.safetyTracker.ObserveKeyVersion(scopedKeyID, currentVersion)
 		keyLock := t.safetyTracker.KeyLock(scopedKeyID)
 		keyLock.RLock()
 		defer keyLock.RUnlock()
@@ -643,7 +651,8 @@ func (t *cryptoService) EncryptBatch(ctx context.Context, req *EncryptBatchReque
 		return nil, err
 	}
 
-	if err := t.checkCurrentVersionUsable(ctx, scopedKeyID, "service.EncryptBatch"); err != nil {
+	currentVersion, err := t.checkCurrentVersionUsable(ctx, scopedKeyID, "service.EncryptBatch")
+	if err != nil {
 		t.metrics.encryptOperationsTotal.With(req.KeyID, "version_disabled").Inc()
 		t.metrics.errorsByType.With("key_version_error").Inc()
 		return nil, err
@@ -661,6 +670,9 @@ func (t *cryptoService) EncryptBatch(ctx context.Context, req *EncryptBatchReque
 		// Each item is one AEAD operation under the key.
 		// Held until the operation returns, so a concurrent rotation cannot
 		// reset the usage this operation records (AEADSafetyTracker.KeyLock).
+		// A newer current version than the usage was counted under is a
+		// rotation (possibly on another node): the budget starts over.
+		t.safetyTracker.ObserveKeyVersion(scopedKeyID, currentVersion)
 		keyLock := t.safetyTracker.KeyLock(scopedKeyID)
 		keyLock.RLock()
 		defer keyLock.RUnlock()
@@ -859,7 +871,8 @@ func (t *cryptoService) GenerateDataKey(ctx context.Context, req *GenerateDataKe
 		return nil, err
 	}
 
-	if err := t.checkCurrentVersionUsable(ctx, scopedKeyID, "service.GenerateDataKey"); err != nil {
+	currentVersion, err := t.checkCurrentVersionUsable(ctx, scopedKeyID, "service.GenerateDataKey")
+	if err != nil {
 		t.metrics.encryptOperationsTotal.With(req.KeyID, "version_disabled").Inc()
 		t.metrics.errorsByType.With("key_version_error").Inc()
 		return nil, err
@@ -873,6 +886,9 @@ func (t *cryptoService) GenerateDataKey(ctx context.Context, req *GenerateDataKe
 	if t.safetyTracker != nil {
 		// Held until the operation returns, so a concurrent rotation cannot
 		// reset the usage this operation records (AEADSafetyTracker.KeyLock).
+		// A newer current version than the usage was counted under is a
+		// rotation (possibly on another node): the budget starts over.
+		t.safetyTracker.ObserveKeyVersion(scopedKeyID, currentVersion)
 		keyLock := t.safetyTracker.KeyLock(scopedKeyID)
 		keyLock.RLock()
 		defer keyLock.RUnlock()
@@ -946,7 +962,8 @@ func (t *cryptoService) GenerateWrappedDataKey(ctx context.Context, req *Generat
 		return nil, err
 	}
 
-	if err := t.checkCurrentVersionUsable(ctx, scopedKeyID, "service.GenerateWrappedDataKey"); err != nil {
+	currentVersion, err := t.checkCurrentVersionUsable(ctx, scopedKeyID, "service.GenerateWrappedDataKey")
+	if err != nil {
 		t.metrics.encryptOperationsTotal.With(req.KeyID, "version_disabled").Inc()
 		t.metrics.errorsByType.With("key_version_error").Inc()
 		return nil, err
@@ -959,6 +976,9 @@ func (t *cryptoService) GenerateWrappedDataKey(ctx context.Context, req *Generat
 	if t.safetyTracker != nil {
 		// Held until the operation returns, so a concurrent rotation cannot
 		// reset the usage this operation records (AEADSafetyTracker.KeyLock).
+		// A newer current version than the usage was counted under is a
+		// rotation (possibly on another node): the budget starts over.
+		t.safetyTracker.ObserveKeyVersion(scopedKeyID, currentVersion)
 		keyLock := t.safetyTracker.KeyLock(scopedKeyID)
 		keyLock.RLock()
 		defer keyLock.RUnlock()
