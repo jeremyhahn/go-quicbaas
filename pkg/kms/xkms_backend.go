@@ -932,17 +932,12 @@ func (kb *XKMSBackend) storedVersion(ctx context.Context, keyID string) (int, er
 // migrateVersionRecord gives a stored key that has no version record one.
 //
 // Rotation records every version it writes, so a stored key without a record
-// was never rotated under the registry: it predates it. Before the registry a
-// key's versions were its contiguous stored run keyID_v2..keyID_vk, so that
-// run is adopted as its versions and recorded. The adopted run serves
-// encryption and decryption, but a name in it may equally be an independent
-// key created before the registry, so the run is also recorded as a legacy
-// run: refuseVersionName does not hide its names and DeleteKey does not
-// delete them, they stay ordinary keys. The record is written before
-// any later name keyID_vN can be created: CreateKey and ImportKey resolve
-// keyID's version through refuseVersionName, which lands here, so an
-// independent key created under the registry lies above the recorded run and
-// is never adopted. A key that is not stored has no versions: it reports
+// was never rotated under the registry: it predates it. Its pre-registry
+// keyID_vN names cannot be told apart from independent keys created before
+// the registry under such a name, so none is adopted: the key records version
+// 1 and every such name stays an ordinary key. A rotation under the registry
+// then refuses with ErrVersionNameTaken while keyID_v2 exists, rather than
+// silently taking over an existing key. A key that is not stored reports
 // version 1 and no record is written for it.
 func (kb *XKMSBackend) migrateVersionRecord(ctx context.Context, reg interfaces.KVStore, keyID string) (int, error) {
 	stored, err := kb.listStoredKeyIDs(ctx, keyID)
@@ -952,33 +947,12 @@ func (kb *XKMSBackend) migrateVersionRecord(ctx context.Context, reg interfaces.
 	if _, ok := stored[keyID]; !ok {
 		return 1, nil
 	}
-	version := kb.highestContiguousVersion(stored, keyID)
+	version := 1
 	recordKey := kb.versionRecordKey(keyID)
 	value := []byte(strconv.Itoa(version))
 	guarded, hasGuarded := reg.(interface {
 		PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error)
 	})
-	if version >= 2 {
-		// The legacy run is recorded first. Any rotation under the registry
-		// happens only after a migration has written it, so the first
-		// migration's run stands and a lost insert is not an error.
-		legacyKey := kb.legacyRunRecordKey(keyID)
-		if hasGuarded {
-			if _, err := guarded.PutIfAbsent(ctx, legacyKey, value); err != nil {
-				return 0, fmt.Errorf("xkms key registry: record legacy run %d of %q: %w", version, keyID, err)
-			}
-		} else {
-			_, found, err := readRegistryRecord(ctx, reg, legacyKey)
-			if err != nil {
-				return 0, fmt.Errorf("xkms key registry: record legacy run %d of %q: %w", version, keyID, err)
-			}
-			if !found {
-				if err := reg.Put(ctx, legacyKey, value); err != nil {
-					return 0, fmt.Errorf("xkms key registry: record legacy run %d of %q: %w", version, keyID, err)
-				}
-			}
-		}
-	}
 	// A rotation on another node may record a version between the listing
 	// above and this write: the migrated record never overwrites one. A
 	// store with a guarded insert makes the absence check and the write one

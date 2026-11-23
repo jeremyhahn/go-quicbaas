@@ -88,14 +88,14 @@ func TestXKMSBackend_DeleteKeepsIndependentVersionNamedKey(t *testing.T) {
 	assertKeyRoundTrips(t, fresh, "report_v2")
 }
 
-// TestXKMSBackend_PreRegistryRotatedKeyMigrates: a key rotated before the
-// registry has stored versions but no version record. Installing the registry
-// adopts its contiguous rotated run as its versions and records it, so its
-// version-2 ciphertext still decrypts and rotation continues at version 3.
-// DeleteKey deletes the registry-era version 3 but keeps the pre-registry
-// ledger_v2 as an ordinary key: it cannot be told apart from an independent
-// key of that name.
-func TestXKMSBackend_PreRegistryRotatedKeyMigrates(t *testing.T) {
+// TestXKMSBackend_PreRegistryVersionNamesAreNotAdopted: a key rotated before
+// the registry has stored versions but no version record. Its ledger_v2 cannot
+// be told apart from an independent key created under that name, so
+// installing the registry adopts no version: ledger records version 1, its
+// version-2 ciphertext is not opened with ledger_v2's material, ledger_v2
+// stays an ordinary key, rotation is refused while the next version name is
+// taken, and DeleteKey keeps ledger_v2.
+func TestXKMSBackend_PreRegistryVersionNamesAreNotAdopted(t *testing.T) {
 	cleanup := initXKMSForTest(t)
 	defer cleanup()
 	ctx := context.Background()
@@ -114,27 +114,28 @@ func TestXKMSBackend_PreRegistryRotatedKeyMigrates(t *testing.T) {
 	upgraded := newRegistryTestBackend(t, registry)
 	current, err := upgraded.CurrentVersion(ctx, "ledger")
 	require.NoError(t, err)
-	assert.Equal(t, 2, current, "the pre-registry rotated run is the key's versions")
+	assert.Equal(t, 1, current, "no pre-registry version name is adopted")
 	record, err := registry.Get(ctx, upgraded.versionRecordKey("ledger"))
 	require.NoError(t, err)
-	assert.Equal(t, "2", string(record), "the migrated version is recorded")
+	assert.Equal(t, "1", string(record), "the migrated version is recorded")
 
 	meta, err := upgraded.GetKeyMetadata(ctx, "ledger")
 	require.NoError(t, err)
-	assert.Equal(t, 2, meta.Version)
-	plaintext, err := upgraded.Decrypt(ctx, "ledger", v2Ciphertext, nil)
-	require.NoError(t, err, "version-2 ciphertext from before the upgrade decrypts")
-	assert.Equal(t, []byte("sealed under v2"), plaintext)
+	assert.Equal(t, 1, meta.Version)
+	_, err = upgraded.Decrypt(ctx, "ledger", v2Ciphertext, nil)
+	assert.Error(t, err, "a version-2 ciphertext under ledger is not opened with another key's material")
 
-	rotated, err := upgraded.RotateKey(ctx, "ledger")
-	require.NoError(t, err)
-	assert.Equal(t, 3, rotated.Version)
+	_, err = upgraded.GetKeyMetadata(ctx, "ledger_v2")
+	require.NoError(t, err, "the pre-registry ledger_v2 is an ordinary key")
+
+	_, err = upgraded.RotateKey(ctx, "ledger")
+	assert.ErrorIs(t, err, ErrVersionNameTaken, "rotation does not take over the existing ledger_v2")
 
 	require.NoError(t, upgraded.DeleteKey(ctx, "ledger"))
 	stored, err := upgraded.listStoredKeyIDs(ctx, "ledger")
 	require.NoError(t, err)
 	assert.Equal(t, map[string]struct{}{"ledger_v2": {}}, stored,
-		"DeleteKey deletes the registry-era version and keeps the pre-registry one as an ordinary key")
+		"DeleteKey keeps the pre-registry ledger_v2 as an ordinary key")
 }
 
 // TestXKMSBackend_PreRegistryIndependentVersionNamedKeyIsPreserved: before
@@ -157,6 +158,14 @@ func TestXKMSBackend_PreRegistryIndependentVersionNamedKeyIsPreserved(t *testing
 	_, err = upgraded.GetKeyMetadata(ctx, "report_v2")
 	require.NoError(t, err, "a pre-registry key named like a version stays addressable")
 	assertKeyRoundTrips(t, upgraded, "report_v2")
+	ct, err := upgraded.Encrypt(ctx, "report", []byte("p"), nil)
+	require.NoError(t, err)
+	v, err := CiphertextKeyVersion(ct)
+	require.NoError(t, err)
+	assert.Equal(t, uint64(1), v, "report keeps encrypting under its own material")
+	plaintext, err := newRegistryTestBackend(t, registry).Decrypt(ctx, "report", ct, nil)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("p"), plaintext)
 
 	require.NoError(t, upgraded.DeleteKey(ctx, "report"))
 
