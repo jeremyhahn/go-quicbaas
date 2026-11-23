@@ -15,8 +15,10 @@
 
 <!--
   NodesView lists the members of the Raft cluster from GET
-  /api/v1/cluster/nodes: address, Raft address, role, health, version and
-  uptime. Read-only: no node is added or removed from here.
+  /api/v1/cluster/nodes: address, Raft address, role, and the version and
+  uptime when the daemon reports them. The endpoint's health field is not
+  shown: the daemon fills it from Raft membership, not from a liveness
+  check. Read-only: no node is added or removed from here.
 -->
 <script lang="ts">
   import PageHeader from '../../components/core/PageHeader.svelte';
@@ -24,7 +26,7 @@
   import type { Column } from '../../lib/dataTable.ts';
   import StatCard from '../../components/core/StatCard.svelte';
   import { getSDKClient } from '../../stores/sdkClient.ts';
-  import { Network, Server, CheckCircle, Crown } from 'lucide-svelte';
+  import { Network, Server, Crown } from 'lucide-svelte';
   import type { ClusterNodeInfo, ListClusterNodesResponse } from '@quicbaas/sdk';
   import type { Component } from 'svelte';
 
@@ -33,12 +35,12 @@
     { key: 'address', label: 'Address', sortable: true },
     { key: 'raft_address', label: 'Raft address', sortable: true },
     { key: 'is_leader', label: 'Role', sortable: true },
-    { key: 'health_status', label: 'Health', sortable: true },
     { key: 'version', label: 'Version', sortable: true },
     { key: 'uptime_seconds', label: 'Uptime', sortable: true },
   ];
 
   const UNAVAILABLE = 'Cluster nodes are not available over this connection';
+  const NOT_REPORTED = 'not reported';
 
   // PageHeader takes a Svelte 5 Component; lucide-svelte's icon classes do not
   // match that signature in the type checker, though they render the same.
@@ -65,7 +67,6 @@
   $effect(() => { void load(); });
 
   const nodes = $derived(result?.nodes ?? []);
-  const healthyCount = $derived(nodes.filter((n) => n.health_status === 'healthy').length);
   const leader = $derived(nodes.find((n) => n.is_leader));
 
   /** formatUptime renders seconds as `Xd Yh`, `Yh Zm` or `Zm`. */
@@ -81,7 +82,7 @@
 </script>
 
 <div class="p-6 space-y-6">
-  <PageHeader title="Nodes" subtitle="Members of the Raft cluster" icon={HEADER_ICON} />
+  <PageHeader title="Nodes" subtitle="Raft cluster membership and leadership. Liveness, version and uptime are not measured by the daemon and show as not reported when absent." icon={HEADER_ICON} />
 
   {#if error}
     <div class="alert alert-error text-sm flex items-center justify-between" role="alert">
@@ -95,9 +96,8 @@
       <span class="loading loading-spinner loading-md"></span>
     </div>
   {:else if result}
-    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
       <StatCard label="Total" value={String(result.total_count)} icon={Server} />
-      <StatCard label="Healthy" value={String(healthyCount)} icon={CheckCircle} variant="primary" />
       <StatCard label="Leader" value={leader ? String(leader.node_id) : 'none'} icon={Crown} />
     </div>
 
@@ -120,13 +120,8 @@
               <span class="text-xs text-base-content/60">Follower</span>
             {/if}
           </td>
-          <td>
-            <span class="badge badge-xs" class:badge-success={node.health_status === 'healthy'} class:badge-warning={node.health_status !== 'healthy'}>
-              {node.health_status}
-            </span>
-          </td>
-          <td class="font-mono text-xs">{node.version}</td>
-          <td class="text-xs">{formatUptime(node.uptime_seconds)}</td>
+          <td class={node.version ? 'font-mono text-xs' : 'text-xs text-base-content/60'}>{node.version ? node.version : NOT_REPORTED}</td>
+          <td class={node.uptime_seconds > 0 ? 'text-xs' : 'text-xs text-base-content/60'}>{node.uptime_seconds > 0 ? formatUptime(node.uptime_seconds) : NOT_REPORTED}</td>
         </tr>
       {/snippet}
     </DataTable>

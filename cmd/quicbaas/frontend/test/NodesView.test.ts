@@ -1,6 +1,8 @@
 /**
  * NodesView unit tests: the view lists the nodes from cluster.listNodes(),
- * marks the leader, shows an empty state for no nodes, and on a failed load
+ * marks the leader, shows version and uptime when reported and "not reported"
+ * otherwise (the daemon's real response), claims no health, shows an empty
+ * state for no nodes, and on a failed load
  * shows an error alert whose Retry button loads again. Also checks the
  * sidebar mapping and the router for #/nodes.
  */
@@ -19,7 +21,34 @@ import { routerStore } from '../src/stores/router.svelte.ts';
 
 const mockListNodes = vi.fn();
 
-const TWO_NODES = {
+// What GET /api/v1/cluster/nodes returns today: the service sets health to
+// healthy for every member and reports no version or uptime.
+const SERVICE_NODES = {
+  nodes: [
+    {
+      node_id: 1,
+      address: '10.0.0.1:7000',
+      raft_address: '10.0.0.1:7000',
+      is_leader: true,
+      health_status: 'healthy',
+      version: '',
+      uptime_seconds: 0,
+    },
+    {
+      node_id: 2,
+      address: '10.0.0.2:7000',
+      raft_address: '10.0.0.2:7000',
+      is_leader: false,
+      health_status: 'healthy',
+      version: '',
+      uptime_seconds: 0,
+    },
+  ],
+  total_count: 2,
+  timestamp: '2026-11-21T00:00:00Z',
+};
+
+const REPORTED_NODES = {
   nodes: [
     {
       node_id: 1,
@@ -46,7 +75,7 @@ const TWO_NODES = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockListNodes.mockResolvedValue(TWO_NODES);
+  mockListNodes.mockResolvedValue(SERVICE_NODES);
   vi.mocked(getSDKClient).mockResolvedValue({
     cluster: { listNodes: mockListNodes },
   } as never);
@@ -64,6 +93,7 @@ describe('NodesView', () => {
   });
 
   it('renders one row per node with the Leader badge on the leader', async () => {
+    mockListNodes.mockResolvedValue(REPORTED_NODES);
     const { container } = render(NodesView);
     await waitFor(() => {
       expect(container.querySelectorAll('tbody tr')).toHaveLength(2);
@@ -72,14 +102,35 @@ describe('NodesView', () => {
     expect(rows[0].textContent).toContain('10.0.0.1:8443');
     expect(rows[0].textContent).toContain('Leader');
     expect(rows[0].textContent).toContain('1d 1h');
+    expect(rows[0].textContent).toContain('v1.2.3');
     expect(rows[1].textContent).toContain('Follower');
     expect(rows[1].textContent).not.toContain('Leader');
     expect(rows[1].textContent).toContain('1h 2m');
     expect(mockListNodes).toHaveBeenCalledTimes(1);
   });
 
+  it('marks version and uptime as not reported and claims no health', async () => {
+    const { container } = render(NodesView);
+    await waitFor(() => {
+      expect(container.querySelectorAll('tbody tr')).toHaveLength(2);
+    });
+    const rows = container.querySelectorAll('tbody tr');
+    for (const row of rows) {
+      expect(row.textContent!.split('not reported')).toHaveLength(3);
+    }
+    expect(container.textContent).not.toContain('healthy');
+    expect(container.textContent).not.toContain('Healthy');
+    expect(screen.queryByRole('columnheader', { name: /^Health/ })).toBeNull();
+    const stat = (label: string): string | null | undefined =>
+      Array.from(container.querySelectorAll('.stat'))
+        .find((s) => s.querySelector('.stat-title')?.textContent === label)
+        ?.querySelector('.stat-title + div')?.textContent;
+    expect(stat('Total')).toBe('2');
+    expect(stat('Leader')).toBe('1');
+  });
+
   it('shows the empty state when no nodes are reported', async () => {
-    mockListNodes.mockResolvedValue({ nodes: [], total_count: 0, timestamp: TWO_NODES.timestamp });
+    mockListNodes.mockResolvedValue({ nodes: [], total_count: 0, timestamp: SERVICE_NODES.timestamp });
     render(NodesView);
     await waitFor(() => {
       expect(screen.getByText('No nodes reported')).toBeInTheDocument();
