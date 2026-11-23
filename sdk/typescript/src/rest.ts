@@ -4891,7 +4891,6 @@ export class RestBackupClient implements BackupClient {
   async list(opts: ListBackupsOptions = {}): Promise<ListBackupsResponse> {
     const params = new URLSearchParams();
     if (opts.limit !== undefined) params.set('limit', String(opts.limit));
-    if (opts.offset !== undefined) params.set('offset', String(opts.offset));
     const qs = params.toString();
     const resp = await this.http.fetchJSON<ListBackupsResponse>(
       `/api/v1/backups${qs ? `?${qs}` : ''}`,
@@ -4900,11 +4899,12 @@ export class RestBackupClient implements BackupClient {
     return { ...resp, backups: resp?.backups ?? [], total_count: resp?.total_count ?? 0 };
   }
 
-  async create(req: CreateBackupRequest): Promise<CreateBackupResponse> {
+  async create(req: CreateBackupRequest = {}): Promise<CreateBackupResponse> {
     return this.http.fetchJSON<CreateBackupResponse>('/api/v1/backups', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(req),
+      // The wire field `name` is the server's full/incremental type selector.
+      body: JSON.stringify({ name: req.type ?? 'full' }),
     });
   }
 

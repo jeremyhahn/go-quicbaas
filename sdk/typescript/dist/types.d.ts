@@ -2092,35 +2092,43 @@ export interface WorkerImageStatus {
     queued: boolean;
     last?: WorkerImageReport;
 }
+/** BackupType is the kind of backup the server takes. */
+export type BackupType = 'full' | 'incremental';
 /** BackupInfo is one backup as listed by GET /api/v1/backups. */
 export interface BackupInfo {
     backup_id: string;
+    /** The backup's type ('full' or 'incremental') as the server reports it; the server keeps no user label. */
     name?: string;
+    /** Text the server generates from the creation time. */
     description?: string;
     timestamp: number;
     size: number;
     status: string;
     shards?: number[];
 }
-/** ListBackupsOptions pages GET /api/v1/backups. */
+/** ListBackupsOptions bounds GET /api/v1/backups. */
 export interface ListBackupsOptions {
+    /**
+     * The server returns at most `limit` backups (default 100) in backup-ID
+     * order; it has no offset, so a caller that needs every backup asks again
+     * with `limit` set to `total_count`.
+     */
     limit?: number;
-    offset?: number;
 }
 /** ListBackupsResponse is the body of GET /api/v1/backups. */
 export interface ListBackupsResponse {
     backups: BackupInfo[];
+    /** Number of backups stored; `backups` can hold fewer when a record's metadata is unreadable. */
     total_count: number;
 }
-/** CreateBackupRequest is the body of POST /api/v1/backups. */
+/**
+ * CreateBackupRequest is the body of POST /api/v1/backups. Compression,
+ * encryption and the shard set are the server's configured defaults; this
+ * request cannot choose them.
+ */
 export interface CreateBackupRequest {
-    name: string;
-    description?: string;
-    /** Compression algorithm, e.g. "gzip", "lz4" or "none". */
-    compression?: string;
-    /** Encryption scheme, e.g. "aes256" or "none". */
-    encryption?: string;
-    include_shards?: number[];
+    /** Full or incremental; the server takes a full backup when absent. */
+    type?: BackupType;
 }
 /** CreateBackupResponse is the 201 body of POST /api/v1/backups. */
 export interface CreateBackupResponse {

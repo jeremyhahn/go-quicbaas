@@ -3490,17 +3490,16 @@ export class RestBackupClient {
         const params = new URLSearchParams();
         if (opts.limit !== undefined)
             params.set('limit', String(opts.limit));
-        if (opts.offset !== undefined)
-            params.set('offset', String(opts.offset));
         const qs = params.toString();
         const resp = await this.http.fetchJSON(`/api/v1/backups${qs ? `?${qs}` : ''}`, { method: 'GET' });
         return { ...resp, backups: resp?.backups ?? [], total_count: resp?.total_count ?? 0 };
     }
-    async create(req) {
+    async create(req = {}) {
         return this.http.fetchJSON('/api/v1/backups', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(req),
+            // The wire field `name` is the server's full/incremental type selector.
+            body: JSON.stringify({ name: req.type ?? 'full' }),
         });
     }
     async delete(id) {

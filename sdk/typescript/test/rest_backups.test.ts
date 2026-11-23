@@ -5,10 +5,10 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { RestClient } from '../src/rest.js';
-import type { BackupInfo } from '../src/types.js';
+import type { BackupInfo, CreateBackupRequest } from '../src/types.js';
 
 const sample: BackupInfo[] = [
-  { backup_id: 'b1', name: 'nightly', timestamp: 1700000000, size: 2048, status: 'completed', shards: [1, 2] },
+  { backup_id: 'b1', name: 'full', timestamp: 1700000000, size: 2048, status: 'completed', shards: [1, 2] },
 ];
 
 function makeFetch(body: unknown, status = 200) {
@@ -51,14 +51,14 @@ describe('RestBackupClient', () => {
     expect(resp.total_count).toBe(1);
   });
 
-  it('list({limit, offset}) puts both in the query', async () => {
+  it('list({limit}) puts limit in the query and sends no offset', async () => {
     const f = makeFetch({ backups: sample, total_count: 1 });
-    await client(f).list({ limit: 10, offset: 20 });
+    await client(f).list({ limit: 10 });
     const { url } = call(f);
     const q = new URL(url).searchParams;
     expect(new URL(url).pathname).toBe('/api/v1/backups');
     expect(q.get('limit')).toBe('10');
-    expect(q.get('offset')).toBe('20');
+    expect(q.has('offset')).toBe(false);
   });
 
   it('list() turns backups: null into []', async () => {
@@ -67,15 +67,25 @@ describe('RestBackupClient', () => {
     expect(resp.backups).toEqual([]);
   });
 
-  it('create() POSTs the JSON body', async () => {
+  it('create() POSTs the type as the server\'s name selector', async () => {
     const f = makeFetch({ backup_id: 'b2', timestamp: 1, size: 0, status: 'pending' }, 201);
-    const resp = await client(f).create({ name: 'n', description: 'd' });
+    const c = client(f);
+    const resp = await c.create({ type: 'incremental' });
+    await c.create();
     const { url, init } = call(f);
     expect(url.endsWith('/api/v1/backups')).toBe(true);
     expect(init.method).toBe('POST');
-    expect(JSON.parse(String(init.body))).toEqual({ name: 'n', description: 'd' });
+    expect(JSON.parse(String(init.body))).toEqual({ name: 'incremental' });
     expect((init.headers as Record<string, string>)['Content-Type']).toBe('application/json');
     expect(resp.backup_id).toBe('b2');
+    expect(JSON.parse(String(call(f, 1).init.body))).toEqual({ name: 'full' });
+  });
+
+  it('create() forwards no option the server ignores', async () => {
+    const f = makeFetch({ backup_id: 'b3', timestamp: 1, size: 0, status: 'pending' }, 201);
+    const req = { type: 'full', encryption: 'aes256', description: 'd' } as unknown as CreateBackupRequest;
+    await client(f).create(req);
+    expect(JSON.parse(String(call(f).init.body))).toEqual({ name: 'full' });
   });
 
   it('delete() sends DELETE /api/v1/backups/{id}', async () => {

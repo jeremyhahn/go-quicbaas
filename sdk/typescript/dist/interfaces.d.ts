@@ -326,7 +326,7 @@ export interface ClusterClient {
 }
 export interface BackupClient {
     list(opts?: ListBackupsOptions): Promise<ListBackupsResponse>;
-    create(req: CreateBackupRequest): Promise<CreateBackupResponse>;
+    create(req?: CreateBackupRequest): Promise<CreateBackupResponse>;
     delete(id: string): Promise<DeleteBackupResponse>;
     restore(id: string, req?: RestoreBackupRequest): Promise<RestoreBackupResponse>;
     status(id: string): Promise<BackupStatusResponse>;

@@ -195,7 +195,7 @@ export declare class RestBackupClient implements BackupClient {
     private readonly http;
     constructor(baseUrl: string, config?: ClientConfig);
     list(opts?: ListBackupsOptions): Promise<ListBackupsResponse>;
-    create(req: CreateBackupRequest): Promise<CreateBackupResponse>;
+    create(req?: CreateBackupRequest): Promise<CreateBackupResponse>;
     delete(id: string): Promise<DeleteBackupResponse>;
     restore(id: string, req?: RestoreBackupRequest): Promise<RestoreBackupResponse>;
     status(id: string): Promise<BackupStatusResponse>;

@@ -1213,10 +1213,12 @@ export interface ClusterClient {
 
 // BackupClient manages cluster backups under /api/v1/backups.
 export interface BackupClient {
-  // list returns a page of backups. Maps to GET /api/v1/backups.
+  // list returns up to opts.limit backups (default 100) and total_count; there
+  // is no offset. Maps to GET /api/v1/backups.
   list(opts?: ListBackupsOptions): Promise<ListBackupsResponse>;
-  // create starts a backup. Maps to POST /api/v1/backups.
-  create(req: CreateBackupRequest): Promise<CreateBackupResponse>;
+  // create takes a full or incremental backup with the server's configured
+  // compression and encryption. Maps to POST /api/v1/backups.
+  create(req?: CreateBackupRequest): Promise<CreateBackupResponse>;
   // delete removes a backup. Maps to DELETE /api/v1/backups/{id}.
   delete(id: string): Promise<DeleteBackupResponse>;
   // restore restores a backup onto shards. Maps to POST /api/v1/backups/{id}/restore.

@@ -2,7 +2,7 @@
  * backup_view.spec.ts
  *
  * Cluster > Backup: the sidebar entry is enabled, #/backup lists the backups
- * GET /api/v1/backups returns, and the Create form POSTs the typed name.
+ * GET /api/v1/backups returns, and the Create form POSTs the chosen type.
  * The backups API is stubbed with page.route so the spec does not depend on
  * the daemon's backup store.
  */
@@ -18,8 +18,8 @@ async function navigateTo(page: Page, hash: string): Promise<void> {
 }
 
 const BACKUPS = [
-  { backup_id: 'b1', name: 'nightly', timestamp: 1700000000, size: 2048, status: 'completed', shards: [1, 2] },
-  { backup_id: 'b2', name: 'weekly', timestamp: 1700100000, size: 4096, status: 'completed', shards: [1] },
+  { backup_id: 'backup-1', name: 'full', timestamp: 1700000000000000000, size: 2048, status: 'completed', shards: [1, 2] },
+  { backup_id: 'backup-2', name: 'incremental', timestamp: 1700100000000000000, size: 4096, status: 'completed', shards: [1] },
 ];
 
 test.describe('Cluster > Backup', () => {
@@ -32,7 +32,7 @@ test.describe('Cluster > Backup', () => {
         await route.fulfill({
           status: 201,
           contentType: 'application/json',
-          body: JSON.stringify({ backup_id: 'b3', timestamp: 1700200000, size: 0, status: 'pending' }),
+          body: JSON.stringify({ backup_id: 'backup-3', timestamp: 1700200000, size: 0, status: 'pending' }),
         });
         return;
       }
@@ -49,10 +49,10 @@ test.describe('Cluster > Backup', () => {
     const table = page.getByRole('table', { name: 'Backups' });
     await expect(table.locator('tbody tr')).toHaveCount(2);
 
-    await page.getByLabel('Name', { exact: true }).fill('e2e-backup');
+    await page.getByLabel('Type', { exact: true }).selectOption('incremental');
     await page.getByRole('button', { name: 'Create', exact: true }).click();
     await expect.poll(() => posted.length).toBe(1);
-    expect(posted[0]).toMatchObject({ name: 'e2e-backup' });
+    expect(posted[0]).toEqual({ name: 'incremental' });
   });
 
   test('the sidebar Backup entry is not marked soon', async ({ page }) => {

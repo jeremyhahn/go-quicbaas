@@ -14,8 +14,10 @@
 -->
 
 <!--
-  BackupView lists the cluster's backups from /api/v1/backups and lets an
-  operator create, verify and delete them. Restore is in the SDK client but
+  BackupView lists every backup from /api/v1/backups with its ID and type,
+  takes full or incremental backups with the server's configured
+  compression and encryption, verifies and deletes them, and marks backups
+  that captured no shards. Restore is in the SDK client but
   has no button here: it overwrites shards and needs its own confirmation.
 -->
 <script lang="ts">
@@ -26,7 +28,7 @@
   import { showToast } from '../../stores/toast.svelte.ts';
   import { HardDrive } from 'lucide-svelte';
   import { formatDateTime } from '../../lib/time.ts';
-  import type { BackupInfo, VerifyBackupResponse } from '@quicbaas/sdk';
+  import type { BackupInfo, BackupType, VerifyBackupResponse } from '@quicbaas/sdk';
   import type { Component } from 'svelte';
 
   /** The lucide-svelte icon typed as the component PageHeader takes. */
@@ -36,7 +38,8 @@
   const UNAVAILABLE = 'Backups are not available over this connection';
 
   const COLUMNS: Column<BackupInfo>[] = [
-    { key: 'name', label: 'Name', sortable: true, searchable: true, value: (b) => b.name || b.backup_id },
+    { key: 'backup_id', label: 'Backup ID', sortable: true, searchable: true },
+    { key: 'name', label: 'Type', sortable: true, searchable: true },
     { key: 'timestamp', label: 'Created', sortable: true },
     { key: 'size', label: 'Size', sortable: true },
     { key: 'status', label: 'Status', sortable: true, searchable: true },
@@ -52,8 +55,13 @@
   let loading = $state(false);
   let error: string | null = $state(null);
 
-  let name = $state('');
-  let description = $state('');
+  /** PAGE is the server's default list limit. */
+  const PAGE = 100;
+
+  /** totalCount is the number of backups the server stores. */
+  let totalCount = $state(0);
+
+  let backupType: BackupType = $state('full');
   let creating = $state(false);
 
   /** verifyResults holds the last verify outcome per backup id. */
@@ -71,8 +79,14 @@
     try {
       const client = await getSDKClient();
       if (!client.backups) { backups = []; error = UNAVAILABLE; return; }
-      const resp = await client.backups.list();
+      // The server has no offset, so the whole collection is fetched by
+      // asking again with limit set to total_count.
+      let resp = await client.backups.list({ limit: PAGE });
+      if (resp.total_count > resp.backups.length && resp.backups.length >= PAGE) {
+        resp = await client.backups.list({ limit: resp.total_count });
+      }
       backups = resp.backups ?? [];
+      totalCount = resp.total_count ?? backups.length;
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to load backups';
     } finally {
@@ -83,16 +97,14 @@
   $effect(() => { void loadBackups(); });
 
   async function createBackup(): Promise<void> {
-    const trimmed = name.trim();
-    if (!trimmed || creating) return;
+    if (creating) return;
     creating = true;
     try {
       const client = await getSDKClient();
       if (!client.backups) { showToast('error', UNAVAILABLE); return; }
-      await client.backups.create({ name: trimmed, description: description.trim() });
-      showToast('success', `Backup "${trimmed}" created`);
-      name = '';
-      description = '';
+      const resp = await client.backups.create({ type: backupType });
+      showToast('success', `Backup ${resp.backup_id} created`);
+      backupType = 'full';
       await loadBackups();
     } catch (e) {
       showToast('error', e instanceof Error ? e.message : 'Failed to create backup');
@@ -116,7 +128,7 @@
   }
 
   async function deleteBackup(b: BackupInfo): Promise<void> {
-    const label = b.name || b.backup_id;
+    const label = b.backup_id;
     if (!window.confirm(`Delete backup "${label}"? This cannot be undone.`)) return;
     busyId = b.backup_id;
     try {
@@ -165,6 +177,10 @@
 <div class="p-6 space-y-6">
   <PageHeader title="Backup" subtitle="Snapshots of the cluster's shards" icon={ICON} />
 
+  <div class="alert alert-info text-sm" role="note">
+    A backup lists the shards it captured. A backup with 0 shards holds no shard data and cannot restore the cluster's data.
+  </div>
+
   <form
     class="card bg-base-200 shadow-sm"
     aria-label="Create backup"
@@ -174,18 +190,18 @@
       <h2 class="font-medium">Create backup</h2>
       <div class="flex flex-wrap gap-3 items-end">
         <label class="form-control">
-          <span class="label-text text-sm">Name</span>
-          <input class="input input-bordered input-sm" type="text" name="name" bind:value={name} required />
+          <span class="label-text text-sm">Type</span>
+          <select class="select select-bordered select-sm" name="type" bind:value={backupType}>
+            <option value="full">Full</option>
+            <option value="incremental">Incremental</option>
+          </select>
         </label>
-        <label class="form-control flex-1 min-w-48">
-          <span class="label-text text-sm">Description</span>
-          <input class="input input-bordered input-sm" type="text" name="description" bind:value={description} />
-        </label>
-        <button class="btn btn-primary btn-sm" type="submit" disabled={!name.trim() || creating}>
+        <button class="btn btn-primary btn-sm" type="submit" disabled={creating}>
           {#if creating}<span class="loading loading-spinner loading-xs"></span>{/if}
           Create
         </button>
       </div>
+      <p class="text-xs text-base-content/60">Compression and encryption are the server's configured defaults.</p>
     </div>
   </form>
 
@@ -201,6 +217,13 @@
       <span class="loading loading-spinner loading-md"></span>
     </div>
   {:else if !error}
+    <p class="text-sm text-base-content/60">
+      {#if backups.length === totalCount}
+        {backups.length} backups
+      {:else}
+        {backups.length} of {totalCount} backups; {totalCount - backups.length} could not be read
+      {/if}
+    </p>
     <DataTable
       columns={COLUMNS}
       rows={backups}
@@ -210,15 +233,11 @@
     >
       {#snippet row(b: BackupInfo)}
         <tr class="hover">
-          <td>
-            <div class="font-medium">{b.name || b.backup_id}</div>
-            {#if b.description}
-              <div class="text-xs text-base-content/60">{b.description}</div>
-            {/if}
-          </td>
+          <td class="font-mono text-xs">{b.backup_id}</td>
+          <td>{b.name || 'full'}</td>
           <td class="text-sm">{formatDateTime(b.timestamp)}</td>
           <td class="font-mono text-xs">{formatSize(b.size)}</td>
-          <td><span class="badge badge-sm {statusClass(b.status)}">{b.status}</span></td>
+          <td><span class="badge badge-sm {statusClass(b.status)}">{b.status}</span>{#if !b.shards || b.shards.length === 0}<span class="badge badge-sm badge-warning ml-1">no shard data</span>{/if}</td>
           <td class="font-mono text-xs">{b.shards?.length ?? 0}</td>
           <td>
             <div class="flex items-center gap-2">
