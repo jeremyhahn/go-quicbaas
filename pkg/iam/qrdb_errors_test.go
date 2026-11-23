@@ -26,6 +26,7 @@ import (
 // translated to the correct QuicBaaS dberrors code, that the original error is
 // preserved as the wrapped cause, and that a nil input produces nil output.
 func TestMapQRDBTenantError(t *testing.T) {
+	t.Parallel()
 	// entitlementErr is a concrete *EntitlementError (Feature-denied variant).
 	entitlementErr := &qrdbsdk.EntitlementError{TenantID: "t1", Feature: "dedicated-raft"}
 
@@ -107,6 +108,7 @@ func TestMapQRDBTenantError(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			result := mapQRDBTenantError("test-op", tc.input)
 
 			if tc.expectNil {
@@ -141,6 +143,7 @@ func TestMapQRDBTenantError(t *testing.T) {
 // TestMapQRDBTenantError_OpPropagated verifies the op string is preserved in
 // the returned QBError so callers get useful context in error messages.
 func TestMapQRDBTenantError_OpPropagated(t *testing.T) {
+	t.Parallel()
 	result := mapQRDBTenantError("UpdateTenantBarrier", errors.New("boom"))
 
 	var qbErr *dberrors.QBError

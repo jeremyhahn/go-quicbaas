@@ -19,6 +19,7 @@ import (
 
 // IssueSessionToken fails closed when a DPoP proof is presented but invalid.
 func TestIssueSessionToken_InvalidDPoPFailsClosed(t *testing.T) {
+	t.Parallel()
 	provider, _, _, _, _ := createTestOIDCProvider(t)
 
 	identity := SessionIdentity{
@@ -38,6 +39,7 @@ func TestIssueSessionToken_InvalidDPoPFailsClosed(t *testing.T) {
 
 // bindSessionDPoP returns no confirmation when no proof is presented.
 func TestBindSessionDPoP_NoProof(t *testing.T) {
+	t.Parallel()
 	provider, _, _, _, _ := createTestOIDCProvider(t)
 
 	cnf, err := provider.bindSessionDPoP(SessionIdentity{Subject: "u"})

@@ -27,6 +27,7 @@ import (
 // role ID order (#1848). Map iteration order is random, so without a sort two
 // offset pages can repeat a role or skip one.
 func TestMemoryStorage_ListRoles_OffsetPagesCoverEachRoleOnce(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	m := NewMemoryStorage()
 
