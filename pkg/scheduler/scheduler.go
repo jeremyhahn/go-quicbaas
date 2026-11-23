@@ -1679,10 +1679,11 @@ func (s *SchedulerEngine) persistJobOutcome(ctx context.Context, job *Job) bool 
 	defer lock.Unlock()
 
 	// On a clustered engine the stripe lock is this node's exclusivity only:
-	// a recovery on another node may have concluded this run as abandoned.
-	// The guard decides which conclusion stands, and a loss writes nothing.
-	if !s.concludeOwnRun(ctx, job) {
-		return false
+	// a recovery on another node may have concluded this run as abandoned,
+	// or another node may have deleted the job. The outcome is written by
+	// the guarded transition itself, and a loss writes nothing.
+	if guarded, won := s.concludeOwnRun(ctx, job); guarded {
+		return won
 	}
 
 	current, getErr := s.storage.GetJob(ctx, job.ID, JobTenantID(job))

@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -300,34 +299,30 @@ func (s *SchedulerEngine) completeRemoteRunElsewhere(ctx context.Context, ref Re
 			return RemoteRunNotOpenError{Ref: ref, Reason: "the run already ended"}
 		}
 	}
-	// Each completion concludes under an owner of its own: a repeated
-	// completion of one run on one node loses the mark to the first, rather
-	// than winning it again as the same owner's retry would.
-	won, err := s.concluder.ConcludeRun(ctx, &RunConclusion{
-		JobID: job.ID, TenantID: JobTenantID(job), Firing: ref.Firing, StartedAt: ref.StartedAt,
-		Owner: fmt.Sprintf("remote@%s/%d", s.nodeID, remoteCompletionSeq.Add(1)),
-	})
 	lock.Unlock()
-	if err != nil {
-		s.storageErrors.Add(1)
-		return ErrStorageError{Op: "CompleteRemoteRun", Cause: err}
-	}
-	if !won {
-		return RemoteRunNotOpenError{Ref: ref, Reason: "another writer concluded the run"}
-	}
-	ctx = withOwnRun(ctx, ownRun{concluded: true})
+	// The outcome is written by the guarded transition (persistJobOutcome),
+	// which concludes the run once: a repeated completion, the firing node's
+	// own conclusion or a recovery that got there first finds the run
+	// concluded and loses, and a deleted job is not recreated.
+	res := &ownRunResult{}
+	ctx = withOwnRun(ctx, ownRun{
+		run:    &RunConclusion{JobID: job.ID, TenantID: JobTenantID(job), Firing: ref.Firing, StartedAt: ref.StartedAt},
+		result: res,
+	})
 	exec := &JobExecution{JobID: job.ID, TenantID: JobTenantID(job), Status: JobStatusRunning, StartedAt: ref.StartedAt}
 	if o.err != nil {
 		s.handleJobError(ctx, job, exec, o.err)
-		return nil
+	} else {
+		s.handleJobSuccess(ctx, job, exec, o.result)
 	}
-	s.handleJobSuccess(ctx, job, exec, o.result)
+	if res.err != nil {
+		return ErrStorageError{Op: "CompleteRemoteRun", Cause: res.err}
+	}
+	if !res.won {
+		return RemoteRunNotOpenError{Ref: ref, Reason: "another writer concluded the run"}
+	}
 	return nil
 }
-
-// remoteCompletionSeq makes each cross-node completion's conclusion owner
-// unique within the process.
-var remoteCompletionSeq atomic.Uint64
 
 // runDeadline is when the job's current run times out: its start plus the
 // effective timeout.

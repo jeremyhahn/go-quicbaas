@@ -264,6 +264,14 @@ func (s *SchedulerEngine) RecoverAbandonedRun(
 		return "", JobNotFoundError{JobID: job.ID}
 	}
 
+	// On a clustered engine a run that was concluded says so on the job, so a
+	// recovery of it is refused as concluded whatever status the conclusion
+	// left — or, retried on the node whose recovery concluded it, finishes
+	// the history record that attempt failed to write.
+	if s.concluder != nil && runConcluded(current) {
+		return s.revisitConcludedRun(storageCtx, current, att)
+	}
+
 	if current.Status != JobStatusRunning {
 		return current.Status, RecoveryRefusedError{
 			JobID:   job.ID,
@@ -298,31 +306,12 @@ func (s *SchedulerEngine) RecoverAbandonedRun(
 		att.ObservedAt = startedAt
 	}
 
-	// THE GUARD IS TAKEN BEFORE ANYTHING IS WRITTEN on a clustered engine.
-	// Losing it means another writer concluded this run — the executing node
-	// came back with its outcome, or another node's recovery won — and this
-	// recovery writes neither history nor a transition. The owner is stable
-	// per node, so a retry here after a later failure wins again and the
-	// history-then-transition retry contract below still holds.
+	evidence := renderAttestation(att)
+
+	// A CLUSTERED ENGINE CONCLUDES THROUGH THE GUARDED TRANSITION, which is
+	// the job write itself; see recoverThroughGuard.
 	if s.concluder != nil {
-		won, err := s.concluder.ConcludeRun(storageCtx, &RunConclusion{
-			JobID:     current.ID,
-			TenantID:  JobTenantID(current),
-			Firing:    current.NextRun,
-			StartedAt: startedAt,
-			Owner:     s.recoveryOwner(),
-		})
-		if err != nil {
-			s.storageErrors.Add(1)
-			return "", ErrStorageError{Op: "ConcludeRun", Cause: err}
-		}
-		if !won {
-			return current.Status, RecoveryRefusedError{
-				JobID:   job.ID,
-				Refusal: RefusedConcluded,
-				Status:  current.Status,
-			}
-		}
+		return s.recoverThroughGuard(storageCtx, current, att, evidence, startedAt, now)
 	}
 
 	// THE HISTORY RECORD IS WRITTEN BEFORE THE TRANSITION, and the order is
@@ -337,7 +326,6 @@ func (s *SchedulerEngine) RecoverAbandonedRun(
 	// record — same firing evidence, same StartedAt, which is stable because
 	// the record it derives from has not changed while the job stays Running
 	// — and does not write a second one.
-	evidence := renderAttestation(att)
 	already, err := s.abandonedRunRecorded(storageCtx, current.ID, JobTenantID(current), startedAt, evidence)
 	if err != nil {
 		s.storageErrors.Add(1)
@@ -374,6 +362,117 @@ func (s *SchedulerEngine) RecoverAbandonedRun(
 	s.failureCount.Add(1)
 
 	return current.Status, nil
+}
+
+// recoverThroughGuard concludes an abandoned run on a clustered engine.
+//
+// THE TRANSITION IS THE GUARD. The failure is applied to the job as storage
+// holds it at the guarded write, and written only while that record still
+// runs this run, unconcluded, at the attested firing. A concurrent outcome,
+// another node's recovery and a force delete each leave a record the write no
+// longer matches, so this recovery writes nothing and is refused: a deleted
+// job is never recreated. Nothing is decided before the job is written, so no
+// crash can strand a run decided but not written.
+//
+// THE HISTORY RECORD FOLLOWS THE TRANSITION here, the reverse of the
+// single-node order: a record written first by a recovery that then lost the
+// write would put a failure on record for a run another writer concluded. A
+// SaveExecution failure after the write is reported, and a retry on this node
+// finishes it (revisitConcludedRun): the job names this node's recovery as
+// the run's conclusion and carries the evidence in LastError.
+func (s *SchedulerEngine) recoverThroughGuard(
+	ctx context.Context,
+	current *Job,
+	att AbandonedRunAttestation,
+	evidence string,
+	startedAt, now time.Time,
+) (JobStatus, error) {
+	run := RunConclusion{JobID: current.ID, TenantID: JobTenantID(current), Firing: current.NextRun, StartedAt: startedAt}
+	owner := s.recoveryOwner()
+	var written *Job
+	won, err := s.concluder.ConcludeRun(ctx, &run, func(held *Job) (*Job, bool) {
+		written = nil
+		if held.Status != JobStatusRunning || !runOpen(held, &run) || !held.NextRun.Equal(att.Firing) {
+			return nil, false
+		}
+		next := *held
+		s.applyRunFailure(&next, evidence, now)
+		next.ConcludedRunAt, next.ConcludedBy = startedAt, owner
+		written = &next
+		return &next, true
+	})
+	if err != nil {
+		s.storageErrors.Add(1)
+		return "", ErrStorageError{Op: "ConcludeRun", Cause: err}
+	}
+	if !won {
+		return current.Status, RecoveryRefusedError{
+			JobID:   current.ID,
+			Refusal: RefusedConcluded,
+			Status:  current.Status,
+		}
+	}
+	s.failureCount.Add(1)
+	if err := s.saveAbandonedRun(ctx, written, startedAt, evidence, now); err != nil {
+		return "", err
+	}
+	return written.Status, nil
+}
+
+// runConcluded reports whether the job's current run was concluded through
+// the guarded transition.
+func runConcluded(job *Job) bool {
+	return !job.ConcludedRunAt.IsZero() && job.ConcludedRunAt.Equal(runStartedAt(job))
+}
+
+// revisitConcludedRun answers a recovery of a run that was already concluded.
+// It is refused as concluded, unless this node's recovery concluded it with
+// the same evidence: that is a retry of a recovery whose history write
+// failed after its transition, and it finishes the record, once.
+func (s *SchedulerEngine) revisitConcludedRun(ctx context.Context, current *Job, att AbandonedRunAttestation) (JobStatus, error) {
+	startedAt := runStartedAt(current)
+	if att.ObservedAt.IsZero() {
+		att.ObservedAt = startedAt
+	}
+	evidence := renderAttestation(att)
+	if current.ConcludedBy != s.recoveryOwner() || current.LastError != evidence {
+		return current.Status, RecoveryRefusedError{
+			JobID:   current.ID,
+			Refusal: RefusedConcluded,
+			Status:  current.Status,
+		}
+	}
+	if err := s.saveAbandonedRun(ctx, current, startedAt, evidence, current.LastRun); err != nil {
+		return "", err
+	}
+	return current.Status, nil
+}
+
+// saveAbandonedRun writes the abandoned run's history record unless it is
+// already recorded (same evidence, same StartedAt).
+func (s *SchedulerEngine) saveAbandonedRun(ctx context.Context, job *Job, startedAt time.Time, evidence string, endedAt time.Time) error {
+	already, err := s.abandonedRunRecorded(ctx, job.ID, JobTenantID(job), startedAt, evidence)
+	if err != nil {
+		s.storageErrors.Add(1)
+		return ErrStorageError{Op: "GetExecutions", Cause: err}
+	}
+	if already {
+		return nil
+	}
+	exec := &JobExecution{
+		TenantID:  JobTenantID(job),
+		JobID:     job.ID,
+		Status:    JobStatusFailed,
+		StartedAt: startedAt,
+		EndedAt:   endedAt,
+		Duration:  endedAt.Sub(startedAt),
+		Error:     evidence,
+	}
+	if err := s.storage.SaveExecution(ctx, exec); err != nil {
+		s.storageErrors.Add(1)
+		return ErrStorageError{Op: "SaveExecution", Cause: err}
+	}
+	return nil
 }
 
 // abandonedRunRecorded reports whether a previous recovery attempt already

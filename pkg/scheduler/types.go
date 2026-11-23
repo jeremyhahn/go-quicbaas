@@ -134,6 +134,17 @@ type Job struct {
 	// changes it, so an update to a running job keeps its run's identity.
 	RunStartedAt time.Time `json:"run_started_at,omitempty"`
 
+	// ConcludedRunAt is the RunStartedAt of the last run whose conclusion a
+	// clustered engine wrote through its guarded transition (RunConcluder).
+	// It makes a run concludable once: a second writer of the same run finds
+	// it here and loses, even when the first conclusion kept the job's status
+	// (a cancel written while the run was executing).
+	ConcludedRunAt time.Time `json:"concluded_run_at,omitempty"`
+	// ConcludedBy names the writer of that conclusion (a node's recovery or
+	// execution), so a recovery retried on the node that concluded the run
+	// can finish the history record its first attempt failed to write.
+	ConcludedBy string `json:"concluded_by,omitempty"`
+
 	// Metadata
 	Labels    map[string]string `json:"labels,omitempty"`
 	CreatedAt time.Time         `json:"created_at"`

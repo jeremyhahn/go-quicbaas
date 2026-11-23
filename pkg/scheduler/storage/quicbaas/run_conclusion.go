@@ -4,96 +4,78 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"strconv"
+	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/cas"
+	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
 )
-
-// ConclusionsPrefix stores one run-conclusion mark per job: the last run of
-// the job that a writer concluded, and which writer did.
-//
-// Same classification and namespace as ClaimsPrefix (see its comment): raw
-// KV coordination metadata of the scheduler's own, in the reserved "__sys:"
-// namespace, arbitrated by the transaction plane that decides firings.
-const ConclusionsPrefix = "__sys:scheduler/conclusions/"
 
 // ErrNilRunConclusion indicates a nil run was passed to ConcludeRun.
 var ErrNilRunConclusion = errors.New("run conclusion cannot be nil")
 
-// ErrIncompleteRunConclusion indicates a run that does not name its job,
-// firing and running transition: it would collide with every other run.
-var ErrIncompleteRunConclusion = errors.New("a run conclusion must name its job, firing and start")
+// ErrIncompleteRunConclusion indicates a run that does not name its job and
+// start, or carries no transition.
+var ErrIncompleteRunConclusion = errors.New("a run conclusion must name its job and start")
 
-// conclusionMark is the stored form. It carries no timestamps of its own, so
-// the same owner concluding the same run marshals to the same bytes.
-type conclusionMark struct {
-	JobID        uint64 `json:"job_id"`
-	FiringNanos  int64  `json:"firing_nanos"`
-	StartedNanos int64  `json:"started_nanos"`
-	Owner        string `json:"owner"`
+// ErrNoCompareAndSwap indicates a KV store without a guarded swap.
+var ErrNoCompareAndSwap = errors.New("the kv store has no CompareAndSwap")
+
+// ErrConclusionContended indicates a conclusion interrupted cas.MaxAttempts times.
+var ErrConclusionContended = errors.New("run conclusion contended")
+
+type compareAndSwapper interface {
+	CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error)
 }
 
-func keyForConclusion(jobID uint64, tenantID string) string {
-	return ConclusionsPrefix + scopeToken(tenantID) + strconv.FormatUint(jobID, 10)
-}
-
-// before reports whether m names an earlier run of the job than o.
-func (m conclusionMark) before(o conclusionMark) bool {
-	if m.FiringNanos != o.FiringNanos {
-		return m.FiringNanos < o.FiringNanos
-	}
-	return m.StartedNanos < o.StartedNanos
-}
-
-// ConcludeRun implements scheduler.RunConcluder with a guarded write.
-//
-// The mark only moves forward. The caller wins when no mark exists, when the
-// mark names an EARLIER run (that run's conclusion is history), or when it
-// names this very run concluded by this same owner (a retry). It loses when
-// another owner concluded this run, or when a LATER run of the job has been
-// concluded — a zombie outcome of an old run must not overwrite a newer one.
-func (s *ClusteredStorage) ConcludeRun(ctx context.Context, run *scheduler.RunConclusion) (bool, error) {
+// ConcludeRun implements scheduler.RunConcluder as a compare-and-swap of the
+// job record itself: the transition decides against the record storage
+// holds, and its result replaces exactly those bytes. An absent job loses,
+// so a deleted job is never recreated; a record that moved is re-read and
+// re-decided.
+func (s *ClusteredStorage) ConcludeRun(ctx context.Context, run *scheduler.RunConclusion, transition scheduler.RunTransition) (bool, error) {
 	if run == nil {
 		return false, &scheduler.ErrStorageError{Op: "ConcludeRun", Cause: ErrNilRunConclusion}
 	}
-	if run.JobID == 0 || run.Firing.IsZero() || run.StartedAt.IsZero() {
+	if run.JobID == 0 || run.StartedAt.IsZero() || transition == nil {
 		return false, &scheduler.ErrStorageError{Op: "ConcludeRun", Cause: ErrIncompleteRunConclusion}
 	}
-	mine := conclusionMark{
-		JobID:        run.JobID,
-		FiringNanos:  run.Firing.UnixNano(),
-		StartedNanos: run.StartedAt.UnixNano(),
-		Owner:        run.Owner,
+	swapper, ok := s.kv.(compareAndSwapper)
+	if !ok {
+		return false, &scheduler.ErrStorageError{Op: "ConcludeRun", Cause: ErrNoCompareAndSwap}
 	}
-	data, err := json.Marshal(mine)
-	if err != nil {
-		return false, &scheduler.ErrStorageError{Op: "ConcludeRun.marshal", Cause: err}
+	key := keyForJobByID(run.JobID, run.TenantID)
+	for attempt := 0; attempt < cas.MaxAttempts; attempt++ {
+		held, err := s.kv.Get(ctx, key)
+		if err != nil {
+			if dberrors.IsNotFound(err) {
+				return false, nil
+			}
+			return false, &scheduler.ErrStorageError{Op: "ConcludeRun.get", Cause: err}
+		}
+		if len(held) == 0 {
+			return false, nil
+		}
+		var job scheduler.Job
+		if err := json.Unmarshal(held, &job); err != nil {
+			return false, &scheduler.ErrStorageError{Op: "ConcludeRun.unmarshal", Cause: err}
+		}
+		next, take := transition(&job)
+		if !take || next == nil {
+			return false, nil
+		}
+		next.UpdatedAt = time.Now()
+		data, err := json.Marshal(next)
+		if err != nil {
+			return false, &scheduler.ErrStorageError{Op: "ConcludeRun.marshal", Cause: err}
+		}
+		swapped, err := swapper.CompareAndSwap(ctx, key, held, data)
+		if err != nil {
+			return false, &scheduler.ErrStorageError{Op: "ConcludeRun.swap", Cause: err}
+		}
+		if swapped {
+			return true, nil
+		}
 	}
-
-	return s.conclusions.Handover(ctx, keyForConclusion(run.JobID, run.TenantID), data,
-		func(held []byte) (cas.Decision, error) {
-			var current conclusionMark
-			if err := json.Unmarshal(held, &current); err != nil {
-				return cas.Decline, &scheduler.ErrStorageError{Op: "ConcludeRun.unmarshal", Cause: err}
-			}
-			if current.FiringNanos <= 0 {
-				return cas.Decline, &scheduler.ErrStorageError{
-					Op:    "ConcludeRun.read",
-					Cause: ErrUnreadableClaimMark,
-				}
-			}
-			switch {
-			case current.before(mine):
-				return cas.Take, nil
-			case mine.before(current):
-				return cas.Decline, nil
-			case current.Owner == mine.Owner:
-				// The same run, concluded by this owner already: swapping
-				// the identical bytes succeeds, so the retry wins again.
-				return cas.Take, nil
-			default:
-				return cas.Decline, nil
-			}
-		})
+	return false, &scheduler.ErrStorageError{Op: "ConcludeRun", Cause: ErrConclusionContended}
 }
