@@ -579,6 +579,61 @@ func TestCompleteEnrollment(t *testing.T) {
 	}
 }
 
+// TestCompleteEnrollmentIncrementAttempts submits known-invalid codes against
+// one enrollment until it is refused. Each failure must add one to the stored
+// counter (1, 2, 3, ...), so the brute-force limit is reached; once it is, the
+// enrollment is refused and deleted.
+func TestCompleteEnrollmentIncrementAttempts(t *testing.T) {
+	ctx := context.Background()
+	m, err := NewMFAManager()
+	require.NoError(t, err)
+
+	resp, err := m.BeginEnrollment(ctx, 123, "tenant-123", MFAMethodTOTP)
+	require.NoError(t, err)
+
+	// A code that no step near now accepts, whatever the configured skew.
+	period := int64(m.config.Period)
+	if period == 0 {
+		period = 30
+	}
+	digits := m.config.Digits
+	if digits == 0 {
+		digits = 6
+	}
+	reach := int64(m.config.Skew) + 2
+	accepted := map[string]bool{}
+	nowStep := time.Now().Unix() / period
+	for step := nowStep - reach; step <= nowStep+reach; step++ {
+		accepted[generateTOTPCodeAt(t, resp.Secret, m.config, time.Unix(step*period, 0).UTC())] = true
+	}
+	invalid := ""
+	for n := 0; invalid == ""; n++ {
+		if c := fmt.Sprintf("%0*d", digits, n); !accepted[c] {
+			invalid = c
+		}
+	}
+
+	enrollment, err := m.storage.GetEnrollment(ctx, resp.EnrollmentID)
+	require.NoError(t, err)
+	maxAttempts := enrollment.MaxAttempts
+	require.Greater(t, maxAttempts, 1, "the limit must allow more than one attempt for this test to mean anything")
+
+	for want := 1; want <= maxAttempts; want++ {
+		err = m.CompleteEnrollment(ctx, 123, "tenant-123", resp.EnrollmentID, invalid)
+		require.ErrorIs(t, err, ErrMFACodeInvalid, "attempt %d", want)
+
+		enrollment, err = m.storage.GetEnrollment(ctx, resp.EnrollmentID)
+		require.NoError(t, err)
+		require.Equal(t, want, enrollment.Attempts, "failures on one enrollment accumulate")
+	}
+
+	err = m.CompleteEnrollment(ctx, 123, "tenant-123", resp.EnrollmentID, invalid)
+	require.ErrorIs(t, err, ErrMFAMaxAttemptsExceeded)
+
+	_, err = m.storage.GetEnrollment(ctx, resp.EnrollmentID)
+	assert.ErrorIs(t, err, ErrMFAEnrollmentNotFound, "an enrollment past its limit is deleted")
+}
+
 // TestCancelEnrollment tests canceling MFA enrollment
 func TestCancelEnrollment(t *testing.T) {
 	tests := []struct {
