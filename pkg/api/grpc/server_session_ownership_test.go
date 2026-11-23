@@ -185,6 +185,24 @@ func TestSessionOwnership_RevokeOtherSessions(t *testing.T) {
 	requireSessionKept(t, storage, ownSessionID, otherUserSessionID, otherTenantSessionID)
 }
 
+// TestSessionOwnership_RevokeOtherSessions_KeepsUnstoredCurrentSession: login
+// mints the session ID into the token but stores no record for it, so a kept
+// ID with no record revokes every stored session of the caller and nobody
+// else's.
+func TestSessionOwnership_RevokeOtherSessions_KeepsUnstoredCurrentSession(t *testing.T) {
+	server, storage := sessionOwnershipFixture(t)
+	ctx := sessionCallerContext("t1", "alice")
+
+	resp, err := server.RevokeOtherSessions(ctx, &iampb.RevokeOtherSessionsRequest{TenantId: "t1", KeepSessionId: "token-sid-not-stored"})
+	require.NoError(t, err)
+	assert.Equal(t, int32(2), resp.RevokedCount)
+	for _, id := range []string{ownSessionID, ownSecondSessionID} {
+		_, err := storage.GetSession(context.Background(), id)
+		assert.Error(t, err, "session %s should be revoked", id)
+	}
+	requireSessionKept(t, storage, otherUserSessionID, otherTenantSessionID)
+}
+
 func TestSessionOwnership_ListSessions(t *testing.T) {
 	server, _ := sessionOwnershipFixture(t)
 	ctx := sessionCallerContext("t1", "alice")

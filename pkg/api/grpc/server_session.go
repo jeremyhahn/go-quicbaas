@@ -26,6 +26,7 @@ import (
 
 	iampb "github.com/jeremyhahn/go-quicbaas/api/proto/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -223,12 +224,27 @@ func (s *SessionServer) RevokeOtherSessions(ctx context.Context, req *iampb.Revo
 		return nil, status.Error(codes.InvalidArgument, "keep_session_id is required")
 	}
 	// The kept session names whose sessions are revoked, so it must be the
-	// caller's own.
-	if _, err := s.ownedSession(ctx, req.KeepSessionId); err != nil {
+	// caller's own. A kept ID with no stored record is the caller's current
+	// token session, which login does not store: revoke every stored session
+	// of the caller, which keeps it.
+	tenantID, callerID, err := s.sessionCaller(ctx)
+	if err != nil {
 		return nil, err
 	}
-
-	count, err := s.sessionService.RevokeOtherSessions(ctx, req.TenantId, req.KeepSessionId)
+	kept, err := s.sessionService.GetSession(ctx, req.KeepSessionId)
+	var count int
+	switch {
+	case err == nil:
+		if kept.UserID != callerID || kept.TenantID != tenantID {
+			return nil, status.Error(codes.PermissionDenied, "access denied")
+		}
+		count, err = s.sessionService.RevokeOtherSessions(ctx, req.TenantId, req.KeepSessionId)
+	case qberrors.IsNotFound(err) || status.Code(err) == codes.NotFound:
+		count, err = s.sessionService.RevokeAllSessions(ctx, tenantID, callerID)
+	default:
+		s.logger.WithError(err).Error("Failed to get session")
+		return nil, status.Errorf(codes.Internal, "failed to get session: %v", err)
+	}
 	if err != nil {
 		s.logger.WithError(err).Error("Failed to revoke other sessions")
 		return nil, status.Errorf(codes.Internal, "failed to revoke other sessions: %v", err)
