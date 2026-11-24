@@ -204,7 +204,9 @@ func TestQRDBRebalance_EmbeddedIsATypedRefusal(t *testing.T) {
 }
 
 // TestQRDBRebalance_BearerOnlyOverGRPCAndUnix: the WithAuthToken bearer wraps
-// the rebalance client only where the qrdb sub-client speaks gRPC.
+// the rebalance client only where the qrdb sub-client speaks gRPC. A token
+// over REST, QUIC or MCP is refused, which
+// TestQRDBClusterAccessors_TokenOverRESTQUICMCPIsRefused covers.
 func TestQRDBRebalance_BearerOnlyOverGRPCAndUnix(t *testing.T) {
 	base, err := qrdbembedded.New(stubKVService{}, stubAdminService{})
 	if err != nil {
@@ -222,8 +224,6 @@ func TestQRDBRebalance_BearerOnlyOverGRPCAndUnix(t *testing.T) {
 	}{
 		{TransportGRPC, "t-1649", true},
 		{TransportUnix, "t-1649", true},
-		{TransportREST, "t-1649", false},
-		{TransportMCP, "t-1649", false},
 		{TransportGRPC, "", false},
 	}
 	for _, tc := range cases {
