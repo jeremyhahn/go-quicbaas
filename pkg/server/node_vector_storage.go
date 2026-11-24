@@ -321,10 +321,14 @@ var errIncompleteVectorScan = errors.New("vector scan did not return every vecto
 // far are discarded, so a result never holds a vector that was deleted since
 // nor misses one written meanwhile. When the namespace count, or the distinct
 // total of a complete pass, differs from the previous pass's, the vectors are
-// discarded too: that second guard is all that covers writes which do not
-// pass through this node's QuicBaaS vector storage or service. With a nil
-// writes only the count checks apply. If
-// nodeScanMaxPasses passes still fall short it returns errIncompleteVectorScan
+// discarded too. Neither guard sees a write that bypasses this node, such as
+// a direct qrdb client deleting one vector and adding another between two
+// pages, so a scan is accepted only after every vector it keeps is re-read
+// from storage by ID at the version it was listed at, and the namespace count
+// is still the same; a vector gone or changed meanwhile discards the vectors
+// and uses up a pass. The re-read costs one point read per vector, with no
+// vector or metadata payload. With a nil writes only the count checks and the
+// re-read apply. If nodeScanMaxPasses passes still fall short it returns errIncompleteVectorScan
 // rather than an incomplete set, so a caller such as an index rebuild never
 // reports success over vectors it did not read.
 //
