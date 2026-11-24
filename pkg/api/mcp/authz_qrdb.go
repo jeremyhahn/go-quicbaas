@@ -754,6 +754,9 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	"quicbaas_iam_user_delete":      {"users", "delete"},
 	"quicbaas_iam_user_assign_role": {"roles", "assign"},
 	"quicbaas_iam_user_revoke_role": {"roles", "unassign"},
+	// Approve and reject mirror REST's /iam/users/{id}/approve and /reject routes.
+	"quicbaas_iam_user_approve": {"users", "enable"},
+	"quicbaas_iam_user_reject":  {"users", "disable"},
 
 	// WebAuthn credential administration. These are admin verbs over
 	// another user's authenticators, so they carry the same user-admin

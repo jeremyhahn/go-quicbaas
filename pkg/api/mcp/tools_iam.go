@@ -461,6 +461,48 @@ func (r *ToolRegistry) registerUserTools() {
 			"required": []string{"tenant_id", "user_id", "role_id"},
 		},
 	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_iam_user_approve",
+		Description: "Approve a pending self-registered user, moving it to the active lifecycle state",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Owning tenant ID",
+				},
+				"user_id": map[string]interface{}{
+					"type":        "string",
+					"description": "User identifier",
+				},
+			},
+			"required": []string{"tenant_id", "user_id"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_iam_user_reject",
+		Description: "Reject a pending self-registered user, moving it to the disabled lifecycle state",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Owning tenant ID",
+				},
+				"user_id": map[string]interface{}{
+					"type":        "string",
+					"description": "User identifier",
+				},
+				"reason": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional reason for the rejection; it is not stored",
+				},
+			},
+			"required": []string{"tenant_id", "user_id"},
+		},
+	})
 }
 
 // =============================================================================
@@ -1623,6 +1665,48 @@ func (r *ToolRegistry) executeIAMUserUpdate(ctx context.Context, args map[string
 		return nil, err
 	}
 	return marshalResult(resp)
+}
+
+// executeIAMUserApprove moves a pending self-registered user to the active
+// lifecycle state, as quicbaasd's REST approve route does.
+func (r *ToolRegistry) executeIAMUserApprove(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	return r.setIAMUserDecision(ctx, args, iam.LifecycleActive)
+}
+
+// executeIAMUserReject moves a pending self-registered user to the disabled
+// lifecycle state, as quicbaasd's REST reject route does. The optional reason
+// is accepted and, as on REST, not stored.
+func (r *ToolRegistry) executeIAMUserReject(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	return r.setIAMUserDecision(ctx, args, iam.LifecycleDisabled)
+}
+
+// setIAMUserDecision sets the lifecycle state an approve or reject decision
+// leaves the user in.
+func (r *ToolRegistry) setIAMUserDecision(ctx context.Context, args map[string]interface{}, state iam.Lifecycle) (interface{}, error) {
+	iamSvc, err := r.getIAMService()
+	if err != nil {
+		return nil, err
+	}
+	tenantID := getString(args, "tenant_id")
+	if tenantID == "" {
+		return nil, &UserIDArgError{Arg: "tenant_id", Value: tenantID}
+	}
+	userID, err := getUserID(args)
+	if err != nil {
+		return nil, err
+	}
+	lifecycle := state
+	if _, err := iamSvc.UpdateUser(ctx, &service.IAMUpdateUserRequest{
+		TenantID:  tenantID,
+		UserID:    userID,
+		Lifecycle: &lifecycle,
+	}); err != nil {
+		return nil, err
+	}
+	return map[string]interface{}{
+		"user_id":   userID,
+		"lifecycle": string(state),
+	}, nil
 }
 
 func (r *ToolRegistry) executeIAMUserDelete(ctx context.Context, args map[string]interface{}) (interface{}, error) {

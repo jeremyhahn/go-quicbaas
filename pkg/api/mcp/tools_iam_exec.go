@@ -31,6 +31,8 @@ var iamTenantScopedTools = map[string]struct{}{
 	"quicbaas_iam_user_update":     {},
 	"quicbaas_iam_user_delete":     {},
 	"quicbaas_iam_user_list":       {},
+	"quicbaas_iam_user_approve":    {},
+	"quicbaas_iam_user_reject":     {},
 	"quicbaas_iam_role_create":     {},
 	"quicbaas_iam_role_get":        {},
 	"quicbaas_iam_role_update":     {},
@@ -109,6 +111,10 @@ func (r *ToolRegistry) executeIAMTool(ctx context.Context, name string, args map
 		return r.executeIAMUserAssignRole(ctx, args)
 	case "quicbaas_iam_user_revoke_role":
 		return r.executeIAMUserRevokeRole(ctx, args)
+	case "quicbaas_iam_user_approve":
+		return r.executeIAMUserApprove(ctx, args)
+	case "quicbaas_iam_user_reject":
+		return r.executeIAMUserReject(ctx, args)
 
 	// Role Operations
 	case "quicbaas_iam_role_create":

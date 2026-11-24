@@ -154,9 +154,6 @@ var sdkCallsWithoutMCPTool = map[sdkCall]string{
 
 	{"quicbaas.IAM.Policy", "GetEffectivePermissions"}: gapNoTool,
 
-	{"quicbaas.IAM.User", "Approve"}: gapNoTool,
-	{"quicbaas.IAM.User", "Reject"}:  gapNoTool,
-
 	// --- Object storage ----------------------------------------------------
 	// The whole admin surface is registered under quicbaas_object_admin_*; the
 	// SDK collapses ObjectStorageAdmin to the quicbaas_object_ prefix.

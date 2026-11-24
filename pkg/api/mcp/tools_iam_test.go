@@ -52,7 +52,7 @@ func TestIAMToolsRegistration(t *testing.T) {
 	}
 
 	// We should have all IAM tools registered
-	expectedCount := 44 // 6 tenant + 7 user + 6 role + 7 policy + 6 app + 10 mfa + 2 pep
+	expectedCount := 46 // 6 tenant + 9 user + 6 role + 7 policy + 6 app + 10 mfa + 2 pep
 	if iamToolCount != expectedCount {
 		t.Errorf("Expected %d IAM tools, got %d", expectedCount, iamToolCount)
 	}

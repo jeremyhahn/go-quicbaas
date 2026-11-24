@@ -82,6 +82,8 @@ var iamToolMap = map[string]string{
 	"User.List":           "quicbaas_iam_user_list",
 	"User.AssignRole":     "quicbaas_iam_user_assign_role",
 	"User.RevokeRole":     "quicbaas_iam_user_revoke_role",
+	"User.Approve":        "quicbaas_iam_user_approve",
+	"User.Reject":         "quicbaas_iam_user_reject",
 
 	// Role Operations
 	"Role.Create": "quicbaas_iam_role_create",
