@@ -160,6 +160,8 @@ func (f *BackendFactory) InitializeFromXKMS(ctx context.Context, enabledBackends
 			}).Info("Registered KMS backend")
 		}
 
+		f.reportLegacyTenantKeys(ctx, backendName, backend)
+
 		priority++
 	}
 
@@ -170,6 +172,31 @@ func (f *BackendFactory) InitializeFromXKMS(ctx context.Context, enabledBackends
 	}
 
 	return nil
+}
+
+// reportLegacyTenantKeys logs, once per backend, how many keys are left under
+// the interim encoded tenant names. There is no migration: those keys are
+// unsupported and unreachable, and the report keeps any from disappearing
+// silently. Startup goes on either way.
+func (f *BackendFactory) reportLegacyTenantKeys(ctx context.Context, backendName string, backend *XKMSBackend) {
+	if f.logger == nil {
+		return
+	}
+	count, err := backend.LegacyTenantKeyCount(ctx)
+	if err != nil {
+		f.logger.WithFields(map[string]interface{}{
+			"backend": backendName,
+			"error":   err.Error(),
+		}).Warn("Could not count legacy encoded tenant keys")
+		return
+	}
+	if count == 0 {
+		return
+	}
+	f.logger.WithFields(map[string]interface{}{
+		"backend":            backendName,
+		"legacy_tenant_keys": count,
+	}).Warn("Legacy encoded tenant keys found; they are unsupported and unreachable (tenant keys are now stored as CN with TenantID)")
 }
 
 // RegisterBackend manually registers a backend with the registry.
