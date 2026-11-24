@@ -137,7 +137,8 @@ func (v *Validator) AuthorizeRequest(r *http.Request, permission string) (*Autho
 //     token's roles and authentication claims together, so a deny
 //     selecting either matches, and an absence-based condition
 //     ("notexists") or an unless exemption is judged on what the token
-//     actually carries.
+//     actually carries, including a token that carries no authentication
+//     claim at all.
 //
 // A request is admitted only when its permission is in scope and both
 // allow.
@@ -162,19 +163,43 @@ func (v *Validator) authorizePermission(ctx context.Context, ac *AuthorizedConte
 	return nil
 }
 
+// guardAuthSourceKey and guardAuthSource mark, in Identity.Metadata, an
+// identity the route guard built from a verified platform token. The mark
+// keeps the attribute set go-qrdb sees non-empty for every guard caller:
+// go-qrdb's ABAC decorator turns an empty Identity.Metadata into a nil
+// attribute namespace, and it resolves subject.attrs.<name> against that
+// nil namespace as present. So without the mark, a deny on a claim's
+// absence ("notexists") would not refuse a token with no authentication
+// claims, and an "exists" exemption would cover it. The key follows
+// go-qrdb's own auth_source mark. Its value is never go-qrdb's on_behalf.
+const (
+	guardAuthSourceKey = "auth_source"
+	guardAuthSource    = "platform_token"
+)
+
 // authorizerIdentity is the complete verified principal the guard asks
-// go-qrdb about: the token's subject, tenant, roles, scope (as
-// ScopePermissions, its only grant) and authentication claims (as
-// Identity.Metadata). Every call returns fresh copies of the slices and
-// the map, so neither decision can change the authorised principal or the
-// identity the other decision sees.
+// go-qrdb about:
+//
+//   - the token's subject, tenant and roles;
+//   - its scope, as ScopePermissions, which is its only grant;
+//   - its authentication claims, as Identity.Metadata, together with the
+//     guard's auth_source mark (guardAuthSourceKey), set last so no claim
+//     can replace it.
+//
+// Metadata is therefore never empty, and go-qrdb judges a condition on a
+// missing claim as missing. Every call returns fresh copies of the slices
+// and the map, so neither decision can change the authorised principal or
+// the identity the other decision sees.
 func authorizerIdentity(ac *AuthorizedContext) *qrdbsdk.Identity {
+	metadata := make(map[string]string, len(ac.AuthAttributes)+1)
+	maps.Copy(metadata, ac.AuthAttributes)
+	metadata[guardAuthSourceKey] = guardAuthSource
 	return &qrdbsdk.Identity{
 		Subject:          ac.Subject,
 		TenantID:         ac.TenantID,
 		Roles:            slices.Clone(ac.Roles),
 		ScopePermissions: slices.Clone(ac.Scopes),
-		Metadata:         maps.Clone(ac.AuthAttributes),
+		Metadata:         metadata,
 	}
 }
 

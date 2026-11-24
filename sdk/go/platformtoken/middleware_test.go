@@ -592,7 +592,7 @@ func TestAuthorizerIdentity_CompleteVerifiedIdentity(t *testing.T) {
 		if id.Subject != "user-1" || id.TenantID != "tenant-1" ||
 			!slices.Equal(id.Roles, []string{"role-auditor"}) ||
 			!slices.Equal(id.ScopePermissions, []string{"keys:get"}) ||
-			!maps.Equal(id.Metadata, map[string]string{"attest_method": "tpm"}) {
+			!maps.Equal(id.Metadata, map[string]string{"attest_method": "tpm", "auth_source": "platform_token"}) {
 			t.Fatalf("identity %+v, want subject user-1, tenant tenant-1, roles [role-auditor], "+
 				"scope [keys:get] and attest_method tpm", id)
 		}
@@ -606,7 +606,7 @@ func TestAuthorizerIdentity_CompleteVerifiedIdentity(t *testing.T) {
 		again := authorizerIdentity(ac)
 		if !slices.Equal(again.Roles, []string{"role-auditor"}) ||
 			!slices.Equal(again.ScopePermissions, []string{"keys:get"}) ||
-			!maps.Equal(again.Metadata, map[string]string{"attest_method": "tpm"}) {
+			!maps.Equal(again.Metadata, map[string]string{"attest_method": "tpm", "auth_source": "platform_token"}) {
 			t.Fatalf("a changed identity leaked into the next one: %+v", again)
 		}
 	})
@@ -615,8 +615,20 @@ func TestAuthorizerIdentity_CompleteVerifiedIdentity(t *testing.T) {
 		if id.Roles != nil {
 			t.Fatalf("identity roles %v, want nil", id.Roles)
 		}
-		if id.Metadata != nil {
-			t.Fatalf("identity metadata %v, want nil", id.Metadata)
+		if !maps.Equal(id.Metadata, map[string]string{"auth_source": "platform_token"}) {
+			t.Fatalf("identity metadata %v, want only auth_source platform_token", id.Metadata)
+		}
+	})
+	t.Run("a claim never replaces the guard's mark", func(t *testing.T) {
+		ac := &AuthorizedContext{
+			Subject: "user-1", TenantID: "tenant-1", Scopes: []string{"keys:get"},
+			AuthAttributes: map[string]string{"auth_source": "on_behalf"},
+		}
+		if got := authorizerIdentity(ac).Metadata["auth_source"]; got != "platform_token" {
+			t.Fatalf("identity auth_source %q, want platform_token", got)
+		}
+		if ac.AuthAttributes["auth_source"] != "on_behalf" {
+			t.Fatalf("building the identity changed the authorised context: %v", ac.AuthAttributes)
 		}
 	})
 }
@@ -695,7 +707,10 @@ func abacKeysGetDeny(t *testing.T, inner qrdbsdk.Authorizer, when, unless []qrdb
 // TestMiddleware_ABACSeesTheCompleteIdentity proves ABAC is judged once, on
 // the token's complete verified identity: a deny conditioned on a claim's
 // absence does not refuse a token that carries the claim, and a deny's unless
-// exemption on a verified claim admits the token that carries it.
+// exemption on a verified claim admits the token that carries it. A token
+// with no authentication claims at all is judged the same way: an
+// absence-based deny refuses it, and an exists-based exemption does not
+// cover it.
 func TestMiddleware_ABACSeesTheCompleteIdentity(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	key := newIssuerKey(t, testKID)
@@ -704,6 +719,8 @@ func TestMiddleware_ABACSeesTheCompleteIdentity(t *testing.T) {
 		[]qrdbsdk.ABACCondition{{Expression: "subject.attrs.attest_method notexists"}}, nil)
 	unless := abacKeysGetDeny(t, &qrdbsdk.NoopAuthorizer{},
 		nil, []qrdbsdk.ABACCondition{{Expression: "subject.attrs.attest_method == \"tpm\""}})
+	unlessExists := abacKeysGetDeny(t, &qrdbsdk.NoopAuthorizer{},
+		nil, []qrdbsdk.ABACCondition{{Expression: "subject.attrs.attest_method exists"}})
 
 	for _, tc := range []struct {
 		name         string
@@ -715,16 +732,19 @@ func TestMiddleware_ABACSeesTheCompleteIdentity(t *testing.T) {
 	}{
 		{name: "a claim-bearing token passes an absence-based deny", authz: absence, attestMethod: "tpm",
 			wantStatus: http.StatusOK, wantBody: "tenant-1/user-1"},
-		// The token carries another authentication claim (amr) but not
-		// attest_method. go-qrdb resolves an absent attribute namespace to a
-		// typed nil map, so a notexists condition only matches when the
-		// subject has some authentication claim.
+		// The token carries another authentication claim (amr) but not attest_method.
 		{name: "a token without the claim is refused by an absence-based deny", authz: absence,
 			amr: []string{"pwd"}, wantStatus: http.StatusForbidden},
+		{name: "a token with no authentication claims is refused by an absence-based deny", authz: absence,
+			wantStatus: http.StatusForbidden},
 		{name: "an unless exemption on a verified claim admits", authz: unless, attestMethod: "tpm",
 			wantStatus: http.StatusOK, wantBody: "tenant-1/user-1"},
 		{name: "an unless exemption does not cover another value", authz: unless, attestMethod: "manual",
 			wantStatus: http.StatusForbidden},
+		{name: "an exists-based unless exemption does not cover a token with no authentication claims",
+			authz: unlessExists, wantStatus: http.StatusForbidden},
+		{name: "an exists-based unless exemption covers a claim-bearing token", authz: unlessExists,
+			attestMethod: "tpm", wantStatus: http.StatusOK, wantBody: "tenant-1/user-1"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			opts := Options{ModeResolver: offline, Authorizer: tc.authz, RBAC: &qrdbsdk.NoopAuthorizer{}}
