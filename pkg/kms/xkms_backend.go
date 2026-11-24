@@ -890,10 +890,31 @@ func (kb *XKMSBackend) Sign(ctx context.Context, keyID string, digest []byte, al
 	return sig, nil
 }
 
+// pssBackendSupported reports whether a backend type is verified to honor
+// both the RSA-PSS padding and the requested salt length: software and
+// PKCS#11. Other backends at the pinned go-xkms drop the padding (TPM2, GCP
+// KMS) or the salt length (AWS KMS, Azure Key Vault, Vault), or are not
+// verified, so they are refused rather than returning a signature the caller
+// did not ask for. Widening this list waits for a go-xkms change plus a
+// per-backend verification test.
+func pssBackendSupported(bt config.BackendType) bool {
+	switch bt {
+	case config.BackendTypeSoftware, config.BackendTypePKCS11:
+		return true
+	default:
+		return false
+	}
+}
+
 // SignPSS signs a pre-hashed digest with an RSA key using RSA-PSS padding.
 // A saltLength of 0 means the salt length equals the hash length. Non-RSA
-// keys are refused with ErrPSSNotSupported.
+// keys, and backends pssBackendSupported does not list, are refused with
+// ErrPSSNotSupported.
 func (kb *XKMSBackend) SignPSS(ctx context.Context, keyID string, digest []byte, hash crypto.Hash, saltLength int) ([]byte, error) {
+	if !pssBackendSupported(kb.backendType) {
+		return nil, fmt.Errorf("%w: backend %s", ErrPSSNotSupported, kb.backendType)
+	}
+
 	if !kb.IsAvailable(ctx) {
 		return nil, ErrBackendNotReady
 	}
