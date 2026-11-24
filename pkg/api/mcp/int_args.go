@@ -16,6 +16,7 @@
 package mcp
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"strconv"
@@ -74,6 +75,56 @@ func idOrHashKeyArg(entityType string, args map[string]interface{}) (uint64, err
 		return hashStringKey(entityType, key), nil
 	}
 	return 0, nil
+}
+
+// expectedVersionArg reads the optional expectedVersion argument. Absent
+// or null is nil, which means an unconditional write. Any present value
+// must be a non-negative whole number (a JSON number or a decimal
+// string); anything else is refused, never read as 0.
+func expectedVersionArg(args map[string]interface{}) (*uint64, error) {
+	const key = "expectedVersion"
+	var (
+		version uint64
+		err     error
+	)
+	switch v := args[key].(type) {
+	case nil:
+		return nil, nil
+	case float64:
+		// float64(math.MaxUint64) rounds up to 2^64, so >= refuses it.
+		switch {
+		case math.IsNaN(v) || math.IsInf(v, 0):
+			err = fmt.Errorf("%v is not a finite number", v)
+		case v != math.Trunc(v):
+			err = fmt.Errorf("%v is not an integer", v)
+		case v < 0:
+			err = fmt.Errorf("%v is negative", v)
+		case v >= float64(math.MaxUint64):
+			err = fmt.Errorf("%v is out of range", v)
+		default:
+			version = uint64(v)
+		}
+	case int:
+		version, err = conv.SafeIntToUint64(v)
+	case int64:
+		version, err = conv.SafeInt64ToUint64(v)
+	case uint64:
+		version = v
+	case json.Number:
+		version, err = strconv.ParseUint(string(v), 10, 64)
+	case string:
+		if v == "" {
+			err = fmt.Errorf("empty string is not a version")
+		} else {
+			version, err = strconv.ParseUint(v, 10, 64)
+		}
+	default:
+		err = fmt.Errorf("unsupported type %T", v)
+	}
+	if err != nil {
+		return nil, newIntArgError(key, err)
+	}
+	return &version, nil
 }
 
 // newIntArgError is the invalid-input error for a whole-number tool

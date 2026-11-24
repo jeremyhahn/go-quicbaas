@@ -415,6 +415,11 @@ func validatePutRequest(req *service.PutRequest) error {
 	if req.EntityType == "" {
 		return errors.NewInvalidInput("kv.Put", "entity type is required")
 	}
+	// No SDK transport carries ExpectedVersion, so sending it would drop
+	// the condition and write unconditionally. Refuse it instead.
+	if req.ExpectedVersion != nil {
+		return errors.NewInvalidInput("kv.Put", "expectedVersion is served only by the MCP key-value tools")
+	}
 	return nil
 }
 
@@ -434,6 +439,11 @@ func validateDeleteRequest(req *service.DeleteRequest) error {
 	}
 	if req.EntityType == "" {
 		return errors.NewInvalidInput("kv.Delete", "entity type is required")
+	}
+	// No SDK transport carries ExpectedVersion, so sending it would drop
+	// the condition and delete unconditionally. Refuse it instead.
+	if req.ExpectedVersion != nil {
+		return errors.NewInvalidInput("kv.Delete", "expectedVersion is served only by the MCP key-value tools")
 	}
 	return nil
 }

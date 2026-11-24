@@ -15,6 +15,8 @@
 // This file contains KV service request/response types.
 package service
 
+import "fmt"
+
 // =============================================================================
 // KV Operations Request/Response Types
 // =============================================================================
@@ -41,6 +43,28 @@ type PutRequest struct {
 	// WriteMode specifies the durability guarantee for this write.
 	// Default: WriteModeSync
 	WriteMode WriteMode `json:"write_mode,omitempty"`
+
+	// ExpectedVersion, when set, makes the put conditional: it is applied
+	// only if the key's stored version equals *ExpectedVersion, and a key
+	// that does not exist has version 0. On a mismatch the put fails with
+	// an ErrConflict whose cause is *KVVersionConflictError and nothing is
+	// written. Nil keeps the unconditional put. It is served only by the
+	// MCP key-value tools, so it is not part of the wire encoding.
+	ExpectedVersion *uint64 `json:"-"`
+}
+
+// KVVersionConflictError reports that a conditional put or delete found
+// the key at a version other than the one the caller expected. Nothing
+// was changed.
+type KVVersionConflictError struct {
+	EntityType string
+	ID         uint64
+	Expected   uint64
+}
+
+// Error implements the error interface.
+func (e *KVVersionConflictError) Error() string {
+	return fmt.Sprintf("version conflict: %s %d is not at expected version %d", e.EntityType, e.ID, e.Expected)
 }
 
 // PutResponse represents a put operation response.
@@ -77,6 +101,13 @@ type GetRequest struct {
 
 	// TimeoutMs is the operation timeout in milliseconds (0 = default).
 	TimeoutMs uint64 `json:"timeout_ms,omitempty"`
+
+	// ReadVersion, when set, makes Get read the value and the key's stored
+	// per-key version together in one MVCC read and bypass the cache, so
+	// Version is the value a conditional put or delete compares against.
+	// When it is false, Version is a placeholder. It is set only by the MCP
+	// key-value get tool, so it is not part of the wire encoding.
+	ReadVersion bool `json:"-"`
 }
 
 // GetResponse represents a get operation response.
@@ -88,7 +119,8 @@ type GetResponse struct {
 	// Data contains the serialized entity payload.
 	Data []byte `json:"data,omitempty"`
 
-	// Version is the MVCC version number of the entity.
+	// Version is the key's stored per-key version when the request set
+	// ReadVersion, and otherwise a placeholder.
 	Version uint64 `json:"version"`
 
 	// Timestamp is when the entity was last modified (Unix nanoseconds).
@@ -113,6 +145,14 @@ type DeleteRequest struct {
 
 	// ShardID specifies the target shard (0 = auto-route based on key).
 	ShardID uint64 `json:"shard_id,omitempty"`
+
+	// ExpectedVersion, when set, makes the delete conditional: it is applied
+	// only if the key's stored version equals *ExpectedVersion, and a key
+	// that does not exist has version 0. On a mismatch the delete fails with
+	// an ErrConflict whose cause is *KVVersionConflictError and nothing is
+	// deleted. Nil keeps the unconditional delete. It is served only by the
+	// MCP key-value tools, so it is not part of the wire encoding.
+	ExpectedVersion *uint64 `json:"-"`
 }
 
 // DeleteResponse represents a delete operation response.

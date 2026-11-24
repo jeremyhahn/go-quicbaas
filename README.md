@@ -422,6 +422,8 @@ filtered out of `tools/list` under the default-deny authorization gate, leaving
 ```json
 // Key-Value operations
 {"tool": "qrdb_put", "arguments": {"entityType": "user", "id": 1, "data": "base64data"}}
+// Conditional put: a stale expectedVersion is refused with a conflict and changes nothing
+{"tool": "qrdb_put", "arguments": {"entityType": "user", "id": 1, "data": "base64data", "expectedVersion": 1}}
 {"tool": "qrdb_get", "arguments": {"entityType": "user", "id": 1}}
 {"tool": "quicbaas_batch_put", "arguments": {"operations": [{"entityType": "user", "id": 1, "data": "base64data"}]}}
 
