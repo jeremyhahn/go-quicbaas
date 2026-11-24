@@ -42,6 +42,7 @@
  *   #/objects        → Object storage
  *   #/iam            → IAM
  *   #/kms            → KMS
+ *   #/xkms-keys      → Key Store (xkms keys)
  *   #/secrets        → Secrets
  *   #/certificates   → Certificates / Certificate Authority
  *   #/trust          → Trust composition (cross-sign / AIA / DANE)
@@ -98,6 +99,7 @@ export type RouteName =
   // SECURITY
   | 'iam'
   | 'kms'
+  | 'xkms-keys'
   | 'secrets'
   | 'certificates'
   | 'trust'
@@ -272,6 +274,9 @@ function matchPath(path: string, hash: string): Route {
   }
   if (path === '/kms') {
     return { name: 'kms', params: {}, hash };
+  }
+  if (path === '/xkms-keys') {
+    return { name: 'xkms-keys', params: {}, hash };
   }
   if (path === '/secrets') {
     return { name: 'secrets', params: {}, hash };
@@ -540,6 +545,7 @@ export function routeIAMTab(tab: 'users' | 'tenants' | 'roles' | 'policies'): vo
   navigateTo(`/iam/${tab}`);
 }
 export function routeKMS(): void { navigateTo('/kms'); }
+export function routeXKMSKeys(): void { navigateTo('/xkms-keys'); }
 export function routeSecrets(): void { navigateTo('/secrets'); }
 export function routeCertificates(): void { navigateTo('/certificates'); }
 export function routeTrust(): void { navigateTo('/trust'); }

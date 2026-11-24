@@ -42,6 +42,7 @@ export type ViewID =
   | 'scheduler'
   | 'iam'
   | 'kms'
+  | 'xkms-keys'
   | 'secrets'
   | 'certificates'
   | 'trust'
@@ -95,6 +96,7 @@ const viewHashPaths: Partial<Record<ViewID, string>> = {
   // SECURITY
   iam:           '/iam',
   kms:           '/kms',
+  'xkms-keys':   '/xkms-keys',
   secrets:       '/secrets',
   certificates:  '/certificates',
   trust:         '/trust',
@@ -160,6 +162,7 @@ const routeToViewID: Partial<Record<RouteName, ViewID>> = {
   // SECURITY
   iam:              'iam',
   kms:              'kms',
+  'xkms-keys':      'xkms-keys',
   secrets:          'secrets',
   certificates:     'certificates',
   trust:            'trust',

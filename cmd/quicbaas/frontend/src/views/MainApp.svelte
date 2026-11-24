@@ -78,6 +78,7 @@
   import IAMView from './security/IAMView.svelte';
   import InviteActivateView from './security/InviteActivateView.svelte';
   import KMSView from './security/KMSView.svelte';
+  import XKMSKeysView from './security/XKMSKeysView.svelte';
   import SecretsView from './security/SecretsView.svelte';
   import CertificatesView from './security/CertificatesView.svelte';
   import TrustView from './security/TrustView.svelte';
@@ -266,6 +267,7 @@
       items: [
         { id: 'iam',       label: 'IAM',       icon: Shield,   implemented: true },
         { id: 'kms',       label: 'KMS',       icon: Key,      implemented: true },
+        { id: 'xkms-keys', label: 'Key Store', icon: KeySquare, implemented: true },
         { id: 'secrets',   label: 'Secrets',   icon: EyeOff,   implemented: true },
         { id: 'certificates', label: 'Certificates', icon: FileBadge,  implemented: true },
         { id: 'trust',     label: 'Trust',     icon: ShieldCheck, implemented: true },
@@ -304,12 +306,13 @@
     },
   ];
 
-  // These pages call the SDK's iam or attestation client, which the desktop
-  // (Wails) transport does not provide. On desktop they are disabled in the
-  // navigation and a direct route shows a notice instead of a broken page.
+  // These pages call the SDK's iam, attestation or xkms clients, which the
+  // desktop (Wails) transport does not provide. On desktop they are disabled
+  // in the navigation and a direct route shows a notice instead of a broken
+  // page.
   const WEB_ONLY_VIEWS: ReadonlySet<string> = new Set([
     'my-sessions', 'attestation', 'oauth-apps', 'identity-providers',
-    'policy-tester', 'impersonation', 'iam-audit',
+    'policy-tester', 'impersonation', 'iam-audit', 'xkms-keys',
   ]);
   const desktopRuntime = isWailsRuntime();
   function available(item: NavItem): boolean {
@@ -771,6 +774,9 @@
             {:else if routerStore.name === 'kms'}
               <li class="text-base-content/40">Security</li>
               <li class="font-medium">KMS</li>
+            {:else if routerStore.name === 'xkms-keys'}
+              <li class="text-base-content/40">Security</li>
+              <li class="font-medium">Key Store</li>
             {:else if routerStore.name === 'secrets'}
               <li class="text-base-content/40">Security</li>
               <li class="font-medium">Secrets</li>
@@ -1144,6 +1150,10 @@
       {:else if routerStore.name === 'kms'}
         <div class="flex-1 overflow-y-auto">
           <KMSView />
+        </div>
+      {:else if routerStore.name === 'xkms-keys'}
+        <div class="flex-1 overflow-y-auto">
+          <XKMSKeysView />
         </div>
 
       {:else if routerStore.name === 'secrets'}

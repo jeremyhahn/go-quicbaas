@@ -135,6 +135,21 @@ describe('MainApp — web-only security routes and withheld My Sessions', () => 
     expect(screen.getByTestId('web-only-notice').textContent).toContain('OAuth Apps');
   });
 
+  it('disables the Key Store on desktop, where the transport has no xkms clients', async () => {
+    runtime.wails = true;
+    await goto('/xkms-keys');
+    setAuthenticated({ access_token: 'test-access-token' });
+    render(MainApp);
+
+    await vi.waitFor(() => {
+      expect(screen.getByRole('navigation')).toBeInTheDocument();
+    });
+    const button = navButton('Key Store');
+    expect(button).toHaveClass('opacity-40');
+    expect(button.textContent).toContain('soon');
+    expect(screen.getByTestId('web-only-notice').textContent).toContain('Key Store');
+  });
+
   it('keeps the web-only page enabled in the web console', async () => {
     runtime.wails = false;
     await goto('/oauth-apps');

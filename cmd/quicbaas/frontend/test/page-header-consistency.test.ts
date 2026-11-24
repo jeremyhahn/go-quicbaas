@@ -57,6 +57,7 @@ const views: ViewEntry[] = [
   { name: 'ConnectionView',        path: 'src/views/settings/ConnectionView.svelte',               title: 'Connection' },
   { name: 'SchedulerView',         path: 'src/views/async/SchedulerView.svelte',                   title: 'Scheduler' },
   { name: 'KMSView',               path: 'src/views/security/KMSView.svelte',                      title: 'KMS' },
+  { name: 'XKMSKeysView',          path: 'src/views/security/XKMSKeysView.svelte',                 title: 'Key Store' },
   { name: 'SecretsView',           path: 'src/views/security/SecretsView.svelte',                  title: 'Secrets' },
   { name: 'CertificatesView',      path: 'src/views/security/CertificatesView.svelte',             title: 'Certificates' },
   { name: 'BackupView',            path: 'src/views/cluster/BackupView.svelte',                    title: 'Backup' },
