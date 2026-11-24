@@ -82,7 +82,7 @@ func requireGRPCGrantEnforced(t *testing.T, grants map[string]methodPermission) 
 			called := false
 			handler := func(context.Context, interface{}) (interface{}, error) { called = true; return nil, nil }
 
-			_, err := UnaryAuthorizationInterceptor(authorizer)(ctxWithBearer("good"), nil, info, handler)
+			_, err := UnaryAuthorizationInterceptor(authorizer)(ctxWithBearer("good"), grantEnforcedRequest(method), info, handler)
 			require.NoError(t, err)
 			assert.True(t, called, "a caller holding %s must reach the handler", grant)
 			assert.Equal(t, grant, authorizer.lastPerm)
@@ -97,7 +97,7 @@ func requireGRPCGrantEnforced(t *testing.T, grants map[string]methodPermission) 
 			called := false
 			handler := func(context.Context, interface{}) (interface{}, error) { called = true; return nil, nil }
 
-			_, err := UnaryAuthorizationInterceptor(authorizer)(ctxWithBearer("good"), nil, info, handler)
+			_, err := UnaryAuthorizationInterceptor(authorizer)(ctxWithBearer("good"), grantEnforcedRequest(method), info, handler)
 			require.Error(t, err)
 			assert.Equal(t, codes.PermissionDenied, status.Code(err))
 			assert.NotEqual(t, (&UnmappedMethodError{Method: method}).Error(), status.Convert(err).Message(),
