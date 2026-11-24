@@ -137,7 +137,11 @@ Every error is a typed struct with a sentinel reachable through `errors.Is`.
 | `AccountsSaturatedError` (`ErrAccountsSaturated`) | 409 | `ResourceExhausted` |
 | `service.AccountNotReleasableError` (revoked, errored or held account) | 409 | `FailedPrecondition` |
 | `AccountSecretRefUnresolvedError` | 409, `fault_class: credential_not_found` | `FailedPrecondition` |
-| `lease.LeaseRevokedError` (a revoked delivery grant presented) | 409 | `Internal` (see Known gaps) |
+| `lease.LeaseRevokedError` (a revoked delivery grant presented) | 409 | `FailedPrecondition` |
+| `AccountQuotaExhaustedError` (a spent spend window) | 409 | `ResourceExhausted` |
+| `AccountBreakerOpenError`, `AccountBreakerTrialHeldError` | 409 | `Unavailable` |
+| `AccountLimitedError` | 409 | `FailedPrecondition` |
+| `AccountSpendUnknownVerdictError`, `SpendAuthorityConfigError` (the spend authority cannot decide) | 503 | `Unavailable` |
 | `service.AccountProjectScopeError` | 403 | `PermissionDenied` |
 | `AccountVersionConflictError` (`ErrAccountVersionConflict`), including an overtaken rotation | 409 | `Aborted` |
 | `service.AccountUsageTrackerNotConfiguredError`, `AccountTokenManagerNotConfiguredError`, `AccountSessionReserverNotConfiguredError`, `AccountSecretResolverNotConfiguredError` | 503 | `Unavailable` |
@@ -285,9 +289,16 @@ same turns.
 `pkg/server/ledger_pricing.go` registers the `ledger.pricing` system job
 (`pkg/scheduler/handlers/ledger_pricing.go`).
 
+The control plane attaches the resolver and the credential leaser to the
+`claude`, `codex` and `opencode` backends with `attachAccountResolver`
+(`pkg/server/lifecycle_account_backends.go`). `codex` is the server-local
+`CodexExecBackend`: it folds an environment credential into the session and
+names a file credential's `.codex` directory through `CODEX_HOME`.
+
 On a worker, `cmd/quicbaas/fleet_serve.go` composes the resolver with
-`agent.NewAccountPool` and attaches it to every ACP backend with
-`Runtime.SetAccountResolver`.
+`agent.NewAccountPool` and attaches it with `Runtime.SetAccountResolver` to
+every backend that can draw an account, ACP or codex exec. The embedded fleet
+node's codex gets it the same way.
 
 ## Tests
 
@@ -296,6 +307,7 @@ On a worker, `cmd/quicbaas/fleet_serve.go` composes the resolver with
 | Store, defaults, locking | `pkg/orchestration/account_store*_test.go`, including `TestAccountStore_SetDefault_ConcurrentMutualDisplacement_DoesNotDeadlock` |
 | End-to-end pool | `pkg/orchestration/account_spawn_e2e_test.go`: `TestAccountPool_Anthropic_StaticToken_EndToEnd`, `TestAccountPool_OpenAI_StaticToken_EndToEnd`, `TestAccountPool_OAuthRefresh_EndToEnd` (against a live local token endpoint) |
 | Provider registry | `TestBuiltinAccountProviders_*`: fails if a vendor endpoint or client id is hardcoded |
+| Codex exec backend | `pkg/orchestration/codex_exec_backend_account_test.go`: `TestCodexExecBackend_Spawn_*` (pinned env account, file account and `CODEX_HOME`, fail-closed, no account available, env conflicts); `TestAttachAccountResolver_ReachesCodexAndACP`; `TestRuntime_SetAccountResolverReachesCodexExec` |
 | Delivery leases | `TestAccountCredentialLeaser_NoSecretInLeaseOrAudit` |
 | Release verb | `TestMaterialize_AuditNamesTheGrantAndNeverTheCredential` |
 | REST | `pkg/api/rest/handlers_account*_test.go` |
@@ -315,57 +327,27 @@ Run a package's unit tests with `make test-orchestration` (or the matching
 Each item is a defect or limitation in the code, recorded here rather than
 fixed in a docs change.
 
-1. **Stale spend-policy help.** The CLI help
-   (`cmd/quicbaas/orchestrator_spend_policy.go:50-51`) and the MCP tool
-   description (`pkg/api/mcp/orchestrator_tools.go:331`) say a tenant's limits
-   are not enforced at admission. They are (`admission_spend.go:132`, wired at
-   `pkg/server/lifecycle_orchestration.go:618`).
-2. **A proto comment cites a missing document.** `account.proto:70` points at
+1. **A proto comment cites a missing document.** `account.proto:70` points at
    `docs/agent-orchestration/accounts.md`, which does not exist. The page is
    now [architecture.md](architecture.md#the-release-verb).
-3. **The reservation table is per control-plane node.** It lives in process
+2. **The reservation table is per control-plane node.** It lives in process
    memory, so `max_concurrent_sessions` holds per node in a deployment with
    more than one control-plane node.
-4. **No inbox reason for an exhausted pool.** Exhaustion is audited, counted
+3. **No inbox reason for an exhausted pool.** Exhaustion is audited, counted
    and logged, but the attention inbox has no `account_pool_exhausted` reason.
-5. **`CodexExecBackend` has no account resolver.** `SetAccountResolver` exists
-   only on `ACPBackend` (`acp_backend.go:272`), so a codex spawn on the control
-   plane cannot use the pool.
-6. **Usage needs orchestration.** `GetAccountUsage` answers 503
+4. **Usage needs orchestration.** `GetAccountUsage` answers 503
    (`AccountUsageTrackerNotConfiguredError`) when orchestration is disabled,
    although the account CRUD verbs work.
-7. **Limit detection falls back to a text heuristic** when the CLI emits no
+5. **Limit detection falls back to a text heuristic** when the CLI emits no
    structured signal. QuicBaaS does not sit between the CLI and the provider.
-8. **No interactive OAuth enrollment, and no vendor endpoint or client id is
+6. **No interactive OAuth enrollment, and no vendor endpoint or client id is
    shipped.** `oauth2` renewal needs both values supplied by the operator.
-9. **Telemetry retention is not enforced by the engine.** The retention policy
+7. **Telemetry retention is not enforced by the engine.** The retention policy
    is set on every `fleet.device.*` series, but the time-series engine stores
    it without expiring points.
-10. **`quicbaas orchestrator rotate-account` lacks `--available-at`.** The
-    request field `available_at_unix` is reachable from REST, gRPC, MCP and the
-    SDK only.
-11. **TypeScript SDK gaps.** `AccountsClient` (`accounts.ts`) has no
-    materialize, reserve or release. The non-REST TypeScript transports return
-    `notImpl` for rotate-account, the spend report, the spend policy and cost
-    settings.
-12. **Web UI gaps.** The spawn dialog's `account_allow` takes effect only
-    alongside a pin; there is no allow-list picker and no rotate action.
-13. **A lab host in CLI help.** `cmd/quicbaas/orchestrator_cost.go:78` uses a
-    real-looking host and port as its `--host` example; it should use a
-    placeholder such as `gpu-host.internal`. The `SpendHost.Host` comment
-    (`pkg/orchestration/spend_report.go:297`) has the same problem.
-14. **gRPC does not map a revoked delivery grant.** REST answers a presented
-    revoked lease with 409 so a daemon drops the grant and asks for a fresh
-    one. `convertAccountError` has no case for `lease.LeaseRevokedError`, so the
-    same refusal over gRPC is `Internal`.
-15. **A spend-capped release answers 500.** The release verb checks spend
-    before it resolves the credential (`pkg/service/account_materialize.go:364-368`).
-    The refusals it can return (`AccountQuotaExhaustedError`,
-    `AccountBreakerOpenError`, `AccountBreakerTrialHeldError`,
-    `AccountLimitedError`, `AccountSpendUnknownVerdictError`,
-    `SpendAuthorityConfigError`) have no case in `accountErrorStatus`
-    (`pkg/api/rest/handlers_account.go:842`) or `convertAccountError`, so a
-    daemon sees 500 or `Internal` instead of a conflict it could back off from.
-16. **A handler comment names the wrong permission.**
-    `pkg/api/rest/handlers_orchestrator_spend_policy.go:60` says
-    `orchestrator:spend_policy`; the route requires `spend_policy:write`.
+8. **TypeScript SDK gaps.** `AccountsClient` (`accounts.ts`) has no
+   materialize, reserve or release. The non-REST TypeScript transports return
+   `notImpl` for rotate-account, the spend report, the spend policy and cost
+   settings.
+9. **Web UI gaps.** The spawn dialog's `account_allow` takes effect only
+   alongside a pin; there is no allow-list picker and no rotate action.

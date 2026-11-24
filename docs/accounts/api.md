@@ -314,8 +314,8 @@ Checked in this order (`account_materialize.go:319-433`):
 | Unknown account | 404 | `NotFound` |
 | Project fence: the account is scoped to another project | 403 | `PermissionDenied` |
 | The account is revoked, errored or held (`available_at` in the body) | 409 | `FailedPrecondition` |
-| The account's spend policy refuses | 500 (Known gap 15) | `Internal` |
-| A revoked delivery grant is presented | 409 | `Internal` (Known gap 14) |
+| The account's spend policy refuses | 409; 503 when the spend authority cannot decide | `ResourceExhausted` (spent window), `Unavailable` (breaker open or trial held), `FailedPrecondition` (provider limit); `Unavailable` when the authority cannot decide |
+| A revoked delivery grant is presented | 409 | `FailedPrecondition` |
 | The tenant secret cannot be read | 409, `fault_class: credential_not_found` | `FailedPrecondition` |
 | No secret resolver wired | 503 | `Unavailable` |
 

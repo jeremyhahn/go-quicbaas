@@ -177,9 +177,6 @@ quicbaas --tenant acme orchestrator spend-policy set \
 quicbaas --tenant acme orchestrator spend-policy set --clear-spend
 ```
 
-The command's help text says tenant limits are not enforced at admission. That
-text is stale; see [engineering.md](engineering.md#known-gaps).
-
 ## quicbaas orchestrator cost
 
 `cmd/quicbaas/orchestrator_cost.go:63`. Show one scope of the consumption
@@ -239,11 +236,14 @@ cost history; the replacement account opens a new attribution segment.
 | `<sessionID>` | The session to move |
 | `--reason` | Recorded on the closed account segment and in the transcript |
 | `--hold-outgoing` | Hold the outgoing account out of the pool for the server's default backoff |
+| `--available-at` | When a held outgoing account rejoins the pool (RFC 3339), instead of the default backoff; used with `--hold-outgoing`. A value that does not parse fails before any request is sent. |
 
 ```bash
 quicbaas --tenant acme orchestrator rotate-account sess_abc123
 quicbaas --tenant acme orchestrator rotate-account sess_abc123 \
   --reason "seat retired" --hold-outgoing
+quicbaas --tenant acme orchestrator rotate-account sess_abc123 \
+  --hold-outgoing --available-at 2026-12-01T00:00:00Z
 ```
 
 Only a session spawned with `--account-auto` or `--account-allow` may rotate.
