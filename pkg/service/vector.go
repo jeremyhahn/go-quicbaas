@@ -18,7 +18,6 @@ package service
 import (
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
@@ -78,22 +77,7 @@ type RebuildJobState struct {
 	StartedAt        time.Time
 	CompletedAt      *time.Time
 	Error            error
-	// DistanceMetric is the namespace's stored metric, read when the job starts.
-	DistanceMetric string
-	mu             sync.RWMutex
-}
-
-// vectorIndexDistanceMetric maps a namespace's stored distance metric to the
-// index config's metric name; anything unrecognised gives l2.
-func vectorIndexDistanceMetric(stored string) string {
-	switch stored {
-	case "COSINE", "cosine":
-		return "cosine"
-	case "DOT_PRODUCT", "dot_product":
-		return "dot_product"
-	default:
-		return "l2"
-	}
+	mu               sync.RWMutex
 }
 
 // CompactionJobState tracks the state of a compaction job.
@@ -369,7 +353,15 @@ func (v *vectorService) ensureIndex(ctx context.Context, namespace string) (inte
 	}
 
 	// Parse distance metric from storage
-	distanceMetric := vectorIndexDistanceMetric(info.DistanceMetric)
+	var distanceMetric string
+	switch info.DistanceMetric {
+	case "COSINE", "cosine":
+		distanceMetric = "cosine"
+	case "DOT_PRODUCT", "dot_product":
+		distanceMetric = "dot_product"
+	default:
+		distanceMetric = "l2"
+	}
 
 	// Create vector index via factory
 	config := interfaces.DefaultVectorIndexConfig()
@@ -1491,7 +1483,6 @@ func (v *vectorService) RebuildIndex(ctx context.Context, req *RebuildIndexReque
 		VectorsProcessed: 0,
 		TotalVectors:     info.VectorCount,
 		StartedAt:        time.Now(),
-		DistanceMetric:   info.DistanceMetric,
 	}
 
 	v.jobMu.Lock()
@@ -1554,32 +1545,19 @@ func (v *vectorService) GetRebuildProgress(ctx context.Context, req *GetRebuildP
 		return nil, err
 	}
 
-	tenantID, err := prepareTenantContext(ctx)
-	if err != nil {
-		return nil, err
-	}
-	scoped := vectorTenantScopedNamespace(tenantID, req.Namespace)
-
 	var job *RebuildJobState
 	var found bool
 
 	v.jobMu.RLock()
 	if req.JobID != "" {
-		// Find by job ID; a job of another tenant is reported as not found
+		// Find by job ID
 		job, found = v.rebuildJobs[req.JobID]
-		if found {
-			job.mu.RLock()
-			if !strings.HasPrefix(job.Namespace, vectorTenantScopedNamespace(tenantID, "")) {
-				found = false
-			}
-			job.mu.RUnlock()
-		}
 	} else {
 		// Find by namespace (return most recent job)
 		var latestStartTime time.Time
 		for _, j := range v.rebuildJobs {
 			j.mu.RLock()
-			if j.Namespace == scoped && j.StartedAt.After(latestStartTime) {
+			if j.Namespace == req.Namespace && j.StartedAt.After(latestStartTime) {
 				job = j
 				latestStartTime = j.StartedAt
 				found = true
@@ -1651,7 +1629,7 @@ func (v *vectorService) GetRebuildProgress(ctx context.Context, req *GetRebuildP
 
 	return &GetRebuildProgressResponse{
 		JobID:                    job.JobID,
-		Namespace:                vectorTenantStripNamespace(tenantID, job.Namespace),
+		Namespace:                job.Namespace,
 		Status:                   status,
 		VectorsProcessed:         job.VectorsProcessed,
 		TotalVectors:             job.TotalVectors,
@@ -1698,11 +1676,8 @@ func (v *vectorService) performIndexRebuild(ctx context.Context, jobID, namespac
 		}
 	}
 
-	// Create new vector index via factory, with the namespace's metric
+	// Create new vector index via factory
 	config := interfaces.DefaultVectorIndexConfig()
-	job.mu.RLock()
-	config.DistanceMetric = vectorIndexDistanceMetric(job.DistanceMetric)
-	job.mu.RUnlock()
 
 	// Parse custom config if provided
 	if indexConfig != nil {
