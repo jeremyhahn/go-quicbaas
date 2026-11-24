@@ -146,6 +146,30 @@ func TestMCPCryptoClient_KMSSign(t *testing.T) {
 		assert.Equal(t, "sign-key", resp.KeyID)
 	})
 
+	t.Run("ForwardsPSSFields", func(t *testing.T) {
+		respMap := map[string]interface{}{
+			"key_id":    "sign-key",
+			"signature": sig,
+		}
+		tr := &sdkMockTransport{resp: respMap}
+		c := &mcpCryptoClient{sdk: &sdkTestClient{mockTransport: tr}}
+		_, err := c.KMSSign(ctx, &service.SignRequest{
+			KeyID:         "sign-key",
+			Message:       []byte("digest"),
+			PreHashed:     true,
+			Padding:       service.SignaturePaddingPSS,
+			PSSSaltLength: 32,
+			MGF1Hash:      service.HashAlgorithm("SHA256"),
+		})
+		require.NoError(t, err)
+		args, ok := tr.lastBody.(map[string]interface{})
+		require.True(t, ok, "request body is %T", tr.lastBody)
+		assert.Equal(t, true, args["pre_hashed"])
+		assert.Equal(t, "PSS", args["padding"])
+		assert.Equal(t, 32, args["pss_salt_length"])
+		assert.Equal(t, "SHA256", args["mgf1_hash"])
+	})
+
 	t.Run("TransportError", func(t *testing.T) {
 		c := &mcpCryptoClient{sdk: newTestSDKClient(nil, fmt.Errorf("fail"))}
 		resp, err := c.KMSSign(ctx, &service.SignRequest{KeyID: "k", Message: []byte("m")})

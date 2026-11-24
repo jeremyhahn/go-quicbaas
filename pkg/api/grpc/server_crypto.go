@@ -313,11 +313,19 @@ func (s *CryptoServer) Sign(ctx context.Context, req *pb.SignRequest) (*pb.SignR
 		return nil, status.Error(codes.InvalidArgument, "message is required")
 	}
 
+	mgf1Hash, ok := convertProtoMGF1Hash(req.Mgf1Hash)
+	if !ok {
+		return nil, status.Error(codes.InvalidArgument, "unsupported mgf1_hash: "+req.Mgf1Hash.String())
+	}
+
 	svcReq := &service.SignRequest{
 		KeyID:         req.KeyId,
 		Message:       req.Message,
 		HashAlgorithm: convertProtoHashAlgorithm(req.HashAlgorithm),
 		PreHashed:     req.PreHashed,
+		Padding:       convertProtoSignaturePadding(req.Padding),
+		PSSSaltLength: int(req.PssSaltLength),
+		MGF1Hash:      mgf1Hash,
 	}
 
 	resp, err := s.cryptoSvc.Sign(ctx, svcReq)
@@ -547,6 +555,35 @@ func convertProtoHashAlgorithm(alg pb.HashAlgorithm) service.HashAlgorithm {
 	default:
 		return service.HashAlgSHA256
 	}
+}
+
+// convertProtoSignaturePadding maps the proto padding to the service padding.
+// UNSPECIFIED gives empty (PKCS#1 v1.5); an unknown value is passed through
+// by name so request validation refuses it.
+func convertProtoSignaturePadding(p pb.SignaturePadding) service.SignaturePadding {
+	switch p {
+	case pb.SignaturePadding_SIGNATURE_PADDING_UNSPECIFIED:
+		return ""
+	case pb.SignaturePadding_SIGNATURE_PADDING_PKCS1V15:
+		return service.SignaturePaddingPKCS1v15
+	case pb.SignaturePadding_SIGNATURE_PADDING_PSS:
+		return service.SignaturePaddingPSS
+	default:
+		return service.SignaturePadding(p.String())
+	}
+}
+
+// convertProtoMGF1Hash maps the proto MGF1 hash; UNSPECIFIED gives empty.
+// An unknown MGF1 hash is refused (ok is false), never rewritten to a
+// default hash.
+func convertProtoMGF1Hash(alg pb.HashAlgorithm) (service.HashAlgorithm, bool) {
+	if alg == pb.HashAlgorithm_HASH_ALG_UNSPECIFIED {
+		return "", true
+	}
+	if _, known := pb.HashAlgorithm_name[int32(alg)]; !known {
+		return "", false
+	}
+	return convertProtoHashAlgorithm(alg), true
 }
 
 func convertServiceHashAlgorithm(alg service.HashAlgorithm) pb.HashAlgorithm {

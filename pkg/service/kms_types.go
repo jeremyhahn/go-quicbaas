@@ -1490,7 +1490,29 @@ type SignRequest struct {
 	// PreHashed indicates the Message is already a hash digest (e.g., from crypto.Signer).
 	// When true, the service will not hash the message again.
 	PreHashed bool `json:"pre_hashed,omitempty"`
+
+	// Padding selects the RSA signature padding; empty means PKCS1V15.
+	Padding SignaturePadding `json:"padding,omitempty"`
+
+	// PSSSaltLength is the RSA-PSS salt length in bytes; 0 means equal to the
+	// hash length. Only valid with SignaturePaddingPSS.
+	PSSSaltLength int `json:"pss_salt_length,omitempty"`
+
+	// MGF1Hash is the RSA-PSS MGF1 hash; it must be empty or equal to
+	// HashAlgorithm. Only valid with SignaturePaddingPSS.
+	MGF1Hash HashAlgorithm `json:"mgf1_hash,omitempty"`
 }
+
+// SignaturePadding specifies the RSA signature padding scheme.
+type SignaturePadding string
+
+const (
+	// SignaturePaddingPKCS1v15 is RSASSA-PKCS1-v1_5 (the default).
+	SignaturePaddingPKCS1v15 SignaturePadding = "PKCS1V15"
+
+	// SignaturePaddingPSS is RSASSA-PSS.
+	SignaturePaddingPSS SignaturePadding = "PSS"
+)
 
 // SignResponse returns the signature.
 type SignResponse struct {

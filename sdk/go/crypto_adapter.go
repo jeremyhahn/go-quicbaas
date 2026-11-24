@@ -21,8 +21,10 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"io"
+	"strconv"
 
 	sdkcrypto "github.com/jeremyhahn/go-quicbaas/sdk/go/client/crypto"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/service"
 )
 
 // Compile-time interface assertions.
@@ -79,6 +81,18 @@ type ErrSignerUnsupportedHash struct {
 // Error implements the error interface.
 func (e *ErrSignerUnsupportedHash) Error() string {
 	return "quicbaas signer: unsupported hash algorithm: " + e.Hash.String()
+}
+
+// ErrSignerPSSSaltLength is returned by QuicBaaSSigner.Sign when the
+// *rsa.PSSOptions salt length cannot be sent: a negative value other than
+// rsa.PSSSaltLengthAuto or rsa.PSSSaltLengthEqualsHash, or an automatic salt
+// the key is too small for.
+type ErrSignerPSSSaltLength struct {
+	SaltLength int
+}
+
+func (e *ErrSignerPSSSaltLength) Error() string {
+	return "quicbaas signer: unsupported RSA-PSS salt length " + strconv.Itoa(e.SaltLength)
 }
 
 // ErrDecrypterKeyFetch indicates a failure to fetch the public key for a decrypter.
@@ -176,22 +190,61 @@ func (s *QuicBaaSSigner) Public() crypto.PublicKey {
 // remotely by the QuicBaaS server. The opts parameter is used to determine
 // the hash algorithm that was applied to produce the digest.
 func (s *QuicBaaSSigner) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
-	hashAlg, ok := hashToAlgorithm[opts.HashFunc()]
-	if !ok {
-		return nil, &ErrSignerUnsupportedHash{Hash: opts.HashFunc()}
+	req, err := signRequestForOpts(s.keyID, s.publicKey, digest, opts)
+	if err != nil {
+		return nil, err
 	}
 
-	resp, err := s.client.Security().Crypto().Sign(context.Background(), &sdkcrypto.SignRequest{
-		KeyID:     s.keyID,
-		Data:      digest,
-		HashAlg:   hashAlg,
-		PreHashed: true,
-	})
+	resp, err := s.client.Security().Crypto().Sign(context.Background(), req)
 	if err != nil {
 		return nil, &ErrSignerSign{KeyID: s.keyID, Err: err}
 	}
 
 	return resp.Signature, nil
+}
+
+// signRequestForOpts builds the pre-hashed sign request for a crypto.Signer
+// call. *rsa.PSSOptions selects RSA-PSS padding: PSSSaltLengthEqualsHash
+// sends salt 0 (equal to the hash length), PSSSaltLengthAuto sends the
+// largest salt the RSA key pub allows, as crypto/rsa does, and a positive
+// salt length is kept. Auto on a non-RSA key, any other negative salt length
+// and an Auto salt below 1 are refused.
+func signRequestForOpts(keyID string, pub crypto.PublicKey, digest []byte, opts crypto.SignerOpts) (*sdkcrypto.SignRequest, error) {
+	hashAlg, ok := hashToAlgorithm[opts.HashFunc()]
+	if !ok {
+		return nil, &ErrSignerUnsupportedHash{Hash: opts.HashFunc()}
+	}
+
+	req := &sdkcrypto.SignRequest{
+		KeyID:     keyID,
+		Data:      digest,
+		HashAlg:   hashAlg,
+		PreHashed: true,
+	}
+
+	if pss, ok := opts.(*rsa.PSSOptions); ok {
+		req.Padding = service.SignaturePaddingPSS
+		switch {
+		case pss.SaltLength > 0:
+			req.PSSSaltLength = pss.SaltLength
+		case pss.SaltLength == rsa.PSSSaltLengthEqualsHash:
+			req.PSSSaltLength = 0
+		case pss.SaltLength == rsa.PSSSaltLengthAuto:
+			rsaPub, ok := pub.(*rsa.PublicKey)
+			if !ok {
+				return nil, &ErrUnsupportedKeyType{KeyID: keyID, KeyType: publicKeyTypeName(pub)}
+			}
+			salt := (rsaPub.N.BitLen()-1+7)/8 - 2 - opts.HashFunc().Size()
+			if salt < 1 {
+				return nil, &ErrSignerPSSSaltLength{SaltLength: salt}
+			}
+			req.PSSSaltLength = salt
+		default:
+			return nil, &ErrSignerPSSSaltLength{SaltLength: pss.SaltLength}
+		}
+	}
+
+	return req, nil
 }
 
 // QuicBaaSDecrypter implements crypto.Decrypter using a QuicBaaS-managed key.

@@ -271,6 +271,7 @@ export type {
 export type {
   CryptoClient,
   HashAlgorithm as CryptoHashAlgorithm,
+  SignaturePadding as CryptoSignaturePadding,
   CryptoEncryptRequest,
   CryptoEncryptResponse,
   CryptoDecryptRequest,

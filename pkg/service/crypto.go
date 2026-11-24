@@ -18,6 +18,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"crypto"
 	stderrors "errors"
 	"time"
 
@@ -848,8 +849,22 @@ func (t *cryptoService) Sign(ctx context.Context, req *SignRequest) (*SignRespon
 		hashAlg = "SHA256"
 	}
 
-	// Perform signing (message is not pre-hashed)
-	signature, err := t.cryptoManager.Sign(ctx, scopedKeyID, req.Message, hashAlg, req.PreHashed)
+	var signature []byte
+	if req.Padding == SignaturePaddingPSS {
+		pssSigner, ok := t.kmsManager.(interfaces.PSSSigner)
+		if !ok {
+			t.metrics.signOperationsTotal.With(req.KeyID, "invalid").Inc()
+			t.metrics.errorsByType.With("validation_error").Inc()
+			return nil, &errors.QBError{
+				Code: errors.ErrInvalidInput,
+				Op:   "crypto.Sign",
+				Err:  &api.InvalidInputError{Message: "RSA-PSS signing is not supported by this key manager"},
+			}
+		}
+		signature, err = t.signPSS(ctx, pssSigner, scopedKeyID, req, hashAlg)
+	} else {
+		signature, err = t.cryptoManager.Sign(ctx, scopedKeyID, req.Message, hashAlg, req.PreHashed)
+	}
 	if err != nil {
 		t.metrics.signOperationsTotal.With(req.KeyID, "error").Inc()
 		t.metrics.errorsByType.With("sign_error").Inc()
@@ -1351,7 +1366,77 @@ func (t *cryptoService) validateSignRequest(req *SignRequest) error {
 			Err:  &api.EmptyCollectionError{Field: "message"},
 		}
 	}
-	return nil
+	return validateSignPadding(req)
+}
+
+// validateSignPadding checks the RSA padding fields of a sign request.
+func validateSignPadding(req *SignRequest) error {
+	invalid := func(msg string) error {
+		return &errors.QBError{
+			Code: errors.ErrInvalidInput,
+			Op:   "crypto.validateSignRequest",
+			Err:  &api.InvalidInputError{Message: msg},
+		}
+	}
+	switch req.Padding {
+	case "", SignaturePaddingPKCS1v15:
+		if req.PSSSaltLength != 0 {
+			return invalid("pss_salt_length requires PSS padding")
+		}
+		if req.MGF1Hash != "" {
+			return invalid("mgf1_hash requires PSS padding")
+		}
+		return nil
+	case SignaturePaddingPSS:
+		hashAlg := req.HashAlgorithm
+		if hashAlg == "" {
+			hashAlg = HashAlgSHA256
+		}
+		if _, ok := pssCryptoHash(hashAlg); !ok {
+			return invalid("PSS padding requires hash SHA256, SHA384 or SHA512, got " + string(hashAlg))
+		}
+		if req.PSSSaltLength < 0 {
+			return invalid("pss_salt_length must not be negative")
+		}
+		if req.MGF1Hash != "" && req.MGF1Hash != hashAlg {
+			return invalid("mgf1_hash must equal the signing hash")
+		}
+		return nil
+	default:
+		return invalid("unsupported signature padding: " + string(req.Padding))
+	}
+}
+
+// pssCryptoHash maps the hash algorithms RSA-PSS signing supports.
+func pssCryptoHash(alg HashAlgorithm) (crypto.Hash, bool) {
+	switch alg {
+	case HashAlgSHA256:
+		return crypto.SHA256, true
+	case HashAlgSHA384:
+		return crypto.SHA384, true
+	case HashAlgSHA512:
+		return crypto.SHA512, true
+	default:
+		return 0, false
+	}
+}
+
+// signPSS hashes the message unless it is pre-hashed and signs the digest
+// with RSA-PSS through the key manager.
+func (t *cryptoService) signPSS(ctx context.Context, signer interfaces.PSSSigner, keyID string, req *SignRequest, hashAlg string) ([]byte, error) {
+	hash, ok := pssCryptoHash(HashAlgorithm(hashAlg))
+	if !ok {
+		return nil, api.NewUnsupportedHashAlgorithmError("crypto.Sign", hashAlg)
+	}
+	digest := req.Message
+	if !req.PreHashed {
+		var err error
+		digest, err = t.cryptoManager.Hash(ctx, req.Message, hashAlg)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return signer.SignPSS(ctx, keyID, digest, hash, req.PSSSaltLength)
 }
 
 func (t *cryptoService) validateVerifyRequest(req *VerifyRequest) error {

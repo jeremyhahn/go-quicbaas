@@ -15,7 +15,9 @@
 package crypto
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha512"
 	"errors"
 	"testing"
 
@@ -832,6 +834,28 @@ func TestMemoryCryptoManager_Hash(t *testing.T) {
 			t.Errorf("Hash length = %d, want 32", len(hash))
 		}
 	})
+}
+
+// TestMemoryCryptoManager_Hash_SHA384 proves Hash accepts SHA-384 in both
+// spellings, so an RSA-PSS SHA-384 sign of a raw message can hash it.
+func TestMemoryCryptoManager_Hash_SHA384(t *testing.T) {
+	manager, _, cleanup := memoryManagerTestHelper(t)
+	defer cleanup()
+
+	data := []byte("hello world")
+	want := sha512.Sum384(data)
+	for _, alg := range []string{"sha384", "SHA384"} {
+		got, err := manager.Hash(context.Background(), data, alg)
+		if err != nil {
+			t.Fatalf("Hash(%q) error = %v", alg, err)
+		}
+		if len(got) != 48 {
+			t.Errorf("Hash(%q) length = %d, want 48", alg, len(got))
+		}
+		if !bytes.Equal(got, want[:]) {
+			t.Errorf("Hash(%q) does not equal sha512.Sum384", alg)
+		}
+	}
 }
 
 // TestMemoryCryptoManager_Close tests close operation.

@@ -21,6 +21,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -95,6 +96,9 @@ type cliTestContext struct {
 	// home is the session home of this context: the CLI reads its bearer
 	// only from $HOME/.quicbaas/token.
 	home string
+
+	// login returns the CLI bearer and its expiry; tests replace it to inject a failure.
+	login func(ctx context.Context) (string, time.Time, error)
 }
 
 // newCLITestContext creates a new CLI test context.
@@ -107,33 +111,50 @@ func newCLITestContext(t *testing.T, protocol, address string) *cliTestContext {
 		timeout:   30 * time.Second,
 		outputFmt: "json",
 		home:      t.TempDir(),
+		login:     loginSystemAdminPIV,
 	}
+}
+
+// errSessionSetup marks a login or token-save failure in sessionEnv: the
+// CLI never ran, so the error is not a command result.
+var errSessionSetup = errors.New("CLI session setup failed, the command never ran")
+
+// loginSystemAdminPIV logs the fixture's system admin in over PIV.
+func loginSystemAdminPIV(ctx context.Context) (string, time.Time, error) {
+	return helpers.AuthPIVSession(ctx, getRESTEndpoints()[0], "", "", "")
 }
 
 // sessionEnv logs the fixture's system admin in (PIV, memoized in helpers
 // until the token expires), writes the bearer to the context's session home
 // and returns the environment the CLI process needs to present it.
 //
+// It returns a login or token-save error rather than failing the test: the
+// context holds the top-level test, while run and runExpectError are called
+// from its subtests, and FailNow on a parent from a subtest aborts the
+// whole package. Both errors wrap errSessionSetup.
+//
 // The system admin is the suite's interim principal for these commands: the
 // tests ran with no credential before. A narrower tenant session for the KMS
 // commands is planned.
-func (c *cliTestContext) sessionEnv() []string {
-	c.t.Helper()
-
+func (c *cliTestContext) sessionEnv() ([]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	bearer, expiresAt, err := helpers.AuthPIVSession(ctx, getRESTEndpoints()[0], "", "", "")
-	require.NoError(c.t, err, "PIV login for the CLI bearer failed")
+	bearer, expiresAt, err := c.login(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("%w: PIV login for the CLI bearer: %w", errSessionSetup, err)
+	}
 
 	tokenPath := filepath.Join(c.home, ".quicbaas", "token")
-	require.NoError(c.t, clitoken.SaveToken(tokenPath, &clitoken.TokenData{
+	if err := clitoken.SaveToken(tokenPath, &clitoken.TokenData{
 		AccessToken: bearer,
 		ExpiresAt:   expiresAt,
 		TokenType:   "Bearer",
-	}), "persist the CLI bearer")
+	}); err != nil {
+		return nil, fmt.Errorf("%w: persist the CLI bearer: %w", errSessionSetup, err)
+	}
 
-	return append(os.Environ(), "HOME="+c.home)
+	return append(os.Environ(), "HOME="+c.home), nil
 }
 
 // run executes a CLI command with the configured protocol and address.
@@ -149,7 +170,10 @@ func (c *cliTestContext) run(args ...string) (string, error) {
 	}
 	fullArgs = append(fullArgs, args...)
 
-	env := c.sessionEnv()
+	env, err := c.sessionEnv()
+	if err != nil {
+		return "", err
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
 	defer cancel()
@@ -160,7 +184,7 @@ func (c *cliTestContext) run(args ...string) (string, error) {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	err := cmd.Run()
+	err = cmd.Run()
 
 	c.t.Logf("[%s] %s %s", c.protocol, c.binary, strings.Join(fullArgs, " "))
 	if stdout.Len() > 0 {
@@ -189,7 +213,12 @@ func (c *cliTestContext) runExpectError(args ...string) (string, error) {
 	}
 	fullArgs = append(fullArgs, args...)
 
-	env := c.sessionEnv()
+	// A session setup failure is never the CLI failure the caller expects: Errorf on the parent (safe from a subtest) keeps the package red.
+	env, err := c.sessionEnv()
+	if err != nil {
+		c.t.Errorf("%v", err)
+		return "", err
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
 	defer cancel()
@@ -200,7 +229,7 @@ func (c *cliTestContext) runExpectError(args ...string) (string, error) {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	err := cmd.Run()
+	err = cmd.Run()
 
 	c.t.Logf("[%s] %s %s", c.protocol, c.binary, strings.Join(fullArgs, " "))
 	if stdout.Len() > 0 {
@@ -211,6 +240,26 @@ func (c *cliTestContext) runExpectError(args ...string) (string, error) {
 	}
 
 	return stderr.String(), err
+}
+
+// failOnSessionSetup fails the active subtest t when err is a session setup
+// failure: the CLI never ran, so the error cannot be the expected rejection.
+func failOnSessionSetup(t *testing.T, err error) {
+	t.Helper()
+	if errors.Is(err, errSessionSetup) {
+		t.Fatal(err)
+	}
+}
+
+// deleteKeyCleanup force-deletes keyID in a cleanup. A command failure is
+// ignored; a session setup failure leaks the key, so it fails t with Errorf
+// and leaves the remaining cleanups to run.
+func (c *cliTestContext) deleteKeyCleanup(t *testing.T, keyID string) {
+	t.Helper()
+	_, err := c.run("kms", "key", "delete", keyID, "--force")
+	if errors.Is(err, errSessionSetup) {
+		t.Errorf("cleanup of key %s: %v", keyID, err)
+	}
 }
 
 // unmarshalJSON unmarshals JSON output from a CLI command.
@@ -424,7 +473,7 @@ func TestCLIKMSKeyGenerateAllAlgorithms(t *testing.T) {
 
 			// Cleanup in defer to ensure it runs even on test failure
 			defer func() {
-				_, _ = cli.run("kms", "key", "delete", resp.Key.KeyID, "--force")
+				cli.deleteKeyCleanup(t, resp.Key.KeyID)
 			}()
 		})
 	}
@@ -455,7 +504,7 @@ func TestCLIKMSKeyGenerateFlags(t *testing.T) {
 
 		// Cleanup
 		defer func() {
-			_, _ = cli.run("kms", "key", "delete", resp.Key.KeyID, "--force")
+			cli.deleteKeyCleanup(t, resp.Key.KeyID)
 		}()
 	})
 
@@ -485,7 +534,7 @@ func TestCLIKMSKeyGenerateFlags(t *testing.T) {
 
 		// Cleanup
 		defer func() {
-			_, _ = cli.run("kms", "key", "delete", resp.Key.KeyID, "--force")
+			cli.deleteKeyCleanup(t, resp.Key.KeyID)
 		}()
 	})
 
@@ -514,7 +563,7 @@ func TestCLIKMSKeyGenerateFlags(t *testing.T) {
 
 		// Cleanup
 		defer func() {
-			_, _ = cli.run("kms", "key", "delete", resp.Key.KeyID, "--force")
+			cli.deleteKeyCleanup(t, resp.Key.KeyID)
 		}()
 	})
 
@@ -550,7 +599,7 @@ func TestCLIKMSKeyGenerateFlags(t *testing.T) {
 
 		// Cleanup
 		defer func() {
-			_, _ = cli.run("kms", "key", "delete", resp.Key.KeyID, "--force")
+			cli.deleteKeyCleanup(t, resp.Key.KeyID)
 		}()
 	})
 
@@ -572,7 +621,7 @@ func TestCLIKMSKeyGenerateFlags(t *testing.T) {
 
 		// Cleanup
 		defer func() {
-			_, _ = cli.run("kms", "key", "delete", resp.Key.KeyID, "--force")
+			cli.deleteKeyCleanup(t, resp.Key.KeyID)
 		}()
 	})
 
@@ -592,7 +641,7 @@ func TestCLIKMSKeyGenerateFlags(t *testing.T) {
 
 		// Cleanup
 		defer func() {
-			_, _ = cli.run("kms", "key", "delete", resp.Key.KeyID, "--force")
+			cli.deleteKeyCleanup(t, resp.Key.KeyID)
 		}()
 	})
 
@@ -613,7 +662,7 @@ func TestCLIKMSKeyGenerateFlags(t *testing.T) {
 
 		// Cleanup
 		defer func() {
-			_, _ = cli.run("kms", "key", "delete", resp.Key.KeyID, "--force")
+			cli.deleteKeyCleanup(t, resp.Key.KeyID)
 		}()
 	})
 }
@@ -660,11 +709,12 @@ func TestCLIKMSKeyGenerateErrors(t *testing.T) {
 
 		// Cleanup first key
 		defer func() {
-			_, _ = cli.run("kms", "key", "delete", keyID, "--force")
+			cli.deleteKeyCleanup(t, keyID)
 		}()
 
 		// Try to create second key with same name - may or may not fail depending on implementation
 		_, err = cli.runExpectError("kms", "key", "generate", keyName, "--algorithm", "AES-256-GCM")
+		failOnSessionSetup(t, err)
 		// Some implementations allow duplicate names, some don't
 		t.Logf("Duplicate name result: %v", err)
 	})
@@ -675,6 +725,7 @@ func TestCLIKMSKeyGenerateErrors(t *testing.T) {
 
 		// Try lowercase algorithm
 		output, err := cli.run("kms", "key", "generate", keyName, "--algorithm", "aes-256-gcm")
+		failOnSessionSetup(t, err)
 		if err != nil {
 			// If it fails, that's expected - we require uppercase
 			t.Logf("Lowercase algorithm failed as expected: %v", err)
@@ -685,7 +736,7 @@ func TestCLIKMSKeyGenerateErrors(t *testing.T) {
 		var resp keyResponse
 		if cli.unmarshalJSON(output, &resp) == nil && resp.Key.KeyID != "" {
 			defer func() {
-				_, _ = cli.run("kms", "key", "delete", resp.Key.KeyID, "--force")
+				cli.deleteKeyCleanup(t, resp.Key.KeyID)
 			}()
 		}
 	})
@@ -710,6 +761,7 @@ func TestCLIKMSKeyGenerateErrors(t *testing.T) {
 		for _, name := range specialNames {
 			t.Run(name, func(t *testing.T) {
 				output, err := cli.run("kms", "key", "generate", name, "--algorithm", "AES-256-GCM")
+				failOnSessionSetup(t, err)
 				if err != nil {
 					// Some special characters may not be allowed
 					t.Logf("Special character name %q result: %v", name, err)
@@ -719,7 +771,7 @@ func TestCLIKMSKeyGenerateErrors(t *testing.T) {
 				var resp keyResponse
 				if cli.unmarshalJSON(output, &resp) == nil && resp.Key.KeyID != "" {
 					defer func() {
-						_, _ = cli.run("kms", "key", "delete", resp.Key.KeyID, "--force")
+						cli.deleteKeyCleanup(t, resp.Key.KeyID)
 					}()
 				}
 			})
@@ -777,7 +829,7 @@ func TestCLIKMSKeyGenerateJSONResponse(t *testing.T) {
 
 	// Cleanup
 	defer func() {
-		_, _ = cli.run("kms", "key", "delete", resp.Key.KeyID, "--force")
+		cli.deleteKeyCleanup(t, resp.Key.KeyID)
 	}()
 }
 
@@ -822,7 +874,7 @@ func TestCLIKMSKeyGenerate(t *testing.T) {
 			assert.Contains(t, resp.Key.Algorithm, strings.TrimPrefix(alg, "AES-"), "algorithm should match")
 
 			// Cleanup
-			_, _ = cli.run("kms", "key", "delete", resp.Key.KeyID, "--force")
+			cli.deleteKeyCleanup(t, resp.Key.KeyID)
 		})
 	}
 
@@ -838,7 +890,7 @@ func TestCLIKMSKeyGenerate(t *testing.T) {
 			var resp keyResponse
 			if cli.unmarshalJSON(output, &resp) == nil && resp.Key.KeyID != "" {
 				// Cleanup
-				_, _ = cli.run("kms", "key", "delete", resp.Key.KeyID, "--force")
+				cli.deleteKeyCleanup(t, resp.Key.KeyID)
 			}
 		})
 	}
@@ -867,7 +919,7 @@ func TestCLIKMSKeyGenerate(t *testing.T) {
 		}
 
 		// Cleanup
-		_, _ = cli.run("kms", "key", "delete", resp.Key.KeyID, "--force")
+		cli.deleteKeyCleanup(t, resp.Key.KeyID)
 	})
 
 	// Test with exportable flag
@@ -893,7 +945,7 @@ func TestCLIKMSKeyGenerate(t *testing.T) {
 		}
 
 		// Cleanup
-		_, _ = cli.run("kms", "key", "delete", resp.Key.KeyID, "--force")
+		cli.deleteKeyCleanup(t, resp.Key.KeyID)
 	})
 
 	// Test all flags combined
@@ -912,7 +964,7 @@ func TestCLIKMSKeyGenerate(t *testing.T) {
 		assert.Equal(t, keyName, resp.Metadata.Name, "key name should match")
 
 		// Cleanup
-		_, _ = cli.run("kms", "key", "delete", resp.Key.KeyID, "--force")
+		cli.deleteKeyCleanup(t, resp.Key.KeyID)
 	})
 
 	// Test default algorithm (should use ED25519)
@@ -926,7 +978,7 @@ func TestCLIKMSKeyGenerate(t *testing.T) {
 		var resp keyResponse
 		if cli.unmarshalJSON(output, &resp) == nil && resp.Key.KeyID != "" {
 			// Cleanup
-			_, _ = cli.run("kms", "key", "delete", resp.Key.KeyID, "--force")
+			cli.deleteKeyCleanup(t, resp.Key.KeyID)
 		}
 	})
 
@@ -968,7 +1020,7 @@ func TestCLIKMSKeyGet(t *testing.T) {
 	require.NotEmpty(t, keyID, "key ID should not be empty")
 
 	defer func() {
-		_, _ = cli.run("kms", "key", "delete", keyID, "--force")
+		cli.deleteKeyCleanup(t, keyID)
 	}()
 
 	// Rotate key to create multiple versions
@@ -1066,7 +1118,7 @@ func TestCLIKMSKeyList(t *testing.T) {
 
 	defer func() {
 		for _, keyID := range keyIDs {
-			_, _ = cli.run("kms", "key", "delete", keyID, "--force")
+			cli.deleteKeyCleanup(t, keyID)
 		}
 	}()
 
@@ -1160,7 +1212,7 @@ func TestCLIKMSKeyRotate(t *testing.T) {
 	require.NotEmpty(t, keyID, "key ID should not be empty")
 
 	defer func() {
-		_, _ = cli.run("kms", "key", "delete", keyID, "--force")
+		cli.deleteKeyCleanup(t, keyID)
 	}()
 
 	// Test first rotation
@@ -1279,12 +1331,13 @@ func TestCLIKMSKeyDelete(t *testing.T) {
 
 		defer func() {
 			if keyID != "" {
-				_, _ = cli.run("kms", "key", "delete", keyID, "--force")
+				cli.deleteKeyCleanup(t, keyID)
 			}
 		}()
 
 		// Delete without force - may fail in non-interactive mode
 		_, err = cli.runExpectError("kms", "key", "delete", keyID)
+		failOnSessionSetup(t, err)
 		// This might succeed or fail depending on implementation
 		t.Logf("Delete without force result: %v", err)
 	})
@@ -1312,12 +1365,13 @@ func TestCLIKMSKeyDelete(t *testing.T) {
 
 		defer func() {
 			if keyID != "" {
-				_, _ = cli.run("kms", "key", "delete", keyID, "--force")
+				cli.deleteKeyCleanup(t, keyID)
 			}
 		}()
 
 		// Purge without force should use 30-day pending period
 		output, err = cli.run("kms", "key", "delete", keyID, "--purge")
+		failOnSessionSetup(t, err)
 		// This might fail without --force in non-interactive mode
 		t.Logf("Delete with purge but without force result: %v", err)
 	})
@@ -1343,7 +1397,7 @@ func TestCLIKMSKeyEnableDisable(t *testing.T) {
 	require.NotEmpty(t, keyID, "key ID should not be empty")
 
 	defer func() {
-		_, _ = cli.run("kms", "key", "delete", keyID, "--force")
+		cli.deleteKeyCleanup(t, keyID)
 	}()
 
 	// Test disable key
@@ -1454,7 +1508,7 @@ func TestCLIKMSKeyVersions(t *testing.T) {
 	require.NotEmpty(t, keyID, "key ID should not be empty")
 
 	defer func() {
-		_, _ = cli.run("kms", "key", "delete", keyID, "--force")
+		cli.deleteKeyCleanup(t, keyID)
 	}()
 
 	// Rotate key 4 times to create 5 versions total
@@ -1523,7 +1577,7 @@ func TestCLIKMSEncryptDecrypt(t *testing.T) {
 	require.NotEmpty(t, keyID, "key ID should not be empty")
 
 	defer func() {
-		_, _ = cli.run("kms", "key", "delete", keyID, "--force")
+		cli.deleteKeyCleanup(t, keyID)
 	}()
 
 	testData := "Hello, World! This is secret data."
@@ -1621,7 +1675,7 @@ func TestCLIKMSEncryptDecrypt(t *testing.T) {
 		require.NoError(t, cli.unmarshalJSON(output, &otherResp),
 			"Parsing second key response must succeed")
 		defer func() {
-			_, _ = cli.run("kms", "key", "delete", otherResp.Key.KeyID, "--force")
+			cli.deleteKeyCleanup(t, otherResp.Key.KeyID)
 		}()
 
 		// Encrypt with first key
@@ -1660,7 +1714,7 @@ func TestCLIKMSKeyExport(t *testing.T) {
 	require.NotEmpty(t, keyID, "key ID should not be empty")
 
 	defer func() {
-		_, _ = cli.run("kms", "key", "delete", keyID, "--force")
+		cli.deleteKeyCleanup(t, keyID)
 	}()
 
 	// Create a wrapping key for export
@@ -1673,7 +1727,7 @@ func TestCLIKMSKeyExport(t *testing.T) {
 	wrapKeyID := wrapResp.Key.KeyID
 
 	defer func() {
-		_, _ = cli.run("kms", "key", "delete", wrapKeyID, "--force")
+		cli.deleteKeyCleanup(t, wrapKeyID)
 	}()
 
 	// Test key export
@@ -1703,7 +1757,7 @@ func TestCLIKMSKeyExport(t *testing.T) {
 		require.NoError(t, cli.unmarshalJSON(output, &nonExpResp),
 			"Parsing non-exportable key response must succeed")
 		defer func() {
-			_, _ = cli.run("kms", "key", "delete", nonExpResp.Key.KeyID, "--force")
+			cli.deleteKeyCleanup(t, nonExpResp.Key.KeyID)
 		}()
 
 		// Try to export non-exportable key

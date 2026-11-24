@@ -135,6 +135,20 @@ func (r *ToolRegistry) registerCryptoTools() {
 					"type":        "boolean",
 					"description": "When true, message is already a hash digest and is signed directly without hashing again",
 				},
+				"padding": map[string]interface{}{
+					"type":        "string",
+					"description": "RSA signature padding; empty means PKCS1V15",
+					"enum":        []string{"PKCS1V15", "PSS"},
+				},
+				"pss_salt_length": map[string]interface{}{
+					"type":        "integer",
+					"description": "RSA-PSS salt length in bytes; 0 means the hash length. Only with PSS",
+				},
+				"mgf1_hash": map[string]interface{}{
+					"type":        "string",
+					"description": "RSA-PSS MGF1 hash; empty or equal to hash_algorithm. Only with PSS",
+					"enum":        []string{"SHA256", "SHA384", "SHA512", "SHA3-256", "SHA3-384", "SHA3-512", "BLAKE2B-256", "BLAKE2B-512"},
+				},
 			},
 			"required": []string{"key_id", "message"},
 		},
@@ -529,6 +543,9 @@ func (r *ToolRegistry) executeCryptoSign(ctx context.Context, args map[string]in
 		Message:       message,
 		HashAlgorithm: service.HashAlgorithm(getString(args, "hash_algorithm")),
 		PreHashed:     getBool(args, "pre_hashed"),
+		Padding:       service.SignaturePadding(getString(args, "padding")),
+		PSSSaltLength: getInt(args, "pss_salt_length"),
+		MGF1Hash:      service.HashAlgorithm(getString(args, "mgf1_hash")),
 	}
 
 	resp, err := cryptoSvc.Sign(ctx, req)

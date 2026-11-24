@@ -102,6 +102,16 @@ type SignRequest struct {
 	Data      []byte
 	HashAlg   HashAlgorithm
 	PreHashed bool // When true, Data is already a hash digest (e.g., from crypto.Signer)
+
+	// Padding selects the RSA signature padding; empty means PKCS#1 v1.5.
+	Padding service.SignaturePadding
+	// PSSSaltLength is the RSA-PSS salt length in bytes; 0 means equal to
+	// the hash length. Only valid with service.SignaturePaddingPSS.
+	PSSSaltLength int
+	// MGF1Hash is the RSA-PSS MGF1 hash; nil means the signing hash. When set
+	// it must equal HashAlg. A pointer because HashAlgorithm's zero value is
+	// SHA-256. Only valid with service.SignaturePaddingPSS.
+	MGF1Hash *HashAlgorithm
 }
 
 // HashAlgorithm represents the hash algorithm for signing.
@@ -419,6 +429,11 @@ func (c *client) Sign(ctx context.Context, req *SignRequest) (*SignResponse, err
 		Message:       req.Data,
 		HashAlgorithm: hashAlgToServiceHashAlg(req.HashAlg),
 		PreHashed:     req.PreHashed,
+		Padding:       req.Padding,
+		PSSSaltLength: req.PSSSaltLength,
+	}
+	if req.MGF1Hash != nil {
+		svcReq.MGF1Hash = hashAlgToServiceHashAlg(*req.MGF1Hash)
 	}
 
 	resp, err := c.transport.Request(ctx, serviceName, "Sign", svcReq)

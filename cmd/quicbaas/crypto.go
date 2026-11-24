@@ -45,6 +45,9 @@ var (
 	cryptoBits      int
 	cryptoOutputFmt string
 	cryptoBase64    bool
+
+	cryptoPadding       string
+	cryptoPSSSaltLength int
 )
 
 // newCryptoCommand creates the crypto command group.
@@ -292,13 +295,18 @@ Examples:
   quicbaas crypto sign signing-key --data "message to sign"
 
   # Sign with specific algorithm
-  quicbaas crypto sign signing-key --data "message" --algorithm SHA512`,
+  quicbaas crypto sign signing-key --data "message" --algorithm SHA512
+
+  # Sign with an RSA key using RSA-PSS padding
+  quicbaas crypto sign rsa-key --data "message" --padding PSS --pss-salt-length 32`,
 		Args: cobra.ExactArgs(1),
 		RunE: runCryptoSignCommand,
 	}
 
 	cmd.Flags().StringVar(&cryptoData, "data", "", "Data to sign (required)")
 	cmd.Flags().StringVar(&cryptoAlgorithm, "algorithm", "SHA256", "Hash algorithm (SHA256, SHA384, SHA512)")
+	cmd.Flags().StringVar(&cryptoPadding, "padding", "", "RSA signature padding: PKCS1V15 or PSS (default PKCS1V15)")
+	cmd.Flags().IntVar(&cryptoPSSSaltLength, "pss-salt-length", 0, "RSA-PSS salt length in bytes; 0 means the hash length")
 
 	cmd.MarkFlagRequired("data")
 
@@ -322,6 +330,8 @@ func runCryptoSignCommand(cmd *cobra.Command, args []string) error {
 		KeyID:         keyName,
 		Message:       []byte(cryptoData),
 		HashAlgorithm: parseHashAlgorithm(cryptoAlgorithm),
+		Padding:       service.SignaturePadding(strings.ToUpper(cryptoPadding)),
+		PSSSaltLength: cryptoPSSSaltLength,
 	}
 
 	resp, err := executeCryptoSign(ctx, client, req)

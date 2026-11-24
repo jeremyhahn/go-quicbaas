@@ -15,9 +15,11 @@ package grpc
 
 import (
 	"context"
+	"math"
 	"time"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
+	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
@@ -32,6 +34,14 @@ func (c *Client) KMSSign(ctx context.Context, req *service.SignRequest) (*servic
 		}
 	}
 
+	if err := validateSignPaddingFields(req); err != nil {
+		return nil, &errors.QBError{
+			Code: errors.ErrInvalidInput,
+			Op:   "Client.KMSSign",
+			Err:  err,
+		}
+	}
+
 	if err := c.ensureConnected(ctx); err != nil {
 		return nil, err
 	}
@@ -43,6 +53,9 @@ func (c *Client) KMSSign(ctx context.Context, req *service.SignRequest) (*servic
 		Message:       req.Message,
 		HashAlgorithm: convertServiceHashAlgorithmToProto(req.HashAlgorithm),
 		PreHashed:     req.PreHashed,
+		Padding:       convertServiceSignaturePaddingToProto(req.Padding),
+		PssSaltLength: pssSaltLengthToProto(req.PSSSaltLength),
+		Mgf1Hash:      convertServiceMGF1HashToProto(req.MGF1Hash),
 	}
 
 	pbResp, err := cryptoClient.Sign(ctx, pbReq)
@@ -298,6 +311,57 @@ func convertServiceHashAlgorithmToProto(alg service.HashAlgorithm) pb.HashAlgori
 	default:
 		return pb.HashAlgorithm_HASH_ALG_SHA256
 	}
+}
+
+// convertServiceSignaturePaddingToProto maps the service padding to the proto
+// padding; empty gives UNSPECIFIED.
+func convertServiceSignaturePaddingToProto(p service.SignaturePadding) pb.SignaturePadding {
+	switch p {
+	case service.SignaturePaddingPKCS1v15:
+		return pb.SignaturePadding_SIGNATURE_PADDING_PKCS1V15
+	case service.SignaturePaddingPSS:
+		return pb.SignaturePadding_SIGNATURE_PADDING_PSS
+	default:
+		return pb.SignaturePadding_SIGNATURE_PADDING_UNSPECIFIED
+	}
+}
+
+// validateSignPaddingFields refuses a padding or MGF1 hash the converters
+// would otherwise rewrite silently: an unknown padding would go out as
+// UNSPECIFIED (PKCS#1 v1.5) and an unknown MGF1 hash as SHA-256.
+func validateSignPaddingFields(req *service.SignRequest) error {
+	switch req.Padding {
+	case "", service.SignaturePaddingPKCS1v15, service.SignaturePaddingPSS:
+	default:
+		return api.NewInvalidInputError("unsupported signature padding: " + string(req.Padding))
+	}
+	switch req.MGF1Hash {
+	case "",
+		service.HashAlgSHA256, service.HashAlgSHA384, service.HashAlgSHA512,
+		service.HashAlgSHA3_256, service.HashAlgSHA3_384, service.HashAlgSHA3_512,
+		service.HashAlgBLAKE2b256, service.HashAlgBLAKE2b512:
+	default:
+		return api.NewInvalidInputError("unsupported MGF1 hash: " + string(req.MGF1Hash))
+	}
+	return nil
+}
+
+// pssSaltLengthToProto narrows the salt length to the wire type; a value out
+// of int32 range becomes -1 so the server refuses it.
+func pssSaltLengthToProto(n int) int32 {
+	if n < math.MinInt32 || n > math.MaxInt32 {
+		return -1
+	}
+	return int32(n)
+}
+
+// convertServiceMGF1HashToProto maps the service MGF1 hash; empty gives
+// UNSPECIFIED.
+func convertServiceMGF1HashToProto(alg service.HashAlgorithm) pb.HashAlgorithm {
+	if alg == "" {
+		return pb.HashAlgorithm_HASH_ALG_UNSPECIFIED
+	}
+	return convertServiceHashAlgorithmToProto(alg)
 }
 
 // convertProtoToServiceHashAlgorithm converts pb.HashAlgorithm to service.HashAlgorithm.

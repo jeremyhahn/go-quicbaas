@@ -36,6 +36,41 @@ func TestClient_KMSSign_ClosedClient(t *testing.T) {
 	assert.Contains(t, err.Error(), "closed")
 }
 
+// TestClient_KMSSign_RejectsUnknownPadding proves the client refuses an
+// unknown padding or MGF1 hash before it connects, instead of sending
+// UNSPECIFIED (PKCS#1 v1.5) or SHA-256 in its place.
+func TestClient_KMSSign_RejectsUnknownPadding(t *testing.T) {
+	t.Parallel()
+	client := newClosedClient()
+
+	bad := []struct {
+		name    string
+		req     *service.SignRequest
+		wantArg string
+	}{
+		{"lower-case pss", &service.SignRequest{Padding: "pss"}, "pss"},
+		{"oaep", &service.SignRequest{Padding: "OAEP"}, "OAEP"},
+		{"md5 mgf1", &service.SignRequest{Padding: service.SignaturePaddingPSS, MGF1Hash: "MD5"}, "MD5"},
+	}
+	for _, tc := range bad {
+		resp, err := client.KMSSign(context.Background(), tc.req)
+		require.Error(t, err, tc.name)
+		assert.Nil(t, resp, tc.name)
+		assert.NotContains(t, err.Error(), "closed", tc.name)
+		assert.Contains(t, err.Error(), tc.wantArg, tc.name)
+	}
+
+	good := []*service.SignRequest{
+		{Padding: ""},
+		{Padding: service.SignaturePaddingPSS, MGF1Hash: service.HashAlgSHA256},
+	}
+	for i, req := range good {
+		_, err := client.KMSSign(context.Background(), req)
+		require.Error(t, err, i)
+		assert.Contains(t, err.Error(), "closed", i)
+	}
+}
+
 func TestClient_KMSVerify_ClosedClient(t *testing.T) {
 	t.Parallel()
 	client := newClosedClient()

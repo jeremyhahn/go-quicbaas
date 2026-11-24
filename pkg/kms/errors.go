@@ -26,6 +26,10 @@ var (
 	// ErrKeyCNEmpty indicates key common name is empty.
 	ErrKeyCNEmpty = errors.New("key CN (common name) cannot be empty")
 
+	// ErrReservedKeyName indicates a key name that uses the prefix reserved
+	// for the backend names of tenant-scoped keys.
+	ErrReservedKeyName = errors.New("key names starting with \"tenant.\" are reserved for tenant-scoped keys")
+
 	// ErrKeyMaterialEmpty indicates key material is empty.
 	ErrKeyMaterialEmpty = errors.New("key material cannot be empty")
 
@@ -70,6 +74,9 @@ var (
 
 	// ErrDigestEmpty indicates digest is empty.
 	ErrDigestEmpty = errors.New("digest cannot be empty")
+
+	// ErrPSSNotSupported indicates the backend or key cannot produce an RSA-PSS signature.
+	ErrPSSNotSupported = errors.New("RSA-PSS signing is not supported")
 
 	// ErrSignatureEmpty indicates signature is empty.
 	ErrSignatureEmpty = errors.New("signature cannot be empty")
