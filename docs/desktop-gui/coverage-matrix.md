@@ -641,17 +641,17 @@ RestSecretsClient builds `/api/v1/secrets/<path>` for the `*` routes (POST store
 |---|---|---|---|---|
 | GET | `/api/v1/xkms/backends` | HandleXKMSListBackends | rest.ts | covered: views/security/XKMSKeysView.svelte |
 | GET | `/api/v1/xkms/backends/{id}` | HandleXKMSGetBackend | rest.ts | covered: views/security/XKMSKeysView.svelte |
-| GET | `/api/v1/xkms/ca/bundle` | HandleXKMSGetCABundle | - (rest.ts†) | not covered |
-| GET | `/api/v1/xkms/ca/cert` | HandleXKMSGetCACertificate | - (rest.ts†) | not covered |
+| GET | `/api/v1/xkms/ca/bundle` | HandleXKMSGetCABundle | - (rest.ts†) | covered: components/security/XKMSCAPanel.svelte |
+| GET | `/api/v1/xkms/ca/cert` | HandleXKMSGetCACertificate | - (rest.ts†) | covered: components/security/XKMSCAPanel.svelte |
 | POST | `/api/v1/xkms/ca/crl` | HandleXKMSGenerateCRL | rest.ts | covered: views/security/CertificatesView.svelte |
-| POST | `/api/v1/xkms/ca/issue` | HandleXKMSIssueCertificate | rest.ts | not covered |
-| POST | `/api/v1/xkms/ca/revoke` | HandleXKMSRevokeCertificate | rest.ts | not covered |
+| POST | `/api/v1/xkms/ca/issue` | HandleXKMSIssueCertificate | rest.ts | covered: components/security/XKMSCAPanel.svelte |
+| POST | `/api/v1/xkms/ca/revoke` | HandleXKMSRevokeCertificate | rest.ts | covered: components/security/XKMSCAPanel.svelte |
 | GET | `/api/v1/xkms/ca/revoked/{serial}` | HandleXKMSIsRevoked | rest.ts | covered: views/security/CertificatesView.svelte |
-| POST | `/api/v1/xkms/ca/sign` | HandleXKMSSignCSR | rest.ts | not covered |
-| GET | `/api/v1/xkms/certs` | HandleXKMSListCerts | - (rest.ts†) | not covered |
-| POST | `/api/v1/xkms/certs` | HandleXKMSSaveCert | - (rest.ts†) | not covered |
-| DELETE | `/api/v1/xkms/certs/{id}` | HandleXKMSDeleteCert | rest.ts | not covered |
-| GET | `/api/v1/xkms/certs/{id}` | HandleXKMSGetCert | rest.ts | not covered |
+| POST | `/api/v1/xkms/ca/sign` | HandleXKMSSignCSR | rest.ts | covered: components/security/XKMSCAPanel.svelte |
+| GET | `/api/v1/xkms/certs` | HandleXKMSListCerts | - (rest.ts†) | covered: components/security/XKMSCertificatesPanel.svelte |
+| POST | `/api/v1/xkms/certs` | HandleXKMSSaveCert | - (rest.ts†) | covered: components/security/XKMSCertificatesPanel.svelte |
+| DELETE | `/api/v1/xkms/certs/{id}` | HandleXKMSDeleteCert | rest.ts | covered: components/security/XKMSCertificatesPanel.svelte |
+| GET | `/api/v1/xkms/certs/{id}` | HandleXKMSGetCert | rest.ts | covered: components/security/XKMSCertificatesPanel.svelte |
 | HEAD | `/api/v1/xkms/certs/{id}` | HandleXKMSCertExists | - | not covered |
 | POST | `/api/v1/xkms/fido2/authenticate/begin` | HandleXKMSFIDO2BeginAuthentication | - (rest.ts†) | not covered |
 | POST | `/api/v1/xkms/fido2/authenticate/finish` | HandleXKMSFIDO2FinishAuthentication | - (rest.ts†) | not covered |
