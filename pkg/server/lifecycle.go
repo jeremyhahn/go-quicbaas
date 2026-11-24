@@ -515,7 +515,7 @@ func (s *Server) initializeCA() error {
 
 	// Create CA - derive KeyAttributes and CAConfig from the identity
 	issuingIdentity := caConfig.IssuingIdentity()
-	keyAttrs, err := issuingIdentity.ToKeyAttributes()
+	keyAttrs, err := issuingIdentity.ToKeyAttributes(context.Background())
 	if err != nil {
 		return api.NewOperationFailedError("derive CA key attributes", err)
 	}

@@ -143,7 +143,7 @@ func buildQRDBConfig(cfg *config.Config, clusterMode bool) (*qrdbsdk.DaemonConfi
 		qrdbBackend = "memory"
 	}
 	qcfg.Databases = []qrdbsdk.DaemonDatabaseConfig{
-		{Name: "default", Engine: "mvcc", Backend: qrdbBackend},
+		{Name: "default", Backend: qrdbBackend},
 	}
 
 	// ------------------------------------------------------------------ //

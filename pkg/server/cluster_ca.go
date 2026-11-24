@@ -89,7 +89,7 @@ func (s *Server) clusterCAKeyProtection() (clustercasdk.KeyProtection, error) {
 		AllowInsecure: clustercasdk.KeyProtectionMode(enr.CAKeyProtection) == clustercasdk.KeyProtectNone,
 	}
 	if enr.CAKeyPassphrase != "" {
-		passphrase, err := newClusterCAPassphrase([]byte(enr.CAKeyPassphrase))
+		passphrase, err := newClusterCAPassphrase(context.Background(), []byte(enr.CAKeyPassphrase))
 		if err != nil {
 			return clustercasdk.KeyProtection{}, &ClusterCAPassphraseError{Cause: err}
 		}

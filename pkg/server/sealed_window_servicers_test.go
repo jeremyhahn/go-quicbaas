@@ -17,7 +17,101 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 )
+
+// compactionAdminServicer wraps a live node admin servicer and answers the
+// compaction pair itself, so the test can see exactly what the proxy hands
+// over and hands back.
+type compactionAdminServicer struct {
+	qrdbsdk.AdminServicer
+	policy *qrdbsdk.CompactionPolicy
+	set    *qrdbsdk.CompactionPolicy
+}
+
+func (f *compactionAdminServicer) NodeCompaction(context.Context) (*qrdbsdk.CompactionPolicy, error) {
+	return f.policy, nil
+}
+
+func (f *compactionAdminServicer) SetNodeCompaction(_ context.Context, policy *qrdbsdk.CompactionPolicy) error {
+	f.set = policy
+	return nil
+}
+
+// TestSealedAdminServicerProxy_NodeCompaction proves the compaction pair
+// added with go-qrdb v0.51.0 fails closed with the typed sealed-window error
+// while the embedded node is absent, and forwards to the live admin servicer
+// once it is there.
+func TestSealedAdminServicerProxy_NodeCompaction(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("sealed", func(t *testing.T) {
+		p := newSealedAdminServicerProxy(&Server{})
+		var sealed *SealedNodeUnavailableError
+
+		policy, err := p.NodeCompaction(ctx)
+		if !errors.As(err, &sealed) {
+			t.Fatalf("NodeCompaction: expected SealedNodeUnavailableError, got %v", err)
+		}
+		if sealed.Service != "admin" {
+			t.Fatalf("expected admin service in the sealed error, got %q", sealed.Service)
+		}
+		if policy != nil {
+			t.Fatalf("NodeCompaction returned a policy through a sealed node: %+v", policy)
+		}
+
+		sealed = nil
+		err = p.SetNodeCompaction(ctx, &qrdbsdk.CompactionPolicy{})
+		if !errors.As(err, &sealed) {
+			t.Fatalf("SetNodeCompaction: expected SealedNodeUnavailableError, got %v", err)
+		}
+		if sealed.Service != "admin" {
+			t.Fatalf("expected admin service in the sealed error, got %q", sealed.Service)
+		}
+	})
+
+	t.Run("live", func(t *testing.T) {
+		cfg := &qrdbsdk.DaemonConfig{}
+		cfg.Raft.DataDir = t.TempDir()
+		cfg.Databases = []qrdbsdk.DaemonDatabaseConfig{
+			{Name: "default", Backend: "memory"},
+		}
+		node, err := qrdbnode.NewStandaloneNode(ctx, cfg, nil)
+		if err != nil {
+			t.Fatalf("start node: %v", err)
+		}
+		t.Cleanup(func() { _ = node.Close() })
+
+		fake := &compactionAdminServicer{
+			AdminServicer: node.Services().Admin,
+			policy:        &qrdbsdk.CompactionPolicy{},
+		}
+		node.Services().Admin = fake
+
+		s := &Server{}
+		s.setQRDBNode(node)
+		t.Cleanup(func() { s.setQRDBNode(nil) })
+		p := newSealedAdminServicerProxy(s)
+
+		got, err := p.NodeCompaction(ctx)
+		if err != nil {
+			t.Fatalf("NodeCompaction: %v", err)
+		}
+		if got != fake.policy {
+			t.Fatalf("NodeCompaction returned %p, want the live servicer's %p", got, fake.policy)
+		}
+
+		want := &qrdbsdk.CompactionPolicy{}
+		if err := p.SetNodeCompaction(ctx, want); err != nil {
+			t.Fatalf("SetNodeCompaction: %v", err)
+		}
+		if fake.set != want {
+			t.Fatalf("SetNodeCompaction passed %p, want %p", fake.set, want)
+		}
+	})
+}
 
 // TestSealedKVServicerProxy_GuardedWritesFailClosed proves the guarded
 // write pair added with go-qrdb v0.16.0 — the release half (CompareAndDelete)

@@ -137,7 +137,7 @@ func newPersistorNode(t *testing.T) (*kvWorkflowPersistor, *qrdbsdk.Client) {
 	qcfg := &qrdbsdk.DaemonConfig{}
 	qcfg.Raft.DataDir = t.TempDir() // vector storage requires a data dir
 	qcfg.Databases = []qrdbsdk.DaemonDatabaseConfig{
-		{Name: "default", Engine: "mvcc", Backend: "memory"},
+		{Name: "default", Backend: "memory"},
 	}
 	node, err := qrdbnode.NewStandaloneNode(ctx, qcfg, nil)
 	require.NoError(t, err)
@@ -202,7 +202,7 @@ func TestKVWorkflowPersistor_RoundTrip(t *testing.T) {
 	qcfg := &qrdbsdk.DaemonConfig{}
 	qcfg.Raft.DataDir = t.TempDir() // vector storage requires a data dir
 	qcfg.Databases = []qrdbsdk.DaemonDatabaseConfig{
-		{Name: "default", Engine: "mvcc", Backend: "memory"},
+		{Name: "default", Backend: "memory"},
 	}
 	node, err := qrdbnode.NewStandaloneNode(ctx, qcfg, nil)
 	require.NoError(t, err)
@@ -250,7 +250,7 @@ func TestKVWorkflowPersistor_LoadAll_SkipsMalformedEntries(t *testing.T) {
 	qcfg := &qrdbsdk.DaemonConfig{}
 	qcfg.Raft.DataDir = t.TempDir() // vector storage requires a data dir
 	qcfg.Databases = []qrdbsdk.DaemonDatabaseConfig{
-		{Name: "default", Engine: "mvcc", Backend: "memory"},
+		{Name: "default", Backend: "memory"},
 	}
 	node, nodeErr := qrdbnode.NewStandaloneNode(ctx, qcfg, nil)
 	require.NoError(t, nodeErr)
@@ -287,7 +287,7 @@ func newClosedPersistorClient(t *testing.T) *kvWorkflowPersistor {
 	qcfg := &qrdbsdk.DaemonConfig{}
 	qcfg.Raft.DataDir = t.TempDir() // vector storage requires a data dir
 	qcfg.Databases = []qrdbsdk.DaemonDatabaseConfig{
-		{Name: "default", Engine: "mvcc", Backend: "memory"},
+		{Name: "default", Backend: "memory"},
 	}
 	node, err := qrdbnode.NewStandaloneNode(ctx, qcfg, nil)
 	require.NoError(t, err)
@@ -340,7 +340,7 @@ func TestKVWorkflowPersistor_LoadAll_SkipsEmptyName(t *testing.T) {
 	qcfg := &qrdbsdk.DaemonConfig{}
 	qcfg.Raft.DataDir = t.TempDir() // vector storage requires a data dir
 	qcfg.Databases = []qrdbsdk.DaemonDatabaseConfig{
-		{Name: "default", Engine: "mvcc", Backend: "memory"},
+		{Name: "default", Backend: "memory"},
 	}
 	node, err := qrdbnode.NewStandaloneNode(ctx, qcfg, nil)
 	require.NoError(t, err)

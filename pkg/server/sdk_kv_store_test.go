@@ -43,7 +43,7 @@ func createTestSDKKVStore(t *testing.T) interfaces.KVStore {
 	cfg := &qrdbsdk.DaemonConfig{}
 	cfg.Raft.DataDir = t.TempDir() // vector storage requires a data dir
 	cfg.Databases = []qrdbsdk.DaemonDatabaseConfig{
-		{Name: "default", Engine: "mvcc", Backend: "memory"},
+		{Name: "default", Backend: "memory"},
 	}
 	node, err := qrdbnode.NewStandaloneNode(ctx, cfg, nil)
 	require.NoError(t, err, "standalone node construction must succeed for sdkKVStore unit tests")
