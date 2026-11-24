@@ -3,6 +3,7 @@ package quicbaas
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -38,8 +39,9 @@ func dueJobNames(t *testing.T, storage *Storage, before time.Time) map[string]bo
 
 // TestTenantJobIndexBackfill_UnindexedJobsRunAfterOpen is the upgrade
 // fixture: a delayed and a cron tenant job stored before the index existed
-// are due once the storage opens, the backfill is recorded so it runs once,
-// and a second open changes nothing.
+// are due once the storage opens, and a tenant job a node on the earlier
+// release writes after that open, again with no index entry, is due after
+// the next open.
 func TestTenantJobIndexBackfill_UnindexedJobsRunAfterOpen(t *testing.T) {
 	ctx := context.Background()
 	kv := newMockKVStore()
@@ -71,12 +73,9 @@ func TestTenantJobIndexBackfill_UnindexedJobsRunAfterOpen(t *testing.T) {
 	if len(names) != 2 || !names["legacy-delayed"] || !names["legacy-cron"] {
 		t.Fatalf("after open, due jobs = %v, want legacy-delayed and legacy-cron", names)
 	}
-	if done, err := kv.Exists(ctx, TenantJobIndexBackfillKey); err != nil || !done {
-		t.Fatalf("backfill marker present = %v (%v), want true", done, err)
-	}
 
-	// The marker makes the migration one-time: a later open does not rescan,
-	// and it leaves the index it built intact.
+	// A node still on the earlier release writes a tenant job with no index
+	// entry after this open. The next open indexes it, so it runs.
 	late := createTestJob("written-after-backfill", scheduler.OwnerTypeTenant, "acme")
 	late.ID = 43
 	late.NextRun = now.Add(-time.Minute)
@@ -85,14 +84,13 @@ func TestTenantJobIndexBackfill_UnindexedJobsRunAfterOpen(t *testing.T) {
 		t.Fatalf("second open: %v", err)
 	}
 	names = dueJobNames(t, storage, now)
-	if len(names) != 2 || names["written-after-backfill"] {
-		t.Fatalf("after second open, due jobs = %v, want only the backfilled two", names)
+	if len(names) != 3 || !names["legacy-delayed"] || !names["legacy-cron"] || !names["written-after-backfill"] {
+		t.Fatalf("after second open, due jobs = %v, want legacy-delayed, legacy-cron and written-after-backfill", names)
 	}
 }
 
-// TestTenantJobIndexBackfill_IsIdempotent proves a backfill interrupted
-// before its marker is written can run again: indexed and unindexed jobs
-// each end with exactly one entry.
+// TestTenantJobIndexBackfill_IsIdempotent proves the backfill can run again
+// and again: indexed and unindexed jobs each end with exactly one entry.
 func TestTenantJobIndexBackfill_IsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	kv := newMockKVStore()
@@ -110,9 +108,6 @@ func TestTenantJobIndexBackfill_IsIdempotent(t *testing.T) {
 		if err := storage.backfillTenantJobIndex(ctx); err != nil {
 			t.Fatalf("backfill %d: %v", i, err)
 		}
-		if err := kv.Delete(ctx, TenantJobIndexBackfillKey); err != nil {
-			t.Fatalf("drop marker: %v", err)
-		}
 	}
 	entries, err := kv.List(ctx, TenantJobIndexPrefix)
 	if err != nil {
@@ -120,6 +115,53 @@ func TestTenantJobIndexBackfill_IsIdempotent(t *testing.T) {
 	}
 	if len(entries) != 2 {
 		t.Fatalf("index entries = %v, want one per tenant job", entries)
+	}
+}
+
+// indexPutCountingKV is a mockKVStore that counts the Puts under
+// TenantJobIndexPrefix.
+type indexPutCountingKV struct {
+	*mockKVStore
+	indexPuts int
+}
+
+func (c *indexPutCountingKV) Put(ctx context.Context, key string, value []byte) error {
+	if strings.HasPrefix(key, TenantJobIndexPrefix) {
+		c.indexPuts++
+	}
+	return c.mockKVStore.Put(ctx, key, value)
+}
+
+// TestTenantJobIndexBackfill_SteadyOpenWritesNothing proves the backfill
+// writes only missing entries: once an open has indexed every tenant job, a
+// later open writes no index entry.
+func TestTenantJobIndexBackfill_SteadyOpenWritesNothing(t *testing.T) {
+	ctx := context.Background()
+	kv := &indexPutCountingKV{mockKVStore: newMockKVStore()}
+	storage := NewStorage(kv)
+
+	indexed := createTestJob("indexed", scheduler.OwnerTypeTenant, "acme")
+	if err := storage.CreateJob(ctx, indexed); err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+	legacy := createTestJob("legacy", scheduler.OwnerTypeTenant, "globex")
+	legacy.ID = indexed.ID + 1
+	putUnindexedTenantJob(t, kv.mockKVStore, legacy)
+
+	kv.indexPuts = 0
+	if err := storage.backfillTenantJobIndex(ctx); err != nil {
+		t.Fatalf("first backfill: %v", err)
+	}
+	if kv.indexPuts != 1 {
+		t.Fatalf("first backfill index writes = %d, want 1 (the unindexed job only)", kv.indexPuts)
+	}
+
+	kv.indexPuts = 0
+	if err := storage.backfillTenantJobIndex(ctx); err != nil {
+		t.Fatalf("second backfill: %v", err)
+	}
+	if kv.indexPuts != 0 {
+		t.Fatalf("steady-state backfill index writes = %d, want 0", kv.indexPuts)
 	}
 }
 
