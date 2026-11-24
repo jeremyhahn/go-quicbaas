@@ -50,20 +50,21 @@ counts as covered when the SDK method the file calls is that operation. The mark
 
 ## quicbaas.attestation.v1.AttestationService
 
-Service: not-UI, machine attestation of nodes and containers, called by nodes and the verifier.
+Service: not-UI, machine attestation of nodes and containers, called by nodes and the verifier. The console's
+AttestationView manages the endorsements and reference values.
 
 | RPC | Proto file | Console |
 |---|---|---|
 | Verify | api/proto/attestation.proto | not-UI: machine attestation |
 | VerifyChain | api/proto/attestation.proto | not-UI: machine attestation |
 | AttestContainer | api/proto/attestation.proto | not-UI: machine attestation |
-| PutEndorsement | api/proto/attestation.proto | not-UI: machine attestation |
-| ListEndorsements | api/proto/attestation.proto | not-UI: machine attestation |
-| DeleteEndorsement | api/proto/attestation.proto | not-UI: machine attestation |
-| PutReferenceValues | api/proto/attestation.proto | not-UI: machine attestation |
+| PutEndorsement | api/proto/attestation.proto | covered: views/security/AttestationView.svelte |
+| ListEndorsements | api/proto/attestation.proto | covered: views/security/AttestationView.svelte |
+| DeleteEndorsement | api/proto/attestation.proto | covered: views/security/AttestationView.svelte |
+| PutReferenceValues | api/proto/attestation.proto | covered: views/security/AttestationView.svelte |
 | GetReferenceValues | api/proto/attestation.proto | not-UI: machine attestation |
-| ListReferenceValues | api/proto/attestation.proto | not-UI: machine attestation |
-| DeleteReferenceValues | api/proto/attestation.proto | not-UI: machine attestation |
+| ListReferenceValues | api/proto/attestation.proto | covered: views/security/AttestationView.svelte |
+| DeleteReferenceValues | api/proto/attestation.proto | covered: views/security/AttestationView.svelte |
 | AppraiseQuote | api/proto/attestation.proto | not-UI: machine attestation |
 
 ## quicbaas.barrier.v1.Barrier
@@ -72,24 +73,24 @@ Service: not-UI, machine attestation of nodes and containers, called by nodes an
 |---|---|---|
 | BarrierInitialize | api/proto/barrier.proto | covered: views/security/BarrierView.svelte |
 | BarrierUnseal | api/proto/barrier.proto | not covered |
-| BarrierSeal | api/proto/barrier.proto | not covered |
+| BarrierSeal | api/proto/barrier.proto | covered: views/security/BarrierView.svelte |
 | BarrierStatus | api/proto/barrier.proto | covered: views/security/BarrierView.svelte |
 | BarrierShamirInitialize | api/proto/barrier.proto | covered: views/security/BarrierView.svelte |
 | BarrierShamirUnsealShare | api/proto/barrier.proto | covered: views/security/BarrierView.svelte |
 | BarrierShamirUnsealShares | api/proto/barrier.proto | not covered |
-| BarrierRekey | api/proto/barrier.proto | not covered |
-| BarrierRecoveryGenerate | api/proto/barrier.proto | not covered |
+| BarrierRekey | api/proto/barrier.proto | covered: views/security/BarrierView.svelte |
+| BarrierRecoveryGenerate | api/proto/barrier.proto | covered: views/security/BarrierView.svelte |
 | BarrierRecoveryRecover | api/proto/barrier.proto | not covered |
-| BarrierRecoveryDelete | api/proto/barrier.proto | not covered |
-| BarrierRecoveryStatus | api/proto/barrier.proto | not covered |
+| BarrierRecoveryDelete | api/proto/barrier.proto | covered: views/security/BarrierView.svelte |
+| BarrierRecoveryStatus | api/proto/barrier.proto | covered: views/security/BarrierView.svelte |
 | BarrierRootToken | api/proto/barrier.proto | not covered |
-| BarrierEnableEncryption | api/proto/barrier.proto | not covered |
+| BarrierEnableEncryption | api/proto/barrier.proto | covered: views/security/TenantBarrierView.svelte |
 
 ## quicbaas.ceremony.v1.Ceremony
 
 | RPC | Proto file | Console |
 |---|---|---|
-| CeremonyInitialize | api/proto/ceremony.proto | not covered |
+| CeremonyInitialize | api/proto/ceremony.proto | covered: views/security/BarrierView.svelte |
 | CeremonyStatus | api/proto/ceremony.proto | not covered |
 | CeremonyClaimCertBegin | api/proto/ceremony.proto | not covered |
 | CeremonyClaimCertComplete | api/proto/ceremony.proto | covered: views/security/CeremonyView.svelte |
@@ -183,19 +184,19 @@ Service: not-UI, the fleet node's agent runtime channel to the server.
 | UpdateTenant | api/proto/iam/iam.proto | covered: views/security/IAMView.svelte |
 | DeleteTenant | api/proto/iam/iam.proto | covered: views/security/IAMView.svelte |
 | ListTenants | api/proto/iam/iam.proto | covered: views/security/IAMView.svelte |
-| ProvisionTenant | api/proto/iam/iam.proto | not covered |
+| ProvisionTenant | api/proto/iam/iam.proto | covered: views/security/IAMView.svelte |
 | CreateUser | api/proto/iam/iam.proto | covered: views/security/IAMView.svelte |
 | GetUser | api/proto/iam/iam.proto | not covered |
 | UpdateUser | api/proto/iam/iam.proto | covered: views/security/IAMView.svelte |
 | DeleteUser | api/proto/iam/iam.proto | covered: views/security/IAMView.svelte |
 | ListUsers | api/proto/iam/iam.proto | covered: views/security/IAMView.svelte |
 | ApproveUser | api/proto/iam/iam.proto | not covered |
-| ListWebAuthnCredentials | api/proto/iam/iam.proto | not covered |
-| DeleteWebAuthnCredential | api/proto/iam/iam.proto | not covered |
-| DeleteWebAuthnCredentials | api/proto/iam/iam.proto | not covered |
+| ListWebAuthnCredentials | api/proto/iam/iam.proto | covered: views/security/IAMView.svelte |
+| DeleteWebAuthnCredential | api/proto/iam/iam.proto | covered: views/security/IAMView.svelte |
+| DeleteWebAuthnCredentials | api/proto/iam/iam.proto | covered: views/security/IAMView.svelte |
 | GetInvite | api/proto/iam/iam.proto | covered: views/security/InviteActivateView.svelte |
-| ActivateFIDO2Begin | api/proto/iam/iam.proto | not covered |
-| ActivateFIDO2Finish | api/proto/iam/iam.proto | not covered |
+| ActivateFIDO2Begin | api/proto/iam/iam.proto | covered: views/security/InviteActivateView.svelte |
+| ActivateFIDO2Finish | api/proto/iam/iam.proto | covered: views/security/InviteActivateView.svelte |
 | ActivatePIV | api/proto/iam/iam.proto | covered: views/security/InviteActivateView.svelte |
 | CreateRole | api/proto/iam/iam.proto | covered: views/security/IAMView.svelte |
 | GetRole | api/proto/iam/iam.proto | not covered |
@@ -203,41 +204,41 @@ Service: not-UI, the fleet node's agent runtime channel to the server.
 | DeleteRole | api/proto/iam/iam.proto | covered: views/security/IAMView.svelte |
 | ListRoles | api/proto/iam/iam.proto | covered: views/security/IAMView.svelte |
 | AssignRole | api/proto/iam/iam.proto | covered: views/security/IAMView.svelte |
-| RevokeRole | api/proto/iam/iam.proto | not covered |
+| RevokeRole | api/proto/iam/iam.proto | covered: views/security/IAMView.svelte |
 | ReconcileRoles | api/proto/iam/iam.proto | covered: views/security/IAMView.svelte |
-| RegisterApp | api/proto/iam/iam.proto | not covered |
+| RegisterApp | api/proto/iam/iam.proto | covered: views/security/OAuthAppsView.svelte |
 | GetApp | api/proto/iam/iam.proto | not covered |
-| UpdateApp | api/proto/iam/iam.proto | not covered |
-| DeleteApp | api/proto/iam/iam.proto | not covered |
-| ListApps | api/proto/iam/iam.proto | not covered |
-| RotateAppSecret | api/proto/iam/iam.proto | not covered |
+| UpdateApp | api/proto/iam/iam.proto | covered: views/security/OAuthAppsView.svelte |
+| DeleteApp | api/proto/iam/iam.proto | covered: views/security/OAuthAppsView.svelte |
+| ListApps | api/proto/iam/iam.proto | covered: views/security/OAuthAppsView.svelte |
+| RotateAppSecret | api/proto/iam/iam.proto | covered: views/security/OAuthAppsView.svelte |
 | CreatePolicy | api/proto/iam/iam.proto | covered: views/security/IAMView.svelte |
-| GetPolicy | api/proto/iam/iam.proto | not covered |
+| GetPolicy | api/proto/iam/iam.proto | covered: views/security/PolicyTesterView.svelte |
 | UpdatePolicy | api/proto/iam/iam.proto | covered: views/security/IAMView.svelte |
 | DeletePolicy | api/proto/iam/iam.proto | covered: views/security/IAMView.svelte |
 | ListPolicies | api/proto/iam/iam.proto | covered: views/security/IAMView.svelte |
-| ValidatePolicy | api/proto/iam/iam.proto | not covered |
-| TestPolicy | api/proto/iam/iam.proto | not covered |
+| ValidatePolicy | api/proto/iam/iam.proto | covered: views/security/PolicyTesterView.svelte |
+| TestPolicy | api/proto/iam/iam.proto | covered: views/security/PolicyTesterView.svelte |
 | CreateAdminAssignment | api/proto/iam/iam.proto | not covered |
 | GetAdminAssignment | api/proto/iam/iam.proto | not covered |
 | UpdateAdminAssignment | api/proto/iam/iam.proto | not covered |
 | DeleteAdminAssignment | api/proto/iam/iam.proto | not covered |
 | ListAdminAssignments | api/proto/iam/iam.proto | not covered |
 | CheckAdminPermission | api/proto/iam/iam.proto | not-UI: an authorization probe the services call |
-| StartImpersonation | api/proto/iam/iam.proto | not covered |
-| EndImpersonation | api/proto/iam/iam.proto | not covered |
+| StartImpersonation | api/proto/iam/iam.proto | covered: views/security/ImpersonationView.svelte |
+| EndImpersonation | api/proto/iam/iam.proto | covered: views/security/ImpersonationView.svelte |
 | GetActiveImpersonations | api/proto/iam/iam.proto | not covered |
-| GrantConsent | api/proto/iam/iam.proto | not covered |
-| WithdrawConsent | api/proto/iam/iam.proto | not covered |
+| GrantConsent | api/proto/iam/iam.proto | covered: views/security/IAMView.svelte |
+| WithdrawConsent | api/proto/iam/iam.proto | covered: views/security/IAMView.svelte |
 | GetConsent | api/proto/iam/iam.proto | not covered |
-| ListUserConsents | api/proto/iam/iam.proto | not covered |
-| RequestExport | api/proto/iam/iam.proto | not covered |
-| GetExportStatus | api/proto/iam/iam.proto | not covered |
+| ListUserConsents | api/proto/iam/iam.proto | covered: views/security/IAMView.svelte |
+| RequestExport | api/proto/iam/iam.proto | covered: views/security/IAMView.svelte |
+| GetExportStatus | api/proto/iam/iam.proto | covered: views/security/IAMView.svelte |
 | GenerateExport | api/proto/iam/iam.proto | not covered |
-| RequestDeletion | api/proto/iam/iam.proto | not covered |
-| CancelDeletion | api/proto/iam/iam.proto | not covered |
+| RequestDeletion | api/proto/iam/iam.proto | covered: views/security/IAMView.svelte |
+| CancelDeletion | api/proto/iam/iam.proto | covered: views/security/IAMView.svelte |
 | ProcessDeletion | api/proto/iam/iam.proto | not covered |
-| GetDeletionStatus | api/proto/iam/iam.proto | not covered |
+| GetDeletionStatus | api/proto/iam/iam.proto | covered: views/security/IAMView.svelte |
 
 ## quicbaas.iam.v1.PEPService
 
@@ -253,15 +254,15 @@ Service: not-UI, the policy enforcement point the services call on each request.
 
 | RPC | Proto file | Console |
 |---|---|---|
-| BeginEnrollment | api/proto/iam/iam.proto | not covered |
-| CompleteEnrollment | api/proto/iam/iam.proto | not covered |
-| CancelEnrollment | api/proto/iam/iam.proto | not covered |
+| BeginEnrollment | api/proto/iam/iam.proto | covered: views/security/IAMView.svelte |
+| CompleteEnrollment | api/proto/iam/iam.proto | covered: views/security/IAMView.svelte |
+| CancelEnrollment | api/proto/iam/iam.proto | covered: views/security/IAMView.svelte |
 | BeginChallenge | api/proto/iam/iam.proto | not covered |
 | VerifyChallenge | api/proto/iam/iam.proto | not covered |
 | VerifyCode | api/proto/iam/iam.proto | not covered |
-| GetStatus | api/proto/iam/iam.proto | not covered |
-| Disable | api/proto/iam/iam.proto | not covered |
-| GenerateBackupCodes | api/proto/iam/iam.proto | not covered |
+| GetStatus | api/proto/iam/iam.proto | covered: views/security/IAMView.svelte |
+| Disable | api/proto/iam/iam.proto | covered: views/security/IAMView.svelte |
+| GenerateBackupCodes | api/proto/iam/iam.proto | covered: views/security/IAMView.svelte |
 | VerifyBackupCode | api/proto/iam/iam.proto | not covered |
 | GetBackupCodeStatus | api/proto/iam/iam.proto | not covered |
 
@@ -269,33 +270,33 @@ Service: not-UI, the policy enforcement point the services call on each request.
 
 | RPC | Proto file | Console |
 |---|---|---|
-| CreateProvider | api/proto/iam/iam.proto | not covered |
+| CreateProvider | api/proto/iam/iam.proto | covered: views/security/IdentityProvidersView.svelte |
 | GetProvider | api/proto/iam/iam.proto | not covered |
-| UpdateProvider | api/proto/iam/iam.proto | not covered |
-| DeleteProvider | api/proto/iam/iam.proto | not covered |
-| ListProviders | api/proto/iam/iam.proto | not covered |
+| UpdateProvider | api/proto/iam/iam.proto | covered: views/security/IdentityProvidersView.svelte |
+| DeleteProvider | api/proto/iam/iam.proto | covered: views/security/IdentityProvidersView.svelte |
+| ListProviders | api/proto/iam/iam.proto | covered: views/security/IdentityProvidersView.svelte |
 | BeginFederatedLogin | api/proto/iam/iam.proto | not covered |
 | HandleFederatedCallback | api/proto/iam/iam.proto | not covered |
-| LinkAccount | api/proto/iam/iam.proto | not covered |
-| UnlinkAccount | api/proto/iam/iam.proto | not covered |
-| GetUserLinks | api/proto/iam/iam.proto | not covered |
+| LinkAccount | api/proto/iam/iam.proto | covered: views/security/IAMView.svelte |
+| UnlinkAccount | api/proto/iam/iam.proto | covered: views/security/IAMView.svelte |
+| GetUserLinks | api/proto/iam/iam.proto | covered: views/security/IAMView.svelte |
 
 ## quicbaas.iam.v1.SessionService
 
 | RPC | Proto file | Console |
 |---|---|---|
-| ListSessions | api/proto/iam/iam.proto | not covered |
-| GetSession | api/proto/iam/iam.proto | not covered |
-| RevokeSession | api/proto/iam/iam.proto | not covered |
-| RevokeAllSessions | api/proto/iam/iam.proto | not covered |
-| RevokeOtherSessions | api/proto/iam/iam.proto | not covered |
+| ListSessions | api/proto/iam/iam.proto | covered: views/security/MySessionsView.svelte |
+| GetSession | api/proto/iam/iam.proto | covered: views/security/MySessionsView.svelte |
+| RevokeSession | api/proto/iam/iam.proto | covered: views/security/MySessionsView.svelte |
+| RevokeAllSessions | api/proto/iam/iam.proto | covered: views/security/MySessionsView.svelte |
+| RevokeOtherSessions | api/proto/iam/iam.proto | covered: views/security/MySessionsView.svelte |
 
 ## quicbaas.iam.v1.AuditService
 
 | RPC | Proto file | Console |
 |---|---|---|
-| QueryAuditEvents | api/proto/iam/iam.proto | not covered |
-| GetAuditEvent | api/proto/iam/iam.proto | not covered |
+| QueryAuditEvents | api/proto/iam/iam.proto | covered: views/security/IAMAuditView.svelte |
+| GetAuditEvent | api/proto/iam/iam.proto | covered: views/security/IAMAuditView.svelte |
 | RecordAuditEvent | api/proto/iam/iam.proto | not-UI: the services write audit events |
 
 ## quicbaas.kms.v1.KeyManagement
@@ -480,7 +481,7 @@ Service: not-UI, the server's internal embedding backend adapter; a console user
 |---|---|---|
 | SpawnSession | api/proto/orchestrator.proto | covered: components/orchestrator/SpawnDialog.svelte |
 | PromptSession | api/proto/orchestrator.proto | covered: components/orchestrator/PromptComposer.svelte |
-| SessionStatus | api/proto/orchestrator.proto | not covered |
+| SessionStatus | api/proto/orchestrator.proto | covered: cmd/quicbaas/bindings_sessions.go |
 | CloseSession | api/proto/orchestrator.proto | covered: stores/sessionStore.svelte.ts |
 | ListSessions | api/proto/orchestrator.proto | covered: stores/sessionStore.svelte.ts |
 | RotateSessionAccount | api/proto/orchestrator.proto | covered: components/orchestrator/SessionDetail.svelte |
@@ -510,7 +511,7 @@ Service: not-UI, the server's internal embedding backend adapter; a console user
 | GetFleetNode | api/proto/orchestrator.proto | covered: cmd/quicbaas/bindings_orchestrator.go |
 | ListFleetNodes | api/proto/orchestrator.proto | covered: stores/fleetStore.svelte.ts |
 | RemoveFleetNode | api/proto/orchestrator.proto | covered: components/orchestrator/FleetList.svelte |
-| FleetNodeHeartbeat | api/proto/orchestrator.proto | not-UI: the fleet node's liveness beat |
+| FleetNodeHeartbeat | api/proto/orchestrator.proto | covered: cmd/quicbaas/bindings_fleet.go |
 | ListBackendModels | api/proto/orchestrator.proto | covered: views/orchestrator/InferenceView.svelte |
 | PushEvents | api/proto/orchestrator.proto | not-UI: the agent runtime pushes session events |
 | SubscribeSessionEvents | api/proto/orchestrator.proto | covered: stores/sessionStore.svelte.ts |
@@ -570,14 +571,14 @@ Service: not-UI, the server's internal embedding backend adapter; a console user
 
 | RPC | Proto file | Console |
 |---|---|---|
-| ListPrompts | api/proto/prompt.proto | not covered |
-| GetPrompt | api/proto/prompt.proto | not covered |
-| GetEffectivePrompt | api/proto/prompt.proto | not covered |
-| DiffPrompt | api/proto/prompt.proto | not covered |
-| GetPromptHistory | api/proto/prompt.proto | not covered |
-| PutPrompt | api/proto/prompt.proto | not covered |
-| RollbackPrompt | api/proto/prompt.proto | not covered |
-| ResetPrompt | api/proto/prompt.proto | not covered |
+| ListPrompts | api/proto/prompt.proto | covered: views/orchestrator/PromptsView.svelte |
+| GetPrompt | api/proto/prompt.proto | covered: views/orchestrator/PromptsView.svelte |
+| GetEffectivePrompt | api/proto/prompt.proto | covered: views/orchestrator/PromptsView.svelte |
+| DiffPrompt | api/proto/prompt.proto | covered: views/orchestrator/PromptsView.svelte |
+| GetPromptHistory | api/proto/prompt.proto | covered: views/orchestrator/PromptsView.svelte |
+| PutPrompt | api/proto/prompt.proto | covered: views/orchestrator/PromptsView.svelte |
+| RollbackPrompt | api/proto/prompt.proto | covered: views/orchestrator/PromptsView.svelte |
+| ResetPrompt | api/proto/prompt.proto | covered: views/orchestrator/PromptsView.svelte |
 
 ## quicbaas.v1.QuicBaaS
 
@@ -612,10 +613,10 @@ Service: not-UI, the server's internal embedding backend adapter; a console user
 | Transaction | api/proto/quicbaas.proto | not covered |
 | Health | api/proto/quicbaas.proto | covered: views/SystemDashboard.svelte |
 | CreateBackup | api/proto/quicbaas.proto | not covered |
-| ListBackups | api/proto/quicbaas.proto | not covered |
+| ListBackups | api/proto/quicbaas.proto | covered: views/cluster/BackupView.svelte |
 | RestoreBackup | api/proto/quicbaas.proto | not covered |
-| DeleteBackup | api/proto/quicbaas.proto | not covered |
-| VerifyBackup | api/proto/quicbaas.proto | not covered |
+| DeleteBackup | api/proto/quicbaas.proto | covered: views/cluster/BackupView.svelte |
+| VerifyBackup | api/proto/quicbaas.proto | covered: views/cluster/BackupView.svelte |
 | Login | api/proto/quicbaas.proto | not covered |
 | Logout | api/proto/quicbaas.proto | covered: views/MainApp.svelte |
 | RefreshToken | api/proto/quicbaas.proto | covered: stores/auth.svelte.ts |
@@ -676,19 +677,19 @@ Service: not-UI, service instances register and resolve each other.
 | ResumeJob | api/proto/scheduler.proto | covered: views/async/SchedulerView.svelte |
 | CancelJob | api/proto/scheduler.proto | not covered |
 | GetJobHistory | api/proto/scheduler.proto | not covered |
-| GetSchedulerStatus | api/proto/scheduler.proto | not covered |
+| GetSchedulerStatus | api/proto/scheduler.proto | covered: views/async/SchedulerView.svelte |
 | RegisterNode | api/proto/scheduler.proto | not-UI: a scheduler node's own membership |
 | RenewNode | api/proto/scheduler.proto | not-UI: a scheduler node's own membership |
-| DeregisterNode | api/proto/scheduler.proto | not-UI: a scheduler node's own membership |
-| GetNode | api/proto/scheduler.proto | not covered |
-| ListNodes | api/proto/scheduler.proto | not covered |
-| CordonNode | api/proto/scheduler.proto | not covered |
-| UncordonNode | api/proto/scheduler.proto | not covered |
-| DrainNode | api/proto/scheduler.proto | not covered |
+| DeregisterNode | api/proto/scheduler.proto | covered: views/async/SchedulerView.svelte |
+| GetNode | api/proto/scheduler.proto | covered: views/async/SchedulerView.svelte |
+| ListNodes | api/proto/scheduler.proto | covered: views/async/SchedulerView.svelte |
+| CordonNode | api/proto/scheduler.proto | covered: views/async/SchedulerView.svelte |
+| UncordonNode | api/proto/scheduler.proto | covered: views/async/SchedulerView.svelte |
+| DrainNode | api/proto/scheduler.proto | covered: views/async/SchedulerView.svelte |
 | Place | api/proto/scheduler.proto | not-UI: placement calls by the services |
-| Release | api/proto/scheduler.proto | not-UI: placement calls by the services |
-| GetPlacement | api/proto/scheduler.proto | not covered |
-| ListPlacements | api/proto/scheduler.proto | not covered |
+| Release | api/proto/scheduler.proto | covered: views/async/SchedulerView.svelte |
+| GetPlacement | api/proto/scheduler.proto | covered: views/async/SchedulerView.svelte |
+| ListPlacements | api/proto/scheduler.proto | covered: views/async/SchedulerView.svelte |
 
 ## quicbaas.sdlc.v1.SDLCService
 
