@@ -46,4 +46,4 @@ RUN CGO_ENABLED=1 go test -c -race -buildvcs=false \
 
 ENV CONTAINERRUNTIME_BUSYBOX=/bin/busybox
 
-CMD ["sh", "-c", "set -e; /usr/local/bin/containerruntime.test -test.v -test.count=1 -test.timeout=10m; /usr/local/bin/containerruntime-internal.test -test.v -test.count=1 -test.timeout=10m -test.run '^TestStorageLayerCommitter_'"]
+CMD ["sh", "-c", "set -e; /usr/local/bin/containerruntime.test -test.v -test.count=1 -test.timeout=10m; /usr/local/bin/containerruntime-internal.test -test.v -test.count=1 -test.timeout=10m -test.run '^(TestStorageLayerCommitter|TestBuildImage)_'"]

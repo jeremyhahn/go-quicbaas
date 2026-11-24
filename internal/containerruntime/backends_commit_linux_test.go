@@ -36,14 +36,13 @@ import (
 	"go.podman.io/image/v5/types"
 	"go.podman.io/storage"
 	"go.podman.io/storage/pkg/idtools"
-	"go.podman.io/storage/pkg/reexec"
 )
 
-// TestMain serves go.podman.io/storage's reexec helpers, which apply a layer
-// in a re-executed copy of the test binary, as RunContainerInit does for the
-// agent's own binary.
+// TestMain serves the test binary's re-execs as RunContainerInit does for
+// the agent's own binary: go.podman.io/storage's reexec helpers, which apply
+// a layer, and libcontainer's container init, which a build's RUN step needs.
 func TestMain(m *testing.M) {
-	if reexec.Init() {
+	if RunContainerInit() {
 		return
 	}
 	os.Exit(m.Run())
