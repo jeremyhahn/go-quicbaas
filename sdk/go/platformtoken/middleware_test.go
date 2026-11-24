@@ -154,7 +154,7 @@ func TestMiddleware_DaemonRoutesAuthenticateAndAuthoriseThroughTheSDK(t *testing
 			wantStatus: http.StatusServiceUnavailable},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			opts := Options{ModeResolver: offline, Authorizer: &qrdbsdk.NoopAuthorizer{}}
+			opts := Options{ModeResolver: offline, Authorizer: &qrdbsdk.NoopAuthorizer{}, RBAC: &qrdbsdk.NoopAuthorizer{}}
 			if !tc.noReplay {
 				opts.ReplayCache = dpop.NewMemoryReplayCache(&fixedDPoPClock{now})
 			}
@@ -250,20 +250,25 @@ func TestMiddleware_AuthorizerDecision(t *testing.T) {
 		name       string
 		scopes     []string
 		authz      qrdbsdk.Authorizer
+		rbac       qrdbsdk.Authorizer
 		wantStatus int
 		wantBody   string
 	}{
 		{name: "ABAC denies a granted scope", scopes: []string{"keys:get"}, authz: abacDenyKeysGet(t),
-			wantStatus: http.StatusForbidden},
+			rbac: &qrdbsdk.NoopAuthorizer{}, wantStatus: http.StatusForbidden},
 		{name: "the authorizer allows", scopes: []string{"keys:get"}, authz: &qrdbsdk.NoopAuthorizer{},
-			wantStatus: http.StatusOK, wantBody: "tenant-1/user-1"},
+			rbac: &qrdbsdk.NoopAuthorizer{}, wantStatus: http.StatusOK, wantBody: "tenant-1/user-1"},
 		{name: "no authorizer on a permission route", scopes: []string{"keys:get"},
-			wantStatus: http.StatusServiceUnavailable},
+			rbac: &qrdbsdk.NoopAuthorizer{}, wantStatus: http.StatusServiceUnavailable},
 		{name: "a scope not granted never reaches the authorizer", scopes: []string{"keys:list"},
-			authz: mustNotAuthorize{t}, wantStatus: http.StatusForbidden},
+			authz: mustNotAuthorize{t}, rbac: &qrdbsdk.NoopAuthorizer{}, wantStatus: http.StatusForbidden},
+		{name: "no RBAC on a permission route", scopes: []string{"keys:get"},
+			authz: &qrdbsdk.NoopAuthorizer{}, wantStatus: http.StatusServiceUnavailable},
+		{name: "a scope not granted never reaches RBAC", scopes: []string{"keys:list"},
+			authz: mustNotAuthorize{t}, rbac: mustNotAuthorize{t}, wantStatus: http.StatusForbidden},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			guard := newAuthzValidator(t, key, now, Options{ModeResolver: offline, Authorizer: tc.authz}).
+			guard := newAuthzValidator(t, key, now, Options{ModeResolver: offline, Authorizer: tc.authz, RBAC: tc.rbac}).
 				Middleware("keys:get")(principalEcho(t))
 			req := httptest.NewRequest(http.MethodGet, "https://daemon.example/v1/keys", nil)
 			req.Header.Set("X-Tenant-ID", "tenant-2")
@@ -323,6 +328,7 @@ func TestMiddleware_AuthorizerSeesTokenRoles(t *testing.T) {
 		name       string
 		roles      []string
 		authz      qrdbsdk.Authorizer
+		rbac       qrdbsdk.Authorizer
 		wantStatus int
 		wantBody   string
 	}{
@@ -332,13 +338,18 @@ func TestMiddleware_AuthorizerSeesTokenRoles(t *testing.T) {
 			authz:      abacRoleKeysGet(t, qrdbsdk.ABACEffectDeny, &qrdbsdk.NoopAuthorizer{}),
 			wantStatus: http.StatusOK, wantBody: "tenant-1/user-1"},
 		{name: "a role-selected allow cannot override an inner deny", roles: []string{"role-auditor"},
+			rbac:  innerDeny{},
 			authz: abacRoleKeysGet(t, qrdbsdk.ABACEffectAllow, innerDeny{}), wantStatus: http.StatusForbidden},
 		{name: "no roles in the token",
 			authz:      abacRoleKeysGet(t, qrdbsdk.ABACEffectDeny, &qrdbsdk.NoopAuthorizer{}),
 			wantStatus: http.StatusOK, wantBody: "tenant-1/user-1"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			guard := newAuthzValidator(t, key, now, Options{ModeResolver: offline, Authorizer: tc.authz}).
+			rbac := tc.rbac
+			if rbac == nil {
+				rbac = &qrdbsdk.NoopAuthorizer{}
+			}
+			guard := newAuthzValidator(t, key, now, Options{ModeResolver: offline, Authorizer: tc.authz, RBAC: rbac}).
 				Middleware("keys:get")(principalEcho(t))
 			token := key.sign(t, tokenClaims{
 				iss: testIssuer, aud: []string{testAudience}, sub: "user-1", tid: "tenant-1",
@@ -393,7 +404,7 @@ func abacAttestKeysGet(t *testing.T, effect qrdbsdk.ABACEffect, inner qrdbsdk.Au
 // TestMiddleware_AuthorizerSeesAuthAttributes proves the authorizer sees the
 // token's authentication claims as Identity.Metadata: an ABAC deny that
 // selects attest_method refuses the request, and an attribute-selected allow
-// never admits a request the decisions without the attributes refuse.
+// never overrides an RBAC refusal.
 func TestMiddleware_AuthorizerSeesAuthAttributes(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	key := newIssuerKey(t, testKID)
@@ -403,6 +414,7 @@ func TestMiddleware_AuthorizerSeesAuthAttributes(t *testing.T) {
 		name         string
 		attestMethod string
 		authz        qrdbsdk.Authorizer
+		rbac         qrdbsdk.Authorizer
 		wantStatus   int
 		wantBody     string
 	}{
@@ -412,13 +424,18 @@ func TestMiddleware_AuthorizerSeesAuthAttributes(t *testing.T) {
 			authz:      abacAttestKeysGet(t, qrdbsdk.ABACEffectDeny, &qrdbsdk.NoopAuthorizer{}),
 			wantStatus: http.StatusOK, wantBody: "tenant-1/user-1"},
 		{name: "an attribute-selected allow cannot override an inner deny", attestMethod: "manual",
+			rbac:  innerDeny{},
 			authz: abacAttestKeysGet(t, qrdbsdk.ABACEffectAllow, innerDeny{}), wantStatus: http.StatusForbidden},
 		{name: "no authentication claims in the token",
 			authz:      abacAttestKeysGet(t, qrdbsdk.ABACEffectDeny, &qrdbsdk.NoopAuthorizer{}),
 			wantStatus: http.StatusOK, wantBody: "tenant-1/user-1"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			guard := newAuthzValidator(t, key, now, Options{ModeResolver: offline, Authorizer: tc.authz}).
+			rbac := tc.rbac
+			if rbac == nil {
+				rbac = &qrdbsdk.NoopAuthorizer{}
+			}
+			guard := newAuthzValidator(t, key, now, Options{ModeResolver: offline, Authorizer: tc.authz, RBAC: rbac}).
 				Middleware("keys:get")(principalEcho(t))
 			token := key.sign(t, tokenClaims{
 				iss: testIssuer, aud: []string{testAudience}, sub: "user-1", tid: "tenant-1",
@@ -513,7 +530,7 @@ func TestMiddleware_TokenRolesDenyMatchesAndScopeBoundsGrants(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := &identityRecorder{inner: tc.inner}
-			guard := newAuthzValidator(t, key, now, Options{ModeResolver: offline, Authorizer: rec}).
+			guard := newAuthzValidator(t, key, now, Options{ModeResolver: offline, Authorizer: rec, RBAC: &qrdbsdk.NoopAuthorizer{}}).
 				Middleware(tc.permission)(principalEcho(t))
 			token := key.sign(t, tokenClaims{
 				iss: testIssuer, aud: []string{testAudience}, sub: "user-1", tid: "tenant-1",
@@ -562,60 +579,57 @@ func TestMiddleware_TokenRolesDenyMatchesAndScopeBoundsGrants(t *testing.T) {
 	}
 }
 
-// TestAuthorizerIdentities_TokenRolesPopulateTheIdentity pins the identities
-// the guard asks the authorizer about: the role-less floor, then the token's
-// roles, then the roles with the authentication claims; each with only the
-// token's scope, and each a copy.
-func TestAuthorizerIdentities_TokenRolesPopulateTheIdentity(t *testing.T) {
+// TestAuthorizerIdentity_CompleteVerifiedIdentity pins the one identity the
+// guard asks go-qrdb about: the token's subject, tenant, roles, scope and
+// authentication claims together, each call a fresh copy.
+func TestAuthorizerIdentity_CompleteVerifiedIdentity(t *testing.T) {
 	t.Run("roles and claims", func(t *testing.T) {
 		ac := &AuthorizedContext{
 			Subject: "user-1", TenantID: "tenant-1", Scopes: []string{"keys:get"},
 			Roles: []string{"role-auditor"}, AuthAttributes: map[string]string{"attest_method": "tpm"},
 		}
-		ids := authorizerIdentities(ac)
-		if len(ids) != 3 {
-			t.Fatalf("%d identities, want 3", len(ids))
-		}
-		if ids[0].Roles != nil || ids[0].Metadata != nil {
-			t.Fatalf("floor identity %+v, want no roles and no metadata", ids[0])
-		}
-		if !slices.Equal(ids[1].Roles, []string{"role-auditor"}) || ids[1].Metadata != nil {
-			t.Fatalf("role identity %+v, want roles [role-auditor] and no metadata", ids[1])
-		}
-		if !slices.Equal(ids[2].Roles, []string{"role-auditor"}) ||
-			!maps.Equal(ids[2].Metadata, map[string]string{"attest_method": "tpm"}) {
-			t.Fatalf("claims identity %+v, want roles [role-auditor] and attest_method tpm", ids[2])
-		}
-		for i, id := range ids {
-			if !slices.Equal(id.ScopePermissions, []string{"keys:get"}) || id.Subject != "user-1" || id.TenantID != "tenant-1" {
-				t.Fatalf("identity %d %+v, want subject user-1, tenant tenant-1, scope [keys:get]", i, id)
-			}
+		id := authorizerIdentity(ac)
+		if id.Subject != "user-1" || id.TenantID != "tenant-1" ||
+			!slices.Equal(id.Roles, []string{"role-auditor"}) ||
+			!slices.Equal(id.ScopePermissions, []string{"keys:get"}) ||
+			!maps.Equal(id.Metadata, map[string]string{"attest_method": "tpm"}) {
+			t.Fatalf("identity %+v, want subject user-1, tenant tenant-1, roles [role-auditor], "+
+				"scope [keys:get] and attest_method tpm", id)
 		}
 
-		ids[1].Roles[0] = "role-admin"
-		ids[0].ScopePermissions[0] = "*:*"
-		ids[2].Metadata["attest_method"] = "manual"
+		id.Roles[0] = "role-admin"
+		id.ScopePermissions[0] = "*:*"
+		id.Metadata["attest_method"] = "manual"
 		if ac.Roles[0] != "role-auditor" || ac.Scopes[0] != "keys:get" || ac.AuthAttributes["attest_method"] != "tpm" {
-			t.Fatalf("changing an identity changed the authorised principal: %+v", ac)
+			t.Fatalf("changing the identity changed the authorised principal: %+v", ac)
+		}
+		again := authorizerIdentity(ac)
+		if !slices.Equal(again.Roles, []string{"role-auditor"}) ||
+			!slices.Equal(again.ScopePermissions, []string{"keys:get"}) ||
+			!maps.Equal(again.Metadata, map[string]string{"attest_method": "tpm"}) {
+			t.Fatalf("a changed identity leaked into the next one: %+v", again)
 		}
 	})
 	t.Run("no roles and no claims", func(t *testing.T) {
-		ids := authorizerIdentities(&AuthorizedContext{Subject: "user-1", TenantID: "tenant-1", Scopes: []string{"keys:get"}})
-		if len(ids) != 1 {
-			t.Fatalf("%d identities, want 1", len(ids))
+		id := authorizerIdentity(&AuthorizedContext{Subject: "user-1", TenantID: "tenant-1", Scopes: []string{"keys:get"}})
+		if id.Roles != nil {
+			t.Fatalf("identity roles %v, want nil", id.Roles)
 		}
-		if ids[0].Roles != nil {
-			t.Fatalf("identity roles %v, want nil", ids[0].Roles)
+		if id.Metadata != nil {
+			t.Fatalf("identity metadata %v, want nil", id.Metadata)
 		}
 	})
 }
 
 // TestAuthorizePermission_ScopeBoundsEveryGrant: the scope bound sits in the
-// function that asks the authorizer, not only in its caller's order, so an
-// out-of-scope permission never reaches the authorizer.
+// function that asks go-qrdb, not only in its caller's order, so an
+// out-of-scope permission reaches neither RBAC nor the authorizer; an
+// in-scope one asks each once with the token's roles, and a missing RBAC is
+// a configuration error.
 func TestAuthorizePermission_ScopeBoundsEveryGrant(t *testing.T) {
 	rec := &identityRecorder{inner: &qrdbsdk.NoopAuthorizer{}}
-	v := &Validator{authorizer: rec}
+	rbacRec := &identityRecorder{inner: &qrdbsdk.NoopAuthorizer{}}
+	v := &Validator{authorizer: rec, rbac: rbacRec}
 	ac := &AuthorizedContext{
 		Subject: "user-1", TenantID: "tenant-1", Scopes: []string{"keys:get"}, Roles: []string{"role-auditor"},
 	}
@@ -624,19 +638,211 @@ func TestAuthorizePermission_ScopeBoundsEveryGrant(t *testing.T) {
 	if !errors.As(err, new(*ScopeDeniedError)) {
 		t.Fatalf("out-of-scope permission: err %v, want a ScopeDeniedError", err)
 	}
-	if len(rec.seen) != 0 {
-		t.Fatalf("the authorizer was asked %d times for an out-of-scope permission", len(rec.seen))
+	if len(rec.seen) != 0 || len(rbacRec.seen) != 0 {
+		t.Fatalf("an out-of-scope permission was asked of the authorizer %d and RBAC %d times",
+			len(rec.seen), len(rbacRec.seen))
 	}
 
 	if err := v.authorizePermission(context.Background(), ac, "keys:get"); err != nil {
 		t.Fatalf("in-scope permission: %v", err)
 	}
-	if len(rec.seen) != 2 {
-		t.Fatalf("the authorizer was asked %d times, want 2 (role-less, then with roles)", len(rec.seen))
+	if len(rbacRec.seen) != 1 || len(rec.seen) != 1 {
+		t.Fatalf("RBAC was asked %d and the authorizer %d times, want once each", len(rbacRec.seen), len(rec.seen))
+	}
+	if !slices.Equal(rbacRec.seen[0].Roles, []string{"role-auditor"}) ||
+		!slices.Equal(rec.seen[0].Roles, []string{"role-auditor"}) {
+		t.Fatalf("RBAC saw roles %v and the authorizer %v, want [role-auditor] for both",
+			rbacRec.seen[0].Roles, rec.seen[0].Roles)
 	}
 
 	ac.Scopes = []string{"keys:*"}
 	if err := v.authorizePermission(context.Background(), ac, "keys:delete"); err != nil {
 		t.Fatalf("a whole-segment wildcard scope must cover keys:delete: %v", err)
+	}
+
+	ac.Scopes = []string{"keys:get"}
+	err = (&Validator{authorizer: rec}).authorizePermission(context.Background(), ac, "keys:get")
+	if !errors.As(err, new(*ConfigError)) {
+		t.Fatalf("no RBAC: err %v, want a ConfigError", err)
+	}
+}
+
+// abacKeysGetDeny decorates inner with one tenant-1 policy that denies get on
+// keys to every authenticated subject, under rule's When and Unless
+// conditions.
+func abacKeysGetDeny(t *testing.T, inner qrdbsdk.Authorizer, when, unless []qrdbsdk.ABACCondition) qrdbsdk.Authorizer {
+	t.Helper()
+	policy := &qrdbsdk.ABACPolicy{
+		APIVersion: "abac.qrdb.io/v1",
+		Kind:       "Policy",
+		Metadata:   qrdbsdk.ABACPolicyMetadata{Name: "attested-key-reads", Tenant: "tenant-1"},
+		Spec: qrdbsdk.ABACPolicySpec{
+			Subjects: qrdbsdk.ABACSubjectSelector{Authenticated: true},
+			Rules: []qrdbsdk.ABACRule{{
+				Name: "attested-get", Effect: qrdbsdk.ABACEffectDeny,
+				Actions: []string{"get"}, Resources: []string{"keys"},
+				When: when, Unless: unless,
+			}},
+		},
+	}
+	a, err := qrdbsdk.DecorateAuthorizer(inner, qrdbsdk.ABACWithPolicies([]*qrdbsdk.ABACPolicy{policy}))
+	if err != nil {
+		t.Fatalf("DecorateAuthorizer: %v", err)
+	}
+	return a
+}
+
+// TestMiddleware_ABACSeesTheCompleteIdentity proves ABAC is judged once, on
+// the token's complete verified identity: a deny conditioned on a claim's
+// absence does not refuse a token that carries the claim, and a deny's unless
+// exemption on a verified claim admits the token that carries it.
+func TestMiddleware_ABACSeesTheCompleteIdentity(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	key := newIssuerKey(t, testKID)
+	offline := func(string) AuthzMode { return AuthzModeOffline }
+	absence := abacKeysGetDeny(t, &qrdbsdk.NoopAuthorizer{},
+		[]qrdbsdk.ABACCondition{{Expression: "subject.attrs.attest_method notexists"}}, nil)
+	unless := abacKeysGetDeny(t, &qrdbsdk.NoopAuthorizer{},
+		nil, []qrdbsdk.ABACCondition{{Expression: "subject.attrs.attest_method == \"tpm\""}})
+
+	for _, tc := range []struct {
+		name         string
+		authz        qrdbsdk.Authorizer
+		attestMethod string
+		amr          []string
+		wantStatus   int
+		wantBody     string
+	}{
+		{name: "a claim-bearing token passes an absence-based deny", authz: absence, attestMethod: "tpm",
+			wantStatus: http.StatusOK, wantBody: "tenant-1/user-1"},
+		// The token carries another authentication claim (amr) but not
+		// attest_method. go-qrdb resolves an absent attribute namespace to a
+		// typed nil map, so a notexists condition only matches when the
+		// subject has some authentication claim.
+		{name: "a token without the claim is refused by an absence-based deny", authz: absence,
+			amr: []string{"pwd"}, wantStatus: http.StatusForbidden},
+		{name: "an unless exemption on a verified claim admits", authz: unless, attestMethod: "tpm",
+			wantStatus: http.StatusOK, wantBody: "tenant-1/user-1"},
+		{name: "an unless exemption does not cover another value", authz: unless, attestMethod: "manual",
+			wantStatus: http.StatusForbidden},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := Options{ModeResolver: offline, Authorizer: tc.authz, RBAC: &qrdbsdk.NoopAuthorizer{}}
+			guard := newAuthzValidator(t, key, now, opts).Middleware("keys:get")(principalEcho(t))
+			token := key.sign(t, tokenClaims{
+				iss: testIssuer, aud: []string{testAudience}, sub: "user-1", tid: "tenant-1",
+				scp: []string{"keys:get"}, attestMethod: tc.attestMethod, amr: tc.amr,
+				exp: now.Add(10 * time.Minute), iat: now,
+			})
+			req := httptest.NewRequest(http.MethodGet, "https://daemon.example/v1/keys", nil)
+			req.Header.Set("Authorization", "Bearer "+token)
+			w := httptest.NewRecorder()
+			guard.ServeHTTP(w, req)
+
+			if w.Code != tc.wantStatus {
+				t.Fatalf("status %d, want %d (body %q)", w.Code, tc.wantStatus, w.Body.String())
+			}
+			if tc.wantBody != "" && w.Body.String() != tc.wantBody {
+				t.Fatalf("principal %q, want %q", w.Body.String(), tc.wantBody)
+			}
+			if tc.wantStatus != http.StatusOK {
+				if !strings.Contains(w.Body.String(), "access_denied") {
+					t.Fatalf("refusal body %q, want access_denied", w.Body.String())
+				}
+				if strings.Contains(w.Body.String(), "platformtoken:") {
+					t.Fatalf("the validator's detail reached the caller: %q", w.Body.String())
+				}
+			}
+		})
+	}
+}
+
+// soCryptoDenyRBAC stands in for go-qrdb RBAC's SO deny-list: it refuses a
+// cryptographic permission to an identity holding the "so" role, and
+// records every identity it is asked about.
+type soCryptoDenyRBAC struct{ seen []qrdbsdk.Identity }
+
+func (r *soCryptoDenyRBAC) Authorize(_ context.Context, id *qrdbsdk.Identity, resource, action string) error {
+	r.seen = append(r.seen, *id)
+	if slices.Contains(id.Roles, qrdbsdk.RoleNameSO) && qrdbsdk.IsPermissionCryptoUse(qrdbsdk.Permission(resource+":"+action)) {
+		return errors.New("SO denied cryptographic use")
+	}
+	return nil
+}
+
+// TestMiddleware_RBACHoldsWhenABACAllows proves an ABAC allow does not lift
+// RBAC's mandatory restrictions: go-qrdb's decorated authorizer admits on a
+// matched allow without asking the inner RBAC, so the guard asks RBAC
+// itself, with the token's roles, and its SO deny-list refuses.
+func TestMiddleware_RBACHoldsWhenABACAllows(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	key := newIssuerKey(t, testKID)
+	offline := func(string) AuthzMode { return AuthzModeOffline }
+
+	for _, tc := range []struct {
+		name       string
+		roles      []string
+		wantStatus int
+		wantBody   string
+	}{
+		{name: "an ABAC allow does not lift the SO deny-list", roles: []string{"so"},
+			wantStatus: http.StatusForbidden},
+		{name: "the same allow admits a non-SO signer", roles: []string{"signer"},
+			wantStatus: http.StatusOK, wantBody: "tenant-1/user-1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rbac := &soCryptoDenyRBAC{}
+			policy := &qrdbsdk.ABACPolicy{
+				APIVersion: "abac.qrdb.io/v1",
+				Kind:       "Policy",
+				Metadata:   qrdbsdk.ABACPolicyMetadata{Name: "signers", Tenant: "tenant-1"},
+				Spec: qrdbsdk.ABACPolicySpec{
+					Subjects: qrdbsdk.ABACSubjectSelector{Roles: []string{"so", "signer"}},
+					Rules: []qrdbsdk.ABACRule{{
+						Name: "sign", Effect: qrdbsdk.ABACEffectAllow,
+						Actions: []string{"sign"}, Resources: []string{"keys"},
+					}},
+				},
+			}
+			authz, err := qrdbsdk.DecorateAuthorizer(rbac, qrdbsdk.ABACWithPolicies([]*qrdbsdk.ABACPolicy{policy}))
+			if err != nil {
+				t.Fatalf("DecorateAuthorizer: %v", err)
+			}
+			if err := authz.Authorize(qrdbsdk.ContextWithTenant(context.Background(), "tenant-1"),
+				&qrdbsdk.Identity{Subject: "user-1", TenantID: "tenant-1", Roles: []string{"so"},
+					ScopePermissions: []string{"keys:sign"}}, "keys", "sign"); err != nil {
+				t.Fatalf("the decorated authorizer alone must admit the SO on its allow: %v", err)
+			}
+			rbac.seen = nil
+
+			opts := Options{ModeResolver: offline, Authorizer: authz, RBAC: rbac}
+			guard := newAuthzValidator(t, key, now, opts).Middleware("keys:sign")(principalEcho(t))
+			token := key.sign(t, tokenClaims{
+				iss: testIssuer, aud: []string{testAudience}, sub: "user-1", tid: "tenant-1",
+				scp: []string{"keys:sign"}, roles: tc.roles, exp: now.Add(10 * time.Minute), iat: now,
+			})
+			req := httptest.NewRequest(http.MethodPost, "https://daemon.example/v1/keys/k1/sign", nil)
+			req.Header.Set("Authorization", "Bearer "+token)
+			w := httptest.NewRecorder()
+			guard.ServeHTTP(w, req)
+
+			if w.Code != tc.wantStatus {
+				t.Fatalf("status %d, want %d (body %q)", w.Code, tc.wantStatus, w.Body.String())
+			}
+			if tc.wantBody != "" && w.Body.String() != tc.wantBody {
+				t.Fatalf("principal %q, want %q", w.Body.String(), tc.wantBody)
+			}
+			if len(rbac.seen) == 0 || !slices.Equal(rbac.seen[0].Roles, tc.roles) {
+				t.Fatalf("RBAC saw %+v, want the token's roles %v", rbac.seen, tc.roles)
+			}
+			if tc.wantStatus != http.StatusOK {
+				if !strings.Contains(w.Body.String(), "access_denied") {
+					t.Fatalf("refusal body %q, want access_denied", w.Body.String())
+				}
+				if strings.Contains(w.Body.String(), "platformtoken:") {
+					t.Fatalf("the validator's detail reached the caller: %q", w.Body.String())
+				}
+			}
+		})
 	}
 }

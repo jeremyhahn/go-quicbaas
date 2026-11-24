@@ -148,10 +148,22 @@ type Options struct {
 	ReplayCache dpop.ReplayCache
 	// Authorizer is the go-qrdb policy decision point a permission route asks
 	// after the scope check: go-qrdb RBAC, decorated with its ABAC policies by
-	// qrdbsdk.DecorateAuthorizer. AuthorizeRequest and Middleware refuse a
+	// qrdbsdk.DecorateAuthorizer. It is asked with the complete verified
+	// identity (subject, tenant, roles, scope, authentication claims).
+	// AuthorizeRequest and Middleware refuse a permission route with 503 when
+	// it is nil; an empty permission does not use it.
+	Authorizer qrdbsdk.Authorizer
+	// RBAC is the undecorated go-qrdb RBAC authorizer that Authorizer's ABAC
+	// policies decorate (the inner authorizer passed to
+	// qrdbsdk.DecorateAuthorizer). A permission route asks it with the
+	// complete verified identity as well as Authorizer, because in go-qrdb a
+	// matched ABAC allow is decisive and skips the inner RBAC: its mandatory
+	// restrictions (the SO deny-list for cryptographic operations, the
+	// tenant scope rules) hold only when RBAC is asked directly. A request is
+	// admitted only when both allow. AuthorizeRequest and Middleware refuse a
 	// permission route with 503 when it is nil; an empty permission does not
 	// use it.
-	Authorizer qrdbsdk.Authorizer
+	RBAC qrdbsdk.Authorizer
 }
 
 // Validator verifies platform access tokens for one trusted issuer and one
@@ -167,6 +179,7 @@ type Validator struct {
 	modeResolver   ModeResolver
 	replayCache    dpop.ReplayCache
 	authorizer     qrdbsdk.Authorizer
+	rbac           qrdbsdk.Authorizer
 }
 
 // NewValidator constructs a Validator. It requires an issuer, an audience, and
@@ -232,6 +245,7 @@ func NewValidator(opts Options) (*Validator, error) {
 		modeResolver: opts.ModeResolver,
 		replayCache:  opts.ReplayCache,
 		authorizer:   opts.Authorizer,
+		rbac:         opts.RBAC,
 	}
 	if opts.LivenessChecker != nil {
 		v.cachedLiveness = NewCachedLivenessChecker(opts.LivenessChecker, opts.LivenessCacheTTL, nowFunc)

@@ -60,16 +60,18 @@ func WithAuthorizedContext(ctx context.Context, ac *AuthorizedContext) context.C
 //     certificate whose SHA-256 thumbprint the token names (RFC 8705), so a
 //     PIV or device certificate login cannot be replayed from another key;
 //   - requires the permission among the token's granted scopes, then the
-//     liveness check the validator's mode asks for, then asks
-//     Options.Authorizer (go-qrdb RBAC with its ABAC policies) for the
-//     permission as the token's subject, roles and authentication claims,
-//     in the token's tenant. The token's scope bounds every grant: a role
+//     liveness check the validator's mode asks for, then asks go-qrdb for
+//     the permission as the token's complete principal (subject, roles,
+//     scope and authentication claims) in the token's tenant: first
+//     Options.RBAC, whose mandatory restrictions such as the SO deny-list
+//     hold whatever an ABAC policy says, then Options.Authorizer (RBAC with
+//     its ABAC policies). The token's scope bounds every grant: a role
 //     never admits a permission outside it.
 //
 // A missing or invalid credential is 401 with a WWW-Authenticate challenge, a
 // missing permission 403, a permission the authorizer denies 403, and a guard
-// that cannot decide (no JWKS, no liveness authority, no authorizer for a
-// permission route) 503. The authorised principal is bound onto the
+// that cannot decide (no JWKS, no liveness authority, no authorizer or RBAC
+// for a permission route) 503. The authorised principal is bound onto the
 // request's context; read it with FromContext.
 func (v *Validator) Middleware(permission string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
@@ -114,22 +116,31 @@ func (v *Validator) AuthorizeRequest(r *http.Request, permission string) (*Autho
 	return ac, nil
 }
 
-// authorizePermission asks the go-qrdb authorizer for permission's resource
-// and action as the token's principal, in the token's tenant. It fails
-// closed: a permission outside the token's scope is refused before any
-// authorizer is asked, no authorizer is a configuration error, and any error
-// from the authorizer is a refusal.
+// authorizePermission asks go-qrdb for permission's resource and action as
+// the token's complete principal, in the token's tenant. It fails closed: a
+// permission outside the token's scope is refused before anything is
+// asked, a missing authorizer or RBAC is a configuration error, and any
+// error from either is a refusal.
 //
 // The token's scope bounds every grant. go-qrdb's RBAC unions a role's
-// permissions with Identity.ScopePermissions, so the authorizer alone would
-// let a role grant beyond the token. The scope check therefore runs here,
-// where the authorizer is asked, and not only in AuthorizeRequest: a
-// request is admitted only when its permission is in the token's scope AND
-// the authorizer, given the token's roles, allows it.
+// permissions with Identity.ScopePermissions, so the authorizer alone
+// would let a role grant beyond the token. The scope check therefore runs
+// here as well as in AuthorizeRequest.
 //
-// The verified token's roles populate the identity the authorizer
-// evaluates, so an ABAC policy that denies one of the caller's roles
-// refuses the request. authorizerIdentities lists the decisions asked.
+// Both decisions see the same complete identity (authorizerIdentity):
+//
+//   - Options.RBAC first. In go-qrdb a matched ABAC allow is decisive and
+//     never reaches the inner RBAC, so RBAC's mandatory restrictions (the
+//     SO deny-list for cryptographic operations, FIPS 140-3 AS10.03, and
+//     the tenant scope rules) are enforced by asking it directly;
+//   - then Options.Authorizer, RBAC decorated with ABAC. ABAC sees the
+//     token's roles and authentication claims together, so a deny
+//     selecting either matches, and an absence-based condition
+//     ("notexists") or an unless exemption is judged on what the token
+//     actually carries.
+//
+// A request is admitted only when its permission is in scope and both
+// allow.
 func (v *Validator) authorizePermission(ctx context.Context, ac *AuthorizedContext, permission string) error {
 	if err := ac.RequireScope(permission); err != nil {
 		return err
@@ -137,58 +148,34 @@ func (v *Validator) authorizePermission(ctx context.Context, ac *AuthorizedConte
 	if v.authorizer == nil {
 		return &ConfigError{Detail: "a permission route needs Options.Authorizer"}
 	}
+	if v.rbac == nil {
+		return &ConfigError{Detail: "a permission route needs Options.RBAC"}
+	}
 	ctx = qrdbsdk.ContextWithTenant(ctx, qrdbsdk.NormalizeTenantID(ac.TenantID))
 	perm := qrdbsdk.Permission(permission)
 	resource, action := qrdbsdk.PermissionResource(perm), qrdbsdk.PermissionAction(perm)
-	for _, identity := range authorizerIdentities(ac) {
-		if err := v.authorizer.Authorize(ctx, identity, resource, action); err != nil {
+	for _, decide := range []qrdbsdk.Authorizer{v.rbac, v.authorizer} {
+		if err := decide.Authorize(ctx, authorizerIdentity(ac), resource, action); err != nil {
 			return &PolicyDeniedError{Required: permission, Cause: err}
 		}
 	}
 	return nil
 }
 
-// authorizerIdentities are the identities the guard asks the authorizer
-// about, in order. A request is admitted only when the authorizer allows
-// every one, so each added identity can only refuse more:
-//
-//   - the token's subject and scope, without roles or claims. This is the
-//     floor: in go-qrdb a matched ABAC allow is decisive and skips the
-//     inner RBAC check (the SO deny-list and the tenant scope rules), so an
-//     allow that selects a role or a claim is never the only decision;
-//   - with the token's roles, when it has any, so a role-selected deny
-//     matches;
-//   - with the roles and the token's authentication claims as
-//     Identity.Metadata, when it has any, so an attribute-selected deny
-//     matches.
-//
-// Every identity carries the token's scope as ScopePermissions and no other
-// grant. The slices and the map are copies, so the authorizer cannot change
-// the authorised principal.
-func authorizerIdentities(ac *AuthorizedContext) []*qrdbsdk.Identity {
-	ids := []*qrdbsdk.Identity{{
+// authorizerIdentity is the complete verified principal the guard asks
+// go-qrdb about: the token's subject, tenant, roles, scope (as
+// ScopePermissions, its only grant) and authentication claims (as
+// Identity.Metadata). Every call returns fresh copies of the slices and
+// the map, so neither decision can change the authorised principal or the
+// identity the other decision sees.
+func authorizerIdentity(ac *AuthorizedContext) *qrdbsdk.Identity {
+	return &qrdbsdk.Identity{
 		Subject:          ac.Subject,
 		TenantID:         ac.TenantID,
+		Roles:            slices.Clone(ac.Roles),
 		ScopePermissions: slices.Clone(ac.Scopes),
-	}}
-	if len(ac.Roles) > 0 {
-		ids = append(ids, &qrdbsdk.Identity{
-			Subject:          ac.Subject,
-			TenantID:         ac.TenantID,
-			Roles:            slices.Clone(ac.Roles),
-			ScopePermissions: slices.Clone(ac.Scopes),
-		})
+		Metadata:         maps.Clone(ac.AuthAttributes),
 	}
-	if len(ac.AuthAttributes) > 0 {
-		ids = append(ids, &qrdbsdk.Identity{
-			Subject:          ac.Subject,
-			TenantID:         ac.TenantID,
-			Roles:            slices.Clone(ac.Roles),
-			ScopePermissions: slices.Clone(ac.Scopes),
-			Metadata:         maps.Clone(ac.AuthAttributes),
-		})
-	}
-	return ids
 }
 
 // requestToken reads the access token from the Authorization header.

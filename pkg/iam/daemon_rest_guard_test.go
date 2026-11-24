@@ -84,6 +84,7 @@ func TestDaemonRESTGuard_AdmitsTokensThisNodeIssues(t *testing.T) {
 		JWKS:         svc.keyManager.JWKS(),
 		ModeResolver: func(string) platformtoken.AuthzMode { return platformtoken.AuthzModeOffline },
 		Authorizer:   &qrdbsdk.NoopAuthorizer{},
+		RBAC:         &qrdbsdk.NoopAuthorizer{},
 	})
 	if err != nil {
 		t.Fatalf("NewValidator: %v", err)
@@ -204,6 +205,7 @@ func TestDaemonRESTGuard_AttributeSelectedDenyRefusesNodeToken(t *testing.T) {
 		JWKS:         svc.keyManager.JWKS(),
 		ModeResolver: func(string) platformtoken.AuthzMode { return platformtoken.AuthzModeOffline },
 		Authorizer:   authz,
+		RBAC:         &qrdbsdk.NoopAuthorizer{},
 	})
 	if err != nil {
 		t.Fatalf("NewValidator: %v", err)
@@ -357,6 +359,7 @@ func TestDaemonRESTGuard_TokenRolesDenyMatchesAndScopeBoundsGrants(t *testing.T)
 				JWKS:         svc.keyManager.JWKS(),
 				ModeResolver: func(string) platformtoken.AuthzMode { return platformtoken.AuthzModeOffline },
 				Authorizer:   counter,
+				RBAC:         &qrdbsdk.NoopAuthorizer{},
 			})
 			if err != nil {
 				t.Fatalf("NewValidator: %v", err)
