@@ -70,11 +70,6 @@ func generateNamespaceKey(t *testing.T, svc *kmsServiceImpl, tenantID string) {
 // caller's key name and the tenant is the xkms TenantID attribute, the same
 // form the gRPC transport sends to xkms.v1.
 func TestKMSNamespace_GenerateKeyUsesXKMSForm(t *testing.T) {
-	// Red-first test from PR #2279: the service still names a tenant key
-	// tenant/<t>/<k>. Row #1654's #2196 slice moves it to CN=K TenantID=T,
-	// with #2128's verified-ownership path for keys already stored, and
-	// removes this skip in the same commit.
-	t.Skip("#2196: tenant keys still use tenant/<t>/<k>; see docs/plans/1654.md")
 	svc, _, generated := newNamespaceKMS(t)
 
 	generateNamespaceKey(t, svc, namespaceOwnerTenant)
