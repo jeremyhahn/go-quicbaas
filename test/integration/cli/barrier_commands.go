@@ -645,7 +645,7 @@ func BarrierRecoveryRecoverNoSharesCommand() CommandDef {
 		Name:           "barrier recovery recover no shares",
 		Args:           []string{"barrier", "recovery", "recover"},
 		ExpectSuccess:  false,
-		ExpectError:    []string{"--share is required"},
+		ExpectError:    []string{"one of --share (repeatable) or --shares-file is required"},
 		Timeout:        10 * time.Second,
 		SkipTransports: barrierTransportsToSkip,
 	}

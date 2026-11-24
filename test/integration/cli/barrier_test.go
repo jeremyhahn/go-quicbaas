@@ -1778,7 +1778,7 @@ func TestBarrierRecovery_RecoverValidation(t *testing.T) {
 	runForBarrierTransports(t, "RecoverValidation", barrierValidationDaemonOpts, func(t *testing.T, _ *barrierDaemon, runner *TestRunner) {
 		stdout, stderr, err := runner.Run(BarrierRecoveryRecoverNoSharesCommand())
 		require.Errorf(t, err, "recovery recover with no shares must fail")
-		assert.Containsf(t, stdout+stderr, "--share is required",
+		assert.Containsf(t, stdout+stderr, "one of --share (repeatable) or --shares-file is required",
 			"canonical missing-share error missing: %s", stdout+stderr)
 	})
 }
