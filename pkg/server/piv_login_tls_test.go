@@ -69,6 +69,8 @@ func newOperatorTLSIntegrationNode(t *testing.T) (*Server, service.IAMComponents
 	srv.config.Auth.BootstrapAdminPIVCertPath = adminCertPath
 	components, err := srv.initializeIAMComponents()
 	require.NoError(t, err, "first boot")
+	// Production attaches IAM in startService before the REST listener serves logins.
+	srv.iamComponents = components
 
 	return srv, components, diskLeaf(t, certFile)
 }

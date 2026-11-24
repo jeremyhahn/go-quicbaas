@@ -143,6 +143,23 @@ func TestXKMSLoginPlatformToken_NoIAMNoTokens(t *testing.T) {
 	assert.NotContains(t, rec.Body.String(), "tok-test")
 }
 
+// TestXKMSLoginPlatformToken_NoUserNoTokens is the fail-closed refusal with
+// IAM attached: the module accepted the login, but no IAM user holds the
+// presented certificate, so the exchange answers 401 and none of the
+// module's tokens reach the client.
+func TestXKMSLoginPlatformToken_NoUserNoTokens(t *testing.T) {
+	srv, _, _ := newOperatorTLSIntegrationNode(t)
+	router := platformTokenRouter(t, srv, http.StatusOK, platformTokenModuleBody)
+	leaf := buildSelfSignedRoot(t, "nobody")
+
+	rec := postPlatformTokenRoute(router, platformTokenLoginRoute,
+		&tls.ConnectionState{PeerCertificates: []*x509.Certificate{leaf}})
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code, rec.Body.String())
+	assert.NotContains(t, rec.Body.String(), "access_token")
+	assert.NotContains(t, rec.Body.String(), "tok-test")
+}
+
 func TestXKMSLoginPlatformToken_BearerFallbackDefersToModule(t *testing.T) {
 	hosted, err := newXKMSLoginPlatformTokenModule(&Server{}, &platformTokenStubModule{}, nil)
 	require.NoError(t, err)
