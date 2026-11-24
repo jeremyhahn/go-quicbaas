@@ -133,13 +133,16 @@ func cleanupAuditTests(cluster *testCluster, tenantID string) {
 	cluster.asSystemAdmin().deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
 }
 
-// waitForAuditEvents polls the audit query endpoint until at least min events
+// waitForAuditEvents polls the audit query endpoint until at least want events
 // are visible for the tenant (or the deadline expires) and returns the last
-// response. Audit events are written through DefaultAuditLogger.LogAsync — a
+// response. The response's total counts every event of the tenant, while its
+// page holds at most limit events (the endpoint defaults limit to 100), so the
+// wait requires total >= want and a page that is full up to the limit: a
+// shared tenant that already holds more events than one page still passes. Audit events are written through DefaultAuditLogger.LogAsync — a
 // buffered channel drained by a background worker — so an event emitted by
 // the request that just returned is only EVENTUALLY queryable. Asserting on
 // the first read races the async writer; polling matches the API contract.
-func waitForAuditEvents(t *testing.T, cluster *testCluster, path string, min int) AuditQueryResponse {
+func waitForAuditEvents(t *testing.T, cluster *testCluster, path string, want int) AuditQueryResponse {
 	t.Helper()
 	var resp AuditQueryResponse
 	require.Eventually(t, func() bool {
@@ -149,9 +152,9 @@ func waitForAuditEvents(t *testing.T, cluster *testCluster, path string, min int
 			return false
 		}
 		resp = attempt
-		return attempt.Total >= min && len(attempt.Events) >= min
+		return attempt.Total >= want && len(attempt.Events) >= min(want, attempt.Limit)
 	}, 15*time.Second, 200*time.Millisecond,
-		"at least %d audit event(s) should become visible at %s", min, path)
+		"at least %d audit event(s) should become visible at %s", want, path)
 	return resp
 }
 
