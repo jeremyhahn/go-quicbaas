@@ -160,8 +160,10 @@ lease, RBAC binds the manifest's role to the identity, and the secrets grant
 binds `services/<name>/` to it. The plane stores these under the tenant's
 scope (`tenant/<tenant>/services/<name>/...`), the same place the secrets
 service maps the tenant's `services/<name>/` to, so two tenants' services of
-one name never share credentials. A redeploy keeps every grant whose ref still
-fits the manifest; an SVID under another ID is reissued and the old one
+one name never share credentials. The identity and certificate grants keep
+their credential as one `data` PEM bundle (certificate, then key), which the
+secrets API serves to the bound workload. A redeploy keeps every grant whose
+ref still fits the manifest; an SVID under another ID is reissued and the old one
 revoked; undeploy revokes the certificates and destroys what was
 stored. The `RoleBinder` over go-qrdb IAM is `iam.WorkloadRoleBinder`: the
 SPIFFE ID is a machine principal (username the SVID's CommonName, active,
@@ -218,7 +220,9 @@ and every fill, drain and switch carries it as a `Fence`: the runtime and
 the registry refuse (`ErrFenced`) an epoch older than the newest they took
 for the service (`EpochGate`), so a superseded leader's delayed side effect
 never lands. A failed step rolls back (`rolled_back`); a failed rollback is
-recorded as `failed`. `rollout.PlaneRoller` drives the plane's own slot
+recorded as `failed`. A rollback whose switch back fails leaves the target
+slot running, since the name may still route to it. `rollout.PlaneRoller`
+drives the plane's own slot
 verbs. `FillSlot` and `DrainSlot` are the slot runtime (over the plane's launcher),
 `SwitchSlot` is the name switch (it moves the name grant), and the plane
 fences each with the claim's epoch. The node builds the one controller over
