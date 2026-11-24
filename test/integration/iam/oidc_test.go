@@ -101,7 +101,7 @@ func TestAuthorizationEndpointValidation(t *testing.T) {
 	// tenant lift); the OAuth2 and OIDC requests stay unauthenticated.
 	admin := cluster.asSystemAdmin()
 
-	tenantID := setupTenantForTests(t, admin)
+	tenantID := sharedTenantForTests(t, admin, "oidc")
 	defer deleteTenantUnlessShared(admin, tenantID)
 
 	// Create a valid application for testing
@@ -214,7 +214,7 @@ func TestPKCEParameterValidation(t *testing.T) {
 	// tenant lift); the OAuth2 and OIDC requests stay unauthenticated.
 	admin := cluster.asSystemAdmin()
 
-	tenantID := setupTenantForTests(t, admin)
+	tenantID := sharedTenantForTests(t, admin, "oidc")
 	defer deleteTenantUnlessShared(admin, tenantID)
 
 	// Create application with PKCE support
@@ -286,7 +286,7 @@ func TestClientCredentialsFlow(t *testing.T) {
 	// tenant lift); the OAuth2 and OIDC requests stay unauthenticated.
 	admin := cluster.asSystemAdmin()
 
-	tenantID := setupTenantForTests(t, admin)
+	tenantID := sharedTenantForTests(t, admin, "oidc")
 	defer deleteTenantUnlessShared(admin, tenantID)
 
 	// Create application with client credentials grant
@@ -367,7 +367,7 @@ func TestClientCredentialsInvalidCredentials(t *testing.T) {
 	// tenant lift); the OAuth2 and OIDC requests stay unauthenticated.
 	admin := cluster.asSystemAdmin()
 
-	tenantID := setupTenantForTests(t, admin)
+	tenantID := sharedTenantForTests(t, admin, "oidc")
 	defer deleteTenantUnlessShared(admin, tenantID)
 
 	// Create valid application first
@@ -453,7 +453,7 @@ func TestRefreshTokenFlow(t *testing.T) {
 	// tenant lift); the OAuth2 and OIDC requests stay unauthenticated.
 	admin := cluster.asSystemAdmin()
 
-	tenantID := setupTenantForTests(t, admin)
+	tenantID := sharedTenantForTests(t, admin, "oidc")
 	defer deleteTenantUnlessShared(admin, tenantID)
 
 	// Create application with refresh_token grant
@@ -560,7 +560,7 @@ func TestTokenRevocation(t *testing.T) {
 	// tenant lift); the OAuth2 and OIDC requests stay unauthenticated.
 	admin := cluster.asSystemAdmin()
 
-	tenantID := setupTenantForTests(t, admin)
+	tenantID := sharedTenantForTests(t, admin, "oidc")
 	defer deleteTenantUnlessShared(admin, tenantID)
 
 	// Create application with client credentials grant
@@ -862,7 +862,7 @@ func TestOIDCScopeValidation(t *testing.T) {
 	// tenant lift); the OAuth2 and OIDC requests stay unauthenticated.
 	admin := cluster.asSystemAdmin()
 
-	tenantID := setupTenantForTests(t, admin)
+	tenantID := sharedTenantForTests(t, admin, "oidc")
 	defer deleteTenantUnlessShared(admin, tenantID)
 
 	// Create application
@@ -937,7 +937,7 @@ func TestOIDCStateParameterEchoed(t *testing.T) {
 	// tenant lift); the OAuth2 and OIDC requests stay unauthenticated.
 	admin := cluster.asSystemAdmin()
 
-	tenantID := setupTenantForTests(t, admin)
+	tenantID := sharedTenantForTests(t, admin, "oidc")
 	defer deleteTenantUnlessShared(admin, tenantID)
 
 	// Create application
@@ -991,7 +991,7 @@ func TestOIDCNonceAcceptedByAuthorizeEndpoint(t *testing.T) {
 	// tenant lift); the OAuth2 and OIDC requests stay unauthenticated.
 	admin := cluster.asSystemAdmin()
 
-	tenantID := setupTenantForTests(t, admin)
+	tenantID := sharedTenantForTests(t, admin, "oidc")
 	defer deleteTenantUnlessShared(admin, tenantID)
 
 	// Create application

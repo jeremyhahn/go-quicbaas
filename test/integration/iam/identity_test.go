@@ -62,7 +62,7 @@ func TestUserCRUD(t *testing.T) {
 	// through the tenant lift (pkg/api/rest/tenant_target.go).
 	cluster := base.asSystemAdmin()
 
-	tenantID := setupTenantForTests(t, cluster)
+	tenantID := sharedTenantForTests(t, cluster, "identity")
 	defer deleteTenantUnlessShared(cluster, tenantID)
 
 	email := generateUniqueEmail()
@@ -161,7 +161,7 @@ func TestUserEmailUniqueness(t *testing.T) {
 	// through the tenant lift (pkg/api/rest/tenant_target.go).
 	cluster := base.asSystemAdmin()
 
-	tenantID := setupTenantForTests(t, cluster)
+	tenantID := sharedTenantForTests(t, cluster, "identity")
 	defer deleteTenantUnlessShared(cluster, tenantID)
 
 	email := generateUniqueEmail()
@@ -197,7 +197,7 @@ func TestUserRoleAssignment(t *testing.T) {
 	// through the tenant lift (pkg/api/rest/tenant_target.go).
 	cluster := base.asSystemAdmin()
 
-	tenantID := setupTenantForTests(t, cluster)
+	tenantID := sharedTenantForTests(t, cluster, "identity")
 	defer deleteTenantUnlessShared(cluster, tenantID)
 
 	// Create user
@@ -253,7 +253,7 @@ func TestRoleCRUD(t *testing.T) {
 	// through the tenant lift (pkg/api/rest/tenant_target.go).
 	cluster := base.asSystemAdmin()
 
-	tenantID := setupTenantForTests(t, cluster)
+	tenantID := sharedTenantForTests(t, cluster, "identity")
 	defer deleteTenantUnlessShared(cluster, tenantID)
 
 	roleID := "test-role"
@@ -325,7 +325,7 @@ func TestRoleAssignmentRevocation(t *testing.T) {
 	// through the tenant lift (pkg/api/rest/tenant_target.go).
 	cluster := base.asSystemAdmin()
 
-	tenantID := setupTenantForTests(t, cluster)
+	tenantID := sharedTenantForTests(t, cluster, "identity")
 	defer deleteTenantUnlessShared(cluster, tenantID)
 
 	// Create user
