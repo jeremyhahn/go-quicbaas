@@ -15,14 +15,18 @@
 
 <!--
   VectorsView lists vector namespaces (collections), allows creating a new
-  namespace, and provides a similarity search interface for any namespace.
+  namespace, shows the vector store's status, opens a namespace's detail panel
+  (stats, index rebuild, compaction, export and import), and searches a
+  namespace by similarity, hybrid vector-and-metadata, or metadata alone.
   Mirrors the `quicbaas vector search/index/create` CLI surface.
 -->
 <script lang="ts">
   import PageHeader from '../../components/core/PageHeader.svelte';
+  import VectorNamespacePanel from '../../components/data/VectorNamespacePanel.svelte';
+  import VectorStatusStrip from '../../components/data/VectorStatusStrip.svelte';
   import { showToast } from '../../stores/toast.svelte.ts';
   import { getSDKClient } from '../../stores/sdkClient.ts';
-  import type { VectorNamespace, VectorSearchResult } from '@quicbaas/sdk';
+  import type { VectorNamespace } from '@quicbaas/sdk';
   import { APIError } from '@quicbaas/sdk';
   import { Plus, Search, Trash2, ChevronRight, ScatterChart } from 'lucide-svelte';
 
@@ -34,6 +38,9 @@
   let loading = $state(false);
   let loadError = $state('');
   let subsystemDisabled = $state(false);
+  // The status strip mounts once the first listing has answered, so a
+  // disabled subsystem is known before the strip asks for its status.
+  let listLoaded = $state(false);
 
   function isDisabledError(err: unknown): boolean {
     if (err instanceof APIError && (err.status === 408 || err.status === 503 || err.status === 500)) {
@@ -66,6 +73,7 @@
       }
     } finally {
       loading = false;
+      listLoaded = true;
     }
   }
 
@@ -132,6 +140,7 @@
       const client = await getSDKClient();
       await client.vectors.deleteNamespace(namespaceToDelete.name);
       showToast({ message: `Namespace "${namespaceToDelete.name}" deleted.`, type: 'success' });
+      if (selectedNamespace === namespaceToDelete.name) selectedNamespace = null;
       namespaceToDelete = null;
       await fetchNamespaces();
     } catch (err: unknown) {
@@ -145,35 +154,118 @@
   // Search panel
   // ---------------------------------------------------------------------------
 
+  type SearchMode = 'similar' | 'hybrid' | 'metadata';
+  interface ResultRow {
+    id: string;
+    score?: number;
+    metadata?: Record<string, unknown>;
+  }
+
+  let selectedNamespace = $state<string | null>(null);
   let searchNamespace = $state('');
+  let searchMode = $state<SearchMode>('similar');
   let searchQuery = $state('');
+  let searchFilter = $state('');
   let searchTopK = $state(10);
-  let searchResults = $state<VectorSearchResult[]>([]);
+  let searchResults = $state<ResultRow[]>([]);
   let searching = $state(false);
+  let searched = $state(false);
   let searchError = $state('');
+
+  function openNamespace(name: string): void {
+    searchNamespace = name;
+    selectedNamespace = name;
+  }
+
+  /** Parses the metadata filter field: empty is {}, else a JSON object of strings. */
+  function parseFilter(): Record<string, string> | null {
+    if (!searchFilter.trim()) return {};
+    try {
+      const parsed: unknown = JSON.parse(searchFilter);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+      return Object.fromEntries(
+        Object.entries(parsed as Record<string, unknown>).map(([k, v]) => [k, String(v)]),
+      );
+    } catch {
+      return null;
+    }
+  }
+
+  /** Parses the hybrid query vector: a JSON array of numbers. */
+  function parseVector(): number[] | null {
+    try {
+      const parsed: unknown = JSON.parse(searchQuery);
+      if (!Array.isArray(parsed) || parsed.length === 0 || !parsed.every((n) => typeof n === 'number')) return null;
+      return parsed as number[];
+    } catch {
+      return null;
+    }
+  }
 
   async function handleSearch(): Promise<void> {
     if (!searchNamespace.trim()) {
       searchError = 'Select a namespace first.';
       return;
     }
-    if (!searchQuery.trim()) {
-      searchError = 'Enter a search query.';
-      return;
+    let filters: Record<string, string> = {};
+    let vector: number[] = [];
+    if (searchMode === 'similar') {
+      if (!searchQuery.trim()) {
+        searchError = 'Enter a search query.';
+        return;
+      }
+    } else {
+      const f = parseFilter();
+      if (f === null) {
+        searchError = 'Metadata filter must be a JSON object.';
+        return;
+      }
+      filters = f;
+      if (searchMode === 'hybrid') {
+        const v = parseVector();
+        if (v === null) {
+          searchError = 'Query vector must be a JSON array of numbers.';
+          return;
+        }
+        vector = v;
+      } else if (Object.keys(filters).length === 0) {
+        searchError = 'Enter a metadata filter.';
+        return;
+      }
     }
     searching = true;
     searchError = '';
     searchResults = [];
     try {
       const client = await getSDKClient();
-      searchResults = await client.vectors.searchSimilar(searchNamespace, {
-        text: searchQuery.trim(),
-        top_k: searchTopK,
-      });
+      if (searchMode === 'similar') {
+        searchResults = await client.vectors.searchSimilar(searchNamespace, {
+          text: searchQuery.trim(),
+          top_k: searchTopK,
+        });
+      } else if (searchMode === 'hybrid') {
+        const res = await client.vectors.hybridSearch({
+          namespace: searchNamespace,
+          query_vector: vector,
+          k: searchTopK,
+          metadata_filters: filters,
+          include_metadata: true,
+        });
+        searchResults = (res.results ?? []).map((r) => ({ id: r.id, score: r.score, metadata: r.metadata }));
+      } else {
+        const res = await client.vectors.searchByMetadata({
+          namespace: searchNamespace,
+          filters,
+          limit: searchTopK,
+          include_metadata: true,
+        });
+        searchResults = (res.results ?? []).map((r) => ({ id: r.id, metadata: r.metadata }));
+      }
     } catch (err: unknown) {
       searchError = err instanceof Error ? err.message : String(err);
     } finally {
       searching = false;
+      searched = true;
     }
   }
 </script>
@@ -208,6 +300,10 @@
     </div>
   {/if}
 
+  {#if listLoaded && !subsystemDisabled}
+    <VectorStatusStrip />
+  {/if}
+
   <!-- Two-panel layout: namespace list | search panel -->
   <div class="flex gap-6 flex-wrap lg:flex-nowrap">
 
@@ -227,8 +323,9 @@
               class:ring-primary={searchNamespace === ns.name}
               role="button"
               tabindex="0"
-              onclick={() => { searchNamespace = ns.name; }}
-              onkeydown={(e) => { if (e.key === 'Enter') searchNamespace = ns.name; }}
+              aria-label={`Open namespace ${ns.name}`}
+              onclick={() => { openNamespace(ns.name); }}
+              onkeydown={(e) => { if (e.key === 'Enter') openNamespace(ns.name); }}
             >
               <div class="card-body flex-row items-center gap-4">
                 <div class="flex-1 min-w-0">
@@ -255,11 +352,17 @@
           {/each}
         </div>
       {/if}
+
+      {#if selectedNamespace && !subsystemDisabled}
+        <div class="mt-4">
+          <VectorNamespacePanel namespace={selectedNamespace} onclose={() => { selectedNamespace = null; }} />
+        </div>
+      {/if}
     </div>
 
     <!-- Search panel -->
     <div class="w-full lg:w-96 shrink-0">
-      <h2 class="text-sm font-semibold text-base-content/50 uppercase tracking-wider mb-3">Similarity Search</h2>
+      <h2 class="text-sm font-semibold text-base-content/50 uppercase tracking-wider mb-3">Search</h2>
 
       <div class="card bg-base-200">
         <div class="card-body gap-3">
@@ -274,17 +377,43 @@
           </label>
 
           <label class="form-control">
-            <div class="label py-1"><span class="label-text text-xs">Text query</span></div>
-            <input
-              type="text"
-              class="input input-bordered input-sm"
-              bind:value={searchQuery}
-              placeholder="Enter search text…"
-            />
+            <div class="label py-1"><span class="label-text text-xs">Search mode</span></div>
+            <select class="select select-bordered select-sm" bind:value={searchMode} aria-label="Search mode">
+              <option value="similar">Similar</option>
+              <option value="hybrid">Hybrid</option>
+              <option value="metadata">Metadata</option>
+            </select>
           </label>
 
+          {#if searchMode !== 'metadata'}
+            <label class="form-control">
+              <div class="label py-1">
+                <span class="label-text text-xs">{searchMode === 'hybrid' ? 'Query vector (JSON array)' : 'Text query'}</span>
+              </div>
+              <input
+                type="text"
+                class="input input-bordered input-sm"
+                class:font-mono={searchMode === 'hybrid'}
+                bind:value={searchQuery}
+                placeholder={searchMode === 'hybrid' ? '[0.1, 0.2, 0.3]' : 'Enter search text…'}
+              />
+            </label>
+          {/if}
+
+          {#if searchMode !== 'similar'}
+            <label class="form-control">
+              <div class="label py-1"><span class="label-text text-xs">Metadata filter (JSON object)</span></div>
+              <input
+                type="text"
+                class="input input-bordered input-sm font-mono"
+                bind:value={searchFilter}
+                placeholder={'{"lang":"en"}'}
+              />
+            </label>
+          {/if}
+
           <label class="form-control">
-            <div class="label py-1"><span class="label-text text-xs">Top-K results</span></div>
+            <div class="label py-1"><span class="label-text text-xs">{searchMode === 'metadata' ? 'Limit' : 'Top-K results'}</span></div>
             <input
               type="number"
               class="input input-bordered input-sm w-24"
@@ -303,7 +432,7 @@
             onclick={() => { void handleSearch(); }}
             disabled={searching || subsystemDisabled}
             title={subsystemDisabled ? 'Vector database subsystem is not enabled on this node' : undefined}
-            aria-label="Run similarity search"
+            aria-label={searchMode === 'similar' ? 'Run similarity search' : `Run ${searchMode} search`}
           >
             {#if searching}
               <span class="loading loading-spinner loading-xs"></span>
@@ -320,9 +449,11 @@
                 <div class="bg-base-100 rounded p-2 text-xs">
                   <div class="flex items-center justify-between gap-2">
                     <span class="font-mono truncate">{result.id}</span>
-                    <span class="badge badge-sm badge-primary shrink-0">
-                      {result.score.toFixed(4)}
-                    </span>
+                    {#if result.score !== undefined}
+                      <span class="badge badge-sm badge-primary shrink-0">
+                        {result.score.toFixed(4)}
+                      </span>
+                    {/if}
                   </div>
                   {#if result.metadata && Object.keys(result.metadata).length > 0}
                     <pre class="text-[10px] text-base-content/40 mt-1 overflow-hidden">{JSON.stringify(result.metadata)}</pre>
@@ -330,7 +461,7 @@
                 </div>
               {/each}
             </div>
-          {:else if !searching && searchQuery}
+          {:else if !searching && searched && !searchError}
             <p class="text-xs text-base-content/30 text-center">No results.</p>
           {/if}
         </div>
