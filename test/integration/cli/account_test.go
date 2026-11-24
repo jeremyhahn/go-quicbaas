@@ -252,6 +252,69 @@ func TestAgentAccountLifecycle(t *testing.T) {
 	})
 }
 
+// writeStaticAccountCredential writes a static_token credential, the refresh
+// policy a seeded default account carries: an access token and the variable
+// it is exported as, and no refresh token.
+func writeStaticAccountCredential(t *testing.T, accessToken string) string {
+	t.Helper()
+	encoded, err := json.Marshal(map[string]interface{}{
+		"access_token":         accessToken,
+		"access_token_env_key": "CLAUDE_CODE_OAUTH_TOKEN",
+	})
+	require.NoError(t, err)
+
+	path := filepath.Join(t.TempDir(), "static-credential.json")
+	require.NoError(t, os.WriteFile(path, encoded, 0o600))
+	return path
+}
+
+// accountStatusFromJSON decodes an account document and returns its status.
+func accountStatusFromJSON(t *testing.T, transport Transport, stdout string) string {
+	t.Helper()
+	var info struct {
+		Status string `json:"status"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(stdout), &info),
+		"[%s] output is not an account document: %s", transport, stdout)
+	return info.Status
+}
+
+// TestAgentAccountDefaultProviderAccounts proves that a tenant created after
+// the server started has both default provider accounts awaiting their
+// credential, and that the first-login rotate activates one without showing
+// the credential.
+func TestAgentAccountDefaultProviderAccounts(t *testing.T) {
+	RunForAllTransports(t, "AgentAccountDefaultProviderAccounts", func(t *testing.T, runner *TestRunner) {
+		// A fresh tenant, provisioned after startup: the case neither the
+		// boot pass nor a barrier unseal reaches.
+		runner.ActAsTenantAdmin(UniqueKey("acctdef"))
+
+		for _, accountID := range []string{"default-claude", "default-codex"} {
+			get := AccountGetCommand(accountID)
+			stdout, stderr, err := runner.Run(get)
+			if runner.IsSkipped(get) {
+				return
+			}
+			require.NoError(t, err, "[%s] get %s failed: stdout=%s stderr=%s", runner.transport, accountID, stdout, stderr)
+			assertNoCredentialLeak(t, runner.transport, get.Name, stdout)
+			assert.Equal(t, "awaiting_credential", accountStatusFromJSON(t, runner.transport, stdout),
+				"[%s] %s status in a new tenant", runner.transport, accountID)
+		}
+
+		rotate := AccountRotateCommand("default-claude", writeStaticAccountCredential(t, "SECRET-ACCESS-TOKEN"))
+		stdout, stderr, err := runner.Run(rotate)
+		require.NoError(t, err, "[%s] rotate failed: stdout=%s stderr=%s", runner.transport, stdout, stderr)
+		assertNoCredentialLeak(t, runner.transport, rotate.Name, stdout)
+
+		get := AccountGetCommand("default-claude")
+		stdout, stderr, err = runner.Run(get)
+		require.NoError(t, err, "[%s] get after rotate failed: stdout=%s stderr=%s", runner.transport, stdout, stderr)
+		assertNoCredentialLeak(t, runner.transport, get.Name, stdout)
+		assert.Equal(t, "active", accountStatusFromJSON(t, runner.transport, stdout),
+			"[%s] default-claude status after its first credential", runner.transport)
+	})
+}
+
 // TestAgentAccountUsage checks the usage report verb separately: it is the one
 // verb that depends on a wired CostTracker, so it is asserted to either
 // succeed or fail with the explicit "usage tracker not configured" condition
