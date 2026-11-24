@@ -1555,20 +1555,21 @@ func TestBarrierSeal_RequiresConfirmation(t *testing.T) {
 }
 
 // TestBarrierSeal_SORequired exercises the --so-pin pass-through. The
-// seal verb accepts --so-pin uncoditionally per the canonical surface
-// (the SDK forwards it once the BarrierSeal request-bearing form lands).
-// Today we assert that --so-pin -y succeeds when the daemon does not
-// have a PINBackend configured (per-test daemon comes up with no
-// PINBackend), proving the flag is at least parsed and forwarded without
-// error.
+// per-test daemon provisions defaultBarrierSOPin at init and verifies the
+// SO PIN before it seals: a wrong PIN on --so-pin is refused and leaves the
+// barrier unsealed, and the provisioned PIN on --so-pin seals it.
 func TestBarrierSeal_SORequired(t *testing.T) {
 	const secret = "so-pin-secret"
 	opts := barrierDaemonOptions{Strategy: "passphrase", Secret: secret}
 	runForBarrierTransports(t, "SOPin", opts, func(t *testing.T, _ *barrierDaemon, runner *TestRunner) {
 		runner.RunAndAssert(BarrierUnsealCommand(secret))
-		// With --so-pin set and -y supplied: succeeds (the per-test daemon
-		// has no PINBackend, so the flag is parsed + ignored).
-		runner.RunAndAssert(BarrierSealWithSOPinCommand("SO-PIN-XYZ"))
+		// A PIN the daemon did not provision is refused; the barrier
+		// stays unsealed.
+		runner.RunAndAssert(BarrierSealWithWrongSOPinCommand("SO-PIN-XYZ"))
+		unsealed := false
+		assertBarrierStatus(t, runner, &unsealed, "passphrase")
+		// The provisioned PIN on --so-pin seals.
+		runner.RunAndAssert(BarrierSealWithSOPinCommand(defaultBarrierSOPin))
 		sealed := true
 		assertBarrierStatus(t, runner, &sealed, "passphrase")
 	})

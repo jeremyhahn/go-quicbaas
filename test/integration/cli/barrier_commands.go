@@ -374,10 +374,10 @@ func BarrierUnsealSharesNoInputsCommand() CommandDef {
 // Default SO/User PIN values used by the per-test daemon's init ceremony.
 // The canonical init flow REQUIRES --so-pin/--user-pin for any
 // barrier-enabled strategy (software/shamir); the no-barrier "none"
-// strategy REJECTS them. These are throwaway test credentials — the
-// per-test daemon has no PINBackend, so they only satisfy the init flag
-// contract and are never consulted at runtime. defaultBarrierUserPin is
-// declared in barrier_test.go.
+// strategy REJECTS them. These are throwaway test credentials: init
+// provisions them, and the server verifies defaultBarrierSOPin before it
+// seals on every transport, so every seal in the suite must send it.
+// defaultBarrierUserPin is declared in barrier_test.go.
 const defaultBarrierSOPin = "SO-PIN-TEST-0001"
 
 // barrierSealSOPinEnv is the environment every network `barrier seal` in
@@ -442,6 +442,25 @@ func BarrierSealWithSOPinCommand(soPin string) CommandDef {
 			"-y",
 		},
 		ExpectSuccess:  true,
+		Timeout:        30 * time.Second,
+		SkipTransports: barrierTransportsToSkip,
+	}
+}
+
+// BarrierSealWithWrongSOPinCommand builds `barrier seal --so-pin <pin> -y`
+// with a PIN the daemon did not provision: the server verifies the SO PIN
+// before it seals and refuses this one, so the command must fail. The
+// refusal text differs per transport (REST 403, gRPC Unauthenticated), so
+// the caller proves the refusal by asserting the barrier is still unsealed.
+func BarrierSealWithWrongSOPinCommand(soPin string) CommandDef {
+	return CommandDef{
+		Name: "barrier seal --so-pin <wrong> -y",
+		Args: []string{
+			"barrier", "seal",
+			"--so-pin", soPin,
+			"-y",
+		},
+		ExpectSuccess:  false,
 		Timeout:        30 * time.Second,
 		SkipTransports: barrierTransportsToSkip,
 	}
