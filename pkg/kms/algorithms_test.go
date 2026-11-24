@@ -5972,7 +5972,7 @@ func TestXKMSBackend_DeleteKey_RealXKMS(t *testing.T) {
 	require.NoError(t, err)
 
 	backend.mu.RLock()
-	_, exists := backend.metadata["delete-real"]
+	_, exists := backend.metadata[keyRef{name: "delete-real"}]
 	backend.mu.RUnlock()
 	assert.False(t, exists)
 }
@@ -6470,7 +6470,7 @@ func TestXKMSBackend_ExportPublicKey_NotAvailable(t *testing.T) {
 	backend := &XKMSBackend{
 		backendType: config.BackendTypeSoftware,
 		logger:      &mockLogger{},
-		metadata:    make(map[string]*KeyMetadata),
+		metadata:    make(map[keyRef]*KeyMetadata),
 	}
 
 	ctx := context.Background()
@@ -6600,7 +6600,7 @@ func TestXKMSBackend_SupportedAlgorithms_TPM2NotInitialized(t *testing.T) {
 	backend := &XKMSBackend{
 		backendType: config.BackendTypeTPM2,
 		logger:      &mockLogger{},
-		metadata:    make(map[string]*KeyMetadata),
+		metadata:    make(map[keyRef]*KeyMetadata),
 	}
 
 	ctx := context.Background()
@@ -6618,7 +6618,7 @@ func TestXKMSBackend_SupportedAlgorithms_PKCS11NotInitialized(t *testing.T) {
 	backend := &XKMSBackend{
 		backendType: config.BackendTypePKCS11,
 		logger:      &mockLogger{},
-		metadata:    make(map[string]*KeyMetadata),
+		metadata:    make(map[keyRef]*KeyMetadata),
 	}
 
 	ctx := context.Background()
@@ -6978,7 +6978,7 @@ func TestXKMSBackend_MetadataCacheOperations(t *testing.T) {
 	backend := &XKMSBackend{
 		backendType: config.BackendTypeSoftware,
 		logger:      &mockLogger{},
-		metadata:    make(map[string]*KeyMetadata),
+		metadata:    make(map[keyRef]*KeyMetadata),
 	}
 
 	// Add key to cache
@@ -6994,12 +6994,12 @@ func TestXKMSBackend_MetadataCacheOperations(t *testing.T) {
 	}
 
 	backend.mu.Lock()
-	backend.metadata["test-key"] = meta
+	backend.metadata[keyRef{name: "test-key"}] = meta
 	backend.mu.Unlock()
 
 	// Verify key is in cache
 	backend.mu.RLock()
-	cachedMeta, exists := backend.metadata["test-key"]
+	cachedMeta, exists := backend.metadata[keyRef{name: "test-key"}]
 	backend.mu.RUnlock()
 
 	require.True(t, exists)
@@ -7009,12 +7009,12 @@ func TestXKMSBackend_MetadataCacheOperations(t *testing.T) {
 
 	// Delete key from cache
 	backend.mu.Lock()
-	delete(backend.metadata, "test-key")
+	delete(backend.metadata, keyRef{name: "test-key"})
 	backend.mu.Unlock()
 
 	// Verify key is removed
 	backend.mu.RLock()
-	_, exists = backend.metadata["test-key"]
+	_, exists = backend.metadata[keyRef{name: "test-key"}]
 	backend.mu.RUnlock()
 
 	assert.False(t, exists)
@@ -7028,7 +7028,7 @@ func TestXKMSBackend_ConcurrentMetadataReadWrite(t *testing.T) {
 	backend := &XKMSBackend{
 		backendType: config.BackendTypeSoftware,
 		logger:      &mockLogger{},
-		metadata:    make(map[string]*KeyMetadata),
+		metadata:    make(map[keyRef]*KeyMetadata),
 	}
 
 	done := make(chan bool)
@@ -7039,7 +7039,7 @@ func TestXKMSBackend_ConcurrentMetadataReadWrite(t *testing.T) {
 			now := time.Now()
 			keyID := "concurrent-key"
 			backend.mu.Lock()
-			backend.metadata[keyID] = &KeyMetadata{
+			backend.metadata[keyRef{name: keyID}] = &KeyMetadata{
 				KeyID:   keyID,
 				State:   KeyStateEnabled,
 				Version: i + 1,
@@ -7056,7 +7056,7 @@ func TestXKMSBackend_ConcurrentMetadataReadWrite(t *testing.T) {
 		go func() {
 			for j := 0; j < 50; j++ {
 				backend.mu.RLock()
-				_ = backend.metadata["concurrent-key"]
+				_ = backend.metadata[keyRef{name: "concurrent-key"}]
 				backend.mu.RUnlock()
 			}
 			done <- true
@@ -7070,7 +7070,7 @@ func TestXKMSBackend_ConcurrentMetadataReadWrite(t *testing.T) {
 
 	// Verify final state
 	backend.mu.RLock()
-	meta, exists := backend.metadata["concurrent-key"]
+	meta, exists := backend.metadata[keyRef{name: "concurrent-key"}]
 	backend.mu.RUnlock()
 
 	require.True(t, exists)

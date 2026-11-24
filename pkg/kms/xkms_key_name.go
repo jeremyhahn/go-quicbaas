@@ -14,45 +14,31 @@
 package kms
 
 import (
-	"strings"
+	"context"
 
 	"github.com/jeremyhahn/go-xkms/pkg/validation"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/api"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
-// tenantKeyRefPrefix starts the service's reference to a tenant's key,
-// "tenant/<tenantID>/<name>".
-const tenantKeyRefPrefix = "tenant/"
-
-// xkmsKeyRef maps a service key reference to go-xkms's own form of the key.
-// A tenant's key "tenant/<T>/<K>" is go-xkms CN=K with TenantID=T, so go-xkms
-// keeps tenants apart itself (KeyAttributes.ID() prefixes "<T>:"). Any other
-// reference is a platform key: its CN is the reference and its TenantID is
-// empty. Nothing is encoded, so a platform name is never read as a tenant key.
-func xkmsKeyRef(keyID string) (tenantID, cn string, err error) {
-	rest, isTenant := strings.CutPrefix(keyID, tenantKeyRefPrefix)
-	if !isTenant {
-		if err := validation.ValidateKeyID(keyID); err != nil {
-			return "", "", api.NewInvalidInputCauseError("invalid key name "+keyID, err)
-		}
-		return "", keyID, nil
+// keyTenant returns the tenant a pkg/kms call acts for: the tenant bound to
+// ctx, or "" when none is bound or the system tenant is. "" means a platform
+// key. A tenant key is go-xkms CN=<name> with TenantID=<tenant>, so go-xkms
+// keeps tenants apart itself; the name never carries the tenant.
+func keyTenant(ctx context.Context) string {
+	tenantID, ok := tenantctx.Lookup(ctx)
+	if !ok || tenantctx.IsSystem(tenantID) {
+		return ""
 	}
-	tenantID, cn, ok := strings.Cut(rest, "/")
-	if !ok || tenantID == "" {
-		return "", "", api.NewInvalidInputError("malformed tenant key reference " + keyID)
-	}
-	if err := validation.ValidateKeyID(cn); err != nil {
-		return "", "", api.NewInvalidInputCauseError("invalid key name in "+keyID, err)
-	}
-	return tenantID, cn, nil
+	return tenantID
 }
 
-// keyIDFromXKMS is the inverse of xkmsKeyRef: the service reference of the
-// go-xkms key CN under tenantID.
-func keyIDFromXKMS(tenantID, cn string) string {
-	if tenantID == "" {
-		return cn
+// validateKeyName checks a caller's bare key name. go-xkms's rules refuse
+// "/", so no name can spell a tenant or a path.
+func validateKeyName(name string) error {
+	if err := validation.ValidateKeyID(name); err != nil {
+		return api.NewInvalidInputCauseError("invalid key name "+name, err)
 	}
-	return tenantKeyRefPrefix + tenantID + "/" + cn
+	return nil
 }

@@ -25,6 +25,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // KMSService provides a unified interface for key management operations.
@@ -259,6 +260,13 @@ func (s *KMSService) GenerateKey(ctx context.Context, attrs *kctypes.KeyAttribut
 		}
 	}
 
+	// The key is the caller's name in CN, owned by attrs.TenantID or the
+	// tenant bound to ctx.
+	ctx, tenantID, err := attrsTenant(ctx, attrs)
+	if err != nil {
+		return nil, err
+	}
+
 	// Get backend for this operation
 	// For key generation, we route by algorithm since no key ID exists yet
 	algorithm := attrsToAlgorithmString(attrs)
@@ -292,7 +300,7 @@ func (s *KMSService) GenerateKey(ctx context.Context, attrs *kctypes.KeyAttribut
 	}
 
 	// Store metadata in cache
-	if err := s.store.Put(s.copyMetadata(metadata)); err != nil {
+	if err := s.storePut(tenantID, metadata); err != nil {
 		// Log but don't fail - cache failure is not critical
 		if s.logger != nil {
 			s.logger.WithFields(map[string]interface{}{
@@ -377,7 +385,7 @@ func (s *KMSService) ImportKey(ctx context.Context, keyID string, material []byt
 	}
 
 	// Store metadata in cache
-	if err := s.store.Put(s.copyMetadata(metadata)); err != nil {
+	if err := s.storePut(keyTenant(ctx), metadata); err != nil {
 		if s.logger != nil {
 			s.logger.WithFields(map[string]interface{}{
 				"key_id": keyID,
@@ -419,7 +427,7 @@ func (s *KMSService) GetKey(ctx context.Context, keyID string) (interface{}, err
 	}
 
 	// Try to get from cache first
-	cached, err := s.store.Get(keyID)
+	cached, err := s.storeGet(keyTenant(ctx), keyID)
 	if err == nil {
 		return cached, nil
 	}
@@ -449,7 +457,7 @@ func (s *KMSService) GetKey(ctx context.Context, keyID string) (interface{}, err
 
 	// Store in cache for future requests
 	serviceMeta := s.copyMetadata(metadata)
-	if err := s.store.Put(serviceMeta); err != nil {
+	if err := s.storePut(keyTenant(ctx), serviceMeta); err != nil {
 		if s.logger != nil {
 			s.logger.WithFields(map[string]interface{}{
 				"key_id": keyID,
@@ -528,8 +536,8 @@ func (s *KMSService) UpdateStoredMetadata(metadata interface{}) error {
 		}
 	}
 
-	// Store the metadata in the cache
-	if err := s.store.Put(serviceMeta); err != nil {
+	// Store the metadata in the cache, under the key's own tenant
+	if err := s.storePut(serviceMeta.TenantID, serviceMeta); err != nil {
 		if s.logger != nil {
 			s.logger.WithFields(map[string]interface{}{
 				"key_id": serviceMeta.KeyID,
@@ -593,7 +601,7 @@ func (s *KMSService) ListKeys(ctx context.Context, prefix string) ([]interface{}
 	for i, key := range allKeys {
 		backendMeta := s.copyMetadata(key)
 		// Try to get stored metadata with Name/Description from the store
-		if storedMeta, err := s.store.Get(backendMeta.KeyID); err == nil {
+		if storedMeta, err := s.storeGet(keyTenant(ctx), backendMeta.KeyID); err == nil {
 			// Use stored metadata (has Name, Description, Tags from GenerateKey)
 			result[i] = storedMeta
 		} else {
@@ -628,7 +636,7 @@ func (s *KMSService) RotateKey(ctx context.Context, keyID string) (interface{}, 
 	}
 
 	// Validate key exists and is not disabled
-	if err := s.validateKeyForOperation(keyID, "rotate"); err != nil {
+	if err := s.validateKeyForOperation(keyTenant(ctx), keyID, "rotate"); err != nil {
 		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "KMSService.RotateKey",
@@ -661,7 +669,7 @@ func (s *KMSService) RotateKey(ctx context.Context, keyID string) (interface{}, 
 
 	// Update cache
 	serviceMeta := s.copyMetadata(metadata)
-	if err := s.store.Put(serviceMeta); err != nil {
+	if err := s.storePut(keyTenant(ctx), serviceMeta); err != nil {
 		if s.logger != nil {
 			s.logger.WithFields(map[string]interface{}{
 				"key_id": keyID,
@@ -672,7 +680,7 @@ func (s *KMSService) RotateKey(ctx context.Context, keyID string) (interface{}, 
 
 	// Invalidate key material cache if enabled
 	if s.cache != nil {
-		s.cache.Delete(keyID)
+		s.cache.Delete(storeKeyID(keyTenant(ctx), keyID))
 	}
 
 	if s.logger != nil {
@@ -729,7 +737,7 @@ func (s *KMSService) RevokeKey(ctx context.Context, keyID string) error {
 	}
 
 	// Update cache state
-	if err := s.store.SetState(keyID, KeyStateDisabled); err != nil {
+	if err := s.store.SetState(storeKeyID(keyTenant(ctx), keyID), KeyStateDisabled); err != nil {
 		if s.logger != nil {
 			s.logger.WithFields(map[string]interface{}{
 				"key_id": keyID,
@@ -740,7 +748,7 @@ func (s *KMSService) RevokeKey(ctx context.Context, keyID string) error {
 
 	// Invalidate key material cache if enabled
 	if s.cache != nil {
-		s.cache.Delete(keyID)
+		s.cache.Delete(storeKeyID(keyTenant(ctx), keyID))
 	}
 
 	if s.logger != nil {
@@ -794,7 +802,7 @@ func (s *KMSService) EnableKey(ctx context.Context, keyID string) error {
 	}
 
 	// Update cache state
-	if err := s.store.SetState(keyID, KeyStateEnabled); err != nil {
+	if err := s.store.SetState(storeKeyID(keyTenant(ctx), keyID), KeyStateEnabled); err != nil {
 		if s.logger != nil {
 			s.logger.WithFields(map[string]interface{}{
 				"key_id": keyID,
@@ -854,7 +862,7 @@ func (s *KMSService) DisableKey(ctx context.Context, keyID string) error {
 	}
 
 	// Update cache state
-	if err := s.store.SetState(keyID, KeyStateDisabled); err != nil {
+	if err := s.store.SetState(storeKeyID(keyTenant(ctx), keyID), KeyStateDisabled); err != nil {
 		if s.logger != nil {
 			s.logger.WithFields(map[string]interface{}{
 				"key_id": keyID,
@@ -865,7 +873,7 @@ func (s *KMSService) DisableKey(ctx context.Context, keyID string) error {
 
 	// Invalidate key material cache if enabled
 	if s.cache != nil {
-		s.cache.Delete(keyID)
+		s.cache.Delete(storeKeyID(keyTenant(ctx), keyID))
 	}
 
 	if s.logger != nil {
@@ -920,7 +928,7 @@ func (s *KMSService) DeleteKey(ctx context.Context, keyID string) error {
 	}
 
 	// Remove from cache
-	if err := s.store.Delete(keyID); err != nil {
+	if err := s.store.Delete(storeKeyID(keyTenant(ctx), keyID)); err != nil {
 		if s.logger != nil {
 			s.logger.WithFields(map[string]interface{}{
 				"key_id": keyID,
@@ -931,7 +939,7 @@ func (s *KMSService) DeleteKey(ctx context.Context, keyID string) error {
 
 	// Invalidate key material cache if enabled
 	if s.cache != nil {
-		s.cache.Delete(keyID)
+		s.cache.Delete(storeKeyID(keyTenant(ctx), keyID))
 	}
 
 	if s.logger != nil {
@@ -972,7 +980,7 @@ func (s *KMSService) Encrypt(ctx context.Context, keyID string, plaintext, aad [
 	}
 
 	// Validate key can be used for encryption
-	if err := s.validateKeyForOperation(keyID, OpEncrypt); err != nil {
+	if err := s.validateKeyForOperation(keyTenant(ctx), keyID, OpEncrypt); err != nil {
 		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "KMSService.Encrypt",
@@ -997,7 +1005,7 @@ func (s *KMSService) Encrypt(ctx context.Context, keyID string, plaintext, aad [
 	}
 
 	// Update usage counter
-	if err := s.store.IncrementUsage(keyID); err != nil {
+	if err := s.store.IncrementUsage(storeKeyID(keyTenant(ctx), keyID)); err != nil {
 		if s.logger != nil {
 			s.logger.WithFields(map[string]interface{}{
 				"key_id": keyID,
@@ -1040,7 +1048,7 @@ func (s *KMSService) Decrypt(ctx context.Context, keyID string, ciphertext, aad 
 	}
 
 	// Validate key can be used for decryption
-	if err := s.validateKeyForOperation(keyID, OpDecrypt); err != nil {
+	if err := s.validateKeyForOperation(keyTenant(ctx), keyID, OpDecrypt); err != nil {
 		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "KMSService.Decrypt",
@@ -1065,7 +1073,7 @@ func (s *KMSService) Decrypt(ctx context.Context, keyID string, ciphertext, aad 
 	}
 
 	// Update usage counter
-	if err := s.store.IncrementUsage(keyID); err != nil {
+	if err := s.store.IncrementUsage(storeKeyID(keyTenant(ctx), keyID)); err != nil {
 		if s.logger != nil {
 			s.logger.WithFields(map[string]interface{}{
 				"key_id": keyID,
@@ -1108,7 +1116,7 @@ func (s *KMSService) Sign(ctx context.Context, keyID string, digest []byte, algo
 	}
 
 	// Validate key can be used for signing
-	if err := s.validateKeyForOperation(keyID, OpSign); err != nil {
+	if err := s.validateKeyForOperation(keyTenant(ctx), keyID, OpSign); err != nil {
 		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "KMSService.Sign",
@@ -1133,7 +1141,7 @@ func (s *KMSService) Sign(ctx context.Context, keyID string, digest []byte, algo
 	}
 
 	// Update usage counter
-	if err := s.store.IncrementUsage(keyID); err != nil {
+	if err := s.store.IncrementUsage(storeKeyID(keyTenant(ctx), keyID)); err != nil {
 		if s.logger != nil {
 			s.logger.WithFields(map[string]interface{}{
 				"key_id": keyID,
@@ -1183,7 +1191,7 @@ func (s *KMSService) Verify(ctx context.Context, keyID string, digest, signature
 	}
 
 	// Validate key can be used for verification
-	if err := s.validateKeyForOperation(keyID, OpVerify); err != nil {
+	if err := s.validateKeyForOperation(keyTenant(ctx), keyID, OpVerify); err != nil {
 		return false, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "KMSService.Verify",
@@ -1208,7 +1216,7 @@ func (s *KMSService) Verify(ctx context.Context, keyID string, digest, signature
 	}
 
 	// Update usage counter
-	if err := s.store.IncrementUsage(keyID); err != nil {
+	if err := s.store.IncrementUsage(storeKeyID(keyTenant(ctx), keyID)); err != nil {
 		if s.logger != nil {
 			s.logger.WithFields(map[string]interface{}{
 				"key_id": keyID,
@@ -1254,6 +1262,12 @@ func (s *KMSService) GenerateDataKey(ctx context.Context, attrs *kctypes.KeyAttr
 		}
 	}
 
+	// The KEK is owned by attrs.TenantID or the tenant bound to ctx.
+	ctx, _, err = attrsTenant(ctx, attrs)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	// Check for context cancellation
 	if ctx.Err() != nil {
 		return nil, nil, &errors.QBError{
@@ -1264,7 +1278,7 @@ func (s *KMSService) GenerateDataKey(ctx context.Context, attrs *kctypes.KeyAttr
 	}
 
 	// Validate key can be used for wrapping
-	if err := s.validateKeyForOperation(keyID, OpWrap); err != nil {
+	if err := s.validateKeyForOperation(keyTenant(ctx), keyID, OpWrap); err != nil {
 		return nil, nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "KMSService.GenerateDataKey",
@@ -1290,7 +1304,7 @@ func (s *KMSService) GenerateDataKey(ctx context.Context, attrs *kctypes.KeyAttr
 	}
 
 	// Update usage counter
-	if err := s.store.IncrementUsage(keyID); err != nil {
+	if err := s.store.IncrementUsage(storeKeyID(keyTenant(ctx), keyID)); err != nil {
 		if s.logger != nil {
 			s.logger.WithFields(map[string]interface{}{
 				"key_id": keyID,
@@ -1466,9 +1480,9 @@ func (s *KMSService) validateAlgorithm(algorithm string) error {
 }
 
 // validateKeyForOperation checks if a key exists and can be used for the specified operation.
-func (s *KMSService) validateKeyForOperation(keyID, operation string) error {
+func (s *KMSService) validateKeyForOperation(tenantID, keyID, operation string) error {
 	// Get key metadata from cache or backend
-	metadata, err := s.store.Get(keyID)
+	metadata, err := s.storeGet(tenantID, keyID)
 	if err != nil {
 		// Not in cache - this is OK, backend will validate
 		return nil
@@ -1548,4 +1562,58 @@ func (s *KMSService) copyMetadata(meta *KeyMetadata) *KeyMetadata {
 	}
 
 	return copied
+}
+
+// storeKeyID is the KeyStore and KeyCache entry for the key named name and
+// owned by tenantID ("" for a platform key). A tenant's key and a platform key
+// may share a name, so a tenant key's entry joins the two with "/", which no
+// valid key name holds. The entry is never handed back as a key ID.
+func storeKeyID(tenantID, name string) string {
+	if tenantID == "" {
+		return name
+	}
+	return tenantID + "/" + name
+}
+
+// storePut caches metadata for the key it names, owned by tenantID.
+func (s *KMSService) storePut(tenantID string, metadata *KeyMetadata) error {
+	if metadata == nil {
+		return s.store.Put(nil)
+	}
+	entry := s.copyMetadata(metadata)
+	entry.TenantID = tenantID
+	if entry.KeyID != "" {
+		entry.KeyID = storeKeyID(tenantID, metadata.KeyID)
+	}
+	return s.store.Put(entry)
+}
+
+// storeGet returns the cached metadata of the key named name and owned by
+// tenantID, with its KeyID the caller's name.
+func (s *KMSService) storeGet(tenantID, name string) (*KeyMetadata, error) {
+	meta, err := s.store.Get(storeKeyID(tenantID, name))
+	if err != nil {
+		return nil, err
+	}
+	meta = s.copyMetadata(meta)
+	meta.KeyID = name
+	meta.TenantID = tenantID
+	return meta, nil
+}
+
+// attrsTenant binds the tenant a key's attributes name: attrs.TenantID when
+// set, else the tenant bound to ctx. The two must agree. The returned ctx
+// carries the tenant, so the backend acts for it.
+func attrsTenant(ctx context.Context, attrs *kctypes.KeyAttributes) (context.Context, string, error) {
+	tenantID := keyTenant(ctx)
+	if attrs.TenantID == "" {
+		return ctx, tenantID, nil
+	}
+	if tenantID != "" && tenantID != attrs.TenantID {
+		return nil, "", api.NewInvalidInputError("key attributes name tenant " + attrs.TenantID + " but the caller acts for another tenant")
+	}
+	if tenantID == "" {
+		ctx = tenantctx.WithTenant(ctx, attrs.TenantID)
+	}
+	return ctx, attrs.TenantID, nil
 }
