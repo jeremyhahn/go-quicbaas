@@ -402,3 +402,64 @@ func TestPersistJobOutcome_KeepsHistoryAnotherRunLeftPending(t *testing.T) {
 		t.Fatalf("job ran %d times, want 2", stored.RunCount)
 	}
 }
+
+// moveSchedule changes a stored job's schedule as UpdateJob does while the job
+// runs: its next firing moves and its running transition stays.
+func moveSchedule(t *testing.T, storage *mockJobStorage, jobID uint64) {
+	t.Helper()
+	updated := storedJob(t, storage, jobID)
+	updated.Schedule = "30 * * * *"
+	updated.NextRun = updated.NextRun.Add(30 * time.Minute)
+	updated.UpdatedAt = time.Now()
+	if err := storage.UpdateJob(context.Background(), updated); err != nil {
+		t.Fatalf("UpdateJob: %v", err)
+	}
+}
+
+// A schedule change while the worker runs the job leaves the run it is
+// listed under, and the worker's result, unchanged.
+func TestRemoteHandler_AScheduleChangeKeepsTheRunsIdentity(t *testing.T) {
+	storage := newMockJobStorage()
+	engine := New(DefaultConfig(), storage)
+	job := seedRunningJob(t, storage, remoteJob(time.Minute))
+
+	done := fire(engine, job)
+	first := openRun(t, engine, job.ID)
+	moveSchedule(t, storage, job.ID)
+
+	second := openRun(t, engine, job.ID)
+	if !second.StartedAt.Equal(first.StartedAt) || !second.RemoteRunRef.same(first.RemoteRunRef) {
+		t.Fatalf("the schedule change renamed the run: %+v, was %+v", second.RemoteRunRef, first.RemoteRunRef)
+	}
+	if err := engine.CompleteRemoteRun(context.Background(), second.RemoteRunRef, &JobResult{Success: true}, nil); err != nil {
+		t.Fatalf("CompleteRemoteRun after the schedule change: %v", err)
+	}
+	waitDone(t, done)
+
+	if stored := storedJob(t, storage, job.ID); stored.RunCount != 1 {
+		t.Fatalf("STORED job has %d runs, want 1", stored.RunCount)
+	}
+	if executions := history(t, storage, job.ID); len(executions) != 1 {
+		t.Fatalf("history holds %d records for one run, want 1", len(executions))
+	}
+}
+
+// Another node of a cluster completes a run whose job's schedule changed
+// after the worker took it.
+func TestRemoteHandler_AScheduleChangeKeepsTheRunCompletableElsewhere(t *testing.T) {
+	storage := newConcludingStorage()
+	node := clusteredNode(t, storage, "node-2")
+	job := runningRemoteJob(t, storage, time.Minute, time.Now())
+	ref := runRefOf(storedJob(t, storage.mockJobStorage, job.ID))
+
+	moveSchedule(t, storage.mockJobStorage, job.ID)
+	if !ref.names(storedJob(t, storage.mockJobStorage, job.ID)) {
+		t.Fatal("the schedule change changed the identity of the running run")
+	}
+	if err := node.CompleteRemoteRun(context.Background(), ref, &JobResult{Success: true}, nil); err != nil {
+		t.Fatalf("CompleteRemoteRun after the schedule change: %v", err)
+	}
+	if stored := storedJob(t, storage.mockJobStorage, job.ID); stored.Status != JobStatusPending || stored.RunCount != 1 {
+		t.Fatalf("STORED job is %s with %d runs, want pending with 1", stored.Status, stored.RunCount)
+	}
+}

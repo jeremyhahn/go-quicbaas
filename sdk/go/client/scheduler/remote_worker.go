@@ -64,8 +64,8 @@ func NewWorker(c RemoteRunClient, handlers map[string]RemoteHandlerFunc, interva
 }
 
 func runKey(r RemoteRunRef) string {
-	return strconv.FormatUint(r.JobID, 10) + "/" + strconv.FormatInt(r.Firing.UnixNano(), 10) +
-		"/" + strconv.FormatInt(r.StartedAt.UnixNano(), 10)
+	// Firing is left out: a schedule update moves it while the run still runs.
+	return strconv.FormatUint(r.JobID, 10) + "/" + strconv.FormatInt(r.StartedAt.UnixNano(), 10)
 }
 
 // Poll lists the open runs once and starts each run not yet started. It does

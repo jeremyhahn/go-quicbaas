@@ -128,6 +128,36 @@ func TestWorker_RunsAnOpenRunOnceAndReportsItsResult(t *testing.T) {
 	}
 }
 
+// A schedule change moves the firing a running job is listed under; the run is
+// the same one and is not handed to the handler again.
+func TestWorker_ARunListedUnderANewFiringRunsOnce(t *testing.T) {
+	svc := &remoteService{open: []*pkgscheduler.RemoteRun{openRemoteRun(7, time.Now().Add(time.Minute))}}
+	calls := 0
+	w := remoteWorker(t, svc, func(context.Context, *RemoteRun) (*RemoteResult, error) {
+		calls++
+		return &RemoteResult{Message: "renewed"}, nil
+	})
+
+	if err := w.Poll(context.Background()); err != nil {
+		t.Fatalf("Poll: %v", err)
+	}
+	w.Wait()
+	svc.mu.Lock()
+	svc.open[0].Firing = svc.open[0].Firing.Add(30 * time.Minute)
+	svc.mu.Unlock()
+	if err := w.Poll(context.Background()); err != nil {
+		t.Fatalf("Poll: %v", err)
+	}
+	w.Wait()
+
+	if calls != 1 {
+		t.Fatalf("the handler ran %d times for one run, want 1", calls)
+	}
+	if results := svc.results(); len(results) != 1 {
+		t.Fatalf("%d results reported, want 1", len(results))
+	}
+}
+
 func TestWorker_AFailedOrPanickingHandlerFailsTheRun(t *testing.T) {
 	for name, fn := range map[string]RemoteHandlerFunc{
 		"error": func(context.Context, *RemoteRun) (*RemoteResult, error) {

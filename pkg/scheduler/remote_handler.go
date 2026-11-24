@@ -34,9 +34,11 @@ import (
 //     and recorded there; the firing node's own timeout then loses the guard
 //     and writes nothing.
 //
-// A run is named by its RemoteRunRef — the job, its firing and its running
+// A run is named by its RemoteRunRef — the job, its tenant and its running
 // transition — so a result for an earlier run of the job, or one already
-// concluded, is refused rather than recorded against the wrong run.
+// concluded, is refused rather than recorded against the wrong run. The
+// firing a run is listed under is never part of its name: a schedule update
+// moves the firing of a job while its run is still running.
 
 // RemoteHandlerPrefix marks a job handler executed by a remote worker.
 const RemoteHandlerPrefix = "remote:"
@@ -46,7 +48,10 @@ func IsRemoteHandler(handler string) bool {
 	return strings.HasPrefix(handler, RemoteHandlerPrefix) && len(handler) > len(RemoteHandlerPrefix)
 }
 
-// RemoteRunRef names one run of a remotely handled job.
+// RemoteRunRef names one run of a remotely handled job by its job, tenant
+// and running transition (StartedAt). Firing is the firing the run is listed
+// under, for the log; it is never compared, because a schedule update moves
+// it while the run is still running (the same rule as RunConclusion).
 type RemoteRunRef struct {
 	JobID     uint64    `json:"job_id"`
 	TenantID  string    `json:"tenant_id,omitempty"`
@@ -170,11 +175,11 @@ func runStartedAt(job *Job) time.Time {
 }
 
 func (r RemoteRunRef) names(job *Job) bool {
-	return job.ID == r.JobID && job.NextRun.Equal(r.Firing) && runStartedAt(job).Equal(r.StartedAt)
+	return job.ID == r.JobID && runStartedAt(job).Equal(r.StartedAt)
 }
 
 func (r RemoteRunRef) same(o RemoteRunRef) bool {
-	return r.JobID == o.JobID && r.TenantID == o.TenantID && r.Firing.Equal(o.Firing) && r.StartedAt.Equal(o.StartedAt)
+	return r.JobID == o.JobID && r.TenantID == o.TenantID && r.StartedAt.Equal(o.StartedAt)
 }
 
 // openRemoteRun registers the waiting execution of the run job is now
@@ -332,7 +337,7 @@ func (s *SchedulerEngine) completeRemoteRunElsewhere(ctx context.Context, ref Re
 			lock.Unlock()
 			return fmt.Errorf("scheduler: started run of job %d is a %T, not a RunConclusion", job.ID, v)
 		}
-		if started.Firing.Equal(ref.Firing) && started.StartedAt.Equal(ref.StartedAt) {
+		if started.StartedAt.Equal(ref.StartedAt) {
 			lock.Unlock()
 			return RemoteRunNotOpenError{Ref: ref, Reason: "the run already ended"}
 		}
