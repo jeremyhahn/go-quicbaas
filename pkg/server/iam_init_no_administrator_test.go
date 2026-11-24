@@ -610,6 +610,79 @@ func requireActiveCertFactor(t *testing.T, factors *testutil.MemoryUserAuthFacto
 	}
 }
 
+func TestFirstBootBootstrap_ReEntryRefusesAnAdminWhoCannotLogIn(t *testing.T) {
+	// hasSystemAdministrator reads a suspended, locked or disabled admin as no
+	// administrator, so first boot re-enters. qrdb's idempotent first boot
+	// accepts the existing user; the re-entry must refuse it before it
+	// reissues, delivers or grants anything.
+	for _, lifecycle := range []iam.Lifecycle{
+		iam.LifecycleSuspended, iam.LifecycleLocked, iam.LifecycleDisabled,
+	} {
+		t.Run(string(lifecycle), func(t *testing.T) {
+			srv := withTempServer(t)
+			srv.config.Auth.AllowPasswordAuth = false
+			srv.config.Auth.InsecureDevMode = false
+			srv.xkmsCA = newFakeTrustedCA(t)
+			srv.config.IAM.SPIFFETrustDomain = testTrustDomain
+			c, factors := buildTestIAMComponentsWithFactors(t)
+			ctx := context.Background()
+
+			var banner adminEnrollmentBanner
+			restore := captureFirstBootBanner(t, &banner)
+			defer restore()
+
+			require.NoError(t, srv.firstBootBootstrap(ctx, c))
+			require.NotEmpty(t, banner.CertPath)
+			firstCertPEM, err := os.ReadFile(banner.CertPath)
+			require.NoError(t, err)
+			firstCert, err := parseCertLoginPEM(firstCertPEM)
+			require.NoError(t, err)
+			adminID := srv.bootstrapAdminUserID
+			admin, err := c.identityStore.GetUser(ctx, qrdbsdk.SystemTenantID, adminID)
+			require.NoError(t, err)
+			firstThumb := admin.SPKIThumbprint()
+			require.NotEmpty(t, firstThumb)
+
+			l := lifecycle
+			_, err = c.identityStore.UpdateUser(ctx, qrdbsdk.SystemTenantID, adminID,
+				iam.UpdateUserOptions{Lifecycle: &l})
+			require.NoError(t, err, "moving the admin to %s", lifecycle)
+
+			assignments, err := c.adminManager.ListAssignments(ctx, iam.ListAdminAssignmentsOptions{})
+			require.NoError(t, err)
+			require.Len(t, assignments, 1)
+			require.NoError(t, c.adminManager.DeleteAssignment(ctx, assignments[0].ID))
+			banner = adminEnrollmentBanner{}
+
+			err = srv.firstBootBootstrap(ctx, c)
+			require.ErrorIs(t, err, ErrBootstrapAdminUnusable)
+			var unusable *BootstrapAdminUnusableError
+			require.ErrorAs(t, err, &unusable)
+			assert.Equal(t, adminID, unusable.UserID)
+			assert.Equal(t, lifecycle, unusable.Lifecycle)
+
+			active, err := c.adminManager.ListAssignments(ctx, iam.ListAdminAssignmentsOptions{ActiveOnly: true})
+			require.NoError(t, err)
+			assert.Empty(t, active, "an admin nobody can log in as must not be granted super_admin")
+			admin, err = c.identityStore.GetUser(ctx, qrdbsdk.SystemTenantID, adminID)
+			require.NoError(t, err)
+			assert.Equal(t, firstThumb, admin.SPKIThumbprint(), "nothing may be reissued or rebound")
+			assert.Empty(t, banner.CertPath, "no bundle may be delivered")
+			requireActiveCertFactor(t, factors, firstCert)
+		})
+	}
+}
+
+func TestBootstrapAdminUnusableError_SaysWhatToDo(t *testing.T) {
+	err := &BootstrapAdminUnusableError{UserID: 42, Email: "admin@system.qrdb.local", Lifecycle: iam.LifecycleSuspended}
+	msg := err.Error()
+	assert.Contains(t, msg, "42")
+	assert.Contains(t, msg, "admin@system.qrdb.local")
+	assert.Contains(t, msg, string(iam.LifecycleSuspended))
+	assert.Contains(t, msg, "reactivate")
+	assert.ErrorIs(t, err, ErrBootstrapAdminUnusable)
+}
+
 // removeFailingFactorServicer is a factor store whose revocations fail.
 type removeFailingFactorServicer struct {
 	*testutil.MemoryUserAuthFactors

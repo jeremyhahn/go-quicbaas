@@ -1022,6 +1022,23 @@ func (s *Server) firstBootBootstrap(ctx context.Context, c *iamComponents) error
 	s.bootstrapAdminUserID = user.ID
 	s.bootstrapAdminTenantID = adminTenantID
 
+	// A re-entered first boot accepts the existing admin user whatever its
+	// lifecycle, and hasSystemAdministrator re-enters precisely when that user
+	// cannot authenticate. Reissuing, delivering and granting for such an
+	// account would produce a super-admin nobody can log in as, so the boot
+	// fails before anything is issued. The predicate is the same one
+	// hasSystemAdministrator uses.
+	if (result == nil || !result.AdminCreated) && !user.CanAuthenticate() {
+		return &FirstBootBootstrapError{
+			Op: "verify re-entered bootstrap admin",
+			Cause: &BootstrapAdminUnusableError{
+				UserID:    user.ID,
+				Email:     user.Email,
+				Lifecycle: user.Lifecycle,
+			},
+		}
+	}
+
 	// Make the issued certificate usable for `quicbaas auth login --method
 	// mtls`: enroll it as an mtls auth factor in qrdb's UserAuthFactor store.
 	// This runs BEFORE the admin assignment so a failure leaves first-boot
@@ -1338,6 +1355,30 @@ var ErrNoDataDirForAdminBundle = errors.New("first-boot: storage.data_dir is req
 // silently produce a private key the operator did not ask this process to
 // hold, so the bootstrap fails closed instead.
 var ErrEmptyAdminCSR = errors.New("first-boot: configured admin CSR file is empty")
+
+// ErrBootstrapAdminUnusable reports that first boot re-entered for an admin
+// account that already exists but cannot authenticate (suspended, locked,
+// disabled or being deleted). Reissuing a credential for it would deliver a
+// bundle and a super-admin grant nobody can log in with.
+var ErrBootstrapAdminUnusable = errors.New("first-boot: the existing bootstrap admin cannot authenticate")
+
+// BootstrapAdminUnusableError names the re-entered bootstrap admin that cannot
+// authenticate and the lifecycle state that stops it. First boot does not
+// change the account's lifecycle itself: that is the operator's decision.
+type BootstrapAdminUnusableError struct {
+	UserID    uint64
+	Email     string
+	Lifecycle iam.Lifecycle
+}
+
+func (e *BootstrapAdminUnusableError) Error() string {
+	return fmt.Sprintf("first-boot: the existing bootstrap admin (user %d, %s) is %s and cannot authenticate, "+
+		"so no credential or super-admin grant was issued; reactivate the account (or delete it) and start again",
+		e.UserID, e.Email, e.Lifecycle)
+}
+
+// Unwrap returns ErrBootstrapAdminUnusable.
+func (e *BootstrapAdminUnusableError) Unwrap() error { return ErrBootstrapAdminUnusable }
 
 // reissueAdminCredentialOnReEntry reissues the admin credential on re-entry. qrdb's
 // idempotent first boot issues no certificate for an admin that already
