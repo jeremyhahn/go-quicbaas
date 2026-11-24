@@ -79,13 +79,46 @@ type Report struct {
 // *DeliveryError only when no channel delivered n; a partial success
 // returns nil.
 func (d *Dispatcher) Notify(ctx context.Context, n Notification) (Report, error) {
+	return d.NotifyChannels(ctx, n, nil)
+}
+
+// NotifyChannels is Notify restricted to the channels named in names; an
+// empty or nil names means every channel. The named channels are delivered
+// to in the dispatcher's order, secure first. A name that matches no
+// channel is refused with a *ConfigError before anything is delivered. A
+// Sensitive body is kept off an insecure channel as in Notify: it gets the
+// pointer to the secure channels only when one delivered in this same call,
+// and the attention-inbox pointer otherwise. The error is a *DeliveryError
+// only when no named channel delivered n.
+func (d *Dispatcher) NotifyChannels(ctx context.Context, n Notification, names []string) (Report, error) {
+	var wanted map[string]struct{}
+	if len(names) > 0 {
+		known := make(map[string]struct{}, len(d.channels))
+		for _, ch := range d.channels {
+			known[ch.Name()] = struct{}{}
+		}
+		wanted = make(map[string]struct{}, len(names))
+		for _, name := range names {
+			if _, ok := known[name]; !ok {
+				return Report{}, &ConfigError{Field: "channels", Message: "no channel named " + name}
+			}
+			wanted[name] = struct{}{}
+		}
+	}
 	if err := n.Validate(); err != nil {
 		return Report{}, err
+	}
+	selected := func(ch Channel) bool {
+		if wanted == nil {
+			return true
+		}
+		_, ok := wanted[ch.Name()]
+		return ok
 	}
 	var report Report
 	var secureDelivered []string
 	for _, ch := range d.channels {
-		if !ch.Secure() {
+		if !ch.Secure() || !selected(ch) {
 			continue
 		}
 		if err := ch.Deliver(ctx, n); err != nil {
@@ -104,7 +137,7 @@ func (d *Dispatcher) Notify(ctx context.Context, n Notification) (Report, error)
 		}
 	}
 	for _, ch := range d.channels {
-		if ch.Secure() {
+		if ch.Secure() || !selected(ch) {
 			continue
 		}
 		if err := ch.Deliver(ctx, insecure); err != nil {

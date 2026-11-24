@@ -211,3 +211,41 @@ func TestDispatcher_InvalidNotificationDeliversNothing(t *testing.T) {
 		t.Fatalf("invalid notification was delivered")
 	}
 }
+
+func TestDispatcher_NotifyChannelsOnlyNamed(t *testing.T) {
+	log := &callLog{}
+	signal := &fakeChannel{name: "signal-like", secure: true, log: log}
+	slack := &fakeChannel{name: "slack-like", log: log}
+	d := newTestDispatcher(t, slack, signal)
+	report, err := d.NotifyChannels(context.Background(), validNotification(), []string{"slack-like"})
+	if err != nil {
+		t.Fatalf("NotifyChannels: %v", err)
+	}
+	if len(report.Delivered) != 1 || report.Delivered[0] != "slack-like" || len(report.Failed) != 0 {
+		t.Fatalf("report: %+v", report)
+	}
+	if len(slack.received()) != 1 || len(signal.received()) != 0 {
+		t.Fatalf("slack %d, signal %d", len(slack.received()), len(signal.received()))
+	}
+	if len(log.names) != 1 || log.names[0] != "slack-like" {
+		t.Fatalf("calls: %v", log.names)
+	}
+}
+
+func TestDispatcher_NotifyChannelsRefusesUnknownName(t *testing.T) {
+	log := &callLog{}
+	signal := &fakeChannel{name: "signal-like", secure: true, log: log}
+	slack := &fakeChannel{name: "slack-like", log: log}
+	d := newTestDispatcher(t, slack, signal)
+	_, err := d.NotifyChannels(context.Background(), validNotification(), []string{"signal-like", "pager"})
+	if !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("want ErrInvalidConfig, got %v", err)
+	}
+	var cfgErr *ConfigError
+	if !errors.As(err, &cfgErr) || cfgErr.Field != "channels" {
+		t.Fatalf("want *ConfigError on channels, got %v", err)
+	}
+	if len(log.names) != 0 || len(slack.received()) != 0 || len(signal.received()) != 0 {
+		t.Fatalf("a refused call delivered: %v", log.names)
+	}
+}
