@@ -57,6 +57,16 @@ func (f *fakeRBACClient) ListPermissions(ctx context.Context, identity *qrdbtran
 	return out, nil
 }
 
+// ListOwnPermissions completes qrdbtransport.RBACClient. The token paths under
+// test resolve permissions for an explicit identity, never the caller's own,
+// so the fake carries no caller and grants it nothing.
+func (f *fakeRBACClient) ListOwnPermissions(context.Context) ([]qrdbtransport.PermissionInfo, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return nil, nil
+}
+
 // fakePermissionResolver hands a fixed RBAC client (or nil) to the token
 // service, mirroring the late-bound serverPermissionResolver seam.
 type fakePermissionResolver struct {

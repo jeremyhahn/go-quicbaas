@@ -131,8 +131,8 @@ func registerPasskeyInTenant(t *testing.T, tenantID string, userID uint64, credI
 	t.Helper()
 
 	factors := &fakeUserAuthFactorClient{}
-	users := xkmswebauthn.NewMemoryUserStore()
-	creds := xkmswebauthn.NewMemoryCredentialStore()
+	users := newMemoryUserStore()
+	creds := newMemoryCredentialStore()
 	wt, err := newWebAuthnFactorWriteThrough(creds, users, factors, recorderOf(factors), tenantID, permissiveTestGate(), nil)
 	if err != nil {
 		t.Fatalf("newWebAuthnFactorWriteThrough: %v", err)

@@ -46,8 +46,9 @@ func (e *TenantUnresolvedError) Unwrap() error {
 // TenantFromPeerCert is the login tenant-derivation core. It resolves a
 // caller's tenant in the locked priority order:
 //
-//  1. The tenant-scoped SPIFFE URI SAN on the verified peer certificate, with
-//     the operator-configured trust domain PINNED. A foreign trust domain or a
+//  1. The tenant named by the verified peer certificate under qrdb's rule:
+//     the first Subject OU and the SPIFFE trust domain agree, with the
+//     operator-configured cluster trust domain PINNED. A foreign trust domain or a
 //     malformed SAN fails closed immediately (it does NOT fall through to HRD),
 //     so a presented-but-invalid cert can never be silently re-routed. The SO /
 //     bootstrap cert's tenant SAN resolves the system tenant so the control
@@ -68,10 +69,10 @@ func (e *TenantUnresolvedError) Unwrap() error {
 func TenantFromPeerCert(ctx context.Context, cert *x509.Certificate, trustDomain string, hrd HomeRealmResolver, hints RealmHints) (string, error) {
 	// 1. SPIFFE SAN (pinned trust domain).
 	if cert != nil {
-		id, err := qrdbsdk.TenantFromCert(cert, trustDomain)
+		tenantID, err := qrdbsdk.TenantFromClientCert(cert, trustDomain)
 		switch {
 		case err == nil:
-			return id.TenantID, nil
+			return tenantID, nil
 		case errors.Is(err, qrdbsdk.ErrSpiffeNoTenantID):
 			// No SPIFFE SAN on this cert: fall through to HRD (covers external
 			// PIV/CAC and browser/WebAuthn flows).

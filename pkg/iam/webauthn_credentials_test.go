@@ -44,8 +44,8 @@ func newCredentialAdminManager(t *testing.T) (*XKMSWebAuthnManager, *webAuthnFac
 	t.Helper()
 
 	factors := &reapableFactorClient{}
-	users := xkmswebauthn.NewMemoryUserStore()
-	creds := xkmswebauthn.NewMemoryCredentialStore()
+	users := newMemoryUserStore()
+	creds := newMemoryCredentialStore()
 	wt, err := newWebAuthnFactorWriteThrough(
 		creds, users, factors, recorderOf(factors), testWriteThroughTenant, permissiveTestGate(), nil)
 	if err != nil {

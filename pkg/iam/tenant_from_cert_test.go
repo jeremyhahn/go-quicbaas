@@ -31,15 +31,22 @@ import (
 
 // spiffeLeaf builds a self-signed leaf carrying the given SPIFFE URI SAN (or no
 // URI SAN when spiffeURI is empty).
-func spiffeLeaf(t *testing.T, spiffeURI string) *x509.Certificate {
+// spiffeLeaf builds a leaf carrying spiffeURI as its SPIFFE SAN (none when
+// empty) and ou as its first Subject OU (none when empty). qrdb names a
+// tenant only when the OU and the SPIFFE trust domain agree.
+func spiffeLeaf(t *testing.T, spiffeURI, ou string) *x509.Certificate {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatalf("key: %v", err)
 	}
+	subject := pkix.Name{CommonName: "leaf"}
+	if ou != "" {
+		subject.OrganizationalUnit = []string{ou}
+	}
 	tmpl := &x509.Certificate{
 		SerialNumber: big.NewInt(42),
-		Subject:      pkix.Name{CommonName: "leaf"},
+		Subject:      subject,
 		NotBefore:    time.Now().Add(-time.Hour),
 		NotAfter:     time.Now().Add(time.Hour),
 	}
@@ -88,7 +95,7 @@ func (r *stubResolver) Resolve(_ context.Context, hints RealmHints) (string, err
 
 // A SPIFFE cert resolves to its tenant when the trust domain matches.
 func TestTenantFromPeerCert_SPIFFESAN(t *testing.T) {
-	cert := spiffeLeaf(t, "spiffe://example.com/tenant/tenant-acme/user/alice")
+	cert := spiffeLeaf(t, "spiffe://tenant-acme/user/alice", "tenant-acme")
 
 	got, err := TenantFromPeerCert(context.Background(), cert, "example.com", nil, RealmHints{})
 	if err != nil {
@@ -101,7 +108,7 @@ func TestTenantFromPeerCert_SPIFFESAN(t *testing.T) {
 
 // A cert with no SPIFFE SAN falls through to HRD, which resolves via the host.
 func TestTenantFromPeerCert_NoSANHRDHint(t *testing.T) {
-	cert := spiffeLeaf(t, "") // no SPIFFE SAN
+	cert := spiffeLeaf(t, "", "") // no SPIFFE SAN
 	hrd := &stubResolver{byHost: map[string]string{"acme.example.com": "tenant-acme"}}
 
 	got, err := TenantFromPeerCert(context.Background(), cert, "example.com", hrd, RealmHints{SNIHost: "acme.example.com"})
@@ -130,7 +137,7 @@ func TestTenantFromPeerCert_Unresolved(t *testing.T) {
 // A presented cert with no SAN that HRD cannot resolve surfaces the
 // ErrNoTenantSPIFFEID cause so a fail-closed caller can demand reissuance.
 func TestTenantFromPeerCert_NoSANNoHintCarriesCause(t *testing.T) {
-	cert := spiffeLeaf(t, "")
+	cert := spiffeLeaf(t, "", "")
 	hrd := &stubResolver{}
 
 	_, err := TenantFromPeerCert(context.Background(), cert, "example.com", hrd, RealmHints{})
@@ -146,7 +153,7 @@ func TestTenantFromPeerCert_NoSANNoHintCarriesCause(t *testing.T) {
 // A foreign trust domain fails closed immediately and does NOT fall through to
 // HRD, even when HRD could resolve a tenant.
 func TestTenantFromPeerCert_ForeignTrustDomain(t *testing.T) {
-	cert := spiffeLeaf(t, "spiffe://evil.example/tenant/tenant-acme/user/m")
+	cert := spiffeLeaf(t, "spiffe://evil.example/user/m", "")
 	hrd := &stubResolver{byHost: map[string]string{"acme.example.com": "tenant-acme"}}
 
 	_, err := TenantFromPeerCert(context.Background(), cert, "example.com", hrd, RealmHints{SNIHost: "acme.example.com"})
