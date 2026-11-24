@@ -25,6 +25,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -57,6 +58,7 @@ type kmsFaultServer struct {
 
 	mu       sync.Mutex
 	calls    map[string]int
+	arrivals map[string][]time.Time
 	scripts  map[string][]kmsFaultResponse
 	fallback map[string]*kmsFaultResponse
 }
@@ -65,6 +67,7 @@ func newKMSFaultServer(t *testing.T) *kmsFaultServer {
 	t.Helper()
 	s := &kmsFaultServer{
 		calls:    map[string]int{},
+		arrivals: map[string][]time.Time{},
 		scripts:  map[string][]kmsFaultResponse{},
 		fallback: map[string]*kmsFaultResponse{},
 	}
@@ -94,13 +97,27 @@ func (s *kmsFaultServer) count(op string) int {
 	return s.calls[op]
 }
 
+// firstRetryGap returns the time between the arrivals of the first and second
+// calls of op, and false when op has been called fewer than two times.
+func (s *kmsFaultServer) firstRetryGap(op string) (time.Duration, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a := s.arrivals[op]
+	if len(a) < 2 {
+		return 0, false
+	}
+	return a[1].Sub(a[0]), true
+}
+
 func (s *kmsFaultServer) handle(w http.ResponseWriter, r *http.Request) {
 	target := r.Header.Get("X-Amz-Target")
 	op := strings.TrimPrefix(target, "TrentService.")
 	reqBody, _ := io.ReadAll(r.Body)
+	arrived := time.Now()
 
 	s.mu.Lock()
 	s.calls[op]++
+	s.arrivals[op] = append(s.arrivals[op], arrived)
 	var resp *kmsFaultResponse
 	if q := s.scripts[op]; len(q) > 0 {
 		resp = &q[0]
@@ -243,10 +260,11 @@ func TestAWSKMSStrategy_RetryBehaviour(t *testing.T) {
 	})
 
 	t.Run("unmodeled 429 with x-amz-retry-after then success", func(t *testing.T) {
+		const retryAfter = 2500 * time.Millisecond
 		srv := newKMSFaultServer(t)
 		srv.script("Encrypt", kmsFaultResponse{
 			status: http.StatusTooManyRequests,
-			header: map[string]string{"x-amz-retry-after": "50"},
+			header: map[string]string{"x-amz-retry-after": strconv.FormatInt(retryAfter.Milliseconds(), 10)},
 			body:   `{"__type":"TooManyRequests","message":"slow down"}`,
 		})
 		strategy := newFaultStrategy(t, srv.URL)
@@ -257,6 +275,15 @@ func TestAWSKMSStrategy_RetryBehaviour(t *testing.T) {
 			}
 			if n := srv.count("Encrypt"); n != 2 {
 				t.Errorf("Encrypt calls = %d, want 2", n)
+			}
+			// The SDK clamps x-amz-retry-after to [backoff, backoff+5s], and
+			// its first throttle backoff is below 2s, so a header above that
+			// is what sets the delay: an ignored header retries sooner.
+			gap, ok := srv.firstRetryGap("Encrypt")
+			if !ok {
+				t.Error("no retry arrival recorded for Encrypt")
+			} else if gap < retryAfter-100*time.Millisecond {
+				t.Errorf("retry came %v after the 429, want at least %v (x-amz-retry-after)", gap, retryAfter)
 			}
 		})
 	})
