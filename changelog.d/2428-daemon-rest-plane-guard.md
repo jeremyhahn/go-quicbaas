@@ -12,9 +12,12 @@
   (`Options.Authorizer`) for it, both with the token's subject, roles, scope
   and authentication claims (`attest_method`, `attest_level` and the like).
   So an ABAC policy that denies one of the caller's roles or claims refuses
-  the request, an ABAC allow never lifts RBAC's SO deny-list, and the token's
-  scope bounds every grant. It binds the token's tenant and subject onto the
-  request's context (`platformtoken.FromContext`), never a tenant or user
-  named in the request. A refusal is 401 with a `Bearer` challenge, 403
-  `insufficient_scope` or `access_denied`, or 503 when the guard cannot
-  decide, and the validator's error text is never sent to the caller (#2428).
+  the request, a deny on a missing claim refuses a token that carries no
+  authentication claim (the guard marks its identity
+  `auth_source=platform_token`), an ABAC allow never lifts RBAC's SO
+  deny-list, and the token's scope bounds every grant. It binds the token's
+  tenant and subject onto the request's context (`platformtoken.FromContext`),
+  never a tenant or user named in the request. A refusal is 401 with a
+  `Bearer` challenge, 403 `insufficient_scope` or `access_denied`, or 503
+  when the guard cannot decide, and the validator's error text is never sent
+  to the caller (#2428).
