@@ -127,8 +127,12 @@ func TestDCR_InitialAccessTokenRegistersClient(t *testing.T) {
 }
 
 // TestDCR_RegistrationRequiresInitialAccessToken proves registration stays
-// protected on the integration node: no bearer is refused with 401, and a
-// bearer that is not a real token is refused without creating a client.
+// protected on the integration node: no bearer is refused with 401 by the
+// route's authentication before the registration handler runs, so no client
+// is created. The handler's own "initial access token is required" refusal is
+// covered by the unit test TestDCRRegistration_RequiresInitialAccessToken in
+// pkg/api/rest. A bearer that is not a real token is refused without creating
+// a client.
 func TestDCR_RegistrationRequiresInitialAccessToken(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
@@ -136,8 +140,8 @@ func TestDCR_RegistrationRequiresInitialAccessToken(t *testing.T) {
 	status, body := doBearerRequest(t, cluster, http.MethodPost, dcrRegisterPath, "", dcrRegistrationBody())
 	require.Equal(t, http.StatusUnauthorized, status,
 		"DCR without an initial access token must be refused: %s", body)
-	require.Contains(t, string(body), "initial access token is required",
-		"the refusal must name the missing initial access token: %s", body)
+	require.NotContains(t, string(body), "client_secret",
+		"DCR without an initial access token must not create a client: %s", body)
 
 	status, body = doBearerRequest(t, cluster, http.MethodPost, dcrRegisterPath,
 		"not-a-real-token", dcrRegistrationBody())
