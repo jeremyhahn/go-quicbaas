@@ -295,12 +295,14 @@ func (s ABSwitch) Step(ctx context.Context, r *Rollout) (Phase, error) {
 }
 
 // Rollback points the name back at the previous slot when the switch may
-// have moved it, and drains the target slot.
+// have moved it, and drains the target slot. The target is drained only
+// once the name is known not to route to it: when the switch back fails,
+// Rollback answers that error and leaves the target running.
 func (s ABSwitch) Rollback(ctx context.Context, r *Rollout) error {
-	var errs []error
 	if r.Phase == PhaseSwitch && r.From != "" {
-		errs = append(errs, s.Names.Switch(ctx, r.Fence(), r.From))
+		if err := s.Names.Switch(ctx, r.Fence(), r.From); err != nil {
+			return fmt.Errorf("restore the route to slot %s: %w", r.From, err)
+		}
 	}
-	errs = append(errs, s.Slots.Drain(ctx, r.Fence(), r.To))
-	return errors.Join(errs...)
+	return s.Slots.Drain(ctx, r.Fence(), r.To)
 }

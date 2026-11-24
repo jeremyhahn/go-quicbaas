@@ -63,8 +63,11 @@ type slotRig struct {
 	failDrain    bool
 	failFill     bool
 	failSwitch   string
-	filling      chan struct{}
-	block        chan struct{}
+	// failRestore fails a switch back to the previous slot: every switch
+	// to a slot other than failSwitch's fails without moving the name.
+	failRestore bool
+	filling     chan struct{}
+	block       chan struct{}
 }
 
 func (r *slotRig) log(s string) {
@@ -112,6 +115,9 @@ func (r *slotRig) Drain(_ context.Context, f Fence, slot Slot) error {
 func (r *slotRig) Switch(_ context.Context, f Fence, slot Slot) error {
 	return r.gate.Do(f, func() error {
 		r.log("switch " + string(slot))
+		if r.failRestore && string(slot) != r.failSwitch {
+			return errors.New("the switch back did not take effect")
+		}
 		r.mu.Lock()
 		r.routed = slot
 		r.mu.Unlock()
@@ -281,6 +287,29 @@ func TestABSwitch_AFailedSwitchPointsTheNameBack(t *testing.T) {
 	}
 	if stored.Active != SlotA || stored.Rollout.Phase != PhaseRolledBack {
 		t.Fatalf("after a failed switch: %+v %+v", stored, stored.Rollout)
+	}
+}
+
+func TestABSwitch_AFailedRestoreKeepsTheTargetRunning(t *testing.T) {
+	w, rig := newWorld(t), &slotRig{}
+	c := w.controller("node-1", rig, true)
+	ctx := context.Background()
+	if _, err := c.Roll(ctx, "acme", w.release(t, "acme", "1", serviceplane.ReleaseService)); err != nil {
+		t.Fatal(err)
+	}
+	rig.failSwitch = "b"
+	rig.failRestore = true
+	_, err := c.Roll(ctx, "acme", w.release(t, "acme", "2", serviceplane.ReleaseService))
+	if !errors.Is(err, ErrRollback) {
+		t.Fatalf("roll = %v", err)
+	}
+	wantCalls(t, rig, "fill a 1", "appraise a 1", "switch a", "fill b 2", "appraise b 2", "switch b", "switch a")
+	stored, err := c.Slots(ctx, "acme", "web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Rollout.Phase != PhaseFailed {
+		t.Fatalf("after a failed restore: %+v", stored.Rollout)
 	}
 }
 
