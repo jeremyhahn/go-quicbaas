@@ -4,7 +4,8 @@
 # line, a failed package with a healthy cluster lets the rest run, a failed
 # package with a dead cluster stops the suite, exit 124 reads as timeout,
 # --filter splits go test flags from packages, and a probe that never answers
-# is cut off at HEALTH_PROBE_TIMEOUT.
+# is cut off at HEALTH_PROBE_TIMEOUT, and the iam package alone gets its own
+# go test -timeout.
 #
 # Run by `make check-workspace-script`.
 set -eu
@@ -153,6 +154,16 @@ PATH="$tmp/probe-bin:$PATH" STUB_RAN="$tmp/ran" STUB_GO_EXIT_a=1 HEALTH_PROBE_TI
 [ "$(ran)" = "example/a " ] || fail "probe hangs: ran '$(ran)'"
 grep -q '^infrastructure failure after example/a; 1 packages not run$' "$tmp/out" ||
 	fail "probe hangs: no infrastructure failure line"
+
+# (x) The iam package runs with its own limit, IAM_PACKAGE_TIMEOUT (30m).
+run_filter "./test/integration/iam" || fail "iam limit: exit $?, want 0"
+grep -q -- ' -timeout 30m .*\./test/integration/iam$' "$tmp/ran.args" ||
+	fail "iam limit: ran '$(cat "$tmp/ran.args")', want -timeout 30m"
+
+# (xi) Every other package keeps PACKAGE_TIMEOUT (10m).
+run_filter "./test/integration/cli" || fail "other limit: exit $?, want 0"
+grep -q -- ' -timeout 10m .*\./test/integration/cli$' "$tmp/ran.args" ||
+	fail "other limit: ran '$(cat "$tmp/ran.args")', want -timeout 10m"
 
 # Too few arguments are refused, in both modes.
 if sh "$script" --filter "$tmp/log" integration 2>/dev/null; then
