@@ -1304,6 +1304,49 @@ func TestManagerListByPrefix(t *testing.T) {
 			t.Error("expected HasMore to be true")
 		}
 	})
+
+	t.Run("pages with a cursor", func(t *testing.T) {
+		want := make([]string, 0, 5)
+		for i := 0; i < 5; i++ {
+			key := "ns-paged:dir/file-" + string(rune('a'+i)) + ".txt"
+			if err := manager.Put(ctx, createTestEntry(key)); err != nil {
+				t.Fatalf("Put failed: %v", err)
+			}
+			want = append(want, key)
+		}
+
+		var got []string
+		cursor := ""
+		for pages := 0; ; pages++ {
+			if pages > 5 {
+				t.Fatal("paging did not terminate")
+			}
+			result, err := manager.ListByPrefix(ctx, "ns-paged:", &ListOptions{Limit: 2, Cursor: cursor})
+			if err != nil {
+				t.Fatalf("ListByPrefix failed: %v", err)
+			}
+			got = append(got, result.Keys...)
+			if !result.HasMore {
+				if result.NextCursor != "" {
+					t.Errorf("last page NextCursor = %q, want empty", result.NextCursor)
+				}
+				break
+			}
+			if result.NextCursor == "" {
+				t.Fatal("HasMore page has no NextCursor")
+			}
+			cursor = result.NextCursor
+		}
+
+		if len(got) != len(want) {
+			t.Fatalf("got keys %v, want %v", got, want)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("key %d = %q, want %q", i, got[i], want[i])
+			}
+		}
+	})
 }
 
 // =============================================================================

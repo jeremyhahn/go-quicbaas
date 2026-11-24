@@ -534,8 +534,18 @@ func (m *manager) ListByPrefix(ctx context.Context, prefix string, opts *ListOpt
 		Total: -1,
 	}
 
+	cursor := ""
+	if opts != nil {
+		cursor = opts.Cursor
+	}
+
+	// IterateKeys yields keys in Pebble key order, so a page resumes after
+	// the cursor by skipping every key up to and including it.
 	count := 0
 	err := m.storage.IterateKeys(ctx, prefix, func(key string) bool {
+		if cursor != "" && key <= cursor {
+			return true
+		}
 		if count < limit {
 			result.Keys = append(result.Keys, key)
 		} else {
@@ -547,6 +557,10 @@ func (m *manager) ListByPrefix(ctx context.Context, prefix string, opts *ListOpt
 	})
 	if err != nil {
 		return nil, err
+	}
+
+	if result.HasMore && len(result.Keys) > 0 {
+		result.NextCursor = result.Keys[len(result.Keys)-1]
 	}
 
 	return result, nil
