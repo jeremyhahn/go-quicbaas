@@ -51,6 +51,7 @@ func newHRDFederationManager(t *testing.T) (*DefaultFederationManager, *MemoryPr
 // BeginLogin with an empty provider name uses HRD selection within the tenant:
 // a single configured provider resolves unambiguously and produces an auth URL.
 func TestBeginLogin_EmptyProviderUsesHRDSingleProvider(t *testing.T) {
+	t.Parallel()
 	manager, providerStorage, _ := newHRDFederationManager(t)
 	ctx := context.Background()
 
@@ -74,6 +75,7 @@ func TestBeginLogin_EmptyProviderUsesHRDSingleProvider(t *testing.T) {
 
 // BeginLogin still rejects a missing tenant.
 func TestBeginLogin_MissingTenant(t *testing.T) {
+	t.Parallel()
 	manager, _, _ := newHRDFederationManager(t)
 	_, err := manager.BeginLogin(context.Background(), "", "", "https://app/cb")
 	if !errors.As(err, new(*dberrors.QBError)) {
@@ -83,6 +85,7 @@ func TestBeginLogin_MissingTenant(t *testing.T) {
 
 // The explicit-provider-name path is unaffected by the HRD wiring.
 func TestBeginLogin_ExplicitNameStillWorks(t *testing.T) {
+	t.Parallel()
 	manager, _, _ := newHRDFederationManager(t)
 	ctx := context.Background()
 	p := createTestProvider("tenant-acme", "okta")
@@ -102,6 +105,7 @@ func TestBeginLogin_ExplicitNameStillWorks(t *testing.T) {
 // BeginLoginHRD routes a local-realm tenant to the local-factor path: the
 // redirect carries the local sentinel and no auth URL.
 func TestBeginLoginHRD_LocalRealm(t *testing.T) {
+	t.Parallel()
 	manager, _, dir := newHRDFederationManager(t)
 	ctx := context.Background()
 	if err := dir.SetDefaultProvider(ctx, "tenant-acme", LocalRealmProviderID); err != nil {
@@ -122,6 +126,7 @@ func TestBeginLoginHRD_LocalRealm(t *testing.T) {
 
 // BeginLoginHRD routes an email domain to the resolved external IdP.
 func TestBeginLoginHRD_ExternalProvider(t *testing.T) {
+	t.Parallel()
 	manager, _, _ := newHRDFederationManager(t)
 	ctx := context.Background()
 	p := createTestProvider("tenant-acme", "okta")
@@ -140,6 +145,7 @@ func TestBeginLoginHRD_ExternalProvider(t *testing.T) {
 
 // BeginLoginHRD fails closed when no resolver is configured.
 func TestBeginLoginHRD_NoResolver(t *testing.T) {
+	t.Parallel()
 	manager, _, _, _, _, _ := setupTestFederationManager(t)
 	_, err := manager.BeginLoginHRD(context.Background(), RealmHints{Email: "u@acme.example"}, "cb")
 	if !errors.As(err, new(*dberrors.QBError)) {
@@ -149,6 +155,7 @@ func TestBeginLoginHRD_NoResolver(t *testing.T) {
 
 // BeginLoginHRD surfaces ambiguous resolution as a not-found-class error.
 func TestBeginLoginHRD_AmbiguousFailClosed(t *testing.T) {
+	t.Parallel()
 	manager, _, _ := newHRDFederationManager(t)
 	ctx := context.Background()
 	if err := manager.RegisterProvider(ctx, createTestProvider("tenant-acme", "okta")); err != nil {
@@ -167,6 +174,7 @@ func TestBeginLoginHRD_AmbiguousFailClosed(t *testing.T) {
 // BeginLogin with an empty provider name and no resolver fails closed: a
 // provider name is required when home-realm discovery is not configured.
 func TestBeginLogin_EmptyProviderNoResolver(t *testing.T) {
+	t.Parallel()
 	manager, _, _, _, _, _ := setupTestFederationManager(t)
 	_, err := manager.BeginLogin(context.Background(), "tenant1", "", "cb")
 	if !errors.As(err, new(*dberrors.QBError)) {
@@ -177,6 +185,7 @@ func TestBeginLogin_EmptyProviderNoResolver(t *testing.T) {
 // BeginLogin via HRD routing to the local realm returns the local sentinel with
 // no auth URL (the empty-provider-name path).
 func TestBeginLogin_EmptyProviderLocalRealm(t *testing.T) {
+	t.Parallel()
 	manager, _, dir := newHRDFederationManager(t)
 	ctx := context.Background()
 	if err := dir.SetDefaultProvider(ctx, "tenant-acme", LocalRealmProviderID); err != nil {
@@ -194,6 +203,7 @@ func TestBeginLogin_EmptyProviderLocalRealm(t *testing.T) {
 // A tenant default pointing at a non-existent provider ID fails closed: the
 // resolved provider cannot be loaded, so no login is begun.
 func TestBeginLogin_DanglingDefaultProviderFailsClosed(t *testing.T) {
+	t.Parallel()
 	manager, _, dir := newHRDFederationManager(t)
 	ctx := context.Background()
 	if err := dir.SetDefaultProvider(ctx, "tenant-acme", "ghost-provider"); err != nil {
@@ -208,6 +218,7 @@ func TestBeginLogin_DanglingDefaultProviderFailsClosed(t *testing.T) {
 // BeginLogin with an empty provider name and an ambiguous tenant (multiple
 // enabled providers, no default) fails closed via the resolver.
 func TestBeginLogin_EmptyProviderAmbiguousFailsClosed(t *testing.T) {
+	t.Parallel()
 	manager, _, _ := newHRDFederationManager(t)
 	ctx := context.Background()
 	if err := manager.RegisterProvider(ctx, createTestProvider("tenant-acme", "okta")); err != nil {
@@ -225,6 +236,7 @@ func TestBeginLogin_EmptyProviderAmbiguousFailsClosed(t *testing.T) {
 // beginLoginFromRealm surfaces a non-not-found provider-store error as an
 // invalid-provider error (distinct from the not-found fail-closed path).
 func TestBeginLoginHRD_ProviderStoreError(t *testing.T) {
+	t.Parallel()
 	dir, err := NewHomeRealmDirectory(newMockKVStore())
 	if err != nil {
 		t.Fatalf("NewHomeRealmDirectory: %v", err)
@@ -260,6 +272,7 @@ func TestBeginLoginHRD_ProviderStoreError(t *testing.T) {
 
 // BeginLogin (explicit name) surfaces a non-not-found GetProviderByName error.
 func TestBeginLogin_ExplicitNameStoreError(t *testing.T) {
+	t.Parallel()
 	storage := &errorProviderStorage{getByNameErr: errors.New("store unavailable")}
 	manager, err := NewFederationManager(
 		WithProviderStorage(storage),

@@ -114,6 +114,7 @@ func (h *idTokenTestHarness) validator(t *testing.T, jwksURL string) *IDTokenVal
 }
 
 func TestIDTokenValidator_ValidToken(t *testing.T) {
+	t.Parallel()
 	h := newIDTokenHarness(t)
 	v := h.validator(t, h.jwksSrv.URL+"/jwks")
 
@@ -131,6 +132,7 @@ func TestIDTokenValidator_ValidToken(t *testing.T) {
 }
 
 func TestIDTokenValidator_DiscoversJWKS(t *testing.T) {
+	t.Parallel()
 	h := newIDTokenHarness(t)
 	// No explicit JWKS URL: must be discovered from the issuer's discovery doc.
 	// Point the issuer at the test server so discovery resolves there.
@@ -150,6 +152,7 @@ func TestIDTokenValidator_DiscoversJWKS(t *testing.T) {
 }
 
 func TestIDTokenValidator_BadSignature(t *testing.T) {
+	t.Parallel()
 	h := newIDTokenHarness(t)
 	v := h.validator(t, h.jwksSrv.URL+"/jwks")
 
@@ -177,6 +180,7 @@ func TestIDTokenValidator_BadSignature(t *testing.T) {
 }
 
 func TestIDTokenValidator_WrongIssuer(t *testing.T) {
+	t.Parallel()
 	h := newIDTokenHarness(t)
 	v := h.validator(t, h.jwksSrv.URL+"/jwks")
 
@@ -192,6 +196,7 @@ func TestIDTokenValidator_WrongIssuer(t *testing.T) {
 }
 
 func TestIDTokenValidator_WrongAudience(t *testing.T) {
+	t.Parallel()
 	h := newIDTokenHarness(t)
 	v := h.validator(t, h.jwksSrv.URL+"/jwks")
 
@@ -207,6 +212,7 @@ func TestIDTokenValidator_WrongAudience(t *testing.T) {
 }
 
 func TestIDTokenValidator_Expired(t *testing.T) {
+	t.Parallel()
 	h := newIDTokenHarness(t)
 	v := h.validator(t, h.jwksSrv.URL+"/jwks")
 
@@ -225,6 +231,7 @@ func TestIDTokenValidator_Expired(t *testing.T) {
 }
 
 func TestIDTokenValidator_UnsignedTokenRejected(t *testing.T) {
+	t.Parallel()
 	h := newIDTokenHarness(t)
 	v := h.validator(t, h.jwksSrv.URL+"/jwks")
 
@@ -245,6 +252,7 @@ func TestIDTokenValidator_UnsignedTokenRejected(t *testing.T) {
 }
 
 func TestIDTokenValidator_MissingKID(t *testing.T) {
+	t.Parallel()
 	h := newIDTokenHarness(t)
 	v := h.validator(t, h.jwksSrv.URL+"/jwks")
 
@@ -255,6 +263,7 @@ func TestIDTokenValidator_MissingKID(t *testing.T) {
 }
 
 func TestIDTokenValidator_ConfigValidation(t *testing.T) {
+	t.Parallel()
 	client := &http.Client{}
 	cases := []struct {
 		name string

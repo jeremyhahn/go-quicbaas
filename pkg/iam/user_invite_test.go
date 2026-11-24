@@ -88,6 +88,7 @@ func (u *undeletableStorage) MarkUserDeleting(context.Context, string, uint64) e
 }
 
 func TestCreateInvitedUser_PendingUserGetsRedeemableInvite(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store, _ := newInviteTestStore(t, nil)
 	invites := iamtest.NewMemoryInviteStore()
@@ -108,6 +109,7 @@ func TestCreateInvitedUser_PendingUserGetsRedeemableInvite(t *testing.T) {
 }
 
 func TestCreateInvitedUser_NonPendingUserGetsNoInvite(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store, _ := newInviteTestStore(t, nil)
 
@@ -122,6 +124,7 @@ func TestCreateInvitedUser_NonPendingUserGetsNoInvite(t *testing.T) {
 }
 
 func TestCreateInvitedUser_NoInviteStoreRefusesBeforeWriting(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store, mem := newInviteTestStore(t, nil)
 
@@ -134,6 +137,7 @@ func TestCreateInvitedUser_NoInviteStoreRefusesBeforeWriting(t *testing.T) {
 }
 
 func TestCreateInvitedUser_InviteFailureRollsBackUser(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store, mem := newInviteTestStore(t, nil)
 	cause := errors.New("invite store unreachable")
@@ -148,6 +152,7 @@ func TestCreateInvitedUser_InviteFailureRollsBackUser(t *testing.T) {
 }
 
 func TestCreateInvitedUser_AttachFailureSpendsTokenAndRollsBackUser(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	cause := errors.New("user store unavailable")
 	store, mem := newInviteTestStore(t, func(u iam.UserStorage) iam.UserStorage {
@@ -168,6 +173,7 @@ func TestCreateInvitedUser_AttachFailureSpendsTokenAndRollsBackUser(t *testing.T
 }
 
 func TestCreateInvitedUser_RollbackSurvivesCancellation(t *testing.T) {
+	t.Parallel()
 	store, mem := newInviteTestStore(t, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -197,6 +203,7 @@ func (c *cancellingInviteStore) Create(context.Context, string, uint64, time.Dur
 }
 
 func TestCreateInvitedUser_FailedRollbackIsTyped(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	cause := errors.New("user store unavailable")
 	store, _ := newInviteTestStore(t, func(u iam.UserStorage) iam.UserStorage {
@@ -223,6 +230,7 @@ func (f userReaderFunc) GetUser(ctx context.Context, tenantID string, userID uin
 }
 
 func TestRereadUserAfterFailedWrite_DetachesFromCancellation(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	reader := userReaderFunc(func(ctx context.Context, tenantID string, userID uint64) (*iam.User, error) {
@@ -245,6 +253,7 @@ func TestRereadUserAfterFailedWrite_DetachesFromCancellation(t *testing.T) {
 }
 
 func TestRereadUserAfterFailedWrite_ReturnsReadError(t *testing.T) {
+	t.Parallel()
 	readErr := errors.New("read failed")
 	reader := userReaderFunc(func(context.Context, string, uint64) (*iam.User, error) {
 		return nil, readErr
@@ -256,6 +265,7 @@ func TestRereadUserAfterFailedWrite_ReturnsReadError(t *testing.T) {
 }
 
 func TestCreateInvitedUser_InvalidInputWritesNothing(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store, _ := newInviteTestStore(t, nil)
 	invites := &recordingInviteStore{InviteStore: iamtest.NewMemoryInviteStore()}
@@ -267,6 +277,7 @@ func TestCreateInvitedUser_InvalidInputWritesNothing(t *testing.T) {
 }
 
 func TestCreateUserOptions_EffectiveLifecycle(t *testing.T) {
+	t.Parallel()
 	disabled, enabled := false, true
 	tests := []struct {
 		name string
@@ -280,12 +291,14 @@ func TestCreateUserOptions_EffectiveLifecycle(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			assert.Equal(t, tt.want, tt.opts.EffectiveLifecycle())
 		})
 	}
 }
 
 func TestClampInviteTTL(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, iam.DefaultInviteTTL, iam.ClampInviteTTL(0))
 	assert.Equal(t, iam.DefaultInviteTTL, iam.ClampInviteTTL(-time.Hour))
 	assert.Equal(t, 3*time.Hour, iam.ClampInviteTTL(3*time.Hour))
@@ -293,6 +306,7 @@ func TestClampInviteTTL(t *testing.T) {
 }
 
 func TestInviteURL(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, "https://id.example.com/ui/#/invite/acme/tok",
 		iam.InviteURL("https://id.example.com/", "acme", "tok"))
 	// Path separators in either segment must not change the route.

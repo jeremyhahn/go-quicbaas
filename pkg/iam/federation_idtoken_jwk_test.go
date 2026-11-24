@@ -122,6 +122,7 @@ func offCurveECJWK(t *testing.T, kid string) map[string]interface{} {
 // coordinates without this check lets whoever answers the JWKS fetch hand us an
 // invalid key that ID-token signatures are then verified against.
 func TestIDTokenJWKS_RejectsOffCurveECKey(t *testing.T) {
+	t.Parallel()
 	v := jwksValidator(t, offCurveECJWK(t, "off-curve-kid"))
 
 	key, err := v.publicKeyForKID(context.Background(), "off-curve-kid")
@@ -135,6 +136,7 @@ func TestIDTokenJWKS_RejectsOffCurveECKey(t *testing.T) {
 
 // A well-formed EC key on the declared curve is accepted and returned intact.
 func TestIDTokenJWKS_AcceptsValidECKey(t *testing.T) {
+	t.Parallel()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatalf("ec keygen: %v", err)
@@ -156,6 +158,7 @@ func TestIDTokenJWKS_AcceptsValidECKey(t *testing.T) {
 
 // A well-formed RSA key is accepted and returned intact.
 func TestIDTokenJWKS_AcceptsValidRSAKey(t *testing.T) {
+	t.Parallel()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatalf("rsa keygen: %v", err)
@@ -178,6 +181,7 @@ func TestIDTokenJWKS_AcceptsValidRSAKey(t *testing.T) {
 // Key types the validator's permitted RS*/ES* algorithms cannot use, and JWKs
 // with undecodable members, must not reach the key cache.
 func TestIDTokenJWKS_RejectsUnusableKeys(t *testing.T) {
+	t.Parallel()
 	edKid := "okp-kid"
 	edPoint := make([]byte, ed25519.PublicKeySize)
 	if _, err := rand.Read(edPoint); err != nil {
@@ -225,6 +229,7 @@ func TestIDTokenJWKS_RejectsUnusableKeys(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			kid, ok := tc.jwk["kid"].(string)
 			if !ok {
 				t.Fatal("test JWK is missing a kid")
@@ -245,6 +250,7 @@ func TestIDTokenJWKS_RejectsUnusableKeys(t *testing.T) {
 // RFC 7517 section 5: an entry the implementation cannot use is ignored, not
 // treated as a reason to discard the rest of the set.
 func TestIDTokenJWKS_UnusableKeyDoesNotDiscardTheSet(t *testing.T) {
+	t.Parallel()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatalf("rsa keygen: %v", err)
@@ -268,6 +274,7 @@ func TestIDTokenJWKS_UnusableKeyDoesNotDiscardTheSet(t *testing.T) {
 // carried as the IDTokenJWKSError cause rather than replacing it, so callers
 // matching on *IDTokenJWKSError see no change.
 func TestParseIDTokenJWK_TypedErrorShape(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name      string
 		raw       string
@@ -286,6 +293,7 @@ func TestParseIDTokenJWK_TypedErrorShape(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			key, kid, err := parseIDTokenJWK(json.RawMessage(tc.raw))
 			if err == nil {
 				t.Fatalf("want error, got key %#v (kid %q)", key, kid)

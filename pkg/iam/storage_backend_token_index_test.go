@@ -53,6 +53,7 @@ func storeRefreshToken(t *testing.T, storage *BackendStorage, tenantID, jti, sec
 // login context must still resolve — for a barrier-isolated tenant, a
 // logical-prefix tenant, and the system tenant alike.
 func TestGetTokenByValue_ResolvesWithNoTenantInContext(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name     string
 		tenantID string
@@ -63,6 +64,7 @@ func TestGetTokenByValue_ResolvesWithNoTenantInContext(t *testing.T) {
 		{"system tenant", "system", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			kv := newRoutingTestKV()
 			if tc.barrier {
 				kv.barrierTenant(tc.tenantID)
@@ -91,6 +93,7 @@ func TestGetTokenByValue_ResolvesWithNoTenantInContext(t *testing.T) {
 // not merge two tenants' token state: each secret resolves only its own
 // tenant's record.
 func TestGetTokenByValue_KeepsRecordsTenantIsolated(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("alpha")
 	kv.barrierTenant("beta")
@@ -121,6 +124,7 @@ func TestGetTokenByValue_KeepsRecordsTenantIsolated(t *testing.T) {
 // otherwise anyone able to write the shared index could aim their own secret at
 // a victim's refresh JTI.
 func TestGetTokenByValue_RejectsAPointerToAnotherRecord(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("victim")
 	storage := NewBackendStorage(kv)
@@ -149,6 +153,7 @@ func TestGetTokenByValue_RejectsAPointerToAnotherRecord(t *testing.T) {
 // endpoint — which scopes its context from the client id — read it from there
 // successfully. Those tokens must keep working after the index moves.
 func TestGetTokenByValue_ReadsTheLegacyTenantScopedIndex(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	storage := NewBackendStorage(kv)
@@ -183,6 +188,7 @@ func TestGetTokenByValue_ReadsTheLegacyTenantScopedIndex(t *testing.T) {
 // become a way around a sealed barrier: the pointer resolves, then the record
 // read routes into the sealed tenant and fails.
 func TestGetTokenByValue_SealedTenantFailsClosed(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("burnin")
 	storage := NewBackendStorage(kv)
@@ -199,6 +205,7 @@ func TestGetTokenByValue_SealedTenantFailsClosed(t *testing.T) {
 // TestStoreToken_IndexWriteFailureIsFatal proves an unwritable index fails the
 // issuance instead of handing back a credential that is already dead.
 func TestStoreToken_IndexWriteFailureIsFatal(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("burnin")
 	// The index is written untenanted, so sealing the SYSTEM tenant is what
@@ -225,6 +232,7 @@ func TestStoreToken_IndexWriteFailureIsFatal(t *testing.T) {
 // tenant-routed store — a key that is never written — and so leaked one entry
 // per expired token.
 func TestDeleteExpiredTokens_RemovesTheValueIndex(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("burnin")
 	storage := NewBackendStorage(kv)
