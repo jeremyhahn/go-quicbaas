@@ -204,11 +204,111 @@ func TestWrapVolumeRuntimeLocksAVolumeAcrossWorkDirs(t *testing.T) {
 	if _, err := b.Run(ctx, ownedVolumeSvcSpec(wb)); !errors.Is(err, orchestration.ErrVolumeInUse) {
 		t.Fatalf("b.Run of a volume a holds = %v, want ErrVolumeInUse", err)
 	}
-	if volumeNamespace(map[string]string{"volume_group": "vg0"}) == volumeNamespace(map[string]string{"volume_group": "vg1"}) {
+	if volumeNamespace("local", map[string]string{"volume_group": "vg0"}) == volumeNamespace("local", map[string]string{"volume_group": "vg1"}) {
 		t.Error("vg0 and vg1 share a lock namespace")
 	}
-	if volumeNamespace(map[string]string{"volume_group": "vg0"}) != volumeNamespace(map[string]string{"volume_group": "vg0", "node_id": "n1"}) {
+	if volumeNamespace("local", map[string]string{"volume_group": "vg0"}) != volumeNamespace("local", map[string]string{"volume_group": "vg0", "node_id": "n1"}) {
 		t.Error("node_id changes the lock namespace")
+	}
+}
+
+// TestVolumeNamespaceIgnoresOperationalSettings proves that settings that do
+// not select the backing storage leave the lock namespace unchanged, and that
+// settings that do select it change it.
+func TestVolumeNamespaceIgnoresOperationalSettings(t *testing.T) {
+	vg0 := map[string]string{"volume_group": "vg0"}
+	cases := []struct {
+		name           string
+		providerA      string
+		settingsA      map[string]string
+		providerB      string
+		settingsB      map[string]string
+		wantSameLockNS bool
+	}{
+		{
+			name: "local operational settings", providerA: "local", settingsA: vg0,
+			providerB: "local", settingsB: map[string]string{
+				"volume_group": "vg0", "wipe_on_delete": "true", "preflight": "off",
+				"encrypted": "true", "mount_propagation": "shared", "snapshot_cow_percent": "50",
+				"lock_dir": "/run/x", "node_id": "n9",
+			},
+			wantSameLockNS: true,
+		},
+		{
+			name:      "drbd resource names are host-wide",
+			providerA: "drbd", settingsA: map[string]string{"volume_group": "vg0", "node_name": "a", "peer_node": "b"},
+			providerB: "drbd", settingsB: map[string]string{"volume_group": "vg1", "config_dir": "/etc/other", "wipe_on_delete": "true"},
+			wantSameLockNS: true,
+		},
+		{
+			name:      "local volume group",
+			providerA: "local", settingsA: vg0,
+			providerB: "local", settingsB: map[string]string{"volume_group": "vg1"},
+		},
+		{
+			name:      "provider",
+			providerA: "local", settingsA: vg0,
+			providerB: "drbd", settingsB: vg0,
+		},
+		{
+			name:      "unknown provider setting",
+			providerA: "other", settingsA: map[string]string{"a": "1"},
+			providerB: "other", settingsB: map[string]string{"a": "2"},
+		},
+		{
+			name:      "unknown provider node_id",
+			providerA: "other", settingsA: map[string]string{"a": "1"},
+			providerB: "other", settingsB: map[string]string{"a": "1", "node_id": "n"},
+			wantSameLockNS: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			a := volumeNamespace(tc.providerA, tc.settingsA)
+			b := volumeNamespace(tc.providerB, tc.settingsB)
+			if (a == b) != tc.wantSameLockNS {
+				t.Errorf("namespaces %q and %q: same = %v, want %v", a, b, a == b, tc.wantSameLockNS)
+			}
+		})
+	}
+}
+
+// TestWrapVolumeRuntimeLocksAcrossOperationalSettings proves that two daemons
+// on one volume group whose operational settings differ still share the
+// volume's lock.
+func TestWrapVolumeRuntimeLocksAcrossOperationalSettings(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the volume lock is a Linux flock")
+	}
+	stubSharedVolumeProvider(t)
+	locks := t.TempDir()
+	wrap := func(node, workDir string, settings map[string]string) orchestration.ContainerRuntime {
+		t.Helper()
+		inner := &capableContainerRuntime{}
+		inner.available = true
+		got, err := WrapVolumeRuntime(VolumeConfig{
+			Provider: "local", NodeID: node, LockDir: locks,
+			Settings: settings,
+		}, workDir, inner)
+		if err != nil {
+			t.Fatalf("WrapVolumeRuntime: %v", err)
+		}
+		t.Cleanup(func() { _ = got.(*orchestration.VolumeRuntime).Close() })
+		return got
+	}
+	wa, wb, wc := t.TempDir(), t.TempDir(), t.TempDir()
+	a := wrap("n1", wa, map[string]string{"volume_group": "vg0"})
+	b := wrap("n2", wb, map[string]string{"volume_group": "vg0", "wipe_on_delete": "true", "preflight": "off"})
+	c := wrap("n3", wc, map[string]string{"volume_group": "vg1"})
+	ctx := context.Background()
+	if _, err := a.Run(ctx, ownedVolumeSvcSpec(wa)); err != nil {
+		t.Fatalf("a.Run: %v", err)
+	}
+	if _, err := b.Run(ctx, ownedVolumeSvcSpec(wb)); !errors.Is(err, orchestration.ErrVolumeInUse) {
+		t.Fatalf("b.Run of a volume a holds = %v, want ErrVolumeInUse", err)
+	}
+	if _, err := c.Run(ctx, ownedVolumeSvcSpec(wc)); err != nil {
+		t.Fatalf("c.Run on another volume group: %v", err)
 	}
 }
 

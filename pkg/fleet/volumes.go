@@ -50,18 +50,39 @@ type VolumeConfig struct {
 // VolumeConfig.LockDir is empty.
 const DefaultVolumeLockDir = "/run/lock/quicbaas/volumes"
 
-// volumeNamespace names the backing storage a provider's settings select:
-// the first 16 hex characters of a sha256 over the sorted "k=v" lines of
-// every setting but node_id, which is per daemon.
-func volumeNamespace(settings map[string]string) string {
-	keys := make([]string, 0, len(settings))
-	for k := range settings {
-		if k != "node_id" {
-			keys = append(keys, k)
+// volumeIdentitySettings lists, per provider, the settings that select the
+// backing storage a claim name reaches. Every other setting is operational
+// (how a volume is wiped, checked, encrypted, mounted or replicated) and
+// does not change which volume a name resolves to, so it must not change the
+// lock namespace. A DRBD resource name is one kernel object per host, so
+// drbd volumes share one namespace whatever their settings.
+var volumeIdentitySettings = map[string][]string{
+	"local": {"volume_group"},
+	"drbd":  {},
+}
+
+// volumeNamespace names the backing storage a provider and its settings
+// select: the first 16 hex characters of a sha256 over a "provider=<name>"
+// line followed by sorted "k=v" lines. For a provider volumeIdentitySettings
+// names, only its identity settings are hashed, with values exactly as
+// configured (an absent key hashes as "k="), so operational settings never
+// split one volume's lock. For any other provider every setting but node_id,
+// which is per daemon, is hashed.
+func volumeNamespace(provider string, settings map[string]string) string {
+	h := sha256.New()
+	fmt.Fprintf(h, "provider=%s\n", provider)
+	keys, known := volumeIdentitySettings[provider]
+	if known {
+		keys = append([]string(nil), keys...)
+	} else {
+		keys = make([]string, 0, len(settings))
+		for k := range settings {
+			if k != "node_id" {
+				keys = append(keys, k)
+			}
 		}
 	}
 	sort.Strings(keys)
-	h := sha256.New()
 	for _, k := range keys {
 		fmt.Fprintf(h, "%s=%s\n", k, settings[k])
 	}
@@ -138,7 +159,7 @@ func WrapVolumeRuntime(cfg VolumeConfig, workDir string, inner orchestration.Con
 	if lockBase == "" {
 		lockBase = DefaultVolumeLockDir
 	}
-	lockDir := filepath.Join(lockBase, cfg.Provider+"-"+volumeNamespace(cfg.Settings))
+	lockDir := filepath.Join(lockBase, cfg.Provider+"-"+volumeNamespace(cfg.Provider, cfg.Settings))
 	settings := cfg.Settings
 	if cfg.Provider == "local" {
 		// The local provider refuses Attach for any node but its own, which it

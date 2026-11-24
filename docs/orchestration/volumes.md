@@ -84,11 +84,14 @@ staging directory, which is scoped to the daemon's work dir and provider, and
 one volume runtime holds it exclusively (a lock on
 `.quicbaas-attachments.lock`): a second daemon given the same `staging_dir` is
 refused with `ErrVolumeStateLocked` at startup. Each owned volume also holds a
-host-wide lock, `<lock_dir>/<provider>-<hash of the provider settings, node_id
-excluded>/<claim>.lock`, from its reservation until its release, so two
-daemons with their own work dirs over the same backing storage never own one
-volume at once: a launch whose volume another daemon holds is refused with
-`ErrVolumeInUse`, and so is a restart that recovers one. The agent refuses a
+host-wide lock, `<lock_dir>/<provider>-<hash of the provider and the settings
+that select its backing storage>/<claim>.lock`, from its reservation until its
+release, so two daemons with their own work dirs over the same backing storage
+never own one volume at once: a launch whose volume another daemon holds is
+refused with `ErrVolumeInUse`, and so is a restart that recovers one. For the
+local provider that is the volume group alone, and drbd volumes share one
+namespace per host, so daemons whose wipe, preflight, encryption or mount
+settings differ still share each volume's lock. The agent refuses a
 volume launch whose `quicbaas.owner` label is not its work dir
 (`ErrVolumeOwnerLabel`), so every volume container is one the startup sweep
 removes before the recovered volumes are released.
