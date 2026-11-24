@@ -812,6 +812,17 @@ message RotateAppSecretRequest {
 }
 
 // Policy CRUD messages
+
+// PolicyRule is one structured policy rule: the engine's rule without
+// conditions. effect is "allow" or "deny".
+message PolicyRule {
+  string name = 1;
+  string effect = 2;
+  int32 priority = 3;
+  repeated string actions = 4;
+  repeated string resources = 5;
+}
+
 message CreatePolicyRequest {
   string tenant_id = 1;
   string name = 2;
@@ -819,6 +830,8 @@ message CreatePolicyRequest {
   map<string, string> labels = 4;
   int32 priority = 5;
   bytes spec_yaml = 6;
+  // Structured rules; set either these or spec_yaml, not both.
+  repeated PolicyRule rules = 7;
 }
 
 message GetPolicyRequest {
@@ -833,6 +846,8 @@ message UpdatePolicyRequest {
   map<string, string> labels = 4;
   int32 priority = 5;
   bytes spec_yaml = 6;
+  // Structured rules; set either these or spec_yaml, not both.
+  repeated PolicyRule rules = 7;
 }
 
 message DeletePolicyRequest {
