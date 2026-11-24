@@ -113,7 +113,7 @@ are the full paths chi composes.
 | 46 | DELETE | /api/v1/tenants/{tenant_id}/users/{user_id}/roles/{role} | RevokeRole | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.revokeRoleFromUser` | covered: views/security/IAMView.svelte |
 | 47 | GET | /api/v1/tenants/{tenant_id}/users/{user_id}/sessions/ | ListUserSessions | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.listUserSessions` | covered: views/security/IAMView.svelte |
 | 48 | POST | /api/v1/tenants/{tenant_id}/users/{user_id}/sessions/ | CreateSession | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
-| 49 | DELETE | /api/v1/tenants/{tenant_id}/users/{user_id}/sessions/ | RevokeAllUserSessions | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.revokeAllUserSessions` | covered: views/security/IAMView.svelte |
+| 49 | DELETE | /api/v1/tenants/{tenant_id}/users/{user_id}/sessions/ | RevokeAllUserSessions | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.revokeAllUserSessions` | not covered |
 | 50 | GET | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/ | GetMFAStatus | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.getMFAStatus` | covered: views/security/IAMView.svelte |
 | 51 | DELETE | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/ | DisableMFA | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.disableMFA` | covered: views/security/IAMView.svelte |
 | 52 | POST | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/enroll | BeginMFAEnrollment | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.beginMFAEnrollment` | not covered |
