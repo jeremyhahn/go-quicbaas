@@ -1714,6 +1714,15 @@ func (s *objectStorageService) SetObjectPolicy(ctx context.Context, req *SetObje
 		return nil, err
 	}
 
+	// A key missing from the caller's namespace is not found, as in the
+	// other verbs, rather than an uncoded catalog update error.
+	if _, getErr := s.catalogMgr.Get(ctx, osTenantScopedKey(req.TenantID, req.Key)); getErr != nil {
+		if s.metrics != nil && s.metrics.operationErrors != nil {
+			s.metrics.operationErrors.WithLabelValues("set_object_policy", "not_found").Inc()
+		}
+		return nil, api.NewNotFoundWithCauseError("objectstorage.SetObjectPolicy", "object", getErr)
+	}
+
 	var newVersion uint64
 
 	err = s.catalogMgr.Update(ctx, osTenantScopedKey(req.TenantID, req.Key), func(entry *catalog.CatalogEntry) error {

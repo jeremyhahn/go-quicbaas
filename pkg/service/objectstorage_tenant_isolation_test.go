@@ -15,11 +15,14 @@ package service
 
 import (
 	"sort"
+	"strings"
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/catalog"
 )
 
 // isoPut stores value under key as the given tenant.
@@ -31,6 +34,14 @@ func isoPut(t *testing.T, svc ObjectStorageService, tenantID, key, value string,
 	require.NoError(t, err, "%s puts %s", tenantID, key)
 }
 
+// isoGetValue reads key as the given tenant and returns its value.
+func isoGetValue(t *testing.T, svc ObjectStorageService, tenantID, key string) []byte {
+	t.Helper()
+	got, err := svc.GetObject(callerOf(tenantID), &GetObjectRequest{Key: key})
+	require.NoError(t, err, "%s reads %s", tenantID, key)
+	return got.Value
+}
+
 func isoKeys(objects []*ObjectSummary) []string {
 	keys := make([]string, 0, len(objects))
 	for _, o := range objects {
@@ -40,139 +51,172 @@ func isoKeys(objects []*ObjectSummary) []string {
 	return keys
 }
 
-func TestObjectStorage_SameKeyTwoTenants(t *testing.T) {
+func TestObjectStorage_TenantIsolation_SameKeyTwoTenants(t *testing.T) {
 	svc, catalogMgr, _, _ := createObjstoreTestService(t)
 
-	isoPut(t, svc, "tenant-a", "shared/report.txt", "alpha", nil)
-	isoPut(t, svc, "tenant-b", "shared/report.txt", "bravo", nil)
+	isoPut(t, svc, "tenant-a", "shared.txt", "alpha", nil)
+	isoPut(t, svc, "tenant-b", "shared.txt", "bravo", nil)
 
-	gotA, err := svc.GetObject(callerOf("tenant-a"), &GetObjectRequest{Key: "shared/report.txt"})
-	require.NoError(t, err)
-	assert.Equal(t, []byte("alpha"), gotA.Value, "tenant-a reads its own object")
-
-	gotB, err := svc.GetObject(callerOf("tenant-b"), &GetObjectRequest{Key: "shared/report.txt"})
-	require.NoError(t, err)
-	assert.Equal(t, []byte("bravo"), gotB.Value, "tenant-b's put did not overwrite tenant-a's object")
+	assert.Equal(t, []byte("alpha"), isoGetValue(t, svc, "tenant-a", "shared.txt"), "tenant-a reads its own object")
+	assert.Equal(t, []byte("bravo"), isoGetValue(t, svc, "tenant-b", "shared.txt"), "tenant-b's put did not overwrite tenant-a's object")
 
 	catalogMgr.mu.RLock()
-	_, rawA := catalogMgr.entries["tenant/tenant-a/shared/report.txt"]
-	_, rawB := catalogMgr.entries["tenant/tenant-b/shared/report.txt"]
-	_, bare := catalogMgr.entries["shared/report.txt"]
+	_, rawA := catalogMgr.entries["tenant/tenant-a/shared.txt"]
+	_, rawB := catalogMgr.entries["tenant/tenant-b/shared.txt"]
+	_, bare := catalogMgr.entries["shared.txt"]
 	catalogMgr.mu.RUnlock()
 	assert.True(t, rawA, "tenant-a's entry lives in its namespace")
 	assert.True(t, rawB, "tenant-b's entry lives in its namespace")
 	assert.False(t, bare, "no entry is stored under the bare key")
+
+	_, err := svc.DeleteObject(callerOf("tenant-a"), &DeleteObjectRequest{Key: "shared.txt"})
+	require.NoError(t, err, "tenant-a deletes its own object")
+
+	_, err = svc.GetObject(callerOf("tenant-a"), &GetObjectRequest{Key: "shared.txt"})
+	requireNotFound(t, err, "tenant-a's object is gone")
+	assert.Equal(t, []byte("bravo"), isoGetValue(t, svc, "tenant-b", "shared.txt"), "tenant-a's delete left tenant-b's object")
 }
 
-func TestObjectStorage_CrossTenantReadListDeleteFail(t *testing.T) {
-	svc, _, _, _ := createObjstoreTestService(t)
-	isoPut(t, svc, "tenant-b", "b/only.txt", "tenant-b data", map[string]string{"team": "x"})
+func TestObjectStorage_TenantIsolation_CrossTenantReadListDeleteFail(t *testing.T) {
+	svc, _, backendMgr, _ := createObjstoreTestService(t)
+	backendMgr.AddBackend("cold", newObjstoreMockStorage(), &catalog.BackendConfig{
+		Type: "local", Enabled: true, Tier: catalog.TierCold,
+	})
 
-	_, err := svc.GetObject(callerOf("tenant-a"), &GetObjectRequest{Key: "b/only.txt"})
-	requireNotFound(t, err, "tenant-a reads tenant-b's key")
+	const key = "b/secret.txt"
+	isoPut(t, svc, "tenant-b", key, "tenant-b data", map[string]string{"team": "x"})
 
-	head, err := svc.HeadObject(callerOf("tenant-a"), &HeadObjectRequest{Key: "b/only.txt"})
-	require.NoError(t, err)
-	assert.False(t, head.Exists, "tenant-a does not see tenant-b's key exist")
-
-	_, err = svc.DeleteObject(callerOf("tenant-a"), &DeleteObjectRequest{Key: "b/only.txt"})
-	requireNotFound(t, err, "tenant-a deletes tenant-b's key")
-
-	list, err := svc.ListObjects(callerOf("tenant-a"), &ListObjectsRequest{})
-	require.NoError(t, err)
-	assert.Empty(t, list.Objects, "tenant-a lists nothing of tenant-b's")
-
-	byTag, err := svc.ListByTag(callerOf("tenant-a"), &ListByTagRequest{TagName: "team", TagValue: "x"})
-	require.NoError(t, err)
-	assert.Empty(t, byTag.Objects, "tenant-a's tag listing excludes tenant-b's objects")
-
-	got, err := svc.GetObject(callerOf("tenant-b"), &GetObjectRequest{Key: "b/only.txt"})
-	require.NoError(t, err, "tenant-b's object survived tenant-a's delete")
-	assert.Equal(t, []byte("tenant-b data"), got.Value)
-}
-
-func TestObjectStorage_KeysAreReturnedUnscoped(t *testing.T) {
-	svc, _, _, _ := createObjstoreTestService(t)
-	isoPut(t, svc, "tenant-a", "docs/one.txt", "1", map[string]string{"kind": "doc"})
-	isoPut(t, svc, "tenant-a", "docs/two.txt", "2", map[string]string{"kind": "doc"})
-	isoPut(t, svc, "tenant-b", "docs/three.txt", "3", map[string]string{"kind": "doc"})
-
-	ctx := callerOf("tenant-a")
-
-	put, err := svc.PutObject(ctx, &PutObjectRequest{Key: "docs/four.txt", Value: []byte("4")})
-	require.NoError(t, err)
-	assert.Equal(t, "docs/four.txt", put.Key)
-
-	got, err := svc.GetObject(ctx, &GetObjectRequest{Key: "docs/one.txt"})
-	require.NoError(t, err)
-	assert.Equal(t, "docs/one.txt", got.Key)
-
-	list, err := svc.ListObjects(ctx, &ListObjectsRequest{Prefix: "docs/"})
-	require.NoError(t, err)
-	assert.Equal(t, []string{"docs/four.txt", "docs/one.txt", "docs/two.txt"}, isoKeys(list.Objects))
-
-	byTag, err := svc.ListByTag(ctx, &ListByTagRequest{TagName: "kind", TagValue: "doc"})
-	require.NoError(t, err)
-	assert.Equal(t, []string{"docs/one.txt", "docs/two.txt"}, isoKeys(byTag.Objects))
-
-	byTenant, err := svc.ListByTenant(ctx, &ListByTenantRequest{TenantID: "tenant-a"})
-	require.NoError(t, err)
-	assert.Equal(t, []string{"docs/four.txt", "docs/one.txt", "docs/two.txt"}, isoKeys(byTenant.Objects))
-}
-
-func TestObjectStorage_SystemScopeSeesTenantNamespace(t *testing.T) {
-	svc, _, _, _ := createObjstoreTestService(t)
-	isoPut(t, svc, "tenant-a", "a/file.txt", "alpha", nil)
-
-	sys := callerOf(qrdbsdk.SystemTenantID)
-
-	list, err := svc.ListObjects(sys, &ListObjectsRequest{Prefix: "tenant/tenant-a/"})
-	require.NoError(t, err)
-	assert.Equal(t, []string{"tenant/tenant-a/a/file.txt"}, isoKeys(list.Objects),
-		"the system scope sees the stored, tenant-scoped key")
-
-	got, err := svc.GetObject(sys, &GetObjectRequest{Key: "tenant/tenant-a/a/file.txt"})
-	require.NoError(t, err)
-	assert.Equal(t, []byte("alpha"), got.Value)
-
-	_, err = svc.GetObject(sys, &GetObjectRequest{Key: "a/file.txt"})
-	requireNotFound(t, err, "the bare key is not a system-scope object")
-}
-
-func TestObjectStorage_BatchVerbs(t *testing.T) {
-	svc, _, _, _ := createObjstoreTestService(t)
-
-	put, err := svc.BatchPutObjects(callerOf("tenant-a"), &BatchPutObjectsRequest{
-		Objects: []*PutObjectRequest{
-			{Key: "batch/1.txt", Value: []byte("a1")},
-			{Key: "batch/2.txt", Value: []byte("a2")},
+	a := callerOf("tenant-a")
+	verbs := map[string]func() error{
+		"Get": func() error {
+			_, err := svc.GetObject(a, &GetObjectRequest{Key: key})
+			return err
 		},
-	})
-	require.NoError(t, err)
-	assert.Equal(t, 2, put.SuccessCount)
-	isoPut(t, svc, "tenant-b", "batch/1.txt", "b1", nil)
+		"Delete": func() error {
+			_, err := svc.DeleteObject(a, &DeleteObjectRequest{Key: key})
+			return err
+		},
+		"Copy (as source)": func() error {
+			_, err := svc.CopyObject(a, &CopyObjectRequest{SourceKey: key, DestinationKey: "a/stolen.txt"})
+			return err
+		},
+		"Replicate": func() error {
+			_, err := svc.ReplicateObject(a, &ReplicateObjectRequest{Key: key, Targets: []string{"cold"}, Synchronous: true})
+			return err
+		},
+		"Migrate": func() error {
+			_, err := svc.MigrateObject(a, &MigrateObjectRequest{Key: key, TargetBackend: "cold"})
+			return err
+		},
+		"Archive": func() error {
+			_, err := svc.ArchiveObject(a, &ArchiveObjectRequest{Key: key, TargetStore: "cold"})
+			return err
+		},
+		"Restore": func() error {
+			_, err := svc.RestoreObject(a, &RestoreObjectRequest{Key: key, TargetBackend: "local"})
+			return err
+		},
+		"Verify": func() error {
+			_, err := svc.VerifyObject(a, &VerifyObjectRequest{Key: key})
+			return err
+		},
+		"GetObjectPolicy": func() error {
+			_, err := svc.GetObjectPolicy(a, &GetObjectPolicyRequest{Key: key})
+			return err
+		},
+		"SetObjectPolicy": func() error {
+			_, err := svc.SetObjectPolicy(a, &SetObjectPolicyRequest{
+				Key:             key,
+				RetentionPolicy: &catalog.RetentionPolicy{},
+			})
+			return err
+		},
+	}
+	for name, call := range verbs {
+		requireNotFound(t, call(), "tenant-a "+name+" of tenant-b's key")
+	}
 
-	gotB, err := svc.BatchGetObjects(callerOf("tenant-b"), &BatchGetObjectsRequest{
-		Keys: []string{"batch/1.txt", "batch/2.txt"},
-	})
+	head, err := svc.HeadObject(a, &HeadObjectRequest{Key: key})
 	require.NoError(t, err)
-	require.Len(t, gotB.Results, 2)
-	assert.True(t, gotB.Results[0].Found)
-	assert.Equal(t, []byte("b1"), gotB.Results[0].Value, "tenant-b gets its own batch/1.txt")
-	assert.False(t, gotB.Results[1].Found, "tenant-b does not see tenant-a's batch/2.txt")
+	assert.False(t, head.Exists, "tenant-a's Head does not see tenant-b's key")
 
-	del, err := svc.BatchDeleteObjects(callerOf("tenant-b"), &BatchDeleteObjectsRequest{
-		Keys: []string{"batch/1.txt", "batch/2.txt"}, ContinueOnError: true,
-	})
-	require.NoError(t, err)
-	assert.Equal(t, 1, del.DeletedCount, "tenant-b deletes only its own key")
-	assert.Equal(t, 1, del.FailureCount)
+	for _, prefix := range []string{"", "b/"} {
+		list, err := svc.ListObjects(a, &ListObjectsRequest{Prefix: prefix})
+		require.NoError(t, err)
+		assert.Empty(t, list.Objects, "tenant-a's ListObjects with prefix %q", prefix)
+	}
 
-	gotA, err := svc.BatchGetObjects(callerOf("tenant-a"), &BatchGetObjectsRequest{
-		Keys: []string{"batch/1.txt", "batch/2.txt"},
-	})
+	byTag, err := svc.ListByTag(a, &ListByTagRequest{TagName: "team", TagValue: "x"})
 	require.NoError(t, err)
-	require.Len(t, gotA.Results, 2)
-	assert.Equal(t, []byte("a1"), gotA.Results[0].Value, "tenant-a's batch/1.txt survived")
-	assert.Equal(t, []byte("a2"), gotA.Results[1].Value, "tenant-a's batch/2.txt survived")
+	assert.Empty(t, byTag.Objects, "tenant-a's ListByTag")
+
+	byTenant, err := svc.ListByTenant(a, &ListByTenantRequest{TenantID: "tenant-a"})
+	require.NoError(t, err)
+	assert.Empty(t, byTenant.Objects, "tenant-a's ListByTenant")
+
+	assert.Equal(t, []byte("tenant-b data"), isoGetValue(t, svc, "tenant-b", key), "tenant-b still reads its object")
+}
+
+func TestObjectStorage_TenantIsolation_KeysAreReturnedUnscoped(t *testing.T) {
+	svc, _, _, _ := createObjstoreTestService(t)
+	a := callerOf("tenant-a")
+
+	put, err := svc.PutObject(a, &PutObjectRequest{Key: "dir/x.txt", Value: []byte("x")})
+	require.NoError(t, err)
+	assert.Equal(t, "dir/x.txt", put.Key, "Put")
+
+	head, err := svc.HeadObject(a, &HeadObjectRequest{Key: "dir/x.txt"})
+	require.NoError(t, err)
+	assert.True(t, head.Exists)
+	assert.Equal(t, "dir/x.txt", head.Key, "Head")
+
+	list, err := svc.ListObjects(a, &ListObjectsRequest{Prefix: "dir/"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"dir/x.txt"}, isoKeys(list.Objects), "ListObjects")
+
+	cp, err := svc.CopyObject(a, &CopyObjectRequest{SourceKey: "dir/x.txt", DestinationKey: "dir/y.txt"})
+	require.NoError(t, err)
+	assert.Equal(t, "dir/y.txt", cp.Key, "Copy")
+
+	all, err := svc.ListObjects(a, &ListObjectsRequest{})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"dir/x.txt", "dir/y.txt"}, isoKeys(all.Objects))
+	for _, k := range isoKeys(all.Objects) {
+		assert.False(t, strings.HasPrefix(k, "tenant/"), "key %q is returned unscoped", k)
+	}
+}
+
+func TestObjectStorage_TenantIsolation_SystemScopeSeesTenantNamespace(t *testing.T) {
+	svc, _, _, _ := createObjstoreTestService(t)
+	isoPut(t, svc, "tenant-a", "dir/x.txt", "alpha", nil)
+
+	list, err := svc.ListObjects(callerOf(qrdbsdk.SystemTenantID), &ListObjectsRequest{Prefix: "tenant/tenant-a/"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"tenant/tenant-a/dir/x.txt"}, isoKeys(list.Objects),
+		"the system scope lists tenant-a's object under its stored key")
+}
+
+func TestObjectStorage_TenantIsolation_BatchVerbs(t *testing.T) {
+	svc, _, _, _ := createObjstoreTestService(t)
+	isoPut(t, svc, "tenant-b", "b/1.txt", "b1", nil)
+	isoPut(t, svc, "tenant-b", "b/2.txt", "b2", nil)
+
+	a := callerOf("tenant-a")
+	keys := []string{"b/1.txt", "b/2.txt"}
+
+	got, err := svc.BatchGetObjects(a, &BatchGetObjectsRequest{Keys: keys})
+	require.NoError(t, err)
+	assert.Equal(t, 0, got.FoundCount, "tenant-a's BatchGet reads none of tenant-b's keys")
+	for _, r := range got.Results {
+		assert.False(t, r.Found, "tenant-a's BatchGet of %s", r.Key)
+		assert.Empty(t, r.Value)
+	}
+
+	del, err := svc.BatchDeleteObjects(a, &BatchDeleteObjectsRequest{Keys: keys, ContinueOnError: true})
+	require.NoError(t, err)
+	assert.Equal(t, 0, del.DeletedCount, "tenant-a's BatchDelete deletes none of tenant-b's keys")
+	assert.Equal(t, 2, del.FailureCount)
+
+	assert.Equal(t, []byte("b1"), isoGetValue(t, svc, "tenant-b", "b/1.txt"))
+	assert.Equal(t, []byte("b2"), isoGetValue(t, svc, "tenant-b", "b/2.txt"))
 }
