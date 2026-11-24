@@ -1210,25 +1210,26 @@ func TestRunnerSelect(t *testing.T) {
 		notCall  string // no called URL contains it
 		noCall   bool
 	}{
-		// Both pools below their limit: the lower use wins, a tie goes hosted.
-		{name: "an idle repository: a tie goes hosted", fix: load(), notice: "use hosted 0/12, bigdisk 0/4, bigdisk-docker 0/4; " + toHosted},
+		// Both pools below their limit: the lower use wins, a tie goes to the Dells.
+		{name: "an idle repository: a tie goes to the Dells", fix: load(), overflow: true, notice: "use hosted 0/12, bigdisk 0/4, bigdisk-docker 0/4; " + toDells},
 		{name: "hosted busier than the Dells", fix: load(h(3, "in_progress")), overflow: true, notice: "use hosted 3/12, bigdisk 0/4, bigdisk-docker 0/4; " + toDells},
-		{name: "equal use: a tie goes hosted", fix: load(h(3, "in_progress"), s1(1, "in_progress")), notice: toHosted},
+		{name: "equal use: a tie goes to the Dells", fix: load(h(3, "in_progress"), s1(1, "in_progress")), overflow: true, notice: toDells},
 		{name: "the Dells busier than hosted", fix: load(h(1, "in_progress"), s1(1, "in_progress")), notice: toHosted},
 		{name: "both kinds below hosted use", fix: load(h(6, "in_progress"), s1(1, "in_progress"), s2(1, "in_progress")), overflow: true, notice: toDells},
-		{name: "bigdisk-docker alone at hosted use", fix: load(h(6, "in_progress"), s2(2, "in_progress")), notice: toHosted},
+		{name: "bigdisk-docker alone at hosted use", fix: load(h(6, "in_progress"), s2(2, "in_progress")), overflow: true, notice: toDells},
+		{name: "bigdisk-docker alone above hosted use", fix: load(h(6, "in_progress"), s2(3, "in_progress")), notice: toHosted},
 		{name: "queued jobs count as use", fix: load(h(3, "queued")), overflow: true, notice: "use hosted 3/12"},
-		{name: "completed jobs are not counted", fix: load(h(hs, "completed"), s1(units, "completed")), notice: "use hosted 0/12, bigdisk 0/4"},
+		{name: "completed jobs are not counted", fix: load(h(hs, "completed"), s1(units, "completed")), overflow: true, notice: "use hosted 0/12, bigdisk 0/4"},
 		{name: "a self-hosted job off bigdisk is not counted", fix: load(h(1, "in_progress"), repeatJob(units, selJob(4, "in_progress", time.Minute, "self-hosted", "ci-gate"))), overflow: true, notice: "bigdisk 0/4, bigdisk-docker 0/4"},
-		{name: "this run's own jobs are not counted", fix: load(repeatJob(hs, selJob(runID, "queued", time.Hour, hosted))), notice: "use hosted 0/12", notCall: "/runs/1000/jobs"},
+		{name: "this run's own jobs are not counted", fix: load(repeatJob(hs, selJob(runID, "queued", time.Hour, hosted))), overflow: true, notice: "use hosted 0/12", notCall: "/runs/1000/jobs"},
 		// One pool full: the other pool.
 		{name: "the hosted pool full", fix: hostedFull, overflow: true, notice: "the hosted pool is full (12 of 12); " + toDells},
 		{name: "bigdisk full", fix: load(h(11, "in_progress"), s1(units, "in_progress")), notice: "the self-hosted pool is full (bigdisk 4 of 4, bigdisk-docker 0 of 4); " + toHosted},
 		{name: "bigdisk-docker full", fix: load(h(11, "in_progress"), s2(units, "in_progress")), notice: "the self-hosted pool is full (bigdisk 0 of 4, bigdisk-docker 4 of 4)"},
-		// Both full: fewer queued wins, a tie goes hosted.
+		// Both full: fewer queued wins, a tie goes to the Dells.
 		{name: "both full, hosted more queued", fix: load(h(hs, "in_progress"), h(2, "queued"), s1(units, "in_progress"), s2(1, "queued")), overflow: true, notice: "both pools full: hosted 2 queued, self-hosted 1 queued; " + toDells},
 		{name: "both full, the Dells more queued", fix: load(h(hs, "in_progress"), h(1, "queued"), s1(units, "in_progress"), s1(1, "queued"), s2(2, "queued")), notice: "both pools full: hosted 1 queued, self-hosted 3 queued; " + toHosted},
-		{name: "both full, a tie goes hosted", fix: load(h(hs, "in_progress"), s1(units, "in_progress")), notice: "both pools full: hosted 0 queued, self-hosted 0 queued"},
+		{name: "both full, a tie goes to the Dells", fix: load(h(hs, "in_progress"), s1(units, "in_progress")), overflow: true, notice: "both pools full: hosted 0 queued, self-hosted 0 queued; " + toDells},
 		// The limits.
 		{name: "CI_HOSTED_SHARE unset is 12", env: map[string]string{"HS": ""}, fix: hostedFull, overflow: true, warning: "CI_HOSTED_SHARE='' is unset, 0 or not a whole number; HS=12", notice: "the hosted pool is full (12 of 12)"},
 		{name: "CI_HOSTED_SHARE with a leading zero is decimal", env: map[string]string{"HS": "08"}, fix: load(h(8, "in_progress")), overflow: true, notice: "the hosted pool is full (8 of 8)"},
@@ -1240,7 +1241,7 @@ func TestRunnerSelect(t *testing.T) {
 		{name: "a run list over two pages", fix: paged, overflow: true, call: "page=2", notice: "the hosted pool is full"},
 		// v1.59: a listing short of its total_count is a lower bound, named in a
 		// ::notice, and the choice still uses it; only a failed call goes hosted.
-		{name: "a run list short of its total_count is a lower bound", fix: short, notice: "runs?status=in_progress: 100 of 150 entries); the counts are a lower bound", notice2: "use hosted 0/12, bigdisk 0/4, bigdisk-docker 0/4; " + toHosted},
+		{name: "a run list short of its total_count is a lower bound", fix: short, notice: "runs?status=in_progress: 100 of 150 entries); the counts are a lower bound", overflow: true, notice2: "use hosted 0/12, bigdisk 0/4, bigdisk-docker 0/4; " + toDells},
 		{name: "a short run list at the hosted share goes to the Dells", fix: shortRunsHostedFull, overflow: true, notice: "runs?status=in_progress: 1 of 2 entries", notice2: "the hosted pool is full (12 of 12); " + toDells},
 		{name: "a short job list at the hosted share goes to the Dells", fix: shortJobsHostedFull, overflow: true, notice: "runs/1/jobs?filter=latest: 12 of 17 entries", notice2: "the hosted pool is full (12 of 12); " + toDells},
 		{name: "a short run list below every limit still chooses", fix: shortRunsBelow, overflow: true, notice: "1 of 2 entries", notice2: "use hosted 3/12, bigdisk 0/4, bigdisk-docker 0/4; " + toDells},

@@ -1018,11 +1018,11 @@ jobs:
       # hosted default with a ::warning). Hosted use is H/HS; self-hosted use
       # is the larger of S1/C1 and S2/C2. Then:
       #   - both below their limit: the lower use wins, compared by
-      #     cross-multiplication (self-hosted wins only when S1*HS < H*C1 and
-      #     S2*HS < H*C2); a tie goes hosted;
+      #     cross-multiplication (self-hosted wins when S1*HS <= H*C1 and
+      #     S2*HS <= H*C2); a tie goes self-hosted;
       #   - one pool full (H >= HS; or S1 >= C1 or S2 >= C2): the other pool;
       #   - both full: the pool with fewer queued jobs (bigdisk and
-      #     bigdisk-docker together for the Dells); a tie goes hosted.
+      #     bigdisk-docker together for the Dells); a tie goes self-hosted.
       # The units are shared across repositories, so C1 and C2 can overstate
       # this repository's free room: when they are busy elsewhere its jobs
       # queue, S1 or S2 rises, and its runs go hosted.
@@ -1181,15 +1181,15 @@ jobs:
           [ "$H" -lt "$HS" ] || hfull=1
           { [ "$S1" -lt "$C1" ] && [ "$S2" -lt "$C2" ]; } || sfull=1
           if [ "$hfull" = 1 ] && [ "$sfull" = 1 ]; then
-            [ "$SQ" -lt "$HQ" ] && pick=self
+            [ "$SQ" -le "$HQ" ] && pick=self
             why="both pools full: hosted $HQ queued, self-hosted $SQ queued"
           elif [ "$hfull" = 1 ]; then
             pick=self; why="the hosted pool is full ($H of $HS)"
           elif [ "$sfull" = 1 ]; then
             why="the self-hosted pool is full (bigdisk $S1 of $C1, bigdisk-docker $S2 of $C2)"
           else
-            # self-hosted use, max(S1/C1, S2/C2), below hosted use H/HS.
-            [ $((S1 * HS)) -lt $((H * C1)) ] && [ $((S2 * HS)) -lt $((H * C2)) ] && pick=self
+            # self-hosted use, max(S1/C1, S2/C2), at or below hosted use H/HS.
+            [ $((S1 * HS)) -le $((H * C1)) ] && [ $((S2 * HS)) -le $((H * C2)) ] && pick=self
             why="use hosted $H/$HS, bigdisk $S1/$C1, bigdisk-docker $S2/$C2"
           fi
           if [ "$pick" = self ]; then

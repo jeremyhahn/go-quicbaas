@@ -219,15 +219,15 @@ jobs:
           [ "$H" -lt "$HS" ] || hfull=1
           { [ "$S1" -lt "$C1" ] && [ "$S2" -lt "$C2" ]; } || sfull=1
           if [ "$hfull" = 1 ] && [ "$sfull" = 1 ]; then
-            [ "$SQ" -lt "$HQ" ] && pick=self
+            [ "$SQ" -le "$HQ" ] && pick=self
             why="both pools full: hosted $HQ queued, self-hosted $SQ queued"
           elif [ "$hfull" = 1 ]; then
             pick=self; why="the hosted pool is full ($H of $HS)"
           elif [ "$sfull" = 1 ]; then
             why="the self-hosted pool is full (bigdisk $S1 of $C1, bigdisk-docker $S2 of $C2)"
           else
-            # self-hosted use, max(S1/C1, S2/C2), below hosted use H/HS.
-            [ $((S1 * HS)) -lt $((H * C1)) ] && [ $((S2 * HS)) -lt $((H * C2)) ] && pick=self
+            # self-hosted use, max(S1/C1, S2/C2), at or below hosted use H/HS.
+            [ $((S1 * HS)) -le $((H * C1)) ] && [ $((S2 * HS)) -le $((H * C2)) ] && pick=self
             why="use hosted $H/$HS, bigdisk $S1/$C1, bigdisk-docker $S2/$C2"
           fi
           if [ "$pick" = self ]; then
