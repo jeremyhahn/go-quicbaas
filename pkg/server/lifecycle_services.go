@@ -77,7 +77,8 @@ const servicePlaneRecoveryInterval = time.Minute
 
 // startServicePlaneRecovery runs Plane.Recover now and every
 // servicePlaneRecoveryInterval until shutdown. A plane that cannot be built
-// yet (the platform shard is not up) is retried on the next tick.
+// yet (the platform shard is not up) is retried on the next tick. Each tick
+// also lets the leader take over the service rollouts in flight.
 func (s *Server) startServicePlaneRecovery(resolve service.ServicePlaneResolver) {
 	s.stopServicePlaneRecovery()
 	ctx, stop := context.WithCancel(context.Background())
@@ -104,7 +105,7 @@ func (s *Server) runServicePlaneRecovery(ctx context.Context, resolve service.Se
 }
 
 // recoverServicePlane runs one recovery. A failure is logged; the next tick
-// retries it.
+// retries it. It then lets the leader take over the rollouts in flight.
 func (s *Server) recoverServicePlane(ctx context.Context, resolve service.ServicePlaneResolver) {
 	plane, err := resolve(ctx)
 	if err != nil {
@@ -120,6 +121,7 @@ func (s *Server) recoverServicePlane(ctx context.Context, resolve service.Servic
 	for _, svc := range recovered {
 		s.logger.Infof("service plane: recovered %s/%s halted: %s", svc.Tenant, svc.Name, svc.Reason)
 	}
+	s.resumeServicePlaneRollouts(ctx, plane)
 }
 
 // stopServicePlaneRecovery stops the recovery loop and waits for it.

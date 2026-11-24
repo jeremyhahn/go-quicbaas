@@ -1,6 +1,8 @@
 package server
 
 import (
+	"context"
+	"errors"
 	"strconv"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
@@ -31,6 +33,39 @@ func (s *Server) servicePlaneRoller(rt service.ServicePlaneRuntime, plane *servi
 		ID: s.servicePlaneRollerID(), Guard: guard, KV: kv, Leader: leader, Verifier: keyring,
 		Strategy: rollout.NewPlaneStrategy(plane, rt.Appraiser),
 	}}
+}
+
+// servicePlaneResumer is the Roller the node's recovery asks to take over
+// rollouts in flight; rollout.PlaneRoller is one.
+type servicePlaneResumer interface {
+	ResumeAll(ctx context.Context) ([]*rollout.Slots, error)
+}
+
+// resumeServicePlaneRollouts takes over the rollouts in flight when the
+// plane has the node's rollout controller and this node leads. A plane
+// with no Roller, or a follower, does nothing.
+func (s *Server) resumeServicePlaneRollouts(ctx context.Context, plane *serviceplane.Plane) {
+	if plane == nil {
+		return
+	}
+	resumer, ok := plane.Roller().(servicePlaneResumer)
+	if !ok {
+		return
+	}
+	resumed, err := resumer.ResumeAll(ctx)
+	if err != nil && !errors.Is(err, rollout.ErrNotLeader) {
+		s.logger.WithError(err).Warn("service plane: rollouts in flight not all resumed")
+	}
+	for _, slots := range resumed {
+		if slots == nil {
+			continue
+		}
+		phase := rollout.Phase("")
+		if slots.Rollout != nil {
+			phase = slots.Rollout.Phase
+		}
+		s.logger.Infof("service plane: resumed the rollout of %s/%s: %s", slots.Tenant, slots.Service, phase)
+	}
 }
 
 // servicePlaneRollerID names the node's controller in the rollouts it
