@@ -61,6 +61,8 @@ config.local.json
 *.key
 *.pem
 *.crt
+# A public RSA-1024 CSR test fixture (no private key), generated outside FIPS mode.
+!pkg/service/testdata/admin_csr_rsa1024.pem
 
 # Debug and profiling
 *.prof
