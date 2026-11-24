@@ -172,7 +172,7 @@ func TestGRPCPhase2_PEP_CheckBatch_Success(t *testing.T) {
 	}
 	srv := NewPEPServer(svc, log)
 
-	resp, err := srv.CheckBatch(context.Background(), &iampb.CheckBatchRequest{
+	resp, err := srv.CheckBatch(tenantctx.WithTenant(context.Background(), "t1"), &iampb.CheckBatchRequest{
 		Subject:   &iampb.Subject{Id: "user-1"},
 		Action:    "read",
 		Resources: []string{"doc:1", "doc:2", "doc:3"},
@@ -229,7 +229,7 @@ func TestGRPCPhase2_PEP_CheckBatch_ServiceError(t *testing.T) {
 	}
 	srv := NewPEPServer(svc, log)
 
-	_, err := srv.CheckBatch(context.Background(), &iampb.CheckBatchRequest{
+	_, err := srv.CheckBatch(tenantctx.WithTenant(context.Background(), "t1"), &iampb.CheckBatchRequest{
 		Subject:   &iampb.Subject{Id: "user-1"},
 		Action:    "read",
 		Resources: []string{"doc:1"},

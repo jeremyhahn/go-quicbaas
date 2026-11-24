@@ -37,7 +37,7 @@ func TestPolicyCRUD(t *testing.T) {
 	cluster := base.asSystemAdmin()
 
 	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	defer deleteTenantUnlessShared(cluster, tenantID)
 
 	policyName := "test-policy"
 
@@ -169,7 +169,7 @@ func TestPolicyValidation(t *testing.T) {
 	cluster := base.asSystemAdmin()
 
 	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	defer deleteTenantUnlessShared(cluster, tenantID)
 
 	tests := []struct {
 		name        string
@@ -313,7 +313,7 @@ func TestPolicyEvaluation(t *testing.T) {
 	cluster := base.asSystemAdmin()
 
 	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	defer deleteTenantUnlessShared(cluster, tenantID)
 	resolver := base.asResolver(t, tenantID)
 
 	// Create a policy
@@ -380,7 +380,7 @@ func TestPolicyPriority(t *testing.T) {
 	cluster := base.asSystemAdmin()
 
 	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	defer deleteTenantUnlessShared(cluster, tenantID)
 	resolver := base.asResolver(t, tenantID)
 
 	// Create high-priority deny policy
@@ -467,7 +467,7 @@ func TestPolicyConditions(t *testing.T) {
 	cluster := base.asSystemAdmin()
 
 	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	defer deleteTenantUnlessShared(cluster, tenantID)
 	resolver := base.asResolver(t, tenantID)
 
 	t.Run("AttributeCondition", func(t *testing.T) {
@@ -542,7 +542,7 @@ func TestPolicyResourcePatterns(t *testing.T) {
 	cluster := base.asSystemAdmin()
 
 	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	defer deleteTenantUnlessShared(cluster, tenantID)
 	resolver := base.asResolver(t, tenantID)
 
 	policy := map[string]interface{}{
@@ -619,7 +619,7 @@ func TestPolicyTimeConditions(t *testing.T) {
 	cluster := base.asSystemAdmin()
 
 	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	defer deleteTenantUnlessShared(cluster, tenantID)
 
 	policy := map[string]interface{}{
 		"apiVersion": "abac.quicbaas.io/v1",
@@ -669,7 +669,7 @@ func TestPolicyNetworkConditions(t *testing.T) {
 	cluster := base.asSystemAdmin()
 
 	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	defer deleteTenantUnlessShared(cluster, tenantID)
 
 	// First, update tenant with named networks
 	tenantUpdate := map[string]interface{}{
