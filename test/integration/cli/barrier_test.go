@@ -357,10 +357,9 @@ func findBarrierRepoRoot() (string, error) {
 // strategy REJECTS them. These are throwaway test credentials — the
 // per-test daemon has no PINBackend, so they only satisfy the init flag
 // contract and are never consulted at runtime.
-const (
-	defaultBarrierSOPin   = "SO-PIN-TEST-0001"
-	defaultBarrierUserPin = "USER-PIN-TEST-0001"
-)
+// defaultBarrierSOPin is declared in barrier_commands.go, a non-test file,
+// because barrierSealSOPinEnv there uses it too.
+const defaultBarrierUserPin = "USER-PIN-TEST-0001"
 
 // barrierDaemonOptions parameterises the per-test daemon's `quicbaasd
 // init` ceremony. The CONFIRMED model is server-init-first: the daemon is

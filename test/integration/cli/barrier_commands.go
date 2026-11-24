@@ -371,6 +371,15 @@ func BarrierUnsealSharesNoInputsCommand() CommandDef {
 // Seal verb
 // =============================================================================
 
+// Default SO/User PIN values used by the per-test daemon's init ceremony.
+// The canonical init flow REQUIRES --so-pin/--user-pin for any
+// barrier-enabled strategy (software/shamir); the no-barrier "none"
+// strategy REJECTS them. These are throwaway test credentials — the
+// per-test daemon has no PINBackend, so they only satisfy the init flag
+// contract and are never consulted at runtime. defaultBarrierUserPin is
+// declared in barrier_test.go.
+const defaultBarrierSOPin = "SO-PIN-TEST-0001"
+
 // barrierSealSOPinEnv is the environment every network `barrier seal` in
 // the suite runs with: the server verifies the SO PIN that init provisioned
 // (defaultBarrierSOPin) before it seals, and the CLI reads it from
