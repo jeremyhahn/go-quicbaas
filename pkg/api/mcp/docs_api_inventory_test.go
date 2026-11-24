@@ -21,6 +21,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // apiDocToolToken matches a documented tool name in the API reference: an
@@ -88,16 +90,10 @@ func TestAPIDoc_ToolInventoryMatchesServedSurface(t *testing.T) {
 	}
 	reportAPIDocOffenders(t, "documented tools the server does not serve", phantom)
 
+	sources := packageSourcesExcludingMappingTables(t)
 	var emptyFamilies []string
 	for _, prefix := range families {
-		found := false
-		for name := range served {
-			if strings.HasPrefix(name, prefix) {
-				found = true
-				break
-			}
-		}
-		if !found {
+		if !documentedFamilyServed(prefix, served, sources) {
 			emptyFamilies = append(emptyFamilies, prefix+"*")
 		}
 	}
@@ -121,9 +117,76 @@ func TestAPIDoc_ToolInventoryMatchesServedSurface(t *testing.T) {
 	reportAPIDocOffenders(t, "public tools not named exactly in api.md", publicMissing)
 }
 
+// TestAPIDoc_DocumentedFamilyServed pins the cross-configuration rule for
+// documented tool families: a family counts when the compiled registry
+// serves a tool with its prefix, or when a package source registers a tool
+// literal with that prefix under another build configuration.
+func TestAPIDoc_DocumentedFamilyServed(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		prefix  string
+		served  map[string]bool
+		sources map[string]string
+		want    bool
+	}{
+		{
+			name:    "prefix served by the compiled registry",
+			prefix:  "quicbaas_alpha_",
+			served:  map[string]bool{"quicbaas_alpha_list": true},
+			sources: map[string]string{"other.go": `const x = "quicbaas_beta_get"`},
+			want:    true,
+		},
+		{
+			name:    "prefix only in a package source literal",
+			prefix:  "quicbaas_alpha_",
+			served:  map[string]bool{"quicbaas_beta_get": true},
+			sources: map[string]string{"alpha_tools.go": `const name = "quicbaas_alpha_query"`},
+			want:    true,
+		},
+		{
+			name:    "prefix in neither registry nor sources",
+			prefix:  "quicbaas_alpha_",
+			served:  map[string]bool{"quicbaas_beta_get": true},
+			sources: map[string]string{"other.go": `// mentions quicbaas_alpha_ without a literal`},
+			want:    false,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tc.want, documentedFamilyServed(tc.prefix, tc.served, tc.sources))
+		})
+	}
+}
+
 func hasAnyPrefix(name string, prefixes []string) bool {
 	for _, prefix := range prefixes {
 		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// documentedFamilyServed reports whether a documented tool family (a name
+// prefix such as "quicbaas_rag_") is served. It applies the package's
+// cross-configuration rule, as TestMCPPermissions_EveryMappedToolIsRegistered
+// does: a family counts when the compiled registry serves a tool with the
+// prefix, or when a non-test package source carries a tool-name literal that
+// opens with it. Build tags are ignored on purpose, so a family registered
+// only under an optional tag (rag) still counts in a pass without that tag,
+// while a prefix that nothing in the package registers still fails.
+func documentedFamilyServed(prefix string, served map[string]bool, sources map[string]string) bool {
+	for name := range served {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	literal := `"` + prefix
+	for _, body := range sources {
+		if strings.Contains(body, literal) {
 			return true
 		}
 	}
