@@ -140,10 +140,17 @@ write's token, the write landed and the fence read follows as usual. Otherwise
 the bind moves the binding slot to bytes the pending write did not read: a void
 marker in an empty slot, or the held record with a fresh write token. Every
 binding write is a compare-and-swap on the bytes it read, so the pending write
-can no longer apply. A fresh bind that did not land forgets its route, and the
-bind returns the write's own error. A settle that cannot be written returns
-`sdlc.BindWithdrawError`. A void marker reads as no binding, listing skips it,
-and the next bind of the project replaces it.
+can no longer apply. A fresh bind that did not land forgets its route while no
+binding holds the slot, and the bind returns the write's own error. A settle
+that cannot be written returns `sdlc.BindWithdrawError`. A void marker reads as
+no binding, listing skips it, and the next bind of the project replaces it. An
+unbind or a withdrawal also leaves a void marker in place of the binding, never
+an empty slot, so no earlier pending create can apply.
+
+A project delete is guarded on the bytes it read in the same way. A delete that
+fails is settled before its fence clears: the project is re-stamped with a
+guarded swap, so a delete still pending can no longer apply. A store that cannot
+settle leaves the fence held.
 
 ## Identity: id, name and source repository
 
