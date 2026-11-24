@@ -1223,12 +1223,19 @@ func (s *Server) startKMS() error {
 		s.ownsXKMS = true
 	}
 
+	keyOwnerStore, err := kmsKeyOwnerStore(backendName, keyStorage, func() (xkmssdk.StorageBackend, error) {
+		return s.kmsReplicatedKeyOwnerStore(keyStorage)
+	})
+	if err != nil {
+		return api.NewOperationFailedError("open KMS key owner store", err)
+	}
+
 	// Create BackendFactory to manage multiple backends via registry
 	factory, err := newKMSBackendFactory(&kms.BackendFactoryConfig{
 		Logger:              logAdapter,
 		EnabledBackends:     s.config.KMS.EnabledBackends,
 		HealthCheckInterval: 30,
-		KeyNameStore:        keyStorage,
+		KeyNameStore:        keyOwnerStore,
 	})
 	if err != nil {
 		return api.NewOperationFailedError("create backend factory", err)
@@ -1264,6 +1271,41 @@ func (s *Server) startKMS() error {
 	}).Info("KMS manager initialized with backend registry")
 
 	return nil
+}
+
+// kmsKeyOwnerStore picks where the XKMS ownership proofs and key-name markers
+// live: the node-local store for backends whose key material is on this node,
+// the replicated store for backends every node shares.
+func kmsKeyOwnerStore(backendName string, local xkmssdk.StorageBackend, replicated func() (xkmssdk.StorageBackend, error)) (xkmssdk.StorageBackend, error) {
+	switch backendName {
+	case "software", "tpm2", "quantum":
+		return local, nil
+	}
+	store, err := replicated()
+	if err != nil {
+		return nil, err
+	}
+	return store, nil
+}
+
+// kmsReplicatedKeyOwnerStore opens the key owner store on the replicated
+// cluster shard. startKMS runs before the sharded client exists, so it builds
+// one from the running qrdb node; with neither it returns local.
+func (s *Server) kmsReplicatedKeyOwnerStore(local xkmssdk.StorageBackend) (xkmssdk.StorageBackend, error) {
+	client := s.qrdbClient
+	if client == nil {
+		node := s.getQRDBNode()
+		if node == nil {
+			s.logger.Warn("No qrdb node: KMS key ownership proofs stay on this node")
+			return local, nil
+		}
+		client = newNodeBackedShardedClient(node)
+	}
+	shardClient, err := client.ForShard(clusterCAShardID)
+	if err != nil {
+		return nil, err
+	}
+	return xkmssdk.NewStoragePrefixBackend(xkmssdk.NewQRDBStorageBackend(shardClient.KV()), "kms-key-owners/")
 }
 
 // startSecrets initializes the secrets manager unconditionally when the
