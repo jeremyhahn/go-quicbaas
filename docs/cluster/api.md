@@ -1,6 +1,6 @@
 # Cluster — API
 
-> **Status: NORMATIVE** · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Last verified: 2026-11-24
 > The capability on every transport, with permissions. Feature folder: `docs/cluster/`.
 
 
@@ -74,12 +74,17 @@ between the caller and go-qrdb. The types are aliases declared in
 
 | Accessor | go-qrdb type | REST / QUIC / MCP | gRPC / Unix | Embedded (`WithEmbeddedQRDB`) |
 |---|---|---|---|---|
-| `QRDBCluster()` | `*sdk.ClusterClient` (`QRDBClusterClient`) | yes, no bearer | yes, no bearer | yes; `AddReplica`, `RemoveReplica`, `Members` and `Leader` go to the Admin servicer |
-| `QRDBMembership()` | `*sdk.Client` as `QRDBMembershipClient` | yes, no bearer | yes, no bearer | reconfigurer only. The membership store, manager and node advertiser need lease, watch and MVCC servicers, which `QRDBEmbeddedServicers` does not carry, so their calls fail with go-qrdb's `NilServiceError` |
-| `QRDBRebalance()` | `transport.RebalanceClient` (`QRDBRebalanceClient`) | yes, no bearer | yes; the `WithAuthToken` bearer rides each call as `authorization` metadata | refused with `errors.QRDBRebalanceUnsupportedError` (`CodeUnimplemented`) |
+| `QRDBCluster()` | `*sdk.ClusterClient` (`QRDBClusterClient`) | yes without `WithAuthToken`; with a token, refused with InvalidInput (the transport cannot carry the bearer to go-qrdb) | yes; the `WithAuthToken` bearer rides each call as `authorization` metadata | yes; `AddReplica`, `RemoveReplica`, `Members` and `Leader` go to the Admin servicer |
+| `QRDBMembership()` | `*sdk.Client` as `QRDBMembershipClient` | yes without `WithAuthToken`; with a token, refused with InvalidInput (the transport cannot carry the bearer to go-qrdb) | yes; the `WithAuthToken` bearer rides each call as `authorization` metadata, including the calls of the built manager, store, reconfigurer and advertiser | reconfigurer only. The membership store, manager and node advertiser need lease, watch and MVCC servicers, which `QRDBEmbeddedServicers` does not carry, so their calls fail with go-qrdb's `NilServiceError` |
+| `QRDBRebalance()` | `transport.RebalanceClient` (`QRDBRebalanceClient`) | yes without `WithAuthToken`; with a token, refused with InvalidInput (the transport cannot carry the bearer to go-qrdb) | yes; the `WithAuthToken` bearer rides each call as `authorization` metadata | refused with `errors.QRDBRebalanceUnsupportedError` (`CodeUnimplemented`) |
 
-- "no bearer": go-qrdb's SDK transport config has no auth option, so a server
-  that requires a bearer refuses these calls on that transport.
+- Refused with a token: go-qrdb v0.30.1-alpha's REST, QUIC and MCP transports
+  take no auth option, so a `WithAuthToken` token there is refused with
+  InvalidInput rather than silently dropped. This follows the
+  `Search().QRDBTimeSeries` convention. Carrying the bearer there waits on a
+  go-qrdb transport option, which needs a pin bump.
+- Embedded: no token is forwarded. With `WithEmbeddedQRDB` the calls stay in
+  process, so `WithAuthToken` neither rides them nor causes a refusal.
 - `TransportEmbedded` without `WithEmbeddedQRDB` fails all three accessors with
   an InvalidInput error.
 - Membership managers are built over a network transport, or on the node
