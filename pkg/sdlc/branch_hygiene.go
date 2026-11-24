@@ -36,11 +36,21 @@ type ForgeBranchInventory interface {
 	// BranchContained reports whether base already carries headSHA, so
 	// that deleting a branch at headSHA loses no commit.
 	BranchContained(ctx context.Context, repo RepoRef, base, headSHA string) (bool, error)
+
+	// DeleteBranchAt deletes name only while it points at sha, a condition
+	// the forge enforces in the same operation as the delete. It returns
+	// an error wrapping ErrBranchMoved when the branch points elsewhere,
+	// and one wrapping ErrNotFound when it is already gone.
+	DeleteBranchAt(ctx context.Context, repo RepoRef, name, sha string) error
 }
 
 // ErrBranchInventoryUnsupported is returned by SweepBranches when the forge
 // does not implement ForgeBranchInventory.
 var ErrBranchInventoryUnsupported = errors.New("forge does not serve a branch inventory")
+
+// ErrBranchMoved is returned by DeleteBranchAt when the branch no longer
+// points at the tip it was asked to delete.
+var ErrBranchMoved = errors.New("branch moved from the expected tip")
 
 // FactoryBranchPrefixes are the prefixes the factory names its branches
 // under (see issueBranch). A sweep looks at no other branch, so the default

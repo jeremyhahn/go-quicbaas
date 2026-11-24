@@ -38,6 +38,8 @@ type sweepForge struct {
 
 	// moved is the tip GetBranch reports in place of the listed one.
 	moved map[string]string
+	// movedAtDelete is the tip a push left after the sweep's last read.
+	movedAtDelete map[string]string
 
 	deleteErr map[string]error
 	deleted   []string
@@ -72,6 +74,34 @@ func (f *sweepForge) GetBranch(_ context.Context, _ RepoRef, name string) (*Forg
 func (f *sweepForge) DeleteBranch(_ context.Context, _ RepoRef, name string) error {
 	if err := f.deleteErr[name]; err != nil {
 		return err
+	}
+	f.deleted = append(f.deleted, name)
+	return nil
+}
+
+// DeleteBranchAt deletes name only while its current tip is sha. The
+// current tip is movedAtDelete, else moved, else the listed one.
+func (f *sweepForge) DeleteBranchAt(_ context.Context, _ RepoRef, name, sha string) error {
+	if err := f.deleteErr[name]; err != nil {
+		return err
+	}
+	current, present := "", false
+	for _, b := range f.branches {
+		if b.Name == name && !slices.Contains(f.deleted, name) {
+			current, present = b.SHA, true
+		}
+	}
+	if !present {
+		return fmt.Errorf("branch %s: %w", name, ErrNotFound)
+	}
+	if tip, ok := f.moved[name]; ok {
+		current = tip
+	}
+	if tip, ok := f.movedAtDelete[name]; ok {
+		current = tip
+	}
+	if current != sha {
+		return fmt.Errorf("branch %s: %w", name, ErrBranchMoved)
 	}
 	f.deleted = append(f.deleted, name)
 	return nil
@@ -183,6 +213,26 @@ func TestSweepBranches_LeaseKeepsMovedBranch(t *testing.T) {
 	}
 	if len(sweep.Kept) != 1 || sweep.Kept[0] != (BranchKept{Name: "issue/4", Reason: BranchKeptMoved}) {
 		t.Errorf("kept = %+v", sweep.Kept)
+	}
+}
+
+// A push that lands after the sweep's last read of the branch must not be
+// deleted: the delete itself is conditional on the listed tip.
+func TestSweepBranches_LeaseKeepsBranchMovedAfterRead(t *testing.T) {
+	forge := &sweepForge{
+		branches:      []ForgeBranch{{Name: "issue/4", SHA: "old"}},
+		contained:     map[string]bool{"main...old": true},
+		movedAtDelete: map[string]string{"issue/4": "new"},
+	}
+	sweep := sweepOrFail(t, forge, BranchSweepInput{})
+	if len(forge.deleted) != 0 || len(sweep.Deleted) != 0 {
+		t.Fatalf("deleted = %v (sweep %v), want a branch moved after the read kept", forge.deleted, sweep.Deleted)
+	}
+	if len(sweep.Kept) != 1 || sweep.Kept[0] != (BranchKept{Name: "issue/4", Reason: BranchKeptMoved}) {
+		t.Errorf("kept = %+v, want issue/4 kept as moved", sweep.Kept)
+	}
+	if len(sweep.Failed) != 0 {
+		t.Errorf("failed = %+v, want none", sweep.Failed)
 	}
 }
 

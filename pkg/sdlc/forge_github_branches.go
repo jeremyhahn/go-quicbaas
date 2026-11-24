@@ -85,3 +85,9 @@ func (g *GitHubBackend) BranchContained(ctx context.Context, repo RepoRef, base,
 		}
 	}
 }
+
+// DeleteBranchAt deletes name only while it points at sha. It is not
+// implemented yet.
+func (g *GitHubBackend) DeleteBranchAt(_ context.Context, _ RepoRef, _, _ string) error {
+	return ErrBranchInventoryUnsupported
+}
