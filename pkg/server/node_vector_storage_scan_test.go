@@ -469,6 +469,55 @@ func TestListAllVectors_CountPreservingDirectWriteBetweenPages(t *testing.T) {
 	}
 }
 
+// TestListAllVectors_DirectUpdateOfKeptVectorRestarts updates a vector the
+// first page already served, directly in storage: the IDs and count stay the
+// same, so only the version re-read can see it, and the scan starts over.
+func TestListAllVectors_DirectUpdateOfKeptVectorRestarts(t *testing.T) {
+	f := newFakeScanVectorClient(1500)
+	f.versions = make(map[uint64]uint64)
+	for _, id := range f.ids {
+		f.versions[id] = 1
+	}
+	f.mutateAt = 2
+	f.mutate = func(f *fakeScanVectorClient) { f.versions[5] = 2 }
+
+	all, err := listAllVectors(context.Background(), f, &qrdbtransport.ListVectorsRequest{Namespace: "ns"}, &vectorScanSnapshots{})
+	require.NoError(t, err)
+	require.Len(t, all, 1500)
+	for i, v := range all {
+		require.Equal(t, uint64(i+1), v.ID, "index %d", i)
+	}
+	assert.Equal(t, uint64(2), all[4].Version, "ID 5 at its updated version")
+	assert.Greater(t, f.getCalls, 1500, "the first verification failed and a second one ran")
+}
+
+// TestListAllVectors_VerifyStopsOnCanceledContext ends the context during
+// the verification re-reads: the scan returns the context's error.
+func TestListAllVectors_VerifyStopsOnCanceledContext(t *testing.T) {
+	f := newFakeScanVectorClient(1500)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f.getHook = func(*fakeScanVectorClient, uint64) { cancel() }
+
+	all, err := listAllVectors(ctx, f, &qrdbtransport.ListVectorsRequest{Namespace: "ns"}, nil)
+	require.ErrorIs(t, err, context.Canceled)
+	require.NotErrorIs(t, err, errIncompleteVectorScan)
+	require.Nil(t, all)
+}
+
+// TestListAllVectors_VectorGoneEveryPassFails lists a vector that storage
+// never returns by ID: every verification fails, and the scan refuses with
+// errIncompleteVectorScan instead of returning the set.
+func TestListAllVectors_VectorGoneEveryPassFails(t *testing.T) {
+	f := newFakeScanVectorClient(1500)
+	f.gone = map[uint64]bool{7: true}
+
+	all, err := listAllVectors(context.Background(), f, &qrdbtransport.ListVectorsRequest{Namespace: "ns"}, nil)
+	require.ErrorIs(t, err, errIncompleteVectorScan)
+	require.Nil(t, all)
+	assert.LessOrEqual(t, f.getCalls, nodeScanMaxPasses*7, "each pass stops verifying at the gone vector")
+}
+
 func TestListAllVectors_WriteInFlightIsNotAccepted(t *testing.T) {
 	f := newFakeScanVectorClient(1500)
 	var s vectorScanSnapshots
