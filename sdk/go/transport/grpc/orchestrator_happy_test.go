@@ -127,6 +127,26 @@ func (f *fakeOrchestratorServer) DeleteTask(context.Context, *pb.DeleteTaskReque
 	}
 	return &pb.DeleteTaskResponse{TaskId: "t1", Deleted: true}, nil
 }
+
+func (f *fakeOrchestratorServer) SubmitTaskArtifacts(_ context.Context, req *pb.SubmitTaskArtifactsRequest) (*pb.SubmitTaskArtifactsResponse, error) {
+	if err := f.e(); err != nil {
+		return nil, err
+	}
+	return &pb.SubmitTaskArtifactsResponse{TaskId: req.TaskId, Stored: int32(len(req.Artifacts))}, nil
+}
+
+func (f *fakeOrchestratorServer) GetTaskArtifact(_ context.Context, req *pb.GetTaskArtifactRequest) (*pb.GetTaskArtifactResponse, error) {
+	if err := f.e(); err != nil {
+		return nil, err
+	}
+	return &pb.GetTaskArtifactResponse{Artifact: &pb.Artifact{
+		Kind:     "commit",
+		Name:     req.Name,
+		MimeType: "text/plain",
+		Content:  []byte("hello"),
+		Ref:      &pb.ArtifactRef{AgentId: "a1", Path: "out.txt", Sha: "abc123", Branch: "main"},
+	}}, nil
+}
 func (f *fakeOrchestratorServer) ReadmitTask(context.Context, *pb.ReadmitTaskRequest) (*pb.ReadmitTaskResponse, error) {
 	if err := f.e(); err != nil {
 		return nil, err
@@ -276,6 +296,8 @@ var orchCases = []orchCase{
 	{"GetJobStatus", "GetJobStatus", &orchestrator.GetJobStatusRequest{JobID: "j1"}},
 	{"ListJobs", "ListJobs", &orchestrator.ListJobsRequest{}},
 	{"CancelJob", "CancelJob", &orchestrator.CancelJobRequest{JobID: "j1"}},
+	{"SubmitTaskArtifacts", "SubmitTaskArtifacts", &orchestrator.SubmitTaskArtifactsRequest{TenantID: "t1", TaskID: "t1", Artifacts: []*orchestrator.TaskArtifact{{Name: "a"}}}},
+	{"GetTaskArtifact", "GetTaskArtifact", &orchestrator.GetTaskArtifactRequest{TenantID: "t1", TaskID: "t1", Name: "a"}},
 	{"GetSessionHistory", "GetSessionHistory", &orchestrator.GetSessionHistoryRequest{SessionID: "s1", Limit: 1}},
 	{"Inference", "Inference", &orchestrator.InferenceRequest{Backend: "claude", Prompt: "hi"}},
 }
