@@ -1657,7 +1657,7 @@ clients and use `/api/v1/iam/refresh`.
 - `quicbaas auth login` writes `access_token`, `refresh_token`, `expires_at`,
   and `token_type` into the `cli.TokenData` envelope at `~/.quicbaas/token` on
   every successful login, and prints no token to stdout unless `--show-token`
-  is passed (owner ruling on #58). `--save-token` is deprecated and ignored:
+  is passed. `--save-token` is deprecated and ignored:
   storing the credential is unconditional.
 - `loadStoredAuthToken()` resolves through `cli.TokenManager`: a token inside
   the skew window is renewed first and the rotated pair is written back.
@@ -2364,8 +2364,7 @@ a new tenant and become its first user through a WebAuthn ceremony. Configure
 it under `iam.self_service_registration`:
 
 - `enabled` defaults to `false`. Onboarding is then invite-only: a system
-  administrator provisions the tenant and its first admin (owner ruling
-  2026-09-01), and both endpoints answer 403.
+  administrator provisions the tenant and its first admin, and both endpoints answer 403.
 - `default_role` is one of `Admin`, `Operator`, `User`, `Auditor`, `Custodian`
   or `SO`, and defaults to `User`.
 
