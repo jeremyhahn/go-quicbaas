@@ -29,8 +29,7 @@ import (
 	"github.com/google/go-tpm/tpm2"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
-	"github.com/jeremyhahn/go-xkms/pkg/attestation/evidence"
-	"github.com/jeremyhahn/go-xkms/pkg/attestation/refvalue"
+	"github.com/jeremyhahn/go-xkms/sdk/go/evidence"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
@@ -608,7 +607,7 @@ func (s *attestationService) PutReferenceValues(ctx context.Context, req *PutRef
 
 // verifyCoRIM verifies a signed CoRIM against the tenant's reference-signer
 // endorsements: CA certificates as the x5chain roots, then each pinned key.
-func (s *attestationService) verifyCoRIM(ctx context.Context, store AttestationStore, signed []byte) (*refvalue.Manifest, error) {
+func (s *attestationService) verifyCoRIM(ctx context.Context, store AttestationStore, signed []byte) (*evidence.ReferenceManifest, error) {
 	signers, err := s.loadEndorsements(ctx, store, EndorsementReferenceSigner)
 	if err != nil {
 		return nil, err
@@ -633,7 +632,7 @@ func (s *attestationService) verifyCoRIM(ctx context.Context, store AttestationS
 		haveRoots = true
 	}
 	if haveRoots {
-		manifest, err := refvalue.VerifySigned(signed, refvalue.VerifyOptions{Roots: roots, Now: now})
+		manifest, err := evidence.VerifySignedCoRIM(signed, evidence.CoRIMVerifyOptions{Roots: roots, Now: now})
 		if err == nil {
 			return manifest, nil
 		}
@@ -648,7 +647,7 @@ func (s *attestationService) verifyCoRIM(ctx context.Context, store AttestationS
 			failures = append(failures, err)
 			continue
 		}
-		manifest, err := refvalue.VerifySigned(signed, refvalue.VerifyOptions{PublicKey: key, Now: now})
+		manifest, err := evidence.VerifySignedCoRIM(signed, evidence.CoRIMVerifyOptions{PublicKey: key, Now: now})
 		if err == nil {
 			return manifest, nil
 		}
@@ -667,7 +666,7 @@ func (s *attestationService) verifyCoRIM(ctx context.Context, store AttestationS
 var referenceBanks = []crypto.Hash{crypto.SHA256, crypto.SHA384, crypto.SHA512}
 
 // referenceValuesRecord builds the stored record of a verified CoRIM.
-func referenceValuesRecord(name string, signed []byte, manifest *refvalue.Manifest, storedAt time.Time) (*ReferenceValues, error) {
+func referenceValuesRecord(name string, signed []byte, manifest *evidence.ReferenceManifest, storedAt time.Time) (*ReferenceValues, error) {
 	indices := map[uint32]bool{}
 	for _, hash := range referenceBanks {
 		digests, err := manifest.PCRDigests(hash)

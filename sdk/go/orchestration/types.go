@@ -59,7 +59,7 @@
 package orchestration
 
 import (
-	xkmstpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
+	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	pkgorch "github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
@@ -222,13 +222,13 @@ type HostTPM = pkgorch.HostTPM
 
 // TPMQuote is the go-xkms TPM 2.0 quote returned by HostTPM.Quote. Re-exported
 // so a consumer can implement HostTPM without importing go-xkms directly.
-type TPMQuote = xkmstpm2.Quote
+type TPMQuote = xkmssdk.Quote
 
 // PCRBank is a go-xkms PCR bank returned by HostTPM.ReadPCRs.
-type PCRBank = xkmstpm2.PCRBank
+type PCRBank = xkmssdk.PCRBank
 
 // PCR is a single go-xkms PCR index/value pair carried in a PCRBank.
-type PCR = xkmstpm2.PCR
+type PCR = xkmssdk.PCR
 
 // ContainerAttestation is the self-contained evidence produced by
 // AttestingContainerRuntime.Attest: quote, nonce, PCR values and the identity
@@ -246,7 +246,7 @@ type AttestingContainerRuntime = pkgorch.AttestingContainerRuntime
 
 // TPMAttestingRuntime is the standalone Tier 1 / Tier 2 runtime: it delegates
 // container operations to a base runtime and adds host attestation and
-// measured launch by composing go-xkms pkg/tpm2.
+// measured launch by composing the go-xkms SDK's TPM.
 type TPMAttestingRuntime = pkgorch.TPMAttestingRuntime
 
 // NewTPMAttestingRuntime wraps base with TPM-backed attestation. base supplies
@@ -588,7 +588,7 @@ var (
 
 // go-xkms types named by HostTPM.
 var (
-	_ xkmstpm2.Quote   = TPMQuote{}
-	_ xkmstpm2.PCRBank = PCRBank{}
-	_ xkmstpm2.PCR     = PCR{}
+	_ xkmssdk.Quote   = TPMQuote{}
+	_ xkmssdk.PCRBank = PCRBank{}
+	_ xkmssdk.PCR     = PCR{}
 )

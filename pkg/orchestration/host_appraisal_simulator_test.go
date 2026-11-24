@@ -22,7 +22,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/attestation/evidence"
+	"github.com/jeremyhahn/go-xkms/sdk/go/evidence"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service/attestationtest"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/tpmsim"

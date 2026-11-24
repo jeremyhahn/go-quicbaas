@@ -29,9 +29,8 @@ import (
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
-	xkmsevidence "github.com/jeremyhahn/go-xkms/pkg/attestation/evidence"
-	xkmstpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
+	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
+	xkmsevidence "github.com/jeremyhahn/go-xkms/sdk/go/evidence"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service/attestationtest"
 )
@@ -175,7 +174,7 @@ func encodeTPMSAttestSelections(t *testing.T, nonce []byte, selections []testSel
 
 	writeUint32(uint32(len(selections)))
 	for _, selection := range selections {
-		algID, err := xkmstpm2.ParsePCRBankAlgID(selection.bank)
+		algID, err := xkmssdk.ParsePCRBankAlgID(selection.bank)
 		if err != nil {
 			t.Fatalf("ParsePCRBankAlgID(%q): %v", selection.bank, err)
 		}
@@ -198,7 +197,7 @@ func encodeTPMSAttestSelections(t *testing.T, nonce []byte, selections []testSel
 func quotePCRDigest(t *testing.T, bank string, values [][]byte) []byte {
 	t.Helper()
 
-	hash, err := xkmstpm2.ParsePCRBankCryptoHash(bank)
+	hash, err := xkmssdk.ParsePCRBankCryptoHash(bank)
 	if err != nil {
 		t.Fatalf("ParsePCRBankCryptoHash(%q): %v", bank, err)
 	}
@@ -235,14 +234,14 @@ func (f *fakeHostTPM) pcr(index uint32) []byte {
 // quote is the fake TPM's quote path. It takes a *testing.T because a
 // synthesized TPMS_ATTEST is only meaningful when the encoding succeeds, and a
 // silent encoding failure would weaken every test that depends on it.
-func (f *fakeHostTPM) quote(t *testing.T, pcrs []uint, nonce []byte) (xkmstpm2.Quote, error) {
+func (f *fakeHostTPM) quote(t *testing.T, pcrs []uint, nonce []byte) (xkmssdk.Quote, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.quoteCalls++
 	f.lastQuoted = append([]uint(nil), pcrs...)
 	f.lastNonce = append([]byte(nil), nonce...)
 	if f.quoteErr != nil {
-		return xkmstpm2.Quote{}, f.quoteErr
+		return xkmssdk.Quote{}, f.quoteErr
 	}
 
 	indices := make([]uint32, 0, len(pcrs))
@@ -282,7 +281,7 @@ func (f *fakeHostTPM) quote(t *testing.T, pcrs []uint, nonce []byte) (xkmstpm2.Q
 
 	// No event log unless a test sets one: the Verifier skips an absent
 	// log, and a placeholder would be appraised as forged.
-	return xkmstpm2.Quote{
+	return xkmssdk.Quote{
 		Quoted:    quoted,
 		Signature: signature,
 		Nonce:     nonce,
@@ -306,7 +305,7 @@ func (f *fakeHostTPM) IAKCertificate() (*x509.Certificate, error) {
 // signedBank is the bank named inside the signed selection.
 // IAKAttributes reports the attestation key's hash algorithm. It names the
 // TPM's bank, as go-xkms does, unless iakBank overrides it.
-func (f *fakeHostTPM) IAKAttributes() (*types.KeyAttributes, error) {
+func (f *fakeHostTPM) IAKAttributes() (*xkmssdk.KeyAttributes, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.iakAttrsErr != nil {
@@ -316,11 +315,11 @@ func (f *fakeHostTPM) IAKAttributes() (*types.KeyAttributes, error) {
 	if bank == "" {
 		bank = f.bank
 	}
-	alg, err := xkmstpm2.ParsePCRBankAlgID(bank)
+	alg, err := xkmssdk.ParsePCRBankAlgID(bank)
 	if err != nil {
 		return nil, err
 	}
-	return &types.KeyAttributes{TPMAttributes: &types.TPMAttributes{HashAlg: tpm2.TPMIAlgHash(alg)}}, nil
+	return &xkmssdk.KeyAttributes{TPMAttributes: &xkmssdk.TPMAttributes{HashAlg: tpm2.TPMIAlgHash(alg)}}, nil
 }
 
 func (f *fakeHostTPM) signedBank() string {
@@ -333,8 +332,8 @@ func (f *fakeHostTPM) signedBank() string {
 // Quote satisfies HostTPM. It is only reachable through boundHostTPM, which
 // supplies the *testing.T the encoder needs; calling it directly is a test
 // wiring mistake and says so rather than producing an unverifiable quote.
-func (f *fakeHostTPM) Quote(pcrs []uint, nonce []byte) (xkmstpm2.Quote, error) {
-	return xkmstpm2.Quote{}, errors.New("fakeHostTPM must be wrapped with newBoundHostTPM to produce a signed quote")
+func (f *fakeHostTPM) Quote(pcrs []uint, nonce []byte) (xkmssdk.Quote, error) {
+	return xkmssdk.Quote{}, errors.New("fakeHostTPM must be wrapped with newBoundHostTPM to produce a signed quote")
 }
 
 // boundHostTPM binds a fakeHostTPM to a test so quotes can be synthesized.
@@ -350,11 +349,11 @@ func newBoundHostTPM(t *testing.T, inner *fakeHostTPM) *boundHostTPM {
 	return &boundHostTPM{t: t, inner: inner}
 }
 
-func (b *boundHostTPM) Quote(pcrs []uint, nonce []byte) (xkmstpm2.Quote, error) {
+func (b *boundHostTPM) Quote(pcrs []uint, nonce []byte) (xkmssdk.Quote, error) {
 	return b.inner.quote(b.t, pcrs, nonce)
 }
 
-func (b *boundHostTPM) ReadPCRs(pcrList []uint) ([]xkmstpm2.PCRBank, error) {
+func (b *boundHostTPM) ReadPCRs(pcrList []uint) ([]xkmssdk.PCRBank, error) {
 	return b.inner.ReadPCRs(pcrList)
 }
 
@@ -366,24 +365,24 @@ func (b *boundHostTPM) IAKCertificate() (*x509.Certificate, error) {
 	return b.inner.IAKCertificate()
 }
 
-func (b *boundHostTPM) IAKAttributes() (*types.KeyAttributes, error) {
+func (b *boundHostTPM) IAKAttributes() (*xkmssdk.KeyAttributes, error) {
 	return b.inner.IAKAttributes()
 }
 
-func (f *fakeHostTPM) ReadPCRs(pcrList []uint) ([]xkmstpm2.PCRBank, error) {
+func (f *fakeHostTPM) ReadPCRs(pcrList []uint) ([]xkmssdk.PCRBank, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.readErr != nil {
 		return nil, f.readErr
 	}
-	bank := xkmstpm2.PCRBank{Algorithm: f.bank}
+	bank := xkmssdk.PCRBank{Algorithm: f.bank}
 	for _, index := range pcrList {
-		bank.PCRs = append(bank.PCRs, xkmstpm2.PCR{
+		bank.PCRs = append(bank.PCRs, xkmssdk.PCR{
 			ID:    int32(index),
 			Value: append([]byte(nil), f.pcr(uint32(index))...),
 		})
 	}
-	return []xkmstpm2.PCRBank{bank}, nil
+	return []xkmssdk.PCRBank{bank}, nil
 }
 
 func (f *fakeHostTPM) ExtendPCR(pcrIndex int, hashAlg string, data []byte) error {
@@ -796,12 +795,12 @@ type pcrOmittingTPM struct {
 	inner *fakeHostTPM
 }
 
-func (p *pcrOmittingTPM) Quote(pcrs []uint, nonce []byte) (xkmstpm2.Quote, error) {
+func (p *pcrOmittingTPM) Quote(pcrs []uint, nonce []byte) (xkmssdk.Quote, error) {
 	return p.inner.quote(p.t, pcrs, nonce)
 }
 
-func (p *pcrOmittingTPM) ReadPCRs([]uint) ([]xkmstpm2.PCRBank, error) {
-	return []xkmstpm2.PCRBank{{Algorithm: DefaultMeasurementBank}}, nil
+func (p *pcrOmittingTPM) ReadPCRs([]uint) ([]xkmssdk.PCRBank, error) {
+	return []xkmssdk.PCRBank{{Algorithm: DefaultMeasurementBank}}, nil
 }
 
 func (p *pcrOmittingTPM) ExtendPCR(index int, alg string, data []byte) error {
@@ -812,7 +811,7 @@ func (p *pcrOmittingTPM) IAKCertificate() (*x509.Certificate, error) {
 	return p.inner.IAKCertificate()
 }
 
-func (p *pcrOmittingTPM) IAKAttributes() (*types.KeyAttributes, error) {
+func (p *pcrOmittingTPM) IAKAttributes() (*xkmssdk.KeyAttributes, error) {
 	return p.inner.IAKAttributes()
 }
 
@@ -1157,9 +1156,9 @@ func TestQuotePCRIndices(t *testing.T) {
 
 func TestFlattenPCRBanks(t *testing.T) {
 	t.Run("SelectsRequestedBank", func(t *testing.T) {
-		banks := []xkmstpm2.PCRBank{
-			{Algorithm: "sha1", PCRs: []xkmstpm2.PCR{{ID: 7, Value: []byte{0x01}}}},
-			{Algorithm: "sha256", PCRs: []xkmstpm2.PCR{{ID: 7, Value: []byte{0x02}}}},
+		banks := []xkmssdk.PCRBank{
+			{Algorithm: "sha1", PCRs: []xkmssdk.PCR{{ID: 7, Value: []byte{0x01}}}},
+			{Algorithm: "sha256", PCRs: []xkmssdk.PCR{{ID: 7, Value: []byte{0x02}}}},
 		}
 		got, err := flattenPCRBanks(banks, "sha256")
 		if err != nil {
@@ -1185,9 +1184,9 @@ func TestFlattenPCRBanks(t *testing.T) {
 		}
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {
-				banks := []xkmstpm2.PCRBank{
-					{Algorithm: "SHA1", PCRs: []xkmstpm2.PCR{{ID: 7, Value: []byte{0x01}}}},
-					{Algorithm: tc.reported, PCRs: []xkmstpm2.PCR{{ID: 7, Value: []byte{0x02}}}},
+				banks := []xkmssdk.PCRBank{
+					{Algorithm: "SHA1", PCRs: []xkmssdk.PCR{{ID: 7, Value: []byte{0x01}}}},
+					{Algorithm: tc.reported, PCRs: []xkmssdk.PCR{{ID: 7, Value: []byte{0x02}}}},
 				}
 				got, err := flattenPCRBanks(banks, tc.requested)
 				if err != nil {
@@ -1204,8 +1203,8 @@ func TestFlattenPCRBanks(t *testing.T) {
 	// requested bank produced measurements from an unintended one with no
 	// error at all.
 	t.Run("AbsentBankIsAnErrorNotAFallback", func(t *testing.T) {
-		banks := []xkmstpm2.PCRBank{
-			{Algorithm: "SHA1", PCRs: []xkmstpm2.PCR{{ID: 7, Value: []byte{0x01}}}},
+		banks := []xkmssdk.PCRBank{
+			{Algorithm: "SHA1", PCRs: []xkmssdk.PCR{{ID: 7, Value: []byte{0x01}}}},
 		}
 		got, err := flattenPCRBanks(banks, "sha384")
 		if got != nil {
@@ -1243,8 +1242,8 @@ func TestFlattenPCRBanks(t *testing.T) {
 	})
 
 	t.Run("SkipsNegativeIndices", func(t *testing.T) {
-		banks := []xkmstpm2.PCRBank{
-			{Algorithm: "sha256", PCRs: []xkmstpm2.PCR{{ID: -1, Value: []byte{0x01}}}},
+		banks := []xkmssdk.PCRBank{
+			{Algorithm: "sha256", PCRs: []xkmssdk.PCR{{ID: -1, Value: []byte{0x01}}}},
 		}
 		got, err := flattenPCRBanks(banks, "sha256")
 		if err != nil {
@@ -1503,9 +1502,9 @@ func TestBindQuotedPCRs_RefusesQuotesNoSingleBankReferenceCanJudge(t *testing.T)
 	sha1Value := bytes.Repeat([]byte{0x11}, 20)
 	sha256Value := bytes.Repeat([]byte{0x22}, sha256.Size)
 	nonce := []byte("nonce-for-a-refused-quote")
-	banks := []xkmstpm2.PCRBank{
-		{Algorithm: "SHA1", PCRs: []xkmstpm2.PCR{{ID: 7, Value: sha1Value}}},
-		{Algorithm: "SHA256", PCRs: []xkmstpm2.PCR{{ID: 7, Value: sha256Value}}},
+	banks := []xkmssdk.PCRBank{
+		{Algorithm: "SHA1", PCRs: []xkmssdk.PCR{{ID: 7, Value: sha1Value}}},
+		{Algorithm: "SHA256", PCRs: []xkmssdk.PCR{{ID: 7, Value: sha256Value}}},
 	}
 
 	cases := map[string]struct {
@@ -1546,7 +1545,7 @@ func TestBindQuotedPCRs_ShortRegisterIsRejected(t *testing.T) {
 	quoted := encodeTPMSAttestSelections(t, nonce,
 		[]testSelection{{bank: "sha256", indices: []uint32{7}}},
 		quotePCRDigest(t, "sha256", [][]byte{short}))
-	banks := []xkmstpm2.PCRBank{{Algorithm: "SHA256", PCRs: []xkmstpm2.PCR{{ID: 7, Value: short}}}}
+	banks := []xkmssdk.PCRBank{{Algorithm: "SHA256", PCRs: []xkmssdk.PCR{{ID: 7, Value: short}}}}
 
 	_, err := bindQuotedPCRs("alpine", quoted, nonce, banks)
 	if !errors.Is(err, ErrQuotedPCRDigestMismatch) {
@@ -1564,7 +1563,7 @@ type extendBetweenQuoteAndReadTPM struct {
 	value []byte
 }
 
-func (p *extendBetweenQuoteAndReadTPM) Quote(pcrs []uint, nonce []byte) (xkmstpm2.Quote, error) {
+func (p *extendBetweenQuoteAndReadTPM) Quote(pcrs []uint, nonce []byte) (xkmssdk.Quote, error) {
 	quote, err := p.inner.quote(p.t, pcrs, nonce)
 	if err != nil {
 		return quote, err
@@ -1574,7 +1573,7 @@ func (p *extendBetweenQuoteAndReadTPM) Quote(pcrs []uint, nonce []byte) (xkmstpm
 	return quote, nil
 }
 
-func (p *extendBetweenQuoteAndReadTPM) ReadPCRs(pcrList []uint) ([]xkmstpm2.PCRBank, error) {
+func (p *extendBetweenQuoteAndReadTPM) ReadPCRs(pcrList []uint) ([]xkmssdk.PCRBank, error) {
 	return p.inner.ReadPCRs(pcrList)
 }
 
@@ -1586,7 +1585,7 @@ func (p *extendBetweenQuoteAndReadTPM) IAKCertificate() (*x509.Certificate, erro
 	return p.inner.IAKCertificate()
 }
 
-func (p *extendBetweenQuoteAndReadTPM) IAKAttributes() (*types.KeyAttributes, error) {
+func (p *extendBetweenQuoteAndReadTPM) IAKAttributes() (*xkmssdk.KeyAttributes, error) {
 	return p.inner.IAKAttributes()
 }
 
@@ -1596,7 +1595,7 @@ func (p *extendBetweenQuoteAndReadTPM) IAKAttributes() (*types.KeyAttributes, er
 func TestPCRBankName(t *testing.T) {
 	t.Run("EverySupportedBankRoundTrips", func(t *testing.T) {
 		for _, bank := range supportedPCRBankNames {
-			algID, err := xkmstpm2.ParsePCRBankAlgID(bank)
+			algID, err := xkmssdk.ParsePCRBankAlgID(bank)
 			if err != nil {
 				t.Fatalf("ParsePCRBankAlgID(%q): %v", bank, err)
 			}

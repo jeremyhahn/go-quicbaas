@@ -23,9 +23,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/attestation/evidence"
-	xkmstpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
+	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/evidence"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
@@ -46,7 +45,8 @@ import (
 // on it — a property no post-hoc inspection of the running container can
 // establish.
 //
-// Both tiers compose go-xkms pkg/tpm2 (Quote / ReadPCRs / ExtendPCR). Nothing
+// Both tiers compose the go-xkms SDK's TPM (xkmssdk.TPM2: Quote / ReadPCRs /
+// ExtendPCR). Nothing
 // here reimplements a TPM primitive.
 
 // MeasurementPCRDefault is the PCR index used for measured launch when a spec
@@ -72,11 +72,11 @@ const attestationNonceBytes = 20
 type HostTPM interface {
 	// Quote produces a TPM 2.0 quote over the supplied PCR indices, bound
 	// to nonce as qualifying data.
-	Quote(pcrs []uint, nonce []byte) (xkmstpm2.Quote, error)
+	Quote(pcrs []uint, nonce []byte) (xkmssdk.Quote, error)
 
 	// ReadPCRs reads the current value of the supplied PCR indices across
 	// the TPM's active banks.
-	ReadPCRs(pcrList []uint) ([]xkmstpm2.PCRBank, error)
+	ReadPCRs(pcrList []uint) ([]xkmssdk.PCRBank, error)
 
 	// ExtendPCR hashes data with hashAlg and extends the result into the
 	// PCR at pcrIndex.
@@ -88,12 +88,12 @@ type HostTPM interface {
 
 	// IAKAttributes returns the attributes of the attestation key that
 	// signs Quote. Its TPM hash algorithm names the PCR bank Quote covers.
-	IAKAttributes() (*types.KeyAttributes, error)
+	IAKAttributes() (*xkmssdk.KeyAttributes, error)
 }
 
-// go-xkms's TPM is the production quote producer; HostTPM is the subset of it
+// The go-xkms SDK's TPM (xkmssdk.TPM2) is the production quote producer; HostTPM is the subset of it
 // the attesting runtime drives.
-var _ HostTPM = (*xkmstpm2.TPM2)(nil)
+var _ HostTPM = (*xkmssdk.TPM2)(nil)
 
 // AttestingContainerRuntime is the trusted-computing seam: a ContainerRuntime
 // that can additionally prove, to a remote verifier, what it launched and
@@ -221,7 +221,7 @@ func LaunchMeasurement(spec *ContainerSpec) ([]byte, error) {
 // TPMAttestingRuntime is the standalone Tier 1 / Tier 2 container runtime. It
 // delegates every container operation to a base runtime (normally
 // ExecContainerRuntime, which supplies Tier 0) and adds host attestation and
-// measured launch on top by composing go-xkms pkg/tpm2.
+// measured launch on top by composing the go-xkms SDK's TPM.
 //
 // It is the reference implementation of AttestingContainerRuntime and requires
 // nothing from go-trusted-platform.
@@ -466,7 +466,7 @@ func quotePCRIndices(reference []uint32, spec *ContainerSpec, measured bool) []u
 
 // appraise hands the bound evidence to the Verifier and turns anything short
 // of a verified appraisal into a HostAppraisalError.
-func (r *TPMAttestingRuntime) appraise(ctx context.Context, spec *ContainerSpec, nonce []byte, quote xkmstpm2.Quote, bound *boundPCRs) error {
+func (r *TPMAttestingRuntime) appraise(ctx context.Context, spec *ContainerSpec, nonce []byte, quote xkmssdk.Quote, bound *boundPCRs) error {
 	akCert, err := r.tpm.IAKCertificate()
 	if err != nil {
 		return &ContainerQuoteError{Image: spec.Image, Cause: err}
@@ -512,8 +512,8 @@ func (r *TPMAttestingRuntime) appraise(ctx context.Context, spec *ContainerSpec,
 // generated.
 //
 // Every TPM structure here is parsed and checked by go-xkms's evidence
-// primitives (pkg/attestation/evidence) and every bank mapping comes from
-// go-xkms (tpm2.ParsePCRBankAlgID). Nothing in this file hand-rolls a TPM
+// primitives (go-xkms/sdk/go/evidence) and every bank mapping comes from
+// go-xkms (xkmssdk.ParsePCRBankAlgID). Nothing in this file hand-rolls a TPM
 // structure or recomputes a digest.
 
 // boundPCRs is a PCR read that has been proven to agree with a signed quote.
@@ -549,7 +549,7 @@ type boundPCRs struct {
 // in constant time) and VerifyPCRValues (the reported set equals the
 // selection and hashes to the signed digest). Nothing here re-derives the
 // digest or decodes a selection bitmap.
-func bindQuotedPCRs(image string, quoted, nonce []byte, banks []xkmstpm2.PCRBank) (*boundPCRs, error) {
+func bindQuotedPCRs(image string, quoted, nonce []byte, banks []xkmssdk.PCRBank) (*boundPCRs, error) {
 	quote, err := evidence.ParseQuote(quoted)
 	if err != nil {
 		return nil, &QuoteBindingError{
@@ -613,7 +613,7 @@ func bindQuotedPCRs(image string, quoted, nonce []byte, banks []xkmstpm2.PCRBank
 // here.
 func pcrBankName(algID uint16) (string, error) {
 	for _, name := range supportedPCRBankNames {
-		id, err := xkmstpm2.ParsePCRBankAlgID(name)
+		id, err := xkmssdk.ParsePCRBankAlgID(name)
 		if err != nil {
 			return "", err
 		}
@@ -658,7 +658,7 @@ func (r *TPMAttestingRuntime) quoteBank(image string) (crypto.Hash, error) {
 // genuinely absent is an error, never a fallback to whichever bank happened to
 // be first — reading PCRs from an unintended bank produces measurements that
 // look valid and mean nothing.
-func flattenPCRBanks(banks []xkmstpm2.PCRBank, name string) (map[uint32][]byte, error) {
+func flattenPCRBanks(banks []xkmssdk.PCRBank, name string) (map[uint32][]byte, error) {
 	for _, bank := range banks {
 		if !strings.EqualFold(bank.Algorithm, name) {
 			continue
