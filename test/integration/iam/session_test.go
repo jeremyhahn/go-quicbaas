@@ -52,17 +52,45 @@ type SessionListResponse struct {
 // Both calls go as the system admin: the tenant create is a system-tenant
 // route and the user create reaches the new tenant by the tenant lift.
 func setupUserForSessionTests(t *testing.T, cluster *testCluster) (string, string) {
-	admin := cluster.asSystemAdmin()
+	tenantID := createSessionTenant(t, cluster)
+	return tenantID, createSessionUser(t, cluster, tenantID)
+}
 
-	// Create tenant
+// sharedUserForSessionTests is setupUserForSessionTests on the package's
+// shared session tenant (shared_tenant_test.go): the user is the test's own,
+// so a session test that asserts only on its user's sessions shares the
+// tenant.
+func sharedUserForSessionTests(t *testing.T, cluster *testCluster) (string, string) {
+	tenantID := sharedSessionTenantID(t, cluster)
+	return tenantID, createSessionUser(t, cluster, tenantID)
+}
+
+// sharedSessionTenantID returns the shared session tenant, created with
+// createSessionTenant on first use and deleted after m.Run.
+func sharedSessionTenantID(t *testing.T, cluster *testCluster) string {
+	t.Helper()
+	return sharedTenantFor(t, cluster.httpEndpoint, "session", func(t *testing.T) string {
+		return createSessionTenant(t, cluster)
+	}).id
+}
+
+// createSessionTenant creates a session test tenant as the fixture system
+// admin and returns its ID.
+func createSessionTenant(t *testing.T, cluster *testCluster) string {
+	t.Helper()
 	tenantID := generateUniqueTenantID()
 	createTenantReq := map[string]interface{}{
 		"id":   tenantID,
 		"name": "Session Test Tenant",
 	}
-	require.NoError(t, admin.postJSON("/api/v1/tenants", createTenantReq, nil))
+	require.NoError(t, cluster.asSystemAdmin().postJSON("/api/v1/tenants", createTenantReq, nil))
+	return tenantID
+}
 
-	// Create user
+// createSessionUser creates a uniquely named user in tenantID as the fixture
+// system admin and returns its ID.
+func createSessionUser(t *testing.T, cluster *testCluster, tenantID string) string {
+	t.Helper()
 	email := generateUniqueEmail()
 	createUserReq := map[string]interface{}{
 		"email":    email,
@@ -73,14 +101,17 @@ func setupUserForSessionTests(t *testing.T, cluster *testCluster) (string, strin
 	var user struct {
 		ID string `json:"id"`
 	}
-	err := admin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), createUserReq, &user)
+	err := cluster.asSystemAdmin().postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), createUserReq, &user)
 	require.NoError(t, err)
-
-	return tenantID, user.ID
+	return user.ID
 }
 
 // cleanupSessionTests deletes the test tenant as the system admin.
 func cleanupSessionTests(cluster *testCluster, tenantID string) {
+	if isSharedTenant(tenantID) {
+		// TestMain deletes the shared tenant after m.Run.
+		return
+	}
 	cluster.asSystemAdmin().deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
 }
 
@@ -156,7 +187,7 @@ func TestSessionListEmpty(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, userID := setupUserForSessionTests(t, cluster)
+	tenantID, userID := sharedUserForSessionTests(t, cluster)
 	defer cleanupSessionTests(cluster, tenantID)
 
 	// Mock authentication context by using tenant/user-specific endpoint
@@ -177,7 +208,7 @@ func TestSessionCreate(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, userID := setupUserForSessionTests(t, cluster)
+	tenantID, userID := sharedUserForSessionTests(t, cluster)
 	defer cleanupSessionTests(cluster, tenantID)
 
 	// Create a mock session
@@ -195,7 +226,7 @@ func TestSessionListAfterCreate(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, userID := setupUserForSessionTests(t, cluster)
+	tenantID, userID := sharedUserForSessionTests(t, cluster)
 	defer cleanupSessionTests(cluster, tenantID)
 
 	// Create a mock session
@@ -221,7 +252,7 @@ func TestSessionGet(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, userID, self := setupSessionSelf(t, cluster)
+	tenantID, userID, self := sharedSessionSelf(t, cluster)
 	defer cleanupSessionTests(cluster, tenantID)
 
 	// Create a mock session
@@ -246,7 +277,7 @@ func TestSessionGetNonExistent(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, _, self := setupSessionSelf(t, cluster)
+	tenantID, _, self := sharedSessionSelf(t, cluster)
 	defer cleanupSessionTests(cluster, tenantID)
 
 	nonExistentID := uuid.New().String()
@@ -263,7 +294,7 @@ func TestSessionRevoke(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, userID, self := setupSessionSelf(t, cluster)
+	tenantID, userID, self := sharedSessionSelf(t, cluster)
 	defer cleanupSessionTests(cluster, tenantID)
 
 	// Create a mock session
@@ -288,7 +319,7 @@ func TestSessionRevokeNonExistent(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, _, self := setupSessionSelf(t, cluster)
+	tenantID, _, self := sharedSessionSelf(t, cluster)
 	defer cleanupSessionTests(cluster, tenantID)
 
 	nonExistentID := uuid.New().String()
@@ -306,7 +337,7 @@ func TestSessionRevokeAll(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, userID, self := setupSessionSelf(t, cluster)
+	tenantID, userID, self := sharedSessionSelf(t, cluster)
 	defer cleanupSessionTests(cluster, tenantID)
 
 	// Create multiple mock sessions
@@ -335,7 +366,7 @@ func TestSessionRevokeAllExceptCurrent(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, userID, self := setupSessionSelf(t, cluster)
+	tenantID, userID, self := sharedSessionSelf(t, cluster)
 	defer cleanupSessionTests(cluster, tenantID)
 
 	// Create multiple mock sessions
@@ -369,7 +400,7 @@ func TestSessionRevokeOtherSessions(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, userID, self := setupSessionSelf(t, cluster)
+	tenantID, userID, self := sharedSessionSelf(t, cluster)
 	defer cleanupSessionTests(cluster, tenantID)
 
 	// Create multiple mock sessions
@@ -401,7 +432,7 @@ func TestSessionExpiration(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, userID, self := setupSessionSelf(t, cluster)
+	tenantID, userID, self := sharedSessionSelf(t, cluster)
 	defer cleanupSessionTests(cluster, tenantID)
 
 	// Create a session with short expiration
@@ -471,7 +502,7 @@ func TestSessionMultipleConcurrent(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, userID := setupUserForSessionTests(t, cluster)
+	tenantID, userID := sharedUserForSessionTests(t, cluster)
 	defer cleanupSessionTests(cluster, tenantID)
 
 	// Create multiple concurrent sessions
@@ -500,7 +531,7 @@ func TestSessionDeviceInfo(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, userID := setupUserForSessionTests(t, cluster)
+	tenantID, userID := sharedUserForSessionTests(t, cluster)
 	defer cleanupSessionTests(cluster, tenantID)
 
 	// Create session with detailed device info
@@ -547,7 +578,7 @@ func TestSessionMFAStatus(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, userID := setupUserForSessionTests(t, cluster)
+	tenantID, userID := sharedUserForSessionTests(t, cluster)
 	defer cleanupSessionTests(cluster, tenantID)
 
 	// Create session without MFA
@@ -586,7 +617,7 @@ func TestSessionEndpointAvailability(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, _ := setupUserForSessionTests(t, cluster)
+	tenantID, _ := sharedUserForSessionTests(t, cluster)
 	defer cleanupSessionTests(cluster, tenantID)
 
 	tests := []struct {
@@ -647,7 +678,7 @@ func TestSessionListTenantEndpoint(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, userID := setupUserForSessionTests(t, cluster)
+	tenantID, userID := sharedUserForSessionTests(t, cluster)
 	defer cleanupSessionTests(cluster, tenantID)
 
 	// Create a session
