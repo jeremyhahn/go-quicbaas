@@ -73,7 +73,14 @@ func (a *kmsGracePeriodAdapter) SetJobID(jobID string) {
 
 // UpdateKeyStatusForGracePeriod implements handlers.KMSKeyStatusUpdater.
 func (a *kmsGracePeriodAdapter) UpdateKeyStatusForGracePeriod(ctx context.Context, keyID string, version uint64) (*schedulerhandlers.GracePeriodResult, error) {
-	resp, err := a.kms.disableKeyVersion(ctx, keyID, version)
+	// The handler binds the job's tenant in ctx; keyID is that tenant's key
+	// name. The version status is the service's own bookkeeping, kept under
+	// the tenant-scoped reference.
+	tenantID, err := prepareTenantContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := a.kms.disableKeyVersion(ctx, tenantScopedKeyID(tenantID, keyID), version)
 
 	// Log the grace period disable event to audit logger
 	if a.kms.auditLogger != nil {

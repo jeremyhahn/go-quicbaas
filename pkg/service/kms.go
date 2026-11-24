@@ -1180,9 +1180,9 @@ func (k *kmsServiceImpl) RotateKey(ctx context.Context, req *RotateKeyRequest) (
 		gracePeriodDisableAt := time.Now().Add(time.Duration(req.GracePeriodSeconds) * time.Second)
 
 		// Create payload for the grace period handler
-		// The handler addresses the version by its tenant-scoped key ID, the
-		// same ID GetKey, UpdateKeyStatus and ListKeyVersions read it under.
-		payload := fmt.Sprintf(`{"key_id":%q,"version":%d}`, scopedKeyID, resp.OldVersion)
+		// The payload names the key as the caller does; the job's tenant
+		// owns it, and the handler runs the update as that tenant.
+		payload := fmt.Sprintf(`{"key_id":%q,"version":%d}`, req.KeyID, resp.OldVersion)
 
 		// A tenant's grace job is that tenant's own job, filed in its
 		// namespace, so the tenant that rotated the key can read and cancel

@@ -18,7 +18,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
@@ -114,14 +113,14 @@ func (h *KMSGracePeriodHandler) Handle(ctx context.Context, job *scheduler.Job) 
 		}
 	}
 
-	// A tenant's grace job may only disable that tenant's own key: the
-	// payload is bound to the job's tenant at execution, whatever was
-	// written into it.
-	if tenant := graceJobTenant(job); tenant != "" && !strings.HasPrefix(payload.KeyID, TenantKeyPrefix(tenant)) {
-		return nil, &scheduler.InvalidJobError{
-			Field:   "payload.key_id",
-			Message: "key_id is not a key of the job's tenant",
-		}
+	// The payload names the key; the job's tenant owns it. The update runs
+	// as that tenant, so a tenant's grace job reaches only that tenant's own
+	// key of that name, whatever was written into the payload. A platform
+	// job runs as the system tenant.
+	if tenant := graceJobTenant(job); tenant != "" {
+		ctx = tenantctx.WithTenant(ctx, tenant)
+	} else {
+		ctx = tenantctx.WithSystem(ctx)
 	}
 
 	resp, err := h.kmsUpdater.UpdateKeyStatusForGracePeriod(ctx, payload.KeyID, payload.Version)
@@ -138,13 +137,6 @@ func (h *KMSGracePeriodHandler) Handle(ctx context.Context, job *scheduler.Job) 
 		Message: fmt.Sprintf("Disabled key %s version %d (previous status: %s)",
 			resp.KeyID, payload.Version, resp.OldStatus),
 	}, nil
-}
-
-// TenantKeyPrefix is the KMS key-ID prefix of tenantID's keys,
-// "tenant/<tenantID>/" (service.tenantScopedKeyID; a service test pins the
-// two together).
-func TenantKeyPrefix(tenantID string) string {
-	return "tenant/" + tenantID + "/"
 }
 
 // graceJobTenant is the tenant a grace job acts for: the owner of a

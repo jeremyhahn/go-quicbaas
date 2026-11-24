@@ -204,6 +204,3 @@ func TestSchedulerAdapter_TenantCannotUsePlatformSweepHandlers(t *testing.T) {
 
 // The grace handler binds a tenant job's key to the tenant by the same
 // prefix the KMS service scopes the tenant's keys under.
-func TestGraceHandlerTenantKeyPrefix_MatchesServiceScope(t *testing.T) {
-	require.Equal(t, tenantScopedKeyID("tenant-a", ""), schedulerhandlers.TenantKeyPrefix("tenant-a"))
-}
