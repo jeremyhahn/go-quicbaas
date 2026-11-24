@@ -17,8 +17,11 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"sync/atomic"
 	"testing"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/qrdbnode"
 )
 
 // The "qrdb" half of this suite runs against a real go-qrdb node, under the
@@ -39,6 +42,24 @@ func TestStorageContract(t *testing.T) {
 			kv, err := newPebbleKV(&PebbleStorageConfig{Path: filepath.Join(t.TempDir(), "catalog")})
 			if err != nil {
 				t.Fatalf("newPebbleKV() error = %v", err)
+			}
+			s, err := NewKVStorage(kv)
+			if err != nil {
+				t.Fatalf("NewKVStorage() error = %v", err)
+			}
+			t.Cleanup(func() { _ = s.Close() })
+			return s
+		})
+	})
+
+	t.Run("qrdb", func(t *testing.T) {
+		runStorageContract(t, func(t *testing.T) Storage {
+			t.Helper()
+			n := qrdbnode.Shared(t)
+			ns := "__sys:catalog-test/" + strconv.FormatUint(contractNamespaces.Add(1), 10) + "/"
+			kv, err := NewQRDBKV(n.KV, n.Transaction, ns)
+			if err != nil {
+				t.Fatalf("NewQRDBKV() error = %v", err)
 			}
 			s, err := NewKVStorage(kv)
 			if err != nil {
