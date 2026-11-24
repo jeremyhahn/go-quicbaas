@@ -189,7 +189,8 @@ func (f *fixture) now() time.Time {
 	return f.clock
 }
 
-func newFixture(t *testing.T) *fixture {
+// newFixture builds a plane over fakes; each opt changes its Config first.
+func newFixture(t *testing.T, opts ...func(*Config)) *fixture {
 	t.Helper()
 	pub, key, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -212,10 +213,14 @@ func newFixture(t *testing.T) *fixture {
 		f.grants[k] = &grant{kind: k, ledger: f.ledger}
 		gs = append(gs, f.grants[k])
 	}
-	f.plane, err = NewPlane(Config{
+	cfg := Config{
 		Store: store, Verifier: Keyring{"k1": pub}, Launcher: f.launcher, Grants: gs,
 		Now: f.now,
-	})
+	}
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	f.plane, err = NewPlane(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}

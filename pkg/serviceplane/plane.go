@@ -66,6 +66,10 @@ type Config struct {
 	// MarkHalted treats the claim as abandoned (its holder crashed, or its
 	// settlement write failed) and recovers it. Zero is DefaultStaleClaim.
 	StaleClaim time.Duration
+	// RenewClaim is how often a verb renews the claim it holds while its
+	// launcher or grant call runs, so a live verb never goes stale. Zero
+	// is StaleClaim / 3.
+	RenewClaim time.Duration
 	// Rollout rolls a served Redeploy out through the rollout controller;
 	// a plane without one refuses Redeploy with ErrConfig. SetRoller sets
 	// it after construction, for a controller built over the plane.
@@ -83,6 +87,7 @@ type Plane struct {
 	grants     map[GrantKind]Grant
 	now        func() time.Time
 	staleClaim time.Duration
+	renewClaim time.Duration
 	roller     Roller
 }
 
@@ -117,7 +122,11 @@ func NewPlane(cfg Config) (*Plane, error) {
 	if stale <= 0 {
 		stale = DefaultStaleClaim
 	}
-	return &Plane{store: cfg.Store, verifier: cfg.Verifier, launcher: cfg.Launcher, grants: grants, now: now, staleClaim: stale, roller: cfg.Rollout}, nil
+	renew := cfg.RenewClaim
+	if renew <= 0 {
+		renew = stale / 3
+	}
+	return &Plane{store: cfg.Store, verifier: cfg.Verifier, launcher: cfg.Launcher, grants: grants, now: now, staleClaim: stale, renewClaim: renew, roller: cfg.Rollout}, nil
 }
 
 // SetRoller sets the Roller Redeploy rolls out through. Call it before the
@@ -159,6 +168,9 @@ func (p *Plane) Deploy(ctx context.Context, tenant string, sm *SignedManifest) (
 		return nil, err
 	}
 	cur, grants, _, err := p.grant(ctx, VerbDeploy, cur, svc, m, nil)
+	if lostClaim(err) {
+		return nil, err
+	}
 	if err != nil {
 		if len(grants) > 0 {
 			// Grants still in force: keep them for undeploy, and the
@@ -197,6 +209,9 @@ func (p *Plane) Replace(ctx context.Context, tenant string, sm *SignedManifest) 
 	prior := cur.svc.Grants
 	cleanup := cur.svc.Cleanup
 	cur, grants, incomplete, err := p.grant(ctx, VerbRedeploy, cur, cur.svc, m, prior)
+	if lostClaim(err) {
+		return nil, err
+	}
 	if err != nil {
 		// The prior grants, overlaid with each reference in force that
 		// differs from them: a new grant whose revoke failed, a restored
@@ -224,15 +239,23 @@ func (p *Plane) Undeploy(ctx context.Context, tenant, name string) error {
 	if err != nil {
 		return err
 	}
-	if err := p.launcher.Halt(ctx, cur.svc); err != nil {
+	running := cur.svc
+	if err := p.held(ctx, string(VerbUndeploy), &cur, func(c context.Context) error { return p.launcher.Halt(c, running) }); err != nil {
+		if lostClaim(err) {
+			return err
+		}
 		return p.settle(ctx, VerbUndeploy, cur, ErrLaunch, err)
 	}
 	// A rollout's filled slots that are not active run beside it.
-	for slot, rel := range cur.svc.Slots {
-		if slot == cur.svc.Slot {
+	for slot, rel := range running.Slots {
+		if slot == running.Slot {
 			continue
 		}
-		if err := p.launcher.Halt(ctx, slotInstance(cur.svc, slot, &rel)); err != nil {
+		inst := slotInstance(running, slot, &rel)
+		if err := p.held(ctx, string(VerbUndeploy), &cur, func(c context.Context) error { return p.launcher.Halt(c, inst) }); err != nil {
+			if lostClaim(err) {
+				return err
+			}
 			return p.settle(ctx, VerbUndeploy, cur, ErrLaunch, fmt.Errorf("halt slot %s: %w", slot, err))
 		}
 	}
@@ -259,7 +282,11 @@ func (p *Plane) Undeploy(ctx context.Context, tenant, name string) error {
 		if !ok {
 			continue
 		}
-		if err := p.grants[k].Revoke(ctx, &next.Manifest, ref); err != nil {
+		g, m := p.grants[k], &next.Manifest
+		if err := p.held(ctx, string(VerbUndeploy), &cur, func(c context.Context) error { return g.Revoke(c, m, ref) }); err != nil {
+			if lostClaim(err) {
+				return err
+			}
 			errs = append(errs, fmt.Errorf("revoke %s: %w", k, err))
 			continue
 		}
@@ -307,7 +334,11 @@ func (p *Plane) Stop(ctx context.Context, tenant, name string) (*Service, error)
 	if err != nil {
 		return nil, err
 	}
-	if err := p.launcher.Halt(ctx, cur.svc); err != nil {
+	running := cur.svc
+	if err := p.held(ctx, string(VerbStop), &cur, func(c context.Context) error { return p.launcher.Halt(c, running) }); err != nil {
+		if lostClaim(err) {
+			return nil, err
+		}
 		return nil, p.settle(ctx, VerbStop, cur, ErrLaunch, err)
 	}
 	next := *cur.svc
@@ -327,7 +358,8 @@ func (p *Plane) Stop(ctx context.Context, tenant, name string) (*Service, error)
 // a stale claim: a service transitioning since longer than Config.StaleClaim,
 // whose verb was interrupted before it settled, is settled halted with its
 // grants kept. A fresher transitioning service is refused with
-// ErrTransition.
+// ErrTransition. A live verb renews its claim, so only a claim whose holder
+// stopped renewing goes stale.
 func (p *Plane) MarkHalted(ctx context.Context, tenant, name, reason string) (*Service, error) {
 	cur, err := p.store.load(ctx, "halt", tenant, name)
 	if err != nil {
@@ -350,7 +382,9 @@ func (p *Plane) MarkHalted(ctx context.Context, tenant, name, reason string) (*S
 // tenant, transitioning since longer than Config.StaleClaim is marked
 // halted through MarkHalted, so its owner can resume, redeploy or undeploy
 // it. The node runs it at start and on a timer. It answers the services it
-// recovered; a service another node settled first is skipped.
+// recovered; a service another node settled first is skipped. A live verb
+// renews its claim, so only a claim whose holder stopped renewing goes
+// stale.
 func (p *Plane) Recover(ctx context.Context) ([]*Service, error) {
 	all, err := p.store.listAll(ctx)
 	if err != nil {
@@ -431,6 +465,72 @@ func (p *Plane) claim(ctx context.Context, verb Verb, tenant, name string) (*sto
 	return p.store.swap(ctx, string(verb), cur, &next)
 }
 
+// errClaimLost is the cause of the ErrConflict held answers when a renewal
+// found the claim taken over.
+var errClaimLost = errors.New("the claim was taken over while the call ran")
+
+// lostClaim reports whether err is held's answer to a claim taken over.
+func lostClaim(err error) bool { return errors.Is(err, errClaimLost) }
+
+// held runs fn, a side effect of a claimed verb, while renewing the claim
+// in *cur every Config.RenewClaim, so a live verb is never recovered as
+// stale. A renewal that loses the swap means another node took the claim
+// over: fn's context is cancelled, and held answers ErrConflict (joined
+// with fn's error) so the verb writes nothing more. *cur is left at the
+// latest stored record.
+func (p *Plane) held(ctx context.Context, op string, cur **stored, fn func(context.Context) error) error {
+	fctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	latest, lost := *cur, false
+	stop, ended := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(ended)
+		tick := time.NewTicker(p.renewClaim)
+		defer tick.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-tick.C:
+			}
+			next := *latest.svc
+			next.UpdatedAt = p.now()
+			sctx, scancel := settleCtx(ctx)
+			st, err := p.store.swap(sctx, op, latest, &next)
+			scancel()
+			switch {
+			case err == nil:
+				latest = st
+			case errors.Is(err, ErrConflict):
+				lost = true
+				cancel()
+				return
+			}
+			// Any other error is the store being unavailable, not a
+			// lost claim: keep it and renew at the next tick.
+		}
+	}()
+	err := fn(fctx)
+	close(stop)
+	<-ended
+	*cur = latest
+	if lost {
+		return errors.Join(p.fail(op, latest.svc, ErrConflict, errClaimLost), err)
+	}
+	return err
+}
+
+// heldGrant runs the grant of kind k for m through held.
+func (p *Plane) heldGrant(ctx context.Context, op string, cur **stored, k GrantKind, m *Manifest, prior string) (string, error) {
+	var ref string
+	err := p.held(ctx, op, cur, func(c context.Context) error {
+		var gerr error
+		ref, gerr = p.grants[k].Grant(c, m, prior)
+		return gerr
+	})
+	return ref, err
+}
+
 // launchable reports why svc's record may not be launched as it stands: a
 // verb left its grants part way (Cleanup), or a grant kind is missing. Such
 // a record is only redeployed, which grants it anew, or undeployed.
@@ -450,11 +550,18 @@ func launchable(svc *Service) error {
 // settles it running, or halted with the launcher's error.
 func (p *Plane) launch(ctx context.Context, verb Verb, cur *stored, next *Service, halt bool) (*Service, error) {
 	if halt {
-		if err := p.launcher.Halt(ctx, cur.svc); err != nil {
+		running := cur.svc
+		if err := p.held(ctx, string(verb), &cur, func(c context.Context) error { return p.launcher.Halt(c, running) }); err != nil {
+			if lostClaim(err) {
+				return nil, err
+			}
 			return nil, p.settleNext(ctx, verb, cur, next, ErrLaunch, err)
 		}
 	}
-	if err := p.launcher.Launch(ctx, next); err != nil {
+	if err := p.held(ctx, string(verb), &cur, func(c context.Context) error { return p.launcher.Launch(c, next) }); err != nil {
+		if lostClaim(err) {
+			return nil, err
+		}
 		return nil, p.settleNext(ctx, verb, cur, next, ErrLaunch, err)
 	}
 	next.State, next.Verb, next.Reason, next.UpdatedAt = StateRunning, "", "", p.now()
@@ -514,13 +621,20 @@ func (p *Plane) grant(ctx context.Context, verb Verb, cur *stored, base *Service
 		for i := len(changed) - 1; i >= 0; i-- {
 			k := changed[i]
 			if _, held := prior[k]; !held {
-				if rerr := p.grants[k].Revoke(rctx, m, out[k]); rerr != nil {
+				made := out[k]
+				if rerr := p.held(rctx, string(verb), &cur, func(c context.Context) error { return p.grants[k].Revoke(c, m, made) }); rerr != nil {
+					if lostClaim(rerr) {
+						return cur, out, true, rerr
+					}
 					errs = append(errs, fmt.Errorf("revoke %s: %w", k, rerr))
 					left[k], incomplete = out[k], true
 				}
 				continue
 			}
-			ref, rerr := p.grants[k].Grant(rctx, &base.Manifest, out[k])
+			ref, rerr := p.heldGrant(rctx, string(verb), &cur, k, &base.Manifest, out[k])
+			if lostClaim(rerr) {
+				return cur, out, true, rerr
+			}
 			if rerr != nil {
 				errs = append(errs, fmt.Errorf("restore %s: %w", k, rerr))
 				left[k], incomplete = out[k], true
@@ -541,8 +655,10 @@ func (p *Plane) grant(ctx context.Context, verb Verb, cur *stored, base *Service
 				if ref, set := left[k]; set {
 					inForce = ref
 				}
-				ref, rerr := p.grants[k].Grant(rctx, &base.Manifest, inForce)
+				ref, rerr := p.heldGrant(rctx, string(verb), &cur, k, &base.Manifest, inForce)
 				switch {
+				case lostClaim(rerr):
+					return cur, out, true, rerr
 				case rerr != nil:
 					errs = append(errs, fmt.Errorf("rebind %s: %w", k, rerr))
 					left[k], incomplete = inForce, true
@@ -557,7 +673,15 @@ func (p *Plane) grant(ctx context.Context, verb Verb, cur *stored, base *Service
 		return cur, left, incomplete, errors.Join(errs...)
 	}
 	for _, k := range GrantKinds {
-		ref, err := p.grants[k].Grant(ctx, m, prior[k])
+		ref, err := p.heldGrant(ctx, string(verb), &cur, k, m, prior[k])
+		if lostClaim(err) {
+			// Another node holds the service now: no rollback, and
+			// nothing more written.
+			if ref != "" {
+				out[k] = ref
+			}
+			return cur, out, true, err
+		}
 		if err != nil {
 			return rollback(fmt.Errorf("grant %s: %w", k, err))
 		}

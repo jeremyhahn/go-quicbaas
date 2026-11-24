@@ -641,3 +641,90 @@ func TestList_IsScopedToTheTenant(t *testing.T) {
 	_, err = f.plane.List(ctx, "")
 	wantErr(t, err, ErrNotFound)
 }
+
+// renewEvery sets how often a plane renews a held claim.
+func renewEvery(d time.Duration) func(*Config) {
+	return func(c *Config) { c.RenewClaim = d }
+}
+
+// blockedLaunch is a Launch hook that closes entered, then blocks until
+// release closes (answering nil) or its context ends (closing cancelled and
+// answering the context's error).
+type blockedLaunch struct {
+	entered, release, cancelled chan struct{}
+	enter, cancel               sync.Once
+}
+
+func blockLaunches(f *fixture) *blockedLaunch {
+	b := &blockedLaunch{entered: make(chan struct{}), release: make(chan struct{}), cancelled: make(chan struct{})}
+	f.launcher.onLaunch = func(lctx context.Context) error {
+		b.enter.Do(func() { close(b.entered) })
+		select {
+		case <-b.release:
+			return nil
+		case <-lctx.Done():
+			b.cancel.Do(func() { close(b.cancelled) })
+			return lctx.Err()
+		}
+	}
+	return b
+}
+
+func (b *blockedLaunch) waitEntered(t *testing.T) {
+	t.Helper()
+	select {
+	case <-b.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the launch never started")
+	}
+}
+
+// waitFor polls cond every 5ms for at most 5s.
+func waitFor(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+type verbResult struct {
+	svc *Service
+	err error
+}
+
+// restartAsync runs Restart of acme/web in a goroutine.
+func restartAsync(f *fixture) <-chan verbResult {
+	done := make(chan verbResult, 1)
+	go func() {
+		svc, err := f.plane.Restart(ctx, "acme", "web")
+		done <- verbResult{svc, err}
+	}()
+	return done
+}
+
+func TestClaim_ALiveVerbRenewsItsClaim(t *testing.T) {
+	f := newFixture(t, renewEvery(5*time.Millisecond))
+	f.deploy(t, "web")
+	b := blockLaunches(f)
+	done := restartAsync(f)
+	b.waitEntered(t)
+	f.advance(DefaultStaleClaim + time.Second)
+	waitFor(t, "the claim renewed", func() bool {
+		svc, err := f.plane.Get(ctx, "acme", "web")
+		return err == nil && svc.State == StateTransitioning && svc.UpdatedAt.Equal(f.now())
+	})
+	if got, err := f.plane.Recover(ctx); err != nil || len(got) != 0 {
+		t.Fatalf("recover a live claim = %+v, %v", got, err)
+	}
+	_, err := f.plane.MarkHalted(ctx, "acme", "web", "lost node")
+	wantErr(t, err, ErrTransition)
+	close(b.release)
+	r := <-done
+	if r.err != nil || r.svc.State != StateRunning {
+		t.Fatalf("restart = %+v, %v", r.svc, r.err)
+	}
+}
