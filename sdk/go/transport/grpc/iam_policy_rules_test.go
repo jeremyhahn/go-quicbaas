@@ -152,3 +152,30 @@ func TestIAMHandler_PolicyWrite_RefusesUnstorableRuleFields(t *testing.T) {
 		}
 	}
 }
+
+func TestIAMHandler_UpdatePolicy_SendsTypedSpecYAML(t *testing.T) {
+	t.Parallel()
+	h := &iamHandler{}
+	client := &recordingPolicyClient{}
+	desc := "d"
+	spec := []byte("rules: []\n")
+	req := policyRequest(map[string]interface{}{"request": nil})
+	req["request"] = &iam.UpdatePolicyRequest{Description: &desc, SpecYAML: spec}
+
+	if _, err := h.handleUpdatePolicy(context.Background(), client, req); err != nil {
+		t.Fatalf("handleUpdatePolicy() = %v, want nil", err)
+	}
+	if len(client.updated) != 1 {
+		t.Fatalf("UpdatePolicy requests = %d, want 1", len(client.updated))
+	}
+	got := client.updated[0]
+	if string(got.GetSpecYaml()) != string(spec) {
+		t.Fatalf("spec_yaml = %q, want %q", got.GetSpecYaml(), spec)
+	}
+	if got.GetDescription() != desc {
+		t.Fatalf("description = %q, want %q", got.GetDescription(), desc)
+	}
+	if got.GetRules() != nil {
+		t.Fatalf("rules = %v, want none", got.GetRules())
+	}
+}
