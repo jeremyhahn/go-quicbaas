@@ -190,7 +190,7 @@ func TestPEPServer_CheckBatch(t *testing.T) {
 			return []bool{true, true, true}, 10000, nil
 		}
 
-		resp, err := srv.CheckBatch(ctx, &iampb.CheckBatchRequest{
+		resp, err := srv.CheckBatch(tenantctx.WithTenant(ctx, "tenant1"), &iampb.CheckBatchRequest{
 			Subject:   &iampb.Subject{Id: "user1", TenantId: "tenant1"},
 			Action:    "read",
 			Resources: []string{"doc:1", "doc:2", "doc:3"},
@@ -212,7 +212,7 @@ func TestPEPServer_CheckBatch(t *testing.T) {
 			return []bool{true, false, true}, 8000, nil
 		}
 
-		resp, err := srv.CheckBatch(ctx, &iampb.CheckBatchRequest{
+		resp, err := srv.CheckBatch(tenantctx.WithTenant(ctx, "t1"), &iampb.CheckBatchRequest{
 			Subject:   &iampb.Subject{Id: "user1"},
 			Action:    "write",
 			Resources: []string{"doc:1", "doc:2", "doc:3"},
@@ -272,7 +272,7 @@ func TestPEPServer_CheckBatch(t *testing.T) {
 			return nil, 0, errors.New("batch error")
 		}
 
-		resp, err := srv.CheckBatch(ctx, &iampb.CheckBatchRequest{
+		resp, err := srv.CheckBatch(tenantctx.WithTenant(ctx, "t1"), &iampb.CheckBatchRequest{
 			Subject:   &iampb.Subject{Id: "user1"},
 			Action:    "read",
 			Resources: []string{"doc:1"},
@@ -281,6 +281,69 @@ func TestPEPServer_CheckBatch(t *testing.T) {
 		require.Error(t, err)
 		assert.Nil(t, resp)
 	})
+}
+
+// TestPEPServer_CheckBatch_RefusesOtherTenant verifies a batch naming a
+// subject in another tenant is refused before the service runs.
+func TestPEPServer_CheckBatch_RefusesOtherTenant(t *testing.T) {
+	srv, mockSvc := createTestPEPServer(t)
+	called := false
+	mockSvc.checkBatchFunc = func(_ context.Context, _ *iam.Subject, _ string, _ []string, _ map[string]interface{}, _ bool) ([]bool, int64, error) {
+		called = true
+		return []bool{true}, 1, nil
+	}
+
+	resp, err := srv.CheckBatch(tenantctx.WithTenant(context.Background(), "t1"), &iampb.CheckBatchRequest{
+		Subject:   &iampb.Subject{Id: "user1", TenantId: "t2"},
+		Action:    "read",
+		Resources: []string{"doc:1"},
+	})
+
+	require.Error(t, err)
+	assert.Nil(t, resp)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+	assert.False(t, called, "the service must not evaluate another tenant's subject")
+}
+
+// TestPEPServer_CheckBatch_UsesCallerTenant verifies a subject without a
+// tenant is evaluated in the caller's bound tenant.
+func TestPEPServer_CheckBatch_UsesCallerTenant(t *testing.T) {
+	srv, mockSvc := createTestPEPServer(t)
+	var got *iam.Subject
+	mockSvc.checkBatchFunc = func(_ context.Context, subject *iam.Subject, _ string, resources []string, _ map[string]interface{}, _ bool) ([]bool, int64, error) {
+		got = subject
+		return make([]bool, len(resources)), 1, nil
+	}
+
+	_, err := srv.CheckBatch(tenantctx.WithTenant(context.Background(), "t1"), &iampb.CheckBatchRequest{
+		Subject:   &iampb.Subject{Id: "user1"},
+		Action:    "read",
+		Resources: []string{"doc:1"},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, got, "the service must be called")
+	assert.Equal(t, "t1", got.TenantID)
+}
+
+// TestPEPServer_CheckBatch_RequiresBoundTenant verifies a request with no
+// bound tenant is refused before the service runs.
+func TestPEPServer_CheckBatch_RequiresBoundTenant(t *testing.T) {
+	srv, mockSvc := createTestPEPServer(t)
+	called := false
+	mockSvc.checkBatchFunc = func(_ context.Context, _ *iam.Subject, _ string, _ []string, _ map[string]interface{}, _ bool) ([]bool, int64, error) {
+		called = true
+		return []bool{true}, 1, nil
+	}
+
+	_, err := srv.CheckBatch(context.Background(), &iampb.CheckBatchRequest{
+		Subject:   &iampb.Subject{Id: "user1"},
+		Action:    "read",
+		Resources: []string{"doc:1"},
+	})
+
+	require.Error(t, err)
+	assert.False(t, called, "the service must not run without a bound tenant")
 }
 
 func TestConvertPolicyUpdateType(t *testing.T) {
@@ -588,7 +651,7 @@ func TestPEPServerCoverage_CheckBatch_Success(t *testing.T) {
 	}
 	srv := newTestPEPServer(t, svc)
 
-	resp, err := srv.CheckBatch(context.Background(), &iampb.CheckBatchRequest{
+	resp, err := srv.CheckBatch(tenantctx.WithTenant(context.Background(), "tenant1"), &iampb.CheckBatchRequest{
 		Subject:   &iampb.Subject{Id: "user1", TenantId: "tenant1"},
 		Action:    "read",
 		Resources: []string{"doc:1", "doc:2", "doc:3"},
@@ -642,7 +705,7 @@ func TestPEPServerCoverage_CheckBatch_ServiceError(t *testing.T) {
 		},
 	}
 	srv := newTestPEPServer(t, svc)
-	_, err := srv.CheckBatch(context.Background(), &iampb.CheckBatchRequest{
+	_, err := srv.CheckBatch(tenantctx.WithTenant(context.Background(), "t1"), &iampb.CheckBatchRequest{
 		Subject:   &iampb.Subject{Id: "user1"},
 		Action:    "read",
 		Resources: []string{"doc:1"},

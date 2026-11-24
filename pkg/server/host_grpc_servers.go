@@ -20,7 +20,7 @@ import (
 type HostGRPCNotReadyError struct{}
 
 func (e *HostGRPCNotReadyError) Error() string {
-	return "quicbaas federation, session and IAM services are not yet available: IAM initialisation has not completed"
+	return "quicbaas federation, session, IAM and audit services are not yet available: IAM initialisation has not completed"
 }
 
 // GRPCStatus maps the error onto gRPC Unavailable.
@@ -33,11 +33,11 @@ func (e *HostGRPCNotReadyError) GRPCStatus() *status.Status {
 // Unix-socket gRPC server registers them, and the quicbaas module mounts the
 // same instances on the node's TCP gRPC server (WithHostGRPCServers), so both
 // listeners serve one session store. The servers are FederationService,
-// SessionService and IAMService.
+// SessionService, IAMService, AuditService and PEPService.
 //
 // The node accepts requests before startService attaches IAM, so a call can
-// arrive while the facade has no federation manager, session storage or IAM
-// components yet.
+// arrive while the facade has no federation manager, session storage, audit
+// logger or IAM components yet.
 // Until attachIAMComponents marks IAM ready, hostGRPCServers returns
 // HostGRPCNotReadyError and builds nothing, so no server over missing IAM
 // components is ever cached. Lock-free: concurrent first calls after IAM is
@@ -65,6 +65,8 @@ func (s *Server) buildHostGRPCServers() *apimodule.HostGRPCServers {
 		built.Federation = s.buildFederationServer(getter)
 		built.Session = s.buildSessionServer(getter)
 		built.IAM = s.buildIAMServer(getter)
+		built.Audit = s.buildAuditServer(getter)
+		built.PEP = s.buildPEPServer(getter)
 	}
 	return built
 }
@@ -100,5 +102,55 @@ func (s *Server) buildSessionServer(getter iamComponentsGetter) iampb.SessionSer
 	if !ok {
 		s.logger.Warn("QuicBaaS service does not resolve caller accounts; gRPC session RPCs will refuse every caller")
 	}
-	return grpcapi.NewSessionServer(grpcapi.NewSessionServiceAdapter(sessionStorage), callers, s.logger)
+	return grpcapi.NewSessionServer(grpcapi.NewSessionServiceAdapter(sessionStorage), callers, s.logger).
+		WithBearerRevoker(oidcBearerRevoker{s: s})
+}
+
+// oidcBearerRevoker resolves the OIDC provider on each call, because the
+// session server is built before IAM initialisation completes.
+type oidcBearerRevoker struct{ s *Server }
+
+func (r oidcBearerRevoker) RevokeSubjectBearers(ctx context.Context, tenantID, subject, keepSessionID string) (int, error) {
+	getter, ok := r.s.quicBaaSServiceRef().(interface {
+		GetOIDCProvider(context.Context) (*iam.OIDCProvider, error)
+	})
+	if !ok {
+		return 0, status.Error(codes.Unavailable, "login bearer revocation not available: no OIDC provider")
+	}
+	provider, err := getter.GetOIDCProvider(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if provider == nil {
+		return 0, status.Error(codes.Unavailable, "login bearer revocation not available: no OIDC provider")
+	}
+	return provider.RevokeSubjectBearers(ctx, tenantID, subject, keepSessionID)
+}
+
+// buildAuditServer builds the AuditService server over the IAM audit logger.
+// It returns nil when the audit logger is unavailable.
+func (s *Server) buildAuditServer(getter iamComponentsGetter) iampb.AuditServiceServer {
+	// The audit logger is ALWAYS the node-backed NodeAuditLogger
+	// (node_audit_logger.go) once IAM composes — there is no in-memory
+	// fallback (a fallback that loses records on restart is the defect the
+	// unified audit plane exists to eliminate). A nil return here means IAM
+	// itself failed to compose, in which case not serving AuditService is
+	// correct: nothing else is served either.
+	auditLogger, _ := getter.GetAuditLogger(context.Background())
+	if auditLogger == nil {
+		s.logger.Error("Audit logger unavailable, skipping Audit gRPC registration")
+		return nil
+	}
+	return grpcapi.NewAuditServer(grpcapi.NewAuditServiceAdapter(auditLogger), s.logger)
+}
+
+// buildPEPServer builds the PEPService server over the IAM policy engine.
+// It returns nil when the policy engine is unavailable.
+func (s *Server) buildPEPServer(getter iamComponentsGetter) iampb.PEPServiceServer {
+	engine, err := getter.GetPolicyEngine(context.Background())
+	if err != nil || engine == nil {
+		s.logger.WithError(err).Warn("Policy engine unavailable, PEPService is not served")
+		return nil
+	}
+	return grpcapi.NewPEPServer(grpcapi.NewPEPServiceAdapter(engine), s.logger)
 }

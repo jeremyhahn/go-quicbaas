@@ -87,6 +87,8 @@ func TestMain(m *testing.M) {
 	code := m.Run()
 
 	fmt.Println(">>> Tests completed")
+	// The shared tenants outlive the tests that use them (shared_tenant_test.go).
+	deleteSharedTenants()
 	// Cleanup
 	if srv != nil {
 		helpers.TeardownEmbeddedServer(srv)

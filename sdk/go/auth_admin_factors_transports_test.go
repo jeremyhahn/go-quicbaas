@@ -296,11 +296,11 @@ func unixAdminFactors(t *testing.T, s *adminFactorServer) transport.Transport {
 // which the SDK tests do not set.
 func (s *adminFactorServer) mcpTools() map[string]func(context.Context, map[string]any) (any, error) {
 	return map[string]func(context.Context, map[string]any) (any, error){
-		"xkms.fido2.beginAddCredential": func(ctx context.Context, _ map[string]any) (any, error) {
+		"xkms_fido2_beginAddCredential": func(ctx context.Context, _ map[string]any) (any, error) {
 			tenantID, _ := tenantctx.Lookup(ctx) // comma-ok: the caller's own tenant, as the server tool reads it
 			return s.facade.FIDO2().BeginAddCredential(ctx, tenantID)
 		},
-		"xkms.fido2.finishRegistration": func(ctx context.Context, args map[string]any) (any, error) {
+		"xkms_fido2_finishRegistration": func(ctx context.Context, args map[string]any) (any, error) {
 			tenantID, ok := args["tenant_id"].(string)
 			if !ok || tenantID == "" {
 				tenantID, _ = tenantctx.Lookup(ctx) // comma-ok: an unnamed tenant is the caller's own
