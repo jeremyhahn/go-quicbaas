@@ -143,7 +143,7 @@ type; collapsing the two would be a silent widening.
 
 | Service | Tenant Helper File | Storage Prefix | Scoped Entity |
 |---------|-------------------|----------------|---------------|
-| KMS | `kms_tenant.go` | `tenant/{tenantID}/` | Key IDs |
+| KMS | `kms_tenant.go` | TenantID attribute | Key names (go-xkms TenantID attribute) |
 | Secrets | `secrets_tenant.go` | `tenant/{tenantID}/` | Secret paths |
 | TimeSeries | `timeseries_tenant.go` | `ts-tenant/{tenantID}/` | Metric names |
 | Scheduler | `scheduler_tenant.go` | `tenant/{tenantID}/` | Job names (via TargetTenantID) |
@@ -236,6 +236,8 @@ kms/keys/my-key
 # Multi-tenant (tenantID = "acme-corp")
 kms/tenant/acme-corp/keys/my-key
 ```
+
+KMS key names themselves are not prefixed: a key keeps the caller's name, and its tenant is the go-xkms `TenantID` attribute. Only the KV storage path above carries the tenant.
 
 Cross-tenant access returns `ErrCrossTenantAccess`. List operations return only the requesting tenant's data with prefixes stripped from the response.
 
@@ -404,10 +406,11 @@ QuicBaaS's KMS layer supports multi-tenant key isolation. Each tenant's keys are
 
 When a tenant ID is present in the request context, key operations are automatically scoped to that tenant's namespace. When no tenant ID is present, the system operates in single-tenant mode with no behavioral changes.
 
-#### Key Namespace Format
+#### Key Names and the Tenant
 
-- **Single-tenant**: keys stored as `{keyID}`
-- **Multi-tenant**: keys stored as `tenant/{tenantID}/{keyID}`
+A KMS key keeps the caller's name as given, in single-tenant and multi-tenant mode alike. In multi-tenant mode the tenant goes in go-xkms's `KeyAttributes.TenantID` attribute, and look-ups, lists and tenant authorization use that attribute, not the name. Two tenants may each have a key of the same name, and neither can see or use the other's.
+
+A tenant's KMS grace job carries the bare key name in its payload and runs as its tenant, so it reaches only that tenant's key of that name.
 
 At the storage layer, the full path includes the KMS prefix:
 
