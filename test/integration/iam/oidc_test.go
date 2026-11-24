@@ -102,7 +102,7 @@ func TestAuthorizationEndpointValidation(t *testing.T) {
 	admin := cluster.asSystemAdmin()
 
 	tenantID := setupTenantForTests(t, admin)
-	defer admin.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	defer deleteTenantUnlessShared(admin, tenantID)
 
 	// Create a valid application for testing
 	appReq := map[string]interface{}{
@@ -215,7 +215,7 @@ func TestPKCEParameterValidation(t *testing.T) {
 	admin := cluster.asSystemAdmin()
 
 	tenantID := setupTenantForTests(t, admin)
-	defer admin.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	defer deleteTenantUnlessShared(admin, tenantID)
 
 	// Create application with PKCE support
 	appReq := map[string]interface{}{
@@ -287,7 +287,7 @@ func TestClientCredentialsFlow(t *testing.T) {
 	admin := cluster.asSystemAdmin()
 
 	tenantID := setupTenantForTests(t, admin)
-	defer admin.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	defer deleteTenantUnlessShared(admin, tenantID)
 
 	// Create application with client credentials grant
 	appReq := map[string]interface{}{
@@ -368,7 +368,7 @@ func TestClientCredentialsInvalidCredentials(t *testing.T) {
 	admin := cluster.asSystemAdmin()
 
 	tenantID := setupTenantForTests(t, admin)
-	defer admin.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	defer deleteTenantUnlessShared(admin, tenantID)
 
 	// Create valid application first
 	appReq := map[string]interface{}{
@@ -454,7 +454,7 @@ func TestRefreshTokenFlow(t *testing.T) {
 	admin := cluster.asSystemAdmin()
 
 	tenantID := setupTenantForTests(t, admin)
-	defer admin.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	defer deleteTenantUnlessShared(admin, tenantID)
 
 	// Create application with refresh_token grant
 	appReq := map[string]interface{}{
@@ -561,7 +561,7 @@ func TestTokenRevocation(t *testing.T) {
 	admin := cluster.asSystemAdmin()
 
 	tenantID := setupTenantForTests(t, admin)
-	defer admin.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	defer deleteTenantUnlessShared(admin, tenantID)
 
 	// Create application with client credentials grant
 	appReq := map[string]interface{}{
@@ -863,7 +863,7 @@ func TestOIDCScopeValidation(t *testing.T) {
 	admin := cluster.asSystemAdmin()
 
 	tenantID := setupTenantForTests(t, admin)
-	defer admin.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	defer deleteTenantUnlessShared(admin, tenantID)
 
 	// Create application
 	appReq := map[string]interface{}{
@@ -938,7 +938,7 @@ func TestOIDCStateParameterEchoed(t *testing.T) {
 	admin := cluster.asSystemAdmin()
 
 	tenantID := setupTenantForTests(t, admin)
-	defer admin.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	defer deleteTenantUnlessShared(admin, tenantID)
 
 	// Create application
 	appReq := map[string]interface{}{
@@ -992,7 +992,7 @@ func TestOIDCNonceAcceptedByAuthorizeEndpoint(t *testing.T) {
 	admin := cluster.asSystemAdmin()
 
 	tenantID := setupTenantForTests(t, admin)
-	defer admin.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	defer deleteTenantUnlessShared(admin, tenantID)
 
 	// Create application
 	appReq := map[string]interface{}{

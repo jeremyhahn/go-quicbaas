@@ -81,21 +81,55 @@ type AuditQueryResponse struct {
 // counts its own events from auditBaseline does not count it.
 func setupTenantForAuditTests(t *testing.T, cluster *testCluster) (string, *testCluster) {
 	t.Helper()
+	tenantID := createAuditTenant(t, cluster)
+	auditor := cluster.asTenantAuditor(t, tenantID)
+	waitForAuditSetup(t, auditor, tenantID)
+	return tenantID, auditor
+}
+
+// sharedTenantForAuditTests is setupTenantForAuditTests on the package's
+// shared audit tenant (shared_tenant_test.go): the tenant and its auditor are
+// created by the first test that asks and reused by the rest. A test takes it
+// only when every assertion it makes is about objects it names uniquely or a
+// delta from an auditBaseline it reads first.
+func sharedTenantForAuditTests(t *testing.T, cluster *testCluster) (string, *testCluster) {
+	t.Helper()
+	shared := sharedTenantFor(t, cluster.httpEndpoint, "audit", func(t *testing.T) string {
+		return createAuditTenant(t, cluster)
+	})
+	auditor := shared.auditorView(t, cluster)
+	waitForAuditSetup(t, auditor, shared.id)
+	return shared.id, auditor
+}
+
+// createAuditTenant creates an audit test tenant as the fixture system admin
+// and returns its ID.
+func createAuditTenant(t *testing.T, cluster *testCluster) string {
+	t.Helper()
 	tenantID := generateUniqueTenantID()
 	createTenantReq := map[string]interface{}{
 		"id":   tenantID,
 		"name": "Audit Test Tenant",
 	}
 	require.NoError(t, cluster.asSystemAdmin().postJSON("/api/v1/tenants", createTenantReq, nil))
-	auditor := cluster.asTenantAuditor(t, tenantID)
+	return tenantID
+}
+
+// waitForAuditSetup waits until the auditor's own user_management setup
+// event is visible in tenantID's chain.
+func waitForAuditSetup(t *testing.T, auditor *testCluster, tenantID string) {
+	t.Helper()
 	waitForAuditEvents(t, auditor,
 		fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&event_type=user_management", tenantID), 1)
-	return tenantID, auditor
 }
 
 // cleanupAuditTests cleans up test resources. Deleting a tenant is a
 // system-tenant route (tenants:delete), sent as the fixture system admin.
 func cleanupAuditTests(cluster *testCluster, tenantID string) {
+	if isSharedTenant(tenantID) {
+		// TestMain deletes the shared tenant after m.Run.
+		return
+	}
 	cluster.asSystemAdmin().deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
 }
 
@@ -136,7 +170,7 @@ func TestAuditEventQuery(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, auditor := setupTenantForAuditTests(t, cluster)
+	tenantID, auditor := sharedTenantForAuditTests(t, cluster)
 	defer cleanupAuditTests(cluster, tenantID)
 
 	// Query audit events for the tenant. The tenant creation just performed
@@ -165,7 +199,7 @@ func TestAuditEventQueryWithFilters(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, auditor := setupTenantForAuditTests(t, cluster)
+	tenantID, auditor := sharedTenantForAuditTests(t, cluster)
 	defer cleanupAuditTests(cluster, tenantID)
 
 	userEvents := fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&event_type=user_management", tenantID)
@@ -230,7 +264,7 @@ func TestAuditEventQueryPagination(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, auditor := setupTenantForAuditTests(t, cluster)
+	tenantID, auditor := sharedTenantForAuditTests(t, cluster)
 	defer cleanupAuditTests(cluster, tenantID)
 
 	userEvents := fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&event_type=user_management", tenantID)
@@ -277,7 +311,7 @@ func TestAuditEventQueryTimeRange(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, auditor := setupTenantForAuditTests(t, cluster)
+	tenantID, auditor := sharedTenantForAuditTests(t, cluster)
 	defer cleanupAuditTests(cluster, tenantID)
 
 	userEvents := fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&event_type=user_management", tenantID)
@@ -343,7 +377,7 @@ func TestAuditEventGet(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, auditor := setupTenantForAuditTests(t, cluster)
+	tenantID, auditor := sharedTenantForAuditTests(t, cluster)
 	defer cleanupAuditTests(cluster, tenantID)
 
 	// Query events to get an event ID. Audit writes flow through
@@ -376,7 +410,7 @@ func TestAuditEventGetNotFound(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, auditor := setupTenantForAuditTests(t, cluster)
+	tenantID, auditor := sharedTenantForAuditTests(t, cluster)
 	defer cleanupAuditTests(cluster, tenantID)
 
 	// Try to get a non-existent event
@@ -525,7 +559,7 @@ func TestAuditEventTenantIsolation(t *testing.T) {
 	defer cluster.Close()
 
 	// Create two separate tenants, each with its own auditor
-	tenant1ID, auditor1 := setupTenantForAuditTests(t, cluster)
+	tenant1ID, auditor1 := sharedTenantForAuditTests(t, cluster)
 	defer cleanupAuditTests(cluster, tenant1ID)
 
 	tenant2ID, auditor2 := setupTenantForAuditTests(t, cluster)
@@ -595,7 +629,7 @@ func TestAuditEventGeneration(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, auditor := setupTenantForAuditTests(t, cluster)
+	tenantID, auditor := sharedTenantForAuditTests(t, cluster)
 	defer cleanupAuditTests(cluster, tenantID)
 
 	tests := []struct {
@@ -675,7 +709,7 @@ func TestAuditEventMissingTenantID(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, auditor := setupTenantForAuditTests(t, cluster)
+	tenantID, auditor := sharedTenantForAuditTests(t, cluster)
 	defer cleanupAuditTests(cluster, tenantID)
 
 	// Query without tenant_id
@@ -691,7 +725,7 @@ func TestAuditEventInvalidTimeFormat(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, auditor := setupTenantForAuditTests(t, cluster)
+	tenantID, auditor := sharedTenantForAuditTests(t, cluster)
 	defer cleanupAuditTests(cluster, tenantID)
 
 	// The handler should gracefully handle invalid time formats by ignoring
@@ -707,7 +741,7 @@ func TestAuditEventLargeLimit(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, auditor := setupTenantForAuditTests(t, cluster)
+	tenantID, auditor := sharedTenantForAuditTests(t, cluster)
 	defer cleanupAuditTests(cluster, tenantID)
 
 	// Try to query with a very large limit
