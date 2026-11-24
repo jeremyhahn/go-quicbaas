@@ -672,6 +672,79 @@ func GetSymmetricKey(ctx context.Context, keyRef string) (xkmssdk.SymmetricKey, 
 	return key, nil
 }
 
+// symmetricProviderFor resolves the symmetric key provider of the backend
+// that holds attrs. A kid string carries no tenant, so a key with a TenantID
+// is reachable only through its attributes.
+func symmetricProviderFor(attrs *xkmssdk.KeyAttributes) (xkmssdk.SymmetricKeyProvider, error) {
+	if err := checkInitialized(); err != nil {
+		return nil, err
+	}
+	if attrs == nil {
+		return nil, ErrInvalidKeyID
+	}
+	backend, err := xkmssdk.ServiceBackendFor(attrs)
+	if err != nil {
+		return nil, err
+	}
+	provider, ok := backend.KeyProvider().(xkmssdk.SymmetricKeyProvider)
+	if !ok {
+		return nil, ErrEncryptionFailed
+	}
+	return provider, nil
+}
+
+// EncryptWithAttributes encrypts data with the symmetric key named by attrs
+// (CN, TenantID, StoreType, KeyType and algorithm).
+func EncryptWithAttributes(ctx context.Context, attrs *xkmssdk.KeyAttributes, data []byte, opts *xkmssdk.EncryptOptions) (*xkmssdk.EncryptedData, error) {
+	provider, err := symmetricProviderFor(attrs)
+	if err != nil {
+		return nil, &api.XKMSEncryptionError{Cause: err}
+	}
+	encrypter, err := provider.SymmetricEncrypter(ctx, attrs)
+	if err != nil {
+		return nil, &api.XKMSEncryptionError{Cause: err}
+	}
+	encrypted, err := encrypter.Encrypt(data, opts)
+	if err != nil {
+		return nil, &api.XKMSEncryptionError{Cause: err}
+	}
+	return encrypted, nil
+}
+
+// DecryptWithAttributes decrypts data with the symmetric key named by attrs.
+func DecryptWithAttributes(ctx context.Context, attrs *xkmssdk.KeyAttributes, data *xkmssdk.EncryptedData, opts *xkmssdk.DecryptOptions) ([]byte, error) {
+	if data == nil {
+		return nil, &api.XKMSDecryptionError{Detail: "encrypted data cannot be nil"}
+	}
+	provider, err := symmetricProviderFor(attrs)
+	if err != nil {
+		return nil, &api.XKMSDecryptionError{Cause: err}
+	}
+	decrypter, err := provider.SymmetricEncrypter(ctx, attrs)
+	if err != nil {
+		return nil, &api.XKMSDecryptionError{Cause: err}
+	}
+	plaintext, err := decrypter.Decrypt(data, opts)
+	if err != nil {
+		return nil, &api.XKMSDecryptionError{Cause: err}
+	}
+	return plaintext, nil
+}
+
+// SymmetricKeyByAttributes returns the symmetric key named by attrs; it is
+// the attribute form of GetSymmetricKey.
+func SymmetricKeyByAttributes(ctx context.Context, attrs *xkmssdk.KeyAttributes) (xkmssdk.SymmetricKey, error) {
+	provider, err := symmetricProviderFor(attrs)
+	if err != nil {
+		return nil, &api.XKMSKeyNotFoundError{Cause: err}
+	}
+	key, err := provider.GetSymmetricKey(ctx, attrs)
+	if err != nil {
+		return nil, &api.XKMSKeyNotFoundError{Cause: err}
+	}
+	return key, nil
+}
+
 // Errors reporting material that does not match the algorithm it is offered
 // under. Storing a key beneath a false description is worse than refusing it:
 // the description is what every later operation reasons from.

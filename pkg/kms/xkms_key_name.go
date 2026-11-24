@@ -18,58 +18,70 @@ import (
 	"strings"
 
 	"github.com/jeremyhahn/go-xkms/pkg/validation"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/api"
 )
 
-// xkmsEncodedKeyNamePrefix starts every go-xkms key name that carries an
-// encoded service key ID. It is NOT reserved: a valid name that starts with
-// it (an existing "qbx.production") is used unchanged.
-const xkmsEncodedKeyNamePrefix = "qbx."
+// tenantKeyRefPrefix starts the service's reference to a tenant's key,
+// "tenant/<tenantID>/<name>".
+const tenantKeyRefPrefix = "tenant/"
 
-// xkmsEncoding is strict so that each encoded payload has exactly one
-// spelling: a name with non-canonical trailing bits is never an encoded
-// output and reads back literally.
-var xkmsEncoding = base64.RawURLEncoding.Strict()
-
-// xkmsKeyName maps a service key ID to the key name go-xkms stores and
-// resolves it under. Service IDs may hold characters go-xkms refuses in a key
-// reference (a tenant's key is "tenant/<tenantID>/<name>"); go-xkms's own
-// validation is not loosened, the name is encoded instead.
-//
-// A name go-xkms accepts is used unchanged, always, so every existing key
-// keeps its name. Only an ID go-xkms rejects is encoded, as the prefix plus
-// its canonical unpadded base64url form.
-//
-// go-xkms has one key-name space, and an encoded name must live in it, so
-// the mapping cannot be injective over every ID: the literal valid name
-// "qbx.<canonical base64url of a rejected ID>" and that rejected ID share a
-// go-xkms name. That is the only overlap; keyIDFromXKMSName reads such a
-// name as the encoded ID.
-func xkmsKeyName(keyID string) string {
-	// An empty ID is refused before any go-xkms call (ErrKeyCNEmpty); it is
-	// not encoded, so "qbx." alone stays a literal name.
-	if keyID == "" || validation.ValidateKeyID(keyID) == nil {
-		return keyID
+// xkmsKeyRef maps a service key reference to go-xkms's own form of the key.
+// A tenant's key "tenant/<T>/<K>" is go-xkms CN=K with TenantID=T, so go-xkms
+// keeps tenants apart itself (KeyAttributes.ID() prefixes "<T>:"). Any other
+// reference is a platform key: its CN is the reference and its TenantID is
+// empty. Nothing is encoded, so a platform name is never read as a tenant key.
+func xkmsKeyRef(keyID string) (tenantID, cn string, err error) {
+	rest, isTenant := strings.CutPrefix(keyID, tenantKeyRefPrefix)
+	if !isTenant {
+		if err := validation.ValidateKeyID(keyID); err != nil {
+			return "", "", api.NewInvalidInputCauseError("invalid key name "+keyID, err)
+		}
+		return "", keyID, nil
 	}
-	return xkmsEncodedKeyNamePrefix + xkmsEncoding.EncodeToString([]byte(keyID))
+	tenantID, cn, ok := strings.Cut(rest, "/")
+	if !ok || tenantID == "" {
+		return "", "", api.NewInvalidInputError("malformed tenant key reference " + keyID)
+	}
+	if err := validation.ValidateKeyID(cn); err != nil {
+		return "", "", api.NewInvalidInputCauseError("invalid key name in "+keyID, err)
+	}
+	return tenantID, cn, nil
 }
 
-// keyIDFromXKMSName returns the service key ID behind a go-xkms key name. It
-// decodes a name only when the name is exactly what xkmsKeyName makes of an
-// ID go-xkms rejects; every other name is the key ID itself.
-func keyIDFromXKMSName(name string) string {
-	encoded, ok := strings.CutPrefix(name, xkmsEncodedKeyNamePrefix)
+// keyIDFromXKMS is the inverse of xkmsKeyRef: the service reference of the
+// go-xkms key CN under tenantID.
+func keyIDFromXKMS(tenantID, cn string) string {
+	if tenantID == "" {
+		return cn
+	}
+	return tenantKeyRefPrefix + tenantID + "/" + cn
+}
+
+// legacyTenantKeyPrefix starts the interim encoded names an earlier build
+// stored tenant keys under: "qbx." + base64url("tenant/<T>/<K>"), with an
+// empty TenantID. Those keys are unsupported; they are only counted at
+// startup so that none disappears silently.
+const legacyTenantKeyPrefix = "qbx."
+
+// isLegacyEncodedTenantKey reports whether a go-xkms key is one of the
+// interim encoded tenant keys. Nothing resolves through this decoder.
+func isLegacyEncodedTenantKey(tenantID, cn string) bool {
+	if tenantID != "" {
+		return false
+	}
+	encoded, ok := strings.CutPrefix(cn, legacyTenantKeyPrefix)
 	if !ok {
-		return name
+		return false
 	}
-	decoded, err := xkmsEncoding.DecodeString(encoded)
+	decoded, err := base64.RawURLEncoding.Strict().DecodeString(encoded)
 	if err != nil {
-		return name
+		return false
 	}
-	keyID := string(decoded)
-	if keyID == "" || validation.ValidateKeyID(keyID) == nil {
-		// Neither an empty nor a valid ID is ever encoded, so this name is
-		// a literal.
-		return name
+	ref := string(decoded)
+	if !strings.HasPrefix(ref, tenantKeyRefPrefix) {
+		return false
 	}
-	return keyID
+	t, _, err := xkmsKeyRef(ref)
+	return err == nil && t != ""
 }

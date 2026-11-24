@@ -66,19 +66,29 @@ func TestXKMSBackend_TenantScopedKeyID_EncryptsAndDecrypts(t *testing.T) {
 }
 
 func TestXKMSKeyName_IsInjectiveAndKeepsValidNames(t *testing.T) {
-	require.Equal(t, "plain-key_1.v2", xkmsKeyName("plain-key_1.v2"), "a valid name is unchanged")
+	tenantID, cn, err := xkmsKeyRef("plain-key_1.v2")
+	require.NoError(t, err)
+	require.Equal(t, "", tenantID, "a platform name has no tenant")
+	require.Equal(t, "plain-key_1.v2", cn, "a platform name is unchanged")
 
-	ids := []string{"tenant/acme/k", "tenant/acme/k_v2", "tenant.acme.k", "a/b", "a.b"}
-	seen := map[string]string{}
+	ids := []string{"tenant/acme/k", "tenant/acme/k_v2", "tenant/globex/k", "tenant.acme.k", "acme.k", "k"}
+	type pair struct{ tenantID, cn string }
+	seen := map[pair]string{}
 	for _, id := range ids {
-		name := xkmsKeyName(id)
-		require.Regexp(t, `^[A-Za-z0-9._-]+$`, name)
-		require.NotContains(t, name, "..")
-		if prev, ok := seen[name]; ok {
-			t.Fatalf("%q and %q map to the same go-xkms name %q", prev, id, name)
+		tenantID, cn, err := xkmsKeyRef(id)
+		require.NoError(t, err, id)
+		require.NoError(t, validation.ValidateKeyID(cn), "the CN must be a valid go-xkms name")
+		p := pair{tenantID, cn}
+		if prev, ok := seen[p]; ok {
+			t.Fatalf("%q and %q map to the same go-xkms key %+v", prev, id, p)
 		}
-		seen[name] = id
-		require.Equal(t, id, keyIDFromXKMSName(name), "the mapping round-trips")
+		seen[p] = id
+		require.Equal(t, id, keyIDFromXKMS(tenantID, cn), "the mapping round-trips")
+	}
+
+	for _, bad := range []string{"tenant/", "tenant//k", "tenant/acme", "tenant/acme/a/b", "a/b", "has space"} {
+		_, _, err := xkmsKeyRef(bad)
+		require.Error(t, err, "%q is refused", bad)
 	}
 }
 
@@ -90,31 +100,25 @@ func TestXKMSKeyName_EveryValidNameMapsToItself(t *testing.T) {
 		"qbx.production", "qbx.", "qbx.YS9i", "qbx.cHJvZA", "qbx.production.sign", "qbx-x", "QBX.prod",
 	} {
 		require.NoError(t, validation.ValidateKeyID(id), "fixture %q must be a valid go-xkms name", id)
-		require.Equal(t, id, xkmsKeyName(id), "a valid name maps to itself")
-		if id == "qbx.YS9i" {
-			// The one shape that is ambiguous by construction: the
-			// canonical encoding of the rejected ID "a/b". See xkmsKeyName.
-			continue
-		}
-		require.Equal(t, id, keyIDFromXKMSName(id), "ListKeys reads a literal name unchanged")
+		tenantID, cn, err := xkmsKeyRef(id)
+		require.NoError(t, err)
+		require.Equal(t, "", tenantID, "a platform name has no tenant")
+		require.Equal(t, id, cn, "a valid name maps to itself")
+		require.Equal(t, id, keyIDFromXKMS("", id), "ListKeys reads a platform name unchanged")
 	}
 }
 
 // TestXKMSKeyName_DecodesOnlyEncodedOutputs: keyIDFromXKMSName decodes a name
 // only when it is exactly what xkmsKeyName makes of an ID go-xkms rejects.
 func TestXKMSKeyName_DecodesOnlyEncodedOutputs(t *testing.T) {
-	for _, id := range []string{"tenant/acme/k", "a/b", "has space", "colon:id", "tenant/é/k"} {
-		require.Error(t, validation.ValidateKeyID(id), "fixture %q must be rejected by go-xkms", id)
-		name := xkmsKeyName(id)
-		require.NoError(t, validation.ValidateKeyID(name), "the encoded name must be a valid go-xkms name")
-		require.Equal(t, id, keyIDFromXKMSName(name))
-	}
-	// A prefixed name whose payload decodes to a VALID ID is never an
-	// encoded output (a valid ID is not encoded), so it reads literally.
-	literal := xkmsEncodedKeyNamePrefix + base64.RawURLEncoding.EncodeToString([]byte("plain"))
-	require.Equal(t, literal, keyIDFromXKMSName(literal))
-	// A non-canonical payload is not an encoded output either.
-	require.Equal(t, "qbx.production", keyIDFromXKMSName("qbx.production"))
+	// The interim encoding is gone: a "qbx.<b64 of tenant/acme/k>" name is a
+	// platform name like any other, and is never decoded into a tenant key.
+	literal := "qbx." + base64.RawURLEncoding.EncodeToString([]byte("tenant/acme/k"))
+	tenantID, cn, err := xkmsKeyRef(literal)
+	require.NoError(t, err)
+	require.Equal(t, "", tenantID)
+	require.Equal(t, literal, cn)
+	require.Equal(t, literal, keyIDFromXKMS("", literal))
 }
 
 // TestXKMSBackend_LegacyQBXKeyName_StillWorks is the upgrade fixture: keys
