@@ -542,9 +542,6 @@ func TestWatchBridgeStartStop(t *testing.T) {
 		// Cancel context
 		cancel()
 
-		// Give time for goroutines to notice cancellation
-		time.Sleep(50 * time.Millisecond)
-
 		// Stop should complete quickly
 		stopCtx, stopCancel := context.WithTimeout(context.Background(), time.Second)
 		defer stopCancel()
@@ -588,8 +585,7 @@ func TestWatchBridgeStartStop(t *testing.T) {
 		timeoutCtx, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
 		defer cancel()
 
-		// Wait a moment for timeout to expire
-		time.Sleep(time.Millisecond)
+		<-timeoutCtx.Done()
 
 		err = bridge.WaitStarted(timeoutCtx)
 		if err == nil {
@@ -998,8 +994,10 @@ func TestWatchBridgeStats(t *testing.T) {
 	watchMgr.NotifyPut([]byte("/stats/key2"), nil, []byte(`{"id": "2"}`), 2, 1)
 	watchMgr.NotifyDelete([]byte("/stats/key1"), []byte(`{"id": "1"}`), 3, 1) // Should be filtered
 
-	// Give time for event processing
-	time.Sleep(200 * time.Millisecond)
+	poll.Until(t, 5*time.Second, func() bool {
+		s := bridge.GetStats()
+		return s.EventsReceived >= 3 && s.EventsFiltered >= 1 && s.EventsPublished >= 2
+	}, "three events received, one filtered, two published")
 
 	stats := bridge.GetStats()
 
@@ -1044,8 +1042,7 @@ func TestWatchEventPayload(t *testing.T) {
 	testValue := []byte(`{"name": "test"}`)
 	watchMgr.NotifyPut([]byte("/payload/test-key"), nil, testValue, 42, 5)
 
-	// Give time for event processing
-	time.Sleep(200 * time.Millisecond)
+	poll.Until(t, 5*time.Second, func() bool { return len(messagingSvc.GetPublishedMessages("watch:/payload")) > 0 }, "message published on watch:/payload")
 
 	// Check published messages
 	msgs := messagingSvc.GetPublishedMessages("watch:/payload")
@@ -1426,8 +1423,7 @@ func TestWatchBridgeDeltaComputation(t *testing.T) {
 		testValue := []byte(`{"id": "entity1", "name": "Test", "age": 25}`)
 		watchMgr.NotifyPut([]byte("/delta/entity1"), nil, testValue, 1, 1)
 
-		// Give time for event processing
-		time.Sleep(200 * time.Millisecond)
+		poll.Until(t, 5*time.Second, func() bool { return len(messagingSvc.GetPublishedMessages("watch:/delta")) > 0 }, "message published on watch:/delta")
 
 		// Check published messages
 		msgs := messagingSvc.GetPublishedMessages("watch:/delta")
@@ -1484,7 +1480,7 @@ func TestWatchBridgeDeltaComputation(t *testing.T) {
 		testValue := []byte(`{"id": "entity1", "name": "Test"}`)
 		watchMgr.NotifyPut([]byte("/nodelta/entity1"), nil, testValue, 1, 1)
 
-		time.Sleep(200 * time.Millisecond)
+		poll.Until(t, 5*time.Second, func() bool { return len(messagingSvc.GetPublishedMessages("watch:/nodelta")) > 0 }, "message published on watch:/nodelta")
 
 		msgs := messagingSvc.GetPublishedMessages("watch:/nodelta")
 		if len(msgs) == 0 {
@@ -1536,7 +1532,7 @@ func TestWatchBridgeDeltaComputation(t *testing.T) {
 		testValue := []byte(`{"id": "entity1", "name": "Test", "age": 25}`)
 		watchMgr.NotifyPut([]byte("/clearold/entity1"), nil, testValue, 1, 1)
 
-		time.Sleep(200 * time.Millisecond)
+		poll.Until(t, 5*time.Second, func() bool { return len(messagingSvc.GetPublishedMessages("watch:/clearold")) > 0 }, "message published on watch:/clearold")
 
 		msgs := messagingSvc.GetPublishedMessages("watch:/clearold")
 		if len(msgs) == 0 {
@@ -1596,8 +1592,7 @@ func TestWatchBridgeDeleteEvent(t *testing.T) {
 	// Trigger a delete event
 	watchMgr.NotifyDelete([]byte("/delete/key1"), []byte(`{"id": "1"}`), 1, 1)
 
-	// Give time for event processing
-	time.Sleep(200 * time.Millisecond)
+	poll.Until(t, 5*time.Second, func() bool { return len(messagingSvc.GetPublishedMessages("watch:/delete")) > 0 }, "message published on watch:/delete")
 
 	// Check published messages
 	msgs := messagingSvc.GetPublishedMessages("watch:/delete")
