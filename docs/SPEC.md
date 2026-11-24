@@ -107,6 +107,7 @@ Status is one of `shipped`, `in progress`, `planned`, `future`.
 | agents | future | A user creates further agents of their own, with any name, each with its account and model<br>Identity, roles and secrets come from go-qrdb and go-xkms, as the stack layering requires | none |
 | project-agents | future | Creating a software-factory project lets the user choose its agents and accounts, with the existing rotate-on-failure account options<br>In the same dialog the user either reuses any agent already configured in the system or creates a project-specific agent | none |
 | agent-sessions | future | Starting a session with an agent sets session-only options: reasoning effort, context window size and similar | none |
+| maintenance | standing | One standing maintenance row ([#2713](https://github.com/jeremyhahn/go-quicbaas/issues/2713), owner ruling 1234): dependency updates (Dependabot and manual) and CI configuration (ci.yml template adoptions, workflow fixes) are worked on its row branch and land from it, so no such change sits on a branch outside a row<br>The row stays open and carries no Dev complete milestone, so it never gates a release date | none |
 
 ### Authorization clean-up
 

@@ -34,6 +34,14 @@ also fails a case whose curl command line carries the token.
      this repository (a fork, or one since deleted) gets the hosted default
      with a ::notice and no call, even when self-hosted would win; a
      same-repository pull request and a push still balance.
+  F. go-quicbaas #2427: the Dells' runner image refuses every event but a
+     push to refs/heads/main and a same-repository pull_request, so
+     workflow_dispatch, schedule, pull_request_target, a push to another
+     ref and any other event get the hosted default with a ::notice naming
+     why and no call; a push to main and a same-repository pull_request
+     still balance.
+  G. #2427: integration.yml's preflight carries the step verbatim; its run
+     block and env equal ci.yml's.
 
 Run: python3 -I software/templates/github-actions/testdata/runner-select-tests.py
 """
@@ -59,10 +67,10 @@ def fatal(msg):
     sys.exit(9)
 
 
-def script():
-    text = WORKFLOW.read_text()
+def script(workflow=WORKFLOW):
+    text = workflow.read_text()
     if text.count(STEP) != 1:
-        fatal("the step `Balanced runner pool (ruling 1137)` is not in ci.yml exactly once")
+        fatal(f"the step `Balanced runner pool (ruling 1137)` is not in {workflow.name} exactly once")
     rest = text.split(STEP, 1)[1].split("\n")
     out, inside = [], False
     for line in rest:
@@ -120,7 +128,7 @@ def jobs(*js, total=None):
     return json.dumps({"total_count": len(js) if total is None else total, "jobs": list(js)})
 
 
-def run(resp, server="https://github.com", hs="10", c1="10", c2="10", event="push", head=""):
+def run(resp, server="https://github.com", hs="10", c1="10", c2="10", event="push", head="", ref="refs/heads/main"):
     with tempfile.TemporaryDirectory() as d:
         d = pathlib.Path(d)
         (d / "bin").mkdir()
@@ -138,7 +146,7 @@ def run(resp, server="https://github.com", hs="10", c1="10", c2="10", event="pus
             "GITHUB_OUTPUT": str(d / "out"), "RUNNER_TEMP": str(d / "tmp"),
             "SERVER": server, "API": "https://api.github.com/repos/o/r/actions", "RUN_ID": "100",
             "JOB_TOKEN": TOKEN, "HS": hs, "C1": c1, "C2": c2,
-            "EVENT": event, "HEAD_REPO": head, "REPO": "o/r",
+            "EVENT": event, "HEAD_REPO": head, "REPO": "o/r", "REF": ref,
         }
         p = subprocess.run(["bash", "--noprofile", "--norc", "-eo", "pipefail", str(d / "step.sh")],
                            env=env, capture_output=True, text=True, timeout=60)
@@ -311,6 +319,60 @@ case("E5 a push still balances",
      WIN, SELF, SELF_D, ["run on the Dells"], ["a fork"])
 case("E6 off github.com a fork keeps the forge labels: no call, no fork notice",
      [], HOSTED, HOSTED, ["not github.com"], ["a fork"], calls=0, server="gitea", event="pull_request", head="fork/r")
+
+# F. #2427: the Dells' runner image refuses every event but a push to main
+# and a same-repository pull_request, so every other event goes hosted with
+# a ::notice naming why, and no call, even where self-hosted would win.
+REFUSED = "which the Dells' runner image refuses"
+case("F1 workflow_dispatch on main: hosted, no call",
+     WIN, HOSTED, HOSTED, ["::notice::", "a workflow_dispatch event", REFUSED, "#2427"], ["::warning::"], calls=0,
+     event="workflow_dispatch")
+case("F2 a push to a ref other than main: hosted, no call",
+     WIN, HOSTED, HOSTED, ["::notice::", "a push to refs/heads/feature, not to refs/heads/main", REFUSED], ["::warning::"],
+     calls=0, ref="refs/heads/feature")
+case("F3 a push of a tag: hosted, no call",
+     WIN, HOSTED, HOSTED, ["a push to refs/tags/v1.0.0", REFUSED], ["::warning::"], calls=0, ref="refs/tags/v1.0.0")
+case("F4 a same-repository pull_request_target: hosted, no call",
+     WIN, HOSTED, HOSTED, ["::notice::", "a pull_request_target event", REFUSED], ["::warning::", "a fork"], calls=0,
+     event="pull_request_target", head="o/r", ref="refs/heads/main")
+case("F5 a schedule run: hosted, no call",
+     WIN, HOSTED, HOSTED, ["a schedule event", REFUSED], ["::warning::"], calls=0, event="schedule")
+case("F6 any other event: hosted, no call",
+     WIN, HOSTED, HOSTED, ["a merge_group event", REFUSED], ["::warning::"], calls=0, event="merge_group")
+case("F7 a push to main still balances",
+     WIN, SELF, SELF_D, ["run on the Dells"], [REFUSED, "a fork"], ref="refs/heads/main")
+case("F8 a same-repository pull_request still balances",
+     WIN, SELF, SELF_D, ["run on the Dells"], [REFUSED, "a fork"], event="pull_request", head="o/r",
+     ref="refs/pull/7/merge")
+case("F9 the C1 check still runs for a push to main: hosted with a warning",
+     WIN, HOSTED, HOSTED, ["::warning::", "CI_SELF_HOSTED_BIGDISK=''"], [REFUSED], calls=0, c1="")
+case("F10 off github.com a workflow_dispatch keeps the forge labels: no call, no refusal notice",
+     [], HOSTED, HOSTED, ["not github.com"], [REFUSED], calls=0, server="gitea", event="workflow_dispatch")
+
+# G. #2427: integration.yml's preflight carries this step verbatim.
+INTEGRATION = HERE.parent / "integration.yml"
+ok = script(INTEGRATION) == SCRIPT
+print(f"{'PASS' if ok else 'FAIL'}: G1 integration.yml's `Balanced runner pool (ruling 1137)` run block equals ci.yml's")
+FAILS += 0 if ok else 1
+
+
+def step_env(workflow):
+    lines = workflow.read_text().split(STEP, 1)[1].split("\n")
+    env, inside = [], False
+    for line in lines:
+        if line == "        env:":
+            inside = True
+            continue
+        if inside and not line.startswith(" " * 10):
+            break
+        if inside:
+            env.append(line)
+    return env
+
+
+ok = step_env(INTEGRATION) == step_env(WORKFLOW) and any(l.strip() == "REF: ${{ github.ref }}" for l in step_env(WORKFLOW))
+print(f"{'PASS' if ok else 'FAIL'}: G2 the two copies read the same env, REF from github.ref included")
+FAILS += 0 if ok else 1
 
 print(f"{'ALL PASS' if not FAILS else f'{FAILS} FAILED'}")
 sys.exit(1 if FAILS else 0)
