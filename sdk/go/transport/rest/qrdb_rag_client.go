@@ -66,13 +66,26 @@ func (c *QRDBRAGClient) RAGQuery(ctx context.Context, req *qrdbtransport.RAGQuer
 	return &resp, nil
 }
 
-// RAGDeleteDocument removes a document from a namespace.
+// RAGDeleteDocument removes a document from a namespace. The pinned go-qrdb
+// handler reads the document id and namespace only from the query string, so
+// both go there, URL-encoded; the JSON body go-qrdb's own SDK sends is kept.
 func (c *QRDBRAGClient) RAGDeleteDocument(ctx context.Context, req *qrdbtransport.RAGDeleteDocumentRequest) (*qrdbtransport.RAGDeleteDocumentResponse, error) {
 	if req == nil {
 		req = &qrdbtransport.RAGDeleteDocumentRequest{}
 	}
+	q := url.Values{}
+	if req.DocumentID != "" {
+		q.Set("id", req.DocumentID)
+	}
+	if req.Namespace != "" {
+		q.Set("namespace", req.Namespace)
+	}
+	path := "/v1/rag/documents/delete"
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
 	var resp qrdbtransport.RAGDeleteDocumentResponse
-	if err := doJSONResult(ctx, c.t, qrdbRAGOp, http.MethodPost, "/v1/rag/documents/delete", req, &resp); err != nil {
+	if err := doJSONResult(ctx, c.t, qrdbRAGOp, http.MethodPost, path, req, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil

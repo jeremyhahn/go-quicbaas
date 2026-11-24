@@ -78,11 +78,12 @@ func TestQRDBRAGClient_MethodPathAndBearer(t *testing.T) {
 			},
 		},
 		{
-			name:   "Delete",
-			method: http.MethodPost,
-			path:   "/v1/rag/documents/delete",
-			reply:  deleteReply,
-			body:   &wantBody{DocumentID: "doc-1", Namespace: "ns"},
+			name:     "Delete",
+			method:   http.MethodPost,
+			path:     "/v1/rag/documents/delete",
+			rawQuery: "id=doc-1&namespace=ns",
+			reply:    deleteReply,
+			body:     &wantBody{DocumentID: "doc-1", Namespace: "ns"},
 			call: func(c qrdbtransport.RAGClient) (any, error) {
 				return c.RAGDeleteDocument(ctx, &qrdbtransport.RAGDeleteDocumentRequest{
 					DocumentID: "doc-1", Namespace: "ns",
@@ -174,6 +175,66 @@ func TestQRDBRAGClient_MethodPathAndBearer(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestQRDBRAGClient_DeleteReachesHandlerQuery proves RAGDeleteDocument's id
+// and namespace reach go-qrdb's delete handler. The stub reads the request
+// exactly as go-qrdb v0.30.1-alpha pkg/api/rest/handlers_rag.go
+// handleRAGDeleteDocument does: the id from PathValue("id"), falling back to
+// the id query parameter, and the namespace from the namespace query
+// parameter, never the body. The id has a space and a slash, so it proves
+// the query is URL-encoded.
+func TestQRDBRAGClient_DeleteReachesHandlerQuery(t *testing.T) {
+	const docID, namespace = "doc 1/a", "ns&x"
+	var (
+		mu        sync.Mutex
+		gotID     string
+		gotNS     string
+		gotHits   int
+		replyBody = &qrdbtransport.RAGDeleteDocumentResponse{DocumentID: docID, ChunksRemoved: 1}
+	)
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/rag/documents/delete", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		if id == "" {
+			id = r.URL.Query().Get("id")
+		}
+		mu.Lock()
+		gotHits++
+		gotID, gotNS = id, r.URL.Query().Get("namespace")
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(replyBody)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	tr, err := New(&transport.Config{Address: srv.URL, MaxRetries: 0}, WithAuthToken("tok-rag"))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = tr.Close() })
+
+	resp, err := tr.QRDBRAG().RAGDeleteDocument(context.Background(), &qrdbtransport.RAGDeleteDocumentRequest{
+		DocumentID: docID, Namespace: namespace,
+	})
+	if err != nil {
+		t.Fatalf("RAGDeleteDocument: %v", err)
+	}
+	if !reflect.DeepEqual(resp, replyBody) {
+		t.Errorf("response: got %+v, want %+v", resp, replyBody)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if gotHits != 1 {
+		t.Fatalf("requests reaching the handler: got %d, want 1", gotHits)
+	}
+	if gotID != docID {
+		t.Errorf("handler id: got %q, want %q", gotID, docID)
+	}
+	if gotNS != namespace {
+		t.Errorf("handler namespace: got %q, want %q", gotNS, namespace)
 	}
 }
 
