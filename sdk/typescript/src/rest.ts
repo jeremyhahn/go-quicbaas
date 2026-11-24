@@ -699,6 +699,21 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
+// policyWireBody serializes a policy create, update or validate request. The
+// server decodes spec_yaml into a Go []byte, so the document text goes on the
+// wire as the base64 of its UTF-8 bytes; every other field is sent unchanged,
+// and an undefined spec_yaml is left out.
+function policyWireBody(
+  req: import('./interfaces.js').CreatePolicyRequest | import('./interfaces.js').UpdatePolicyRequest,
+): string {
+  const { spec_yaml, ...rest } = req;
+  const wire: Record<string, unknown> = { ...rest };
+  if (spec_yaml !== undefined) {
+    wire.spec_yaml = bytesToBase64(utf8Bytes(spec_yaml));
+  }
+  return JSON.stringify(wire);
+}
+
 // parseResponseBody reads the body of a 2xx fetch Response and returns the
 // parsed JSON, tolerating 204 No Content and empty bodies (returns undefined
 // as T). All fetchJSON and fetchSSH success tails delegate here to prevent
@@ -4275,14 +4290,14 @@ async listSessions(
   async createPolicy(tenantID: string, req: import('./interfaces.js').CreatePolicyRequest): Promise<IAMPolicy> {
     return this.fetchJSON<IAMPolicy>(
       `/api/v1/tenants/${encodeURIComponent(tenantID)}/policies`,
-      { method: 'POST', body: JSON.stringify(req) },
+      { method: 'POST', body: policyWireBody(req) },
     );
   }
 
   async updatePolicy(tenantID: string, policyName: string, req: import('./interfaces.js').UpdatePolicyRequest): Promise<IAMPolicy> {
     return this.fetchJSON<IAMPolicy>(
       `/api/v1/tenants/${encodeURIComponent(tenantID)}/policies/${encodeURIComponent(policyName)}`,
-      { method: 'PUT', body: JSON.stringify(req) },
+      { method: 'PUT', body: policyWireBody(req) },
     );
   }
 
@@ -4309,7 +4324,7 @@ async listSessions(
     const query = name !== undefined ? `?name=${encodeURIComponent(name)}` : '';
     return this.fetchJSON<import('./interfaces.js').IAMPolicyValidationResult>(
       `/api/v1/tenants/${encodeURIComponent(tenantID)}/policies/validate${query}`,
-      { method: 'POST', body: JSON.stringify(req) },
+      { method: 'POST', body: policyWireBody(req) },
     );
   }
 

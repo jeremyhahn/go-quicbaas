@@ -53,6 +53,18 @@ function bytesToBase64(bytes) {
     }
     return btoa(binary);
 }
+// policyWireBody serializes a policy create, update or validate request. The
+// server decodes spec_yaml into a Go []byte, so the document text goes on the
+// wire as the base64 of its UTF-8 bytes; every other field is sent unchanged,
+// and an undefined spec_yaml is left out.
+function policyWireBody(req) {
+    const { spec_yaml, ...rest } = req;
+    const wire = { ...rest };
+    if (spec_yaml !== undefined) {
+        wire.spec_yaml = bytesToBase64(utf8Bytes(spec_yaml));
+    }
+    return JSON.stringify(wire);
+}
 // parseResponseBody reads the body of a 2xx fetch Response and returns the
 // parsed JSON, tolerating 204 No Content and empty bodies (returns undefined
 // as T). All fetchJSON and fetchSSH success tails delegate here to prevent
@@ -2863,10 +2875,10 @@ class RestIAMClient {
         return { policies, count: raw.count ?? policies.length };
     }
     async createPolicy(tenantID, req) {
-        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/policies`, { method: 'POST', body: JSON.stringify(req) });
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/policies`, { method: 'POST', body: policyWireBody(req) });
     }
     async updatePolicy(tenantID, policyName, req) {
-        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/policies/${encodeURIComponent(policyName)}`, { method: 'PUT', body: JSON.stringify(req) });
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/policies/${encodeURIComponent(policyName)}`, { method: 'PUT', body: policyWireBody(req) });
     }
     async deletePolicy(tenantID, policyName) {
         await this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/policies/${encodeURIComponent(policyName)}`, { method: 'DELETE' });
@@ -2878,7 +2890,7 @@ class RestIAMClient {
     // Maps to POST /api/v1/tenants/{tenantID}/policies/validate[?name=]
     async validatePolicy(tenantID, req, name) {
         const query = name !== undefined ? `?name=${encodeURIComponent(name)}` : '';
-        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/policies/validate${query}`, { method: 'POST', body: JSON.stringify(req) });
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/policies/validate${query}`, { method: 'POST', body: policyWireBody(req) });
     }
     // Maps to POST /api/v1/tenants/{tenantID}/policies/test
     async testPolicy(tenantID, req) {

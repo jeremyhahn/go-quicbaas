@@ -66,6 +66,71 @@ describe('RestIAMClient policy read', () => {
   });
 });
 
+// decodeSpec reverses the wire encoding: base64 of the document's UTF-8 bytes.
+function decodeSpec(b64: string): string {
+  const bin = atob(b64);
+  const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
+}
+
+function sentBody(): Record<string, unknown> {
+  return JSON.parse(lastCall()[1]?.body as string) as Record<string, unknown>;
+}
+
+const specText = 'description: "café"\nrules: []\n';
+
+describe('RestIAMClient policy write spec_yaml encoding', () => {
+  it('createPolicy sends spec_yaml as base64 of the UTF-8 text', async () => {
+    fetchMock.mockResolvedValue(makeJSON({ name: 'p1' }));
+    const client = new RestClient('http://localhost');
+    await client.iam.createPolicy('t/1', { name: 'p1', description: 'd', spec_yaml: specText });
+
+    const [url, init] = lastCall();
+    expect(url).toBe(base);
+    expect(init?.method).toBe('POST');
+    const body = sentBody();
+    expect(body.spec_yaml).not.toBe(specText);
+    expect(decodeSpec(body.spec_yaml as string)).toBe(specText);
+    expect(body.name).toBe('p1');
+    expect(body.description).toBe('d');
+  });
+
+  it('updatePolicy sends spec_yaml as base64 of the UTF-8 text', async () => {
+    fetchMock.mockResolvedValue(makeJSON({ name: 'p1' }));
+    const client = new RestClient('http://localhost');
+    await client.iam.updatePolicy('t/1', 'p/1', { description: 'd2', spec_yaml: specText });
+
+    const [url, init] = lastCall();
+    expect(url).toBe(`${base}/p%2F1`);
+    expect(init?.method).toBe('PUT');
+    const body = sentBody();
+    expect(decodeSpec(body.spec_yaml as string)).toBe(specText);
+    expect(body.description).toBe('d2');
+  });
+
+  it('validatePolicy sends spec_yaml as base64 of the UTF-8 text', async () => {
+    fetchMock.mockResolvedValue(makeJSON({ valid: true }));
+    const client = new RestClient('http://localhost');
+    await client.iam.validatePolicy('t/1', { name: 'p1', spec_yaml: specText }, 'p1');
+
+    const [url] = lastCall();
+    expect(url).toBe(`${base}/validate?name=p1`);
+    const body = sentBody();
+    expect(decodeSpec(body.spec_yaml as string)).toBe(specText);
+    expect(body.name).toBe('p1');
+  });
+
+  it('a request without spec_yaml sends no spec_yaml key', async () => {
+    fetchMock.mockResolvedValue(makeJSON({ name: 'p1' }));
+    const client = new RestClient('http://localhost');
+    await client.iam.updatePolicy('t/1', 'p1', { description: 'only' });
+
+    const body = sentBody();
+    expect('spec_yaml' in body).toBe(false);
+    expect(body).toEqual({ description: 'only' });
+  });
+});
+
 describe('RestIAMClient policy validate', () => {
   const req = { name: 'p1', spec_yaml: 'rules: []' };
 
@@ -77,7 +142,7 @@ describe('RestIAMClient policy validate', () => {
     const [url, init] = lastCall();
     expect(url).toBe(`${base}/validate`);
     expect(init?.method).toBe('POST');
-    expect(JSON.parse(init?.body as string)).toEqual(req);
+    expect(JSON.parse(init?.body as string)).toEqual({ name: 'p1', spec_yaml: btoa('rules: []') });
     expect(resp.valid).toBe(true);
   });
 

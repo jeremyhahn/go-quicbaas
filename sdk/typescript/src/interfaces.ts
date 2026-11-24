@@ -1207,12 +1207,18 @@ export interface ListIAMProvidersOptions {
 export interface CreatePolicyRequest {
   name: string;
   description?: string;
+  // spec_yaml is the policy document text (YAML or JSON). The REST client
+  // base64-encodes its UTF-8 bytes on the wire, where the server reads a
+  // byte field.
   spec_yaml?: string;
 }
 
 // UpdatePolicyRequest holds updatable policy fields.
 export interface UpdatePolicyRequest {
   description?: string;
+  // spec_yaml is the policy document text (YAML or JSON). The REST client
+  // base64-encodes its UTF-8 bytes on the wire, where the server reads a
+  // byte field.
   spec_yaml?: string;
 }
 
