@@ -271,6 +271,7 @@ func JobHistoryResponseFromService(jobID uint64, resp *service.GetSchedulerJobHi
 			CompletedAt: exec.EndedAt,
 			Duration:    exec.Duration,
 			Error:       exec.Error,
+			Message:     exec.Output,
 			Result:      result,
 		})
 	}

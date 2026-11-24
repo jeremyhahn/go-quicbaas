@@ -368,7 +368,9 @@ type JobExecution struct {
 	Duration    time.Duration
 	RetryCount  int
 	Error       string
-	Result      []byte
+	// Message is the run's text message; Result holds the run's output bytes.
+	Message string
+	Result  []byte
 }
 
 // SchedulerStatus represents the scheduler's current status and statistics.

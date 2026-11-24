@@ -859,6 +859,7 @@ type schedulerExecutionView struct {
 	Duration  time.Duration `json:"duration,omitempty"`
 	Error     string        `json:"error,omitempty"`
 	Output    string        `json:"output,omitempty"`
+	Result    []byte        `json:"result,omitempty"`
 }
 
 // schedulerJobHistoryView is the CLI's rendering of a history response.
@@ -887,7 +888,8 @@ func formatSchedulerJobHistory(w io.Writer, resp *scheduler.JobHistoryResponse) 
 			EndedAt:   exec.CompletedAt,
 			Duration:  exec.Duration,
 			Error:     exec.Error,
-			Output:    string(exec.Result),
+			Output:    exec.Message,
+			Result:    exec.Result,
 		})
 	}
 	return writeSchedulerOutput(w, view, func(tw *tabwriter.Writer) {
