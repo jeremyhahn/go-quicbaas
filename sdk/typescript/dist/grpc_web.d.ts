@@ -7,11 +7,10 @@ import type { BarrierGenerateRecoveryKeysRequest, BarrierGenerateRootTokenReques
 import { TransportNotSupportedError } from './errors.js';
 export declare class GrpcWebNotImplementedError extends TransportNotSupportedError {
     /**
-     * The original form, kept for existing callers. `method` is `family.verb`
-     * (for example `prompts.list`) or a bare verb (for example `listJobs`).
+     * `method` is `family.verb` (for example `prompts.list`) or a bare verb
+     * (for example `listJobs`).
      */
     constructor(method: string);
-    constructor(family: string, method: string, reason?: string);
 }
 export declare class GrpcWebBarrierClient implements BarrierClient {
     status(): Promise<BarrierStatusResponse>;
