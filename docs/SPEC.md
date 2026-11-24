@@ -104,6 +104,7 @@ Status is one of `shipped`, `in progress`, `planned`, `future`.
 | service-policy | planned | Policy is signed data with one engine: the Go-coded admission, sandbox, mount, network, trust, communication, role, lifecycle and spend policies move into one engine dispatched by kind; documents are signed through go-xkms, stored in go-qrdb and verified on load<br>IAM authorization stays go-qrdb's; there is no second engine for the same decision<br>Seams: go-xkms signs and verifies policy documents; go-trusted-platform's rego rules map onto the existing kinds | [service-plane/](service-plane/architecture.md) |
 | tenant-agent | future | A QuicBaaS tenant agent replaces the Company Agent | none |
 | iam-groups | planned | Re-export of go-qrdb's IAM groups ([#2716](https://github.com/jeremyhahn/go-quicbaas/issues/2716), owner ruling 1234): groups, members, and roles granted to a group in a member's effective permissions<br>Blocked until go-qrdb ships groups (jeremyhahn/go-qrdb#1710) | iam, go-qrdb#1710 |
+| maintenance | standing | One standing maintenance row ([#2713](https://github.com/jeremyhahn/go-quicbaas/issues/2713), owner ruling 1234): dependency updates (Dependabot and manual) and CI configuration (ci.yml template adoptions, workflow fixes) are worked on its row branch and land from it, so no such change sits on a branch outside a row<br>The row stays open and carries no Dev complete milestone, so it never gates a release date | none |
 
 ### Authorization clean-up
 
