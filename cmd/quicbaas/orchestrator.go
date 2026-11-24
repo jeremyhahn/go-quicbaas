@@ -107,6 +107,7 @@ var (
 	// Rotation flags.
 	orchRotateReason       string
 	orchRotateHoldOutgoing bool
+	orchRotateAvailableAt  string
 
 	// Display flags.
 	orchVerbosity string
@@ -473,7 +474,8 @@ bare --account-id pin is deliberate and is honored.
 
 Examples:
   quicbaas orchestrator rotate-account sess_abc123
-  quicbaas orchestrator rotate-account sess_abc123 --reason "seat retired" --hold-outgoing`,
+  quicbaas orchestrator rotate-account sess_abc123 --reason "seat retired" --hold-outgoing
+  quicbaas orchestrator rotate-account sess_abc123 --hold-outgoing --available-at 2026-12-01T00:00:00Z`,
 		Args: cobra.ExactArgs(1),
 		RunE: runOrchRotateAccount,
 	}
@@ -482,6 +484,8 @@ Examples:
 		"Reason recorded on the closed account segment and in the session transcript")
 	cmd.Flags().BoolVar(&orchRotateHoldOutgoing, "hold-outgoing", false,
 		"Hold the outgoing account out of the pool for the server's default backoff so the next selection does not pick it again")
+	cmd.Flags().StringVar(&orchRotateAvailableAt, "available-at", "",
+		"When a held outgoing account rejoins the pool (RFC 3339); used with --hold-outgoing")
 
 	return cmd
 }
@@ -489,6 +493,15 @@ Examples:
 // runOrchRotateAccount executes the rotate-account command.
 func runOrchRotateAccount(cmd *cobra.Command, args []string) error {
 	sessionID := args[0]
+
+	var availableAt time.Time
+	if orchRotateAvailableAt != "" {
+		parsed, parseErr := time.Parse(time.RFC3339, orchRotateAvailableAt)
+		if parseErr != nil {
+			return formatError(fmt.Errorf("invalid --available-at %q: want an RFC 3339 time: %w", orchRotateAvailableAt, parseErr))
+		}
+		availableAt = parsed
+	}
 
 	client, err := orchestratorClientFactory()
 	if err != nil {
@@ -503,6 +516,7 @@ func runOrchRotateAccount(cmd *cobra.Command, args []string) error {
 		SessionID:    sessionID,
 		Reason:       orchRotateReason,
 		HoldOutgoing: orchRotateHoldOutgoing,
+		AvailableAt:  availableAt,
 	})
 	if err != nil {
 		return formatError(err)

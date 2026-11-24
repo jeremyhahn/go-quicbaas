@@ -47,8 +47,10 @@ func newOrchSpendPolicyCommand() *cobra.Command {
 		Short: "Show or set the tenant's own spend limits",
 		Long: `Show or set the spend limits of the tenant named by --tenant: sliding
 windows, in tokens and/or list-price dollars, over every turn charged to the
-tenant — every project, pooled and local. The limits are stored and reported
-against the tenant's usage; admission does not enforce them yet.
+tenant — every project, pooled and local. The limits are stored, reported
+against the tenant's usage, and enforced at admission: while one of the
+tenant's windows is spent, every project of the tenant is deferred until it
+frees up.
 
 Examples:
   quicbaas orchestrator spend-policy get
