@@ -20,20 +20,44 @@ import (
 
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/crypto"
+	"github.com/jeremyhahn/go-quicbaas/pkg/kms"
 )
 
+// kmsManagerOverInitializedXKMSForTest builds a key manager with its own
+// XKMSBackend over the go-xkms store a caller already initialized, so two
+// managers model two nodes with separate caches over one key store.
+func kmsManagerOverInitializedXKMSForTest(t *testing.T) *kms.KMSService {
+	t.Helper()
+
+	backend, err := kms.NewXKMSBackend(&kms.XKMSBackendConfig{
+		BackendType: config.BackendTypeSoftware,
+		Logger:      newMockLogger(),
+	})
+	require.NoError(t, err)
+
+	registry := kms.NewBackendRegistry(nil)
+	require.NoError(t, registry.Register("software", backend, 100))
+
+	manager, err := kms.NewKMSService(&kms.KMSServiceOptions{Registry: registry})
+	require.NoError(t, err)
+	return manager
+}
+
 // TestAEADSafety_RotationOnOtherNodeRestartsUsage_RealXKMS runs two service
-// instances, each with its own AEAD tracker, over one key manager. Node B
-// exhausts the key's allowance; node A rotates the key. Node B must count
-// against the new version and accept crypto calls again, without any reset
+// instances, each with its own AEAD tracker and its own key manager and
+// backend, over one go-xkms store and one replicated store. Node B exhausts
+// the key's allowance; node A rotates the key. Node B must seal under the new
+// version, count against it and accept crypto calls again, without any reset
 // on its own tracker.
 func TestAEADSafety_RotationOnOtherNodeRestartsUsage_RealXKMS(t *testing.T) {
-	manager, cleanup := realKMSManagerForTest(t)
+	_, cleanup := realKMSManagerForTest(t)
 	defer cleanup()
 
 	shared := newMockKVStore()
 	newNode := func() (*kmsServiceImpl, *cryptoService) {
+		manager := kmsManagerOverInitializedXKMSForTest(t)
 		logger := newMockLogger()
 		kmsSvc := newKMSService(manager, logger)
 		kmsSvc.SetKVStore(shared)
@@ -65,8 +89,12 @@ func TestAEADSafety_RotationOnOtherNodeRestartsUsage_RealXKMS(t *testing.T) {
 	kmsA.GetSafetyTracker().SetKeyConfig(scoped, limits)
 	kmsB.GetSafetyTracker().SetKeyConfig(scoped, limits)
 
+	var lastCiphertext []byte
 	encrypt := func() error {
-		_, err := csB.Encrypt(ctx, &EncryptRequest{KeyID: keyID, Plaintext: []byte("payload")})
+		resp, err := csB.Encrypt(ctx, &EncryptRequest{KeyID: keyID, Plaintext: []byte("payload")})
+		if err == nil {
+			lastCiphertext = resp.Ciphertext
+		}
 		return err
 	}
 
@@ -87,6 +115,9 @@ func TestAEADSafety_RotationOnOtherNodeRestartsUsage_RealXKMS(t *testing.T) {
 	require.Greater(t, rotated.NewVersion, rotated.OldVersion)
 
 	require.NoError(t, encrypt(), "node B must accept calls once another node rotated the key")
+	sealed, ok := kms.CiphertextKeyVersion(lastCiphertext)
+	require.True(t, ok)
+	require.Equal(t, 2, sealed, "node B's backend must seal under the version node A created")
 	ops, _, _ := kmsB.GetSafetyTracker().GetKeyUsage(scoped)
 	require.Equal(t, uint64(1), ops, "node B's count must restart at the new version")
 }
