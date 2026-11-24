@@ -106,6 +106,7 @@ type gateCase struct {
 	twins  []gateTwin
 	review string          // the reviewer's state on the head, or "" for none
 	fail   map[string]bool // route -> answer HTTP 500
+	base   string          // the live PR's base ref; "" means main
 }
 
 // gateResult is what one run of the gate step did.
@@ -190,9 +191,14 @@ func runGate(t *testing.T, tc gateCase) gateResult {
 				{"name": "Codex review", "status": review},
 			}})
 		case "pull":
+			base := tc.base
+			if base == "" {
+				base = "main"
+			}
 			writeJSON(w, map[string]any{
 				"number": 7,
 				"head":   map[string]any{"sha": gateHeadSHA},
+				"base":   map[string]any{"ref": base},
 				"labels": []map[string]any{{"name": "code-review"}},
 			})
 		case "reviews":
@@ -299,7 +305,7 @@ func TestCodeReviewGateTwin(t *testing.T) {
 				twins:  []gateTwin{{id: 88, runStatus: "queued", reviewStatus: "queued"}},
 				review: "APPROVED",
 			},
-			wantCode: 0, wantText: "approved " + gateHeadSHA,
+			wantCode: 3, wantText: twinText,
 		},
 		"no twin, approved": {
 			tc:       gateCase{review: "APPROVED"},
@@ -324,6 +330,10 @@ func TestCodeReviewGateTwin(t *testing.T) {
 				fail:   map[string]bool{"jobs": true},
 			},
 			wantCode: 3, wantText: "cannot read the jobs of run 88",
+		},
+		"retargeted, approved": {
+			tc:       gateCase{review: "APPROVED", base: "release"},
+			wantCode: 3, wantText: "was retargeted from main to release",
 		},
 	}
 	for name, c := range cases {
@@ -373,6 +383,15 @@ func TestCodeReviewGateTimeout(t *testing.T) {
 // gateHandoffProblems lists what breaks the gate's handoff to a twin run: the
 // twin's gate must post the newest check of the same static name on the
 // head, after its review ends, and newer gates must cancel older ones.
+// gateDraftName is the gate's name since v5.12.9: the required name on a
+// non-draft PR, another name on a draft, so a skipped gate never posts the
+// required context.
+const gateDraftName = "${{ github.event.pull_request.draft != true && '" + codexGateName + "' || 'Code Review (not requested)' }}"
+
+// gateDraftIf is the gate's if since v5.12.9: always(), so it runs after a
+// failed or skipped review, and never on a draft.
+const gateDraftIf = "always() && github.event.pull_request.draft != true"
+
 func gateHandoffProblems(body []byte) []string {
 	jobs, err := workflowJobs(body)
 	if err != nil {
@@ -381,7 +400,7 @@ func gateHandoffProblems(body []byte) []string {
 	var problems []string
 	var named []string
 	for i := 0; i+1 < len(jobs.Content); i += 2 {
-		if n := mapValue(jobs.Content[i+1], "name"); n != nil && n.Value == codexGateName {
+		if n := mapValue(jobs.Content[i+1], "name"); n != nil && (n.Value == codexGateName || n.Value == gateDraftName) {
 			named = append(named, jobs.Content[i].Value)
 		}
 	}
@@ -392,8 +411,8 @@ func gateHandoffProblems(body []byte) []string {
 	if gate == nil {
 		return append(problems, "no gate job")
 	}
-	if n := mapValue(gate, "name"); n == nil || n.Value != codexGateName || strings.Contains(n.Value, "${{") {
-		problems = append(problems, fmt.Sprintf("gate name is not the literal %q", codexGateName))
+	if n := mapValue(gate, "name"); n == nil || (n.Value != codexGateName && n.Value != gateDraftName) {
+		problems = append(problems, fmt.Sprintf("gate name is not the literal %q or the draft-conditional name", codexGateName))
 	}
 	needsReview := false
 	if needs := mapValue(gate, "needs"); needs != nil {
@@ -407,7 +426,7 @@ func gateHandoffProblems(body []byte) []string {
 	if !needsReview {
 		problems = append(problems, "gate needs does not include review")
 	}
-	if n := mapValue(gate, "if"); n == nil || n.Value != "always()" {
+	if n := mapValue(gate, "if"); n == nil || (n.Value != "always()" && n.Value != gateDraftIf) {
 		problems = append(problems, "gate if is not always()")
 	}
 	if mapValue(gate, "continue-on-error") != nil {
@@ -443,22 +462,25 @@ func TestCodeReviewGateHandsOffToTheTwin(t *testing.T) {
 
 func TestCodeReviewGateHandsOffToTheTwin_Mutations(t *testing.T) {
 	body := readFile(t, codeReviewWorkflowPath)
-	gateHead := "    name: Code Review (codex)\n    needs: [scope, review]\n    if: always()\n"
+	gateName := "    name: >-\n      ${{ github.event.pull_request.draft != true\n      && 'Code Review (codex)' || 'Code Review (not requested)' }}\n"
+	gateNeeds := "    needs: [scope, review]\n"
+	gateIf := "    if: >-\n      always() && github.event.pull_request.draft != true\n"
+	gateHead := gateName + gateNeeds + gateIf
 	cancel := gateGroup + "\n      cancel-in-progress: true\n"
 	cases := map[string]struct {
 		old, new string
 		want     string
 	}{
 		"needs scope only": {
-			old: gateHead, new: "    name: Code Review (codex)\n    needs: [scope]\n    if: always()\n",
+			old: gateHead, new: gateName + "    needs: [scope]\n" + gateIf,
 			want: "gate needs does not include review",
 		},
 		"if success": {
-			old: gateHead, new: "    name: Code Review (codex)\n    needs: [scope, review]\n    if: success()\n",
+			old: gateHead, new: gateName + gateNeeds + "    if: >-\n      success() && github.event.pull_request.draft != true\n",
 			want: "gate if is not always()",
 		},
 		"name per run": {
-			old: gateHead, new: "    name: Code Review (codex) ${{ github.run_id }}\n    needs: [scope, review]\n    if: always()\n",
+			old: gateHead, new: "    name: Code Review (codex) ${{ github.run_id }}\n" + gateNeeds + gateIf,
 			want: "gate name is not the literal",
 		},
 		"second job of the name": {
