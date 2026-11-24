@@ -161,6 +161,12 @@ func (h *IAMHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A create that names roles also needs roles:assign in the target tenant,
+	// mirroring go-qrdb's native AuthorizeRoleAssignmentWriteOnCreate.
+	if len(req.Roles) > 0 && !h.server.authorizePermissionInTenant(w, r, tenantID, "roles", "assign") {
+		return
+	}
+
 	// User quota (max users per tenant) is enforced by qrdb's TenantServicer.
 	// qrdb will return a quota-exceeded error if the limit is reached; the
 	// service layer propagates that as a 403 Forbidden through the normal error

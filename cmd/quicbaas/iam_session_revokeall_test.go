@@ -78,10 +78,11 @@ func TestRunIAMSessionRevokeAll_KeepCurrent(t *testing.T) {
 		"exp": time.Now().Add(time.Hour).Unix(),
 	})
 
-	var keptSession string
+	var keptSession, sentTenant string
 	mockClient := newTestMockIAMClient()
-	mockClient.sessionClient.RevokeOthersFunc = func(_ context.Context, keepSessionID string) error {
+	mockClient.sessionClient.RevokeOthersFunc = func(_ context.Context, tenantID, keepSessionID string) error {
 		keptSession = keepSessionID
+		sentTenant = tenantID
 		return nil
 	}
 	iamClientFactory = func() (iam.Client, error) { return mockClient, nil }
@@ -92,6 +93,7 @@ func TestRunIAMSessionRevokeAll_KeepCurrent(t *testing.T) {
 
 	require.NoError(t, runIAMSessionRevokeAllCommand(cmd, nil))
 	assert.Equal(t, "sess-keep", keptSession)
+	assert.Equal(t, "acme", sentTenant, "--keep-current must send the --tenant to RevokeOthers")
 }
 
 func TestRunIAMSessionRevokeAll_KeepCurrentNoSession(t *testing.T) {
@@ -177,7 +179,7 @@ func TestRunIAMSessionRevokeAll_KeepCurrentSDKError(t *testing.T) {
 	})
 
 	mockClient := newTestMockIAMClient()
-	mockClient.sessionClient.RevokeOthersFunc = func(_ context.Context, _ string) error {
+	mockClient.sessionClient.RevokeOthersFunc = func(_ context.Context, _, _ string) error {
 		return errors.New(errors.ErrInternal, "iam", "revoke others failed")
 	}
 	iamClientFactory = func() (iam.Client, error) { return mockClient, nil }

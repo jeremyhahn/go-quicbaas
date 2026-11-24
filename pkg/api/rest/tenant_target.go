@@ -98,6 +98,15 @@ func (s *Server) authorizeTenantLift(w http.ResponseWriter, r *http.Request, ten
 		})
 		return false
 	}
+	return s.authorizePermissionInTenant(w, r, tenantID, perm.resource, perm.action)
+}
+
+// authorizePermissionInTenant renders resource:action for the request's
+// authenticated identity in tenantID through the node's RBAC authorizer. It
+// fails closed: no authorizer wired answers 503, no identity 401, and a
+// denial 403. It reports whether the request may proceed; on false the
+// response has been written.
+func (s *Server) authorizePermissionInTenant(w http.ResponseWriter, r *http.Request, tenantID, resource, action string) bool {
 	var authz qrdbsdk.Authorizer
 	if s != nil {
 		authz = s.barrierScopeAuthorizer()
@@ -114,14 +123,14 @@ func (s *Server) authorizeTenantLift(w http.ResponseWriter, r *http.Request, ten
 	}
 
 	ctx := qrdbsdk.ContextWithTenant(r.Context(), tenantID)
-	if err := authz.Authorize(ctx, identity, perm.resource, perm.action); err != nil {
+	if err := authz.Authorize(ctx, identity, resource, action); err != nil {
 		var unavailable *BarrierScopeAuthorizerUnavailableError
 		if errors.As(err, &unavailable) {
 			RespondError(w, r, http.StatusServiceUnavailable, unavailable)
 			return false
 		}
 		RespondError(w, r, http.StatusForbidden, &ForbiddenError{
-			Reason: perm.resource + ":" + perm.action + " is required in the requested tenant",
+			Reason: resource + ":" + action + " is required in the requested tenant",
 		})
 		return false
 	}

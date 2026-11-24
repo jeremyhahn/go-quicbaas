@@ -336,6 +336,10 @@ func (s *securityService) SSH() SSHService {
 // own HTTP/3 client: go-qrdb's REST transport dials TCP, which a node serving
 // only its QUIC (UDP) listener refuses (go-quicbaas#2533). An embedded QRDB
 // takes precedence over the REST, QUIC and MCP shortcuts.
+//
+// Over gRPC and Unix the barrier verbs keep go-qrdb's gRPC sub-client, and
+// each call carries the platform bearer set by WithAuthToken as outgoing
+// authorization metadata, the way the SDK's own gRPC transport sends it.
 func (s *securityService) Barrier() (QRDBBarrierClient, error) {
 	if s.c.opts == nil || s.c.opts.embeddedQRDB == nil {
 		if rt, ok := s.c.transport.(*rest.Transport); ok {
@@ -352,7 +356,11 @@ func (s *securityService) Barrier() (QRDBBarrierClient, error) {
 	if err != nil {
 		return nil, err
 	}
-	return qrdbClient.Barrier(), nil
+	bc := qrdbClient.Barrier()
+	if s.c.opts != nil && s.c.opts.embeddedQRDB == nil && s.c.opts.authToken != "" && qrdbSubClientSpeaksGRPC(s.c.opts.transportType) {
+		return &qrdbBearerBarrierClient{inner: bc, bearer: "Bearer " + s.c.opts.authToken}, nil
+	}
+	return bc, nil
 }
 
 // Ceremony returns the QRDB CeremonyClient. The QRDB transport is
