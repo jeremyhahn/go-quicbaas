@@ -54,10 +54,12 @@ type objectStorageService struct {
 	closed         atomic.Bool
 	mu             sync.RWMutex
 	objectIDGen    atomic.Uint64
-	// putLocks serialise the writers of one key (striped by key hash), so
-	// an overwrite reads the entry it replaces and removes that entry's
-	// backend copies before another writer of the key can replace it.
-	putLocks [64]sync.Mutex
+	// keyLocks guard each key (striped by key hash). Writers of a key hold
+	// it exclusively from reading the entry they replace through removing
+	// its backend copies; readers hold it shared from their catalog read
+	// through their backend read, so an overwrite never removes an object
+	// a reader has resolved, and another writer of the key waits for it.
+	keyLocks [64]sync.RWMutex
 }
 
 // objectStorageMetrics holds Prometheus metrics for object storage operations.
@@ -192,11 +194,12 @@ func (s *objectStorageService) checkClosed() error {
 	return nil
 }
 
-// putLock returns the stripe lock that serialises the writers of key.
-func (s *objectStorageService) putLock(key string) *sync.Mutex {
+// keyLock returns the stripe lock of key: writers take it exclusively,
+// readers of the key's backend object take it shared.
+func (s *objectStorageService) keyLock(key string) *sync.RWMutex {
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(key))
-	return &s.putLocks[h.Sum32()%uint32(len(s.putLocks))]
+	return &s.keyLocks[h.Sum32()%uint32(len(s.keyLocks))]
 }
 
 // deleteSuperseded removes the backend copies of previous, the entry a
@@ -249,7 +252,7 @@ func (s *objectStorageService) PutObject(ctx context.Context, req *PutObjectRequ
 		return nil, err
 	}
 
-	keyLock := s.putLock(req.Key)
+	keyLock := s.keyLock(req.Key)
 	keyLock.Lock()
 	defer keyLock.Unlock()
 
@@ -455,6 +458,12 @@ func (s *objectStorageService) GetObject(ctx context.Context, req *GetObjectRequ
 	if err := s.checkClosed(); err != nil {
 		return nil, err
 	}
+
+	// Hold the key shared from the catalog read through the backend
+	// read: an overwrite waits rather than removing the object read here.
+	keyLock := s.keyLock(req.Key)
+	keyLock.RLock()
+	defer keyLock.RUnlock()
 
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -1097,6 +1106,12 @@ func (s *objectStorageService) ReplicateObject(ctx context.Context, req *Replica
 		return nil, err
 	}
 
+	// Hold the key shared from the catalog read through the source
+	// read: an overwrite waits rather than removing the object read here.
+	keyLock := s.keyLock(req.Key)
+	keyLock.RLock()
+	defer keyLock.RUnlock()
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -1601,6 +1616,12 @@ func (s *objectStorageService) VerifyObject(ctx context.Context, req *VerifyObje
 	if err := s.checkClosed(); err != nil {
 		return nil, err
 	}
+
+	// Hold the key shared from the catalog read through the backend
+	// read: an overwrite waits rather than removing the object read here.
+	keyLock := s.keyLock(req.Key)
+	keyLock.RLock()
+	defer keyLock.RUnlock()
 
 	s.mu.RLock()
 	defer s.mu.RUnlock()
