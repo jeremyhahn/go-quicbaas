@@ -126,6 +126,7 @@ func createTestSession(t *testing.T, sessionStorage SessionStorage, tenantID str
 // ==================== GDPRManager Constructor Tests ====================
 
 func TestNewGDPRManager_Success(t *testing.T) {
+	t.Parallel()
 	deps := GDPRManagerDependencies{
 		ConsentStorage:    NewMemoryConsentStorage(),
 		DataExportStorage: NewMemoryDataExportStorage(),
@@ -141,6 +142,7 @@ func TestNewGDPRManager_Success(t *testing.T) {
 }
 
 func TestNewGDPRManager_MissingConsentStorage(t *testing.T) {
+	t.Parallel()
 	deps := GDPRManagerDependencies{
 		DataExportStorage: NewMemoryDataExportStorage(),
 		DeletionStorage:   NewMemoryDeletionStorage(),
@@ -154,6 +156,7 @@ func TestNewGDPRManager_MissingConsentStorage(t *testing.T) {
 }
 
 func TestNewGDPRManager_MissingDataExportStorage(t *testing.T) {
+	t.Parallel()
 	deps := GDPRManagerDependencies{
 		ConsentStorage:  NewMemoryConsentStorage(),
 		DeletionStorage: NewMemoryDeletionStorage(),
@@ -167,6 +170,7 @@ func TestNewGDPRManager_MissingDataExportStorage(t *testing.T) {
 }
 
 func TestNewGDPRManager_MissingDeletionStorage(t *testing.T) {
+	t.Parallel()
 	deps := GDPRManagerDependencies{
 		ConsentStorage:    NewMemoryConsentStorage(),
 		DataExportStorage: NewMemoryDataExportStorage(),
@@ -180,6 +184,7 @@ func TestNewGDPRManager_MissingDeletionStorage(t *testing.T) {
 }
 
 func TestNewGDPRManager_MissingUserStorage(t *testing.T) {
+	t.Parallel()
 	deps := GDPRManagerDependencies{
 		ConsentStorage:    NewMemoryConsentStorage(),
 		DataExportStorage: NewMemoryDataExportStorage(),
@@ -195,6 +200,7 @@ func TestNewGDPRManager_MissingUserStorage(t *testing.T) {
 // ==================== Consent Management Tests ====================
 
 func TestGDPRManager_GrantConsent_Success(t *testing.T) {
+	t.Parallel()
 	manager, auditLogger := createTestGDPRManager(t)
 	ctx := context.Background()
 
@@ -230,6 +236,7 @@ func TestGDPRManager_GrantConsent_Success(t *testing.T) {
 }
 
 func TestGDPRManager_GrantConsent_InvalidPurpose(t *testing.T) {
+	t.Parallel()
 	manager, _ := createTestGDPRManager(t)
 	ctx := context.Background()
 
@@ -243,6 +250,7 @@ func TestGDPRManager_GrantConsent_InvalidPurpose(t *testing.T) {
 }
 
 func TestGDPRManager_GrantConsent_AllPurposes(t *testing.T) {
+	t.Parallel()
 	manager, _ := createTestGDPRManager(t)
 	ctx := context.Background()
 
@@ -263,6 +271,7 @@ func TestGDPRManager_GrantConsent_AllPurposes(t *testing.T) {
 }
 
 func TestGDPRManager_WithdrawConsent_Success(t *testing.T) {
+	t.Parallel()
 	manager, auditLogger := createTestGDPRManager(t)
 	ctx := context.Background()
 
@@ -295,6 +304,7 @@ func TestGDPRManager_WithdrawConsent_Success(t *testing.T) {
 }
 
 func TestGDPRManager_WithdrawConsent_NotFound(t *testing.T) {
+	t.Parallel()
 	manager, _ := createTestGDPRManager(t)
 	ctx := context.Background()
 
@@ -304,6 +314,7 @@ func TestGDPRManager_WithdrawConsent_NotFound(t *testing.T) {
 }
 
 func TestGDPRManager_GetConsent_Found(t *testing.T) {
+	t.Parallel()
 	manager, _ := createTestGDPRManager(t)
 	ctx := context.Background()
 
@@ -323,6 +334,7 @@ func TestGDPRManager_GetConsent_Found(t *testing.T) {
 }
 
 func TestGDPRManager_GetConsent_NotFound(t *testing.T) {
+	t.Parallel()
 	manager, _ := createTestGDPRManager(t)
 	ctx := context.Background()
 
@@ -336,6 +348,7 @@ func TestGDPRManager_GetConsent_NotFound(t *testing.T) {
 }
 
 func TestGDPRManager_ListUserConsents(t *testing.T) {
+	t.Parallel()
 	manager, _ := createTestGDPRManager(t)
 	ctx := context.Background()
 
@@ -370,6 +383,7 @@ func TestGDPRManager_ListUserConsents(t *testing.T) {
 }
 
 func TestGDPRManager_ListUserConsents_Empty(t *testing.T) {
+	t.Parallel()
 	manager, _ := createTestGDPRManager(t)
 	ctx := context.Background()
 
@@ -381,6 +395,7 @@ func TestGDPRManager_ListUserConsents_Empty(t *testing.T) {
 // ==================== Data Export Tests ====================
 
 func TestGDPRManager_RequestExport_Success(t *testing.T) {
+	t.Parallel()
 	manager, auditLogger := createTestGDPRManager(t)
 	ctx := context.Background()
 
@@ -409,6 +424,7 @@ func TestGDPRManager_RequestExport_Success(t *testing.T) {
 }
 
 func TestGDPRManager_RequestExport_InvalidCategory(t *testing.T) {
+	t.Parallel()
 	manager, _ := createTestGDPRManager(t)
 	ctx := context.Background()
 
@@ -420,6 +436,7 @@ func TestGDPRManager_RequestExport_InvalidCategory(t *testing.T) {
 }
 
 func TestGDPRManager_RequestExport_PendingExists(t *testing.T) {
+	t.Parallel()
 	manager, _ := createTestGDPRManager(t)
 	ctx := context.Background()
 
@@ -438,6 +455,7 @@ func TestGDPRManager_RequestExport_PendingExists(t *testing.T) {
 }
 
 func TestGDPRManager_GetExportStatus(t *testing.T) {
+	t.Parallel()
 	manager, _ := createTestGDPRManager(t)
 	ctx := context.Background()
 
@@ -453,6 +471,7 @@ func TestGDPRManager_GetExportStatus(t *testing.T) {
 }
 
 func TestGDPRManager_GetExportStatus_NotFound(t *testing.T) {
+	t.Parallel()
 	manager, _ := createTestGDPRManager(t)
 	ctx := context.Background()
 
@@ -462,6 +481,7 @@ func TestGDPRManager_GetExportStatus_NotFound(t *testing.T) {
 }
 
 func TestGDPRManager_GenerateExport_ProfileOnly(t *testing.T) {
+	t.Parallel()
 	manager, _ := createTestGDPRManager(t)
 	ctx := context.Background()
 
@@ -499,6 +519,7 @@ func TestGDPRManager_GenerateExport_ProfileOnly(t *testing.T) {
 }
 
 func TestGDPRManager_GenerateExport_AllCategories(t *testing.T) {
+	t.Parallel()
 	manager, _ := createTestGDPRManager(t)
 	ctx := context.Background()
 
@@ -530,6 +551,7 @@ func TestGDPRManager_GenerateExport_AllCategories(t *testing.T) {
 }
 
 func TestGDPRManager_GenerateExport_WithExclusions(t *testing.T) {
+	t.Parallel()
 	manager, _ := createTestGDPRManager(t)
 	ctx := context.Background()
 
@@ -554,6 +576,7 @@ func TestGDPRManager_GenerateExport_WithExclusions(t *testing.T) {
 }
 
 func TestGDPRManager_GenerateExport_UserNotFound(t *testing.T) {
+	t.Parallel()
 	manager, _ := createTestGDPRManager(t)
 	ctx := context.Background()
 
@@ -577,6 +600,7 @@ func TestGDPRManager_GenerateExport_UserNotFound(t *testing.T) {
 // ==================== Data Deletion Tests ====================
 
 func TestGDPRManager_RequestDeletion_Success(t *testing.T) {
+	t.Parallel()
 	manager, auditLogger := createTestGDPRManager(t)
 	ctx := context.Background()
 
@@ -609,6 +633,7 @@ func TestGDPRManager_RequestDeletion_Success(t *testing.T) {
 }
 
 func TestGDPRManager_RequestDeletion_DefaultGracePeriod(t *testing.T) {
+	t.Parallel()
 	manager, _ := createTestGDPRManager(t)
 	ctx := context.Background()
 
@@ -622,6 +647,7 @@ func TestGDPRManager_RequestDeletion_DefaultGracePeriod(t *testing.T) {
 }
 
 func TestGDPRManager_RequestDeletion_ImmediateDeletion(t *testing.T) {
+	t.Parallel()
 	manager, _ := createTestGDPRManager(t)
 	ctx := context.Background()
 
@@ -634,6 +660,7 @@ func TestGDPRManager_RequestDeletion_ImmediateDeletion(t *testing.T) {
 }
 
 func TestGDPRManager_RequestDeletion_InvalidCategory(t *testing.T) {
+	t.Parallel()
 	manager, _ := createTestGDPRManager(t)
 	ctx := context.Background()
 
@@ -645,6 +672,7 @@ func TestGDPRManager_RequestDeletion_InvalidCategory(t *testing.T) {
 }
 
 func TestGDPRManager_RequestDeletion_InvalidPreserveCategory(t *testing.T) {
+	t.Parallel()
 	manager, _ := createTestGDPRManager(t)
 	ctx := context.Background()
 
@@ -656,6 +684,7 @@ func TestGDPRManager_RequestDeletion_InvalidPreserveCategory(t *testing.T) {
 }
 
 func TestGDPRManager_RequestDeletion_PendingExists(t *testing.T) {
+	t.Parallel()
 	manager, _ := createTestGDPRManager(t)
 	ctx := context.Background()
 
@@ -674,6 +703,7 @@ func TestGDPRManager_RequestDeletion_PendingExists(t *testing.T) {
 }
 
 func TestGDPRManager_CancelDeletion_Success(t *testing.T) {
+	t.Parallel()
 	manager, auditLogger := createTestGDPRManager(t)
 	ctx := context.Background()
 
@@ -704,6 +734,7 @@ func TestGDPRManager_CancelDeletion_Success(t *testing.T) {
 }
 
 func TestGDPRManager_CancelDeletion_NotFound(t *testing.T) {
+	t.Parallel()
 	manager, _ := createTestGDPRManager(t)
 	ctx := context.Background()
 
@@ -713,6 +744,7 @@ func TestGDPRManager_CancelDeletion_NotFound(t *testing.T) {
 }
 
 func TestGDPRManager_CancelDeletion_AlreadyProcessing(t *testing.T) {
+	t.Parallel()
 	manager, _ := createTestGDPRManager(t)
 	ctx := context.Background()
 
@@ -732,6 +764,7 @@ func TestGDPRManager_CancelDeletion_AlreadyProcessing(t *testing.T) {
 }
 
 func TestGDPRManager_ProcessDeletion_GracePeriodActive(t *testing.T) {
+	t.Parallel()
 	manager, _ := createTestGDPRManager(t)
 	ctx := context.Background()
 
@@ -753,6 +786,7 @@ func TestGDPRManager_ProcessDeletion_GracePeriodActive(t *testing.T) {
 }
 
 func TestGDPRManager_ProcessDeletion_Success(t *testing.T) {
+	t.Parallel()
 	manager, auditLogger := createTestGDPRManager(t)
 	ctx := context.Background()
 
@@ -798,6 +832,7 @@ func TestGDPRManager_ProcessDeletion_Success(t *testing.T) {
 }
 
 func TestGDPRManager_ProcessDeletion_PartialDeletion(t *testing.T) {
+	t.Parallel()
 	manager, _ := createTestGDPRManager(t)
 	ctx := context.Background()
 
@@ -827,6 +862,7 @@ func TestGDPRManager_ProcessDeletion_PartialDeletion(t *testing.T) {
 }
 
 func TestGDPRManager_ProcessDeletion_DeleteAll(t *testing.T) {
+	t.Parallel()
 	manager, _ := createTestGDPRManager(t)
 	ctx := context.Background()
 
@@ -851,6 +887,7 @@ func TestGDPRManager_ProcessDeletion_DeleteAll(t *testing.T) {
 }
 
 func TestGDPRManager_GetDeletionStatus(t *testing.T) {
+	t.Parallel()
 	manager, _ := createTestGDPRManager(t)
 	ctx := context.Background()
 
@@ -866,6 +903,7 @@ func TestGDPRManager_GetDeletionStatus(t *testing.T) {
 }
 
 func TestGDPRManager_GetDeletionStatus_NotFound(t *testing.T) {
+	t.Parallel()
 	manager, _ := createTestGDPRManager(t)
 	ctx := context.Background()
 
@@ -877,6 +915,7 @@ func TestGDPRManager_GetDeletionStatus_NotFound(t *testing.T) {
 // ==================== Helper Function Tests ====================
 
 func TestIsValidConsentPurpose(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		purpose ConsentPurpose
 		valid   bool
@@ -893,12 +932,14 @@ func TestIsValidConsentPurpose(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(string(tt.purpose), func(t *testing.T) {
+			t.Parallel()
 			assert.Equal(t, tt.valid, IsValidConsentPurpose(tt.purpose))
 		})
 	}
 }
 
 func TestIsValidConsentStatus(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		status ConsentStatus
 		valid  bool
@@ -913,12 +954,14 @@ func TestIsValidConsentStatus(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(string(tt.status), func(t *testing.T) {
+			t.Parallel()
 			assert.Equal(t, tt.valid, IsValidConsentStatus(tt.status))
 		})
 	}
 }
 
 func TestIsValidDataCategory(t *testing.T) {
+	t.Parallel()
 	validCategories := []string{
 		"profile", "sessions", "consents",
 		"roles", "audit_logs", "credentials", "mfa",
@@ -926,6 +969,7 @@ func TestIsValidDataCategory(t *testing.T) {
 
 	for _, cat := range validCategories {
 		t.Run(cat, func(t *testing.T) {
+			t.Parallel()
 			assert.True(t, IsValidDataCategory(cat))
 		})
 	}
@@ -934,12 +978,14 @@ func TestIsValidDataCategory(t *testing.T) {
 	invalidCategories := []string{"invalid", "", "unknown", "groups"}
 	for _, cat := range invalidCategories {
 		t.Run(cat, func(t *testing.T) {
+			t.Parallel()
 			assert.False(t, IsValidDataCategory(cat))
 		})
 	}
 }
 
 func TestConsent_Validate_Success(t *testing.T) {
+	t.Parallel()
 	consent := &Consent{
 		UserID:   11,
 		TenantID: "tenant1",
@@ -952,6 +998,7 @@ func TestConsent_Validate_Success(t *testing.T) {
 }
 
 func TestConsent_Validate_MissingUserID(t *testing.T) {
+	t.Parallel()
 	consent := &Consent{
 		TenantID: "tenant1",
 		Purpose:  ConsentPurposeMarketing,
@@ -964,6 +1011,7 @@ func TestConsent_Validate_MissingUserID(t *testing.T) {
 }
 
 func TestConsent_Validate_MissingTenantID(t *testing.T) {
+	t.Parallel()
 	consent := &Consent{
 		UserID:  11,
 		Purpose: ConsentPurposeMarketing,
@@ -976,6 +1024,7 @@ func TestConsent_Validate_MissingTenantID(t *testing.T) {
 }
 
 func TestConsent_Validate_MissingPurpose(t *testing.T) {
+	t.Parallel()
 	consent := &Consent{
 		UserID:   11,
 		TenantID: "tenant1",
@@ -988,6 +1037,7 @@ func TestConsent_Validate_MissingPurpose(t *testing.T) {
 }
 
 func TestConsent_Validate_MissingVersion(t *testing.T) {
+	t.Parallel()
 	consent := &Consent{
 		UserID:   11,
 		TenantID: "tenant1",
@@ -1002,6 +1052,7 @@ func TestConsent_Validate_MissingVersion(t *testing.T) {
 // ==================== MemoryConsentStorage Tests ====================
 
 func TestMemoryConsentStorage_CreateConsent_Success(t *testing.T) {
+	t.Parallel()
 	storage := NewMemoryConsentStorage()
 	ctx := context.Background()
 
@@ -1026,6 +1077,7 @@ func TestMemoryConsentStorage_CreateConsent_Success(t *testing.T) {
 }
 
 func TestMemoryConsentStorage_CreateConsent_DuplicatePurpose(t *testing.T) {
+	t.Parallel()
 	storage := NewMemoryConsentStorage()
 	ctx := context.Background()
 
@@ -1051,6 +1103,7 @@ func TestMemoryConsentStorage_CreateConsent_DuplicatePurpose(t *testing.T) {
 }
 
 func TestMemoryConsentStorage_CreateConsent_ValidationErrors(t *testing.T) {
+	t.Parallel()
 	storage := NewMemoryConsentStorage()
 	ctx := context.Background()
 
@@ -1107,6 +1160,7 @@ func TestMemoryConsentStorage_CreateConsent_ValidationErrors(t *testing.T) {
 }
 
 func TestMemoryConsentStorage_GetUserConsents(t *testing.T) {
+	t.Parallel()
 	storage := NewMemoryConsentStorage()
 	ctx := context.Background()
 
@@ -1134,6 +1188,7 @@ func TestMemoryConsentStorage_GetUserConsents(t *testing.T) {
 }
 
 func TestMemoryConsentStorage_ListConsents_WithFilters(t *testing.T) {
+	t.Parallel()
 	storage := NewMemoryConsentStorage()
 	ctx := context.Background()
 
@@ -1172,6 +1227,7 @@ func TestMemoryConsentStorage_ListConsents_WithFilters(t *testing.T) {
 }
 
 func TestMemoryConsentStorage_ListConsents_Pagination(t *testing.T) {
+	t.Parallel()
 	storage := NewMemoryConsentStorage()
 	ctx := context.Background()
 
@@ -1205,6 +1261,7 @@ func TestMemoryConsentStorage_ListConsents_Pagination(t *testing.T) {
 }
 
 func TestMemoryConsentStorage_DeleteConsent(t *testing.T) {
+	t.Parallel()
 	storage := NewMemoryConsentStorage()
 	ctx := context.Background()
 
@@ -1231,6 +1288,7 @@ func TestMemoryConsentStorage_DeleteConsent(t *testing.T) {
 // ==================== MemoryDataExportStorage Tests ====================
 
 func TestMemoryDataExportStorage_CreateExportRequest_Success(t *testing.T) {
+	t.Parallel()
 	storage := NewMemoryDataExportStorage()
 	ctx := context.Background()
 
@@ -1253,6 +1311,7 @@ func TestMemoryDataExportStorage_CreateExportRequest_Success(t *testing.T) {
 }
 
 func TestMemoryDataExportStorage_CreateExportRequest_ValidationErrors(t *testing.T) {
+	t.Parallel()
 	storage := NewMemoryDataExportStorage()
 	ctx := context.Background()
 
@@ -1297,6 +1356,7 @@ func TestMemoryDataExportStorage_CreateExportRequest_ValidationErrors(t *testing
 }
 
 func TestMemoryDataExportStorage_ListExportRequests_WithFilters(t *testing.T) {
+	t.Parallel()
 	storage := NewMemoryDataExportStorage()
 	ctx := context.Background()
 
@@ -1326,6 +1386,7 @@ func TestMemoryDataExportStorage_ListExportRequests_WithFilters(t *testing.T) {
 // ==================== MemoryDeletionStorage Tests ====================
 
 func TestMemoryDeletionStorage_CreateDeletionRequest_Success(t *testing.T) {
+	t.Parallel()
 	storage := NewMemoryDeletionStorage()
 	ctx := context.Background()
 
@@ -1350,6 +1411,7 @@ func TestMemoryDeletionStorage_CreateDeletionRequest_Success(t *testing.T) {
 }
 
 func TestMemoryDeletionStorage_CreateDeletionRequest_ValidationErrors(t *testing.T) {
+	t.Parallel()
 	storage := NewMemoryDeletionStorage()
 	ctx := context.Background()
 
@@ -1394,6 +1456,7 @@ func TestMemoryDeletionStorage_CreateDeletionRequest_ValidationErrors(t *testing
 }
 
 func TestMemoryDeletionStorage_ListDeletionRequests_WithFilters(t *testing.T) {
+	t.Parallel()
 	storage := NewMemoryDeletionStorage()
 	ctx := context.Background()
 
@@ -1422,6 +1485,7 @@ func TestMemoryDeletionStorage_ListDeletionRequests_WithFilters(t *testing.T) {
 // ==================== Edge Cases and Concurrency Tests ====================
 
 func TestGDPRManager_ConcurrentConsentGrants(t *testing.T) {
+	t.Parallel()
 	manager, _ := createTestGDPRManager(t)
 	ctx := context.Background()
 
@@ -1460,6 +1524,7 @@ func TestGDPRManager_ConcurrentConsentGrants(t *testing.T) {
 }
 
 func TestGDPRManager_ExportWithNoOptionalDeps(t *testing.T) {
+	t.Parallel()
 	// Create manager without optional dependencies
 	deps := GDPRManagerDependencies{
 		ConsentStorage:    NewMemoryConsentStorage(),
@@ -1491,6 +1556,7 @@ func TestGDPRManager_ExportWithNoOptionalDeps(t *testing.T) {
 }
 
 func TestGDPRManager_ProcessDeletion_NotFound(t *testing.T) {
+	t.Parallel()
 	manager, _ := createTestGDPRManager(t)
 	ctx := context.Background()
 
@@ -1502,6 +1568,7 @@ func TestGDPRManager_ProcessDeletion_NotFound(t *testing.T) {
 }
 
 func TestGDPRManager_ProcessDeletion_NotPending(t *testing.T) {
+	t.Parallel()
 	manager, _ := createTestGDPRManager(t)
 	ctx := context.Background()
 
@@ -1528,6 +1595,7 @@ func TestGDPRManager_ProcessDeletion_NotPending(t *testing.T) {
 }
 
 func TestGDPRManager_ProcessDeletion_AlreadyProcessing(t *testing.T) {
+	t.Parallel()
 	manager, _ := createTestGDPRManager(t)
 	ctx := context.Background()
 
@@ -1554,6 +1622,7 @@ func TestGDPRManager_ProcessDeletion_AlreadyProcessing(t *testing.T) {
 }
 
 func TestGDPRManager_determineCategories(t *testing.T) {
+	t.Parallel()
 	manager, _ := createTestGDPRManager(t)
 	ctx := context.Background()
 
@@ -1594,6 +1663,7 @@ func TestGDPRManager_determineCategories(t *testing.T) {
 // =============================================================================
 
 func TestExportFailedError_Error(t *testing.T) {
+	t.Parallel()
 	t.Run("includes message", func(t *testing.T) {
 		err := &ExportFailedError{Message: "disk full"}
 		expected := "export request failed: disk full"
