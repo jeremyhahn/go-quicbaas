@@ -100,6 +100,17 @@ func dynamicCredentialStores(
 	}
 }
 
+// credentialTenant is the tenant binding credential routing uses: the
+// caller's tenant, except that the system tenant is system scope and goes
+// to the system credential service, never to a tenant barrier.
+func credentialTenant(ctx context.Context) (string, bool) {
+	tid, ok := tenantctx.Lookup(ctx)
+	if !ok || tid == "" || tenantctx.IsSystem(tid) {
+		return "", false
+	}
+	return tid, true
+}
+
 // registerDynamicSecretGenerators registers the production dynamic-secret
 // generators. The credential generator needs the node's credential service
 // (seal enabled); without one nothing is registered, and CreateRole refuses
@@ -113,7 +124,7 @@ func (s *Server) registerDynamicSecretGenerators(gens *credentials.GeneratorRegi
 	if svcs == nil || svcs.Credential == nil {
 		return nil
 	}
-	gen, err := credstore.NewGenerator(dynamicCredentialStores(node.BarrierRegistry(), svcs.Credential, tenantctx.Lookup))
+	gen, err := credstore.NewGenerator(dynamicCredentialStores(node.BarrierRegistry(), svcs.Credential, credentialTenant))
 	if err != nil {
 		return err
 	}
