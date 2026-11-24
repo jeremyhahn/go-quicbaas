@@ -592,6 +592,11 @@ func TestCryptoService_KeyUseAudit_EmittedOnAllow(t *testing.T) {
 	svc.authzEnabled = true
 
 	ctx := subjectCtx(authenticatedSubject("user-1", "alice"))
+	// Encrypt reads the key's current version, so the key must exist.
+	scoped, err := scopeKeyID(ctx, "any-key")
+	require.NoError(t, err)
+	kmsManager.keys[scoped] = &mockKeyData{keyID: scoped, algorithm: "AES-256-GCM", version: 1, status: "enabled", createdAt: time.Now()}
+
 	resp, err := svc.Encrypt(ctx, &EncryptRequest{
 		KeyID:     "any-key",
 		Plaintext: []byte("hello"),

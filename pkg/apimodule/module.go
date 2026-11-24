@@ -77,9 +77,12 @@
 // AttestationService is mounted beside KeyManagement/DEKManagement because the
 // pinned go-xkms serves only KeystoreService.AttestKey and none of the
 // Verifier RPCs (endorsements, reference values, AppraiseQuote) the CLI calls
-// by the quicbaas.attestation.v1 name.
+// by the quicbaas.attestation.v1 name. Crypto is mounted beside them too
+// because the pinned go-xkms serves no quicbaas.kms.v1 name, so the CLI's
+// encrypt/decrypt/wrap/unwrap/derive calls on quicbaas.kms.v1.Crypto would
+// otherwise reach the node as Unimplemented.
 //
-// Crypto, CertificateService, TrustService, and PIVService (the quicbaas.v1
+// CertificateService, TrustService, and PIVService (the quicbaas.v1
 // wrappers over the SAME composed go-xkms library, xkms.Get(), that go-xkms's
 // OWN ServiceModule registers on this unified server as its canonical
 // xkms.v1 KeystoreService surface) are registered here for Unix-socket peers
@@ -91,7 +94,8 @@
 // caller gets Unimplemented for these names exactly as before and uses
 // go-xkms's canonical surface instead. They never reach QUIC, no method of
 // theirs is public, and no permission or role grant is derived from them
-// (module_grants.go).
+// (module_grants.go). Crypto, mounted for every gRPC peer as said above,
+// stays off QUIC too (grpcOnly): the CLI reaches it over gRPC.
 //
 // FIDO2Service is the other xkms-backed surface registered here: quicbaas's
 // own tenant-scoped LOGIN ceremony (the WebAuthn analogue of the Login
@@ -392,13 +396,13 @@ type grpcServers struct {
 	keyManagement      pb.KeyManagementServer
 	dekManagement      pb.DEKManagementServer
 	attestation        pb.AttestationServiceServer
+	crypto             pb.CryptoServer
 	vectorDB           pb.VectorDBServer
 	vectorAdmin        pb.VectorAdminServer
 	prompt             pb.PromptServiceServer
 	agentCatalog       pb.AgentCatalogServiceServer
 	sdlc               pb.SDLCServiceServer
 	registry           pb.RegistryServiceServer
-	crypto             pb.CryptoServer
 	certificate        pb.CertificateServiceServer
 	trust              pb.TrustServiceServer
 	piv                pb.PIVServiceServer
@@ -456,7 +460,9 @@ type grpcRegistration struct {
 	// grpcOnly keeps the service off the QUIC projection: QUIC's startup
 	// assertion refuses a unary method without a (qrdb.v1.permission)
 	// option, and IAMService leaves most of its RPCs unannotated
-	// (default-denied on gRPC and Unix).
+	// (default-denied on gRPC and Unix). Crypto is grpcOnly as well: the CLI
+	// reaches it over gRPC, and the quicbaas.v1 xkms wrapper names never
+	// reach QUIC.
 	grpcOnly bool
 	// unixOnly implies grpcOnly, and additionally serves the service to
 	// Unix-socket peers only (unixPeerOnly): a peer on any other network
@@ -488,6 +494,7 @@ var grpcRegistrations = []grpcRegistration{
 	{desc: &pb.SecretsManagement_ServiceDesc, capability: "secrets-management", pick: func(s *grpcServers) any { return s.secretsManagement }},
 	{desc: &pb.KeyManagement_ServiceDesc, capability: "key-management", pick: func(s *grpcServers) any { return s.keyManagement }},
 	{desc: &pb.DEKManagement_ServiceDesc, capability: "dek-management", pick: func(s *grpcServers) any { return s.dekManagement }},
+	{desc: &pb.Crypto_ServiceDesc, capability: "crypto", pick: func(s *grpcServers) any { return s.crypto }, grpcOnly: true},
 	{desc: &pb.AttestationService_ServiceDesc, capability: "attestation", pick: func(s *grpcServers) any { return s.attestation }},
 	{desc: &pb.VectorDB_ServiceDesc, capability: "vector", pick: func(s *grpcServers) any { return s.vectorDB }},
 	{desc: &pb.VectorAdmin_ServiceDesc, capability: "vector-admin", pick: func(s *grpcServers) any { return s.vectorAdmin }},
@@ -498,7 +505,6 @@ var grpcRegistrations = []grpcRegistration{
 	{desc: &iampb.FederationService_ServiceDesc, capability: "federation", hostPick: func(h HostGRPCServers) any { return h.Federation }},
 	{desc: &iampb.SessionService_ServiceDesc, capability: "session", hostPick: func(h HostGRPCServers) any { return h.Session }},
 	{desc: &iampb.IAMService_ServiceDesc, capability: "iam", hostPick: func(h HostGRPCServers) any { return h.IAM }, grpcOnly: true},
-	{desc: &pb.Crypto_ServiceDesc, capability: "crypto", pick: func(s *grpcServers) any { return s.crypto }, unixOnly: true},
 	{desc: &pb.CertificateService_ServiceDesc, capability: "certificate", pick: func(s *grpcServers) any { return s.certificate }, unixOnly: true},
 	{desc: &pb.TrustService_ServiceDesc, capability: "trust", pick: func(s *grpcServers) any { return s.trust }, unixOnly: true},
 	{desc: &pb.PIVService_ServiceDesc, capability: "piv", pick: func(s *grpcServers) any { return s.piv }, unixOnly: true},
@@ -565,7 +571,7 @@ func (m *Module) RegisterGRPC(reg grpc.ServiceRegistrar) {
 // go-qrdb's QUIC frame transport. The QUIC server's registrar projects each
 // unary method, authorized by its (qrdb.v1.permission) option; it skips the
 // methods PublicGRPCMethods lists (QUIC is mTLS-only) and every streaming
-// method. Services marked grpcOnly (IAMService) are not projected.
+// method. Services marked grpcOnly (IAMService, Crypto) are not projected.
 func (m *Module) RegisterQUIC(reg grpc.ServiceRegistrar) {
 	for _, entry := range grpcRegistrations {
 		if entry.grpcOnly || entry.unixOnly {
@@ -776,16 +782,15 @@ func (m *Module) bind() (*grpcServers, error) {
 	// capability services above, with the SAME nil-gating
 	// pkg/server/lifecycle.go applies on the legacy transport.
 	//
-	// Crypto, CertificateService, TrustService, and PIVService are bound
-	// for Unix-socket peers only (unixOnly in grpcRegistrations; see the
+	// CertificateService, TrustService, and PIVService are bound for
+	// Unix-socket peers only (unixOnly in grpcRegistrations; see the
 	// package doc): the Unix SDK still calls these legacy wire names. They
 	// use the legacy constructors and lifecycle.go's nil-gating; TCP callers
-	// use go-xkms's canonical surface, and QUIC never projects them.
+	// use go-xkms's canonical surface, and QUIC never projects them. Crypto
+	// is bound below, beside KeyManagement and DEKManagement, for every
+	// gRPC peer.
 	if secretsSvc := svc.Secrets(); secretsSvc != nil {
 		built.secretsManagement = grpcapi.NewSecretsServer(secretsSvc, m.log)
-	}
-	if cryptoSvc := svc.Crypto(); cryptoSvc != nil {
-		built.crypto = grpcapi.NewCryptoServer(cryptoSvc, m.log)
 	}
 	if svc.Certificate() != nil {
 		built.certificate = facade
@@ -814,6 +819,16 @@ func (m *Module) bind() (*grpcServers, error) {
 	// the handlers (pkg/api/grpc/server_attestation.go).
 	if svc.Attestation() != nil {
 		built.attestation = facade
+	}
+
+	// Crypto is quicbaas-native for the same reason (package doc): the pinned
+	// go-xkms serves no quicbaas.kms.v1 name. It is gated on Crypto() exactly
+	// as pkg/server/lifecycle.go gates it on the legacy transport.
+	// nodeCryptoServer withholds GenerateHMAC/VerifyHMAC: the crypto backend
+	// has no stable MAC key; and Sign/Verify: it does not resolve the signing
+	// key version (crypto_server.go).
+	if c := svc.Crypto(); c != nil {
+		built.crypto = nodeCryptoServer{CryptoServer: grpcapi.NewCryptoServer(c, m.log)}
 	}
 
 	// VectorDB and VectorAdmin are quicbaas-native here: go-qrdb registers no

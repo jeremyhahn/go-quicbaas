@@ -625,7 +625,8 @@ func TestXKMSBackend_formatKeyID_WithPrefix(t *testing.T) {
 	}
 
 	// formatKeyID now returns key ID as-is (no transformation)
-	result := backend.formatKeyID("software:encryption:aes256-gcm:my-key")
+	result, err := backend.formatKeyID("software:encryption:aes256-gcm:my-key")
+	require.NoError(t, err)
 	assert.Equal(t, "software:encryption:aes256-gcm:my-key", result)
 }
 
@@ -637,7 +638,8 @@ func TestXKMSBackend_formatKeyID_WithoutPrefix(t *testing.T) {
 	}
 
 	// formatKeyID now returns key ID as-is (matching how keys are stored with attrs.CN)
-	result := backend.formatKeyID("my-key")
+	result, err := backend.formatKeyID("my-key")
+	require.NoError(t, err)
 	assert.Equal(t, "my-key", result)
 }
 
@@ -649,7 +651,8 @@ func TestXKMSBackend_formatKeyID_TPM2Backend(t *testing.T) {
 	}
 
 	// formatKeyID returns key ID as-is regardless of backend type
-	result := backend.formatKeyID("my-key")
+	result, err := backend.formatKeyID("my-key")
+	require.NoError(t, err)
 	assert.Equal(t, "my-key", result)
 }
 
@@ -661,7 +664,8 @@ func TestXKMSBackend_formatKeyID_PKCS11Backend(t *testing.T) {
 	}
 
 	// formatKeyID returns key ID as-is regardless of backend type
-	result := backend.formatKeyID("my-key")
+	result, err := backend.formatKeyID("my-key")
+	require.NoError(t, err)
 	assert.Equal(t, "my-key", result)
 }
 
@@ -675,7 +679,8 @@ func TestXKMSBackend_buildFullKeyID_AES256GCM(t *testing.T) {
 		metadata:    make(map[string]*KeyMetadata),
 	}
 
-	result := backend.buildFullKeyID("my-key", "AES-256-GCM")
+	result, err := backend.buildFullKeyID("my-key", "AES-256-GCM")
+	require.NoError(t, err)
 	assert.Equal(t, "software:encryption:aes256-gcm:my-key", result)
 }
 
@@ -686,7 +691,8 @@ func TestXKMSBackend_buildFullKeyID_AES128GCM(t *testing.T) {
 		metadata:    make(map[string]*KeyMetadata),
 	}
 
-	result := backend.buildFullKeyID("my-key", "AES-128-GCM")
+	result, err := backend.buildFullKeyID("my-key", "AES-128-GCM")
+	require.NoError(t, err)
 	assert.Equal(t, "software:encryption:aes128-gcm:my-key", result)
 }
 
@@ -697,7 +703,8 @@ func TestXKMSBackend_buildFullKeyID_ChaCha20(t *testing.T) {
 		metadata:    make(map[string]*KeyMetadata),
 	}
 
-	result := backend.buildFullKeyID("my-key", "CHACHA20-POLY1305")
+	result, err := backend.buildFullKeyID("my-key", "CHACHA20-POLY1305")
+	require.NoError(t, err)
 	assert.Equal(t, "software:encryption:chacha20-poly1305:my-key", result)
 }
 
@@ -708,7 +715,8 @@ func TestXKMSBackend_buildFullKeyID_TPM2Backend(t *testing.T) {
 		metadata:    make(map[string]*KeyMetadata),
 	}
 
-	result := backend.buildFullKeyID("my-key", "AES-256-GCM")
+	result, err := backend.buildFullKeyID("my-key", "AES-256-GCM")
+	require.NoError(t, err)
 	assert.Equal(t, "tpm2:encryption:aes256-gcm:my-key", result)
 }
 
@@ -723,7 +731,8 @@ func TestXKMSBackend_buildSigningKeyID_RSA(t *testing.T) {
 		metadata:    make(map[string]*KeyMetadata),
 	}
 
-	result := backend.buildSigningKeyID("my-key", "RSA-2048")
+	result, err := backend.buildSigningKeyID("my-key", "RSA-2048")
+	require.NoError(t, err)
 	assert.Equal(t, "software:signing:rsa:my-key", result)
 }
 
@@ -734,7 +743,8 @@ func TestXKMSBackend_buildSigningKeyID_RSA4096(t *testing.T) {
 		metadata:    make(map[string]*KeyMetadata),
 	}
 
-	result := backend.buildSigningKeyID("my-key", "RSA-4096")
+	result, err := backend.buildSigningKeyID("my-key", "RSA-4096")
+	require.NoError(t, err)
 	assert.Equal(t, "software:signing:rsa:my-key", result)
 }
 
@@ -745,7 +755,8 @@ func TestXKMSBackend_buildSigningKeyID_ECDSA(t *testing.T) {
 		metadata:    make(map[string]*KeyMetadata),
 	}
 
-	result := backend.buildSigningKeyID("my-key", "ECDSA-P256")
+	result, err := backend.buildSigningKeyID("my-key", "ECDSA-P256")
+	require.NoError(t, err)
 	assert.Equal(t, "software:signing:ecdsa-p256:my-key", result)
 }
 
@@ -756,7 +767,8 @@ func TestXKMSBackend_buildSigningKeyID_ECDSA_P384(t *testing.T) {
 		metadata:    make(map[string]*KeyMetadata),
 	}
 
-	result := backend.buildSigningKeyID("my-key", "ECDSA-P384")
+	result, err := backend.buildSigningKeyID("my-key", "ECDSA-P384")
+	require.NoError(t, err)
 	assert.Equal(t, "software:signing:ecdsa-p384:my-key", result)
 }
 
@@ -767,7 +779,8 @@ func TestXKMSBackend_buildSigningKeyID_Ed25519(t *testing.T) {
 		metadata:    make(map[string]*KeyMetadata),
 	}
 
-	result := backend.buildSigningKeyID("my-key", "ED25519")
+	result, err := backend.buildSigningKeyID("my-key", "ED25519")
+	require.NoError(t, err)
 	assert.Equal(t, "software:signing:ed25519:my-key", result)
 }
 
@@ -778,7 +791,8 @@ func TestXKMSBackend_buildSigningKeyID_TPM2Backend(t *testing.T) {
 		metadata:    make(map[string]*KeyMetadata),
 	}
 
-	result := backend.buildSigningKeyID("my-key", "RSA-2048")
+	result, err := backend.buildSigningKeyID("my-key", "RSA-2048")
+	require.NoError(t, err)
 	assert.Equal(t, "tpm2:signing:rsa:my-key", result)
 }
 
@@ -789,7 +803,8 @@ func TestXKMSBackend_buildSigningKeyID_PKCS11Backend(t *testing.T) {
 		metadata:    make(map[string]*KeyMetadata),
 	}
 
-	result := backend.buildSigningKeyID("my-key", "ECDSA-P256")
+	result, err := backend.buildSigningKeyID("my-key", "ECDSA-P256")
+	require.NoError(t, err)
 	assert.Equal(t, "pkcs11:signing:ecdsa-p256:my-key", result)
 }
 
@@ -884,7 +899,8 @@ func TestXKMSBackend_algorithmToKeyAttributes_AES256GCM(t *testing.T) {
 		backendType: config.BackendTypeSoftware,
 	}
 
-	attrs := backend.algorithmToKeyAttributes("test-key", AlgAES256GCM)
+	attrs, err := backend.algorithmToKeyAttributes("test-key", AlgAES256GCM)
+	require.NoError(t, err)
 	require.NotNil(t, attrs)
 	assert.Equal(t, "test-key", attrs.CN)
 	assert.Equal(t, xkmssdk.SymmetricAES256GCM, attrs.SymmetricAlgorithm)
@@ -895,7 +911,8 @@ func TestXKMSBackend_algorithmToKeyAttributes_AES192GCM(t *testing.T) {
 		backendType: config.BackendTypeSoftware,
 	}
 
-	attrs := backend.algorithmToKeyAttributes("test-key", "AES-192-GCM")
+	attrs, err := backend.algorithmToKeyAttributes("test-key", "AES-192-GCM")
+	require.NoError(t, err)
 	require.NotNil(t, attrs)
 	assert.Equal(t, xkmssdk.SymmetricAES192GCM, attrs.SymmetricAlgorithm)
 }
@@ -905,7 +922,8 @@ func TestXKMSBackend_algorithmToKeyAttributes_AES128GCM(t *testing.T) {
 		backendType: config.BackendTypeSoftware,
 	}
 
-	attrs := backend.algorithmToKeyAttributes("test-key", "AES-128-GCM")
+	attrs, err := backend.algorithmToKeyAttributes("test-key", "AES-128-GCM")
+	require.NoError(t, err)
 	require.NotNil(t, attrs)
 	assert.Equal(t, xkmssdk.SymmetricAES128GCM, attrs.SymmetricAlgorithm)
 }
@@ -915,7 +933,8 @@ func TestXKMSBackend_algorithmToKeyAttributes_ChaCha20(t *testing.T) {
 		backendType: config.BackendTypeSoftware,
 	}
 
-	attrs := backend.algorithmToKeyAttributes("test-key", "ChaCha20-Poly1305")
+	attrs, err := backend.algorithmToKeyAttributes("test-key", "ChaCha20-Poly1305")
+	require.NoError(t, err)
 	require.NotNil(t, attrs)
 	assert.Equal(t, xkmssdk.SymmetricChaCha20Poly1305, attrs.SymmetricAlgorithm)
 }
@@ -925,7 +944,8 @@ func TestXKMSBackend_algorithmToKeyAttributes_XChaCha20(t *testing.T) {
 		backendType: config.BackendTypeSoftware,
 	}
 
-	attrs := backend.algorithmToKeyAttributes("test-key", "XChaCha20-Poly1305")
+	attrs, err := backend.algorithmToKeyAttributes("test-key", "XChaCha20-Poly1305")
+	require.NoError(t, err)
 	require.NotNil(t, attrs)
 	assert.Equal(t, xkmssdk.SymmetricXChaCha20Poly1305, attrs.SymmetricAlgorithm)
 }
@@ -935,7 +955,8 @@ func TestXKMSBackend_algorithmToKeyAttributes_RSA4096(t *testing.T) {
 		backendType: config.BackendTypeSoftware,
 	}
 
-	attrs := backend.algorithmToKeyAttributes("test-key", "RSA-4096")
+	attrs, err := backend.algorithmToKeyAttributes("test-key", "RSA-4096")
+	require.NoError(t, err)
 	require.NotNil(t, attrs)
 	assert.Equal(t, x509.RSA, attrs.KeyAlgorithm)
 	assert.Equal(t, xkmssdk.KeyTypeSigning, attrs.KeyType)
@@ -948,7 +969,8 @@ func TestXKMSBackend_algorithmToKeyAttributes_RSA3072(t *testing.T) {
 		backendType: config.BackendTypeSoftware,
 	}
 
-	attrs := backend.algorithmToKeyAttributes("test-key", "RSA-3072")
+	attrs, err := backend.algorithmToKeyAttributes("test-key", "RSA-3072")
+	require.NoError(t, err)
 	require.NotNil(t, attrs)
 	assert.Equal(t, x509.RSA, attrs.KeyAlgorithm)
 	require.NotNil(t, attrs.RSAAttributes)
@@ -960,7 +982,8 @@ func TestXKMSBackend_algorithmToKeyAttributes_RSA2048(t *testing.T) {
 		backendType: config.BackendTypeSoftware,
 	}
 
-	attrs := backend.algorithmToKeyAttributes("test-key", "RSA-2048")
+	attrs, err := backend.algorithmToKeyAttributes("test-key", "RSA-2048")
+	require.NoError(t, err)
 	require.NotNil(t, attrs)
 	assert.Equal(t, x509.RSA, attrs.KeyAlgorithm)
 	require.NotNil(t, attrs.RSAAttributes)
@@ -972,7 +995,8 @@ func TestXKMSBackend_algorithmToKeyAttributes_RSADefault(t *testing.T) {
 		backendType: config.BackendTypeSoftware,
 	}
 
-	attrs := backend.algorithmToKeyAttributes("test-key", "RSA")
+	attrs, err := backend.algorithmToKeyAttributes("test-key", "RSA")
+	require.NoError(t, err)
 	require.NotNil(t, attrs)
 	assert.Equal(t, x509.RSA, attrs.KeyAlgorithm)
 	require.NotNil(t, attrs.RSAAttributes)
@@ -984,7 +1008,8 @@ func TestXKMSBackend_algorithmToKeyAttributes_ECDSAP256(t *testing.T) {
 		backendType: config.BackendTypeSoftware,
 	}
 
-	attrs := backend.algorithmToKeyAttributes("test-key", "ECDSA-P256")
+	attrs, err := backend.algorithmToKeyAttributes("test-key", "ECDSA-P256")
+	require.NoError(t, err)
 	require.NotNil(t, attrs)
 	assert.Equal(t, x509.ECDSA, attrs.KeyAlgorithm)
 	assert.Equal(t, xkmssdk.KeyTypeSigning, attrs.KeyType)
@@ -997,7 +1022,8 @@ func TestXKMSBackend_algorithmToKeyAttributes_ECDSAP384(t *testing.T) {
 		backendType: config.BackendTypeSoftware,
 	}
 
-	attrs := backend.algorithmToKeyAttributes("test-key", "ECDSA-P384")
+	attrs, err := backend.algorithmToKeyAttributes("test-key", "ECDSA-P384")
+	require.NoError(t, err)
 	require.NotNil(t, attrs)
 	assert.Equal(t, x509.ECDSA, attrs.KeyAlgorithm)
 	require.NotNil(t, attrs.ECCAttributes)
@@ -1009,7 +1035,8 @@ func TestXKMSBackend_algorithmToKeyAttributes_ECDSAP521(t *testing.T) {
 		backendType: config.BackendTypeSoftware,
 	}
 
-	attrs := backend.algorithmToKeyAttributes("test-key", "ECDSA-P521")
+	attrs, err := backend.algorithmToKeyAttributes("test-key", "ECDSA-P521")
+	require.NoError(t, err)
 	require.NotNil(t, attrs)
 	assert.Equal(t, x509.ECDSA, attrs.KeyAlgorithm)
 	require.NotNil(t, attrs.ECCAttributes)
@@ -1021,7 +1048,8 @@ func TestXKMSBackend_algorithmToKeyAttributes_ECDSADefault(t *testing.T) {
 		backendType: config.BackendTypeSoftware,
 	}
 
-	attrs := backend.algorithmToKeyAttributes("test-key", "ECDSA")
+	attrs, err := backend.algorithmToKeyAttributes("test-key", "ECDSA")
+	require.NoError(t, err)
 	require.NotNil(t, attrs)
 	assert.Equal(t, x509.ECDSA, attrs.KeyAlgorithm)
 	require.NotNil(t, attrs.ECCAttributes)
@@ -1033,7 +1061,8 @@ func TestXKMSBackend_algorithmToKeyAttributes_Ed25519(t *testing.T) {
 		backendType: config.BackendTypeSoftware,
 	}
 
-	attrs := backend.algorithmToKeyAttributes("test-key", "ED25519")
+	attrs, err := backend.algorithmToKeyAttributes("test-key", "ED25519")
+	require.NoError(t, err)
 	require.NotNil(t, attrs)
 	assert.Equal(t, x509.Ed25519, attrs.KeyAlgorithm)
 	assert.Equal(t, xkmssdk.KeyTypeSigning, attrs.KeyType)
@@ -1044,7 +1073,8 @@ func TestXKMSBackend_algorithmToKeyAttributes_Default(t *testing.T) {
 		backendType: config.BackendTypeSoftware,
 	}
 
-	attrs := backend.algorithmToKeyAttributes("test-key", "unknown-algorithm")
+	attrs, err := backend.algorithmToKeyAttributes("test-key", "unknown-algorithm")
+	require.NoError(t, err)
 	require.NotNil(t, attrs)
 	// Default to AES-256-GCM
 	assert.Equal(t, xkmssdk.SymmetricAES256GCM, attrs.SymmetricAlgorithm)
@@ -1524,7 +1554,8 @@ func TestXKMSBackend_algorithmToKeyAttributes_CaseInsensitive(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.algorithm, func(t *testing.T) {
-			attrs := backend.algorithmToKeyAttributes("test", tc.algorithm)
+			attrs, err := backend.algorithmToKeyAttributes("test", tc.algorithm)
+			require.NoError(t, err)
 			assert.Equal(t, tc.expected, attrs.SymmetricAlgorithm)
 		})
 	}
@@ -1550,7 +1581,8 @@ func TestXKMSBackend_algorithmToKeyAttributes_AlternateFormats(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.algorithm, func(t *testing.T) {
-			attrs := backend.algorithmToKeyAttributes("test", tc.algorithm)
+			attrs, err := backend.algorithmToKeyAttributes("test", tc.algorithm)
+			require.NoError(t, err)
 			if tc.checkRSA {
 				assert.Equal(t, x509.RSA, attrs.KeyAlgorithm)
 				require.NotNil(t, attrs.RSAAttributes)
@@ -1580,7 +1612,8 @@ func TestXKMSBackend_algorithmToKeyAttributes_ECAlternateFormats(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.algorithm, func(t *testing.T) {
-			attrs := backend.algorithmToKeyAttributes("test", tc.algorithm)
+			attrs, err := backend.algorithmToKeyAttributes("test", tc.algorithm)
+			require.NoError(t, err)
 			assert.Equal(t, x509.ECDSA, attrs.KeyAlgorithm)
 			require.NotNil(t, attrs.ECCAttributes)
 			assert.Equal(t, tc.curve, attrs.ECCAttributes.Curve)
@@ -1597,7 +1630,8 @@ func TestXKMSBackend_algorithmToKeyAttributes_StoreType(t *testing.T) {
 		backendType: config.BackendTypeTPM2,
 	}
 
-	attrs := backend.algorithmToKeyAttributes("test-key", AlgAES256GCM)
+	attrs, err := backend.algorithmToKeyAttributes("test-key", AlgAES256GCM)
+	require.NoError(t, err)
 	assert.Equal(t, xkmssdk.StoreType("tpm2"), attrs.StoreType)
 }
 
@@ -1607,11 +1641,13 @@ func TestXKMSBackend_algorithmToKeyAttributes_KeyType(t *testing.T) {
 	}
 
 	// Symmetric key should have encryption key type
-	symAttrs := backend.algorithmToKeyAttributes("test-key", AlgAES256GCM)
+	symAttrs, err := backend.algorithmToKeyAttributes("test-key", AlgAES256GCM)
+	require.NoError(t, err)
 	assert.Equal(t, xkmssdk.KeyTypeEncryption, symAttrs.KeyType)
 
 	// Asymmetric signing key should have signing key type
-	rsaAttrs := backend.algorithmToKeyAttributes("test-key", AlgRSA4096)
+	rsaAttrs, err := backend.algorithmToKeyAttributes("test-key", AlgRSA4096)
+	require.NoError(t, err)
 	assert.Equal(t, xkmssdk.KeyTypeSigning, rsaAttrs.KeyType)
 }
 

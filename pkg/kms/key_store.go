@@ -270,6 +270,43 @@ func (s *KeyStore) IncrementVersion(keyID string) (int, error) {
 	return newVersion, nil
 }
 
+// SetVersion records version as the key's current version, changing no other
+// metadata field. It updates the entry in place under the store lock, so a
+// concurrent SetState (a disable, say) is never overwritten by a version
+// refresh built from an older metadata snapshot. It never lowers the recorded
+// version: a key's versions only grow, so a lower one is a refresh read before
+// a rotation that has since been recorded, and restoring it would roll the
+// rotation back.
+func (s *KeyStore) SetVersion(keyID string, version int) error {
+	if keyID == "" {
+		return &errors.QBError{
+			Code: errors.ErrInvalidInput,
+			Op:   "KeyStore.SetVersion",
+			Err:  ErrKeyIDEmpty,
+		}
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	entry, exists := s.keys[keyID]
+	if !exists {
+		return &errors.QBError{
+			Code: errors.ErrNotFound,
+			Op:   "KeyStore.SetVersion",
+			Err:  ErrKeyNotFound,
+		}
+	}
+
+	if version <= entry.metadata.Version {
+		return nil
+	}
+	entry.metadata.Version = version
+	s.versionCounter[keyID] = version
+
+	return nil
+}
+
 // GetVersion returns the current version number for a key.
 func (s *KeyStore) GetVersion(keyID string) (int, error) {
 	if keyID == "" {

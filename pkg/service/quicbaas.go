@@ -586,6 +586,9 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 		if kmsImpl, ok := svc.kmsService.(*kmsServiceImpl); ok {
 			crypto.kmsSvc = kmsImpl
 			crypto.authzEnabled = true
+			// The AEAD limits SetKeySafety configures live in the KMS
+			// service's tracker; Crypto must count against the same one.
+			crypto.safetyTracker = kmsImpl.GetSafetyTracker()
 		}
 	}
 
