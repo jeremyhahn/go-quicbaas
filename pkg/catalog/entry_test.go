@@ -1913,9 +1913,7 @@ func TestOpenPebbleStorage_EdgeCases(t *testing.T) {
 		}
 		defer storage.Close()
 
-		if storage.DB() == nil {
-			t.Error("expected DB to be non-nil")
-		}
+		assertStoreRoundTrip(t, storage)
 	})
 
 	t.Run("open with zero write buffer size uses default", func(t *testing.T) {

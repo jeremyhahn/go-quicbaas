@@ -73,9 +73,7 @@ func TestNewPebbleStorage(t *testing.T) {
 		}
 		defer storage.Close()
 
-		if storage.DB() == nil {
-			t.Error("expected DB to be non-nil")
-		}
+		assertStoreRoundTrip(t, storage)
 		if storage.GetPebbleIndexManager() == nil {
 			t.Error("expected IndexManager to be non-nil")
 		}

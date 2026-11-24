@@ -18,26 +18,24 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/hex"
-
-	"github.com/cockroachdb/pebble"
 )
 
 // IndexManager manages secondary indexes for the catalog.
 // Index keys have empty values - only their existence matters.
-// All index operations are designed to be called within a PebbleDB batch
-// for atomic updates with the main catalog entry.
+// All index writes are designed to be called within one KVBatch, so they
+// are applied atomically with the main catalog entry.
 type IndexManager interface {
 	// WriteIndexes writes all secondary indexes for a catalog entry.
 	// This should be called when creating or updating an entry.
-	WriteIndexes(batch *pebble.Batch, entry *CatalogEntry) error
+	WriteIndexes(batch *KVBatch, entry *CatalogEntry) error
 
 	// DeleteIndexes removes all secondary indexes for a catalog entry.
 	// This should be called when deleting an entry.
-	DeleteIndexes(batch *pebble.Batch, entry *CatalogEntry) error
+	DeleteIndexes(batch *KVBatch, entry *CatalogEntry) error
 
 	// UpdateIndexes updates indexes when an entry changes.
 	// It removes old indexes and writes new ones atomically.
-	UpdateIndexes(batch *pebble.Batch, oldEntry, newEntry *CatalogEntry) error
+	UpdateIndexes(batch *KVBatch, oldEntry, newEntry *CatalogEntry) error
 
 	// ListByStore returns object keys for entries stored in a specific backend store.
 	ListByStore(ctx context.Context, store string, opts *ListOptions) (*ListResult, error)
@@ -67,40 +65,40 @@ type IndexManager interface {
 	CountByStatus(ctx context.Context, status EntryStatus) (int64, error)
 }
 
-// indexManager implements IndexManager using PebbleDB.
+// indexManager implements IndexManager over a KV.
 type indexManager struct {
-	db *pebble.DB
+	kv KV
 
-	// gate keeps the database open for the duration of an index read. When the
-	// index manager belongs to a pebbleStorage this is that store's gate, so
+	// gate keeps the KV open for the duration of an index read. When the
+	// index manager belongs to a Storage this is that store's gate, so
 	// closing the store waits for index reads in flight and fails later ones
-	// with a catalog-closed error instead of panicking inside PebbleDB.
+	// with a catalog-closed error instead of reading a closed KV.
 	gate *storeGate
 }
 
-// NewIndexManager creates a new index manager for the given PebbleDB instance.
-// The caller owns the database: closing it while index reads are in flight is
-// the caller's responsibility. Index managers obtained from a PebbleStorage via
+// NewIndexManager creates a new index manager over the given KV.
+// The caller owns the KV: closing it while index reads are in flight is
+// the caller's responsibility. Index managers obtained from a Storage via
 // GetPebbleIndexManager are tied to that store's lifecycle instead.
-func NewIndexManager(db *pebble.DB) (IndexManager, error) {
-	return newGatedIndexManager(db, newStoreGate())
+func NewIndexManager(kv KV) (IndexManager, error) {
+	return newGatedIndexManager(kv, newStoreGate())
 }
 
 // newGatedIndexManager creates an index manager whose reads are guarded by the
-// given gate, which is the gate of the storage that owns the database.
-func newGatedIndexManager(db *pebble.DB, gate *storeGate) (IndexManager, error) {
-	if db == nil {
-		return nil, NewInvalidEntryError("db", "PebbleDB instance is required")
+// given gate, which is the gate of the storage that owns the KV.
+func newGatedIndexManager(kv KV, gate *storeGate) (IndexManager, error) {
+	if kv == nil {
+		return nil, NewInvalidEntryError("kv", "KV store is required")
 	}
 	if gate == nil {
 		return nil, NewInvalidEntryError("gate", "store gate is required")
 	}
 
-	return &indexManager{db: db, gate: gate}, nil
+	return &indexManager{kv: kv, gate: gate}, nil
 }
 
 // WriteIndexes writes all secondary indexes for a catalog entry.
-func (m *indexManager) WriteIndexes(batch *pebble.Batch, entry *CatalogEntry) error {
+func (m *indexManager) WriteIndexes(batch *KVBatch, entry *CatalogEntry) error {
 	if batch == nil {
 		return NewInvalidEntryError("batch", "batch is required")
 	}
@@ -116,57 +114,45 @@ func (m *indexManager) WriteIndexes(batch *pebble.Batch, entry *CatalogEntry) er
 	// Index by store (primary store)
 	if store := entry.GetPrimaryStoreName(); store != "" {
 		indexKey := objKey.StoreIndexKey(store)
-		if err := batch.Set(indexKey, nil, nil); err != nil {
-			return NewIndexError("store", entry.Key, err)
-		}
+		batch.Set(indexKey, nil)
 	}
 
 	// Index by tenant
 	if entry.TenantID != "" {
 		indexKey := objKey.TenantIndexKey(entry.TenantID)
-		if err := batch.Set(indexKey, nil, nil); err != nil {
-			return NewIndexError("tenant", entry.Key, err)
-		}
+		batch.Set(indexKey, nil)
 	}
 
 	// Index by checksum
 	if len(entry.Checksum) > 0 {
 		checksumHex := hex.EncodeToString(entry.Checksum)
 		indexKey := objKey.ChecksumIndexKey(checksumHex)
-		if err := batch.Set(indexKey, nil, nil); err != nil {
-			return NewIndexError("checksum", entry.Key, err)
-		}
+		batch.Set(indexKey, nil)
 	}
 
 	// Index by status
 	if entry.Status != "" {
 		indexKey := objKey.StatusIndexKey(string(entry.Status))
-		if err := batch.Set(indexKey, nil, nil); err != nil {
-			return NewIndexError("status", entry.Key, err)
-		}
+		batch.Set(indexKey, nil)
 	}
 
 	// Index by tags
 	for tag, value := range entry.Tags {
 		indexKey := objKey.TagIndexKey(tag, value)
-		if err := batch.Set(indexKey, nil, nil); err != nil {
-			return NewIndexError("tag", entry.Key, err)
-		}
+		batch.Set(indexKey, nil)
 	}
 
 	// Index by encryption key
 	if keyID := entry.GetEncryptionKeyID(); keyID != "" {
 		indexKey := objKey.EncryptionIndexKey(keyID)
-		if err := batch.Set(indexKey, nil, nil); err != nil {
-			return NewIndexError("encryption", entry.Key, err)
-		}
+		batch.Set(indexKey, nil)
 	}
 
 	return nil
 }
 
 // DeleteIndexes removes all secondary indexes for a catalog entry.
-func (m *indexManager) DeleteIndexes(batch *pebble.Batch, entry *CatalogEntry) error {
+func (m *indexManager) DeleteIndexes(batch *KVBatch, entry *CatalogEntry) error {
 	if batch == nil {
 		return NewInvalidEntryError("batch", "batch is required")
 	}
@@ -182,57 +168,45 @@ func (m *indexManager) DeleteIndexes(batch *pebble.Batch, entry *CatalogEntry) e
 	// Delete store index
 	if store := entry.GetPrimaryStoreName(); store != "" {
 		indexKey := objKey.StoreIndexKey(store)
-		if err := batch.Delete(indexKey, nil); err != nil {
-			return NewIndexError("store", entry.Key, err)
-		}
+		batch.Delete(indexKey)
 	}
 
 	// Delete tenant index
 	if entry.TenantID != "" {
 		indexKey := objKey.TenantIndexKey(entry.TenantID)
-		if err := batch.Delete(indexKey, nil); err != nil {
-			return NewIndexError("tenant", entry.Key, err)
-		}
+		batch.Delete(indexKey)
 	}
 
 	// Delete checksum index
 	if len(entry.Checksum) > 0 {
 		checksumHex := hex.EncodeToString(entry.Checksum)
 		indexKey := objKey.ChecksumIndexKey(checksumHex)
-		if err := batch.Delete(indexKey, nil); err != nil {
-			return NewIndexError("checksum", entry.Key, err)
-		}
+		batch.Delete(indexKey)
 	}
 
 	// Delete status index
 	if entry.Status != "" {
 		indexKey := objKey.StatusIndexKey(string(entry.Status))
-		if err := batch.Delete(indexKey, nil); err != nil {
-			return NewIndexError("status", entry.Key, err)
-		}
+		batch.Delete(indexKey)
 	}
 
 	// Delete tag indexes
 	for tag, value := range entry.Tags {
 		indexKey := objKey.TagIndexKey(tag, value)
-		if err := batch.Delete(indexKey, nil); err != nil {
-			return NewIndexError("tag", entry.Key, err)
-		}
+		batch.Delete(indexKey)
 	}
 
 	// Delete encryption key index
 	if keyID := entry.GetEncryptionKeyID(); keyID != "" {
 		indexKey := objKey.EncryptionIndexKey(keyID)
-		if err := batch.Delete(indexKey, nil); err != nil {
-			return NewIndexError("encryption", entry.Key, err)
-		}
+		batch.Delete(indexKey)
 	}
 
 	return nil
 }
 
 // UpdateIndexes updates indexes when an entry changes.
-func (m *indexManager) UpdateIndexes(batch *pebble.Batch, oldEntry, newEntry *CatalogEntry) error {
+func (m *indexManager) UpdateIndexes(batch *KVBatch, oldEntry, newEntry *CatalogEntry) error {
 	if batch == nil {
 		return NewInvalidEntryError("batch", "batch is required")
 	}
@@ -375,74 +349,55 @@ func (m *indexManager) listByPrefix(ctx context.Context, prefix []byte, opts *Li
 		}
 	}
 
-	// Hold the store open for the life of the iterator: PebbleDB panics when
-	// an iterator is created on a closed database.
+	// Hold the store open for the life of the scan: a closed KV must never be
+	// read (PebbleDB panics when an iterator is created on a closed database).
 	if err := m.gate.enter(); err != nil {
 		return nil, err
 	}
 	defer m.gate.leave()
-
-	// Create iterator with prefix bounds
-	iterOpts := &pebble.IterOptions{
-		LowerBound: prefix,
-		UpperBound: indexPrefixUpperBound(prefix),
-	}
-
-	iter, err := m.db.NewIter(iterOpts)
-	if err != nil {
-		return nil, NewStorageError("list", err)
-	}
-	defer iter.Close()
 
 	result := &ListResult{
 		Keys:  make([]string, 0, limit),
 		Total: -1, // Unknown without counting
 	}
 
-	// Start from cursor position if provided
-	if len(startCursor) > 0 {
-		iter.SeekGE(startCursor)
-		// Skip the cursor key itself (we already returned it)
-		if iter.Valid() && bytes.Equal(iter.Key(), startCursor) {
-			iter.Next()
-		}
-	} else {
-		iter.First()
-	}
-
-	// Skip offset items
-	for i := 0; i < offset && iter.Valid(); i++ {
-		iter.Next()
-	}
-
-	// Collect results
+	// Keys up to and including the cursor were returned by earlier pages, so
+	// they are skipped before the offset is applied.
+	skipped := 0
 	count := 0
 	var lastKey []byte
-	for iter.Valid() && count < limit+1 {
+	var scanErr error
+	err := m.kv.Scan(ctx, prefix, func(key, _ []byte) bool {
 		if err := ctx.Err(); err != nil {
-			return nil, NewStorageError("list", err)
+			scanErr = err
+			return false
 		}
-
-		key := iter.Key()
-		keyCopy := make([]byte, len(key))
-		copy(keyCopy, key)
-
-		if count < limit {
-			objKey, err := parser(keyCopy)
-			if err == nil {
-				result.Keys = append(result.Keys, objKey.String())
-				lastKey = keyCopy
-			}
-		} else {
+		if len(startCursor) > 0 && bytes.Compare(key, startCursor) <= 0 {
+			return true
+		}
+		if skipped < offset {
+			skipped++
+			return true
+		}
+		if count >= limit {
 			// Found one more item, so there are more results
 			result.HasMore = true
+			return false
 		}
 
+		keyCopy := cloneBytes(key)
+		objKey, err := parser(keyCopy)
+		if err == nil {
+			result.Keys = append(result.Keys, objKey.String())
+			lastKey = keyCopy
+		}
 		count++
-		iter.Next()
+		return true
+	})
+	if scanErr != nil {
+		return nil, NewStorageError("list", scanErr)
 	}
-
-	if err := iter.Error(); err != nil {
+	if err != nil {
 		return nil, NewStorageError("list", err)
 	}
 
@@ -466,26 +421,20 @@ func (m *indexManager) countByPrefix(ctx context.Context, prefix []byte) (int64,
 	}
 	defer m.gate.leave()
 
-	iterOpts := &pebble.IterOptions{
-		LowerBound: prefix,
-		UpperBound: indexPrefixUpperBound(prefix),
-	}
-
-	iter, err := m.db.NewIter(iterOpts)
-	if err != nil {
-		return 0, NewStorageError("count", err)
-	}
-	defer iter.Close()
-
 	var count int64
-	for iter.First(); iter.Valid(); iter.Next() {
+	var scanErr error
+	err := m.kv.Scan(ctx, prefix, func(_, _ []byte) bool {
 		if err := ctx.Err(); err != nil {
-			return 0, NewStorageError("count", err)
+			scanErr = err
+			return false
 		}
 		count++
+		return true
+	})
+	if scanErr != nil {
+		return 0, NewStorageError("count", scanErr)
 	}
-
-	if err := iter.Error(); err != nil {
+	if err != nil {
 		return 0, NewStorageError("count", err)
 	}
 

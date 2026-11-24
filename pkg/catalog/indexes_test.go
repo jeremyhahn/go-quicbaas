@@ -20,12 +20,10 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/cockroachdb/pebble"
 )
 
 // testPebbleDB creates a temporary PebbleDB for testing.
-func testPebbleDB(t *testing.T) (*pebble.DB, func()) {
+func testPebbleDB(t *testing.T) (*pebbleKV, func()) {
 	t.Helper()
 
 	tmpDir, err := os.MkdirTemp("", "catalog-index-test-*")
@@ -34,7 +32,7 @@ func testPebbleDB(t *testing.T) (*pebble.DB, func()) {
 	}
 
 	dbPath := filepath.Join(tmpDir, "test.db")
-	db, err := pebble.Open(dbPath, &pebble.Options{})
+	db, err := newPebbleKV(&PebbleStorageConfig{Path: dbPath})
 	if err != nil {
 		os.RemoveAll(tmpDir)
 		t.Fatalf("failed to open pebble: %v", err)
@@ -100,71 +98,58 @@ func TestIndexManager_WriteIndexes(t *testing.T) {
 		entry.Tags = map[string]string{"env": "production", "type": "document"}
 		entry.Encryption = &ObjectEncryption{Enabled: true, KeyID: "key-123"}
 
-		batch := db.NewBatch()
-		defer batch.Close()
+		batch := &KVBatch{}
 
 		err := mgr.WriteIndexes(batch, entry)
 		if err != nil {
 			t.Fatalf("WriteIndexes() error = %v", err)
 		}
 
-		if err := batch.Commit(pebble.NoSync); err != nil {
+		if err := db.Apply(context.Background(), batch); err != nil {
 			t.Fatalf("batch.Commit() error = %v", err)
 		}
 
 		// Verify store index exists
 		objKey, _ := ParseKey(entry.Key)
 		storeIdxKey := objKey.StoreIndexKey("s3-primary")
-		_, closer, err := db.Get(storeIdxKey)
+		_, err = db.Get(context.Background(), storeIdxKey)
 		if err != nil {
 			t.Errorf("store index not found: %v", err)
-		} else {
-			closer.Close()
 		}
 
 		// Verify tenant index exists
 		tenantIdxKey := objKey.TenantIndexKey("tenant-a")
-		_, closer, err = db.Get(tenantIdxKey)
+		_, err = db.Get(context.Background(), tenantIdxKey)
 		if err != nil {
 			t.Errorf("tenant index not found: %v", err)
-		} else {
-			closer.Close()
 		}
 
 		// Verify status index exists
 		statusIdxKey := objKey.StatusIndexKey("active")
-		_, closer, err = db.Get(statusIdxKey)
+		_, err = db.Get(context.Background(), statusIdxKey)
 		if err != nil {
 			t.Errorf("status index not found: %v", err)
-		} else {
-			closer.Close()
 		}
 
 		// Verify checksum index exists
 		checksumIdxKey := objKey.ChecksumIndexKey(entry.ChecksumHex())
-		_, closer, err = db.Get(checksumIdxKey)
+		_, err = db.Get(context.Background(), checksumIdxKey)
 		if err != nil {
 			t.Errorf("checksum index not found: %v", err)
-		} else {
-			closer.Close()
 		}
 
 		// Verify tag indexes exist
 		tagIdxKey := objKey.TagIndexKey("env", "production")
-		_, closer, err = db.Get(tagIdxKey)
+		_, err = db.Get(context.Background(), tagIdxKey)
 		if err != nil {
 			t.Errorf("tag index not found: %v", err)
-		} else {
-			closer.Close()
 		}
 
 		// Verify encryption index exists
 		encIdxKey := objKey.EncryptionIndexKey("key-123")
-		_, closer, err = db.Get(encIdxKey)
+		_, err = db.Get(context.Background(), encIdxKey)
 		if err != nil {
 			t.Errorf("encryption index not found: %v", err)
-		} else {
-			closer.Close()
 		}
 	})
 
@@ -186,8 +171,7 @@ func TestIndexManager_WriteIndexes(t *testing.T) {
 		defer cleanup()
 
 		mgr, _ := NewIndexManager(db)
-		batch := db.NewBatch()
-		defer batch.Close()
+		batch := &KVBatch{}
 
 		err := mgr.WriteIndexes(batch, nil)
 		if err == nil {
@@ -202,8 +186,7 @@ func TestIndexManager_WriteIndexes(t *testing.T) {
 		mgr, _ := NewIndexManager(db)
 		entry := &CatalogEntry{Key: "invalid-key-no-colon"}
 
-		batch := db.NewBatch()
-		defer batch.Close()
+		batch := &KVBatch{}
 
 		err := mgr.WriteIndexes(batch, entry)
 		if err == nil {
@@ -221,8 +204,7 @@ func TestIndexManager_WriteIndexes(t *testing.T) {
 			Status: StatusPending,
 		}
 
-		batch := db.NewBatch()
-		defer batch.Close()
+		batch := &KVBatch{}
 
 		err := mgr.WriteIndexes(batch, entry)
 		if err != nil {
@@ -241,37 +223,33 @@ func TestIndexManager_DeleteIndexes(t *testing.T) {
 		entry.Tags = map[string]string{"backup": "true"}
 
 		// First write indexes
-		batch := db.NewBatch()
+		batch := &KVBatch{}
 		if err := mgr.WriteIndexes(batch, entry); err != nil {
 			t.Fatalf("WriteIndexes() error = %v", err)
 		}
-		if err := batch.Commit(pebble.NoSync); err != nil {
+		if err := db.Apply(context.Background(), batch); err != nil {
 			t.Fatalf("batch.Commit() error = %v", err)
 		}
-		batch.Close()
 
 		// Verify indexes exist
 		objKey, _ := ParseKey(entry.Key)
 		storeIdxKey := objKey.StoreIndexKey("minio")
-		_, closer, err := db.Get(storeIdxKey)
+		_, err := db.Get(context.Background(), storeIdxKey)
 		if err != nil {
 			t.Fatalf("store index should exist before delete: %v", err)
 		}
-		closer.Close()
-
 		// Now delete indexes
-		batch = db.NewBatch()
+		batch = &KVBatch{}
 		if err := mgr.DeleteIndexes(batch, entry); err != nil {
 			t.Fatalf("DeleteIndexes() error = %v", err)
 		}
-		if err := batch.Commit(pebble.NoSync); err != nil {
+		if err := db.Apply(context.Background(), batch); err != nil {
 			t.Fatalf("batch.Commit() error = %v", err)
 		}
-		batch.Close()
 
 		// Verify indexes are deleted
-		_, _, err = db.Get(storeIdxKey)
-		if err != pebble.ErrNotFound {
+		_, err = db.Get(context.Background(), storeIdxKey)
+		if !isKVKeyNotFound(err) {
 			t.Errorf("store index should be deleted, got error: %v", err)
 		}
 	})
@@ -294,8 +272,7 @@ func TestIndexManager_DeleteIndexes(t *testing.T) {
 		defer cleanup()
 
 		mgr, _ := NewIndexManager(db)
-		batch := db.NewBatch()
-		defer batch.Close()
+		batch := &KVBatch{}
 
 		err := mgr.DeleteIndexes(batch, nil)
 		if err == nil {
@@ -315,49 +292,43 @@ func TestIndexManager_UpdateIndexes(t *testing.T) {
 		newEntry := testEntry("ns:file.txt", "s3-new", "tenant-1", StatusArchived)
 
 		// Write initial indexes
-		batch := db.NewBatch()
+		batch := &KVBatch{}
 		if err := mgr.WriteIndexes(batch, oldEntry); err != nil {
 			t.Fatalf("WriteIndexes() error = %v", err)
 		}
-		if err := batch.Commit(pebble.NoSync); err != nil {
+		if err := db.Apply(context.Background(), batch); err != nil {
 			t.Fatalf("batch.Commit() error = %v", err)
 		}
-		batch.Close()
 
 		// Update indexes
-		batch = db.NewBatch()
+		batch = &KVBatch{}
 		if err := mgr.UpdateIndexes(batch, oldEntry, newEntry); err != nil {
 			t.Fatalf("UpdateIndexes() error = %v", err)
 		}
-		if err := batch.Commit(pebble.NoSync); err != nil {
+		if err := db.Apply(context.Background(), batch); err != nil {
 			t.Fatalf("batch.Commit() error = %v", err)
 		}
-		batch.Close()
 
 		// Verify old indexes are gone
 		objKey, _ := ParseKey(oldEntry.Key)
 		oldStoreIdx := objKey.StoreIndexKey("s3-old")
-		_, _, err := db.Get(oldStoreIdx)
-		if err != pebble.ErrNotFound {
+		_, err := db.Get(context.Background(), oldStoreIdx)
+		if !isKVKeyNotFound(err) {
 			t.Errorf("old store index should be deleted")
 		}
 
 		// Verify new indexes exist
 		newStoreIdx := objKey.StoreIndexKey("s3-new")
-		_, closer, err := db.Get(newStoreIdx)
+		_, err = db.Get(context.Background(), newStoreIdx)
 		if err != nil {
 			t.Errorf("new store index should exist: %v", err)
-		} else {
-			closer.Close()
 		}
 
 		// Verify status index changed
 		archivedIdx := objKey.StatusIndexKey("archived")
-		_, closer, err = db.Get(archivedIdx)
+		_, err = db.Get(context.Background(), archivedIdx)
 		if err != nil {
 			t.Errorf("archived status index should exist: %v", err)
-		} else {
-			closer.Close()
 		}
 	})
 
@@ -382,8 +353,7 @@ func TestIndexManager_UpdateIndexes(t *testing.T) {
 		mgr, _ := NewIndexManager(db)
 		new := testEntry("ns:path", "s3", "tenant", StatusActive)
 
-		batch := db.NewBatch()
-		defer batch.Close()
+		batch := &KVBatch{}
 
 		err := mgr.UpdateIndexes(batch, nil, new)
 		if err == nil {
@@ -398,8 +368,7 @@ func TestIndexManager_UpdateIndexes(t *testing.T) {
 		mgr, _ := NewIndexManager(db)
 		old := testEntry("ns:path", "s3", "tenant", StatusActive)
 
-		batch := db.NewBatch()
-		defer batch.Close()
+		batch := &KVBatch{}
 
 		err := mgr.UpdateIndexes(batch, old, nil)
 		if err == nil {
@@ -424,14 +393,13 @@ func TestIndexManager_ListByStore(t *testing.T) {
 		}
 
 		for _, entry := range entries {
-			batch := db.NewBatch()
+			batch := &KVBatch{}
 			if err := mgr.WriteIndexes(batch, entry); err != nil {
 				t.Fatalf("WriteIndexes() error = %v", err)
 			}
-			if err := batch.Commit(pebble.NoSync); err != nil {
+			if err := db.Apply(context.Background(), batch); err != nil {
 				t.Fatalf("batch.Commit() error = %v", err)
 			}
-			batch.Close()
 		}
 
 		result, err := mgr.ListByStore(ctx, "s3-primary", nil)
@@ -467,10 +435,9 @@ func TestIndexManager_ListByStore(t *testing.T) {
 		// Create multiple entries
 		for i := 0; i < 5; i++ {
 			entry := testEntry("ns:file"+string(rune('a'+i))+".txt", "s3", "tenant", StatusActive)
-			batch := db.NewBatch()
+			batch := &KVBatch{}
 			mgr.WriteIndexes(batch, entry)
-			batch.Commit(pebble.NoSync)
-			batch.Close()
+			db.Apply(context.Background(), batch)
 		}
 
 		result, err := mgr.ListByStore(ctx, "s3", &ListOptions{Limit: 2})
@@ -501,10 +468,9 @@ func TestIndexManager_ListByStore(t *testing.T) {
 		// Create entries
 		for i := 0; i < 5; i++ {
 			entry := testEntry("ns:file"+string(rune('a'+i))+".txt", "s3", "tenant", StatusActive)
-			batch := db.NewBatch()
+			batch := &KVBatch{}
 			mgr.WriteIndexes(batch, entry)
-			batch.Commit(pebble.NoSync)
-			batch.Close()
+			db.Apply(context.Background(), batch)
 		}
 
 		// Get first page
@@ -576,10 +542,9 @@ func TestIndexManager_ListByTenant(t *testing.T) {
 		}
 
 		for _, entry := range entries {
-			batch := db.NewBatch()
+			batch := &KVBatch{}
 			mgr.WriteIndexes(batch, entry)
-			batch.Commit(pebble.NoSync)
-			batch.Close()
+			db.Apply(context.Background(), batch)
 		}
 
 		result, err := mgr.ListByTenant(ctx, "acme-corp", nil)
@@ -622,10 +587,9 @@ func TestIndexManager_ListByChecksum(t *testing.T) {
 		entry2.Checksum = checksum[:] // Same checksum - deduplication scenario
 
 		for _, entry := range []*CatalogEntry{entry1, entry2} {
-			batch := db.NewBatch()
+			batch := &KVBatch{}
 			mgr.WriteIndexes(batch, entry)
-			batch.Commit(pebble.NoSync)
-			batch.Close()
+			db.Apply(context.Background(), batch)
 		}
 
 		result, err := mgr.ListByChecksum(ctx, checksum[:], nil)
@@ -668,10 +632,9 @@ func TestIndexManager_ListByStatus(t *testing.T) {
 		}
 
 		for _, entry := range entries {
-			batch := db.NewBatch()
+			batch := &KVBatch{}
 			mgr.WriteIndexes(batch, entry)
-			batch.Commit(pebble.NoSync)
-			batch.Close()
+			db.Apply(context.Background(), batch)
 		}
 
 		result, err := mgr.ListByStatus(ctx, StatusActive, nil)
@@ -716,10 +679,9 @@ func TestIndexManager_ListByTag(t *testing.T) {
 		entry3.Tags = map[string]string{"env": "staging"}
 
 		for _, entry := range []*CatalogEntry{entry1, entry2, entry3} {
-			batch := db.NewBatch()
+			batch := &KVBatch{}
 			mgr.WriteIndexes(batch, entry)
-			batch.Commit(pebble.NoSync)
-			batch.Close()
+			db.Apply(context.Background(), batch)
 		}
 
 		result, err := mgr.ListByTag(ctx, "env", "prod", nil)
@@ -764,10 +726,9 @@ func TestIndexManager_ListByEncryptionKey(t *testing.T) {
 		entry3.Encryption = &ObjectEncryption{Enabled: true, KeyID: "kms-key-xyz"}
 
 		for _, entry := range []*CatalogEntry{entry1, entry2, entry3} {
-			batch := db.NewBatch()
+			batch := &KVBatch{}
 			mgr.WriteIndexes(batch, entry)
-			batch.Commit(pebble.NoSync)
-			batch.Close()
+			db.Apply(context.Background(), batch)
 		}
 
 		result, err := mgr.ListByEncryptionKey(ctx, "kms-key-abc", nil)
@@ -810,10 +771,9 @@ func TestIndexManager_CountByStore(t *testing.T) {
 		}
 
 		for _, entry := range entries {
-			batch := db.NewBatch()
+			batch := &KVBatch{}
 			mgr.WriteIndexes(batch, entry)
-			batch.Commit(pebble.NoSync)
-			batch.Close()
+			db.Apply(context.Background(), batch)
 		}
 
 		count, err := mgr.CountByStore(ctx, "s3")
@@ -872,10 +832,9 @@ func TestIndexManager_CountByTenant(t *testing.T) {
 		}
 
 		for _, entry := range entries {
-			batch := db.NewBatch()
+			batch := &KVBatch{}
 			mgr.WriteIndexes(batch, entry)
-			batch.Commit(pebble.NoSync)
-			batch.Close()
+			db.Apply(context.Background(), batch)
 		}
 
 		count, err := mgr.CountByTenant(ctx, "tenant-a")
@@ -918,10 +877,9 @@ func TestIndexManager_CountByStatus(t *testing.T) {
 		}
 
 		for _, entry := range entries {
-			batch := db.NewBatch()
+			batch := &KVBatch{}
 			mgr.WriteIndexes(batch, entry)
-			batch.Commit(pebble.NoSync)
-			batch.Close()
+			db.Apply(context.Background(), batch)
 		}
 
 		count, err := mgr.CountByStatus(ctx, StatusActive)

@@ -23,7 +23,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cockroachdb/pebble"
 	"github.com/stretchr/testify/require"
 )
 
@@ -294,7 +293,7 @@ func BenchmarkIndexManager_WriteIndexes(b *testing.B) {
 	require.NoError(b, err)
 	defer os.RemoveAll(tmpDir)
 
-	db, err := pebble.Open(filepath.Join(tmpDir, "index"), &pebble.Options{})
+	db, err := newPebbleKV(&PebbleStorageConfig{Path: filepath.Join(tmpDir, "index")})
 	require.NoError(b, err)
 	defer db.Close()
 
@@ -306,16 +305,13 @@ func BenchmarkIndexManager_WriteIndexes(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		entry := createBenchEntry(fmt.Sprintf("bench:index/entry-%d", i), 1024)
-		batch := db.NewBatch()
+		batch := &KVBatch{}
 		if err := indexMgr.WriteIndexes(batch, entry); err != nil {
-			batch.Close()
 			b.Fatal(err)
 		}
-		if err := batch.Commit(pebble.NoSync); err != nil {
-			batch.Close()
+		if err := db.Apply(context.Background(), batch); err != nil {
 			b.Fatal(err)
 		}
-		batch.Close()
 	}
 }
 
