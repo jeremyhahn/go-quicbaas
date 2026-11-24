@@ -66,6 +66,7 @@ func newDefaultBackends(config *RuntimeConfig) (*backends, error) {
 		engine: newLibcontainerEngine(filepath.Join(config.RunRoot, "libcontainer")),
 		images: images,
 		rootfs: &storageRootfsStore{store: store},
+		commit: &storageLayerCommitter{store: store, system: images.system},
 		close: func() error {
 			_, err := store.Shutdown(true)
 			return err

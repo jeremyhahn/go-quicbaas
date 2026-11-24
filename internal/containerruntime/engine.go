@@ -145,11 +145,22 @@ type imageStore interface {
 // rootfsStore unpacks an image's layers into a container root filesystem.
 type rootfsStore interface {
 	// Create unpacks imageID into a new read-write layer for containerID,
-	// mounts it, and returns the mount point.
+	// mounts it, and returns the mount point. An empty imageID gives an
+	// empty layer, which is what a FROM scratch stage builds on.
 	Create(ctx context.Context, containerID, imageID string) (string, error)
 
 	// Remove unmounts and deletes containerID's root filesystem.
 	Remove(containerID string) error
+}
+
+// layerCommitter stores a build container's filesystem as an image.
+type layerCommitter interface {
+	// Commit stores containerID's read-write layer as one new layer on top
+	// of the image the container was created from (none for an empty
+	// layer), with config as the image's configuration and createdBy as
+	// the new history entry, and returns the stored image. The container
+	// is left as it was: still mounted, still removable by rootfsStore.
+	Commit(ctx context.Context, containerID string, config imageConfig, createdBy string) (imageRecord, error)
 }
 
 // backends bundles the Runtime's backends with the function that releases
@@ -158,6 +169,7 @@ type backends struct {
 	engine containerEngine
 	images imageStore
 	rootfs rootfsStore
+	commit layerCommitter
 	close  func() error
 }
 
