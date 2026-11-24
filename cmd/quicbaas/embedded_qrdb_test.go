@@ -101,9 +101,10 @@ func TestBuildEmbeddedQRDBServicers_EndToEnd(t *testing.T) {
 	require.NotNil(t, servicers.KV, "WithEmbeddedQRDB requires non-nil KV")
 	require.NotNil(t, servicers.Admin, "WithEmbeddedQRDB requires non-nil Admin")
 	require.NotNil(t, servicers.Data, "QRDBData() needs the node's own client")
-	nodeClient, ok := servicers.Data.(*qrdbsdk.Client)
-	require.True(t, ok, "servicers.Data is %T, want the node's *qrdbsdk.Client", servicers.Data)
-	assert.Same(t, es.server.GetQRDBNodeClient(), nodeClient)
+	data, ok := servicers.Data.(*nodeDataService)
+	require.True(t, ok, "servicers.Data is %T, want *nodeDataService", servicers.Data)
+	assert.Same(t, es.server.GetQRDBNodeClient(), data.collections, "collections go through the node's own client")
+	assert.NotSame(t, es.server.GetQRDBNodeClient(), data.data, "KV and friends go through the data registry, not the node's client")
 
 	// Isolation probes on the real node: the node's client must refuse an
 	// absent database and an unknown tenant.
@@ -112,6 +113,15 @@ func TestBuildEmbeddedQRDBServicers_EndToEnd(t *testing.T) {
 	assert.Error(t, err, "an absent database must be refused")
 	_, err = servicers.Data.Collections().ListCollections(qrdbsdk.ContextWithTenant(ctx, "row1652-no-such-tenant"), "row1652db")
 	assert.Error(t, err, "an unknown tenant must be refused")
+
+	// A KV write through QRDBData() lands in the data registry's default
+	// database, the keyspace the network data RPCs read.
+	require.NoError(t, servicers.Data.KV().Put(ctx, "row1652/cli", []byte("v")))
+	dc, err := es.server.QRDBDataClient()
+	require.NoError(t, err)
+	got, err := dc.KV().Get(ctx, "row1652/cli")
+	require.NoError(t, err)
+	assert.Equal(t, "v", string(got))
 
 	// The bootstrap ceremony services should be wired on a healthy first
 	// boot. If they are not, the CLI's first-boot SDK path falls back to
