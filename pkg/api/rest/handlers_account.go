@@ -784,6 +784,12 @@ func accountErrorStatus(err error) int {
 	var secretUnresolved *orchestration.AccountSecretRefUnresolvedError
 	var noSecretResolver *orchestration.AccountSecretResolverNotConfiguredError
 	var missingTenant *tenantctx.MissingTenantError
+	var quotaExhausted *orchestration.AccountQuotaExhaustedError
+	var breakerOpen *orchestration.AccountBreakerOpenError
+	var breakerTrialHeld *orchestration.AccountBreakerTrialHeldError
+	var limited *orchestration.AccountLimitedError
+	var spendUnknown *orchestration.AccountSpendUnknownVerdictError
+	var spendConfig *orchestration.SpendAuthorityConfigError
 
 	switch {
 	case isPageInputError(err):
@@ -846,6 +852,15 @@ func accountErrorStatus(err error) int {
 		// rewrite that kept losing, or an inline rotation overtaken by a switch
 		// to a secret reference. Nothing was written; the caller may retry.
 		return http.StatusConflict
+	case errors.As(err, &quotaExhausted), errors.As(err, &breakerOpen), errors.As(err, &breakerTrialHeld), errors.As(err, &limited):
+		// 409, like a not-releasable account: the spend cap refuses the
+		// release because of the account's STATE — a spent window, an open
+		// breaker, a provider limit — and that state clears on its own, so a
+		// daemon backs off instead of treating it as a server fault.
+		return http.StatusConflict
+	case errors.As(err, &spendUnknown), errors.As(err, &spendConfig):
+		// 503: the spend authority cannot decide, like an unwired dependency.
+		return http.StatusServiceUnavailable
 	default:
 		return http.StatusInternalServerError
 	}
