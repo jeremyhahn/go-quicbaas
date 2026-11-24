@@ -22,6 +22,7 @@ import (
 
 // TestMFASecretValidate tests MFASecret.Validate() method.
 func TestMFASecretValidate(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		secret  *MFASecret
@@ -227,6 +228,7 @@ func TestMFASecretValidate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			err := tt.secret.Validate()
 			if tt.wantErr {
 				if err == nil {
@@ -255,6 +257,7 @@ func TestMFASecretValidate(t *testing.T) {
 
 // TestMFAEnrollmentValidate tests MFAEnrollment.Validate() method.
 func TestMFAEnrollmentValidate(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		enrollment *MFAEnrollment
@@ -338,6 +341,7 @@ func TestMFAEnrollmentValidate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			err := tt.enrollment.Validate()
 			if tt.wantErr {
 				if err == nil {
@@ -366,6 +370,7 @@ func TestMFAEnrollmentValidate(t *testing.T) {
 
 // TestMFAEnrollmentIsExpired tests MFAEnrollment.IsExpired() method.
 func TestMFAEnrollmentIsExpired(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		enrollment *MFAEnrollment
@@ -403,6 +408,7 @@ func TestMFAEnrollmentIsExpired(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got := tt.enrollment.IsExpired()
 			if got != tt.want {
 				t.Errorf("MFAEnrollment.IsExpired() = %v, want %v", got, tt.want)
@@ -413,6 +419,7 @@ func TestMFAEnrollmentIsExpired(t *testing.T) {
 
 // TestMFAChallengeValidate tests MFAChallenge.Validate() method.
 func TestMFAChallengeValidate(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		challenge *MFAChallenge
@@ -497,6 +504,7 @@ func TestMFAChallengeValidate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			err := tt.challenge.Validate()
 			if tt.wantErr {
 				if err == nil {
@@ -525,6 +533,7 @@ func TestMFAChallengeValidate(t *testing.T) {
 
 // TestMFAChallengeIsExpired tests MFAChallenge.IsExpired() method.
 func TestMFAChallengeIsExpired(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		challenge *MFAChallenge
@@ -562,6 +571,7 @@ func TestMFAChallengeIsExpired(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got := tt.challenge.IsExpired()
 			if got != tt.want {
 				t.Errorf("MFAChallenge.IsExpired() = %v, want %v", got, tt.want)
@@ -572,6 +582,7 @@ func TestMFAChallengeIsExpired(t *testing.T) {
 
 // TestMFAPolicyValidate tests MFAPolicy.Validate() method.
 func TestMFAPolicyValidate(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		policy  *MFAPolicy
@@ -655,6 +666,7 @@ func TestMFAPolicyValidate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			err := tt.policy.Validate()
 			if tt.wantErr {
 				if err == nil {
@@ -683,6 +695,7 @@ func TestMFAPolicyValidate(t *testing.T) {
 
 // TestMFAPolicyApplyDefaults tests MFAPolicy.ApplyDefaults() method.
 func TestMFAPolicyApplyDefaults(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		policy   *MFAPolicy
@@ -764,6 +777,7 @@ func TestMFAPolicyApplyDefaults(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			tt.policy.ApplyDefaults()
 
 			if len(tt.policy.AllowedMethods) != len(tt.expected.AllowedMethods) {
@@ -803,6 +817,7 @@ func TestMFAPolicyApplyDefaults(t *testing.T) {
 
 // TestMFAConfigValidate tests MFAConfig.Validate() method.
 func TestMFAConfigValidate(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		config  *MFAConfig
@@ -1045,6 +1060,7 @@ func TestMFAConfigValidate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			err := tt.config.Validate()
 			if tt.wantErr {
 				if err == nil {
@@ -1073,6 +1089,7 @@ func TestMFAConfigValidate(t *testing.T) {
 
 // TestMFAConfigApplyDefaults tests MFAConfig.ApplyDefaults() method.
 func TestMFAConfigApplyDefaults(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		config   *MFAConfig
@@ -1150,6 +1167,7 @@ func TestMFAConfigApplyDefaults(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			tt.config.ApplyDefaults()
 
 			if tt.config.Issuer != tt.expected.Issuer {
@@ -1176,6 +1194,7 @@ func TestMFAConfigApplyDefaults(t *testing.T) {
 
 // TestBackupCodeSetRemainingCodes tests BackupCodeSet.RemainingCodes() method.
 func TestBackupCodeSetRemainingCodes(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	tests := []struct {
 		name     string
@@ -1233,6 +1252,7 @@ func TestBackupCodeSetRemainingCodes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got := tt.codeSet.RemainingCodes()
 			if got != tt.expected {
 				t.Errorf("BackupCodeSet.RemainingCodes() = %v, want %v", got, tt.expected)
@@ -1243,6 +1263,7 @@ func TestBackupCodeSetRemainingCodes(t *testing.T) {
 
 // TestBackupCodeSetUseCode tests BackupCodeSet.UseCode() method.
 func TestBackupCodeSetUseCode(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name           string
 		codeSet        *BackupCodeSet
@@ -1327,6 +1348,7 @@ func TestBackupCodeSetUseCode(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got := tt.codeSet.UseCode(tt.codeHash)
 			if got != tt.expectedResult {
 				t.Errorf("BackupCodeSet.UseCode() = %v, want %v", got, tt.expectedResult)

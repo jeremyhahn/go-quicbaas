@@ -162,6 +162,7 @@ func createTestTokenService(t *testing.T) (*TokenService, *rsa.PrivateKey) {
 }
 
 func TestTokenService_GenerateAccessToken(t *testing.T) {
+	t.Parallel()
 	service, privateKey := createTestTokenService(t)
 	ctx := context.Background()
 
@@ -215,6 +216,7 @@ func TestTokenService_GenerateAccessToken(t *testing.T) {
 // TestTokenService_GenerateIDToken_NotAccessTokenType asserts an ID token does
 // NOT carry the RFC 9068 access-token media type (token-type confusion guard).
 func TestTokenService_GenerateIDToken_NotAccessTokenType(t *testing.T) {
+	t.Parallel()
 	service, _ := createTestTokenService(t)
 	ctx := context.Background()
 
@@ -238,6 +240,7 @@ func TestTokenService_GenerateIDToken_NotAccessTokenType(t *testing.T) {
 }
 
 func TestTokenService_GenerateIDToken(t *testing.T) {
+	t.Parallel()
 	service, privateKey := createTestTokenService(t)
 	ctx := context.Background()
 
@@ -285,6 +288,7 @@ func TestTokenService_GenerateIDToken(t *testing.T) {
 }
 
 func TestTokenService_GenerateRefreshToken(t *testing.T) {
+	t.Parallel()
 	service, _ := createTestTokenService(t)
 	ctx := context.Background()
 
@@ -326,6 +330,7 @@ func TestTokenService_GenerateRefreshToken(t *testing.T) {
 }
 
 func TestTokenService_GenerateAuthCode(t *testing.T) {
+	t.Parallel()
 	service, _ := createTestTokenService(t)
 	ctx := context.Background()
 
@@ -369,6 +374,7 @@ func TestTokenService_GenerateAuthCode(t *testing.T) {
 }
 
 func TestTokenService_ValidateAuthCode(t *testing.T) {
+	t.Parallel()
 	service, _ := createTestTokenService(t)
 	ctx := context.Background()
 
@@ -405,6 +411,7 @@ func TestTokenService_ValidateAuthCode(t *testing.T) {
 }
 
 func TestTokenService_ValidateAuthCode_Expired(t *testing.T) {
+	t.Parallel()
 	service, _ := createTestTokenService(t)
 	ctx := context.Background()
 
@@ -432,6 +439,7 @@ func TestTokenService_ValidateAuthCode_Expired(t *testing.T) {
 
 // Test RevokeToken with JWT access token
 func TestTokenService_RevokeToken_JWT(t *testing.T) {
+	t.Parallel()
 	service, _ := createTestTokenService(t)
 	ctx := context.Background()
 
@@ -473,6 +481,7 @@ func TestTokenService_RevokeToken_JWT(t *testing.T) {
 
 // Test RevokeToken with refresh token
 func TestTokenService_RevokeToken_RefreshToken(t *testing.T) {
+	t.Parallel()
 	service, _ := createTestTokenService(t)
 	ctx := context.Background()
 
@@ -513,6 +522,7 @@ func TestTokenService_RevokeToken_RefreshToken(t *testing.T) {
 
 // Test RevokeToken with invalid token
 func TestTokenService_RevokeToken_Invalid(t *testing.T) {
+	t.Parallel()
 	service, _ := createTestTokenService(t)
 	ctx := context.Background()
 
@@ -550,6 +560,7 @@ func TestTokenService_RevokeToken_Invalid(t *testing.T) {
 
 // Test RevokeToken error handling
 func TestTokenService_RevokeToken_ErrorHandling(t *testing.T) {
+	t.Parallel()
 	service, _ := createTestTokenService(t)
 	ctx := context.Background()
 
@@ -599,6 +610,7 @@ func mustGenerateJTI(t *testing.T) string {
 }
 
 func TestGenerateJTI(t *testing.T) {
+	t.Parallel()
 	jti1, err := generateJTI()
 	if err != nil {
 		t.Fatalf("generateJTI() error = %v", err)
@@ -623,6 +635,7 @@ func TestGenerateJTI(t *testing.T) {
 }
 
 func TestParseScopes(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name  string
 		scope string
@@ -652,6 +665,7 @@ func TestParseScopes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got := parseScopes(tt.scope)
 			if len(got) != len(tt.want) {
 				t.Errorf("parseScopes() len = %d, want %d", len(got), len(tt.want))
@@ -667,6 +681,7 @@ func TestParseScopes(t *testing.T) {
 }
 
 func TestValidatePKCES256(t *testing.T) {
+	t.Parallel()
 	validChallenge := "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
 	validVerifier := "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
 
@@ -698,6 +713,7 @@ func TestValidatePKCES256(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			if got := validatePKCES256(tt.verifier, tt.challenge); got != tt.want {
 				t.Errorf("validatePKCES256() = %v, want %v", got, tt.want)
 			}

@@ -136,6 +136,7 @@ func hasScope(scopes []string, want string) bool {
 // form, a limited user carries only its own perms, and the OIDC scope claim is
 // untouched.
 func TestGenerateAccessToken_SCPIsResolvedColonPerms(t *testing.T) {
+	t.Parallel()
 	rbac := &fakeRBACClient{permsByRole: map[string][]string{
 		"admin":  {"keys:get", "keys:create", "tenant_barrier:init", "users:read"},
 		"reader": {"kv:get"},
@@ -200,6 +201,7 @@ func TestGenerateAccessToken_SCPIsResolvedColonPerms(t *testing.T) {
 // when no resolver is wired or qrdb is unavailable: scp falls back to the OIDC
 // scope (today's behavior), so non-server callers/tests keep working.
 func TestGenerateAccessToken_SCPFallsBackToScope(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	t.Run("nil resolver falls back to scope", func(t *testing.T) {
@@ -249,6 +251,7 @@ func TestGenerateAccessToken_SCPFallsBackToScope(t *testing.T) {
 // repeated permission Names and skips empty Names so the scp set is a clean
 // union.
 func TestGenerateAccessToken_SCPDedupAndSkipEmpty(t *testing.T) {
+	t.Parallel()
 	rbac := &fakeRBACClient{permsByRole: map[string][]string{
 		// Two roles both grant kv:get (duplicate) and one empty Name to skip.
 		"a": {"kv:get", ""},
@@ -281,6 +284,7 @@ func TestGenerateAccessToken_SCPDedupAndSkipEmpty(t *testing.T) {
 // TestGenerateAccessToken_SCPResolverError verifies a real RBAC error fails
 // issuance (the token must not ship with an unresolved/unauthorized perm set).
 func TestGenerateAccessToken_SCPResolverError(t *testing.T) {
+	t.Parallel()
 	rbac := &fakeRBACClient{err: errors.New("qrdb unavailable")}
 	svc, _ := newSCPTestService(t, &fakePermissionResolver{client: rbac})
 	_, err := svc.GenerateAccessToken(context.Background(), baseSCPClaims(t, []string{"admin"}))
@@ -336,6 +340,7 @@ func rolesFromToken(t *testing.T, token string, key *rsa.PrivateKey) []string {
 //
 // and the SAME canonical subject is threaded to the qrdb PDP for resolution.
 func TestIssueHardwareTokens_AdminCarriesRolesAndCanonicalSubject(t *testing.T) {
+	t.Parallel()
 	const (
 		adminUserID  = 1234567890123456789
 		adminSubject = "1234567890123456789" // canonical decimal-string user id
@@ -395,6 +400,7 @@ func TestIssueHardwareTokens_AdminCarriesRolesAndCanonicalSubject(t *testing.T) 
 // (test d): a user with NO roles still issues a valid token, but its scp is the
 // OIDC fallback (no resolved perms), so a protected scope is NOT over-granted.
 func TestIssueHardwareTokens_NoRolesFallsBackToScope(t *testing.T) {
+	t.Parallel()
 	rbac := &fakeRBACClient{permsByRole: map[string][]string{
 		"admin": {"orchestrator:*"},
 	}}

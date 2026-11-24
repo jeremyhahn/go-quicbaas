@@ -42,6 +42,7 @@ func attestationTestUser() *User {
 // claim was a label the handler chose, so a consumer downstream could not tell
 // a YubiKey login from a virtual-authenticator one.
 func TestIssueHardwareTokens_RefusesHardwareACRWithoutProof(t *testing.T) {
+	t.Parallel()
 	service, _ := createTestTokenService(t)
 	ctx := context.Background()
 
@@ -83,6 +84,7 @@ func TestIssueHardwareTokens_RefusesHardwareACRWithoutProof(t *testing.T) {
 // evidence a verifier in this package produced does mint the hardware ACR, and
 // the attestation claims are DERIVED from that evidence rather than supplied.
 func TestIssueHardwareTokens_AllowsHardwareACRWithProof(t *testing.T) {
+	t.Parallel()
 	service, privateKey := createTestTokenService(t)
 
 	set, err := service.IssueHardwareTokens(context.Background(), HardwareTokenOptions{
@@ -115,6 +117,7 @@ func TestIssueHardwareTokens_AllowsHardwareACRWithProof(t *testing.T) {
 // tokens, and the token says what was actually proven rather than staying
 // silent. Silence would be indistinguishable from a path that never asked.
 func TestIssueHardwareTokens_NonHardwareACRRecordsTheProvenLevel(t *testing.T) {
+	t.Parallel()
 	service, privateKey := createTestTokenService(t)
 
 	set, err := service.IssueHardwareTokens(context.Background(), HardwareTokenOptions{
@@ -142,6 +145,7 @@ func TestIssueHardwareTokens_NonHardwareACRRecordsTheProvenLevel(t *testing.T) {
 // AttestationResult does not emit an empty or placeholder attest_level. A claim
 // that is present but meaningless is worse than one that is absent.
 func TestIssueHardwareTokens_NoAttestationOmitsTheClaims(t *testing.T) {
+	t.Parallel()
 	service, privateKey := createTestTokenService(t)
 
 	set, err := service.IssueHardwareTokens(context.Background(), HardwareTokenOptions{
@@ -175,6 +179,7 @@ func TestIssueHardwareTokens_NoAttestationOmitsTheClaims(t *testing.T) {
 // so a handler deriving amr correctly today does not close the contract for the
 // next in-process caller.
 func TestIssueHardwareTokens_RefusesForgedHardwareAMR(t *testing.T) {
+	t.Parallel()
 	service, _ := createTestTokenService(t)
 
 	for _, tc := range []struct {
@@ -213,6 +218,7 @@ func TestIssueHardwareTokens_RefusesForgedHardwareAMR(t *testing.T) {
 // how the user authenticated, not where the key lives, so they need no
 // attestation.
 func TestIssueHardwareTokens_AllowsCeremonyAMRWithoutProof(t *testing.T) {
+	t.Parallel()
 	service, _ := createTestTokenService(t)
 
 	for _, amr := range [][]string{
@@ -232,6 +238,7 @@ func TestIssueHardwareTokens_AllowsCeremonyAMRWithoutProof(t *testing.T) {
 
 // TestIssueHardwareTokens_AllowsHardwareAMRWithProof is the positive control.
 func TestIssueHardwareTokens_AllowsHardwareAMRWithProof(t *testing.T) {
+	t.Parallel()
 	service, _ := createTestTokenService(t)
 
 	if _, err := service.IssueHardwareTokens(context.Background(), HardwareTokenOptions{
@@ -258,6 +265,7 @@ func TestIssueHardwareTokens_AllowsHardwareAMRWithProof(t *testing.T) {
 // hardware-only policy is applied: the bearer would be indistinguishable from
 // an unattested session's.
 func TestIssueHardwareTokens_AccessTokenCarriesTheAttestation(t *testing.T) {
+	t.Parallel()
 	service, privateKey := createTestTokenService(t)
 
 	set, err := service.IssueHardwareTokens(context.Background(), HardwareTokenOptions{
@@ -287,6 +295,7 @@ func TestIssueHardwareTokens_AccessTokenCarriesTheAttestation(t *testing.T) {
 // the bearer rather than emitting an empty string, so a policy reading
 // attest_level gets "no evidence" and never a value it might read as an answer.
 func TestIssueHardwareTokens_AccessTokenOmitsAnAbsentAttestation(t *testing.T) {
+	t.Parallel()
 	service, privateKey := createTestTokenService(t)
 
 	set, err := service.IssueHardwareTokens(context.Background(), HardwareTokenOptions{
@@ -327,6 +336,7 @@ func TestIssueHardwareTokens_AccessTokenOmitsAnAbsentAttestation(t *testing.T) {
 // evidence (the WebAuthn UV flag, the PIV PIN policy) is not part of the rule
 // yet; when it is, this table gains the rows that need it.
 func TestIssueHardwareTokens_ProvenHardwareSatisfiesMFA(t *testing.T) {
+	t.Parallel()
 	service, privateKey := createTestTokenService(t)
 	ctx := context.Background()
 
