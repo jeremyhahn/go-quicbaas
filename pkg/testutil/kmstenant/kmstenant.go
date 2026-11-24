@@ -177,7 +177,8 @@ func (m *Manager) lookup(keyID string) (*kms.KeyMetadata, error) {
 	return key, nil
 }
 
-// GenerateKey stores a key under attrs.CN.
+// GenerateKey stores a key under its reference: tenant/<TenantID>/<CN> for a
+// tenant key, else attrs.CN.
 func (m *Manager) GenerateKey(_ context.Context, attrs *xkmssdk.KeyAttributes) (interface{}, error) {
 	algorithm := string(attrs.SymmetricAlgorithm)
 	if algorithm == "" {
@@ -187,7 +188,13 @@ func (m *Manager) GenerateKey(_ context.Context, attrs *xkmssdk.KeyAttributes) (
 		// Name the curve as the transports do: "ECDSA-P256", not "P-256".
 		algorithm += "-" + strings.ReplaceAll(attrs.ECCAttributes.Curve.Params().Name, "-", "")
 	}
-	return m.store(attrs.CN, algorithm), nil
+	// Key it by its reference, as the real manager does: a tenant key comes
+	// as CN=<name> with TenantID=<tenant>.
+	keyID := attrs.CN
+	if attrs.TenantID != "" {
+		keyID = "tenant/" + attrs.TenantID + "/" + attrs.CN
+	}
+	return m.store(keyID, algorithm), nil
 }
 
 // ImportKey stores a key under keyID.
