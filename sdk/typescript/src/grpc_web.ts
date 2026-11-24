@@ -146,12 +146,40 @@ const grpcWebNotImplemented =
   'go-qrdb serves no gRPC-Web endpoint yet: the pinned go-qrdb release has no sdk/go option ' +
   'that turns it on, and this SDK has no @connectrpc/connect-web client yet; use the rest transport';
 
+// grpcWebRefusalTarget returns the family and method a GrpcWebNotImplementedError
+// names. The single-argument form passes `family.verb` or a bare verb in
+// familyOrMethod and no method: it is split at the first `.`, and a bare verb
+// becomes the family with no method.
+function grpcWebRefusalTarget(familyOrMethod: string, method?: string): [string, string | undefined] {
+  if (method !== undefined) {
+    return [familyOrMethod, method];
+  }
+  const dot = familyOrMethod.indexOf('.');
+  if (dot < 0) {
+    return [familyOrMethod, undefined];
+  }
+  return [familyOrMethod.slice(0, dot), familyOrMethod.slice(dot + 1)];
+}
+
 // GrpcWebNotImplementedError is the gRPC-Web transport's refusal of one verb.
 // It is a TransportNotSupportedError naming `family.verb`, like
 // QuicNotImplementedError, so a caller that catches the base class handles it.
+// The constructor accepts both the original single-argument form
+// `(method)` and `(family, method, reason?)`.
 export class GrpcWebNotImplementedError extends TransportNotSupportedError {
-  constructor(family: string, method: string, reason: string = grpcWebNotImplemented) {
-    super('grpc-web', family, reason, method);
+  /**
+   * The original form, kept for existing callers. `method` is `family.verb`
+   * (for example `prompts.list`) or a bare verb (for example `listJobs`).
+   */
+  constructor(method: string);
+  constructor(family: string, method: string, reason?: string);
+  constructor(familyOrMethod: string, method?: string, reason: string = grpcWebNotImplemented) {
+    super(
+      'grpc-web',
+      grpcWebRefusalTarget(familyOrMethod, method)[0],
+      reason,
+      grpcWebRefusalTarget(familyOrMethod, method)[1],
+    );
     this.name = 'GrpcWebNotImplementedError';
   }
 }

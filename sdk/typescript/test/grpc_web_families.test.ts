@@ -159,3 +159,30 @@ describe('createClient — grpc-web', () => {
     await expectNamedRefusals(client);
   });
 });
+
+describe('GrpcWebNotImplementedError constructor', () => {
+  it('splits the original single-argument family.verb form', () => {
+    const err = new GrpcWebNotImplementedError('prompts.list');
+    expect(err).toBeInstanceOf(GrpcWebNotImplementedError);
+    expect(err).toBeInstanceOf(TransportNotSupportedError);
+    expect(err.transport).toBe('grpc-web');
+    expect(err.family).toBe('prompts');
+    expect(err.method).toBe('list');
+    expect(err.reason).toContain('@connectrpc/connect-web');
+    expect(err.message).toBe(`grpc-web transport does not carry prompts.list: ${err.reason}`);
+  });
+
+  it('keeps a single-argument bare verb as the family', () => {
+    const err = new GrpcWebNotImplementedError('listJobs');
+    expect(err.family).toBe('listJobs');
+    expect(err.method).toBeUndefined();
+    expect(err.message).toBe(`grpc-web transport does not carry listJobs: ${err.reason}`);
+  });
+
+  it('takes family, method and reason', () => {
+    const err = new GrpcWebNotImplementedError('jobs', 'listJobs', 'custom reason');
+    expect(err.family).toBe('jobs');
+    expect(err.method).toBe('listJobs');
+    expect(err.reason).toBe('custom reason');
+  });
+});
