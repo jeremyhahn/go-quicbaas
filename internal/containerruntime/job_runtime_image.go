@@ -185,6 +185,37 @@ func (j *JobRuntime) TagImage(ctx context.Context, source, target string) error 
 	return nil
 }
 
+// BuildImage builds spec.Dockerfile in-process with an empty build context,
+// tags the image with every spec tag and returns its ID as "sha256:<hex>".
+// RUN steps run in containers of this runtime with no network; COPY takes
+// heredocs and files of earlier stages only. Any failure is an
+// *orchestration.ImageBuildError.
+func (j *JobRuntime) BuildImage(ctx context.Context, spec *orchestration.ImageBuildSpec) (string, error) {
+	switch {
+	case spec == nil:
+		return "", &orchestration.InputValidationError{Field: "spec", Message: "cannot be nil"}
+	case len(bytes.TrimSpace(spec.Dockerfile)) == 0:
+		return "", &orchestration.InputValidationError{Field: "dockerfile", Message: "cannot be empty"}
+	case len(spec.Tags) == 0:
+		return "", &orchestration.InputValidationError{Field: "tags", Message: "at least one tag is required; an untagged image is pruned"}
+	}
+	for _, tag := range spec.Tags {
+		if strings.TrimSpace(tag) == "" {
+			return "", &orchestration.InputValidationError{Field: "tags", Message: "a tag cannot be empty"}
+		}
+	}
+	image, err := j.runtime.buildImage(ctx, spec.Dockerfile, buildOptions{
+		Tags:   slices.Clone(spec.Tags),
+		Args:   maps.Clone(spec.BuildArgs),
+		Labels: maps.Clone(spec.Labels),
+		Pull:   spec.Pull,
+	})
+	if err != nil {
+		return "", &orchestration.ImageBuildError{Tags: slices.Clone(spec.Tags), Cause: err}
+	}
+	return "sha256:" + image.ID, nil
+}
+
 // PushImage copies the stored image to the registry its reference names,
 // in-process, signing in with auth when it is set, and returns the digest
 // of the manifest the registry holds. Any failure is an ImagePushError.

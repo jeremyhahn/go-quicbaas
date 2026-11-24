@@ -17,9 +17,12 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -219,6 +222,10 @@ type fakeEngine struct {
 	// initResult, when set, makes the init process write its output and
 	// exit at once; otherwise it runs until signalled.
 	initResult *fakeResult
+	// onStart, when set, runs as the init process would, given the
+	// container's root filesystem, and its result is what the process
+	// writes and exits with. It takes precedence over initResult.
+	onStart func(spec processSpec, rootfs string) fakeResult
 	// ignoreSIGTERM makes init processes survive SIGTERM.
 	ignoreSIGTERM bool
 	// execResult is what every exec process writes and exits with.
@@ -239,8 +246,11 @@ type fakeEngine struct {
 	reclaimErr error
 	reclaimed  []string
 	starts     []processSpec
-	execs      []processSpec
-	processes  []*fakeProcess
+	// startConfigs are the created configurations of the started
+	// containers, in the order of starts.
+	startConfigs []*ociConfig
+	execs        []processSpec
+	processes    []*fakeProcess
 }
 
 func newFakeEngine() *fakeEngine {
@@ -274,7 +284,14 @@ func (e *fakeEngine) Start(id string, spec processSpec) (containerProcess, error
 	process := newFakeProcess(1000 + len(e.processes))
 	process.ignoreSIGTERM = e.ignoreSIGTERM
 	e.processes = append(e.processes, process)
-	if e.initResult != nil {
+	e.startConfigs = append(e.startConfigs, e.created[id])
+	if e.onStart != nil {
+		rootfs := ""
+		if config := e.created[id]; config != nil && config.Root != nil {
+			rootfs = config.Root.Path
+		}
+		e.play(spec, process, e.onStart(spec, rootfs))
+	} else if e.initResult != nil {
 		e.play(spec, process, *e.initResult)
 	}
 	return process, nil
@@ -431,6 +448,13 @@ func (s *fakeImages) Inspect(ctx context.Context, ref string) (imageRecord, erro
 	defer s.mu.Unlock()
 	record, ok := s.images[ref]
 	if !ok {
+		if id, isID := strings.CutPrefix(ref, "sha256:"); isID {
+			for _, candidate := range s.images {
+				if candidate.ID != "" && candidate.ID == id {
+					return candidate, nil
+				}
+			}
+		}
 		return imageRecord{}, ErrImageNotFound
 	}
 	return record, nil
@@ -493,6 +517,11 @@ type fakeRootfs struct {
 	removed   []string
 	// seed, when set, fills each new root filesystem as an image would.
 	seed func(dir string) error
+	// snapshots are the committed images' filesystems, by image ID: a root
+	// filesystem created from one starts as a copy of it.
+	snapshots map[string]string
+	// created records each Create, as containerID -> imageID.
+	created map[string]string
 }
 
 func (s *fakeRootfs) Create(ctx context.Context, containerID, imageID string) (string, error) {
@@ -510,7 +539,135 @@ func (s *fakeRootfs) Create(ctx context.Context, containerID, imageID string) (s
 			return "", err
 		}
 	}
+	if snapshot, ok := s.snapshots[imageID]; ok {
+		if err := copyTestTree(snapshot, dir); err != nil {
+			return "", err
+		}
+	}
+	if s.created == nil {
+		s.created = map[string]string{}
+	}
+	s.created[containerID] = imageID
 	return dir, nil
+}
+
+// snapshot copies containerID's root filesystem to a new directory, the
+// filesystem of the committed image imageID, and returns it.
+func (s *fakeRootfs) snapshot(containerID, imageID string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	src := filepath.Join(s.root, containerID)
+	if _, err := os.Lstat(src); err != nil {
+		return "", err
+	}
+	dst := filepath.Join(filepath.Dir(s.root), "snapshots", imageID)
+	if err := os.MkdirAll(dst, 0o700); err != nil {
+		return "", err
+	}
+	if err := copyTestTree(src, dst); err != nil {
+		return "", err
+	}
+	if s.snapshots == nil {
+		s.snapshots = map[string]string{}
+	}
+	s.snapshots[imageID] = dst
+	return dst, nil
+}
+
+// copyTestTree copies the tree under src onto dst, keeping modes,
+// modification times and symlinks.
+func copyTestTree(src, dst string) error {
+	return filepath.WalkDir(src, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		switch {
+		case entry.Type()&fs.ModeSymlink != 0:
+			link, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			if err := os.RemoveAll(target); err != nil {
+				return err
+			}
+			return os.Symlink(link, target)
+		case entry.IsDir():
+			if err := os.MkdirAll(target, 0o700); err != nil {
+				return err
+			}
+		default:
+			data, err := fs.ReadFile(os.DirFS(src), filepath.ToSlash(rel))
+			if err != nil {
+				return err
+			}
+			if err := os.WriteFile(target, data, 0o600); err != nil {
+				return err
+			}
+		}
+		if err := os.Chmod(target, info.Mode().Perm()); err != nil {
+			return err
+		}
+		return os.Chtimes(target, info.ModTime(), info.ModTime())
+	})
+}
+
+// fakeCommit is one commit the fake committer took.
+type fakeCommit struct {
+	containerID string
+	config      imageConfig
+	createdBy   string
+	image       imageRecord
+	// snapshot is the committed root filesystem.
+	snapshot string
+}
+
+// fakeCommitter is a layerCommitter that snapshots the container's root
+// filesystem directory and stores the result in the fake image store as
+// "commit-<n>".
+type fakeCommitter struct {
+	images *fakeImages
+	rootfs *fakeRootfs
+
+	mu        sync.Mutex
+	commitErr error
+	commits   []fakeCommit
+}
+
+func (c *fakeCommitter) Commit(ctx context.Context, containerID string, config imageConfig, createdBy string) (imageRecord, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.commitErr != nil {
+		return imageRecord{}, c.commitErr
+	}
+	id := fmt.Sprintf("commit-%d", len(c.commits)+1)
+	snapshot, err := c.rootfs.snapshot(containerID, id)
+	if err != nil {
+		return imageRecord{}, err
+	}
+	record := imageRecord{ID: id, Config: config}
+	c.images.mu.Lock()
+	c.images.images["sha256:"+id] = record
+	c.images.mu.Unlock()
+	c.commits = append(c.commits, fakeCommit{
+		containerID: containerID, config: config, createdBy: createdBy, image: record, snapshot: snapshot,
+	})
+	return record, nil
+}
+
+// recorded returns the commits taken so far.
+func (c *fakeCommitter) recorded() []fakeCommit {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Clone(c.commits)
 }
 
 func (s *fakeRootfs) Remove(containerID string) error {
@@ -528,6 +685,7 @@ type testBackends struct {
 	engine *fakeEngine
 	images *fakeImages
 	rootfs *fakeRootfs
+	commit *fakeCommitter
 }
 
 // newTestRuntime builds a Runtime rooted at a temporary directory over
@@ -549,6 +707,7 @@ func newTestRuntimeWithBackends(t *testing.T) (*Runtime, *testBackends) {
 		images: newFakeImages("alpine:latest"),
 		rootfs: &fakeRootfs{root: filepath.Join(dir, "rootfs")},
 	}
+	doubles.commit = &fakeCommitter{images: doubles.images, rootfs: doubles.rootfs}
 	config := &RuntimeConfig{
 		Root:            filepath.Join(dir, "root"),
 		RunRoot:         filepath.Join(dir, "run"),
@@ -563,6 +722,7 @@ func newTestRuntimeWithBackends(t *testing.T) (*Runtime, *testBackends) {
 		engine: doubles.engine,
 		images: doubles.images,
 		rootfs: doubles.rootfs,
+		commit: doubles.commit,
 	}))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, rt.Close()) })

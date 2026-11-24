@@ -192,6 +192,84 @@ func TestJobRuntime_TagImage(t *testing.T) {
 	})
 }
 
+func TestJobRuntime_BuildImage(t *testing.T) {
+	t.Run("BuildsAndTags", func(t *testing.T) {
+		jr, doubles := newTestJobRuntime(t)
+		id, err := jr.BuildImage(t.Context(), &orchestration.ImageBuildSpec{
+			Dockerfile: []byte("FROM alpine:latest\nARG V\nLABEL v=$V\n"),
+			Tags:       []string{"reg/o/w:1", "reg/o/w:latest"},
+			BuildArgs:  map[string]string{"V": "7"},
+			Labels:     map[string]string{"extra": "yes"},
+		})
+		require.NoError(t, err)
+
+		commits := doubles.commit.recorded()
+		require.Len(t, commits, 1)
+		assert.Equal(t, "sha256:"+commits[0].image.ID, id)
+		assert.Equal(t, "7", commits[0].config.Labels["v"])
+		assert.Equal(t, "yes", commits[0].config.Labels["extra"])
+		for _, tag := range []string{"reg/o/w:1", "reg/o/w:latest"} {
+			info, err := jr.InspectImage(t.Context(), tag)
+			require.NoError(t, err, tag)
+			assert.Equal(t, id, info.ID, tag)
+		}
+		assert.Empty(t, doubles.images.pulls)
+	})
+
+	t.Run("Pull", func(t *testing.T) {
+		jr, doubles := newTestJobRuntime(t)
+		_, err := jr.BuildImage(t.Context(), &orchestration.ImageBuildSpec{
+			Dockerfile: []byte("FROM alpine:latest\nLABEL a=b\n"),
+			Tags:       []string{"reg/o/w:1"},
+			Pull:       true,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"alpine:latest"}, doubles.images.pulls)
+	})
+
+	t.Run("AFailureIsABuildError", func(t *testing.T) {
+		jr, doubles := newTestJobRuntime(t)
+		doubles.engine.onStart = func(processSpec, string) fakeResult {
+			return fakeResult{stderr: "no such program", exitCode: 127}
+		}
+		_, err := jr.BuildImage(t.Context(), &orchestration.ImageBuildSpec{
+			Dockerfile: []byte("FROM alpine:latest\nRUN missing\n"),
+			Tags:       []string{"reg/o/w:1"},
+		})
+		require.ErrorIs(t, err, orchestration.ErrImageBuild)
+		var buildErr *orchestration.ImageBuildError
+		require.ErrorAs(t, err, &buildErr)
+		assert.Equal(t, []string{"reg/o/w:1"}, buildErr.Tags)
+		assert.Contains(t, err.Error(), "no such program")
+	})
+
+	t.Run("ADockerfileErrorIsABuildError", func(t *testing.T) {
+		jr, _ := newTestJobRuntime(t)
+		_, err := jr.BuildImage(t.Context(), &orchestration.ImageBuildSpec{
+			Dockerfile: []byte("RUN true\n"),
+			Tags:       []string{"reg/o/w:1"},
+		})
+		require.ErrorIs(t, err, orchestration.ErrImageBuild)
+		var dockerfileErr *DockerfileError
+		require.ErrorAs(t, err, &dockerfileErr)
+	})
+}
+
+func TestJobRuntime_BuildImage_Validation(t *testing.T) {
+	jr, doubles := newTestJobRuntime(t)
+	dockerfile := []byte("FROM scratch\n")
+
+	_, err := jr.BuildImage(t.Context(), nil)
+	requireInputValidation(t, err, "spec")
+	_, err = jr.BuildImage(t.Context(), &orchestration.ImageBuildSpec{Dockerfile: []byte(" \n"), Tags: []string{"t"}})
+	requireInputValidation(t, err, "dockerfile")
+	_, err = jr.BuildImage(t.Context(), &orchestration.ImageBuildSpec{Dockerfile: dockerfile})
+	requireInputValidation(t, err, "tags")
+	_, err = jr.BuildImage(t.Context(), &orchestration.ImageBuildSpec{Dockerfile: dockerfile, Tags: []string{"t", " "}})
+	requireInputValidation(t, err, "tags")
+	assert.Empty(t, doubles.commit.recorded(), "an invalid spec builds nothing")
+}
+
 func TestJobRuntime_PushImage(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("a", 64)
 
