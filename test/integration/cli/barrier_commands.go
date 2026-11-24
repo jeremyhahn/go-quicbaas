@@ -566,16 +566,40 @@ func BarrierRekeyTotalBelowThresholdCommand() CommandDef {
 // Recovery verbs
 // =============================================================================
 
-// BarrierRecoveryGenerateCommand builds `barrier recovery generate`.
+// BarrierRecoveryGenerateCommand builds the canonical recovery generate verb:
+// `barrier recovery generate --so-pin <defaultBarrierSOPin> --threshold <M>
+// --total <N>`. The per-test daemon provisions defaultBarrierSOPin at init and
+// the server verifies the SO PIN on recovery generate as it does on seal and
+// rekey, so the verb sends the provisioned PIN to reach the recovery
+// distributor.
 func BarrierRecoveryGenerateCommand(threshold, total int) CommandDef {
 	return CommandDef{
-		Name: fmt.Sprintf("barrier recovery generate %d-of-%d", threshold, total),
+		Name: fmt.Sprintf("barrier recovery generate --so-pin <pin> %d-of-%d", threshold, total),
+		Args: []string{
+			"barrier", "recovery", "generate",
+			"--so-pin", defaultBarrierSOPin,
+			"--threshold", fmt.Sprintf("%d", threshold),
+			"--total", fmt.Sprintf("%d", total),
+		},
+		ExpectSuccess:  true,
+		Timeout:        30 * time.Second,
+		SkipTransports: barrierTransportsToSkip,
+	}
+}
+
+// BarrierRecoveryGenerateWithoutSOPinCommand builds the recovery generate verb
+// with the same threshold/total pair as BarrierRecoveryGenerateCommand but no
+// `--so-pin`. The server refuses it at the SO-PIN check, before the request
+// reaches the recovery distributor.
+func BarrierRecoveryGenerateWithoutSOPinCommand(threshold, total int) CommandDef {
+	return CommandDef{
+		Name: fmt.Sprintf("barrier recovery generate (no SO PIN) %d-of-%d", threshold, total),
 		Args: []string{
 			"barrier", "recovery", "generate",
 			"--threshold", fmt.Sprintf("%d", threshold),
 			"--total", fmt.Sprintf("%d", total),
 		},
-		ExpectSuccess:  true,
+		ExpectSuccess:  false,
 		Timeout:        30 * time.Second,
 		SkipTransports: barrierTransportsToSkip,
 	}

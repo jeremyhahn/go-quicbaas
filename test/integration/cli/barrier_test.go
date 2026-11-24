@@ -1691,6 +1691,10 @@ func TestBarrierRekey_ValidationErrors(t *testing.T) {
 // GenerateRecoveryKeys seals the generated shares to ENROLLED recovery
 // officers via the recovery distributor and returns metadata only; no key
 // material ever travels back to the caller (qrdb pkg/seal/recovery.go).
+// The per-test daemon provisions defaultBarrierSOPin at init and the server
+// verifies the SO PIN on recovery generate (as on seal and rekey), so the
+// test first proves a generate without `--so-pin` is refused at the PIN
+// check, before the distributor, then sends the provisioned PIN.
 // The per-test daemon has no enrolled officers (enrollment requires the
 // locked officer-ceremony flow), so generation is rejected with the
 // canonical "insufficient officers enrolled" error and there are no keys
@@ -1711,7 +1715,19 @@ func TestBarrierRecovery_Dispatch(t *testing.T) {
 		//    reaches the distributor (the root key must be in memory).
 		runner.RunAndAssert(BarrierUnsealCommand(secret))
 
-		// 2. recovery generate → rejected: no recovery officers enrolled.
+		// 2. Without the SO PIN the server refuses recovery generate at the
+		//    PIN check, before the distributor, so its officers answer
+		//    never surfaces.
+		noPinOut, noPinErr, err := runner.Run(BarrierRecoveryGenerateWithoutSOPinCommand(2, 3))
+		require.Errorf(t, err,
+			"recovery generate without the SO PIN must be refused: stdout=%s stderr=%s",
+			noPinOut, noPinErr)
+		assert.NotContainsf(t, noPinOut+noPinErr, "insufficient officers enrolled",
+			"recovery generate without the SO PIN must be refused before the distributor: stdout=%s stderr=%s",
+			noPinOut, noPinErr)
+
+		// 3. recovery generate with the provisioned SO PIN → rejected: no
+		//    recovery officers enrolled.
 		stdout, stderr, err := runner.Run(BarrierRecoveryGenerateCommand(2, 3))
 		combined := stdout + stderr
 		require.Errorf(t, err,
@@ -1723,7 +1739,7 @@ func TestBarrierRecovery_Dispatch(t *testing.T) {
 			"recovery generate must surface the canonical officers rejection: stdout=%s stderr=%s",
 			stdout, stderr)
 
-		// 3. Seal, then recovery recover with placeholder keys → rejected.
+		// 4. Seal, then recovery recover with placeholder keys → rejected.
 		//    GenerateRecoveryKeys persists the recovery METADATA before the
 		//    distributor runs, so after the officers rejection above the
 		//    daemon carries a 2-of-3 recovery meta with NO distributed
