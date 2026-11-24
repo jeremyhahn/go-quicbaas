@@ -26,7 +26,9 @@ import (
 	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
 
-var errFakeKMSUnavailable = errors.New("kms: deadline exceeded")
+// errFakeKMSUnavailable is the coded error a transport returns when the KMS
+// cannot be reached.
+var errFakeKMSUnavailable = sdkerrors.New(sdkerrors.CodeUnavailable, "GetKey", "kms: deadline exceeded")
 
 // fakeSDKEncryptionKMS stands in for the SDK KMS and crypto clients: it holds
 // AES-256 keys by ID and seals with the platform AES-GCM, as the KMS does.
@@ -253,6 +255,29 @@ func TestSDKKMSClient_TransientLookupCreatesNoKey(t *testing.T) {
 	}
 	if !errors.Is(err, errFakeKMSUnavailable) {
 		t.Errorf("EncryptImage error = %v, want the lookup failure", err)
+	}
+	if fake.generated != 0 {
+		t.Fatalf("generated = %d after a failed lookup, want 0", fake.generated)
+	}
+}
+
+func TestSDKKMSClient_InternalLookupFailureCreatesNoKey(t *testing.T) {
+	client, fake := newTestSDKKMSClient(t)
+	fake.getErr = sdkerrors.New(sdkerrors.CodeInternal, "GetKey", "kms: backend failure")
+	enc, err := NewImageEncryptor(client)
+	if err != nil {
+		t.Fatalf("NewImageEncryptor: %v", err)
+	}
+	_, err = enc.EncryptImage(context.Background(), createTestImage(t), "img-key")
+	if err == nil {
+		t.Fatal("EncryptImage succeeded with a failing key lookup")
+	}
+	if got := sdkerrors.Code(err); got != sdkerrors.CodeInternal {
+		t.Errorf("EncryptImage error code = %v (%v), want %v", got, err, sdkerrors.CodeInternal)
+	}
+	var notFound KeyNotFoundError
+	if errors.As(err, &notFound) {
+		t.Errorf("EncryptImage error = %v, want a lookup failure, not a missing key", err)
 	}
 	if fake.generated != 0 {
 		t.Fatalf("generated = %d after a failed lookup, want 0", fake.generated)
