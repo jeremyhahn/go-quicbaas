@@ -139,23 +139,22 @@ func TestMCPToolPermissions_LoginStaysRefused(t *testing.T) {
 	}
 }
 
-// TestMCPToolPermissions_FIDO2AddCredentialOnItsRESTGrant proves the module
-// declares the passkey add-credential pair on user_authfactors:add, the
-// permission its REST and gRPC routes take, and leaves the other FIDO2
-// ceremony tools undeclared (refused).
-func TestMCPToolPermissions_FIDO2AddCredentialOnItsRESTGrant(t *testing.T) {
+// TestMCPToolPermissions_PasskeyToolsStayRefused pins that no passkey
+// (FIDO2) tool is declared on the MCP listener: passkeys stay off MCP.
+func TestMCPToolPermissions_PasskeyToolsStayRefused(t *testing.T) {
 	backend := newMCPBackend(t)
 	m := newMCPModule(t, func() *mcpapi.Server { return backend })
 
 	perms := m.MCPToolPermissions()
 
-	for _, tool := range []string{"xkms_fido2_beginAddCredential", "xkms_fido2_finishRegistration"} {
-		perm, declared := perms[tool]
-		require.True(t, declared, "%s must be declared", tool)
-		assert.Equal(t, qrdbsdk.Permission("user_authfactors:add"), perm, "tool %q", tool)
-	}
-	for _, tool := range []string{"xkms_fido2_beginRegistration", "xkms_fido2_beginAuthentication", "xkms_fido2_finishAuthentication"} {
-		_, declared := perms[tool]
+	for _, tool := range []string{
+		"xkms_fido2_beginRegistration",
+		"xkms_fido2_finishRegistration",
+		"xkms_fido2_beginAddCredential",
+		"xkms_fido2_beginAuthentication",
+		"xkms_fido2_finishAuthentication",
+	} {
+		_, declared := perms[mcpapi.ToolName(tool)]
 		assert.False(t, declared, "%s must stay undeclared (refused)", tool)
 	}
 }

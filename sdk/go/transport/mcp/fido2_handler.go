@@ -54,9 +54,9 @@ const fido2MethodBeginAddCredential = "BeginAddCredential"
 
 // fido2MethodTools maps FIDO2 methods (the xkms FIDO2Service vocabulary) to
 // the server's tool names as the node registers them: the xkms.fido2.*
-// registry names with dots replaced by underscores. The node serves only
-// BeginAddCredential and FinishRegistration; the other three answer "not
-// found" there.
+// registry names with dots replaced by underscores. Passkeys stay off MCP:
+// the node serves none of these tools there, so every method answers "not
+// found" over MCP.
 var fido2MethodTools = map[string]string{
 	"BeginRegistration":    "xkms_fido2_beginRegistration",
 	"FinishRegistration":   "xkms_fido2_finishRegistration",
