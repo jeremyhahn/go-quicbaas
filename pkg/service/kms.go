@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	kctypes "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
@@ -493,7 +494,17 @@ func (k *kmsServiceImpl) GenerateKey(ctx context.Context, req *GenerateKeyReques
 	if attrs == nil {
 		attrs = &kctypes.KeyAttributes{}
 	}
-	attrs.CN = keyID
+	// A tenant's key is generated in go-xkms's own form: CN is the caller's
+	// key name and the tenant is the TenantID attribute. A system key is
+	// named by its reference, with no TenantID. keyID stays the reference
+	// for everything above the manager.
+	if qrdbsdk.IsSystemTenant(tenantID) {
+		attrs.CN = keyID
+		attrs.TenantID = ""
+	} else {
+		attrs.CN = req.Name
+		attrs.TenantID = tenantID
+	}
 
 	// go-xkms enforces exportability from its own key record, which it writes
 	// once, from these attributes, at generation; the quicbaas metadata below

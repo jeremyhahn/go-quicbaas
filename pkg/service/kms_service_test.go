@@ -77,8 +77,12 @@ func (m *mockKMSManager) GenerateKey(ctx context.Context, attrs *xkmssdk.KeyAttr
 	if m.generateKeyFn != nil {
 		return m.generateKeyFn(ctx, attrs)
 	}
-	// Default behavior: store key
+	// Default behavior: store key under its reference, as the real manager
+	// does: tenant/<TenantID>/<CN> for a tenant key, else CN.
 	keyID := attrs.CN
+	if attrs.TenantID != "" {
+		keyID = "tenant/" + attrs.TenantID + "/" + attrs.CN
+	}
 	algorithm := string(attrs.SymmetricAlgorithm)
 	if algorithm == "" {
 		algorithm = attrs.KeyAlgorithm.String()

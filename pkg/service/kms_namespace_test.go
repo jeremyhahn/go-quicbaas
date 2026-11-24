@@ -39,14 +39,18 @@ func newNamespaceKMS(t *testing.T) (*kmsServiceImpl, *mockKMSManager, *[]*xkmssd
 	mgr.generateKeyFn = func(_ context.Context, attrs *xkmssdk.KeyAttributes) (interface{}, error) {
 		recorded := *attrs
 		generated = append(generated, &recorded)
-		mgr.keys[attrs.CN] = &mockKeyData{
-			keyID:     attrs.CN,
+		ref := attrs.CN
+		if attrs.TenantID != "" {
+			ref = "tenant/" + attrs.TenantID + "/" + attrs.CN
+		}
+		mgr.keys[ref] = &mockKeyData{
+			keyID:     ref,
 			algorithm: string(attrs.SymmetricAlgorithm),
 			version:   1,
 			status:    "enabled",
 			createdAt: time.Now(),
 		}
-		return mgr.keys[attrs.CN], nil
+		return mgr.keys[ref], nil
 	}
 	svc := newKMSService(mgr, nil)
 	svc.SetKVStore(newMockKVStore())
