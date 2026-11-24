@@ -186,7 +186,8 @@ func readCI(t *testing.T) []byte {
 
 // TestCIRunsHostedFirst holds the runner rule on ci.yml, and that no job
 // carries a self-hosted waiver today: every job runs on hostedRunner or on
-// one of ci-template v1.48's two hosted-first runs-on expressions.
+// one of ci-template v1.48's two hosted-first runs-on expressions, apart
+// from preflight on preflightRunner and ci-gate on gateRunner.
 func TestCIRunsHostedFirst(t *testing.T) {
 	body := readCI(t)
 	for _, p := range runnerProblems(body) {
@@ -198,7 +199,8 @@ func TestCIRunsHostedFirst(t *testing.T) {
 	}
 	for _, j := range jobs {
 		if j.runsOn != nil && j.runsOn.Value != hostedRunner && !isOverflowRunner(j.runsOn.Value) &&
-			(j.name != "preflight" || j.runsOn.Value != preflightRunner) {
+			(j.name != "preflight" || j.runsOn.Value != preflightRunner) &&
+			(j.name != "ci-gate" || j.runsOn.Value != gateRunner) {
 			t.Errorf("job %s runs on %q; no ci.yml job is waived off %s today", j.name, j.runsOn.Value, hostedRunner)
 		}
 	}
