@@ -20,6 +20,7 @@ package cli
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 )
@@ -55,6 +56,24 @@ type CommandDef struct {
 
 	// RequiresUnseal indicates the server must be unsealed for this command
 	RequiresUnseal bool
+
+	// Env holds extra KEY=value entries for the CLI process, on top of the
+	// environment the runner would give it. It carries secrets (an SO PIN)
+	// that must stay off argv.
+	Env []string
+}
+
+// commandEnv returns the environment for a CLI process: base (nil means the
+// test process's own environment) with extra appended. It returns base
+// unchanged when there is nothing extra, so exec keeps its default.
+func commandEnv(base, extra []string) []string {
+	if len(extra) == 0 {
+		return base
+	}
+	if base == nil {
+		base = os.Environ()
+	}
+	return append(append([]string{}, base...), extra...)
 }
 
 // UniqueKey generates a unique key for test isolation.
