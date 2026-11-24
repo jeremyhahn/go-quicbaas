@@ -4,6 +4,7 @@ import (
 	"crypto"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/sha512"
 	"crypto/x509"
 	"testing"
 
@@ -128,5 +129,64 @@ func TestCryptoSign_PSS_RealSoftwareBackend(t *testing.T) {
 		})
 		require.NoError(t, err)
 		require.NoError(t, rsa.VerifyPSS(pub, crypto.SHA256, sum[:], resp.Signature, opts))
+	})
+}
+
+// TestCryptoSign_PSS_SHA384_RealSoftwareBackend signs with RSA-PSS and
+// SHA-384, a raw message (hashed by the service) and a pre-hashed digest.
+func TestCryptoSign_PSS_SHA384_RealSoftwareBackend(t *testing.T) {
+	manager, cleanup := realKMSManagerForTest(t)
+	defer cleanup()
+
+	ctx := systemTenantCtx()
+	kmsSvc := newKMSService(manager, newMockLogger())
+
+	const keyName = "pss-sha384-signing-key"
+	_, err := kmsSvc.GenerateKey(ctx, &GenerateKeyRequest{
+		Name: keyName,
+		KeyAttributes: &xkmssdk.KeyAttributes{
+			CN:            keyName,
+			KeyType:       xkmssdk.KeyTypeSigning,
+			KeyAlgorithm:  x509.RSA,
+			RSAAttributes: &xkmssdk.RSAAttributes{KeySize: 2048},
+		},
+		Usage: []KeyUsage{KeyUsageSign},
+	})
+	require.NoError(t, err)
+
+	pubResp, err := kmsSvc.GetPublicKey(ctx, &GetPublicKeyRequest{KeyID: keyName})
+	require.NoError(t, err)
+	parsed, err := x509.ParsePKIXPublicKey(pubResp.PublicKey)
+	require.NoError(t, err)
+	pub, ok := parsed.(*rsa.PublicKey)
+	require.True(t, ok, "expected an RSA public key, got %T", parsed)
+
+	cryptoSvc := newCryptoService(qbcrypto.NewMemoryCryptoManager(manager), manager, newMockLogger(), nil)
+
+	message := []byte("sign me with RSA-PSS and SHA-384")
+	sum := sha512.Sum384(message)
+	opts := &rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash, Hash: crypto.SHA384}
+
+	t.Run("message hashed by the service", func(t *testing.T) {
+		resp, err := cryptoSvc.Sign(ctx, &SignRequest{
+			KeyID:         keyName,
+			Message:       message,
+			HashAlgorithm: HashAlgSHA384,
+			Padding:       SignaturePaddingPSS,
+		})
+		require.NoError(t, err)
+		require.NoError(t, rsa.VerifyPSS(pub, crypto.SHA384, sum[:], resp.Signature, opts))
+	})
+
+	t.Run("pre-hashed digest", func(t *testing.T) {
+		resp, err := cryptoSvc.Sign(ctx, &SignRequest{
+			KeyID:         keyName,
+			Message:       sum[:],
+			HashAlgorithm: HashAlgSHA384,
+			PreHashed:     true,
+			Padding:       SignaturePaddingPSS,
+		})
+		require.NoError(t, err)
+		require.NoError(t, rsa.VerifyPSS(pub, crypto.SHA384, sum[:], resp.Signature, opts))
 	})
 }

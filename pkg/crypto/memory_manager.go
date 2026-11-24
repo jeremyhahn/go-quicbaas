@@ -215,6 +215,8 @@ func (m *MemoryCryptoManager) Hash(ctx context.Context, input []byte, algorithm 
 	switch algorithm {
 	case "sha256", "SHA256", "":
 		h = sha256.New()
+	case "sha384", "SHA384":
+		h = sha512.New384()
 	case "sha512", "SHA512":
 		h = sha512.New()
 	default:
