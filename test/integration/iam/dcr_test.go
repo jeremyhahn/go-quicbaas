@@ -24,6 +24,7 @@ import (
 	"strings"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
@@ -90,8 +91,10 @@ func doFormPost(t *testing.T, cluster *testCluster, path string, form url.Values
 
 // TestDCR_InitialAccessTokenRegistersClient drives the SDK bootstrap chain
 // against the real unified server: the PIV admin bearer is presented as the
-// initial access token, registration returns a client, and that client gets
-// a client_credentials access token.
+// initial access token and registration returns a client; the client's
+// scoped token request is refused with invalid_scope before any grant; the
+// admin grants the registered scopes through the app-update route; and the
+// client then gets a client_credentials access token.
 func TestDCR_InitialAccessTokenRegistersClient(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
@@ -110,12 +113,23 @@ func TestDCR_InitialAccessTokenRegistersClient(t *testing.T) {
 	require.NotEmpty(t, client.ClientID, "DCR response has no client_id: %s", body)
 	require.NotEmpty(t, client.ClientSecret, "DCR response has no client_secret: %s", body)
 
-	form := url.Values{}
-	form.Set("grant_type", "client_credentials")
-	form.Set("client_id", client.ClientID)
-	form.Set("client_secret", client.ClientSecret)
-	form.Set("scope", dcrTokenScope)
-	status, body = doFormPost(t, cluster, "/oauth2/token", form)
+	// Registration stores no grant: the token endpoint must refuse the
+	// requested permissions until an administrator grants them.
+	status, body = doFormPost(t, cluster, "/oauth2/token", dcrTokenForm(client.ClientID, client.ClientSecret))
+	require.Equal(t, http.StatusBadRequest, status,
+		"an ungranted DCR client must not get its requested scopes: %s", body)
+	require.Contains(t, string(body), "invalid_scope",
+		"the refusal of an ungranted DCR client must be invalid_scope: %s", body)
+
+	// The initial-access-token holder grants the scopes through the admin
+	// app-update route, where the grantor gate checks it holds them.
+	status, body = doBearerRequest(t, cluster, http.MethodPut,
+		"/api/v1/tenants/"+qrdbsdk.SystemTenantID+"/apps/"+client.ClientID, initialAccessToken,
+		map[string]interface{}{"scopes": strings.Fields(dcrTokenScope)})
+	require.Equal(t, http.StatusOK, status,
+		"the admin must be able to grant the DCR client its scopes: %s", body)
+
+	status, body = doFormPost(t, cluster, "/oauth2/token", dcrTokenForm(client.ClientID, client.ClientSecret))
 	require.Equal(t, http.StatusOK, status,
 		"the registered client must get a client_credentials token: %s", body)
 
@@ -124,6 +138,17 @@ func TestDCR_InitialAccessTokenRegistersClient(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(body, &tok), "decode token response: %s", body)
 	require.NotEmpty(t, tok.AccessToken, "token response has no access_token: %s", body)
+}
+
+// dcrTokenForm is the client_credentials form a DCR client posts for
+// dcrTokenScope.
+func dcrTokenForm(clientID, clientSecret string) url.Values {
+	form := url.Values{}
+	form.Set("grant_type", "client_credentials")
+	form.Set("client_id", clientID)
+	form.Set("client_secret", clientSecret)
+	form.Set("scope", dcrTokenScope)
+	return form
 }
 
 // TestDCR_RegistrationRequiresInitialAccessToken proves registration stays
