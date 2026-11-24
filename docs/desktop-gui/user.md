@@ -4569,7 +4569,7 @@ Clicking a row opens the task's detail page. A field the server has not sent ren
 | Create Task | Plus | Opens a modal to create a new task manually | `POST /api/v1/orchestrator/tasks` |
 | Claim Task | Check | Claim a pending task for this agent; shows a confirm modal | `POST /api/v1/orchestrator/tasks/{taskID}/claim` |
 | Complete Task | CheckDouble | Mark a claimed task as complete | `POST /api/v1/orchestrator/tasks/{taskID}/complete` |
-| Decompose Task | GitBranch | Break a task into subtasks; opens a modal with JSON editor | `POST /api/v1/orchestrator/tasks/decompose` |
+| Decompose Task | GitBranch | Sends the task's text (its description, or its subject when it has none) and shows the proposed work items; nothing is saved until you create them | `POST /api/v1/orchestrator/tasks/decompose` |
 
 Deleting a task has no button in this view yet. The verb reaches every
 transport and the CLI (`quicbaas orchestrator task delete <taskID>`,
@@ -4649,30 +4649,24 @@ Task will be marked as completed. This cannot be undone.
 **Expected outcome:**
 
 ```
-✓ Confirm modal closes
-✓ Success toast: "Task completed"
-✓ Task status changes to "completed" (green)
-```
-
-14. Optional: Try decomposing a task. Click a task's row three-dot menu and select **Decompose Task**.
-15. A modal with a JSON editor opens:
-
-```
-Decompose Task
-
-Input:   [{"subtask": "Part A", "priority": "high"}]
-
-Output:  [{"id": "tsk_xxx", "state": "pending"}]
-
-[Cancel] [Decompose]
-```
-
-16. Modify the JSON to define subtasks and click **Decompose**.
+✓ Confirm modal clo14. Optional: Try decomposing a task. Click the task row's **Decompose** button.
+15. The server proposes work items from the task's text. A "Proposed work items for “<subject>”" card opens above the
+    table and lists them; nothing is saved yet.
+16. Click **Create N tasks** to create them as tasks in the parent task's team (and in its project, unless an
+    item names its own), or **Dismiss** to drop them.
 
 **Expected outcome:**
 
 ```
-✓ Modal closes
+✓ Success toast: "Task decomposed into N work items"
+✓ After Create: toast "Created N tasks from the decomposition"; each new task records the parent in its
+  decomposed_from metadata
+✓ Items that could not be created stay in the card so you can retry them
+```
+
+Changing the tenant or signing in again discards a proposal that has not been created.
+
+loses
 ✓ New subtasks appear in the task list
 ✓ Parent task is marked as decomposed
 ```
@@ -4684,7 +4678,7 @@ Output:  [{"id": "tsk_xxx", "state": "pending"}]
 | Create Task form validation error | Description is empty | Enter a task description |
 | Claim Task button is disabled | Task is already claimed by another agent | Complete the task first or wait for it to be released |
 | Complete Task fails | Task is not in "claimed" state | Claim the task first via the Claim action |
-| Decompose Task shows JSON parse error | JSON syntax is invalid | Fix the JSON and try again |
+| Decompose shows no proposed work items | The server proposed none for the task's text | Add a description to the task and decompose it again |
 | Task does not appear after creation | API response was lost (network timeout) | Refresh the page to see the task; check daemon logs |
 
 ### See also
