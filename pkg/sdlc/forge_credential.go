@@ -50,13 +50,19 @@ type forgeCredential struct {
 	// tokens that expire within the hour, so a session that pushes after
 	// its checkout re-resolves first (see Refresh).
 	resolve func(ctx context.Context) ([]byte, error)
+
+	// undelivered is set while the token held was not written to the
+	// container: a Refresh whose delivery failed. The next Refresh delivers
+	// it again even when the source answers the same token.
+	undelivered bool
 }
 
 // Refresh re-resolves the token and, when its source answers a new one,
 // redelivers it to the container's credential tier so the git operation
 // that follows authenticates with a token that has not expired. A
-// credential with no resolver, or one whose source answers the same token,
-// sends nothing.
+// credential with no resolver, or one whose source answers the same token
+// it already delivered, sends nothing. A refresh whose delivery failed is
+// retried by the next Refresh, even when the source answers the same token.
 func (c *forgeCredential) Refresh(ctx context.Context, exec sessionExecFunc, taskID, sessionID string) error {
 	if c == nil || c.resolve == nil {
 		return nil
@@ -71,14 +77,16 @@ func (c *forgeCredential) Refresh(ctx context.Context, exec sessionExecFunc, tas
 	if len(fresh) == 0 {
 		return &ForgeCredentialDeliveryError{TaskID: taskID, SessionID: sessionID, Cause: ErrForgeCredentialWiped}
 	}
-	if bytes.Equal(fresh, c.token) {
+	if bytes.Equal(fresh, c.token) && !c.undelivered {
 		return nil
 	}
 	held := make([]byte, len(fresh))
 	copy(held, fresh)
 	clear(c.token)
 	c.token = held
-	return c.Deliver(exec, taskID, sessionID)
+	err = c.Deliver(exec, taskID, sessionID)
+	c.undelivered = err != nil
+	return err
 }
 
 // newForgeCredential holds a copy of token, or answers nil when there is

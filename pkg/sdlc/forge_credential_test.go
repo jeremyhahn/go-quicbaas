@@ -187,6 +187,38 @@ func TestForgeCredential_RefreshRedeliversATokenThatExpired(t *testing.T) {
 	}
 }
 
+func TestForgeCredential_ARefreshWhoseDeliveryFailedIsRetried(t *testing.T) {
+	current := "token-before-expiry"
+	cred := newForgeCredential([]byte(current))
+	cred.resolve = func(context.Context) ([]byte, error) {
+		return []byte(current), nil
+	}
+	container := &credentialExec{err: &orchestration.SessionNotContainerizedError{SessionID: "session-1"}}
+
+	current = "token-after-expiry"
+	err := cred.Refresh(context.Background(), container.exec, "task-1", "session-1")
+	var delivery *ForgeCredentialDeliveryError
+	if !errors.As(err, &delivery) {
+		t.Fatalf("Refresh whose delivery failed = %v, want a ForgeCredentialDeliveryError", err)
+	}
+
+	container.err = nil
+	if err := cred.Refresh(context.Background(), container.exec, "task-1", "session-1"); err != nil {
+		t.Fatalf("Refresh after a failed delivery: %v", err)
+	}
+	sent := container.sent()
+	if len(sent) != 2 || string(sent[len(sent)-1].Stdin) != "token-after-expiry" {
+		t.Fatalf("execs = %d, want a second delivery of the token whose delivery failed", len(sent))
+	}
+
+	if err := cred.Refresh(context.Background(), container.exec, "task-1", "session-1"); err != nil {
+		t.Fatalf("Refresh with the delivered token: %v", err)
+	}
+	if n := len(container.sent()); n != 2 {
+		t.Fatalf("execs = %d after a refresh to the delivered token, want no more", n)
+	}
+}
+
 // TestForgeCredential_NoTokenDeliversAndRevokesNothing: a checkout over ssh
 // holds no forge credential, so nothing is sent to its container.
 func TestForgeCredential_NoTokenDeliversAndRevokesNothing(t *testing.T) {
