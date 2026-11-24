@@ -20,13 +20,13 @@ import (
 	"testing"
 	"time"
 
+	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/stretchr/testify/require"
 
 	quicbaasErrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/kms"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
-	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 const (

@@ -29,6 +29,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/kms"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/kmstenant"
 )
 
@@ -37,10 +38,11 @@ import (
 // =============================================================================
 
 func TestKMSServer_ImportKey_Success(t *testing.T) {
-	var importedID string
+	var importedID, importedTenant string
 	mockMgr := &mockKMSManager{
 		importKeyFunc: func(ctx context.Context, keyID string, material []byte, algorithm string) (interface{}, error) {
 			importedID = keyID
+			importedTenant, _ = tenantctx.Lookup(ctx)
 			assert.Equal(t, []byte("key-material"), material)
 			assert.Equal(t, "AES-256-GCM", algorithm)
 			return &kms.KeyMetadata{KeyID: keyID, Algorithm: kms.AlgAES256GCM, State: kms.KeyStateEnabled, Version: 1}, nil
@@ -59,7 +61,8 @@ func TestKMSServer_ImportKey_Success(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	assert.Equal(t, "tenant/"+kmstenant.OwnerTenant+"/import-key", importedID, "the manager must receive the tenant-scoped key ID")
+	assert.Equal(t, "import-key", importedID, "the manager must receive the caller's key name")
+	assert.Equal(t, kmstenant.OwnerTenant, importedTenant, "the manager must see the caller's tenant in ctx")
 	assert.Equal(t, "import-key", resp.GetKey().GetKeyId())
 	assert.Equal(t, "imported key", resp.GetMetadata().GetDescription())
 	assert.Equal(t, map[string]string{"env": "test"}, resp.GetMetadata().GetTags())
