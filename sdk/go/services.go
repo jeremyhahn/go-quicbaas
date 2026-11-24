@@ -389,12 +389,19 @@ func (c *client) ceremonyClient() (QRDBCeremonyClient, error) {
 		if qt, ok := c.transport.(*quic.Transport); ok {
 			return qt.Transport.Ceremony(), nil
 		}
+		if mt, ok := c.transport.(*mcp.Transport); ok {
+			return mt, nil
+		}
 	}
 	qrdbClient, err := c.qrdbClient()
 	if err != nil {
 		return nil, err
 	}
-	return qrdbClient.Ceremony(), nil
+	cc := qrdbClient.Ceremony()
+	if c.opts != nil && c.opts.embeddedQRDB == nil && c.opts.authToken != "" && qrdbSubClientSpeaksGRPC(c.opts.transportType) {
+		return &qrdbBearerCeremonyClient{inner: cc, bearer: "Bearer " + c.opts.authToken}, nil
+	}
+	return cc, nil
 }
 
 // Credentials returns the QRDB CredentialClient. The QRDB transport
