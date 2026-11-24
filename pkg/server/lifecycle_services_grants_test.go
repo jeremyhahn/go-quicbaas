@@ -23,7 +23,9 @@ func grantsTestServer(t *testing.T) *Server {
 	}
 	cfg := &config.Config{}
 	cfg.IAM.SPIFFETrustDomain = "svc.example.test"
-	return &Server{logger: log, config: cfg}
+	srv := &Server{logger: log, config: cfg}
+	srv.iamReady.Store(true)
+	return srv
 }
 
 // requireGrantsNotReady asserts err is the typed not-ready error naming
@@ -82,6 +84,15 @@ func TestServicePlaneGrants_NoIdentityStoreIsNotReady(t *testing.T) {
 
 	srv.iamComponents = &iamComponents{}
 	_, err = srv.servicePlaneGrants(context.Background(), service.ServicePlaneRuntime{}, nil)
+	requireGrantsNotReady(t, err, "IAM identity store")
+}
+
+func TestServicePlaneGrants_IAMNotAttachedIsNotReady(t *testing.T) {
+	srv := grantsTestServer(t)
+	srv.iamReady.Store(false)
+	srv.xkmsCA = xkmsca.New(t, "service plane grants "+t.Name())
+	srv.secretsManager = &secrets.Manager{}
+	_, err := srv.servicePlaneGrants(context.Background(), service.ServicePlaneRuntime{}, nil)
 	requireGrantsNotReady(t, err, "IAM identity store")
 }
 

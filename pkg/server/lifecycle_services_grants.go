@@ -44,6 +44,11 @@ func (s *Server) servicePlaneGrants(ctx context.Context, rt service.ServicePlane
 	if len(rt.Grants) > 0 {
 		return rt.Grants, nil
 	}
+	// IAM attaches after the plane's recovery loop starts; iamReady is
+	// stored after s.iamComponents, so loading it first orders the reads.
+	if !s.iamReady.Load() {
+		return nil, &ServicePlaneGrantsError{Missing: "IAM identity store"}
+	}
 	if s.xkmsCA == nil {
 		return nil, &ServicePlaneGrantsError{Missing: "certificate authority"}
 	}
