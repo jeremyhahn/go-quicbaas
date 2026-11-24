@@ -124,6 +124,9 @@ func NewPlane(cfg Config) (*Plane, error) {
 // plane serves.
 func (p *Plane) SetRoller(r Roller) { p.roller = r }
 
+// Roller answers the Roller set by Config.Rollout or SetRoller, nil when none.
+func (p *Plane) Roller() Roller { return p.roller }
+
 // Get returns a deployed service.
 func (p *Plane) Get(ctx context.Context, tenant, name string) (*Service, error) {
 	return p.store.Get(ctx, tenant, name)

@@ -557,3 +557,142 @@ func TestController_RefusesReleasesItMustNotRoll(t *testing.T) {
 		t.Fatalf("empty strategy = %v", err)
 	}
 }
+
+// releaseOf signs an acme release of the named service.
+func (w *world) releaseOf(t *testing.T, service, version string) *serviceplane.SignedRelease {
+	t.Helper()
+	sr, err := serviceplane.SignRelease(&serviceplane.Release{
+		Kind:         serviceplane.ReleaseService,
+		Version:      version,
+		Manifest:     *serviceplanetest.Manifest("acme", service),
+		PolicyDigest: "sha256:" + strings.Repeat("cd", 32),
+		Provenance:   "slsa://registry/" + service + "/" + version,
+	}, serviceplanetest.KeyID, w.rt.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sr
+}
+
+// strand leaves a rollout of acme's service in flight: version 1 is rolled
+// out, then a leader that steps down after its first check starts version 2.
+func (w *world) strand(t *testing.T, service string) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := w.controller("node-0", &slotRig{}, true).Roll(ctx, "acme", w.releaseOf(t, service, "1")); err != nil {
+		t.Fatal(err)
+	}
+	stranded := w.controller("node-0", &slotRig{}, true)
+	stranded.Leader = &stepDown{}
+	if _, err := stranded.Roll(ctx, "acme", w.releaseOf(t, service, "2")); !errors.Is(err, ErrNotLeader) {
+		t.Fatalf("stranded roll of %s = %v", service, err)
+	}
+}
+
+func TestController_ResumeAllTakesOverEveryRolloutInFlight(t *testing.T) {
+	w := newWorld(t)
+	ctx := context.Background()
+	w.strand(t, "web")
+	w.strand(t, "api")
+
+	rig := &slotRig{}
+	got, err := w.controller("node-1", rig, true).ResumeAll(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("resumed %d rollouts, want 2", len(got))
+	}
+	seen := map[string]bool{}
+	for _, slots := range got {
+		if slots.Tenant != "acme" || slots.Rollout == nil || slots.Rollout.Phase != PhaseDone ||
+			slots.Active != SlotB || slots.Current().Version != "2" {
+			t.Fatalf("resumed %+v", slots)
+		}
+		seen[slots.Service] = true
+	}
+	if !seen["web"] || !seen["api"] {
+		t.Fatalf("resumed %v, want web and api", seen)
+	}
+	wantCalls(t, rig, "fill b 2", "appraise b 2", "switch b", "fill b 2", "appraise b 2", "switch b")
+}
+
+func TestController_ResumeAllSkipsFinishedRollouts(t *testing.T) {
+	w := newWorld(t)
+	ctx := context.Background()
+	if _, err := w.controller("node-0", &slotRig{}, true).Roll(ctx, "acme", w.releaseOf(t, "web", "1")); err != nil {
+		t.Fatal(err)
+	}
+	rig := &slotRig{}
+	got, err := w.controller("node-1", rig, true).ResumeAll(ctx)
+	if err != nil || len(got) != 0 {
+		t.Fatalf("resume all = %+v, %v", got, err)
+	}
+	wantCalls(t, rig)
+}
+
+func TestController_ResumeAllNotLeaderTouchesNothing(t *testing.T) {
+	w := newWorld(t)
+	ctx := context.Background()
+	w.strand(t, "web")
+	reader := w.controller("node-1", &slotRig{}, true)
+	before, err := reader.Slots(ctx, "acme", "web")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rig := &slotRig{}
+	got, err := w.controller("node-1", rig, false).ResumeAll(ctx)
+	if !errors.Is(err, ErrNotLeader) || len(got) != 0 {
+		t.Fatalf("follower resume all = %+v, %v", got, err)
+	}
+	wantCalls(t, rig)
+	after, err := reader.Slots(ctx, "acme", "web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Rollout.Epoch != before.Rollout.Epoch || after.Rollout.Phase != before.Rollout.Phase {
+		t.Fatalf("a follower changed the rollout: %+v, was %+v", after.Rollout, before.Rollout)
+	}
+}
+
+func TestController_ResumeAllSkipsARolloutItDrives(t *testing.T) {
+	w := newWorld(t)
+	rig := &slotRig{filling: make(chan struct{}, 1), block: make(chan struct{})}
+	c := w.controller("node-1", rig, true)
+	ctx := context.Background()
+	done := make(chan error, 1)
+	go func() {
+		_, err := c.Roll(ctx, "acme", w.releaseOf(t, "web", "1"))
+		done <- err
+	}()
+	<-rig.filling
+	got, err := c.ResumeAll(ctx)
+	if err != nil || len(got) != 0 {
+		t.Fatalf("resume all during roll = %+v, %v", got, err)
+	}
+	close(rig.block)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	wantCalls(t, rig, "fill a 1", "appraise a 1", "switch a")
+}
+
+func TestController_ResumeAllRecordsARolledBackResume(t *testing.T) {
+	w := newWorld(t)
+	ctx := context.Background()
+	w.strand(t, "web")
+
+	c := w.controller("node-1", &slotRig{failAppraise: "2"}, true)
+	got, err := c.ResumeAll(ctx)
+	if !errors.Is(err, ErrRolledBack) {
+		t.Fatalf("resume all = %v, want rolled back", err)
+	}
+	if len(got) != 1 || got[0].Rollout.Phase != PhaseRolledBack {
+		t.Fatalf("resumed %+v", got)
+	}
+	stored, err := c.Slots(ctx, "acme", "web")
+	if err != nil || stored.Rollout.Phase != PhaseRolledBack || stored.Active != SlotA {
+		t.Fatalf("stored = %+v, %v", stored, err)
+	}
+}

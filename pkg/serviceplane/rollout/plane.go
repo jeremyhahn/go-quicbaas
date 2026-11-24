@@ -74,6 +74,12 @@ func (p PlaneRoller) Roll(ctx context.Context, tenant string, sr *serviceplane.S
 	return name, err
 }
 
+// ResumeAll resumes every rollout in flight through the controller; the
+// node's recovery calls it so the leader takes over rollouts in flight.
+func (p PlaneRoller) ResumeAll(ctx context.Context) ([]*Slots, error) {
+	return p.Controller.ResumeAll(ctx)
+}
+
 // NewPlaneStrategy answers the ABSwitch that rolls releases through plane's
 // slot verbs and appraises each filled slot with appraiser.
 func NewPlaneStrategy(plane *serviceplane.Plane, appraiser Appraiser) ABSwitch {

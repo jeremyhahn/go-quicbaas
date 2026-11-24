@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 
@@ -163,6 +164,62 @@ func (c *Controller) Resume(ctx context.Context, tenant, service string) (*Slots
 		return nil, err
 	}
 	return c.drive(ctx, slots, raw)
+}
+
+// ResumeAll takes over every rollout in flight, as a new leader does: it
+// resumes each service whose slot record holds a rollout that is not
+// terminal and answers the slots it drove. A service this controller is
+// driving already is skipped. A controller that does not lead resumes
+// nothing and answers ErrNotLeader.
+func (c *Controller) ResumeAll(ctx context.Context) ([]*Slots, error) {
+	if err := c.check(); err != nil {
+		return nil, err
+	}
+	if err := c.leader(); err != nil {
+		return nil, err
+	}
+	type inFlight struct{ key, tenant, service string }
+	var (
+		pending []inFlight
+		errs    []error
+	)
+	// The scan only decodes: every step runs after it, through Resume.
+	err := c.KV.Scan(ctx, keyPrefix, func(key string, value []byte) error {
+		var slots Slots
+		if err := json.Unmarshal(value, &slots); err != nil {
+			errs = append(errs, fmt.Errorf("%w: slot record %s: %w", ErrStore, key, err))
+			return nil
+		}
+		if slots.Rollout != nil && !slots.Rollout.Phase.Terminal() {
+			pending = append(pending, inFlight{key: key, tenant: slots.Tenant, service: slots.Service})
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrStore, err)
+	}
+	slices.SortFunc(pending, func(a, b inFlight) int { return strings.Compare(a.key, b.key) })
+
+	var out []*Slots
+	for _, p := range pending {
+		if err := ctx.Err(); err != nil {
+			errs = append(errs, err)
+			break
+		}
+		slots, err := c.Resume(ctx, p.tenant, p.service)
+		if slots != nil {
+			out = append(out, slots)
+		}
+		switch {
+		case err == nil, errors.Is(err, ErrBusy):
+		case errors.Is(err, ErrNotLeader):
+			errs = append(errs, err)
+			return out, errors.Join(errs...)
+		default:
+			errs = append(errs, fmt.Errorf("%s/%s: %w", p.tenant, p.service, err))
+		}
+	}
+	return out, errors.Join(errs...)
 }
 
 // claim fences the service in this process until release is called; a
