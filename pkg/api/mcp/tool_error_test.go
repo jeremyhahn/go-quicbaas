@@ -138,6 +138,11 @@ func TestToolErrorCode(t *testing.T) {
 		{"project access denied", &service.ProjectAccessDeniedError{}, mcptransport.MCPPermissionDenied},
 		// A delete refused while the project is bound; REST answers 409.
 		{"project bound", &service.ProjectBoundError{TenantID: "t", ProjectID: "p"}, mcptransport.MCPResourceConflict},
+		// Another delete, or another bind or unbind, is in flight: retry.
+		{"project delete in progress", &sdlc.DeleteInProgressError{TenantID: "t", ProjectID: "p"}, mcptransport.MCPResourceConflict},
+		{"bind in progress", &sdlc.BindInProgressError{TenantID: "t", ProjectID: "p"}, mcptransport.MCPResourceConflict},
+		// A bind withdrawn because a delete won keeps the version-conflict class.
+		{"project deleting (bind withdrawn)", &sdlc.ProjectDeletingError{TenantID: "t", ProjectID: "p"}, mcptransport.MCPAlreadyExists},
 		// An unreadable binding store is a server failure, not a refusal.
 		{"project binding check failed", &service.ProjectBindingCheckError{TenantID: "t", ProjectID: "p", Cause: stderrors.New("store down")}, mcptransport.JSONRPCInternalError},
 		{"binding not found", sdlc.ErrNotFound, mcptransport.MCPResourceNotFound},

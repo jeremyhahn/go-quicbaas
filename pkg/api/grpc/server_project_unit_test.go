@@ -27,6 +27,7 @@ import (
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
@@ -350,6 +351,17 @@ func TestProjectServer_ServiceErrorMapping(t *testing.T) {
 		_, err := srv.DeleteProject(ctx, &pb.DeleteProjectRequest{TenantId: "t", ProjectId: "p"})
 		assert.Equal(t, codes.FailedPrecondition, status.Code(err))
 		assert.Contains(t, status.Convert(err).Message(), "unbind")
+	})
+
+	// A second delete while one is in flight is refused; retry once it settles.
+	t.Run("delete-in-progress", func(t *testing.T) {
+		srv := newProjectServer(t, &grpcMockProjectService{
+			deleteFunc: func(context.Context, *service.DeleteProjectRequest) (*service.DeleteProjectResponse, error) {
+				return nil, &sdlc.DeleteInProgressError{TenantID: "t", ProjectID: "p"}
+			},
+		})
+		_, err := srv.DeleteProject(ctx, &pb.DeleteProjectRequest{TenantId: "t", ProjectId: "p"})
+		assert.Equal(t, codes.FailedPrecondition, status.Code(err))
 	})
 
 	t.Run("getbyname-error", func(t *testing.T) {
