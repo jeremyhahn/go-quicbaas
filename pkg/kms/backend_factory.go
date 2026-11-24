@@ -16,6 +16,7 @@ package kms
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -33,7 +34,8 @@ type BackendFactory struct {
 	registry *BackendRegistry
 	mu       sync.RWMutex
 
-	keyNameStore goxkms.StorageBackend
+	keyNameStore    goxkms.StorageBackend
+	keyNameStoreFor func(backendName string) (goxkms.StorageBackend, error)
 }
 
 // BackendFactoryConfig configures the backend factory.
@@ -56,6 +58,13 @@ type BackendFactoryConfig struct {
 	// algorithm, name), not per name (xkms_key_owner.go); nil keeps those in
 	// memory per backend.
 	KeyNameStore goxkms.StorageBackend
+
+	// KeyNameStoreFor, when set, is asked once for each backend the factory
+	// registers, and its answer replaces KeyNameStore for that backend. This
+	// lets a node-local backend keep its ownership records on the node while
+	// a shared backend keeps them on the replicated store. An error fails
+	// InitializeFromXKMS.
+	KeyNameStoreFor func(backendName string) (goxkms.StorageBackend, error)
 }
 
 // NewBackendFactory creates a new backend factory.
@@ -77,9 +86,10 @@ func NewBackendFactory(cfg *BackendFactoryConfig) (*BackendFactory, error) {
 	})
 
 	factory := &BackendFactory{
-		logger:       cfg.Logger,
-		registry:     registry,
-		keyNameStore: cfg.KeyNameStore,
+		logger:          cfg.Logger,
+		registry:        registry,
+		keyNameStore:    cfg.KeyNameStore,
+		keyNameStoreFor: cfg.KeyNameStoreFor,
 	}
 
 	return factory, nil
@@ -128,6 +138,7 @@ func (f *BackendFactory) InitializeFromXKMS(ctx context.Context, enabledBackends
 	// Create and register backends
 	priority := 1
 	var registered []string
+	var stores []goxkms.StorageBackend
 	for _, backendName := range xkmsBackends {
 		// Apply filter if specified
 		if len(enabledSet) > 0 && !enabledSet[backendName] {
@@ -139,12 +150,24 @@ func (f *BackendFactory) InitializeFromXKMS(ctx context.Context, enabledBackends
 			continue
 		}
 
+		// Resolve the ownership store this backend keeps its records in. A
+		// chooser error fails closed: the backend is never skipped like a
+		// wrapper failure, nor left on an in-memory store.
+		store := f.keyNameStore
+		if f.keyNameStoreFor != nil {
+			var err error
+			store, err = f.keyNameStoreFor(backendName)
+			if err != nil {
+				return fmt.Errorf("ownership store for KMS backend %q: %w", backendName, err)
+			}
+		}
+
 		// Create XKMSBackend wrapper
 		backendType := config.BackendType(backendName)
 		backend, err := NewXKMSBackend(&XKMSBackendConfig{
 			BackendType:  backendType,
 			Logger:       f.logger,
-			KeyNameStore: f.keyNameStore,
+			KeyNameStore: store,
 		})
 		if err != nil {
 			if f.logger != nil {
@@ -175,6 +198,7 @@ func (f *BackendFactory) InitializeFromXKMS(ctx context.Context, enabledBackends
 		}
 
 		registered = append(registered, backendName)
+		stores = append(stores, store)
 		priority++
 	}
 
@@ -184,8 +208,20 @@ func (f *BackendFactory) InitializeFromXKMS(ctx context.Context, enabledBackends
 		return api.NewNoBackendsRegisteredError("BackendFactory.InitializeFromXKMS")
 	}
 
-	if err := checkXKMSKeyNames(ctx, f.keyNameStore, registered); err != nil {
-		return err
+	if f.keyNameStoreFor == nil {
+		if err := checkXKMSKeyNames(ctx, f.keyNameStore, registered); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	// Each resolved store is checked over the full registered list, so its
+	// marker means what it means with a single store. A store resolved for
+	// several backends returns at once on its marker after the first check.
+	for _, s := range stores {
+		if err := checkXKMSKeyNames(ctx, s, registered); err != nil {
+			return err
+		}
 	}
 
 	return nil
