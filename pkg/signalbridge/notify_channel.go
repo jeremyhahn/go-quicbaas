@@ -33,19 +33,19 @@ var _ NotifySender = (*SignalClient)(nil)
 
 var _ notify.Channel = (*NotifyChannel)(nil)
 
-// NotifyTarget is one Signal conversation that receives notifications.
+// NotifyTarget is one Signal direct-message recipient of notifications.
+// Only direct messages are supported: the Signal protocol adapter has no
+// group messaging, so a group target is refused.
 type NotifyTarget struct {
-	// ConversationID is the recipient's ACI for a direct message, or the
-	// group id for a group.
+	// ConversationID is the recipient's ACI.
 	ConversationID string
 
-	// Kind is ConversationDM or ConversationGroup.
+	// Kind must be ConversationDM; ConversationGroup is refused.
 	Kind ConversationKind
 
-	// SubjectID is the QuicBaaS subject the DM recipient's ACI is linked
-	// to. Required for a DM, which reaches a person who must pass the
-	// permission check; ignored for a group, which is an
-	// operator-configured channel.
+	// SubjectID is the QuicBaaS subject the recipient's ACI is linked to.
+	// Required: the recipient is a person who must pass the permission
+	// check.
 	SubjectID string
 }
 
@@ -54,12 +54,13 @@ type NotifyChannelConfig struct {
 	// Sender sends the messages. Required.
 	Sender NotifySender
 
-	// Targets are the conversations that receive notifications. At least
-	// one is required.
+	// Targets are the direct-message recipients of notifications. At
+	// least one is required; a group target is refused, so list each
+	// member as a direct-message target.
 	Targets []NotifyTarget
 
-	// Authorizer decides whether a DM target's subject may receive a
-	// tenant's notifications. Required when any target is a DM.
+	// Authorizer decides whether a target's subject may receive a
+	// tenant's notifications. Required.
 	Authorizer notify.RecipientAuthorizer
 }
 
@@ -95,8 +96,9 @@ func NewNotifyChannel(cfg NotifyChannelConfig) (*NotifyChannel, error) {
 				return nil, newError(op, ErrKindInvalidInput, at+": a direct-message target needs a recipient authorizer")
 			}
 		case ConversationGroup:
+			return nil, newError(op, ErrKindInvalidInput, at+": group delivery is not supported; list each member as a direct-message target")
 		default:
-			return nil, newError(op, ErrKindInvalidInput, at+": kind must be direct message or group")
+			return nil, newError(op, ErrKindInvalidInput, at+": kind must be direct message")
 		}
 	}
 	return &NotifyChannel{
@@ -112,9 +114,10 @@ func (c *NotifyChannel) Name() string { return notifyChannelName }
 // Secure returns true: Signal is end-to-end encrypted.
 func (c *NotifyChannel) Secure() bool { return true }
 
-// Deliver sends notify.Text(n) to every target in order. A DM target whose
-// subject the authorizer does not permit, or whose check errors, is skipped
-// (fail closed). Deliver returns nil when at least one target received the
+// Deliver sends notify.Text(n) as a direct message to every target in
+// order; ConversationID is the recipient's ACI. A target whose subject the
+// authorizer does not permit, or whose check errors, is skipped (fail
+// closed). Deliver returns nil when at least one target received the
 // message; otherwise an *Error of kind ErrKindUnauthorized when every target
 // was refused by the authorizer, else ErrKindTransport. Errors name the
 // subject, never the recipient's ACI.
@@ -125,22 +128,20 @@ func (c *NotifyChannel) Deliver(ctx context.Context, n notify.Notification) erro
 	delivered := 0
 	refused := 0
 	for i, t := range c.targets {
-		if t.Kind == ConversationDM {
-			ok, err := c.authorizer.MayReceive(ctx, n.TenantID, t.SubjectID)
-			if err != nil {
-				refused++
-				errs = append(errs, wrapError(op, ErrKindUnauthorized, err,
-					"subject "+t.SubjectID+" could not be checked for tenant notifications"))
-				continue
-			}
-			if !ok {
-				refused++
-				errs = append(errs, newError(op, ErrKindUnauthorized,
-					"subject "+t.SubjectID+" may not receive tenant notifications"))
-				continue
-			}
+		ok, err := c.authorizer.MayReceive(ctx, n.TenantID, t.SubjectID)
+		if err != nil {
+			refused++
+			errs = append(errs, wrapError(op, ErrKindUnauthorized, err,
+				"subject "+t.SubjectID+" could not be checked for tenant notifications"))
+			continue
 		}
-		err := c.sender.Send(ctx, OutboundMessage{ConversationID: t.ConversationID, Kind: t.Kind, Body: body})
+		if !ok {
+			refused++
+			errs = append(errs, newError(op, ErrKindUnauthorized,
+				"subject "+t.SubjectID+" may not receive tenant notifications"))
+			continue
+		}
+		err = c.sender.Send(ctx, OutboundMessage{ConversationID: t.ConversationID, Kind: ConversationDM, Body: body})
 		if err != nil {
 			errs = append(errs, wrapError(op, ErrKindTransport, err, "target "+strconv.Itoa(i)+": send failed"))
 			continue

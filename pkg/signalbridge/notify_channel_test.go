@@ -63,8 +63,13 @@ func testNotification() notify.Notification {
 	}
 }
 
-func groupTarget() NotifyTarget {
-	return NotifyTarget{ConversationID: "group-ops", Kind: ConversationGroup}
+// opsTarget is a direct-message target whose subject opsAuthorizer allows.
+func opsTarget() NotifyTarget {
+	return NotifyTarget{ConversationID: "aci-ops", Kind: ConversationDM, SubjectID: "user-ops"}
+}
+
+func opsAuthorizer() *fakeAuthorizer {
+	return &fakeAuthorizer{allowed: map[string]bool{"user-ops": true}}
 }
 
 func TestNewNotifyChannel_Refuses(t *testing.T) {
@@ -73,16 +78,18 @@ func TestNewNotifyChannel_Refuses(t *testing.T) {
 		name string
 		cfg  NotifyChannelConfig
 	}{
-		{"nil sender", NotifyChannelConfig{Targets: []NotifyTarget{groupTarget()}}},
+		{"nil sender", NotifyChannelConfig{Targets: []NotifyTarget{opsTarget()}, Authorizer: auth}},
 		{"no targets", NotifyChannelConfig{Sender: &fakeSender{}}},
-		{"empty conversation", NotifyChannelConfig{Sender: &fakeSender{},
-			Targets: []NotifyTarget{{Kind: ConversationGroup}}}},
-		{"bad kind", NotifyChannelConfig{Sender: &fakeSender{},
-			Targets: []NotifyTarget{{ConversationID: "c", Kind: ConversationKind(9)}}}},
+		{"empty conversation", NotifyChannelConfig{Sender: &fakeSender{}, Authorizer: auth,
+			Targets: []NotifyTarget{{Kind: ConversationDM, SubjectID: "user-1"}}}},
+		{"bad kind", NotifyChannelConfig{Sender: &fakeSender{}, Authorizer: auth,
+			Targets: []NotifyTarget{{ConversationID: "c", Kind: ConversationKind(9), SubjectID: "user-1"}}}},
+		{"group target refused", NotifyChannelConfig{Sender: &fakeSender{}, Authorizer: auth,
+			Targets: []NotifyTarget{{ConversationID: "group-ops", Kind: ConversationGroup, SubjectID: "user-1"}}}},
 		{"dm without subject", NotifyChannelConfig{Sender: &fakeSender{}, Authorizer: auth,
 			Targets: []NotifyTarget{{ConversationID: "aci-1", Kind: ConversationDM}}}},
 		{"dm without authorizer", NotifyChannelConfig{Sender: &fakeSender{},
-			Targets: []NotifyTarget{groupTarget(), {ConversationID: "aci-1", Kind: ConversationDM, SubjectID: "user-1"}}}},
+			Targets: []NotifyTarget{opsTarget()}}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -94,25 +101,24 @@ func TestNewNotifyChannel_Refuses(t *testing.T) {
 	}
 }
 
-func TestNotifyChannel_GroupTargetReceivesText(t *testing.T) {
-	sender := &fakeSender{}
-	ch, err := NewNotifyChannel(NotifyChannelConfig{Sender: sender, Targets: []NotifyTarget{groupTarget()}})
+func TestNotifyChannel_DeliversThroughSignalClient(t *testing.T) {
+	c, ft, fa := newTestSignalClient(t)
+	c.account = SignalAccount{ACI: "aci", DeviceID: 1, Password: "pw"}
+	ch, err := NewNotifyChannel(NotifyChannelConfig{Sender: c, Targets: []NotifyTarget{opsTarget()}, Authorizer: opsAuthorizer()})
 	if err != nil {
 		t.Fatalf("NewNotifyChannel: %v", err)
 	}
-	n := testNotification()
-	if err := ch.Deliver(context.Background(), n); err != nil {
+	if err := ch.Deliver(context.Background(), testNotification()); err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
-	if len(sender.sends) != 1 {
-		t.Fatalf("want 1 send, got %d", len(sender.sends))
+	if got := fa.encryptCalls.Load(); got != 1 {
+		t.Fatalf("want 1 encrypt, got %d", got)
 	}
-	msg := sender.sends[0]
-	if msg.Body != notify.Text(n) || msg.ConversationID != "group-ops" || msg.Kind != ConversationGroup {
-		t.Fatalf("message: %+v", msg)
-	}
-	if msg.Timestamp != 0 {
-		t.Fatalf("timestamp set by the channel: %d", msg.Timestamp)
+	ft.mu.Lock()
+	sends := ft.sendCalls
+	ft.mu.Unlock()
+	if sends != 1 {
+		t.Fatalf("want 1 transport send, got %d", sends)
 	}
 }
 
@@ -170,7 +176,7 @@ func TestNotifyChannel_AuthorizerErrorFailsClosed(t *testing.T) {
 
 func TestNotifyChannel_SendFailureIsTransport(t *testing.T) {
 	sender := &fakeSender{failSends: true}
-	ch, err := NewNotifyChannel(NotifyChannelConfig{Sender: sender, Targets: []NotifyTarget{groupTarget()}})
+	ch, err := NewNotifyChannel(NotifyChannelConfig{Sender: sender, Targets: []NotifyTarget{opsTarget()}, Authorizer: opsAuthorizer()})
 	if err != nil {
 		t.Fatalf("NewNotifyChannel: %v", err)
 	}
@@ -182,7 +188,7 @@ func TestNotifyChannel_SendFailureIsTransport(t *testing.T) {
 }
 
 func TestNotifyChannel_IsSecure(t *testing.T) {
-	ch, err := NewNotifyChannel(NotifyChannelConfig{Sender: &fakeSender{}, Targets: []NotifyTarget{groupTarget()}})
+	ch, err := NewNotifyChannel(NotifyChannelConfig{Sender: &fakeSender{}, Targets: []NotifyTarget{opsTarget()}, Authorizer: opsAuthorizer()})
 	if err != nil {
 		t.Fatalf("NewNotifyChannel: %v", err)
 	}
@@ -193,7 +199,7 @@ func TestNotifyChannel_IsSecure(t *testing.T) {
 
 func TestNotifyChannel_WithDispatcherCarriesSensitiveBody(t *testing.T) {
 	sender := &fakeSender{}
-	signal, err := NewNotifyChannel(NotifyChannelConfig{Sender: sender, Targets: []NotifyTarget{groupTarget()}})
+	signal, err := NewNotifyChannel(NotifyChannelConfig{Sender: sender, Targets: []NotifyTarget{opsTarget()}, Authorizer: opsAuthorizer()})
 	if err != nil {
 		t.Fatalf("NewNotifyChannel: %v", err)
 	}
