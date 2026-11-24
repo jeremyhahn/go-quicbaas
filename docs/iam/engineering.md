@@ -18,6 +18,11 @@ iam:
   # - disabled: IAM module off (alias for enabled: false)
   mode: primary
 
+  # Per-client login and refresh attempts per minute on the hosted
+  # login module. 0 keeps the module default; a negative value is
+  # refused at boot.
+  login_rate_per_min: 0
+
   # Remote IAM settings (when mode=remote)
   remote:
     endpoint: "iam.internal:9443"
