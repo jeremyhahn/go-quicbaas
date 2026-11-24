@@ -20,6 +20,7 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 	"google.golang.org/protobuf/types/known/emptypb"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/poll"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
@@ -648,12 +649,11 @@ func TestPool_ReplaceConnectionOldNotFound(t *testing.T) {
 	// Try to replace a connection that's not in the pool
 	p.replaceConnection(fakePC)
 
-	// Wait for async operation
-	time.Sleep(100 * time.Millisecond)
-
-	// Pool should still have its original connections
-	if p.Size() < cfg.MinSize {
-		t.Errorf("expected at least %d connections", cfg.MinSize)
+	// replaceConnection is synchronous. The old entry was not in the pool,
+	// so the replacement is appended while the pool is under MaxSize.
+	if got := p.Size(); got != cfg.MinSize+1 {
+		t.Errorf("expected %d connections (original %d plus the appended replacement), got %d",
+			cfg.MinSize+1, cfg.MinSize, got)
 	}
 }
 
@@ -854,7 +854,7 @@ func TestPool_PerformHealthCheckReplacement(t *testing.T) {
 	cfg := &PoolConfig{
 		MinSize:        2,
 		MaxSize:        5,
-		MaxAge:         1 * time.Millisecond, // Very short max age
+		MaxAge:         time.Hour,
 		HealthInterval: 0,
 	}
 
@@ -864,19 +864,42 @@ func TestPool_PerformHealthCheckReplacement(t *testing.T) {
 	}
 	defer p.Close()
 
-	// Wait for connections to expire
-	time.Sleep(10 * time.Millisecond)
+	// Expire every connection by backdating it past MaxAge.
+	expired := backdateAll(t, p)
 
 	// Perform health check which should replace expired connections
 	p.performHealthCheck()
 
-	// Wait for async replacements
-	time.Sleep(100 * time.Millisecond)
+	p.mu.Lock()
+	for _, pc := range p.connections {
+		if expired[pc] {
+			t.Error("expired connection is still in the pool after the health check")
+		}
+	}
+	p.mu.Unlock()
 
 	if p.Size() < cfg.MinSize {
 		t.Errorf("expected at least %d connections after health check, got %d",
 			cfg.MinSize, p.Size())
 	}
+}
+
+// backdateAll moves the creation time of every pooled connection two hours
+// into the past, under the pool mutex, so a MaxAge of an hour treats them as
+// expired. It returns the entries it backdated.
+func backdateAll(t *testing.T, p *Pool) map[*pooledConn]bool {
+	t.Helper()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	expired := make(map[*pooledConn]bool, len(p.connections))
+	for _, pc := range p.connections {
+		pc.createdAt = time.Now().Add(-2 * time.Hour)
+		expired[pc] = true
+	}
+	if len(expired) == 0 {
+		t.Fatal("pool has no connections to expire")
+	}
+	return expired
 }
 
 const bufSize = 1024 * 1024
@@ -1113,7 +1136,18 @@ func TestPool_HealthCheckLoop(t *testing.T) {
 		t.Fatalf("failed to create pool: %v", err)
 	}
 
-	time.Sleep(100 * time.Millisecond)
+	// Expire the connection; the next tick of the loop must replace it.
+	expired := backdateAll(t, p)
+	poll.Until(t, 5*time.Second, func() bool {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		for _, pc := range p.connections {
+			if expired[pc] {
+				return false
+			}
+		}
+		return true
+	}, "health-check loop replaced the expired connection")
 
 	if !p.Healthy() {
 		t.Error("expected pool to be healthy after health check")
@@ -1200,7 +1234,7 @@ func TestPool_ReplaceConnection(t *testing.T) {
 	cfg := &PoolConfig{
 		MinSize:        1,
 		MaxSize:        3,
-		MaxAge:         1 * time.Millisecond,
+		MaxAge:         time.Hour,
 		HealthInterval: 0,
 	}
 
@@ -1231,7 +1265,10 @@ func TestPool_ReplaceConnection(t *testing.T) {
 		t.Fatal("connection returned by Get is not in the pool")
 	}
 
-	time.Sleep(5 * time.Millisecond)
+	// Expire the handed-out connection by backdating it past MaxAge.
+	p.mu.Lock()
+	original.createdAt = time.Now().Add(-2 * time.Hour)
+	p.mu.Unlock()
 
 	p.Put(conn)
 
@@ -1239,11 +1276,15 @@ func TestPool_ReplaceConnection(t *testing.T) {
 	// pool mutex, until the original entry has left the pool and the pool is
 	// back to MinSize, so the replacement has finished before the deferred
 	// p.Close and ts.stop run.
-	var replacement *pooledConn
-	deadline := time.Now().Add(5 * time.Second)
-	for {
+	var (
+		replacement *pooledConn
+		stillThere  bool
+		size        int
+	)
+	replaced := poll.Wait(5*time.Second, func() bool {
 		p.mu.Lock()
-		stillThere := false
+		defer p.mu.Unlock()
+		stillThere = false
 		replacement = nil
 		for _, pc := range p.connections {
 			if pc == original {
@@ -1253,17 +1294,12 @@ func TestPool_ReplaceConnection(t *testing.T) {
 				replacement = pc
 			}
 		}
-		size := len(p.connections)
-		p.mu.Unlock()
-
-		if !stillThere && size >= cfg.MinSize {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("expired connection not replaced within 5s (still in pool: %v, size %d, min %d)",
-				stillThere, size, cfg.MinSize)
-		}
-		time.Sleep(10 * time.Millisecond)
+		size = len(p.connections)
+		return !stillThere && size >= cfg.MinSize
+	})
+	if !replaced {
+		t.Fatalf("expired connection not replaced within 5s (still in pool: %v, size %d, min %d)",
+			stillThere, size, cfg.MinSize)
 	}
 
 	if replacement == nil {
@@ -1605,8 +1641,14 @@ func TestPool_ReplaceConnection_PoolFull(t *testing.T) {
 	}
 	defer p.Close()
 
-	conn1, _ := p.Get()
-	conn2, _ := p.Get()
+	conn1, err := p.Get()
+	if err != nil {
+		t.Fatalf("failed to get first connection: %v", err)
+	}
+	conn2, err := p.Get()
+	if err != nil {
+		t.Fatalf("failed to get second connection: %v", err)
+	}
 
 	p.mu.Lock()
 	var oldPC *pooledConn
@@ -1625,8 +1667,20 @@ func TestPool_ReplaceConnection_PoolFull(t *testing.T) {
 	p.mu.Unlock()
 
 	if oldPC != nil {
+		// replaceConnection is synchronous: the pool is one under MaxSize, so
+		// the replacement is appended and the pool is full again.
 		p.replaceConnection(oldPC)
-		time.Sleep(100 * time.Millisecond)
+
+		if got := p.Size(); got != cfg.MaxSize {
+			t.Errorf("expected pool at MaxSize %d after replacement, got %d", cfg.MaxSize, got)
+		}
+		p.mu.Lock()
+		for _, pc := range p.connections {
+			if pc == oldPC {
+				t.Error("replaced connection is still in the pool")
+			}
+		}
+		p.mu.Unlock()
 	}
 
 	p.Put(conn2)
