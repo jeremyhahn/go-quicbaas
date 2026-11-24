@@ -17,6 +17,8 @@ package mcp
 
 import (
 	"context"
+	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -126,6 +128,37 @@ func TestQRDBRAGClient_ToolErrorSurfaces(t *testing.T) {
 	resp, err := tr.QRDBRAG().RAGQuery(context.Background(), &qrdbtransport.RAGQueryRequest{Query: "q", Namespace: "ns"})
 	assert.Error(t, err)
 	assert.Nil(t, resp)
+}
+
+// TestQRDBRAGClient_RefusesChunkMinSize pins that a nonzero ChunkMinSize is
+// refused before any tool call: go-qrdb's qrdb_rag_ingest tool cannot parse
+// chunk_min_size, so forwarding it would silently drop the caller's setting.
+func TestQRDBRAGClient_RefusesChunkMinSize(t *testing.T) {
+	var calls atomic.Int32
+	tr := newQRDBRAGTestTransport(t, map[string]mcpserver.ToolHandlerFunc{
+		"qrdb_rag_ingest": func(context.Context, mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+			calls.Add(1)
+			return mcpgo.NewToolResultText(`{"DocumentID":"doc-1","ChunkCount":1,"Namespace":"ns"}`), nil
+		},
+	})
+
+	resp, err := tr.QRDBRAG().RAGIngestDocument(context.Background(), &qrdbtransport.RAGIngestRequest{
+		DocumentID: "doc-1", Text: "t", Namespace: "ns", ChunkMinSize: 1,
+	})
+	require.Error(t, err)
+	assert.Nil(t, resp)
+	var unsupported *QRDBRAGUnsupportedFieldError
+	require.True(t, errors.As(err, &unsupported), "got %T: %v", err, err)
+	assert.Equal(t, "chunk_min_size", unsupported.Field)
+	assert.Contains(t, err.Error(), "chunk_min_size is not supported by go-qrdb's qrdb_rag_ingest tool")
+	assert.Equal(t, int32(0), calls.Load())
+
+	resp, err = tr.QRDBRAG().RAGIngestDocument(context.Background(), &qrdbtransport.RAGIngestRequest{
+		DocumentID: "doc-1", Text: "t", Namespace: "ns",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, resp.ChunkCount)
+	assert.Equal(t, int32(1), calls.Load())
 }
 
 // TestQRDBRAGClient_TransportServesContract checks that the MCP transport

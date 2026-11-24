@@ -44,6 +44,19 @@ func (c *QRDBRAGClient) call(ctx context.Context, op, tool string, args map[stri
 
 // encodeStringMap encodes a non-empty map as the JSON string go-qrdb's RAG
 // tools take for metadata and filters.
+// QRDBRAGUnsupportedFieldError reports a request field the go-qrdb MCP tool
+// cannot carry. The client refuses the request before any tool call rather
+// than drop the field; the gRPC, REST and embedded transports carry it.
+type QRDBRAGUnsupportedFieldError struct {
+	Op    string
+	Field string
+}
+
+// Error implements error.
+func (e *QRDBRAGUnsupportedFieldError) Error() string {
+	return fmt.Sprintf("%s: %s is not supported by go-qrdb's qrdb_rag_ingest tool; use the gRPC, REST or embedded transport", e.Op, e.Field)
+}
+
 func encodeStringMap(args map[string]interface{}, key, op, what string, m map[string]string) error {
 	if len(m) == 0 {
 		return nil
@@ -62,6 +75,11 @@ func (c *QRDBRAGClient) RAGIngestDocument(ctx context.Context, req *qrdbtranspor
 	const op = "mcp.QRDBRAG.IngestDocument"
 	if req == nil {
 		req = &qrdbtransport.RAGIngestRequest{}
+	}
+	// go-qrdb's qrdb_rag_ingest tool parses no chunk_min_size, so a
+	// forwarded value would be dropped silently. Refuse it instead.
+	if req.ChunkMinSize != 0 {
+		return nil, &QRDBRAGUnsupportedFieldError{Op: op, Field: "chunk_min_size"}
 	}
 	args := map[string]interface{}{
 		"document_id": req.DocumentID,
