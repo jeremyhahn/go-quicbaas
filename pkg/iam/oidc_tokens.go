@@ -901,7 +901,9 @@ func (s *TokenService) IssueServiceAccountTokens(ctx context.Context, opts Servi
 		"auth_method":   "mtls",
 		"ptyp":          PrincipalTypeService,
 		"attest_method": opts.AttestMethod,
-		"amr":           opts.AMR,
+		// The acr/amr contract's one access-token exception: this grant
+		// issues no ID token (see IDTokenClaims.AMR).
+		"amr": opts.AMR,
 		"cnf": map[string]interface{}{
 			"x5t#S256": opts.CertThumbprintS256,
 		},
