@@ -27,20 +27,20 @@ GO_VERSION := 1.27.4
 # variables, and the Software Factory worker image is built with them. A
 # worker that linted with a different version than CI would produce review
 # verdicts a merge then contradicts (go-quicbaas#772).
-GOLANGCI_VERSION := v2.14.0
+GOLANGCI_VERSION := v2.15.0
 # Pinned by the fleet ruling of 2026-08-26: an unpinned gosec self-updated
 # mid-day and turned unrelated branches red, so nobody could say which commit
 # owned the new findings.
-GOSEC_VERSION := v2.29.0
+GOSEC_VERSION := v2.30.0
 # Pins the TOOL, not the vulnerability DATABASE -- govulncheck fetches that at
 # run time, which is the point of running it.
-GOVULNCHECK_VERSION := v1.8.0
+GOVULNCHECK_VERSION := v1.10.0
 # Serena is the semantic code-retrieval MCP server the Software Factory's agents
 # search this codebase with, and gopls is the Go language server it drives. Both
 # are pinned for the same reason as the tools above: an agent whose search
 # behaviour changes under an image rebuild is a change nobody authored.
-SERENA_VERSION := v1.7.0
-GOPLS_VERSION := v0.23.0
+SERENA_VERSION := v2.1.0
+GOPLS_VERSION := v0.24.0
 # Dependency floors for the Go tools the worker image SHIPS (gopls, gosec).
 # devops.md section 8 gates every image on `trivy image`, and trivy reads the
 # module list compiled into each binary: gopls v0.23.0 was released against
@@ -54,13 +54,13 @@ GOPLS_VERSION := v0.23.0
 # `make install-gosec` and CI's gosec build the same way, so the gosec that
 # gates CI is the gosec in the image. Space-separated module@version pairs.
 # Drop an entry once the tools' own releases require that version or newer.
-# gosec v2.29.0 (and v2.30.0) require golang.org/x/net below v0.62.0
+# gosec v2.30.0 requires golang.org/x/net v0.61.0, below v0.62.0
 # (CVE-2026-78661).
 # The floors must agree with each other: a floor's own go.mod can require
-# another listed module above that module's floor (x/net v0.62.0 requires
-# x/text v0.43.0), and the build applies every floor in one `go get`, which
+# another listed module above that module's floor (x/net v0.63.0 requires
+# x/text v0.44.0), and the build applies every floor in one `go get`, which
 # then fails rather than lowering one floor to satisfy another.
-GO_TOOL_DEPENDENCY_FLOORS := golang.org/x/mod@v0.41.0 golang.org/x/net@v0.62.0 golang.org/x/text@v0.43.0 golang.org/x/tools@v0.51.0 google.golang.org/grpc@v1.84.0
+GO_TOOL_DEPENDENCY_FLOORS := golang.org/x/mod@v0.43.0 golang.org/x/net@v0.63.0 golang.org/x/text@v0.44.0 golang.org/x/tools@v0.53.0 google.golang.org/grpc@v1.85.0
 # trivy, the scanner `make security` ends with (devops.md section 8). From its
 # release tarball, each architecture's SHA-256 as the release's own
 # trivy_<version>_checksums.txt publishes it: change all three together. Pins
@@ -88,11 +88,11 @@ SHELLCHECK_SHA256_AARCH64 := 12b331c1d2db6b9eb13cfca64306b1b157a86eb69db83023e26
 # -- a single Bun binary, the glibc build for this Debian image -- and the
 # SHA-256 of each architecture's tarball is pinned beside the version, taken
 # from the digests the release itself publishes
-# (github.com/anomalyco/opencode/releases/tag/v1.18.35): change all three
+# (github.com/anomalyco/opencode/releases/tag/v1.19.6): change all three
 # together.
-OPENCODE_VERSION := v1.18.35
-OPENCODE_SHA256_X86_64 := c8f888b451f5494a18f858fffb0e0b68f4e4baa9c241761c5f206884f0fa640d
-OPENCODE_SHA256_AARCH64 := f7f2ba59ee8aa94d388f9696575a32d20e71c2ee48def9f80fc693a60fec6c72
+OPENCODE_VERSION := v1.19.6
+OPENCODE_SHA256_X86_64 := 47734e08968b30cc22a0bffb6d9feeed76ad4aa743213a12122040392d09a057
+OPENCODE_SHA256_AARCH64 := 5b68c1f4c5e75b4134e664cc8f36d634d64208d4fcfe5bcf3b48bab699c2dbac
 # gh, the GitHub CLI the worker image carries for the GitHub mirror work. It is
 # installed from its release tarball, and the SHA-256 of each architecture's
 # tarball is pinned beside the version, taken from the release's own
@@ -120,17 +120,17 @@ PROTOC_GEN_GO_VERSION := v1.36.12
 PROTOC_GEN_GO_GRPC_VERSION := v1.6.2
 # Dependency floor for Serena's own Python tool environment, the same idea as
 # GO_TOOL_DEPENDENCY_FLOORS above but applied through `uv tool install
-# --overrides` rather than a Go build: urllib3 < 2.8.0 is a fixable finding
-# `make push-worker-image`'s trivy gate reads out of Serena's installed
-# packages (go-quicbaas#1161). `--overrides`, not `--with`: serena-agent
-# 1.7.0 depends on urllib3==2.7.0 exactly, and `--with` only adds a second,
-# conflicting constraint uv then refuses to resolve -- `--overrides` replaces
-# the declared pin instead. serena-agent 1.7.0 also pins filelock==3.25.2
-# (CVE-2026-112940) and mcp==1.28.1 (CVE-2026-115563); mcp is held below 2,
-# the major serena 1.7.0 was built against. Space-separated requirement
-# specifiers, no spaces inside an entry. Drop an entry once serena's own
-# release requires that version or newer.
-SERENA_DEPENDENCY_FLOORS := urllib3>=2.8.0 filelock>=4.2.1 mcp>=1.30.0,<2
+# --overrides` rather than a Go build: a fixable finding `make
+# push-worker-image`'s trivy gate reads out of Serena's installed packages is
+# raised here. `--overrides`, not `--with`: serena-agent pins its dependencies
+# exactly, and `--with` only adds a second, conflicting constraint uv then
+# refuses to resolve -- `--overrides` replaces the declared pin instead.
+# serena-agent 2.1.0 pins filelock==3.25.2 (CVE-2026-112940), which this floor
+# raises. Its own urllib3==2.8.0 and mcp==2.2.0 already meet the urllib3
+# (go-quicbaas#1161) and mcp (CVE-2026-115563) floors, so those entries are
+# dropped. Space-separated requirement specifiers, no spaces inside an entry.
+# Drop an entry once serena's own release requires that version or newer.
+SERENA_DEPENDENCY_FLOORS := filelock>=4.2.1
 
 # Node.js, which runs the claude and codex CLIs and the npm-built language
 # servers below, and a project's own frontend build. Installed from the
@@ -138,9 +138,9 @@ SERENA_DEPENDENCY_FLOORS := urllib3>=2.8.0 filelock>=4.2.1 mcp>=1.30.0,<2
 # SHA-256 of each architecture's tarball -- as published in the release's
 # SHASUMS256.txt -- pinned beside the version: change all three together.
 # NPM_VERSION is the npm the image upgrades the bundled one to.
-NODE_VERSION := v26.10.0
-NODE_SHA256_X86_64 := ca70e9e349de048b9522abb3adc05b3bd6f43c5ffd3ec57916c7da292f59f022
-NODE_SHA256_AARCH64 := 7a6353f63eb3d04765004b4adf172616243e4522434635cb1d26288658b04ab5
+NODE_VERSION := v26.13.1
+NODE_SHA256_X86_64 := 5c063e46bab0fbc1c17cc445d7ff129cbdcd0471be6ed83b6ab864f8143bc864
+NODE_SHA256_AARCH64 := 89e1853138db51e8b82d3e98ba9c0d3f2956a28e5e55ea1b7e12d25aae92d5dd
 NPM_VERSION := 12.2.3
 # Dependency floors for the packages npm BUNDLES in its own node_modules, the
 # same idea as SERENA_DEPENDENCY_FLOORS: when an npm release bundles a copy the
@@ -158,9 +158,9 @@ NPM_VERSION := 12.2.3
 # uv, which installs Serena (and is on the PATH for a Python project). From its
 # release tarball -- Debian packages no uv -- with each architecture's SHA-256
 # pinned beside the version, as the release's own .sha256 files publish it.
-UV_VERSION := 0.12.23
-UV_SHA256_X86_64 := 9167d72b3319674b6303c4cbe071854bba13ebdf3d76b1a7cbdc175471fb66d6
-UV_SHA256_AARCH64 := 6524bd338177ed50d035d39354e12545e993bbeba2ecbddf0480c5b3a81d313f
+UV_VERSION := 0.13.9
+UV_SHA256_X86_64 := a7fbaff2b9a271d85c1bdb540941090fd1ce011797b4abeb48e4dcd39c2471d5
+UV_SHA256_AARCH64 := 0797542018e541a9288855df555c8077eed06f7a47d206362030480e8ecc9f3d
 
 # The language servers Serena drives, baked into the image so a session with an
 # empty HOME and no network still reads code by symbol. Left to itself Serena
@@ -173,9 +173,9 @@ UV_SHA256_AARCH64 := 6524bd338177ed50d035d39354e12545e993bbeba2ecbddf0480c5b3a81
 # (the native rewrite) no longer ships -- the currency check tracks 6.x for it.
 PYRIGHT_VERSION := 1.1.414
 TYPESCRIPT_VERSION := 6.0.3
-TYPESCRIPT_LANGUAGE_SERVER_VERSION := 6.0.1
+TYPESCRIPT_LANGUAGE_SERVER_VERSION := 6.1.0
 BASH_LANGUAGE_SERVER_VERSION := 5.8.1
-YAML_LANGUAGE_SERVER_VERSION := 1.24.0
+YAML_LANGUAGE_SERVER_VERSION := 2.0.0
 # Ruby's server, a gem installed against Debian's ruby.
 RUBY_LSP_VERSION := 0.26.11
 # The release binaries, each with its architecture's SHA-256 as the release's
@@ -184,9 +184,9 @@ RUBY_LSP_VERSION := 0.26.11
 # only the x86_64 digest is pinned.
 CLANGD_VERSION := 23.1.0
 CLANGD_SHA256_X86_64 := e53b1a96196095faedb7642cf64964f7fb9ad4a0c1f00dd2c172a3d9dcbafdfd
-RUST_ANALYZER_VERSION := 2026-10-05
-RUST_ANALYZER_SHA256_X86_64 := 28070188df63b6f217768040781decc8db43bc9d29b126847acb365575b09bc9
-RUST_ANALYZER_SHA256_AARCH64 := 3974c863acbbd96ef2cc02a7aaa79123935b05f27ffe4fd393fc229522f75cb9
+RUST_ANALYZER_VERSION := 2026-11-23
+RUST_ANALYZER_SHA256_X86_64 := 99748126069cc1360e2729e45ae7b563a2b885def41c0d600de8e5977a7adf13
+RUST_ANALYZER_SHA256_AARCH64 := cf7e9c2cd34540da92473d47f0866c9515425da01116e7aaca988c9b19408285
 MARKSMAN_VERSION := 2026-02-08
 MARKSMAN_SHA256_X86_64 := be5098e8213219269c47fc0d916a66fa31ce0602ec967475c722260aabf26087
 MARKSMAN_SHA256_AARCH64 := db8e124527f7f8048e3e6c91821b9c52ef173d92c01e47d221bf1337afd962fb

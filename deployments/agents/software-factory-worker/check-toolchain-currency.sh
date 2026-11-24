@@ -63,6 +63,7 @@ declare -A SOURCES=(
 	[CLANGD_VERSION]="github:clangd/clangd"
 	[RUST_ANALYZER_VERSION]="github:rust-lang/rust-analyzer"
 	[MARKSMAN_VERSION]="github:artempyanykh/marksman"
+	[TRIVY_VERSION]="github:aquasecurity/trivy"
 	[NODE_VERSION]="node:"
 	[NPM_VERSION]="npm:npm"
 	[PYRIGHT_VERSION]="npm:pyright"
@@ -109,8 +110,10 @@ latest_github() {
 	esac
 }
 
+# The newest STABLE release: index.json lists pre-releases (v27.0.0-alpha.*)
+# first, and a pre-release is never a pin.
 latest_node() {
-	fetch 'https://nodejs.org/dist/index.json' | json_string version
+	fetch 'https://nodejs.org/dist/index.json' | first_match '"version" *: *"v[0-9]+\.[0-9]+\.[0-9]+"' | sed -E 's/.*: *"([^"]*)"/\1/'
 }
 
 # From the dist-tags document, which holds nothing but tags: the /latest
