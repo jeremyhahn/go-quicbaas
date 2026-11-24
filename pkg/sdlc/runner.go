@@ -536,11 +536,16 @@ func (s *runnerRun) drive(ctx context.Context) (err error) {
 }
 
 // recordSummary records the run's structured public summary as a task
-// artifact. A cancelled run records none: it did not conclude, and the
-// run that resumes it will. A summary that cannot be recorded is put on
-// the job's audit trail and never replaces the run's own error.
+// artifact. A run whose own context was cancelled records none: it did not
+// conclude, and the run that resumes it will. The run's context is the only
+// cancellation signal. An error wrapping context.Canceled or
+// context.DeadlineExceeded while that context is live is a stage's own
+// timeout or cancel: the attempt concluded, the task concludes from it, and
+// so its summary is recorded as a failed run. A summary that cannot be
+// recorded is put on the job's audit trail and never replaces the run's own
+// error.
 func (s *runnerRun) recordSummary(ctx context.Context, err error) {
-	if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if ctx.Err() != nil {
 		return
 	}
 	job := s.job.Context()

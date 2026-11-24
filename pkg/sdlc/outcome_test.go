@@ -128,7 +128,7 @@ func TestRenderOutcome_ExhaustedCarriesTheEvidence(t *testing.T) {
 	for _, want := range []string{
 		"### This task has spent its attempt budget",
 		"**Outcome:** `exhausted`",
-		"> sdlc: task task-1 produced no changes in /workspace/api",
+		"> " + noRunSummaryEvidence,
 		"**Attempt:** 3 of 3",
 		"**Attempt history:** `job-1`, `job-2`, `job-3`",
 		"**Labels:** `task:ready` → `factory:escalated`",
@@ -287,7 +287,7 @@ func TestHooks_TaskConcluded_ExhaustedPostsOnceAndSwapsTheLabel(t *testing.T) {
 		t.Fatalf("expected exactly one comment, got %d", len(comments))
 	}
 	for _, want := range []string{"### This task has spent its attempt budget", "**Outcome:** `exhausted`",
-		"produced no changes", "`job-1`, `job-2`, `job-3`", blockedMarker(task.ID, 3, OutcomeExhausted)} {
+		noRunSummaryEvidence, "`job-1`, `job-2`, `job-3`", blockedMarker(task.ID, 3, OutcomeExhausted)} {
 		if !strings.Contains(comments[0].Body, want) {
 			t.Fatalf("comment lacks %q:\n%s", want, comments[0].Body)
 		}
