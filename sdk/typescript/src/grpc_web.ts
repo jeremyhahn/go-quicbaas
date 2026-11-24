@@ -147,38 +147,31 @@ const grpcWebNotImplemented =
   'that turns it on, and this SDK has no @connectrpc/connect-web client yet; use the rest transport';
 
 // grpcWebRefusalTarget returns the family and method a GrpcWebNotImplementedError
-// names. The single-argument form passes `family.verb` or a bare verb in
-// familyOrMethod and no method: it is split at the first `.`, and a bare verb
-// becomes the family with no method.
-function grpcWebRefusalTarget(familyOrMethod: string, method?: string): [string, string | undefined] {
-  if (method !== undefined) {
-    return [familyOrMethod, method];
-  }
-  const dot = familyOrMethod.indexOf('.');
+// names. `method` is `family.verb` or a bare verb: it is split at the first
+// `.`, and a bare verb becomes the family with no method.
+function grpcWebRefusalTarget(method: string): [string, string | undefined] {
+  const dot = method.indexOf('.');
   if (dot < 0) {
-    return [familyOrMethod, undefined];
+    return [method, undefined];
   }
-  return [familyOrMethod.slice(0, dot), familyOrMethod.slice(dot + 1)];
+  return [method.slice(0, dot), method.slice(dot + 1)];
 }
 
 // GrpcWebNotImplementedError is the gRPC-Web transport's refusal of one verb.
 // It is a TransportNotSupportedError naming `family.verb`, like
 // QuicNotImplementedError, so a caller that catches the base class handles it.
-// The constructor accepts both the original single-argument form
-// `(method)` and `(family, method, reason?)`.
+// The constructor takes `family.verb` or a bare verb.
 export class GrpcWebNotImplementedError extends TransportNotSupportedError {
   /**
-   * The original form, kept for existing callers. `method` is `family.verb`
-   * (for example `prompts.list`) or a bare verb (for example `listJobs`).
+   * `method` is `family.verb` (for example `prompts.list`) or a bare verb
+   * (for example `listJobs`).
    */
-  constructor(method: string);
-  constructor(family: string, method: string, reason?: string);
-  constructor(familyOrMethod: string, method?: string, reason: string = grpcWebNotImplemented) {
+  constructor(method: string) {
     super(
       'grpc-web',
-      grpcWebRefusalTarget(familyOrMethod, method)[0],
-      reason,
-      grpcWebRefusalTarget(familyOrMethod, method)[1],
+      grpcWebRefusalTarget(method)[0],
+      grpcWebNotImplemented,
+      grpcWebRefusalTarget(method)[1],
     );
     this.name = 'GrpcWebNotImplementedError';
   }
@@ -186,7 +179,7 @@ export class GrpcWebNotImplementedError extends TransportNotSupportedError {
 
 // notImpl throws the gRPC-Web refusal for family.method.
 function notImpl(family: string, method: string): never {
-  throw new GrpcWebNotImplementedError(family, method);
+  throw new GrpcWebNotImplementedError(`${family}.${method}`);
 }
 
 // grpcWebNotImplementedClient returns a client of type T whose every verb
@@ -199,7 +192,7 @@ function grpcWebNotImplementedClient<T extends object>(family: string): T {
     get(_target, prop) {
       if (typeof prop !== 'string' || prop === 'then') return undefined;
       return async () => {
-        throw new GrpcWebNotImplementedError(family, prop);
+        throw new GrpcWebNotImplementedError(`${family}.${prop}`);
       };
     },
   });

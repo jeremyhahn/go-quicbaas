@@ -179,10 +179,12 @@ describe('GrpcWebNotImplementedError constructor', () => {
     expect(err.message).toBe(`grpc-web transport does not carry listJobs: ${err.reason}`);
   });
 
-  it('takes family, method and reason', () => {
-    const err = new GrpcWebNotImplementedError('jobs', 'listJobs', 'custom reason');
+  it('names the family and verb of a family.verb argument with the default reason', () => {
+    expect(GrpcWebNotImplementedError.length).toBe(1);
+    const err = new GrpcWebNotImplementedError('jobs.listJobs');
     expect(err.family).toBe('jobs');
     expect(err.method).toBe('listJobs');
-    expect(err.reason).toBe('custom reason');
+    expect(err.reason).toContain('@connectrpc/connect-web');
+    expect(err.message).toBe(`grpc-web transport does not carry jobs.listJobs: ${err.reason}`);
   });
 });
