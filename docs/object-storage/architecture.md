@@ -465,15 +465,17 @@ and return.
 
 #### Key Namespace
 
-A tenant's object keys are stored in the catalog as `tenant/{tenant}/{key}`.
-The object's backend reference is derived from that stored key as well. A
-tenant always uses its own keys. Two tenants can each store `docs/report.pdf`
-without overwriting each other. A tenant asking for a key that only another
-tenant holds gets not found, and its listings contain only its own objects.
-Keys in responses come back as the tenant wrote them, without the prefix.
+An object key has the form `{namespace}:{path}`. The catalog stores a tenant's
+key as `tenant/{tenant}/{namespace}:{path}`: it accepts `tenant/{tenant}/{namespace}`
+as a namespace and no other slash in a namespace. The object's backend
+reference is derived from that stored key as well. A tenant always uses its own
+keys. Two tenants can each store `docs:report.pdf` without overwriting each
+other. A tenant asking for a key that only another tenant holds gets not found,
+and its listings contain only its own objects. Keys in responses come back as
+the tenant wrote them, without the prefix.
 
 The system scope uses keys exactly as given. It therefore sees the stored form,
-for example `tenant/tenant-acme/docs/report.pdf`, and can list one tenant's
+for example `tenant/tenant-acme/docs:report.pdf`, and can list one tenant's
 namespace with the prefix `tenant/tenant-acme/`. A system-scope caller naming a
 tenant in the request is refused. The scope never lifts across tenants.
 
