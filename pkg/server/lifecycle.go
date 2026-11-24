@@ -265,6 +265,8 @@ func (s *Server) resolveCAStoreType() (xkmssdk.StoreType, error) {
 }
 
 func (s *Server) initializeCA() error {
+	// Release the go-xkms module's resolver on every return (xkmsServiceForModule).
+	defer s.caSettled.Store(true)
 	// Build the unified secret resolver registry FIRST, before any of the
 	// CA-specific early returns below. The secrets manager is a core,
 	// always-on service: kms:// / credential:// URIs must resolve in EVERY
