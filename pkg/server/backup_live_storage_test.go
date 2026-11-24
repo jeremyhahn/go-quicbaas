@@ -56,7 +56,6 @@ func startBackupTestNode(t *testing.T, srv *Server) {
 }
 
 func TestServerBackup_RoundTripRestoresLiveKey(t *testing.T) {
-	saveAndRestoreLifecycleSeams(t)
 	srv := newBackupTestServer(t)
 	startBackupTestNode(t, srv)
 	require.NoError(t, srv.startBackupManager())
@@ -86,7 +85,6 @@ func TestServerBackup_RoundTripRestoresLiveKey(t *testing.T) {
 }
 
 func TestServerBackup_BackupSurvivesManagerRestart(t *testing.T) {
-	saveAndRestoreLifecycleSeams(t)
 	srv := newBackupTestServer(t)
 	startBackupTestNode(t, srv)
 	require.NoError(t, srv.startBackupManager())
@@ -121,7 +119,6 @@ func TestServerBackup_BackupSurvivesManagerRestart(t *testing.T) {
 }
 
 func TestServerBackup_NoNodeFailsClosed(t *testing.T) {
-	saveAndRestoreLifecycleSeams(t)
 	srv := newBackupTestServer(t)
 	srv.qrdbClient = nil
 
