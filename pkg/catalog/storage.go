@@ -36,77 +36,20 @@ type Storage interface {
 	IterateKeys(ctx context.Context, prefix string, fn func(string) bool) error
 
 	// Index operations
-	GetPebbleIndexManager() IndexManager
+	Indexes() IndexManager
 
 	// Lifecycle
 	Close() error
 	Sync() error
 }
 
-// PebbleStorage is the name Storage had while the catalog ran only on
-// PebbleDB. It goes with the Pebble KV adapter.
-type PebbleStorage = Storage
-
-// PebbleStorageConfig configures the PebbleDB storage layer.
-type PebbleStorageConfig struct {
-	Path            string
-	CacheSize       int64
-	WriteBufferSize int
-	MaxOpenFiles    int
-	Compression     bool
-	SyncWrites      bool
-}
-
-// DefaultPebbleStorageConfig returns sensible defaults for PebbleDB storage configuration.
-func DefaultPebbleStorageConfig() *PebbleStorageConfig {
-	return &PebbleStorageConfig{
-		CacheSize:       64 * 1024 * 1024,
-		WriteBufferSize: 16 * 1024 * 1024,
-		MaxOpenFiles:    1000,
-		Compression:     true,
-		SyncWrites:      true,
-	}
-}
-
-// Validate validates the PebbleDB storage configuration.
-func (c *PebbleStorageConfig) Validate() error {
-	if c.Path == "" {
-		return NewStorageError("validate", &pebbleConfigError{field: "Path", msg: "path is required"})
-	}
-	if c.CacheSize < 0 {
-		return NewStorageError("validate", &pebbleConfigError{field: "CacheSize", msg: "must be non-negative"})
-	}
-	if c.WriteBufferSize < 0 {
-		return NewStorageError("validate", &pebbleConfigError{field: "WriteBufferSize", msg: "must be non-negative"})
-	}
-	if c.MaxOpenFiles < 0 {
-		return NewStorageError("validate", &pebbleConfigError{field: "MaxOpenFiles", msg: "must be non-negative"})
-	}
-	return nil
-}
-
-// WithDefaults returns a config with defaults applied for zero values.
-func (c *PebbleStorageConfig) WithDefaults() *PebbleStorageConfig {
-	cfg := *c
-	defaults := DefaultPebbleStorageConfig()
-	if cfg.CacheSize == 0 {
-		cfg.CacheSize = defaults.CacheSize
-	}
-	if cfg.WriteBufferSize == 0 {
-		cfg.WriteBufferSize = defaults.WriteBufferSize
-	}
-	if cfg.MaxOpenFiles == 0 {
-		cfg.MaxOpenFiles = defaults.MaxOpenFiles
-	}
-	return &cfg
-}
-
-type pebbleConfigError struct {
+// storageInputError describes an argument the storage layer refuses.
+type storageInputError struct {
 	field string
 	msg   string
 }
 
-func (e *pebbleConfigError) Error() string {
+func (e *storageInputError) Error() string {
 	return e.field + ": " + e.msg
 }
 
@@ -116,8 +59,7 @@ type kvStorage struct {
 	indexManager IndexManager
 
 	// gate keeps the KV open for the operations running against it and makes
-	// Close wait for them, so no call is ever issued on a closed KV (a closed
-	// PebbleDB instance panics instead of returning an error).
+	// Close wait for them, so no call is ever issued on a closed KV.
 	gate *storeGate
 }
 
@@ -133,20 +75,6 @@ func NewKVStorage(kv KV) (Storage, error) {
 	gate := newStoreGate()
 	indexMgr := &indexManager{kv: kv, gate: gate}
 	return &kvStorage{kv: kv, indexManager: indexMgr, gate: gate}, nil
-}
-
-// NewPebbleStorage opens a catalog Storage on a local PebbleDB instance.
-func NewPebbleStorage(config *PebbleStorageConfig) (PebbleStorage, error) {
-	return OpenPebbleStorage(config)
-}
-
-// OpenPebbleStorage opens a catalog Storage on a local PebbleDB instance.
-func OpenPebbleStorage(config *PebbleStorageConfig) (PebbleStorage, error) {
-	kv, err := newPebbleKV(config)
-	if err != nil {
-		return nil, err
-	}
-	return NewKVStorage(kv)
 }
 
 func (s *kvStorage) GetEntry(ctx context.Context, key string) (*CatalogEntry, error) {
@@ -187,7 +115,7 @@ func (s *kvStorage) PutEntry(ctx context.Context, entry *CatalogEntry) error {
 		return NewStorageError("put", err)
 	}
 	if entry == nil {
-		return NewStorageError("put", &pebbleConfigError{field: "entry", msg: "entry cannot be nil"})
+		return NewStorageError("put", &storageInputError{field: "entry", msg: "entry cannot be nil"})
 	}
 	if entry.Key == "" {
 		return NewKeyEmptyError()
@@ -413,7 +341,7 @@ func (s *kvStorage) IterateKeys(ctx context.Context, prefix string, fn func(stri
 	return nil
 }
 
-func (s *kvStorage) GetPebbleIndexManager() IndexManager { return s.indexManager }
+func (s *kvStorage) Indexes() IndexManager { return s.indexManager }
 
 // Close shuts the store down. It waits for the reads and writes already in
 // flight to finish before closing the KV, so a background scan can never be

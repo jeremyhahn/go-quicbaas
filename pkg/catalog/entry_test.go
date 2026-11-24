@@ -1900,74 +1900,8 @@ func TestPebbleStorage_IterateKeys_EdgeCases(t *testing.T) {
 	})
 }
 
-func TestOpenPebbleStorage_EdgeCases(t *testing.T) {
-	t.Run("open with compression disabled", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		cfg := &PebbleStorageConfig{
-			Path:        tmpDir,
-			Compression: false,
-		}
-		storage, err := OpenPebbleStorage(cfg)
-		if err != nil {
-			t.Fatalf("failed to open storage: %v", err)
-		}
-		defer storage.Close()
-
-		assertStoreRoundTrip(t, storage)
-	})
-
-	t.Run("open with zero write buffer size uses default", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		cfg := &PebbleStorageConfig{
-			Path:            tmpDir,
-			WriteBufferSize: 0, // Should use default
-		}
-		storage, err := OpenPebbleStorage(cfg)
-		if err != nil {
-			t.Fatalf("failed to open storage: %v", err)
-		}
-		defer storage.Close()
-	})
-
-	t.Run("open existing database", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		cfg := &PebbleStorageConfig{Path: tmpDir}
-
-		// Create and close first instance
-		storage1, err := OpenPebbleStorage(cfg)
-		if err != nil {
-			t.Fatalf("failed to create storage: %v", err)
-		}
-
-		// Put some data
-		ctx := context.Background()
-		entry := createPebbleTestEntry("ns1:persist/test")
-		if err := storage1.PutEntry(ctx, entry); err != nil {
-			t.Fatalf("failed to put entry: %v", err)
-		}
-		storage1.Close()
-
-		// Reopen and verify data persists
-		storage2, err := OpenPebbleStorage(cfg)
-		if err != nil {
-			t.Fatalf("failed to reopen storage: %v", err)
-		}
-		defer storage2.Close()
-
-		retrieved, err := storage2.GetEntry(ctx, entry.Key)
-		if err != nil {
-			t.Fatalf("failed to get entry after reopen: %v", err)
-		}
-		if retrieved.Key != entry.Key {
-			t.Errorf("expected key %s, got %s", entry.Key, retrieved.Key)
-		}
-	})
-}
-
 func TestPebbleStorage_ClosedOperations(t *testing.T) {
-	tmpDir := t.TempDir()
-	cfg := &PebbleStorageConfig{Path: tmpDir, SyncWrites: false}
-	storage, err := NewPebbleStorage(cfg)
+	storage, err := NewKVStorage(NewMemoryKV())
 	if err != nil {
 		t.Fatalf("failed to create storage: %v", err)
 	}
@@ -2111,12 +2045,12 @@ func TestCatalogEntry_Encode_EdgeCases(t *testing.T) {
 }
 
 // =============================================================================
-// pebbleConfigError Tests
+// storageInputError Tests
 // =============================================================================
 
 func TestPebbleConfigError(t *testing.T) {
 	t.Run("error string format", func(t *testing.T) {
-		err := &pebbleConfigError{field: "Path", msg: "path is required"}
+		err := &storageInputError{field: "Path", msg: "path is required"}
 		errStr := err.Error()
 		if errStr != "Path: path is required" {
 			t.Errorf("unexpected error string: %s", errStr)

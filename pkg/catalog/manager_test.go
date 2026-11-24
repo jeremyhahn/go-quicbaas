@@ -17,8 +17,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -29,18 +27,8 @@ import (
 func setupTestManager(t *testing.T) (CatalogManager, func()) {
 	t.Helper()
 
-	tmpDir, err := os.MkdirTemp("", "catalog-manager-test-*")
+	storage, err := NewKVStorage(NewMemoryKV())
 	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-
-	dbPath := filepath.Join(tmpDir, "testdb")
-	storage, err := NewPebbleStorage(&PebbleStorageConfig{
-		Path:       dbPath,
-		SyncWrites: false, // Faster for tests
-	})
-	if err != nil {
-		os.RemoveAll(tmpDir)
 		t.Fatalf("failed to create storage: %v", err)
 	}
 
@@ -49,13 +37,11 @@ func setupTestManager(t *testing.T) (CatalogManager, func()) {
 	})
 	if err != nil {
 		storage.Close()
-		os.RemoveAll(tmpDir)
 		t.Fatalf("failed to create manager: %v", err)
 	}
 
 	cleanup := func() {
 		manager.Close()
-		os.RemoveAll(tmpDir)
 	}
 
 	return manager, cleanup

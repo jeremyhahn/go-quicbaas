@@ -16,7 +16,6 @@ package catalog
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"strconv"
 	"sync/atomic"
 	"testing"
@@ -29,27 +28,17 @@ import (
 // test is that the STORE applies a catalog entry and its index keys as one
 // transaction, and an in-memory double that agrees with this package would
 // prove nothing about that. The adapter's request shape is tested with a
-// double in kv_qrdb_test.go.
+// double in kv_qrdb_test.go. The "memory" half runs the in-memory KV that
+// this package's data-shaped tests use; this suite is what proves that double
+// agrees with go-qrdb.
 
 // contractNamespaces hands each qrdb-backed test a namespace no other test
 // uses, so no two tests see each other's keys on the shared node.
 var contractNamespaces atomic.Uint64
 
 func TestStorageContract(t *testing.T) {
-	t.Run("pebble", func(t *testing.T) {
-		runStorageContract(t, func(t *testing.T) Storage {
-			t.Helper()
-			kv, err := newPebbleKV(&PebbleStorageConfig{Path: filepath.Join(t.TempDir(), "catalog")})
-			if err != nil {
-				t.Fatalf("newPebbleKV() error = %v", err)
-			}
-			s, err := NewKVStorage(kv)
-			if err != nil {
-				t.Fatalf("NewKVStorage() error = %v", err)
-			}
-			t.Cleanup(func() { _ = s.Close() })
-			return s
-		})
+	t.Run("memory", func(t *testing.T) {
+		runStorageContract(t, newMemoryStorage)
 	})
 
 	t.Run("qrdb", func(t *testing.T) {
@@ -69,6 +58,18 @@ func TestStorageContract(t *testing.T) {
 			return s
 		})
 	})
+}
+
+// newMemoryStorage returns a Storage over a fresh in-memory KV, closed when
+// the test ends.
+func newMemoryStorage(t *testing.T) Storage {
+	t.Helper()
+	s, err := NewKVStorage(NewMemoryKV())
+	if err != nil {
+		t.Fatalf("NewKVStorage() error = %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	return s
 }
 
 // runStorageContract checks the behaviour every Storage must share, whatever
@@ -177,7 +178,7 @@ func runStorageContract(t *testing.T, newStorage func(t *testing.T) Storage) {
 
 	t.Run("indexes follow the entry", func(t *testing.T) {
 		s := newStorage(t)
-		idx := s.GetPebbleIndexManager()
+		idx := s.Indexes()
 		entry := testEntry("ns1:idx/a", "store-old", "tenant-idx", StatusActive)
 		if err := s.PutEntry(ctx, entry); err != nil {
 			t.Fatalf("PutEntry() error = %v", err)
@@ -224,7 +225,7 @@ func runStorageContract(t *testing.T, newStorage func(t *testing.T) Storage) {
 
 	t.Run("index paging", func(t *testing.T) {
 		s := newStorage(t)
-		idx := s.GetPebbleIndexManager()
+		idx := s.Indexes()
 		var want []string
 		for i := 0; i < 5; i++ {
 			k := fmt.Sprintf("ns1:page/%d", i)

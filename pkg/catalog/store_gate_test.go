@@ -178,7 +178,7 @@ func TestPebbleStorageReadsDuringCloseDoNotPanic(t *testing.T) {
 		}
 	}
 
-	indexes := storage.GetPebbleIndexManager()
+	indexes := storage.Indexes()
 
 	const readers = 8
 	var ready sync.WaitGroup

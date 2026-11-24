@@ -79,7 +79,7 @@ type indexManager struct {
 // NewIndexManager creates a new index manager over the given KV.
 // The caller owns the KV: closing it while index reads are in flight is
 // the caller's responsibility. Index managers obtained from a Storage via
-// GetPebbleIndexManager are tied to that store's lifecycle instead.
+// Indexes are tied to that store's lifecycle instead.
 func NewIndexManager(kv KV) (IndexManager, error) {
 	return newGatedIndexManager(kv, newStoreGate())
 }
@@ -350,7 +350,7 @@ func (m *indexManager) listByPrefix(ctx context.Context, prefix []byte, opts *Li
 	}
 
 	// Hold the store open for the life of the scan: a closed KV must never be
-	// read (PebbleDB panics when an iterator is created on a closed database).
+	// read.
 	if err := m.gate.enter(); err != nil {
 		return nil, err
 	}

@@ -17,30 +17,17 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
-	"os"
-	"path/filepath"
 	"testing"
 )
 
 // testPebbleDB creates a temporary PebbleDB for testing.
-func testPebbleDB(t *testing.T) (*pebbleKV, func()) {
+func testPebbleDB(t *testing.T) (KV, func()) {
 	t.Helper()
 
-	tmpDir, err := os.MkdirTemp("", "catalog-index-test-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-
-	dbPath := filepath.Join(tmpDir, "test.db")
-	db, err := newPebbleKV(&PebbleStorageConfig{Path: dbPath})
-	if err != nil {
-		os.RemoveAll(tmpDir)
-		t.Fatalf("failed to open pebble: %v", err)
-	}
+	db := NewMemoryKV()
 
 	cleanup := func() {
 		db.Close()
-		os.RemoveAll(tmpDir)
 	}
 
 	return db, cleanup
