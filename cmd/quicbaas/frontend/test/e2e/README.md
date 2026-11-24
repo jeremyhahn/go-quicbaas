@@ -47,7 +47,7 @@ test/e2e-coverage-matrix.test.ts fails when a route has no row.
 | `tenant-barrier` | #/tenant-barrier | detail, edit | tenant_barrier.spec.ts |
 | `ceremony` | #/ceremony | detail, create | ceremony.spec.ts, rapid_nav_no_duplicate_keys.spec.ts, security_surfaces.spec.ts |
 | `bootstrap` | #/bootstrap | detail, create | bootstrap.spec.ts, rapid_nav_no_duplicate_keys.spec.ts, security_surfaces.spec.ts |
-| `ssh-keys` | #/ssh-keys, #/sshkeys | list, create, delete | rapid_nav_no_duplicate_keys.spec.ts, ssh_generate.spec.ts, ssh_keys.spec.ts |
+| `ssh-keys` | #/ssh-keys, #/sshkeys | list, create, delete, detail, public export, sign, known-host verify, authorized list, authorized add, authorized detail, authorized remove, authorized format, authorized verify | rapid_nav_no_duplicate_keys.spec.ts, ssh_generate.spec.ts, ssh_keys.spec.ts |
 | `my-sessions` | #/my-sessions | list, detail, delete | none |
 | `attestation` | #/attestation | list, create, delete | none |
 | `oauth-apps` | #/oauth-apps | list, create, edit, delete | none |

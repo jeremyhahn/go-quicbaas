@@ -553,23 +553,23 @@ RestSecretsClient builds `/api/v1/secrets/<path>` for the `*` routes (POST store
 
 | Method | Path | Handler | SDK file | Console |
 |---|---|---|---|---|
-| POST | `/api/v1/ssh/authorized` | HandleEmitAuthorized | rest.ts | not covered |
-| GET | `/api/v1/ssh/authorized/keys` | HandleListAuthorizedKeys | - | not covered |
-| POST | `/api/v1/ssh/authorized/keys` | HandleAddAuthorizedKey | - | not covered |
-| DELETE | `/api/v1/ssh/authorized/keys/{scope}/{owner}/{name}` | HandleRemoveAuthorizedKey | - | not covered |
-| GET | `/api/v1/ssh/authorized/keys/{scope}/{owner}/{name}` | HandleGetAuthorizedKey | - | not covered |
-| POST | `/api/v1/ssh/authorized/verify` | HandleVerifyAuthorized | rest.ts | not covered |
+| POST | `/api/v1/ssh/authorized` | HandleEmitAuthorized | rest.ts | covered: views/security/ssh/AuthorizedKeysPanel.svelte |
+| GET | `/api/v1/ssh/authorized/keys` | HandleListAuthorizedKeys | rest.ts | covered: views/security/ssh/AuthorizedKeysPanel.svelte |
+| POST | `/api/v1/ssh/authorized/keys` | HandleAddAuthorizedKey | rest.ts | covered: views/security/ssh/AuthorizedKeysPanel.svelte |
+| DELETE | `/api/v1/ssh/authorized/keys/{scope}/{owner}/{name}` | HandleRemoveAuthorizedKey | - (rest.ts†) | covered: views/security/ssh/AuthorizedKeysPanel.svelte |
+| GET | `/api/v1/ssh/authorized/keys/{scope}/{owner}/{name}` | HandleGetAuthorizedKey | - (rest.ts†) | covered: views/security/ssh/AuthorizedKeysPanel.svelte |
+| POST | `/api/v1/ssh/authorized/verify` | HandleVerifyAuthorized | rest.ts | covered: views/security/ssh/AuthorizedKeysPanel.svelte |
 | GET | `/api/v1/ssh/keys` | HandleListSSHKeys | rest.ts | covered: views/security/SSHKeysView.svelte |
 | POST | `/api/v1/ssh/keys` | HandleGenerateSSHKey | rest.ts | covered: views/security/ssh/GenerateKeyModal.svelte |
 | POST | `/api/v1/ssh/keys/import` | HandleImportSSHKey | rest.ts | covered: views/security/ssh/ImportKeyModal.svelte |
 | DELETE | `/api/v1/ssh/keys/{scope}/{owner}/{name}` | HandleDeleteSSHKey | rest.ts | covered: views/security/SSHKeysView.svelte |
-| GET | `/api/v1/ssh/keys/{scope}/{owner}/{name}` | HandleGetSSHKey | rest.ts | not covered |
-| GET | `/api/v1/ssh/keys/{scope}/{owner}/{name}/public` | HandleExportSSHKeyPublic | rest.ts | not covered |
-| POST | `/api/v1/ssh/keys/{scope}/{owner}/{name}/sign` | HandleSignSSHDigest | rest.ts | not covered |
+| GET | `/api/v1/ssh/keys/{scope}/{owner}/{name}` | HandleGetSSHKey | rest.ts | covered: views/security/ssh/PublicKeyModal.svelte |
+| GET | `/api/v1/ssh/keys/{scope}/{owner}/{name}/public` | HandleExportSSHKeyPublic | rest.ts | covered: views/security/ssh/PublicKeyModal.svelte |
+| POST | `/api/v1/ssh/keys/{scope}/{owner}/{name}/sign` | HandleSignSSHDigest | rest.ts | covered: views/security/ssh/SignDigestModal.svelte |
 | GET | `/api/v1/ssh/known-hosts` | HandleListKnownHosts | rest.ts | covered: views/security/ssh/KnownHostsPanel.svelte |
 | POST | `/api/v1/ssh/known-hosts` | HandleAddKnownHost | rest.ts | covered: views/security/ssh/KnownHostsPanel.svelte |
 | DELETE | `/api/v1/ssh/known-hosts/{host}` | HandleRemoveKnownHost | rest.ts | covered: views/security/ssh/KnownHostsPanel.svelte |
-| POST | `/api/v1/ssh/known-hosts/{host}/verify` | HandleVerifyKnownHost | rest.ts | not covered |
+| POST | `/api/v1/ssh/known-hosts/{host}/verify` | HandleVerifyKnownHost | rest.ts | covered: views/security/ssh/KnownHostsPanel.svelte |
 
 ### timeseries
 
