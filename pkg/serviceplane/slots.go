@@ -87,11 +87,19 @@ func (p *Plane) FillSlot(ctx context.Context, epoch uint64, slot string, rel *Re
 		return p.slotSettle(ctx, "fill", cur, prior, ErrTransition, cause, nil)
 	}
 	if held, ok := cur.svc.Slots[slot]; ok {
-		if err := p.launcher.Halt(ctx, slotInstance(cur.svc, slot, &held)); err != nil {
+		inst := slotInstance(cur.svc, slot, &held)
+		if err := p.held(ctx, "fill", &cur, func(c context.Context) error { return p.launcher.Halt(c, inst) }); err != nil {
+			if lostClaim(err) {
+				return err
+			}
 			return p.slotSettle(ctx, "fill", cur, prior, ErrLaunch, fmt.Errorf("drain slot %s: %w", slot, err), nil)
 		}
 	}
-	if err := p.launcher.Launch(ctx, slotInstance(cur.svc, slot, rel)); err != nil {
+	inst := slotInstance(cur.svc, slot, rel)
+	if err := p.held(ctx, "fill", &cur, func(c context.Context) error { return p.launcher.Launch(c, inst) }); err != nil {
+		if lostClaim(err) {
+			return err
+		}
 		return p.slotSettle(ctx, "fill", cur, prior, ErrLaunch, err, func(next *Service) {
 			delete(next.Slots, slot)
 		})
@@ -122,13 +130,20 @@ func (p *Plane) SwitchSlot(ctx context.Context, epoch uint64, tenant, name, slot
 		return p.slotSettle(ctx, "switch", cur, prior, ErrTransition, fmt.Errorf("slot %s holds no release", slot), nil)
 	}
 	if cur.svc.Slot == "" && prior == StateRunning {
-		if err := p.launcher.Halt(ctx, cur.svc); err != nil {
+		running := cur.svc
+		if err := p.held(ctx, "switch", &cur, func(c context.Context) error { return p.launcher.Halt(c, running) }); err != nil {
+			if lostClaim(err) {
+				return err
+			}
 			return p.slotSettle(ctx, "switch", cur, prior, ErrLaunch, fmt.Errorf("halt the deployed instance: %w", err), nil)
 		}
 	}
 	held := cur.svc.Grants
 	cleanup := cur.svc.Cleanup
 	last, grants, incomplete, err := p.grant(ctx, VerbRedeploy, cur, cur.svc, &rel.Manifest, held)
+	if lostClaim(err) {
+		return err
+	}
 	if err != nil {
 		return p.slotSettle(ctx, "switch", last, prior, ErrGrant, err, func(next *Service) {
 			next.Grants = make(map[GrantKind]string, len(held)+len(grants))
@@ -169,7 +184,11 @@ func (p *Plane) DrainSlot(ctx context.Context, epoch uint64, tenant, name, slot 
 	if !ok {
 		return p.slotSettle(ctx, "drain", cur, prior, nil, nil, nil)
 	}
-	if err := p.launcher.Halt(ctx, slotInstance(cur.svc, slot, &held)); err != nil {
+	inst := slotInstance(cur.svc, slot, &held)
+	if err := p.held(ctx, "drain", &cur, func(c context.Context) error { return p.launcher.Halt(c, inst) }); err != nil {
+		if lostClaim(err) {
+			return err
+		}
 		return p.slotSettle(ctx, "drain", cur, prior, ErrLaunch, err, nil)
 	}
 	return p.slotSettle(ctx, "drain", cur, prior, nil, nil, func(next *Service) {

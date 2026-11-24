@@ -799,3 +799,29 @@ func TestClaim_AStoreOutageDuringRenewalKeepsTheClaim(t *testing.T) {
 		t.Fatalf("restart = %+v, %v", r.svc, r.err)
 	}
 }
+
+func TestClaim_ASlowFillSlotKeepsItsClaim(t *testing.T) {
+	f := newFixture(t, renewEvery(5*time.Millisecond))
+	f.deploy(t, "web")
+	b := blockLaunches(f)
+	rel := &Release{Kind: ReleaseService, Version: "2.0.0", Manifest: *validManifest()}
+	done := make(chan error, 1)
+	go func() { done <- f.plane.FillSlot(ctx, 1, "b", rel) }()
+	b.waitEntered(t)
+	f.advance(DefaultStaleClaim + time.Second)
+	waitFor(t, "the slot claim renewed", func() bool {
+		svc, err := f.plane.Get(ctx, "acme", "web")
+		return err == nil && svc.State == StateTransitioning && svc.UpdatedAt.Equal(f.now())
+	})
+	if got, err := f.plane.Recover(ctx); err != nil || len(got) != 0 {
+		t.Fatalf("recover a live slot claim = %+v, %v", got, err)
+	}
+	close(b.release)
+	if err := <-done; err != nil {
+		t.Fatalf("fill slot = %v", err)
+	}
+	svc, err := f.plane.Get(ctx, "acme", "web")
+	if err != nil || svc.State != StateRunning || svc.Slots["b"].Version != "2.0.0" {
+		t.Fatalf("after fill = %+v, %v", svc, err)
+	}
+}
