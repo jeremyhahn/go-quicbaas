@@ -1,6 +1,6 @@
 # Data Encryption Keys — User Guide
 
-> **Status: NORMATIVE** · Last verified: 2026-11-23
+> **Status: NORMATIVE** · Last verified: 2026-11-24
 > Task-oriented guide to creating, rotating and retiring DEKs. Feature folder:
 > `docs/data-encryption-keys/`.
 
@@ -146,10 +146,13 @@ quicbaas dek tenant retire --version 1
   sealed under a version before you retire it.
 - **`retire` refuses the current version.** Rotate first, then retire the old
   one.
-- **Over REST, the data verbs need an https address.** `encrypt`, `decrypt`
-  and `rewrap` carry plaintext or ciphertext, so the SDK refuses to send them
-  over `http://` and never follows a redirect for them. `status`, `rotate` and
-  `retire` never send the platform bearer over http or to another host.
+- **Over REST and MCP, the data verbs need an https address.** `encrypt`,
+  `decrypt` and `rewrap` carry plaintext or ciphertext, so the SDK refuses to
+  send them over `http://` and never follows a redirect for them. `status`,
+  `rotate` and `retire` never send the platform bearer over http or to another
+  host. Over MCP every keyring verb needs an https address, because the session
+  sends the bearer from its first request; the SDK refuses the call before
+  anything is sent.
 - **No use bound.** The safety interlock does not cover this keyring yet; see
   [Engage the safety interlock](#engage-the-safety-interlock).
 

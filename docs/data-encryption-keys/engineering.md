@@ -1,6 +1,6 @@
 # Data Encryption Keys — Engineering
 
-> **Status: NORMATIVE** · Last verified: 2026-11-23
+> **Status: NORMATIVE** · Last verified: 2026-11-24
 > Implementation contract for the DEK surface. Feature folder:
 > `docs/data-encryption-keys/`.
 
@@ -22,6 +22,13 @@ Two DEK surfaces reach users through `sdk/go`:
   and rewrap also carry the secret-hop guard: their only allowed hop is the
   configured https origin, and no redirect is followed. A refusal is a
   non-retryable `CodeForbidden` error, and nothing reaches the network.
+  MCP (`sdk/go/transport/mcp/qrdb_dek_client.go`) holds the same rules. Every
+  verb sends the platform bearer, on the session's initialize too, so every
+  verb refuses a non-https endpoint before the session starts, and every hop of
+  its initialize, authenticate and tool call must be https to the configured
+  host. Encrypt, decrypt and rewrap follow no redirect, even to the same host.
+  A refusal is a non-retryable `CodeForbidden` error wrapping
+  `*mcp.DEKHopError`, which names the verb and the reason, never the data.
 - **QuicBaaS's own path-addressed DEK store** — `quicbaas.DEKClient`
   (`sdk/go/client/dek`), reached by `Security().DEK()`. It is a **parallel
   implementation** of the keyring above and is removed on the owner's word;
@@ -129,6 +136,13 @@ one explicit list of environment variables and no DEK key appears in it.
   `TestQRDBDEKClient_RefusesRedirects`, `TestQRDBDEKClient_HTTPSRoundTrip`)
   and by `TestTenantDEK_REST_SendsPlatformBearer` (over TLS) and
   `TestTenantDEK_REST_RefusesPlaintextHTTP` in `sdk/go/qrdb_dek_client_test.go`.
+- The MCP hop guard is proven by
+  `sdk/go/transport/mcp/qrdb_dek_hop_test.go` (`TestDEKHop_PlainEndpointRefused`,
+  `TestDEKHop_RedirectToPlainRefused`, `TestDEKHop_RedirectToForeignHostRefused`,
+  `TestDEKHop_DataVerbSameHostRedirectRefused`, `TestDEKHop_HTTPSRoundTrip`,
+  `TestDEKHop_RefusalIsForbidden`), each over all six verbs where it applies,
+  and by `TestTenantDEK_MCP_SendsBearer` (over TLS) and
+  `TestTenantDEK_MCP_RefusesPlaintextHTTP` in `sdk/go/qrdb_dek_client_test.go`.
 - `make integration-test-dek` drives create, get, list, rotate, delete, status,
   set default, set and clear safety (rotating under the bound), start
   re-encryption and progress over REST, gRPC and the unix socket.
