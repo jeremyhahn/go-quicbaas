@@ -170,8 +170,8 @@ func writeHeredoc(rootfs string, step *buildStep) error {
 	if err != nil {
 		return err
 	}
-	_, err = io.WriteString(file, step.Content)
-	if err = errors.Join(err, file.Close()); err != nil {
+	_, writeErr := file.WriteString(step.Content)
+	if err := errors.Join(writeErr, file.Close()); err != nil {
 		return err
 	}
 	if err := root.Chmod(rel, mode); err != nil {
