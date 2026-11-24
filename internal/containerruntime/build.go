@@ -40,9 +40,11 @@ const buildNetworkMode = "none"
 // stored image, tagged with every tag.
 //
 // Every step commits one layer on the image the step before it made, with
-// its stage's final configuration; the intermediate images stay stored,
-// untagged. Build containers run with no network.
-func (r *Runtime) buildImage(ctx context.Context, dockerfile []byte, opts buildOptions) (imageRecord, error) {
+// its stage's final configuration. When the build ends it removes the
+// images its steps committed and keeps only the final one; a failed build
+// removes them all. Base images are never removed. Build containers run
+// with no network.
+func (r *Runtime) buildImage(ctx context.Context, dockerfile []byte, opts buildOptions) (built imageRecord, err error) {
 	if len(opts.Tags) == 0 {
 		return imageRecord{}, errors.New("build: at least one tag is required")
 	}
@@ -54,6 +56,21 @@ func (r *Runtime) buildImage(ctx context.Context, dockerfile []byte, opts buildO
 	if err != nil {
 		return imageRecord{}, err
 	}
+
+	// committed is every image the build's commits stored. They are
+	// removed once the build ends, never between stages: a later stage
+	// may start from, or copy from, an earlier stage's image. A build that
+	// fails, including one whose tags fail (the final image may hold some
+	// of them already), keeps none of them.
+	var committed []string
+	defer func() {
+		keep := ""
+		if err == nil {
+			keep = built.ID
+		}
+		r.removeIntermediates(context.WithoutCancel(ctx), committed, keep)
+	}()
+
 	bases := map[string]imageRecord{}
 	plan, err := planDockerfile(ctx, instructions, buildPlanOptions{Args: opts.Args, Labels: opts.Labels},
 		func(ctx context.Context, ref string) (imageConfig, error) {
@@ -82,7 +99,7 @@ func (r *Runtime) buildImage(ctx context.Context, dockerfile []byte, opts buildO
 		case stage.BaseStage >= 0:
 			from = stageImages[stage.BaseStage]
 		}
-		b := &stageBuild{r: r, plan: plan, stage: stage, stageImages: stageImages}
+		b := &stageBuild{r: r, plan: plan, stage: stage, stageImages: stageImages, committed: &committed}
 		if stageImages[i], err = b.run(ctx, from); err != nil {
 			return imageRecord{}, err
 		}
@@ -100,6 +117,26 @@ func (r *Runtime) buildImage(ctx context.Context, dockerfile []byte, opts buildO
 	}
 	r.logger.Info("built image", "id", image.ID, "tags", opts.Tags)
 	return image, nil
+}
+
+// removeIntermediates removes every image in committed except keep,
+// newest first. Removing an image frees its top layer only when no other
+// image's layer sits on it, so the newest image goes first and each
+// removal frees the layer the one before it left. A removal that fails is
+// logged; it does not change the build's result.
+func (r *Runtime) removeIntermediates(ctx context.Context, committed []string, keep string) {
+	var errs []error
+	for _, id := range slices.Backward(committed) {
+		if id == keep {
+			continue
+		}
+		if err := r.backends.images.Remove(ctx, "sha256:"+id, true); err != nil {
+			errs = append(errs, fmt.Errorf("remove image %s: %w", id, err))
+		}
+	}
+	if err := errors.Join(errs...); err != nil {
+		r.logger.Warn("build: remove intermediate images", "error", err)
+	}
 }
 
 // buildBase is the stored base image ref, pulled when pull is set or when
@@ -130,6 +167,19 @@ type stageBuild struct {
 	plan        *buildPlan
 	stage       *buildStage
 	stageImages []string
+	// committed is the build's list of the image IDs its commits
+	// stored, in commit order; every stage adds to the same list.
+	committed *[]string
+}
+
+// commit commits the root filesystem of id as the stage's next image
+// and records the image, even when the commit also reports an error.
+func (b *stageBuild) commit(ctx context.Context, id, createdBy string) (imageRecord, error) {
+	image, err := b.r.backends.commit.Commit(ctx, id, b.stage.Config, createdBy)
+	if image.ID != "" {
+		*b.committed = append(*b.committed, image.ID)
+	}
+	return image, err
 }
 
 // run runs the stage's steps on the image from ("" for scratch) and
@@ -237,7 +287,7 @@ func (b *stageBuild) runAndCommit(ctx context.Context, step *buildStep, id strin
 		return imageRecord{}, errors.Join(
 			fmt.Errorf("RUN exited with code %d: %s", code, strings.TrimSpace(string(output))), logErr)
 	}
-	return r.backends.commit.Commit(ctx, id, b.stage.Config, "RUN "+strings.Join(step.Argv, " "))
+	return b.commit(ctx, id, "RUN "+strings.Join(step.Argv, " "))
 }
 
 // commitInRoot creates a root filesystem from the image current, lets
@@ -255,7 +305,7 @@ func (b *stageBuild) commitInRoot(ctx context.Context, current, createdBy string
 		err = write(rootfs)
 	}
 	if err == nil {
-		image, err = r.backends.commit.Commit(ctx, id, b.stage.Config, createdBy)
+		image, err = b.commit(ctx, id, createdBy)
 	}
 	if rmErr := r.backends.rootfs.Remove(id); rmErr != nil {
 		err = errors.Join(err, rmErr)

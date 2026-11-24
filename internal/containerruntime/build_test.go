@@ -14,11 +14,14 @@
 package containerruntime
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -323,4 +326,151 @@ func TestBuildImage_CopyStaysInsideTheRoot(t *testing.T) {
 	entries, err := os.ReadDir(outside)
 	require.NoError(t, err)
 	assert.Empty(t, entries, "nothing is written outside the root filesystem")
+}
+
+// assertStored checks whether ref is in the fake image store.
+func assertStored(t *testing.T, doubles *testBackends, ref string, stored bool) {
+	t.Helper()
+	_, err := doubles.images.Inspect(context.Background(), ref)
+	if stored {
+		assert.NoError(t, err, "%s is stored", ref)
+		return
+	}
+	doubles.images.mu.Lock()
+	_, ok := doubles.images.images[ref]
+	doubles.images.mu.Unlock()
+	assert.False(t, ok, "%s is removed", ref)
+}
+
+func TestBuildImage_RemovesIntermediateImages(t *testing.T) {
+	rt, doubles := newTestRuntimeWithBackends(t)
+	doubles.engine.onStart = func(_ processSpec, rootfs string) fakeResult {
+		writeBuildFile(t, rootfs, "hello", "hi\n", 0o644)
+		return fakeResult{}
+	}
+
+	built, err := buildTagged(t, rt, `FROM alpine:latest AS one
+RUN echo hi > /hello
+COPY <<EOF /etc/greeting
+hey
+EOF
+FROM scratch
+COPY --from=one /hello /etc/greeting /out/
+`)
+	require.NoError(t, err)
+
+	commits := doubles.commit.recorded()
+	require.Len(t, commits, 3)
+	assert.Equal(t, "commit-3", built.ID)
+	assertStored(t, doubles, "sha256:commit-1", false)
+	assertStored(t, doubles, "sha256:commit-2", false)
+	assertStored(t, doubles, "sha256:commit-3", true)
+	tagged, err := doubles.images.Inspect(context.Background(), buildTag)
+	require.NoError(t, err)
+	assert.Equal(t, "commit-3", tagged.ID)
+	assertStored(t, doubles, "alpine:latest", true)
+	assert.Equal(t, []string{"sha256:commit-2", "sha256:commit-1"}, doubles.images.removes,
+		"the intermediate images are removed newest first")
+}
+
+func TestBuildImage_SingleStepKeepsItsImage(t *testing.T) {
+	rt, doubles := newTestRuntimeWithBackends(t)
+
+	built, err := buildTagged(t, rt, scratchHeredoc)
+	require.NoError(t, err)
+	require.Len(t, doubles.commit.recorded(), 1)
+	assertStored(t, doubles, "sha256:"+built.ID, true)
+	assert.Empty(t, doubles.images.removes, "a build's only image is its final image")
+}
+
+func TestBuildImage_StageWithoutStepsOnlyFinal(t *testing.T) {
+	rt, doubles := newTestRuntimeWithBackends(t)
+
+	built, err := buildTagged(t, rt, "FROM alpine:latest AS a\nLABEL a=b\nFROM a\nLABEL c=d\n")
+	require.NoError(t, err)
+	commits := doubles.commit.recorded()
+	require.Len(t, commits, 2)
+	assert.Equal(t, "CONFIG", commits[0].createdBy)
+	assert.Equal(t, commits[1].image.ID, built.ID)
+	assertStored(t, doubles, "sha256:"+commits[0].image.ID, false)
+	assertStored(t, doubles, "sha256:"+commits[1].image.ID, true)
+	assertStored(t, doubles, "alpine:latest", true)
+	assert.Equal(t, []string{"sha256:" + commits[0].image.ID}, doubles.images.removes)
+}
+
+func TestBuildImage_FailedBuildRemovesItsImages(t *testing.T) {
+	rt, doubles := newTestRuntimeWithBackends(t)
+	doubles.engine.onStart = func(processSpec, string) fakeResult {
+		return fakeResult{exitCode: 1}
+	}
+
+	_, err := buildTagged(t, rt, "FROM alpine:latest\nCOPY <<EOF /a\na\nEOF\nRUN false\n")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "code 1")
+
+	commits := doubles.commit.recorded()
+	require.Len(t, commits, 1, "the COPY commits, the RUN does not")
+	assertStored(t, doubles, "sha256:"+commits[0].image.ID, false)
+	assertStored(t, doubles, buildTag, false)
+	assertStored(t, doubles, "alpine:latest", true)
+	assert.Equal(t, []string{"sha256:" + commits[0].image.ID}, doubles.images.removes)
+}
+
+func TestBuildImage_CancelledBuildRemovesItsImages(t *testing.T) {
+	rt, doubles := newTestRuntimeWithBackends(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var runs atomic.Int32
+	doubles.engine.onStart = func(processSpec, string) fakeResult {
+		if runs.Add(1) == 2 {
+			cancel()
+			return fakeResult{exitCode: 1}
+		}
+		return fakeResult{}
+	}
+
+	_, err := rt.buildImage(ctx, []byte("FROM alpine:latest\nRUN echo one\nRUN echo two\n"),
+		buildOptions{Tags: []string{buildTag}})
+	require.Error(t, err)
+	require.ErrorIs(t, ctx.Err(), context.Canceled)
+
+	commits := doubles.commit.recorded()
+	require.Len(t, commits, 1)
+	assertStored(t, doubles, "sha256:"+commits[0].image.ID, false)
+	assertStored(t, doubles, buildTag, false)
+	assertStored(t, doubles, "alpine:latest", true)
+	assert.Equal(t, []string{"sha256:" + commits[0].image.ID}, doubles.images.removes,
+		"the removal does not take the build's cancellation")
+}
+
+func TestBuildImage_RemovalFailureDoesNotFailTheBuild(t *testing.T) {
+	rt, doubles := newTestRuntimeWithBackends(t)
+	var logs bytes.Buffer
+	rt.logger = slog.New(slog.NewTextHandler(&logs, nil))
+	doubles.images.removeErr = errTestBackend
+	doubles.engine.onStart = func(processSpec, string) fakeResult { return fakeResult{} }
+
+	built, err := buildTagged(t, rt, "FROM alpine:latest\nRUN echo one\nRUN echo two\n")
+	require.NoError(t, err)
+	assert.Equal(t, "commit-2", built.ID)
+	tagged, err := doubles.images.Inspect(context.Background(), buildTag)
+	require.NoError(t, err)
+	assert.Equal(t, built.ID, tagged.ID)
+	assert.Equal(t, []string{"sha256:commit-1"}, doubles.images.removes)
+	assert.Contains(t, logs.String(), "build: remove intermediate images")
+	assert.Contains(t, logs.String(), errTestBackend.Error())
+}
+
+func TestBuildImage_TagFailureRemovesTheFinalImage(t *testing.T) {
+	rt, doubles := newTestRuntimeWithBackends(t)
+	doubles.images.tagErr = errTestBackend
+	doubles.engine.onStart = func(processSpec, string) fakeResult { return fakeResult{} }
+
+	_, err := buildTagged(t, rt, "FROM alpine:latest\nRUN echo one\nRUN echo two\n")
+	require.ErrorIs(t, err, errTestBackend)
+	assertStored(t, doubles, "sha256:commit-1", false)
+	assertStored(t, doubles, "sha256:commit-2", false)
+	assertStored(t, doubles, "alpine:latest", true)
+	assert.Equal(t, []string{"sha256:commit-2", "sha256:commit-1"}, doubles.images.removes,
+		"a build whose tags fail removes its final image too")
 }

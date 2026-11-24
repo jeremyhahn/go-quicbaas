@@ -407,6 +407,13 @@ type fakeImages struct {
 	pushDigest string
 	// pushes records each pushed reference and the auth it carried.
 	pushes []fakePush
+
+	// removeErr fails every removal; removes records each removed
+	// reference in order, failed or not.
+	removeErr error
+	removes   []string
+	// tagErr fails every tag.
+	tagErr error
 }
 
 // fakePush is one push the fake image store took.
@@ -463,6 +470,13 @@ func (s *fakeImages) Inspect(ctx context.Context, ref string) (imageRecord, erro
 func (s *fakeImages) Remove(ctx context.Context, ref string, force bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.removes = append(s.removes, ref)
+	if s.removeErr != nil {
+		return s.removeErr
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if _, ok := s.images[ref]; !ok {
 		if force {
 			return nil
@@ -476,6 +490,9 @@ func (s *fakeImages) Remove(ctx context.Context, ref string, force bool) error {
 func (s *fakeImages) Tag(ctx context.Context, source, target string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.tagErr != nil {
+		return s.tagErr
+	}
 	record, ok := s.images[source]
 	if !ok {
 		id := strings.TrimPrefix(source, "sha256:")
