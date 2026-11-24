@@ -1700,30 +1700,29 @@ func amqpTopicMatch(pattern, routingKey string) bool {
 	return amqpTopicMatchWords(strings.Split(pattern, "."), strings.Split(routingKey, "."))
 }
 
-// amqpTopicMatchWords matches pattern words against routing key words.
+// amqpTopicMatchWords matches pattern words against routing key words with
+// a two-row dynamic program, without recursion. It costs
+// O(len(pattern) x len(key)) time and O(len(key)) memory, whatever the
+// number of '#' words in the pattern.
 func amqpTopicMatchWords(pattern, key []string) bool {
-	for len(pattern) > 0 {
-		switch pattern[0] {
-		case "#":
-			rest := pattern[1:]
-			for i := 0; i <= len(key); i++ {
-				if amqpTopicMatchWords(rest, key[i:]) {
-					return true
-				}
-			}
-			return false
-		case "*":
-			if len(key) == 0 {
-				return false
-			}
-		default:
-			if len(key) == 0 || key[0] != pattern[0] {
-				return false
+	// cur[j] reports whether the pattern words seen so far match key[:j].
+	cur := make([]bool, len(key)+1)
+	next := make([]bool, len(key)+1)
+	cur[0] = true
+	for _, word := range pattern {
+		for j := 0; j <= len(key); j++ {
+			switch word {
+			case "#":
+				next[j] = cur[j] || (j > 0 && next[j-1])
+			case "*":
+				next[j] = j > 0 && cur[j-1]
+			default:
+				next[j] = j > 0 && cur[j-1] && key[j-1] == word
 			}
 		}
-		pattern, key = pattern[1:], key[1:]
+		cur, next = next, cur
 	}
-	return len(key) == 0
+	return cur[len(key)]
 }
 
 // handleBasicGet handles Basic.Get.

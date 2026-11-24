@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"strings"
 	"testing"
 	"time"
 
@@ -1441,11 +1442,44 @@ func TestAMQPTopicMatch(t *testing.T) {
 		{"order.created", "order.created", true},
 		{"order.created", "order.deleted", false},
 		{"#.eu", "order.created.eu", true},
+		{"#.#", "a", true},
+		{"a.#.b", "a.b", true},
+		{"a.#.b", "a.x.y.b", true},
+		{"a.#.b", "a.x.y.c", false},
+		{"*.#", "a", true},
+		// An empty routing key splits into one empty word, so '*' matches
+		// it and '*.#' matches the empty key.
+		{"*.#", "", true},
+		{"#", "", true},
+		{"a.*.#.c", "a.b.c", true},
 	}
 	for _, tt := range tests {
 		if got := amqpTopicMatch(tt.pattern, tt.key); got != tt.want {
 			t.Errorf("amqpTopicMatch(%q, %q) = %v, want %v", tt.pattern, tt.key, got, tt.want)
 		}
+	}
+}
+
+// TestAMQPTopicMatch_AdversarialPatternIsLinear checks that a binding key
+// made of many '#' words with a non-matching last word does not take
+// exponential time on a short routing key.
+func TestAMQPTopicMatch_AdversarialPatternIsLinear(t *testing.T) {
+	pattern := strings.Repeat("#.", 40) + "z"
+	key := strings.TrimSuffix(strings.Repeat("a.", 40), ".")
+
+	done := make(chan bool, 1)
+	go func() { done <- amqpTopicMatch(pattern, key) }()
+	select {
+	case got := <-done:
+		if got {
+			t.Fatalf("amqpTopicMatch(%q, %q) = true, want false", pattern, key)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("amqpTopicMatch did not return within 5s on an adversarial pattern")
+	}
+
+	if !amqpTopicMatch(strings.Repeat("#.", 40)+"a", key) {
+		t.Fatal("amqpTopicMatch of '#' words then 'a' against 'a' words = false, want true")
 	}
 }
 
