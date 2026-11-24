@@ -16,7 +16,9 @@ package sdlc
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
+	"strings"
 )
 
 // errBranchPagesExhausted reports a branch listing that never ended.
@@ -86,8 +88,116 @@ func (g *GitHubBackend) BranchContained(ctx context.Context, repo RepoRef, base,
 	}
 }
 
-// DeleteBranchAt deletes name only while it points at sha. It is not
-// implemented yet.
-func (g *GitHubBackend) DeleteBranchAt(_ context.Context, _ RepoRef, _, _ string) error {
-	return ErrBranchInventoryUnsupported
+// githubZeroOID is the object ID a ref update names to delete the ref.
+const githubZeroOID = "0000000000000000000000000000000000000000"
+
+// githubDeleteRefMutation applies the ref updates it is given atomically,
+// refusing any whose ref is not at its beforeOid.
+const githubDeleteRefMutation = `mutation($input: UpdateRefsInput!) { updateRefs(input: $input) { clientMutationId } }`
+
+// githubGraphQLURL is the GraphQL endpoint of the GitHub whose REST root is
+// base: https://api.github.com/graphql for github.com, and
+// https://host/api/graphql for a GitHub Enterprise Server at
+// https://host/api/v3.
+func githubGraphQLURL(base string) string {
+	base = strings.TrimRight(base, "/")
+	if strings.HasSuffix(base, "/api/v3") {
+		return strings.TrimSuffix(base, "/v3") + "/graphql"
+	}
+	return base + "/graphql"
+}
+
+// repositoryNodeID returns the repository's GraphQL node ID.
+func (g *GitHubBackend) repositoryNodeID(ctx context.Context, repo RepoRef) (string, error) {
+	var raw struct {
+		NodeID string `json:"node_id"`
+	}
+	if err := g.do(ctx, forgeRequest{
+		method:    http.MethodGet,
+		path:      repoPath(repo),
+		out:       &raw,
+		operation: "RepositoryNodeID",
+	}); err != nil {
+		return "", err
+	}
+	if raw.NodeID == "" {
+		return "", &IncompleteResponseError{Op: "RepositoryNodeID " + repo.String(), Missing: "node_id"}
+	}
+	return raw.NodeID, nil
+}
+
+// DeleteBranchAt deletes name only while it points at sha.
+//
+// GitHub's REST API has no conditional ref delete, so this is the GraphQL
+// updateRefs mutation with beforeOid set to sha: GitHub refuses the update
+// when the ref is anywhere else, in the same operation as the delete. A
+// refusal answers 200 with an errors array, so the outcome is decided by
+// reading the branch back, never by the wording of the message: absent is
+// a delete, a different tip is ErrBranchMoved, and the same tip is an
+// error. It never falls back to an unconditional delete.
+func (g *GitHubBackend) DeleteBranchAt(ctx context.Context, repo RepoRef, name, sha string) error {
+	if name == "" {
+		return &InvalidInputError{Field: "name", Message: "a conditional delete needs a branch name"}
+	}
+	if sha == "" {
+		return &InvalidInputError{Field: "sha", Message: "a conditional delete needs the expected tip"}
+	}
+	id, err := g.repositoryNodeID(ctx, repo)
+	if err != nil {
+		return err
+	}
+	var answer struct {
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	postErr := g.do(ctx, forgeRequest{
+		method:   http.MethodPost,
+		path:     "/graphql",
+		endpoint: githubGraphQLURL(g.baseURL),
+		headers:  map[string]string{"GraphQL-Features": "update_refs_preview"},
+		body: map[string]any{
+			"query": githubDeleteRefMutation,
+			"variables": map[string]any{
+				"input": map[string]any{
+					"repositoryId": id,
+					"refUpdates": []map[string]any{{
+						"name":      "refs/heads/" + name,
+						"beforeOid": sha,
+						"afterOid":  githubZeroOID,
+						"force":     false,
+					}},
+				},
+			},
+		},
+		out:       &answer,
+		operation: "DeleteBranchAt",
+	})
+	if status := forgeStatusOf(postErr); status == http.StatusUnauthorized || status == http.StatusForbidden {
+		return postErr
+	}
+
+	current, err := g.GetBranch(ctx, repo, name)
+	switch {
+	case errors.Is(err, ErrNotFound):
+		return nil
+	case err != nil:
+		return err
+	case current.SHA != sha:
+		return fmt.Errorf("%s %s: %w", repo, name, ErrBranchMoved)
+	}
+	got := "branch present at the expected tip"
+	switch {
+	case postErr != nil:
+		got += ": " + postErr.Error()
+	case len(answer.Errors) > 0:
+		got += ": " + answer.Errors[0].Message
+	}
+	return &ForgeWriteNotAppliedError{
+		Type:      ForgeGitHub,
+		Operation: "DeleteBranchAt",
+		Subject:   repo.String() + " " + name,
+		Want:      "absent",
+		Got:       got,
+	}
 }

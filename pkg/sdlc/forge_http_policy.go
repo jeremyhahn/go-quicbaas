@@ -78,6 +78,7 @@ type forgeWritePolicy struct {
 //	CloseIssue          write     replay      PATCH to a state; the response is checked
 //	ClosePullRequest    write     replay      PATCH to a state; the method reads the pull request back
 //	DeleteBranch        write     replay      a replayed DELETE answers 404, which the method accepts
+//	DeleteBranchAt      write     replay      a replayed conditional delete is refused once the ref is gone; the method reads the branch back
 //	SetCommitStatus     write     replay      the latest status per context wins; read back
 //	UpdateWebhook       write     replay      PATCH to a configuration; EnsureWebhook reads it back
 //	DeleteWebhook       write     replay      a replayed DELETE answers 404, which the caller accepts
@@ -101,6 +102,7 @@ var forgeWritePolicies = map[string]forgeWritePolicy{
 	"CloseIssue":        {recovery: recoverReplay},
 	"ClosePullRequest":  {recovery: recoverReplay},
 	"DeleteBranch":      {recovery: recoverReplay},
+	"DeleteBranchAt":    {recovery: recoverReplay},
 	"SetCommitStatus":   {recovery: recoverReplay},
 	"UpdateWebhook":     {recovery: recoverReplay},
 	"DeleteWebhook":     {recovery: recoverReplay},

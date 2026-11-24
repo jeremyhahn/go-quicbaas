@@ -112,9 +112,11 @@ func (s *BranchSweep) StrandedCount() int {
 // SweepBranches deletes the factory branches that the default branch or an
 // open pull request head already carries, and counts the rest as stranded.
 //
-// A branch is deleted under a lease. It is read again just before the
-// delete, and if its tip has moved since the listing it is kept. A delete
-// that fails is recorded in Failed and the sweep goes on. A listing or
+// A branch is deleted under a lease that the forge itself enforces:
+// DeleteBranchAt removes it only while it still points at the listed tip,
+// in the same operation as the delete, so a push that lands at any point
+// after the listing keeps the branch. A read followed by an unconditional
+// delete would not be a lease. A delete that fails is recorded in Failed and the sweep goes on. A listing or
 // containment error fails the whole sweep, because a count built on a
 // partial read would report fewer branches than the forge holds.
 func SweepBranches(ctx context.Context, forge ForgeBackend, repo RepoRef, in BranchSweepInput) (*BranchSweep, error) {
@@ -174,7 +176,7 @@ func SweepBranches(ctx context.Context, forge ForgeBackend, repo RepoRef, in Bra
 			sweep.Stranded = append(sweep.Stranded, branch)
 			continue
 		}
-		deleteCarriedBranch(ctx, forge, repo, branch, sweep)
+		deleteCarriedBranch(ctx, inventory, repo, branch, sweep)
 	}
 	return sweep, nil
 }
@@ -198,25 +200,18 @@ func branchCarried(ctx context.Context, inventory ForgeBranchInventory, repo Rep
 }
 
 // deleteCarriedBranch deletes branch only while it still points at the
-// listed tip, and records the outcome on sweep.
-func deleteCarriedBranch(ctx context.Context, forge ForgeBackend, repo RepoRef, branch ForgeBranch, sweep *BranchSweep) {
-	current, err := forge.GetBranch(ctx, repo, branch.Name)
+// listed tip, a condition the forge enforces in the delete itself, and
+// records the outcome on sweep.
+func deleteCarriedBranch(ctx context.Context, inventory ForgeBranchInventory, repo RepoRef, branch ForgeBranch, sweep *BranchSweep) {
+	err := inventory.DeleteBranchAt(ctx, repo, branch.Name, branch.SHA)
 	switch {
-	case errors.Is(err, ErrNotFound):
-		sweep.Deleted = append(sweep.Deleted, branch.Name)
-		return
-	case err != nil:
-		sweep.Failed = append(sweep.Failed, BranchSweepFailure{Name: branch.Name, Err: err})
-		return
-	case current == nil || current.SHA != branch.SHA:
+	case errors.Is(err, ErrBranchMoved):
 		sweep.Kept = append(sweep.Kept, BranchKept{Name: branch.Name, Reason: BranchKeptMoved})
-		return
-	}
-	if err := forge.DeleteBranch(ctx, repo, branch.Name); err != nil && !errors.Is(err, ErrNotFound) {
+	case err == nil, errors.Is(err, ErrNotFound):
+		sweep.Deleted = append(sweep.Deleted, branch.Name)
+	default:
 		sweep.Failed = append(sweep.Failed, BranchSweepFailure{Name: branch.Name, Err: err})
-		return
 	}
-	sweep.Deleted = append(sweep.Deleted, branch.Name)
 }
 
 func hasAnyPrefix(name string, prefixes []string) bool {

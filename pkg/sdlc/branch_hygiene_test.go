@@ -36,7 +36,8 @@ type sweepForge struct {
 	contained  map[string]bool
 	containErr error
 
-	// moved is the tip GetBranch reports in place of the listed one.
+	// moved is the tip the branch has at the delete in place of the
+	// listed one.
 	moved map[string]string
 	// movedAtDelete is the tip a push left after the sweep's last read.
 	movedAtDelete map[string]string
@@ -57,26 +58,6 @@ func (f *sweepForge) BranchContained(_ context.Context, _ RepoRef, base, headSHA
 		return false, f.containErr
 	}
 	return f.contained[base+"..."+headSHA], nil
-}
-
-func (f *sweepForge) GetBranch(_ context.Context, _ RepoRef, name string) (*ForgeBranch, error) {
-	if sha, ok := f.moved[name]; ok {
-		return &ForgeBranch{Name: name, SHA: sha}, nil
-	}
-	for _, b := range f.branches {
-		if b.Name == name && !slices.Contains(f.deleted, name) {
-			return &ForgeBranch{Name: b.Name, SHA: b.SHA}, nil
-		}
-	}
-	return nil, fmt.Errorf("branch %s: %w", name, ErrNotFound)
-}
-
-func (f *sweepForge) DeleteBranch(_ context.Context, _ RepoRef, name string) error {
-	if err := f.deleteErr[name]; err != nil {
-		return err
-	}
-	f.deleted = append(f.deleted, name)
-	return nil
 }
 
 // DeleteBranchAt deletes name only while its current tip is sha. The
@@ -233,6 +214,23 @@ func TestSweepBranches_LeaseKeepsBranchMovedAfterRead(t *testing.T) {
 	}
 	if len(sweep.Failed) != 0 {
 		t.Errorf("failed = %+v, want none", sweep.Failed)
+	}
+}
+
+// A branch someone else deleted between the listing and the sweep's delete
+// is gone, which is what the sweep wanted.
+func TestSweepBranches_AlreadyDeletedBranchCountsAsDeleted(t *testing.T) {
+	forge := &sweepForge{
+		branches:  []ForgeBranch{{Name: "issue/9", SHA: "c"}},
+		contained: map[string]bool{"main...c": true},
+		deleteErr: map[string]error{"issue/9": fmt.Errorf("branch issue/9: %w", ErrNotFound)},
+	}
+	sweep := sweepOrFail(t, forge, BranchSweepInput{})
+	if !slices.Equal(sweep.Deleted, []string{"issue/9"}) {
+		t.Fatalf("deleted = %v, want issue/9", sweep.Deleted)
+	}
+	if len(sweep.Kept) != 0 || len(sweep.Failed) != 0 {
+		t.Errorf("sweep = %+v, want only the delete", sweep)
 	}
 }
 

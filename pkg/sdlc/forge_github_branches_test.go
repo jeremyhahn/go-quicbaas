@@ -107,3 +107,101 @@ func TestGitHubBackend_BranchContained_RefusesEmptyInput(t *testing.T) {
 		t.Errorf("writes = %+v, want none", calls)
 	}
 }
+
+// deleteAtGraphQLKey is the stub key of a POST to the stub's GraphQL
+// endpoint, which lives beside the REST root rather than under it.
+const deleteAtGraphQLKey = "POST /api/graphql"
+
+func stubDeleteAt(stub *forgeStub, graphQL any, readBack http.HandlerFunc) {
+	stub.json("GET /repos/acme/widgets", http.StatusOK, map[string]string{"node_id": "R_1"})
+	stub.json(deleteAtGraphQLKey, http.StatusOK, graphQL)
+	stub.handle("GET /repos/acme/widgets/branches/issue/4", readBack)
+}
+
+func TestGitHubBackend_DeleteBranchAt_DeletesAtTheExpectedTip(t *testing.T) {
+	backend, stub := newGitHubStub(t)
+	stubDeleteAt(stub, map[string]any{"data": map[string]any{"updateRefs": map[string]any{"clientMutationId": nil}}},
+		forgeJSON(http.StatusNotFound, map[string]string{"message": "Branch not found"}))
+
+	if err := backend.DeleteBranchAt(context.Background(), sweepRepo, "issue/4", githubHeadSHA); err != nil {
+		t.Fatalf("DeleteBranchAt: %v", err)
+	}
+	posts := stub.requests(deleteAtGraphQLKey)
+	if len(posts) != 1 {
+		t.Fatalf("GraphQL posts = %d, want 1", len(posts))
+	}
+	for _, want := range []string{
+		`"beforeOid":"` + githubHeadSHA + `"`,
+		`"afterOid":"` + githubZeroOID + `"`,
+		`"force":false`,
+		`"repositoryId":"R_1"`,
+		`"name":"refs/heads/issue/4"`,
+		`updateRefs(input: $input)`,
+	} {
+		if !strings.Contains(posts[0].Body, want) {
+			t.Errorf("body %s lacks %s", posts[0].Body, want)
+		}
+	}
+	if got := posts[0].Header.Get("GraphQL-Features"); got != "update_refs_preview" {
+		t.Errorf("GraphQL-Features = %q, want update_refs_preview", got)
+	}
+	if writes := stub.writes(); len(writes) != 1 || writes[0].Method != http.MethodPost {
+		t.Errorf("writes = %+v, want only the GraphQL POST and no DELETE", writes)
+	}
+}
+
+func TestGitHubBackend_DeleteBranchAt_MovedBranchIsKept(t *testing.T) {
+	backend, stub := newGitHubStub(t)
+	stubDeleteAt(stub, map[string]any{"errors": []map[string]string{{"message": "ref was not at the expected oid"}}},
+		forgeJSON(http.StatusOK, githubBranchJSON("issue/4", githubMovedSHA)))
+
+	err := backend.DeleteBranchAt(context.Background(), sweepRepo, "issue/4", githubHeadSHA)
+	if !errors.Is(err, ErrBranchMoved) {
+		t.Fatalf("err = %v, want ErrBranchMoved", err)
+	}
+	if n := len(stub.writes()); n != 1 {
+		t.Errorf("writes = %d, want only the GraphQL POST", n)
+	}
+}
+
+func TestGitHubBackend_DeleteBranchAt_RefusedAtSameTipIsAnError(t *testing.T) {
+	backend, stub := newGitHubStub(t)
+	stubDeleteAt(stub, map[string]any{"errors": []map[string]string{{"message": "refusing to update the ref"}}},
+		forgeJSON(http.StatusOK, githubBranchJSON("issue/4", githubHeadSHA)))
+
+	err := backend.DeleteBranchAt(context.Background(), sweepRepo, "issue/4", githubHeadSHA)
+	if err == nil || errors.Is(err, ErrBranchMoved) || errors.Is(err, ErrNotFound) {
+		t.Fatalf("err = %v, want a failure that is neither moved nor not found", err)
+	}
+	if !strings.Contains(err.Error(), "refusing to update the ref") {
+		t.Errorf("err = %v, want the GraphQL message", err)
+	}
+	if strings.Contains(err.Error(), githubTestToken) {
+		t.Errorf("err carries the token: %v", err)
+	}
+}
+
+func TestGitHubBackend_DeleteBranchAt_RefusesEmptyInput(t *testing.T) {
+	backend, stub := newGitHubStub(t)
+	for _, tc := range []struct{ name, sha string }{{"", githubHeadSHA}, {"issue/4", ""}} {
+		err := backend.DeleteBranchAt(context.Background(), sweepRepo, tc.name, tc.sha)
+		if !errors.Is(err, ErrInvalidInput) {
+			t.Errorf("DeleteBranchAt(%q, %q) = %v, want ErrInvalidInput", tc.name, tc.sha, err)
+		}
+	}
+	if calls := stub.requests("GET /repos/acme/widgets"); len(calls) != 0 || len(stub.writes()) != 0 {
+		t.Errorf("requests were sent for an empty input")
+	}
+}
+
+func TestGitHubGraphQLURL(t *testing.T) {
+	for base, want := range map[string]string{
+		"https://api.github.com":          "https://api.github.com/graphql",
+		"https://ghes.example.com/api/v3": "https://ghes.example.com/api/graphql",
+		"https://proxy.example.com/gh":    "https://proxy.example.com/gh/graphql",
+	} {
+		if got := githubGraphQLURL(base); got != want {
+			t.Errorf("githubGraphQLURL(%q) = %q, want %q", base, got, want)
+		}
+	}
+}

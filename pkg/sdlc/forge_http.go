@@ -42,6 +42,14 @@ type forgeRequest struct {
 	path   string
 	query  url.Values
 
+	// endpoint is an absolute URL that replaces baseURL+path, for the one
+	// route that does not live under the REST root: GitHub's GraphQL.
+	// Empty means baseURL+path. path still names the call in errors.
+	endpoint string
+
+	// headers are extra request headers, set after the dialect's.
+	headers map[string]string
+
 	// body is marshalled as JSON when non-nil.
 	body any
 
@@ -302,6 +310,9 @@ func (h *forgeHTTP) send(ctx context.Context, req forgeRequest, deadline time.Du
 	defer cancel()
 
 	endpoint := h.baseURL + req.path
+	if req.endpoint != "" {
+		endpoint = req.endpoint
+	}
 	if len(req.query) > 0 {
 		endpoint += "?" + req.query.Encode()
 	}
@@ -343,6 +354,9 @@ func (h *forgeHTTP) send(ctx context.Context, req forgeRequest, deadline time.Du
 		httpReq.Header.Set("Authorization", h.dialect.tokenScheme+h.token)
 	}
 	for name, value := range h.dialect.headers {
+		httpReq.Header.Set(name, value)
+	}
+	for name, value := range req.headers {
 		httpReq.Header.Set(name, value)
 	}
 	if req.body != nil {
