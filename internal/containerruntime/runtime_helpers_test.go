@@ -319,6 +319,86 @@ func TestJobContainerConfig_HostMountsAreBound(t *testing.T) {
 	assert.NotContains(t, mounts[2].Options, "rbind")
 }
 
+// TestJobContainerConfig_TmpfsMountHasATmpfsSource pins that a job's tmpfs
+// mount reaches the OCI configuration with its source naming the filesystem,
+// as the default /dev mount does, and with only the size the spec gives it.
+func TestJobContainerConfig_TmpfsMountHasATmpfsSource(t *testing.T) {
+	config, err := jobContainerConfig(&orchestration.ContainerSpec{
+		Network: "none",
+		Image:   "alpine:latest",
+		Mounts: []orchestration.ContainerMount{
+			{Target: "/workspace", Type: "tmpfs", TmpfsSizeBytes: 8 << 20},
+		},
+	})
+	require.NoError(t, err)
+
+	mounts := newTestRuntime(t).generateOCIConfig(config, "/rootfs").Mounts
+	require.NotEmpty(t, mounts)
+	assert.Equal(t, ociMount{Destination: "/workspace", Type: "tmpfs", Source: "tmpfs", Options: []string{"size=8388608"}}, mounts[len(mounts)-1])
+}
+
+// TestJobContainerConfig_EphemeralWorkspaceTier runs a spec that
+// orchestration.ApplyWorkspaceStorage put on the ephemeral tier through the
+// job runtime's configuration: the checkout becomes a sized tmpfs with no host
+// bind left, the shared module cache stays a bind, and the memory limit is the
+// plan's.
+func TestJobContainerConfig_EphemeralWorkspaceTier(t *testing.T) {
+	newSpec := func() *orchestration.ContainerSpec {
+		return &orchestration.ContainerSpec{
+			Network: "none",
+			Image:   "alpine:latest",
+			Mounts: []orchestration.ContainerMount{
+				{Source: "/srv/checkout", Target: "/workspace"},
+				{Source: "/srv/gomodcache", Target: "/go/pkg/mod", Type: "bind"},
+			},
+		}
+	}
+
+	t.Run("the checkout is a sized tmpfs inside the planned memory limit", func(t *testing.T) {
+		spec := newSpec()
+		require.NoError(t, orchestration.ApplyWorkspaceStorage(spec, "/workspace", orchestration.ProjectStorage{
+			WorkspaceTier:     orchestration.WorkspaceTierEphemeral,
+			WorkspaceTmpfsMB:  64,
+			ContainerMemoryMB: 1024 + 128,
+		}.Plan()))
+
+		config, err := jobContainerConfig(spec)
+		require.NoError(t, err)
+		oci := newTestRuntime(t).generateOCIConfig(config, "/rootfs")
+
+		var workspace []ociMount
+		for _, m := range oci.Mounts {
+			assert.NotEqual(t, "/srv/checkout", m.Source, "the checkout's host directory is still mounted")
+			if m.Destination == "/workspace" {
+				workspace = append(workspace, m)
+			}
+		}
+		require.Len(t, workspace, 1, "exactly one mount at the checkout target")
+		assert.Equal(t, ociMount{Destination: "/workspace", Type: "tmpfs", Source: "tmpfs", Options: []string{"size=67108864"}}, workspace[0])
+
+		assert.Contains(t, oci.Mounts, ociMount{Destination: "/go/pkg/mod", Type: "bind", Source: "/srv/gomodcache", Options: []string{"rbind"}},
+			"the shared module cache stays a read-write bind")
+
+		require.NotNil(t, oci.Linux.Resources)
+		require.NotNil(t, oci.Linux.Resources.Memory)
+		require.NotNil(t, oci.Linux.Resources.Memory.Limit)
+		assert.Equal(t, int64(1024+128)<<20, *oci.Linux.Resources.Memory.Limit)
+	})
+
+	t.Run("a limit below the tmpfs plus the build headroom is refused before the runtime", func(t *testing.T) {
+		spec := newSpec()
+		err := orchestration.ApplyWorkspaceStorage(spec, "/workspace", orchestration.ProjectStorage{
+			WorkspaceTier:     orchestration.WorkspaceTierEphemeral,
+			WorkspaceTmpfsMB:  64,
+			ContainerMemoryMB: int(orchestration.WorkspaceBuildHeadroomBytes>>20) + 63,
+		}.Plan())
+		var budget *orchestration.MemoryBudgetError
+		require.ErrorAs(t, err, &budget)
+		assert.Equal(t, int64(64)<<20, budget.TmpfsBytes)
+		assert.Equal(t, orchestration.WorkspaceBuildHeadroomBytes, budget.HeadroomBytes)
+	})
+}
+
 func TestJobContainerConfig_UntypedNamedSourceIsAVolume(t *testing.T) {
 	config, err := jobContainerConfig(&orchestration.ContainerSpec{
 		Network: "none",

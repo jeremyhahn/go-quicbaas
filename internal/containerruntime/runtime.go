@@ -687,10 +687,15 @@ func (r *Runtime) generateOCIConfig(config *ContainerConfig, rootfsPath string) 
 		if slices.Contains(opts, "rbind") && slices.Contains(opts, "ro") && !slices.Contains(opts, "rro") {
 			opts = append(opts, "rro")
 		}
+		source := m.Source
+		// A tmpfs mount's source names the filesystem, as on the default /dev mount.
+		if mountType == "tmpfs" && source == "" {
+			source = "tmpfs"
+		}
 		oci.Mounts = append(oci.Mounts, ociMount{
 			Destination: m.Target,
 			Type:        mountType,
-			Source:      m.Source,
+			Source:      source,
 			Options:     opts,
 		})
 	}
