@@ -2175,15 +2175,66 @@ integration-test-cluster: ## Phase F: Run 3+1-node Raft cluster integration test
 	fi; \
 	exit $$RESULT
 
+# The deployment row's 3-node proof: every node runs one go-quicbaas build
+# (one image, built once, VERSION and the commit compiled in), the nodes form
+# a cluster and serve a replicated write, and the survivors take over after
+# the leader is stopped. The formation test records the leader; this target
+# (not the test runner, which never gets the Docker socket) stops that node's
+# container. The tests carry the deployment_proof build tag, so only this
+# target compiles them.
 .PHONY: integration-test-cluster-failover
-integration-test-cluster-failover: ## Phase F: Run leader-failover integration test only (requires a running cluster stack)
-	@echo "$(BLUE)Running Phase F leader-failover integration test...$(NC)"
-	@if [ -z "$(QUICBAAS_NODE1_URL)" ] || [ -z "$(QUICBAAS_NODE2_URL)" ] || [ -z "$(QUICBAAS_NODE3_URL)" ]; then \
-		echo "$(RED)Error: QUICBAAS_NODE1_URL, NODE2_URL, NODE3_URL must be set$(NC)"; \
+integration-test-cluster-failover: ## Prove one build, formation, smoke and leader failover on the 3-node cluster (Docker)
+	@echo "$(BLUE)Running deployment proof (one build, 3-node formation, smoke, leader failover)...$(NC)"
+	@if ! docker compose version > /dev/null 2>&1 && ! command -v docker-compose > /dev/null 2>&1; then \
+		echo "$(RED)Error: Docker Compose is not installed$(NC)"; \
 		exit 1; \
 	fi
-	@$(GOTEST) -v -tags integration -timeout 180s -run TestQRDBCluster_LeaderFailoverRecovers \
-		./test/integration/cluster/...
+	@COMPOSE_FILE="test/integration/docker-compose.cluster.yml"; \
+	COMPOSE_PROJECT_NAME="$(COMPOSE_PROJECT_CLUSTER)"; \
+	export QUICBAAS_CLUSTER_IMAGE="quicbaas-cluster-node:$(VERSION)"; export QUICBAAS_VERSION="$(VERSION)"; export GIT_COMMIT="$(GIT_COMMIT)"; \
+	CLUSTER_DIR="test/integration"; \
+	ABS_CLUSTER_DIR="$$PWD/$$CLUSTER_DIR"; \
+	STATE_FILE="$$ABS_CLUSTER_DIR/cluster-logs/deployment-proof.env"; \
+	cleanup() { \
+		$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi all >/dev/null 2>&1 || true; \
+		if [ -d "$$ABS_CLUSTER_DIR/cluster-data" ]; then \
+			docker run --rm -v "$$ABS_CLUSTER_DIR/cluster-data:/cleanup" alpine sh -c "rm -rf /cleanup/*" 2>/dev/null || true; \
+		fi; \
+		rm -rf $$CLUSTER_DIR/cluster-data $$CLUSTER_DIR/cluster-logs 2>/dev/null || true; \
+	}; \
+	echo "$(YELLOW)Cleaning up any previous cluster-test containers and bind-mount data dirs...$(NC)"; \
+	cleanup; \
+	trap cleanup EXIT; \
+	for N in node1 node2 node3; do \
+		mkdir -p $$CLUSTER_DIR/cluster-data/$$N $$CLUSTER_DIR/cluster-logs/$$N; \
+		chmod 0777 $$CLUSTER_DIR/cluster-data/$$N $$CLUSTER_DIR/cluster-logs/$$N; \
+	done; \
+	echo "$(YELLOW)Building cluster node image $$QUICBAAS_CLUSTER_IMAGE once (version $$QUICBAAS_VERSION, commit $$GIT_COMMIT)...$(NC)"; \
+	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE build 2>&1 | while IFS= read -r line; do echo "  $$line"; done; \
+	echo "$(YELLOW)Starting 3-node quicbaas cluster on that one image...$(NC)"; \
+	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE up -d quicbaas-node1 quicbaas-node2 quicbaas-node3 || exit 1; \
+	NODE1_HTTP=$$($(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE port quicbaas-node1 8080); \
+	NODE2_HTTP=$$($(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE port quicbaas-node2 8080); \
+	NODE3_HTTP=$$($(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE port quicbaas-node3 8080); \
+	export QUICBAAS_NODE1_URL="http://localhost:$${NODE1_HTTP##*:}"; \
+	export QUICBAAS_NODE2_URL="http://localhost:$${NODE2_HTTP##*:}"; \
+	export QUICBAAS_NODE3_URL="http://localhost:$${NODE3_HTTP##*:}"; \
+	export QUICBAAS_DEPLOYMENT_PROOF_STATE="$$STATE_FILE"; \
+	export QUICBAAS_EXPECTED_VERSION="$(VERSION)"; \
+	echo "$(YELLOW)One build, formation and smoke on all three nodes...$(NC)"; \
+	$(GOTEST) -v -tags 'integration deployment_proof' -timeout 300s -run '^TestDeploymentProof_OneBuildFormsAndServes$$' ./test/integration/cluster/ || exit $$?; \
+	. "$$STATE_FILE"; \
+	echo "$(YELLOW)Stopping platform-shard leader quicbaas-node$$DEPLOYMENT_PROOF_LEADER_NODE_ID...$(NC)"; \
+	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE stop quicbaas-node$$DEPLOYMENT_PROOF_LEADER_NODE_ID || exit 1; \
+	echo "$(YELLOW)After leader stop: the survivors elect a leader, keep the data and accept writes...$(NC)"; \
+	$(GOTEST) -v -tags 'integration deployment_proof' -timeout 300s -run '^TestDeploymentProof_AfterLeaderStop$$' ./test/integration/cluster/; \
+	RESULT=$$?; \
+	if [ $$RESULT -eq 0 ]; then \
+		echo "$(GREEN)✓ Deployment proof PASSED$(NC)"; \
+	else \
+		echo "$(RED)✗ Deployment proof FAILED (exit $$RESULT)$(NC)"; \
+	fi; \
+	exit $$RESULT
 
 .PHONY: integration-test-cluster-membership
 integration-test-cluster-membership: ## Phase F: Run dynamic-membership integration test only (requires QUICBAAS_NODE4_URL)
