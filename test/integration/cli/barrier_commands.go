@@ -471,18 +471,39 @@ func BarrierSealWithWrongSOPinCommand(soPin string) CommandDef {
 // =============================================================================
 
 // BarrierRekeyCommand builds the canonical share-free rekey verb:
-// `barrier rekey --threshold <M> --total <N>`. No secret travels on the
-// request — the server generates a fresh unseal key and seals new shares to
-// the enrolled Security Officers (qrdb pkg/seal/rekey.go).
+// `barrier rekey --so-pin <defaultBarrierSOPin> --threshold <M> --total <N>`.
+// No secret travels on the request — the server generates a fresh unseal key
+// and seals new shares to the enrolled Security Officers (qrdb
+// pkg/seal/rekey.go). The per-test daemon provisions defaultBarrierSOPin at
+// init and the server verifies the SO PIN on rekey as it does on seal, so the
+// verb sends the provisioned PIN to reach the backend.
 func BarrierRekeyCommand(threshold, total int) CommandDef {
 	return CommandDef{
-		Name: fmt.Sprintf("barrier rekey %d-of-%d", threshold, total),
+		Name: fmt.Sprintf("barrier rekey --so-pin <pin> %d-of-%d", threshold, total),
+		Args: []string{
+			"barrier", "rekey",
+			"--so-pin", defaultBarrierSOPin,
+			"--threshold", fmt.Sprintf("%d", threshold),
+			"--total", fmt.Sprintf("%d", total),
+		},
+		ExpectSuccess:  true,
+		Timeout:        30 * time.Second,
+		SkipTransports: barrierTransportsToSkip,
+	}
+}
+
+// BarrierRekeyWithoutSOPinCommand builds the rekey verb with the same
+// threshold/total pair as BarrierRekeyCommand but no `--so-pin`. The server
+// refuses it at the SO-PIN check, before the request reaches the backend.
+func BarrierRekeyWithoutSOPinCommand(threshold, total int) CommandDef {
+	return CommandDef{
+		Name: fmt.Sprintf("barrier rekey (no SO PIN) %d-of-%d", threshold, total),
 		Args: []string{
 			"barrier", "rekey",
 			"--threshold", fmt.Sprintf("%d", threshold),
 			"--total", fmt.Sprintf("%d", total),
 		},
-		ExpectSuccess:  true,
+		ExpectSuccess:  false,
 		Timeout:        30 * time.Second,
 		SkipTransports: barrierTransportsToSkip,
 	}

@@ -1598,6 +1598,12 @@ func TestBarrierSeal_SORequired(t *testing.T) {
 // transport and the daemon's rejection is surfaced (not a CLI crash or a
 // malformed-envelope decode failure), so a regression in any transport's
 // BarrierRekey marshalling/decoding still fails in exactly one matrix cell.
+//
+// SO PIN: the per-test daemon provisions defaultBarrierSOPin at init and
+// the server verifies the SO PIN on rekey as it does on seal. The test first
+// proves that a rekey without the PIN is refused before the backend (the
+// refusal carries no "shamir not configured"), then sends the provisioned
+// PIN so every transport reaches the backend's rekey path.
 func TestBarrierRekey_Dispatch(t *testing.T) {
 	const oldSecret = "rekey-old-secret"
 	const shamirNotConfigured = "shamir not configured"
@@ -1606,6 +1612,16 @@ func TestBarrierRekey_Dispatch(t *testing.T) {
 		// Daemon came up SEALED after server-init; unseal so rekey operates
 		// on an unsealed barrier and reaches the backend's rekey path.
 		runner.RunAndAssert(BarrierUnsealCommand(oldSecret))
+
+		// Without the SO PIN the server refuses the rekey at the PIN check,
+		// before the backend, so its Shamir answer never surfaces.
+		noPinOut, noPinErr, err := runner.Run(BarrierRekeyWithoutSOPinCommand(2, 3))
+		require.Errorf(t, err,
+			"rekey without the SO PIN must be refused: stdout=%s stderr=%s",
+			noPinOut, noPinErr)
+		assert.NotContainsf(t, noPinOut+noPinErr, shamirNotConfigured,
+			"rekey without the SO PIN must be refused before the backend: stdout=%s stderr=%s",
+			noPinOut, noPinErr)
 
 		// The canonical rekey surface is SHARE-FREE: no secret travels on
 		// the request (`barrier rekey [--so-pin] [--threshold N --total M]`).
