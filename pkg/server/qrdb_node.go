@@ -36,7 +36,6 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/sealedwindow"
 	"github.com/jeremyhahn/go-quicbaas/pkg/apimodule"
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/routing"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	qbshards "github.com/jeremyhahn/go-quicbaas/pkg/shards"
@@ -714,7 +713,7 @@ func (s *Server) unifiedModuleServerOptions(serverOpts []qrdbsdk.ServerOption, s
 		xkmssdk.WithServiceModuleWebAuthn(quicbaasWebAuthnConfigToXKMS(
 			s.config.IAM.WebAuthn, s.config.IAM.SelfServiceRegistration.Enabled)),
 		xkmssdk.WithServiceModuleWebAuthnCredentialStoreDecorator(webauthnCredentialStoreDecorator),
-		xkmssdk.WithServiceModuleSession(s.xkmsModuleSessionOptions()),
+		xkmssdk.WithServiceModuleSession(&xkmssdk.ServiceModuleSessionOptions{}),
 		// The xkms module serves its OWN PIV login at /api/v1/auth/login/piv.
 		// Since go-xkms v0.49.0-alpha it checks the slot attestation itself,
 		// so it has to be told that the operator accepted unattested login.
@@ -1497,18 +1496,6 @@ func (s *Server) standaloneRegistryNotice() string {
 		"it needs the raft lease and watch planes, so registry calls return RegistryRequiresRaftError"
 }
 
-// xkmsModuleSessionOptions makes the xkms module sign its session tokens
-// with the quicbaas OIDC key, issuer and audience, so one key signs every
-// platform token the node validates (#2134).
-func (s *Server) xkmsModuleSessionOptions() *xkmssdk.ServiceModuleSessionOptions {
-	issuer := s.getIssuerURL()
-	return &xkmssdk.ServiceModuleSessionOptions{
-		SigningKeyCN: iam.OIDCSigningKeyCN,
-		Issuer:       issuer,
-		Audience:     []string{issuer},
-	}
-}
-
 // pivLoginModuleOptions builds the options of the xkms module's own PIV login.
 //
 // The module checks the slot attestation itself (go-xkms v0.49.0-alpha), so
@@ -1526,11 +1513,17 @@ func (s *Server) pivLoginModuleOptions() *xkmssdk.ServiceModulePIVLoginOptions {
 // route precedence (apimodule.XKMSRouteExclusions), then the tenant binding of
 // xkms's certificate login (apimodule.XKMSCertLoginRoutes), so a tenant
 // admin's certificate is looked up in the tenant its SPIFFE SAN names rather
-// than in the system tenant.
+// than in the system tenant. A successful certificate login is then answered
+// with platform tokens the node's own OIDC provider issues, so the node's
+// current signing key signs every token it accepts.
 func (s *Server) hostXKMSModule(xkmsModule qrdbsdk.ServiceModule) (qrdbsdk.ServiceModule, error) {
 	hosted, err := apimodule.NewRouteExcludingModule(xkmsModule, apimodule.XKMSRouteExclusions)
 	if err != nil {
 		return nil, &QRDBNodeError{Stage: "compose xkms module route precedence", Cause: err}
+	}
+	hosted, err = newXKMSLoginPlatformTokenModule(s, hosted, apimodule.XKMSCertLoginRoutes)
+	if err != nil {
+		return nil, &QRDBNodeError{Stage: "exchange xkms login for platform tokens", Cause: err}
 	}
 	hosted, err = apimodule.NewCertLoginTenantModule(hosted, s.config.IAM.SPIFFETrustDomain,
 		apimodule.XKMSCertLoginRoutes, &caRevocationChecker{server: s})

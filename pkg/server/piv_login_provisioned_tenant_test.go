@@ -4,10 +4,12 @@ package server
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -44,6 +46,36 @@ func TestPIVLogin_CertProvisionedTenantAdminLogsIn(t *testing.T) {
 	tenant, err := tenantctx.Target(ctx, "rest.IAM", "acme")
 	require.NoError(t, err, "the tenant admin's bearer must be bound to its tenant")
 	assert.Equal(t, "acme", tenant)
+
+	// The access token is a platform token the node's own OIDC provider
+	// signed: an at+jwt under a kid its JWKS publishes.
+	header := accessTokenHeader(t, body)
+	assert.Equal(t, "at+jwt", header.Typ)
+	var kids []string
+	for _, key := range components.GetOIDCProvider().GetJWKS().Keys {
+		kids = append(kids, key.KeyID)
+	}
+	assert.Contains(t, kids, header.Kid, "the access token's kid must be in the node's JWKS")
+}
+
+// accessTokenHeader decodes, without verifying, the JOSE header of the login
+// response's access_token.
+func accessTokenHeader(t *testing.T, loginBody string) struct{ Typ, Kid string } {
+	t.Helper()
+	var tokens struct {
+		AccessToken string `json:"access_token"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(loginBody), &tokens))
+	segments := strings.Split(tokens.AccessToken, ".")
+	require.Len(t, segments, 3, "the access token is a compact JWS")
+	raw, err := base64.RawURLEncoding.DecodeString(segments[0])
+	require.NoError(t, err)
+	var header struct {
+		Typ string `json:"typ"`
+		Kid string `json:"kid"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &header))
+	return struct{ Typ, Kid string }{Typ: header.Typ, Kid: header.Kid}
 }
 
 // TestPIVLogin_CertProvisionedTenantAdminBearerRefusedForOtherTenant is the
