@@ -58,6 +58,7 @@ test/e2e-coverage-matrix.test.ts fails when a route has no row.
 | `inference` | #/inference | list, create, error state | inference_no_provider.spec.ts, rapid_nav_no_duplicate_keys.spec.ts |
 | `projects` | #/projects | list, create, edit, delete | projects.spec.ts, ref_picker_secret_create.spec.ts, ref_picker_ssh_key.spec.ts, sidebar_nav.spec.ts |
 | `accounts` | #/accounts | list, create, delete | none |
+| `agents` | #/agents | list, create, edit, delete, used-by, pool list, pool create, pool edit, pool delete, pool used-by | none |
 | `prompts` | #/prompts | list, detail, edit, history, diff, rollback, reset | none |
 | `attention` | #/attention | list | none |
 | `cluster` | #/cluster | detail, leader, shard leader, rebalance plan and progress, migration start, progress and cancel | bug_regressions.spec.ts, light_theme_contrast.spec.ts |
@@ -76,6 +77,7 @@ test/e2e-coverage-matrix.test.ts fails when a route has no row.
 - `dek`
 - `dynamic-secrets`
 - `accounts`
+- `agents`
 - `prompts`
 - `attention`
 - `my-sessions`

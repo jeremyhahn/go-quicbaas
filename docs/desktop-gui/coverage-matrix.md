@@ -392,22 +392,22 @@ RestOrchestratorClient builds these paths from `API_PREFIX` (`/api/v1/orchestrat
 | Method | Path | Handler | SDK file | Console |
 |---|---|---|---|---|
 | GET | `/api/v1/agents` | HandleListAgents | rest.ts | covered: components/orchestrator/StartJobDialog.svelte |
-| POST | `/api/v1/agents` | HandleCreateAgent | rest.ts | not covered |
+| POST | `/api/v1/agents` | HandleCreateAgent | rest.ts | covered: views/orchestrator/AgentsView.svelte |
 | GET | `/api/v1/agents/{agentID}` | HandleGetAgent | rest.ts | covered: components/orchestrator/AgentSpendLimitsEditor.svelte |
 | PUT | `/api/v1/agents/{agentID}` | HandleUpdateAgent | rest.ts | covered: components/orchestrator/AgentSpendLimitsEditor.svelte |
-| DELETE | `/api/v1/agents/{agentID}` | HandleDeleteAgent | rest.ts | not covered |
-| GET | `/api/v1/agents/{agentID}/used-by` | HandleAgentUsedBy | rest.ts | not covered |
+| DELETE | `/api/v1/agents/{agentID}` | HandleDeleteAgent | rest.ts | covered: views/orchestrator/AgentsView.svelte |
+| GET | `/api/v1/agents/{agentID}/used-by` | HandleAgentUsedBy | rest.ts | covered: views/orchestrator/AgentsView.svelte |
 
 ### agent-pools
 
 | Method | Path | Handler | SDK file | Console |
 |---|---|---|---|---|
 | GET | `/api/v1/agent-pools` | HandleListAgentPools | rest.ts | covered: components/orchestrator/StartJobDialog.svelte |
-| POST | `/api/v1/agent-pools` | HandleCreateAgentPool | rest.ts | not covered |
-| GET | `/api/v1/agent-pools/{poolID}` | HandleGetAgentPool | rest.ts | not covered |
-| PUT | `/api/v1/agent-pools/{poolID}` | HandleUpdateAgentPool | rest.ts | not covered |
-| DELETE | `/api/v1/agent-pools/{poolID}` | HandleDeleteAgentPool | rest.ts | not covered |
-| GET | `/api/v1/agent-pools/{poolID}/used-by` | HandleAgentPoolUsedBy | rest.ts | not covered |
+| POST | `/api/v1/agent-pools` | HandleCreateAgentPool | rest.ts | covered: views/orchestrator/AgentsView.svelte |
+| GET | `/api/v1/agent-pools/{poolID}` | HandleGetAgentPool | rest.ts | covered: views/orchestrator/AgentsView.svelte |
+| PUT | `/api/v1/agent-pools/{poolID}` | HandleUpdateAgentPool | rest.ts | covered: views/orchestrator/AgentsView.svelte |
+| DELETE | `/api/v1/agent-pools/{poolID}` | HandleDeleteAgentPool | rest.ts | covered: views/orchestrator/AgentsView.svelte |
+| GET | `/api/v1/agent-pools/{poolID}/used-by` | HandleAgentPoolUsedBy | rest.ts | covered: views/orchestrator/AgentsView.svelte |
 
 ### parameters
 
