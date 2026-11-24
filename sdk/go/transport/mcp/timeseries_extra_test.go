@@ -116,8 +116,14 @@ func TestTimeseriesQueryFromMapInt64Times(t *testing.T) {
 	if err != nil {
 		t.Fatalf("transformQueryFromMap: %v", err)
 	}
-	if args["start_time"] != int64(100) || args["end_time"] != int64(200) {
-		t.Errorf("times = %v / %v", args["start_time"], args["end_time"])
+	if args["start"] != "100" || args["end"] != "200" {
+		t.Errorf("times = %v / %v", args["start"], args["end"])
+	}
+	if args["interval_ns"] != int64(60e9) {
+		t.Errorf("interval_ns = %v, want 60e9", args["interval_ns"])
+	}
+	if _, ok := args["interval_seconds"]; ok {
+		t.Errorf("interval_seconds must not be sent: %v", args)
 	}
 	if args["group_by"] != `["host"]` {
 		t.Errorf("group_by = %v", args["group_by"])
@@ -132,7 +138,7 @@ func TestTimeseriesResponseTransforms(t *testing.T) {
 	ts := "2026-05-29T00:00:00Z"
 
 	t.Run("write point", func(t *testing.T) {
-		out, err := h.transformResponse("Write", map[string]interface{}{"success": true, "timestamp": ts})
+		out, err := h.transformResponse("Write", nil, map[string]interface{}{"success": true, "timestamp": ts})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -143,7 +149,7 @@ func TestTimeseriesResponseTransforms(t *testing.T) {
 	})
 
 	t.Run("write batch", func(t *testing.T) {
-		out, err := h.transformResponse("WriteBatch", map[string]interface{}{
+		out, err := h.transformResponse("WriteBatch", nil, map[string]interface{}{
 			"success": true, "points_written": float64(3), "timestamp": ts})
 		if err != nil {
 			t.Fatal(err)
@@ -155,7 +161,7 @@ func TestTimeseriesResponseTransforms(t *testing.T) {
 	})
 
 	t.Run("query", func(t *testing.T) {
-		out, err := h.transformResponse("Query", map[string]interface{}{
+		out, err := h.transformResponse("Query", nil, map[string]interface{}{
 			"points": []interface{}{
 				map[string]interface{}{"timestamp": ts, "value": 1.5},
 			},
@@ -170,7 +176,7 @@ func TestTimeseriesResponseTransforms(t *testing.T) {
 	})
 
 	t.Run("delete", func(t *testing.T) {
-		out, err := h.transformResponse("DeleteSeries", map[string]interface{}{"success": true, "timestamp": ts})
+		out, err := h.transformResponse("DeleteSeries", nil, map[string]interface{}{"success": true, "timestamp": ts})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -180,7 +186,7 @@ func TestTimeseriesResponseTransforms(t *testing.T) {
 	})
 
 	t.Run("get retention", func(t *testing.T) {
-		out, err := h.transformResponse("GetRetentionPolicy", map[string]interface{}{
+		out, err := h.transformResponse("GetRetentionPolicy", nil, map[string]interface{}{
 			"metric": "m", "duration_seconds": float64(3600), "resolution_seconds": float64(60),
 			"aggregation": "avg", "timestamp": ts})
 		if err != nil {
@@ -193,7 +199,7 @@ func TestTimeseriesResponseTransforms(t *testing.T) {
 	})
 
 	t.Run("set retention", func(t *testing.T) {
-		out, err := h.transformResponse("SetRetentionPolicy", map[string]interface{}{"success": true})
+		out, err := h.transformResponse("SetRetentionPolicy", nil, map[string]interface{}{"success": true})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -203,7 +209,7 @@ func TestTimeseriesResponseTransforms(t *testing.T) {
 	})
 
 	t.Run("list metrics", func(t *testing.T) {
-		out, err := h.transformResponse("ListMetrics", map[string]interface{}{
+		out, err := h.transformResponse("ListMetrics", nil, map[string]interface{}{
 			"metrics": []interface{}{"a", "b"}, "next_cursor": "c", "timestamp": ts})
 		if err != nil {
 			t.Fatal(err)
@@ -217,7 +223,7 @@ func TestTimeseriesResponseTransforms(t *testing.T) {
 
 	t.Run("unknown method passthrough", func(t *testing.T) {
 		in := map[string]interface{}{"x": 1}
-		out, err := h.transformResponse("Bogus", in)
+		out, err := h.transformResponse("Bogus", nil, in)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -232,11 +238,11 @@ func TestTimeseriesResponseNilAndNonMap(t *testing.T) {
 	methods := []string{"Write", "WriteBatch", "Query", "DeleteSeries",
 		"GetRetentionPolicy", "SetRetentionPolicy", "ListMetrics"}
 	for _, m := range methods {
-		if _, err := h.transformResponse(m, nil); err != nil {
+		if _, err := h.transformResponse(m, nil, nil); err != nil {
 			t.Errorf("%s nil response: %v", m, err)
 		}
 		// Non-map response passes through unchanged.
-		out, err := h.transformResponse(m, "scalar")
+		out, err := h.transformResponse(m, nil, "scalar")
 		if err != nil {
 			t.Errorf("%s scalar response: %v", m, err)
 		}
