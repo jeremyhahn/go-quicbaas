@@ -313,6 +313,11 @@ func (s *CryptoServer) Sign(ctx context.Context, req *pb.SignRequest) (*pb.SignR
 		return nil, status.Error(codes.InvalidArgument, "message is required")
 	}
 
+	mgf1Hash, ok := convertProtoMGF1Hash(req.Mgf1Hash)
+	if !ok {
+		return nil, status.Error(codes.InvalidArgument, "unsupported mgf1_hash: "+req.Mgf1Hash.String())
+	}
+
 	svcReq := &service.SignRequest{
 		KeyID:         req.KeyId,
 		Message:       req.Message,
@@ -320,7 +325,7 @@ func (s *CryptoServer) Sign(ctx context.Context, req *pb.SignRequest) (*pb.SignR
 		PreHashed:     req.PreHashed,
 		Padding:       convertProtoSignaturePadding(req.Padding),
 		PSSSaltLength: int(req.PssSaltLength),
-		MGF1Hash:      convertProtoMGF1Hash(req.Mgf1Hash),
+		MGF1Hash:      mgf1Hash,
 	}
 
 	resp, err := s.cryptoSvc.Sign(ctx, svcReq)
@@ -569,11 +574,16 @@ func convertProtoSignaturePadding(p pb.SignaturePadding) service.SignaturePaddin
 }
 
 // convertProtoMGF1Hash maps the proto MGF1 hash; UNSPECIFIED gives empty.
-func convertProtoMGF1Hash(alg pb.HashAlgorithm) service.HashAlgorithm {
+// An unknown MGF1 hash is refused (ok is false), never rewritten to a
+// default hash.
+func convertProtoMGF1Hash(alg pb.HashAlgorithm) (service.HashAlgorithm, bool) {
 	if alg == pb.HashAlgorithm_HASH_ALG_UNSPECIFIED {
-		return ""
+		return "", true
 	}
-	return convertProtoHashAlgorithm(alg)
+	if _, known := pb.HashAlgorithm_name[int32(alg)]; !known {
+		return "", false
+	}
+	return convertProtoHashAlgorithm(alg), true
 }
 
 func convertServiceHashAlgorithm(alg service.HashAlgorithm) pb.HashAlgorithm {

@@ -7,6 +7,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
@@ -80,6 +82,53 @@ func TestCryptoServer_Sign_PSSPassthrough(t *testing.T) {
 		assert.Zero(t, captured.PSSSaltLength)
 		assert.Empty(t, captured.MGF1Hash)
 	})
+}
+
+func TestCryptoServer_Sign_RejectsUnknownMGF1Hash(t *testing.T) {
+	t.Run("unknown enum is refused before the service", func(t *testing.T) {
+		var captured *service.SignRequest
+		srv := newPreHashedCaptureServer(&captured)
+
+		_, err := srv.Sign(context.Background(), &pb.SignRequest{
+			KeyId:         "k1",
+			Message:       []byte{0xde, 0xad, 0xbe, 0xef},
+			HashAlgorithm: pb.HashAlgorithm_HASH_ALG_SHA256,
+			Padding:       pb.SignaturePadding_SIGNATURE_PADDING_PSS,
+			Mgf1Hash:      pb.HashAlgorithm(999),
+		})
+		require.Error(t, err)
+		assert.Equal(t, codes.InvalidArgument, status.Code(err))
+		assert.Contains(t, err.Error(), "mgf1_hash")
+		assert.Nil(t, captured)
+	})
+
+	named := []pb.HashAlgorithm{
+		pb.HashAlgorithm_HASH_ALG_SHA256,
+		pb.HashAlgorithm_HASH_ALG_SHA384,
+		pb.HashAlgorithm_HASH_ALG_SHA512,
+		pb.HashAlgorithm_HASH_ALG_SHA3_256,
+		pb.HashAlgorithm_HASH_ALG_SHA3_384,
+		pb.HashAlgorithm_HASH_ALG_SHA3_512,
+		pb.HashAlgorithm_HASH_ALG_BLAKE2B_256,
+		pb.HashAlgorithm_HASH_ALG_BLAKE2B_512,
+	}
+	for _, alg := range named {
+		t.Run("named "+alg.String()+" reaches the service", func(t *testing.T) {
+			var captured *service.SignRequest
+			srv := newPreHashedCaptureServer(&captured)
+
+			_, err := srv.Sign(context.Background(), &pb.SignRequest{
+				KeyId:         "k1",
+				Message:       []byte{0xde, 0xad, 0xbe, 0xef},
+				HashAlgorithm: pb.HashAlgorithm_HASH_ALG_SHA256,
+				Padding:       pb.SignaturePadding_SIGNATURE_PADDING_PSS,
+				Mgf1Hash:      alg,
+			})
+			require.NoError(t, err)
+			require.NotNil(t, captured)
+			assert.Equal(t, convertProtoHashAlgorithm(alg), captured.MGF1Hash)
+		})
+	}
 }
 
 // TestCryptoServer_Sign_NotPreHashedByDefault verifies the default remains
