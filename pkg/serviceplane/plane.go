@@ -494,7 +494,9 @@ func (p *Plane) settleNext(ctx context.Context, verb Verb, cur *stored, next *Se
 // what this call changed: it revokes each grant it made where prior held
 // none, and gives back base's grant where a held one was replaced (a new
 // role, a moved name, a renewed SVID), so the prior manifest's grants are
-// in force again. refs then holds each reference in force that differs
+// in force again. When a restored grant keeps a new reference, every later
+// grant prior holds is granted again on base, since it may read what the
+// earlier one changed. refs then holds each reference in force that differs
 // from prior: a made grant whose revoke failed, a restored grant's new
 // reference, or a replacement whose restore failed. incomplete reports
 // that some change could not be undone, so the record's grants no longer
@@ -507,6 +509,7 @@ func (p *Plane) grant(ctx context.Context, verb Verb, cur *stored, base *Service
 		rctx, cancel := settleCtx(ctx)
 		defer cancel()
 		left := map[GrantKind]string{}
+		moved := map[GrantKind]bool{}
 		incomplete := false
 		for i := len(changed) - 1; i >= 0; i-- {
 			k := changed[i]
@@ -524,8 +527,32 @@ func (p *Plane) grant(ctx context.Context, verb Verb, cur *stored, base *Service
 				continue
 			}
 			if ref != prior[k] {
-				left[k] = ref
+				left[k], moved[k] = ref, true
 			}
+		}
+		// A later grant may read what an earlier one changed (a role binds
+		// the key an identity keeps): once a restored kind kept a new
+		// reference, re-grant every later kind prior holds.
+		after := false
+		for _, k := range GrantKinds {
+			held, ok := prior[k]
+			if after && ok {
+				inForce := held
+				if ref, set := left[k]; set {
+					inForce = ref
+				}
+				ref, rerr := p.grants[k].Grant(rctx, &base.Manifest, inForce)
+				switch {
+				case rerr != nil:
+					errs = append(errs, fmt.Errorf("rebind %s: %w", k, rerr))
+					left[k], incomplete = inForce, true
+				case ref != held:
+					left[k] = ref
+				default:
+					delete(left, k)
+				}
+			}
+			after = after || moved[k]
 		}
 		return cur, left, incomplete, errors.Join(errs...)
 	}

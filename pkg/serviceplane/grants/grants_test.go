@@ -893,3 +893,44 @@ func TestIdentity_KeepsALoadableKeyPair(t *testing.T) {
 		})
 	}
 }
+
+func TestPlane_ARolledBackRenewalRebindsTheRole(t *testing.T) {
+	e := newEnv(t)
+	flaky := &flakyRegistry{NameRegistry: e.reg}
+	e.grant(serviceplane.GrantName).(*Name).Registry = flaky
+	id, ok := e.grant(serviceplane.GrantIdentity).(*Identity)
+	require.True(t, ok)
+	rt := serviceplanetest.NewRuntime(t)
+	rt.Grants = e.grants
+	plane := rt.Plane(t)
+	ctx := context.Background()
+	sign := func(m *serviceplane.Manifest) *serviceplane.SignedManifest {
+		sm, err := serviceplane.Sign(m, serviceplanetest.KeyID, rt.Key)
+		require.NoError(t, err)
+		return sm
+	}
+
+	m := serviceplanetest.Manifest("acme", "web")
+	m.Ports = []serviceplane.Port{{Name: "https", Port: 8443, Protocol: "tcp"}}
+	_, err := plane.Deploy(ctx, "acme", sign(m))
+	require.NoError(t, err)
+	held := e.kept(t, "acme", "tenant/acme/services/web/svid")
+
+	// The next grant renews the SVID; the name grant then fails.
+	id.Now = func() time.Time { return held.NotAfter.Add(-held.NotAfter.Sub(held.NotBefore) / 4) }
+	flaky.failRegister(errors.New("registry unavailable"))
+	moved := serviceplanetest.Manifest("acme", "web")
+	moved.Ports = []serviceplane.Port{{Name: "https", Port: 9443, Protocol: "tcp"}}
+	_, err = plane.Replace(ctx, "acme", sign(moved))
+	require.Error(t, err)
+
+	renewed := e.kept(t, "acme", "tenant/acme/services/web/svid")
+	require.NotEqual(t, held.SerialNumber, renewed.SerialNumber, "the renewed SVID is kept")
+	assert.True(t, e.revoked(t, held), "the prior SVID is revoked")
+	bound := e.roles.svids["acme|"+SPIFFEID(trustDomain, m)]
+	require.NotNil(t, bound)
+	assert.Equal(t, renewed.SerialNumber, bound.SerialNumber, "the role is bound to the kept SVID")
+	svc, err := plane.Get(ctx, "acme", "web")
+	require.NoError(t, err)
+	assert.Equal(t, SPIFFEID(trustDomain, m)+"#"+renewed.SerialNumber.Text(16), svc.Grants[serviceplane.GrantIdentity])
+}
