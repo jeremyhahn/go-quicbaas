@@ -111,6 +111,7 @@ func (h *systemTenantSSOHarness) begin(t *testing.T) (stateToken, nonce string) 
 // This proves the federation register/login paths do NOT special-case or block
 // the system tenant, and the broker-token path applies to operators.
 func TestOperatorSSO_SystemTenantCallbackMintsBearer(t *testing.T) {
+	t.Parallel()
 	h := newSystemTenantSSOHarness(t, []string{"operator"})
 	stateToken, nonce := h.begin(t)
 
@@ -146,6 +147,7 @@ func TestOperatorSSO_SystemTenantCallbackMintsBearer(t *testing.T) {
 // invariant: an operator IdP cannot be configured before the bootstrap admin
 // exists (no admin -> can't configure Okta).
 func TestOperatorSSORegistrar_RequiresBootstrapAdmin(t *testing.T) {
+	t.Parallel()
 	manager, _, _, _, _, _ := setupTestFederationManager(t)
 
 	gate := &stubAdminGate{hasAdmin: false}
@@ -165,6 +167,7 @@ func TestOperatorSSORegistrar_RequiresBootstrapAdmin(t *testing.T) {
 // registered once the bootstrap admin exists, and that the registrar forces the
 // provider onto the system tenant regardless of the caller-supplied tenant.
 func TestOperatorSSORegistrar_SucceedsAfterBootstrap(t *testing.T) {
+	t.Parallel()
 	manager, providerStorage, _, _, _, _ := setupTestFederationManager(t)
 
 	gate := &stubAdminGate{hasAdmin: true}
@@ -198,6 +201,7 @@ func TestOperatorSSORegistrar_SucceedsAfterBootstrap(t *testing.T) {
 // closed when the admin-presence check itself errors — never opening the
 // configuration path on uncertainty.
 func TestOperatorSSORegistrar_FailsClosedOnGateError(t *testing.T) {
+	t.Parallel()
 	manager, _, _, _, _, _ := setupTestFederationManager(t)
 
 	gate := &stubAdminGate{err: errors.New("storage unavailable")}
@@ -214,6 +218,7 @@ func TestOperatorSSORegistrar_FailsClosedOnGateError(t *testing.T) {
 
 // TestNewOperatorSSORegistrar_Validation covers constructor error handling.
 func TestNewOperatorSSORegistrar_Validation(t *testing.T) {
+	t.Parallel()
 	manager, _, _, _, _, _ := setupTestFederationManager(t)
 
 	if _, err := NewOperatorSSORegistrar(nil, &stubAdminGate{}); err == nil {
@@ -228,6 +233,7 @@ func TestNewOperatorSSORegistrar_Validation(t *testing.T) {
 // down into the raw RegisterProvider chokepoint, ALLOWS a system-tenant operator
 // IdP once a bootstrap admin is present -- on the path every transport uses.
 func TestRegisterProvider_SystemTenantGate_AllowsWithAdmin(t *testing.T) {
+	t.Parallel()
 	manager, providerStorage, _, _, _, _ := setupTestFederationManager(t)
 	manager.bootstrapGate = &stubAdminGate{hasAdmin: true}
 
@@ -245,6 +251,7 @@ func TestRegisterProvider_SystemTenantGate_AllowsWithAdmin(t *testing.T) {
 // bootstrap admin exists -- proving there is NO transport bypass of the
 // bootstrap-ordering invariant.
 func TestRegisterProvider_SystemTenantGate_RejectsWithoutAdmin(t *testing.T) {
+	t.Parallel()
 	manager, providerStorage, _, _, _, _ := setupTestFederationManager(t)
 	manager.bootstrapGate = &stubAdminGate{hasAdmin: false}
 
@@ -262,6 +269,7 @@ func TestRegisterProvider_SystemTenantGate_RejectsWithoutAdmin(t *testing.T) {
 // error fails the system-tenant registration closed (never opening on
 // uncertainty).
 func TestRegisterProvider_SystemTenantGate_FailsClosedOnGateError(t *testing.T) {
+	t.Parallel()
 	manager, _, _, _, _, _ := setupTestFederationManager(t)
 	manager.bootstrapGate = &stubAdminGate{err: errors.New("storage unavailable")}
 
@@ -276,6 +284,7 @@ func TestRegisterProvider_SystemTenantGate_FailsClosedOnGateError(t *testing.T) 
 // the admin => deny), so a misconfigured deployment cannot silently open the
 // control-plane configuration path.
 func TestRegisterProvider_SystemTenantGate_NilGateFailsClosed(t *testing.T) {
+	t.Parallel()
 	manager, _, _, _, _, _ := setupTestFederationManager(t)
 	// No bootstrapGate configured.
 
@@ -289,6 +298,7 @@ func TestRegisterProvider_SystemTenantGate_NilGateFailsClosed(t *testing.T) {
 // touches non-system tenants: a data-plane provider registers successfully even
 // when no gate is wired and even when a stub gate would report no admin.
 func TestRegisterProvider_NonSystemTenant_UnaffectedByGate(t *testing.T) {
+	t.Parallel()
 	t.Run("nil gate", func(t *testing.T) {
 		manager, providerStorage, _, _, _, _ := setupTestFederationManager(t)
 		provider := createTestProvider("tenant-acme", "acme-oidc")
@@ -319,6 +329,7 @@ func TestRegisterProvider_NonSystemTenant_UnaffectedByGate(t *testing.T) {
 // exclusively in go-qrdb/sdk/go as qrdbsdk.IsSystemTenant; quicbaas does not
 // keep a local copy of that logic.
 func TestSystemTenantIDMatchesQRDB(t *testing.T) {
+	t.Parallel()
 	if SystemTenantID != qrdbsdk.SystemTenantID {
 		t.Errorf("SystemTenantID = %q, want %q (qrdbsdk.SystemTenantID)", SystemTenantID, qrdbsdk.SystemTenantID)
 	}

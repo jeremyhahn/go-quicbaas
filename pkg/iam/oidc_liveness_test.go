@@ -81,6 +81,7 @@ func seedLivenessUser(t *testing.T, provider *OIDCProvider, tenantID string, use
 // TestTokenLiveness_EnabledUser verifies an unrevoked token whose subject is an
 // enabled user is live.
 func TestTokenLiveness_EnabledUser(t *testing.T) {
+	t.Parallel()
 	provider, _, _, _, _ := createTestOIDCProvider(t)
 	seedLivenessUser(t, provider, "tenant-a", liveUserID, LifecycleActive)
 
@@ -102,6 +103,7 @@ func TestTokenLiveness_EnabledUser(t *testing.T) {
 // now denies, like every other non-active state: a value nobody gave a state to
 // is not evidence that it may authenticate.
 func TestTokenLiveness_UnsetStateIsNotLive(t *testing.T) {
+	t.Parallel()
 	provider, _, _, _, _ := createTestOIDCProvider(t)
 	seedLivenessUser(t, provider, "tenant-a", unsetStateUserID, "")
 
@@ -116,6 +118,7 @@ func TestTokenLiveness_UnsetStateIsNotLive(t *testing.T) {
 
 // TestTokenLiveness_SuspendedUser verifies a suspended user is not live.
 func TestTokenLiveness_SuspendedUser(t *testing.T) {
+	t.Parallel()
 	provider, _, _, _, _ := createTestOIDCProvider(t)
 	seedLivenessUser(t, provider, "tenant-a", suspUserID, LifecycleSuspended)
 
@@ -130,6 +133,7 @@ func TestTokenLiveness_SuspendedUser(t *testing.T) {
 
 // TestTokenLiveness_LockedUser verifies a locked user is not live.
 func TestTokenLiveness_LockedUser(t *testing.T) {
+	t.Parallel()
 	provider, _, _, _, _ := createTestOIDCProvider(t)
 	seedLivenessUser(t, provider, "tenant-a", lockUserID, LifecycleLocked)
 
@@ -145,6 +149,7 @@ func TestTokenLiveness_LockedUser(t *testing.T) {
 // TestTokenLiveness_DisabledState verifies a user in the disabled state is not
 // live.
 func TestTokenLiveness_DisabledState(t *testing.T) {
+	t.Parallel()
 	provider, _, _, _, _ := createTestOIDCProvider(t)
 	seedLivenessUser(t, provider, "tenant-a", disUserID, LifecycleDisabled)
 
@@ -169,6 +174,7 @@ func TestTokenLiveness_DisabledState(t *testing.T) {
 // were silently promoted to service principals, which is why the positive claim
 // exists.
 func TestTokenLiveness_ServiceTokenIsLive(t *testing.T) {
+	t.Parallel()
 	provider, _, _, _, _ := createTestOIDCProvider(t)
 
 	live, err := provider.TokenLiveness(context.Background(), "tenant-a", "app_default_runtime", 0, PrincipalTypeService, "jti-svc")
@@ -182,6 +188,7 @@ func TestTokenLiveness_ServiceTokenIsLive(t *testing.T) {
 
 // TestTokenLiveness_Revoked verifies a revoked jti is not live.
 func TestTokenLiveness_Revoked(t *testing.T) {
+	t.Parallel()
 	provider, _, _, _, _ := createTestOIDCProvider(t)
 	seedLivenessUser(t, provider, "tenant-a", revUserID, LifecycleActive)
 
@@ -204,6 +211,7 @@ func TestTokenLiveness_Revoked(t *testing.T) {
 // TestTokenLiveness_RevocationStoreError verifies a revocation-store error is
 // fail-closed: (false, err).
 func TestTokenLiveness_RevocationStoreError(t *testing.T) {
+	t.Parallel()
 	provider, _, _, _, _ := createTestOIDCProvider(t)
 	// Swap in a token storage whose IsTokenRevoked always errors.
 	provider.tokenService.storage = &erroringTokenStorage{mockTokenStorage: newMockTokenStorage()}
@@ -220,6 +228,7 @@ func TestTokenLiveness_RevocationStoreError(t *testing.T) {
 // TestTokenLiveness_GetUserError verifies a non-not-found GetUser error is
 // fail-closed: (false, err).
 func TestTokenLiveness_GetUserError(t *testing.T) {
+	t.Parallel()
 	provider, _, _, _, _ := createTestOIDCProvider(t)
 	// Swap in an identity store whose GetUser always errors with a non-not-found
 	// error so the fail-closed path (not the service-token path) is exercised.
@@ -240,6 +249,7 @@ func TestTokenLiveness_GetUserError(t *testing.T) {
 // TestOIDCIntrospect_DisabledUser verifies Introspect reports active=false for
 // an otherwise-valid token whose subject is a suspended user.
 func TestOIDCIntrospect_DisabledUser(t *testing.T) {
+	t.Parallel()
 	provider, _, _, _, _ := createTestOIDCProvider(t)
 	seedLivenessUser(t, provider, "tenant-a", introspectSuspID, LifecycleSuspended)
 	ctx := context.Background()
@@ -260,6 +270,7 @@ func TestOIDCIntrospect_DisabledUser(t *testing.T) {
 // TestOIDCIntrospect_EnabledUser verifies Introspect reports active=true with
 // claims for a valid token whose subject is an enabled user.
 func TestOIDCIntrospect_EnabledUser(t *testing.T) {
+	t.Parallel()
 	provider, _, _, _, _ := createTestOIDCProvider(t)
 	seedLivenessUser(t, provider, "tenant-a", introspectLiveID, LifecycleActive)
 	ctx := context.Background()
@@ -283,6 +294,7 @@ func TestOIDCIntrospect_EnabledUser(t *testing.T) {
 // TestOIDCIntrospect_ServiceToken verifies Introspect reports active=true for a
 // valid token whose subject has no backing user (service token regression).
 func TestOIDCIntrospect_ServiceToken(t *testing.T) {
+	t.Parallel()
 	provider, _, _, _, _ := createTestOIDCProvider(t)
 	ctx := context.Background()
 
@@ -303,6 +315,7 @@ func TestOIDCIntrospect_ServiceToken(t *testing.T) {
 // rewire is fail-closed on a revocation-store error: active=false (not the
 // previous fail-open behavior).
 func TestOIDCIntrospect_RevocationStoreErrorFailClosed(t *testing.T) {
+	t.Parallel()
 	provider, _, _, _, _ := createTestOIDCProvider(t)
 	ctx := context.Background()
 

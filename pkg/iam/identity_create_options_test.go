@@ -65,6 +65,7 @@ func newCreateOptionsStore() (*IdentityStore, *MemoryStorage) {
 // It used to be accepted and discarded, so a caller that asked for PIV got a
 // user with no auth methods at all and no indication why.
 func TestCreateUser_HonoursAuthMethods(t *testing.T) {
+	t.Parallel()
 	store, mem := newCreateOptionsStore()
 	ctx := context.Background()
 
@@ -92,6 +93,7 @@ func TestCreateUser_HonoursAuthMethods(t *testing.T) {
 // TestCreateUser_DefaultsAuthMethodsToWebAuthn proves the documented default is
 // applied rather than merely described in a comment.
 func TestCreateUser_DefaultsAuthMethodsToWebAuthn(t *testing.T) {
+	t.Parallel()
 	store, _ := newCreateOptionsStore()
 
 	user, err := store.CreateUser(context.Background(), "acme", CreateUserOptions{
@@ -113,6 +115,7 @@ func TestCreateUser_DefaultsAuthMethodsToWebAuthn(t *testing.T) {
 // pending, so an account created anywhere but REST could not be PIV-activated
 // at all, and REST only worked because it issued a second write afterwards.
 func TestCreateUser_SetsInitialState(t *testing.T) {
+	t.Parallel()
 	store, mem := newCreateOptionsStore()
 	ctx := context.Background()
 
@@ -140,6 +143,7 @@ func TestCreateUser_SetsInitialState(t *testing.T) {
 // not awaiting an invite — first-boot's cert-enrolled admin and a federated
 // user authenticated by their IdP are both active on arrival.
 func TestCreateUser_HonoursExplicitState(t *testing.T) {
+	t.Parallel()
 	store, _ := newCreateOptionsStore()
 
 	user, err := store.CreateUser(context.Background(), "acme", CreateUserOptions{
@@ -162,6 +166,7 @@ func TestCreateUser_HonoursExplicitState(t *testing.T) {
 // activated — ActivateFIDO2 and PIVActivator are the only mechanisms — so the
 // invite it is issued advertises something that does not exist.
 func TestCreateUser_RejectsUnsupportedAuthMethods(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name    string
 		methods []string
@@ -175,6 +180,7 @@ func TestCreateUser_RejectsUnsupportedAuthMethods(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			store, mem := newCreateOptionsStore()
 
 			user, err := store.CreateUser(context.Background(), "acme", CreateUserOptions{
@@ -197,6 +203,7 @@ func TestCreateUser_RejectsUnsupportedAuthMethods(t *testing.T) {
 // only `disabled`, so a typo yields an account that can neither be activated
 // nor be held out by the state it claims.
 func TestCreateUser_RejectsUnsupportedState(t *testing.T) {
+	t.Parallel()
 	store, mem := newCreateOptionsStore()
 
 	user, err := store.CreateUser(context.Background(), "acme", CreateUserOptions{
@@ -215,6 +222,7 @@ func TestCreateUser_RejectsUnsupportedState(t *testing.T) {
 // canonical shape: surrounding whitespace removed and a repeat dropped, so a
 // record cannot claim the same credential kind twice.
 func TestCreateUser_NormalizesAuthMethods(t *testing.T) {
+	t.Parallel()
 	store, mem := newCreateOptionsStore()
 	ctx := context.Background()
 
@@ -247,6 +255,7 @@ func TestCreateUser_NormalizesAuthMethods(t *testing.T) {
 // into the same record: the REST create handler writes the caller's
 // auth_methods a second time through UpdateUser to attach the invite.
 func TestUpdateUser_RejectsUnsupportedAuthMethods(t *testing.T) {
+	t.Parallel()
 	store, mem := newCreateOptionsStore()
 	ctx := context.Background()
 
@@ -284,6 +293,7 @@ func TestUpdateUser_RejectsUnsupportedAuthMethods(t *testing.T) {
 // most requests — so honouring it naively would have suspended nearly every
 // user the moment the field started being read.
 func TestCreateUser_EnabledDefaultsToNotSuspended(t *testing.T) {
+	t.Parallel()
 	store, _ := newCreateOptionsStore()
 
 	user, err := store.CreateUser(context.Background(), "acme", CreateUserOptions{
@@ -306,6 +316,7 @@ func TestCreateUser_EnabledDefaultsToNotSuspended(t *testing.T) {
 // TestCreateUser_HonoursExplicitEnabled proves an explicit false does suspend,
 // mapping to Suspended exactly as UpdateUser does.
 func TestCreateUser_HonoursExplicitEnabled(t *testing.T) {
+	t.Parallel()
 	store, mem := newCreateOptionsStore()
 	ctx := context.Background()
 

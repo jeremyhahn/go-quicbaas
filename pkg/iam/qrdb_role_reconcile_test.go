@@ -40,6 +40,7 @@ import (
 // a role changed but not how, which is the whole content of the log line the
 // boot-time hook emits.
 func TestQRDBRoleStorage_ReconcileBuiltInRoles_ProjectsReport(t *testing.T) {
+	t.Parallel()
 	fc := &fakeRoleClient{
 		recResp: &qrdbtransport.ReconcileRolesResponse{
 			TenantID: "burnin",
@@ -104,6 +105,7 @@ func TestQRDBRoleStorage_ReconcileBuiltInRoles_ProjectsReport(t *testing.T) {
 // claimed a change would put one noise line per role per boot in front of
 // every operator whose fleet is already correct.
 func TestQRDBRoleStorage_ReconcileBuiltInRoles_ConvergedTenantReportsNoChange(t *testing.T) {
+	t.Parallel()
 	fc := &fakeRoleClient{recResp: &qrdbtransport.ReconcileRolesResponse{TenantID: "burnin"}}
 	s := NewQRDBRoleStorage(&fakeRoleResolver{client: fc})
 
@@ -124,6 +126,7 @@ func TestQRDBRoleStorage_ReconcileBuiltInRoles_ConvergedTenantReportsNoChange(t 
 // tenant that was asked for. The report is what the log line and the API
 // response identify the tenant by; an empty one would name nothing.
 func TestQRDBRoleStorage_ReconcileBuiltInRoles_TenantFallsBackToTheRequest(t *testing.T) {
+	t.Parallel()
 	fc := &fakeRoleClient{recResp: &qrdbtransport.ReconcileRolesResponse{}}
 	s := NewQRDBRoleStorage(&fakeRoleResolver{client: fc})
 
@@ -140,6 +143,7 @@ func TestQRDBRoleStorage_ReconcileBuiltInRoles_TenantFallsBackToTheRequest(t *te
 // nil response with a nil error yields an empty report rather than a nil
 // dereference in the caller's Changed() check.
 func TestQRDBRoleStorage_ReconcileBuiltInRoles_NilResponseIsNotAPanic(t *testing.T) {
+	t.Parallel()
 	s := NewQRDBRoleStorage(&fakeRoleResolver{client: &fakeRoleClient{}})
 
 	report, err := s.ReconcileBuiltInRoles(context.Background(), "burnin")
@@ -156,6 +160,7 @@ func TestQRDBRoleStorage_ReconcileBuiltInRoles_NilResponseIsNotAPanic(t *testing
 // caller branches on the broker's sentinels regardless of which role
 // operation raised them.
 func TestQRDBRoleStorage_ReconcileBuiltInRoles_ClassifiesQRDBErrors(t *testing.T) {
+	t.Parallel()
 	fc := &fakeRoleClient{recErr: errors.New("qrdb unreachable")}
 	s := NewQRDBRoleStorage(&fakeRoleResolver{client: fc})
 
@@ -179,6 +184,7 @@ func TestQRDBRoleStorage_ReconcileBuiltInRoles_ClassifiesQRDBErrors(t *testing.T
 // unwired storage refuses with a typed configuration error instead of
 // panicking, matching the CRUD paths' fail-closed behaviour.
 func TestQRDBRoleStorage_ReconcileBuiltInRoles_NilResolverFailsClosed(t *testing.T) {
+	t.Parallel()
 	s := NewQRDBRoleStorage(nil)
 
 	_, err := s.ReconcileBuiltInRoles(context.Background(), "burnin")
@@ -201,6 +207,7 @@ func TestQRDBRoleStorage_ReconcileBuiltInRoles_NilResolverFailsClosed(t *testing
 // correct while the PDP is answering from a stale grant — the exact shape of
 // the defect #573 was filed for.
 func TestTransportRoleToIAM_CarriesRetiredPermissions(t *testing.T) {
+	t.Parallel()
 	got := transportRoleToIAM(&qrdbtransport.Role{
 		ID:                 "role-admin",
 		Name:               "admin",
@@ -223,6 +230,7 @@ func TestTransportRoleToIAM_CarriesRetiredPermissions(t *testing.T) {
 // agrees with reports no retired permissions, so the drift column is a signal
 // rather than decoration.
 func TestTransportRoleToIAM_CleanRoleCarriesNoDrift(t *testing.T) {
+	t.Parallel()
 	got := transportRoleToIAM(&qrdbtransport.Role{
 		ID:          "role-admin",
 		Name:        "admin",
@@ -244,6 +252,7 @@ type nonReconcilingRoleStorage struct{ RoleStorage }
 // a tenant against a built-in set this package invented. Built-in definitions
 // are qrdb's; a storage that cannot reach them has nothing correct to say.
 func TestIdentityStore_ReconcileBuiltInRoles_RefusesAStorageThatCannotReconcile(t *testing.T) {
+	t.Parallel()
 	mem := NewMemoryStorage()
 	store := NewIdentityStore(IdentityStoreOptions{
 		UserStorage: mem,
@@ -260,6 +269,7 @@ func TestIdentityStore_ReconcileBuiltInRoles_RefusesAStorageThatCannotReconcile(
 // tenant identifier is validated before any store call, matching every other
 // tenant-scoped method on the identity store.
 func TestIdentityStore_ReconcileBuiltInRoles_RejectsAnInvalidTenant(t *testing.T) {
+	t.Parallel()
 	fc := &fakeRoleClient{recResp: &qrdbtransport.ReconcileRolesResponse{}}
 	store := NewIdentityStore(IdentityStoreOptions{
 		RoleStorage: NewQRDBRoleStorage(&fakeRoleResolver{client: fc}),
@@ -276,6 +286,7 @@ func TestIdentityStore_ReconcileBuiltInRoles_RejectsAnInvalidTenant(t *testing.T
 // TestIdentityStore_ReconcileBuiltInRoles_DelegatesToTheRoleStorage proves the
 // happy path reaches the qrdb reconcile verb and returns its report unchanged.
 func TestIdentityStore_ReconcileBuiltInRoles_DelegatesToTheRoleStorage(t *testing.T) {
+	t.Parallel()
 	fc := &fakeRoleClient{
 		recResp: &qrdbtransport.ReconcileRolesResponse{
 			TenantID: "burnin",
@@ -299,6 +310,7 @@ func TestIdentityStore_ReconcileBuiltInRoles_DelegatesToTheRoleStorage(t *testin
 // storage failure is wrapped, not swallowed: the boot-time hook logs a warning
 // on it, and an empty report would instead read as "every tenant is fine".
 func TestIdentityStore_ReconcileBuiltInRoles_SurfacesStorageFailures(t *testing.T) {
+	t.Parallel()
 	fc := &fakeRoleClient{recErr: errors.New("qrdb unreachable")}
 	store := NewIdentityStore(IdentityStoreOptions{
 		RoleStorage: NewQRDBRoleStorage(&fakeRoleResolver{client: fc}),
