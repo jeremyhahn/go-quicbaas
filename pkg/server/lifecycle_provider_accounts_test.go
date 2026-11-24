@@ -15,7 +15,13 @@ package server
 
 import (
 	"context"
+	"errors"
+	"slices"
+	"sync"
 	"testing"
+
+	qrdbtenant "github.com/jeremyhahn/go-qrdb/pkg/tenant"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
@@ -106,5 +112,86 @@ func TestSeedDefaultProviderAccounts_SecondBootCreatesNothing(t *testing.T) {
 	registry := providerAccountsRegistry(t)
 	s.seedDefaultProviderAccounts(context.Background(), store, registry)
 	s.seedDefaultProviderAccounts(context.Background(), store, registry)
+	assertSeededDefaults(t, store, orchestration.SystemTenantID)
+}
+
+// nativeTenantDirectory is go-qrdb's native tenant service as far as the
+// default accounts see it: the tenants it creates and lists.
+type nativeTenantDirectory struct {
+	qrdbsdk.ServiceTenantServicer
+
+	mu        sync.Mutex
+	tenants   []qrdbtenant.TenantInfo
+	createErr error
+}
+
+func (d *nativeTenantDirectory) CreateTenant(_ context.Context, id, name string, isolationType qrdbtenant.IsolationType, _ ...qrdbtenant.CreateTenantOption) (*qrdbtenant.TenantInfo, error) {
+	if d.createErr != nil {
+		return nil, d.createErr
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	info := qrdbtenant.TenantInfo{ID: id, Name: name, IsolationType: isolationType}
+	d.tenants = append(d.tenants, info)
+	return &info, nil
+}
+
+func (d *nativeTenantDirectory) ListTenants(context.Context) ([]qrdbtenant.TenantInfo, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return slices.Clone(d.tenants), nil
+}
+
+func TestSeedDefaultProviderAccounts_ReachesATenantCreatedNatively(t *testing.T) {
+	s := agentsTestServer(t, nil)
+	directory := &nativeTenantDirectory{}
+	s.tenantUnsealRouter = s.newNodeTenantRouter(func() qrdbsdk.ServiceTenantServicer { return directory })
+	store := orchestration.NewInMemoryAccountStore()
+	s.seedDefaultProviderAccounts(context.Background(), store, providerAccountsRegistry(t))
+
+	// The servicer the SDK's TenantMgmt() is wired to in an embedded node;
+	// the network transports call the router itself.
+	tenantMgmt := hookedTenantServicer(directory, s.tenantUnsealRouter)
+	if _, err := tenantMgmt.CreateTenant(context.Background(), "acme", "Acme", qrdbtenant.IsolationBarrier); err != nil {
+		t.Fatalf("native CreateTenant: %v", err)
+	}
+	assertSeededDefaults(t, store, "acme")
+
+	if _, err := s.tenantUnsealRouter.CreateTenant(context.Background(), "globex", "Globex", qrdbtenant.IsolationBarrier); err != nil {
+		t.Fatalf("router CreateTenant: %v", err)
+	}
+	assertSeededDefaults(t, store, "globex")
+}
+
+func TestSeedDefaultProviderAccounts_FailedNativeCreateSeedsNothing(t *testing.T) {
+	s := agentsTestServer(t, nil)
+	directory := &nativeTenantDirectory{createErr: errors.New("tenant exists")}
+	s.tenantUnsealRouter = s.newNodeTenantRouter(func() qrdbsdk.ServiceTenantServicer { return directory })
+	store := orchestration.NewInMemoryAccountStore()
+	s.seedDefaultProviderAccounts(context.Background(), store, providerAccountsRegistry(t))
+
+	if _, err := s.tenantUnsealRouter.CreateTenant(context.Background(), "acme", "Acme", qrdbtenant.IsolationBarrier); err == nil {
+		t.Fatal("native CreateTenant: want the directory's error")
+	}
+	if got := tenantProviderAccounts(t, store, "acme"); len(got) != 0 {
+		t.Fatalf("a tenant that was not created has accounts %v", got)
+	}
+}
+
+func TestSeedDefaultProviderAccounts_ReachesANativeTenantAtBoot(t *testing.T) {
+	s := agentsTestServer(t, nil)
+	directory := &nativeTenantDirectory{tenants: []qrdbtenant.TenantInfo{{ID: "acme", Name: "Acme"}}}
+	s.tenantUnsealRouter = s.newNodeTenantRouter(func() qrdbsdk.ServiceTenantServicer { return directory })
+	store := orchestration.NewInMemoryAccountStore()
+	s.seedDefaultProviderAccounts(context.Background(), store, providerAccountsRegistry(t))
+	assertSeededDefaults(t, store, orchestration.SystemTenantID)
+	assertSeededDefaults(t, store, "acme")
+}
+
+func TestSeedDefaultProviderAccounts_NoNodeTenantServiceAtBoot(t *testing.T) {
+	s := agentsTestServer(t, nil)
+	s.tenantUnsealRouter = s.newNodeTenantRouter(func() qrdbsdk.ServiceTenantServicer { return nil })
+	store := orchestration.NewInMemoryAccountStore()
+	s.seedDefaultProviderAccounts(context.Background(), store, providerAccountsRegistry(t))
 	assertSeededDefaults(t, store, orchestration.SystemTenantID)
 }
