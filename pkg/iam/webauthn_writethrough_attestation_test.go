@@ -68,6 +68,7 @@ func newGatedWriteThrough(
 // virtual authenticator for an administrative account, and the registration is
 // refused before ANYTHING is persisted.
 func TestWriteThroughSave_RefusesUnattestedAdminEnrollment(t *testing.T) {
+	t.Parallel()
 	factors := &fakeUserAuthFactorClient{}
 	gate := NewWebAuthnAttestationGate(
 		WebAuthnAssuranceAny,
@@ -102,6 +103,7 @@ func TestWriteThroughSave_RefusesUnattestedAdminEnrollment(t *testing.T) {
 // case, and it also pins the second half of scope item 3: the stored factor
 // STATES its attested level, so login can later require hardware.
 func TestWriteThroughSave_AcceptsAttestedHardwareAndRecordsLevel(t *testing.T) {
+	t.Parallel()
 	factors := &fakeUserAuthFactorClient{}
 	gate := NewWebAuthnAttestationGate(WebAuthnAssuranceHardware, hardwareAllowlist(), nil)
 	wt, users, _ := newGatedWriteThrough(t, gate, factors)
@@ -132,6 +134,7 @@ func TestWriteThroughSave_AcceptsAttestedHardwareAndRecordsLevel(t *testing.T) {
 // unattested authenticator, but the stored factor says so — which is what stops
 // it from later being mistaken for hardware.
 func TestWriteThroughSave_PermissiveTenantRecordsSoftware(t *testing.T) {
+	t.Parallel()
 	factors := &fakeUserAuthFactorClient{}
 	gate := NewWebAuthnAttestationGate(
 		WebAuthnAssuranceAny,
@@ -158,6 +161,7 @@ func TestWriteThroughSave_PermissiveTenantRecordsSoftware(t *testing.T) {
 // deployment denies" regression: a decorator constructed without a gate must
 // refuse rather than persist.
 func TestWriteThroughSave_NilGateRefuses(t *testing.T) {
+	t.Parallel()
 	factors := &fakeUserAuthFactorClient{}
 	wt, users, _ := newGatedWriteThrough(t, nil, factors)
 	seedUser(t, users, 42, "admin@example.com", "admin's yubikey")
@@ -178,6 +182,7 @@ func TestWriteThroughSave_NilGateRefuses(t *testing.T) {
 // would let a permissive deployment enroll a virtual authenticator as a tenant
 // administrator.
 func TestWriteThroughSave_UnresolvableRegistrantIsHeldToHardware(t *testing.T) {
+	t.Parallel()
 	factors := &fakeUserAuthFactorClient{}
 	gate := NewWebAuthnAttestationGate(
 		WebAuthnAssuranceAny,
@@ -201,6 +206,7 @@ func TestWriteThroughSave_UnresolvableRegistrantIsHeldToHardware(t *testing.T) {
 // well-formed manufacturer attestation, with an allowlisted AAGUID and no
 // verified chain, writes nothing.
 func TestWriteThroughSave_RefusesUnverifiedAttestationChainForAdmin(t *testing.T) {
+	t.Parallel()
 	factors := &fakeUserAuthFactorClient{}
 	gate := NewWebAuthnAttestationGate(WebAuthnAssuranceHardware, hardwareAllowlist(), nil)
 	wt, users, creds := newGatedWriteThrough(t, gate, factors)
@@ -238,6 +244,7 @@ func TestWriteThroughSave_RefusesUnverifiedAttestationChainForAdmin(t *testing.T
 // silent downgrade this whole change exists to remove — just arriving through
 // the permissive door instead of the administrative one.
 func TestWriteThroughSave_PermissiveTenantNeverRecordsUnverifiedHardware(t *testing.T) {
+	t.Parallel()
 	factors := &fakeUserAuthFactorClient{}
 	gate := NewWebAuthnAttestationGate(
 		WebAuthnAssuranceAny,
@@ -270,6 +277,7 @@ func TestWriteThroughSave_PermissiveTenantNeverRecordsUnverifiedHardware(t *test
 // same credential, with a verified trust path, IS hardware. Without this the
 // test above could be satisfied by never recording hardware at all.
 func TestWriteThroughSave_VerifiedChainRecordsHardware(t *testing.T) {
+	t.Parallel()
 	factors := &fakeUserAuthFactorClient{}
 	gate := NewWebAuthnAttestationGate(
 		WebAuthnAssuranceAny,
@@ -297,6 +305,7 @@ func TestWriteThroughSave_VerifiedChainRecordsHardware(t *testing.T) {
 // would receive an unattested session and appear weaker than their credential
 // until they logged in a second time.
 func TestWriteThroughSave_RecordsTheProvenResultForTheCaller(t *testing.T) {
+	t.Parallel()
 	factors := &fakeUserAuthFactorClient{}
 	gate := NewWebAuthnAttestationGate(WebAuthnAssuranceHardware, hardwareAllowlist(), nil)
 	wt, users, _ := newGatedWriteThrough(t, gate, factors)
@@ -321,6 +330,7 @@ func TestWriteThroughSave_RecordsTheProvenResultForTheCaller(t *testing.T) {
 // direction: the recorder must carry the level that was actually established,
 // so a caller cannot read "hardware" out of a permissive enrollment.
 func TestWriteThroughSave_RecordsSoftwareForAnUnprovenCredential(t *testing.T) {
+	t.Parallel()
 	factors := &fakeUserAuthFactorClient{}
 	gate := NewWebAuthnAttestationGate(
 		WebAuthnAssuranceAny,
@@ -348,6 +358,7 @@ func TestWriteThroughSave_RecordsSoftwareForAnUnprovenCredential(t *testing.T) {
 // driven by a path that attached no recorder must not panic, and reading an
 // unfilled one yields nothing rather than a false positive.
 func TestAttestationRecorder_NilSafety(t *testing.T) {
+	t.Parallel()
 	var recorder *attestationRecorder
 	recorder.set(testHardwareAttestation("x"))
 	if recorder.get() != nil {

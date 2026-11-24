@@ -165,6 +165,7 @@ func registerPasskeyInTenant(t *testing.T, tenantID string, userID uint64, credI
 // is actually minted. Before the fix the ceremony verified the assertion and
 // then refused issuance, so this crossing failed at its last step.
 func TestTenantUserRegistersThenLogsIn(t *testing.T) {
+	t.Parallel()
 	// --- registration half -------------------------------------------------
 	credID := []byte{0x80, 0x36, 0xfe, 0x36, 0xb8, 0x3b, 0xce, 0xeb}
 	lookupKey := registerPasskeyInTenant(t, crossingTenant, 89482037924204544, credID)
@@ -219,6 +220,7 @@ func TestTenantUserRegistersThenLogsIn(t *testing.T) {
 // is claimed in still refuses issuance, typed, rather than minting a bearer
 // with an empty scp that denies every request it is later presented on.
 func TestTenantUserLogin_RefusesWhenTheRoleIsAbsentFromItsOwnTenant(t *testing.T) {
+	t.Parallel()
 	rbac := newCrossingRBAC()
 	provider, storage := newCeremonyProvider(t, &fakePermissionResolver{client: rbac})
 
@@ -248,6 +250,7 @@ func TestTenantUserLogin_RefusesWhenTheRoleIsAbsentFromItsOwnTenant(t *testing.T
 // call that crosses into the qrdb SDK can no longer run in the system tenant
 // while looking correctly scoped. There is one key (go-quicbaas#1150).
 func TestWithTokenTenant_BindsQRDBsOwnKey(t *testing.T) {
+	t.Parallel()
 	ctx := withTokenTenant(context.Background(), crossingTenant)
 
 	got, ok := qrdbsdk.TenantFromContext(ctx)
@@ -264,6 +267,7 @@ func TestWithTokenTenant_BindsQRDBsOwnKey(t *testing.T) {
 // explicit empty binding and an absent one the same way but callers cannot
 // distinguish them afterwards.
 func TestWithTokenTenant_EmptyTenantLeavesTheContextAlone(t *testing.T) {
+	t.Parallel()
 	base := qrdbsdk.ContextWithTenant(context.Background(), crossingTenant)
 
 	got := withTokenTenant(base, "")
