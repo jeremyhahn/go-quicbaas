@@ -20,14 +20,24 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // A tenant's grace job disables only that tenant's own key versions,
-// whatever its payload names: the key is bound to the job's tenant at
-// execution.
+// whatever its payload names: the payload carries the bare key name and the
+// update runs as the job's tenant.
 func TestKMSGracePeriodHandler_TenantJobBoundToItsTenant(t *testing.T) {
+	type boundCall struct {
+		KeyID   string
+		Version uint64
+		Tenant  string
+		System  bool
+	}
+	var bound []boundCall
 	updater := newMockKMSKeyStatusUpdater()
-	updater.updateFunc = func(_ context.Context, keyID string, version uint64) (*GracePeriodResult, error) {
+	updater.updateFunc = func(ctx context.Context, keyID string, version uint64) (*GracePeriodResult, error) {
+		tenant, _ := tenantctx.Lookup(ctx)
+		bound = append(bound, boundCall{KeyID: keyID, Version: version, Tenant: tenant, System: tenantctx.IsSystem(tenant)})
 		return &GracePeriodResult{KeyID: keyID, Version: version, OldStatus: "enabled", NewStatus: "disabled"}, nil
 	}
 	h := NewKMSGracePeriodHandler(updater)
@@ -43,36 +53,36 @@ func TestKMSGracePeriodHandler_TenantJobBoundToItsTenant(t *testing.T) {
 		}
 	}
 
-	for _, payload := range []string{
-		`{"key_id":"tenant/other/key","version":1}`,
-		`{"key_id":"system-key","version":1}`,
-		`{"key_id":"tenant/acme-evil/key","version":1}`,
-	} {
-		_, err := h.Handle(context.Background(), tenantJob(payload))
-		var invalid *scheduler.InvalidJobError
-		require.ErrorAs(t, err, &invalid, "payload %s", payload)
-		require.Equal(t, "payload.key_id", invalid.Field)
-	}
-	require.Empty(t, updater.calls, "no key outside the tenant is touched")
-
-	_, err := h.Handle(context.Background(), tenantJob(`{"key_id":"tenant/acme/key","version":1}`))
+	// The tenant's job updates its own key by the bare name, as the tenant.
+	_, err := h.Handle(context.Background(), tenantJob(`{"key_id":"key","version":1}`))
 	require.NoError(t, err)
-	require.Equal(t, []updateCall{{KeyID: "tenant/acme/key", Version: 1}}, updater.calls)
+	require.Equal(t, []boundCall{{KeyID: "key", Version: 1, Tenant: "acme"}}, bound)
+
+	// A payload naming another tenant's key name still runs as acme, so the
+	// update reaches only acme's key of that name.
+	bound = nil
+	_, err = h.Handle(context.Background(), tenantJob(`{"key_id":"other-key","version":1}`))
+	require.NoError(t, err)
+	require.Equal(t, []boundCall{{KeyID: "other-key", Version: 1, Tenant: "acme"}}, bound)
 
 	// A delegated job aimed at a tenant is bound the same way.
+	bound = nil
 	delegated := &scheduler.Job{
 		OwnerType:      scheduler.OwnerTypeDelegated,
 		TargetTenantID: "acme",
-		Payload:        []byte(`{"key_id":"tenant/other/key","version":1}`),
+		Payload:        []byte(`{"key_id":"other-key","version":1}`),
 	}
 	_, err = h.Handle(context.Background(), delegated)
-	require.Error(t, err)
+	require.NoError(t, err)
+	require.Equal(t, []boundCall{{KeyID: "other-key", Version: 1, Tenant: "acme"}}, bound)
 
-	// A platform job keeps platform authority.
+	// A platform job keeps platform authority: it runs as the system tenant.
+	bound = nil
 	platform := &scheduler.Job{
 		OwnerType: scheduler.OwnerTypeDelegated,
-		Payload:   []byte(`{"key_id":"tenant/other/key","version":2}`),
+		Payload:   []byte(`{"key_id":"other-key","version":2}`),
 	}
 	_, err = h.Handle(context.Background(), platform)
 	require.NoError(t, err)
+	require.Equal(t, []boundCall{{KeyID: "other-key", Version: 2, Tenant: tenantctx.SystemTenantID, System: true}}, bound)
 }
