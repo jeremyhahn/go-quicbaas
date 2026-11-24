@@ -93,6 +93,10 @@ const (
 	// tenantAgentKeyspace holds each tenant's TenantAgent appointment: one
 	// record per tenant, under a fixed identifier.
 	tenantAgentKeyspace = "orch/tenantagent/"
+
+	// tenantPlanKeyspace holds each tenant's TenantPlan: one record per
+	// tenant, under a fixed identifier.
+	tenantPlanKeyspace = "orch/tenantplan/"
 )
 
 // =============================================================================
@@ -311,6 +315,9 @@ const (
 
 	// AuditResourceTenantAgent identifies a tenant's TenantAgent appointment.
 	AuditResourceTenantAgent = "orchestration_tenant_agent"
+
+	// AuditResourceTenantPlan identifies a tenant's TenantPlan.
+	AuditResourceTenantPlan = "orchestration_tenant_plan"
 )
 
 // StoreAuditEvent describes a single mutation of a durable orchestration
