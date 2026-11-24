@@ -20,6 +20,7 @@ import (
 	"encoding/base64"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"log/slog"
 	"maps"
 	"net"
@@ -1230,19 +1231,14 @@ func (s *Server) startKMS() error {
 		s.ownsXKMS = true
 	}
 
-	keyOwnerStore, err := kmsKeyOwnerStore(backendName, keyStorage, func() (xkmssdk.StorageBackend, error) {
-		return s.kmsReplicatedKeyOwnerStore(keyStorage)
-	})
-	if err != nil {
-		return api.NewOperationFailedError("open KMS key owner store", err)
-	}
-
 	// Create BackendFactory to manage multiple backends via registry
 	factory, err := newKMSBackendFactory(&kms.BackendFactoryConfig{
 		Logger:              logAdapter,
 		EnabledBackends:     s.config.KMS.EnabledBackends,
 		HealthCheckInterval: 30,
-		KeyNameStore:        keyOwnerStore,
+		KeyNameStoreFor: kmsKeyOwnerStores(keyStorage, func() (xkmssdk.StorageBackend, error) {
+			return s.kmsReplicatedKeyOwnerStore(keyStorage)
+		}),
 	})
 	if err != nil {
 		return api.NewOperationFailedError("create backend factory", err)
@@ -1280,19 +1276,35 @@ func (s *Server) startKMS() error {
 	return nil
 }
 
-// kmsKeyOwnerStore picks where the XKMS ownership proofs and key-name markers
-// live: the node-local store for backends whose key material is on this node,
-// the replicated store for backends every node shares.
-func kmsKeyOwnerStore(backendName string, local xkmssdk.StorageBackend, replicated func() (xkmssdk.StorageBackend, error)) (xkmssdk.StorageBackend, error) {
-	switch backendName {
-	case "software", "tpm2", "quantum":
-		return local, nil
+// kmsKeyOwnerStores returns the chooser that picks each registered KMS
+// backend's XKMS ownership proofs and key-name markers store from where that
+// backend's key material lives: the node-local store for backends whose key
+// material is on this node, the replicated store for backends every node
+// shares. So the node-local CA software backend never writes to the
+// replicated store when the primary backend is shared. The replicated store
+// is opened on first use and reused after that; a failed open is returned and
+// not cached, so the next call opens again. The backend factory calls the
+// chooser under its own lock.
+func kmsKeyOwnerStores(local xkmssdk.StorageBackend, replicated func() (xkmssdk.StorageBackend, error)) func(backendName string) (xkmssdk.StorageBackend, error) {
+	var shared xkmssdk.StorageBackend
+	return func(backendName string) (xkmssdk.StorageBackend, error) {
+		switch backendName {
+		case "software", "tpm2", "quantum":
+			return local, nil
+		}
+		if shared != nil {
+			return shared, nil
+		}
+		store, err := replicated()
+		if err != nil {
+			return nil, err
+		}
+		if store == nil {
+			return nil, fmt.Errorf("replicated KMS key owner store for backend %q is nil", backendName)
+		}
+		shared = store
+		return shared, nil
 	}
-	store, err := replicated()
-	if err != nil {
-		return nil, err
-	}
-	return store, nil
 }
 
 // kmsReplicatedKeyOwnerStore opens the key owner store on the replicated
