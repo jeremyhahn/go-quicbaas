@@ -366,6 +366,20 @@ func (s *Scratch) Approve(ctx context.Context, number int, sha string) error {
 	return s.do(ctx, s.env.ReviewerToken, http.MethodPost, s.repoPath("/pulls/"+strconv.Itoa(number)+"/reviews"), body, nil)
 }
 
+// ReviewerLogin returns the login the reviewer token authenticates as.
+func (s *Scratch) ReviewerLogin(ctx context.Context) (string, error) {
+	var out struct {
+		Login string `json:"login"`
+	}
+	if err := s.do(ctx, s.env.ReviewerToken, http.MethodGet, "/user", nil, &out); err != nil {
+		return "", err
+	}
+	if out.Login == "" {
+		return "", &DecodeError{Method: http.MethodGet, Path: "/user", Err: errors.New("the answer names no login")}
+	}
+	return out.Login, nil
+}
+
 // PullRequest is the part of a pull request the train tests assert on.
 type PullRequest struct {
 	Number         int    `json:"number"`
