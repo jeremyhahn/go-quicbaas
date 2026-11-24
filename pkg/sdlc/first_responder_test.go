@@ -66,14 +66,17 @@ func (f *fakeAttentionLister) List(_ context.Context, _ string, _ AttentionFilte
 type fakeResponderNotifier struct {
 	mu       sync.Mutex
 	got      []notify.Notification
+	channels [][]string
 	failKeys map[string]bool
 }
 
-func (f *fakeResponderNotifier) Notify(_ context.Context, n notify.Notification) (notify.Report, error) {
+func (f *fakeResponderNotifier) NotifyChannels(_ context.Context, n notify.Notification, channels []string) (notify.Report, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.channels = append(f.channels, append([]string(nil), channels...))
 	if f.failKeys[n.Key] {
-		return notify.Report{}, &notify.DeliveryError{Key: n.Key}
+		failed := []notify.ChannelFailure{{Channel: "signal", Err: errors.New("signal unavailable")}}
+		return notify.Report{Failed: failed}, &notify.DeliveryError{Key: n.Key, Failures: failed}
 	}
 	f.got = append(f.got, n)
 	return notify.Report{Delivered: []string{"signal"}}, nil
@@ -208,6 +211,12 @@ func TestFirstResponder_RetriesFailedDelivery(t *testing.T) {
 	got := notifier.received()
 	if len(got) != 2 || got[1].Key != "t2@20" {
 		t.Fatalf("notifications: %+v", got)
+	}
+	notifier.mu.Lock()
+	calls := notifier.channels
+	notifier.mu.Unlock()
+	if len(calls) != 3 || len(calls[2]) != 1 || calls[2][0] != "signal" {
+		t.Fatalf("retry channels: %v", calls)
 	}
 }
 
@@ -403,5 +412,124 @@ func TestFirstResponder_RunSweepsUntilCancelled(t *testing.T) {
 	}
 	if len(sweeps) != 1 || sweeps[0].Notified != 1 {
 		t.Fatalf("sweeps: %+v", sweeps)
+	}
+}
+
+// frTestChannel is a notify.Channel that records what it receives and
+// fails while failing is set.
+type frTestChannel struct {
+	name    string
+	secure  bool
+	mu      sync.Mutex
+	failing bool
+	got     []notify.Notification
+}
+
+func (c *frTestChannel) Name() string { return c.name }
+
+func (c *frTestChannel) Secure() bool { return c.secure }
+
+func (c *frTestChannel) Deliver(_ context.Context, n notify.Notification) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.failing {
+		return errors.New(c.name + " unavailable")
+	}
+	c.got = append(c.got, n)
+	return nil
+}
+
+func (c *frTestChannel) setFailing(failing bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.failing = failing
+}
+
+func (c *frTestChannel) received() []notify.Notification {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]notify.Notification(nil), c.got...)
+}
+
+// newDispatchedResponder wires a FirstResponder to a real notify.Dispatcher
+// over a secure "signal" channel, failing at first, and an insecure "slack"
+// channel.
+func newDispatchedResponder(t *testing.T, lister *fakeAttentionLister) (*FirstResponder, *frTestChannel, *frTestChannel) {
+	t.Helper()
+	signal := &frTestChannel{name: "signal", secure: true, failing: true}
+	slack := &frTestChannel{name: "slack"}
+	d, err := notify.NewDispatcher(notify.DispatcherConfig{Channels: []notify.Channel{signal, slack}})
+	if err != nil {
+		t.Fatalf("NewDispatcher: %v", err)
+	}
+	r, err := NewFirstResponder(FirstResponderConfig{Attention: lister, Notifier: d})
+	if err != nil {
+		t.Fatalf("NewFirstResponder: %v", err)
+	}
+	return r, signal, slack
+}
+
+func TestFirstResponder_PartialFailureRetriesOnlyFailedChannel(t *testing.T) {
+	lister := &fakeAttentionLister{}
+	lister.set(alertItem("agent_offline:a1", "warning"))
+	r, signal, slack := newDispatchedResponder(t, lister)
+
+	if res := mustSweep(t, r); res.Notified != 0 || res.Failed != 1 {
+		t.Fatalf("sweep 1: %+v", res)
+	}
+	if got := slack.received(); len(got) != 1 || got[0].Key != "agent_offline:a1@7" {
+		t.Fatalf("slack after sweep 1: %+v", got)
+	}
+	if got := signal.received(); len(got) != 0 {
+		t.Fatalf("signal after sweep 1: %+v", got)
+	}
+
+	signal.setFailing(false)
+	if res := mustSweep(t, r); res.Notified != 1 || res.Failed != 0 {
+		t.Fatalf("sweep 2: %+v", res)
+	}
+	if got := signal.received(); len(got) != 1 || got[0].Key != "agent_offline:a1@7" {
+		t.Fatalf("signal after sweep 2: %+v", got)
+	}
+	if got := slack.received(); len(got) != 1 {
+		t.Fatalf("slack re-sent in sweep 2: %+v", got)
+	}
+
+	if res := mustSweep(t, r); res.Notified != 0 || res.Failed != 0 {
+		t.Fatalf("sweep 3: %+v", res)
+	}
+	if len(signal.received()) != 1 || len(slack.received()) != 1 {
+		t.Fatalf("sweep 3 sent again: signal %d, slack %d", len(signal.received()), len(slack.received()))
+	}
+}
+
+func TestFirstResponder_SensitiveBodyReachesSignalAfterRecovery(t *testing.T) {
+	item := parkedItem("t1", 10)
+	want := notificationFor(frTenant, item).Body
+	if want == "" {
+		t.Fatalf("parked item has no body")
+	}
+	lister := &fakeAttentionLister{}
+	lister.set(item)
+	r, signal, slack := newDispatchedResponder(t, lister)
+
+	if res := mustSweep(t, r); res.Failed != 1 {
+		t.Fatalf("sweep 1: %+v", res)
+	}
+	got := slack.received()
+	if len(got) != 1 || got[0].Body == want || strings.Contains(got[0].Body, "which branch?") || !strings.Contains(got[0].Body, "withheld") {
+		t.Fatalf("slack after sweep 1: %+v", got)
+	}
+
+	signal.setFailing(false)
+	if res := mustSweep(t, r); res.Notified != 1 {
+		t.Fatalf("sweep 2: %+v", res)
+	}
+	sig := signal.received()
+	if len(sig) != 1 || sig[0].Body != want {
+		t.Fatalf("signal after sweep 2: %+v", sig)
+	}
+	if len(slack.received()) != 1 {
+		t.Fatalf("slack re-sent in sweep 2: %+v", slack.received())
 	}
 }

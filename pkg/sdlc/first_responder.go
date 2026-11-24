@@ -15,6 +15,7 @@ package sdlc
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"strings"
 	"sync"
@@ -32,8 +33,9 @@ import (
 // operator must open it to see anything. The first responder sweeps the
 // inbox and pushes each new item through the notifier (Signal first, then
 // any other channel), once per item and age: an item re-parked later, or
-// one that resolves and returns, is announced again. A failed delivery is
-// not recorded, so the next sweep retries it.
+// one that resolves and returns, is announced again. A channel that failed
+// is retried on the next sweep, and only that channel: a channel that
+// delivered is never sent the same item at the same age again.
 //
 // Deduplication is in memory: after a restart every open item is announced
 // once more.
@@ -45,10 +47,10 @@ type AttentionLister interface {
 
 var _ AttentionLister = (*AttentionService)(nil)
 
-// ResponderNotifier delivers one notification. notify.Dispatcher
-// implements it.
+// ResponderNotifier delivers one notification to the named channels; nil
+// channels means every channel. notify.Dispatcher implements it.
 type ResponderNotifier interface {
-	Notify(ctx context.Context, n notify.Notification) (notify.Report, error)
+	NotifyChannels(ctx context.Context, n notify.Notification, channels []string) (notify.Report, error)
 }
 
 var _ ResponderNotifier = (*notify.Dispatcher)(nil)
@@ -87,10 +89,21 @@ type FirstResponderConfig struct {
 type FirstResponderSweep struct {
 	// Listed is the number of inbox items seen.
 	Listed int
-	// Notified is the number of items announced in this sweep.
+	// Notified is the number of items every attempted channel delivered
+	// in this sweep.
 	Notified int
-	// Failed is the number of announcements that reached no channel.
+	// Failed is the number of items with a channel still owed after this
+	// sweep, or whose notification was refused; they are retried next
+	// sweep.
 	Failed int
+}
+
+// announcement records an item's announcement at one age. pending holds
+// the channels still owed the item at that age; an empty pending means it
+// is fully announced.
+type announcement struct {
+	age     int64
+	pending []string
 }
 
 // FirstResponder announces each new attention item through a notifier.
@@ -101,8 +114,8 @@ type FirstResponder struct {
 	onSweep   func(tenantID string, result FirstResponderSweep, err error)
 
 	mu sync.Mutex
-	// notified maps tenant → item ID → the attentionAge it was announced at.
-	notified map[string]map[string]int64
+	// notified maps tenant → item ID → its announcement.
+	notified map[string]map[string]announcement
 }
 
 // NewFirstResponder validates cfg and returns a FirstResponder. Refusals
@@ -126,13 +139,15 @@ func NewFirstResponder(cfg FirstResponderConfig) (*FirstResponder, error) {
 		notifier:  cfg.Notifier,
 		interval:  interval,
 		onSweep:   cfg.OnSweep,
-		notified:  make(map[string]map[string]int64),
+		notified:  make(map[string]map[string]announcement),
 	}, nil
 }
 
 // Sweep lists the tenant's attention inbox and announces every item not
-// yet announced at its current age. A List error returns it and leaves the
-// record untouched; a delivery failure is counted and retried next sweep.
+// yet announced at its current age, and retries each channel an earlier
+// sweep failed for that age, only that channel. A List error returns it
+// and leaves the record untouched; a delivery failure is counted and
+// retried next sweep.
 func (r *FirstResponder) Sweep(ctx context.Context, tenantID string) (FirstResponderSweep, error) {
 	if tenantID == "" {
 		return FirstResponderSweep{}, &InvalidInputError{Field: "tenant_id", Message: "is required"}
@@ -167,14 +182,36 @@ func (r *FirstResponder) Sweep(ctx context.Context, tenantID string) (FirstRespo
 		result.Listed++
 		seen[item.ID] = struct{}{}
 		age := attentionAge(item)
-		if r.announcedAt(tenantID, item.ID, age) {
+		prev, ok := r.lookup(tenantID, item.ID)
+		retry := ok && prev.age == age
+		if retry && len(prev.pending) == 0 {
 			continue
 		}
-		if _, err := r.notifier.Notify(ctx, notificationFor(tenantID, item)); err != nil {
+		var channels []string
+		if retry {
+			channels = prev.pending
+		}
+		report, err := r.notifier.NotifyChannels(ctx, notificationFor(tenantID, item), channels)
+		if len(report.Delivered) == 0 && len(report.Failed) == 0 {
+			// Nothing was attempted: the notification or the channel
+			// list was refused. Owed channels that no longer exist are
+			// forgotten, so the next sweep sends to every channel.
+			var cfgErr *notify.ConfigError
+			if retry && errors.As(err, &cfgErr) {
+				r.forget(tenantID, item.ID)
+			}
 			result.Failed++
 			continue
 		}
-		r.record(tenantID, item.ID, age)
+		var pending []string
+		for _, f := range report.Failed {
+			pending = append(pending, f.Channel)
+		}
+		r.record(tenantID, item.ID, announcement{age: age, pending: pending})
+		if len(pending) > 0 {
+			result.Failed++
+			continue
+		}
 		result.Notified++
 	}
 	if complete {
@@ -183,24 +220,35 @@ func (r *FirstResponder) Sweep(ctx context.Context, tenantID string) (FirstRespo
 	return result, nil
 }
 
-// announcedAt reports whether the item was announced at age.
-func (r *FirstResponder) announcedAt(tenantID, itemID string, age int64) bool {
+// lookup returns the item's recorded announcement, if any.
+func (r *FirstResponder) lookup(tenantID, itemID string) (announcement, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	got, ok := r.notified[tenantID][itemID]
-	return ok && got == age
+	return got, ok
 }
 
-// record notes that the item was announced at age.
-func (r *FirstResponder) record(tenantID, itemID string, age int64) {
+// record notes the item's announcement.
+func (r *FirstResponder) record(tenantID, itemID string, a announcement) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	byItem := r.notified[tenantID]
 	if byItem == nil {
-		byItem = make(map[string]int64)
+		byItem = make(map[string]announcement)
 		r.notified[tenantID] = byItem
 	}
-	byItem[itemID] = age
+	byItem[itemID] = a
+}
+
+// forget drops the item's announcement, so the next sweep sends it to
+// every channel.
+func (r *FirstResponder) forget(tenantID, itemID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.notified[tenantID], itemID)
+	if len(r.notified[tenantID]) == 0 {
+		delete(r.notified, tenantID)
+	}
 }
 
 // prune forgets every recorded item not in seen, so an item that resolves
