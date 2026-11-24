@@ -153,11 +153,7 @@ import (
 // under messaging:watch, the REST face of Messaging.WatchChannel.
 // PLUS 8 for the prompt store's verbs (/api/v1/prompts/{set}[/{name}...],
 // handlers_prompt.go, go-quicbaas#805) under prompts:read, prompts:history
-// and prompts:write. PLUS 1 for the batch executor
-// (POST /api/v1/batch/execute) that the SDK gRPC and REST batch calls reach.
-// PLUS 2 for the KV conditional writes
-// (/api/v1/kv/{type}/{key}/compare-and-swap and /put-if-absent,
-// go-quicbaas#2029) under kv:put.
+// and prompts:write.
 // PLUS 5 for the fleet placement specs (/api/v1/fleet/placements[/{name}
 // [/drift]], handlers_fleet_placement.go, go-quicbaas#1681) under
 // placement:read and placement:manage.
@@ -165,7 +161,7 @@ import (
 // and POST .../{id}/answer) under placement:read and placement:consent.
 // PLUS 1 for the capabilities report (GET /api/v1/server/capabilities,
 // handlers_capabilities.go), authenticated with no RBAC permission.
-const baseRouteTableSize = 683
+const baseRouteTableSize = 680
 
 // TestRoutes_SurfaceGuard asserts the table's structural invariants: exact
 // size, absolute patterns, no duplicate method+pattern, and a handler binder

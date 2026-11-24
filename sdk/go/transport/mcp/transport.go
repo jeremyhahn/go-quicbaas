@@ -343,14 +343,6 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 		}
 	}
 
-	// KV conditional writes go to qrdb's guarded tools, which answer with a
-	// single boolean decision.
-	if isMCPKVService(service) {
-		if verb, ok := kvConditionalVerbs[method]; ok {
-			return t.requestKVConditional(ctx, toolName, verb, reqBody)
-		}
-	}
-
 	// The Agents catalog is a closed set of tools with typed answers.
 	if isMCPAgentsService(service) {
 		return t.requestAgents(ctx, method, reqBody)
@@ -388,12 +380,6 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 	// generic path below.
 	if verb, ok := ollamaVerbs[method]; ok && isMCPOllamaService(service) {
 		return t.requestToolVerb(ctx, "mcp.ollama."+method, verb, reqBody)
-	}
-
-	// Batch Execute decodes into the client type; the rest keep the generic
-	// path below.
-	if verb, ok := batchVerbs[method]; ok && isMCPBatchService(service) {
-		return t.requestToolVerb(ctx, "mcp.batch."+method, verb, reqBody)
 	}
 
 	// These KMS verbs decode into the client types; the rest keep the
@@ -1216,10 +1202,6 @@ func ToolName(service, method string) string {
 			return "quicbaas_kv_" + strings.ToLower(method)
 		case "Scan":
 			return "qrdb_" + strings.ToLower(method)
-		case "CompareAndSwap", "PutIfAbsent":
-			// quicbaas's conditional tools, which name the entity as
-			// qrdb_put does and so act on the record it wrote.
-			return "quicbaas_kv_" + camelToSnake(method)
 		default:
 			return "quicbaas_" + strings.ToLower(method)
 		}

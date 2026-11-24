@@ -189,12 +189,6 @@ type (
 	PutRequest = service.PutRequest
 	// PutResponse is an alias for service.PutResponse.
 	PutResponse = service.PutResponse
-	// CompareAndSwapRequest is an alias for service.CompareAndSwapRequest.
-	CompareAndSwapRequest = service.CompareAndSwapRequest
-	// PutIfAbsentRequest is an alias for service.PutIfAbsentRequest.
-	PutIfAbsentRequest = service.PutIfAbsentRequest
-	// ConditionalPutResponse is an alias for service.ConditionalPutResponse.
-	ConditionalPutResponse = service.ConditionalPutResponse
 	// GetRequest is an alias for service.GetRequest.
 	GetRequest = service.GetRequest
 	// GetResponse is an alias for service.GetResponse.

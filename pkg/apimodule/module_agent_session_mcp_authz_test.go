@@ -205,7 +205,7 @@ func agentSessionCallContext(
 
 // TestAgentSession_EnrolledCertificateHoldsExactlyItsFloor proves the fix end to
 // end through go-qrdb's own pipeline, and proves its bound in the same pass: the
-// session is admitted on the six tools its floor names and REFUSED on every
+// session is admitted on the four tools its floor names and REFUSED on every
 // other permissioned tool in the real table.
 func TestAgentSession_EnrolledCertificateHoldsExactlyItsFloor(t *testing.T) {
 	cert := agentSessionPeerCert(t, agentSessionTenant, agentSessionCN)
@@ -241,9 +241,6 @@ func TestAgentSession_EnrolledCertificateHoldsExactlyItsFloor(t *testing.T) {
 		qrdbListTool:                      true,
 		"quicbaas_kv_get":                 true,
 		"quicbaas_kv_put":                 true,
-		// kv:put, the permission qrdbPutTool already holds.
-		"quicbaas_kv_compare_and_swap": true,
-		"quicbaas_kv_put_if_absent":    true,
 	}
 	if _, covered := registry.Lookup("quicbaas_kv_list"); !covered {
 		t.Fatal("quicbaas_kv_list is not in the tool registry")
