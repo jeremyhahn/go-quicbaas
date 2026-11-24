@@ -1,11 +1,12 @@
 # Agent Fleet — CLI Reference
 
-> **Status: NORMATIVE** · Last verified: 2026-10-15
+> **Status: NORMATIVE** · Last verified: 2026-11-15
 > Every `quicbaas fleet` verb, checked against `cmd/quicbaas/fleet*.go`.
 > Conflicts with this document are defects.
 
 ```
 quicbaas fleet register|list|status|remove|heartbeat   registry operations
+quicbaas fleet placement declare|get|list|withdraw|drift   placement specs
 quicbaas fleet serve                                   run the node daemon
 quicbaas fleet deploy|stop|start|undeploy              manage a node over SSH (deploy --local: this host)
 ```
@@ -27,6 +28,26 @@ tenant flag. `fleet` has the persistent flag `--output json|yaml|table`.
 | `fleet status <nodeID>` | | One node. |
 | `fleet remove <nodeID>` | | Removes the registration. |
 | `fleet heartbeat <nodeID>` | | Sends a bare heartbeat, mainly to test credentials. |
+
+## fleet placement
+
+Placement specs say where a role's work may run across the fleet's hosts
+(go-quicbaas#1681; [api.md](api.md#placement-specs), design in
+[docs/scheduler/](../scheduler/)). Every verb takes the spec's name except
+`list`; the tenant is `--tenant`.
+
+| Verb | Flags | Notes |
+|---|---|---|
+| `fleet placement declare <name>` | `--role`, `--hosts h1,h2` or `--host-count N`, `--capability` (repeatable), `--actuate`, `--generation`, `--file` | Creates (generation 0) or replaces the spec at the generation read. `--file` is a JSON or YAML spec with the REST body's names; flags given override it, and a file naming another spec is refused. |
+| `fleet placement get <name>` | | One spec. |
+| `fleet placement list` | | The tenant's specs. |
+| `fleet placement withdraw <name>` | | Removes the spec. |
+| `fleet placement drift <name>` | | The read-only drift report: work on hosts the spec does not admit, each with its remedy. |
+
+```sh
+quicbaas fleet placement declare agents --role agent --hosts h1,h2 --tenant acme
+quicbaas fleet placement drift agents --tenant acme --output json
+```
 
 ## fleet serve
 

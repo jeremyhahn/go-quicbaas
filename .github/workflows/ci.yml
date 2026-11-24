@@ -10,6 +10,17 @@
 # ::warning. The runs-on expressions and outputs are unchanged.
 # Nothing else of v1.54 to v1.59 is taken. Its tests: the handbook's
 # runner-select-tests.py, verbatim, and test/buildgates, both run in CI.
+# go-quicbaas #2427 (owner order): the unit shards, coverage and unit-passes
+# leave ubuntu-latest for the preflight runner_docker pool, as lint, image
+# and integration: they build the toolchain image and run their target in it
+# on either pool (IN_IMAGE_MEMORY caps it on the Dells: 16g for unit and
+# unit-passes, 8g for coverage), and their native setup-go steps for the
+# bigdisk pool are removed. The selection step and preflight's runs-on take
+# the Dells only for a push to main or a same-repository pull_request, since
+# the runner image's job hook refuses every other event: workflow_dispatch,
+# schedule, pull_request_target and a push to another ref go hosted, with a
+# ::notice naming why. integration.yml's Integration Tests job gets a
+# preflight carrying the same step, copied verbatim, and the same runs-on.
 # v1.53 (2026-11-21, Tenant Agent ruling 1087, owner order: remove the
 # bottlenecks): main has one concurrency group per event again, `main-{event}`,
 # so a newer push to main cancels the older main run still queued or in
@@ -749,7 +760,8 @@ on:
     # `concurrency` block lets cancel the PR's run in progress. The cost:
     # adding `ci:full` waits for the PR's next push or update-branch, or takes
     # effect through `workflow_dispatch`.
-    types: [opened, synchronize, reopened]
+    # v1.35.3: `ready_for_review`, so a draft marked ready gets its run.
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:                    # re-fire a whole workflow; also the
                                         # only retry when a run was never
                                         # created (see v1.3 correction above)
@@ -786,8 +798,8 @@ env:
   # while the gate still reports green (automatethethings#7: go-signal had eight
   # such packages, including its whole WebAuthn implementation).
   GO_BUILD_TAGS: ""
-  # The Go toolchain of the jobs that run on the self-hosted bigdisk pool,
-  # where setup-go installs it natively. It is the toolchain image's Go:
+  # The Go toolchain the self-hosted bigdisk pool's setup-go installed
+  # natively (no ci.yml job does since #2427). It is the toolchain image's Go:
   # pkg/version/toolchain.mk `GO_VERSION := 1.27.4`, which
   # build/docker/devcontainer/Dockerfile's `FROM golang:${GO_VERSION}-trixie`
   # builds from. Bump both together.
@@ -845,7 +857,12 @@ jobs:
     # holds; a fork never reaches a self-hosted runner. This preflight runs
     # the pull request's scripts/docs-only.sh; an empty head repository (a
     # deleted fork) counts as a fork.
-    runs-on: ${{ github.server_url == 'https://github.com' && (!startsWith(github.event_name, 'pull_request') || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.CI_PREFLIGHT_RUNS_ON || '["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}   # v1.52
+    # #2427 (owner order): the Dells' runner image's job hook refuses every
+    # event but a push to main and a same-repository pull_request, so only
+    # those two take the variable or bigdisk; workflow_dispatch, schedule,
+    # pull_request_target, a push to another ref and any other event take
+    # ubuntu-latest.
+    runs-on: ${{ github.server_url == 'https://github.com' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON(vars.CI_PREFLIGHT_RUNS_ON || '["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}   # v1.52, #2427
     # v1.26: a draft PR runs no CI; every job that needs this one skips with it.
     if: ${{ !github.event.pull_request.draft }}
     timeout-minutes: 10       # v1.34: the three jobs had 5 each
@@ -1022,13 +1039,23 @@ jobs:
       # v1.52 (Tenant Agent order, kept): on a pull request whose head
       # repository is not this repository (a fork, or a fork since deleted),
       # it makes no call and outputs the hosted default with a ::notice: a
-      # fork never reaches a self-hosted runner. Its tests:
-      # the repository copy at .github/workflows/testdata/runner-select-tests.py.
+      # fork never reaches a self-hosted runner.
+      # #2427 (owner order): the Dells' runner image's job hook refuses every
+      # event but a push to main and a same-repository pull_request. Only
+      # those two (EVENT push with REF refs/heads/main; EVENT pull_request
+      # with HEAD_REPO equal to REPO) are balanced; every other event
+      # (workflow_dispatch, schedule, pull_request_target, a push to another
+      # ref) makes no call and outputs the hosted default with a ::notice
+      # naming why. integration.yml's preflight carries this step verbatim.
+      # Its tests: the repository copy at
+      # .github/workflows/testdata/runner-select-tests.py, which also holds
+      # the two copies equal, and test/buildgates.
       - name: Balanced runner pool (ruling 1137)
         id: runner
         env:
           SERVER: ${{ github.server_url }}
           EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           REPO: ${{ github.repository }}
           API: ${{ github.api_url }}/repos/${{ github.repository }}/actions
@@ -1057,13 +1084,26 @@ jobs:
             exit 0
           fi
           # v1.52: a fork's pull request runs every job on GitHub-hosted runners.
+          # #2427: so does every event but a push to main and a same-repository
+          # pull_request, which the Dells' runner image's job hook refuses.
+          # refused <why>: the hosted default, with the reason shown.
+          refused() {
+            echo "::notice::runner selection: $1, which the Dells' runner image refuses (it takes a push to main or a same-repository pull_request only); every job of this run takes the GitHub-hosted default, ubuntu-latest (#2427)"
+            emit "$HOSTED" "$HOSTED"
+            exit 0
+          }
           case "$EVENT" in
             pull_request|pull_request_target)
               if [ "$HEAD_REPO" != "$REPO" ]; then
                 echo "::notice::runner selection: this pull request's head repository is not this repository (a fork); every job of this run takes the GitHub-hosted default, ubuntu-latest, and none reaches a self-hosted runner (ci-template v1.52)"
                 emit "$HOSTED" "$HOSTED"
                 exit 0
-              fi ;;
+              fi
+              [ "$EVENT" = pull_request ] || refused "a $EVENT event" ;;
+            push)
+              [ "$REF" = refs/heads/main ] || refused "a push to $REF, not to refs/heads/main" ;;
+            *)
+              refused "a $EVENT event" ;;
           esac
           # whole <value>: a whole number above 0, at most 6 digits.
           whole() { [[ "$1" =~ ^[0-9]{1,6}$ ]] && [ "$((10#$1))" -gt 0 ]; }
@@ -1227,6 +1267,8 @@ jobs:
         run: python3 -I testdata/ci-mask-lan-tests.py
       - name: Job output handoff tests
         run: python3 -I testdata/job-output-handoff-tests.py
+      - name: Code review draft tests
+        run: python3 -I .github/workflows/testdata/code-review-v51213-tests.py .github/workflows/code-review.yml
 
   # v1.30 (fix 1): the toolchain image is built once per content hash, here,
   # and every other job pulls it (scripts/ci-image-cache.sh v2, ships beside
@@ -1305,8 +1347,8 @@ jobs:
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
       CI_IMAGE_NAMESPACE: ${{ vars.CI_IMAGE_NAMESPACE }}
-      # the GPU runner's and the big-disk hosts' 8g sidecar cap (#2200); no cap only on a GitHub-hosted runner (the preflight runner_docker output is "ubuntu-latest").
-      IN_IMAGE_MEMORY: ${{ (github.server_url != 'https://github.com' || needs.preflight.outputs.runner_docker != '"ubuntu-latest"') && '8g' || 'none' }}
+      # 16g on self-hosted runners: golangci-lint is killed at 8g (#2657); no cap only on a GitHub-hosted runner (the preflight runner_docker output is "ubuntu-latest").
+      IN_IMAGE_MEMORY: ${{ (github.server_url != 'https://github.com' || needs.preflight.outputs.runner_docker != '"ubuntu-latest"') && '16g' || 'none' }}
     steps:
       # No credential reaches a job. A runner that injects a git credential
       # through GIT_CONFIG_* stops the job here, before any later step can
@@ -1545,8 +1587,8 @@ jobs:
   # on the daemon's host. A failed step names its stage; `if: !cancelled()`
   # runs every stage after a failed one, so one run reports them all.
   #
-  # No job installs a Go toolchain or a tool on the runner, except the unit
-  # jobs on the bigdisk pool (setup-go at GO_VERSION): the image's pin file
+  # No job installs a Go toolchain or a tool on the runner (#2427: the unit
+  # jobs' native setup-go path on the bigdisk pool is gone): the image's pin file
   # (devcontainer.md §2) decides every version, and the Makefile carries every
   # flag set (devops.md §4; §8: CI runs gosec through the developers' target).
   #
@@ -1584,8 +1626,8 @@ jobs:
     env:
       CI_IMAGE_NAMESPACE: ${{ vars.CI_IMAGE_NAMESPACE }}   # v1.30
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
-      # the GPU runner's and the big-disk hosts' 8g sidecar cap (#2200); no cap only on a GitHub-hosted runner (the preflight runner_docker output is "ubuntu-latest").
-      IN_IMAGE_MEMORY: ${{ (github.server_url != 'https://github.com' || needs.preflight.outputs.runner_docker != '"ubuntu-latest"') && '8g' || 'none' }}
+      # 16g on self-hosted runners: golangci-lint is killed at 8g (#2657); no cap only on a GitHub-hosted runner (the preflight runner_docker output is "ubuntu-latest").
+      IN_IMAGE_MEMORY: ${{ (github.server_url != 'https://github.com' || needs.preflight.outputs.runner_docker != '"ubuntu-latest"') && '16g' || 'none' }}
       # v1.22: the cache volumes' trust class. Only a push to main writes the
       # caches main's build reads; every other event, pull requests included,
       # gets the `pr` set (ci-standard.md §6).
@@ -1743,10 +1785,13 @@ jobs:
   # guards.
   unit:
     name: Unit tests -race (shard ${{ matrix.shard }})
-    # Every shard, on every event, runs on the standard hosted runner: it
-    # builds the toolchain image and runs the target in it (header: v1.46
-    # runner rule).
-    runs-on: ubuntu-latest
+    # #2427 (owner order): every shard runs on the preflight runner_docker
+    # pool, as lint, image and integration do: ubuntu-latest, or the Dells'
+    # bigdisk-docker when the balanced selector picks them (only for a push
+    # to main or a same-repository pull_request). On either it builds the
+    # toolchain image and runs the target in it; only the disk cleanup is
+    # hosted-only.
+    runs-on: ${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner_docker) || 'bigdisk' }}   # v1.48
     timeout-minutes: 150      # CUSTOMIZE: a shard is expected to take about an hour
     needs: [preflight]   # v1.34
     if: ${{ needs.preflight.outputs.verdict == 'run' && needs.preflight.outputs.docs_only != 'true' }}
@@ -1760,6 +1805,10 @@ jobs:
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ github.event_name == 'push' && 'main' || 'pr' }}
       SHARD: ${{ matrix.shard }}
+      # #2427: 16g on a self-hosted runner, as lint (the race detector's
+      # memory); no cap only on a GitHub-hosted runner (the preflight
+      # runner_docker output is "ubuntu-latest").
+      IN_IMAGE_MEMORY: ${{ (github.server_url != 'https://github.com' || needs.preflight.outputs.runner_docker != '"ubuntu-latest"') && '16g' || 'none' }}
     steps:
       # No credential reaches a job. A runner that injects a git credential
       # through GIT_CONFIG_* stops the job here, before any later step can
@@ -1779,7 +1828,6 @@ jobs:
           exit "$found"
 
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-        if: runner.environment == 'github-hosted'
 
       # v1.53 (ruling 887; template v1.44, host names since v1.53): a pool
       # runner's environment names LAN addresses and host names; they are
@@ -1808,7 +1856,7 @@ jobs:
           df -h /
 
       - name: Build the toolchain image
-        if: ${{ runner.environment == 'github-hosted' && env.DOCS_ONLY != 'true' }}
+        if: ${{ env.DOCS_ONLY != 'true' }}
         run: |
           ( umask 077; : > "$RUNNER_TEMP/gomodauth.env" )
           make docker-build-toolchain-image MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env"
@@ -1816,7 +1864,7 @@ jobs:
           echo "TOOLCHAIN_IMAGE=$(make -s toolchain-image)" >> "$GITHUB_ENV"
 
       - name: make coverage-shard
-        if: ${{ !cancelled() && runner.environment == 'github-hosted' && env.TOOLCHAIN_IMAGE != '' && env.DOCS_ONLY != 'true' }}
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.DOCS_ONLY != 'true' }}
         run: |
           profile="coverage-shard-$SHARD-of-$UNIT_SHARDS.out"
           scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" \
@@ -1824,7 +1872,7 @@ jobs:
             > "$profile"
 
       - name: Upload the shard's coverage profile
-        if: ${{ !cancelled() && (env.TOOLCHAIN_IMAGE != '' || runner.environment == 'self-hosted') && env.DOCS_ONLY != 'true' }}
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.DOCS_ONLY != 'true' }}
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: coverage-shard-${{ matrix.shard }}
@@ -1843,11 +1891,12 @@ jobs:
   # leaves this job skipped and CI Gate fails on it.
   coverage:
     name: Coverage gate [merged unit shards]
-    # v1.43: GitHub-hosted. The steps guarded `runner.environment ==
-    # 'self-hosted'` (setup-go and a native make) serve a self-hosted runner
-    # if the job is ever split onto the bigdisk pool as unit is; here the
-    # job builds the toolchain image and runs the target in it.
-    runs-on: ubuntu-latest
+    # #2427 (owner order): the preflight runner_docker pool, as unit:
+    # ubuntu-latest, or the Dells' bigdisk-docker when the balanced selector
+    # picks them. On either it builds the toolchain image and runs the target
+    # in it; the native setup-go steps of the bigdisk pool are gone, and only
+    # the disk cleanup is hosted-only.
+    runs-on: ${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner_docker) || 'bigdisk' }}   # v1.48
     timeout-minutes: 60
     needs: [preflight, unit]   # v1.34
     if: ${{ needs.preflight.outputs.verdict == 'run' && needs.preflight.outputs.docs_only != 'true' }}
@@ -1855,6 +1904,10 @@ jobs:
       DOCS_ONLY: ${{ needs.preflight.outputs.docs_only }}
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ github.event_name == 'push' && 'main' || 'pr' }}
+      # #2427: 8g on a self-hosted runner, as lint-gates and integration; no
+      # cap only on a GitHub-hosted runner (the preflight runner_docker output
+      # is "ubuntu-latest").
+      IN_IMAGE_MEMORY: ${{ (github.server_url != 'https://github.com' || needs.preflight.outputs.runner_docker != '"ubuntu-latest"') && '8g' || 'none' }}
     steps:
       # No credential reaches a job. A runner that injects a git credential
       # through GIT_CONFIG_* stops the job here, before any later step can
@@ -1874,7 +1927,6 @@ jobs:
           exit "$found"
 
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-        if: runner.environment == 'github-hosted'
 
       # v1.53 (ruling 887; template v1.44, host names since v1.53): a pool
       # runner's environment names LAN addresses and host names; they are
@@ -1892,12 +1944,6 @@ jobs:
           CI_IMAGE_REGISTRY: ${{ runner.environment != 'github-hosted' && secrets.CI_IMAGE_REGISTRY || '' }}
         run: scripts/ci-mask-lan.sh
 
-      - name: Check out (bigdisk pool)
-        if: runner.environment == 'self-hosted'
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          persist-credentials: false
-
       # The report reads the source the shards tested: the same merge result.
       - name: Validate the merge result, not the head alone
         run: .github/scripts/ci-merge-base.sh "${{ github.event_name }}" "${{ github.base_ref }}" "${{ github.event.pull_request.base.sha }}"
@@ -1910,7 +1956,7 @@ jobs:
           df -h /
 
       - name: Build the toolchain image
-        if: ${{ runner.environment == 'github-hosted' && env.DOCS_ONLY != 'true' }}
+        if: ${{ env.DOCS_ONLY != 'true' }}
         run: |
           ( umask 077; : > "$RUNNER_TEMP/gomodauth.env" )
           make docker-build-toolchain-image MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env"
@@ -1926,29 +1972,8 @@ jobs:
           merge-multiple: true
 
       - name: make coverage-merge (the threshold)
-        if: ${{ !cancelled() && runner.environment == 'github-hosted' && env.TOOLCHAIN_IMAGE != '' && env.DOCS_ONLY != 'true' }}
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.DOCS_ONLY != 'true' }}
         run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make coverage-merge SHARDS=$UNIT_SHARDS COVERAGE_THRESHOLD=$COVERAGE_THRESHOLD"
-
-      # The pool has no toolchain image, so Go comes from setup-go, at the
-      # image's version (GO_VERSION above). No other tool is installed: every
-      # target this job runs needs only go, git, make and a POSIX shell.
-      - name: Set up Go (bigdisk pool)
-        if: ${{ runner.environment == 'self-hosted' && env.DOCS_ONLY != 'true' }}
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
-        with:
-          cache: ${{ runner.environment != 'self-hosted' }}
-          go-version: ${{ env.GO_VERSION }}
-
-      - name: make coverage-merge (the threshold; bigdisk pool, native)
-        if: ${{ !cancelled() && runner.environment == 'self-hosted' && env.DOCS_ONLY != 'true' }}
-        # The toolchain image's module settings (Dockerfile ENV), except that
-        # modules come from the pool's module proxy (the runner's GOPROXY, the LAN
-        # proxy first) instead of the image's offline cache: a public GOPROXY here
-        # sends every module download over the WAN (ruling 862).
-        env:
-          GOFLAGS: -mod=readonly
-          GOWORK: 'off'
-        run: make coverage-merge SHARDS="$UNIT_SHARDS" COVERAGE_THRESHOLD="$COVERAGE_THRESHOLD"
 
       - name: Tear down
         if: always()
@@ -1960,11 +1985,12 @@ jobs:
   # one job holds them; they used to share the unsharded run's hour with it.
   unit-passes:
     name: Unit tests [checks, Go SDK, tag passes, tooling]
-    # v1.43: GitHub-hosted. The steps guarded `runner.environment ==
-    # 'self-hosted'` (setup-go and a native make) serve a self-hosted runner
-    # if the job is ever split onto the bigdisk pool as unit is; here the
-    # job builds the toolchain image and runs the target in it.
-    runs-on: ubuntu-latest
+    # #2427 (owner order): the preflight runner_docker pool, as unit:
+    # ubuntu-latest, or the Dells' bigdisk-docker when the balanced selector
+    # picks them. On either it builds the toolchain image and runs the target
+    # in it; the native setup-go steps of the bigdisk pool are gone, and only
+    # the disk cleanup is hosted-only.
+    runs-on: ${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner_docker) || 'bigdisk' }}   # v1.48
     timeout-minutes: 180
     needs: [preflight]   # v1.34
     if: ${{ needs.preflight.outputs.verdict == 'run' && needs.preflight.outputs.docs_only != 'true' }}
@@ -1972,6 +1998,10 @@ jobs:
       DOCS_ONLY: ${{ needs.preflight.outputs.docs_only }}
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ github.event_name == 'push' && 'main' || 'pr' }}
+      # #2427: 16g on a self-hosted runner, as unit (the Go SDK runs under
+      # -race); no cap only on a GitHub-hosted runner (the preflight
+      # runner_docker output is "ubuntu-latest").
+      IN_IMAGE_MEMORY: ${{ (github.server_url != 'https://github.com' || needs.preflight.outputs.runner_docker != '"ubuntu-latest"') && '16g' || 'none' }}
     steps:
       # No credential reaches a job. A runner that injects a git credential
       # through GIT_CONFIG_* stops the job here, before any later step can
@@ -1991,7 +2021,6 @@ jobs:
           exit "$found"
 
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-        if: runner.environment == 'github-hosted'
 
       # v1.53 (ruling 887; template v1.44, host names since v1.53): a pool
       # runner's environment names LAN addresses and host names; they are
@@ -2009,12 +2038,6 @@ jobs:
           CI_IMAGE_REGISTRY: ${{ runner.environment != 'github-hosted' && secrets.CI_IMAGE_REGISTRY || '' }}
         run: scripts/ci-mask-lan.sh
 
-      - name: Check out (bigdisk pool)
-        if: runner.environment == 'self-hosted'
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          persist-credentials: false
-
       - name: Validate the merge result, not the head alone
         run: .github/scripts/ci-merge-base.sh "${{ github.event_name }}" "${{ github.base_ref }}" "${{ github.event.pull_request.base.sha }}"
 
@@ -2026,7 +2049,7 @@ jobs:
           df -h /
 
       - name: Build the toolchain image
-        if: ${{ runner.environment == 'github-hosted' && env.DOCS_ONLY != 'true' }}
+        if: ${{ env.DOCS_ONLY != 'true' }}
         run: |
           ( umask 077; : > "$RUNNER_TEMP/gomodauth.env" )
           make docker-build-toolchain-image MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env"
@@ -2034,49 +2057,12 @@ jobs:
           echo "TOOLCHAIN_IMAGE=$(make -s toolchain-image)" >> "$GITHUB_ENV"
 
       - name: make coverage-passes
-        if: ${{ !cancelled() && runner.environment == 'github-hosted' && env.TOOLCHAIN_IMAGE != '' && env.DOCS_ONLY != 'true' }}
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.DOCS_ONLY != 'true' }}
         run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make coverage-passes GO_BUILD_TAGS='$GO_BUILD_TAGS'"
-
-      # The pool has no toolchain image, so Go comes from setup-go, at the
-      # image's version (GO_VERSION above). No other tool is installed: every
-      # target this job runs needs only go, git, make and a POSIX shell.
-      - name: Set up Go (bigdisk pool)
-        if: ${{ runner.environment == 'self-hosted' && env.DOCS_ONLY != 'true' }}
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
-        with:
-          cache: ${{ runner.environment != 'self-hosted' }}
-          go-version: ${{ env.GO_VERSION }}
-
-      # A per-job TMPDIR (go-xkms #2183): the runner's _work/_temp made t.TempDir
-      # Unix socket paths overflow sun_path, and runner units on one host share
-      # /tmp, so each job takes its own /tmp/XXXXXX and removes it in its last step.
-      # GOTMPDIR too: the pool sets it to _work/_temp, and Go 1.27's t.TempDir
-      # uses GOTMPDIR whenever it is set, ahead of TMPDIR.
-      - name: Per-job short TMPDIR (native)
-        if: ${{ runner.environment == 'self-hosted' }}
-        run: |
-          d="$(mktemp -d /tmp/XXXXXX)"
-          echo "TMPDIR=$d" >> "$GITHUB_ENV"
-          echo "GOTMPDIR=$d" >> "$GITHUB_ENV"
-
-      - name: make coverage-passes (bigdisk pool, native)
-        if: ${{ !cancelled() && runner.environment == 'self-hosted' && env.DOCS_ONLY != 'true' }}
-        # The toolchain image's module settings (Dockerfile ENV), except that
-        # modules come from the pool's module proxy (the runner's GOPROXY, the LAN
-        # proxy first) instead of the image's offline cache: a public GOPROXY here
-        # sends every module download over the WAN (ruling 862).
-        env:
-          GOFLAGS: -mod=readonly
-          GOWORK: 'off'
-        run: make coverage-passes GO_BUILD_TAGS="$GO_BUILD_TAGS"
 
       - name: Tear down
         if: always()
         run: rm -f "$RUNNER_TEMP/gomodauth.env"
-
-      - name: Remove the per-job TMPDIR (native)
-        if: ${{ always() && runner.environment == 'self-hosted' }}
-        run: case "$TMPDIR" in /tmp/??????) rm -rf "$TMPDIR" ;; esac
 
   # v1.27 (Company Agent m1192 (6), item 27): a repository's `make lint-gates`
   # (its own gates beside `make lint`: script, workflow, generated-code and

@@ -500,6 +500,56 @@ func TestDaemon_HeartbeatLoop_ExitsOnReregisterFailure(t *testing.T) {
 	}
 }
 
+// TestDaemon_RunErrorIsNeverVisibleBeforeTheFailedState pins #2327: on a
+// re-register failure the daemon stores its failed state before its run
+// error, so a reader that sees RunError() non-nil always reads
+// State()=="failed". An observer spins on RunError() and records the
+// state the first time the error shows; the scenario repeats so the
+// window between the two stores is exercised.
+func TestDaemon_RunErrorIsNeverVisibleBeforeTheFailedState(t *testing.T) {
+	t.Parallel()
+	const rounds = 200
+	for i := 0; i < rounds; i++ {
+		cfg := newTestConfig(t)
+		cfg.HeartbeatInterval = time.Millisecond
+		deps := DaemonDeps{
+			Runtime:     newTestRuntime(t),
+			Enroller:    &fakeEnroller{identity: &orchestration.AgentIdentity{AgentID: "a", TenantID: cfg.TenantID}},
+			Heartbeat:   &fakeHeartbeat{err: ErrNodeReRegisterFailed},
+			SpawnServer: &fakeSpawnServer{addr: "127.0.0.1:0"},
+			Logger:      &testLogger{t: t},
+		}
+		d, err := NewDaemon(cfg, deps)
+		if err != nil {
+			t.Fatalf("round %d: NewDaemon: %v", i, err)
+		}
+		observed := make(chan string, 1)
+		go func() {
+			deadline := time.Now().Add(2 * time.Second)
+			for time.Now().Before(deadline) {
+				if d.RunError() != nil {
+					observed <- d.State()
+					return
+				}
+			}
+			observed <- "timeout: RunError stayed nil"
+		}()
+		if err := d.Start(context.Background()); err != nil {
+			t.Fatalf("round %d: Start: %v", i, err)
+		}
+		got := <-observed
+		if err := d.Stop(context.Background()); err != nil {
+			t.Errorf("round %d: Stop: %v", i, err)
+		}
+		if got != "failed" {
+			t.Fatalf("round %d: state when RunError first showed = %q, want \"failed\"", i, got)
+		}
+		if runErr := d.RunError(); !errors.Is(runErr, ErrNodeReRegisterFailed) {
+			t.Fatalf("round %d: RunError = %v, want ErrNodeReRegisterFailed", i, runErr)
+		}
+	}
+}
+
 func TestDaemon_Stop_IsIdempotent(t *testing.T) {
 	t.Parallel()
 	cfg := newTestConfig(t)

@@ -71,6 +71,7 @@ func (b *FleetDeployBinding) Deploy(spec *deploy.Spec) (*deploy.Result, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	ctx = deployContext(ctx, spec)
 
 	result, err := svc.Deploy(ctx, spec)
 	if err != nil {
