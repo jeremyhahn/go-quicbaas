@@ -132,19 +132,19 @@ RestBootstrapClient builds `/api/v1/bootstrap/<mode>` from the mode name.
 
 | Method | Path | Handler | SDK file | Console |
 |---|---|---|---|---|
-| GET | `/api/v1/cluster/leader` | HandleGetClusterLeader | rest.ts | not covered |
-| GET | `/api/v1/cluster/leader/{shardID}` | HandleGetLeader | rest.ts | not covered |
-| DELETE | `/api/v1/cluster/migrate/` | HandleCancelMigration | - (rest.ts†) | not covered |
-| POST | `/api/v1/cluster/migrate/` | HandleStartMigration | rest.ts | not covered |
-| GET | `/api/v1/cluster/migrate/status` | HandleGetMigrationStatus | - (rest.ts†) | not covered |
+| GET | `/api/v1/cluster/leader` | HandleGetClusterLeader | rest.ts | covered: views/cluster/ClusterDashboard.svelte |
+| GET | `/api/v1/cluster/leader/{shardID}` | HandleGetLeader | rest.ts | covered: views/cluster/ClusterDashboard.svelte |
+| DELETE | `/api/v1/cluster/migrate/` | HandleCancelMigration | - (rest.ts†) | covered: components/cluster/ClusterOperationsPanel.svelte |
+| POST | `/api/v1/cluster/migrate/` | HandleStartMigration | rest.ts | covered: components/cluster/ClusterOperationsPanel.svelte |
+| GET | `/api/v1/cluster/migrate/status` | HandleGetMigrationStatus | - (rest.ts†) | covered: components/cluster/ClusterOperationsPanel.svelte |
 | GET | `/api/v1/cluster/nodes/` | HandleListNodes | rest.ts | covered: views/cluster/NodesView.svelte |
-| POST | `/api/v1/cluster/nodes/` | HandleAddNode | rest.ts | not covered |
-| GET | `/api/v1/cluster/nodes/non-leader` | HandleListNonLeaderNodes | rest.ts | not covered |
-| DELETE | `/api/v1/cluster/nodes/{nodeId}` | HandleRemoveNode | - (rest.ts†) | not covered |
-| PUT | `/api/v1/cluster/nodes/{nodeId}/replace` | HandleReplaceNode | rest.ts | not covered |
-| POST | `/api/v1/cluster/rebalance/` | HandleStartRebalance | rest.ts | not covered |
-| GET | `/api/v1/cluster/rebalance/plan` | HandleGetRebalancePlan | rest.ts | not covered |
-| GET | `/api/v1/cluster/rebalance/status` | HandleGetRebalanceStatus | - (rest.ts†) | not covered |
+| POST | `/api/v1/cluster/nodes/` | HandleAddNode | rest.ts | covered: components/cluster/NodeMembershipDialog.svelte |
+| GET | `/api/v1/cluster/nodes/non-leader` | HandleListNonLeaderNodes | rest.ts | covered: views/cluster/NodesView.svelte |
+| DELETE | `/api/v1/cluster/nodes/{nodeId}` | HandleRemoveNode | - (rest.ts†) | covered: views/cluster/NodesView.svelte |
+| PUT | `/api/v1/cluster/nodes/{nodeId}/replace` | HandleReplaceNode | rest.ts | covered: components/cluster/NodeMembershipDialog.svelte |
+| POST | `/api/v1/cluster/rebalance/` | HandleStartRebalance | rest.ts | covered: components/cluster/ClusterOperationsPanel.svelte |
+| GET | `/api/v1/cluster/rebalance/plan` | HandleGetRebalancePlan | rest.ts | covered: components/cluster/ClusterOperationsPanel.svelte |
+| GET | `/api/v1/cluster/rebalance/status` | HandleGetRebalanceStatus | - (rest.ts†) | covered: components/cluster/ClusterOperationsPanel.svelte |
 | GET | `/api/v1/cluster/shards` | HandleClusterShards | - | not covered |
 | GET | `/api/v1/cluster/status` | HandleClusterStatus | rest.ts | covered: views/cluster/ClusterDashboard.svelte |
 | POST | `/api/v1/cluster/upgrade/` | HandleStartUpgrade | - | not covered |

@@ -59,8 +59,8 @@ test/e2e-coverage-matrix.test.ts fails when a route has no row.
 | `accounts` | #/accounts | list, create, delete | none |
 | `prompts` | #/prompts | list, detail, edit, history, diff, rollback, reset | none |
 | `attention` | #/attention | list | none |
-| `cluster` | #/cluster | detail | bug_regressions.spec.ts, light_theme_contrast.spec.ts |
-| `nodes` | #/nodes | list | nodes_view.spec.ts |
+| `cluster` | #/cluster | detail, leader, shard leader, rebalance plan and progress, migration start, progress and cancel | bug_regressions.spec.ts, light_theme_contrast.spec.ts |
+| `nodes` | #/nodes | list, add, remove, replace, non-leader filter | nodes_view.spec.ts |
 | `backup` | #/backup | list | backup_view.spec.ts |
 | `connection` | #/connection | detail, edit, error state | connection_view.spec.ts |
 | `invite-activate` | #/invite/:tenant/:token | detail, error state | bootstrap_activate.spec.ts |
