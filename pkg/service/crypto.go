@@ -87,15 +87,18 @@ func (t *cryptoService) checkKeyAuthz(ctx context.Context, keyID, operation stri
 	return t.kmsSvc.checkKeyAuthz(ctx, keyID, operation)
 }
 
-// scopeKeyID resolves a caller-supplied key id under the caller's tenant,
-// the same way every KMS verb does, so a crypto verb never addresses
-// another tenant's key.
-func scopeKeyID(ctx context.Context, keyID string) (string, error) {
-	tenantID, err := prepareTenantContext(ctx)
+// scopeKeyID checks the caller's tenant and the caller-supplied key name.
+// The KMS manager is handed the name unchanged: ctx carries the tenant, so a
+// crypto verb never addresses another tenant's key. It also returns the
+// caller's tenant (empty for the system tenant) and the service's own
+// tenant-scoped reference for the name, which keys the service's policy and
+// safety bookkeeping and is never handed to the manager.
+func scopeKeyID(ctx context.Context, keyID string) (tenantID, keyRef string, err error) {
+	tenantID, err = prepareTenantContext(ctx)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	return tenantScopedKeyID(tenantID, keyID), nil
+	return tenantID, tenantScopedKeyID(tenantID, keyID), nil
 }
 
 // keyOperationError wraps a failed key operation. A key absent from the
@@ -188,7 +191,7 @@ func (t *cryptoService) Encrypt(ctx context.Context, req *EncryptRequest) (*Encr
 		return nil, err
 	}
 
-	scopedKeyID, err := scopeKeyID(ctx, req.KeyID)
+	_, scopedKeyID, err := scopeKeyID(ctx, req.KeyID)
 	if err != nil {
 		return nil, err
 	}
@@ -214,14 +217,14 @@ func (t *cryptoService) Encrypt(ctx context.Context, req *EncryptRequest) (*Encr
 	}
 
 	// Perform encryption
-	ciphertext, err := t.cryptoManager.Encrypt(ctx, scopedKeyID, req.Plaintext, req.Context)
+	ciphertext, err := t.cryptoManager.Encrypt(ctx, req.KeyID, req.Plaintext, req.Context)
 	if err != nil {
 		t.metrics.encryptOperationsTotal.With(req.KeyID, "error").Inc()
 		t.metrics.errorsByType.With("encrypt_error").Inc()
 		return nil, keyOperationError(errors.ErrEncryption, "crypto.Encrypt", "encrypt data", err)
 	}
 
-	keyVersion := t.keyVersion(ctx, scopedKeyID)
+	keyVersion := t.keyVersion(ctx, req.KeyID)
 
 	resp := &EncryptResponse{
 		KeyID:      req.KeyID,
@@ -327,7 +330,7 @@ func (t *cryptoService) Decrypt(ctx context.Context, req *DecryptRequest) (*Decr
 		return nil, err
 	}
 
-	scopedKeyID, err := scopeKeyID(ctx, req.KeyID)
+	_, scopedKeyID, err := scopeKeyID(ctx, req.KeyID)
 	if err != nil {
 		return nil, err
 	}
@@ -354,7 +357,7 @@ func (t *cryptoService) Decrypt(ctx context.Context, req *DecryptRequest) (*Decr
 	}
 
 	// Perform decryption
-	plaintext, err := t.cryptoManager.Decrypt(ctx, scopedKeyID, req.Ciphertext, req.Context)
+	plaintext, err := t.cryptoManager.Decrypt(ctx, req.KeyID, req.Ciphertext, req.Context)
 	if err != nil {
 		t.metrics.decryptOperationsTotal.With(req.KeyID, "error").Inc()
 		t.metrics.errorsByType.With("decrypt_error").Inc()
@@ -405,7 +408,7 @@ func (t *cryptoService) Rewrap(ctx context.Context, req *RewrapRequest) (*Rewrap
 		return nil, err
 	}
 
-	scopedKeyID, err := scopeKeyID(ctx, req.KeyID)
+	_, scopedKeyID, err := scopeKeyID(ctx, req.KeyID)
 	if err != nil {
 		return nil, err
 	}
@@ -436,7 +439,7 @@ func (t *cryptoService) Rewrap(ctx context.Context, req *RewrapRequest) (*Rewrap
 	}
 
 	// Perform rewrap
-	newCiphertext, err := t.cryptoManager.Rewrap(ctx, scopedKeyID, req.Ciphertext, req.Context)
+	newCiphertext, err := t.cryptoManager.Rewrap(ctx, req.KeyID, req.Ciphertext, req.Context)
 	if err != nil {
 		t.metrics.encryptOperationsTotal.With(req.KeyID, "error").Inc()
 		t.metrics.errorsByType.With("rewrap_error").Inc()
@@ -487,7 +490,7 @@ func (t *cryptoService) EncryptBatch(ctx context.Context, req *EncryptBatchReque
 		return nil, err
 	}
 
-	scopedKeyID, err := scopeKeyID(ctx, req.KeyID)
+	_, scopedKeyID, err := scopeKeyID(ctx, req.KeyID)
 	if err != nil {
 		return nil, err
 	}
@@ -528,7 +531,7 @@ func (t *cryptoService) EncryptBatch(ctx context.Context, req *EncryptBatchReque
 	}
 
 	// Perform batch encryption, binding each item to its own context
-	ciphertexts, err := processBatchItems(ctx, scopedKeyID, plaintexts, contexts, t.cryptoManager.EncryptBatch, t.cryptoManager.Encrypt)
+	ciphertexts, err := processBatchItems(ctx, req.KeyID, plaintexts, contexts, t.cryptoManager.EncryptBatch, t.cryptoManager.Encrypt)
 	if err != nil {
 		t.metrics.encryptOperationsTotal.With(req.KeyID, "error").Inc()
 		t.metrics.errorsByType.With("encrypt_batch_error").Inc()
@@ -545,7 +548,7 @@ func (t *cryptoService) EncryptBatch(ctx context.Context, req *EncryptBatchReque
 
 	resp := &EncryptBatchResponse{
 		KeyID:      req.KeyID,
-		KeyVersion: t.keyVersion(ctx, scopedKeyID),
+		KeyVersion: t.keyVersion(ctx, req.KeyID),
 		Results:    results,
 		Timestamp:  time.Now(),
 	}
@@ -580,7 +583,7 @@ func (t *cryptoService) DecryptBatch(ctx context.Context, req *DecryptBatchReque
 		return nil, err
 	}
 
-	scopedKeyID, err := scopeKeyID(ctx, req.KeyID)
+	_, scopedKeyID, err := scopeKeyID(ctx, req.KeyID)
 	if err != nil {
 		return nil, err
 	}
@@ -621,7 +624,7 @@ func (t *cryptoService) DecryptBatch(ctx context.Context, req *DecryptBatchReque
 	}
 
 	// Perform batch decryption, verifying each item against its own context
-	plaintexts, err := processBatchItems(ctx, scopedKeyID, ciphertexts, contexts, t.cryptoManager.DecryptBatch, t.cryptoManager.Decrypt)
+	plaintexts, err := processBatchItems(ctx, req.KeyID, ciphertexts, contexts, t.cryptoManager.DecryptBatch, t.cryptoManager.Decrypt)
 	if err != nil {
 		t.metrics.decryptOperationsTotal.With(req.KeyID, "error").Inc()
 		t.metrics.errorsByType.With("decrypt_batch_error").Inc()
@@ -676,7 +679,7 @@ func (t *cryptoService) GenerateDataKey(ctx context.Context, req *GenerateDataKe
 		return nil, err
 	}
 
-	scopedKeyID, err := scopeKeyID(ctx, req.KeyID)
+	tenantID, scopedKeyID, err := scopeKeyID(ctx, req.KeyID)
 	if err != nil {
 		return nil, err
 	}
@@ -707,7 +710,7 @@ func (t *cryptoService) GenerateDataKey(ctx context.Context, req *GenerateDataKe
 
 	// Generate data key using KMS
 	// KeyAttributes.CN specifies the KEK to use for wrapping
-	kekAttrs := &types.KeyAttributes{CN: scopedKeyID}
+	kekAttrs := &types.KeyAttributes{CN: req.KeyID, TenantID: tenantID}
 	plaintext, wrapped, err := t.kmsManager.GenerateDataKey(ctx, kekAttrs, keyBytes)
 	if err != nil {
 		t.metrics.encryptOperationsTotal.With(req.KeyID, "error").Inc()
@@ -752,7 +755,7 @@ func (t *cryptoService) GenerateWrappedDataKey(ctx context.Context, req *Generat
 		return nil, err
 	}
 
-	scopedKeyID, err := scopeKeyID(ctx, req.KeyID)
+	tenantID, scopedKeyID, err := scopeKeyID(ctx, req.KeyID)
 	if err != nil {
 		return nil, err
 	}
@@ -782,7 +785,7 @@ func (t *cryptoService) GenerateWrappedDataKey(ctx context.Context, req *Generat
 
 	// Generate data key and discard plaintext
 	// KeyAttributes.CN specifies the KEK to use for wrapping
-	kekAttrs := &types.KeyAttributes{CN: scopedKeyID}
+	kekAttrs := &types.KeyAttributes{CN: req.KeyID, TenantID: tenantID}
 	_, wrapped, err := t.kmsManager.GenerateDataKey(ctx, kekAttrs, keyBytes)
 	if err != nil {
 		t.metrics.encryptOperationsTotal.With(req.KeyID, "error").Inc()
@@ -830,7 +833,7 @@ func (t *cryptoService) Sign(ctx context.Context, req *SignRequest) (*SignRespon
 		return nil, err
 	}
 
-	scopedKeyID, err := scopeKeyID(ctx, req.KeyID)
+	_, scopedKeyID, err := scopeKeyID(ctx, req.KeyID)
 	if err != nil {
 		return nil, err
 	}
@@ -849,7 +852,7 @@ func (t *cryptoService) Sign(ctx context.Context, req *SignRequest) (*SignRespon
 	}
 
 	// Perform signing (message is not pre-hashed)
-	signature, err := t.cryptoManager.Sign(ctx, scopedKeyID, req.Message, hashAlg, req.PreHashed)
+	signature, err := t.cryptoManager.Sign(ctx, req.KeyID, req.Message, hashAlg, req.PreHashed)
 	if err != nil {
 		t.metrics.signOperationsTotal.With(req.KeyID, "error").Inc()
 		t.metrics.errorsByType.With("sign_error").Inc()
@@ -895,7 +898,7 @@ func (t *cryptoService) Verify(ctx context.Context, req *VerifyRequest) (*Verify
 		return nil, err
 	}
 
-	scopedKeyID, err := scopeKeyID(ctx, req.KeyID)
+	_, scopedKeyID, err := scopeKeyID(ctx, req.KeyID)
 	if err != nil {
 		return nil, err
 	}
@@ -914,7 +917,7 @@ func (t *cryptoService) Verify(ctx context.Context, req *VerifyRequest) (*Verify
 	}
 
 	// Perform verification
-	valid, err := t.cryptoManager.Verify(ctx, scopedKeyID, req.Message, req.Signature, hashAlg)
+	valid, err := t.cryptoManager.Verify(ctx, req.KeyID, req.Message, req.Signature, hashAlg)
 	if err != nil {
 		t.metrics.verifyOperationsTotal.With(req.KeyID, "error").Inc()
 		t.metrics.errorsByType.With("verify_error").Inc()
@@ -967,7 +970,7 @@ func (t *cryptoService) GenerateHMAC(ctx context.Context, req *HMACRequest) (*HM
 		return nil, err
 	}
 
-	scopedKeyID, err := scopeKeyID(ctx, req.KeyID)
+	_, scopedKeyID, err := scopeKeyID(ctx, req.KeyID)
 	if err != nil {
 		return nil, err
 	}
@@ -986,7 +989,7 @@ func (t *cryptoService) GenerateHMAC(ctx context.Context, req *HMACRequest) (*HM
 	}
 
 	// Generate HMAC
-	hmac, err := t.cryptoManager.GenerateHMAC(ctx, scopedKeyID, req.Message, hashAlg)
+	hmac, err := t.cryptoManager.GenerateHMAC(ctx, req.KeyID, req.Message, hashAlg)
 	if err != nil {
 		t.metrics.hmacOperationsTotal.With(req.KeyID, "error").Inc()
 		t.metrics.errorsByType.With("generate_hmac_error").Inc()
@@ -1032,7 +1035,7 @@ func (t *cryptoService) VerifyHMAC(ctx context.Context, req *VerifyHMACRequest) 
 		return nil, err
 	}
 
-	scopedKeyID, err := scopeKeyID(ctx, req.KeyID)
+	_, scopedKeyID, err := scopeKeyID(ctx, req.KeyID)
 	if err != nil {
 		return nil, err
 	}
@@ -1051,7 +1054,7 @@ func (t *cryptoService) VerifyHMAC(ctx context.Context, req *VerifyHMACRequest) 
 	}
 
 	// Verify HMAC
-	valid, err := t.cryptoManager.VerifyHMAC(ctx, scopedKeyID, req.Message, req.HMAC, hashAlg)
+	valid, err := t.cryptoManager.VerifyHMAC(ctx, req.KeyID, req.Message, req.HMAC, hashAlg)
 	if err != nil {
 		t.metrics.hmacOperationsTotal.With(req.KeyID, "error").Inc()
 		t.metrics.errorsByType.With("verify_hmac_error").Inc()

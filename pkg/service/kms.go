@@ -15,7 +15,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	kctypes "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
@@ -494,17 +493,11 @@ func (k *kmsServiceImpl) GenerateKey(ctx context.Context, req *GenerateKeyReques
 	if attrs == nil {
 		attrs = &kctypes.KeyAttributes{}
 	}
-	// A tenant's key is generated in go-xkms's own form: CN is the caller's
-	// key name and the tenant is the TenantID attribute. A system key is
-	// named by its reference, with no TenantID. keyID stays the reference
-	// for everything above the manager.
-	if qrdbsdk.IsSystemTenant(tenantID) {
-		attrs.CN = keyID
-		attrs.TenantID = ""
-	} else {
-		attrs.CN = req.Name
-		attrs.TenantID = tenantID
-	}
+	// A key is generated in go-xkms's own form: CN is the caller's key name
+	// and the tenant is the TenantID attribute, empty for the system tenant.
+	// keyID stays the service's own bookkeeping reference.
+	attrs.CN = req.Name
+	attrs.TenantID = tenantID
 
 	// go-xkms enforces exportability from its own key record, which it writes
 	// once, from these attributes, at generation; the quicbaas metadata below
@@ -574,6 +567,7 @@ func (k *kmsServiceImpl) GenerateKey(ctx context.Context, req *GenerateKeyReques
 	// and optional rotation policy) that the crypto backend does not store natively.
 	if kmsMeta, ok := keyMetadata.(*kms.KeyMetadata); ok {
 		kmsMeta.Name = req.Name
+		kmsMeta.TenantID = tenantID
 		kmsMeta.Description = req.Description
 		kmsMeta.Exportable = req.Exportable
 		kmsMeta.DeletionProtection = req.DeletionProtection
@@ -612,7 +606,7 @@ func (k *kmsServiceImpl) GenerateKey(ctx context.Context, req *GenerateKeyReques
 				k.metrics.errorsByType.With("kms_error", "generate_key").Inc()
 			}
 			cause := storeErr
-			if delErr := k.kmsManager.DeleteKey(ctx, keyID); delErr != nil {
+			if delErr := k.kmsManager.DeleteKey(ctx, req.Name); delErr != nil {
 				cause = stderrors.Join(cause, delErr)
 			}
 			if policyPersisted {
@@ -666,15 +660,13 @@ func (k *kmsServiceImpl) ImportKey(ctx context.Context, req *ImportKeyRequest) (
 		return nil, err
 	}
 
-	// Use the provided name as the key ID, scoped by tenant if applicable
-	keyID := tenantScopedKeyID(tenantID, req.Name)
-
 	// Get algorithm string from attributes
 	algorithm := attrsToAlgorithm(req.KeyAttributes)
 
-	// Call KMS manager to import key. go-xkms records Exportable at import and
-	// enforces it on export; the quicbaas metadata below only mirrors it.
-	keyMetadata, err := k.kmsManager.ImportKey(ctx, keyID, req.KeyMaterial, algorithm, req.KeyAttributes.Exportable)
+	// Call KMS manager to import key under the caller's name; ctx carries the
+	// tenant. go-xkms records Exportable at import and enforces it on export;
+	// the quicbaas metadata below only mirrors it.
+	keyMetadata, err := k.kmsManager.ImportKey(ctx, req.Name, req.KeyMaterial, algorithm, req.KeyAttributes.Exportable)
 	if err != nil {
 		if k.metrics != nil {
 			k.metrics.errorsByType.With("kms_error", "import_key").Inc()
@@ -715,7 +707,7 @@ func (k *kmsServiceImpl) ImportKey(ctx context.Context, req *ImportKeyRequest) (
 
 	if k.logger != nil {
 		k.logger.WithFields(map[string]interface{}{
-			"key_id":    keyID,
+			"key_id":    req.Name,
 			"algorithm": KeyAlgorithm(attrsToAlgorithm(req.KeyAttributes)),
 		}).Info("Imported cryptographic key")
 	}
@@ -724,6 +716,7 @@ func (k *kmsServiceImpl) ImportKey(ctx context.Context, req *ImportKeyRequest) (
 	// that the crypto backend does not store natively.
 	if kmsMeta, ok := keyMetadata.(*kms.KeyMetadata); ok {
 		kmsMeta.Name = req.Name
+		kmsMeta.TenantID = tenantID
 		kmsMeta.Description = req.Description
 		kmsMeta.Exportable = req.KeyAttributes.Exportable
 		kmsMeta.DeletionProtection = req.DeletionProtection
@@ -797,7 +790,7 @@ func (k *kmsServiceImpl) GetKey(ctx context.Context, req *GetKeyRequest) (*GetKe
 	scopedKeyID := tenantScopedKeyID(tenantID, req.KeyID)
 
 	// Call KMS manager to get key metadata
-	keyMetadata, err := k.kmsManager.GetKey(ctx, scopedKeyID)
+	keyMetadata, err := k.kmsManager.GetKey(ctx, req.KeyID)
 	if err != nil {
 		if k.metrics != nil {
 			k.metrics.errorsByType.With("not_found", "get_key").Inc()
@@ -933,14 +926,13 @@ func (k *kmsServiceImpl) GetPublicKey(ctx context.Context, req *GetPublicKeyRequ
 	}
 
 	// Extract tenant context for multi-tenant isolation
-	tenantID, err := prepareTenantContext(ctx)
+	_, err := prepareTenantContext(ctx)
 	if err != nil {
 		return nil, err
 	}
-	scopedKeyID := tenantScopedKeyID(tenantID, req.KeyID)
 
 	// Call KMS manager to get public key
-	publicKeyBytes, err := k.kmsManager.GetPublicKey(ctx, scopedKeyID)
+	publicKeyBytes, err := k.kmsManager.GetPublicKey(ctx, req.KeyID)
 	if err != nil {
 		if k.metrics != nil {
 			k.metrics.errorsByType.With("not_found", "get_public_key").Inc()
@@ -949,7 +941,7 @@ func (k *kmsServiceImpl) GetPublicKey(ctx context.Context, req *GetPublicKeyRequ
 	}
 
 	// Get key metadata for algorithm and version info
-	keyMetadata, err := k.kmsManager.GetKey(ctx, scopedKeyID)
+	keyMetadata, err := k.kmsManager.GetKey(ctx, req.KeyID)
 	if err != nil {
 		if k.metrics != nil {
 			k.metrics.errorsByType.With("not_found", "get_public_key").Inc()
@@ -992,9 +984,9 @@ func (k *kmsServiceImpl) ListKeys(ctx context.Context, req *ListKeysRequest) (*L
 		}()
 	}
 
-	// Extract tenant context for multi-tenant isolation
-	tenantID, listTenantErr := prepareTenantContext(ctx)
-	if listTenantErr != nil {
+	// Resolve the caller's tenant; ctx carries it to the manager, which
+	// lists only that tenant's keys.
+	if _, listTenantErr := prepareTenantContext(ctx); listTenantErr != nil {
 		return nil, listTenantErr
 	}
 
@@ -1006,11 +998,8 @@ func (k *kmsServiceImpl) ListKeys(ctx context.Context, req *ListKeysRequest) (*L
 		}
 	}
 
-	// Scope prefix with tenant namespace for isolation
-	scopedPrefix := tenantListPrefix(tenantID) + prefix
-
-	// Call KMS manager to list keys with prefix filter
-	keys, err := k.kmsManager.ListKeys(ctx, scopedPrefix)
+	// Call KMS manager to list the caller's keys with the caller's prefix
+	keys, err := k.kmsManager.ListKeys(ctx, prefix)
 	if err != nil {
 		if k.metrics != nil {
 			k.metrics.errorsByType.With("kms_error", "list_keys").Inc()
@@ -1092,13 +1081,6 @@ func (k *kmsServiceImpl) ListKeys(ctx context.Context, req *ListKeysRequest) (*L
 		}
 	}
 
-	// Strip tenant prefix from key IDs in the response
-	if tenantID != "" {
-		for _, handle := range keyHandles {
-			handle.KeyID = tenantStripKeyID(tenantID, handle.KeyID)
-		}
-	}
-
 	// Apply limit if specified
 	limit := req.Limit
 	if limit <= 0 {
@@ -1146,7 +1128,7 @@ func (k *kmsServiceImpl) RotateKey(ctx context.Context, req *RotateKeyRequest) (
 	scopedKeyID := tenantScopedKeyID(tenantID, req.KeyID)
 
 	// Get current version before rotation
-	oldResult, err := k.kmsManager.GetKey(ctx, scopedKeyID)
+	oldResult, err := k.kmsManager.GetKey(ctx, req.KeyID)
 	if err != nil {
 		if k.metrics != nil {
 			k.metrics.errorsByType.With("kms_error", "rotate_key").Inc()
@@ -1164,7 +1146,7 @@ func (k *kmsServiceImpl) RotateKey(ctx context.Context, req *RotateKeyRequest) (
 	}
 
 	// Call KMS manager to rotate key
-	newResult, err := k.kmsManager.RotateKey(ctx, scopedKeyID)
+	newResult, err := k.kmsManager.RotateKey(ctx, req.KeyID)
 	if err != nil {
 		if k.metrics != nil {
 			k.metrics.errorsByType.With("kms_error", "rotate_key").Inc()
@@ -1284,14 +1266,13 @@ func (k *kmsServiceImpl) RevokeKey(ctx context.Context, req *RevokeKeyRequest) (
 	}
 
 	// Extract tenant context for multi-tenant isolation
-	tenantID, err := prepareTenantContext(ctx)
+	_, err := prepareTenantContext(ctx)
 	if err != nil {
 		return nil, err
 	}
-	scopedKeyID := tenantScopedKeyID(tenantID, req.KeyID)
 
 	// Call KMS manager to revoke key
-	err = k.kmsManager.RevokeKey(ctx, scopedKeyID)
+	err = k.kmsManager.RevokeKey(ctx, req.KeyID)
 	if err != nil {
 		if k.metrics != nil {
 			k.metrics.errorsByType.With("kms_error", "revoke_key").Inc()
@@ -1345,7 +1326,7 @@ func (k *kmsServiceImpl) DeleteKey(ctx context.Context, req *DeleteKeyRequest) (
 	scopedKeyID := tenantScopedKeyID(tenantID, req.KeyID)
 
 	// Call KMS manager to delete key
-	err = k.kmsManager.DeleteKey(ctx, scopedKeyID)
+	err = k.kmsManager.DeleteKey(ctx, req.KeyID)
 	if err != nil {
 		if k.metrics != nil {
 			k.metrics.errorsByType.With("kms_error", "delete_key").Inc()
@@ -1418,14 +1399,13 @@ func (k *kmsServiceImpl) GetKeyMetadata(ctx context.Context, req *GetKeyMetadata
 	}
 
 	// Extract tenant context for multi-tenant isolation
-	tenantID, err := prepareTenantContext(ctx)
+	_, err := prepareTenantContext(ctx)
 	if err != nil {
 		return nil, err
 	}
-	scopedKeyID := tenantScopedKeyID(tenantID, req.KeyID)
 
 	// Call KMS manager to get key metadata
-	keyData, err := k.kmsManager.GetKey(ctx, scopedKeyID)
+	keyData, err := k.kmsManager.GetKey(ctx, req.KeyID)
 	if err != nil {
 		if k.metrics != nil {
 			k.metrics.errorsByType.With("not_found", "get_key_metadata").Inc()
@@ -1468,10 +1448,9 @@ func (k *kmsServiceImpl) UpdateKeyMetadata(ctx context.Context, req *UpdateKeyMe
 	if err != nil {
 		return nil, err
 	}
-	scopedKeyID := tenantScopedKeyID(tenantID, req.KeyID)
 
 	// Retrieve existing key metadata to merge with updates
-	keyData, err := k.kmsManager.GetKey(ctx, scopedKeyID)
+	keyData, err := k.kmsManager.GetKey(ctx, req.KeyID)
 	if err != nil {
 		if k.metrics != nil {
 			k.metrics.errorsByType.With("not_found", "update_key_metadata").Inc()
@@ -1484,6 +1463,7 @@ func (k *kmsServiceImpl) UpdateKeyMetadata(ctx context.Context, req *UpdateKeyMe
 	// type for persistence, then convert to service types for the response.
 	if kmsMeta, ok := keyData.(*kms.KeyMetadata); ok {
 		kmsMeta.Updated = time.Now()
+		kmsMeta.TenantID = tenantID
 		if req.Name != nil {
 			kmsMeta.Name = *req.Name
 		}
@@ -1557,7 +1537,7 @@ func (k *kmsServiceImpl) SetKeyPolicy(ctx context.Context, req *SetKeyPolicyRequ
 	scopedKeyID := tenantScopedKeyID(tenantID, req.KeyID)
 
 	// Verify key exists
-	_, err = k.kmsManager.GetKey(ctx, scopedKeyID)
+	_, err = k.kmsManager.GetKey(ctx, req.KeyID)
 	if err != nil {
 		if k.metrics != nil {
 			k.metrics.errorsByType.With("not_found", "set_key_policy").Inc()
@@ -1621,7 +1601,7 @@ func (k *kmsServiceImpl) GetKeyPolicy(ctx context.Context, req *GetKeyPolicyRequ
 	scopedKeyID := tenantScopedKeyID(tenantID, req.KeyID)
 
 	// Verify key exists
-	_, err = k.kmsManager.GetKey(ctx, scopedKeyID)
+	_, err = k.kmsManager.GetKey(ctx, req.KeyID)
 	if err != nil {
 		if k.metrics != nil {
 			k.metrics.errorsByType.With("not_found", "get_key_policy").Inc()
@@ -1674,7 +1654,7 @@ func (k *kmsServiceImpl) DeleteKeyPolicy(ctx context.Context, req *DeleteKeyPoli
 	scopedKeyID := tenantScopedKeyID(tenantID, req.KeyID)
 
 	// Verify key exists
-	_, err = k.kmsManager.GetKey(ctx, scopedKeyID)
+	_, err = k.kmsManager.GetKey(ctx, req.KeyID)
 	if err != nil {
 		return nil, WrapError(err, errors.ErrNotFound, "kms.DeleteKeyPolicy", "key not found")
 	}
@@ -1783,7 +1763,7 @@ func (k *kmsServiceImpl) SetKeyRotationPolicy(ctx context.Context, req *SetKeyRo
 	}
 
 	// Verify key exists.
-	keyData, err := k.kmsManager.GetKey(ctx, scopedKeyID)
+	keyData, err := k.kmsManager.GetKey(ctx, req.KeyID)
 	if err != nil {
 		return nil, WrapError(err, errors.ErrNotFound, "kms.SetKeyRotationPolicy", "key not found")
 	}
@@ -1802,6 +1782,7 @@ func (k *kmsServiceImpl) SetKeyRotationPolicy(ctx context.Context, req *SetKeyRo
 	// Also embed in key metadata so the scheduler can read it from ListKeys/GetKey.
 	if kmsMeta, ok := keyData.(*kms.KeyMetadata); ok {
 		kmsMeta.Updated = time.Now()
+		kmsMeta.TenantID = tenantID
 		kmsMeta.RotationPolicy = serviceRotationToKMS(&policy)
 		if updateErr := k.kmsManager.UpdateStoredMetadata(kmsMeta); updateErr != nil {
 			if k.logger != nil {
@@ -1851,7 +1832,7 @@ func (k *kmsServiceImpl) GetKeyRotationPolicy(ctx context.Context, req *GetKeyRo
 	}
 
 	// Verify key exists.
-	keyData, err := k.kmsManager.GetKey(ctx, scopedKeyID)
+	keyData, err := k.kmsManager.GetKey(ctx, req.KeyID)
 	if err != nil {
 		return nil, WrapError(err, errors.ErrNotFound, "kms.GetKeyRotationPolicy", "key not found")
 	}
@@ -1898,7 +1879,7 @@ func (k *kmsServiceImpl) DeleteKeyRotationPolicy(ctx context.Context, req *Delet
 	}
 
 	// Verify key exists.
-	keyData, err := k.kmsManager.GetKey(ctx, scopedKeyID)
+	keyData, err := k.kmsManager.GetKey(ctx, req.KeyID)
 	if err != nil {
 		return nil, WrapError(err, errors.ErrNotFound, "kms.DeleteKeyRotationPolicy", "key not found")
 	}
@@ -1911,6 +1892,7 @@ func (k *kmsServiceImpl) DeleteKeyRotationPolicy(ctx context.Context, req *Delet
 	// Clear from key metadata.
 	if kmsMeta, ok := keyData.(*kms.KeyMetadata); ok {
 		kmsMeta.Updated = time.Now()
+		kmsMeta.TenantID = tenantID
 		kmsMeta.RotationPolicy = nil
 		if updateErr := k.kmsManager.UpdateStoredMetadata(kmsMeta); updateErr != nil {
 			if k.logger != nil {
@@ -2588,7 +2570,7 @@ func (k *kmsServiceImpl) UpdateKeyStatus(ctx context.Context, req *UpdateKeyStat
 	scopedKeyID := tenantScopedKeyID(tenantID, req.KeyID)
 
 	// Verify key exists
-	keyData, err := k.kmsManager.GetKey(ctx, scopedKeyID)
+	keyData, err := k.kmsManager.GetKey(ctx, req.KeyID)
 	if err != nil {
 		if k.metrics != nil {
 			k.metrics.errorsByType.With("not_found", "update_key_status").Inc()
@@ -2645,7 +2627,7 @@ func (k *kmsServiceImpl) UpdateKeyStatus(ctx context.Context, req *UpdateKeyStat
 		// This is used when no specific version is targeted
 		switch req.Status {
 		case KeyStatusEnabled:
-			err = k.kmsManager.EnableKey(ctx, scopedKeyID)
+			err = k.kmsManager.EnableKey(ctx, req.KeyID)
 			if err != nil {
 				if k.metrics != nil {
 					k.metrics.errorsByType.With("kms_error", "update_key_status").Inc()
@@ -2653,7 +2635,7 @@ func (k *kmsServiceImpl) UpdateKeyStatus(ctx context.Context, req *UpdateKeyStat
 				return nil, WrapError(err, errors.ErrInternal, "kms.UpdateKeyStatus", "failed to enable key")
 			}
 		case KeyStatusDisabled:
-			err = k.kmsManager.DisableKey(ctx, scopedKeyID)
+			err = k.kmsManager.DisableKey(ctx, req.KeyID)
 			if err != nil {
 				if k.metrics != nil {
 					k.metrics.errorsByType.With("kms_error", "update_key_status").Inc()
@@ -2716,7 +2698,7 @@ func (k *kmsServiceImpl) ListKeyVersions(ctx context.Context, req *ListKeyVersio
 	scopedKeyID := tenantScopedKeyID(tenantID, req.KeyID)
 
 	// Verify key exists and get metadata
-	keyData, err := k.kmsManager.GetKey(ctx, scopedKeyID)
+	keyData, err := k.kmsManager.GetKey(ctx, req.KeyID)
 	if err != nil {
 		if k.metrics != nil {
 			k.metrics.errorsByType.With("not_found", "list_key_versions").Inc()
@@ -3506,7 +3488,7 @@ func (k *kmsServiceImpl) StartReencryption(ctx context.Context, req *StartReencr
 	startedAt := time.Now()
 
 	// Count total keys to re-encrypt
-	keys, err := k.kmsManager.ListKeys(ctx, tenantListPrefix(tenantID))
+	keys, err := k.kmsManager.ListKeys(ctx, "")
 	if err != nil {
 		k.reencryptionState.mu.Unlock()
 		return nil, WrapError(err, errors.ErrInternal, "kms.StartReencryption", "failed to list keys for re-encryption")

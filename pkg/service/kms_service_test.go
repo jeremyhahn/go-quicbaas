@@ -44,19 +44,22 @@ import (
 
 // mockKMSManager implements interfaces.KMSManager for testing.
 type mockKMSManager struct {
-	keys              map[string]*mockKeyData
-	generateKeyFn     func(ctx context.Context, attrs *xkmssdk.KeyAttributes) (interface{}, error)
-	importKeyFn       func(ctx context.Context, keyID string, material []byte, algorithm string) (interface{}, error)
-	getKeyFn          func(ctx context.Context, keyID string) (interface{}, error)
-	listKeysFn        func(ctx context.Context, prefix string) ([]interface{}, error)
-	rotateKeyFn       func(ctx context.Context, keyID string) (interface{}, error)
-	revokeKeyFn       func(ctx context.Context, keyID string) error
-	deleteKeyFn       func(ctx context.Context, keyID string) error
-	encryptFn         func(ctx context.Context, keyID string, plaintext, aad []byte) ([]byte, error)
-	decryptFn         func(ctx context.Context, keyID string, ciphertext, aad []byte) ([]byte, error)
-	signFn            func(ctx context.Context, keyID string, digest []byte, algorithm string) ([]byte, error)
-	verifyFn          func(ctx context.Context, keyID string, digest, signature []byte, algorithm string) (bool, error)
-	generateDataKeyFn func(ctx context.Context, attrs *xkmssdk.KeyAttributes, keyBytes int) ([]byte, []byte, error)
+	keys map[string]*mockKeyData
+	// storedMetadataRefs records tenantScopedKeyID(TenantID, KeyID) for each
+	// metadata UpdateStoredMetadata received.
+	storedMetadataRefs []string
+	generateKeyFn      func(ctx context.Context, attrs *xkmssdk.KeyAttributes) (interface{}, error)
+	importKeyFn        func(ctx context.Context, keyID string, material []byte, algorithm string) (interface{}, error)
+	getKeyFn           func(ctx context.Context, keyID string) (interface{}, error)
+	listKeysFn         func(ctx context.Context, prefix string) ([]interface{}, error)
+	rotateKeyFn        func(ctx context.Context, keyID string) (interface{}, error)
+	revokeKeyFn        func(ctx context.Context, keyID string) error
+	deleteKeyFn        func(ctx context.Context, keyID string) error
+	encryptFn          func(ctx context.Context, keyID string, plaintext, aad []byte) ([]byte, error)
+	decryptFn          func(ctx context.Context, keyID string, ciphertext, aad []byte) ([]byte, error)
+	signFn             func(ctx context.Context, keyID string, digest []byte, algorithm string) ([]byte, error)
+	verifyFn           func(ctx context.Context, keyID string, digest, signature []byte, algorithm string) (bool, error)
+	generateDataKeyFn  func(ctx context.Context, attrs *xkmssdk.KeyAttributes, keyBytes int) ([]byte, []byte, error)
 }
 
 type mockKeyData struct {
@@ -77,24 +80,40 @@ func (m *mockKMSManager) GenerateKey(ctx context.Context, attrs *xkmssdk.KeyAttr
 	if m.generateKeyFn != nil {
 		return m.generateKeyFn(ctx, attrs)
 	}
-	// Default behavior: store key under its reference, as the real manager
-	// does: tenant/<TenantID>/<CN> for a tenant key, else CN.
-	keyID := attrs.CN
-	if attrs.TenantID != "" {
-		keyID = "tenant/" + attrs.TenantID + "/" + attrs.CN
+	// Default behavior: store the key under its name, owned by attrs.TenantID
+	// (or the ctx tenant when the attributes carry none), as the real manager does.
+	tenant := attrs.TenantID
+	if tenant == "" {
+		tenant = mockCtxTenant(ctx)
 	}
+	ref := tenantScopedKeyID(tenant, attrs.CN)
 	algorithm := string(attrs.SymmetricAlgorithm)
 	if algorithm == "" {
 		algorithm = attrs.KeyAlgorithm.String()
 	}
-	m.keys[keyID] = &mockKeyData{
-		keyID:     keyID,
+	m.keys[ref] = &mockKeyData{
+		keyID:     attrs.CN,
 		algorithm: algorithm,
 		version:   1,
 		status:    "enabled",
 		createdAt: time.Now(),
 	}
-	return m.keys[keyID], nil
+	return m.keys[ref], nil
+}
+
+// mockCtxTenant returns the tenant bound to ctx, or "" for the system tenant
+// or a ctx with no tenant.
+func mockCtxTenant(ctx context.Context) string {
+	tenant, err := prepareTenantContext(ctx)
+	if err != nil {
+		return ""
+	}
+	return tenant
+}
+
+// mockKeyRef is the mock's private map key: the ctx tenant and the key name.
+func mockKeyRef(ctx context.Context, name string) string {
+	return tenantScopedKeyID(mockCtxTenant(ctx), name)
 }
 
 func (m *mockKMSManager) ImportKey(ctx context.Context, keyID string, material []byte, algorithm string, _ bool) (interface{}, error) {
@@ -102,14 +121,14 @@ func (m *mockKMSManager) ImportKey(ctx context.Context, keyID string, material [
 		return m.importKeyFn(ctx, keyID, material, algorithm)
 	}
 	// Default behavior: store key
-	m.keys[keyID] = &mockKeyData{
+	m.keys[mockKeyRef(ctx, keyID)] = &mockKeyData{
 		keyID:     keyID,
 		algorithm: algorithm,
 		version:   1,
 		status:    "enabled",
 		createdAt: time.Now(),
 	}
-	return m.keys[keyID], nil
+	return m.keys[mockKeyRef(ctx, keyID)], nil
 }
 
 func (m *mockKMSManager) GetKey(ctx context.Context, keyID string) (interface{}, error) {
@@ -117,7 +136,7 @@ func (m *mockKMSManager) GetKey(ctx context.Context, keyID string) (interface{},
 		return m.getKeyFn(ctx, keyID)
 	}
 	// Default behavior: return key if exists as kms.KeyMetadata
-	if key, ok := m.keys[keyID]; ok {
+	if key, ok := m.keys[mockKeyRef(ctx, keyID)]; ok {
 		return &kms.KeyMetadata{
 			KeyID:     key.keyID,
 			Name:      key.keyID,
@@ -132,7 +151,12 @@ func (m *mockKMSManager) GetKey(ctx context.Context, keyID string) (interface{},
 }
 
 func (m *mockKMSManager) UpdateStoredMetadata(metadata interface{}) error {
-	// No-op for mock - the metadata is already stored during key creation
+	// The service holds the metadata; the mock records the reference the
+	// metadata names, found by metadata.TenantID and its key name as the real
+	// manager does.
+	if meta, ok := metadata.(*kms.KeyMetadata); ok && meta != nil {
+		m.storedMetadataRefs = append(m.storedMetadataRefs, tenantScopedKeyID(meta.TenantID, meta.KeyID))
+	}
 	return nil
 }
 
@@ -142,7 +166,11 @@ func (m *mockKMSManager) ListKeys(ctx context.Context, prefix string) ([]interfa
 	}
 	// Default behavior: return all keys as KeyMetadata
 	result := make([]interface{}, 0, len(m.keys))
-	for _, key := range m.keys {
+	for ref, key := range m.keys {
+		// A caller lists only the keys of its own ctx tenant.
+		if ref != mockKeyRef(ctx, key.keyID) {
+			continue
+		}
 		// Convert mockKeyData to KeyMetadata for proper type assertion in service
 		km := &KeyMetadata{
 			KeyID:     key.keyID,
@@ -163,7 +191,7 @@ func (m *mockKMSManager) RotateKey(ctx context.Context, keyID string) (interface
 		return m.rotateKeyFn(ctx, keyID)
 	}
 	// Default behavior: increment version and return as kms.KeyMetadata
-	if key, ok := m.keys[keyID]; ok {
+	if key, ok := m.keys[mockKeyRef(ctx, keyID)]; ok {
 		key.version++
 		return &kms.KeyMetadata{
 			KeyID:     key.keyID,
@@ -183,7 +211,7 @@ func (m *mockKMSManager) RevokeKey(ctx context.Context, keyID string) error {
 		return m.revokeKeyFn(ctx, keyID)
 	}
 	// Default behavior: mark as revoked
-	if key, ok := m.keys[keyID]; ok {
+	if key, ok := m.keys[mockKeyRef(ctx, keyID)]; ok {
 		key.status = "compromised"
 		return nil
 	}
@@ -192,7 +220,7 @@ func (m *mockKMSManager) RevokeKey(ctx context.Context, keyID string) error {
 
 func (m *mockKMSManager) EnableKey(ctx context.Context, keyID string) error {
 	// Default behavior: mark as enabled
-	if key, ok := m.keys[keyID]; ok {
+	if key, ok := m.keys[mockKeyRef(ctx, keyID)]; ok {
 		key.status = "enabled"
 		return nil
 	}
@@ -201,7 +229,7 @@ func (m *mockKMSManager) EnableKey(ctx context.Context, keyID string) error {
 
 func (m *mockKMSManager) DisableKey(ctx context.Context, keyID string) error {
 	// Default behavior: mark as disabled
-	if key, ok := m.keys[keyID]; ok {
+	if key, ok := m.keys[mockKeyRef(ctx, keyID)]; ok {
 		key.status = "disabled"
 		return nil
 	}
@@ -213,8 +241,8 @@ func (m *mockKMSManager) DeleteKey(ctx context.Context, keyID string) error {
 		return m.deleteKeyFn(ctx, keyID)
 	}
 	// Default behavior: delete key
-	if _, ok := m.keys[keyID]; ok {
-		delete(m.keys, keyID)
+	if _, ok := m.keys[mockKeyRef(ctx, keyID)]; ok {
+		delete(m.keys, mockKeyRef(ctx, keyID))
 		return nil
 	}
 	return stderrors.New("key not found")
@@ -290,7 +318,7 @@ func (m *mockKMSManager) GetSupportedAlgorithms(ctx context.Context) ([]string, 
 
 func (m *mockKMSManager) GetPublicKey(ctx context.Context, keyID string) ([]byte, error) {
 	// Default behavior: return mock public key for asymmetric keys
-	if key, ok := m.keys[keyID]; ok {
+	if key, ok := m.keys[mockKeyRef(ctx, keyID)]; ok {
 		// Return mock public key bytes
 		mockPubKey := []byte("mock-public-key-" + key.keyID)
 		return mockPubKey, nil

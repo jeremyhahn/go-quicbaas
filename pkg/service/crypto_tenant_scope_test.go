@@ -25,10 +25,11 @@ import (
 // cryptoScopeVerb invokes one crypto verb against the key named keyID.
 type cryptoScopeVerb func(svc *cryptoService, ctx context.Context, keyID string) error
 
-// ownerKeyOnly mirrors the production key store: only the owner tenant's
-// scoped key exists, so any other id is reported as kms.ErrKeyNotFound.
-func ownerKeyOnly(keyID string) error {
-	if keyID != tenantScopedKeyID(scopeOwnerTenant, scopeKeyName) {
+// ownerKeyOnly mirrors the production key store: only the owner tenant's key
+// exists, so any other (tenant, name) reference, built by mockKeyRef or
+// tenantScopedKeyID, is reported as kms.ErrKeyNotFound.
+func ownerKeyOnly(ref string) error {
+	if ref != tenantScopedKeyID(scopeOwnerTenant, scopeKeyName) {
 		return kms.ErrKeyNotFound
 	}
 	return nil
@@ -38,37 +39,37 @@ func ownerKeyOnly(keyID string) error {
 // owned by scopeOwnerTenant under its tenant-scoped id.
 func newTenantScopeCrypto() *cryptoService {
 	cryptoMgr := &mockCryptoManager{
-		encryptFn: func(_ context.Context, keyID string, plaintext, _ []byte) ([]byte, error) {
-			return plaintext, ownerKeyOnly(keyID)
+		encryptFn: func(ctx context.Context, keyID string, plaintext, _ []byte) ([]byte, error) {
+			return plaintext, ownerKeyOnly(mockKeyRef(ctx, keyID))
 		},
-		decryptFn: func(_ context.Context, keyID string, ciphertext, _ []byte) ([]byte, error) {
-			return ciphertext, ownerKeyOnly(keyID)
+		decryptFn: func(ctx context.Context, keyID string, ciphertext, _ []byte) ([]byte, error) {
+			return ciphertext, ownerKeyOnly(mockKeyRef(ctx, keyID))
 		},
-		rewrapFn: func(_ context.Context, keyID string, ciphertext, _ []byte) ([]byte, error) {
-			return ciphertext, ownerKeyOnly(keyID)
+		rewrapFn: func(ctx context.Context, keyID string, ciphertext, _ []byte) ([]byte, error) {
+			return ciphertext, ownerKeyOnly(mockKeyRef(ctx, keyID))
 		},
-		encryptBatchFn: func(_ context.Context, keyID string, items [][]byte, _ []byte) ([][]byte, error) {
-			return items, ownerKeyOnly(keyID)
+		encryptBatchFn: func(ctx context.Context, keyID string, items [][]byte, _ []byte) ([][]byte, error) {
+			return items, ownerKeyOnly(mockKeyRef(ctx, keyID))
 		},
-		decryptBatchFn: func(_ context.Context, keyID string, items [][]byte, _ []byte) ([][]byte, error) {
-			return items, ownerKeyOnly(keyID)
+		decryptBatchFn: func(ctx context.Context, keyID string, items [][]byte, _ []byte) ([][]byte, error) {
+			return items, ownerKeyOnly(mockKeyRef(ctx, keyID))
 		},
-		signFn: func(_ context.Context, keyID string, input []byte, _ string, _ bool) ([]byte, error) {
-			return input, ownerKeyOnly(keyID)
+		signFn: func(ctx context.Context, keyID string, input []byte, _ string, _ bool) ([]byte, error) {
+			return input, ownerKeyOnly(mockKeyRef(ctx, keyID))
 		},
-		verifyFn: func(_ context.Context, keyID string, _, _ []byte, _ string) (bool, error) {
-			return true, ownerKeyOnly(keyID)
+		verifyFn: func(ctx context.Context, keyID string, _, _ []byte, _ string) (bool, error) {
+			return true, ownerKeyOnly(mockKeyRef(ctx, keyID))
 		},
-		generateHMACFn: func(_ context.Context, keyID string, input []byte, _ string) ([]byte, error) {
-			return input, ownerKeyOnly(keyID)
+		generateHMACFn: func(ctx context.Context, keyID string, input []byte, _ string) ([]byte, error) {
+			return input, ownerKeyOnly(mockKeyRef(ctx, keyID))
 		},
-		verifyHMACFn: func(_ context.Context, keyID string, _, _ []byte, _ string) (bool, error) {
-			return true, ownerKeyOnly(keyID)
+		verifyHMACFn: func(ctx context.Context, keyID string, _, _ []byte, _ string) (bool, error) {
+			return true, ownerKeyOnly(mockKeyRef(ctx, keyID))
 		},
 	}
 	kmsMgr := newMockKMSManager()
 	kmsMgr.generateDataKeyFn = func(_ context.Context, attrs *xkmssdk.KeyAttributes, keyBytes int) ([]byte, []byte, error) {
-		if err := ownerKeyOnly(attrs.CN); err != nil {
+		if err := ownerKeyOnly(tenantScopedKeyID(attrs.TenantID, attrs.CN)); err != nil {
 			return nil, nil, err
 		}
 		return make([]byte, keyBytes), []byte("wrapped"), nil

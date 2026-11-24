@@ -46,7 +46,7 @@ func newTenantScopeKMS(t *testing.T) *kmsServiceImpl {
 	scopedKeyID := tenantScopedKeyID(scopeOwnerTenant, scopeKeyName)
 	mgr := newMockKMSManager()
 	mgr.keys[scopedKeyID] = &mockKeyData{
-		keyID:     scopedKeyID,
+		keyID:     scopeKeyName,
 		algorithm: "ECDSA-P256",
 		version:   1,
 		status:    "enabled",
@@ -54,25 +54,27 @@ func newTenantScopeKMS(t *testing.T) *kmsServiceImpl {
 	}
 	// The production manager reports an absent key as kms.ErrKeyNotFound;
 	// the double's default plain error would hide the not-found mapping.
-	mgr.rotateKeyFn = func(_ context.Context, keyID string) (interface{}, error) {
-		key, ok := mgr.keys[keyID]
+	// Like the manager, it finds a key by the ctx tenant and the key name.
+	mgr.rotateKeyFn = func(ctx context.Context, keyID string) (interface{}, error) {
+		key, ok := mgr.keys[mockKeyRef(ctx, keyID)]
 		if !ok {
 			return nil, kms.ErrKeyNotFound
 		}
 		key.version++
 		return &kms.KeyMetadata{KeyID: key.keyID, Algorithm: key.algorithm, Version: int(key.version), State: kms.KeyState(key.status)}, nil
 	}
-	mgr.revokeKeyFn = func(_ context.Context, keyID string) error {
-		if _, ok := mgr.keys[keyID]; !ok {
+	mgr.revokeKeyFn = func(ctx context.Context, keyID string) error {
+		if _, ok := mgr.keys[mockKeyRef(ctx, keyID)]; !ok {
 			return kms.ErrKeyNotFound
 		}
 		return nil
 	}
-	mgr.deleteKeyFn = func(_ context.Context, keyID string) error {
-		if _, ok := mgr.keys[keyID]; !ok {
+	mgr.deleteKeyFn = func(ctx context.Context, keyID string) error {
+		ref := mockKeyRef(ctx, keyID)
+		if _, ok := mgr.keys[ref]; !ok {
 			return kms.ErrKeyNotFound
 		}
-		delete(mgr.keys, keyID)
+		delete(mgr.keys, ref)
 		return nil
 	}
 	svc := newKMSService(mgr, nil)
@@ -280,10 +282,10 @@ func newTenantScopeWrapKMS(t *testing.T) (*kmsServiceImpl, *mockKMSManager) {
 	mgr := newMockKMSManager()
 	for _, name := range []string{scopeKeyName, scopeWrappingKey} {
 		id := tenantScopedKeyID(scopeOwnerTenant, name)
-		mgr.keys[id] = &mockKeyData{keyID: id, algorithm: string(KeyAlgAES256GCM), version: 1, status: "enabled", createdAt: time.Now()}
+		mgr.keys[id] = &mockKeyData{keyID: name, algorithm: string(KeyAlgAES256GCM), version: 1, status: "enabled", createdAt: time.Now()}
 	}
-	mgr.getKeyFn = func(_ context.Context, keyID string) (interface{}, error) {
-		key, ok := mgr.keys[keyID]
+	mgr.getKeyFn = func(ctx context.Context, keyID string) (interface{}, error) {
+		key, ok := mgr.keys[mockKeyRef(ctx, keyID)]
 		if !ok {
 			return nil, kms.ErrKeyNotFound
 		}
@@ -449,22 +451,25 @@ func TestKMSService_StartReencryption_ListsOnlyTheCallersKeys(t *testing.T) {
 		name       string
 		ctx        context.Context
 		wantPrefix string
+		wantTenant string
 	}{
-		{name: "tenant lists its own keys", ctx: tenantctx.WithTenant(context.Background(), scopeOwnerTenant), wantPrefix: tenantListPrefix(scopeOwnerTenant)},
-		{name: "system scope keeps its reach", ctx: systemTenantCtx(), wantPrefix: ""},
+		{name: "tenant lists its own keys", ctx: tenantctx.WithTenant(context.Background(), scopeOwnerTenant), wantPrefix: "", wantTenant: scopeOwnerTenant},
+		{name: "system scope keeps its reach", ctx: systemTenantCtx(), wantPrefix: "", wantTenant: ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			svc := newTenantScopeKMS(t)
 			mgr := svc.kmsManager.(*mockKMSManager)
-			var gotPrefix string
-			mgr.listKeysFn = func(_ context.Context, prefix string) ([]interface{}, error) {
+			var gotPrefix, gotTenant string
+			mgr.listKeysFn = func(ctx context.Context, prefix string) ([]interface{}, error) {
 				gotPrefix = prefix
+				gotTenant = mockCtxTenant(ctx)
 				return nil, nil
 			}
 			_, err := svc.StartReencryption(tc.ctx, &StartReencryptionRequest{FromVersion: 1, ToVersion: 2})
 			require.NoError(t, err)
 			require.Equal(t, tc.wantPrefix, gotPrefix)
+			require.Equal(t, tc.wantTenant, gotTenant, "the manager lists by the caller's ctx tenant")
 		})
 	}
 

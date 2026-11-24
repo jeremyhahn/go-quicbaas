@@ -55,7 +55,7 @@ func (k *kmsServiceImpl) SetKeySafety(ctx context.Context, req *SetKeySafetyRequ
 		return nil, err
 	}
 	scopedKeyID := tenantScopedKeyID(tenantID, req.KeyID)
-	_, err = k.kmsManager.GetKey(ctx, scopedKeyID)
+	_, err = k.kmsManager.GetKey(ctx, req.KeyID)
 	if err != nil {
 		return nil, NewError(errors.ErrNotFound, "kms.SetKeySafety", "key not found: "+req.KeyID)
 	}
@@ -129,7 +129,7 @@ func (k *kmsServiceImpl) ClearKeySafety(ctx context.Context, req *ClearKeySafety
 		return nil, err
 	}
 	scopedKeyID := tenantScopedKeyID(tenantID, req.KeyID)
-	_, err = k.kmsManager.GetKey(ctx, scopedKeyID)
+	_, err = k.kmsManager.GetKey(ctx, req.KeyID)
 	if err != nil {
 		return nil, NewError(errors.ErrNotFound, "kms.ClearKeySafety", "key not found: "+req.KeyID)
 	}
