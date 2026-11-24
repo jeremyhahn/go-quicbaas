@@ -44,9 +44,9 @@ func acpDaemonShape(tenantID string) *FleetNode {
 
 func gpuDaemonShape(tenantID string) *FleetNode {
 	return &FleetNode{
-		ID:           "gpu-host",
+		ID:           "gpu-01",
 		TenantID:     tenantID,
-		Name:         "gpu-host",
+		Name:         "gpu-01",
 		Host:         "198.51.100.92:9091",
 		Backend:      "ollama",
 		NodeType:     "agent-runtime",
@@ -112,8 +112,8 @@ func TestListAgents_BackendFilterMatchesServedList(t *testing.T) {
 		"primary backend finds the daemon":    {"claude", []string{"agent-04"}},
 		"served sub-backend finds the daemon": {"codex", []string{"agent-04"}},
 		"other sub-backend finds the daemon":  {"opencode", []string{"agent-04"}},
-		"ollama finds only the gpu host":      {"ollama", []string{"gpu-host"}},
-		"gpu trait is filterable":             {"gpu", []string{"gpu-host"}},
+		"ollama finds only the gpu host":      {"ollama", []string{"gpu-01"}},
+		"gpu trait is filterable":             {"gpu", []string{"gpu-01"}},
 		"the transport name serves nothing":   {"acp", nil},
 		"a backend nobody serves":             {"gemini", nil},
 	}
@@ -203,8 +203,8 @@ func TestMatchAgentForTask_ServedBackends(t *testing.T) {
 		"claude reaches the acp daemon":      {"claude", false, "agent-04", false},
 		"codex reaches the acp daemon":       {"codex", false, "agent-04", false},
 		"opencode reaches the acp daemon":    {"opencode", false, "agent-04", false},
-		"ollama reaches the gpu host":        {"ollama", false, "gpu-host", false},
-		"gpu routing reaches the gpu host":   {"ollama", true, "gpu-host", false},
+		"ollama reaches the gpu host":        {"ollama", false, "gpu-01", false},
+		"gpu routing reaches the gpu host":   {"ollama", true, "gpu-01", false},
 		"the transport name reaches nobody":  {"acp", false, "", true},
 		"an unserved backend reaches nobody": {"gemini", false, "", true},
 	}

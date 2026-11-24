@@ -82,7 +82,7 @@ const BACKENDS = [
 const AGENTS = [
   {
     id: 'agent-1',
-    name: 'gpu-host',
+    name: 'gpu-01',
     host: '198.51.100.10',
     backend: 'ollama',
     capabilities: ['ollama'],
@@ -127,7 +127,7 @@ describe('InferenceView', () => {
     await waitFor(() => {
       const select = screen.getByLabelText('Select host affinity (optional)') as HTMLSelectElement;
       const options = Array.from(select.options).map((o) => o.value);
-      expect(options).toContain('gpu-host');
+      expect(options).toContain('gpu-01');
     });
   });
 
@@ -381,12 +381,12 @@ describe('InferenceView', () => {
     await waitFor(() => screen.getByLabelText('Select host affinity (optional)'));
 
     const hostSelect = screen.getByLabelText('Select host affinity (optional)') as HTMLSelectElement;
-    await fireEvent.change(hostSelect, { target: { value: 'gpu-host' } });
+    await fireEvent.change(hostSelect, { target: { value: 'gpu-01' } });
 
     await waitFor(() => {
-      // listBackendModels should have been re-called with 'gpu-host' as the agent.
+      // listBackendModels should have been re-called with 'gpu-01' as the agent.
       const calls = mockListBackendModels.mock.calls;
-      const withAgent = calls.some(([agentID]) => agentID === 'gpu-host');
+      const withAgent = calls.some(([agentID]) => agentID === 'gpu-01');
       expect(withAgent).toBe(true);
     });
   });
