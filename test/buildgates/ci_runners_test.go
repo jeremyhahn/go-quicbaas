@@ -45,11 +45,12 @@ const (
 	// overflowRunnerGate is ci-template v1.48's runs-on for CI Gate: the
 	// preflight `runner` output on github.com, and ci-gate elsewhere.
 	overflowRunnerGate = `${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner || '"ubuntu-latest"') || 'ci-gate' }}`
-	// gateRunner is CI Gate's runs-on: on github.com the bigdisk pool for a
-	// push to main and for a pull request (pull_request or
-	// pull_request_target) whose head repository is this one, and
-	// ubuntu-latest for a fork's head and off github.com.
-	gateRunner = `${{ github.server_url == 'https://github.com' && (!startsWith(github.event_name, 'pull_request') || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}`
+	// gateRunner is CI Gate's runs-on, preflight's accepted-event predicate
+	// with a fixed bigdisk array: on github.com the bigdisk pool for a push to
+	// main and a same-repository pull_request, the two events the Dells' job
+	// hook accepts (#2427), and ubuntu-latest for workflow_dispatch, schedule,
+	// pull_request_target, a fork's head and off github.com.
+	gateRunner = `${{ github.server_url == 'https://github.com' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}`
 	// preflightRunner is preflight's runs-on (ci-template v1.52): on
 	// github.com the Dells' bigdisk pool unless the repository variable
 	// CI_PREFLIGHT_RUNS_ON (runs-on JSON) overrides it, and off github.com
@@ -906,6 +907,114 @@ func TestCIPreflightRunsOn(t *testing.T) {
 				t.Errorf("preflight runs on %s, want %s", got, c.want)
 			}
 		})
+	}
+}
+
+// gateRouteCases are the events CI Gate's routing is checked on. The Dells'
+// job hook (#2427) accepts only a push to main and a same-repository
+// pull_request, so only those two take bigdisk.
+var gateRouteCases = []struct {
+	name                     string
+	server, event, ref, head string
+	want                     string
+}{
+	{"github.com push to main", githubCom, "push", mainRef, "", bigdiskJSON},
+	{"github.com push to another branch", githubCom, "push", "refs/heads/feature", "", `"ubuntu-latest"`},
+	{"github.com dispatch on main", githubCom, "workflow_dispatch", mainRef, "", `"ubuntu-latest"`},
+	{"github.com schedule", githubCom, "schedule", mainRef, "", `"ubuntu-latest"`},
+	{"github.com same-repository pull request", githubCom, "pull_request", prRef, "o/r", bigdiskJSON},
+	{"github.com fork pull request", githubCom, "pull_request", prRef, "fork/r", `"ubuntu-latest"`},
+	{"github.com deleted fork pull request", githubCom, "pull_request", prRef, "", `"ubuntu-latest"`},
+	{"github.com same-repository pull_request_target", githubCom, "pull_request_target", mainRef, "o/r", `"ubuntu-latest"`},
+	{"github.com fork pull_request_target", githubCom, "pull_request_target", mainRef, "fork/r", `"ubuntu-latest"`},
+	{"off github.com, push to main", forge, "push", mainRef, "", `"ubuntu-latest"`},
+}
+
+// TestCIGateRunsOn evaluates CI Gate's runs-on for each event: bigdisk only
+// where the Dells' job hook accepts the event, ubuntu-latest everywhere else.
+func TestCIGateRunsOn(t *testing.T) {
+	runsOn := mapValue(ciJobNode(readCI(t), "ci-gate"), "runs-on")
+	if runsOn == nil || runsOn.Kind != yaml.ScalarNode {
+		t.Fatal("ci.yml's ci-gate job has no scalar runs-on")
+	}
+	for _, c := range gateRouteCases {
+		t.Run(c.name, func(t *testing.T) {
+			v, err := ghEval(runsOn.Value, ghContext(c.server, c.event, c.ref, c.head, ""))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, _ := json.Marshal(v); string(got) != c.want {
+				t.Errorf("CI Gate runs on %s, want %s", got, c.want)
+			}
+		})
+	}
+}
+
+// TestCIGateRunsWherePreflightDoes holds CI Gate's predicate to preflight's:
+// with the variable unset, the gate takes bigdisk exactly when preflight
+// does, so an edit to one predicate alone is caught.
+func TestCIGateRunsWherePreflightDoes(t *testing.T) {
+	body := readCI(t)
+	gate := mapValue(ciJobNode(body, "ci-gate"), "runs-on")
+	pre := mapValue(ciJobNode(body, "preflight"), "runs-on")
+	if gate == nil || gate.Kind != yaml.ScalarNode || pre == nil || pre.Kind != yaml.ScalarNode {
+		t.Fatal("ci.yml's ci-gate or preflight job has no scalar runs-on")
+	}
+	for _, c := range gateRouteCases {
+		t.Run(c.name, func(t *testing.T) {
+			ctx := ghContext(c.server, c.event, c.ref, c.head, "")
+			pv, err := ghEval(pre.Value, ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			gv, err := ghEval(gate.Value, ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			p, _ := json.Marshal(pv)
+			g, _ := json.Marshal(gv)
+			want := `"ubuntu-latest"`
+			if string(p) == bigdiskJSON {
+				want = bigdiskJSON
+			}
+			if string(g) != want {
+				t.Errorf("CI Gate runs on %s while preflight runs on %s; want %s", g, p, want)
+			}
+		})
+	}
+}
+
+// TestCodeReviewJobsRunHosted keeps code-review.yml's scope and gate jobs on
+// ubuntu-latest. The workflow's only trigger is pull_request_target, which
+// the Dells' job hook refuses (#2427), so no bigdisk route can run there.
+func TestCodeReviewJobsRunHosted(t *testing.T) {
+	b, err := os.ReadFile(codeReviewWorkflowPath)
+	if err != nil {
+		t.Fatalf("read code-review.yml: %v", err)
+	}
+	var doc yaml.Node
+	if err := yaml.Unmarshal(b, &doc); err != nil || len(doc.Content) == 0 {
+		t.Fatalf("parse code-review.yml: %v", err)
+	}
+	on := mapValue(doc.Content[0], "on")
+	if on == nil || on.Kind != yaml.MappingNode || len(on.Content) != 2 || on.Content[0].Value != "pull_request_target" {
+		t.Fatal("code-review.yml's on: must have pull_request_target as its only trigger; " +
+			"a new trigger means the scope and gate routing must be reviewed against the events the Dells' job hook accepts")
+	}
+	for _, job := range []string{"scope", "gate"} {
+		runsOn := mapValue(mapValue(mapValue(doc.Content[0], "jobs"), job), "runs-on")
+		if runsOn == nil || runsOn.Kind != yaml.ScalarNode {
+			t.Fatalf("code-review.yml's %s job has no scalar runs-on", job)
+		}
+		for _, head := range []string{"o/r", "fork/r", ""} {
+			v, err := ghEval(runsOn.Value, ghContext(githubCom, "pull_request_target", mainRef, head, ""))
+			if err != nil {
+				t.Fatalf("%s, head %q: %v", job, head, err)
+			}
+			if got, _ := json.Marshal(v); string(got) != `"ubuntu-latest"` {
+				t.Errorf("code-review.yml's %s runs on %s for a pull_request_target with head %q, want \"ubuntu-latest\"", job, got, head)
+			}
+		}
 	}
 }
 
