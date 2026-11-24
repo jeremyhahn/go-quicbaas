@@ -150,6 +150,30 @@ func AccountUpdateCommand(accountID string) CommandDef {
 	}
 }
 
+// AccountUpdateSecretRefCommand points an account at the tenant secret ref.
+func AccountUpdateSecretRefCommand(accountID, ref string) CommandDef {
+	return CommandDef{
+		Name: "account update --credential-secret-ref",
+		Args: []string{"account", "update", accountID,
+			"--credential-secret-ref", ref, "--output", "json"},
+		ExpectSuccess: true,
+		Timeout:       20 * time.Second,
+	}
+}
+
+// secretsStoreFileCommand stores the raw bytes of a file as the tenant secret
+// path: the verbatim shape an account's credential reference reads (a --data
+// pair would store a JSON map instead). It keeps SecretsStoreCommand's
+// transports and unseal requirement.
+func secretsStoreFileCommand(t *testing.T, path, value string) CommandDef {
+	t.Helper()
+	file := filepath.Join(t.TempDir(), "secret-value")
+	require.NoError(t, os.WriteFile(file, []byte(value), 0o600))
+	cmd := SecretsStoreCommand(path, value)
+	cmd.Args = []string{"secrets", "put", path, "--from-file", file}
+	return cmd
+}
+
 // AccountSetDefaultCommand marks an account the tenant default.
 func AccountSetDefaultCommand(accountID string) CommandDef {
 	return CommandDef{
@@ -312,6 +336,49 @@ func TestAgentAccountDefaultProviderAccounts(t *testing.T) {
 		assertNoCredentialLeak(t, runner.transport, get.Name, stdout)
 		assert.Equal(t, "active", accountStatusFromJSON(t, runner.transport, stdout),
 			"[%s] default-claude status after its first credential", runner.transport)
+	})
+}
+
+// TestAgentAccountDefaultProviderAccountSecretRef: a new tenant's default
+// account takes its first credential by reference too. Pointing default-claude
+// at a tenant secret with account update makes it active, and no output ever
+// shows the secret.
+func TestAgentAccountDefaultProviderAccountSecretRef(t *testing.T) {
+	RunForAllTransports(t, "AgentAccountDefaultProviderAccountSecretRef", func(t *testing.T, runner *TestRunner) {
+		runner.ActAsTenantAdmin(UniqueKey("acctref"))
+		const (
+			ref    = "agents/claude/default/oauth_token"
+			marker = "SECRET-REF-TOKEN"
+		)
+		assertClean := func(name, stdout, stderr string) {
+			t.Helper()
+			assertNoCredentialLeak(t, runner.transport, name, stdout)
+			assert.NotContains(t, stdout, marker, "[%s] %s stdout shows the secret", runner.transport, name)
+			assert.NotContains(t, stderr, marker, "[%s] %s stderr shows the secret", runner.transport, name)
+		}
+
+		put := secretsStoreFileCommand(t, ref, marker)
+		stdout, stderr, err := runner.Run(put)
+		if runner.IsSkipped(put) {
+			return
+		}
+		require.NoError(t, err, "[%s] secrets put failed: stdout=%s stderr=%s", runner.transport, stdout, stderr)
+		assertClean(put.Name, stdout, stderr)
+
+		update := AccountUpdateSecretRefCommand("default-claude", ref)
+		stdout, stderr, err = runner.Run(update)
+		if runner.IsSkipped(update) {
+			return
+		}
+		require.NoError(t, err, "[%s] update failed: stdout=%s stderr=%s", runner.transport, stdout, stderr)
+		assertClean(update.Name, stdout, stderr)
+
+		get := AccountGetCommand("default-claude")
+		stdout, stderr, err = runner.Run(get)
+		require.NoError(t, err, "[%s] get after update failed: stdout=%s stderr=%s", runner.transport, stdout, stderr)
+		assertClean(get.Name, stdout, stderr)
+		assert.Equal(t, "active", accountStatusFromJSON(t, runner.transport, stdout),
+			"[%s] default-claude status after its secret reference", runner.transport)
 	})
 }
 
