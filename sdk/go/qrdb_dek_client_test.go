@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	qrdbapigrpc "github.com/jeremyhahn/go-qrdb/pkg/api/grpc"
@@ -24,6 +25,9 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
+
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport/mcp"
 )
 
 // tenantKeyringDEKServicer keeps one keyring per tenant and resolves the
@@ -246,7 +250,7 @@ func TestTenantDEK_MCP_SendsBearer(t *testing.T) {
 	srv.AddTool(mcpgo.NewTool("qrdb_dek_decrypt"), answer("qrdb_dek_decrypt", &QRDBTenantDEKDecryptResponse{Plaintext: []byte("hi"), Version: 2}))
 	srv.AddTool(mcpgo.NewTool("qrdb_dek_rewrap"), answer("qrdb_dek_rewrap", &QRDBTenantDEKRewrapResponse{Ciphertext: []byte("ct"), FromVersion: 1, ToVersion: 2}))
 	h := mcpserver.NewStreamableHTTPServer(srv)
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer t-dek" {
 			http.Error(w, "unauthenticated", http.StatusUnauthorized)
 			return
@@ -255,7 +259,7 @@ func TestTenantDEK_MCP_SendsBearer(t *testing.T) {
 	}))
 	t.Cleanup(ts.Close)
 
-	c, err := NewClient(ts.URL, WithMCP(), WithAuthToken("t-dek"))
+	c, err := NewClient(ts.URL, WithMCP(), WithAuthToken("t-dek"), WithTLSConfig(stubTLSConfig(t, ts)))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = c.Close() })
 
@@ -271,6 +275,28 @@ func TestTenantDEK_MCP_SendsBearer(t *testing.T) {
 	assert.Equal(t, base64.StdEncoding.EncodeToString([]byte("hi")), args["qrdb_dek_encrypt"]["plaintext"])
 	assert.Equal(t, base64.StdEncoding.EncodeToString([]byte("a")), args["qrdb_dek_encrypt"]["aad"])
 	assert.Equal(t, base64.StdEncoding.EncodeToString([]byte("ct")), args["qrdb_dek_rewrap"]["ciphertext"])
+}
+
+func TestTenantDEK_MCP_RefusesPlaintextHTTP(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	c, err := NewClient(srv.URL, WithMCP(), WithAuthToken("t-dek"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = c.Close() })
+
+	keyring, err := c.Security().TenantDEK()
+	require.NoError(t, err)
+	_, err = keyring.TenantDEKEncrypt(context.Background(), &QRDBTenantDEKEncryptRequest{Plaintext: []byte("hi"), AAD: []byte("a")})
+	require.Error(t, err)
+	var hopErr *mcp.DEKHopError
+	assert.ErrorAs(t, err, &hopErr)
+	assert.Equal(t, errors.CodeForbidden, errors.Code(err))
+	assert.Zero(t, hits.Load(), "no request may reach the server")
 }
 
 // TestTenantDEK_GRPCAndUnix_SendPlatformBearer proves every keyring verb

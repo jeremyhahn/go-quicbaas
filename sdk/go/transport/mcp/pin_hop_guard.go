@@ -55,13 +55,22 @@ func (e *PINForeignHostError) Error() string {
 
 // pinHopRoundTripper refuses a request whose context carries the pinHopKey
 // marker on any hop that is not https or names a host other than host.
-// Other requests pass through unchanged.
+// A request whose context carries the dekHopKey marker is held to the tenant
+// DEK rules of checkDEKHop first. Other requests pass through unchanged.
 type pinHopRoundTripper struct {
 	base http.RoundTripper
 	host string
 }
 
 func (rt *pinHopRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	if mark, ok := dekHopGuard(req.Context()); ok {
+		if hopErr := checkDEKHop(req, rt.host, mark); hopErr != nil {
+			if req.Body != nil {
+				_ = req.Body.Close()
+			}
+			return nil, hopErr
+		}
+	}
 	if !pinHopGuarded(req.Context()) {
 		return rt.base.RoundTrip(req)
 	}
