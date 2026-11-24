@@ -54,6 +54,7 @@ type Fn = ReturnType<typeof vi.fn>;
 let xkmsKeys: Record<string, Fn>;
 let xkms: Record<string, Fn>;
 let ca: Record<string, Fn>;
+let piv: Record<string, Fn>;
 
 function newKeys(): Record<string, Fn> {
   return {
@@ -83,6 +84,22 @@ function newXKMS(): Record<string, Fn> {
     getCertificate: vi.fn(),
     saveCertificate: vi.fn(),
     deleteCertificate: vi.fn(),
+    canSeal: vi.fn(),
+    seal: vi.fn(),
+    unseal: vi.fn(),
+  };
+}
+
+function newPIV(): Record<string, Fn> {
+  return {
+    listSlots: vi.fn().mockResolvedValue({
+      slots: [{ slot: '9a', name: 'PIV Authentication', description: '', has_cert: false, has_key: false }],
+    }),
+    getCertificate: vi.fn(),
+    storeCertificate: vi.fn(),
+    deleteCertificate: vi.fn(),
+    generateKey: vi.fn(),
+    generateCSR: vi.fn(),
   };
 }
 
@@ -109,7 +126,8 @@ describe('XKMSKeysView', () => {
     xkmsKeys = newKeys();
     xkms = newXKMS();
     ca = newCA();
-    mockGetSDKClient.mockResolvedValue({ xkmsKeys, xkms, ca });
+    piv = newPIV();
+    mockGetSDKClient.mockResolvedValue({ xkmsKeys, xkms, ca, piv });
   });
 
   it('lists keys with their id, type, algorithm and backend', async () => {
@@ -243,5 +261,25 @@ describe('XKMSKeysView', () => {
     await waitFor(() => expect(screen.getByRole('option', { name: 'tpm2' })).toBeInTheDocument());
     await fireEvent.change(screen.getByLabelText('Backend'), { target: { value: 'tpm2' } });
     await waitFor(() => expect(xkms.listCertificates).toHaveBeenCalledWith('tpm2'));
+  });
+
+  it('renders the Seal and unseal and PIV slots sections', async () => {
+    render(XKMSKeysView);
+    await waitFor(() => screen.getByText('signer'));
+    const seal = screen.getByRole('region', { name: 'Seal and unseal' });
+    expect(within(seal).getByRole('button', { name: 'Check seal capability' })).toBeInTheDocument();
+    expect(xkms.canSeal).not.toHaveBeenCalled();
+    const slots = screen.getByRole('region', { name: 'PIV slots' });
+    await waitFor(() => expect(within(slots).getByText('PIV Authentication')).toBeInTheDocument());
+    expect(piv.listSlots).toHaveBeenCalledWith();
+  });
+
+  it('passes the chosen backend to the seal and PIV sections', async () => {
+    render(XKMSKeysView);
+    await waitFor(() => expect(screen.getByRole('option', { name: 'tpm2' })).toBeInTheDocument());
+    await fireEvent.change(screen.getByLabelText('Backend'), { target: { value: 'tpm2' } });
+    await waitFor(() => expect(piv.listSlots).toHaveBeenCalledWith('tpm2'));
+    const seal = screen.getByRole('region', { name: 'Seal and unseal' });
+    await waitFor(() => expect((within(seal).getByLabelText('Seal backend') as HTMLInputElement).value).toBe('tpm2'));
   });
 });

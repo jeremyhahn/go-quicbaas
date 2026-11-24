@@ -27,6 +27,12 @@
       narrowed by the chosen backend; view, save and delete
     - Certificate authority (XKMSCAPanel): the xkms CA certificate and
       bundle; issue, sign a CSR and revoke
+    - Seal and unseal (XKMSSealPanel): check a backend's seal capability,
+      seal text under a key and unseal a sealed envelope; both forms start
+      from the chosen backend
+    - PIV slots (XKMSPIVPanel): the PIV slots, narrowed by the chosen
+      backend; view, store and delete a slot certificate, generate a key
+      and a CSR
 
   Each section loads its own data and shows its own error. Each load is bound to the session that started it: a response that lands
   after a sign-out or another login is dropped.
@@ -51,6 +57,8 @@
   import XKMSKeyPanel from '../../components/security/XKMSKeyPanel.svelte';
   import XKMSCertificatesPanel from '../../components/security/XKMSCertificatesPanel.svelte';
   import XKMSCAPanel from '../../components/security/XKMSCAPanel.svelte';
+  import XKMSSealPanel from '../../components/security/XKMSSealPanel.svelte';
+  import XKMSPIVPanel from '../../components/security/XKMSPIVPanel.svelte';
 
   const NOT_AVAILABLE = 'Key Store is not available on this connection.';
 
@@ -404,6 +412,14 @@
 
     <section class="card bg-base-200 p-4" aria-label="Certificate authority">
       <XKMSCAPanel />
+    </section>
+
+    <section class="card bg-base-200 p-4" aria-label="Seal and unseal">
+      <XKMSSealPanel backend={backendFilter} />
+    </section>
+
+    <section class="card bg-base-200 p-4" aria-label="PIV slots">
+      <XKMSPIVPanel backend={backendFilter} />
     </section>
   {/if}
 </div>

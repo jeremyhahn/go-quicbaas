@@ -1,0 +1,3 @@
+### Added
+
+- The web console's Key Store page has a Seal and unseal section, which checks a backend's seal capability, seals UTF-8 text under a key (with optional AAD and password) and shows the sealed envelope as JSON, and unseals a pasted envelope, showing the plaintext as text or as base64 when it is not UTF-8; and a PIV slots section, which lists the PIV slots (name, certificate and key flags, subject, algorithm and expiry) under the page's backend filter, shows and stores a slot's PEM certificate, deletes it after a confirmation, generates a key in a slot (after a confirmation when the slot already holds one) and generates a CSR. A connection without the xkms or PIV client shows that inline in the section (#2371).
