@@ -1938,6 +1938,238 @@ func TestAMQPHandler_HandleConnectionTuneOk_FrameMax(t *testing.T) {
 	}
 }
 
+// amqpQueueTest drives one handler's queue methods for the queue storage
+// tests.
+type amqpQueueTest struct {
+	t       *testing.T
+	h       *AMQPHandler
+	session *ws.Session
+}
+
+func newAMQPQueueTest(t *testing.T) *amqpQueueTest {
+	return &amqpQueueTest{t: t, h: NewAMQPHandler(NewInMemoryPubSubHub()), session: newGrantedSession("test", "amqp", nil)}
+}
+
+// newState returns a connection state whose consumers receive on a
+// buffered deliveries channel, as HandleConnection's do.
+func (q *amqpQueueTest) newState() (*amqpClientState, chan amqpDelivery) {
+	state := newTestAMQPState()
+	deliveries := make(chan amqpDelivery, 16)
+	state.deliveries = deliveries
+	return state, deliveries
+}
+
+func (q *amqpQueueTest) call(state *amqpClientState, class, method uint16, args []byte) []*AMQPFrame {
+	q.t.Helper()
+	response, err := q.h.handleFrame(context.Background(), q.h.buildMethodFrame(1, class, method, args), q.session, state)
+	if err != nil {
+		q.t.Fatalf("method %d.%d: %v", class, method, err)
+	}
+	if response == nil {
+		return nil
+	}
+	return splitAMQPTestFrames(q.t, q.h, response)
+}
+
+// declare sends Queue.Declare and returns Declare-Ok's message-count.
+func (q *amqpQueueTest) declare(state *amqpClientState, queue string) uint32 {
+	q.t.Helper()
+	args := &bytes.Buffer{}
+	_ = binary.Write(args, binary.BigEndian, uint16(0))
+	writeShortString(args, queue)
+	args.WriteByte(0)
+	writeTable(args, nil)
+	frames := q.call(state, ClassQueue, MethodQueueDeclare, args.Bytes())
+	if len(frames) != 1 || binary.BigEndian.Uint16(frames[0].Payload[2:4]) != MethodQueueDeclareOk {
+		q.t.Fatalf("Queue.Declare %q: got %d frames, want Declare-Ok", queue, len(frames))
+	}
+	rest := frames[0].Payload[4:]
+	rest = rest[1+int(rest[0]):]
+	return binary.BigEndian.Uint32(rest[0:4])
+}
+
+func (q *amqpQueueTest) publish(state *amqpClientState, queue string, body []byte) {
+	q.t.Helper()
+	args := &bytes.Buffer{}
+	_ = binary.Write(args, binary.BigEndian, uint16(0))
+	writeShortString(args, "")
+	writeShortString(args, queue)
+	args.WriteByte(0x00)
+	msg := q.h.buildMethodFrame(1, ClassBasic, MethodBasicPublish, args.Bytes())
+	msg = append(msg, q.h.buildFrame(FrameHeader, 1, amqpContentHeader(uint64(len(body))))...)
+	msg = append(msg, q.h.buildFrame(FrameBody, 1, body)...)
+	mustNoResponse(q.t, q.h, q.session, state, msg)
+}
+
+func (q *amqpQueueTest) consume(state *amqpClientState, queue, tag string) {
+	q.t.Helper()
+	args := &bytes.Buffer{}
+	_ = binary.Write(args, binary.BigEndian, uint16(0))
+	writeShortString(args, queue)
+	writeShortString(args, tag)
+	args.WriteByte(0x02) // no-ack
+	writeTable(args, nil)
+	if frames := q.call(state, ClassBasic, MethodBasicConsume, args.Bytes()); len(frames) != 1 {
+		q.t.Fatalf("Basic.Consume %q: got %d frames, want Consume-Ok", queue, len(frames))
+	}
+}
+
+func (q *amqpQueueTest) cancel(state *amqpClientState, tag string) {
+	q.t.Helper()
+	args := &bytes.Buffer{}
+	writeShortString(args, tag)
+	args.WriteByte(0)
+	if frames := q.call(state, ClassBasic, MethodBasicCancel, args.Bytes()); len(frames) != 1 {
+		q.t.Fatalf("Basic.Cancel %q: got %d frames, want Cancel-Ok", tag, len(frames))
+	}
+}
+
+// get sends Basic.Get and returns the message body, or ok false on
+// Get-Empty.
+func (q *amqpQueueTest) get(state *amqpClientState, queue string) (body []byte, ok bool) {
+	q.t.Helper()
+	args := &bytes.Buffer{}
+	_ = binary.Write(args, binary.BigEndian, uint16(0))
+	writeShortString(args, queue)
+	args.WriteByte(0x01) // no-ack
+	frames := q.call(state, ClassBasic, MethodBasicGet, args.Bytes())
+	if len(frames) == 0 {
+		q.t.Fatalf("Basic.Get %q: no response", queue)
+	}
+	switch method := binary.BigEndian.Uint16(frames[0].Payload[2:4]); method {
+	case MethodBasicGetEmpty:
+		return nil, false
+	case MethodBasicGetOk:
+		for _, f := range frames[2:] {
+			body = append(body, f.Payload...)
+		}
+		return body, true
+	default:
+		q.t.Fatalf("Basic.Get %q: method %d, want Get-Ok or Get-Empty", queue, method)
+		return nil, false
+	}
+}
+
+func receiveAMQPDeliveries(t *testing.T, want int, chans ...<-chan amqpDelivery) [][]amqpDelivery {
+	t.Helper()
+	got := make([][]amqpDelivery, len(chans))
+	deadline := time.After(2 * time.Second)
+	for n := 0; n < want; {
+		select {
+		case d := <-chans[0]:
+			got[0] = append(got[0], d)
+			n++
+		case d := <-chans[len(chans)-1]:
+			if len(chans) == 1 {
+				got[0] = append(got[0], d)
+			} else {
+				got[len(chans)-1] = append(got[len(chans)-1], d)
+			}
+			n++
+		case <-deadline:
+			t.Fatalf("received %d deliveries, want %d", n, want)
+		}
+	}
+	quiet := time.After(200 * time.Millisecond)
+	for {
+		select {
+		case d := <-chans[0]:
+			t.Fatalf("unexpected extra delivery %q", d.payload)
+		case d := <-chans[len(chans)-1]:
+			t.Fatalf("unexpected extra delivery %q", d.payload)
+		case <-quiet:
+			return got
+		}
+	}
+}
+
+func TestAMQPHandler_QueueKeepsMessagesUntilGet(t *testing.T) {
+	q := newAMQPQueueTest(t)
+	publisher, _ := q.newState()
+	getter, _ := q.newState()
+
+	if count := q.declare(publisher, "orders"); count != 0 {
+		t.Fatalf("first Declare-Ok message-count = %d, want 0", count)
+	}
+	q.publish(publisher, "orders", []byte("one"))
+	q.publish(publisher, "orders", []byte("two"))
+
+	t.Run("redeclare reports stored messages", func(t *testing.T) {
+		if count := q.declare(getter, "orders"); count != 2 {
+			t.Errorf("Declare-Ok message-count = %d, want 2", count)
+		}
+	})
+
+	for _, want := range []string{"one", "two"} {
+		body, ok := q.get(getter, "orders")
+		if !ok || string(body) != want {
+			t.Fatalf("Basic.Get = %q, %v; want %q", body, ok, want)
+		}
+	}
+	if body, ok := q.get(getter, "orders"); ok {
+		t.Fatalf("third Basic.Get = %q, want Get-Empty", body)
+	}
+}
+
+func TestAMQPHandler_QueueCompetingConsumers(t *testing.T) {
+	q := newAMQPQueueTest(t)
+	a, deliveriesA := q.newState()
+	b, deliveriesB := q.newState()
+	q.declare(a, "jobs")
+	q.declare(b, "jobs")
+	q.consume(a, "jobs", "tag-a")
+	q.consume(b, "jobs", "tag-b")
+
+	for i := range 6 {
+		q.publish(a, "jobs", []byte{'j', byte('0' + i)})
+	}
+
+	got := receiveAMQPDeliveries(t, 6, deliveriesA, deliveriesB)
+	seen := make(map[string]int)
+	for i, tag := range []string{"tag-a", "tag-b"} {
+		if len(got[i]) != 3 {
+			t.Errorf("consumer %s got %d deliveries, want 3", tag, len(got[i]))
+		}
+		for _, d := range got[i] {
+			if d.consumerTag != tag || d.queue != "jobs" {
+				t.Errorf("consumer %s got a delivery for %q/%q", tag, d.consumerTag, d.queue)
+			}
+			seen[string(d.payload)]++
+		}
+	}
+	for i := range 6 {
+		if body := string([]byte{'j', byte('0' + i)}); seen[body] != 1 {
+			t.Errorf("payload %q delivered %d times, want once", body, seen[body])
+		}
+	}
+}
+
+func TestAMQPHandler_QueueDeliversStoredMessagesOnConsume(t *testing.T) {
+	q := newAMQPQueueTest(t)
+	publisher, _ := q.newState()
+	consumer, deliveries := q.newState()
+	q.declare(publisher, "late")
+	q.publish(publisher, "late", []byte("early"))
+
+	q.consume(consumer, "late", "tag-late")
+	got := receiveAMQPDeliveries(t, 1, deliveries)
+	if d := got[0][0]; string(d.payload) != "early" || d.consumerTag != "tag-late" {
+		t.Fatalf("delivery = %q for %q, want %q for tag-late", d.payload, d.consumerTag, "early")
+	}
+
+	q.cancel(consumer, "tag-late")
+	q.publish(publisher, "late", []byte("after-cancel"))
+	select {
+	case d := <-deliveries:
+		t.Fatalf("cancelled consumer received %q", d.payload)
+	default:
+	}
+	q.declare(consumer, "late")
+	if body, ok := q.get(consumer, "late"); !ok || string(body) != "after-cancel" {
+		t.Fatalf("Basic.Get = %q, %v; want %q", body, ok, "after-cancel")
+	}
+}
+
 func TestWriteTable_Int32Value(t *testing.T) {
 	buf := &bytes.Buffer{}
 	table := map[string]interface{}{

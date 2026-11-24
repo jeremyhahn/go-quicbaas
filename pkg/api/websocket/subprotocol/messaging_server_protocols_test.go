@@ -435,3 +435,154 @@ func amqpRoundTrip(t *testing.T, ctx context.Context, conn *websocket.Conn, fram
 		}
 	}
 }
+
+// openAMQPTestChannel dials url as an AMQP client and opens channel 1.
+func openAMQPTestChannel(t *testing.T, ctx context.Context, url string) *websocket.Conn {
+	t.Helper()
+	conn := dialSubprotocol(t, ctx, url, "amqp")
+	if err := conn.Write(ctx, websocket.MessageBinary, []byte{'A', 'M', 'Q', 'P', 0, 0, 9, 1}); err != nil {
+		t.Fatalf("write protocol header: %v", err)
+	}
+	if _, _, err := conn.Read(ctx); err != nil { // Connection.Start
+		t.Fatalf("read Connection.Start: %v", err)
+	}
+	amqpRoundTrip(t, ctx, conn, amqpTestMethod(20, 10, []byte{0}), "Channel.Open")
+	return conn
+}
+
+// declareAndConsumeAMQPTestQueue sends Queue.Declare and, when consume is
+// set, Basic.Consume with no-ack on queue.
+func declareAndConsumeAMQPTestQueue(t *testing.T, ctx context.Context, conn *websocket.Conn, queue string, consume bool) {
+	t.Helper()
+	args := &bytes.Buffer{}
+	_ = binary.Write(args, binary.BigEndian, uint16(0))
+	writeShortString(args, queue)
+	args.WriteByte(0)
+	_ = binary.Write(args, binary.BigEndian, uint32(0))
+	amqpRoundTrip(t, ctx, conn, amqpTestMethod(50, 10, args.Bytes()), "Queue.Declare")
+	if !consume {
+		return
+	}
+	args = &bytes.Buffer{}
+	_ = binary.Write(args, binary.BigEndian, uint16(0))
+	writeShortString(args, queue)
+	writeShortString(args, "")
+	args.WriteByte(0x02) // no-ack
+	_ = binary.Write(args, binary.BigEndian, uint32(0))
+	amqpRoundTrip(t, ctx, conn, amqpTestMethod(60, 20, args.Bytes()), "Basic.Consume")
+}
+
+// publishAMQPTestMessage publishes body to queue through the default
+// exchange, in body frames of at most chunk bytes.
+func publishAMQPTestMessage(t *testing.T, ctx context.Context, conn *websocket.Conn, queue string, body []byte, chunk int) {
+	t.Helper()
+	args := &bytes.Buffer{}
+	_ = binary.Write(args, binary.BigEndian, uint16(0))
+	writeShortString(args, "")
+	writeShortString(args, queue)
+	args.WriteByte(0)
+	msg := amqpTestMethod(60, 40, args.Bytes())
+	header := &bytes.Buffer{}
+	_ = binary.Write(header, binary.BigEndian, uint16(60))
+	_ = binary.Write(header, binary.BigEndian, uint16(0))
+	_ = binary.Write(header, binary.BigEndian, uint64(len(body)))
+	_ = binary.Write(header, binary.BigEndian, uint16(0))
+	msg = append(msg, amqpTestFrame(2, 1, header.Bytes())...)
+	for rest := body; len(rest) > 0; {
+		n := min(chunk, len(rest))
+		msg = append(msg, amqpTestFrame(3, 1, rest[:n])...)
+		rest = rest[n:]
+	}
+	if err := conn.Write(ctx, websocket.MessageBinary, msg); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+}
+
+// readAMQPTestDelivery reads WebSocket messages until it has a
+// Basic.Deliver, its content header and body-size bytes of body, and
+// returns the body. Every frame must fit the default frame-max.
+func readAMQPTestDelivery(t *testing.T, ctx context.Context, conn *websocket.Conn) []byte {
+	t.Helper()
+	deliverCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	var buf, body []byte
+	sawDeliver, sawHeader := false, false
+	var bodySize uint64
+	for {
+		for len(buf) >= 8 {
+			size := int(binary.BigEndian.Uint32(buf[3:7]))
+			if len(buf) < 8+size {
+				break
+			}
+			if buf[7+size] != 0xCE {
+				t.Fatalf("bad frame-end after a %d-byte frame", size)
+			}
+			if 8+size > int(amqpDefaultFrameMax) {
+				t.Fatalf("received a %d-byte frame, over frame-max %d", 8+size, amqpDefaultFrameMax)
+			}
+			typ, payload := buf[0], buf[7:7+size]
+			buf = buf[8+size:]
+			switch {
+			case typ == 1 && len(payload) >= 4 &&
+				binary.BigEndian.Uint16(payload[0:2]) == 60 && binary.BigEndian.Uint16(payload[2:4]) == 60:
+				sawDeliver = true
+			case sawDeliver && !sawHeader && typ == 2:
+				if len(payload) < 12 {
+					t.Fatalf("content header too short: %x", payload)
+				}
+				sawHeader = true
+				bodySize = binary.BigEndian.Uint64(payload[4:12])
+			case sawHeader && typ == 3:
+				body = append(body, payload...)
+			case sawDeliver:
+				t.Fatalf("unexpected frame type %d after Basic.Deliver", typ)
+			}
+			if sawHeader && uint64(len(body)) >= bodySize {
+				return body
+			}
+		}
+		_, data, err := conn.Read(deliverCtx)
+		if err != nil {
+			t.Fatalf("no complete delivery within 5s (deliver %v, header %v, %d body bytes): %v", sawDeliver, sawHeader, len(body), err)
+		}
+		buf = append(buf, data...)
+	}
+}
+
+func TestTenantMessagingServer_AMQPPublishBeforeConsumeIsKept(t *testing.T) {
+	_, url := tenantTestServer(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	url += "?tenant=tenant-a"
+
+	publisher := openAMQPTestChannel(t, ctx, url)
+	declareAndConsumeAMQPTestQueue(t, ctx, publisher, "kept", false)
+	publishAMQPTestMessage(t, ctx, publisher, "kept", []byte("kept-body"), 1024)
+
+	consumer := openAMQPTestChannel(t, ctx, url)
+	declareAndConsumeAMQPTestQueue(t, ctx, consumer, "kept", true)
+	if body := readAMQPTestDelivery(t, ctx, consumer); string(body) != "kept-body" {
+		t.Fatalf("delivered body = %q, want %q", body, "kept-body")
+	}
+}
+
+func TestTenantMessagingServer_AMQPLargeBodyWithinFrameMax(t *testing.T) {
+	_, url := tenantTestServer(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	url += "?tenant=tenant-a"
+
+	consumer := openAMQPTestChannel(t, ctx, url)
+	// The delivery arrives as one WebSocket message larger than the
+	// client's default 32 KiB read limit.
+	consumer.SetReadLimit(1 << 20)
+	declareAndConsumeAMQPTestQueue(t, ctx, consumer, "big", true)
+
+	body := bytes.Repeat([]byte{0x5A}, 200*1024)
+	publisher := openAMQPTestChannel(t, ctx, url)
+	publishAMQPTestMessage(t, ctx, publisher, "big", body, int(amqpDefaultFrameMax)-8)
+
+	if got := readAMQPTestDelivery(t, ctx, consumer); !bytes.Equal(got, body) {
+		t.Fatalf("delivered body is %d bytes and differs, want %d bytes", len(got), len(body))
+	}
+}

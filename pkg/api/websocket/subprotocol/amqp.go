@@ -229,7 +229,30 @@ type AMQPHandler struct {
 
 	// routes maps exchange names to the queue bindings made on them.
 	routes map[string][]amqpRoute
+
+	// declareMu serializes creating and deleting registry queues together
+	// with the broker client's hub subscription for them, so a queue is
+	// never visible before it receives publications.
+	declareMu sync.Mutex
+
+	// queuesMu protects queues and every queue's messages, consumers and
+	// next. A connection's state.mu may be held while taking it, never the
+	// reverse; routesMu is never held with it, and the hub is never called
+	// under it.
+	queuesMu sync.Mutex
+
+	// queues is the tenant-wide queue registry. Publications reach it
+	// through the broker hub client (amqpBrokerClientID).
+	queues map[string]*amqpQueueState
+
+	// brokerRegistered is set once the broker client is registered with
+	// the hub.
+	brokerRegistered atomic.Bool
 }
+
+// amqpBrokerClientID is the hub client through which publications to a
+// declared queue reach the handler's queue registry.
+const amqpBrokerClientID = "amqp-queues"
 
 // amqpRoute is one Queue.Bind: messages published to the exchange with a
 // matching routing key go to queue.
@@ -304,6 +327,20 @@ type amqpQueueState struct {
 	autoDelete bool
 	messages   [][]byte
 	bindings   []amqpBinding
+	// consumers are the queue's consumers across connections; each
+	// message goes to one of them, round-robin from next.
+	consumers []amqpQueueConsumer
+	next      int
+}
+
+// amqpQueueConsumer is one consumer of a registry queue.
+type amqpQueueConsumer struct {
+	sessionID   string
+	consumerTag string
+	channel     uint16
+	// deliveries is the consumer connection's delivery channel; a consumer
+	// with a nil one is never sent to.
+	deliveries chan<- amqpDelivery
 }
 
 // amqpExchangeState holds the state for an AMQP exchange.
@@ -377,11 +414,221 @@ func NewAMQPHandler(hub PubSubHub) *AMQPHandler {
 	if hub == nil {
 		hub = NewInMemoryPubSubHub()
 	}
-	return &AMQPHandler{
+	h := &AMQPHandler{
 		hub:           hub,
 		clients:       make(map[string]*amqpClientState),
 		exchangeTypes: make(map[string]string),
 		routes:        make(map[string][]amqpRoute),
+		queues:        make(map[string]*amqpQueueState),
+	}
+	// A failure here is retried on the first queue declaration.
+	h.registerBroker()
+	return h
+}
+
+// registerBroker registers the broker hub client, whose callback stores or
+// dispatches publications to declared queues, unless it already is.
+func (h *AMQPHandler) registerBroker() {
+	if h.brokerRegistered.Load() {
+		return
+	}
+	err := h.hub.RegisterClient(amqpBrokerClientID, func(topic string, payload []byte, _ byte, _ bool) {
+		h.enqueue(topic, payload)
+	})
+	if err == nil {
+		h.brokerRegistered.Store(true)
+	}
+}
+
+// declareQueue returns the registry queue name, creating it and
+// subscribing the broker client to it when it does not exist.
+func (h *AMQPHandler) declareQueue(name string, durable, exclusive, autoDelete bool) (*amqpQueueState, error) {
+	h.declareMu.Lock()
+	defer h.declareMu.Unlock()
+
+	h.queuesMu.Lock()
+	queue := h.queues[name]
+	h.queuesMu.Unlock()
+	if queue != nil {
+		return queue, nil
+	}
+
+	queue = &amqpQueueState{
+		name:       name,
+		durable:    durable,
+		exclusive:  exclusive,
+		autoDelete: autoDelete,
+		messages:   make([][]byte, 0),
+		bindings:   make([]amqpBinding, 0),
+	}
+	h.queuesMu.Lock()
+	h.queues[name] = queue
+	h.queuesMu.Unlock()
+
+	h.registerBroker()
+	if err := h.hub.Subscribe(amqpBrokerClientID, name, 0); err != nil {
+		h.queuesMu.Lock()
+		delete(h.queues, name)
+		h.queuesMu.Unlock()
+		return nil, err
+	}
+	return queue, nil
+}
+
+// deleteQueue removes name from the registry and unsubscribes the broker
+// client from it. It returns the number of messages the queue held.
+func (h *AMQPHandler) deleteQueue(name string) (uint32, bool, error) {
+	h.declareMu.Lock()
+	defer h.declareMu.Unlock()
+
+	h.queuesMu.Lock()
+	queue := h.queues[name]
+	var count uint32
+	if queue != nil {
+		count = uint32(len(queue.messages))
+		delete(h.queues, name)
+	}
+	h.queuesMu.Unlock()
+	if queue == nil {
+		return 0, false, nil
+	}
+	return count, true, h.hub.Unsubscribe(amqpBrokerClientID, name)
+}
+
+// lookupQueue returns the registry queue name, or nil.
+func (h *AMQPHandler) lookupQueue(name string) *amqpQueueState {
+	h.queuesMu.Lock()
+	defer h.queuesMu.Unlock()
+	return h.queues[name]
+}
+
+// enqueue is the broker client's hub callback. It hands a publication for
+// a declared queue to the queue's next consumer that can take it without
+// blocking, or stores it. A publication for an unknown queue is dropped.
+func (h *AMQPHandler) enqueue(queueName string, payload []byte) {
+	message := append([]byte{}, payload...)
+	h.queuesMu.Lock()
+	defer h.queuesMu.Unlock()
+	queue := h.queues[queueName]
+	if queue == nil {
+		return
+	}
+	if !queue.dispatchLocked(message) {
+		queue.messages = append(queue.messages, message)
+	}
+}
+
+// dispatchLocked hands payload to the next consumer, round-robin, whose
+// delivery channel has room. It reports whether one took it. The caller
+// holds h.queuesMu.
+func (q *amqpQueueState) dispatchLocked(payload []byte) bool {
+	n := len(q.consumers)
+	for i := range n {
+		idx := (q.next + i) % n
+		c := q.consumers[idx]
+		if c.deliveries == nil {
+			continue
+		}
+		select {
+		case c.deliveries <- amqpDelivery{queue: q.name, consumerTag: c.consumerTag, payload: payload}:
+			q.next = (idx + 1) % n
+			return true
+		default:
+		}
+	}
+	return false
+}
+
+// drainQueue hands stored messages of queueName to its consumers until
+// none can take the next one without blocking.
+func (h *AMQPHandler) drainQueue(queueName string) {
+	h.queuesMu.Lock()
+	defer h.queuesMu.Unlock()
+	queue := h.queues[queueName]
+	if queue == nil {
+		return
+	}
+	for len(queue.messages) > 0 && queue.dispatchLocked(queue.messages[0]) {
+		queue.messages = queue.messages[1:]
+	}
+}
+
+// requeue puts payload back at the front of queueName and offers the
+// queue's messages to its consumers again.
+func (h *AMQPHandler) requeue(queueName string, payload []byte) {
+	h.queuesMu.Lock()
+	queue := h.queues[queueName]
+	if queue != nil {
+		queue.messages = append([][]byte{payload}, queue.messages...)
+	}
+	h.queuesMu.Unlock()
+	if queue != nil {
+		h.drainQueue(queueName)
+	}
+}
+
+// addQueueConsumer adds consumer to the registry queue queueName,
+// replacing one with the same session and tag.
+func (h *AMQPHandler) addQueueConsumer(queueName string, consumer amqpQueueConsumer) {
+	h.queuesMu.Lock()
+	defer h.queuesMu.Unlock()
+	queue := h.queues[queueName]
+	if queue == nil {
+		return
+	}
+	for i, c := range queue.consumers {
+		if c.sessionID == consumer.sessionID && c.consumerTag == consumer.consumerTag {
+			queue.consumers[i] = consumer
+			return
+		}
+	}
+	queue.consumers = append(queue.consumers, consumer)
+}
+
+// removeQueueConsumer removes the consumer sessionID/consumerTag from the
+// registry queue queueName.
+func (h *AMQPHandler) removeQueueConsumer(queueName, sessionID, consumerTag string) {
+	h.queuesMu.Lock()
+	defer h.queuesMu.Unlock()
+	if queue := h.queues[queueName]; queue != nil {
+		queue.removeConsumersLocked(func(c amqpQueueConsumer) bool {
+			return c.sessionID == sessionID && c.consumerTag == consumerTag
+		})
+	}
+}
+
+// removeSessionConsumers removes every consumer of sessionID from the
+// registry.
+func (h *AMQPHandler) removeSessionConsumers(sessionID string) {
+	h.queuesMu.Lock()
+	defer h.queuesMu.Unlock()
+	for _, queue := range h.queues {
+		queue.removeConsumersLocked(func(c amqpQueueConsumer) bool {
+			return c.sessionID == sessionID
+		})
+	}
+}
+
+// removeConsumersLocked removes the consumers match selects, keeping the
+// round-robin position on the consumer that was next. The caller holds
+// h.queuesMu.
+func (q *amqpQueueState) removeConsumersLocked(match func(amqpQueueConsumer) bool) {
+	kept := q.consumers[:0]
+	next := 0
+	for i, c := range q.consumers {
+		if match(c) {
+			continue
+		}
+		if i < q.next {
+			next++
+		}
+		kept = append(kept, c)
+	}
+	clear(q.consumers[len(kept):])
+	q.consumers = kept
+	q.next = next
+	if q.next >= len(q.consumers) {
+		q.next = 0
 	}
 }
 
@@ -397,11 +644,12 @@ func (h *AMQPHandler) HandleConnection(ctx context.Context, conn *websocket.Conn
 		consumers: make(map[string]amqpConsumer),
 	}
 
-	// Message delivery channel for this client. Hub callbacks send on it
-	// outside the hub lock, so one may still be sending after
-	// UnregisterClient returns: never close it. cancelDelivery stops the
-	// delivery goroutine, and the callbacks never block.
+	// Message delivery channel for this client. The queue registry sends
+	// on it without blocking while holding h.queuesMu, so a send may race
+	// the connection going away: never close it. cancelDelivery stops the
+	// delivery goroutine.
 	deliveryChan := make(chan amqpDelivery, 100)
+	clientState.deliveries = deliveryChan
 
 	// Register cleanup on connection close
 	defer func() {
@@ -409,29 +657,28 @@ func (h *AMQPHandler) HandleConnection(ctx context.Context, conn *websocket.Conn
 		delete(h.clients, session.ID)
 		h.clientsMu.Unlock()
 
-		// Best effort: the connection is already going away and there is
-		// nobody left to report a hub failure to.
-		_ = h.hub.UnregisterClient(session.ID)
+		// Stop dispatching to this connection, then put back the messages
+		// it was handed but never sent, in their order.
+		h.removeSessionConsumers(session.ID)
+		var undelivered []amqpDelivery
+	drain:
+		for {
+			select {
+			case d := <-deliveryChan:
+				undelivered = append(undelivered, d)
+			default:
+				break drain
+			}
+		}
+		for i := len(undelivered) - 1; i >= 0; i-- {
+			h.requeue(undelivered[i].queue, undelivered[i].payload)
+		}
 	}()
 
 	// Store client state
 	h.clientsMu.Lock()
 	h.clients[session.ID] = clientState
 	h.clientsMu.Unlock()
-
-	// Register with hub for message delivery
-	if err := h.hub.RegisterClient(session.ID, func(topic string, payload []byte, qos byte, retain bool) {
-		select {
-		case deliveryChan <- amqpDelivery{
-			queue:   topic,
-			payload: payload,
-		}:
-		default:
-			// Channel full, drop message
-		}
-	}); err != nil {
-		return err
-	}
 
 	// Start message delivery goroutine
 	deliveryCtx, cancelDelivery := context.WithCancel(ctx)
@@ -509,8 +756,9 @@ func (h *AMQPHandler) HandleConnection(ctx context.Context, conn *websocket.Conn
 
 // amqpDelivery represents a message to be delivered to a client.
 type amqpDelivery struct {
-	queue   string
-	payload []byte
+	queue       string
+	consumerTag string
+	payload     []byte
 }
 
 // deliverMessages handles outbound message delivery to the client.
@@ -524,20 +772,14 @@ func (h *AMQPHandler) deliverMessages(ctx context.Context, conn *websocket.Conn,
 		case delivery := <-deliveryChan:
 
 			state.mu.RLock()
-			// Find consumer for this queue
-			var consumer amqpConsumer
-			var found bool
-			for _, c := range state.consumers {
-				if c.queueName == delivery.queue {
-					consumer = c
-					found = true
-					break
-				}
-			}
+			consumer, found := state.consumers[delivery.consumerTag]
 			frameMax := state.frameMax
 			state.mu.RUnlock()
 
-			if !found {
+			if !found || consumer.queueName != delivery.queue {
+				// The consumer was cancelled after the registry handed
+				// it this message: give the message back to the queue.
+				h.requeue(delivery.queue, delivery.payload)
 				continue
 			}
 
@@ -1078,36 +1320,46 @@ func (h *AMQPHandler) handleQueueDeclare(ctx context.Context, frame *AMQPFrame, 
 	autoDelete := (flags & 0x08) != 0
 	noWait := (flags & 0x10) != 0
 
-	// Store queue state
+	state.mu.RLock()
+	channelOpen := state.channels[frame.Channel] != nil
+	state.mu.RUnlock()
+	if !channelOpen {
+		return nil, &ErrAMQPProtocolError{Message: "channel not open"}
+	}
+
+	// The queue lives in the tenant-wide registry; the channel keeps a
+	// pointer to it.
+	var queue *amqpQueueState
+	if !passive {
+		declared, err := h.declareQueue(queueName, durable, exclusive, autoDelete)
+		if err != nil {
+			return nil, err
+		}
+		queue = declared
+	}
+
 	state.mu.Lock()
 	ch := state.channels[frame.Channel]
 	if ch == nil {
 		state.mu.Unlock()
 		return nil, &ErrAMQPProtocolError{Message: "channel not open"}
 	}
-
 	if passive {
-		// Check if queue exists
-		if ch.queues[queueName] == nil {
+		queue = ch.queues[queueName]
+		if queue == nil {
+			queue = h.lookupQueue(queueName)
+		}
+		if queue == nil {
 			state.mu.Unlock()
 			return h.buildChannelClose(frame.Channel, NotFound, "NOT_FOUND - no queue '"+queueName+"'", ClassQueue, MethodQueueDeclare), nil
 		}
-	} else {
-		ch.queues[queueName] = &amqpQueueState{
-			name:       queueName,
-			durable:    durable,
-			exclusive:  exclusive,
-			autoDelete: autoDelete,
-			messages:   make([][]byte, 0),
-			bindings:   make([]amqpBinding, 0),
-		}
 	}
+	ch.queues[queueName] = queue
+	h.queuesMu.Lock()
+	messageCount := uint32(len(queue.messages))
+	consumerCount := uint32(len(queue.consumers))
+	h.queuesMu.Unlock()
 	state.mu.Unlock()
-
-	// Register queue as topic in hub
-	if err := h.hub.Subscribe(session.ID, queueName, 0); err != nil {
-		return nil, err
-	}
 
 	// Send Queue.Declare-Ok if not no-wait
 	if noWait {
@@ -1117,8 +1369,8 @@ func (h *AMQPHandler) handleQueueDeclare(ctx context.Context, frame *AMQPFrame, 
 	// Queue.Declare-Ok: queue (shortstring), message-count (long), consumer-count (long)
 	declareOkArgs := &bytes.Buffer{}
 	writeShortString(declareOkArgs, queueName)
-	_ = binary.Write(declareOkArgs, binary.BigEndian, uint32(0)) // message-count
-	_ = binary.Write(declareOkArgs, binary.BigEndian, uint32(0)) // consumer-count
+	_ = binary.Write(declareOkArgs, binary.BigEndian, messageCount)
+	_ = binary.Write(declareOkArgs, binary.BigEndian, consumerCount)
 
 	return h.buildMethodFrame(frame.Channel, ClassQueue, MethodQueueDeclareOk, declareOkArgs.Bytes()), nil
 }
@@ -1288,9 +1540,14 @@ func (h *AMQPHandler) handleQueuePurge(ctx context.Context, frame *AMQPFrame, ar
 	ch := state.channels[frame.Channel]
 	if ch != nil {
 		queue := ch.queues[string(queueName)]
+		if queue == nil {
+			queue = h.lookupQueue(string(queueName))
+		}
 		if queue != nil {
+			h.queuesMu.Lock()
 			messageCount = uint32(len(queue.messages))
 			queue.messages = make([][]byte, 0)
+			h.queuesMu.Unlock()
 		}
 	}
 	state.mu.Unlock()
@@ -1339,15 +1596,22 @@ func (h *AMQPHandler) handleQueueDelete(ctx context.Context, frame *AMQPFrame, a
 	if ch != nil {
 		queue := ch.queues[queueName]
 		if queue != nil {
+			h.queuesMu.Lock()
 			messageCount = uint32(len(queue.messages))
+			h.queuesMu.Unlock()
 		}
 		delete(ch.queues, queueName)
 	}
 	state.mu.Unlock()
 	h.removeQueueRoutes(queueName)
 
-	// Unsubscribe from hub
-	if err := h.hub.Unsubscribe(session.ID, queueName); err != nil {
+	// Remove the queue from the registry and stop the broker client's
+	// subscription to it.
+	registryCount, inRegistry, err := h.deleteQueue(queueName)
+	if inRegistry {
+		messageCount = registryCount
+	}
+	if err != nil {
 		return nil, err
 	}
 
@@ -1435,7 +1699,12 @@ func (h *AMQPHandler) handleBasicConsume(ctx context.Context, frame *AMQPFrame, 
 	exclusive := (flags & 0x04) != 0
 	noWait := (flags & 0x08) != 0
 
-	// Register consumer
+	// Consuming a queue that was not declared creates it.
+	if _, err := h.declareQueue(queueName, false, false, false); err != nil {
+		return nil, err
+	}
+
+	// Register consumer, on the connection and on the registry queue.
 	state.mu.Lock()
 	state.consumers[consumerTag] = amqpConsumer{
 		queueName:   queueName,
@@ -1445,12 +1714,16 @@ func (h *AMQPHandler) handleBasicConsume(ctx context.Context, frame *AMQPFrame, 
 		noAck:       noAck,
 		exclusive:   exclusive,
 	}
+	h.addQueueConsumer(queueName, amqpQueueConsumer{
+		sessionID:   session.ID,
+		consumerTag: consumerTag,
+		channel:     frame.Channel,
+		deliveries:  state.deliveries,
+	})
 	state.mu.Unlock()
 
-	// Subscribe to queue via hub
-	if err := h.hub.Subscribe(session.ID, queueName, 0); err != nil {
-		return nil, err
-	}
+	// Hand the consumers the messages stored before they attached.
+	h.drainQueue(queueName)
 
 	// Send Basic.Consume-Ok if not no-wait
 	if noWait {
@@ -1486,29 +1759,14 @@ func (h *AMQPHandler) handleBasicCancel(ctx context.Context, frame *AMQPFrame, a
 	}
 	noWait := (flags & 0x01) != 0
 
-	// Remove consumer
-	var unsubErr error
+	// Remove consumer, from the connection and from the registry queue,
+	// under state.mu so the delivery goroutine sees both or neither.
 	state.mu.Lock()
-	consumer, exists := state.consumers[consumerTag]
-	if exists {
+	if consumer, exists := state.consumers[consumerTag]; exists {
 		delete(state.consumers, consumerTag)
-		// Unsubscribe from queue if no other consumers
-		hasOtherConsumer := false
-		for _, c := range state.consumers {
-			if c.queueName == consumer.queueName {
-				hasOtherConsumer = true
-				break
-			}
-		}
-		if !hasOtherConsumer {
-			unsubErr = h.hub.Unsubscribe(session.ID, consumer.queueName)
-		}
+		h.removeQueueConsumer(consumer.queueName, session.ID, consumerTag)
 	}
 	state.mu.Unlock()
-
-	if unsubErr != nil {
-		return nil, unsubErr
-	}
 
 	// Send Basic.Cancel-Ok if not no-wait
 	if noWait {
@@ -1808,10 +2066,23 @@ func (h *AMQPHandler) handleBasicGet(ctx context.Context, frame *AMQPFrame, args
 	var messageCount uint32
 	if ch != nil {
 		queue := ch.queues[queueName]
-		if queue != nil && len(queue.messages) > 0 {
-			message = queue.messages[0]
-			queue.messages = queue.messages[1:]
-			messageCount = uint32(len(queue.messages))
+		if queue == nil {
+			queue = h.lookupQueue(queueName)
+		}
+		var found bool
+		if queue != nil {
+			h.queuesMu.Lock()
+			if len(queue.messages) > 0 {
+				message, found = queue.messages[0], true
+				if message == nil {
+					message = []byte{}
+				}
+				queue.messages = queue.messages[1:]
+				messageCount = uint32(len(queue.messages))
+			}
+			h.queuesMu.Unlock()
+		}
+		if found {
 
 			if !noAck {
 				ch.nextDeliveryTag++
