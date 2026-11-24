@@ -591,6 +591,27 @@ func NewCompactionUnsupportedError(op, backend string) *dberrors.QBError {
 	}
 }
 
+// GarbageCollectionDeleteUnsupportedError indicates a garbage collection
+// request asked to delete objects, which this build cannot do safely: each
+// node's catalog is local, so no node can prove an object on a shared backend
+// is orphaned.
+type GarbageCollectionDeleteUnsupportedError struct{}
+
+// Error implements the error interface.
+func (e *GarbageCollectionDeleteUnsupportedError) Error() string {
+	return "garbage collection runs only as a dry run: each node's catalog is local, so it cannot prove an object on a shared backend is orphaned"
+}
+
+// NewGarbageCollectionDeleteUnsupportedError creates a QBError for a garbage
+// collection request that is not a dry run.
+func NewGarbageCollectionDeleteUnsupportedError(op string) *dberrors.QBError {
+	return &dberrors.QBError{
+		Code: dberrors.ErrUnimplemented,
+		Op:   op,
+		Err:  &GarbageCollectionDeleteUnsupportedError{},
+	}
+}
+
 // EmptyPasswordError indicates an empty password was provided for key derivation.
 type EmptyPasswordError struct{}
 

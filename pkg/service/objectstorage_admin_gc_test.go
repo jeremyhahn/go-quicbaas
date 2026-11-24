@@ -571,16 +571,66 @@ func TestGetGarbageCollectionProgress_OtherTenantGetsNotFound(t *testing.T) {
 	assert.Equal(t, "gc-tenant-a", resp.OperationID)
 }
 
-func TestRunGarbageCollection_RecordsTheCallerTenant(t *testing.T) {
+func TestRunGarbageCollection_TenantCallerIsRefused(t *testing.T) {
 	svc, _, _ := createTestAdminService(t)
 
 	resp, err := svc.RunGarbageCollection(tenantctx.WithTenant(context.Background(), "tenant-a"),
 		&RunGarbageCollectionRequest{Backends: []string{}, DryRun: true})
-	require.NoError(t, err)
+	require.Error(t, err)
+	assert.Nil(t, resp)
+
+	var qbErr *dberrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, dberrors.ErrCrossTenantAccess, qbErr.Code)
 
 	svc.mu.RLock()
-	op := svc.gcOperations[resp.OperationID]
-	tenant := op.TenantID
-	svc.mu.RUnlock()
-	assert.Equal(t, "tenant-a", tenant)
+	defer svc.mu.RUnlock()
+	assert.Empty(t, svc.gcOperations)
+}
+
+func TestRunGarbageCollection_DeletingRunIsRefused(t *testing.T) {
+	svc, _, _ := createTestAdminService(t)
+
+	resp, err := svc.RunGarbageCollection(tenantctx.WithSystem(context.Background()),
+		&RunGarbageCollectionRequest{Backends: []string{}, DryRun: false})
+	require.Error(t, err)
+	assert.Nil(t, resp)
+
+	var unsupported *api.GarbageCollectionDeleteUnsupportedError
+	require.ErrorAs(t, err, &unsupported)
+
+	var qbErr *dberrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, dberrors.ErrUnimplemented, qbErr.Code)
+
+	svc.mu.RLock()
+	defer svc.mu.RUnlock()
+	assert.Empty(t, svc.gcOperations)
+}
+
+func TestRunGarbageCollection_DryRunStarts(t *testing.T) {
+	svc, _, stores := gcFixture(t, "backend-1")
+	st := stores["backend-1"]
+	gcPutObject(t, st, "ref-old-orphan", 10, time.Now().Add(-3*time.Hour))
+	ctx := tenantctx.WithSystem(context.Background())
+
+	resp, err := svc.RunGarbageCollection(ctx, &RunGarbageCollectionRequest{Backends: []string{"backend-1"}, DryRun: true})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+
+	var progress *GetGarbageCollectionProgressResponse
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		progress, err = svc.GetGarbageCollectionProgress(ctx, &GetGarbageCollectionProgressRequest{OperationID: resp.OperationID})
+		require.NoError(t, err)
+		if progress.Status != GCStatusRunning {
+			break
+		}
+		require.True(t, time.Now().Before(deadline), "garbage collection did not finish within 5s")
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	require.Equal(t, GCStatusCompleted, progress.Status, progress.Error)
+	assert.Equal(t, int64(1), progress.ObjectsDeleted)
+	assert.True(t, gcHas(st, "ref-old-orphan"))
 }

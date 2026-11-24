@@ -30,6 +30,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/catalog"
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
+	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/metrics"
 )
@@ -642,6 +643,25 @@ func (s *objectStorageAdminService) RunGarbageCollection(ctx context.Context, re
 		return nil, err
 	}
 
+	// Collection lists and deletes across every tenant's objects on a
+	// backend, so a tenant caller cannot start it.
+	if tenantID != "" {
+		if s.metrics != nil && s.metrics.operationErrors != nil {
+			s.metrics.operationErrors.WithLabelValues("run_gc", "cross_tenant").Inc()
+		}
+		return nil, NewError(dberrors.ErrCrossTenantAccess, "objectstorage_admin.RunGarbageCollection",
+			"garbage collection spans every tenant; only the system scope can run it")
+	}
+
+	// Each node's catalog is local, so a deleting run could remove another
+	// node's live objects on a shared backend. Only dry runs start.
+	if !req.DryRun {
+		if s.metrics != nil && s.metrics.operationErrors != nil {
+			s.metrics.operationErrors.WithLabelValues("run_gc", "unsupported").Inc()
+		}
+		return nil, api.NewGarbageCollectionDeleteUnsupportedError("admin.RunGarbageCollection")
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -700,6 +720,8 @@ const (
 // runGCOperation collects orphaned objects on each of op's backends in
 // order: objects no catalog entry references and that are older than the
 // grace window. The first backend or catalog error fails the operation.
+// RunGarbageCollection starts it only as a dry run for now (see
+// api.NewGarbageCollectionDeleteUnsupportedError).
 func (s *objectStorageAdminService) runGCOperation(ctx context.Context, op *GCOperation) {
 	defer func() {
 		if r := recover(); r != nil {

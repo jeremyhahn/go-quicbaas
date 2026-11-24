@@ -943,7 +943,7 @@ func TestRunGarbageCollection_Success(t *testing.T) {
 
 	req := &RunGarbageCollectionRequest{
 		Backends:   []string{"test-backend"},
-		DryRun:     false,
+		DryRun:     true,
 		Aggressive: true,
 	}
 
@@ -1010,6 +1010,7 @@ func TestGetGarbageCollectionProgress_Success(t *testing.T) {
 	// Start a GC operation
 	gcReq := &RunGarbageCollectionRequest{
 		Backends: []string{"test-backend"},
+		DryRun:   true,
 	}
 
 	gcResp, err := svc.RunGarbageCollection(ctx, gcReq)
