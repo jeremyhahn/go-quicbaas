@@ -55,6 +55,30 @@ func TestGracePeriodAdapter_UpdateKeyStatusForGracePeriod_Success(t *testing.T) 
 	assert.Equal(t, string(KeyStatusDisabled), result.NewStatus)
 }
 
+// A tenant's grace job names the bare key name and runs as its tenant: it
+// disables that version of its own tenant's key, and another tenant's key of
+// the same name keeps its status.
+func TestGracePeriodAdapter_TenantJobDisablesOnlyItsTenantsKey(t *testing.T) {
+	kmsImpl := newKMSService(newMockKMSManager(), newMockLogger())
+	adapter := &kmsGracePeriodAdapter{kms: kmsImpl, jobID: "grace-job-tenant"}
+
+	ctxA := tenantctx.WithTenant(context.Background(), "tenant-a")
+	ctxB := tenantctx.WithTenant(context.Background(), "tenant-b")
+
+	result, err := adapter.UpdateKeyStatusForGracePeriod(ctxA, "k", 2)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, tenantScopedKeyID("tenant-a", "k"), result.KeyID)
+	assert.Equal(t, uint64(2), result.Version)
+	assert.Equal(t, string(KeyStatusDisabled), result.NewStatus)
+
+	status, _ := kmsImpl.getVersionStatus(ctxA, tenantScopedKeyID("tenant-a", "k"), 2)
+	assert.Equal(t, KeyStatusDisabled, status, "tenant-a's key version is disabled")
+
+	status, _ = kmsImpl.getVersionStatus(ctxB, tenantScopedKeyID("tenant-b", "k"), 2)
+	assert.Empty(t, status, "tenant-b's key of the same name is untouched")
+}
+
 func TestGracePeriodAdapter_UpdateKeyStatusForGracePeriod_WithAuditLogger(t *testing.T) {
 	mockMgr := newMockKMSManager()
 	logger := newMockLogger()

@@ -15,7 +15,6 @@ package service
 
 import (
 	"context"
-	"fmt"
 	"testing"
 	"time"
 
@@ -72,7 +71,7 @@ func TestSchedulerAdapter_TenantCannotEditGraceJobPayload(t *testing.T) {
 	a := realStorageSchedulerAdapter(t)
 	ctx := tenantctx.WithTenant(context.Background(), "tenant-a")
 
-	original := []byte(fmt.Sprintf(`{"key_id":%q,"version":1}`, tenantScopedKeyID("tenant-a", "k")))
+	original := []byte(`{"key_id":"k","version":1}`)
 	job := &SchedulerJob{
 		Name:           "kms-grace",
 		OwnerType:      SchedulerOwnerTypeTenant,
@@ -88,7 +87,7 @@ func TestSchedulerAdapter_TenantCannotEditGraceJobPayload(t *testing.T) {
 
 	_, err := a.UpdateJob(ctx, &UpdateSchedulerJobRequest{
 		JobID:   job.ID,
-		Payload: []byte(`{"key_id":"tenant/other/key","version":1}`),
+		Payload: []byte(`{"key_id":"other-key","version":1}`),
 	})
 	require.Error(t, err, "the grace job's payload is not tenant-editable")
 
@@ -104,7 +103,7 @@ func TestSchedulerAdapter_TenantCannotEditGraceJobPayload(t *testing.T) {
 		Type:      SchedulerJobType(scheduler.JobTypeOneShot),
 		ExecuteAt: time.Now().Add(time.Hour),
 		Handler:   "kms.grace_period",
-		Payload:   []byte(`{"key_id":"tenant/other/key","version":1}`),
+		Payload:   []byte(`{"key_id":"other-key","version":1}`),
 	})
 	require.Error(t, err, "no caller creates a job of an internal handler")
 }
@@ -125,7 +124,7 @@ func TestSchedulerAdapter_TenantCannotTriggerOrRescheduleGraceJob(t *testing.T) 
 		Type:           SchedulerJobTypeOneShot,
 		ExecuteAt:      executeAt,
 		Handler:        "kms.grace_period",
-		Payload:        []byte(fmt.Sprintf(`{"key_id":%q,"version":1}`, tenantScopedKeyID("tenant-a", "k"))),
+		Payload:        []byte(`{"key_id":"k","version":1}`),
 		Status:         SchedulerJobStatusPending,
 	}
 	require.NoError(t, a.ScheduleJob(ctx, grace))
@@ -201,6 +200,3 @@ func TestSchedulerAdapter_TenantCannotUsePlatformSweepHandlers(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "noop", got.Job.Handler, "the job's handler is unchanged")
 }
-
-// The grace handler binds a tenant job's key to the tenant by the same
-// prefix the KMS service scopes the tenant's keys under.
