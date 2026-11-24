@@ -2083,7 +2083,6 @@ func (h *AMQPHandler) handleBasicGet(ctx context.Context, frame *AMQPFrame, args
 			h.queuesMu.Unlock()
 		}
 		if found {
-
 			if !noAck {
 				ch.nextDeliveryTag++
 				ch.unackedMessages[ch.nextDeliveryTag] = &amqpUnackedMessage{
