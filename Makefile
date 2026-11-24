@@ -2106,10 +2106,11 @@ integration-test-cluster: ## Phase F: Run 3+1-node Raft cluster integration test
 	fi
 	@COMPOSE_FILE="test/integration/docker-compose.cluster.yml"; \
 	COMPOSE_PROJECT_NAME="$(COMPOSE_PROJECT_CLUSTER)"; \
+	export QUICBAAS_CLUSTER_IMAGE="quicbaas-cluster-node:$(VERSION)"; export QUICBAAS_VERSION="$(VERSION)"; export GIT_COMMIT="$(GIT_COMMIT)"; \
 	CLUSTER_DIR="test/integration"; \
 	echo "$(YELLOW)Cleaning up any previous cluster-test containers and bind-mount data dirs...$(NC)"; \
-	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi local 2>/dev/null || true; \
-	trap '$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi local >/dev/null 2>&1 || true' EXIT; \
+	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi all 2>/dev/null || true; \
+	trap '$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi all >/dev/null 2>&1 || true' EXIT; \
 	ABS_CLUSTER_DIR="$$PWD/$$CLUSTER_DIR"; \
 	if [ -d "$$ABS_CLUSTER_DIR/cluster-data" ]; then \
 		docker run --rm -v "$$ABS_CLUSTER_DIR/cluster-data:/cleanup" alpine sh -c "rm -rf /cleanup/*" 2>/dev/null || true; \
@@ -2162,7 +2163,7 @@ integration-test-cluster: ## Phase F: Run 3+1-node Raft cluster integration test
 	$(GOTEST) -v -tags integration -timeout 300s ./test/integration/cluster/...; \
 	RESULT=$$?; \
 	echo "$(BLUE)Stopping cluster stack...$(NC)"; \
-	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi local; \
+	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi all; \
 	if [ -d "$$ABS_CLUSTER_DIR/cluster-data" ]; then \
 		docker run --rm -v "$$ABS_CLUSTER_DIR/cluster-data:/cleanup" alpine sh -c "rm -rf /cleanup/*" 2>/dev/null || true; \
 	fi; \
@@ -2204,11 +2205,12 @@ integration-test-cluster-scheduler: ## #105: Prove leader-gated scheduler firing
 	fi
 	@COMPOSE_FILE="test/integration/docker-compose.cluster.yml"; \
 	COMPOSE_PROJECT_NAME="$(COMPOSE_PROJECT_CLUSTER)"; \
+	export QUICBAAS_CLUSTER_IMAGE="quicbaas-cluster-node:$(VERSION)"; export QUICBAAS_VERSION="$(VERSION)"; export GIT_COMMIT="$(GIT_COMMIT)"; \
 	CLUSTER_DIR="test/integration"; \
 	ABS_CLUSTER_DIR="$$PWD/$$CLUSTER_DIR"; \
 	STATE_FILE="$$ABS_CLUSTER_DIR/cluster-logs/scheduler-proof.env"; \
 	cleanup() { \
-		$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi local >/dev/null 2>&1 || true; \
+		$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi all >/dev/null 2>&1 || true; \
 		if [ -d "$$ABS_CLUSTER_DIR/cluster-data" ]; then \
 			docker run --rm -v "$$ABS_CLUSTER_DIR/cluster-data:/cleanup" alpine sh -c "rm -rf /cleanup/*" 2>/dev/null || true; \
 		fi; \

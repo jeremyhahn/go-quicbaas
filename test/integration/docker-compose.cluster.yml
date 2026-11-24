@@ -30,6 +30,11 @@
 #   AddNode REST API on the leader to add node4 before starting the membership
 #   integration test.
 #
+# One image:
+#   quicbaas-node1 builds the image once and nodes 2-4 run the same tag
+#   (QUICBAAS_CLUSTER_IMAGE), so every node runs one go-quicbaas build. Run
+#   `docker compose build` before `up`.
+#
 # Prerequisites:
 #   Cluster certificates must exist at test/integration/cluster-certs/.
 #   Generate them once, from the repository root, with:
@@ -38,11 +43,15 @@
 services:
   # Node 1 - Initial leader
   quicbaas-node1:
+    image: ${QUICBAAS_CLUSTER_IMAGE:-quicbaas-cluster-node:local}
     build:
       context: ../..
       additional_contexts:
         workspace: ../../..
       dockerfile: test/integration/Dockerfile.node
+      args:
+        QUICBAAS_VERSION: ${QUICBAAS_VERSION:-dev}
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
     hostname: quicbaas-node1
     environment:
       - CGO_ENABLED=0
@@ -103,11 +112,8 @@ services:
 
   # Node 2
   quicbaas-node2:
-    build:
-      context: ../..
-      additional_contexts:
-        workspace: ../../..
-      dockerfile: test/integration/Dockerfile.node
+    image: ${QUICBAAS_CLUSTER_IMAGE:-quicbaas-cluster-node:local}
+    pull_policy: never
     hostname: quicbaas-node2
     environment:
       - CGO_ENABLED=0
@@ -161,11 +167,8 @@ services:
 
   # Node 3
   quicbaas-node3:
-    build:
-      context: ../..
-      additional_contexts:
-        workspace: ../../..
-      dockerfile: test/integration/Dockerfile.node
+    image: ${QUICBAAS_CLUSTER_IMAGE:-quicbaas-cluster-node:local}
+    pull_policy: never
     hostname: quicbaas-node3
     environment:
       - CGO_ENABLED=0
@@ -225,11 +228,8 @@ services:
   # The Makefile calls POST /api/v1/cluster/nodes on the leader to add node4
   # before the TestQRDBCluster_DynamicMembership test runs.
   quicbaas-node4:
-    build:
-      context: ../..
-      additional_contexts:
-        workspace: ../../..
-      dockerfile: test/integration/Dockerfile.node
+    image: ${QUICBAAS_CLUSTER_IMAGE:-quicbaas-cluster-node:local}
+    pull_policy: never
     hostname: quicbaas-node4
     environment:
       - CGO_ENABLED=0
