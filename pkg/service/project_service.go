@@ -814,16 +814,34 @@ const (
 )
 
 // settleFailedDelete decides a failed delete's fence outcome from what the
-// store now holds. A store delete can fail after removing the record (a
-// failed name release, say), so the project is read again, detached from the
-// request: gone settles a tombstone, present clears the fence, and a read
-// that fails leaves the fence held.
+// store now holds, detached from the request. A store delete can fail after
+// removing the record (a failed name release, say), or with an unknown
+// outcome that may still apply later. A store that can settle the delete
+// does so: gone settles a tombstone, and a project it re-stamped (so the
+// pending delete can never apply) clears the fence. A store that cannot
+// settle is only read: gone settles a tombstone, and a present project leaves
+// the fence held, because a snapshot read cannot rule out a pending delete.
+// Any failure leaves the fence held.
 func (s *projectServiceImpl) settleFailedDelete(ctx context.Context, tenantID, projectID string) fenceOutcome {
 	readCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), fenceSettleTimeout)
 	defer cancel()
+	if settler, ok := s.store.(orchestration.ProjectDeleteSettler); ok {
+		gone, err := settler.SettleDelete(readCtx, tenantID, projectID)
+		switch {
+		case err != nil:
+			slog.Default().Error("project: a failed delete could not be settled",
+				"tenant_id", tenantID, "project_id", projectID, "error", err)
+			return fenceLeftHeld
+		case gone:
+			return fenceDeleted
+		default:
+			return fenceCleared
+		}
+	}
 	_, err := s.store.Get(readCtx, tenantID, projectID)
 	if err == nil {
-		return fenceCleared
+		// Present, but a delete still pending may apply later.
+		return fenceLeftHeld
 	}
 	var notFound *ProjectNotFoundError
 	if stderrors.As(s.convertStoreError(err), &notFound) {

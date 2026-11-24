@@ -2265,7 +2265,17 @@ func (k *projectHoldAfterRecordDelete) PutIfAbsent(ctx context.Context, key stri
 }
 
 func (k *projectHoldAfterRecordDelete) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
-	return forwardCompareAndDelete(ctx, k.KVStore, key, expected)
+	deleted, err := forwardCompareAndDelete(ctx, k.KVStore, key, expected)
+	if key != k.recordKey || err != nil || !deleted {
+		return deleted, err
+	}
+	// The record delete is guarded, so it parks here as Delete does.
+	k.once.Do(func() { close(k.parked) })
+	select {
+	case <-k.release:
+	case <-time.After(barrierWait):
+	}
+	return true, nil
 }
 
 // TestProjectStore_Delete_DoesNotReleaseAReservationItNoLongerHolds drives the

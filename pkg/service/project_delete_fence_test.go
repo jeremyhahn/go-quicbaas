@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -582,6 +583,106 @@ func (s *failingDeleteStore) Get(ctx context.Context, tenantID, projectID string
 		return nil, errors.New("project store: unavailable")
 	}
 	return s.ProjectStore.Get(ctx, tenantID, projectID)
+}
+
+// SettleDelete fails like Get under failGet, and otherwise settles through
+// the wrapped store, which must be able to.
+func (s *failingDeleteStore) SettleDelete(ctx context.Context, tenantID, projectID string) (bool, error) {
+	if s.failGet && s.deleted.Load() {
+		return false, errors.New("project store: unavailable")
+	}
+	settler, ok := s.ProjectStore.(orchestration.ProjectDeleteSettler)
+	if !ok {
+		// Fails the setup: every test through this store then sees the
+		// fence held where it expects a settled outcome.
+		return false, errors.New("test setup: failingDeleteStore wraps a project store that cannot settle a delete")
+	}
+	return settler.SettleDelete(ctx, tenantID, projectID)
+}
+
+// heldDeleteKV holds back the first guarded delete of a project record
+// (expected bytes that are a JSON record, not a name reservation's id) and
+// fails it as an unknown outcome; commit applies it later.
+type heldDeleteKV struct {
+	qrdbsdk.AtomicKVStore
+
+	mu       sync.Mutex
+	held     bool
+	key      string
+	expected []byte
+}
+
+func (k *heldDeleteKV) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
+	k.mu.Lock()
+	hold := !k.held && strings.HasPrefix(string(expected), "{")
+	if hold {
+		k.held, k.key, k.expected = true, key, append([]byte(nil), expected...)
+	}
+	k.mu.Unlock()
+	if hold {
+		return false, errors.New("proposal outcome unknown")
+	}
+	return k.AtomicKVStore.CompareAndDelete(ctx, key, expected)
+}
+
+func (k *heldDeleteKV) commit(t *testing.T) bool {
+	t.Helper()
+	k.mu.Lock()
+	key, expected := k.key, k.expected
+	k.mu.Unlock()
+	if key == "" {
+		t.Fatal("no project delete was held")
+	}
+	applied, err := k.AtomicKVStore.CompareAndDelete(context.Background(), key, expected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return applied
+}
+
+// TestDeleteProject_PendingDeleteCannotLandAfterTheFenceClears: a record
+// delete with an unknown outcome is settled before the fence clears, so the
+// held delete can no longer apply and a later bind stands.
+func TestDeleteProject_PendingDeleteCannotLandAfterTheFenceClears(t *testing.T) {
+	ctx := context.Background()
+	inner, ok := orchestration.NewMemoryTaskKV().(qrdbsdk.AtomicKVStore)
+	if !ok {
+		t.Fatal("the memory KV takes no guarded writes")
+	}
+	kv := &heldDeleteKV{AtomicKVStore: inner}
+	projects := orchestration.NewProjectStore(kv)
+	rig := newSDLCServiceRig(t)
+	svc := NewProjectService(projects)
+	svc.(*projectServiceImpl).SetBindingReader(rig.store)
+	resp, err := svc.CreateProject(ctx, &CreateProjectRequest{TenantID: sdlcTestTenant, Name: "held-delete"})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	projectID := resp.Project.ID
+	if _, err := svc.DeleteProject(ctx, &DeleteProjectRequest{TenantID: sdlcTestTenant, ProjectID: projectID}); err == nil {
+		t.Fatal("DeleteProject succeeded with its record delete held back")
+	}
+	if fenced, err := rig.store.ProjectDeleteFenced(ctx, sdlcTestTenant, projectID); err != nil || fenced {
+		t.Fatalf("after the settled delete: fenced=%v err=%v, want the fence cleared", fenced, err)
+	}
+	if kv.commit(t) {
+		t.Fatal("the held project delete applied after it was settled")
+	}
+	if _, err := projects.Get(ctx, sdlcTestTenant, projectID); err != nil {
+		t.Fatalf("project after the held delete: %v", err)
+	}
+
+	record := sdlcTestProjectRecord()
+	record.ID = projectID
+	rig.projects.projects[projectID] = record
+	binding := rig.binding()
+	binding.ProjectID = projectID
+	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, binding, BindOptions{}); err != nil {
+		t.Fatalf("Bind after the settled delete: %v", err)
+	}
+	if _, err := rig.store.GetBinding(ctx, sdlcTestTenant, projectID); err != nil {
+		t.Fatalf("binding after the settled delete: %v", err)
+	}
 }
 
 // deleteThroughFailingStore creates a project on store, deletes it through a
