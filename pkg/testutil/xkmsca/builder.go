@@ -109,8 +109,12 @@ func Build(cfg Config) (xkmssdk.TrustedCA, error) {
 		return nil, err
 	}
 
+	certDAOs, err := xkmssdk.NewBackendDAOFactory(certStorage)
+	if err != nil {
+		return nil, err
+	}
 	certStore, err := xkmssdk.NewCertStore(&xkmssdk.CertStoreConfig{
-		CertStorage: xkmssdk.NewStorageCertAdapter(certStorage),
+		DAOs: certDAOs,
 	})
 	if err != nil {
 		return nil, err
