@@ -300,6 +300,11 @@ type Server struct {
 	// HandleSDLCWebhook for why that distinction matters to a forge.
 	sdlcWebhookHandler http.HandlerFunc
 
+	// ociRegistryHandler serves the OCI distribution surface at /v2. Nil
+	// until the node injects the registry; the routes are registered either
+	// way, so a node without the registry answers 503 rather than 404.
+	ociRegistryHandler http.Handler
+
 	// tenantWebAuthnWarned is the one-per-episode flag behind the tenant
 	// WebAuthn ceremony's unavailability warning. It lives on the server
 	// rather than in the handler closure because the module route table binds
@@ -556,6 +561,10 @@ func (s *Server) setupRouter() {
 	// These delegate to the composed go-xkms RestServicer; they respond 503
 	// when ACME is not configured.
 	registerACMEDirectoryRoutes(s, r)
+
+	// OCI distribution (/v2) at the root, as the OCI spec places it. Outside
+	// the /api/v1 authorization chain: the registry's own gates authenticate.
+	registerOCIRegistryRoutes(s, r)
 
 	// IAM routes
 	// Note: This is at root level because OIDC endpoints must be at /.well-known/*
@@ -854,6 +863,57 @@ func (s *Server) HandleSDLCWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	handler(w, r)
+}
+
+// SetOCIRegistryHandler registers the OCI distribution handler served at
+// /v2. A nil handler takes the registry off again (503).
+//
+// The handler is built by the registry package
+// (pkg/ociregistry/distribution.NewRegistryHandler) and injected by the
+// node, so the REST layer does not import the registry. The handler
+// authenticates its own requests (verified client certificate and
+// attestation); the /api/v1 authorization chain does not run in front of it.
+func (s *Server) SetOCIRegistryHandler(h http.Handler) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ociRegistryHandler = h
+}
+
+// ociRegistryUnavailable is the OCI error envelope a node without the
+// registry answers with; OCI clients parse this shape.
+const ociRegistryUnavailable = `{"errors":[{"code":"UNAVAILABLE","message":"the OCI registry is not running on this node"}]}`
+
+// HandleOCIRegistry serves the /v2 routes. It answers 503 with an OCI error
+// body when no registry handler is set, NOT 404: the route exists in every
+// build, and a client retries a 503. Otherwise it forwards the request,
+// with its full /v2 path, to the injected handler.
+func (s *Server) HandleOCIRegistry(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	handler := s.ociRegistryHandler
+	s.mu.RUnlock()
+
+	if handler == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(ociRegistryUnavailable))
+		return
+	}
+	handler.ServeHTTP(w, r)
+}
+
+// registerOCIRegistryRoutes mounts HandleOCIRegistry at the root /v2 with
+// the methods the OCI distribution spec uses. It lists them explicitly
+// rather than using Handle, which would admit every method (CONNECT and
+// TRACE included).
+func registerOCIRegistryRoutes(s *Server, root chi.Router) {
+	root.Get("/v2", s.HandleOCIRegistry)
+	root.Head("/v2", s.HandleOCIRegistry)
+	root.Get("/v2/*", s.HandleOCIRegistry)
+	root.Head("/v2/*", s.HandleOCIRegistry)
+	root.Post("/v2/*", s.HandleOCIRegistry)
+	root.Put("/v2/*", s.HandleOCIRegistry)
+	root.Patch("/v2/*", s.HandleOCIRegistry)
+	root.Delete("/v2/*", s.HandleOCIRegistry)
 }
 
 // SetHookTaskStore sets the task store used by Claude Code hook handlers.
