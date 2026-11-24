@@ -43,10 +43,11 @@ const mockKeys: SSHKey[] = [
 // Hoisted mocks
 // ---------------------------------------------------------------------------
 
-const { mockListScoped, mockDeleteScoped, mockGetSDKClient } = vi.hoisted(() => ({
+const { mockListScoped, mockDeleteScoped, mockGetSDKClient, mockAuthorizedList } = vi.hoisted(() => ({
   mockListScoped: vi.fn(),
   mockDeleteScoped: vi.fn(),
   mockGetSDKClient: vi.fn(),
+  mockAuthorizedList: vi.fn(),
 }));
 
 vi.mock('../src/stores/sdkClient.ts', () => ({
@@ -82,6 +83,7 @@ describe('SSHKeysView', () => {
     vi.clearAllMocks();
     mockListScoped.mockResolvedValue({ items: mockKeys });
     mockDeleteScoped.mockResolvedValue(undefined);
+    mockAuthorizedList.mockResolvedValue([]);
     mockGetSDKClient.mockResolvedValue({
       ssh: {
         keys: {
@@ -89,7 +91,13 @@ describe('SSHKeysView', () => {
           deleteScoped: mockDeleteScoped,
           create: vi.fn(),
           import_: vi.fn(),
-          exportPublic: vi.fn(),
+          getScoped: vi.fn().mockResolvedValue(mockKeys[0]),
+          exportPublic: vi.fn().mockResolvedValue({
+            algorithm: 'ssh-ed25519',
+            line: mockKeys[0].public_key,
+            fingerprint: mockKeys[0].fingerprint,
+          }),
+          sign: vi.fn(),
         },
         knownHosts: {
           list: vi.fn().mockResolvedValue({ items: [] }),
@@ -100,6 +108,10 @@ describe('SSHKeysView', () => {
         authorized: {
           emit: vi.fn(),
           verify: vi.fn(),
+          add: vi.fn(),
+          list: mockAuthorizedList,
+          get: vi.fn(),
+          remove: vi.fn(),
         },
       },
     });
@@ -201,6 +213,35 @@ describe('SSHKeysView', () => {
 
     await waitFor(() => {
       expect(mockDeleteScoped).toHaveBeenCalledWith('user', 'default', 'laptop-key');
+    });
+  });
+
+  it('opens the sign digest modal from a row Sign action', async () => {
+    render(SSHKeysView);
+    await waitFor(() => screen.getByText('laptop-key'));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Sign a digest with laptop-key' }));
+    expect(screen.getByRole('dialog', { name: 'Sign a digest with laptop-key' })).toBeInTheDocument();
+    expect(screen.getByLabelText(/^Digest \(hex\)/)).toBeInTheDocument();
+  });
+
+  it('opens the public key modal with the key details from getScoped', async () => {
+    render(SSHKeysView);
+    await waitFor(() => screen.getByText('laptop-key'));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'View public key for laptop-key' }));
+    const client = await mockGetSDKClient.mock.results[0].value;
+    await waitFor(() => {
+      expect(client.ssh.keys.getScoped).toHaveBeenCalledWith('user', 'default', 'laptop-key');
+      expect(client.ssh.keys.exportPublic).toHaveBeenCalledWith('user', 'default', 'laptop-key');
+    });
+  });
+
+  it('renders the authorized keys panel for the active scope and owner', async () => {
+    render(SSHKeysView);
+    await waitFor(() => {
+      expect(screen.getByRole('region', { name: 'Authorized keys' })).toBeInTheDocument();
+      expect(mockAuthorizedList).toHaveBeenCalledWith({ scope: 'user', owner: 'default' });
     });
   });
 
