@@ -50,8 +50,12 @@ const (
 	// ubuntu-latest. A pull request (pull_request or pull_request_target)
 	// whose head repository is not this one, a deleted fork included, takes
 	// ubuntu-latest whatever CI_PREFLIGHT_RUNS_ON holds: this preflight runs
-	// the pull request's scripts/docs-only.sh.
-	preflightRunner = `${{ github.server_url == 'https://github.com' && (!startsWith(github.event_name, 'pull_request') || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.CI_PREFLIGHT_RUNS_ON || '["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}`
+	// the pull request's scripts/docs-only.sh. Since #2427 only a push to
+	// refs/heads/main and a same-repository pull_request take the variable or
+	// bigdisk, since the Dells' runner image's job hook refuses every other
+	// event: workflow_dispatch, schedule, pull_request_target and a push to
+	// another ref take ubuntu-latest.
+	preflightRunner = `${{ github.server_url == 'https://github.com' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON(vars.CI_PREFLIGHT_RUNS_ON || '["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}`
 	// selfHostedWaiver opens the waiver a job that leaves hostedRunner
 	// carries in its runs-on line comment, followed by a category and a
 	// measured reason.
@@ -274,13 +278,14 @@ func replaceJobRunner(t *testing.T, body, job, runsOn string) string {
 
 // jobRunners is every ci.yml job's exact runs-on: the hosted-only jobs (the
 // non-gating e2e-ui job among them), the jobs that build or run images (the
-// Docker overflow class) and CI Gate.
+// Docker overflow class; since #2427 the unit shards, coverage and unit-passes
+// too) and CI Gate.
 var jobRunners = map[string]string{
 	"preflight":      preflightRunner,
 	"publish-images": hostedRunner,
-	"unit":           hostedRunner,
-	"coverage":       hostedRunner,
-	"unit-passes":    hostedRunner,
+	"unit":           overflowRunnerDocker,
+	"coverage":       overflowRunnerDocker,
+	"unit-passes":    overflowRunnerDocker,
 	"e2e-ui":         hostedRunner,
 	"lint":           overflowRunnerDocker,
 	"image":          overflowRunnerDocker,
@@ -334,7 +339,8 @@ func TestCIJobRunners_Mutations(t *testing.T) {
 		{"lint", hostedRunner, "job lint runs on \"ubuntu-latest\""},
 		{"image", overflowRunnerGate, "job image runs on"},
 		{"ci-gate", overflowRunnerDocker, "job ci-gate runs on"},
-		{"coverage", overflowRunnerDocker, "job coverage runs on"},
+		{"coverage", hostedRunner, "job coverage runs on \"ubuntu-latest\""},
+		{"unit-passes", overflowRunnerGate, "job unit-passes runs on"},
 		{"preflight", hostedRunner, "job preflight runs on \"ubuntu-latest\""},
 	} {
 		t.Run(c.job, func(t *testing.T) {
@@ -726,12 +732,18 @@ func TestCIPreflightRunsOn(t *testing.T) {
 		{"github.com push to main, variable unset", githubCom, "push", mainRef, "", "", bigdiskJSON},
 		{"github.com push to main, variable hosted", githubCom, "push", mainRef, "", `"ubuntu-latest"`, `"ubuntu-latest"`},
 		{"github.com push to main, variable bigdisk", githubCom, "push", mainRef, "", bigdiskJSON, bigdiskJSON},
-		{"github.com dispatch, variable unset", githubCom, "workflow_dispatch", mainRef, "", "", bigdiskJSON},
+		{"github.com push to another branch, variable unset", githubCom, "push", "refs/heads/feature", "", "", `"ubuntu-latest"`},
+		{"github.com push to another branch, variable bigdisk", githubCom, "push", "refs/heads/feature", "", bigdiskJSON, `"ubuntu-latest"`},
+		{"github.com push of a tag", githubCom, "push", "refs/tags/v1.0.0", "", "", `"ubuntu-latest"`},
+		{"github.com dispatch, variable unset", githubCom, "workflow_dispatch", mainRef, "", "", `"ubuntu-latest"`},
+		{"github.com dispatch, variable bigdisk", githubCom, "workflow_dispatch", mainRef, "", bigdiskJSON, `"ubuntu-latest"`},
+		{"github.com schedule", githubCom, "schedule", mainRef, "", "", `"ubuntu-latest"`},
 		{"github.com same-repository pull request", githubCom, "pull_request", prRef, "o/r", "", bigdiskJSON},
 		{"github.com fork pull request", githubCom, "pull_request", prRef, "fork/r", "", `"ubuntu-latest"`},
 		{"github.com fork pull request, variable bigdisk", githubCom, "pull_request", prRef, "fork/r", bigdiskJSON, `"ubuntu-latest"`},
 		{"github.com deleted fork pull request", githubCom, "pull_request", prRef, "", "", `"ubuntu-latest"`},
-		{"github.com same-repository pull_request_target", githubCom, "pull_request_target", mainRef, "o/r", "", bigdiskJSON},
+		{"github.com same-repository pull_request_target", githubCom, "pull_request_target", mainRef, "o/r", "", `"ubuntu-latest"`},
+		{"github.com same-repository pull_request_target, variable bigdisk", githubCom, "pull_request_target", mainRef, "o/r", bigdiskJSON, `"ubuntu-latest"`},
 		{"github.com fork pull_request_target", githubCom, "pull_request_target", mainRef, "fork/r", "", `"ubuntu-latest"`},
 		{"github.com fork pull_request_target, variable bigdisk", githubCom, "pull_request_target", mainRef, "fork/r", bigdiskJSON, `"ubuntu-latest"`},
 		{"github.com deleted fork pull_request_target", githubCom, "pull_request_target", mainRef, "", "", `"ubuntu-latest"`},
@@ -788,19 +800,24 @@ func TestCIPreflightAgentToken(t *testing.T) {
 // runner, keyed on the preflight runner_docker output (the runner context is
 // not available in jobs.<id>.env). Lint and image take 16g, since
 // golangci-lint is killed at 8g on a self-hosted runner (#2657); lint-gates
-// and integration keep 8g.
+// and integration keep 8g. Since #2427 the unit shards and unit-passes take
+// 16g and coverage 8g.
 const (
 	inImageMemoryExpr8g  = `${{ (github.server_url != 'https://github.com' || needs.preflight.outputs.runner_docker != '"ubuntu-latest"') && '8g' || 'none' }}`
 	inImageMemoryExpr16g = `${{ (github.server_url != 'https://github.com' || needs.preflight.outputs.runner_docker != '"ubuntu-latest"') && '16g' || 'none' }}`
 )
 
 // inImageMemoryJobs maps each job to its wanted IN_IMAGE_MEMORY expression:
-// 16g on lint and image, 8g on lint-gates and integration.
+// 16g on lint, image, unit and unit-passes, 8g on lint-gates, integration and
+// coverage.
 var inImageMemoryJobs = map[string]string{
 	"lint":        inImageMemoryExpr16g,
 	"image":       inImageMemoryExpr16g,
+	"unit":        inImageMemoryExpr16g,
+	"unit-passes": inImageMemoryExpr16g,
 	"lint-gates":  inImageMemoryExpr8g,
 	"integration": inImageMemoryExpr8g,
+	"coverage":    inImageMemoryExpr8g,
 }
 
 // inImageMemoryCap is the cap a wanted expression sets on a self-hosted runner.
@@ -839,8 +856,8 @@ func inImageMemoryProblems(body []byte) []string {
 	return problems
 }
 
-// TestCIInImageMemory: an overflow stage on a Dell keeps its cap, 16g on lint
-// and image, 8g on lint-gates and integration.
+// TestCIInImageMemory: an overflow stage on a Dell keeps its cap, 16g on lint,
+// image, unit and unit-passes, 8g on lint-gates, integration and coverage.
 func TestCIInImageMemory(t *testing.T) {
 	for _, p := range inImageMemoryProblems(readCI(t)) {
 		t.Error(p)
@@ -1119,8 +1136,10 @@ func TestRunnerSelect(t *testing.T) {
 	baseEnv := map[string]string{
 		"SERVER": "https://github.com", "API": selectAPI, "RUN_ID": strconv.Itoa(runID), "JOB_TOKEN": "job-token",
 		"HS": strconv.Itoa(hs), "C1": strconv.Itoa(units), "C2": strconv.Itoa(units),
-		"EVENT": "push", "REPO": "o/r", "HEAD_REPO": "",
+		"EVENT": "push", "REF": "refs/heads/main", "REPO": "o/r", "HEAD_REPO": "",
 	}
+	// #2427: the notice of an event the Dells' runner image refuses.
+	const refused = "which the Dells' runner image refuses"
 	const (
 		toDells  = "this run's jobs run on the Dells"
 		toHosted = "this run's jobs take the GitHub-hosted default"
@@ -1236,7 +1255,14 @@ func TestRunnerSelect(t *testing.T) {
 		{name: "a same-repository pull request with the hosted pool full", env: map[string]string{"EVENT": "pull_request", "HEAD_REPO": "o/r"}, fix: hostedFull, overflow: true},
 		{name: "a fork's pull_request_target with the hosted pool full", env: map[string]string{"EVENT": "pull_request_target", "HEAD_REPO": "someone/r"}, fix: hostedFull, notice: "head repository is not this repository (a fork)", noCall: true},
 		{name: "a deleted fork's pull_request_target with the hosted pool full", env: map[string]string{"EVENT": "pull_request_target", "HEAD_REPO": ""}, fix: hostedFull, notice: "head repository is not this repository (a fork)", noCall: true},
-		{name: "a same-repository pull_request_target with the hosted pool full", env: map[string]string{"EVENT": "pull_request_target", "HEAD_REPO": "o/r"}, fix: hostedFull, overflow: true},
+		// #2427: only a push to main and a same-repository pull_request reach
+		// the Dells; every other event goes hosted, with a notice and no call.
+		{name: "a same-repository pull_request_target with the hosted pool full", env: map[string]string{"EVENT": "pull_request_target", "HEAD_REPO": "o/r"}, fix: hostedFull, notice: "a pull_request_target event, " + refused, noCall: true},
+		{name: "a workflow_dispatch with the hosted pool full", env: map[string]string{"EVENT": "workflow_dispatch"}, fix: hostedFull, notice: "a workflow_dispatch event, " + refused, noCall: true},
+		{name: "a schedule run with the hosted pool full", env: map[string]string{"EVENT": "schedule"}, fix: hostedFull, notice: "a schedule event, " + refused, noCall: true},
+		{name: "a push to another branch with the hosted pool full", env: map[string]string{"REF": "refs/heads/feature"}, fix: hostedFull, notice: "a push to refs/heads/feature, not to refs/heads/main, " + refused, noCall: true},
+		{name: "a push of a tag with the hosted pool full", env: map[string]string{"REF": "refs/tags/v1.0.0"}, fix: hostedFull, notice: "a push to refs/tags/v1.0.0, not to refs/heads/main", noCall: true},
+		{name: "a push to main with the hosted pool full", fix: hostedFull, overflow: true, notice: toDells},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			env := maps.Clone(baseEnv)
@@ -1289,6 +1315,7 @@ func TestRunnerSelect_ForkEnv(t *testing.T) {
 	env, _ := selectorStep(t)
 	for k, want := range map[string]string{
 		"EVENT":     "${{ github.event_name }}",
+		"REF":       "${{ github.ref }}",
 		"REPO":      "${{ github.repository }}",
 		"HEAD_REPO": "${{ github.event.pull_request.head.repo.full_name }}",
 	} {
