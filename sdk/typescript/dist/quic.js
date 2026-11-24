@@ -22,20 +22,26 @@ export class QuicNotImplementedError extends TransportNotSupportedError {
         this.name = 'QuicNotImplementedError';
     }
 }
-// quicUnsupported is why most families refuse here. The server's QUIC listener
+// quicWebTransport opens every QUIC refusal: the adopted path for SDK callers
+// is WebTransport over HTTP/3 (draft-ietf-webtrans-http3-16), and the server
+// has no WebTransport endpoint yet.
+const quicWebTransport = 'this SDK reaches QUIC only through WebTransport over HTTP/3 (draft-ietf-webtrans-http3-16), ' +
+    'which the server does not accept yet; ';
+// quicUnsupported is why most families refuse here. Besides the missing
+// WebTransport endpoint, the server's QUIC listener
 // (pkg/server/transport_factory.go) speaks qrdb's frame protocol, not REST over
 // HTTP/3, and Node's fetch does not negotiate HTTP/3 anyway: a REST client
 // aimed at the QUIC endpoint would either fail against the real listener or
-// quietly fall back to TCP HTTP while claiming QUIC. Implementing the frame
-// protocol in TypeScript waits on an open owner decision on whether and how a
-// QUIC client listener is offered to SDK callers.
-const quicUnsupported = "the server's QUIC listener speaks qrdb's frame protocol, which this SDK " +
+// quietly fall back to TCP HTTP while claiming QUIC.
+const quicUnsupported = quicWebTransport +
+    "the server's QUIC listener speaks qrdb's frame protocol, which this SDK " +
     'does not implement; use the rest transport';
-// quicNoOrchestratorRoute is why the orchestrator family refuses: the server's
-// QUIC listener serves every unary orchestration, cost and worker-image method
-// (go-quicbaas#819), but only over qrdb's frame protocol, which this SDK does
-// not implement yet.
-const quicNoOrchestratorRoute = "the server's QUIC listener serves the orchestrator's unary methods over " +
+// quicNoOrchestratorRoute is why the orchestrator family refuses: there is no
+// WebTransport endpoint yet, and the server's QUIC listener serves every unary
+// orchestration, cost and worker-image method (go-quicbaas#819) only over
+// qrdb's frame protocol, which this SDK does not implement.
+const quicNoOrchestratorRoute = quicWebTransport +
+    "the server's QUIC listener serves the orchestrator's unary methods over " +
     "qrdb's frame protocol, which this SDK does not implement yet; use the rest transport";
 function frameOnly(family, method) {
     throw new QuicNotImplementedError(family, method, quicUnsupported);

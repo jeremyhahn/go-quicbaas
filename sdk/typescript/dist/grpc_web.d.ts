@@ -4,9 +4,9 @@ import type { PromptsClient } from './prompts.js';
 import type { ProjectsClient } from './projects.js';
 import type { SdlcClient } from './sdlc.js';
 import type { BarrierGenerateRecoveryKeysRequest, BarrierGenerateRootTokenRequest, BarrierEnableEncryptionRequest, BarrierEnableEncryptionResponse, BarrierHasRecoveryKeysResponse, BarrierInitRequest, BarrierRecoverWithKeysRequest, BarrierRecoveryKeysResponse, BarrierRekeyRequest, BarrierRekeyResponse, BarrierRootTokenResponse, BarrierShamirInitRequest, BarrierShamirInitResponse, BarrierStatusResponse, BarrierUnsealRequest, BarrierSealRequest, BarrierUnsealShareRequest, BarrierUnsealShareResponse, BarrierUnsealSharesRequest, CeremonyClaimCertBeginRequest, CeremonyClaimCertBeginResponse, CeremonyClaimCertCompleteRequest, CeremonyClaimCertCompleteResponse, CeremonyClaimShareBeginRequest, CeremonyClaimShareBeginResponse, CeremonyClaimShareCompleteRequest, CeremonyClaimShareCompleteResponse, CeremonyEnrollExternalOfficerRequest, CeremonyEnrollExternalOfficerResponse, CeremonyInitializeRequest, CeremonyInitializeResponse, CeremonySignCSRRequest, CeremonySignCSRResponse, CeremonyStatusResponse, ClientConfig } from './types.js';
-import { QuicBaaSError } from './errors.js';
-export declare class GrpcWebNotImplementedError extends QuicBaaSError {
-    constructor(method: string);
+import { TransportNotSupportedError } from './errors.js';
+export declare class GrpcWebNotImplementedError extends TransportNotSupportedError {
+    constructor(family: string, method: string, reason?: string);
 }
 export declare class GrpcWebBarrierClient implements BarrierClient {
     status(): Promise<BarrierStatusResponse>;
