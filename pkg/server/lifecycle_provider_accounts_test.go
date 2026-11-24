@@ -17,6 +17,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
@@ -75,6 +76,26 @@ func TestSeedDefaultProviderAccounts_ReachesATenantUnsealedLater(t *testing.T) {
 	barrier := service.NewTenantBarrierService(unsealingTenantClient{}, service.WithTenantUnsealHooks(&s.tenantUnsealHooks))
 	if err := barrier.TenantBarrierUnseal(tenantAdminCtx("acme"), "acme", []byte("key")); err != nil {
 		t.Fatalf("unseal: %v", err)
+	}
+	assertSeededDefaults(t, store, "acme")
+}
+
+// TestSeedDefaultProviderAccounts_ReachesATenantCreatedLater pins that a
+// tenant created after the boot pass, which has no barrier unseal to wait
+// for when it is prefix-isolated, has both default accounts as soon as its
+// creation returns.
+func TestSeedDefaultProviderAccounts_ReachesATenantCreatedLater(t *testing.T) {
+	s := agentsTestServer(t, nil)
+	store := orchestration.NewInMemoryAccountStore()
+	s.seedDefaultProviderAccounts(context.Background(), store, providerAccountsRegistry(t))
+	if got := tenantProviderAccounts(t, store, "acme"); len(got) != 0 {
+		t.Fatalf("a tenant the boot pass does not reach has accounts %v", got)
+	}
+
+	manager := iam.NewDefaultTenantManager(iam.NewMemoryStorage())
+	manager.AddCreatedObserver(&s.tenantCreatedHooks)
+	if _, err := manager.CreateTenant(context.Background(), iam.CreateTenantOptions{ID: "acme", Name: "Acme"}); err != nil {
+		t.Fatalf("CreateTenant: %v", err)
 	}
 	assertSeededDefaults(t, store, "acme")
 }

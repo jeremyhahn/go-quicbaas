@@ -352,6 +352,10 @@ type Server struct {
 	// tenant's barrier is unsealed; the boot migrations register here to
 	// reach the tenants that were sealed at boot.
 	tenantUnsealHooks service.TenantUnsealHooks
+	// tenantCreatedHooks is told by the tenant manager after every tenant it
+	// creates; per-tenant defaults register here to reach tenants created
+	// after startup, whatever their isolation.
+	tenantCreatedHooks tenantCreatedHooks
 	// tenantUnsealRouter is the tenant servicer the embedded node's native transports call, built in unifiedModuleServerOptions.
 	tenantUnsealRouter *tenantUnsealRouter
 

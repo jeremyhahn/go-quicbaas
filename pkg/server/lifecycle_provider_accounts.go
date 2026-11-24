@@ -20,15 +20,19 @@ import (
 )
 
 // seedDefaultProviderAccounts creates each tenant's default provider
-// accounts: now for every tenant it can read, and again for each tenant
-// whose barrier is unsealed later. A failure is logged, never fatal: a
-// missing default account is something the user can add by hand, and must
-// not stop the server.
+// accounts: now for every tenant it can read, again for each tenant whose
+// barrier is unsealed later, and for each tenant created after startup,
+// whatever its isolation. A failure is logged, never fatal: a missing default
+// account is something the user can add by hand, and must neither stop the
+// server nor fail or undo a tenant's creation.
 func (s *Server) seedDefaultProviderAccounts(ctx context.Context, store orchestration.AccountStore, providers *orchestration.AccountProviderRegistry) {
 	for _, tenantID := range s.agentMigrationTenants(ctx) {
 		s.seedTenantProviderAccounts(ctx, store, providers, tenantID)
 	}
 	s.tenantUnsealHooks.Register(tenantUnsealFunc(func(ctx context.Context, tenantID string) {
+		s.seedTenantProviderAccounts(ctx, store, providers, tenantID)
+	}))
+	s.tenantCreatedHooks.Register(tenantCreatedFunc(func(ctx context.Context, tenantID string) {
 		s.seedTenantProviderAccounts(ctx, store, providers, tenantID)
 	}))
 }
