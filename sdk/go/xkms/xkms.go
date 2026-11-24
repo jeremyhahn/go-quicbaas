@@ -578,6 +578,35 @@ var (
 	PeerQualifyingData = xkmssdk.PeerQualifyingData
 )
 
+// Device-trust primitives (go-xkms sdk/go attestation_peer.go): recognising a
+// peer's TCG device credential and binding evidence to the TLS connection it
+// arrived on. Pure aliases; go-trusted-platform's validator is the consumer.
+type (
+	// PeerDevIDPolicy is what a TCG device credential is checked against.
+	PeerDevIDPolicy = xkmssdk.PeerDevIDPolicy
+	// PeerTLSEvidence pairs a peer's evidence with its connection's binding.
+	PeerTLSEvidence = xkmssdk.PeerTLSEvidence
+	// PeerDevIDError reports a certificate that is not a usable credential.
+	PeerDevIDError = xkmssdk.PeerDevIDError
+	// PeerDevIDPolicyError reports a PeerDevIDPolicy that cannot be evaluated.
+	PeerDevIDPolicyError = xkmssdk.PeerDevIDPolicyError
+)
+
+var (
+	// PeerVerifyIDevID checks a device identity credential (IDevID/LDevID).
+	PeerVerifyIDevID = xkmssdk.PeerVerifyIDevID
+	// PeerVerifyIAK checks an attestation key credential (IAK/LAK).
+	PeerVerifyIAK = xkmssdk.PeerVerifyIAK
+	// PeerIsIDevID reports the device identity shape; never authorization.
+	PeerIsIDevID = xkmssdk.PeerIsIDevID
+	// PeerIsIAK reports the attestation key shape; never authorization.
+	PeerIsIAK = xkmssdk.PeerIsIAK
+	// PeerEvidenceFromTLS pairs evidence with the TLS connection's binding.
+	PeerEvidenceFromTLS = xkmssdk.PeerEvidenceFromTLS
+	// PeerQualifyingDataFromTLS derives the quote's qualifying data from TLS.
+	PeerQualifyingDataFromTLS = xkmssdk.PeerQualifyingDataFromTLS
+)
+
 // TPM lifecycle and EK credential challenge (go-xkms#798). The lifecycle
 // verbs are methods on TrustedPlatformModule — State, ClearForReprovision,
 // CreateActivationKey and AnswerCredentialChallenge — and arrive through that
