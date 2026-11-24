@@ -13,13 +13,9 @@
 
 // GrpcWebClient is the transport implementation for gRPC-Web.
 //
-// OPERATOR NOTE: This transport requires a gRPC-Web client library.
-// The two main options are:
-//   - @improbable-eng/grpc-web (https://github.com/improbable-eng/grpc-web)
-//   - grpc-web (https://github.com/grpc/grpc-web)
-// Neither is installed by default to avoid adding runtime dependencies for
-// projects that do not need gRPC-Web. Install your preferred library and
-// implement the methods below before using this transport.
+// Until go-qrdb's gRPC-Web option is in the pinned release and this SDK has
+// an @connectrpc/connect-web client (docs/SPEC.md, multiprotocol-api), every
+// verb refuses with GrpcWebNotImplementedError and nothing reaches the network.
 //
 // Proto definitions: api/proto/orchestrator.proto
 // gRPC service: OrchestratorService
@@ -38,7 +34,6 @@ import type { AccountsClient } from './accounts.js';
 import type { PromptsClient } from './prompts.js';
 import type { ProjectsClient } from './projects.js';
 import type { SdlcClient } from './sdlc.js';
-import { unsupportedClient } from './unsupported.js';
 import type {
   AgentBackendInfo,
   JobRunnerInfo,
@@ -141,23 +136,29 @@ import {
   type SessionPageParams,
   type TaskPageParams,
 } from './page.js';
-import { QuicBaaSError, DeployNotSupportedError } from './errors.js';
+import { DeployNotSupportedError, TransportNotSupportedError } from './errors.js';
 
-// GrpcWebNotImplementedError is thrown when any gRPC-Web method is called
-// before the transport library is wired in.
-export class GrpcWebNotImplementedError extends QuicBaaSError {
-  constructor(method: string) {
-    super(
-      `grpc-web transport: ${method} not implemented. ` +
-      'Install @improbable-eng/grpc-web or grpc-web and wire the generated proto client.',
-    );
+// grpcWebNotImplemented is why every gRPC-Web verb refuses. The server's
+// gRPC-Web endpoint comes from go-qrdb, whose pinned release has no sdk/go
+// option to turn it on, and the client docs/SPEC.md (multiprotocol-api) names,
+// @connectrpc/connect-web, is not wired into this SDK.
+const grpcWebNotImplemented =
+  'go-qrdb serves no gRPC-Web endpoint yet: the pinned go-qrdb release has no sdk/go option ' +
+  'that turns it on, and this SDK has no @connectrpc/connect-web client yet; use the rest transport';
+
+// GrpcWebNotImplementedError is the gRPC-Web transport's refusal of one verb.
+// It is a TransportNotSupportedError naming `family.verb`, like
+// QuicNotImplementedError, so a caller that catches the base class handles it.
+export class GrpcWebNotImplementedError extends TransportNotSupportedError {
+  constructor(family: string, method: string, reason: string = grpcWebNotImplemented) {
+    super('grpc-web', family, reason, method);
     this.name = 'GrpcWebNotImplementedError';
   }
 }
 
-// notImpl is a helper that produces a rejected Promise with a clear error.
-function notImpl(method: string): never {
-  throw new GrpcWebNotImplementedError(method);
+// notImpl throws the gRPC-Web refusal for family.method.
+function notImpl(family: string, method: string): never {
+  throw new GrpcWebNotImplementedError(family, method);
 }
 
 // grpcWebNotImplementedClient returns a client of type T whose every verb
@@ -170,19 +171,11 @@ function grpcWebNotImplementedClient<T extends object>(family: string): T {
     get(_target, prop) {
       if (typeof prop !== 'string' || prop === 'then') return undefined;
       return async () => {
-        throw new GrpcWebNotImplementedError(`${family}.${prop}`);
+        throw new GrpcWebNotImplementedError(family, prop);
       };
     },
   });
 }
-
-// grpcWebUnsupported is why projects, sdlc and accounts refuse here. The
-// server serves ProjectService, SDLCService and AccountService as native gRPC
-// (pkg/server/lifecycle.go), but nothing serves the gRPC-Web framing a browser
-// needs, and this SDK carries no gRPC-Web client or generated stubs.
-const grpcWebUnsupported =
-  'the server serves these services as native gRPC only (no gRPC-Web endpoint) ' +
-  'and the SDK has no gRPC-Web client; use the rest transport';
 
 class GrpcWebConnectionClient implements ConnectionClient {
   private readonly _transport = 'grpc-web';
@@ -192,8 +185,8 @@ class GrpcWebConnectionClient implements ConnectionClient {
     this._address = address;
   }
 
-  async connect(_address: string): Promise<void> { notImpl('connect'); }
-  async disconnect(): Promise<void> { notImpl('disconnect'); }
+  async connect(_address: string): Promise<void> { notImpl('connection', 'connect'); }
+  async disconnect(): Promise<void> { notImpl('connection', 'disconnect'); }
   isConnected(): boolean { return false; }
   getAddress(): string { return this._address; }
   getTransport(): string { return this._transport; }
@@ -255,101 +248,101 @@ class GrpcWebOrchestratorClient implements OrchestratorClient {
     return wholeSetPage(resp.workflows ?? []);
   }
 
-  async listJobs(_tenantID: string, _taskID?: string): Promise<JobStatus[]> { return notImpl('listJobs'); }
-  async getJobStatus(_tenantID: string, _jobID: string): Promise<JobStatus> { return notImpl('getJobStatus'); }
-  async startJob(_req: StartJobRequest): Promise<StartJobResponse> { return notImpl('startJob'); }
-  async cancelJob(_tenantID: string, _jobID: string): Promise<void> { return notImpl('cancelJob'); }
-  async listFleetNodes(_req: ListFleetNodesRequest): Promise<ListFleetNodesResponse> { return notImpl('listFleetNodes'); }
-  async getFleetNode(_req: GetFleetNodeRequest): Promise<FleetNode> { return notImpl('getFleetNode'); }
-  async listSessions(_req: ListSessionsRequest): Promise<ListSessionsResponse> { return notImpl('listSessions'); }
-  async listTasks(_tenantID: string): Promise<Task[]> { return notImpl('listTasks'); }
-  async getTask(_tenantID: string, _taskID: string): Promise<Task> { return notImpl('getTask'); }
-  async listBackends(): Promise<AgentBackendInfo[]> { return notImpl('listBackends'); }
+  async listJobs(_tenantID: string, _taskID?: string): Promise<JobStatus[]> { return notImpl('orchestrator', 'listJobs'); }
+  async getJobStatus(_tenantID: string, _jobID: string): Promise<JobStatus> { return notImpl('orchestrator', 'getJobStatus'); }
+  async startJob(_req: StartJobRequest): Promise<StartJobResponse> { return notImpl('orchestrator', 'startJob'); }
+  async cancelJob(_tenantID: string, _jobID: string): Promise<void> { return notImpl('orchestrator', 'cancelJob'); }
+  async listFleetNodes(_req: ListFleetNodesRequest): Promise<ListFleetNodesResponse> { return notImpl('orchestrator', 'listFleetNodes'); }
+  async getFleetNode(_req: GetFleetNodeRequest): Promise<FleetNode> { return notImpl('orchestrator', 'getFleetNode'); }
+  async listSessions(_req: ListSessionsRequest): Promise<ListSessionsResponse> { return notImpl('orchestrator', 'listSessions'); }
+  async listTasks(_tenantID: string): Promise<Task[]> { return notImpl('orchestrator', 'listTasks'); }
+  async getTask(_tenantID: string, _taskID: string): Promise<Task> { return notImpl('orchestrator', 'getTask'); }
+  async listBackends(): Promise<AgentBackendInfo[]> { return notImpl('orchestrator', 'listBackends'); }
 
-  async listRunners(): Promise<JobRunnerInfo[]> { return notImpl('listRunners'); }
-  async listBackendModels(_agentID: string, _backendName: string): Promise<string[]> { return notImpl('listBackendModels'); }
-  async healthCheck(): Promise<HealthCheckReport> { return notImpl('healthCheck'); }
-  subscribeJobEvents(_tenantID: string, _jobID: string, _onEvent: (event: JobEvent) => void): () => void { return notImpl('subscribeJobEvents'); }
-  async spawnSession(_req: SpawnSessionRequest): Promise<SpawnSessionResponse> { return notImpl('spawnSession'); }
-  async promptSession(_req: PromptSessionRequest): Promise<PromptSessionResponse> { return notImpl('promptSession'); }
-  async closeSession(_req: CloseSessionRequest): Promise<CloseSessionResponse> { return notImpl('closeSession'); }
-  async rotateSessionAccount(_req: RotateSessionAccountRequest): Promise<RotateSessionAccountResponse> { return notImpl('rotateSessionAccount'); }
-  async getSessionHistory(_req: GetSessionHistoryRequest): Promise<GetSessionHistoryResponse> { return notImpl('getSessionHistory'); }
-  async getSessionConversation(_req: GetSessionConversationRequest): Promise<GetSessionConversationResponse> { return notImpl('getSessionConversation'); }
-  async getSpendReport(_req: GetSpendReportRequest): Promise<GetSpendReportResponse> { return notImpl('getSpendReport'); }
-  async getTenantSpendPolicy(_req: GetTenantSpendPolicyRequest): Promise<TenantSpendPolicy> { return notImpl('getTenantSpendPolicy'); }
-  async setTenantSpendPolicy(_req: SetTenantSpendPolicyRequest): Promise<TenantSpendPolicy> { return notImpl('setTenantSpendPolicy'); }
-  async getCostSettings(_req: GetCostSettingsRequest): Promise<CostSettings> { return notImpl('getCostSettings'); }
-  async setCostSettings(_req: SetCostSettingsRequest): Promise<CostSettings> { return notImpl('setCostSettings'); }
-  async getWorkerImageStatus(): Promise<WorkerImageStatus> { return notImpl('getWorkerImageStatus'); }
-  async refreshWorkerImage(): Promise<WorkerImageStatus> { return notImpl('refreshWorkerImage'); }
+  async listRunners(): Promise<JobRunnerInfo[]> { return notImpl('orchestrator', 'listRunners'); }
+  async listBackendModels(_agentID: string, _backendName: string): Promise<string[]> { return notImpl('orchestrator', 'listBackendModels'); }
+  async healthCheck(): Promise<HealthCheckReport> { return notImpl('orchestrator', 'healthCheck'); }
+  subscribeJobEvents(_tenantID: string, _jobID: string, _onEvent: (event: JobEvent) => void): () => void { return notImpl('orchestrator', 'subscribeJobEvents'); }
+  async spawnSession(_req: SpawnSessionRequest): Promise<SpawnSessionResponse> { return notImpl('orchestrator', 'spawnSession'); }
+  async promptSession(_req: PromptSessionRequest): Promise<PromptSessionResponse> { return notImpl('orchestrator', 'promptSession'); }
+  async closeSession(_req: CloseSessionRequest): Promise<CloseSessionResponse> { return notImpl('orchestrator', 'closeSession'); }
+  async rotateSessionAccount(_req: RotateSessionAccountRequest): Promise<RotateSessionAccountResponse> { return notImpl('orchestrator', 'rotateSessionAccount'); }
+  async getSessionHistory(_req: GetSessionHistoryRequest): Promise<GetSessionHistoryResponse> { return notImpl('orchestrator', 'getSessionHistory'); }
+  async getSessionConversation(_req: GetSessionConversationRequest): Promise<GetSessionConversationResponse> { return notImpl('orchestrator', 'getSessionConversation'); }
+  async getSpendReport(_req: GetSpendReportRequest): Promise<GetSpendReportResponse> { return notImpl('orchestrator', 'getSpendReport'); }
+  async getTenantSpendPolicy(_req: GetTenantSpendPolicyRequest): Promise<TenantSpendPolicy> { return notImpl('orchestrator', 'getTenantSpendPolicy'); }
+  async setTenantSpendPolicy(_req: SetTenantSpendPolicyRequest): Promise<TenantSpendPolicy> { return notImpl('orchestrator', 'setTenantSpendPolicy'); }
+  async getCostSettings(_req: GetCostSettingsRequest): Promise<CostSettings> { return notImpl('orchestrator', 'getCostSettings'); }
+  async setCostSettings(_req: SetCostSettingsRequest): Promise<CostSettings> { return notImpl('orchestrator', 'setCostSettings'); }
+  async getWorkerImageStatus(): Promise<WorkerImageStatus> { return notImpl('orchestrator', 'getWorkerImageStatus'); }
+  async refreshWorkerImage(): Promise<WorkerImageStatus> { return notImpl('orchestrator', 'refreshWorkerImage'); }
   // eslint-disable-next-line @typescript-eslint/require-await
-  async *subscribeSession(_req: SubscribeSessionEventsRequest): AsyncIterable<SessionEventEnvelope> { return notImpl('subscribeSession'); }
+  async *subscribeSession(_req: SubscribeSessionEventsRequest): AsyncIterable<SessionEventEnvelope> { return notImpl('orchestrator', 'subscribeSession'); }
   async deployFleetNode(_spec: DeployFleetNodeSpec): Promise<DeployFleetNodeResult> { throw new DeployNotSupportedError('grpc-web'); }
-  async inference(_req: InferenceRequest): Promise<InferenceResponse> { return notImpl('inference'); }
+  async inference(_req: InferenceRequest): Promise<InferenceResponse> { return notImpl('orchestrator', 'inference'); }
   // eslint-disable-next-line @typescript-eslint/require-await
-  async *inferenceStream(_req: InferenceRequest, _signal?: AbortSignal): AsyncIterable<InferenceChunk> { return notImpl('inferenceStream'); }
-  async createWorkflow(_req: CreateWorkflowRequest): Promise<CreateWorkflowResponse> { return notImpl('createWorkflow'); }
-  async listWorkflows(_tenantID: string): Promise<ListWorkflowsResponse> { return notImpl('listWorkflows'); }
-  async getWorkflow(_tenantID: string, _name: string): Promise<WorkflowDefinition> { return notImpl('getWorkflow'); }
-  async updateWorkflow(_name: string, _def: WorkflowDefinition): Promise<WorkflowDefinition> { return notImpl('updateWorkflow'); }
-  async deleteWorkflow(_tenantID: string, _name: string): Promise<void> { return notImpl('deleteWorkflow'); }
-  async createTask(_req: CreateTaskRequest): Promise<CreateTaskResponse> { return notImpl('createTask'); }
-  async claimTask(_req: ClaimTaskRequest): Promise<void> { return notImpl('claimTask'); }
-  async completeTask(_req: CompleteTaskRequest): Promise<void> { return notImpl('completeTask'); }
-  async readmitTask(_tenantID: string, _taskID: string): Promise<void> { return notImpl('readmitTask'); }
-  async deleteTask(_req: import('./types.js').DeleteTaskRequest): Promise<import('./types.js').DeleteTaskResponse> { return notImpl('deleteTask'); }
-  async listAttention(_tenantID: string, _page?: import('./page.js').AttentionPageParams): Promise<import('./page.js').PageResult<import('./types.js').AttentionItem>> { return notImpl('listAttention'); }
-  async resolveAttention(_req: import('./types.js').AttentionResolveRequest): Promise<import('./types.js').AttentionItem> { return notImpl('resolveAttention'); }
-  async decomposeTask(_req: DecomposeTaskRequest): Promise<DecomposeTaskResponse> { return notImpl('decomposeTask'); }
-  async registerFleetNode(_req: RegisterFleetNodeRequest): Promise<RegisterFleetNodeResponse> { return notImpl('registerFleetNode'); }
-  async removeFleetNode(_req: RemoveFleetNodeRequest): Promise<void> { return notImpl('removeFleetNode'); }
-  async disableFleetNode(_req: import('./types.js').DisableFleetNodeRequest): Promise<import('./types.js').DisableFleetNodeResponse> { return notImpl('disableFleetNode'); }
-  async enableFleetNode(_req: import('./types.js').EnableFleetNodeRequest): Promise<import('./types.js').EnableFleetNodeResponse> { return notImpl('enableFleetNode'); }
+  async *inferenceStream(_req: InferenceRequest, _signal?: AbortSignal): AsyncIterable<InferenceChunk> { return notImpl('orchestrator', 'inferenceStream'); }
+  async createWorkflow(_req: CreateWorkflowRequest): Promise<CreateWorkflowResponse> { return notImpl('orchestrator', 'createWorkflow'); }
+  async listWorkflows(_tenantID: string): Promise<ListWorkflowsResponse> { return notImpl('orchestrator', 'listWorkflows'); }
+  async getWorkflow(_tenantID: string, _name: string): Promise<WorkflowDefinition> { return notImpl('orchestrator', 'getWorkflow'); }
+  async updateWorkflow(_name: string, _def: WorkflowDefinition): Promise<WorkflowDefinition> { return notImpl('orchestrator', 'updateWorkflow'); }
+  async deleteWorkflow(_tenantID: string, _name: string): Promise<void> { return notImpl('orchestrator', 'deleteWorkflow'); }
+  async createTask(_req: CreateTaskRequest): Promise<CreateTaskResponse> { return notImpl('orchestrator', 'createTask'); }
+  async claimTask(_req: ClaimTaskRequest): Promise<void> { return notImpl('orchestrator', 'claimTask'); }
+  async completeTask(_req: CompleteTaskRequest): Promise<void> { return notImpl('orchestrator', 'completeTask'); }
+  async readmitTask(_tenantID: string, _taskID: string): Promise<void> { return notImpl('orchestrator', 'readmitTask'); }
+  async deleteTask(_req: import('./types.js').DeleteTaskRequest): Promise<import('./types.js').DeleteTaskResponse> { return notImpl('orchestrator', 'deleteTask'); }
+  async listAttention(_tenantID: string, _page?: import('./page.js').AttentionPageParams): Promise<import('./page.js').PageResult<import('./types.js').AttentionItem>> { return notImpl('orchestrator', 'listAttention'); }
+  async resolveAttention(_req: import('./types.js').AttentionResolveRequest): Promise<import('./types.js').AttentionItem> { return notImpl('orchestrator', 'resolveAttention'); }
+  async decomposeTask(_req: DecomposeTaskRequest): Promise<DecomposeTaskResponse> { return notImpl('orchestrator', 'decomposeTask'); }
+  async registerFleetNode(_req: RegisterFleetNodeRequest): Promise<RegisterFleetNodeResponse> { return notImpl('orchestrator', 'registerFleetNode'); }
+  async removeFleetNode(_req: RemoveFleetNodeRequest): Promise<void> { return notImpl('orchestrator', 'removeFleetNode'); }
+  async disableFleetNode(_req: import('./types.js').DisableFleetNodeRequest): Promise<import('./types.js').DisableFleetNodeResponse> { return notImpl('orchestrator', 'disableFleetNode'); }
+  async enableFleetNode(_req: import('./types.js').EnableFleetNodeRequest): Promise<import('./types.js').EnableFleetNodeResponse> { return notImpl('orchestrator', 'enableFleetNode'); }
 }
 
 class GrpcWebAuthClient implements AuthClient {
-  async authValidate(_token?: string): Promise<boolean> { return notImpl('authValidate'); }
-  async authLogin(_credentials: { username: string; password: string }): Promise<void> { return notImpl('authLogin'); }
-  async webAuthnBeginLogin(_tenantID: string, _email: string): Promise<import('./types.js').WebAuthnLoginChallenge> { return notImpl('webAuthnBeginLogin'); }
-  async webAuthnFinishLogin(_challenge: import('./types.js').WebAuthnLoginChallenge, _credential: import('./types.js').PublicKeyCredentialJSON): Promise<import('./types.js').AuthTokenResponse> { return notImpl('webAuthnFinishLogin'); }
-  async loginPIV(): Promise<import('./types.js').AuthTokenResponse> { return notImpl('loginPIV'); }
-  async logout(_token?: string): Promise<void> { return notImpl('logout'); }
-  async registerBegin(_req: import('./interfaces.js').SelfRegisterBeginRequest): Promise<import('./interfaces.js').SelfRegisterBeginResponse> { return notImpl('registerBegin'); }
-  async registerFinish(_req: import('./interfaces.js').SelfRegisterFinishRequest): Promise<import('./interfaces.js').SelfRegisterFinishResponse> { return notImpl('registerFinish'); }
+  async authValidate(_token?: string): Promise<boolean> { return notImpl('auth', 'authValidate'); }
+  async authLogin(_credentials: { username: string; password: string }): Promise<void> { return notImpl('auth', 'authLogin'); }
+  async webAuthnBeginLogin(_tenantID: string, _email: string): Promise<import('./types.js').WebAuthnLoginChallenge> { return notImpl('auth', 'webAuthnBeginLogin'); }
+  async webAuthnFinishLogin(_challenge: import('./types.js').WebAuthnLoginChallenge, _credential: import('./types.js').PublicKeyCredentialJSON): Promise<import('./types.js').AuthTokenResponse> { return notImpl('auth', 'webAuthnFinishLogin'); }
+  async loginPIV(): Promise<import('./types.js').AuthTokenResponse> { return notImpl('auth', 'loginPIV'); }
+  async logout(_token?: string): Promise<void> { return notImpl('auth', 'logout'); }
+  async registerBegin(_req: import('./interfaces.js').SelfRegisterBeginRequest): Promise<import('./interfaces.js').SelfRegisterBeginResponse> { return notImpl('auth', 'registerBegin'); }
+  async registerFinish(_req: import('./interfaces.js').SelfRegisterFinishRequest): Promise<import('./interfaces.js').SelfRegisterFinishResponse> { return notImpl('auth', 'registerFinish'); }
 }
 
 // GrpcWebBarrierClient is a stub BarrierClient that throws
 // GrpcWebNotImplementedError on every call. The barrier surface lives on
 // REST today; future gRPC-Web wiring can replace this stub.
 export class GrpcWebBarrierClient implements BarrierClient {
-  async status(): Promise<BarrierStatusResponse> { return notImpl('barrier.status'); }
-  async initialize(_req: BarrierInitRequest): Promise<void> { return notImpl('barrier.initialize'); }
-  async unseal(_req: BarrierUnsealRequest): Promise<void> { return notImpl('barrier.unseal'); }
-  async seal(_req?: BarrierSealRequest): Promise<void> { return notImpl('barrier.seal'); }
-  async initializeShamir(_req: BarrierShamirInitRequest): Promise<BarrierShamirInitResponse> { return notImpl('barrier.initializeShamir'); }
-  async unsealWithShare(_req: BarrierUnsealShareRequest): Promise<BarrierUnsealShareResponse> { return notImpl('barrier.unsealWithShare'); }
-  async unsealWithShares(_req: BarrierUnsealSharesRequest): Promise<void> { return notImpl('barrier.unsealWithShares'); }
-  async rekey(_req: BarrierRekeyRequest): Promise<BarrierRekeyResponse> { return notImpl('barrier.rekey'); }
-  async generateRecoveryKeys(_req: BarrierGenerateRecoveryKeysRequest): Promise<BarrierRecoveryKeysResponse> { return notImpl('barrier.generateRecoveryKeys'); }
-  async recoverWithKeys(_req: BarrierRecoverWithKeysRequest): Promise<void> { return notImpl('barrier.recoverWithKeys'); }
-  async deleteRecoveryKeys(): Promise<void> { return notImpl('barrier.deleteRecoveryKeys'); }
-  async recoveryStatus(): Promise<BarrierHasRecoveryKeysResponse> { return notImpl('barrier.recoveryStatus'); }
-  async generateRootToken(_req: BarrierGenerateRootTokenRequest): Promise<BarrierRootTokenResponse> { return notImpl('barrier.generateRootToken'); }
-  async enableEncryption(_req: BarrierEnableEncryptionRequest): Promise<BarrierEnableEncryptionResponse> { return notImpl('barrier.enableEncryption'); }
+  async status(): Promise<BarrierStatusResponse> { return notImpl('barrier', 'status'); }
+  async initialize(_req: BarrierInitRequest): Promise<void> { return notImpl('barrier', 'initialize'); }
+  async unseal(_req: BarrierUnsealRequest): Promise<void> { return notImpl('barrier', 'unseal'); }
+  async seal(_req?: BarrierSealRequest): Promise<void> { return notImpl('barrier', 'seal'); }
+  async initializeShamir(_req: BarrierShamirInitRequest): Promise<BarrierShamirInitResponse> { return notImpl('barrier', 'initializeShamir'); }
+  async unsealWithShare(_req: BarrierUnsealShareRequest): Promise<BarrierUnsealShareResponse> { return notImpl('barrier', 'unsealWithShare'); }
+  async unsealWithShares(_req: BarrierUnsealSharesRequest): Promise<void> { return notImpl('barrier', 'unsealWithShares'); }
+  async rekey(_req: BarrierRekeyRequest): Promise<BarrierRekeyResponse> { return notImpl('barrier', 'rekey'); }
+  async generateRecoveryKeys(_req: BarrierGenerateRecoveryKeysRequest): Promise<BarrierRecoveryKeysResponse> { return notImpl('barrier', 'generateRecoveryKeys'); }
+  async recoverWithKeys(_req: BarrierRecoverWithKeysRequest): Promise<void> { return notImpl('barrier', 'recoverWithKeys'); }
+  async deleteRecoveryKeys(): Promise<void> { return notImpl('barrier', 'deleteRecoveryKeys'); }
+  async recoveryStatus(): Promise<BarrierHasRecoveryKeysResponse> { return notImpl('barrier', 'recoveryStatus'); }
+  async generateRootToken(_req: BarrierGenerateRootTokenRequest): Promise<BarrierRootTokenResponse> { return notImpl('barrier', 'generateRootToken'); }
+  async enableEncryption(_req: BarrierEnableEncryptionRequest): Promise<BarrierEnableEncryptionResponse> { return notImpl('barrier', 'enableEncryption'); }
 }
 
 // GrpcWebCeremonyClient is a stub CeremonyClient that throws
 // GrpcWebNotImplementedError on every call.
 export class GrpcWebCeremonyClient implements CeremonyClient {
-  async initialize(_req: CeremonyInitializeRequest): Promise<CeremonyInitializeResponse> { return notImpl('ceremony.initialize'); }
-  async status(): Promise<CeremonyStatusResponse> { return notImpl('ceremony.status'); }
-  async claimCertBegin(_req: CeremonyClaimCertBeginRequest): Promise<CeremonyClaimCertBeginResponse> { return notImpl('ceremony.claimCertBegin'); }
-  async claimCertComplete(_req: CeremonyClaimCertCompleteRequest): Promise<CeremonyClaimCertCompleteResponse> { return notImpl('ceremony.claimCertComplete'); }
-  async claimShareBegin(_req: CeremonyClaimShareBeginRequest): Promise<CeremonyClaimShareBeginResponse> { return notImpl('ceremony.claimShareBegin'); }
-  async claimShareComplete(_req: CeremonyClaimShareCompleteRequest): Promise<CeremonyClaimShareCompleteResponse> { return notImpl('ceremony.claimShareComplete'); }
-  async signCSR(_req: CeremonySignCSRRequest): Promise<CeremonySignCSRResponse> { return notImpl('ceremony.signCSR'); }
-  async enrollExternalOfficer(_req: CeremonyEnrollExternalOfficerRequest): Promise<CeremonyEnrollExternalOfficerResponse> { return notImpl('ceremony.enrollExternalOfficer'); }
+  async initialize(_req: CeremonyInitializeRequest): Promise<CeremonyInitializeResponse> { return notImpl('ceremony', 'initialize'); }
+  async status(): Promise<CeremonyStatusResponse> { return notImpl('ceremony', 'status'); }
+  async claimCertBegin(_req: CeremonyClaimCertBeginRequest): Promise<CeremonyClaimCertBeginResponse> { return notImpl('ceremony', 'claimCertBegin'); }
+  async claimCertComplete(_req: CeremonyClaimCertCompleteRequest): Promise<CeremonyClaimCertCompleteResponse> { return notImpl('ceremony', 'claimCertComplete'); }
+  async claimShareBegin(_req: CeremonyClaimShareBeginRequest): Promise<CeremonyClaimShareBeginResponse> { return notImpl('ceremony', 'claimShareBegin'); }
+  async claimShareComplete(_req: CeremonyClaimShareCompleteRequest): Promise<CeremonyClaimShareCompleteResponse> { return notImpl('ceremony', 'claimShareComplete'); }
+  async signCSR(_req: CeremonySignCSRRequest): Promise<CeremonySignCSRResponse> { return notImpl('ceremony', 'signCSR'); }
+  async enrollExternalOfficer(_req: CeremonyEnrollExternalOfficerRequest): Promise<CeremonyEnrollExternalOfficerResponse> { return notImpl('ceremony', 'enrollExternalOfficer'); }
 }
 
 // GrpcWebClient is the stub entry point for the gRPC-Web transport.
@@ -377,9 +370,9 @@ export class GrpcWebClient implements Client {
   readonly messaging: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly scheduler: any = null;
-  readonly projects = unsupportedClient<ProjectsClient>('grpc-web', 'projects', grpcWebUnsupported);
-  readonly sdlc = unsupportedClient<SdlcClient>('grpc-web', 'sdlc', grpcWebUnsupported);
-  readonly accounts = unsupportedClient<AccountsClient>('grpc-web', 'accounts', grpcWebUnsupported);
+  readonly projects = grpcWebNotImplementedClient<ProjectsClient>('projects');
+  readonly sdlc = grpcWebNotImplementedClient<SdlcClient>('sdlc');
+  readonly accounts = grpcWebNotImplementedClient<AccountsClient>('accounts');
   readonly prompts = grpcWebNotImplementedClient<PromptsClient>('prompts');
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly agents: any = null;

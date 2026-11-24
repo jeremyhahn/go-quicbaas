@@ -4,11 +4,11 @@
 // gRPC-Web, Unix and Wails cannot carry projects, sdlc, accounts or prompts today (see
 // docs/software-factory/api.md for why). Each family is still an object of
 // its declared type whose every verb rejects — not a null that fails with
-// "cannot read properties of null" far from the cause. projects, sdlc and
-// accounts reject with TransportNotSupportedError, naming the transport, the
-// family, the verb and the reason, on gRPC-Web, Unix and Wails. Prompts do the
-// same on Unix and Wails, but reject with GrpcWebNotImplementedError on
-// gRPC-Web, as docs/SPEC.md (multiprotocol-api) requires.
+// "cannot read properties of null" far from the cause. Every verb rejects with
+// a TransportNotSupportedError naming the transport, the family, the verb and
+// the reason. On gRPC-Web every family rejects with GrpcWebNotImplementedError,
+// a TransportNotSupportedError subclass, as docs/SPEC.md (multiprotocol-api)
+// requires; on Unix and Wails with a plain TransportNotSupportedError.
 
 import { describe, it, expect } from 'vitest';
 import { GrpcWebClient, GrpcWebNotImplementedError } from '../src/grpc_web';
@@ -89,7 +89,9 @@ describe('gRPC-Web prompts', () => {
     for (const [verb, call] of calls) {
       const err = await call().catch((e: unknown) => e);
       expect(err).toBeInstanceOf(GrpcWebNotImplementedError);
-      expect(err).not.toBeInstanceOf(TransportNotSupportedError);
+      expect(err).toBeInstanceOf(TransportNotSupportedError);
+      expect((err as GrpcWebNotImplementedError).family).toBe('prompts');
+      expect((err as GrpcWebNotImplementedError).method).toBe(verb);
       expect((err as GrpcWebNotImplementedError).message).toContain(`prompts.${verb}`);
     }
   });
