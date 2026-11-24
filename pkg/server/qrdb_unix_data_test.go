@@ -72,6 +72,14 @@ func TestServer_QRDBServiceOnUnixSocket_HonoursDatabaseScope(t *testing.T) {
 // client connected to it.
 func qrdbUnixDataClient(t *testing.T, bindTenant bool) (context.Context, *qrdbsdk.Client) {
 	t.Helper()
+	_, ctx, cl := qrdbUnixDataServer(t, bindTenant)
+	return ctx, cl
+}
+
+// qrdbUnixDataServer is qrdbUnixDataClient that also returns the server, so
+// a test can reach the same node through another transport.
+func qrdbUnixDataServer(t *testing.T, bindTenant bool) (*Server, context.Context, *qrdbsdk.Client) {
+	t.Helper()
 	srv := withTempServer(t)
 	require.NoError(t, srv.initStandaloneQRDBNode(), "initStandaloneQRDBNode")
 	t.Cleanup(func() { _ = srv.stopQRDBNode() })
@@ -112,7 +120,67 @@ func qrdbUnixDataClient(t *testing.T, bindTenant bool) (context.Context, *qrdbsd
 	cl, err := qrdbsdk.NewClient(tr)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = cl.Close() })
-	return ctx, cl
+	return srv, ctx, cl
+}
+
+// TestServer_QRDBEmbeddedData_SharesKeyspaceWithUnix proves an embedded data
+// call and a system-bound Unix data call of the same key meet in one
+// keyspace: each transport reads what the other wrote, and the last write
+// wins for both.
+func TestServer_QRDBEmbeddedData_SharesKeyspaceWithUnix(t *testing.T) {
+	srv, ctx, unix := qrdbUnixDataServer(t, true)
+	emb, embCtx := qrdbEmbeddedDataClient(t, srv)
+
+	require.NoError(t, emb.KV().Put(embCtx, "row1652/emb", []byte("from-embedded")))
+	got, err := unix.KV().Get(ctx, "row1652/emb")
+	require.NoError(t, err, "a Unix read of an embedded write")
+	require.Equal(t, "from-embedded", string(got))
+
+	require.NoError(t, unix.KV().Put(ctx, "row1652/unix-to-emb", []byte("from-unix")))
+	got, err = emb.KV().Get(embCtx, "row1652/unix-to-emb")
+	require.NoError(t, err, "an embedded read of a Unix write")
+	require.Equal(t, "from-unix", string(got))
+
+	require.NoError(t, unix.KV().Put(ctx, "row1652/same", []byte("u")))
+	require.NoError(t, emb.KV().Put(embCtx, "row1652/same", []byte("e")))
+	got, err = unix.KV().Get(ctx, "row1652/same")
+	require.NoError(t, err)
+	require.Equal(t, "e", string(got), "Unix read of a key both transports wrote")
+	got, err = emb.KV().Get(embCtx, "row1652/same")
+	require.NoError(t, err)
+	require.Equal(t, "e", string(got), "embedded read of a key both transports wrote")
+}
+
+// TestServer_QRDBEmbeddedData_BatchSharesKeyspaceWithUnix proves an embedded
+// batch write lands in the keyspace a system-bound Unix read sees.
+func TestServer_QRDBEmbeddedData_BatchSharesKeyspaceWithUnix(t *testing.T) {
+	srv, ctx, unix := qrdbUnixDataServer(t, true)
+	emb, embCtx := qrdbEmbeddedDataClient(t, srv)
+
+	_, err := emb.Batch().ExecuteBatch(embCtx, []qrdbtransport.Op{
+		{Type: qrdbtransport.OpPut, Key: []byte("row1652/batch/a"), Value: []byte("va")},
+		{Type: qrdbtransport.OpPut, Key: []byte("row1652/batch/b"), Value: []byte("vb")},
+	})
+	require.NoError(t, err)
+	for key, want := range map[string]string{"row1652/batch/a": "va", "row1652/batch/b": "vb"} {
+		got, err := unix.KV().Get(ctx, key)
+		require.NoError(t, err, "a Unix read of embedded batch key %s", key)
+		require.Equal(t, want, string(got), key)
+	}
+}
+
+// qrdbEmbeddedDataClient returns srv's embedded data client and a context
+// with no tenant bound, as the SDK's embedded QRDBData path calls it.
+func qrdbEmbeddedDataClient(t *testing.T, srv *Server) (*qrdbsdk.Client, context.Context) {
+	t.Helper()
+	emb, err := srv.QRDBDataClient()
+	require.NoError(t, err)
+	require.NotNil(t, emb)
+	// Close only marks this client's transport closed; the node is untouched.
+	t.Cleanup(func() { _ = emb.Close() })
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	t.Cleanup(cancel)
+	return emb, ctx
 }
 
 // qrdbTenantBoundStream carries a context with a bound tenant into a stream
