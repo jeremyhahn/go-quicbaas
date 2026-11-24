@@ -55,6 +55,7 @@ let xkmsKeys: Record<string, Fn>;
 let xkms: Record<string, Fn>;
 let ca: Record<string, Fn>;
 let piv: Record<string, Fn>;
+let xkmsFido2: Record<string, Fn>;
 
 function newKeys(): Record<string, Fn> {
   return {
@@ -127,7 +128,14 @@ describe('XKMSKeysView', () => {
     xkms = newXKMS();
     ca = newCA();
     piv = newPIV();
-    mockGetSDKClient.mockResolvedValue({ xkmsKeys, xkms, ca, piv });
+    xkmsFido2 = {
+      beginAddCredential: vi.fn(),
+      beginRegistration: vi.fn(),
+      finishRegistration: vi.fn(),
+      beginAuthentication: vi.fn(),
+      finishAuthentication: vi.fn(),
+    };
+    mockGetSDKClient.mockResolvedValue({ xkmsKeys, xkms, ca, piv, xkmsFido2 });
   });
 
   it('lists keys with their id, type, algorithm and backend', async () => {
@@ -226,7 +234,7 @@ describe('XKMSKeysView', () => {
   });
 
   it('shows the not-available state and makes no call without xkmsKeys', async () => {
-    mockGetSDKClient.mockResolvedValue({ xkmsKeys: null, xkms: null });
+    mockGetSDKClient.mockResolvedValue({ xkmsKeys: null, xkms: null, xkmsFido2: null });
     render(XKMSKeysView);
     await waitFor(() => expect(screen.getByText(/Key Store is not available on this connection/)).toBeInTheDocument());
     expect(xkmsKeys.listKeys).not.toHaveBeenCalled();
@@ -272,6 +280,14 @@ describe('XKMSKeysView', () => {
     const slots = screen.getByRole('region', { name: 'PIV slots' });
     await waitFor(() => expect(within(slots).getByText('PIV Authentication')).toBeInTheDocument());
     expect(piv.listSlots).toHaveBeenCalledWith();
+  });
+
+  it('renders the FIDO2 passkeys section and makes no FIDO2 call on mount', async () => {
+    render(XKMSKeysView);
+    await waitFor(() => screen.getByText('signer'));
+    const fido2 = screen.getByRole('region', { name: 'FIDO2 passkeys' });
+    expect(within(fido2).getByText('FIDO2 Passkeys')).toBeInTheDocument();
+    for (const fn of Object.values(xkmsFido2)) expect(fn).not.toHaveBeenCalled();
   });
 
   it('passes the chosen backend to the seal and PIV sections', async () => {

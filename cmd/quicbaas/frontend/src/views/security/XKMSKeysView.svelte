@@ -33,6 +33,9 @@
     - PIV slots (XKMSPIVPanel): the PIV slots, narrowed by the chosen
       backend; view, store and delete a slot certificate, generate a key
       and a CSR
+    - FIDO2 passkeys (XKMSFIDO2Panel): add a passkey to the caller's own
+      account, register a passkey for a user and test a passkey; it takes
+      no backend
 
   Each section loads its own data and shows its own error. Each load is bound to the session that started it: a response that lands
   after a sign-out or another login is dropped.
@@ -59,6 +62,7 @@
   import XKMSCAPanel from '../../components/security/XKMSCAPanel.svelte';
   import XKMSSealPanel from '../../components/security/XKMSSealPanel.svelte';
   import XKMSPIVPanel from '../../components/security/XKMSPIVPanel.svelte';
+  import XKMSFIDO2Panel from '../../components/security/XKMSFIDO2Panel.svelte';
 
   const NOT_AVAILABLE = 'Key Store is not available on this connection.';
 
@@ -420,6 +424,9 @@
 
     <section class="card bg-base-200 p-4" aria-label="PIV slots">
       <XKMSPIVPanel backend={backendFilter} />
+    </section>
+    <section class="card bg-base-200 p-4" aria-label="FIDO2 passkeys">
+      <XKMSFIDO2Panel />
     </section>
   {/if}
 </div>
