@@ -1744,18 +1744,21 @@ func (s *SchedulerEngine) handleInterruptedRun(ctx context.Context, job *Job, ex
 	exec.Status = JobStatusCanceled
 	exec.Error = RunInterruptedError{JobID: job.ID}.Error()
 
-	job.Status = JobStatusPending
-	if job.NextRun.Before(now) {
-		job.NextRun = now
+	apply := func(j *Job) {
+		j.Status = JobStatusPending
+		if j.NextRun.Before(now) {
+			j.NextRun = now
+		}
+		j.UpdatedAt = now
 	}
-	job.UpdatedAt = now
+	apply(job)
 
 	storageCtx, cancel := s.outcomeContext(ctx)
 	defer cancel()
 
 	s.logWarn("Job %d (%s) interrupted by scheduler shutdown; re-armed for %s",
 		job.ID, job.Name, job.NextRun)
-	if !s.persistJobOutcome(storageCtx, job) {
+	if !s.persistJobOutcome(storageCtx, job, apply) {
 		// Another writer concluded this run: its record and history stand.
 		return
 	}
@@ -1776,21 +1779,24 @@ func (s *SchedulerEngine) handleJobSuccess(ctx context.Context, job *Job, exec *
 		exec.Result = result.Output
 	}
 
-	job.LastRun = now
-	job.RunCount++
-	job.FailCount = 0 // a successful run ends its firing's retry budget
-	job.UpdatedAt = now
+	apply := func(j *Job) {
+		j.LastRun = now
+		j.RunCount++
+		j.FailCount = 0 // a successful run ends its firing's retry budget
+		j.UpdatedAt = now
 
-	// For recurring jobs, move on to the next firing
-	if job.Type == JobTypeRecurring {
-		job.Status = JobStatusPending
-		if err := s.startNextFiring(job); err != nil {
-			job.Status = JobStatusFailed
-			job.LastError = err.Error()
+		// For recurring jobs, move on to the next firing
+		if j.Type == JobTypeRecurring {
+			j.Status = JobStatusPending
+			if err := s.startNextFiring(j); err != nil {
+				j.Status = JobStatusFailed
+				j.LastError = err.Error()
+			}
+		} else {
+			j.Status = JobStatusCompleted
 		}
-	} else {
-		job.Status = JobStatusCompleted
 	}
+	apply(job)
 
 	// The outcome is written even when the engine is stopping; see
 	// outcomeContext.
@@ -1799,7 +1805,7 @@ func (s *SchedulerEngine) handleJobSuccess(ctx context.Context, job *Job, exec *
 
 	// Persist the outcome under the job's stripe lock so a concurrent
 	// cancel or delete cannot be clobbered by this write.
-	if !s.persistJobOutcome(storageCtx, job) {
+	if !s.persistJobOutcome(storageCtx, job, apply) {
 		// Another writer concluded this run: its record and history stand.
 		return
 	}
@@ -1827,7 +1833,7 @@ func (s *SchedulerEngine) handleJobSuccess(ctx context.Context, job *Job, exec *
 // It reports whether this outcome concludes the run. False means another
 // writer concluded it (see concludeOwnRun), and the caller must write no
 // history either: the run's record and history are the winner's.
-func (s *SchedulerEngine) persistJobOutcome(ctx context.Context, job *Job) bool {
+func (s *SchedulerEngine) persistJobOutcome(ctx context.Context, job *Job, apply runOutcome) bool {
 	lock := s.jobLock(job.ID)
 	lock.Lock()
 	defer lock.Unlock()
@@ -1836,21 +1842,31 @@ func (s *SchedulerEngine) persistJobOutcome(ctx context.Context, job *Job) bool 
 	// a recovery on another node may have concluded this run as abandoned,
 	// or another node may have deleted the job. The outcome is written by
 	// the guarded transition itself, and a loss writes nothing.
-	if guarded, won := s.concludeOwnRun(ctx, job); guarded {
+	if guarded, won := s.concludeOwnRun(ctx, job, apply); guarded {
 		return won
 	}
 
+	// The stripe lock serializes writers but does not refresh this run's
+	// snapshot: the outcome is applied to the record as it stands, so an
+	// update, or history another run left pending, is not overwritten.
+	write := job
 	current, getErr := s.storage.GetJob(ctx, job.ID, JobTenantID(job))
 	switch {
 	case isJobNotFound(getErr), getErr == nil && current == nil:
 		// Job was deleted concurrently; do not resurrect it.
 		return true
-	case getErr == nil && (current.Status == JobStatusCanceled || current.Status == JobStatusCompleted):
-		// Preserve the terminal status set by a concurrent transition.
-		job.Status = current.Status
+	case getErr == nil:
+		next := *current
+		apply(&next)
+		if current.Status == JobStatusCanceled || current.Status == JobStatusCompleted {
+			// Preserve the terminal status set by a concurrent transition.
+			next.Status = current.Status
+		}
+		job.Status = next.Status
+		write = &next
 	}
 
-	if err := s.storage.UpdateJob(ctx, job); err != nil {
+	if err := s.storage.UpdateJob(ctx, write); err != nil {
 		s.storageErrors.Add(1)
 		runResultOf(ctx).noteWriteError(ErrStorageError{Op: "UpdateJob", Cause: err})
 	}
@@ -1932,7 +1948,9 @@ func (s *SchedulerEngine) handleJobError(ctx context.Context, job *Job, exec *Jo
 	exec.Status = JobStatusFailed
 	exec.Error = err.Error()
 
-	s.applyRunFailure(job, err.Error(), now)
+	reason := err.Error()
+	apply := func(j *Job) { s.applyRunFailure(j, reason, now) }
+	apply(job)
 
 	// The outcome is written even when the engine is stopping; see
 	// outcomeContext.
@@ -1941,7 +1959,7 @@ func (s *SchedulerEngine) handleJobError(ctx context.Context, job *Job, exec *Jo
 
 	// Persist the outcome under the job's stripe lock so a concurrent
 	// cancel or delete cannot be clobbered by this write.
-	if !s.persistJobOutcome(storageCtx, job) {
+	if !s.persistJobOutcome(storageCtx, job, apply) {
 		// Another writer concluded this run: its record and history stand.
 		return
 	}
@@ -1961,10 +1979,14 @@ func (s *SchedulerEngine) handleJobTimeout(ctx context.Context, job *Job, exec *
 // handleJobFailure processes a job failure without execution context.
 func (s *SchedulerEngine) handleJobFailure(ctx context.Context, job *Job, err error) {
 	now := time.Now()
-	job.Status = JobStatusFailed
-	job.LastError = err.Error()
-	job.FailCount++
-	job.UpdatedAt = now
+	reason := err.Error()
+	apply := func(j *Job) {
+		j.Status = JobStatusFailed
+		j.LastError = reason
+		j.FailCount++
+		j.UpdatedAt = now
+	}
+	apply(job)
 
 	// The outcome is written even when the engine is stopping; see
 	// outcomeContext.
@@ -1973,7 +1995,7 @@ func (s *SchedulerEngine) handleJobFailure(ctx context.Context, job *Job, err er
 
 	// Persist the outcome under the job's stripe lock so a concurrent
 	// cancel or delete cannot be clobbered by this write.
-	s.persistJobOutcome(storageCtx, job)
+	s.persistJobOutcome(storageCtx, job, apply)
 	s.failureCount.Add(1)
 }
 

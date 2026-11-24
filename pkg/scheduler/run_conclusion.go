@@ -62,14 +62,16 @@ func runOpen(held *Job, run *RunConclusion) bool {
 // replaces the job while the run is open. A cancel or completion written
 // during the run keeps its terminal status, the rule persistJobOutcome
 // follows on one node; any other status means another writer concluded it.
-func outcomeTransition(run RunConclusion, outcome *Job, owner string) RunTransition {
+func outcomeTransition(run RunConclusion, apply runOutcome, owner string) RunTransition {
 	return func(held *Job) (*Job, bool) {
 		if !runOpen(held, &run) {
 			return nil, false
 		}
-		next := *outcome
-		// Pending history the execution never saw is kept.
-		next.PendingHistory = held.PendingHistory
+		// The outcome is applied to the record as it stands now, so an update,
+		// or pending history, the execution never saw is kept, and the next
+		// firing is scheduled from the job's current configuration.
+		next := *held
+		apply(&next)
 		switch held.Status {
 		case JobStatusRunning:
 		case JobStatusCanceled, JobStatusCompleted:
@@ -81,6 +83,11 @@ func outcomeTransition(run RunConclusion, outcome *Job, owner string) RunTransit
 		return &next, true
 	}
 }
+
+// runOutcome applies a run's outcome (its status, counters, error and next
+// firing) to a job record. It is applied to the record current when the
+// outcome is written, never to the snapshot the run started from.
+type runOutcome func(job *Job)
 
 // recoveryOwner is the conclusion owner a recovery on this engine writes.
 // It is stable per node, so a retried recovery recognises its own conclusion.
@@ -118,7 +125,7 @@ func (s *SchedulerEngine) noteRunStarted(ctx context.Context, job *Job) context.
 // that judged the run abandoned) concluded the run, the job was deleted, or
 // the write failed, and in every case nothing was written. A failed write
 // leaves the job Running, so the run stays open for recovery.
-func (s *SchedulerEngine) concludeOwnRun(ctx context.Context, job *Job) (guarded, won bool) {
+func (s *SchedulerEngine) concludeOwnRun(ctx context.Context, job *Job, apply runOutcome) (guarded, won bool) {
 	if s.concluder == nil {
 		return false, false
 	}
@@ -135,7 +142,7 @@ func (s *SchedulerEngine) concludeOwnRun(ctx context.Context, job *Job) (guarded
 		s.startedRuns.CompareAndDelete(runKeyOf(job), run)
 	}
 	var written *Job
-	transition := outcomeTransition(run, job, s.executionOwner())
+	transition := outcomeTransition(run, apply, s.executionOwner())
 	won, err := s.concluder.ConcludeRun(ctx, &run, func(held *Job) (*Job, bool) {
 		next, ok := transition(held)
 		written = next

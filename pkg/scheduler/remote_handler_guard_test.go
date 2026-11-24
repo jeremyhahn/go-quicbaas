@@ -133,7 +133,7 @@ func TestRunKey_EqualJobIDsAcrossTenantsDoNotCollide(t *testing.T) {
 	if _, ok := node.startedRuns.Load(runKeyOf(a)); !ok {
 		t.Fatal("tenant-b's run overwrote tenant-a's started run")
 	}
-	if _, won := node.concludeOwnRun(ctxA, a); !won {
+	if _, won := node.concludeOwnRun(ctxA, a, outcomeOf(a)); !won {
 		t.Fatal("tenant-a's run did not conclude")
 	}
 	if _, ok := node.startedRuns.Load(runKeyOf(b)); !ok {
@@ -155,7 +155,7 @@ func TestConcludeOwnRun_ASupersededRunLeavesTheNewerRun(t *testing.T) {
 	r1Outcome := copyJob(r1)
 	r1Outcome.Status, r1Outcome.RunCount = JobStatusPending, 1
 	if won, err := storage.ConcludeRun(context.Background(), &r1Run,
-		outcomeTransition(r1Run, r1Outcome, "remote@node-2/1")); err != nil || !won {
+		outcomeTransition(r1Run, outcomeOf(r1Outcome), "remote@node-2/1")); err != nil || !won {
 		t.Fatalf("remote conclusion of R1: won=%v err=%v", won, err)
 	}
 
@@ -168,7 +168,7 @@ func TestConcludeOwnRun_ASupersededRunLeavesTheNewerRun(t *testing.T) {
 	}
 	ctx2 := node.noteRunStarted(context.Background(), r2)
 	r2.Status, r2.RunCount = JobStatusPending, 1
-	if !node.persistJobOutcome(ctx2, r2) {
+	if !node.persistJobOutcome(ctx2, r2, outcomeOf(r2)) {
 		t.Fatal("R2's outcome lost the guard with no contender")
 	}
 
@@ -320,5 +320,85 @@ func TestRemoteHandler_TheFiringNodeReportsALostHistoryRecord(t *testing.T) {
 	waitDone(t, done)
 	if stored := storedJob(t, storage.mockJobStorage, job.ID); stored.ConcludedBy != "execution@node-1" {
 		t.Fatalf("the outcome was not written: ConcludedBy = %q", stored.ConcludedBy)
+	}
+}
+
+// TestRemoteHandler_AnUpdateDuringTheCompletionIsKept: a completion reads the
+// job, releases its stripe lock and then concludes the run. An update that
+// commits in between is kept: the outcome is applied to the updated record,
+// and the next firing follows the updated schedule.
+func TestRemoteHandler_AnUpdateDuringTheCompletionIsKept(t *testing.T) {
+	storage := newConcludingStorage()
+	node := clusteredNode(t, storage, "node-2")
+	job := runningRemoteJob(t, storage, time.Minute, time.Now())
+	ref := runRefOf(storedJob(t, storage.mockJobStorage, job.ID))
+	storage.beforeConclude = func() {
+		updated := storedJob(t, storage.mockJobStorage, job.ID)
+		updated.Name = "renew-cert-v2"
+		updated.Payload = []byte(`{"node":"node-b"}`)
+		updated.Schedule = "30 * * * *"
+		if err := storage.mockJobStorage.UpdateJob(context.Background(), updated); err != nil {
+			t.Errorf("the interleaved update: %v", err)
+		}
+	}
+	if err := node.CompleteRemoteRun(context.Background(), ref, &JobResult{Success: true, Message: "renewed"}, nil); err != nil {
+		t.Fatalf("CompleteRemoteRun: %v", err)
+	}
+
+	stored := storedJob(t, storage.mockJobStorage, job.ID)
+	if stored.Name != "renew-cert-v2" || string(stored.Payload) != `{"node":"node-b"}` || stored.Schedule != "30 * * * *" {
+		t.Fatalf("the completion undid the update: name %q, payload %s, schedule %q", stored.Name, stored.Payload, stored.Schedule)
+	}
+	if stored.Status != JobStatusPending || stored.RunCount != 1 || stored.ConcludedRunAt.IsZero() {
+		t.Fatalf("the run's outcome was not applied: %s, %d runs, concluded at %s", stored.Status, stored.RunCount, stored.ConcludedRunAt)
+	}
+	if stored.NextRun.Minute() != 30 {
+		t.Fatalf("next firing %s does not follow the updated schedule", stored.NextRun)
+	}
+}
+
+// TestPersistJobOutcome_KeepsHistoryAnotherRunLeftPending: on a single node,
+// run A's history write fails and its record is kept pending on the job,
+// while run B still holds the snapshot from before. B's outcome must not
+// write that snapshot's empty pending history over A's record.
+func TestPersistJobOutcome_KeepsHistoryAnotherRunLeftPending(t *testing.T) {
+	storage := newMockJobStorage()
+	engine := New(DefaultConfig(), storage)
+	started := time.Now()
+	job := remoteJob(time.Minute)
+	job.Status, job.RunStartedAt = JobStatusRunning, started
+	seedRunningJob(t, storage, job)
+	runA := copyJob(storedJob(t, storage, job.ID))
+	runB := copyJob(storedJob(t, storage, job.ID))
+
+	storage.errMu.Lock()
+	storage.saveExecutionErr = errors.New("raft: no quorum")
+	storage.errMu.Unlock()
+	// A is a remote run: its completion waits on the result, so a failed
+	// history write is kept pending on the job and A is acknowledged.
+	ctxA := withOwnRun(context.Background(), ownRun{result: &ownRunResult{}})
+	engine.handleJobSuccess(ctxA, runA, &JobExecution{JobID: job.ID, StartedAt: started},
+		&JobResult{Success: true, Message: "renewed"})
+	assertHistoryKeptPending(t, storage, job.ID)
+
+	storage.errMu.Lock()
+	storage.saveExecutionErr = nil
+	storage.errMu.Unlock()
+	engine.handleJobSuccess(context.Background(), runB, &JobExecution{JobID: job.ID, StartedAt: started.Add(time.Second)},
+		&JobResult{Success: true, Message: "second"})
+
+	stored := storedJob(t, storage, job.ID)
+	kept := false
+	for _, rec := range stored.PendingHistory {
+		kept = kept || rec.Output == "renewed"
+	}
+	for _, rec := range history(t, storage, job.ID) {
+		kept = kept || rec.Output == "renewed"
+	}
+	if !kept {
+		t.Fatalf("run A's acknowledged history was lost: %d pending, record %+v", len(stored.PendingHistory), stored)
+	}
+	if stored.RunCount != 2 {
+		t.Fatalf("job ran %d times, want 2", stored.RunCount)
 	}
 }

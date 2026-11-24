@@ -149,6 +149,15 @@ func clusteredNode(t *testing.T, storage *concludingStorage, nodeID string) *Sch
 	return engine
 }
 
+// outcomeOf is the outcome a test spells as a whole record: applied to the
+// record current at the write, it sets want's outcome fields.
+func outcomeOf(want *Job) runOutcome {
+	return func(j *Job) {
+		j.Status, j.LastRun, j.RunCount, j.FailCount = want.Status, want.LastRun, want.RunCount, want.FailCount
+		j.LastError, j.NextRun, j.UpdatedAt = want.LastError, want.NextRun, want.UpdatedAt
+	}
+}
+
 // TestRecoverAbandonedRun_ClusteredEngineRecoversThroughTheGuard is the
 // lifted gate: a clustered engine whose store provides the guarded
 // transition concludes an abandoned run, and does so through the guard.
@@ -250,7 +259,7 @@ func TestClusteredOutcome_LosesToARecoveryThatConcludedTheRun(t *testing.T) {
 
 	late := copyJob(job)
 	late.Status = JobStatusCompleted
-	executor.persistJobOutcome(runCtx, late)
+	executor.persistJobOutcome(runCtx, late, outcomeOf(late))
 
 	stored := storedJob(t, storage.mockJobStorage, job.ID)
 	if stored.Status != recovered.Status || stored.FailCount != recovered.FailCount {
@@ -299,7 +308,7 @@ func TestRecoverAbandonedRun_RefusedWhenTheExecutorConcludedFirst(t *testing.T) 
 	runCtx := executor.noteRunStarted(context.Background(), job)
 	done := copyJob(job)
 	done.Status = JobStatusPending
-	if guarded, won := executor.concludeOwnRun(runCtx, done); !guarded || !won {
+	if guarded, won := executor.concludeOwnRun(runCtx, done, outcomeOf(done)); !guarded || !won {
 		t.Fatalf("the executor's own conclusion: guarded=%v won=%v, want both", guarded, won)
 	}
 
@@ -414,7 +423,7 @@ func TestClusteredOutcome_DoesNotRecreateADeletedJob(t *testing.T) {
 	}
 	done := copyJob(job)
 	done.Status = JobStatusPending
-	if executor.persistJobOutcome(runCtx, done) {
+	if executor.persistJobOutcome(runCtx, done, outcomeOf(done)) {
 		t.Fatal("the outcome of a deleted job won")
 	}
 	if got, _ := storage.GetJob(context.Background(), job.ID, ""); got != nil {
@@ -436,7 +445,7 @@ func TestClusteredOutcome_AFailedWriteLeavesTheRunRecoverable(t *testing.T) {
 	storage.updateJobErr = errors.New("job store unreachable")
 	done := copyJob(job)
 	done.Status = JobStatusPending
-	if executor.persistJobOutcome(runCtx, done) {
+	if executor.persistJobOutcome(runCtx, done, outcomeOf(done)) {
 		t.Fatal("an outcome whose write failed won")
 	}
 	storage.updateJobErr = nil
@@ -469,7 +478,7 @@ func TestClusteredOutcome_AnEarlyTriggersRetryConcludes(t *testing.T) {
 	failed.Status = JobStatusPending
 	failed.FailCount = 1
 	failed.NextRun = now.Add(time.Minute)
-	if !executor.persistJobOutcome(runCtx, failed) {
+	if !executor.persistJobOutcome(runCtx, failed, outcomeOf(failed)) {
 		t.Fatal("the triggered run's outcome lost")
 	}
 
@@ -483,7 +492,7 @@ func TestClusteredOutcome_AnEarlyTriggersRetryConcludes(t *testing.T) {
 	done := copyJob(retry)
 	done.Status = JobStatusPending
 	done.FailCount = 0
-	if !executor.persistJobOutcome(retryCtx, done) {
+	if !executor.persistJobOutcome(retryCtx, done, outcomeOf(done)) {
 		t.Fatal("the retry's outcome lost to the earlier run's later firing")
 	}
 	if stored := storedJob(t, storage.mockJobStorage, job.ID); stored.Status != JobStatusPending || stored.FailCount != 0 {
