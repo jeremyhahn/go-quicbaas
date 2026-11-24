@@ -51,7 +51,7 @@ func TestStartKMSLifecycle_EmptyBackendDefaults(t *testing.T) {
 }
 
 func TestStartCatalogManagerLifecycle_WithBackends(t *testing.T) {
-	t.Parallel()
+	useMemoryCatalogKV(t)
 
 	cfg := createTestConfig(t)
 	t.Cleanup(func() { cleanupTestData(t, cfg) })
@@ -80,7 +80,7 @@ func TestStartCatalogManagerLifecycle_WithBackends(t *testing.T) {
 }
 
 func TestStopCatalogManagerLifecycle_WithManager(t *testing.T) {
-	t.Parallel()
+	useMemoryCatalogKV(t)
 
 	cfg := createTestConfig(t)
 	t.Cleanup(func() { cleanupTestData(t, cfg) })
@@ -107,7 +107,7 @@ func TestStopCatalogManagerLifecycle_WithManager(t *testing.T) {
 }
 
 func TestStopBackendManagerLifecycle_WithManager(t *testing.T) {
-	t.Parallel()
+	useMemoryCatalogKV(t)
 
 	cfg := createTestConfig(t)
 	t.Cleanup(func() { cleanupTestData(t, cfg) })
@@ -135,7 +135,7 @@ func TestStopBackendManagerLifecycle_WithManager(t *testing.T) {
 }
 
 func TestStopWorkerManagerLifecycle_WithManager(t *testing.T) {
-	t.Parallel()
+	useMemoryCatalogKV(t)
 
 	cfg := createTestConfig(t)
 	t.Cleanup(func() { cleanupTestData(t, cfg) })

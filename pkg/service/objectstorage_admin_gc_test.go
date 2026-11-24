@@ -19,7 +19,6 @@ import (
 	"bytes"
 	"context"
 	stderrors "errors"
-	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -266,16 +265,13 @@ func TestRunGCOperation_ReplicaLocationIsReferenced(t *testing.T) {
 	assert.True(t, gcHas(stores["backend-2"], "ref-replica"))
 }
 
-// gcRealCatalogRun stores one entry in a real Pebble catalog with its primary
+// gcRealCatalogRun stores one entry in a real catalog store with its primary
 // copy on backend-1 and, through addCopy, a second copy "ref-copy" on
 // backend-2, then runs a deleting collection on backend-2 and returns the
 // operation and the backend-2 store.
 func gcRealCatalogRun(t *testing.T, opID string, addCopy func(entry *catalog.CatalogEntry)) (*GCOperation, *objstoreMockStorage) {
 	t.Helper()
-	storage, err := catalog.NewPebbleStorage(&catalog.PebbleStorageConfig{
-		Path:       filepath.Join(t.TempDir(), "catalog"),
-		SyncWrites: false,
-	})
+	storage, err := catalog.NewKVStorage(catalog.NewMemoryKV())
 	require.NoError(t, err)
 	realCatalog, err := catalog.NewCatalogManager(&catalog.ManagerConfig{Storage: storage})
 	require.NoError(t, err)

@@ -40,6 +40,7 @@ import (
 // must still succeed (worker registration is best-effort).
 func TestServer_StartCatalogManager_TT_WorkerRegistrationFailuresTolerated(t *testing.T) {
 	saveAndRestoreSeams(t)
+	useMemoryCatalogKV(t)
 	srv := withTempServer(t)
 	srv.config.ObjectStorage.Enabled = true
 

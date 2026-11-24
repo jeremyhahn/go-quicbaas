@@ -80,7 +80,8 @@ var (
 	grpcForceStop    = func(s *ggrpc.Server) { s.Stop() }
 	// Seams for backup, secrets, catalog, and worker constructors.
 	newSecretsMgr          = secrets.NewManager
-	newCatalogStore        = catalog.NewPebbleStorage
+	newCatalogKV           = defaultCatalogKV
+	newCatalogStore        = catalog.NewKVStorage
 	newCatalogMgr          = catalog.NewCatalogManager
 	newBackendMgr          = catalog.NewBackendManager
 	newReplicationWorkerFn = catalog.NewReplicationWorker
@@ -1342,13 +1343,17 @@ func (s *Server) startCatalogManager() error {
 	// Create logger adapter
 	logAdapter := logger.NewAdapter(s.logger)
 
-	// Create catalog storage with a dedicated path for object metadata
-	catalogPath := filepath.Join(s.config.Storage.DataDir, "catalog")
-	catalogStorage, err := newCatalogStore(&catalog.PebbleStorageConfig{
-		Path:       catalogPath,
-		SyncWrites: true,
-	})
+	// The catalog of object metadata is stored in go-qrdb, on the node's own
+	// client under the system catalog namespace. Shutdown stops the catalog
+	// manager before it closes the qrdb node, so the catalog never writes to a
+	// closed node.
+	catalogKV, err := newCatalogKV(s)
 	if err != nil {
+		return api.NewOperationFailedError("create catalog storage", err)
+	}
+	catalogStorage, err := newCatalogStore(catalogKV)
+	if err != nil {
+		_ = catalogKV.Close()
 		return api.NewOperationFailedError("create catalog storage", err)
 	}
 
@@ -1492,6 +1497,23 @@ func (s *Server) startCatalogManager() error {
 	}).Info("Object storage catalog, backend manager, and background workers initialized")
 
 	return nil
+}
+
+// defaultCatalogKV returns the KV the object catalog is stored in: go-qrdb,
+// through the qrdb node's own client, under the system catalog namespace.
+// The node exists before startCatalogManager runs in both standalone and
+// clustered modes; a server without a live node has no catalog and fails
+// closed with ErrCatalogNeedsQRDB.
+func defaultCatalogKV(s *Server) (catalog.KV, error) {
+	node := s.getQRDBNode()
+	if node == nil {
+		return nil, ErrCatalogNeedsQRDB
+	}
+	client := node.Client()
+	if client == nil {
+		return nil, ErrCatalogNeedsQRDB
+	}
+	return catalog.NewQRDBKV(client.KV(), client.Transaction(), catalog.DefaultQRDBNamespace)
 }
 
 // stopCatalogManager shuts down the catalog manager.

@@ -1108,7 +1108,7 @@ func TestP15_Initialize_StartCatalogManagerError(t *testing.T) {
 	seamMu.Lock()
 	initIAMComponentsFn = func(_ *Server) (service.IAMComponents, error) { return nil, nil }
 	initSealManagerFn = func(_ *logger.Logger) error { return nil }
-	newCatalogStore = func(_ *catalog.PebbleStorageConfig) (catalog.PebbleStorage, error) {
+	newCatalogStore = func(_ catalog.KV) (catalog.Storage, error) {
 		return nil, errors.New("injected catalog storage error")
 	}
 	seamMu.Unlock()

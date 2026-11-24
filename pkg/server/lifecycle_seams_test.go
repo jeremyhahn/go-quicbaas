@@ -833,6 +833,7 @@ func TestFT2_EnsureTLSCertificates_WithCustomHostname(t *testing.T) {
 
 func TestFT2_StartCatalogManager_WorkerStartError(t *testing.T) {
 	saveAndRestoreSeams(t)
+	useMemoryCatalogKV(t)
 
 	srv := createFTServerWithService(t)
 	srv.config.ObjectStorage.Enabled = true

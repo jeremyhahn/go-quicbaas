@@ -13,8 +13,8 @@
 
 //go:build integration
 
-// Package object composes the real object-storage stack (a PebbleDB catalog
-// on disk, the backend manager with several backends, and the per-tenant
+// Package object composes the real object-storage stack (a go-qrdb
+// catalog, the backend manager with several backends, and the per-tenant
 // config resolver) under ObjectStorageService, and checks that tenants land
 // on their configured backends and the catalog records where each object
 // lives. Single-backend round trips run in pkg/service.
@@ -23,7 +23,9 @@ package object
 import (
 	"context"
 	"crypto/rand"
-	"path/filepath"
+	"os"
+	"strconv"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -34,6 +36,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
+	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/qrdbnode"
 )
 
 // objectStack is ObjectStorageService over real components, with the catalog
@@ -43,8 +46,19 @@ type objectStack struct {
 	objects service.ObjectStorageService
 }
 
-// newObjectStack builds the service over a PebbleDB catalog in a temp dir and
-// four memory backends: "primary" (the default), "replica-west", "archive",
+// stackNamespaces gives each stack its own catalog namespace on the shared
+// node.
+var stackNamespaces atomic.Uint64
+
+// TestMain closes the shared qrdb node once every test has run.
+func TestMain(m *testing.M) {
+	code := m.Run()
+	qrdbnode.CloseShared()
+	os.Exit(code)
+}
+
+// newObjectStack builds the service over a go-qrdb catalog, in a namespace of
+// its own on the shared node, and four memory backends: "primary" (the default), "replica-west", "archive",
 // and "tenant-premium". Tenant "tenant-premium" is configured onto the
 // "tenant-premium" backend, tenant "tenant-basic" onto "primary".
 func newObjectStack(t *testing.T) *objectStack {
@@ -54,12 +68,11 @@ func newObjectStack(t *testing.T) *objectStack {
 	require.NoError(t, err)
 	logAdapter := logger.NewAdapter(log)
 
-	catalogStorage, err := catalog.NewPebbleStorage(&catalog.PebbleStorageConfig{
-		Path:        filepath.Join(t.TempDir(), "catalog"),
-		CacheSize:   32 * 1024 * 1024,
-		SyncWrites:  true,
-		Compression: true,
-	})
+	n := qrdbnode.Shared(t)
+	ns := "__sys:catalog-it/" + strconv.FormatUint(stackNamespaces.Add(1), 10) + "/"
+	catalogKV, err := catalog.NewQRDBKV(n.KV, n.Transaction, ns)
+	require.NoError(t, err)
+	catalogStorage, err := catalog.NewKVStorage(catalogKV)
 	require.NoError(t, err)
 
 	catalogManager, err := catalog.NewCatalogManager(&catalog.ManagerConfig{Storage: catalogStorage, Logger: logAdapter})

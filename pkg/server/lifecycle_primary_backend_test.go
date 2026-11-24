@@ -39,7 +39,7 @@ func stopCatalogComponents(t *testing.T, srv *Server) {
 }
 
 func TestStartCatalogManager_PrimaryBackendResolved(t *testing.T) {
-	t.Parallel()
+	useMemoryCatalogKV(t)
 
 	tests := []struct {
 		name    string
