@@ -65,11 +65,17 @@ type ListServicesResponse struct {
 // ServicePlaneRuntime is what an application supplies for the service plane
 // to act: the launcher that runs a verified manifest, one grant per grant
 // kind, and the verifier that holds the manifest signing keys. The store
-// comes from the node (go-qrdb through cas.Writer).
+// comes from the node (go-qrdb through cas.Writer). With no Grants, the node
+// builds the five itself (grants.All) from its CA, secrets manager, platform
+// registry and IAM identity store.
 type ServicePlaneRuntime struct {
 	Launcher serviceplane.Launcher
 	Grants   []serviceplane.Grant
 	Verifier serviceplane.Verifier
+	// Domain is the zone registered names and certificates live under
+	// (<name>.<tenant>.<Domain>) when the node builds the grants. Empty
+	// means the operator SPIFFE trust domain.
+	Domain string
 }
 
 // ServicePlaneResolver answers the node's plane, built on first use, or why

@@ -24,7 +24,7 @@ var errServicePlaneStore = errors.New("service plane: the platform shard's qrdb 
 func (s *Server) servicePlaneResolver(rt service.ServicePlaneRuntime) service.ServicePlaneResolver {
 	var mu sync.Mutex
 	var plane *serviceplane.Plane
-	return func(context.Context) (*serviceplane.Plane, error) {
+	return func(ctx context.Context) (*serviceplane.Plane, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		if plane != nil {
@@ -49,8 +49,12 @@ func (s *Server) servicePlaneResolver(rt service.ServicePlaneRuntime) service.Se
 		if err != nil {
 			return nil, err
 		}
+		gs, err := s.servicePlaneGrants(ctx, rt, shard)
+		if err != nil {
+			return nil, err
+		}
 		built, err := serviceplane.NewPlane(serviceplane.Config{
-			Store: store, Verifier: rt.Verifier, Launcher: rt.Launcher, Grants: rt.Grants,
+			Store: store, Verifier: rt.Verifier, Launcher: rt.Launcher, Grants: gs,
 		})
 		if err != nil {
 			return nil, err
@@ -98,7 +102,7 @@ func (s *Server) runServicePlaneRecovery(ctx context.Context, resolve service.Se
 func (s *Server) recoverServicePlane(ctx context.Context, resolve service.ServicePlaneResolver) {
 	plane, err := resolve(ctx)
 	if err != nil {
-		if !errors.Is(err, errServicePlaneStore) {
+		if !errors.Is(err, errServicePlaneStore) && !errors.Is(err, errServicePlaneGrants) {
 			s.logger.WithError(err).Warn("service plane: recovery could not build the plane")
 		}
 		return

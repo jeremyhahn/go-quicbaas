@@ -203,9 +203,10 @@ func WithContainerAttestor(attestor service.ContainerAttestor) ServerOption {
 }
 
 // WithServicePlane supplies the service plane's launcher, its grants (one per
-// grant kind) and the keyring that verifies service manifests. The node keeps
-// the services in the platform shard of go-qrdb, every write arbitrated by
-// cas.Writer. Until this is set, every Services() verb answers
+// grant kind, or none for the node to build the five from its own CA, secrets,
+// registry and IAM) and the keyring that verifies service manifests. The node
+// keeps the services in the platform shard of go-qrdb, every write arbitrated
+// by cas.Writer. Until this is set, every Services() verb answers
 // service.ErrServicePlaneNotConfigured on every transport.
 func WithServicePlane(rt service.ServicePlaneRuntime) ServerOption {
 	return func(o *serverOptions) { o.servicePlane = &rt }
