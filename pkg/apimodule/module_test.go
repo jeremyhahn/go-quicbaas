@@ -18,6 +18,8 @@ import (
 	"crypto"
 	"errors"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -54,7 +56,7 @@ type stubKMSManager struct{}
 func (stubKMSManager) GenerateKey(context.Context, *xkmstypes.KeyAttributes) (interface{}, error) {
 	return nil, nil
 }
-func (stubKMSManager) ImportKey(context.Context, string, []byte, string) (interface{}, error) {
+func (stubKMSManager) ImportKey(context.Context, string, []byte, string, bool) (interface{}, error) {
 	return nil, nil
 }
 func (stubKMSManager) GetKey(context.Context, string) (interface{}, error)  { return nil, nil }
@@ -192,13 +194,13 @@ func TestModule_RegisterGRPC_RegistersFullGRPCSurface(t *testing.T) {
 		&pb.SecretsManagement_ServiceDesc,
 		&pb.KeyManagement_ServiceDesc,
 		&pb.DEKManagement_ServiceDesc,
-		&pb.AttestationService_ServiceDesc,
 		&pb.VectorDB_ServiceDesc,
 		&pb.VectorAdmin_ServiceDesc,
 		&pb.PromptService_ServiceDesc,
 		&pb.AgentCatalogService_ServiceDesc,
 		&pb.SDLCService_ServiceDesc,
 		&pb.RegistryService_ServiceDesc,
+		&pb.AttestationService_ServiceDesc,
 		&iampb.FederationService_ServiceDesc,
 		&iampb.SessionService_ServiceDesc,
 		&iampb.IAMService_ServiceDesc,
@@ -288,6 +290,21 @@ func TestModule_RegisterGRPC_LegacyXKMSWrappersAreUnixOnly(t *testing.T) {
 	}
 }
 
+// TestModule_RegisterGRPC_ServesAttestationVerifier proves the node's network
+// gRPC port serves quicbaas.attestation.v1: the pinned go-xkms ServiceModule
+// has no endorsement or reference-values RPC, so without this registration
+// the SDK's attestation client gets Unimplemented.
+func TestModule_RegisterGRPC_ServesAttestationVerifier(t *testing.T) {
+	m, err := NewModule(func() service.QuicBaaS { return nil }, testLogger(t))
+	require.NoError(t, err)
+
+	server := grpc.NewServer()
+	m.RegisterGRPC(server)
+	info, ok := server.GetServiceInfo()[pb.AttestationService_ServiceDesc.ServiceName]
+	require.True(t, ok, "AttestationService must be registered on the quicbaas module")
+	assert.Len(t, info.Methods, len(pb.AttestationService_ServiceDesc.Methods))
+}
+
 // startBufconnModule registers the module on a bufconn-backed gRPC server and
 // returns the client connection.
 func startBufconnModule(t *testing.T, m *Module, opts ...grpc.ServerOption) *grpc.ClientConn {
@@ -306,6 +323,35 @@ func startBufconnModule(t *testing.T, m *Module, opts ...grpc.ServerOption) *grp
 		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
 			return listener.DialContext(ctx)
 		}))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+
+	return conn
+}
+
+// startUnixSocketModule serves the module's gRPC registrations on a real
+// Unix socket and dials it, so the server sees a "unix" peer: the legacy
+// xkms wrappers (unixOnly in grpcRegistrations) answer only such a peer. The
+// socket lives under a short temp dir to stay inside the sun_path limit.
+func startUnixSocketModule(t *testing.T, m *Module, opts ...grpc.ServerOption) *grpc.ClientConn {
+	t.Helper()
+
+	dir, err := os.MkdirTemp("", "qbm")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	socket := filepath.Join(dir, "g.sock")
+
+	listener, err := net.Listen("unix", socket)
+	require.NoError(t, err)
+	server := grpc.NewServer(opts...)
+	m.RegisterGRPC(server)
+	go func() {
+		_ = server.Serve(listener)
+	}()
+	t.Cleanup(server.Stop)
+
+	conn, err := grpc.NewClient("unix://"+socket,
+		grpc.WithTransportCredentials(insecure.NewCredentials()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = conn.Close() })
 
@@ -690,6 +736,59 @@ func TestModule_Secrets_LateBinding(t *testing.T) {
 	})
 	_, err = client.GetSecret(ctx, &pb.GetSecretRequest{SecretId: "app-db-password"})
 	require.NoError(t, err, "the late-bound SecretsService must serve without re-registration")
+}
+
+// TestModule_Crypto_LateBinding proves the node serves
+// quicbaas.kms.v1.Crypto, nil-gated on the facade's Crypto() exactly as
+// pkg/server/lifecycle.go gates it on the legacy transport: Unavailable
+// before composition and while no crypto service is composed, then served
+// by the composed CryptoService without re-registration. Before the module
+// registered Crypto, every call answered Unimplemented (the CLI's kms
+// encrypt/decrypt).
+func TestModule_Crypto_LateBinding(t *testing.T) {
+	var svc atomic.Pointer[mocks.MockQuicBaaS]
+	m, err := NewModule(func() service.QuicBaaS {
+		if composed := svc.Load(); composed != nil {
+			return composed
+		}
+		return nil
+	}, testLogger(t))
+	require.NoError(t, err)
+
+	client := pb.NewCryptoClient(startUnixSocketModule(t, m))
+	ctx := context.Background()
+	req := &pb.CryptoEncryptRequest{KeyId: "app-key", Plaintext: []byte("hello")}
+
+	_, err = client.Encrypt(ctx, req)
+	requireUnavailable(t, err, "the node's gRPC service")
+
+	var gotKeyID string
+	svc.Store(&mocks.MockQuicBaaS{
+		CryptoServiceFunc: func() service.CryptoService {
+			return &mocks.MockCryptoService{
+				EncryptFunc: func(_ context.Context, r *service.EncryptRequest) (*service.EncryptResponse, error) {
+					gotKeyID = r.KeyID
+					return &service.EncryptResponse{KeyID: r.KeyID, KeyVersion: 1, Ciphertext: []byte("sealed")}, nil
+				},
+			}
+		},
+	})
+	resp, err := client.Encrypt(ctx, req)
+	require.NoError(t, err, "the late-bound CryptoService must serve without re-registration")
+	assert.Equal(t, "app-key", gotKeyID)
+	assert.Equal(t, []byte("sealed"), resp.GetCiphertext())
+}
+
+// TestModule_Crypto_DisabledAnswersUnavailable proves a composed facade
+// without a crypto service leaves Crypto answering Unavailable, never
+// Unimplemented and never a nil dereference.
+func TestModule_Crypto_DisabledAnswersUnavailable(t *testing.T) {
+	m, err := NewModule(func() service.QuicBaaS { return &mocks.MockQuicBaaS{} }, testLogger(t))
+	require.NoError(t, err)
+
+	client := pb.NewCryptoClient(startUnixSocketModule(t, m))
+	_, err = client.Encrypt(context.Background(), &pb.CryptoEncryptRequest{KeyId: "app-key", Plaintext: []byte("x")})
+	requireUnavailable(t, err, "the node's gRPC service")
 }
 
 // TestModule_OllamaService_LateBinding proves OllamaService answers

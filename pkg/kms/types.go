@@ -113,8 +113,13 @@ type RotationPolicy struct {
 // KeyMetadata contains non-sensitive metadata about a key as stored in the backend.
 // This is the internal representation used by Backend implementations.
 type KeyMetadata struct {
-	// KeyID is the unique identifier
+	// KeyID is the key's name as its caller gave it. A tenant's key and a
+	// platform key may share a name; TenantID tells them apart.
 	KeyID string `json:"key_id"`
+
+	// TenantID is the tenant that owns the key, or "" for a platform key.
+	// It is go-xkms's KeyAttributes.TenantID of the key.
+	TenantID string `json:"tenant_id,omitempty"`
 
 	// Name is the human-readable key name
 	Name string `json:"name,omitempty"`

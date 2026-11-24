@@ -304,7 +304,7 @@ func TestKMSService_ImportKey_Success(t *testing.T) {
 	keyID := "imported-key-1"
 	material := make([]byte, 32) // 256-bit key
 
-	result, err := manager.ImportKey(ctx, keyID, material, AlgAES256GCM)
+	result, err := manager.ImportKey(ctx, keyID, material, AlgAES256GCM, false)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
@@ -332,7 +332,7 @@ func TestKMSService_ImportKey_EmptyMaterial(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := manager.ImportKey(ctx, keyID, tt.material, AlgAES256GCM)
+			result, err := manager.ImportKey(ctx, keyID, tt.material, AlgAES256GCM, false)
 			require.Error(t, err)
 			assert.Nil(t, result)
 			assert.Contains(t, err.Error(), "key material cannot be empty")
@@ -349,7 +349,7 @@ func TestKMSService_ImportKey_EmptyKeyID(t *testing.T) {
 	ctx := context.Background()
 	material := make([]byte, 32)
 
-	result, err := manager.ImportKey(ctx, "", material, AlgAES256GCM)
+	result, err := manager.ImportKey(ctx, "", material, AlgAES256GCM, false)
 	require.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "keyID cannot be empty")
@@ -365,7 +365,7 @@ func TestKMSService_ImportKey_InvalidAlgorithm(t *testing.T) {
 	keyID := "imported-key-invalid-alg"
 	material := make([]byte, 32)
 
-	result, err := manager.ImportKey(ctx, keyID, material, "INVALID-ALG")
+	result, err := manager.ImportKey(ctx, keyID, material, "INVALID-ALG", false)
 	require.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "unsupported algorithm")
@@ -382,7 +382,7 @@ func TestKMSService_ImportKey_ContextCancelled(t *testing.T) {
 
 	keyID := "imported-key-cancelled"
 	material := make([]byte, 32)
-	result, err := manager.ImportKey(ctx, keyID, material, AlgAES256GCM)
+	result, err := manager.ImportKey(ctx, keyID, material, AlgAES256GCM, false)
 	require.Error(t, err)
 	assert.Nil(t, result)
 }
@@ -398,7 +398,7 @@ func TestKMSService_ImportKey_BackendError(t *testing.T) {
 	keyID := "imported-key-backend-error"
 	material := make([]byte, 32)
 
-	result, err := manager.ImportKey(ctx, keyID, material, AlgAES256GCM)
+	result, err := manager.ImportKey(ctx, keyID, material, AlgAES256GCM, false)
 	require.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "backend import failure")
@@ -1764,11 +1764,11 @@ func TestKMSService_ValidateKeyForOperation(t *testing.T) {
 	require.NoError(t, err)
 
 	// Test valid operation
-	err = manager.validateKeyForOperation(keyID, OpEncrypt)
+	err = manager.validateKeyForOperation("", keyID, OpEncrypt)
 	assert.NoError(t, err)
 
 	// Test invalid operation for this algorithm
-	err = manager.validateKeyForOperation(keyID, OpSign)
+	err = manager.validateKeyForOperation("", keyID, OpSign)
 	assert.Error(t, err)
 }
 
@@ -1790,7 +1790,7 @@ func TestKMSService_ValidateKeyForOperation_DeletedKey(t *testing.T) {
 	require.NoError(t, err)
 
 	// Validation should fail
-	err = manager.validateKeyForOperation(keyID, OpEncrypt)
+	err = manager.validateKeyForOperation("", keyID, OpEncrypt)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "deleted")
 }
@@ -1813,7 +1813,7 @@ func TestKMSService_ValidateKeyForOperation_PendingDeletion(t *testing.T) {
 	require.NoError(t, err)
 
 	// Validation should fail
-	err = manager.validateKeyForOperation(keyID, OpEncrypt)
+	err = manager.validateKeyForOperation("", keyID, OpEncrypt)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "pending deletion")
 }
@@ -1827,7 +1827,7 @@ func TestKMSService_ValidateKeyForOperation_NotInCache(t *testing.T) {
 	keyID := "non-cached-key"
 
 	// Validation should pass (key not in cache means backend will validate)
-	err = manager.validateKeyForOperation(keyID, OpEncrypt)
+	err = manager.validateKeyForOperation("", keyID, OpEncrypt)
 	assert.NoError(t, err)
 }
 
@@ -2715,7 +2715,7 @@ func TestKMSService_ImportKey_DefaultAlgorithm(t *testing.T) {
 	material := make([]byte, 32)
 
 	// Empty algorithm should use default
-	result, err := manager.ImportKey(ctx, keyID, material, "")
+	result, err := manager.ImportKey(ctx, keyID, material, "", false)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
@@ -2955,7 +2955,7 @@ func TestKMSService_ImportKey_MultiBackendMode(t *testing.T) {
 	keyID := "multi-backend-import-key"
 	material := make([]byte, 32)
 
-	result, err := manager.ImportKey(ctx, keyID, material, AlgAES256GCM)
+	result, err := manager.ImportKey(ctx, keyID, material, AlgAES256GCM, false)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
@@ -3381,7 +3381,7 @@ func TestKMSService_validateKeyForOperation_NotInStore(t *testing.T) {
 	require.NoError(t, err)
 
 	// Key not in store - should return nil (backend will validate)
-	err = manager.validateKeyForOperation("nonexistent-key", "encrypt")
+	err = manager.validateKeyForOperation("", "nonexistent-key", "encrypt")
 	require.NoError(t, err)
 }
 
@@ -3401,7 +3401,7 @@ func TestKMSService_validateKeyForOperation_Disabled(t *testing.T) {
 	require.NoError(t, err)
 
 	// Validate - should fail for disabled key
-	err = manager.validateKeyForOperation(keyID, "encrypt")
+	err = manager.validateKeyForOperation("", keyID, "encrypt")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "disabled")
 }
@@ -3420,7 +3420,7 @@ func TestKMSService_validateKeyForOperation_WrongOperation(t *testing.T) {
 	require.NoError(t, err)
 
 	// Validate sign operation - should fail for encryption key
-	err = manager.validateKeyForOperation(keyID, "sign")
+	err = manager.validateKeyForOperation("", keyID, "sign")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "does not support operation")
 }
@@ -4249,7 +4249,7 @@ func TestKMSService_ImportKey_SuccessExt(t *testing.T) {
 	keyID := "import-success"
 	material := make([]byte, 32)
 
-	result, err := manager.ImportKey(ctx, keyID, material, AlgAES256GCM)
+	result, err := manager.ImportKey(ctx, keyID, material, AlgAES256GCM, false)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 }
@@ -4857,7 +4857,7 @@ func TestKMSService_ImportKey_UsesDefaultAlgorithmWhenEmpty(t *testing.T) {
 	material := make([]byte, 32)
 
 	// Import with empty algorithm - should use default (AES-256-GCM)
-	result, err := manager.ImportKey(ctx, keyID, material, "")
+	result, err := manager.ImportKey(ctx, keyID, material, "", false)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
@@ -4883,7 +4883,7 @@ func TestKMSService_ImportKey_LogsKeyImport(t *testing.T) {
 
 	logger.reset()
 
-	result, err := manager.ImportKey(ctx, keyID, material, AlgAES256GCM)
+	result, err := manager.ImportKey(ctx, keyID, material, AlgAES256GCM, false)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
@@ -5821,7 +5821,7 @@ func TestKMSService_Coverage_ImportKey_StorePutFailLogsWarning(t *testing.T) {
 	logger.reset()
 
 	// This should work and log the import
-	result, err := manager.ImportKey(ctx, keyID, material, AlgAES256GCM)
+	result, err := manager.ImportKey(ctx, keyID, material, AlgAES256GCM, false)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
@@ -6308,7 +6308,7 @@ func TestKMSService_Coverage_MultiBackend_RoutingWithPrefix(t *testing.T) {
 	keyID := "vault/secret-key"
 	material := make([]byte, 32)
 
-	result, err := manager.ImportKey(ctx, keyID, material, AlgAES256GCM)
+	result, err := manager.ImportKey(ctx, keyID, material, AlgAES256GCM, false)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 }

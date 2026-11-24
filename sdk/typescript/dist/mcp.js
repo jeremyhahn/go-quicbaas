@@ -12,7 +12,7 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 import { McpSession } from './mcp_rpc.js';
 import { adoptPage, wholeSetPage, } from './page.js';
-import { QuicBaaSError, DeployNotSupportedError, McpError, TransportNotSupportedError } from './errors.js';
+import { QuicBaaSError, DeployNotSupportedError, McpError, TransportNotSupportedError, UnsupportedArgumentError, } from './errors.js';
 import { requireTLSForSOPIN } from './so_pin.js';
 // McpNotImplementedError is thrown by all methods until the MCP protocol
 // client is wired into this file.
@@ -705,6 +705,27 @@ function decodeBase64Text(tool, b64) {
     }
     return new TextDecoder().decode(Uint8Array.from(binary, (c) => c.charCodeAt(0)));
 }
+// mcpCeremonyOfficerOptions are the officer fields the MCP ceremony backend
+// (the pinned go-qrdb ceremony parser behind pkg/api/mcp/tools_ceremony.go)
+// does not accept yet; it reads only username and csr_pem.
+const mcpCeremonyOfficerOptions = [
+    { field: 'role', isSet: (o) => o.role !== undefined && o.role !== '' },
+    { field: 'encryption_kem', isSet: (o) => o.encryption_kem !== undefined && o.encryption_kem !== '' },
+    { field: 'encryption_key', isSet: (o) => o.encryption_key !== undefined && o.encryption_key !== '' },
+    { field: 'factors', isSet: (o) => o.factors !== undefined && o.factors.length > 0 },
+    { field: 'designated', isSet: (o) => o.designated !== undefined && o.designated !== '' },
+];
+// mcpCeremonyOfficer returns the officer as the MCP backend takes it, or
+// throws UnsupportedArgumentError when it sets an option the backend would
+// otherwise drop.
+function mcpCeremonyOfficer(officer) {
+    for (const option of mcpCeremonyOfficerOptions) {
+        if (option.isSet(officer)) {
+            throw new UnsupportedArgumentError('mcp', option.field, `ceremony officer "${officer.username}" sets ${option.field}; the MCP ceremony backend does not support it yet`);
+        }
+    }
+    return { username: officer.username, csr_pem: officer.csr_pem };
+}
 // McpCeremonyClient calls the qrdb_ceremony_* MCP tools, with the tool names
 // and argument keys of the Go SDK's MCP transport. claimShareBegin and
 // claimShareComplete call the qrdb_ceremony_begin_claim_share /
@@ -722,7 +743,7 @@ export class McpCeremonyClient {
         if (req.credential_seal_strategy)
             args.credential_seal_strategy = req.credential_seal_strategy;
         if (req.officers && req.officers.length > 0) {
-            args.officers = req.officers.map((o) => ({ username: o.username, csr_pem: o.csr_pem }));
+            args.officers = req.officers.map(mcpCeremonyOfficer);
         }
         if (req.hostname)
             args.hostname = req.hostname;

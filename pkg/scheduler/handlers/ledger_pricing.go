@@ -15,6 +15,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -74,6 +75,16 @@ func (h *LedgerPricingHandler) Name() string {
 
 // Handle runs one pricing sweep.
 func (h *LedgerPricingHandler) Handle(ctx context.Context, job *scheduler.Job) (*scheduler.JobResult, error) {
+	// The handler prices every tenant's ledger, so it runs only as the
+	// reserved system job; a tenant job naming it is refused before the
+	// pricer runs.
+	if job.ID != LedgerPricingJobID || job.OwnerType != scheduler.OwnerTypeSystem || scheduler.JobTenantID(job) != "" {
+		return nil, &scheduler.HandlerFailedError{
+			Handler: HandlerLedgerPricing,
+			JobID:   job.ID,
+			Cause:   errors.New("ledger pricing runs only as its reserved system job"),
+		}
+	}
 	result, err := h.pricer.PriceUnpricedEntries(ctx)
 	if err != nil {
 		return nil, &scheduler.HandlerFailedError{

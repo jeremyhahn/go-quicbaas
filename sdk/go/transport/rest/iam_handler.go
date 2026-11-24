@@ -1879,7 +1879,8 @@ func mapServerPolicyToSDK(resp interface{}) interface{} {
 		return resp
 	}
 
-	result := make(map[string]interface{})
+	// An absent spec.enabled means enabled; only an explicit false disables.
+	result := map[string]interface{}{"enabled": true}
 
 	// Extract metadata fields
 	if metadata, ok := policyMap["metadata"].(map[string]interface{}); ok {

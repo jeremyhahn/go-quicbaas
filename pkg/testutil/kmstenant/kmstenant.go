@@ -155,30 +155,49 @@ func NewManager() *Manager {
 	return &Manager{keys: make(map[string]*kms.KeyMetadata)}
 }
 
-func (m *Manager) store(keyID, algorithm string) *kms.KeyMetadata {
+// ctxTenant returns the tenant bound to ctx, or "" for the system tenant or
+// a ctx with no tenant.
+func ctxTenant(ctx context.Context) string {
+	tenant, ok := tenantctx.Lookup(ctx)
+	if !ok || tenantctx.IsSystem(tenant) {
+		return ""
+	}
+	return tenant
+}
+
+// keyRef is the manager's private map key: the owning tenant and the key name.
+func keyRef(tenant, name string) string {
+	if tenant == "" {
+		return name
+	}
+	return "tenant/" + tenant + "/" + name
+}
+
+func (m *Manager) store(tenant, name, algorithm string) *kms.KeyMetadata {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	now := time.Now()
 	key := &kms.KeyMetadata{
-		KeyID: keyID, Name: keyID, Algorithm: algorithm, Version: 1,
+		KeyID: name, Name: name, TenantID: tenant, Algorithm: algorithm, Version: 1,
 		State: kms.KeyState("enabled"), Created: now, Updated: now,
 	}
-	m.keys[keyID] = key
+	m.keys[keyRef(tenant, name)] = key
 	return key
 }
 
-func (m *Manager) lookup(keyID string) (*kms.KeyMetadata, error) {
+func (m *Manager) lookup(ctx context.Context, keyID string) (*kms.KeyMetadata, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	key, ok := m.keys[keyID]
+	key, ok := m.keys[keyRef(ctxTenant(ctx), keyID)]
 	if !ok {
 		return nil, kms.ErrKeyNotFound
 	}
 	return key, nil
 }
 
-// GenerateKey stores a key under attrs.CN.
-func (m *Manager) GenerateKey(_ context.Context, attrs *xkmssdk.KeyAttributes) (interface{}, error) {
+// GenerateKey stores a key under its reference: tenant/<TenantID>/<CN> for a
+// tenant key, else attrs.CN.
+func (m *Manager) GenerateKey(ctx context.Context, attrs *xkmssdk.KeyAttributes) (interface{}, error) {
 	algorithm := string(attrs.SymmetricAlgorithm)
 	if algorithm == "" {
 		algorithm = attrs.KeyAlgorithm.String()
@@ -187,44 +206,66 @@ func (m *Manager) GenerateKey(_ context.Context, attrs *xkmssdk.KeyAttributes) (
 		// Name the curve as the transports do: "ECDSA-P256", not "P-256".
 		algorithm += "-" + strings.ReplaceAll(attrs.ECCAttributes.Curve.Params().Name, "-", "")
 	}
-	return m.store(attrs.CN, algorithm), nil
+	// A key is the caller's name owned by attrs.TenantID (or the ctx tenant
+	// when the attributes carry none), as the real manager does.
+	tenant := attrs.TenantID
+	if tenant == "" {
+		tenant = ctxTenant(ctx)
+	}
+	return m.store(tenant, attrs.CN, algorithm), nil
 }
 
-// ImportKey stores a key under keyID.
-func (m *Manager) ImportKey(_ context.Context, keyID string, _ []byte, algorithm string) (interface{}, error) {
-	return m.store(keyID, algorithm), nil
+// ImportKey stores a key under its name, owned by the ctx tenant.
+func (m *Manager) ImportKey(ctx context.Context, keyID string, _ []byte, algorithm string, _ bool) (interface{}, error) {
+	return m.store(ctxTenant(ctx), keyID, algorithm), nil
 }
 
 // GetKey returns the key's metadata.
-func (m *Manager) GetKey(_ context.Context, keyID string) (interface{}, error) {
-	return m.lookup(keyID)
+func (m *Manager) GetKey(ctx context.Context, keyID string) (interface{}, error) {
+	return m.lookup(ctx, keyID)
 }
 
 // GetPublicKey returns placeholder public key bytes for a stored key.
-func (m *Manager) GetPublicKey(_ context.Context, keyID string) ([]byte, error) {
-	if _, err := m.lookup(keyID); err != nil {
+func (m *Manager) GetPublicKey(ctx context.Context, keyID string) ([]byte, error) {
+	if _, err := m.lookup(ctx, keyID); err != nil {
 		return nil, err
 	}
 	return []byte("public-" + keyID), nil
 }
 
-// UpdateStoredMetadata keeps nothing: the service holds the metadata.
-func (m *Manager) UpdateStoredMetadata(interface{}) error { return nil }
+// UpdateStoredMetadata finds the key by metadata.TenantID and its name; the
+// service holds the metadata itself.
+func (m *Manager) UpdateStoredMetadata(metadata interface{}) error {
+	meta, ok := metadata.(*kms.KeyMetadata)
+	if !ok || meta == nil {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, found := m.keys[keyRef(meta.TenantID, meta.KeyID)]; !found {
+		return kms.ErrKeyNotFound
+	}
+	return nil
+}
 
-// ListKeys returns every stored key.
-func (m *Manager) ListKeys(context.Context, string) ([]interface{}, error) {
+// ListKeys returns the keys the ctx tenant owns.
+func (m *Manager) ListKeys(ctx context.Context, _ string) ([]interface{}, error) {
+	tenant := ctxTenant(ctx)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := make([]interface{}, 0, len(m.keys))
 	for _, key := range m.keys {
+		if key.TenantID != tenant {
+			continue
+		}
 		out = append(out, key)
 	}
 	return out, nil
 }
 
 // RotateKey bumps the key's version.
-func (m *Manager) RotateKey(_ context.Context, keyID string) (interface{}, error) {
-	key, err := m.lookup(keyID)
+func (m *Manager) RotateKey(ctx context.Context, keyID string) (interface{}, error) {
+	key, err := m.lookup(ctx, keyID)
 	if err != nil {
 		return nil, err
 	}
@@ -235,61 +276,61 @@ func (m *Manager) RotateKey(_ context.Context, keyID string) (interface{}, error
 }
 
 // RevokeKey checks the key exists.
-func (m *Manager) RevokeKey(_ context.Context, keyID string) error {
-	_, err := m.lookup(keyID)
+func (m *Manager) RevokeKey(ctx context.Context, keyID string) error {
+	_, err := m.lookup(ctx, keyID)
 	return err
 }
 
 // EnableKey checks the key exists.
-func (m *Manager) EnableKey(_ context.Context, keyID string) error {
-	_, err := m.lookup(keyID)
+func (m *Manager) EnableKey(ctx context.Context, keyID string) error {
+	_, err := m.lookup(ctx, keyID)
 	return err
 }
 
 // DisableKey checks the key exists.
-func (m *Manager) DisableKey(_ context.Context, keyID string) error {
-	_, err := m.lookup(keyID)
+func (m *Manager) DisableKey(ctx context.Context, keyID string) error {
+	_, err := m.lookup(ctx, keyID)
 	return err
 }
 
 // DeleteKey removes the key.
-func (m *Manager) DeleteKey(_ context.Context, keyID string) error {
-	if _, err := m.lookup(keyID); err != nil {
+func (m *Manager) DeleteKey(ctx context.Context, keyID string) error {
+	if _, err := m.lookup(ctx, keyID); err != nil {
 		return err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	delete(m.keys, keyID)
+	delete(m.keys, keyRef(ctxTenant(ctx), keyID))
 	return nil
 }
 
 // Encrypt returns the plaintext tagged with the key id.
-func (m *Manager) Encrypt(_ context.Context, keyID string, plaintext, _ []byte) ([]byte, error) {
-	if _, err := m.lookup(keyID); err != nil {
+func (m *Manager) Encrypt(ctx context.Context, keyID string, plaintext, _ []byte) ([]byte, error) {
+	if _, err := m.lookup(ctx, keyID); err != nil {
 		return nil, err
 	}
 	return append([]byte(keyID+":"), plaintext...), nil
 }
 
 // Decrypt strips the key id tag Encrypt added.
-func (m *Manager) Decrypt(_ context.Context, keyID string, ciphertext, _ []byte) ([]byte, error) {
-	if _, err := m.lookup(keyID); err != nil {
+func (m *Manager) Decrypt(ctx context.Context, keyID string, ciphertext, _ []byte) ([]byte, error) {
+	if _, err := m.lookup(ctx, keyID); err != nil {
 		return nil, err
 	}
 	return ciphertext[len(keyID)+1:], nil
 }
 
 // Sign returns the digest tagged with the key id.
-func (m *Manager) Sign(_ context.Context, keyID string, digest []byte, _ string) ([]byte, error) {
-	if _, err := m.lookup(keyID); err != nil {
+func (m *Manager) Sign(ctx context.Context, keyID string, digest []byte, _ string) ([]byte, error) {
+	if _, err := m.lookup(ctx, keyID); err != nil {
 		return nil, err
 	}
 	return append([]byte(keyID+":"), digest...), nil
 }
 
 // Signer is not served by this manager.
-func (m *Manager) Signer(_ context.Context, keyID string) (crypto.Signer, error) {
-	if _, err := m.lookup(keyID); err != nil {
+func (m *Manager) Signer(ctx context.Context, keyID string) (crypto.Signer, error) {
+	if _, err := m.lookup(ctx, keyID); err != nil {
 		return nil, err
 	}
 	return nil, kms.ErrKeyNotFound

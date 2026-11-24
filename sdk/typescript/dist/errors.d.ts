@@ -22,6 +22,11 @@ export declare class TransportNotSupportedError extends QuicBaaSError {
     readonly method?: string;
     constructor(transport: string, family: string, reason: string, method?: string);
 }
+export declare class UnsupportedArgumentError extends QuicBaaSError {
+    readonly transport: string;
+    readonly argument: string;
+    constructor(transport: string, argument: string, message: string);
+}
 /**
  * SOPINRequiresTLSError is thrown before any request is sent when a call
  * carries a Security Officer PIN and the endpoint is not https://. It

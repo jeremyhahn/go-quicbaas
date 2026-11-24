@@ -20,6 +20,7 @@ import (
 	"fmt"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // HandlerKMSGracePeriod is the handler name for KMS grace period jobs.
@@ -112,6 +113,16 @@ func (h *KMSGracePeriodHandler) Handle(ctx context.Context, job *scheduler.Job) 
 		}
 	}
 
+	// The payload names the key; the job's tenant owns it. The update runs
+	// as that tenant, so a tenant's grace job reaches only that tenant's own
+	// key of that name, whatever was written into the payload. A platform
+	// job runs as the system tenant.
+	if tenant := graceJobTenant(job); tenant != "" {
+		ctx = tenantctx.WithTenant(ctx, tenant)
+	} else {
+		ctx = tenantctx.WithSystem(ctx)
+	}
+
 	resp, err := h.kmsUpdater.UpdateKeyStatusForGracePeriod(ctx, payload.KeyID, payload.Version)
 	if err != nil {
 		return nil, &scheduler.HandlerFailedError{
@@ -126,6 +137,18 @@ func (h *KMSGracePeriodHandler) Handle(ctx context.Context, job *scheduler.Job) 
 		Message: fmt.Sprintf("Disabled key %s version %d (previous status: %s)",
 			resp.KeyID, payload.Version, resp.OldStatus),
 	}, nil
+}
+
+// graceJobTenant is the tenant a grace job acts for: the owner of a
+// tenant-owned job, else a non-system target tenant; "" for a platform job.
+func graceJobTenant(job *scheduler.Job) string {
+	if tenant := scheduler.JobTenantID(job); tenant != "" {
+		return tenant
+	}
+	if job.TargetTenantID != "" && !tenantctx.IsSystem(job.TargetTenantID) {
+		return job.TargetTenantID
+	}
+	return ""
 }
 
 // Handler returns the JobHandler function for registration.

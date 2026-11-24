@@ -119,7 +119,7 @@ func TestXKMSBackend_Type(t *testing.T) {
 	backend := &XKMSBackend{
 		backendType: config.BackendTypeSoftware,
 		logger:      &mockLogger{},
-		metadata:    make(map[string]*KeyMetadata),
+		metadata:    make(map[keyRef]*KeyMetadata),
 	}
 
 	assert.Equal(t, config.BackendTypeSoftware, backend.Type())
@@ -129,7 +129,7 @@ func TestXKMSBackend_Type_TPM2(t *testing.T) {
 	backend := &XKMSBackend{
 		backendType: config.BackendTypeTPM2,
 		logger:      &mockLogger{},
-		metadata:    make(map[string]*KeyMetadata),
+		metadata:    make(map[keyRef]*KeyMetadata),
 	}
 
 	assert.Equal(t, config.BackendTypeTPM2, backend.Type())
@@ -139,7 +139,7 @@ func TestXKMSBackend_Type_PKCS11(t *testing.T) {
 	backend := &XKMSBackend{
 		backendType: config.BackendTypePKCS11,
 		logger:      &mockLogger{},
-		metadata:    make(map[string]*KeyMetadata),
+		metadata:    make(map[keyRef]*KeyMetadata),
 	}
 
 	assert.Equal(t, config.BackendTypePKCS11, backend.Type())
@@ -156,7 +156,7 @@ func TestXKMSBackend_IsAvailable_NotInitialized(t *testing.T) {
 	backend := &XKMSBackend{
 		backendType: config.BackendTypeSoftware,
 		logger:      &mockLogger{},
-		metadata:    make(map[string]*KeyMetadata),
+		metadata:    make(map[keyRef]*KeyMetadata),
 	}
 
 	ctx := context.Background()
@@ -174,7 +174,7 @@ func TestXKMSBackend_SupportedAlgorithms_NotInitialized(t *testing.T) {
 	backend := &XKMSBackend{
 		backendType: config.BackendTypeSoftware,
 		logger:      &mockLogger{},
-		metadata:    make(map[string]*KeyMetadata),
+		metadata:    make(map[keyRef]*KeyMetadata),
 	}
 
 	ctx := context.Background()
@@ -199,7 +199,7 @@ func TestXKMSBackend_CreateKey_NotAvailable(t *testing.T) {
 	backend := &XKMSBackend{
 		backendType: config.BackendTypeSoftware,
 		logger:      &mockLogger{},
-		metadata:    make(map[string]*KeyMetadata),
+		metadata:    make(map[keyRef]*KeyMetadata),
 	}
 
 	ctx := context.Background()
@@ -223,7 +223,7 @@ func TestXKMSBackend_CreateKey_NilAttrs(t *testing.T) {
 	backend := &XKMSBackend{
 		backendType: config.BackendTypeSoftware,
 		logger:      &mockLogger{},
-		metadata:    make(map[string]*KeyMetadata),
+		metadata:    make(map[keyRef]*KeyMetadata),
 	}
 
 	// Since IsAvailable returns false, we get ErrBackendNotReady
@@ -242,7 +242,7 @@ func TestXKMSBackend_CreateKey_EmptyCN(t *testing.T) {
 	backend := &XKMSBackend{
 		backendType: config.BackendTypeSoftware,
 		logger:      &mockLogger{},
-		metadata:    make(map[string]*KeyMetadata),
+		metadata:    make(map[keyRef]*KeyMetadata),
 	}
 
 	ctx := context.Background()
@@ -269,7 +269,7 @@ func TestXKMSBackend_ImportKey_NotAvailable(t *testing.T) {
 	backend := &XKMSBackend{
 		backendType: config.BackendTypeSoftware,
 		logger:      &mockLogger{},
-		metadata:    make(map[string]*KeyMetadata),
+		metadata:    make(map[keyRef]*KeyMetadata),
 	}
 
 	ctx := context.Background()
@@ -288,7 +288,7 @@ func TestXKMSBackend_ImportKey_EmptyKeyID(t *testing.T) {
 	backend := &XKMSBackend{
 		backendType: config.BackendTypeSoftware,
 		logger:      &mockLogger{},
-		metadata:    make(map[string]*KeyMetadata),
+		metadata:    make(map[keyRef]*KeyMetadata),
 	}
 
 	ctx := context.Background()
@@ -308,7 +308,7 @@ func TestXKMSBackend_ImportKey_EmptyMaterial(t *testing.T) {
 	backend := &XKMSBackend{
 		backendType: config.BackendTypeSoftware,
 		logger:      &mockLogger{},
-		metadata:    make(map[string]*KeyMetadata),
+		metadata:    make(map[keyRef]*KeyMetadata),
 	}
 
 	ctx := context.Background()
@@ -331,7 +331,7 @@ func TestXKMSBackend_GetKeyMetadata_NotAvailable(t *testing.T) {
 	backend := &XKMSBackend{
 		backendType: config.BackendTypeSoftware,
 		logger:      &mockLogger{},
-		metadata:    make(map[string]*KeyMetadata),
+		metadata:    make(map[keyRef]*KeyMetadata),
 	}
 
 	ctx := context.Background()
@@ -360,7 +360,7 @@ func TestXKMSBackend_GetKeyMetadata_FromCache(t *testing.T) {
 	backend := &XKMSBackend{
 		backendType: config.BackendTypeSoftware,
 		logger:      &mockLogger{},
-		metadata:    map[string]*KeyMetadata{"test-key": cachedMeta},
+		metadata:    map[keyRef]*KeyMetadata{{name: "test-key"}: cachedMeta},
 	}
 
 	ctx := context.Background()
@@ -382,7 +382,7 @@ func TestXKMSBackend_ListKeys_NotAvailable(t *testing.T) {
 	backend := &XKMSBackend{
 		backendType: config.BackendTypeSoftware,
 		logger:      &mockLogger{},
-		metadata:    make(map[string]*KeyMetadata),
+		metadata:    make(map[keyRef]*KeyMetadata),
 	}
 
 	ctx := context.Background()
@@ -404,7 +404,7 @@ func TestXKMSBackend_RotateKey_NotAvailable(t *testing.T) {
 	backend := &XKMSBackend{
 		backendType: config.BackendTypeSoftware,
 		logger:      &mockLogger{},
-		metadata:    make(map[string]*KeyMetadata),
+		metadata:    make(map[keyRef]*KeyMetadata),
 	}
 
 	ctx := context.Background()
@@ -425,7 +425,7 @@ func TestXKMSBackend_DisableKey_NotAvailable(t *testing.T) {
 	backend := &XKMSBackend{
 		backendType: config.BackendTypeSoftware,
 		logger:      &mockLogger{},
-		metadata:    make(map[string]*KeyMetadata),
+		metadata:    make(map[keyRef]*KeyMetadata),
 	}
 
 	ctx := context.Background()
@@ -445,7 +445,7 @@ func TestXKMSBackend_EnableKey_NotAvailable(t *testing.T) {
 	backend := &XKMSBackend{
 		backendType: config.BackendTypeSoftware,
 		logger:      &mockLogger{},
-		metadata:    make(map[string]*KeyMetadata),
+		metadata:    make(map[keyRef]*KeyMetadata),
 	}
 
 	ctx := context.Background()
@@ -465,7 +465,7 @@ func TestXKMSBackend_DeleteKey_NotAvailable(t *testing.T) {
 	backend := &XKMSBackend{
 		backendType: config.BackendTypeSoftware,
 		logger:      &mockLogger{},
-		metadata:    make(map[string]*KeyMetadata),
+		metadata:    make(map[keyRef]*KeyMetadata),
 	}
 
 	ctx := context.Background()
@@ -485,7 +485,7 @@ func TestXKMSBackend_Encrypt_NotAvailable(t *testing.T) {
 	backend := &XKMSBackend{
 		backendType: config.BackendTypeSoftware,
 		logger:      &mockLogger{},
-		metadata:    make(map[string]*KeyMetadata),
+		metadata:    make(map[keyRef]*KeyMetadata),
 	}
 
 	ctx := context.Background()
@@ -506,7 +506,7 @@ func TestXKMSBackend_Decrypt_NotAvailable(t *testing.T) {
 	backend := &XKMSBackend{
 		backendType: config.BackendTypeSoftware,
 		logger:      &mockLogger{},
-		metadata:    make(map[string]*KeyMetadata),
+		metadata:    make(map[keyRef]*KeyMetadata),
 	}
 
 	ctx := context.Background()
@@ -527,7 +527,7 @@ func TestXKMSBackend_Sign_NotAvailable(t *testing.T) {
 	backend := &XKMSBackend{
 		backendType: config.BackendTypeSoftware,
 		logger:      &mockLogger{},
-		metadata:    make(map[string]*KeyMetadata),
+		metadata:    make(map[keyRef]*KeyMetadata),
 	}
 
 	ctx := context.Background()
@@ -549,7 +549,7 @@ func TestXKMSBackend_Verify_NotAvailable(t *testing.T) {
 	backend := &XKMSBackend{
 		backendType: config.BackendTypeSoftware,
 		logger:      &mockLogger{},
-		metadata:    make(map[string]*KeyMetadata),
+		metadata:    make(map[keyRef]*KeyMetadata),
 	}
 
 	ctx := context.Background()
@@ -572,7 +572,7 @@ func TestXKMSBackend_GenerateDataKey_NotAvailable(t *testing.T) {
 	backend := &XKMSBackend{
 		backendType: config.BackendTypeSoftware,
 		logger:      &mockLogger{},
-		metadata:    make(map[string]*KeyMetadata),
+		metadata:    make(map[keyRef]*KeyMetadata),
 	}
 
 	ctx := context.Background()
@@ -591,7 +591,7 @@ func TestXKMSBackend_Close(t *testing.T) {
 	backend := &XKMSBackend{
 		backendType: config.BackendTypeSoftware,
 		logger:      &mockLogger{},
-		metadata:    make(map[string]*KeyMetadata),
+		metadata:    make(map[keyRef]*KeyMetadata),
 	}
 
 	err := backend.Close()
@@ -602,7 +602,7 @@ func TestXKMSBackend_Close_MultipleCallsIdempotent(t *testing.T) {
 	backend := &XKMSBackend{
 		backendType: config.BackendTypeSoftware,
 		logger:      &mockLogger{},
-		metadata:    make(map[string]*KeyMetadata),
+		metadata:    make(map[keyRef]*KeyMetadata),
 	}
 
 	// Multiple closes should be safe
@@ -621,7 +621,7 @@ func TestXKMSBackend_formatKeyID_WithPrefix(t *testing.T) {
 	backend := &XKMSBackend{
 		backendType: config.BackendTypeSoftware,
 		logger:      &mockLogger{},
-		metadata:    make(map[string]*KeyMetadata),
+		metadata:    make(map[keyRef]*KeyMetadata),
 	}
 
 	// formatKeyID now returns key ID as-is (no transformation)
@@ -633,7 +633,7 @@ func TestXKMSBackend_formatKeyID_WithoutPrefix(t *testing.T) {
 	backend := &XKMSBackend{
 		backendType: config.BackendTypeSoftware,
 		logger:      &mockLogger{},
-		metadata:    make(map[string]*KeyMetadata),
+		metadata:    make(map[keyRef]*KeyMetadata),
 	}
 
 	// formatKeyID now returns key ID as-is (matching how keys are stored with attrs.CN)
@@ -645,7 +645,7 @@ func TestXKMSBackend_formatKeyID_TPM2Backend(t *testing.T) {
 	backend := &XKMSBackend{
 		backendType: config.BackendTypeTPM2,
 		logger:      &mockLogger{},
-		metadata:    make(map[string]*KeyMetadata),
+		metadata:    make(map[keyRef]*KeyMetadata),
 	}
 
 	// formatKeyID returns key ID as-is regardless of backend type
@@ -657,7 +657,7 @@ func TestXKMSBackend_formatKeyID_PKCS11Backend(t *testing.T) {
 	backend := &XKMSBackend{
 		backendType: config.BackendTypePKCS11,
 		logger:      &mockLogger{},
-		metadata:    make(map[string]*KeyMetadata),
+		metadata:    make(map[keyRef]*KeyMetadata),
 	}
 
 	// formatKeyID returns key ID as-is regardless of backend type
@@ -672,44 +672,44 @@ func TestXKMSBackend_buildFullKeyID_AES256GCM(t *testing.T) {
 	backend := &XKMSBackend{
 		backendType: config.BackendTypeSoftware,
 		logger:      &mockLogger{},
-		metadata:    make(map[string]*KeyMetadata),
+		metadata:    make(map[keyRef]*KeyMetadata),
 	}
 
 	result := backend.buildFullKeyID("my-key", "AES-256-GCM")
-	assert.Equal(t, "software:encryption:aes256-gcm:my-key", result)
+	assert.Equal(t, "software:secret:aes256-gcm:my-key", result)
 }
 
 func TestXKMSBackend_buildFullKeyID_AES128GCM(t *testing.T) {
 	backend := &XKMSBackend{
 		backendType: config.BackendTypeSoftware,
 		logger:      &mockLogger{},
-		metadata:    make(map[string]*KeyMetadata),
+		metadata:    make(map[keyRef]*KeyMetadata),
 	}
 
 	result := backend.buildFullKeyID("my-key", "AES-128-GCM")
-	assert.Equal(t, "software:encryption:aes128-gcm:my-key", result)
+	assert.Equal(t, "software:secret:aes128-gcm:my-key", result)
 }
 
 func TestXKMSBackend_buildFullKeyID_ChaCha20(t *testing.T) {
 	backend := &XKMSBackend{
 		backendType: config.BackendTypeSoftware,
 		logger:      &mockLogger{},
-		metadata:    make(map[string]*KeyMetadata),
+		metadata:    make(map[keyRef]*KeyMetadata),
 	}
 
 	result := backend.buildFullKeyID("my-key", "CHACHA20-POLY1305")
-	assert.Equal(t, "software:encryption:chacha20-poly1305:my-key", result)
+	assert.Equal(t, "software:secret:chacha20-poly1305:my-key", result)
 }
 
 func TestXKMSBackend_buildFullKeyID_TPM2Backend(t *testing.T) {
 	backend := &XKMSBackend{
 		backendType: config.BackendTypeTPM2,
 		logger:      &mockLogger{},
-		metadata:    make(map[string]*KeyMetadata),
+		metadata:    make(map[keyRef]*KeyMetadata),
 	}
 
 	result := backend.buildFullKeyID("my-key", "AES-256-GCM")
-	assert.Equal(t, "tpm2:encryption:aes256-gcm:my-key", result)
+	assert.Equal(t, "tpm2:secret:aes256-gcm:my-key", result)
 }
 
 // =============================================================================
@@ -720,7 +720,7 @@ func TestXKMSBackend_buildSigningKeyID_RSA(t *testing.T) {
 	backend := &XKMSBackend{
 		backendType: config.BackendTypeSoftware,
 		logger:      &mockLogger{},
-		metadata:    make(map[string]*KeyMetadata),
+		metadata:    make(map[keyRef]*KeyMetadata),
 	}
 
 	result := backend.buildSigningKeyID("my-key", "RSA-2048")
@@ -731,7 +731,7 @@ func TestXKMSBackend_buildSigningKeyID_RSA4096(t *testing.T) {
 	backend := &XKMSBackend{
 		backendType: config.BackendTypeSoftware,
 		logger:      &mockLogger{},
-		metadata:    make(map[string]*KeyMetadata),
+		metadata:    make(map[keyRef]*KeyMetadata),
 	}
 
 	result := backend.buildSigningKeyID("my-key", "RSA-4096")
@@ -742,7 +742,7 @@ func TestXKMSBackend_buildSigningKeyID_ECDSA(t *testing.T) {
 	backend := &XKMSBackend{
 		backendType: config.BackendTypeSoftware,
 		logger:      &mockLogger{},
-		metadata:    make(map[string]*KeyMetadata),
+		metadata:    make(map[keyRef]*KeyMetadata),
 	}
 
 	result := backend.buildSigningKeyID("my-key", "ECDSA-P256")
@@ -753,7 +753,7 @@ func TestXKMSBackend_buildSigningKeyID_ECDSA_P384(t *testing.T) {
 	backend := &XKMSBackend{
 		backendType: config.BackendTypeSoftware,
 		logger:      &mockLogger{},
-		metadata:    make(map[string]*KeyMetadata),
+		metadata:    make(map[keyRef]*KeyMetadata),
 	}
 
 	result := backend.buildSigningKeyID("my-key", "ECDSA-P384")
@@ -764,7 +764,7 @@ func TestXKMSBackend_buildSigningKeyID_Ed25519(t *testing.T) {
 	backend := &XKMSBackend{
 		backendType: config.BackendTypeSoftware,
 		logger:      &mockLogger{},
-		metadata:    make(map[string]*KeyMetadata),
+		metadata:    make(map[keyRef]*KeyMetadata),
 	}
 
 	result := backend.buildSigningKeyID("my-key", "ED25519")
@@ -775,7 +775,7 @@ func TestXKMSBackend_buildSigningKeyID_TPM2Backend(t *testing.T) {
 	backend := &XKMSBackend{
 		backendType: config.BackendTypeTPM2,
 		logger:      &mockLogger{},
-		metadata:    make(map[string]*KeyMetadata),
+		metadata:    make(map[keyRef]*KeyMetadata),
 	}
 
 	result := backend.buildSigningKeyID("my-key", "RSA-2048")
@@ -786,7 +786,7 @@ func TestXKMSBackend_buildSigningKeyID_PKCS11Backend(t *testing.T) {
 	backend := &XKMSBackend{
 		backendType: config.BackendTypePKCS11,
 		logger:      &mockLogger{},
-		metadata:    make(map[string]*KeyMetadata),
+		metadata:    make(map[keyRef]*KeyMetadata),
 	}
 
 	result := backend.buildSigningKeyID("my-key", "ECDSA-P256")
@@ -1456,14 +1456,14 @@ func TestXKMSBackend_ConcurrentMetadataAccess(t *testing.T) {
 	backend := &XKMSBackend{
 		backendType: config.BackendTypeSoftware,
 		logger:      &mockLogger{},
-		metadata:    make(map[string]*KeyMetadata),
+		metadata:    make(map[keyRef]*KeyMetadata),
 	}
 
 	// Pre-populate some metadata
 	now := time.Now()
 	for i := 0; i < 10; i++ {
 		keyID := "key-" + string(rune('A'+i))
-		backend.metadata[keyID] = &KeyMetadata{
+		backend.metadata[keyRef{name: keyID}] = &KeyMetadata{
 			KeyID:   keyID,
 			State:   KeyStateEnabled,
 			Version: 1,
@@ -1608,7 +1608,7 @@ func TestXKMSBackend_algorithmToKeyAttributes_KeyType(t *testing.T) {
 
 	// Symmetric key should have encryption key type
 	symAttrs := backend.algorithmToKeyAttributes("test-key", AlgAES256GCM)
-	assert.Equal(t, xkmssdk.KeyTypeEncryption, symAttrs.KeyType)
+	assert.Equal(t, xkmssdk.KeyTypeSecret, symAttrs.KeyType)
 
 	// Asymmetric signing key should have signing key type
 	rsaAttrs := backend.algorithmToKeyAttributes("test-key", AlgRSA4096)

@@ -198,7 +198,7 @@ func TestPolicyClient_Create(t *testing.T) {
 		}
 	})
 
-	t.Run("empty rules", func(t *testing.T) {
+	t.Run("no rules and no spec YAML", func(t *testing.T) {
 		tr := &mockPolicyTransport{}
 		client := NewPolicyClient(tr)
 		req := &CreatePolicyRequest{
@@ -208,10 +208,38 @@ func TestPolicyClient_Create(t *testing.T) {
 
 		_, err := client.Create(context.Background(), "tenant-1", req)
 		if err == nil {
-			t.Error("expected error for empty rules")
+			t.Error("expected error for a create with no rules and no spec YAML")
 		}
 		if !errors.IsInvalidInput(err) {
 			t.Errorf("expected invalid input error, got %v", err)
+		}
+	})
+
+	// gRPC and MCP carry the rules in SpecYAML and refuse structured rules
+	// on create, so a rule-less create with a spec must reach the transport.
+	t.Run("spec YAML without rules", func(t *testing.T) {
+		spec := []byte("rules:\n  - name: allow-read\n    effect: allow\n")
+		var sent *createPolicyRequest
+		tr := &mockPolicyTransport{
+			requestFunc: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+				if r, ok := req.(*createPolicyRequest); ok {
+					sent = r
+				}
+				return &Policy{Name: "test-policy", TenantID: "tenant-1"}, nil
+			},
+		}
+		client := NewPolicyClient(tr)
+
+		policy, err := client.Create(context.Background(), "tenant-1",
+			&CreatePolicyRequest{Name: "test-policy", SpecYAML: spec})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if policy == nil || policy.Name != "test-policy" {
+			t.Fatalf("expected the created policy, got %+v", policy)
+		}
+		if sent == nil || string(sent.Request.SpecYAML) != string(spec) {
+			t.Errorf("expected the spec YAML sent to the transport, got %+v", sent)
 		}
 	})
 

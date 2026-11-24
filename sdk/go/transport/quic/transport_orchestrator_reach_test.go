@@ -48,7 +48,7 @@ func clientMethods() []string {
 
 // notCarriedOverREST are the methods the REST dialect has no route for: they
 // fail Unimplemented without sending anything.
-var notCarriedOverREST = map[string]bool{"InferenceStream": true, "SubscribeJobEvents": true, "GetSessionHistory": true}
+var notCarriedOverREST = map[string]bool{"InferenceStream": true, "SubscribeJobEvents": true}
 
 func orchestratorReachCases() map[string]reachCase {
 	def := &orchestratorclient.WorkflowDefinition{Name: "w1", Mode: orchestratorclient.WorkflowModeCanned}
@@ -71,7 +71,7 @@ func orchestratorReachCases() map[string]reachCase {
 		"GetFleetNode":           {req: &orchestratorclient.GetFleetNodeRequest{NodeID: "n1"}, route: "GET /api/v1/fleet/n1"},
 		"GetJobStatus":           {req: &orchestratorclient.GetJobStatusRequest{JobID: "j1"}, route: "GET /api/v1/orchestrator/jobs/j1"},
 		"GetSessionConversation": {req: &orchestratorclient.GetSessionConversationRequest{SessionID: "s1"}, route: "GET /api/v1/orchestrator/sessions/s1/history"},
-		"GetSessionHistory":      {req: &orchestratorclient.GetSessionHistoryRequest{SessionID: "s1"}},
+		"GetSessionHistory":      {req: &orchestratorclient.GetSessionHistoryRequest{SessionID: "s1"}, route: "GET /api/v1/orchestrator/sessions/s1/events"},
 		"GetSpendReport":         {req: &orchestratorclient.GetSpendReportRequest{}, route: "GET /api/v1/orchestrator/cost"},
 		"GetTask":                {req: &orchestratorclient.GetTaskRequest{TaskID: "t1"}, route: "GET /api/v1/orchestrator/tasks/t1"},
 		"GetTaskArtifact":        {req: &orchestratorclient.GetTaskArtifactRequest{TaskID: "t1", Name: "a1"}, route: "GET /api/v1/orchestrator/tasks/t1/artifacts/a1"},

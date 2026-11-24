@@ -163,11 +163,16 @@ func TestCeremonyE2E_SealedDaemonServesTheCeremonyOverCLI(t *testing.T) {
 
 	// The daemon's CA chain is written under its data dir; the CLI trusts it explicitly. TLS is never turned off.
 	address := fmt.Sprintf("https://127.0.0.1:%d", ports.REST)
+	// The sealed daemon serves with the CA chain its first boot wrote under
+	// the data dir (the same chain the readiness probe trusts). The CLI runs
+	// with a fresh HOME and no --data-dir, so it must be pointed at that chain
+	// or it falls back to the system roots. TLS verification stays on.
+	caFile := caChainPath(dataDir)
 
 	// The ceremony status verb must answer while the barrier is sealed. If the
 	// sealed-window allowlist regressed, this is where it shows up.
 	statusOut, statusErr := runCLI(ctx, t, cliBinary,
-		"init", "status", "--address", address, "--tls-ca", caChainPath(dataDir), "--output", "json")
+		"init", "status", "--address", address, "--tls-ca", caFile, "--output", "json")
 	if statusErr != nil {
 		t.Fatalf("`quicbaas init status` against a SEALED daemon failed: %v\noutput:\n%s",
 			statusErr, statusOut)
@@ -179,7 +184,7 @@ func TestCeremonyE2E_SealedDaemonServesTheCeremonyOverCLI(t *testing.T) {
 	// Officer registration must also be reachable while sealed: officers have
 	// to be enrolled BEFORE the split, and the barrier is sealed until after it.
 	csrPath := filepath.Join(t.TempDir(), "alice.csr")
-	if err := writeOfficerCSR(csrPath, "alice"); err != nil {
+	if _, err := writeOfficerCSR(csrPath, "alice"); err != nil {
 		t.Fatalf("generate officer CSR: %v", err)
 	}
 	certPath := filepath.Join(t.TempDir(), "alice.crt")
@@ -187,7 +192,7 @@ func TestCeremonyE2E_SealedDaemonServesTheCeremonyOverCLI(t *testing.T) {
 	registerOut, registerErr := runCLI(ctx, t, cliBinary,
 		"init", "officer", "register",
 		"--address", address,
-		"--tls-ca", caChainPath(dataDir),
+		"--tls-ca", caFile,
 		"--username", "alice",
 		"--csr", csrPath,
 		"--output", certPath,

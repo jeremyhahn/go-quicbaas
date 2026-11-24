@@ -225,6 +225,20 @@ func TestNewModule_RegistersRoleGrants_XKMSWireServicesNotDuplicated(t *testing.
 	}
 }
 
+// TestNewModule_RegistersRoleGrants_AttestationVerifier proves the module
+// grants the attestation Verifier's permissions it serves: the pinned go-xkms
+// ServiceModule declares no endorsement or reference-values RPC, so without
+// these grants qrdb's reflection gate denies them to every role.
+func TestNewModule_RegistersRoleGrants_AttestationVerifier(t *testing.T) {
+	set := map[string]struct{}{}
+	contributeGRPCPermissions(set)
+
+	for _, perm := range []string{"attestation:verify", "attestation:provision", "attestation:attest"} {
+		_, ok := set[perm]
+		assert.True(t, ok, "%s must be contributed by the module that serves quicbaas.attestation.v1", perm)
+	}
+}
+
 // TestNewModule_PreservesUpstreamPermissionScopes is the regression guard for
 // the widest hole this module could open.
 //

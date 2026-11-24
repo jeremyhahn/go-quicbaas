@@ -383,20 +383,20 @@ func (e *Engine) algorithmToKeyAttributes(keyName, algorithm string) *types.KeyA
 	switch algorithm {
 	case kms.AlgAES128GCM:
 		attrs.SymmetricAlgorithm = types.SymmetricAES128GCM
-		attrs.KeyType = types.KeyTypeEncryption
+		attrs.KeyType = kms.SymmetricKeyType
 	case kms.AlgAES192GCM:
 		attrs.SymmetricAlgorithm = types.SymmetricAES192GCM
-		attrs.KeyType = types.KeyTypeEncryption
+		attrs.KeyType = kms.SymmetricKeyType
 	case kms.AlgAES256GCM:
 		attrs.SymmetricAlgorithm = types.SymmetricAES256GCM
-		attrs.KeyType = types.KeyTypeEncryption
+		attrs.KeyType = kms.SymmetricKeyType
 	case kms.AlgChaCha20Poly1305:
 		attrs.SymmetricAlgorithm = types.SymmetricChaCha20Poly1305
-		attrs.KeyType = types.KeyTypeEncryption
+		attrs.KeyType = kms.SymmetricKeyType
 	default:
 		// Default to AES-256-GCM
 		attrs.SymmetricAlgorithm = types.SymmetricAES256GCM
-		attrs.KeyType = types.KeyTypeEncryption
+		attrs.KeyType = kms.SymmetricKeyType
 	}
 
 	return attrs

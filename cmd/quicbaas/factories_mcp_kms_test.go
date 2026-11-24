@@ -1032,6 +1032,66 @@ func TestMCPKMSClientTransportError(t *testing.T) {
 	})
 }
 
+// newRecordingMCPKMSClient returns an MCP KMS client whose transport records
+// the arguments of every tool call and answers with err.
+func newRecordingMCPKMSClient(sent map[string]map[string]interface{}, err error) *mcpKMSClient {
+	tr := &mockMCPTransport{
+		requestFunc: func(_ context.Context, _, method string, req interface{}) (interface{}, error) {
+			args, ok := req.(map[string]interface{})
+			if ok {
+				sent[method] = args
+			}
+			if err != nil {
+				return nil, err
+			}
+			return map[string]interface{}{"key_id": "key-1"}, nil
+		},
+	}
+	return &mcpKMSClient{sdk: &mockSDKClientForMCP{mockTransport: tr}}
+}
+
+func TestMCPKMSClientSendsExportable(t *testing.T) {
+	ctx := context.Background()
+	for _, exportable := range []bool{true, false} {
+		sent := map[string]map[string]interface{}{}
+		client := newRecordingMCPKMSClient(sent, nil)
+
+		_, err := client.KMSImportKey(ctx, &service.ImportKeyRequest{
+			KeyMaterial:   []byte("material"),
+			KeyAttributes: &kctypes.KeyAttributes{SymmetricAlgorithm: kctypes.SymmetricAES256GCM, Exportable: exportable},
+		})
+		require.NoError(t, err)
+		_, err = client.KMSUnwrapKey(ctx, &service.UnwrapKeyRequest{
+			KeyID: "key-1", WrappingKeyID: "w", WrappedKey: []byte("d"), Algorithm: "a",
+			KeyAttributes: &kctypes.KeyAttributes{Exportable: exportable},
+		})
+		require.NoError(t, err)
+
+		for _, tool := range []string{"quicbaas_kms_import_key", "quicbaas_kms_unwrap_key"} {
+			require.Contains(t, sent, tool)
+			got, present := sent[tool]["exportable"]
+			if exportable {
+				assert.Equal(t, true, got, tool)
+			} else {
+				assert.False(t, present, "%s must not send exportable when it is false", tool)
+			}
+		}
+	}
+}
+
+func TestMCPKMSClientExportableTransportError(t *testing.T) {
+	sent := map[string]map[string]interface{}{}
+	client := newRecordingMCPKMSClient(sent, &dberrors.MessageError{Message: "transport error"})
+
+	_, err := client.KMSUnwrapKey(context.Background(), &service.UnwrapKeyRequest{
+		KeyID: "key-1", WrappingKeyID: "w", WrappedKey: []byte("d"), Algorithm: "a",
+		KeyAttributes: &kctypes.KeyAttributes{Exportable: true},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "transport error")
+	assert.Equal(t, true, sent["quicbaas_kms_unwrap_key"]["exportable"])
+}
+
 func TestMCPBackendClientTransportError(t *testing.T) {
 	tr := &mockMCPTransport{
 		requestFunc: func(ctx context.Context, svc, method string, req interface{}) (interface{}, error) {

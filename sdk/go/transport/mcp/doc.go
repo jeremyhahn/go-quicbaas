@@ -25,10 +25,14 @@
 // Tool Name Mapping:
 //
 // The transport maps SDK service/method names to MCP tool names. qrdb-mirror
-// services (KV, Vector, Timeseries, Health.Check, RBAC user/role lifecycle,
+// services (Vector, Timeseries, Health.Check, RBAC user/role lifecycle,
 // Barrier, Ceremony) are routed to canonical qrdb_* tools; quicbaas-specific
 // surfaces (KMS, Crypto, Orchestrator, Scheduler, Agent, etc.) keep the
-// quicbaas_ prefix.
+// quicbaas_ prefix. KV Put/Get/Delete call quicbaas_kv_put/get/delete, which
+// reach quicbaas's KV service: the service builds the canonical key from the
+// caller's tenant and routes to the request's shard. Every uint64 (id,
+// shard_id, version, leader_id) crosses the wire as a decimal string so
+// values above 2^53 stay exact.
 //
 // Examples:
 //   - "quicbaas.KV/Put" -> "quicbaas_kv_put"
