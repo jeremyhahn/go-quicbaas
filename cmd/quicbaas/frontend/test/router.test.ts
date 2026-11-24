@@ -188,6 +188,12 @@ describe('router — task detail and query params', () => {
     expect(routerStore.name).toBe('xkms-keys');
   });
 
+  it('#/agents resolves to agents', async () => {
+    const { routerStore } = await loadRouter();
+    setHashAndFire('#/agents');
+    expect(routerStore.name).toBe('agents');
+  });
+
   it('#/prompts?set=sdlc&scope=project&project=p1 resolves to prompts with its query params', async () => {
     const { routerStore } = await loadRouter();
     setHashAndFire('#/prompts?set=sdlc&scope=project&project=p1');

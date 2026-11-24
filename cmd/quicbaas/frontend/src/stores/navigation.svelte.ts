@@ -69,6 +69,7 @@ export type ViewID =
   | 'inference'
   | 'projects'
   | 'accounts'
+  | 'agents'
   | 'prompts';
 
 /** Map each sidebar ViewID to its canonical hash path. */
@@ -121,6 +122,8 @@ const viewHashPaths: Partial<Record<ViewID, string>> = {
   projects:      '/projects',
   // ORCHESTRATION — pooled provider accounts
   accounts:      '/accounts',
+  // ORCHESTRATION — the Agent catalog: Agents and agent pools
+  agents:        '/agents',
   // ORCHESTRATION — the prompts jobs render from
   prompts:       '/prompts',
   // CLUSTER
@@ -187,6 +190,8 @@ const routeToViewID: Partial<Record<RouteName, ViewID>> = {
   projects:         'projects',
   // ORCHESTRATION — pooled provider accounts
   accounts:         'accounts',
+  // ORCHESTRATION — the Agent catalog: Agents and agent pools
+  agents:           'agents',
   // ORCHESTRATION — the prompts jobs render from
   prompts:          'prompts',
   // CLUSTER
