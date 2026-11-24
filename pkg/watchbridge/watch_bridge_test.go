@@ -26,6 +26,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/messaging"
+	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/poll"
 	"github.com/jeremyhahn/go-quicbaas/pkg/watch"
 )
 
@@ -857,8 +858,8 @@ func TestWatchBridgeLeaderGating(t *testing.T) {
 		// Trigger a watch event
 		watchMgr.NotifyPut([]byte("/test/key1"), nil, []byte(`{"id": "1"}`), 1, 1)
 
-		// Give time for event processing
-		time.Sleep(100 * time.Millisecond)
+		// The published event has passed the leader gate.
+		poll.Until(t, 5*time.Second, func() bool { return bridge.GetStats().EventsPublished >= 1 }, "event published")
 
 		stats := bridge.GetStats()
 		if stats.EventsDroppedNotLeader != 0 {
@@ -890,8 +891,7 @@ func TestWatchBridgeLeaderGating(t *testing.T) {
 		// Trigger a watch event
 		watchMgr.NotifyPut([]byte("/test2/key1"), nil, []byte(`{"id": "1"}`), 1, 1)
 
-		// Give time for event processing
-		time.Sleep(100 * time.Millisecond)
+		poll.Until(t, 5*time.Second, func() bool { return bridge.GetStats().EventsDroppedNotLeader >= 1 }, "event dropped as not leader")
 
 		stats := bridge.GetStats()
 		if stats.EventsDroppedNotLeader == 0 {
@@ -923,8 +923,8 @@ func TestWatchBridgeLeaderGating(t *testing.T) {
 		// Trigger a watch event
 		watchMgr.NotifyPut([]byte("/test3/key1"), nil, []byte(`{"id": "1"}`), 1, 1)
 
-		// Give time for event processing
-		time.Sleep(100 * time.Millisecond)
+		// The published event has passed the leader gate.
+		poll.Until(t, 5*time.Second, func() bool { return bridge.GetStats().EventsPublished >= 1 }, "event published")
 
 		stats := bridge.GetStats()
 		if stats.EventsDroppedNotLeader != 0 {
@@ -954,8 +954,8 @@ func TestWatchBridgeLeaderGating(t *testing.T) {
 		// Trigger a watch event
 		watchMgr.NotifyPut([]byte("/test4/key1"), nil, []byte(`{"id": "1"}`), 1, 1)
 
-		// Give time for event processing
-		time.Sleep(100 * time.Millisecond)
+		// The published event has passed the leader gate.
+		poll.Until(t, 5*time.Second, func() bool { return bridge.GetStats().EventsPublished >= 1 }, "event published")
 
 		stats := bridge.GetStats()
 		if stats.EventsDroppedNotLeader != 0 {
