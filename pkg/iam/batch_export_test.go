@@ -152,6 +152,7 @@ func generateTestPolicyName(i int) string {
 
 // TestExportAll tests the ExportAll function with various scenarios.
 func TestExportAll(t *testing.T) {
+	t.Parallel()
 	tenantID := "test-tenant"
 
 	t.Run("export all resource types successfully", func(t *testing.T) {
@@ -371,6 +372,7 @@ func TestExportAll(t *testing.T) {
 
 // TestExportUsersWithFilters tests ExportUsers with various filter combinations.
 func TestExportUsersWithFilters(t *testing.T) {
+	t.Parallel()
 	tenantID := "test-tenant"
 
 	t.Run("export all users without filter", func(t *testing.T) {
@@ -532,6 +534,7 @@ func TestExportUsersWithFilters(t *testing.T) {
 
 // TestExportRolesWithFilters tests ExportRoles with various filter combinations.
 func TestExportRolesWithFilters(t *testing.T) {
+	t.Parallel()
 	tenantID := "test-tenant"
 
 	t.Run("export all roles without filter", func(t *testing.T) {
@@ -637,6 +640,7 @@ func TestExportRolesWithFilters(t *testing.T) {
 
 // TestExportPoliciesWithFilters tests ExportPolicies with various filter combinations.
 func TestExportPoliciesWithFilters(t *testing.T) {
+	t.Parallel()
 	tenantID := "test-tenant"
 
 	t.Run("export all policies without filter", func(t *testing.T) {
@@ -779,6 +783,7 @@ func TestExportPoliciesWithFilters(t *testing.T) {
 
 // TestFilterMatchFunctions tests the individual filter matching functions.
 func TestFilterMatchFunctions(t *testing.T) {
+	t.Parallel()
 	bm := NewBatchManager(BatchManagerOptions{})
 	now := time.Now()
 	yesterday := now.Add(-24 * time.Hour)
@@ -993,6 +998,7 @@ func TestFilterMatchFunctions(t *testing.T) {
 
 // TestConvertToImportRequest tests conversion of export results to import requests.
 func TestConvertToImportRequest(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 
 	t.Run("convert full export result", func(t *testing.T) {
@@ -1179,6 +1185,7 @@ func TestConvertToImportRequest(t *testing.T) {
 
 // TestExportWithContextCancellation tests context cancellation during various export operations.
 func TestExportWithContextCancellation(t *testing.T) {
+	t.Parallel()
 	tenantID := "test-tenant"
 
 	t.Run("cancel during roles export", func(t *testing.T) {
@@ -1210,6 +1217,7 @@ func TestExportWithContextCancellation(t *testing.T) {
 
 // TestExportErrorCases tests various error scenarios.
 func TestExportErrorCases(t *testing.T) {
+	t.Parallel()
 	t.Run("export users with nil identity store", func(t *testing.T) {
 		bm := NewBatchManager(BatchManagerOptions{})
 		ctx := context.Background()
@@ -1276,6 +1284,7 @@ func TestExportErrorCases(t *testing.T) {
 // =============================================================================
 
 func TestBatchManager_ExportAll_AllIncludes(t *testing.T) {
+	t.Parallel()
 	storage := NewMemoryStorage()
 
 	identityStore := NewIdentityStore(IdentityStoreOptions{
@@ -1344,6 +1353,7 @@ func TestBatchManager_ExportAll_AllIncludes(t *testing.T) {
 }
 
 func TestBatchManager_ExportAll_ValidationError(t *testing.T) {
+	t.Parallel()
 	storage := NewMemoryStorage()
 
 	identityStore := NewIdentityStore(IdentityStoreOptions{
@@ -1377,6 +1387,7 @@ func TestBatchManager_ExportAll_ValidationError(t *testing.T) {
 // =============================================================================
 
 func TestBatchManager_ImportAll_ValidationError(t *testing.T) {
+	t.Parallel()
 	storage := NewMemoryStorage()
 
 	identityStore := NewIdentityStore(IdentityStoreOptions{
@@ -1408,6 +1419,7 @@ func TestBatchManager_ImportAll_ValidationError(t *testing.T) {
 }
 
 func TestBatchManager_ImportAll_NoItems(t *testing.T) {
+	t.Parallel()
 	storage := NewMemoryStorage()
 
 	identityStore := NewIdentityStore(IdentityStoreOptions{
@@ -1447,6 +1459,7 @@ func TestBatchManager_ImportAll_NoItems(t *testing.T) {
 // =============================================================================
 
 func TestAdminManager_CreateAssignment_InvalidRole(t *testing.T) {
+	t.Parallel()
 	adminStorage := NewMemoryAdminStorage()
 	impersonationStorage := NewMemoryImpersonationStorage()
 	auditLogger, err := NewAuditLogger(WithAuditStorage(NewMemoryAuditStorage()))
@@ -1477,6 +1490,7 @@ func TestAdminManager_CreateAssignment_InvalidRole(t *testing.T) {
 }
 
 func TestAdminManager_CreateAssignment_MissingUserID(t *testing.T) {
+	t.Parallel()
 	adminStorage := NewMemoryAdminStorage()
 	impersonationStorage := NewMemoryImpersonationStorage()
 	auditLogger, err := NewAuditLogger(WithAuditStorage(NewMemoryAuditStorage()))
@@ -1507,6 +1521,7 @@ func TestAdminManager_CreateAssignment_MissingUserID(t *testing.T) {
 }
 
 func TestAdminManager_CreateAssignment_MissingGrantedBy(t *testing.T) {
+	t.Parallel()
 	adminStorage := NewMemoryAdminStorage()
 	impersonationStorage := NewMemoryImpersonationStorage()
 	auditLogger, err := NewAuditLogger(WithAuditStorage(NewMemoryAuditStorage()))
@@ -1545,6 +1560,7 @@ func TestAdminManager_CreateAssignment_MissingGrantedBy(t *testing.T) {
 // field but the authenticated principal in context (go-quicbaas#383), so
 // the failure mode is an unauthenticated caller, which fails closed.
 func TestAdminManager_StartImpersonation_NoAuthenticatedCaller(t *testing.T) {
+	t.Parallel()
 	adminStorage := NewMemoryAdminStorage()
 	impersonationStorage := NewMemoryImpersonationStorage()
 	auditLogger, err := NewAuditLogger(WithAuditStorage(NewMemoryAuditStorage()))
@@ -1575,6 +1591,7 @@ func TestAdminManager_StartImpersonation_NoAuthenticatedCaller(t *testing.T) {
 }
 
 func TestAdminManager_StartImpersonation_MissingTargetUserID(t *testing.T) {
+	t.Parallel()
 	adminStorage := NewMemoryAdminStorage()
 	impersonationStorage := NewMemoryImpersonationStorage()
 	auditLogger, err := NewAuditLogger(WithAuditStorage(NewMemoryAuditStorage()))
@@ -1602,6 +1619,7 @@ func TestAdminManager_StartImpersonation_MissingTargetUserID(t *testing.T) {
 }
 
 func TestAdminManager_StartImpersonation_MissingReason(t *testing.T) {
+	t.Parallel()
 	adminStorage := NewMemoryAdminStorage()
 	impersonationStorage := NewMemoryImpersonationStorage()
 	auditLogger, err := NewAuditLogger(WithAuditStorage(NewMemoryAuditStorage()))
@@ -1633,6 +1651,7 @@ func TestAdminManager_StartImpersonation_MissingReason(t *testing.T) {
 // =============================================================================
 
 func TestBatchProcessor_ProcessPolicies_WithRateLimit(t *testing.T) {
+	t.Parallel()
 	storage := newMockBatchStorage()
 	tenantMgr := newMockTenantManager()
 	bp := NewIAMBatchProcessor(storage, tenantMgr)
@@ -1677,6 +1696,7 @@ func TestBatchProcessor_ProcessPolicies_WithRateLimit(t *testing.T) {
 // =============================================================================
 
 func TestBatchManager_ImportRoles_WithPermissions(t *testing.T) {
+	t.Parallel()
 	storage := NewMemoryStorage()
 
 	identityStore := NewIdentityStore(IdentityStoreOptions{
@@ -1722,6 +1742,7 @@ func TestBatchManager_ImportRoles_WithPermissions(t *testing.T) {
 // =============================================================================
 
 func TestBatchManager_ExportUsers_ContextCanceled(t *testing.T) {
+	t.Parallel()
 	storage := NewMemoryStorage()
 
 	identityStore := NewIdentityStore(IdentityStoreOptions{
@@ -1752,6 +1773,7 @@ func TestBatchManager_ExportUsers_ContextCanceled(t *testing.T) {
 // =============================================================================
 
 func TestMemoryStorage_IncrementQuotaUsage_AppsLimit(t *testing.T) {
+	t.Parallel()
 	storage := NewMemoryStorage()
 	ctx := context.Background()
 
@@ -1772,6 +1794,7 @@ func TestMemoryStorage_IncrementQuotaUsage_AppsLimit(t *testing.T) {
 }
 
 func TestMemoryStorage_DecrementQuotaUsage_AppsToFloor(t *testing.T) {
+	t.Parallel()
 	storage := NewMemoryStorage()
 	ctx := context.Background()
 

@@ -180,6 +180,7 @@ func createTestPolicy(tenantID, name string) *Policy {
 }
 
 func TestNewPolicyEngine(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		opts PolicyEngineOptions
@@ -203,6 +204,7 @@ func TestNewPolicyEngine(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			engine := NewPolicyEngine(tt.opts)
 
 			if engine == nil {
@@ -216,6 +218,7 @@ func TestNewPolicyEngine(t *testing.T) {
 }
 
 func TestPolicyEngine_CreatePolicy(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		tenantID  string
@@ -321,6 +324,7 @@ func TestPolicyEngine_CreatePolicy(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			storage := newMockPolicyStorage()
 			tt.setup(storage)
 
@@ -374,6 +378,7 @@ func TestPolicyEngine_CreatePolicy(t *testing.T) {
 }
 
 func TestPolicyEngine_GetPolicy(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		tenantID   string
@@ -413,6 +418,7 @@ func TestPolicyEngine_GetPolicy(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			storage := newMockPolicyStorage()
 			tt.setup(storage)
 
@@ -450,6 +456,7 @@ func TestPolicyEngine_GetPolicy(t *testing.T) {
 }
 
 func TestPolicyEngine_UpdatePolicy(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		tenantID  string
@@ -507,6 +514,7 @@ func TestPolicyEngine_UpdatePolicy(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			storage := newMockPolicyStorage()
 			tt.setup(storage)
 
@@ -545,6 +553,7 @@ func TestPolicyEngine_UpdatePolicy(t *testing.T) {
 }
 
 func TestPolicyEngine_DeletePolicy(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		tenantID   string
@@ -586,6 +595,7 @@ func TestPolicyEngine_DeletePolicy(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			storage := newMockPolicyStorage()
 			tt.setup(storage)
 
@@ -625,6 +635,7 @@ func TestPolicyEngine_DeletePolicy(t *testing.T) {
 }
 
 func TestPolicyEngine_ListPolicies(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		tenantID  string
@@ -666,6 +677,7 @@ func TestPolicyEngine_ListPolicies(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			storage := newMockPolicyStorage()
 			tt.setup(storage)
 
@@ -693,6 +705,7 @@ func TestPolicyEngine_ListPolicies(t *testing.T) {
 }
 
 func TestPolicyEngine_ValidatePolicy(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		policy    *Policy
@@ -727,6 +740,7 @@ func TestPolicyEngine_ValidatePolicy(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			engine := NewPolicyEngine(PolicyEngineOptions{
 				Storage: newMockPolicyStorage(),
 			})
@@ -747,6 +761,7 @@ func TestPolicyEngine_ValidatePolicy(t *testing.T) {
 }
 
 func TestPolicyEngine_TestPolicy(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		tenantID  string
@@ -790,6 +805,7 @@ func TestPolicyEngine_TestPolicy(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			cache := NewPolicyCache(&CacheConfig{
 				TTL:               5 * time.Minute,
 				MaxSize:           1000,
@@ -823,6 +839,7 @@ func TestPolicyEngine_TestPolicy(t *testing.T) {
 }
 
 func TestPolicyEngine_Evaluate(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		req       *CheckRequest
@@ -849,6 +866,7 @@ func TestPolicyEngine_Evaluate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			cache := NewPolicyCache(&CacheConfig{
 				TTL:               5 * time.Minute,
 				MaxSize:           1000,
@@ -882,6 +900,7 @@ func TestPolicyEngine_Evaluate(t *testing.T) {
 }
 
 func TestPolicyEngine_ClearCache(t *testing.T) {
+	t.Parallel()
 	cache := NewPolicyCache(&CacheConfig{
 		TTL:               5 * time.Minute,
 		MaxSize:           1000,
@@ -911,6 +930,7 @@ func TestPolicyEngine_ClearCache(t *testing.T) {
 }
 
 func TestMemoryPolicyCache_NewMemoryPolicyCache(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		ttl  time.Duration
@@ -927,6 +947,7 @@ func TestMemoryPolicyCache_NewMemoryPolicyCache(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			cache := NewMemoryPolicyCache(tt.ttl)
 
 			if cache == nil {
@@ -946,6 +967,7 @@ func TestMemoryPolicyCache_NewMemoryPolicyCache(t *testing.T) {
 }
 
 func TestMemoryPolicyCache_Get(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		setup     func(*MemoryPolicyCache)
@@ -989,6 +1011,7 @@ func TestMemoryPolicyCache_Get(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			cache := NewMemoryPolicyCache(5 * time.Minute)
 			tt.setup(cache)
 
@@ -1016,6 +1039,7 @@ func TestMemoryPolicyCache_Get(t *testing.T) {
 }
 
 func TestMemoryPolicyCache_Set(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		ttl       time.Duration
@@ -1047,6 +1071,7 @@ func TestMemoryPolicyCache_Set(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			cache := NewMemoryPolicyCache(tt.ttl)
 
 			ctx := context.Background()
@@ -1079,6 +1104,7 @@ func TestMemoryPolicyCache_Set(t *testing.T) {
 }
 
 func TestMemoryPolicyCache_Invalidate(t *testing.T) {
+	t.Parallel()
 	cache := NewMemoryPolicyCache(5 * time.Minute)
 	ctx := context.Background()
 
@@ -1111,6 +1137,7 @@ func TestMemoryPolicyCache_Invalidate(t *testing.T) {
 }
 
 func TestMemoryPolicyCache_Clear(t *testing.T) {
+	t.Parallel()
 	cache := NewMemoryPolicyCache(5 * time.Minute)
 	ctx := context.Background()
 
@@ -1157,6 +1184,7 @@ func TestMemoryPolicyCache_Clear(t *testing.T) {
 }
 
 func TestMemoryPolicyCache_Concurrent(t *testing.T) {
+	t.Parallel()
 	cache := NewMemoryPolicyCache(5 * time.Minute)
 	ctx := context.Background()
 
@@ -1192,6 +1220,7 @@ func TestMemoryPolicyCache_Concurrent(t *testing.T) {
 }
 
 func TestPolicyEngine_CacheInvalidation(t *testing.T) {
+	t.Parallel()
 	storage := newMockPolicyStorage()
 	cache := newTestPolicyCache()
 	engine := NewPolicyEngine(PolicyEngineOptions{

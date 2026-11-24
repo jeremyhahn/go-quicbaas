@@ -30,6 +30,7 @@ import (
 // FinishRegistration without a corresponding stashed session id surfaces
 // a typed error rather than crashing on the cache miss.
 func TestXKMSWebAuthnManager_FinishRegistration_NoSession(t *testing.T) {
+	t.Parallel()
 	f, err := NewWebAuthnServiceFactory(WebAuthnFactoryParams{
 		Config: WebAuthnFactoryConfig{
 			RPID:          "example.com",
@@ -64,6 +65,7 @@ func TestXKMSWebAuthnManager_FinishRegistration_NoSession(t *testing.T) {
 // TestMarshalToMap_RoundTrip verifies the JSON marshal helper round-trips
 // a typed protocol structure into a generic map without loss.
 func TestMarshalToMap_RoundTrip(t *testing.T) {
+	t.Parallel()
 	type fixture struct {
 		Foo string `json:"foo"`
 		Bar int    `json:"bar"`
@@ -86,6 +88,7 @@ func TestMarshalToMap_RoundTrip(t *testing.T) {
 // credential maps surface parse errors from the underlying go-webauthn
 // library rather than panicking.
 func TestParseCredentialCreationMap_Error(t *testing.T) {
+	t.Parallel()
 	if _, err := parseCredentialCreationMap(map[string]interface{}{}); err == nil {
 		t.Fatalf("expected error from empty map")
 	}
@@ -97,6 +100,7 @@ func TestParseCredentialCreationMap_Error(t *testing.T) {
 // TestParseCredentialAssertionMap_Error mirrors the creation-map test for
 // the login (assertion) ceremony.
 func TestParseCredentialAssertionMap_Error(t *testing.T) {
+	t.Parallel()
 	if _, err := parseCredentialAssertionMap(map[string]interface{}{}); err == nil {
 		t.Fatalf("expected error from empty map")
 	}
@@ -109,6 +113,7 @@ func TestParseCredentialAssertionMap_Error(t *testing.T) {
 // FinishLogin with no prior BeginLogin in the cache returns an error
 // rather than dispatching to xkms.
 func TestXKMSWebAuthnManager_FinishLogin_NoSession(t *testing.T) {
+	t.Parallel()
 	f, err := NewWebAuthnServiceFactory(WebAuthnFactoryParams{
 		Config: WebAuthnFactoryConfig{
 			RPID:          "example.com",
@@ -161,6 +166,7 @@ func TestXKMSWebAuthnManager_FinishLogin_NoSession(t *testing.T) {
 // regSessions[tenantID:userID] and FinishRegistration reads the same
 // key.
 func TestXKMSWebAuthnManager_RegKey(t *testing.T) {
+	t.Parallel()
 	m := &XKMSWebAuthnManager{}
 	got := m.regKey("tenant-a", "user@x.com")
 	if got != "tenant-a:user@x.com" {
@@ -185,6 +191,7 @@ func assertionWithChallenge(challenge string) *protocol.ParsedCredentialAssertio
 // WebAuthnLoginSessionError. Sessions are keyed exactly as BeginLogin stores
 // them and resolved exactly as FinishLogin reads them.
 func TestXKMSWebAuthnManager_LoginSession_ConcurrentResolution(t *testing.T) {
+	t.Parallel()
 	m := newClockedManager(handoffTestNow)
 	const tenant = "tenant-1"
 
@@ -282,6 +289,7 @@ func assertLoginSessionError(t *testing.T, m *XKMSWebAuthnManager, tenantID stri
 // concurrent finishes for one challenge must not all resolve the handoff.
 // Exactly one wins; every other finish fails closed.
 func TestXKMSWebAuthnManager_LoginSession_ConsumedOnce(t *testing.T) {
+	t.Parallel()
 	m := newClockedManager(handoffTestNow)
 	const tenant = "tenant-1"
 	const challenge = "challenge-shared"
@@ -333,6 +341,7 @@ func TestXKMSWebAuthnManager_LoginSession_ConsumedOnce(t *testing.T) {
 // user restarts the ceremony instead of the handoff leaking for the life of
 // the process.
 func TestXKMSWebAuthnManager_FinishLogin_FailureReclaimsHandoff(t *testing.T) {
+	t.Parallel()
 	settingsErr := &WebAuthnSettingsReadError{TenantID: "tenant-1"}
 	// A failing settings provider makes ServiceFor fail inside resolveConfig,
 	// before it touches the zero-value qrdb client.
@@ -400,6 +409,7 @@ func assertionMapWithChallenge(t *testing.T, challenge string) map[string]interf
 // TestXKMSWebAuthnManager_LoginSession_ExpiredRefused verifies an expired
 // handoff is refused with the typed error and consumed by the attempt.
 func TestXKMSWebAuthnManager_LoginSession_ExpiredRefused(t *testing.T) {
+	t.Parallel()
 	m := newClockedManager(handoffTestNow)
 	const tenant = "tenant-1"
 	const challenge = "challenge-expired"
@@ -426,6 +436,7 @@ func TestXKMSWebAuthnManager_LoginSession_ExpiredRefused(t *testing.T) {
 // TestXKMSWebAuthnManager_ReclaimExpiredLoginHandoffs verifies the sweep
 // removes only expired handoffs.
 func TestXKMSWebAuthnManager_ReclaimExpiredLoginHandoffs(t *testing.T) {
+	t.Parallel()
 	m := newClockedManager(handoffTestNow)
 	const tenant = "tenant-1"
 	seedLoginHandoff(m, tenant, "challenge-stale", loginHandoff{expiresAt: handoffTestNow.Add(-time.Minute)})
@@ -444,6 +455,7 @@ func TestXKMSWebAuthnManager_ReclaimExpiredLoginHandoffs(t *testing.T) {
 // TestXKMSWebAuthnManager_SweepLoginHandoffsIfDue verifies the sweep runs at
 // most once per TTL, observed through the recorded sweep time.
 func TestXKMSWebAuthnManager_SweepLoginHandoffsIfDue(t *testing.T) {
+	t.Parallel()
 	m := newClockedManager(handoffTestNow)
 	const tenant = "tenant-1"
 	const ttl = time.Minute
@@ -484,6 +496,7 @@ func TestXKMSWebAuthnManager_SweepLoginHandoffsIfDue(t *testing.T) {
 // TestLoginHandoffTTL verifies the handoff lifetime follows the configured
 // ceremony timeout and falls back to the library default when it is unset.
 func TestLoginHandoffTTL(t *testing.T) {
+	t.Parallel()
 	if got := loginHandoffTTL(90 * time.Second); got != 90*time.Second {
 		t.Fatalf("configured timeout: ttl = %v, want 90s", got)
 	}
@@ -501,6 +514,7 @@ func TestLoginHandoffTTL(t *testing.T) {
 // TestXKMSWebAuthnManager_NewLoginHandoff verifies the handoff BeginLogin
 // stores expires one TTL after the manager's clock.
 func TestXKMSWebAuthnManager_NewLoginHandoff(t *testing.T) {
+	t.Parallel()
 	m := newClockedManager(handoffTestNow)
 
 	h := m.newLoginHandoff("xkms-session-1", []byte{0x01}, 2*time.Minute)
@@ -525,6 +539,7 @@ func TestXKMSWebAuthnManager_NewLoginHandoff(t *testing.T) {
 // triggered the browser's native passkey picker). This asserts the handoff
 // round-trips the exact handle bytes that resolveLoginSession returns.
 func TestXKMSWebAuthnManager_LoginHandoff_CarriesUserHandle(t *testing.T) {
+	t.Parallel()
 	m := newClockedManager(handoffTestNow)
 	const tenant = "tenant-1"
 	const challenge = "challenge-xyz"
@@ -580,6 +595,7 @@ func (r *stubUserResolver) GetUserByEmail(_ context.Context, tenantID, email str
 // relabelled, and returned. A tenant-scoped lookup cannot read it in the first
 // place, so the record's own tenant is authoritative.
 func TestXKMSWebAuthnManager_ResolveAuthenticatedUser_CanonicalIdentity(t *testing.T) {
+	t.Parallel()
 	const tenant = "system"
 	const email = "admin@example.com"
 	canonical := &User{
@@ -618,6 +634,7 @@ func TestXKMSWebAuthnManager_ResolveAuthenticatedUser_CanonicalIdentity(t *testi
 // resolution fails closed (never surfaces a half-populated user) when no
 // resolver is wired, the resolver errors, or it returns no user.
 func TestXKMSWebAuthnManager_ResolveAuthenticatedUser_FailClosed(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	t.Run("no resolver", func(t *testing.T) {
@@ -653,6 +670,7 @@ func TestXKMSWebAuthnManager_ResolveAuthenticatedUser_FailClosed(t *testing.T) {
 // key and FinishLogin reads it back; a drift here would silently fail every
 // login.
 func TestXKMSWebAuthnManager_LoginKey(t *testing.T) {
+	t.Parallel()
 	m := &XKMSWebAuthnManager{}
 	if got := m.loginKey("tenant-a", "chal-123"); got != "tenant-a:chal-123" {
 		t.Fatalf("loginKey unexpected format: %q", got)
