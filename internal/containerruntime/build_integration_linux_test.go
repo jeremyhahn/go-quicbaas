@@ -98,6 +98,23 @@ func TestBuildImage_BusyboxRoundTrip(t *testing.T) {
 	assert.Equal(t, built.ID, tagged.ID)
 	assert.Equal(t, []string{"/out/hello"}, built.Config.Cmd)
 
+	// The build removed stage one's images, so the store holds the base
+	// and the built image, each with its one layer. This is checked
+	// before the root filesystem below adds a container layer.
+	base, err := b.images.Inspect(ctx, "localhost/busybox-base:test")
+	require.NoError(t, err)
+	store := b.images.(*storageImageStore).store
+	storedImages, err := store.Images()
+	require.NoError(t, err)
+	var imageIDs []string
+	for _, image := range storedImages {
+		imageIDs = append(imageIDs, image.ID)
+	}
+	assert.ElementsMatch(t, []string{base.ID, built.ID}, imageIDs, "the intermediate images are removed")
+	layers, err := store.Layers()
+	require.NoError(t, err)
+	assert.Len(t, layers, 2, "the intermediate images' layers are freed")
+
 	mnt, err := b.rootfs.Create(ctx, "built-check", built.ID)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, b.rootfs.Remove("built-check")) })
