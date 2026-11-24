@@ -100,6 +100,7 @@ func TestOrchestratorHandleRequest_AllMethodsMapped(t *testing.T) {
 		"SpawnSession", "PromptSession", "SessionStatus", "CloseSession", "ListSessions",
 		"CreateTask", "GetTask", "ListTasks", "ClaimTask", "CompleteTask",
 		"RegisterFleetNode", "GetFleetNode", "ListFleetNodes", "RemoveFleetNode", "FleetNodeHeartbeat",
+		"ListTaskArtifacts", "SubmitTaskArtifacts", "GetTaskArtifact",
 	}
 	for _, method := range expectedMethods {
 		t.Run(method, func(t *testing.T) {

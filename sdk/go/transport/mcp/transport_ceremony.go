@@ -16,6 +16,7 @@ package mcp
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"time"
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
@@ -28,7 +29,7 @@ import (
 //
 // The qrdb SDK transport.CeremonyClient interface defines the canonical
 // initialization-ceremony wire contract. The quicbaas MCP server exposes the
-// same surface under the quicbaas_ceremony_* tool namespace (see
+// same surface under go-qrdb's qrdb_ceremony_* tool names (see
 // pkg/api/mcp/tools_ceremony on the daemon side). This file makes
 // *Transport implement qrdbtransport.CeremonyClient so consumers can talk to
 // the quicbaas MCP listener with the same client type they use against
@@ -39,9 +40,9 @@ import (
 var _ qrdbtransport.CeremonyClient = (*Transport)(nil)
 
 // CeremonyInitialize starts the initialization ceremony by calling the
-// qrdb_ceremony_initialize MCP tool. The officer list and SANs are sent
-// as JSON arrays so the daemon's typed argument parser can decode them
-// without splitting strings.
+// qrdb_ceremony_initialize MCP tool. The officer list and SANs travel as
+// JSON-encoded strings, the shape go-qrdb's native qrdb_ceremony_initialize
+// declares.
 func (t *Transport) CeremonyInitialize(ctx context.Context, req *qrdbtransport.CeremonyInitializeRequest) (*qrdbtransport.CeremonyInitializeResponse, error) {
 	if req == nil {
 		return nil, errors.NewInvalidInput("mcp.CeremonyInitialize", "request is required")
@@ -55,20 +56,29 @@ func (t *Transport) CeremonyInitialize(ctx context.Context, req *qrdbtransport.C
 		args["credential_seal_strategy"] = req.CredentialSealStrategy
 	}
 	if len(req.Officers) > 0 {
-		officers := make([]interface{}, len(req.Officers))
-		for i, o := range req.Officers {
-			officers[i] = map[string]interface{}{
-				"username": o.Username,
-				"csr_pem":  o.CSRPEM,
-			}
+		type wireOfficer struct {
+			Username string `json:"username"`
+			CSRPEM   string `json:"csr_pem"`
 		}
-		args["officers"] = officers
+		officers := make([]wireOfficer, len(req.Officers))
+		for i, o := range req.Officers {
+			officers[i] = wireOfficer{Username: o.Username, CSRPEM: o.CSRPEM}
+		}
+		b, err := json.Marshal(officers)
+		if err != nil {
+			return nil, errors.Wrap(err, errors.CodeInvalidInput, "mcp.CeremonyInitialize", "failed to encode officers")
+		}
+		args["officers"] = string(b)
 	}
 	if req.Hostname != "" {
 		args["hostname"] = req.Hostname
 	}
 	if len(req.SANs) > 0 {
-		args["sans"] = stringsToInterfaces(req.SANs)
+		b, err := json.Marshal(req.SANs)
+		if err != nil {
+			return nil, errors.Wrap(err, errors.CodeInvalidInput, "mcp.CeremonyInitialize", "failed to encode sans")
+		}
+		args["sans"] = string(b)
 	}
 
 	raw, err := t.callBarrier(ctx, "qrdb_ceremony_initialize", args)
