@@ -78,16 +78,22 @@ func TestIAMHandler_CreatePolicy_SendsSpecYAMLOnly(t *testing.T) {
 	}
 }
 
-func TestIAMHandler_UpdatePolicy_RefusesSpecYAML(t *testing.T) {
+func TestIAMHandler_UpdatePolicy_SendsSpecYAML(t *testing.T) {
 	h := &iamHandler{}
 	client := &recordingPolicyClient{}
 	request := map[string]interface{}{"spec_yaml": []byte("rules: []")}
 
-	if _, err := h.handleUpdatePolicy(context.Background(), client, policyRequest(request)); !errors.IsInvalidInput(err) {
-		t.Fatalf("handleUpdatePolicy() = %v, want INVALID_INPUT", err)
+	if _, err := h.handleUpdatePolicy(context.Background(), client, policyRequest(request)); err != nil {
+		t.Fatalf("handleUpdatePolicy() = %v, want nil", err)
 	}
-	if len(client.updated) != 0 {
-		t.Fatalf("refused update reached the server: %v", client.updated)
+	if len(client.updated) != 1 {
+		t.Fatalf("UpdatePolicy requests = %d, want 1", len(client.updated))
+	}
+	if got := string(client.updated[0].GetSpecYaml()); got != "rules: []" {
+		t.Fatalf("spec_yaml = %q, want %q", got, "rules: []")
+	}
+	if got := client.updated[0].GetPolicyName(); got != "p" {
+		t.Fatalf("policy_name = %q, want %q", got, "p")
 	}
 }
 

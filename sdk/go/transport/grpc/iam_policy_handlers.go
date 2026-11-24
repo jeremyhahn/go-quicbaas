@@ -98,7 +98,9 @@ func (h *iamHandler) handleGetPolicy(ctx context.Context, client iampb.IAMServic
 	return convertProtoPolicyToSDK(resp), nil
 }
 
-// handleUpdatePolicy handles UpdatePolicy requests.
+// handleUpdatePolicy handles UpdatePolicy requests. On the server spec_yaml
+// replaces the stored spec, structured rules replace only the stored rules,
+// and a request carrying both is refused.
 func (h *iamHandler) handleUpdatePolicy(ctx context.Context, client iampb.IAMServiceClient, req interface{}) (interface{}, error) {
 	reqMap, ok := toMap(req)
 	if !ok {
@@ -119,14 +121,7 @@ func (h *iamHandler) handleUpdatePolicy(ctx context.Context, client iampb.IAMSer
 	description, _ := getString(requestData, "description")
 	labels, _ := getStringMap(requestData, "labels")
 	priority, _ := getInt(requestData, "priority")
-	// The server's UpdatePolicy does not apply spec_yaml yet (#1406): it
-	// echoes the bytes back while keeping the stored rules, so a caller
-	// could not tell the replacement was dropped. Refuse before the RPC.
-	if specYAML, _ := getBytes(requestData, "spec_yaml"); len(specYAML) > 0 {
-		return nil, errors.NewInvalidInput("handleUpdatePolicy",
-			"spec_yaml cannot be sent on a policy update over "+grpcPolicyTransport+
-				"; the server does not apply it yet")
-	}
+	specYAML, _ := getBytes(requestData, "spec_yaml")
 
 	pbReq := &iampb.UpdatePolicyRequest{
 		TenantId:    tenantID,
@@ -135,6 +130,7 @@ func (h *iamHandler) handleUpdatePolicy(ctx context.Context, client iampb.IAMSer
 		Labels:      labels,
 		Priority:    int32(priority),
 		Rules:       rules,
+		SpecYaml:    specYAML,
 	}
 
 	resp, err := client.UpdatePolicy(ctx, pbReq)
