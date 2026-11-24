@@ -2765,6 +2765,8 @@ func (k *kmsServiceImpl) disableKeyVersion(ctx context.Context, keyID string, ve
 // This method validates the request, retrieves the current key status,
 // calls the appropriate KMS manager method (EnableKey or DisableKey),
 // and returns the status transition information.
+// A version's old status comes from replicated storage, not this node's
+// cache, and a failed lookup fails the update.
 func (k *kmsServiceImpl) UpdateKeyStatus(ctx context.Context, req *UpdateKeyStatusRequest) (*UpdateKeyStatusResponse, error) {
 	start := time.Now()
 	if k.metrics != nil {
@@ -2800,8 +2802,16 @@ func (k *kmsServiceImpl) UpdateKeyStatus(ctx context.Context, req *UpdateKeyStat
 	// Determine old status - for version-specific updates, use version status
 	var oldStatus KeyStatus
 	if req.Version > 0 {
-		// Get version-specific status for grace period and similar operations
-		versionStatus, _ := k.getVersionStatus(ctx, scopedKeyID, req.Version)
+		// Read the replicated status: another node may have changed it since
+		// this node cached it, and a stale entry would turn the update into a
+		// silent no-op.
+		versionStatus, err := k.authoritativeVersionStatus(ctx, scopedKeyID, req.Version)
+		if err != nil {
+			if k.metrics != nil {
+				k.metrics.errorsByType.With("storage_error", "update_key_status").Inc()
+			}
+			return nil, err
+		}
 		if versionStatus != "" {
 			oldStatus = versionStatus
 		} else {

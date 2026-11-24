@@ -297,6 +297,90 @@ func TestCryptoDecrypt_VersionStatusAcrossNodes_RealXKMS(t *testing.T) {
 	shared.failGet = false
 }
 
+// TestUpdateKeyStatus_AlternatingAcrossNodes_RealXKMS alternates version
+// status updates between two nodes whose local caches go stale. Each update
+// must read the replicated status, so a stale cache never turns a real
+// change into a silent no-op, and a failed lookup fails the update.
+func TestUpdateKeyStatus_AlternatingAcrossNodes_RealXKMS(t *testing.T) {
+	manager, cleanup := realKMSManagerForTest(t)
+	defer cleanup()
+
+	shared := &getFailingKVStore{mockKVStore: newMockKVStore()}
+	newNode := func() (*kmsServiceImpl, *cryptoService) {
+		logger := newMockLogger()
+		kmsSvc := newKMSService(manager, logger)
+		kmsSvc.SetKVStore(shared)
+		cs := newCryptoService(crypto.NewMemoryCryptoManager(manager), manager, logger, kmsSvc.GetSafetyTracker())
+		cs.kmsSvc = kmsSvc
+		return kmsSvc, cs
+	}
+	kmsA, csA := newNode()
+	kmsB, csB := newNode()
+	ctx := systemTenantCtx()
+
+	const keyID = "vstatus-alternating-key"
+	_, err := kmsA.GenerateKey(ctx, &GenerateKeyRequest{
+		Name:  keyID,
+		Usage: []KeyUsage{KeyUsageEncrypt, KeyUsageDecrypt},
+		KeyAttributes: &xkmssdk.KeyAttributes{
+			StoreType:          xkmssdk.StoreType("software"),
+			KeyType:            xkmssdk.KeyTypeEncryption,
+			SymmetricAlgorithm: xkmssdk.SymmetricAES256GCM,
+		},
+	})
+	require.NoError(t, err)
+	v1, err := csB.Encrypt(ctx, &EncryptRequest{KeyID: keyID, Plaintext: []byte("sealed under v1")})
+	require.NoError(t, err)
+	_, err = kmsA.RotateKey(ctx, &RotateKeyRequest{KeyID: keyID})
+	require.NoError(t, err)
+
+	scoped, err := scopeKeyID(ctx, keyID)
+	require.NoError(t, err)
+	update := func(node *kmsServiceImpl, status KeyStatus) (*UpdateKeyStatusResponse, error) {
+		return node.UpdateKeyStatus(ctx, &UpdateKeyStatusRequest{KeyID: keyID, Version: 1, Status: status})
+	}
+
+	// Disable through stale caches: A caches disabled, B enables, A disables again.
+	_, err = update(kmsA, KeyStatusDisabled)
+	require.NoError(t, err)
+	resp, err := update(kmsB, KeyStatusEnabled)
+	require.NoError(t, err)
+	require.Equal(t, KeyStatusDisabled, resp.OldStatus)
+	resp, err = update(kmsA, KeyStatusDisabled)
+	require.NoError(t, err)
+	require.Equal(t, KeyStatusEnabled, resp.OldStatus, "node A must read the replicated enable, not its stale cache")
+	status, err := kmsB.authoritativeVersionStatus(ctx, scoped, 1)
+	require.NoError(t, err)
+	require.Equal(t, KeyStatusDisabled, status, "node A's second disable must be written")
+	_, err = csB.Decrypt(ctx, &DecryptRequest{KeyID: keyID, Ciphertext: v1.Ciphertext})
+	var disabled *KeyVersionDisabledError
+	require.ErrorAs(t, err, &disabled)
+
+	// Enable through stale caches: A caches enabled, B disables, A enables again.
+	_, err = update(kmsA, KeyStatusEnabled)
+	require.NoError(t, err)
+	_, err = update(kmsB, KeyStatusDisabled)
+	require.NoError(t, err)
+	resp, err = update(kmsA, KeyStatusEnabled)
+	require.NoError(t, err)
+	require.Equal(t, KeyStatusDisabled, resp.OldStatus, "node A must read the replicated disable, not its stale cache")
+	status, err = kmsB.authoritativeVersionStatus(ctx, scoped, 1)
+	require.NoError(t, err)
+	require.Equal(t, KeyStatusEnabled, status, "node A's second enable must be written")
+	got, err := csA.Decrypt(ctx, &DecryptRequest{KeyID: keyID, Ciphertext: v1.Ciphertext})
+	require.NoError(t, err)
+	require.Equal(t, []byte("sealed under v1"), got.Plaintext)
+
+	// A status lookup that fails fails the update (fail closed).
+	shared.failGet = true
+	_, err = update(kmsA, KeyStatusDisabled)
+	require.Error(t, err)
+	var qbErr *dberrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	require.Equal(t, dberrors.ErrStorage, qbErr.Code)
+	shared.failGet = false
+}
+
 // TestCryptoDecrypt_FailedDisableWriteStaysDisabled_RealXKMS persists an
 // enabled record for v1, then makes the disable write fail. The disable must
 // report failure, the node must still refuse v1 ciphertexts rather than trust
