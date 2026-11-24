@@ -16,6 +16,7 @@ package quicbaas
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"net/url"
 	"os"
 	"time"
 
@@ -83,6 +84,10 @@ type clientOptions struct {
 
 	// Unix socket settings
 	unixSocketPath string
+
+	// OCI registry: base URL of the REST listener serving /v2/ for
+	// Compute().Images(); empty means the client's own address.
+	imagesURL string
 
 	// Embedded settings
 	// Note: Uses interface{} to avoid import cycles. The actual type
@@ -284,6 +289,32 @@ func WithPoolHealthInterval(d time.Duration) Option {
 func WithREST() Option {
 	return func(o *clientOptions) error {
 		o.transportType = TransportREST
+		return nil
+	}
+}
+
+// WithImagesURL sets the base URL (http or https, no path needed) of the
+// REST listener that serves the OCI registry at /v2/, for Compute().Images().
+// Without it the registry is reached at the client's own address (origin
+// only), which a Unix socket or embedded client does not have. An empty,
+// unparsable or relative URL, or a scheme other than http or https, is an
+// InvalidInput error.
+func WithImagesURL(u string) Option {
+	return func(o *clientOptions) error {
+		if u == "" {
+			return errors.NewInvalidInput("WithImagesURL", "URL cannot be empty")
+		}
+		parsed, err := url.Parse(u)
+		if err != nil {
+			return errors.NewInvalidInput("WithImagesURL", "invalid URL: "+err.Error())
+		}
+		if !parsed.IsAbs() || parsed.Host == "" {
+			return errors.NewInvalidInput("WithImagesURL", "URL must be absolute with a host")
+		}
+		if parsed.Scheme != "http" && parsed.Scheme != "https" {
+			return errors.NewInvalidInput("WithImagesURL", "URL scheme must be http or https")
+		}
+		o.imagesURL = u
 		return nil
 	}
 }

@@ -85,6 +85,9 @@ type Client interface {
 	BarrierCeremonyMgmt() BarrierCeremonyService
 	TenantMgmtService() TenantService
 
+	// Compute operations: the OCI image registry (Compute().Images())
+	Compute() ComputeService
+
 	// Core data operations (backward compatible)
 	KV() KVClient
 	Batch() BatchClient
@@ -1759,6 +1762,11 @@ type client struct {
 	acmeTransportOnce        sync.Once
 	acmeTransportCached      Transport
 	acmeTransportErr         error
+
+	// OCI registry client for Compute().Images() (lazily initialized).
+	imagesOnce   sync.Once
+	imagesClient *ImagesClient
+	imagesErr    error
 
 	// M10 — extended security service (lazily initialized).
 	securityOnce sync.Once

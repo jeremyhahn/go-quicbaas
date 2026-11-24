@@ -532,6 +532,7 @@ func (m *mockSDKClientForMCP) DataStore() (quicbaas.QRDBKVStore, error) { return
 
 func (m *mockSDKClientForMCP) BarrierCeremonyMgmt() quicbaas.BarrierCeremonyService  { return nil }
 func (m *mockSDKClientForMCP) TenantMgmtService() quicbaas.TenantService             { return nil }
+func (m *mockSDKClientForMCP) Compute() quicbaas.ComputeService                      { return nil }
 func (m *mockSDKClientForMCP) Barrier() (quicbaas.QRDBBarrierClient, error)          { return nil, nil }
 func (m *mockSDKClientForMCP) BarrierCeremony() (quicbaas.QRDBCeremonyClient, error) { return nil, nil }
 func (m *mockSDKClientForMCP) SealStore() (quicbaas.QRDBSealStoreClient, error)      { return nil, nil }

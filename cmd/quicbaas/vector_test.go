@@ -918,6 +918,7 @@ func (m *mockSDKClientWithVector) Close() error { return nil }
 
 func (m *mockSDKClientWithVector) BarrierCeremonyMgmt() quicbaas.BarrierCeremonyService { return nil }
 func (m *mockSDKClientWithVector) TenantMgmtService() quicbaas.TenantService            { return nil }
+func (m *mockSDKClientWithVector) Compute() quicbaas.ComputeService                     { return nil }
 func (m *mockSDKClientWithVector) Barrier() (quicbaas.QRDBBarrierClient, error) {
 	return nil, nil
 }
@@ -1302,6 +1303,7 @@ func (m *testSDKClientForVector) DataStore() (quicbaas.QRDBKVStore, error) { ret
 
 func (m *testSDKClientForVector) BarrierCeremonyMgmt() quicbaas.BarrierCeremonyService { return nil }
 func (m *testSDKClientForVector) TenantMgmtService() quicbaas.TenantService            { return nil }
+func (m *testSDKClientForVector) Compute() quicbaas.ComputeService                     { return nil }
 func (m *testSDKClientForVector) Barrier() (quicbaas.QRDBBarrierClient, error) {
 	return nil, nil
 }

@@ -99,6 +99,7 @@ func (m *mockClient) DataStore() (quicbaas.QRDBKVStore, error)              { re
 
 func (m *mockClient) BarrierCeremonyMgmt() quicbaas.BarrierCeremonyService       { return nil }
 func (m *mockClient) TenantMgmtService() quicbaas.TenantService                  { return nil }
+func (m *mockClient) Compute() quicbaas.ComputeService                           { return nil }
 func (m *mockClient) Barrier() (quicbaas.QRDBBarrierClient, error)               { return nil, nil }
 func (m *mockClient) BarrierCeremony() (quicbaas.QRDBCeremonyClient, error)      { return nil, nil }
 func (m *mockClient) SealStore() (quicbaas.QRDBSealStoreClient, error)           { return nil, nil }
