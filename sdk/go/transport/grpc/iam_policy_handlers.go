@@ -15,6 +15,7 @@ package grpc
 
 import (
 	"context"
+	"encoding/json"
 	"strconv"
 	"strings"
 
@@ -27,8 +28,10 @@ import (
 )
 
 // grpcPolicyTransport names this transport in a policyfields refusal. The
-// IAM proto carries a policy as spec_yaml only until #1405, so structured
-// rules, conditions, subjects and targets are refused instead of dropped.
+// IAM proto carries a policy as spec_yaml or as structured rules holding a
+// name, effect, priority and action and resource patterns. What the engine
+// cannot store (conditions, targets, rule subjects, matcher negate, resource
+// type and attributes) is refused instead of dropped.
 const grpcPolicyTransport = "gRPC"
 
 // handleCreatePolicy handles CreatePolicy requests.
@@ -40,7 +43,11 @@ func (h *iamHandler) handleCreatePolicy(ctx context.Context, client iampb.IAMSer
 
 	tenantID, _ := getString(reqMap, "tenant_id")
 	requestData, _ := getMap(reqMap, "request")
-	if err := policyfields.Refuse("handleCreatePolicy", grpcPolicyTransport, requestData); err != nil {
+	if err := policyfields.RefuseUnstorable("handleCreatePolicy", grpcPolicyTransport, requestData); err != nil {
+		return nil, err
+	}
+	rules, err := policyRulesToProto("handleCreatePolicy", requestData)
+	if err != nil {
 		return nil, err
 	}
 
@@ -57,6 +64,7 @@ func (h *iamHandler) handleCreatePolicy(ctx context.Context, client iampb.IAMSer
 		Labels:      labels,
 		Priority:    int32(priority),
 		SpecYaml:    specYAML,
+		Rules:       rules,
 	}
 
 	resp, err := client.CreatePolicy(ctx, pbReq)
@@ -100,7 +108,11 @@ func (h *iamHandler) handleUpdatePolicy(ctx context.Context, client iampb.IAMSer
 	tenantID, _ := getString(reqMap, "tenant_id")
 	policyName, _ := getString(reqMap, "policy_name")
 	requestData, _ := getMap(reqMap, "request")
-	if err := policyfields.Refuse("handleUpdatePolicy", grpcPolicyTransport, requestData); err != nil {
+	if err := policyfields.RefuseUnstorable("handleUpdatePolicy", grpcPolicyTransport, requestData); err != nil {
+		return nil, err
+	}
+	rules, err := policyRulesToProto("handleUpdatePolicy", requestData)
+	if err != nil {
 		return nil, err
 	}
 
@@ -122,6 +134,7 @@ func (h *iamHandler) handleUpdatePolicy(ctx context.Context, client iampb.IAMSer
 		Description: description,
 		Labels:      labels,
 		Priority:    int32(priority),
+		Rules:       rules,
 	}
 
 	resp, err := client.UpdatePolicy(ctx, pbReq)
@@ -130,6 +143,56 @@ func (h *iamHandler) handleUpdatePolicy(ctx context.Context, client iampb.IAMSer
 	}
 
 	return convertProtoPolicyToSDK(resp), nil
+}
+
+// policyRulesToProto maps a policy request's structured rules to the proto
+// rules, or returns nil when the request carries none. Call it after
+// policyfields.RefuseUnstorable: what the engine cannot store is refused
+// there, so only names, effects, priorities and patterns are left to map.
+func policyRulesToProto(op string, requestData map[string]interface{}) ([]*iampb.PolicyRule, error) {
+	raw, ok := requestData["rules"]
+	if !ok || raw == nil {
+		return nil, nil
+	}
+	data, err := json.Marshal(raw)
+	if err != nil {
+		return nil, errors.Wrap(err, errors.CodeInvalidInput, op, "policy rules are not JSON-encodable")
+	}
+	var sdkRules []iam.Rule
+	if err := json.Unmarshal(data, &sdkRules); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInvalidInput, op, "policy rules are not valid rules")
+	}
+	if len(sdkRules) == 0 {
+		return nil, nil
+	}
+	rules := make([]*iampb.PolicyRule, 0, len(sdkRules))
+	for i, r := range sdkRules {
+		var effect string
+		switch r.Effect {
+		case iam.EffectAllow:
+			effect = "allow"
+		case iam.EffectDeny:
+			effect = "deny"
+		default:
+			return nil, errors.NewInvalidInput(op, "rules["+strconv.Itoa(i)+"].effect must be allow or deny")
+		}
+		actions := make([]string, 0, len(r.Actions))
+		for _, a := range r.Actions {
+			actions = append(actions, a.Pattern)
+		}
+		resources := make([]string, 0, len(r.Resources))
+		for _, res := range r.Resources {
+			resources = append(resources, res.Pattern)
+		}
+		rules = append(rules, &iampb.PolicyRule{
+			Name:      r.Name,
+			Effect:    effect,
+			Priority:  int32(r.Priority),
+			Actions:   actions,
+			Resources: resources,
+		})
+	}
+	return rules, nil
 }
 
 // handleDeletePolicy handles DeletePolicy requests.
