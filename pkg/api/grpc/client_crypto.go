@@ -19,6 +19,7 @@ import (
 	"time"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
+	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
@@ -30,6 +31,14 @@ func (c *Client) KMSSign(ctx context.Context, req *service.SignRequest) (*servic
 			Code: errors.ErrInvalidInput,
 			Op:   "Client.KMSSign",
 			Err:  ErrRequestNil,
+		}
+	}
+
+	if err := validateSignPaddingFields(req); err != nil {
+		return nil, &errors.QBError{
+			Code: errors.ErrInvalidInput,
+			Op:   "Client.KMSSign",
+			Err:  err,
 		}
 	}
 
@@ -315,6 +324,26 @@ func convertServiceSignaturePaddingToProto(p service.SignaturePadding) pb.Signat
 	default:
 		return pb.SignaturePadding_SIGNATURE_PADDING_UNSPECIFIED
 	}
+}
+
+// validateSignPaddingFields refuses a padding or MGF1 hash the converters
+// would otherwise rewrite silently: an unknown padding would go out as
+// UNSPECIFIED (PKCS#1 v1.5) and an unknown MGF1 hash as SHA-256.
+func validateSignPaddingFields(req *service.SignRequest) error {
+	switch req.Padding {
+	case "", service.SignaturePaddingPKCS1v15, service.SignaturePaddingPSS:
+	default:
+		return api.NewInvalidInputError("unsupported signature padding: " + string(req.Padding))
+	}
+	switch req.MGF1Hash {
+	case "",
+		service.HashAlgSHA256, service.HashAlgSHA384, service.HashAlgSHA512,
+		service.HashAlgSHA3_256, service.HashAlgSHA3_384, service.HashAlgSHA3_512,
+		service.HashAlgBLAKE2b256, service.HashAlgBLAKE2b512:
+	default:
+		return api.NewInvalidInputError("unsupported MGF1 hash: " + string(req.MGF1Hash))
+	}
+	return nil
 }
 
 // pssSaltLengthToProto narrows the salt length to the wire type; a value out
