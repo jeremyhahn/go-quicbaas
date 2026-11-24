@@ -81,7 +81,7 @@ ARG BUILD_TAGS
 LABEL maintainer="Jeremy Hahn"
 LABEL description="QuicBaaS hardware-seal integration test runner (tpm2 + pkcs11)"
 
-# Runtime dependencies:
+# Runtime dependencies: the test harness tools, gcc and musl-dev for cgo, and the SoftHSM2 shared libraries.
 RUN apk add --no-cache \
     bash \
     coreutils \
