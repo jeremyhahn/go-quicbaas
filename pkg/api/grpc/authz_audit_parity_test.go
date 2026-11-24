@@ -38,7 +38,15 @@ var auditGrants = map[string]methodPermission{
 }
 
 func TestAuditGRPCResourceAndAction(t *testing.T) {
-	for method, want := range auditGrants {
+	requireGRPCGrants(t, auditGrants)
+}
+
+// requireGRPCGrants asserts every method in grants is mapped to exactly its
+// REST twin's grant, both in grpcMethodPermissions and through
+// grpcResourceAndAction.
+func requireGRPCGrants(t *testing.T, grants map[string]methodPermission) {
+	t.Helper()
+	for method, want := range grants {
 		t.Run(method, func(t *testing.T) {
 			got, ok := grpcMethodPermissions[method]
 			require.True(t, ok, "unmapped: under RequireAuthz the verb is refused for every caller")
@@ -53,7 +61,15 @@ func TestAuditGRPCResourceAndAction(t *testing.T) {
 }
 
 func TestAuditGRPCAuthorization(t *testing.T) {
-	for method, want := range auditGrants {
+	requireGRPCGrantEnforced(t, auditGrants)
+}
+
+// requireGRPCGrantEnforced asserts the authorization interceptor lets a
+// caller holding each method's grant reach the handler and refuses a caller
+// without it on the grant check, not as an unmapped method.
+func requireGRPCGrantEnforced(t *testing.T, grants map[string]methodPermission) {
+	t.Helper()
+	for method, want := range grants {
 		grant := want.resource + ":" + want.action
 		info := &grpc.UnaryServerInfo{FullMethod: method}
 

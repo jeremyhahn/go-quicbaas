@@ -242,12 +242,14 @@ var grpcMethodPermissions = map[string]methodPermission{
 
 	// ---- quicbaas.iam.v1.IAMService: WebAuthn credential administration ----
 	//
-	// The IAMService methods mapped here are ApproveUser, GetUser,
-	// GetUserByUsername and the WebAuthn credential verbs, and only those;
-	// that needs saying out loud: the rest of quicbaas.iam.v1.IAMService is
-	// absent from brokerServiceDescs and unmapped, so under RequireAuthz it is
-	// denied wholesale. Mapping the WebAuthn verbs does not carve an exception
-	// into that posture — it is the minimum needed for the surface to exist.
+	// IAMService is absent from brokerServiceDescs, so a method of it that is
+	// not mapped in this table is denied wholesale under RequireAuthz. The
+	// methods mapped are ApproveUser, GetUser, GetUserByUsername, the
+	// WebAuthn credential verbs here, ReconcileRoles, and the tenant verbs
+	// (CreateTenant, GetTenant, ListTenants, UpdateTenant, DeleteTenant,
+	// ProvisionTenant) below. Mapping the WebAuthn verbs does not carve an
+	// exception into that posture — it is the minimum needed for the surface
+	// to exist.
 	// They are the operator's ONLY recovery path for a WebAuthn credential
 	// stranded by a deleted user (go-quicbaas#273): the credential blocks its
 	// email from ever registering an authenticator again, and every other way
@@ -265,9 +267,8 @@ var grpcMethodPermissions = map[string]methodPermission{
 	// also outside brokerServiceDescs; they are mapped below by REST parity,
 	// each taking the grant its REST twin requires (go-quicbaas#1624).
 	//
-	// Mapping the REST of IAMService is an authorization-policy decision for
-	// the owner, not a wiring change; it is tracked separately. Until then it
-	// stays unmapped and default-denied.
+	// Every other IAMService method stays unmapped and default-denied; a
+	// method is mapped only by REST parity, taking its REST twin's grant.
 	// Mirrors REST POST /api/v1/iam/users/{user_id}/approve (users:enable).
 	"/quicbaas.iam.v1.IAMService/ApproveUser": {"users", "enable"},
 	// Mirror QRDBService GetUser/GetUserByUsername (users:read).
@@ -294,6 +295,17 @@ var grpcMethodPermissions = map[string]methodPermission{
 	// tenant-create family, the same grant REST's
 	// POST /api/v1/tenants/{tenant_id}/provision requires (go-quicbaas#358).
 	"/quicbaas.iam.v1.IAMService/ProvisionTenant": {"tenants", "create"},
+	// The tenant CRUD verbs the CLI calls over gRPC take their REST twin's
+	// grant (pkg/api/rest/routes_permissions_generated.go): POST
+	// /api/v1/tenants/ tenants:create, GET /api/v1/tenants/{tenant_id}
+	// tenants:read, GET /api/v1/tenants/ tenants:list, PUT
+	// /api/v1/tenants/{tenant_id} tenants:create, DELETE
+	// /api/v1/tenants/{tenant_id} tenants:delete.
+	"/quicbaas.iam.v1.IAMService/CreateTenant": {"tenants", "create"},
+	"/quicbaas.iam.v1.IAMService/GetTenant":    {"tenants", "read"},
+	"/quicbaas.iam.v1.IAMService/ListTenants":  {"tenants", "list"},
+	"/quicbaas.iam.v1.IAMService/UpdateTenant": {"tenants", "create"},
+	"/quicbaas.iam.v1.IAMService/DeleteTenant": {"tenants", "delete"},
 
 	// ---- quicbaas.iam.v1.FederationService: providers and account links ----
 	//
