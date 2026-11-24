@@ -17,6 +17,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -102,6 +103,13 @@ func NewStdioTransport(command string, args []string, workDir string, env []stri
 		_ = stdinPipe.Close()
 		return nil, &SpawnError{Command: command, Cause: err}
 	}
+
+	// Log process start for debugging.
+	pid := 0
+	if cmd.Process != nil {
+		pid = cmd.Process.Pid
+	}
+	fmt.Fprintf(os.Stderr, "[transport] started %s pid=%d workDir=%s\n", command, pid, workDir)
 
 	t := &StdioTransport{
 		cmd:      cmd,
@@ -311,10 +319,17 @@ func (t *StdioTransport) readLoop() {
 	}
 
 	// Process exited or pipe closed. Signal done via CAS to avoid double-close.
+	scanErr := t.stdout.Err()
+	pid := 0
+	if t.cmd != nil && t.cmd.Process != nil {
+		pid = t.cmd.Process.Pid
+	}
+	fmt.Fprintf(os.Stderr, "[transport] readLoop exited pid=%d scanErr=%v\n", pid, scanErr)
 	if t.closed.CompareAndSwap(false, true) {
 		close(t.done)
 	}
 	if t.cmd != nil && t.cmd.Process != nil {
-		_ = t.cmd.Wait()
+		waitErr := t.cmd.Wait()
+		fmt.Fprintf(os.Stderr, "[transport] process exited pid=%d waitErr=%v\n", pid, waitErr)
 	}
 }
