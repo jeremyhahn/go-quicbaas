@@ -236,8 +236,8 @@ func TestRenderOutcome_CarriesTheTypedCondition(t *testing.T) {
 // attempt's result — which is where the worker's final word lands.
 func TestConclusionEvidence_PrefersThePark(t *testing.T) {
 	task := exhaustedTask()
-	if got := conclusionEvidence(task); got != "sdlc: task task-1 produced no changes in /workspace/api" {
-		t.Fatalf("failed task evidence: %q", got)
+	if got := conclusionEvidence(task); got != "the run recorded no public summary; see the task's audit trail" {
+		t.Fatalf("a failed task with no run summary must not quote its output: %q", got)
 	}
 	task.BlockedReason = "  the pipeline is red  "
 	if got := conclusionEvidence(task); got != "the pipeline is red" {
@@ -369,6 +369,35 @@ func TestHooks_TaskConcluded_PostsTheRunSummaryNotTheOutput(t *testing.T) {
 		t.Fatalf("the comment does not quote the run summary:\n%s", body)
 	}
 	for _, private := range []string{"https://bot:hunter2@git.corp.internal", "qbx_live_9f8e7d6c5b4a3f2e1d0c"} {
+		if strings.Contains(body, private) {
+			t.Fatalf("the comment carries %q:\n%s", private, body)
+		}
+	}
+}
+
+// TestHooks_TaskConcluded_WithNoSummaryPostsNoOutput: a task that concluded
+// with no run summary posts the fixed line, never its raw result output.
+func TestHooks_TaskConcluded_WithNoSummaryPostsNoOutput(t *testing.T) {
+	rig := concludedRig(t)
+	task := exhaustedTask()
+	task.Result.Output = "sdlc: push to https://bot:hunter2@git.corp.internal failed with qbx_live_9f8e7d6c5b4a3f2e1d0c"
+	rig.tasks.replace(task)
+
+	err := rig.hooks.TaskConcluded(context.Background(), orchestration.TaskConclusion{
+		TenantID: testTenant, Reason: orchestration.TaskConcludedBudgetExhausted, Task: task, JobID: "job-3",
+	})
+	if err != nil {
+		t.Fatalf("TaskConcluded: %v", err)
+	}
+	comments := rig.forge.commentsOn(25)
+	if len(comments) != 1 {
+		t.Fatalf("expected exactly one comment, got %d", len(comments))
+	}
+	body := comments[0].Body
+	if !strings.Contains(body, "the run recorded no public summary; see the task's audit trail") {
+		t.Fatalf("the comment lacks the fixed line:\n%s", body)
+	}
+	for _, private := range []string{"https://bot:hunter2@git.corp.internal", "qbx_live_9f8e7d6c5b4a3f2e1d0c", "sdlc: push"} {
 		if strings.Contains(body, private) {
 			t.Fatalf("the comment carries %q:\n%s", private, body)
 		}

@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -2065,6 +2066,58 @@ func TestRunner_AFailedVerificationRecordsARunSummary(t *testing.T) {
 	}
 	if summary.AuditRecord != auditVerification {
 		t.Fatalf("audit record = %q, want %q", summary.AuditRecord, auditVerification)
+	}
+}
+
+// TestRunnerRun_ATimedOutStageRecordsARunSummary: a stage's own timeout ends
+// the attempt while the job's context is live, and the task concludes from
+// that attempt, so its summary must be recorded. Only a cancelled job
+// context records none, because the resuming run will.
+func TestRunnerRun_ATimedOutStageRecordsARunSummary(t *testing.T) {
+	rig := newRunnerRig(t)
+	run := newRunnerRun(t, rig)
+	timedOut := &orchestration.JobHookError{
+		Stage: orchestration.JobStagePrepare, Hooks: "sdlc", JobID: run.job.JobID,
+		Cause: fmt.Errorf("verification: %w", context.DeadlineExceeded),
+	}
+	run.recordSummary(context.Background(), timedOut)
+	summary := submittedRunSummary(t, rig, "run_summary@a1")
+	if summary.Outcome != RunOutcomeFailed {
+		t.Fatalf("summary = %+v, want a failed run", summary)
+	}
+
+	before := len(rig.tasks.submitted(testTask))
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	newRunnerRun(t, rig).recordSummary(cancelled, fmt.Errorf("stage: %w", context.Canceled))
+	if after := len(rig.tasks.submitted(testTask)); after != before {
+		t.Fatalf("a cancelled run submitted %d artifacts, want none", after-before)
+	}
+}
+
+// TestRunner_ATimedOutStageConcludesWithItsSummary drives a whole run whose
+// worker turn times out under a live job context: the run records its summary,
+// and the summary carries none of the error's text.
+func TestRunner_ATimedOutStageConcludesWithItsSummary(t *testing.T) {
+	rig := newRunnerRig(t)
+	rig.rebindVerification(t, "true")
+	rig.workerWrote()
+	const private = "/var/lib/quicbaas/secret-session.sock"
+	rig.agents.promptErr = fmt.Errorf("prompt via %s: %w", private, context.DeadlineExceeded)
+
+	err := rig.runner.Run(context.Background(), rig.job(t))
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Run err = %v, want the stage timeout", err)
+	}
+	summary := submittedRunSummary(t, rig, "run_summary@a1")
+	if summary.Outcome != RunOutcomeFailed {
+		t.Fatalf("summary = %+v, want a failed run", summary)
+	}
+	rendered := summary.Render()
+	for _, leak := range []string{private, "prompt via", context.DeadlineExceeded.Error()} {
+		if strings.Contains(rendered, leak) {
+			t.Fatalf("the summary carries %q:\n%s", leak, rendered)
+		}
 	}
 }
 
