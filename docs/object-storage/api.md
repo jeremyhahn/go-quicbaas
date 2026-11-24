@@ -904,6 +904,8 @@ POST /admin/storage/gc
 GET /admin/storage/gc/progress?operation_id={id}
 ```
 
+See [Garbage Collection](#garbage-collection-1) below for what a run deletes.
+
 ### Object Repair
 
 ```http
@@ -933,6 +935,9 @@ POST /admin/object-backends/{name}/compact
   "aggressive": false
 }
 ```
+
+No backend supports compaction yet, so this call returns an unimplemented
+error for every backend that exists. See [Compaction](#compaction-1) below.
 
 ---
 
@@ -1321,6 +1326,26 @@ rpc SetBackendStatus(SetBackendStatusRequest) returns (SetBackendStatusResponse)
 
 Remove orphaned objects that exist in backends but not in the catalog.
 
+A run works through each named backend in turn:
+
+1. It lists every object in the backend. Each one counts towards
+   `objects_scanned`.
+2. It keeps any object that a catalog entry references, whether as the
+   primary store, a replica or the archive copy.
+3. It keeps any unreferenced object modified within the grace window before
+   the run started. The window is one hour, or five minutes with
+   `aggressive`, so a write that has not yet reached the catalog is not lost.
+   It also keeps any object whose modification time the backend cannot report.
+4. It deletes the rest, adding each one to `objects_deleted` and its size to
+   `bytes_reclaimed`.
+
+With `dry_run`, step 4 deletes nothing, but the counters still report what
+would have been deleted. If a backend cannot be listed or a delete fails, the
+operation ends `failed` with the error.
+
+A run records the tenant that started it. Another tenant asking for its
+progress gets `GC_OPERATION_NOT_FOUND`.
+
 #### Run Garbage Collection
 
 **REST API**
@@ -1449,6 +1474,13 @@ rpc RepairObject(RepairObjectRequest) returns (RepairObjectResponse);
 ### Compaction
 
 Trigger compaction on storage backends that support it.
+
+No backend supports compaction yet. For a backend that exists, the call
+returns an unimplemented error (gRPC `UNIMPLEMENTED`), with the message
+`compaction is not supported by backend {name}`. It does not start an
+operation, and nothing is compacted. An unknown backend returns
+`BACKEND_NOT_FOUND`. The request and response below show the interface that a
+backend with compaction support will use.
 
 #### Compact Backend
 
