@@ -639,8 +639,8 @@ RestSecretsClient builds `/api/v1/secrets/<path>` for the `*` routes (POST store
 
 | Method | Path | Handler | SDK file | Console |
 |---|---|---|---|---|
-| GET | `/api/v1/xkms/backends` | HandleXKMSListBackends | rest.ts | not covered |
-| GET | `/api/v1/xkms/backends/{id}` | HandleXKMSGetBackend | rest.ts | not covered |
+| GET | `/api/v1/xkms/backends` | HandleXKMSListBackends | rest.ts | covered: views/security/XKMSKeysView.svelte |
+| GET | `/api/v1/xkms/backends/{id}` | HandleXKMSGetBackend | rest.ts | covered: views/security/XKMSKeysView.svelte |
 | GET | `/api/v1/xkms/ca/bundle` | HandleXKMSGetCABundle | - (rest.ts†) | not covered |
 | GET | `/api/v1/xkms/ca/cert` | HandleXKMSGetCACertificate | - (rest.ts†) | not covered |
 | POST | `/api/v1/xkms/ca/crl` | HandleXKMSGenerateCRL | rest.ts | covered: views/security/CertificatesView.svelte |
@@ -658,21 +658,21 @@ RestSecretsClient builds `/api/v1/secrets/<path>` for the `*` routes (POST store
 | POST | `/api/v1/xkms/fido2/register/begin` | HandleXKMSFIDO2BeginRegistration | - (rest.ts†) | not covered |
 | POST | `/api/v1/xkms/fido2/register/finish` | HandleXKMSFIDO2FinishRegistration | - (rest.ts†) | not covered |
 | POST | `/api/v1/xkms/fido2/credentials/begin` | HandleXKMSFIDO2BeginAddCredential | rest.ts | not covered |
-| GET | `/api/v1/xkms/health` | HandleXKMSHealth | rest.ts | not covered |
-| GET | `/api/v1/xkms/keys` | HandleXKMSListKeys | - (rest.ts†) | not covered |
-| POST | `/api/v1/xkms/keys` | HandleXKMSGenerateKey | rest.ts | not covered |
-| DELETE | `/api/v1/xkms/keys/{id}` | HandleXKMSDeleteKey | - (rest.ts†) | not covered |
-| GET | `/api/v1/xkms/keys/{id}` | HandleXKMSGetKey | - (rest.ts†) | not covered |
-| POST | `/api/v1/xkms/keys/{id}/decrypt` | HandleXKMSDecrypt | - (rest.ts†) | not covered |
-| POST | `/api/v1/xkms/keys/{id}/encrypt` | HandleXKMSEncrypt | - (rest.ts†) | not covered |
-| POST | `/api/v1/xkms/keys/{id}/rotate` | HandleXKMSRotateKey | - (rest.ts†) | not covered |
-| POST | `/api/v1/xkms/keys/{id}/sign` | HandleXKMSSign | - (rest.ts†) | not covered |
-| POST | `/api/v1/xkms/keys/{id}/verify` | HandleXKMSVerify | - (rest.ts†) | not covered |
-| GET | `/api/v1/xkms/keys/{id}/versions` | HandleXKMSListKeyVersions | - (rest.ts†) | not covered |
-| POST | `/api/v1/xkms/keys/{id}/versions/disable-all` | HandleXKMSDisableAllKeyVersions | - (rest.ts†) | not covered |
-| POST | `/api/v1/xkms/keys/{id}/versions/enable-all` | HandleXKMSEnableAllKeyVersions | - (rest.ts†) | not covered |
-| POST | `/api/v1/xkms/keys/{id}/versions/{version}/disable` | HandleXKMSDisableKeyVersion | - (rest.ts†) | not covered |
-| POST | `/api/v1/xkms/keys/{id}/versions/{version}/enable` | HandleXKMSEnableKeyVersion | - (rest.ts†) | not covered |
+| GET | `/api/v1/xkms/health` | HandleXKMSHealth | rest.ts | covered: views/security/XKMSKeysView.svelte |
+| GET | `/api/v1/xkms/keys` | HandleXKMSListKeys | - (rest.ts†) | covered: views/security/XKMSKeysView.svelte |
+| POST | `/api/v1/xkms/keys` | HandleXKMSGenerateKey | rest.ts | covered: views/security/XKMSKeysView.svelte |
+| DELETE | `/api/v1/xkms/keys/{id}` | HandleXKMSDeleteKey | - (rest.ts†) | covered: components/security/XKMSKeyPanel.svelte |
+| GET | `/api/v1/xkms/keys/{id}` | HandleXKMSGetKey | - (rest.ts†) | covered: components/security/XKMSKeyPanel.svelte |
+| POST | `/api/v1/xkms/keys/{id}/decrypt` | HandleXKMSDecrypt | - (rest.ts†) | covered: components/security/XKMSKeyPanel.svelte |
+| POST | `/api/v1/xkms/keys/{id}/encrypt` | HandleXKMSEncrypt | - (rest.ts†) | covered: components/security/XKMSKeyPanel.svelte |
+| POST | `/api/v1/xkms/keys/{id}/rotate` | HandleXKMSRotateKey | - (rest.ts†) | covered: components/security/XKMSKeyPanel.svelte |
+| POST | `/api/v1/xkms/keys/{id}/sign` | HandleXKMSSign | - (rest.ts†) | covered: components/security/XKMSKeyPanel.svelte |
+| POST | `/api/v1/xkms/keys/{id}/verify` | HandleXKMSVerify | - (rest.ts†) | covered: components/security/XKMSKeyPanel.svelte |
+| GET | `/api/v1/xkms/keys/{id}/versions` | HandleXKMSListKeyVersions | - (rest.ts†) | covered: components/security/XKMSKeyPanel.svelte |
+| POST | `/api/v1/xkms/keys/{id}/versions/disable-all` | HandleXKMSDisableAllKeyVersions | - (rest.ts†) | covered: components/security/XKMSKeyPanel.svelte |
+| POST | `/api/v1/xkms/keys/{id}/versions/enable-all` | HandleXKMSEnableAllKeyVersions | - (rest.ts†) | covered: components/security/XKMSKeyPanel.svelte |
+| POST | `/api/v1/xkms/keys/{id}/versions/{version}/disable` | HandleXKMSDisableKeyVersion | - (rest.ts†) | covered: components/security/XKMSKeyPanel.svelte |
+| POST | `/api/v1/xkms/keys/{id}/versions/{version}/enable` | HandleXKMSEnableKeyVersion | - (rest.ts†) | covered: components/security/XKMSKeyPanel.svelte |
 | GET | `/api/v1/xkms/pin/lockout` | HandleXKMSGetLockoutStatus | - | not covered |
 | POST | `/api/v1/xkms/pin/lockout/reset` | HandleXKMSResetLockout | - | not covered |
 | POST | `/api/v1/xkms/pin/so/change` | HandleXKMSChangeSOPIN | - | not covered |
