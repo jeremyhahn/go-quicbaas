@@ -45,6 +45,11 @@ const (
 	// overflowRunnerGate is ci-template v1.48's runs-on for CI Gate: the
 	// preflight `runner` output on github.com, and ci-gate elsewhere.
 	overflowRunnerGate = `${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner || '"ubuntu-latest"') || 'ci-gate' }}`
+	// gateRunner is CI Gate's runs-on: on github.com the bigdisk pool for a
+	// push to main and for a pull request (pull_request or
+	// pull_request_target) whose head repository is this one, and
+	// ubuntu-latest for a fork's head and off github.com.
+	gateRunner = `${{ github.server_url == 'https://github.com' && (!startsWith(github.event_name, 'pull_request') || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}`
 	// preflightRunner is preflight's runs-on (ci-template v1.52): on
 	// github.com the Dells' bigdisk pool unless the repository variable
 	// CI_PREFLIGHT_RUNS_ON (runs-on JSON) overrides it, and off github.com
@@ -213,6 +218,7 @@ func runnerProblems(body []byte) []string {
 			}
 		case isOverflowRunner(j.runsOn.Value):
 		case j.name == "preflight" && j.runsOn.Value == preflightRunner:
+		case j.name == "ci-gate" && j.runsOn.Value == gateRunner:
 		case strings.Contains(j.runsOn.Value, "${{"):
 			problems = append(problems, where+" runs on an expression, which can pick a self-hosted label: "+strconv.Quote(j.runsOn.Value))
 		case j.runsOn.Value != hostedRunner:
@@ -261,7 +267,8 @@ func readCI(t *testing.T) []byte {
 
 // TestCIRunsHostedFirst holds the runner rule on ci.yml, and that no job
 // carries a self-hosted waiver today: every job runs on hostedRunner or on
-// one of ci-template v1.48's two hosted-first runs-on expressions.
+// one of ci-template v1.48's two hosted-first runs-on expressions, apart
+// from preflight on preflightRunner and ci-gate on gateRunner.
 func TestCIRunsHostedFirst(t *testing.T) {
 	body := readCI(t)
 	for _, p := range runnerProblems(body) {
@@ -273,7 +280,8 @@ func TestCIRunsHostedFirst(t *testing.T) {
 	}
 	for _, j := range jobs {
 		if j.runsOn != nil && j.runsOn.Value != hostedRunner && !isOverflowRunner(j.runsOn.Value) &&
-			(j.name != "preflight" || j.runsOn.Value != preflightRunner) {
+			(j.name != "preflight" || j.runsOn.Value != preflightRunner) &&
+			(j.name != "ci-gate" || j.runsOn.Value != gateRunner) {
 			t.Errorf("job %s runs on %q; no ci.yml job is waived off %s today", j.name, j.runsOn.Value, hostedRunner)
 		}
 	}
@@ -430,7 +438,7 @@ var jobRunners = map[string]string{
 	"image":          overflowRunnerDocker,
 	"lint-gates":     overflowRunnerDocker,
 	"integration":    overflowRunnerDocker,
-	"ci-gate":        overflowRunnerGate,
+	"ci-gate":        gateRunner,
 }
 
 // jobRunnerProblems lists each ci.yml job whose runs-on is not its jobRunners
