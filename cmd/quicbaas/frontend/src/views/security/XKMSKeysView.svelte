@@ -23,8 +23,12 @@
     - Generate Key dialog (key id, backend, type, size or curve, algorithm)
     - Manage a key in XKMSKeyPanel (details, versions, rotate, delete,
       encrypt, decrypt, sign, verify)
+    - Certificates (XKMSCertificatesPanel): the xkms certificate store,
+      narrowed by the chosen backend; view, save and delete
+    - Certificate authority (XKMSCAPanel): the xkms CA certificate and
+      bundle; issue, sign a CSR and revoke
 
-  Each load is bound to the session that started it: a response that lands
+  Each section loads its own data and shows its own error. Each load is bound to the session that started it: a response that lands
   after a sign-out or another login is dropped.
 -->
 <script lang="ts">
@@ -45,6 +49,8 @@
   } from '@quicbaas/sdk';
   import { KeySquare, Settings2 } from 'lucide-svelte';
   import XKMSKeyPanel from '../../components/security/XKMSKeyPanel.svelte';
+  import XKMSCertificatesPanel from '../../components/security/XKMSCertificatesPanel.svelte';
+  import XKMSCAPanel from '../../components/security/XKMSCAPanel.svelte';
 
   const NOT_AVAILABLE = 'Key Store is not available on this connection.';
 
@@ -391,6 +397,14 @@
         {/snippet}
       </DataTable>
     {/if}
+
+    <section class="card bg-base-200 p-4" aria-label="Certificates">
+      <XKMSCertificatesPanel backend={backendFilter} />
+    </section>
+
+    <section class="card bg-base-200 p-4" aria-label="Certificate authority">
+      <XKMSCAPanel />
+    </section>
   {/if}
 </div>
 

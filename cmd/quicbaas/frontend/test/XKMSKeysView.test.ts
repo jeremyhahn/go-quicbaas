@@ -53,6 +53,7 @@ const KEYS: XKMSKeyInfo[] = [
 type Fn = ReturnType<typeof vi.fn>;
 let xkmsKeys: Record<string, Fn>;
 let xkms: Record<string, Fn>;
+let ca: Record<string, Fn>;
 
 function newKeys(): Record<string, Fn> {
   return {
@@ -78,6 +79,23 @@ function newXKMS(): Record<string, Fn> {
     health: vi.fn().mockResolvedValue({ status: 'ok', version: '1.2.0' }),
     listBackends: vi.fn().mockResolvedValue({ backends: BACKENDS }),
     getBackend: vi.fn().mockImplementation((id: string) => Promise.resolve(BACKENDS.find((b) => b.id === id))),
+    listCertificates: vi.fn().mockResolvedValue({ certificates: [] }),
+    getCertificate: vi.fn(),
+    saveCertificate: vi.fn(),
+    deleteCertificate: vi.fn(),
+  };
+}
+
+function newCA(): Record<string, Fn> {
+  return {
+    xkmsGetCACertificate: vi.fn().mockResolvedValue({
+      certificate_pem: '', subject: 'CN=page root', issuer: 'CN=page root', serial_number: 'ca99',
+      not_before: '', not_after: '', is_ca: true,
+    }),
+    xkmsGetCABundle: vi.fn(),
+    xkmsSignCSR: vi.fn(),
+    xkmsIssueCertificate: vi.fn(),
+    xkmsRevokeCertificate: vi.fn(),
   };
 }
 
@@ -90,7 +108,8 @@ describe('XKMSKeysView', () => {
     vi.clearAllMocks();
     xkmsKeys = newKeys();
     xkms = newXKMS();
-    mockGetSDKClient.mockResolvedValue({ xkmsKeys, xkms });
+    ca = newCA();
+    mockGetSDKClient.mockResolvedValue({ xkmsKeys, xkms, ca });
   });
 
   it('lists keys with their id, type, algorithm and backend', async () => {
@@ -101,7 +120,7 @@ describe('XKMSKeysView', () => {
     expect(screen.getByText('RS256')).toBeInTheDocument();
     expect(screen.getByText('ES256')).toBeInTheDocument();
     expect(screen.getByText('ecdsa')).toBeInTheDocument();
-    const table = screen.getByRole('table');
+    const table = screen.getByRole('table', { name: 'Key Store keys' });
     expect(within(table).getByText('pkcs8')).toBeInTheDocument();
     expect(within(table).getByText('tpm2')).toBeInTheDocument();
   });
@@ -206,5 +225,23 @@ describe('XKMSKeysView', () => {
     await waitFor(() => expect(xkmsKeys.getKey).toHaveBeenCalledWith('signer', 'pkcs8'));
     await fireEvent.click(within(panel).getByRole('button', { name: 'Close key panel' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Manage key signer' })).not.toBeInTheDocument());
+  });
+
+  it('renders the Certificates and Certificate authority sections', async () => {
+    render(XKMSKeysView);
+    await waitFor(() => screen.getByText('signer'));
+    const certs = screen.getByRole('region', { name: 'Certificates' });
+    await waitFor(() => expect(xkms.listCertificates).toHaveBeenCalledWith());
+    expect(within(certs).getByRole('table', { name: 'Key Store certificates' })).toBeInTheDocument();
+    const authority = screen.getByRole('region', { name: 'Certificate authority' });
+    await waitFor(() => expect(within(authority).getByText('ca99')).toBeInTheDocument());
+    expect(ca.xkmsGetCACertificate).toHaveBeenCalledTimes(1);
+  });
+
+  it('passes the chosen backend to the certificates section', async () => {
+    render(XKMSKeysView);
+    await waitFor(() => expect(screen.getByRole('option', { name: 'tpm2' })).toBeInTheDocument());
+    await fireEvent.change(screen.getByLabelText('Backend'), { target: { value: 'tpm2' } });
+    await waitFor(() => expect(xkms.listCertificates).toHaveBeenCalledWith('tpm2'));
   });
 });
