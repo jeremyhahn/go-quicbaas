@@ -561,7 +561,7 @@ func sealBarrierDaemon(t *testing.T, d *barrierDaemon) {
 	cmd := exec.CommandContext(ctx, binary, args...) // #nosec G204 - args produced by the test
 	// A network seal is authenticated by the SO PIN that init provisioned;
 	// the env var keeps it off argv.
-	cmd.Env = append(os.Environ(), "QUICBAAS_BARRIER_SO_PIN="+defaultBarrierSOPin)
+	cmd.Env = commandEnv(nil, barrierSealSOPinEnv())
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("seal per-test daemon (barrier seal -y over REST) failed: %v\noutput:\n%s", err, out)
@@ -1114,6 +1114,7 @@ func runBarrierCommandWithStdin(t *testing.T, runner *TestRunner, cmd CommandDef
 	ctx, cancel := context.WithTimeout(context.Background(), timeout+5*time.Second)
 	defer cancel()
 	execCmd := exec.CommandContext(ctx, runner.binary, args...) // #nosec G204
+	execCmd.Env = commandEnv(nil, cmd.Env)
 	execCmd.Stdin = strings.NewReader(stdin)
 	var outBuf, errBuf bytes.Buffer
 	execCmd.Stdout = &outBuf

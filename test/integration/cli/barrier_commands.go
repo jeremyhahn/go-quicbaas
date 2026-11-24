@@ -371,8 +371,17 @@ func BarrierUnsealSharesNoInputsCommand() CommandDef {
 // Seal verb
 // =============================================================================
 
+// barrierSealSOPinEnv is the environment every network `barrier seal` in
+// the suite runs with: the server verifies the SO PIN that init provisioned
+// (defaultBarrierSOPin) before it seals, and the CLI reads it from
+// QUICBAAS_BARRIER_SO_PIN, which keeps it off argv.
+func barrierSealSOPinEnv() []string {
+	return []string{"QUICBAAS_BARRIER_SO_PIN=" + defaultBarrierSOPin}
+}
+
 // BarrierSealAssumeYesCommand builds `barrier seal -y` so the interactive
-// confirmation prompt is bypassed. The canonical scripted-runbook path.
+// confirmation prompt is bypassed. The canonical scripted-runbook path. It
+// carries the provisioned SO PIN (barrierSealSOPinEnv).
 func BarrierSealAssumeYesCommand() CommandDef {
 	return CommandDef{
 		Name:           "barrier seal -y",
@@ -380,12 +389,14 @@ func BarrierSealAssumeYesCommand() CommandDef {
 		ExpectSuccess:  true,
 		Timeout:        30 * time.Second,
 		SkipTransports: barrierTransportsToSkip,
+		Env:            barrierSealSOPinEnv(),
 	}
 }
 
 // BarrierSealCommand builds `barrier seal` without --assume-yes. The
-// caller MUST pipe "yes\n" into stdin via runner.RunWithStdin to satisfy
-// the confirmation prompt.
+// caller MUST pipe "yes\n" into stdin via runBarrierCommandWithStdin to
+// satisfy the confirmation prompt. It carries the provisioned SO PIN
+// (barrierSealSOPinEnv).
 func BarrierSealCommand() CommandDef {
 	return CommandDef{
 		Name:           "barrier seal (interactive)",
@@ -393,6 +404,7 @@ func BarrierSealCommand() CommandDef {
 		ExpectSuccess:  true,
 		Timeout:        30 * time.Second,
 		SkipTransports: barrierTransportsToSkip,
+		Env:            barrierSealSOPinEnv(),
 	}
 }
 
@@ -406,6 +418,7 @@ func BarrierSealCancelCommand() CommandDef {
 		ExpectOutput:   []string{"Seal cancelled"},
 		Timeout:        15 * time.Second,
 		SkipTransports: barrierTransportsToSkip,
+		Env:            barrierSealSOPinEnv(),
 	}
 }
 
