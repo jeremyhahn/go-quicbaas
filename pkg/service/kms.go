@@ -744,6 +744,41 @@ func importKeyErrorCode(err error) errors.ErrorCode {
 	return errors.ErrInternal
 }
 
+// kmsLookupErrorCode returns the code a failed key lookup reports: not-found
+// only for a key the manager reports missing, the manager's own code for any
+// other classified failure, and ErrInternal otherwise. A lookup that did not
+// complete must not read as a missing key: a caller that creates a missing
+// key would then create one over an outage.
+func kmsLookupErrorCode(err error) errors.ErrorCode {
+	if stderrors.Is(err, kms.ErrKeyNotFound) {
+		return errors.ErrNotFound
+	}
+	var qbErr *errors.QBError
+	if stderrors.As(err, &qbErr) {
+		return qbErr.Code
+	}
+	return errors.ErrInternal
+}
+
+// kmsLookupError wraps a failed key lookup for op with the code
+// kmsLookupErrorCode reports, saying "key not found" only for a missing key.
+func kmsLookupError(err error, op string) error {
+	code := kmsLookupErrorCode(err)
+	if code == errors.ErrNotFound {
+		return WrapError(err, code, op, "key not found")
+	}
+	return WrapError(err, code, op, "failed to get key")
+}
+
+// kmsLookupMetricLabel is the error-type metric label for a failed key
+// lookup: "not_found" for a missing key, "kms_error" otherwise.
+func kmsLookupMetricLabel(err error) string {
+	if kmsLookupErrorCode(err) == errors.ErrNotFound {
+		return "not_found"
+	}
+	return "kms_error"
+}
+
 // GetKey retrieves key material or public key by key ID.
 // If a specific version is requested, it validates that the version exists.
 // If no version is specified (version=0), the current version is returned.
@@ -776,9 +811,9 @@ func (k *kmsServiceImpl) GetKey(ctx context.Context, req *GetKeyRequest) (*GetKe
 	keyMetadata, err := k.kmsManager.GetKey(ctx, scopedKeyID)
 	if err != nil {
 		if k.metrics != nil {
-			k.metrics.errorsByType.With("not_found", "get_key").Inc()
+			k.metrics.errorsByType.With(kmsLookupMetricLabel(err), "get_key").Inc()
 		}
-		return nil, WrapError(err, errors.ErrNotFound, "kms.GetKey", "key not found")
+		return nil, kmsLookupError(err, "kms.GetKey")
 	}
 
 	// Extract actual values from key metadata
@@ -928,9 +963,9 @@ func (k *kmsServiceImpl) GetPublicKey(ctx context.Context, req *GetPublicKeyRequ
 	keyMetadata, err := k.kmsManager.GetKey(ctx, scopedKeyID)
 	if err != nil {
 		if k.metrics != nil {
-			k.metrics.errorsByType.With("not_found", "get_public_key").Inc()
+			k.metrics.errorsByType.With(kmsLookupMetricLabel(err), "get_public_key").Inc()
 		}
-		return nil, WrapError(err, errors.ErrNotFound, "kms.GetPublicKey", "key not found")
+		return nil, kmsLookupError(err, "kms.GetPublicKey")
 	}
 
 	// Extract version and algorithm from metadata
@@ -1394,9 +1429,9 @@ func (k *kmsServiceImpl) GetKeyMetadata(ctx context.Context, req *GetKeyMetadata
 	keyData, err := k.kmsManager.GetKey(ctx, scopedKeyID)
 	if err != nil {
 		if k.metrics != nil {
-			k.metrics.errorsByType.With("not_found", "get_key_metadata").Inc()
+			k.metrics.errorsByType.With(kmsLookupMetricLabel(err), "get_key_metadata").Inc()
 		}
-		return nil, WrapError(err, errors.ErrNotFound, "kms.GetKeyMetadata", "key not found")
+		return nil, kmsLookupError(err, "kms.GetKeyMetadata")
 	}
 
 	metadata, err := extractKeyMetadata(req.KeyID, keyData)

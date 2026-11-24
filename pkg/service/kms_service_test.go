@@ -124,7 +124,8 @@ func (m *mockKMSManager) GetKey(ctx context.Context, keyID string) (interface{},
 			Updated:   key.createdAt,
 		}, nil
 	}
-	return nil, stderrors.New("key not found")
+	// The real manager's shape for a missing key.
+	return nil, &quicbaasErrors.QBError{Code: quicbaasErrors.ErrNotFound, Err: kms.ErrKeyNotFound}
 }
 
 func (m *mockKMSManager) UpdateStoredMetadata(metadata interface{}) error {
@@ -665,6 +666,75 @@ func TestKMSService_GetKey_NotFound(t *testing.T) {
 	if errors.As(err, &dErr) {
 		assert.Equal(t, quicbaasErrors.ErrNotFound, dErr.Code)
 	}
+}
+
+// kmsLookupTestCalls runs each key-lookup operation against svc for keyID.
+func kmsLookupTestCalls(svc KMSService, keyID string) map[string]func() error {
+	return map[string]func() error{
+		"GetKey": func() error {
+			_, err := svc.GetKey(systemTenantCtx(), &GetKeyRequest{KeyID: keyID})
+			return err
+		},
+		"GetPublicKey": func() error {
+			_, err := svc.GetPublicKey(systemTenantCtx(), &GetPublicKeyRequest{KeyID: keyID})
+			return err
+		},
+		"GetKeyMetadata": func() error {
+			_, err := svc.GetKeyMetadata(systemTenantCtx(), &GetKeyMetadataRequest{KeyID: keyID})
+			return err
+		},
+	}
+}
+
+// assertKMSLookupCode runs every key lookup with the manager's GetKey
+// failing with lookupErr and checks the code each reports.
+func assertKMSLookupCode(t *testing.T, lookupErr error, want quicbaasErrors.ErrorCode) {
+	t.Helper()
+	mockMgr := newMockKMSManager()
+	// The key exists for the manager's GetPublicKey; only GetKey fails.
+	mockMgr.keys["lookup-key"] = &mockKeyData{
+		keyID:     "lookup-key",
+		algorithm: "ECDSA-P256",
+		version:   1,
+		status:    "enabled",
+		createdAt: time.Now(),
+	}
+	mockMgr.getKeyFn = func(ctx context.Context, keyID string) (interface{}, error) {
+		return nil, lookupErr
+	}
+	svc := newKMSService(mockMgr, newMockLogger())
+	for op, call := range kmsLookupTestCalls(svc, "lookup-key") {
+		t.Run(op, func(t *testing.T) {
+			err := call()
+			require.Error(t, err)
+			var dErr *quicbaasErrors.QBError
+			require.True(t, errors.As(err, &dErr), "want a QBError, got %T", err)
+			assert.Equal(t, want, dErr.Code)
+		})
+	}
+}
+
+// TestKMSService_GetKey_LookupFailureIsNotNotFound checks that a lookup
+// that did not complete does not read as a missing key.
+func TestKMSService_GetKey_LookupFailureIsNotNotFound(t *testing.T) {
+	assertKMSLookupCode(t, stderrors.New("backend unreachable"), quicbaasErrors.ErrInternal)
+}
+
+// TestKMSService_GetKey_ClassifiedFailureKeepsCode checks that a lookup
+// failure the manager classified keeps its code.
+func TestKMSService_GetKey_ClassifiedFailureKeepsCode(t *testing.T) {
+	assertKMSLookupCode(t, &quicbaasErrors.QBError{Code: quicbaasErrors.ErrTimeout, Err: stderrors.New("deadline")}, quicbaasErrors.ErrTimeout)
+}
+
+// TestKMSService_GetKey_MissingKeyIsNotFound checks that a key the
+// manager reports missing, wrapped or bare, answers not-found.
+func TestKMSService_GetKey_MissingKeyIsNotFound(t *testing.T) {
+	t.Run("wrapped", func(t *testing.T) {
+		assertKMSLookupCode(t, &quicbaasErrors.QBError{Code: quicbaasErrors.ErrNotFound, Err: kms.ErrKeyNotFound}, quicbaasErrors.ErrNotFound)
+	})
+	t.Run("bare", func(t *testing.T) {
+		assertKMSLookupCode(t, kms.ErrKeyNotFound, quicbaasErrors.ErrNotFound)
+	})
 }
 
 // =============================================================================
@@ -3030,7 +3100,12 @@ func TestKMSService_GetPublicKey_GetKeyMetadataError(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "key not found")
+	// A metadata lookup that failed is not a missing key.
+	assert.Contains(t, err.Error(), "failed to get key")
+	assert.NotContains(t, err.Error(), "key not found")
+	var dErr *quicbaasErrors.QBError
+	require.True(t, errors.As(err, &dErr))
+	assert.Equal(t, quicbaasErrors.ErrInternal, dErr.Code)
 }
 
 func TestKMSService_GetPublicKey_ServiceKeyMetadataType(t *testing.T) {
