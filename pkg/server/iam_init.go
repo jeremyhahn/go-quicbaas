@@ -360,6 +360,8 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 	if s.promptSeeder != nil {
 		tenantManager.SetPromptSeeder(s.promptSeeder)
 	}
+	// Tell the server's created-hooks after every new tenant (its defaults).
+	tenantManager.AddCreatedObserver(&s.tenantCreatedHooks)
 
 	// Create policy cache and engine
 	policyCache := iam.NewPolicyCache(&iam.CacheConfig{
