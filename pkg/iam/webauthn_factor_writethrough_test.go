@@ -148,6 +148,10 @@ func (f *fakeUserAuthFactorClient) RemoveAuthFactor(context.Context, *qrdbtransp
 	return nil, errors.New("RemoveAuthFactor not expected")
 }
 
+func (f *fakeUserAuthFactorClient) DeleteAuthFactor(context.Context, *qrdbtransport.AuthFactorDeleteRequest) (*qrdbtransport.AuthFactorDeleteResponse, error) {
+	return nil, errors.New("DeleteAuthFactor not expected")
+}
+
 func (f *fakeUserAuthFactorClient) RotateAuthFactor(context.Context, *qrdbtransport.AuthFactorRotateRequest) (*qrdbtransport.AuthFactorRotateResponse, error) {
 	return nil, errors.New("RotateAuthFactor not expected")
 }

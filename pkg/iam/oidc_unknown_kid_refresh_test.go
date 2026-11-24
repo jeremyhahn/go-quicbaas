@@ -65,7 +65,11 @@ func setupSharedSigningXKMS(t *testing.T) *countingStorage {
 		return ks
 	}
 	records := &countingStorage{StorageBackend: xkmssdk.NewStorageMemory()}
-	keyVersions, err := xkmssdk.NewKeyVersionStore(records)
+	versionDAOs, err := xkmssdk.NewBackendDAOFactory(records)
+	if err != nil {
+		t.Fatalf("key version DAO factory: %v", err)
+	}
+	keyVersions, err := xkmssdk.NewKeyVersionStore(versionDAOs)
 	if err != nil {
 		t.Fatalf("key version store: %v", err)
 	}

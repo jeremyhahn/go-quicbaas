@@ -20,7 +20,6 @@ import (
 	"strings"
 	"testing"
 
-	xkmswebauthn "github.com/jeremyhahn/go-xkms/pkg/webauthn"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 

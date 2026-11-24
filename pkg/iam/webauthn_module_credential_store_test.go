@@ -219,6 +219,10 @@ func (c *serializingFactorClient) RemoveAuthFactor(ctx context.Context, req *qrd
 	return c.inner.RemoveAuthFactor(ctx, req)
 }
 
+func (c *serializingFactorClient) DeleteAuthFactor(ctx context.Context, req *qrdbtransport.AuthFactorDeleteRequest) (*qrdbtransport.AuthFactorDeleteResponse, error) {
+	return c.inner.DeleteAuthFactor(ctx, req)
+}
+
 func (c *serializingFactorClient) RotateAuthFactor(ctx context.Context, req *qrdbtransport.AuthFactorRotateRequest) (*qrdbtransport.AuthFactorRotateResponse, error) {
 	return c.inner.RotateAuthFactor(ctx, req)
 }

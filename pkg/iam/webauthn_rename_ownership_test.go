@@ -370,11 +370,14 @@ func newRenameFixture(t *testing.T, email, displayName string) *renameFixture {
 	t.Helper()
 
 	userClient := newRenameTestUserClient()
-	kv := newRenameTestKV()
+	credentialDAOs, err := xkmssdk.NewBackendDAOFactory(xkmssdk.NewStorageMemory())
+	if err != nil {
+		t.Fatalf("credential DAO factory: %v", err)
+	}
 	users, creds, err := xkmssdk.NewWebAuthnQRDBUserStoreAdapter(xkmssdk.WebAuthnQRDBUserStoreOptions{
-		Users:    userClient,
-		KV:       kv,
-		TenantID: testWriteThroughTenant,
+		Users:      userClient,
+		DAOFactory: credentialDAOs,
+		TenantID:   testWriteThroughTenant,
 	})
 	if err != nil {
 		t.Fatalf("NewWebAuthnQRDBUserStoreAdapter: %v", err)

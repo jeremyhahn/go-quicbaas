@@ -110,6 +110,19 @@ func (f *reapableFactorClient) RemoveAuthFactor(_ context.Context, req *qrdbtran
 	return &qrdbtransport.AuthFactorRemoveResponse{Status: "revoked"}, nil
 }
 
+// DeleteAuthFactor hard-deletes the factor from the stored set. It does not
+// count as a revocation, so it is not recorded in removed.
+func (f *reapableFactorClient) DeleteAuthFactor(_ context.Context, req *qrdbtransport.AuthFactorDeleteRequest) (*qrdbtransport.AuthFactorDeleteResponse, error) {
+	out := f.stored[:0]
+	for _, record := range f.stored {
+		if record.ID != req.FactorID {
+			out = append(out, record)
+		}
+	}
+	f.stored = out
+	return &qrdbtransport.AuthFactorDeleteResponse{Status: "deleted"}, nil
+}
+
 // newRevokingWriteThrough builds the decorator over xkms's real in-memory
 // stores so the deletion paths run against genuine persistence semantics.
 func newRevokingWriteThrough(

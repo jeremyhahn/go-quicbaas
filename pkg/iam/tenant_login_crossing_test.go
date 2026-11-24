@@ -78,6 +78,11 @@ func (r *tenantPartitionedRBAC) Authorize(context.Context, *qrdbtransport.Identi
 	return nil
 }
 
+// ListOwnPermissions is not on the login path under test; it lists nothing.
+func (r *tenantPartitionedRBAC) ListOwnPermissions(context.Context) ([]qrdbtransport.PermissionInfo, error) {
+	return nil, nil
+}
+
 func (r *tenantPartitionedRBAC) ListPermissions(ctx context.Context, identity *qrdbtransport.Identity) ([]qrdbtransport.PermissionInfo, error) {
 	tenantID, _ := qrdbsdk.TenantFromContext(ctx)
 	r.resolvedTenant = tenantID
