@@ -49,6 +49,30 @@ type fakeScanVectorClient struct {
 	// shuffle, when set, serves each page from a fresh order of ids, as
 	// qrdb rebuilds its listing from a map on every request.
 	shuffle *rand.Rand
+	// versions holds each id's stored version; an absent id reads as 0.
+	versions map[uint64]uint64
+	// getCalls counts GetVector calls, kept apart from calls (ListVectors).
+	getCalls int
+	// getHook, when set, runs at the start of every GetVector call.
+	getHook func(f *fakeScanVectorClient, id uint64)
+	// gone, when set, names an id GetVector never finds, though
+	// ListVectors keeps serving it.
+	gone map[uint64]bool
+}
+
+func (f *fakeScanVectorClient) GetVector(_ context.Context, req *qrdbtransport.GetVectorRequest) (*qrdbtransport.GetVectorResponse, error) {
+	f.getCalls++
+	if f.getHook != nil {
+		f.getHook(f, req.ID)
+	}
+	if !f.gone[req.ID] {
+		for _, id := range f.ids {
+			if id == req.ID {
+				return &qrdbtransport.GetVectorResponse{ID: id, Version: f.versions[id], Found: true}, nil
+			}
+		}
+	}
+	return nil, errors.New("fake: vector not found")
 }
 
 func (f *fakeScanVectorClient) GetNamespaceInfo(_ context.Context, req *qrdbtransport.GetNamespaceInfoRequest) (*qrdbtransport.GetNamespaceInfoResponse, error) {
@@ -100,7 +124,7 @@ func (f *fakeScanVectorClient) ListVectors(_ context.Context, req *qrdbtransport
 		resp.NextCursor = fmt.Sprintf("%d", offset+limit)
 	}
 	for _, id := range ids {
-		resp.Vectors = append(resp.Vectors, &qrdbtransport.VectorData{ID: id})
+		resp.Vectors = append(resp.Vectors, &qrdbtransport.VectorData{ID: id, Version: f.versions[id]})
 	}
 	return resp, nil
 }
@@ -410,6 +434,38 @@ func TestListAllVectors_CountPreservingWriteBetweenPages(t *testing.T) {
 	require.Len(t, all, 1500)
 	for i, v := range all {
 		require.Equal(t, uint64(i+2), v.ID, "index %d", i)
+	}
+}
+
+// TestListAllVectors_CountPreservingDirectWriteBetweenPages makes the same
+// count-preserving swap as the test above, but as a writer that bypasses
+// this node would: no beginWrite, so the local write revision never moves.
+// The swap runs at ListVectors call 2, after the first page served IDs
+// 1-1000, so the first pass keeps deleted ID 1 and misses live ID 1001
+// (page two serves 1002-1501) while the count and distinct total still
+// read 1500. Only re-reading the kept vectors from storage catches it.
+func TestListAllVectors_CountPreservingDirectWriteBetweenPages(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		writes func() *vectorScanSnapshots
+	}{
+		{"tracked namespace", func() *vectorScanSnapshots { return &vectorScanSnapshots{} }},
+		{"nil writes", func() *vectorScanSnapshots { return nil }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFakeScanVectorClient(1500)
+			f.mutateAt = 2
+			f.mutate = func(f *fakeScanVectorClient) {
+				f.ids = append(append([]uint64(nil), f.ids[1:]...), 1501)
+			}
+
+			all, err := listAllVectors(context.Background(), f, &qrdbtransport.ListVectorsRequest{Namespace: "ns"}, tc.writes())
+			require.NoError(t, err)
+			require.Len(t, all, 1500)
+			for i, v := range all {
+				require.Equal(t, uint64(i+2), v.ID, "index %d", i)
+			}
+		})
 	}
 }
 

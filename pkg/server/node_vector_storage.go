@@ -417,12 +417,54 @@ func listAllVectors(ctx context.Context, vc qrdbtransport.VectorClient, req *qrd
 			}
 			r, quiet := writes.revision(req.Namespace)
 			if int(info.VectorCount) == count && clean && quiet && r == rev {
-				sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
-				return all, nil
+				// A writer that bypasses this node moves neither the
+				// revision nor, with a count-preserving swap, the count:
+				// re-read every kept vector at its listed version, then
+				// check the count once more.
+				ok, err := verifyScannedVectors(ctx, vc, req.Namespace, all)
+				if err != nil {
+					return nil, err
+				}
+				if ok {
+					info, err := vc.GetNamespaceInfo(ctx, &qrdbtransport.GetNamespaceInfoRequest{Namespace: req.Namespace})
+					if err != nil {
+						return nil, err
+					}
+					if int(info.VectorCount) == count {
+						sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
+						return all, nil
+					}
+				}
+				// Storage changed under the kept set: read it again.
+				reset()
 			}
 		}
 	}
 	return nil, fmt.Errorf("%w: namespace %q: read %d of %d distinct vectors (namespace count %d)", errIncompleteVectorScan, req.Namespace, len(seen), distinct, count)
+}
+
+// verifyScannedVectors re-reads every vector of a finished scan from storage,
+// one point read each with no vector or metadata payload. It reports false
+// on the first vector that is gone, cannot be read, or is no longer at the
+// version it was listed at, so the caller scans again; it fails only when
+// ctx ends.
+func verifyScannedVectors(ctx context.Context, vc qrdbtransport.VectorClient, ns string, all []*qrdbtransport.VectorData) (bool, error) {
+	for _, v := range all {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		resp, err := vc.GetVector(ctx, &qrdbtransport.GetVectorRequest{Namespace: ns, ID: v.ID})
+		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return false, ctxErr
+			}
+			return false, nil
+		}
+		if resp == nil || resp.ID != v.ID || resp.Version != v.Version {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // nodeScanSnapshotTTL bounds how long the offset pages of one listing reuse
