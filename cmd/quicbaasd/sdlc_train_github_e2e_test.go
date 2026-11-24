@@ -1,4 +1,4 @@
-//go:build integration
+//go:build integration && github_live
 
 package main
 
@@ -26,7 +26,10 @@ import (
 // github to the scratch repository githubitest.LoadEnv names, lands a train
 // of approved pull requests through a queue/<n> pull request whose CI is the
 // scratch repository's queue-ci.yml. Without the environment every test
-// here FAILS, naming each missing variable; it never skips.
+// here FAILS, naming each missing variable; it never skips. The file builds
+// only under the github_live tag, so the blanket integration run, which has
+// no GitHub credentials, does not compile it; make
+// integration-test-train-github runs it.
 const (
 	githubTrainProject  = "sdlc-github-train-e2e"
 	githubTrainTokenRef = "github-train-e2e-token"

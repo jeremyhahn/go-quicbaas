@@ -1321,11 +1321,19 @@ LINT_BUILD_TAGS := $(filter-out !integration,$(TEST_TAGS))
 #
 #   OPENVINO_BASE_URL=http://gpu-host:9000 OPENVINO_MODEL=qwen3-8b \
 #     go test -tags openvino_live -run TestOpenVINOBackend_Live ./pkg/orchestration/
+#
+# github_live drives a REAL GitHub scratch repository with live tokens
+# (cmd/quicbaasd/sdlc_train_github_e2e_test.go). It is exempt for the same
+# reason: no CI pass has the GITHUB_ITEST_* credentials, and a pass that
+# compiled it could not run it. Drive it with:
+#
+#   make integration-test-train-github
 TAG_GATE_EXEMPT := linux darwin windows unix ignore integration coverage production \
 	pkcs11 swtpm \
 	awskms gcpkms azurekv vault awss3 gcpstorage azureblob minio \
 	gpu \
-	openvino_live
+	openvino_live \
+	github_live
 
 # IAM_TEST_TAGS: retained alias for TEST_TAGS. IAM is now always compiled
 # (the 'iam' build tag was removed in phase C1-G), so no extra tag is needed
@@ -1915,6 +1923,13 @@ integration-test-forge-github: ## Run the live GitHub forge suite (needs GITHUB_
 	@echo "$(YELLOW)Requires GITHUB_ITEST_TOKEN, _OWNER, _REPO, _REVIEWER_TOKEN against a SCRATCH repo$(NC)"
 	$(GOTEST) -tags integration -count=1 -v -timeout=15m -run 'TestLiveGitHub_' ./pkg/sdlc/
 	@echo "$(GREEN)✓ Live GitHub forge tests passed$(NC)"
+
+.PHONY: integration-test-train-github
+integration-test-train-github: ## Run the live GitHub merge-train e2e (needs GITHUB_ITEST_* env)
+	@echo "$(BLUE)Running the live GitHub merge-train e2e...$(NC)"
+	@echo "$(YELLOW)Requires GITHUB_ITEST_TOKEN, _OWNER, _REPO, _REVIEWER_TOKEN against a SCRATCH repo$(NC)"
+	$(GOTEST) -tags 'integration github_live $(strip $(INTEGRATION_BUILD_TAGS))' -count=1 -v -timeout=75m -run '^TestGitHubTrain_' ./cmd/quicbaasd/
+	@echo "$(GREEN)✓ Live GitHub merge-train e2e passed$(NC)"
 
 # The merge-result snapshot suite. It measures what the tree a verification
 # judges actually HOLDS, which needs real git against a real working tree:
