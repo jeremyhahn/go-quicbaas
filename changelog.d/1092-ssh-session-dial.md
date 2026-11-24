@@ -7,4 +7,6 @@
   host key is checked against the server's pins (`HostKeyScope` and
   `HostKeyOwner`, defaulting to the key's scope and owner). An unpinned host
   or a changed host key refuses the session. The server never carries the
-  SSH stream. `Console` still reports `CodeUnimplemented`.
+  SSH stream. Host-key checks keep working across key re-exchanges, and
+  cancelling `Dial` interrupts a handshake stalled on a silent peer.
+  `Console` still reports `CodeUnimplemented`.

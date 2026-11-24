@@ -546,8 +546,8 @@ those shapes.
 ### Session dials from the caller; Console is unimplemented
 
 `Session().Dial` connects from the caller's own process
-(`sdk/go/client/ssh/client.go`, over go-xkms's `session.DialClient`), the
-same design as every go-xkms transport. The transport carries two RPCs only:
+(`sdk/go/client/ssh/client.go`, with its own TCP dial and SSH handshake in
+`session_dial.go`, returning go-xkms's session error types), the same design as every go-xkms transport. The transport carries two RPCs only:
 `Keys().Signer`, whose forward-signing proxy ships each digest to the server
 so the private key never leaves it, and `KnownHosts().Callback`, which checks
 the presented host key against the pins of `HostKeyScope`/`HostKeyOwner`
@@ -566,6 +566,12 @@ with rsa-sha2-256 or rsa-sha2-512 when the server asks for it, not with
 request on every transport (`SSHSignDigestRequest.algorithm` on gRPC). The
 service refuses, as invalid argument, an algorithm that does not fit the key,
 or a SHA-2 algorithm that a remote go-xkms backend's signer cannot honour.
+
+Cancelling the dial context stops `Dial` at any stage, including a peer that
+accepts TCP and withholds its SSH banner. After `Dial` returns, the caller's
+context no longer governs the session: host-key checks on rekey run under the
+session's own context, each bounded by the dial timeout, and end when the
+session is closed.
 
 `Close()` is a no-op: the transport belongs to the parent SDK client.
 
