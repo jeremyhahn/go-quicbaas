@@ -67,17 +67,21 @@ func (in PriorityInputs) Computed() int {
 //
 // Two shifts read the issue rather than its priority:* label, through
 // ComputedForIssue. A release-blocker or release-candidate label lifts an
-// issue above every priority:critical one, even one at the ceiling: the
-// release waits on it. A milestone lifts an issue by less than the gap
-// between two tiers, so it orders issues inside one tier and never carries
-// one past the next tier up.
+// issue above every non-release issue, whatever its priority:* label and
+// milestone: the release waits on it. A milestone lifts an issue by less than
+// the gap between two tiers, so it orders issues inside one tier and never
+// carries one past the next tier up.
 const (
 	PriorityShiftCritical = 600
 	PriorityShiftHigh     = 300
 	PriorityShiftLow      = -300
 
-	PriorityShiftReleaseBlocker = 1600
-	PriorityShiftMilestone      = 100
+	// PriorityShiftReleaseBlocker exceeds the whole range a non-release issue
+	// can reach, milestone included, so the lowest release issue still sorts
+	// above the highest non-release one.
+	PriorityShiftReleaseBlocker = (ComputedCeiling + PriorityShiftCritical + PriorityShiftMilestone) -
+		(ComputedFloor + PriorityShiftLow) + 1
+	PriorityShiftMilestone = 100
 )
 
 // releaseBlockerLabels are the labels that mark an issue a release waits on.

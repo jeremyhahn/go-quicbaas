@@ -104,6 +104,19 @@ func TestComputedForIssue_ReleaseLabelOutranksCriticalAtTheCeiling(t *testing.T)
 	}
 }
 
+func TestComputedForIssue_ReleaseAtLowOutranksEveryNonReleaseIssue(t *testing.T) {
+	highest := PriorityInputs{BlastRadius: ComputedCeiling, ProjectDefault: ComputedCeiling}.
+		ComputedForIssue(&ForgeIssue{Labels: []string{"priority:critical"}, Milestone: "v1"})
+	labels := []string{"release-blocker", "priority:low"}
+	for _, in := range []PriorityInputs{{}, {ProjectDefault: -(1 << 40)}} {
+		lowest := in.ComputedForIssue(&ForgeIssue{Labels: labels})
+		if lowest <= highest {
+			t.Fatalf("%v with project default %d = %d, want above a milestoned critical at the ceiling %d",
+				labels, in.ProjectDefault, lowest, highest)
+		}
+	}
+}
+
 // TestComputedForIssue_MilestoneOrdersInsideOneTier: a milestone lifts an
 // issue above an unmilestoned one in its tier and never past the next tier.
 func TestComputedForIssue_MilestoneOrdersInsideOneTier(t *testing.T) {
