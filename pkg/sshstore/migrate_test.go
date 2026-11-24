@@ -15,8 +15,8 @@ package sshstore
 
 import (
 	"context"
-	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/rsa"
 	"encoding/json"
 	"errors"
 	"os"
@@ -24,6 +24,8 @@ import (
 	"testing"
 
 	sshscope "github.com/jeremyhahn/go-xkms/pkg/ssh/scope"
+	xkmsstorage "github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	xkmsssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 	"github.com/stretchr/testify/assert"
@@ -39,43 +41,46 @@ var legacyKeys = []xkmsssh.GetKeyRequest{
 
 const pinnedHost = "node01.example.internal"
 
-// seedLegacyStore writes a legacy file store under a fresh data dir: two keys,
-// one host pin and one authorized-keys entry. It returns the store directory
-// and each key's authorized_keys line as generated.
+// seedLegacyStore writes a legacy file store under a fresh data dir, in the
+// legacy on-disk format: two keys (ed25519 and RSA), one host pin and one
+// authorized-keys entry. It returns the store directory and each key's
+// authorized_keys line as generated.
 func seedLegacyStore(t *testing.T) (string, map[string]string) {
 	t.Helper()
-	ctx := context.Background()
 	dir := LegacyDir(t.TempDir())
 
-	client, err := xkmsssh.NewEmbeddedFile(xkmsssh.EmbeddedFileOptions{RootDir: dir})
-	require.NoError(t, err)
-
 	pubs := make(map[string]string, len(legacyKeys))
-	for _, k := range legacyKeys {
-		key, err := client.Keys().Generate(ctx, xkmsssh.GenerateRequest{
-			Scope: k.Scope, Owner: k.Owner, Name: k.Name, Algorithm: "ed25519",
-		})
-		require.NoError(t, err)
-		pubs[k.Name] = key.PublicKey
+	for i, k := range legacyKeys {
+		sc := sshscope.Scope(k.Scope)
+		key, algo := newEd25519TestKey(t), "ed25519"
+		if i == 1 {
+			priv, err := rsa.GenerateKey(rand.Reader, 2048)
+			require.NoError(t, err)
+			key, algo = newTestKey(t, priv), "rsa"
+		}
+		putLegacyRecord(t, dir, sshscope.KindKeys, sc, k.Owner, k.Name, legacyKeyJSON(t, sc, k.Owner, k.Name, algo, key))
+		pubs[k.Name] = key.line
 	}
 
-	_, hostPriv, err := ed25519.GenerateKey(rand.Reader)
-	require.NoError(t, err)
-	hostSigner, err := gossh.NewSignerFromKey(hostPriv)
-	require.NoError(t, err)
-	hostPub := hostSigner.PublicKey()
-	require.NoError(t, client.KnownHosts().Add(ctx, xkmsssh.AddKnownHostRequest{
-		Scope: "user", Owner: "alice", Host: pinnedHost,
-		Fingerprint: gossh.FingerprintSHA256(hostPub),
-		PublicKey:   string(gossh.MarshalAuthorizedKey(hostPub)),
-	}))
-
-	require.NoError(t, client.AuthorizedKeys().Add(ctx, xkmsssh.AddAuthorizedKeyRequest{
-		Scope: "user", Owner: "alice", Name: "laptop", Line: pubs["fleet-deploy"],
-	}))
-
-	require.NoError(t, client.Close())
+	host := newEd25519TestKey(t)
+	putLegacyRecord(t, dir, sshscope.KindKnownHosts, sshscope.User, "alice", pinnedHost,
+		legacyPinJSON(t, sshscope.User, "alice", pinnedHost, host.pub))
+	putLegacyRecord(t, dir, sshscope.KindAuthorizedKeys, sshscope.User, "alice", "laptop",
+		legacyAuthorizedJSON(t, sshscope.User, "alice", "laptop", pubs["fleet-deploy"]))
 	return dir, pubs
+}
+
+// putLegacyRecord writes value at the record path of (kind, sc, owner, name)
+// in the legacy file store at dir, and returns that path.
+func putLegacyRecord(t *testing.T, dir string, kind sshscope.Kind, sc sshscope.Scope, owner, name string, value []byte) string {
+	t.Helper()
+	path, err := kind.RecordPath(sc, owner, name)
+	require.NoError(t, err)
+	backend, err := file.New(dir)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, backend.Close()) }()
+	require.NoError(t, backend.Put(context.Background(), path, value))
+	return path
 }
 
 // keyRecordPath is where go-xkms's scope layout stores a user-scoped SSH
@@ -94,23 +99,47 @@ func newSealed(t *testing.T) xkmssdk.StorageBackend {
 	return backend
 }
 
-// requireLegacyIntact asserts the legacy store still opens and still serves
-// every seeded key.
+// newSealedStores builds the go-xkms SSH DAO stores over sealed.
+func newSealedStores(t *testing.T, sealed xkmssdk.StorageBackend) *xkmsssh.Stores {
+	t.Helper()
+	daos, err := xkmssdk.NewBackendDAOFactory(sealed)
+	require.NoError(t, err)
+	stores, err := xkmsssh.NewStores(daos)
+	require.NoError(t, err)
+	return stores
+}
+
+// newSealedClient is an embedded SSH client over the sealed stores.
+func newSealedClient(t *testing.T, sealed xkmssdk.StorageBackend) xkmsssh.Client {
+	t.Helper()
+	client, err := xkmsssh.NewEmbedded(xkmsssh.EmbeddedOptions{Stores: newSealedStores(t, sealed)})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, client.Close()) })
+	return client
+}
+
+// requireLegacyIntact asserts the legacy store still opens and still holds
+// every seeded key as a decodable legacy record.
 func requireLegacyIntact(t *testing.T, dir string) {
 	t.Helper()
-	client, err := xkmsssh.NewEmbeddedFile(xkmsssh.EmbeddedFileOptions{RootDir: dir})
+	backend, err := file.New(dir)
 	require.NoError(t, err)
-	defer func() { require.NoError(t, client.Close()) }()
+	defer func() { require.NoError(t, backend.Close()) }()
 	for _, k := range legacyKeys {
-		_, err := client.Keys().Get(context.Background(), k)
+		path, err := sshscope.KindKeys.RecordPath(sshscope.Scope(k.Scope), k.Owner, k.Name)
+		require.NoError(t, err)
+		value, err := backend.Get(context.Background(), path)
 		require.NoError(t, err, "legacy key %s must survive a failed migration", k.Name)
+		key, err := decodeLegacyKey(value)
+		require.NoError(t, err, "legacy key %s must survive a failed migration", k.Name)
+		clear(key.PEM)
 	}
 }
 
 // recordBytes reads the raw legacy record for key.
 func recordBytes(t *testing.T, dir, key string) []byte {
 	t.Helper()
-	backend, err := xkmsssh.NewFileStorage(dir)
+	backend, err := file.New(dir)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, backend.Close()) }()
 	value, err := backend.Get(context.Background(), key)
@@ -138,8 +167,7 @@ func TestMigrateLegacy_MovesVerifiesAndWipes(t *testing.T) {
 	assert.NoDirExists(t, dir, "the plaintext store must be gone")
 	assert.NoDirExists(t, dir+wipingSuffix, "the wipe must complete")
 
-	client, err := xkmsssh.NewEmbedded(xkmsssh.EmbeddedOptions{Backend: sealed})
-	require.NoError(t, err)
+	client := newSealedClient(t, sealed)
 	for _, k := range legacyKeys {
 		got, err := client.Keys().Get(ctx, k)
 		require.NoError(t, err)
@@ -175,9 +203,17 @@ func TestMigrateLegacy_RetryAcceptsIdenticalRecords(t *testing.T) {
 	dir, _ := seedLegacyStore(t)
 	sealed := newSealed(t)
 
-	// A previous run copied this record and then failed.
+	// A previous run copied these records and then failed.
+	stores := newSealedStores(t, sealed)
 	key := keyRecordPath(t, "alice", "fleet-deploy")
-	require.NoError(t, sealed.Put(ctx, key, recordBytes(t, dir, key)))
+	legacyKey, err := decodeLegacyKey(recordBytes(t, dir, key))
+	require.NoError(t, err)
+	require.NoError(t, copyKey(ctx, stores.Keys, decodedKey{path: key, key: legacyKey}))
+	pinPath, err := sshscope.KindKnownHosts.RecordPath(sshscope.User, "alice", pinnedHost)
+	require.NoError(t, err)
+	legacyPin, err := decodeLegacyPin(recordBytes(t, dir, pinPath))
+	require.NoError(t, err)
+	require.NoError(t, copyPin(ctx, stores.KnownHosts, decodedPin{path: pinPath, pin: legacyPin}))
 
 	report, err := MigrateLegacy(ctx, dir, sealed, nil)
 	require.NoError(t, err)
@@ -190,44 +226,54 @@ func TestMigrateLegacy_ConflictLeavesLegacyIntact(t *testing.T) {
 	dir, _ := seedLegacyStore(t)
 	sealed := newSealed(t)
 
-	key := keyRecordPath(t, "alice", "fleet-deploy")
-	require.NoError(t, sealed.Put(ctx, key, []byte(`{"v":2,"name":"someone-else"}`)))
+	// The sealed store already holds a different key under the same name.
+	client := newSealedClient(t, sealed)
+	other, err := client.Keys().Generate(ctx, xkmsssh.GenerateRequest{Scope: "user", Owner: "alice", Name: "fleet-deploy", Algorithm: "ed25519"})
+	require.NoError(t, err)
 
-	_, err := MigrateLegacy(ctx, dir, sealed, nil)
+	_, err = MigrateLegacy(ctx, dir, sealed, nil)
 	var conflict *RecordConflictError
 	require.ErrorAs(t, err, &conflict)
-	assert.Equal(t, key, conflict.Key)
+	assert.Equal(t, keyRecordPath(t, "alice", "fleet-deploy"), conflict.Key)
 
-	stored, err := sealed.Get(ctx, key)
+	stored, err := client.Keys().Get(ctx, legacyKeys[0])
 	require.NoError(t, err)
-	assert.Equal(t, `{"v":2,"name":"someone-else"}`, string(stored), "a conflicting record must not be overwritten")
+	assert.Equal(t, other.PublicKey, stored.PublicKey, "a conflicting record must not be overwritten")
+	assert.Equal(t, other.Fingerprint, stored.Fingerprint, "a conflicting record must not be overwritten")
 	requireLegacyIntact(t, dir)
 }
 
 func TestMigrateLegacy_UnparseableKeyRecordLeavesLegacyIntact(t *testing.T) {
 	ctx := context.Background()
 	dir, _ := seedLegacyStore(t)
+	putLegacyRecord(t, dir, sshscope.KindKeys, sshscope.User, "alice", "corrupt", []byte("not an envelope"))
 
-	backend, err := xkmsssh.NewFileStorage(dir)
-	require.NoError(t, err)
-	require.NoError(t, backend.Put(ctx, keyRecordPath(t, "alice", "corrupt"), []byte("not an envelope")))
-	require.NoError(t, backend.Close())
-
-	_, err = MigrateLegacy(ctx, dir, newSealed(t), nil)
-	var verifyErr *KeyVerificationError
+	sealed := newSealed(t)
+	_, err := MigrateLegacy(ctx, dir, sealed, nil)
 	var unparsed *UnparsedKeysError
-	require.True(t, errors.As(err, &verifyErr) || errors.As(err, &unparsed),
-		"an unparseable key record must stop the migration, got %v", err)
+	require.ErrorAs(t, err, &unparsed, "an unparseable key record must stop the migration, got %v", err)
+	assert.Equal(t, 3, unparsed.Records)
+	assert.Equal(t, 2, unparsed.Parsed)
 	requireLegacyIntact(t, dir)
+
+	listed, err := newSealedClient(t, sealed).Keys().List(ctx, xkmsssh.ListKeysRequest{})
+	require.NoError(t, err)
+	assert.Empty(t, listed, "nothing is written before every key record decodes")
 }
 
-// failingBackend fails the configured operation and delegates the rest.
+// failingBackend fails the configured operation and delegates the rest. The
+// sealed DAO stores write through Put, PutIfAbsent and CompareAndSwap and
+// check for a record by reading it, so failPut fails every write, failExists
+// fails every read and existence check, and corrupt alters the fingerprint
+// of every record read back.
 type failingBackend struct {
 	xkmssdk.StorageBackend
 	failPut    bool
 	failExists bool
 	corrupt    bool
 }
+
+var errInjected = errors.New("injected storage failure")
 
 func (b *failingBackend) Exists(ctx context.Context, key string) (bool, error) {
 	if b.failExists {
@@ -236,8 +282,6 @@ func (b *failingBackend) Exists(ctx context.Context, key string) (bool, error) {
 	return b.StorageBackend.Exists(ctx, key)
 }
 
-var errInjected = errors.New("injected storage failure")
-
 func (b *failingBackend) Put(ctx context.Context, key string, value []byte) error {
 	if b.failPut {
 		return errInjected
@@ -245,12 +289,52 @@ func (b *failingBackend) Put(ctx context.Context, key string, value []byte) erro
 	return b.StorageBackend.Put(ctx, key, value)
 }
 
+func (b *failingBackend) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
+	if b.failPut {
+		return false, errInjected
+	}
+	return b.StorageBackend.PutIfAbsent(ctx, key, value)
+}
+
+func (b *failingBackend) CompareAndSwap(ctx context.Context, key string, expected, value []byte) (bool, []byte, error) {
+	if b.failPut {
+		return false, nil, errInjected
+	}
+	return b.StorageBackend.(xkmsstorage.CompareAndSwapper).CompareAndSwap(ctx, key, expected, value)
+}
+
+func (b *failingBackend) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
+	return b.StorageBackend.(xkmsstorage.CompareAndDeleter).CompareAndDelete(ctx, key, expected)
+}
+
 func (b *failingBackend) Get(ctx context.Context, key string) ([]byte, error) {
+	if b.failExists {
+		return nil, errInjected
+	}
 	value, err := b.StorageBackend.Get(ctx, key)
 	if err != nil || !b.corrupt {
 		return value, err
 	}
-	return append(value, '!'), nil
+	return tamperFingerprint(value), nil
+}
+
+// tamperFingerprint replaces the fingerprint in a stored DAO record, so the
+// record still decodes but no longer matches what was written.
+func tamperFingerprint(value []byte) []byte {
+	var rec map[string]any
+	if err := json.Unmarshal(value, &rec); err != nil {
+		return append(value, '!')
+	}
+	body, ok := rec["body"].(map[string]any)
+	if !ok {
+		return append(value, '!')
+	}
+	body["fp"] = "SHA256:tampered"
+	tampered, err := json.Marshal(rec)
+	if err != nil {
+		return append(value, '!')
+	}
+	return tampered
 }
 
 func TestMigrateLegacy_SealedStoreFailures(t *testing.T) {
@@ -311,8 +395,7 @@ func TestMigrateLegacy_SealedStoreFailures(t *testing.T) {
 func TestVerifyKey_RejectsForeignPrivateKey(t *testing.T) {
 	ctx := context.Background()
 	sealed := newSealed(t)
-	client, err := xkmsssh.NewEmbedded(xkmsssh.EmbeddedOptions{Backend: sealed})
-	require.NoError(t, err)
+	client := newSealedClient(t, sealed)
 
 	real, err := client.Keys().Generate(ctx, xkmsssh.GenerateRequest{Scope: "user", Owner: "alice", Name: "real", Algorithm: "ed25519"})
 	require.NoError(t, err)
@@ -320,16 +403,16 @@ func TestVerifyKey_RejectsForeignPrivateKey(t *testing.T) {
 	require.NoError(t, err)
 
 	// Graft "other"'s public half onto "real"'s private half.
-	key := keyRecordPath(t, "alice", "real")
-	raw, err := sealed.Get(ctx, key)
+	stores := newSealedStores(t, sealed)
+	grafted, err := stores.Keys.Get(ctx, sshscope.User, "alice", "real")
 	require.NoError(t, err)
-	var envelope map[string]any
-	require.NoError(t, json.Unmarshal(raw, &envelope))
-	envelope["pub"] = other.PublicKey
-	envelope["fp"] = other.Fingerprint
-	tampered, err := json.Marshal(envelope)
+	defer grafted.Destroy()
+	otherKey, err := stores.Keys.Get(ctx, sshscope.User, "alice", "other")
 	require.NoError(t, err)
-	require.NoError(t, sealed.Put(ctx, key, tampered))
+	defer otherKey.Destroy()
+	grafted.PublicKey = otherKey.PublicKey
+	grafted.Fingerprint = otherKey.Fingerprint
+	require.NoError(t, stores.Keys.Put(ctx, grafted))
 
 	claimed := &xkmsssh.Key{Scope: "user", Owner: "alice", Name: "real", PublicKey: other.PublicKey, Fingerprint: other.Fingerprint}
 	err = verifyKey(ctx, client.Keys(), claimed)
@@ -341,9 +424,7 @@ func TestVerifyKey_RejectsForeignPrivateKey(t *testing.T) {
 
 func TestVerifyKey_Failures(t *testing.T) {
 	ctx := context.Background()
-	sealed := newSealed(t)
-	client, err := xkmsssh.NewEmbedded(xkmsssh.EmbeddedOptions{Backend: sealed})
-	require.NoError(t, err)
+	client := newSealedClient(t, newSealed(t))
 	key, err := client.Keys().Generate(ctx, xkmsssh.GenerateRequest{Scope: "user", Owner: "alice", Name: "k", Algorithm: "ed25519"})
 	require.NoError(t, err)
 
