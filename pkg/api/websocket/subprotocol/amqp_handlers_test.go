@@ -1683,6 +1683,99 @@ func TestAMQPHandler_PublishRoutesThroughBindings(t *testing.T) {
 	})
 }
 
+func TestAMQPHandler_ExchangeRedeclareIncompatibleType(t *testing.T) {
+	session := newGrantedSession("test", "amqp", nil)
+	hub := NewInMemoryPubSubHub()
+	h := NewAMQPHandler(hub)
+	stateA := newTestAMQPState()
+	stateB := newTestAMQPState()
+
+	send := func(t *testing.T, state *amqpClientState, class, method uint16, args []byte) []byte {
+		t.Helper()
+		resp, err := h.handleFrame(context.Background(), h.buildMethodFrame(1, class, method, args), session, state)
+		if err != nil {
+			t.Fatalf("method %d/%d: %v", class, method, err)
+		}
+		return resp
+	}
+	methodOf := func(t *testing.T, resp []byte) (uint16, uint16, []byte) {
+		t.Helper()
+		frames := splitAMQPTestFrames(t, h, resp)
+		if len(frames) != 1 || frames[0].Type != FrameMethod || len(frames[0].Payload) < 4 {
+			t.Fatalf("response %x is not one method frame", resp)
+		}
+		p := frames[0].Payload
+		return binary.BigEndian.Uint16(p[0:2]), binary.BigEndian.Uint16(p[2:4]), p[4:]
+	}
+	declare := func(t *testing.T, state *amqpClientState, typ string) []byte {
+		t.Helper()
+		return send(t, state, ClassExchange, MethodExchangeDeclare, buildExchangeDeclareArgs("events", typ, 0))
+	}
+	expectDeclareOk := func(t *testing.T, resp []byte) {
+		t.Helper()
+		if c, m, _ := methodOf(t, resp); c != ClassExchange || m != MethodExchangeDeclareOk {
+			t.Fatalf("method = %d/%d, want Exchange.Declare-Ok %d/%d", c, m, ClassExchange, MethodExchangeDeclareOk)
+		}
+	}
+
+	// Connection A: events is direct, orders is bound with order.created.
+	expectDeclareOk(t, declare(t, stateA, "direct"))
+	queueArgs := &bytes.Buffer{}
+	_ = binary.Write(queueArgs, binary.BigEndian, uint16(0))
+	writeShortString(queueArgs, "orders")
+	queueArgs.WriteByte(0)
+	_ = binary.Write(queueArgs, binary.BigEndian, uint32(0))
+	send(t, stateA, ClassQueue, MethodQueueDeclare, queueArgs.Bytes())
+	send(t, stateA, ClassQueue, MethodQueueBind, buildQueueBindArgs("orders", "events", "order.created", false))
+
+	// Connection B redeclares events as fanout: Channel.Close 406.
+	c, m, args := methodOf(t, declare(t, stateB, "fanout"))
+	if c != ClassChannel || m != MethodChannelClose {
+		t.Fatalf("method = %d/%d, want Channel.Close %d/%d", c, m, ClassChannel, MethodChannelClose)
+	}
+	if len(args) < 3 {
+		t.Fatalf("Channel.Close args too short: %x", args)
+	}
+	if code := binary.BigEndian.Uint16(args[0:2]); code != PreconditionFailed {
+		t.Errorf("reply code = %d, want %d", code, PreconditionFailed)
+	}
+	textEnd := 3 + int(args[2])
+	if len(args) < textEnd+4 {
+		t.Fatalf("Channel.Close args too short: %x", args)
+	}
+	if !strings.Contains(string(args[3:textEnd]), "inequivalent arg 'type'") {
+		t.Errorf("reply text = %q, want it to name the inequivalent type", args[3:textEnd])
+	}
+	if fc, fm := binary.BigEndian.Uint16(args[textEnd:textEnd+2]), binary.BigEndian.Uint16(args[textEnd+2:textEnd+4]); fc != ClassExchange || fm != MethodExchangeDeclare {
+		t.Errorf("failing method = %d/%d, want Exchange.Declare %d/%d", fc, fm, ClassExchange, MethodExchangeDeclare)
+	}
+
+	stateB.mu.RLock()
+	_, exists := stateB.channels[1].exchanges["events"]
+	stateB.mu.RUnlock()
+	if exists {
+		t.Error("refused declaration recorded events on connection B's channel")
+	}
+
+	if got := h.routeTargets("events", "order.deleted"); len(got) != 0 {
+		t.Errorf("routeTargets(order.deleted) = %v, want none: routing changed", got)
+	}
+	if got := h.routeTargets("events", "order.created"); len(got) != 1 || got[0] != "orders" {
+		t.Errorf("routeTargets(order.created) = %v, want [orders]", got)
+	}
+
+	// The same type is equivalent and accepted.
+	expectDeclareOk(t, declare(t, stateB, "direct"))
+
+	// After A deletes the exchange, B may declare it with another type.
+	deleteArgs := &bytes.Buffer{}
+	_ = binary.Write(deleteArgs, binary.BigEndian, uint16(0))
+	writeShortString(deleteArgs, "events")
+	deleteArgs.WriteByte(0)
+	send(t, stateA, ClassExchange, MethodExchangeDelete, deleteArgs.Bytes())
+	expectDeclareOk(t, declare(t, stateB, "fanout"))
+}
+
 // TestAMQPHandler_BasicPublish_DeniedWithoutPublishPermission: a session
 // whose grant refuses messaging:publish gets Channel.Close ACCESS_REFUSED and
 // nothing reaches the hub, even when the content follows.

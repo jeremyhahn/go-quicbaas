@@ -938,16 +938,31 @@ func (h *AMQPHandler) handleExchangeDeclare(ctx context.Context, frame *AMQPFram
 			state.mu.Unlock()
 			return h.buildChannelClose(frame.Channel, NotFound, "NOT_FOUND - no exchange '"+exchangeName+"'", ClassExchange, MethodExchangeDeclare), nil
 		}
+		state.mu.Unlock()
 	} else {
+		state.mu.Unlock()
+
+		// The tenant-wide registry decides first, without state.mu held, so
+		// an incompatible redeclaration leaves the channel and the live
+		// routing untouched.
+		if existing, ok := h.declareExchangeType(exchangeName, exchangeType); !ok {
+			return h.buildChannelClose(frame.Channel, PreconditionFailed,
+				"PRECONDITION_FAILED - inequivalent arg 'type' for exchange '"+exchangeName+"': received '"+exchangeType+"' but current is '"+existing+"'",
+				ClassExchange, MethodExchangeDeclare), nil
+		}
+
+		state.mu.Lock()
+		ch = state.channels[frame.Channel]
+		if ch == nil {
+			state.mu.Unlock()
+			return nil, &ErrAMQPProtocolError{Message: "channel not open"}
+		}
 		ch.exchanges[exchangeName] = &amqpExchangeState{
 			name:    exchangeName,
 			typ:     exchangeType,
 			durable: durable,
 		}
-	}
-	state.mu.Unlock()
-	if !passive {
-		h.recordExchange(exchangeName, exchangeType)
+		state.mu.Unlock()
 	}
 
 	// Send Exchange.Declare-Ok if not no-wait
@@ -1603,15 +1618,20 @@ func (h *AMQPHandler) publishRouted(exchange, routingKey string, body []byte) er
 	return firstErr
 }
 
-// recordExchange records a declared exchange's type in the tenant-wide
-// registry.
-func (h *AMQPHandler) recordExchange(name, typ string) {
+// declareExchangeType records a declared exchange's type in the
+// tenant-wide registry. When the exchange already exists with another
+// type it changes nothing and returns that type and false.
+func (h *AMQPHandler) declareExchangeType(name, typ string) (existing string, ok bool) {
 	h.routesMu.Lock()
 	defer h.routesMu.Unlock()
 	if h.exchangeTypes == nil {
 		h.exchangeTypes = make(map[string]string)
 	}
+	if current, found := h.exchangeTypes[name]; found && current != typ {
+		return current, false
+	}
 	h.exchangeTypes[name] = typ
+	return typ, true
 }
 
 // removeExchange drops a deleted exchange's type and its bindings.
