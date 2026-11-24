@@ -31,7 +31,10 @@ service IAMService {
   }
 
   // User management
-  rpc CreateUser(CreateUserRequest) returns (User);
+  // CreateUser takes users:create, the grant QRDBService's CreateUser takes.
+  rpc CreateUser(CreateUserRequest) returns (User) {
+      option (qrdb.v1.permission) = "users:create";
+  }
   // GetUser is the tenant-scoped user lookup. It takes users:read, the grant QRDBService's user reads take.
   rpc GetUser(GetUserRequest) returns (User) {
       option (qrdb.v1.permission) = "users:read";

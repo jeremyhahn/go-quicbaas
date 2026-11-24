@@ -244,7 +244,7 @@ var grpcMethodPermissions = map[string]methodPermission{
 	//
 	// IAMService is absent from brokerServiceDescs, so a method of it that is
 	// not mapped in this table is denied wholesale under RequireAuthz. The
-	// methods mapped are ApproveUser, GetUser, GetUserByUsername, the
+	// methods mapped are ApproveUser, CreateUser, GetUser, GetUserByUsername, the
 	// WebAuthn credential verbs here, ReconcileRoles, and the tenant verbs
 	// (CreateTenant, GetTenant, ListTenants, UpdateTenant, DeleteTenant,
 	// ProvisionTenant) below. Mapping the WebAuthn verbs does not carve an
@@ -271,6 +271,8 @@ var grpcMethodPermissions = map[string]methodPermission{
 	// method is mapped only by REST parity, taking its REST twin's grant.
 	// Mirrors REST POST /api/v1/iam/users/{user_id}/approve (users:enable).
 	"/quicbaas.iam.v1.IAMService/ApproveUser": {"users", "enable"},
+	// Mirrors QRDBService CreateUser (users:create).
+	"/quicbaas.iam.v1.IAMService/CreateUser": {"users", "create"},
 	// Mirror QRDBService GetUser/GetUserByUsername (users:read).
 	"/quicbaas.iam.v1.IAMService/GetUser":                   {"users", "read"},
 	"/quicbaas.iam.v1.IAMService/GetUserByUsername":         {"users", "read"},
