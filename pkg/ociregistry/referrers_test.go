@@ -15,6 +15,7 @@ package ociregistry
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"testing"
 )
@@ -91,5 +92,58 @@ func TestOCIDistBackend_ListReferrers(t *testing.T) {
 		if got == nil || len(got) != 0 {
 			t.Errorf("ListReferrers %s@%s = %#v, want an empty list", tc.name, tc.digest, got)
 		}
+	}
+}
+
+// TestOCIDistBackend_ListReferrersReadFailure checks that a referrer
+// manifest that cannot be read or decoded fails the listing rather than
+// dropping out of it, and that the listing is scoped to the repository.
+func TestOCIDistBackend_ListReferrersReadFailure(t *testing.T) {
+	ctx := context.Background()
+	client := newMockStorageClient()
+	storage, err := NewQuicBaaSStorage(client)
+	if err != nil {
+		t.Fatalf("NewQuicBaaSStorage: %v", err)
+	}
+	reg, err := NewRegistry(validTestConfig(), testLogger(), WithStorage(storage))
+	if err != nil {
+		t.Fatalf("NewRegistry: %v", err)
+	}
+	t.Cleanup(func() { _ = reg.Close() })
+
+	image := []byte(`{"schemaVersion":2,"mediaType":"` + manifestV1 + `","layers":[]}`)
+	subject, err := reg.PutManifest(ctx, "apps/web", "v1", manifestV1, image)
+	if err != nil {
+		t.Fatalf("PutManifest image: %v", err)
+	}
+	sig := []byte(`{"schemaVersion":2,"mediaType":"` + manifestV1 + `","artifactType":"application/vnd.example.signature",` +
+		`"layers":[],"subject":{"mediaType":"` + manifestV1 + `","digest":"` + subject + `","size":` + strconv.Itoa(len(image)) + `}}`)
+	sigDigest, err := reg.PutManifest(ctx, "apps/web", sha256Digest(sig), manifestV1, sig)
+	if err != nil {
+		t.Fatalf("PutManifest sig: %v", err)
+	}
+	if got, err := reg.ListReferrers(ctx, "apps/web", subject, ""); err != nil || len(got) != 1 {
+		t.Fatalf("ListReferrers = %+v, %v; want the signature", got, err)
+	}
+
+	client.getErr = errors.New("backend down")
+	if got, err := reg.ListReferrers(ctx, "apps/web", subject, ""); err == nil {
+		t.Errorf("ListReferrers on a failed read = %+v, want an error", got)
+	}
+	client.getErr = nil
+
+	// A corrupt manifest in another repository does not fail this one.
+	client.data[entityTypeManifest+":"+storage.manifestKey("apps/other:sha256:"+repeat64("a"))] = []byte("not json{")
+	if got, err := reg.ListReferrers(ctx, "apps/web", subject, ""); err != nil || len(got) != 1 {
+		t.Fatalf("ListReferrers with another repository corrupt = %+v, %v; want the signature", got, err)
+	}
+
+	sigKey := entityTypeManifest + ":" + storage.manifestKey("apps/web:"+sigDigest)
+	if _, ok := client.data[sigKey]; !ok {
+		t.Fatalf("no stored manifest at %q", sigKey)
+	}
+	client.data[sigKey] = []byte("not json{")
+	if got, err := reg.ListReferrers(ctx, "apps/web", subject, ""); err == nil {
+		t.Errorf("ListReferrers with a corrupt referrer = %+v, want an error", got)
 	}
 }

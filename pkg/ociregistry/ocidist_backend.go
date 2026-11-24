@@ -309,7 +309,10 @@ func (r *Registry) ListTags(ctx context.Context, name string) ([]string, error) 
 // API). A non-empty artifactType keeps only the referrers of that
 // type. Each manifest is stored once under its digest, so only those
 // digest-keyed copies are considered and no referrer is listed twice.
-// A subject with no referrers yields an empty list, not an error.
+// A subject with no referrers yields an empty list, not an error. The
+// repository's digest-keyed manifests are listed strictly: a referrer
+// manifest that cannot be read or decoded fails the listing, so a 200
+// never hides an existing artifact.
 func (r *Registry) ListReferrers(ctx context.Context, name, digest, artifactType string) ([]Descriptor, error) {
 	if err := r.checkState(); err != nil {
 		return nil, err
@@ -321,8 +324,11 @@ func (r *Registry) ListReferrers(ctx context.Context, name, digest, artifactType
 	cursor := ""
 	for {
 		res, err := r.storage.ListManifests(ctx, ListOptions{
-			Limit:  500,
-			Cursor: cursor,
+			Repository: name,
+			Prefix:     "sha256:",
+			Limit:      500,
+			Cursor:     cursor,
+			Strict:     true,
 		})
 		if err != nil {
 			return nil, err
