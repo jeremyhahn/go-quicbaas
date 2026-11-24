@@ -2368,9 +2368,12 @@ jobs:
   # nightly.yml (v1.9, devops.md §8a: the alpha regime).
   ci-gate:
     name: CI Gate
-    # v1.43: GitHub-hosted, like every job but the unit split; it needs no
-    # Docker.
-    runs-on: ${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner || '"ubuntu-latest"') || 'ci-gate' }}   # v1.48
+    # The bigdisk pool for pushes to main and for pull requests whose head is
+    # in this repository (pull_request or pull_request_target); a fork's head
+    # runs on ubuntu-latest and never reaches a self-hosted runner. The gate
+    # does not read the preflight runner output, so a failed preflight still
+    # gets a gate. It needs no Docker.
+    runs-on: ${{ github.server_url == 'https://github.com' && (!startsWith(github.event_name, 'pull_request') || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}
     # v1.29.3: on a schedule run the schedule guard decides; every other
     # event runs the gate.
     # v1.53 (template at 88c10e76): with main-{event} a newer push cancels
