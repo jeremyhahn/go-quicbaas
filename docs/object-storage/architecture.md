@@ -428,15 +428,17 @@ must outlive the workers that scan it:
 2. `BackendManager.Close()` — closes the storage backends.
 3. `CatalogManager.Close()` — closes the catalog store.
 
+The catalog lives in go-qrdb, under the `__sys:catalog/` namespace of the
+server's qrdb node, so `Server.Shutdown` stops the catalog before the node.
 `Server.Shutdown` performs exactly this sequence. Embedders that drive the
 managers directly must keep it: closing the catalog first leaves a scan
-iterating a closed PebbleDB.
+reading a closed catalog store.
 
-The store defends the ordering rather than trusting it. `pebbleStorage` holds
+The store defends the ordering rather than trusting it. `kvStorage` holds
 every read and write open against its close, so a `Close()` that arrives while
 a scan is in flight waits for that scan, and any operation arriving afterwards
-receives a `catalog closed` error (`IsCatalogClosed`) instead of panicking
-inside PebbleDB. Workers treat that error as an ordinary end-of-life condition
+receives a `catalog closed` error (`IsCatalogClosed`) instead of failing
+inside the KV. Workers treat that error as an ordinary end-of-life condition
 and return.
 
 ## Multi-Tenancy

@@ -1,3 +1,7 @@
+### Changed
+
+- Object storage: the catalog of object metadata is stored in go-qrdb instead of a separate PebbleDB directory under the data directory. An existing catalog directory is not imported (pre-1.0).
+
 ### Fixed
 
 - Object storage: reading garbage-collection progress no longer races the running collection.
