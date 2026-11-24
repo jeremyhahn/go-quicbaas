@@ -345,7 +345,7 @@ func newIAMCLITenantSessionContext(t *testing.T, tenantID string) *iamCLITestCon
 func newIAMCLITenantSessionContextFor(t *testing.T, tenantID, protocol, address string) *iamCLITestContext {
 	t.Helper()
 
-	admin := helpers.TenantAdmin(t, getRESTEndpointForCLI(), tenantID)
+	admin := iamCLITenantAdmin(t, tenantID)
 
 	cli := newIAMCLITestContext(t, protocol, address, tenantID)
 
@@ -364,6 +364,33 @@ func newIAMCLITenantSessionContextFor(t *testing.T, tenantID, protocol, address 
 	return cli
 }
 
+// sharedIAMCLITenantID returns the package's shared CLI tenant
+// (shared_tenant_test.go), provisioned with its admin on first use the way
+// helpers.TenantAdmin provisions a fresh one, and deleted after m.Run. A CLI
+// test takes it only when every assertion it makes is about objects it names
+// uniquely; a test that revokes the admin's sessions or acts on the tenant
+// itself keeps a fresh tenant (generateUniqueTenantIDForCLI).
+func sharedIAMCLITenantID(t *testing.T) string {
+	t.Helper()
+	return provisionSharedTenant(t, getRESTEndpointForCLI(), "cli", generateUniqueTenantIDForCLI).id
+}
+
+// iamCLITenantAdmin returns the admin session of tenantID: the shared
+// tenant's cached session, or helpers.TenantAdmin, which provisions a fresh
+// tenant deleted when t ends.
+func iamCLITenantAdmin(t *testing.T, tenantID string) *helpers.TenantAdminSession {
+	t.Helper()
+	sharedTenants.Lock()
+	for _, s := range sharedTenants.byName {
+		if s.id == tenantID && s.admin != nil {
+			sharedTenants.Unlock()
+			return s.admin
+		}
+	}
+	sharedTenants.Unlock()
+	return helpers.TenantAdmin(t, getRESTEndpointForCLI(), tenantID)
+}
+
 // generateUniqueTenantIDForCLI generates a unique tenant ID for CLI testing.
 func generateUniqueTenantIDForCLI() string {
 	return fmt.Sprintf("cli-test-tenant-%d", time.Now().UnixNano())
@@ -373,7 +400,7 @@ func generateUniqueTenantIDForCLI() string {
 func setupIAMCLITestTenant(t *testing.T) string {
 	t.Helper()
 
-	tenantID := generateUniqueTenantIDForCLI()
+	tenantID := generateUniqueTenantIDForCLI() // fresh: tenant control-plane fixture
 	restEndpoint := getRESTEndpointForCLI()
 
 	// Creating a tenant is a system-tenant route: the system admin's.
@@ -474,7 +501,7 @@ func isExpectedNoSessionError(err error) bool {
 
 // TestCLISessionList tests the session list command.
 func TestCLISessionList(t *testing.T) {
-	tenantID := generateUniqueTenantIDForCLI()
+	tenantID := sharedIAMCLITenantID(t)
 	cli := newIAMCLITenantSessionContext(t, tenantID)
 
 	t.Run("list-sessions", func(t *testing.T) {
@@ -501,7 +528,7 @@ func TestCLISessionList(t *testing.T) {
 
 // TestCLISessionGet tests the session get command.
 func TestCLISessionGet(t *testing.T) {
-	tenantID := generateUniqueTenantIDForCLI()
+	tenantID := sharedIAMCLITenantID(t)
 	cli := newIAMCLITenantSessionContext(t, tenantID)
 
 	// First, list sessions to get a valid session ID
@@ -540,7 +567,7 @@ func TestCLISessionGet(t *testing.T) {
 
 // TestCLISessionRevoke tests the session revoke command.
 func TestCLISessionRevoke(t *testing.T) {
-	tenantID := generateUniqueTenantIDForCLI()
+	tenantID := generateUniqueTenantIDForCLI() // fresh: revokes the tenant admin's sessions
 	cli := newIAMCLITenantSessionContext(t, tenantID)
 
 	t.Run("revoke-session", func(t *testing.T) {
@@ -560,7 +587,7 @@ func TestCLISessionRevoke(t *testing.T) {
 
 // TestCLISessionRevokeAll tests the session revoke-all command.
 func TestCLISessionRevokeAll(t *testing.T) {
-	tenantID := generateUniqueTenantIDForCLI()
+	tenantID := generateUniqueTenantIDForCLI() // fresh: revokes the tenant admin's sessions
 	cli := newIAMCLITenantSessionContext(t, tenantID)
 
 	t.Run("revoke-all-sessions", func(t *testing.T) {
@@ -572,7 +599,7 @@ func TestCLISessionRevokeAll(t *testing.T) {
 
 // TestCLISessionRevokeAllKeepCurrent tests the session revoke-all with keep-current flag.
 func TestCLISessionRevokeAllKeepCurrent(t *testing.T) {
-	tenantID := generateUniqueTenantIDForCLI()
+	tenantID := generateUniqueTenantIDForCLI() // fresh: revokes the tenant admin's sessions
 	cli := newIAMCLITenantSessionContext(t, tenantID)
 
 	t.Run("revoke-all-keep-current", func(t *testing.T) {
@@ -592,7 +619,7 @@ func TestCLISessionRevokeAllKeepCurrent(t *testing.T) {
 
 // TestCLIAuditQuery tests the audit query command.
 func TestCLIAuditQuery(t *testing.T) {
-	tenantID := generateUniqueTenantIDForCLI()
+	tenantID := sharedIAMCLITenantID(t)
 	cli := newIAMCLITenantSessionContext(t, tenantID)
 
 	t.Run("query-audit-logs", func(t *testing.T) {
@@ -613,7 +640,7 @@ func TestCLIAuditQuery(t *testing.T) {
 
 // TestCLIAuditQueryWithFilters tests the audit query command with filters.
 func TestCLIAuditQueryWithFilters(t *testing.T) {
-	tenantID := generateUniqueTenantIDForCLI()
+	tenantID := sharedIAMCLITenantID(t)
 	cli := newIAMCLITenantSessionContext(t, tenantID)
 
 	testCases := []struct {
@@ -640,7 +667,7 @@ func TestCLIAuditQueryWithFilters(t *testing.T) {
 
 // TestCLIAuditQueryWithPagination tests the audit query command with pagination.
 func TestCLIAuditQueryWithPagination(t *testing.T) {
-	tenantID := generateUniqueTenantIDForCLI()
+	tenantID := sharedIAMCLITenantID(t)
 	cli := newIAMCLITenantSessionContext(t, tenantID)
 
 	t.Run("query-with-limit", func(t *testing.T) {
@@ -658,7 +685,7 @@ func TestCLIAuditQueryWithPagination(t *testing.T) {
 
 // TestCLIAuditGet tests the audit get command.
 func TestCLIAuditGet(t *testing.T) {
-	tenantID := generateUniqueTenantIDForCLI()
+	tenantID := sharedIAMCLITenantID(t)
 	cli := newIAMCLITenantSessionContext(t, tenantID)
 
 	t.Run("get-audit-event", func(t *testing.T) {
@@ -716,7 +743,7 @@ func TestCLIAuditMissingTenant(t *testing.T) {
 
 // TestCLIPEPCheck tests the PEP check command for allowed access.
 func TestCLIPEPCheck(t *testing.T) {
-	tenantID := generateUniqueTenantIDForCLI()
+	tenantID := sharedIAMCLITenantID(t)
 	cli := newIAMCLITenantSessionContext(t, tenantID)
 
 	t.Run("check-access-allowed", func(t *testing.T) {
@@ -743,7 +770,7 @@ func TestCLIPEPCheck(t *testing.T) {
 
 // TestCLIPEPCheckDeny tests the PEP check command for denied access.
 func TestCLIPEPCheckDeny(t *testing.T) {
-	tenantID := generateUniqueTenantIDForCLI()
+	tenantID := sharedIAMCLITenantID(t)
 	cli := newIAMCLITenantSessionContext(t, tenantID)
 
 	t.Run("check-access-denied", func(t *testing.T) {
@@ -773,7 +800,7 @@ func TestCLIPEPCheckDeny(t *testing.T) {
 
 // TestCLIPEPCheckBatch tests the PEP check-batch command.
 func TestCLIPEPCheckBatch(t *testing.T) {
-	tenantID := generateUniqueTenantIDForCLI()
+	tenantID := sharedIAMCLITenantID(t)
 	cli := newIAMCLITenantSessionContext(t, tenantID)
 
 	t.Run("check-batch", func(t *testing.T) {
@@ -817,7 +844,7 @@ func TestCLIPEPCheckBatch(t *testing.T) {
 // TestCLIPEPCheckMissingArgs tests that PEP check fails with missing arguments.
 func TestCLIPEPCheckMissingArgs(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := generateUniqueTenantIDForCLI()
+	tenantID := sharedIAMCLITenantID(t)
 
 	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
@@ -899,7 +926,7 @@ func TestCLIAuditErrors(t *testing.T) {
 // TestCLIPEPErrors tests error handling for PEP commands.
 func TestCLIPEPErrors(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := generateUniqueTenantIDForCLI()
+	tenantID := sharedIAMCLITenantID(t)
 
 	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
@@ -1007,10 +1034,10 @@ func TestCLIIAMPEPHelp(t *testing.T) {
 
 // TestCLIIAMOutputFormats tests different output formats for IAM commands.
 func TestCLIIAMOutputFormats(t *testing.T) {
-	tenantID := generateUniqueTenantIDForCLI()
+	tenantID := sharedIAMCLITenantID(t)
 	// Provision the tenant once in the parent: each subtest's TenantAdmin call
 	// reuses this cached session instead of provisioning the tenant again.
-	helpers.TenantAdmin(t, getRESTEndpointForCLI(), tenantID)
+	iamCLITenantAdmin(t, tenantID)
 
 	outputFormats := []string{"json", "table", "yaml"}
 
@@ -1047,7 +1074,7 @@ func TestCLIIAMOutputFormats(t *testing.T) {
 
 // TestCLIIAMSessionWorkflow tests a complete session management workflow.
 func TestCLIIAMSessionWorkflow(t *testing.T) {
-	tenantID := generateUniqueTenantIDForCLI()
+	tenantID := generateUniqueTenantIDForCLI() // fresh: revokes the tenant admin's sessions
 	cli := newIAMCLITenantSessionContext(t, tenantID)
 
 	// Step 1: List sessions
@@ -1092,7 +1119,7 @@ func TestCLIIAMSessionWorkflow(t *testing.T) {
 
 // TestCLIIAMAuditWorkflow tests a complete audit query workflow.
 func TestCLIIAMAuditWorkflow(t *testing.T) {
-	tenantID := generateUniqueTenantIDForCLI()
+	tenantID := sharedIAMCLITenantID(t)
 	cli := newIAMCLITenantSessionContext(t, tenantID)
 
 	// Step 1: Query all events
@@ -1140,7 +1167,7 @@ func TestCLIIAMAuditWorkflow(t *testing.T) {
 
 // TestCLIIAMPEPWorkflow tests a complete PEP access check workflow.
 func TestCLIIAMPEPWorkflow(t *testing.T) {
-	tenantID := generateUniqueTenantIDForCLI()
+	tenantID := sharedIAMCLITenantID(t)
 	cli := newIAMCLITenantSessionContext(t, tenantID)
 
 	// Step 1: Check read access
@@ -1411,11 +1438,11 @@ func TestCLITenantDelete(t *testing.T) {
 
 // TestCLIUserCreateMultiProtocol tests the user create command across all protocols.
 func TestCLIUserCreateMultiProtocol(t *testing.T) {
-	tenantID := generateUniqueTenantIDForCLI()
+	tenantID := sharedIAMCLITenantID(t)
 	// Provision the tenant once in the parent: each protocol's TenantAdmin
 	// call reuses this cached session, and the tenant's own admin creates
 	// the users (the system admin has no gRPC lift into the tenant).
-	helpers.TenantAdmin(t, getRESTEndpointForCLI(), tenantID)
+	iamCLITenantAdmin(t, tenantID)
 
 	protocols := getAllProtocolConfigs()
 
@@ -1468,7 +1495,7 @@ func TestCLIUserCreateMultiProtocol(t *testing.T) {
 // TestCLIUserCreate tests the user create command (single protocol for quick validation).
 func TestCLIUserCreate(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := generateUniqueTenantIDForCLI()
+	tenantID := sharedIAMCLITenantID(t)
 
 	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
@@ -1510,10 +1537,10 @@ func TestCLIUserCreate(t *testing.T) {
 
 // TestCLIUserCRUDMultiProtocol tests full user CRUD across all protocols.
 func TestCLIUserCRUDMultiProtocol(t *testing.T) {
-	tenantID := generateUniqueTenantIDForCLI()
+	tenantID := sharedIAMCLITenantID(t)
 	// Provision once in the parent; each protocol reuses the cached tenant
 	// admin session and acts in the tenant as that tenant's own admin.
-	helpers.TenantAdmin(t, getRESTEndpointForCLI(), tenantID)
+	iamCLITenantAdmin(t, tenantID)
 
 	protocols := getAllProtocolConfigs()
 
@@ -1564,7 +1591,7 @@ func TestCLIUserCRUDMultiProtocol(t *testing.T) {
 // TestCLIUserGet tests the user get command (single protocol for quick validation).
 func TestCLIUserGet(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := generateUniqueTenantIDForCLI()
+	tenantID := sharedIAMCLITenantID(t)
 
 	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
@@ -1604,7 +1631,7 @@ func TestCLIUserGet(t *testing.T) {
 // TestCLIUserList tests the user list command.
 func TestCLIUserList(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := generateUniqueTenantIDForCLI()
+	tenantID := sharedIAMCLITenantID(t)
 
 	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
@@ -1629,7 +1656,7 @@ func TestCLIUserList(t *testing.T) {
 // TestCLIUserUpdate tests the user update command.
 func TestCLIUserUpdate(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := generateUniqueTenantIDForCLI()
+	tenantID := sharedIAMCLITenantID(t)
 
 	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
@@ -1663,7 +1690,7 @@ func TestCLIUserUpdate(t *testing.T) {
 // TestCLIUserDelete tests the user delete command.
 func TestCLIUserDelete(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := generateUniqueTenantIDForCLI()
+	tenantID := sharedIAMCLITenantID(t)
 
 	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
@@ -1697,7 +1724,7 @@ func TestCLIUserDelete(t *testing.T) {
 // TestCLIUserRoleManagement tests user role assignment and revocation.
 func TestCLIUserRoleManagement(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := generateUniqueTenantIDForCLI()
+	tenantID := sharedIAMCLITenantID(t)
 
 	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
@@ -1772,7 +1799,7 @@ func TestCLIUserRoleManagement(t *testing.T) {
 // TestCLIRoleCreate tests the role create command.
 func TestCLIRoleCreate(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := generateUniqueTenantIDForCLI()
+	tenantID := sharedIAMCLITenantID(t)
 
 	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
@@ -1791,7 +1818,7 @@ func TestCLIRoleCreate(t *testing.T) {
 // TestCLIRoleGet tests the role get command.
 func TestCLIRoleGet(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := generateUniqueTenantIDForCLI()
+	tenantID := sharedIAMCLITenantID(t)
 
 	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
@@ -1818,7 +1845,7 @@ func TestCLIRoleGet(t *testing.T) {
 // TestCLIRoleList tests the role list command.
 func TestCLIRoleList(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := generateUniqueTenantIDForCLI()
+	tenantID := sharedIAMCLITenantID(t)
 
 	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
@@ -1832,7 +1859,7 @@ func TestCLIRoleList(t *testing.T) {
 // TestCLIRoleUpdate tests the role update command.
 func TestCLIRoleUpdate(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := generateUniqueTenantIDForCLI()
+	tenantID := sharedIAMCLITenantID(t)
 
 	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
@@ -1856,7 +1883,7 @@ func TestCLIRoleUpdate(t *testing.T) {
 // TestCLIRoleDelete tests the role delete command.
 func TestCLIRoleDelete(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := generateUniqueTenantIDForCLI()
+	tenantID := sharedIAMCLITenantID(t)
 
 	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
@@ -1883,7 +1910,7 @@ func TestCLIRoleDelete(t *testing.T) {
 // TestCLIPolicyApply tests the policy apply command.
 func TestCLIPolicyApply(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := generateUniqueTenantIDForCLI()
+	tenantID := sharedIAMCLITenantID(t)
 
 	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
@@ -1922,7 +1949,7 @@ spec:
 // TestCLIPolicyGet tests the policy get command.
 func TestCLIPolicyGet(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := generateUniqueTenantIDForCLI()
+	tenantID := sharedIAMCLITenantID(t)
 
 	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
@@ -1970,7 +1997,7 @@ spec:
 // TestCLIPolicyList tests the policy list command.
 func TestCLIPolicyList(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := generateUniqueTenantIDForCLI()
+	tenantID := sharedIAMCLITenantID(t)
 
 	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
@@ -1984,7 +2011,7 @@ func TestCLIPolicyList(t *testing.T) {
 // TestCLIPolicyDelete tests the policy delete command.
 func TestCLIPolicyDelete(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := generateUniqueTenantIDForCLI()
+	tenantID := sharedIAMCLITenantID(t)
 
 	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
@@ -2028,7 +2055,7 @@ spec:
 // TestCLIPolicyValidate tests the policy validate command.
 func TestCLIPolicyValidate(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := generateUniqueTenantIDForCLI()
+	tenantID := sharedIAMCLITenantID(t)
 
 	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
@@ -2081,7 +2108,7 @@ spec:
 // TestCLIPolicyTest tests the policy test command.
 func TestCLIPolicyTest(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := generateUniqueTenantIDForCLI()
+	tenantID := sharedIAMCLITenantID(t)
 
 	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
@@ -2107,7 +2134,7 @@ func TestCLIPolicyTest(t *testing.T) {
 // TestCLIAppRegister tests the app register command.
 func TestCLIAppRegister(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := generateUniqueTenantIDForCLI()
+	tenantID := sharedIAMCLITenantID(t)
 
 	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
@@ -2126,7 +2153,7 @@ func TestCLIAppRegister(t *testing.T) {
 // TestCLIAppGet tests the app get command.
 func TestCLIAppGet(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := generateUniqueTenantIDForCLI()
+	tenantID := sharedIAMCLITenantID(t)
 
 	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
@@ -2166,7 +2193,7 @@ func TestCLIAppGet(t *testing.T) {
 // TestCLIAppList tests the app list command.
 func TestCLIAppList(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := generateUniqueTenantIDForCLI()
+	tenantID := sharedIAMCLITenantID(t)
 
 	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
@@ -2180,7 +2207,7 @@ func TestCLIAppList(t *testing.T) {
 // TestCLIAppUpdate tests the app update command.
 func TestCLIAppUpdate(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := generateUniqueTenantIDForCLI()
+	tenantID := sharedIAMCLITenantID(t)
 
 	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
@@ -2216,7 +2243,7 @@ func TestCLIAppUpdate(t *testing.T) {
 // TestCLIAppDelete tests the app delete command.
 func TestCLIAppDelete(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := generateUniqueTenantIDForCLI()
+	tenantID := sharedIAMCLITenantID(t)
 
 	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
@@ -2251,7 +2278,7 @@ func TestCLIAppDelete(t *testing.T) {
 // TestCLIAppRotateSecret tests the app rotate-secret command.
 func TestCLIAppRotateSecret(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := generateUniqueTenantIDForCLI()
+	tenantID := sharedIAMCLITenantID(t)
 
 	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
@@ -2289,7 +2316,7 @@ func TestCLIAppRotateSecret(t *testing.T) {
 // TestCLIMFAStatus tests the MFA status command.
 func TestCLIMFAStatus(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := generateUniqueTenantIDForCLI()
+	tenantID := sharedIAMCLITenantID(t)
 
 	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
@@ -2323,7 +2350,7 @@ func TestCLIMFAStatus(t *testing.T) {
 // TestCLIMFAEnroll tests the MFA enrollment flow.
 func TestCLIMFAEnroll(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := generateUniqueTenantIDForCLI()
+	tenantID := sharedIAMCLITenantID(t)
 
 	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
@@ -2361,7 +2388,7 @@ func TestCLIMFAEnroll(t *testing.T) {
 // TestCLIMFADisable tests the MFA disable command.
 func TestCLIMFADisable(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := generateUniqueTenantIDForCLI()
+	tenantID := sharedIAMCLITenantID(t)
 
 	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
@@ -2399,7 +2426,7 @@ func TestCLIMFADisable(t *testing.T) {
 // TestCLIMFABackupCodes tests MFA backup codes management.
 func TestCLIMFABackupCodes(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := generateUniqueTenantIDForCLI()
+	tenantID := sharedIAMCLITenantID(t)
 
 	cli := newIAMCLITenantSessionContextFor(t, tenantID, proto.name, proto.address)
 
