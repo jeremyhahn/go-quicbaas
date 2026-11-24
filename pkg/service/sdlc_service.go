@@ -434,12 +434,25 @@ func (s *SDLCService) Bind(ctx context.Context, tenantID string, binding *sdlc.P
 		}
 		if !landed {
 			// Nothing was written, and nothing can be now. A fresh bind
-			// recorded the route of a project with no binding: forget it.
+			// recorded the route of a project with no binding: forget it,
+			// but only while no binding holds the slot. A route left for a
+			// binding that may stand is recoverable through Conformance; a
+			// route removed under a standing binding stops webhook delivery.
 			if prior == nil {
-				if forgetErr := s.routes.Forget(detached, binding.ProjectID, tenantID); forgetErr != nil {
-					s.logger.Error("sdlc: a binding write that did not land left its route behind",
-						"tenant_id", tenantID, "project_id", binding.ProjectID, "error", forgetErr)
-					return nil, &sdlc.BindWithdrawError{TenantID: tenantID, ProjectID: binding.ProjectID, Cause: forgetErr}
+				_, getErr := s.store.GetBinding(detached, tenantID, binding.ProjectID)
+				switch {
+				case getErr == nil:
+					// A binding holds the slot: its route stays.
+				case !errors.Is(getErr, sdlc.ErrNotFound):
+					s.logger.Error("sdlc: a binding write that did not land could not tell whether a binding stands; its route is kept",
+						"tenant_id", tenantID, "project_id", binding.ProjectID, "error", getErr)
+					return nil, &sdlc.BindWithdrawError{TenantID: tenantID, ProjectID: binding.ProjectID, Cause: getErr}
+				default:
+					if forgetErr := s.routes.Forget(detached, binding.ProjectID, tenantID); forgetErr != nil {
+						s.logger.Error("sdlc: a binding write that did not land left its route behind",
+							"tenant_id", tenantID, "project_id", binding.ProjectID, "error", forgetErr)
+						return nil, &sdlc.BindWithdrawError{TenantID: tenantID, ProjectID: binding.ProjectID, Cause: forgetErr}
+					}
 				}
 			}
 			return nil, err

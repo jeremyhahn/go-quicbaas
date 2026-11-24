@@ -17,12 +17,27 @@ import (
 	"context"
 )
 
-// bindingVoid is what SettleBindingWrite leaves in an empty binding slot. It
-// decodes as a ProjectBinding with no ProjectID, so every reader already
-// treats the slot as holding no binding for any project, and its bytes
-// differ from an empty slot, so a pending PutIfAbsent can never apply over it.
+// bindingVoid is what a binding slot holds once it has held anything and no
+// longer holds a binding: SettleBindingWrite leaves one in an empty slot, and
+// every path that takes a binding away (an unbind, a withdrawal) leaves a
+// fresh one, never an empty slot. It decodes as a ProjectBinding with no
+// ProjectID, so every reader already treats the slot as holding no binding
+// for any project, and its bytes differ from an empty slot, so a create still
+// pending from any earlier attempt (a PutIfAbsent) can never apply over it.
+// Markers are never removed: that is one small record per project ever
+// bound, and it reads as no binding everywhere.
 type bindingVoid struct {
 	VoidToken string `json:"void_token"`
+}
+
+// newBindingVoid returns a void marker with a fresh token, so its bytes
+// differ from every marker the slot held before.
+func newBindingVoid() (*bindingVoid, error) {
+	nonce, err := newNonce()
+	if err != nil {
+		return nil, err
+	}
+	return &bindingVoid{VoidToken: nonce}, nil
 }
 
 // SettleBindingWrite decides the outcome of a PutBinding that returned an
@@ -60,17 +75,17 @@ func (s *Store) SettleBindingWrite(ctx context.Context, tenantID, projectID, wri
 		if held != nil && held.ProjectID == projectID && held.WriteToken == writeToken {
 			return true, nil
 		}
-		nonce, err := newNonce()
+		marker, err := newBindingVoid()
 		if err != nil {
 			return false, backendError("SettleBindingWrite.token", err)
 		}
 		var next any
 		switch {
 		case held == nil || held.ProjectID == "":
-			next = &bindingVoid{VoidToken: nonce}
+			next = marker
 		case held.ProjectID == projectID:
 			restamped := *held
-			restamped.WriteToken = nonce
+			restamped.WriteToken = marker.VoidToken
 			restamped.ID = entityIDFor(projectID)
 			next = &restamped
 		default:

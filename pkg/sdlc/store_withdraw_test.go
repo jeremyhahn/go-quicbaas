@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -126,6 +127,125 @@ func TestWithdrawBinding_RemovesAFreshWrite(t *testing.T) {
 	}
 	if _, err := store.GetBinding(ctx, testTenant, testProject); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("binding after withdrawal: %v, want not found", err)
+	}
+}
+
+// A withdrawal of a fresh write leaves a void marker, not an empty slot.
+func TestWithdrawBinding_FreshWriteLeavesAVoidMarker(t *testing.T) {
+	store, resolver := newSettleStore(t)
+	ctx := context.Background()
+	binding := testBinding()
+	if _, err := store.PutBinding(ctx, testTenant, binding); err != nil {
+		t.Fatal(err)
+	}
+	withdrawn, err := store.WithdrawBinding(ctx, testTenant, testProject, binding.WriteToken, nil)
+	if err != nil || !withdrawn {
+		t.Fatalf("WithdrawBinding = %v, %v; want true, nil", withdrawn, err)
+	}
+	voidToken(t, resolver)
+	assertSlotHoldsNoBinding(t, store)
+}
+
+// rejectSwapKV rejects the first binding compare-and-swap as a definite
+// conflict, then either cancels the caller's context or fails the next
+// binding read.
+type rejectSwapKV struct {
+	qrdbsdk.AtomicKVStore
+	cancel   context.CancelFunc
+	failRead bool
+
+	mu       sync.Mutex
+	rejected bool
+}
+
+func (k *rejectSwapKV) CompareAndSwap(ctx context.Context, key string, old, value []byte) (bool, error) {
+	k.mu.Lock()
+	reject := !k.rejected && strings.HasPrefix(key, "sdlc_binding/")
+	k.rejected = k.rejected || reject
+	k.mu.Unlock()
+	if !reject {
+		return k.AtomicKVStore.CompareAndSwap(ctx, key, old, value)
+	}
+	if k.cancel != nil {
+		k.cancel()
+	}
+	return false, nil
+}
+
+func (k *rejectSwapKV) Get(ctx context.Context, key string) ([]byte, error) {
+	k.mu.Lock()
+	fail := k.failRead && k.rejected && strings.HasPrefix(key, "sdlc_binding/")
+	k.mu.Unlock()
+	if fail {
+		return nil, errors.New("read failed")
+	}
+	return k.AtomicKVStore.Get(ctx, key)
+}
+
+// boundBehind binds testProject, then installs wrap around the tenant store;
+// it returns the store and the first binding.
+func boundBehind(t *testing.T, wrap *rejectSwapKV) (*Store, *ProjectBinding) {
+	t.Helper()
+	store, resolver := newSettleStore(t)
+	first := testBinding()
+	if _, err := store.PutBinding(context.Background(), testTenant, first); err != nil {
+		t.Fatal(err)
+	}
+	resolver.mu.Lock()
+	held, ok := resolver.stores[testTenant].(qrdbsdk.AtomicKVStore)
+	if !ok {
+		resolver.mu.Unlock()
+		t.Fatal("the test tenant store takes no guarded writes")
+	}
+	wrap.AtomicKVStore = held
+	resolver.stores[testTenant] = wrap
+	resolver.mu.Unlock()
+	return store, first
+}
+
+// A rebind whose swap was rejected and whose context then ended attempted
+// no write that can land, so it carries no token to settle.
+func TestPutBinding_RejectedSwapThenCanceledCarriesNoToken(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	store, first := boundBehind(t, &rejectSwapKV{cancel: cancel})
+	second := testBinding()
+	if _, err := store.PutBinding(ctx, testTenant, second); err == nil {
+		t.Fatal("PutBinding after a rejected swap and a cancel succeeded, want an error")
+	}
+	if second.WriteToken != "" {
+		t.Fatalf("WriteToken = %q after a rejected swap, want empty", second.WriteToken)
+	}
+	got, err := store.GetBinding(context.Background(), testTenant, testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.WriteToken != first.WriteToken {
+		t.Fatalf("stored token = %q, want the first write's %q", got.WriteToken, first.WriteToken)
+	}
+}
+
+// A rebind whose swap was rejected and whose next read failed carries no
+// token either.
+func TestPutBinding_RejectedSwapThenFailedReadCarriesNoToken(t *testing.T) {
+	wrap := &rejectSwapKV{failRead: true}
+	store, first := boundBehind(t, wrap)
+	second := testBinding()
+	if _, err := store.PutBinding(context.Background(), testTenant, second); err == nil {
+		t.Fatal("PutBinding after a rejected swap and a failed read succeeded, want an error")
+	}
+	if second.WriteToken != "" {
+		t.Fatalf("WriteToken = %q after a rejected swap, want empty", second.WriteToken)
+	}
+	wrap.mu.Lock()
+	wrap.failRead = false
+	wrap.mu.Unlock()
+	got, err := store.GetBinding(context.Background(), testTenant, testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.WriteToken != first.WriteToken {
+		t.Fatalf("stored token = %q, want the first write's %q", got.WriteToken, first.WriteToken)
 	}
 }
 

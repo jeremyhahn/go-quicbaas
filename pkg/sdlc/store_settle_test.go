@@ -145,6 +145,101 @@ func TestSettleBindingWrite_PendingCreateCannotCommitLater(t *testing.T) {
 	}
 }
 
+// assertSlotHoldsNoBinding checks that no binding is visible for testProject.
+func assertSlotHoldsNoBinding(t *testing.T, store *Store) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := store.GetBinding(ctx, testTenant, testProject); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("GetBinding = %v, want not found", err)
+	}
+	listed, err := store.ListBindings(ctx, testTenant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 0 {
+		t.Fatalf("ListBindings = %d records, want none", len(listed))
+	}
+}
+
+// A settled create must stay unable to apply after a later bind is undone
+// by an unbind: the slot is never emptied again.
+func TestSettleBindingWrite_PendingCreateCannotCommitAfterBindUnbind(t *testing.T) {
+	ctx := context.Background()
+	store, resolver := newSettleStore(t)
+	delayed, token := pendingCreate(t, store, resolver)
+
+	if landed, err := store.SettleBindingWrite(ctx, testTenant, testProject, token); err != nil || landed {
+		t.Fatalf("SettleBindingWrite = %v, %v; want false, nil", landed, err)
+	}
+	if _, err := store.PutBinding(ctx, testTenant, testBinding()); err != nil {
+		t.Fatalf("PutBinding B = %v", err)
+	}
+	if err := store.DeleteBinding(ctx, testTenant, testProject); err != nil {
+		t.Fatalf("DeleteBinding B = %v", err)
+	}
+	applied, err := delayed.commit(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if applied {
+		t.Fatal("the held create applied after a bind and an unbind")
+	}
+	assertSlotHoldsNoBinding(t, store)
+}
+
+// A settled create must stay unable to apply after a later bind is withdrawn.
+func TestSettleBindingWrite_PendingCreateCannotCommitAfterWithdrawal(t *testing.T) {
+	ctx := context.Background()
+	store, resolver := newSettleStore(t)
+	delayed, token := pendingCreate(t, store, resolver)
+
+	if landed, err := store.SettleBindingWrite(ctx, testTenant, testProject, token); err != nil || landed {
+		t.Fatalf("SettleBindingWrite = %v, %v; want false, nil", landed, err)
+	}
+	second := testBinding()
+	if _, err := store.PutBinding(ctx, testTenant, second); err != nil {
+		t.Fatalf("PutBinding B = %v", err)
+	}
+	withdrawn, err := store.WithdrawBinding(ctx, testTenant, testProject, second.WriteToken, nil)
+	if err != nil || !withdrawn {
+		t.Fatalf("WithdrawBinding B = %v, %v; want true, nil", withdrawn, err)
+	}
+	voidToken(t, resolver)
+	applied, err := delayed.commit(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if applied {
+		t.Fatal("the held create applied after a bind was withdrawn")
+	}
+	assertSlotHoldsNoBinding(t, store)
+}
+
+// An unbind leaves a void marker: the binding reads as absent everywhere and
+// a later bind creates afresh.
+func TestDeleteBinding_LeavesAVoidMarker(t *testing.T) {
+	ctx := context.Background()
+	store, resolver := newSettleStore(t)
+	if _, err := store.PutBinding(ctx, testTenant, testBinding()); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DeleteBinding(ctx, testTenant, testProject); err != nil {
+		t.Fatalf("DeleteBinding = %v", err)
+	}
+	voidToken(t, resolver)
+	assertSlotHoldsNoBinding(t, store)
+	if err := store.DeleteBinding(ctx, testTenant, testProject); err != nil {
+		t.Fatalf("DeleteBinding over a void marker = %v, want nil", err)
+	}
+	prior, err := store.PutBinding(ctx, testTenant, testBinding())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prior != nil {
+		t.Fatalf("PutBinding over a void marker reported prior %+v, want nil", prior)
+	}
+}
+
 // A rebind whose outcome is unknown is settled as not landed: the held
 // record keeps its content and gets a fresh token, so the held swap, committed
 // after, does not apply.

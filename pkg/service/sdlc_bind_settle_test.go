@@ -180,6 +180,67 @@ func TestSDLCService_RebindWithPendingWriteKeepsThePrior(t *testing.T) {
 	assertPendingWriteError(t, bindErr)
 }
 
+// rejectBindSwapKV rejects the first binding compare-and-swap as a definite
+// conflict and then cancels the bind's context.
+type rejectBindSwapKV struct {
+	qrdbsdk.AtomicKVStore
+	cancel context.CancelFunc
+
+	mu       sync.Mutex
+	rejected bool
+}
+
+func (k *rejectBindSwapKV) CompareAndSwap(ctx context.Context, key string, old, value []byte) (bool, error) {
+	k.mu.Lock()
+	reject := !k.rejected && strings.HasPrefix(key, "sdlc_binding/")
+	k.rejected = k.rejected || reject
+	k.mu.Unlock()
+	if !reject {
+		return k.AtomicKVStore.CompareAndSwap(ctx, key, old, value)
+	}
+	k.cancel()
+	return false, nil
+}
+
+// A rebind whose swap was rejected wrote nothing, so the binding it would
+// have replaced and that binding's route both stand.
+func TestSDLCService_RebindWithRejectedSwapKeepsBindingAndRoute(t *testing.T) {
+	rig := newSDLCServiceRig(t)
+	if _, err := rig.svc.Bind(context.Background(), sdlcTestTenant, rig.binding(), BindOptions{}); err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	original, err := rig.store.GetBinding(context.Background(), sdlcTestTenant, sdlcTestProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rig.resolver.mu.Lock()
+	inner, ok := rig.resolver.stores[sdlcTestTenant].(qrdbsdk.AtomicKVStore)
+	if !ok {
+		rig.resolver.mu.Unlock()
+		t.Fatal("the rig's tenant store takes no guarded writes")
+	}
+	rig.resolver.stores[sdlcTestTenant] = &rejectBindSwapKV{AtomicKVStore: inner, cancel: cancel}
+	rig.resolver.mu.Unlock()
+
+	rebind := rig.binding()
+	rebind.MaxReviewRounds = original.MaxReviewRounds + 2
+	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, rebind, BindOptions{}); err == nil {
+		t.Fatal("a rebind whose swap was rejected and whose context ended succeeded, want an error")
+	}
+	got, err := rig.store.GetBinding(context.Background(), sdlcTestTenant, sdlcTestProject)
+	if err != nil {
+		t.Fatalf("binding after the rejected rebind: %v", err)
+	}
+	if got.WriteToken != original.WriteToken || got.MaxReviewRounds != original.MaxReviewRounds {
+		t.Fatalf("binding after the rejected rebind = %+v, want the original", got)
+	}
+	if _, err := rig.svc.Routes().Tenant(context.Background(), sdlcTestProject); err != nil {
+		t.Fatalf("the rejected rebind dropped the binding's route: %v", err)
+	}
+}
+
 // A bind whose write is still pending returns; the project is then deleted,
 // and the write commits late. It does not apply, so no binding stands on the
 // deleted project.

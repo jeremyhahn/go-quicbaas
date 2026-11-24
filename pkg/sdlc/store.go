@@ -126,7 +126,11 @@ func (s *Store) GetBinding(ctx context.Context, tenantID, projectID string) (*Pr
 // lose the response of a committed write. In that case PutBinding returns
 // the record that write would have replaced, and binding.WriteToken carries
 // the token stamped on the attempt, so the caller can withdraw exactly that
-// write. Every other error returns a nil record. A caller whose write
+// write. binding.WriteToken is left set only then: a write the backend
+// rejected (a compare-and-swap that did not apply) cannot land, so a context
+// error after that rejection, or a failed read on a retry round, returns with
+// an empty WriteToken and nothing to settle. Every other error returns a nil
+// record. A caller whose write
 // returned an error must settle it with SettleBindingWrite before treating
 // the binding as absent, because the write may still commit later.
 func (s *Store) PutBinding(ctx context.Context, tenantID string, binding *ProjectBinding) (*ProjectBinding, error) {
@@ -147,6 +151,7 @@ func (s *Store) PutBinding(ctx context.Context, tenantID string, binding *Projec
 	}
 	binding.ID = entityIDFor(binding.ProjectID)
 	key := bindingKey(binding.ProjectID)
+	binding.WriteToken = ""
 	for {
 		held, raw, err := loadRecord[ProjectBinding](ctx, "PutBinding", store, key)
 		if err != nil {
@@ -157,13 +162,13 @@ func (s *Store) PutBinding(ctx context.Context, tenantID string, binding *Projec
 		binding.UpdatedAt = now
 		binding.CreatedAt = now
 		binding.Epoch = epoch
-		binding.WriteToken = token
 		if held != nil && held.ProjectID == binding.ProjectID {
 			binding.CreatedAt = held.CreatedAt
 			binding.Epoch = held.Epoch
 			prior = held
 			prior.ID = binding.ID
 		}
+		binding.WriteToken = token
 		applied, err := storeRecord(ctx, "PutBinding", store, key, raw, binding)
 		if err != nil {
 			// The outcome is unknown: report what this write would have
@@ -173,6 +178,9 @@ func (s *Store) PutBinding(ctx context.Context, tenantID string, binding *Projec
 		if applied {
 			return prior, nil
 		}
+		// The swap was rejected: this attempt cannot apply, so it leaves no
+		// token for the caller to settle.
+		binding.WriteToken = ""
 		if err := ctx.Err(); err != nil {
 			return nil, backendError("PutBinding", err)
 		}
@@ -181,7 +189,8 @@ func (s *Store) PutBinding(ctx context.Context, tenantID string, binding *Projec
 
 // WithdrawBinding undoes the PutBinding that stamped writeToken: while the
 // stored record still carries that token, it is swapped back to prior (the
-// record that put replaced) or, when prior is nil, removed. A record carrying
+// record that put replaced) or, when prior is nil, replaced by a fresh void
+// marker, so no create still pending can apply over it. A record carrying
 // another token (a later bind's, or none) is left alone and withdrawn is
 // false; so is an absent record. It undoes a write known to have landed: a
 // write whose outcome is unknown is first settled with SettleBindingWrite.
@@ -207,9 +216,13 @@ func (s *Store) WithdrawBinding(ctx context.Context, tenantID, projectID, writeT
 		}
 		var applied bool
 		if prior == nil {
-			applied, err = store.CompareAndDelete(ctx, key, raw)
+			marker, err := newBindingVoid()
 			if err != nil {
-				return false, backendError("WithdrawBinding", err)
+				return false, backendError("WithdrawBinding.void", err)
+			}
+			applied, err = storeRecord(ctx, "WithdrawBinding", store, key, raw, marker)
+			if err != nil {
+				return false, err
 			}
 		} else {
 			applied, err = storeRecord(ctx, "WithdrawBinding", store, key, raw, prior)
@@ -282,7 +295,8 @@ func (s *Store) UpdateBinding(ctx context.Context, tenantID string, binding *Pro
 // DeleteBinding removes the binding for projectID. Deleting an absent
 // binding is not an error. The store removes only the exact record read, so
 // a binding updated after that read is kept and the delete is refused with a
-// VersionConflictError.
+// VersionConflictError. The binding is replaced by a fresh void marker, never
+// an empty slot, so no create still pending from an earlier bind can apply.
 func (s *Store) DeleteBinding(ctx context.Context, tenantID, projectID string) error {
 	if err := validateKeySegment("project_id", projectID); err != nil {
 		return err
@@ -291,13 +305,30 @@ func (s *Store) DeleteBinding(ctx context.Context, tenantID, projectID string) e
 	if err != nil {
 		return err
 	}
-	held, changed, err := removeRecord(ctx, "DeleteBinding", store, bindingKey(projectID), func(b *ProjectBinding) bool {
-		return b.ProjectID == projectID
-	})
+	key := bindingKey(projectID)
+	held, raw, err := loadRecord[ProjectBinding](ctx, "DeleteBinding", store, key)
 	if err != nil {
 		return err
 	}
-	if changed {
+	if held == nil || held.ProjectID != projectID {
+		// Absent, a void marker, or another project's record.
+		return nil
+	}
+	marker, err := newBindingVoid()
+	if err != nil {
+		return backendError("DeleteBinding.void", err)
+	}
+	applied, err := storeRecord(ctx, "DeleteBinding", store, key, raw, marker)
+	if err != nil || applied {
+		return err
+	}
+	// The slot changed after the read: a record of this project still there
+	// was updated underneath; anything else means the binding is gone.
+	current, _, err := loadRecord[ProjectBinding](ctx, "DeleteBinding", store, key)
+	if err != nil {
+		return err
+	}
+	if current != nil && current.ProjectID == projectID {
 		return &VersionConflictError{Entity: bindingEntityName, TenantID: tenantID, ID: projectID, Expected: held.UpdatedAt.UnixNano()}
 	}
 	return nil
