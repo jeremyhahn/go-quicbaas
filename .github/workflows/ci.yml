@@ -1266,6 +1266,8 @@ jobs:
         run: python3 -I testdata/ci-mask-lan-tests.py
       - name: Job output handoff tests
         run: python3 -I testdata/job-output-handoff-tests.py
+      - name: Code review draft tests
+        run: python3 -I .github/workflows/testdata/code-review-v51213-tests.py .github/workflows/code-review.yml
 
   # v1.30 (fix 1): the toolchain image is built once per content hash, here,
   # and every other job pulls it (scripts/ci-image-cache.sh v2, ships beside
