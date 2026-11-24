@@ -1513,15 +1513,17 @@ func (s *Server) pivLoginModuleOptions() *xkmssdk.ServiceModulePIVLoginOptions {
 // route precedence (apimodule.XKMSRouteExclusions), then the tenant binding of
 // xkms's certificate login (apimodule.XKMSCertLoginRoutes), so a tenant
 // admin's certificate is looked up in the tenant its SPIFFE SAN names rather
-// than in the system tenant. A successful certificate login is then answered
-// with platform tokens the node's own OIDC provider issues, so the node's
-// current signing key signs every token it accepts.
+// than in the system tenant. Both of xkms's login surfaces, the certificate
+// login and the passkey (FIDO2) login (xkmsPasskeyLoginRoutes), are then
+// answered on success with platform tokens the node's own OIDC provider
+// issues, so the node's current signing key signs every token it accepts and
+// every login token's kid is in the published JWKS.
 func (s *Server) hostXKMSModule(xkmsModule qrdbsdk.ServiceModule) (qrdbsdk.ServiceModule, error) {
 	hosted, err := apimodule.NewRouteExcludingModule(xkmsModule, apimodule.XKMSRouteExclusions)
 	if err != nil {
 		return nil, &QRDBNodeError{Stage: "compose xkms module route precedence", Cause: err}
 	}
-	hosted, err = newXKMSLoginPlatformTokenModule(s, hosted, apimodule.XKMSCertLoginRoutes)
+	hosted, err = newXKMSLoginPlatformTokenModule(s, hosted, apimodule.XKMSCertLoginRoutes, xkmsPasskeyLoginRoutes)
 	if err != nil {
 		return nil, &QRDBNodeError{Stage: "exchange xkms login for platform tokens", Cause: err}
 	}
