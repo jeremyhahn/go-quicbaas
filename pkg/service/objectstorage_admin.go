@@ -877,14 +877,19 @@ func (s *objectStorageAdminService) GetGarbageCollectionProgress(ctx context.Con
 		return nil, err
 	}
 
-	if _, err := prepareTenantContext(ctx); err != nil {
+	tenantID, err := prepareTenantContext(ctx)
+	if err != nil {
 		return nil, err
 	}
 
 	// runGCOperation updates op's fields under s.mu in its own goroutine, so
-	// the response is built from them while the read lock is held.
+	// the response is built from them while the read lock is held. Another
+	// tenant's operation is not found; the system scope ("") sees every one.
 	s.mu.RLock()
 	op, exists := s.gcOperations[req.OperationID]
+	if exists && tenantID != "" && op.TenantID != tenantID {
+		exists = false
+	}
 	var resp *GetGarbageCollectionProgressResponse
 	if exists {
 		// Calculate percent complete

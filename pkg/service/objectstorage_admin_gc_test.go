@@ -469,3 +469,55 @@ func TestGetGarbageCollectionProgress_ConcurrentWithRunIsRaceFree(t *testing.T) 
 			"reader %d did not see a terminal status within 5s", i)
 	}
 }
+
+func TestGetGarbageCollectionProgress_OtherTenantGetsNotFound(t *testing.T) {
+	svc, _, _ := createTestAdminService(t)
+	svc.mu.Lock()
+	svc.gcOperations["gc-tenant-a"] = &GCOperation{
+		ID:             "gc-tenant-a",
+		TenantID:       "tenant-a",
+		Status:         GCStatusCompleted,
+		ObjectsScanned: 3,
+		StartedAt:      1000000,
+		CompletedAt:    2000000,
+	}
+	svc.mu.Unlock()
+	req := &GetGarbageCollectionProgressRequest{OperationID: "gc-tenant-a"}
+
+	resp, err := svc.GetGarbageCollectionProgress(tenantctx.WithTenant(context.Background(), "tenant-b"), req)
+	require.Error(t, err)
+	assert.Nil(t, resp)
+	var qbErr *dberrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, dberrors.ErrNotFound, qbErr.Code)
+
+	// The not-found matches an unknown ID exactly.
+	_, unknownErr := svc.GetGarbageCollectionProgress(tenantctx.WithTenant(context.Background(), "tenant-b"),
+		&GetGarbageCollectionProgressRequest{OperationID: "gc-unknown"})
+	var unknownQB *dberrors.QBError
+	require.ErrorAs(t, unknownErr, &unknownQB)
+	assert.Equal(t, unknownQB.Code, qbErr.Code)
+
+	resp, err = svc.GetGarbageCollectionProgress(tenantctx.WithTenant(context.Background(), "tenant-a"), req)
+	require.NoError(t, err)
+	assert.Equal(t, "gc-tenant-a", resp.OperationID)
+	assert.Equal(t, int64(3), resp.ObjectsScanned)
+
+	resp, err = svc.GetGarbageCollectionProgress(tenantctx.WithSystem(context.Background()), req)
+	require.NoError(t, err)
+	assert.Equal(t, "gc-tenant-a", resp.OperationID)
+}
+
+func TestRunGarbageCollection_RecordsTheCallerTenant(t *testing.T) {
+	svc, _, _ := createTestAdminService(t)
+
+	resp, err := svc.RunGarbageCollection(tenantctx.WithTenant(context.Background(), "tenant-a"),
+		&RunGarbageCollectionRequest{Backends: []string{}, DryRun: true})
+	require.NoError(t, err)
+
+	svc.mu.RLock()
+	op := svc.gcOperations[resp.OperationID]
+	tenant := op.TenantID
+	svc.mu.RUnlock()
+	assert.Equal(t, "tenant-a", tenant)
+}

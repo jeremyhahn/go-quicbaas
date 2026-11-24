@@ -41,6 +41,14 @@ func requireForbidden(t *testing.T, err error, msg string) {
 	assert.Contains(t, []errors.ErrorCode{errors.ErrForbidden, errors.ErrCrossTenantAccess}, qb.Code, msg)
 }
 
+func requireNotFound(t *testing.T, err error, msg string) {
+	t.Helper()
+	require.Error(t, err, msg)
+	var qb *errors.QBError
+	require.True(t, stderrors.As(err, &qb), "%s: want a coded error, got %v", msg, err)
+	assert.Equal(t, errors.ErrNotFound, qb.Code, msg)
+}
+
 // TestObjectStorage_CallerNamedTenantIsChecked is a go-quicbaas#1150
 // regression: the object-storage service scoped every operation by the tenant
 // the REQUEST named (REST's X-Tenant-ID header, gRPC's tenant_id field), and
@@ -60,8 +68,15 @@ func TestObjectStorage_CallerNamedTenantIsChecked(t *testing.T) {
 	_, err = svc.GetObject(callerOf("tenant-a"), &GetObjectRequest{Key: "b/secret.txt", TenantID: "tenant-b"})
 	requireForbidden(t, err, "tenant-a naming tenant-b")
 
+	// tenant-a's "b/secret.txt" is its own key, so tenant-b's object is not
+	// visible to it at all.
 	_, err = svc.GetObject(callerOf("tenant-a"), &GetObjectRequest{Key: "b/secret.txt"})
-	requireForbidden(t, err, "tenant-a naming nobody")
+	requireNotFound(t, err, "tenant-a naming nobody")
+
+	_, err = svc.PutObject(callerOf("tenant-a"), &PutObjectRequest{
+		Key: "b/secret.txt", Value: []byte("tenant-a data"),
+	})
+	require.NoError(t, err, "tenant-a writes the same key in its own namespace")
 
 	_, err = svc.PutObject(callerOf("tenant-a"), &PutObjectRequest{
 		Key: "a/x.txt", Value: []byte("x"), TenantID: "tenant-b",
