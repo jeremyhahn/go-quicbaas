@@ -15,6 +15,7 @@ package grants
 
 import (
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
@@ -104,11 +105,24 @@ func (e *env) kept(t *testing.T, tenant, path string) *x509.Certificate {
 	t.Helper()
 	data, _, err := e.secrets.Get(tenantctx.WithTenant(context.Background(), tenant), path)
 	require.NoError(t, err)
-	require.NotEmpty(t, data["private_key"])
-	block, _ := pem.Decode(data["certificate"])
-	require.NotNil(t, block)
-	cert, err := x509.ParseCertificate(block.Bytes)
-	require.NoError(t, err)
+	var cert *x509.Certificate
+	key := false
+	for rest := data["data"]; ; {
+		var block *pem.Block
+		block, rest = pem.Decode(rest)
+		if block == nil {
+			break
+		}
+		switch {
+		case block.Type == "CERTIFICATE" && cert == nil:
+			cert, err = x509.ParseCertificate(block.Bytes)
+			require.NoError(t, err)
+		case block.Type == "PRIVATE KEY":
+			key = true
+		}
+	}
+	require.NotNil(t, cert, "a CERTIFICATE block in the bundle")
+	require.True(t, key, "a PRIVATE KEY block in the bundle")
 	return cert
 }
 
@@ -855,4 +869,27 @@ func TestWithdraw_RefusesAMalformedSerial(t *testing.T) {
 	e := newEnv(t)
 	var bad *RefError
 	assert.ErrorAs(t, withdraw(context.Background(), e.ca, e.secrets, "p", serviceplane.GrantCertificate, "zz"), &bad)
+}
+
+func TestIdentity_KeepsALoadableKeyPair(t *testing.T) {
+	e := newEnv(t)
+	m := serviceplanetest.Manifest("acme", "web")
+	ctx := context.Background()
+	for kind, path := range map[serviceplane.GrantKind]string{
+		serviceplane.GrantIdentity:    "tenant/acme/services/web/svid",
+		serviceplane.GrantCertificate: "tenant/acme/services/web/tls",
+	} {
+		t.Run(string(kind), func(t *testing.T) {
+			_, err := e.grant(kind).Grant(ctx, m, "")
+			require.NoError(t, err)
+			data, _, err := e.secrets.Get(tenantctx.WithTenant(ctx, "acme"), path)
+			require.NoError(t, err)
+			pair, err := tls.X509KeyPair(data["data"], data["data"])
+			require.NoError(t, err, "the kept bundle loads as a key pair")
+			require.NotEmpty(t, pair.Certificate)
+			leaf, err := x509.ParseCertificate(pair.Certificate[0])
+			require.NoError(t, err)
+			assert.Equal(t, e.kept(t, "acme", path).SerialNumber, leaf.SerialNumber)
+		})
+	}
 }

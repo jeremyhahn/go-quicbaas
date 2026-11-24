@@ -296,10 +296,11 @@ func issue(ctx context.Context, ca CA, store SecretStore, path, cn string, opts 
 	if err != nil {
 		return "", errors.Join(err, ca.Revoke(ctx, cert.SerialNumber, reasonCessation))
 	}
-	data := map[string][]byte{
-		"certificate": pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw}),
-		"private_key": pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}),
-	}
+	// One PEM bundle, the certificate then the key: the secrets API serves
+	// the "data" field, and tls.X509KeyPair loads the bundle as both.
+	bundle := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw})
+	bundle = append(bundle, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})...)
+	data := map[string][]byte{"data": bundle}
 	if err := store.Store(ctx, path, data, map[string]string{"serial": serial}); err != nil {
 		return "", errors.Join(err, ca.Revoke(ctx, cert.SerialNumber, reasonCessation))
 	}
@@ -505,14 +506,30 @@ func storedCert(ctx context.Context, store SecretStore, path string) (*x509.Cert
 	if err != nil {
 		return nil, err
 	}
-	block, _ := pem.Decode(data["certificate"])
-	if block == nil || block.Type != "CERTIFICATE" {
+	var (
+		certDER []byte
+		key     bool
+	)
+	for rest := data["data"]; ; {
+		var block *pem.Block
+		block, rest = pem.Decode(rest)
+		if block == nil {
+			break
+		}
+		switch {
+		case block.Type == "CERTIFICATE" && certDER == nil:
+			certDER = block.Bytes
+		case block.Type == "PRIVATE KEY":
+			key = true
+		}
+	}
+	if certDER == nil {
 		return nil, fmt.Errorf("no certificate PEM at %s", path)
 	}
-	if _, ok := data["private_key"]; !ok {
+	if !key {
 		return nil, fmt.Errorf("no private key at %s", path)
 	}
-	return x509.ParseCertificate(block.Bytes)
+	return x509.ParseCertificate(certDER)
 }
 
 // svidFresh reports whether the stored SVID is the one serial names and
