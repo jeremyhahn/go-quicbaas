@@ -740,7 +740,7 @@ func handleIAMRoleReconcile(ctx context.Context, svc service.QuicBaaS, req inter
 	out := &iamsdk.ReconcileRolesResponse{
 		TenantID: report.TenantID,
 		Roles:    make([]iamsdk.RoleReconcileResult, 0, len(report.Roles)),
-		Changed:  report.Changed(),
+		Changed:  iam.RoleReconcileChanged(report),
 	}
 	for _, r := range report.Roles {
 		out.Roles = append(out.Roles, iamsdk.RoleReconcileResult{

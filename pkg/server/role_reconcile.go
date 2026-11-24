@@ -73,7 +73,7 @@ func (s *Server) reconcileTenantBuiltInRoles(ctx context.Context, roles builtInR
 		if err != nil {
 			return &RoleReconcileError{TenantID: tenantID, Cause: err}
 		}
-		if !report.Changed() {
+		if !iam.RoleReconcileChanged(report) {
 			continue
 		}
 		for _, r := range report.Roles {
