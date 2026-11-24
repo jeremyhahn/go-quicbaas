@@ -1,5 +1,8 @@
 # Reference standards
 
+> **Status: NORMATIVE** · Last verified: 2026-11-24
+> The standards this repository implements, one copy each; the code follows the copy exactly. Conflicts with this document are defects.
+
 go-quicbaas implements an industry standard wherever one exists and designs nothing in its place. This directory holds a copy of each standard the code in this repository implements. The code follows the copy exactly. A draft is adopted at one pinned revision, and `ROADMAP.md` Dependencies carries a standards-watch line for it. A new revision, or the final RFC, opens an issue that updates both the copy and the code.
 
 Not listed here:

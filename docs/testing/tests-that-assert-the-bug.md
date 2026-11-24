@@ -1,5 +1,8 @@
 # Spotting a test that asserts the bug
 
+> **Status: REFERENCE** · Last verified: 2026-11-24
+> Signs that a test asserts a defect rather than the intended behaviour; a checklist, not policy.
+
 A living list of heuristics, collected from tests found on this project's
 board. It is not policy: these are signals that make a test worth a second
 look, and they have a false-positive rate. Add an entry when a new mechanism
