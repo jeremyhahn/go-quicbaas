@@ -320,3 +320,89 @@ func TestTPMAttestingRuntime_AttestReplaysMeasurementLog(t *testing.T) {
 		}
 	})
 }
+
+// launchEntry builds the log entry a measured launch of spec under policy
+// records: its measurement and policy digest are the real ones, so the
+// entry replays.
+func launchEntry(t *testing.T, spec *ContainerSpec, policy LaunchPolicy) MeasurementLogEntry {
+	t.Helper()
+	measurement, err := LaunchMeasurementUnder(spec, policy)
+	if err != nil {
+		t.Fatalf("LaunchMeasurementUnder: %v", err)
+	}
+	configDigest, err := ContainerConfigDigest(spec)
+	if err != nil {
+		t.Fatalf("ContainerConfigDigest: %v", err)
+	}
+	return MeasurementLogEntry{
+		Kind:          MeasurementLogLaunch,
+		Image:         spec.Image,
+		ImageDigest:   spec.ResolvedImageDigest(),
+		ConfigDigest:  configDigest,
+		PolicyDigest:  policy.Digest(),
+		TrustLabel:    spec.TrustLabel,
+		AllowUnsigned: policy.AllowUnsigned,
+		PCR:           policy.MeasurementPCR,
+		Bank:          policy.MeasurementBank,
+		Measurement:   measurement,
+	}
+}
+
+// measuredTestPolicy is the policy a measured launch of spec runs under.
+func measuredTestPolicy(spec *ContainerSpec, allowUnsigned string) LaunchPolicy {
+	return LaunchPolicy{
+		TrustLevel:      TrustLevelMeasured,
+		MeasurementPCR:  spec.EffectiveMeasurementPCR(),
+		MeasurementBank: spec.EffectiveMeasurementBank(),
+		AllowUnsigned:   allowUnsigned,
+	}
+}
+
+func TestReplayMeasurementLog_RefusesAlteredLaunchFields(t *testing.T) {
+	spec := measuredTestSpec("granted")
+	entry := launchEntry(t, spec, measuredTestPolicy(spec, "dev-grant"))
+
+	if _, err := ReplayMeasurementLog(ChainMeasurementLog([]MeasurementLogEntry{entry}), MeasurementPCRDefault, DefaultMeasurementBank); err != nil {
+		t.Fatalf("an unaltered launch entry must replay: %v", err)
+	}
+
+	otherDigest := "sha256:" + strings.Repeat("ab", sha256.Size)
+	alter := map[string]func(e *MeasurementLogEntry){
+		"ClearedAllowUnsigned": func(e *MeasurementLogEntry) { e.AllowUnsigned = "" },
+		"ChangedImageDigest":   func(e *MeasurementLogEntry) { e.ImageDigest = otherDigest },
+		"ChangedConfigDigest":  func(e *MeasurementLogEntry) { e.ConfigDigest = otherDigest },
+		"ChangedTrustLabel":    func(e *MeasurementLogEntry) { e.TrustLabel = "other" },
+		"ChangedPolicyDigest":  func(e *MeasurementLogEntry) { e.PolicyDigest = otherDigest },
+		"MeasurementMismatch":  func(e *MeasurementLogEntry) { e.Measurement = []byte("m1") },
+		"EmptyImageDigest":     func(e *MeasurementLogEntry) { e.ImageDigest = "" },
+		"EmptyConfigDigest":    func(e *MeasurementLogEntry) { e.ConfigDigest = "" },
+	}
+	for name, mutate := range alter {
+		t.Run(name, func(t *testing.T) {
+			forged := entry
+			forged.Measurement = bytes.Clone(entry.Measurement)
+			mutate(&forged)
+			var logErr *MeasurementLogError
+			_, err := ReplayMeasurementLog(ChainMeasurementLog([]MeasurementLogEntry{forged}), MeasurementPCRDefault, DefaultMeasurementBank)
+			if !errors.As(err, &logErr) {
+				t.Fatalf("expected *MeasurementLogError, got %v", err)
+			}
+			if logErr.Sequence != 0 {
+				t.Fatalf("error names sequence %d, want 0", logErr.Sequence)
+			}
+		})
+	}
+
+	t.Run("AnchorCarryingImageDigestIsRefused", func(t *testing.T) {
+		anchor := MeasurementLogEntry{
+			Kind: MeasurementLogAnchor, Base: make([]byte, sha256.Size),
+			ImageDigest: testDigest,
+			PCR:         MeasurementPCRDefault, Bank: DefaultMeasurementBank,
+		}
+		var logErr *MeasurementLogError
+		_, err := ReplayMeasurementLog(ChainMeasurementLog([]MeasurementLogEntry{anchor, entry}), MeasurementPCRDefault, DefaultMeasurementBank)
+		if !errors.As(err, &logErr) {
+			t.Fatalf("expected *MeasurementLogError, got %v", err)
+		}
+	})
+}

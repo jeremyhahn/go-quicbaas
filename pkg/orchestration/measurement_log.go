@@ -308,11 +308,55 @@ func pcrBankHash(bank string) (func() hash.Hash, error) {
 	return nil, &InputValidationError{Field: "bank", Message: fmt.Sprintf("unsupported PCR bank %q", bank)}
 }
 
+// measuredTrustLevels are the trust levels whose launches are measured into
+// the node measurement log. ReplayMeasurementLog recovers an entry's level by
+// matching its PolicyDigest against these; a new measured tier is added here.
+var measuredTrustLevels = []TrustLevel{TrustLevelMeasured}
+
+// checkLaunchEntry rebuilds a launch entry's policy digest and measurement
+// from its fields, so a producer cannot change what an entry says (an image,
+// a configuration, an allow-unsigned grant) and re-chain it: the hash chain
+// is public, the measurement is what the PCR covers.
+func checkLaunchEntry(e *MeasurementLogEntry) error {
+	if e.ImageDigest == "" {
+		return &MeasurementLogError{Sequence: e.Sequence, Reason: "launch entry has no image_digest"}
+	}
+	if e.ConfigDigest == "" {
+		return &MeasurementLogError{Sequence: e.Sequence, Reason: "launch entry has no config_digest"}
+	}
+	policyMatches := false
+	for _, level := range measuredTrustLevels {
+		policy := LaunchPolicy{
+			TrustLevel:      level,
+			MeasurementPCR:  e.PCR,
+			MeasurementBank: e.Bank,
+			AllowUnsigned:   e.AllowUnsigned,
+		}
+		if policy.Digest() == e.PolicyDigest {
+			policyMatches = true
+			break
+		}
+	}
+	if !policyMatches {
+		return &MeasurementLogError{Sequence: e.Sequence, Reason: "launch entry policy_digest does not match its register and allow_unsigned under a measured trust level"}
+	}
+	if !bytes.Equal(e.Measurement, launchMeasurementRecord(e.ImageDigest, e.ConfigDigest, e.PolicyDigest, e.TrustLabel)) {
+		return &MeasurementLogError{Sequence: e.Sequence, Reason: "launch entry measurement does not match its image_digest, config_digest, policy_digest and trust_label"}
+	}
+	return nil
+}
+
 // ReplayMeasurementLog verifies entries and returns the value the PCR at
 // pcr in bank holds after every entry for that register is applied in
 // order. The register starts at zero, or at the Base of its anchor, which
-// must precede every launch on it; each launch extends it as
-// HostTPM.ExtendPCR does: PCR = H(PCR || H(measurement)).
+// must precede every launch on it and carries no launch fields; each launch
+// extends it as HostTPM.ExtendPCR does: PCR = H(PCR || H(measurement)).
+//
+// Each launch entry's measurement and policy digest are checked against its
+// fields before it is applied: the measurement must be the one its image,
+// configuration and policy digests and trust label produce, and the policy
+// digest must be the one its register and allow-unsigned grant produce under
+// a measured trust level.
 func ReplayMeasurementLog(entries []MeasurementLogEntry, pcr int, bank string) ([]byte, error) {
 	newHash, err := pcrBankHash(bank)
 	if err != nil {
@@ -336,8 +380,15 @@ func ReplayMeasurementLog(entries []MeasurementLogEntry, pcr int, bank string) (
 			if len(e.Base) != len(value) {
 				return nil, &MeasurementLogError{Sequence: e.Sequence, Reason: "anchor base is not a " + bank + " digest"}
 			}
+			if e.Image != "" || e.ImageDigest != "" || e.ConfigDigest != "" || e.PolicyDigest != "" ||
+				e.TrustLabel != "" || e.AllowUnsigned != "" || len(e.Measurement) != 0 {
+				return nil, &MeasurementLogError{Sequence: e.Sequence, Reason: "anchor carries launch fields"}
+			}
 			value = append([]byte(nil), e.Base...)
 		case MeasurementLogLaunch:
+			if err := checkLaunchEntry(e); err != nil {
+				return nil, err
+			}
 			h := newHash()
 			h.Write(e.Measurement)
 			digest := h.Sum(nil)

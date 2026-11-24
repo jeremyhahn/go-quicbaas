@@ -298,3 +298,55 @@ func TestUnsignedImageGrants(t *testing.T) {
 		}
 	}
 }
+
+func TestAttest_AllowUnsignedLaunchReportsRecordedMeasurement(t *testing.T) {
+	const grant = "tenant-a/legacy-ci"
+	spec := measuredTestSpec("legacy")
+	spec.ImageSignature = nil
+	granted, err := LaunchMeasurementUnder(spec, measuredTestPolicy(spec, grant))
+	if err != nil {
+		t.Fatal(err)
+	}
+	signed, err := LaunchMeasurement(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tpm := newFakeHostTPM()
+	rt, _ := newAttestingTestRuntime(t, tpm, map[uint32][]byte{
+		7:                             make([]byte, sha256.Size),
+		uint32(MeasurementPCRDefault): expectedExtend(make([]byte, sha256.Size), granted),
+	})
+	WithUnsignedImagePolicy(UnsignedImageGrants{"legacy": grant})(rt)
+	if _, err := rt.Run(t.Context(), spec); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	evidence, err := rt.Attest(t.Context(), spec, "container-1")
+	if err != nil {
+		t.Fatalf("Attest: the Verifier must accept the evidence: %v", err)
+	}
+	entries := rt.MeasurementLog().Entries()
+	recorded := entries[len(entries)-1].Measurement
+	if !bytes.Equal(evidence.LaunchMeasurement, recorded) {
+		t.Fatal("Attest must report the measurement the log recorded")
+	}
+	if bytes.Equal(evidence.LaunchMeasurement, signed) {
+		t.Fatal("an allow-unsigned launch's measurement must differ from the spec's signed one")
+	}
+}
+
+func TestAttest_MeasuredSpecNeverRunIsUnavailable(t *testing.T) {
+	spec := measuredTestSpec("never-run")
+	// The measurement register is untouched and the reference values say
+	// so, so the host appraises; only the log lacks a launch of this spec.
+	rt, _ := newAttestingTestRuntime(t, newFakeHostTPM(), map[uint32][]byte{
+		7:                             make([]byte, sha256.Size),
+		uint32(MeasurementPCRDefault): make([]byte, sha256.Size),
+	})
+	_, err := rt.Attest(t.Context(), spec, "container-1")
+	var unavailable *AttestationUnavailableError
+	if !errors.As(err, &unavailable) {
+		t.Fatalf("Attest = %v, want *AttestationUnavailableError", err)
+	}
+}

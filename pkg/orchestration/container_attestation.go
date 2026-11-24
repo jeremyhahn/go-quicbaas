@@ -224,18 +224,25 @@ func LaunchMeasurementUnder(spec *ContainerSpec, policy LaunchPolicy) ([]byte, e
 	if err != nil {
 		return nil, err
 	}
-	policyDigest := policy.Digest()
+	return launchMeasurementRecord(spec.ResolvedImageDigest(), configDigest, policy.Digest(), spec.TrustLabel), nil
+}
+
+// launchMeasurementRecord is the byte layout of a launch measurement: a
+// version tag and the image, configuration and policy digests and the
+// trust label, NUL-separated. LaunchMeasurementUnder builds it from a spec,
+// and ReplayMeasurementLog rebuilds it from a log entry's fields.
+func launchMeasurementRecord(imageDigest, configDigest, policyDigest, trustLabel string) []byte {
 	var buf bytes.Buffer
 	buf.WriteString("quicbaas-container-launch/v2")
 	buf.WriteByte(0)
-	buf.WriteString(spec.ResolvedImageDigest())
+	buf.WriteString(imageDigest)
 	buf.WriteByte(0)
 	buf.WriteString(configDigest)
 	buf.WriteByte(0)
 	buf.WriteString(policyDigest)
 	buf.WriteByte(0)
-	buf.WriteString(spec.TrustLabel)
-	return buf.Bytes(), nil
+	buf.WriteString(trustLabel)
+	return buf.Bytes()
 }
 
 // TPMAttestingRuntime is the standalone Tier 1 / Tier 2 container runtime. It
@@ -464,6 +471,83 @@ func (r *TPMAttestingRuntime) Attest(ctx context.Context, spec *ContainerSpec, c
 		return nil, err
 	}
 
+	host, err := r.appraiseHostFor(ctx, spec)
+	if err != nil {
+		return nil, err
+	}
+	measured := host.measured
+	nonce, quote, bound, launchLog := host.nonce, host.quote, host.bound, host.launchLog
+
+	attestation := &ContainerAttestation{
+		ContainerID:     containerID,
+		Image:           spec.PinnedImageReference(),
+		ImageDigest:     spec.ResolvedImageDigest(),
+		ConfigDigest:    configDigest,
+		TrustLabel:      spec.TrustLabel,
+		TrustLevel:      spec.TrustLevel,
+		Nonce:           nonce,
+		Quoted:          quote.Quoted,
+		Signature:       quote.Signature,
+		PCRs:            bound.values,
+		PCRBank:         bound.bank,
+		EventLog:        quote.EventLog,
+		Measured:        measured,
+		MeasurementBank: spec.EffectiveMeasurementBank(),
+		AttestedAt:      time.Now().UTC(),
+	}
+
+	if measured {
+		// The reported measurement is the one this node recorded and
+		// extended, not one rebuilt from the spec: the spec does not carry
+		// the policy the launch was admitted under (an allow-unsigned
+		// grant), so a rebuilt measurement can differ from the log and PCR.
+		recorded := recordedLaunch(launchLog, spec, configDigest)
+		if recorded == nil {
+			return nil, &AttestationUnavailableError{
+				TrustLevel: spec.TrustLevel,
+				Reason:     "no measured launch of this image and configuration is in the node measurement log",
+			}
+		}
+		attestation.MeasurementPCR = spec.EffectiveMeasurementPCR()
+		attestation.LaunchMeasurement = bytes.Clone(recorded.Measurement)
+		attestation.MeasurementLog = launchLog
+	}
+
+	return attestation, nil
+}
+
+// recordedLaunch returns the newest launch entry in entries for spec's
+// measurement register whose image digest, configuration digest and trust
+// label are spec's, or nil when spec was not launched measured on this node.
+func recordedLaunch(entries []MeasurementLogEntry, spec *ContainerSpec, configDigest string) *MeasurementLogEntry {
+	pcr := spec.EffectiveMeasurementPCR()
+	bank := spec.EffectiveMeasurementBank()
+	imageDigest := spec.ResolvedImageDigest()
+	for i := len(entries) - 1; i >= 0; i-- {
+		e := &entries[i]
+		if e.Kind == MeasurementLogLaunch && e.PCR == pcr && e.Bank == bank &&
+			e.ImageDigest == imageDigest && e.ConfigDigest == configDigest && e.TrustLabel == spec.TrustLabel {
+			return e
+		}
+	}
+	return nil
+}
+
+// hostEvidence is a quote of the host's PCRs, bound to its PCR read and
+// verified by the Verifier.
+type hostEvidence struct {
+	measured  bool
+	nonce     []byte
+	quote     xkmstpm2.Quote
+	bound     *boundPCRs
+	launchLog []MeasurementLogEntry
+}
+
+// appraiseHostFor quotes the PCRs spec's reference values cover (and the
+// measurement PCR for a measured launch), binds the PCR read to the signed
+// quote, and has the Verifier appraise the bound evidence with the node
+// measurement log. Anything short of a verified appraisal is an error.
+func (r *TPMAttestingRuntime) appraiseHostFor(ctx context.Context, spec *ContainerSpec) (*hostEvidence, error) {
 	bank, err := r.quoteBank(spec.Image)
 	if err != nil {
 		return nil, err
@@ -510,36 +594,7 @@ func (r *TPMAttestingRuntime) Attest(ctx context.Context, spec *ContainerSpec, c
 	if err := r.appraise(ctx, spec, nonce, quote, bound, launchLog); err != nil {
 		return nil, err
 	}
-
-	attestation := &ContainerAttestation{
-		ContainerID:     containerID,
-		Image:           spec.PinnedImageReference(),
-		ImageDigest:     spec.ResolvedImageDigest(),
-		ConfigDigest:    configDigest,
-		TrustLabel:      spec.TrustLabel,
-		TrustLevel:      spec.TrustLevel,
-		Nonce:           nonce,
-		Quoted:          quote.Quoted,
-		Signature:       quote.Signature,
-		PCRs:            bound.values,
-		PCRBank:         bound.bank,
-		EventLog:        quote.EventLog,
-		Measured:        measured,
-		MeasurementBank: spec.EffectiveMeasurementBank(),
-		AttestedAt:      time.Now().UTC(),
-	}
-
-	if measured {
-		measurement, err := LaunchMeasurement(spec)
-		if err != nil {
-			return nil, err
-		}
-		attestation.MeasurementPCR = spec.EffectiveMeasurementPCR()
-		attestation.LaunchMeasurement = measurement
-		attestation.MeasurementLog = launchLog
-	}
-
-	return attestation, nil
+	return &hostEvidence{measured: measured, nonce: nonce, quote: quote, bound: bound, launchLog: launchLog}, nil
 }
 
 // quotePCRIndices returns the sorted, de-duplicated set of PCR indices to
