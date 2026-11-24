@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	xkmscaprovider "github.com/jeremyhahn/go-xkms/pkg/ca/provider"
 	xkmslib "github.com/jeremyhahn/go-xkms/pkg/xkms"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/stretchr/testify/require"
@@ -50,7 +51,9 @@ func TestXKMSCABinding_AdoptCASetsTheXKMSServiceCA(t *testing.T) {
 	srv.adoptCA(ca)
 
 	require.NotNil(t, x.CA(), "the XKMS service must hold the adopted CA")
-	require.Same(t, ca, x.CA(), "the XKMS service must sign with the node's adopted CA")
+	wrapped, ok := x.CA().(interface{ Unwrap() xkmscaprovider.CA })
+	require.True(t, ok, "the XKMS service holds the tenant-bound wrapper")
+	require.Same(t, ca, wrapped.Unwrap(), "the XKMS service must sign with the node's adopted CA")
 }
 
 // TestXKMSCABinding_NoCAIsANoOp verifies that with no adopted CA, binding
