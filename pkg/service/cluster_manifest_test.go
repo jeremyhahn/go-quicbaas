@@ -6,6 +6,9 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	stderrors "errors"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -229,6 +232,105 @@ func TestClusterManifests_DSSESigningAlgorithm(t *testing.T) {
 		}
 		if m, err := manifests.Current(ctx); err != nil || m.Version != 2 {
 			t.Fatalf("a refused manifest must not replace the stored one: %+v, %v", m, err)
+		}
+	})
+}
+
+// plainStore is an AttestationStore without the conditional writes.
+type plainStore struct{ AttestationStore }
+
+// losingStore is an atomic store whose conditional writes always lose, as
+// if a concurrent writer replaced the record each time.
+type losingStore struct {
+	*attestationtest.MemoryStore
+	attempts atomic.Int32
+}
+
+func (s *losingStore) PutIfAbsent(context.Context, string, []byte) (bool, error) {
+	s.attempts.Add(1)
+	return false, nil
+}
+
+func (s *losingStore) CompareAndSwap(context.Context, string, []byte, []byte) (bool, error) {
+	s.attempts.Add(1)
+	return false, nil
+}
+
+// TestClusterManifests_CompareAndSwap checks that a manifest is replaced
+// only by a conditional write, so concurrent writers cannot roll it back.
+func TestClusterManifests_CompareAndSwap(t *testing.T) {
+	ctx := tenantctx.WithTenant(context.Background(), "acme")
+	manifestCA, err := attestationtest.NewAuthority("Cluster Manifest CA")
+	if err != nil {
+		t.Fatal(err)
+	}
+	endorse := func(t *testing.T, store AttestationStore) {
+		t.Helper()
+		svc := NewAttestationService(nil, nil, WithAttestationStore(store))
+		if _, err := svc.PutEndorsement(ctx, &PutEndorsementRequest{Name: "manifests", Kind: EndorsementManifestSigner, CertificatePEM: manifestCA.CertificatePEM()}); err != nil {
+			t.Fatalf("PutEndorsement: %v", err)
+		}
+	}
+	app := Release{Service: "app", Image: "registry.example.com/team/app", Digest: imageTestDigest}
+
+	t.Run("ConcurrentPutsNeverRollBack", func(t *testing.T) {
+		store := attestationtest.NewMemoryStore()
+		endorse(t, store)
+		manifests, err := NewClusterManifests(store)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := manifests.Put(ctx, signManifest(t, manifestCA, 1, app)); err != nil {
+			t.Fatalf("Put v1: %v", err)
+		}
+		const writers = 16
+		signed := make([]*provenance.Signed, writers)
+		for i := range signed {
+			signed[i] = signManifest(t, manifestCA, uint64(i+2), app)
+		}
+		errs := make([]error, writers)
+		var wg sync.WaitGroup
+		for i := range signed {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				_, errs[i] = manifests.Put(ctx, signed[i])
+			}(i)
+		}
+		wg.Wait()
+		for i, err := range errs {
+			if err != nil && !stderrors.Is(err, ErrClusterManifestRollback) {
+				t.Errorf("Put v%d: %v", i+2, err)
+			}
+		}
+		m, err := manifests.Current(ctx)
+		if err != nil || m.Version != writers+1 {
+			t.Fatalf("Current: %+v, %v; want version %d", m, err, writers+1)
+		}
+	})
+
+	t.Run("LostConditionalWritesFailAfterTheBound", func(t *testing.T) {
+		store := &losingStore{MemoryStore: attestationtest.NewMemoryStore()}
+		endorse(t, store)
+		manifests, err := NewClusterManifests(store)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = manifests.Put(ctx, signManifest(t, manifestCA, 1, app))
+		if err == nil || !strings.Contains(err.Error(), "lost the conditional write") {
+			t.Fatalf("Put must fail once its conditional writes keep losing: %v", err)
+		}
+		if got := store.attempts.Load(); got != clusterManifestPutAttempts {
+			t.Fatalf("conditional writes tried %d times, want %d", got, clusterManifestPutAttempts)
+		}
+		if _, err := manifests.Current(ctx); !stderrors.Is(err, ErrNoClusterManifest) {
+			t.Fatalf("a lost Put must not write: %v", err)
+		}
+	})
+
+	t.Run("NeedsAnAtomicStore", func(t *testing.T) {
+		if _, err := NewClusterManifests(plainStore{attestationtest.NewMemoryStore()}); err != ErrClusterManifestConfig {
+			t.Fatalf("a store without conditional writes: %v", err)
 		}
 	})
 }

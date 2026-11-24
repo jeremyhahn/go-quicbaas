@@ -325,6 +325,17 @@ type AttestationStore interface {
 	Delete(ctx context.Context, key string) error
 }
 
+// AtomicAttestationStore is an AttestationStore whose writes can be
+// conditional. A record that must never move backwards (the signed
+// cluster manifest) is replaced only through it.
+type AtomicAttestationStore interface {
+	AttestationStore
+	// PutIfAbsent stores value only when key is absent.
+	PutIfAbsent(ctx context.Context, key string, value []byte) (stored bool, err error)
+	// CompareAndSwap replaces key's value only when it is still expected.
+	CompareAndSwap(ctx context.Context, key string, expected, next []byte) (swapped bool, err error)
+}
+
 // qrdbAttestationStore stores Verifier records in qrdb KV.
 //
 // Raw KV is the sanctioned form here (handbook conventions/data-access.md §3
@@ -378,6 +389,38 @@ func (s *qrdbAttestationStore) Delete(ctx context.Context, key string) error {
 		return err
 	}
 	return c.KV().Delete(ctx, key)
+}
+
+var _ AtomicAttestationStore = (*qrdbAttestationStore)(nil)
+
+// guarded returns the client's conditional-write KV verbs, or an error when
+// the transport does not carry them.
+func (s *qrdbAttestationStore) guarded() (qrdbtransport.GuardedKVClient, error) {
+	c, err := s.client()
+	if err != nil {
+		return nil, err
+	}
+	kv, ok := c.KV().(qrdbtransport.GuardedKVClient)
+	if !ok {
+		return nil, stderrors.New("attestation store: the qrdb transport has no conditional writes")
+	}
+	return kv, nil
+}
+
+func (s *qrdbAttestationStore) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
+	kv, err := s.guarded()
+	if err != nil {
+		return false, err
+	}
+	return kv.PutIfAbsent(ctx, key, value)
+}
+
+func (s *qrdbAttestationStore) CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error) {
+	kv, err := s.guarded()
+	if err != nil {
+		return false, err
+	}
+	return kv.CompareAndSwap(ctx, key, expected, next)
 }
 
 // attestationShardID is the qrdb shard the Verifier's records live on: the

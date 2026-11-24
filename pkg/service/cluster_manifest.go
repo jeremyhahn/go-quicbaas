@@ -89,8 +89,8 @@ func SignClusterManifest(m *ClusterManifest, signer crypto.Signer, chain []*x509
 
 var (
 	// ErrClusterManifestConfig is returned by NewClusterManifests without a
-	// store.
-	ErrClusterManifestConfig = stderrors.New("cluster manifests: an attestation store is required")
+	// store, or with one that has no conditional writes.
+	ErrClusterManifestConfig = stderrors.New("cluster manifests: an atomic attestation store is required")
 
 	// ErrClusterManifestRollback is returned when a manifest's version is
 	// not higher than the stored manifest's.
@@ -108,14 +108,25 @@ var (
 // manifest-signer endorsements when the manifest is stored and again each
 // time it is read, so a record altered in the store is refused.
 type ClusterManifests struct {
-	svc *attestationService
+	svc   *attestationService
+	store AtomicAttestationStore
 }
 
 var _ orchestration.ClusterManifest = (*ClusterManifests)(nil)
 
-// NewClusterManifests returns the cluster manifests over store.
+// clusterManifestPutAttempts bounds how often Put retries a conditional
+// write it lost to a concurrent writer.
+const clusterManifestPutAttempts = 8
+
+// NewClusterManifests returns the cluster manifests over store. The store
+// must be an AtomicAttestationStore: a manifest is replaced only by a
+// compare-and-swap, so concurrent writers cannot roll it back.
 func NewClusterManifests(store AttestationStore, opts ...AttestationOption) (*ClusterManifests, error) {
 	if store == nil {
+		return nil, ErrClusterManifestConfig
+	}
+	atomic, ok := store.(AtomicAttestationStore)
+	if !ok {
 		return nil, ErrClusterManifestConfig
 	}
 	svc := &attestationService{now: time.Now}
@@ -123,22 +134,18 @@ func NewClusterManifests(store AttestationStore, opts ...AttestationOption) (*Cl
 		opt(svc)
 	}
 	svc.store = store
-	return &ClusterManifests{svc: svc}, nil
+	return &ClusterManifests{svc: svc, store: atomic}, nil
 }
 
 // Put verifies signed and stores it as the tenant's current manifest. The
-// manifest's version must be higher than the stored one's.
+// manifest's version must be higher than the stored one's. The write is
+// conditional on the record Put read, so a concurrent writer's manifest is
+// never overwritten by a lower version; a lost write is re-read and the
+// version check re-run.
 func (c *ClusterManifests) Put(ctx context.Context, signed *provenance.Signed) (*ClusterManifest, error) {
 	m, err := c.verify(ctx, signed)
 	if err != nil {
 		return nil, err
-	}
-	current, err := c.Current(ctx)
-	if err != nil && !stderrors.Is(err, ErrNoClusterManifest) {
-		return nil, err
-	}
-	if current != nil && m.Version <= current.Version {
-		return nil, fmt.Errorf("%w: version %d, stored %d", ErrClusterManifestRollback, m.Version, current.Version)
 	}
 	key, err := c.key(ctx)
 	if err != nil {
@@ -148,10 +155,28 @@ func (c *ClusterManifests) Put(ctx context.Context, signed *provenance.Signed) (
 	if err != nil {
 		return nil, err
 	}
-	if err := c.svc.store.Put(ctx, key, record); err != nil {
-		return nil, err
+	for attempt := 0; attempt < clusterManifestPutAttempts; attempt++ {
+		raw, current, err := c.stored(ctx, key)
+		if err != nil && !stderrors.Is(err, ErrNoClusterManifest) {
+			return nil, err
+		}
+		if current != nil && m.Version <= current.Version {
+			return nil, fmt.Errorf("%w: version %d, stored %d", ErrClusterManifestRollback, m.Version, current.Version)
+		}
+		var written bool
+		if raw == nil {
+			written, err = c.store.PutIfAbsent(ctx, key, record)
+		} else {
+			written, err = c.store.CompareAndSwap(ctx, key, raw, record)
+		}
+		if err != nil {
+			return nil, err
+		}
+		if written {
+			return m, nil
+		}
 	}
-	return m, nil
+	return nil, fmt.Errorf("cluster manifest version %d: lost the conditional write to concurrent writers %d times", m.Version, clusterManifestPutAttempts)
 }
 
 // Current returns the tenant's stored manifest after verifying its
@@ -161,18 +186,31 @@ func (c *ClusterManifests) Current(ctx context.Context) (*ClusterManifest, error
 	if err != nil {
 		return nil, err
 	}
-	record, found, err := c.svc.store.Get(ctx, key)
+	_, m, err := c.stored(ctx, key)
+	return m, err
+}
+
+// stored reads key's raw record and returns it with the verified manifest
+// it holds. With no record it returns nil raw bytes and
+// ErrNoClusterManifest; a record that does not verify returns its raw bytes
+// and the verification error.
+func (c *ClusterManifests) stored(ctx context.Context, key string) ([]byte, *ClusterManifest, error) {
+	raw, found, err := c.store.Get(ctx, key)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if !found {
-		return nil, ErrNoClusterManifest
+		return nil, nil, ErrNoClusterManifest
 	}
 	var signed provenance.Signed
-	if err := json.Unmarshal(record, &signed); err != nil {
-		return nil, fmt.Errorf("cluster manifest: decode stored record: %w", err)
+	if err := json.Unmarshal(raw, &signed); err != nil {
+		return raw, nil, fmt.Errorf("cluster manifest: decode stored record: %w", err)
 	}
-	return c.verify(ctx, &signed)
+	m, err := c.verify(ctx, &signed)
+	if err != nil {
+		return raw, nil, err
+	}
+	return raw, m, nil
 }
 
 // CheckRelease implements orchestration.ClusterManifest: the spec's pinned
