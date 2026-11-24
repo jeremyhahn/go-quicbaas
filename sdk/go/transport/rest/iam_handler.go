@@ -22,6 +22,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -188,6 +189,33 @@ func (h *iamRESTHandler) handleUserRequest(ctx context.Context, method string, r
 			return nil, errors.NewInvalidInput("iamRESTHandler.handleUserRequest", "user_id is required")
 		}
 		return h.doRequest(ctx, http.MethodDelete, "/api/v1/tenants/"+tenantID+"/users/"+userID+"/roles/"+roleID, nil)
+
+	case "Approve", "Reject":
+		// POST /api/v1/iam/users/{user_id}/approve?tenant_id={tenant_id}
+		// POST /api/v1/iam/users/{user_id}/reject?tenant_id={tenant_id}, body {"reason": ...}
+		userID := getString(reqMap, "user_id")
+		if userID == "" {
+			return nil, errors.NewInvalidInput("iamRESTHandler.handleUserRequest", "user_id is required")
+		}
+		verb := "/approve"
+		var body interface{}
+		if method == "Reject" {
+			verb = "/reject"
+			if reason := getString(reqMap, "reason"); reason != "" {
+				body = map[string]interface{}{"reason": reason}
+			}
+		}
+		path := "/api/v1/iam/users/" + url.PathEscape(userID) + verb + "?tenant_id=" + url.QueryEscape(tenantID)
+		resp, decisionErr := h.doRequest(ctx, http.MethodPost, path, body)
+		if decisionErr != nil {
+			return nil, decisionErr
+		}
+		// The client reads only the error; a decoded object or an empty
+		// body is success, so hand back a map either way.
+		if m, ok := resp.(map[string]interface{}); ok {
+			return m, nil
+		}
+		return map[string]interface{}{}, nil
 
 	default:
 		return nil, errors.NewUnimplemented("iamRESTHandler.handleUserRequest", "unsupported method: "+method)
@@ -401,9 +429,130 @@ func (h *iamRESTHandler) handlePolicyRequest(ctx context.Context, method string,
 		delete(innerReq, "tenant_id")
 		return h.doRequest(ctx, http.MethodPost, "/api/v1/tenants/"+tenantID+"/policies/test", innerReq)
 
+	case "GetEffectivePermissions":
+		// POST /api/v1/tenants/{tenant_id}/policies/effective-permissions
+		body := mapEffectivePermissionsRequest(tenantID, getMap(reqMap, "request"))
+		resp, permErr := h.doRequest(ctx, http.MethodPost,
+			"/api/v1/tenants/"+url.PathEscape(tenantID)+"/policies/effective-permissions", body)
+		if permErr != nil {
+			return nil, permErr
+		}
+		return mapEffectivePermissionsResult(resp), nil
+
 	default:
 		return nil, errors.NewUnimplemented("iamRESTHandler.handlePolicyRequest", "unsupported method: "+method)
 	}
+}
+
+// mapEffectivePermissionsRequest maps the SDK's EffectivePermissionsRequest
+// fields onto the body quicbaasd's effective-permissions handler decodes:
+// subject, resource_patterns (required), actions and include_deny_details.
+func mapEffectivePermissionsRequest(tenantID string, sdkReq map[string]interface{}) map[string]interface{} {
+	subject := getMap(sdkReq, "subject")
+	if subject == nil {
+		subject = map[string]interface{}{}
+	}
+	// The SDK subject type is a numeric enum the server subject does not carry.
+	delete(subject, "type")
+	if getString(subject, "tenant_id") == "" {
+		subject["tenant_id"] = tenantID
+	}
+
+	body := map[string]interface{}{
+		"subject":           subject,
+		"resource_patterns": []string{effectiveResourcePattern(getString(sdkReq, "resource_type"))},
+	}
+	if action := getString(sdkReq, "action_pattern"); action != "" && action != "*" {
+		body["actions"] = []string{action}
+	}
+	if include, ok := sdkReq["include_denied"].(bool); ok && include {
+		body["include_deny_details"] = true
+	}
+	return body
+}
+
+// effectiveResourcePattern turns the SDK's optional resource-type filter
+// into a resource pattern: every resource when unset, every resource of the
+// type when it names a type, and the value itself when it is a pattern.
+func effectiveResourcePattern(resourceType string) string {
+	switch {
+	case resourceType == "":
+		return "*"
+	case strings.Contains(resourceType, "://"), strings.Contains(resourceType, "*"):
+		return resourceType
+	default:
+		return resourceType + "://*"
+	}
+}
+
+// mapEffectivePermissionsResult maps the server's EffectivePermissionsResult
+// (permissions keyed by resource pattern, each with allowed and denied
+// actions and their source policies) onto the SDK's flat
+// EffectivePermissionsResponse.
+func mapEffectivePermissionsResult(resp interface{}) *iam.EffectivePermissionsResponse {
+	out := &iam.EffectivePermissionsResponse{Permissions: []iam.EffectivePermission{}}
+	m, ok := resp.(map[string]interface{})
+	if !ok {
+		return out
+	}
+	if ns, ok := m["evaluation_time_ns"].(float64); ok {
+		out.EvaluationTimeNs = int64(ns)
+	}
+
+	perms, _ := m["permissions"].(map[string]interface{})
+	patterns := make([]string, 0, len(perms))
+	for pattern := range perms {
+		patterns = append(patterns, pattern)
+	}
+	sort.Strings(patterns)
+
+	evaluated := map[string]struct{}{}
+	for _, pattern := range patterns {
+		set, _ := perms[pattern].(map[string]interface{})
+		sources, _ := set["sources"].(map[string]interface{})
+		add := func(key string, effect iam.Effect) {
+			actions, _ := set[key].([]interface{})
+			for _, a := range actions {
+				action, ok := a.(string)
+				if !ok {
+					continue
+				}
+				srcs := stringList(sources[action])
+				for _, s := range srcs {
+					evaluated[s] = struct{}{}
+				}
+				out.Permissions = append(out.Permissions, iam.EffectivePermission{
+					Action:          action,
+					ResourcePattern: pattern,
+					Effect:          effect,
+					SourcePolicies:  srcs,
+				})
+			}
+		}
+		add("allowed", iam.EffectAllow)
+		add("denied", iam.EffectDeny)
+	}
+
+	for name := range evaluated {
+		out.EvaluatedPolicies = append(out.EvaluatedPolicies, name)
+	}
+	sort.Strings(out.EvaluatedPolicies)
+	return out
+}
+
+// stringList returns the strings of a decoded JSON array.
+func stringList(v interface{}) []string {
+	items, _ := v.([]interface{})
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		if s, ok := item.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // handleAppRequest handles Application service requests.
