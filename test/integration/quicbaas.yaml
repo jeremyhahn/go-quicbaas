@@ -169,6 +169,15 @@ iam:
     # docs/iam/engineering.md "PIV smartcard attestation".
     allow_unattested: true
 
+  # OAuth 2.0 dynamic client registration (RFC 7591) at POST /oauth2/register.
+  # It serves the DCR integration test (test/integration/iam/dcr_test.go) and
+  # mirrors the SDK suite's bootstrap (PIV admin bearer -> register a
+  # client_credentials client -> token). Registration still requires an
+  # initial access token: no anonymous_tenant_id is set, so a caller without
+  # a verified bearer is refused with 401.
+  dynamic_client_registration:
+    enabled: true
+
   tenants:
     default: "test-tenant"
     isolation: strict
