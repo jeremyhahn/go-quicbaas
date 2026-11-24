@@ -789,6 +789,13 @@ func (p *barrierProbeErrors) note(err error) {
 // GET /v1/barrier/status reporting sealed=true — mirroring how qrdb's
 // harness documents probing /v1/barrier/status while a node is sealed —
 // plus liveness probes for the remaining sealed-phase listeners.
+//
+// It probes exactly the listeners runSealedWindow (pkg/server/sealed_window.go)
+// starts: the sealed REST server and the sealed gRPC server on TCP and on the
+// Unix socket. The sealed window has no MCP listener and no QUIC (HTTP/3 or
+// QUIC transport) listener, so the MCP and QUIC ports stay closed until the
+// barrier is unsealed and the full boot runs; probing them here would never
+// succeed (a local run timed out on the QUIC UDP gate).
 func waitForSealedBarrierDaemonReady(ctx context.Context, d *barrierDaemon) error {
 	ticker := time.NewTicker(daemonReadyPollInterval)
 	defer ticker.Stop()
@@ -812,14 +819,6 @@ func waitForSealedBarrierDaemonReady(ctx context.Context, d *barrierDaemon) erro
 			}
 			if err := probeBarrierTCP(ctx, d.ports.GRPC); err != nil {
 				probes.note(err)
-				continue
-			}
-			if err := probeBarrierUDP(ctx, d.ports.QUIC); err != nil {
-				probes.note(err)
-				continue
-			}
-			if err := probeBarrierTLS(ctx, d.ports.MCP, tlsCfg); err != nil {
-				probes.note(fmt.Errorf("mcp: %w", err))
 				continue
 			}
 			if err := probeBarrierUnix(ctx, d.ports.Unix); err != nil {
