@@ -279,6 +279,7 @@ func createTestProvider(tenantID, name string) *ExternalProvider {
 
 // TestNewFederationManager tests the federation manager constructor.
 func TestNewFederationManager(t *testing.T) {
+	t.Parallel()
 	t.Run("success with all options", func(t *testing.T) {
 		providerStorage := NewMemoryProviderStorage()
 		linkStorage := NewMemoryFederationStorage()
@@ -387,6 +388,7 @@ func TestNewFederationManager(t *testing.T) {
 
 // TestRegisterProvider tests the RegisterProvider method.
 func TestRegisterProvider(t *testing.T) {
+	t.Parallel()
 	testCases := []struct {
 		name        string
 		provider    *ExternalProvider
@@ -466,6 +468,7 @@ func TestRegisterProvider(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			manager, providerStorage, _, _, _, _ := setupTestFederationManager(t)
 			ctx := context.Background()
 
@@ -502,6 +505,7 @@ func TestRegisterProvider(t *testing.T) {
 
 // TestGetProvider tests the GetProvider method.
 func TestGetProvider(t *testing.T) {
+	t.Parallel()
 	testCases := []struct {
 		name        string
 		tenantID    string
@@ -547,6 +551,7 @@ func TestGetProvider(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			manager, providerStorage, _, _, _, _ := setupTestFederationManager(t)
 			ctx := context.Background()
 
@@ -581,6 +586,7 @@ func TestGetProvider(t *testing.T) {
 
 // TestGetProviderByName tests the GetProviderByName method.
 func TestGetProviderByName(t *testing.T) {
+	t.Parallel()
 	testCases := []struct {
 		name         string
 		tenantID     string
@@ -625,6 +631,7 @@ func TestGetProviderByName(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			manager, providerStorage, _, _, _, _ := setupTestFederationManager(t)
 			ctx := context.Background()
 
@@ -655,6 +662,7 @@ func TestGetProviderByName(t *testing.T) {
 
 // TestUpdateProvider tests the UpdateProvider method.
 func TestUpdateProvider(t *testing.T) {
+	t.Parallel()
 	testCases := []struct {
 		name        string
 		setup       func(*DefaultFederationManager, *MemoryProviderStorage) *ExternalProvider
@@ -728,6 +736,7 @@ func TestUpdateProvider(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			manager, providerStorage, _, _, _, _ := setupTestFederationManager(t)
 			ctx := context.Background()
 
@@ -756,6 +765,7 @@ func TestUpdateProvider(t *testing.T) {
 
 // TestDeleteProvider tests the DeleteProvider method.
 func TestDeleteProvider(t *testing.T) {
+	t.Parallel()
 	testCases := []struct {
 		name        string
 		tenantID    string
@@ -801,6 +811,7 @@ func TestDeleteProvider(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			manager, providerStorage, _, _, _, _ := setupTestFederationManager(t)
 			ctx := context.Background()
 
@@ -832,6 +843,7 @@ func TestDeleteProvider(t *testing.T) {
 
 // TestListProviders tests the ListProviders method.
 func TestListProviders(t *testing.T) {
+	t.Parallel()
 	testCases := []struct {
 		name          string
 		tenantID      string
@@ -888,6 +900,7 @@ func TestListProviders(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			manager, providerStorage, _, _, _, _ := setupTestFederationManager(t)
 			ctx := context.Background()
 
@@ -915,6 +928,7 @@ func TestListProviders(t *testing.T) {
 
 // TestBeginLogin tests the BeginLogin method.
 func TestBeginLogin(t *testing.T) {
+	t.Parallel()
 	testCases := []struct {
 		name         string
 		tenantID     string
@@ -978,6 +992,7 @@ func TestBeginLogin(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			manager, providerStorage, _, _, _, _ := setupTestFederationManager(t)
 			ctx := context.Background()
 
@@ -1018,6 +1033,7 @@ func TestBeginLogin(t *testing.T) {
 
 // TestHandleCallback tests the HandleCallback method.
 func TestHandleCallback(t *testing.T) {
+	t.Parallel()
 	testCases := []struct {
 		name        string
 		stateToken  string
@@ -1074,6 +1090,7 @@ func TestHandleCallback(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			manager, providerStorage, _, stateStorage, _, _ := setupTestFederationManager(t)
 			ctx := context.Background()
 
@@ -1106,6 +1123,7 @@ func TestHandleCallback(t *testing.T) {
 
 // TestLinkAccount tests the LinkAccount method.
 func TestLinkAccount(t *testing.T) {
+	t.Parallel()
 	testCases := []struct {
 		name          string
 		userID        uint64
@@ -1212,6 +1230,7 @@ func TestLinkAccount(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			manager, providerStorage, linkStorage, _, identityStore, _ := setupTestFederationManager(t)
 			ctx := context.Background()
 
@@ -1245,6 +1264,7 @@ func TestLinkAccount(t *testing.T) {
 
 // TestUnlinkAccount tests the UnlinkAccount method.
 func TestUnlinkAccount(t *testing.T) {
+	t.Parallel()
 	testCases := []struct {
 		name        string
 		userID      uint64
@@ -1335,6 +1355,7 @@ func TestUnlinkAccount(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			manager, providerStorage, linkStorage, _, identityStore, _ := setupTestFederationManager(t)
 			ctx := context.Background()
 
@@ -1372,6 +1393,7 @@ func TestUnlinkAccount(t *testing.T) {
 
 // TestGetUserLinks tests the GetUserLinks method.
 func TestGetUserLinks(t *testing.T) {
+	t.Parallel()
 	testCases := []struct {
 		name          string
 		userID        uint64
@@ -1479,6 +1501,7 @@ func TestGetUserLinks(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			manager, providerStorage, linkStorage, _, identityStore, _ := setupTestFederationManager(t)
 			ctx := context.Background()
 
@@ -1510,6 +1533,7 @@ func TestGetUserLinks(t *testing.T) {
 
 // TestOAuthClientCache tests the OAuth client caching functionality.
 func TestOAuthClientCache(t *testing.T) {
+	t.Parallel()
 	t.Run("cache hit", func(t *testing.T) {
 		manager, providerStorage, _, _, _, _ := setupTestFederationManager(t)
 		ctx := context.Background()
@@ -1592,6 +1616,7 @@ func TestOAuthClientCache(t *testing.T) {
 
 // TestOIDCDiscovery tests the OIDC discovery functionality.
 func TestOIDCDiscovery(t *testing.T) {
+	t.Parallel()
 	t.Run("success", func(t *testing.T) {
 		discoveryDoc := &OIDCDiscoveryDocument{
 			Issuer:                "https://auth.example.com",
@@ -1680,6 +1705,7 @@ func TestOIDCDiscovery(t *testing.T) {
 
 // TestExtractClaim tests the extractClaim helper method.
 func TestExtractClaim(t *testing.T) {
+	t.Parallel()
 	manager, _, _, _, _, _ := setupTestFederationManager(t)
 
 	testCases := []struct {
@@ -1738,6 +1764,7 @@ func TestExtractClaim(t *testing.T) {
 
 // TestDecodeJWTPayload tests the post-verification payload decoder.
 func TestDecodeJWTPayload(t *testing.T) {
+	t.Parallel()
 	t.Run("success", func(t *testing.T) {
 		// Create a valid JWT structure (header.payload.signature)
 		claims := map[string]interface{}{
@@ -1784,6 +1811,7 @@ func TestDecodeJWTPayload(t *testing.T) {
 
 // TestAuditLogging tests that audit events are logged correctly.
 func TestAuditLogging(t *testing.T) {
+	t.Parallel()
 	t.Run("register provider logs event", func(t *testing.T) {
 		manager, _, _, _, _, auditLogger := setupTestFederationManager(t)
 		ctx := context.Background()
@@ -1905,6 +1933,7 @@ func TestAuditLogging(t *testing.T) {
 
 // TestGenerateSecureNonce tests the generateSecureNonce function.
 func TestGenerateSecureNonce(t *testing.T) {
+	t.Parallel()
 	t.Run("generates correct length", func(t *testing.T) {
 		nonce, err := generateSecureNonce(32)
 		if err != nil {
@@ -1934,6 +1963,7 @@ func TestGenerateSecureNonce(t *testing.T) {
 
 // TestFederationManagerWithErrorStorage tests error handling with failing storage.
 func TestFederationManagerWithErrorStorage(t *testing.T) {
+	t.Parallel()
 	t.Run("register provider storage error", func(t *testing.T) {
 		providerStorage := &errorProviderStorage{
 			createErr:    errors.New("storage error"),
@@ -2073,6 +2103,7 @@ func TestFederationManagerWithErrorStorage(t *testing.T) {
 
 // TestFederationManagerWithNilAuditLogger tests that operations work without audit logger.
 func TestFederationManagerWithNilAuditLogger(t *testing.T) {
+	t.Parallel()
 	providerStorage := NewMemoryProviderStorage()
 	linkStorage := NewMemoryFederationStorage()
 	stateStorage := NewMemoryStateStorage()
@@ -2112,6 +2143,7 @@ func TestFederationManagerWithNilAuditLogger(t *testing.T) {
 
 // TestFederationManagerOptions tests individual option functions.
 func TestFederationManagerOptions(t *testing.T) {
+	t.Parallel()
 	t.Run("WithFederationHTTPClient", func(t *testing.T) {
 		client := &http.Client{Timeout: 30 * time.Second}
 		providerStorage := NewMemoryProviderStorage()
@@ -2162,6 +2194,7 @@ func TestFederationManagerOptions(t *testing.T) {
 
 // TestExternalProviderValidation tests ExternalProvider.Validate method.
 func TestExternalProviderValidation(t *testing.T) {
+	t.Parallel()
 	testCases := []struct {
 		name        string
 		provider    *ExternalProvider
@@ -2237,6 +2270,7 @@ func TestExternalProviderValidation(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			err := tc.provider.Validate()
 			if tc.wantErr {
 				if err == nil {
@@ -2256,6 +2290,7 @@ func TestExternalProviderValidation(t *testing.T) {
 
 // TestExternalProviderApplyDefaults tests ExternalProvider.ApplyDefaults method.
 func TestExternalProviderApplyDefaults(t *testing.T) {
+	t.Parallel()
 	t.Run("applies defaults to empty provider", func(t *testing.T) {
 		provider := &ExternalProvider{}
 		provider.ApplyDefaults()
@@ -2298,6 +2333,7 @@ func TestExternalProviderApplyDefaults(t *testing.T) {
 
 // TestFederatedIdentityValidation tests FederatedIdentity.Validate method.
 func TestFederatedIdentityValidation(t *testing.T) {
+	t.Parallel()
 	testCases := []struct {
 		name        string
 		identity    *FederatedIdentity
@@ -2374,6 +2410,7 @@ func TestFederatedIdentityValidation(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			err := tc.identity.Validate()
 			if tc.wantErr {
 				if err == nil {
@@ -2393,6 +2430,7 @@ func TestFederatedIdentityValidation(t *testing.T) {
 
 // TestFederationCallbackStateValidation tests FederationCallbackState.Validate method.
 func TestFederationCallbackStateValidation(t *testing.T) {
+	t.Parallel()
 	testCases := []struct {
 		name        string
 		state       *FederationCallbackState
@@ -2453,6 +2491,7 @@ func TestFederationCallbackStateValidation(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			err := tc.state.Validate()
 			if tc.wantErr {
 				if err == nil {
@@ -2472,6 +2511,7 @@ func TestFederationCallbackStateValidation(t *testing.T) {
 
 // TestFederationCallbackStateIsExpired tests FederationCallbackState.IsExpired method.
 func TestFederationCallbackStateIsExpired(t *testing.T) {
+	t.Parallel()
 	t.Run("not expired", func(t *testing.T) {
 		state := &FederationCallbackState{
 			ExpiresAt: time.Now().Add(5 * time.Minute),
@@ -2493,6 +2533,7 @@ func TestFederationCallbackStateIsExpired(t *testing.T) {
 
 // TestClaimMappingsApplyDefaults tests ClaimMappings.ApplyDefaults method.
 func TestClaimMappingsApplyDefaults(t *testing.T) {
+	t.Parallel()
 	t.Run("applies defaults to empty mappings", func(t *testing.T) {
 		mappings := &ClaimMappings{}
 		mappings.ApplyDefaults()
@@ -2556,6 +2597,7 @@ func makeOAuth2Token(accessToken, idToken string) *oauth2.Token {
 }
 
 func TestExtractClaims_UnsignedIDTokenRejected(t *testing.T) {
+	t.Parallel()
 	// Regression: the legacy parseIDToken base64-decoded the ID-token payload
 	// WITHOUT verifying the signature. extractClaims must now fail closed when
 	// the ID token cannot be verified against the provider JWKS — there is no
@@ -2582,6 +2624,7 @@ func TestExtractClaims_UnsignedIDTokenRejected(t *testing.T) {
 }
 
 func TestExtractClaims_NoIDToken_FetchesUserInfo(t *testing.T) {
+	t.Parallel()
 	userInfoClaims := map[string]interface{}{
 		"sub":   "ext-user-456",
 		"email": "ext@example.com",
@@ -2617,6 +2660,7 @@ func TestExtractClaims_NoIDToken_FetchesUserInfo(t *testing.T) {
 }
 
 func TestExtractClaims_NoUserInfoURL_Error(t *testing.T) {
+	t.Parallel()
 	manager, _, _, _, _, _ := setupTestFederationManager(t)
 	ctx := context.Background()
 
@@ -2633,6 +2677,7 @@ func TestExtractClaims_NoUserInfoURL_Error(t *testing.T) {
 }
 
 func TestExtractClaims_UserInfoBadStatus(t *testing.T) {
+	t.Parallel()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
 	}))
@@ -2655,6 +2700,7 @@ func TestExtractClaims_UserInfoBadStatus(t *testing.T) {
 }
 
 func TestExtractClaims_UserInfoInvalidJSON(t *testing.T) {
+	t.Parallel()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -2684,6 +2730,7 @@ func TestExtractClaims_UserInfoInvalidJSON(t *testing.T) {
 // =============================================================================
 
 func TestProcessAuthentication_ExistingLink(t *testing.T) {
+	t.Parallel()
 	manager, _, linkStorage, _, identityStore, _ := setupTestFederationManager(t)
 	ctx := context.Background()
 
@@ -2730,6 +2777,7 @@ func TestProcessAuthentication_ExistingLink(t *testing.T) {
 }
 
 func TestProcessAuthentication_LinkByEmail(t *testing.T) {
+	t.Parallel()
 	manager, _, _, _, identityStore, _ := setupTestFederationManager(t)
 	ctx := context.Background()
 
@@ -2766,6 +2814,7 @@ func TestProcessAuthentication_LinkByEmail(t *testing.T) {
 }
 
 func TestProcessAuthentication_JITProvision(t *testing.T) {
+	t.Parallel()
 	manager, _, _, _, _, _ := setupTestFederationManager(t)
 	ctx := context.Background()
 
@@ -2796,6 +2845,7 @@ func TestProcessAuthentication_JITProvision(t *testing.T) {
 }
 
 func TestProcessAuthentication_NoExternalID(t *testing.T) {
+	t.Parallel()
 	manager, _, _, _, _, _ := setupTestFederationManager(t)
 	ctx := context.Background()
 
@@ -2819,6 +2869,7 @@ func TestProcessAuthentication_NoExternalID(t *testing.T) {
 }
 
 func TestProcessAuthentication_JITDisabled(t *testing.T) {
+	t.Parallel()
 	manager, _, _, _, _, _ := setupTestFederationManager(t)
 	ctx := context.Background()
 
@@ -2849,6 +2900,7 @@ func TestProcessAuthentication_JITDisabled(t *testing.T) {
 // =============================================================================
 
 func TestProvisionUser_Success(t *testing.T) {
+	t.Parallel()
 	manager, _, _, _, _, _ := setupTestFederationManager(t)
 	ctx := context.Background()
 
@@ -2865,6 +2917,7 @@ func TestProvisionUser_Success(t *testing.T) {
 }
 
 func TestProvisionUser_NoEmail_Error(t *testing.T) {
+	t.Parallel()
 	manager, _, _, _, _, _ := setupTestFederationManager(t)
 	ctx := context.Background()
 
@@ -2880,6 +2933,7 @@ func TestProvisionUser_NoEmail_Error(t *testing.T) {
 }
 
 func TestProvisionUser_LongUsername_Truncated(t *testing.T) {
+	t.Parallel()
 	manager, _, _, _, _, _ := setupTestFederationManager(t)
 	ctx := context.Background()
 
@@ -2903,6 +2957,7 @@ func TestProvisionUser_LongUsername_Truncated(t *testing.T) {
 // TestProvisionUser_WithDefaultRoles: DefaultRoles is the whole provisioning
 // grant. quicbaas keeps no groups, so there is nothing else to join.
 func TestProvisionUser_WithDefaultRoles(t *testing.T) {
+	t.Parallel()
 	manager, _, _, _, identityStore, _ := setupTestFederationManager(t)
 	ctx := context.Background()
 
@@ -2940,6 +2995,7 @@ func TestProvisionUser_WithDefaultRoles(t *testing.T) {
 // =============================================================================
 
 func TestGenerateTokenResult_WithoutOIDCProvider(t *testing.T) {
+	t.Parallel()
 	manager, _, _, _, identityStore, _ := setupTestFederationManager(t)
 	ctx := context.Background()
 
@@ -2967,6 +3023,7 @@ func TestGenerateTokenResult_WithoutOIDCProvider(t *testing.T) {
 }
 
 func TestGenerateTokenResult_Provisioned(t *testing.T) {
+	t.Parallel()
 	manager, _, _, _, identityStore, _ := setupTestFederationManager(t)
 	ctx := context.Background()
 
@@ -2996,6 +3053,7 @@ func TestGenerateTokenResult_Provisioned(t *testing.T) {
 // =============================================================================
 
 func TestLogAuthEvent_Success(t *testing.T) {
+	t.Parallel()
 	manager, _, _, _, _, auditLogger := setupTestFederationManager(t)
 	ctx := context.Background()
 
@@ -3015,6 +3073,7 @@ func TestLogAuthEvent_Success(t *testing.T) {
 }
 
 func TestLogAuthEvent_Failure_WithDetails(t *testing.T) {
+	t.Parallel()
 	manager, _, _, _, _, auditLogger := setupTestFederationManager(t)
 	ctx := context.Background()
 
@@ -3034,6 +3093,7 @@ func TestLogAuthEvent_Failure_WithDetails(t *testing.T) {
 }
 
 func TestLogAuthEvent_NilAuditLogger(t *testing.T) {
+	t.Parallel()
 	manager, _, _, _, _, _ := setupTestFederationManager(t)
 	manager.auditLogger = nil
 	ctx := context.Background()
@@ -3047,6 +3107,7 @@ func TestLogAuthEvent_NilAuditLogger(t *testing.T) {
 // =============================================================================
 
 func TestMarkExportFailed_Success(t *testing.T) {
+	t.Parallel()
 	manager, _ := createTestGDPRManager(t)
 	ctx := context.Background()
 
@@ -3068,6 +3129,7 @@ func TestMarkExportFailed_Success(t *testing.T) {
 }
 
 func TestMarkExportFailed_NonexistentExport(t *testing.T) {
+	t.Parallel()
 	manager, _ := createTestGDPRManager(t)
 
 	// Should not panic on a nonexistent export
@@ -3079,6 +3141,7 @@ func TestMarkExportFailed_NonexistentExport(t *testing.T) {
 // =============================================================================
 
 func TestMarkDeletionFailed_Success(t *testing.T) {
+	t.Parallel()
 	manager, _ := createTestGDPRManager(t)
 	ctx := context.Background()
 
@@ -3100,6 +3163,7 @@ func TestMarkDeletionFailed_Success(t *testing.T) {
 }
 
 func TestMarkDeletionFailed_NonexistentDeletion(t *testing.T) {
+	t.Parallel()
 	manager, _ := createTestGDPRManager(t)
 
 	// Should not panic on a nonexistent deletion
