@@ -452,16 +452,15 @@ func TestRolePolicy_ValidateRefusesTermsWithNoSubject(t *testing.T) {
 
 func TestAgentFailoverReason_ClassifiesEveryTrigger(t *testing.T) {
 	cases := map[error]string{
-		&AccountLimitedError{}:       AgentFailoverRateLimited,
-		ErrAccountsCoolingDown:       AgentFailoverRateLimited,
-		ErrAccountCredentialExpiring: AgentFailoverAccountExpired,
-		ErrAccountRefreshFailed:      AgentFailoverAccountExpired,
-		ErrNoAccountAvailable:        AgentFailoverAccountExhausted,
-		ErrAccountsSpent:             AgentFailoverAccountExhausted,
-		ErrAccountsSaturated:         AgentFailoverAccountExhausted,
-		&AccountAwaitingCredentialError{AccountID: "default-claude"}: AgentFailoverAccountExhausted,
-		&BackendNotFoundError{Backend: "openvino"}:                   AgentFailoverBackendUnavailable,
-		&NoMatchingFleetNodeError{Detail: "none"}:                    AgentFailoverBackendUnavailable,
+		&AccountLimitedError{}:                     AgentFailoverRateLimited,
+		ErrAccountsCoolingDown:                     AgentFailoverRateLimited,
+		ErrAccountCredentialExpiring:               AgentFailoverAccountExpired,
+		ErrAccountRefreshFailed:                    AgentFailoverAccountExpired,
+		ErrNoAccountAvailable:                      AgentFailoverAccountExhausted,
+		ErrAccountsSpent:                           AgentFailoverAccountExhausted,
+		ErrAccountsSaturated:                       AgentFailoverAccountExhausted,
+		&BackendNotFoundError{Backend: "openvino"}: AgentFailoverBackendUnavailable,
+		&NoMatchingFleetNodeError{Detail: "none"}:  AgentFailoverBackendUnavailable,
 	}
 	for err, want := range cases {
 		got, ok := AgentFailoverReason(err)

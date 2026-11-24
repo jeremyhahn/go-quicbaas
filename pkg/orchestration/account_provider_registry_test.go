@@ -298,49 +298,6 @@ func TestAccountProviderRegistry_Providers(t *testing.T) {
 	}
 }
 
-func TestDefaultAccountProviders_BuiltinsAreClaudeAndCodex(t *testing.T) {
-	registry, err := NewAccountProviderRegistry()
-	if err != nil {
-		t.Fatalf("NewAccountProviderRegistry() error = %v", err)
-	}
-	want := []AccountProvider{AccountProviderClaude, AccountProviderCodex}
-	if got := registry.DefaultAccountProviders(); !reflect.DeepEqual(got, want) {
-		t.Fatalf("DefaultAccountProviders() = %v, want %v", got, want)
-	}
-	var nilRegistry *AccountProviderRegistry
-	if got := nilRegistry.DefaultAccountProviders(); got != nil {
-		t.Fatalf("nil registry DefaultAccountProviders() = %v, want nil", got)
-	}
-}
-
-func TestDefaultAccountProviders_OverrideKeepsTheFlag(t *testing.T) {
-	registry, err := NewAccountProviderRegistry(ProviderDescriptor{
-		Provider:      AccountProviderClaude,
-		TokenEndpoint: "https://id.example/oauth2/token",
-	})
-	if err != nil {
-		t.Fatalf("NewAccountProviderRegistry() error = %v", err)
-	}
-	want := []AccountProvider{AccountProviderClaude, AccountProviderCodex}
-	if got := registry.DefaultAccountProviders(); !reflect.DeepEqual(got, want) {
-		t.Fatalf("DefaultAccountProviders() = %v, want %v", got, want)
-	}
-}
-
-func TestDefaultAccountProviders_ConfiguredProviderIsNotDefault(t *testing.T) {
-	registry, err := NewAccountProviderRegistry(ProviderDescriptor{
-		Provider:      "acme-llm",
-		TokenEndpoint: "https://id.acme.example/oauth2/token",
-	})
-	if err != nil {
-		t.Fatalf("NewAccountProviderRegistry() error = %v", err)
-	}
-	want := []AccountProvider{AccountProviderClaude, AccountProviderCodex}
-	if got := registry.DefaultAccountProviders(); !reflect.DeepEqual(got, want) {
-		t.Fatalf("DefaultAccountProviders() = %v, want %v", got, want)
-	}
-}
-
 // TestAccountProviderRegistry_ValidateCredential covers every write-time rule,
 // happy path and rejection alike.
 func TestAccountProviderRegistry_ValidateCredential(t *testing.T) {

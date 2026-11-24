@@ -123,14 +123,6 @@ type TenantSettingsObserver interface {
 	OnTenantSettingsChanged(tenantID string)
 }
 
-// TenantCreatedObserver is told after CreateTenant has created and fully
-// seeded a tenant. It runs on the creating request's goroutine, must be
-// idempotent, and cannot fail the creation: a step that may fail without
-// undoing the tenant belongs here, not in a seeder.
-type TenantCreatedObserver interface {
-	TenantCreated(ctx context.Context, tenantID string)
-}
-
 // DefaultTenantManager is the default implementation of TenantManager.
 type DefaultTenantManager struct {
 	storage         TenantStorage
@@ -171,11 +163,6 @@ type DefaultTenantManager struct {
 	// time (server init) before the manager is shared, so reads during
 	// UpdateTenant need no lock.
 	settingsObservers []TenantSettingsObserver
-
-	// createdObservers are told after CreateTenant has created and seeded a
-	// tenant. The slice is append-only at wiring time (server init) before
-	// the manager is shared, so reads during CreateTenant need no lock.
-	createdObservers []TenantCreatedObserver
 }
 
 // AddSettingsObserver registers an observer notified after each successful
@@ -353,15 +340,6 @@ func (m *DefaultTenantManager) CreateTenant(ctx context.Context, opts CreateTena
 				unseed = m.roleSeeder.DeleteBuiltInRoles(ctx, tenantID)
 			}
 			return nil, dberrors.Wrapf(errors.Join(err, unseed, m.rollbackCreate(ctx, tenantID)), dberrors.ErrInternal, "iam.CreateTenant", "failed to seed tenant prompt set")
-		}
-	}
-
-	// The tenant now exists and is fully seeded. Observers follow it through
-	// even when the caller has gone, and cannot undo it.
-	if len(m.createdObservers) > 0 {
-		observerCtx := context.WithoutCancel(ctx)
-		for _, observer := range m.createdObservers {
-			observer.TenantCreated(observerCtx, tenantID)
 		}
 	}
 

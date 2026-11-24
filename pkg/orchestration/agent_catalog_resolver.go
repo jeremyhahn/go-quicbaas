@@ -249,7 +249,6 @@ var agentFailoverRules = []agentFailoverRule{
 	{ErrAccountsSpent, AgentFailoverAccountExhausted},
 	{ErrAccountRevoked, AgentFailoverAccountExhausted},
 	{ErrAccountErrored, AgentFailoverAccountExhausted},
-	{ErrAccountAwaitingCredential, AgentFailoverAccountExhausted},
 	{ErrAccountCredentialNotFound, AgentFailoverAccountExhausted},
 	{ErrBackendNotFound, AgentFailoverBackendUnavailable},
 	{ErrNoMatchingFleetNode, AgentFailoverBackendUnavailable},

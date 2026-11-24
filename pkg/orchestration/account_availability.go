@@ -83,7 +83,7 @@ func (h *accountPoolHeadroom) AccountAvailability(ctx context.Context, query Acc
 	if err != nil {
 		return AccountAvailability{}, err
 	}
-	var relogin, errored, revoked, awaiting, spent int
+	var relogin, errored, revoked, spent int
 	candidates := 0
 	for _, account := range pooled {
 		if account.Provider != query.Provider || (len(query.Allow) > 0 && !slices.Contains(query.Allow, account.ID)) {
@@ -93,9 +93,6 @@ func (h *accountPoolHeadroom) AccountAvailability(ctx context.Context, query Acc
 		switch account.Status {
 		case AccountStatusRevoked:
 			revoked++
-			continue
-		case AccountStatusAwaitingCredential:
-			awaiting++
 			continue
 		case AccountStatusError:
 			errored++
@@ -121,11 +118,11 @@ func (h *accountPoolHeadroom) AccountAvailability(ctx context.Context, query Acc
 	if candidates == 0 {
 		return AccountAvailability{Reason: "no pooled " + string(query.Provider) + " account is defined for this project"}, nil
 	}
-	return AccountAvailability{Reason: unusablePoolReason(query.Provider, relogin, errored, revoked, awaiting, spent)}, nil
+	return AccountAvailability{Reason: unusablePoolReason(query.Provider, relogin, errored, revoked, spent)}, nil
 }
 
 // unusablePoolReason says, most actionable first, why no account can serve.
-func unusablePoolReason(provider AccountProvider, relogin, errored, revoked, awaiting, spent int) string {
+func unusablePoolReason(provider AccountProvider, relogin, errored, revoked, spent int) string {
 	var parts []string
 	if relogin > 0 {
 		parts = append(parts, "re-login needed on "+strconv.Itoa(relogin))
@@ -135,9 +132,6 @@ func unusablePoolReason(provider AccountProvider, relogin, errored, revoked, awa
 	}
 	if revoked > 0 {
 		parts = append(parts, strconv.Itoa(revoked)+" revoked")
-	}
-	if awaiting > 0 {
-		parts = append(parts, strconv.Itoa(awaiting)+" awaiting a credential")
 	}
 	if spent > 0 {
 		parts = append(parts, strconv.Itoa(spent)+" over budget")

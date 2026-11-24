@@ -404,12 +404,6 @@ func (r *accountResolver) checkSelected(ctx context.Context, account *Account) e
 	if account.Status == AccountStatusError {
 		return &AccountErroredError{AccountID: account.ID, LastError: account.LastError}
 	}
-	// An account still waiting for its first credential has nothing to
-	// resolve. A pinned account reaches this check; the strategy path already
-	// excludes it through Account.Selectable.
-	if account.Status == AccountStatusAwaitingCredential {
-		return &AccountAwaitingCredentialError{AccountID: account.ID, Provider: account.Provider}
-	}
 	// A pinned account under a live limit hold fails LOUDLY rather than being
 	// silently swapped for another. The caller pinned it on purpose; only an
 	// explicit rotation (which resolves with Auto, not a pin) may move off it.

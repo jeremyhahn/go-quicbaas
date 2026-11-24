@@ -52,19 +52,6 @@ func TestAccountAvailability_ADeadLoginPoolIsUnusableAndSaysSo(t *testing.T) {
 	}
 }
 
-func TestAccountAvailability_AnAwaitingCredentialPoolIsUnusableAndSaysSo(t *testing.T) {
-	rig := newHeadroomRig(t)
-	rig.availabilityAccount(t, "default-codex", AccountStatusAwaitingCredential, "")
-
-	got, err := rig.reader.(AccountAvailabilityReader).AccountAvailability(context.Background(), codexQuery(), time.Now().UTC())
-	if err != nil {
-		t.Fatalf("AccountAvailability: %v", err)
-	}
-	if got.Usable || !strings.Contains(got.Reason, "1 awaiting a credential") {
-		t.Fatalf("availability = %+v, want unusable naming the account awaiting its credential", got)
-	}
-}
-
 // TestAccountAvailability_AnAccountThatReturnsByItselfIsUsable: a cooling-down
 // account comes back on its own, so work waits for it rather than being held.
 func TestAccountAvailability_AnAccountThatReturnsByItselfIsUsable(t *testing.T) {
