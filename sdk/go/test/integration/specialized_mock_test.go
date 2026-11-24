@@ -978,7 +978,14 @@ func TestBackupClient_RestoreValidationErrors(t *testing.T) {
 		{
 			name:    "empty backup ID and source",
 			req:     &backup.RestoreRequest{},
-			wantErr: "backup ID or source is required",
+			wantErr: "backup ID is required",
+		},
+		{
+			// The backup service restores by backup ID only (#1726): a
+			// source is refused rather than silently dropped.
+			name:    "source is refused",
+			req:     &backup.RestoreRequest{BackupID: "backup-20251227-001", Source: "s3://bucket/backup"},
+			wantErr: "source is not supported: the backup service restores by backup ID only",
 		},
 	}
 
