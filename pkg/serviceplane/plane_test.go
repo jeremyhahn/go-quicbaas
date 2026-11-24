@@ -728,3 +728,74 @@ func TestClaim_ALiveVerbRenewsItsClaim(t *testing.T) {
 		t.Fatalf("restart = %+v, %v", r.svc, r.err)
 	}
 }
+
+// otherNode is a second plane over f's store whose clock runs past
+// f's stale claim, as a node that recovers f's claims would.
+func otherNode(t *testing.T, f *fixture) *Plane {
+	t.Helper()
+	var gs []Grant
+	for _, k := range GrantKinds {
+		gs = append(gs, f.grants[k])
+	}
+	p, err := NewPlane(Config{
+		Store: f.plane.store, Verifier: f.plane.verifier, Launcher: &launcher{}, Grants: gs,
+		Now: func() time.Time { return f.now().Add(DefaultStaleClaim + time.Minute) },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestClaim_ATakenOverClaimCancelsTheCallAndWritesNothing(t *testing.T) {
+	f := newFixture(t, renewEvery(5*time.Millisecond))
+	f.deploy(t, "web")
+	b := blockLaunches(f)
+	done := restartAsync(f)
+	b.waitEntered(t)
+	other := otherNode(t, f)
+	waitFor(t, "the other node to recover the claim", func() bool {
+		// A renewal racing the recovery is skipped as a conflict.
+		got, err := other.Recover(ctx)
+		return err == nil && len(got) == 1
+	})
+	r := <-done
+	if !errors.Is(r.err, ErrConflict) || r.svc != nil {
+		t.Fatalf("restart after a takeover = %+v, %v; want ErrConflict", r.svc, r.err)
+	}
+	select {
+	case <-b.cancelled:
+	default:
+		t.Fatal("the launch's context was not cancelled")
+	}
+	svc, err := f.plane.Get(ctx, "acme", "web")
+	if err != nil || svc.State != StateHalted || !strings.HasPrefix(svc.Reason, "recovered:") {
+		t.Fatalf("record after a takeover = %+v, %v; want the other node's halted record", svc, err)
+	}
+}
+
+func TestClaim_AStoreOutageDuringRenewalKeepsTheClaim(t *testing.T) {
+	f := newFixture(t, renewEvery(5*time.Millisecond))
+	f.deploy(t, "web")
+	b := blockLaunches(f)
+	done := restartAsync(f)
+	b.waitEntered(t)
+	f.guard.setFailSwaps(true)
+	waitFor(t, "renewals to meet the outage", func() bool { return f.guard.failedSwaps() >= 3 })
+	f.guard.setFailSwaps(false)
+	f.advance(DefaultStaleClaim + time.Second)
+	waitFor(t, "the claim renewed after the outage", func() bool {
+		svc, err := f.plane.Get(ctx, "acme", "web")
+		return err == nil && svc.State == StateTransitioning && svc.UpdatedAt.Equal(f.now())
+	})
+	select {
+	case <-b.cancelled:
+		t.Fatal("a store outage cancelled the launch")
+	default:
+	}
+	close(b.release)
+	r := <-done
+	if r.err != nil || r.svc.State != StateRunning {
+		t.Fatalf("restart = %+v, %v", r.svc, r.err)
+	}
+}

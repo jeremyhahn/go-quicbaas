@@ -27,6 +27,25 @@ type memGuard struct {
 	// successful ones lose; later Swaps succeed.
 	loseOnce int
 	swaps    int
+	// failSwaps makes every Swap answer an error, as an unavailable
+	// store would.
+	failSwaps bool
+	// failed counts the Swaps failSwaps refused.
+	failed int
+}
+
+// setFailSwaps turns store errors on every Swap on or off.
+func (g *memGuard) setFailSwaps(fail bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.failSwaps = fail
+}
+
+// failedSwaps answers how many Swaps failSwaps refused.
+func (g *memGuard) failedSwaps() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.failed
 }
 
 func (g *memGuard) Create(ctx context.Context, key string, value []byte) (bool, error) {
@@ -45,6 +64,10 @@ func (g *memGuard) Swap(ctx context.Context, key string, held, next []byte) (boo
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	if g.failSwaps {
+		g.failed++
+		return false, errors.New("store unavailable")
+	}
 	if g.loseSwaps || (g.loseAfter > 0 && g.swaps >= g.loseAfter) {
 		return false, nil
 	}
