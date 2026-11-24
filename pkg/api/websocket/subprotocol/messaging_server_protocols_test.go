@@ -318,6 +318,104 @@ func TestTenantMessagingServer_AMQPExchangeBindingReachesConsumer(t *testing.T) 
 	}
 }
 
+func TestTenantMessagingServer_AMQPEmptyMessageReachesConsumer(t *testing.T) {
+	_, url := tenantTestServer(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	url += "?tenant=tenant-a"
+
+	open := func() *websocket.Conn {
+		t.Helper()
+		conn := dialSubprotocol(t, ctx, url, "amqp")
+		if err := conn.Write(ctx, websocket.MessageBinary, []byte{'A', 'M', 'Q', 'P', 0, 0, 9, 1}); err != nil {
+			t.Fatalf("write protocol header: %v", err)
+		}
+		if _, _, err := conn.Read(ctx); err != nil { // Connection.Start
+			t.Fatalf("read Connection.Start: %v", err)
+		}
+		amqpRoundTrip(t, ctx, conn, amqpTestMethod(20, 10, []byte{0}), "Channel.Open")
+		return conn
+	}
+	method := func(build func(*bytes.Buffer)) []byte {
+		args := &bytes.Buffer{}
+		_ = binary.Write(args, binary.BigEndian, uint16(0)) // reserved-1
+		build(args)
+		return args.Bytes()
+	}
+
+	consumer := open()
+	amqpRoundTrip(t, ctx, consumer, amqpTestMethod(50, 10, method(func(b *bytes.Buffer) {
+		writeShortString(b, "empty")
+		b.WriteByte(0)
+		_ = binary.Write(b, binary.BigEndian, uint32(0))
+	})), "Queue.Declare")
+	amqpRoundTrip(t, ctx, consumer, amqpTestMethod(60, 20, method(func(b *bytes.Buffer) {
+		writeShortString(b, "empty")
+		writeShortString(b, "")
+		b.WriteByte(0x02) // no-ack
+		_ = binary.Write(b, binary.BigEndian, uint32(0))
+	})), "Basic.Consume")
+
+	publisher := open()
+	publish := amqpTestMethod(60, 40, method(func(b *bytes.Buffer) {
+		writeShortString(b, "")
+		writeShortString(b, "empty")
+		b.WriteByte(0)
+	}))
+	header := &bytes.Buffer{}
+	_ = binary.Write(header, binary.BigEndian, uint16(60))
+	_ = binary.Write(header, binary.BigEndian, uint16(0))
+	_ = binary.Write(header, binary.BigEndian, uint64(0))
+	_ = binary.Write(header, binary.BigEndian, uint16(0))
+	publish = append(publish, amqpTestFrame(2, 1, header.Bytes())...)
+	if err := publisher.Write(ctx, websocket.MessageBinary, publish); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+
+	// Basic.Deliver (class 60, method 60) followed by a content header with
+	// body-size 0, in one WebSocket message or several. Frames are
+	// type(1) channel(2) size(4) payload frame-end(0xCE).
+	deliverCtx, deliverCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer deliverCancel()
+	var buf []byte
+	sawDeliver := false
+	for {
+		for len(buf) >= 8 {
+			size := int(binary.BigEndian.Uint32(buf[3:7]))
+			if len(buf) < 8+size {
+				break
+			}
+			if buf[7+size] != 0xCE {
+				t.Fatalf("bad frame-end in %x", buf)
+			}
+			typ, payload := buf[0], buf[7:7+size]
+			buf = buf[8+size:]
+			switch {
+			case typ == 1 && len(payload) >= 4 &&
+				binary.BigEndian.Uint16(payload[0:2]) == 60 && binary.BigEndian.Uint16(payload[2:4]) == 60:
+				sawDeliver = true
+			case sawDeliver && typ == 3:
+				t.Fatal("body frame delivered for an empty message")
+			case sawDeliver && typ == 2:
+				if len(payload) < 12 {
+					t.Fatalf("content header too short: %x", payload)
+				}
+				if got := binary.BigEndian.Uint64(payload[4:12]); got != 0 {
+					t.Fatalf("content header body-size = %d, want 0", got)
+				}
+				return
+			case sawDeliver:
+				t.Fatalf("frame type %d after Basic.Deliver, want a content header", typ)
+			}
+		}
+		_, data, err := consumer.Read(deliverCtx)
+		if err != nil {
+			t.Fatalf("no Basic.Deliver with a content header within 5s (deliver seen: %v): %v", sawDeliver, err)
+		}
+		buf = append(buf, data...)
+	}
+}
+
 // amqpRoundTrip writes one method frame and reads its reply, failing on a
 // Channel.Close or Connection.Close.
 func amqpRoundTrip(t *testing.T, ctx context.Context, conn *websocket.Conn, frame []byte, what string) {

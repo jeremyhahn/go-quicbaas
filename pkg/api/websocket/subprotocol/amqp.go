@@ -1792,26 +1792,7 @@ func (h *AMQPHandler) handleBasicGet(ctx context.Context, frame *AMQPFrame, args
 	_ = binary.Write(getOkArgs, binary.BigEndian, messageCount)
 
 	methodFrame := h.buildMethodFrame(frame.Channel, ClassBasic, MethodBasicGetOk, getOkArgs.Bytes())
-
-	// Build content header and body frames
-	if len(message) > 0 {
-		headerPayload := &bytes.Buffer{}
-		_ = binary.Write(headerPayload, binary.BigEndian, ClassBasic)           // class-id
-		_ = binary.Write(headerPayload, binary.BigEndian, uint16(0))            // weight (reserved)
-		_ = binary.Write(headerPayload, binary.BigEndian, uint64(len(message))) // body-size
-		_ = binary.Write(headerPayload, binary.BigEndian, uint16(0))            // property-flags (no properties)
-		headerFrame := h.buildFrame(FrameHeader, frame.Channel, headerPayload.Bytes())
-
-		bodyFrame := h.buildFrame(FrameBody, frame.Channel, message)
-
-		result := make([]byte, 0, len(methodFrame)+len(headerFrame)+len(bodyFrame))
-		result = append(result, methodFrame...)
-		result = append(result, headerFrame...)
-		result = append(result, bodyFrame...)
-		return result, nil
-	}
-
-	return methodFrame, nil
+	return append(methodFrame, h.buildContentFrames(frame.Channel, message)...), nil
 }
 
 // handleBasicAck handles Basic.Ack.
@@ -1949,7 +1930,8 @@ func (h *AMQPHandler) buildChannelClose(channel uint16, replyCode uint16, replyT
 	return h.buildMethodFrame(channel, ClassChannel, MethodChannelClose, args.Bytes())
 }
 
-// buildBasicDeliver builds a Basic.Deliver method frame with content.
+// buildBasicDeliver builds a Basic.Deliver method frame followed by its
+// content header and, for a non-empty payload, its body frame.
 func (h *AMQPHandler) buildBasicDeliver(channel uint16, consumerTag string, deliveryTag uint64, routingKey string, payload []byte) []byte {
 	// Build method frame
 	// Basic.Deliver: consumer-tag (shortstring), delivery-tag (longlong), redelivered (bit), exchange (shortstring), routing-key (shortstring)
@@ -1962,27 +1944,22 @@ func (h *AMQPHandler) buildBasicDeliver(channel uint16, consumerTag string, deli
 
 	methodFrame := h.buildMethodFrame(channel, ClassBasic, MethodBasicDeliver, methodArgs.Bytes())
 
-	if len(payload) == 0 {
-		return methodFrame
-	}
+	return append(methodFrame, h.buildContentFrames(channel, payload)...)
+}
 
-	// Build content header frame
+// buildContentFrames builds the content header frame for payload and, when
+// payload is not empty, its body frame. AMQP 0-9-1 sends the content
+// header after Basic.Deliver and Basic.Get-Ok even when the body is empty.
+func (h *AMQPHandler) buildContentFrames(channel uint16, payload []byte) []byte {
 	headerPayload := &bytes.Buffer{}
 	_ = binary.Write(headerPayload, binary.BigEndian, ClassBasic)           // class-id
 	_ = binary.Write(headerPayload, binary.BigEndian, uint16(0))            // weight (reserved)
 	_ = binary.Write(headerPayload, binary.BigEndian, uint64(len(payload))) // body-size
 	_ = binary.Write(headerPayload, binary.BigEndian, uint16(0))            // property-flags (no properties)
-	headerFrame := h.buildFrame(FrameHeader, channel, headerPayload.Bytes())
-
-	// Build content body frame
-	bodyFrame := h.buildFrame(FrameBody, channel, payload)
-
-	// Concatenate all frames
-	result := make([]byte, 0, len(methodFrame)+len(headerFrame)+len(bodyFrame))
-	result = append(result, methodFrame...)
-	result = append(result, headerFrame...)
-	result = append(result, bodyFrame...)
-
+	result := h.buildFrame(FrameHeader, channel, headerPayload.Bytes())
+	if len(payload) > 0 {
+		result = append(result, h.buildFrame(FrameBody, channel, payload)...)
+	}
 	return result
 }
 

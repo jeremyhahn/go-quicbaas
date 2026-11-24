@@ -1483,6 +1483,77 @@ func TestAMQPTopicMatch_AdversarialPatternIsLinear(t *testing.T) {
 	}
 }
 
+// splitAMQPTestFrames parses data into its AMQP frames.
+func splitAMQPTestFrames(t *testing.T, h *AMQPHandler, data []byte) []*AMQPFrame {
+	t.Helper()
+	var frames []*AMQPFrame
+	for len(data) > 0 {
+		frame, n, err := h.nextFrame(data)
+		if err != nil {
+			t.Fatalf("nextFrame() error = %v", err)
+		}
+		frames = append(frames, frame)
+		data = data[n:]
+	}
+	return frames
+}
+
+// assertEmptyContent checks that frames are exactly a method frame and a
+// content header with body-size 0, with no body frame.
+func assertEmptyContent(t *testing.T, frames []*AMQPFrame, first uint8) {
+	t.Helper()
+	if len(frames) != 2 {
+		t.Fatalf("got %d frames, want 2 (method, header)", len(frames))
+	}
+	if frames[0].Type != first {
+		t.Errorf("frame 0 type = %d, want %d (method)", frames[0].Type, first)
+	}
+	if frames[1].Type != FrameHeader {
+		t.Fatalf("frame 1 type = %d, want %d (header)", frames[1].Type, FrameHeader)
+	}
+	if len(frames[1].Payload) < 12 {
+		t.Fatalf("header payload too short: %d bytes", len(frames[1].Payload))
+	}
+	if size := binary.BigEndian.Uint64(frames[1].Payload[4:12]); size != 0 {
+		t.Errorf("header body-size = %d, want 0", size)
+	}
+	for i, f := range frames {
+		if f.Type == FrameBody {
+			t.Errorf("frame %d is a body frame, want none for an empty message", i)
+		}
+	}
+}
+
+func TestAMQPHandler_HandleBasicGet_EmptyMessageHasContentHeader(t *testing.T) {
+	handler := NewAMQPHandler(nil)
+	session := newGrantedSession("test", "amqp", nil)
+	state := newTestAMQPState()
+	state.channels[1].queues["q"] = &amqpQueueState{
+		name:     "q",
+		messages: [][]byte{{}},
+	}
+	frame := &AMQPFrame{Type: FrameMethod, Channel: 1}
+
+	args := &bytes.Buffer{}
+	binary.Write(args, binary.BigEndian, uint16(0))
+	writeShortString(args, "q")
+	args.WriteByte(0x01) // no-ack = true
+
+	response, err := handler.handleBasicGet(context.Background(), frame, args.Bytes(), session, state)
+	if err != nil {
+		t.Fatalf("handleBasicGet() error = %v", err)
+	}
+
+	frames := splitAMQPTestFrames(t, handler, response)
+	if len(frames) == 0 || len(frames[0].Payload) < 4 {
+		t.Fatal("expected a Get-Ok method frame")
+	}
+	if c, m := binary.BigEndian.Uint16(frames[0].Payload[0:2]), binary.BigEndian.Uint16(frames[0].Payload[2:4]); c != ClassBasic || m != MethodBasicGetOk {
+		t.Fatalf("method = %d/%d, want Basic.Get-Ok %d/%d", c, m, ClassBasic, MethodBasicGetOk)
+	}
+	assertEmptyContent(t, frames, FrameMethod)
+}
+
 // TestAMQPHandler_PublishRoutesThroughBindings: publications to a named
 // exchange reach the queues bound to it, by exchange type.
 func TestAMQPHandler_PublishRoutesThroughBindings(t *testing.T) {

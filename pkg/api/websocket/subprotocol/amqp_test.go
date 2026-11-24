@@ -1151,10 +1151,14 @@ func TestAMQPHandler_BuildBasicDeliver_EmptyPayload(t *testing.T) {
 		t.Fatalf("Deliver frame too short: %d bytes", len(result))
 	}
 
-	// Should only have method frame for empty payload
+	// The method frame comes first, then a content header with body-size 0
+	// and no body frame.
 	if result[0] != FrameMethod {
 		t.Errorf("Frame type = %d, want %d (method)", result[0], FrameMethod)
 	}
+
+	frames := splitAMQPTestFrames(t, handler, result)
+	assertEmptyContent(t, frames, FrameMethod)
 }
 
 func TestAMQPHandler_HandleConnectionOpen_MissingVhost(t *testing.T) {
