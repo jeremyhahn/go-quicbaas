@@ -1130,7 +1130,7 @@ func TestAMQPHandler_HandleMethodFrame_TooShort(t *testing.T) {
 func TestAMQPHandler_BuildBasicDeliver(t *testing.T) {
 	handler := NewAMQPHandler(nil)
 
-	result := handler.buildBasicDeliver(1, "consumer-tag", 123, "test.queue", []byte("hello"))
+	result := handler.buildBasicDeliver(1, "consumer-tag", 123, "test.queue", []byte("hello"), amqpDefaultFrameMax)
 
 	if len(result) < 8 {
 		t.Fatalf("Deliver frames too short: %d bytes", len(result))
@@ -1145,7 +1145,7 @@ func TestAMQPHandler_BuildBasicDeliver(t *testing.T) {
 func TestAMQPHandler_BuildBasicDeliver_EmptyPayload(t *testing.T) {
 	handler := NewAMQPHandler(nil)
 
-	result := handler.buildBasicDeliver(1, "consumer-tag", 123, "test.queue", nil)
+	result := handler.buildBasicDeliver(1, "consumer-tag", 123, "test.queue", nil, amqpDefaultFrameMax)
 
 	if len(result) < 8 {
 		t.Fatalf("Deliver frame too short: %d bytes", len(result))

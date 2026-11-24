@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -1860,6 +1861,80 @@ func mustNoResponse(t *testing.T, handler *AMQPHandler, session *ws.Session, sta
 	response, err := handler.handleFrame(context.Background(), data, session, state)
 	if err != nil || response != nil {
 		t.Fatalf("handleFrame = %x, %v; want no response", response, err)
+	}
+}
+
+func TestAMQPHandler_BuildContentFrames_SplitsAtFrameMax(t *testing.T) {
+	h := NewAMQPHandler(nil)
+	payload := bytes.Repeat([]byte{0xAB}, 200*1024)
+
+	for _, frameMax := range []uint32{amqpDefaultFrameMax, 4096} {
+		frames := splitAMQPTestFrames(t, h, h.buildContentFrames(1, payload, frameMax))
+		if len(frames) < 3 {
+			t.Fatalf("frameMax %d: got %d frames, want a header and two or more body frames", frameMax, len(frames))
+		}
+		if frames[0].Type != FrameHeader {
+			t.Fatalf("frameMax %d: frame 0 type = %d, want %d (header)", frameMax, frames[0].Type, FrameHeader)
+		}
+		if size := binary.BigEndian.Uint64(frames[0].Payload[4:12]); size != uint64(len(payload)) {
+			t.Fatalf("frameMax %d: header body-size = %d, want %d", frameMax, size, len(payload))
+		}
+		var body []byte
+		for i, f := range frames[1:] {
+			if f.Type != FrameBody {
+				t.Fatalf("frameMax %d: frame %d type = %d, want %d (body)", frameMax, i+1, f.Type, FrameBody)
+			}
+			if encoded := 7 + len(f.Payload) + 1; encoded > int(frameMax) {
+				t.Errorf("frameMax %d: body frame %d is %d bytes encoded", frameMax, i+1, encoded)
+			}
+			if len(f.Payload) > int(frameMax)-8 {
+				t.Errorf("frameMax %d: body frame %d carries %d bytes, want at most %d", frameMax, i+1, len(f.Payload), frameMax-8)
+			}
+			body = append(body, f.Payload...)
+		}
+		if !bytes.Equal(body, payload) {
+			t.Errorf("frameMax %d: joined body differs from the payload (%d bytes, want %d)", frameMax, len(body), len(payload))
+		}
+	}
+}
+
+func TestAMQPHandler_HandleConnectionTuneOk_FrameMax(t *testing.T) {
+	h := NewAMQPHandler(nil)
+	session := newGrantedSession("test", "amqp", nil)
+	tuneOk := func(frameMax uint32) []byte {
+		args := &bytes.Buffer{}
+		_ = binary.Write(args, binary.BigEndian, uint16(2047))
+		_ = binary.Write(args, binary.BigEndian, frameMax)
+		_ = binary.Write(args, binary.BigEndian, uint16(60))
+		return args.Bytes()
+	}
+
+	for _, tc := range []struct {
+		client uint32
+		want   uint32
+	}{
+		{client: 65536, want: 65536},
+		{client: 0, want: 131072},
+		{client: 1 << 20, want: 131072},
+		{client: 1000, want: 4096},
+	} {
+		state := newTestAMQPState()
+		response, err := h.handleConnectionTuneOk(context.Background(), &AMQPFrame{Type: FrameMethod}, tuneOk(tc.client), session, state)
+		if err != nil || response != nil {
+			t.Fatalf("frame-max %d: handleConnectionTuneOk = %x, %v; want no response", tc.client, response, err)
+		}
+		state.mu.RLock()
+		got := state.frameMax
+		state.mu.RUnlock()
+		if got != tc.want {
+			t.Errorf("frame-max %d: state.frameMax = %d, want %d", tc.client, got, tc.want)
+		}
+	}
+
+	_, err := h.handleConnectionTuneOk(context.Background(), &AMQPFrame{Type: FrameMethod}, []byte{0, 1, 0, 0, 0}, session, newTestAMQPState())
+	var protoErr *ErrAMQPProtocolError
+	if !errors.As(err, &protoErr) {
+		t.Errorf("short Tune-Ok error = %v, want a protocol error", err)
 	}
 }
 

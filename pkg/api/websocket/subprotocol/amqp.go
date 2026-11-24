@@ -244,7 +244,13 @@ type amqpClientState struct {
 	vhost     string
 	channels  map[uint16]*amqpChannelState
 	consumers map[string]amqpConsumer // consumerTag -> consumer
-	mu        sync.RWMutex
+	// deliveries carries the queue messages handed to this connection's
+	// consumers to its delivery goroutine; nil when there is none.
+	deliveries chan<- amqpDelivery
+	// frameMax is the negotiated frame-max; 0 until Tune-Ok, which means
+	// amqpDefaultFrameMax.
+	frameMax uint32
+	mu       sync.RWMutex
 }
 
 // amqpChannelState holds the state for an AMQP channel.
@@ -278,6 +284,17 @@ type amqpPendingPublish struct {
 // amqpMaxBodySize bounds the body size a content header may declare. It
 // matches the WebSocket server's default message size limit.
 const amqpMaxBodySize = 1024 * 1024
+
+// amqpDefaultFrameMax is the frame-max Connection.Tune offers. A client may
+// lower it in Tune-Ok, down to amqpMinFrameMax.
+const amqpDefaultFrameMax uint32 = 131072
+
+// amqpMinFrameMax is the smallest frame-max AMQP 0-9-1 lets a peer negotiate.
+const amqpMinFrameMax uint32 = 4096
+
+// amqpFrameOverhead is the bytes a frame adds around its payload: the
+// 7-byte header and the frame-end octet.
+const amqpFrameOverhead = 8
 
 // amqpQueueState holds the state for an AMQP queue.
 type amqpQueueState struct {
@@ -517,6 +534,7 @@ func (h *AMQPHandler) deliverMessages(ctx context.Context, conn *websocket.Conn,
 					break
 				}
 			}
+			frameMax := state.frameMax
 			state.mu.RUnlock()
 
 			if !found {
@@ -526,7 +544,7 @@ func (h *AMQPHandler) deliverMessages(ctx context.Context, conn *websocket.Conn,
 			deliveryTag++
 
 			// Build Basic.Deliver frame
-			deliverFrame := h.buildBasicDeliver(consumer.channel, consumer.consumerTag, deliveryTag, delivery.queue, delivery.payload)
+			deliverFrame := h.buildBasicDeliver(consumer.channel, consumer.consumerTag, deliveryTag, delivery.queue, delivery.payload, frameMax)
 
 			if err := conn.Write(ctx, websocket.MessageBinary, deliverFrame); err != nil {
 				return
@@ -767,9 +785,9 @@ func (h *AMQPHandler) handleConnectionStartOk(ctx context.Context, frame *AMQPFr
 	// Parse client properties and authentication (simplified)
 	// Send Connection.Tune
 	tuneArgs := &bytes.Buffer{}
-	_ = binary.Write(tuneArgs, binary.BigEndian, uint16(2047))   // channel-max
-	_ = binary.Write(tuneArgs, binary.BigEndian, uint32(131072)) // frame-max
-	_ = binary.Write(tuneArgs, binary.BigEndian, uint16(60))     // heartbeat
+	_ = binary.Write(tuneArgs, binary.BigEndian, uint16(2047))        // channel-max
+	_ = binary.Write(tuneArgs, binary.BigEndian, amqpDefaultFrameMax) // frame-max
+	_ = binary.Write(tuneArgs, binary.BigEndian, uint16(60))          // heartbeat
 
 	return h.buildMethodFrame(0, ClassConnection, MethodConnectionTune, tuneArgs.Bytes()), nil
 }
@@ -779,16 +797,30 @@ func (h *AMQPHandler) handleConnectionSecureOk(ctx context.Context, frame *AMQPF
 	// SASL authentication challenge/response
 	// For PLAIN mechanism, just proceed to Tune
 	tuneArgs := &bytes.Buffer{}
-	_ = binary.Write(tuneArgs, binary.BigEndian, uint16(2047))   // channel-max
-	_ = binary.Write(tuneArgs, binary.BigEndian, uint32(131072)) // frame-max
-	_ = binary.Write(tuneArgs, binary.BigEndian, uint16(60))     // heartbeat
+	_ = binary.Write(tuneArgs, binary.BigEndian, uint16(2047))        // channel-max
+	_ = binary.Write(tuneArgs, binary.BigEndian, amqpDefaultFrameMax) // frame-max
+	_ = binary.Write(tuneArgs, binary.BigEndian, uint16(60))          // heartbeat
 
 	return h.buildMethodFrame(0, ClassConnection, MethodConnectionTune, tuneArgs.Bytes()), nil
 }
 
 // handleConnectionTuneOk handles Connection.Tune-Ok.
 func (h *AMQPHandler) handleConnectionTuneOk(ctx context.Context, frame *AMQPFrame, args []byte, session *ws.Session, state *amqpClientState) ([]byte, error) {
-	// Client accepted tune parameters, waiting for Connection.Open
+	// Tune-Ok: channel-max (short), frame-max (long), heartbeat (short).
+	if len(args) < 6 {
+		return nil, &ErrAMQPProtocolError{Message: "invalid Connection.Tune-Ok arguments"}
+	}
+	frameMax := binary.BigEndian.Uint32(args[2:6])
+	switch {
+	case frameMax == 0 || frameMax > amqpDefaultFrameMax:
+		frameMax = amqpDefaultFrameMax
+	case frameMax < amqpMinFrameMax:
+		frameMax = amqpMinFrameMax
+	}
+	state.mu.Lock()
+	state.frameMax = frameMax
+	state.mu.Unlock()
+	// Waiting for Connection.Open.
 	return nil, nil
 }
 
@@ -1794,6 +1826,7 @@ func (h *AMQPHandler) handleBasicGet(ctx context.Context, frame *AMQPFrame, args
 	if ch != nil {
 		deliveryTag = ch.nextDeliveryTag
 	}
+	frameMax := state.frameMax
 	state.mu.Unlock()
 
 	if message == nil {
@@ -1812,7 +1845,7 @@ func (h *AMQPHandler) handleBasicGet(ctx context.Context, frame *AMQPFrame, args
 	_ = binary.Write(getOkArgs, binary.BigEndian, messageCount)
 
 	methodFrame := h.buildMethodFrame(frame.Channel, ClassBasic, MethodBasicGetOk, getOkArgs.Bytes())
-	return append(methodFrame, h.buildContentFrames(frame.Channel, message)...), nil
+	return append(methodFrame, h.buildContentFrames(frame.Channel, message, frameMax)...), nil
 }
 
 // handleBasicAck handles Basic.Ack.
@@ -1952,7 +1985,7 @@ func (h *AMQPHandler) buildChannelClose(channel uint16, replyCode uint16, replyT
 
 // buildBasicDeliver builds a Basic.Deliver method frame followed by its
 // content header and, for a non-empty payload, its body frame.
-func (h *AMQPHandler) buildBasicDeliver(channel uint16, consumerTag string, deliveryTag uint64, routingKey string, payload []byte) []byte {
+func (h *AMQPHandler) buildBasicDeliver(channel uint16, consumerTag string, deliveryTag uint64, routingKey string, payload []byte, frameMax uint32) []byte {
 	// Build method frame
 	// Basic.Deliver: consumer-tag (shortstring), delivery-tag (longlong), redelivered (bit), exchange (shortstring), routing-key (shortstring)
 	methodArgs := &bytes.Buffer{}
@@ -1964,21 +1997,31 @@ func (h *AMQPHandler) buildBasicDeliver(channel uint16, consumerTag string, deli
 
 	methodFrame := h.buildMethodFrame(channel, ClassBasic, MethodBasicDeliver, methodArgs.Bytes())
 
-	return append(methodFrame, h.buildContentFrames(channel, payload)...)
+	return append(methodFrame, h.buildContentFrames(channel, payload, frameMax)...)
 }
 
 // buildContentFrames builds the content header frame for payload and, when
-// payload is not empty, its body frame. AMQP 0-9-1 sends the content
+// payload is not empty, its body frames, each no larger than frameMax bytes
+// encoded (0 means amqpDefaultFrameMax). AMQP 0-9-1 sends the content
 // header after Basic.Deliver and Basic.Get-Ok even when the body is empty.
-func (h *AMQPHandler) buildContentFrames(channel uint16, payload []byte) []byte {
+func (h *AMQPHandler) buildContentFrames(channel uint16, payload []byte, frameMax uint32) []byte {
+	if frameMax == 0 {
+		frameMax = amqpDefaultFrameMax
+	}
+	if frameMax < amqpMinFrameMax {
+		frameMax = amqpMinFrameMax
+	}
 	headerPayload := &bytes.Buffer{}
 	_ = binary.Write(headerPayload, binary.BigEndian, ClassBasic)           // class-id
 	_ = binary.Write(headerPayload, binary.BigEndian, uint16(0))            // weight (reserved)
 	_ = binary.Write(headerPayload, binary.BigEndian, uint64(len(payload))) // body-size
 	_ = binary.Write(headerPayload, binary.BigEndian, uint16(0))            // property-flags (no properties)
 	result := h.buildFrame(FrameHeader, channel, headerPayload.Bytes())
-	if len(payload) > 0 {
-		result = append(result, h.buildFrame(FrameBody, channel, payload)...)
+	chunk := int(frameMax) - amqpFrameOverhead
+	for rest := payload; len(rest) > 0; {
+		n := min(chunk, len(rest))
+		result = append(result, h.buildFrame(FrameBody, channel, rest[:n])...)
+		rest = rest[n:]
 	}
 	return result
 }
