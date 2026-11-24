@@ -23,6 +23,7 @@ import (
 // carried across: any grant held only in the first provider's process memory
 // is gone, exactly as it is after a daemon restart.
 func TestSessionRefresh_SurvivesADaemonRestart(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant(burninTenant)
 

@@ -82,6 +82,7 @@ func (f *faultyTokenStorage) disarm() []string {
 // refresh record) may stay live, and a successful retry still revokes the
 // presented credential.
 func TestRefreshSession_AFailedRotationLeavesTheChainRedeemable(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		arm  func(f *faultyTokenStorage, presentedJTI string)
@@ -100,6 +101,7 @@ func TestRefreshSession_AFailedRotationLeavesTheChainRedeemable(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			provider, memory := newSessionRefreshProvider(t, 15*time.Minute, 7*24*time.Hour)
 			faulty := &faultyTokenStorage{MemoryStorage: memory}
 			provider.tokenService.storage = faulty

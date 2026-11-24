@@ -50,6 +50,7 @@ func assertIntrospectActive(t *testing.T, provider *OIDCProvider, token string) 
 }
 
 func TestRevokeToken_UnverifiedJWTRevokesNothing(t *testing.T) {
+	t.Parallel()
 	provider, _, _, _, _ := createTestOIDCProvider(t)
 	attacker, _, _, _, _ := createTestOIDCProvider(t)
 	ctx := context.Background()
@@ -100,6 +101,7 @@ func TestRevokeToken_UnverifiedJWTRevokesNothing(t *testing.T) {
 }
 
 func TestRevokeToken_SignedAccessTokenRevoked(t *testing.T) {
+	t.Parallel()
 	provider, _, _, _, _ := createTestOIDCProvider(t)
 	ctx := context.Background()
 
@@ -119,6 +121,7 @@ func TestRevokeToken_SignedAccessTokenRevoked(t *testing.T) {
 }
 
 func TestRevokeToken_StoredRefreshTokenRevokedByValue(t *testing.T) {
+	t.Parallel()
 	provider, _, _, _, _ := createTestOIDCProvider(t)
 	ctx := context.Background()
 
@@ -163,6 +166,7 @@ func TestRevokeToken_StoredRefreshTokenRevokedByValue(t *testing.T) {
 // verifier, and revocation acts only on claims the verified parse returns,
 // which refuses an expired token. Revoking it reports the token unknown.
 func TestRevokeToken_ExpiredSignedTokenNotRevocable(t *testing.T) {
+	t.Parallel()
 	provider, _, _, _, _ := createTestOIDCProvider(t)
 	ctx := context.Background()
 

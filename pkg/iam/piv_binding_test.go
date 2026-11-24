@@ -24,6 +24,7 @@ import (
 // TestUser_PIVBindingHelpers exercises the PIV cert-binding helpers on the user
 // model: setting, listing, single-value access, and the non-expired predicate.
 func TestUser_PIVBindingHelpers(t *testing.T) {
+	t.Parallel()
 	u := &User{ID: 1, TenantID: "t1"}
 
 	// Empty user: every accessor reports no binding.
@@ -74,6 +75,7 @@ func TestUser_PIVBindingHelpers(t *testing.T) {
 // TestUser_SetPIVThumbprint_PreservesNonPIVBindings verifies SetPIVThumbprint
 // only touches PIV-attested bindings and leaves other binding kinds intact.
 func TestUser_SetPIVThumbprint_PreservesNonPIVBindings(t *testing.T) {
+	t.Parallel()
 	u := &User{ID: 1, TenantID: "t1"}
 	u.CertBindings = []qrdbsdk.CertBinding{
 		{Thumbprint: "spki-1", Kind: qrdbsdk.CertBindingSPKIThumbprint},
@@ -105,6 +107,7 @@ func TestUser_SetPIVThumbprint_PreservesNonPIVBindings(t *testing.T) {
 // TestUser_HasPIVThumbprint_ExpiredRejected ensures a PIV binding past its
 // NotAfter is never resolved — a decommissioned credential must fail closed.
 func TestUser_HasPIVThumbprint_ExpiredRejected(t *testing.T) {
+	t.Parallel()
 	now := time.Now().UTC()
 	u := &User{ID: 1, TenantID: "t1"}
 	u.CertBindings = []qrdbsdk.CertBinding{
@@ -124,6 +127,7 @@ func TestUser_HasPIVThumbprint_ExpiredRejected(t *testing.T) {
 // PIV binding is resolvable through any of its thumbprints, and that removing
 // one binding leaves the other resolvable.
 func TestMemoryStorage_PIV_MultiBindingLookup(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	storage := NewMemoryStorage()
 	if err := storage.CreateTenant(ctx, &Tenant{ID: "t1", Name: "Test"}); err != nil {
@@ -167,6 +171,7 @@ func TestMemoryStorage_PIV_MultiBindingLookup(t *testing.T) {
 // TestMemoryStorage_PIV_UnknownThumbprintFailsClosed verifies an unknown
 // thumbprint never resolves a user.
 func TestMemoryStorage_PIV_UnknownThumbprintFailsClosed(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	storage := NewMemoryStorage()
 	if err := storage.CreateTenant(ctx, &Tenant{ID: "t1", Name: "Test"}); err != nil {

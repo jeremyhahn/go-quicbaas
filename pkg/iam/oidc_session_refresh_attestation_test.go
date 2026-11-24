@@ -39,6 +39,7 @@ import (
 // unattested one within one access-token lifetime, and a hardware-only policy
 // starts refusing — or worse, an operator relaxes the policy to compensate.
 func TestRefreshSession_ReplaysTheAttestationOfTheLoginThatProvedIt(t *testing.T) {
+	t.Parallel()
 	provider, storage := newSessionRefreshProvider(t, 15*time.Minute, 7*24*time.Hour)
 	ctx := context.Background()
 
@@ -78,6 +79,7 @@ func TestRefreshSession_ReplaysTheAttestationOfTheLoginThatProvedIt(t *testing.T
 // proved, and a login that proved nothing must renew into a bearer that still
 // says nothing. A refresh is not an opportunity to acquire assurance.
 func TestRefreshSession_InventsNoAttestationForAnUnattestedSession(t *testing.T) {
+	t.Parallel()
 	provider, storage := newSessionRefreshProvider(t, 15*time.Minute, 7*24*time.Hour)
 	ctx := context.Background()
 
@@ -118,6 +120,7 @@ func TestRefreshSession_InventsNoAttestationForAnUnattestedSession(t *testing.T)
 // persisted, and every renewal for the whole refresh lifetime repeated it long
 // after the login that made it was gone.
 func TestRefreshSession_MFAAssuranceSurvivesRenewalWithoutBeingInvented(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name        string
 		amr         []string
@@ -140,6 +143,7 @@ func TestRefreshSession_MFAAssuranceSurvivesRenewalWithoutBeingInvented(t *testi
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			provider, storage := newSessionRefreshProvider(t, 15*time.Minute, 7*24*time.Hour)
 			ctx := context.Background()
 			user := seedCeremonyUser(t, storage, "acme", "renewing-user", []string{"admin"})
