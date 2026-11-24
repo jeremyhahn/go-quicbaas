@@ -21,6 +21,7 @@ import (
 // TestUserInfoSubject_PrefersTheImmutableUIDClaim: when the token carries uid,
 // it names the record directly and no string matching happens at all.
 func TestUserInfoSubject_PrefersTheImmutableUIDClaim(t *testing.T) {
+	t.Parallel()
 	provider, storage := newCeremonyProvider(t, nil)
 	ctx := context.Background()
 
@@ -53,6 +54,7 @@ func TestUserInfoSubject_PrefersTheImmutableUIDClaim(t *testing.T) {
 // service-principal case below, which the UUID guard that used to sit there did
 // not cover.
 func TestUserInfoSubject_RequiresTheUIDClaim(t *testing.T) {
+	t.Parallel()
 	provider, storage := newCeremonyProvider(t, nil)
 	ctx := context.Background()
 
@@ -89,6 +91,7 @@ func TestUserInfoSubject_RequiresTheUIDClaim(t *testing.T) {
 // under the token's own sub. A UUID-shaped-subject guard never saw it, because
 // a client id is not UUID-shaped.
 func TestUserInfoSubject_ServicePrincipalGetsNoUserProfile(t *testing.T) {
+	t.Parallel()
 	provider, storage := newCeremonyProvider(t, nil)
 	ctx := context.Background()
 
@@ -119,6 +122,7 @@ func TestUserInfoSubject_ServicePrincipalGetsNoUserProfile(t *testing.T) {
 // the path that used to guess its liveness from the subject string is gone, and
 // an unrecognised token is denied rather than resolved.
 func TestPrincipalLive_NeitherClaimIsDenied(t *testing.T) {
+	t.Parallel()
 	provider, storage := newCeremonyProvider(t, nil)
 	ctx := context.Background()
 
@@ -144,6 +148,7 @@ func TestPrincipalLive_NeitherClaimIsDenied(t *testing.T) {
 // TestPrincipalLive_StillHonoursBothClaims proves the denial above is specific:
 // the two claims a current mint sets still decide liveness.
 func TestPrincipalLive_StillHonoursBothClaims(t *testing.T) {
+	t.Parallel()
 	provider, storage := newCeremonyProvider(t, nil)
 	ctx := context.Background()
 
@@ -176,8 +181,10 @@ func TestPrincipalLive_StillHonoursBothClaims(t *testing.T) {
 // subject's right to use it is what the lifecycle exists to catch, and
 // revocation cannot retroactively un-issue one.
 func TestUserInfo_RefusesAnAccountThatMayNotAuthenticate(t *testing.T) {
+	t.Parallel()
 	for _, state := range []Lifecycle{LifecycleDisabled, LifecycleSuspended, LifecycleLocked, LifecycleDeleting} {
 		t.Run(string(state), func(t *testing.T) {
+			t.Parallel()
 			provider, storage := newCeremonyProvider(t, nil)
 			ctx := context.Background()
 

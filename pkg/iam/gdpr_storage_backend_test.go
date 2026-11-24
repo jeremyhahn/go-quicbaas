@@ -24,6 +24,7 @@ import (
 // (a)/(b) A consent for a barrier tenant lands in its store; by-id update routes
 // via the encoded id.
 func TestBackendConsentStorage_BarrierAndByID(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	tenantStore := kv.barrierTenant("acme")
 	store := NewBackendConsentStorage(kv, nil)
@@ -68,6 +69,7 @@ func TestBackendConsentStorage_BarrierAndByID(t *testing.T) {
 
 // (c) Consent sealed fail-closed.
 func TestBackendConsentStorage_SealedFailsClosed(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	kv.sealTenant("acme")
@@ -88,6 +90,7 @@ func TestBackendConsentStorage_SealedFailsClosed(t *testing.T) {
 
 // (b) Export request by-id get routes via the encoded id.
 func TestBackendDataExportStorage_ByID(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	store := NewBackendDataExportStorage(kv, nil)
@@ -123,6 +126,7 @@ func TestBackendDataExportStorage_ByID(t *testing.T) {
 // (b) Deletion request by-id get routes via the encoded id; cross-tenant get
 // for the wrong tenant returns not-found (isolation).
 func TestBackendDeletionStorage_ByIDAndIsolation(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	kv.barrierTenant("globex")
@@ -154,6 +158,7 @@ func TestBackendDeletionStorage_ByIDAndIsolation(t *testing.T) {
 
 // (c) Deletion sealed fail-closed.
 func TestBackendDeletionStorage_SealedFailsClosed(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	kv.sealTenant("acme")
@@ -173,6 +178,7 @@ func TestBackendDeletionStorage_SealedFailsClosed(t *testing.T) {
 
 // ListConsents with a tenant filter routes directly to that tenant.
 func TestBackendConsentStorage_ListByTenantFilter(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	kv.barrierTenant("globex")

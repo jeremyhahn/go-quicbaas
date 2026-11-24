@@ -45,6 +45,7 @@ func extSession(tenantID string, userID uint64, id, tokenHash string) *SessionEx
 
 // (a) A barrier tenant's session lands in its own store, absent from shared.
 func TestBackendSessionStorage_BarrierIsolation(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	tenantStore := kv.barrierTenant("acme")
 	store := NewBackendSessionStorage(kv, nil)
@@ -78,6 +79,7 @@ func TestBackendSessionStorage_BarrierIsolation(t *testing.T) {
 
 // (c) Sealed tenant fails closed with no shared fallback.
 func TestBackendSessionStorage_SealedFailsClosed(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	kv.sealTenant("acme")
@@ -94,6 +96,7 @@ func TestBackendSessionStorage_SealedFailsClosed(t *testing.T) {
 
 // DeleteExpiredSessions sweeps per tenant via the lister.
 func TestBackendSessionStorage_DeleteExpiredPerTenant(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	kv.barrierTenant("globex")
@@ -120,6 +123,7 @@ func TestBackendSessionStorage_DeleteExpiredPerTenant(t *testing.T) {
 
 // (a)/(b) SessionExt barrier isolation + GetByToken routes by context tenant.
 func TestBackendSessionExtStorage_TokenLookup(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	tenantStore := kv.barrierTenant("acme")
 	store := NewBackendSessionExtStorage(kv, nil)
@@ -157,6 +161,7 @@ func TestBackendSessionExtStorage_TokenLookup(t *testing.T) {
 
 // SessionExt sealed fail-closed.
 func TestBackendSessionExtStorage_SealedFailsClosed(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	kv.sealTenant("acme")
@@ -173,6 +178,7 @@ func TestBackendSessionExtStorage_SealedFailsClosed(t *testing.T) {
 
 // ListByUserActive filters expired sessions; DeleteAllExcept keeps one.
 func TestBackendSessionExtStorage_ListAndDeleteAllExcept(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	store := NewBackendSessionExtStorage(kv, nil)

@@ -88,6 +88,7 @@ func mintPIVAttestationCert(
 // It chains to the configured anchor. It must still not be hardware, because
 // nothing in it says a card ever existed.
 func TestPIVAttestationVerifier_LoginCertIsNeverItsOwnAttestation(t *testing.T) {
+	t.Parallel()
 	orgKey, orgCA := mintCA(t, "Acme Corp Issuing CA", nil, nil)
 
 	softwareKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -123,6 +124,7 @@ func TestPIVAttestationVerifier_LoginCertIsNeverItsOwnAttestation(t *testing.T) 
 // structural test except the one that matters: it is an ordinary client
 // certificate, and it says nothing about where the key lives.
 func TestPIVAttestationVerifier_SecondCertFromTheSameCAIsNotAttestation(t *testing.T) {
+	t.Parallel()
 	orgKey, orgCA := mintCA(t, "Acme Corp Issuing CA", nil, nil)
 
 	softwareKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -154,6 +156,7 @@ func TestPIVAttestationVerifier_SecondCertFromTheSameCAIsNotAttestation(t *testi
 // the same key, carrying the vendor attestation profile and chaining to the
 // vendor root.
 func TestPIVAttestationVerifier_AcceptsAProfiledSlotAttestation(t *testing.T) {
+	t.Parallel()
 	vendorKey, vendorRoot := mintCA(t, "Yubico PIV Attestation Root", nil, nil)
 	orgKey, orgCA := mintCA(t, "Acme Corp Issuing CA", nil, nil)
 
@@ -183,6 +186,7 @@ func TestPIVAttestationVerifier_AcceptsAProfiledSlotAttestation(t *testing.T) {
 // shaped like an attestation"; only the chain says "a vendor stands behind it".
 // Anyone can put an OID in a certificate they signed themselves.
 func TestPIVAttestationVerifier_ProfiledAttestationStillNeedsATrustedAnchor(t *testing.T) {
+	t.Parallel()
 	_, vendorRoot := mintCA(t, "Yubico PIV Attestation Root", nil, nil)
 	rogueKey, rogueRoot := mintCA(t, "Impostor Attestation Root", nil, nil)
 

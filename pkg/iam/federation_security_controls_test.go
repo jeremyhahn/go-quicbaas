@@ -24,6 +24,7 @@ import (
 // email_verified == false must be REJECTED on the JIT/linking-by-email path,
 // and no user may be provisioned (account-takeover guard).
 func TestHandleCallback_EmailNotVerifiedRejected(t *testing.T) {
+	t.Parallel()
 	h := newCallbackHarness(t, nil, []string{"role-default"})
 	stateToken, nonce := h.begin(t)
 
@@ -48,6 +49,7 @@ func TestHandleCallback_EmailNotVerifiedRejected(t *testing.T) {
 // Gap 1 (variant): a missing email_verified claim is treated as NOT verified
 // (fail-closed) when email-based JIT is in play.
 func TestHandleCallback_EmailVerifiedMissingRejected(t *testing.T) {
+	t.Parallel()
 	h := newCallbackHarness(t, nil, []string{"role-default"})
 	stateToken, nonce := h.begin(t)
 
@@ -69,6 +71,7 @@ func TestHandleCallback_EmailVerifiedMissingRejected(t *testing.T) {
 // Gap 2: AllowedEmailDomains gating. An email outside the allowlist is rejected;
 // inside is allowed; an empty list allows all.
 func TestHandleCallback_AllowedEmailDomains(t *testing.T) {
+	t.Parallel()
 	t.Run("outside allowlist rejected", func(t *testing.T) {
 		h := newCallbackHarness(t, nil, []string{"role-default"})
 		h.provider.AllowedEmailDomains = []string{"corp.example"}
@@ -124,6 +127,7 @@ func TestHandleCallback_AllowedEmailDomains(t *testing.T) {
 
 // Gap 3: empty-email hard reject when linking/JIT-by-email is in play.
 func TestHandleCallback_EmptyEmailRejected(t *testing.T) {
+	t.Parallel()
 	h := newCallbackHarness(t, nil, []string{"role-default"})
 	// AllowLinking is true in the harness; AutoProvision is true too.
 	stateToken, nonce := h.begin(t)
@@ -146,6 +150,7 @@ func TestHandleCallback_EmptyEmailRejected(t *testing.T) {
 // DefaultRoles, the login is denied with no zero-role user. With it false, the
 // DefaultRoles fallback applies as before.
 func TestHandleCallback_RequireExplicitRoleMapping(t *testing.T) {
+	t.Parallel()
 	t.Run("true + no roles resolvable -> denied", func(t *testing.T) {
 		// No mappings, no defaults: resolution yields zero roles.
 		h := newCallbackHarness(t, nil, nil)

@@ -29,6 +29,7 @@ import (
 // identifying messages and unwrap chains (CLAUDE.md mandates typed errors, so
 // their behavior is part of the contract).
 func TestSigningKeyManagerErrorTypes(t *testing.T) {
+	t.Parallel()
 	unknown := &UnknownKeyIDError{KID: "abc123"}
 	if !strings.Contains(unknown.Error(), "abc123") {
 		t.Fatalf("UnknownKeyIDError must name the kid, got %q", unknown.Error())
@@ -58,6 +59,7 @@ func TestSigningKeyManagerErrorTypes(t *testing.T) {
 // guards on every read path. A zero-value manager (no snapshot stored) must
 // degrade to safe, typed errors and empty results rather than panic.
 func TestSigningKeyManagerUninitializedSnapshot(t *testing.T) {
+	t.Parallel()
 	var m SigningKeyManager // no snapshot stored
 
 	kid, signer, alg := m.Current()
@@ -91,6 +93,7 @@ func TestSigningKeyManagerUninitializedSnapshot(t *testing.T) {
 // TestNewSigningKeyManagerMissingCNTypedError pins the typed error returned when
 // the signing key common name is empty.
 func TestNewSigningKeyManagerMissingCNTypedError(t *testing.T) {
+	t.Parallel()
 	_, err := NewSigningKeyManagerFromXKMS("", "")
 	var cfgErr *OIDCConfigRequiredError
 	if !errors.As(err, &cfgErr) {
@@ -102,6 +105,7 @@ func TestNewSigningKeyManagerMissingCNTypedError(t *testing.T) {
 // in-place rotation carries the resolved store type and the ECDSA P-256 signing
 // segments, which backends require to address the key for regeneration.
 func TestRotationKIDFormat(t *testing.T) {
+	t.Parallel()
 	m := &SigningKeyManager{cn: "oidc-signing", storeType: "software"}
 	got := m.rotationKID()
 	const want = "software:signing:ecdsa-p256:oidc-signing"
@@ -114,6 +118,7 @@ func TestRotationKIDFormat(t *testing.T) {
 // in-process signer signs with that signer under the SPKI-derived kid,
 // publishes the same kid in its JWKS, and refuses to rotate.
 func TestNewSigningKeyManagerFromSigner(t *testing.T) {
+	t.Parallel()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatalf("generate key: %v", err)
@@ -160,6 +165,7 @@ func (unmarshalableSigner) Sign(io.Reader, []byte, crypto.SignerOpts) ([]byte, e
 // TestNewSigningKeyManagerFromSignerErrors pins the typed errors for a missing
 // signer, a missing algorithm, and a public key no kid can be derived from.
 func TestNewSigningKeyManagerFromSignerErrors(t *testing.T) {
+	t.Parallel()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatalf("generate key: %v", err)
@@ -176,6 +182,7 @@ func TestNewSigningKeyManagerFromSignerErrors(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			_, err := NewSigningKeyManagerFromSigner(tt.signer, tt.alg)
 			var required *OIDCConfigRequiredError
 			if !errors.As(err, &required) || required.Field != tt.field {
