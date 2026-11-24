@@ -79,6 +79,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
 	"math/big"
 	"net"
 	"net/http"
@@ -179,31 +180,6 @@ func allocBarrierPort(t *testing.T) int {
 	return 0
 }
 
-// allocBarrierUDPPort reserves a free UDP port for the QUIC listener.
-func allocBarrierUDPPort(t *testing.T) int {
-	t.Helper()
-	for attempt := 0; attempt < daemonPortRetries; attempt++ {
-		conn, err := net.ListenPacket("udp", "127.0.0.1:0")
-		if err != nil {
-			continue
-		}
-		port := conn.LocalAddr().(*net.UDPAddr).Port
-		if cerr := conn.Close(); cerr != nil {
-			t.Fatalf("close port-allocation packet conn: %v", cerr)
-		}
-		allocatedBarrierPortsMu.Lock()
-		_, taken := allocatedBarrierPorts[port]
-		if !taken {
-			allocatedBarrierPorts[port] = struct{}{}
-			allocatedBarrierPortsMu.Unlock()
-			return port
-		}
-		allocatedBarrierPortsMu.Unlock()
-	}
-	t.Fatalf("allocBarrierUDPPort: %d retries exhausted", daemonPortRetries)
-	return 0
-}
-
 // allocBarrierPorts reserves the full port set the per-test daemon needs
 // to serve every transport the barrier matrix exercises. Unix socket
 // lives under the data dir so it is removed automatically when t.TempDir
@@ -211,10 +187,15 @@ func allocBarrierUDPPort(t *testing.T) int {
 // AF_UNIX 108-byte limit when t.TempDir prefixes are long.
 func allocBarrierPorts(t *testing.T, dataDir string) barrierDaemonPorts {
 	t.Helper()
+	rest := allocBarrierPort(t)
 	return barrierDaemonPorts{
-		REST: allocBarrierPort(t),
+		REST: rest,
 		GRPC: allocBarrierPort(t),
-		QUIC: allocBarrierUDPPort(t),
+		// quicbaasd starts no QUIC listener of its own: it serves QUIC as
+		// REST over HTTP/3 on the UDP side of the REST port, and no config
+		// key gives QUIC a port. Probing a separately allocated UDP port
+		// therefore never succeeds.
+		QUIC: rest,
 		MCP:  allocBarrierPort(t),
 		Unix: filepath.Join(dataDir, "d.sock"),
 	}
@@ -376,10 +357,9 @@ func findBarrierRepoRoot() (string, error) {
 // strategy REJECTS them. These are throwaway test credentials — the
 // per-test daemon has no PINBackend, so they only satisfy the init flag
 // contract and are never consulted at runtime.
-const (
-	defaultBarrierSOPin   = "SO-PIN-TEST-0001"
-	defaultBarrierUserPin = "USER-PIN-TEST-0001"
-)
+// defaultBarrierSOPin is declared in barrier_commands.go, a non-test file,
+// because barrierSealSOPinEnv there uses it too.
+const defaultBarrierUserPin = "USER-PIN-TEST-0001"
 
 // barrierDaemonOptions parameterises the per-test daemon's `quicbaasd
 // init` ceremony. The CONFIRMED model is server-init-first: the daemon is
@@ -476,6 +456,7 @@ func spawnFreshBarrierDaemon(t *testing.T, opts barrierDaemonOptions) (*barrierD
 	// chosen strategy. The runtime client never re-inits over the network.
 	initArgs := []string{
 		"init",
+		"--config", writeBarrierInitConfig(t, dataDir),
 		"--barrier-strategy", opts.Strategy,
 		"--data-dir", dataDir,
 	}
@@ -577,6 +558,9 @@ func sealBarrierDaemon(t *testing.T, d *barrierDaemon) {
 		"barrier", "seal", "-y",
 	}
 	cmd := exec.CommandContext(ctx, binary, args...) // #nosec G204 - args produced by the test
+	// A network seal is authenticated by the SO PIN that init provisioned;
+	// the env var keeps it off argv.
+	cmd.Env = commandEnv(nil, barrierSealSOPinEnv())
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("seal per-test daemon (barrier seal -y over REST) failed: %v\noutput:\n%s", err, out)
@@ -591,9 +575,13 @@ func sealBarrierDaemon(t *testing.T, d *barrierDaemon) {
 // require_authz=false with network transports enabled unless the dev-only
 // escape hatch is set, so both keys are required. NEVER use this posture in
 // production.
+//
+// The file also carries iam.spiffe_trust_domain, as the init config does:
+// on a non-durable engine start runs first-boot again, and first-boot
+// refuses to issue the admin certificate without a trust domain.
 func writeBarrierInsecurePostureConfig(t *testing.T, dataDir string) string {
 	t.Helper()
-	const insecurePosture = `# Test-only security posture for the hermetic per-test barrier daemon.
+	insecurePosture := "iam:\n  spiffe_trust_domain: " + barrierTrustDomain + "\n" + `# Test-only security posture for the hermetic per-test barrier daemon.
 # Mirrors test/integration/quicbaas.yaml: the daemon has no IAM bootstrap,
 # so post-unseal barrier verbs must be reachable without a bearer token.
 security:
@@ -607,13 +595,36 @@ security:
 	return path
 }
 
+// barrierTrustDomain is the SPIFFE trust domain the per-test barrier daemon
+// is initialised under. quicbaasd init refuses to run without one, and it is
+// read only from a config file.
+const barrierTrustDomain = "quicbaas.barrier.test"
+
+// writeBarrierInitConfig writes the config file quicbaasd init needs (the
+// trust domain) into dataDir and returns its path for --config.
+func writeBarrierInitConfig(t *testing.T, dataDir string) string {
+	t.Helper()
+	path := filepath.Join(dataDir, "init-config.yaml")
+	body := "iam:\n  spiffe_trust_domain: " + barrierTrustDomain + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("write barrier init config %s: %v", path, err)
+	}
+	return path
+}
+
 // startBarrierDaemonProcess launches quicbaasd start with every transport
 // enabled against the supplied port bundle. For the passphrase strategy the
 // daemon is started with the seal posture matching `quicbaasd init`
 // (QUICBAAS_SEAL_ENABLED/STRATEGY/PASSPHRASE) so it can decrypt the
 // encfs-encrypted data plane and auto-unseal — the same contract as
 // test/integration/init/helpers.go startDaemon.
-func startBarrierDaemonProcess(t *testing.T, binary, dataDir string, ports barrierDaemonPorts, opts barrierDaemonOptions) *barrierDaemon {
+// barrierStartArgs builds the `quicbaasd start` arguments of a per-test
+// barrier daemon. Every start reads a config file that carries
+// iam.spiffe_trust_domain, as init does: on a non-durable engine start runs
+// first-boot again, and first-boot refuses to issue the admin certificate
+// without a trust domain. An enforcing daemon reads the init config (trust
+// domain only); every other daemon reads the insecure-posture config.
+func barrierStartArgs(t *testing.T, dataDir string, ports barrierDaemonPorts, opts barrierDaemonOptions) []string {
 	t.Helper()
 
 	args := []string{
@@ -629,8 +640,15 @@ func startBarrierDaemonProcess(t *testing.T, binary, dataDir string, ports barri
 		// (bindEnvVars covers seal/server/raft/... but not security.require_
 		// authz), so the acknowledged insecure posture must travel via a
 		// --config file. See barrierDaemonOptions.EnforceAuthz.
-		args = append(args, "--config", writeBarrierInsecurePostureConfig(t, dataDir))
+		return append(args, "--config", writeBarrierInsecurePostureConfig(t, dataDir))
 	}
+	return append(args, "--config", writeBarrierInitConfig(t, dataDir))
+}
+
+func startBarrierDaemonProcess(t *testing.T, binary, dataDir string, ports barrierDaemonPorts, opts barrierDaemonOptions) *barrierDaemon {
+	t.Helper()
+
+	args := barrierStartArgs(t, dataDir, ports, opts)
 
 	env := []string{
 		"PATH=" + os.Getenv("PATH"),
@@ -640,9 +658,8 @@ func startBarrierDaemonProcess(t *testing.T, binary, dataDir string, ports barri
 		// Discovery + scheduler do not add coverage to barrier tests; off.
 		"QUICBAAS_DISCOVERY_ENABLED=false",
 		"QUICBAAS_ENABLE_SCHEDULER=false",
-		// QUIC + MCP listeners have no CLI flags; drive via env.
-		"QUICBAAS_SERVER_QUIC_ENABLED=true",
-		fmt.Sprintf("QUICBAAS_SERVER_QUIC_PORT=%d", ports.QUIC),
+		// MCP has no CLI flag; drive it via env. QUIC needs no switch:
+		// HTTP/3 comes up with REST on the REST port.
 		"QUICBAAS_SERVER_MCP_ENABLED=true",
 		fmt.Sprintf("QUICBAAS_SERVER_MCP_PORT=%d", ports.MCP),
 	}
@@ -709,10 +726,11 @@ func waitForBarrierDaemonReady(ctx context.Context, d *barrierDaemon) error {
 	ticker := time.NewTicker(daemonReadyPollInterval)
 	defer ticker.Stop()
 	caPath := filepath.Join(d.dataDir, "certs", "ca-chain.crt")
+	probes := barrierProbeErrors{ctx: ctx}
 	for {
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("barrier daemon not ready within %s: %w", daemonStartTimeout, ctx.Err())
+			return fmt.Errorf("barrier daemon not ready within %s: %w; last probe: %v", daemonStartTimeout, ctx.Err(), probes.last)
 		case <-d.Done():
 			return fmt.Errorf("barrier daemon exited before ready: wait_err=%v", d.WaitErr())
 		case <-ticker.C:
@@ -721,25 +739,46 @@ func waitForBarrierDaemonReady(ctx context.Context, d *barrierDaemon) error {
 			// missing/empty chain as "not ready yet" and keep polling.
 			tlsCfg, err := barrierProbeTLSConfig(caPath)
 			if err != nil {
+				probes.note(err)
 				continue
 			}
 			if err := probeBarrierREST(ctx, d.ports.REST, tlsCfg); err != nil {
+				probes.note(err)
 				continue
 			}
 			if err := probeBarrierTCP(ctx, d.ports.GRPC); err != nil {
+				probes.note(err)
 				continue
 			}
 			if err := probeBarrierUDP(ctx, d.ports.QUIC); err != nil {
+				probes.note(err)
 				continue
 			}
 			if err := probeBarrierTLS(ctx, d.ports.MCP, tlsCfg); err != nil {
+				probes.note(err)
 				continue
 			}
 			if err := probeBarrierUnix(ctx, d.ports.Unix); err != nil {
+				probes.note(err)
 				continue
 			}
 			return nil
 		}
+	}
+}
+
+// barrierProbeErrors keeps the most recent readiness probe failure so a
+// timeout names the gate that never opened. A probe the start deadline
+// itself cut short does not overwrite it: that error would only repeat the
+// deadline.
+type barrierProbeErrors struct {
+	ctx  context.Context
+	last error
+}
+
+func (p *barrierProbeErrors) note(err error) {
+	if p.last == nil || p.ctx.Err() == nil {
+		p.last = err
 	}
 }
 
@@ -750,34 +789,40 @@ func waitForBarrierDaemonReady(ctx context.Context, d *barrierDaemon) error {
 // GET /v1/barrier/status reporting sealed=true — mirroring how qrdb's
 // harness documents probing /v1/barrier/status while a node is sealed —
 // plus liveness probes for the remaining sealed-phase listeners.
+//
+// It probes exactly the listeners runSealedWindow (pkg/server/sealed_window.go)
+// starts: the sealed REST server and the sealed gRPC server on TCP and on the
+// Unix socket. The sealed window has no MCP listener and no QUIC (HTTP/3 or
+// QUIC transport) listener, so the MCP and QUIC ports stay closed until the
+// barrier is unsealed and the full boot runs; probing them here would never
+// succeed (a local run timed out on the QUIC UDP gate).
 func waitForSealedBarrierDaemonReady(ctx context.Context, d *barrierDaemon) error {
 	ticker := time.NewTicker(daemonReadyPollInterval)
 	defer ticker.Stop()
 	caPath := filepath.Join(d.dataDir, "certs", "ca-chain.crt")
+	probes := barrierProbeErrors{ctx: ctx}
 	for {
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("sealed barrier daemon not ready within %s: %w", daemonStartTimeout, ctx.Err())
+			return fmt.Errorf("sealed barrier daemon not ready within %s: %w; last probe: %v", daemonStartTimeout, ctx.Err(), probes.last)
 		case <-d.Done():
 			return fmt.Errorf("sealed barrier daemon exited before ready: wait_err=%v", d.WaitErr())
 		case <-ticker.C:
 			tlsCfg, err := barrierProbeTLSConfig(caPath)
 			if err != nil {
+				probes.note(err)
 				continue
 			}
 			if err := probeBarrierSealedStatus(ctx, d.ports.REST, tlsCfg); err != nil {
+				probes.note(err)
 				continue
 			}
 			if err := probeBarrierTCP(ctx, d.ports.GRPC); err != nil {
-				continue
-			}
-			if err := probeBarrierUDP(ctx, d.ports.QUIC); err != nil {
-				continue
-			}
-			if err := probeBarrierTLS(ctx, d.ports.MCP, tlsCfg); err != nil {
+				probes.note(err)
 				continue
 			}
 			if err := probeBarrierUnix(ctx, d.ports.Unix); err != nil {
+				probes.note(err)
 				continue
 			}
 			return nil
@@ -875,7 +920,8 @@ func probeBarrierREST(ctx context.Context, port int, tlsCfg *tls.Config) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("probeBarrierREST: %s -> %d", url, resp.StatusCode)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("probeBarrierREST: %s -> %d: %s", url, resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	return nil
 }
@@ -1080,6 +1126,7 @@ func runBarrierCommandWithStdin(t *testing.T, runner *TestRunner, cmd CommandDef
 	ctx, cancel := context.WithTimeout(context.Background(), timeout+5*time.Second)
 	defer cancel()
 	execCmd := exec.CommandContext(ctx, runner.binary, args...) // #nosec G204
+	execCmd.Env = commandEnv(nil, cmd.Env)
 	execCmd.Stdin = strings.NewReader(stdin)
 	var outBuf, errBuf bytes.Buffer
 	execCmd.Stdout = &outBuf
@@ -1521,20 +1568,21 @@ func TestBarrierSeal_RequiresConfirmation(t *testing.T) {
 }
 
 // TestBarrierSeal_SORequired exercises the --so-pin pass-through. The
-// seal verb accepts --so-pin uncoditionally per the canonical surface
-// (the SDK forwards it once the BarrierSeal request-bearing form lands).
-// Today we assert that --so-pin -y succeeds when the daemon does not
-// have a PINBackend configured (per-test daemon comes up with no
-// PINBackend), proving the flag is at least parsed and forwarded without
-// error.
+// per-test daemon provisions defaultBarrierSOPin at init and verifies the
+// SO PIN before it seals: a wrong PIN on --so-pin is refused and leaves the
+// barrier unsealed, and the provisioned PIN on --so-pin seals it.
 func TestBarrierSeal_SORequired(t *testing.T) {
 	const secret = "so-pin-secret"
 	opts := barrierDaemonOptions{Strategy: "passphrase", Secret: secret}
 	runForBarrierTransports(t, "SOPin", opts, func(t *testing.T, _ *barrierDaemon, runner *TestRunner) {
 		runner.RunAndAssert(BarrierUnsealCommand(secret))
-		// With --so-pin set and -y supplied: succeeds (the per-test daemon
-		// has no PINBackend, so the flag is parsed + ignored).
-		runner.RunAndAssert(BarrierSealWithSOPinCommand("SO-PIN-XYZ"))
+		// A PIN the daemon did not provision is refused; the barrier
+		// stays unsealed.
+		runner.RunAndAssert(BarrierSealWithWrongSOPinCommand("SO-PIN-XYZ"))
+		unsealed := false
+		assertBarrierStatus(t, runner, &unsealed, "passphrase")
+		// The provisioned PIN on --so-pin seals.
+		runner.RunAndAssert(BarrierSealWithSOPinCommand(defaultBarrierSOPin))
 		sealed := true
 		assertBarrierStatus(t, runner, &sealed, "passphrase")
 	})
@@ -1563,6 +1611,12 @@ func TestBarrierSeal_SORequired(t *testing.T) {
 // transport and the daemon's rejection is surfaced (not a CLI crash or a
 // malformed-envelope decode failure), so a regression in any transport's
 // BarrierRekey marshalling/decoding still fails in exactly one matrix cell.
+//
+// SO PIN: the per-test daemon provisions defaultBarrierSOPin at init and
+// the server verifies the SO PIN on rekey as it does on seal. The test first
+// proves that a rekey without the PIN is refused before the backend (the
+// refusal carries no "shamir not configured"), then sends the provisioned
+// PIN so every transport reaches the backend's rekey path.
 func TestBarrierRekey_Dispatch(t *testing.T) {
 	const oldSecret = "rekey-old-secret"
 	const shamirNotConfigured = "shamir not configured"
@@ -1571,6 +1625,16 @@ func TestBarrierRekey_Dispatch(t *testing.T) {
 		// Daemon came up SEALED after server-init; unseal so rekey operates
 		// on an unsealed barrier and reaches the backend's rekey path.
 		runner.RunAndAssert(BarrierUnsealCommand(oldSecret))
+
+		// Without the SO PIN the server refuses the rekey at the PIN check,
+		// before the backend, so its Shamir answer never surfaces.
+		noPinOut, noPinErr, err := runner.Run(BarrierRekeyWithoutSOPinCommand(2, 3))
+		require.Errorf(t, err,
+			"rekey without the SO PIN must be refused: stdout=%s stderr=%s",
+			noPinOut, noPinErr)
+		assert.NotContainsf(t, noPinOut+noPinErr, shamirNotConfigured,
+			"rekey without the SO PIN must be refused before the backend: stdout=%s stderr=%s",
+			noPinOut, noPinErr)
 
 		// The canonical rekey surface is SHARE-FREE: no secret travels on
 		// the request (`barrier rekey [--so-pin] [--threshold N --total M]`).
@@ -1640,6 +1704,10 @@ func TestBarrierRekey_ValidationErrors(t *testing.T) {
 // GenerateRecoveryKeys seals the generated shares to ENROLLED recovery
 // officers via the recovery distributor and returns metadata only; no key
 // material ever travels back to the caller (qrdb pkg/seal/recovery.go).
+// The per-test daemon provisions defaultBarrierSOPin at init and the server
+// verifies the SO PIN on recovery generate (as on seal and rekey), so the
+// test first proves a generate without `--so-pin` is refused at the PIN
+// check, before the distributor, then sends the provisioned PIN.
 // The per-test daemon has no enrolled officers (enrollment requires the
 // locked officer-ceremony flow), so generation is rejected with the
 // canonical "insufficient officers enrolled" error and there are no keys
@@ -1660,7 +1728,19 @@ func TestBarrierRecovery_Dispatch(t *testing.T) {
 		//    reaches the distributor (the root key must be in memory).
 		runner.RunAndAssert(BarrierUnsealCommand(secret))
 
-		// 2. recovery generate → rejected: no recovery officers enrolled.
+		// 2. Without the SO PIN the server refuses recovery generate at the
+		//    PIN check, before the distributor, so its officers answer
+		//    never surfaces.
+		noPinOut, noPinErr, err := runner.Run(BarrierRecoveryGenerateWithoutSOPinCommand(2, 3))
+		require.Errorf(t, err,
+			"recovery generate without the SO PIN must be refused: stdout=%s stderr=%s",
+			noPinOut, noPinErr)
+		assert.NotContainsf(t, noPinOut+noPinErr, "insufficient officers enrolled",
+			"recovery generate without the SO PIN must be refused before the distributor: stdout=%s stderr=%s",
+			noPinOut, noPinErr)
+
+		// 3. recovery generate with the provisioned SO PIN → rejected: no
+		//    recovery officers enrolled.
 		stdout, stderr, err := runner.Run(BarrierRecoveryGenerateCommand(2, 3))
 		combined := stdout + stderr
 		require.Errorf(t, err,
@@ -1672,7 +1752,7 @@ func TestBarrierRecovery_Dispatch(t *testing.T) {
 			"recovery generate must surface the canonical officers rejection: stdout=%s stderr=%s",
 			stdout, stderr)
 
-		// 3. Seal, then recovery recover with placeholder keys → rejected.
+		// 4. Seal, then recovery recover with placeholder keys → rejected.
 		//    GenerateRecoveryKeys persists the recovery METADATA before the
 		//    distributor runs, so after the officers rejection above the
 		//    daemon carries a 2-of-3 recovery meta with NO distributed
@@ -1711,7 +1791,7 @@ func TestBarrierRecovery_RecoverValidation(t *testing.T) {
 	runForBarrierTransports(t, "RecoverValidation", barrierValidationDaemonOpts, func(t *testing.T, _ *barrierDaemon, runner *TestRunner) {
 		stdout, stderr, err := runner.Run(BarrierRecoveryRecoverNoSharesCommand())
 		require.Errorf(t, err, "recovery recover with no shares must fail")
-		assert.Containsf(t, stdout+stderr, "--share is required",
+		assert.Containsf(t, stdout+stderr, "one of --share (repeatable) or --shares-file is required",
 			"canonical missing-share error missing: %s", stdout+stderr)
 	})
 }
@@ -1771,8 +1851,11 @@ func TestBarrierAuthPosture_DefaultDeny(t *testing.T) {
 	require.Errorf(t, err,
 		"post-unseal BarrierStatus without a token must be rejected: stdout=%s stderr=%s",
 		stdout, stderr)
-	assert.Containsf(t, stdout+stderr, "authentication required",
-		"post-unseal status must fail Unauthenticated: stdout=%s stderr=%s",
+	assert.Containsf(t, stdout+stderr, "code = Unauthenticated",
+		"post-unseal status must be gRPC Unauthenticated: stdout=%s stderr=%s",
+		stdout, stderr)
+	assert.Containsf(t, stdout+stderr, "platform bearer authorization is missing",
+		"post-unseal status must surface the missing bearer: stdout=%s stderr=%s",
 		stdout, stderr)
 
 	// 3. Post-unseal, a token-less re-seal is rejected 401 over REST. This
@@ -1789,9 +1872,9 @@ func TestBarrierAuthPosture_DefaultDeny(t *testing.T) {
 	require.Errorf(t, err,
 		"post-unseal BarrierSeal without a token must be rejected: stdout=%s stderr=%s",
 		stdout, stderr)
-	assert.Containsf(t, stdout+stderr, "401",
-		"post-unseal seal must fail 401 Unauthorized: stdout=%s stderr=%s", stdout, stderr)
-	assert.Containsf(t, stdout+stderr, "Missing or invalid authorization header",
+	assert.Containsf(t, stdout+stderr, "UNAUTHORIZED",
+		"post-unseal seal must fail with the CLI's rendering of HTTP 401: stdout=%s stderr=%s", stdout, stderr)
+	assert.Containsf(t, stdout+stderr, "platform bearer authorization is missing",
 		"post-unseal seal must surface the REST authz rejection: stdout=%s stderr=%s",
 		stdout, stderr)
 }

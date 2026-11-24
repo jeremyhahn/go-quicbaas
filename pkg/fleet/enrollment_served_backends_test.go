@@ -118,7 +118,7 @@ func TestEnroll_AdvertisesServedBackendsNotTransport(t *testing.T) {
 		"the transport kind is not a backend a task can route to")
 }
 
-// TestEnroll_AdvertisesGPUBesideServedBackends pins gpu-host's shape: the gpu
+// TestEnroll_AdvertisesGPUBesideServedBackends pins gpu-01's shape: the gpu
 // trait still rides along with the served list, because that is how the
 // scheduler filters to GPU-capable daemons.
 func TestEnroll_AdvertisesGPUBesideServedBackends(t *testing.T) {

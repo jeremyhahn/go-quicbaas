@@ -349,7 +349,7 @@ func TestHandleOrchestratorCost_NarrowsToAHost(t *testing.T) {
 		entries int
 	}{
 		"unattributed": {"-", 2},
-		"elsewhere":    {"gpu-host:9091", 0},
+		"elsewhere":    {"gpu-01:9091", 0},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {

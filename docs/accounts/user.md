@@ -153,7 +153,7 @@ quicbaas --tenant acme orchestrator cost
 quicbaas --tenant acme orchestrator cost --project p1
 quicbaas --tenant acme orchestrator cost --project p1 --task t1 --job j1
 quicbaas --tenant acme orchestrator cost --from 2026-01-01T00:00:00Z
-quicbaas --tenant acme orchestrator cost --host gpu-host.internal:9091
+quicbaas --tenant acme orchestrator cost --host gpu-01.internal:9091
 ```
 
 Each report has two money figures:
