@@ -204,11 +204,14 @@ func UnaryAuthorizationInterceptor(authorizer GRPCValidatorAuthorizer, opts ...A
 // as the method grant; a denial maps through validatorGRPCStatus, and a request
 // the table cannot read is refused (fail closed).
 func authorizeGRPCRequestFields(ctx context.Context, fullMethod string, req interface{}, authorizer GRPCValidatorAuthorizer, sealedBypass *sealedwindow.AuthBypass) error {
-	if isPublicGRPCMethod(fullMethod) || sealedBypass.BypassesGRPC(fullMethod) {
-		return nil
-	}
+	// The table is consulted first: BypassesGRPC audits every admit it
+	// makes, so it is asked only for a method that has an entry, and an
+	// allowlisted unseal verb is never audited twice.
 	fields, ok := grpcRequestPermissions[fullMethod]
 	if !ok {
+		return nil
+	}
+	if isPublicGRPCMethod(fullMethod) || sealedBypass.BypassesGRPC(fullMethod) {
 		return nil
 	}
 	perms, err := fields(req)
