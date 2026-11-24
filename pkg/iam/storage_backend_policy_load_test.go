@@ -115,6 +115,7 @@ func findPolicy(policies []*Policy, name string) *Policy {
 }
 
 func TestBackendStorage_StoredPolicyJSONLoadsWhole(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	kv := newMockKVStore()
 	storage := NewBackendStorage(kv)
@@ -137,6 +138,7 @@ func TestBackendStorage_StoredPolicyJSONLoadsWhole(t *testing.T) {
 // lists it as a flagged entry with no rules next to the good record, and
 // both log it at WARN.
 func TestBackendStorage_StoredPolicyUnknownKeysNotApplied(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	kv := newMockKVStore()
 	logger := &capturingLogger{}
@@ -173,6 +175,7 @@ func TestBackendStorage_StoredPolicyUnknownKeysNotApplied(t *testing.T) {
 // TestBackendStorage_ListPoliciesFlagsUndecodableRecord pins that a record
 // that is not a policy document at all is listed as flagged, not dropped.
 func TestBackendStorage_ListPoliciesFlagsUndecodableRecord(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	kv := newMockKVStore()
 	storage := NewBackendStorage(kv)
@@ -197,6 +200,7 @@ func TestBackendStorage_ListPoliciesFlagsUndecodableRecord(t *testing.T) {
 
 // TestDecodeStoredPolicy covers the strict decoder's edges.
 func TestDecodeStoredPolicy(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		data     string
@@ -212,6 +216,7 @@ func TestDecodeStoredPolicy(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			policy, loadErr := decodeStoredPolicy("t", "p", []byte(tt.data))
 			if !tt.wantErr {
 				require.Nil(t, loadErr)
@@ -229,6 +234,7 @@ func TestDecodeStoredPolicy(t *testing.T) {
 // TestPolicyEngine_RepairsFlaggedRecord pins that a refused record can still
 // be replaced or deleted: that is how an operator repairs it.
 func TestPolicyEngine_RepairsFlaggedRecord(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	kv := newMockKVStore()
 	engine := NewPolicyEngine(PolicyEngineOptions{Storage: NewBackendStorage(kv)})
@@ -259,6 +265,7 @@ func (failingABACSync) Sync(context.Context) error {
 // delete of a flagged record whose ABAC sync fails restores the record's
 // original stored bytes, so it stays byte-identical and still flagged.
 func TestPolicyEngine_RollbackRestoresFlaggedRecordBytes(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	kv := newMockKVStore()
 	engine := NewPolicyEngine(PolicyEngineOptions{Storage: NewBackendStorage(kv), ABACSync: failingABACSync{}})
@@ -283,6 +290,7 @@ func TestPolicyEngine_RollbackRestoresFlaggedRecordBytes(t *testing.T) {
 }
 
 func TestPolicyEngine_GetPolicyReturnsFlaggedEntry(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	kv := newMockKVStore()
 	engine := NewPolicyEngine(PolicyEngineOptions{Storage: NewBackendStorage(kv)})
@@ -300,6 +308,7 @@ func TestPolicyEngine_GetPolicyReturnsFlaggedEntry(t *testing.T) {
 }
 
 func TestPolicyEngine_UpdatePolicyRefusesFlaggedEntry(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	kv := newMockKVStore()
 	engine := NewPolicyEngine(PolicyEngineOptions{Storage: NewBackendStorage(kv)})
@@ -336,6 +345,7 @@ func assertRecordRepaired(t *testing.T, engine *PolicyEngine, wantRules []Rule) 
 }
 
 func TestPolicyEngine_FullReplacementRepairsFlaggedRecord(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	kv := newMockKVStore()
 	engine := NewPolicyEngine(PolicyEngineOptions{Storage: NewBackendStorage(kv)})
@@ -348,6 +358,7 @@ func TestPolicyEngine_FullReplacementRepairsFlaggedRecord(t *testing.T) {
 }
 
 func TestBatchImport_ReplacesFlaggedRecordThroughUpdate(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	kv := newMockKVStore()
 	engine := NewPolicyEngine(PolicyEngineOptions{Storage: NewBackendStorage(kv)})
@@ -364,6 +375,7 @@ func TestBatchImport_ReplacesFlaggedRecordThroughUpdate(t *testing.T) {
 }
 
 func TestBatchImport_FlaggedRecordExistsWithoutUpdateExisting(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	kv := newMockKVStore()
 	key := policyKey("t-stored", "stored-eng")
@@ -398,6 +410,7 @@ func newStoredPolicyBatchManager(t *testing.T, withFlagged bool) *BatchManager {
 }
 
 func TestBatchManager_ExportPoliciesRefusesFlaggedEntry(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	exported, err := newStoredPolicyBatchManager(t, false).ExportPolicies(ctx, "t-stored", ExportFilter{})
@@ -414,6 +427,7 @@ func TestBatchManager_ExportPoliciesRefusesFlaggedEntry(t *testing.T) {
 }
 
 func TestBatchManager_ExportPoliciesErrorNamesPolicy(t *testing.T) {
+	t.Parallel()
 	_, err := newStoredPolicyBatchManager(t, true).ExportPolicies(context.Background(), "t-stored", ExportFilter{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "'stored-unknown'")

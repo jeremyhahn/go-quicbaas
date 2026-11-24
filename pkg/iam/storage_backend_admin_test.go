@@ -29,6 +29,7 @@ import (
 // -----------------------------------------------------------------------------
 
 func TestBackendAdminStorage_CreateGetAssignment(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := NewBackendAdminStorage(newMockKVStore())
 
@@ -49,6 +50,7 @@ func TestBackendAdminStorage_CreateGetAssignment(t *testing.T) {
 }
 
 func TestBackendAdminStorage_CreateAssignment_Errors(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := NewBackendAdminStorage(newMockKVStore())
 
@@ -69,6 +71,7 @@ func TestBackendAdminStorage_CreateAssignment_Errors(t *testing.T) {
 }
 
 func TestBackendAdminStorage_GetAssignment_Errors(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := NewBackendAdminStorage(newMockKVStore())
 
@@ -80,6 +83,7 @@ func TestBackendAdminStorage_GetAssignment_Errors(t *testing.T) {
 }
 
 func TestBackendAdminStorage_UpdateAssignment(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := NewBackendAdminStorage(newMockKVStore())
 
@@ -95,6 +99,7 @@ func TestBackendAdminStorage_UpdateAssignment(t *testing.T) {
 }
 
 func TestBackendAdminStorage_UpdateAssignment_Errors(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := NewBackendAdminStorage(newMockKVStore())
 
@@ -106,6 +111,7 @@ func TestBackendAdminStorage_UpdateAssignment_Errors(t *testing.T) {
 }
 
 func TestBackendAdminStorage_DeleteAssignment(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := NewBackendAdminStorage(newMockKVStore())
 
@@ -118,6 +124,7 @@ func TestBackendAdminStorage_DeleteAssignment(t *testing.T) {
 }
 
 func TestBackendAdminStorage_DeleteAssignment_Errors(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := NewBackendAdminStorage(newMockKVStore())
 
@@ -129,6 +136,7 @@ func TestBackendAdminStorage_DeleteAssignment_Errors(t *testing.T) {
 }
 
 func TestBackendAdminStorage_ListAssignments_Filters(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := NewBackendAdminStorage(newMockKVStore())
 
@@ -178,6 +186,7 @@ func TestBackendAdminStorage_ListAssignments_Filters(t *testing.T) {
 }
 
 func TestBackendAdminStorage_ListAssignments_Pagination(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := NewBackendAdminStorage(newMockKVStore())
 
@@ -204,6 +213,7 @@ func TestBackendAdminStorage_ListAssignments_Pagination(t *testing.T) {
 }
 
 func TestBackendAdminStorage_GetUserAssignments(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := NewBackendAdminStorage(newMockKVStore())
 
@@ -218,6 +228,7 @@ func TestBackendAdminStorage_GetUserAssignments(t *testing.T) {
 }
 
 func TestBackendAdminStorage_GetUserAssignments_Error(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := NewBackendAdminStorage(newMockKVStore())
 
@@ -243,6 +254,7 @@ func newImpersonationSession(id string) *ImpersonationSession {
 }
 
 func TestBackendImpersonationStorage_CreateGet(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := NewBackendImpersonationStorage(newMockKVStore())
 
@@ -255,6 +267,7 @@ func TestBackendImpersonationStorage_CreateGet(t *testing.T) {
 }
 
 func TestBackendImpersonationStorage_Create_Errors(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := NewBackendImpersonationStorage(newMockKVStore())
 
@@ -272,6 +285,7 @@ func TestBackendImpersonationStorage_Create_Errors(t *testing.T) {
 }
 
 func TestBackendImpersonationStorage_Get_Errors(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := NewBackendImpersonationStorage(newMockKVStore())
 
@@ -284,6 +298,7 @@ func TestBackendImpersonationStorage_Get_Errors(t *testing.T) {
 }
 
 func TestBackendImpersonationStorage_End(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := NewBackendImpersonationStorage(newMockKVStore())
 
@@ -296,6 +311,7 @@ func TestBackendImpersonationStorage_End(t *testing.T) {
 }
 
 func TestBackendImpersonationStorage_End_Errors(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := NewBackendImpersonationStorage(newMockKVStore())
 
@@ -308,6 +324,7 @@ func TestBackendImpersonationStorage_End_Errors(t *testing.T) {
 }
 
 func TestBackendImpersonationStorage_IncrementOperationCount(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := NewBackendImpersonationStorage(newMockKVStore())
 
@@ -323,6 +340,7 @@ func TestBackendImpersonationStorage_IncrementOperationCount(t *testing.T) {
 }
 
 func TestBackendImpersonationStorage_IncrementOperationCount_Errors(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := NewBackendImpersonationStorage(newMockKVStore())
 
@@ -335,6 +353,7 @@ func TestBackendImpersonationStorage_IncrementOperationCount_Errors(t *testing.T
 }
 
 func TestBackendImpersonationStorage_ListActive(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := NewBackendImpersonationStorage(newMockKVStore())
 
@@ -354,6 +373,7 @@ func TestBackendImpersonationStorage_ListActive(t *testing.T) {
 }
 
 func TestBackendImpersonationStorage_ListActive_Error(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := NewBackendImpersonationStorage(newMockKVStore())
 
@@ -363,6 +383,7 @@ func TestBackendImpersonationStorage_ListActive_Error(t *testing.T) {
 }
 
 func TestBackendImpersonationStorage_List(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := NewBackendImpersonationStorage(newMockKVStore())
 
@@ -393,6 +414,7 @@ func TestBackendImpersonationStorage_List(t *testing.T) {
 }
 
 func TestBackendImpersonationStorage_DeleteExpiredSessions(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := NewBackendImpersonationStorage(newMockKVStore())
 

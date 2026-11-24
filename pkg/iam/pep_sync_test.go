@@ -23,6 +23,7 @@ import (
 
 // TestPolicyChangeType tests PolicyChangeType string conversion.
 func TestPolicyChangeType(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		pct      PolicyChangeType
@@ -37,6 +38,7 @@ func TestPolicyChangeType(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			if got := tt.pct.String(); got != tt.expected {
 				t.Errorf("PolicyChangeType.String() = %v, want %v", got, tt.expected)
 			}
@@ -46,6 +48,7 @@ func TestPolicyChangeType(t *testing.T) {
 
 // TestPolicyChangeEventMarshal tests PolicyChangeEvent binary serialization.
 func TestPolicyChangeEventMarshal(t *testing.T) {
+	t.Parallel()
 	event := PolicyChangeEvent{
 		Type:      PolicyChangeCreated,
 		PolicyID:  "policy-123",
@@ -88,6 +91,7 @@ func TestPolicyChangeEventMarshal(t *testing.T) {
 
 // TestPolicyChangeEventUnmarshalInvalid tests unmarshaling invalid data.
 func TestPolicyChangeEventUnmarshalInvalid(t *testing.T) {
+	t.Parallel()
 	var event PolicyChangeEvent
 	err := event.UnmarshalBinary([]byte("not valid json"))
 	if err == nil {
@@ -97,6 +101,7 @@ func TestPolicyChangeEventUnmarshalInvalid(t *testing.T) {
 
 // TestCacheSyncConfig tests configuration validation.
 func TestCacheSyncConfig(t *testing.T) {
+	t.Parallel()
 	t.Run("DefaultConfig", func(t *testing.T) {
 		config := DefaultCacheSyncConfig("node-1", "tenant-1")
 
@@ -198,6 +203,7 @@ func TestCacheSyncConfig(t *testing.T) {
 
 // TestInvalidSyncConfigError tests the error type.
 func TestInvalidSyncConfigError(t *testing.T) {
+	t.Parallel()
 	err := &InvalidSyncConfigError{Reason: "test reason"}
 	expected := "invalid sync configuration: test reason"
 	if err.Error() != expected {
@@ -207,6 +213,7 @@ func TestInvalidSyncConfigError(t *testing.T) {
 
 // TestErrSyncFailed tests the sync failed error type.
 func TestErrSyncFailed(t *testing.T) {
+	t.Parallel()
 	t.Run("WithCause", func(t *testing.T) {
 		cause := errors.New("underlying error")
 		err := &SyncFailedError{
@@ -235,6 +242,7 @@ func TestErrSyncFailed(t *testing.T) {
 
 // TestCacheVersionTracker tests the version tracker.
 func TestCacheVersionTracker(t *testing.T) {
+	t.Parallel()
 	t.Run("InitialVersion", func(t *testing.T) {
 		tracker := NewCacheVersionTracker()
 		if tracker.GetVersion() != 0 {
