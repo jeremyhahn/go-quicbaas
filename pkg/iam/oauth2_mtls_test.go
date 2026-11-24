@@ -138,6 +138,7 @@ func makeIssuedCert(t *testing.T, caCert *x509.Certificate, caKey *ecdsa.Private
 // ---------------------------------------------------------------------------
 
 func TestCertThumbprintS256_Deterministic(t *testing.T) {
+	t.Parallel()
 	cert, _ := makeSelfSigned(t, pkix.Name{CommonName: "test"}, nil)
 	first := iam.CertThumbprintS256(cert)
 	second := iam.CertThumbprintS256(cert)
@@ -150,6 +151,7 @@ func TestCertThumbprintS256_Deterministic(t *testing.T) {
 }
 
 func TestCertThumbprintS256_DistinctCerts(t *testing.T) {
+	t.Parallel()
 	certA, _ := makeSelfSigned(t, pkix.Name{CommonName: "a"}, nil)
 	certB, _ := makeSelfSigned(t, pkix.Name{CommonName: "b"}, nil)
 	if iam.CertThumbprintS256(certA) == iam.CertThumbprintS256(certB) {
@@ -162,6 +164,7 @@ func TestCertThumbprintS256_DistinctCerts(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSelfSignedClientAuth_HappyPath(t *testing.T) {
+	t.Parallel()
 	cert, certPEM := makeSelfSigned(t, pkix.Name{CommonName: "svc-agent"}, nil)
 
 	app := &iam.Application{
@@ -187,6 +190,7 @@ func TestSelfSignedClientAuth_HappyPath(t *testing.T) {
 }
 
 func TestSelfSignedClientAuth_ThumbprintMismatch(t *testing.T) {
+	t.Parallel()
 	cert, _ := makeSelfSigned(t, pkix.Name{CommonName: "svc-agent"}, nil)
 	otherCert, otherPEM := makeSelfSigned(t, pkix.Name{CommonName: "other"}, nil)
 	_ = otherCert
@@ -212,6 +216,7 @@ func TestSelfSignedClientAuth_ThumbprintMismatch(t *testing.T) {
 }
 
 func TestSelfSignedClientAuth_NilCert(t *testing.T) {
+	t.Parallel()
 	app := &iam.Application{
 		ClientID:                "app_test_abc",
 		TokenEndpointAuthMethod: iam.AuthMethodSelfSignedTLSClientAuth,
@@ -227,6 +232,7 @@ func TestSelfSignedClientAuth_NilCert(t *testing.T) {
 }
 
 func TestSelfSignedClientAuth_ClientNotFound(t *testing.T) {
+	t.Parallel()
 	cert, _ := makeSelfSigned(t, pkix.Name{CommonName: "svc"}, nil)
 	storage := newMemAppStorage() // empty
 	auth := iam.NewSelfSignedClientAuth(storage)
@@ -242,6 +248,7 @@ func TestSelfSignedClientAuth_ClientNotFound(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPKIClientAuth_HappyPath_SubjectDN(t *testing.T) {
+	t.Parallel()
 	caCert, caKey, pool := makeCA(t)
 	subject := pkix.Name{CommonName: "fleet-agent-1", Organization: []string{"Acme Corp"}}
 	cert := makeIssuedCert(t, caCert, caKey, subject, nil)
@@ -266,6 +273,7 @@ func TestPKIClientAuth_HappyPath_SubjectDN(t *testing.T) {
 }
 
 func TestPKIClientAuth_HappyPath_SANDNS(t *testing.T) {
+	t.Parallel()
 	caCert, caKey, pool := makeCA(t)
 	cert := makeIssuedCert(t, caCert, caKey, pkix.Name{CommonName: "agent"}, []string{"agent.example.com"})
 
@@ -289,6 +297,7 @@ func TestPKIClientAuth_HappyPath_SANDNS(t *testing.T) {
 }
 
 func TestPKIClientAuth_UntrustedCert(t *testing.T) {
+	t.Parallel()
 	_, _, pool := makeCA(t) // CA that did NOT issue the cert
 	// Issue cert from a different CA
 	caCert2, caKey2, _ := makeCA(t)
@@ -309,6 +318,7 @@ func TestPKIClientAuth_UntrustedCert(t *testing.T) {
 }
 
 func TestPKIClientAuth_DNMismatch(t *testing.T) {
+	t.Parallel()
 	caCert, caKey, pool := makeCA(t)
 	cert := makeIssuedCert(t, caCert, caKey, pkix.Name{CommonName: "agent"}, nil)
 
@@ -331,6 +341,7 @@ func TestPKIClientAuth_DNMismatch(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPinMTLSCert_InvalidPEM(t *testing.T) {
+	t.Parallel()
 	app := &iam.Application{ClientID: "x"}
 	if err := app.PinMTLSCert([]byte("not-a-pem")); err == nil {
 		t.Fatal("expected error for invalid PEM")
@@ -338,6 +349,7 @@ func TestPinMTLSCert_InvalidPEM(t *testing.T) {
 }
 
 func TestPinMTLSCert_SetsThumbprintAndAuthMethod(t *testing.T) {
+	t.Parallel()
 	_, certPEM := makeSelfSigned(t, pkix.Name{CommonName: "svc"}, nil)
 	app := &iam.Application{ClientID: "x"}
 	if err := app.PinMTLSCert(certPEM); err != nil {
@@ -356,6 +368,7 @@ func TestPinMTLSCert_SetsThumbprintAndAuthMethod(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestVerifyMTLSBoundToken_Match(t *testing.T) {
+	t.Parallel()
 	cert, _ := makeSelfSigned(t, pkix.Name{CommonName: "svc"}, nil)
 	thumbprint := iam.CertThumbprintS256(cert)
 
@@ -370,6 +383,7 @@ func TestVerifyMTLSBoundToken_Match(t *testing.T) {
 }
 
 func TestVerifyMTLSBoundToken_Mismatch(t *testing.T) {
+	t.Parallel()
 	certA, _ := makeSelfSigned(t, pkix.Name{CommonName: "a"}, nil)
 	certB, _ := makeSelfSigned(t, pkix.Name{CommonName: "b"}, nil)
 
@@ -384,6 +398,7 @@ func TestVerifyMTLSBoundToken_Mismatch(t *testing.T) {
 }
 
 func TestVerifyMTLSBoundToken_MissingCNF(t *testing.T) {
+	t.Parallel()
 	cert, _ := makeSelfSigned(t, pkix.Name{CommonName: "svc"}, nil)
 	claims := map[string]interface{}{}
 	if err := iam.VerifyMTLSBoundToken(claims, cert); err == nil {
@@ -392,6 +407,7 @@ func TestVerifyMTLSBoundToken_MissingCNF(t *testing.T) {
 }
 
 func TestVerifyMTLSBoundToken_NilCert(t *testing.T) {
+	t.Parallel()
 	claims := map[string]interface{}{
 		"cnf": map[string]interface{}{"x5t#S256": "abc"},
 	}

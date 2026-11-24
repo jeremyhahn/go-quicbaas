@@ -21,6 +21,7 @@ import (
 )
 
 func TestUserFromContext(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		ctx      context.Context
@@ -45,6 +46,7 @@ func TestUserFromContext(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			result := UserFromContext(tt.ctx)
 			if result != tt.expected {
 				t.Errorf("UserFromContext() = %q, want %q", result, tt.expected)
@@ -54,6 +56,7 @@ func TestUserFromContext(t *testing.T) {
 }
 
 func TestContextWithUser(t *testing.T) {
+	t.Parallel()
 	userID := "test-user-123"
 	ctx := ContextWithUser(context.Background(), userID)
 
@@ -64,6 +67,7 @@ func TestContextWithUser(t *testing.T) {
 }
 
 func TestVectorContextFromContext(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		ctx      context.Context
@@ -91,6 +95,7 @@ func TestVectorContextFromContext(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			result := VectorContextFromContext(tt.ctx)
 			if tt.expected == nil && result != nil {
 				t.Errorf("VectorContextFromContext() = %v, want nil", result)
@@ -114,6 +119,7 @@ func TestVectorContextFromContext(t *testing.T) {
 }
 
 func TestIsSameTenant(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		tenantA  string
@@ -154,6 +160,7 @@ func TestIsSameTenant(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			result := IsSameTenant(tt.tenantA, tt.tenantB)
 			if result != tt.expected {
 				t.Errorf("IsSameTenant(%q, %q) = %v, want %v", tt.tenantA, tt.tenantB, result, tt.expected)
@@ -163,6 +170,7 @@ func TestIsSameTenant(t *testing.T) {
 }
 
 func TestRequiresTenantIsolation(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		tenantID string
@@ -192,6 +200,7 @@ func TestRequiresTenantIsolation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			result := RequiresTenantIsolation(tt.tenantID)
 			if result != tt.expected {
 				t.Errorf("RequiresTenantIsolation(%q) = %v, want %v", tt.tenantID, result, tt.expected)
@@ -201,6 +210,7 @@ func TestRequiresTenantIsolation(t *testing.T) {
 }
 
 func TestCombinedContext(t *testing.T) {
+	t.Parallel()
 	// Test that multiple context values can coexist
 	ctx := context.Background()
 	ctx = tenantctx.WithTenant(ctx, "tenant-multi")
@@ -228,6 +238,7 @@ func TestCombinedContext(t *testing.T) {
 // binding: the bound tenant when there is one, and "" — "not yet known", never
 // the system tenant — when there is none.
 func TestContextTenant(t *testing.T) {
+	t.Parallel()
 	if got := contextTenant(context.Background()); got != "" {
 		t.Errorf("contextTenant() unbound = %q, want empty string", got)
 	}
@@ -240,6 +251,7 @@ func TestContextTenant(t *testing.T) {
 }
 
 func TestContextWithWrongType(t *testing.T) {
+	t.Parallel()
 	// Test that wrong type in context returns empty/nil
 	ctx := context.WithValue(context.Background(), userContextKey{}, 12345) // wrong type
 	if got := UserFromContext(ctx); got != "" {
@@ -255,6 +267,7 @@ func TestContextWithWrongType(t *testing.T) {
 // Tests for SuperAdminContext
 
 func TestSuperAdminContext_IsCrossTenantOperation(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		sac      *SuperAdminContext
@@ -301,6 +314,7 @@ func TestSuperAdminContext_IsCrossTenantOperation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			result := tt.sac.IsCrossTenantOperation()
 			if result != tt.expected {
 				t.Errorf("IsCrossTenantOperation() = %v, want %v", result, tt.expected)
@@ -310,6 +324,7 @@ func TestSuperAdminContext_IsCrossTenantOperation(t *testing.T) {
 }
 
 func TestSuperAdminContextFromContext(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		ctx      context.Context
@@ -335,6 +350,7 @@ func TestSuperAdminContextFromContext(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			result := SuperAdminContextFromContext(tt.ctx)
 			if tt.wantNil {
 				if result != nil {
@@ -352,6 +368,7 @@ func TestSuperAdminContextFromContext(t *testing.T) {
 }
 
 func TestContextWithSuperAdmin(t *testing.T) {
+	t.Parallel()
 	sac := &SuperAdminContext{
 		OriginalTenantID: "original-tenant",
 		TargetTenantID:   "target-tenant",
@@ -381,6 +398,7 @@ func TestContextWithSuperAdmin(t *testing.T) {
 }
 
 func TestSuperAdminContextFromContext_WrongType(t *testing.T) {
+	t.Parallel()
 	ctx := context.WithValue(context.Background(), superAdminContextKey{}, "wrong type")
 	result := SuperAdminContextFromContext(ctx)
 	if result != nil {
@@ -389,6 +407,7 @@ func TestSuperAdminContextFromContext_WrongType(t *testing.T) {
 }
 
 func TestIsSuperAdminOperation(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		ctx      context.Context
@@ -419,6 +438,7 @@ func TestIsSuperAdminOperation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			result := IsSuperAdminOperation(tt.ctx)
 			if result != tt.expected {
 				t.Errorf("IsSuperAdminOperation() = %v, want %v", result, tt.expected)
