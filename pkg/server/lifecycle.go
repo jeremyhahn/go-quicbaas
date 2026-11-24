@@ -826,8 +826,8 @@ func (s *Server) adoptCA(ca xkmssdk.TrustedCA) {
 // on the node (SignCSR, which PIV enrollment over gRPC uses) sign with the
 // same CA as the quicbaas CA adapter. It is a no-op until both the CA is
 // adopted and the XKMS service resolves, and it is called from both places,
-// whichever comes last. The CA is wrapped so a CSR signed with no tenant is
-// recorded for the authenticated caller's tenant.
+// whichever comes last. The CA is wrapped so a CSR signed or a certificate
+// issued with no tenant is recorded for the authenticated caller's tenant.
 func (s *Server) bindCAToXKMSService() {
 	if s.xkmsCA == nil {
 		return

@@ -158,3 +158,55 @@ func TestXKMSCATenant_CanonicalSignCSRAsSystemStaysSystemScoped(t *testing.T) {
 		require.NotContains(t, u.String(), "/tenant/", "a system-signed certificate carries no tenant SPIFFE SAN")
 	}
 }
+
+// issueCanonicalCert issues a certificate through go-xkms's canonical
+// KeystoreService IssueCertificate handler, whose request carries no tenant,
+// and returns the parsed leaf and the serial number the service reports.
+func issueCanonicalCert(t *testing.T, ctx context.Context, services capturedGRPCServices) (*x509.Certificate, string) {
+	t.Helper()
+	out, err := services.callCtx(t, ctx, "xkms.v1.KeystoreService", "IssueCertificate",
+		&xkmsv1.IssueCertificateRequest{CommonName: "alice", Profile: "client", ValidityDays: 1})
+	require.NoError(t, err, "canonical IssueCertificate must succeed")
+	resp, ok := out.(*xkmsv1.IssueCertificateResponse)
+	require.True(t, ok, "IssueCertificate returns an IssueCertificateResponse")
+	block, _ := pem.Decode(resp.GetCertificatePem())
+	require.NotNil(t, block, "IssueCertificate returns a PEM certificate")
+	leaf, err := x509.ParseCertificate(block.Bytes)
+	require.NoError(t, err)
+	return leaf, resp.GetSerialNumber()
+}
+
+// A certificate a tenant has issued through the canonical IssueCertificate is
+// recorded for that tenant, so the tenant (and only the tenant) revokes it.
+func TestXKMSCATenant_CanonicalIssueCertificateRecordsCallerTenantAndTenantRevokes(t *testing.T) {
+	pc, services := newXKMSCATenantServices(t)
+	acme := authenticatedTenant("acme")
+
+	leaf, serial := issueCanonicalCert(t, acme, services)
+
+	owner, err := pc.CertificateTenant(acme, leaf.SerialNumber)
+	require.NoError(t, err)
+	require.Equal(t, "acme", owner, "the certificate is recorded for the issuing tenant")
+
+	globex := authenticatedTenant("globex")
+	_, err = services.callCtx(t, globex, "xkms.v1.KeystoreService", "RevokeCertificate",
+		&xkmsv1.RevokeCertificateRequest{SerialNumber: serial})
+	require.Error(t, err, "another tenant must not revoke the certificate")
+
+	_, err = services.callCtx(t, acme, "xkms.v1.KeystoreService", "RevokeCertificate",
+		&xkmsv1.RevokeCertificateRequest{SerialNumber: serial})
+	require.NoError(t, err, "the issuing tenant revokes its own certificate")
+}
+
+// A certificate a system caller issues through the canonical IssueCertificate
+// stays in the system scope.
+func TestXKMSCATenant_CanonicalIssueCertificateAsSystemStaysSystemScoped(t *testing.T) {
+	pc, services := newXKMSCATenantServices(t)
+	sys := tenantctx.WithSystem(context.Background())
+
+	leaf, _ := issueCanonicalCert(t, sys, services)
+
+	owner, err := pc.CertificateTenant(sys, leaf.SerialNumber)
+	require.NoError(t, err)
+	require.Equal(t, "", owner, "a system-issued certificate stays in the system scope")
+}
