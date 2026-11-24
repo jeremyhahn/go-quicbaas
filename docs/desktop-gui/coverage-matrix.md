@@ -653,11 +653,11 @@ RestSecretsClient builds `/api/v1/secrets/<path>` for the `*` routes (POST store
 | DELETE | `/api/v1/xkms/certs/{id}` | HandleXKMSDeleteCert | rest.ts | covered: components/security/XKMSCertificatesPanel.svelte |
 | GET | `/api/v1/xkms/certs/{id}` | HandleXKMSGetCert | rest.ts | covered: components/security/XKMSCertificatesPanel.svelte |
 | HEAD | `/api/v1/xkms/certs/{id}` | HandleXKMSCertExists | - | not covered |
-| POST | `/api/v1/xkms/fido2/authenticate/begin` | HandleXKMSFIDO2BeginAuthentication | - (rest.ts†) | not covered |
-| POST | `/api/v1/xkms/fido2/authenticate/finish` | HandleXKMSFIDO2FinishAuthentication | - (rest.ts†) | not covered |
-| POST | `/api/v1/xkms/fido2/register/begin` | HandleXKMSFIDO2BeginRegistration | - (rest.ts†) | not covered |
-| POST | `/api/v1/xkms/fido2/register/finish` | HandleXKMSFIDO2FinishRegistration | - (rest.ts†) | not covered |
-| POST | `/api/v1/xkms/fido2/credentials/begin` | HandleXKMSFIDO2BeginAddCredential | rest.ts | not covered |
+| POST | `/api/v1/xkms/fido2/authenticate/begin` | HandleXKMSFIDO2BeginAuthentication | - (rest.ts†) | covered: components/security/XKMSFIDO2Panel.svelte |
+| POST | `/api/v1/xkms/fido2/authenticate/finish` | HandleXKMSFIDO2FinishAuthentication | - (rest.ts†) | covered: components/security/XKMSFIDO2Panel.svelte |
+| POST | `/api/v1/xkms/fido2/register/begin` | HandleXKMSFIDO2BeginRegistration | - (rest.ts†) | covered: components/security/XKMSFIDO2Panel.svelte |
+| POST | `/api/v1/xkms/fido2/register/finish` | HandleXKMSFIDO2FinishRegistration | - (rest.ts†) | covered: components/security/XKMSFIDO2Panel.svelte |
+| POST | `/api/v1/xkms/fido2/credentials/begin` | HandleXKMSFIDO2BeginAddCredential | rest.ts | covered: components/security/XKMSFIDO2Panel.svelte |
 | GET | `/api/v1/xkms/health` | HandleXKMSHealth | rest.ts | covered: views/security/XKMSKeysView.svelte |
 | GET | `/api/v1/xkms/keys` | HandleXKMSListKeys | - (rest.ts†) | covered: views/security/XKMSKeysView.svelte |
 | POST | `/api/v1/xkms/keys` | HandleXKMSGenerateKey | rest.ts | covered: views/security/XKMSKeysView.svelte |
