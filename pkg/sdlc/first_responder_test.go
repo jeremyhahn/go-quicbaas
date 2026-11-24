@@ -16,6 +16,7 @@ package sdlc
 import (
 	"context"
 	"errors"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -29,10 +30,11 @@ import (
 const frTenant = "tenant-fr"
 
 type fakeAttentionLister struct {
-	mu    sync.Mutex
-	items []*AttentionItem
-	err   error
-	calls int
+	mu      sync.Mutex
+	items   []*AttentionItem
+	err     error
+	calls   int
+	offsets []int
 }
 
 func (f *fakeAttentionLister) set(items ...*AttentionItem) {
@@ -45,6 +47,7 @@ func (f *fakeAttentionLister) List(_ context.Context, _ string, _ AttentionFilte
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++
+	f.offsets = append(f.offsets, page.Offset)
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -292,7 +295,7 @@ func TestFirstResponder_PagesThroughEveryItem(t *testing.T) {
 	notifier := &fakeResponderNotifier{}
 	r := newTestResponder(t, lister, notifier)
 	res := mustSweep(t, r)
-	if res.Listed != 250 || res.Notified != 250 {
+	if res.Listed != 250 || res.Notified != 250 || res.More {
 		t.Fatalf("sweep: %+v", res)
 	}
 	lister.mu.Lock()
@@ -300,6 +303,142 @@ func TestFirstResponder_PagesThroughEveryItem(t *testing.T) {
 	lister.mu.Unlock()
 	if calls != 3 {
 		t.Fatalf("List calls: want 3, got %d", calls)
+	}
+}
+
+// numberedItems returns n parked items with ids t0..t(n-1).
+func numberedItems(n int) []*AttentionItem {
+	items := make([]*AttentionItem, n)
+	for i := range items {
+		items[i] = parkedItem("t"+strconv.Itoa(i), int64(i+1))
+	}
+	return items
+}
+
+// listedOffsets returns the page offsets the lister has been asked for.
+func (f *fakeAttentionLister) listedOffsets() []int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]int(nil), f.offsets...)
+}
+
+func TestFirstResponder_ContinuesPastPageBudget(t *testing.T) {
+	lister := &fakeAttentionLister{}
+	lister.set(numberedItems(250)...)
+	notifier := &fakeResponderNotifier{}
+	r := newTestResponder(t, lister, notifier)
+	r.pagesPerSweep = 1
+
+	want := []FirstResponderSweep{
+		{Listed: 100, Notified: 100, More: true},
+		{Listed: 100, Notified: 100, More: true},
+		{Listed: 50, Notified: 50, More: false},
+	}
+	for i, w := range want {
+		if res := mustSweep(t, r); res != w {
+			t.Fatalf("sweep %d: want %+v, got %+v", i+1, w, res)
+		}
+	}
+	got := notifier.received()
+	keys := make(map[string]struct{}, len(got))
+	for _, n := range got {
+		keys[n.Key] = struct{}{}
+	}
+	if len(got) != 250 || len(keys) != 250 {
+		t.Fatalf("notifications: %d, distinct keys: %d", len(got), len(keys))
+	}
+
+	res := mustSweep(t, r)
+	if res != (FirstResponderSweep{Listed: 100, More: true}) {
+		t.Fatalf("sweep 4: %+v", res)
+	}
+	if offsets := lister.listedOffsets(); !slices.Equal(offsets, []int{0, 100, 200, 0}) {
+		t.Fatalf("offsets: %v", offsets)
+	}
+}
+
+func TestFirstResponder_ListErrorMidCycleKeepsCursor(t *testing.T) {
+	lister := &fakeAttentionLister{}
+	lister.set(numberedItems(250)...)
+	notifier := &fakeResponderNotifier{}
+	r := newTestResponder(t, lister, notifier)
+	r.pagesPerSweep = 1
+	if res := mustSweep(t, r); res.Notified != 100 || !res.More {
+		t.Fatalf("sweep 1: %+v", res)
+	}
+
+	errList := errors.New("store unavailable")
+	lister.mu.Lock()
+	lister.err = errList
+	lister.mu.Unlock()
+	res, err := r.Sweep(context.Background(), frTenant)
+	if !errors.Is(err, errList) || res != (FirstResponderSweep{}) {
+		t.Fatalf("list error sweep: %+v, %v", res, err)
+	}
+
+	lister.mu.Lock()
+	lister.err = nil
+	lister.mu.Unlock()
+	if res := mustSweep(t, r); res.Listed != 100 || res.Notified != 100 || !res.More {
+		t.Fatalf("sweep 3: %+v", res)
+	}
+	offsets := lister.listedOffsets()
+	if last := offsets[len(offsets)-1]; last != 100 {
+		t.Fatalf("sweep 3 offset: want 100, got %d (all %v)", last, offsets)
+	}
+	if got := notifier.received(); len(got) != 200 {
+		t.Fatalf("notifications: %d", len(got))
+	}
+}
+
+// sweepPass runs one pass of two sweeps and checks its boundaries: the
+// first sweep stops at the budget, the second reaches the end. It returns
+// the number of items notified in the pass.
+func sweepPass(t *testing.T, r *FirstResponder, pass int) int {
+	t.Helper()
+	first := mustSweep(t, r)
+	if !first.More {
+		t.Fatalf("pass %d sweep 1 reached the end: %+v", pass, first)
+	}
+	second := mustSweep(t, r)
+	if second.More {
+		t.Fatalf("pass %d sweep 2 stopped early: %+v", pass, second)
+	}
+	return first.Notified + second.Notified
+}
+
+func TestFirstResponder_PagedCyclePrunesAfterTwoMisses(t *testing.T) {
+	items := numberedItems(150)
+	lister := &fakeAttentionLister{}
+	lister.set(items...)
+	notifier := &fakeResponderNotifier{}
+	r := newTestResponder(t, lister, notifier)
+	r.pagesPerSweep = 1
+
+	if n := sweepPass(t, r, 1); n != 150 {
+		t.Fatalf("pass 1 notified %d", n)
+	}
+	lister.set(items[1:]...)
+	if n := sweepPass(t, r, 2); n != 0 {
+		t.Fatalf("pass 2 notified %d", n)
+	}
+	lister.set(items...)
+	if n := sweepPass(t, r, 3); n != 0 {
+		t.Fatalf("pass 3: item missed once was announced again (%d)", n)
+	}
+	lister.set(items[1:]...)
+	for pass := 4; pass <= 5; pass++ {
+		if n := sweepPass(t, r, pass); n != 0 {
+			t.Fatalf("pass %d notified %d", pass, n)
+		}
+	}
+	lister.set(items...)
+	if n := sweepPass(t, r, 6); n != 1 {
+		t.Fatalf("pass 6: item missed twice not announced again (%d)", n)
+	}
+	got := notifier.received()
+	if last := got[len(got)-1]; last.Key != "t0@1" {
+		t.Fatalf("pass 6 announced %q", last.Key)
 	}
 }
 
