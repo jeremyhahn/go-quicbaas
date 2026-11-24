@@ -267,6 +267,47 @@ func TestOCIDistBackend_ListReposAndTags(t *testing.T) {
 	}
 }
 
+// TestOCIDistBackend_ListRepositoriesDigestOnly checks that the catalog
+// lists a repository pushed only by digest, and one whose last tag was
+// deleted while its digest-keyed manifest remains.
+func TestOCIDistBackend_ListRepositoriesDigestOnly(t *testing.T) {
+	reg := newTestRegistry(t)
+	ctx := context.Background()
+	const mediaType = "application/vnd.oci.image.manifest.v1+json"
+	body := []byte(`{"schemaVersion":2,"mediaType":"` + mediaType + `","layers":[]}`)
+	tagged := []byte(`{"schemaVersion":2,"mediaType":"` + mediaType + `","layers":[],"annotations":{"k":"v"}}`)
+
+	if _, err := reg.PutManifest(ctx, "digestonly", sha256Digest(body), mediaType, body); err != nil {
+		t.Fatalf("PutManifest by digest: %v", err)
+	}
+	digest, err := reg.PutManifest(ctx, "tagged", "v1", mediaType, tagged)
+	if err != nil {
+		t.Fatalf("PutManifest by tag: %v", err)
+	}
+
+	repos, err := reg.ListRepositories(ctx, 0)
+	if err != nil {
+		t.Fatalf("ListRepositories: %v", err)
+	}
+	if len(repos) != 2 || repos[0] != "digestonly" || repos[1] != "tagged" {
+		t.Fatalf("ListRepositories = %v, want [digestonly tagged]", repos)
+	}
+
+	if err := reg.DeleteManifest(ctx, "tagged", "v1"); err != nil {
+		t.Fatalf("DeleteManifest by tag: %v", err)
+	}
+	if _, _, err := reg.GetManifest(ctx, "tagged", digest); err != nil {
+		t.Fatalf("GetManifest by digest after tag delete: %v", err)
+	}
+	repos, err = reg.ListRepositories(ctx, 0)
+	if err != nil {
+		t.Fatalf("ListRepositories after tag delete: %v", err)
+	}
+	if len(repos) != 2 || repos[0] != "digestonly" || repos[1] != "tagged" {
+		t.Fatalf("ListRepositories after tag delete = %v, want [digestonly tagged]", repos)
+	}
+}
+
 // TestOCIDistBackend_ListTagsBeyondFirstPage puts more manifests than one
 // storage page holds ahead of the target repository, so its tags only
 // appear on a later page: ListTags must follow the storage cursor.

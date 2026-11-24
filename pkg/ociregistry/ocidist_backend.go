@@ -241,14 +241,15 @@ func (r *Registry) ListRepositories(ctx context.Context, limit int) ([]string, e
 			if name == "" {
 				continue
 			}
-			// The PutManifest path stores each manifest twice — once
-			// under name:tag and once under name:sha256:<digest> — so
-			// GET-by-digest works. Skip the digest-keyed copies when
-			// enumerating repositories, or `alpine:sha256` shows up
-			// as a phantom repo. Detected by an "sha256" tag prefix
-			// followed by a 64-char hex string.
+			// The PutManifest path stores each manifest under
+			// name:sha256:<digest>, and a tagged push also under
+			// name:tag. A digest-keyed record splits as
+			// ("name:sha256", "<hex>"), so it is mapped back to name
+			// rather than skipped: a repository pushed only by digest,
+			// or whose last tag was deleted, is still listed, and
+			// `alpine:sha256` never shows up as a phantom repo.
 			if strings.HasSuffix(name, ":sha256") && isHex64(tag) {
-				continue
+				name = strings.TrimSuffix(name, ":sha256")
 			}
 			seen[name] = struct{}{}
 			if limit > 0 && len(seen) >= limit {
