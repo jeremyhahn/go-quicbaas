@@ -132,12 +132,15 @@ Reference checks are shared with other services; their two failure modes
 | `service.ProjectBindingCheckError` | wraps the store error | service | delete refused: the binding store could not be read, or the delete fence could not be written |
 | `service.ProjectDeleteUnsettledError` | — | service | the project was deleted but its delete tombstone could not be written; a late bind still withdraws on its project re-read |
 | `sdlc.ProjectDeletingError` | `sdlc.ErrVersionConflict` | SDLC bind | a fresh bind found a delete's fence after writing its binding; the binding was withdrawn, retry |
+| `sdlc.DeleteInProgressError` | `sdlc.ErrVersionConflict` | project delete | another delete of the project holds its fence; retry once it settles |
+| `sdlc.BindInProgressError` | `sdlc.ErrVersionConflict` | SDLC bind, unbind | another bind or unbind holds the project's bind lease; retry once it settles |
+| `sdlc.BindWithdrawError` | wraps its cause | SDLC bind | a bind that had to withdraw its binding could not finish the withdrawal |
 | `service.ProjectInvalidError` | `orchestration.ErrProjectInvalid` | service | a field failed validation |
 | `service.ProjectAccessDeniedError` | `orchestration.ErrProjectAccessDenied` | service, authz | role below the required one |
 | `service.ProjectUnresolvedError` | `orchestration.ErrProjectUnresolved` | service, authz | the project could not be read; a refusal |
 | `service.ProjectRoleInvalidError` | `orchestration.ErrProjectRoleInvalid` | service | unknown role |
 | `ProjectProvisioningUnavailableError` | — | service | managed create on a server that cannot provision or clone |
-| `orchestration.ProjectStoreNotFoundError`, `ProjectStoreError`, `ProjectKeySegmentError` | `ErrProjectStore` | store | persistence failures; a name or id that is not a valid key segment |
+| `orchestration.ProjectStoreNotFoundError`, `ProjectStoreError`, `ProjectKeySegmentError` | `ErrProjectStore` | store | persistence failures; a name or id that is not a valid key segment; a delete refused because the record changed under it (retry) |
 | `orchestration.InvalidProjectIDError` | `ErrInvalidProjectID` | `CreateTask`, `StartJob` | a set `project_id` that is not a UUID |
 | `orchestration.ProjectParkedError` | `ErrProjectParked` | `admitIntake` | intake refused while parked |
 | `orchestration.ProjectWorkspaceNotReadyError` | — | spawn | managed workspace not yet `ready` |
@@ -187,6 +190,7 @@ Unit tests run in memory: `make test-orchestration`, `make test-service`,
 | Git and signing history | `pkg/orchestration/project_git_test.go`, `project_git_retired_test.go`, `pkg/service/project_git_test.go`, `project_git_signing_test.go`, `project_signing_history_test.go`, `project_git_redaction_test.go` |
 | Service validation | `pkg/service/project_service_test.go`, `…_workflow_test.go`, `…_references_test.go`, `…_storage_test.go`, `…_session_rotation_test.go`, `…_autonomy_test.go`, `…_quota_test.go`, `…_tenant_store_test.go` |
 | Managed workspace | `pkg/service/project_provisioner_test.go` |
+| Delete fence, bind lease, write settlement | `pkg/sdlc/store_delete_fence_test.go`, `store_delete_test.go`, `store_bind_lease_test.go`, `store_settle_test.go`, `store_withdraw_test.go`, `pkg/orchestration/project_store_settle_delete_test.go`, `pkg/service/project_delete_fence_test.go`, `project_delete_bound_test.go`, `sdlc_bind_lease_test.go`, `sdlc_bind_settle_test.go`; transport mapping in `pkg/api/rest/handlers_project_errors_cover_test.go`, `handlers_sdlc_adopt_test.go`, `pkg/api/grpc/server_project_unit_test.go`, `pkg/api/mcp/tool_error_test.go` |
 | MCP | `pkg/api/mcp/project_fleet_admin_tools_test.go`, `project_storage_tools_test.go`, `project_session_rotation_tools_test.go`, `project_account_page_test.go` |
 | SDK transports | `sdk/go/transport/{rest,grpc,mcp}/project_handler_test.go` and the `project_storage_test.go` / `project_session_rotation_test.go` siblings |
 | Cross-transport parity | `pkg/apimodule/module_project_parity_test.go` (create, get, get by name, update, list, delete), `module_sdlc_parity_test.go` (the SDLC binding, reviewer and conformance verbs) |
