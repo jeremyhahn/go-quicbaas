@@ -52,6 +52,20 @@ QuicBaaS Object Storage provides a distributed object storage layer built on the
       └──────────┘         └──────────┘         └──────────┘
 ```
 
+## Layer Ownership
+
+The service layer authorizes and scopes every request, the catalog records where each object lives, and go-objstore backends hold the bytes; go-quicbaas links go-objstore directly today (see [engineering.md, ObjStoreAdapter](engineering.md#objstoreadapter) for the open SDK re-export).
+
+| Operation | Service layer (`pkg/service`) | Catalog (`pkg/catalog`, go-qrdb) | Backend (go-objstore) |
+|---|---|---|---|
+| Put, get, head, delete, copy, batch put/get/delete | Validates the request; `objectStorageTenant` binds the caller's tenant; `osTenantScopedKey` scopes the key; put checks quotas | `CatalogManager` holds the entry (locations, checksum, tags) under the tenant-scoped key, stored in go-qrdb under `__sys:catalog/` | `common.Storage` from `BackendManager.GetBackend` reads, writes and deletes the bytes |
+| List (by prefix, tag, tenant) | `objectStorageTenant`; `osTenantListPrefix` scopes a prefix list | `ListByPrefix`, `ListByTag`, `ListByTenant` | Not called |
+| Replicate, migrate, archive, restore, verify | `objectStorageTenant`; resolves policy through `config.ObjectStoreConfigResolver` | Records locations and the primary store (`AddLocation`, `SetPrimaryStore`, `RemoveLocation`, `Update`) | Source and target backends copy, read or delete the bytes |
+| Object policy (set, get); tenant usage and quotas | `objectStorageTenant`; quotas are kept by `config.ObjectStoreConfigResolver` | Policy lives on the entry; `GetTenantUsage` counts a tenant's objects | Not called |
+| Backend admin (create, update, delete, set status, list, health) | Platform resources, not tenant-scoped; create, update, delete and set status check `prepareTenantContext`; list and health carry no tenant check | `BackendManager` registers backends and runs health checks | One `common.Storage` per registered backend |
+| Garbage collection and compaction | GC: `prepareTenantContext`, system scope only, dry runs only (`NewGarbageCollectionDeleteUnsupportedError` otherwise); compaction is refused (`NewCompactionUnsupportedError`) | GC compares backend objects with the catalog's references | GC lists each backend's objects; compaction: `common.Storage` has no compaction verb |
+| Buckets, multipart, pre-signed URLs, rename | Not yet: waits on go-objstore #89/#90 and the go-qrdb object-storage seam | Not yet | Not yet |
+
 ## Catalog Manager
 
 The Catalog Manager is the source of truth for all object metadata and locations.
