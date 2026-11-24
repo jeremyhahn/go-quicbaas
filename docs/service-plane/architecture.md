@@ -216,8 +216,14 @@ switch carries it as a `Fence`: the runtime and the registry refuse
 (`ErrFenced`) an epoch older than the newest they took for the service
 (`EpochGate`), so a superseded leader's delayed side effect never lands.
 A failed step rolls back (`rolled_back`); a failed rollback is recorded as
-`failed`. Not built: slot runtime, appraiser and name switch backed by the
-container runtime, the Verifier and the registry.
+`failed`. `rollout.PlaneRoller` drives the plane's own slot verbs. `FillSlot`
+and `DrainSlot` are the slot runtime (over the plane's launcher),
+`SwitchSlot` is the name switch (it moves the name grant), and the plane
+fences each with the claim's epoch. The node builds the one controller over
+the platform shard, gated by the shard's leader, when its
+`ServicePlaneRuntime` supplies an `Appraiser` and a `Keyring` verifier;
+otherwise a release redeploy is refused. Not built: a node appraiser over
+measured-launch evidence, and a release redeploy on the transports.
 
 ### Boot node, NBD and the deployer
 
