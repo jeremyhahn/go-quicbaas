@@ -194,6 +194,127 @@ func TestFirstResponder_NotifiesEachItemOnce(t *testing.T) {
 	}
 }
 
+// blockingResponderNotifier holds every delivery until release is closed,
+// and reports each call on entered.
+type blockingResponderNotifier struct {
+	fakeResponderNotifier
+	entered chan string
+	release chan struct{}
+	once    sync.Once
+}
+
+// unblock releases every held delivery; it is safe to call more than once.
+func (b *blockingResponderNotifier) unblock() { b.once.Do(func() { close(b.release) }) }
+
+func (b *blockingResponderNotifier) NotifyChannels(ctx context.Context, n notify.Notification, channels []string) (notify.Report, error) {
+	b.entered <- n.TenantID + "/" + n.Key
+	select {
+	case <-b.release:
+	case <-ctx.Done():
+		failed := []notify.ChannelFailure{{Channel: "signal", Err: ctx.Err()}}
+		return notify.Report{Failed: failed}, &notify.DeliveryError{Key: n.Key, Failures: failed}
+	}
+	return b.fakeResponderNotifier.NotifyChannels(ctx, n, channels)
+}
+
+// Two overlapping sweeps of one tenant (a manual sweep while Run is
+// sweeping) announce an item once: the second waits for the first and then
+// finds the item already announced.
+func TestFirstResponder_OverlappingSweepsAnnounceOnce(t *testing.T) {
+	lister := &fakeAttentionLister{}
+	lister.set(alertItem("agent_offline:a1", "warning"))
+	notifier := &blockingResponderNotifier{entered: make(chan string, 4), release: make(chan struct{})}
+	r, err := NewFirstResponder(FirstResponderConfig{Attention: lister, Notifier: notifier})
+	if err != nil {
+		t.Fatalf("NewFirstResponder: %v", err)
+	}
+
+	type outcome struct {
+		res FirstResponderSweep
+		err error
+	}
+	results := make(chan outcome, 2)
+	sweep := func() {
+		res, err := r.Sweep(context.Background(), frTenant)
+		results <- outcome{res, err}
+	}
+	go sweep()
+	<-notifier.entered // the first sweep is delivering
+	go sweep()
+	var overlap string
+	select {
+	case overlap = <-notifier.entered:
+	case <-time.After(100 * time.Millisecond):
+	}
+	notifier.unblock()
+	if overlap != "" {
+		<-results
+		<-results
+		t.Fatalf("second sweep delivered %s while the first was still delivering", overlap)
+	}
+
+	notified := 0
+	for i := 0; i < 2; i++ {
+		o := <-results
+		if o.err != nil {
+			t.Fatalf("Sweep: %v", o.err)
+		}
+		notified += o.res.Notified
+	}
+	if notified != 1 {
+		t.Fatalf("overlapping sweeps notified %d times, want 1", notified)
+	}
+	if got := notifier.received(); len(got) != 1 {
+		t.Fatalf("notifications: %+v", got)
+	}
+}
+
+// A sweep waiting behind another sweep of its tenant gives up when its
+// context ends, and a sweep of another tenant does not wait at all.
+func TestFirstResponder_WaitingSweepHonoursContextOtherTenantRuns(t *testing.T) {
+	lister := &fakeAttentionLister{}
+	lister.set(alertItem("agent_offline:a1", "warning"))
+	notifier := &blockingResponderNotifier{entered: make(chan string, 4), release: make(chan struct{})}
+	r, err := NewFirstResponder(FirstResponderConfig{Attention: lister, Notifier: notifier})
+	if err != nil {
+		t.Fatalf("NewFirstResponder: %v", err)
+	}
+	t.Cleanup(notifier.unblock)
+	first := make(chan error, 1)
+	go func() {
+		_, err := r.Sweep(context.Background(), frTenant)
+		first <- err
+	}()
+	<-notifier.entered
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if _, err := r.Sweep(ctx, frTenant); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("waiting sweep: want context.DeadlineExceeded, got %v", err)
+	}
+
+	other := make(chan error, 1)
+	go func() {
+		_, err := r.Sweep(context.Background(), "tenant-other")
+		other <- err
+	}()
+	select {
+	case got := <-notifier.entered:
+		if got != "tenant-other/agent_offline:a1@7" {
+			t.Fatalf("other tenant delivered %q", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a sweep of another tenant waited for this tenant's sweep")
+	}
+	notifier.unblock()
+	if err := <-first; err != nil {
+		t.Fatalf("first sweep: %v", err)
+	}
+	if err := <-other; err != nil {
+		t.Fatalf("other tenant sweep: %v", err)
+	}
+}
+
 func TestFirstResponder_RetriesFailedDelivery(t *testing.T) {
 	lister := &fakeAttentionLister{}
 	lister.set(parkedItem("t1", 10), parkedItem("t2", 20))

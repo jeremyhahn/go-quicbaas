@@ -136,6 +136,9 @@ type FirstResponder struct {
 	notified map[string]map[string]announcement
 	// cursors maps tenant → where its next sweep starts.
 	cursors map[string]sweepCursor
+	// sweeping maps tenant → a one-slot lock held for a whole sweep, so
+	// overlapping sweeps of one tenant run one after the other.
+	sweeping map[string]chan struct{}
 }
 
 // NewFirstResponder validates cfg and returns a FirstResponder. Refusals
@@ -162,7 +165,26 @@ func NewFirstResponder(cfg FirstResponderConfig) (*FirstResponder, error) {
 		pagesPerSweep: maxFirstResponderPages,
 		notified:      make(map[string]map[string]announcement),
 		cursors:       make(map[string]sweepCursor),
+		sweeping:      make(map[string]chan struct{}),
 	}, nil
+}
+
+// lockSweep takes the tenant's sweep lock, waiting for a running sweep of
+// the same tenant to finish. It returns ctx's error if ctx ends first.
+func (r *FirstResponder) lockSweep(ctx context.Context, tenantID string) (func(), error) {
+	r.mu.Lock()
+	lock, ok := r.sweeping[tenantID]
+	if !ok {
+		lock = make(chan struct{}, 1)
+		r.sweeping[tenantID] = lock
+	}
+	r.mu.Unlock()
+	select {
+	case lock <- struct{}{}:
+		return func() { <-lock }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 // Sweep lists the tenant's attention inbox and announces every item not
@@ -171,11 +193,19 @@ func NewFirstResponder(cfg FirstResponderConfig) (*FirstResponder, error) {
 // and leaves the record untouched; a delivery failure is counted and
 // retried next sweep. A sweep reads at most the page budget and the next
 // sweep resumes after it, reporting More, so every item is eventually
-// announced however long the inbox is.
+// announced however long the inbox is. Sweeps of one tenant are serialized:
+// an overlapping call waits for the running sweep (or for ctx), so the
+// read, deliver and record steps of two sweeps never interleave and an item
+// is announced once per age. Sweeps of different tenants run concurrently.
 func (r *FirstResponder) Sweep(ctx context.Context, tenantID string) (FirstResponderSweep, error) {
 	if tenantID == "" {
 		return FirstResponderSweep{}, &InvalidInputError{Field: "tenant_id", Message: "is required"}
 	}
+	unlock, err := r.lockSweep(ctx, tenantID)
+	if err != nil {
+		return FirstResponderSweep{}, err
+	}
+	defer unlock()
 	cur := r.cursor(tenantID)
 	items, next, complete, err := r.listFrom(ctx, tenantID, cur.offset)
 	if err != nil {
