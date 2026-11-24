@@ -25,8 +25,11 @@ import (
 
 // The acr/amr contract: both are ID-token claims, set only by the
 // hardware-attested login (TokenService.IssueHardwareTokens). Discovery
-// advertises both; every other ID token and every access token, renewed
-// ones included, omits them.
+// advertises both; every other ID token omits them. The one access token
+// that carries a method is the mTLS service-account token
+// (TokenService.IssueServiceAccountTokens, /oauth2/token-mtls): it states
+// the ServiceAccountAMR value and no acr, since that grant issues no ID
+// token. Every other access token, renewed ones included, omits both.
 
 // acrAmrContractPayload decodes a JWT's payload segment without verifying it:
 // the contract is about which claims are present, not who signed them.
@@ -197,4 +200,93 @@ func TestAcrAmrContract_UnattestedPIVLoginReportsMtlsAmr(t *testing.T) {
 		t.Fatalf("RefreshSession: %v", err)
 	}
 	assertNoAcrAmr(t, "renewed unattested access token", acrAmrContractPayload(t, tokens.AccessToken))
+}
+
+// TestAcrAmrContract_ServiceAccountAccessTokenCarriesAttestAMR pins the one
+// access-token exception: the mTLS client_credentials grant issues no ID
+// token, so its access token states how the certificate was attested.
+func TestAcrAmrContract_ServiceAccountAccessTokenCarriesAttestAMR(t *testing.T) {
+	t.Parallel()
+
+	provider, _, appStorage, _, _ := createTestOIDCProvider(t)
+	ctx := context.Background()
+
+	if err := appStorage.CreateApp(ctx, &Application{
+		ClientID:   "svc-test",
+		TenantID:   "tenant-1",
+		GrantTypes: []string{GrantTypeClientCredentials},
+		Scopes:     []string{"mcp:tools"},
+	}); err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+
+	tests := []struct {
+		attest string
+		want   []string
+	}{
+		{attest: AttestMethodManual, want: []string{"mtls"}},
+		{attest: AttestMethodXKey, want: []string{"mtls"}},
+		{attest: AttestMethodTPM, want: []string{"mtls", "hwk"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.attest, func(t *testing.T) {
+			resp, err := provider.TokenMTLS(ctx, &MTLSTokenRequest{
+				GrantType:          GrantTypeClientCredentials,
+				ClientID:           "svc-test",
+				Scope:              "mcp:tools",
+				CertThumbprintS256: "thumb-test",
+				AttestMethod:       tt.attest,
+			})
+			if err != nil {
+				t.Fatalf("TokenMTLS: %v", err)
+			}
+			claims := acrAmrContractPayload(t, resp.AccessToken)
+			if got, ok := claims["acr"]; ok {
+				t.Errorf("service-account access token carries acr = %v, want no such claim", got)
+			}
+			raw, ok := claims["amr"].([]any)
+			if !ok {
+				t.Fatalf("service-account access token amr = %v, want %v", claims["amr"], tt.want)
+			}
+			got := make([]string, 0, len(raw))
+			for _, v := range raw {
+				s, _ := v.(string)
+				got = append(got, s)
+			}
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("service-account access token amr = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestAcrAmrContract_SecretClientCredentialsAccessTokenOmitsAcrAmr: a
+// secret-authenticated client_credentials token proves no method worth
+// stating, so it carries neither claim.
+func TestAcrAmrContract_SecretClientCredentialsAccessTokenOmitsAcrAmr(t *testing.T) {
+	t.Parallel()
+
+	provider, _, appStorage, _, _ := createTestOIDCProvider(t)
+	ctx := context.Background()
+
+	if err := appStorage.CreateApp(ctx, &Application{
+		ClientID:     "svc-test",
+		ClientSecret: currentSecretHash(t, "svc-secret"),
+		TenantID:     "tenant-1",
+		GrantTypes:   []string{GrantTypeClientCredentials},
+		Scopes:       []string{"mcp:tools"},
+	}); err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+
+	resp, err := provider.Token(ctx, &TokenRequest{
+		GrantType:    GrantTypeClientCredentials,
+		ClientID:     "svc-test",
+		ClientSecret: "svc-secret",
+		Scope:        []string{"mcp:tools"},
+	})
+	if err != nil {
+		t.Fatalf("Token: %v", err)
+	}
+	assertNoAcrAmr(t, "client_credentials access token", acrAmrContractPayload(t, resp.AccessToken))
 }
