@@ -333,3 +333,48 @@ func TestServices_TheDeployedWorkloadReadsItsCredentialsAndHoldsItsRole(t *testi
 		"the principal is bound to the SVID's key")
 	assert.True(t, binding.NotAfter.Equal(svid.NotAfter), "the binding expires with the SVID")
 }
+
+// Undeploy withdraws each of the node's real grants: both certificates
+// are revoked at the CA, the credentials are destroyed, the principal
+// holds no role, and the name no longer resolves.
+func TestServices_UndeployWithdrawsEveryRealGrant(t *testing.T) {
+	client, svc, rt := startRealGrantsNode(t)
+	plane := client.Services()
+	acme := tenantctx.WithTenant(context.Background(), "acme")
+
+	rec, err := plane.Deploy(acme, signed(t, rt, "acme", "web"))
+	require.NoError(t, err)
+	require.Equal(t, "running", rec.State)
+	id := grants.SPIFFEID(helpers.SPIFFETrustDomain, &serviceplane.Manifest{Tenant: "acme", Name: "web"})
+	asWorkload := asPrincipal(id)
+	svid := readLeaf(t, svc, asWorkload, "services/web/svid")
+	leaf := readLeaf(t, svc, asWorkload, "services/web/tls")
+
+	require.NoError(t, plane.Undeploy(acme, "web"))
+	_, err = plane.Get(acme, "web")
+	assert.Error(t, err, "an undeployed service is gone")
+
+	for kind, cert := range map[string]*x509.Certificate{"SVID": svid, "TLS leaf": leaf} {
+		got, err := svc.Certificate().IsRevoked(acme, &service.IsRevokedRequest{SerialNumber: cert.SerialNumber.Text(16)})
+		require.NoError(t, err, "the CA answers for the %s", kind)
+		assert.True(t, got.Revoked, "undeploy revokes the %s", kind)
+	}
+
+	for _, path := range []string{"services/web/svid", "services/web/tls"} {
+		_, err := svc.Secrets().GetSecret(asWorkload, &service.GetSecretRequest{SecretID: path})
+		assert.Error(t, err, "undeploy destroys %s", path)
+	}
+
+	if u := workloadUser(t, svc, id); u != nil {
+		assert.Empty(t, u.Roles, "the workload principal holds no role after undeploy")
+	}
+
+	resolved, err := client.Registry().Resolve(acme, "web")
+	if err == nil {
+		assert.Empty(t, resolved.Instances, "undeploy withdraws the name")
+	}
+
+	assert.NotPanics(t, func() {
+		assert.Error(t, plane.Undeploy(acme, "web"), "nothing is left to undeploy")
+	})
+}
