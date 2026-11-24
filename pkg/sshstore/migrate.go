@@ -29,10 +29,16 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
+	"github.com/jeremyhahn/go-xkms/pkg/ssh/authorized"
+	"github.com/jeremyhahn/go-xkms/pkg/ssh/keys"
+	knownhosts "github.com/jeremyhahn/go-xkms/pkg/ssh/known_hosts"
 	sshscope "github.com/jeremyhahn/go-xkms/pkg/ssh/scope"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	xkmsssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
+	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	gossh "golang.org/x/crypto/ssh"
 )
 
@@ -47,8 +53,8 @@ const (
 
 	// recordPrefix is the namespace go-xkms keeps every SSH record under.
 	// Within it, go-xkms's scope layout (pkg/ssh/scope) places a record at
-	// ssh/{shared|users/<owner>|services/<owner>}/<kind>/<name>; the kinds
-	// are classified with that layout's own matcher, never re-derived here.
+	// ssh/{shared|users/<owner>|services/<owner>}/<kind>/<name>; a record's
+	// kind is the segment just before its name.
 	recordPrefix = sshscope.Feature + "/"
 
 	// challengeSize is the length of the random message each migrated key
@@ -70,7 +76,7 @@ type Report struct {
 
 	// Keys, KnownHosts and AuthorizedKeys count the records migrated by kind.
 	// Other counts records under the SSH namespace of no known kind; they
-	// are migrated byte for byte like the rest.
+	// are copied into sealed byte for byte.
 	Keys           int
 	KnownHosts     int
 	AuthorizedKeys int
@@ -102,18 +108,22 @@ func LegacyPresent(legacyDir string) (bool, error) {
 // MigrateLegacy moves every record of the legacy file store at legacyDir into
 // sealed, then destroys the legacy files.
 //
-// Each record is copied byte for byte and read back. Each key must then prove
-// that its sealed copy holds the same key pair: the public key and fingerprint
-// must match, and a signature over a random challenge made by the sealed
-// signer must verify against the legacy public key. The legacy tree is
-// destroyed only after every record passes. Each file is overwritten with
-// random bytes and synced before it is unlinked.
+// The legacy files keep the JSON format the old go-xkms file store wrote,
+// which the pinned go-xkms SSH stores no longer read, so each record is
+// decoded here and written into sealed as a typed record through the go-xkms
+// DAO stores, then read back. Each key must then prove that its sealed copy
+// holds the same key pair: the public key and fingerprint must match, and a
+// signature over a random challenge made by the sealed signer must verify
+// against the legacy public key. The legacy tree is destroyed only after
+// every record passes. Each file is overwritten with random bytes and synced
+// before it is unlinked.
 //
 // Any failure leaves the legacy store in place and returns a typed error. The
-// run is idempotent: a record already present in sealed with identical bytes
-// is accepted, so a boot that failed part-way can simply retry. A record
-// present with different bytes is a *RecordConflictError, and nothing is
-// overwritten.
+// run is idempotent: a record already present in sealed with the same
+// identity (a key's public key and fingerprint, a host pin's fingerprint and
+// public key, an authorized-keys entry's line) is accepted, so a boot that
+// failed part-way can simply retry. A record present with a different
+// identity is a *RecordConflictError, and nothing is overwritten.
 //
 // provider is the backend provider the sealed store serves with. It is needed
 // only to verify backend-backed keys, and may be nil when there are none.
@@ -167,24 +177,44 @@ type record struct {
 	value []byte
 }
 
-// migrate copies and verifies every legacy record. The legacy store is closed
-// before it returns, so the caller can safely destroy its files.
-func migrate(ctx context.Context, legacyDir string, sealed xkmssdk.StorageBackend, provider xkmsssh.BackendProvider, report *Report) (err error) {
-	legacyBackend, err := xkmsssh.NewFileStorage(legacyDir)
-	if err != nil {
-		return &LegacyStoreError{Op: "open", Path: legacyDir, Err: err}
-	}
-	legacy, err := xkmsssh.NewEmbedded(xkmsssh.EmbeddedOptions{Backend: legacyBackend})
-	if err != nil {
-		return &LegacyStoreError{Op: "open", Path: legacyDir, Err: errors.Join(err, legacyBackend.Close())}
-	}
-	defer func() {
-		if cerr := legacy.Close(); cerr != nil {
-			err = errors.Join(err, &LegacyStoreError{Op: "close", Path: legacyDir, Err: cerr})
-		}
-	}()
+// decodedKey, decodedPin and decodedAuthorized pair a decoded legacy record
+// with the legacy record path it came from.
+type decodedKey struct {
+	path string
+	key  *legacyKey
+}
 
-	records, err := readRecords(ctx, legacyBackend, legacyDir)
+type decodedPin struct {
+	path string
+	pin  *legacyPin
+}
+
+type decodedAuthorized struct {
+	path  string
+	entry *legacyAuthorized
+}
+
+// decodedStore is the legacy store decoded by kind. Records of no known kind
+// are kept raw in other.
+type decodedStore struct {
+	keys       []decodedKey
+	pins       []decodedPin
+	authorized []decodedAuthorized
+	other      []record
+}
+
+// wipe clears every private key PEM the decoded store holds.
+func (d *decodedStore) wipe() {
+	for _, k := range d.keys {
+		clear(k.key.PEM)
+	}
+}
+
+// migrate decodes every legacy record, writes it into the sealed stores and
+// verifies it. The legacy store is closed before anything is written, so the
+// caller can safely destroy its files once migrate returns.
+func migrate(ctx context.Context, legacyDir string, sealed xkmssdk.StorageBackend, provider xkmsssh.BackendProvider, report *Report) error {
+	records, err := readLegacy(ctx, legacyDir)
 	defer func() {
 		for _, r := range records {
 			clear(r.value)
@@ -194,23 +224,62 @@ func migrate(ctx context.Context, legacyDir string, sealed xkmssdk.StorageBacken
 		return err
 	}
 
-	for _, r := range records {
+	decoded, err := decodeRecords(records, legacyDir)
+	defer decoded.wipe()
+	if err != nil {
+		return err
+	}
+
+	daos, err := xkmssdk.NewBackendDAOFactory(sealed)
+	if err != nil {
+		return &SealedStoreError{Op: "open", Key: recordPrefix, Err: err}
+	}
+	stores, err := xkmsssh.NewStores(daos)
+	if err != nil {
+		return &SealedStoreError{Op: "open", Key: recordPrefix, Err: err}
+	}
+
+	for _, k := range decoded.keys {
+		if err := copyKey(ctx, stores.Keys, k); err != nil {
+			return err
+		}
+		report.Keys++
+	}
+	for _, p := range decoded.pins {
+		if err := copyPin(ctx, stores.KnownHosts, p); err != nil {
+			return err
+		}
+		report.KnownHosts++
+	}
+	for _, a := range decoded.authorized {
+		if err := copyAuthorized(ctx, stores.Authorized, a); err != nil {
+			return err
+		}
+		report.AuthorizedKeys++
+	}
+	for _, r := range decoded.other {
 		if err := copyRecord(ctx, sealed, r); err != nil {
 			return err
 		}
-		switch {
-		case sshscope.KindKeys.Match(r.key):
-			report.Keys++
-		case sshscope.KindKnownHosts.Match(r.key):
-			report.KnownHosts++
-		case sshscope.KindAuthorizedKeys.Match(r.key):
-			report.AuthorizedKeys++
-		default:
-			report.Other++
-		}
+		report.Other++
 	}
 
-	return verifyKeys(ctx, legacy, sealed, provider, report.Keys)
+	return verifyKeys(ctx, stores, provider, decoded.keys)
+}
+
+// readLegacy opens the legacy file store, reads every record under the SSH
+// namespace and closes it again.
+func readLegacy(ctx context.Context, legacyDir string) (records []record, err error) {
+	backend, err := file.New(legacyDir)
+	if err != nil {
+		return nil, &LegacyStoreError{Op: "open", Path: legacyDir, Err: err}
+	}
+	defer func() {
+		if cerr := backend.Close(); cerr != nil {
+			err = errors.Join(err, &LegacyStoreError{Op: "close", Path: legacyDir, Err: cerr})
+		}
+	}()
+	return readRecords(ctx, backend, legacyDir)
 }
 
 // readRecords returns every record under the SSH namespace, sorted by key.
@@ -227,8 +296,235 @@ func readRecords(ctx context.Context, backend xkmssdk.StorageBackend, legacyDir 
 	return records, nil
 }
 
-// copyRecord writes r into sealed and reads it back. A record already present
-// with identical bytes is accepted, so a partial run can be retried.
+// recordKind classifies a legacy record path by the segment just before the
+// record name: ssh/<scope keyspace>/<kind>/<name>. A path of no known kind
+// returns the empty Kind.
+func recordKind(path string) sshscope.Kind {
+	parts := strings.Split(path, "/")
+	if len(parts) < 3 {
+		return ""
+	}
+	switch kind := sshscope.Kind(parts[len(parts)-2]); kind {
+	case sshscope.KindKeys, sshscope.KindKnownHosts, sshscope.KindAuthorizedKeys:
+		return kind
+	default:
+		return ""
+	}
+}
+
+// decodeRecords decodes every legacy record by kind. Every key record must
+// decode to a key, because a key that does not decode cannot be verified: the
+// count is reported as an *UnparsedKeysError. A host pin or authorized-keys
+// record that does not decode is a *LegacyStoreError with Op "decode".
+func decodeRecords(records []record, legacyDir string) (*decodedStore, error) {
+	decoded := &decodedStore{}
+	keyRecords := 0
+	for _, r := range records {
+		switch recordKind(r.key) {
+		case sshscope.KindKeys:
+			keyRecords++
+			key, err := decodeLegacyKey(r.value)
+			if err != nil {
+				continue
+			}
+			decoded.keys = append(decoded.keys, decodedKey{path: r.key, key: key})
+		case sshscope.KindKnownHosts:
+			pin, err := decodeLegacyPin(r.value)
+			if err != nil {
+				return decoded, &LegacyStoreError{Op: "decode", Path: filepath.Join(legacyDir, filepath.FromSlash(r.key)), Err: err}
+			}
+			decoded.pins = append(decoded.pins, decodedPin{path: r.key, pin: pin})
+		case sshscope.KindAuthorizedKeys:
+			entry, err := decodeLegacyAuthorized(r.value)
+			if err != nil {
+				return decoded, &LegacyStoreError{Op: "decode", Path: filepath.Join(legacyDir, filepath.FromSlash(r.key)), Err: err}
+			}
+			decoded.authorized = append(decoded.authorized, decodedAuthorized{path: r.key, entry: entry})
+		default:
+			decoded.other = append(decoded.other, r)
+		}
+	}
+	if len(decoded.keys) != keyRecords {
+		return decoded, &UnparsedKeysError{Records: keyRecords, Parsed: len(decoded.keys)}
+	}
+	return decoded, nil
+}
+
+// copyKey writes a legacy key into the sealed key store and reads it back. A
+// key already present with the same public key and fingerprint is accepted,
+// so a partial run can be retried; one present with a different key is a
+// *RecordConflictError and is not overwritten.
+func copyKey(ctx context.Context, store *keys.DAOStore, d decodedKey) error {
+	lk := d.key
+	existing, err := store.Get(ctx, lk.Scope, lk.Owner, lk.Name)
+	if err == nil {
+		defer existing.Destroy()
+		if !sameKey(existing, lk) {
+			return &RecordConflictError{Key: d.path}
+		}
+		return nil
+	}
+	var notFound *keys.KeyNotFoundError
+	if !errors.As(err, &notFound) {
+		return &SealedStoreError{Op: "exists", Key: d.path, Err: err}
+	}
+
+	key := &keys.Key{
+		PublicKey:    lk.PublicKey,
+		Algorithm:    keys.Algorithm(lk.Algorithm),
+		Fingerprint:  lk.Fingerprint,
+		Scope:        lk.Scope,
+		Owner:        lk.Owner,
+		Name:         lk.Name,
+		CreatedAt:    lk.CreatedAt,
+		Comment:      lk.Comment,
+		BackendID:    lk.BackendID,
+		BackendKeyID: lk.BackendKeyID,
+	}
+	defer key.Destroy()
+	if lk.BackendID == "" {
+		// NewSecret wipes the PEM it seals.
+		material, err := secure.NewSecret(ctx, lk.PEM)
+		if err != nil {
+			return &SealedStoreError{Op: "seal", Key: d.path, Err: err}
+		}
+		key.Material = material
+	}
+	if err := store.Put(ctx, key); err != nil {
+		var owned *keys.OwnerConflictError
+		if errors.As(err, &owned) {
+			return &RecordConflictError{Key: d.path}
+		}
+		return &SealedStoreError{Op: "put", Key: d.path, Err: err}
+	}
+
+	stored, err := store.Get(ctx, lk.Scope, lk.Owner, lk.Name)
+	if err != nil {
+		return &SealedStoreError{Op: "get", Key: d.path, Err: err}
+	}
+	defer stored.Destroy()
+	if !sameKey(stored, lk) {
+		return &RecordMismatchError{Key: d.path}
+	}
+	return nil
+}
+
+// sameKey reports whether a sealed key has the legacy key's identity.
+func sameKey(got *keys.Key, lk *legacyKey) bool {
+	return got.PublicKey != nil &&
+		bytes.Equal(got.PublicKey.Marshal(), lk.PublicKey.Marshal()) &&
+		got.Fingerprint == lk.Fingerprint
+}
+
+// copyPin writes a legacy host pin into the sealed known-hosts store and
+// reads it back, with copyKey's retry and conflict rules.
+func copyPin(ctx context.Context, store *knownhosts.DAOStore, d decodedPin) error {
+	lp := d.pin
+	existing, err := store.Get(ctx, lp.Scope, lp.Owner, lp.Host)
+	if err == nil {
+		if !samePin(existing, lp) {
+			return &RecordConflictError{Key: d.path}
+		}
+		return nil
+	}
+	var notFound *knownhosts.NotFoundError
+	if !errors.As(err, &notFound) {
+		return &SealedStoreError{Op: "exists", Key: d.path, Err: err}
+	}
+
+	pin := &knownhosts.Pin{
+		Host:        lp.Host,
+		Fingerprint: lp.Fingerprint,
+		Algorithm:   lp.Algorithm,
+		Scope:       lp.Scope,
+		Owner:       lp.Owner,
+		AddedAt:     lp.AddedAt,
+		Source:      lp.Source,
+		PublicKey:   bytes.Clone(lp.PublicKey),
+	}
+	if err := store.Add(ctx, pin); err != nil {
+		var dup *knownhosts.DuplicateError
+		if errors.As(err, &dup) {
+			return &RecordConflictError{Key: d.path}
+		}
+		return &SealedStoreError{Op: "put", Key: d.path, Err: err}
+	}
+
+	stored, err := store.Get(ctx, lp.Scope, lp.Owner, lp.Host)
+	if err != nil {
+		return &SealedStoreError{Op: "get", Key: d.path, Err: err}
+	}
+	if !samePin(stored, lp) {
+		return &RecordMismatchError{Key: d.path}
+	}
+	return nil
+}
+
+// samePin reports whether a sealed pin has the legacy pin's identity.
+func samePin(got *knownhosts.Pin, lp *legacyPin) bool {
+	return got.Fingerprint == lp.Fingerprint && bytes.Equal(got.PublicKey, lp.PublicKey)
+}
+
+// copyAuthorized writes a legacy authorized-keys entry into the sealed
+// authorized-keys store and reads it back, with copyKey's retry and conflict
+// rules. Entries are compared by their authorized_keys line.
+func copyAuthorized(ctx context.Context, store *authorized.DAOStore, d decodedAuthorized) error {
+	la := d.entry
+	want, err := authorized.ParseLine(la.Line)
+	if err != nil {
+		return &LegacyStoreError{Op: "decode", Path: d.path, Err: err}
+	}
+	wantLine, err := authorized.Emit(want)
+	if err != nil {
+		return &LegacyStoreError{Op: "decode", Path: d.path, Err: err}
+	}
+
+	existing, err := store.Get(ctx, la.Scope, la.Owner, la.Name)
+	if err == nil {
+		if emittedLine(existing) != wantLine {
+			return &RecordConflictError{Key: d.path}
+		}
+		return nil
+	}
+	var notFound *authorized.NotFoundError
+	if !errors.As(err, &notFound) {
+		return &SealedStoreError{Op: "exists", Key: d.path, Err: err}
+	}
+
+	if err := store.Add(ctx, la.Scope, la.Owner, la.Name, want); err != nil {
+		var dup *authorized.DuplicateError
+		if errors.As(err, &dup) {
+			return &RecordConflictError{Key: d.path}
+		}
+		return &SealedStoreError{Op: "put", Key: d.path, Err: err}
+	}
+
+	stored, err := store.Get(ctx, la.Scope, la.Owner, la.Name)
+	if err != nil {
+		return &SealedStoreError{Op: "get", Key: d.path, Err: err}
+	}
+	if emittedLine(stored) != wantLine {
+		return &RecordMismatchError{Key: d.path}
+	}
+	return nil
+}
+
+// emittedLine is the authorized_keys line of a stored record, or "" when it
+// has none.
+func emittedLine(rec *authorized.Record) string {
+	if rec == nil || rec.Entry == nil {
+		return ""
+	}
+	line, err := authorized.Emit(rec.Entry)
+	if err != nil {
+		return ""
+	}
+	return line
+}
+
+// copyRecord writes a record of no known kind into sealed byte for byte and
+// reads it back. A record already present with identical bytes is accepted,
+// so a partial run can be retried.
 func copyRecord(ctx context.Context, sealed xkmssdk.StorageBackend, r record) error {
 	exists, err := sealed.Exists(ctx, r.key)
 	if err != nil {
@@ -254,30 +550,39 @@ func copyRecord(ctx context.Context, sealed xkmssdk.StorageBackend, r record) er
 	return &RecordMismatchError{Key: r.key}
 }
 
-// verifyKeys proves every legacy key is usable from sealed. keyRecords is the
-// number of raw key records copied; every one must parse as a key, because a
-// record that does not parse cannot be verified.
-func verifyKeys(ctx context.Context, legacy xkmsssh.Client, sealed xkmssdk.StorageBackend, provider xkmsssh.BackendProvider, keyRecords int) error {
-	keys, err := legacy.Keys().List(ctx, xkmsssh.ListKeysRequest{})
-	if err != nil {
-		return &KeyVerificationError{Key: string(sshscope.KindKeys), Reason: "list legacy keys", Err: err}
+// verifyKeys proves every legacy key is usable from the sealed stores.
+func verifyKeys(ctx context.Context, stores *xkmsssh.Stores, provider xkmsssh.BackendProvider, legacyKeys []decodedKey) (err error) {
+	if len(legacyKeys) == 0 {
+		return nil
 	}
-	if len(keys) != keyRecords {
-		return &UnparsedKeysError{Records: keyRecords, Parsed: len(keys)}
-	}
-
-	// The verifying client is not closed: closing it would close sealed,
-	// which the caller owns.
-	verifier, err := xkmsssh.NewEmbedded(xkmsssh.EmbeddedOptions{Backend: sealed, BackendProvider: provider})
+	// Closing the verifier leaves the stores, and sealed, open.
+	verifier, err := xkmsssh.NewEmbedded(xkmsssh.EmbeddedOptions{Stores: stores, BackendProvider: provider})
 	if err != nil {
 		return &KeyVerificationError{Key: string(sshscope.KindKeys), Reason: "open sealed store", Err: err}
 	}
-	for _, k := range keys {
-		if err := verifyKey(ctx, verifier.Keys(), k); err != nil {
+	defer func() {
+		if cerr := verifier.Close(); cerr != nil {
+			err = errors.Join(err, &KeyVerificationError{Key: string(sshscope.KindKeys), Reason: "close sealed store", Err: cerr})
+		}
+	}()
+	for _, d := range legacyKeys {
+		legacyKey := &xkmsssh.Key{
+			Scope:       string(d.key.Scope),
+			Owner:       d.key.Owner,
+			Name:        d.key.Name,
+			PublicKey:   authorizedKeyLine(d.key.PublicKey),
+			Fingerprint: d.key.Fingerprint,
+		}
+		if err := verifyKey(ctx, verifier.Keys(), legacyKey); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// authorizedKeyLine is pub in authorized_keys form, without a newline.
+func authorizedKeyLine(pub gossh.PublicKey) string {
+	return strings.TrimRight(string(gossh.MarshalAuthorizedKey(pub)), "\n")
 }
 
 // verifyKey proves the sealed copy of legacyKey holds the same key pair.
