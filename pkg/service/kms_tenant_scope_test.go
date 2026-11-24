@@ -23,8 +23,10 @@ import (
 	"github.com/stretchr/testify/require"
 
 	quicbaasErrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/kms"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
+	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 const (
@@ -493,4 +495,75 @@ func TestKMSService_ReencryptionProgressAndCancel_AreTenantScoped(t *testing.T) 
 			})
 		}
 	}
+}
+
+// Two tenants each own a key named "shared". Each lists, uses and deletes
+// only its own. The double binds a ciphertext to the caller's tenant and the
+// key id it was handed, as a real KMS binds it to the key.
+func TestKMSService_SameNameTwoTenants(t *testing.T) {
+	const name = "shared"
+	mgr := newMockKMSManager()
+	binding := func(ctx context.Context, keyID string) []byte {
+		tenant, _ := tenantctx.Lookup(ctx)
+		return []byte(tenant + "|" + keyID + "|")
+	}
+	mgr.encryptFn = func(ctx context.Context, keyID string, plaintext, _ []byte) ([]byte, error) {
+		return append(binding(ctx, keyID), plaintext...), nil
+	}
+	mgr.decryptFn = func(ctx context.Context, keyID string, ciphertext, _ []byte) ([]byte, error) {
+		b := binding(ctx, keyID)
+		if !bytes.HasPrefix(ciphertext, b) {
+			return nil, kms.ErrKeyNotFound
+		}
+		return ciphertext[len(b):], nil
+	}
+	svc := newKMSService(mgr, nil)
+	svc.SetKVStore(newMockKVStore())
+	crypt := newCryptoService(kmsBackedCrypto{mgr: mgr}, mgr, nil, nil)
+
+	acme := tenantctx.WithTenant(context.Background(), scopeOwnerTenant)
+	globex := tenantctx.WithTenant(context.Background(), scopeOtherTenant)
+	ciphertexts := map[string][]byte{}
+	for tenant, ctx := range map[string]context.Context{scopeOwnerTenant: acme, scopeOtherTenant: globex} {
+		_, err := svc.GenerateKey(ctx, &GenerateKeyRequest{
+			Name:          name,
+			Usage:         []KeyUsage{KeyUsageEncrypt, KeyUsageDecrypt},
+			KeyAttributes: &xkmssdk.KeyAttributes{SymmetricAlgorithm: xkmssdk.SymmetricAES256GCM},
+		})
+		require.NoError(t, err, "tenant %s creates %q", tenant, name)
+		enc, err := crypt.Encrypt(ctx, &EncryptRequest{KeyID: name, Plaintext: []byte(tenant)})
+		require.NoError(t, err)
+		ciphertexts[tenant] = enc.Ciphertext
+	}
+
+	for _, ctx := range []context.Context{acme, globex} {
+		list, err := svc.ListKeys(ctx, &ListKeysRequest{})
+		require.NoError(t, err)
+		require.Len(t, list.Keys, 1, "a tenant lists only its own key")
+		require.Equal(t, name, list.Keys[0].KeyID)
+	}
+
+	_, err := crypt.Decrypt(globex, &DecryptRequest{KeyID: name, Ciphertext: ciphertexts[scopeOwnerTenant]})
+	require.Error(t, err, "globex must not open acme's ciphertext")
+
+	_, err = svc.DeleteKey(acme, &DeleteKeyRequest{KeyID: name, Force: true})
+	require.NoError(t, err)
+	meta, err := svc.GetKeyMetadata(globex, &GetKeyMetadataRequest{KeyID: name})
+	require.NoError(t, err, "acme's delete leaves globex's key")
+	require.NotNil(t, meta.Metadata)
+}
+
+// kmsBackedCrypto is a crypto manager double that encrypts and decrypts
+// through the KMS manager double, as the production crypto manager does.
+type kmsBackedCrypto struct {
+	interfaces.CryptoManager
+	mgr *mockKMSManager
+}
+
+func (c kmsBackedCrypto) Encrypt(ctx context.Context, keyID string, plaintext, aad []byte) ([]byte, error) {
+	return c.mgr.Encrypt(ctx, keyID, plaintext, aad)
+}
+
+func (c kmsBackedCrypto) Decrypt(ctx context.Context, keyID string, ciphertext, aad []byte) ([]byte, error) {
+	return c.mgr.Decrypt(ctx, keyID, ciphertext, aad)
 }
