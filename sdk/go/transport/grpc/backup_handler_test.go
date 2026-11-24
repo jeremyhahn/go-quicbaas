@@ -100,7 +100,7 @@ func TestBackupHandler_RestoreCarriesTheBackupID(t *testing.T) {
 	if got := fake.lastRestore.GetBackupId(); got != "b-42" {
 		t.Errorf("RestoreBackup backup_id = %q, want b-42", got)
 	}
-	want := &backup.RestoreResponse{Restored: true, Duration: 3 * time.Second}
+	want := &backup.RestoreResponse{Restored: true}
 	if !reflect.DeepEqual(resp, want) {
 		t.Errorf("Restore = %+v, want %+v", resp, want)
 	}
@@ -121,9 +121,11 @@ func TestBackupHandler_ListMapsEveryBackup(t *testing.T) {
 	if fake.lastList.GetLimit() != 0 || fake.lastList.GetContinuationToken() != "" {
 		t.Errorf("ListBackups must ask for every backup, got %+v", fake.lastList)
 	}
+	// The service list response the client reads has no encryption field, so
+	// Encrypted stays false on every transport.
 	want := &backup.ListBackupsResponse{Backups: []backup.BackupInfo{
-		{ID: "b-1", Size: 1024, CreatedAt: created, Encrypted: true},
-		{ID: "b-2", Size: 2048},
+		{ID: "b-1", Size: 1024, CreatedAt: created},
+		{ID: "b-2", Size: 2048, CreatedAt: time.Unix(0, 0).UTC()},
 	}}
 	if !reflect.DeepEqual(resp, want) {
 		t.Errorf("List = %+v, want %+v", resp, want)
@@ -140,8 +142,8 @@ func TestBackupHandler_RefusesFieldsTheWireCannotCarry(t *testing.T) {
 	if _, err := client.Create(ctx, &backup.BackupRequest{Destination: "/backups", Compress: true}); !errors.IsUnimplemented(err) {
 		t.Errorf("Create with a destination gave %v, want unimplemented", err)
 	}
-	if _, err := client.Restore(ctx, &backup.RestoreRequest{BackupID: "b-1", Source: "/backups/b-1"}); !errors.IsUnimplemented(err) {
-		t.Errorf("Restore with a source gave %v, want unimplemented", err)
+	if _, err := client.Restore(ctx, &backup.RestoreRequest{BackupID: "b-1", Source: "/backups/b-1"}); !errors.IsInvalidInput(err) {
+		t.Errorf("Restore with a source gave %v, want invalid input", err)
 	}
 	if fake.calls != 0 {
 		t.Errorf("a refused request reached the server %d times", fake.calls)

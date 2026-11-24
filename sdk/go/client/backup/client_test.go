@@ -192,8 +192,8 @@ func TestClient_Restore_Validation(t *testing.T) {
 		{name: "nil request", req: nil, wantErr: true},
 		{name: "empty backup ID and source", req: &RestoreRequest{}, wantErr: true},
 		{name: "valid request with backup ID only", req: &RestoreRequest{BackupID: "backup-123"}},
-		{name: "valid request with source only", req: &RestoreRequest{Source: "s3://bucket/backup"}},
-		{name: "valid request with both", req: &RestoreRequest{BackupID: "backup-123", Source: "s3://bucket/backup"}},
+		{name: "source only is refused (the service has no source)", req: &RestoreRequest{Source: "s3://bucket/backup"}, wantErr: true},
+		{name: "backup ID with source is refused (the source would be dropped)", req: &RestoreRequest{BackupID: "backup-123", Source: "s3://bucket/backup"}, wantErr: true},
 	}
 
 	for _, tt := range tests {
@@ -533,7 +533,6 @@ func TestClient_Restore_RequestMapping(t *testing.T) {
 
 	_, err := client.Restore(context.Background(), &RestoreRequest{
 		BackupID: "backup-456",
-		Source:   "s3://my-bucket/backups/backup-456",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -597,8 +596,8 @@ func TestValidateRestoreRequest(t *testing.T) {
 		{name: "nil request", req: nil, wantErr: true},
 		{name: "empty backup ID and source", req: &RestoreRequest{}, wantErr: true},
 		{name: "backup ID only", req: &RestoreRequest{BackupID: "backup-123"}},
-		{name: "source only", req: &RestoreRequest{Source: "/path/to/backup"}},
-		{name: "both backup ID and source", req: &RestoreRequest{BackupID: "backup-123", Source: "/path/to/backup"}},
+		{name: "source only", req: &RestoreRequest{Source: "/path/to/backup"}, wantErr: true},
+		{name: "both backup ID and source", req: &RestoreRequest{BackupID: "backup-123", Source: "/path/to/backup"}, wantErr: true},
 	}
 
 	for _, tt := range tests {

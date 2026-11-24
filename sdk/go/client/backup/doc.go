@@ -34,7 +34,6 @@
 //
 //	resp, err := client.Restore(ctx, &backup.RestoreRequest{
 //	    BackupID: "backup-123",
-//	    Source:   "s3://my-bucket/backups/backup-123",
 //	})
 //	if err != nil {
 //	    log.Fatal(err)

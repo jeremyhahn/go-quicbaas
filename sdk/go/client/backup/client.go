@@ -60,8 +60,12 @@ type BackupResponse struct {
 
 // RestoreRequest is a request to restore from a backup.
 type RestoreRequest struct {
+	// BackupID names the backup to restore. It is required.
 	BackupID string
-	Source   string
+	// Source is not carried by the backup service: no transport's restore
+	// request has a source. Restore refuses a request that sets it with an
+	// invalid-input error before any call, rather than dropping it (#1726).
+	Source string
 }
 
 // RestoreResponse is the response from restoring a backup.
@@ -224,8 +228,11 @@ func validateRestoreRequest(req *RestoreRequest) error {
 	if req == nil {
 		return errors.NewInvalidInput("backup.Restore", "request is required")
 	}
-	if req.BackupID == "" && req.Source == "" {
-		return errors.NewInvalidInput("backup.Restore", "backup ID or source is required")
+	if req.Source != "" {
+		return errors.NewInvalidInput("backup.Restore", "source is not supported: the backup service restores by backup ID only")
+	}
+	if req.BackupID == "" {
+		return errors.NewInvalidInput("backup.Restore", "backup ID is required")
 	}
 	return nil
 }
