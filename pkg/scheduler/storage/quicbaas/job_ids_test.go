@@ -395,7 +395,7 @@ func TestJobIDs_ExhaustionNeverReachesSystemIDs(t *testing.T) {
 func newClusteredStoreOver(t *testing.T, kv *mockKVStore) *ClusteredStorage {
 	t.Helper()
 	n := node(t)
-	storage, err := NewClusteredStorage(kv, n.Transaction, n.KV)
+	storage, err := NewClusteredStorage(&swappingKV{mockKVStore: kv}, n.Transaction, n.KV)
 	if err != nil {
 		t.Fatalf("NewClusteredStorage: %v", err)
 	}
@@ -528,7 +528,7 @@ func (r failingReader) Get(context.Context, string, ...transport.ReadOption) ([]
 func TestClusteredJobIDs_AStorageErrorAtInitFailsEngineStart(t *testing.T) {
 	n := node(t)
 	cause := errors.New("no leader")
-	storage, err := NewClusteredStorage(newMockKVStore(), n.Transaction, failingReader{KVClient: n.KV, err: cause})
+	storage, err := NewClusteredStorage(&swappingKV{mockKVStore: newMockKVStore()}, n.Transaction, failingReader{KVClient: n.KV, err: cause})
 	if err != nil {
 		t.Fatalf("NewClusteredStorage: %v", err)
 	}

@@ -164,8 +164,16 @@ func NewStorage(kv interfaces.KVStore) *Storage {
 // cluster running without claims looks perfectly healthy right up to the first
 // leadership change. Refusing here means a misconfigured clustered node fails
 // to start rather than silently double-firing.
+//
+// The job record's guarded writes (MutateJob, ConcludeRun) need the kv's
+// CompareAndSwap, so a kv without it is refused here too, before any firing
+// is claimed: otherwise every Running transition would fail after the due
+// sweep had already consumed the firing's claim.
 func NewClusteredStorage(kv interfaces.KVStore, claims ClaimTransactor, marks ClaimReader) (*ClusteredStorage, error) {
 	if claims == nil || marks == nil {
+		return nil, scheduler.ClaimUnsupportedError{Backend: typeName(kv)}
+	}
+	if _, ok := kv.(compareAndSwapper); !ok {
 		return nil, scheduler.ClaimUnsupportedError{Backend: typeName(kv)}
 	}
 	writer, err := cas.NewWriter(claims, marks, func(op string, cause error) error {

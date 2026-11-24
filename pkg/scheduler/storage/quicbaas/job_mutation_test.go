@@ -74,3 +74,20 @@ func TestClusteredStorage_MutateJob(t *testing.T) {
 		}
 	})
 }
+
+// The job record's guarded writes need the kv's CompareAndSwap, so a clustered
+// store without it is refused before it claims any firing.
+func TestNewClusteredStorage_RequiresCompareAndSwap(t *testing.T) {
+	n := node(t)
+
+	store, err := NewClusteredStorage(newMockKVStore(), n.Transaction, n.KV)
+	var unsupported scheduler.ClaimUnsupportedError
+	if store != nil || !errors.As(err, &unsupported) {
+		t.Fatalf("a kv without CompareAndSwap: store = %v, err = %v, want nil and ClaimUnsupportedError", store, err)
+	}
+
+	store, err = NewClusteredStorage(&swappingKV{mockKVStore: newMockKVStore()}, n.Transaction, n.KV)
+	if store == nil || err != nil {
+		t.Fatalf("a kv with CompareAndSwap: store = %v, err = %v", store, err)
+	}
+}
