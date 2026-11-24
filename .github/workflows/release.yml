@@ -22,6 +22,11 @@ on:
 # prefixes the local tag the Trivy gate scans.
 env:
   GO_VERSION: '1.27.4'
+  # Images release jobs run, pinned by digest (multi-arch index) so a
+  # re-tagged upstream or cached image cannot change a release build.
+  # TRIVY_IMAGE tracks TRIVY_VERSION in pkg/version/toolchain.mk.
+  TRIVY_IMAGE: aquasec/trivy:0.76.0@sha256:2416d1f74045b57274df1a340eee6b510cacd73c66a6ccb8da092b117eb7d222
+  GO_BUILD_IMAGE: golang:1.27.4-bookworm@sha256:b754301872c53d3dff666ec39e3fae971dc6f5ecd5a9b01fdefabbebb0f59901
   REGISTRY: ${{ vars.REGISTRY || 'ghcr.io' }}
   IMAGE_NAME_DAEMON: jeremyhahn/quicbaasd
   IMAGE_NAME_CLI: jeremyhahn/quicbaas
@@ -34,7 +39,7 @@ jobs:
   create-release:
     timeout-minutes: 120
     name: Create Release
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'release' }}
     outputs:
       version: ${{ steps.get_version.outputs.version }}
     steps:
@@ -150,7 +155,7 @@ jobs:
     timeout-minutes: 120
     name: Build Binaries (${{ matrix.platform }}, ${{ matrix.variant }})
     needs: create-release
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'release' }}
     strategy:
       matrix:
         include:
@@ -285,7 +290,7 @@ jobs:
             -e DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             -e GOARCH="${{ matrix.arch }}" \
             -e WITH_FIPS="${{ matrix.fips }}" \
-            golang:1.27-bookworm \
+            "$GO_BUILD_IMAGE" \
             bash /src/build.sh)
           docker cp . "$CID":/src
           docker start -a "$CID"
@@ -343,7 +348,7 @@ jobs:
     timeout-minutes: 120
     name: Build Darwin Binaries (${{ matrix.arch }})
     needs: create-release
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'release' }}
     strategy:
       matrix:
         arch: [amd64, arm64]
@@ -426,7 +431,7 @@ jobs:
     timeout-minutes: 120
     name: Build Docker Daemon Image
     needs: create-release
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'release' }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -500,14 +505,22 @@ jobs:
 
       - name: Trivy image gate (fail on CRITICAL/HIGH)
         run: |
-          docker run --rm \
-            -v /var/run/docker.sock:/var/run/docker.sock \
-            aquasec/trivy:latest image \
-              --format table \
-              --severity CRITICAL,HIGH \
-              --exit-code 1 \
-              --no-progress \
-              "${REGISTRY}/${IMAGE}:release-scan"
+          # Trivy reads a saved tarball copied into its container rather
+          # than the host Docker daemon: no job hands a container the
+          # runner's daemon socket (#1171).
+          docker save -o release-scan.tar "${REGISTRY}/${IMAGE}:release-scan"
+          CID=$(docker create "$TRIVY_IMAGE" image \
+            --input /tmp/release-scan.tar \
+            --format table \
+            --severity CRITICAL,HIGH \
+            --exit-code 1 \
+            --no-progress)
+          docker cp release-scan.tar "$CID":/tmp/release-scan.tar
+          rc=0
+          docker start -a "$CID" || rc=$?
+          docker rm "$CID" >/dev/null
+          rm -f release-scan.tar
+          exit "$rc"
         env:
           REGISTRY: ${{ env.REGISTRY }}
           IMAGE: ${{ env.IMAGE_NAME_DAEMON }}
@@ -537,7 +550,7 @@ jobs:
     timeout-minutes: 120
     name: Build Docker CLI Image
     needs: create-release
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'release' }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -602,14 +615,20 @@ jobs:
 
       - name: Trivy image gate (fail on CRITICAL/HIGH)
         run: |
-          docker run --rm \
-            -v /var/run/docker.sock:/var/run/docker.sock \
-            aquasec/trivy:latest image \
-              --format table \
-              --severity CRITICAL,HIGH \
-              --exit-code 1 \
-              --no-progress \
-              "${REGISTRY}/${IMAGE}:release-scan"
+          # See the daemon job's Trivy gate.
+          docker save -o release-scan.tar "${REGISTRY}/${IMAGE}:release-scan"
+          CID=$(docker create "$TRIVY_IMAGE" image \
+            --input /tmp/release-scan.tar \
+            --format table \
+            --severity CRITICAL,HIGH \
+            --exit-code 1 \
+            --no-progress)
+          docker cp release-scan.tar "$CID":/tmp/release-scan.tar
+          rc=0
+          docker start -a "$CID" || rc=$?
+          docker rm "$CID" >/dev/null
+          rm -f release-scan.tar
+          exit "$rc"
         env:
           REGISTRY: ${{ env.REGISTRY }}
           IMAGE: ${{ env.IMAGE_NAME_CLI }}
@@ -638,7 +657,7 @@ jobs:
     timeout-minutes: 120
     name: Build Docker FIPS Image
     needs: create-release
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'release' }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -701,14 +720,20 @@ jobs:
 
       - name: Trivy image gate (fail on CRITICAL/HIGH)
         run: |
-          docker run --rm \
-            -v /var/run/docker.sock:/var/run/docker.sock \
-            aquasec/trivy:latest image \
-              --format table \
-              --severity CRITICAL,HIGH \
-              --exit-code 1 \
-              --no-progress \
-              "${REGISTRY}/${IMAGE}:release-scan-fips"
+          # See the daemon job's Trivy gate.
+          docker save -o release-scan-fips.tar "${REGISTRY}/${IMAGE}:release-scan-fips"
+          CID=$(docker create "$TRIVY_IMAGE" image \
+            --input /tmp/release-scan-fips.tar \
+            --format table \
+            --severity CRITICAL,HIGH \
+            --exit-code 1 \
+            --no-progress)
+          docker cp release-scan-fips.tar "$CID":/tmp/release-scan-fips.tar
+          rc=0
+          docker start -a "$CID" || rc=$?
+          docker rm "$CID" >/dev/null
+          rm -f release-scan-fips.tar
+          exit "$rc"
         env:
           REGISTRY: ${{ env.REGISTRY }}
           IMAGE: ${{ env.IMAGE_NAME_DAEMON }}
@@ -737,7 +762,7 @@ jobs:
     timeout-minutes: 120
     name: Create Master Checksums
     needs: [create-release, build-binaries, build-darwin-binaries]
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'release' }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -774,7 +799,7 @@ jobs:
     timeout-minutes: 120
     name: Announce Release
     needs: [create-release, build-binaries, build-darwin-binaries, build-docker, build-docker-cli, build-docker-fips, create-checksums]
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'release' }}
     if: success()
     steps:
       # Skipped off GitHub, where no image was pushed -- appending pull
