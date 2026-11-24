@@ -65,3 +65,12 @@ func TestXKMSCABinding_NoCAIsANoOp(t *testing.T) {
 
 	require.Equal(t, before, x.CA(), "binding without a CA must not change the XKMS service's CA")
 }
+
+// TestXKMSCABinding_NonProviderCAWithNilLoggerDoesNotPanic pins that a bare
+// Server (no logger, as unit tests build it) adopting a CA that is not an
+// XKMS CA provider returns without binding instead of dereferencing the nil
+// logger.
+func TestXKMSCABinding_NonProviderCAWithNilLoggerDoesNotPanic(t *testing.T) {
+	srv := &Server{xkmsCA: newFakeTrustedCA(t)}
+	require.NotPanics(t, srv.bindCAToXKMSService)
+}

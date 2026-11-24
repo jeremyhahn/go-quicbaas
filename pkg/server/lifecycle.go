@@ -831,7 +831,9 @@ func (s *Server) bindCAToXKMSService() {
 	}
 	pc, ok := s.xkmsCA.(xkmscaprovider.CA)
 	if !ok {
-		s.logger.Warn("adopted CA does not implement the XKMS CA provider; canonical KeystoreService CA RPCs stay unconfigured")
+		if s.logger != nil {
+			s.logger.Warn("adopted CA does not implement the XKMS CA provider; canonical KeystoreService CA RPCs stay unconfigured")
+		}
 		return
 	}
 	x, err := xkmssdk.Get()
