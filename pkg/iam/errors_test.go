@@ -23,6 +23,7 @@ import (
 
 // TestErrCompilationFailed_Error tests the Error method for ErrCompilationFailed.
 func TestErrCompilationFailed_Error(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name           string
 		err            *CompilationFailedError
@@ -56,6 +57,7 @@ func TestErrCompilationFailed_Error(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			result := tc.err.Error()
 			if result != tc.expectedOutput {
 				t.Errorf("expected %q, got %q", tc.expectedOutput, result)
@@ -66,6 +68,7 @@ func TestErrCompilationFailed_Error(t *testing.T) {
 
 // TestErrInvalidPolicy_Error tests the Error method for InvalidPolicyError.
 func TestErrInvalidPolicy_Error(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name           string
 		err            *InvalidPolicyError
@@ -97,6 +100,7 @@ func TestErrInvalidPolicy_Error(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			result := tc.err.Error()
 			if result != tc.expectedOutput {
 				t.Errorf("expected %q, got %q", tc.expectedOutput, result)
@@ -107,6 +111,7 @@ func TestErrInvalidPolicy_Error(t *testing.T) {
 
 // TestErrPolicyExists_Error tests the Error method for PolicyExistsError.
 func TestErrPolicyExists_Error(t *testing.T) {
+	t.Parallel()
 	err := &PolicyExistsError{Name: "admin-access"}
 	expected := "policy 'admin-access' already exists in tenant ''"
 	if result := err.Error(); result != expected {
@@ -116,6 +121,7 @@ func TestErrPolicyExists_Error(t *testing.T) {
 
 // TestPolicyNotFoundTypeError_Error tests the Error method for PolicyNotFoundTypeError.
 func TestPolicyNotFoundTypeError_Error(t *testing.T) {
+	t.Parallel()
 	t.Run("with tenant and name", func(t *testing.T) {
 		err := &PolicyNotFoundTypeError{TenantID: "tenant-1", Name: "viewer-policy"}
 		expected := "policy 'viewer-policy' not found in tenant 'tenant-1'"
@@ -135,6 +141,7 @@ func TestPolicyNotFoundTypeError_Error(t *testing.T) {
 
 // TestErrPolicyNotFoundType_Error tests the Error method for IAMPolicyNotFoundError.
 func TestErrPolicyNotFoundType_Error(t *testing.T) {
+	t.Parallel()
 	err := &IAMPolicyNotFoundError{PolicyName: "viewer-policy"}
 	expected := "policy not found: viewer-policy"
 	if result := err.Error(); result != expected {
@@ -144,6 +151,7 @@ func TestErrPolicyNotFoundType_Error(t *testing.T) {
 
 // TestNewPolicyNotFoundError tests the constructor for policy not found.
 func TestNewPolicyNotFoundError(t *testing.T) {
+	t.Parallel()
 	err := NewPolicyNotFoundError("tenant-1", "missing-policy")
 	if err == nil {
 		t.Fatal("expected non-nil error")
@@ -162,6 +170,7 @@ func TestNewPolicyNotFoundError(t *testing.T) {
 
 // TestPolicyCompilationError_ErrorAndUnwrap tests Error and Unwrap for PolicyCompilationError.
 func TestPolicyCompilationError_ErrorAndUnwrap(t *testing.T) {
+	t.Parallel()
 	t.Run("error includes policy name and cause", func(t *testing.T) {
 		cause := errors.New("syntax error")
 		err := &PolicyCompilationError{PolicyName: "broken-policy", Cause: cause}
@@ -185,6 +194,7 @@ func TestPolicyCompilationError_ErrorAndUnwrap(t *testing.T) {
 
 // TestNewPolicyCompilationError tests the constructor for policy compilation.
 func TestNewPolicyCompilationError(t *testing.T) {
+	t.Parallel()
 	cause := errors.New("syntax error")
 	err := NewPolicyCompilationError("tenant-1", "broken-policy", cause)
 	if err == nil {
@@ -201,6 +211,7 @@ func TestNewPolicyCompilationError(t *testing.T) {
 
 // TestPolicyEvaluationError_ErrorAndUnwrap tests Error and Unwrap for PolicyEvaluationError.
 func TestPolicyEvaluationError_ErrorAndUnwrap(t *testing.T) {
+	t.Parallel()
 	t.Run("error includes policy name and cause", func(t *testing.T) {
 		cause := errors.New("runtime error")
 		err := &PolicyEvaluationError{PolicyName: "eval-policy", Cause: cause}
@@ -224,6 +235,7 @@ func TestPolicyEvaluationError_ErrorAndUnwrap(t *testing.T) {
 
 // TestNewPolicyEvaluationError tests the constructor for policy evaluation.
 func TestNewPolicyEvaluationError(t *testing.T) {
+	t.Parallel()
 	cause := errors.New("runtime error")
 	err := NewPolicyEvaluationError("tenant-1", "eval-policy", cause)
 	if err == nil {
@@ -236,6 +248,7 @@ func TestNewPolicyEvaluationError(t *testing.T) {
 
 // TestErrConditionParsing_Error tests the Error method for ConditionParsingError.
 func TestErrConditionParsing_Error(t *testing.T) {
+	t.Parallel()
 	err := &ConditionParsingError{Expression: "time > now()", Reason: "invalid function"}
 	expected := "condition parsing failed for 'time > now()': invalid function"
 	if result := err.Error(); result != expected {
@@ -245,6 +258,7 @@ func TestErrConditionParsing_Error(t *testing.T) {
 
 // TestErrorTypeFields tests basic error type fields.
 func TestErrorTypeFields(t *testing.T) {
+	t.Parallel()
 	t.Run("IAMMessageError", func(t *testing.T) {
 		err := &IAMMessageError{Message: "test message"}
 		if err.Error() != "test message" {
@@ -270,6 +284,7 @@ func TestErrorTypeFields(t *testing.T) {
 
 // TestNewInvalidCheckRequestError tests the constructor for invalid check request.
 func TestNewInvalidCheckRequestError(t *testing.T) {
+	t.Parallel()
 	err := NewInvalidCheckRequestError("missing subject")
 	if err == nil {
 		t.Fatal("expected non-nil error")
@@ -284,6 +299,7 @@ func TestNewInvalidCheckRequestError(t *testing.T) {
 // =============================================================================
 
 func TestIAMContextError_Unwrap(t *testing.T) {
+	t.Parallel()
 	t.Run("returns cause when set", func(t *testing.T) {
 		cause := errors.New("root cause")
 		err := &IAMContextError{Message: "context", Cause: cause}
@@ -305,6 +321,7 @@ func TestIAMContextError_Unwrap(t *testing.T) {
 // =============================================================================
 
 func TestTenantNotFoundError_Error(t *testing.T) {
+	t.Parallel()
 	err := &TenantNotFoundError{TenantID: "tenant-abc"}
 	if result := err.Error(); result != "tenant not found: tenant-abc" {
 		t.Errorf("unexpected: %q", result)
@@ -312,6 +329,7 @@ func TestTenantNotFoundError_Error(t *testing.T) {
 }
 
 func TestInvalidTenantIDError_Error(t *testing.T) {
+	t.Parallel()
 	err := &InvalidTenantIDError{TenantID: "bad!", Reason: "contains special chars"}
 	expected := "invalid tenant ID bad!: contains special chars"
 	if result := err.Error(); result != expected {
@@ -320,6 +338,7 @@ func TestInvalidTenantIDError_Error(t *testing.T) {
 }
 
 func TestQuotaExceededError_Error(t *testing.T) {
+	t.Parallel()
 	err := &QuotaExceededError{Resource: "users", Limit: 100, Current: 101}
 	if !strings.Contains(err.Error(), "users") || !strings.Contains(err.Error(), "100") {
 		t.Errorf("unexpected error: %q", err.Error())
@@ -331,6 +350,7 @@ func TestQuotaExceededError_Error(t *testing.T) {
 // =============================================================================
 
 func TestPolicySyncError_Error(t *testing.T) {
+	t.Parallel()
 	cause := errors.New("network timeout")
 	err := &PolicySyncError{TenantID: "tenant-1", Cause: cause}
 	expected := "failed to sync policies for tenant tenant-1: network timeout"
@@ -340,6 +360,7 @@ func TestPolicySyncError_Error(t *testing.T) {
 }
 
 func TestPolicySyncError_Unwrap(t *testing.T) {
+	t.Parallel()
 	cause := errors.New("net error")
 	err := &PolicySyncError{TenantID: "t1", Cause: cause}
 	if err.Unwrap() != cause {
@@ -352,6 +373,7 @@ func TestPolicySyncError_Unwrap(t *testing.T) {
 // =============================================================================
 
 func TestCredentialNotFoundError_Error(t *testing.T) {
+	t.Parallel()
 	err := &CredentialNotFoundError{CredentialID: "cred-123"}
 	if result := err.Error(); result != "credential not found: cred-123" {
 		t.Errorf("unexpected: %q", result)
@@ -359,6 +381,7 @@ func TestCredentialNotFoundError_Error(t *testing.T) {
 }
 
 func TestChallengeNotFoundError_Error(t *testing.T) {
+	t.Parallel()
 	err := &ChallengeNotFoundError{ChallengeID: "ch-456"}
 	if result := err.Error(); result != "challenge not found: ch-456" {
 		t.Errorf("unexpected: %q", result)
@@ -366,6 +389,7 @@ func TestChallengeNotFoundError_Error(t *testing.T) {
 }
 
 func TestChallengeExpiredError_Error(t *testing.T) {
+	t.Parallel()
 	err := &ChallengeExpiredError{ChallengeID: "ch-789"}
 	if result := err.Error(); result != "challenge expired: ch-789" {
 		t.Errorf("unexpected: %q", result)
@@ -373,6 +397,7 @@ func TestChallengeExpiredError_Error(t *testing.T) {
 }
 
 func TestWebAuthnRegistrationError_Error(t *testing.T) {
+	t.Parallel()
 	cause := errors.New("attestation failed")
 	err := &WebAuthnRegistrationError{UserID: "user-1", Cause: cause}
 	expected := "WebAuthn registration failed for user user-1: attestation failed"
@@ -382,6 +407,7 @@ func TestWebAuthnRegistrationError_Error(t *testing.T) {
 }
 
 func TestWebAuthnRegistrationError_Unwrap(t *testing.T) {
+	t.Parallel()
 	cause := errors.New("inner")
 	err := &WebAuthnRegistrationError{UserID: "u1", Cause: cause}
 	if err.Unwrap() != cause {
@@ -390,6 +416,7 @@ func TestWebAuthnRegistrationError_Unwrap(t *testing.T) {
 }
 
 func TestWebAuthnAuthenticationError_Error(t *testing.T) {
+	t.Parallel()
 	cause := errors.New("invalid signature")
 	err := &WebAuthnAuthenticationError{Email: "test@example.com", Cause: cause}
 	if !strings.Contains(err.Error(), "test@example.com") {
@@ -398,6 +425,7 @@ func TestWebAuthnAuthenticationError_Error(t *testing.T) {
 }
 
 func TestWebAuthnAuthenticationError_Unwrap(t *testing.T) {
+	t.Parallel()
 	cause := errors.New("sig error")
 	err := &WebAuthnAuthenticationError{Email: "e@e.com", Cause: cause}
 	if err.Unwrap() != cause {
@@ -410,6 +438,7 @@ func TestWebAuthnAuthenticationError_Unwrap(t *testing.T) {
 // =============================================================================
 
 func TestUnexpectedResultTypeError_Error(t *testing.T) {
+	t.Parallel()
 	err := &UnexpectedResultTypeError{ExpectedType: "[]byte", ActualType: "string"}
 	if result := err.Error(); !strings.Contains(result, "[]byte") || !strings.Contains(result, "string") {
 		t.Errorf("unexpected: %q", result)
@@ -417,6 +446,7 @@ func TestUnexpectedResultTypeError_Error(t *testing.T) {
 }
 
 func TestNilSnapshotError_Error(t *testing.T) {
+	t.Parallel()
 	err := &NilSnapshotError{}
 	if err.Error() != "snapshot is nil" {
 		t.Errorf("unexpected: %q", err.Error())
@@ -424,6 +454,7 @@ func TestNilSnapshotError_Error(t *testing.T) {
 }
 
 func TestMissingPolicyDataError_Error(t *testing.T) {
+	t.Parallel()
 	err := &MissingPolicyDataError{EventType: "create"}
 	if !strings.Contains(err.Error(), "create") {
 		t.Errorf("unexpected: %q", err.Error())
@@ -431,6 +462,7 @@ func TestMissingPolicyDataError_Error(t *testing.T) {
 }
 
 func TestResourceAlreadyExistsError_Error(t *testing.T) {
+	t.Parallel()
 	err := &ResourceAlreadyExistsError{}
 	if err.Error() != "resource already exists" {
 		t.Errorf("unexpected: %q", err.Error())
@@ -438,6 +470,7 @@ func TestResourceAlreadyExistsError_Error(t *testing.T) {
 }
 
 func TestInvalidIndexEntryError_Error(t *testing.T) {
+	t.Parallel()
 	err := &InvalidIndexEntryError{}
 	if err.Error() != "invalid index entry" {
 		t.Errorf("unexpected: %q", err.Error())
@@ -445,6 +478,7 @@ func TestInvalidIndexEntryError_Error(t *testing.T) {
 }
 
 func TestSyncInProgressError_Error(t *testing.T) {
+	t.Parallel()
 	err := &SyncInProgressError{}
 	if err.Error() != "sync already in progress" {
 		t.Errorf("unexpected: %q", err.Error())
@@ -452,6 +486,7 @@ func TestSyncInProgressError_Error(t *testing.T) {
 }
 
 func TestIncrementalSyncDisabledError_Error(t *testing.T) {
+	t.Parallel()
 	err := &IncrementalSyncDisabledError{}
 	if err.Error() != "incremental sync is not enabled" {
 		t.Errorf("unexpected: %q", err.Error())
@@ -459,6 +494,7 @@ func TestIncrementalSyncDisabledError_Error(t *testing.T) {
 }
 
 func TestVersionConflictError_Error(t *testing.T) {
+	t.Parallel()
 	err := &VersionConflictError{Current: 5, Incoming: 3}
 	if !strings.Contains(err.Error(), "5") || !strings.Contains(err.Error(), "3") {
 		t.Errorf("unexpected: %q", err.Error())
@@ -466,6 +502,7 @@ func TestVersionConflictError_Error(t *testing.T) {
 }
 
 func TestPolicyCompileFailedError_ErrorAndUnwrap(t *testing.T) {
+	t.Parallel()
 	cause := errors.New("bad syntax")
 	err := &PolicyCompileFailedError{Cause: cause}
 	if !strings.Contains(err.Error(), "bad syntax") {
@@ -477,6 +514,7 @@ func TestPolicyCompileFailedError_ErrorAndUnwrap(t *testing.T) {
 }
 
 func TestRaftProposerRequiredError_Error(t *testing.T) {
+	t.Parallel()
 	err := &RaftProposerRequiredError{}
 	if err.Error() != "raft proposer is required for distributed PEP" {
 		t.Errorf("unexpected: %q", err.Error())
@@ -484,6 +522,7 @@ func TestRaftProposerRequiredError_Error(t *testing.T) {
 }
 
 func TestSyncerCreationError_ErrorAndUnwrap(t *testing.T) {
+	t.Parallel()
 	cause := errors.New("config error")
 	err := &SyncerCreationError{Cause: cause}
 	if !strings.Contains(err.Error(), "config error") {
@@ -495,6 +534,7 @@ func TestSyncerCreationError_ErrorAndUnwrap(t *testing.T) {
 }
 
 func TestSubscribeFailedError_ErrorAndUnwrap(t *testing.T) {
+	t.Parallel()
 	cause := errors.New("connection refused")
 	err := &SubscribeFailedError{Cause: cause}
 	if !strings.Contains(err.Error(), "connection refused") {
@@ -506,6 +546,7 @@ func TestSubscribeFailedError_ErrorAndUnwrap(t *testing.T) {
 }
 
 func TestPolicyUnmarshalError_ErrorAndUnwrap(t *testing.T) {
+	t.Parallel()
 	cause := errors.New("invalid json")
 	err := &PolicyUnmarshalError{Cause: cause}
 	if !strings.Contains(err.Error(), "invalid json") {
@@ -517,6 +558,7 @@ func TestPolicyUnmarshalError_ErrorAndUnwrap(t *testing.T) {
 }
 
 func TestPolicyMarshalError_ErrorAndUnwrap(t *testing.T) {
+	t.Parallel()
 	cause := errors.New("encoding error")
 	err := &PolicyMarshalError{Cause: cause}
 	if !strings.Contains(err.Error(), "encoding error") {
@@ -528,6 +570,7 @@ func TestPolicyMarshalError_ErrorAndUnwrap(t *testing.T) {
 }
 
 func TestBaseSyncerCreationError_ErrorAndUnwrap(t *testing.T) {
+	t.Parallel()
 	cause := errors.New("init failed")
 	err := &BaseSyncerCreationError{Cause: cause}
 	if !strings.Contains(err.Error(), "init failed") {
@@ -539,6 +582,7 @@ func TestBaseSyncerCreationError_ErrorAndUnwrap(t *testing.T) {
 }
 
 func TestBatchProcessorCreationError_ErrorAndUnwrap(t *testing.T) {
+	t.Parallel()
 	cause := errors.New("bad config")
 	err := &BatchProcessorCreationError{Cause: cause}
 	if !strings.Contains(err.Error(), "bad config") {
@@ -550,6 +594,7 @@ func TestBatchProcessorCreationError_ErrorAndUnwrap(t *testing.T) {
 }
 
 func TestDeltaLogAppendError_ErrorAndUnwrap(t *testing.T) {
+	t.Parallel()
 	cause := errors.New("disk full")
 	err := &DeltaLogAppendError{Cause: cause}
 	if !strings.Contains(err.Error(), "disk full") {
@@ -561,6 +606,7 @@ func TestDeltaLogAppendError_ErrorAndUnwrap(t *testing.T) {
 }
 
 func TestConnectionCreationError_ErrorAndUnwrap(t *testing.T) {
+	t.Parallel()
 	cause := errors.New("refused")
 	err := &ConnectionCreationError{Index: 2, Total: 5, Cause: cause}
 	if !strings.Contains(err.Error(), "2/5") {
@@ -572,6 +618,7 @@ func TestConnectionCreationError_ErrorAndUnwrap(t *testing.T) {
 }
 
 func TestInvalidConnectionTypeError_Error(t *testing.T) {
+	t.Parallel()
 	err := &InvalidConnectionTypeError{}
 	if err.Error() != "invalid connection type" {
 		t.Errorf("unexpected: %q", err.Error())
@@ -579,6 +626,7 @@ func TestInvalidConnectionTypeError_Error(t *testing.T) {
 }
 
 func TestFactoryFailedError_ErrorAndUnwrap(t *testing.T) {
+	t.Parallel()
 	cause := errors.New("factory err")
 	err := &FactoryFailedError{Cause: cause}
 	if !strings.Contains(err.Error(), "factory err") {
@@ -590,6 +638,7 @@ func TestFactoryFailedError_ErrorAndUnwrap(t *testing.T) {
 }
 
 func TestDeltaLogVersionError_Error(t *testing.T) {
+	t.Parallel()
 	err := &DeltaLogVersionError{RequestedVersion: 3, MinimumVersion: 10}
 	if !strings.Contains(err.Error(), "3") || !strings.Contains(err.Error(), "10") {
 		t.Errorf("unexpected: %q", err.Error())
@@ -597,6 +646,7 @@ func TestDeltaLogVersionError_Error(t *testing.T) {
 }
 
 func TestCompressorCreationError_ErrorAndUnwrap(t *testing.T) {
+	t.Parallel()
 	cause := errors.New("no codec")
 	err := &CompressorCreationError{Cause: cause}
 	if !strings.Contains(err.Error(), "no codec") {
@@ -608,6 +658,7 @@ func TestCompressorCreationError_ErrorAndUnwrap(t *testing.T) {
 }
 
 func TestBatchMarshalError_ErrorAndUnwrap(t *testing.T) {
+	t.Parallel()
 	cause := errors.New("marshal fail")
 	err := &BatchMarshalError{Cause: cause}
 	if !strings.Contains(err.Error(), "marshal fail") {
@@ -619,6 +670,7 @@ func TestBatchMarshalError_ErrorAndUnwrap(t *testing.T) {
 }
 
 func TestBatchCompressError_ErrorAndUnwrap(t *testing.T) {
+	t.Parallel()
 	cause := errors.New("compress fail")
 	err := &BatchCompressError{Cause: cause}
 	if !strings.Contains(err.Error(), "compress fail") {
@@ -630,6 +682,7 @@ func TestBatchCompressError_ErrorAndUnwrap(t *testing.T) {
 }
 
 func TestBatchNotifyError_ErrorAndUnwrap(t *testing.T) {
+	t.Parallel()
 	cause := errors.New("notify fail")
 	err := &BatchNotifyError{Cause: cause}
 	if !strings.Contains(err.Error(), "notify fail") {
@@ -645,6 +698,7 @@ func TestBatchNotifyError_ErrorAndUnwrap(t *testing.T) {
 // =============================================================================
 
 func TestResourceURIError_Error(t *testing.T) {
+	t.Parallel()
 	t.Run("with cause", func(t *testing.T) {
 		cause := errors.New("parse failed")
 		err := &ResourceURIError{Detail: "invalid URI", Cause: cause}
@@ -662,6 +716,7 @@ func TestResourceURIError_Error(t *testing.T) {
 }
 
 func TestResourceURIError_Unwrap(t *testing.T) {
+	t.Parallel()
 	cause := errors.New("inner")
 	err := &ResourceURIError{Detail: "d", Cause: cause}
 	if err.Unwrap() != cause {
@@ -670,6 +725,7 @@ func TestResourceURIError_Unwrap(t *testing.T) {
 }
 
 func TestAttributeMatcherError_Error(t *testing.T) {
+	t.Parallel()
 	err := &AttributeMatcherError{Key: "department"}
 	if !strings.Contains(err.Error(), "department") {
 		t.Errorf("unexpected: %q", err.Error())
@@ -677,6 +733,7 @@ func TestAttributeMatcherError_Error(t *testing.T) {
 }
 
 func TestAttributeMatcherCompilationError_ErrorAndUnwrap(t *testing.T) {
+	t.Parallel()
 	cause := errors.New("bad regex")
 	err := &AttributeMatcherCompilationError{Key: "role", Cause: cause}
 	if !strings.Contains(err.Error(), "role") || !strings.Contains(err.Error(), "bad regex") {
@@ -688,6 +745,7 @@ func TestAttributeMatcherCompilationError_ErrorAndUnwrap(t *testing.T) {
 }
 
 func TestConditionParseError_ErrorAndUnwrap(t *testing.T) {
+	t.Parallel()
 	cause := errors.New("syntax")
 	err := &ConditionParseError{Expression: "x > 5", Cause: cause}
 	if !strings.Contains(err.Error(), "x > 5") {
@@ -699,6 +757,7 @@ func TestConditionParseError_ErrorAndUnwrap(t *testing.T) {
 }
 
 func TestUnlessConditionParseError_ErrorAndUnwrap(t *testing.T) {
+	t.Parallel()
 	cause := errors.New("invalid op")
 	err := &UnlessConditionParseError{Expression: "role != admin", Cause: cause}
 	if !strings.Contains(err.Error(), "role != admin") {
@@ -714,6 +773,7 @@ func TestUnlessConditionParseError_ErrorAndUnwrap(t *testing.T) {
 // =============================================================================
 
 func TestTimeParseError_Error(t *testing.T) {
+	t.Parallel()
 	t.Run("with cause", func(t *testing.T) {
 		cause := errors.New("bad format")
 		err := &TimeParseError{Detail: "invalid time", Cause: cause}
@@ -731,6 +791,7 @@ func TestTimeParseError_Error(t *testing.T) {
 }
 
 func TestTimeParseError_Unwrap(t *testing.T) {
+	t.Parallel()
 	cause := errors.New("parse error")
 	err := &TimeParseError{Detail: "d", Cause: cause}
 	if err.Unwrap() != cause {
@@ -739,6 +800,7 @@ func TestTimeParseError_Unwrap(t *testing.T) {
 }
 
 func TestUnixTimeFormatError_Error(t *testing.T) {
+	t.Parallel()
 	err := &UnixTimeFormatError{}
 	if !strings.Contains(err.Error(), "UnixTime") {
 		t.Errorf("unexpected: %q", err.Error())
@@ -746,6 +808,7 @@ func TestUnixTimeFormatError_Error(t *testing.T) {
 }
 
 func TestIDTokenFormatError_Error(t *testing.T) {
+	t.Parallel()
 	err := &IDTokenFormatError{}
 	if err.Error() != "invalid ID token format" {
 		t.Errorf("unexpected: %q", err.Error())
@@ -753,6 +816,7 @@ func TestIDTokenFormatError_Error(t *testing.T) {
 }
 
 func TestIDTokenDecodeError_ErrorAndUnwrap(t *testing.T) {
+	t.Parallel()
 	cause := errors.New("base64 error")
 	err := &IDTokenDecodeError{Cause: cause}
 	if !strings.Contains(err.Error(), "base64 error") {
@@ -764,6 +828,7 @@ func TestIDTokenDecodeError_ErrorAndUnwrap(t *testing.T) {
 }
 
 func TestIDTokenClaimsError_ErrorAndUnwrap(t *testing.T) {
+	t.Parallel()
 	cause := errors.New("json error")
 	err := &IDTokenClaimsError{Cause: cause}
 	if !strings.Contains(err.Error(), "json error") {
@@ -779,6 +844,7 @@ func TestIDTokenClaimsError_ErrorAndUnwrap(t *testing.T) {
 // =============================================================================
 
 func TestOIDCConfigRequiredError_Error(t *testing.T) {
+	t.Parallel()
 	err := &OIDCConfigRequiredError{Field: "issuer"}
 	if err.Error() != "issuer is required" {
 		t.Errorf("unexpected: %q", err.Error())
@@ -786,6 +852,7 @@ func TestOIDCConfigRequiredError_Error(t *testing.T) {
 }
 
 func TestTokenRevokedError_Error(t *testing.T) {
+	t.Parallel()
 	err := &TokenRevokedError{}
 	if err.Error() != "token is revoked" {
 		t.Errorf("unexpected: %q", err.Error())
@@ -797,6 +864,7 @@ func TestTokenRevokedError_Error(t *testing.T) {
 // =============================================================================
 
 func TestConsentIDGenerationError_ErrorAndUnwrap(t *testing.T) {
+	t.Parallel()
 	cause := errors.New("rand error")
 	err := &ConsentIDGenerationError{Cause: cause}
 	if !strings.Contains(err.Error(), "rand error") {
@@ -808,6 +876,7 @@ func TestConsentIDGenerationError_ErrorAndUnwrap(t *testing.T) {
 }
 
 func TestExportIDGenerationError_ErrorAndUnwrap(t *testing.T) {
+	t.Parallel()
 	cause := errors.New("gen fail")
 	err := &ExportIDGenerationError{Cause: cause}
 	if !strings.Contains(err.Error(), "gen fail") {
@@ -819,6 +888,7 @@ func TestExportIDGenerationError_ErrorAndUnwrap(t *testing.T) {
 }
 
 func TestDeletionIDGenerationError_ErrorAndUnwrap(t *testing.T) {
+	t.Parallel()
 	cause := errors.New("id gen fail")
 	err := &DeletionIDGenerationError{Cause: cause}
 	if !strings.Contains(err.Error(), "id gen fail") {
@@ -830,6 +900,7 @@ func TestDeletionIDGenerationError_ErrorAndUnwrap(t *testing.T) {
 }
 
 func TestConsentExistsError_Error(t *testing.T) {
+	t.Parallel()
 	err := &ConsentExistsError{Purpose: "marketing", ConsentID: "c-123"}
 	if !strings.Contains(err.Error(), "marketing") || !strings.Contains(err.Error(), "c-123") {
 		t.Errorf("unexpected: %q", err.Error())
@@ -841,6 +912,7 @@ func TestConsentExistsError_Error(t *testing.T) {
 // =============================================================================
 
 func TestProviderNameExistsError_Error(t *testing.T) {
+	t.Parallel()
 	err := &ProviderNameExistsError{Name: "google"}
 	if !strings.Contains(err.Error(), "google") {
 		t.Errorf("unexpected: %q", err.Error())
@@ -848,6 +920,7 @@ func TestProviderNameExistsError_Error(t *testing.T) {
 }
 
 func TestLinkExternalExistsError_Error(t *testing.T) {
+	t.Parallel()
 	err := &LinkExternalExistsError{ExternalID: "ext-123"}
 	if !strings.Contains(err.Error(), "ext-123") {
 		t.Errorf("unexpected: %q", err.Error())
@@ -855,6 +928,7 @@ func TestLinkExternalExistsError_Error(t *testing.T) {
 }
 
 func TestFederatedLinkNotFoundError_Error(t *testing.T) {
+	t.Parallel()
 	err := &FederatedLinkNotFoundError{LinkID: "link-abc"}
 	if !strings.Contains(err.Error(), "link-abc") {
 		t.Errorf("unexpected: %q", err.Error())
@@ -862,6 +936,7 @@ func TestFederatedLinkNotFoundError_Error(t *testing.T) {
 }
 
 func TestStateExpiredDetailError_Error(t *testing.T) {
+	t.Parallel()
 	err := &StateExpiredDetailError{Token: "tok-xyz"}
 	if !strings.Contains(err.Error(), "tok-xyz") {
 		t.Errorf("unexpected: %q", err.Error())
@@ -869,6 +944,7 @@ func TestStateExpiredDetailError_Error(t *testing.T) {
 }
 
 func TestDiscoveryStatusError_Error(t *testing.T) {
+	t.Parallel()
 	err := &DiscoveryStatusError{StatusCode: 503}
 	if !strings.Contains(err.Error(), "503") {
 		t.Errorf("unexpected: %q", err.Error())
@@ -876,6 +952,7 @@ func TestDiscoveryStatusError_Error(t *testing.T) {
 }
 
 func TestUserInfoStatusError_Error(t *testing.T) {
+	t.Parallel()
 	err := &UserInfoStatusError{StatusCode: 401}
 	if !strings.Contains(err.Error(), "401") {
 		t.Errorf("unexpected: %q", err.Error())
@@ -887,6 +964,7 @@ func TestUserInfoStatusError_Error(t *testing.T) {
 // =============================================================================
 
 func TestNilEventError_Error(t *testing.T) {
+	t.Parallel()
 	err := &NilEventError{}
 	if err.Error() != "event is nil" {
 		t.Errorf("unexpected: %q", err.Error())
