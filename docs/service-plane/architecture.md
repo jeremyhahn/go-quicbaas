@@ -129,7 +129,10 @@ ECDSA P-256 and P-384, over a domain-separated payload kept as signed), the
 tenant-scoped `Store` whose writes go through a `Guard` (go-qrdb's
 `cas.Writer`), and the `Plane`. Each verb on a deployed service first claims
 it by a guarded swap to `transitioning`, so of two racing nodes one acts.
-Legal transitions: `start` from stopped, `stop` from running, `resume` from
+While a verb's launcher or grant call runs, the plane renews the claim, so
+only a claim whose holder stopped is recovered as stale; a verb that finds
+its claim taken over cancels that call and writes nothing more. Legal
+transitions: `start` from stopped, `stop` from running, `resume` from
 halted, `restart` from running or halted, and `undeploy` and `redeploy` from
 any settled state. A failed launch, halt or revoke leaves the service
 `halted` with the reason. The five grants come in through one `Grant` per
