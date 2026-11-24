@@ -1,6 +1,6 @@
 # Object Storage — Architecture
 
-> **Status: NORMATIVE** · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Last verified: 2026-11-24
 > Design, component boundaries and data flow. Feature folder: `docs/object-storage/`.
 
 ## Overview
@@ -596,14 +596,15 @@ quicbaas_objstore_tenant_object_count
 
 ## Tenant Isolation
 
-The object storage service validates tenant context on all admin operations using `iam.TenantFromContext(ctx)`.
+The object storage service checks tenant context on its admin operations with `prepareTenantContext` (`pkg/service`), which reads the tenant through `tenantctx.FromContext`. It refuses a request with no tenant bound, treats the system tenant as the platform scope, and validates any other tenant ID. Object verbs use `objectStorageTenant`, which reads the tenant through `tenantctx.Target` and treats the system tenant the same way.
 
 ### Validated Operations
 
-- **CreateBackend**: Tenant ID validated before backend registration
-- **DeleteBackend**: Tenant ID validated before backend removal
-- **ListBackends**: Tenant ID validated before returning backend list
-- **GetBackendHealth/CheckAllHealth**: Tenant ID validated before health checks
+- **CreateBackend**: Tenant context checked before backend registration
+- **UpdateBackend / SetBackendStatus**: Tenant context checked before the backend is re-registered
+- **DeleteBackend**: Tenant context checked before backend removal
+- **GetStorageStats, RunGarbageCollection, GetGarbageCollectionProgress, RepairObject, CompactBackend**: Tenant context checked first; garbage collection also refuses any caller but the system tenant
+- **ListBackends / GetBackendHealth**: No tenant check in the service layer at present
 
 Backends are infrastructure-level resources shared across the platform. Tenant validation on these operations ensures the request originates from a well-formed, authenticated context rather than scoping backends per tenant.
 
@@ -611,9 +612,9 @@ Backends are infrastructure-level resources shared across the platform. Tenant v
 
 Validation occurs at the service layer before requests reach the `BackendManager` or `CatalogManager`. Invalid or malformed tenant IDs are rejected with a typed `ErrTenantAccessDenied` error.
 
-### Single-Tenant Mode
+### Requests Without a Tenant
 
-When the tenant ID from context is empty, the service operates in single-tenant mode. No tenant validation is applied to admin operations, preserving backward compatibility with existing deployments.
+There is no single-tenant mode. A request with no tenant bound is refused: `tenantctx.FromContext` returns a `MissingTenantError` on every verb listed above that checks tenant context, and on every object verb. A request bound to the system tenant (`tenantctx.SystemTenantID`) acts on the platform scope.
 
 
 ---
