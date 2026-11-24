@@ -14,11 +14,14 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	stderrors "errors"
+	"io"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -28,6 +31,8 @@ import (
 	mcpclient "github.com/mark3labs/mcp-go/client"
 	mcptransport "github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
+
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
@@ -47,12 +52,15 @@ const MCPProtocolVersionHeader = "MCP-Protocol-Version"
 // tool-name derivation and argument/response transforms as the retired
 // hand-rolled JSON-RPC client. Only the wire engine changed.
 type Transport struct {
-	cfg      *transport.Config
-	client   *http.Client
-	baseURL  string
-	endpoint string
-	headers  map[string]string
-	closed   atomic.Bool
+	cfg    *transport.Config
+	client *http.Client
+	// baseTransport is the *http.Transport under client's SO PIN guard;
+	// Close closes its idle connections.
+	baseTransport *http.Transport
+	baseURL       string
+	endpoint      string
+	headers       map[string]string
+	closed        atomic.Bool
 
 	lastHealth atomic.Int64
 	requestID  atomic.Uint64
@@ -114,19 +122,49 @@ func New(cfg *transport.Config, opts ...Option) (*Transport, error) {
 		return nil, t.optionErr
 	}
 
+	// Build base URL and endpoint only if not explicitly set via options.
+	// It comes before the HTTP client, whose SO PIN guard names the
+	// endpoint's host as the only one a bound PIN may reach.
+	if t.baseURL == "" && t.endpoint == "" {
+		t.buildBaseURL()
+	}
+
 	// Build HTTP client if not provided via options
+	var base http.RoundTripper
+	var c *http.Client
 	if t.client == nil {
 		client, err := t.buildHTTPClient()
 		if err != nil {
 			return nil, err
 		}
-		t.client = client
+		c = client
+		base = client.Transport
+	} else {
+		// A supplied client gets the same guard on a shallow copy, keeping
+		// its Timeout, Jar and CheckRedirect and never mutating the
+		// caller's client.
+		copied := *t.client
+		c = &copied
+		base = c.Transport
 	}
-
-	// Build base URL and endpoint only if not explicitly set via options
-	if t.baseURL == "" && t.endpoint == "" {
-		t.buildBaseURL()
+	if base == nil {
+		base = http.DefaultTransport
+	} else if httpTransport, ok := base.(*http.Transport); ok {
+		t.baseTransport = httpTransport
 	}
+	// Guard an SO PIN bound by qrdbtransport.WithSOPIN the way go-qrdb's
+	// own MCP transport does: a PIN-bound request is refused before it is
+	// sent on any hop, redirects included, that is not https or names a
+	// host other than the endpoint's. Requests without a bound PIN pass
+	// through unchanged. A barrier or ceremony tool call whose so_pin comes
+	// from the request rather than from WithSOPIN is bound for that call by
+	// callBarrier, so it meets the same guard on every hop. A call that
+	// carries only a user PIN is marked by callBarrier and refused by the
+	// inner pinHopRoundTripper on the same hops, without the PIN ever going
+	// into the SO PIN header.
+	host := qrdbtransport.ConfiguredHost(t.endpoint)
+	c.Transport = qrdbtransport.SOPINRoundTripper(&pinHopRoundTripper{base: base, host: host}, "mcp", host)
+	t.client = c
 
 	// Mark as healthy initially
 	t.lastHealth.Store(time.Now().UnixNano())
@@ -451,6 +489,9 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 		if err != nil {
 			return nil, err
 		}
+		if method == "Query" || method == "TSQuery" {
+			toolName = timeseriesQueryTool(arguments)
+		}
 	} else if isEmbedding {
 		// Use embedding handler to transform SDK request to MCP arguments
 		eh := newEmbeddingHandler()
@@ -544,13 +585,20 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 		// that could never succeed -- a filtered listing came back as a
 		// required-field error instead of a session list.
 		arguments = applyTenantFromContext(ctx, t.convertToArguments(reqBody))
+	} else if isMCPKVService(service) {
+		arguments = t.kvArguments(method, reqBody)
 	} else {
 		// Convert request to tool arguments using generic conversion
 		arguments = t.convertToArguments(reqBody)
 	}
 
-	// Call the tool via JSON-RPC
-	result, err := t.callTool(ctx, toolName, arguments)
+	// Call the tool via JSON-RPC. Entity KV results carry uint64 IDs, so
+	// their numbers keep their exact tokens.
+	call := t.callTool
+	if isMCPKVService(service) {
+		call = t.callToolExact
+	}
+	result, err := call(ctx, toolName, arguments)
 	if err != nil {
 		return nil, err
 	}
@@ -619,7 +667,7 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 	// Transform response for TimeSeries service
 	if isTimeseries {
 		th := newTimeseriesHandler(t)
-		return th.transformResponse(method, result)
+		return th.transformResponse(method, reqBody, result)
 	}
 
 	// Transform response for Auth service
@@ -678,6 +726,12 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 	// client accepts.
 	if isMCPDEKService(service) {
 		return transformDEKResponse(method, result)
+	}
+
+	// Decode the entity KV verbs into the service responses the KV client
+	// accepts.
+	if isMCPKVService(service) {
+		return transformKVResponse(method, result)
 	}
 
 	return result, nil
@@ -942,6 +996,16 @@ func (t *Transport) ensureRawTransport(ctx context.Context) (mcptransport.Interf
 
 // callTool invokes an MCP tool via the negotiated mcpClient session.
 func (t *Transport) callTool(ctx context.Context, name string, arguments map[string]interface{}) (interface{}, error) {
+	return t.callToolDecoded(ctx, name, arguments, false)
+}
+
+// callToolExact is callTool with numbers in the result decoded as
+// json.Number, so integer tokens above 2^53 survive.
+func (t *Transport) callToolExact(ctx context.Context, name string, arguments map[string]interface{}) (interface{}, error) {
+	return t.callToolDecoded(ctx, name, arguments, true)
+}
+
+func (t *Transport) callToolDecoded(ctx context.Context, name string, arguments map[string]interface{}, exact bool) (interface{}, error) {
 	result, err := t.mcpClient.CallTool(ctx, mcp.CallToolRequest{
 		Params: mcp.CallToolParams{
 			Name:      name,
@@ -960,7 +1024,7 @@ func (t *Transport) callTool(ctx context.Context, name string, arguments map[str
 	t.lastHealth.Store(time.Now().UnixNano())
 
 	// Extract result from content
-	return t.extractContent(result.Content)
+	return decodeContent(result.Content, exact)
 }
 
 // sendRPC forwards a caller-owned JSON-RPC 2.0 request verbatim over the
@@ -1128,11 +1192,15 @@ func ToolName(service, method string) string {
 	// All tool names use snake_case: quicbaas_<service>_<method_in_snake_case>
 	switch serviceName {
 	case "KV":
-		// Core KV operations are qrdb-mirror tools (canonical qrdb_*).
-		// Quicbaas-specific methods (ListEntityTypes, Watch, etc.) keep
-		// the quicbaas_ prefix.
+		// Core KV operations reach quicbaas's entity tools
+		// (entityType/id/data) under their quicbaas_kv_* names: on a full
+		// node the qrdb_* names are go-qrdb's own key/value tools, which
+		// take key/value (CA ruling 574). Quicbaas-specific methods
+		// (ListEntityTypes, Watch, etc.) keep the quicbaas_ prefix.
 		switch method {
-		case "Put", "Get", "Delete", "List", "Scan":
+		case "Put", "Get", "Delete", "List":
+			return "quicbaas_kv_" + strings.ToLower(method)
+		case "Scan":
 			return "qrdb_" + strings.ToLower(method)
 		default:
 			return "quicbaas_" + strings.ToLower(method)
@@ -1362,6 +1430,13 @@ func camelToSnake(s string) string {
 // convertToArguments converts a request object to MCP tool arguments.
 // Field names are converted to snake_case to match MCP tool expectations.
 func (t *Transport) convertToArguments(req interface{}) map[string]interface{} {
+	return toolArguments(req, false)
+}
+
+// toolArguments converts req to tool arguments via a JSON round-trip with
+// snake_case keys. With exact set, numbers decode as json.Number, so an
+// integer above 2^53 keeps its token instead of rounding through float64.
+func toolArguments(req interface{}, exact bool) map[string]interface{} {
 	if req == nil {
 		return nil
 	}
@@ -1378,12 +1453,39 @@ func (t *Transport) convertToArguments(req interface{}) map[string]interface{} {
 	}
 
 	var args map[string]interface{}
-	if err := json.Unmarshal(data, &args); err != nil {
+	if err := decodeJSON(data, &args, exact); err != nil {
 		return nil
 	}
 
 	// Convert keys to snake_case for MCP tools
 	return convertKeysToSnakeCase(args)
+}
+
+// decodeJSON is json.Unmarshal; with exact set, numbers decode as
+// json.Number. Trailing data after the value is refused in both modes.
+func decodeJSON(data []byte, out interface{}, exact bool) error {
+	if !exact {
+		return json.Unmarshal(data, out)
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	if err := dec.Decode(out); err != nil {
+		return err
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return &trailingJSONError{Offset: dec.InputOffset()}
+	}
+	return nil
+}
+
+// trailingJSONError reports data after the one JSON value a tool text or
+// argument document may hold, as json.Unmarshal refuses it.
+type trailingJSONError struct {
+	Offset int64
+}
+
+func (e *trailingJSONError) Error() string {
+	return "mcp: invalid character after top-level JSON value at offset " + strconv.FormatInt(e.Offset, 10)
 }
 
 // convertKeysToSnakeCase recursively converts all map keys to snake_case.
@@ -1405,6 +1507,13 @@ func convertKeysToSnakeCase(m map[string]interface{}) map[string]interface{} {
 // return content items without the type field explicitly set. Just check
 // for the first item with non-empty text.
 func (t *Transport) extractContent(content []mcp.Content) (interface{}, error) {
+	return decodeContent(content, false)
+}
+
+// decodeContent decodes the first non-empty text item as JSON, answering the
+// raw text when it is not JSON. With exact set, numbers decode as
+// json.Number (see decodeJSON).
+func decodeContent(content []mcp.Content, exact bool) (interface{}, error) {
 	for _, item := range content {
 		text, ok := mcp.AsTextContent(item)
 		if !ok || text.Text == "" {
@@ -1412,7 +1521,7 @@ func (t *Transport) extractContent(content []mcp.Content) (interface{}, error) {
 		}
 		// Parse JSON from text
 		var result interface{}
-		if err := json.Unmarshal([]byte(text.Text), &result); err != nil {
+		if err := decodeJSON([]byte(text.Text), &result, exact); err != nil {
 			// Return raw text if not valid JSON
 			return text.Text, nil
 		}
@@ -1518,8 +1627,11 @@ func (t *Transport) Close() error {
 		}
 	}
 
-	// Close idle connections
-	if t.client != nil && t.client.Transport != nil {
+	// Close idle connections. The client's transport is the SO PIN guard,
+	// so close the *http.Transport under it directly.
+	if t.baseTransport != nil {
+		t.baseTransport.CloseIdleConnections()
+	} else if t.client != nil && t.client.Transport != nil {
 		if httpTransport, ok := t.client.Transport.(*http.Transport); ok {
 			httpTransport.CloseIdleConnections()
 		}

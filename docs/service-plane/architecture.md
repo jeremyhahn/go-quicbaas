@@ -271,12 +271,17 @@ it appears in the node's evidence.
 ## Service policy
 
 The row `service-policy` moves the Go-coded policies into one engine. The
-policies come from `pkg/orchestration` and `pkg/fleet/sandbox_policy.go`:
+policies come from `pkg/orchestration` and the fleet's sandbox resolver:
 admission, sandbox, sandbox-network, mount, trust tiers, communication, role,
 lifecycle and spend.
 
-The engine dispatches on the policy kind through a map. Each kind's evaluator
-is its existing Go code and tests, moved rather than rewritten.
+The engine (`pkg/policy`) dispatches on the policy kind through a map, one
+evaluator per kind, each in `pkg/policy/<kind>`. Each kind's evaluator is its
+existing Go code and tests, moved rather than rewritten. `Engine.Load` verifies
+a document's signature and validates its spec before anything in it is used.
+The sandbox kind (`pkg/policy/sandbox`) is the first moved: the daemon's
+resolver, and an evaluator whose document is the tenant's sandbox policy,
+which can only tighten the daemon's.
 
 - **Policy documents** are data. They are signed with the tenant key through
   go-xkms, stored in go-qrdb, and verified on load.
