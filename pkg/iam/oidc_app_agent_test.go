@@ -49,8 +49,8 @@ func newAgentAppManager(t *testing.T, tenantID string) (*AppManager, *BackendSto
 func TestAgentClientID_IsDerivedAndParseable(t *testing.T) {
 	const tenantID = "automatethethings"
 
-	first := FleetNodeClientID(tenantID, "agent-gpu-host")
-	if second := FleetNodeClientID(tenantID, "agent-gpu-host"); first != second {
+	first := FleetNodeClientID(tenantID, "agent-gpu-01")
+	if second := FleetNodeClientID(tenantID, "agent-gpu-01"); first != second {
 		t.Fatalf("FleetNodeClientID is not stable: %q then %q", first, second)
 	}
 	if got := TenantFromClientID(first); got != tenantID {
@@ -59,7 +59,7 @@ func TestAgentClientID_IsDerivedAndParseable(t *testing.T) {
 	if other := FleetNodeClientID(tenantID, "agent-other"); other == first {
 		t.Fatalf("two agents share the client id %q", first)
 	}
-	if crossTenant := FleetNodeClientID("acme", "agent-gpu-host"); crossTenant == first {
+	if crossTenant := FleetNodeClientID("acme", "agent-gpu-01"); crossTenant == first {
 		t.Fatalf("two tenants share the client id %q", first)
 	}
 	suffix := strings.TrimPrefix(first, ClientIDPrefix+tenantID+ClientIDSeparator)
@@ -78,7 +78,7 @@ func TestAgentClientID_DegenerateIdentityNamesNoTenant(t *testing.T) {
 		tenantID   string
 		commonName string
 	}{
-		{"no tenant", "", "agent-gpu-host"},
+		{"no tenant", "", "agent-gpu-01"},
 		{"no common name", "automatethethings", ""},
 		{"neither", "", ""},
 	} {
@@ -101,11 +101,11 @@ func TestRegisterAgentApp_IsIdempotent(t *testing.T) {
 	mgr, storage := newAgentAppManager(t, tenantID)
 
 	// The register route is public, so its context names no tenant.
-	first, err := mgr.RegisterAgentApp(context.Background(), tenantID, "agent-gpu-host", agentAppOptions(tenantID, "agent-gpu-host"))
+	first, err := mgr.RegisterAgentApp(context.Background(), tenantID, "agent-gpu-01", agentAppOptions(tenantID, "agent-gpu-01"))
 	if err != nil {
 		t.Fatalf("first RegisterAgentApp: %v", err)
 	}
-	second, err := mgr.RegisterAgentApp(context.Background(), tenantID, "agent-gpu-host", agentAppOptions(tenantID, "agent-gpu-host"))
+	second, err := mgr.RegisterAgentApp(context.Background(), tenantID, "agent-gpu-01", agentAppOptions(tenantID, "agent-gpu-01"))
 	if err != nil {
 		t.Fatalf("second RegisterAgentApp: %v", err)
 	}
@@ -156,13 +156,13 @@ func TestRegisterAgentApp_RejectsIncompleteIdentity(t *testing.T) {
 		tenantID   string
 		commonName string
 	}{
-		{"no tenant", "", "agent-gpu-host"},
+		{"no tenant", "", "agent-gpu-01"},
 		{"no common name", "automatethethings", ""},
 		{"neither", "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			app, err := mgr.RegisterAgentApp(context.Background(), tc.tenantID, tc.commonName,
-				agentAppOptions("automatethethings", "agent-gpu-host"))
+				agentAppOptions("automatethethings", "agent-gpu-01"))
 			if err == nil {
 				t.Fatalf("RegisterAgentApp(%q, %q) succeeded with %q", tc.tenantID, tc.commonName, app.ClientID)
 			}
@@ -181,8 +181,8 @@ func TestRegisterAgentApp_RefusesSealedTenant(t *testing.T) {
 	kv.sealTenant(tenantID)
 	mgr := NewAppManager(NewBackendStorage(kv), nil)
 
-	if _, err := mgr.RegisterAgentApp(context.Background(), tenantID, "agent-gpu-host",
-		agentAppOptions(tenantID, "agent-gpu-host")); err == nil {
+	if _, err := mgr.RegisterAgentApp(context.Background(), tenantID, "agent-gpu-01",
+		agentAppOptions(tenantID, "agent-gpu-01")); err == nil {
 		t.Fatal("RegisterAgentApp into a sealed tenant returned nil; it must fail closed")
 	}
 }

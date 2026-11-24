@@ -1319,7 +1319,7 @@ LINT_BUILD_TAGS := $(filter-out !integration,$(TEST_TAGS))
 # a pass that compiled it could not run it. Drive it by hand against a served
 # model:
 #
-#   OPENVINO_BASE_URL=http://gpu-host:9000 OPENVINO_MODEL=qwen3-8b \
+#   OPENVINO_BASE_URL=http://gpu-01:9000 OPENVINO_MODEL=qwen3-8b \
 #     go test -tags openvino_live -run TestOpenVINOBackend_Live ./pkg/orchestration/
 TAG_GATE_EXEMPT := linux darwin windows unix ignore integration coverage production \
 	pkcs11 swtpm \
@@ -5667,6 +5667,7 @@ verify-integration-teardown: ## Fail if the integration stack can outlive a run 
 	@echo "$(BLUE)verify-integration-teardown: checking the stack comes down on the early-exit path...$(NC)"
 	@$(GOCMD) run ./scripts/verifyteardown
 
+# GOMODAUTH_TOKEN_FILE must be set: the decoy token file's path relative to the gate's throwaway HOME, e.g. `.gate/tokens.env`.
 .PHONY: verify-gomodauth
 verify-gomodauth: ## Fail if a Docker test build receives module credentials, or the staged secret file is not empty and 0600
 	@echo "$(BLUE)verify-gomodauth: checking module credentials are staged on any host and cleared after the build...$(NC)"

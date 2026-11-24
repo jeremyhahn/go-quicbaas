@@ -94,8 +94,8 @@ node:
   auto_pull: true
 
   # Local-model backends, when the model runs on another box.
-  # ollama_base_url: http://gpu-host.internal:11434
-  # vllm_base_url: http://gpu-host.internal:11435
+  # ollama_base_url: http://gpu-01.internal:11434
+  # vllm_base_url: http://gpu-01.internal:11435
   # vllm_model: qwen3-coder
   # openvino_base_url: http://npu-host.internal:9000
 
