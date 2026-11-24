@@ -893,7 +893,7 @@ POST /admin/storage/gc
 ```json
 {
   "backends": ["s3-primary"],
-  "dry_run": false,
+  "dry_run": true,
   "aggressive": false
 }
 ```
@@ -1326,12 +1326,23 @@ rpc SetBackendStatus(SetBackendStatusRequest) returns (SetBackendStatusResponse)
 
 Remove orphaned objects that exist in backends but not in the catalog.
 
+A run spans every tenant's objects on a backend, so only the system scope can
+start one. A tenant caller gets a cross-tenant access error (HTTP 403, gRPC
+`PERMISSION_DENIED`), and no operation starts.
+
+For now a run must set `dry_run`. A run without it returns an unimplemented
+error (gRPC `UNIMPLEMENTED`), with the message `garbage collection runs only as
+a dry run: each node's catalog is local, so it cannot prove an object on a
+shared backend is orphaned`. Each node keeps its own catalog, so on a backend
+that several nodes share, a node cannot tell another node's live object from an
+orphan.
+
 A run works through each named backend in turn:
 
 1. It lists every object in the backend. Each one counts towards
    `objects_scanned`.
-2. It keeps any object that a catalog entry references, whether as the
-   primary store, a replica or the archive copy.
+2. It reads every catalog entry and keeps any object an entry references, so
+   primary, replica and archive copies are all kept.
 3. It keeps any unreferenced object modified within the grace window before
    the run started. The window is one hour, or five minutes with
    `aggressive`, so a write that has not yet reached the catalog is not lost.
@@ -1343,8 +1354,8 @@ With `dry_run`, step 4 deletes nothing, but the counters still report what
 would have been deleted. If a backend cannot be listed or a delete fails, the
 operation ends `failed` with the error.
 
-A run records the tenant that started it. Another tenant asking for its
-progress gets `GC_OPERATION_NOT_FOUND`.
+Runs are system-scope only, so a tenant caller asking for a run's progress
+gets `GC_OPERATION_NOT_FOUND`.
 
 #### Run Garbage Collection
 
