@@ -134,6 +134,7 @@ func newRevokingWriteThrough(
 // guard: deleting a credential must take its fido2 factor with it, or the
 // factor keeps resolving at login to a passkey that no longer exists.
 func TestWriteThroughDelete_RevokesLoginFactor(t *testing.T) {
+	t.Parallel()
 	factors := &reapableFactorClient{}
 	wt, users, _ := newRevokingWriteThrough(t, factors)
 	seedUser(t, users, 42, "alice@example.com", "alice's yubikey")
@@ -164,6 +165,7 @@ func TestWriteThroughDelete_RevokesLoginFactor(t *testing.T) {
 // splits into "factor without credential" — the state that fails hardware
 // verification at login and leaves an entry an operator has to chase.
 func TestWriteThroughDelete_FailsClosedOnRevokeFailure(t *testing.T) {
+	t.Parallel()
 	revokeErr := errors.New("qrdb unavailable")
 	factors := &reapableFactorClient{removeErr: revokeErr}
 	wt, users, _ := newRevokingWriteThrough(t, factors)
@@ -195,6 +197,7 @@ func TestWriteThroughDelete_FailsClosedOnRevokeFailure(t *testing.T) {
 // must not shortcut to the inner store's bulk removal, which would strip every
 // credential and leave every factor.
 func TestWriteThroughDeleteByUserID_RevokesEveryFactor(t *testing.T) {
+	t.Parallel()
 	factors := &reapableFactorClient{}
 	wt, users, _ := newRevokingWriteThrough(t, factors)
 	seedUser(t, users, 42, "alice@example.com", "alice's keys")
@@ -269,6 +272,7 @@ func (r *recordingReaper) ListCredentials(_ context.Context, tenantID, email str
 // the user's EMAIL — the key the credential store and the registration ceremony
 // both use.
 func TestIdentityStoreDeleteUser_CascadesWebAuthnCredentials(t *testing.T) {
+	t.Parallel()
 	store, tenantID := newCascadeIdentityStore(t)
 	reaper := &recordingReaper{count: 1}
 	store.SetWebAuthnCredentialReaper(reaper)
@@ -298,6 +302,7 @@ func TestIdentityStoreDeleteUser_CascadesWebAuthnCredentials(t *testing.T) {
 // find its credentials, producing exactly the orphan #273 is about, so an
 // unreachable credential store must abort the deletion instead.
 func TestIdentityStoreDeleteUser_FailsClosedOnCascadeFailure(t *testing.T) {
+	t.Parallel()
 	store, tenantID := newCascadeIdentityStore(t)
 	store.SetWebAuthnCredentialReaper(&recordingReaper{err: errors.New("credential store unreachable")})
 
@@ -321,6 +326,7 @@ func TestIdentityStoreDeleteUser_FailsClosedOnCascadeFailure(t *testing.T) {
 // TestIdentityStoreDeleteUser_NoReaperIsNotAnError keeps WebAuthn optional: a
 // deployment without it deletes users exactly as it did before.
 func TestIdentityStoreDeleteUser_NoReaperIsNotAnError(t *testing.T) {
+	t.Parallel()
 	store, tenantID := newCascadeIdentityStore(t)
 
 	ctx := context.Background()
@@ -344,6 +350,7 @@ func TestIdentityStoreDeleteUser_NoReaperIsNotAnError(t *testing.T) {
 // base64url as the browser reports it, and a value that is not must be rejected
 // as a bad request rather than silently addressing some other credential.
 func TestDecodeWebAuthnCredentialID(t *testing.T) {
+	t.Parallel()
 	raw := []byte{0xfb, 0xff, 0x01, 0x02}
 	unpadded := base64.RawURLEncoding.EncodeToString(raw)
 	padded := base64.URLEncoding.EncodeToString(raw)
@@ -378,6 +385,7 @@ func TestDecodeWebAuthnCredentialID(t *testing.T) {
 // to recognise a key, and no key material. A credential's public key leaking
 // into an operator listing would put it in logs and terminal scrollback.
 func TestSummarizeWebAuthnCredential(t *testing.T) {
+	t.Parallel()
 	cred := testCredential(42, []byte{0x01, 0x02, 0x03})
 	cred.Authenticator.SignCount = 17
 	cred.Authenticator.CloneWarning = true
@@ -418,6 +426,7 @@ func TestSummarizeWebAuthnCredential(t *testing.T) {
 // and must be refused before any store dispatch rather than silently operating
 // on whatever an empty lookup returns.
 func TestManagerCredentialVerbs_RejectEmptyEmail(t *testing.T) {
+	t.Parallel()
 	factory, err := NewWebAuthnServiceFactory(WebAuthnFactoryParams{
 		Config: WebAuthnFactoryConfig{
 			RPID:          "example.com",
@@ -452,6 +461,7 @@ func TestManagerCredentialVerbs_RejectEmptyEmail(t *testing.T) {
 // which factor to revoke, so deleting anyway would strand the factor. Only an
 // honest not-found may fall through to a plain delete.
 func TestWriteThroughDelete_FailsClosedOnUnreadableStore(t *testing.T) {
+	t.Parallel()
 	readErr := errors.New("kv unavailable")
 	factors := &reapableFactorClient{}
 	users := xkmswebauthn.NewMemoryUserStore()
@@ -521,6 +531,7 @@ func (s *unreadableCredentialStore) DeleteByUserID(context.Context, []byte) erro
 // cannot occur. On the burn-in node it cost the tenant user their only passkey
 // and returned 200.
 func TestIdentityStoreUpdateUser_KeepsCredentialsOnEmailChange(t *testing.T) {
+	t.Parallel()
 	store, tenantID := newCascadeIdentityStore(t)
 	reaper := &recordingReaper{count: 1}
 	store.SetWebAuthnCredentialReaper(reaper)
@@ -553,6 +564,7 @@ func TestIdentityStoreUpdateUser_KeepsCredentialsOnEmailChange(t *testing.T) {
 // that changes the address a user answers to now says what became of that
 // user's enrolled credentials, with the count on both sides of the write.
 func TestIdentityStoreUpdateUser_LogsTheCredentialsARenameCarried(t *testing.T) {
+	t.Parallel()
 	var buf bytes.Buffer
 	store, tenantID := newLoggingCascadeIdentityStore(t, &buf)
 	reaper := &recordingReaper{listed: map[string]int{
@@ -595,6 +607,7 @@ func TestIdentityStoreUpdateUser_LogsTheCredentialsARenameCarried(t *testing.T) 
 // stands: the record is already committed by then, so reporting an error would
 // misrepresent a completed write.
 func TestIdentityStoreUpdateUser_LogsACredentialCountThatDidNotCarry(t *testing.T) {
+	t.Parallel()
 	var buf bytes.Buffer
 	store, tenantID := newLoggingCascadeIdentityStore(t, &buf)
 	reaper := &recordingReaper{listed: map[string]int{
@@ -632,6 +645,7 @@ func TestIdentityStoreUpdateUser_LogsACredentialCountThatDidNotCarry(t *testing.
 // rename says the ownership was not re-keyed rather than claiming zero. "Had
 // none" and "nobody looked" are different facts.
 func TestIdentityStoreUpdateUser_LogsAnUnknownCredentialCount(t *testing.T) {
+	t.Parallel()
 	var buf bytes.Buffer
 	store, tenantID := newLoggingCascadeIdentityStore(t, &buf)
 	store.SetWebAuthnCredentialReaper(&recordingReaper{listErr: errors.New("credential store unreachable")})
@@ -709,6 +723,7 @@ func findOptionalLogRecord(buf *bytes.Buffer, needle string) (map[string]any, bo
 // update cheap and non-destructive: a name, role or state change must not cost
 // the user a passkey.
 func TestIdentityStoreUpdateUser_NoRevocationWithoutEmailChange(t *testing.T) {
+	t.Parallel()
 	store, tenantID := newCascadeIdentityStore(t)
 	reaper := &recordingReaper{}
 	store.SetWebAuthnCredentialReaper(reaper)
@@ -746,6 +761,7 @@ func TestIdentityStoreUpdateUser_NoRevocationWithoutEmailChange(t *testing.T) {
 // nothing more — letting it veto the rename would be keeping the coupling
 // go-quicbaas#582 removed while losing the behaviour that justified it.
 func TestIdentityStoreUpdateUser_UnreadableCredentialStoreStillRenames(t *testing.T) {
+	t.Parallel()
 	store, tenantID := newCascadeIdentityStore(t)
 	store.SetWebAuthnCredentialReaper(&recordingReaper{listErr: errors.New("credential store unreachable")})
 	ctx := context.Background()
@@ -831,6 +847,7 @@ func newDueDeletionRequest(t *testing.T, mgr *GDPRManager, tenantID string, user
 // erasure that leaves it behind has not done what it reported doing — it also
 // leaves the address able to block whoever is issued it next.
 func TestGDPRErasure_DeletesWebAuthnCredentials(t *testing.T) {
+	t.Parallel()
 	reaper := &recordingReaper{count: 2}
 	mgr := newGDPRTestManagerWithReaper(t, reaper)
 	ctx := context.Background()
@@ -865,6 +882,7 @@ func TestGDPRErasure_DeletesWebAuthnCredentials(t *testing.T) {
 // because once it is gone the email is gone and nothing can name the
 // credential that was left behind.
 func TestGDPRErasure_FailsClosedOnCredentialFailure(t *testing.T) {
+	t.Parallel()
 	mgr := newGDPRTestManagerWithReaper(t, &recordingReaper{err: errors.New("credential store unreachable")})
 	ctx := context.Background()
 
@@ -892,6 +910,7 @@ func TestGDPRErasure_FailsClosedOnCredentialFailure(t *testing.T) {
 // #273 was opened for. Closing the window needs an atomic rename-plus-revoke,
 // which needs the single identity key of #289.
 func TestIdentityStoreUpdateUser_RevocationPrecedesPersistence(t *testing.T) {
+	t.Parallel()
 	store, tenantID := newCascadeIdentityStore(t)
 	reaper := &recordingReaper{count: 1}
 	store.SetWebAuthnCredentialReaper(reaper)
@@ -933,6 +952,7 @@ func TestIdentityStoreUpdateUser_RevocationPrecedesPersistence(t *testing.T) {
 // cascade wired there does not run: without this the tenant's credentials
 // survive the tenant, filed under (tenant, email) keys whose users are gone.
 func TestDeleteTenant_RevokesWebAuthnCredentials(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := NewMemoryStorage()
 	reaper := &recordingReaper{count: 1}
@@ -972,6 +992,7 @@ func TestDeleteTenant_RevokesWebAuthnCredentials(t *testing.T) {
 // tenant survives, so the operator can retry rather than hunt for records
 // whose owning tenant no longer exists.
 func TestDeleteTenant_FailsClosedOnCredentialRevocationFailure(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := NewMemoryStorage()
 
@@ -1003,6 +1024,7 @@ func TestDeleteTenant_FailsClosedOnCredentialRevocationFailure(t *testing.T) {
 // surface — so the request is refused at request time rather than resolved
 // silently in either direction.
 func TestGDPRErasure_RejectsPreserveCredentialsWithProfileDeletion(t *testing.T) {
+	t.Parallel()
 	reaper := &recordingReaper{count: 1}
 	mgr := newGDPRTestManagerWithReaper(t, reaper)
 	ctx := context.Background()
@@ -1025,6 +1047,7 @@ func TestGDPRErasure_RejectsPreserveCredentialsWithProfileDeletion(t *testing.T)
 // profile and the credentials is coherent, so the erasure runs and the
 // credentials are left alone.
 func TestGDPRErasure_PreservedCredentialsSurviveWhenProfileIsKept(t *testing.T) {
+	t.Parallel()
 	reaper := &recordingReaper{count: 1}
 	mgr := newGDPRTestManagerWithReaper(t, reaper)
 	ctx := context.Background()
@@ -1055,6 +1078,7 @@ func TestGDPRErasure_PreservedCredentialsSurviveWhenProfileIsKept(t *testing.T) 
 // not asked to retain them. Erasing an identity carries its authenticators
 // with it, so they go too rather than being stranded.
 func TestGDPRErasure_OmittedCredentialsGoWithTheProfile(t *testing.T) {
+	t.Parallel()
 	reaper := &recordingReaper{count: 2}
 	mgr := newGDPRTestManagerWithReaper(t, reaper)
 	ctx := context.Background()
@@ -1082,6 +1106,7 @@ func TestGDPRErasure_OmittedCredentialsGoWithTheProfile(t *testing.T) {
 // credential: a stuck request an operator can amend is recoverable, and the
 // orphan is not.
 func TestGDPRErasure_StoredConflictFailsClosed(t *testing.T) {
+	t.Parallel()
 	reaper := &recordingReaper{count: 1}
 	mgr := newGDPRTestManagerWithReaper(t, reaper)
 	ctx := context.Background()
@@ -1117,6 +1142,7 @@ func TestGDPRErasure_StoredConflictFailsClosed(t *testing.T) {
 // "profile" preserves nothing, and the request is coherent — refusing it would
 // break a deployment that never had a passkey to lose.
 func TestGDPRErasure_ConflictOnlyWhereCredentialsCanExist(t *testing.T) {
+	t.Parallel()
 	mgr := newGDPRTestManagerWithReaper(t, nil)
 	ctx := context.Background()
 
@@ -1196,6 +1222,7 @@ func (s *flakyReadCredentialStore) DeleteByUserID(context.Context, []byte) error
 // other read failure aborts before the Save, so no compensation decision is
 // ever taken on a snapshot that could be wrong.
 func TestWriteThroughSave_UnreadableStoreDoesNotDestroyExistingCredential(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	inner := newFlakyReadCredentialStore()
 	users := xkmswebauthn.NewMemoryUserStore()
@@ -1276,6 +1303,7 @@ func TestWriteThroughSave_UnreadableStoreDoesNotDestroyExistingCredential(t *tes
 // the handler tests drilled a branch production never reaches. This asserts
 // the double can tell the two apart before anything relies on it.
 func TestFlakyReadCredentialStore_DistinguishesAbsenceFromFailure(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := newFlakyReadCredentialStore()
 
@@ -1304,6 +1332,7 @@ func TestFlakyReadCredentialStore_DistinguishesAbsenceFromFailure(t *testing.T) 
 // not-found is trustworthy, so a credential this ceremony created is still
 // rolled back when the factor enrollment fails.
 func TestWriteThroughSave_GenuineNotFoundStillCompensates(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	inner := newFlakyReadCredentialStore()
 	users := xkmswebauthn.NewMemoryUserStore()
@@ -1348,6 +1377,7 @@ func TestWriteThroughSave_GenuineNotFoundStillCompensates(t *testing.T) {
 // can defend against; what it can do is never add a second, looser
 // classification of its own, which is what this pins.
 func TestWriteThroughSave_SnapshotClassifiesBySentinelNotText(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name      string
 		readErr   error
@@ -1382,6 +1412,7 @@ func TestWriteThroughSave_SnapshotClassifiesBySentinelNotText(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			ctx := context.Background()
 			inner := newFlakyReadCredentialStore()
 			users := xkmswebauthn.NewMemoryUserStore()
