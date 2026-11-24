@@ -18,15 +18,21 @@
   count from the /api/v1/cluster/status endpoint. In standalone mode (no Raft
   peers configured) it surfaces the standalone badge so operators know the
   node is running in single-node mode rather than in a degraded cluster.
+  Below the status it shows the cluster leader with a lookup of one shard's
+  leader, and ClusterOperationsPanel for rebalances and migrations.
 -->
 <script lang="ts">
   import PageHeader from '../../components/core/PageHeader.svelte';
   import DataTable from '../../components/core/DataTable.svelte';
   import type { Column } from '../../lib/dataTable.ts';
   import StatCard from '../../components/core/StatCard.svelte';
+  import ClusterOperationsPanel from '../../components/cluster/ClusterOperationsPanel.svelte';
   import { getSDKClient } from '../../stores/sdkClient.ts';
-  import { Server, Network, HardDrive, CheckCircle, AlertTriangle } from 'lucide-svelte';
+  import { authStore } from '../../stores/auth.svelte.ts';
+  import { Server, Network, HardDrive, CheckCircle, AlertTriangle, Crown, Search } from 'lucide-svelte';
   import { formatDateTime } from '../../lib/time.ts';
+  import { APIError } from '@quicbaas/sdk';
+  import type { ClusterLeaderResponse, ShardLeaderResponse } from '@quicbaas/sdk';
 
   // ---------------------------------------------------------------------------
   // Wire shape returned by GET /api/v1/cluster/status
@@ -83,6 +89,77 @@
   }
 
   $effect(() => { void loadStatus(); });
+
+  // ---------------------------------------------------------------------------
+  // Leadership: the cluster leader (GET /api/v1/cluster/leader, a 503 when the
+  // cluster has none) and a lookup of one shard's leader. A session change
+  // clears both and drops any answer still in flight.
+  // ---------------------------------------------------------------------------
+
+  const LEADERSHIP_UNAVAILABLE = 'Cluster leadership is not available over this connection';
+
+  let leader = $state<ClusterLeaderResponse | null>(null);
+  let noLeader = $state(false);
+  let leaderLoading = $state(false);
+  let leaderError = $state('');
+  let shardInput = $state('');
+  let shardLeader = $state<ShardLeaderResponse | null>(null);
+  let shardLeaderLoading = $state(false);
+  let shardLeaderError = $state('');
+
+  async function loadLeader(forSession: string): Promise<void> {
+    leaderLoading = true;
+    try {
+      const client = await getSDKClient();
+      if (forSession !== authStore.sessionKey) return;
+      if (!client.cluster) { leaderError = LEADERSHIP_UNAVAILABLE; return; }
+      const resp = await client.cluster.leader();
+      if (forSession !== authStore.sessionKey) return;
+      leader = resp;
+    } catch (e) {
+      if (forSession !== authStore.sessionKey) return;
+      if (e instanceof APIError && e.status === 503) noLeader = true;
+      else leaderError = e instanceof Error ? e.message : 'Failed to load the cluster leader';
+    } finally {
+      if (forSession === authStore.sessionKey) leaderLoading = false;
+    }
+  }
+
+  async function lookUpShardLeader(): Promise<void> {
+    shardLeaderError = '';
+    const raw = shardInput.trim();
+    if (!/^\d+$/.test(raw)) {
+      shardLeader = null;
+      shardLeaderError = raw === '' ? 'Shard ID is required' : 'Shard ID must be a whole number';
+      return;
+    }
+    const forSession = authStore.sessionKey;
+    shardLeaderLoading = true;
+    try {
+      const client = await getSDKClient();
+      if (forSession !== authStore.sessionKey) return;
+      if (!client.cluster) { shardLeaderError = LEADERSHIP_UNAVAILABLE; return; }
+      const resp = await client.cluster.shardLeader(Number(raw));
+      if (forSession !== authStore.sessionKey) return;
+      shardLeader = resp;
+    } catch (e) {
+      if (forSession !== authStore.sessionKey) return;
+      shardLeader = null;
+      shardLeaderError = e instanceof Error ? e.message : 'Failed to look up the shard leader';
+    } finally {
+      if (forSession === authStore.sessionKey) shardLeaderLoading = false;
+    }
+  }
+
+  $effect(() => {
+    const forSession = authStore.sessionKey;
+    leader = null;
+    noLeader = false;
+    leaderError = '';
+    shardLeader = null;
+    shardLeaderError = '';
+    void loadLeader(forSession);
+  });
 
   // ---------------------------------------------------------------------------
   // Derived display helpers
@@ -193,4 +270,56 @@
   {:else if !loading && !error}
     <div class="text-center py-10 text-base-content/30 text-sm">No cluster status available.</div>
   {/if}
+
+  <!-- Leadership -->
+  <section class="card bg-base-200 shadow-sm" aria-label="Leadership">
+    <div class="card-body gap-3">
+      <h2 class="card-title text-base"><Crown class="h-4 w-4" /> Leadership</h2>
+      <div class="text-sm" data-testid="cluster-leader">
+        {#if leaderLoading}
+          <span class="loading loading-spinner loading-xs"></span>
+        {:else if leader}
+          Cluster leader: node <span class="font-mono font-semibold">{leader.leader.node_id}</span>
+          at <span class="font-mono">{leader.leader.address}</span>
+          {#if leader.leader.raft_address && leader.leader.raft_address !== leader.leader.address}
+            (Raft <span class="font-mono">{leader.leader.raft_address}</span>)
+          {/if}
+        {:else if noLeader}
+          <span class="badge badge-warning badge-sm">No leader</span>
+          <span class="text-base-content/60">The cluster has no elected leader right now.</span>
+        {:else if leaderError}
+          <span class="text-error">{leaderError}</span>
+        {/if}
+      </div>
+
+      <form class="flex flex-wrap items-end gap-2" onsubmit={(e) => { e.preventDefault(); void lookUpShardLeader(); }}>
+        <label class="form-control">
+          <span class="label-text text-xs">Shard ID</span>
+          <input class="input input-sm input-bordered w-32" type="text" inputmode="numeric" bind:value={shardInput} />
+        </label>
+        <button type="submit" class="btn btn-sm btn-ghost" disabled={shardLeaderLoading}>
+          {#if shardLeaderLoading}<span class="loading loading-spinner loading-xs"></span>{:else}<Search class="h-4 w-4" />{/if}
+          Look up shard leader
+        </button>
+      </form>
+      {#if shardLeader}
+        <p class="text-sm" data-testid="shard-leader">
+          Shard <span class="font-mono">{shardLeader.shard_id}</span>:
+          {#if shardLeader.valid}
+            leader node <span class="font-mono font-semibold">{shardLeader.leader_id}</span>
+            {#if shardLeader.leader_address}at <span class="font-mono">{shardLeader.leader_address}</span>{/if}
+            {#if shardLeader.term !== undefined}&nbsp;&bull;&nbsp; term {shardLeader.term}{/if}
+          {:else}
+            <span class="badge badge-warning badge-sm">No leader</span>
+          {/if}
+        </p>
+      {/if}
+      {#if shardLeaderError}
+        <div class="alert alert-error text-sm" role="alert" data-testid="shard-leader-error">{shardLeaderError}</div>
+      {/if}
+    </div>
+  </section>
+
+  <!-- Long operations -->
+  <ClusterOperationsPanel />
 </div>
