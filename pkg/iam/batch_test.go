@@ -28,6 +28,7 @@ func assertEnabledStated(t *testing.T, got *bool, want bool, context string) {
 }
 
 func TestNewBatchManager(t *testing.T) {
+	t.Parallel()
 	t.Run("with default options", func(t *testing.T) {
 		bm := NewBatchManager(BatchManagerOptions{})
 
@@ -89,6 +90,7 @@ func TestNewBatchManager(t *testing.T) {
 }
 
 func TestBatchImportRequestValidate(t *testing.T) {
+	t.Parallel()
 	t.Run("valid request", func(t *testing.T) {
 		req := &BatchImportRequest{
 			TenantID: "test-tenant",
@@ -171,6 +173,7 @@ func TestBatchImportRequestValidate(t *testing.T) {
 }
 
 func TestBatchOptionsValidate(t *testing.T) {
+	t.Parallel()
 	t.Run("valid options", func(t *testing.T) {
 		opts := BatchOptions{
 			BatchSize:       100,
@@ -216,6 +219,7 @@ func TestBatchOptionsValidate(t *testing.T) {
 }
 
 func TestBatchExportRequestValidate(t *testing.T) {
+	t.Parallel()
 	t.Run("valid request", func(t *testing.T) {
 		req := &BatchExportRequest{
 			TenantID:     "test-tenant",
@@ -264,6 +268,7 @@ func TestBatchExportRequestValidate(t *testing.T) {
 }
 
 func TestWorkerPool(t *testing.T) {
+	t.Parallel()
 	t.Run("basic job processing", func(t *testing.T) {
 		ctx := context.Background()
 		wp := newWorkerPool(ctx, 2)
@@ -366,6 +371,7 @@ func TestWorkerPool(t *testing.T) {
 }
 
 func TestProgressTracker(t *testing.T) {
+	t.Parallel()
 	t.Run("basic progress tracking", func(t *testing.T) {
 		var lastProgress BatchImportProgress
 		progressFunc := func(p BatchImportProgress) {
@@ -429,6 +435,7 @@ func TestProgressTracker(t *testing.T) {
 }
 
 func TestBatchResult(t *testing.T) {
+	t.Parallel()
 	t.Run("batch result fields", func(t *testing.T) {
 		result := &BatchResult{
 			TotalItems:   100,
@@ -468,6 +475,7 @@ func TestBatchResult(t *testing.T) {
 }
 
 func TestBatchError(t *testing.T) {
+	t.Parallel()
 	t.Run("batch error fields", func(t *testing.T) {
 		testErr := errors.New("test error")
 		batchErr := BatchError{
@@ -493,6 +501,7 @@ func TestBatchError(t *testing.T) {
 }
 
 func TestUserImport(t *testing.T) {
+	t.Parallel()
 	t.Run("user import fields", func(t *testing.T) {
 		user := &UserImport{
 			ID:       30001,
@@ -517,6 +526,7 @@ func TestUserImport(t *testing.T) {
 }
 
 func TestRoleImport(t *testing.T) {
+	t.Parallel()
 	t.Run("role import fields", func(t *testing.T) {
 		role := &RoleImport{
 			ID:          "r1",
@@ -541,6 +551,7 @@ func TestRoleImport(t *testing.T) {
 }
 
 func TestPolicyImport(t *testing.T) {
+	t.Parallel()
 	t.Run("policy import fields", func(t *testing.T) {
 		policy := &PolicyImport{
 			Name:        "admin-policy",
@@ -575,6 +586,7 @@ func TestPolicyImport(t *testing.T) {
 }
 
 func TestExportFilter(t *testing.T) {
+	t.Parallel()
 	t.Run("export filter with all fields", func(t *testing.T) {
 		now := time.Now()
 		yesterday := now.Add(-24 * time.Hour)
@@ -599,6 +611,7 @@ func TestExportFilter(t *testing.T) {
 }
 
 func TestBatchProgress(t *testing.T) {
+	t.Parallel()
 	t.Run("batch progress fields", func(t *testing.T) {
 		progress := BatchProgress{
 			TotalItems:      100,
@@ -622,6 +635,7 @@ func TestBatchProgress(t *testing.T) {
 }
 
 func TestBatchErrorTypes(t *testing.T) {
+	t.Parallel()
 	t.Run("sentinel errors", func(t *testing.T) {
 		if errBatchOperationFailed.Error() != "batch operation failed" {
 			t.Errorf("unexpected error message: %s", errBatchOperationFailed.Error())
@@ -645,6 +659,7 @@ func TestBatchErrorTypes(t *testing.T) {
 }
 
 func TestBatchManagerGetBatchSize(t *testing.T) {
+	t.Parallel()
 	bm := NewBatchManager(BatchManagerOptions{
 		BatchSize: 50,
 	})
@@ -665,6 +680,7 @@ func TestBatchManagerGetBatchSize(t *testing.T) {
 }
 
 func TestBatchManagerGetParallelism(t *testing.T) {
+	t.Parallel()
 	bm := NewBatchManager(BatchManagerOptions{
 		Parallelism: 8,
 	})
@@ -685,6 +701,7 @@ func TestBatchManagerGetParallelism(t *testing.T) {
 }
 
 func TestBatchManagerMergeResult(t *testing.T) {
+	t.Parallel()
 	bm := NewBatchManager(BatchManagerOptions{})
 
 	t.Run("merges results correctly", func(t *testing.T) {
@@ -744,6 +761,7 @@ func TestBatchManagerMergeResult(t *testing.T) {
 }
 
 func TestBatchExportResultConvertToImportRequest(t *testing.T) {
+	t.Parallel()
 	t.Run("converts export to import request", func(t *testing.T) {
 		now := time.Now()
 		exportResult := &BatchExportResult{
@@ -887,6 +905,7 @@ func TestBatchExportResultConvertToImportRequest(t *testing.T) {
 }
 
 func TestUserMatchesFilter(t *testing.T) {
+	t.Parallel()
 	bm := NewBatchManager(BatchManagerOptions{})
 	now := time.Now()
 	yesterday := now.Add(-24 * time.Hour)
@@ -957,6 +976,7 @@ func TestUserMatchesFilter(t *testing.T) {
 }
 
 func TestRoleMatchesFilter(t *testing.T) {
+	t.Parallel()
 	bm := NewBatchManager(BatchManagerOptions{})
 	now := time.Now()
 
@@ -990,6 +1010,7 @@ func TestRoleMatchesFilter(t *testing.T) {
 }
 
 func TestPolicyMatchesFilter(t *testing.T) {
+	t.Parallel()
 	bm := NewBatchManager(BatchManagerOptions{})
 	now := time.Now()
 	yesterday := now.Add(-24 * time.Hour)
@@ -1032,6 +1053,7 @@ func TestPolicyMatchesFilter(t *testing.T) {
 }
 
 func TestImportUsersEmptySlice(t *testing.T) {
+	t.Parallel()
 	bm := NewBatchManager(BatchManagerOptions{})
 	ctx := context.Background()
 
@@ -1048,6 +1070,7 @@ func TestImportUsersEmptySlice(t *testing.T) {
 }
 
 func TestImportRolesEmptySlice(t *testing.T) {
+	t.Parallel()
 	bm := NewBatchManager(BatchManagerOptions{})
 	ctx := context.Background()
 
@@ -1064,6 +1087,7 @@ func TestImportRolesEmptySlice(t *testing.T) {
 }
 
 func TestImportPoliciesEmptySlice(t *testing.T) {
+	t.Parallel()
 	bm := NewBatchManager(BatchManagerOptions{})
 	ctx := context.Background()
 
@@ -1080,6 +1104,7 @@ func TestImportPoliciesEmptySlice(t *testing.T) {
 }
 
 func TestImportUsersMissingTenantID(t *testing.T) {
+	t.Parallel()
 	bm := NewBatchManager(BatchManagerOptions{})
 	ctx := context.Background()
 
@@ -1090,6 +1115,7 @@ func TestImportUsersMissingTenantID(t *testing.T) {
 }
 
 func TestImportRolesMissingTenantID(t *testing.T) {
+	t.Parallel()
 	bm := NewBatchManager(BatchManagerOptions{})
 	ctx := context.Background()
 
@@ -1100,6 +1126,7 @@ func TestImportRolesMissingTenantID(t *testing.T) {
 }
 
 func TestImportPoliciesMissingTenantID(t *testing.T) {
+	t.Parallel()
 	bm := NewBatchManager(BatchManagerOptions{})
 	ctx := context.Background()
 
@@ -1110,6 +1137,7 @@ func TestImportPoliciesMissingTenantID(t *testing.T) {
 }
 
 func TestExportUsersMissingTenantID(t *testing.T) {
+	t.Parallel()
 	bm := NewBatchManager(BatchManagerOptions{})
 	ctx := context.Background()
 
@@ -1120,6 +1148,7 @@ func TestExportUsersMissingTenantID(t *testing.T) {
 }
 
 func TestExportRolesMissingTenantID(t *testing.T) {
+	t.Parallel()
 	bm := NewBatchManager(BatchManagerOptions{})
 	ctx := context.Background()
 
@@ -1130,6 +1159,7 @@ func TestExportRolesMissingTenantID(t *testing.T) {
 }
 
 func TestExportPoliciesMissingTenantID(t *testing.T) {
+	t.Parallel()
 	bm := NewBatchManager(BatchManagerOptions{})
 	ctx := context.Background()
 
@@ -1140,6 +1170,7 @@ func TestExportPoliciesMissingTenantID(t *testing.T) {
 }
 
 func TestExportUsersNoIdentityStore(t *testing.T) {
+	t.Parallel()
 	bm := NewBatchManager(BatchManagerOptions{})
 	ctx := context.Background()
 
@@ -1150,6 +1181,7 @@ func TestExportUsersNoIdentityStore(t *testing.T) {
 }
 
 func TestExportRolesNoIdentityStore(t *testing.T) {
+	t.Parallel()
 	bm := NewBatchManager(BatchManagerOptions{})
 	ctx := context.Background()
 
@@ -1160,6 +1192,7 @@ func TestExportRolesNoIdentityStore(t *testing.T) {
 }
 
 func TestExportPoliciesNoPolicyEngine(t *testing.T) {
+	t.Parallel()
 	bm := NewBatchManager(BatchManagerOptions{})
 	ctx := context.Background()
 
@@ -1170,6 +1203,7 @@ func TestExportPoliciesNoPolicyEngine(t *testing.T) {
 }
 
 func TestImportUserNoIdentityStore(t *testing.T) {
+	t.Parallel()
 	bm := NewBatchManager(BatchManagerOptions{})
 	ctx := context.Background()
 
@@ -1183,6 +1217,7 @@ func TestImportUserNoIdentityStore(t *testing.T) {
 }
 
 func TestImportRoleNoIdentityStore(t *testing.T) {
+	t.Parallel()
 	bm := NewBatchManager(BatchManagerOptions{})
 	ctx := context.Background()
 
@@ -1195,6 +1230,7 @@ func TestImportRoleNoIdentityStore(t *testing.T) {
 }
 
 func TestImportPolicyNoPolicyEngine(t *testing.T) {
+	t.Parallel()
 	bm := NewBatchManager(BatchManagerOptions{})
 	ctx := context.Background()
 
@@ -1215,6 +1251,7 @@ func TestImportPolicyNoPolicyEngine(t *testing.T) {
 }
 
 func TestImportUserValidation(t *testing.T) {
+	t.Parallel()
 	bm := NewBatchManager(BatchManagerOptions{
 		IdentityStore: NewIdentityStore(IdentityStoreOptions{}),
 	})
@@ -1250,6 +1287,7 @@ func TestImportUserValidation(t *testing.T) {
 }
 
 func TestImportRoleValidation(t *testing.T) {
+	t.Parallel()
 	bm := NewBatchManager(BatchManagerOptions{
 		IdentityStore: NewIdentityStore(IdentityStoreOptions{}),
 	})
@@ -1273,6 +1311,7 @@ func TestImportRoleValidation(t *testing.T) {
 }
 
 func TestImportPolicyValidation(t *testing.T) {
+	t.Parallel()
 	bm := NewBatchManager(BatchManagerOptions{
 		PolicyEngine: NewPolicyEngine(PolicyEngineOptions{}),
 	})
@@ -1322,6 +1361,7 @@ func TestImportPolicyValidation(t *testing.T) {
 }
 
 func TestImportAllValidation(t *testing.T) {
+	t.Parallel()
 	bm := NewBatchManager(BatchManagerOptions{})
 	ctx := context.Background()
 
@@ -1334,6 +1374,7 @@ func TestImportAllValidation(t *testing.T) {
 }
 
 func TestExportAllValidation(t *testing.T) {
+	t.Parallel()
 	bm := NewBatchManager(BatchManagerOptions{})
 	ctx := context.Background()
 
@@ -1346,6 +1387,7 @@ func TestExportAllValidation(t *testing.T) {
 }
 
 func TestBatchConstants(t *testing.T) {
+	t.Parallel()
 	if DefaultBatchSize <= 0 {
 		t.Error("DefaultBatchSize must be positive")
 	}
@@ -1364,6 +1406,7 @@ func TestBatchConstants(t *testing.T) {
 }
 
 func TestPolicyImportItem_Validate(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		item    *PolicyImportItem
@@ -1395,6 +1438,7 @@ func TestPolicyImportItem_Validate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			err := tt.item.Validate()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
@@ -1405,6 +1449,7 @@ func TestPolicyImportItem_Validate(t *testing.T) {
 
 // TestBatchOptions_Validate_Coverage tests BatchOptions validation edge cases.
 func TestBatchOptions_Validate_Coverage(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		opts    *BatchOptions
@@ -1453,6 +1498,7 @@ func TestBatchOptions_Validate_Coverage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			err := tt.opts.Validate()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
@@ -1471,6 +1517,7 @@ func TestBatchOptions_Validate_Coverage(t *testing.T) {
 
 // TestBatchOperation_Validate_Coverage tests BatchOperation validation edge cases.
 func TestBatchOperation_Validate_Coverage(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		op      *BatchOperation
@@ -1517,6 +1564,7 @@ func TestBatchOperation_Validate_Coverage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			err := tt.op.Validate()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
@@ -1535,6 +1583,7 @@ func TestBatchOperation_Validate_Coverage(t *testing.T) {
 
 // TestUserImportItem_ValidateCoverage tests UserImportItem validation.
 func TestUserImportItem_ValidateCoverage(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		item    *UserImportItem
@@ -1571,6 +1620,7 @@ func TestUserImportItem_ValidateCoverage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			err := tt.item.Validate()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
@@ -1581,6 +1631,7 @@ func TestUserImportItem_ValidateCoverage(t *testing.T) {
 
 // TestRoleImportItem_ValidateCoverage tests RoleImportItem validation.
 func TestRoleImportItem_ValidateCoverage(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		item    *RoleImportItem
@@ -1610,6 +1661,7 @@ func TestRoleImportItem_ValidateCoverage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			err := tt.item.Validate()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
@@ -1620,6 +1672,7 @@ func TestRoleImportItem_ValidateCoverage(t *testing.T) {
 
 // TestBatchError_ErrorMessage tests BatchError error message.
 func TestBatchError_ErrorMessage(t *testing.T) {
+	t.Parallel()
 	err := errors.New("test error")
 	be := &BatchError{
 		Index: 5,
