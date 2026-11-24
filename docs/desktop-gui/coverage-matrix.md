@@ -601,24 +601,24 @@ RestSecretsClient builds `/api/v1/secrets/<path>` for the `*` routes (POST store
 
 | Method | Path | Handler | SDK file | Console |
 |---|---|---|---|---|
-| POST | `/api/v1/vector/admin/compact` | HandleCompactNamespace | rest.ts | not covered |
-| GET | `/api/v1/vector/admin/compact/progress` | HandleGetCompactionProgress | - (rest.ts†) | not covered |
-| POST | `/api/v1/vector/admin/export/{namespace}` | HandleExportVectors | rest.ts | not covered |
-| POST | `/api/v1/vector/admin/import/{namespace}` | HandleImportVectors | rest.ts | not covered |
-| GET | `/api/v1/vector/admin/stats/global` | HandleGetGlobalStats | rest.ts | not covered |
-| GET | `/api/v1/vector/cluster/stats` | HandleGetGlobalStats | rest.ts | not covered |
-| GET | `/api/v1/vector/health` | HandleVectorHealth | rest.ts | not covered |
-| POST | `/api/v1/vector/hybrid-search` | HandleHybridSearch | rest.ts | not covered |
+| POST | `/api/v1/vector/admin/compact` | HandleCompactNamespace | rest.ts | covered: components/data/VectorNamespacePanel.svelte |
+| GET | `/api/v1/vector/admin/compact/progress` | HandleGetCompactionProgress | - (rest.ts†) | covered: components/data/VectorNamespacePanel.svelte |
+| POST | `/api/v1/vector/admin/export/{namespace}` | HandleExportVectors | rest.ts | covered: components/data/VectorNamespacePanel.svelte |
+| POST | `/api/v1/vector/admin/import/{namespace}` | HandleImportVectors | rest.ts | covered: components/data/VectorNamespacePanel.svelte |
+| GET | `/api/v1/vector/admin/stats/global` | HandleGetGlobalStats | rest.ts | covered: components/data/VectorStatusStrip.svelte |
+| GET | `/api/v1/vector/cluster/stats` | HandleGetGlobalStats | rest.ts | covered: components/data/VectorStatusStrip.svelte |
+| GET | `/api/v1/vector/health` | HandleVectorHealth | rest.ts | covered: components/data/VectorStatusStrip.svelte |
+| POST | `/api/v1/vector/hybrid-search` | HandleHybridSearch | rest.ts | covered: views/data/VectorsView.svelte |
 | GET | `/api/v1/vector/namespaces/` | HandleListNamespaces | rest.ts | covered: views/data/VectorsView.svelte |
 | POST | `/api/v1/vector/namespaces/` | HandleCreateNamespace | rest.ts | covered: views/data/VectorsView.svelte |
 | DELETE | `/api/v1/vector/namespaces/{namespace}` | HandleDeleteNamespace | rest.ts | covered: views/data/VectorsView.svelte |
-| GET | `/api/v1/vector/namespaces/{namespace}` | HandleGetNamespaceInfo | rest.ts | not covered |
+| GET | `/api/v1/vector/namespaces/{namespace}` | HandleGetNamespaceInfo | rest.ts | covered: components/data/VectorNamespacePanel.svelte |
 | PUT | `/api/v1/vector/namespaces/{namespace}` | HandleUpdateNamespace | rest.ts | not covered |
-| GET | `/api/v1/vector/namespaces/{namespace}/index/progress` | HandleGetIndexProgress | - (rest.ts†) | not covered |
-| POST | `/api/v1/vector/namespaces/{namespace}/index/rebuild` | HandleRebuildIndex | rest.ts | not covered |
+| GET | `/api/v1/vector/namespaces/{namespace}/index/progress` | HandleGetIndexProgress | - (rest.ts†) | covered: components/data/VectorNamespacePanel.svelte |
+| POST | `/api/v1/vector/namespaces/{namespace}/index/rebuild` | HandleRebuildIndex | rest.ts | covered: components/data/VectorNamespacePanel.svelte |
 | POST | `/api/v1/vector/namespaces/{namespace}/search/by-id/{id}` | HandleSearchByID | - | not covered |
 | POST | `/api/v1/vector/namespaces/{namespace}/search/similar` | HandleSearchSimilar | rest.ts | covered: views/data/VectorsView.svelte |
-| GET | `/api/v1/vector/namespaces/{namespace}/stats` | HandleGetNamespaceStats | rest.ts | not covered |
+| GET | `/api/v1/vector/namespaces/{namespace}/stats` | HandleGetNamespaceStats | rest.ts | covered: components/data/VectorNamespacePanel.svelte |
 | GET | `/api/v1/vector/namespaces/{namespace}/vectors/` | HandleListVectors | - | not covered |
 | POST | `/api/v1/vector/namespaces/{namespace}/vectors/` | HandleUpsertVector | - | not covered |
 | DELETE | `/api/v1/vector/namespaces/{namespace}/vectors/batch` | HandleBatchDeleteVectors | - | not covered |
@@ -627,7 +627,7 @@ RestSecretsClient builds `/api/v1/secrets/<path>` for the `*` routes (POST store
 | GET | `/api/v1/vector/namespaces/{namespace}/vectors/{id}` | HandleGetVector | - | not covered |
 | PUT | `/api/v1/vector/namespaces/{namespace}/vectors/{id}` | HandleUpsertVector | - | not covered |
 | PUT | `/api/v1/vector/namespaces/{namespace}/vectors/{id}/metadata` | HandleUpdateMetadata | - | not covered |
-| POST | `/api/v1/vector/search-by-metadata` | HandleSearchByMetadata | rest.ts | not covered |
+| POST | `/api/v1/vector/search-by-metadata` | HandleSearchByMetadata | rest.ts | covered: views/data/VectorsView.svelte |
 
 ### version
 

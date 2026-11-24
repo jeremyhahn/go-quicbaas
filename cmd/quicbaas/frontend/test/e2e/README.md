@@ -27,7 +27,7 @@ test/e2e-coverage-matrix.test.ts fails when a route has no row.
 | `events` | #/events, #/live-events | list | dashboard.spec.ts, rapid_nav_no_duplicate_keys.spec.ts, sidebar_nav.spec.ts |
 | `cost` | #/cost, #/cost-tracking | list | dashboard.spec.ts, rapid_nav_no_duplicate_keys.spec.ts, sidebar_nav.spec.ts |
 | `kv` | #/kv | list, create, edit, delete | data_surfaces.spec.ts, kv_roundtrip.spec.ts, rapid_nav_no_duplicate_keys.spec.ts, tenant_selector_layering.spec.ts |
-| `vectors` | #/vectors | list, create, delete, error state | data_surfaces.spec.ts, rapid_nav_no_duplicate_keys.spec.ts, subsystem_gating.spec.ts |
+| `vectors` | #/vectors | list, create, delete, error state, namespace detail, index rebuild, compaction, export/import, status, hybrid and metadata search | data_surfaces.spec.ts, rapid_nav_no_duplicate_keys.spec.ts, subsystem_gating.spec.ts |
 | `timeseries` | #/timeseries | list, create, error state | data_surfaces.spec.ts, rapid_nav_no_duplicate_keys.spec.ts, subsystem_gating.spec.ts |
 | `objects` | #/objects | list, create, delete | bug_regressions.spec.ts, data_surfaces.spec.ts, rapid_nav_no_duplicate_keys.spec.ts |
 | `rag` | #/rag | list, create, delete | ai_async_surfaces.spec.ts, rapid_nav_no_duplicate_keys.spec.ts, renderer_freeze_reproducer.spec.ts |

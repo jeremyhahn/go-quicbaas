@@ -759,28 +759,28 @@ Service: not-UI, service instances register and resolve each other.
 | BatchDeleteVectors | api/proto/vector.proto | not covered |
 | SearchSimilar | api/proto/vector.proto | covered: views/data/VectorsView.svelte |
 | SearchByID | api/proto/vector.proto | not covered |
-| HybridSearch | api/proto/vector.proto | not covered |
-| SearchByMetadata | api/proto/vector.proto | not covered |
+| HybridSearch | api/proto/vector.proto | covered: views/data/VectorsView.svelte |
+| SearchByMetadata | api/proto/vector.proto | covered: views/data/VectorsView.svelte |
 | ListVectors | api/proto/vector.proto | not covered |
 | ListNamespaces | api/proto/vector.proto | covered: views/data/VectorsView.svelte |
 | CreateNamespace | api/proto/vector.proto | covered: views/data/VectorsView.svelte |
 | UpdateNamespace | api/proto/vector.proto | not covered |
 | DeleteNamespace | api/proto/vector.proto | covered: views/data/VectorsView.svelte |
-| GetNamespaceInfo | api/proto/vector.proto | not covered |
-| GetVectorStats | api/proto/vector.proto | not covered |
-| Health | api/proto/vector.proto | not covered |
-| RebuildIndex | api/proto/vector.proto | not covered |
-| GetIndexProgress | api/proto/vector.proto | not covered |
+| GetNamespaceInfo | api/proto/vector.proto | covered: components/data/VectorNamespacePanel.svelte |
+| GetVectorStats | api/proto/vector.proto | covered: components/data/VectorNamespacePanel.svelte |
+| Health | api/proto/vector.proto | covered: components/data/VectorStatusStrip.svelte |
+| RebuildIndex | api/proto/vector.proto | covered: components/data/VectorNamespacePanel.svelte |
+| GetIndexProgress | api/proto/vector.proto | covered: components/data/VectorNamespacePanel.svelte |
 
 ## quicbaas.vector.v1.VectorAdmin
 
 | RPC | Proto file | Console |
 |---|---|---|
-| GetClusterStats | api/proto/vector.proto | not covered |
-| CompactNamespace | api/proto/vector.proto | not covered |
-| GetCompactionProgress | api/proto/vector.proto | not covered |
-| ExportVectors | api/proto/vector.proto | not covered |
-| ImportVectors | api/proto/vector.proto | not covered |
+| GetClusterStats | api/proto/vector.proto | covered: components/data/VectorStatusStrip.svelte |
+| CompactNamespace | api/proto/vector.proto | covered: components/data/VectorNamespacePanel.svelte |
+| GetCompactionProgress | api/proto/vector.proto | covered: components/data/VectorNamespacePanel.svelte |
+| ExportVectors | api/proto/vector.proto | covered: components/data/VectorNamespacePanel.svelte |
+| ImportVectors | api/proto/vector.proto | covered: components/data/VectorNamespacePanel.svelte |
 | CreateScalarIndex | api/proto/vector.proto | not covered |
 | DropScalarIndex | api/proto/vector.proto | not covered |
 | ListScalarIndexes | api/proto/vector.proto | not covered |
