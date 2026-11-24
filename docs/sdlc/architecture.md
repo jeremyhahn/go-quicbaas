@@ -991,7 +991,8 @@ because the strategy was configured with `docs` would send a docs change
 through a review nobody asked for. `NewTrunkBased(labels...)` builds a
 trunk-based strategy with a different carve-out for a build that wants one —
 registered under its own name, never mutating the one other projects already
-selected.
+selected. A binding on the `ai-native` profile has no carve-out: whatever its
+strategy, every change, `docs` and `ci` included, goes through a pull request.
 
 Gitflow's **release branches** — cutting `release/<version>` off `develop`,
 tagging the release merge and the double back-merge behind it — are not
