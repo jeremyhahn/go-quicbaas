@@ -28,6 +28,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/apimodule"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 const (
@@ -340,4 +341,75 @@ func TestXKMSLoginPlatformToken_PasskeyLoginReturnsPlatformTokens(t *testing.T) 
 		assert.NotContains(t, rec.Body.String(), passkeyModuleRefresh)
 		assertPasskeyPlatformToken(t, components, rec.Body.String())
 	})
+}
+
+// assertPasskeyRefused checks a fail-closed refusal: 401 and none of the
+// module's tokens reach the client.
+func assertPasskeyRefused(t *testing.T, rec *httptest.ResponseRecorder) {
+	t.Helper()
+	assert.Equal(t, http.StatusUnauthorized, rec.Code, rec.Body.String())
+	assert.NotContains(t, rec.Body.String(), passkeyModuleToken)
+	assert.NotContains(t, rec.Body.String(), "access_token")
+}
+
+func TestXKMSLoginPlatformToken_PasskeyNon200PassesThrough(t *testing.T) {
+	router := passkeyRouter(t, &Server{}, &passkeyStubModule{
+		platformTokenStubModule: platformTokenStubModule{status: http.StatusUnauthorized, body: `{"error":"no"}`},
+	})
+
+	for _, route := range xkmsPasskeyLoginRoutes {
+		rec := postPlatformTokenRoute(router, route, nil)
+
+		assert.Equal(t, http.StatusUnauthorized, rec.Code, route)
+		assert.Equal(t, `{"error":"no"}`, rec.Body.String(), route)
+		assert.Equal(t, "stub", rec.Header().Get("X-Module"), route)
+	}
+}
+
+func TestXKMSLoginPlatformToken_PasskeyUnverifiedTokenRefused(t *testing.T) {
+	srv, _, _ := newPasskeyLoginNode(t)
+	// No identity: the module's fallback refuses its own token.
+	router := passkeyRouter(t, srv, &passkeyStubModule{
+		platformTokenStubModule: platformTokenStubModule{status: http.StatusOK, body: passkeySDKBody},
+	})
+
+	assertPasskeyRefused(t, postPlatformTokenRoute(router, passkeySDKFinishRoute, nil))
+}
+
+func TestXKMSLoginPlatformToken_PasskeyWrongSubjectKindRefused(t *testing.T) {
+	srv, _, user := newPasskeyLoginNode(t)
+	router := passkeyRouter(t, srv, &passkeyStubModule{
+		platformTokenStubModule: platformTokenStubModule{status: http.StatusOK, body: passkeySDKBody},
+		identity:                passkeyModuleIdentity(user.ID, "username"),
+	})
+
+	assertPasskeyRefused(t, postPlatformTokenRoute(router, passkeySDKFinishRoute, nil))
+}
+
+func TestXKMSLoginPlatformToken_PasskeyUnknownUserRefused(t *testing.T) {
+	srv, _, user := newPasskeyLoginNode(t)
+	router := passkeyRouter(t, srv, &passkeyStubModule{
+		platformTokenStubModule: platformTokenStubModule{status: http.StatusOK, body: passkeyLoginBody},
+		identity:                passkeyModuleIdentity(user.ID+1, "user_handle"),
+	})
+
+	rec := postPlatformTokenRoute(router, passkeyLoginFinishRoute, nil)
+
+	assertPasskeyRefused(t, rec)
+	assert.NotContains(t, rec.Body.String(), passkeyModuleRefresh)
+}
+
+func TestXKMSLoginPlatformToken_PasskeyOtherTenantRefused(t *testing.T) {
+	srv, _, user := newPasskeyLoginNode(t)
+	router := passkeyRouter(t, srv, &passkeyStubModule{
+		platformTokenStubModule: platformTokenStubModule{status: http.StatusOK, body: passkeySDKBody},
+		identity:                passkeyModuleIdentity(user.ID, "user_handle"),
+	})
+
+	req := httptest.NewRequest(http.MethodPost, passkeySDKFinishRoute, nil)
+	req = req.WithContext(tenantctx.WithTenant(req.Context(), "tenant-test"))
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	assertPasskeyRefused(t, rec)
 }
