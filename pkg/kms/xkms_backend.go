@@ -549,25 +549,6 @@ func (kb *XKMSBackend) ListKeys(ctx context.Context, prefix string, limit int) (
 	return result, "", nil
 }
 
-// LegacyTenantKeyCount counts the go-xkms keys of this backend that an
-// earlier build stored under the interim encoded name
-// "qbx." + base64url("tenant/<T>/<K>") with an empty TenantID. Those keys are
-// unsupported and unreachable; the count is reported at startup so that none
-// disappears silently.
-func (kb *XKMSBackend) LegacyTenantKeyCount(ctx context.Context) (int, error) {
-	keys, err := xkms.ListKeys(ctx, string(kb.backendType))
-	if err != nil {
-		return 0, err
-	}
-	count := 0
-	for _, attrs := range keys {
-		if attrs != nil && isLegacyEncodedTenantKey(attrs.TenantID, attrs.CN) {
-			count++
-		}
-	}
-	return count, nil
-}
-
 // RotateKey rotates a key to a new version, creating versioned keys
 // ("<id>_v<n>") while preserving old versions for decryption. This predates
 // go-xkms's own key versions (its RotateKey now keeps earlier versions too,

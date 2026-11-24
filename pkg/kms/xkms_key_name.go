@@ -14,7 +14,6 @@
 package kms
 
 import (
-	"encoding/base64"
 	"strings"
 
 	"github.com/jeremyhahn/go-xkms/pkg/validation"
@@ -56,32 +55,4 @@ func keyIDFromXKMS(tenantID, cn string) string {
 		return cn
 	}
 	return tenantKeyRefPrefix + tenantID + "/" + cn
-}
-
-// legacyTenantKeyPrefix starts the interim encoded names an earlier build
-// stored tenant keys under: "qbx." + base64url("tenant/<T>/<K>"), with an
-// empty TenantID. Those keys are unsupported; they are only counted at
-// startup so that none disappears silently.
-const legacyTenantKeyPrefix = "qbx."
-
-// isLegacyEncodedTenantKey reports whether a go-xkms key is one of the
-// interim encoded tenant keys. Nothing resolves through this decoder.
-func isLegacyEncodedTenantKey(tenantID, cn string) bool {
-	if tenantID != "" {
-		return false
-	}
-	encoded, ok := strings.CutPrefix(cn, legacyTenantKeyPrefix)
-	if !ok {
-		return false
-	}
-	decoded, err := base64.RawURLEncoding.Strict().DecodeString(encoded)
-	if err != nil {
-		return false
-	}
-	ref := string(decoded)
-	if !strings.HasPrefix(ref, tenantKeyRefPrefix) {
-		return false
-	}
-	t, _, err := xkmsKeyRef(ref)
-	return err == nil && t != ""
 }

@@ -15,7 +15,6 @@ package kms
 
 import (
 	"context"
-	"encoding/base64"
 	"strings"
 	"testing"
 
@@ -84,45 +83,5 @@ func TestXKMSTenantForm_NativeTenantKeyResolves(t *testing.T) {
 
 // A literal platform name that looks like the old encoding is a platform key,
 // never a tenant key.
-func TestXKMSTenantForm_QBXLiteralIsNotATenantKey(t *testing.T) {
-	cleanup := initXKMSForTest(t)
-	defer cleanup()
-
-	backend := newRealXKMSBackendForTest(t)
-	ctx := context.Background()
-
-	literal := "qbx." + base64.RawURLEncoding.EncodeToString([]byte("tenant/acme/k"))
-	_, err := backend.CreateKey(ctx, backend.algorithmToKeyAttributes(literal, AlgAES256GCM))
-	require.NoError(t, err)
-
-	_, err = backend.GetKeyMetadata(ctx, "tenant/acme/k")
-	require.Error(t, err, "the literal qbx name is not the tenant key")
-
-	keys, _, err := backend.ListKeys(ctx, "tenant/acme/", 0)
-	require.NoError(t, err)
-	require.Empty(t, keys, "the literal qbx name does not list under the tenant")
-}
-
 // Upgrade fixture: a key stored under the row's interim encoding is counted as
 // a legacy tenant key; a literal qbx name and a new-form key are not.
-func TestXKMSTenantForm_LegacyTenantKeyCount(t *testing.T) {
-	cleanup := initXKMSForTest(t)
-	defer cleanup()
-
-	backend := newRealXKMSBackendForTest(t)
-	ctx := context.Background()
-
-	legacy := "qbx." + base64.RawURLEncoding.EncodeToString([]byte("tenant/acme/old"))
-	_, err := xkms.GenerateSymmetricKey(ctx, string(backend.backendType),
-		backend.algorithmToKeyAttributes(legacy, AlgAES256GCM))
-	require.NoError(t, err)
-	_, err = xkms.GenerateSymmetricKey(ctx, string(backend.backendType),
-		backend.algorithmToKeyAttributes("qbx.production", AlgAES256GCM))
-	require.NoError(t, err)
-	_, err = backend.CreateKey(ctx, backend.algorithmToKeyAttributes("tenant/acme/new", AlgAES256GCM))
-	require.NoError(t, err)
-
-	count, err := backend.LegacyTenantKeyCount(ctx)
-	require.NoError(t, err)
-	require.Equal(t, 1, count)
-}
