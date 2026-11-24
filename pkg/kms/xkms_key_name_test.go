@@ -18,11 +18,14 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	stderrors "errors"
+	"strconv"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/validation"
 	goxkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
@@ -409,4 +412,204 @@ func TestXKMSBackend_LegacyQBXKeyName_StillWorks(t *testing.T) {
 
 	require.NoError(t, backend.DeleteKey(ctx, encKeyID), "the legacy key must still delete")
 	require.NoError(t, backend.DeleteKey(ctx, signKeyID), "the legacy key must still delete")
+}
+
+// twoNodeKeys is the go-xkms key set two nodes share: one backend behind both.
+type twoNodeKeys struct {
+	mu   sync.Mutex
+	keys map[string]bool
+}
+
+func newTwoNodeKeys() *twoNodeKeys { return &twoNodeKeys{keys: map[string]bool{}} }
+
+func (k *twoNodeKeys) exists(name string) (bool, error) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	return k.keys[name], nil
+}
+
+func (k *twoNodeKeys) create(name string) error {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.keys[name] = true
+	return nil
+}
+
+func (k *twoNodeKeys) del(name string) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	delete(k.keys, name)
+}
+
+// twoNodes returns two xkmsNameOwners sharing one store, as two nodes share
+// the replicated key-name keyspace.
+func twoNodes(t *testing.T) (a, b *xkmsNameOwners, store goxkmssdk.StorageBackend) {
+	t.Helper()
+	mem, err := goxkmssdk.NewMemoryBackend()
+	require.NoError(t, err)
+	// The memory backend must offer the guarded delete the protocol needs.
+	_, guarded := mem.(keyNameCompareAndDeleter)
+	require.True(t, guarded, "go-xkms's memory backend must implement CompareAndDelete")
+	return &xkmsNameOwners{backend: "software", store: mem},
+		&xkmsNameOwners{backend: "software", store: mem}, mem
+}
+
+func requireNoNameLeases(t *testing.T, store goxkmssdk.StorageBackend) {
+	t.Helper()
+	keys, err := store.List(context.Background(), xkmsNameOwnerPrefix+"lease/")
+	require.NoError(t, err)
+	require.Empty(t, keys, "every name lease must be released")
+}
+
+func TestXKMSNameOwners_TwoNodes_FailedCreateKeepsTheWinnersRecord(t *testing.T) {
+	ctx := context.Background()
+	a, b, store := twoNodes(t)
+	keys := newTwoNodeKeys()
+	const keyID = "tenant/acme/k"
+
+	inCreate := make(chan struct{})
+	finish := make(chan struct{})
+	aErr := make(chan error, 1)
+	go func() {
+		aErr <- a.claim(ctx, keyID, keys.exists, func(name string) error {
+			close(inCreate)
+			<-finish
+			return keys.create(name)
+		})
+	}()
+	<-inCreate
+	err := b.claim(ctx, keyID, keys.exists, func(string) error {
+		t.Error("node B's create must not run while node A holds the name")
+		return nil
+	})
+	require.ErrorIs(t, err, ErrKeyNameBusy)
+	var busy *KeyNameBusyError
+	require.ErrorAs(t, err, &busy)
+	assert.Equal(t, xkmsKeyName(keyID), busy.Name)
+	close(finish)
+	require.NoError(t, <-aErr)
+	requireNoNameLeases(t, store)
+
+	for _, node := range []*xkmsNameOwners{a, b} {
+		name, err := node.resolve(ctx, keyID)
+		require.NoError(t, err)
+		assert.Equal(t, xkmsKeyName(keyID), name)
+	}
+
+	// Node B's later create fails; its rollback keeps node A's record.
+	require.Error(t, b.claim(ctx, keyID, keys.exists, func(string) error { return stderrors.New("exists") }))
+	_, err = a.resolve(ctx, keyID)
+	require.NoError(t, err)
+	requireNoNameLeases(t, store)
+}
+
+func TestXKMSNameOwners_TwoNodes_RollbackNeverDropsAnotherOwnersRecord(t *testing.T) {
+	ctx := context.Background()
+	a, b, store := twoNodes(t)
+	const x, y = "tenant/acme/x", "tenant/acme/y"
+	name := xkmsKeyName(x)
+	require.NoError(t, store.Put(ctx, a.recordKey(name), []byte(x)))
+
+	require.NoError(t, b.dropLocked(ctx, y, name), "a guarded miss is not an error")
+	owner, found, err := a.owner(ctx, name)
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, x, owner, "a rollback for Y must not delete the record naming X")
+
+	require.NoError(t, b.dropLocked(ctx, x, name))
+	_, found, err = a.owner(ctx, name)
+	require.NoError(t, err)
+	assert.False(t, found)
+}
+
+func TestXKMSNameOwners_TwoNodes_DeleteAndRecreateSerialize(t *testing.T) {
+	ctx := context.Background()
+	a, b, store := twoNodes(t)
+	keys := newTwoNodeKeys()
+	const keyID = "tenant/acme/k"
+	require.NoError(t, a.claim(ctx, keyID, keys.exists, keys.create))
+
+	inDel := make(chan struct{})
+	finish := make(chan struct{})
+	aErr := make(chan error, 1)
+	go func() {
+		aErr <- a.release(ctx, keyID, func() error {
+			close(inDel)
+			<-finish
+			keys.del(xkmsKeyName(keyID))
+			return nil
+		})
+	}()
+	<-inDel
+	err := b.claim(ctx, keyID, keys.exists, func(string) error {
+		t.Error("node B's create must not run while node A deletes the key")
+		return nil
+	})
+	require.ErrorIs(t, err, ErrKeyNameBusy)
+	close(finish)
+	require.NoError(t, <-aErr)
+
+	require.NoError(t, b.claim(ctx, keyID, keys.exists, keys.create))
+	name, err := a.resolve(ctx, keyID)
+	require.NoError(t, err, "the recreated key's record must survive the delete")
+	assert.Equal(t, xkmsKeyName(keyID), name)
+	requireNoNameLeases(t, store)
+
+	// Releasing a key whose del fails keeps the record and frees the lease.
+	require.Error(t, b.release(ctx, keyID, func() error { return stderrors.New("unavailable") }))
+	_, err = a.resolve(ctx, keyID)
+	require.NoError(t, err)
+	requireNoNameLeases(t, store)
+}
+
+func TestXKMSNameOwners_ExpiredLeaseIsTakenOver(t *testing.T) {
+	ctx := context.Background()
+	a, _, store := twoNodes(t)
+	keys := newTwoNodeKeys()
+	const keyID = "tenant/acme/k"
+	name := xkmsKeyName(keyID)
+	past := strconv.FormatInt(time.Now().Add(-time.Second).UnixNano(), 10)
+	require.NoError(t, store.Put(ctx, a.leaseKey(name), []byte("abandoned|"+past)))
+
+	require.NoError(t, a.claim(ctx, keyID, keys.exists, keys.create))
+	requireNoNameLeases(t, store)
+	_, err := a.resolve(ctx, keyID)
+	require.NoError(t, err)
+
+	// A literal name takes the lease too, and a live one makes it busy.
+	const literal = "plain-key"
+	future := strconv.FormatInt(time.Now().Add(time.Minute).UnixNano(), 10)
+	require.NoError(t, store.Put(ctx, a.leaseKey(literal), []byte("other|"+future)))
+	err = a.claim(ctx, literal, keys.exists, func(string) error {
+		t.Error("create must not run under another request's live lease")
+		return nil
+	})
+	require.ErrorIs(t, err, ErrKeyNameBusy)
+}
+
+// unguardedKeyNameStore hides the guarded delete of the store it wraps.
+type unguardedKeyNameStore struct {
+	goxkmssdk.StorageBackend
+}
+
+func TestXKMSNameOwners_StoreWithoutGuardedDeleteFailsClosed(t *testing.T) {
+	ctx := context.Background()
+	mem, err := goxkmssdk.NewMemoryBackend()
+	require.NoError(t, err)
+	names := &xkmsNameOwners{backend: "software", store: unguardedKeyNameStore{mem}}
+	create := func(string) error {
+		t.Error("create must not run on a store that cannot arbitrate")
+		return nil
+	}
+	err = names.claim(ctx, "tenant/acme/k", func(string) (bool, error) { return false, nil }, create)
+	require.ErrorIs(t, err, ErrKeyNameStoreUnguarded)
+	var unguarded *KeyNameStoreUnguardedError
+	require.ErrorAs(t, err, &unguarded)
+	assert.Equal(t, "software", unguarded.Backend)
+
+	err = names.release(ctx, "tenant/acme/k", func() error {
+		t.Error("del must not run on a store that cannot arbitrate")
+		return nil
+	})
+	require.ErrorIs(t, err, ErrKeyNameStoreUnguarded)
 }

@@ -3,11 +3,13 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 
 	xkmsstorage "github.com/jeremyhahn/go-xkms/pkg/storage"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/kms"
 	qbshards "github.com/jeremyhahn/go-quicbaas/pkg/shards"
 )
 
@@ -130,6 +132,42 @@ func (r *kmsKeyNameRouter) Delete(ctx context.Context, key string) error {
 		return nil
 	}
 	return err
+}
+
+// CompareAndDelete removes the record only while it holds expected. The KMS
+// key-name claim and release use it to arbitrate a name across nodes (a
+// lease, and a rollback that never drops another owner's record), so a
+// primary store without it fails closed rather than falling back to an
+// unguarded Delete. Once the router is replicated, a legacy copy holding the
+// same value is removed as well, so a dropped record never resurfaces
+// through the fallback.
+func (r *kmsKeyNameRouter) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
+	primary, legacy := r.stores()
+	guarded, ok := primary.(kmsKeyNameCompareAndDeleter)
+	if !ok {
+		return false, fmt.Errorf("kms key-name router: primary store %T: %w", primary, kms.ErrKeyNameStoreUnguarded)
+	}
+	deleted, err := guarded.CompareAndDelete(ctx, key, expected)
+	if err != nil {
+		return false, err
+	}
+	if legacy == nil {
+		return deleted, nil
+	}
+	legacyGuarded, ok := legacy.(kmsKeyNameCompareAndDeleter)
+	if !ok {
+		return deleted, nil
+	}
+	legacyDeleted, err := legacyGuarded.CompareAndDelete(ctx, key, expected)
+	if err != nil && !isKeyNameNotFound(err) {
+		return deleted, err
+	}
+	return deleted || legacyDeleted, nil
+}
+
+// kmsKeyNameCompareAndDeleter is the guarded delete the router forwards.
+type kmsKeyNameCompareAndDeleter interface {
+	CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error)
 }
 
 func (r *kmsKeyNameRouter) List(ctx context.Context, prefix string) ([]string, error) {

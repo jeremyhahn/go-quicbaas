@@ -53,6 +53,38 @@ func TestKMSKeyNameRouter_LegacyLocalRecordsAreAdopted(t *testing.T) {
 	require.True(t, isKeyNameNotFound(r.Delete(ctx, "owners/software/k")))
 }
 
+func TestKMSKeyNameRouter_CompareAndDeleteForwards(t *testing.T) {
+	ctx := context.Background()
+	const key = "owners/software/k"
+	local := xkmssdk.NewStorageMemory()
+	replicated := xkmssdk.NewStorageMemory()
+	r := newKMSKeyNameRouter(local)
+
+	// Local only: a different value is a guarded miss, the same one deletes.
+	require.NoError(t, local.Put(ctx, key, []byte("tenant/acme/k")))
+	deleted, err := r.CompareAndDelete(ctx, key, []byte("tenant/acme/other"))
+	require.NoError(t, err)
+	require.False(t, deleted)
+	deleted, err = r.CompareAndDelete(ctx, key, []byte("tenant/acme/k"))
+	require.NoError(t, err)
+	require.True(t, deleted)
+
+	// Replicated: the record and its legacy copy both go.
+	r.setReplicated(replicated)
+	require.NoError(t, local.Put(ctx, key, []byte("tenant/acme/k")))
+	require.NoError(t, replicated.Put(ctx, key, []byte("tenant/acme/k")))
+	deleted, err = r.CompareAndDelete(ctx, key, []byte("tenant/acme/other"))
+	require.NoError(t, err)
+	require.False(t, deleted)
+	_, err = replicated.Get(ctx, key)
+	require.NoError(t, err, "a guarded miss must leave the record")
+	deleted, err = r.CompareAndDelete(ctx, key, []byte("tenant/acme/k"))
+	require.NoError(t, err)
+	require.True(t, deleted)
+	_, err = r.Get(ctx, key)
+	require.True(t, isKeyNameNotFound(err), "a dropped record must not resurface from the local store: %v", err)
+}
+
 // Before the service has its datastore the router serves the local store.
 func TestKMSKeyNameRouter_LocalUntilReplicated(t *testing.T) {
 	ctx := context.Background()
