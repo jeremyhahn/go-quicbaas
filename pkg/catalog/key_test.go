@@ -415,6 +415,29 @@ func TestIsValidNamespace(t *testing.T) {
 	}
 }
 
+func TestIsValidScopedNamespace(t *testing.T) {
+	tests := []struct {
+		name      string
+		namespace string
+		want      bool
+	}{
+		{"plain namespace", "backups", true},
+		{"tenant-scoped namespace", "tenant/acme/docs", true},
+		{"tenant without namespace", "tenant/acme", false},
+		{"extra segment", "tenant/acme/docs/x", false},
+		{"other slash", "my/namespace", false},
+		{"empty", "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsValidScopedNamespace(tt.namespace); got != tt.want {
+				t.Errorf("IsValidScopedNamespace(%q) = %v, want %v", tt.namespace, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestIsValidPath(t *testing.T) {
 	tests := []struct {
 		name string

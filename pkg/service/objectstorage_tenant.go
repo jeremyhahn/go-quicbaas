@@ -23,12 +23,15 @@ import (
 	"context"
 	"strings"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/catalog"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
-// osTenantPrefix is the storage prefix for tenant-scoped object keys.
-const osTenantPrefix = "tenant/"
+// osTenantPrefix is the storage prefix for tenant-scoped object keys. It is
+// the catalog's tenant namespace prefix, so a stored key
+// tenant/{tenant}/{namespace}:{path} is one the catalog accepts.
+const osTenantPrefix = catalog.TenantNamespacePrefix
 
 // osTenantSeparator follows the tenant ID in the object storage namespace.
 const osTenantSeparator = "/"
