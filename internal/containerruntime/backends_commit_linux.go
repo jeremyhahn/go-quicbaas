@@ -60,11 +60,6 @@ func (c *storageLayerCommitter) Commit(ctx context.Context, containerID string, 
 		return imageRecord{}, fmt.Errorf("commit container %s: %w", containerID, err)
 	}
 
-	oci, layers, err := c.baseImage(ctx, container.ImageID)
-	if err != nil {
-		return imageRecord{}, fmt.Errorf("commit container %s: base image %s: %w", containerID, container.ImageID, err)
-	}
-
 	dir, err := os.MkdirTemp(c.system.BigFilesTemporaryDir, "commit-")
 	if err != nil {
 		return imageRecord{}, err
@@ -73,9 +68,34 @@ func (c *storageLayerCommitter) Commit(ctx context.Context, containerID string, 
 		err = errors.Join(err, os.RemoveAll(dir))
 	}()
 
+	configDigest, err := c.writeLayout(ctx, container, dir, config, createdBy)
+	if err != nil {
+		return imageRecord{}, err
+	}
+
+	id := configDigest.Encoded()
+	if err := c.copyLayout(ctx, dir, id); err != nil {
+		return imageRecord{}, fmt.Errorf("commit container %s: %w", containerID, err)
+	}
+	images := &storageImageStore{store: c.store, system: c.system}
+	return images.Inspect(ctx, "sha256:"+id)
+}
+
+// writeLayout writes container's read-write layer, uncompressed, as one new
+// layer on its base image (none for an empty layer) into the empty
+// directory dir as an OCI image layout, with config as the image's
+// configuration and createdBy as the new history entry. It returns the new
+// config's digest, whose hex is the image ID. The base image's layers are
+// named in the manifest but not written: the copy into the store reuses them.
+func (c *storageLayerCommitter) writeLayout(ctx context.Context, container *storage.Container, dir string, config imageConfig, createdBy string) (digest.Digest, error) {
+	oci, layers, err := c.baseImage(ctx, container.ImageID)
+	if err != nil {
+		return "", fmt.Errorf("commit container %s: base image %s: %w", container.ID, container.ImageID, err)
+	}
+
 	layer, err := c.writeDiff(dir, container.LayerID)
 	if err != nil {
-		return imageRecord{}, fmt.Errorf("commit container %s: %w", containerID, err)
+		return "", fmt.Errorf("commit container %s: %w", container.ID, err)
 	}
 
 	now := time.Now().UTC()
@@ -92,7 +112,7 @@ func (c *storageLayerCommitter) Commit(ctx context.Context, containerID string, 
 
 	configDesc, err := writeLayoutJSON(dir, imgspecv1.MediaTypeImageConfig, oci)
 	if err != nil {
-		return imageRecord{}, err
+		return "", err
 	}
 	manifestDesc, err := writeLayoutJSON(dir, imgspecv1.MediaTypeImageManifest, imgspecv1.Manifest{
 		Versioned: imgspec.Versioned{SchemaVersion: 2},
@@ -101,18 +121,12 @@ func (c *storageLayerCommitter) Commit(ctx context.Context, containerID string, 
 		Layers:    append(layers, layer),
 	})
 	if err != nil {
-		return imageRecord{}, err
+		return "", err
 	}
 	if err := writeLayoutIndex(dir, manifestDesc); err != nil {
-		return imageRecord{}, err
+		return "", err
 	}
-
-	id := configDesc.Digest.Encoded()
-	if err := c.copyLayout(ctx, dir, id); err != nil {
-		return imageRecord{}, fmt.Errorf("commit container %s: %w", containerID, err)
-	}
-	images := &storageImageStore{store: c.store, system: c.system}
-	return images.Inspect(ctx, "sha256:"+id)
+	return configDesc.Digest, nil
 }
 
 // baseImage returns the OCI configuration and manifest layer descriptors of
@@ -179,7 +193,7 @@ func (c *storageLayerCommitter) writeDiff(dir, layerID string) (desc imgspecv1.D
 	}()
 
 	blobs := filepath.Join(dir, "blobs", "sha256")
-	if err := os.MkdirAll(blobs, 0o755); err != nil {
+	if err := os.MkdirAll(blobs, 0o750); err != nil {
 		return imgspecv1.Descriptor{}, err
 	}
 	file, err := os.CreateTemp(blobs, "layer-")
@@ -211,10 +225,10 @@ func writeLayoutJSON(dir, mediaType string, value any) (imgspecv1.Descriptor, er
 	}
 	d := digest.FromBytes(data)
 	blobs := filepath.Join(dir, "blobs", "sha256")
-	if err := os.MkdirAll(blobs, 0o755); err != nil {
+	if err := os.MkdirAll(blobs, 0o750); err != nil {
 		return imgspecv1.Descriptor{}, err
 	}
-	if err := os.WriteFile(filepath.Join(blobs, d.Encoded()), data, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(blobs, d.Encoded()), data, 0o600); err != nil {
 		return imgspecv1.Descriptor{}, err
 	}
 	return imgspecv1.Descriptor{MediaType: mediaType, Digest: d, Size: int64(len(data))}, nil
@@ -227,7 +241,7 @@ func writeLayoutIndex(dir string, desc imgspecv1.Descriptor) error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(dir, imgspecv1.ImageLayoutFile), layoutFile, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, imgspecv1.ImageLayoutFile), layoutFile, 0o600); err != nil {
 		return err
 	}
 	index, err := json.Marshal(imgspecv1.Index{
@@ -238,7 +252,7 @@ func writeLayoutIndex(dir string, desc imgspecv1.Descriptor) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir, imgspecv1.ImageIndexFile), index, 0o644)
+	return os.WriteFile(filepath.Join(dir, imgspecv1.ImageIndexFile), index, 0o600)
 }
 
 // copyLayout copies the image layout dir into the store as the image id.
