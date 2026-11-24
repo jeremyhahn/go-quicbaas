@@ -174,7 +174,9 @@ func (h *certificateHandler) handleSignCSR(ctx context.Context, client pb.Certif
 
 // signCSRCanonical signs the CSR through go-xkms's canonical
 // xkms.v1.KeystoreService/SignCSR. That RPC returns no CA certificate and
-// no validity times, so those response fields stay empty.
+// no validity times, so those response fields stay empty. The node records
+// the authenticated caller as the issuing tenant, so the tenant can revoke
+// what it signed.
 func (h *certificateHandler) signCSRCanonical(ctx context.Context, sdkReq *certificate.SignCSRRequest) (interface{}, error) {
 	resp, err := xkmsv1.NewKeystoreServiceClient(h.conn).SignCSR(ctx, &xkmsv1.SignCSRRequest{
 		CsrPem:       []byte(sdkReq.CSRPEM),
