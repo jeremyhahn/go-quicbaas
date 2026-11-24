@@ -114,7 +114,7 @@ func (a *hostAppraiser) AppraiseHost(ctx context.Context, ev *orchestration.Host
 	if ev.AKCertificate != nil {
 		req.AKCertificatePEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: ev.AKCertificate.Raw})
 	}
-	result, divergences, err := a.svc.appraiseQuote(ctx, req, ev.LaunchPCRs)
+	result, divergences, launchDivergences, err := a.svc.appraiseQuote(ctx, req, ev)
 	if err != nil {
 		return nil, err
 	}
@@ -141,12 +141,10 @@ func (a *hostAppraiser) AppraiseHost(ctx context.Context, ev *orchestration.Host
 				})
 			}
 		}
+		if check.Name == AppraisalCheckLaunchLog {
+			failure.PCRs = append(failure.PCRs, launchDivergences...)
+		}
 		appraisal.Failures = append(appraisal.Failures, failure)
-	}
-	if failure := appraiseLaunchLog(ev); failure != nil {
-		appraisal.Verified = false
-		appraisal.CryptographicFailure = true
-		appraisal.Failures = append(appraisal.Failures, *failure)
 	}
 	return appraisal, nil
 }

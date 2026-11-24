@@ -82,7 +82,7 @@ func (v *provenanceVerifier) verify(ctx context.Context, signed *provenance.Sign
 	pae := signed.Envelope.PAE()
 	var sigErr error
 	for _, sig := range signed.Envelope.Signatures {
-		if sigErr = v.svc.verifyImageSigner(ctx, signed.SignerChainPEM, "", sig.Sig, pae); sigErr == nil {
+		if sigErr = v.svc.verifyImageSigner(ctx, signed.SignerChainPEM, algDSSE, sig.Sig, pae); sigErr == nil {
 			break
 		}
 	}

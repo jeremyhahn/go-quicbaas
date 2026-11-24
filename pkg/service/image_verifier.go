@@ -89,7 +89,12 @@ func (s *attestationService) verifyEndorsedSigner(ctx context.Context, kind Endo
 	}
 	leaf := chain[0]
 	sigAlg := leaf.SignatureAlgorithm
-	if algName != "" {
+	if algName == algDSSE {
+		sigAlg, err = dsseSignatureAlgorithm(leaf)
+		if err != nil {
+			return err
+		}
+	} else if algName != "" {
 		parsed, ok := signatureAlgorithmByName[algName]
 		if !ok {
 			return fmt.Errorf("unsupported signature algorithm %q", algName)
@@ -115,4 +120,23 @@ func (s *attestationService) verifyEndorsedSigner(ctx context.Context, kind Endo
 		return err
 	}
 	return nil
+}
+
+// algDSSE names the DSSE signing contract for verifyEndorsedSigner: the
+// signature is over SHA-256 of the envelope's PAE, made with the leaf's
+// subject key (provenance.SignPayload). The algorithm comes from that key,
+// not from how the leaf's issuer signed the certificate.
+const algDSSE = "dsse-sha256"
+
+// dsseSignatureAlgorithm returns the x509 algorithm a DSSE signature by
+// leaf's subject key is checked with: SHA-256 with the key's ECDSA or RSA.
+func dsseSignatureAlgorithm(leaf *x509.Certificate) (x509.SignatureAlgorithm, error) {
+	switch leaf.PublicKeyAlgorithm {
+	case x509.ECDSA:
+		return x509.ECDSAWithSHA256, nil
+	case x509.RSA:
+		return x509.SHA256WithRSA, nil
+	default:
+		return x509.UnknownSignatureAlgorithm, fmt.Errorf("DSSE signer key algorithm %s is not supported", leaf.PublicKeyAlgorithm)
+	}
 }

@@ -33,6 +33,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/refvalue"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
@@ -804,29 +805,38 @@ func (s *attestationService) DeleteReferenceValues(ctx context.Context, req *Del
 // only when the request is unusable or the store is unreachable; evidence that
 // fails appraisal is a successful call whose result says Verified=false.
 func (s *attestationService) AppraiseQuote(ctx context.Context, req *AppraiseQuoteRequest) (*AttestationResult, error) {
-	result, _, err := s.appraiseQuote(ctx, req, nil)
+	result, _, _, err := s.appraiseQuote(ctx, req, nil)
 	return result, err
 }
 
 // appraiseQuote is AppraiseQuote, also returning the PCRs the baseline found
-// divergent, which a host appraiser reports in detail. launchPCRs are quoted
-// registers extended at container launch: the event-log replay leaves them
-// to the baseline.
-func (s *attestationService) appraiseQuote(ctx context.Context, req *AppraiseQuoteRequest, launchPCRs []uint32) (*AttestationResult, []pcrDivergence, error) {
+// divergent, which a host appraiser reports in detail.
+//
+// host is the node's host evidence when the quote comes from AppraiseHost,
+// and nil for AppraiseQuote. Its launch PCRs are quoted registers extended at
+// container launch: the event-log replay leaves them to the baseline and the
+// node measurement log, which is replayed here, so the recorded result
+// carries the launch-log verdict with every other check. The launch-log
+// divergences are returned next to the baseline ones.
+func (s *attestationService) appraiseQuote(ctx context.Context, req *AppraiseQuoteRequest, host *orchestration.HostEvidence) (*AttestationResult, []pcrDivergence, []orchestration.PCRDivergence, error) {
 	const op = "AttestationService.AppraiseQuote"
 	if req == nil {
-		return nil, nil, ErrAttestationNilRequest
+		return nil, nil, nil, ErrAttestationNilRequest
 	}
 	store, err := s.verifierStore(op)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
+	}
+	var launchPCRs []uint32
+	if host != nil {
+		launchPCRs = host.LaunchPCRs
 	}
 	now := s.now()
 	result := &AttestationResult{AppraisedAt: now.UTC(), ReferenceValues: req.ReferenceValues}
 
 	akKey, akCheck, err := s.appraiseAKCertificate(ctx, store, req.AKCertificatePEM, now)
 	if err != nil {
-		return nil, nil, verifierError(op, errors.ErrUnavailable, err)
+		return nil, nil, nil, verifierError(op, errors.ErrUnavailable, err)
 	}
 	result.Checks = append(result.Checks, akCheck)
 
@@ -856,9 +866,22 @@ func (s *attestationService) appraiseQuote(ctx context.Context, req *AppraiseQuo
 
 	baseline, divergences, err := s.appraiseBaseline(ctx, store, req.ReferenceValues, quote, proven, result)
 	if err != nil {
-		return nil, nil, verifierError(op, errors.ErrUnavailable, err)
+		return nil, nil, nil, verifierError(op, errors.ErrUnavailable, err)
 	}
 	result.Checks = append(result.Checks, baseline)
+
+	// The launch-log verdict is part of the result before it is recorded:
+	// a forged log must never leave a verified result behind it.
+	var launchDivergences []orchestration.PCRDivergence
+	if host != nil && host.LaunchLog != nil {
+		launchCheck := AppraisalCheck{Name: AppraisalCheckLaunchLog, Outcome: AppraisalPass}
+		if failure := appraiseLaunchLog(host); failure != nil {
+			launchCheck.Outcome = AppraisalForged
+			launchCheck.Reason = failure.Reason
+			launchDivergences = failure.PCRs
+		}
+		result.Checks = append(result.Checks, launchCheck)
+	}
 
 	result.Verified = true
 	for _, check := range result.Checks {
@@ -873,9 +896,9 @@ func (s *attestationService) appraiseQuote(ctx context.Context, req *AppraiseQuo
 	// The result is the go-xkms attestation result: it is recorded before
 	// it is returned, so a reported appraisal is never missing from it.
 	if err := recordAttestationResult(ctx, store, req.AKCertificatePEM, result); err != nil {
-		return nil, nil, verifierError(op, errors.ErrUnavailable, err)
+		return nil, nil, nil, verifierError(op, errors.ErrUnavailable, err)
 	}
-	return result, divergences, nil
+	return result, divergences, launchDivergences, nil
 }
 
 // appraiseAKCertificate chains the AK certificate to the tenant's ak-root

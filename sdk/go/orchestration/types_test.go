@@ -98,6 +98,7 @@ func TestMeasurementLogAcrossBoundary(t *testing.T) {
 		Image:       "registry.example.com/agent",
 		ImageDigest: testDigest,
 		TrustLabel:  "approved-agent",
+		TrustLevel:  sdkorch.TrustLevelMeasured,
 	}
 	policy, err := sdkorch.LaunchPolicyDigest(spec)
 	if err != nil {
@@ -111,10 +112,16 @@ func TestMeasurementLogAcrossBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LaunchMeasurement: %v", err)
 	}
+	configDigest, err := sdkorch.ContainerConfigDigest(spec)
+	if err != nil {
+		t.Fatalf("ContainerConfigDigest: %v", err)
+	}
 
+	// A launch entry carries the fields its measurement is rebuilt from.
 	log := sdkorch.ChainMeasurementLog([]sdkorch.MeasurementLogEntry{
 		{Kind: sdkorch.MeasurementLogAnchor, Base: make([]byte, 32), PCR: 16, Bank: "sha256"},
-		{Kind: sdkorch.MeasurementLogLaunch, PolicyDigest: policy, PCR: 16, Bank: "sha256", Measurement: measurement},
+		{Kind: sdkorch.MeasurementLogLaunch, Image: spec.Image, ImageDigest: testDigest, ConfigDigest: configDigest,
+			PolicyDigest: policy, TrustLabel: spec.TrustLabel, PCR: 16, Bank: "sha256", Measurement: measurement},
 	})
 	if err := pkgorch.VerifyMeasurementLog(log); err != nil {
 		t.Fatalf("upstream rejected an SDK-chained log: %v", err)

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"crypto"
 	"crypto/x509"
 	"encoding/json"
 	stderrors "errors"
@@ -176,4 +177,58 @@ func TestClusterManifests_ManifestSignerIsACA(t *testing.T) {
 	if _, err := svc.PutEndorsement(ctx, &PutEndorsementRequest{Name: "m", Kind: EndorsementManifestSigner, PublicKeyPEM: ca.CertificatePEM()}); err == nil {
 		t.Fatal("a manifest-signer endorsement must be a CA certificate")
 	}
+}
+
+// TestClusterManifests_DSSESigningAlgorithm checks that a manifest is
+// verified with the algorithm its leaf key signs with (SHA-256 over the
+// PAE), not the algorithm the leaf's issuer signed the certificate with.
+func TestClusterManifests_DSSESigningAlgorithm(t *testing.T) {
+	ctx := tenantctx.WithTenant(context.Background(), "acme")
+	store := attestationtest.NewMemoryStore()
+	svc := NewAttestationService(nil, nil, WithAttestationStore(store))
+	ca := newP384Authority(t, "P-384 Cluster Manifest CA")
+	if _, err := svc.PutEndorsement(ctx, &PutEndorsementRequest{Name: "manifests", Kind: EndorsementManifestSigner, CertificatePEM: ca.CertificatePEM()}); err != nil {
+		t.Fatalf("PutEndorsement: %v", err)
+	}
+	manifests, err := NewClusterManifests(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sign := func(t *testing.T, key crypto.Signer, version uint64) *provenance.Signed {
+		t.Helper()
+		signed, err := SignClusterManifest(&ClusterManifest{Cluster: "prod", Version: version, IssuedAt: time.Now().UTC(),
+			Releases: []Release{{Service: "app", Image: "registry.example.com/team/app", Digest: imageTestDigest}}},
+			key, dsseLeafUnder(t, ca, key))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return signed
+	}
+
+	t.Run("P256LeafUnderP384CAVerifies", func(t *testing.T) {
+		if _, err := manifests.Put(ctx, sign(t, newP256Key(t), 1)); err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+		if _, err := manifests.Current(ctx); err != nil {
+			t.Fatalf("Current: %v", err)
+		}
+	})
+
+	t.Run("RSALeafUnderECDSACAVerifies", func(t *testing.T) {
+		if _, err := manifests.Put(ctx, sign(t, newRSAKey(t), 2)); err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+	})
+
+	t.Run("SHA384OverPAEIsRefused", func(t *testing.T) {
+		key := newP256Key(t)
+		signed := sign(t, key, 3)
+		resignOverSHA384(t, signed, key)
+		if _, err := manifests.Put(ctx, signed); err == nil {
+			t.Fatal("a signature over SHA-384 of the PAE is not a DSSE signature and must be refused")
+		}
+		if m, err := manifests.Current(ctx); err != nil || m.Version != 2 {
+			t.Fatalf("a refused manifest must not replace the stored one: %+v, %v", m, err)
+		}
+	})
 }

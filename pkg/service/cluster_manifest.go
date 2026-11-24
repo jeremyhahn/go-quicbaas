@@ -215,7 +215,7 @@ func (c *ClusterManifests) verify(ctx context.Context, signed *provenance.Signed
 	pae := signed.Envelope.PAE()
 	var sigErr error
 	for _, sig := range signed.Envelope.Signatures {
-		if sigErr = c.svc.verifyEndorsedSigner(ctx, EndorsementManifestSigner, signed.SignerChainPEM, "", sig.Sig, pae); sigErr == nil {
+		if sigErr = c.svc.verifyEndorsedSigner(ctx, EndorsementManifestSigner, signed.SignerChainPEM, algDSSE, sig.Sig, pae); sigErr == nil {
 			break
 		}
 	}
