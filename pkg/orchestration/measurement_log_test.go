@@ -2,10 +2,13 @@ package orchestration
 
 import (
 	"bytes"
+	"crypto"
 	"crypto/sha256"
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/service/attestationtest"
 )
 
 func measuredTestSpec(label string) *ContainerSpec {
@@ -77,10 +80,21 @@ func TestTPMAttestingRuntime_MeasurementLog(t *testing.T) {
 	reference := map[uint32][]byte{7: make([]byte, sha256.Size)}
 
 	t.Run("EachMeasuredLaunchIsLoggedAndReplays", func(t *testing.T) {
-		tpm := newFakeHostTPM()
-		rt, _ := newAttestingTestRuntime(t, tpm, reference)
-
 		specs := []*ContainerSpec{measuredTestSpec("a"), measuredTestSpec("b"), measuredTestSpec("c")}
+		// Each launch is appraised on the launch register it just extended,
+		// so the reference values admit the register after every launch.
+		digests := []attestationtest.PCRDigest{{Index: 7, Hash: crypto.SHA256, Value: make([]byte, sha256.Size)}}
+		register := make([]byte, sha256.Size)
+		for _, spec := range specs {
+			measurement, err := LaunchMeasurement(spec)
+			if err != nil {
+				t.Fatalf("LaunchMeasurement: %v", err)
+			}
+			register = expectedExtend(register, measurement)
+			digests = append(digests, attestationtest.PCRDigest{Index: uint32(MeasurementPCRDefault), Hash: crypto.SHA256, Value: register})
+		}
+		tpm := newFakeHostTPM()
+		rt, _ := newAttestingTestRuntimeDigests(t, tpm, digests)
 		for _, spec := range specs {
 			if _, err := rt.Run(t.Context(), spec); err != nil {
 				t.Fatalf("Run: %v", err)
@@ -290,9 +304,14 @@ func TestTPMAttestingRuntime_AttestReplaysMeasurementLog(t *testing.T) {
 	t.Run("UnloggedExtendIsRefused", func(t *testing.T) {
 		tpm := newFakeHostTPM()
 		rogue := []byte("an extend the node measurement log never recorded")
-		rt, _ := newAttestingTestRuntime(t, tpm, map[uint32][]byte{
-			7:                             zero,
-			uint32(MeasurementPCRDefault): expectedExtend(launched, rogue),
+		// The reference values admit the launch register both before and
+		// after the rogue extend: the launch is appraised (and starts) on
+		// the clean value, and at Attest the baseline still passes, so only
+		// the launch-log replay can catch the unlogged extend.
+		rt, _ := newAttestingTestRuntimeDigests(t, tpm, []attestationtest.PCRDigest{
+			{Index: 7, Hash: crypto.SHA256, Value: zero},
+			{Index: uint32(MeasurementPCRDefault), Hash: crypto.SHA256, Value: launched},
+			{Index: uint32(MeasurementPCRDefault), Hash: crypto.SHA256, Value: expectedExtend(launched, rogue)},
 		})
 		if _, err := rt.Run(t.Context(), spec); err != nil {
 			t.Fatalf("Run: %v", err)

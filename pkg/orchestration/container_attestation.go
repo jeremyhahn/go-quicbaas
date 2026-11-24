@@ -101,8 +101,11 @@ var _ HostTPM = (*xkmstpm2.TPM2)(nil)
 // where.
 //
 // The interface is deliberately an EMBEDDING of ContainerRuntime rather than
-// three extra methods bolted onto it. A runtime either can attest or cannot,
-// and callers should be able to tell which by a type assertion:
+// three extra methods bolted onto it. Run and RunInteractive of an attesting
+// runtime refuse to start a container on a host the Verifier does not
+// verify; Attest produces the evidence for a remote verifier. A runtime
+// either can attest or cannot, and callers should be able to tell which by a
+// type assertion:
 //
 //	if attester, ok := runtime.(AttestingContainerRuntime); ok {
 //	        evidence, err := attester.Attest(ctx, spec, containerID)
@@ -330,24 +333,46 @@ func (r *TPMAttestingRuntime) TrustCapabilities() TrustCapabilities {
 	}
 }
 
-// Run performs a measured launch when the spec asks for one, then delegates
-// to the base runtime. The measurement is extended BEFORE the container
-// starts: a measurement taken afterwards would not be a measured launch, it
-// would be an assertion that something already running was approved.
+// Run performs a measured launch when the spec asks for one, appraises the
+// host when the spec requires a host TPM, then delegates to the base
+// runtime. The measurement is extended BEFORE the container starts: a
+// measurement taken afterwards would not be a measured launch, it would be
+// an assertion that something already running was approved.
+//
+// The order is admission, then the extend and its log entry, then the host
+// appraisal, then the start. The appraisal comes after the extend so the
+// quote covers this launch and the log replays to it. A container starts
+// only on a host the Verifier verifies; a launch refused at the appraisal
+// stays in the log and the PCR, because it was measured and refused, and
+// the log must keep matching the PCR.
 func (r *TPMAttestingRuntime) Run(ctx context.Context, spec *ContainerSpec) (string, error) {
-	if err := r.measureLaunch(ctx, spec); err != nil {
+	if err := r.prepareLaunch(ctx, spec); err != nil {
 		return "", err
 	}
 	return r.ContainerRuntime.Run(ctx, spec)
 }
 
-// RunInteractive performs a measured launch when the spec asks for one, then
-// delegates to the base runtime.
+// RunInteractive performs a measured launch when the spec asks for one,
+// appraises the host when the spec requires a host TPM, then delegates to
+// the base runtime, in the same order as Run.
 func (r *TPMAttestingRuntime) RunInteractive(ctx context.Context, spec *ContainerSpec) (*InteractiveProcess, error) {
-	if err := r.measureLaunch(ctx, spec); err != nil {
+	if err := r.prepareLaunch(ctx, spec); err != nil {
 		return nil, err
 	}
 	return r.ContainerRuntime.RunInteractive(ctx, spec)
+}
+
+// prepareLaunch measures the launch and, for a spec that requires a host
+// TPM, refuses it unless the Verifier verifies the host.
+func (r *TPMAttestingRuntime) prepareLaunch(ctx context.Context, spec *ContainerSpec) error {
+	if err := r.measureLaunch(ctx, spec); err != nil {
+		return err
+	}
+	if !spec.TrustLevel.RequiresHostTPM() {
+		return nil
+	}
+	_, err := r.appraiseHostFor(ctx, spec)
+	return err
 }
 
 // measureLaunch extends the launch measurement into the spec's measurement

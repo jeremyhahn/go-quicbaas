@@ -3,10 +3,13 @@ package orchestration
 import (
 	"bytes"
 	"context"
+	"crypto"
 	"encoding/json"
 	"errors"
 	"sync"
 	"testing"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/service/attestationtest"
 )
 
 // memoryLogStore is a MeasurementLogStore that keeps the log as JSON, as a
@@ -49,13 +52,33 @@ func (s *memoryLogStore) stored(t *testing.T) []MeasurementLogEntry {
 	return entries
 }
 
-// nopAppraiser satisfies NewTPMAttestingRuntime; these tests only launch.
-type nopAppraiser struct{ HostAppraiser }
+// verifyingAppraiser verifies every host: these tests are about the stored
+// log, and a measured launch now starts only after a verified host
+// appraisal. The appraisal itself is tested with the real Verifier
+// elsewhere.
+type verifyingAppraiser struct{}
+
+func (verifyingAppraiser) ReferencePCRs(context.Context, string, crypto.Hash) ([]uint32, error) {
+	return []uint32{7}, nil
+}
+
+func (verifyingAppraiser) AppraiseHost(context.Context, *HostEvidence) (*HostAppraisal, error) {
+	return &HostAppraisal{Verified: true}, nil
+}
 
 func newStoredLogRuntime(t *testing.T, tpm *fakeHostTPM, store MeasurementLogStore) (*TPMAttestingRuntime, *recordingRuntime) {
 	t.Helper()
+	akRoot, err := attestationtest.NewAuthority("AK CA")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ak, err := attestationtest.IssueAttestationKey(akRoot, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tpm.ak = ak
 	base := &recordingRuntime{}
-	rt, err := NewTPMAttestingRuntime(base, tpm, nopAppraiser{}, newContainerTestLogger(t),
+	rt, err := NewTPMAttestingRuntime(base, newBoundHostTPM(t, tpm), verifyingAppraiser{}, newContainerTestLogger(t),
 		WithImageVerifier(acceptingImageVerifier{}), WithProvenanceVerifier(acceptingProvenanceVerifier{}),
 		WithClusterManifest(listingManifest{}), WithMeasurementLogStore(store))
 	if err != nil {

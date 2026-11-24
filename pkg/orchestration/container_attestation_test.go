@@ -825,8 +825,6 @@ func TestTPMAttestingRuntime_MeasuredLaunch(t *testing.T) {
 
 	t.Run("ExtendsMeasurementPCRBeforeLaunch", func(t *testing.T) {
 		tpm := newFakeHostTPM()
-		rt, base := newAttestingTestRuntime(t, tpm, reference)
-
 		spec := &ContainerSpec{
 			Image:           "alpine@" + testDigest,
 			TrustLevel:      TrustLevelMeasured,
@@ -834,6 +832,7 @@ func TestTPMAttestingRuntime_MeasuredLaunch(t *testing.T) {
 			TrustLabel:      "prod-agent",
 			ReferenceValues: "golden",
 		}
+		rt, base := newAttestingTestRuntime(t, tpm, measuredReference(t, spec))
 
 		zero := make([]byte, sha256.Size)
 		measurement, err := LaunchMeasurement(spec)
@@ -885,14 +884,13 @@ func TestTPMAttestingRuntime_MeasuredLaunch(t *testing.T) {
 
 	t.Run("InteractiveIsMeasuredToo", func(t *testing.T) {
 		tpm := newFakeHostTPM()
-		rt, base := newAttestingTestRuntime(t, tpm, reference)
-
 		spec := &ContainerSpec{
 			Image:           "alpine@" + testDigest,
 			TrustLevel:      TrustLevelMeasured,
 			ImageSignature:  testImageSignature(),
 			ReferenceValues: "golden",
 		}
+		rt, base := newAttestingTestRuntime(t, tpm, measuredReference(t, spec))
 
 		if _, err := rt.RunInteractive(t.Context(), spec); err != nil {
 			t.Fatalf("RunInteractive: %v", err)
@@ -987,8 +985,6 @@ func TestTPMAttestingRuntime_MeasuredLaunch(t *testing.T) {
 
 	t.Run("CustomMeasurementPCR", func(t *testing.T) {
 		tpm := newFakeHostTPM()
-		rt, _ := newAttestingTestRuntime(t, tpm, reference)
-
 		spec := &ContainerSpec{
 			Image:           "alpine@" + testDigest,
 			TrustLevel:      TrustLevelMeasured,
@@ -996,6 +992,7 @@ func TestTPMAttestingRuntime_MeasuredLaunch(t *testing.T) {
 			MeasurementPCR:  12,
 			ReferenceValues: "golden",
 		}
+		rt, _ := newAttestingTestRuntime(t, tpm, measuredReference(t, spec))
 
 		if _, err := rt.Run(t.Context(), spec); err != nil {
 			t.Fatalf("Run: %v", err)
@@ -1032,20 +1029,28 @@ func TestTPMAttestingRuntime_MeasuredLaunchWithBootLog(t *testing.T) {
 		{PCR: 7, Digest: digest(0x07)},
 	})
 
-	// measuredHost boots the fake TPM through the log, with pcr7 standing in
-	// for whatever PCR 7 holds, and launches the container.
-	measuredHost := func(t *testing.T, pcr7 []byte) (*TPMAttestingRuntime, *fakeHostTPM) {
+	// launchOnHost boots the fake TPM through the log, with pcr7 standing in
+	// for whatever PCR 7 holds (and the reference values holding pcr7), and
+	// launches the container, returning Run's error.
+	launchOnHost := func(t *testing.T, pcr7 []byte) (*TPMAttestingRuntime, *fakeHostTPM, *recordingRuntime, error) {
 		t.Helper()
 		tpm := newFakeHostTPM()
 		tpm.eventLog = bootLog
 		tpm.setPCR(0, boot[0])
 		tpm.setPCR(7, pcr7)
-		rt, _ := newAttestingTestRuntime(t, tpm, map[uint32][]byte{
+		rt, base := newAttestingTestRuntime(t, tpm, map[uint32][]byte{
 			0:                             boot[0],
 			7:                             pcr7,
 			uint32(MeasurementPCRDefault): expectedExtend(make([]byte, sha256.Size), measurement),
 		})
-		if _, err := rt.Run(t.Context(), spec); err != nil {
+		_, err := rt.Run(t.Context(), spec)
+		return rt, tpm, base, err
+	}
+	// measuredHost is launchOnHost for a launch that must start.
+	measuredHost := func(t *testing.T, pcr7 []byte) (*TPMAttestingRuntime, *fakeHostTPM) {
+		t.Helper()
+		rt, tpm, _, err := launchOnHost(t, pcr7)
+		if err != nil {
 			t.Fatalf("Run: %v", err)
 		}
 		return rt, tpm
@@ -1065,14 +1070,170 @@ func TestTPMAttestingRuntime_MeasuredLaunchWithBootLog(t *testing.T) {
 	t.Run("TamperedBootPCRIsRefused", func(t *testing.T) {
 		// The reference values were signed over the tampered value, so only
 		// the log replay can catch it.
-		rt, _ := measuredHost(t, digest(0xEE))
+		// The launch is refused before the container starts.
+		_, _, base, err := launchOnHost(t, digest(0xEE))
+		var appraisal *HostAppraisalError
+		if !errors.As(err, &appraisal) || !errors.Is(err, ErrHostNotVerified) {
+			t.Fatalf("Run = %v, want a *HostAppraisalError", err)
+		}
+		if !appraisal.CryptographicFailure || len(appraisal.Failures) != 1 || appraisal.Failures[0].Check != "event-log" {
+			t.Fatalf("failures = %+v, want only a forged event log", appraisal.Failures)
+		}
+		if n := base.launchCount(); n != 0 {
+			t.Fatalf("base runtime launched %d containers on a tampered host", n)
+		}
+	})
+
+	t.Run("TamperedAfterLaunchIsRefusedAtAttest", func(t *testing.T) {
+		rt, tpm := measuredHost(t, boot[7])
+		tpm.setPCR(7, digest(0xEE))
 		_, err := rt.Attest(t.Context(), spec, "container-1")
 		var appraisal *HostAppraisalError
 		if !errors.As(err, &appraisal) || !errors.Is(err, ErrHostNotVerified) {
 			t.Fatalf("Attest = %v, want a *HostAppraisalError", err)
 		}
-		if !appraisal.CryptographicFailure || len(appraisal.Failures) != 1 || appraisal.Failures[0].Check != "event-log" {
-			t.Fatalf("failures = %+v, want only a forged event log", appraisal.Failures)
+		// The reference values hold the clean PCR 7, so the baseline fails
+		// next to the forged event log: the event-log failure must be among
+		// the failures rather than the only one.
+		var eventLogFailure bool
+		for _, failure := range appraisal.Failures {
+			if failure.Check == "event-log" {
+				eventLogFailure = true
+			}
+		}
+		if !appraisal.CryptographicFailure || !eventLogFailure {
+			t.Fatalf("failures = %+v, want a forged event log among them", appraisal.Failures)
+		}
+	})
+}
+
+// assertHostRefusedAtLaunch checks that a launch was refused by the host
+// appraisal and that the base runtime never started a container.
+func assertHostRefusedAtLaunch(t *testing.T, err error, base *recordingRuntime) {
+	t.Helper()
+	var appraisal *HostAppraisalError
+	if !errors.As(err, &appraisal) || !errors.Is(err, ErrHostNotVerified) {
+		t.Fatalf("launch = %v, want a *HostAppraisalError", err)
+	}
+	if n := base.launchCount(); n != 0 {
+		t.Fatalf("base runtime launched %d containers on a host the Verifier refused", n)
+	}
+}
+
+// measuredReference returns reference values for a clean host (PCR 7 =
+// zero) after one measured launch of spec from a zero measurement PCR. The
+// Verifier compares equal sets, so a measured launch's reference values
+// carry the measurement PCR the launch produces.
+func measuredReference(t *testing.T, spec *ContainerSpec) map[uint32][]byte {
+	t.Helper()
+	measurement, err := LaunchMeasurement(spec)
+	if err != nil {
+		t.Fatalf("LaunchMeasurement: %v", err)
+	}
+	zero := make([]byte, sha256.Size)
+	return map[uint32][]byte{
+		7:                                      zero,
+		uint32(spec.EffectiveMeasurementPCR()): expectedExtend(zero, measurement),
+	}
+}
+
+// failingHostDigest is a PCR 7 value the "golden" reference values (PCR 7 =
+// zero) refuse.
+func failingHostDigest() []byte { return bytes.Repeat([]byte{0xEE}, sha256.Size) }
+
+func TestRun_RefusesWhenHostAppraisalFails(t *testing.T) {
+	tpm := newFakeHostTPM()
+	tpm.setPCR(7, failingHostDigest())
+	rt, base := newAttestingTestRuntime(t, tpm, map[uint32][]byte{7: make([]byte, sha256.Size)})
+
+	_, err := rt.Run(t.Context(), measuredTestSpec("prod-agent"))
+	assertHostRefusedAtLaunch(t, err, base)
+}
+
+func TestRunInteractive_RefusesWhenHostAppraisalFails(t *testing.T) {
+	tpm := newFakeHostTPM()
+	tpm.setPCR(7, failingHostDigest())
+	rt, base := newAttestingTestRuntime(t, tpm, map[uint32][]byte{7: make([]byte, sha256.Size)})
+
+	proc, err := rt.RunInteractive(t.Context(), measuredTestSpec("prod-agent"))
+	if proc != nil {
+		t.Fatal("RunInteractive returned a process on a host the Verifier refused")
+	}
+	assertHostRefusedAtLaunch(t, err, base)
+}
+
+func TestRun_AttestedTierRefusesWhenHostAppraisalFails(t *testing.T) {
+	tpm := newFakeHostTPM()
+	tpm.setPCR(7, failingHostDigest())
+	before := bytes.Clone(tpm.pcr(uint32(MeasurementPCRDefault)))
+	rt, base := newAttestingTestRuntime(t, tpm, map[uint32][]byte{7: make([]byte, sha256.Size)})
+
+	spec := &ContainerSpec{Image: "alpine@" + testDigest, TrustLevel: TrustLevelAttested, ReferenceValues: "golden"}
+	_, err := rt.Run(t.Context(), spec)
+	assertHostRefusedAtLaunch(t, err, base)
+	// Below the measured tier nothing is extended.
+	if after := tpm.pcr(uint32(MeasurementPCRDefault)); !bytes.Equal(before, after) {
+		t.Fatalf("measurement PCR changed from %x to %x for an attested, unmeasured launch", before, after)
+	}
+}
+
+func TestRun_MissingReferenceValuesRefused(t *testing.T) {
+	tpm := newFakeHostTPM()
+	rt, base := newAttestingTestRuntime(t, tpm, nil)
+
+	if _, err := rt.Run(t.Context(), measuredTestSpec("prod-agent")); err == nil {
+		t.Fatal("Run started a measured launch whose reference values do not exist")
+	}
+	if n := base.launchCount(); n != 0 {
+		t.Fatalf("base runtime launched %d containers without reference values", n)
+	}
+}
+
+func TestRun_AttestedLaunchAppraisesBeforeStart(t *testing.T) {
+	t.Run("PassingHostStarts", func(t *testing.T) {
+		spec := measuredTestSpec("prod-agent")
+		measurement, err := LaunchMeasurement(spec)
+		if err != nil {
+			t.Fatalf("LaunchMeasurement: %v", err)
+		}
+		zero := make([]byte, sha256.Size)
+		tpm := newFakeHostTPM()
+		rt, base := newAttestingTestRuntime(t, tpm, map[uint32][]byte{
+			7:                             zero,
+			uint32(MeasurementPCRDefault): expectedExtend(zero, measurement),
+		})
+
+		id, err := rt.Run(t.Context(), spec)
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		if id == "" {
+			t.Fatal("Run returned an empty container ID")
+		}
+		if n := base.launchCount(); n != 1 {
+			t.Fatalf("base runtime launched %d containers, want 1", n)
+		}
+		if tpm.quoteCalls == 0 {
+			t.Fatal("an attested launch started without a host quote")
+		}
+		if _, err := rt.Attest(t.Context(), spec, id); err != nil {
+			t.Fatalf("Attest after a verified launch: %v", err)
+		}
+	})
+
+	t.Run("Tier0StartsWithoutQuote", func(t *testing.T) {
+		tpm := newFakeHostTPM()
+		tpm.setPCR(7, failingHostDigest())
+		rt, base := newAttestingTestRuntime(t, tpm, map[uint32][]byte{7: make([]byte, sha256.Size)})
+
+		if _, err := rt.Run(t.Context(), &ContainerSpec{Image: "alpine:3.20"}); err != nil {
+			t.Fatalf("Run of a Tier 0 spec: %v", err)
+		}
+		if n := base.launchCount(); n != 1 {
+			t.Fatalf("base runtime launched %d containers, want 1", n)
+		}
+		if tpm.quoteCalls != 0 {
+			t.Fatalf("quoted %d times for a launch that requests no host TPM", tpm.quoteCalls)
 		}
 	})
 }

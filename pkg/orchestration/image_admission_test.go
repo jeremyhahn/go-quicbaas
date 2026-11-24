@@ -93,7 +93,7 @@ func TestTPMAttestingRuntime_DefaultDeny(t *testing.T) {
 
 	t.Run("SignedImageIsVerifiedAndLaunched", func(t *testing.T) {
 		tpm := newFakeHostTPM()
-		rt, base := newAttestingTestRuntime(t, tpm, reference)
+		rt, base := newAttestingTestRuntime(t, tpm, measuredReference(t, measuredTestSpec("a")))
 		if _, err := rt.Run(t.Context(), measuredTestSpec("a")); err != nil {
 			t.Fatalf("Run: %v", err)
 		}
@@ -212,11 +212,26 @@ func TestTPMAttestingRuntime_DefaultDeny(t *testing.T) {
 	t.Run("AllowUnsignedAdmitsAuditsAndLogs", func(t *testing.T) {
 		tpm := newFakeHostTPM()
 		before := tpm.pcr(uint32(MeasurementPCRDefault))
-		rt, base := newAttestingTestRuntime(t, tpm, reference)
 		const grant = "tenant-a/legacy-ci"
+		spec := unsignedSpec("legacy")
+		policy, err := LaunchPolicyOf(spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		signedDigest := policy.Digest()
+		policy.AllowUnsigned = grant
+		granted, err := LaunchMeasurementUnder(spec, policy)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The Verifier compares equal sets, so the reference values carry
+		// the launch register the granted launch produces.
+		rt, base := newAttestingTestRuntime(t, tpm, map[uint32][]byte{
+			7:                             make([]byte, sha256.Size),
+			uint32(MeasurementPCRDefault): expectedExtend(before, granted),
+		})
 		WithUnsignedImagePolicy(UnsignedImageGrants{"legacy": grant})(rt)
 
-		spec := unsignedSpec("legacy")
 		if _, err := rt.Run(t.Context(), spec); err != nil {
 			t.Fatalf("Run: %v", err)
 		}
@@ -230,22 +245,12 @@ func TestTPMAttestingRuntime_DefaultDeny(t *testing.T) {
 			t.Fatalf("log must record the grant on the launch, got kind %q grant %q", launch.Kind, launch.AllowUnsigned)
 		}
 
-		policy, err := LaunchPolicyOf(spec)
-		if err != nil {
-			t.Fatal(err)
-		}
-		signedDigest := policy.Digest()
-		policy.AllowUnsigned = grant
 		if launch.PolicyDigest != policy.Digest() || launch.PolicyDigest == signedDigest {
 			t.Fatalf("policy digest %s must commit to the grant (signed %s)", launch.PolicyDigest, signedDigest)
 		}
 
 		// The PCR commits to the grant: it is the extend of the measurement
 		// under the granted policy, not of the spec's signed measurement.
-		granted, err := LaunchMeasurementUnder(spec, policy)
-		if err != nil {
-			t.Fatal(err)
-		}
 		signed, err := LaunchMeasurement(spec)
 		if err != nil {
 			t.Fatal(err)

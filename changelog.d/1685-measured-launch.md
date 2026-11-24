@@ -1,6 +1,7 @@
 ### Security
 
-- Measured container launch (#1685): the Verifier rebuilds each
+- Measured container launch (#1685): an attested or measured launch now
+  starts only after a verified host appraisal; the Verifier rebuilds each
   measurement log entry from its recorded image, configuration and policy
   digests; an attestation reports the measurement the node logged at launch;
   the stored attestation result includes the launch-log verdict; DSSE
