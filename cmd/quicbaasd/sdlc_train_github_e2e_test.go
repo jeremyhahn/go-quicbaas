@@ -33,7 +33,16 @@ import (
 const (
 	githubTrainProject  = "sdlc-github-train-e2e"
 	githubTrainTokenRef = "github-train-e2e-token"
-	githubTrainTrigger  = "train-itest:ready"
+	// githubTrainReviewerTokenRef holds the reviewer token: the counting
+	// reviewer seat's forge identity, distinct from the author's.
+	githubTrainReviewerTokenRef  = "github-train-e2e-reviewer-token"
+	githubTrainReviewBackendName = "e2e-train-reviewer"
+	githubTrainReviewAgent       = "e2e-train-reviewer"
+	// githubTrainReviewModel is in the OpenAI family: that keeps the seat
+	// independent of the Anthropic worker, and CheckAgents refuses an
+	// Anthropic reviewer.
+	githubTrainReviewModel = "gpt-5"
+	githubTrainTrigger     = "train-itest:ready"
 
 	// githubTrainDeadline bounds each wait on GitHub: a worker round, an
 	// Actions run on the queue head and the merge all happen inside it.
@@ -82,7 +91,7 @@ func startGitHubTrain(t *testing.T, env githubitest.Env) *githubTrainRig {
 		}
 	})
 	backend := newE2EBackend()
-	projectID := registerGitHubTrainProject(t, srv, backend, env, base)
+	projectID := registerGitHubTrainProject(t, srv, backend, scratch, env, base)
 	return &githubTrainRig{srv: srv, backend: backend, scratch: scratch, projectID: projectID, base: base}
 }
 
@@ -92,7 +101,15 @@ func startGitHubTrain(t *testing.T, env githubitest.Env) *githubTrainRig {
 // the forge token from the environment is the binding's token secret, the
 // strategy is github-flow (which lands by squash) and the train is on.
 // Discovery is by poll: no forge can reach this node's webhook origin.
-func registerGitHubTrainProject(t *testing.T, srv *server.Server, backend *e2eAgentBackend, env githubitest.Env, base string) string {
+//
+// The train forms only with a counting reviewer, so the binding has a
+// default reviewer seat: a review-role Agent on a scripted backend that
+// approves with findings, the reviewer token as its secret and the login
+// that token authenticates as. The test approves each car at its own head
+// (approveAll); the queue head is approved by this seat through the train's
+// review job. The binding is checked to have the train on before any
+// scenario runs.
+func registerGitHubTrainProject(t *testing.T, srv *server.Server, backend *e2eAgentBackend, scratch *githubitest.Scratch, env githubitest.Env, base string) string {
 	t.Helper()
 	ctx := tenantctx.WithTenant(context.Background(), loopE2ETenant)
 	orchCtx := orchestration.ContextWithTenant(ctx, loopE2ETenant)
@@ -102,6 +119,8 @@ func registerGitHubTrainProject(t *testing.T, srv *server.Server, backend *e2eAg
 	require.NotNil(t, secrets)
 	_, err := secrets.StoreSecret(ctx, &service.StoreSecretRequest{SecretID: githubTrainTokenRef, Data: []byte(env.Token)})
 	require.NoError(t, err, "storing the forge token")
+	_, err = secrets.StoreSecret(ctx, &service.StoreSecretRequest{SecretID: githubTrainReviewerTokenRef, Data: []byte(env.ReviewerToken)})
+	require.NoError(t, err, "storing the reviewer token")
 
 	sshClient := srv.Service().SSHClient()
 	require.NotNil(t, sshClient, "the node has no SSH key store to mint the signing key in")
@@ -114,6 +133,14 @@ func registerGitHubTrainProject(t *testing.T, srv *server.Server, backend *e2eAg
 	require.NotNil(t, agents)
 	require.NoError(t, agents.RegisterBackend(orchCtx, &orchestration.RegisterBackendRequest{Name: loopE2EBackend, Backend: backend}))
 	workerRef := defineFactoryWorker(t, orchCtx, agents)
+	// The review backend shares the worker backend's container runtime: the
+	// agent service holds one runtime, and both backends' containers must
+	// resolve in it.
+	reviewBackend := &githubTrainReviewBackend{&e2eAgentBackend{sessions: map[string]string{}, runtime: backend.runtime}}
+	require.NoError(t, agents.RegisterBackend(orchCtx, &orchestration.RegisterBackendRequest{Name: githubTrainReviewBackendName, Backend: reviewBackend}))
+	reviewAgent := defineGitHubTrainReviewer(t, orchCtx, agents)
+	reviewerLogin, err := scratch.ReviewerLogin(ctx)
+	require.NoError(t, err, "reading the reviewer's login")
 	runtimeSetter, ok := agents.(interface {
 		SetContainerRuntime(orchestration.ContainerRuntime)
 	})
@@ -153,8 +180,14 @@ func registerGitHubTrainProject(t *testing.T, srv *server.Server, backend *e2eAg
 		MaxReviewRounds: 3,
 		Discovery:       sdlc.DiscoveryPoll,
 		MergeTrain:      sdlc.MergeTrainPolicy{MaxSize: 4},
+		Reviewer: sdlc.ReviewerConfig{
+			Agent: reviewAgent, Login: reviewerLogin, TokenSecretRef: githubTrainReviewerTokenRef,
+		},
 	}, service.BindOptions{})
 	require.NoError(t, err, "binding the project to the scratch repository")
+	binding, err := srv.SDLCService().Binding(ctx, loopE2ETenant, created.Project.ID)
+	require.NoError(t, err, "reading the binding back")
+	require.True(t, binding.TrainEnabled(), "the binding merges cars one at a time: %s", binding.TrainOffReason())
 	return created.Project.ID
 }
 
@@ -235,8 +268,10 @@ func (r *githubTrainRig) openFixtureCar(t *testing.T, name, path string) githubi
 	return pr
 }
 
-// approveAll approves every car at its head in one pass, so every car is
-// approved before the train runner next forms a train.
+// approveAll approves every car at its own head in one pass, so every car
+// is approved before the train runner next forms a train. The queue head is
+// not approved here: the counting reviewer seat approves it through the
+// train's review job.
 func (r *githubTrainRig) approveAll(t *testing.T, cars ...githubitest.PullRequest) {
 	t.Helper()
 	for _, car := range cars {
@@ -410,4 +445,45 @@ func TestGitHubTrain_ACarThatBreaksQueueCIIsEjectedAndTheRestLand(t *testing.T) 
 	}
 	rig.requireOnBase(t, map[string]bool{"WORK.md": true, "car-c.txt": true, githubitest.BreakCIFile: false})
 	rig.awaitBranchesGone(t, carA.Head.Ref, carC.Head.Ref)
+}
+
+// defineGitHubTrainReviewer defines the review-role Agent the binding's
+// default reviewer seat names, on the scripted review backend, and returns
+// its ID.
+func defineGitHubTrainReviewer(t *testing.T, ctx context.Context, agents orchestration.AgentService) string {
+	t.Helper()
+	accessor, ok := agents.(orchestration.AgentDirectoryAccessor)
+	require.True(t, ok, "the agent service does not expose its agent catalog")
+	directory := accessor.AgentDirectory()
+	require.NotNil(t, directory, "the agent catalog is not wired")
+	if _, err := directory.GetAgent(ctx, loopE2ETenant, githubTrainReviewAgent); err == nil {
+		return githubTrainReviewAgent
+	}
+	_, err := directory.CreateAgent(ctx, loopE2ETenant, &orchestration.Agent{
+		ID: githubTrainReviewAgent, Name: "GitHub train e2e reviewer",
+		Roles:   []orchestration.AgentRole{orchestration.AgentRoleReview},
+		Backend: githubTrainReviewBackendName, Model: githubTrainReviewModel,
+	})
+	require.NoError(t, err, "defining the reviewer Agent")
+	return githubTrainReviewAgent
+}
+
+// githubTrainReviewBackend is the counting reviewer seat's scripted backend.
+// It inherits the worker backend's session handling, but a prompt writes
+// nothing to the checkout: it answers with one findings line and an approve
+// verdict.
+type githubTrainReviewBackend struct {
+	*e2eAgentBackend
+}
+
+func (b *githubTrainReviewBackend) Prompt(_ context.Context, req *orchestration.PromptRequest) (*orchestration.PromptResponse, error) {
+	b.mu.Lock()
+	b.prompts = append(b.prompts, req.Prompt)
+	b.mu.Unlock()
+	text := "the change is the scripted car content; nothing to fix\n" + sdlc.ReviewVerdictMarker + " " + sdlc.ReviewCodeApprove
+	return &orchestration.PromptResponse{SessionID: req.SessionID, Content: []orchestration.ContentBlock{{Type: "text", Text: text}}}, nil
+}
+
+func (b *githubTrainReviewBackend) ListModels(context.Context) ([]string, error) {
+	return []string{githubTrainReviewModel}, nil
 }
