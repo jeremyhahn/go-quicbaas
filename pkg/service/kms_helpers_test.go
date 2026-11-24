@@ -30,6 +30,8 @@ import (
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/kms"
+	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 func TestServiceUsageToKMS(t *testing.T) {
@@ -320,6 +322,25 @@ func TestGetVersionStatus(t *testing.T) {
 		status, dt := svc.getVersionStatus(context.Background(), "key-bg", 1)
 		assert.Empty(t, status)
 		assert.Nil(t, dt)
+	})
+
+	t.Run("falls back to the tenant's completed grace jobs by key name", func(t *testing.T) {
+		// The grace job's payload carries the tenant's bare key name; the
+		// service looks the version up by its tenant-scoped reference.
+		completedAt := time.Now()
+		engine := &covMockSchedulerEngine{
+			listJobsFn: func(_ context.Context, _ *scheduler.JobQuery) ([]*scheduler.Job, string, error) {
+				return []*scheduler.Job{
+					{ID: 1, Payload: []byte(`{"key_id":"k","version":3}`), LastRun: completedAt},
+				}, "", nil
+			},
+		}
+		svc := &kmsServiceImpl{scheduler: &SchedulerAdapter{scheduler: engine}}
+
+		ctx := tenantctx.WithTenant(context.Background(), "tenant-a")
+		status, dt := svc.getVersionStatus(ctx, tenantScopedKeyID("tenant-a", "k"), 3)
+		assert.Equal(t, KeyStatusDisabled, status)
+		assert.NotNil(t, dt)
 	})
 }
 

@@ -20,6 +20,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/kms"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
 	"github.com/jeremyhahn/go-quicbaas/pkg/util/metrics"
 )
@@ -2422,8 +2423,14 @@ func (k *kmsServiceImpl) getVersionStatus(ctx context.Context, keyID string, ver
 
 	// Fall back to Raft-replicated scheduler storage: completed grace period jobs
 	// are visible on all nodes via SyncRead, regardless of which node executed the job.
+	// A grace job's payload carries the tenant's bare key name, and the querier
+	// reads only the ctx tenant's jobs, so it is asked by that name.
 	if querier, ok := k.scheduler.(KMSSchedulerQuerier); ok {
-		versions, err := querier.GetCompletedGracePeriodVersions(ctx, keyID)
+		keyName := keyID
+		if tenant, ok := tenantctx.Lookup(ctx); ok {
+			keyName = tenantStripKeyID(tenant, keyID)
+		}
+		versions, err := querier.GetCompletedGracePeriodVersions(ctx, keyName)
 		if err == nil {
 			if completedAt, found := versions[version]; found {
 				// Populate local cache
