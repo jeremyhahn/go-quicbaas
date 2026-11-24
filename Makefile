@@ -1618,6 +1618,11 @@ test-tooling: ## Run the unit tests of the repository tooling (scripts, build ga
 	@echo "$(BLUE)Running the repository tooling unit tests...$(NC)"
 	$(TEST_CPU_ENV) $(GOTEST) $(TEST_CPU_FLAGS) -tags '$(TEST_TAGS)' -timeout=10m ./scripts/... ./test/buildgates/...
 
+.PHONY: test-awskms-retry
+test-awskms-retry: ## Run the AWS KMS sealing retry tests against a local fault-injecting endpoint (no AWS account needed)
+	@echo "$(BLUE)Running the AWS KMS retry tests...$(NC)"
+	$(TEST_CPU_ENV) $(GOTEST) $(TEST_CPU_FLAGS) -race -count=1 -tags 'awskms codec_json' -timeout=10m -run '^TestAWSKMSStrategy_RetryBehaviour$$' ./pkg/server/
+
 .PHONY: test-desktop
 test-desktop: check-insecure-tls check-build-tags check-local-keygen ## Run the Wails desktop binding tests (needs webkit2gtk dev libraries)
 	@echo "$(BLUE)Running desktop GUI binding tests...$(NC)"
@@ -3583,7 +3588,7 @@ TAG_PASS_TIMEOUT ?= 20m
 # `make coverage` runs all three with a single shard. It runs the same
 # TEST_CHECKS validations as `make test` first, so replacing `make test` with
 # it keeps every check.
-COVERAGE_PASSES := test-sdk-go test-minimal test-standard test-lean test-tooling test-software-factory-worker
+COVERAGE_PASSES := test-sdk-go test-minimal test-standard test-lean test-tooling test-software-factory-worker test-awskms-retry
 
 # coverage_shard_profile is shard $(1)'s profile in a run of SHARDS shards.
 coverage_shard_profile = $(COVERAGE_DIR)/coverage-shard-$(1)-of-$(SHARDS).out

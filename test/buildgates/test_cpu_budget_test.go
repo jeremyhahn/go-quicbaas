@@ -67,6 +67,7 @@ func TestEveryCITestTargetCarriesTheSplit(t *testing.T) {
 		"test-lean":                    tagChecks,
 		"test-tooling":                 nil,
 		"test-software-factory-worker": nil,
+		"test-awskms-retry":            nil,
 	}
 	for target, prereqs := range targets {
 		t.Run(target, func(t *testing.T) {
