@@ -266,6 +266,12 @@ func branchPlanFor(a *attempt, issue *ForgeIssue) (BranchPlan, error) {
 	if err != nil {
 		return BranchPlan{}, err
 	}
+	// THE AI-NATIVE PROFILE HAS NO CARVE-OUT. Its chain promises a pull
+	// request, review, checks and train for every change, so a strategy's
+	// direct-push exemption does not apply under it.
+	if a.binding.Profile == ProfileAINative {
+		plan.RequiresPullRequest = true
+	}
 	return pinnedBranch(plan, a.task).Resolve(a.project.Git.DefaultBranch), nil
 }
 

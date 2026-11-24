@@ -27,7 +27,8 @@ const (
 	ProfileStandard SDLCProfile = ""
 
 	// ProfileAINative refuses a binding that leaves any link of the
-	// artifact chain off.
+	// artifact chain off. Under it every change lands through a pull
+	// request: a strategy's direct-push carve-out does not apply.
 	ProfileAINative SDLCProfile = "ai-native"
 )
 

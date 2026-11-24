@@ -1054,6 +1054,37 @@ func TestHooks_ReviewableCarveOutPushesToTheTargetWithoutAPullRequest(t *testing
 	}
 }
 
+func TestHooks_AINativeHasNoCarveOut(t *testing.T) {
+	rig := newHooksRig(t)
+	ctx := context.Background()
+	if err := rig.rebind(ctx, func(b *ProjectBinding) {
+		*b = *aiNativeBinding()
+		b.Strategy = TrunkBasedName
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rig.forge.putIssue(25, "Fix the thing", "task:ready", "docs")
+	job := testJob(1)
+	if _, err := rig.hooks.Prepare(ctx, job); err != nil {
+		t.Fatal(err)
+	}
+	job.WorkDir = containerWorkDir(t)
+	delivery, err := rig.store.GetDelivery(ctx, testTenant, testTask)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !delivery.RequiresPullRequest {
+		t.Fatal("a docs change under the ai-native profile was planned to bypass review")
+	}
+	rig.publishHead(t, ctx, "head-1")
+	if err := rig.hooks.Reviewable(ctx, job); err != nil {
+		t.Fatalf("Reviewable: %v", err)
+	}
+	if len(rig.forge.prs) != 1 {
+		t.Errorf("pull requests = %v, want one for a docs change under the ai-native profile", rig.forge.prs)
+	}
+}
+
 // TestHooks_CompleteCarriesTheBranchLifecycleFromThePlan: DeleteAfterMerge is
 // decided once, when the branch is cut, and the merge spec only carries it to
 // the forge. A strategy deciding it twice is how the two halves drift.
