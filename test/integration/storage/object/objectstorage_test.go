@@ -175,10 +175,14 @@ func TestObjectStorage_CatalogTracksBackendLocations(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "tenant-premium", put.Backend)
 
-		entry, err := stack.catalog.Get(systemCtx, "premium:data/important.bin")
+		// The system scope sees a tenant's object under its stored key.
+		entry, err := stack.catalog.Get(systemCtx, "tenant/tenant-premium/premium:data/important.bin")
 		require.NoError(t, err)
 		assert.Equal(t, "tenant-premium", entry.PrimaryStore.Store)
 		assert.Equal(t, "tenant-premium", entry.TenantID)
+
+		_, err = stack.catalog.Get(systemCtx, "premium:data/important.bin")
+		assert.Error(t, err, "nothing is stored under the bare key")
 	})
 
 	t.Run("explicit target backend overrides the default", func(t *testing.T) {
@@ -251,12 +255,12 @@ func TestObjectStorage_TenantBackendsAndIsolation(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "primary", basic.Backend)
 
-		premiumEntry, err := stack.catalog.Get(systemCtx, "premium-data:secrets/api-keys.txt")
+		premiumEntry, err := stack.catalog.Get(systemCtx, "tenant/tenant-premium/premium-data:secrets/api-keys.txt")
 		require.NoError(t, err)
 		assert.Equal(t, "tenant-premium", premiumEntry.PrimaryStore.Store)
 		assert.Equal(t, "tenant-premium", premiumEntry.TenantID)
 
-		basicEntry, err := stack.catalog.Get(systemCtx, "basic-data:files/readme.txt")
+		basicEntry, err := stack.catalog.Get(systemCtx, "tenant/tenant-basic/basic-data:files/readme.txt")
 		require.NoError(t, err)
 		assert.Equal(t, "primary", basicEntry.PrimaryStore.Store)
 		assert.Equal(t, "tenant-basic", basicEntry.TenantID)
