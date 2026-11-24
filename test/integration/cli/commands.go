@@ -55,6 +55,10 @@ type CommandDef struct {
 
 	// RequiresUnseal indicates the server must be unsealed for this command
 	RequiresUnseal bool
+
+	// RedactStdout keeps stdout out of the test log: set it on a command
+	// whose output carries a secret value.
+	RedactStdout bool
 }
 
 // UniqueKey generates a unique key for test isolation.

@@ -388,7 +388,11 @@ func (r *TestRunner) Run(cmd CommandDef) (stdout string, stderr string, err erro
 
 	r.t.Logf("[%s] %s %s", r.transport, r.binary, strings.Join(args, " "))
 	if stdout != "" {
-		r.t.Logf("[%s] stdout: %s", r.transport, stdout)
+		if cmd.RedactStdout {
+			r.t.Logf("[%s] stdout: <redacted, %d bytes>", r.transport, len(stdout))
+		} else {
+			r.t.Logf("[%s] stdout: %s", r.transport, stdout)
+		}
 	}
 	if stderr != "" {
 		r.t.Logf("[%s] stderr: %s", r.transport, stderr)
