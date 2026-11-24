@@ -241,7 +241,7 @@ RestDEKClient builds the `/api/v1/kms/deks/<path>[/action]` paths the `*` routes
 | GET | `/api/v1/kms/algorithms` | HandleGetSupportedAlgorithms | - | not covered |
 | GET | `/api/v1/kms/backend/status` | HandleBackendStatus | - | not covered |
 | POST | `/api/v1/kms/backend/test` | HandleBackendTest | - | not covered |
-| POST | `/api/v1/kms/decrypt/{name}` | HandleKMSDecrypt | rest.ts | not covered |
+| POST | `/api/v1/kms/decrypt/{name}` | HandleKMSDecrypt | rest.ts | covered: components/security/KMSKeyPanel.svelte |
 | GET | `/api/v1/kms/deks/` | HandleListDEKs | rest.ts | covered: views/security/DEKView.svelte |
 | POST | `/api/v1/kms/deks/` | HandleCreateDEK | rest.ts | covered: views/security/DEKView.svelte |
 | DELETE | `/api/v1/kms/deks/*` | handleDEKDeleteAction | - (rest.ts†) | covered: views/security/DEKView.svelte |
@@ -249,7 +249,7 @@ RestDEKClient builds the `/api/v1/kms/deks/<path>[/action]` paths the `*` routes
 | POST | `/api/v1/kms/deks/*` | handleDEKPostAction | - (rest.ts†) | covered: views/security/DEKView.svelte |
 | PUT | `/api/v1/kms/deks/*` | handleDEKPutAction | - (rest.ts†) | covered: views/security/DEKView.svelte |
 | PUT | `/api/v1/kms/deks/default` | HandleSetDefaultDEKFromBody | - | not covered |
-| POST | `/api/v1/kms/encrypt/{name}` | HandleKMSEncrypt | rest.ts | not covered |
+| POST | `/api/v1/kms/encrypt/{name}` | HandleKMSEncrypt | rest.ts | covered: components/security/KMSKeyPanel.svelte |
 | GET | `/api/v1/kms/keys` | HandleListKeys | rest.ts | covered: views/security/KMSView.svelte |
 | POST | `/api/v1/kms/keys` | HandleGenerateKey | rest.ts | covered: views/security/KMSView.svelte |
 | POST | `/api/v1/kms/keys/import` | HandleImportKey | - | not covered |
@@ -258,16 +258,16 @@ RestDEKClient builds the `/api/v1/kms/deks/<path>[/action]` paths the `*` routes
 | GET | `/api/v1/kms/keys/{name}` | HandleGetKey | rest.ts | not covered |
 | PUT | `/api/v1/kms/keys/{name}/default` | HandleSetDefaultKey | rest.ts | covered: views/security/KMSView.svelte |
 | POST | `/api/v1/kms/keys/{name}/export` | HandleExportKey | - | not covered |
-| GET | `/api/v1/kms/keys/{name}/metadata` | HandleGetKeyMetadata | - (rest.ts†) | not covered |
-| PUT | `/api/v1/kms/keys/{name}/metadata` | HandleUpdateKeyMetadata | - (rest.ts†) | not covered |
-| GET | `/api/v1/kms/keys/{name}/policy` | HandleGetKeyPolicy | - (rest.ts†) | not covered |
-| PUT | `/api/v1/kms/keys/{name}/policy` | HandleSetKeyPolicy | - (rest.ts†) | not covered |
+| GET | `/api/v1/kms/keys/{name}/metadata` | HandleGetKeyMetadata | - (rest.ts†) | covered: components/security/KMSKeyPanel.svelte |
+| PUT | `/api/v1/kms/keys/{name}/metadata` | HandleUpdateKeyMetadata | - (rest.ts†) | covered: components/security/KMSKeyPanel.svelte |
+| GET | `/api/v1/kms/keys/{name}/policy` | HandleGetKeyPolicy | - (rest.ts†) | covered: components/security/KMSKeyPanel.svelte |
+| PUT | `/api/v1/kms/keys/{name}/policy` | HandleSetKeyPolicy | - (rest.ts†) | covered: components/security/KMSKeyPanel.svelte |
 | GET | `/api/v1/kms/keys/{name}/public` | HandleGetPublicKey | - | not covered |
 | POST | `/api/v1/kms/keys/{name}/revoke` | HandleRevokeKey | - | not covered |
 | POST | `/api/v1/kms/keys/{name}/rotate` | HandleRotateKey | rest.ts | covered: views/security/KMSView.svelte |
-| DELETE | `/api/v1/kms/keys/{name}/rotation-policy` | HandleDeleteKeyRotationPolicy | - (rest.ts†) | not covered |
-| GET | `/api/v1/kms/keys/{name}/rotation-policy` | HandleGetKeyRotationPolicy | - (rest.ts†) | not covered |
-| PUT | `/api/v1/kms/keys/{name}/rotation-policy` | HandleSetKeyRotationPolicy | - (rest.ts†) | not covered |
+| DELETE | `/api/v1/kms/keys/{name}/rotation-policy` | HandleDeleteKeyRotationPolicy | - (rest.ts†) | covered: components/security/KMSKeyPanel.svelte |
+| GET | `/api/v1/kms/keys/{name}/rotation-policy` | HandleGetKeyRotationPolicy | - (rest.ts†) | covered: components/security/KMSKeyPanel.svelte |
+| PUT | `/api/v1/kms/keys/{name}/rotation-policy` | HandleSetKeyRotationPolicy | - (rest.ts†) | covered: components/security/KMSKeyPanel.svelte |
 | DELETE | `/api/v1/kms/keys/{name}/safety` | HandleClearKeySafety | - | not covered |
 | PUT | `/api/v1/kms/keys/{name}/safety` | HandleSetKeySafety | - | not covered |
 | PUT | `/api/v1/kms/keys/{name}/status` | HandleUpdateKeyStatus | rest.ts | covered: views/security/KMSView.svelte |

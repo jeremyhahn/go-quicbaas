@@ -35,7 +35,7 @@ test/e2e-coverage-matrix.test.ts fails when a route has no row.
 | `messaging` | #/messaging | list, create, delete | ai_async_surfaces.spec.ts, rapid_nav_no_duplicate_keys.spec.ts |
 | `scheduler` | #/scheduler | list, create, delete | ai_async_surfaces.spec.ts, rapid_nav_no_duplicate_keys.spec.ts |
 | `iam` | #/iam, #/iam/:tab | list, create, edit, delete | bug_regressions.spec.ts, iam_rbac.spec.ts, rapid_nav_no_duplicate_keys.spec.ts, security_surfaces.spec.ts |
-| `kms` | #/kms | list, create, delete | bug_regressions.spec.ts, kms_roundtrip.spec.ts, rapid_nav_no_duplicate_keys.spec.ts, renderer_freeze_reproducer.spec.ts, security_surfaces.spec.ts |
+| `kms` | #/kms | list, create, delete, key metadata, access policy, rotation policy, encrypt and decrypt | bug_regressions.spec.ts, kms_roundtrip.spec.ts, rapid_nav_no_duplicate_keys.spec.ts, renderer_freeze_reproducer.spec.ts, security_surfaces.spec.ts |
 | `secrets` | #/secrets | list, create, edit, delete | rapid_nav_no_duplicate_keys.spec.ts, secrets_roundtrip.spec.ts, security_surfaces.spec.ts |
 | `certificates` | #/certificates | list, create, delete | none |
 | `trust` | #/trust | list, create, delete | none |
