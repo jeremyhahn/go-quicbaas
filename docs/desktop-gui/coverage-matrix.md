@@ -52,30 +52,31 @@ not-UI: the ACME protocol, called by ACME clients.
 | POST | `/api/v1/attestation/verify` | HandleAttestationVerify | - | not covered |
 | POST | `/api/v1/attestation/verify-chain` | HandleAttestationVerifyChain | - | not covered |
 | POST | `/api/v1/attestation/appraise-quote` | HandleAttestationAppraiseQuote | - | not covered |
-| GET | `/api/v1/attestation/endorsements` | HandleAttestationListEndorsements | - | not covered |
-| PUT | `/api/v1/attestation/endorsements/{name}` | HandleAttestationPutEndorsement | - | not covered |
-| DELETE | `/api/v1/attestation/endorsements/{name}` | HandleAttestationDeleteEndorsement | - | not covered |
-| GET | `/api/v1/attestation/reference-values` | HandleAttestationListReferenceValues | - | not covered |
-| GET | `/api/v1/attestation/reference-values/{name}` | HandleAttestationGetReferenceValues | - | not covered |
-| PUT | `/api/v1/attestation/reference-values/{name}` | HandleAttestationPutReferenceValues | - | not covered |
-| DELETE | `/api/v1/attestation/reference-values/{name}` | HandleAttestationDeleteReferenceValues | - | not covered |
+| GET | `/api/v1/attestation/endorsements` | HandleAttestationListEndorsements | - (rest.ts†) | covered: views/security/AttestationView.svelte |
+| PUT | `/api/v1/attestation/endorsements/{name}` | HandleAttestationPutEndorsement | rest.ts | covered: views/security/AttestationView.svelte |
+| DELETE | `/api/v1/attestation/endorsements/{name}` | HandleAttestationDeleteEndorsement | rest.ts | covered: views/security/AttestationView.svelte |
+| GET | `/api/v1/attestation/reference-values` | HandleAttestationListReferenceValues | rest.ts | covered: views/security/AttestationView.svelte |
+| GET | `/api/v1/attestation/reference-values/{name}` | HandleAttestationGetReferenceValues | rest.ts | not covered |
+| PUT | `/api/v1/attestation/reference-values/{name}` | HandleAttestationPutReferenceValues | rest.ts | covered: views/security/AttestationView.svelte |
+| DELETE | `/api/v1/attestation/reference-values/{name}` | HandleAttestationDeleteReferenceValues | rest.ts | covered: views/security/AttestationView.svelte |
 
 ### barrier
 
-The console's BarrierView adapts the SDK barrier client to three calls: status, Shamir
-initialize and unseal with one share.
+The console's BarrierView calls the SDK barrier client for status, Shamir unseal with one share,
+seal, rekey and the recovery keys (status, generate, delete). It initializes a Shamir barrier
+through the ceremony client (`init/initialize`), and TenantBarrierView enables encryption.
 
 | Method | Path | Handler | SDK file | Console |
 |---|---|---|---|---|
-| POST | `/api/v1/barrier/enable-encryption` | HandleBarrierEnableEncryption | - | not covered |
+| POST | `/api/v1/barrier/enable-encryption` | HandleBarrierEnableEncryption | - (rest.ts†) | covered: views/security/TenantBarrierView.svelte |
 | POST | `/api/v1/barrier/initialize` | HandleBarrierInitialize | rest.ts | not covered |
-| DELETE | `/api/v1/barrier/recovery` | HandleBarrierRecoveryDelete | rest.ts | not covered |
-| POST | `/api/v1/barrier/recovery/generate` | HandleBarrierRecoveryGenerate | rest.ts | not covered |
+| DELETE | `/api/v1/barrier/recovery` | HandleBarrierRecoveryDelete | rest.ts | covered: views/security/BarrierView.svelte |
+| POST | `/api/v1/barrier/recovery/generate` | HandleBarrierRecoveryGenerate | rest.ts | covered: views/security/BarrierView.svelte |
 | POST | `/api/v1/barrier/recovery/recover` | HandleBarrierRecoveryRecover | rest.ts | not covered |
-| GET | `/api/v1/barrier/recovery/status` | HandleBarrierRecoveryStatus | rest.ts | not covered |
-| POST | `/api/v1/barrier/rekey` | HandleBarrierRekey | rest.ts | not covered |
+| GET | `/api/v1/barrier/recovery/status` | HandleBarrierRecoveryStatus | rest.ts | covered: views/security/BarrierView.svelte |
+| POST | `/api/v1/barrier/rekey` | HandleBarrierRekey | rest.ts | covered: views/security/BarrierView.svelte |
 | POST | `/api/v1/barrier/root-token` | HandleBarrierRootToken | rest.ts | not covered |
-| POST | `/api/v1/barrier/seal` | HandleBarrierSeal | rest.ts | not covered |
+| POST | `/api/v1/barrier/seal` | HandleBarrierSeal | rest.ts | covered: views/security/BarrierView.svelte |
 | POST | `/api/v1/barrier/shamir/initialize` | HandleBarrierShamirInitialize | rest.ts | covered: views/security/BarrierView.svelte |
 | POST | `/api/v1/barrier/shamir/unseal-share` | HandleBarrierShamirUnsealShare | rest.ts | covered: views/security/BarrierView.svelte |
 | POST | `/api/v1/barrier/shamir/unseal-shares` | HandleBarrierShamirUnsealShares | rest.ts | not covered |
@@ -105,10 +106,10 @@ RestBootstrapClient builds `/api/v1/bootstrap/<mode>` from the mode name.
 
 | Method | Path | Handler | SDK file | Console |
 |---|---|---|---|---|
-| POST | `/api/v1/cache/clear` | HandleClearCache | - | not covered |
-| GET | `/api/v1/cache/config` | HandleGetCacheConfig | - | not covered |
-| PUT | `/api/v1/cache/config` | HandleUpdateCacheConfig | - | not covered |
-| GET | `/api/v1/cache/stats` | HandleGetCacheStats | - | not covered |
+| POST | `/api/v1/cache/clear` | HandleClearCache | rest.ts | not covered |
+| GET | `/api/v1/cache/config` | HandleGetCacheConfig | rest.ts | not covered |
+| PUT | `/api/v1/cache/config` | HandleUpdateCacheConfig | rest.ts | not covered |
+| GET | `/api/v1/cache/stats` | HandleGetCacheStats | rest.ts | not covered |
 
 ### certificate
 
@@ -131,19 +132,19 @@ RestBootstrapClient builds `/api/v1/bootstrap/<mode>` from the mode name.
 
 | Method | Path | Handler | SDK file | Console |
 |---|---|---|---|---|
-| GET | `/api/v1/cluster/leader` | HandleGetClusterLeader | - | not covered |
-| GET | `/api/v1/cluster/leader/{shardID}` | HandleGetLeader | - | not covered |
-| DELETE | `/api/v1/cluster/migrate/` | HandleCancelMigration | - | not covered |
-| POST | `/api/v1/cluster/migrate/` | HandleStartMigration | - | not covered |
-| GET | `/api/v1/cluster/migrate/status` | HandleGetMigrationStatus | - | not covered |
-| GET | `/api/v1/cluster/nodes/` | HandleListNodes | - | not covered |
-| POST | `/api/v1/cluster/nodes/` | HandleAddNode | - | not covered |
-| GET | `/api/v1/cluster/nodes/non-leader` | HandleListNonLeaderNodes | - | not covered |
-| DELETE | `/api/v1/cluster/nodes/{nodeId}` | HandleRemoveNode | - | not covered |
-| PUT | `/api/v1/cluster/nodes/{nodeId}/replace` | HandleReplaceNode | - | not covered |
-| POST | `/api/v1/cluster/rebalance/` | HandleStartRebalance | - | not covered |
-| GET | `/api/v1/cluster/rebalance/plan` | HandleGetRebalancePlan | - | not covered |
-| GET | `/api/v1/cluster/rebalance/status` | HandleGetRebalanceStatus | - | not covered |
+| GET | `/api/v1/cluster/leader` | HandleGetClusterLeader | rest.ts | not covered |
+| GET | `/api/v1/cluster/leader/{shardID}` | HandleGetLeader | rest.ts | not covered |
+| DELETE | `/api/v1/cluster/migrate/` | HandleCancelMigration | - (rest.ts†) | not covered |
+| POST | `/api/v1/cluster/migrate/` | HandleStartMigration | rest.ts | not covered |
+| GET | `/api/v1/cluster/migrate/status` | HandleGetMigrationStatus | - (rest.ts†) | not covered |
+| GET | `/api/v1/cluster/nodes/` | HandleListNodes | rest.ts | covered: views/cluster/NodesView.svelte |
+| POST | `/api/v1/cluster/nodes/` | HandleAddNode | rest.ts | not covered |
+| GET | `/api/v1/cluster/nodes/non-leader` | HandleListNonLeaderNodes | rest.ts | not covered |
+| DELETE | `/api/v1/cluster/nodes/{nodeId}` | HandleRemoveNode | - (rest.ts†) | not covered |
+| PUT | `/api/v1/cluster/nodes/{nodeId}/replace` | HandleReplaceNode | rest.ts | not covered |
+| POST | `/api/v1/cluster/rebalance/` | HandleStartRebalance | rest.ts | not covered |
+| GET | `/api/v1/cluster/rebalance/plan` | HandleGetRebalancePlan | rest.ts | not covered |
+| GET | `/api/v1/cluster/rebalance/status` | HandleGetRebalanceStatus | - (rest.ts†) | not covered |
 | GET | `/api/v1/cluster/shards` | HandleClusterShards | - | not covered |
 | GET | `/api/v1/cluster/status` | HandleClusterStatus | rest.ts | covered: views/cluster/ClusterDashboard.svelte |
 | POST | `/api/v1/cluster/upgrade/` | HandleStartUpgrade | - | not covered |
@@ -181,11 +182,11 @@ RestBootstrapClient builds `/api/v1/bootstrap/<mode>` from the mode name.
 
 | Method | Path | Handler | SDK file | Console |
 |---|---|---|---|---|
-| GET | `/api/v1/entities/{type}/` | HandleList | - | not covered |
-| POST | `/api/v1/entities/{type}/` | HandlePut | - | not covered |
-| DELETE | `/api/v1/entities/{type}/{id}` | HandleDelete | - | not covered |
-| GET | `/api/v1/entities/{type}/{id}` | HandleGet | - | not covered |
-| PUT | `/api/v1/entities/{type}/{id}` | HandlePut | - | not covered |
+| GET | `/api/v1/entities/{type}/` | HandleList | - (rest.ts†) | not covered |
+| POST | `/api/v1/entities/{type}/` | HandlePut | - (rest.ts†) | not covered |
+| DELETE | `/api/v1/entities/{type}/{id}` | HandleDelete | - (rest.ts†) | not covered |
+| GET | `/api/v1/entities/{type}/{id}` | HandleGet | - (rest.ts†) | not covered |
+| PUT | `/api/v1/entities/{type}/{id}` | HandlePut | - (rest.ts†) | not covered |
 
 ### entity-types
 
@@ -216,14 +217,15 @@ not-UI: agent-runtime hook events, posted by running sessions.
 ### init
 
 CeremonyView adapts the SDK ceremony client; it lists officers with its own `fetch` of
-`/api/v1/init/officers`, which the SDK does not expose.
+`/api/v1/init/officers`, which the SDK does not expose. BarrierView runs `initialize` through the
+SDK ceremony client to initialize a Shamir barrier.
 
 | Method | Path | Handler | SDK file | Console |
 |---|---|---|---|---|
 | POST | `/api/v1/init/claim-cert/begin` | HandleCeremonyClaimCertBegin | rest.ts | not covered |
 | POST | `/api/v1/init/claim-cert/complete` | HandleCeremonyClaimCertComplete | rest.ts | covered: views/security/CeremonyView.svelte |
 | POST | `/api/v1/init/enroll-external-officer` | HandleCeremonyEnrollExternalOfficer | rest.ts | covered: views/security/CeremonyView.svelte |
-| POST | `/api/v1/init/initialize` | HandleCeremonyInitialize | rest.ts | not covered |
+| POST | `/api/v1/init/initialize` | HandleCeremonyInitialize | rest.ts | covered: views/security/BarrierView.svelte |
 | POST | `/api/v1/init/officer-share/begin` | HandleCeremonyBeginClaimShare | rest.ts | not covered |
 | POST | `/api/v1/init/officer-share/complete` | HandleCeremonyCompleteClaimShare | rest.ts | covered: views/security/CeremonyView.svelte |
 | GET | `/api/v1/init/officers` | HandleCeremonyListOfficers | - | covered: views/security/CeremonyView.svelte (direct fetch, not the SDK) |
@@ -256,16 +258,16 @@ RestDEKClient builds the `/api/v1/kms/deks/<path>[/action]` paths the `*` routes
 | GET | `/api/v1/kms/keys/{name}` | HandleGetKey | rest.ts | not covered |
 | PUT | `/api/v1/kms/keys/{name}/default` | HandleSetDefaultKey | rest.ts | covered: views/security/KMSView.svelte |
 | POST | `/api/v1/kms/keys/{name}/export` | HandleExportKey | - | not covered |
-| GET | `/api/v1/kms/keys/{name}/metadata` | HandleGetKeyMetadata | - | not covered |
-| PUT | `/api/v1/kms/keys/{name}/metadata` | HandleUpdateKeyMetadata | - | not covered |
-| GET | `/api/v1/kms/keys/{name}/policy` | HandleGetKeyPolicy | - | not covered |
-| PUT | `/api/v1/kms/keys/{name}/policy` | HandleSetKeyPolicy | - | not covered |
+| GET | `/api/v1/kms/keys/{name}/metadata` | HandleGetKeyMetadata | - (rest.ts†) | not covered |
+| PUT | `/api/v1/kms/keys/{name}/metadata` | HandleUpdateKeyMetadata | - (rest.ts†) | not covered |
+| GET | `/api/v1/kms/keys/{name}/policy` | HandleGetKeyPolicy | - (rest.ts†) | not covered |
+| PUT | `/api/v1/kms/keys/{name}/policy` | HandleSetKeyPolicy | - (rest.ts†) | not covered |
 | GET | `/api/v1/kms/keys/{name}/public` | HandleGetPublicKey | - | not covered |
 | POST | `/api/v1/kms/keys/{name}/revoke` | HandleRevokeKey | - | not covered |
 | POST | `/api/v1/kms/keys/{name}/rotate` | HandleRotateKey | rest.ts | covered: views/security/KMSView.svelte |
-| DELETE | `/api/v1/kms/keys/{name}/rotation-policy` | HandleDeleteKeyRotationPolicy | - | not covered |
-| GET | `/api/v1/kms/keys/{name}/rotation-policy` | HandleGetKeyRotationPolicy | - | not covered |
-| PUT | `/api/v1/kms/keys/{name}/rotation-policy` | HandleSetKeyRotationPolicy | - | not covered |
+| DELETE | `/api/v1/kms/keys/{name}/rotation-policy` | HandleDeleteKeyRotationPolicy | - (rest.ts†) | not covered |
+| GET | `/api/v1/kms/keys/{name}/rotation-policy` | HandleGetKeyRotationPolicy | - (rest.ts†) | not covered |
+| PUT | `/api/v1/kms/keys/{name}/rotation-policy` | HandleSetKeyRotationPolicy | - (rest.ts†) | not covered |
 | DELETE | `/api/v1/kms/keys/{name}/safety` | HandleClearKeySafety | - | not covered |
 | PUT | `/api/v1/kms/keys/{name}/safety` | HandleSetKeySafety | - | not covered |
 | PUT | `/api/v1/kms/keys/{name}/status` | HandleUpdateKeyStatus | rest.ts | covered: views/security/KMSView.svelte |
@@ -335,9 +337,8 @@ posted by the fleet node's own agent.
 ### orchestrator
 
 RestOrchestratorClient builds these paths from `API_PREFIX` (`/api/v1/orchestrator`). not-UI for
-`hooks`: hook events posted by running sessions. The SDK's `decomposeTask` posts to
-`/api/v1/orchestrator/tasks/{taskID}/decompose`, which routes.go does not register, so the
-`tasks/decompose` route is not covered (a defect for slice follow-up).
+`hooks`: hook events posted by running sessions. `decomposeTask` posts the task text to
+`tasks/decompose`.
 
 | Method | Path | Handler | SDK file | Console |
 |---|---|---|---|---|
@@ -370,7 +371,7 @@ RestOrchestratorClient builds these paths from `API_PREFIX` (`/api/v1/orchestrat
 | POST | `/api/v1/orchestrator/sessions/{sessionID}/rotate-account` | HandleOrchestratorRotateSessionAccount | - (rest.ts†) | covered: components/orchestrator/SessionDetail.svelte |
 | GET | `/api/v1/orchestrator/tasks` | HandleOrchestratorListTasks | - (rest.ts†) | covered: views/orchestrator/TasksView.svelte |
 | POST | `/api/v1/orchestrator/tasks` | HandleOrchestratorCreateTask | - (rest.ts†) | covered: components/orchestrator/CreateTaskDialog.svelte |
-| POST | `/api/v1/orchestrator/tasks/decompose` | HandleOrchestratorDecomposeTask | - | not covered |
+| POST | `/api/v1/orchestrator/tasks/decompose` | HandleOrchestratorDecomposeTask | - (rest.ts†) | covered: views/orchestrator/TasksView.svelte |
 | GET | `/api/v1/orchestrator/tasks/{taskID}` | HandleOrchestratorGetTask | - (rest.ts†) | not covered |
 | DELETE | `/api/v1/orchestrator/tasks/{taskID}` | HandleOrchestratorDeleteTask | - (rest.ts†) | not covered |
 | GET | `/api/v1/orchestrator/tasks/{taskID}/artifacts` | HandleOrchestratorListArtifacts | - | not covered |
@@ -480,19 +481,19 @@ not-UI: the service registry, called by service instances to register, renew and
 | POST | `/api/v1/scheduler/jobs/{id}/pause` | HandlePauseSchedulerJob | rest.ts | covered: views/async/SchedulerView.svelte |
 | POST | `/api/v1/scheduler/jobs/{id}/resume` | HandleResumeSchedulerJob | rest.ts | covered: views/async/SchedulerView.svelte |
 | POST | `/api/v1/scheduler/jobs/{id}/trigger` | HandleTriggerSchedulerJob | rest.ts | covered: views/async/SchedulerView.svelte |
-| GET | `/api/v1/scheduler/status` | HandleGetSchedulerStatus | rest.ts | not covered |
+| GET | `/api/v1/scheduler/status` | HandleGetSchedulerStatus | rest.ts | covered: views/async/SchedulerView.svelte |
 | POST | `/api/v1/scheduler/nodes` | HandleRegisterPlacementNode | rest.ts | not covered |
-| GET | `/api/v1/scheduler/nodes` | HandleListPlacementNodes | rest.ts | not covered |
-| GET | `/api/v1/scheduler/nodes/{id}` | HandleGetPlacementNode | rest.ts | not covered |
-| DELETE | `/api/v1/scheduler/nodes/{id}` | HandleDeregisterPlacementNode | rest.ts | not covered |
+| GET | `/api/v1/scheduler/nodes` | HandleListPlacementNodes | rest.ts | covered: views/async/SchedulerView.svelte |
+| GET | `/api/v1/scheduler/nodes/{id}` | HandleGetPlacementNode | rest.ts | covered: views/async/SchedulerView.svelte |
+| DELETE | `/api/v1/scheduler/nodes/{id}` | HandleDeregisterPlacementNode | rest.ts | covered: views/async/SchedulerView.svelte |
 | POST | `/api/v1/scheduler/nodes/{id}/renew` | HandleRenewPlacementNode | rest.ts | not covered |
-| POST | `/api/v1/scheduler/nodes/{id}/cordon` | HandleCordonPlacementNode | rest.ts | not covered |
-| POST | `/api/v1/scheduler/nodes/{id}/uncordon` | HandleUncordonPlacementNode | rest.ts | not covered |
-| POST | `/api/v1/scheduler/nodes/{id}/drain` | HandleDrainPlacementNode | rest.ts | not covered |
+| POST | `/api/v1/scheduler/nodes/{id}/cordon` | HandleCordonPlacementNode | rest.ts | covered: views/async/SchedulerView.svelte |
+| POST | `/api/v1/scheduler/nodes/{id}/uncordon` | HandleUncordonPlacementNode | rest.ts | covered: views/async/SchedulerView.svelte |
+| POST | `/api/v1/scheduler/nodes/{id}/drain` | HandleDrainPlacementNode | rest.ts | covered: views/async/SchedulerView.svelte |
 | POST | `/api/v1/scheduler/placements` | HandlePlaceWorkload | rest.ts | not covered |
-| GET | `/api/v1/scheduler/placements` | HandleListPlacements | rest.ts | not covered |
-| GET | `/api/v1/scheduler/placements/{id}` | HandleGetPlacement | rest.ts | not covered |
-| DELETE | `/api/v1/scheduler/placements/{id}` | HandleReleasePlacement | rest.ts | not covered |
+| GET | `/api/v1/scheduler/placements` | HandleListPlacements | rest.ts | covered: views/async/SchedulerView.svelte |
+| GET | `/api/v1/scheduler/placements/{id}` | HandleGetPlacement | rest.ts | covered: views/async/SchedulerView.svelte |
+| DELETE | `/api/v1/scheduler/placements/{id}` | HandleReleasePlacement | rest.ts | covered: views/async/SchedulerView.svelte |
 
 ### sdlc
 
@@ -576,11 +577,11 @@ RestSecretsClient builds `/api/v1/secrets/<path>` for the `*` routes (POST store
 |---|---|---|---|---|
 | GET | `/api/v1/timeseries/metrics` | HandleListMetrics | rest.ts | covered: views/data/TimeSeriesView.svelte |
 | POST | `/api/v1/timeseries/query` | HandleTSQuery | rest.ts | covered: views/data/TimeSeriesView.svelte |
-| GET | `/api/v1/timeseries/retention/{metric}` | HandleGetRetentionPolicy | - | not covered |
-| PUT | `/api/v1/timeseries/retention/{metric}` | HandleSetRetentionPolicy | - | not covered |
+| GET | `/api/v1/timeseries/retention/{metric}` | HandleGetRetentionPolicy | rest.ts | not covered |
+| PUT | `/api/v1/timeseries/retention/{metric}` | HandleSetRetentionPolicy | rest.ts | not covered |
 | DELETE | `/api/v1/timeseries/series` | HandleDeleteSeries | rest.ts | covered: views/data/TimeSeriesView.svelte |
 | POST | `/api/v1/timeseries/write` | HandleWritePoint | rest.ts | covered: views/data/TimeSeriesView.svelte |
-| POST | `/api/v1/timeseries/write-batch` | HandleWriteBatch | - | not covered |
+| POST | `/api/v1/timeseries/write-batch` | HandleWriteBatch | rest.ts | not covered |
 
 ### transaction
 
@@ -600,24 +601,24 @@ RestSecretsClient builds `/api/v1/secrets/<path>` for the `*` routes (POST store
 
 | Method | Path | Handler | SDK file | Console |
 |---|---|---|---|---|
-| POST | `/api/v1/vector/admin/compact` | HandleCompactNamespace | - | not covered |
-| GET | `/api/v1/vector/admin/compact/progress` | HandleGetCompactionProgress | - | not covered |
-| POST | `/api/v1/vector/admin/export/{namespace}` | HandleExportVectors | - | not covered |
-| POST | `/api/v1/vector/admin/import/{namespace}` | HandleImportVectors | - | not covered |
-| GET | `/api/v1/vector/admin/stats/global` | HandleGetGlobalStats | - | not covered |
-| GET | `/api/v1/vector/cluster/stats` | HandleGetGlobalStats | - | not covered |
-| GET | `/api/v1/vector/health` | HandleVectorHealth | - | not covered |
-| POST | `/api/v1/vector/hybrid-search` | HandleHybridSearch | - | not covered |
+| POST | `/api/v1/vector/admin/compact` | HandleCompactNamespace | rest.ts | not covered |
+| GET | `/api/v1/vector/admin/compact/progress` | HandleGetCompactionProgress | - (rest.ts†) | not covered |
+| POST | `/api/v1/vector/admin/export/{namespace}` | HandleExportVectors | rest.ts | not covered |
+| POST | `/api/v1/vector/admin/import/{namespace}` | HandleImportVectors | rest.ts | not covered |
+| GET | `/api/v1/vector/admin/stats/global` | HandleGetGlobalStats | rest.ts | not covered |
+| GET | `/api/v1/vector/cluster/stats` | HandleGetGlobalStats | rest.ts | not covered |
+| GET | `/api/v1/vector/health` | HandleVectorHealth | rest.ts | not covered |
+| POST | `/api/v1/vector/hybrid-search` | HandleHybridSearch | rest.ts | not covered |
 | GET | `/api/v1/vector/namespaces/` | HandleListNamespaces | rest.ts | covered: views/data/VectorsView.svelte |
 | POST | `/api/v1/vector/namespaces/` | HandleCreateNamespace | rest.ts | covered: views/data/VectorsView.svelte |
 | DELETE | `/api/v1/vector/namespaces/{namespace}` | HandleDeleteNamespace | rest.ts | covered: views/data/VectorsView.svelte |
 | GET | `/api/v1/vector/namespaces/{namespace}` | HandleGetNamespaceInfo | rest.ts | not covered |
 | PUT | `/api/v1/vector/namespaces/{namespace}` | HandleUpdateNamespace | rest.ts | not covered |
-| GET | `/api/v1/vector/namespaces/{namespace}/index/progress` | HandleGetIndexProgress | - | not covered |
-| POST | `/api/v1/vector/namespaces/{namespace}/index/rebuild` | HandleRebuildIndex | - | not covered |
+| GET | `/api/v1/vector/namespaces/{namespace}/index/progress` | HandleGetIndexProgress | - (rest.ts†) | not covered |
+| POST | `/api/v1/vector/namespaces/{namespace}/index/rebuild` | HandleRebuildIndex | rest.ts | not covered |
 | POST | `/api/v1/vector/namespaces/{namespace}/search/by-id/{id}` | HandleSearchByID | - | not covered |
 | POST | `/api/v1/vector/namespaces/{namespace}/search/similar` | HandleSearchSimilar | rest.ts | covered: views/data/VectorsView.svelte |
-| GET | `/api/v1/vector/namespaces/{namespace}/stats` | HandleGetNamespaceStats | - | not covered |
+| GET | `/api/v1/vector/namespaces/{namespace}/stats` | HandleGetNamespaceStats | rest.ts | not covered |
 | GET | `/api/v1/vector/namespaces/{namespace}/vectors/` | HandleListVectors | - | not covered |
 | POST | `/api/v1/vector/namespaces/{namespace}/vectors/` | HandleUpsertVector | - | not covered |
 | DELETE | `/api/v1/vector/namespaces/{namespace}/vectors/batch` | HandleBatchDeleteVectors | - | not covered |
@@ -626,7 +627,7 @@ RestSecretsClient builds `/api/v1/secrets/<path>` for the `*` routes (POST store
 | GET | `/api/v1/vector/namespaces/{namespace}/vectors/{id}` | HandleGetVector | - | not covered |
 | PUT | `/api/v1/vector/namespaces/{namespace}/vectors/{id}` | HandleUpsertVector | - | not covered |
 | PUT | `/api/v1/vector/namespaces/{namespace}/vectors/{id}/metadata` | HandleUpdateMetadata | - | not covered |
-| POST | `/api/v1/vector/search-by-metadata` | HandleSearchByMetadata | - | not covered |
+| POST | `/api/v1/vector/search-by-metadata` | HandleSearchByMetadata | rest.ts | not covered |
 
 ### version
 
@@ -638,40 +639,40 @@ RestSecretsClient builds `/api/v1/secrets/<path>` for the `*` routes (POST store
 
 | Method | Path | Handler | SDK file | Console |
 |---|---|---|---|---|
-| GET | `/api/v1/xkms/backends` | HandleXKMSListBackends | - | not covered |
-| GET | `/api/v1/xkms/backends/{id}` | HandleXKMSGetBackend | - | not covered |
-| GET | `/api/v1/xkms/ca/bundle` | HandleXKMSGetCABundle | - | not covered |
-| GET | `/api/v1/xkms/ca/cert` | HandleXKMSGetCACertificate | - | not covered |
+| GET | `/api/v1/xkms/backends` | HandleXKMSListBackends | rest.ts | not covered |
+| GET | `/api/v1/xkms/backends/{id}` | HandleXKMSGetBackend | rest.ts | not covered |
+| GET | `/api/v1/xkms/ca/bundle` | HandleXKMSGetCABundle | - (rest.ts†) | not covered |
+| GET | `/api/v1/xkms/ca/cert` | HandleXKMSGetCACertificate | - (rest.ts†) | not covered |
 | POST | `/api/v1/xkms/ca/crl` | HandleXKMSGenerateCRL | rest.ts | covered: views/security/CertificatesView.svelte |
-| POST | `/api/v1/xkms/ca/issue` | HandleXKMSIssueCertificate | - | not covered |
-| POST | `/api/v1/xkms/ca/revoke` | HandleXKMSRevokeCertificate | - | not covered |
+| POST | `/api/v1/xkms/ca/issue` | HandleXKMSIssueCertificate | rest.ts | not covered |
+| POST | `/api/v1/xkms/ca/revoke` | HandleXKMSRevokeCertificate | rest.ts | not covered |
 | GET | `/api/v1/xkms/ca/revoked/{serial}` | HandleXKMSIsRevoked | rest.ts | covered: views/security/CertificatesView.svelte |
-| POST | `/api/v1/xkms/ca/sign` | HandleXKMSSignCSR | - | not covered |
-| GET | `/api/v1/xkms/certs` | HandleXKMSListCerts | - | not covered |
-| POST | `/api/v1/xkms/certs` | HandleXKMSSaveCert | - | not covered |
-| DELETE | `/api/v1/xkms/certs/{id}` | HandleXKMSDeleteCert | - | not covered |
-| GET | `/api/v1/xkms/certs/{id}` | HandleXKMSGetCert | - | not covered |
+| POST | `/api/v1/xkms/ca/sign` | HandleXKMSSignCSR | rest.ts | not covered |
+| GET | `/api/v1/xkms/certs` | HandleXKMSListCerts | - (rest.ts†) | not covered |
+| POST | `/api/v1/xkms/certs` | HandleXKMSSaveCert | - (rest.ts†) | not covered |
+| DELETE | `/api/v1/xkms/certs/{id}` | HandleXKMSDeleteCert | rest.ts | not covered |
+| GET | `/api/v1/xkms/certs/{id}` | HandleXKMSGetCert | rest.ts | not covered |
 | HEAD | `/api/v1/xkms/certs/{id}` | HandleXKMSCertExists | - | not covered |
-| POST | `/api/v1/xkms/fido2/authenticate/begin` | HandleXKMSFIDO2BeginAuthentication | - | not covered |
-| POST | `/api/v1/xkms/fido2/authenticate/finish` | HandleXKMSFIDO2FinishAuthentication | - | not covered |
-| POST | `/api/v1/xkms/fido2/register/begin` | HandleXKMSFIDO2BeginRegistration | - | not covered |
-| POST | `/api/v1/xkms/fido2/register/finish` | HandleXKMSFIDO2FinishRegistration | - | not covered |
-| POST | `/api/v1/xkms/fido2/credentials/begin` | HandleXKMSFIDO2BeginAddCredential | - | not covered |
-| GET | `/api/v1/xkms/health` | HandleXKMSHealth | - | not covered |
-| GET | `/api/v1/xkms/keys` | HandleXKMSListKeys | - | not covered |
-| POST | `/api/v1/xkms/keys` | HandleXKMSGenerateKey | - | not covered |
-| DELETE | `/api/v1/xkms/keys/{id}` | HandleXKMSDeleteKey | - | not covered |
-| GET | `/api/v1/xkms/keys/{id}` | HandleXKMSGetKey | - | not covered |
-| POST | `/api/v1/xkms/keys/{id}/decrypt` | HandleXKMSDecrypt | - | not covered |
-| POST | `/api/v1/xkms/keys/{id}/encrypt` | HandleXKMSEncrypt | - | not covered |
-| POST | `/api/v1/xkms/keys/{id}/rotate` | HandleXKMSRotateKey | - | not covered |
-| POST | `/api/v1/xkms/keys/{id}/sign` | HandleXKMSSign | - | not covered |
-| POST | `/api/v1/xkms/keys/{id}/verify` | HandleXKMSVerify | - | not covered |
-| GET | `/api/v1/xkms/keys/{id}/versions` | HandleXKMSListKeyVersions | - | not covered |
-| POST | `/api/v1/xkms/keys/{id}/versions/disable-all` | HandleXKMSDisableAllKeyVersions | - | not covered |
-| POST | `/api/v1/xkms/keys/{id}/versions/enable-all` | HandleXKMSEnableAllKeyVersions | - | not covered |
-| POST | `/api/v1/xkms/keys/{id}/versions/{version}/disable` | HandleXKMSDisableKeyVersion | - | not covered |
-| POST | `/api/v1/xkms/keys/{id}/versions/{version}/enable` | HandleXKMSEnableKeyVersion | - | not covered |
+| POST | `/api/v1/xkms/fido2/authenticate/begin` | HandleXKMSFIDO2BeginAuthentication | - (rest.ts†) | not covered |
+| POST | `/api/v1/xkms/fido2/authenticate/finish` | HandleXKMSFIDO2FinishAuthentication | - (rest.ts†) | not covered |
+| POST | `/api/v1/xkms/fido2/register/begin` | HandleXKMSFIDO2BeginRegistration | - (rest.ts†) | not covered |
+| POST | `/api/v1/xkms/fido2/register/finish` | HandleXKMSFIDO2FinishRegistration | - (rest.ts†) | not covered |
+| POST | `/api/v1/xkms/fido2/credentials/begin` | HandleXKMSFIDO2BeginAddCredential | rest.ts | not covered |
+| GET | `/api/v1/xkms/health` | HandleXKMSHealth | rest.ts | not covered |
+| GET | `/api/v1/xkms/keys` | HandleXKMSListKeys | - (rest.ts†) | not covered |
+| POST | `/api/v1/xkms/keys` | HandleXKMSGenerateKey | rest.ts | not covered |
+| DELETE | `/api/v1/xkms/keys/{id}` | HandleXKMSDeleteKey | - (rest.ts†) | not covered |
+| GET | `/api/v1/xkms/keys/{id}` | HandleXKMSGetKey | - (rest.ts†) | not covered |
+| POST | `/api/v1/xkms/keys/{id}/decrypt` | HandleXKMSDecrypt | - (rest.ts†) | not covered |
+| POST | `/api/v1/xkms/keys/{id}/encrypt` | HandleXKMSEncrypt | - (rest.ts†) | not covered |
+| POST | `/api/v1/xkms/keys/{id}/rotate` | HandleXKMSRotateKey | - (rest.ts†) | not covered |
+| POST | `/api/v1/xkms/keys/{id}/sign` | HandleXKMSSign | - (rest.ts†) | not covered |
+| POST | `/api/v1/xkms/keys/{id}/verify` | HandleXKMSVerify | - (rest.ts†) | not covered |
+| GET | `/api/v1/xkms/keys/{id}/versions` | HandleXKMSListKeyVersions | - (rest.ts†) | not covered |
+| POST | `/api/v1/xkms/keys/{id}/versions/disable-all` | HandleXKMSDisableAllKeyVersions | - (rest.ts†) | not covered |
+| POST | `/api/v1/xkms/keys/{id}/versions/enable-all` | HandleXKMSEnableAllKeyVersions | - (rest.ts†) | not covered |
+| POST | `/api/v1/xkms/keys/{id}/versions/{version}/disable` | HandleXKMSDisableKeyVersion | - (rest.ts†) | not covered |
+| POST | `/api/v1/xkms/keys/{id}/versions/{version}/enable` | HandleXKMSEnableKeyVersion | - (rest.ts†) | not covered |
 | GET | `/api/v1/xkms/pin/lockout` | HandleXKMSGetLockoutStatus | - | not covered |
 | POST | `/api/v1/xkms/pin/lockout/reset` | HandleXKMSResetLockout | - | not covered |
 | POST | `/api/v1/xkms/pin/so/change` | HandleXKMSChangeSOPIN | - | not covered |
@@ -680,15 +681,15 @@ RestSecretsClient builds `/api/v1/secrets/<path>` for the `*` routes (POST store
 | POST | `/api/v1/xkms/pin/user/change` | HandleXKMSChangeUserPIN | - | not covered |
 | POST | `/api/v1/xkms/pin/user/set` | HandleXKMSSetUserPIN | - | not covered |
 | POST | `/api/v1/xkms/pin/user/verify` | HandleXKMSVerifyUserPIN | - | not covered |
-| GET | `/api/v1/xkms/piv/slots` | HandleXKMSListPIVSlots | - | not covered |
-| DELETE | `/api/v1/xkms/piv/slots/{slot}/cert` | HandleXKMSDeletePIVCertificate | - | not covered |
-| GET | `/api/v1/xkms/piv/slots/{slot}/cert` | HandleXKMSGetPIVCertificate | - | not covered |
-| PUT | `/api/v1/xkms/piv/slots/{slot}/cert` | HandleXKMSStorePIVCertificate | - | not covered |
-| POST | `/api/v1/xkms/piv/slots/{slot}/csr` | HandleXKMSGeneratePIVCSR | - | not covered |
-| POST | `/api/v1/xkms/piv/slots/{slot}/key` | HandleXKMSGeneratePIVKey | - | not covered |
-| POST | `/api/v1/xkms/seal` | HandleXKMSSeal | - | not covered |
-| GET | `/api/v1/xkms/seal/capability` | HandleXKMSCanSeal | - | not covered |
-| POST | `/api/v1/xkms/unseal` | HandleXKMSUnseal | - | not covered |
+| GET | `/api/v1/xkms/piv/slots` | HandleXKMSListPIVSlots | - (rest.ts†) | not covered |
+| DELETE | `/api/v1/xkms/piv/slots/{slot}/cert` | HandleXKMSDeletePIVCertificate | - (rest.ts†) | not covered |
+| GET | `/api/v1/xkms/piv/slots/{slot}/cert` | HandleXKMSGetPIVCertificate | - (rest.ts†) | not covered |
+| PUT | `/api/v1/xkms/piv/slots/{slot}/cert` | HandleXKMSStorePIVCertificate | - (rest.ts†) | not covered |
+| POST | `/api/v1/xkms/piv/slots/{slot}/csr` | HandleXKMSGeneratePIVCSR | - (rest.ts†) | not covered |
+| POST | `/api/v1/xkms/piv/slots/{slot}/key` | HandleXKMSGeneratePIVKey | - (rest.ts†) | not covered |
+| POST | `/api/v1/xkms/seal` | HandleXKMSSeal | rest.ts | not covered |
+| GET | `/api/v1/xkms/seal/capability` | HandleXKMSCanSeal | - (rest.ts†) | not covered |
+| POST | `/api/v1/xkms/unseal` | HandleXKMSUnseal | rest.ts | not covered |
 | POST | `/api/v1/xkms/v1/ssh/authorized` | HandleEmitAuthorized | - | not covered |
 | GET | `/api/v1/xkms/v1/ssh/authorized/keys` | HandleListAuthorizedKeys | - | not covered |
 | POST | `/api/v1/xkms/v1/ssh/authorized/keys` | HandleAddAuthorizedKey | - | not covered |
@@ -711,26 +712,26 @@ RestSecretsClient builds `/api/v1/secrets/<path>` for the `*` routes (POST store
 
 | Method | Path | Handler | SDK file | Console |
 |---|---|---|---|---|
-| POST | `/api/v1/admin/object-backends` | HandleCreateObjectBackend | - | not covered |
-| DELETE | `/api/v1/admin/object-backends/{name}` | HandleDeleteObjectBackend | - | not covered |
-| PUT | `/api/v1/admin/object-backends/{name}` | HandleUpdateObjectBackend | - | not covered |
-| POST | `/api/v1/admin/object-backends/{name}/compact` | HandleCompactObjectBackend | - | not covered |
-| PUT | `/api/v1/admin/object-backends/{name}/status` | HandleSetObjectBackendStatus | - | not covered |
-| POST | `/api/v1/admin/objects/repair` | HandleRepairObject | - | not covered |
-| POST | `/api/v1/admin/storage/gc` | HandleRunGarbageCollection | - | not covered |
-| GET | `/api/v1/admin/storage/gc/progress` | HandleGetGarbageCollectionProgress | - | not covered |
-| GET | `/api/v1/admin/storage/stats` | HandleGetStorageStats | - | not covered |
+| POST | `/api/v1/admin/object-backends` | HandleCreateObjectBackend | rest.ts | not covered |
+| DELETE | `/api/v1/admin/object-backends/{name}` | HandleDeleteObjectBackend | rest.ts | not covered |
+| PUT | `/api/v1/admin/object-backends/{name}` | HandleUpdateObjectBackend | rest.ts | not covered |
+| POST | `/api/v1/admin/object-backends/{name}/compact` | HandleCompactObjectBackend | rest.ts | not covered |
+| PUT | `/api/v1/admin/object-backends/{name}/status` | HandleSetObjectBackendStatus | rest.ts | not covered |
+| POST | `/api/v1/admin/objects/repair` | HandleRepairObject | rest.ts | not covered |
+| POST | `/api/v1/admin/storage/gc` | HandleRunGarbageCollection | rest.ts | not covered |
+| GET | `/api/v1/admin/storage/gc/progress` | HandleGetGarbageCollectionProgress | - (rest.ts†) | not covered |
+| GET | `/api/v1/admin/storage/stats` | HandleGetStorageStats | - (rest.ts†) | not covered |
 
 ### backups
 
 | Method | Path | Handler | SDK file | Console |
 |---|---|---|---|---|
-| GET | `/api/v1/backups` | HandleListBackups | - | not covered |
+| GET | `/api/v1/backups` | HandleListBackups | - (rest.ts†) | covered: views/cluster/BackupView.svelte |
 | POST | `/api/v1/backups` | HandleCreateBackup | - | not covered |
-| DELETE | `/api/v1/backups/{id}` | HandleDeleteBackup | - | not covered |
-| POST | `/api/v1/backups/{id}/restore` | HandleRestoreBackup | - | not covered |
-| GET | `/api/v1/backups/{id}/status` | HandleBackupStatus | - | not covered |
-| POST | `/api/v1/backups/{id}/verify` | HandleVerifyBackup | - | not covered |
+| DELETE | `/api/v1/backups/{id}` | HandleDeleteBackup | rest.ts | covered: views/cluster/BackupView.svelte |
+| POST | `/api/v1/backups/{id}/restore` | HandleRestoreBackup | rest.ts | not covered |
+| GET | `/api/v1/backups/{id}/status` | HandleBackupStatus | rest.ts | not covered |
+| POST | `/api/v1/backups/{id}/verify` | HandleVerifyBackup | rest.ts | covered: views/cluster/BackupView.svelte |
 
 ### object-backends
 
@@ -758,9 +759,9 @@ RestObjectsClient builds `/api/v1/objects/<key>` for the `*` routes (PUT stores)
 | HEAD | `/api/v1/objects/*` | handleObjectAction | - | not covered |
 | POST | `/api/v1/objects/*` | handleObjectAction | - | not covered |
 | PUT | `/api/v1/objects/*` | handleObjectAction | - (rest.ts†) | covered: views/data/ObjectsView.svelte |
-| POST | `/api/v1/objects/batch` | HandleBatchPutObjects | - | not covered |
-| POST | `/api/v1/objects/batch/delete` | HandleBatchDeleteObjects | - | not covered |
-| POST | `/api/v1/objects/batch/get` | HandleBatchGetObjects | - | not covered |
+| POST | `/api/v1/objects/batch` | HandleBatchPutObjects | rest.ts | not covered |
+| POST | `/api/v1/objects/batch/delete` | HandleBatchDeleteObjects | rest.ts | not covered |
+| POST | `/api/v1/objects/batch/get` | HandleBatchGetObjects | rest.ts | not covered |
 | GET | `/api/v1/objects/by-tag` | HandleListByTag | - | not covered |
 | GET | `/api/v1/objects/by-tenant/{tenant}` | HandleListByTenant | - | not covered |
 
