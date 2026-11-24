@@ -14,9 +14,12 @@
 package grpc
 
 import (
+	"fmt"
+
 	"google.golang.org/grpc"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
+	iampb "github.com/jeremyhahn/go-quicbaas/api/proto/iam"
 )
 
 // brokerServiceDescs is the canonical list of gRPC service descriptors that the
@@ -187,6 +190,27 @@ var qrdbIdentityGatedMethods = map[string]bool{
 	"/qrdb.v1.QRDBService/BarrierRecoveryShareClaimComplete": true,
 }
 
+// grpcRequestPermissions holds, per gRPC FullMethod, the further permissions a
+// request's own fields demand on top of the method's grpcMethodPermissions
+// grant. Each func returns the extra permissions for req (nil when the fields
+// demand none) and an error for a req it does not recognise, so the call fails
+// closed. The token's tenant is the target tenant for every entry: each
+// handler here refuses any tenant other than the caller's own.
+var grpcRequestPermissions = map[string]func(req interface{}) ([]methodPermission, error){
+	// go-qrdb's native CreateUser (AuthorizeRoleAssignmentWriteOnCreate):
+	// a create that names roles also needs roles:assign.
+	"/quicbaas.iam.v1.IAMService/CreateUser": func(req interface{}) ([]methodPermission, error) {
+		r, ok := req.(*iampb.CreateUserRequest)
+		if !ok {
+			return nil, fmt.Errorf("unexpected request type %T for CreateUser", req)
+		}
+		if len(r.GetRoles()) > 0 {
+			return []methodPermission{{"roles", "assign"}}, nil
+		}
+		return nil, nil
+	},
+}
+
 // grpcMethodPermissions maps each protected gRPC FullMethod to the qrdb-canonical
 // permission it requires. Every value is a registered qrdb permission (the join
 // resource:action exists in go-qrdb/pkg/permission/constants.go).
@@ -271,7 +295,9 @@ var grpcMethodPermissions = map[string]methodPermission{
 	// method is mapped only by REST parity, taking its REST twin's grant.
 	// Mirrors REST POST /api/v1/iam/users/{user_id}/approve (users:enable).
 	"/quicbaas.iam.v1.IAMService/ApproveUser": {"users", "enable"},
-	// Mirrors QRDBService CreateUser (users:create).
+	// Mirrors QRDBService CreateUser (users:create). A request naming roles
+	// also takes roles:assign (grpcRequestPermissions), as go-qrdb's native
+	// CreateUser requires (AuthorizeRoleAssignmentWriteOnCreate).
 	"/quicbaas.iam.v1.IAMService/CreateUser": {"users", "create"},
 	// Mirror QRDBService GetUser/GetUserByUsername (users:read).
 	"/quicbaas.iam.v1.IAMService/GetUser":                   {"users", "read"},
