@@ -30,12 +30,14 @@ var xkmsPasskeyLoginRoutes = []string{
 }
 
 const (
-	// xkmsSubjectKindKey is the identity metadata key go-xkms names the
-	// kind of a token's Subject under.
-	xkmsSubjectKindKey = "subject_kind"
-	// xkmsPasskeySubjectKind is the subject kind go-xkms gives a passkey
-	// token's identity: its Subject is the WebAuthn user handle, the qrdb
-	// user id as 8 big-endian bytes in unpadded base64url.
+	// xkmsSubjectKindKey is the identity metadata key go-xkms declares the
+	// encoding of a token's Subject under (go-xkms auth.SubjectKindMetadataKey).
+	// go-xkms stamps it on the refresh token; the access token's identity
+	// does not carry it.
+	xkmsSubjectKindKey = "sub_kind"
+	// xkmsPasskeySubjectKind is the subject kind of a passkey login (go-xkms
+	// auth.SubjectKindUserHandle): its Subject is the WebAuthn user handle,
+	// the qrdb user id as 8 big-endian bytes in unpadded base64url.
 	xkmsPasskeySubjectKind = "user_handle"
 )
 
@@ -199,10 +201,12 @@ func resolveCertUser(r *http.Request, _ *bufferedResponseWriter, store *iam.Iden
 
 // resolvePasskeyUser names the IAM user a go-xkms passkey login belongs to.
 // The identity comes only from the module's own token, verified by the
-// module's bearer fallback; the body's username is never trusted.
+// module's bearer fallback; the body's username is never trusted, and its
+// user_id, when present, must agree with the token.
 func (m *xkmsLoginPlatformTokenModule) resolvePasskeyUser(r *http.Request, buffered *bufferedResponseWriter, store *iam.IdentityStore) *iam.User {
 	var answer struct {
-		Token string `json:"token"`
+		Token  string `json:"token"`
+		UserID string `json:"user_id"`
 	}
 	if err := json.Unmarshal(buffered.body.Bytes(), &answer); err != nil || strings.TrimSpace(answer.Token) == "" {
 		return nil
@@ -210,11 +214,22 @@ func (m *xkmsLoginPlatformTokenModule) resolvePasskeyUser(r *http.Request, buffe
 	verify := r.Clone(r.Context())
 	verify.Header.Set("Authorization", "Bearer "+answer.Token)
 	identity, err := m.inner.AuthenticateHTTP(verify)
-	if err != nil || identity == nil || identity.Metadata[xkmsSubjectKindKey] != xkmsPasskeySubjectKind {
+	if err != nil || identity == nil {
+		return nil
+	}
+	// The passkey routes mint through go-xkms's WebAuthn token adapter, so
+	// the Subject is the user handle. An identity that declares any other
+	// encoding is refused, never reinterpreted.
+	if kind, declared := identity.Metadata[xkmsSubjectKindKey]; declared && kind != xkmsPasskeySubjectKind {
 		return nil
 	}
 	handle, err := base64.RawURLEncoding.DecodeString(identity.Subject)
 	if err != nil || len(handle) != 8 {
+		return nil
+	}
+	// The ceremony's own answer names the account it authenticated; when it
+	// does, it must be the token's subject.
+	if answer.UserID != "" && !passkeyHandleMatches(answer.UserID, handle) {
 		return nil
 	}
 	user, err := store.GetUser(r.Context(), identity.TenantID, binary.BigEndian.Uint64(handle))
@@ -222,6 +237,17 @@ func (m *xkmsLoginPlatformTokenModule) resolvePasskeyUser(r *http.Request, buffe
 		return nil
 	}
 	return user
+}
+
+// passkeyHandleMatches reports whether encoded, the user_id a go-xkms
+// ceremony answers (base64, padded or not), decodes to handle.
+func passkeyHandleMatches(encoded string, handle []byte) bool {
+	for _, enc := range []*base64.Encoding{base64.RawURLEncoding, base64.URLEncoding, base64.StdEncoding, base64.RawStdEncoding} {
+		if decoded, err := enc.DecodeString(encoded); err == nil {
+			return bytes.Equal(decoded, handle)
+		}
+	}
+	return false
 }
 
 // exchangeLoginTokens runs next and, when it answered 200, replaces the

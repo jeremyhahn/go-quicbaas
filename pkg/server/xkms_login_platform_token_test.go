@@ -227,10 +227,14 @@ func passkeyUserHandle(id uint64) string {
 // passkeyModuleIdentity is the identity go-xkms's fallback returns for its
 // passkey token.
 func passkeyModuleIdentity(id uint64, subjectKind string) *qrdbsdk.Identity {
+	metadata := map[string]string{"username": passkeyUsername}
+	if subjectKind != "" {
+		metadata["sub_kind"] = subjectKind
+	}
 	return &qrdbsdk.Identity{
 		Subject:  passkeyUserHandle(id),
 		TenantID: xkmsModuleWebAuthnTenantID,
-		Metadata: map[string]string{"subject_kind": subjectKind, "username": passkeyUsername},
+		Metadata: metadata,
 	}
 }
 
@@ -326,7 +330,7 @@ func TestXKMSLoginPlatformToken_PasskeyLoginReturnsPlatformTokens(t *testing.T) 
 	t.Run("login finish", func(t *testing.T) {
 		router := passkeyRouter(t, srv, &passkeyStubModule{
 			platformTokenStubModule: platformTokenStubModule{status: http.StatusOK, body: passkeyLoginBody},
-			identity:                passkeyModuleIdentity(user.ID, "user_handle"),
+			identity:                passkeyModuleIdentity(user.ID, ""),
 		})
 
 		rec := postPlatformTokenRoute(router, passkeyLoginFinishRoute, nil)
@@ -384,6 +388,19 @@ func TestXKMSLoginPlatformToken_PasskeyWrongSubjectKindRefused(t *testing.T) {
 	})
 
 	assertPasskeyRefused(t, postPlatformTokenRoute(router, passkeySDKFinishRoute, nil))
+}
+
+// TestXKMSLoginPlatformToken_PasskeyUserIDMismatchRefused pins that a login
+// answer naming a different account than its token's subject is refused.
+func TestXKMSLoginPlatformToken_PasskeyUserIDMismatchRefused(t *testing.T) {
+	srv, _, user := newPasskeyLoginNode(t)
+	body := `{"token":"` + passkeyModuleToken + `","user_id":"` + passkeyUserHandle(user.ID+1) + `"}`
+	router := passkeyRouter(t, srv, &passkeyStubModule{
+		platformTokenStubModule: platformTokenStubModule{status: http.StatusOK, body: body},
+		identity:                passkeyModuleIdentity(user.ID, ""),
+	})
+
+	assertPasskeyRefused(t, postPlatformTokenRoute(router, passkeyLoginFinishRoute, nil))
 }
 
 func TestXKMSLoginPlatformToken_PasskeyUnknownUserRefused(t *testing.T) {
