@@ -753,23 +753,19 @@ describe('IAMView', () => {
       await waitFor(() => expect(dialog.textContent).toContain('No active sessions'));
     });
 
-    it('revokes all sessions after confirmation, toasts and reloads', async () => {
+    it('lists the sessions but withholds "Revoke all sessions"', async () => {
       const list = vi.fn().mockResolvedValue({ sessions: [session] });
       const revoke = vi.fn().mockResolvedValue(undefined);
       stubSessions({ listUserSessions: list, revokeAllUserSessions: revoke });
-      await openSessionsDialog('alice');
+      const dialog = await openSessionsDialog('alice');
       await screen.findByRole('table', { name: 'User sessions' });
-      await fireEvent.click(screen.getByRole('button', { name: 'Revoke all sessions' }));
+      expect(screen.queryByRole('button', { name: 'Revoke all sessions' })).toBeNull();
+      expect(screen.queryByRole('dialog', { name: 'Revoke sessions confirmation' })).toBeNull();
+      expect(dialog.textContent).toContain(
+        "Revoking sessions is not offered yet: it does not end a login's access or refresh tokens.",
+      );
+      expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
       expect(revoke).not.toHaveBeenCalled();
-      screen.getByRole('dialog', { name: 'Revoke sessions confirmation' });
-      await fireEvent.click(screen.getByRole('button', { name: 'Revoke' }));
-
-      await waitFor(() => {
-        expect(revoke).toHaveBeenCalledWith('acme', 'user-1');
-        expect(mockShowToast).toHaveBeenCalledWith({ message: 'All sessions of "alice" revoked', type: 'success' });
-        expect(list).toHaveBeenCalledTimes(2);
-      });
-      expect(screen.queryByRole('dialog', { name: 'Revoke sessions confirmation' })).not.toBeInTheDocument();
     });
 
     it('shows the SDK error in the dialog when the list fails', async () => {
@@ -778,18 +774,6 @@ describe('IAMView', () => {
       await waitFor(() => {
         expect(dialog.querySelector('[role="alert"]')?.textContent).toBe('sessions unavailable');
       });
-    });
-
-    it('shows the SDK error in the dialog when the revoke is rejected', async () => {
-      stubSessions({ revokeAllUserSessions: vi.fn().mockRejectedValue(new Error('revoke denied')) });
-      const dialog = await openSessionsDialog('alice');
-      await screen.findByRole('table', { name: 'User sessions' });
-      await fireEvent.click(screen.getByRole('button', { name: 'Revoke all sessions' }));
-      await fireEvent.click(screen.getByRole('button', { name: 'Revoke' }));
-      await waitFor(() => {
-        expect(dialog.querySelector('[role="alert"]')?.textContent).toBe('revoke denied');
-      });
-      expect(mockShowToast).not.toHaveBeenCalled();
     });
   });
 
@@ -1587,5 +1571,109 @@ describe('Provision tenant', () => {
     await submit();
     expect(await screen.findByRole('alert')).toHaveTextContent('tenant already exists');
     expect(screen.getByRole('dialog', { name: 'Provision tenant dialog' })).toBeInTheDocument();
+  });
+
+  it('clears the shown invite token when the session changes', async () => {
+    await openDialog();
+    await fireEvent.input(screen.getByLabelText('Tenant ID'), { target: { value: 'globex' } });
+    await submit();
+    await screen.findByRole('dialog', { name: 'Tenant provisioned dialog' });
+    expect(screen.getByLabelText('Invite token')).toHaveValue('inv-secret-token');
+
+    setAuthenticated({ access_token: sessionToken('globex') });
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: 'Tenant provisioned dialog' })).toBeNull();
+      expect(screen.queryByDisplayValue('inv-secret-token')).toBeNull();
+    });
+  });
+
+  it('clears the shown admin certificate when the session changes', async () => {
+    const pem = '-----BEGIN CERTIFICATE-----\nsecret-cert\n-----END CERTIFICATE-----';
+    provisionTenant.mockResolvedValue({
+      tenant_id: 'globex',
+      admin_user_id: 'usr_admin',
+      admin_username: 'root',
+      admin_role_id: 'role_admin',
+      admin_pending: false,
+      admin_cert_pem: pem,
+      timestamp: '2026-11-12T00:00:00Z',
+    });
+    const csr = '-----BEGIN CERTIFICATE REQUEST-----\nabc\n-----END CERTIFICATE REQUEST-----';
+    await openDialog();
+    await fireEvent.input(screen.getByLabelText('Tenant ID'), { target: { value: 'globex' } });
+    await fireEvent.click(screen.getByLabelText('Certificate (CSR)'));
+    await fireEvent.input(screen.getByLabelText('Admin CSR PEM'), { target: { value: csr } });
+    await submit();
+    await screen.findByRole('dialog', { name: 'Tenant provisioned dialog' });
+    expect(screen.getByLabelText('Admin certificate')).toHaveValue(pem);
+
+    setAuthenticated({ access_token: sessionToken('globex') });
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: 'Tenant provisioned dialog' })).toBeNull();
+      expect(screen.queryByDisplayValue(pem)).toBeNull();
+    });
+  });
+
+  it('drops a provisioning result that lands after the session changed', async () => {
+    let resolve!: (v: unknown) => void;
+    provisionTenant.mockReturnValue(
+      new Promise((r) => {
+        resolve = r;
+      }),
+    );
+    await openDialog();
+    await fireEvent.input(screen.getByLabelText('Tenant ID'), { target: { value: 'globex' } });
+    await submit();
+    await waitFor(() => expect(provisionTenant).toHaveBeenCalledTimes(1));
+
+    setAuthenticated({ access_token: sessionToken('globex') });
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Provision tenant dialog' })).toBeNull());
+    // The new session opens the form before the old response lands.
+    await fireEvent.click(screen.getByRole('button', { name: 'Provision tenant' }));
+    await screen.findByRole('dialog', { name: 'Provision tenant dialog' });
+    expect(screen.getByLabelText('Tenant ID')).toHaveValue('');
+
+    resolve({
+      tenant_id: 'globex',
+      admin_user_id: 'usr_admin',
+      admin_username: 'root',
+      admin_role_id: 'role_admin',
+      admin_pending: true,
+      invite_token: 'inv-secret-token',
+      timestamp: '2026-11-12T00:00:00Z',
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    await tick();
+    expect(screen.queryByRole('dialog', { name: 'Tenant provisioned dialog' })).toBeNull();
+    expect(screen.queryByDisplayValue('inv-secret-token')).toBeNull();
+    expect(mockShowToast).not.toHaveBeenCalled();
+    // The form stays open and usable for the new session.
+    expect(screen.getByRole('dialog', { name: 'Provision tenant dialog' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Provision' })).not.toBeDisabled();
+  });
+
+  it('drops a provisioning error that lands after the session changed', async () => {
+    let reject!: (e: Error) => void;
+    provisionTenant.mockReturnValue(
+      new Promise((_, r) => {
+        reject = r;
+      }),
+    );
+    await openDialog();
+    await fireEvent.input(screen.getByLabelText('Tenant ID'), { target: { value: 'globex' } });
+    await submit();
+    await waitFor(() => expect(provisionTenant).toHaveBeenCalledTimes(1));
+
+    setAuthenticated({ access_token: sessionToken('globex') });
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Provision tenant dialog' })).toBeNull());
+    await fireEvent.click(screen.getByRole('button', { name: 'Provision tenant' }));
+    const form = await screen.findByRole('dialog', { name: 'Provision tenant dialog' });
+
+    reject(new Error('old session refused'));
+    await new Promise((r) => setTimeout(r, 0));
+    await tick();
+    expect(form.querySelector('[role="alert"]')).toBeNull();
+    expect(screen.queryByText('old session refused')).toBeNull();
+    expect(mockShowToast).not.toHaveBeenCalled();
   });
 });

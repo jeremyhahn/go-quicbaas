@@ -279,9 +279,9 @@
   let userSessions: IAMSession[] = $state([]);
   let sessionsLoading = $state(false);
   let sessionsError: string | null = $state(null);
-  // The revoke-all confirmation is open.
-  let confirmRevokeSessions = $state(false);
-  let revokingSessions = $state(false);
+  // The dialog lists a user's sessions read-only. Revoking them is withheld:
+  // the server only deletes the session-manager records, so a login's access
+  // and refresh tokens stay valid until they expire.
 
   // ---------------------------------------------------------------------------
   // MFA dialog state
@@ -386,6 +386,23 @@
   // The provisioning result; holds the one-time invite token or certificate
   // until the result dialog closes.
   let provisionResult: ProvisionTenantResponse | null = $state(null);
+
+  // The provisioning result is shown only to the session that asked for it:
+  // a change of session identity closes the form and drops the invite token
+  // or certificate. No cleanup is sent: the new session did not provision it.
+  let lastProvisionSession = authStore.sessionKey;
+  $effect(() => {
+    const key = authStore.sessionKey;
+    if (key === lastProvisionSession) return;
+    lastProvisionSession = key;
+    untrack(() => {
+      provisionResult = null;
+      showProvisionTenant = false;
+      provCsrPem = '';
+      provisionTenantError = null;
+      provisioningTenant = false;
+    });
+  });
 
   // ---------------------------------------------------------------------------
   // Edit Tenant dialog state
@@ -1341,34 +1358,12 @@
     userForSessions = user;
     userSessions = [];
     sessionsError = null;
-    confirmRevokeSessions = false;
-    revokingSessions = false;
     void loadUserSessions(user);
   }
 
   function closeSessions(): void {
     userForSessions = null;
     sessionsError = null;
-    confirmRevokeSessions = false;
-  }
-
-  async function confirmRevokeAllSessions(): Promise<void> {
-    if (!userForSessions) return;
-    const user = userForSessions;
-    sessionsError = null;
-    revokingSessions = true;
-    try {
-      const client = await getSDKClient();
-      await client.iam.revokeAllUserSessions(selectedTenantID, user.id);
-      showToast({ message: `All sessions of "${user.username}" revoked`, type: 'success' });
-      confirmRevokeSessions = false;
-      await loadUserSessions(user);
-    } catch (e) {
-      confirmRevokeSessions = false;
-      sessionsError = e instanceof Error ? e.message : 'Failed to revoke sessions';
-    } finally {
-      revokingSessions = false;
-    }
   }
 
   // ---------------------------------------------------------------------------
@@ -1447,16 +1442,23 @@
         req.invite_expiry_hours = Number(expiry);
       }
     }
+    // Read before the call: a result that lands after the session changed
+    // belongs to the old session and is dropped, secrets and errors alike.
+    const forSession = authStore.sessionKey;
     provisioningTenant = true;
     try {
       const client = await getSDKClient();
-      provisionResult = await client.iam.provisionTenant(req);
+      const result = await client.iam.provisionTenant(req);
+      if (forSession !== authStore.sessionKey) return;
+      provisionResult = result;
       showToast({ message: `Tenant "${tenantID}" provisioned`, type: 'success' });
       closeProvisionTenant();
     } catch (e) {
+      if (forSession !== authStore.sessionKey) return;
       provisionTenantError = e instanceof Error ? e.message : 'Failed to provision tenant';
     } finally {
-      provisioningTenant = false;
+      // The session-change effect already reset the form for a new session.
+      if (forSession === authStore.sessionKey) provisioningTenant = false;
     }
   }
 
@@ -2502,28 +2504,15 @@
           </table>
         </div>
       {/if}
+      <!-- Revoking sessions is withheld: it would delete the session records
+           but leave the login's access and refresh tokens valid. -->
+      <p class="text-xs text-base-content/50">Revoking sessions is not offered yet: it does not end a login's access or refresh tokens.</p>
       <div class="modal-action">
         <button class="btn btn-ghost btn-sm" onclick={closeSessions}>Close</button>
-        <button class="btn btn-error btn-sm" disabled={revokingSessions || userSessions.length === 0} onclick={() => { confirmRevokeSessions = true; }}>Revoke all sessions</button>
       </div>
     </div>
     <div class="modal-backdrop" role="none" onclick={closeSessions} onkeydown={closeSessions}></div>
   </div>
-  {#if confirmRevokeSessions}
-    <div class="modal modal-open" role="dialog" aria-modal="true" aria-label="Revoke sessions confirmation">
-      <div class="modal-box max-w-sm">
-        <h3 class="text-base font-semibold mb-2">Revoke All Sessions?</h3>
-        <p class="text-sm text-base-content/70">
-          Sign <span class="font-mono font-semibold">{userForSessions.username}</span> out of every session? They must sign in again.
-        </p>
-        <div class="modal-action">
-          <button class="btn btn-ghost btn-sm" onclick={() => { confirmRevokeSessions = false; }}>Cancel</button>
-          <button class="btn btn-error btn-sm" disabled={revokingSessions} onclick={confirmRevokeAllSessions}>{revokingSessions ? 'Revoking…' : 'Revoke'}</button>
-        </div>
-      </div>
-      <div class="modal-backdrop" role="none" onclick={() => { confirmRevokeSessions = false; }} onkeydown={() => { confirmRevokeSessions = false; }}></div>
-    </div>
-  {/if}
 {/if}
 
 <!-- =========================================================================
