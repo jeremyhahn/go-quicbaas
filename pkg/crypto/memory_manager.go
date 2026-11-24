@@ -261,11 +261,7 @@ func CreateDefaultManagers(log interfaces.Logger) (interfaces.KMSManager, interf
 
 	// Key-version records, in their own store, so the default keys can be
 	// rotated.
-	versionStorage, err := xkmssdk.NewMemoryBackend()
-	if err != nil {
-		return nil, nil, nil, errors.Wrapf(err, errors.ErrInternal, "crypto.CreateDefaultManagers", "failed to create key version storage")
-	}
-	keyVersions, err := xkmssdk.NewKeyVersionStore(versionStorage)
+	keyVersions, err := xkmssdk.NewKeyVersionStore(NewMemoryDAOFactory())
 	if err != nil {
 		return nil, nil, nil, errors.Wrapf(err, errors.ErrInternal, "crypto.CreateDefaultManagers", "failed to create key version store")
 	}
