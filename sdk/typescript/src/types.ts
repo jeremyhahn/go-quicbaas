@@ -1893,7 +1893,7 @@ export interface ClientConfig {
 
 // =============================================================================
 // Agent Deploy Types
-// Mirrors pkg/fleet/deploy/spec.go — fields are snake_case to match the
+// Mirrors pkg/orchestration/fleet/deploy/spec.go — fields are snake_case to match the
 // JSON tags the Go-side primitives use.
 // =============================================================================
 

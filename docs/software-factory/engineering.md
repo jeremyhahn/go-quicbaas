@@ -32,7 +32,7 @@ the binary, not a Go constant. `pkg/orchestration/prompts` is the generic
 package — `SetKind`, `PromptSpec`, `SetSpec`, a registry swapped as a whole
 under `atomic.Pointer`, a validator, a `${name}` renderer and a content hash.
 Two sets register from `init()`: `workflow`, owned by `pkg/orchestration` from
-`promptdefaults/workflow/*.md`, and `sdlc`, owned by `pkg/sdlc` from
+`promptdefaults/workflow/*.md`, and `sdlc`, owned by `pkg/orchestration/sdlc` from
 `promptdefaults/sdlc/*.md`. **The embedded files are the system tenant's
 defaults.**
 

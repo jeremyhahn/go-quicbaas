@@ -33,7 +33,7 @@ import (
 // #235 taught the SDLC module to refund an attempt that never reached a model,
 // on the CLI's own structured account of the failure. That works in-process,
 // where the typed error travels by pointer. Over a remote daemon it did not:
-// the daemon mapped the failure to a gRPC status (pkg/fleet, mapRuntimeError),
+// the daemon mapped the failure to a gRPC status (pkg/orchestration/fleet, mapRuntimeError),
 // the client wrapped the transport error, and the evidence was gone. A
 // distributed worker went on burning its attempt on exactly the pre-model
 // failure a local one has refunded since #235 — the same local-fixed,

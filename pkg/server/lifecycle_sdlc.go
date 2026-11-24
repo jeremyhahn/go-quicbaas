@@ -29,7 +29,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/cas"
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
-	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/sdlc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	qbshards "github.com/jeremyhahn/go-quicbaas/pkg/shards"
 )
@@ -48,7 +48,7 @@ import (
 //
 // THE ENGINE NEVER IMPORTS THIS MODULE. Registration goes the other way: the
 // host registers a forwarder into orchestration's registries, so
-// pkg/orchestration knows a runner named "sdlc" and nothing about pkg/sdlc.
+// pkg/orchestration knows a runner named "sdlc" and nothing about pkg/orchestration/sdlc.
 //
 // THE SEAM REGISTRIES ARE PROCESS-GLOBAL AND APPEND-ONLY, while a server
 // starts and stops (a restart in one process is exactly what the e2e rig
@@ -934,7 +934,7 @@ func verifyTransactionPlane(ctx context.Context, tx cas.Transactor) error {
 const sdlcTransactionProbeKey = "__sys:sdlc/boot-probe"
 
 // sdlcWebhookPathParams extracts the project id from the route. Injected
-// rather than assumed by pkg/sdlc, which holds no router.
+// rather than assumed by pkg/orchestration/sdlc, which holds no router.
 func sdlcWebhookPathParams(r *http.Request) string {
 	return chi.URLParam(r, "projectID")
 }

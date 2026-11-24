@@ -16,7 +16,7 @@ package embedded
 import (
 	"context"
 
-	pkgsdlc "github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
+	pkgsdlc "github.com/jeremyhahn/go-quicbaas/pkg/orchestration/sdlc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/sdlc"
 )

@@ -285,7 +285,7 @@ func TestRemoteTurnFailure_RendersOnlyCompiledConstants(t *testing.T) {
 func TestRemoteACPBackend_PromptReconstructsTheTurnFailure(t *testing.T) {
 	t.Parallel()
 
-	// The daemon answers the way pkg/fleet's Prompt handler does once it has
+	// The daemon answers the way pkg/orchestration/fleet's Prompt handler does once it has
 	// attached the evidence.
 	local := localPreFirstTurnError()
 	daemon := startBufconnDaemon(t, &fakeDaemonServer{

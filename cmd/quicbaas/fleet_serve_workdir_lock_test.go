@@ -23,7 +23,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/fleet"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/fleet"
 )
 
 // serveWorkDirCommand parses a fleet serve command line that passes Validate

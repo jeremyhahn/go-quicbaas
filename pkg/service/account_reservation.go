@@ -24,7 +24,7 @@ import (
 // Session reservations — the remote half of the session cap
 // =============================================================================
 //
-// A worker daemon selects its account itself (pkg/fleet/account_pool.go), so
+// A worker daemon selects its account itself (pkg/orchestration/fleet/account_pool.go), so
 // the claim that makes MaxConcurrentSessions hold under concurrency has to be
 // made against the control plane's table, not a table of the daemon's own: a
 // cap enforced per host would let every host fill the account. These two verbs

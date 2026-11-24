@@ -107,7 +107,7 @@ func TestHeartbeatBody_ObservationOfAnUnreportedCapacity(t *testing.T) {
 // TestHeartbeatBody_ACapacityWithNoServedListReconcilesNothing pins the shape
 // deliberately NOT supported: an observation reporting no backend is refused by
 // the registry as a fault, so decoding one would turn a heartbeat into an error
-// rather than into a capacity. pkg/fleet writes both fields in one payload.
+// rather than into a capacity. pkg/orchestration/fleet writes both fields in one payload.
 func TestHeartbeatBody_ACapacityWithNoServedListReconcilesNothing(t *testing.T) {
 	t.Parallel()
 

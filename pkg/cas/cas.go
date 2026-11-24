@@ -26,7 +26,7 @@
 // # Why it lives here
 //
 // It was implemented twice before it was implemented once: pkg/scheduler's
-// firing claim and pkg/sdlc's coordination leases each grew the same
+// firing claim and pkg/orchestration/sdlc's coordination leases each grew the same
 // create/read/decide/swap sequence, differing only in what they decide and how
 // they name their errors. Two spellings of one rule drift, and the drift is
 // silent because both spellings keep passing their own tests. Callers supply

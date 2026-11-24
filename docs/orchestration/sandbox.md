@@ -132,7 +132,7 @@ remains the authority for what runs on the daemon.
 
 **A role narrows itself by stating its own grant.** `ApplyWorkerSpawnEnvironment`
 leaves an `ExtraArgs` that already names a permission mode alone, and that is
-the opt-out triage uses (`pkg/sdlc/triage_runner.go`): triage reads a repository
+the opt-out triage uses (`pkg/orchestration/sdlc/triage_runner.go`): triage reads a repository
 at its default branch and writes nothing, so it keeps the narrower grant even
 though it is containerized.
 

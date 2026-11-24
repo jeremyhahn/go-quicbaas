@@ -60,7 +60,7 @@ func (s *sourcedTaskStore) GetTask(_ context.Context, _, taskID string) (*Task, 
 	return task, nil
 }
 
-// forgeIssueKind is pkg/sdlc's source kind, spelled out here because this
+// forgeIssueKind is pkg/orchestration/sdlc's source kind, spelled out here because this
 // package cannot import the module that declares it: the kind is registered
 // INTO the engine, not by it.
 const forgeIssueKind TaskSourceKind = "forge_issue"

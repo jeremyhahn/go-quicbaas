@@ -50,7 +50,7 @@ const (
 type FleetNodeKind string
 
 const (
-	// FleetNodeKindDaemon identifies a long-lived pkg/fleet daemon process that
+	// FleetNodeKindDaemon identifies a long-lived pkg/orchestration/fleet daemon process that
 	// exposes the FleetRuntime gRPC service (see api/proto/fleet_runtime.proto).
 	// Registrations of this kind are routed via RemoteACPBackend.
 	FleetNodeKindDaemon FleetNodeKind = "daemon"
@@ -388,7 +388,7 @@ const FleetNodeTraitGPU = "gpu"
 // Heartbeat reconciliation rewrites the backend axis of a record and must
 // leave these exactly as advertised, because the heartbeat's served list is
 // Runtime.Backends() -- the backends the runtime constructed, and nothing
-// else. pkg/fleet appends the gpu trait on the REGISTER payload alone
+// else. pkg/orchestration/fleet appends the gpu trait on the REGISTER payload alone
 // (enrollment.go bootstrap), so a reconciliation that took the served list
 // wholesale would silently un-advertise a GPU on the first heartbeat.
 var fleetNodeCapabilityTraits = map[string]struct{}{FleetNodeTraitGPU: {}, FleetNodeTraitSigningRelay: {}}
@@ -406,7 +406,7 @@ var fleetNodeCapabilityTraits = map[string]struct{}{FleetNodeTraitGPU: {}, Fleet
 // MCP heartbeat verbs carry no served list -- and reconciles nothing.
 type FleetNodeObservation struct {
 	// Backends is the set of backend names the daemon's runtime is serving
-	// right now (pkg/fleet Runtime.Backends()). It carries no host traits.
+	// right now (pkg/orchestration/fleet Runtime.Backends()). It carries no host traits.
 	//
 	// EMPTY IS A FAULT, NOT A CORRECTION. A daemon that constructed no
 	// backends serves nothing and can honour no task; reconciling a record

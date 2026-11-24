@@ -28,7 +28,7 @@ var (
 )
 
 // Agent runtime scope constants define the OAuth2 scopes that a remote fleet node
-// daemon (pkg/fleet) is authorized to exercise against the central
+// daemon (pkg/orchestration/fleet) is authorized to exercise against the central
 // orchestrator's FleetRuntime gRPC service. They follow the three-segment
 // "resource:subresource:action" naming convention so they slot into the
 // same HasScope / wildcard rules as existing scopes.
@@ -148,7 +148,7 @@ func (e *AgentIdentityInvalidScopeError) Unwrap() error {
 
 // AgentIdentity is an agent DAEMON's enrollment result: the OAuth2 application
 // the control plane registered for a remote fleet node host, plus the grant that
-// application carries. pkg/fleet ProductionEnroller builds it from the response
+// application carries. pkg/orchestration/fleet ProductionEnroller builds it from the response
 // to POST /api/v1/fleet/enroll and the token exchange that follows, and the
 // daemon's own gRPC spawn server authorizes the central's inbound dispatch
 // against its Scopes (GRPCSpawnServer.authorize). That is where it is a
@@ -167,7 +167,7 @@ type AgentIdentity struct {
 	AgentID string
 
 	// ServiceAccountID is the fleet enrollment service-account identifier when
-	// this identity came from pkg/fleet. The orchestration control loop leaves it
+	// this identity came from pkg/orchestration/fleet. The orchestration control loop leaves it
 	// empty because its in-memory AgentIdentity is only turn attribution.
 	ServiceAccountID string
 
