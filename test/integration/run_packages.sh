@@ -100,6 +100,16 @@ PACKAGE_KILL_TIMEOUT=${PACKAGE_KILL_TIMEOUT:-11m}
 # which is capped at 30m. The kill limit stays one minute above it.
 IAM_PACKAGE_TIMEOUT=${IAM_PACKAGE_TIMEOUT:-30m}
 IAM_PACKAGE_KILL_TIMEOUT=${IAM_PACKAGE_KILL_TIMEOUT:-31m}
+# CLI_PACKAGE_TIMEOUT is the cli package's own limit. Its length is legitimate,
+# not a hang: run 45364801188 ran 64 of its 615 top-level tests in 523 s
+# (TestAgentAccount* 296 s, the barrier per-test daemons 171 s) before the 10m
+# limit. The 551 tests still to run all use the shared docker cluster (only
+# barrier_test.go spawns per-test daemons), at about 2 s each:
+#   523 s + 15 s (TestBarrierAuthPosture_DefaultDeny) + 551 x 2 s = 1640 s,
+#   ceil(1.5 x 1640 s) = 2460 s (41m), capped at 30m like iam.
+# The kill limit stays one minute above it.
+CLI_PACKAGE_TIMEOUT=${CLI_PACKAGE_TIMEOUT:-30m}
+CLI_PACKAGE_KILL_TIMEOUT=${CLI_PACKAGE_KILL_TIMEOUT:-31m}
 # HEALTH_PROBE_TIMEOUT bounds the cluster probe after a failed package: a node
 # that accepts connections but never answers would otherwise hang the runner.
 HEALTH_PROBE_TIMEOUT=${HEALTH_PROBE_TIMEOUT:-120s}
@@ -119,6 +129,10 @@ for pkg in "$@"; do
 	*/integration/iam | */integration/iam/ | */integration/iam/...)
 		pkg_timeout=$IAM_PACKAGE_TIMEOUT
 		pkg_kill_timeout=$IAM_PACKAGE_KILL_TIMEOUT
+		;;
+	*/integration/cli | */integration/cli/ | */integration/cli/...)
+		pkg_timeout=$CLI_PACKAGE_TIMEOUT
+		pkg_kill_timeout=$CLI_PACKAGE_KILL_TIMEOUT
 		;;
 	esac
 	# shellcheck disable=SC2086 # FLAGS is split into separate go test flags.

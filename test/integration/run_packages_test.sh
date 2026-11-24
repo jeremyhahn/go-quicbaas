@@ -160,9 +160,14 @@ run_filter "./test/integration/iam" || fail "iam limit: exit $?, want 0"
 grep -q -- ' -timeout 30m .*\./test/integration/iam$' "$tmp/ran.args" ||
 	fail "iam limit: ran '$(cat "$tmp/ran.args")', want -timeout 30m"
 
-# (xi) Every other package keeps PACKAGE_TIMEOUT (10m).
-run_filter "./test/integration/cli" || fail "other limit: exit $?, want 0"
-grep -q -- ' -timeout 10m .*\./test/integration/cli$' "$tmp/ran.args" ||
+# (xi) The cli package runs with its own limit, CLI_PACKAGE_TIMEOUT (30m).
+run_filter "./test/integration/cli" || fail "cli limit: exit $?, want 0"
+grep -q -- ' -timeout 30m .*\./test/integration/cli$' "$tmp/ran.args" ||
+	fail "cli limit: ran '$(cat "$tmp/ran.args")', want -timeout 30m"
+
+# (xii) Every other package keeps PACKAGE_TIMEOUT (10m).
+run_filter "./test/integration/login" || fail "other limit: exit $?, want 0"
+grep -q -- ' -timeout 10m .*\./test/integration/login$' "$tmp/ran.args" ||
 	fail "other limit: ran '$(cat "$tmp/ran.args")', want -timeout 10m"
 
 # Too few arguments are refused, in both modes.
