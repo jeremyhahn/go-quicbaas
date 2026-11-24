@@ -50,7 +50,7 @@ func heartbeatRoutePermission(t *testing.T) string {
 // client_credentials principal has.
 func TestHandleAgentRegister_GrantsTheHeartbeatPermission(t *testing.T) {
 	f := newAgentOAuthFixture(t)
-	resp := f.register(t, "agent-gpu-host")
+	resp := f.register(t, "agent-gpu-01")
 
 	ctx := tokenEndpointContext(resp.ClientID)
 	app, err := f.storage.GetApp(ctx, resp.ClientID)
@@ -78,7 +78,7 @@ func TestHandleAgentRegister_GrantsTheHeartbeatPermission(t *testing.T) {
 // tenant's data and key material.
 func TestHandleAgentRegister_GrantIsNarrow(t *testing.T) {
 	f := newAgentOAuthFixture(t)
-	resp := f.register(t, "agent-gpu-host")
+	resp := f.register(t, "agent-gpu-01")
 
 	ctx := tokenEndpointContext(resp.ClientID)
 	app, err := f.storage.GetApp(ctx, resp.ClientID)
@@ -120,8 +120,8 @@ func TestHandleAgentRegister_ConvergesTheGrantOnReEnrollment(t *testing.T) {
 
 	// An application as a pre-#653 node left it: right identity, no grant.
 	stale := &iam.Application{
-		ClientID:       iam.FleetNodeClientID(agentOAuthTestTenant, "agent-gpu-host"),
-		Name:           iam.FleetNodeAppName(agentOAuthTestTenant, "agent-gpu-host"),
+		ClientID:       iam.FleetNodeClientID(agentOAuthTestTenant, "agent-gpu-01"),
+		Name:           iam.FleetNodeAppName(agentOAuthTestTenant, "agent-gpu-01"),
 		TenantID:       agentOAuthTestTenant,
 		GrantTypes:     []string{iam.GrantTypeClientCredentials},
 		ResponseTypes:  []string{},
@@ -130,7 +130,7 @@ func TestHandleAgentRegister_ConvergesTheGrantOnReEnrollment(t *testing.T) {
 	require.NoError(t, f.storage.CreateApp(
 		loginContextWithTenant(context.Background(), agentOAuthTestTenant), stale))
 
-	resp := f.register(t, "agent-gpu-host")
+	resp := f.register(t, "agent-gpu-01")
 	require.Equal(t, stale.ClientID, resp.ClientID, "re-enrollment must converge on the existing client")
 
 	app, err := f.storage.GetApp(tokenEndpointContext(resp.ClientID), resp.ClientID)
@@ -145,7 +145,7 @@ func TestHandleAgentRegister_ConvergesTheGrantOnReEnrollment(t *testing.T) {
 // certificate-authenticated agent refused.
 func TestHandleAgentRegister_GrantsTheMTLSClientTheSameSet(t *testing.T) {
 	f := newAgentOAuthFixture(t)
-	resp := f.register(t, "agent-gpu-host")
+	resp := f.register(t, "agent-gpu-01")
 	require.NotEmpty(t, resp.MTLSClientID)
 
 	ctx := loginContextWithTenant(context.Background(), agentOAuthTestTenant)
