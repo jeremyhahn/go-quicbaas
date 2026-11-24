@@ -281,6 +281,64 @@ func TestApprove_AForbiddenReviewIsTyped(t *testing.T) {
 	}
 }
 
+func TestReviewerLogin_AsksWhoTheReviewerTokenIs(t *testing.T) {
+	fake, s := newFakeGitHub(t)
+	fake.answer("GET /user", http.StatusOK, `{"login":"itest-reviewer"}`)
+
+	login, err := s.ReviewerLogin(context.Background())
+	if err != nil {
+		t.Fatalf("ReviewerLogin: %v", err)
+	}
+	if login != "itest-reviewer" {
+		t.Fatalf("login = %q, want itest-reviewer", login)
+	}
+	rec := fake.only(t)
+	if rec.Method != http.MethodGet || rec.Path != "/user" {
+		t.Fatalf("request = %s %s, want GET /user", rec.Method, rec.Path)
+	}
+	if rec.Auth != "Bearer "+testReviewer {
+		t.Fatalf("auth = %q, want the reviewer token", rec.Auth)
+	}
+}
+
+func TestReviewerLogin_AnEmptyLoginIsAnError(t *testing.T) {
+	t.Run("empty login", func(t *testing.T) {
+		fake, s := newFakeGitHub(t)
+		fake.answer("GET /user", http.StatusOK, `{"login":""}`)
+
+		login, err := s.ReviewerLogin(context.Background())
+		if err == nil {
+			t.Fatalf("ReviewerLogin = %q, nil; want an error", login)
+		}
+		if login != "" {
+			t.Fatalf("login = %q on error, want empty", login)
+		}
+		var decodeErr *DecodeError
+		if !errors.As(err, &decodeErr) {
+			t.Fatalf("error = %T %v, want a *DecodeError", err, err)
+		}
+		if strings.Contains(err.Error(), testReviewer) || strings.Contains(err.Error(), testToken) {
+			t.Fatalf("error %q carries a token", err)
+		}
+	})
+	t.Run("unauthorized", func(t *testing.T) {
+		fake, s := newFakeGitHub(t)
+		fake.answer("GET /user", http.StatusUnauthorized, `{"message":"Bad credentials"}`)
+
+		login, err := s.ReviewerLogin(context.Background())
+		var apiErr *APIError
+		if !errors.As(err, &apiErr) || apiErr.Status != http.StatusUnauthorized {
+			t.Fatalf("ReviewerLogin = %q, %v; want a 401 *APIError", login, err)
+		}
+		if login != "" {
+			t.Fatalf("login = %q on error, want empty", login)
+		}
+		if strings.Contains(err.Error(), testReviewer) {
+			t.Fatalf("error %q carries the reviewer token", err)
+		}
+	})
+}
+
 func TestCutBase_BranchesFromTheDefaultBranch(t *testing.T) {
 	fake, s := newFakeGitHub(t)
 	fake.answer("GET /repos/acme/scratch", http.StatusOK, `{"default_branch":"trunk"}`)
