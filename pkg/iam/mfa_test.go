@@ -15,7 +15,6 @@ package iam
 
 import (
 	"context"
-	"crypto/hmac"
 	"crypto/sha1" // #nosec G505 -- RFC 6238 reference derivation for test vectors
 	"crypto/sha256"
 	"crypto/sha512"
@@ -52,15 +51,50 @@ var referenceHashes = map[otp.Algorithm]func() hash.Hash{
 // truncation, reduced to digits decimal digits. It is independent of go-auth,
 // so a code it derives was produced by something other than the code under
 // test. TestReferenceTOTPMatchesRFC6238Vectors pins it to the RFC.
+// referenceHMAC computes HMAC over newHash by hand, as RFC 2104 defines it.
+// It exists because FIPS 140-only mode refuses crypto/hmac with SHA-1, and
+// it keeps the TOTP oracle independent of both go-auth and this module, so
+// the SHA-1 RFC 6238 vectors still run in every mode.
+func referenceHMAC(t *testing.T, newHash func() hash.Hash, key, message []byte) []byte {
+	t.Helper()
+
+	blockSize := newHash().BlockSize()
+	if len(key) > blockSize {
+		h := newHash()
+		_, err := h.Write(key)
+		require.NoError(t, err)
+		key = h.Sum(nil)
+	}
+	padded := make([]byte, blockSize)
+	copy(padded, key)
+
+	innerPad := make([]byte, blockSize)
+	outerPad := make([]byte, blockSize)
+	for i, b := range padded {
+		innerPad[i] = b ^ 0x36
+		outerPad[i] = b ^ 0x5c
+	}
+
+	inner := newHash()
+	_, err := inner.Write(innerPad)
+	require.NoError(t, err)
+	_, err = inner.Write(message)
+	require.NoError(t, err)
+
+	outer := newHash()
+	_, err = outer.Write(outerPad)
+	require.NoError(t, err)
+	_, err = outer.Write(inner.Sum(nil))
+	require.NoError(t, err)
+	return outer.Sum(nil)
+}
+
 func referenceTOTP(t *testing.T, key []byte, newHash func() hash.Hash, counter uint64, digits int) string {
 	t.Helper()
 
-	mac := hmac.New(newHash, key)
 	var message [8]byte
 	binary.BigEndian.PutUint64(message[:], counter)
-	_, err := mac.Write(message[:])
-	require.NoError(t, err)
-	sum := mac.Sum(nil)
+	sum := referenceHMAC(t, newHash, key, message[:])
 
 	offset := sum[len(sum)-1] & 0x0f
 	truncated := binary.BigEndian.Uint32(sum[offset:offset+4]) & 0x7fffffff
@@ -131,6 +165,10 @@ func TestReferenceTOTPMatchesRFC6238Vectors(t *testing.T) {
 		got := referenceTOTP(t, seeds[v.algorithm], referenceHashes[v.algorithm], uint64(v.at/30), 8)
 		assert.Equal(t, v.want, got, "T=%d %s", v.at, v.algorithm)
 	}
+
+	// The hand-written HMAC matches RFC 2202 test case 2 for HMAC-SHA-1.
+	assert.Equal(t, "effcdf6ae5eb2fa2d27416d5f184df9c259a7c79",
+		hex.EncodeToString(referenceHMAC(t, sha1.New, []byte("Jefe"), []byte("what do ya want for nothing?"))))
 
 	// A wrong key must not reproduce the vector: the oracle is not a constant.
 	wrongKey := []byte("09876543210987654321")
