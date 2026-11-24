@@ -421,6 +421,24 @@ func (h *RegistryAuthHandler) ValidateSession(ctx context.Context, session *Regi
 	return nil
 }
 
+// LookupSession returns the stored, unexpired session sessionID names.
+func (h *RegistryAuthHandler) LookupSession(ctx context.Context, sessionID string) (*RegistrySession, error) {
+	session, err := h.sessionManager.Get(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if err := h.ValidateSession(ctx, session); err != nil {
+		return nil, err
+	}
+	return session, nil
+}
+
+// InvalidateSession removes the session sessionID names, so it can no
+// longer authenticate a request.
+func (h *RegistryAuthHandler) InvalidateSession(ctx context.Context, sessionID string) error {
+	return h.sessionManager.Invalidate(ctx, sessionID)
+}
+
 // SessionManager manages active sessions with QuicBaaS storage.
 type SessionManager struct {
 	quicBaaS        QuicBaaSClient
