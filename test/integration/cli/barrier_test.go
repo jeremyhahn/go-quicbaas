@@ -1851,8 +1851,11 @@ func TestBarrierAuthPosture_DefaultDeny(t *testing.T) {
 	require.Errorf(t, err,
 		"post-unseal BarrierStatus without a token must be rejected: stdout=%s stderr=%s",
 		stdout, stderr)
-	assert.Containsf(t, stdout+stderr, "authentication required",
-		"post-unseal status must fail Unauthenticated: stdout=%s stderr=%s",
+	assert.Containsf(t, stdout+stderr, "code = Unauthenticated",
+		"post-unseal status must be gRPC Unauthenticated: stdout=%s stderr=%s",
+		stdout, stderr)
+	assert.Containsf(t, stdout+stderr, "platform bearer authorization is missing",
+		"post-unseal status must surface the missing bearer: stdout=%s stderr=%s",
 		stdout, stderr)
 
 	// 3. Post-unseal, a token-less re-seal is rejected 401 over REST. This
@@ -1869,9 +1872,9 @@ func TestBarrierAuthPosture_DefaultDeny(t *testing.T) {
 	require.Errorf(t, err,
 		"post-unseal BarrierSeal without a token must be rejected: stdout=%s stderr=%s",
 		stdout, stderr)
-	assert.Containsf(t, stdout+stderr, "401",
-		"post-unseal seal must fail 401 Unauthorized: stdout=%s stderr=%s", stdout, stderr)
-	assert.Containsf(t, stdout+stderr, "Missing or invalid authorization header",
+	assert.Containsf(t, stdout+stderr, "UNAUTHORIZED",
+		"post-unseal seal must fail with the CLI's rendering of HTTP 401: stdout=%s stderr=%s", stdout, stderr)
+	assert.Containsf(t, stdout+stderr, "platform bearer authorization is missing",
 		"post-unseal seal must surface the REST authz rejection: stdout=%s stderr=%s",
 		stdout, stderr)
 }
