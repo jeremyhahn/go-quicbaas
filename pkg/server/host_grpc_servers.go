@@ -102,7 +102,29 @@ func (s *Server) buildSessionServer(getter iamComponentsGetter) iampb.SessionSer
 	if !ok {
 		s.logger.Warn("QuicBaaS service does not resolve caller accounts; gRPC session RPCs will refuse every caller")
 	}
-	return grpcapi.NewSessionServer(grpcapi.NewSessionServiceAdapter(sessionStorage), callers, s.logger)
+	return grpcapi.NewSessionServer(grpcapi.NewSessionServiceAdapter(sessionStorage), callers, s.logger).
+		WithBearerRevoker(oidcBearerRevoker{s: s})
+}
+
+// oidcBearerRevoker resolves the OIDC provider on each call, because the
+// session server is built before IAM initialisation completes.
+type oidcBearerRevoker struct{ s *Server }
+
+func (r oidcBearerRevoker) RevokeSubjectBearers(ctx context.Context, tenantID, subject, keepSessionID string) (int, error) {
+	getter, ok := r.s.quicBaaSServiceRef().(interface {
+		GetOIDCProvider(context.Context) (*iam.OIDCProvider, error)
+	})
+	if !ok {
+		return 0, status.Error(codes.Unavailable, "login bearer revocation not available: no OIDC provider")
+	}
+	provider, err := getter.GetOIDCProvider(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if provider == nil {
+		return 0, status.Error(codes.Unavailable, "login bearer revocation not available: no OIDC provider")
+	}
+	return provider.RevokeSubjectBearers(ctx, tenantID, subject, keepSessionID)
 }
 
 // buildAuditServer builds the AuditService server over the IAM audit logger.
