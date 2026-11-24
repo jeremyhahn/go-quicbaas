@@ -18,6 +18,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -397,6 +398,47 @@ func TestJobContainerConfig_EphemeralWorkspaceTier(t *testing.T) {
 		assert.Equal(t, int64(64)<<20, budget.TmpfsBytes)
 		assert.Equal(t, orchestration.WorkspaceBuildHeadroomBytes, budget.HeadroomBytes)
 	})
+}
+
+// TestJobContainerConfig_CredentialTier pins the credential tier and the
+// signing socket on the job runtime: the tier is a sized tmpfs with no host
+// source, and the signing socket is a read-only bind. Neither carries a
+// secret in the configuration.
+func TestJobContainerConfig_CredentialTier(t *testing.T) {
+	spec := &orchestration.ContainerSpec{
+		Network: "none",
+		Image:   "alpine:latest",
+		Env:     map[string]string{orchestration.WorkspaceSigningAgentEnv: orchestration.WorkspaceSigningAgentSocket},
+		Mounts: []orchestration.ContainerMount{
+			orchestration.WorkspaceCredentialMount(),
+			{Source: "/run/q/s1/agent.sock", Target: orchestration.WorkspaceSigningAgentSocket, ReadOnly: true},
+		},
+	}
+
+	config, err := jobContainerConfig(spec)
+	require.NoError(t, err)
+	oci := newTestRuntime(t).generateOCIConfig(config, "/rootfs")
+
+	assert.Contains(t, oci.Mounts, ociMount{
+		Destination: orchestration.WorkspaceCredentialDir,
+		Type:        "tmpfs",
+		Source:      "tmpfs",
+		Options:     []string{"size=" + strconv.FormatInt(orchestration.WorkspaceCredentialTmpfsBytes, 10)},
+	}, "the credential tier is a sized tmpfs with no host source")
+	assert.Contains(t, oci.Mounts, ociMount{
+		Destination: orchestration.WorkspaceSigningAgentSocket,
+		Type:        "bind",
+		Source:      "/run/q/s1/agent.sock",
+		Options:     []string{"rbind", "ro", "rro"},
+	}, "the signing socket is a read-only bind")
+
+	credentialMounts := 0
+	for _, m := range oci.Mounts {
+		if m.Destination == orchestration.WorkspaceCredentialDir {
+			credentialMounts++
+		}
+	}
+	assert.Equal(t, 1, credentialMounts, "exactly one mount at the credential tier")
 }
 
 func TestJobContainerConfig_UntypedNamedSourceIsAVolume(t *testing.T) {
