@@ -251,7 +251,7 @@ func TestJobRuntime_RunAppliesUlimits(t *testing.T) {
 }
 
 func TestJobRuntime_RefusesUnsupportedNetwork(t *testing.T) {
-	for _, network := range []string{"bridge", "host", "", "jobs-net"} {
+	for _, network := range []string{"bridge", "", "jobs-net"} {
 		t.Run("network="+network, func(t *testing.T) {
 			jr, doubles := newTestJobRuntime(t)
 			_, err := jr.Run(t.Context(), &orchestration.ContainerSpec{Network: network, Image: "alpine:latest"})
@@ -262,14 +262,18 @@ func TestJobRuntime_RefusesUnsupportedNetwork(t *testing.T) {
 }
 
 func TestJobRuntime_RefusesPublishedPorts(t *testing.T) {
-	jr, doubles := newTestJobRuntime(t)
-	_, err := jr.Run(t.Context(), &orchestration.ContainerSpec{
-		Network: "none",
-		Image:   "alpine:latest",
-		Ports:   []string{"127.0.0.1:8080:80/udp"},
-	})
-	require.ErrorIs(t, err, ErrNetworkUnsupported)
-	assert.Empty(t, doubles.engine.created, "no container is created")
+	for _, network := range []string{"none", "host"} {
+		t.Run("network="+network, func(t *testing.T) {
+			jr, doubles := newTestJobRuntime(t)
+			_, err := jr.Run(t.Context(), &orchestration.ContainerSpec{
+				Network: network,
+				Image:   "alpine:latest",
+				Ports:   []string{"127.0.0.1:8080:80/udp"},
+			})
+			require.ErrorIs(t, err, ErrNetworkUnsupported)
+			assert.Empty(t, doubles.engine.created, "no container is created")
+		})
+	}
 }
 
 func TestJobRuntime_NetworkNoneRuns(t *testing.T) {
@@ -277,6 +281,20 @@ func TestJobRuntime_NetworkNoneRuns(t *testing.T) {
 	id, err := jr.Run(t.Context(), &orchestration.ContainerSpec{Network: "none", Image: "alpine:latest"})
 	require.NoError(t, err)
 	assert.Contains(t, doubles.engine.created, id)
+}
+
+func TestJobRuntime_NetworkHostRuns(t *testing.T) {
+	jr, doubles := newTestJobRuntime(t)
+	id, err := jr.Run(t.Context(), &orchestration.ContainerSpec{Network: "host", Image: "alpine:latest"})
+	require.NoError(t, err)
+
+	var types []string
+	for _, ns := range doubles.engine.created[id].Linux.Namespaces {
+		types = append(types, ns.Type)
+	}
+	assert.NotContains(t, types, "network", "a host-network job shares the agent's network namespace")
+	assert.Contains(t, types, "pid")
+	assert.Contains(t, types, "mount")
 }
 
 func TestParsePortMapping(t *testing.T) {
@@ -546,13 +564,13 @@ func TestJobRuntime_RunRefusesUntypedBadVolumeName(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalidVolumeName)
 }
 
-func TestJobRuntime_SupportsOnlyNetworkNone(t *testing.T) {
+func TestJobRuntime_SupportsNetworksNoneAndHost(t *testing.T) {
 	jr, _ := newTestJobRuntime(t)
 
 	assert.True(t, jr.SupportsSandboxNetwork(orchestration.SandboxNetworkNone))
+	assert.True(t, jr.SupportsSandboxNetwork(orchestration.SandboxNetworkHost))
 	for _, network := range []orchestration.SandboxNetwork{
 		orchestration.SandboxNetworkBridge,
-		orchestration.SandboxNetworkHost,
 		orchestration.SandboxNetwork("custom"),
 		"",
 	} {

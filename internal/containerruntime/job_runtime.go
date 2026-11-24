@@ -44,12 +44,12 @@ const jobNamePrefix = "quicbaas-job-"
 var ErrJobSpecUnsupported = errors.New("containerruntime: container spec field not supported")
 
 // ErrNetworkUnsupported refuses a job whose network the in-process runtime
-// cannot give it. The runtime gives every container an isolated network
-// namespace with no interface, route, DNS or port forward, which is the
-// "none" network and nothing else: a job asking for any other network, or
-// for published ports, is refused before its container is created rather
-// than run without the network it asked for.
-var ErrNetworkUnsupported = errors.New("containerruntime: only the \"none\" network is supported")
+// cannot give it. The runtime gives a job one of two networks: "none", an
+// isolated network namespace with only loopback, and "host", which shares
+// the agent's network namespace. A job asking for any other network, or for
+// published ports on any network, is refused before its container is
+// created rather than run without the network it asked for.
+var ErrNetworkUnsupported = errors.New("containerruntime: only the \"none\" and \"host\" networks are supported")
 
 // JobRuntime runs orchestration jobs on the in-process Runtime: it implements
 // orchestration.ContainerRuntime, the interface the fleet node agent launches
@@ -326,11 +326,11 @@ func (j *JobRuntime) IsAvailable() bool {
 }
 
 // SupportsSandboxNetwork reports whether a sandbox can be given network:
-// this runtime gives a container the "none" network and nothing else (see
-// ErrNetworkUnsupported), so an agent configured for any other sandbox
-// network refuses to start rather than refuse every spawn.
+// this runtime gives a container the "none" or the "host" network and
+// nothing else (see ErrNetworkUnsupported), so an agent configured for any
+// other sandbox network refuses to start rather than refuse every spawn.
 func (*JobRuntime) SupportsSandboxNetwork(network orchestration.SandboxNetwork) bool {
-	return network == orchestration.SandboxNetworkNone
+	return network == orchestration.SandboxNetworkNone || network == orchestration.SandboxNetworkHost
 }
 
 // Pull fetches an image into the runtime's storage, honouring the signature
@@ -427,7 +427,7 @@ func jobContainerConfig(spec *orchestration.ContainerSpec) (*ContainerConfig, er
 	if err := config.Validate(); err != nil {
 		return nil, &orchestration.InputValidationError{Field: "spec", Message: err.Error()}
 	}
-	if spec.Network != "none" {
+	if spec.Network != orchestration.SandboxNetworkNone.String() && spec.Network != orchestration.SandboxNetworkHost.String() {
 		return nil, fmt.Errorf("%w: job asks for network %q", ErrNetworkUnsupported, spec.Network)
 	}
 	if len(spec.Ports) > 0 {

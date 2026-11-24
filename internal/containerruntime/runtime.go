@@ -584,6 +584,14 @@ type ociLinuxDevice struct {
 	Minor int64  `json:"minor"`
 }
 
+// hostNetworkMode is the network mode in which a container shares the
+// agent's network namespace.
+const hostNetworkMode = "host"
+
+// hostResolverFiles are the host files a host-network container sees
+// read-only, so it resolves names as the host does.
+var hostResolverFiles = []string{"/etc/resolv.conf", "/etc/hosts"}
+
 // generateOCIConfig generates an OCI runtime config from ContainerConfig.
 func (r *Runtime) generateOCIConfig(config *ContainerConfig, rootfsPath string) *ociConfig {
 	// Build environment variables
@@ -610,6 +618,14 @@ func (r *Runtime) generateOCIConfig(config *ContainerConfig, rootfsPath string) 
 		cwd = "/"
 	}
 
+	// A host-network container shares the agent's network namespace, as
+	// `docker run --network host` does; every other mode gets its own.
+	namespaces := []ociNamespace{{Type: "pid"}}
+	if config.NetworkMode != hostNetworkMode {
+		namespaces = append(namespaces, ociNamespace{Type: "network"})
+	}
+	namespaces = append(namespaces, ociNamespace{Type: "ipc"}, ociNamespace{Type: "uts"}, ociNamespace{Type: "mount"})
+
 	oci := &ociConfig{
 		OCIVersion: "1.0.2",
 		Process: &ociProcess{
@@ -627,13 +643,7 @@ func (r *Runtime) generateOCIConfig(config *ContainerConfig, rootfsPath string) 
 		},
 		Hostname: config.Hostname,
 		Linux: &ociLinux{
-			Namespaces: []ociNamespace{
-				{Type: "pid"},
-				{Type: "network"},
-				{Type: "ipc"},
-				{Type: "uts"},
-				{Type: "mount"},
-			},
+			Namespaces: namespaces,
 			MaskedPaths: []string{
 				"/proc/acpi",
 				"/proc/kcore",
@@ -664,6 +674,16 @@ func (r *Runtime) generateOCIConfig(config *ContainerConfig, rootfsPath string) 
 		{Destination: "/dev/mqueue", Type: "mqueue", Source: "mqueue", Options: []string{"nosuid", "noexec", "nodev"}},
 		{Destination: "/sys", Type: "sysfs", Source: "sysfs", Options: []string{"nosuid", "noexec", "nodev", "ro"}},
 		{Destination: "/sys/fs/cgroup", Type: "cgroup", Source: "cgroup", Options: []string{"nosuid", "noexec", "nodev", "relatime", "ro"}},
+	}
+
+	// A host-network container resolves names as the host does: it sees the
+	// host's resolver files, read-only, where the host has them.
+	if config.NetworkMode == hostNetworkMode {
+		for _, p := range hostResolverFiles {
+			if info, err := os.Stat(p); err == nil && info.Mode().IsRegular() {
+				oci.Mounts = append(oci.Mounts, ociMount{Destination: p, Type: "bind", Source: p, Options: []string{"rbind", "ro", "rro"}})
+			}
+		}
 	}
 
 	// Add user-specified mounts

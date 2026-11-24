@@ -298,6 +298,53 @@ func TestGenerateOCIConfig_NoNewPrivilegesIsExplicit(t *testing.T) {
 	assert.False(t, rt.generateOCIConfig(&ContainerConfig{Privileged: true}, "/rootfs").Process.NoNewPrivileges)
 }
 
+// TestGenerateOCIConfig_HostNetworkSharesTheHostNamespace pins that a
+// host-network container joins the agent's network namespace and sees the
+// host's resolver files read-only, while every other network mode keeps a
+// namespace of its own.
+func TestGenerateOCIConfig_HostNetworkSharesTheHostNamespace(t *testing.T) {
+	rt := newTestRuntime(t)
+	namespaceTypes := func(oci *ociConfig) []string {
+		var types []string
+		for _, ns := range oci.Linux.Namespaces {
+			types = append(types, ns.Type)
+		}
+		return types
+	}
+	resolverFiles := []string{"/etc/resolv.conf", "/etc/hosts"}
+	hasDestination := func(oci *ociConfig, dest string) bool {
+		for _, m := range oci.Mounts {
+			if m.Destination == dest {
+				return true
+			}
+		}
+		return false
+	}
+
+	for _, mode := range []string{"", "none", "bridge"} {
+		t.Run("network="+mode, func(t *testing.T) {
+			oci := rt.generateOCIConfig(&ContainerConfig{NetworkMode: mode}, "/rootfs")
+			assert.Equal(t, []string{"pid", "network", "ipc", "uts", "mount"}, namespaceTypes(oci))
+			for _, p := range resolverFiles {
+				assert.False(t, hasDestination(oci, p), "%s is mounted", p)
+			}
+		})
+	}
+
+	t.Run("network=host", func(t *testing.T) {
+		oci := rt.generateOCIConfig(&ContainerConfig{NetworkMode: "host"}, "/rootfs")
+		assert.Equal(t, []string{"pid", "ipc", "uts", "mount"}, namespaceTypes(oci))
+		for _, p := range resolverFiles {
+			if _, err := os.Stat(p); err == nil {
+				assert.Contains(t, oci.Mounts, ociMount{Destination: p, Type: "bind", Source: p, Options: []string{"rbind", "ro", "rro"}},
+					"the host's %s is bound read-only", p)
+			} else {
+				assert.False(t, hasDestination(oci, p), "%s is mounted though the host has none", p)
+			}
+		}
+	})
+}
+
 func TestJobContainerConfig_HostMountsAreBound(t *testing.T) {
 	config, err := jobContainerConfig(&orchestration.ContainerSpec{
 		Network: "none",
