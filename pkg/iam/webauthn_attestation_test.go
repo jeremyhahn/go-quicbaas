@@ -87,6 +87,7 @@ func hardwareAllowlist() *AAGUIDAllowlist {
 // old code's equivalent state — no allowlist wired — accepted every
 // authenticator on every path.
 func TestWebAuthnAttestationGate_ZeroValueRefusesEverything(t *testing.T) {
+	t.Parallel()
 	var gate WebAuthnAttestationGate
 
 	for _, tc := range []struct {
@@ -113,6 +114,7 @@ func TestWebAuthnAttestationGate_ZeroValueRefusesEverything(t *testing.T) {
 // TestWebAuthnAttestationGate_NilGateRefuses covers the nil-pointer path a
 // caller reaches by forgetting to construct the gate at all.
 func TestWebAuthnAttestationGate_NilGateRefuses(t *testing.T) {
+	t.Parallel()
 	var gate *WebAuthnAttestationGate
 
 	result, err := gate.Evaluate(context.Background(), "t1", "op@example.com", "basic_full", yubiKey5AAGUID)
@@ -135,6 +137,7 @@ func TestWebAuthnAttestationGate_NilGateRefuses(t *testing.T) {
 // #381's headline verification: a virtual/software authenticator must be
 // refused for administrative enrollment with an operator-facing reason.
 func TestWebAuthnAttestationGate_RefusesVirtualAuthenticatorForAdmin(t *testing.T) {
+	t.Parallel()
 	gate := NewWebAuthnAttestationGate(
 		WebAuthnAssuranceAny, // tenant users may be permissive...
 		hardwareAllowlist(),
@@ -167,6 +170,7 @@ func TestWebAuthnAttestationGate_RefusesVirtualAuthenticatorForAdmin(t *testing.
 }
 
 func TestWebAuthnAttestationGate_AssuranceAnyRefusesAdminRoleID(t *testing.T) {
+	t.Parallel()
 	gate := NewWebAuthnAttestationGate(
 		WebAuthnAssuranceAny,
 		hardwareAllowlist(),
@@ -196,6 +200,7 @@ func TestWebAuthnAttestationGate_AssuranceAnyRefusesAdminRoleID(t *testing.T) {
 // software case: a well-formed but self-signed attestation statement, which is
 // syntactically an attestation and proves nothing about key storage.
 func TestWebAuthnAttestationGate_RefusesSelfAttestationForAdmin(t *testing.T) {
+	t.Parallel()
 	gate := NewWebAuthnAttestationGate(WebAuthnAssuranceHardware, hardwareAllowlist(), nil)
 
 	_, err := gate.Evaluate(context.Background(), "t1", "admin@example.com", "basic_surrogate", yubiKey5AAGUID)
@@ -218,6 +223,7 @@ func TestWebAuthnAttestationGate_RefusesSelfAttestationForAdmin(t *testing.T) {
 // a manufacturer-attested authenticator of an allowlisted model is admitted and
 // reports hardware.
 func TestWebAuthnAttestationGate_AcceptsAllowlistedHardware(t *testing.T) {
+	t.Parallel()
 	gate := NewWebAuthnAttestationGate(WebAuthnAssuranceHardware, hardwareAllowlist(), nil)
 
 	for _, attestationType := range []string{"basic_full", "attca", "anonca"} {
@@ -243,6 +249,7 @@ func TestWebAuthnAttestationGate_AcceptsAllowlistedHardware(t *testing.T) {
 // allowlist still bites once attestation makes the AAGUID meaningful: a real
 // security key of a model the operator did not allowlist is refused.
 func TestWebAuthnAttestationGate_RefusesHardwareOfUnknownModel(t *testing.T) {
+	t.Parallel()
 	other := []byte{0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
 		0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00}
 	gate := NewWebAuthnAttestationGate(WebAuthnAssuranceHardware, hardwareAllowlist(), nil)
@@ -257,6 +264,7 @@ func TestWebAuthnAttestationGate_RefusesHardwareOfUnknownModel(t *testing.T) {
 // allow, even for a genuinely manufacturer-attested authenticator. The old
 // `if allowlist != nil` guard made this exact case a silent pass.
 func TestWebAuthnAttestationGate_NilAllowlistDeniesAttestedHardware(t *testing.T) {
+	t.Parallel()
 	gate := NewWebAuthnAttestationGate(WebAuthnAssuranceHardware, nil, nil)
 
 	result, err := gate.Evaluate(verifiedChainContext(yubiKey5AAGUID), "t1", "admin@example.com", "basic_full", yubiKey5AAGUID)
@@ -285,6 +293,7 @@ func TestWebAuthnAttestationGate_NilAllowlistDeniesAttestedHardware(t *testing.T
 // so the credential is visibly software-backed rather than indistinguishable
 // from hardware.
 func TestWebAuthnAttestationGate_PermissiveTenantRecordsSoftware(t *testing.T) {
+	t.Parallel()
 	gate := NewWebAuthnAttestationGate(
 		WebAuthnAssuranceAny,
 		nil, // no allowlist at all: still fine, because hardware is not required here
@@ -310,6 +319,7 @@ func TestWebAuthnAttestationGate_PermissiveTenantRecordsSoftware(t *testing.T) {
 // administrator" would let a tenant-permissive deployment enroll a virtual
 // authenticator as a tenant administrator.
 func TestWebAuthnAttestationGate_UnresolvableAccountIsTreatedAsAdmin(t *testing.T) {
+	t.Parallel()
 	gate := NewWebAuthnAttestationGate(
 		WebAuthnAssuranceAny,
 		hardwareAllowlist(),
@@ -324,6 +334,7 @@ func TestWebAuthnAttestationGate_UnresolvableAccountIsTreatedAsAdmin(t *testing.
 // TestWebAuthnAttestationGate_AbsentResolverIsTreatedAsAdmin covers the same
 // fail-safe direction when no resolver is wired at all.
 func TestWebAuthnAttestationGate_AbsentResolverIsTreatedAsAdmin(t *testing.T) {
+	t.Parallel()
 	gate := NewWebAuthnAttestationGate(WebAuthnAssuranceAny, hardwareAllowlist(), nil)
 
 	if _, err := gate.Evaluate(context.Background(), "t1", "user@example.com", "none", virtualAAGUID); err == nil {
@@ -337,6 +348,7 @@ func TestWebAuthnAttestationGate_AbsentResolverIsTreatedAsAdmin(t *testing.T) {
 // email; the gate must not accept that answer, because an unidentified
 // registrant is exactly the case it cannot afford to get wrong.
 func TestWebAuthnAttestationGate_UnidentifiedRegistrantIsTreatedAsAdmin(t *testing.T) {
+	t.Parallel()
 	// A deliberately lenient resolver: every unknown email answers
 	// (false, nil) — "not an administrator" — with no error to fall back on.
 	gate := NewWebAuthnAttestationGate(
@@ -365,6 +377,7 @@ func TestWebAuthnAttestationGate_UnidentifiedRegistrantIsTreatedAsAdmin(t *testi
 // TestParseWebAuthnAssurance covers the mapping and, critically, that an empty
 // value selects hardware rather than the loose policy.
 func TestParseWebAuthnAssurance(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		in   string
 		want WebAuthnAssurance
@@ -390,6 +403,7 @@ func TestParseWebAuthnAssurance(t *testing.T) {
 // than silently selecting a policy — and that the value it falls back to on the
 // error path is the strict one.
 func TestParseWebAuthnAssurance_RejectsUnknown(t *testing.T) {
+	t.Parallel()
 	got, err := ParseWebAuthnAssurance("hardwar")
 	if err == nil {
 		t.Fatal("an unrecognised assurance value was accepted")
@@ -411,6 +425,7 @@ func TestParseWebAuthnAssurance_RejectsUnknown(t *testing.T) {
 // unrecognised type degrades to "none" rather than being optimistically read as
 // evidence.
 func TestWebAuthnAttestLevel(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		in   string
 		want AttestLevel
@@ -489,6 +504,7 @@ func (s *stubAttestUserResolver) GetUserByEmail(_ context.Context, tenantID, ema
 // TestAdminRoleResolver recognises the administrative roles and reports a plain
 // tenant user as non-administrative.
 func TestAdminRoleResolver(t *testing.T) {
+	t.Parallel()
 	resolver := NewWebAuthnAdminResolver(&stubAttestUserResolver{users: map[string]*User{
 		"admin@example.com":  {Email: "admin@example.com", Roles: []string{"role-user-id", "role-admin-id"}},
 		"so@example.com":     {Email: "so@example.com", Roles: []string{"role-so-id"}},
@@ -525,6 +541,7 @@ func TestAdminRoleResolver(t *testing.T) {
 // unresolvable account must return an error, NOT (false, nil). A false would
 // be read by the gate as "tenant user" and could downgrade an administrator.
 func TestAdminRoleResolver_ErrorsAreNotFalse(t *testing.T) {
+	t.Parallel()
 	resolver := NewWebAuthnAdminResolver(&stubAttestUserResolver{err: errors.New("store unavailable")}, stubAttestRoles())
 
 	if _, err := resolver.IsAdministrativeAccount(context.Background(), "t1", "admin@example.com"); err == nil {
@@ -540,6 +557,7 @@ func TestAdminRoleResolver_ErrorsAreNotFalse(t *testing.T) {
 // TestNewWebAuthnAdminResolver_NilStore returns a nil resolver, which the gate
 // treats as "cannot tell" and therefore as administrative.
 func TestNewWebAuthnAdminResolver_NilStore(t *testing.T) {
+	t.Parallel()
 	if r := NewWebAuthnAdminResolver(nil, stubAttestRoles()); r != nil {
 		t.Fatalf("NewWebAuthnAdminResolver(nil, stubAttestRoles()) = %v, want nil", r)
 	}
@@ -551,6 +569,7 @@ func TestNewWebAuthnAdminResolver_NilStore(t *testing.T) {
 // TestWebAuthnAssurance_String keeps the policy printable in the startup log
 // line an operator reads to confirm what the deployment is enforcing.
 func TestWebAuthnAssurance_String(t *testing.T) {
+	t.Parallel()
 	for assurance, want := range map[WebAuthnAssurance]string{
 		WebAuthnAssuranceHardware:                            "hardware",
 		WebAuthnAssuranceAny:                                 "any",
@@ -566,6 +585,7 @@ func TestWebAuthnAssurance_String(t *testing.T) {
 // TestWebAuthnAssuranceValueError_Message names the offending value and the
 // accepted set, and renders on a nil receiver.
 func TestWebAuthnAssuranceValueError_Message(t *testing.T) {
+	t.Parallel()
 	msg := (&WebAuthnAssuranceValueError{Value: "hardwar"}).Error()
 	if !strings.Contains(msg, "hardwar") || !strings.Contains(msg, "\"any\"") {
 		t.Errorf("unexpected message: %s", msg)
@@ -580,6 +600,7 @@ func TestWebAuthnAssuranceValueError_Message(t *testing.T) {
 // so the stored factor and the refusal message name the same thing the WebAuthn
 // spec does, rather than an empty string.
 func TestNormalizedAttestationFormat(t *testing.T) {
+	t.Parallel()
 	for in, want := range map[string]string{
 		"":            "none",
 		"   ":         "none",
@@ -594,6 +615,7 @@ func TestNormalizedAttestationFormat(t *testing.T) {
 
 // TestAdminRoleResolver_NilReceiver fails closed rather than panicking.
 func TestAdminRoleResolver_NilReceiver(t *testing.T) {
+	t.Parallel()
 	var resolver *adminRoleResolver
 	if _, err := resolver.IsAdministrativeAccount(context.Background(), "t1", "a@b.c"); err == nil {
 		t.Fatal("a nil resolver answered successfully")
@@ -607,6 +629,7 @@ func TestAdminRoleResolver_NilReceiver(t *testing.T) {
 // TestAdminRoleResolver_NilUserIsAnError covers the store that answers
 // (nil, nil) — an absent user must not read as "not an administrator".
 func TestAdminRoleResolver_NilUserIsAnError(t *testing.T) {
+	t.Parallel()
 	resolver := NewWebAuthnAdminResolver(&stubAttestNilUserResolver{}, stubAttestRoles())
 	if _, err := resolver.IsAdministrativeAccount(context.Background(), "t1", "a@b.c"); err == nil {
 		t.Fatal("a nil user was reported as a successful non-administrative answer")
@@ -633,6 +656,7 @@ func (stubAttestNilUserResolver) GetUserByEmail(context.Context, string, string)
 // records what it actually proved, so even here nothing is represented as
 // hardware that is not.
 func TestWebAuthnAttestationGate_InsecurePolicyAdmitsSoftwareAdministrators(t *testing.T) {
+	t.Parallel()
 	gate := NewWebAuthnAttestationGate(
 		WebAuthnAssuranceInsecureAllowSoftwareAdministrators,
 		nil, // not even an allowlist is needed: hardware is never required
@@ -656,6 +680,7 @@ func TestWebAuthnAttestationGate_InsecurePolicyAdmitsSoftwareAdministrators(t *t
 // startup path uses to decide whether to announce the node as insecure. Only
 // one value may answer true.
 func TestWebAuthnAssurance_AllowsSoftwareAdministrators(t *testing.T) {
+	t.Parallel()
 	if !WebAuthnAssuranceInsecureAllowSoftwareAdministrators.AllowsSoftwareAdministrators() {
 		t.Error("the insecure policy does not report itself as such")
 	}
@@ -675,6 +700,7 @@ func TestWebAuthnAssurance_AllowsSoftwareAdministrators(t *testing.T) {
 // that says what it does — a shorter alias would make it reachable by someone
 // who had not read what they were turning off.
 func TestParseWebAuthnAssurance_NoShortAliasForTheInsecurePolicy(t *testing.T) {
+	t.Parallel()
 	for _, alias := range []string{"insecure", "insecure-any", "allow-software-administrators", "software", "test"} {
 		got, err := ParseWebAuthnAssurance(alias)
 		if err == nil {
@@ -706,6 +732,7 @@ func TestParseWebAuthnAssurance_NoShortAliasForTheInsecurePolicy(t *testing.T) {
 // Hardware therefore additionally requires a trust path verified against roots
 // the operator configured. No verified path on the context means no hardware.
 func TestWebAuthnAttestationGate_RefusesUnverifiedAttestationChain(t *testing.T) {
+	t.Parallel()
 	gate := NewWebAuthnAttestationGate(WebAuthnAssuranceHardware, hardwareAllowlist(), nil)
 
 	// A perfectly-formed forgery: manufacturer-grade attestation type, an
@@ -731,6 +758,7 @@ func TestWebAuthnAttestationGate_RefusesUnverifiedAttestationChain(t *testing.T)
 // chain to THIS credential. Without the binding, a chain verified for one
 // authenticator could vouch for a credential reporting a different model.
 func TestWebAuthnAttestationGate_RefusesChainForADifferentModel(t *testing.T) {
+	t.Parallel()
 	gate := NewWebAuthnAttestationGate(WebAuthnAssuranceHardware, hardwareAllowlist(), nil)
 
 	other := []byte{0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
@@ -752,6 +780,7 @@ func TestWebAuthnAttestationGate_RefusesChainForADifferentModel(t *testing.T) {
 // A tenant user under the permissive policy still enrolls, and still records
 // what was proven.
 func TestWebAuthnAttestationGate_UnverifiedChainDoesNotBlockPermissiveTenants(t *testing.T) {
+	t.Parallel()
 	gate := NewWebAuthnAttestationGate(
 		WebAuthnAssuranceAny,
 		hardwareAllowlist(),

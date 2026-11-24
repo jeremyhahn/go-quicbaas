@@ -344,6 +344,7 @@ func seedUser(t *testing.T, users *xkmswebauthn.MemoryUserStore, id uint64, emai
 // reduces to. Without it a browser-registered passkey can never complete a
 // CLI/SDK login.
 func TestWriteThroughSave_EnrollsLoginResolvableFactor(t *testing.T) {
+	t.Parallel()
 	factors := &fakeUserAuthFactorClient{}
 	wt, users, creds := newTestWriteThrough(t, factors)
 	seedUser(t, users, 42, "alice@example.com", "alice's yubikey")
@@ -394,6 +395,7 @@ func TestWriteThroughSave_EnrollsLoginResolvableFactor(t *testing.T) {
 }
 
 func TestWriteThroughSave_TenantRoutedFactorResolvesForSameTenantOnly(t *testing.T) {
+	t.Parallel()
 	kv := newRoutingTestKV()
 	kv.barrierTenant("tenant-a")
 	kv.barrierTenant("tenant-b")
@@ -440,6 +442,7 @@ func TestWriteThroughSave_TenantRoutedFactorResolvesForSameTenantOnly(t *testing
 // display name still yields a labelled factor, so `auth factor list` is never
 // blank.
 func TestWriteThroughSave_LabelFallsBackToEmail(t *testing.T) {
+	t.Parallel()
 	factors := &fakeUserAuthFactorClient{}
 	wt, users, _ := newTestWriteThrough(t, factors)
 	seedUser(t, users, 7, "bob@example.com", "")
@@ -463,6 +466,7 @@ func TestWriteThroughSave_LabelFallsBackToEmail(t *testing.T) {
 // That is a separate control from the one under test here: this test asserts
 // that a failed profile read costs the factor its LABEL and nothing else.
 func TestWriteThroughSave_UnknownUserStillEnrolls(t *testing.T) {
+	t.Parallel()
 	factors := &fakeUserAuthFactorClient{}
 	gate := NewWebAuthnAttestationGate(WebAuthnAssuranceHardware, hardwareAllowlist(), nil)
 	wt, _, _ := newGatedWriteThrough(t, gate, factors)
@@ -488,6 +492,7 @@ func TestWriteThroughSave_UnknownUserStillEnrolls(t *testing.T) {
 // FactorAlreadyEnrolledError; the write-through treats that as success because
 // the login-resolvable factor already exists.
 func TestWriteThroughSave_IdempotentReRegistration(t *testing.T) {
+	t.Parallel()
 	factors := &fakeUserAuthFactorClient{
 		addErr: &qrdbtransport.FactorAlreadyEnrolledError{
 			Type:     qrdbtransport.FactorTypeFIDO2,
@@ -511,6 +516,7 @@ func TestWriteThroughSave_IdempotentReRegistration(t *testing.T) {
 // cases, so idempotency never silently depends on which qrdb transport the
 // server was built with.
 func TestIsFactorAlreadyEnrolled(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		err  error
@@ -526,6 +532,7 @@ func TestIsFactorAlreadyEnrolled(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			if got := isFactorAlreadyEnrolled(tt.err); got != tt.want {
 				t.Errorf("isFactorAlreadyEnrolled(%v) = %v, want %v", tt.err, got, tt.want)
 			}
@@ -542,6 +549,7 @@ func TestIsFactorAlreadyEnrolled(t *testing.T) {
 // be rolled back and the ceremony must fail closed. Otherwise the registration
 // leaves exactly the orphaned credential this fix exists to prevent.
 func TestWriteThroughSave_CompensatesOnEnrollFailure(t *testing.T) {
+	t.Parallel()
 	enrollErr := errors.New("qrdb unavailable")
 	factors := &fakeUserAuthFactorClient{addErr: enrollErr}
 
@@ -583,6 +591,7 @@ func TestWriteThroughSave_CompensatesOnEnrollFailure(t *testing.T) {
 // can never destroy a good credential: when the credential already existed
 // before this Save, a subsequent enrollment failure leaves it in place.
 func TestWriteThroughSave_DoesNotCompensateAPreExistingCredential(t *testing.T) {
+	t.Parallel()
 	factors := &fakeUserAuthFactorClient{}
 	users := xkmswebauthn.NewMemoryUserStore()
 	inner := newStubCredentialStore()
@@ -623,6 +632,7 @@ func TestWriteThroughSave_DoesNotCompensateAPreExistingCredential(t *testing.T) 
 // fails is reported honestly (Compensated=false) instead of claiming a clean
 // state the store is not in.
 func TestWriteThroughSave_ReportsFailedCompensation(t *testing.T) {
+	t.Parallel()
 	factors := &fakeUserAuthFactorClient{addErr: errors.New("qrdb unavailable")}
 	users := xkmswebauthn.NewMemoryUserStore()
 	// The registrant is seeded because the assurance gate holds an
@@ -653,6 +663,7 @@ func TestWriteThroughSave_ReportsFailedCompensation(t *testing.T) {
 // never runs when the credential could not be persisted — an enroll-first
 // ordering would leave a factor pointing at a credential that does not exist.
 func TestWriteThroughSave_InnerSaveFailureSkipsEnrollment(t *testing.T) {
+	t.Parallel()
 	factors := &fakeUserAuthFactorClient{}
 	users := xkmswebauthn.NewMemoryUserStore()
 	seedUser(t, users, 42, "alice@example.com", "alice")
@@ -676,6 +687,7 @@ func TestWriteThroughSave_InnerSaveFailureSkipsEnrollment(t *testing.T) {
 // user handle is not the canonical 8-byte qrdb id fails closed BEFORE anything
 // is written, rather than enrolling a factor against a bogus user id.
 func TestWriteThroughSave_RejectsMalformedUserHandle(t *testing.T) {
+	t.Parallel()
 	factors := &fakeUserAuthFactorClient{}
 	wt, _, creds := newTestWriteThrough(t, factors)
 
@@ -703,6 +715,7 @@ func TestWriteThroughSave_RejectsMalformedUserHandle(t *testing.T) {
 // with a typed error instead of being handed to the inner store, which is not
 // required to nil-check before dereferencing.
 func TestWriteThroughSave_RejectsNilCredential(t *testing.T) {
+	t.Parallel()
 	factors := &fakeUserAuthFactorClient{}
 	wt, _, _ := newTestWriteThrough(t, factors)
 
@@ -723,6 +736,7 @@ func TestWriteThroughSave_RejectsNilCredential(t *testing.T) {
 // id is handed straight to the inner store — its validation owns that case —
 // and that no factor is enrolled for an unkeyable credential.
 func TestWriteThroughSave_EmptyCredentialIDDelegates(t *testing.T) {
+	t.Parallel()
 	factors := &fakeUserAuthFactorClient{}
 	inner := newStubCredentialStore()
 	wt, err := newWebAuthnFactorWriteThrough(
@@ -748,6 +762,7 @@ func TestWriteThroughSave_EmptyCredentialIDDelegates(t *testing.T) {
 // reproduce the split-store bug (registration succeeds, login can never
 // resolve), so it must be a startup error, not a runtime no-op.
 func TestNewWebAuthnFactorWriteThrough_RequiresEveryDependency(t *testing.T) {
+	t.Parallel()
 	users := xkmswebauthn.NewMemoryUserStore()
 	creds := xkmswebauthn.NewMemoryCredentialStore()
 	factors := &fakeUserAuthFactorClient{}
@@ -782,6 +797,7 @@ func TestNewWebAuthnFactorWriteThrough_RequiresEveryDependency(t *testing.T) {
 // TestNewWebAuthnFactorWriteThrough_DefaultsLogger proves a nil logger is
 // tolerated (production always supplies one; tests should not have to).
 func TestNewWebAuthnFactorWriteThrough_DefaultsLogger(t *testing.T) {
+	t.Parallel()
 	wt, err := newWebAuthnFactorWriteThrough(
 		xkmswebauthn.NewMemoryCredentialStore(),
 		xkmswebauthn.NewMemoryUserStore(),
@@ -801,6 +817,7 @@ func TestNewWebAuthnFactorWriteThrough_DefaultsLogger(t *testing.T) {
 // TestWebAuthnFactorErrors_RenderAndUnwrap covers the typed errors' zero-value
 // and unwrap behaviour so callers can rely on errors.Is / errors.As.
 func TestWebAuthnFactorErrors_RenderAndUnwrap(t *testing.T) {
+	t.Parallel()
 	var nilEnroll *WebAuthnFactorEnrollError
 	if nilEnroll.Error() == "" {
 		t.Error("a nil WebAuthnFactorEnrollError must still render")
@@ -827,6 +844,7 @@ func TestWebAuthnFactorErrors_RenderAndUnwrap(t *testing.T) {
 // TestWebAuthnCredentialLookupKey pins the encoding contract shared with the
 // login path: the factor lookup key is the unpadded base64url credential id.
 func TestWebAuthnCredentialLookupKey(t *testing.T) {
+	t.Parallel()
 	got := webAuthnCredentialLookupKey([]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16})
 	if want := "AQIDBAUGBwgJCgsMDQ4PEA"; got != want {
 		t.Errorf("lookup key = %q, want %q", got, want)
