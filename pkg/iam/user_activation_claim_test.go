@@ -88,6 +88,7 @@ func requireActivationInProgress(t *testing.T, err error) {
 }
 
 func TestNewUserActivationClaims_NilResolver(t *testing.T) {
+	t.Parallel()
 	claims, err := NewUserActivationClaims(nil)
 	if claims != nil {
 		t.Fatal("want nil claims for a nil resolver")
@@ -99,6 +100,7 @@ func TestNewUserActivationClaims_NilResolver(t *testing.T) {
 }
 
 func TestUserActivationClaims_SecondClaimLoses(t *testing.T) {
+	t.Parallel()
 	claims := newTestActivationClaims(t)
 	ctx := context.Background()
 	pendingSince := time.Now().UTC()
@@ -116,6 +118,7 @@ func TestUserActivationClaims_SecondClaimLoses(t *testing.T) {
 }
 
 func TestUserActivationClaims_ReleaseAllowsReclaim(t *testing.T) {
+	t.Parallel()
 	claims := newTestActivationClaims(t)
 	ctx := context.Background()
 	pendingSince := time.Now().UTC()
@@ -133,6 +136,7 @@ func TestUserActivationClaims_ReleaseAllowsReclaim(t *testing.T) {
 }
 
 func TestUserActivationClaims_CompletedClaimYieldsOnlyToLaterReset(t *testing.T) {
+	t.Parallel()
 	claims := newTestActivationClaims(t)
 	ctx := context.Background()
 	pendingSince := time.Now().UTC()
@@ -160,6 +164,7 @@ func TestUserActivationClaims_CompletedClaimYieldsOnlyToLaterReset(t *testing.T)
 }
 
 func TestUserActivationClaims_ExpiredLeaseIsTakenOver(t *testing.T) {
+	t.Parallel()
 	resolver := newClaimTestResolver()
 	claims, err := NewUserActivationClaims(resolver)
 	if err != nil {
@@ -199,6 +204,7 @@ func TestUserActivationClaims_ExpiredLeaseIsTakenOver(t *testing.T) {
 }
 
 func TestUserActivationClaims_UnsupportedStoreFailsClosed(t *testing.T) {
+	t.Parallel()
 	resolver := newClaimTestResolver()
 	resolver.wrap = func(store qrdbsdk.KVStore) qrdbsdk.KVStore { return plainKVStore{KVStore: store} }
 	claims, err := NewUserActivationClaims(resolver)
@@ -214,6 +220,7 @@ func TestUserActivationClaims_UnsupportedStoreFailsClosed(t *testing.T) {
 }
 
 func TestUserActivationClaims_ResolveErrorPropagates(t *testing.T) {
+	t.Parallel()
 	resolver := newClaimTestResolver()
 	resolver.err = claimTestResolveError{}
 	claims, err := NewUserActivationClaims(resolver)
@@ -232,6 +239,7 @@ func TestUserActivationClaims_ResolveErrorPropagates(t *testing.T) {
 }
 
 func TestUserActivationClaims_CorruptRecordRefuses(t *testing.T) {
+	t.Parallel()
 	resolver := newClaimTestResolver()
 	claims, err := NewUserActivationClaims(resolver)
 	if err != nil {
@@ -251,6 +259,7 @@ func TestUserActivationClaims_CorruptRecordRefuses(t *testing.T) {
 }
 
 func TestUserActivationClaimRecord_SupersededBy(t *testing.T) {
+	t.Parallel()
 	now := time.Now().UTC()
 	tests := []struct {
 		name         string
@@ -266,6 +275,7 @@ func TestUserActivationClaimRecord_SupersededBy(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			if got := tc.record.supersededBy(tc.pendingSince, now); got != tc.want {
 				t.Fatalf("supersededBy = %v, want %v", got, tc.want)
 			}

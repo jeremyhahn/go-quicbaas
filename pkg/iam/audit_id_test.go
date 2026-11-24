@@ -25,6 +25,7 @@ func zeroEntropy(n int) ([]byte, error) {
 }
 
 func TestGenerateAuditLogID_Format(t *testing.T) {
+	t.Parallel()
 	id, err := generateAuditLogID()
 	require.NoError(t, err)
 
@@ -36,6 +37,7 @@ func TestGenerateAuditLogID_Format(t *testing.T) {
 }
 
 func TestAuditIDGenerator_DistinctWhenClockDoesNotAdvance(t *testing.T) {
+	t.Parallel()
 	g := newAuditIDGenerator(frozenClock(), zeroEntropy)
 
 	previous := ""
@@ -50,6 +52,7 @@ func TestAuditIDGenerator_DistinctWhenClockDoesNotAdvance(t *testing.T) {
 }
 
 func TestAuditIDGenerator_DistinctWhenClockStepsBack(t *testing.T) {
+	t.Parallel()
 	ticks := []time.Time{
 		time.Unix(0, 5000),
 		time.Unix(0, 1000), // the clock is set back
@@ -76,6 +79,7 @@ func TestAuditIDGenerator_DistinctWhenClockStepsBack(t *testing.T) {
 }
 
 func TestAuditIDGenerator_ConcurrentIDsAreDistinct(t *testing.T) {
+	t.Parallel()
 	const workers, perWorker = 32, 500
 	// A frozen clock forces every ID onto the counter path, the case
 	// where concurrent callers would collide if the CAS were wrong.
@@ -108,6 +112,7 @@ func TestAuditIDGenerator_ConcurrentIDsAreDistinct(t *testing.T) {
 }
 
 func TestMemoryAuditStorage_SaveEventRejectsDuplicateID(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := NewMemoryAuditStorage()
 	first := &AuditEvent{
@@ -130,6 +135,7 @@ func TestMemoryAuditStorage_SaveEventRejectsDuplicateID(t *testing.T) {
 }
 
 func TestMemoryAuditStorage_SaveEventAcceptsDistinctIDs(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := NewMemoryAuditStorage()
 	for range 3 {

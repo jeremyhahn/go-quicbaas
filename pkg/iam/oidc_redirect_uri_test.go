@@ -10,6 +10,7 @@ import (
 // redirect URIs match exactly, except that a registered http loopback IP
 // literal matches any port.
 func TestRedirectURIMatches(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		registered string
@@ -41,6 +42,7 @@ func TestRedirectURIMatches(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			if got := redirectURIMatches(tt.registered, tt.requested); got != tt.want {
 				t.Errorf("redirectURIMatches(%q, %q) = %v, want %v", tt.registered, tt.requested, got, tt.want)
 			}
@@ -80,6 +82,7 @@ func authorizeRequestFor(clientID string) *AuthorizeRequest {
 }
 
 func TestOIDCAuthorizeLoopbackRedirectPort(t *testing.T) {
+	t.Parallel()
 	provider, _, appStorage, _, _ := createTestOIDCProvider(t)
 	ctx := context.Background()
 
@@ -110,6 +113,7 @@ func TestOIDCAuthorizeLoopbackRedirectPort(t *testing.T) {
 // (#1439): redirect_uri may be omitted only when the client registered
 // exactly one.
 func TestOIDCAuthorizeDefaultRedirectURI(t *testing.T) {
+	t.Parallel()
 	provider, _, appStorage, tokenStorage, _ := createTestOIDCProvider(t)
 	ctx := context.Background()
 
@@ -168,6 +172,7 @@ func TestOIDCAuthorizeDefaultRedirectURI(t *testing.T) {
 // TestResolveRedirectURI pins the §4.1.1 default: only a sole registered URI
 // stands in for an omitted redirect_uri.
 func TestResolveRedirectURI(t *testing.T) {
+	t.Parallel()
 	got, err := resolveRedirectURI(&Application{RedirectURIs: []string{"https://app.example/cb"}})
 	if err != nil || got != "https://app.example/cb" {
 		t.Errorf("resolveRedirectURI(one) = %q, %v; want the registered URI", got, err)
@@ -184,6 +189,7 @@ func TestResolveRedirectURI(t *testing.T) {
 // (#1434): the token endpoint compares redirect_uri only when the client
 // sends it, against the value the authorize step resolved.
 func TestOIDCTokenRedirectURIOptional(t *testing.T) {
+	t.Parallel()
 	provider, _, appStorage, _, memStorage := createTestOIDCProvider(t)
 	ctx := context.Background()
 	addUserToMemStorage(ctx, memStorage, &User{
