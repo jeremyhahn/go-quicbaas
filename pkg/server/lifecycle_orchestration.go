@@ -918,26 +918,8 @@ func (s *Server) startOrchestration() error {
 			// session's credential was delivered under.
 			wirer.SetAccountCredentialLeaser(accountLeases)
 
-			// "claude-code" is an alias for the same program and is absent from
-			// the registrations above, so naming it here is a no-op today — the
-			// lookup simply misses. It is named anyway because the SDLC module
-			// demands a pooled account for it (orchestration.WorkerSpawnAccountAuto,
-			// go-quicbaas#235), and the two lists disagreeing in THIS direction
-			// is the expensive one: a backend the module pools and the server
-			// does not fails every worker spawn closed, with no configuration
-			// an operator could change to fix it.
-			for _, name := range []string{"claude", "claude-code", "opencode"} {
-				if b, ok := backends[name]; ok {
-					if acpBackend, ok := b.(*orchestration.ACPBackend); ok {
-						acpBackend.SetAccountResolver(accountResolver)
-						// Only for the spawn that resolved an account and then
-						// failed to dispatch: no Session exists to carry the
-						// grant, so the backend withdraws it itself.
-						acpBackend.SetAccountCredentialLeaser(accountLeases)
-					}
-				}
-			}
-			s.logger.Info("Pooled provider account resolver attached to claude/opencode orchestration backends (default strategy: least_usage, balanced on live sessions then recorded usage; static available)")
+			attached := attachAccountResolver(backends, accountResolver, accountLeases)
+			s.logger.Infof("Pooled provider account resolver attached to orchestration backends %v (default strategy: least_usage, balanced on live sessions then recorded usage; static available)", attached)
 		} else {
 			s.logger.Warn("No secrets manager attached; pooled provider accounts are disabled (spawns with account_id/account_auto will fail closed)")
 		}

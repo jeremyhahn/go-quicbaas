@@ -390,11 +390,11 @@ func WorkerSpawnEnv(backend, configDir string) map[string]string {
 //
 // The daemon side needs no list change: pkg/fleet's Runtime attaches the
 // resolver to EVERY ACP backend it serves, deliberately, to avoid exactly this
-// kind of name-list omission. The server-local path is the one that still
-// disagrees — its codex is a CodexExecBackend, which has no
-// SetAccountResolver — so an in-process codex spawn now fails closed and loud
-// rather than silently unauthenticated. That is the correct direction of the
-// two, and giving CodexExecBackend resolver support is the follow-on.
+// kind of name-list omission. The server-local path agrees too: its codex is
+// a CodexExecBackend, which takes the resolver like the ACP backends, so a
+// pooled codex spawn on the control plane resolves an account — its
+// credential in the session's environment, a file credential found through
+// CODEX_HOME.
 //
 // Each maps to the provider whose accounts it draws on, which is what an
 // Agent naming accounts is checked against when it is saved.

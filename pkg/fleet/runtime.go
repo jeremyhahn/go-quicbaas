@@ -242,19 +242,20 @@ func NewRuntime(cfg RuntimeConfig) (*Runtime, error) {
 		}
 	}
 
-	// Give every ACP backend the pooled-account resolver so a spawn naming
-	// AccountID / AccountAuto resolves against the tenant's central pool
-	// instead of failing with AccountResolverNotConfiguredError. This mirrors
-	// the orchestrator-side wiring in pkg/server/lifecycle_orchestration.go —
-	// which attaches by backend name — but attaches to EVERY ACP backend the
+	// Give every backend that can draw an account — ACP or codex exec — the
+	// pooled-account resolver so a spawn naming AccountID / AccountAuto
+	// resolves against the tenant's central pool instead of failing with
+	// AccountResolverNotConfiguredError. This mirrors the orchestrator-side
+	// wiring in pkg/server/lifecycle_account_backends.go —
+	// which attaches by backend name — but attaches to EVERY such backend the
 	// daemon serves: the daemon's own backend set is already the operator's
 	// choice, and a name list here would silently exclude a backend the
 	// control plane pools (the "claude-code" alias problem that wiring
 	// documents).
 	if cfg.AccountResolver != nil {
 		for _, b := range backends {
-			if acp, ok := b.(*orchestration.ACPBackend); ok {
-				acp.SetAccountResolver(cfg.AccountResolver)
+			if pooled, ok := b.(accountResolverSetter); ok {
+				pooled.SetAccountResolver(cfg.AccountResolver)
 			}
 		}
 	}
@@ -288,7 +289,8 @@ func (r *Runtime) SetEventForwarder(f *EventForwarder) {
 }
 
 // SetAccountResolver installs (or replaces) the pooled provider account
-// resolver on every ACP backend this runtime serves.
+// resolver on every backend this runtime serves that can draw an account,
+// ACP or codex exec.
 //
 // It exists for the same reason SetEventForwarder does: the resolver's
 // dependencies are the daemon's control-plane HTTP client and token source,
@@ -307,10 +309,16 @@ func (r *Runtime) SetAccountResolver(resolver orchestration.AccountResolver) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, b := range r.backends {
-		if acp, ok := b.(*orchestration.ACPBackend); ok {
-			acp.SetAccountResolver(resolver)
+		if pooled, ok := b.(accountResolverSetter); ok {
+			pooled.SetAccountResolver(resolver)
 		}
 	}
+}
+
+// accountResolverSetter is a backend that can draw a pooled provider account
+// at spawn: an ACP backend or the codex exec backend.
+type accountResolverSetter interface {
+	SetAccountResolver(orchestration.AccountResolver)
 }
 
 // rememberBackendForSession records which backend owns a session so that
