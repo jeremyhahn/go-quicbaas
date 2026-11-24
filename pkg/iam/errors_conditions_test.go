@@ -32,6 +32,7 @@ import (
 //
 // The paired predicate assertion is what the call sites depend on.
 func TestErrorsIsCannotDistinguishIAMSentinels(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		// err and target are two DIFFERENT conditions carrying one code.
@@ -80,6 +81,7 @@ func TestErrorsIsCannotDistinguishIAMSentinels(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			assert.True(t, errors.Is(tc.err, tc.target),
 				"errors.Is stopped comparing codes; the predicates may no longer be needed")
 			assert.False(t, tc.narrow(tc.err),
@@ -92,6 +94,7 @@ func TestErrorsIsCannotDistinguishIAMSentinels(t *testing.T) {
 // predicate must still recognise the condition it is named for, both as the
 // bare sentinel and wrapped.
 func TestIAMConditionPredicatesMatchTheirOwnSentinel(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		err    error
@@ -114,6 +117,7 @@ func TestIAMConditionPredicatesMatchTheirOwnSentinel(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			assert.True(t, tc.narrow(tc.err), "the predicate refused its own sentinel")
 			assert.True(t, tc.narrow(&IAMContextError{Message: "wrapped", Cause: tc.err}),
 				"the predicate refused its own sentinel through a wrapper")
@@ -127,6 +131,7 @@ func TestIAMConditionPredicatesMatchTheirOwnSentinel(t *testing.T) {
 // the same code, while the code itself -- what a client sees on the wire --
 // is unchanged.
 func TestRoleSentinelPredicatesRefuseSiblings(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		sentinel error
@@ -166,6 +171,7 @@ func TestRoleSentinelPredicatesRefuseSiblings(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			var coded *dberrors.QBError
 			require.ErrorAs(t, tc.sentinel, &coded)
 			assert.Equal(t, tc.wantCode, coded.Code, "the wire code changed")
@@ -185,6 +191,7 @@ func TestRoleSentinelPredicatesRefuseSiblings(t *testing.T) {
 // errors.Is would match them, but they are not a wrong TOTP code and must not
 // count as a failed enrollment attempt.
 func TestIsMFACodeInvalidRefusesOtherUnauthorized(t *testing.T) {
+	t.Parallel()
 	for _, err := range []error{ErrMFABackupCodeInvalid, ErrMTLSNoCertificate, ErrWebAuthnAuthenticationFailed} {
 		require.ErrorIs(t, err, ErrMFACodeInvalid, "precondition: the code alone cannot tell these apart")
 		assert.False(t, IsMFACodeInvalid(err), "%v must not read as a wrong MFA code", err)
@@ -196,6 +203,7 @@ func TestIsMFACodeInvalidRefusesOtherUnauthorized(t *testing.T) {
 // (it reaches operators through the REST error envelope), so it must not have
 // moved when the inner error's TYPE did.
 func TestIAMSentinelMessagesAreUnchanged(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		err  error
 		want string
@@ -226,6 +234,7 @@ func TestIAMSentinelMessagesAreUnchanged(t *testing.T) {
 // QBError{ErrNotFound} carries no such identity and would be read as an
 // unrelated store failure.
 func TestMemoryStorageAnswersIdentityLookupsWithSentinels(t *testing.T) {
+	t.Parallel()
 	m := NewMemoryStorage()
 	ctx := context.Background()
 

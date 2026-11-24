@@ -25,6 +25,7 @@ import (
 // (sub/tenant_id/scp/roles/jti), and that the tenant is stamped on the event
 // (AU-2/AU-3).
 func TestLogDualIdentity_CarriesBothIdentities(t *testing.T) {
+	t.Parallel()
 	logger, err := NewAuditLogger()
 	if err != nil {
 		t.Fatalf("NewAuditLogger() error = %v", err)
@@ -94,6 +95,7 @@ func TestLogDualIdentity_CarriesBothIdentities(t *testing.T) {
 // context tenant when the DualIdentity does not carry one, so the event still
 // routes to a tenant partition.
 func TestLogDualIdentity_TenantFromContext(t *testing.T) {
+	t.Parallel()
 	logger, err := NewAuditLogger()
 	if err != nil {
 		t.Fatalf("NewAuditLogger() error = %v", err)
@@ -127,6 +129,7 @@ func TestLogDualIdentity_TenantFromContext(t *testing.T) {
 // TestLogDualIdentity_Errors verifies fail-closed behaviour: a nil logger and a
 // missing tenant both return errors rather than dropping the security event.
 func TestLogDualIdentity_Errors(t *testing.T) {
+	t.Parallel()
 	// Nil logger.
 	if err := LogDualIdentity(context.Background(), nil, DualIdentity{TenantID: "t"},
 		AuditEventAuthentication, AuditCategoryAuthentication,
@@ -152,6 +155,7 @@ func TestLogDualIdentity_Errors(t *testing.T) {
 // dual-identity event records WHERE the request originated (AU-3 network
 // source) in addition to WHO performed it.
 func TestLogDualIdentity_CarriesNetworkSource(t *testing.T) {
+	t.Parallel()
 	logger, err := NewAuditLogger()
 	if err != nil {
 		t.Fatalf("NewAuditLogger() error = %v", err)
@@ -191,6 +195,7 @@ func TestLogDualIdentity_CarriesNetworkSource(t *testing.T) {
 // TestLogDualIdentity_NetworkSourceOptional verifies that omitting the network
 // source leaves the fields empty rather than failing (the fields are optional).
 func TestLogDualIdentity_NetworkSourceOptional(t *testing.T) {
+	t.Parallel()
 	logger, err := NewAuditLogger()
 	if err != nil {
 		t.Fatalf("NewAuditLogger() error = %v", err)

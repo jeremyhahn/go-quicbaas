@@ -25,6 +25,7 @@ import (
 // not-found from storage, and the two input-validation guards (empty tenant and
 // empty username) that must fail before storage is consulted.
 func TestIdentityStore_GetUserByUsername(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := newMockUserStorage()
 	if err := store.CreateUser(ctx, &User{
@@ -81,6 +82,7 @@ func TestIdentityStore_GetUserByUsername(t *testing.T) {
 // the tenant-scoped name, a miss returning ErrUserNotFound, and a tenant mismatch
 // (right username, wrong tenant) that must not cross the tenant boundary.
 func TestMemoryStorage_GetUserByUsername(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	storage := NewMemoryStorage()
 	if err := storage.CreateTenant(ctx, &Tenant{ID: "t1", Name: "Tenant One"}); err != nil {
@@ -130,6 +132,7 @@ func TestMemoryStorage_GetUserByUsername(t *testing.T) {
 // Both follow from one cause, so the test asserts both: the handle resolves,
 // and a shared display name does not make two accounts collide.
 func TestCreateUser_KeepsTheHandleAndTheDisplayNameApart(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := newTestIdentityStore()
 
@@ -192,6 +195,7 @@ func TestCreateUser_KeepsTheHandleAndTheDisplayNameApart(t *testing.T) {
 // silently changed the handle every role assignment and ceremony subject
 // resolves through. A rename is not a re-identification.
 func TestUpdateUser_RenamingTheDisplayNameLeavesTheHandleAlone(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := newTestIdentityStore()
 

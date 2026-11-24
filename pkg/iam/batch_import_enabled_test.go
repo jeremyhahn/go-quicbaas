@@ -36,6 +36,7 @@ func newImportEnabledFixture(t *testing.T) (*BatchManager, *IdentityStore, *Memo
 // ignored it. So the round trip re-enabled every disabled account it carried,
 // and the code read as though it did not.
 func TestImportUsers_PreservesDisabled(t *testing.T) {
+	t.Parallel()
 	bm, _, mem := newImportEnabledFixture(t)
 	ctx := context.Background()
 
@@ -61,6 +62,7 @@ func TestImportUsers_PreservesDisabled(t *testing.T) {
 // that says nothing about Enabled must not suspend anyone: as a plain bool,
 // "said nothing" and "said disabled" were the same value.
 func TestImportUsers_UnspecifiedEnabledLeavesUserEnabled(t *testing.T) {
+	t.Parallel()
 	bm, _, mem := newImportEnabledFixture(t)
 	ctx := context.Background()
 
@@ -90,6 +92,7 @@ func TestImportUsers_UnspecifiedEnabledLeavesUserEnabled(t *testing.T) {
 // never nil, so refreshing an existing user's name through an import record
 // that did not mention Enabled SUSPENDED them.
 func TestImportUsers_UpdateWithoutEnabledDoesNotSuspend(t *testing.T) {
+	t.Parallel()
 	bm, store, mem := newImportEnabledFixture(t)
 	ctx := context.Background()
 
@@ -124,6 +127,7 @@ func TestImportUsers_UpdateWithoutEnabledDoesNotSuspend(t *testing.T) {
 // disables when the import actually says so, so the fix above did not buy
 // safety by making the field inert.
 func TestImportUsers_UpdateHonoursExplicitDisable(t *testing.T) {
+	t.Parallel()
 	bm, store, mem := newImportEnabledFixture(t)
 	ctx := context.Background()
 
@@ -154,6 +158,7 @@ func TestImportUsers_UpdateHonoursExplicitDisable(t *testing.T) {
 // TestExportImportRoundTrip_PreservesDisabled is the property the other tests
 // serve, stated end to end over the two functions an operator actually calls.
 func TestExportImportRoundTrip_PreservesDisabled(t *testing.T) {
+	t.Parallel()
 	bm, _, mem := newImportEnabledFixture(t)
 	ctx := context.Background()
 
@@ -209,8 +214,10 @@ func TestExportImportRoundTrip_PreservesDisabled(t *testing.T) {
 // six states; it must not overrule a caller who named the state, on the update
 // path any more than on the create path.
 func TestImportUsers_UpdateExistingPreservesTheExactLifecycle(t *testing.T) {
+	t.Parallel()
 	for _, state := range []Lifecycle{LifecyclePending, LifecycleActive, LifecycleDisabled} {
 		t.Run(string(state), func(t *testing.T) {
+			t.Parallel()
 			bm, is, mem := newImportEnabledFixture(t)
 			ctx := context.Background()
 

@@ -18,6 +18,7 @@ import (
 )
 
 func TestPolicyUpdateType_String(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		ut       PolicyUpdateType
@@ -67,6 +68,7 @@ func TestPolicyUpdateType_String(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			result := tt.ut.String()
 			if result != tt.expected {
 				t.Errorf("PolicyUpdateType.String() = %q, want %q", result, tt.expected)
@@ -76,6 +78,7 @@ func TestPolicyUpdateType_String(t *testing.T) {
 }
 
 func TestPolicyUpdateType_Values(t *testing.T) {
+	t.Parallel()
 	// Verify the iota values are sequential starting from 0
 	if PolicyUpdateSnapshot != 0 {
 		t.Errorf("PolicyUpdateSnapshot = %d, want 0", PolicyUpdateSnapshot)
@@ -95,6 +98,7 @@ func TestPolicyUpdateType_Values(t *testing.T) {
 }
 
 func TestPolicyUpdate_Fields(t *testing.T) {
+	t.Parallel()
 	// Test that PolicyUpdate struct can be created with all fields
 	update := PolicyUpdate{
 		Type:     PolicyUpdateCreated,
@@ -114,6 +118,7 @@ func TestPolicyUpdate_Fields(t *testing.T) {
 }
 
 func TestBatchCheckRequest_Fields(t *testing.T) {
+	t.Parallel()
 	// Test that BatchCheckRequest struct can be created
 	req := &BatchCheckRequest{
 		Checks: []*CheckRequest{
@@ -137,6 +142,7 @@ func TestBatchCheckRequest_Fields(t *testing.T) {
 }
 
 func TestBatchCheckResponse_Fields(t *testing.T) {
+	t.Parallel()
 	// Test that BatchCheckResponse struct can be created
 	resp := &BatchCheckResponse{
 		Responses: []*CheckResponse{
@@ -160,6 +166,7 @@ func TestBatchCheckResponse_Fields(t *testing.T) {
 }
 
 func TestPEPStats_Fields(t *testing.T) {
+	t.Parallel()
 	// Test that PEPStats struct can be created with all fields
 	stats := &PEPStats{
 		ChecksTotal:      100,
