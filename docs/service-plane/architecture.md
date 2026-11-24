@@ -166,8 +166,10 @@ revoked; undeploy revokes the certificates and destroys what was
 stored. The `RoleBinder` over go-qrdb IAM is `iam.WorkloadRoleBinder`: the
 SPIFFE ID is a machine principal (username the SVID's CommonName, active,
 mTLS-only, no email login key) holding the built-in role; it never widens an
-account that is not mTLS-only, and a revoke removes the role. Not built: the
-server wiring that passes `grants.All` as the plane's grants.
+account that is not mTLS-only, and a revoke removes the role. The node builds
+them: a `ServicePlaneRuntime` with no grants gets `grants.All` over the node's
+go-xkms CA, secrets manager, platform registry and `iam.WorkloadRoleBinder`,
+its names under `ServicePlaneRuntime.Domain` (default: the trust domain).
 
 **Placement** reuses `pkg/scheduler/placement`. `FleetDeployService`, the SSH
 install of the daemon itself, stays as node bootstrap. Its verbs are not
