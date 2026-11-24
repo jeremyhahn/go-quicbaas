@@ -895,10 +895,10 @@ func (c *client) qrdbEmbedding() (QRDBEmbeddingClient, error) {
 
 // QRDBData returns go-qrdb's data services through a go-qrdb SDK client.
 //
-// Embedded: when the client carries QRDBEmbeddedServicers.Data (the embedded
-// node's own client, whose transport carries the node's service registry) it
-// serves the calls, so every data service reaches the node; otherwise this
-// client's own go-qrdb client does. The node's KV, batch, transaction, MVCC
+// Embedded: when the client carries QRDBEmbeddedServicers.Data, it serves
+// the calls, so every data service reaches the node; otherwise this client's
+// own go-qrdb client does. With the CLI's embedded wiring, an embedded write
+// and a network read of the same key meet in one keyspace. The node's KV, batch, transaction, MVCC
 // and index services on the default database are the system tenant's: they
 // do not resolve the context's tenant, so a call whose context binds another
 // tenant (go-qrdb's ContextWithTenant, this SDK's transport.ContextWithTenant,
