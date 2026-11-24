@@ -726,19 +726,11 @@ func waitForBarrierDaemonReady(ctx context.Context, d *barrierDaemon) error {
 	ticker := time.NewTicker(daemonReadyPollInterval)
 	defer ticker.Stop()
 	caPath := filepath.Join(d.dataDir, "certs", "ca-chain.crt")
-	// lastErr keeps the most recent probe failure so a timeout names the
-	// gate that never opened. A probe the start deadline itself cut short
-	// does not overwrite it: that error would only repeat the deadline.
-	var lastErr error
-	noteProbe := func(err error) {
-		if lastErr == nil || ctx.Err() == nil {
-			lastErr = err
-		}
-	}
+	probes := barrierProbeErrors{ctx: ctx}
 	for {
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("barrier daemon not ready within %s: %w; last probe: %v", daemonStartTimeout, ctx.Err(), lastErr)
+			return fmt.Errorf("barrier daemon not ready within %s: %w; last probe: %v", daemonStartTimeout, ctx.Err(), probes.last)
 		case <-d.Done():
 			return fmt.Errorf("barrier daemon exited before ready: wait_err=%v", d.WaitErr())
 		case <-ticker.C:
@@ -747,31 +739,46 @@ func waitForBarrierDaemonReady(ctx context.Context, d *barrierDaemon) error {
 			// missing/empty chain as "not ready yet" and keep polling.
 			tlsCfg, err := barrierProbeTLSConfig(caPath)
 			if err != nil {
-				noteProbe(err)
+				probes.note(err)
 				continue
 			}
 			if err := probeBarrierREST(ctx, d.ports.REST, tlsCfg); err != nil {
-				noteProbe(err)
+				probes.note(err)
 				continue
 			}
 			if err := probeBarrierTCP(ctx, d.ports.GRPC); err != nil {
-				noteProbe(err)
+				probes.note(err)
 				continue
 			}
 			if err := probeBarrierUDP(ctx, d.ports.QUIC); err != nil {
-				noteProbe(err)
+				probes.note(err)
 				continue
 			}
 			if err := probeBarrierTLS(ctx, d.ports.MCP, tlsCfg); err != nil {
-				noteProbe(err)
+				probes.note(err)
 				continue
 			}
 			if err := probeBarrierUnix(ctx, d.ports.Unix); err != nil {
-				noteProbe(err)
+				probes.note(err)
 				continue
 			}
 			return nil
 		}
+	}
+}
+
+// barrierProbeErrors keeps the most recent readiness probe failure so a
+// timeout names the gate that never opened. A probe the start deadline
+// itself cut short does not overwrite it: that error would only repeat the
+// deadline.
+type barrierProbeErrors struct {
+	ctx  context.Context
+	last error
+}
+
+func (p *barrierProbeErrors) note(err error) {
+	if p.last == nil || p.ctx.Err() == nil {
+		p.last = err
 	}
 }
 
@@ -786,30 +793,37 @@ func waitForSealedBarrierDaemonReady(ctx context.Context, d *barrierDaemon) erro
 	ticker := time.NewTicker(daemonReadyPollInterval)
 	defer ticker.Stop()
 	caPath := filepath.Join(d.dataDir, "certs", "ca-chain.crt")
+	probes := barrierProbeErrors{ctx: ctx}
 	for {
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("sealed barrier daemon not ready within %s: %w", daemonStartTimeout, ctx.Err())
+			return fmt.Errorf("sealed barrier daemon not ready within %s: %w; last probe: %v", daemonStartTimeout, ctx.Err(), probes.last)
 		case <-d.Done():
 			return fmt.Errorf("sealed barrier daemon exited before ready: wait_err=%v", d.WaitErr())
 		case <-ticker.C:
 			tlsCfg, err := barrierProbeTLSConfig(caPath)
 			if err != nil {
+				probes.note(err)
 				continue
 			}
 			if err := probeBarrierSealedStatus(ctx, d.ports.REST, tlsCfg); err != nil {
+				probes.note(err)
 				continue
 			}
 			if err := probeBarrierTCP(ctx, d.ports.GRPC); err != nil {
+				probes.note(err)
 				continue
 			}
 			if err := probeBarrierUDP(ctx, d.ports.QUIC); err != nil {
+				probes.note(err)
 				continue
 			}
 			if err := probeBarrierTLS(ctx, d.ports.MCP, tlsCfg); err != nil {
+				probes.note(fmt.Errorf("mcp: %w", err))
 				continue
 			}
 			if err := probeBarrierUnix(ctx, d.ports.Unix); err != nil {
+				probes.note(err)
 				continue
 			}
 			return nil
