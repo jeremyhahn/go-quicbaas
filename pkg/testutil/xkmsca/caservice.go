@@ -18,6 +18,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"math/big"
+	"strings"
 	"sync"
 	"testing"
 
@@ -176,6 +177,9 @@ func NewCAServiceOver(t *testing.T, ca xkmssdk.TrustedCA) *CAService {
 // certificate against the authority that signed it.
 func (s *CAService) TrustedCA() xkmssdk.TrustedCA { return s.ca }
 
+// fleetNodeCertProfile mirrors service.FleetNodeCertProfile.
+const fleetNodeCertProfile = "fleet-node"
+
 // SignCSR signs the supplied PKCS#10 CSR with the real CA, under the client
 // profile when one is named.
 func (s *CAService) SignCSR(ctx context.Context, req *xkmstransport.SignCSRRequest) (*xkmstransport.SignCSRResponse, error) {
@@ -193,6 +197,13 @@ func (s *CAService) SignCSR(ctx context.Context, req *xkmstransport.SignCSRReque
 		Profile:      req.Profile,
 		ValidityDays: req.ValidityDays,
 		TenantID:     req.TenantID,
+	}
+	// A QuicBaaS provider translates the fleet node profile before go-xkms
+	// sees it (service.SignProfileUsage; this package cannot import
+	// pkg/service, whose tests import it).
+	if strings.EqualFold(strings.TrimSpace(req.Profile), fleetNodeCertProfile) {
+		opts.Profile = ""
+		opts.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
 	}
 	if trustDomain != "" && req.TenantID != "" {
 		opts.SPIFFETrustDomain = trustDomain

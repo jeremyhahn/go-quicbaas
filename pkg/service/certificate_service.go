@@ -624,6 +624,24 @@ func SPIFFEKindForProfile(profile string) string {
 	return qrdbsdk.SpiffeKindService
 }
 
+// FleetNodeCertProfile is the sign profile for a fleet node's machine
+// identity: a TLS client authentication certificate with SPIFFE kind svc.
+// The xkms CA does not know it; the server's CA adapters translate it with
+// SignProfileUsage before signing.
+const FleetNodeCertProfile = "fleet-node"
+
+// SignProfileUsage translates a caller's sign profile into the xkms profile
+// and the extended key usages to request. FleetNodeCertProfile (matched
+// case-insensitively, trimmed) becomes no xkms profile with ExtKeyUsage
+// [ClientAuth]; every other profile passes through unchanged with no
+// extended key usage override.
+func SignProfileUsage(profile string) (xkmsProfile string, extKeyUsage []x509.ExtKeyUsage) {
+	if strings.EqualFold(strings.TrimSpace(profile), FleetNodeCertProfile) {
+		return "", []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
+	}
+	return profile, nil
+}
+
 // =============================================================================
 // CA Administration Surface — types & implementation
 // =============================================================================

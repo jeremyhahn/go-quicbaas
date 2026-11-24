@@ -16,10 +16,14 @@
 package rest
 
 import (
+	"crypto/x509"
+	"slices"
 	"testing"
 
 	qrdbspiffe "github.com/jeremyhahn/go-qrdb/pkg/auth/spiffe"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
 // TestXKMSCAServicer_SignOptionsWithSPIFFE verifies the REST servicer folds the
@@ -47,6 +51,20 @@ func TestXKMSCAServicer_SignOptionsWithSPIFFE(t *testing.T) {
 	t.Run("server profile stamps svc kind", func(t *testing.T) {
 		a := &xkmsCAServicer{spiffeTrustDomain: "example.com"}
 		opts := a.signOptionsWithSPIFFE("server", 0, "acme-corp")
+		if opts.SPIFFEKind != qrdbspiffe.KindService {
+			t.Fatalf("SPIFFEKind = %q, want svc", opts.SPIFFEKind)
+		}
+	})
+
+	t.Run("fleet-node profile signs clientAuth svc", func(t *testing.T) {
+		a := &xkmsCAServicer{spiffeTrustDomain: "example.com"}
+		opts := a.signOptionsWithSPIFFE(service.FleetNodeCertProfile, 0, "acme-corp")
+		if opts.Profile != "" {
+			t.Fatalf("Profile = %q, want no xkms profile", opts.Profile)
+		}
+		if !slices.Equal(opts.ExtKeyUsage, []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}) {
+			t.Fatalf("ExtKeyUsage = %v, want [ClientAuth]", opts.ExtKeyUsage)
+		}
 		if opts.SPIFFEKind != qrdbspiffe.KindService {
 			t.Fatalf("SPIFFEKind = %q, want svc", opts.SPIFFEKind)
 		}

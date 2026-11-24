@@ -276,15 +276,20 @@ func (a *caServiceAdapter) IssueCertificate(
 // When the trust domain or tenant is empty the CA omits the SPIFFE SAN
 // (single-domain / pre-broker mode). Returns nil only when profile, validity
 // and tenant are all empty, so the CA applies its own profile defaults
-// unchanged.
+// unchanged. The fleet-node profile is translated by service.SignProfileUsage
+// into a clientAuth certificate under no xkms profile, keeping kind svc.
 func (a *caServiceAdapter) signOptionsWithSPIFFE(profile string, validityDays int, tenantID string) *xkmssdk.TrustedCASignOptions {
 	if profile == "" && validityDays <= 0 && tenantID == "" {
 		return nil
 	}
+	xkmsProfile, extKeyUsage := service.SignProfileUsage(profile)
 	opts := &xkmssdk.TrustedCASignOptions{
-		Profile:      profile,
+		Profile:      xkmsProfile,
 		ValidityDays: validityDays,
 		TenantID:     tenantID,
+	}
+	if extKeyUsage != nil {
+		opts.ExtKeyUsage = extKeyUsage
 	}
 	trustDomain := a.getSPIFFETrustDomain()
 	if trustDomain != "" && tenantID != "" {

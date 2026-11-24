@@ -212,7 +212,7 @@ func (i *sdkFleetNodeCertIssuer) IssueFleetNodeCertificate(ctx context.Context, 
 
 	signedCert, chainPEM, err := i.signCSR(ctx, &xkmsSignCSRRequest{
 		CSRPEM:       csrPEM,
-		Profile:      "client",
+		Profile:      service.FleetNodeCertProfile,
 		ValidityDays: ttl,
 		TenantID:     req.TenantID,
 	})

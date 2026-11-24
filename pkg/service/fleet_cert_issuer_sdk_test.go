@@ -183,8 +183,8 @@ func TestSDKAgentCertIssuer_SignsACSRAndKeepsTheMatchingKey(t *testing.T) {
 	if ca.LastSignCSR() == nil {
 		t.Fatal("no CSR was recorded")
 	}
-	if ca.LastSignCSR().Profile != "client" {
-		t.Errorf("CSR profile = %q, want %q", ca.LastSignCSR().Profile, "client")
+	if ca.LastSignCSR().Profile != FleetNodeCertProfile {
+		t.Errorf("CSR profile = %q, want %q", ca.LastSignCSR().Profile, FleetNodeCertProfile)
 	}
 	if ca.LastSignCSR().TenantID != sdkIssuerTenant {
 		t.Errorf("CSR tenant = %q, want %q", ca.LastSignCSR().TenantID, sdkIssuerTenant)

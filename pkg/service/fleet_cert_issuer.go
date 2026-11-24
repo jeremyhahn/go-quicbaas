@@ -387,7 +387,8 @@ func NewSDKFleetNodeCertIssuer(ca xkmstransport.CAService) (*SDKFleetNodeCertIss
 
 // IssueFleetNodeCertificate implements FleetNodeCertIssuer.IssueFleetNodeCertificate by
 // creating the fleet node's key pair at the point of custody and asking the CA
-// service to sign a CSR for it.
+// service to sign a CSR for it under the FleetNodeCertProfile profile, which
+// the server's CA adapters sign as a TLS client certificate with kind svc.
 //
 // It does NOT call CAService.IssueCertificate, and it must not: that route
 // generates inside the go-xkms keystore, where the key is a non-exportable
@@ -476,7 +477,7 @@ func (i *SDKFleetNodeCertIssuer) IssueFleetNodeCertificate(ctx context.Context, 
 
 	resp, err := i.ca.SignCSR(ctx, &xkmstransport.SignCSRRequest{
 		CSRPEM:       csrPEM,
-		Profile:      "client",
+		Profile:      FleetNodeCertProfile,
 		ValidityDays: validity,
 		TenantID:     req.TenantID,
 	})
@@ -623,10 +624,9 @@ func (e *FleetNodeCertIssueError) Unwrap() error {
 // FleetNodeCertKindUnavailableError reports that the certificate provider
 // issued a fleet node certificate the fleet enrollment endpoint would refuse:
 // its tenant SPIFFE SAN is missing, names another tenant, or names a kind
-// other than svc. The pinned go-xkms CSR-signing request carries no SPIFFE
-// kind (#1772), so a remote provider cannot be asked for svc; the deploy
-// refuses before anything is installed rather than install a daemon that
-// can never enroll.
+// other than svc. A provider that does not honour the fleet-node profile, or
+// issues another kind, is refused before anything is installed rather than
+// install a daemon that can never enroll.
 type FleetNodeCertKindUnavailableError struct {
 	// TenantID is the tenant the node was being deployed into.
 	TenantID string

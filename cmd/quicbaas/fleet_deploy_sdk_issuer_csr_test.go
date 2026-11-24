@@ -59,6 +59,10 @@ func TestSDKAgentCertIssuer_PostsASignableCSRAndKeepsTheMatchingKey(t *testing.T
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		if req.Profile != pkgservice.FleetNodeCertProfile {
+			http.Error(w, "unexpected profile "+req.Profile, http.StatusBadRequest)
+			return
+		}
 		gotCSR = req.CSRPEM
 
 		cert, signErr := ca.SignCSR(r.Context(), req.CSRPEM, &xkmssdk.TrustedCASignOptions{
