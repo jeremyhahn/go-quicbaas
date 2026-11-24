@@ -190,8 +190,41 @@ func UnaryAuthorizationInterceptor(authorizer GRPCValidatorAuthorizer, opts ...A
 		if err != nil {
 			return nil, err
 		}
+		if err := authorizeGRPCRequestFields(ctx, info.FullMethod, req, authorizer, cfg.sealedBypass); err != nil {
+			return nil, err
+		}
 		return handler(authedCtx, req)
 	}
+}
+
+// authorizeGRPCRequestFields renders the further permissions a request's own
+// fields demand (grpcRequestPermissions) after the method's grant has been
+// decided. A public or sealed-window bypassed method, or one with no entry,
+// needs nothing more. Each permission is decided by the same token authorizer
+// as the method grant; a denial maps through validatorGRPCStatus, and a request
+// the table cannot read is refused (fail closed).
+func authorizeGRPCRequestFields(ctx context.Context, fullMethod string, req interface{}, authorizer GRPCValidatorAuthorizer, sealedBypass *sealedwindow.AuthBypass) error {
+	// The table is consulted first: BypassesGRPC audits every admit it
+	// makes, so it is asked only for a method that has an entry, and an
+	// allowlisted unseal verb is never audited twice.
+	fields, ok := grpcRequestPermissions[fullMethod]
+	if !ok {
+		return nil
+	}
+	if isPublicGRPCMethod(fullMethod) || sealedBypass.BypassesGRPC(fullMethod) {
+		return nil
+	}
+	perms, err := fields(req)
+	if err != nil {
+		return status.Error(codes.PermissionDenied, "permission denied")
+	}
+	token := bearerFromContext(ctx)
+	for _, perm := range perms {
+		if _, err := authorizer.Authorize(ctx, token, perm.resource+":"+perm.action, "", "", ""); err != nil {
+			return validatorGRPCStatus(err)
+		}
+	}
+	return nil
 }
 
 // StreamAuthorizationInterceptor is the streaming counterpart of

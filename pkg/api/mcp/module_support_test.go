@@ -190,6 +190,20 @@ func TestModuleTools_EntityKVToolsOnExistingKVPermissions(t *testing.T) {
 	}
 }
 
+// TestModuleTools_PasskeyToolsStayOffMCP pins that the node's MCP module
+// surface lists no passkey (FIDO2) tool: passkey enrolment and login are
+// refused over MCP.
+func TestModuleTools_PasskeyToolsStayOffMCP(t *testing.T) {
+	for _, spec := range ModuleTools() {
+		if strings.HasPrefix(spec.Name, "xkms.fido2.") {
+			t.Errorf("passkey tool %s must not be listed on the node's MCP surface", spec.Name)
+		}
+		if strings.HasPrefix(spec.Tool, "xkms_fido2_") {
+			t.Errorf("passkey tool %s must not be listed on the node's MCP surface", spec.Tool)
+		}
+	}
+}
+
 // TestInvokeTool_EntityKVPutReachesEntityHandler proves quicbaas_kv_put runs
 // quicbaas's entity put handler: a call with undecodable data fails in the entity
 // handler's own base64 decoding, not with an unknown-tool error.

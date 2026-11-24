@@ -148,7 +148,7 @@ func TestAllocPortBundle_QUICRowIsTheRESTPort(t *testing.T) {
 // administrator's session is refused on every backend; the client
 // newSDKClient builds must present the token on initialize.
 func TestNewSDKClient_MCPPresentsAdminToken(t *testing.T) {
-	const adminToken = "first-boot-admin-session"
+	adminToken := testSecret(t, "admin-")
 
 	var mu sync.Mutex
 	var seen []string

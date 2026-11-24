@@ -4590,7 +4590,7 @@ v0.13.1-alpha (held; see Changed).
   (`GITEA_HTTP_ORIGIN`) land unreported. The one remaining lab value in the
   Makefile carries an inline waiver naming the release issue it must be gone
   by. Fleet hostnames, lab addresses and the owner's account name were
-  replaced with neutral fixtures (`agent-NN`, `gpu-host`, RFC 5737
+  replaced with neutral fixtures (`agent-NN`, `gpu-01`, RFC 5737
   addresses, `operator`) in the tests, comments and changelog that carried
   them.
 
@@ -4699,7 +4699,7 @@ v0.13.1-alpha (held; see Changed).
   variables a Gitea runner injects, so anywhere else it was written empty and
   the image's `go mod download` failed on `github.com/jeremyhahn/go-auth` with
   `unknown revision`. It now falls back to a Gitea read token from the
-  environment or from `~/.agent-identity/tokens.env`, against an overridable `GITEA_HTTP_ORIGIN`,
+  environment or from a tokens file in the agent's home directory, against an overridable `GITEA_HTTP_ORIGIN`,
   and refuses a value that is not token-shaped. `integration-test-seal`,
   `integration-test-tenantbarrier`, `integration-bench`, `test-e2e-docker` and
   `test-e2e-acp-docker` now stage the secret too, and every one of them empties

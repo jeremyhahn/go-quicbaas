@@ -17,7 +17,7 @@ six classes:
 | Class | What it covers | Use instead |
 |---|---|---|
 | `lab-address` | An address on the fleet subnet | RFC 5737 documentation addresses — `192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24` |
-| `lab-host` | A fleet hostname: the build and runner servers, the GPU and NPU workstations, the remote fleet node host | The role, not the machine: `quicbaas.example.com:8443`, `agent-01`, `gpu-host.internal`, `npu-host.internal` |
+| `lab-host` | A fleet hostname: the build and runner servers, the GPU and NPU workstations, the remote fleet node host | The role, not the machine: `quicbaas.example.com:8443`, `agent-01`, `gpu-01.internal`, `npu-host.internal` |
 | `owner-path` | A path under the owner's home directory, the lab's shared network mount, or the burn-in node's deployment directory | A repository-relative path, or `/var/lib`, `/srv`, `/home/agent` |
 | `owner-account` | The owner's account name on its own | A role: `operator`, `agent`, or the module path |
 | `coord-host` | The fleet's coordination services: forge and registry endpoints, the agent accounts that use them, and the variables that carry their credentials | `forge.example.com`, `registry.example:5000`, a role account such as `company-agent`, and a variable named for what it holds, such as `FORGE_READ_TOKEN` |
@@ -45,7 +45,7 @@ One thing is explicitly *not* a violation:
   look at `192.168.0.0/16` at large, only at the fleet's own /24.
 
 Test files are published and scanned like everything else; they use neutral
-fixtures (`agent-NN`, `gpu-host`, `198.51.100.x`, `/home/agent`). The gate's
+fixtures (`agent-NN`, `gpu-01`, `198.51.100.x`, `/home/agent`). The gate's
 own tests (`pkg/labstrings/*_test.go`) carry no fleet values either: they build
 their rules from reference values (`203.0.113.x`, `fleet-node-NN`,
 `/home/example-owner`).
