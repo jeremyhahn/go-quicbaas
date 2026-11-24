@@ -257,7 +257,6 @@ export declare class RestEntitiesClient implements EntitiesClient {
     private readonly http;
     constructor(baseUrl: string, config?: ClientConfig);
     list(type: string, opts?: EntityListOptions): Promise<EntityList>;
-    create(type: string, data: unknown, opts?: EntityWriteOptions): Promise<PutEntityResponse>;
     put(type: string, id: number | string, data: unknown, opts?: EntityWriteOptions): Promise<PutEntityResponse>;
     get(type: string, id: number | string, opts?: EntityGetOptions): Promise<EntityRecord>;
     delete(type: string, id: number | string, opts?: EntityWriteOptions): Promise<DeleteEntityResponse>;

@@ -74,20 +74,10 @@ describe('entities.list', () => {
 });
 
 describe('entities.create', () => {
-  it('POSTs to the collection with a trailing slash and the type in the body', async () => {
-    fetchMock.mockResolvedValue(makeJSON(201, { id: 7, entity_type: 'a/b', created: true, timestamp: TS }));
-    const res = await new RestClient(BASE).entities.create('a/b', { name: 'x' });
-    const c = lastCall();
-    expect(c.url).toBe(`${BASE}/api/v1/entities/a%2Fb/`);
-    expect(c.method).toBe('POST');
-    expect(c.body).toEqual({ entity_type: 'a/b', data: { name: 'x' } });
-    expect(res.id).toBe(7);
-  });
-
-  it('sends write_mode only when set', async () => {
-    fetchMock.mockResolvedValue(makeJSON(201, { id: 7, entity_type: 'user', created: true, timestamp: TS }));
-    await new RestClient(BASE).entities.create('user', 1, { write_mode: 'sync' });
-    expect(lastCall().url).toBe(`${BASE}/api/v1/entities/user/?write_mode=sync`);
+  it('is withheld until the server assigns ids on POST', () => {
+    const entities = new RestClient(BASE).entities as unknown as Record<string, unknown>;
+    expect('create' in entities).toBe(false);
+    expect(entities.create).toBeUndefined();
   });
 });
 

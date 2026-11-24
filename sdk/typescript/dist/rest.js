@@ -4092,10 +4092,6 @@ export class RestEntitiesClient {
         return { ...wire, entities: wire.entities ?? [] };
     }
     // Maps to POST /api/v1/entities/{type}/ (trailing slash).
-    async create(type, data, opts = {}) {
-        const body = { entity_type: type, data };
-        return this.http.fetchJSON(`/api/v1/entities/${encodeURIComponent(type)}/${entityQuery({ write_mode: opts.write_mode })}`, { method: 'POST', body: JSON.stringify(body) });
-    }
     // Maps to PUT /api/v1/entities/{type}/{id}.
     async put(type, id, data, opts = {}) {
         // The ID travels only in the URL, which the handler takes as the entity's

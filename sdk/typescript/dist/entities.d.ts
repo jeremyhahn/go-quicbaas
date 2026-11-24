@@ -1,11 +1,11 @@
-/** PutEntityRequest is the body of a create (POST) or put (PUT). */
+/** PutEntityRequest is the body of a put (PUT). */
 export interface PutEntityRequest {
     entity_type: string;
     id?: number | string;
     data: unknown;
     consistency_level?: string;
 }
-/** PutEntityResponse confirms a create or put. */
+/** PutEntityResponse confirms a put. */
 export interface PutEntityResponse {
     id: number;
     entity_type: string;
@@ -62,8 +62,6 @@ export interface EntityWriteOptions {
 export interface EntitiesClient {
     /** list returns one page of entities of a type. GET /api/v1/entities/{type}/ */
     list(type: string, opts?: EntityListOptions): Promise<EntityList>;
-    /** create stores a new entity, the server assigning its id. POST /api/v1/entities/{type}/ */
-    create(type: string, data: unknown, opts?: EntityWriteOptions): Promise<PutEntityResponse>;
     /** put creates or replaces the entity with the given id. PUT /api/v1/entities/{type}/{id} */
     put(type: string, id: number | string, data: unknown, opts?: EntityWriteOptions): Promise<PutEntityResponse>;
     /** get returns the entity with the given id. GET /api/v1/entities/{type}/{id} */

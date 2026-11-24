@@ -6015,14 +6015,6 @@ export class RestEntitiesClient implements EntitiesClient {
   }
 
   // Maps to POST /api/v1/entities/{type}/ (trailing slash).
-  async create(type: string, data: unknown, opts: EntityWriteOptions = {}): Promise<PutEntityResponse> {
-    const body: PutEntityRequest = { entity_type: type, data };
-    return this.http.fetchJSON<PutEntityResponse>(
-      `/api/v1/entities/${encodeURIComponent(type)}/${entityQuery({ write_mode: opts.write_mode })}`,
-      { method: 'POST', body: JSON.stringify(body) },
-    );
-  }
-
   // Maps to PUT /api/v1/entities/{type}/{id}.
   async put(
     type: string,

@@ -183,7 +183,7 @@ RestBootstrapClient builds `/api/v1/bootstrap/<mode>` from the mode name.
 | Method | Path | Handler | SDK file | Console |
 |---|---|---|---|---|
 | GET | `/api/v1/entities/{type}/` | HandleList | - (rest.ts†) | not covered |
-| POST | `/api/v1/entities/{type}/` | HandlePut | - (rest.ts†) | not covered |
+| POST | `/api/v1/entities/{type}/` | HandlePut | - | not covered |
 | DELETE | `/api/v1/entities/{type}/{id}` | HandleDelete | - (rest.ts†) | not covered |
 | GET | `/api/v1/entities/{type}/{id}` | HandleGet | - (rest.ts†) | not covered |
 | PUT | `/api/v1/entities/{type}/{id}` | HandlePut | - (rest.ts†) | not covered |

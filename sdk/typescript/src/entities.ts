@@ -24,13 +24,14 @@
 // beyond Number.MAX_SAFE_INTEGER can still be addressed exactly. `data` is
 // any JSON value. Timestamps arrive as RFC 3339 strings.
 //
-// Routing note: the collection routes (list and create) end in a trailing
-// slash; the item routes (put, get, delete) do not. Each path segment is
-// encoded with encodeURIComponent, so a type name containing '/' stays one
-// segment.
+// Routing note: the collection route (list) ends in a trailing slash; the
+// item routes (put, get, delete) do not. Each path segment is encoded with
+// encodeURIComponent, so a type name containing '/' stays one segment.
+// create (POST to the collection) is withheld until the server assigns an
+// id there; callers store an entity with put(type, id, data).
 // ---------------------------------------------------------------------------
 
-/** PutEntityRequest is the body of a create (POST) or put (PUT). */
+/** PutEntityRequest is the body of a put (PUT). */
 export interface PutEntityRequest {
   entity_type: string;
   id?: number | string;
@@ -38,7 +39,7 @@ export interface PutEntityRequest {
   consistency_level?: string;
 }
 
-/** PutEntityResponse confirms a create or put. */
+/** PutEntityResponse confirms a put. */
 export interface PutEntityResponse {
   id: number;
   entity_type: string;
@@ -107,9 +108,6 @@ export interface EntityWriteOptions {
 export interface EntitiesClient {
   /** list returns one page of entities of a type. GET /api/v1/entities/{type}/ */
   list(type: string, opts?: EntityListOptions): Promise<EntityList>;
-
-  /** create stores a new entity, the server assigning its id. POST /api/v1/entities/{type}/ */
-  create(type: string, data: unknown, opts?: EntityWriteOptions): Promise<PutEntityResponse>;
 
   /** put creates or replaces the entity with the given id. PUT /api/v1/entities/{type}/{id} */
   put(type: string, id: number | string, data: unknown, opts?: EntityWriteOptions): Promise<PutEntityResponse>;
