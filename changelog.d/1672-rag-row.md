@@ -23,3 +23,11 @@
   every transport. Only an omitted `min_score` defaults to 0.7.
 - `make test-rag` passes the build tags, so the rag-tagged watcher, REST,
   MCP, gRPC and embedded RAG tests run (go-quicbaas#2067).
+- The node's go-qrdb RAG service removes a document's vectors as well as
+  its chunks on delete, and reports a storage failure instead of success.
+  Re-ingesting a document as fewer chunks removes the old ones, so a query
+  no longer returns replaced text.
+- The Go SDK's REST and QUIC `QRDBRAGClient.RAGDeleteDocument` sends the
+  document id and namespace as query parameters, where go-qrdb reads them.
+- Over MCP, `QRDBRAGClient.RAGIngestDocument` refuses a `ChunkMinSize`,
+  which go-qrdb's MCP tool cannot carry, instead of dropping it.
