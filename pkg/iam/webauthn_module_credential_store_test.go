@@ -75,6 +75,7 @@ func newUnboundModuleStore(t *testing.T) (*lateBoundWebAuthnFactorStore, xkmssdk
 // ceremony routes must enroll the qrdb fido2 factor the unified login ceremony
 // resolves, exactly as one served by quicbaas's own surface does.
 func TestModuleStoreSave_EnrollsLoginFactor(t *testing.T) {
+	t.Parallel()
 	store, factors, users, inner := newBoundModuleStore(t)
 	seedUser(t, users, 42, "burnin@example.com", "xkey")
 
@@ -109,6 +110,7 @@ func TestModuleStoreSave_EnrollsLoginFactor(t *testing.T) {
 // once and cached: rebuilding it per registration would re-derive the qrdb
 // store adapters on every ceremony.
 func TestModuleStoreSave_ReusesOneWriteThrough(t *testing.T) {
+	t.Parallel()
 	store, _, users, _ := newBoundModuleStore(t)
 	seedUser(t, users, 7, "reuse@example.com", "xkey")
 	builds := 0
@@ -136,6 +138,7 @@ func TestModuleStoreSave_ReusesOneWriteThrough(t *testing.T) {
 // concurrent first registrations: every Save must succeed and exactly one
 // write-through must win the CAS.
 func TestModuleStoreConcurrentSave_BindsOnce(t *testing.T) {
+	t.Parallel()
 	store, factors, users, _ := newBoundModuleStore(t)
 	seedUser(t, users, 9, "race@example.com", "xkey")
 
@@ -241,6 +244,7 @@ func (c *serializingFactorClient) LoginAuthFactor(ctx context.Context, req *qrdb
 // would reproduce go-quicbaas#484 exactly — a passkey that registers and can
 // never complete a login.
 func TestModuleStoreSave_UnboundFactoryPersistsNothing(t *testing.T) {
+	t.Parallel()
 	store, inner := newUnboundModuleStore(t)
 	credID := []byte{9, 9, 9, 9}
 
@@ -265,6 +269,7 @@ func TestModuleStoreSave_UnboundFactoryPersistsNothing(t *testing.T) {
 // revoked, which would strand a factor resolving at login to a passkey that no
 // longer exists.
 func TestModuleStoreDelete_UnboundFactoryDeletesNothing(t *testing.T) {
+	t.Parallel()
 	store, inner := newUnboundModuleStore(t)
 	credID := []byte{4, 5, 6}
 	if err := inner.Save(context.Background(), testCredential(3, credID)); err != nil {
@@ -288,6 +293,7 @@ func TestModuleStoreDelete_UnboundFactoryDeletesNothing(t *testing.T) {
 // only reads. A login/begin that could not list credentials would turn a
 // registration-plane defect into a login-plane outage.
 func TestModuleStoreReads_DelegateWhileUnbound(t *testing.T) {
+	t.Parallel()
 	store, inner := newUnboundModuleStore(t)
 	credID := []byte{7, 7}
 	cred := testCredential(11, credID)
@@ -319,6 +325,7 @@ func TestModuleStoreReads_DelegateWhileUnbound(t *testing.T) {
 // constructor returns a decorator that actually wraps — the composed node's
 // whole fix depends on the returned store not being the one passed in.
 func TestNewWebAuthnModuleCredentialStoreDecorator_Decorates(t *testing.T) {
+	t.Parallel()
 	decorate, err := NewWebAuthnModuleCredentialStoreDecorator(
 		testModuleTenant,
 		func() *WebAuthnServiceFactory { return nil },
@@ -352,6 +359,7 @@ func TestNewWebAuthnModuleCredentialStoreDecorator_Decorates(t *testing.T) {
 // failures that ARE knowable at composition time, which must stop the daemon
 // rather than yield a decorator that refuses every ceremony at runtime.
 func TestNewWebAuthnModuleCredentialStoreDecorator_RejectsInvalidConfig(t *testing.T) {
+	t.Parallel()
 	resolve := func() *WebAuthnServiceFactory { return nil }
 	tests := []struct {
 		name     string
@@ -364,6 +372,7 @@ func TestNewWebAuthnModuleCredentialStoreDecorator_RejectsInvalidConfig(t *testi
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			_, err := NewWebAuthnModuleCredentialStoreDecorator(tc.tenantID, tc.resolve, slog.Default())
 			var cfgErr *WebAuthnFactorStoreConfigError
 			if !errors.As(err, &cfgErr) {
@@ -382,6 +391,7 @@ func TestNewWebAuthnModuleCredentialStoreDecorator_RejectsInvalidConfig(t *testi
 // undecorated store instead would serve registrations that enroll no login
 // factor — the defect, restored.
 func TestWebAuthnModuleDecorator_NilStoreLeavesLaneUnserved(t *testing.T) {
+	t.Parallel()
 	decorate, err := NewWebAuthnModuleCredentialStoreDecorator(
 		testModuleTenant,
 		func() *WebAuthnServiceFactory { return nil },
@@ -398,6 +408,7 @@ func TestWebAuthnModuleDecorator_NilStoreLeavesLaneUnserved(t *testing.T) {
 // TestWebAuthnFactorStoreUnboundError_Message covers the typed error's own
 // rendering, including the nil receiver a caller can reach through errors.As.
 func TestWebAuthnFactorStoreUnboundError_Message(t *testing.T) {
+	t.Parallel()
 	var nilErr *WebAuthnFactorStoreUnboundError
 	if msg := nilErr.Error(); msg == "" {
 		t.Error("nil receiver produced an empty message")
@@ -421,6 +432,7 @@ func TestWebAuthnFactorStoreUnboundError_Message(t *testing.T) {
 // success value is a concrete pointer widened to an interface, and a nil
 // pointer inside a non-nil interface reads as a usable store.
 func TestDecorateCredentialStore_RejectsANilStoreBeforeBuilding(t *testing.T) {
+	t.Parallel()
 	factory, err := NewWebAuthnServiceFactory(WebAuthnFactoryParams{
 		Config: WebAuthnFactoryConfig{
 			RPID:          "localhost",
@@ -451,6 +463,7 @@ func TestDecorateCredentialStore_RejectsANilStoreBeforeBuilding(t *testing.T) {
 // composition-time refusal: a tenant-less decorator would resolve the
 // registrant in no tenant at all.
 func TestDecorateCredentialStore_RejectsAnEmptyTenant(t *testing.T) {
+	t.Parallel()
 	factory, err := NewWebAuthnServiceFactory(WebAuthnFactoryParams{
 		Config: WebAuthnFactoryConfig{
 			RPID:          "localhost",

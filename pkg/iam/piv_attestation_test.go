@@ -146,6 +146,7 @@ func certPEM(cert *x509.Certificate) []byte {
 // verification criterion: a slot certificate chaining to a trusted attestation
 // CA is accepted and reports hardware.
 func TestPIVAttestationVerifier_AcceptsChainToTrustedCA(t *testing.T) {
+	t.Parallel()
 	chain := newPIVTestChain(t)
 
 	verifier, err := NewPIVAttestationVerifier(chain.rootPEM, nil)
@@ -175,6 +176,7 @@ func TestPIVAttestationVerifier_AcceptsChainToTrustedCA(t *testing.T) {
 // not evidence of hardware, and the PIV login handler used to accept exactly
 // this and mint attest_level=hardware for it.
 func TestPIVAttestationVerifier_RefusesSelfSigned(t *testing.T) {
+	t.Parallel()
 	chain := newPIVTestChain(t)
 	verifier, err := NewPIVAttestationVerifier(chain.rootPEM, nil)
 	if err != nil {
@@ -201,6 +203,7 @@ func TestPIVAttestationVerifier_RefusesSelfSigned(t *testing.T) {
 // TestPIVAttestationVerifier_RefusesForeignChain covers the certificate that is
 // properly issued — just not by anything this deployment trusts.
 func TestPIVAttestationVerifier_RefusesForeignChain(t *testing.T) {
+	t.Parallel()
 	ours := newPIVTestChain(t)
 	theirs := newPIVTestChain(t)
 
@@ -225,6 +228,7 @@ func TestPIVAttestationVerifier_RefusesForeignChain(t *testing.T) {
 // TestPIVAttestationVerifier_UnconfiguredDenies is the "unconfigured deployment
 // refuses rather than silently accepting anything" criterion, on the PIV side.
 func TestPIVAttestationVerifier_UnconfiguredDenies(t *testing.T) {
+	t.Parallel()
 	chain := newPIVTestChain(t)
 
 	var verifier *PIVAttestationVerifier
@@ -249,6 +253,7 @@ func TestPIVAttestationVerifier_UnconfiguredDenies(t *testing.T) {
 
 // TestPIVAttestationVerifier_NilCertificate covers the empty-input error path.
 func TestPIVAttestationVerifier_NilCertificate(t *testing.T) {
+	t.Parallel()
 	chain := newPIVTestChain(t)
 	verifier, err := NewPIVAttestationVerifier(chain.rootPEM, nil)
 	if err != nil {
@@ -263,6 +268,7 @@ func TestPIVAttestationVerifier_NilCertificate(t *testing.T) {
 // boundary: material the card supplies can complete a path to an operator's
 // root, but supplying its OWN root must not make the chain trusted.
 func TestPIVAttestationVerifier_DeviceIntermediatesAreNotAnchors(t *testing.T) {
+	t.Parallel()
 	ours := newPIVTestChain(t)
 	theirs := newPIVTestChain(t)
 
@@ -287,6 +293,7 @@ func TestPIVAttestationVerifier_DeviceIntermediatesAreNotAnchors(t *testing.T) {
 // TestNewPIVAttestationVerifier_WithIntermediates checks a configured
 // intermediate bundle completes a chain without the card supplying one.
 func TestNewPIVAttestationVerifier_WithIntermediates(t *testing.T) {
+	t.Parallel()
 	chain := newPIVTestChain(t)
 
 	verifier, err := NewPIVAttestationVerifier(chain.rootPEM, certPEM(chain.intermediate))
@@ -302,6 +309,7 @@ func TestNewPIVAttestationVerifier_WithIntermediates(t *testing.T) {
 // silently ended up empty — the state that would verify nothing while looking
 // configured.
 func TestNewPIVAttestationVerifier_RejectsEmptyBundle(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		pem  []byte
@@ -312,6 +320,7 @@ func TestNewPIVAttestationVerifier_RejectsEmptyBundle(t *testing.T) {
 		{"not pem at all", []byte("hello")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			if _, err := NewPIVAttestationVerifier(tc.pem, nil); err == nil {
 				t.Fatal("an empty attestation CA bundle was accepted")
 			}
@@ -322,6 +331,7 @@ func TestNewPIVAttestationVerifier_RejectsEmptyBundle(t *testing.T) {
 // TestNewPIVAttestationVerifier_RejectsMalformedCertificate proves a corrupt
 // CERTIFICATE block is an error rather than a quietly smaller trust set.
 func TestNewPIVAttestationVerifier_RejectsMalformedCertificate(t *testing.T) {
+	t.Parallel()
 	bad := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("not a certificate")})
 
 	_, err := NewPIVAttestationVerifier(bad, nil)
@@ -340,6 +350,7 @@ func TestNewPIVAttestationVerifier_RejectsMalformedCertificate(t *testing.T) {
 // TestNewPIVAttestationVerifierFromFiles covers the operator-facing loader,
 // including both missing-file paths and the no-path-configured refusal.
 func TestNewPIVAttestationVerifierFromFiles(t *testing.T) {
+	t.Parallel()
 	chain := newPIVTestChain(t)
 	dir := t.TempDir()
 
@@ -378,6 +389,7 @@ func TestNewPIVAttestationVerifierFromFiles(t *testing.T) {
 // TestUnattestedPIVCredential documents the explicit opt-out: the result is
 // representable, says "software", and is never mistaken for hardware.
 func TestUnattestedPIVCredential(t *testing.T) {
+	t.Parallel()
 	result := UnattestedPIVCredential()
 
 	if result.IsHardware() {
@@ -397,6 +409,7 @@ func TestUnattestedPIVCredential(t *testing.T) {
 // TestPIVAttestationErrors_NilReceivers checks every typed error renders
 // without panicking on a nil receiver.
 func TestPIVAttestationErrors_NilReceivers(t *testing.T) {
+	t.Parallel()
 	var cfgErr *PIVAttestationConfigError
 	var unverified *PIVAttestationUnverifiedError
 	var chainErr *PIVAttestationChainError
@@ -425,6 +438,7 @@ func TestPIVAttestationErrors_NilReceivers(t *testing.T) {
 // that merely carries a matching issuer DN — the name comparison alone would be
 // forgeable.
 func TestIsSelfSigned(t *testing.T) {
+	t.Parallel()
 	chain := newPIVTestChain(t)
 
 	if !isSelfSigned(chain.root) {
@@ -441,6 +455,7 @@ func TestIsSelfSigned(t *testing.T) {
 // TestPIVAttestationErrors_Messages checks each typed error names the
 // certificate or configuration at fault, and unwraps to its cause.
 func TestPIVAttestationErrors_Messages(t *testing.T) {
+	t.Parallel()
 	cause := errors.New("underlying")
 
 	cfgErr := &PIVAttestationConfigError{Reason: "bundle unreadable", Cause: cause}
@@ -508,6 +523,7 @@ func mintLeafForKey(
 // push an operator into pointing attestation_ca_file at their own login CA and
 // hollowing the control out.
 func TestPIVAttestationVerifier_AcceptsSeparateSlotAttestation(t *testing.T) {
+	t.Parallel()
 	vendorKey, vendorRoot := mintCA(t, "Yubico PIV Attestation Root", nil, nil)
 	orgKey, orgCA := mintCA(t, "Acme Corp Issuing CA", nil, nil)
 
@@ -541,6 +557,7 @@ func TestPIVAttestationVerifier_AcceptsSeparateSlotAttestation(t *testing.T) {
 // SubjectPublicKeyInfo binding, anyone holding any genuine YubiKey attestation
 // could use it to launder a software key into a hardware-attested login.
 func TestPIVAttestationVerifier_RefusesAttestationForADifferentKey(t *testing.T) {
+	t.Parallel()
 	vendorKey, vendorRoot := mintCA(t, "Yubico PIV Attestation Root", nil, nil)
 	orgKey, orgCA := mintCA(t, "Acme Corp Issuing CA", nil, nil)
 
@@ -579,6 +596,7 @@ func TestPIVAttestationVerifier_RefusesAttestationForADifferentKey(t *testing.T)
 // the other half: the certificate is about the right key, but no trust anchor
 // vouches for it.
 func TestPIVAttestationVerifier_RefusesUntrustedAttestationForTheRightKey(t *testing.T) {
+	t.Parallel()
 	_, vendorRoot := mintCA(t, "Yubico PIV Attestation Root", nil, nil)
 	rogueKey, rogueRoot := mintCA(t, "Impostor Attestation Root", nil, nil)
 
