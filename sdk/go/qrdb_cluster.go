@@ -110,9 +110,12 @@ type QRDBRebalanceResult = qrdbtransport.RebalanceResult
 type QRDBImbalanceReport = qrdbtransport.ImbalanceReport
 
 // QRDBCluster returns go-qrdb's ClusterClient for shard membership and
-// leadership. The qrdb sub-client is lazily initialized on first call.
+// leadership. The qrdb sub-client is lazily initialized on first call. Over
+// gRPC and Unix, a WithAuthToken bearer rides each call as authorization
+// metadata. Over REST, QUIC and MCP a token is refused with InvalidInput,
+// since go-qrdb's transports there cannot carry it.
 func (c *client) QRDBCluster() (*QRDBClusterClient, error) {
-	qrdbClient, err := c.qrdbClient()
+	qrdbClient, err := c.qrdbClusterSubClient("QRDBCluster")
 	if err != nil {
 		return nil, err
 	}
@@ -120,18 +123,53 @@ func (c *client) QRDBCluster() (*QRDBClusterClient, error) {
 }
 
 // QRDBMembership returns go-qrdb's membership constructors bound to the qrdb
-// sub-client. The qrdb sub-client is lazily initialized on first call.
+// sub-client. The qrdb sub-client is lazily initialized on first call. Over
+// gRPC and Unix, a WithAuthToken bearer rides each call of the built
+// manager, store, reconfigurer and advertiser as authorization metadata.
+// Over REST, QUIC and MCP a token is refused with InvalidInput.
 func (c *client) QRDBMembership() (QRDBMembershipClient, error) {
-	qrdbClient, err := c.qrdbClient()
+	qrdbClient, err := c.qrdbClusterSubClient("QRDBMembership")
 	if err != nil {
 		return nil, err
 	}
 	return qrdbClient, nil
 }
 
+// qrdbClusterSubClient returns the qrdb client the cluster and membership
+// accessors build on: the main one on the embedded path or without a token,
+// the bearer client over gRPC and Unix with a token, and an InvalidInput
+// refusal over a transport that cannot carry the token.
+func (c *client) qrdbClusterSubClient(op string) (*QRDBClient, error) {
+	qrdbClient, err := c.qrdbClient()
+	if err != nil {
+		return nil, err
+	}
+	if !c.qrdbNeedsBearer() {
+		return qrdbClient, nil
+	}
+	if !qrdbSubClientSpeaksGRPC(c.opts.transportType) {
+		return nil, errQRDBBearerUncarried(op)
+	}
+	return c.qrdbBearerClient(op)
+}
+
+// qrdbNeedsBearer reports whether a WithAuthToken bearer must reach the
+// network qrdb sub-client.
+func (c *client) qrdbNeedsBearer() bool {
+	return c.opts != nil && c.opts.embeddedQRDB == nil && c.opts.authToken != ""
+}
+
+// errQRDBBearerUncarried refuses a token the selected transport's qrdb
+// sub-client cannot carry, rather than dropping it.
+func errQRDBBearerUncarried(op string) error {
+	return sdkerrors.NewInvalidInput(op,
+		"the selected transport cannot carry the WithAuthToken bearer to go-qrdb's cluster services; use gRPC or Unix")
+}
+
 // QRDBRebalance returns go-qrdb's RebalanceClient. Over gRPC and Unix, a
-// WithAuthToken bearer rides each call as authorization metadata. It returns
-// a *errors.QRDBRebalanceUnsupportedError, never a nil client, when the
+// WithAuthToken bearer rides each call as authorization metadata; over REST,
+// QUIC and MCP a token is refused with InvalidInput. It returns a
+// *errors.QRDBRebalanceUnsupportedError, never a nil client, when the
 // active qrdb transport does not implement the rebalance service, and on the
 // in-process WithEmbeddedQRDB path, which installs no rebalance servicer.
 func (c *client) QRDBRebalance() (QRDBRebalanceClient, error) {
@@ -141,6 +179,9 @@ func (c *client) QRDBRebalance() (QRDBRebalanceClient, error) {
 	}
 	if c.opts != nil && c.opts.embeddedQRDB != nil {
 		return nil, sdkerrors.NewQRDBRebalanceUnsupported("QRDBRebalance")
+	}
+	if c.qrdbNeedsBearer() && !qrdbSubClientSpeaksGRPC(c.opts.transportType) {
+		return nil, errQRDBBearerUncarried("QRDBRebalance")
 	}
 	rc := qrdbClient.Rebalance()
 	if rc == nil {
