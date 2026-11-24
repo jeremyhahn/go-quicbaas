@@ -10,6 +10,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/serviceplane"
+	"github.com/jeremyhahn/go-quicbaas/pkg/serviceplane/rollout"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
@@ -67,11 +68,17 @@ type ListServicesResponse struct {
 // kind, and the verifier that holds the manifest signing keys. The store
 // comes from the node (go-qrdb through cas.Writer). With no Grants, the node
 // builds the five itself (grants.All) from its CA, secrets manager, platform
-// registry and IAM identity store.
+// registry and IAM identity store. The appraiser, when supplied, lets the
+// node run the rollout controller that redeploys signed releases.
 type ServicePlaneRuntime struct {
 	Launcher serviceplane.Launcher
 	Grants   []serviceplane.Grant
 	Verifier serviceplane.Verifier
+	// Appraiser checks a filled slot before a release rollout switches to
+	// it. With one, and a Keyring Verifier, the node runs the rollout
+	// controller and Plane.Redeploy rolls signed releases through the A/B
+	// slots; with none, a release redeploy is refused.
+	Appraiser rollout.Appraiser
 	// Domain is the zone registered names and certificates live under
 	// (<name>.<tenant>.<Domain>) when the node builds the grants. Empty
 	// means the operator SPIFFE trust domain.

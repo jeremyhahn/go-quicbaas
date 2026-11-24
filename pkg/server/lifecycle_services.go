@@ -20,7 +20,9 @@ var errServicePlaneStore = errors.New("service plane: the platform shard's qrdb 
 
 // servicePlaneResolver builds the node's service plane on first use, over
 // the platform shard: writes through cas.Writer, reads through the shard's KV.
-// A failed build is retried on the next call; a built plane is kept.
+// A failed build is retried on the next call; a built plane is kept. When
+// the runtime supplies an appraiser, the plane's Roller is the node's one
+// rollout controller, gated by the shard's raft leader, over the same writer.
 func (s *Server) servicePlaneResolver(rt service.ServicePlaneRuntime) service.ServicePlaneResolver {
 	var mu sync.Mutex
 	var plane *serviceplane.Plane
@@ -58,6 +60,10 @@ func (s *Server) servicePlaneResolver(rt service.ServicePlaneRuntime) service.Se
 		})
 		if err != nil {
 			return nil, err
+		}
+		leader := service.NewQRDBLeaderChecker(shard, qbshards.PlatformShardID, s.config.Raft.NodeID)
+		if r := s.servicePlaneRoller(rt, built, writer, serviceplane.QRDBReader(shard.KV()), leader); r != nil {
+			built.SetRoller(r)
 		}
 		plane = built
 		return plane, nil
