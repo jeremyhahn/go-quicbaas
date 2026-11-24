@@ -23,6 +23,8 @@ package services
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	stderrors "errors"
 	"path/filepath"
 	"strings"
@@ -32,7 +34,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/server"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/serviceplane"
@@ -138,17 +145,83 @@ func TestServices_TheSevenVerbsOnARealNode(t *testing.T) {
 // so the node builds the five itself over its own CA, secrets manager,
 // platform registry and IAM: deploy grants each for real, the name resolves
 // through the SDK registry, and undeploy revokes them.
-func TestServices_DeployGrantsAllFiveOnARealNode(t *testing.T) {
+// startRealGrantsNode starts a node whose service plane composes the
+// node's own five grants (no stub grants), under the domain
+// "svc.example.test", with the tenant "acme" created so the rbac grant
+// can bind the manifest's built-in role, which the node seeds with the
+// tenant.
+func startRealGrantsNode(t *testing.T) (quicbaas.Client, service.QuicBaaS, *serviceplanetest.Runtime) {
+	t.Helper()
 	rt := serviceplanetest.NewRuntime(t)
 	client, svc := startNodeWith(t, &service.ServicePlaneRuntime{
 		Launcher: rt.Launcher, Verifier: rt.Verifier, Domain: "svc.example.test",
 	})
-	// The rbac grant binds the manifest's built-in role, which the node
-	// seeds when it creates the tenant.
+	_, err := nodeIAM(t, svc).CreateTenant(context.Background(), &service.CreateTenantRequest{ID: "acme", Name: "acme"})
+	require.NoError(t, err, "create tenant acme")
+	return client, svc, rt
+}
+
+// nodeIAM answers the node's IAM service.
+func nodeIAM(t *testing.T, svc service.QuicBaaS) service.IAMService {
+	t.Helper()
 	accessor, ok := svc.(interface{ IAM() service.IAMService })
 	require.True(t, ok, "the node's service exposes IAM()")
-	_, err := accessor.IAM().CreateTenant(context.Background(), &service.CreateTenantRequest{ID: "acme", Name: "acme"})
-	require.NoError(t, err, "create tenant acme")
+	return accessor.IAM()
+}
+
+// asPrincipal answers a context authenticated as the principal id in
+// the tenant "acme", the way the node's transports hand a request to
+// its services.
+func asPrincipal(id string) context.Context {
+	return auth.SubjectIntoContext(tenantctx.WithTenant(context.Background(), "acme"),
+		interfaces.Subject{ID: id, Authenticated: true})
+}
+
+// readLeaf reads the credential at path through the node's secrets API
+// in ctx, checks it loads as a key pair, and answers its leaf.
+func readLeaf(t *testing.T, svc service.QuicBaaS, ctx context.Context, path string) *x509.Certificate {
+	t.Helper()
+	got, err := svc.Secrets().GetSecret(ctx, &service.GetSecretRequest{SecretID: path})
+	require.NoError(t, err, "read %s", path)
+	require.NotNil(t, got)
+	pair, err := tls.X509KeyPair(got.Data, got.Data)
+	require.NoError(t, err, "%s loads as a key pair", path)
+	leaf, err := x509.ParseCertificate(pair.Certificate[0])
+	require.NoError(t, err)
+	return leaf
+}
+
+// workloadUser answers the tenant acme's IAM principal named id, or nil.
+func workloadUser(t *testing.T, svc service.QuicBaaS, id string) *iam.User {
+	t.Helper()
+	users, err := nodeIAM(t, svc).ListUsers(context.Background(), &service.IAMListUsersRequest{TenantID: "acme"})
+	require.NoError(t, err)
+	var found *iam.User
+	for _, u := range users.Users {
+		if u.Username == id {
+			require.Nil(t, found, "one principal is named %s", id)
+			found = u
+		}
+	}
+	return found
+}
+
+// roleIDs answers the IDs of acme's roles named name.
+func roleIDs(t *testing.T, svc service.QuicBaaS, name string) []string {
+	t.Helper()
+	roles, err := nodeIAM(t, svc).ListRoles(context.Background(), &service.IAMListRolesRequest{TenantID: "acme"})
+	require.NoError(t, err)
+	var ids []string
+	for _, r := range roles.Roles {
+		if r.Name == name {
+			ids = append(ids, r.ID)
+		}
+	}
+	return ids
+}
+
+func TestServices_DeployGrantsAllFiveOnARealNode(t *testing.T) {
+	client, _, rt := startRealGrantsNode(t)
 	plane := client.Services()
 	acme := tenantctx.WithTenant(context.Background(), "acme")
 
@@ -204,4 +277,59 @@ func TestServices_ANodeWithoutAPlaneRefuses(t *testing.T) {
 	plane := startNode(t, rt, false).Services()
 	_, err := plane.Deploy(tenantctx.WithTenant(context.Background(), "acme"), signed(t, rt, "acme", "web"))
 	require.Error(t, err, "a node started without WithServicePlane serves no services")
+}
+
+// The node's five grants compose into a workload that can authenticate:
+// the bound workload reads its SVID and TLS credentials through the
+// node's secrets API (another principal cannot), and the IAM principal
+// named by its SPIFFE ID holds the manifest's role under exactly the
+// SPKI binding of that SVID, the key the mTLS login resolves it by.
+func TestServices_TheDeployedWorkloadReadsItsCredentialsAndHoldsItsRole(t *testing.T) {
+	client, svc, rt := startRealGrantsNode(t)
+	plane := client.Services()
+	acme := tenantctx.WithTenant(context.Background(), "acme")
+
+	rec, err := plane.Deploy(acme, signed(t, rt, "acme", "web"))
+	require.NoError(t, err)
+	require.Equal(t, "running", rec.State)
+	t.Cleanup(func() { _ = plane.Undeploy(acme, "web") })
+
+	id := grants.SPIFFEID(helpers.SPIFFETrustDomain, &serviceplane.Manifest{Tenant: "acme", Name: "web"})
+	asWorkload := asPrincipal(id)
+
+	svid := readLeaf(t, svc, asWorkload, "services/web/svid")
+	require.Len(t, svid.URIs, 1, "the SVID names one SPIFFE ID")
+	assert.Equal(t, id, svid.URIs[0].String(), "the SVID's URI SAN is the workload's SPIFFE ID")
+	_, svidSerial, ok := strings.Cut(rec.Grants["identity"], "#")
+	require.True(t, ok, "the identity grant carries the SVID serial: %q", rec.Grants["identity"])
+	assert.Equal(t, svidSerial, svid.SerialNumber.Text(16), "the stored SVID is the granted one")
+
+	leaf := readLeaf(t, svc, asWorkload, "services/web/tls")
+	assert.Equal(t, rec.Grants["certificate"], leaf.SerialNumber.Text(16), "the stored TLS leaf is the granted one")
+	assert.Contains(t, leaf.DNSNames, "web.acme.svc.example.test")
+
+	for _, path := range []string{"services/web/svid", "services/web/tls"} {
+		_, err := svc.Secrets().GetSecret(asPrincipal("mallory"), &service.GetSecretRequest{SecretID: path})
+		assert.Error(t, err, "another principal cannot read %s", path)
+	}
+
+	role, _, ok := strings.Cut(rec.Grants["rbac"], "@")
+	require.True(t, ok, "the rbac grant names its role: %q", rec.Grants["rbac"])
+	u := workloadUser(t, svc, id)
+	require.NotNil(t, u, "the workload principal %s exists", id)
+	held := map[string]bool{}
+	for _, r := range u.Roles {
+		held[r] = true
+	}
+	holds := held[role]
+	for _, rid := range roleIDs(t, svc, role) {
+		holds = holds || held[rid]
+	}
+	assert.True(t, holds, "the workload principal holds the role %q: %v", role, u.Roles)
+	require.Len(t, u.CertBindings, 1, "the workload principal has one certificate binding")
+	binding := u.CertBindings[0]
+	assert.Equal(t, qrdbsdk.CertBindingSPKIThumbprint, binding.Kind)
+	assert.Equal(t, qrdbsdk.ComputeSPKIThumbprint(svid), binding.Thumbprint,
+		"the principal is bound to the SVID's key")
+	assert.True(t, binding.NotAfter.Equal(svid.NotAfter), "the binding expires with the SVID")
 }
