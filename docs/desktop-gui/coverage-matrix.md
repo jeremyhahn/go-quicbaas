@@ -681,15 +681,15 @@ RestSecretsClient builds `/api/v1/secrets/<path>` for the `*` routes (POST store
 | POST | `/api/v1/xkms/pin/user/change` | HandleXKMSChangeUserPIN | - | not covered |
 | POST | `/api/v1/xkms/pin/user/set` | HandleXKMSSetUserPIN | - | not covered |
 | POST | `/api/v1/xkms/pin/user/verify` | HandleXKMSVerifyUserPIN | - | not covered |
-| GET | `/api/v1/xkms/piv/slots` | HandleXKMSListPIVSlots | - (rest.ts†) | not covered |
-| DELETE | `/api/v1/xkms/piv/slots/{slot}/cert` | HandleXKMSDeletePIVCertificate | - (rest.ts†) | not covered |
-| GET | `/api/v1/xkms/piv/slots/{slot}/cert` | HandleXKMSGetPIVCertificate | - (rest.ts†) | not covered |
-| PUT | `/api/v1/xkms/piv/slots/{slot}/cert` | HandleXKMSStorePIVCertificate | - (rest.ts†) | not covered |
-| POST | `/api/v1/xkms/piv/slots/{slot}/csr` | HandleXKMSGeneratePIVCSR | - (rest.ts†) | not covered |
-| POST | `/api/v1/xkms/piv/slots/{slot}/key` | HandleXKMSGeneratePIVKey | - (rest.ts†) | not covered |
-| POST | `/api/v1/xkms/seal` | HandleXKMSSeal | rest.ts | not covered |
-| GET | `/api/v1/xkms/seal/capability` | HandleXKMSCanSeal | - (rest.ts†) | not covered |
-| POST | `/api/v1/xkms/unseal` | HandleXKMSUnseal | rest.ts | not covered |
+| GET | `/api/v1/xkms/piv/slots` | HandleXKMSListPIVSlots | - (rest.ts†) | covered: components/security/XKMSPIVPanel.svelte |
+| DELETE | `/api/v1/xkms/piv/slots/{slot}/cert` | HandleXKMSDeletePIVCertificate | - (rest.ts†) | covered: components/security/XKMSPIVPanel.svelte |
+| GET | `/api/v1/xkms/piv/slots/{slot}/cert` | HandleXKMSGetPIVCertificate | - (rest.ts†) | covered: components/security/XKMSPIVPanel.svelte |
+| PUT | `/api/v1/xkms/piv/slots/{slot}/cert` | HandleXKMSStorePIVCertificate | - (rest.ts†) | covered: components/security/XKMSPIVPanel.svelte |
+| POST | `/api/v1/xkms/piv/slots/{slot}/csr` | HandleXKMSGeneratePIVCSR | - (rest.ts†) | covered: components/security/XKMSPIVPanel.svelte |
+| POST | `/api/v1/xkms/piv/slots/{slot}/key` | HandleXKMSGeneratePIVKey | - (rest.ts†) | covered: components/security/XKMSPIVPanel.svelte |
+| POST | `/api/v1/xkms/seal` | HandleXKMSSeal | rest.ts | covered: components/security/XKMSSealPanel.svelte |
+| GET | `/api/v1/xkms/seal/capability` | HandleXKMSCanSeal | - (rest.ts†) | covered: components/security/XKMSSealPanel.svelte |
+| POST | `/api/v1/xkms/unseal` | HandleXKMSUnseal | rest.ts | covered: components/security/XKMSSealPanel.svelte |
 | POST | `/api/v1/xkms/v1/ssh/authorized` | HandleEmitAuthorized | - | not covered |
 | GET | `/api/v1/xkms/v1/ssh/authorized/keys` | HandleListAuthorizedKeys | - | not covered |
 | POST | `/api/v1/xkms/v1/ssh/authorized/keys` | HandleAddAuthorizedKey | - | not covered |
