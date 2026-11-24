@@ -393,10 +393,11 @@ func TestCIGateTiersMatchTheJobs(t *testing.T) {
 // PR's run in flight.
 func TestCIIgnoresLabelChanges(t *testing.T) {
 	body := readFile(t, ciWorkflowPath)
-	// The ci-template's (v1.25.4) pull_request trigger lists its types, with
-	// no `labeled`, so a label change starts no run.
+	// The ci-template's pull_request trigger lists its types, with no
+	// `labeled`, so a label change starts no run. v1.35.3 added
+	// `ready_for_review`, so a draft marked ready gets its run.
 	const trigger = "\n  pull_request:\n    branches: [main]\n"
-	const types = "\n    types: [opened, synchronize, reopened]\n"
+	const types = "\n    types: [opened, synchronize, reopened, ready_for_review]\n"
 	if !strings.Contains(body, trigger) || !strings.Contains(body, types) {
 		t.Errorf("ci.yml's pull_request trigger is not the ci-template's:%s%s", trigger, types)
 	}

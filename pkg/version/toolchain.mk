@@ -65,9 +65,9 @@ GO_TOOL_DEPENDENCY_FLOORS := golang.org/x/mod@v0.41.0 golang.org/x/net@v0.62.0 g
 # release tarball, each architecture's SHA-256 as the release's own
 # trivy_<version>_checksums.txt publishes it: change all three together. Pins
 # the TOOL; trivy fetches its vulnerability database at run time.
-TRIVY_VERSION := v0.76.0
-TRIVY_SHA256_X86_64 := e24b1c51293c1b15e4ba8d45bbc7891ba053f90278ec2698f3562c993e145fe7
-TRIVY_SHA256_AARCH64 := aab21e677a7b7071fc79f1711480840754c18a1b9d9cefa7ccd06af63a0e8f4c
+TRIVY_VERSION := v0.76.2
+TRIVY_SHA256_X86_64 := bc0fc726e017b8927a62b2d3531d7a84ee01769daf5c99ed866dced54089fdbf
+TRIVY_SHA256_AARCH64 := ab9d51f86e6a5fb936f605faff6b593ac51bc378fff4d3e8b9d58358b9c367c3
 # The devcontainer's base image (build/docker/devcontainer/Dockerfile),
 # golang:$(GO_VERSION)-trixie by its multi-arch index digest, so a re-pushed
 # tag cannot change the toolchain under a pin. Change it with GO_VERSION.
