@@ -15,7 +15,6 @@ package iam
 
 import (
 	"context"
-	"crypto/sha1" // #nosec G505 -- RFC 6238 reference derivation for test vectors
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/base32"
@@ -23,6 +22,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"hash"
+	"math/bits"
 	"strings"
 	"testing"
 	"time"
@@ -38,23 +38,111 @@ import (
 // shorter than production's.
 const testTOTPSecret = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
 
-// referenceHashes maps the algorithm the manager resolved onto the standard
-// library hash the reference derivation uses.
+// referenceHashes maps the algorithm the manager resolved onto the hash the
+// reference derivation uses: the standard library for SHA-256 and SHA-512,
+// and the test-local referenceSHA1 for SHA-1.
 var referenceHashes = map[otp.Algorithm]func() hash.Hash{
-	otp.AlgorithmSHA1:   sha1.New,
+	otp.AlgorithmSHA1:   newReferenceSHA1,
 	otp.AlgorithmSHA256: sha256.New,
 	otp.AlgorithmSHA512: sha512.New,
 }
 
-// referenceTOTP is RFC 6238 written out from the RFC over the standard
-// library: HMAC of the big-endian step counter, RFC 4226 §5.3 dynamic
-// truncation, reduced to digits decimal digits. It is independent of go-auth,
-// so a code it derives was produced by something other than the code under
-// test. TestReferenceTOTPMatchesRFC6238Vectors pins it to the RFC.
+// referenceSHA1 is SHA-1 written out from FIPS 180-4 §6.1: 80-round
+// compression over 64-byte blocks, padded with 0x80, zeros and the big-endian
+// bit length. FIPS 140-only mode refuses crypto/sha1 itself, not only
+// HMAC-SHA-1, so the RFC 6238 and RFC 2202 SHA-1 vectors need a SHA-1 that
+// does not go through the Go crypto module. It is a test oracle only.
+type referenceSHA1 struct {
+	h     [5]uint32
+	block [64]byte
+	n     int    // bytes buffered in block
+	total uint64 // bytes written since Reset
+}
+
+func newReferenceSHA1() hash.Hash {
+	s := &referenceSHA1{}
+	s.Reset()
+	return s
+}
+
+func (s *referenceSHA1) Reset() {
+	s.h = [5]uint32{0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476, 0xc3d2e1f0}
+	s.n = 0
+	s.total = 0
+}
+
+func (s *referenceSHA1) Size() int { return 20 }
+
+func (s *referenceSHA1) BlockSize() int { return 64 }
+
+func (s *referenceSHA1) Write(p []byte) (int, error) {
+	written := len(p)
+	s.total += uint64(written)
+	for len(p) > 0 {
+		c := copy(s.block[s.n:], p)
+		s.n += c
+		p = p[c:]
+		if s.n == len(s.block) {
+			s.compress()
+			s.n = 0
+		}
+	}
+	return written, nil
+}
+
+// Sum pads a copy, so the running state is unchanged and Write may continue.
+func (s *referenceSHA1) Sum(b []byte) []byte {
+	c := *s
+	bitLen := c.total * 8
+	padLen := 56 - c.n
+	if c.n >= 56 {
+		padLen += 64
+	}
+	var pad [72]byte
+	pad[0] = 0x80
+	binary.BigEndian.PutUint64(pad[padLen:], bitLen)
+	_, _ = c.Write(pad[:padLen+8])
+	for _, v := range c.h {
+		b = binary.BigEndian.AppendUint32(b, v)
+	}
+	return b
+}
+
+func (s *referenceSHA1) compress() {
+	var w [80]uint32
+	for i := range 16 {
+		w[i] = binary.BigEndian.Uint32(s.block[4*i:])
+	}
+	for i := 16; i < 80; i++ {
+		w[i] = bits.RotateLeft32(w[i-3]^w[i-8]^w[i-14]^w[i-16], 1)
+	}
+	a, b, c, d, e := s.h[0], s.h[1], s.h[2], s.h[3], s.h[4]
+	for i := range 80 {
+		var f, k uint32
+		switch {
+		case i < 20:
+			f, k = (b&c)|(^b&d), 0x5a827999
+		case i < 40:
+			f, k = b^c^d, 0x6ed9eba1
+		case i < 60:
+			f, k = (b&c)|(b&d)|(c&d), 0x8f1bbcdc
+		default:
+			f, k = b^c^d, 0xca62c1d6
+		}
+		t := bits.RotateLeft32(a, 5) + f + e + k + w[i]
+		e, d, c, b, a = d, c, bits.RotateLeft32(b, 30), a, t
+	}
+	s.h[0] += a
+	s.h[1] += b
+	s.h[2] += c
+	s.h[3] += d
+	s.h[4] += e
+}
+
 // referenceHMAC computes HMAC over newHash by hand, as RFC 2104 defines it.
 // It exists because FIPS 140-only mode refuses crypto/hmac with SHA-1, and
-// it keeps the TOTP oracle independent of both go-auth and this module, so
-// the SHA-1 RFC 6238 vectors still run in every mode.
+// with referenceSHA1 it keeps the SHA-1 RFC 6238 vectors running in every
+// mode without going through the Go crypto module.
 func referenceHMAC(t *testing.T, newHash func() hash.Hash, key, message []byte) []byte {
 	t.Helper()
 
@@ -89,6 +177,13 @@ func referenceHMAC(t *testing.T, newHash func() hash.Hash, key, message []byte) 
 	return outer.Sum(nil)
 }
 
+// referenceTOTP is RFC 6238 written out from the RFC: HMAC of the big-endian
+// step counter, RFC 4226 §5.3 dynamic truncation, reduced to digits decimal
+// digits. It uses referenceHMAC rather than crypto/hmac, because FIPS 140-only
+// mode refuses crypto/hmac and crypto/sha1 for the SHA-1 vectors, and it is
+// independent of go-auth, so a code it derives was produced by something other
+// than the code under test. TestReferenceTOTPMatchesRFC6238Vectors pins it to
+// the RFC.
 func referenceTOTP(t *testing.T, key []byte, newHash func() hash.Hash, counter uint64, digits int) string {
 	t.Helper()
 
@@ -166,13 +261,35 @@ func TestReferenceTOTPMatchesRFC6238Vectors(t *testing.T) {
 		assert.Equal(t, v.want, got, "T=%d %s", v.at, v.algorithm)
 	}
 
+	// The test-local SHA-1 matches the FIPS 180-2 Appendix A vectors, and the
+	// empty message, written whole and in pieces.
+	sha1Vectors := map[string]string{
+		"":    "da39a3ee5e6b4b0d3255bfef95601890afd80709",
+		"abc": "a9993e364706816aba3e25717850c26c9cd0d89d",
+		"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq": "84983e441c3bd26ebaae4aa1f95129e5e54670f1",
+	}
+	for message, want := range sha1Vectors {
+		whole := newReferenceSHA1()
+		_, err := whole.Write([]byte(message))
+		require.NoError(t, err)
+		assert.Equal(t, want, hex.EncodeToString(whole.Sum(nil)), "SHA-1(%q)", message)
+
+		pieces := newReferenceSHA1()
+		for i := range len(message) {
+			_, err = pieces.Write([]byte{message[i]})
+			require.NoError(t, err)
+			assert.Len(t, pieces.Sum(nil), 20, "Sum must not disturb the running state")
+		}
+		assert.Equal(t, want, hex.EncodeToString(pieces.Sum(nil)), "SHA-1(%q) byte by byte", message)
+	}
+
 	// The hand-written HMAC matches RFC 2202 test case 2 for HMAC-SHA-1.
 	assert.Equal(t, "effcdf6ae5eb2fa2d27416d5f184df9c259a7c79",
-		hex.EncodeToString(referenceHMAC(t, sha1.New, []byte("Jefe"), []byte("what do ya want for nothing?"))))
+		hex.EncodeToString(referenceHMAC(t, newReferenceSHA1, []byte("Jefe"), []byte("what do ya want for nothing?"))))
 
 	// A wrong key must not reproduce the vector: the oracle is not a constant.
 	wrongKey := []byte("09876543210987654321")
-	assert.NotEqual(t, "94287082", referenceTOTP(t, wrongKey, sha1.New, 1, 8))
+	assert.NotEqual(t, "94287082", referenceTOTP(t, wrongKey, newReferenceSHA1, 1, 8))
 }
 
 // generateValidTOTPCode derives the code for the current instant. It is enough
