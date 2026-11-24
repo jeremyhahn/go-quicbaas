@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"context"
 	stderrors "errors"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -48,6 +49,10 @@ func gcFixture(t *testing.T, backends ...string) (*objectStorageAdminService, *a
 		backendMgr.AddBackend(name, st, &catalog.BackendConfig{Type: "memory"})
 	}
 	catalogMgr.listByStoreFn = func(ctx context.Context, store string, opts *catalog.ListOptions) (*catalog.ListResult, error) {
+		t.Errorf("GC must not use the primary-store index")
+		return &catalog.ListResult{Keys: []string{}}, nil
+	}
+	catalogMgr.listByPrefixFn = func(ctx context.Context, prefix string, opts *catalog.ListOptions) (*catalog.ListResult, error) {
 		catalogMgr.mu.RLock()
 		defer catalogMgr.mu.RUnlock()
 		keys := make([]string, 0, len(catalogMgr.entries))
@@ -261,6 +266,64 @@ func TestRunGCOperation_ReplicaLocationIsReferenced(t *testing.T) {
 	assert.True(t, gcHas(stores["backend-2"], "ref-replica"))
 }
 
+// gcRealCatalogRun stores one entry in a real Pebble catalog with its primary
+// copy on backend-1 and, through addCopy, a second copy "ref-copy" on
+// backend-2, then runs a deleting collection on backend-2 and returns the
+// operation and the backend-2 store.
+func gcRealCatalogRun(t *testing.T, opID string, addCopy func(entry *catalog.CatalogEntry)) (*GCOperation, *objstoreMockStorage) {
+	t.Helper()
+	storage, err := catalog.NewPebbleStorage(&catalog.PebbleStorageConfig{
+		Path:       filepath.Join(t.TempDir(), "catalog"),
+		SyncWrites: false,
+	})
+	require.NoError(t, err)
+	realCatalog, err := catalog.NewCatalogManager(&catalog.ManagerConfig{Storage: storage})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = realCatalog.Close() })
+
+	backendMgr := newAdminMockBackendManager()
+	primary, secondary := newObjstoreMockStorage(), newObjstoreMockStorage()
+	backendMgr.AddBackend("backend-1", primary, &catalog.BackendConfig{Type: "memory"})
+	backendMgr.AddBackend("backend-2", secondary, &catalog.BackendConfig{Type: "memory"})
+	svcIface, err := NewObjectStorageAdminService(realCatalog, backendMgr, nil, newObjstoreMockLogger())
+	require.NoError(t, err)
+	svc := svcIface.(*objectStorageAdminService)
+
+	old := time.Now().Add(-3 * time.Hour)
+	gcPutObject(t, primary, "ref-primary", 10, old)
+	gcPutObject(t, secondary, "ref-copy", 10, old)
+
+	entry := catalog.NewCatalogEntry("ns-gc:dir/copied.txt", 10, []byte("checksum"))
+	entry.PrimaryStore = catalog.StoreLocation{Store: "backend-1", ObjectRef: "ref-primary", Status: catalog.LocationStatusActive}
+	entry.TenantID = "tenant-1"
+	addCopy(entry)
+	require.NoError(t, realCatalog.Put(context.Background(), entry))
+
+	op := gcOp(opID, "backend-2")
+	svc.runGCOperation(tenantctx.WithSystem(context.Background()), op)
+	return op, secondary
+}
+
+func TestRunGCOperation_ReplicaOnTheRealCatalogIsReferenced(t *testing.T) {
+	op, secondary := gcRealCatalogRun(t, "gc-real-replica", func(entry *catalog.CatalogEntry) {
+		entry.Replicas = []catalog.StoreLocation{{Store: "backend-2", ObjectRef: "ref-copy", Status: catalog.LocationStatusActive}}
+	})
+
+	require.Equal(t, GCStatusCompleted, op.Status, op.Error)
+	assert.Equal(t, int64(0), op.ObjectsDeleted)
+	assert.True(t, gcHas(secondary, "ref-copy"))
+}
+
+func TestRunGCOperation_ArchiveOnTheRealCatalogIsReferenced(t *testing.T) {
+	op, secondary := gcRealCatalogRun(t, "gc-real-archive", func(entry *catalog.CatalogEntry) {
+		entry.ArchiveStore = &catalog.StoreLocation{Store: "backend-2", ObjectRef: "ref-copy", Status: catalog.LocationStatusActive}
+	})
+
+	require.Equal(t, GCStatusCompleted, op.Status, op.Error)
+	assert.Equal(t, int64(0), op.ObjectsDeleted)
+	assert.True(t, gcHas(secondary, "ref-copy"))
+}
+
 func TestRunGCOperation_CatalogPagesAreFollowed(t *testing.T) {
 	svc, catalogMgr, stores := gcFixture(t, "backend-1")
 	st := stores["backend-1"]
@@ -269,7 +332,7 @@ func TestRunGCOperation_CatalogPagesAreFollowed(t *testing.T) {
 	gcPutObject(t, st, "ref-page-2", 10, old)
 	gcCatalogRef(catalogMgr, "p1.txt", "backend-1", "ref-page-1")
 	gcCatalogRef(catalogMgr, "p2.txt", "backend-1", "ref-page-2")
-	catalogMgr.listByStoreFn = func(ctx context.Context, store string, opts *catalog.ListOptions) (*catalog.ListResult, error) {
+	catalogMgr.listByPrefixFn = func(ctx context.Context, prefix string, opts *catalog.ListOptions) (*catalog.ListResult, error) {
 		if opts.Cursor == "" {
 			return &catalog.ListResult{Keys: []string{"p1.txt"}, HasMore: true, NextCursor: "next"}, nil
 		}

@@ -822,12 +822,14 @@ func (s *objectStorageAdminService) collectBackendOrphans(ctx context.Context, o
 }
 
 // referencedRefs returns the set of object refs that catalog entries locate
-// on the named backend, primary and replica locations alike.
+// on the named backend: primary, replica and archive locations alike. It reads
+// every catalog entry, because the catalog's store index covers only primary
+// stores and would miss a replica or archive copy held on this backend.
 func (s *objectStorageAdminService) referencedRefs(ctx context.Context, backendName string) (map[string]struct{}, error) {
 	referenced := make(map[string]struct{})
 	cursor := ""
 	for {
-		page, err := s.catalogMgr.ListByStore(ctx, backendName, &catalog.ListOptions{Limit: 1000, Cursor: cursor})
+		page, err := s.catalogMgr.ListByPrefix(ctx, "", &catalog.ListOptions{Limit: 1000, Cursor: cursor})
 		if err != nil {
 			return nil, fmt.Errorf("list catalog entries: %w", err)
 		}
