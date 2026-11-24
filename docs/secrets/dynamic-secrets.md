@@ -169,7 +169,8 @@ lifecycle is built on — work with an empty registry.
 The `credential` generator writes the random secret it mints to go-qrdb's
 barrier-backed credential store, as `dynamic-<credential_id>`: in the caller's
 tenant's store for a tenant call, and in the system credential service for a
-system call. A tenant with no registered, unsealed barrier is refused; the call
+system call. A call bound to the system tenant is a system call: it writes to
+the system credential store. A tenant with no registered, unsealed barrier is refused; the call
 never falls back to the system store. The tenant's credential service is built
 fresh on every call, as go-qrdb's own tenant-scoped retrieve does, because a
 rekey can replace a tenant barrier.
