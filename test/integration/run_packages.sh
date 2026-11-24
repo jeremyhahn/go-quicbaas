@@ -1,28 +1,5 @@
 #!/bin/sh
-# run_packages.sh runs integration test packages one at a time, each under its
-# own time limit, so one hung package costs at most 11 minutes instead of the
-# whole suite (#1591).
-#
-# Usage: run_packages.sh LOG TAGS FLAGS PKG...
-#        run_packages.sh --filter LOG TAGS FILTER
-#
-#   LOG    file every package's output is appended to (and echoed)
-#   TAGS   build tags, passed to go test -tags
-#   FLAGS  extra go test flags, split on spaces (may be empty), e.g. "-run X$"
-#   PKG    packages or package patterns, each run by its own go test
-#   FILTER a QUICBAAS_TEST_FILTER value, go test flags and packages mixed, e.g.
-#          "-run TestX ./test/integration/...". It is split on spaces: a token
-#          starting with - is a flag, and a flag that takes a value (-run,
-#          -skip, -count, -timeout, -tags, ...) takes the next token with it
-#          unless written -flag=value; every other token is a package. A
-#          filter without packages runs on FILTER_DEFAULT_ROOT.
-#
-# After a failed package the cluster probe (health_check.sh on PATH) runs,
-# bounded by HEALTH_PROBE_TIMEOUT: if the cluster is down, or the probe does
-# not answer in time, the remaining packages are not run. The script exits 0
-# only if every package passed, and ends with a table of package durations.
-#
-# Tested by run_packages_test.sh (`make check-workspace-script`).
+# run_packages.sh runs integration packages one at a time, each under its own time limit.
 set -u
 set -f
 

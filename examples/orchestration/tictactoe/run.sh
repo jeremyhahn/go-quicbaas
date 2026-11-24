@@ -1,19 +1,5 @@
 #!/bin/bash
-# Tic-Tac-Toe Orchestration Example
-#
-# Fully automated: starts the server, runs the workflow, monitors progress,
-# and cleans up on exit. Supports GPU profile and model family selection.
-#
-# Prerequisites:
-#   - make build (from repo root)
-#   - ollama running (model auto-pulled if missing)
-#   - opencode installed (for the coder agent)
-#
-# Usage:
-#   ./run.sh                                              # defaults: gpu-lite + llama
-#   ./run.sh --gpu-profile cpu                            # CPU only, tinyllama
-#   ./run.sh --gpu-profile gpu-power --model-family qwen  # RTX 4090 / A6000
-#   ./run.sh --gpu-profile gpu-max --model-family deepseek # RTX 6000 Pro
+# Tic-tac-toe orchestration example.
 
 set -euo pipefail
 
