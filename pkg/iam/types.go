@@ -20,6 +20,7 @@ import (
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 )
 
 // Lifecycle is the canonical account state, owned by go-qrdb and re-exported
@@ -334,42 +335,19 @@ type Role struct {
 	Updated time.Time `json:"updated" yaml:"updated"`
 }
 
-// RoleReconcileResult records what reconciling one built-in role changed.
-// Only roles that changed are reported, so a zero-valued result never
-// appears in a report.
-type RoleReconcileResult struct {
-	// RoleID is the reconciled role's identifier.
-	RoleID string `json:"role_id" yaml:"role_id"`
+// RoleReconcileResult records what reconciling one built-in role changed. It
+// is go-qrdb's type, re-exported here so this package names it without
+// redefining it. Only changed roles are reported.
+type RoleReconcileResult = qrdbtransport.RoleReconcileResult
 
-	// Name is the built-in role's name (admin, operator, ...).
-	Name string `json:"name" yaml:"name"`
+// RoleReconcileReport is one tenant's reconciliation outcome: go-qrdb's
+// reconcile response, re-exported. An empty Roles slice means the tenant
+// already agreed with the build and nothing was written.
+type RoleReconcileReport = qrdbtransport.ReconcileRolesResponse
 
-	// Created is true when the built-in was absent from the tenant and was
-	// seeded. Added then carries its whole permission set.
-	Created bool `json:"created,omitempty" yaml:"created,omitempty"`
-
-	// Added lists the permissions the build grants that the stored role did
-	// not carry, sorted.
-	Added []string `json:"added,omitempty" yaml:"added,omitempty"`
-
-	// Removed lists the permissions the stored role carried that the build no
-	// longer grants, sorted.
-	Removed []string `json:"removed,omitempty" yaml:"removed,omitempty"`
-}
-
-// RoleReconcileReport is one tenant's reconciliation outcome. An empty Roles
-// slice means the tenant already agreed with the build and nothing was
-// written.
-type RoleReconcileReport struct {
-	// TenantID is the reconciled tenant.
-	TenantID string `json:"tenant_id" yaml:"tenant_id"`
-
-	// Roles carries one entry per built-in role that changed.
-	Roles []RoleReconcileResult `json:"roles,omitempty" yaml:"roles,omitempty"`
-}
-
-// Changed reports whether reconciliation altered anything in the tenant.
-func (r *RoleReconcileReport) Changed() bool {
+// RoleReconcileChanged reports whether reconciliation altered anything in the
+// tenant. A nil report changed nothing.
+func RoleReconcileChanged(r *RoleReconcileReport) bool {
 	return r != nil && len(r.Roles) > 0
 }
 

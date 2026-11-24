@@ -566,7 +566,7 @@ func (w *iamServiceWrapper) ReconcileBuiltInRoles(ctx context.Context, req *IAMR
 	return &IAMReconcileRolesResponse{
 		TenantID:  report.TenantID,
 		Roles:     report.Roles,
-		Changed:   report.Changed(),
+		Changed:   iam.RoleReconcileChanged(report),
 		Timestamp: time.Now(),
 	}, nil
 }
