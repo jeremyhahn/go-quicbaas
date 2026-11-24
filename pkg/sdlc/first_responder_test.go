@@ -509,6 +509,25 @@ func TestFirstResponder_SeverityMapping(t *testing.T) {
 }
 
 func TestFirstResponder_SubjectIsOneLine(t *testing.T) {
+	for _, tc := range []struct {
+		projectName string
+		want        string
+	}{
+		{"Project\r\nOne\n", "Project One: line one line two"},
+		{"\n \r", "proj-1: line one line two"},
+	} {
+		item := parkedItem("t1", 10)
+		item.ProjectName = tc.projectName
+		item.Subject = "line one\nline two"
+		n := notificationFor(frTenant, item)
+		if n.Subject != tc.want {
+			t.Fatalf("project name %q: subject %q, want %q", tc.projectName, n.Subject, tc.want)
+		}
+		if err := n.Validate(); err != nil {
+			t.Fatalf("project name %q: validate: %v", tc.projectName, err)
+		}
+	}
+
 	item := parkedItem("t1", 10)
 	item.ProjectName = ""
 	item.Subject = "line one\nline two"
@@ -670,5 +689,30 @@ func TestFirstResponder_SensitiveBodyReachesSignalAfterRecovery(t *testing.T) {
 	}
 	if len(slack.received()) != 1 {
 		t.Fatalf("slack re-sent in sweep 2: %+v", slack.received())
+	}
+}
+
+func TestFirstResponder_MultilineProjectNameIsDelivered(t *testing.T) {
+	item := parkedItem("t1", 10)
+	item.ProjectName = "Project\nOne"
+	lister := &fakeAttentionLister{}
+	lister.set(item)
+	r, signal, slack := newDispatchedResponder(t, lister)
+	signal.setFailing(false)
+
+	if res := mustSweep(t, r); res.Notified != 1 || res.Failed != 0 {
+		t.Fatalf("sweep 1: %+v", res)
+	}
+	for name, ch := range map[string]*frTestChannel{"signal": signal, "slack": slack} {
+		if got := ch.received(); len(got) != 1 || got[0].Subject != "Project One: task t1" {
+			t.Fatalf("%s after sweep 1: %+v", name, got)
+		}
+	}
+
+	if res := mustSweep(t, r); res.Notified != 0 || res.Failed != 0 {
+		t.Fatalf("sweep 2: %+v", res)
+	}
+	if len(signal.received()) != 1 || len(slack.received()) != 1 {
+		t.Fatalf("sweep 2 sent again: signal %d, slack %d", len(signal.received()), len(slack.received()))
 	}
 }

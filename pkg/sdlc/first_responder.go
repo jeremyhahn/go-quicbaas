@@ -361,16 +361,17 @@ func (r *FirstResponder) Run(ctx context.Context, tenantID string) error {
 
 // notificationFor renders one attention item as a notification. A parked
 // task carries the worker's own words, so it is Sensitive; an environmental
-// alert is not.
+// alert is not. The headline is one line, project label included, because
+// the notifier refuses a multi-line subject.
 func notificationFor(tenantID string, item *AttentionItem) notify.Notification {
-	label := item.ProjectName
+	label := oneLine(item.ProjectName)
 	if label == "" {
-		label = item.ProjectID
+		label = oneLine(item.ProjectID)
 	}
 	if label == "" {
 		label = string(item.Kind)
 	}
-	subject := strings.Join(strings.Fields(strings.NewReplacer("\r", " ", "\n", " ").Replace(item.Subject)), " ")
+	subject := oneLine(item.Subject)
 	if subject == "" {
 		subject = string(item.Kind)
 	}
@@ -403,6 +404,12 @@ func prefixed(prefix, text string) string {
 		return ""
 	}
 	return prefix + text
+}
+
+// oneLine collapses every run of whitespace, line breaks included, to a
+// single space and trims the ends.
+func oneLine(s string) string {
+	return strings.Join(strings.Fields(s), " ")
 }
 
 // attentionSeverity grades an item: a critical alert or an escalated park
