@@ -33,7 +33,6 @@ var composedLibraries = []string{
 	"github.com/jeremyhahn/go-qrdb/sdk/go",
 	"github.com/jeremyhahn/go-xkms",
 	"github.com/jeremyhahn/go-xkms/sdk/go",
-	"github.com/jeremyhahn/go-xkms/xkey",
 }
 
 // composedPinFiles are the go.mod files whose composed-library pins are
