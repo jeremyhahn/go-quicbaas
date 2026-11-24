@@ -22,6 +22,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -38,6 +39,10 @@ const (
 
 // SlackConfig configures a SlackChannel.
 type SlackConfig struct {
+	// TenantID is the tenant whose operators the webhook reaches. Required:
+	// the channel delivers only that tenant's notifications.
+	TenantID string
+
 	// WebhookURL is the Slack incoming-webhook URL. It must be https. The
 	// URL is the credential: it is never logged or put in an error.
 	WebhookURL string
@@ -52,6 +57,7 @@ type SlackConfig struct {
 // SlackChannel delivers notifications to a Slack incoming webhook. It is
 // not end-to-end encrypted, so it never receives a Sensitive body.
 type SlackChannel struct {
+	tenantID   string
 	webhookURL string
 	client     *http.Client
 	timeout    time.Duration
@@ -64,6 +70,9 @@ func NewSlackChannel(cfg SlackConfig) (*SlackChannel, error) {
 	if err != nil || u.Scheme != "https" || u.Host == "" {
 		return nil, &ConfigError{Field: "webhook_url", Message: "must be an https URL with a host"}
 	}
+	if strings.TrimSpace(cfg.TenantID) == "" {
+		return nil, &ConfigError{Field: "tenant_id", Message: "is required"}
+	}
 	if cfg.Timeout < 0 {
 		return nil, &ConfigError{Field: "timeout", Message: "must not be negative"}
 	}
@@ -75,7 +84,7 @@ func NewSlackChannel(cfg SlackConfig) (*SlackChannel, error) {
 	if client == nil {
 		client = &http.Client{}
 	}
-	return &SlackChannel{webhookURL: cfg.WebhookURL, client: client, timeout: timeout}, nil
+	return &SlackChannel{tenantID: cfg.TenantID, webhookURL: cfg.WebhookURL, client: client, timeout: timeout}, nil
 }
 
 // Name returns "slack".
@@ -84,10 +93,15 @@ func (c *SlackChannel) Name() string { return slackChannelName }
 // Secure returns false: Slack is not end-to-end encrypted.
 func (c *SlackChannel) Secure() bool { return false }
 
-// Deliver posts n to the webhook as mrkdwn text. A transport failure is a
+// Deliver posts n to the webhook as mrkdwn text. A notification for any
+// tenant other than the channel's is refused with a *SlackTenantError
+// before anything is sent. A transport failure is a
 // *SlackTransportError and a non-2xx answer a *SlackStatusError; neither
 // contains the webhook URL. Deliver does not retry.
 func (c *SlackChannel) Deliver(ctx context.Context, n Notification) error {
+	if n.TenantID != c.tenantID {
+		return &SlackTenantError{TenantID: n.TenantID}
+	}
 	payload, err := json.Marshal(struct {
 		Text string `json:"text"`
 	}{Text: slackText(n)})

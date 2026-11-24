@@ -105,6 +105,21 @@ func (e *SlackStatusError) Error() string {
 // Unwrap returns ErrDeliveryFailed.
 func (e *SlackStatusError) Unwrap() error { return ErrDeliveryFailed }
 
+// SlackTenantError reports a notification for a tenant other than the one
+// the Slack channel's webhook belongs to. Nothing is sent: the webhook's
+// audience is that one tenant's operators.
+type SlackTenantError struct {
+	TenantID string
+}
+
+// Error implements error.
+func (e *SlackTenantError) Error() string {
+	return "notify: slack channel is not bound to tenant " + e.TenantID
+}
+
+// Unwrap returns ErrDeliveryFailed.
+func (e *SlackTenantError) Unwrap() error { return ErrDeliveryFailed }
+
 // SlackTransportError reports a Slack webhook that could not be reached. It
 // never contains the webhook URL, because the URL is the credential.
 type SlackTransportError struct {

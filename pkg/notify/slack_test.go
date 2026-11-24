@@ -21,6 +21,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -51,7 +52,7 @@ func TestSlackChannel_PostsJSONText(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	ch, err := NewSlackChannel(SlackConfig{WebhookURL: srv.URL + placeholderPath, HTTPClient: srv.Client()})
+	ch, err := NewSlackChannel(SlackConfig{TenantID: "tenant-1", WebhookURL: srv.URL + placeholderPath, HTTPClient: srv.Client()})
 	if err != nil {
 		t.Fatalf("NewSlackChannel: %v", err)
 	}
@@ -69,11 +70,13 @@ func TestNewSlackChannel_RefusesNonHTTPS(t *testing.T) {
 		cfg   SlackConfig
 		field string
 	}{
-		{"http", SlackConfig{WebhookURL: "http://hooks.example" + placeholderPath}, "webhook_url"},
+		{"http", SlackConfig{TenantID: "tenant-1", WebhookURL: "http://hooks.example" + placeholderPath}, "webhook_url"},
 		{"empty", SlackConfig{}, "webhook_url"},
-		{"unparseable", SlackConfig{WebhookURL: "::bad"}, "webhook_url"},
-		{"no host", SlackConfig{WebhookURL: "https://" + placeholderPath}, "webhook_url"},
-		{"negative timeout", SlackConfig{WebhookURL: "https://hooks.example" + placeholderPath, Timeout: -time.Second}, "timeout"},
+		{"unparseable", SlackConfig{TenantID: "tenant-1", WebhookURL: "::bad"}, "webhook_url"},
+		{"no host", SlackConfig{TenantID: "tenant-1", WebhookURL: "https://" + placeholderPath}, "webhook_url"},
+		{"no tenant", SlackConfig{WebhookURL: "https://hooks.example" + placeholderPath}, "tenant_id"},
+		{"blank tenant", SlackConfig{TenantID: " ", WebhookURL: "https://hooks.example" + placeholderPath}, "tenant_id"},
+		{"negative timeout", SlackConfig{TenantID: "tenant-1", WebhookURL: "https://hooks.example" + placeholderPath, Timeout: -time.Second}, "timeout"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -97,7 +100,7 @@ func TestSlackChannel_StatusErrorOmitsURL(t *testing.T) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer srv.Close()
-	ch, err := NewSlackChannel(SlackConfig{WebhookURL: srv.URL + placeholderPath, HTTPClient: srv.Client()})
+	ch, err := NewSlackChannel(SlackConfig{TenantID: "tenant-1", WebhookURL: srv.URL + placeholderPath, HTTPClient: srv.Client()})
 	if err != nil {
 		t.Fatalf("NewSlackChannel: %v", err)
 	}
@@ -114,6 +117,74 @@ func TestSlackChannel_StatusErrorOmitsURL(t *testing.T) {
 	}
 }
 
+// A Slack channel bound to one tenant never sends another tenant's
+// notification to its webhook, so tenant B's subject, link and body never
+// reach tenant A's Slack audience.
+func TestSlackChannel_RefusesOtherTenant(t *testing.T) {
+	var posts atomic.Int32
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		posts.Add(1)
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer srv.Close()
+	ch, err := NewSlackChannel(SlackConfig{TenantID: "tenant-a", WebhookURL: srv.URL + placeholderPath, HTTPClient: srv.Client()})
+	if err != nil {
+		t.Fatalf("NewSlackChannel: %v", err)
+	}
+	n := validNotification()
+	n.TenantID = "tenant-b"
+	err = ch.Deliver(context.Background(), n)
+	var terr *SlackTenantError
+	if !errors.As(err, &terr) || terr.TenantID != "tenant-b" {
+		t.Fatalf("want *SlackTenantError for tenant-b, got %v", err)
+	}
+	if !errors.Is(err, ErrDeliveryFailed) {
+		t.Fatalf("want ErrDeliveryFailed, got %v", err)
+	}
+	if got := posts.Load(); got != 0 {
+		t.Fatalf("webhook received %d posts for another tenant", got)
+	}
+
+	n.TenantID = "tenant-a"
+	if err := ch.Deliver(context.Background(), n); err != nil {
+		t.Fatalf("Deliver for the bound tenant: %v", err)
+	}
+	if got := posts.Load(); got != 1 {
+		t.Fatalf("webhook received %d posts for the bound tenant, want 1", got)
+	}
+}
+
+// Through a Dispatcher, a cross-tenant notification reaches no channel.
+func TestDispatcher_SlackRefusesOtherTenant(t *testing.T) {
+	var posts atomic.Int32
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		posts.Add(1)
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer srv.Close()
+	ch, err := NewSlackChannel(SlackConfig{TenantID: "tenant-a", WebhookURL: srv.URL + placeholderPath, HTTPClient: srv.Client()})
+	if err != nil {
+		t.Fatalf("NewSlackChannel: %v", err)
+	}
+	d, err := NewDispatcher(DispatcherConfig{Channels: []Channel{ch}})
+	if err != nil {
+		t.Fatalf("NewDispatcher: %v", err)
+	}
+	n := validNotification()
+	n.TenantID = "tenant-b"
+	report, err := d.Notify(context.Background(), n)
+	var terr *SlackTenantError
+	if !errors.As(err, &terr) {
+		t.Fatalf("want *SlackTenantError, got %v", err)
+	}
+	if len(report.Delivered) != 0 {
+		t.Fatalf("delivered to %v for another tenant", report.Delivered)
+	}
+	if got := posts.Load(); got != 0 {
+		t.Fatalf("webhook received %d posts for another tenant", got)
+	}
+}
+
 func TestSlackChannel_TransportErrorOmitsURL(t *testing.T) {
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	webhook := srv.URL + placeholderPath
@@ -124,7 +195,7 @@ func TestSlackChannel_TransportErrorOmitsURL(t *testing.T) {
 	}
 	srv.Close()
 
-	ch, err := NewSlackChannel(SlackConfig{WebhookURL: webhook, HTTPClient: client, Timeout: 5 * time.Second})
+	ch, err := NewSlackChannel(SlackConfig{TenantID: "tenant-1", WebhookURL: webhook, HTTPClient: client, Timeout: 5 * time.Second})
 	if err != nil {
 		t.Fatalf("NewSlackChannel: %v", err)
 	}
@@ -139,7 +210,7 @@ func TestSlackChannel_TransportErrorOmitsURL(t *testing.T) {
 }
 
 func TestSlackChannel_IsNotSecure(t *testing.T) {
-	ch, err := NewSlackChannel(SlackConfig{WebhookURL: "https://hooks.example" + placeholderPath})
+	ch, err := NewSlackChannel(SlackConfig{TenantID: "tenant-1", WebhookURL: "https://hooks.example" + placeholderPath})
 	if err != nil {
 		t.Fatalf("NewSlackChannel: %v", err)
 	}
