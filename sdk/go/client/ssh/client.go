@@ -18,6 +18,8 @@ import (
 	"encoding/base64"
 	"io"
 	"net"
+	"strconv"
+	"sync/atomic"
 	"time"
 
 	gossh "golang.org/x/crypto/ssh"
@@ -574,6 +576,12 @@ type sessionClient struct {
 // host is NotFound and a changed key is a *HostKeyMismatchError. The
 // returned Session owns no local key material, so Close only ends the
 // connection.
+//
+// Cancelling ctx stops the dial at any stage, including a peer that accepts
+// TCP and withholds its SSH banner. After Dial returns, ctx no longer
+// governs the session: the host-key checks a key re-exchange runs use the
+// session's own context, each bounded by the dial timeout, and that context
+// ends when the Session is closed.
 func (s sessionClient) Dial(ctx context.Context, req SessionDialRequest) (Session, error) {
 	const op = "ssh.Session.Dial"
 	if err := requireContext(ctx, op); err != nil {
@@ -603,10 +611,16 @@ func (s sessionClient) Dial(ctx context.Context, req SessionDialRequest) (Sessio
 	// hold Dial past its timeout.
 	dialCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	// The session context outlives Dial for the host-key checks of later
+	// key re-exchanges. It keeps ctx's values (credentials) but not its
+	// cancellation or deadline, and Session.Close ends it.
+	sessCtx, sessCancel := context.WithCancel(context.WithoutCancel(ctx))
 	signer, err := s.keys.newRemoteSigner(dialCtx, GetKeyRequest{Scope: req.KeyScope, Owner: req.KeyOwner, Name: req.KeyName})
 	if err != nil {
+		sessCancel()
 		return nil, err
 	}
+	// Public-key authentication happens once, during the handshake.
 	signer.ctx = dialCtx
 	pinScope, pinOwner := req.HostKeyScope, req.HostKeyOwner
 	if pinScope == "" {
@@ -619,18 +633,29 @@ func (s sessionClient) Dial(ctx context.Context, req SessionDialRequest) (Sessio
 	if port == 0 {
 		port = 22
 	}
-	conn, err := xkmssession.DialClient(dialCtx, xkmssession.ClientParams{
-		Host:            req.Host,
-		Port:            port,
+	var established atomic.Bool
+	hostKeyCallback := func(hostname string, _ net.Addr, key gossh.PublicKey) error {
+		if !established.Load() {
+			return s.hosts.Verify(dialCtx, pinScope, pinOwner, stripPort(hostname), key)
+		}
+		callCtx, callCancel := context.WithTimeout(sessCtx, timeout)
+		defer callCancel()
+		return s.hosts.Verify(callCtx, pinScope, pinOwner, stripPort(hostname), key)
+	}
+	cfg := &gossh.ClientConfig{
 		User:            req.User,
-		Signer:          signer,
-		HostKeyCallback: s.hosts.Callback(dialCtx, pinScope, pinOwner),
+		Auth:            []gossh.AuthMethod{gossh.PublicKeys(signer)},
+		HostKeyCallback: hostKeyCallback,
 		Timeout:         timeout,
-	})
+	}
+	addr := net.JoinHostPort(req.Host, strconv.Itoa(port))
+	client, err := dialSSHClient(dialCtx, req.Host, addr, cfg, timeout)
 	if err != nil {
+		sessCancel()
 		return nil, err
 	}
-	return xkmssession.NewSession(req.Host, req.User, conn), nil
+	established.Store(true)
+	return xkmssession.NewSession(req.Host, req.User, client, sessCancel), nil
 }
 
 // =============================================================================

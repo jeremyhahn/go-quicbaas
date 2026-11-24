@@ -50,6 +50,10 @@ func (d *dialTransport) Request(ctx context.Context, _, method string, req inter
 	d.mu.Lock()
 	d.methods = append(d.methods, method)
 	d.mu.Unlock()
+	// A real REST or gRPC transport fails on a done context; so does this one.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if method == d.block {
 		<-ctx.Done()
 		return nil, ctx.Err()
