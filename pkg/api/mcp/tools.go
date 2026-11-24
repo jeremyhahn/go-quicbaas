@@ -296,7 +296,7 @@ func (r *ToolRegistry) registerTools() {
 	})
 
 	r.addKVEntityTool("get", ToolDefinition{
-		Description: "Retrieve a value by key from QuicBaaS",
+		Description: "Retrieve a value by key from QuicBaaS; the result's version is the key's current version, which put and delete accept as expectedVersion",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -1778,6 +1778,9 @@ func (r *ToolRegistry) executeGet(ctx context.Context, args map[string]interface
 		ID:         id,
 		ShardID:    getUint64(args, "shardID"),
 		TimeoutMs:  timeoutMs,
+		// The result's version is the key's stored version, read with the
+		// value, so a caller can pass it back as expectedVersion.
+		ReadVersion: true,
 	}
 	resp, err := r.service.Get(ctx, req)
 	if err != nil {

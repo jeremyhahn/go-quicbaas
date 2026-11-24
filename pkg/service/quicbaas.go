@@ -1049,6 +1049,44 @@ func (k *kvService) Put(ctx context.Context, req *PutRequest) (*PutResponse, err
 	return resp, nil
 }
 
+// readKV reads key from client. When readVersion is false it is a plain
+// key-value read and the version is the placeholder 1. When readVersion is
+// set, the value and the key's stored per-key version come from one MVCC
+// read, so they are always from the same revision; the version is the one a
+// conditional put or delete compares against. A missing key is either a
+// *qrdbtransport.KeyNotFoundError or a nil value with no error.
+func readKV(ctx context.Context, client *qrdbsdk.Client, key string, readVersion bool) ([]byte, uint64, error) {
+	if !readVersion {
+		data, err := client.KV().Get(ctx, key)
+		return data, 1, err
+	}
+	kv, err := client.MVCC().GetRevision(ctx, key)
+	if err != nil {
+		return nil, 0, err
+	}
+	if kv == nil {
+		return nil, 0, nil
+	}
+	version, err := storedKeyVersion(kv.Version)
+	if err != nil {
+		return nil, 0, err
+	}
+	return kv.Value, version, nil
+}
+
+// storedKeyVersion converts the store's per-key version to the uint64 the
+// API reports, refusing a negative version.
+func storedKeyVersion(v int64) (uint64, error) {
+	if v < 0 {
+		return 0, &errors.QBError{
+			Code: errors.ErrRaft,
+			Op:   "service.Get",
+			Err:  fmt.Errorf("store returned negative key version %d", v),
+		}
+	}
+	return uint64(v), nil
+}
+
 func (k *kvService) Get(ctx context.Context, req *GetRequest) (*GetResponse, error) {
 	start := time.Now()
 	if k.svc.metrics != nil {
@@ -1084,8 +1122,9 @@ func (k *kvService) Get(ctx context.Context, req *GetRequest) (*GetResponse, err
 		return nil, err
 	}
 
-	// Check cache first (if consistency allows)
-	if req.Consistency == ConsistencyLevelEventual && k.svc.cacheManager != nil {
+	// Check cache first (if consistency allows). A cached value carries no
+	// version, so a request for the stored version always reads the store.
+	if !req.ReadVersion && req.Consistency == ConsistencyLevelEventual && k.svc.cacheManager != nil {
 		if data, err := k.svc.cacheManager.Get(context.Background(), string(key)); err == nil && len(data) > 0 {
 			return &GetResponse{
 				ID:        req.ID,
@@ -1139,7 +1178,7 @@ func (k *kvService) Get(ctx context.Context, req *GetRequest) (*GetResponse, err
 			Err:  err,
 		}
 	}
-	data, err := client.KV().Get(ctx, string(key))
+	data, version, err := readKV(ctx, client, string(key), req.ReadVersion)
 	if err != nil {
 		// Key-not-found from the transport is not a Raft error; return the
 		// not-found sentinel so the handler maps it to HTTP 404.
@@ -1168,7 +1207,7 @@ func (k *kvService) Get(ctx context.Context, req *GetRequest) (*GetResponse, err
 	// Parse result
 	resp := &GetResponse{
 		ID:        req.ID,
-		Version:   1,
+		Version:   version,
 		Timestamp: time.Now().UnixNano(),
 		Found:     false,
 	}

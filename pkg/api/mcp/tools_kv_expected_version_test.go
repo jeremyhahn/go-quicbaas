@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	stderrors "errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -106,6 +107,16 @@ func (h *kvVersionHarness) requireData(id uint64, want string) {
 	require.Equal(h.t, want, string(got))
 }
 
+// getVersion reads id through the get tool and returns the result's version.
+func (h *kvVersionHarness) getVersion(id uint64) string {
+	h.t.Helper()
+	res, err := h.reg.ExecuteTool(h.ctx, "quicbaas_kv_get", h.args(id, "", nil))
+	require.NoError(h.t, err)
+	m, ok := res.(map[string]interface{})
+	require.True(h.t, ok, "get result is %T", res)
+	return fmt.Sprint(m["version"])
+}
+
 // requireNotFound asserts get reports id as not found.
 func (h *kvVersionHarness) requireNotFound(id uint64) {
 	h.t.Helper()
@@ -140,6 +151,65 @@ func TestKVExpectedVersion_MatchingVersionWrites(t *testing.T) {
 
 	require.Equal(t, "1", h.mustPut(id, "v4", float64(0)), "expectedVersion 0 creates an absent key")
 	h.requireData(id, "v4")
+}
+
+func TestKVExpectedVersion_GetReturnsStoredVersion(t *testing.T) {
+	h := newKVVersionRegistry(t)
+	const id = 20
+
+	h.mustPut(id, "a", nil)
+	h.mustPut(id, "b", nil)
+	h.mustPut(id, "c", nil)
+	require.Equal(t, "3", h.getVersion(id))
+
+	require.Equal(t, "4", h.mustPut(id, "d", float64(3)))
+	require.Equal(t, "4", h.getVersion(id))
+	h.requireData(id, "d")
+}
+
+func TestKVExpectedVersion_ReadVersionThenConditionalWrites(t *testing.T) {
+	h := newKVVersionRegistry(t)
+	const id, staleID = 21, 22
+
+	h.mustPut(id, "a", nil)
+	h.mustPut(id, "b", nil)
+	v := h.getVersion(id)
+	require.Equal(t, "2", v)
+
+	require.Equal(t, "3", h.mustPut(id, "c", v), "the version read back is accepted by a conditional put")
+	v = h.getVersion(id)
+	require.Equal(t, "3", v)
+
+	h.mustDelete(id, v)
+	h.requireNotFound(id)
+
+	h.mustPut(staleID, "x", nil)
+	h.mustPut(staleID, "y", nil)
+	stale := h.getVersion(staleID)
+	h.mustPut(staleID, "z", nil)
+	_, err := h.del(staleID, stale)
+	requireConflict(t, "quicbaas_kv_delete", err)
+	h.requireData(staleID, "z")
+}
+
+func TestKVExpectedVersion_GetRequestsStoredVersion(t *testing.T) {
+	for _, tool := range []string{"quicbaas_kv_get", "qrdb_get"} {
+		t.Run(tool, func(t *testing.T) {
+			var reached, readVersion bool
+			svc := &mockService{}
+			svc.getFunc = func(_ context.Context, req *service.GetRequest) (*service.GetResponse, error) {
+				reached, readVersion = true, req.ReadVersion
+				return &service.GetResponse{ID: req.ID, Found: true}, nil
+			}
+			log, err := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
+			require.NoError(t, err)
+			args := map[string]interface{}{"entityType": "users", "id": float64(7)}
+			_, err = NewToolRegistry(svc, log).ExecuteTool(context.Background(), tool, args)
+			require.NoError(t, err)
+			require.True(t, reached)
+			require.True(t, readVersion, "%s must ask the service for the stored version", tool)
+		})
+	}
 }
 
 func TestKVExpectedVersion_StalePutConflictsAndChangesNothing(t *testing.T) {

@@ -101,6 +101,13 @@ type GetRequest struct {
 
 	// TimeoutMs is the operation timeout in milliseconds (0 = default).
 	TimeoutMs uint64 `json:"timeout_ms,omitempty"`
+
+	// ReadVersion, when set, makes Get read the value and the key's stored
+	// per-key version together in one MVCC read and bypass the cache, so
+	// Version is the value a conditional put or delete compares against.
+	// When it is false, Version is a placeholder. It is set only by the MCP
+	// key-value get tool, so it is not part of the wire encoding.
+	ReadVersion bool `json:"-"`
 }
 
 // GetResponse represents a get operation response.
@@ -112,7 +119,8 @@ type GetResponse struct {
 	// Data contains the serialized entity payload.
 	Data []byte `json:"data,omitempty"`
 
-	// Version is the MVCC version number of the entity.
+	// Version is the key's stored per-key version when the request set
+	// ReadVersion, and otherwise a placeholder.
 	Version uint64 `json:"version"`
 
 	// Timestamp is when the entity was last modified (Unix nanoseconds).
