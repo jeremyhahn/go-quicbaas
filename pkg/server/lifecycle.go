@@ -2124,6 +2124,8 @@ func (s *Server) startService() error {
 			// The proxy serves the direct barrier servicer, which keeps the
 			// verified SO PIN and the Shamir counts the client adapter drops.
 			s.publishBarrierServicer(bootstrapServices.Barrier)
+			// The node's protocol servers serve credentials through the credential proxy.
+			s.publishCredentialServicer(bootstrapServices.Credential)
 			s.logger.Info("Bootstrap ceremony services wired (node seal disabled): persistent data-plane barrier + manual credential/ceremony")
 		}
 	}
