@@ -569,13 +569,13 @@ func TestAgentListJSON(t *testing.T) {
 
 		// Verify JSON structure
 		var listResp struct {
-			Agents []struct {
+			Nodes []struct {
 				ID       string `json:"id"`
 				Name     string `json:"name"`
 				Host     string `json:"host"`
 				NodeType string `json:"node_type"`
 				Status   string `json:"status"`
-			} `json:"agents"`
+			} `json:"nodes"`
 			Count int `json:"count"`
 		}
 		err = json.Unmarshal([]byte(stdout), &listResp)
@@ -584,7 +584,7 @@ func TestAgentListJSON(t *testing.T) {
 
 		// Verify our agent is in the list
 		found := false
-		for _, agent := range listResp.Agents {
+		for _, agent := range listResp.Nodes {
 			if agent.Name == name {
 				found = true
 				assert.Equal(t, "node01:9090", agent.Host)
@@ -1032,16 +1032,16 @@ func TestAgentLifecycle(t *testing.T) {
 		require.NoError(t, err)
 
 		var listResp struct {
-			Agents []struct {
+			Nodes []struct {
 				ID   string `json:"id"`
 				Name string `json:"name"`
-			} `json:"agents"`
+			} `json:"nodes"`
 			Count int `json:"count"`
 		}
 		err = json.Unmarshal([]byte(stdout), &listResp)
 		require.NoError(t, err)
 
-		for _, agent := range listResp.Agents {
+		for _, agent := range listResp.Nodes {
 			assert.NotEqual(t, agentID, agent.ID, "Removed agent should not appear in list")
 		}
 		t.Logf("[%s] Step 8 - Verify removed: OK (count=%d)", runner.transport, listResp.Count)
