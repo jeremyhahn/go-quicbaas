@@ -218,9 +218,10 @@ type MFAInfoExport struct {
 	BackupCodes int        `json:"backup_codes_remaining"`
 }
 
-// generateGDPRUserID generates a unique user ID for GDPR tests.
+// generateGDPRUserID generates a unique user ID for GDPR tests, in the
+// decimal uint64 form the API reads a user ID in (since #389).
 func generateGDPRUserID() string {
-	return fmt.Sprintf("gdpr_user_%d", time.Now().UnixNano())
+	return generateUniqueUserID()
 }
 
 // ============================================================================
