@@ -81,7 +81,7 @@ func TestReconcile_ExceedingSweepBudgetStillDispatchesAndProgresses(t *testing.T
 			t.Fatalf("index never completed: %d of %d entries", prev, legacyJobs)
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), sweep)
-		due, err := storage.GetJobsDueForExecution(ctx, now, 100)
+		due, err := storage.GetJobsDueForExecution(ctx, now, 100, nil)
 		cancel()
 		if err != nil {
 			t.Fatalf("sweep %d: %v", i, err)
@@ -195,7 +195,7 @@ func TestReconcile_ScanLongerThanBudgetResumes(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	due, err := storage.GetJobsDueForExecution(ctx, now, 100)
+	due, err := storage.GetJobsDueForExecution(ctx, now, 100, nil)
 	if err != nil {
 		t.Fatalf("due scan: %v", err)
 	}
@@ -298,7 +298,7 @@ func TestReconcile_ScanTimingOutBeforeFirstCallbackSplits(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	due, err := storage.GetJobsDueForExecution(ctx, now, 100)
+	due, err := storage.GetJobsDueForExecution(ctx, now, 100, nil)
 	if err != nil {
 		t.Fatalf("due scan: %v", err)
 	}
@@ -386,7 +386,7 @@ func TestReconcile_SlowExistsResumesInsideShard(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	due, err := storage.GetJobsDueForExecution(ctx, now, 100)
+	due, err := storage.GetJobsDueForExecution(ctx, now, 100, nil)
 	if err != nil {
 		t.Fatalf("due scan: %v", err)
 	}

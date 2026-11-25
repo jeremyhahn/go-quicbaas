@@ -20,7 +20,10 @@
 // delegates to Security().Credentials() over the active SDK transport.
 // Every transport ships a real-wire implementation, so the credential
 // verbs are exercised across every transport returned by
-// GetTransportConfigs() — no SkipTransports list is required.
+// GetTransportConfigs() — no SkipTransports list is required when the
+// node serves credentials. Tests probe with RequireCredentialAvailable
+// first, which fails the leg when the node answers not-configured: every
+// node, seal-off included, serves a credential service.
 //
 // Verb surface:
 //
@@ -35,8 +38,111 @@ package cli
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
+
+// credentialAuthRefusals lists the 401/403 texts the credential legs print
+// that authRefusalIndicators does not list (the SDK REST/QUIC client prints
+// "(status 401)", the MCP client "unauthorized (401)", and typed errors carry
+// the UNAUTHORIZED/FORBIDDEN code names). A refusal is a real auth failure and
+// must never be read as the not-configured answer.
+var credentialAuthRefusals = []string{
+	"status 401",
+	"status 403",
+	"(401)",
+	"(403)",
+	"UNAUTHORIZED",
+	"FORBIDDEN",
+	"unauthorized",
+	"forbidden",
+}
+
+// credentialNotConfiguredAnswers lists, per transport, the not-configured
+// texts that transport is allowed to print when the node wires no credential
+// service. A text is accepted only on the transport that prints it, so a REST
+// 404 shape on the gRPC leg is not accepted.
+var credentialNotConfiguredAnswers = map[Transport][]string{
+	TransportGRPC: {
+		"credential service is not configured",
+	},
+	TransportUnix: {
+		"credential service is not configured",
+	},
+	TransportREST: {
+		"credential service is not configured",
+		"credential service not configured",
+		"NOT_FOUND: rest.",
+		"HTTP 404",
+		"(status 404)",
+		"404 page not found",
+	},
+	TransportQUIC: {
+		"credential service is not configured",
+		"credential service not configured",
+		"NOT_FOUND: rest.",
+		"HTTP 404",
+		"(status 404)",
+		"404 page not found",
+	},
+	TransportMCP: {
+		"credential service not configured",
+		"credential service is not configured",
+		"tool 'qrdb_credential_list' not found",
+		"tool not found",
+	},
+}
+
+// credentialNotConfiguredAnswer reports whether the probe output is the
+// typed not-configured answer for transport. Any 401/403 refusal text
+// (authRefusalIndicators or credentialAuthRefusals) wins and yields false.
+// A transport with no entry (for example embedded) yields false.
+func credentialNotConfiguredAnswer(transport Transport, stdout, stderr string) bool {
+	combined := stdout + stderr
+	for _, refusal := range authRefusalIndicators {
+		if strings.Contains(combined, refusal) {
+			return false
+		}
+	}
+	for _, refusal := range credentialAuthRefusals {
+		if strings.Contains(combined, refusal) {
+			return false
+		}
+	}
+	for _, answer := range credentialNotConfiguredAnswers[transport] {
+		if strings.Contains(combined, answer) {
+			return true
+		}
+	}
+	return false
+}
+
+// RequireCredentialAvailable probes the credential service with the
+// read-only `credential list` and fails the current transport leg when the
+// node answers not-configured: not-configured (gRPC/unix), 404 (REST/QUIC)
+// or not-configured/tool-not-found (MCP). The probe validates that typed
+// answer per transport and fails the leg with it, since every node wires a
+// credential service. It never reads a 401 or 403 as not-configured: any
+// other failure returns, so the test fails on its own commands.
+func (r *TestRunner) RequireCredentialAvailable() {
+	r.t.Helper()
+
+	probeCmd := CommandDef{
+		Name:          "credential service availability probe",
+		Args:          []string{"credential", "list"},
+		ExpectSuccess: true,
+		Timeout:       15 * time.Second,
+	}
+
+	stdout, stderr, err := r.Run(probeCmd)
+	if err == nil {
+		return
+	}
+	if credentialNotConfiguredAnswer(r.transport, stdout, stderr) {
+		r.t.Fatalf("[%s] credential service not configured on this node; every node must serve one: %s",
+			r.transport, strings.TrimSpace(stdout+stderr))
+	}
+}
 
 // =============================================================================
 // credential submit

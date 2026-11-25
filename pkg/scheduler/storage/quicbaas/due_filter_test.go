@@ -38,10 +38,10 @@ func TestGetJobsDueForExecution_FilteredJobsDoNotFillThePage(t *testing.T) {
 		t.Fatalf("CreateJob zeta: %v", err)
 	}
 
-	filtered := scheduler.WithDueJobFilter(ctx, func(j *scheduler.Job) bool {
+	filter := func(j *scheduler.Job) bool {
 		return j.NodeAffinity != "ghost"
-	})
-	due, err := storage.GetJobsDueForExecution(filtered, now, 2)
+	}
+	due, err := storage.GetJobsDueForExecution(ctx, now, 2, filter)
 	if err != nil {
 		t.Fatalf("filtered scan: %v", err)
 	}
@@ -49,7 +49,7 @@ func TestGetJobsDueForExecution_FilteredJobsDoNotFillThePage(t *testing.T) {
 		t.Fatalf("filtered scan = %v, want zeta-job only", jobNames(due))
 	}
 
-	due, err = storage.GetJobsDueForExecution(ctx, now, 2)
+	due, err = storage.GetJobsDueForExecution(ctx, now, 2, nil)
 	if err != nil {
 		t.Fatalf("unfiltered scan: %v", err)
 	}
@@ -89,12 +89,12 @@ func TestGetJobsDueForExecution_CanceledSweepStopsScanning(t *testing.T) {
 	sweep, cancel := context.WithCancel(ctx)
 	defer cancel()
 	calls := 0
-	filtered := scheduler.WithDueJobFilter(sweep, func(j *scheduler.Job) bool {
+	filter := func(j *scheduler.Job) bool {
 		calls++
 		cancel() // the sweep's deadline passes while this candidate is checked
 		return false
-	})
-	_, err := storage.GetJobsDueForExecution(filtered, now, 100)
+	}
+	_, err := storage.GetJobsDueForExecution(sweep, now, 100, filter)
 	if err == nil || !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled sweep: err = %v, want context.Canceled", err)
 	}

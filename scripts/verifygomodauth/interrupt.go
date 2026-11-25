@@ -40,9 +40,9 @@ var interruptCases = []interruptCase{
 // progress, and sends SIGINT to make's whole process group, as a terminal's
 // Ctrl-C does. reached reports whether the build call was ever made; when it
 // was not, make has already exited on its own and the outcome says why.
-func interrupt(root, work string, ic interruptCase, tokensFile string) (out outcome, reached bool, err error) {
+func interrupt(root, work, tokenFile string, ic interruptCase, tokensFile string) (out outcome, reached bool, err error) {
 	inv := invocation{targets: []string{ic.target}, tokensFile: tokensFile, env: gateOriginEnv, hangMatch: ic.hang}
-	dir, staged, err := prepareCase(work, ic.target+"-interrupted", inv)
+	dir, staged, err := prepareCase(work, tokenFile, ic.target+"-interrupted", inv)
 	if err != nil {
 		return outcome{}, false, err
 	}

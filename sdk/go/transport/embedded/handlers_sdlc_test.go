@@ -201,8 +201,8 @@ func TestSDLCBindingDomainConverters_ReviewerSurvivesTheHop(t *testing.T) {
 			Login:          "codex",
 			TokenSecretRef: "sdlc/reviewer/go-luks2/token",
 			StatusContext:  "quicbaas/review",
-			Endpoint:       "http://gpu-host.internal:11434",
-			HostAffinity:   "gpu-host",
+			Endpoint:       "http://gpu-01.internal:11434",
+			HostAffinity:   "gpu-01",
 		},
 		Discovery: "poll",
 	}

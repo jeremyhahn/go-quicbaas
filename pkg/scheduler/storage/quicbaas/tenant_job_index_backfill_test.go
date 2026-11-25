@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -26,7 +27,7 @@ func putUnindexedTenantJob(t *testing.T, kv *mockKVStore, job *scheduler.Job) {
 
 func dueJobNames(t *testing.T, storage *Storage, before time.Time) map[string]bool {
 	t.Helper()
-	due, err := storage.GetJobsDueForExecution(context.Background(), before, 100)
+	due, err := storage.GetJobsDueForExecution(context.Background(), before, 100, nil)
 	if err != nil {
 		t.Fatalf("GetJobsDueForExecution: %v", err)
 	}
@@ -121,6 +122,53 @@ func TestTenantJobIndexBackfill_IsIdempotent(t *testing.T) {
 	}
 	if len(entries) != 2 {
 		t.Fatalf("index entries = %v, want one per tenant job", entries)
+	}
+}
+
+// indexPutCountingKV is a mockKVStore that counts the Puts under
+// TenantJobIndexPrefix.
+type indexPutCountingKV struct {
+	*mockKVStore
+	indexPuts int
+}
+
+func (c *indexPutCountingKV) Put(ctx context.Context, key string, value []byte) error {
+	if strings.HasPrefix(key, TenantJobIndexPrefix) {
+		c.indexPuts++
+	}
+	return c.mockKVStore.Put(ctx, key, value)
+}
+
+// TestTenantJobIndexBackfill_SteadyOpenWritesNothing proves the backfill
+// writes only missing entries: once an open has indexed every tenant job, a
+// later open writes no index entry.
+func TestTenantJobIndexBackfill_SteadyOpenWritesNothing(t *testing.T) {
+	ctx := context.Background()
+	kv := &indexPutCountingKV{mockKVStore: newMockKVStore()}
+	storage := NewStorage(kv)
+
+	indexed := createTestJob("indexed", scheduler.OwnerTypeTenant, "acme")
+	if err := storage.CreateJob(ctx, indexed); err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+	legacy := createTestJob("legacy", scheduler.OwnerTypeTenant, "globex")
+	legacy.ID = indexed.ID + 1
+	putUnindexedTenantJob(t, kv.mockKVStore, legacy)
+
+	kv.indexPuts = 0
+	if err := storage.reconcileTenantJobIndex(ctx); err != nil {
+		t.Fatalf("first backfill: %v", err)
+	}
+	if kv.indexPuts != 1 {
+		t.Fatalf("first backfill index writes = %d, want 1 (the unindexed job only)", kv.indexPuts)
+	}
+
+	kv.indexPuts = 0
+	if err := storage.reconcileTenantJobIndex(ctx); err != nil {
+		t.Fatalf("second backfill: %v", err)
+	}
+	if kv.indexPuts != 0 {
+		t.Fatalf("steady-state backfill index writes = %d, want 0", kv.indexPuts)
 	}
 }
 
@@ -250,7 +298,7 @@ func TestGetJobsDueForExecution_ReconcileExceedingSweepBudget(t *testing.T) {
 	sawTenantJob := false
 	for sweep := 0; sweep < 30 && (!sawTenantJob || prev < retained+1); sweep++ {
 		sweepCtx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
-		jobs, err := storage.GetJobsDueForExecution(sweepCtx, now, 100)
+		jobs, err := storage.GetJobsDueForExecution(sweepCtx, now, 100, nil)
 		cancel()
 		if err != nil {
 			t.Fatalf("sweep %d: %v", sweep, err)

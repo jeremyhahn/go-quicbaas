@@ -19,8 +19,9 @@
 // Every test runs across all enabled transports via RunForAllTransports.
 // The credential CLI delegates to Security().Credentials() over the
 // active SDK transport (rest / grpc / quic / mcp / unix / embedded —
-// every transport ships a real-wire implementation), so no
-// SkipTransports filter is required.
+// every transport ships a real-wire implementation). Each server-touching
+// test first calls RequireCredentialAvailable, which fails the leg if the
+// node answers not-configured.
 package cli
 
 import (
@@ -38,6 +39,8 @@ import (
 // set/replace path.
 func TestCredentialSubmit(t *testing.T) {
 	RunForAllTransports(t, "Submit", func(t *testing.T, runner *TestRunner) {
+		runner.RequireCredentialAvailable()
+
 		name := UniqueKey("submit-cred")
 		value := "submit-value-" + name
 
@@ -54,6 +57,8 @@ func TestCredentialSubmit(t *testing.T) {
 // disclosed by enumeration.
 func TestCredentialList(t *testing.T) {
 	RunForAllTransports(t, "List", func(t *testing.T, runner *TestRunner) {
+		runner.RequireCredentialAvailable()
+
 		name := UniqueKey("list-cred")
 		value := "list-value"
 
@@ -68,6 +73,8 @@ func TestCredentialList(t *testing.T) {
 // a JSON {"names":[...]} envelope across every enabled transport.
 func TestCredentialListJSON(t *testing.T) {
 	RunForAllTransports(t, "ListJSON", func(t *testing.T, runner *TestRunner) {
+		runner.RequireCredentialAvailable()
+
 		name := UniqueKey("listjson-cred")
 
 		runner.RunAndAssert(CredentialSubmitCommand(name, "listjson-value"))
@@ -84,6 +91,8 @@ func TestCredentialListJSON(t *testing.T) {
 // renders the default table format across every enabled transport.
 func TestCredentialListTable(t *testing.T) {
 	RunForAllTransports(t, "ListTable", func(t *testing.T, runner *TestRunner) {
+		runner.RequireCredentialAvailable()
+
 		name := UniqueKey("listtable-cred")
 
 		runner.RunAndAssert(CredentialSubmitCommand(name, "listtable-value"))
@@ -98,6 +107,8 @@ func TestCredentialListTable(t *testing.T) {
 // previous version immediately.
 func TestCredentialRotate(t *testing.T) {
 	RunForAllTransports(t, "Rotate", func(t *testing.T, runner *TestRunner) {
+		runner.RequireCredentialAvailable()
+
 		name := UniqueKey("rotate-cred")
 
 		runner.RunAndAssert(CredentialSubmitCommand(name, "initial"))
@@ -113,6 +124,8 @@ func TestCredentialRotate(t *testing.T) {
 // transport.
 func TestCredentialRotateJSON(t *testing.T) {
 	RunForAllTransports(t, "RotateJSON", func(t *testing.T, runner *TestRunner) {
+		runner.RequireCredentialAvailable()
+
 		name := UniqueKey("rotatejson-cred")
 
 		runner.RunAndAssert(CredentialSubmitCommand(name, "initial"))
@@ -127,6 +140,8 @@ func TestCredentialRotateJSON(t *testing.T) {
 // value when --version is omitted.
 func TestCredentialRetrieve(t *testing.T) {
 	RunForAllTransports(t, "Retrieve", func(t *testing.T, runner *TestRunner) {
+		runner.RequireCredentialAvailable()
+
 		name := UniqueKey("retrieve-cred")
 		value := "retrieve-value-" + name
 
@@ -142,6 +157,8 @@ func TestCredentialRetrieve(t *testing.T) {
 // during the grace window) across every enabled transport.
 func TestCredentialRetrieveVersion(t *testing.T) {
 	RunForAllTransports(t, "RetrieveVersion", func(t *testing.T, runner *TestRunner) {
+		runner.RequireCredentialAvailable()
+
 		name := UniqueKey("retrievever-cred")
 
 		runner.RunAndAssert(CredentialSubmitCommand(name, "v1-value"))
@@ -164,6 +181,8 @@ func TestCredentialRetrieveVersion(t *testing.T) {
 // are never disclosed.
 func TestCredentialVersions(t *testing.T) {
 	RunForAllTransports(t, "Versions", func(t *testing.T, runner *TestRunner) {
+		runner.RequireCredentialAvailable()
+
 		name := UniqueKey("versions-cred")
 
 		runner.RunAndAssert(CredentialSubmitCommand(name, "v1-value"))
@@ -182,6 +201,8 @@ func TestCredentialVersions(t *testing.T) {
 // across every enabled transport.
 func TestCredentialVersionsJSON(t *testing.T) {
 	RunForAllTransports(t, "VersionsJSON", func(t *testing.T, runner *TestRunner) {
+		runner.RequireCredentialAvailable()
+
 		name := UniqueKey("versionsjson-cred")
 
 		runner.RunAndAssert(CredentialSubmitCommand(name, "v1"))
@@ -196,6 +217,8 @@ func TestCredentialVersionsJSON(t *testing.T) {
 // transport.
 func TestCredentialVersionsTable(t *testing.T) {
 	RunForAllTransports(t, "VersionsTable", func(t *testing.T, runner *TestRunner) {
+		runner.RequireCredentialAvailable()
+
 		name := UniqueKey("versionstable-cred")
 
 		runner.RunAndAssert(CredentialSubmitCommand(name, "v1"))
@@ -210,6 +233,8 @@ func TestCredentialVersionsTable(t *testing.T) {
 // the name must no longer appear in list output.
 func TestCredentialDelete(t *testing.T) {
 	RunForAllTransports(t, "Delete", func(t *testing.T, runner *TestRunner) {
+		runner.RequireCredentialAvailable()
+
 		name := UniqueKey("delete-cred")
 
 		runner.RunAndAssert(CredentialSubmitCommand(name, "delete-me"))
@@ -225,6 +250,8 @@ func TestCredentialDelete(t *testing.T) {
 // succeeds and reports zero reaped.
 func TestCredentialGC(t *testing.T) {
 	RunForAllTransports(t, "GC", func(t *testing.T, runner *TestRunner) {
+		runner.RequireCredentialAvailable()
+
 		name := UniqueKey("gc-cred")
 
 		runner.RunAndAssert(CredentialSubmitCommand(name, "gc-value"))
@@ -319,6 +346,8 @@ func TestCredentialGCMissingName(t *testing.T) {
 // non-versioned write/read/delete path.
 func TestCredentialRoundTrip(t *testing.T) {
 	RunForAllTransports(t, "RoundTrip", func(t *testing.T, runner *TestRunner) {
+		runner.RequireCredentialAvailable()
+
 		name := UniqueKey("roundtrip-cred")
 		value := "roundtrip-value-" + name
 
@@ -357,6 +386,8 @@ func TestCredentialRoundTrip(t *testing.T) {
 // time.Sleep, per project conventions.
 func TestCredentialVersionedRoundTrip(t *testing.T) {
 	RunForAllTransports(t, "VersionedRoundTrip", func(t *testing.T, runner *TestRunner) {
+		runner.RequireCredentialAvailable()
+
 		name := UniqueKey("verroundtrip-cred")
 		const grace = 2 * time.Second
 
@@ -397,6 +428,8 @@ func TestCredentialVersionedRoundTrip(t *testing.T) {
 // RunSuite across every enabled transport.
 func TestCredentialSuite(t *testing.T) {
 	RunForAllTransports(t, "Suite", func(t *testing.T, runner *TestRunner) {
+		runner.RequireCredentialAvailable()
+
 		name := UniqueKey("suite-cred")
 		runner.RunSuite(CredentialSuite(name, "suite-value-"+name))
 	})

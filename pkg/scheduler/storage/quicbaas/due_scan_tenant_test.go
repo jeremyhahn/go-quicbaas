@@ -53,7 +53,7 @@ func TestGetJobsDueForExecution_MalformedTenantJobDoesNotBlockHealthyJobs(t *tes
 		}
 	}
 
-	due, err := storage.GetJobsDueForExecution(ctx, now, 100)
+	due, err := storage.GetJobsDueForExecution(ctx, now, 100, nil)
 	if err != nil {
 		t.Fatalf("due scan with a malformed tenant job: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestGetJobsDueForExecution_BusyTenantDoesNotStarveOthers(t *testing.T) {
 	const tenants = 2
 	for sweep := 0; sweep < tenants; sweep++ {
 		// acme's jobs stay due: nothing dispatches them between sweeps.
-		due, err := storage.GetJobsDueForExecution(ctx, now, limit)
+		due, err := storage.GetJobsDueForExecution(ctx, now, limit, nil)
 		if err != nil {
 			t.Fatalf("sweep %d: %v", sweep, err)
 		}
@@ -172,7 +172,7 @@ func TestGetJobsDueForExecution_SystemAndTenantJobsShareTheRotation(t *testing.T
 			}
 			// Every job stays pending: nothing dispatches between sweeps.
 			for sweep := 0; sweep < tc.sweeps; sweep++ {
-				due, err := storage.GetJobsDueForExecution(ctx, now, tc.limit)
+				due, err := storage.GetJobsDueForExecution(ctx, now, tc.limit, nil)
 				if err != nil {
 					t.Fatalf("sweep %d: %v", sweep, err)
 				}
@@ -217,7 +217,7 @@ func TestGetJobsDueForExecution_TenantJobsReadByScanNotPerJobGet(t *testing.T) {
 	}
 
 	kv.gets.Store(0)
-	due, err := storage.GetJobsDueForExecution(ctx, now, 100)
+	due, err := storage.GetJobsDueForExecution(ctx, now, 100, nil)
 	if err != nil {
 		t.Fatalf("due scan: %v", err)
 	}

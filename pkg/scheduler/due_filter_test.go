@@ -23,21 +23,16 @@ type filterRecordingStorage struct {
 	verdicts []bool
 }
 
-func (f *filterRecordingStorage) GetJobsDueForExecution(ctx context.Context, before time.Time, limit int) ([]*Job, error) {
+func (f *filterRecordingStorage) GetJobsDueForExecution(ctx context.Context, before time.Time, limit int, eligible DueJobFilter) ([]*Job, error) {
 	f.mu.Lock()
-	filter := DueJobFilterFrom(ctx)
-	f.filters = append(f.filters, filter)
-	if filter != nil {
+	f.filters = append(f.filters, eligible)
+	if eligible != nil {
 		for _, job := range f.probe {
-			f.verdicts = append(f.verdicts, filter(job))
+			f.verdicts = append(f.verdicts, eligible(job))
 		}
 	}
 	f.mu.Unlock()
-	return f.mockJobStorage.GetJobsDueForExecution(ctx, before, limit)
-}
-
-func TestDueJobFilterFrom_NilWhenUnset(t *testing.T) {
-	assert.Nil(t, DueJobFilterFrom(context.Background()))
+	return f.mockJobStorage.GetJobsDueForExecution(ctx, before, limit, eligible)
 }
 
 func TestProcessDueJobs_PassesCanDispatchFilter(t *testing.T) {

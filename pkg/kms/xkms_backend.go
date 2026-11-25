@@ -26,6 +26,7 @@ import (
 	"encoding/json"
 	stderrors "errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -54,7 +55,20 @@ type XKMSBackend struct {
 	backendType config.BackendType
 	logger      interfaces.Logger
 	metadata    map[string]*KeyMetadata // cached metadata
+	keyNames    kctypes.StorageBackend  // ownership records of encoded names
 	mu          sync.RWMutex
+
+	// decrypt is a test seam for the ownership proof decrypt; nil means
+	// xkms.Decrypt.
+	decrypt func(ctx context.Context, kid string, data *kctypes.EncryptedData, opts *kctypes.DecryptOptions) ([]byte, error)
+
+	// getSymmetricKey is a test seam for GetKeyMetadata's symmetric probes;
+	// nil means xkms.GetSymmetricKey.
+	getSymmetricKey func(ctx context.Context, kid string) (kctypes.SymmetricKey, error)
+
+	// deleteKey is a test seam for the delete that rolls back an unclaimed
+	// key; nil means xkms.DeleteKey.
+	deleteKey func(ctx context.Context, attrs *kctypes.KeyAttributes) error
 }
 
 // XKMSBackendConfig configures the XKMSBackend.
@@ -65,6 +79,12 @@ type XKMSBackendConfig struct {
 
 	// Logger for operation logging.
 	Logger interfaces.Logger
+
+	// KeyNameStore is the persistent go-xkms key store that holds the
+	// ownership records of the encoded go-xkms names this backend writes
+	// (see xkms_key_owner.go). Nil keeps the records in memory, for this
+	// backend only.
+	KeyNameStore kctypes.StorageBackend
 }
 
 // NewXKMSBackend creates a new backend that wraps go-xkms.
@@ -82,10 +102,20 @@ func NewXKMSBackend(cfg *XKMSBackendConfig) (*XKMSBackend, error) {
 		backendType = config.BackendTypeSoftware
 	}
 
+	keyNames := cfg.KeyNameStore
+	if keyNames == nil {
+		mem, err := kctypes.NewMemoryBackend()
+		if err != nil {
+			return nil, &XKMSKeyOwnershipError{Op: "open", Name: "", Err: err}
+		}
+		keyNames = mem
+	}
+
 	return &XKMSBackend{
 		backendType: backendType,
 		logger:      cfg.Logger,
 		metadata:    make(map[string]*KeyMetadata),
+		keyNames:    keyNames,
 	}, nil
 }
 
@@ -195,6 +225,12 @@ func (kb *XKMSBackend) CreateKey(ctx context.Context, attrs *kctypes.KeyAttribut
 	if attrs.CN == "" {
 		return nil, ErrKeyCNEmpty
 	}
+	if err := refuseReservedKeyName("XKMSBackend.CreateKey", attrs.CN); err != nil {
+		return nil, err
+	}
+	if err := checkXKMSKeyName(attrs.CN); err != nil {
+		return nil, err
+	}
 
 	// Ensure StoreType matches backend
 	if attrs.StoreType == "" {
@@ -204,19 +240,30 @@ func (kb *XKMSBackend) CreateKey(ctx context.Context, attrs *kctypes.KeyAttribut
 	// Determine if symmetric or asymmetric based on attrs
 	isSymmetric := attrs.SymmetricAlgorithm != ""
 
+	// go-xkms stores the key under its go-xkms name; the caller's attrs keep
+	// the service key ID.
+	xattrs := *attrs
+	xattrs.CN = xkmsKeyName(attrs.CN)
+	if err := kb.checkXKMSKeyStorage(&xattrs); err != nil {
+		return nil, err
+	}
+
 	// Generate key using go-xkms
 	if isSymmetric {
 		// Generate symmetric key
-		_, err := xkms.GenerateSymmetricKey(ctx, string(kb.backendType), attrs)
+		_, err := xkms.GenerateSymmetricKey(ctx, string(kb.backendType), &xattrs)
 		if err != nil {
 			return nil, api.NewSymmetricKeyGenerationError("XKMSBackend.CreateKey", err)
 		}
 	} else {
 		// Generate asymmetric key
-		_, err := xkms.GenerateKeyWithBackend(ctx, string(kb.backendType), attrs)
+		_, err := xkms.GenerateKeyWithBackend(ctx, string(kb.backendType), &xattrs)
 		if err != nil {
 			return nil, api.NewAsymmetricKeyGenerationError("XKMSBackend.CreateKey", err)
 		}
+	}
+	if err := kb.claimXKMSKey(ctx, &xattrs); err != nil {
+		return nil, kb.rollbackUnclaimedXKMSKey(ctx, &xattrs, err)
 	}
 
 	// Build metadata
@@ -250,13 +297,22 @@ func (kb *XKMSBackend) ImportKey(ctx context.Context, keyID string, material []b
 	if keyID == "" {
 		return nil, ErrKeyIDEmpty
 	}
+	if err := refuseReservedKeyName("XKMSBackend.ImportKey", keyID); err != nil {
+		return nil, err
+	}
+	if err := checkXKMSKeyName(keyID); err != nil {
+		return nil, err
+	}
 
 	if len(material) == 0 {
 		return nil, ErrKeyMaterialEmpty
 	}
 
 	// Build key attributes for the imported key
-	attrs := kb.algorithmToKeyAttributes(keyID, algorithm)
+	attrs := kb.xkmsKeyAttributes(keyID, algorithm)
+	if err := kb.checkXKMSKeyStorage(attrs); err != nil {
+		return nil, err
+	}
 
 	// Symmetric and asymmetric import are ONE operation. The algorithm rides on
 	// attrs, and go-xkms interprets the material accordingly: raw bytes for a
@@ -274,6 +330,9 @@ func (kb *XKMSBackend) ImportKey(ctx context.Context, keyID string, material []b
 
 	if err := xkms.ImportKeyMaterial(ctx, string(kb.backendType), attrs, material); err != nil {
 		return nil, api.NewKeyImportError("XKMSBackend.ImportKey", kind, err)
+	}
+	if err := kb.claimXKMSKey(ctx, attrs); err != nil {
+		return nil, kb.rollbackUnclaimedXKMSKey(ctx, attrs, err)
 	}
 
 	// Build metadata
@@ -305,76 +364,178 @@ func (kb *XKMSBackend) ImportKey(ctx context.Context, keyID string, material []b
 	return meta, nil
 }
 
+// xkmsKeyProbe is one go-xkms key ID GetKeyMetadata probes for a key whose
+// metadata is not cached.
+type xkmsKeyProbe struct {
+	algorithm, kid string
+	symmetric      bool
+}
+
+// xkmsKeyProbes derives the probes for keyID from SupportedAlgorithms, so
+// every algorithm a key can be created with resolves after a restart. An
+// algorithm whose attributes fall to a default mapping (HMAC, Ed448, X25519,
+// X448) names no key of its own and is dropped. Kids are unique, the first
+// algorithm keeping a shared kid (all RSA sizes share "rsa"); signing probes
+// come first, then symmetric ones. AES-256-GCM is the first symmetric probe:
+// it is the default, the only size cloud KMS creates, and a backend that
+// echoes the requested size (PKCS#11) labels a stored key with the first AES
+// probe that finds it.
+func (kb *XKMSBackend) xkmsKeyProbes(ctx context.Context, keyID string) []xkmsKeyProbe {
+	var signing, symmetric []xkmsKeyProbe
+	seen := make(map[string]bool)
+	for _, alg := range kb.SupportedAlgorithms(ctx) {
+		if kb.attrsToAlgorithmString(kb.xkmsKeyAttributes(keyID, alg)) != alg {
+			continue
+		}
+		sym := kb.isSymmetricAlgorithm(alg)
+		kid := kb.buildSigningKeyID(keyID, alg)
+		if sym {
+			kid = kb.buildFullKeyID(keyID, alg)
+		}
+		if seen[kid] {
+			continue
+		}
+		seen[kid] = true
+		p := xkmsKeyProbe{algorithm: alg, kid: kid, symmetric: sym}
+		if sym {
+			if alg == AlgAES256GCM {
+				symmetric = append([]xkmsKeyProbe{p}, symmetric...)
+			} else {
+				symmetric = append(symmetric, p)
+			}
+		} else {
+			signing = append(signing, p)
+		}
+	}
+	return append(signing, symmetric...)
+}
+
+// xkmsProbedSymmetricAlgorithm names the algorithm of key, the material a
+// symmetric probe for probed returned. Cloud KMS backends look a symmetric
+// key up by name only and echo the requested algorithm, so any AES probe can
+// return a stored key of another size; the size is read from the key itself.
+// A non-AES probe, or a size that is not an AES size, keeps probed.
+func xkmsProbedSymmetricAlgorithm(probed string, key kctypes.SymmetricKey) string {
+	if key == nil {
+		return probed
+	}
+	switch probed {
+	case AlgAES128GCM, AlgAES192GCM, AlgAES256GCM:
+		switch key.KeySize() {
+		case 128:
+			return AlgAES128GCM
+		case 192:
+			return AlgAES192GCM
+		case 256:
+			return AlgAES256GCM
+		}
+	}
+	return probed
+}
+
 // GetKeyMetadata retrieves metadata for a key.
 func (kb *XKMSBackend) GetKeyMetadata(ctx context.Context, keyID string) (*KeyMetadata, error) {
 	if !kb.IsAvailable(ctx) {
 		return nil, ErrBackendNotReady
 	}
+	if err := refuseReservedKeyName("XKMSBackend.GetKeyMetadata", keyID); err != nil {
+		return nil, err
+	}
 
-	// Check cache first
+	// Check cache first. A cached entry is checked against the ownership
+	// record too: the material under its identity may have been replaced
+	// since it was cached.
 	kb.mu.RLock()
-	if meta, ok := kb.metadata[keyID]; ok {
-		kb.mu.RUnlock()
+	meta, ok := kb.metadata[keyID]
+	kb.mu.RUnlock()
+	if ok {
+		if err := kb.checkOwnedXKMSKey(ctx, keyID, meta.Algorithm); err != nil {
+			if stderrors.Is(err, ErrKeyNotFound) {
+				kb.mu.Lock()
+				delete(kb.metadata, keyID)
+				kb.mu.Unlock()
+				return nil, ErrKeyNotFound
+			}
+			return nil, err
+		}
 		return meta, nil
 	}
-	kb.mu.RUnlock()
 
-	// Try to verify key exists in xkms using multiple lookup strategies
-	// Since we don't know the algorithm, try common signing key formats first
+	xkmsName := xkmsKeyName(keyID)
+
+	// Probe every algorithm this backend supports, signing formats first,
+	// since the algorithm is not known without the cached metadata.
+	// A probe read error that does not confirm absence leaves the key's state
+	// unknown; it is kept so a failed read is never reported as "not found".
 	var foundAlgorithm string
-
-	// Try signing key formats: RSA, ECDSA (P-256, P-384, P-521), Ed25519
-	signingFormats := []struct {
-		algo   string
-		format string
-	}{
-		{"RSA-4096", "rsa"},
-		{"RSA-2048", "rsa"},
-		{"ECDSA-P256", "ecdsa-p256"},
-		{"ECDSA-P384", "ecdsa-p384"},
-		{"ECDSA-P521", "ecdsa-p521"},
-		{"ED25519", "ed25519"},
-	}
-
-	for _, sf := range signingFormats {
-		kid := fmt.Sprintf("%s:signing:%s:%s", kb.backendType, sf.format, keyID)
-		if _, err := xkms.SignerByID(ctx, kid); err == nil {
-			foundAlgorithm = sf.algo
-			break
-		}
-	}
-
-	// If not found as signing key, try symmetric key formats
-	if foundAlgorithm == "" {
-		symmetricFormats := []struct {
-			algo   string
-			format string
-		}{
-			{"AES-256-GCM", "aes256-gcm"},
-			{"AES-128-GCM", "aes128-gcm"},
-			{"CHACHA20-POLY1305", "chacha20-poly1305"},
-		}
-
-		for _, sf := range symmetricFormats {
-			kid := fmt.Sprintf("%s:encryption:%s:%s", kb.backendType, sf.format, keyID)
-			if _, err := xkms.GetSymmetricKey(ctx, kid); err == nil {
-				foundAlgorithm = sf.algo
-				break
+	var probeErr error
+	for _, p := range kb.xkmsKeyProbes(ctx, keyID) {
+		var rsaBits int
+		var symKey kctypes.SymmetricKey
+		if p.symmetric {
+			key, err := kb.xkmsGetSymmetricKey(ctx, p.kid)
+			if err != nil {
+				if !isXKMSMaterialAbsent(err) && probeErr == nil {
+					probeErr = err
+				}
+				continue
 			}
+			symKey = key
+		} else {
+			signer, err := xkms.SignerByID(ctx, p.kid)
+			if err != nil {
+				if !isXKMSMaterialAbsent(err) && probeErr == nil {
+					probeErr = err
+				}
+				continue
+			}
+			if pub, ok := signer.Public().(*rsa.PublicKey); ok {
+				rsaBits = pub.N.BitLen()
+			}
+		}
+		// A key under an encoded name that another writer stored (the
+		// node's native go-xkms service) is not this backend's key; only a
+		// recorded identity resolves, so probe the next format.
+		owned, err := kb.ownsXKMSKey(ctx, xkmsName, p.kid, p.symmetric)
+		if err != nil {
+			return nil, err
+		}
+		if !owned {
+			continue
+		}
+		foundAlgorithm = xkmsProbedSymmetricAlgorithm(p.algorithm, symKey)
+		// Every RSA size shares the kid "rsa"; the key itself names its size.
+		if rsaBits > 0 {
+			foundAlgorithm = "RSA-" + strconv.Itoa(rsaBits)
+		}
+		break
+	}
+
+	if foundAlgorithm == "" && probeErr != nil {
+		return nil, fmt.Errorf("XKMSBackend.GetKeyMetadata: read key %q: %w", keyID, probeErr)
+	}
+
+	// The legacy lookups by bare name cannot name a key identity, so an
+	// encoded name never resolves through them.
+	if foundAlgorithm == "" {
+		if _, ok := decodeXKMSKeyName(xkmsName); ok {
+			return nil, ErrKeyNotFound
 		}
 	}
 
 	// If still not found, try legacy lookup methods
 	if foundAlgorithm == "" {
+		// Pin the lookup to this backend; go-xkms falls back to its default backend when attrs and kid name none.
 		attrs := &kctypes.KeyAttributes{
-			CN:        keyID,
+			CN:        xkmsName,
 			StoreType: kctypes.StoreType(string(kb.backendType)),
+			Backend:   string(kb.backendType),
 		}
 
 		// Try to get signer with just CN
 		if _, err := xkms.Signer(ctx, attrs); err != nil {
 			// Try symmetric key by ID
-			if _, err := xkms.GetSymmetricKey(ctx, keyID); err != nil {
+			if _, err := xkms.GetSymmetricKey(ctx, string(kb.backendType)+":::"+xkmsName); err != nil {
 				return nil, ErrKeyNotFound
 			}
 			foundAlgorithm = "AES-256-GCM" // Default for symmetric
@@ -384,7 +545,7 @@ func (kb *XKMSBackend) GetKeyMetadata(ctx context.Context, keyID string) (*KeyMe
 	}
 
 	// Key exists but we don't have metadata - create minimal metadata
-	meta := &KeyMetadata{
+	meta = &KeyMetadata{
 		KeyID:     keyID,
 		Algorithm: foundAlgorithm,
 		State:     KeyStateEnabled,
@@ -419,27 +580,38 @@ func (kb *XKMSBackend) ListKeys(ctx context.Context, prefix string, limit int) (
 
 	// Add keys from xkms
 	for _, attrs := range keys {
+		// A key under an encoded name is listed only when its full identity
+		// (backend, type, algorithm, name) is recorded: another writer's key
+		// cannot be reached through this backend, so it is not listed either.
+		owned, err := kb.ownsXKMSKey(ctx, attrs.CN, kb.xkmsKeyIdentity(attrs), attrs.SymmetricAlgorithm != "")
+		if err != nil {
+			return nil, "", err
+		}
+		if !owned {
+			continue
+		}
+		keyID := keyIDFromXKMSName(attrs.CN)
 		// Filter by prefix
-		if prefix != "" && !strings.HasPrefix(attrs.CN, prefix) {
+		if prefix != "" && !strings.HasPrefix(keyID, prefix) {
 			continue
 		}
 
 		// Check cache for metadata
 		kb.mu.RLock()
-		meta, ok := kb.metadata[attrs.CN]
+		meta, ok := kb.metadata[keyID]
 		kb.mu.RUnlock()
 
 		if !ok {
 			// Create minimal metadata
 			meta = &KeyMetadata{
-				KeyID:   attrs.CN,
+				KeyID:   keyID,
 				State:   KeyStateEnabled,
 				Version: 1,
 			}
 		}
 
 		result = append(result, meta)
-		seen[attrs.CN] = true
+		seen[keyID] = true
 
 		// Apply limit
 		if limit > 0 && len(result) >= limit {
@@ -448,8 +620,15 @@ func (kb *XKMSBackend) ListKeys(ctx context.Context, prefix string, limit int) (
 	}
 
 	// Also add keys from in-memory cache that weren't in xkms list
-	// This handles cases where xkms.ListKeys doesn't return all keys
+	// This handles cases where xkms.ListKeys doesn't return all keys.
+	// Candidates are copied under the lock and checked against their
+	// ownership records outside it, so a replaced key is never listed.
 	kb.mu.RLock()
+	type cachedKey struct {
+		keyID string
+		meta  *KeyMetadata
+	}
+	var cached []cachedKey
 	for keyID, meta := range kb.metadata {
 		if seen[keyID] {
 			continue
@@ -458,14 +637,23 @@ func (kb *XKMSBackend) ListKeys(ctx context.Context, prefix string, limit int) (
 		if prefix != "" && !strings.HasPrefix(keyID, prefix) {
 			continue
 		}
+		cached = append(cached, cachedKey{keyID: keyID, meta: meta})
+	}
+	kb.mu.RUnlock()
+	for _, c := range cached {
+		meta := c.meta
+		if err := kb.checkOwnedXKMSKey(ctx, c.keyID, meta.Algorithm); err != nil {
+			if stderrors.Is(err, ErrKeyNotFound) {
+				continue
+			}
+			return nil, "", err
+		}
 		result = append(result, meta)
 		// Apply limit
 		if limit > 0 && len(result) >= limit {
-			kb.mu.RUnlock()
 			return result, "", nil
 		}
 	}
-	kb.mu.RUnlock()
 
 	// No pagination cursor for now
 	return result, "", nil
@@ -479,6 +667,9 @@ func (kb *XKMSBackend) RotateKey(ctx context.Context, keyID string) (*KeyMetadat
 	if !kb.IsAvailable(ctx) {
 		return nil, ErrBackendNotReady
 	}
+	if err := refuseReservedKeyName("XKMSBackend.RotateKey", keyID); err != nil {
+		return nil, err
+	}
 
 	// Get key metadata to retrieve the algorithm (with proper locking)
 	kb.mu.RLock()
@@ -487,6 +678,11 @@ func (kb *XKMSBackend) RotateKey(ctx context.Context, keyID string) (*KeyMetadat
 
 	if !exists {
 		return nil, ErrKeyNotFound
+	}
+	// The cached key must still be this backend's before a version of it is
+	// generated.
+	if err := kb.checkOwnedXKMSKey(ctx, keyID, meta.Algorithm); err != nil {
+		return nil, err
 	}
 
 	// Never regenerate a version another node already created.
@@ -500,7 +696,13 @@ func (kb *XKMSBackend) RotateKey(ctx context.Context, keyID string) (*KeyMetadat
 
 	// Build attributes for the new versioned key
 	versionedKeyID := kb.buildVersionedKeyID(keyID, newVersion)
-	attrs := kb.algorithmToKeyAttributes(versionedKeyID, meta.Algorithm)
+	if err := checkXKMSKeyName(versionedKeyID); err != nil {
+		return nil, err
+	}
+	attrs := kb.xkmsKeyAttributes(versionedKeyID, meta.Algorithm)
+	if err := kb.checkXKMSKeyStorage(attrs); err != nil {
+		return nil, err
+	}
 
 	// Generate new key with versioned ID
 	// This backend's own version scheme (see the method comment).
@@ -514,6 +716,9 @@ func (kb *XKMSBackend) RotateKey(ctx context.Context, keyID string) (*KeyMetadat
 		if err != nil {
 			return nil, api.NewKeyVersionGenerationError("XKMSBackend.RotateKey", err)
 		}
+	}
+	if err := kb.claimXKMSKeyAs(ctx, attrs, keyID); err != nil {
+		return nil, kb.rollbackUnclaimedXKMSKey(ctx, attrs, err)
 	}
 
 	// Update cached metadata
@@ -541,7 +746,7 @@ func (kb *XKMSBackend) RotateKey(ctx context.Context, keyID string) (*KeyMetadat
 }
 
 // refreshVersion moves the cached version of keyID up to the newest version
-// that exists in the go-xkms store. Another node's RotateKey creates
+// this backend owns as keyID's version in the go-xkms store. Another node's RotateKey creates
 // `<key>_v<N>` in the shared store but cannot update this backend's cache, so
 // Encrypt and RotateKey call this first. The version only moves forward.
 func (kb *XKMSBackend) refreshVersion(ctx context.Context, keyID string, meta *KeyMetadata) {
@@ -555,11 +760,10 @@ func (kb *XKMSBackend) refreshVersion(ctx context.Context, keyID string, meta *K
 	}
 
 	v := current
-	for {
-		kid := kb.buildFullKeyID(kb.buildVersionedKeyID(keyID, v+1), algorithm)
-		if _, err := xkms.GetSymmetricKey(ctx, kid); err != nil {
-			break
-		}
+	// Only a version this backend wrote as keyID's own version is followed:
+	// a key stored under the versioned name that is standalone, or another
+	// key's version, is not keyID's rotation.
+	for kb.checkOwnedXKMSKeyVersion(ctx, keyID, v+1, algorithm) == nil {
 		v++
 	}
 	if v == current {
@@ -583,10 +787,52 @@ func (kb *XKMSBackend) buildVersionedKeyID(keyID string, version int) string {
 	return fmt.Sprintf("%s_v%d", keyID, version)
 }
 
+// checkOwnedXKMSKey refuses a standalone key identity, derived from keyID and
+// algorithm taken from cached metadata, that this backend does not own as a
+// key of its own. Cached metadata outlives the material it describes, so the
+// key must be one this backend wrote and whose ownership proof still
+// verifies; native material stored under that name is not this key, and a
+// rotated version is not a standalone key (see checkOwnedXKMSKeyVersion). It
+// returns ErrKeyNotFound when the key is not owned, and an ownership read
+// error unchanged.
+func (kb *XKMSBackend) checkOwnedXKMSKey(ctx context.Context, keyID, algorithm string) error {
+	attrs := kb.xkmsKeyAttributes(keyID, algorithm)
+	owned, err := kb.ownsXKMSKey(ctx, attrs.CN, kb.xkmsKeyIdentity(attrs), kb.isSymmetricAlgorithm(algorithm))
+	if err != nil {
+		return err
+	}
+	if !owned {
+		return ErrKeyNotFound
+	}
+	return nil
+}
+
+// checkOwnedXKMSKeyVersion refuses version of keyID unless this backend wrote
+// it as keyID's version. The version a ciphertext names is caller input, so
+// the version key must be one whose ownership record names keyID as its
+// parent and whose proof still verifies. A key under the versioned name that
+// was claimed standalone, or as another key's version, is not used. It
+// returns ErrKeyNotFound when the version is not owned, and an ownership read
+// error unchanged.
+func (kb *XKMSBackend) checkOwnedXKMSKeyVersion(ctx context.Context, keyID string, version int, algorithm string) error {
+	attrs := kb.xkmsKeyAttributes(kb.buildVersionedKeyID(keyID, version), algorithm)
+	owned, err := kb.ownsXKMSKeyAs(ctx, attrs.CN, kb.xkmsKeyIdentity(attrs), kb.isSymmetricAlgorithm(algorithm), keyID)
+	if err != nil {
+		return err
+	}
+	if !owned {
+		return ErrKeyNotFound
+	}
+	return nil
+}
+
 // DisableKey temporarily disables a key.
 func (kb *XKMSBackend) DisableKey(ctx context.Context, keyID string) error {
 	if !kb.IsAvailable(ctx) {
 		return ErrBackendNotReady
+	}
+	if err := refuseReservedKeyName("XKMSBackend.DisableKey", keyID); err != nil {
+		return err
 	}
 
 	// Update cached metadata - go-xkms doesn't have native disable
@@ -609,6 +855,9 @@ func (kb *XKMSBackend) EnableKey(ctx context.Context, keyID string) error {
 	if !kb.IsAvailable(ctx) {
 		return ErrBackendNotReady
 	}
+	if err := refuseReservedKeyName("XKMSBackend.EnableKey", keyID); err != nil {
+		return err
+	}
 
 	// Update cached metadata - go-xkms doesn't have native enable
 	kb.mu.Lock()
@@ -630,6 +879,9 @@ func (kb *XKMSBackend) DeleteKey(ctx context.Context, keyID string) error {
 	if !kb.IsAvailable(ctx) {
 		return ErrBackendNotReady
 	}
+	if err := refuseReservedKeyName("XKMSBackend.DeleteKey", keyID); err != nil {
+		return err
+	}
 
 	// First check if key exists in our metadata cache
 	kb.mu.RLock()
@@ -642,7 +894,15 @@ func (kb *XKMSBackend) DeleteKey(ctx context.Context, keyID string) error {
 		var err error
 		meta, err = kb.GetKeyMetadata(ctx, keyID)
 		if err != nil {
-			return ErrKeyNotFound
+			// An ownership read error is not "not found": the key may be
+			// live, so the caller must not treat it as deleted.
+			if !stderrors.Is(err, ErrKeyNotFound) {
+				return fmt.Errorf("XKMSBackend.DeleteKey: %w", err)
+			}
+			// No owned key resolves. A record left by an earlier delete
+			// whose release failed is still dropped, so that delete's retry
+			// completes after a restart too.
+			return kb.releaseStaleXKMSKeyRecords(ctx, keyID)
 		}
 	}
 
@@ -651,35 +911,75 @@ func (kb *XKMSBackend) DeleteKey(ctx context.Context, keyID string) error {
 	// key ID format validation issues with algorithms like ChaCha20-Poly1305
 	var attrs *kctypes.KeyAttributes
 	if meta != nil && meta.Algorithm != "" {
-		attrs = kb.algorithmToKeyAttributes(keyID, meta.Algorithm)
+		attrs = kb.xkmsKeyAttributes(keyID, meta.Algorithm)
 	} else {
-		// Default to AES-256-GCM if we don't have algorithm info
+		// No algorithm is known. An encoded name is deleted only under the
+		// identity its record vouches for, so with none known there is no
+		// owned key to delete. A literal name keeps the AES-256-GCM default.
+		if _, encoded := decodeXKMSKeyName(xkmsKeyName(keyID)); encoded {
+			return ErrKeyNotFound
+		}
 		attrs = &kctypes.KeyAttributes{
-			CN:                 keyID,
+			CN:                 xkmsKeyName(keyID),
 			StoreType:          kctypes.StoreType(string(kb.backendType)),
 			KeyType:            kctypes.KeyTypeEncryption,
 			SymmetricAlgorithm: kctypes.SymmetricAES256GCM,
 		}
 	}
 
-	// Delete from go-xkms using attributes
-	if err := xkms.DeleteKey(ctx, attrs); err != nil {
-		if stderrors.Is(err, xkms.ErrKeyNotFound) {
+	// A cached key is deleted only while its ownership proof verifies. Material
+	// that no longer matches belongs to another writer and is never deleted;
+	// its stale record no longer verifies and is released once the material is
+	// confirmed absent.
+	if exists {
+		owned, err := kb.ownsXKMSKey(ctx, attrs.CN, kb.xkmsKeyIdentity(attrs), attrs.SymmetricAlgorithm != "")
+		if err != nil {
+			return fmt.Errorf("XKMSBackend.DeleteKey: %w", err)
+		}
+		if !owned {
+			kb.mu.Lock()
+			delete(kb.metadata, keyID)
+			kb.mu.Unlock()
+			// No material is deleted. A record left by an earlier delete
+			// whose release failed is dropped once its material is
+			// confirmed absent, so that retry still completes.
+			return kb.releaseStaleXKMSKeyRecords(ctx, keyID)
+		}
+	}
+
+	// Delete from go-xkms using attributes.
+	// go-xkms resolves the backend from attrs.Backend and falls back to its
+	// default backend, not to StoreType; delete from this backend.
+	del := *attrs
+	del.Backend = string(kb.backendType)
+	if err := xkms.DeleteKey(ctx, &del); err != nil {
+		if stderrors.Is(err, xkms.ErrKeyNotFound) || stderrors.Is(err, kctypes.ErrBackendKeyNotFound) {
+			// The material is already gone: this is the retry of a delete
+			// whose release failed, or the key never existed. The record,
+			// if one is left, is still released so the identity can never
+			// resolve again.
+			released, relErr := kb.releaseXKMSKey(ctx, attrs)
+			if relErr != nil {
+				return relErr
+			}
+			kb.mu.Lock()
+			delete(kb.metadata, keyID)
+			kb.mu.Unlock()
+			if released {
+				return nil
+			}
 			return ErrKeyNotFound
 		}
-		// Try with default format as fallback
-		defaultAttrs := &kctypes.KeyAttributes{
-			CN:                 keyID,
-			StoreType:          kctypes.StoreType(string(kb.backendType)),
-			KeyType:            kctypes.KeyTypeEncryption,
-			SymmetricAlgorithm: kctypes.SymmetricAES256GCM,
-		}
-		if err2 := xkms.DeleteKey(ctx, defaultAttrs); err2 != nil {
-			if stderrors.Is(err2, xkms.ErrKeyNotFound) {
-				return ErrKeyNotFound
-			}
-			return api.NewKeyDeletionError("XKMSBackend.DeleteKey", err)
-		}
+		// No other identity is tried: a fallback identity is not the one
+		// this key's record vouches for, and deleting it could remove
+		// another writer's key.
+		return api.NewKeyDeletionError("XKMSBackend.DeleteKey", err)
+	}
+
+	// Drop the ownership record of the deleted key's identity, or a later
+	// native key stored under it would resolve as the deleted key.
+	if _, err := kb.releaseXKMSKey(ctx, attrs); err != nil {
+		return err
 	}
 
 	// Remove from cache
@@ -687,6 +987,42 @@ func (kb *XKMSBackend) DeleteKey(ctx context.Context, keyID string) error {
 	delete(kb.metadata, keyID)
 	kb.mu.Unlock()
 
+	return nil
+}
+
+// releaseStaleXKMSKeyRecords drops the ownership records of keyID's encoded
+// name whose material is confirmed absent: the record of a delete whose
+// release failed. A record is released only after its material is confirmed
+// absent; a record whose material is present stays, and a material read error
+// is returned. It returns ErrKeyNotFound when no record was released, and for
+// a literal name.
+func (kb *XKMSBackend) releaseStaleXKMSKeyRecords(ctx context.Context, keyID string) error {
+	name := xkmsKeyName(keyID)
+	if _, ok := decodeXKMSKeyName(name); !ok {
+		return ErrKeyNotFound
+	}
+	releasedAny := false
+	for _, p := range kb.xkmsKeyProbes(ctx, keyID) {
+		// Only a record whose material is confirmed absent is released.
+		// Present material is another writer's key, or one whose proof does
+		// not verify, and its record stays; a read error is returned because
+		// the material may be live.
+		absent, err := kb.xkmsMaterialAbsent(ctx, p.kid, p.symmetric)
+		if err != nil {
+			return fmt.Errorf("XKMSBackend.DeleteKey: read key %q: %w", keyID, err)
+		}
+		if !absent {
+			continue
+		}
+		released, err := kb.releaseXKMSKeyIdentity(ctx, name, p.kid)
+		if err != nil {
+			return err
+		}
+		releasedAny = releasedAny || released
+	}
+	if !releasedAny {
+		return ErrKeyNotFound
+	}
 	return nil
 }
 
@@ -703,7 +1039,7 @@ func (kb *XKMSBackend) formatKeyID(keyID string) string {
 func (kb *XKMSBackend) buildFullKeyID(keyID string, algorithm string) string {
 	// Map algorithm to go-xkms format
 	algoFormat := kb.algorithmToKeyIDFormat(algorithm)
-	return fmt.Sprintf("%s:encryption:%s:%s", kb.backendType, algoFormat, keyID)
+	return fmt.Sprintf("%s:encryption:%s:%s", kb.backendType, algoFormat, xkmsKeyName(keyID))
 }
 
 // buildSigningKeyID constructs the full key ID format for signing operations.
@@ -711,7 +1047,7 @@ func (kb *XKMSBackend) buildFullKeyID(keyID string, algorithm string) string {
 func (kb *XKMSBackend) buildSigningKeyID(keyID string, algorithm string) string {
 	// Map algorithm to go-xkms signing format
 	algoFormat := kb.signingAlgorithmToKeyIDFormat(algorithm)
-	return fmt.Sprintf("%s:signing:%s:%s", kb.backendType, algoFormat, keyID)
+	return fmt.Sprintf("%s:signing:%s:%s", kb.backendType, algoFormat, xkmsKeyName(keyID))
 }
 
 // signingAlgorithmToKeyIDFormat converts signing algorithm strings to go-xkms key ID format.
@@ -767,6 +1103,9 @@ func (kb *XKMSBackend) Encrypt(ctx context.Context, keyID string, plaintext, aad
 	if !kb.IsAvailable(ctx) {
 		return nil, ErrBackendNotReady
 	}
+	if err := refuseReservedKeyName("XKMSBackend.Encrypt", keyID); err != nil {
+		return nil, err
+	}
 
 	// Get key metadata to determine algorithm and current version
 	meta, err := kb.GetKeyMetadata(ctx, keyID)
@@ -792,6 +1131,9 @@ func (kb *XKMSBackend) Encrypt(ctx context.Context, keyID string, plaintext, aad
 		actualKeyID = keyID
 	} else {
 		actualKeyID = kb.buildVersionedKeyID(keyID, version)
+		if err := kb.checkOwnedXKMSKeyVersion(ctx, keyID, version, algorithm); err != nil {
+			return nil, api.NewKeyMetadataRetrievalError("XKMSBackend.Encrypt", err)
+		}
 	}
 
 	// Build the full key ID with algorithm info for go-xkms
@@ -825,6 +1167,9 @@ func (kb *XKMSBackend) Decrypt(ctx context.Context, keyID string, ciphertext, aa
 	if !kb.IsAvailable(ctx) {
 		return nil, ErrBackendNotReady
 	}
+	if err := refuseReservedKeyName("XKMSBackend.Decrypt", keyID); err != nil {
+		return nil, err
+	}
 
 	// Deserialize encrypted data
 	encrypted, err := kb.deserializeEncryptedData(ciphertext)
@@ -849,6 +1194,9 @@ func (kb *XKMSBackend) Decrypt(ctx context.Context, keyID string, ciphertext, aa
 		actualKeyID = keyID
 	} else {
 		actualKeyID = kb.buildVersionedKeyID(keyID, version)
+		if err := kb.checkOwnedXKMSKeyVersion(ctx, keyID, version, meta.Algorithm); err != nil {
+			return nil, api.NewKeyMetadataRetrievalError("XKMSBackend.Decrypt", err)
+		}
 	}
 
 	// Build the full key ID with algorithm info for go-xkms
@@ -873,6 +1221,9 @@ func (kb *XKMSBackend) Decrypt(ctx context.Context, keyID string, ciphertext, aa
 func (kb *XKMSBackend) Sign(ctx context.Context, keyID string, digest []byte, algorithm string) ([]byte, error) {
 	if !kb.IsAvailable(ctx) {
 		return nil, ErrBackendNotReady
+	}
+	if err := refuseReservedKeyName("XKMSBackend.Sign", keyID); err != nil {
+		return nil, err
 	}
 
 	// Get key metadata to determine the signing algorithm
@@ -920,6 +1271,9 @@ func (kb *XKMSBackend) Verify(ctx context.Context, keyID string, digest, signatu
 	if !kb.IsAvailable(ctx) {
 		return false, ErrBackendNotReady
 	}
+	if err := refuseReservedKeyName("XKMSBackend.Verify", keyID); err != nil {
+		return false, err
+	}
 
 	// Get key metadata to determine the signing algorithm
 	meta, err := kb.GetKeyMetadata(ctx, keyID)
@@ -965,6 +1319,9 @@ func (kb *XKMSBackend) GenerateDataKey(ctx context.Context, keyID string, keyByt
 	if !kb.IsAvailable(ctx) {
 		return nil, nil, ErrBackendNotReady
 	}
+	if err := refuseReservedKeyName("XKMSBackend.GenerateDataKey", keyID); err != nil {
+		return nil, nil, err
+	}
 
 	// Generate random plaintext DEK using xkms RNG
 	plaintext, err = xkms.Rand(keyBytes)
@@ -985,6 +1342,9 @@ func (kb *XKMSBackend) GenerateDataKey(ctx context.Context, keyID string, keyByt
 func (kb *XKMSBackend) ExportPublicKey(ctx context.Context, keyID string) ([]byte, error) {
 	if !kb.IsAvailable(ctx) {
 		return nil, ErrBackendNotReady
+	}
+	if err := refuseReservedKeyName("XKMSBackend.ExportPublicKey", keyID); err != nil {
+		return nil, err
 	}
 
 	// Build the full key ID for go-xkms
@@ -1021,6 +1381,14 @@ func (kb *XKMSBackend) ExportPublicKey(ctx context.Context, keyID string) ([]byt
 func (kb *XKMSBackend) Close() error {
 	// No resources to release - xkms lifecycle is managed globally
 	return nil
+}
+
+// xkmsKeyAttributes is algorithmToKeyAttributes with CN set to the key's
+// go-xkms name, for attributes handed straight to go-xkms.
+func (kb *XKMSBackend) xkmsKeyAttributes(keyID, algorithm string) *kctypes.KeyAttributes {
+	attrs := kb.algorithmToKeyAttributes(keyID, algorithm)
+	attrs.CN = xkmsKeyName(keyID)
+	return attrs
 }
 
 // algorithmToKeyAttributes converts an algorithm string to KeyAttributes.

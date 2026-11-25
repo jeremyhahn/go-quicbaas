@@ -692,7 +692,7 @@ func TestGetJobsDueForExecution_Success(t *testing.T) {
 	completedJob.NextRun = now.Add(-time.Hour)
 	storage.CreateJob(ctx, completedJob)
 
-	dueJobs, err := storage.GetJobsDueForExecution(ctx, now, 100)
+	dueJobs, err := storage.GetJobsDueForExecution(ctx, now, 100, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -720,7 +720,7 @@ func TestGetJobsDueForExecution_Limit(t *testing.T) {
 		storage.CreateJob(ctx, job)
 	}
 
-	dueJobs, err := storage.GetJobsDueForExecution(ctx, now, 5)
+	dueJobs, err := storage.GetJobsDueForExecution(ctx, now, 5, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -742,7 +742,7 @@ func TestGetJobsDueForExecution_DefaultLimit(t *testing.T) {
 	storage.CreateJob(ctx, job)
 
 	// Use 0 limit (should default to 100)
-	dueJobs, err := storage.GetJobsDueForExecution(ctx, time.Now(), 0)
+	dueJobs, err := storage.GetJobsDueForExecution(ctx, time.Now(), 0, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -758,7 +758,7 @@ func TestGetJobsDueForExecution_ScanError(t *testing.T) {
 	kv.scanErr = errors.New("storage unavailable")
 	storage := NewStorage(kv)
 
-	_, err := storage.GetJobsDueForExecution(ctx, time.Now(), 10)
+	_, err := storage.GetJobsDueForExecution(ctx, time.Now(), 10, nil)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -793,7 +793,7 @@ func TestGetJobsDueForExecution_IncludesTenantJobs(t *testing.T) {
 		t.Fatalf("CreateJob: %v", err)
 	}
 
-	dueJobs, err := storage.GetJobsDueForExecution(ctx, now, 100)
+	dueJobs, err := storage.GetJobsDueForExecution(ctx, now, 100, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -808,13 +808,67 @@ func TestGetJobsDueForExecution_IncludesTenantJobs(t *testing.T) {
 	if err := storage.DeleteJob(ctx, tenantJob.ID, "acme"); err != nil {
 		t.Fatalf("DeleteJob: %v", err)
 	}
-	dueJobs, err = storage.GetJobsDueForExecution(ctx, now, 100)
+	dueJobs, err = storage.GetJobsDueForExecution(ctx, now, 100, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(dueJobs) != 1 || dueJobs[0].Name != "system-due" {
 		t.Fatalf("after delete, due jobs = %d, want only system-due", len(dueJobs))
 	}
+}
+
+// TestGetJobsDueForExecution_RunnableJobBehindPinnedBatch checks that due
+// jobs the caller cannot run, here a full batch pinned to an offline node,
+// do not count against the limit and so do not hide a runnable job behind
+// them in index order.
+func TestGetJobsDueForExecution_RunnableJobBehindPinnedBatch(t *testing.T) {
+	ctx := context.Background()
+	storage := NewStorage(&sortedScanKV{mockKVStore: newMockKVStore()})
+	now := time.Now()
+
+	for i := 0; i < 5; i++ {
+		pinned := createTestJob("pinned", scheduler.OwnerTypeTenant, "aaa")
+		pinned.NextRun = now.Add(-time.Minute)
+		pinned.NodeAffinity = "node-offline"
+		if err := storage.CreateJob(ctx, pinned); err != nil {
+			t.Fatalf("CreateJob: %v", err)
+		}
+	}
+	runnable := createTestJob("runnable", scheduler.OwnerTypeTenant, "zzz")
+	runnable.NextRun = now.Add(-time.Minute)
+	if err := storage.CreateJob(ctx, runnable); err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+
+	unfiltered, err := storage.GetJobsDueForExecution(ctx, now, 5, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(unfiltered) != 5 {
+		t.Fatalf("unfiltered due jobs = %d, want 5", len(unfiltered))
+	}
+	for _, j := range unfiltered {
+		if j.ID == runnable.ID {
+			t.Fatal("the setup does not put the runnable job behind the pinned batch")
+		}
+	}
+
+	onNodeA := func(j *scheduler.Job) bool { return j.NodeAffinity == "" || j.NodeAffinity == "node-a" }
+	filtered, err := storage.GetJobsDueForExecution(ctx, now, 5, onNodeA)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(filtered) != 1 || filtered[0].ID != runnable.ID {
+		t.Fatalf("filtered due jobs = %v, want only the runnable job %d", dueIDs(filtered), runnable.ID)
+	}
+}
+
+func dueIDs(jobs []*scheduler.Job) []uint64 {
+	ids := make([]uint64, 0, len(jobs))
+	for _, j := range jobs {
+		ids = append(ids, j.ID)
+	}
+	return ids
 }
 
 func TestSaveExecution_Success(t *testing.T) {

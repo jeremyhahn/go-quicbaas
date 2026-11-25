@@ -489,7 +489,7 @@ func (s *Storage) ListJobs(ctx context.Context, query *scheduler.JobQuery) ([]*s
 }
 
 // GetJobsDueForExecution returns jobs that need to run.
-func (s *Storage) GetJobsDueForExecution(ctx context.Context, before time.Time, limit int) ([]*scheduler.Job, error) {
+func (s *Storage) GetJobsDueForExecution(ctx context.Context, before time.Time, limit int, filter scheduler.DueJobFilter) ([]*scheduler.Job, error) {
 	if limit <= 0 {
 		limit = 100
 	}
@@ -497,7 +497,6 @@ func (s *Storage) GetJobsDueForExecution(ctx context.Context, before time.Time, 
 	// A job counts toward limit only when it is due and the caller can
 	// dispatch it: ineligible jobs are skipped and the scan continues, so
 	// they cannot fill the page and starve eligible ones behind them.
-	filter := scheduler.DueJobFilterFrom(ctx)
 	eligible := func(job *scheduler.Job) bool {
 		return job.Status == scheduler.JobStatusPending &&
 			!job.NextRun.IsZero() &&

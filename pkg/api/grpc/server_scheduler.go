@@ -425,10 +425,6 @@ func (s *SchedulerServer) GetSchedulerStatus(ctx context.Context, _ *pb.GetSched
 // Type Conversion Helpers - Proto to Service
 // =============================================================================
 
-// protoOwnerTypeToService converts pb.OwnerType to service.SchedulerOwnerType.
-// An unspecified owner type maps to "" (no owner type), so the scheduler
-// adapter applies the caller's default owner: a tenant caller's own tenant,
-// the system for a system caller.
 // protoUpdateExecuteAt converts an update's execute_at, in Unix seconds, to
 // the service's time. An omitted execute_at (zero) is the zero time, which the
 // scheduler reads as "unchanged": converting it with time.Unix would move the
@@ -440,6 +436,10 @@ func protoUpdateExecuteAt(sec int64) time.Time {
 	return time.Unix(sec, 0)
 }
 
+// protoOwnerTypeToService converts pb.OwnerType to service.SchedulerOwnerType.
+// An unspecified owner type maps to "" (no owner type), so the scheduler
+// adapter applies the caller's default owner: a tenant caller's own tenant,
+// the system for a system caller.
 func protoOwnerTypeToService(ot pb.OwnerType) service.SchedulerOwnerType {
 	switch ot {
 	case pb.OwnerType_OWNER_TYPE_SYSTEM:

@@ -59,12 +59,13 @@ node_key_file: /srv/agent/agent.key
 server_ca_file: /srv/agent/server-ca.crt
 max_concurrent_jobs: 4
 allowed_mount_roots: [/srv/sockets]
-ollama_base_url: http://gpu-host.internal:11434
+ollama_base_url: http://gpu-01.internal:11434
 `
 
 // TestResolveServeConfig_FileOverridesDefaults: a key the file names beats the
 // flag's default, and a key it omits keeps that default.
 func TestResolveServeConfig_FileOverridesDefaults(t *testing.T) {
+	unsetEnv(t, serveOllamaEnv)
 	path := writeServeConfig(t, serveConfigBody)
 	cmd := parsedServeCommand(t, "--config", path)
 
@@ -74,7 +75,7 @@ func TestResolveServeConfig_FileOverridesDefaults(t *testing.T) {
 	assert.Equal(t, "0.0.0.0:9191", cfg.BindAddr)
 	assert.Equal(t, 4, cfg.MaxConcurrentJobs)
 	assert.Equal(t, []string{"/srv/sockets"}, cfg.AllowedMountRoots)
-	assert.Equal(t, "http://gpu-host.internal:11434", cfg.OllamaBaseURL)
+	assert.Equal(t, "http://gpu-01.internal:11434", cfg.OllamaBaseURL)
 	// Omitted by the file: the flag defaults stand.
 	assert.Equal(t, orchestration.SandboxPolicyRequired, cfg.SandboxPolicy)
 	assert.Equal(t, 30*time.Second, cfg.HeartbeatInterval)
@@ -176,6 +177,33 @@ func TestResolveServeConfig_AdvertisePrecedence(t *testing.T) {
 	cfg, err = resolveServeConfig(parsedServeCommand(t, "--config", path, "--advertise", "flag-host:9191").Flags())
 	require.NoError(t, err)
 	assert.Equal(t, "flag-host:9191", cfg.AdvertiseAddr)
+}
+
+// unsetEnv removes name from the environment for the test and restores its
+// value afterwards.
+func unsetEnv(t *testing.T, name string) {
+	t.Helper()
+	t.Setenv(name, "")
+	require.NoError(t, os.Unsetenv(name))
+}
+
+// TestResolveServeConfig_OllamaURLPrecedence: the ollama base URL follows the
+// configuration convention, and with nothing set it is fleet's loopback default.
+func TestResolveServeConfig_OllamaURLPrecedence(t *testing.T) {
+	unsetEnv(t, serveOllamaEnv)
+	cfg, err := resolveServeConfig(parsedServeCommand(t, "--server", "https://x:8443").Flags())
+	require.NoError(t, err)
+	assert.Equal(t, fleet.DefaultOllamaBaseURL, cfg.EffectiveOllamaBaseURL())
+
+	path := writeServeConfig(t, serveConfigBody)
+	t.Setenv(serveOllamaEnv, "http://env.example:11434")
+	cfg, err = resolveServeConfig(parsedServeCommand(t, "--config", path).Flags())
+	require.NoError(t, err)
+	assert.Equal(t, "http://env.example:11434", cfg.OllamaBaseURL, "the environment beats the file")
+
+	cfg, err = resolveServeConfig(parsedServeCommand(t, "--config", path, "--ollama-url", "http://flag.example:11434").Flags())
+	require.NoError(t, err)
+	assert.Equal(t, "http://flag.example:11434", cfg.OllamaBaseURL, "a flag beats the environment")
 }
 
 // TestServeEnvFields_NameStringFields: an environment entry naming a field
