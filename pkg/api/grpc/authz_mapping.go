@@ -300,8 +300,10 @@ var grpcMethodPermissions = map[string]methodPermission{
 	// CreateUser requires (AuthorizeRoleAssignmentWriteOnCreate).
 	"/quicbaas.iam.v1.IAMService/CreateUser": {"users", "create"},
 	// Mirror QRDBService GetUser/GetUserByUsername (users:read).
-	"/quicbaas.iam.v1.IAMService/GetUser":                   {"users", "read"},
-	"/quicbaas.iam.v1.IAMService/GetUserByUsername":         {"users", "read"},
+	"/quicbaas.iam.v1.IAMService/GetUser":           {"users", "read"},
+	"/quicbaas.iam.v1.IAMService/GetUserByUsername": {"users", "read"},
+	// Mirror QRDBService ListUsers (users:list).
+	"/quicbaas.iam.v1.IAMService/ListUsers":                 {"users", "list"},
 	"/quicbaas.iam.v1.IAMService/ListWebAuthnCredentials":   {"users", "read"},
 	"/quicbaas.iam.v1.IAMService/DeleteWebAuthnCredential":  {"users", "delete"},
 	"/quicbaas.iam.v1.IAMService/DeleteWebAuthnCredentials": {"users", "delete"},
