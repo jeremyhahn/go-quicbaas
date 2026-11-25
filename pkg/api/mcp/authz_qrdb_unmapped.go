@@ -31,9 +31,9 @@ package mcp
 // build, which is the point: shipping a tool dead must be an explicit,
 // reviewed decision, never an accident.
 //
-// Everything here is dead ON PURPOSE, pending an owner decision. None of these
-// surfaces has a REST or gRPC PEP rule to copy, so choosing a permission would
-// be a guess at a security boundary rather than a transport-parity fix.
+// Everything here is dead ON PURPOSE: by owner ruling, or because there is no
+// REST or gRPC grant to copy, so choosing a permission would be a guess at a
+// security boundary rather than a transport-parity fix.
 
 // unmappedToolGroup declares one family of registered-but-unmapped tools
 // together with the reason no permission was assigned and what has to happen
@@ -52,27 +52,16 @@ type unmappedToolGroup struct {
 // unmappedToolGroups is the source of truth for deliberately dead tools.
 var unmappedToolGroups = []unmappedToolGroup{
 	{
-		// Neither pkg/api/rest/authz_pep_mapping.go nor
-		// pkg/api/grpc/authz_mapping.go carries a rule for the federation
-		// surface, and the qrdb registry defines no federation:* family. The
-		// verbs span provider CRUD (an administrative trust decision: whose
-		// assertions this tenant accepts) and the login/callback handshake
-		// (pre-auth by construction). One borrowed family would be wrong for
-		// half of them.
-		reason: "no REST/gRPC PEP rule and no qrdb federation:* family; provider CRUD " +
-			"and the login handshake need different boundaries",
-		resolution: "register federation:* in go-qrdb, then map all five transports together",
+		// The federation provider and account-link tools take their REST
+		// route's grant (authz_qrdb.go). The login handshake is public on
+		// REST (routes_iam.go) and gRPC (publicGRPCMethods), so there is no
+		// grant to copy, and an MCP public entry would be wider than parity.
+		reason: "REST and gRPC serve the federated login handshake public, so there is no grant " +
+			"to copy, and a public MCP entry would be wider than transport parity",
+		resolution: "an owner decision on whether the handshake is served over MCP at all",
 		tools: []string{
-			"quicbaas_iam_federation_createprovider",
-			"quicbaas_iam_federation_getprovider",
-			"quicbaas_iam_federation_listproviders",
-			"quicbaas_iam_federation_updateprovider",
-			"quicbaas_iam_federation_deleteprovider",
 			"quicbaas_iam_federation_beginlogin",
 			"quicbaas_iam_federation_handlecallback",
-			"quicbaas_iam_federation_linkaccount",
-			"quicbaas_iam_federation_unlinkaccount",
-			"quicbaas_iam_federation_getuserlinks",
 		},
 	},
 	{
@@ -90,44 +79,16 @@ var unmappedToolGroups = []unmappedToolGroup{
 		},
 	},
 	{
-		// No sibling rule and no qrdb gdpr:* / consent:* family. Erasure
-		// processing destroys tenant data irreversibly, so it must not be
-		// folded into users:delete without an explicit decision.
-		reason: "no REST/gRPC PEP rule and no qrdb gdpr:*/consent:* family; irreversible " +
-			"erasure must not silently borrow users:delete",
-		resolution: "register the GDPR permission family in go-qrdb, then map all transports",
+		// The consent, export-request and deletion-request tools take their
+		// REST route's grant (authz_qrdb.go). By owner ruling, irreversible
+		// erasure processing and export generation are refused on every
+		// transport; gRPC leaves GenerateExport and ProcessDeletion unmapped.
+		reason: "owner ruling: irreversible erasure processing and export generation are " +
+			"refused on every transport",
+		resolution: "a new owner ruling",
 		tools: []string{
-			"quicbaas_iam_gdpr_consent_grant",
-			"quicbaas_iam_gdpr_consent_withdraw",
-			"quicbaas_iam_gdpr_consent_get",
-			"quicbaas_iam_gdpr_consent_list",
-			"quicbaas_iam_gdpr_deletion_request",
-			"quicbaas_iam_gdpr_deletion_status",
-			"quicbaas_iam_gdpr_deletion_cancel",
 			"quicbaas_iam_gdpr_deletion_process",
-			"quicbaas_iam_gdpr_export_request",
-			"quicbaas_iam_gdpr_export_status",
 			"quicbaas_iam_gdpr_export_generate",
-		},
-	},
-	{
-		// No sibling rule. qrdb registers permissions:list and
-		// permissions:resolve, but those READ a subject's effective
-		// permissions; they are not a write capability over the policy
-		// documents that produce them. Reusing them for policy CRUD would let
-		// any principal that can run an access check rewrite the rules the
-		// check evaluates.
-		reason: "no REST/gRPC PEP rule; permissions:list/resolve are READ verbs over " +
-			"effective permissions and must not be reused to authorize policy writes",
-		resolution: "register a policy write family in go-qrdb, then map all transports",
-		tools: []string{
-			"quicbaas_iam_policy_create",
-			"quicbaas_iam_policy_get",
-			"quicbaas_iam_policy_list",
-			"quicbaas_iam_policy_update",
-			"quicbaas_iam_policy_delete",
-			"quicbaas_iam_policy_test",
-			"quicbaas_iam_policy_validate",
 		},
 	},
 	{
