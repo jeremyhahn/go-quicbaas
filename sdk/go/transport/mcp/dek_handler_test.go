@@ -8,6 +8,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -106,9 +107,42 @@ func TestDEKClientOverMCP_GetDEKStatusCarriesStatusAndEstimatedCompletion(t *tes
 	assertMCPProgressFields(t, resp.ReencryptionProgress, eta)
 }
 
+// Every DEK verb whose client method type-switches on a service response
+// must get that type back from the MCP transport, or the client returns
+// "invalid response type" (#1700).
+func TestTransformDEKResponse_EachVerbDecodesToServiceResponse(t *testing.T) {
+	cases := []struct {
+		verb string
+		resp interface{}
+	}{
+		{"CreateDEK", &service.CreateDEKResponse{}},
+		{"GetDEK", &service.GetDEKResponse{}},
+		{"ListDEKs", &service.ListDEKsResponse{}},
+		{"RotateDEK", &service.RotateDEKResponse{}},
+		{"DeleteDEK", &service.DeleteDEKResponse{}},
+		{"GetDEKStatus", &service.GetDEKStatusResponse{}},
+		{"SetDefaultDEK", &service.SetDefaultDEKResponse{}},
+		{"SetDEKSafety", &service.SetDEKSafetyResponse{}},
+		{"ClearDEKSafety", &service.ClearDEKSafetyResponse{}},
+		{"StartReencryption", &service.StartReencryptionResponse{}},
+		{"GetReencryptionProgress", &service.GetReencryptionProgressResponse{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.verb, func(t *testing.T) {
+			got, err := transformDEKResponse(tc.verb, dekToolResult(t, tc.resp))
+			if err != nil {
+				t.Fatalf("transformDEKResponse: %v", err)
+			}
+			if fmt.Sprintf("%T", got) != fmt.Sprintf("%T", tc.resp) {
+				t.Errorf("result type = %T, want %T", got, tc.resp)
+			}
+		})
+	}
+}
+
 func TestTransformDEKResponse_OtherVerbPassesThrough(t *testing.T) {
 	result := map[string]interface{}{"path": "app/key"}
-	got, err := transformDEKResponse("CreateDEK", result)
+	got, err := transformDEKResponse("NotADEKVerb", result)
 	if err != nil {
 		t.Fatalf("transformDEKResponse: %v", err)
 	}
