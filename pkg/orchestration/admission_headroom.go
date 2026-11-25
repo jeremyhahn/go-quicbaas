@@ -273,6 +273,10 @@ func (h *accountPoolHeadroom) pool(ctx context.Context, tenantID, projectID stri
 		if account == nil {
 			continue
 		}
+		// An account with no credential yet is not part of the pool, as in AccountAvailability.
+		if account.Status == AccountStatusAwaitingCredential {
+			continue
+		}
 		// An account scoped to ANOTHER project is not in this project's pool.
 		// The unscoped ones are, which is the inheritance the resolver's
 		// tenant-wide fallback implements.
