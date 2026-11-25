@@ -24,6 +24,7 @@ import (
 
 	iampb "github.com/jeremyhahn/go-quicbaas/api/proto/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // stopOnDenyDeniedError is the denial the counting authorizer returns.
@@ -65,7 +66,7 @@ func TestPEPServer_CheckBatch_StopOnDeny(t *testing.T) {
 			authz := &pepCountingAuthorizer{}
 			srv := newStopOnDenyPEPServer(authz)
 
-			resp, err := srv.CheckBatch(context.Background(), &iampb.CheckBatchRequest{
+			resp, err := srv.CheckBatch(tenantctx.WithTenant(context.Background(), "t1"), &iampb.CheckBatchRequest{
 				Subject:    &iampb.Subject{Id: "user-1"},
 				Action:     "read",
 				Resources:  []string{"allow-1", "deny", "allow-2"},

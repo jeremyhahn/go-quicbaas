@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -247,7 +248,7 @@ func (m *mockJobStorage) ListJobs(ctx context.Context, query *JobQuery) ([]*Job,
 	return result, "", nil
 }
 
-func (m *mockJobStorage) GetJobsDueForExecution(ctx context.Context, before time.Time, limit int) ([]*Job, error) {
+func (m *mockJobStorage) GetJobsDueForExecution(ctx context.Context, before time.Time, limit int, eligible DueJobFilter) ([]*Job, error) {
 	m.getJobsDueForExecutionCount.Add(1)
 	m.errMu.RLock()
 	getJobsDueForExecutionErr := m.getJobsDueForExecutionErr
@@ -263,9 +264,17 @@ func (m *mockJobStorage) GetJobsDueForExecution(ctx context.Context, before time
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	var result []*Job
+	// Ascending ID order, as a store's sorted index would give, so a test
+	// can place runnable jobs behind ineligible ones deterministically.
+	ordered := make([]*Job, 0, len(m.jobs))
 	for _, job := range m.jobs {
-		if job.Status == JobStatusPending && !job.NextRun.After(before) {
+		ordered = append(ordered, job)
+	}
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].ID < ordered[j].ID })
+
+	var result []*Job
+	for _, job := range ordered {
+		if job.Status == JobStatusPending && !job.NextRun.After(before) && (eligible == nil || eligible(job)) {
 			// Return copies to prevent race conditions
 			result = append(result, copyJob(job))
 			if len(result) >= limit {
@@ -5218,4 +5227,43 @@ func TestExecuteGate_BindsDispatchToFiringAndRefusesRunning(t *testing.T) {
 			t.Fatalf("the honest repair ran %d time(s), want 1", got)
 		}
 	})
+}
+
+// TestProcessDueJobs_RunnableJobBehindPinnedBatchRuns checks that a full
+// batch of due jobs pinned to an offline node does not keep a runnable job
+// behind it from running: the sweep's limit counts only jobs this node may
+// run.
+func TestProcessDueJobs_RunnableJobBehindPinnedBatchRuns(t *testing.T) {
+	storage := newMockJobStorage()
+	due := time.Now().Add(-time.Minute)
+	for id := uint64(1); id <= 5; id++ {
+		storage.jobs[id] = &Job{
+			ID: id, Name: "pinned", OwnerType: OwnerTypeSystem, Type: JobTypeOneShot,
+			Handler: "pinned", Status: JobStatusPending, NextRun: due, NodeAffinity: "node-offline",
+		}
+	}
+	storage.jobs[6] = &Job{
+		ID: 6, Name: "work", OwnerType: OwnerTypeSystem, Type: JobTypeOneShot,
+		Handler: "work", Status: JobStatusPending, NextRun: due,
+	}
+
+	cfg := DefaultConfig()
+	cfg.MaxConcurrentJobs = 5
+	engine, err := NewWithClustering(cfg, storage, "node-a", nil)
+	require.NoError(t, err)
+	var pinnedRuns, workRuns atomic.Int64
+	require.NoError(t, engine.RegisterHandler("pinned", func(context.Context, *Job) (*JobResult, error) {
+		pinnedRuns.Add(1)
+		return &JobResult{Success: true}, nil
+	}))
+	require.NoError(t, engine.RegisterHandler("work", func(context.Context, *Job) (*JobResult, error) {
+		workRuns.Add(1)
+		return &JobResult{Success: true}, nil
+	}))
+
+	engine.processDueJobs(context.Background())
+	engine.wg.Wait()
+
+	assert.Equal(t, int64(1), workRuns.Load(), "the runnable job behind the pinned batch runs")
+	assert.Equal(t, int64(0), pinnedRuns.Load(), "jobs pinned to another node do not run here")
 }

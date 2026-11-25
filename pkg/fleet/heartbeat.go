@@ -113,8 +113,9 @@ type HTTPHeartbeatConfig struct {
 	Logger interfaces.Logger
 
 	// Reregisterer is the optional re-enrollment driver invoked when the
-	// control plane returns 404. Leave nil to disable client-side recovery —
-	// the sender will then surface the 404 as a regular HeartbeatSendError
+	// control plane returns 404, 403, or a 401 that a token refresh does not
+	// clear. Leave nil to disable client-side recovery — the sender will
+	// then surface the status as a regular HeartbeatSendError
 	// and the heartbeatLoop will keep retrying on the next tick.
 	Reregisterer Reregisterer
 }
@@ -178,11 +179,19 @@ func (s *HTTPHeartbeatSender) SendHeartbeat(ctx context.Context, identity *orche
 		s.tokens.Invalidate()
 		retryCtx, retryCancel := context.WithTimeout(ctx, 15*time.Second)
 		defer retryCancel()
-		if retryErr := s.post(retryCtx, endpoint, status, true); retryErr != nil {
+		retryErr := s.post(retryCtx, endpoint, status, true)
+		switch {
+		case retryErr == nil:
+			s.reregisterFail.Store(0)
+			return nil
+		case errors.Is(retryErr, errHeartbeatUnauthorizedAfterRefresh):
+			// A 401 that survives the refresh means the agent's
+			// certificate is bound to no account. Re-register, then
+			// retry once, exactly as for 403 and 404.
+			return s.reregisterAndRetry(ctx, endpoint, status, http.StatusUnauthorized)
+		default:
 			return retryErr
 		}
-		s.reregisterFail.Store(0)
-		return nil
 
 	case errors.Is(firstErr, errHeartbeatNotFound):
 		// 404 → server failed auto-recovery. Try client-side
@@ -206,8 +215,8 @@ func (s *HTTPHeartbeatSender) handleNotFound(ctx context.Context, endpoint strin
 	return s.reregisterAndRetry(ctx, endpoint, status, http.StatusNotFound)
 }
 
-// reregisterAndRetry drives the rejected (404 or 403) → re-register → retry
-// sequence. The sender keeps an atomic failure counter so transient
+// reregisterAndRetry drives the rejected (404, 403, or a 401 the token
+// refresh did not clear) → re-register → retry sequence. The sender keeps an atomic failure counter so transient
 // re-register errors do not hard-fail the daemon — three consecutive
 // failures must occur before ErrNodeReRegisterFailed is surfaced.
 func (s *HTTPHeartbeatSender) reregisterAndRetry(ctx context.Context, endpoint string, status HeartbeatStatus, rejected int) error {
@@ -353,7 +362,7 @@ func (s *HTTPHeartbeatSender) post(ctx context.Context, endpoint string, status 
 		return nil
 	case resp.StatusCode == http.StatusUnauthorized:
 		if afterRefresh {
-			return &HeartbeatSendError{Op: "authenticate", Status: resp.StatusCode, Cause: errors.New("still 401 after token refresh")}
+			return &HeartbeatSendError{Op: "authenticate", Status: resp.StatusCode, Cause: errHeartbeatUnauthorizedAfterRefresh}
 		}
 		return errHeartbeatUnauthorized
 	case resp.StatusCode == http.StatusNotFound:
@@ -394,6 +403,11 @@ func marshalStringSlice(xs []string) string {
 // errHeartbeatUnauthorized is an internal sentinel used by post() to signal
 // that SendHeartbeat should invalidate the token cache and retry.
 var errHeartbeatUnauthorized = errors.New("agent heartbeat: 401 unauthorized")
+
+// errHeartbeatUnauthorizedAfterRefresh is the cause post() reports when a
+// freshly exchanged JWT is still refused: the agent's certificate is bound
+// to no account, so SendHeartbeat re-enrolls.
+var errHeartbeatUnauthorizedAfterRefresh = errors.New("agent heartbeat: still 401 after token refresh")
 
 // errHeartbeatNotFound is an internal sentinel used by post() to signal
 // that SendHeartbeat should drive a re-register flow before retrying.

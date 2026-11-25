@@ -186,6 +186,30 @@ func TestShouldExecute_LeaderCheckErrorTreatedAsFollower(t *testing.T) {
 	}
 }
 
+// TestDueJobFilter_MatchesShouldExecute checks that the filter a sweep hands
+// its storage makes the same placement decision shouldExecute makes before a
+// job fires, for every node, leadership and affinity combination.
+func TestDueJobFilter_MatchesShouldExecute(t *testing.T) {
+	leaders := map[string]func() LeaderChecker{
+		"nil":      func() LeaderChecker { return nil },
+		"leader":   func() LeaderChecker { return &fakeLeader{isLeader: true} },
+		"follower": func() LeaderChecker { return &fakeLeader{isLeader: false} },
+		"error":    func() LeaderChecker { return &fakeLeader{err: errors.New("raft unavailable")} },
+	}
+	for _, nodeID := range []string{"", "node-a"} {
+		for leaderName, leader := range leaders {
+			for _, affinity := range []string{"", "node-a", "node-b"} {
+				s := mustCluster(t, DefaultConfig(), nodeID, leader())
+				job := &Job{ID: 1, Name: "j", NodeAffinity: affinity}
+				if got, want := s.dueJobFilter()(job), s.shouldExecute(job); got != want {
+					t.Errorf("node=%q leader=%s affinity=%q: filter=%v, shouldExecute=%v",
+						nodeID, leaderName, affinity, got, want)
+				}
+			}
+		}
+	}
+}
+
 // --- Job.NodeAffinity persists through JSON round-trip ---
 
 func TestJob_NodeAffinity_JSONRoundTrip(t *testing.T) {
