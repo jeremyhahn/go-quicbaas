@@ -12,6 +12,19 @@ This directory contains pre-configured deployment templates for different use ca
 | `raft-single-node.yaml` | raft | Yes (1 node) | Yes | Raft testing, CI/CD |
 | `raft-3-node/` | raft | Yes (3 nodes) | Yes | Production, HA |
 
+## At-Rest Encryption (Seal)
+
+Every configuration here enables the passphrase seal (`seal.enabled: true`,
+`seal.strategy: passphrase`). The secrets service refuses secret writes and
+value reads on a node without an at-rest barrier, so do not turn the seal off
+on a node that stores secrets.
+
+- Set `QUICBAAS_SEAL_PASSPHRASE` and the node initialises its barrier on first
+  start and unseals itself on every start.
+- Without it the node starts sealed and waits for `quicbaasd barrier unseal`.
+- The Docker Compose files require it and refuse to start without it:
+  `QUICBAAS_SEAL_PASSPHRASE=... docker compose -f configs/docker/<file> up`.
+
 ## Quick Start
 
 ### In-Memory (Testing)

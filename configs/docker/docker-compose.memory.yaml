@@ -3,8 +3,8 @@
 # Data is NOT persisted - all data is lost on container restart
 #
 # Usage:
-#   docker compose -f configs/docker/docker-compose.memory.yaml up
-#   docker compose -f configs/docker/docker-compose.memory.yaml up -d  # detached
+#   QUICBAAS_SEAL_PASSPHRASE=... docker compose -f configs/docker/docker-compose.memory.yaml up
+#   QUICBAAS_SEAL_PASSPHRASE=... docker compose -f configs/docker/docker-compose.memory.yaml up -d  # detached
 #
 # Access:
 #   REST API: http://localhost:8443
@@ -31,6 +31,9 @@ services:
       - QUICBAAS_SERVER_REST_PORT=8443
       - QUICBAAS_LOGGING_LEVEL=debug
       - QUICBAAS_LOGGING_FORMAT=console
+      - QUICBAAS_SEAL_ENABLED=true
+      - QUICBAAS_SEAL_STRATEGY=passphrase
+      - QUICBAAS_SEAL_PASSPHRASE=${QUICBAAS_SEAL_PASSPHRASE:?set QUICBAAS_SEAL_PASSPHRASE}
     healthcheck:
       test: ["CMD", "quicbaas", "health"]
       interval: 10s

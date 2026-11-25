@@ -4,8 +4,8 @@
 # Best for: Testing Raft behavior, development, CI/CD
 #
 # Usage:
-#   docker compose -f configs/docker/docker-compose.raft-single-node.yaml up
-#   docker compose -f configs/docker/docker-compose.raft-single-node.yaml up -d  # detached
+#   QUICBAAS_SEAL_PASSPHRASE=... docker compose -f configs/docker/docker-compose.raft-single-node.yaml up
+#   QUICBAAS_SEAL_PASSPHRASE=... docker compose -f configs/docker/docker-compose.raft-single-node.yaml up -d  # detached
 #
 # Access:
 #   REST API: http://localhost:8443
@@ -41,6 +41,9 @@ services:
       - QUICBAAS_STORAGE_WAL_DIR=/data/quicbaas/wal
       - QUICBAAS_LOGGING_LEVEL=info
       - QUICBAAS_LOGGING_FORMAT=console
+      - QUICBAAS_SEAL_ENABLED=true
+      - QUICBAAS_SEAL_STRATEGY=passphrase
+      - QUICBAAS_SEAL_PASSPHRASE=${QUICBAAS_SEAL_PASSPHRASE:?set QUICBAAS_SEAL_PASSPHRASE}
     healthcheck:
       test: ["CMD", "quicbaas", "health"]
       interval: 10s

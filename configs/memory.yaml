@@ -81,3 +81,10 @@ trust:
       strategies: [dane, noise, spki, tofu]
       server-url: ""
       per-method-timeout: 5s
+
+# At-rest encryption. Secrets are refused on a node without it.
+# Set QUICBAAS_SEAL_PASSPHRASE to auto-initialise and unseal on start;
+# without it the node starts sealed and waits for `quicbaasd barrier unseal`.
+seal:
+  enabled: true
+  strategy: passphrase

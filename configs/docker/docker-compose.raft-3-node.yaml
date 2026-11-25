@@ -3,8 +3,8 @@
 # Tolerates 1 node failure while maintaining quorum
 #
 # Usage:
-#   docker compose -f configs/docker/docker-compose.raft-3-node.yaml up
-#   docker compose -f configs/docker/docker-compose.raft-3-node.yaml up -d  # detached
+#   QUICBAAS_SEAL_PASSPHRASE=... docker compose -f configs/docker/docker-compose.raft-3-node.yaml up
+#   QUICBAAS_SEAL_PASSPHRASE=... docker compose -f configs/docker/docker-compose.raft-3-node.yaml up -d  # detached
 #
 # Access (any node can handle requests):
 #   Node 1: http://localhost:8444 (REST), localhost:9444 (gRPC)
@@ -21,6 +21,10 @@ services:
       dockerfile: Dockerfile
     container_name: quicbaas-node1
     hostname: node1
+    environment:
+      - QUICBAAS_SEAL_ENABLED=true
+      - QUICBAAS_SEAL_STRATEGY=passphrase
+      - QUICBAAS_SEAL_PASSPHRASE=${QUICBAAS_SEAL_PASSPHRASE:?set QUICBAAS_SEAL_PASSPHRASE}
     ports:
       - "8444:8443"   # REST API
       - "9444:9443"   # gRPC
@@ -47,6 +51,10 @@ services:
       dockerfile: Dockerfile
     container_name: quicbaas-node2
     hostname: node2
+    environment:
+      - QUICBAAS_SEAL_ENABLED=true
+      - QUICBAAS_SEAL_STRATEGY=passphrase
+      - QUICBAAS_SEAL_PASSPHRASE=${QUICBAAS_SEAL_PASSPHRASE:?set QUICBAAS_SEAL_PASSPHRASE}
     ports:
       - "8445:8443"   # REST API
       - "9445:9443"   # gRPC
@@ -70,6 +78,10 @@ services:
       dockerfile: Dockerfile
     container_name: quicbaas-node3
     hostname: node3
+    environment:
+      - QUICBAAS_SEAL_ENABLED=true
+      - QUICBAAS_SEAL_STRATEGY=passphrase
+      - QUICBAAS_SEAL_PASSPHRASE=${QUICBAAS_SEAL_PASSPHRASE:?set QUICBAAS_SEAL_PASSPHRASE}
     ports:
       - "8446:8443"   # REST API
       - "9446:9443"   # gRPC

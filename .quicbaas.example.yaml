@@ -321,3 +321,10 @@ trust:
       # spki:
       #   pin: "<64-character hex SHA-256 SPKI digest>"
       #   pin-file: "/etc/quicbaas/spki.pin"
+
+# At-rest encryption. Secrets are refused on a node without it.
+# Set QUICBAAS_SEAL_PASSPHRASE to auto-initialise and unseal on start;
+# without it the node starts sealed and waits for `quicbaasd barrier unseal`.
+seal:
+  enabled: true
+  strategy: passphrase
