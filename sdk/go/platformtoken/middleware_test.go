@@ -596,6 +596,13 @@ func TestAuthorizerIdentity_CompleteVerifiedIdentity(t *testing.T) {
 			t.Fatalf("identity %+v, want subject user-1, tenant tenant-1, roles [role-auditor], "+
 				"scope [keys:get] and attest_method tpm", id)
 		}
+		if !maps.Equal(id.Attributes, map[string]string{"auth_source": "platform_token"}) {
+			t.Fatalf("identity attributes %v, want only auth_source platform_token", id.Attributes)
+		}
+		id.Attributes["auth_source"] = "x"
+		if got := authorizerIdentity(ac).Attributes["auth_source"]; got != "platform_token" {
+			t.Fatalf("a changed attribute leaked into the next identity: auth_source %q", got)
+		}
 
 		id.Roles[0] = "role-admin"
 		id.ScopePermissions[0] = "*:*"
@@ -617,6 +624,9 @@ func TestAuthorizerIdentity_CompleteVerifiedIdentity(t *testing.T) {
 		}
 		if !maps.Equal(id.Metadata, map[string]string{"auth_source": "platform_token"}) {
 			t.Fatalf("identity metadata %v, want only auth_source platform_token", id.Metadata)
+		}
+		if !maps.Equal(id.Attributes, map[string]string{"auth_source": "platform_token"}) {
+			t.Fatalf("identity attributes %v, want only auth_source platform_token", id.Attributes)
 		}
 	})
 	t.Run("a claim never replaces the guard's mark", func(t *testing.T) {
@@ -710,7 +720,8 @@ func abacKeysGetDeny(t *testing.T, inner qrdbsdk.Authorizer, when, unless []qrdb
 // exemption on a verified claim admits the token that carries it. A token
 // with no authentication claims at all is judged the same way: an
 // absence-based deny refuses it, and an exists-based exemption does not
-// cover it.
+// cover it. The guard carries no user-record attribute, so a condition on
+// one is judged absent.
 func TestMiddleware_ABACSeesTheCompleteIdentity(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	key := newIssuerKey(t, testKID)
@@ -721,6 +732,10 @@ func TestMiddleware_ABACSeesTheCompleteIdentity(t *testing.T) {
 		nil, []qrdbsdk.ABACCondition{{Expression: "subject.attrs.attest_method == \"tpm\""}})
 	unlessExists := abacKeysGetDeny(t, &qrdbsdk.NoopAuthorizer{},
 		nil, []qrdbsdk.ABACCondition{{Expression: "subject.attrs.attest_method exists"}})
+	userAbsence := abacKeysGetDeny(t, &qrdbsdk.NoopAuthorizer{},
+		[]qrdbsdk.ABACCondition{{Expression: "subject.user_attrs.clearance notexists"}}, nil)
+	userUnlessExists := abacKeysGetDeny(t, &qrdbsdk.NoopAuthorizer{},
+		nil, []qrdbsdk.ABACCondition{{Expression: "subject.user_attrs.clearance exists"}})
 
 	for _, tc := range []struct {
 		name         string
@@ -745,6 +760,12 @@ func TestMiddleware_ABACSeesTheCompleteIdentity(t *testing.T) {
 			authz: unlessExists, wantStatus: http.StatusForbidden},
 		{name: "an exists-based unless exemption covers a claim-bearing token", authz: unlessExists,
 			attestMethod: "tpm", wantStatus: http.StatusOK, wantBody: "tenant-1/user-1"},
+		{name: "a token is refused by a deny on a missing user attribute", authz: userAbsence,
+			wantStatus: http.StatusForbidden},
+		{name: "a claim-bearing token is refused by a deny on a missing user attribute", authz: userAbsence,
+			attestMethod: "tpm", wantStatus: http.StatusForbidden},
+		{name: "an exists-based unless exemption on a user attribute does not cover a token",
+			authz: userUnlessExists, wantStatus: http.StatusForbidden},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			opts := Options{ModeResolver: offline, Authorizer: tc.authz, RBAC: &qrdbsdk.NoopAuthorizer{}}
