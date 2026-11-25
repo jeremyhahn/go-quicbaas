@@ -22,7 +22,8 @@
 // verbs are exercised across every transport returned by
 // GetTransportConfigs() — no SkipTransports list is required when the
 // node serves credentials. Tests probe with RequireCredentialAvailable
-// first and skip on a seal-off node, which wires no credential service.
+// first, which fails the leg when the node answers not-configured: every
+// node, seal-off included, serves a credential service.
 //
 // Verb surface:
 //
@@ -117,13 +118,12 @@ func credentialNotConfiguredAnswer(transport Transport, stdout, stderr string) b
 }
 
 // RequireCredentialAvailable probes the credential service with the
-// read-only `credential list` and skips the current transport leg when the
-// node answers not-configured. On a seal-off node no credential service is
-// wired, by owner ruling, so every credential verb answers not-configured
-// (gRPC/unix), 404 (REST/QUIC) or not-configured/tool-not-found (MCP). The
-// probe validates that typed answer per transport and skips. It never
-// accepts a 401 or 403: any other failure returns, so the test goes on and
-// fails on its own commands.
+// read-only `credential list` and fails the current transport leg when the
+// node answers not-configured: not-configured (gRPC/unix), 404 (REST/QUIC)
+// or not-configured/tool-not-found (MCP). The probe validates that typed
+// answer per transport and fails the leg with it, since every node wires a
+// credential service. It never reads a 401 or 403 as not-configured: any
+// other failure returns, so the test fails on its own commands.
 func (r *TestRunner) RequireCredentialAvailable() {
 	r.t.Helper()
 
@@ -139,7 +139,7 @@ func (r *TestRunner) RequireCredentialAvailable() {
 		return
 	}
 	if credentialNotConfiguredAnswer(r.transport, stdout, stderr) {
-		r.t.Skipf("[%s] credential service not configured on this node (seal-off; wiring a credential service is deferred to the owner); validated the not-configured answer: %s",
+		r.t.Fatalf("[%s] credential service not configured on this node; every node must serve one: %s",
 			r.transport, strings.TrimSpace(stdout+stderr))
 	}
 }
