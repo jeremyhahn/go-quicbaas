@@ -239,7 +239,7 @@ func TestDeep_CreateAdminAssignment_NilManager(t *testing.T) {
 	defer cl()
 	r := httptest.NewRequest(http.MethodPost, "/a", strings.NewReader(`{"user_id":"50001","admin_role":"super_admin"}`))
 	w := httptest.NewRecorder()
-	h.CreateAdminAssignment(w, r)
+	h.CreateAdminAssignment(w, asAdminCaller(r, "t1"))
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
@@ -248,7 +248,7 @@ func TestDeep_CreateAdminAssignment_ManagerError(t *testing.T) {
 	defer cl()
 	r := httptest.NewRequest(http.MethodPost, "/a", strings.NewReader(`{"user_id":"50001","admin_role":"super_admin"}`))
 	w := httptest.NewRecorder()
-	h.CreateAdminAssignment(w, r)
+	h.CreateAdminAssignment(w, asAdminCaller(r, "t1"))
 	assert.NotEqual(t, http.StatusOK, w.Code)
 }
 
@@ -257,7 +257,7 @@ func TestDeep_ListAdminAssignments_NilManager(t *testing.T) {
 	defer cl()
 	r := httptest.NewRequest(http.MethodGet, "/a", nil)
 	w := httptest.NewRecorder()
-	h.ListAdminAssignments(w, r)
+	h.ListAdminAssignments(w, asAdminCaller(r, "t1"))
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
@@ -266,7 +266,7 @@ func TestDeep_ListAdminAssignments_ManagerError(t *testing.T) {
 	defer cl()
 	r := httptest.NewRequest(http.MethodGet, "/a", nil)
 	w := httptest.NewRecorder()
-	h.ListAdminAssignments(w, r)
+	h.ListAdminAssignments(w, asAdminCaller(r, "t1"))
 	assert.NotEqual(t, http.StatusOK, w.Code)
 }
 
@@ -276,7 +276,7 @@ func TestDeep_GetAdminAssignment_NilManager(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/a/1", nil)
 	r = withChiParams(r, map[string]string{"assignment_id": "a1"})
 	w := httptest.NewRecorder()
-	h.GetAdminAssignment(w, r)
+	h.GetAdminAssignment(w, asAdminCaller(r, "t1"))
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
@@ -286,7 +286,7 @@ func TestDeep_GetAdminAssignment_ManagerError(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/a/1", nil)
 	r = withChiParams(r, map[string]string{"assignment_id": "a1"})
 	w := httptest.NewRecorder()
-	h.GetAdminAssignment(w, r)
+	h.GetAdminAssignment(w, asAdminCaller(r, "t1"))
 	assert.NotEqual(t, http.StatusOK, w.Code)
 }
 
@@ -296,7 +296,7 @@ func TestDeep_UpdateAdminAssignment_NilManager(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPut, "/a/1", strings.NewReader(`{"admin_role":"super_admin"}`))
 	r = withChiParams(r, map[string]string{"assignment_id": "a1"})
 	w := httptest.NewRecorder()
-	h.UpdateAdminAssignment(w, r)
+	h.UpdateAdminAssignment(w, asAdminCaller(r, "t1"))
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
@@ -306,7 +306,7 @@ func TestDeep_UpdateAdminAssignment_ManagerError(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPut, "/a/1", strings.NewReader(`{"admin_role":"super_admin"}`))
 	r = withChiParams(r, map[string]string{"assignment_id": "a1"})
 	w := httptest.NewRecorder()
-	h.UpdateAdminAssignment(w, r)
+	h.UpdateAdminAssignment(w, asAdminCaller(r, "t1"))
 	assert.NotEqual(t, http.StatusOK, w.Code)
 }
 
@@ -316,7 +316,7 @@ func TestDeep_DeleteAdminAssignment_NilManager(t *testing.T) {
 	r := httptest.NewRequest(http.MethodDelete, "/a/1", nil)
 	r = withChiParams(r, map[string]string{"assignment_id": "a1"})
 	w := httptest.NewRecorder()
-	h.DeleteAdminAssignment(w, r)
+	h.DeleteAdminAssignment(w, asAdminCaller(r, "t1"))
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
@@ -326,7 +326,7 @@ func TestDeep_DeleteAdminAssignment_ManagerError(t *testing.T) {
 	r := httptest.NewRequest(http.MethodDelete, "/a/1", nil)
 	r = withChiParams(r, map[string]string{"assignment_id": "a1"})
 	w := httptest.NewRecorder()
-	h.DeleteAdminAssignment(w, r)
+	h.DeleteAdminAssignment(w, asAdminCaller(r, "t1"))
 	assert.NotEqual(t, http.StatusOK, w.Code)
 }
 
@@ -336,7 +336,7 @@ func TestDeep_GetUserAssignments_NilManager(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/a/u/1", nil)
 	r = withChiParams(r, map[string]string{"user_id": "30001"})
 	w := httptest.NewRecorder()
-	h.GetUserAssignments(w, r)
+	h.GetUserAssignments(w, asAdminCaller(r, "t1"))
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
@@ -346,7 +346,7 @@ func TestDeep_GetUserAssignments_ManagerError(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/a/u/1", nil)
 	r = withChiParams(r, map[string]string{"user_id": "30001"})
 	w := httptest.NewRecorder()
-	h.GetUserAssignments(w, r)
+	h.GetUserAssignments(w, asAdminCaller(r, "t1"))
 	assert.NotEqual(t, http.StatusOK, w.Code)
 }
 
@@ -355,7 +355,7 @@ func TestDeep_CheckAdminPermission_NilManager(t *testing.T) {
 	defer cl()
 	r := httptest.NewRequest(http.MethodPost, "/c", strings.NewReader(`{"user_id":"50001","permission":"manage_users"}`))
 	w := httptest.NewRecorder()
-	h.CheckAdminPermission(w, r)
+	h.CheckAdminPermission(w, asAdminCaller(r, "t1"))
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
@@ -364,7 +364,7 @@ func TestDeep_CheckAdminPermission_ManagerError(t *testing.T) {
 	defer cl()
 	r := httptest.NewRequest(http.MethodPost, "/c", strings.NewReader(`{"user_id":"50001","permission":"manage_users"}`))
 	w := httptest.NewRecorder()
-	h.CheckAdminPermission(w, r)
+	h.CheckAdminPermission(w, asAdminCaller(r, "t1"))
 	assert.NotEqual(t, http.StatusOK, w.Code)
 }
 
@@ -373,7 +373,7 @@ func TestDeep_StartImpersonation_NilManager(t *testing.T) {
 	defer cl()
 	r := httptest.NewRequest(http.MethodPost, "/i", strings.NewReader(`{"target_user_id":"50001","tenant_id":"t1","reason":"support"}`))
 	w := httptest.NewRecorder()
-	h.StartImpersonation(w, r)
+	h.StartImpersonation(w, asAdminCaller(r, "t1"))
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
@@ -382,7 +382,7 @@ func TestDeep_StartImpersonation_ManagerError(t *testing.T) {
 	defer cl()
 	r := httptest.NewRequest(http.MethodPost, "/i", strings.NewReader(`{"target_user_id":"50001","tenant_id":"t1","reason":"support"}`))
 	w := httptest.NewRecorder()
-	h.StartImpersonation(w, r)
+	h.StartImpersonation(w, asAdminCaller(r, "t1"))
 	assert.NotEqual(t, http.StatusOK, w.Code)
 }
 
@@ -392,7 +392,7 @@ func TestDeep_EndImpersonation_NilManager(t *testing.T) {
 	r := httptest.NewRequest(http.MethodDelete, "/i/1", nil)
 	r = withChiParams(r, map[string]string{"session_id": "s1"})
 	w := httptest.NewRecorder()
-	h.EndImpersonation(w, r)
+	h.EndImpersonation(w, asAdminCaller(r, "t1"))
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
@@ -402,7 +402,7 @@ func TestDeep_EndImpersonation_ManagerError(t *testing.T) {
 	r := httptest.NewRequest(http.MethodDelete, "/i/1", nil)
 	r = withChiParams(r, map[string]string{"session_id": "s1"})
 	w := httptest.NewRecorder()
-	h.EndImpersonation(w, r)
+	h.EndImpersonation(w, asAdminCaller(r, "t1"))
 	assert.NotEqual(t, http.StatusOK, w.Code)
 }
 
@@ -412,7 +412,7 @@ func TestDeep_ListActiveImpersonations_NilManager(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/i/active", nil)
 	r = withChiParams(r, map[string]string{"user_id": "30001"})
 	w := httptest.NewRecorder()
-	h.ListActiveImpersonations(w, r)
+	h.ListActiveImpersonations(w, asAdminCaller(r, "t1"))
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
@@ -421,7 +421,7 @@ func TestDeep_ListActiveImpersonations_ManagerError(t *testing.T) {
 	defer cl()
 	r := httptest.NewRequest(http.MethodGet, "/i/active", nil)
 	w := httptest.NewRecorder()
-	h.ListActiveImpersonations(w, r)
+	h.ListActiveImpersonations(w, asAdminCaller(r, "t1"))
 	assert.NotEqual(t, http.StatusOK, w.Code)
 }
 
@@ -431,7 +431,7 @@ func TestDeep_ListImpersonations_NilManager(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/i", nil)
 	r = withChiParams(r, map[string]string{"user_id": "30001"})
 	w := httptest.NewRecorder()
-	h.ListImpersonations(w, r)
+	h.ListImpersonations(w, asAdminCaller(r, "t1"))
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
@@ -441,7 +441,7 @@ func TestDeep_ListImpersonations_ManagerError(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/i", nil)
 	r = withChiParams(r, map[string]string{"user_id": "30001"})
 	w := httptest.NewRecorder()
-	h.ListImpersonations(w, r)
+	h.ListImpersonations(w, asAdminCaller(r, "t1"))
 	assert.NotEqual(t, http.StatusOK, w.Code)
 }
 

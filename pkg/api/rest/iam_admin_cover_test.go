@@ -42,7 +42,7 @@ func TestListAdminAssignments_WithFilters(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet,
 		"/api/v1/admin/assignments?limit=10&offset=0&user_id=50001&tenant_id=t1&admin_role=tenant_admin&active_only=true", nil)
 	w := httptest.NewRecorder()
-	handler.ListAdminAssignments(w, req)
+	handler.ListAdminAssignments(w, asAdminCaller(req, "t1"))
 	assert.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 }
 
@@ -71,7 +71,7 @@ func TestAdminHandlers_ManagerNotAvailable(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			w := httptest.NewRecorder()
-			tt.call(w, tt.req)
+			tt.call(w, asAdminCaller(tt.req, "t1"))
 			assert.Equal(t, http.StatusInternalServerError, w.Code)
 		})
 	}
@@ -83,7 +83,7 @@ func TestCreateAdminAssignment_Validation(t *testing.T) {
 
 	// Invalid JSON
 	w := httptest.NewRecorder()
-	handler.CreateAdminAssignment(w, httptest.NewRequest(http.MethodPost, "/x", bytes.NewReader([]byte("{bad"))))
+	handler.CreateAdminAssignment(w, asAdminCaller(httptest.NewRequest(http.MethodPost, "/x", bytes.NewReader([]byte("{bad"))), "t1"))
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
@@ -92,14 +92,14 @@ func TestUpdateAdminAssignment_Validation(t *testing.T) {
 
 	// Missing assignment_id (no chi param) -> 400
 	w := httptest.NewRecorder()
-	handler.UpdateAdminAssignment(w, httptest.NewRequest(http.MethodPut, "/x", bytes.NewReader([]byte(`{}`))))
+	handler.UpdateAdminAssignment(w, asAdminCaller(httptest.NewRequest(http.MethodPut, "/x", bytes.NewReader([]byte(`{}`))), "t1"))
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 
 	// Invalid JSON with an assignment_id
 	w = httptest.NewRecorder()
 	r := withChiParams(httptest.NewRequest(http.MethodPut, "/x", bytes.NewReader([]byte("{bad"))),
 		map[string]string{"assignment_id": "a1"})
-	handler.UpdateAdminAssignment(w, r)
+	handler.UpdateAdminAssignment(w, asAdminCaller(r, "t1"))
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
@@ -108,7 +108,7 @@ func TestEndImpersonation_Validation(t *testing.T) {
 
 	// Missing session_id -> 400
 	w := httptest.NewRecorder()
-	handler.EndImpersonation(w, httptest.NewRequest(http.MethodPost, "/x", nil))
+	handler.EndImpersonation(w, asAdminCaller(httptest.NewRequest(http.MethodPost, "/x", nil), "t1"))
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
@@ -117,6 +117,6 @@ func TestListActiveImpersonations_Success(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	r := withChiParams(httptest.NewRequest(http.MethodGet, "/x", nil), map[string]string{"user_id": "30001"})
-	handler.ListActiveImpersonations(w, r)
+	handler.ListActiveImpersonations(w, asAdminCaller(r, "t1"))
 	assert.Equal(t, http.StatusOK, w.Code)
 }

@@ -198,7 +198,7 @@ func TestStartImpersonation_RefusesANonIDTarget(t *testing.T) {
 		body := `{"target_user_id":"` + value + `","tenant_id":"t1","reason":"r"}`
 		w := httptest.NewRecorder()
 		(&IAMHandler{}).StartImpersonation(w,
-			httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(body)))
+			asAdminCaller(httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(body)), "t1"))
 		assert.Equal(t, http.StatusBadRequest, w.Code, "target %q", value)
 	}
 }

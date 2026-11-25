@@ -26,11 +26,23 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
+
+// adminTenantOp names the delegated-admin handlers in tenant errors. Each
+// handler acts only in the caller's tenant: another tenant's assignment or
+// impersonation session answers as not found, and a request that names
+// another tenant is refused.
+const adminTenantOp = "rest.IAM"
 
 // CreateAdminAssignment handles POST /api/v1/admin/assignments - Create a new admin assignment.
 func (h *IAMHandler) CreateAdminAssignment(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	_, err := tenantctx.FromContext(ctx, adminTenantOp)
+	if err != nil {
+		h.server.handleServiceError(w, r, err)
+		return
+	}
 
 	// Read request body
 	body, err := io.ReadAll(r.Body)
@@ -46,6 +58,11 @@ func (h *IAMHandler) CreateAdminAssignment(w http.ResponseWriter, r *http.Reques
 	if err := json.Unmarshal(body, &opts); err != nil {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "invalid JSON body"))
+		return
+	}
+	opts.TenantIDs, err = iam.GrantableTenantIDs(ctx, adminTenantOp, opts.TenantIDs)
+	if err != nil {
+		h.server.handleServiceError(w, r, err)
 		return
 	}
 
@@ -96,6 +113,11 @@ func (h *IAMHandler) CreateAdminAssignment(w http.ResponseWriter, r *http.Reques
 // ListAdminAssignments handles GET /api/v1/admin/assignments - List admin assignments.
 func (h *IAMHandler) ListAdminAssignments(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	caller, err := tenantctx.FromContext(ctx, adminTenantOp)
+	if err != nil {
+		h.server.handleServiceError(w, r, err)
+		return
+	}
 
 	// Parse query parameters
 	limit := 100
@@ -116,7 +138,11 @@ func (h *IAMHandler) ListAdminAssignments(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	tenantID := r.URL.Query().Get("tenant_id")
+	tenantID, err := tenantctx.Target(ctx, adminTenantOp, r.URL.Query().Get("tenant_id"))
+	if err != nil {
+		h.server.handleServiceError(w, r, err)
+		return
+	}
 	adminRoleStr := r.URL.Query().Get("admin_role")
 
 	activeOnly := false
@@ -159,11 +185,12 @@ func (h *IAMHandler) ListAdminAssignments(w http.ResponseWriter, r *http.Request
 	}
 
 	// List assignments
-	assignments, err := manager.ListAssignments(ctx, opts)
+	listed, err := manager.ListAssignments(ctx, opts)
 	if err != nil {
 		h.server.handleServiceError(w, r, err)
 		return
 	}
+	assignments := assignmentsInTenant(listed, caller)
 
 	// Return assignments wrapped in a response object
 	resp := map[string]interface{}{
@@ -176,6 +203,11 @@ func (h *IAMHandler) ListAdminAssignments(w http.ResponseWriter, r *http.Request
 // GetAdminAssignment handles GET /api/v1/admin/assignments/{assignment_id} - Get a specific admin assignment.
 func (h *IAMHandler) GetAdminAssignment(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	caller, err := tenantctx.FromContext(ctx, adminTenantOp)
+	if err != nil {
+		h.server.handleServiceError(w, r, err)
+		return
+	}
 
 	assignmentID := chi.URLParam(r, "assignment_id")
 	if assignmentID == "" {
@@ -211,6 +243,10 @@ func (h *IAMHandler) GetAdminAssignment(w http.ResponseWriter, r *http.Request) 
 		h.server.handleServiceError(w, r, err)
 		return
 	}
+	if !iam.AssignmentInTenant(assignment, caller) {
+		h.server.handleServiceError(w, r, iam.ErrAdminAssignmentNotFound)
+		return
+	}
 
 	RespondJSON(w, r, http.StatusOK, assignment)
 }
@@ -218,6 +254,11 @@ func (h *IAMHandler) GetAdminAssignment(w http.ResponseWriter, r *http.Request) 
 // UpdateAdminAssignment handles PUT /api/v1/admin/assignments/{assignment_id} - Update an admin assignment.
 func (h *IAMHandler) UpdateAdminAssignment(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	caller, err := tenantctx.FromContext(ctx, adminTenantOp)
+	if err != nil {
+		h.server.handleServiceError(w, r, err)
+		return
+	}
 
 	assignmentID := chi.URLParam(r, "assignment_id")
 	if assignmentID == "" {
@@ -264,6 +305,17 @@ func (h *IAMHandler) UpdateAdminAssignment(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	if !h.assignmentOwnedByCaller(w, r, manager, assignmentID, caller) {
+		return
+	}
+	if len(opts.TenantIDs) > 0 {
+		opts.TenantIDs, err = iam.GrantableTenantIDs(ctx, adminTenantOp, opts.TenantIDs)
+		if err != nil {
+			h.server.handleServiceError(w, r, err)
+			return
+		}
+	}
+
 	// Update assignment
 	assignment, err := manager.UpdateAssignment(ctx, assignmentID, opts)
 	if err != nil {
@@ -289,6 +341,11 @@ func (h *IAMHandler) UpdateAdminAssignment(w http.ResponseWriter, r *http.Reques
 // DeleteAdminAssignment handles DELETE /api/v1/admin/assignments/{assignment_id} - Delete an admin assignment.
 func (h *IAMHandler) DeleteAdminAssignment(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	caller, err := tenantctx.FromContext(ctx, adminTenantOp)
+	if err != nil {
+		h.server.handleServiceError(w, r, err)
+		return
+	}
 
 	assignmentID := chi.URLParam(r, "assignment_id")
 	if assignmentID == "" {
@@ -318,6 +375,10 @@ func (h *IAMHandler) DeleteAdminAssignment(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	if !h.assignmentOwnedByCaller(w, r, manager, assignmentID, caller) {
+		return
+	}
+
 	// Delete assignment
 	if err := manager.DeleteAssignment(ctx, assignmentID); err != nil {
 		h.server.handleServiceError(w, r, err)
@@ -340,6 +401,11 @@ func (h *IAMHandler) DeleteAdminAssignment(w http.ResponseWriter, r *http.Reques
 // GetUserAssignments handles GET /api/v1/admin/users/{user_id}/assignments - Get admin assignments for a user.
 func (h *IAMHandler) GetUserAssignments(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	caller, err := tenantctx.FromContext(ctx, adminTenantOp)
+	if err != nil {
+		h.server.handleServiceError(w, r, err)
+		return
+	}
 
 	userID, ok := requireUserIDParam(w, r)
 	if !ok {
@@ -380,13 +446,18 @@ func (h *IAMHandler) GetUserAssignments(w http.ResponseWriter, r *http.Request) 
 
 	RespondJSON(w, r, http.StatusOK, userAdminAssignmentsResponse{
 		UserID:      userID,
-		Assignments: assignments,
+		Assignments: assignmentsInTenant(assignments, caller),
 	})
 }
 
 // CheckAdminPermission handles POST /api/v1/admin/check - Check if an admin has a specific permission.
 func (h *IAMHandler) CheckAdminPermission(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	_, err := tenantctx.FromContext(ctx, adminTenantOp)
+	if err != nil {
+		h.server.handleServiceError(w, r, err)
+		return
+	}
 
 	// Read request body
 	body, err := io.ReadAll(r.Body)
@@ -402,6 +473,13 @@ func (h *IAMHandler) CheckAdminPermission(w http.ResponseWriter, r *http.Request
 	if err := json.Unmarshal(body, &checkReq); err != nil {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "invalid JSON body"))
+		return
+	}
+	// An omitted tenant means the caller's: an empty filter would match
+	// every assignment the user holds, in any tenant.
+	checkReq.TenantID, err = tenantctx.Target(ctx, adminTenantOp, checkReq.TenantID)
+	if err != nil {
+		h.server.handleServiceError(w, r, err)
 		return
 	}
 
@@ -466,6 +544,11 @@ type userImpersonationsResponse struct {
 // StartImpersonation handles POST /api/v1/admin/impersonate - Start an impersonation session.
 func (h *IAMHandler) StartImpersonation(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	_, err := tenantctx.FromContext(ctx, adminTenantOp)
+	if err != nil {
+		h.server.handleServiceError(w, r, err)
+		return
+	}
 
 	// Read request body
 	body, err := io.ReadAll(r.Body)
@@ -499,6 +582,12 @@ func (h *IAMHandler) StartImpersonation(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, err.Error()))
+		return
+	}
+
+	req.TenantID, err = tenantctx.Target(ctx, adminTenantOp, req.TenantID)
+	if err != nil {
+		h.server.handleServiceError(w, r, err)
 		return
 	}
 
@@ -562,6 +651,11 @@ func (h *IAMHandler) StartImpersonation(w http.ResponseWriter, r *http.Request) 
 // EndImpersonation handles DELETE /api/v1/admin/impersonate/{session_id} - End an impersonation session.
 func (h *IAMHandler) EndImpersonation(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	caller, err := tenantctx.FromContext(ctx, adminTenantOp)
+	if err != nil {
+		h.server.handleServiceError(w, r, err)
+		return
+	}
 
 	sessionID := chi.URLParam(r, "session_id")
 	if sessionID == "" {
@@ -588,6 +682,16 @@ func (h *IAMHandler) EndImpersonation(w http.ResponseWriter, r *http.Request) {
 	if manager == nil {
 		RespondIAMError(w, r, http.StatusInternalServerError,
 			NewIAMAPIError(ErrInternalError, "admin manager not initialized"))
+		return
+	}
+
+	owned, err := manager.GetImpersonationSession(ctx, sessionID)
+	if err != nil {
+		h.server.handleServiceError(w, r, err)
+		return
+	}
+	if owned.TenantID != caller {
+		h.server.handleServiceError(w, r, iam.ErrImpersonationSessionNotFound)
 		return
 	}
 
@@ -621,6 +725,11 @@ func (h *IAMHandler) EndImpersonation(w http.ResponseWriter, r *http.Request) {
 // ListActiveImpersonations handles GET /api/v1/admin/users/{user_id}/impersonations - List active impersonation sessions for a user.
 func (h *IAMHandler) ListActiveImpersonations(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	caller, err := tenantctx.FromContext(ctx, adminTenantOp)
+	if err != nil {
+		h.server.handleServiceError(w, r, err)
+		return
+	}
 
 	userID, ok := requireUserIDParam(w, r)
 	if !ok {
@@ -657,13 +766,18 @@ func (h *IAMHandler) ListActiveImpersonations(w http.ResponseWriter, r *http.Req
 
 	RespondJSON(w, r, http.StatusOK, userImpersonationsResponse{
 		UserID:   userID,
-		Sessions: sessions,
+		Sessions: sessionsInTenant(sessions, caller),
 	})
 }
 
 // ListImpersonations handles GET /api/v1/admin/impersonation - List all impersonation sessions.
 func (h *IAMHandler) ListImpersonations(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	caller, err := tenantctx.FromContext(ctx, adminTenantOp)
+	if err != nil {
+		h.server.handleServiceError(w, r, err)
+		return
+	}
 
 	// Parse query params
 	activeOnly := r.URL.Query().Get("active") == "true"
@@ -694,11 +808,12 @@ func (h *IAMHandler) ListImpersonations(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// List impersonations
-	sessions, err := manager.ListImpersonations(ctx, activeOnly, adminUserID)
+	listed, err := manager.ListImpersonations(ctx, activeOnly, adminUserID)
 	if err != nil {
 		h.server.handleServiceError(w, r, err)
 		return
 	}
+	sessions := sessionsInTenant(listed, caller)
 
 	// Build response
 	resp := map[string]interface{}{
@@ -718,6 +833,44 @@ func (h *IAMHandler) ListImpersonations(w http.ResponseWriter, r *http.Request) 
 // — creating an admin assignment, starting an impersonation session — is the
 // module-only GroupIAM RouteSpecs (routes_iam.go), frozen to the "roles:*"
 // permission family, served through go-qrdb's unified-server authorizer via BindRoute.
+// assignmentOwnedByCaller loads the assignment and reports whether it
+// belongs to the caller's tenant. When it does not, or cannot be loaded, it
+// has already answered: another tenant's assignment answers as not found.
+func (h *IAMHandler) assignmentOwnedByCaller(w http.ResponseWriter, r *http.Request, manager *iam.AdminManager, assignmentID, caller string) bool {
+	assignment, err := manager.GetAssignment(r.Context(), assignmentID)
+	if err != nil {
+		h.server.handleServiceError(w, r, err)
+		return false
+	}
+	if !iam.AssignmentInTenant(assignment, caller) {
+		h.server.handleServiceError(w, r, iam.ErrAdminAssignmentNotFound)
+		return false
+	}
+	return true
+}
+
+// assignmentsInTenant keeps the assignments that belong to tenantID alone.
+func assignmentsInTenant(assignments []*iam.AdminAssignment, tenantID string) []*iam.AdminAssignment {
+	kept := make([]*iam.AdminAssignment, 0, len(assignments))
+	for _, a := range assignments {
+		if iam.AssignmentInTenant(a, tenantID) {
+			kept = append(kept, a)
+		}
+	}
+	return kept
+}
+
+// sessionsInTenant keeps the impersonation sessions held in tenantID.
+func sessionsInTenant(sessions []*iam.ImpersonationSession, tenantID string) []*iam.ImpersonationSession {
+	kept := make([]*iam.ImpersonationSession, 0, len(sessions))
+	for _, s := range sessions {
+		if s != nil && s.TenantID == tenantID {
+			kept = append(kept, s)
+		}
+	}
+	return kept
+}
+
 func RegisterAdminRoutes(router chi.Router, handler *IAMHandler) {
 	// Admin assignment management
 	router.Route("/api/v1/admin", func(r chi.Router) {

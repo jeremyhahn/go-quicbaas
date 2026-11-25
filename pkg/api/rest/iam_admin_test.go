@@ -111,7 +111,7 @@ func TestCreateAdminAssignment(t *testing.T) {
 	rr := httptest.NewRecorder()
 
 	// Call handler
-	handler.CreateAdminAssignment(rr, req)
+	handler.CreateAdminAssignment(rr, asAdminCaller(req, "tenant_1"))
 
 	// Verify response
 	assert.Equal(t, http.StatusCreated, rr.Code)
@@ -153,7 +153,7 @@ func TestListAdminAssignments(t *testing.T) {
 	rr := httptest.NewRecorder()
 
 	// Call handler
-	handler.ListAdminAssignments(rr, req)
+	handler.ListAdminAssignments(rr, asAdminCaller(req, "tenant_1"))
 
 	// Verify response
 	assert.Equal(t, http.StatusOK, rr.Code)
@@ -162,8 +162,9 @@ func TestListAdminAssignments(t *testing.T) {
 	err = json.Unmarshal(rr.Body.Bytes(), &resp)
 	require.NoError(t, err)
 
+	// The tenant_1 caller sees its own tenant's assignment, never tenant_2's.
 	assignments := resp["assignments"].([]interface{})
-	assert.Len(t, assignments, 2)
+	assert.Len(t, assignments, 1)
 }
 
 // TestGetAdminAssignment tests the GetAdminAssignment handler.
@@ -189,7 +190,7 @@ func TestGetAdminAssignment(t *testing.T) {
 	rr := httptest.NewRecorder()
 
 	// Call handler
-	handler.GetAdminAssignment(rr, req)
+	handler.GetAdminAssignment(rr, asAdminCaller(req, "tenant_1"))
 
 	// Verify response
 	assert.Equal(t, http.StatusOK, rr.Code)
@@ -237,7 +238,7 @@ func TestUpdateAdminAssignment(t *testing.T) {
 	rr := httptest.NewRecorder()
 
 	// Call handler
-	handler.UpdateAdminAssignment(rr, req)
+	handler.UpdateAdminAssignment(rr, asAdminCaller(req, "tenant_1"))
 
 	// Verify response
 	assert.Equal(t, http.StatusOK, rr.Code)
@@ -274,7 +275,7 @@ func TestDeleteAdminAssignment(t *testing.T) {
 	rr := httptest.NewRecorder()
 
 	// Call handler
-	handler.DeleteAdminAssignment(rr, req)
+	handler.DeleteAdminAssignment(rr, asAdminCaller(req, "tenant_1"))
 
 	// Verify response - should be 204 No Content
 	assert.Equal(t, http.StatusNoContent, rr.Code)
@@ -324,7 +325,7 @@ func TestGetUserAssignments(t *testing.T) {
 	rr := httptest.NewRecorder()
 
 	// Call handler
-	handler.GetUserAssignments(rr, req)
+	handler.GetUserAssignments(rr, asAdminCaller(req, "tenant_1"))
 
 	// Verify response
 	assert.Equal(t, http.StatusOK, rr.Code)
@@ -334,8 +335,9 @@ func TestGetUserAssignments(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, "50001", resp["user_id"])
+	// The tenant_1 caller sees its own tenant's assignment, never tenant_2's.
 	assignments := resp["assignments"].([]interface{})
-	assert.Len(t, assignments, 2)
+	assert.Len(t, assignments, 1)
 }
 
 // TestCheckAdminPermission tests the CheckAdminPermission handler.
@@ -372,7 +374,7 @@ func TestCheckAdminPermission(t *testing.T) {
 	rr := httptest.NewRecorder()
 
 	// Call handler
-	handler.CheckAdminPermission(rr, req)
+	handler.CheckAdminPermission(rr, asAdminCaller(req, "tenant_1"))
 
 	// Verify response
 	assert.Equal(t, http.StatusOK, rr.Code)
@@ -420,7 +422,7 @@ func TestStartImpersonation(t *testing.T) {
 	rr := httptest.NewRecorder()
 
 	// Call handler
-	handler.StartImpersonation(rr, req)
+	handler.StartImpersonation(rr, asAdminCaller(req, "tenant_1"))
 
 	// Verify response
 	assert.Equal(t, http.StatusOK, rr.Code)
@@ -461,7 +463,7 @@ func TestStartImpersonation_ActorIsAuthenticatedCaller(t *testing.T) {
 	req = req.WithContext(ctxWithTestUser(req.Context(), 50666, "tenant_1"))
 	rr := httptest.NewRecorder()
 
-	handler.StartImpersonation(rr, req)
+	handler.StartImpersonation(rr, asAdminCaller(req, "tenant_1"))
 
 	assert.Equal(t, http.StatusForbidden, rr.Code,
 		"a non-privileged caller must be refused even when naming a privileged admin_user_id; body: %s", rr.Body.String())
@@ -473,7 +475,7 @@ func TestStartImpersonation_ActorIsAuthenticatedCaller(t *testing.T) {
 	req = req.WithContext(ctxWithTestUser(req.Context(), 50100, "tenant_1"))
 	rr = httptest.NewRecorder()
 
-	handler.StartImpersonation(rr, req)
+	handler.StartImpersonation(rr, asAdminCaller(req, "tenant_1"))
 	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
 	var session iam.ImpersonationSession
@@ -503,7 +505,7 @@ func TestStartImpersonation_ResponseCarriesStartedAt(t *testing.T) {
 	rr := httptest.NewRecorder()
 
 	before := time.Now().UTC().Truncate(time.Second)
-	handler.StartImpersonation(rr, req)
+	handler.StartImpersonation(rr, asAdminCaller(req, "tenant_1"))
 	after := time.Now().UTC()
 	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -534,7 +536,7 @@ func TestStartImpersonation_MissingReasonHasNoStartedAt(t *testing.T) {
 	req = req.WithContext(ctxWithTestUser(req.Context(), 50100, "tenant_1"))
 	rr := httptest.NewRecorder()
 
-	handler.StartImpersonation(rr, req)
+	handler.StartImpersonation(rr, asAdminCaller(req, "tenant_1"))
 
 	assert.Equal(t, http.StatusBadRequest, rr.Code, "body: %s", rr.Body.String())
 	assert.NotContains(t, rr.Body.String(), "started_at")
@@ -578,7 +580,7 @@ func TestEndImpersonation(t *testing.T) {
 	rr := httptest.NewRecorder()
 
 	// Call handler
-	handler.EndImpersonation(rr, req)
+	handler.EndImpersonation(rr, asAdminCaller(req, "tenant_1"))
 
 	// Verify response
 	assert.Equal(t, http.StatusOK, rr.Code)
@@ -631,7 +633,7 @@ func TestListActiveImpersonations(t *testing.T) {
 	rr := httptest.NewRecorder()
 
 	// Call handler
-	handler.ListActiveImpersonations(rr, req)
+	handler.ListActiveImpersonations(rr, asAdminCaller(req, "tenant_1"))
 
 	// Verify response
 	assert.Equal(t, http.StatusOK, rr.Code)
@@ -641,8 +643,9 @@ func TestListActiveImpersonations(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, "50100", resp["user_id"])
+	// The tenant_1 caller sees its own tenant's session, never tenant_2's.
 	sessions := resp["sessions"].([]interface{})
-	assert.Len(t, sessions, 2)
+	assert.Len(t, sessions, 1)
 }
 
 // TestListImpersonations tests the ListImpersonations handler.
@@ -678,7 +681,7 @@ func TestListImpersonations(t *testing.T) {
 	rr := httptest.NewRecorder()
 
 	// Call handler
-	handler.ListImpersonations(rr, req)
+	handler.ListImpersonations(rr, asAdminCaller(req, "tenant_1"))
 
 	// Verify response
 	assert.Equal(t, http.StatusOK, rr.Code)
@@ -724,7 +727,7 @@ func TestListImpersonations_WithFilters(t *testing.T) {
 	rr := httptest.NewRecorder()
 
 	// Call handler
-	handler.ListImpersonations(rr, req)
+	handler.ListImpersonations(rr, asAdminCaller(req, "tenant_1"))
 
 	// Verify response
 	assert.Equal(t, http.StatusOK, rr.Code)
@@ -871,7 +874,7 @@ func TestCreateAdminAssignment_InvalidJSON(t *testing.T) {
 	rr := httptest.NewRecorder()
 
 	// Call handler
-	handler.CreateAdminAssignment(rr, req)
+	handler.CreateAdminAssignment(rr, asAdminCaller(req, "tenant_1"))
 
 	// Verify response - should be 400 Bad Request
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
@@ -890,7 +893,7 @@ func TestGetAdminAssignment_NotFound(t *testing.T) {
 	rr := httptest.NewRecorder()
 
 	// Call handler
-	handler.GetAdminAssignment(rr, req)
+	handler.GetAdminAssignment(rr, asAdminCaller(req, "tenant_1"))
 
 	// Verify response - should indicate not found
 	assert.True(t, rr.Code == http.StatusNotFound || rr.Code == http.StatusInternalServerError)
@@ -909,7 +912,7 @@ func TestGetAdminAssignment_MissingID(t *testing.T) {
 	rr := httptest.NewRecorder()
 
 	// Call handler
-	handler.GetAdminAssignment(rr, req)
+	handler.GetAdminAssignment(rr, asAdminCaller(req, "tenant_1"))
 
 	// Verify response - should be 400 Bad Request
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
@@ -929,7 +932,7 @@ func TestUpdateAdminAssignment_InvalidJSON(t *testing.T) {
 	rr := httptest.NewRecorder()
 
 	// Call handler
-	handler.UpdateAdminAssignment(rr, req)
+	handler.UpdateAdminAssignment(rr, asAdminCaller(req, "tenant_1"))
 
 	// Verify response - should be 400 Bad Request
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
@@ -948,7 +951,7 @@ func TestDeleteAdminAssignment_MissingID(t *testing.T) {
 	rr := httptest.NewRecorder()
 
 	// Call handler
-	handler.DeleteAdminAssignment(rr, req)
+	handler.DeleteAdminAssignment(rr, asAdminCaller(req, "tenant_1"))
 
 	// Verify response - should be 400 Bad Request
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
@@ -967,7 +970,7 @@ func TestGetUserAssignments_MissingUserID(t *testing.T) {
 	rr := httptest.NewRecorder()
 
 	// Call handler
-	handler.GetUserAssignments(rr, req)
+	handler.GetUserAssignments(rr, asAdminCaller(req, "tenant_1"))
 
 	// Verify response - should be 400 Bad Request
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
@@ -984,7 +987,7 @@ func TestCheckAdminPermission_InvalidJSON(t *testing.T) {
 	rr := httptest.NewRecorder()
 
 	// Call handler
-	handler.CheckAdminPermission(rr, req)
+	handler.CheckAdminPermission(rr, asAdminCaller(req, "tenant_1"))
 
 	// Verify response - should be 400 Bad Request
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
@@ -1001,7 +1004,7 @@ func TestStartImpersonation_InvalidJSON(t *testing.T) {
 	rr := httptest.NewRecorder()
 
 	// Call handler
-	handler.StartImpersonation(rr, req)
+	handler.StartImpersonation(rr, asAdminCaller(req, "tenant_1"))
 
 	// Verify response - should be 400 Bad Request
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
@@ -1020,7 +1023,7 @@ func TestEndImpersonation_MissingSessionID(t *testing.T) {
 	rr := httptest.NewRecorder()
 
 	// Call handler
-	handler.EndImpersonation(rr, req)
+	handler.EndImpersonation(rr, asAdminCaller(req, "tenant_1"))
 
 	// Verify response - should be 400 Bad Request
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
