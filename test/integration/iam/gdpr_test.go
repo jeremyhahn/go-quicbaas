@@ -218,9 +218,10 @@ type MFAInfoExport struct {
 	BackupCodes int        `json:"backup_codes_remaining"`
 }
 
-// generateGDPRUserID generates a unique user ID for GDPR tests.
+// generateGDPRUserID generates a unique user ID for GDPR tests, in the
+// decimal uint64 form the API reads a user ID in (since #389).
 func generateGDPRUserID() string {
-	return fmt.Sprintf("gdpr_user_%d", time.Now().UnixNano())
+	return generateUniqueUserID()
 }
 
 // ============================================================================
@@ -232,8 +233,7 @@ func TestGDPR_GrantConsent_AllPurposes(t *testing.T) {
 	cluster := setupGDPRCluster(t)
 	defer cluster.Close()
 
-	tenantID := generateUniqueTenantID()
-	createTestTenant(t, cluster, tenantID)
+	tenantID := sharedGDPRTenantID(t, cluster)
 	defer cleanupTestTenant(t, cluster, tenantID)
 
 	purposes := []string{
@@ -294,8 +294,7 @@ func TestGDPR_GrantConsent_WithExpiry(t *testing.T) {
 	cluster := setupGDPRCluster(t)
 	defer cluster.Close()
 
-	tenantID := generateUniqueTenantID()
-	createTestTenant(t, cluster, tenantID)
+	tenantID := sharedGDPRTenantID(t, cluster)
 	defer cleanupTestTenant(t, cluster, tenantID)
 
 	userID := generateGDPRUserID()
@@ -344,8 +343,7 @@ func TestGDPR_GrantConsent_UpdateExisting(t *testing.T) {
 	cluster := setupGDPRCluster(t)
 	defer cluster.Close()
 
-	tenantID := generateUniqueTenantID()
-	createTestTenant(t, cluster, tenantID)
+	tenantID := sharedGDPRTenantID(t, cluster)
 	defer cleanupTestTenant(t, cluster, tenantID)
 
 	userID := generateGDPRUserID()
@@ -421,8 +419,7 @@ func TestGDPR_WithdrawConsent_Success(t *testing.T) {
 	cluster := setupGDPRCluster(t)
 	defer cluster.Close()
 
-	tenantID := generateUniqueTenantID()
-	createTestTenant(t, cluster, tenantID)
+	tenantID := sharedGDPRTenantID(t, cluster)
 	defer cleanupTestTenant(t, cluster, tenantID)
 
 	userID := generateGDPRUserID()
@@ -473,8 +470,7 @@ func TestGDPR_WithdrawConsent_NotFound(t *testing.T) {
 	cluster := setupGDPRCluster(t)
 	defer cluster.Close()
 
-	tenantID := generateUniqueTenantID()
-	createTestTenant(t, cluster, tenantID)
+	tenantID := sharedGDPRTenantID(t, cluster)
 	defer cleanupTestTenant(t, cluster, tenantID)
 
 	userID := generateGDPRUserID()
@@ -504,8 +500,7 @@ func TestGDPR_GetConsent_Success(t *testing.T) {
 	cluster := setupGDPRCluster(t)
 	defer cluster.Close()
 
-	tenantID := generateUniqueTenantID()
-	createTestTenant(t, cluster, tenantID)
+	tenantID := sharedGDPRTenantID(t, cluster)
 	defer cleanupTestTenant(t, cluster, tenantID)
 
 	userID := generateGDPRUserID()
@@ -558,8 +553,7 @@ func TestGDPR_ListConsents_Empty(t *testing.T) {
 	cluster := setupGDPRCluster(t)
 	defer cluster.Close()
 
-	tenantID := generateUniqueTenantID()
-	createTestTenant(t, cluster, tenantID)
+	tenantID := sharedGDPRTenantID(t, cluster)
 	defer cleanupTestTenant(t, cluster, tenantID)
 
 	userID := generateGDPRUserID()
@@ -586,8 +580,7 @@ func TestGDPR_ListConsents_Multiple(t *testing.T) {
 	cluster := setupGDPRCluster(t)
 	defer cluster.Close()
 
-	tenantID := generateUniqueTenantID()
-	createTestTenant(t, cluster, tenantID)
+	tenantID := sharedGDPRTenantID(t, cluster)
 	defer cleanupTestTenant(t, cluster, tenantID)
 
 	userID := generateGDPRUserID()
@@ -651,8 +644,7 @@ func TestGDPR_RequestExport_AllFormats(t *testing.T) {
 	cluster := setupGDPRCluster(t)
 	defer cluster.Close()
 
-	tenantID := generateUniqueTenantID()
-	createTestTenant(t, cluster, tenantID)
+	tenantID := sharedGDPRTenantID(t, cluster)
 	defer cleanupTestTenant(t, cluster, tenantID)
 
 	for _, format := range []string{"csv", "xml"} {
@@ -712,8 +704,7 @@ func TestGDPR_RequestExport_DuplicatePending(t *testing.T) {
 	cluster := setupGDPRCluster(t)
 	defer cluster.Close()
 
-	tenantID := generateUniqueTenantID()
-	createTestTenant(t, cluster, tenantID)
+	tenantID := sharedGDPRTenantID(t, cluster)
 	defer cleanupTestTenant(t, cluster, tenantID)
 
 	userID := generateGDPRUserID()
@@ -757,8 +748,7 @@ func TestGDPR_GetExportStatus_Transitions(t *testing.T) {
 	cluster := setupGDPRCluster(t)
 	defer cluster.Close()
 
-	tenantID := generateUniqueTenantID()
-	createTestTenant(t, cluster, tenantID)
+	tenantID := sharedGDPRTenantID(t, cluster)
 	defer cleanupTestTenant(t, cluster, tenantID)
 
 	userID := generateGDPRUserID()
@@ -834,8 +824,7 @@ func TestGDPR_GenerateExport_AllCategories(t *testing.T) {
 	cluster := setupGDPRCluster(t)
 	defer cluster.Close()
 
-	tenantID := generateUniqueTenantID()
-	createTestTenant(t, cluster, tenantID)
+	tenantID := sharedGDPRTenantID(t, cluster)
 	defer cleanupTestTenant(t, cluster, tenantID)
 
 	userID := generateGDPRUserID()
@@ -901,8 +890,7 @@ func TestGDPR_GenerateExport_SelectiveCategories(t *testing.T) {
 	cluster := setupGDPRCluster(t)
 	defer cluster.Close()
 
-	tenantID := generateUniqueTenantID()
-	createTestTenant(t, cluster, tenantID)
+	tenantID := sharedGDPRTenantID(t, cluster)
 	defer cleanupTestTenant(t, cluster, tenantID)
 
 	userID := generateGDPRUserID()
@@ -986,8 +974,7 @@ func TestGDPR_RequestDeletion_Success(t *testing.T) {
 	cluster := setupGDPRCluster(t)
 	defer cluster.Close()
 
-	tenantID := generateUniqueTenantID()
-	createTestTenant(t, cluster, tenantID)
+	tenantID := sharedGDPRTenantID(t, cluster)
 	defer cleanupTestTenant(t, cluster, tenantID)
 
 	userID := generateGDPRUserID()
@@ -1036,8 +1023,7 @@ func TestGDPR_RequestDeletion_CustomGracePeriod(t *testing.T) {
 	cluster := setupGDPRCluster(t)
 	defer cluster.Close()
 
-	tenantID := generateUniqueTenantID()
-	createTestTenant(t, cluster, tenantID)
+	tenantID := sharedGDPRTenantID(t, cluster)
 	defer cleanupTestTenant(t, cluster, tenantID)
 
 	testCases := []struct {
@@ -1101,8 +1087,7 @@ func TestGDPR_CancelDeletion_DuringGracePeriod(t *testing.T) {
 	cluster := setupGDPRCluster(t)
 	defer cluster.Close()
 
-	tenantID := generateUniqueTenantID()
-	createTestTenant(t, cluster, tenantID)
+	tenantID := sharedGDPRTenantID(t, cluster)
 	defer cleanupTestTenant(t, cluster, tenantID)
 
 	userID := generateGDPRUserID()
@@ -1160,8 +1145,7 @@ func TestGDPR_CancelDeletion_AfterProcessing(t *testing.T) {
 	cluster := setupGDPRCluster(t)
 	defer cluster.Close()
 
-	tenantID := generateUniqueTenantID()
-	createTestTenant(t, cluster, tenantID)
+	tenantID := sharedGDPRTenantID(t, cluster)
 	defer cleanupTestTenant(t, cluster, tenantID)
 
 	userID := generateGDPRUserID()
@@ -1232,8 +1216,7 @@ func TestGDPR_ProcessDeletion_Success(t *testing.T) {
 	cluster := setupGDPRCluster(t)
 	defer cluster.Close()
 
-	tenantID := generateUniqueTenantID()
-	createTestTenant(t, cluster, tenantID)
+	tenantID := sharedGDPRTenantID(t, cluster)
 	defer cleanupTestTenant(t, cluster, tenantID)
 
 	userID := generateGDPRUserID()
@@ -1316,8 +1299,7 @@ func TestGDPR_ProcessDeletion_PartialCategories(t *testing.T) {
 	cluster := setupGDPRCluster(t)
 	defer cluster.Close()
 
-	tenantID := generateUniqueTenantID()
-	createTestTenant(t, cluster, tenantID)
+	tenantID := sharedGDPRTenantID(t, cluster)
 	defer cleanupTestTenant(t, cluster, tenantID)
 
 	userID := generateGDPRUserID()
@@ -1409,8 +1391,7 @@ func TestGDPR_ProcessDeletion_PreserveCategories(t *testing.T) {
 	cluster := setupGDPRCluster(t)
 	defer cluster.Close()
 
-	tenantID := generateUniqueTenantID()
-	createTestTenant(t, cluster, tenantID)
+	tenantID := sharedGDPRTenantID(t, cluster)
 	defer cleanupTestTenant(t, cluster, tenantID)
 
 	userID := generateGDPRUserID()
@@ -2004,9 +1985,26 @@ func createTestTenant(t *testing.T, cluster *testCluster, tenantID string) {
 	}
 }
 
+// sharedGDPRTenantID returns the package's shared GDPR tenant
+// (shared_tenant_test.go), created with createTestTenant on first use and
+// deleted after m.Run. Every GDPR assertion is about a user the test names
+// uniquely (generateGDPRUserID / createTestUser), so the GDPR tests share it.
+func sharedGDPRTenantID(t *testing.T, cluster *testCluster) string {
+	t.Helper()
+	return sharedTenantFor(t, cluster.httpEndpoint, "gdpr", func(t *testing.T) string {
+		tenantID := generateUniqueTenantID()
+		createTestTenant(t, cluster, tenantID)
+		return tenantID
+	}).id
+}
+
 // cleanupTestTenant removes a test tenant.
 func cleanupTestTenant(t *testing.T, cluster *testCluster, tenantID string) {
 	t.Helper()
+	if isSharedTenant(tenantID) {
+		// TestMain deletes the shared tenant after m.Run.
+		return
+	}
 
 	req, err := http.NewRequest(
 		http.MethodDelete,

@@ -787,7 +787,7 @@ func TestIAMHandler_RegisterRoutes(t *testing.T) {
 // "roles" list and forwards it through the shared IdentityStore seam: the
 // created user carries the role and the persisted record matches.
 func TestIAMHandler_CreateUser_WithRoles(t *testing.T) {
-	_, _, memStorage, handler, cleanup := setupIAMTestServer(t)
+	server, _, memStorage, handler, cleanup := setupIAMTestServer(t)
 	defer cleanup()
 
 	ctx := context.Background()
@@ -797,6 +797,7 @@ func TestIAMHandler_CreateUser_WithRoles(t *testing.T) {
 	body := `{"email": "withroles@example.com", "username": "withroles", "name": "With Roles", "roles": ["role-auditor"]}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant1/users", bytes.NewReader([]byte(body)))
 	req.Header.Set("Content-Type", "application/json")
+	req = withRoleAssignCaller(server, req)
 	req = withChiParams(req, map[string]string{"tenant_id": "tenant1"})
 	w := httptest.NewRecorder()
 
@@ -817,7 +818,7 @@ func TestIAMHandler_CreateUser_WithRoles(t *testing.T) {
 // transport inherits the validate-before-create contract: an unknown role
 // reference returns 404 and NO user record is written (retry-safe).
 func TestIAMHandler_CreateUser_UnknownRole_NotFoundNoUser(t *testing.T) {
-	_, _, memStorage, handler, cleanup := setupIAMTestServer(t)
+	server, _, memStorage, handler, cleanup := setupIAMTestServer(t)
 	defer cleanup()
 
 	ctx := context.Background()
@@ -826,6 +827,7 @@ func TestIAMHandler_CreateUser_UnknownRole_NotFoundNoUser(t *testing.T) {
 	body := `{"email": "phantom@example.com", "username": "phantom", "name": "Phantom", "roles": ["no-such-role"]}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant1/users", bytes.NewReader([]byte(body)))
 	req.Header.Set("Content-Type", "application/json")
+	req = withRoleAssignCaller(server, req)
 	req = withChiParams(req, map[string]string{"tenant_id": "tenant1"})
 	w := httptest.NewRecorder()
 

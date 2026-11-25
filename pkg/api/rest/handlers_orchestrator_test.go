@@ -1483,9 +1483,9 @@ func TestHandleOrchestratorListBackendModels_OllamaSuccess(t *testing.T) {
 	server, _, cleanup := setupOrchestratorMockServer(t)
 	defer cleanup()
 
-	req := systemRequest(http.MethodGet, "/api/v1/fleet/gpu-host/backends/ollama/models", nil)
+	req := systemRequest(http.MethodGet, "/api/v1/fleet/gpu-01/backends/ollama/models", nil)
 	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("nodeID", "gpu-host")
+	rctx.URLParams.Add("nodeID", "gpu-01")
 	rctx.URLParams.Add("backendName", "ollama")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
@@ -1510,9 +1510,9 @@ func TestHandleOrchestratorListBackendModels_MissingBackend(t *testing.T) {
 	server, _, cleanup := setupOrchestratorMockServer(t)
 	defer cleanup()
 
-	req := systemRequest(http.MethodGet, "/api/v1/fleet/gpu-host/backends//models", nil)
+	req := systemRequest(http.MethodGet, "/api/v1/fleet/gpu-01/backends//models", nil)
 	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("nodeID", "gpu-host")
+	rctx.URLParams.Add("nodeID", "gpu-01")
 	// backendName is intentionally omitted to trigger validation.
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 

@@ -1022,7 +1022,7 @@ func TestHostnameForCert(t *testing.T) {
 		"host:22":                 "host",
 		"alice@host":              "host",
 		"alice@host:22":           "host",
-		"alice@gpu-host-01":       "gpu-host-01",
+		"alice@gpu-01":            "gpu-01",
 		"alice@remote.example:22": "remote.example",
 		// IPv6 literals survive whole, without their brackets.
 		"[2001:db8::1]:22":       "2001:db8::1",

@@ -16,6 +16,11 @@
 package rest
 
 import (
+	"net/http"
+	"strings"
+
+	"github.com/go-chi/chi/v5"
+
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/sealedwindow"
@@ -73,4 +78,81 @@ func (s *Server) SetSealedWindowGate(
 	// gates for every route group (setupRouter also propagates the bypass
 	// predicate into the installed authz middleware).
 	s.setupRouter()
+}
+
+// SetSealedWindowHandler installs qrdb's sealed REST surface for the
+// allowlisted routes this server has no native handler for (officer
+// registration, share claims, recovery officers, ...). Natively served
+// routes keep their handlers. Passing nil removes the mounts.
+func (s *Server) SetSealedWindowHandler(h http.Handler) {
+	s.sealedWindowHandler = h
+	s.setupRouter()
+}
+
+// sealedWindowNativeAliases are the sealed allowlist paths go-qrdb's sealed
+// REST handler cannot answer: it is built without an admin service, so it
+// registers neither /health nor /status, and it has no /v1/health. This
+// server answers them itself, each with a response an allowlisted route
+// already serves while sealed: the health aliases are /api/v1/health, and
+// /status is the barrier status of /v1/barrier/status.
+func (s *Server) sealedWindowNativeAliases() map[string]http.HandlerFunc {
+	return map[string]http.HandlerFunc{
+		"/health":    s.HandleHealth,
+		"/v1/health": s.HandleHealth,
+		"/status":    s.HandleBarrierStatus,
+	}
+}
+
+// mountSealedWindowRoutes mounts s.sealedWindowHandler on every sealed
+// allowlist entry r does not already route. An entry is "METHOD /path"
+// (that method only), "/path" (every method) or "/prefix/" (the subtree).
+// Called by setupRouter after the native routes are registered, so a native
+// handler is never shadowed. The health and status aliases go-qrdb's handler
+// cannot answer are served natively instead (sealedWindowNativeAliases).
+func (s *Server) mountSealedWindowRoutes(r *chi.Mux) {
+	if s.sealedWindowHandler == nil {
+		return
+	}
+	aliases := s.sealedWindowNativeAliases()
+	for _, entry := range s.sealedAllowlist {
+		methods := sealedWindowAnyMethod
+		path := entry
+		if method, rest, ok := strings.Cut(entry, " "); ok {
+			methods = []string{method}
+			path = rest
+		}
+		pattern, matchPath := path, path
+		if strings.HasSuffix(path, "/") {
+			pattern = path + "*"
+			matchPath = path + "sealed-window"
+		}
+		if sealedWindowRouted(r, methods, matchPath) {
+			continue
+		}
+		if h, ok := aliases[path]; ok {
+			r.Get(path, h)
+			continue
+		}
+		if len(methods) == 1 {
+			r.Method(methods[0], pattern, s.sealedWindowHandler)
+			continue
+		}
+		r.Handle(pattern, s.sealedWindowHandler)
+	}
+}
+
+// sealedWindowAnyMethod are the methods an allowlist entry without a method
+// is route-matched with.
+var sealedWindowAnyMethod = []string{
+	http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete,
+}
+
+// sealedWindowRouted reports whether r routes path for any of methods.
+func sealedWindowRouted(r *chi.Mux, methods []string, path string) bool {
+	for _, method := range methods {
+		if r.Match(chi.NewRouteContext(), method, path) {
+			return true
+		}
+	}
+	return false
 }
