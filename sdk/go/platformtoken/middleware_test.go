@@ -887,3 +887,84 @@ func TestMiddleware_RBACHoldsWhenABACAllows(t *testing.T) {
 		})
 	}
 }
+
+// TestMiddleware_LivenessRefusals proves the route guard itself runs the
+// liveness check the validator's mode asks for, in the default hybrid mode
+// and in online mode: an inactive token is refused with 401 invalid_token,
+// a failed or missing liveness authority with 503, and in neither case does
+// the request reach the handler.
+func TestMiddleware_LivenessRefusals(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	key := newIssuerKey(t, testKID)
+	online := func(string) AuthzMode { return AuthzModeOnline }
+
+	for _, tc := range []struct {
+		name       string
+		mode       ModeResolver
+		live       LivenessChecker
+		wantStatus int
+	}{
+		{name: "hybrid default refuses an inactive token", live: &stubLiveness{results: []bool{false}},
+			wantStatus: http.StatusUnauthorized},
+		{name: "online refuses an inactive token", mode: online, live: &stubLiveness{results: []bool{false}},
+			wantStatus: http.StatusUnauthorized},
+		{name: "hybrid default cannot decide when the liveness authority fails",
+			live: &stubLiveness{err: errors.New("introspection down")}, wantStatus: http.StatusServiceUnavailable},
+		{name: "online cannot decide when the liveness authority fails", mode: online,
+			live: &stubLiveness{err: errors.New("introspection down")}, wantStatus: http.StatusServiceUnavailable},
+		{name: "hybrid default cannot decide without a liveness authority", wantStatus: http.StatusServiceUnavailable},
+		{name: "online cannot decide without a liveness authority", mode: online,
+			wantStatus: http.StatusServiceUnavailable},
+		{name: "hybrid default admits an active token", live: &stubLiveness{results: []bool{true}},
+			wantStatus: http.StatusOK},
+		{name: "online admits an active token", mode: online, live: &stubLiveness{results: []bool{true}},
+			wantStatus: http.StatusOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := Options{ModeResolver: tc.mode, Authorizer: &qrdbsdk.NoopAuthorizer{}, RBAC: &qrdbsdk.NoopAuthorizer{}}
+			if tc.live != nil {
+				opts.LivenessChecker = tc.live
+			}
+			v := newAuthzValidator(t, key, now, opts)
+			called := false
+			handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				called = true
+				w.WriteHeader(http.StatusOK)
+			})
+			req := httptest.NewRequest(http.MethodGet, "https://daemon.example/v1/keys", nil)
+			req.Header.Set("Authorization", "Bearer "+bearerToken(t, key, now, []string{"keys:get"}, "tenant-1"))
+			w := httptest.NewRecorder()
+			v.Middleware("keys:get")(handler).ServeHTTP(w, req)
+
+			if w.Code != tc.wantStatus {
+				t.Fatalf("status %d, want %d (body %q)", w.Code, tc.wantStatus, w.Body.String())
+			}
+			if called != (tc.wantStatus == http.StatusOK) {
+				t.Fatalf("handler called %v, want %v", called, tc.wantStatus == http.StatusOK)
+			}
+			if tc.wantStatus == http.StatusUnauthorized &&
+				!strings.Contains(w.Header().Get("WWW-Authenticate"), "invalid_token") {
+				t.Fatalf("challenge %q, want invalid_token", w.Header().Get("WWW-Authenticate"))
+			}
+			if strings.Contains(w.Body.String(), "platformtoken:") {
+				t.Fatalf("the validator's detail reached the caller: %q", w.Body.String())
+			}
+		})
+	}
+
+	t.Run("AuthorizeRequest refuses an inactive token in online mode", func(t *testing.T) {
+		v := newAuthzValidator(t, key, now, Options{
+			ModeResolver: online, LivenessChecker: &stubLiveness{results: []bool{false}},
+			Authorizer: &qrdbsdk.NoopAuthorizer{}, RBAC: &qrdbsdk.NoopAuthorizer{},
+		})
+		req := httptest.NewRequest(http.MethodGet, "https://daemon.example/v1/keys", nil)
+		req.Header.Set("Authorization", "Bearer "+bearerToken(t, key, now, []string{"keys:get"}, "tenant-1"))
+		ac, err := v.AuthorizeRequest(req, "keys:get")
+		if !errors.As(err, new(*TokenInactiveError)) {
+			t.Fatalf("AuthorizeRequest error %v, want a TokenInactiveError", err)
+		}
+		if ac != nil {
+			t.Fatalf("AuthorizeRequest returned a context for an inactive token: %+v", ac)
+		}
+	})
+}
