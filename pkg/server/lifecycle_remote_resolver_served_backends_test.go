@@ -42,7 +42,7 @@ const servedBackendsTenant = "automatethethings"
 
 // liveFleetPool builds a resolver over the real registry holding the two
 // daemons the burn-in had online: agent-04 started with --backends acp
-// (serving claude, codex and opencode) and gpu-host serving ollama on a GPU.
+// (serving claude, codex and opencode) and gpu-01 serving ollama on a GPU.
 func liveFleetPool(t *testing.T) *remoteBackendPool {
 	t.Helper()
 
@@ -60,9 +60,9 @@ func liveFleetPool(t *testing.T) *remoteBackendPool {
 		Capabilities: []string{"claude", "codex", "opencode"},
 	}))
 	require.NoError(t, registry.RegisterFleetNode(ctx, &orchestration.FleetNode{
-		ID:           "gpu-host-id",
+		ID:           "gpu-01-id",
 		TenantID:     servedBackendsTenant,
-		Name:         "gpu-host",
+		Name:         "gpu-01",
 		Host:         "198.51.100.92:9091",
 		Backend:      "ollama",
 		Kind:         orchestration.FleetNodeKindDaemon,
@@ -172,10 +172,10 @@ func TestResolve_GpuAndHostConstraintsStillNarrow(t *testing.T) {
 		t.Parallel()
 		pool := liveFleetPool(t)
 		ctx := orchestration.WithHostAffinity(
-			orchestration.ContextWithTenant(context.Background(), servedBackendsTenant), "gpu-host")
+			orchestration.ContextWithTenant(context.Background(), servedBackendsTenant), "gpu-01")
 
 		backend, ok := pool.resolve(ctx, "opencode", "")
-		require.False(t, ok, "gpu-host does not serve opencode")
+		require.False(t, ok, "gpu-01 does not serve opencode")
 		require.Nil(t, backend)
 	})
 }

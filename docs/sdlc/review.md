@@ -370,8 +370,8 @@ the endpoint and the pin:
 reviewers:
   - name: qwen
     agent_id: qwen-opencode-reviewer
-    endpoint: http://<gpu-host>:11434   # as the reviewer's CONTAINER reaches it
-    host_affinity: gpu-host               # strict
+    endpoint: http://<gpu-01>:11434   # as the reviewer's CONTAINER reaches it
+    host_affinity: gpu-01               # strict
     login: qwen-reviewer
     token_secret_ref: sdlc/reviewer/<project>/qwen-token
     # counts_toward_merge unset: advisory, publishes quicbaas/review/qwen

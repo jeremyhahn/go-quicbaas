@@ -367,12 +367,22 @@ func (r *ToolRegistry) registerCryptoTools() {
 	})
 }
 
-func (r *ToolRegistry) executeCryptoEncrypt(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	cryptoSvc, ok := r.service.(interface {
-		Encrypt(context.Context, *service.EncryptRequest) (*service.EncryptResponse, error)
-	})
-	if !ok {
+// cryptoService returns the crypto service the crypto tools call. The crypto
+// verbs live behind QuicBaaS.Crypto(), not on the top-level service, so the
+// tools must not type-assert r.service for them. A nil Crypto() answers the
+// crypto service-unavailable error.
+func (r *ToolRegistry) cryptoService() (service.CryptoService, error) {
+	cryptoSvc := r.service.Crypto()
+	if cryptoSvc == nil {
 		return nil, api.NewServiceUnavailableError("crypto")
+	}
+	return cryptoSvc, nil
+}
+
+func (r *ToolRegistry) executeCryptoEncrypt(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	cryptoSvc, err := r.cryptoService()
+	if err != nil {
+		return nil, err
 	}
 
 	// Decode base64-encoded plaintext
@@ -415,11 +425,9 @@ func (r *ToolRegistry) executeCryptoEncrypt(ctx context.Context, args map[string
 }
 
 func (r *ToolRegistry) executeCryptoDecrypt(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	cryptoSvc, ok := r.service.(interface {
-		Decrypt(context.Context, *service.DecryptRequest) (*service.DecryptResponse, error)
-	})
-	if !ok {
-		return nil, api.NewServiceUnavailableError("crypto")
+	cryptoSvc, err := r.cryptoService()
+	if err != nil {
+		return nil, err
 	}
 
 	// Decode base64-encoded ciphertext
@@ -463,11 +471,9 @@ func (r *ToolRegistry) executeCryptoDecrypt(ctx context.Context, args map[string
 }
 
 func (r *ToolRegistry) executeCryptoRewrap(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	cryptoSvc, ok := r.service.(interface {
-		Rewrap(context.Context, *service.RewrapRequest) (*service.RewrapResponse, error)
-	})
-	if !ok {
-		return nil, api.NewServiceUnavailableError("crypto")
+	cryptoSvc, err := r.cryptoService()
+	if err != nil {
+		return nil, err
 	}
 
 	// Decode base64-encoded ciphertext
@@ -510,11 +516,9 @@ func (r *ToolRegistry) executeCryptoRewrap(ctx context.Context, args map[string]
 }
 
 func (r *ToolRegistry) executeCryptoSign(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	cryptoSvc, ok := r.service.(interface {
-		Sign(context.Context, *service.SignRequest) (*service.SignResponse, error)
-	})
-	if !ok {
-		return nil, api.NewServiceUnavailableError("crypto")
+	cryptoSvc, err := r.cryptoService()
+	if err != nil {
+		return nil, err
 	}
 
 	// Decode base64-encoded message
@@ -539,11 +543,9 @@ func (r *ToolRegistry) executeCryptoSign(ctx context.Context, args map[string]in
 }
 
 func (r *ToolRegistry) executeCryptoVerify(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	cryptoSvc, ok := r.service.(interface {
-		Verify(context.Context, *service.VerifyRequest) (*service.VerifyResponse, error)
-	})
-	if !ok {
-		return nil, api.NewServiceUnavailableError("crypto")
+	cryptoSvc, err := r.cryptoService()
+	if err != nil {
+		return nil, err
 	}
 
 	// Decode base64-encoded message
@@ -576,11 +578,9 @@ func (r *ToolRegistry) executeCryptoVerify(ctx context.Context, args map[string]
 }
 
 func (r *ToolRegistry) executeCryptoHMAC(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	cryptoSvc, ok := r.service.(interface {
-		GenerateHMAC(context.Context, *service.HMACRequest) (*service.HMACResponse, error)
-	})
-	if !ok {
-		return nil, api.NewServiceUnavailableError("crypto")
+	cryptoSvc, err := r.cryptoService()
+	if err != nil {
+		return nil, err
 	}
 
 	// Decode base64-encoded message
@@ -604,11 +604,9 @@ func (r *ToolRegistry) executeCryptoHMAC(ctx context.Context, args map[string]in
 }
 
 func (r *ToolRegistry) executeCryptoVerifyHMAC(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	cryptoSvc, ok := r.service.(interface {
-		VerifyHMAC(context.Context, *service.VerifyHMACRequest) (*service.VerifyHMACResponse, error)
-	})
-	if !ok {
-		return nil, api.NewServiceUnavailableError("crypto")
+	cryptoSvc, err := r.cryptoService()
+	if err != nil {
+		return nil, err
 	}
 
 	// Decode base64-encoded message
@@ -641,11 +639,9 @@ func (r *ToolRegistry) executeCryptoVerifyHMAC(ctx context.Context, args map[str
 }
 
 func (r *ToolRegistry) executeCryptoHash(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	cryptoSvc, ok := r.service.(interface {
-		Hash(context.Context, *service.HashRequest) (*service.HashResponse, error)
-	})
-	if !ok {
-		return nil, api.NewServiceUnavailableError("crypto")
+	cryptoSvc, err := r.cryptoService()
+	if err != nil {
+		return nil, err
 	}
 
 	// Decode base64-encoded data
@@ -668,11 +664,9 @@ func (r *ToolRegistry) executeCryptoHash(ctx context.Context, args map[string]in
 }
 
 func (r *ToolRegistry) executeCryptoRandom(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	cryptoSvc, ok := r.service.(interface {
-		GenerateRandom(context.Context, *service.GenerateRandomRequest) (*service.GenerateRandomResponse, error)
-	})
-	if !ok {
-		return nil, api.NewServiceUnavailableError("crypto")
+	cryptoSvc, err := r.cryptoService()
+	if err != nil {
+		return nil, err
 	}
 
 	ints := newIntArgReader(args)
@@ -716,11 +710,9 @@ func algorithmToKeyAttributes(algorithm string) *kctypes.KeyAttributes {
 }
 
 func (r *ToolRegistry) executeCryptoDataKey(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	cryptoSvc, ok := r.service.(interface {
-		GenerateDataKey(context.Context, *service.GenerateDataKeyRequest) (*service.GenerateDataKeyResponse, error)
-	})
-	if !ok {
-		return nil, api.NewServiceUnavailableError("crypto")
+	cryptoSvc, err := r.cryptoService()
+	if err != nil {
+		return nil, err
 	}
 
 	algorithm := getString(args, "algorithm")
@@ -730,7 +722,6 @@ func (r *ToolRegistry) executeCryptoDataKey(ctx context.Context, args map[string
 
 	// Decode base64-encoded context if provided
 	var contextData []byte
-	var err error
 	if contextB64 := getString(args, "context"); contextB64 != "" {
 		contextData, err = base64.StdEncoding.DecodeString(contextB64)
 		if err != nil {
@@ -752,11 +743,9 @@ func (r *ToolRegistry) executeCryptoDataKey(ctx context.Context, args map[string
 }
 
 func (r *ToolRegistry) executeCryptoDataKeyWrapped(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	cryptoSvc, ok := r.service.(interface {
-		GenerateWrappedDataKey(context.Context, *service.GenerateWrappedDataKeyRequest) (*service.GenerateWrappedDataKeyResponse, error)
-	})
-	if !ok {
-		return nil, api.NewServiceUnavailableError("crypto")
+	cryptoSvc, err := r.cryptoService()
+	if err != nil {
+		return nil, err
 	}
 
 	algorithm := getString(args, "algorithm")
@@ -766,7 +755,6 @@ func (r *ToolRegistry) executeCryptoDataKeyWrapped(ctx context.Context, args map
 
 	// Decode base64-encoded context if provided
 	var contextData []byte
-	var err error
 	if contextB64 := getString(args, "context"); contextB64 != "" {
 		contextData, err = base64.StdEncoding.DecodeString(contextB64)
 		if err != nil {
@@ -788,11 +776,9 @@ func (r *ToolRegistry) executeCryptoDataKeyWrapped(ctx context.Context, args map
 }
 
 func (r *ToolRegistry) executeCryptoEncryptBatch(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	cryptoSvc, ok := r.service.(interface {
-		EncryptBatch(context.Context, *service.EncryptBatchRequest) (*service.EncryptBatchResponse, error)
-	})
-	if !ok {
-		return nil, api.NewServiceUnavailableError("crypto")
+	cryptoSvc, err := r.cryptoService()
+	if err != nil {
+		return nil, err
 	}
 
 	itemsRaw, ok := args["items"].([]interface{})
@@ -842,11 +828,9 @@ func (r *ToolRegistry) executeCryptoEncryptBatch(ctx context.Context, args map[s
 }
 
 func (r *ToolRegistry) executeCryptoDecryptBatch(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	cryptoSvc, ok := r.service.(interface {
-		DecryptBatch(context.Context, *service.DecryptBatchRequest) (*service.DecryptBatchResponse, error)
-	})
-	if !ok {
-		return nil, api.NewServiceUnavailableError("crypto")
+	cryptoSvc, err := r.cryptoService()
+	if err != nil {
+		return nil, err
 	}
 
 	itemsRaw, ok := args["items"].([]interface{})

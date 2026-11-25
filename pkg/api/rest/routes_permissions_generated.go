@@ -614,7 +614,7 @@ var frozenRoutePermissions = map[string]frozenPermission{
 	// role seeded before it existed, so nobody would hold the grant needed to
 	// repair exactly that absence.
 	"POST /api/v1/tenants/{tenant_id}/roles/reconcile":                                {auth: RouteAuthPermission, resource: "tenants", action: "create"},
-	"POST /api/v1/tenants/{tenant_id}/users/":                                         {auth: RouteAuthPermission, resource: "tenants", action: "create"},
+	"POST /api/v1/tenants/{tenant_id}/users/":                                         {auth: RouteAuthPermission, resource: "users", action: "create"},
 	"POST /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/consent":                   {auth: RouteAuthPermission, resource: "tenants", action: "create"},
 	"POST /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/deletion":                  {auth: RouteAuthPermission, resource: "tenants", action: "create"},
 	"POST /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/export":                    {auth: RouteAuthPermission, resource: "tenants", action: "create"},

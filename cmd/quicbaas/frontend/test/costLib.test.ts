@@ -227,9 +227,9 @@ describe('formatEnergy / energyNote', () => {
 
 describe('host rows', () => {
   it('labels an unattributed host as an absence and addresses it by the sentinel', () => {
-    expect(hostLabel({ host: 'gpu-host:9091' })).toBe('gpu-host:9091');
+    expect(hostLabel({ host: 'gpu-01:9091' })).toBe('gpu-01:9091');
     expect(hostLabel({ unattributed: true })).toBe('No host recorded');
-    expect(hostScopeValue({ host: 'gpu-host:9091' })).toBe('gpu-host:9091');
+    expect(hostScopeValue({ host: 'gpu-01:9091' })).toBe('gpu-01:9091');
     expect(hostScopeValue({ unattributed: true })).toBe(SPEND_UNATTRIBUTED_LEVEL);
     expect(hostFilterLabel(SPEND_UNATTRIBUTED_LEVEL)).toBe('No host recorded');
     expect(hostFilterLabel('vm-host:9091')).toBe('vm-host:9091');

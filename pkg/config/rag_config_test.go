@@ -537,7 +537,7 @@ func TestEmbeddingConfigValidatesAdditionalProviders(t *testing.T) {
 		cfg := base
 		cfg.Additional = []EmbeddingConfig{{
 			Provider:   "npu",
-			APIURL:     "http://gpu-host.internal:8077",
+			APIURL:     "http://gpu-01.internal:8077",
 			Model:      "all-MiniLM-L6-v2",
 			Dimensions: 384,
 		}}

@@ -24,6 +24,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
 
@@ -245,6 +246,19 @@ func TestNodeAuditLogger_AuditEventNotFound_MatchesIAMSentinel(t *testing.T) {
 	_, err := l.GetEvent(context.Background(), "t1", "nonexistent")
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, iam.ErrAuditEventNotFound))
+}
+
+// TestAuditEventNotFoundError_ClassIsNotFound pins the error class a missing
+// audit event carries: not found, the class REST answers. A transport that
+// classifies by ErrorCode (MCP) then answers not found and keeps the message
+// naming the event, instead of sanitizing it to an internal error.
+func TestAuditEventNotFoundError_ClassIsNotFound(t *testing.T) {
+	_, err := newTestNodeAuditLogger().GetEvent(context.Background(), "t1", "nonexistent")
+	require.Error(t, err)
+
+	var classified interface{ ErrorCode() qberrors.ErrorCode }
+	require.True(t, errors.As(err, &classified), "a missing audit event must carry an error class")
+	assert.Equal(t, qberrors.ErrNotFound, classified.ErrorCode())
 }
 
 func TestNodeAuditLogger_DeleteOlderThan_IsNoop(t *testing.T) {
