@@ -63,6 +63,10 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
+// embeddedSealPassphrase is the fixed test passphrase the embedded node
+// initialises and unseals its at-rest barrier with.
+const embeddedSealPassphrase = "embedded-integration-test-passphrase"
+
 func setupEmbeddedServer() error {
 	tempDir, err := os.MkdirTemp("", "quicbaas-embedded-integration-*")
 	if err != nil {
@@ -91,7 +95,12 @@ func setupEmbeddedServer() error {
 	cfg.Secrets.Enabled = true
 	cfg.Secrets.Versioning = config.SecretsVersioningConfig{Enabled: true}
 
-	srv, err := server.NewServer(cfg)
+	// Secrets are refused on a node without an at-rest barrier, so the
+	// embedded node runs behind the passphrase barrier, auto-unsealed at Start.
+	cfg.Seal.Enabled = true
+	cfg.Seal.Strategy = "passphrase"
+
+	srv, err := server.NewServer(cfg, server.WithSealPassphrase([]byte(embeddedSealPassphrase)))
 	if err != nil {
 		os.RemoveAll(tempDir)
 		return &qberrors.WrappedMessageError{Message: "failed to create server", Cause: err}

@@ -66,6 +66,10 @@ func (e ErrEmbeddedNotEnabled) Error() string {
 // RegisterEmbeddedService so that helpers.GetEmbeddedService will return it.
 //
 // Callers must call TeardownEmbeddedServer when the test suite completes.
+// embeddedSealPassphrase is the fixed test passphrase the embedded
+// integration node initialises and unseals its at-rest barrier with.
+const embeddedSealPassphrase = "embedded-integration-test-passphrase"
+
 func SetupEmbeddedServer() (service.QuicBaaS, *server.Server, error) {
 	if os.Getenv("QUICBAAS_EMBEDDED_ENABLED") != "true" {
 		return nil, nil, ErrEmbeddedNotEnabled{}
@@ -100,7 +104,12 @@ func SetupEmbeddedServer() (service.QuicBaaS, *server.Server, error) {
 	cfg.Scheduler.Enabled = true
 	cfg.Messaging.Enabled = true
 
-	srv, err := server.NewServer(cfg)
+	// Secrets are refused on a node without an at-rest barrier, so the
+	// embedded node runs behind the passphrase barrier, auto-unsealed at Start.
+	cfg.Seal.Enabled = true
+	cfg.Seal.Strategy = "passphrase"
+
+	srv, err := server.NewServer(cfg, server.WithSealPassphrase([]byte(embeddedSealPassphrase)))
 	if err != nil {
 		os.RemoveAll(tempDir)
 		return nil, nil, fmt.Errorf("failed to create server: %w", err)
