@@ -68,7 +68,8 @@ func TestBuildQRDBConfig_AtRestFollowsSeal(t *testing.T) {
 			cfg.Seal.Enabled = tt.enabled
 			cfg.Seal.Strategy = tt.strategy
 
-			qcfg := mustBuildQRDBConfig(t, cfg, false)
+			qcfg, err := buildQRDBConfig(cfg, false)
+			require.NoError(t, err)
 
 			assert.Equal(t, tt.want, platformAtRest(qcfg))
 		})
