@@ -117,7 +117,7 @@ func TestServer_BuildBarrierCeremonyServices_NonNilClient(t *testing.T) {
 	srv := withTempServer(t)
 	// Construct a ShardedClient and assign it. The platform shard lookup
 	// returns a non-nil client; the Barrier and Ceremony facades use it.
-	srv.qrdbClient = NewShardedClient(nil)
+	srv.qrdbClient = newDetachedShardedClient()
 	t.Cleanup(func() { _ = srv.qrdbClient.Close() })
 
 	barrier, ceremony := srv.buildBarrierCeremonyServices()

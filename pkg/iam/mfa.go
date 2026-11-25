@@ -872,7 +872,7 @@ func (m *DefaultMFAManager) checkTOTPCode(ctx context.Context, op, base32Secret,
 
 	// The code arrives as a string from the transport and cannot be wiped;
 	// the enclave keeps the comparison itself out of ordinary memory.
-	submitted, err := enclave.NewMemoryEnclaveFromString(code)
+	submitted, err := enclave.NewMemoryEnclave([]byte(code))
 	if err != nil {
 		return NewIAMError(ErrMFAInvalid, op, "failed to load code into protected memory", err)
 	}

@@ -19,7 +19,7 @@
 // an activation URL and create a pending admin user. On the second boot it
 // must be silent (no second invite).
 
-package iam_test
+package bootstrap_test
 
 import (
 	"bytes"

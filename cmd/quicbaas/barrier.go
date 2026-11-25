@@ -440,12 +440,13 @@ func runBarrierInitCommand(cmd *cobra.Command, _ []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
-	if err := client.BarrierInitialize(ctx, &qrdbtransport.BarrierInitializeRequest{
-		//secure:unborrowed injected-interface barrier transport request must carry bytes; the client owns the request lifetime.
-		Secret:          secret.Bytes(),
-		BarrierStrategy: barrierStrategy,
-		SOPin:           barrierSOPin,
-		UserPin:         barrierUserPin,
+	if err := secret.WithBytes(func(s []byte) error {
+		return client.BarrierInitialize(ctx, &qrdbtransport.BarrierInitializeRequest{
+			Secret:          s,
+			BarrierStrategy: barrierStrategy,
+			SOPin:           barrierSOPin,
+			UserPin:         barrierUserPin,
+		})
 	}); err != nil {
 		return formatError(err)
 	}
@@ -527,13 +528,17 @@ func runBarrierInitShamirCommand(cmd *cobra.Command, _ []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
-	resp, err := client.BarrierInitializeShamir(ctx, &qrdbtransport.BarrierInitializeShamirRequest{
-		//secure:unborrowed injected-interface barrier transport request must carry bytes; the client owns the request lifetime.
-		Secret:      secret.Bytes(),
-		Threshold:   barrierThreshold,
-		TotalShares: barrierTotalShares,
-		SOPin:       barrierSOPin,
-		UserPin:     barrierUserPin,
+	var resp *qrdbtransport.BarrierInitializeShamirResponse
+	err = secret.WithBytes(func(s []byte) error {
+		var reqErr error
+		resp, reqErr = client.BarrierInitializeShamir(ctx, &qrdbtransport.BarrierInitializeShamirRequest{
+			Secret:      s,
+			Threshold:   barrierThreshold,
+			TotalShares: barrierTotalShares,
+			SOPin:       barrierSOPin,
+			UserPin:     barrierUserPin,
+		})
+		return reqErr
 	})
 	if err != nil {
 		return formatError(err)
@@ -597,9 +602,10 @@ func runBarrierUnsealCommand(cmd *cobra.Command, _ []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
-	return formatError(client.BarrierUnseal(ctx, &qrdbtransport.BarrierUnsealRequest{
-		//secure:unborrowed injected-interface barrier transport request must carry bytes; the client owns the request lifetime.
-		Secret: secret.Bytes(),
+	return formatError(secret.WithBytes(func(s []byte) error {
+		return client.BarrierUnseal(ctx, &qrdbtransport.BarrierUnsealRequest{
+			Secret: s,
+		})
 	}))
 }
 
@@ -1329,15 +1335,19 @@ func runBarrierEnableEncryptionCommand(cmd *cobra.Command, _ []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
-	resp, err := client.BarrierEnableEncryption(ctx, &qrdbtransport.BarrierEnableEncryptionRequest{
-		TenantID:     barrierTenantID,
-		Strategy:     barrierStrategy,
-		Mechanism:    barrierMechanism,
-		Availability: barrierAvailability,
-		//secure:unborrowed injected-interface first-boot request must carry bytes; the SDK owns the request lifetime.
-		Passphrase:      secret.Bytes(),
-		ShamirThreshold: barrierThreshold,
-		ShamirTotal:     barrierTotalShares,
+	var resp *qrdbtransport.BarrierEnableEncryptionResponse
+	err = secret.WithBytes(func(s []byte) error {
+		var reqErr error
+		resp, reqErr = client.BarrierEnableEncryption(ctx, &qrdbtransport.BarrierEnableEncryptionRequest{
+			TenantID:        barrierTenantID,
+			Strategy:        barrierStrategy,
+			Mechanism:       barrierMechanism,
+			Availability:    barrierAvailability,
+			Passphrase:      s,
+			ShamirThreshold: barrierThreshold,
+			ShamirTotal:     barrierTotalShares,
+		})
+		return reqErr
 	})
 	if err != nil {
 		return formatError(err)

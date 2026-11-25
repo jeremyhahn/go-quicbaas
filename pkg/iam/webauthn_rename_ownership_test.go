@@ -54,6 +54,10 @@ type renameTestUserClient struct {
 	mu     sync.Mutex
 	nextID uint64
 	users  map[uint64]*qrdbtransport.User
+	// suspended and unsuspended record the IDs SuspendUser and
+	// UnsuspendUser were called with; the rename tests never reach them.
+	suspended   []uint64
+	unsuspended []uint64
 }
 
 func newRenameTestUserClient() *renameTestUserClient {
@@ -218,6 +222,22 @@ func cloneRenameTestUser(u *qrdbtransport.User) *qrdbtransport.User {
 	return &clone
 }
 
+// SuspendUser records the call and succeeds.
+func (c *renameTestUserClient) SuspendUser(_ context.Context, id uint64) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.suspended = append(c.suspended, id)
+	return nil
+}
+
+// UnsuspendUser records the call and succeeds.
+func (c *renameTestUserClient) UnsuspendUser(_ context.Context, id uint64) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.unsuspended = append(c.unsuspended, id)
+	return nil
+}
+
 var _ qrdbtransport.UserClient = (*renameTestUserClient)(nil)
 
 // renameTestKV is an in-memory qrdbtransport.KVClient. A missing key reports
@@ -350,11 +370,14 @@ func newRenameFixture(t *testing.T, email, displayName string) *renameFixture {
 	t.Helper()
 
 	userClient := newRenameTestUserClient()
-	kv := newRenameTestKV()
+	credentialDAOs, err := xkmssdk.NewBackendDAOFactory(xkmssdk.NewStorageMemory())
+	if err != nil {
+		t.Fatalf("credential DAO factory: %v", err)
+	}
 	users, creds, err := xkmssdk.NewWebAuthnQRDBUserStoreAdapter(xkmssdk.WebAuthnQRDBUserStoreOptions{
-		Users:    userClient,
-		KV:       kv,
-		TenantID: testWriteThroughTenant,
+		Users:      userClient,
+		DAOFactory: credentialDAOs,
+		TenantID:   testWriteThroughTenant,
 	})
 	if err != nil {
 		t.Fatalf("NewWebAuthnQRDBUserStoreAdapter: %v", err)

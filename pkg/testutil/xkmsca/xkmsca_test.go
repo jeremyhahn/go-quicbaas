@@ -17,6 +17,7 @@ import (
 	"context"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
@@ -47,8 +48,9 @@ func TestNewReturnsAnInitializedSigningCA(t *testing.T) {
 	}
 
 	issued, err := ca.IssueCertificate(context.Background(), &xkmssdk.TrustedCACertificateRequest{
-		Subject: xkmssdk.TrustedCASubject{CommonName: "leaf.example.test"},
-		Valid:   30,
+		TenantID: qrdbsdk.SystemTenantID,
+		Subject:  xkmssdk.TrustedCASubject{CommonName: "leaf.example.test"},
+		Valid:    30,
 	})
 	if err != nil {
 		t.Fatalf("IssueCertificate against a New CA: %v", err)
@@ -83,8 +85,9 @@ func TestNewUninitializedRefusesIssuance(t *testing.T) {
 		t.Fatal("NewUninitialized returned an initialized CA")
 	}
 	if _, err := ca.IssueCertificate(context.Background(), &xkmssdk.TrustedCACertificateRequest{
-		Subject: xkmssdk.TrustedCASubject{CommonName: "leaf.example.test"},
-		Valid:   30,
+		TenantID: qrdbsdk.SystemTenantID,
+		Subject:  xkmssdk.TrustedCASubject{CommonName: "leaf.example.test"},
+		Valid:    30,
 	}); err == nil {
 		t.Fatal("an uninitialized CA issued a certificate")
 	}
@@ -104,8 +107,9 @@ func TestNewUninitializedBecomesUsableAfterInit(t *testing.T) {
 		t.Fatal("the CA is still uninitialized after Init")
 	}
 	if _, err := ca.IssueCertificate(context.Background(), &xkmssdk.TrustedCACertificateRequest{
-		Subject: xkmssdk.TrustedCASubject{CommonName: "leaf.example.test"},
-		Valid:   30,
+		TenantID: qrdbsdk.SystemTenantID,
+		Subject:  xkmssdk.TrustedCASubject{CommonName: "leaf.example.test"},
+		Valid:    30,
 	}); err != nil {
 		t.Fatalf("IssueCertificate after Init: %v", err)
 	}
@@ -122,8 +126,9 @@ func TestIssueCertificateNeverExportsThePrivateKey(t *testing.T) {
 	ca := New(t, "xkmsca Custody Root CA")
 
 	issued, err := ca.IssueCertificate(context.Background(), &xkmssdk.TrustedCACertificateRequest{
-		Subject: xkmssdk.TrustedCASubject{CommonName: "custody.example.test"},
-		Valid:   30,
+		TenantID: qrdbsdk.SystemTenantID,
+		Subject:  xkmssdk.TrustedCASubject{CommonName: "custody.example.test"},
+		Valid:    30,
 	})
 	if err != nil {
 		t.Fatalf("IssueCertificate: %v", err)

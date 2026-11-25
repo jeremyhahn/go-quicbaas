@@ -16,6 +16,7 @@
 package tpmsim
 
 import (
+	"context"
 	"crypto"
 	"crypto/x509"
 	"errors"
@@ -27,8 +28,10 @@ import (
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
-// PlatformPCR is the PCR the provisioned TPM treats as its platform PCR.
-const PlatformPCR = 16
+// PlatformPCR is the PCR the provisioned TPM treats as its platform PCR. It
+// must not be a resettable PCR (16 or 23): go-xkms refuses to seal the
+// platform policy to one.
+const PlatformPCR = 7
 
 // platformSRKHandle is the persistent handle of the Platform SRK, go-xkms's
 // default.
@@ -61,7 +64,7 @@ func Provision(t testing.TB) *Simulator {
 	if err != nil {
 		t.Fatalf("NewStorageFactory: %v", err)
 	}
-	hierarchyAuth, err := xkmssdk.NewLiteralSecretValue([]byte(tpmstore.DEFAULT_PASSWORD))
+	hierarchyAuth, err := xkmssdk.NewLiteralSecretValue(context.Background(), []byte(tpmstore.DEFAULT_PASSWORD))
 	if err != nil {
 		t.Fatalf("NewLiteralSecretValue: %v", err)
 	}
@@ -86,9 +89,11 @@ func Provision(t testing.TB) *Simulator {
 			RSAConfig:          &tpmstore.RSAConfig{KeySize: 2048},
 			SignatureAlgorithm: x509.SHA256WithRSAPSS.String(),
 		},
-		PlatformPCR:     PlatformPCR,
-		PlatformPCRBank: pkgtpm2.PCRBankSHA256,
-		GoldenPCRs:      []uint{0, 7},
+		PlatformPCRSelection: pkgtpm2.PlatformPCRSelection{
+			PlatformPCRs:    pkgtpm2.PCRSet{PlatformPCR},
+			PlatformPCRBank: pkgtpm2.PCRBankSHA256,
+		},
+		GoldenPCRs: []uint{0, 7},
 		SSRK: &pkgtpm2.SRKConfig{
 			Handle:        0x81000001,
 			HierarchyAuth: hierarchyAuth,
@@ -98,11 +103,10 @@ func Provision(t testing.TB) *Simulator {
 		PlatformSRK: &pkgtpm2.PlatformSRKConfig{SRKHandle: platformSRKHandle, PlatformPolicy: true},
 	}
 
-	certificates := tpmstore.NewFileCertStore(logger, storageFactory.Backend())
+	certificates := tpmstore.NewBlobCertStore(logger, storageFactory.KeyBackend())
 	tpm, err := pkgtpm2.NewTPM2(&pkgtpm2.Params{
 		Logger:    logger,
 		Config:    config,
-		BlobStore: storageFactory.BlobStore(),
 		CertStore: certificates,
 		Backend:   storageFactory.KeyBackend(),
 		FQDN:      "node1.quicbaas.test",

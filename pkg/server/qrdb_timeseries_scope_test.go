@@ -45,7 +45,7 @@ func startScopedTimeSeriesNode(t *testing.T) *qrdbnode.Node {
 	cfg.Raft.DataDir = t.TempDir()
 	cfg.Databases = []qrdbsdk.DaemonDatabaseConfig{
 		// pebble, not memory: the memory engine serves no time series.
-		{Name: "default", Engine: "mvcc", Backend: "pebble"},
+		{Name: "default", Backend: "pebble"},
 	}
 	node, err := qrdbnode.NewStandaloneNode(ctx, cfg, nil)
 	require.NoError(t, err)

@@ -84,8 +84,8 @@ func newProvenanceHarness(t *testing.T) *provenanceHarness {
 	t.Helper()
 	ctx := context.Background()
 
-	users := xkmswebauthn.NewMemoryUserStore()
-	creds := xkmswebauthn.NewMemoryCredentialStore()
+	users := newMemoryUserStore()
+	creds := newMemoryCredentialStore()
 
 	// Public registration enrols the first passkey of a NEW account in one
 	// real ceremony. go-xkms#1294 closed the other unauthenticated path --

@@ -33,11 +33,11 @@ const testModuleTenant = "system"
 // newBoundModuleStore returns a late-bound store whose factory is already
 // resolvable, wrapping xkms's real in-memory credential store, plus the pieces
 // a test asserts against.
-func newBoundModuleStore(t *testing.T) (*lateBoundWebAuthnFactorStore, *fakeUserAuthFactorClient, *xkmswebauthn.MemoryUserStore, xkmssdk.WebAuthnCredentialStore) {
+func newBoundModuleStore(t *testing.T) (*lateBoundWebAuthnFactorStore, *fakeUserAuthFactorClient, *memoryUserStore, xkmssdk.WebAuthnCredentialStore) {
 	t.Helper()
 	factors := &fakeUserAuthFactorClient{}
-	users := xkmswebauthn.NewMemoryUserStore()
-	inner := xkmswebauthn.NewMemoryCredentialStore()
+	users := newMemoryUserStore()
+	inner := newMemoryCredentialStore()
 	store := &lateBoundWebAuthnFactorStore{
 		WebAuthnCredentialStore: inner,
 		tenantID:                testModuleTenant,
@@ -54,7 +54,7 @@ func newBoundModuleStore(t *testing.T) (*lateBoundWebAuthnFactorStore, *fakeUser
 // and IAM initialisation.
 func newUnboundModuleStore(t *testing.T) (*lateBoundWebAuthnFactorStore, xkmssdk.WebAuthnCredentialStore) {
 	t.Helper()
-	inner := xkmswebauthn.NewMemoryCredentialStore()
+	inner := newMemoryCredentialStore()
 	store := &lateBoundWebAuthnFactorStore{
 		WebAuthnCredentialStore: inner,
 		tenantID:                testModuleTenant,
@@ -219,6 +219,10 @@ func (c *serializingFactorClient) RemoveAuthFactor(ctx context.Context, req *qrd
 	return c.inner.RemoveAuthFactor(ctx, req)
 }
 
+func (c *serializingFactorClient) DeleteAuthFactor(ctx context.Context, req *qrdbtransport.AuthFactorDeleteRequest) (*qrdbtransport.AuthFactorDeleteResponse, error) {
+	return c.inner.DeleteAuthFactor(ctx, req)
+}
+
 func (c *serializingFactorClient) RotateAuthFactor(ctx context.Context, req *qrdbtransport.AuthFactorRotateRequest) (*qrdbtransport.AuthFactorRotateResponse, error) {
 	return c.inner.RotateAuthFactor(ctx, req)
 }
@@ -327,7 +331,7 @@ func TestNewWebAuthnModuleCredentialStoreDecorator_Decorates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewWebAuthnModuleCredentialStoreDecorator: %v", err)
 	}
-	inner := xkmswebauthn.NewMemoryCredentialStore()
+	inner := newMemoryCredentialStore()
 	decorated := decorate(inner)
 	if decorated == nil {
 		t.Fatal("decorator returned nil for a valid store")
@@ -464,7 +468,7 @@ func TestDecorateCredentialStore_RejectsAnEmptyTenant(t *testing.T) {
 		t.Fatalf("NewWebAuthnServiceFactory: %v", err)
 	}
 
-	store, err := factory.DecorateCredentialStore(xkmswebauthn.NewMemoryCredentialStore(), "")
+	store, err := factory.DecorateCredentialStore(newMemoryCredentialStore(), "")
 	var cfgErr *WebAuthnFactorStoreConfigError
 	if !errors.As(err, &cfgErr) {
 		t.Fatalf("error = %v, want *WebAuthnFactorStoreConfigError", err)

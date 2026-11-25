@@ -519,7 +519,7 @@ func (s *Server) initializeCA() error {
 
 	// Create CA - derive KeyAttributes and CAConfig from the identity
 	issuingIdentity := caConfig.IssuingIdentity()
-	keyAttrs, err := issuingIdentity.ToKeyAttributes()
+	keyAttrs, err := issuingIdentity.ToKeyAttributes(context.Background())
 	if err != nil {
 		return api.NewOperationFailedError("derive CA key attributes", err)
 	}
@@ -2263,9 +2263,6 @@ func (s *Server) startService() error {
 		s.logger.Info("secret resolver registry wired into QuicBaaS facade")
 	}
 
-	// Update the ShardedClient's transport factory with the service reference
-	// for embedded transport mode (needed when creating embedded SDK clients).
-	s.qrdbClient.factory.kvService = svc
 	svc.SetQRDBClient(s.qrdbClient)
 	s.logger.Info("qrdb ShardedClient attached to service")
 

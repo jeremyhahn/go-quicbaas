@@ -492,9 +492,9 @@ func (f *WebAuthnServiceFactory) tenantStores(tenantID string) (xkmswebauthn.Use
 		return nil, nil, &WebAuthnFactoryConfigError{Field: "QRDB"}
 	}
 	users, creds, err := xkmssdk.NewWebAuthnQRDBUserStoreAdapter(xkmssdk.WebAuthnQRDBUserStoreOptions{
-		Users:    f.params.QRDB.Users(),
-		KV:       f.params.QRDB.KV(),
-		TenantID: tenantID,
+		Users:      f.params.QRDB.Users(),
+		DAOFactory: qrdbsdk.NewClientDAOFactory(f.params.QRDB),
+		TenantID:   tenantID,
 	})
 	if err != nil {
 		return nil, nil, err

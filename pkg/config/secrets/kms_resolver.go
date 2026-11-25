@@ -201,7 +201,7 @@ func (r *LocalKMSResolver) Resolve(ctx context.Context, raw string) (*SecretValu
 		if ensureErr != nil {
 			return nil, NewResolutionFailedError(op, raw, "failed to ensure secret in KMS", ensureErr)
 		}
-		return NewSecretValue(raw, secretData, StrategyLocalKMS)
+		return NewSecretValue(ctx, raw, secretData, StrategyLocalKMS)
 	}
 
 	// Retrieve the secret from the client
@@ -215,7 +215,7 @@ func (r *LocalKMSResolver) Resolve(ctx context.Context, raw string) (*SecretValu
 		return nil, NewResolutionFailedError(op, raw, "failed to retrieve secret from KMS", err)
 	}
 
-	return NewSecretValue(raw, secretData, StrategyLocalKMS)
+	return NewSecretValue(ctx, raw, secretData, StrategyLocalKMS)
 }
 
 // Ensure LocalKMSResolver implements SecretResolver.

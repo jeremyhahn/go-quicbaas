@@ -66,6 +66,16 @@ func (r *RoleRBAC) ListPermissions(_ context.Context, identity *qrdbtransport.Id
 	return out, nil
 }
 
+// ListOwnPermissions returns the permissions of the caller bound to ctx by
+// CallerContext; a context with no caller is refused.
+func (r *RoleRBAC) ListOwnPermissions(ctx context.Context) ([]qrdbtransport.PermissionInfo, error) {
+	identity := qrdbsdk.IdentityFromContext(ctx)
+	if identity == nil {
+		return nil, &NotAuthorizedError{Permission: "rbac:list-own-permissions"}
+	}
+	return r.ListPermissions(ctx, &qrdbtransport.Identity{Subject: identity.Subject, Roles: identity.Roles})
+}
+
 // Authorize permits the action only when a role of identity lists the exact
 // "resource:action" permission.
 func (r *RoleRBAC) Authorize(_ context.Context, identity *qrdbtransport.Identity, resource, action string) error {

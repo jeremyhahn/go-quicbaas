@@ -14,6 +14,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -37,10 +38,12 @@ func TestClusterCAKeyProtection_SealsThePassphrase(t *testing.T) {
 	protection, err := s.clusterCAKeyProtection()
 	require.NoError(t, err)
 	require.NotNil(t, protection.Passphrase)
-	buf, err := protection.Passphrase.Open()
+	buf, err := protection.Passphrase.Open(context.Background())
 	require.NoError(t, err)
 	defer buf.Destroy()
-	assert.Equal(t, "cluster-ca-passphrase", string(buf.Bytes()))
+	held, err := buf.EqualBytes([]byte("cluster-ca-passphrase"))
+	require.NoError(t, err)
+	assert.True(t, held, "the protected passphrase must hold the configured value")
 	assert.False(t, protection.AllowInsecure)
 
 	cfg.Raft.RaftEnrollment.CAKeyPassphrase = ""
@@ -60,7 +63,7 @@ func TestClusterCAKeyProtection_ProtectionFailureIsFatal(t *testing.T) {
 
 	sentinel := errors.New("mlock refused: cannot allocate locked pages")
 	restore := newClusterCAPassphrase
-	newClusterCAPassphrase = func([]byte) (*secure.Secret, error) { return nil, sentinel }
+	newClusterCAPassphrase = func(context.Context, []byte) (*secure.Secret, error) { return nil, sentinel }
 	defer func() { newClusterCAPassphrase = restore }()
 
 	_, err := s.clusterCAKeyProtection()

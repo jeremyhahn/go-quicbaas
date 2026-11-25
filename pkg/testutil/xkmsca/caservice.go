@@ -21,9 +21,21 @@ import (
 	"sync"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
+
+// requestTenant is the tenant a request is issued to: the one it names, or
+// the system tenant when it names none. The CA refuses a request without a
+// tenant; a served CA takes it from the caller, and this single-tenant test
+// CA has only the system tenant to take it from.
+func requestTenant(tenantID string) string {
+	if tenantID == "" {
+		return qrdbsdk.SystemTenantID
+	}
+	return tenantID
+}
 
 // CAService is the transport-shaped view of a real CA, for code that consumes
 // xkmstransport.CAService rather than a direct TrustedCA handle.
@@ -175,7 +187,7 @@ func (s *CAService) SignCSR(ctx context.Context, req *xkmstransport.SignCSRReque
 	cert, err := s.ca.SignCSR(ctx, req.CSRPEM, &xkmssdk.TrustedCASignOptions{
 		Profile:      req.Profile,
 		ValidityDays: req.ValidityDays,
-		TenantID:     req.TenantID,
+		TenantID:     requestTenant(req.TenantID),
 	})
 	if err != nil {
 		return nil, err
@@ -207,7 +219,8 @@ func (s *CAService) IssueCertificate(ctx context.Context, req *xkmstransport.Iss
 			CommonName:   req.CommonName,
 			Organization: req.Organization,
 		},
-		Valid: req.ValidityDays,
+		Valid:    req.ValidityDays,
+		TenantID: requestTenant(""),
 	})
 	if err != nil {
 		return nil, err

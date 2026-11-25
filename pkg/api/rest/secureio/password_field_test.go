@@ -90,8 +90,8 @@ func TestPasswordFieldUnmarshalJSON(t *testing.T) {
 			if f.Size() != len(tc.wantBytes) {
 				t.Fatalf("size mismatch: got %d, want %d", f.Size(), len(tc.wantBytes))
 			}
-			if string(f.Buffer().Bytes()) != string(tc.wantBytes) {
-				t.Fatalf("bytes mismatch: got %q, want %q", f.Buffer().Bytes(), tc.wantBytes)
+			if eq, err := f.Buffer().EqualBytes(tc.wantBytes); err != nil || !eq {
+				t.Fatalf("bytes mismatch: equal = %v, %v; want %q", eq, err, tc.wantBytes)
 			}
 		})
 	}

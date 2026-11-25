@@ -416,8 +416,13 @@ func sshPassphraseProviderFromB64(encoded string) (secure.PassphraseProvider, er
 	if err != nil {
 		return nil, err
 	}
-	//secure:unborrowed allocates-protected copy moves caller bytes into a new protected passphrase buffer.
-	copy(buf.Bytes(), raw)
+	if err := buf.WithBytes(func(dst []byte) error {
+		copy(dst, raw)
+		return nil
+	}); err != nil {
+		buf.Destroy()
+		return nil, err
+	}
 	return &sshStaticPassphraseProvider{buf: buf}, nil
 }
 
@@ -434,7 +439,15 @@ func (p *sshStaticPassphraseProvider) Passphrase(_ context.Context, _ string) (*
 	if err != nil {
 		return nil, err
 	}
-	//secure:unborrowed allocates-protected copy moves bytes between protected buffers for caller-owned cloning.
-	copy(clone.Bytes(), p.buf.Bytes())
+	// The two borrows are on different Buffers, so nesting them is safe.
+	if err := p.buf.WithBytes(func(src []byte) error {
+		return clone.WithBytes(func(dst []byte) error {
+			copy(dst, src)
+			return nil
+		})
+	}); err != nil {
+		clone.Destroy()
+		return nil, err
+	}
 	return clone, nil
 }

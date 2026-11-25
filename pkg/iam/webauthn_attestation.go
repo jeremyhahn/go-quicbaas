@@ -18,6 +18,7 @@ import (
 	"encoding/hex"
 	"strings"
 
+	qrdbrole "github.com/jeremyhahn/go-qrdb/pkg/role"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
@@ -507,24 +508,11 @@ func (r *adminRoleResolver) IsAdministrativeAccount(ctx context.Context, tenantI
 		return false, &WebAuthnUserResolverError{Reason: "canonical user resolver returned nil user"}
 	}
 
-	adminRoleIDs, err := qrdbsdk.SystemRoleIDs(lookupCtx, r.roles, tenantID, qrdbsdk.RoleNameAdmin)
-	if err != nil {
-		return true, nil
-	}
-	soRoleIDs, err := qrdbsdk.SystemRoleIDs(lookupCtx, r.roles, tenantID, qrdbsdk.RoleNameSO)
-	if err != nil {
-		return true, nil
-	}
-
-	administrativeRoleIDs := make(map[string]struct{}, len(adminRoleIDs)+len(soRoleIDs))
-	for _, roleID := range adminRoleIDs {
-		administrativeRoleIDs[roleID] = struct{}{}
-	}
-	for _, roleID := range soRoleIDs {
-		administrativeRoleIDs[roleID] = struct{}{}
-	}
-	for _, roleID := range user.Roles {
-		if _, ok := administrativeRoleIDs[roleID]; ok {
+	// A role lookup that fails cannot clear the account, so it is treated as
+	// administrative: the stricter attestation policy applies.
+	for _, roleName := range []string{qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameSO} {
+		holds, err := qrdbrole.HoldsSystemRole(lookupCtx, r.roles, tenantID, user.Roles, roleName)
+		if err != nil || holds {
 			return true, nil
 		}
 	}

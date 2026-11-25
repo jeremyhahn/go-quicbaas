@@ -579,6 +579,19 @@ resolve**, and the precedence between built-in routes, `quicbaas`, `xkms` and a
 host module is to be written here rather than left to the mount sequence in
 `unifiedModuleServerOptions`.
 
+**The route guard's verdict does not depend on registration order.** It claims
+routes in a stated precedence, not in the mount sequence: the mounted modules
+(`quicbaas`, `xkms`) before every host module, and within each set the module
+whose name sorts first. So whichever order a composition declares its host
+modules in, the guard either passes or fails with the same error: the same
+fault when there are several, and the same `Owner` and `Module` in a
+`HostModuleRouteConflictError` (the owner is the claimant whose name sorts
+first). `pkg/server/module_host_order_test.go` runs the guard over every
+ordering of the module sets and requires a single outcome. A host-module overlap
+never reaches chi because construction fails. Only the pre-existing mounted
+overlap (#361) is still served in mount order, and it stays a defect to
+resolve.
+
 Every module route must be registered through the registrar's
 `Handle` (declaring its `resource:action` permission) or `HandlePublic`
 (genuine first-contact surfaces only). A route registered straight onto the

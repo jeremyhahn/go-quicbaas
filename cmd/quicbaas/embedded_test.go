@@ -15,6 +15,7 @@ package main
 
 import (
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -76,4 +77,39 @@ func TestEmbeddedServerConfig_ScopesStateToItsDir(t *testing.T) {
 	assert.NotEqual(t, first.Storage.DataDir, second.Storage.DataDir)
 	assert.Equal(t, embeddedCLITrustDomain, second.IAM.SPIFFETrustDomain)
 	assert.Equal(t, uint64(1), uint64(second.Raft.NodeID))
+}
+
+// TestGetOrCreateEmbeddedServer_ConcurrentFirstAccessSharesOneServer is the
+// regression test for simultaneous first access: the process runs one
+// embedded go-qrdb node, so concurrent first callers must wait for the one
+// creation in flight and share its server, not race a second creation that
+// the node guard refuses.
+func TestGetOrCreateEmbeddedServer_ConcurrentFirstAccessSharesOneServer(t *testing.T) {
+	require.NoError(t, shutdownEmbeddedServer())
+	t.Cleanup(func() { _ = shutdownEmbeddedServer() })
+
+	const callers = 8
+	var (
+		wg    sync.WaitGroup
+		start = make(chan struct{})
+		srvs  = make([]*embeddedServer, callers)
+		errs  = make([]error, callers)
+	)
+	for i := 0; i < callers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			srvs[i], errs[i] = getOrCreateEmbeddedServer()
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	for i := 0; i < callers; i++ {
+		require.NoError(t, errs[i], "caller %d", i)
+		require.NotNil(t, srvs[i], "caller %d", i)
+		assert.Same(t, srvs[0], srvs[i], "caller %d got a different server", i)
+	}
+	assert.Same(t, srvs[0], embeddedServerHolder.Load())
 }

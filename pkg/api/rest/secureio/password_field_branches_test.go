@@ -167,7 +167,7 @@ func TestPasswordFieldUnmarshalExactFit(t *testing.T) {
 	if f.Size() != len(plaintext) {
 		t.Fatalf("Size() = %d, want %d", f.Size(), len(plaintext))
 	}
-	if string(f.Buffer().Bytes()) != string(plaintext) {
-		t.Fatalf("Bytes() = %q, want %q", f.Buffer().Bytes(), plaintext)
+	if eq, err := f.Buffer().EqualBytes(plaintext); err != nil || !eq {
+		t.Fatalf("EqualBytes = %v, %v; want %q", eq, err, plaintext)
 	}
 }

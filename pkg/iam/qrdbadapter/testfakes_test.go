@@ -267,6 +267,10 @@ func (f *fakeUserServicer) ListUsers(ctx context.Context, req *qrdbsdk.ListUsers
 
 func (f *fakeUserServicer) EnableUser(_ context.Context, _ uint64) error  { return nil }
 func (f *fakeUserServicer) DisableUser(_ context.Context, _ uint64) error { return nil }
+func (f *fakeUserServicer) SuspendUser(_ context.Context, _ uint64) error { return nil }
+func (f *fakeUserServicer) UnsuspendUser(_ context.Context, _ uint64) error {
+	return nil
+}
 
 var _ qrdbsdk.UserServicer = (*fakeUserServicer)(nil)
 

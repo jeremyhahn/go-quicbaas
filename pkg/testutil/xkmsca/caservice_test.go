@@ -448,7 +448,7 @@ func TestWithoutCABundle(t *testing.T) {
 		t.Fatalf("CACertificate: %v", err)
 	}
 	csrPEM, _ := newCSR(t, "leaf.example.test")
-	if _, err := faulted.SignCSR(context.Background(), csrPEM, &xkmssdk.TrustedCASignOptions{Profile: "client"}); err != nil {
+	if _, err := faulted.SignCSR(context.Background(), csrPEM, &xkmssdk.TrustedCASignOptions{Profile: "client", TenantID: requestTenant("")}); err != nil {
 		t.Fatalf("SignCSR through the faulted CA: %v", err)
 	}
 }

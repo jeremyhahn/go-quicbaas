@@ -390,3 +390,24 @@ func (p *sealedAdminServicerProxy) GetTopology(ctx context.Context) (*qrdbsdk.To
 	}
 	return svc.GetTopology(ctx)
 }
+
+// NodeCompaction resolves the live servicer and forwards the read of the
+// node's scheduled-compaction policy. A sealed node has no data plane to
+// compact, so it fails closed like every other admin call.
+func (p *sealedAdminServicerProxy) NodeCompaction(ctx context.Context) (*qrdbsdk.CompactionPolicy, error) {
+	svc, err := p.resolve()
+	if err != nil {
+		return nil, err
+	}
+	return svc.NodeCompaction(ctx)
+}
+
+// SetNodeCompaction resolves the live servicer and forwards the new
+// scheduled-compaction policy unchanged.
+func (p *sealedAdminServicerProxy) SetNodeCompaction(ctx context.Context, policy *qrdbsdk.CompactionPolicy) error {
+	svc, err := p.resolve()
+	if err != nil {
+		return err
+	}
+	return svc.SetNodeCompaction(ctx, policy)
+}
