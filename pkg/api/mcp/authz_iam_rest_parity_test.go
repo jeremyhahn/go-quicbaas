@@ -63,10 +63,7 @@ func TestIAMRESTParityMCPPermissions(t *testing.T) {
 		"quicbaas_iam_gdpr_consent_get":          {"tenants", "read"},
 		"quicbaas_iam_gdpr_consent_list":         {"tenants", "read"},
 		"quicbaas_iam_gdpr_export_request":       {"tenants", "create"},
-		"quicbaas_iam_gdpr_export_status":        {"tenants", "read"},
 		"quicbaas_iam_gdpr_deletion_request":     {"tenants", "create"},
-		"quicbaas_iam_gdpr_deletion_cancel":      {"tenants", "delete"},
-		"quicbaas_iam_gdpr_deletion_status":      {"tenants", "read"},
 		"quicbaas_iam_policy_create":             {"tenants", "create"},
 		"quicbaas_iam_policy_get":                {"tenants", "read"},
 		"quicbaas_iam_policy_list":               {"tenants", "read"},
@@ -103,13 +100,18 @@ func TestIAMRESTParityMCPTenantScoped(t *testing.T) {
 }
 
 // TestIAMRESTParityMCPStillDead pins the login handshake and the erasure
-// tools as declared dead: unmapped, and not public.
+// tools as declared dead: unmapped, and not public. The gdpr export-status,
+// deletion-cancel and deletion-status tools are dead as well: they look the
+// export or deletion record up by ID with no tenant check.
 func TestIAMRESTParityMCPStillDead(t *testing.T) {
 	for _, tool := range []string{
 		"quicbaas_iam_federation_beginlogin",
 		"quicbaas_iam_federation_handlecallback",
 		"quicbaas_iam_gdpr_deletion_process",
 		"quicbaas_iam_gdpr_export_generate",
+		"quicbaas_iam_gdpr_export_status",
+		"quicbaas_iam_gdpr_deletion_cancel",
+		"quicbaas_iam_gdpr_deletion_status",
 	} {
 		if _, ok := qrdbToolExactMapping[tool]; ok {
 			t.Errorf("tool %q must carry no grant", tool)

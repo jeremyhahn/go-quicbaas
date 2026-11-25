@@ -295,6 +295,11 @@ var grpcMethodPermissions = map[string]methodPermission{
 	// grant; every other IAMService method stays unmapped and default-denied.
 	// GenerateExport and ProcessDeletion stay unmapped by owner ruling: export
 	// generation and erasure processing are refused on every transport.
+	// The delegated-admin assignment verbs, CheckAdminPermission,
+	// EndImpersonation, GetActiveImpersonations, GetExportStatus,
+	// CancelDeletion and GetDeletionStatus stay unmapped as well: each handler
+	// looks its object up by ID with no tenant check, so a grant would let a
+	// caller reach another tenant's record.
 	// Mirrors REST POST /api/v1/iam/users/{user_id}/approve (users:enable).
 	"/quicbaas.iam.v1.IAMService/ApproveUser": {"users", "enable"},
 	// Mirrors QRDBService CreateUser (users:create). A request naming roles
@@ -390,24 +395,8 @@ var grpcMethodPermissions = map[string]methodPermission{
 	// Mirrors REST DELETE .../users/{user_id}/roles/{role} (tenants:delete).
 	"/quicbaas.iam.v1.IAMService/RevokeRole": {"tenants", "delete"},
 
-	// Mirrors REST POST /api/v1/admin/assignments/ (roles:assign).
-	"/quicbaas.iam.v1.IAMService/CreateAdminAssignment": {"roles", "assign"},
-	// Mirrors REST GET /api/v1/admin/assignments/{assignment_id} (roles:read).
-	"/quicbaas.iam.v1.IAMService/GetAdminAssignment": {"roles", "read"},
-	// Mirrors REST PUT /api/v1/admin/assignments/{assignment_id} (roles:assign).
-	"/quicbaas.iam.v1.IAMService/UpdateAdminAssignment": {"roles", "assign"},
-	// Mirrors REST DELETE /api/v1/admin/assignments/{assignment_id} (roles:unassign).
-	"/quicbaas.iam.v1.IAMService/DeleteAdminAssignment": {"roles", "unassign"},
-	// Mirrors REST GET /api/v1/admin/assignments/ (roles:list).
-	"/quicbaas.iam.v1.IAMService/ListAdminAssignments": {"roles", "list"},
-	// Mirrors REST POST /api/v1/admin/check-permission (permissions:resolve).
-	"/quicbaas.iam.v1.IAMService/CheckAdminPermission": {"permissions", "resolve"},
 	// Mirrors REST POST /api/v1/admin/impersonation/start (users:update).
 	"/quicbaas.iam.v1.IAMService/StartImpersonation": {"users", "update"},
-	// Mirrors REST POST /api/v1/admin/impersonation/{session_id}/end (users:update).
-	"/quicbaas.iam.v1.IAMService/EndImpersonation": {"users", "update"},
-	// Mirrors REST GET /api/v1/admin/users/{user_id}/impersonations (users:read).
-	"/quicbaas.iam.v1.IAMService/GetActiveImpersonations": {"users", "read"},
 
 	// Mirrors REST POST .../users/{user_id}/gdpr/consent (tenants:create).
 	"/quicbaas.iam.v1.IAMService/GrantConsent": {"tenants", "create"},
@@ -420,15 +409,9 @@ var grpcMethodPermissions = map[string]methodPermission{
 
 	// Mirrors REST POST .../users/{user_id}/gdpr/export (tenants:create).
 	"/quicbaas.iam.v1.IAMService/RequestExport": {"tenants", "create"},
-	// Mirrors REST GET .../users/{user_id}/gdpr/export/{export_id} (tenants:read).
-	"/quicbaas.iam.v1.IAMService/GetExportStatus": {"tenants", "read"},
 
 	// Mirrors REST POST .../users/{user_id}/gdpr/deletion (tenants:create).
 	"/quicbaas.iam.v1.IAMService/RequestDeletion": {"tenants", "create"},
-	// Mirrors REST DELETE .../users/{user_id}/gdpr/deletion/{deletion_id} (tenants:delete).
-	"/quicbaas.iam.v1.IAMService/CancelDeletion": {"tenants", "delete"},
-	// Mirrors REST GET .../users/{user_id}/gdpr/deletion/{deletion_id} (tenants:read).
-	"/quicbaas.iam.v1.IAMService/GetDeletionStatus": {"tenants", "read"},
 
 	// Mirrors REST PUT .../users/{user_id} (tenants:create). REST's handler
 	// checks nothing more, so there is no grpcRequestPermissions entry.

@@ -191,42 +191,26 @@ service IAMService {
   }
 
   // Delegated Administration
-  // CreateAdminAssignment mirrors REST POST /api/v1/admin/assignments/ and takes its roles:assign grant.
-  rpc CreateAdminAssignment(CreateAdminAssignmentRequest) returns (AdminAssignment) {
-      option (qrdb.v1.permission) = "roles:assign";
-  }
-  // GetAdminAssignment mirrors REST GET /api/v1/admin/assignments/{assignment_id} and takes its roles:read grant.
-  rpc GetAdminAssignment(GetAdminAssignmentRequest) returns (AdminAssignment) {
-      option (qrdb.v1.permission) = "roles:read";
-  }
-  // UpdateAdminAssignment mirrors REST PUT /api/v1/admin/assignments/{assignment_id} and takes its roles:assign grant.
-  rpc UpdateAdminAssignment(UpdateAdminAssignmentRequest) returns (AdminAssignment) {
-      option (qrdb.v1.permission) = "roles:assign";
-  }
-  // DeleteAdminAssignment mirrors REST DELETE /api/v1/admin/assignments/{assignment_id} and takes its roles:unassign grant.
-  rpc DeleteAdminAssignment(DeleteAdminAssignmentRequest) returns (DeleteAdminAssignmentResponse) {
-      option (qrdb.v1.permission) = "roles:unassign";
-  }
-  // ListAdminAssignments mirrors REST GET /api/v1/admin/assignments/ and takes its roles:list grant.
-  rpc ListAdminAssignments(ListAdminAssignmentsRequest) returns (AdminAssignmentList) {
-      option (qrdb.v1.permission) = "roles:list";
-  }
-  // CheckAdminPermission mirrors REST POST /api/v1/admin/check-permission and takes its permissions:resolve grant.
-  rpc CheckAdminPermission(CheckAdminPermissionRequest) returns (CheckAdminPermissionResponse) {
-      option (qrdb.v1.permission) = "permissions:resolve";
-  }
+  // CreateAdminAssignment carries no permission option: its handler looks the assignment up by ID with no tenant check, so it stays default-denied.
+  rpc CreateAdminAssignment(CreateAdminAssignmentRequest) returns (AdminAssignment);
+  // GetAdminAssignment carries no permission option: its handler looks the assignment up by ID with no tenant check, so it stays default-denied.
+  rpc GetAdminAssignment(GetAdminAssignmentRequest) returns (AdminAssignment);
+  // UpdateAdminAssignment carries no permission option: its handler looks the assignment up by ID with no tenant check, so it stays default-denied.
+  rpc UpdateAdminAssignment(UpdateAdminAssignmentRequest) returns (AdminAssignment);
+  // DeleteAdminAssignment carries no permission option: its handler looks the assignment up by ID with no tenant check, so it stays default-denied.
+  rpc DeleteAdminAssignment(DeleteAdminAssignmentRequest) returns (DeleteAdminAssignmentResponse);
+  // ListAdminAssignments carries no permission option: its handler looks the assignment up by ID with no tenant check, so it stays default-denied.
+  rpc ListAdminAssignments(ListAdminAssignmentsRequest) returns (AdminAssignmentList);
+  // CheckAdminPermission carries no permission option: its handler looks the assignment up by ID with no tenant check, so it stays default-denied.
+  rpc CheckAdminPermission(CheckAdminPermissionRequest) returns (CheckAdminPermissionResponse);
   // StartImpersonation mirrors REST POST /api/v1/admin/impersonation/start and takes its users:update grant.
   rpc StartImpersonation(StartImpersonationRequest) returns (ImpersonationSession) {
       option (qrdb.v1.permission) = "users:update";
   }
-  // EndImpersonation mirrors REST POST /api/v1/admin/impersonation/{session_id}/end and takes its users:update grant.
-  rpc EndImpersonation(EndImpersonationRequest) returns (EndImpersonationResponse) {
-      option (qrdb.v1.permission) = "users:update";
-  }
-  // GetActiveImpersonations mirrors REST GET /api/v1/admin/users/{user_id}/impersonations and takes its users:read grant.
-  rpc GetActiveImpersonations(GetActiveImpersonationsRequest) returns (ImpersonationSessionList) {
-      option (qrdb.v1.permission) = "users:read";
-  }
+  // EndImpersonation carries no permission option: its handler looks the impersonation session up by ID with no tenant check, so it stays default-denied.
+  rpc EndImpersonation(EndImpersonationRequest) returns (EndImpersonationResponse);
+  // GetActiveImpersonations carries no permission option: its handler looks the target user's sessions up by ID with no tenant check, so it stays default-denied.
+  rpc GetActiveImpersonations(GetActiveImpersonationsRequest) returns (ImpersonationSessionList);
 
   // GDPR Consent Management
   // GrantConsent mirrors REST POST /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/consent and takes its tenants:create grant.
@@ -251,10 +235,8 @@ service IAMService {
   rpc RequestExport(RequestExportRequest) returns (DataExportRequest) {
       option (qrdb.v1.permission) = "tenants:create";
   }
-  // GetExportStatus mirrors REST GET /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/export/{export_id} and takes its tenants:read grant.
-  rpc GetExportStatus(GetExportStatusRequest) returns (DataExportRequest) {
-      option (qrdb.v1.permission) = "tenants:read";
-  }
+  // GetExportStatus carries no permission option: its handler looks the export request up by ID with no tenant check, so it stays default-denied.
+  rpc GetExportStatus(GetExportStatusRequest) returns (DataExportRequest);
   rpc GenerateExport(GenerateExportRequest) returns (UserDataExport);
 
   // GDPR Data Deletion
@@ -262,15 +244,11 @@ service IAMService {
   rpc RequestDeletion(RequestDeletionRequest) returns (DataDeletionRequest) {
       option (qrdb.v1.permission) = "tenants:create";
   }
-  // CancelDeletion mirrors REST DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/deletion/{deletion_id} and takes its tenants:delete grant.
-  rpc CancelDeletion(CancelDeletionRequest) returns (CancelDeletionResponse) {
-      option (qrdb.v1.permission) = "tenants:delete";
-  }
+  // CancelDeletion carries no permission option: its handler looks the deletion request up by ID with no tenant check, so it stays default-denied.
+  rpc CancelDeletion(CancelDeletionRequest) returns (CancelDeletionResponse);
   rpc ProcessDeletion(ProcessDeletionRequest) returns (DeletionSummary);
-  // GetDeletionStatus mirrors REST GET /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/deletion/{deletion_id} and takes its tenants:read grant.
-  rpc GetDeletionStatus(GetDeletionStatusRequest) returns (DataDeletionRequest) {
-      option (qrdb.v1.permission) = "tenants:read";
-  }
+  // GetDeletionStatus carries no permission option: its handler looks the deletion request up by ID with no tenant check, so it stays default-denied.
+  rpc GetDeletionStatus(GetDeletionStatusRequest) returns (DataDeletionRequest);
 }
 
 // Policy Enforcement Point Service

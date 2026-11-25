@@ -187,23 +187,23 @@ type IAMServiceClient interface {
 	// TestPolicy mirrors REST POST /api/v1/tenants/{tenant_id}/policies/test and takes its tenants:create grant.
 	TestPolicy(ctx context.Context, in *TestPolicyRequest, opts ...grpc.CallOption) (*TestPolicyResponse, error)
 	// Delegated Administration
-	// CreateAdminAssignment mirrors REST POST /api/v1/admin/assignments/ and takes its roles:assign grant.
+	// CreateAdminAssignment carries no permission option: its handler looks the assignment up by ID with no tenant check, so it stays default-denied.
 	CreateAdminAssignment(ctx context.Context, in *CreateAdminAssignmentRequest, opts ...grpc.CallOption) (*AdminAssignment, error)
-	// GetAdminAssignment mirrors REST GET /api/v1/admin/assignments/{assignment_id} and takes its roles:read grant.
+	// GetAdminAssignment carries no permission option: its handler looks the assignment up by ID with no tenant check, so it stays default-denied.
 	GetAdminAssignment(ctx context.Context, in *GetAdminAssignmentRequest, opts ...grpc.CallOption) (*AdminAssignment, error)
-	// UpdateAdminAssignment mirrors REST PUT /api/v1/admin/assignments/{assignment_id} and takes its roles:assign grant.
+	// UpdateAdminAssignment carries no permission option: its handler looks the assignment up by ID with no tenant check, so it stays default-denied.
 	UpdateAdminAssignment(ctx context.Context, in *UpdateAdminAssignmentRequest, opts ...grpc.CallOption) (*AdminAssignment, error)
-	// DeleteAdminAssignment mirrors REST DELETE /api/v1/admin/assignments/{assignment_id} and takes its roles:unassign grant.
+	// DeleteAdminAssignment carries no permission option: its handler looks the assignment up by ID with no tenant check, so it stays default-denied.
 	DeleteAdminAssignment(ctx context.Context, in *DeleteAdminAssignmentRequest, opts ...grpc.CallOption) (*DeleteAdminAssignmentResponse, error)
-	// ListAdminAssignments mirrors REST GET /api/v1/admin/assignments/ and takes its roles:list grant.
+	// ListAdminAssignments carries no permission option: its handler looks the assignment up by ID with no tenant check, so it stays default-denied.
 	ListAdminAssignments(ctx context.Context, in *ListAdminAssignmentsRequest, opts ...grpc.CallOption) (*AdminAssignmentList, error)
-	// CheckAdminPermission mirrors REST POST /api/v1/admin/check-permission and takes its permissions:resolve grant.
+	// CheckAdminPermission carries no permission option: its handler looks the assignment up by ID with no tenant check, so it stays default-denied.
 	CheckAdminPermission(ctx context.Context, in *CheckAdminPermissionRequest, opts ...grpc.CallOption) (*CheckAdminPermissionResponse, error)
 	// StartImpersonation mirrors REST POST /api/v1/admin/impersonation/start and takes its users:update grant.
 	StartImpersonation(ctx context.Context, in *StartImpersonationRequest, opts ...grpc.CallOption) (*ImpersonationSession, error)
-	// EndImpersonation mirrors REST POST /api/v1/admin/impersonation/{session_id}/end and takes its users:update grant.
+	// EndImpersonation carries no permission option: its handler looks the impersonation session up by ID with no tenant check, so it stays default-denied.
 	EndImpersonation(ctx context.Context, in *EndImpersonationRequest, opts ...grpc.CallOption) (*EndImpersonationResponse, error)
-	// GetActiveImpersonations mirrors REST GET /api/v1/admin/users/{user_id}/impersonations and takes its users:read grant.
+	// GetActiveImpersonations carries no permission option: its handler looks the target user's sessions up by ID with no tenant check, so it stays default-denied.
 	GetActiveImpersonations(ctx context.Context, in *GetActiveImpersonationsRequest, opts ...grpc.CallOption) (*ImpersonationSessionList, error)
 	// GDPR Consent Management
 	// GrantConsent mirrors REST POST /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/consent and takes its tenants:create grant.
@@ -217,16 +217,16 @@ type IAMServiceClient interface {
 	// GDPR Data Export
 	// RequestExport mirrors REST POST /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/export and takes its tenants:create grant.
 	RequestExport(ctx context.Context, in *RequestExportRequest, opts ...grpc.CallOption) (*DataExportRequest, error)
-	// GetExportStatus mirrors REST GET /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/export/{export_id} and takes its tenants:read grant.
+	// GetExportStatus carries no permission option: its handler looks the export request up by ID with no tenant check, so it stays default-denied.
 	GetExportStatus(ctx context.Context, in *GetExportStatusRequest, opts ...grpc.CallOption) (*DataExportRequest, error)
 	GenerateExport(ctx context.Context, in *GenerateExportRequest, opts ...grpc.CallOption) (*UserDataExport, error)
 	// GDPR Data Deletion
 	// RequestDeletion mirrors REST POST /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/deletion and takes its tenants:create grant.
 	RequestDeletion(ctx context.Context, in *RequestDeletionRequest, opts ...grpc.CallOption) (*DataDeletionRequest, error)
-	// CancelDeletion mirrors REST DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/deletion/{deletion_id} and takes its tenants:delete grant.
+	// CancelDeletion carries no permission option: its handler looks the deletion request up by ID with no tenant check, so it stays default-denied.
 	CancelDeletion(ctx context.Context, in *CancelDeletionRequest, opts ...grpc.CallOption) (*CancelDeletionResponse, error)
 	ProcessDeletion(ctx context.Context, in *ProcessDeletionRequest, opts ...grpc.CallOption) (*DeletionSummary, error)
-	// GetDeletionStatus mirrors REST GET /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/deletion/{deletion_id} and takes its tenants:read grant.
+	// GetDeletionStatus carries no permission option: its handler looks the deletion request up by ID with no tenant check, so it stays default-denied.
 	GetDeletionStatus(ctx context.Context, in *GetDeletionStatusRequest, opts ...grpc.CallOption) (*DataDeletionRequest, error)
 }
 
@@ -953,23 +953,23 @@ type IAMServiceServer interface {
 	// TestPolicy mirrors REST POST /api/v1/tenants/{tenant_id}/policies/test and takes its tenants:create grant.
 	TestPolicy(context.Context, *TestPolicyRequest) (*TestPolicyResponse, error)
 	// Delegated Administration
-	// CreateAdminAssignment mirrors REST POST /api/v1/admin/assignments/ and takes its roles:assign grant.
+	// CreateAdminAssignment carries no permission option: its handler looks the assignment up by ID with no tenant check, so it stays default-denied.
 	CreateAdminAssignment(context.Context, *CreateAdminAssignmentRequest) (*AdminAssignment, error)
-	// GetAdminAssignment mirrors REST GET /api/v1/admin/assignments/{assignment_id} and takes its roles:read grant.
+	// GetAdminAssignment carries no permission option: its handler looks the assignment up by ID with no tenant check, so it stays default-denied.
 	GetAdminAssignment(context.Context, *GetAdminAssignmentRequest) (*AdminAssignment, error)
-	// UpdateAdminAssignment mirrors REST PUT /api/v1/admin/assignments/{assignment_id} and takes its roles:assign grant.
+	// UpdateAdminAssignment carries no permission option: its handler looks the assignment up by ID with no tenant check, so it stays default-denied.
 	UpdateAdminAssignment(context.Context, *UpdateAdminAssignmentRequest) (*AdminAssignment, error)
-	// DeleteAdminAssignment mirrors REST DELETE /api/v1/admin/assignments/{assignment_id} and takes its roles:unassign grant.
+	// DeleteAdminAssignment carries no permission option: its handler looks the assignment up by ID with no tenant check, so it stays default-denied.
 	DeleteAdminAssignment(context.Context, *DeleteAdminAssignmentRequest) (*DeleteAdminAssignmentResponse, error)
-	// ListAdminAssignments mirrors REST GET /api/v1/admin/assignments/ and takes its roles:list grant.
+	// ListAdminAssignments carries no permission option: its handler looks the assignment up by ID with no tenant check, so it stays default-denied.
 	ListAdminAssignments(context.Context, *ListAdminAssignmentsRequest) (*AdminAssignmentList, error)
-	// CheckAdminPermission mirrors REST POST /api/v1/admin/check-permission and takes its permissions:resolve grant.
+	// CheckAdminPermission carries no permission option: its handler looks the assignment up by ID with no tenant check, so it stays default-denied.
 	CheckAdminPermission(context.Context, *CheckAdminPermissionRequest) (*CheckAdminPermissionResponse, error)
 	// StartImpersonation mirrors REST POST /api/v1/admin/impersonation/start and takes its users:update grant.
 	StartImpersonation(context.Context, *StartImpersonationRequest) (*ImpersonationSession, error)
-	// EndImpersonation mirrors REST POST /api/v1/admin/impersonation/{session_id}/end and takes its users:update grant.
+	// EndImpersonation carries no permission option: its handler looks the impersonation session up by ID with no tenant check, so it stays default-denied.
 	EndImpersonation(context.Context, *EndImpersonationRequest) (*EndImpersonationResponse, error)
-	// GetActiveImpersonations mirrors REST GET /api/v1/admin/users/{user_id}/impersonations and takes its users:read grant.
+	// GetActiveImpersonations carries no permission option: its handler looks the target user's sessions up by ID with no tenant check, so it stays default-denied.
 	GetActiveImpersonations(context.Context, *GetActiveImpersonationsRequest) (*ImpersonationSessionList, error)
 	// GDPR Consent Management
 	// GrantConsent mirrors REST POST /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/consent and takes its tenants:create grant.
@@ -983,16 +983,16 @@ type IAMServiceServer interface {
 	// GDPR Data Export
 	// RequestExport mirrors REST POST /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/export and takes its tenants:create grant.
 	RequestExport(context.Context, *RequestExportRequest) (*DataExportRequest, error)
-	// GetExportStatus mirrors REST GET /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/export/{export_id} and takes its tenants:read grant.
+	// GetExportStatus carries no permission option: its handler looks the export request up by ID with no tenant check, so it stays default-denied.
 	GetExportStatus(context.Context, *GetExportStatusRequest) (*DataExportRequest, error)
 	GenerateExport(context.Context, *GenerateExportRequest) (*UserDataExport, error)
 	// GDPR Data Deletion
 	// RequestDeletion mirrors REST POST /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/deletion and takes its tenants:create grant.
 	RequestDeletion(context.Context, *RequestDeletionRequest) (*DataDeletionRequest, error)
-	// CancelDeletion mirrors REST DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/deletion/{deletion_id} and takes its tenants:delete grant.
+	// CancelDeletion carries no permission option: its handler looks the deletion request up by ID with no tenant check, so it stays default-denied.
 	CancelDeletion(context.Context, *CancelDeletionRequest) (*CancelDeletionResponse, error)
 	ProcessDeletion(context.Context, *ProcessDeletionRequest) (*DeletionSummary, error)
-	// GetDeletionStatus mirrors REST GET /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/deletion/{deletion_id} and takes its tenants:read grant.
+	// GetDeletionStatus carries no permission option: its handler looks the deletion request up by ID with no tenant check, so it stays default-denied.
 	GetDeletionStatus(context.Context, *GetDeletionStatusRequest) (*DataDeletionRequest, error)
 }
 

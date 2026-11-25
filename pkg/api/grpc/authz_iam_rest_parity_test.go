@@ -14,9 +14,14 @@
 package grpc
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // iamRESTParityGrants is the grant REST requires for the route each of these
@@ -64,24 +69,8 @@ var iamRESTParityGrants = map[string]methodPermission{
 	"/quicbaas.iam.v1.IAMService/AssignRole": {"tenants", "create"},
 	// DELETE .../users/{user_id}/roles/{role}
 	"/quicbaas.iam.v1.IAMService/RevokeRole": {"tenants", "delete"},
-	// POST /api/v1/admin/assignments/
-	"/quicbaas.iam.v1.IAMService/CreateAdminAssignment": {"roles", "assign"},
-	// GET /api/v1/admin/assignments/{assignment_id}
-	"/quicbaas.iam.v1.IAMService/GetAdminAssignment": {"roles", "read"},
-	// PUT /api/v1/admin/assignments/{assignment_id}
-	"/quicbaas.iam.v1.IAMService/UpdateAdminAssignment": {"roles", "assign"},
-	// DELETE /api/v1/admin/assignments/{assignment_id}
-	"/quicbaas.iam.v1.IAMService/DeleteAdminAssignment": {"roles", "unassign"},
-	// GET /api/v1/admin/assignments/
-	"/quicbaas.iam.v1.IAMService/ListAdminAssignments": {"roles", "list"},
-	// POST /api/v1/admin/check-permission
-	"/quicbaas.iam.v1.IAMService/CheckAdminPermission": {"permissions", "resolve"},
 	// POST /api/v1/admin/impersonation/start
 	"/quicbaas.iam.v1.IAMService/StartImpersonation": {"users", "update"},
-	// POST /api/v1/admin/impersonation/{session_id}/end
-	"/quicbaas.iam.v1.IAMService/EndImpersonation": {"users", "update"},
-	// GET /api/v1/admin/users/{user_id}/impersonations
-	"/quicbaas.iam.v1.IAMService/GetActiveImpersonations": {"users", "read"},
 	// POST .../users/{user_id}/gdpr/consent
 	"/quicbaas.iam.v1.IAMService/GrantConsent": {"tenants", "create"},
 	// PUT .../users/{user_id}/gdpr/consent/{purpose}/withdraw
@@ -92,14 +81,8 @@ var iamRESTParityGrants = map[string]methodPermission{
 	"/quicbaas.iam.v1.IAMService/ListUserConsents": {"tenants", "read"},
 	// POST .../users/{user_id}/gdpr/export
 	"/quicbaas.iam.v1.IAMService/RequestExport": {"tenants", "create"},
-	// GET .../users/{user_id}/gdpr/export/{export_id}
-	"/quicbaas.iam.v1.IAMService/GetExportStatus": {"tenants", "read"},
 	// POST .../users/{user_id}/gdpr/deletion
 	"/quicbaas.iam.v1.IAMService/RequestDeletion": {"tenants", "create"},
-	// DELETE .../users/{user_id}/gdpr/deletion/{deletion_id}
-	"/quicbaas.iam.v1.IAMService/CancelDeletion": {"tenants", "delete"},
-	// GET .../users/{user_id}/gdpr/deletion/{deletion_id}
-	"/quicbaas.iam.v1.IAMService/GetDeletionStatus": {"tenants", "read"},
 	// PUT .../users/{user_id}
 	"/quicbaas.iam.v1.IAMService/UpdateUser": {"tenants", "create"},
 }
@@ -123,5 +106,60 @@ func TestIAMGRPCErasureVerbsStayUnmapped(t *testing.T) {
 		_, mapped := grpcMethodPermissions[method]
 		assert.False(t, mapped, "%s must carry no grant", method)
 		assert.False(t, publicGRPCMethods[method], "%s must not be public", method)
+	}
+}
+
+// TestIAMGRPCTenantUncheckedVerbsStayRefused pins the delegated-admin
+// assignment verbs, CheckAdminPermission, EndImpersonation,
+// GetActiveImpersonations, GetExportStatus, CancelDeletion and
+// GetDeletionStatus as unmapped and not public. Each handler looks its object
+// up by ID with no tenant check, so no grant is copied onto it: a caller
+// holding the REST route's grant is still refused, before the authorizer is
+// asked anything.
+func TestIAMGRPCTenantUncheckedVerbsStayRefused(t *testing.T) {
+	restGrants := map[string]string{
+		// POST /api/v1/admin/assignments/
+		"/quicbaas.iam.v1.IAMService/CreateAdminAssignment": "roles:assign",
+		// GET /api/v1/admin/assignments/{assignment_id}
+		"/quicbaas.iam.v1.IAMService/GetAdminAssignment": "roles:read",
+		// PUT /api/v1/admin/assignments/{assignment_id}
+		"/quicbaas.iam.v1.IAMService/UpdateAdminAssignment": "roles:assign",
+		// DELETE /api/v1/admin/assignments/{assignment_id}
+		"/quicbaas.iam.v1.IAMService/DeleteAdminAssignment": "roles:unassign",
+		// GET /api/v1/admin/assignments/
+		"/quicbaas.iam.v1.IAMService/ListAdminAssignments": "roles:list",
+		// POST /api/v1/admin/check-permission
+		"/quicbaas.iam.v1.IAMService/CheckAdminPermission": "permissions:resolve",
+		// POST /api/v1/admin/impersonation/{session_id}/end
+		"/quicbaas.iam.v1.IAMService/EndImpersonation": "users:update",
+		// GET /api/v1/admin/users/{user_id}/impersonations
+		"/quicbaas.iam.v1.IAMService/GetActiveImpersonations": "users:read",
+		// GET .../users/{user_id}/gdpr/export/{export_id}
+		"/quicbaas.iam.v1.IAMService/GetExportStatus": "tenants:read",
+		// DELETE .../users/{user_id}/gdpr/deletion/{deletion_id}
+		"/quicbaas.iam.v1.IAMService/CancelDeletion": "tenants:delete",
+		// GET .../users/{user_id}/gdpr/deletion/{deletion_id}
+		"/quicbaas.iam.v1.IAMService/GetDeletionStatus": "tenants:read",
+	}
+	for method, grant := range restGrants {
+		t.Run(method, func(t *testing.T) {
+			_, mapped := grpcMethodPermissions[method]
+			assert.False(t, mapped, "%s must carry no grant", method)
+			assert.False(t, publicGRPCMethods[method], "%s must not be public", method)
+
+			authz := &grantSetAuthorizer{token: "tok", granted: map[string]bool{grant: true, "roles:assign": true}}
+			called := false
+			handler := func(context.Context, interface{}) (interface{}, error) {
+				called = true
+				return "ok", nil
+			}
+			_, err := UnaryAuthorizationInterceptor(authz)(ctxWithBearer("tok"), nil,
+				&grpc.UnaryServerInfo{FullMethod: method}, handler)
+			require.Error(t, err)
+			assert.Equal(t, codes.PermissionDenied, status.Code(err))
+			assert.Equal(t, (&UnmappedMethodError{Method: method}).Error(), status.Convert(err).Message())
+			assert.False(t, called, "handler must not run")
+			assert.Empty(t, authz.asked, "the authorizer must not be asked")
+		})
 	}
 }

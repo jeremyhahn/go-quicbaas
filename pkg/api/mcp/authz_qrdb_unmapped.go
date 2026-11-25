@@ -92,6 +92,20 @@ var unmappedToolGroups = []unmappedToolGroup{
 		},
 	},
 	{
+		// The gdpr export-status, deletion-cancel and deletion-status handlers
+		// look the export or deletion request up by ID with no tenant check
+		// after authorization, so a grant would let a caller read or cancel
+		// another tenant's request.
+		reason: "the handler looks the export or deletion request up by ID with no tenant " +
+			"check, so any grant would reach another tenant's record",
+		resolution: "a tenant check in the handler, then the REST route's grant",
+		tools: []string{
+			"quicbaas_iam_gdpr_export_status",
+			"quicbaas_iam_gdpr_deletion_cancel",
+			"quicbaas_iam_gdpr_deletion_status",
+		},
+	},
+	{
 		// No REST or gRPC PEP rule for the MCP MFA surface, and the qrdb
 		// registry offers TWO candidate families for the same concept:
 		// authfactor:* (challenge/enroll/list/revoke/verify) and

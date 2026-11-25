@@ -796,7 +796,9 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	// ruling each takes exactly its REST route's grant
 	// (pkg/api/rest/routes_permissions_generated.go), nothing wider. The
 	// federated login handshake and the erasure processing and export
-	// generation tools stay dead (authz_qrdb_unmapped.go).
+	// generation tools stay dead (authz_qrdb_unmapped.go), and so do the gdpr
+	// export-status, deletion-cancel and deletion-status tools: their handlers
+	// look the record up by ID with no tenant check.
 	"quicbaas_iam_federation_createprovider": {"tenants", "create"},
 	"quicbaas_iam_federation_getprovider":    {"tenants", "read"},
 	"quicbaas_iam_federation_listproviders":  {"tenants", "read"},
@@ -810,10 +812,7 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	"quicbaas_iam_gdpr_consent_get":          {"tenants", "read"},
 	"quicbaas_iam_gdpr_consent_list":         {"tenants", "read"},
 	"quicbaas_iam_gdpr_export_request":       {"tenants", "create"},
-	"quicbaas_iam_gdpr_export_status":        {"tenants", "read"},
 	"quicbaas_iam_gdpr_deletion_request":     {"tenants", "create"},
-	"quicbaas_iam_gdpr_deletion_cancel":      {"tenants", "delete"},
-	"quicbaas_iam_gdpr_deletion_status":      {"tenants", "read"},
 	"quicbaas_iam_policy_create":             {"tenants", "create"},
 	"quicbaas_iam_policy_get":                {"tenants", "read"},
 	"quicbaas_iam_policy_list":               {"tenants", "read"},
