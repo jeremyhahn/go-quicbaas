@@ -46,8 +46,26 @@ import (
 // components and the operator cert, which clients pin as their root.
 func newOperatorTLSIntegrationNode(t *testing.T) (*Server, service.IAMComponents, *x509.Certificate) {
 	t.Helper()
+	return bootOperatorTLSIntegrationNode(t, false)
+}
+
+// newEnforcingOperatorTLSIntegrationNode boots the node with
+// Security.RequireAuthz on, the integration cluster's posture, so the embedded
+// node runs go-qrdb's auth middleware and a bearer reaches the handler as an
+// authenticated identity with its tenant bound. With it off the node installs
+// no middleware and every request is anonymous.
+func newEnforcingOperatorTLSIntegrationNode(t *testing.T) (*Server, service.IAMComponents, *x509.Certificate) {
+	t.Helper()
+	return bootOperatorTLSIntegrationNode(t, true)
+}
+
+// bootOperatorTLSIntegrationNode builds the operator-TLS node with the given
+// authorization posture, set before the embedded qrdb node is built.
+func bootOperatorTLSIntegrationNode(t *testing.T, requireAuthz bool) (*Server, service.IAMComponents, *x509.Certificate) {
+	t.Helper()
 	setupOIDCTestXKMS(t)
 	srv := withTempServer(t)
+	srv.config.Security.RequireAuthz = requireAuthz
 	certFile, keyFile := writeOperatorPair(t, t.TempDir())
 	srv.config.Security.TLSEnabled = true
 	srv.config.Security.TLSClientAuth = false

@@ -23,9 +23,12 @@ import (
 // TestPIVLogin_TenantBearerCreatesRoleThroughComposedNode sends the bearer the
 // way the integration helpers do: bearer only, no client certificate, to the
 // node's own REST listener. The IAM role route has to bind the bearer's tenant
-// rather than refuse it 403 "no tenant is bound to the request" (#2134).
+// rather than refuse it 403 "no tenant is bound to the request" (#2134). The
+// node runs with authorization enforced, as the integration cluster does,
+// because a node with RequireAuthz off has no auth middleware and refuses
+// every IAM request 403 for want of a tenant.
 func TestPIVLogin_TenantBearerCreatesRoleThroughComposedNode(t *testing.T) {
-	srv, components, root := newOperatorTLSIntegrationNode(t)
+	srv, components, root := newEnforcingOperatorTLSIntegrationNode(t)
 	adminCert := provisionCertModeTenant(t, components, "acme")
 	hosted := hostedXKMSPIVLoginModule(t, srv)
 
