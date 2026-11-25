@@ -120,7 +120,9 @@ type tenantUnsealRouter struct {
 	// created is told after every tenant CreateTenant creates, so a tenant
 	// made through go-qrdb's native tenant service (the SDK's TenantMgmt())
 	// gets the same per-tenant defaults as one the IAM tenant manager makes.
-	// Nil tells no one.
+	// It is also told after every successful barrier init: a self-managed
+	// barrier tenant is created sealed, so its defaults can only be written
+	// once its barrier is initialized. Nil tells no one.
 	created *tenantCreatedHooks
 
 	// mu guards probe, which the qrdb server hands over while the node is
@@ -410,22 +412,38 @@ func (r *tenantUnsealRouter) GetQuotaUsage(ctx context.Context, tenantID string,
 	return svc.GetQuotaUsage(ctx, tenantID, resource)
 }
 
-// TenantBarrierInit forwards to the node's servicer.
+// TenantBarrierInit forwards to the node's servicer and, once the init
+// succeeds, tells the tenant-created hooks again: a self-managed barrier
+// tenant is created sealed, so the defaults its creation tried to write can
+// only land once its barrier is initialized. The hooks are idempotent.
 func (r *tenantUnsealRouter) TenantBarrierInit(ctx context.Context, tenantID string, passphrase []byte, threshold, shares int) (*qrdbtenant.TenantBarrierInitResult, error) {
 	svc, err := r.servicer()
 	if err != nil {
 		return nil, err
 	}
-	return svc.TenantBarrierInit(ctx, tenantID, passphrase, threshold, shares)
+	result, err := svc.TenantBarrierInit(ctx, tenantID, passphrase, threshold, shares)
+	if err != nil {
+		return nil, err
+	}
+	r.created.TenantCreated(ctx, tenantID)
+	return result, nil
 }
 
-// TenantBarrierInitWithStrategy forwards to the node's servicer.
+// TenantBarrierInitWithStrategy forwards to the node's servicer and, once the
+// init succeeds, tells the tenant-created hooks again: a self-managed barrier
+// tenant is created sealed, so the defaults its creation tried to write can
+// only land once its barrier is initialized. The hooks are idempotent.
 func (r *tenantUnsealRouter) TenantBarrierInitWithStrategy(ctx context.Context, tenantID string, passphrase []byte, threshold, shares int, strategyID seal.StrategyID) (*qrdbtenant.TenantBarrierInitResult, error) {
 	svc, err := r.servicer()
 	if err != nil {
 		return nil, err
 	}
-	return svc.TenantBarrierInitWithStrategy(ctx, tenantID, passphrase, threshold, shares, strategyID)
+	result, err := svc.TenantBarrierInitWithStrategy(ctx, tenantID, passphrase, threshold, shares, strategyID)
+	if err != nil {
+		return nil, err
+	}
+	r.created.TenantCreated(ctx, tenantID)
+	return result, nil
 }
 
 // TenantBarrierSeal forwards to the node's servicer.

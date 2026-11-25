@@ -20,6 +20,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/jeremyhahn/go-qrdb/pkg/seal"
 	qrdbtenant "github.com/jeremyhahn/go-qrdb/pkg/tenant"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
@@ -194,4 +195,128 @@ func TestSeedDefaultProviderAccounts_NoNodeTenantServiceAtBoot(t *testing.T) {
 	store := orchestration.NewInMemoryAccountStore()
 	s.seedDefaultProviderAccounts(context.Background(), store, providerAccountsRegistry(t))
 	assertSeededDefaults(t, store, orchestration.SystemTenantID)
+}
+
+// sealedAccountStore is the tenant-routed store as seeding sees it: a
+// barrier tenant's records are unreachable until its barrier is initialized
+// and unsealed.
+type sealedAccountStore struct {
+	orchestration.AccountStore
+
+	mu     sync.Mutex
+	sealed map[string]bool
+}
+
+func (s *sealedAccountStore) seal(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sealed[id] = true
+}
+
+func (s *sealedAccountStore) open(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.sealed, id)
+}
+
+func (s *sealedAccountStore) isSealed(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.sealed[id]
+}
+
+func (s *sealedAccountStore) ListByTenant(ctx context.Context, tenantID string, provider orchestration.AccountProvider, projectID string) ([]*orchestration.Account, error) {
+	if s.isSealed(tenantID) {
+		return nil, qrdbtenant.ErrTenantSealed
+	}
+	return s.AccountStore.ListByTenant(ctx, tenantID, provider, projectID)
+}
+
+func (s *sealedAccountStore) Create(ctx context.Context, account *orchestration.Account) error {
+	if s.isSealed(account.TenantID) {
+		return qrdbtenant.ErrTenantSealed
+	}
+	return s.AccountStore.Create(ctx, account)
+}
+
+// barrierTenantDirectory is a node tenant service whose self-managed barrier
+// tenants are created sealed and uninitialized, and opened by a barrier init.
+type barrierTenantDirectory struct {
+	*nativeTenantDirectory
+
+	store   *sealedAccountStore
+	initErr error
+}
+
+func (d *barrierTenantDirectory) CreateTenant(ctx context.Context, id, name string, isolationType qrdbtenant.IsolationType, opts ...qrdbtenant.CreateTenantOption) (*qrdbtenant.TenantInfo, error) {
+	info, err := d.nativeTenantDirectory.CreateTenant(ctx, id, name, isolationType, opts...)
+	if err == nil && isolationType == qrdbtenant.IsolationBarrier {
+		d.store.seal(id)
+	}
+	return info, err
+}
+
+func (d *barrierTenantDirectory) TenantBarrierInit(_ context.Context, id string, _ []byte, _, _ int) (*qrdbtenant.TenantBarrierInitResult, error) {
+	if d.initErr != nil {
+		return nil, d.initErr
+	}
+	d.store.open(id)
+	return &qrdbtenant.TenantBarrierInitResult{TenantID: id}, nil
+}
+
+func (d *barrierTenantDirectory) TenantBarrierInitWithStrategy(_ context.Context, id string, _ []byte, _, _ int, _ seal.StrategyID) (*qrdbtenant.TenantBarrierInitResult, error) {
+	if d.initErr != nil {
+		return nil, d.initErr
+	}
+	d.store.open(id)
+	return &qrdbtenant.TenantBarrierInitResult{TenantID: id}, nil
+}
+
+func TestSeedDefaultProviderAccounts_ReachesANativeBarrierTenantOnceInitialized(t *testing.T) {
+	ctx := context.Background()
+	s := agentsTestServer(t, nil)
+	store := &sealedAccountStore{AccountStore: orchestration.NewInMemoryAccountStore(), sealed: map[string]bool{}}
+	directory := &barrierTenantDirectory{nativeTenantDirectory: &nativeTenantDirectory{}, store: store}
+	s.tenantUnsealRouter = s.newNodeTenantRouter(func() qrdbsdk.ServiceTenantServicer { return directory })
+	s.seedDefaultProviderAccounts(ctx, store, providerAccountsRegistry(t))
+
+	if _, err := s.tenantUnsealRouter.CreateTenant(ctx, "acme", "Acme", qrdbtenant.IsolationBarrier); err != nil {
+		t.Fatalf("router CreateTenant: %v", err)
+	}
+	if got := tenantProviderAccounts(t, store.AccountStore, "acme"); len(got) != 0 {
+		t.Fatalf("a sealed barrier tenant has accounts %v before its init", got)
+	}
+	if _, err := s.tenantUnsealRouter.TenantBarrierInit(ctx, "acme", []byte("passphrase"), 0, 0); err != nil {
+		t.Fatalf("TenantBarrierInit: %v", err)
+	}
+	assertSeededDefaults(t, store, "acme")
+
+	if _, err := s.tenantUnsealRouter.CreateTenant(ctx, "globex", "Globex", qrdbtenant.IsolationBarrier); err != nil {
+		t.Fatalf("router CreateTenant: %v", err)
+	}
+	// The servicer the SDK's TenantMgmt() is wired to in an embedded node.
+	tenantMgmt := hookedTenantServicer(directory, s.tenantUnsealRouter)
+	if _, err := tenantMgmt.TenantBarrierInitWithStrategy(ctx, "globex", []byte("passphrase"), 0, 0, seal.StrategyPassphrase); err != nil {
+		t.Fatalf("TenantBarrierInitWithStrategy: %v", err)
+	}
+	assertSeededDefaults(t, store, "globex")
+}
+
+func TestSeedDefaultProviderAccounts_FailedBarrierInitSeedsNothing(t *testing.T) {
+	ctx := context.Background()
+	s := agentsTestServer(t, nil)
+	store := &sealedAccountStore{AccountStore: orchestration.NewInMemoryAccountStore(), sealed: map[string]bool{}}
+	directory := &barrierTenantDirectory{nativeTenantDirectory: &nativeTenantDirectory{}, store: store, initErr: errors.New("init refused")}
+	s.tenantUnsealRouter = s.newNodeTenantRouter(func() qrdbsdk.ServiceTenantServicer { return directory })
+	s.seedDefaultProviderAccounts(ctx, store, providerAccountsRegistry(t))
+
+	if _, err := s.tenantUnsealRouter.CreateTenant(ctx, "acme", "Acme", qrdbtenant.IsolationBarrier); err != nil {
+		t.Fatalf("router CreateTenant: %v", err)
+	}
+	if _, err := s.tenantUnsealRouter.TenantBarrierInit(ctx, "acme", []byte("passphrase"), 0, 0); err == nil {
+		t.Fatal("TenantBarrierInit succeeded, want the servicer's error")
+	}
+	if got := tenantProviderAccounts(t, store.AccountStore, "acme"); len(got) != 0 {
+		t.Fatalf("a tenant whose barrier init failed has accounts %v", got)
+	}
 }
