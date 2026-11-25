@@ -127,7 +127,7 @@ type ReviewerConfig struct {
 
 	// Endpoint is the root of the model server an opencode reviewer on a
 	// local model is served from — the ollama URL as the reviewer's CONTAINER
-	// reaches it, e.g. "http://gpu-host.internal:11434".
+	// reaches it, e.g. "http://inference.example:11434".
 	//
 	// REQUIRED WHEN THE SEAT'S AGENT IS AN OPENCODE REVIEWER ON A LOCAL MODEL
 	// (model "ollama/<name>"), REFUSED OTHERWISE (CheckAgents). It is carried
@@ -236,7 +236,7 @@ func (r ReviewerConfig) validateEndpoint(field string) error {
 	if !validEndpointRoot(endpoint) {
 		return &InvalidInputError{
 			Field:   field + ".endpoint",
-			Message: "must be the http(s) root of the model server the reviewer's container reaches, e.g. http://gpu-host.internal:11434",
+			Message: "must be the http(s) root of the model server the reviewer's container reaches, e.g. http://inference.example:11434",
 		}
 	}
 	return nil
@@ -260,7 +260,7 @@ func (r ReviewerConfig) checkEndpointFor(field string, agent orchestration.Agent
 		return &InvalidInputError{
 			Field: field + ".endpoint",
 			Message: "required for agent " + strconv.Quote(agent.ID) + " on " + strconv.Quote(agent.Model) +
-				": the http(s) root of the model server its container reaches, e.g. http://gpu-host.internal:11434",
+				": the http(s) root of the model server its container reaches, e.g. http://inference.example:11434",
 		}
 	}
 	return nil

@@ -57,7 +57,7 @@ func TestPickAgent_GpuRequired_FiltersOutCpuOnlyAgents(t *testing.T) {
 	pool := newPool()
 
 	cpuAgent := daemonReg("cpu-host", "192.0.2.10:9090", "ollama", "ollama")
-	gpuAgent := daemonReg("gpu-host", "192.0.2.20:9090", "ollama", "ollama", "gpu")
+	gpuAgent := daemonReg("gpu-01", "192.0.2.20:9090", "ollama", "ollama", "gpu")
 
 	regs := []*orchestration.FleetNode{cpuAgent, gpuAgent}
 
@@ -65,8 +65,8 @@ func TestPickAgent_GpuRequired_FiltersOutCpuOnlyAgents(t *testing.T) {
 	if got == nil {
 		t.Fatalf("expected a GPU agent to be selected, got nil (failedConstraint=%q)", constraint)
 	}
-	if got.Name != "gpu-host" {
-		t.Errorf("expected gpu-host to be selected, got %q", got.Name)
+	if got.Name != "gpu-01" {
+		t.Errorf("expected gpu-01 to be selected, got %q", got.Name)
 	}
 	if constraint != "" {
 		t.Errorf("expected no failed constraint, got %q", constraint)
@@ -97,17 +97,17 @@ func TestPickAgent_HostAffinity_PrefersExactMatch(t *testing.T) {
 	t.Parallel()
 	pool := newPool()
 
-	agentA := daemonReg("gpu-host", "192.0.2.10:9090", "ollama", "ollama")
+	agentA := daemonReg("gpu-01", "192.0.2.10:9090", "ollama", "ollama")
 	agentB := daemonReg("other", "192.0.2.20:9090", "ollama", "ollama")
 	regs := []*orchestration.FleetNode{agentB, agentA} // B first to ensure affinity wins
 
 	// Match by Name.
-	got, constraint := pool.pickDaemon(regs, "ollama", "gpu-host", false, "")
+	got, constraint := pool.pickDaemon(regs, "ollama", "gpu-01", false, "")
 	if got == nil {
-		t.Fatalf("expected gpu-host agent to be selected, got nil (constraint=%q)", constraint)
+		t.Fatalf("expected gpu-01 agent to be selected, got nil (constraint=%q)", constraint)
 	}
-	if got.Name != "gpu-host" {
-		t.Errorf("expected gpu-host, got %q", got.Name)
+	if got.Name != "gpu-01" {
+		t.Errorf("expected gpu-01, got %q", got.Name)
 	}
 }
 

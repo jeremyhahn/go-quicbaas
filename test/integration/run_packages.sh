@@ -90,6 +90,26 @@ fi
 
 PACKAGE_TIMEOUT=${PACKAGE_TIMEOUT:-10m}
 PACKAGE_KILL_TIMEOUT=${PACKAGE_KILL_TIMEOUT:-11m}
+# IAM_PACKAGE_TIMEOUT is the iam package's own limit; every other package keeps
+# PACKAGE_TIMEOUT. The iam package spends its time creating and deleting
+# tenants: run 45348624843 measured about 19.5 s per tenant lifecycle (create
+# plus delete) and timed the package out at 10m. After the shared-tenant
+# fixture (test/integration/iam/shared_tenant_test.go) about 95 lifecycles
+# remain (87 fresh tenants plus 8 shared ones), so
+#   ceil(1.5 x ((95 x 19.5 s) + 60 s)) = ceil(1.5 x 1912.5 s) = 2869 s (~48m),
+# which is capped at 30m. The kill limit stays one minute above it.
+IAM_PACKAGE_TIMEOUT=${IAM_PACKAGE_TIMEOUT:-30m}
+IAM_PACKAGE_KILL_TIMEOUT=${IAM_PACKAGE_KILL_TIMEOUT:-31m}
+# CLI_PACKAGE_TIMEOUT is the cli package's own limit. Its length is legitimate,
+# not a hang: run 45364801188 ran 64 of its 615 top-level tests in 523 s
+# (TestAgentAccount* 296 s, the barrier per-test daemons 171 s) before the 10m
+# limit. The 551 tests still to run all use the shared docker cluster (only
+# barrier_test.go spawns per-test daemons), at about 2 s each:
+#   523 s + 15 s (TestBarrierAuthPosture_DefaultDeny) + 551 x 2 s = 1640 s,
+#   ceil(1.5 x 1640 s) = 2460 s (41m), capped at 30m like iam.
+# The kill limit stays one minute above it.
+CLI_PACKAGE_TIMEOUT=${CLI_PACKAGE_TIMEOUT:-30m}
+CLI_PACKAGE_KILL_TIMEOUT=${CLI_PACKAGE_KILL_TIMEOUT:-31m}
 # HEALTH_PROBE_TIMEOUT bounds the cluster probe after a failed package: a node
 # that accepts connections but never answers would otherwise hang the runner.
 HEALTH_PROBE_TIMEOUT=${HEALTH_PROBE_TIMEOUT:-120s}
@@ -103,10 +123,22 @@ remaining=$#
 for pkg in "$@"; do
 	remaining=$((remaining - 1))
 	start=$(date +%s)
+	pkg_timeout=$PACKAGE_TIMEOUT
+	pkg_kill_timeout=$PACKAGE_KILL_TIMEOUT
+	case "$pkg" in
+	*/integration/iam | */integration/iam/ | */integration/iam/...)
+		pkg_timeout=$IAM_PACKAGE_TIMEOUT
+		pkg_kill_timeout=$IAM_PACKAGE_KILL_TIMEOUT
+		;;
+	*/integration/cli | */integration/cli/ | */integration/cli/...)
+		pkg_timeout=$CLI_PACKAGE_TIMEOUT
+		pkg_kill_timeout=$CLI_PACKAGE_KILL_TIMEOUT
+		;;
+	esac
 	# shellcheck disable=SC2086 # FLAGS is split into separate go test flags.
 	{
-		timeout --kill-after=30s "$PACKAGE_KILL_TIMEOUT" \
-			go test -v -p 1 -failfast -tags "$tags" -timeout "$PACKAGE_TIMEOUT" $flags "$pkg"
+		timeout --kill-after=30s "$pkg_kill_timeout" \
+			go test -v -p 1 -failfast -tags "$tags" -timeout "$pkg_timeout" $flags "$pkg"
 		echo $? >"$status_file"
 	} 2>&1 | tee -a "$log"
 	read -r rc <"$status_file"
