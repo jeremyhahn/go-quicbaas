@@ -285,7 +285,7 @@ func TestCommittedFleetSpecsLoad(t *testing.T) {
 
 // gpuHostSpec is the shape of a GPU node that serves the local review model and
 // the NPU triage model and must never be handed hosted-model work.
-const gpuHostSpec = `host: gpu-host.internal
+const gpuHostSpec = `host: gpu-01.internal
 ssh_user: agent
 ssh_key_name: fleet-deploy
 server: https://quicbaas.example.com:8443

@@ -136,8 +136,11 @@ type Job struct {
 
 // JobExecution represents a single execution of a job.
 type JobExecution struct {
-	ID        uint64        `json:"id"`
-	JobID     uint64        `json:"job_id"`
+	ID    uint64 `json:"id"`
+	JobID uint64 `json:"job_id"`
+	// TenantID is the owning tenant's ID, empty for system and delegated
+	// jobs. It picks the keyspace the record is stored in.
+	TenantID  string        `json:"tenant_id,omitempty"`
 	Status    JobStatus     `json:"status"`
 	StartedAt time.Time     `json:"started_at"`
 	EndedAt   time.Time     `json:"ended_at,omitempty"`
