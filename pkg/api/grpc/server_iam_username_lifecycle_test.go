@@ -48,7 +48,9 @@ func newRealIAMGRPCStack(t *testing.T) (*IAMServer, *iam.MemoryStorage) {
 		Tenants:     tenants,
 	})
 	adapter := NewIAMServiceAdapter(tenants, store, nil, nil, nil, nil)
-	return NewIAMServer(adapter, log), mem
+	srv := NewIAMServer(adapter, log)
+	allowArgumentWrites(srv)
+	return srv, mem
 }
 
 // TestGRPC_CreateUserCarriesTheRequestedUsername proves the protobuf request
@@ -142,7 +144,7 @@ func TestGRPC_UpdateUserChangesTheUsername(t *testing.T) {
 // assert the deletion workflow's terminal state either.
 func TestGRPC_UpdateUserRefusesTheDeletingLifecycle(t *testing.T) {
 	srv, mem := newRealIAMGRPCStack(t)
-	ctx := callerContext("acme")
+	ctx := authenticatedCallerContext("acme")
 
 	created, err := srv.CreateUser(ctx, &iampb.CreateUserRequest{
 		TenantId:  "acme",
@@ -184,7 +186,7 @@ func TestGRPC_UpdateUserRefusesTheDeletingLifecycle(t *testing.T) {
 // user's roles as they were.
 func TestGRPC_UpdateUserKeepsRolesWhenAReplacementIsMissing(t *testing.T) {
 	srv, mem := newRealIAMGRPCStack(t)
-	ctx := callerContext("acme")
+	ctx := authenticatedCallerContext("acme")
 
 	require.NoError(t, mem.CreateRole(ctx, &iam.Role{ID: "viewer", TenantID: "acme", Name: "viewer"}))
 	require.NoError(t, mem.CreateRole(ctx, &iam.Role{ID: "editor", TenantID: "acme", Name: "editor"}))

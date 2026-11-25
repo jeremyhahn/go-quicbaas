@@ -431,6 +431,7 @@ func newTestIAMServer(t *testing.T) (*IAMServer, *mockIAMService) {
 	require.NoError(t, err)
 	svc := &mockIAMService{}
 	srv := NewIAMServer(svc, log)
+	allowArgumentWrites(srv)
 	return srv, svc
 }
 
@@ -557,7 +558,7 @@ func TestIAMServer_CreateUser_Success(t *testing.T) {
 	svc.On("CreateUser", mock.Anything, mock.AnythingOfType("*iam.User")).
 		Return(&iam.User{ID: 30001, TenantID: "t1", Email: "user@test.com"}, nil)
 
-	resp, err := srv.CreateUser(callerContext("t1"), &iampb.CreateUserRequest{
+	resp, err := srv.CreateUser(authenticatedCallerContext("t1"), &iampb.CreateUserRequest{
 		TenantId:   "t1",
 		Email:      "user@test.com",
 		Name:       "Test User",
@@ -674,7 +675,7 @@ func TestIAMServer_UpdateUser_Success(t *testing.T) {
 	svc.On("UpdateUser", mock.Anything, mock.AnythingOfType("*iam.User")).
 		Return(&iam.User{ID: 30001, TenantID: "t1", Email: "updated@test.com"}, nil)
 
-	resp, err := srv.UpdateUser(callerContext("t1"), &iampb.UpdateUserRequest{
+	resp, err := srv.UpdateUser(authenticatedCallerContext("t1"), &iampb.UpdateUserRequest{
 		TenantId:   "t1",
 		UserId:     "30001",
 		Email:      "updated@test.com",
