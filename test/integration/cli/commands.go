@@ -20,6 +20,7 @@ package cli
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 )
@@ -55,6 +56,24 @@ type CommandDef struct {
 
 	// RequiresUnseal indicates the server must be unsealed for this command
 	RequiresUnseal bool
+
+	// Env holds extra KEY=value entries for the CLI process, on top of the
+	// environment the runner would give it. It carries secrets (an SO PIN)
+	// that must stay off argv.
+	Env []string
+}
+
+// commandEnv returns the environment for a CLI process: base (nil means the
+// test process's own environment) with extra appended. It returns base
+// unchanged when there is nothing extra, so exec keeps its default.
+func commandEnv(base, extra []string) []string {
+	if len(extra) == 0 {
+		return base
+	}
+	if base == nil {
+		base = os.Environ()
+	}
+	return append(append([]string{}, base...), extra...)
 }
 
 // UniqueKey generates a unique key for test isolation.
@@ -1281,23 +1300,15 @@ func MsgChannelListCommand() CommandDef {
 	}
 }
 
-// MsgChannelListWithFilterCommand returns a command to list channels with filter.
-// Messaging operations are currently only supported via gRPC transport.
-func MsgChannelListWithFilterCommand(filter string, limit, offset int32) CommandDef {
-	args := []string{"msg", "list-channels"}
-	if filter != "" {
-		args = append(args, "--filter", filter)
-	}
-	if limit > 0 {
-		args = append(args, "--limit", fmt.Sprintf("%d", limit))
-	}
-	if offset > 0 {
-		args = append(args, "--offset", fmt.Sprintf("%d", offset))
-	}
+// MsgChannelListOutputCommand returns a command to list channels in the given
+// output format (list-channels has no filter or paging flags: --output is its
+// only flag), expecting each of expectOutput in the listing.
+func MsgChannelListOutputCommand(format string, expectOutput ...string) CommandDef {
 	return CommandDef{
-		Name:           "msg list-channels with filter",
-		Args:           args,
+		Name:           fmt.Sprintf("msg list-channels --output %s", format),
+		Args:           []string{"msg", "list-channels", "--output", format},
 		ExpectSuccess:  true,
+		ExpectOutput:   expectOutput,
 		Timeout:        10 * time.Second,
 		RequiresUnseal: true,
 		SkipTransports: msgTransportsToSkip,
@@ -1442,20 +1453,15 @@ func MsgDedupStatsCommand(channelName string) CommandDef {
 	}
 }
 
-// MsgDedupStatsWithOptionsCommand returns a command to get dedup stats with options.
-// Messaging operations are currently only supported via gRPC transport.
-func MsgDedupStatsWithOptionsCommand(channelName string, reset bool, window string) CommandDef {
-	args := []string{"msg", "dedup-stats", channelName}
-	if reset {
-		args = append(args, "--reset")
-	}
-	if window != "" {
-		args = append(args, "--window", window)
-	}
+// MsgDedupStatsOutputCommand returns a command to get a channel's dedup stats
+// in the given output format (--output is dedup-stats' only flag), expecting
+// each of expectOutput in the output.
+func MsgDedupStatsOutputCommand(channelName, format string, expectOutput ...string) CommandDef {
 	return CommandDef{
-		Name:           fmt.Sprintf("msg dedup-stats %s with options", channelName),
-		Args:           args,
+		Name:           fmt.Sprintf("msg dedup-stats %s --output %s", channelName, format),
+		Args:           []string{"msg", "dedup-stats", channelName, "--output", format},
 		ExpectSuccess:  true,
+		ExpectOutput:   expectOutput,
 		Timeout:        10 * time.Second,
 		RequiresUnseal: true,
 		SkipTransports: msgTransportsToSkip,

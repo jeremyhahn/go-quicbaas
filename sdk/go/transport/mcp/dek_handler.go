@@ -19,20 +19,29 @@ type dekResultDecoder func(result interface{}) (interface{}, error)
 // typed response. The server's DEK tools marshal the service responses, so
 // the JSON tags are the wire field names.
 var dekResultDecoders = map[string]dekResultDecoder{
-	"GetDEKStatus": func(result interface{}) (interface{}, error) {
-		var resp service.GetDEKStatusResponse
-		if err := decodeDEKResult("GetDEKStatus", result, &resp); err != nil {
+	"CreateDEK":               decodeDEKInto[service.CreateDEKResponse]("CreateDEK"),
+	"GetDEK":                  decodeDEKInto[service.GetDEKResponse]("GetDEK"),
+	"ListDEKs":                decodeDEKInto[service.ListDEKsResponse]("ListDEKs"),
+	"RotateDEK":               decodeDEKInto[service.RotateDEKResponse]("RotateDEK"),
+	"DeleteDEK":               decodeDEKInto[service.DeleteDEKResponse]("DeleteDEK"),
+	"GetDEKStatus":            decodeDEKInto[service.GetDEKStatusResponse]("GetDEKStatus"),
+	"SetDefaultDEK":           decodeDEKInto[service.SetDefaultDEKResponse]("SetDefaultDEK"),
+	"SetDEKSafety":            decodeDEKInto[service.SetDEKSafetyResponse]("SetDEKSafety"),
+	"ClearDEKSafety":          decodeDEKInto[service.ClearDEKSafetyResponse]("ClearDEKSafety"),
+	"StartReencryption":       decodeDEKInto[service.StartReencryptionResponse]("StartReencryption"),
+	"GetReencryptionProgress": decodeDEKInto[service.GetReencryptionProgressResponse]("GetReencryptionProgress"),
+}
+
+// decodeDEKInto returns a decoder that turns the tool result into the
+// *T the DEK client type-switches on.
+func decodeDEKInto[T any](method string) dekResultDecoder {
+	return func(result interface{}) (interface{}, error) {
+		var resp T
+		if err := decodeDEKResult(method, result, &resp); err != nil {
 			return nil, err
 		}
 		return &resp, nil
-	},
-	"GetReencryptionProgress": func(result interface{}) (interface{}, error) {
-		var resp service.GetReencryptionProgressResponse
-		if err := decodeDEKResult("GetReencryptionProgress", result, &resp); err != nil {
-			return nil, err
-		}
-		return &resp, nil
-	},
+	}
 }
 
 // isMCPDEKService reports whether service names the DEK service.

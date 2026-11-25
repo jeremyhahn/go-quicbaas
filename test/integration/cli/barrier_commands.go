@@ -371,8 +371,26 @@ func BarrierUnsealSharesNoInputsCommand() CommandDef {
 // Seal verb
 // =============================================================================
 
+// Default SO/User PIN values used by the per-test daemon's init ceremony.
+// The canonical init flow REQUIRES --so-pin/--user-pin for any
+// barrier-enabled strategy (software/shamir); the no-barrier "none"
+// strategy REJECTS them. These are throwaway test credentials: init
+// provisions them, and the server verifies defaultBarrierSOPin before it
+// seals on every transport, so every seal in the suite must send it.
+// defaultBarrierUserPin is declared in barrier_test.go.
+const defaultBarrierSOPin = "SO-PIN-TEST-0001"
+
+// barrierSealSOPinEnv is the environment every network `barrier seal` in
+// the suite runs with: the server verifies the SO PIN that init provisioned
+// (defaultBarrierSOPin) before it seals, and the CLI reads it from
+// QUICBAAS_BARRIER_SO_PIN, which keeps it off argv.
+func barrierSealSOPinEnv() []string {
+	return []string{"QUICBAAS_BARRIER_SO_PIN=" + defaultBarrierSOPin}
+}
+
 // BarrierSealAssumeYesCommand builds `barrier seal -y` so the interactive
-// confirmation prompt is bypassed. The canonical scripted-runbook path.
+// confirmation prompt is bypassed. The canonical scripted-runbook path. It
+// carries the provisioned SO PIN (barrierSealSOPinEnv).
 func BarrierSealAssumeYesCommand() CommandDef {
 	return CommandDef{
 		Name:           "barrier seal -y",
@@ -380,12 +398,14 @@ func BarrierSealAssumeYesCommand() CommandDef {
 		ExpectSuccess:  true,
 		Timeout:        30 * time.Second,
 		SkipTransports: barrierTransportsToSkip,
+		Env:            barrierSealSOPinEnv(),
 	}
 }
 
 // BarrierSealCommand builds `barrier seal` without --assume-yes. The
-// caller MUST pipe "yes\n" into stdin via runner.RunWithStdin to satisfy
-// the confirmation prompt.
+// caller MUST pipe "yes\n" into stdin via runBarrierCommandWithStdin to
+// satisfy the confirmation prompt. It carries the provisioned SO PIN
+// (barrierSealSOPinEnv).
 func BarrierSealCommand() CommandDef {
 	return CommandDef{
 		Name:           "barrier seal (interactive)",
@@ -393,6 +413,7 @@ func BarrierSealCommand() CommandDef {
 		ExpectSuccess:  true,
 		Timeout:        30 * time.Second,
 		SkipTransports: barrierTransportsToSkip,
+		Env:            barrierSealSOPinEnv(),
 	}
 }
 
@@ -406,6 +427,7 @@ func BarrierSealCancelCommand() CommandDef {
 		ExpectOutput:   []string{"Seal cancelled"},
 		Timeout:        15 * time.Second,
 		SkipTransports: barrierTransportsToSkip,
+		Env:            barrierSealSOPinEnv(),
 	}
 }
 
@@ -425,23 +447,63 @@ func BarrierSealWithSOPinCommand(soPin string) CommandDef {
 	}
 }
 
+// BarrierSealWithWrongSOPinCommand builds `barrier seal --so-pin <pin> -y`
+// with a PIN the daemon did not provision: the server verifies the SO PIN
+// before it seals and refuses this one, so the command must fail. The
+// refusal text differs per transport (REST 403, gRPC Unauthenticated), so
+// the caller proves the refusal by asserting the barrier is still unsealed.
+func BarrierSealWithWrongSOPinCommand(soPin string) CommandDef {
+	return CommandDef{
+		Name: "barrier seal --so-pin <wrong> -y",
+		Args: []string{
+			"barrier", "seal",
+			"--so-pin", soPin,
+			"-y",
+		},
+		ExpectSuccess:  false,
+		Timeout:        30 * time.Second,
+		SkipTransports: barrierTransportsToSkip,
+	}
+}
+
 // =============================================================================
 // Rekey verb
 // =============================================================================
 
 // BarrierRekeyCommand builds the canonical share-free rekey verb:
-// `barrier rekey --threshold <M> --total <N>`. No secret travels on the
-// request — the server generates a fresh unseal key and seals new shares to
-// the enrolled Security Officers (qrdb pkg/seal/rekey.go).
+// `barrier rekey --so-pin <defaultBarrierSOPin> --threshold <M> --total <N>`.
+// No secret travels on the request — the server generates a fresh unseal key
+// and seals new shares to the enrolled Security Officers (qrdb
+// pkg/seal/rekey.go). The per-test daemon provisions defaultBarrierSOPin at
+// init and the server verifies the SO PIN on rekey as it does on seal, so the
+// verb sends the provisioned PIN to reach the backend.
 func BarrierRekeyCommand(threshold, total int) CommandDef {
 	return CommandDef{
-		Name: fmt.Sprintf("barrier rekey %d-of-%d", threshold, total),
+		Name: fmt.Sprintf("barrier rekey --so-pin <pin> %d-of-%d", threshold, total),
+		Args: []string{
+			"barrier", "rekey",
+			"--so-pin", defaultBarrierSOPin,
+			"--threshold", fmt.Sprintf("%d", threshold),
+			"--total", fmt.Sprintf("%d", total),
+		},
+		ExpectSuccess:  true,
+		Timeout:        30 * time.Second,
+		SkipTransports: barrierTransportsToSkip,
+	}
+}
+
+// BarrierRekeyWithoutSOPinCommand builds the rekey verb with the same
+// threshold/total pair as BarrierRekeyCommand but no `--so-pin`. The server
+// refuses it at the SO-PIN check, before the request reaches the backend.
+func BarrierRekeyWithoutSOPinCommand(threshold, total int) CommandDef {
+	return CommandDef{
+		Name: fmt.Sprintf("barrier rekey (no SO PIN) %d-of-%d", threshold, total),
 		Args: []string{
 			"barrier", "rekey",
 			"--threshold", fmt.Sprintf("%d", threshold),
 			"--total", fmt.Sprintf("%d", total),
 		},
-		ExpectSuccess:  true,
+		ExpectSuccess:  false,
 		Timeout:        30 * time.Second,
 		SkipTransports: barrierTransportsToSkip,
 	}
@@ -504,16 +566,40 @@ func BarrierRekeyTotalBelowThresholdCommand() CommandDef {
 // Recovery verbs
 // =============================================================================
 
-// BarrierRecoveryGenerateCommand builds `barrier recovery generate`.
+// BarrierRecoveryGenerateCommand builds the canonical recovery generate verb:
+// `barrier recovery generate --so-pin <defaultBarrierSOPin> --threshold <M>
+// --total <N>`. The per-test daemon provisions defaultBarrierSOPin at init and
+// the server verifies the SO PIN on recovery generate as it does on seal and
+// rekey, so the verb sends the provisioned PIN to reach the recovery
+// distributor.
 func BarrierRecoveryGenerateCommand(threshold, total int) CommandDef {
 	return CommandDef{
-		Name: fmt.Sprintf("barrier recovery generate %d-of-%d", threshold, total),
+		Name: fmt.Sprintf("barrier recovery generate --so-pin <pin> %d-of-%d", threshold, total),
+		Args: []string{
+			"barrier", "recovery", "generate",
+			"--so-pin", defaultBarrierSOPin,
+			"--threshold", fmt.Sprintf("%d", threshold),
+			"--total", fmt.Sprintf("%d", total),
+		},
+		ExpectSuccess:  true,
+		Timeout:        30 * time.Second,
+		SkipTransports: barrierTransportsToSkip,
+	}
+}
+
+// BarrierRecoveryGenerateWithoutSOPinCommand builds the recovery generate verb
+// with the same threshold/total pair as BarrierRecoveryGenerateCommand but no
+// `--so-pin`. The server refuses it at the SO-PIN check, before the request
+// reaches the recovery distributor.
+func BarrierRecoveryGenerateWithoutSOPinCommand(threshold, total int) CommandDef {
+	return CommandDef{
+		Name: fmt.Sprintf("barrier recovery generate (no SO PIN) %d-of-%d", threshold, total),
 		Args: []string{
 			"barrier", "recovery", "generate",
 			"--threshold", fmt.Sprintf("%d", threshold),
 			"--total", fmt.Sprintf("%d", total),
 		},
-		ExpectSuccess:  true,
+		ExpectSuccess:  false,
 		Timeout:        30 * time.Second,
 		SkipTransports: barrierTransportsToSkip,
 	}
@@ -559,7 +645,7 @@ func BarrierRecoveryRecoverNoSharesCommand() CommandDef {
 		Name:           "barrier recovery recover no shares",
 		Args:           []string{"barrier", "recovery", "recover"},
 		ExpectSuccess:  false,
-		ExpectError:    []string{"--share is required"},
+		ExpectError:    []string{"one of --share (repeatable) or --shares-file is required"},
 		Timeout:        10 * time.Second,
 		SkipTransports: barrierTransportsToSkip,
 	}

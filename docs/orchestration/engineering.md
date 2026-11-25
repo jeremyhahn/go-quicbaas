@@ -897,7 +897,7 @@ resp, err := client.SpawnChildJob(ctx, &pb.SpawnChildJobRequest{
             RequiredBackend: "claude",
         },
     },
-    HostAffinity:       "gpu-host-02",
+    HostAffinity:       "gpu-02",
     GPURequired:        true,
     HostAffinityStrict: false,
 })

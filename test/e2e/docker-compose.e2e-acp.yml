@@ -1,4 +1,14 @@
 # ACP live-suite override for the dockerized e2e.
+#
+# Layered on docker-compose.e2e.yml to run the chromium-acp session_lifecycle
+# suite with the open-source opencode agent backed by a remote ollama GPU host:
+#
+#   make test-e2e-acp-docker GPU_HOST=gpu-01.internal
+#
+# Adds opencode to the image (WITH_OPENCODE=1) and mounts the host Docker socket
+# so the orchestrator's container-sandbox spawn path can launch sibling
+# containers when QUICBAAS_E2E_SANDBOX=1 (the production-safe paradigm). The raw
+# (in-container subprocess) path needs no socket.
 
 services:
   e2e:

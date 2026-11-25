@@ -284,6 +284,13 @@ func (s *KMSService) GenerateKey(ctx context.Context, attrs *kctypes.KeyAttribut
 	// Create key via backend
 	metadata, err := backend.CreateKey(ctx, attrs)
 	if err != nil {
+		if stderrors.Is(err, ErrXKMSKeyIDTooLong) {
+			return nil, &errors.QBError{
+				Code: errors.ErrInvalidInput,
+				Op:   "KMSService.GenerateKey",
+				Err:  err,
+			}
+		}
 		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "KMSService.GenerateKey",
@@ -367,6 +374,13 @@ func (s *KMSService) ImportKey(ctx context.Context, keyID string, material []byt
 	// Import key via backend
 	metadata, err := backend.ImportKey(ctx, keyID, material, algorithm, nil)
 	if err != nil {
+		if stderrors.Is(err, ErrXKMSKeyIDTooLong) {
+			return nil, &errors.QBError{
+				Code: errors.ErrInvalidInput,
+				Op:   "KMSService.ImportKey",
+				Err:  err,
+			}
+		}
 		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "KMSService.ImportKey",
@@ -643,6 +657,13 @@ func (s *KMSService) RotateKey(ctx context.Context, keyID string) (interface{}, 
 	// Rotate key via backend
 	metadata, err := backend.RotateKey(ctx, keyID)
 	if err != nil {
+		if stderrors.Is(err, ErrXKMSKeyIDTooLong) {
+			return nil, &errors.QBError{
+				Code: errors.ErrInvalidInput,
+				Op:   "KMSService.RotateKey",
+				Err:  err,
+			}
+		}
 		if stderrors.Is(err, ErrKeyNotFound) {
 			return nil, &errors.QBError{
 				Code: errors.ErrNotFound,

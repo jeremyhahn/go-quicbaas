@@ -21,7 +21,7 @@ import (
 )
 
 // TestConfig_EffectiveBackends_Selection pins what each selection serves. The
-// gpu-host case is the one that matters: a GPU node that names opencode,
+// gpu-01 case is the one that matters: a GPU node that names opencode,
 // openvino and ollama serves exactly those, so placement can never route
 // claude or codex work to it.
 func TestConfig_EffectiveBackends_Selection(t *testing.T) {

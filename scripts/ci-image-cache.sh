@@ -5,7 +5,7 @@ set -euo pipefail
 die() { echo "ci-image-cache: $*" >&2; exit 1; }
 
 # v3 (#2503): a plain registry named by CI_IMAGE_REGISTRY (the repository
-# Actions variable, host[:port]) is read first, before any GITHUB_SERVER_URL
+# Actions secret, host[:port]) is read first, before any GITHUB_SERVER_URL
 # logic, so the cache works on github.com too. pull logs in with nothing,
 # through an empty DOCKER_CONFIG. push runs on a push to main only (it
 # refuses, exit 0, anywhere else) and pushes through CI_IMAGE_DOCKER_CONFIG,

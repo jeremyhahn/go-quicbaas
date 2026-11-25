@@ -16,6 +16,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -1070,4 +1071,44 @@ func TestMCPSafetyClientTransportError(t *testing.T) {
 		_, err := client.KMSSafetyReport(ctx, &service.SafetyReportRequest{})
 		assert.Error(t, err)
 	})
+}
+
+// TestMCPKMSClient_KMSGenerateKey_SendsFullAlgorithmName checks that the MCP
+// client names the curve or key size with the algorithm: the KMS tool does not
+// know "ECDSA" or "RSA" alone and would create an AES-256-GCM key.
+func TestMCPKMSClient_KMSGenerateKey_SendsFullAlgorithmName(t *testing.T) {
+	ctx := context.Background()
+	for _, alg := range []string{
+		"ECDSA-P256", "ECDSA-P384", "ECDSA-P521",
+		"RSA-2048", "RSA-3072", "RSA-4096",
+		"ED25519", "AES-256-GCM",
+	} {
+		t.Run(alg, func(t *testing.T) {
+			var sent map[string]interface{}
+			tr := &mockMCPTransport{
+				requestFunc: func(ctx context.Context, svc, method string, req interface{}) (interface{}, error) {
+					sent, _ = req.(map[string]interface{})
+					return toolResp(map[string]interface{}{
+						"key_id": "k", "name": "k", "version": float64(1),
+						"algorithm": alg, "status": "active",
+						"created_at": time.Now().UTC().Format(time.RFC3339),
+					}), nil
+				},
+			}
+			client := &mcpKMSClient{sdk: &mockSDKClientForMCP{mockTransport: tr}}
+
+			attrs, err := createKeyAttributes("k", alg, false)
+			require.NoError(t, err)
+			_, err = client.KMSGenerateKey(ctx, &service.GenerateKeyRequest{KeyAttributes: attrs, Name: "k"})
+			require.NoError(t, err)
+
+			got, ok := sent["algorithm"].(string)
+			require.True(t, ok, "algorithm argument not sent")
+			if alg == "AES-256-GCM" {
+				assert.Contains(t, strings.ToLower(got), "256")
+				return
+			}
+			assert.True(t, strings.EqualFold(alg, got), "algorithm: want %q, got %q", alg, got)
+		})
+	}
 }
