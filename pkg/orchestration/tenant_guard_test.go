@@ -35,11 +35,6 @@ func tenantCtx(tenantID string) context.Context {
 }
 
 // superAdminCtx creates a context with both tenant and super admin flags set.
-func superAdminCtx(tenantID string) context.Context {
-	ctx := ContextWithTenant(context.Background(), tenantID)
-	return ContextWithSuperAdmin(ctx, true)
-}
-
 // =============================================================================
 // ValidateTenantAccess Tests
 // =============================================================================
@@ -75,42 +70,6 @@ func TestValidateTenantAccess_DifferentTenant_Blocked(t *testing.T) {
 	}
 	if accessErr.TargetTenant != "tenant-2" {
 		t.Errorf("TargetTenant = %q, want %q", accessErr.TargetTenant, "tenant-2")
-	}
-}
-
-func TestValidateTenantAccess_SuperAdmin_Blocked(t *testing.T) {
-	guard := newTestTenantGuard()
-
-	// SuperAdmin trying to access same tenant should still be blocked
-	ctx := superAdminCtx("tenant-1")
-	err := guard.ValidateTenantAccess(ctx, "tenant-1")
-	if err == nil {
-		t.Fatal("expected error for SuperAdmin access")
-	}
-	if !errors.Is(err, ErrSuperAdminBlocked) {
-		t.Errorf("expected ErrSuperAdminBlocked, got: %v", err)
-	}
-
-	var blockedErr *SuperAdminBlockedError
-	if !errors.As(err, &blockedErr) {
-		t.Fatal("expected SuperAdminBlockedError type")
-	}
-	if blockedErr.Operation != "ValidateTenantAccess" {
-		t.Errorf("Operation = %q, want %q", blockedErr.Operation, "ValidateTenantAccess")
-	}
-}
-
-func TestValidateTenantAccess_SuperAdmin_CrossTenant_Blocked(t *testing.T) {
-	guard := newTestTenantGuard()
-
-	// SuperAdmin trying cross-tenant access
-	ctx := superAdminCtx("tenant-1")
-	err := guard.ValidateTenantAccess(ctx, "tenant-2")
-	if err == nil {
-		t.Fatal("expected error for SuperAdmin cross-tenant access")
-	}
-	if !errors.Is(err, ErrSuperAdminBlocked) {
-		t.Errorf("expected ErrSuperAdminBlocked, got: %v", err)
 	}
 }
 
@@ -159,13 +118,6 @@ func TestValidateTenantAccess_CancelledContext(t *testing.T) {
 // =============================================================================
 // IsSuperAdminBlocked Tests
 // =============================================================================
-
-func TestIsSuperAdminBlocked_AlwaysTrue(t *testing.T) {
-	guard := newTestTenantGuard()
-	if !guard.IsSuperAdminBlocked() {
-		t.Error("IsSuperAdminBlocked should always return true")
-	}
-}
 
 // =============================================================================
 // EnforceTenantPrefix Tests
@@ -294,19 +246,6 @@ func TestEnforceTenantPrefix_EmptyKey(t *testing.T) {
 	}
 }
 
-func TestEnforceTenantPrefix_SuperAdmin_Blocked(t *testing.T) {
-	guard := newTestTenantGuard()
-	ctx := superAdminCtx("tenant-1")
-
-	_, err := guard.EnforceTenantPrefix(ctx, "some-key")
-	if err == nil {
-		t.Fatal("expected error for SuperAdmin")
-	}
-	if !errors.Is(err, ErrSuperAdminBlocked) {
-		t.Errorf("expected ErrSuperAdminBlocked, got: %v", err)
-	}
-}
-
 func TestEnforceTenantPrefix_CancelledContext(t *testing.T) {
 	guard := newTestTenantGuard()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -334,26 +273,6 @@ func TestTenantFromContext_NotSet(t *testing.T) {
 	got := TenantFromContext(context.Background())
 	if got != "" {
 		t.Errorf("TenantFromContext = %q, want empty", got)
-	}
-}
-
-func TestIsSuperAdmin_True(t *testing.T) {
-	ctx := ContextWithSuperAdmin(context.Background(), true)
-	if !IsSuperAdmin(ctx) {
-		t.Error("IsSuperAdmin should be true")
-	}
-}
-
-func TestIsSuperAdmin_False(t *testing.T) {
-	ctx := ContextWithSuperAdmin(context.Background(), false)
-	if IsSuperAdmin(ctx) {
-		t.Error("IsSuperAdmin should be false")
-	}
-}
-
-func TestIsSuperAdmin_NotSet(t *testing.T) {
-	if IsSuperAdmin(context.Background()) {
-		t.Error("IsSuperAdmin should be false when not set")
 	}
 }
 
@@ -398,23 +317,6 @@ func TestTenantRequiredError(t *testing.T) {
 		err := &TenantRequiredError{Operation: "SpawnSession"}
 		if !errors.Is(err, ErrTenantRequired) {
 			t.Error("errors.Is should match ErrTenantRequired")
-		}
-	})
-}
-
-func TestSuperAdminBlockedError(t *testing.T) {
-	t.Run("Error", func(t *testing.T) {
-		err := &SuperAdminBlockedError{Operation: "PromptSession"}
-		want := "orchestration: super admin access blocked for orchestration: PromptSession"
-		if got := err.Error(); got != want {
-			t.Errorf("Error() = %q, want %q", got, want)
-		}
-	})
-
-	t.Run("Unwrap", func(t *testing.T) {
-		err := &SuperAdminBlockedError{Operation: "PromptSession"}
-		if !errors.Is(err, ErrSuperAdminBlocked) {
-			t.Error("errors.Is should match ErrSuperAdminBlocked")
 		}
 	})
 }

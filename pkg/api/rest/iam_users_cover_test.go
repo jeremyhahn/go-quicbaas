@@ -42,6 +42,7 @@ func TestUpdateUser_Success(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/x", bytes.NewReader([]byte(body)))
 	req = withChiParams(req, map[string]string{"tenant_id": "tenant1", "user_id": "11"})
 	w := httptest.NewRecorder()
+	req = asRoleAssigner(handler, req)
 	handler.UpdateUser(w, req)
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 }
@@ -114,6 +115,7 @@ func TestUpdateUser_RefusesTheTerminalDeletingState(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/x", bytes.NewReader([]byte(`{"lifecycle":"deleting"}`)))
 	req = withChiParams(req, map[string]string{"tenant_id": "tenant1", "user_id": "11"})
 	w := httptest.NewRecorder()
+	req = asRoleAssigner(handler, req)
 	handler.UpdateUser(w, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code,
@@ -160,6 +162,7 @@ func TestUpdateUser_StillAcceptsTheReversibleStates(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPut, "/x", bytes.NewReader([]byte(body)))
 			req = withChiParams(req, map[string]string{"tenant_id": "tenant1", "user_id": "11"})
 			w := httptest.NewRecorder()
+			req = asRoleAssigner(handler, req)
 			handler.UpdateUser(w, req)
 			require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 
@@ -189,6 +192,7 @@ func TestUpdateUser_PendingIsRefusedByTheTransitionTableNotTheGuard(t *testing.T
 	req := httptest.NewRequest(http.MethodPut, "/x", bytes.NewReader([]byte(`{"lifecycle":"pending"}`)))
 	req = withChiParams(req, map[string]string{"tenant_id": "tenant1", "user_id": "11"})
 	w := httptest.NewRecorder()
+	req = asRoleAssigner(handler, req)
 	handler.UpdateUser(w, req)
 
 	require.NotEqual(t, http.StatusOK, w.Code)

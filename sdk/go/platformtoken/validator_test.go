@@ -464,12 +464,6 @@ func TestRequireScope(t *testing.T) {
 	if !errors.As(err, &denied) || denied.Required != "app.admin" {
 		t.Fatalf("expected ScopeDeniedError for app.admin, got %v", err)
 	}
-	if err := az.RequireAnyScope("app.admin", "app.read"); err != nil {
-		t.Fatalf("RequireAnyScope should pass: %v", err)
-	}
-	if err := az.RequireAnyScope("app.admin"); err == nil {
-		t.Fatal("RequireAnyScope(app.admin) should be denied")
-	}
 }
 
 func TestClaims_ScopesFromSpaceSeparated(t *testing.T) {

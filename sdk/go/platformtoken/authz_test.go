@@ -15,6 +15,7 @@ package platformtoken
 
 import (
 	"context"
+	"reflect"
 	"testing"
 	"time"
 
@@ -273,16 +274,25 @@ func TestEndToEnd_AdminWildcardTokenAuthorizesOrchestratorScope(t *testing.T) {
 }
 
 // TestHasAnyScopeWildcardInherits verifies the wildcard semantics flow through
-// HasAnyScope/RequireAnyScope without separate wildcard logic.
+// HasAnyScope without separate wildcard logic.
 func TestHasAnyScopeWildcardInherits(t *testing.T) {
 	ac := &AuthorizedContext{Scopes: []string{"orchestrator:*"}}
 	if !ac.HasAnyScope("keys:get", "orchestrator:status") {
 		t.Fatal("HasAnyScope should match via covering wildcard")
 	}
-	if err := ac.RequireAnyScope("keys:get", "orchestrator:status"); err != nil {
-		t.Fatalf("RequireAnyScope = %v, want nil", err)
-	}
 	if ac.HasAnyScope("keys:get", "secrets:read") {
 		t.Fatal("HasAnyScope should not match unrelated concretes under orchestrator:* grant")
+	}
+}
+
+// TestAuthorizedContext_NoLocalRoleCheck guards SPEC Authorization clean-up
+// D8: the token context makes no role decision of its own (roles are go-qrdb's
+// Authorizer's to judge) and carries no unused scope helpers.
+func TestAuthorizedContext_NoLocalRoleCheck(t *testing.T) {
+	typ := reflect.TypeOf(&AuthorizedContext{})
+	for _, name := range []string{"HasRole", "RequireAnyScope"} {
+		if _, ok := typ.MethodByName(name); ok {
+			t.Errorf("AuthorizedContext.%s is a local authorization helper; D8 deletes it", name)
+		}
 	}
 }

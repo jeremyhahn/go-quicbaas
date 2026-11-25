@@ -15,6 +15,7 @@ package grpc
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"google.golang.org/grpc"
@@ -22,8 +23,9 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/api/sealedwindow"
+	iampb "github.com/jeremyhahn/go-quicbaas/api/proto/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/platformtoken"
@@ -74,19 +76,21 @@ func bearerFromContext(ctx context.Context) string {
 // point, backed by the central platform-token Validator: ONE Authorize call does
 // offline signature / iss / aud / exp verification, DPoP sender-constraint for
 // cnf.jkt-bound tokens, the offline scp -> permission decision, and the
-// per-tenant liveness/revocation check. This REPLACES the prior online qrdb
-// role-PDP two-step (validate token + authorize).
+// per-tenant liveness/revocation check. The validator thus authenticates the
+// token and caps it by scp; then go-qrdb's authorizer (cfg.rbac, the embedded
+// node's RBAC with its ABAC decorator) decides for the token's subject, tenant
+// and roles. Both must allow.
 //
 // On allow it returns the context enriched with the authenticated Subject
 // reconstructed from the verified AuthorizedContext; on deny it returns a gRPC
-// status error mapped by validatorGRPCStatus.
+// status error mapped by validatorGRPCStatus or rbacGRPCStatus.
 //
 // The decision is default-deny under RequireAuthz: a public method bypasses; a
 // missing token, an unmapped method, an invalid/inactive token, or a missing
 // scope all reject the call. The gRPC metadata path carries no DPoP proof, so
 // the empty dpopProof / htm / htu args are passed deliberately (see
 // GRPCValidatorAuthorizer).
-func authorizeGRPCRequest(ctx context.Context, fullMethod string, authorizer GRPCValidatorAuthorizer, sealedBypass *sealedwindow.AuthBypass) (context.Context, error) {
+func authorizeGRPCRequest(ctx context.Context, fullMethod string, authorizer GRPCValidatorAuthorizer, cfg authzInterceptorConfig) (context.Context, error) {
 	if isPublicGRPCMethod(fullMethod) {
 		return ctx, nil
 	}
@@ -101,7 +105,7 @@ func authorizeGRPCRequest(ctx context.Context, fullMethod string, authorizer GRP
 	// admit. Unsealed, the predicate is always false and enforcement below
 	// is unchanged; the handlers keep their own credential checks (officer
 	// cert + nonce verification) on the share-claim verbs.
-	if sealedBypass.BypassesGRPC(fullMethod) {
+	if cfg.sealedBypass.BypassesGRPC(fullMethod) {
 		return ctx, nil
 	}
 
@@ -142,7 +146,13 @@ func authorizeGRPCRequest(ctx context.Context, fullMethod string, authorizer GRP
 		return ctx, validatorGRPCStatus(err)
 	}
 
-	return contextWithAuthorizedSubject(ctx, authzCtx), nil
+	// The token allows it; go-qrdb decides. The authenticated context binds
+	// the caller's tenant, which go-qrdb's authorizer reads.
+	authedCtx := contextWithAuthorizedSubject(ctx, authzCtx)
+	if err := rbacAuthorize(authedCtx, cfg, authzCtx, resource+":"+action); err != nil {
+		return ctx, err
+	}
+	return authedCtx, nil
 }
 
 // contextWithAuthorizedSubject reconstructs the principal from the verified
@@ -182,46 +192,141 @@ func contextWithAuthorizedSubject(ctx context.Context, authzCtx *platformtoken.A
 // unary RPC. It is installed only when RequireAuthz=true; when authz is off this
 // interceptor is never added to the chain, so behavior is unchanged. Both the
 // TCP gRPC listener and the Unix-domain-socket gRPC listener share this chain,
-// so a single installation covers both the gRPC and Unix transports.
+// so a single installation covers both the gRPC and Unix transports. The
+// validator authenticates the token and caps it by scp, then go-qrdb's
+// authorizer (WithRBACAuthorizer) decides; both must allow.
 func UnaryAuthorizationInterceptor(authorizer GRPCValidatorAuthorizer, opts ...AuthzInterceptorOption) grpc.UnaryServerInterceptor {
 	cfg := resolveAuthzInterceptorOptions(opts)
 	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
-		authedCtx, err := authorizeGRPCRequest(ctx, info.FullMethod, authorizer, cfg.sealedBypass)
+		authedCtx, err := authorizeGRPCRequest(ctx, info.FullMethod, authorizer, cfg)
 		if err != nil {
 			return nil, err
 		}
-		if err := authorizeGRPCRequestFields(ctx, info.FullMethod, req, authorizer, cfg.sealedBypass); err != nil {
+		if err := authorizeGRPCArguments(authedCtx, info.FullMethod, req, authorizer, cfg); err != nil {
 			return nil, err
 		}
 		return handler(authedCtx, req)
 	}
 }
 
-// authorizeGRPCRequestFields renders the further permissions a request's own
-// fields demand (grpcRequestPermissions) after the method's grant has been
-// decided. A public or sealed-window bypassed method, or one with no entry,
-// needs nothing more. Each permission is decided by the same token authorizer
-// as the method grant; a denial maps through validatorGRPCStatus, and a request
-// the table cannot read is refused (fail closed).
-func authorizeGRPCRequestFields(ctx context.Context, fullMethod string, req interface{}, authorizer GRPCValidatorAuthorizer, sealedBypass *sealedwindow.AuthBypass) error {
-	// The table is consulted first: BypassesGRPC audits every admit it
-	// makes, so it is asked only for a method that has an entry, and an
-	// allowlisted unseal verb is never audited twice.
-	fields, ok := grpcRequestPermissions[fullMethod]
+// roleAssignmentPermission is the permission the AssignRole verb declares.
+const roleAssignmentPermission = "roles:assign"
+
+// rolesCarrier is a request that can carry a roles list.
+type rolesCarrier interface {
+	GetRoles() []string
+}
+
+// requireRolesAssign asks for roles:assign when the request carries roles. A
+// user create or update that sets roles assigns them as surely as AssignRole
+// does: without this, a caller holding only users:update could write the
+// tenant Admin role into its own account. proto3 repeated fields have no
+// presence, so an empty list means the request sets no roles.
+func requireRolesAssign(req interface{}) []string {
+	carrier, ok := req.(rolesCarrier)
+	if !ok || len(carrier.GetRoles()) == 0 {
+		return nil
+	}
+	return []string{roleAssignmentPermission}
+}
+
+// requireUserUpdateArguments is requireRolesAssign plus the attributes and
+// lifecycle rules. A user's attributes feed ABAC, so writing them is an
+// authorization write like writing roles and needs roles:assign (asked once
+// when the request carries both). Moving a user to "active" needs
+// users:enable and to any other lifecycle users:disable, as REST's approve
+// and reject routes declare, so users:update alone cannot approve or suspend
+// a user.
+func requireUserUpdateArguments(req interface{}) ([]string, error) {
+	update, ok := req.(*iampb.UpdateUserRequest)
+	if !ok || update == nil {
+		return nil, fmt.Errorf("unexpected request type %T for UpdateUser", req)
+	}
+	perms := requireRolesAssign(update)
+	if len(update.GetAttributes()) > 0 && len(perms) == 0 {
+		perms = append(perms, roleAssignmentPermission)
+	}
+	if update.GetLifecycle() == "" {
+		return perms, nil
+	}
+	if update.GetLifecycle() == string(iam.LifecycleActive) {
+		return append(perms, "users:enable"), nil
+	}
+	return append(perms, "users:disable"), nil
+}
+
+// requireUserCreateArguments is requireRolesAssign plus the attributes rule.
+// A user's attributes feed ABAC, so setting them at create is an
+// authorization write like setting roles, as for UpdateUser, and needs
+// roles:assign (asked once when the request carries both). Without it a
+// caller holding only users:create could create a user whose attributes
+// match a privileged ABAC policy.
+func requireUserCreateArguments(req interface{}) ([]string, error) {
+	create, ok := req.(*iampb.CreateUserRequest)
+	if !ok || create == nil {
+		return nil, fmt.Errorf("unexpected request type %T for CreateUser", req)
+	}
+	perms := requireRolesAssign(create)
+	if len(create.GetAttributes()) > 0 && len(perms) == 0 {
+		perms = append(perms, roleAssignmentPermission)
+	}
+	return perms, nil
+}
+
+// grpcArgumentPermissions maps a full method name to the permissions its
+// request arguments demand on top of the method's own permission. Each func
+// returns an error for a request it cannot read (a nil or another type), so
+// the call fails closed rather than passing with no further permission.
+var grpcArgumentPermissions = map[string]func(req interface{}) ([]string, error){
+	iampb.IAMService_CreateUser_FullMethodName: requireUserCreateArguments,
+	iampb.IAMService_UpdateUser_FullMethodName: requireUserUpdateArguments,
+}
+
+// grpcArgumentPermissionsFor returns the extra permissions req demands for
+// fullMethod, nil when the method has none, and an error when the method has
+// an entry that cannot read req.
+func grpcArgumentPermissionsFor(fullMethod string, req interface{}) ([]string, error) {
+	permissionsFor, ok := grpcArgumentPermissions[fullMethod]
 	if !ok {
+		return nil, nil
+	}
+	return permissionsFor(req)
+}
+
+// authorizeGRPCArguments checks each argument-dependent permission of the
+// request, after the method's own permission was granted. It fails closed: a
+// request the table cannot read and a missing token are refused, and each
+// permission the validator allows is then asked of go-qrdb's authorizer
+// (cfg.rbac). ctx is the authenticated context authorizeGRPCRequest returned,
+// so go-qrdb reads the caller's tenant from it. A public or sealed-window
+// bypassed method needs nothing more; the table is consulted first because
+// BypassesGRPC audits every admit it makes, so an allowlisted unseal verb is
+// never audited twice.
+func authorizeGRPCArguments(ctx context.Context, fullMethod string, req interface{}, authorizer GRPCValidatorAuthorizer, cfg authzInterceptorConfig) error {
+	if _, ok := grpcArgumentPermissions[fullMethod]; !ok {
 		return nil
 	}
-	if isPublicGRPCMethod(fullMethod) || sealedBypass.BypassesGRPC(fullMethod) {
+	if isPublicGRPCMethod(fullMethod) || cfg.sealedBypass.BypassesGRPC(fullMethod) {
 		return nil
 	}
-	perms, err := fields(req)
+	perms, err := grpcArgumentPermissionsFor(fullMethod, req)
 	if err != nil {
 		return status.Error(codes.PermissionDenied, "permission denied")
 	}
+	if len(perms) == 0 {
+		return nil
+	}
 	token := bearerFromContext(ctx)
+	if token == "" {
+		return status.Error(codes.Unauthenticated, (&MissingTokenError{Method: fullMethod}).Error())
+	}
 	for _, perm := range perms {
-		if _, err := authorizer.Authorize(ctx, token, perm.resource+":"+perm.action, "", "", ""); err != nil {
+		authzCtx, err := authorizer.Authorize(ctx, token, perm, "", "", "")
+		if err != nil {
 			return validatorGRPCStatus(err)
+		}
+		if err := rbacAuthorize(ctx, cfg, authzCtx, perm); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -229,11 +334,12 @@ func authorizeGRPCRequestFields(ctx context.Context, fullMethod string, req inte
 
 // StreamAuthorizationInterceptor is the streaming counterpart of
 // UnaryAuthorizationInterceptor. It authorizes the stream open and wraps the
-// stream so downstream handlers observe the authenticated context.
+// stream so downstream handlers observe the authenticated context. As on the
+// unary path, the token's scp and go-qrdb's authorizer must both allow.
 func StreamAuthorizationInterceptor(authorizer GRPCValidatorAuthorizer, opts ...AuthzInterceptorOption) grpc.StreamServerInterceptor {
 	cfg := resolveAuthzInterceptorOptions(opts)
 	return func(srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
-		authedCtx, err := authorizeGRPCRequest(ss.Context(), info.FullMethod, authorizer, cfg.sealedBypass)
+		authedCtx, err := authorizeGRPCRequest(ss.Context(), info.FullMethod, authorizer, cfg)
 		if err != nil {
 			return err
 		}

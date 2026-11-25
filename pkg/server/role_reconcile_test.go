@@ -195,7 +195,7 @@ func TestReconcileTenantBuiltInRoles_SecondRunIsANoOp(t *testing.T) {
 
 	second, err := store.ReconcileBuiltInRoles(ctx, reconcileTestTenant)
 	require.NoError(t, err)
-	require.Falsef(t, second.Changed(),
+	require.Falsef(t, iam.RoleReconcileChanged(second),
 		"second run reported %d changed roles after the first run converged the tenant (first run: %d)",
 		len(second.Roles), len(first.Roles))
 }

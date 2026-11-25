@@ -2426,7 +2426,7 @@ func (s *Server) grpcServerInterceptors() ([]ggrpc.UnaryServerInterceptor, []ggr
 	if unaryAuthz != nil {
 		unaryInterceptors = append(unaryInterceptors, unaryAuthz)
 		streamInterceptors = append(streamInterceptors, streamAuthz)
-		s.logger.Info("gRPC platform-token validator authorization installed (RequireAuthz=true)")
+		s.logger.Info("gRPC authorization installed: platform-token validator and go-qrdb authorizer (RequireAuthz=true)")
 	}
 	return unaryInterceptors, streamInterceptors, nil
 }

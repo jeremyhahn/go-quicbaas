@@ -305,7 +305,7 @@ func convertRoleReconcileReportToProto(r *iam.RoleReconcileReport) *iampb.Reconc
 	return &iampb.ReconcileRolesResponse{
 		TenantId: r.TenantID,
 		Roles:    roles,
-		Changed:  r.Changed(),
+		Changed:  iam.RoleReconcileChanged(r),
 	}
 }
 

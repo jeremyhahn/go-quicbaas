@@ -27,6 +27,8 @@ type AuthzInterceptorOption func(*authzInterceptorConfig)
 // resolved from AuthzInterceptorOption values.
 type authzInterceptorConfig struct {
 	sealedBypass *sealedwindow.AuthBypass
+	// rbac is go-qrdb's authorizer, asked after the validator allows.
+	rbac GRPCRBACAuthorizer
 }
 
 // WithSealedWindowAuthBypass installs the shared sealed-window

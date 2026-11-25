@@ -651,8 +651,13 @@ func (s *IdentityStore) UpdateUser(ctx context.Context, tenantID string, userID 
 	previousEmail := ""
 	pendingEmail := ""
 
+	// fields names what this call changes, so a store that can write fields
+	// alone does not write back the rest of the copy read above.
+	var fields UserFields
+
 	// Apply updates
 	if opts.Email != nil {
+		fields |= UserFieldEmail
 		newEmail := strings.ToLower(strings.TrimSpace(*opts.Email))
 
 		// Check email uniqueness if changing
@@ -676,13 +681,16 @@ func (s *IdentityStore) UpdateUser(ctx context.Context, tenantID string, userID 
 	// assignment and ceremony subject resolves through, and a caller who sent
 	// both had one of them dropped without being told.
 	if opts.Name != nil {
+		fields |= UserFieldName
 		user.Name = strings.TrimSpace(*opts.Name)
 	}
 	if opts.Username != nil {
+		fields |= UserFieldUsername
 		user.Username = strings.TrimSpace(*opts.Username)
 	}
 
 	if opts.Attributes != nil {
+		fields |= UserFieldAttributes
 		user.Attributes = *opts.Attributes
 	}
 
@@ -691,6 +699,7 @@ func (s *IdentityStore) UpdateUser(ctx context.Context, tenantID string, userID 
 	// disabled, and enabling moves it to active. Writing a derived field
 	// directly is how a record ends up claiming to be locked and active at once.
 	if opts.Enabled != nil {
+		fields |= UserFieldLifecycle
 		if *opts.Enabled {
 			user.Lifecycle = LifecycleActive
 		} else {
@@ -699,6 +708,7 @@ func (s *IdentityStore) UpdateUser(ctx context.Context, tenantID string, userID 
 	}
 
 	if opts.Roles != nil {
+		fields |= UserFieldRoles
 		user.Roles = *opts.Roles
 	}
 
@@ -706,20 +716,25 @@ func (s *IdentityStore) UpdateUser(ctx context.Context, tenantID string, userID 
 	// named the state meant that state — provided it is one this surface may
 	// assert at all.
 	if opts.Lifecycle != nil {
+		fields |= UserFieldLifecycle
 		user.Lifecycle = *opts.Lifecycle
 	}
 
 	if opts.AuthMethods != nil {
+		fields |= UserFieldAuthMethods
 		user.AuthMethods = authMethods
 	}
 
 	if opts.PIVCertThumbprints != nil {
+		fields |= UserFieldCertBindings
 		user.SetPIVThumbprints(*opts.PIVCertThumbprints...)
 	} else if opts.PIVCertThumbprint != nil {
+		fields |= UserFieldCertBindings
 		user.SetPIVThumbprint(*opts.PIVCertThumbprint)
 	}
 
 	if opts.SPKICertThumbprint != nil {
+		fields |= UserFieldCertBindings
 		user.SetSPKIThumbprint(*opts.SPKICertThumbprint)
 	}
 
@@ -741,8 +756,16 @@ func (s *IdentityStore) UpdateUser(ctx context.Context, tenantID string, userID 
 		user.Email = pendingEmail
 	}
 
-	if err := s.userStorage.UpdateUser(ctx, user); err != nil {
-		return nil, api.NewOperationFailedError("update user", err)
+	var writeErr error
+	if p, ok := s.userStorage.(PartialUserUpdater); ok {
+		if fields != 0 {
+			writeErr = p.UpdateUserFields(ctx, user, fields)
+		}
+	} else {
+		writeErr = s.userStorage.UpdateUser(ctx, user)
+	}
+	if writeErr != nil {
+		return nil, api.NewOperationFailedError("update user", writeErr)
 	}
 
 	if previousEmail != "" {

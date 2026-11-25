@@ -354,6 +354,25 @@ func handleIAMUserCreate(ctx context.Context, svc service.QuicBaaS, req interfac
 		return nil, NewInvalidRequestTypeError("quicbaas.IAM.User", "Create",
 			"*iam.CreateUserRequest", typeNameOf(req))
 	}
+	// Creating a user with roles assigns them, so a bound caller needs
+	// roles:assign as on REST, gRPC and MCP (go-quicbaas#2068). An unbound
+	// context is the host process itself, as for every embedded IAM handler.
+	if len(sdkReq.Roles) > 0 {
+		// roles:assign is checked in the requested tenant: a tenant-scoped
+		// subject naming another tenant is refused here.
+		permTenant, err := requireSubjectTenant(ctx, "Create", tenantID)
+		if err != nil {
+			return nil, err
+		}
+		permCtx := ctx
+		if permTenant != "" {
+			permCtx = tenantctx.WithTenant(ctx, permTenant)
+		}
+		if err := requireSubjectPermission(permCtx, svc, "quicbaas.IAM.User", "Create",
+			adminResourceRoles, adminActionAssign); err != nil {
+			return nil, err
+		}
+	}
 	opts := iam.CreateUserOptions{
 		Email:       sdkReq.Email,
 		Username:    sdkReq.Username,
@@ -721,7 +740,7 @@ func handleIAMRoleReconcile(ctx context.Context, svc service.QuicBaaS, req inter
 	out := &iamsdk.ReconcileRolesResponse{
 		TenantID: report.TenantID,
 		Roles:    make([]iamsdk.RoleReconcileResult, 0, len(report.Roles)),
-		Changed:  report.Changed(),
+		Changed:  iam.RoleReconcileChanged(report),
 	}
 	for _, r := range report.Roles {
 		out.Roles = append(out.Roles, iamsdk.RoleReconcileResult{

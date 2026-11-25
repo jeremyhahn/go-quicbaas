@@ -71,7 +71,7 @@ func TestQRDBRoleStorage_ReconcileBuiltInRoles_ProjectsReport(t *testing.T) {
 	if report.TenantID != "burnin" {
 		t.Fatalf("report TenantID = %q, want burnin", report.TenantID)
 	}
-	if !report.Changed() {
+	if !RoleReconcileChanged(report) {
 		t.Fatal("Changed() = false for a report carrying two changed roles")
 	}
 	if len(report.Roles) != 2 {
@@ -111,7 +111,7 @@ func TestQRDBRoleStorage_ReconcileBuiltInRoles_ConvergedTenantReportsNoChange(t 
 	if err != nil {
 		t.Fatalf("ReconcileBuiltInRoles: %v", err)
 	}
-	if report.Changed() {
+	if RoleReconcileChanged(report) {
 		t.Fatalf("Changed() = true for an empty report: %+v", report.Roles)
 	}
 	if len(report.Roles) != 0 {
@@ -146,7 +146,7 @@ func TestQRDBRoleStorage_ReconcileBuiltInRoles_NilResponseIsNotAPanic(t *testing
 	if err != nil {
 		t.Fatalf("ReconcileBuiltInRoles: %v", err)
 	}
-	if report == nil || report.Changed() {
+	if report == nil || RoleReconcileChanged(report) {
 		t.Fatalf("report = %+v, want an empty report for a nil response", report)
 	}
 }
@@ -290,7 +290,7 @@ func TestIdentityStore_ReconcileBuiltInRoles_DelegatesToTheRoleStorage(t *testin
 	if err != nil {
 		t.Fatalf("ReconcileBuiltInRoles: %v", err)
 	}
-	if !report.Changed() || len(report.Roles) != 1 || report.Roles[0].Name != "admin" {
+	if !RoleReconcileChanged(report) || len(report.Roles) != 1 || report.Roles[0].Name != "admin" {
 		t.Fatalf("report = %+v, want the admin role reported as changed", report)
 	}
 }

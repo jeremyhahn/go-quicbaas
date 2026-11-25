@@ -447,6 +447,7 @@ func (h *IAMHandler) ReconcileRoles(w http.ResponseWriter, r *http.Request) {
 		h.server.handleServiceError(w, r, err)
 		return
 	}
+	changed := iam.RoleReconcileChanged(report)
 
 	// Log audit event
 	h.logAuditEvent(ctx, tenantID,
@@ -455,14 +456,14 @@ func (h *IAMHandler) ReconcileRoles(w http.ResponseWriter, r *http.Request) {
 		"reconcile",
 		iam.AuditOutcomeSuccess,
 		&iam.AuditResource{Type: "tenant", ID: tenantID},
-		map[string]interface{}{"changed": report.Changed(), "roles_changed": len(report.Roles)},
+		map[string]interface{}{"changed": changed, "roles_changed": len(report.Roles)},
 	)
 
 	// Build response
 	resp := map[string]interface{}{
 		"tenant_id": report.TenantID,
 		"roles":     report.Roles,
-		"changed":   report.Changed(),
+		"changed":   changed,
 	}
 
 	RespondJSON(w, r, http.StatusOK, resp)

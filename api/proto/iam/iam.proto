@@ -39,7 +39,9 @@ service IAMService {
   rpc GetUser(GetUserRequest) returns (User) {
       option (qrdb.v1.permission) = "users:read";
   }
-  rpc UpdateUser(UpdateUserRequest) returns (User);
+  rpc UpdateUser(UpdateUserRequest) returns (User) {
+      option (qrdb.v1.permission) = "users:update";
+  }
   rpc DeleteUser(DeleteUserRequest) returns (DeleteUserResponse);
   rpc ListUsers(ListUsersRequest) returns (ListUsersResponse);
   // GetUserByUsername is the tenant-scoped username lookup. Like GetUser it
@@ -216,13 +218,13 @@ service FederationService {
 
   // Account linking
   rpc LinkAccount(LinkAccountRequest) returns (LinkAccountResponse) {
-      option (qrdb.v1.permission) = "tenants:create";
+      option (qrdb.v1.permission) = "users:update";
   }
   rpc UnlinkAccount(UnlinkAccountRequest) returns (UnlinkAccountResponse) {
-      option (qrdb.v1.permission) = "tenants:delete";
+      option (qrdb.v1.permission) = "users:update";
   }
   rpc GetUserLinks(GetUserLinksRequest) returns (GetUserLinksResponse) {
-      option (qrdb.v1.permission) = "tenants:read";
+      option (qrdb.v1.permission) = "users:read";
   }
 }
 

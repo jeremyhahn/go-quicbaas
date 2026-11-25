@@ -16,6 +16,7 @@ package iam
 import (
 	"context"
 	"errors"
+	"slices"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
@@ -245,10 +246,12 @@ func (s *QRDBRoleStorage) ReconcileBuiltInRoles(ctx context.Context, tenantID st
 	return transportReconcileToIAM(tenantID, resp), nil
 }
 
-// transportReconcileToIAM projects qrdb's reconcile response onto the broker
-// report. The response's TenantID is preferred when set; the requested tenant
-// is the fallback, so a report always names the tenant it describes even when
-// the caller addressed its own effective tenant with an empty string.
+// transportReconcileToIAM copies qrdb's reconcile response into the report
+// this package returns, which is go-qrdb's type itself. The response's
+// TenantID is preferred when set; the requested tenant is the fallback, so a
+// report always names the tenant it describes even when the caller addressed
+// its own effective tenant with an empty string. Each role's Added and Removed
+// are cloned so the report never aliases the response.
 func transportReconcileToIAM(tenantID string, resp *qrdbtransport.ReconcileRolesResponse) *RoleReconcileReport {
 	report := &RoleReconcileReport{TenantID: tenantID}
 	if resp == nil {
@@ -259,13 +262,9 @@ func transportReconcileToIAM(tenantID string, resp *qrdbtransport.ReconcileRoles
 	}
 	report.Roles = make([]RoleReconcileResult, 0, len(resp.Roles))
 	for _, r := range resp.Roles {
-		report.Roles = append(report.Roles, RoleReconcileResult{
-			RoleID:  r.RoleID,
-			Name:    r.Name,
-			Created: r.Created,
-			Added:   append([]string(nil), r.Added...),
-			Removed: append([]string(nil), r.Removed...),
-		})
+		r.Added = slices.Clone(r.Added)
+		r.Removed = slices.Clone(r.Removed)
+		report.Roles = append(report.Roles, r)
 	}
 	return report
 }

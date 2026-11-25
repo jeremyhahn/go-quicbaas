@@ -881,6 +881,7 @@ func TestIAMHandler_CreateUser_WithRoles(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	req = withRoleAssignCaller(server, req)
 	req = withChiParams(req, map[string]string{"tenant_id": "tenant1"})
+	req = asRoleAssigner(handler, req)
 	w := httptest.NewRecorder()
 
 	handler.CreateUser(w, req)
@@ -911,6 +912,7 @@ func TestIAMHandler_CreateUser_UnknownRole_NotFoundNoUser(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	req = withRoleAssignCaller(server, req)
 	req = withChiParams(req, map[string]string{"tenant_id": "tenant1"})
+	req = asRoleAssigner(handler, req)
 	w := httptest.NewRecorder()
 
 	handler.CreateUser(w, req)

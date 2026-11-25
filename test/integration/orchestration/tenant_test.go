@@ -145,31 +145,6 @@ func TestE2E_TenantIsolation_MessagingIsolated(t *testing.T) {
 	}
 }
 
-// TestE2E_TenantIsolation_SuperAdminBlocked verifies that a request with
-// super admin context is blocked from accessing orchestration data.
-func TestE2E_TenantIsolation_SuperAdminBlocked(t *testing.T) {
-	svc := newAgentService(t)
-	tenantID := "tenant-platform-admin-blocked"
-
-	// Create a task normally.
-	createTestTask(t, svc, tenantID, "Super admin test task", "security-team")
-
-	// Attempt to list tasks as super admin.
-	ctx := orchestration.ContextWithSuperAdmin(
-		orchestration.ContextWithTenant(context.Background(), tenantID),
-		true,
-	)
-
-	// The tenant guard should block super admin access.
-	guard := orchestration.NewTenantGuard(&testLogger{t: t})
-	err := guard.ValidateTenantAccess(ctx, tenantID)
-	require.Error(t, err, "super admin should be blocked")
-
-	var superAdminErr *orchestration.SuperAdminBlockedError
-	assert.ErrorAs(t, err, &superAdminErr,
-		"error should be SuperAdminBlockedError")
-}
-
 // TestE2E_TenantIsolation_RAGNamespaceIsolated verifies that RAG operations
 // are isolated per tenant namespace. Tenant A's RAG data should not be
 // accessible by tenant B.

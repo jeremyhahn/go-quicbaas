@@ -16,6 +16,7 @@ package grpc
 import (
 	"context"
 	stderrors "errors"
+	"strings"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -25,6 +26,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	iampb "github.com/jeremyhahn/go-quicbaas/api/proto/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
@@ -40,6 +42,10 @@ type IAMServer struct {
 	// inviteOrigin is the origin activation links are built under: the one
 	// the WebAuthn relying party accepts. Empty leaves invite_url unset.
 	inviteOrigin string
+
+	// argumentAuthz resolves go-qrdb's authorizer for the permissions a user
+	// write's own arguments demand (SetArgumentAuthorizer).
+	argumentAuthz func() qrdbsdk.Authorizer
 }
 
 // IAMService defines the interface for IAM operations.
@@ -140,6 +146,58 @@ func NewIAMServer(iamService IAMService, log *logger.Logger) *IAMServer {
 // and the ceremony is then refused.
 func (s *IAMServer) SetInviteOrigin(origin string) {
 	s.inviteOrigin = origin
+}
+
+// SetArgumentAuthorizer installs go-qrdb's authorizer, resolved per call
+// because the node builds it after the server, to decide the permissions a
+// user write's own arguments demand (roles, attributes, lifecycle). Without
+// one those writes are refused.
+func (s *IAMServer) SetArgumentAuthorizer(resolve func() qrdbsdk.Authorizer) {
+	s.argumentAuthz = resolve
+}
+
+// authorizeArguments asks go-qrdb's authorizer, in tenantID, for every
+// permission req's own arguments demand on top of fullMethod's descriptor
+// permission (grpcArgumentPermissionsFor). It lives in the handler so every
+// listener that serves this IAMServer enforces it, including the unified
+// module, which checks only the descriptor permission. It fails closed: a
+// request the table cannot read, a caller with no identity, and a missing
+// authorizer are each refused. The identity is go-qrdb's on the unified path
+// and, on the legacy path, the token-validated subject the interceptor bound.
+func (s *IAMServer) authorizeArguments(ctx context.Context, fullMethod, tenantID string, req interface{}) error {
+	perms, err := grpcArgumentPermissionsFor(fullMethod, req)
+	if err != nil {
+		return status.Error(codes.PermissionDenied, "permission denied")
+	}
+	if len(perms) == 0 {
+		return nil
+	}
+	identity := qrdbsdk.IdentityFromContext(ctx)
+	if identity == nil {
+		subj, ok := auth.SubjectFromContext(ctx)
+		if !ok || !subj.Authenticated {
+			return status.Error(codes.Unauthenticated, "authentication required")
+		}
+		identity = &qrdbsdk.Identity{Subject: subj.ID, TenantID: subj.TenantID, Roles: subj.Roles}
+	}
+	var authz qrdbsdk.Authorizer
+	if s.argumentAuthz != nil {
+		authz = s.argumentAuthz()
+	}
+	if authz == nil {
+		return status.Error(codes.PermissionDenied, "permission denied")
+	}
+	tctx := qrdbsdk.ContextWithTenant(ctx, tenantID)
+	for _, perm := range perms {
+		resource, action, ok := strings.Cut(perm, ":")
+		if !ok {
+			return status.Error(codes.PermissionDenied, "permission denied")
+		}
+		if err := authz.Authorize(tctx, identity, resource, action); err != nil {
+			return rbacGRPCStatus(err)
+		}
+	}
+	return nil
 }
 
 // =============================================================================
@@ -330,6 +388,9 @@ func (s *IAMServer) CreateUser(ctx context.Context, req *iampb.CreateUserRequest
 	if err := requireCallerTenant(ctx, "grpc.IAM", req.TenantId); err != nil {
 		return nil, err
 	}
+	if err := s.authorizeArguments(ctx, iampb.IAMService_CreateUser_FullMethodName, req.TenantId, req); err != nil {
+		return nil, err
+	}
 	if req.Email == "" {
 		return nil, status.Error(codes.InvalidArgument, "email is required")
 	}
@@ -432,6 +493,9 @@ func (s *IAMServer) UpdateUser(ctx context.Context, req *iampb.UpdateUserRequest
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
 	}
 	if err := requireCallerTenant(ctx, "grpc.IAM", req.TenantId); err != nil {
+		return nil, err
+	}
+	if err := s.authorizeArguments(ctx, iampb.IAMService_UpdateUser_FullMethodName, req.TenantId, req); err != nil {
 		return nil, err
 	}
 	if req.UserId == "" {

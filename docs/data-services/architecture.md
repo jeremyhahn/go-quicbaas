@@ -1917,8 +1917,9 @@ The platform shard hosts the platform database which stores:
 - Shard allocation state
 - Global platform configuration
 
-Access to the platform shard requires the `db:admin` role, enforced by
-`GuardPlatformShard` at gRPC and REST transport layers.
+No transport takes a caller-chosen shard ID as an authorization input:
+platform data is reached only through the services that own it, each gated by
+go-qrdb's `Authorizer` on a registered permission.
 
 ### Tenant Shards (100+)
 
@@ -1952,10 +1953,11 @@ IsTenantShard(id)   bool  // id >= 100
 
 ### Access Control
 
-Two enforcement points prevent unauthorized access to the platform shard:
-
-1. **gRPC interceptor** (`pkg/api/grpc/interceptor_shard.go`): Checks `GuardPlatformShard` on the shard ID from request metadata.
-2. **REST middleware** (`pkg/api/rest/middleware_shard.go`): Same guard on the `X-Shard-ID` header.
+`pkg/shards` classifies a shard ID (`TierForShard`). The gRPC interceptor and
+REST middleware that once guarded the platform shard on an `x-shard-id` header
+and trusted an `x-roles` header as admin were never wired into a server and
+were deleted (SPEC Authorization clean-up D3); a caller-supplied role is never
+an authorization input.
 
 ```go
 func GuardPlatformShard(id uint64, hasAdminRole bool) error

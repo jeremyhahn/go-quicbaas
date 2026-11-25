@@ -14,12 +14,9 @@
 package grpc
 
 import (
-	"fmt"
-
 	"google.golang.org/grpc"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
-	iampb "github.com/jeremyhahn/go-quicbaas/api/proto/iam"
 )
 
 // brokerServiceDescs is the canonical list of gRPC service descriptors that the
@@ -190,27 +187,6 @@ var qrdbIdentityGatedMethods = map[string]bool{
 	"/qrdb.v1.QRDBService/BarrierRecoveryShareClaimComplete": true,
 }
 
-// grpcRequestPermissions holds, per gRPC FullMethod, the further permissions a
-// request's own fields demand on top of the method's grpcMethodPermissions
-// grant. Each func returns the extra permissions for req (nil when the fields
-// demand none) and an error for a req it does not recognise, so the call fails
-// closed. The token's tenant is the target tenant for every entry: each
-// handler here refuses any tenant other than the caller's own.
-var grpcRequestPermissions = map[string]func(req interface{}) ([]methodPermission, error){
-	// go-qrdb's native CreateUser (AuthorizeRoleAssignmentWriteOnCreate):
-	// a create that names roles also needs roles:assign.
-	"/quicbaas.iam.v1.IAMService/CreateUser": func(req interface{}) ([]methodPermission, error) {
-		r, ok := req.(*iampb.CreateUserRequest)
-		if !ok {
-			return nil, fmt.Errorf("unexpected request type %T for CreateUser", req)
-		}
-		if len(r.GetRoles()) > 0 {
-			return []methodPermission{{"roles", "assign"}}, nil
-		}
-		return nil, nil
-	},
-}
-
 // grpcMethodPermissions maps each protected gRPC FullMethod to the qrdb-canonical
 // permission it requires. Every value is a registered qrdb permission (the join
 // resource:action exists in go-qrdb/pkg/permission/constants.go).
@@ -268,12 +244,12 @@ var grpcMethodPermissions = map[string]methodPermission{
 	//
 	// IAMService is absent from brokerServiceDescs, so a method of it that is
 	// not mapped in this table is denied wholesale under RequireAuthz. The
-	// methods mapped are ApproveUser, CreateUser, GetUser, GetUserByUsername, the
-	// WebAuthn credential verbs here, ReconcileRoles, and the tenant verbs
-	// (CreateTenant, GetTenant, ListTenants, UpdateTenant, DeleteTenant,
-	// ProvisionTenant) below. Mapping the WebAuthn verbs does not carve an
-	// exception into that posture — it is the minimum needed for the surface
-	// to exist.
+	// methods mapped are ApproveUser, CreateUser, UpdateUser, GetUser,
+	// GetUserByUsername, the WebAuthn credential verbs here, ReconcileRoles,
+	// and the tenant verbs (CreateTenant, GetTenant, ListTenants, UpdateTenant,
+	// DeleteTenant, ProvisionTenant) below. Mapping the WebAuthn verbs does not
+	// carve an exception into that posture — it is the minimum needed for the
+	// surface to exist.
 	// They are the operator's ONLY recovery path for a WebAuthn credential
 	// stranded by a deleted user (go-quicbaas#273): the credential blocks its
 	// email from ever registering an authenticator again, and every other way
@@ -295,10 +271,12 @@ var grpcMethodPermissions = map[string]methodPermission{
 	// method is mapped only by REST parity, taking its REST twin's grant.
 	// Mirrors REST POST /api/v1/iam/users/{user_id}/approve (users:enable).
 	"/quicbaas.iam.v1.IAMService/ApproveUser": {"users", "enable"},
-	// Mirrors QRDBService CreateUser (users:create). A request naming roles
-	// also takes roles:assign (grpcRequestPermissions), as go-qrdb's native
-	// CreateUser requires (AuthorizeRoleAssignmentWriteOnCreate).
+	// User create and update take the grants their REST twins require
+	// (POST and PUT /api/v1/iam/users), so the roles:assign argument check
+	// in authz_interceptor.go is reached on a write that carries roles
+	// (go-quicbaas#2064).
 	"/quicbaas.iam.v1.IAMService/CreateUser": {"users", "create"},
+	"/quicbaas.iam.v1.IAMService/UpdateUser": {"users", "update"},
 	// Mirror QRDBService GetUser/GetUserByUsername (users:read).
 	"/quicbaas.iam.v1.IAMService/GetUser":                   {"users", "read"},
 	"/quicbaas.iam.v1.IAMService/GetUserByUsername":         {"users", "read"},
@@ -352,12 +330,16 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.iam.v1.FederationService/UpdateProvider": {"tenants", "create"},
 	// DELETE /api/v1/tenants/{tenant_id}/providers/{provider_id}
 	"/quicbaas.iam.v1.FederationService/DeleteProvider": {"tenants", "delete"},
+	// An account link is a user credential (it lets an external identity log
+	// in as the user), so it takes a users:* grant, not a tenant-lifecycle one
+	// (go-quicbaas#341).
+	//
 	// POST /api/v1/tenants/{tenant_id}/users/{user_id}/links/
-	"/quicbaas.iam.v1.FederationService/LinkAccount": {"tenants", "create"},
+	"/quicbaas.iam.v1.FederationService/LinkAccount": {"users", "update"},
 	// GET /api/v1/tenants/{tenant_id}/users/{user_id}/links/
-	"/quicbaas.iam.v1.FederationService/GetUserLinks": {"tenants", "read"},
+	"/quicbaas.iam.v1.FederationService/GetUserLinks": {"users", "read"},
 	// DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/links/{provider_id}
-	"/quicbaas.iam.v1.FederationService/UnlinkAccount": {"tenants", "delete"},
+	"/quicbaas.iam.v1.FederationService/UnlinkAccount": {"users", "update"},
 
 	// ---- quicbaas.iam.v1.SessionService ----
 	//

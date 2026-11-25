@@ -163,7 +163,17 @@ func TestREST_UpdateUserStillAcceptsALegitimateLifecycle(t *testing.T) {
 	userID, _ := created["id"].(string)
 	require.NotEmpty(t, userID)
 
-	w = putUser(t, handler, "acme", userID, `{"lifecycle":"suspended"}`)
+	// Suspending the account asks users:disable, so the caller holds it.
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("tenant_id", "acme")
+	rctx.URLParams.Add("user_id", userID)
+	req := httptest.NewRequest(http.MethodPut,
+		"/api/v1/tenants/acme/users/"+userID, strings.NewReader(`{"lifecycle":"suspended"}`))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
+	req.Header.Set("Content-Type", "application/json")
+	req = asRoleAssigner(handler, req)
+	w = httptest.NewRecorder()
+	handler.UpdateUser(w, req)
 	require.Equal(t, http.StatusOK, w.Code, "UpdateUser failed: %s", w.Body.String())
 
 	storedID, err := strconv.ParseUint(userID, 10, 64)

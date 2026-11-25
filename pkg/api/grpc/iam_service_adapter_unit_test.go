@@ -1157,7 +1157,7 @@ func TestAdapter91_ReconcileBuiltInRoles_Success(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, report)
 	assert.Equal(t, "tenant-1", report.TenantID)
-	assert.True(t, report.Changed())
+	assert.True(t, iam.RoleReconcileChanged(report))
 	require.Len(t, report.Roles, 1)
 	assert.Equal(t, "admin", report.Roles[0].Name)
 }

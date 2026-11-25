@@ -53,6 +53,8 @@ type QRDBUserStorage struct {
 // Compile-time interface check: QRDBUserStorage is a UserStorage.
 var _ iam.UserStorage = (*QRDBUserStorage)(nil)
 
+var _ iam.PartialUserUpdater = (*QRDBUserStorage)(nil)
+
 // NewQRDBUserStorage builds a qrdb-backed UserStorage. A nil resolver yields a
 // storage that fails every call with a typed configuration error rather than
 // panicking.
@@ -289,6 +291,57 @@ func (s *QRDBUserStorage) UpdateUser(ctx context.Context, u *iam.User) error {
 		Lifecycle:    core.Lifecycle,
 		LastAuth:     core.LastAuth,
 	}); err != nil {
+		return mapQRDBUserError("update", err)
+	}
+	return nil
+}
+
+// UpdateUserFields writes only the named fields of u. qrdb's UpdateUserRequest
+// is a partial update (an empty string or nil slice/map means no change), so
+// every field left out keeps the value the store holds: a role revoked or an
+// account disabled since u was read is not written back. LastAuth is never
+// sent from here.
+func (s *QRDBUserStorage) UpdateUserFields(ctx context.Context, u *iam.User, fields iam.UserFields) error {
+	svc, err := s.servicer(ctx)
+	if err != nil {
+		return err
+	}
+	core, err := FromIAMUser(u)
+	if err != nil {
+		return err
+	}
+	if core.ID == 0 {
+		return iam.ErrUserNotFound
+	}
+
+	req := &qrdbsdk.UpdateUserRequest{ID: core.ID}
+	if fields&iam.UserFieldUsername != 0 {
+		req.Username = core.Username
+	}
+	if fields&iam.UserFieldEmail != 0 {
+		req.Email = core.Email
+	}
+	if fields&iam.UserFieldName != 0 {
+		req.Name = core.Name
+	}
+	if fields&iam.UserFieldRoles != 0 {
+		req.RoleIDs = orEmptySlice(core.RoleIDs)
+	}
+	if fields&iam.UserFieldAuthMethods != 0 {
+		req.AuthMethods = orEmptySlice(core.AuthMethods)
+	}
+	if fields&iam.UserFieldAttributes != 0 {
+		req.Attributes = orEmptyMap(core.Attributes)
+	}
+	if fields&iam.UserFieldCertBindings != 0 {
+		req.CertBindings = orEmptyCertBindings(core.CertBindings)
+	}
+	if fields&iam.UserFieldLifecycle != 0 {
+		req.Lifecycle = core.Lifecycle
+	}
+
+	tctx := qrdbsdk.ContextWithTenant(ctx, u.TenantID)
+	if _, err := svc.UpdateUser(tctx, req); err != nil {
 		return mapQRDBUserError("update", err)
 	}
 	return nil

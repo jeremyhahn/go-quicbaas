@@ -1964,6 +1964,7 @@ func (s *Server) buildIAMServer(getter iamComponentsGetter) iampb.IAMServiceServ
 	}
 	iamServer := grpcapi.NewIAMServer(iamAdapter, s.logger)
 	iamServer.SetInviteOrigin(s.inviteOrigin())
+	iamServer.SetArgumentAuthorizer(s.capturedNodeAuthorizer)
 	return iamServer
 }
 

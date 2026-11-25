@@ -206,6 +206,18 @@ const (
 	// thereby be able to extract every login in it.
 	AgentAccountMaterialize qrdbsdk.Permission = "agent_accounts:materialize"
 
+	// The agent runtime verbs ("agent:runtime:*") guard an enrolled
+	// daemon's own spawn server: start a session, prompt it, read its
+	// status, and run a stateless inference. They are spelled here exactly
+	// as orchestration.AgentScopeRuntime* spells them, and the
+	// tenant-scoped "agent-runtime" role (iam.FleetRuntimeGrant) names
+	// them. Registering them makes that role's grant a registry member
+	// like every other verb it holds (SPEC Authorization clean-up D6).
+	AgentRuntimeSpawn  qrdbsdk.Permission = "agent:runtime:spawn"
+	AgentRuntimePrompt qrdbsdk.Permission = "agent:runtime:prompt"
+	AgentRuntimeStatus qrdbsdk.Permission = "agent:runtime:status"
+	AgentRuntimeInfer  qrdbsdk.Permission = "agent:runtime:infer"
+
 	// SpendPolicyWrite ("spend_policy:write") authorizes REPLACING a tenant's
 	// own spend limits: the sliding token and dollar windows over every turn
 	// charged to the tenant, which defer the tenant's new work at admission
@@ -627,6 +639,15 @@ var contributions = []contribution{
 		roles: []string{qrdbsdk.PermissionRoleAdmin},
 		duty:  dutyOutsideSecurityOfficer,
 	},
+	// The agent runtime verbs. The identity that exercises them is the
+	// tenant-scoped "agent-runtime" role an enrolled daemon holds
+	// (iam.FleetRuntimeGrant), not a built-in role. Among the built-ins
+	// Admin alone may drive a daemon's runtime by hand, as with
+	// agent_accounts:materialize. No key material, no module governance.
+	{permission: AgentRuntimeSpawn, roles: []string{qrdbsdk.PermissionRoleAdmin}, duty: dutyOutsideSecurityOfficer, scope: scopeSelf},
+	{permission: AgentRuntimePrompt, roles: []string{qrdbsdk.PermissionRoleAdmin}, duty: dutyOutsideSecurityOfficer, scope: scopeSelf},
+	{permission: AgentRuntimeStatus, roles: []string{qrdbsdk.PermissionRoleAdmin}, duty: dutyOutsideSecurityOfficer, scope: scopeSelf},
+	{permission: AgentRuntimeInfer, roles: []string{qrdbsdk.PermissionRoleAdmin}, duty: dutyOutsideSecurityOfficer, scope: scopeSelf},
 	// spend_policy:write caps a whole tenant's consumption, so it is
 	// administrative, like sdlc:bind: Admin alone among the built-ins. It
 	// touches no key material and no module governance.

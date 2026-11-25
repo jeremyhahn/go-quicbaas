@@ -362,7 +362,7 @@ func TestAuthorizeGRPCRequest_FederatedLoginIsPublic(t *testing.T) {
 	for _, method := range methods {
 		t.Run(method, func(t *testing.T) {
 			authorizer := &fakeValidatorAuthorizer{denyErr: &platformtoken.InvalidTokenError{Detail: "should never be called"}}
-			_, err := authorizeGRPCRequest(context.Background(), method, authorizer, nil)
+			_, err := authorizeGRPCRequest(context.Background(), method, authorizer, authzInterceptorConfig{})
 			require.NoError(t, err)
 			assert.Equal(t, "", authorizer.lastPerm, "validator must not be consulted for a public method")
 		})

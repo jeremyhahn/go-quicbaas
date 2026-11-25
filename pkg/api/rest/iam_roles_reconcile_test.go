@@ -150,6 +150,66 @@ func TestReconcileRoles_ReportsWhatChanged(t *testing.T) {
 	assert.Equal(t, []string{"tenants:read"}, resp.Roles[1].Added)
 }
 
+// TestReconcileRoles_RoleJSONIsGoQRDBsWireShape pins each changed role's JSON
+// to go-qrdb's transport type: role_id, name and created always, added and
+// removed only when non-empty.
+func TestReconcileRoles_RoleJSONIsGoQRDBsWireShape(t *testing.T) {
+	handler, roleStorage, cleanup := setupReconcileTest(t)
+	defer cleanup()
+
+	roleStorage.report = &iam.RoleReconcileReport{
+		TenantID: reconcileTenant,
+		Roles: []iam.RoleReconcileResult{
+			{
+				RoleID:  "role-admin",
+				Name:    "admin",
+				Added:   []string{"roles:reconcile"},
+				Removed: []string{"tenants:legacy_read"},
+			},
+			{
+				RoleID:  "role-viewer",
+				Name:    "viewer",
+				Created: true,
+				Added:   []string{"tenants:read"},
+			},
+		},
+	}
+
+	w := reconcileRequest(handler, reconcileTenant)
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	roles, ok := body["roles"].([]any)
+	require.True(t, ok, "roles is not an array: %s", w.Body.String())
+	require.Len(t, roles, 2)
+
+	keysOf := func(m map[string]any) []string {
+		keys := make([]string, 0, len(m))
+		for k := range m {
+			keys = append(keys, k)
+		}
+		return keys
+	}
+
+	admin, ok := roles[0].(map[string]any)
+	require.True(t, ok)
+	assert.ElementsMatch(t, []string{"role_id", "name", "created", "added", "removed"}, keysOf(admin))
+	assert.Equal(t, "role-admin", admin["role_id"])
+	assert.Equal(t, "admin", admin["name"])
+	assert.Equal(t, false, admin["created"])
+	assert.Equal(t, []any{"roles:reconcile"}, admin["added"])
+	assert.Equal(t, []any{"tenants:legacy_read"}, admin["removed"])
+
+	viewer, ok := roles[1].(map[string]any)
+	require.True(t, ok)
+	assert.ElementsMatch(t, []string{"role_id", "name", "created", "added"}, keysOf(viewer))
+	assert.Equal(t, "role-viewer", viewer["role_id"])
+	assert.Equal(t, "viewer", viewer["name"])
+	assert.Equal(t, true, viewer["created"])
+	assert.Equal(t, []any{"tenants:read"}, viewer["added"])
+}
+
 // TestReconcileRoles_AlreadyConvergedIsSuccessNotError covers the idempotent
 // case: a tenant that already agrees with the build answers 200 with
 // changed=false. It must not be an error status — the verb is meant to run on
