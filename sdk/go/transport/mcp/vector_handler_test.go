@@ -45,11 +45,35 @@ func TestVectorHandler_TransformCreateNamespaceRequest(t *testing.T) {
 		args, err := vh.transformCreateNamespace(req)
 		require.NoError(t, err)
 		assert.Equal(t, "test-ns", args["namespace"])
-		assert.Equal(t, int32(128), args["dimensions"])
+		// The server's MCP tool reads "dimension", a lower-case
+		// "index_type" and "index_config" as a JSON string.
+		assert.Equal(t, int32(128), args["dimension"])
+		assert.NotContains(t, args, "dimensions")
 		assert.Equal(t, "hnsw", args["index_type"])
 		assert.Equal(t, "cosine", args["distance_metric"])
-		assert.NotNil(t, args["index_params"])
+		assert.JSONEq(t, `{"m":"16","ef_construction":"200"}`, args["index_config"].(string))
+		assert.NotContains(t, args, "index_params")
 		assert.NotNil(t, args["metadata"])
+	})
+
+	t.Run("unset index type defaults to hnsw like gRPC", func(t *testing.T) {
+		vh := &vectorHandler{}
+		args, err := vh.transformCreateNamespace(&vector.CreateNamespaceRequest{
+			Config: &vector.NamespaceConfig{Namespace: "ns", Dimensions: 4},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, int32(4), args["dimension"])
+		assert.Equal(t, "hnsw", args["index_type"])
+		assert.NotContains(t, args, "index_config")
+	})
+
+	t.Run("index type is lower-cased", func(t *testing.T) {
+		vh := &vectorHandler{}
+		args, err := vh.transformCreateNamespace(&vector.CreateNamespaceRequest{
+			Config: &vector.NamespaceConfig{Namespace: "ns", Dimensions: 4, IndexType: vector.IndexType("FLAT")},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, "flat", args["index_type"])
 	})
 
 	t.Run("nil config returns error", func(t *testing.T) {
