@@ -35,6 +35,8 @@ func TestGRPC_UpdateUserWithANonexistentRoleKeepsTheOldRole(t *testing.T) {
 		Roles:     []string{"viewer"},
 	})
 	require.NoError(t, err)
+	// Grant roles:assign so the refusal under test is the missing role's.
+	srv.SetRoleAuthorizer(allowAllRoleAuthorizer{})
 
 	_, err = srv.UpdateUser(ctx, &iampb.UpdateUserRequest{
 		TenantId: "acme",
