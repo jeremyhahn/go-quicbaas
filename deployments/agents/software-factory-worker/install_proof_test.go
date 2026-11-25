@@ -62,6 +62,19 @@ func TestDockerfile_BaseImageCarriesJq(t *testing.T) {
 	}
 }
 
+func TestDockerfile_BaseImageCarriesGcovr(t *testing.T) {
+	packages := baseAptPackages(string(Dockerfile))
+	if len(packages) == 0 {
+		t.Fatal("the Dockerfile's base apt-get install list was not found")
+	}
+	if !slices.Contains(packages, "gcovr") {
+		t.Errorf("the image's apt list %v does not carry gcovr", packages)
+	}
+	if !strings.Contains(string(Dockerfile), "\nRUN gcovr --version\n") {
+		t.Error("the Dockerfile does not assert gcovr --version after the sudo proof")
+	}
+}
+
 // TestDockerfile_BaseImageCarriesTheJDK proves the runtime stage installs the
 // headless JDK at the pinned major (OPENJDK_MAJOR), from Debian's archive
 // beside the other apt packages, rather than a hard-coded major the pin and
@@ -73,6 +86,24 @@ func TestDockerfile_BaseImageCarriesTheJDK(t *testing.T) {
 	}
 	if slices.Contains(packages, "openjdk-21-jdk-headless") {
 		t.Error("the JDK major must come from OPENJDK_MAJOR, not be written into the apt list")
+	}
+}
+
+// TestDockerfile_NodeWebStorageIsOffAfterTheNodeInstall pins #2391: Node 26's
+// global localStorage shadows jsdom's, so the image must set
+// NODE_OPTIONS=--no-experimental-webstorage, after Node is installed.
+func TestDockerfile_NodeWebStorageIsOffAfterTheNodeInstall(t *testing.T) {
+	text := string(Dockerfile)
+	env := strings.Index(text, "\nENV NODE_OPTIONS=--no-experimental-webstorage\n")
+	if env < 0 {
+		t.Fatal("the Dockerfile does not set ENV NODE_OPTIONS=--no-experimental-webstorage")
+	}
+	install := strings.Index(text, `test "$(node --version)" = "${NODE_VERSION}"`)
+	if install < 0 {
+		t.Fatal("the Dockerfile's Node install step was not found")
+	}
+	if env < install {
+		t.Error("ENV NODE_OPTIONS=--no-experimental-webstorage must come after the Node install")
 	}
 }
 

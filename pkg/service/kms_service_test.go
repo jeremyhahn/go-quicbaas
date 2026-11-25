@@ -5109,3 +5109,56 @@ func TestKMSValidationErrorTypes(t *testing.T) {
 func (m *mockKMSManager) Signer(_ context.Context, _ string) (crypto.Signer, error) {
 	return nil, nil
 }
+
+// TestKMSService_GenerateKey_ManagerInvalidInputKeepsItsCode: the manager's
+// invalid-input class (an overlong key ID) reaches the caller as a client
+// validation error, not an internal one.
+func TestKMSService_GenerateKey_ManagerInvalidInputKeepsItsCode(t *testing.T) {
+	mockManager := newMockKMSManager()
+	mockManager.generateKeyFn = func(ctx context.Context, attrs *xkmssdk.KeyAttributes) (interface{}, error) {
+		return nil, &quicbaasErrors.QBError{Code: quicbaasErrors.ErrInvalidInput, Op: "KMSService.GenerateKey", Err: kms.ErrXKMSKeyIDTooLong}
+	}
+	svc := newKMSService(mockManager, newMockLogger())
+
+	resp, err := svc.GenerateKey(systemTenantCtx(), &GenerateKeyRequest{
+		Name: "test-key",
+		KeyAttributes: &xkmssdk.KeyAttributes{
+			SymmetricAlgorithm: xkmssdk.SymmetricAES256GCM,
+		},
+		Usage: []KeyUsage{KeyUsageEncrypt},
+	})
+
+	require.Error(t, err)
+	assert.Nil(t, resp)
+	var qbErr *quicbaasErrors.QBError
+	require.True(t, stderrors.As(err, &qbErr), "service error must be a QBError, got %T", err)
+	assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
+	require.ErrorIs(t, err, kms.ErrXKMSKeyIDTooLong)
+}
+
+// TestKMSService_RotateKey_ManagerInvalidInputKeepsItsCode: a rotation whose
+// versioned key ID exceeds the limit is a client validation error.
+func TestKMSService_RotateKey_ManagerInvalidInputKeepsItsCode(t *testing.T) {
+	mockManager := newMockKMSManager()
+	mockManager.keys["test-key"] = &mockKeyData{
+		keyID:   "test-key",
+		version: 1,
+		status:  "enabled",
+	}
+	mockManager.getKeyFn = func(ctx context.Context, keyID string) (interface{}, error) {
+		return &kms.KeyMetadata{KeyID: keyID, Version: 1, State: kms.KeyStateEnabled}, nil
+	}
+	mockManager.rotateKeyFn = func(ctx context.Context, keyID string) (interface{}, error) {
+		return nil, &quicbaasErrors.QBError{Code: quicbaasErrors.ErrInvalidInput, Op: "KMSService.RotateKey", Err: kms.ErrXKMSKeyIDTooLong}
+	}
+	svc := newKMSService(mockManager, newMockLogger())
+
+	resp, err := svc.RotateKey(systemTenantCtx(), &RotateKeyRequest{KeyID: "test-key"})
+
+	require.Error(t, err)
+	assert.Nil(t, resp)
+	var qbErr *quicbaasErrors.QBError
+	require.True(t, stderrors.As(err, &qbErr), "service error must be a QBError, got %T", err)
+	assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
+	require.ErrorIs(t, err, kms.ErrXKMSKeyIDTooLong)
+}

@@ -377,6 +377,7 @@ func (r *TestRunner) Run(cmd CommandDef) (stdout string, stderr string, err erro
 	} else if systemAdminEnv != nil {
 		execCmd.Env = systemAdminEnv
 	}
+	execCmd.Env = commandEnv(execCmd.Env, cmd.Env)
 
 	var outBuf, errBuf bytes.Buffer
 	execCmd.Stdout = &outBuf

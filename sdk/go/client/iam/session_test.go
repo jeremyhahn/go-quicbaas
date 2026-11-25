@@ -535,12 +535,15 @@ func TestSessionClient_RevokeOthers(t *testing.T) {
 				if revokeReq.KeepSessionID != "session-123" {
 					t.Errorf("expected keep session ID session-123, got %s", revokeReq.KeepSessionID)
 				}
+				if revokeReq.TenantID != "tenant-1" {
+					t.Errorf("expected tenant ID tenant-1, got %s", revokeReq.TenantID)
+				}
 				return nil, nil
 			},
 		}
 
 		client := NewSessionClient(mt)
-		err := client.RevokeOthers(context.Background(), "session-123")
+		err := client.RevokeOthers(context.Background(), "tenant-1", "session-123")
 
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -555,7 +558,7 @@ func TestSessionClient_RevokeOthers(t *testing.T) {
 		}
 
 		client := NewSessionClient(mt)
-		err := client.RevokeOthers(context.Background(), "session-123")
+		err := client.RevokeOthers(context.Background(), "tenant-1", "session-123")
 
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -564,7 +567,7 @@ func TestSessionClient_RevokeOthers(t *testing.T) {
 
 	t.Run("nil context", func(t *testing.T) {
 		client := NewSessionClient(&mockTransport{})
-		err := client.RevokeOthers(nil, "session-123")
+		err := client.RevokeOthers(nil, "tenant-1", "session-123")
 		if err == nil {
 			t.Error("expected error for nil context")
 		}
@@ -575,7 +578,7 @@ func TestSessionClient_RevokeOthers(t *testing.T) {
 
 	t.Run("empty keep session ID", func(t *testing.T) {
 		client := NewSessionClient(&mockTransport{})
-		err := client.RevokeOthers(context.Background(), "")
+		err := client.RevokeOthers(context.Background(), "tenant-1", "")
 		if err == nil {
 			t.Error("expected error for empty keep session ID")
 		}
@@ -592,7 +595,7 @@ func TestSessionClient_RevokeOthers(t *testing.T) {
 		}
 
 		client := NewSessionClient(mt)
-		err := client.RevokeOthers(context.Background(), "session-123")
+		err := client.RevokeOthers(context.Background(), "tenant-1", "session-123")
 		if err != nil {
 			t.Errorf("void operation should accept any non-error response, got %v", err)
 		}

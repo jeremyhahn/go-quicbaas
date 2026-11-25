@@ -341,7 +341,7 @@ func TestGetSpendReport_RefusalPaths(t *testing.T) {
 func TestGetSpendReport_BreaksDownAndNarrowsByHost(t *testing.T) {
 	ctx := context.Background()
 	ledger := orchestration.NewInMemoryConsumptionLedger()
-	for i, host := range []string{"gpu-host:9091", "vm-host:9091"} {
+	for i, host := range []string{"gpu-01:9091", "vm-host:9091"} {
 		require.NoError(t, ledger.Record(ctx, orchestration.ConsumptionEntry{
 			EntryID: host, TenantID: "t1", ProjectID: "p1", Host: host,
 			Engine: "ollama", Model: "review-q8", Outcome: orchestration.ConsumptionOutcomeSuccess,
@@ -355,7 +355,7 @@ func TestGetSpendReport_BreaksDownAndNarrowsByHost(t *testing.T) {
 	all, err := srv.GetSpendReport(ctx, &pb.GetSpendReportRequest{TenantId: "t1"})
 	require.NoError(t, err)
 	require.Len(t, all.GetHosts(), 2)
-	assert.Equal(t, "gpu-host:9091", all.GetHosts()[0].GetHost())
+	assert.Equal(t, "gpu-01:9091", all.GetHosts()[0].GetHost())
 	assert.Equal(t, int64(10), all.GetHosts()[0].GetTotals().GetTotalTokens())
 	assert.Equal(t, int32(2), all.GetTotals().GetMeasuredEnergyEntries())
 
