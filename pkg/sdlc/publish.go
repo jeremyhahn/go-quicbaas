@@ -523,7 +523,10 @@ func sshKeyFingerprint(authorizedKey string) (string, error) {
 // THE TASK IS RE-READ LAST, immediately before the push (admit). The
 // verifications run commands in the container, and a block that lands on
 // another node while it runs must still stop the push. A read made before the
-// verification would miss that block.
+// verification would miss that block. The credential refresh can wait on the
+// node's token command and runs a delivery in the container, so it also runs
+// before the re-read: nothing that can block sits between the re-read and the
+// push.
 func (p *publisher) Push(plan publishPlan) (string, error) {
 	if p.admit == nil {
 		return "", &InvalidInputError{Field: "admit", Message: "a publisher that cannot re-read its task must not push"}
@@ -534,10 +537,10 @@ func (p *publisher) Push(plan publishPlan) (string, error) {
 	if err := p.VerifyTrailers(plan); err != nil {
 		return "", err
 	}
-	if err := p.admit(); err != nil {
+	if err := p.refreshCredential(); err != nil {
 		return "", err
 	}
-	if err := p.refreshCredential(); err != nil {
+	if err := p.admit(); err != nil {
 		return "", err
 	}
 	refspec := plan.Branch
