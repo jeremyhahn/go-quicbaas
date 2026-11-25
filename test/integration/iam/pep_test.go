@@ -41,7 +41,7 @@ func TestPEPSingleCheck(t *testing.T) {
 	admin := cluster.asSystemAdmin()
 
 	tenantID := setupTenantForTests(t, admin)
-	defer admin.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	defer deleteTenantUnlessShared(admin, tenantID)
 	resolver := cluster.asResolver(t, tenantID)
 
 	// Create a simple policy
@@ -101,7 +101,7 @@ func TestPEPBatchCheck(t *testing.T) {
 	admin := cluster.asSystemAdmin()
 
 	tenantID := setupTenantForTests(t, admin)
-	defer admin.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	defer deleteTenantUnlessShared(admin, tenantID)
 	resolver := cluster.asResolver(t, tenantID)
 
 	// Create policy
@@ -195,7 +195,7 @@ func TestPEPCaching(t *testing.T) {
 	admin := cluster.asSystemAdmin()
 
 	tenantID := setupTenantForTests(t, admin)
-	defer admin.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	defer deleteTenantUnlessShared(admin, tenantID)
 	resolver := cluster.asResolver(t, tenantID)
 
 	// Create policy
@@ -265,7 +265,7 @@ func TestPEPPolicySync(t *testing.T) {
 	admin := cluster.asSystemAdmin()
 
 	tenantID := setupTenantForTests(t, admin)
-	defer admin.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	defer deleteTenantUnlessShared(admin, tenantID)
 	resolver := cluster.asResolver(t, tenantID)
 
 	// Create initial policy (deny)
@@ -362,7 +362,7 @@ func TestPEPPerformance(t *testing.T) {
 	admin := cluster.asSystemAdmin()
 
 	tenantID := setupTenantForTests(t, admin)
-	defer admin.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	defer deleteTenantUnlessShared(admin, tenantID)
 	resolver := cluster.asResolver(t, tenantID)
 
 	// Create policy
@@ -437,7 +437,7 @@ func TestPEPConcurrency(t *testing.T) {
 	admin := cluster.asSystemAdmin()
 
 	tenantID := setupTenantForTests(t, admin)
-	defer admin.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	defer deleteTenantUnlessShared(admin, tenantID)
 	resolver := cluster.asResolver(t, tenantID)
 
 	// Create policy
@@ -675,7 +675,7 @@ func TestPEPFailover(t *testing.T) {
 	admin := cluster.asSystemAdmin()
 
 	tenantID := setupTenantForTests(t, admin)
-	defer admin.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	defer deleteTenantUnlessShared(admin, tenantID)
 	resolver := cluster.asResolver(t, tenantID)
 
 	// Create policy
@@ -740,7 +740,7 @@ func TestPEPPolicyPriorityEvaluation(t *testing.T) {
 	admin := cluster.asSystemAdmin()
 
 	tenantID := setupTenantForTests(t, admin)
-	defer admin.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	defer deleteTenantUnlessShared(admin, tenantID)
 	resolver := cluster.asResolver(t, tenantID)
 
 	// Create a low-priority allow policy
@@ -844,7 +844,7 @@ func TestPEPWildcardResourceMatching(t *testing.T) {
 	admin := cluster.asSystemAdmin()
 
 	tenantID := setupTenantForTests(t, admin)
-	defer admin.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	defer deleteTenantUnlessShared(admin, tenantID)
 	resolver := cluster.asResolver(t, tenantID)
 
 	// Create policy with various wildcard patterns

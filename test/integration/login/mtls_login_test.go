@@ -25,6 +25,8 @@ import (
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
+	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
+
 	"github.com/stretchr/testify/require"
 )
 
@@ -106,7 +108,8 @@ func TestUnifiedLogin_MTLS_BootstrapBoundCertIsLoginResolvable(t *testing.T) {
 //     resolver reads.
 //  2. For every NETWORK transport (REST, gRPC, QUIC, Unix), builds an SDK
 //     client that PRESENTS the admin client certificate on the TLS handshake
-//     and runs BeginLogin(mtls) + FinishLogin.
+//     and runs BeginLogin(mtls) + FinishLogin. Over MCP the login is refused,
+//     because the unified login tools are not permitted on MCP.
 //  3. Asserts a bearer is issued, the resolved (subject, tenant) is IDENTICAL
 //     across every transport, the bearer's JWT claims encode that identity, and
 //     the bearer validates against the live /oauth2/userinfo endpoint.
@@ -142,6 +145,20 @@ func TestUnifiedLogin_MTLS_AcrossTransports(t *testing.T) {
 			c, cerr := newLoginClient(t, tr, mtlsTLSConfig(t))
 			require.NoError(t, cerr, "[%s] build mTLS login client", tr)
 			defer c.Close()
+
+			if tr == transportMCP {
+				_, lerr := runSDKLogin(ctx, c,
+					qrdbtransport.FactorTypeMTLS,
+					adminSubject,
+					certSHA256(adminLeaf),
+					nil,
+					nil)
+				require.Equal(t, sdkerrors.CodeForbidden, sdkerrors.Code(lerr),
+					"[%s] mTLS login must be refused over MCP, got %v", tr, lerr)
+				require.ErrorContains(t, lerr,
+					"tool not permitted (no permission registration): quicbaas_login_begin", "[%s]", tr)
+				return
+			}
 
 			res, lerr := runSDKLogin(ctx, c,
 				qrdbtransport.FactorTypeMTLS,

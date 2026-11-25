@@ -355,7 +355,7 @@ func profiledProtoBinding() *sdlc.ProjectBinding {
 			TokenSecretRef: "codex-tok", StatusContext: "quicbaas/review"},
 		Reviewers: []sdlc.ReviewerConfig{
 			{Name: "qwen", Agent: "qwen-reviewer", Login: "qwen-reviewer", TokenSecretRef: "qwen-tok", CountsTowardMerge: &advisory,
-				Endpoint: "http://gpu-host.internal:11434", HostAffinity: "gpu-host"},
+				Endpoint: "http://gpu-01.internal:11434", HostAffinity: "gpu-01"},
 			{Name: "gpt", Agent: "codex-reviewer", Login: "gpt-reviewer", TokenSecretRef: "gpt-tok", CountsTowardMerge: &counted},
 			{Name: "unset", Agent: "codex-reviewer", Login: "unset-reviewer", TokenSecretRef: "unset-tok"},
 		},
