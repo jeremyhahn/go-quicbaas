@@ -50,6 +50,7 @@ func TestIAMMFAStatus(t *testing.T) {
 		if runner.IsSkipped(statusCmd) {
 			return
 		}
+		skipIfNoMFAService(t, err, stdout+stderr)
 		require.NoError(t, err, "iam mfa status should succeed: stdout=%s stderr=%s", stdout, stderr)
 
 		combined := stdout + stderr
@@ -85,6 +86,7 @@ func TestIAMMFAStatusJSON(t *testing.T) {
 		if runner.IsSkipped(statusCmd) {
 			return
 		}
+		skipIfNoMFAService(t, err, stdout+stderr)
 		require.NoError(t, err, "iam mfa status --output json should succeed: stdout=%s stderr=%s", stdout, stderr)
 
 		trimmed := strings.TrimSpace(stdout)
@@ -122,6 +124,7 @@ func TestIAMMFAEnroll(t *testing.T) {
 		if runner.IsSkipped(enrollCmd) {
 			return
 		}
+		skipIfNoMFAService(t, err, stdout+stderr)
 		require.NoError(t, err, "iam mfa enroll should succeed: stdout=%s stderr=%s", stdout, stderr)
 
 		combined := stdout + stderr
@@ -164,6 +167,7 @@ func TestIAMMFAEnrollWithMethod(t *testing.T) {
 		if runner.IsSkipped(enrollCmd) {
 			return
 		}
+		skipIfNoMFAService(t, err, stdout+stderr)
 		require.NoError(t, err, "iam mfa enroll --method totp should succeed: stdout=%s stderr=%s", stdout, stderr)
 
 		combined := stdout + stderr
@@ -199,10 +203,11 @@ func TestIAMMFAVerifyInvalidCode(t *testing.T) {
 
 		// Enroll first so we have a valid enrollment to verify against
 		enrollCmd := IAMMFAEnrollCommand(tenantID, userID)
-		stdout, _, err := runner.Run(enrollCmd)
+		stdout, enrollStderr, err := runner.Run(enrollCmd)
 		if runner.IsSkipped(enrollCmd) {
 			return
 		}
+		skipIfNoMFAService(t, err, stdout+enrollStderr)
 		require.NoError(t, err, "iam mfa enroll should succeed before verify test")
 
 		// Extract enrollment ID from output; use a placeholder if extraction fails
@@ -262,6 +267,7 @@ func TestIAMMFADisableNotEnrolled(t *testing.T) {
 		if runner.IsSkipped(disableCmd) {
 			return
 		}
+		skipIfNoMFAService(t, err, stdout+stderr)
 
 		combined := stdout + stderr
 		if err != nil {
@@ -306,10 +312,11 @@ func TestIAMMFABackupCodesStatus(t *testing.T) {
 		// may require completed enrollment (verified TOTP code) before backup
 		// codes are available.
 		enrollCmd := IAMMFAEnrollCommand(tenantID, userID)
-		_, _, enrollErr := runner.Run(enrollCmd)
+		enrollStdout, enrollStderr, enrollErr := runner.Run(enrollCmd)
 		if runner.IsSkipped(enrollCmd) {
 			return
 		}
+		skipIfNoMFAService(t, enrollErr, enrollStdout+enrollStderr)
 		require.NoError(t, enrollErr, "MFA enrollment should succeed before checking backup codes status")
 
 		statusCmd := IAMMFABackupCodesStatusCommand(tenantID, userID)
@@ -360,6 +367,7 @@ func TestIAMMFABackupCodesStatusJSON(t *testing.T) {
 		if runner.IsSkipped(statusCmd) {
 			return
 		}
+		skipIfNoMFAService(t, err, stdout+stderr)
 		require.NoError(t, err, "iam mfa backup-codes status --output json should succeed: stdout=%s stderr=%s", stdout, stderr)
 
 		trimmed := strings.TrimSpace(stdout)
@@ -396,10 +404,11 @@ func TestIAMMFABackupCodesGenerate(t *testing.T) {
 		// may require completed enrollment (verified TOTP code) before backup
 		// codes can be generated.
 		enrollCmd := IAMMFAEnrollCommand(tenantID, userID)
-		_, _, enrollErr := runner.Run(enrollCmd)
+		enrollStdout, enrollStderr, enrollErr := runner.Run(enrollCmd)
 		if runner.IsSkipped(enrollCmd) {
 			return
 		}
+		skipIfNoMFAService(t, enrollErr, enrollStdout+enrollStderr)
 		require.NoError(t, enrollErr, "MFA enrollment should succeed before generating backup codes")
 
 		genCmd := IAMMFABackupCodesGenerateCommand(tenantID, userID)
@@ -458,6 +467,7 @@ func TestIAMMFALifecycle(t *testing.T) {
 		if runner.IsSkipped(statusCmd) {
 			return
 		}
+		skipIfNoMFAService(t, statusErr, statusStdout+statusStderr)
 		require.NoError(t, statusErr,
 			"initial MFA status check should succeed: stdout=%s stderr=%s", statusStdout, statusStderr)
 
@@ -544,4 +554,20 @@ func extractEnrollmentID(stdout string) string {
 	}
 
 	return ""
+}
+
+// skipIfNoMFAService skips the test when the node does not serve the gRPC
+// MFAService: pkg/server registers it only on nodes with an MFA manager, and
+// the integration node has none, so gRPC/unix answer UNIMPLEMENTED. Any other
+// error is left for the caller's assertions.
+func skipIfNoMFAService(t *testing.T, err error, output string) {
+	t.Helper()
+	if err == nil {
+		return
+	}
+	text := output + " " + err.Error()
+	if strings.Contains(strings.ToUpper(text), "UNIMPLEMENTED") &&
+		strings.Contains(text, "unknown service quicbaas.iam.v1.MFAService") {
+		t.Skip("node has no MFA manager: quicbaas.iam.v1.MFAService is not registered (UNIMPLEMENTED)")
+	}
 }
