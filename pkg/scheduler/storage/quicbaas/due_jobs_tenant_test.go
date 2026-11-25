@@ -9,10 +9,10 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
 )
 
-// TestGetJobsDueForExecution_IncludesTenantJobs checks that due-job
+// TestGetJobsDueForExecution_IncludesTenantJobsSkipsNonJobKeys checks that due-job
 // discovery returns a tenant's due jobs as well as the system's, and skips
 // tenant keys that are not job records.
-func TestGetJobsDueForExecution_IncludesTenantJobs(t *testing.T) {
+func TestGetJobsDueForExecution_IncludesTenantJobsSkipsNonJobKeys(t *testing.T) {
 	ctx := context.Background()
 	kv := newMockKVStore()
 	storage := NewStorage(kv)

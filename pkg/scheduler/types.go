@@ -147,10 +147,6 @@ type JobExecution struct {
 	Duration  time.Duration `json:"duration,omitempty"`
 	Error     string        `json:"error,omitempty"`
 	Output    string        `json:"output,omitempty"`
-
-	// TenantID is the namespace the record is stored in: JobTenantID of
-	// its job, "" for a system or delegated job.
-	TenantID string `json:"tenant_id,omitempty"`
 }
 
 // JobResult is returned by job handlers after execution.
