@@ -99,7 +99,7 @@ func TestServiceRegistryLifecycle(t *testing.T) {
 		assert.Empty(t, before.Instances, "[%s] a fresh service has no instances", runner.transport)
 
 		stdout, stderr, err := runner.Run(CommandDef{Name: "registry register", Args: []string{
-			"registry", "register", "--service", service, "--id", "node-a", "--address", "10.9.0.1:443",
+			"registry", "register", "--service", service, "--id", "node-a", "--instance-address", "10.9.0.1:443",
 			"--ttl", "30", "--meta", "zone=z1", "--output", "json"}})
 		require.NoError(t, err, "[%s] register: stdout=%s stderr=%s", runner.transport, stdout, stderr)
 		var lease registryLease
@@ -144,7 +144,7 @@ func TestServiceRegistryLeaseExpiry(t *testing.T) {
 		before := registryResolve(t, runner, service)
 
 		stdout, stderr, err := runner.Run(CommandDef{Name: "registry register (ttl 1)", Args: []string{
-			"registry", "register", "--service", service, "--id", "short-lived", "--address", "10.9.0.2:443",
+			"registry", "register", "--service", service, "--id", "short-lived", "--instance-address", "10.9.0.2:443",
 			"--ttl", "1", "--output", "json"}})
 		require.NoError(t, err, "[%s] register: stdout=%s stderr=%s", runner.transport, stdout, stderr)
 

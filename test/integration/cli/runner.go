@@ -437,6 +437,17 @@ func (r *TestRunner) RunAndAssert(cmd CommandDef) {
 func (r *TestRunner) RunSuite(commands []CommandDef) {
 	r.t.Helper()
 
+	// The tenant admin's tenant is provisioned lazily by the first command
+	// and deleted by the cleanup of the t it was provisioned on. Provision it
+	// here, on the suite's t, so it lives until the suite ends: provisioned
+	// inside the first subtest it would be deleted when that subtest ends,
+	// and a deleted tenant id cannot be reused.
+	if r.tenantAdmin != nil {
+		if err := r.tenantAdmin.prepare(r.t); err != nil {
+			r.t.Fatalf("[%s] %v", r.transport, err)
+		}
+	}
+
 	for _, cmd := range commands {
 		// Run setup if present
 		if cmd.Setup != nil {
