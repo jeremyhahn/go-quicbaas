@@ -29,6 +29,14 @@ import (
 // IAM MFA Status Tests
 // =============================================================================
 
+// mfaEnrollStatusTransportsToSkip skips MCP for `iam mfa enroll` and `iam mfa
+// status` only: their MCP tools (quicbaas_mfa_enroll_begin and
+// quicbaas_mfa_status) are not offered over MCP by design, the MCP server
+// refuses them with "tool not permitted (no permission registration)" (see
+// pkg/api/mcp/authz_qrdb_unmapped.go). Every other MFA command keeps
+// iamTransportsToSkip.
+var mfaEnrollStatusTransportsToSkip = append(append([]Transport{}, iamTransportsToSkip...), TransportMCP)
+
 // TestIAMMFAStatus verifies that checking MFA status for a user within a tenant
 // succeeds and reports MFA as not enabled for a fresh user.
 func TestIAMMFAStatus(t *testing.T) {
@@ -46,6 +54,7 @@ func TestIAMMFAStatus(t *testing.T) {
 		}()
 
 		statusCmd := IAMMFAStatusCommand(tenantID, userID)
+		statusCmd.SkipTransports = mfaEnrollStatusTransportsToSkip
 		stdout, stderr, err := runner.Run(statusCmd)
 		if runner.IsSkipped(statusCmd) {
 			return
@@ -79,7 +88,7 @@ func TestIAMMFAStatusJSON(t *testing.T) {
 			Args:           []string{"iam", "mfa", "status", "--tenant", tenantID, "--user", userID, "--output", "json"},
 			ExpectSuccess:  true,
 			Timeout:        10 * time.Second,
-			SkipTransports: iamTransportsToSkip,
+			SkipTransports: mfaEnrollStatusTransportsToSkip,
 		}
 		stdout, stderr, err := runner.Run(statusCmd)
 		if runner.IsSkipped(statusCmd) {
@@ -118,6 +127,7 @@ func TestIAMMFAEnroll(t *testing.T) {
 		}()
 
 		enrollCmd := IAMMFAEnrollCommand(tenantID, userID)
+		enrollCmd.SkipTransports = mfaEnrollStatusTransportsToSkip
 		stdout, stderr, err := runner.Run(enrollCmd)
 		if runner.IsSkipped(enrollCmd) {
 			return
@@ -158,7 +168,7 @@ func TestIAMMFAEnrollWithMethod(t *testing.T) {
 			ExpectSuccess:  true,
 			ExpectOutput:   []string{userID},
 			Timeout:        10 * time.Second,
-			SkipTransports: iamTransportsToSkip,
+			SkipTransports: mfaEnrollStatusTransportsToSkip,
 		}
 		stdout, stderr, err := runner.Run(enrollCmd)
 		if runner.IsSkipped(enrollCmd) {
@@ -199,6 +209,7 @@ func TestIAMMFAVerifyInvalidCode(t *testing.T) {
 
 		// Enroll first so we have a valid enrollment to verify against
 		enrollCmd := IAMMFAEnrollCommand(tenantID, userID)
+		enrollCmd.SkipTransports = mfaEnrollStatusTransportsToSkip
 		stdout, _, err := runner.Run(enrollCmd)
 		if runner.IsSkipped(enrollCmd) {
 			return
@@ -306,6 +317,7 @@ func TestIAMMFABackupCodesStatus(t *testing.T) {
 		// may require completed enrollment (verified TOTP code) before backup
 		// codes are available.
 		enrollCmd := IAMMFAEnrollCommand(tenantID, userID)
+		enrollCmd.SkipTransports = mfaEnrollStatusTransportsToSkip
 		_, _, enrollErr := runner.Run(enrollCmd)
 		if runner.IsSkipped(enrollCmd) {
 			return
@@ -396,6 +408,7 @@ func TestIAMMFABackupCodesGenerate(t *testing.T) {
 		// may require completed enrollment (verified TOTP code) before backup
 		// codes can be generated.
 		enrollCmd := IAMMFAEnrollCommand(tenantID, userID)
+		enrollCmd.SkipTransports = mfaEnrollStatusTransportsToSkip
 		_, _, enrollErr := runner.Run(enrollCmd)
 		if runner.IsSkipped(enrollCmd) {
 			return
@@ -454,6 +467,7 @@ func TestIAMMFALifecycle(t *testing.T) {
 
 		// Step 1: Check initial MFA status (should not be enabled)
 		statusCmd := IAMMFAStatusCommand(tenantID, userID)
+		statusCmd.SkipTransports = mfaEnrollStatusTransportsToSkip
 		statusStdout, statusStderr, statusErr := runner.Run(statusCmd)
 		if runner.IsSkipped(statusCmd) {
 			return
@@ -467,6 +481,7 @@ func TestIAMMFALifecycle(t *testing.T) {
 
 		// Step 2: Enroll user in MFA
 		enrollCmd := IAMMFAEnrollCommand(tenantID, userID)
+		enrollCmd.SkipTransports = mfaEnrollStatusTransportsToSkip
 		enrollStdout, enrollStderr, enrollErr := runner.Run(enrollCmd)
 		require.NoError(t, enrollErr,
 			"MFA enrollment should succeed: stdout=%s stderr=%s", enrollStdout, enrollStderr)

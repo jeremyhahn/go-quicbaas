@@ -568,6 +568,15 @@ func TestIAMProviderDeleteNonExistent(t *testing.T) {
 // IAM Federation Identity Tests
 // =============================================================================
 
+// identityListUnlinkTransportsToSkip skips MCP for `iam identity list` and
+// `iam identity unlink` only: their MCP tools
+// (quicbaas_iam_identity_listuseridentities and
+// quicbaas_iam_identity_unlinkidentity) are not offered over MCP by design,
+// the MCP server refuses them with "tool not permitted (no permission
+// registration)" (see pkg/api/mcp/authz_qrdb_unmapped.go). Every other
+// identity command keeps iamTransportsToSkip.
+var identityListUnlinkTransportsToSkip = append(append([]Transport{}, iamTransportsToSkip...), TransportMCP)
+
 // TestIAMIdentityListEmpty tests listing federated identities for a user that
 // has no identities linked. The command should succeed with an empty result.
 func TestIAMIdentityListEmpty(t *testing.T) {
@@ -584,6 +593,7 @@ func TestIAMIdentityListEmpty(t *testing.T) {
 
 		// List identities for a user with none linked
 		listIdentities := IAMIdentityListCommand(tenantID, userID)
+		listIdentities.SkipTransports = identityListUnlinkTransportsToSkip
 		stdout, _, err := runner.Run(listIdentities)
 		if !runner.IsSkipped(listIdentities) {
 			// The command should succeed even if there are no linked identities.
@@ -616,7 +626,7 @@ func TestIAMIdentityListJSON(t *testing.T) {
 			Args:           []string{"iam", "identity", "list", "--tenant", tenantID, "--user-id", userID, "--output", "json"},
 			ExpectSuccess:  true,
 			Timeout:        15 * time.Second,
-			SkipTransports: iamTransportsToSkip,
+			SkipTransports: identityListUnlinkTransportsToSkip,
 		}
 		stdout, _, err := runner.Run(listJSON)
 		if !runner.IsSkipped(listJSON) {
@@ -655,7 +665,7 @@ func TestIAMIdentityUnlinkNonExistent(t *testing.T) {
 			Args:           []string{"iam", "identity", "unlink", "--tenant", tenantID, "--user-id", userID, "--provider-id", "nonexistent-provider-99999", "--yes"},
 			ExpectSuccess:  false,
 			Timeout:        10 * time.Second,
-			SkipTransports: iamTransportsToSkip,
+			SkipTransports: identityListUnlinkTransportsToSkip,
 		}
 		stdout, stderr, err := runner.Run(unlinkNonExistent)
 		if !runner.IsSkipped(unlinkNonExistent) {
