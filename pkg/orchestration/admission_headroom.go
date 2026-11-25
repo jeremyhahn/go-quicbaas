@@ -139,6 +139,16 @@ func (h *accountPoolHeadroom) Headroom(ctx context.Context, tenantID, projectID 
 	if err != nil {
 		return PoolHeadroom{}, err
 	}
+	// An account with no credential yet is not part of the pool, as in
+	// AccountAvailability (which reads the same pool and names such accounts
+	// in its reason, so the skip lives here rather than in pool).
+	configured := pooled[:0]
+	for _, account := range pooled {
+		if account.Status != AccountStatusAwaitingCredential {
+			configured = append(configured, account)
+		}
+	}
+	pooled = configured
 	if len(pooled) == 0 {
 		// Unmetered: nobody pooled an account here, so this axis has nothing
 		// to say. See PoolHeadroom.Unmetered.
@@ -271,10 +281,6 @@ func (h *accountPoolHeadroom) pool(ctx context.Context, tenantID, projectID stri
 	seen := make(map[string]struct{}, len(tenantWide))
 	for _, account := range tenantWide {
 		if account == nil {
-			continue
-		}
-		// An account with no credential yet is not part of the pool, as in AccountAvailability.
-		if account.Status == AccountStatusAwaitingCredential {
 			continue
 		}
 		// An account scoped to ANOTHER project is not in this project's pool.
