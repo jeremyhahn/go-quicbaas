@@ -35,7 +35,7 @@ func TestUserGRPCAuthorization(t *testing.T) {
 // and records each requiredPerm it is asked, in order.
 // grantEnforcedRequest is the request requireGRPCGrantEnforced sends for
 // method: a typed request whose fields demand nothing beyond the method's
-// grant when the method has a grpcRequestPermissions entry (which refuses a
+// grant when the method has a grpcArgumentPermissions entry (which refuses a
 // nil request), and nil otherwise.
 func grantEnforcedRequest(method string) interface{} {
 	if method == "/quicbaas.iam.v1.IAMService/CreateUser" {

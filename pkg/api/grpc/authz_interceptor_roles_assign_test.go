@@ -71,7 +71,19 @@ func TestAuthorizeGRPCArguments_NoExtraPermission(t *testing.T) {
 	require.NoError(t, authorizeGRPCArguments(ctx, iampb.IAMService_CreateUser_FullMethodName, &iampb.CreateUserRequest{}, authz, authzInterceptorConfig{}))
 	require.NoError(t, authorizeGRPCArguments(ctx, iampb.IAMService_UpdateUser_FullMethodName, &iampb.UpdateUserRequest{Roles: []string{}}, authz, authzInterceptorConfig{}))
 	require.NoError(t, authorizeGRPCArguments(ctx, "/quicbaas.iam.v1.IAMService/GetUser", &iampb.CreateUserRequest{Roles: []string{"admin"}}, authz, authzInterceptorConfig{}))
-	assert.Nil(t, grpcArgumentPermissionsFor(iampb.IAMService_CreateUser_FullMethodName, struct{}{}))
+	perms, err := grpcArgumentPermissionsFor(iampb.IAMService_CreateUser_FullMethodName, struct{}{})
+	assert.Nil(t, perms)
+	assert.Error(t, err, "a request the table cannot read fails closed")
+}
+
+// argumentPermissions returns the permissions of an argument-table func that
+// must read its request.
+func argumentPermissions(t *testing.T) func([]string, error) []string {
+	return func(perms []string, err error) []string {
+		t.Helper()
+		require.NoError(t, err)
+		return perms
+	}
 }
 
 // TestUnaryAuthorizationInterceptor_UserWriteMappedAndRolesAssignReached
@@ -168,10 +180,10 @@ func TestAuthorizeGRPCArguments_UpdateUserAttributesRequireRolesAssign(t *testin
 	})
 	t.Run("roles and attributes ask roles:assign once", func(t *testing.T) {
 		req := &iampb.UpdateUserRequest{Roles: []string{"admin"}, Attributes: map[string]string{"department": "finance"}}
-		assert.Equal(t, []string{roleAssignmentPermission}, requireUserUpdateArguments(req))
+		assert.Equal(t, []string{roleAssignmentPermission}, argumentPermissions(t)(requireUserUpdateArguments(req)))
 	})
 	t.Run("attributes-only asks roles:assign", func(t *testing.T) {
-		assert.Equal(t, []string{roleAssignmentPermission}, requireUserUpdateArguments(attrsOnly))
+		assert.Equal(t, []string{roleAssignmentPermission}, argumentPermissions(t)(requireUserUpdateArguments(attrsOnly)))
 	})
 }
 
@@ -191,9 +203,9 @@ func TestAuthorizeGRPCArguments_CreateUserAttributesRequireRolesAssign(t *testin
 	})
 	t.Run("roles and attributes ask roles:assign once", func(t *testing.T) {
 		req := &iampb.CreateUserRequest{Roles: []string{"admin"}, Attributes: map[string]string{"department": "finance"}}
-		assert.Equal(t, []string{roleAssignmentPermission}, requireUserCreateArguments(req))
+		assert.Equal(t, []string{roleAssignmentPermission}, argumentPermissions(t)(requireUserCreateArguments(req)))
 	})
 	t.Run("attributes-only asks roles:assign", func(t *testing.T) {
-		assert.Equal(t, []string{roleAssignmentPermission}, requireUserCreateArguments(attrsOnly))
+		assert.Equal(t, []string{roleAssignmentPermission}, argumentPermissions(t)(requireUserCreateArguments(attrsOnly)))
 	})
 }

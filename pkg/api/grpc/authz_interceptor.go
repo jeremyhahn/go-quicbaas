@@ -15,6 +15,7 @@ package grpc
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"google.golang.org/grpc"
@@ -236,19 +237,22 @@ func requireRolesAssign(req interface{}) []string {
 // users:enable and to any other lifecycle users:disable, as REST's approve
 // and reject routes declare, so users:update alone cannot approve or suspend
 // a user.
-func requireUserUpdateArguments(req interface{}) []string {
-	perms := requireRolesAssign(req)
+func requireUserUpdateArguments(req interface{}) ([]string, error) {
 	update, ok := req.(*iampb.UpdateUserRequest)
-	if ok && len(update.GetAttributes()) > 0 && len(perms) == 0 {
+	if !ok || update == nil {
+		return nil, fmt.Errorf("unexpected request type %T for UpdateUser", req)
+	}
+	perms := requireRolesAssign(update)
+	if len(update.GetAttributes()) > 0 && len(perms) == 0 {
 		perms = append(perms, roleAssignmentPermission)
 	}
-	if !ok || update.GetLifecycle() == "" {
-		return perms
+	if update.GetLifecycle() == "" {
+		return perms, nil
 	}
 	if update.GetLifecycle() == string(iam.LifecycleActive) {
-		return append(perms, "users:enable")
+		return append(perms, "users:enable"), nil
 	}
-	return append(perms, "users:disable")
+	return append(perms, "users:disable"), nil
 }
 
 // requireUserCreateArguments is requireRolesAssign plus the attributes rule.
@@ -257,39 +261,58 @@ func requireUserUpdateArguments(req interface{}) []string {
 // roles:assign (asked once when the request carries both). Without it a
 // caller holding only users:create could create a user whose attributes
 // match a privileged ABAC policy.
-func requireUserCreateArguments(req interface{}) []string {
-	perms := requireRolesAssign(req)
+func requireUserCreateArguments(req interface{}) ([]string, error) {
 	create, ok := req.(*iampb.CreateUserRequest)
-	if ok && len(create.GetAttributes()) > 0 && len(perms) == 0 {
+	if !ok || create == nil {
+		return nil, fmt.Errorf("unexpected request type %T for CreateUser", req)
+	}
+	perms := requireRolesAssign(create)
+	if len(create.GetAttributes()) > 0 && len(perms) == 0 {
 		perms = append(perms, roleAssignmentPermission)
 	}
-	return perms
+	return perms, nil
 }
 
 // grpcArgumentPermissions maps a full method name to the permissions its
-// request arguments demand on top of the method's own permission.
-var grpcArgumentPermissions = map[string]func(req interface{}) []string{
+// request arguments demand on top of the method's own permission. Each func
+// returns an error for a request it cannot read (a nil or another type), so
+// the call fails closed rather than passing with no further permission.
+var grpcArgumentPermissions = map[string]func(req interface{}) ([]string, error){
 	iampb.IAMService_CreateUser_FullMethodName: requireUserCreateArguments,
 	iampb.IAMService_UpdateUser_FullMethodName: requireUserUpdateArguments,
 }
 
 // grpcArgumentPermissionsFor returns the extra permissions req demands for
-// fullMethod, or nil when the method has none.
-func grpcArgumentPermissionsFor(fullMethod string, req interface{}) []string {
+// fullMethod, nil when the method has none, and an error when the method has
+// an entry that cannot read req.
+func grpcArgumentPermissionsFor(fullMethod string, req interface{}) ([]string, error) {
 	permissionsFor, ok := grpcArgumentPermissions[fullMethod]
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	return permissionsFor(req)
 }
 
 // authorizeGRPCArguments checks each argument-dependent permission of the
 // request, after the method's own permission was granted. It fails closed: a
-// missing token is refused, and each permission the validator allows is then
-// asked of go-qrdb's authorizer (cfg.rbac). ctx is the authenticated context
-// authorizeGRPCRequest returned, so go-qrdb reads the caller's tenant from it.
+// request the table cannot read and a missing token are refused, and each
+// permission the validator allows is then asked of go-qrdb's authorizer
+// (cfg.rbac). ctx is the authenticated context authorizeGRPCRequest returned,
+// so go-qrdb reads the caller's tenant from it. A public or sealed-window
+// bypassed method needs nothing more; the table is consulted first because
+// BypassesGRPC audits every admit it makes, so an allowlisted unseal verb is
+// never audited twice.
 func authorizeGRPCArguments(ctx context.Context, fullMethod string, req interface{}, authorizer GRPCValidatorAuthorizer, cfg authzInterceptorConfig) error {
-	perms := grpcArgumentPermissionsFor(fullMethod, req)
+	if _, ok := grpcArgumentPermissions[fullMethod]; !ok {
+		return nil
+	}
+	if isPublicGRPCMethod(fullMethod) || cfg.sealedBypass.BypassesGRPC(fullMethod) {
+		return nil
+	}
+	perms, err := grpcArgumentPermissionsFor(fullMethod, req)
+	if err != nil {
+		return status.Error(codes.PermissionDenied, "permission denied")
+	}
 	if len(perms) == 0 {
 		return nil
 	}
