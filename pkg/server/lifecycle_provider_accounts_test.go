@@ -320,3 +320,51 @@ func TestSeedDefaultProviderAccounts_FailedBarrierInitSeedsNothing(t *testing.T)
 		t.Fatalf("a tenant whose barrier init failed has accounts %v", got)
 	}
 }
+
+// pausingTenantDirectory is the boot pass paused between its directory
+// snapshot and the rest of its work.
+type pausingTenantDirectory struct {
+	*nativeTenantDirectory
+
+	afterSnapshot func()
+}
+
+func (d *pausingTenantDirectory) ListTenants(ctx context.Context) ([]qrdbtenant.TenantInfo, error) {
+	tenants, err := d.nativeTenantDirectory.ListTenants(ctx)
+	if pause := d.afterSnapshot; pause != nil {
+		d.afterSnapshot = nil
+		pause()
+	}
+	return tenants, err
+}
+
+func TestSeedDefaultProviderAccounts_ReachesATenantCreatedDuringTheBootPass(t *testing.T) {
+	ctx := context.Background()
+	s := agentsTestServer(t, nil)
+	store := orchestration.NewInMemoryAccountStore()
+	directory := &pausingTenantDirectory{nativeTenantDirectory: &nativeTenantDirectory{}}
+	s.tenantUnsealRouter = s.newNodeTenantRouter(func() qrdbsdk.ServiceTenantServicer { return directory })
+	directory.afterSnapshot = func() {
+		if _, err := s.tenantUnsealRouter.CreateTenant(ctx, "acme", "Acme", qrdbtenant.IsolationPrefix); err != nil {
+			t.Errorf("router CreateTenant: %v", err)
+		}
+	}
+	s.seedDefaultProviderAccounts(ctx, store, providerAccountsRegistry(t))
+	assertSeededDefaults(t, store, "acme")
+}
+
+func TestSeedDefaultProviderAccounts_ReachesATenantUnsealedDuringTheBootPass(t *testing.T) {
+	ctx := context.Background()
+	s := agentsTestServer(t, nil)
+	store := orchestration.NewInMemoryAccountStore()
+	directory := &pausingTenantDirectory{nativeTenantDirectory: &nativeTenantDirectory{}}
+	s.tenantUnsealRouter = s.newNodeTenantRouter(func() qrdbsdk.ServiceTenantServicer { return directory })
+	directory.afterSnapshot = func() {
+		barrier := service.NewTenantBarrierService(unsealingTenantClient{}, service.WithTenantUnsealHooks(&s.tenantUnsealHooks))
+		if err := barrier.TenantBarrierUnseal(tenantAdminCtx("globex"), "globex", []byte("key")); err != nil {
+			t.Errorf("unseal: %v", err)
+		}
+	}
+	s.seedDefaultProviderAccounts(ctx, store, providerAccountsRegistry(t))
+	assertSeededDefaults(t, store, "globex")
+}

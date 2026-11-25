@@ -29,7 +29,18 @@ import (
 // native tenant service). A failure is logged, never fatal: a missing default
 // account is something the user can add by hand, and must neither stop the
 // server nor fail or undo a tenant's creation.
+//
+// The unseal and created observers are registered before the tenant
+// snapshot is taken, so a tenant created or unsealed while the boot pass runs
+// is seeded by its notification even when the snapshot misses it. Seeding is
+// idempotent, so a tenant reached both ways is seeded once.
 func (s *Server) seedDefaultProviderAccounts(ctx context.Context, store orchestration.AccountStore, providers *orchestration.AccountProviderRegistry) {
+	s.tenantUnsealHooks.Register(tenantUnsealFunc(func(ctx context.Context, tenantID string) {
+		s.seedTenantProviderAccounts(ctx, store, providers, tenantID)
+	}))
+	s.tenantCreatedHooks.Register(tenantCreatedFunc(func(ctx context.Context, tenantID string) {
+		s.seedTenantProviderAccounts(ctx, store, providers, tenantID)
+	}))
 	tenants := s.agentMigrationTenants(ctx)
 	for _, tenantID := range s.nativeTenantIDs(ctx) {
 		if !slices.Contains(tenants, tenantID) {
@@ -39,12 +50,6 @@ func (s *Server) seedDefaultProviderAccounts(ctx context.Context, store orchestr
 	for _, tenantID := range tenants {
 		s.seedTenantProviderAccounts(ctx, store, providers, tenantID)
 	}
-	s.tenantUnsealHooks.Register(tenantUnsealFunc(func(ctx context.Context, tenantID string) {
-		s.seedTenantProviderAccounts(ctx, store, providers, tenantID)
-	}))
-	s.tenantCreatedHooks.Register(tenantCreatedFunc(func(ctx context.Context, tenantID string) {
-		s.seedTenantProviderAccounts(ctx, store, providers, tenantID)
-	}))
 }
 
 // nativeTenantIDs lists go-qrdb's native tenant directory, which holds the
