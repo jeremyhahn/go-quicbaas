@@ -746,7 +746,8 @@ func (kb *XKMSBackend) RotateKey(ctx context.Context, keyID string) (*KeyMetadat
 }
 
 // refreshVersion moves the cached version of keyID up to the newest version
-// this backend owns as keyID's version in the go-xkms store. Another node's RotateKey creates
+// that exists in the go-xkms store and that this backend owns as keyID's
+// version. Another node's RotateKey creates
 // `<key>_v<N>` in the shared store but cannot update this backend's cache, so
 // Encrypt and RotateKey call this first. The version only moves forward.
 func (kb *XKMSBackend) refreshVersion(ctx context.Context, keyID string, meta *KeyMetadata) {
@@ -760,10 +761,17 @@ func (kb *XKMSBackend) refreshVersion(ctx context.Context, keyID string, meta *K
 	}
 
 	v := current
-	// Only a version this backend wrote as keyID's own version is followed:
-	// a key stored under the versioned name that is standalone, or another
-	// key's version, is not keyID's rotation.
-	for kb.checkOwnedXKMSKeyVersion(ctx, keyID, v+1, algorithm) == nil {
+	for {
+		kid := kb.buildFullKeyID(kb.buildVersionedKeyID(keyID, v+1), algorithm)
+		if _, err := xkms.GetSymmetricKey(ctx, kid); err != nil {
+			break
+		}
+		// Only a version this backend wrote as keyID's own version is
+		// followed: a key stored under the versioned name that is
+		// standalone, or another key's version, is not keyID's rotation.
+		if kb.checkOwnedXKMSKeyVersion(ctx, keyID, v+1, algorithm) != nil {
+			break
+		}
 		v++
 	}
 	if v == current {
