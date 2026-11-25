@@ -415,7 +415,7 @@ GET /api/v1/orchestrator/cost
                "total_tokens": 5200, "equivalent_micros": 36500, "billed_micros": 0,
                "policy_status": "none"}],
  "models": [{"engine": "claude", "model": "claude-opus-4-5-20251101", "total_tokens": 5200, "equivalent_micros": 36500}],
- "hosts": [{"host": "gpu-host.internal:9091", "total_tokens": 5200}],
+ "hosts": [{"host": "gpu-01.internal:9091", "total_tokens": 5200}],
  "measured_energy_entries": 0, "electricity_entries": 0}
 ```
 

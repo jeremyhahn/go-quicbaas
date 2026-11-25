@@ -45,7 +45,9 @@ type SessionClient interface {
 	RevokeAll(ctx context.Context, tenantID, userID string) error
 
 	// RevokeOthers revokes all sessions except the current one.
-	RevokeOthers(ctx context.Context, keepSessionID string) error
+	// tenantID names the tenant the sessions belong to; the gRPC and MCP
+	// servers require it, the embedded transport reads it from the kept session.
+	RevokeOthers(ctx context.Context, tenantID, keepSessionID string) error
 
 	// Touch updates the last active timestamp for a session.
 	Touch(ctx context.Context, sessionID string) error
@@ -107,6 +109,7 @@ type revokeAllSessionsResponse struct {
 }
 
 type revokeOthersRequest struct {
+	TenantID      string `json:"tenant_id,omitempty"`
 	KeepSessionID string `json:"keep_session_id"`
 }
 
@@ -249,7 +252,7 @@ func (c *sessionClient) RevokeAll(ctx context.Context, tenantID, userID string) 
 }
 
 // RevokeOthers revokes all sessions except the current one.
-func (c *sessionClient) RevokeOthers(ctx context.Context, keepSessionID string) error {
+func (c *sessionClient) RevokeOthers(ctx context.Context, tenantID, keepSessionID string) error {
 	if keepSessionID == "" {
 		return errors.NewInvalidInput("iam.session.RevokeOthers", "keep session ID is required")
 	}
@@ -259,6 +262,7 @@ func (c *sessionClient) RevokeOthers(ctx context.Context, keepSessionID string) 
 	}
 
 	resp, err := c.transport.Request(ctx, sessionServiceName, "RevokeOthers", &revokeOthersRequest{
+		TenantID:      tenantID,
 		KeepSessionID: keepSessionID,
 	})
 	if err != nil {

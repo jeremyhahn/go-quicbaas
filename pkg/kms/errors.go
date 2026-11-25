@@ -17,6 +17,9 @@ import "errors"
 
 // Sentinel errors for KMS operations.
 var (
+	// ErrReservedKeyName indicates a key name that reads as an encoded tenant key ID.
+	ErrReservedKeyName = errors.New("key name is reserved: it reads as an encoded tenant key ID")
+
 	// ErrKeyIDEmpty indicates a keyID parameter is empty.
 	ErrKeyIDEmpty = errors.New("keyID cannot be empty")
 

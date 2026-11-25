@@ -164,7 +164,10 @@ func signWith(key crypto.Signer) func(nonce []byte) ([]byte, error) {
 
 // A passkey the administrator enrolls through AdminFactors().Enroll is the
 // credential the unified login resolves to that administrator, on every
-// transport. Without a FIDO2 handler Enroll refuses before the server is asked.
+// transport but MCP. Without a FIDO2 handler Enroll refuses before the server
+// is asked. Passkeys stay off MCP: there the node refuses both the passkey
+// enrolment (it serves no xkms FIDO2 tool) and the passkey login (the unified
+// login tools are not permitted on MCP).
 func TestAdminFactors_PasskeyEnrollsThenLogsIn(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
@@ -176,6 +179,34 @@ func TestAdminFactors_PasskeyEnrollsThenLogsIn(t *testing.T) {
 			defer c.Close()
 
 			adapter := webauthnclient.NewSoftwareAdapter()
+			if tr == transportMCP {
+				req := &quicbaas.AdminFactorEnrollRequest{
+					Factors:        []string{"fido2"},
+					Subject:        adminSubject,
+					TenantID:       systemTenantID,
+					RelyingPartyID: adminFactorRPID,
+					FIDO2Handler:   &softwarePasskey{adapter: adapter},
+				}
+				require.NoError(t, c.Security().Auth().AdminFactors().Preflight(ctx, req),
+					"[%s] fido2 preflight runs on the client", tr)
+				results, err := c.Security().Auth().AdminFactors().Enroll(ctx, req)
+				require.Equal(t, sdkerrors.CodeInvalidInput, sdkerrors.Code(err),
+					"[%s] passkey enrolment must be refused over MCP, got %v", tr, err)
+				require.ErrorContains(t, err, "mcp.callTool", "[%s]", tr)
+				require.ErrorContains(t, err, "tool 'xkms_fido2_beginAddCredential' not found", "[%s]", tr)
+				require.Empty(t, results, "[%s] nothing is enrolled over MCP", tr)
+
+				_, err = c.Security().Auth().BeginLogin(ctx, qrdbtransport.BeginLoginRequest{
+					Type:     qrdbtransport.FactorTypeFIDO2,
+					Hint:     adminSubject,
+					TenantID: systemTenantID,
+				})
+				require.Equal(t, sdkerrors.CodeForbidden, sdkerrors.Code(err),
+					"[%s] passkey login must be refused over MCP, got %v", tr, err)
+				require.ErrorContains(t, err,
+					"tool not permitted (no permission registration): quicbaas_login_begin", "[%s]", tr)
+				return
+			}
 			results, err := c.Security().Auth().AdminFactors().Enroll(ctx, &quicbaas.AdminFactorEnrollRequest{
 				Factors:        []string{"fido2"},
 				Subject:        adminSubject,
@@ -240,7 +271,9 @@ func resolveEnrolledAdmin(ctx context.Context, t *testing.T, c quicbaas.Client, 
 
 // A PIV key the administrator enrolls through AdminFactors().Enroll holds a
 // certificate the server CA signed, and the unified login accepts a nonce
-// signed by that key, on every transport. Any other key is refused.
+// signed by that key, on every transport but MCP. Any other key is refused.
+// Over MCP the enrolment succeeds and the slot holds the issued certificate,
+// but the login is refused: the unified login tools are not permitted on MCP.
 func TestAdminFactors_PIVEnrollsThenLogsIn(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
@@ -277,6 +310,15 @@ func TestAdminFactors_PIVEnrollsThenLogsIn(t *testing.T) {
 			lookupKey := sha256.Sum256(slotCert.Raw)
 			slotMeta := map[string]string{"slot": metadata["slot"]}
 
+			if tr == transportMCP {
+				_, err = runSDKLogin(ctx, c, qrdbtransport.FactorTypePIV, adminSubject,
+					lookupKey[:], signWith(signer), slotMeta)
+				require.Equal(t, sdkerrors.CodeForbidden, sdkerrors.Code(err),
+					"[%s] PIV login must be refused over MCP, got %v", tr, err)
+				require.ErrorContains(t, err,
+					"tool not permitted (no permission registration): quicbaas_login_begin", "[%s]", tr)
+				return
+			}
 			res, err := runSDKLogin(ctx, c, qrdbtransport.FactorTypePIV, adminSubject,
 				lookupKey[:], signWith(signer), slotMeta)
 			require.NoError(t, err, "[%s] login with the enrolled PIV key", tr)
