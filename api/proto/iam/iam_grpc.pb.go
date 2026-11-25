@@ -100,7 +100,7 @@ type IAMServiceClient interface {
 	CreateUser(ctx context.Context, in *CreateUserRequest, opts ...grpc.CallOption) (*User, error)
 	// GetUser is the tenant-scoped user lookup. It takes users:read, the grant QRDBService's user reads take.
 	GetUser(ctx context.Context, in *GetUserRequest, opts ...grpc.CallOption) (*User, error)
-	// UpdateUser mirrors REST PUT /api/v1/tenants/{tenant_id}/users/{user_id} and takes its tenants:create grant.
+	// UpdateUser mirrors REST PUT /api/v1/tenants/{tenant_id}/users/{user_id} and takes its tenants:create grant. A request naming roles also takes roles:assign.
 	UpdateUser(ctx context.Context, in *UpdateUserRequest, opts ...grpc.CallOption) (*User, error)
 	// DeleteUser takes users:delete, the grant QRDBService's DeleteUser takes.
 	DeleteUser(ctx context.Context, in *DeleteUserRequest, opts ...grpc.CallOption) (*DeleteUserResponse, error)
@@ -866,7 +866,7 @@ type IAMServiceServer interface {
 	CreateUser(context.Context, *CreateUserRequest) (*User, error)
 	// GetUser is the tenant-scoped user lookup. It takes users:read, the grant QRDBService's user reads take.
 	GetUser(context.Context, *GetUserRequest) (*User, error)
-	// UpdateUser mirrors REST PUT /api/v1/tenants/{tenant_id}/users/{user_id} and takes its tenants:create grant.
+	// UpdateUser mirrors REST PUT /api/v1/tenants/{tenant_id}/users/{user_id} and takes its tenants:create grant. A request naming roles also takes roles:assign.
 	UpdateUser(context.Context, *UpdateUserRequest) (*User, error)
 	// DeleteUser takes users:delete, the grant QRDBService's DeleteUser takes.
 	DeleteUser(context.Context, *DeleteUserRequest) (*DeleteUserResponse, error)

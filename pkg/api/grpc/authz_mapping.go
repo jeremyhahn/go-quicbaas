@@ -209,6 +209,20 @@ var grpcRequestPermissions = map[string]func(req interface{}) ([]methodPermissio
 		}
 		return nil, nil
 	},
+	// An update that names roles replaces the user's role set, which is a
+	// role assignment, so it also needs roles:assign. The handler refuses any
+	// tenant but the caller's (requireCallerTenant), so the table's tenant
+	// rule holds.
+	"/quicbaas.iam.v1.IAMService/UpdateUser": func(req interface{}) ([]methodPermission, error) {
+		r, ok := req.(*iampb.UpdateUserRequest)
+		if !ok {
+			return nil, fmt.Errorf("unexpected request type %T for UpdateUser", req)
+		}
+		if len(r.GetRoles()) > 0 {
+			return []methodPermission{{"roles", "assign"}}, nil
+		}
+		return nil, nil
+	},
 }
 
 // grpcMethodPermissions maps each protected gRPC FullMethod to the qrdb-canonical
@@ -413,8 +427,7 @@ var grpcMethodPermissions = map[string]methodPermission{
 	// Mirrors REST POST .../users/{user_id}/gdpr/deletion (tenants:create).
 	"/quicbaas.iam.v1.IAMService/RequestDeletion": {"tenants", "create"},
 
-	// Mirrors REST PUT .../users/{user_id} (tenants:create). REST's handler
-	// checks nothing more, so there is no grpcRequestPermissions entry.
+	// Mirrors REST PUT .../users/{user_id} (tenants:create). A request naming roles also takes roles:assign (grpcRequestPermissions).
 	"/quicbaas.iam.v1.IAMService/UpdateUser": {"tenants", "create"},
 
 	// ---- quicbaas.iam.v1.FederationService: providers and account links ----
