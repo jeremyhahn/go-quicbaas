@@ -18,6 +18,8 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -28,6 +30,17 @@ import (
 // =============================================================================
 // Helper Functions
 // =============================================================================
+
+// uniqueNumericUserIDSeq keeps two user IDs taken in the same nanosecond apart.
+var uniqueNumericUserIDSeq atomic.Uint64
+
+// uniqueNumericUserID returns a unique user ID in decimal form. Since #389 a
+// user ID is a uint64 the API reads from a decimal string, so a prefixed text
+// key is refused before the request does any work. The atomic sequence keeps
+// two IDs taken in the same nanosecond apart.
+func uniqueNumericUserID() string {
+	return strconv.FormatUint(uint64(time.Now().UnixNano())+uniqueNumericUserIDSeq.Add(1), 10)
+}
 
 // createAssignmentJSON creates an admin assignment with --output json and returns
 // the parsed JSON map. The caller is responsible for cleanup.
@@ -129,7 +142,7 @@ func TestIAMAdminAssignmentLifecycle(t *testing.T) {
 			return
 		}
 
-		userID := UniqueKey("lifecycle-admin-user")
+		userID := uniqueNumericUserID()
 		role := "tenant_admin"
 		grantedBy := "admin"
 
@@ -186,7 +199,7 @@ func TestIAMAdminAssignmentCreate(t *testing.T) {
 			return
 		}
 
-		userID := UniqueKey("create-admin-user")
+		userID := uniqueNumericUserID()
 		role := "tenant_admin"
 		grantedBy := "admin"
 
@@ -196,7 +209,7 @@ func TestIAMAdminAssignmentCreate(t *testing.T) {
 		assert.Contains(t, stdout, userID, "output should contain user ID")
 
 		// Clean up: extract ID from JSON create for deletion
-		result := createAssignmentJSON(t, runner, UniqueKey("create-cleanup"), role, grantedBy)
+		result := createAssignmentJSON(t, runner, uniqueNumericUserID(), role, grantedBy)
 		cleanupID := extractAssignmentID(t, result)
 		defer deleteAssignment(t, runner, cleanupID)
 	})
@@ -210,7 +223,7 @@ func TestIAMAdminAssignmentCreateJSON(t *testing.T) {
 			return
 		}
 
-		userID := UniqueKey("createjson-admin-user")
+		userID := uniqueNumericUserID()
 		role := "user_admin"
 		grantedBy := "admin"
 
@@ -232,7 +245,7 @@ func TestIAMAdminAssignmentCreateWithPermissions(t *testing.T) {
 			return
 		}
 
-		userID := UniqueKey("perms-admin-user")
+		userID := uniqueNumericUserID()
 		role := "tenant_admin"
 		grantedBy := "admin"
 
@@ -271,7 +284,7 @@ func TestIAMAdminAssignmentGet(t *testing.T) {
 			return
 		}
 
-		userID := UniqueKey("get-admin-user")
+		userID := uniqueNumericUserID()
 		role := "policy_admin"
 		grantedBy := "admin"
 
@@ -295,7 +308,7 @@ func TestIAMAdminAssignmentGetJSON(t *testing.T) {
 			return
 		}
 
-		userID := UniqueKey("getjson-admin-user")
+		userID := uniqueNumericUserID()
 		role := "audit_admin"
 		grantedBy := "admin"
 
@@ -329,7 +342,7 @@ func TestIAMAdminAssignmentUpdate(t *testing.T) {
 			return
 		}
 
-		userID := UniqueKey("update-admin-user")
+		userID := uniqueNumericUserID()
 		initialRole := "tenant_admin"
 		updatedRole := "policy_admin"
 		grantedBy := "admin"
@@ -370,7 +383,7 @@ func TestIAMAdminAssignmentUpdateDeactivate(t *testing.T) {
 			return
 		}
 
-		userID := UniqueKey("deactivate-admin-user")
+		userID := uniqueNumericUserID()
 		role := "tenant_admin"
 		grantedBy := "admin"
 
@@ -419,7 +432,7 @@ func TestIAMAdminAssignmentDelete(t *testing.T) {
 			return
 		}
 
-		userID := UniqueKey("delete-admin-user")
+		userID := uniqueNumericUserID()
 		role := "read_only"
 		grantedBy := "admin"
 
@@ -453,8 +466,8 @@ func TestIAMAdminAssignmentList(t *testing.T) {
 			return
 		}
 
-		userID1 := UniqueKey("list-admin-user-1")
-		userID2 := UniqueKey("list-admin-user-2")
+		userID1 := uniqueNumericUserID()
+		userID2 := uniqueNumericUserID()
 		grantedBy := "admin"
 
 		result1 := createAssignmentJSON(t, runner, userID1, "tenant_admin", grantedBy)
@@ -482,8 +495,8 @@ func TestIAMAdminAssignmentListActiveOnly(t *testing.T) {
 			return
 		}
 
-		activeUserID := UniqueKey("active-list-user")
-		inactiveUserID := UniqueKey("inactive-list-user")
+		activeUserID := uniqueNumericUserID()
+		inactiveUserID := uniqueNumericUserID()
 		grantedBy := "admin"
 
 		// Create active assignment
@@ -532,7 +545,7 @@ func TestIAMAdminAssignmentCreateInvalidRole(t *testing.T) {
 			return
 		}
 
-		userID := UniqueKey("invalid-role-user")
+		userID := uniqueNumericUserID()
 		invalidRole := "nonexistent_role"
 		grantedBy := "admin"
 
@@ -586,7 +599,7 @@ func TestIAMAdminCheckPermission(t *testing.T) {
 			return
 		}
 
-		userID := UniqueKey("checkperm-user")
+		userID := uniqueNumericUserID()
 		permission := "user:read"
 		grantedBy := "admin"
 
@@ -611,7 +624,7 @@ func TestIAMAdminCheckPermissionWithTenant(t *testing.T) {
 			return
 		}
 
-		userID := UniqueKey("checkperm-tenant-user")
+		userID := uniqueNumericUserID()
 		tenantID := UniqueKey("checkperm-tenant")
 		permission := "user:create"
 		grantedBy := "admin"
@@ -637,7 +650,7 @@ func TestIAMAdminCheckPermissionWithResource(t *testing.T) {
 			return
 		}
 
-		userID := UniqueKey("checkperm-resource-user")
+		userID := uniqueNumericUserID()
 		permission := "document:read"
 		resourceType := "document"
 		resourceID := UniqueKey("resource")

@@ -363,30 +363,83 @@ func (s *securityService) Barrier() (QRDBBarrierClient, error) {
 	return bc, nil
 }
 
-// Ceremony returns the QRDB CeremonyClient. The QRDB transport is
-// lazily initialized on first call (delegated to client.qrdbClient).
+// Ceremony returns the QRDB CeremonyClient. It rides the SDK transport the
+// way Barrier does, so every ceremony call carries the platform bearer set
+// by WithAuthToken: over REST and QUIC through the SDK's REST ceremony
+// client, over MCP through the SDK MCP transport itself, and over gRPC and
+// Unix through go-qrdb's gRPC sub-client with the bearer added as outgoing
+// authorization metadata. An embedded QRDB keeps go-qrdb's client.
 //
-// Over MCP, Ceremony, and likewise Credentials, SealStore, TenantMgmt,
-// CustodianGroup and Share, still use go-qrdb's MCP sub-client, which carries
-// no platform bearer, so a node whose /mcp gate requires one refuses its
-// initialize with 401. Only Barrier rides the SDK's own MCP transport; moving
-// the rest is tracked on go-quicbaas#2556.
+// SealStore, TenantMgmt, CustodianGroup and Share still use
+// go-qrdb's sub-client, which carries no platform bearer over REST, QUIC
+// and MCP; moving them is tracked on go-quicbaas#2556.
 func (s *securityService) Ceremony() (QRDBCeremonyClient, error) {
-	qrdbClient, err := s.c.qrdbClient()
-	if err != nil {
-		return nil, err
-	}
-	return qrdbClient.Ceremony(), nil
+	return s.c.ceremonyClient()
 }
 
-// Credentials returns the QRDB CredentialClient. The QRDB transport
-// is lazily initialized on first call (delegated to client.qrdbClient).
-func (s *securityService) Credentials() (QRDBCredentialClient, error) {
-	qrdbClient, err := s.c.qrdbClient()
+// ceremonyClient selects the ceremony client in the same order as
+// securityService.Barrier: an embedded QRDB first, then the SDK's own REST,
+// QUIC and MCP transports, then go-qrdb's sub-client, wrapped to send the
+// platform bearer when it speaks gRPC.
+func (c *client) ceremonyClient() (QRDBCeremonyClient, error) {
+	if c.opts == nil || c.opts.embeddedQRDB == nil {
+		if rt, ok := c.transport.(*rest.Transport); ok {
+			return rt.Ceremony(), nil
+		}
+		if qt, ok := c.transport.(*quic.Transport); ok {
+			return qt.Transport.Ceremony(), nil
+		}
+		if mt, ok := c.transport.(*mcp.Transport); ok {
+			return mt, nil
+		}
+	}
+	qrdbClient, err := c.qrdbClient()
 	if err != nil {
 		return nil, err
 	}
-	return qrdbClient.Credentials(), nil
+	cc := qrdbClient.Ceremony()
+	if c.opts != nil && c.opts.embeddedQRDB == nil && c.opts.authToken != "" && qrdbSubClientSpeaksGRPC(c.opts.transportType) {
+		return &qrdbBearerCeremonyClient{inner: cc, bearer: "Bearer " + c.opts.authToken}, nil
+	}
+	return cc, nil
+}
+
+// Credentials returns the QRDB CredentialClient. It rides the SDK transport
+// the way Ceremony does, so every credential call carries the platform
+// bearer set by WithAuthToken: over REST and QUIC through the SDK's REST
+// credential client, over MCP through the SDK MCP transport's
+// qrdb_credential_* tool client, and over gRPC and Unix through go-qrdb's
+// gRPC sub-client with the bearer added as outgoing authorization metadata.
+// An embedded QRDB keeps go-qrdb's client.
+func (s *securityService) Credentials() (QRDBCredentialClient, error) {
+	return s.c.credentialClient()
+}
+
+// credentialClient selects the credential client in the same order as
+// ceremonyClient: an embedded QRDB first, then the SDK's own REST, QUIC and
+// MCP transports, then go-qrdb's sub-client, wrapped to send the platform
+// bearer when it speaks gRPC.
+func (c *client) credentialClient() (QRDBCredentialClient, error) {
+	if c.opts == nil || c.opts.embeddedQRDB == nil {
+		if rt, ok := c.transport.(*rest.Transport); ok {
+			return rt.Credentials(), nil
+		}
+		if qt, ok := c.transport.(*quic.Transport); ok {
+			return qt.Transport.Credentials(), nil
+		}
+		if mt, ok := c.transport.(*mcp.Transport); ok {
+			return mt.QRDBCredentials(), nil
+		}
+	}
+	qrdbClient, err := c.qrdbClient()
+	if err != nil {
+		return nil, err
+	}
+	cc := qrdbClient.Credentials()
+	if c.opts != nil && c.opts.embeddedQRDB == nil && c.opts.authToken != "" && qrdbSubClientSpeaksGRPC(c.opts.transportType) {
+		return &qrdbBearerCredentialClient{inner: cc, bearer: "Bearer " + c.opts.authToken}, nil
+	}
+	return cc, nil
 }
 
 // SecretResolver returns the unified secret resolver registry injected via
@@ -462,11 +515,7 @@ type barrierCeremonyService struct {
 }
 
 func (s *barrierCeremonyService) Ceremony() (QRDBCeremonyClient, error) {
-	qrdbClient, err := s.c.qrdbClient()
-	if err != nil {
-		return nil, err
-	}
-	return qrdbClient.Ceremony(), nil
+	return s.c.ceremonyClient()
 }
 
 func (s *barrierCeremonyService) CustodianGroup() (QRDBCustodianGroupClient, error) {
