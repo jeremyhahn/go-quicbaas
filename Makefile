@@ -1811,7 +1811,7 @@ INTEGRATION_FEATURES := account agent agents api attestation auth backup batch \
 	fleet-enrollment fleet-runtime forge-gitea iam init kms lifecycle login mcp merge-result messaging \
 	observability orchestration orchestration-gpu orchestrator parameter_store \
 	placement project quicbaasd raft rag registry routing scheduler sdk-go sdk-js seal \
-	seal-hardware secrets secrets-resolver server session-attach signalbridge \
+	seal-hardware secrets secrets-resolver server services session-attach signalbridge \
 	standalone storage storage-file tenantbarrier timeseries transactions transport vector \
 	workerimage
 FEATURE_PATHS_account           := test/integration/cli/account_test.go
@@ -1861,6 +1861,7 @@ FEATURE_PATHS_seal-hardware     := test/integration/seal/
 FEATURE_PATHS_secrets           := test/integration/secrets/
 FEATURE_PATHS_secrets-resolver  := test/integration/secrets-resolver/
 FEATURE_PATHS_server            := test/integration/server/
+FEATURE_PATHS_services          := test/integration/services/
 FEATURE_PATHS_session-attach    := test/integration/session_attach/
 FEATURE_PATHS_signalbridge      := test/integration/signalbridge/ pkg/signalbridge/
 FEATURE_PATHS_standalone        := test/integration/standalone/
