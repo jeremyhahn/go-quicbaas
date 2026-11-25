@@ -426,6 +426,9 @@ func (s *SchedulerServer) GetSchedulerStatus(ctx context.Context, _ *pb.GetSched
 // =============================================================================
 
 // protoOwnerTypeToService converts pb.OwnerType to service.SchedulerOwnerType.
+// An unspecified owner type maps to "" (no owner type), so the scheduler
+// adapter applies the caller's default owner: a tenant caller's own tenant,
+// the system for a system caller.
 func protoOwnerTypeToService(ot pb.OwnerType) service.SchedulerOwnerType {
 	switch ot {
 	case pb.OwnerType_OWNER_TYPE_SYSTEM:
@@ -435,7 +438,7 @@ func protoOwnerTypeToService(ot pb.OwnerType) service.SchedulerOwnerType {
 	case pb.OwnerType_OWNER_TYPE_DELEGATED:
 		return service.SchedulerOwnerTypeDelegated
 	default:
-		return service.SchedulerOwnerTypeSystem
+		return ""
 	}
 }
 

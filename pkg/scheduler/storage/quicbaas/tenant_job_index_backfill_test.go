@@ -39,8 +39,9 @@ func dueJobNames(t *testing.T, storage *Storage, before time.Time) map[string]bo
 
 // TestTenantJobIndexBackfill_UnindexedJobsRunAfterOpen is the upgrade
 // fixture: a delayed and a cron tenant job stored before the index existed
-// are due once the storage opens, and a tenant job an older writer stores
-// unindexed after that open is due after the next open.
+// are due once the storage opens, and a tenant job a node on the earlier
+// release writes after that open, again with no index entry, is due after
+// the next open.
 func TestTenantJobIndexBackfill_UnindexedJobsRunAfterOpen(t *testing.T) {
 	ctx := context.Background()
 	kv := newMockKVStore()
@@ -72,10 +73,9 @@ func TestTenantJobIndexBackfill_UnindexedJobsRunAfterOpen(t *testing.T) {
 	if len(names) != 2 || !names["legacy-delayed"] || !names["legacy-cron"] {
 		t.Fatalf("after open, due jobs = %v, want legacy-delayed and legacy-cron", names)
 	}
-	// During a rolling upgrade an older node still writes tenant jobs
-	// without an index entry after this node opened. The repair runs at
-	// every open, so the next open indexes that job too, and keeps the
-	// entries it already wrote.
+
+	// A node still on the earlier release writes a tenant job with no index
+	// entry after this open. The next open indexes it, so it runs.
 	late := createTestJob("written-after-backfill", scheduler.OwnerTypeTenant, "acme")
 	late.ID = 43
 	late.NextRun = now.Add(-time.Minute)
@@ -89,9 +89,8 @@ func TestTenantJobIndexBackfill_UnindexedJobsRunAfterOpen(t *testing.T) {
 	}
 }
 
-// TestTenantJobIndexBackfill_IsIdempotent proves the repair can run any
-// number of times: indexed and unindexed jobs each end with exactly one
-// entry.
+// TestTenantJobIndexBackfill_IsIdempotent proves the backfill can run again
+// and again: indexed and unindexed jobs each end with exactly one entry.
 func TestTenantJobIndexBackfill_IsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	kv := newMockKVStore()
@@ -106,8 +105,8 @@ func TestTenantJobIndexBackfill_IsIdempotent(t *testing.T) {
 	putUnindexedTenantJob(t, kv, legacy)
 
 	for i := 0; i < 2; i++ {
-		if err := storage.repairTenantJobIndex(ctx); err != nil {
-			t.Fatalf("repair %d: %v", i, err)
+		if err := storage.backfillTenantJobIndex(ctx); err != nil {
+			t.Fatalf("backfill %d: %v", i, err)
 		}
 	}
 	entries, err := kv.List(ctx, TenantJobIndexPrefix)
@@ -119,55 +118,50 @@ func TestTenantJobIndexBackfill_IsIdempotent(t *testing.T) {
 	}
 }
 
-// putCountingKV records the keys of the Puts made through it.
-type putCountingKV struct {
+// indexPutCountingKV is a mockKVStore that counts the Puts under
+// TenantJobIndexPrefix.
+type indexPutCountingKV struct {
 	*mockKVStore
-	puts []string
+	indexPuts int
 }
 
-func (p *putCountingKV) Put(ctx context.Context, key string, value []byte) error {
-	p.puts = append(p.puts, key)
-	return p.mockKVStore.Put(ctx, key, value)
+func (c *indexPutCountingKV) Put(ctx context.Context, key string, value []byte) error {
+	if strings.HasPrefix(key, TenantJobIndexPrefix) {
+		c.indexPuts++
+	}
+	return c.mockKVStore.Put(ctx, key, value)
 }
 
-// TestTenantJobIndexRepair_WritesOnlyMissingEntries proves the per-open
-// repair stays cheap: when every tenant job is already indexed, an open
-// writes no index entry, and with one job unindexed it writes that one.
-func TestTenantJobIndexRepair_WritesOnlyMissingEntries(t *testing.T) {
+// TestTenantJobIndexBackfill_SteadyOpenWritesNothing proves the backfill
+// writes only missing entries: once an open has indexed every tenant job, a
+// later open writes no index entry.
+func TestTenantJobIndexBackfill_SteadyOpenWritesNothing(t *testing.T) {
 	ctx := context.Background()
-	kv := newMockKVStore()
-	seed := NewStorage(kv)
-	for _, tenant := range []string{"acme", "globex"} {
-		if err := seed.CreateJob(ctx, createTestJob("indexed-"+tenant, scheduler.OwnerTypeTenant, tenant)); err != nil {
-			t.Fatalf("CreateJob %s: %v", tenant, err)
-		}
+	kv := &indexPutCountingKV{mockKVStore: newMockKVStore()}
+	storage := NewStorage(kv)
+
+	indexed := createTestJob("indexed", scheduler.OwnerTypeTenant, "acme")
+	if err := storage.CreateJob(ctx, indexed); err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+	legacy := createTestJob("legacy", scheduler.OwnerTypeTenant, "globex")
+	legacy.ID = indexed.ID + 1
+	putUnindexedTenantJob(t, kv.mockKVStore, legacy)
+
+	kv.indexPuts = 0
+	if err := storage.backfillTenantJobIndex(ctx); err != nil {
+		t.Fatalf("first backfill: %v", err)
+	}
+	if kv.indexPuts != 1 {
+		t.Fatalf("first backfill index writes = %d, want 1 (the unindexed job only)", kv.indexPuts)
 	}
 
-	counting := &putCountingKV{mockKVStore: kv}
-	if err := NewStorage(counting).InitializeJobIDCounter(ctx); err != nil {
-		t.Fatalf("open: %v", err)
+	kv.indexPuts = 0
+	if err := storage.backfillTenantJobIndex(ctx); err != nil {
+		t.Fatalf("second backfill: %v", err)
 	}
-	for _, key := range counting.puts {
-		if strings.HasPrefix(key, TenantJobIndexPrefix) {
-			t.Fatalf("open with every tenant job indexed wrote index entry %q", key)
-		}
-	}
-
-	legacy := createTestJob("legacy", scheduler.OwnerTypeTenant, "acme")
-	legacy.ID = 99
-	putUnindexedTenantJob(t, kv, legacy)
-	counting.puts = nil
-	if err := NewStorage(counting).InitializeJobIDCounter(ctx); err != nil {
-		t.Fatalf("second open: %v", err)
-	}
-	var indexed []string
-	for _, key := range counting.puts {
-		if strings.HasPrefix(key, TenantJobIndexPrefix) {
-			indexed = append(indexed, key)
-		}
-	}
-	if want := keyForTenantJobIndex(99, "acme"); len(indexed) != 1 || indexed[0] != want {
-		t.Fatalf("second open wrote index entries %v, want [%s]", indexed, want)
+	if kv.indexPuts != 0 {
+		t.Fatalf("steady-state backfill index writes = %d, want 0", kv.indexPuts)
 	}
 }
 

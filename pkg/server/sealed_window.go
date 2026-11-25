@@ -129,6 +129,26 @@ type constantSealedProbe struct{}
 // IsSealed implements the sealed-window probe contract.
 func (constantSealedProbe) IsSealed() bool { return true }
 
+// liveSealedWindowProbe reports the barrier's live state to a sealed-window
+// listener that has no authentication behind it (qrdb's sealed REST
+// handler). Unlike constantSealedProbe it turns unsealed the moment the
+// barrier unseals, so that listener refuses every request (503) between the
+// unseal and its teardown.
+type liveSealedWindowProbe struct {
+	sealed func() bool
+}
+
+// IsSealed implements the sealed-window probe contract.
+func (p liveSealedWindowProbe) IsSealed() bool { return p.sealed() }
+
+// sealedWindowNodeSealed reports whether the node that owns the sealed
+// window's barrier is still sealed. With no node it reports unsealed, so an
+// anonymous listener fails closed.
+func (s *Server) sealedWindowNodeSealed() bool {
+	node := s.getQRDBNode()
+	return node != nil && node.IsSealed()
+}
+
 // newSealedWindowClient composes the in-process qrdb SDK client for the
 // sealed-window phase: the node's OWN Barrier / Ceremony / Credential
 // servicers over the canonical qrdb embedded transport, with lazy KV / Admin

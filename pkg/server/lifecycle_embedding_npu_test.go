@@ -207,7 +207,7 @@ func TestBuildAdditionalEmbeddingConfigsMapsEveryField(t *testing.T) {
 	srv.config.RAG.Embedding.Additional = []config.EmbeddingConfig{
 		{
 			Provider:   embedding.NPUProviderName,
-			APIURL:     "http://gpu-host.internal:8077",
+			APIURL:     "http://gpu-01.internal:8077",
 			Model:      "all-MiniLM-L6-v2",
 			Dimensions: 384,
 			Timeout:    45,
@@ -219,7 +219,7 @@ func TestBuildAdditionalEmbeddingConfigsMapsEveryField(t *testing.T) {
 
 	got := extras[0]
 	require.Equal(t, embedding.NPUProviderName, got.Provider)
-	require.Equal(t, "http://gpu-host.internal:8077", got.APIURL)
+	require.Equal(t, "http://gpu-01.internal:8077", got.APIURL)
 	require.Equal(t, "all-MiniLM-L6-v2", got.Model)
 	require.Equal(t, 384, got.Dimensions)
 	require.Equal(t, 45, got.Timeout)

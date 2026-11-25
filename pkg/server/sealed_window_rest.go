@@ -94,6 +94,9 @@ func (s *Server) startSealedRESTServer() error {
 	// sealed gRPC qrdb.v1 service is registered with. It and the native
 	// routes admit on the sealed window's one listener probe, the one the
 	// sealed gRPC listener admits on, which reads the live barrier state.
+	// The /health, /v1/health and /status aliases, which qrdb's sealed
+	// handler cannot answer without an admin service, are served by the
+	// REST server's own health and barrier-status handlers.
 	listener := s.sealedListener()
 	restServer.SetSealedWindowHandler(qrdbsdk.NewSealedWindowHandler(
 		s.qrdbBarrierServicer(), s.qrdbCeremonyServicer(), s.qrdbCredentialServicer(),

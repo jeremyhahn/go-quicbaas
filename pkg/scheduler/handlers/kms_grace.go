@@ -21,14 +21,11 @@ import (
 	"strings"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // HandlerKMSGracePeriod is the handler name for KMS grace period jobs.
 const HandlerKMSGracePeriod = "kms.grace_period"
-
-// kmsTenantKeyPrefix begins the tenant key namespace format,
-// tenant/{tenantID}/{keyID}, as pkg/service tenantScopedKeyID builds it.
-const kmsTenantKeyPrefix = "tenant/"
 
 // KeyStatus defines the status of a key for the grace period handler.
 type KeyStatus string
@@ -117,15 +114,13 @@ func (h *KMSGracePeriodHandler) Handle(ctx context.Context, job *scheduler.Job) 
 		}
 	}
 
-	// A tenant-owned job acts only on its owner's keys. Its payload is
-	// editable by that tenant, so the key it names is checked against the
-	// job's owner, not trusted.
-	if tenant := scheduler.JobTenantID(job); tenant != "" {
-		if !strings.HasPrefix(payload.KeyID, kmsTenantKeyPrefix+tenant+"/") {
-			return nil, &scheduler.InvalidJobError{
-				Field:   "payload.key_id",
-				Message: "key_id is outside the job owner's key namespace",
-			}
+	// A tenant's grace job may only disable that tenant's own key: the
+	// payload is bound to the job's tenant at execution, whatever was
+	// written into it.
+	if tenant := graceJobTenant(job); tenant != "" && !strings.HasPrefix(payload.KeyID, TenantKeyPrefix(tenant)) {
+		return nil, &scheduler.InvalidJobError{
+			Field:   "payload.key_id",
+			Message: "key_id is not a key of the job's tenant",
 		}
 	}
 
@@ -143,6 +138,25 @@ func (h *KMSGracePeriodHandler) Handle(ctx context.Context, job *scheduler.Job) 
 		Message: fmt.Sprintf("Disabled key %s version %d (previous status: %s)",
 			resp.KeyID, payload.Version, resp.OldStatus),
 	}, nil
+}
+
+// TenantKeyPrefix is the KMS key-ID prefix of tenantID's keys,
+// "tenant/<tenantID>/" (service.tenantScopedKeyID; a service test pins the
+// two together).
+func TenantKeyPrefix(tenantID string) string {
+	return "tenant/" + tenantID + "/"
+}
+
+// graceJobTenant is the tenant a grace job acts for: the owner of a
+// tenant-owned job, else a non-system target tenant; "" for a platform job.
+func graceJobTenant(job *scheduler.Job) string {
+	if tenant := scheduler.JobTenantID(job); tenant != "" {
+		return tenant
+	}
+	if job.TargetTenantID != "" && !tenantctx.IsSystem(job.TargetTenantID) {
+		return job.TargetTenantID
+	}
+	return ""
 }
 
 // Handler returns the JobHandler function for registration.

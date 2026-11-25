@@ -27,8 +27,13 @@ import (
 
 	"github.com/robfig/cron/v3"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
 )
+
+// DueJobFilter reports whether this node may run a due job. A nil filter
+// accepts every due job.
+type DueJobFilter func(job *Job) bool
 
 // JobStorage defines the interface for job persistence.
 type JobStorage interface {
@@ -37,10 +42,12 @@ type JobStorage interface {
 	UpdateJob(ctx context.Context, job *Job) error
 	DeleteJob(ctx context.Context, id uint64, tenantID string) error
 	ListJobs(ctx context.Context, query *JobQuery) ([]*Job, string, error)
-	// GetJobsDueForExecution returns up to limit Pending jobs whose NextRun is
-	// before the given time. A nil eligible admits every job; a job eligible
-	// rejects is skipped and does not count against limit.
-	GetJobsDueForExecution(ctx context.Context, before time.Time, limit int, eligible func(*Job) bool) ([]*Job, error)
+
+	// GetJobsDueForExecution returns up to limit jobs due before before that
+	// eligible accepts. The limit counts only accepted jobs, so jobs this
+	// node cannot run never crowd out ones it can.
+	GetJobsDueForExecution(ctx context.Context, before time.Time, limit int, eligible DueJobFilter) ([]*Job, error)
+
 	SaveExecution(ctx context.Context, exec *JobExecution) error
 	GetExecutions(ctx context.Context, jobID uint64, tenantID string, limit int) ([]*JobExecution, error)
 
@@ -473,6 +480,11 @@ func (s *SchedulerEngine) ScheduleJob(ctx context.Context, job *Job) error {
 	// one would overwrite the system job that owns it.
 	if job.ID >= SystemJobIDFloor {
 		return InvalidJobError{Field: "id", Message: "IDs at or above SystemJobIDFloor are reserved for system jobs"}
+	}
+	// A platform handler acts across every tenant; only a system-owned job
+	// may name one.
+	if err := checkPlatformHandler(job); err != nil {
+		return err
 	}
 
 	// Set defaults
@@ -931,6 +943,10 @@ func (s *SchedulerEngine) UpdateJob(ctx context.Context, jobID uint64, tenantID 
 	if updates.Handler != "" {
 		// Handler existence is validated at execution time, not update time
 		job.Handler = updates.Handler
+		// A tenant-owned job is never turned into a platform handler's job.
+		if err := checkPlatformHandler(job); err != nil {
+			return nil, err
+		}
 	}
 	if updates.Payload != nil {
 		job.Payload = json.RawMessage(updates.Payload)
@@ -1135,7 +1151,7 @@ func (s *SchedulerEngine) processDueJobs(ctx context.Context) {
 	storageCtx, cancel := context.WithTimeout(ctx, s.config.DefaultTimeout)
 	defer cancel()
 
-	jobs, err := s.storage.GetJobsDueForExecution(storageCtx, now, s.config.MaxConcurrentJobs, s.runnableHere)
+	jobs, err := s.storage.GetJobsDueForExecution(storageCtx, now, s.config.MaxConcurrentJobs, s.dueJobFilter())
 	if err != nil {
 		s.logError(sweepLogPrefix+" failed: component=scheduler error=%q", err.Error())
 		s.storageErrors.Add(1)
@@ -1289,10 +1305,30 @@ func (s *SchedulerEngine) shouldExecute(job *Job) bool {
 	return true
 }
 
-// runnableHere reports whether this node may ever run job. It looks at
-// node affinity only; leadership is left to shouldExecute.
-func (s *SchedulerEngine) runnableHere(job *Job) bool {
-	return job.NodeAffinity == "" || s.nodeID == "" || job.NodeAffinity == s.nodeID
+// placementAllows is shouldExecute's decision, without logging, for a
+// leadership state sampled by the caller: a job with affinity runs only on
+// its node, any other job only on the leader.
+func (s *SchedulerEngine) placementAllows(job *Job, isLeader bool) bool {
+	if job.NodeAffinity != "" && s.nodeID != "" {
+		return job.NodeAffinity == s.nodeID
+	}
+	return isLeader
+}
+
+// dueJobFilter returns the filter a due-job sweep hands its storage so the
+// batch limit counts only jobs this node may run. Leadership is sampled once
+// per sweep; shouldExecute re-checks it before each job fires.
+func (s *SchedulerEngine) dueJobFilter() DueJobFilter {
+	isLeader := true
+	if s.leader != nil {
+		leader, err := s.leader.IsLeader()
+		if err != nil {
+			s.logWarn("Due-job sweep treats this node as a follower: leader check failed: %v", err)
+			leader = false
+		}
+		isLeader = leader
+	}
+	return func(job *Job) bool { return s.placementAllows(job, isLeader) }
 }
 
 // triggerRequest is one queued manual trigger: the job, the scope it was
@@ -1419,6 +1455,15 @@ func (s *SchedulerEngine) executeJob(ctx context.Context, job *Job, claimedFirin
 
 	job = current
 
+	// A tenant-owned job of a platform handler is refused here too, whatever
+	// wrote it: the handler acts across every tenant, so it never runs for
+	// one. The job fails without being retried.
+	if err := checkPlatformHandler(job); err != nil {
+		lock.Unlock()
+		s.handleJobFailure(storageCtx, job, err)
+		return
+	}
+
 	// Update job status to running
 	job.Status = JobStatusRunning
 	job.UpdatedAt = time.Now()
@@ -1432,9 +1477,9 @@ func (s *SchedulerEngine) executeJob(ctx context.Context, job *Job, claimedFirin
 	// Create execution record
 	exec := &JobExecution{
 		JobID:     job.ID,
+		TenantID:  JobTenantID(job),
 		Status:    JobStatusRunning,
 		StartedAt: time.Now(),
-		TenantID:  JobTenantID(job),
 	}
 
 	// Determine timeout
@@ -1443,8 +1488,16 @@ func (s *SchedulerEngine) executeJob(ctx context.Context, job *Job, claimedFirin
 		timeout = s.config.DefaultTimeout
 	}
 
+	// A tenant-owned job runs with its tenant bound, so a handler that reads
+	// the tenant from its context acts for that tenant and no other. A
+	// system-owned job's context is left as it is.
+	runCtx := ctx
+	if tenantID := JobTenantID(job); tenantID != "" {
+		runCtx = tenantctx.WithTenant(ctx, tenantID)
+	}
+
 	// Execute with timeout
-	execCtx, cancel := context.WithTimeout(ctx, timeout)
+	execCtx, cancel := context.WithTimeout(runCtx, timeout)
 	defer cancel()
 
 	// Channel for result

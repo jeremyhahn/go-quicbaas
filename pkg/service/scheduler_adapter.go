@@ -38,22 +38,6 @@ func NewSchedulerAdapter(s interfaces.SchedulerEngine) *SchedulerAdapter {
 	return &SchedulerAdapter{scheduler: s}
 }
 
-// isSystemSchedulerHandler reports whether handler is one the platform runs
-// for itself: the cross-tenant KMS rotation scan, the KMS grace-period
-// disable, audit cleanup, database compaction and ledger pricing. A tenant
-// cannot create a job naming one, nor point a job at one.
-func isSystemSchedulerHandler(handler string) bool {
-	switch handler {
-	case schedulerhandlers.HandlerKMSRotation,
-		schedulerhandlers.HandlerKMSGracePeriod,
-		schedulerhandlers.HandlerAuditCleanup,
-		schedulerhandlers.HandlerDBCompaction,
-		schedulerhandlers.HandlerLedgerPricing:
-		return true
-	}
-	return false
-}
-
 // ScheduleJob converts the service-level job to a scheduler job and schedules it.
 // This implements the KMSScheduler interface.
 //
@@ -88,18 +72,17 @@ func (a *SchedulerAdapter) CreateJob(ctx context.Context, req *CreateSchedulerJo
 	if err != nil {
 		return nil, err
 	}
-	// System handlers act across tenants or on service-managed state, so a
-	// tenant cannot file a job that runs one.
-	if tenantID != "" && isSystemSchedulerHandler(req.Handler) {
-		return nil, NewError(errors.ErrForbidden, "scheduler.CreateJob",
-			"a tenant cannot create a job that runs a system handler")
-	}
 	// A tenant caller that names no owner type creates a job its own tenant
 	// owns; only an explicit system or delegated owner names the system
-	// namespace.
+	// namespace. A system caller's job with no owner type stays
+	// system-owned.
 	ownerType := req.OwnerType
-	if ownerType == "" && tenantID != "" {
-		ownerType = SchedulerOwnerTypeTenant
+	if ownerType == "" {
+		if tenantID != "" {
+			ownerType = SchedulerOwnerTypeTenant
+		} else {
+			ownerType = SchedulerOwnerTypeSystem
+		}
 	}
 	// A tenant-owned job is filed in its owner's namespace, so naming an
 	// owner is naming a tenant and is held to the same rule.
@@ -113,6 +96,10 @@ func (a *SchedulerAdapter) CreateJob(ctx context.Context, req *CreateSchedulerJo
 		// tenant caller creating one names the system tenant: refused by the
 		// same rule.
 		_, err := tenantctx.Target(ctx, "scheduler.CreateJob", tenantctx.SystemTenantID)
+		return nil, err
+	}
+
+	if err := schedulerRefuseReservedHandler("CreateJob", req.Handler); err != nil {
 		return nil, err
 	}
 
@@ -176,23 +163,23 @@ func (a *SchedulerAdapter) UpdateJob(ctx context.Context, req *UpdateSchedulerJo
 	if err != nil {
 		return nil, err
 	}
-	if tenantID != "" {
-		if isSystemSchedulerHandler(req.Handler) {
-			return nil, NewError(errors.ErrForbidden, "scheduler.UpdateJob",
-				"a tenant cannot point a job at a system handler")
+	// A job run by a reserved handler (a platform handler, or a KMS grace
+	// job) is written only by the service that owns the handler: its handler and payload are not
+	// user-editable, and no job is turned into one.
+	// A tenant's run-time edit is read the same way, so a service-managed job keeps the run time the service gave it.
+	if err := schedulerRefuseReservedHandler("UpdateJob", req.Handler); err != nil {
+		return nil, err
+	}
+	if req.Handler != "" || len(req.Payload) > 0 || (tenantID != "" && !req.ExecuteAt.IsZero()) {
+		current, err := a.scheduler.GetJobWithTenant(ctx, req.JobID, tenantID)
+		if err != nil {
+			return nil, err
 		}
-		// A service-managed job filed in the tenant's namespace (the KMS
-		// grace job) keeps the handler, payload and run time the service
-		// gave it; the tenant may still edit its name, labels and the like.
-		if req.Handler != "" || req.Payload != nil || !req.ExecuteAt.IsZero() {
-			current, err := a.scheduler.GetJobWithTenant(ctx, req.JobID, tenantID)
-			if err != nil {
-				return nil, err
-			}
-			if current.Handler == schedulerhandlers.HandlerKMSGracePeriod {
-				return nil, NewError(errors.ErrForbidden, "scheduler.UpdateJob",
-					"the handler, payload and run time of a service-managed job cannot be changed by a tenant")
-			}
+		if err := schedulerTenantEnforceAccess(tenantID, current.TargetTenantID, "UpdateJob"); err != nil {
+			return nil, err
+		}
+		if err := schedulerRefuseReservedHandler("UpdateJob", current.Handler); err != nil {
+			return nil, err
 		}
 	}
 
@@ -258,19 +245,33 @@ func (a *SchedulerAdapter) ListJobs(ctx context.Context, req *ListSchedulerJobsR
 		return nil, err
 	}
 
-	// Convert request to scheduler.JobQuery. The store picks the namespace by
-	// owner, so the listing reads the caller's own tenant namespace (an
-	// explicit owner_id has already been held to that tenant above); the
-	// system tenant's is "" (the system namespace).
+	// A tenant caller that names no owner type lists the jobs its own tenant
+	// owns, the namespace CreateJob files them in by the same default; a
+	// tenant-owned listing always reads the resolved caller tenant's namespace.
+	ownerType := req.OwnerType
+	if ownerType == "" && tenantID != "" {
+		ownerType = SchedulerOwnerTypeTenant
+	}
+	ownerID := tenantID
+
+	// Convert request to scheduler.JobQuery
 	query := &scheduler.JobQuery{
-		OwnerType:      scheduler.OwnerType(req.OwnerType),
-		OwnerID:        tenantID,
+		OwnerType:      scheduler.OwnerType(ownerType),
+		OwnerID:        ownerID,
 		TargetTenantID: targetTenantID,
 		Status:         scheduler.JobStatus(req.Status),
 		Handler:        req.Handler,
 		Labels:         req.Labels,
 		Limit:          req.Limit,
 		Cursor:         req.Cursor,
+	}
+
+	// A tenant caller's own jobs are filed in its namespace (CreateJob's
+	// default owner), so a listing that names no system or delegated owner
+	// reads that namespace.
+	if tenantID != "" && query.OwnerID == "" &&
+		(req.OwnerType == "" || req.OwnerType == SchedulerOwnerTypeTenant) {
+		query.OwnerID = tenantID
 	}
 
 	// Scope query to tenant in multi-tenant mode
@@ -533,6 +534,25 @@ func (a *SchedulerAdapter) convertToServiceJob(job *scheduler.Job) *SchedulerJob
 type gracePeriodPayload struct {
 	KeyID   string `json:"key_id"`
 	Version uint64 `json:"version"`
+}
+
+// schedulerServiceInternalHandler is the handler whose jobs only its owning
+// service writes (KMSService.RotateKey files kms.grace_period through
+// ScheduleJob). Its jobs are tenant-owned and run bound to that tenant.
+const schedulerServiceInternalHandler = "kms.grace_period"
+
+// schedulerRefuseReservedHandler refuses a scheduler API write that names, or
+// would edit a job of, a reserved handler: a platform-owned handler
+// (scheduler.IsPlatformHandler), which acts across every tenant and is
+// scheduled only by its owning service's internal registration, or the
+// service-internal kms.grace_period. It applies to every caller, the system
+// tenant included.
+func schedulerRefuseReservedHandler(operation, handler string) error {
+	if handler != schedulerServiceInternalHandler && !scheduler.IsPlatformHandler(handler) {
+		return nil
+	}
+	return NewError(errors.ErrForbidden, "scheduler."+operation,
+		"jobs of handler "+handler+" are written only by the service that owns it")
 }
 
 // GetCompletedGracePeriodVersions queries the Raft-replicated scheduler storage
