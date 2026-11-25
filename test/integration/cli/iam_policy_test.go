@@ -40,14 +40,14 @@ metadata:
   name: %s
   tenant: %s
 spec:
+  subjects:
+    authenticated: true
   rules:
     - name: allow-read
       effect: allow
       actions: [read]
       resources:
         - keys/**
-      subjects:
-        authenticated: true
 `, policyName, tenantID)
 
 	tmpFile, err := os.CreateTemp("", "policy-*.yaml")
