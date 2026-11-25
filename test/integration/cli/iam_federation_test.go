@@ -49,6 +49,10 @@ func TestIAMProviderLifecycle(t *testing.T) {
 			tenantID, providerID, "Lifecycle OIDC Provider", "oidc",
 			"lifecycle-client-id", "lifecycle-client-secret",
 			"https://idp.lifecycle.example.com")
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, createProvider) {
+			return
+		}
 		runner.RunAndAssert(createProvider)
 
 		// Get provider
@@ -109,6 +113,10 @@ func TestIAMProviderCreateCustom(t *testing.T) {
 			Timeout:        10 * time.Second,
 			SkipTransports: iamTransportsToSkip,
 		}
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, createProvider) {
+			return
+		}
 		runner.RunAndAssert(createProvider)
 
 		// Verify the provider was created with correct details
@@ -157,6 +165,10 @@ func TestIAMProviderCreateWithAutoProvision(t *testing.T) {
 			Timeout:        10 * time.Second,
 			SkipTransports: iamTransportsToSkip,
 		}
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, createProvider) {
+			return
+		}
 		runner.RunAndAssert(createProvider)
 
 		// Verify via get
@@ -189,6 +201,10 @@ func TestIAMProviderGet(t *testing.T) {
 			tenantID, providerID, "Get Test Provider", "oidc",
 			"get-client-id", "get-client-secret",
 			"https://idp.get.example.com")
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, createProvider) {
+			return
+		}
 		runner.RunAndAssert(createProvider)
 
 		// Get provider and verify details
@@ -222,6 +238,10 @@ func TestIAMProviderGetJSON(t *testing.T) {
 			tenantID, providerID, "JSON Get Provider", "oidc",
 			"json-get-client-id", "json-get-client-secret",
 			"https://idp.json-get.example.com")
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, createProvider) {
+			return
+		}
 		runner.RunAndAssert(createProvider)
 
 		// Get provider with JSON output
@@ -266,6 +286,10 @@ func TestIAMProviderUpdate(t *testing.T) {
 			tenantID, providerID, "Original Provider Name", "oidc",
 			"update-client-id", "update-client-secret",
 			"https://idp.update.example.com")
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, createProvider) {
+			return
+		}
 		runner.RunAndAssert(createProvider)
 
 		// Update provider name
@@ -304,6 +328,10 @@ func TestIAMProviderUpdateEnabled(t *testing.T) {
 			tenantID, providerID, "Enabled Toggle Provider", "oidc",
 			"enabled-client-id", "enabled-client-secret",
 			"https://idp.enabled.example.com")
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, createProvider) {
+			return
+		}
 		runner.RunAndAssert(createProvider)
 
 		// Disable provider
@@ -364,6 +392,10 @@ func TestIAMProviderDelete(t *testing.T) {
 			tenantID, providerID, "Delete Test Provider", "oidc",
 			"del-client-id", "del-client-secret",
 			"https://idp.del.example.com")
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, createProvider) {
+			return
+		}
 		runner.RunAndAssert(createProvider)
 
 		// Delete provider
@@ -414,6 +446,10 @@ func TestIAMProviderList(t *testing.T) {
 			tenantID, providerID1, "List Provider One", "oidc",
 			"list1-client-id", "list1-client-secret",
 			"https://idp.list1.example.com")
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, createProvider1) {
+			return
+		}
 		runner.RunAndAssert(createProvider1)
 
 		createProvider2 := IAMProviderCreateCustomCommand(
@@ -455,6 +491,10 @@ func TestIAMProviderListJSON(t *testing.T) {
 			tenantID, providerID1, "JSON List Provider One", "oidc",
 			"listjson1-client-id", "listjson1-client-secret",
 			"https://idp.listjson1.example.com")
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, createProvider1) {
+			return
+		}
 		runner.RunAndAssert(createProvider1)
 
 		createProvider2 := IAMProviderCreateCustomCommand(
@@ -509,6 +549,10 @@ func TestIAMProviderGetNonExistent(t *testing.T) {
 			Timeout:        10 * time.Second,
 			SkipTransports: iamTransportsToSkip,
 		}
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, getNonExistent) {
+			return
+		}
 		stdout, stderr, err := runner.Run(getNonExistent)
 		if !runner.IsSkipped(getNonExistent) {
 			require.Error(t, err, "get nonexistent provider should fail")
@@ -546,6 +590,10 @@ func TestIAMProviderDeleteNonExistent(t *testing.T) {
 			ExpectSuccess:  false,
 			Timeout:        10 * time.Second,
 			SkipTransports: iamTransportsToSkip,
+		}
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, deleteNonExistent) {
+			return
 		}
 		stdout, stderr, err := runner.Run(deleteNonExistent)
 		if !runner.IsSkipped(deleteNonExistent) {
