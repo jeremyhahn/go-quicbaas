@@ -164,12 +164,13 @@ func (a *SchedulerAdapter) UpdateJob(ctx context.Context, req *UpdateSchedulerJo
 	}
 
 	// A job run by a reserved handler (a platform handler, or a KMS grace
-	// job) is written only by the service that owns the handler: its handler and payload are not
-	// user-editable, and no job is turned into one.
+	// job) is written only by the service that owns the handler: its handler,
+	// payload and run time are not user-editable, and no job is turned into
+	// one. A grace job's run time is the deadline its service set.
 	if err := schedulerRefuseReservedHandler("UpdateJob", req.Handler); err != nil {
 		return nil, err
 	}
-	if req.Handler != "" || len(req.Payload) > 0 {
+	if req.Handler != "" || len(req.Payload) > 0 || !req.ExecuteAt.IsZero() {
 		current, err := a.scheduler.GetJobWithTenant(ctx, req.JobID, tenantID)
 		if err != nil {
 			return nil, err
@@ -567,9 +568,13 @@ func (a *SchedulerAdapter) GetCompletedGracePeriodVersions(ctx context.Context, 
 		Limit:   100,
 	}
 	// A tenant's grace jobs are filed in its own namespace (see RotateKey).
-	if tenantID, ok := tenantctx.Lookup(ctx); ok {
-		query.OwnerID = schedulerEngineTenant(tenantID)
+	// A context with no tenant bound is refused rather than read as the
+	// system namespace.
+	tenantID, err := schedulerTenantResolveID(ctx, "GetCompletedGracePeriodVersions", "")
+	if err != nil {
+		return nil, err
 	}
+	query.OwnerID = tenantID
 
 	jobs, _, err := a.scheduler.ListJobsWithCursor(ctx, query)
 	if err != nil {
