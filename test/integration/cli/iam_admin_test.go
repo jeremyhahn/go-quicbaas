@@ -691,8 +691,7 @@ func TestIAMAdminImpersonateStart(t *testing.T) {
 			return
 		}
 
-		targetUserID := UniqueKey("impersonate-target")
-		tenantID := UniqueKey("impersonate-tenant")
+		tenantID, targetUserID := createImpersonationTarget(t, runner, "impersonate")
 		reason := "integration test impersonation"
 
 		// No test-created admin assignment: the authenticated caller (the
@@ -725,8 +724,7 @@ func TestIAMAdminImpersonateEnd(t *testing.T) {
 			return
 		}
 
-		targetUserID := UniqueKey("end-impersonate-target")
-		tenantID := UniqueKey("end-impersonate-tenant")
+		tenantID, targetUserID := createImpersonationTarget(t, runner, "end-impersonate")
 		reason := "integration test end impersonation"
 
 		// The authenticated caller is already privileged (#383).
@@ -749,8 +747,7 @@ func TestIAMAdminImpersonateList(t *testing.T) {
 			return
 		}
 
-		targetUserID := UniqueKey("list-impersonate-target")
-		tenantID := UniqueKey("list-impersonate-tenant")
+		tenantID, targetUserID := createImpersonationTarget(t, runner, "list-impersonate")
 		reason := "integration test list impersonations"
 
 		// Start a session so the list has something to return. The actor

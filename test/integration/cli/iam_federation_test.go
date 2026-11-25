@@ -577,10 +577,10 @@ func TestIAMIdentityListEmpty(t *testing.T) {
 		}
 
 		tenantID := UniqueKey("fed-idlist-t")
-		userID := UniqueKey("fed-idlist-u")
 
-		// Create tenant
+		// Create tenant and the user whose identities are listed
 		runner.ActAsTenantAdmin(tenantID)
+		userID := createTenantUserID(t, runner, tenantID, "fed-idlist-u")
 
 		// List identities for a user with none linked
 		listIdentities := IAMIdentityListCommand(tenantID, userID)
@@ -605,10 +605,10 @@ func TestIAMIdentityListJSON(t *testing.T) {
 		}
 
 		tenantID := UniqueKey("fed-idjson-t")
-		userID := UniqueKey("fed-idjson-u")
 
-		// Create tenant
+		// Create tenant and the user whose identities are listed
 		runner.ActAsTenantAdmin(tenantID)
+		userID := createTenantUserID(t, runner, tenantID, "fed-idjson-u")
 
 		// List identities with JSON output
 		listJSON := CommandDef{
@@ -644,10 +644,10 @@ func TestIAMIdentityUnlinkNonExistent(t *testing.T) {
 		}
 
 		tenantID := UniqueKey("fed-unlinkne-t")
-		userID := UniqueKey("fed-unlinkne-u")
 
-		// Create tenant
+		// Create tenant and the user whose identities are listed
 		runner.ActAsTenantAdmin(tenantID)
+		userID := createTenantUserID(t, runner, tenantID, "fed-unlinkne-u")
 
 		// Attempt to unlink a nonexistent provider from a user
 		unlinkNonExistent := CommandDef{

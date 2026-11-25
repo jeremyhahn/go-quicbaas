@@ -38,9 +38,9 @@ func TestIAMMFAStatus(t *testing.T) {
 		}
 
 		tenantID := UniqueKey("mfa-status")
-		userID := UniqueKey("mfa-user")
 
 		runner.ActAsTenantAdmin(tenantID)
+		userID := createTenantUserID(t, runner, tenantID, "mfa-user")
 		defer func() {
 			runner.Run(IAMTenantDeleteCommand(tenantID))
 		}()
@@ -67,9 +67,9 @@ func TestIAMMFAStatusJSON(t *testing.T) {
 		}
 
 		tenantID := UniqueKey("mfa-json")
-		userID := UniqueKey("mfa-user")
 
 		runner.ActAsTenantAdmin(tenantID)
+		userID := createTenantUserID(t, runner, tenantID, "mfa-user")
 		defer func() {
 			runner.Run(IAMTenantDeleteCommand(tenantID))
 		}()
@@ -108,9 +108,9 @@ func TestIAMMFAEnroll(t *testing.T) {
 		}
 
 		tenantID := UniqueKey("mfa-enroll")
-		userID := UniqueKey("mfa-user")
 
 		runner.ActAsTenantAdmin(tenantID)
+		userID := createTenantUserID(t, runner, tenantID, "mfa-user")
 		defer func() {
 			// Disable MFA before deleting tenant to clean up state
 			runner.Run(IAMMFADisableCommand(tenantID, userID))
@@ -144,9 +144,9 @@ func TestIAMMFAEnrollWithMethod(t *testing.T) {
 		}
 
 		tenantID := UniqueKey("mfa-method")
-		userID := UniqueKey("mfa-user")
 
 		runner.ActAsTenantAdmin(tenantID)
+		userID := createTenantUserID(t, runner, tenantID, "mfa-user")
 		defer func() {
 			runner.Run(IAMMFADisableCommand(tenantID, userID))
 			runner.Run(IAMTenantDeleteCommand(tenantID))
@@ -189,9 +189,9 @@ func TestIAMMFAVerifyInvalidCode(t *testing.T) {
 		}
 
 		tenantID := UniqueKey("mfa-verify")
-		userID := UniqueKey("mfa-user")
 
 		runner.ActAsTenantAdmin(tenantID)
+		userID := createTenantUserID(t, runner, tenantID, "mfa-user")
 		defer func() {
 			runner.Run(IAMMFADisableCommand(tenantID, userID))
 			runner.Run(IAMTenantDeleteCommand(tenantID))
@@ -249,9 +249,9 @@ func TestIAMMFADisableNotEnrolled(t *testing.T) {
 		}
 
 		tenantID := UniqueKey("mfa-dis-nop")
-		userID := UniqueKey("mfa-user")
 
 		runner.ActAsTenantAdmin(tenantID)
+		userID := createTenantUserID(t, runner, tenantID, "mfa-user")
 		defer func() {
 			runner.Run(IAMTenantDeleteCommand(tenantID))
 		}()
@@ -293,9 +293,9 @@ func TestIAMMFABackupCodesStatus(t *testing.T) {
 		}
 
 		tenantID := UniqueKey("mfa-bcs")
-		userID := UniqueKey("mfa-user")
 
 		runner.ActAsTenantAdmin(tenantID)
+		userID := createTenantUserID(t, runner, tenantID, "mfa-user")
 		defer func() {
 			runner.Run(IAMMFADisableCommand(tenantID, userID))
 			runner.Run(IAMTenantDeleteCommand(tenantID))
@@ -342,9 +342,9 @@ func TestIAMMFABackupCodesStatusJSON(t *testing.T) {
 		}
 
 		tenantID := UniqueKey("mfa-bcj")
-		userID := UniqueKey("mfa-user")
 
 		runner.ActAsTenantAdmin(tenantID)
+		userID := createTenantUserID(t, runner, tenantID, "mfa-user")
 		defer func() {
 			runner.Run(IAMTenantDeleteCommand(tenantID))
 		}()
@@ -383,9 +383,9 @@ func TestIAMMFABackupCodesGenerate(t *testing.T) {
 		}
 
 		tenantID := UniqueKey("mfa-bcg")
-		userID := UniqueKey("mfa-user")
 
 		runner.ActAsTenantAdmin(tenantID)
+		userID := createTenantUserID(t, runner, tenantID, "mfa-user")
 		defer func() {
 			runner.Run(IAMMFADisableCommand(tenantID, userID))
 			runner.Run(IAMTenantDeleteCommand(tenantID))
@@ -445,9 +445,9 @@ func TestIAMMFALifecycle(t *testing.T) {
 		}
 
 		tenantID := UniqueKey("mfa-life")
-		userID := UniqueKey("mfa-user")
 
 		runner.ActAsTenantAdmin(tenantID)
+		userID := createTenantUserID(t, runner, tenantID, "mfa-user")
 		defer func() {
 			runner.Run(IAMTenantDeleteCommand(tenantID))
 		}()
