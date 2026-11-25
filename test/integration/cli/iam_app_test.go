@@ -119,6 +119,10 @@ func TestIAMAppLifecycle(t *testing.T) {
 		appName := UniqueKey("lifecycle-app")
 
 		// Register app
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, IAMAppRegisterCommand(tenantID, appName)) {
+			return
+		}
 		result := registerAppJSON(t, runner, tenantID, appName)
 		clientID := extractClientID(t, result)
 		clientSecret := extractClientSecret(t, result)
@@ -174,6 +178,10 @@ func TestIAMAppRegister(t *testing.T) {
 
 		appName := UniqueKey("register-app")
 		cmd := IAMAppRegisterCommand(tenantID, appName)
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, cmd) {
+			return
+		}
 		stdout, _, err := runner.Run(cmd)
 		require.NoError(t, err, "register app should succeed")
 		assert.Contains(t, stdout, appName, "register output should contain the app name")
@@ -201,6 +209,10 @@ func TestIAMAppRegisterWithRedirectURI(t *testing.T) {
 		appName := UniqueKey("redirect-app")
 		redirectURI := "https://example.com/callback"
 		cmd := IAMAppRegisterWithRedirectCommand(tenantID, appName, redirectURI)
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, cmd) {
+			return
+		}
 		stdout, _, err := runner.Run(cmd)
 		require.NoError(t, err, "register with redirect URI should succeed")
 		assert.Contains(t, stdout, appName, "output should contain app name")
@@ -219,6 +231,10 @@ func TestIAMAppRegisterJSON(t *testing.T) {
 		defer deleteTestTenant(t, runner, tenantID)
 
 		appName := UniqueKey("json-app")
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, IAMAppRegisterCommand(tenantID, appName)) {
+			return
+		}
 		result := registerAppJSON(t, runner, tenantID, appName)
 
 		clientID := extractClientID(t, result)
@@ -251,6 +267,10 @@ func TestIAMAppGet(t *testing.T) {
 		defer deleteTestTenant(t, runner, tenantID)
 
 		appName := UniqueKey("get-app")
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, IAMAppRegisterCommand(tenantID, appName)) {
+			return
+		}
 		result := registerAppJSON(t, runner, tenantID, appName)
 		clientID := extractClientID(t, result)
 		defer deleteApp(t, runner, tenantID, clientID)
@@ -275,6 +295,10 @@ func TestIAMAppGetJSON(t *testing.T) {
 		defer deleteTestTenant(t, runner, tenantID)
 
 		appName := UniqueKey("getjson-app")
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, IAMAppRegisterCommand(tenantID, appName)) {
+			return
+		}
 		registerResult := registerAppJSON(t, runner, tenantID, appName)
 		clientID := extractClientID(t, registerResult)
 		defer deleteApp(t, runner, tenantID, clientID)
@@ -318,6 +342,10 @@ func TestIAMAppUpdate(t *testing.T) {
 		defer deleteTestTenant(t, runner, tenantID)
 
 		appName := UniqueKey("update-app")
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, IAMAppRegisterCommand(tenantID, appName)) {
+			return
+		}
 		result := registerAppJSON(t, runner, tenantID, appName)
 		clientID := extractClientID(t, result)
 		defer deleteApp(t, runner, tenantID, clientID)
@@ -361,6 +389,10 @@ func TestIAMAppUpdateRedirectURI(t *testing.T) {
 		defer deleteTestTenant(t, runner, tenantID)
 
 		appName := UniqueKey("uri-app")
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, IAMAppRegisterCommand(tenantID, appName)) {
+			return
+		}
 		result := registerAppJSON(t, runner, tenantID, appName)
 		clientID := extractClientID(t, result)
 		defer deleteApp(t, runner, tenantID, clientID)
@@ -424,6 +456,10 @@ func TestIAMAppDelete(t *testing.T) {
 		defer deleteTestTenant(t, runner, tenantID)
 
 		appName := UniqueKey("delete-app")
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, IAMAppRegisterCommand(tenantID, appName)) {
+			return
+		}
 		result := registerAppJSON(t, runner, tenantID, appName)
 		clientID := extractClientID(t, result)
 
@@ -462,6 +498,10 @@ func TestIAMAppList(t *testing.T) {
 
 		// Register two apps
 		app1Name := UniqueKey("list-app-1")
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, IAMAppRegisterCommand(tenantID, app1Name)) {
+			return
+		}
 		result1 := registerAppJSON(t, runner, tenantID, app1Name)
 		clientID1 := extractClientID(t, result1)
 		defer deleteApp(t, runner, tenantID, clientID1)
@@ -492,6 +532,10 @@ func TestIAMAppListJSON(t *testing.T) {
 
 		// Register two apps
 		app1Name := UniqueKey("listjson-app-1")
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, IAMAppRegisterCommand(tenantID, app1Name)) {
+			return
+		}
 		result1 := registerAppJSON(t, runner, tenantID, app1Name)
 		clientID1 := extractClientID(t, result1)
 		defer deleteApp(t, runner, tenantID, clientID1)
@@ -539,6 +583,10 @@ func TestIAMAppRotateSecret(t *testing.T) {
 		defer deleteTestTenant(t, runner, tenantID)
 
 		appName := UniqueKey("rotate-app")
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, IAMAppRegisterCommand(tenantID, appName)) {
+			return
+		}
 		result := registerAppJSON(t, runner, tenantID, appName)
 		clientID := extractClientID(t, result)
 		originalSecret := extractClientSecret(t, result)
@@ -589,6 +637,10 @@ func TestIAMAppGetNonExistent(t *testing.T) {
 			Timeout:        10 * time.Second,
 			SkipTransports: iamTransportsToSkip,
 		}
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, getCmd, TransportGRPC, TransportUnix) {
+			return
+		}
 		stdout, stderr, err := runner.Run(getCmd)
 		require.Error(t, err, "get non-existent app should fail")
 
@@ -617,6 +669,10 @@ func TestIAMAppDeleteNonExistent(t *testing.T) {
 			ExpectSuccess:  false,
 			Timeout:        10 * time.Second,
 			SkipTransports: iamTransportsToSkip,
+		}
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, deleteCmd, TransportGRPC, TransportUnix) {
+			return
 		}
 		stdout, stderr, err := runner.Run(deleteCmd)
 		require.Error(t, err, "delete non-existent app should fail")

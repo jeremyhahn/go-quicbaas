@@ -1526,8 +1526,8 @@ func validateCreatePolicyRequest(tenantID string, req *CreatePolicyRequest) erro
 	if req.Name == "" {
 		return errors.NewInvalidInput("iam.Policy.Create", "policy name is required")
 	}
-	if len(req.Rules) == 0 {
-		return errors.NewInvalidInput("iam.Policy.Create", "at least one rule is required")
+	if len(req.Rules) == 0 && len(req.SpecYAML) == 0 {
+		return errors.NewInvalidInput("iam.Policy.Create", "at least one rule or spec_yaml is required")
 	}
 	return nil
 }
