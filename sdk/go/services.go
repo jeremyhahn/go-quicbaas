@@ -370,7 +370,7 @@ func (s *securityService) Barrier() (QRDBBarrierClient, error) {
 // Unix through go-qrdb's gRPC sub-client with the bearer added as outgoing
 // authorization metadata. An embedded QRDB keeps go-qrdb's client.
 //
-// Credentials, SealStore, TenantMgmt, CustodianGroup and Share still use
+// SealStore, TenantMgmt, CustodianGroup and Share still use
 // go-qrdb's sub-client, which carries no platform bearer over REST, QUIC
 // and MCP; moving them is tracked on go-quicbaas#2556.
 func (s *securityService) Ceremony() (QRDBCeremonyClient, error) {
@@ -404,14 +404,42 @@ func (c *client) ceremonyClient() (QRDBCeremonyClient, error) {
 	return cc, nil
 }
 
-// Credentials returns the QRDB CredentialClient. The QRDB transport
-// is lazily initialized on first call (delegated to client.qrdbClient).
+// Credentials returns the QRDB CredentialClient. It rides the SDK transport
+// the way Ceremony does, so every credential call carries the platform
+// bearer set by WithAuthToken: over REST and QUIC through the SDK's REST
+// credential client, over MCP through the SDK MCP transport's
+// qrdb_credential_* tool client, and over gRPC and Unix through go-qrdb's
+// gRPC sub-client with the bearer added as outgoing authorization metadata.
+// An embedded QRDB keeps go-qrdb's client.
 func (s *securityService) Credentials() (QRDBCredentialClient, error) {
-	qrdbClient, err := s.c.qrdbClient()
+	return s.c.credentialClient()
+}
+
+// credentialClient selects the credential client in the same order as
+// ceremonyClient: an embedded QRDB first, then the SDK's own REST, QUIC and
+// MCP transports, then go-qrdb's sub-client, wrapped to send the platform
+// bearer when it speaks gRPC.
+func (c *client) credentialClient() (QRDBCredentialClient, error) {
+	if c.opts == nil || c.opts.embeddedQRDB == nil {
+		if rt, ok := c.transport.(*rest.Transport); ok {
+			return rt.Credentials(), nil
+		}
+		if qt, ok := c.transport.(*quic.Transport); ok {
+			return qt.Transport.Credentials(), nil
+		}
+		if mt, ok := c.transport.(*mcp.Transport); ok {
+			return mt.QRDBCredentials(), nil
+		}
+	}
+	qrdbClient, err := c.qrdbClient()
 	if err != nil {
 		return nil, err
 	}
-	return qrdbClient.Credentials(), nil
+	cc := qrdbClient.Credentials()
+	if c.opts != nil && c.opts.embeddedQRDB == nil && c.opts.authToken != "" && qrdbSubClientSpeaksGRPC(c.opts.transportType) {
+		return &qrdbBearerCredentialClient{inner: cc, bearer: "Bearer " + c.opts.authToken}, nil
+	}
+	return cc, nil
 }
 
 // SecretResolver returns the unified secret resolver registry injected via
