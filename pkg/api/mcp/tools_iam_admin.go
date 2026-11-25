@@ -22,6 +22,7 @@ import (
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -57,6 +58,40 @@ func (r *ToolRegistry) getAdminManager(ctx context.Context) (*iam.AdminManager, 
 		return nil, api.NewServiceUnavailableError("admin")
 	}
 	return mgr, nil
+}
+
+// ownAdminAssignment fetches an admin assignment and answers one outside the
+// caller's tenant as not found.
+func ownAdminAssignment(ctx context.Context, adminMgr *iam.AdminManager, id string) (*iam.AdminAssignment, error) {
+	caller, err := tenantctx.FromContext(ctx, "mcp.iam")
+	if err != nil {
+		return nil, err
+	}
+	assignment, err := adminMgr.GetAssignment(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if !iam.AssignmentInTenant(assignment, caller) {
+		return nil, iam.ErrAdminAssignmentNotFound
+	}
+	return assignment, nil
+}
+
+// ownImpersonationSession fetches an impersonation session and answers one
+// outside the caller's tenant as not found.
+func ownImpersonationSession(ctx context.Context, adminMgr *iam.AdminManager, id string) (*iam.ImpersonationSession, error) {
+	caller, err := tenantctx.FromContext(ctx, "mcp.iam")
+	if err != nil {
+		return nil, err
+	}
+	session, err := adminMgr.GetImpersonationSession(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if session == nil || session.TenantID != caller {
+		return nil, iam.ErrImpersonationSessionNotFound
+	}
+	return session, nil
 }
 
 // =============================================================================
@@ -440,6 +475,10 @@ func (r *ToolRegistry) executeIAMAdminAssignmentCreate(ctx context.Context, args
 		}
 	}
 
+	if opts.TenantIDs, err = iam.GrantableTenantIDs(ctx, "mcp.iam", opts.TenantIDs); err != nil {
+		return nil, err
+	}
+
 	assignment, err := adminMgr.CreateAssignment(ctx, opts)
 	if err != nil {
 		return nil, err
@@ -453,7 +492,7 @@ func (r *ToolRegistry) executeIAMAdminAssignmentGet(ctx context.Context, args ma
 		return nil, err
 	}
 
-	assignment, err := adminMgr.GetAssignment(ctx, getString(args, "assignment_id"))
+	assignment, err := ownAdminAssignment(ctx, adminMgr, getString(args, "assignment_id"))
 	if err != nil {
 		return nil, err
 	}
@@ -552,6 +591,15 @@ func (r *ToolRegistry) executeIAMAdminAssignmentUpdate(ctx context.Context, args
 		opts.Metadata = meta
 	}
 
+	if _, err := ownAdminAssignment(ctx, adminMgr, assignmentID); err != nil {
+		return nil, err
+	}
+	if len(opts.TenantIDs) > 0 {
+		if opts.TenantIDs, err = iam.GrantableTenantIDs(ctx, "mcp.iam", opts.TenantIDs); err != nil {
+			return nil, err
+		}
+	}
+
 	assignment, err := adminMgr.UpdateAssignment(ctx, assignmentID, opts)
 	if err != nil {
 		return nil, err
@@ -565,8 +613,11 @@ func (r *ToolRegistry) executeIAMAdminAssignmentDelete(ctx context.Context, args
 		return nil, err
 	}
 
-	err = adminMgr.DeleteAssignment(ctx, getString(args, "assignment_id"))
-	if err != nil {
+	assignmentID := getString(args, "assignment_id")
+	if _, err := ownAdminAssignment(ctx, adminMgr, assignmentID); err != nil {
+		return nil, err
+	}
+	if err := adminMgr.DeleteAssignment(ctx, assignmentID); err != nil {
 		return nil, err
 	}
 	return marshalResult(map[string]interface{}{
@@ -598,18 +649,29 @@ func (r *ToolRegistry) executeIAMAdminAssignmentList(ctx context.Context, args m
 		return nil, err
 	}
 
+	tenantID, err := tenantctx.Target(ctx, "mcp.iam", getString(args, "tenant_id"))
+	if err != nil {
+		return nil, err
+	}
+
 	opts := iam.ListAdminAssignmentsOptions{
 		UserID:     userID,
-		TenantID:   getString(args, "tenant_id"),
+		TenantID:   tenantID,
 		AdminRole:  iam.AdminRole(getString(args, "admin_role")),
 		ActiveOnly: activeOnly,
 		Limit:      limit,
 		Offset:     offset,
 	}
 
-	assignments, err := adminMgr.ListAssignments(ctx, opts)
+	listed, err := adminMgr.ListAssignments(ctx, opts)
 	if err != nil {
 		return nil, err
+	}
+	assignments := make([]*iam.AdminAssignment, 0, len(listed))
+	for _, assignment := range listed {
+		if iam.AssignmentInTenant(assignment, tenantID) {
+			assignments = append(assignments, assignment)
+		}
 	}
 	return marshalResult(map[string]interface{}{
 		"assignments": assignments,
@@ -629,10 +691,15 @@ func (r *ToolRegistry) executeIAMAdminCheckPermission(ctx context.Context, args 
 		return nil, err
 	}
 
+	tenantID, err := tenantctx.Target(ctx, "mcp.iam", getString(args, "tenant_id"))
+	if err != nil {
+		return nil, err
+	}
+
 	req := &iam.AdminCheckRequest{
 		UserID:       userID,
 		Permission:   iam.AdminPermission(getString(args, "permission")),
-		TenantID:     getString(args, "tenant_id"),
+		TenantID:     tenantID,
 		ResourceType: getString(args, "resource_type"),
 		ResourceID:   getString(args, "resource_id"),
 	}
@@ -667,9 +734,14 @@ func (r *ToolRegistry) executeIAMImpersonationStart(ctx context.Context, args ma
 		return nil, err
 	}
 
+	tenantID, err := tenantctx.Target(ctx, "mcp.iam", getString(args, "tenant_id"))
+	if err != nil {
+		return nil, err
+	}
+
 	opts := &iam.StartImpersonationOptions{
 		TargetUserID: targetUserID,
-		TenantID:     getString(args, "tenant_id"),
+		TenantID:     tenantID,
 		Reason:       getString(args, "reason"),
 		Duration:     time.Duration(durationMinutes) * time.Minute,
 	}
@@ -687,8 +759,11 @@ func (r *ToolRegistry) executeIAMImpersonationEnd(ctx context.Context, args map[
 		return nil, err
 	}
 
-	err = adminMgr.EndImpersonation(ctx, getString(args, "session_id"))
-	if err != nil {
+	sessionID := getString(args, "session_id")
+	if _, err := ownImpersonationSession(ctx, adminMgr, sessionID); err != nil {
+		return nil, err
+	}
+	if err := adminMgr.EndImpersonation(ctx, sessionID); err != nil {
 		return nil, err
 	}
 	return marshalResult(map[string]interface{}{
@@ -703,17 +778,25 @@ func (r *ToolRegistry) executeIAMImpersonationList(ctx context.Context, args map
 		return nil, err
 	}
 
+	caller, err := tenantctx.FromContext(ctx, "mcp.iam")
+	if err != nil {
+		return nil, err
+	}
+
 	adminUserID, err := getUserIDArg(args, "admin_user_id")
 	if err != nil {
 		return nil, err
 	}
 
-	sessions, err := adminMgr.GetActiveImpersonations(ctx, adminUserID)
+	active, err := adminMgr.GetActiveImpersonations(ctx, adminUserID)
 	if err != nil {
 		return nil, err
 	}
-	if sessions == nil {
-		sessions = []*iam.ImpersonationSession{}
+	sessions := make([]*iam.ImpersonationSession, 0, len(active))
+	for _, session := range active {
+		if session != nil && session.TenantID == caller {
+			sessions = append(sessions, session)
+		}
 	}
 	return marshalResult(map[string]interface{}{
 		"sessions":  sessions,

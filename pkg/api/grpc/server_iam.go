@@ -107,6 +107,7 @@ type IAMService interface {
 	CheckAdminPermission(ctx context.Context, req *iam.AdminCheckRequest) (*iam.AdminCheckResponse, error)
 	StartImpersonation(ctx context.Context, opts *iam.StartImpersonationOptions) (*iam.ImpersonationSession, error)
 	EndImpersonation(ctx context.Context, sessionID string) error
+	GetImpersonationSession(ctx context.Context, sessionID string) (*iam.ImpersonationSession, error)
 	GetActiveImpersonations(ctx context.Context, adminUserID uint64) ([]*iam.ImpersonationSession, error)
 
 	// GDPR Consent operations
@@ -1350,10 +1351,14 @@ func (s *IAMServer) CreateAdminAssignment(ctx context.Context, req *iampb.Create
 	if err != nil {
 		return nil, err
 	}
+	tenantIDs, err := grantableTenantIDs(ctx, "grpc.IAM", req.TenantIds)
+	if err != nil {
+		return nil, err
+	}
 	opts := iam.CreateAdminAssignmentOptions{
 		UserID:            userID,
 		AdminRole:         convertProtoAdminRole(req.AdminRole),
-		TenantIDs:         req.TenantIds,
+		TenantIDs:         tenantIDs,
 		Permissions:       permissions,
 		DeniedPermissions: deniedPermissions,
 		ResourceScopes:    resourceScopes,
@@ -1378,9 +1383,13 @@ func (s *IAMServer) GetAdminAssignment(ctx context.Context, req *iampb.GetAdminA
 		return nil, status.Error(codes.InvalidArgument, "id is required")
 	}
 
-	assignment, err := s.iamService.GetAdminAssignment(ctx, req.Id)
+	caller, err := callerTenantOf(ctx, "grpc.IAM")
 	if err != nil {
-		return nil, convertIAMError(err)
+		return nil, err
+	}
+	assignment, err := s.ownAdminAssignment(ctx, caller, req.Id)
+	if err != nil {
+		return nil, err
 	}
 
 	return convertAdminAssignmentToProto(assignment), nil
@@ -1435,9 +1444,23 @@ func (s *IAMServer) UpdateAdminAssignment(ctx context.Context, req *iampb.Update
 		adminRole = &role
 	}
 
+	caller, err := callerTenantOf(ctx, "grpc.IAM")
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.ownAdminAssignment(ctx, caller, req.Id); err != nil {
+		return nil, err
+	}
+	tenantIDs := req.TenantIds
+	if len(tenantIDs) > 0 {
+		if tenantIDs, err = grantableTenantIDs(ctx, "grpc.IAM", tenantIDs); err != nil {
+			return nil, err
+		}
+	}
+
 	opts := iam.UpdateAdminAssignmentOptions{
 		AdminRole:         adminRole,
-		TenantIDs:         req.TenantIds,
+		TenantIDs:         tenantIDs,
 		Permissions:       permissions,
 		DeniedPermissions: deniedPermissions,
 		ResourceScopes:    resourceScopes,
@@ -1462,8 +1485,15 @@ func (s *IAMServer) DeleteAdminAssignment(ctx context.Context, req *iampb.Delete
 		return nil, status.Error(codes.InvalidArgument, "id is required")
 	}
 
-	err := s.iamService.DeleteAdminAssignment(ctx, req.Id)
+	caller, err := callerTenantOf(ctx, "grpc.IAM")
 	if err != nil {
+		return nil, err
+	}
+	if _, err := s.ownAdminAssignment(ctx, caller, req.Id); err != nil {
+		return nil, err
+	}
+
+	if err := s.iamService.DeleteAdminAssignment(ctx, req.Id); err != nil {
 		return nil, convertIAMError(err)
 	}
 
@@ -1478,9 +1508,13 @@ func (s *IAMServer) ListAdminAssignments(ctx context.Context, req *iampb.ListAdm
 	if err != nil {
 		return nil, err
 	}
+	tenantID, err := targetTenant(ctx, "grpc.IAM", req.TenantId)
+	if err != nil {
+		return nil, err
+	}
 	opts := iam.ListAdminAssignmentsOptions{
 		UserID:     userID,
-		TenantID:   req.TenantId,
+		TenantID:   tenantID,
 		AdminRole:  convertProtoAdminRole(req.AdminRole),
 		ActiveOnly: req.ActiveOnly,
 		Limit:      int(req.Limit),
@@ -1498,10 +1532,13 @@ func (s *IAMServer) ListAdminAssignments(ctx context.Context, req *iampb.ListAdm
 
 	pbAssignments := make([]*iampb.AdminAssignment, 0, len(assignments))
 	for _, assignment := range assignments {
+		if !iam.AssignmentInTenant(assignment, tenantID) {
+			continue
+		}
 		pbAssignments = append(pbAssignments, convertAdminAssignmentToProto(assignment))
 	}
 
-	total32, err := responseInt32("total", len(assignments))
+	total32, err := responseInt32("total", len(pbAssignments))
 	if err != nil {
 		return nil, err
 	}
@@ -1530,10 +1567,14 @@ func (s *IAMServer) CheckAdminPermission(ctx context.Context, req *iampb.CheckAd
 	if err != nil {
 		return nil, err
 	}
+	tenantID, err := targetTenant(ctx, "grpc.IAM", req.TenantId)
+	if err != nil {
+		return nil, err
+	}
 	checkReq := &iam.AdminCheckRequest{
 		UserID:       userID,
 		Permission:   iam.AdminPermission(req.Permission),
-		TenantID:     req.TenantId,
+		TenantID:     tenantID,
 		ResourceType: req.ResourceType,
 		ResourceID:   req.ResourceId,
 	}
@@ -1606,8 +1647,19 @@ func (s *IAMServer) EndImpersonation(ctx context.Context, req *iampb.EndImperson
 		return nil, status.Error(codes.InvalidArgument, "session_id is required")
 	}
 
-	err := s.iamService.EndImpersonation(ctx, req.SessionId)
+	caller, err := callerTenantOf(ctx, "grpc.IAM")
 	if err != nil {
+		return nil, err
+	}
+	session, err := s.iamService.GetImpersonationSession(ctx, req.SessionId)
+	if err != nil {
+		return nil, convertIAMError(err)
+	}
+	if session == nil || session.TenantID != caller {
+		return nil, convertIAMError(iam.ErrImpersonationSessionNotFound)
+	}
+
+	if err := s.iamService.EndImpersonation(ctx, req.SessionId); err != nil {
 		return nil, convertIAMError(err)
 	}
 
@@ -1622,6 +1674,10 @@ func (s *IAMServer) GetActiveImpersonations(ctx context.Context, req *iampb.GetA
 		return nil, status.Error(codes.InvalidArgument, "admin_user_id is required")
 	}
 
+	caller, err := callerTenantOf(ctx, "grpc.IAM")
+	if err != nil {
+		return nil, err
+	}
 	adminUserID, err := parseUserID("admin_user_id", req.AdminUserId)
 	if err != nil {
 		return nil, err
@@ -1633,6 +1689,9 @@ func (s *IAMServer) GetActiveImpersonations(ctx context.Context, req *iampb.GetA
 
 	pbSessions := make([]*iampb.ImpersonationSession, 0, len(sessions))
 	for _, session := range sessions {
+		if session == nil || session.TenantID != caller {
+			continue
+		}
 		pbSessions = append(pbSessions, convertImpersonationSessionToProto(session))
 	}
 
@@ -1862,9 +1921,9 @@ func (s *IAMServer) GetExportStatus(ctx context.Context, req *iampb.GetExportSta
 		return nil, status.Error(codes.InvalidArgument, "export_id is required")
 	}
 
-	exportReq, err := s.iamService.GetExportStatus(ctx, req.ExportId)
+	exportReq, err := s.ownExport(ctx, req.ExportId)
 	if err != nil {
-		return nil, convertIAMError(err)
+		return nil, err
 	}
 
 	return convertDataExportRequestToProto(exportReq), nil
@@ -1876,6 +1935,10 @@ func (s *IAMServer) GenerateExport(ctx context.Context, req *iampb.GenerateExpor
 
 	if req.ExportId == "" {
 		return nil, status.Error(codes.InvalidArgument, "export_id is required")
+	}
+
+	if _, err := s.ownExport(ctx, req.ExportId); err != nil {
+		return nil, err
 	}
 
 	export, err := s.iamService.GenerateExport(ctx, req.ExportId)
@@ -1946,8 +2009,11 @@ func (s *IAMServer) CancelDeletion(ctx context.Context, req *iampb.CancelDeletio
 		return nil, status.Error(codes.InvalidArgument, "cancelled_by is required")
 	}
 
-	err := s.iamService.CancelDeletion(ctx, req.DeletionId, req.CancelledBy)
-	if err != nil {
+	if _, err := s.ownDeletion(ctx, req.DeletionId); err != nil {
+		return nil, err
+	}
+
+	if err := s.iamService.CancelDeletion(ctx, req.DeletionId, req.CancelledBy); err != nil {
 		return nil, convertIAMError(err)
 	}
 
@@ -1960,6 +2026,10 @@ func (s *IAMServer) ProcessDeletion(ctx context.Context, req *iampb.ProcessDelet
 
 	if req.DeletionId == "" {
 		return nil, status.Error(codes.InvalidArgument, "deletion_id is required")
+	}
+
+	if _, err := s.ownDeletion(ctx, req.DeletionId); err != nil {
+		return nil, err
 	}
 
 	summary, err := s.iamService.ProcessDeletion(ctx, req.DeletionId)
@@ -1978,9 +2048,9 @@ func (s *IAMServer) GetDeletionStatus(ctx context.Context, req *iampb.GetDeletio
 		return nil, status.Error(codes.InvalidArgument, "deletion_id is required")
 	}
 
-	deletionReq, err := s.iamService.GetDeletionStatus(ctx, req.DeletionId)
+	deletionReq, err := s.ownDeletion(ctx, req.DeletionId)
 	if err != nil {
-		return nil, convertIAMError(err)
+		return nil, err
 	}
 
 	return convertDataDeletionRequestToProto(deletionReq)

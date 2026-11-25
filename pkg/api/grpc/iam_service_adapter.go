@@ -759,6 +759,14 @@ func (a *IAMServiceAdapter) EndImpersonation(ctx context.Context, sessionID stri
 	return a.adminManager.EndImpersonation(ctx, sessionID)
 }
 
+// GetImpersonationSession retrieves an impersonation session by ID.
+func (a *IAMServiceAdapter) GetImpersonationSession(ctx context.Context, sessionID string) (*iam.ImpersonationSession, error) {
+	if a.adminManager == nil {
+		return nil, api.NewServiceNotConfiguredError("admin manager")
+	}
+	return a.adminManager.GetImpersonationSession(ctx, sessionID)
+}
+
 // GetActiveImpersonations retrieves active impersonation sessions.
 func (a *IAMServiceAdapter) GetActiveImpersonations(ctx context.Context, adminUserID uint64) ([]*iam.ImpersonationSession, error) {
 	if a.adminManager == nil {

@@ -28,7 +28,13 @@ import (
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
+
+// t1Ctx binds the caller to tenant t1, the tenant these fixtures live in.
+func t1Ctx() context.Context {
+	return tenantctx.WithTenant(context.Background(), "t1")
+}
 
 // mcpCtxWithActor binds an authenticated principal into ctx the way the MCP
 // transport auth path does (auth.SubjectIntoContext). Impersonation
@@ -93,7 +99,7 @@ func TestExecuteIAMAdminAssignmentCreate_ServiceUnavailable(t *testing.T) {
 	// Use a service that doesn't implement adminManagerAccessor
 	reg := &ToolRegistry{service: &mockService{}, logger: log}
 
-	_, err := reg.executeIAMAdminAssignmentCreate(context.Background(), map[string]interface{}{
+	_, err := reg.executeIAMAdminAssignmentCreate(t1Ctx(), map[string]interface{}{
 		"user_id": "50001", "admin_role": "super_admin", "granted_by": "admin",
 	})
 	require.Error(t, err)
@@ -105,7 +111,7 @@ func TestExecuteIAMAdminAssignmentCreate_NilManager(t *testing.T) {
 	log := newTestLogger(t)
 	reg := &ToolRegistry{service: newAdminMockWithoutManager(), logger: log}
 
-	_, err := reg.executeIAMAdminAssignmentCreate(context.Background(), map[string]interface{}{
+	_, err := reg.executeIAMAdminAssignmentCreate(t1Ctx(), map[string]interface{}{
 		"user_id": "50001", "admin_role": "super_admin", "granted_by": "admin",
 	})
 	require.Error(t, err)
@@ -117,7 +123,7 @@ func TestExecuteIAMAdminAssignmentGet_ServiceUnavailable(t *testing.T) {
 	log := newTestLogger(t)
 	reg := &ToolRegistry{service: &mockService{}, logger: log}
 
-	_, err := reg.executeIAMAdminAssignmentGet(context.Background(), map[string]interface{}{
+	_, err := reg.executeIAMAdminAssignmentGet(t1Ctx(), map[string]interface{}{
 		"assignment_id": "test-id",
 	})
 	require.Error(t, err)
@@ -127,7 +133,7 @@ func TestExecuteIAMAdminAssignmentUpdate_ServiceUnavailable(t *testing.T) {
 	log := newTestLogger(t)
 	reg := &ToolRegistry{service: &mockService{}, logger: log}
 
-	_, err := reg.executeIAMAdminAssignmentUpdate(context.Background(), map[string]interface{}{
+	_, err := reg.executeIAMAdminAssignmentUpdate(t1Ctx(), map[string]interface{}{
 		"assignment_id": "test-id",
 	})
 	require.Error(t, err)
@@ -137,7 +143,7 @@ func TestExecuteIAMAdminAssignmentDelete_ServiceUnavailable(t *testing.T) {
 	log := newTestLogger(t)
 	reg := &ToolRegistry{service: &mockService{}, logger: log}
 
-	_, err := reg.executeIAMAdminAssignmentDelete(context.Background(), map[string]interface{}{
+	_, err := reg.executeIAMAdminAssignmentDelete(t1Ctx(), map[string]interface{}{
 		"assignment_id": "test-id",
 	})
 	require.Error(t, err)
@@ -147,7 +153,7 @@ func TestExecuteIAMAdminAssignmentList_ServiceUnavailable(t *testing.T) {
 	log := newTestLogger(t)
 	reg := &ToolRegistry{service: &mockService{}, logger: log}
 
-	_, err := reg.executeIAMAdminAssignmentList(context.Background(), map[string]interface{}{})
+	_, err := reg.executeIAMAdminAssignmentList(t1Ctx(), map[string]interface{}{})
 	require.Error(t, err)
 }
 
@@ -155,7 +161,7 @@ func TestExecuteIAMAdminCheckPermission_ServiceUnavailable(t *testing.T) {
 	log := newTestLogger(t)
 	reg := &ToolRegistry{service: &mockService{}, logger: log}
 
-	_, err := reg.executeIAMAdminCheckPermission(context.Background(), map[string]interface{}{
+	_, err := reg.executeIAMAdminCheckPermission(t1Ctx(), map[string]interface{}{
 		"user_id": "50001", "permission": "user:create",
 	})
 	require.Error(t, err)
@@ -165,7 +171,7 @@ func TestExecuteIAMImpersonationStart_ServiceUnavailable(t *testing.T) {
 	log := newTestLogger(t)
 	reg := &ToolRegistry{service: &mockService{}, logger: log}
 
-	_, err := reg.executeIAMImpersonationStart(context.Background(), map[string]interface{}{
+	_, err := reg.executeIAMImpersonationStart(t1Ctx(), map[string]interface{}{
 		"admin_user_id": "50100", "target_user_id": "10001",
 		"tenant_id": "t1", "reason": "support",
 	})
@@ -176,7 +182,7 @@ func TestExecuteIAMImpersonationEnd_ServiceUnavailable(t *testing.T) {
 	log := newTestLogger(t)
 	reg := &ToolRegistry{service: &mockService{}, logger: log}
 
-	_, err := reg.executeIAMImpersonationEnd(context.Background(), map[string]interface{}{
+	_, err := reg.executeIAMImpersonationEnd(t1Ctx(), map[string]interface{}{
 		"session_id": "imp-1",
 	})
 	require.Error(t, err)
@@ -186,7 +192,7 @@ func TestExecuteIAMImpersonationList_ServiceUnavailable(t *testing.T) {
 	log := newTestLogger(t)
 	reg := &ToolRegistry{service: &mockService{}, logger: log}
 
-	_, err := reg.executeIAMImpersonationList(context.Background(), map[string]interface{}{
+	_, err := reg.executeIAMImpersonationList(t1Ctx(), map[string]interface{}{
 		"admin_user_id": "50100",
 	})
 	require.Error(t, err)
@@ -201,11 +207,21 @@ func TestExecuteIAMAdminAssignmentCreate_Success(t *testing.T) {
 	mock := newAdminMockWithManager(t)
 	reg := &ToolRegistry{service: mock, logger: log}
 
-	result, err := reg.executeIAMAdminAssignmentCreate(context.Background(), map[string]interface{}{
+	// A grant that also names another tenant is refused.
+	_, err := reg.executeIAMAdminAssignmentCreate(t1Ctx(), map[string]interface{}{
 		"user_id":    "50001",
 		"admin_role": "super_admin",
 		"granted_by": "admin-user",
 		"tenant_ids": []interface{}{"t1", "t2"},
+	})
+	var cross *tenantctx.CrossTenantError
+	require.ErrorAs(t, err, &cross)
+
+	result, err := reg.executeIAMAdminAssignmentCreate(t1Ctx(), map[string]interface{}{
+		"user_id":    "50001",
+		"admin_role": "super_admin",
+		"granted_by": "admin-user",
+		"tenant_ids": []interface{}{"t1"},
 	})
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -223,7 +239,7 @@ func TestExecuteIAMAdminAssignmentCreate_InvalidExpiration(t *testing.T) {
 	mock := newAdminMockWithManager(t)
 	reg := &ToolRegistry{service: mock, logger: log}
 
-	_, err := reg.executeIAMAdminAssignmentCreate(context.Background(), map[string]interface{}{
+	_, err := reg.executeIAMAdminAssignmentCreate(t1Ctx(), map[string]interface{}{
 		"user_id":    "50001",
 		"admin_role": "super_admin",
 		"granted_by": "admin-user",
@@ -239,7 +255,7 @@ func TestExecuteIAMAdminAssignmentCreate_MissingRequired(t *testing.T) {
 	reg := &ToolRegistry{service: mock, logger: log}
 
 	// Missing user_id
-	_, err := reg.executeIAMAdminAssignmentCreate(context.Background(), map[string]interface{}{
+	_, err := reg.executeIAMAdminAssignmentCreate(t1Ctx(), map[string]interface{}{
 		"admin_role": "super_admin",
 		"granted_by": "admin-user",
 	})
@@ -252,7 +268,7 @@ func TestExecuteIAMAdminAssignmentGet_Success(t *testing.T) {
 	reg := &ToolRegistry{service: mock, logger: log}
 
 	// Create an assignment first
-	createResult, err := reg.executeIAMAdminAssignmentCreate(context.Background(), map[string]interface{}{
+	createResult, err := reg.executeIAMAdminAssignmentCreate(t1Ctx(), map[string]interface{}{
 		"user_id":    "50001",
 		"admin_role": "super_admin",
 		"granted_by": "admin-user",
@@ -262,7 +278,7 @@ func TestExecuteIAMAdminAssignmentGet_Success(t *testing.T) {
 	assignmentID := createMap["id"].(string)
 
 	// Get the assignment
-	result, err := reg.executeIAMAdminAssignmentGet(context.Background(), map[string]interface{}{
+	result, err := reg.executeIAMAdminAssignmentGet(t1Ctx(), map[string]interface{}{
 		"assignment_id": assignmentID,
 	})
 	require.NoError(t, err)
@@ -278,7 +294,7 @@ func TestExecuteIAMAdminAssignmentGet_NotFound(t *testing.T) {
 	mock := newAdminMockWithManager(t)
 	reg := &ToolRegistry{service: mock, logger: log}
 
-	_, err := reg.executeIAMAdminAssignmentGet(context.Background(), map[string]interface{}{
+	_, err := reg.executeIAMAdminAssignmentGet(t1Ctx(), map[string]interface{}{
 		"assignment_id": "nonexistent",
 	})
 	require.Error(t, err)
@@ -290,7 +306,7 @@ func TestExecuteIAMAdminAssignmentUpdate_Success(t *testing.T) {
 	reg := &ToolRegistry{service: mock, logger: log}
 
 	// Create an assignment first
-	createResult, err := reg.executeIAMAdminAssignmentCreate(context.Background(), map[string]interface{}{
+	createResult, err := reg.executeIAMAdminAssignmentCreate(t1Ctx(), map[string]interface{}{
 		"user_id":    "50001",
 		"admin_role": "super_admin",
 		"granted_by": "admin-user",
@@ -300,7 +316,7 @@ func TestExecuteIAMAdminAssignmentUpdate_Success(t *testing.T) {
 	assignmentID := createMap["id"].(string)
 
 	// Update the assignment
-	result, err := reg.executeIAMAdminAssignmentUpdate(context.Background(), map[string]interface{}{
+	result, err := reg.executeIAMAdminAssignmentUpdate(t1Ctx(), map[string]interface{}{
 		"assignment_id": assignmentID,
 		"admin_role":    "tenant_admin",
 		"tenant_ids":    []interface{}{"t1"},
@@ -318,7 +334,7 @@ func TestExecuteIAMAdminAssignmentUpdate_InvalidExpiration(t *testing.T) {
 	mock := newAdminMockWithManager(t)
 	reg := &ToolRegistry{service: mock, logger: log}
 
-	_, err := reg.executeIAMAdminAssignmentUpdate(context.Background(), map[string]interface{}{
+	_, err := reg.executeIAMAdminAssignmentUpdate(t1Ctx(), map[string]interface{}{
 		"assignment_id": "test-id",
 		"expires_at":    "invalid-date",
 	})
@@ -332,7 +348,7 @@ func TestExecuteIAMAdminAssignmentDelete_Success(t *testing.T) {
 	reg := &ToolRegistry{service: mock, logger: log}
 
 	// Create an assignment first
-	createResult, err := reg.executeIAMAdminAssignmentCreate(context.Background(), map[string]interface{}{
+	createResult, err := reg.executeIAMAdminAssignmentCreate(t1Ctx(), map[string]interface{}{
 		"user_id":    "50001",
 		"admin_role": "super_admin",
 		"granted_by": "admin-user",
@@ -342,7 +358,7 @@ func TestExecuteIAMAdminAssignmentDelete_Success(t *testing.T) {
 	assignmentID := createMap["id"].(string)
 
 	// Delete the assignment
-	result, err := reg.executeIAMAdminAssignmentDelete(context.Background(), map[string]interface{}{
+	result, err := reg.executeIAMAdminAssignmentDelete(t1Ctx(), map[string]interface{}{
 		"assignment_id": assignmentID,
 	})
 	require.NoError(t, err)
@@ -358,7 +374,7 @@ func TestExecuteIAMAdminAssignmentDelete_NotFound(t *testing.T) {
 	mock := newAdminMockWithManager(t)
 	reg := &ToolRegistry{service: mock, logger: log}
 
-	_, err := reg.executeIAMAdminAssignmentDelete(context.Background(), map[string]interface{}{
+	_, err := reg.executeIAMAdminAssignmentDelete(t1Ctx(), map[string]interface{}{
 		"assignment_id": "nonexistent",
 	})
 	require.Error(t, err)
@@ -370,7 +386,7 @@ func TestExecuteIAMAdminAssignmentList_Success(t *testing.T) {
 	reg := &ToolRegistry{service: mock, logger: log}
 
 	// Create an assignment
-	_, err := reg.executeIAMAdminAssignmentCreate(context.Background(), map[string]interface{}{
+	_, err := reg.executeIAMAdminAssignmentCreate(t1Ctx(), map[string]interface{}{
 		"user_id":    "50001",
 		"admin_role": "super_admin",
 		"granted_by": "admin-user",
@@ -378,7 +394,7 @@ func TestExecuteIAMAdminAssignmentList_Success(t *testing.T) {
 	require.NoError(t, err)
 
 	// List assignments
-	result, err := reg.executeIAMAdminAssignmentList(context.Background(), map[string]interface{}{})
+	result, err := reg.executeIAMAdminAssignmentList(t1Ctx(), map[string]interface{}{})
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
@@ -393,7 +409,7 @@ func TestExecuteIAMAdminAssignmentList_DefaultLimit(t *testing.T) {
 	reg := &ToolRegistry{service: mock, logger: log}
 
 	// List with no explicit limit (should use default of 100)
-	result, err := reg.executeIAMAdminAssignmentList(context.Background(), map[string]interface{}{
+	result, err := reg.executeIAMAdminAssignmentList(t1Ctx(), map[string]interface{}{
 		"active_only": false,
 	})
 	require.NoError(t, err)
@@ -406,7 +422,7 @@ func TestExecuteIAMAdminCheckPermission_Success(t *testing.T) {
 	reg := &ToolRegistry{service: mock, logger: log}
 
 	// Create a super_admin assignment first
-	_, err := reg.executeIAMAdminAssignmentCreate(context.Background(), map[string]interface{}{
+	_, err := reg.executeIAMAdminAssignmentCreate(t1Ctx(), map[string]interface{}{
 		"user_id":    "50100",
 		"admin_role": "super_admin",
 		"granted_by": "system",
@@ -414,7 +430,7 @@ func TestExecuteIAMAdminCheckPermission_Success(t *testing.T) {
 	require.NoError(t, err)
 
 	// Check permission
-	result, err := reg.executeIAMAdminCheckPermission(context.Background(), map[string]interface{}{
+	result, err := reg.executeIAMAdminCheckPermission(t1Ctx(), map[string]interface{}{
 		"user_id":    "50100",
 		"permission": "user:create",
 	})
@@ -432,7 +448,7 @@ func TestExecuteIAMAdminCheckPermission_Denied(t *testing.T) {
 	reg := &ToolRegistry{service: mock, logger: log}
 
 	// Check permission for user with no assignments
-	result, err := reg.executeIAMAdminCheckPermission(context.Background(), map[string]interface{}{
+	result, err := reg.executeIAMAdminCheckPermission(t1Ctx(), map[string]interface{}{
 		"user_id":    "50999",
 		"permission": "user:create",
 	})
@@ -456,7 +472,7 @@ func TestExecuteIAMImpersonationStart_Success(t *testing.T) {
 	// Create an admin assignment first (required for impersonation)
 	// The assignment names the target tenant explicitly — empty tenant_ids
 	// no longer matches a tenant-scoped impersonation check (#357).
-	_, err := reg.executeIAMAdminAssignmentCreate(context.Background(), map[string]interface{}{
+	_, err := reg.executeIAMAdminAssignmentCreate(t1Ctx(), map[string]interface{}{
 		"user_id":    "50100",
 		"admin_role": "super_admin",
 		"granted_by": "system",
@@ -464,7 +480,7 @@ func TestExecuteIAMImpersonationStart_Success(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	result, err := reg.executeIAMImpersonationStart(mcpCtxWithActor(50100), map[string]interface{}{
+	result, err := reg.executeIAMImpersonationStart(tenantctx.WithTenant(mcpCtxWithActor(50100), "t1"), map[string]interface{}{
 		"target_user_id":   "10001",
 		"tenant_id":        "t1",
 		"reason":           "support investigation",
@@ -486,7 +502,7 @@ func TestExecuteIAMImpersonationStart_DefaultDuration(t *testing.T) {
 	// Create admin assignment
 	// The assignment names the target tenant explicitly — empty tenant_ids
 	// no longer matches a tenant-scoped impersonation check (#357).
-	_, err := reg.executeIAMAdminAssignmentCreate(context.Background(), map[string]interface{}{
+	_, err := reg.executeIAMAdminAssignmentCreate(t1Ctx(), map[string]interface{}{
 		"user_id":    "50100",
 		"admin_role": "super_admin",
 		"granted_by": "system",
@@ -495,7 +511,7 @@ func TestExecuteIAMImpersonationStart_DefaultDuration(t *testing.T) {
 	require.NoError(t, err)
 
 	// Start without specifying duration (should default to 60 minutes)
-	result, err := reg.executeIAMImpersonationStart(mcpCtxWithActor(50100), map[string]interface{}{
+	result, err := reg.executeIAMImpersonationStart(tenantctx.WithTenant(mcpCtxWithActor(50100), "t1"), map[string]interface{}{
 		"target_user_id": "10001",
 		"tenant_id":      "t1",
 		"reason":         "testing",
@@ -520,7 +536,7 @@ func TestExecuteIAMImpersonationEnd_Success(t *testing.T) {
 	// Create admin assignment and start impersonation
 	// The assignment names the target tenant explicitly — empty tenant_ids
 	// no longer matches a tenant-scoped impersonation check (#357).
-	_, err := reg.executeIAMAdminAssignmentCreate(context.Background(), map[string]interface{}{
+	_, err := reg.executeIAMAdminAssignmentCreate(t1Ctx(), map[string]interface{}{
 		"user_id":    "50100",
 		"admin_role": "super_admin",
 		"granted_by": "system",
@@ -528,7 +544,7 @@ func TestExecuteIAMImpersonationEnd_Success(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	startResult, err := reg.executeIAMImpersonationStart(mcpCtxWithActor(50100), map[string]interface{}{
+	startResult, err := reg.executeIAMImpersonationStart(tenantctx.WithTenant(mcpCtxWithActor(50100), "t1"), map[string]interface{}{
 		"target_user_id": "10001",
 		"tenant_id":      "t1",
 		"reason":         "testing",
@@ -538,7 +554,7 @@ func TestExecuteIAMImpersonationEnd_Success(t *testing.T) {
 	sessionID := startMap["id"].(string)
 
 	// End the impersonation
-	result, err := reg.executeIAMImpersonationEnd(context.Background(), map[string]interface{}{
+	result, err := reg.executeIAMImpersonationEnd(t1Ctx(), map[string]interface{}{
 		"session_id": sessionID,
 	})
 	require.NoError(t, err)
@@ -554,7 +570,7 @@ func TestExecuteIAMImpersonationEnd_NotFound(t *testing.T) {
 	mock := newAdminMockWithManager(t)
 	reg := &ToolRegistry{service: mock, logger: log}
 
-	_, err := reg.executeIAMImpersonationEnd(context.Background(), map[string]interface{}{
+	_, err := reg.executeIAMImpersonationEnd(t1Ctx(), map[string]interface{}{
 		"session_id": "nonexistent",
 	})
 	require.Error(t, err)
@@ -565,7 +581,7 @@ func TestExecuteIAMImpersonationList_Success(t *testing.T) {
 	mock := newAdminMockWithManager(t)
 	reg := &ToolRegistry{service: mock, logger: log}
 
-	result, err := reg.executeIAMImpersonationList(context.Background(), map[string]interface{}{
+	result, err := reg.executeIAMImpersonationList(t1Ctx(), map[string]interface{}{
 		"admin_user_id": "50100",
 	})
 	require.NoError(t, err)
@@ -581,7 +597,7 @@ func TestExecuteIAMImpersonationList_Empty(t *testing.T) {
 	mock := newAdminMockWithManager(t)
 	reg := &ToolRegistry{service: mock, logger: log}
 
-	result, err := reg.executeIAMImpersonationList(context.Background(), map[string]interface{}{
+	result, err := reg.executeIAMImpersonationList(t1Ctx(), map[string]interface{}{
 		"admin_user_id": "50998",
 	})
 	require.NoError(t, err)
@@ -598,7 +614,7 @@ func TestExecuteIAMAdminAssignmentCreate_WithExpiration(t *testing.T) {
 	reg := &ToolRegistry{service: mock, logger: log}
 
 	expiresAt := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
-	result, err := reg.executeIAMAdminAssignmentCreate(context.Background(), map[string]interface{}{
+	result, err := reg.executeIAMAdminAssignmentCreate(t1Ctx(), map[string]interface{}{
 		"user_id":    "50001",
 		"admin_role": "tenant_admin",
 		"granted_by": "admin-user",
@@ -616,7 +632,7 @@ func TestExecuteIAMAdminAssignmentCreate_WithMetadata(t *testing.T) {
 	mock := newAdminMockWithManager(t)
 	reg := &ToolRegistry{service: mock, logger: log}
 
-	result, err := reg.executeIAMAdminAssignmentCreate(context.Background(), map[string]interface{}{
+	result, err := reg.executeIAMAdminAssignmentCreate(t1Ctx(), map[string]interface{}{
 		"user_id":    "50001",
 		"admin_role": "super_admin",
 		"granted_by": "admin-user",

@@ -364,8 +364,12 @@ func TestIAMServer_ServiceError(t *testing.T) {
 			want: codes.NotFound,
 		},
 		{
-			name:  "DeleteAdminAssignment",
-			setup: func(svc *mockIAMService) { svc.On("DeleteAdminAssignment", mock.Anything, "a-1").Return(notFound) },
+			name: "DeleteAdminAssignment",
+			setup: func(svc *mockIAMService) {
+				svc.On("GetAdminAssignment", mock.Anything, "a-1").
+					Return(&iam.AdminAssignment{ID: "a-1", TenantIDs: []string{"t-1"}}, nil)
+				svc.On("DeleteAdminAssignment", mock.Anything, "a-1").Return(notFound)
+			},
 			call: func(srv *IAMServer) error {
 				_, err := srv.DeleteAdminAssignment(ctx, &iampb.DeleteAdminAssignmentRequest{Id: "a-1"})
 				return err
@@ -397,8 +401,11 @@ func TestIAMServer_ServiceError(t *testing.T) {
 			want: codes.PermissionDenied,
 		},
 		{
-			name:  "EndImpersonation",
-			setup: func(svc *mockIAMService) { svc.On("EndImpersonation", mock.Anything, "sess-1").Return(notFound) },
+			name: "EndImpersonation",
+			setup: func(svc *mockIAMService) {
+				svc.sessions = map[string]*iam.ImpersonationSession{"sess-1": {ID: "sess-1", TenantID: "t-1"}}
+				svc.On("EndImpersonation", mock.Anything, "sess-1").Return(notFound)
+			},
 			call: func(srv *IAMServer) error {
 				_, err := srv.EndImpersonation(ctx, &iampb.EndImpersonationRequest{SessionId: "sess-1"})
 				return err
@@ -467,8 +474,12 @@ func TestIAMServer_ServiceError(t *testing.T) {
 			want: codes.NotFound,
 		},
 		{
-			name:  "GenerateExport",
-			setup: func(svc *mockIAMService) { svc.On("GenerateExport", mock.Anything, "exp-1").Return(nil, notFound) },
+			name: "GenerateExport",
+			setup: func(svc *mockIAMService) {
+				svc.On("GetExportStatus", mock.Anything, "exp-1").
+					Return(&iam.DataExportRequest{ID: "exp-1", TenantID: "t-1"}, nil)
+				svc.On("GenerateExport", mock.Anything, "exp-1").Return(nil, notFound)
+			},
 			call: func(srv *IAMServer) error {
 				_, err := srv.GenerateExport(ctx, &iampb.GenerateExportRequest{ExportId: "exp-1"})
 				return err
@@ -480,6 +491,8 @@ func TestIAMServer_ServiceError(t *testing.T) {
 		{
 			name: "CancelDeletion",
 			setup: func(svc *mockIAMService) {
+				svc.On("GetDeletionStatus", mock.Anything, "del-1").
+					Return(&iam.DataDeletionRequest{ID: "del-1", TenantID: "t-1"}, nil)
 				svc.On("CancelDeletion", mock.Anything, "del-1", "admin-1").Return(notFound)
 			},
 			call: func(srv *IAMServer) error {
@@ -489,8 +502,12 @@ func TestIAMServer_ServiceError(t *testing.T) {
 			want: codes.NotFound,
 		},
 		{
-			name:  "ProcessDeletion",
-			setup: func(svc *mockIAMService) { svc.On("ProcessDeletion", mock.Anything, "del-1").Return(nil, notFound) },
+			name: "ProcessDeletion",
+			setup: func(svc *mockIAMService) {
+				svc.On("GetDeletionStatus", mock.Anything, "del-1").
+					Return(&iam.DataDeletionRequest{ID: "del-1", TenantID: "t-1"}, nil)
+				svc.On("ProcessDeletion", mock.Anything, "del-1").Return(nil, notFound)
+			},
 			call: func(srv *IAMServer) error {
 				_, err := srv.ProcessDeletion(ctx, &iampb.ProcessDeletionRequest{DeletionId: "del-1"})
 				return err

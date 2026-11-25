@@ -35,6 +35,7 @@ func TestIAMHandlers_ResponseOutOfRange(t *testing.T) {
 	hugePolicy := &iam.Policy{Metadata: iam.PolicyMetadata{Name: "p1", Priority: tooBig}}
 	hugeDeletion := &iam.DataDeletionRequest{
 		ID:                 "d1",
+		TenantID:           "t1",
 		DeletedDataSummary: &iam.DeletionSummary{TokensRevoked: tooBig},
 	}
 

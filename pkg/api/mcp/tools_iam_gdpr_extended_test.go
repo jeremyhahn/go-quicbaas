@@ -45,7 +45,7 @@ func TestExecuteIAMGDPRExportRequest_WithCategories(t *testing.T) {
 	mock := newGDPRMockWithManager(t)
 	reg := &ToolRegistry{service: mock, logger: log}
 
-	result, err := reg.executeIAMGDPRExportRequest(context.Background(), map[string]interface{}{
+	result, err := reg.executeIAMGDPRExportRequest(t1Ctx(), map[string]interface{}{
 		"tenant_id":          "t1",
 		"user_id":            "30001",
 		"requested_by":       "50100",
@@ -64,7 +64,7 @@ func TestExecuteIAMGDPRExportRequest_RefusesNonJSONFormats(t *testing.T) {
 		t.Run(format, func(t *testing.T) {
 			reg := &ToolRegistry{service: newGDPRMockWithManager(t), logger: newTestLogger(t)}
 
-			result, err := reg.executeIAMGDPRExportRequest(context.Background(), map[string]interface{}{
+			result, err := reg.executeIAMGDPRExportRequest(t1Ctx(), map[string]interface{}{
 				"tenant_id":    "t1",
 				"user_id":      "30001",
 				"requested_by": "50100",
@@ -100,7 +100,7 @@ func TestExecuteIAMGDPRExportRequest_DefaultFormat(t *testing.T) {
 	reg := &ToolRegistry{service: mock, logger: log}
 
 	// When format is empty, defaults to "json"
-	result, err := reg.executeIAMGDPRExportRequest(context.Background(), map[string]interface{}{
+	result, err := reg.executeIAMGDPRExportRequest(t1Ctx(), map[string]interface{}{
 		"tenant_id":    "t1",
 		"user_id":      "30001",
 		"requested_by": "50100",
@@ -115,7 +115,7 @@ func TestExecuteIAMGDPRExportStatus_Success(t *testing.T) {
 	reg := &ToolRegistry{service: mock, logger: log}
 
 	// First create an export request to get an ID
-	exportResult, err := reg.executeIAMGDPRExportRequest(context.Background(), map[string]interface{}{
+	exportResult, err := reg.executeIAMGDPRExportRequest(t1Ctx(), map[string]interface{}{
 		"tenant_id":    "t1",
 		"user_id":      "30001",
 		"requested_by": "50100",
@@ -128,7 +128,7 @@ func TestExecuteIAMGDPRExportStatus_Success(t *testing.T) {
 	require.True(t, ok)
 
 	// Check status
-	result, err := reg.executeIAMGDPRExportStatus(context.Background(), map[string]interface{}{
+	result, err := reg.executeIAMGDPRExportStatus(t1Ctx(), map[string]interface{}{
 		"export_id": exportID,
 	})
 	require.NoError(t, err)
@@ -155,7 +155,7 @@ func TestExecuteIAMGDPRExportGenerate_Success(t *testing.T) {
 	reg := &ToolRegistry{service: mock, logger: log}
 
 	// Create export request
-	exportResult, exportErr := reg.executeIAMGDPRExportRequest(context.Background(), map[string]interface{}{
+	exportResult, exportErr := reg.executeIAMGDPRExportRequest(t1Ctx(), map[string]interface{}{
 		"tenant_id":    "t1",
 		"user_id":      "30001",
 		"requested_by": "50100",
@@ -168,7 +168,7 @@ func TestExecuteIAMGDPRExportGenerate_Success(t *testing.T) {
 	require.True(t, ok)
 
 	// Generate export
-	result, genErr := reg.executeIAMGDPRExportGenerate(context.Background(), map[string]interface{}{
+	result, genErr := reg.executeIAMGDPRExportGenerate(t1Ctx(), map[string]interface{}{
 		"export_id": exportID,
 	})
 	require.NoError(t, genErr)
@@ -184,7 +184,7 @@ func TestExecuteIAMGDPRDeletionRequest_WithCategories(t *testing.T) {
 	mock := newGDPRMockWithManager(t)
 	reg := &ToolRegistry{service: mock, logger: log}
 
-	result, err := reg.executeIAMGDPRDeletionRequest(context.Background(), map[string]interface{}{
+	result, err := reg.executeIAMGDPRDeletionRequest(t1Ctx(), map[string]interface{}{
 		"tenant_id":           "t1",
 		"user_id":             "30001",
 		"requested_by":        "50100",
@@ -203,7 +203,7 @@ func TestExecuteIAMGDPRDeletionCancel_Success(t *testing.T) {
 	reg := &ToolRegistry{service: mock, logger: log}
 
 	// Create deletion request
-	delResult, err := reg.executeIAMGDPRDeletionRequest(context.Background(), map[string]interface{}{
+	delResult, err := reg.executeIAMGDPRDeletionRequest(t1Ctx(), map[string]interface{}{
 		"tenant_id":    "t1",
 		"user_id":      "30001",
 		"requested_by": "50100",
@@ -216,7 +216,7 @@ func TestExecuteIAMGDPRDeletionCancel_Success(t *testing.T) {
 	require.True(t, ok)
 
 	// Cancel it
-	result, cancelErr := reg.executeIAMGDPRDeletionCancel(context.Background(), map[string]interface{}{
+	result, cancelErr := reg.executeIAMGDPRDeletionCancel(t1Ctx(), map[string]interface{}{
 		"deletion_id":  delID,
 		"cancelled_by": "admin",
 	})
@@ -234,7 +234,7 @@ func TestExecuteIAMGDPRDeletionProcess_GracePeriodActive(t *testing.T) {
 	reg := &ToolRegistry{service: mock, logger: log}
 
 	// Create a deletion request (default 30-day grace period)
-	delResult, err := reg.executeIAMGDPRDeletionRequest(context.Background(), map[string]interface{}{
+	delResult, err := reg.executeIAMGDPRDeletionRequest(t1Ctx(), map[string]interface{}{
 		"tenant_id":    "t1",
 		"user_id":      "30001",
 		"requested_by": "50100",
@@ -247,7 +247,7 @@ func TestExecuteIAMGDPRDeletionProcess_GracePeriodActive(t *testing.T) {
 	require.True(t, ok)
 
 	// Attempting to process during grace period should return an error
-	_, processErr := reg.executeIAMGDPRDeletionProcess(context.Background(), map[string]interface{}{
+	_, processErr := reg.executeIAMGDPRDeletionProcess(t1Ctx(), map[string]interface{}{
 		"deletion_id": delID,
 	})
 	require.Error(t, processErr)
@@ -260,7 +260,7 @@ func TestExecuteIAMGDPRDeletionStatus_Success(t *testing.T) {
 	reg := &ToolRegistry{service: mock, logger: log}
 
 	// Create deletion request
-	delResult, err := reg.executeIAMGDPRDeletionRequest(context.Background(), map[string]interface{}{
+	delResult, err := reg.executeIAMGDPRDeletionRequest(t1Ctx(), map[string]interface{}{
 		"tenant_id":    "t1",
 		"user_id":      "30001",
 		"requested_by": "50100",
@@ -273,7 +273,7 @@ func TestExecuteIAMGDPRDeletionStatus_Success(t *testing.T) {
 	require.True(t, ok)
 
 	// Check status
-	result, statusErr := reg.executeIAMGDPRDeletionStatus(context.Background(), map[string]interface{}{
+	result, statusErr := reg.executeIAMGDPRDeletionStatus(t1Ctx(), map[string]interface{}{
 		"deletion_id": delID,
 	})
 	require.NoError(t, statusErr)
@@ -289,7 +289,7 @@ func TestExecuteIAMGDPRConsentGrant_WithExpiration(t *testing.T) {
 	mock := newGDPRMockWithManager(t)
 	reg := &ToolRegistry{service: mock, logger: log}
 
-	result, err := reg.executeIAMGDPRConsentGrant(context.Background(), map[string]interface{}{
+	result, err := reg.executeIAMGDPRConsentGrant(t1Ctx(), map[string]interface{}{
 		"tenant_id":  "t1",
 		"user_id":    "30001",
 		"purpose":    "analytics",
@@ -308,7 +308,7 @@ func TestExecuteIAMGDPRConsentWithdraw_NotFound(t *testing.T) {
 	reg := &ToolRegistry{service: mock, logger: log}
 
 	// Withdraw consent that was never granted
-	_, err := reg.executeIAMGDPRConsentWithdraw(context.Background(), map[string]interface{}{
+	_, err := reg.executeIAMGDPRConsentWithdraw(t1Ctx(), map[string]interface{}{
 		"tenant_id":  "t1",
 		"user_id":    "30001",
 		"purpose":    "marketing",

@@ -281,6 +281,8 @@ func TestIAMServer_CreateAdminAssignment_ServiceError(t *testing.T) {
 
 func TestIAMServer_UpdateAdminAssignment_ServiceError(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
+	svc.On("GetAdminAssignment", mock.Anything, "a-1").
+		Return(&iam.AdminAssignment{ID: "a-1", TenantIDs: []string{"t-1"}}, nil)
 	svc.On("UpdateAdminAssignment", mock.Anything, "a-1", mock.Anything).
 		Return(nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test"})
 

@@ -37,6 +37,9 @@ import (
 // mockIAMService is a testify mock implementing the IAMService interface.
 type mockIAMService struct {
 	mock.Mock
+
+	// sessions backs GetImpersonationSession; an id it lacks is not found.
+	sessions map[string]*iam.ImpersonationSession
 }
 
 func (m *mockIAMService) CreateTenant(ctx context.Context, opts iam.CreateTenantOptions) (*iam.Tenant, error) {
@@ -334,6 +337,13 @@ func (m *mockIAMService) StartImpersonation(ctx context.Context, opts *iam.Start
 
 func (m *mockIAMService) EndImpersonation(ctx context.Context, sessionID string) error {
 	return m.Called(ctx, sessionID).Error(0)
+}
+
+func (m *mockIAMService) GetImpersonationSession(_ context.Context, sessionID string) (*iam.ImpersonationSession, error) {
+	if session, ok := m.sessions[sessionID]; ok {
+		return session, nil
+	}
+	return nil, iam.ErrImpersonationSessionNotFound
 }
 
 func (m *mockIAMService) GetActiveImpersonations(ctx context.Context, adminUserID uint64) ([]*iam.ImpersonationSession, error) {
@@ -1573,7 +1583,7 @@ func TestIAMServer_GetAdminAssignment_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
 	svc.On("GetAdminAssignment", mock.Anything, "a1").
-		Return(&iam.AdminAssignment{ID: "a1", UserID: 30001}, nil)
+		Return(&iam.AdminAssignment{ID: "a1", UserID: 30001, TenantIDs: []string{"t1"}}, nil)
 
 	resp, err := srv.GetAdminAssignment(callerContext("t1"), &iampb.GetAdminAssignmentRequest{Id: "a1"})
 
@@ -1585,6 +1595,8 @@ func TestIAMServer_GetAdminAssignment_Success(t *testing.T) {
 func TestIAMServer_UpdateAdminAssignment_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
+	svc.On("GetAdminAssignment", mock.Anything, "a1").
+		Return(&iam.AdminAssignment{ID: "a1", UserID: 30001, TenantIDs: []string{"t1"}}, nil)
 	svc.On("UpdateAdminAssignment", mock.Anything, "a1", mock.AnythingOfType("iam.UpdateAdminAssignmentOptions")).
 		Return(&iam.AdminAssignment{ID: "a1", UserID: 30001}, nil)
 
@@ -1608,6 +1620,8 @@ func TestIAMServer_UpdateAdminAssignment_Success(t *testing.T) {
 func TestIAMServer_DeleteAdminAssignment_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
+	svc.On("GetAdminAssignment", mock.Anything, "a1").
+		Return(&iam.AdminAssignment{ID: "a1", UserID: 30001, TenantIDs: []string{"t1"}}, nil)
 	svc.On("DeleteAdminAssignment", mock.Anything, "a1").Return(nil)
 
 	resp, err := srv.DeleteAdminAssignment(callerContext("t1"), &iampb.DeleteAdminAssignmentRequest{Id: "a1"})
@@ -1621,7 +1635,7 @@ func TestIAMServer_ListAdminAssignments_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
 	svc.On("ListAdminAssignments", mock.Anything, mock.AnythingOfType("iam.ListAdminAssignmentsOptions")).
-		Return([]*iam.AdminAssignment{{ID: "a1", UserID: 30001}}, nil)
+		Return([]*iam.AdminAssignment{{ID: "a1", UserID: 30001, TenantIDs: []string{"t1"}}}, nil)
 
 	resp, err := srv.ListAdminAssignments(callerContext("t1"), &iampb.ListAdminAssignmentsRequest{
 		UserId: "30001", TenantId: "t1", ActiveOnly: true,
@@ -1671,6 +1685,7 @@ func TestIAMServer_StartImpersonation_Success(t *testing.T) {
 func TestIAMServer_EndImpersonation_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
+	svc.sessions = map[string]*iam.ImpersonationSession{"s1": {ID: "s1", AdminUserID: 30021, TenantID: "t1"}}
 	svc.On("EndImpersonation", mock.Anything, "s1").Return(nil)
 
 	resp, err := srv.EndImpersonation(callerContext("t1"), &iampb.EndImpersonationRequest{SessionId: "s1"})
@@ -1684,7 +1699,7 @@ func TestIAMServer_GetActiveImpersonations_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
 	svc.On("GetActiveImpersonations", mock.Anything, uint64(30021)).
-		Return([]*iam.ImpersonationSession{{ID: "s1", AdminUserID: 30021}}, nil)
+		Return([]*iam.ImpersonationSession{{ID: "s1", AdminUserID: 30021, TenantID: "t1"}}, nil)
 
 	resp, err := srv.GetActiveImpersonations(callerContext("t1"), &iampb.GetActiveImpersonationsRequest{AdminUserId: "30021"})
 
@@ -1791,7 +1806,7 @@ func TestIAMServer_GetExportStatus_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
 	svc.On("GetExportStatus", mock.Anything, "e1").
-		Return(&iam.DataExportRequest{ID: "e1"}, nil)
+		Return(&iam.DataExportRequest{ID: "e1", TenantID: "t1"}, nil)
 
 	resp, err := srv.GetExportStatus(callerContext("t1"), &iampb.GetExportStatusRequest{ExportId: "e1"})
 
@@ -1803,6 +1818,8 @@ func TestIAMServer_GetExportStatus_Success(t *testing.T) {
 func TestIAMServer_GenerateExport_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
+	svc.On("GetExportStatus", mock.Anything, "e1").
+		Return(&iam.DataExportRequest{ID: "e1", TenantID: "t1"}, nil)
 	svc.On("GenerateExport", mock.Anything, "e1").
 		Return(&iam.UserDataExport{ExportMetadata: iam.ExportMetadata{ExportID: "e1"}}, nil)
 
@@ -1841,6 +1858,8 @@ func TestIAMServer_RequestDeletion_Success(t *testing.T) {
 func TestIAMServer_CancelDeletion_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
+	svc.On("GetDeletionStatus", mock.Anything, "d1").
+		Return(&iam.DataDeletionRequest{ID: "d1", TenantID: "t1"}, nil)
 	svc.On("CancelDeletion", mock.Anything, "d1", "admin1").Return(nil)
 
 	resp, err := srv.CancelDeletion(callerContext("t1"), &iampb.CancelDeletionRequest{DeletionId: "d1", CancelledBy: "admin1"})
@@ -1853,6 +1872,8 @@ func TestIAMServer_CancelDeletion_Success(t *testing.T) {
 func TestIAMServer_ProcessDeletion_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
+	svc.On("GetDeletionStatus", mock.Anything, "d1").
+		Return(&iam.DataDeletionRequest{ID: "d1", TenantID: "t1"}, nil)
 	svc.On("ProcessDeletion", mock.Anything, "d1").
 		Return(&iam.DeletionSummary{ProfileDeleted: true, SessionsDeleted: 5}, nil)
 
@@ -1868,7 +1889,7 @@ func TestIAMServer_GetDeletionStatus_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
 	svc.On("GetDeletionStatus", mock.Anything, "d1").
-		Return(&iam.DataDeletionRequest{ID: "d1"}, nil)
+		Return(&iam.DataDeletionRequest{ID: "d1", TenantID: "t1"}, nil)
 
 	resp, err := srv.GetDeletionStatus(callerContext("t1"), &iampb.GetDeletionStatusRequest{DeletionId: "d1"})
 

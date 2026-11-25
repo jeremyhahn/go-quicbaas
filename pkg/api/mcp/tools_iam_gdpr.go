@@ -22,6 +22,7 @@ import (
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -57,6 +58,40 @@ func (r *ToolRegistry) getGDPRManager(ctx context.Context) (*iam.GDPRManager, er
 		return nil, api.NewServiceUnavailableError("GDPR")
 	}
 	return mgr, nil
+}
+
+// ownExport returns the export request when it belongs to the caller's
+// tenant; another tenant's request answers as not found.
+func ownExport(ctx context.Context, gdprMgr *iam.GDPRManager, exportID string) (*iam.DataExportRequest, error) {
+	caller, err := tenantctx.FromContext(ctx, "mcp.iam")
+	if err != nil {
+		return nil, err
+	}
+	exportReq, err := gdprMgr.GetExportStatus(ctx, exportID)
+	if err != nil {
+		return nil, err
+	}
+	if exportReq == nil || exportReq.TenantID != caller {
+		return nil, iam.ErrDataExportNotFound
+	}
+	return exportReq, nil
+}
+
+// ownDeletion returns the deletion request when it belongs to the caller's
+// tenant; another tenant's request answers as not found.
+func ownDeletion(ctx context.Context, gdprMgr *iam.GDPRManager, deletionID string) (*iam.DataDeletionRequest, error) {
+	caller, err := tenantctx.FromContext(ctx, "mcp.iam")
+	if err != nil {
+		return nil, err
+	}
+	deletionReq, err := gdprMgr.GetDeletionStatus(ctx, deletionID)
+	if err != nil {
+		return nil, err
+	}
+	if deletionReq == nil || deletionReq.TenantID != caller {
+		return nil, iam.ErrDeletionNotFound
+	}
+	return deletionReq, nil
 }
 
 // =============================================================================
@@ -532,7 +567,7 @@ func (r *ToolRegistry) executeIAMGDPRExportStatus(ctx context.Context, args map[
 		return nil, err
 	}
 
-	exportReq, err := gdprMgr.GetExportStatus(ctx, getString(args, "export_id"))
+	exportReq, err := ownExport(ctx, gdprMgr, getString(args, "export_id"))
 	if err != nil {
 		return nil, err
 	}
@@ -542,6 +577,10 @@ func (r *ToolRegistry) executeIAMGDPRExportStatus(ctx context.Context, args map[
 func (r *ToolRegistry) executeIAMGDPRExportGenerate(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	gdprMgr, err := r.getGDPRManager(ctx)
 	if err != nil {
+		return nil, err
+	}
+
+	if _, err := ownExport(ctx, gdprMgr, getString(args, "export_id")); err != nil {
 		return nil, err
 	}
 
@@ -619,6 +658,10 @@ func (r *ToolRegistry) executeIAMGDPRDeletionCancel(ctx context.Context, args ma
 		return nil, err
 	}
 
+	if _, err := ownDeletion(ctx, gdprMgr, getString(args, "deletion_id")); err != nil {
+		return nil, err
+	}
+
 	err = gdprMgr.CancelDeletion(ctx,
 		getString(args, "deletion_id"),
 		getString(args, "cancelled_by"),
@@ -638,6 +681,10 @@ func (r *ToolRegistry) executeIAMGDPRDeletionProcess(ctx context.Context, args m
 		return nil, err
 	}
 
+	if _, err := ownDeletion(ctx, gdprMgr, getString(args, "deletion_id")); err != nil {
+		return nil, err
+	}
+
 	summary, err := gdprMgr.ProcessDeletion(ctx, getString(args, "deletion_id"))
 	if err != nil {
 		return nil, err
@@ -651,7 +698,7 @@ func (r *ToolRegistry) executeIAMGDPRDeletionStatus(ctx context.Context, args ma
 		return nil, err
 	}
 
-	deletionReq, err := gdprMgr.GetDeletionStatus(ctx, getString(args, "deletion_id"))
+	deletionReq, err := ownDeletion(ctx, gdprMgr, getString(args, "deletion_id"))
 	if err != nil {
 		return nil, err
 	}
