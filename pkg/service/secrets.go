@@ -246,7 +246,7 @@ func (s *secretsService) StoreSecret(ctx context.Context, req *StoreSecretReques
 			}).Error("Failed to store secret")
 		}
 		return nil, &errors.QBError{
-			Code: errors.ErrInternal,
+			Code: secretWriteCode(err),
 			Op:   "secrets.StoreSecret",
 			Err:  &api.OperationFailedError{Operation: "store secret", Cause: err},
 		}
@@ -993,7 +993,7 @@ func (s *secretsService) RollbackSecret(ctx context.Context, req *RollbackSecret
 			s.metrics.operationErrors.With("rollback", "rollback_failed").Inc()
 		}
 		return nil, &errors.QBError{
-			Code: errors.ErrInternal,
+			Code: secretWriteCode(err),
 			Op:   "secrets.RollbackSecret",
 			Err:  &api.OperationFailedError{Operation: "rollback secret", Cause: err},
 		}
@@ -1093,7 +1093,7 @@ func (s *secretsService) RotateSecret(ctx context.Context, req *RotateSecretRequ
 			s.metrics.operationErrors.With("rotate", "store_failed").Inc()
 		}
 		return nil, &errors.QBError{
-			Code: errors.ErrInternal,
+			Code: secretWriteCode(err),
 			Op:   "secrets.RotateSecret",
 			Err:  &api.OperationFailedError{Operation: "rotate secret", Cause: err},
 		}
@@ -1188,7 +1188,7 @@ func (s *secretsService) SetRotationPolicy(ctx context.Context, req *SetRotation
 			s.metrics.operationErrors.With("set_rotation_policy", "retrieve_failed").Inc()
 		}
 		return nil, &errors.QBError{
-			Code: errors.ErrInternal,
+			Code: secretWriteCode(err),
 			Op:   "secrets.SetRotationPolicy",
 			Err:  &api.OperationFailedError{Operation: "retrieve secret data", Cause: err},
 		}
@@ -1198,7 +1198,7 @@ func (s *secretsService) SetRotationPolicy(ctx context.Context, req *SetRotation
 			s.metrics.operationErrors.With("set_rotation_policy", "update_failed").Inc()
 		}
 		return nil, &errors.QBError{
-			Code: errors.ErrInternal,
+			Code: secretWriteCode(err),
 			Op:   "secrets.SetRotationPolicy",
 			Err:  &api.OperationFailedError{Operation: "set rotation policy", Cause: err},
 		}
@@ -1360,7 +1360,7 @@ func (s *secretsService) UpdateSecretStatus(ctx context.Context, req *UpdateSecr
 			s.metrics.operationErrors.With("update_status", "update_failed").Inc()
 		}
 		return nil, &errors.QBError{
-			Code: errors.ErrInternal,
+			Code: secretWriteCode(err),
 			Op:   "secrets.UpdateSecretStatus",
 			Err:  &api.OperationFailedError{Operation: "update secret status", Cause: err},
 		}
@@ -2072,4 +2072,14 @@ func secretLookupCode(err error) errors.ErrorCode {
 	default:
 		return errors.ErrUnavailable
 	}
+}
+
+// secretWriteCode is the code a failed secret write, or the read a write
+// depends on, carries. The Manager's at-rest refusal keeps its precondition
+// code so a caller learns the server-wide remedy; anything else is internal.
+func secretWriteCode(err error) errors.ErrorCode {
+	if stderrors.Is(err, secrets.ErrAtRestEncryptionRequired) {
+		return errors.ErrPreconditionFailed
+	}
+	return errors.ErrInternal
 }
