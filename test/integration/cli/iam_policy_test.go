@@ -124,6 +124,22 @@ func createPolicyTestTenant(t *testing.T, runner *TestRunner) string {
 	return tenantID
 }
 
+// createEmptyPolicyTestTenant is createPolicyTestTenant for a test that never
+// creates a policy, without the CLI tenant-delete cleanup. helpers.TenantAdmin,
+// which provisions the tenant on the first command, registers its own delete;
+// cleanups run last-in-first-out, so it removes the empty tenant first and a
+// second delete answers NOT_FOUND.
+func createEmptyPolicyTestTenant(t *testing.T, runner *TestRunner) string {
+	t.Helper()
+	tenantID := UniqueKey("pol-tenant")
+	cmd := IAMTenantCreateCommand(tenantID, tenantID+"-name")
+	if runner.IsSkipped(cmd) {
+		return ""
+	}
+	runner.ActAsTenantAdmin(tenantID)
+	return tenantID
+}
+
 // requireCleanupRun runs a cleanup command and fails the test when it does not
 // succeed, so a resource a test created is never silently left behind.
 func requireCleanupRun(t *testing.T, runner *TestRunner, cmd CommandDef) {
@@ -366,7 +382,7 @@ func TestIAMPolicyGetNonExistent(t *testing.T) {
 			return
 		}
 
-		tenantID := createPolicyTestTenant(t, runner)
+		tenantID := createEmptyPolicyTestTenant(t, runner)
 		if tenantID == "" {
 			return
 		}
@@ -542,7 +558,7 @@ func TestIAMPolicyDeleteNonExistent(t *testing.T) {
 			return
 		}
 
-		tenantID := createPolicyTestTenant(t, runner)
+		tenantID := createEmptyPolicyTestTenant(t, runner)
 		if tenantID == "" {
 			return
 		}
