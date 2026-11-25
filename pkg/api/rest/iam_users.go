@@ -395,6 +395,10 @@ func (h *IAMHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 			NewIAMAPIError(ErrBadRequest, "invalid JSON body"))
 		return
 	}
+	// A roles change, an explicit empty list included, needs roles:assign in the tenant, as on create.
+	if req.Roles != nil && !h.server.authorizePermissionInTenant(w, r, tenantID, "roles", "assign") {
+		return
+	}
 
 	// Get identity store
 	identityStore, ok := h.server.service.(interface {
