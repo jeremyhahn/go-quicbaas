@@ -247,11 +247,6 @@ func turnBudgetValue(n int) string {
 	return v
 }
 
-// oneLine collapses s's whitespace, newlines included, to single spaces.
-func oneLine(s string) string {
-	return strings.Join(strings.Fields(s), " ")
-}
-
 // nonBlankLines returns entries collapsed to one line each, blanks dropped.
 func nonBlankLines(entries []string) []string {
 	out := make([]string, 0, len(entries))
