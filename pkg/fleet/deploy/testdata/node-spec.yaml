@@ -20,8 +20,8 @@ node:
     claude-code: software-factory-worker:latest
     codex: software-factory-worker:latest
   auto_pull: true
-  ollama_base_url: http://gpu-host.internal:11434
-  vllm_base_url: http://gpu-host.internal:11435
+  ollama_base_url: http://gpu-01.internal:11434
+  vllm_base_url: http://gpu-01.internal:11435
   vllm_model: qwen3-coder
   vllm_context_tokens: 32768
   allowed_mount_roots:

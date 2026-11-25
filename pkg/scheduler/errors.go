@@ -34,6 +34,7 @@ const (
 	ErrCodeStorageError       = "SCHEDULER_STORAGE_ERROR"
 	ErrCodeClaimUnsupported   = "SCHEDULER_CLAIM_UNSUPPORTED"
 	ErrCodeInvalidFiringClaim = "SCHEDULER_INVALID_FIRING_CLAIM"
+	ErrCodePlatformHandler    = "SCHEDULER_PLATFORM_HANDLER_FORBIDDEN"
 )
 
 // SchedulerError is the base error type for scheduler operations.
@@ -113,6 +114,24 @@ type HandlerNotFoundError struct {
 
 func (e HandlerNotFoundError) Error() string {
 	return fmt.Sprintf("handler not found: %s", e.Handler)
+}
+
+// PlatformHandlerError refuses a tenant-owned job that names a
+// platform-owned handler (see IsPlatformHandler): such handlers act across
+// every tenant, so only a system-owned job may run them. It is forbidden
+// (ErrCodePlatformHandler) and never retried.
+type PlatformHandlerError struct {
+	Handler  string
+	TenantID string
+}
+
+func (e PlatformHandlerError) Error() string {
+	return fmt.Sprintf("forbidden: handler %s is platform-owned and cannot run a job of tenant '%s'", e.Handler, e.TenantID)
+}
+
+// Code returns ErrCodePlatformHandler.
+func (e PlatformHandlerError) Code() string {
+	return ErrCodePlatformHandler
 }
 
 // HandlerFailedError indicates the handler returned an error.

@@ -174,7 +174,10 @@ func runIAMPolicyApplyCommand(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// buildPolicyRequest builds a CreatePolicyRequest from YAML data.
+// buildPolicyRequest builds a CreatePolicyRequest that carries the policy as
+// spec_yaml only. The server parses the YAML, and the gRPC and MCP transports
+// refuse structured rules rather than drop them
+// (sdk/go/transport/internal/policyfields), so the CLI never sets Rules.
 func buildPolicyRequest(policyData map[string]interface{}, name string, rawYAML []byte) *iam.CreatePolicyRequest {
 	req := &iam.CreatePolicyRequest{
 		Name:     name,
@@ -186,29 +189,6 @@ func buildPolicyRequest(policyData map[string]interface{}, name string, rawYAML 
 	if metadata, ok := policyData["metadata"].(map[string]interface{}); ok {
 		if desc, ok := metadata["description"].(string); ok {
 			req.Description = desc
-		}
-	}
-
-	// Extract spec if present
-	if spec, ok := policyData["spec"].(map[string]interface{}); ok {
-		// Extract rules
-		if rulesRaw, ok := spec["rules"].([]interface{}); ok {
-			for _, ruleRaw := range rulesRaw {
-				if ruleMap, ok := ruleRaw.(map[string]interface{}); ok {
-					rule := iam.Rule{}
-					if name, ok := ruleMap["name"].(string); ok {
-						rule.Name = name
-					}
-					if effect, ok := ruleMap["effect"].(string); ok {
-						if effect == "allow" {
-							rule.Effect = iam.EffectAllow
-						} else {
-							rule.Effect = iam.EffectDeny
-						}
-					}
-					req.Rules = append(req.Rules, rule)
-				}
-			}
 		}
 	}
 

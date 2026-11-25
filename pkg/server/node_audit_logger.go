@@ -27,6 +27,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
 
@@ -223,6 +224,14 @@ func (e *AuditEventNotFoundError) Error() string {
 // IAM sentinel (the REST audit handler's 404) match the node chain's error.
 func (e *AuditEventNotFoundError) Is(target error) bool {
 	return target == iam.ErrAuditEventNotFound
+}
+
+// ErrorCode reports the not-found class, the same class REST answers through
+// the iam.ErrAuditEventNotFound sentinel (pkg/api/rest/iam_audit.go). It makes
+// the error a ClassifiedError, so MCP answers not found and keeps the message
+// that names the event instead of sanitizing it to an internal error.
+func (e *AuditEventNotFoundError) ErrorCode() qberrors.ErrorCode {
+	return qberrors.ErrNotFound
 }
 
 // --- iam.AuditEvent <-> qrdbsdk.NodeAuditEvent conversion (P3 Option B) ---

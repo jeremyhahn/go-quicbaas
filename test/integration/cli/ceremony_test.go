@@ -395,10 +395,8 @@ func TestCeremonyStatusAcrossTransports(t *testing.T) {
 
 		t.Run(string(cfg.Transport), func(t *testing.T) {
 			runner := NewTestRunner(t, cfg.Transport, cfg.Address)
-			if cfg.Transport == TransportMCP {
-				if err := runner.Authenticate(); err != nil {
-					t.Fatalf("MCP authentication failed: %v", err)
-				}
+			if err := runner.Authenticate(); err != nil {
+				t.Fatalf("[%s] system admin authentication failed: %v", cfg.Transport, err)
 			}
 			if !runner.RequireCeremonyAvailable() {
 				results = append(results, result{transport: cfg.Transport, available: false})

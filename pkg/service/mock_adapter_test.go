@@ -365,6 +365,10 @@ func TestSchedulerAdapter_UpdateJob_Success(t *testing.T) {
 		Status:         scheduler.JobStatusPending,
 	}
 
+	// A handler or payload edit first reads the job: an internal handler's
+	// job is not user-editable.
+	mockEngine.On("GetJobWithTenant", ctx, uint64(100), "tenant-1").
+		Return(&scheduler.Job{ID: 100, Handler: "old-handler", TargetTenantID: "tenant-1"}, nil).Once()
 	mockEngine.On("UpdateJob", ctx, uint64(100), "tenant-1", mock.AnythingOfType("*scheduler.JobUpdateParams")).
 		Return(updatedJob, nil).Once()
 

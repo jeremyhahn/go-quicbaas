@@ -14,9 +14,12 @@
 package grpc
 
 import (
+	"fmt"
+
 	"google.golang.org/grpc"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
+	iampb "github.com/jeremyhahn/go-quicbaas/api/proto/iam"
 )
 
 // brokerServiceDescs is the canonical list of gRPC service descriptors that the
@@ -187,6 +190,27 @@ var qrdbIdentityGatedMethods = map[string]bool{
 	"/qrdb.v1.QRDBService/BarrierRecoveryShareClaimComplete": true,
 }
 
+// grpcRequestPermissions holds, per gRPC FullMethod, the further permissions a
+// request's own fields demand on top of the method's grpcMethodPermissions
+// grant. Each func returns the extra permissions for req (nil when the fields
+// demand none) and an error for a req it does not recognise, so the call fails
+// closed. The token's tenant is the target tenant for every entry: each
+// handler here refuses any tenant other than the caller's own.
+var grpcRequestPermissions = map[string]func(req interface{}) ([]methodPermission, error){
+	// go-qrdb's native CreateUser (AuthorizeRoleAssignmentWriteOnCreate):
+	// a create that names roles also needs roles:assign.
+	"/quicbaas.iam.v1.IAMService/CreateUser": func(req interface{}) ([]methodPermission, error) {
+		r, ok := req.(*iampb.CreateUserRequest)
+		if !ok {
+			return nil, fmt.Errorf("unexpected request type %T for CreateUser", req)
+		}
+		if len(r.GetRoles()) > 0 {
+			return []methodPermission{{"roles", "assign"}}, nil
+		}
+		return nil, nil
+	},
+}
+
 // grpcMethodPermissions maps each protected gRPC FullMethod to the qrdb-canonical
 // permission it requires. Every value is a registered qrdb permission (the join
 // resource:action exists in go-qrdb/pkg/permission/constants.go).
@@ -242,12 +266,14 @@ var grpcMethodPermissions = map[string]methodPermission{
 
 	// ---- quicbaas.iam.v1.IAMService: WebAuthn credential administration ----
 	//
-	// The IAMService methods mapped here are ApproveUser, GetUser,
-	// GetUserByUsername and the WebAuthn credential verbs, and only those;
-	// that needs saying out loud: the rest of quicbaas.iam.v1.IAMService is
-	// absent from brokerServiceDescs and unmapped, so under RequireAuthz it is
-	// denied wholesale. Mapping the WebAuthn verbs does not carve an exception
-	// into that posture — it is the minimum needed for the surface to exist.
+	// IAMService is absent from brokerServiceDescs, so a method of it that is
+	// not mapped in this table is denied wholesale under RequireAuthz. The
+	// methods mapped are ApproveUser, CreateUser, GetUser, GetUserByUsername, the
+	// WebAuthn credential verbs here, ReconcileRoles, and the tenant verbs
+	// (CreateTenant, GetTenant, ListTenants, UpdateTenant, DeleteTenant,
+	// ProvisionTenant) below. Mapping the WebAuthn verbs does not carve an
+	// exception into that posture — it is the minimum needed for the surface
+	// to exist.
 	// They are the operator's ONLY recovery path for a WebAuthn credential
 	// stranded by a deleted user (go-quicbaas#273): the credential blocks its
 	// email from ever registering an authenticator again, and every other way
@@ -265,11 +291,14 @@ var grpcMethodPermissions = map[string]methodPermission{
 	// also outside brokerServiceDescs; they are mapped below by REST parity,
 	// each taking the grant its REST twin requires (go-quicbaas#1624).
 	//
-	// Mapping the REST of IAMService is an authorization-policy decision for
-	// the owner, not a wiring change; it is tracked separately. Until then it
-	// stays unmapped and default-denied.
+	// Every other IAMService method stays unmapped and default-denied; a
+	// method is mapped only by REST parity, taking its REST twin's grant.
 	// Mirrors REST POST /api/v1/iam/users/{user_id}/approve (users:enable).
 	"/quicbaas.iam.v1.IAMService/ApproveUser": {"users", "enable"},
+	// Mirrors QRDBService CreateUser (users:create). A request naming roles
+	// also takes roles:assign (grpcRequestPermissions), as go-qrdb's native
+	// CreateUser requires (AuthorizeRoleAssignmentWriteOnCreate).
+	"/quicbaas.iam.v1.IAMService/CreateUser": {"users", "create"},
 	// Mirror QRDBService GetUser/GetUserByUsername (users:read).
 	"/quicbaas.iam.v1.IAMService/GetUser":                   {"users", "read"},
 	"/quicbaas.iam.v1.IAMService/GetUserByUsername":         {"users", "read"},
@@ -302,6 +331,17 @@ var grpcMethodPermissions = map[string]methodPermission{
 	// tenant-create family, the same grant REST's
 	// POST /api/v1/tenants/{tenant_id}/provision requires (go-quicbaas#358).
 	"/quicbaas.iam.v1.IAMService/ProvisionTenant": {"tenants", "create"},
+	// The tenant CRUD verbs the CLI calls over gRPC take their REST twin's
+	// grant (pkg/api/rest/routes_permissions_generated.go): POST
+	// /api/v1/tenants/ tenants:create, GET /api/v1/tenants/{tenant_id}
+	// tenants:read, GET /api/v1/tenants/ tenants:list, PUT
+	// /api/v1/tenants/{tenant_id} tenants:create, DELETE
+	// /api/v1/tenants/{tenant_id} tenants:delete.
+	"/quicbaas.iam.v1.IAMService/CreateTenant": {"tenants", "create"},
+	"/quicbaas.iam.v1.IAMService/GetTenant":    {"tenants", "read"},
+	"/quicbaas.iam.v1.IAMService/ListTenants":  {"tenants", "list"},
+	"/quicbaas.iam.v1.IAMService/UpdateTenant": {"tenants", "create"},
+	"/quicbaas.iam.v1.IAMService/DeleteTenant": {"tenants", "delete"},
 
 	// ---- quicbaas.iam.v1.FederationService: providers and account links ----
 	//
@@ -341,6 +381,26 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.iam.v1.SessionService/RevokeAllSessions": {"users", "update"},
 	// POST /api/v1/iam/sessions/revoke-others
 	"/quicbaas.iam.v1.SessionService/RevokeOtherSessions": {"users", "update"},
+
+	// ---- quicbaas.iam.v1.AuditService ----
+	//
+	// Each RPC takes the grant its REST twin requires. RecordAuditEvent stays
+	// unmapped, so it is default-denied on the node.
+	//
+	// GET /api/v1/iam/audit
+	"/quicbaas.iam.v1.AuditService/QueryAuditEvents": {"audit", "query"},
+	// GET /api/v1/iam/audit/{id}
+	"/quicbaas.iam.v1.AuditService/GetAuditEvent": {"audit", "read"},
+
+	// ---- quicbaas.iam.v1.PEPService ----
+	//
+	// Each RPC takes the grant its REST twin requires. Subscribe stays
+	// unmapped, so it is default-denied on the node.
+	//
+	// POST /api/v1/iam/check
+	"/quicbaas.iam.v1.PEPService/Check": {"permissions", "resolve"},
+	// POST /api/v1/iam/check/batch
+	"/quicbaas.iam.v1.PEPService/CheckBatch": {"permissions", "resolve"},
 
 	// ---- quicbaas.v1.QuicBaaS: auth (token lifecycle) ----
 	"/quicbaas.v1.QuicBaaS/Logout":        {"user_authfactors", "login"},
