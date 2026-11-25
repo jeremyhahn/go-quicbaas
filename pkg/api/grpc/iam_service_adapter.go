@@ -364,6 +364,16 @@ func (a *IAMServiceAdapter) UpdateUser(ctx context.Context, user *iam.User) (*ia
 		opts.Lifecycle = &user.Lifecycle
 	}
 
+	// Every requested role must exist BEFORE any write. The role sync below
+	// revokes roles absent from the request before it assigns the new ones,
+	// so a nonexistent replacement would otherwise strip the user's access and
+	// only then fail. REST validates the same way through opts.Roles.
+	for _, roleID := range user.Roles {
+		if _, err := a.identityStore.GetRole(ctx, user.TenantID, roleID); err != nil {
+			return nil, err
+		}
+	}
+
 	updated, err := a.identityStore.UpdateUser(ctx, user.TenantID, user.ID, opts)
 	if err != nil {
 		return nil, err
