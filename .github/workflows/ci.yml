@@ -2355,6 +2355,12 @@ jobs:
 
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
+      # The job's later steps run checked-out scripts, so the LAN addresses are masked first.
+      - name: Mask the LAN addresses
+        env:
+          CI_IMAGE_REGISTRY: ${{ runner.environment != 'github-hosted' && secrets.CI_IMAGE_REGISTRY || '' }}
+        run: scripts/ci-mask-lan.sh
+
       - name: Free runner disk
         if: ${{ runner.environment == 'github-hosted' }}
         run: |
