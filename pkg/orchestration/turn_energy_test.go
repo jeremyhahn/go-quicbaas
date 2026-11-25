@@ -148,7 +148,7 @@ func TestPointAt(t *testing.T) {
 func TestTurnOccupancy_SharersAndPruning(t *testing.T) {
 	t.Parallel()
 	var o turnOccupancy
-	key := occupancyKey{host: "gpu-host:9091", kind: DeviceGPU}
+	key := occupancyKey{host: "gpu-01:9091", kind: DeviceGPU}
 	other := occupancyKey{host: "other:1", kind: DeviceGPU}
 
 	o.begin(key, "mine", at(0))
@@ -203,7 +203,7 @@ func TestPriceBook_StampWithEnergy(t *testing.T) {
 	assert.Equal(t, 600.0, draw)
 
 	entry := func(engine string) *ConsumptionEntry {
-		return &ConsumptionEntry{TenantID: "t", Engine: engine, Model: "review-q8", Host: "gpu-host:9091", DurationMillis: 60_000, InputTokens: 10}
+		return &ConsumptionEntry{TenantID: "t", Engine: engine, Model: "review-q8", Host: "gpu-01:9091", DurationMillis: 60_000, InputTokens: 10}
 	}
 
 	t.Run("measured energy outranks the configured draw", func(t *testing.T) {
@@ -214,7 +214,7 @@ func TestPriceBook_StampWithEnergy(t *testing.T) {
 		assert.Equal(t, int64(1000), e.EquivalentMicros, "5 Wh at $0.20/kWh is $0.001")
 		assert.Equal(t, ProvenanceMeasured, e.EnergyProvenance)
 		assert.Equal(t, PriceBasisElectricity, e.PriceBasis)
-		assert.Contains(t, e.PriceRef, "measured:gpu@gpu-host:9091")
+		assert.Contains(t, e.PriceRef, "measured:gpu@gpu-01:9091")
 		assert.Equal(t, localProvider, e.Provider)
 	})
 	t.Run("measured energy needs no configured draw", func(t *testing.T) {
@@ -272,17 +272,17 @@ func TestRecordConsumption_MeasuresEnergyFromFleetTelemetry(t *testing.T) {
 	store, err := NewFleetTelemetryStore(series)
 	require.NoError(t, err)
 	impl.SetFleetTelemetryStore(store)
-	impl.SetNode("gpu-host:9091")
+	impl.SetNode("gpu-01:9091")
 
 	ctx := ContextWithTenant(context.Background(), "t1")
 	now := time.Now().UTC()
 	// The GPU drew 300 W across the whole turn.
 	for _, offset := range []time.Duration{-40 * time.Second, -10 * time.Second, 5 * time.Second} {
-		require.NoError(t, store.Record(ctx, "t1", "n", "gpu-host:9091", now.Add(offset), []DeviceSample{gpuSample("GPU-1", 300)}))
+		require.NoError(t, store.Record(ctx, "t1", "n", "gpu-01:9091", now.Add(offset), []DeviceSample{gpuSample("GPU-1", 300)}))
 	}
 
 	turn := completedTurn{turnID: "turn-1", sessionID: "s1", engine: "ollama", model: "review-q8", duration: 30 * time.Second}
-	impl.recordConsumption(ctx, turn, TurnAttribution{}, turnSession{host: "gpu-host:9091"}, &TokenUsage{InputTokens: 5}, ConsumptionOutcomeSuccess)
+	impl.recordConsumption(ctx, turn, TurnAttribution{}, turnSession{host: "gpu-01:9091"}, &TokenUsage{InputTokens: 5}, ConsumptionOutcomeSuccess)
 
 	rollup, err := ledger.Rollup(ctx, ConsumptionScope{TenantID: "t1"})
 	require.NoError(t, err)

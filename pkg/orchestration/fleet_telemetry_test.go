@@ -137,7 +137,7 @@ func TestFleetTelemetryStore_RecordFilesKnownReadingsOnly(t *testing.T) {
 	at := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
 
 	npu := DeviceSample{Kind: DeviceNPU, ID: "accel0", Utilization: Derived(0.25)}
-	require.NoError(t, store.Record(context.Background(), "t1", "node-1", "gpu-host:9091", at,
+	require.NoError(t, store.Record(context.Background(), "t1", "node-1", "gpu-01:9091", at,
 		[]DeviceSample{gpuSample("GPU-1", 300), npu}))
 
 	points := series.points["t1"]
@@ -152,7 +152,7 @@ func TestFleetTelemetryStore_RecordFilesKnownReadingsOnly(t *testing.T) {
 	}
 	assert.Equal(t, MetricDeviceUtilization, npuPoint.Metric)
 	assert.Equal(t, "derived", npuPoint.Tags[telemetryTagProvenance])
-	assert.Equal(t, "gpu-host:9091", npuPoint.Tags[telemetryTagHost])
+	assert.Equal(t, "gpu-01:9091", npuPoint.Tags[telemetryTagHost])
 	assert.Equal(t, "node-1", npuPoint.Tags[telemetryTagNode])
 	assert.Equal(t, at, npuPoint.At)
 }
@@ -246,7 +246,7 @@ func TestFleetNodeHeartbeat_FilesDeviceTelemetryUnderTheNodesHost(t *testing.T) 
 	ctx := context.Background()
 
 	resp, err := impl.RegisterFleetNode(ctx, &RegisterFleetNodeRequest{
-		TenantID: "tenant-1", Name: "gpu-host", Host: "gpu-host:9091", NodeType: "agent-runtime",
+		TenantID: "tenant-1", Name: "gpu-01", Host: "gpu-01:9091", NodeType: "agent-runtime",
 	})
 	require.NoError(t, err)
 
@@ -255,7 +255,7 @@ func TestFleetNodeHeartbeat_FilesDeviceTelemetryUnderTheNodesHost(t *testing.T) 
 
 	points := series.points["tenant-1"]
 	require.NotEmpty(t, points)
-	assert.Equal(t, "gpu-host:9091", points[0].Tags[telemetryTagHost])
+	assert.Equal(t, "gpu-01:9091", points[0].Tags[telemetryTagHost])
 	assert.Equal(t, resp.Node.ID, points[0].Tags[telemetryTagNode])
 }
 

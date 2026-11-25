@@ -125,7 +125,7 @@
 //	err = client.Session().Revoke(ctx, sessionID)
 //
 //	// Revoke all other sessions (security measure)
-//	err = client.Session().RevokeOthers(ctx, currentSessionID)
+//	err = client.Session().RevokeOthers(ctx, tenantID, currentSessionID)
 //
 // # Audit Logging
 //

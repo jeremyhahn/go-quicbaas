@@ -201,7 +201,7 @@ func TestPEPServerCoverage_CheckBatch(t *testing.T) {
 	})
 
 	t.Run("successful_batch_check_returns_results", func(t *testing.T) {
-		resp, err := server.CheckBatch(context.Background(), &iampb.CheckBatchRequest{
+		resp, err := server.CheckBatch(tenantctx.WithTenant(context.Background(), "t1"), &iampb.CheckBatchRequest{
 			Subject:   &iampb.Subject{Id: "user-1"},
 			Action:    "read",
 			Resources: []string{"/data/a", "/data/b"},
@@ -222,7 +222,7 @@ func TestPEPServerCoverage_CheckBatch(t *testing.T) {
 		}
 		errServer := NewPEPServer(errSvc, newPEPTestLogger())
 
-		_, err := errServer.CheckBatch(context.Background(), &iampb.CheckBatchRequest{
+		_, err := errServer.CheckBatch(tenantctx.WithTenant(context.Background(), "t1"), &iampb.CheckBatchRequest{
 			Subject:   &iampb.Subject{Id: "user-1"},
 			Action:    "read",
 			Resources: []string{"/data"},

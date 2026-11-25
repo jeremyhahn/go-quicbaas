@@ -142,8 +142,8 @@ func resetInitFlags() {
 	initUsername = ""
 	initCSRKeyPath = ""
 	initOutputPath = ""
-	initTLSCertPath = ""
-	initTLSKeyPath = ""
+	tlsCert = ""
+	tlsKey = ""
 	initSOPin = ""
 	initCSRPath = ""
 	initRole = ""
@@ -378,6 +378,45 @@ func TestInitClaimShare_Success(t *testing.T) {
 	got, err := os.ReadFile(outPath)
 	require.NoError(t, err)
 	assert.Contains(t, string(got), `"share"`)
+}
+
+// The officer proves their identity on the claim's mTLS handshake, so the
+// --tls-cert/--tls-key handed to claim-share must reach the transport config
+// the SDK client is built from (buildTLSConfig reads tlsCert/tlsKey), not
+// only the nonce signer.
+func TestInitClaimShare_OfficerCertificateReachesTransport(t *testing.T) {
+	defer resetInitFlags()
+	origCert, origKey := tlsCert, tlsKey
+	defer func() { tlsCert, tlsKey = origCert, origKey }()
+
+	dir := t.TempDir()
+	keyPath := filepath.Join(dir, "alice.key")
+	certPath := filepath.Join(dir, "alice.crt")
+	writeECPEM(t, keyPath)
+
+	var dialCert, dialKey string
+	fc := &fakeCeremonyClient{}
+	orig := ceremonyClientFactory
+	ceremonyClientFactory = func() (CeremonyClient, error) {
+		dialCert, dialKey = tlsCert, tlsKey
+		return fc, nil
+	}
+	defer func() { ceremonyClientFactory = orig }()
+
+	cmd := newInitClaimShareCommand()
+	cmd.SetArgs([]string{
+		"--username", "alice",
+		"--tls-cert", certPath,
+		"--tls-key", keyPath,
+		"--output", filepath.Join(dir, "alice.share.json"),
+	})
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+
+	require.NoError(t, cmd.Execute())
+	assert.Equal(t, certPath, dialCert, "the officer certificate must be the client's mTLS certificate")
+	assert.Equal(t, keyPath, dialKey, "the officer key must be the client's mTLS key")
 }
 
 // TestInitClaimShare_UnreadableKey rejects a signing key that cannot be
