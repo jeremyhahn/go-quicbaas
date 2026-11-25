@@ -32,6 +32,20 @@ import (
 // TestIAMSessionList verifies that listing sessions for a tenant succeeds.
 // Sessions may be empty if no login has occurred, but the command must
 // execute without error.
+// forSessionUser returns cmd with the value of its --user flag set to userID.
+// The shared session commands name the user "admin", which the API refuses
+// because a user ID is a decimal uint64; these tests pass the tenant admin's ID.
+func forSessionUser(cmd CommandDef, userID string) CommandDef {
+	args := append([]string(nil), cmd.Args...)
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "--user" {
+			args[i+1] = userID
+		}
+	}
+	cmd.Args = args
+	return cmd
+}
+
 func TestIAMSessionList(t *testing.T) {
 	RunForTransports(t, "SessionList", iamTransportsToSkip, func(t *testing.T, runner *TestRunner) {
 		if !runner.RequireIAMAvailable() {
@@ -44,7 +58,7 @@ func TestIAMSessionList(t *testing.T) {
 			runner.Run(IAMTenantDeleteCommand(tenantID))
 		}()
 
-		listCmd := IAMSessionListCommand(tenantID)
+		listCmd := forSessionUser(IAMSessionListCommand(tenantID), tenantAdminUserID(t, runner, tenantID))
 		stdout, stderr, err := runner.Run(listCmd)
 		if runner.IsSkipped(listCmd) {
 			return
@@ -66,10 +80,11 @@ func TestIAMSessionListJSON(t *testing.T) {
 		defer func() {
 			runner.Run(IAMTenantDeleteCommand(tenantID))
 		}()
+		adminUserID := tenantAdminUserID(t, runner, tenantID)
 
 		listCmd := CommandDef{
 			Name:           "iam session list json",
-			Args:           []string{"iam", "session", "list", "--tenant", tenantID, "--user", "admin", "--output", "json"},
+			Args:           []string{"iam", "session", "list", "--tenant", tenantID, "--user", adminUserID, "--output", "json"},
 			ExpectSuccess:  true,
 			Timeout:        15 * time.Second,
 			SkipTransports: iamTransportsToSkip,
@@ -102,10 +117,11 @@ func TestIAMSessionListWithLimit(t *testing.T) {
 		defer func() {
 			runner.Run(IAMTenantDeleteCommand(tenantID))
 		}()
+		adminUserID := tenantAdminUserID(t, runner, tenantID)
 
 		listCmd := CommandDef{
 			Name:           "iam session list with limit",
-			Args:           []string{"iam", "session", "list", "--tenant", tenantID, "--user", "admin", "--limit", "5"},
+			Args:           []string{"iam", "session", "list", "--tenant", tenantID, "--user", adminUserID, "--limit", "5"},
 			ExpectSuccess:  true,
 			Timeout:        15 * time.Second,
 			SkipTransports: iamTransportsToSkip,
@@ -215,7 +231,7 @@ func TestIAMSessionRevokeAll(t *testing.T) {
 			runner.Run(IAMTenantDeleteCommand(tenantID))
 		}()
 
-		revokeAllCmd := IAMSessionRevokeAllCommand(tenantID)
+		revokeAllCmd := forSessionUser(IAMSessionRevokeAllCommand(tenantID), tenantAdminUserID(t, runner, tenantID))
 		stdout, stderr, err := runner.Run(revokeAllCmd)
 		if runner.IsSkipped(revokeAllCmd) {
 			return
@@ -241,6 +257,7 @@ func TestIAMSessionRevokeAllKeepCurrent(t *testing.T) {
 		defer func() {
 			runner.Run(IAMTenantDeleteCommand(tenantID))
 		}()
+		adminUserID := tenantAdminUserID(t, runner, tenantID)
 
 		revokeAllKeepCmd := CommandDef{
 			Name: "iam session revoke-all keep-current",
@@ -248,7 +265,7 @@ func TestIAMSessionRevokeAllKeepCurrent(t *testing.T) {
 				"iam", "session", "revoke-all",
 				"--tenant", tenantID,
 				"--yes",
-				"--user", "admin",
+				"--user", adminUserID,
 				"--keep-current",
 			},
 			ExpectSuccess:  false,
@@ -294,11 +311,12 @@ func TestIAMSessionLifecycle(t *testing.T) {
 		defer func() {
 			runner.Run(IAMTenantDeleteCommand(tenantID))
 		}()
+		adminUserID := tenantAdminUserID(t, runner, tenantID)
 
 		// Step 1: List sessions in JSON format to parse results
 		listCmd := CommandDef{
 			Name:           "iam session list json for lifecycle",
-			Args:           []string{"iam", "session", "list", "--tenant", tenantID, "--user", "admin", "--output", "json"},
+			Args:           []string{"iam", "session", "list", "--tenant", tenantID, "--user", adminUserID, "--output", "json"},
 			ExpectSuccess:  true,
 			Timeout:        15 * time.Second,
 			SkipTransports: iamTransportsToSkip,

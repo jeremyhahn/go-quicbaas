@@ -16,6 +16,7 @@ package iam
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -282,6 +283,48 @@ func TestPolicyClient_Create(t *testing.T) {
 			t.Error("expected error for invalid response type")
 		}
 	})
+}
+
+func TestValidateCreatePolicyRequest_RulesOrSpecYAML(t *testing.T) {
+	tests := []struct {
+		name    string
+		req     *CreatePolicyRequest
+		wantErr string
+	}{
+		{
+			name: "spec_yaml only",
+			req:  &CreatePolicyRequest{Name: "p", SpecYAML: []byte("name: p\n")},
+		},
+		{
+			name: "rules only",
+			req:  &CreatePolicyRequest{Name: "p", Rules: []Rule{{Name: "r"}}},
+		},
+		{
+			name:    "neither rules nor spec_yaml",
+			req:     &CreatePolicyRequest{Name: "p"},
+			wantErr: "at least one rule or spec_yaml is required",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateCreatePolicyRequest("tenant-1", tt.req)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("expected error %q, got nil", tt.wantErr)
+			}
+			if !errors.IsInvalidInput(err) {
+				t.Errorf("expected invalid input error, got %v", err)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("expected error containing %q, got %v", tt.wantErr, err)
+			}
+		})
+	}
 }
 
 func TestPolicyClient_Get(t *testing.T) {

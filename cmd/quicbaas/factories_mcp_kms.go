@@ -16,8 +16,13 @@ package main
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/json"
+	"fmt"
+	"strings"
 	"time"
+
+	kctypes "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
@@ -46,11 +51,7 @@ func createMCPKMSClient() (KMSClient, error) {
 func (c *mcpKMSClient) KMSGenerateKey(ctx context.Context, req *service.GenerateKeyRequest) (*service.GenerateKeyResponse, error) {
 	args := map[string]interface{}{}
 	if req.KeyAttributes != nil {
-		if req.KeyAttributes.SymmetricAlgorithm != "" {
-			args["algorithm"] = string(req.KeyAttributes.SymmetricAlgorithm)
-		} else {
-			args["algorithm"] = req.KeyAttributes.KeyAlgorithm.String()
-		}
+		args["algorithm"] = mcpKeyAlgorithm(req.KeyAttributes)
 	}
 	if req.Name != "" {
 		args["name"] = req.Name
@@ -95,11 +96,7 @@ func (c *mcpKMSClient) KMSImportKey(ctx context.Context, req *service.ImportKeyR
 		args["description"] = req.Description
 	}
 	if req.KeyAttributes != nil {
-		if req.KeyAttributes.SymmetricAlgorithm != "" {
-			args["algorithm"] = string(req.KeyAttributes.SymmetricAlgorithm)
-		} else {
-			args["algorithm"] = req.KeyAttributes.KeyAlgorithm.String()
-		}
+		args["algorithm"] = mcpKeyAlgorithm(req.KeyAttributes)
 		if req.KeyAttributes.Exportable {
 			args["exportable"] = true
 		}
@@ -1083,6 +1080,31 @@ func parseDuration(s string) time.Duration {
 	}
 	d, _ := time.ParseDuration(s)
 	return d
+}
+
+// mcpKeyAlgorithm names attrs' algorithm the way the KMS MCP tool parses it.
+// The curve or key size is part of the name: "ECDSA" or "RSA" alone is not
+// a name the tool knows, and it falls back to AES-256-GCM.
+func mcpKeyAlgorithm(attrs *kctypes.KeyAttributes) string {
+	if attrs.SymmetricAlgorithm != "" {
+		return string(attrs.SymmetricAlgorithm)
+	}
+	switch attrs.KeyAlgorithm {
+	case x509.ECDSA:
+		if attrs.ECCAttributes != nil && attrs.ECCAttributes.Curve != nil {
+			return "ECDSA-" + strings.ReplaceAll(attrs.ECCAttributes.Curve.Params().Name, "-", "")
+		}
+		return "ECDSA-P256"
+	case x509.RSA:
+		size := 2048
+		if attrs.RSAAttributes != nil && attrs.RSAAttributes.KeySize > 0 {
+			size = attrs.RSAAttributes.KeySize
+		}
+		return fmt.Sprintf("RSA-%d", size)
+	case x509.Ed25519:
+		return "ED25519"
+	}
+	return attrs.KeyAlgorithm.String()
 }
 
 // =============================================================================
