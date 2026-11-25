@@ -58,7 +58,8 @@ func TestTenantAdminSession_ReusesBearerUntilExpiry(t *testing.T) {
 
 	first, err := session.Bearer(context.Background())
 	require.NoError(t, err)
-	fake.clock = fake.clock.Add(14 * time.Minute)
+	// Still more than pivReuseMargin before the bearer's expiry.
+	fake.clock = fake.clock.Add(12 * time.Minute)
 	second, err := session.Bearer(context.Background())
 	require.NoError(t, err)
 
