@@ -576,6 +576,11 @@ type Server struct {
 	// read and written atomically. Empty answers not-configured.
 	barrierServicer atomic.Pointer[barrierServicerRef]
 
+	// credentialServicer is the qrdb.v1 credential servicer the credential
+	// proxy serves on a seal-off node, published by startService while the
+	// listeners run, so it is read and written atomically. Empty answers not-configured.
+	credentialServicer atomic.Pointer[credentialServicerRef]
+
 	// tenantSDKClient is the in-process qrdb SDK client whose embedded
 	// transport carries the node's TenantServicer. It backs the per-tenant
 	// barrier facade shared by every transport (see tenant_barrier_wiring.go).

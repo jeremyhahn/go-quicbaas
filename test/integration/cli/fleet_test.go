@@ -1154,18 +1154,22 @@ func findAgentID(t *testing.T, runner *TestRunner, tenant, agentName string) str
 		return ""
 	}
 
+	// The fleet list JSON carries the agents under "nodes" (REST and CLI);
+	// older output used "agents". Accept both.
+	type fleetEntry struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
 	var listResp struct {
-		Agents []struct {
-			ID   string `json:"id"`
-			Name string `json:"name"`
-		} `json:"agents"`
+		Nodes  []fleetEntry `json:"nodes"`
+		Agents []fleetEntry `json:"agents"`
 	}
 	if err := json.Unmarshal([]byte(stdout), &listResp); err != nil {
 		return ""
 	}
 
-	for _, agent := range listResp.Agents {
-		if agent.Name == agentName {
+	for _, agent := range append(listResp.Nodes, listResp.Agents...) {
+		if agent.Name == agentName && agent.ID != "" {
 			return agent.ID
 		}
 	}
