@@ -576,7 +576,7 @@ func OrchestratorRunHelpCommand() CommandDef {
 		Name:          "orchestrator run help",
 		Args:          []string{"orchestrator", "run", "--help"},
 		ExpectSuccess: true,
-		ExpectOutput:  []string{"workflow", "backend", "max-iterations"},
+		ExpectOutput:  []string{"workflow", "lead", "max-iterations"},
 		Timeout:       10 * time.Second,
 	}
 }
