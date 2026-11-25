@@ -40,6 +40,12 @@ type IAMServer struct {
 	// inviteOrigin is the origin activation links are built under: the one
 	// the WebAuthn relying party accepts. Empty leaves invite_url unset.
 	inviteOrigin string
+
+	// roleAuthorizer checks the request-dependent permissions the method
+	// annotation cannot carry (roles:assign when UpdateUser names roles), so
+	// the check holds on every gRPC listener, not only the legacy one. Nil
+	// refuses such requests (fail closed).
+	roleAuthorizer GRPCValidatorAuthorizer
 }
 
 // IAMService defines the interface for IAM operations.
@@ -140,6 +146,26 @@ func NewIAMServer(iamService IAMService, log *logger.Logger) *IAMServer {
 // and the ceremony is then refused.
 func (s *IAMServer) SetInviteOrigin(origin string) {
 	s.inviteOrigin = origin
+}
+
+// SetRoleAuthorizer sets the authorizer UpdateUser asks for roles:assign
+// when a request names roles. Without one such requests are refused.
+func (s *IAMServer) SetRoleAuthorizer(authorizer GRPCValidatorAuthorizer) {
+	s.roleAuthorizer = authorizer
+}
+
+// requireRoleAssign demands roles:assign of the caller's bearer token, as
+// the legacy interceptor does for the same request (grpcRequestPermissions),
+// so a caller holding only users:update cannot grant itself roles on a
+// listener whose interceptor checks only the method annotation.
+func (s *IAMServer) requireRoleAssign(ctx context.Context) error {
+	if s.roleAuthorizer == nil {
+		return status.Error(codes.PermissionDenied, "role assignment requires roles:assign and no authorizer is configured")
+	}
+	if _, err := s.roleAuthorizer.Authorize(ctx, bearerFromContext(ctx), "roles:assign", "", "", ""); err != nil {
+		return validatorGRPCStatus(err)
+	}
+	return nil
 }
 
 // =============================================================================
@@ -440,6 +466,11 @@ func (s *IAMServer) UpdateUser(ctx context.Context, req *iampb.UpdateUserRequest
 	userID, err := parseUserID("user_id", req.UserId)
 	if err != nil {
 		return nil, err
+	}
+	if len(req.GetRoles()) > 0 {
+		if err := s.requireRoleAssign(ctx); err != nil {
+			return nil, err
+		}
 	}
 
 	user := &iam.User{
