@@ -24,6 +24,8 @@ import (
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
+	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
+
 	"github.com/stretchr/testify/require"
 )
 
@@ -31,7 +33,7 @@ import (
 // software PIV credential (P-256 key + a leaf certificate chained to the
 // cluster CA), enrolls it as a piv factor against the bootstrap admin user
 // (Credential = SHA-256(leaf DER), Metadata["cert_pem"] = the leaf PEM), then,
-// for every NETWORK transport:
+// for every network transport but MCP:
 //
 //  1. BeginLogin(piv) -> obtain the server nonce.
 //  2. Sign SHA-256(nonce) with the P-256 key (ECDSA ASN.1) — exactly what a
@@ -44,7 +46,8 @@ import (
 // SHA-256(nonce). The crypto is REAL end-to-end — nothing is mocked.
 //
 // The test asserts a bearer is issued, the resolved (subject, tenant) is
-// identical across transports, and the bearer validates.
+// identical across transports, and the bearer validates. Over MCP the login
+// is refused, because the unified login tools are not permitted on MCP.
 func TestUnifiedLogin_PIV_AcrossTransports(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
@@ -72,6 +75,20 @@ func TestUnifiedLogin_PIV_AcrossTransports(t *testing.T) {
 			c, cerr := newLoginClient(t, tr, mtlsTLSConfig(t))
 			require.NoError(t, cerr, "[%s] build PIV login client", tr)
 			defer c.Close()
+
+			if tr == transportMCP {
+				_, lerr := runSDKLogin(ctx, c,
+					qrdbtransport.FactorTypePIV,
+					adminSubject,
+					cred.leafHash,
+					cred.signNonce,
+					map[string]string{"slot": "9a"})
+				require.Equal(t, sdkerrors.CodeForbidden, sdkerrors.Code(lerr),
+					"[%s] PIV login must be refused over MCP, got %v", tr, lerr)
+				require.ErrorContains(t, lerr,
+					"tool not permitted (no permission registration): quicbaas_login_begin", "[%s]", tr)
+				return
+			}
 
 			res, lerr := runSDKLogin(ctx, c,
 				qrdbtransport.FactorTypePIV,

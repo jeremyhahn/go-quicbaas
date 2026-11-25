@@ -9,10 +9,13 @@ package main
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
 func TestParseCryptoEncryptResponse(t *testing.T) {
@@ -20,7 +23,7 @@ func TestParseCryptoEncryptResponse(t *testing.T) {
 		data := map[string]interface{}{
 			"key_id":      "key-1",
 			"key_version": float64(2),
-			"ciphertext":  "encrypted-data",
+			"ciphertext":  base64.StdEncoding.EncodeToString([]byte("encrypted-data")),
 		}
 		resp, err := parseCryptoEncryptResponse(data)
 		require.NoError(t, err)
@@ -48,7 +51,7 @@ func TestParseCryptoDecryptResponse(t *testing.T) {
 		data := map[string]interface{}{
 			"key_id":      "key-2",
 			"key_version": float64(1),
-			"plaintext":   "decrypted-data",
+			"plaintext":   base64.StdEncoding.EncodeToString([]byte("decrypted-data")),
 		}
 		resp, err := parseCryptoDecryptResponse(data)
 		require.NoError(t, err)
@@ -68,7 +71,7 @@ func TestParseCryptoSignResponse(t *testing.T) {
 		data := map[string]interface{}{
 			"key_id":         "sign-key",
 			"key_version":    float64(3),
-			"signature":      "sig-data",
+			"signature":      base64.StdEncoding.EncodeToString([]byte("sig-data")),
 			"hash_algorithm": "SHA256",
 		}
 		resp, err := parseCryptoSignResponse(data)
@@ -114,7 +117,7 @@ func TestParseCryptoHashResponse(t *testing.T) {
 	t.Run("ValidResponse", func(t *testing.T) {
 		data := map[string]interface{}{
 			"algorithm": "SHA512",
-			"hash":      "hash-bytes",
+			"hash":      base64.StdEncoding.EncodeToString([]byte("hash-bytes")),
 		}
 		resp, err := parseCryptoHashResponse(data)
 		require.NoError(t, err)
@@ -135,7 +138,7 @@ func TestParseCryptoHMACResponse(t *testing.T) {
 		data := map[string]interface{}{
 			"key_id":         "hmac-key",
 			"key_version":    float64(1),
-			"hmac":           "hmac-value",
+			"hmac":           base64.StdEncoding.EncodeToString([]byte("hmac-value")),
 			"hash_algorithm": "SHA256",
 		}
 		resp, err := parseCryptoHMACResponse(data)
@@ -181,7 +184,7 @@ func TestParseCryptoRewrapResponse(t *testing.T) {
 			"key_id":          "rewrap-key",
 			"old_key_version": float64(1),
 			"new_key_version": float64(2),
-			"ciphertext":      "rewrapped-ct",
+			"ciphertext":      base64.StdEncoding.EncodeToString([]byte("rewrapped-ct")),
 		}
 		resp, err := parseCryptoRewrapResponse(data)
 		require.NoError(t, err)
@@ -202,8 +205,8 @@ func TestParseCryptoGenerateDataKeyResponse(t *testing.T) {
 	t.Run("ValidResponse", func(t *testing.T) {
 		data := map[string]interface{}{
 			"key_id":          "dek-key",
-			"plaintext":       "plain-key",
-			"ciphertext_blob": "ct-blob",
+			"plaintext":       base64.StdEncoding.EncodeToString([]byte("plain-key")),
+			"ciphertext_blob": base64.StdEncoding.EncodeToString([]byte("ct-blob")),
 		}
 		resp, err := parseCryptoGenerateDataKeyResponse(data)
 		require.NoError(t, err)
@@ -223,7 +226,7 @@ func TestParseCryptoGenerateDataKeyResponse(t *testing.T) {
 func TestParseCryptoGenerateRandomResponse(t *testing.T) {
 	t.Run("ValidResponse", func(t *testing.T) {
 		data := map[string]interface{}{
-			"random_bytes": "random-data",
+			"random_bytes": base64.StdEncoding.EncodeToString([]byte("random-data")),
 		}
 		resp, err := parseCryptoGenerateRandomResponse(data)
 		require.NoError(t, err)
@@ -236,6 +239,34 @@ func TestParseCryptoGenerateRandomResponse(t *testing.T) {
 		require.NoError(t, err)
 		assert.Nil(t, resp.RandomBytes)
 	})
+}
+
+// TestParseCryptoEncryptResponse_DecodesMCPBase64Once checks the parser
+// against the JSON shape the MCP server actually sends: encoding/json writes
+// a []byte as a base64 string, so the parser must decode it exactly once.
+func TestParseCryptoEncryptResponse_DecodesMCPBase64Once(t *testing.T) {
+	want := []byte{0x00, 0xff, 0x10, 'x'}
+	raw, err := json.Marshal(service.EncryptResponse{KeyID: "k", Ciphertext: want})
+	require.NoError(t, err)
+	var data map[string]interface{}
+	require.NoError(t, json.Unmarshal(raw, &data))
+
+	resp, err := parseCryptoEncryptResponse(data)
+	require.NoError(t, err)
+	assert.Equal(t, want, resp.Ciphertext)
+}
+
+// TestParseCryptoResponses_RejectNonBase64 checks that a byte field that is
+// not valid base64 is an error naming the key, not passed through as raw
+// bytes (which would hide a double encoding).
+func TestParseCryptoResponses_RejectNonBase64(t *testing.T) {
+	_, err := parseCryptoEncryptResponse(map[string]interface{}{"ciphertext": "not base64!"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ciphertext")
+
+	_, err = parseCryptoGenerateDataKeyResponse(map[string]interface{}{"plaintext": "", "ciphertext_blob": "%%%"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ciphertext_blob")
 }
 
 // Test MCP crypto client interface compliance

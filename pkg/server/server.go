@@ -290,6 +290,10 @@ type Server struct {
 	// never wired serves no certificate operation, so swapping its CA would
 	// report a success that changes nothing.
 	caWired atomic.Bool
+	// caSettled is set once initializeCA has returned. Until then the go-xkms
+	// module's resolver yields no XKMS service, so the module cannot build
+	// and cache its KeystoreService before the node's CA is bound.
+	caSettled atomic.Bool
 
 	// xkmsKeyStorage is the file-backed XKMS key store created by
 	// initializeCA. startKMS reuses this same storage root so that the CA
