@@ -351,7 +351,7 @@ fixed in a docs change.
     alongside a pin; there is no allow-list picker and no rotate action.
 13. **A lab host in CLI help.** `cmd/quicbaas/orchestrator_cost.go:78` uses a
     real-looking host and port as its `--host` example; it should use a
-    placeholder such as `gpu-host.internal`. The `SpendHost.Host` comment
+    placeholder such as `gpu-01.internal`. The `SpendHost.Host` comment
     (`pkg/orchestration/spend_report.go:297`) has the same problem.
 14. **gRPC does not map a revoked delivery grant.** REST answers a presented
     revoked lease with 409 so a daemon drops the grant and asks for a fresh

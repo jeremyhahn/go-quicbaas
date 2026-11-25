@@ -144,17 +144,17 @@ describe('RestOrchestratorClient.getSpendReport', () => {
   it('sends the host only when set, and carries the per-host rows', async () => {
     const hosted: GetSpendReportResponse = {
       ...serverBody,
-      host: 'gpu-host:9091',
+      host: 'gpu-01:9091',
       measured_energy_entries: 2,
-      hosts: [{ host: 'gpu-host:9091', total_tokens: 200, measured_energy_entries: 2 }],
+      hosts: [{ host: 'gpu-01:9091', total_tokens: 200, measured_energy_entries: 2 }],
     };
     fetchMock.mockImplementation(() => Promise.resolve(makeResponse(hosted)));
     const client = new RestClient('http://localhost').orchestrator;
 
-    const resp = await client.getSpendReport({ tenant_id: 'acme', host: 'gpu-host:9091' });
+    const resp = await client.getSpendReport({ tenant_id: 'acme', host: 'gpu-01:9091' });
     const narrowed = new URL(fetchMock.mock.calls[0][0] as string).searchParams;
-    expect(narrowed.get('host')).toBe('gpu-host:9091');
-    expect(resp.hosts?.[0]?.host).toBe('gpu-host:9091');
+    expect(narrowed.get('host')).toBe('gpu-01:9091');
+    expect(resp.hosts?.[0]?.host).toBe('gpu-01:9091');
     expect(resp.measured_energy_entries).toBe(2);
 
     await client.getSpendReport({ tenant_id: 'acme' });

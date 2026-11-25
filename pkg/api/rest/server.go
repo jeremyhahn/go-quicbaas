@@ -345,6 +345,13 @@ type Server struct {
 	sealedProbe     qrdbsdk.SealedWindowProbe
 	sealedAllowlist []string
 
+	// sealedWindowHandler is qrdb's sealed REST surface
+	// (rest.NewSealedWindowHandler) over the node's own seal services. When
+	// set, setupRouter mounts it on every allowlisted route the native
+	// router does not serve, so the sealed listener answers its whole
+	// allowlist with the handlers the unix and gRPC windows serve.
+	sealedWindowHandler http.Handler
+
 	// sealedBypass is the shared sealed-window authentication-bypass
 	// predicate (probe + canonical-table lookup), derived by
 	// SetSealedWindowGate from the same probe that drives the sealed gate.
@@ -578,6 +585,11 @@ func (s *Server) setupRouter() {
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/docs/", http.StatusMovedPermanently)
 	})
+
+	// The sealed window's allowlisted routes with no native handler are
+	// served by qrdb's sealed REST surface (last, so nothing native is
+	// shadowed).
+	s.mountSealedWindowRoutes(r)
 
 	s.router = r
 }

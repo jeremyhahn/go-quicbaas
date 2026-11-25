@@ -40,14 +40,14 @@ metadata:
   name: %s
   tenant: %s
 spec:
+  subjects:
+    authenticated: true
   rules:
     - name: allow-read
       effect: allow
       actions: [read]
       resources:
         - keys/**
-      subjects:
-        authenticated: true
 `, policyName, tenantID)
 
 	tmpFile, err := os.CreateTemp("", "policy-*.yaml")
@@ -107,7 +107,8 @@ spec:
 }
 
 // createPolicyTestTenant provisions a tenant for policy tests, makes the runner
-// act as its admin, and registers cleanup.
+// act as its admin. helpers.TenantAdmin, which provisions the tenant on the
+// first command, registers the tenant delete.
 // Returns the tenant ID.
 func createPolicyTestTenant(t *testing.T, runner *TestRunner) string {
 	t.Helper()
@@ -117,10 +118,22 @@ func createPolicyTestTenant(t *testing.T, runner *TestRunner) string {
 		return ""
 	}
 	runner.ActAsTenantAdmin(tenantID)
-	t.Cleanup(func() {
-		delCmd := IAMTenantDeleteCommand(tenantID)
-		requireCleanupRun(t, runner, delCmd)
-	})
+	return tenantID
+}
+
+// createEmptyPolicyTestTenant is createPolicyTestTenant for a test that never
+// creates a policy, without the CLI tenant-delete cleanup. helpers.TenantAdmin,
+// which provisions the tenant on the first command, registers its own delete;
+// cleanups run last-in-first-out, so it removes the empty tenant first and a
+// second delete answers NOT_FOUND.
+func createEmptyPolicyTestTenant(t *testing.T, runner *TestRunner) string {
+	t.Helper()
+	tenantID := UniqueKey("pol-tenant")
+	cmd := IAMTenantCreateCommand(tenantID, tenantID+"-name")
+	if runner.IsSkipped(cmd) {
+		return ""
+	}
+	runner.ActAsTenantAdmin(tenantID)
 	return tenantID
 }
 
@@ -152,6 +165,10 @@ func TestIAMPolicyLifecycle(t *testing.T) {
 
 		// Apply
 		applyCmd := IAMPolicyApplyCommand(policyFile)
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, applyCmd) {
+			return
+		}
 		stdout, stderr, err := runner.Run(applyCmd)
 		if runner.IsSkipped(applyCmd) {
 			return
@@ -202,6 +219,10 @@ func TestIAMPolicyApply(t *testing.T) {
 		policyFile := writeTempPolicyFile(t, tenantID, policyName)
 
 		applyCmd := IAMPolicyApplyCommand(policyFile)
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, applyCmd) {
+			return
+		}
 		stdout, stderr, err := runner.Run(applyCmd)
 		if runner.IsSkipped(applyCmd) {
 			return
@@ -235,6 +256,10 @@ func TestIAMPolicyApplyJSON(t *testing.T) {
 			ExpectSuccess:  true,
 			Timeout:        10 * time.Second,
 			SkipTransports: iamTransportsToSkip,
+		}
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, applyJSONCmd) {
+			return
 		}
 		stdout, stderr, err := runner.Run(applyJSONCmd)
 		if runner.IsSkipped(applyJSONCmd) {
@@ -296,6 +321,10 @@ func TestIAMPolicyGet(t *testing.T) {
 
 		// Apply first
 		applyCmd := IAMPolicyApplyCommand(policyFile)
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, applyCmd) {
+			return
+		}
 		stdout, stderr, err := runner.Run(applyCmd)
 		if runner.IsSkipped(applyCmd) {
 			return
@@ -331,6 +360,10 @@ func TestIAMPolicyGetJSON(t *testing.T) {
 
 		// Apply first
 		applyCmd := IAMPolicyApplyCommand(policyFile)
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, applyCmd) {
+			return
+		}
 		stdout, stderr, err := runner.Run(applyCmd)
 		if runner.IsSkipped(applyCmd) {
 			return
@@ -366,7 +399,7 @@ func TestIAMPolicyGetNonExistent(t *testing.T) {
 			return
 		}
 
-		tenantID := createPolicyTestTenant(t, runner)
+		tenantID := createEmptyPolicyTestTenant(t, runner)
 		if tenantID == "" {
 			return
 		}
@@ -411,6 +444,10 @@ func TestIAMPolicyList(t *testing.T) {
 
 		// Apply both
 		applyCmd1 := IAMPolicyApplyCommand(policyFile1)
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, applyCmd1) {
+			return
+		}
 		stdout, stderr, err := runner.Run(applyCmd1)
 		if runner.IsSkipped(applyCmd1) {
 			return
@@ -455,6 +492,10 @@ func TestIAMPolicyListJSON(t *testing.T) {
 
 		// Apply both
 		applyCmd1 := IAMPolicyApplyCommand(policyFile1)
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, applyCmd1) {
+			return
+		}
 		stdout, stderr, err := runner.Run(applyCmd1)
 		if runner.IsSkipped(applyCmd1) {
 			return
@@ -510,6 +551,10 @@ func TestIAMPolicyDelete(t *testing.T) {
 
 		// Apply
 		applyCmd := IAMPolicyApplyCommand(policyFile)
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, applyCmd) {
+			return
+		}
 		stdout, stderr, err := runner.Run(applyCmd)
 		if runner.IsSkipped(applyCmd) {
 			return
@@ -542,7 +587,7 @@ func TestIAMPolicyDeleteNonExistent(t *testing.T) {
 			return
 		}
 
-		tenantID := createPolicyTestTenant(t, runner)
+		tenantID := createEmptyPolicyTestTenant(t, runner)
 		if tenantID == "" {
 			return
 		}
@@ -579,6 +624,10 @@ func TestIAMPolicyValidateValid(t *testing.T) {
 		policyFile := writeTempPolicyFile(t, tenantID, policyName)
 
 		validateCmd := IAMPolicyValidateCommand(policyFile)
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, validateCmd) {
+			return
+		}
 		stdout, stderr, err := runner.Run(validateCmd)
 		if runner.IsSkipped(validateCmd) {
 			return
@@ -643,6 +692,10 @@ func TestIAMPolicyTest(t *testing.T) {
 
 		// Apply the policy that allows read on keys/**
 		applyCmd := IAMPolicyApplyCommand(policyFile)
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, applyCmd) {
+			return
+		}
 		stdout, stderr, err := runner.Run(applyCmd)
 		if runner.IsSkipped(applyCmd) {
 			return
@@ -683,6 +736,10 @@ func TestIAMPolicyTestDeny(t *testing.T) {
 
 		// Apply the policy
 		applyCmd := IAMPolicyApplyCommand(policyFile)
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, applyCmd) {
+			return
+		}
 		stdout, stderr, err := runner.Run(applyCmd)
 		if runner.IsSkipped(applyCmd) {
 			return
@@ -730,6 +787,10 @@ func TestIAMPolicyTestJSON(t *testing.T) {
 
 		// Apply
 		applyCmd := IAMPolicyApplyCommand(policyFile)
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, applyCmd) {
+			return
+		}
 		stdout, stderr, err := runner.Run(applyCmd)
 		if runner.IsSkipped(applyCmd) {
 			return

@@ -622,7 +622,7 @@ func TestSchedulerHelp(t *testing.T) {
 
 // TestSchedulerStatus tests scheduler status command with all output formats.
 func TestSchedulerStatus(t *testing.T) {
-	RunForAllTransports(t, "SchedulerStatus", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "SchedulerStatus", "sched-tenant", func(t *testing.T, runner *TestRunner) {
 		cmd := SchedulerStatusCommand()
 		if runner.IsSkipped(cmd) {
 			return
@@ -630,7 +630,7 @@ func TestSchedulerStatus(t *testing.T) {
 		runner.RunAndAssert(cmd)
 	})
 
-	RunForAllTransports(t, "SchedulerStatusJSON", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "SchedulerStatusJSON", "sched-tenant", func(t *testing.T, runner *TestRunner) {
 		cmd := SchedulerStatusJSONCommand()
 		if runner.IsSkipped(cmd) {
 			return
@@ -644,7 +644,7 @@ func TestSchedulerStatus(t *testing.T) {
 		require.NoError(t, err, "Output should be valid JSON")
 	})
 
-	RunForAllTransports(t, "SchedulerStatusYAML", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "SchedulerStatusYAML", "sched-tenant", func(t *testing.T, runner *TestRunner) {
 		cmd := SchedulerStatusYAMLCommand()
 		if runner.IsSkipped(cmd) {
 			return
@@ -655,7 +655,7 @@ func TestSchedulerStatus(t *testing.T) {
 
 // TestSchedulerJobLifecycle tests complete job lifecycle via CLI.
 func TestSchedulerJobLifecycle(t *testing.T) {
-	RunForAllTransports(t, "JobLifecycle", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "JobLifecycle", "sched-tenant", func(t *testing.T, runner *TestRunner) {
 		jobName := fmt.Sprintf("cli-test-job-%d", time.Now().UnixNano())
 		executeAt := time.Now().Add(1 * time.Hour).Format(time.RFC3339)
 
@@ -748,7 +748,7 @@ func TestSchedulerJobLifecycle(t *testing.T) {
 
 // TestSchedulerJobCreate tests job creation with various options.
 func TestSchedulerJobCreate(t *testing.T) {
-	RunForAllTransports(t, "CreateOneShotJob", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "CreateOneShotJob", "sched-tenant", func(t *testing.T, runner *TestRunner) {
 		jobName := fmt.Sprintf("oneshot-%d", time.Now().UnixNano())
 		executeAt := time.Now().Add(1 * time.Hour).Format(time.RFC3339)
 
@@ -764,7 +764,7 @@ func TestSchedulerJobCreate(t *testing.T) {
 		cleanupSchedulerJob(t, runner, jobName)
 	})
 
-	RunForAllTransports(t, "CreateRecurringJob", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "CreateRecurringJob", "sched-tenant", func(t *testing.T, runner *TestRunner) {
 		jobName := fmt.Sprintf("recurring-%d", time.Now().UnixNano())
 
 		cmd := SchedulerJobCreateRecurringCommand(jobName, "backup.full", "0 0 * * *")
@@ -778,10 +778,12 @@ func TestSchedulerJobCreate(t *testing.T) {
 		cleanupSchedulerJob(t, runner, jobName)
 	})
 
-	RunForAllTransports(t, "CreateDelayedJob", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "CreateDelayedJob", "sched-tenant", func(t *testing.T, runner *TestRunner) {
 		jobName := fmt.Sprintf("delayed-%d", time.Now().UnixNano())
 
-		cmd := SchedulerJobCreateDelayedCommand(jobName, "audit.cleanup", "24h")
+		// audit.cleanup is a platform handler only its service schedules
+		// (scheduler.IsPlatformHandler); a tenant admin's job uses its own.
+		cmd := SchedulerJobCreateDelayedCommand(jobName, "test.handler", "24h")
 		if runner.IsSkipped(cmd) {
 			return
 		}
@@ -792,7 +794,7 @@ func TestSchedulerJobCreate(t *testing.T) {
 		cleanupSchedulerJob(t, runner, jobName)
 	})
 
-	RunForAllTransports(t, "CreateJobWithAllOptions", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "CreateJobWithAllOptions", "sched-tenant", func(t *testing.T, runner *TestRunner) {
 		jobName := fmt.Sprintf("allopts-%d", time.Now().UnixNano())
 
 		cmd := SchedulerJobCreateWithAllOptionsCommand(jobName, "test.comprehensive")
@@ -806,9 +808,9 @@ func TestSchedulerJobCreate(t *testing.T) {
 		cleanupSchedulerJob(t, runner, jobName)
 	})
 
-	RunForAllTransports(t, "CreateJobWithTenant", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "CreateJobWithTenant", "sched-tenant", func(t *testing.T, runner *TestRunner) {
 		jobName := fmt.Sprintf("tenant-%d", time.Now().UnixNano())
-		tenantID := "test-tenant"
+		tenantID := runner.TenantAdminID()
 
 		cmd := SchedulerJobCreateWithTenantCommand(jobName, "tenant.job", tenantID)
 		if runner.IsSkipped(cmd) {
@@ -824,7 +826,7 @@ func TestSchedulerJobCreate(t *testing.T) {
 
 // TestSchedulerJobList tests job listing with various filters.
 func TestSchedulerJobList(t *testing.T) {
-	RunForAllTransports(t, "ListJobs", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "ListJobs", "sched-tenant", func(t *testing.T, runner *TestRunner) {
 		cmd := SchedulerJobListCommand()
 		if runner.IsSkipped(cmd) {
 			return
@@ -832,7 +834,7 @@ func TestSchedulerJobList(t *testing.T) {
 		runner.RunAndAssert(cmd)
 	})
 
-	RunForAllTransports(t, "ListJobsWithLimit", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "ListJobsWithLimit", "sched-tenant", func(t *testing.T, runner *TestRunner) {
 		cmd := SchedulerJobListWithLimitCommand(10)
 		if runner.IsSkipped(cmd) {
 			return
@@ -840,7 +842,7 @@ func TestSchedulerJobList(t *testing.T) {
 		runner.RunAndAssert(cmd)
 	})
 
-	RunForAllTransports(t, "ListJobsJSON", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "ListJobsJSON", "sched-tenant", func(t *testing.T, runner *TestRunner) {
 		cmd := SchedulerJobListJSONCommand()
 		if runner.IsSkipped(cmd) {
 			return
@@ -853,7 +855,7 @@ func TestSchedulerJobList(t *testing.T) {
 		require.NoError(t, err, "Output should be valid JSON")
 	})
 
-	RunForAllTransports(t, "ListJobsByStatus", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "ListJobsByStatus", "sched-tenant", func(t *testing.T, runner *TestRunner) {
 		// Test various status filters
 		statuses := []string{"pending", "running", "completed", "failed", "paused", "canceled"}
 		for _, status := range statuses {
@@ -867,7 +869,7 @@ func TestSchedulerJobList(t *testing.T) {
 		}
 	})
 
-	RunForAllTransports(t, "ListJobsByHandler", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "ListJobsByHandler", "sched-tenant", func(t *testing.T, runner *TestRunner) {
 		cmd := SchedulerJobListWithHandlerCommand("test.handler")
 		if runner.IsSkipped(cmd) {
 			return
@@ -875,8 +877,8 @@ func TestSchedulerJobList(t *testing.T) {
 		runner.RunAndAssert(cmd)
 	})
 
-	RunForAllTransports(t, "ListJobsWithTenant", func(t *testing.T, runner *TestRunner) {
-		cmd := SchedulerJobListWithTenantCommand("test-tenant")
+	RunForAllTransportsAsTenantAdmin(t, "ListJobsWithTenant", "sched-tenant", func(t *testing.T, runner *TestRunner) {
+		cmd := SchedulerJobListWithTenantCommand(runner.TenantAdminID())
 		if runner.IsSkipped(cmd) {
 			return
 		}
@@ -886,7 +888,7 @@ func TestSchedulerJobList(t *testing.T) {
 
 // TestSchedulerJobHistory tests job history retrieval.
 func TestSchedulerJobHistory(t *testing.T) {
-	RunForAllTransports(t, "JobHistory", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "JobHistory", "sched-tenant", func(t *testing.T, runner *TestRunner) {
 		// First create a job to get history for
 		jobName := fmt.Sprintf("history-test-%d", time.Now().UnixNano())
 		executeAt := time.Now().Add(1 * time.Hour).Format(time.RFC3339)
@@ -925,7 +927,7 @@ func TestSchedulerJobHistory(t *testing.T) {
 
 // TestSchedulerJobPauseResume tests job pause and resume operations.
 func TestSchedulerJobPauseResume(t *testing.T) {
-	RunForAllTransports(t, "PauseResumeJob", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "PauseResumeJob", "sched-tenant", func(t *testing.T, runner *TestRunner) {
 		// Create a recurring job that can be paused
 		jobName := fmt.Sprintf("pause-resume-%d", time.Now().UnixNano())
 
@@ -957,7 +959,7 @@ func TestSchedulerJobPauseResume(t *testing.T) {
 
 // TestSchedulerJobCancel tests job cancellation.
 func TestSchedulerJobCancel(t *testing.T) {
-	RunForAllTransports(t, "CancelJob", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "CancelJob", "sched-tenant", func(t *testing.T, runner *TestRunner) {
 		jobName := fmt.Sprintf("cancel-test-%d", time.Now().UnixNano())
 		executeAt := time.Now().Add(1 * time.Hour).Format(time.RFC3339)
 
@@ -980,7 +982,7 @@ func TestSchedulerJobCancel(t *testing.T) {
 		cleanupSchedulerJob(t, runner, jobName)
 	})
 
-	RunForAllTransports(t, "CancelJobWithReason", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "CancelJobWithReason", "sched-tenant", func(t *testing.T, runner *TestRunner) {
 		jobName := fmt.Sprintf("cancel-reason-%d", time.Now().UnixNano())
 		executeAt := time.Now().Add(1 * time.Hour).Format(time.RFC3339)
 
@@ -1006,16 +1008,16 @@ func TestSchedulerJobCancel(t *testing.T) {
 
 // TestSchedulerJobErrors tests error handling.
 func TestSchedulerJobErrors(t *testing.T) {
-	RunForAllTransports(t, "CreateMissingHandler", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "CreateMissingHandler", "sched-tenant", func(t *testing.T, runner *TestRunner) {
 		jobName := fmt.Sprintf("error-test-%d", time.Now().UnixNano())
 		runner.RunAndAssert(SchedulerJobCreateMissingHandlerCommand(jobName))
 	})
 
-	RunForAllTransports(t, "GetInvalidID", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "GetInvalidID", "sched-tenant", func(t *testing.T, runner *TestRunner) {
 		runner.RunAndAssert(SchedulerJobGetInvalidIDCommand())
 	})
 
-	RunForAllTransports(t, "GetNonexistent", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "GetNonexistent", "sched-tenant", func(t *testing.T, runner *TestRunner) {
 		cmd := SchedulerJobGetNonexistentCommand()
 		if runner.IsSkipped(cmd) {
 			return
@@ -1023,21 +1025,21 @@ func TestSchedulerJobErrors(t *testing.T) {
 		runner.RunAndAssert(cmd)
 	})
 
-	RunForAllTransports(t, "DeleteInvalidID", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "DeleteInvalidID", "sched-tenant", func(t *testing.T, runner *TestRunner) {
 		runner.RunAndAssert(SchedulerJobDeleteInvalidIDCommand())
 	})
 
-	RunForAllTransports(t, "CreateInvalidTimeout", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "CreateInvalidTimeout", "sched-tenant", func(t *testing.T, runner *TestRunner) {
 		jobName := fmt.Sprintf("invalid-timeout-%d", time.Now().UnixNano())
 		runner.RunAndAssert(SchedulerJobCreateInvalidTimeoutCommand(jobName))
 	})
 
-	RunForAllTransports(t, "CreateInvalidExecuteAt", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "CreateInvalidExecuteAt", "sched-tenant", func(t *testing.T, runner *TestRunner) {
 		jobName := fmt.Sprintf("invalid-execute-%d", time.Now().UnixNano())
 		runner.RunAndAssert(SchedulerJobCreateInvalidExecuteAtCommand(jobName))
 	})
 
-	RunForAllTransports(t, "CreateInvalidDelay", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "CreateInvalidDelay", "sched-tenant", func(t *testing.T, runner *TestRunner) {
 		jobName := fmt.Sprintf("invalid-delay-%d", time.Now().UnixNano())
 		runner.RunAndAssert(SchedulerJobCreateInvalidDelayCommand(jobName))
 	})
@@ -1049,7 +1051,7 @@ func TestSchedulerOutputFormats(t *testing.T) {
 
 	for _, format := range formats {
 		t.Run(fmt.Sprintf("Status_%s", format), func(t *testing.T) {
-			RunForAllTransports(t, fmt.Sprintf("Status_%s", format), func(t *testing.T, runner *TestRunner) {
+			RunForAllTransportsAsTenantAdmin(t, fmt.Sprintf("Status_%s", format), "sched-tenant", func(t *testing.T, runner *TestRunner) {
 				cmd := CommandDef{
 					Name:           fmt.Sprintf("scheduler status %s", format),
 					Args:           []string{"scheduler", "status", "--output", format},
@@ -1065,7 +1067,7 @@ func TestSchedulerOutputFormats(t *testing.T) {
 		})
 
 		t.Run(fmt.Sprintf("JobList_%s", format), func(t *testing.T) {
-			RunForAllTransports(t, fmt.Sprintf("JobList_%s", format), func(t *testing.T, runner *TestRunner) {
+			RunForAllTransportsAsTenantAdmin(t, fmt.Sprintf("JobList_%s", format), "sched-tenant", func(t *testing.T, runner *TestRunner) {
 				cmd := CommandDef{
 					Name:           fmt.Sprintf("scheduler job list %s", format),
 					Args:           []string{"scheduler", "job", "list", "--output", format},
