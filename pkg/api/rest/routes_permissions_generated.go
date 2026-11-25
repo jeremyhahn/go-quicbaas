@@ -336,6 +336,7 @@ var frozenRoutePermissions = map[string]frozenPermission{
 	"GET /api/v1/vector/namespaces/{namespace}/vectors/":                               {auth: RouteAuthPermission, resource: "vector", action: "list"},
 	"GET /api/v1/vector/namespaces/{namespace}/vectors/{id}":                           {auth: RouteAuthPermission, resource: "vector", action: "get"},
 	"GET /api/v1/version":                                                              {auth: RouteAuthPublic, resource: "", action: ""},
+	"GET /api/v1/ws":                                                                   {auth: RouteAuthPermission, resource: "messaging", action: "subscribe"},
 	"GET /api/v1/xkms/backends":                                                        {auth: RouteAuthPermission, resource: "backends", action: "list"},
 	"GET /api/v1/xkms/backends/{id}":                                                   {auth: RouteAuthPermission, resource: "backends", action: "read"},
 	"GET /api/v1/xkms/ca/bundle":                                                       {auth: RouteAuthPermission, resource: "ca", action: "read"},

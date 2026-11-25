@@ -18,11 +18,13 @@ package server
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"time"
 
 	restapi "github.com/jeremyhahn/go-quicbaas/pkg/api/rest"
 	qbsealedwindow "github.com/jeremyhahn/go-quicbaas/pkg/api/sealedwindow"
+	"github.com/jeremyhahn/go-quicbaas/pkg/api/websocket/subprotocol"
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
@@ -86,12 +88,27 @@ func (s *Server) startRESTServer() error {
 
 	s.logger.Info("Initializing REST server (unified-server binding, no local listener)...")
 
-	restServer, err := s.buildRESTServer()
-	if err != nil {
-		return err
+	// One REST instance serves both paths: a module request that arrived
+	// before this point (after iamReady) already built and cached one, and
+	// the route the module bound keeps serving it, so adopt it instead of
+	// building a second instance that would own different WebSocket servers.
+	// moduleRESTMu is held across the build so ModuleRESTServer cannot build
+	// one concurrently.
+	s.moduleRESTMu.Lock()
+	s.mu.RLock()
+	early := s.moduleREST
+	s.mu.RUnlock()
+	restServer := early
+	if restServer == nil {
+		built, err := s.buildRESTServer()
+		if err != nil {
+			s.moduleRESTMu.Unlock()
+			return err
+		}
+		restServer = built
 	}
-
 	s.setRESTServer(restServer)
+	s.moduleRESTMu.Unlock()
 
 	// Wire mTLS authenticators from operator config (rest && iam builds only;
 	// other build combinations compile a no-op stub).
@@ -292,6 +309,18 @@ func (s *Server) buildRESTServer() (*restapi.Server, error) {
 		restServer.SetSDLCWebhookHandler(h)
 	}
 
+	// Mount the WebSocket upgrade (GET /api/v1/ws). The route carries the
+	// messaging:subscribe permission, so go-qrdb's middleware authenticates and
+	// authorizes the upgrade like any other API call. FIPS-only mode refuses the
+	// server; the route then answers 503.
+	// Each tenant gets its own messaging hub (TenantMessagingServer), keyed by
+	// the verified tenant HandleWebSocket hands over.
+	if wsSrv, err := subprotocol.NewTenantMessagingServer(s.logger); err != nil {
+		s.logger.Warnf("WebSocket endpoint disabled: %v", err)
+	} else {
+		restServer.SetWebSocketHandler(wsSrv)
+	}
+
 	// The credential management service and the qrdb user + user
 	// auth-factor services are wired into the MCP server (lifecycle_mcp.go)
 	// but NOT the REST server: go-qrdb's unified REST server natively serves
@@ -404,16 +433,30 @@ func cloneTLSConfig(cfg *tls.Config) *tls.Config {
 
 // stopRESTServer gracefully shuts down the REST server.
 func (s *Server) stopRESTServer(ctx context.Context) error {
+	// Shut down every REST instance this server owns: the started one and,
+	// when it is a different instance, the one an early module request
+	// built. Each owns live WebSocket sessions the HTTP server cannot close.
 	restServer := s.getRESTServer()
-	if restServer == nil {
-		return nil
-	}
+	s.mu.RLock()
+	moduleREST := s.moduleREST
+	s.mu.RUnlock()
 
-	if err := restShutdownFn(restServer, ctx); err != nil {
+	var errs []error
+	if restServer != nil {
+		if err := restShutdownFn(restServer, ctx); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if moduleREST != nil && moduleREST != restServer {
+		if err := restShutdownFn(moduleREST, ctx); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if len(errs) > 0 {
 		return &qberrors.QBError{
 			Code: qberrors.ErrInternal,
 			Op:   "server.stopRESTServer",
-			Err:  &ServerCauseError{Message: "failed to shutdown REST server", Cause: err},
+			Err:  &ServerCauseError{Message: "failed to shutdown REST server", Cause: errors.Join(errs...)},
 		}
 	}
 

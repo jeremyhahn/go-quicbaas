@@ -273,6 +273,7 @@ GET /api/v1/vector/namespaces/{namespace}/stats permission vector:get_index_stat
 GET /api/v1/vector/namespaces/{namespace}/vectors/ permission vector:list
 GET /api/v1/vector/namespaces/{namespace}/vectors/{id} permission vector:get
 GET /api/v1/version public -:-
+GET /api/v1/ws permission messaging:subscribe
 GET /api/v1/xkms/backends permission backends:list
 GET /api/v1/xkms/backends/{id} permission backends:read
 GET /api/v1/xkms/ca/bundle permission ca:read

@@ -352,8 +352,10 @@ func TimeoutMiddleware(timeout time.Duration) func(http.Handler) http.Handler {
 			// response, which would defeat incremental delivery even below
 			// the deadline. Such requests bypass the deadline entirely;
 			// their lifetime is governed by the client disconnecting or the
-			// handler completing.
-			if isStreamingRequest(r) {
+			// handler completing. A WebSocket upgrade hijacks the connection,
+			// which TimeoutHandler's writer cannot do, so upgrades bypass the
+			// deadline too.
+			if isStreamingRequest(r) || isWebSocketUpgrade(r) {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -380,6 +382,24 @@ func isStreamingRequest(r *http.Request) bool {
 	switch r.URL.Query().Get("follow") {
 	case "1", "true":
 		return true
+	}
+	return false
+}
+
+// isWebSocketUpgrade reports whether the request asks to upgrade to
+// WebSocket. The upgrade hijacks the connection, which the buffered
+// writer of http.TimeoutHandler cannot do, and the connection then lives
+// for as long as the client keeps it open.
+func isWebSocketUpgrade(r *http.Request) bool {
+	if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+		return false
+	}
+	for _, v := range r.Header.Values("Connection") {
+		for _, tok := range strings.Split(v, ",") {
+			if strings.EqualFold(strings.TrimSpace(tok), "upgrade") {
+				return true
+			}
+		}
 	}
 	return false
 }

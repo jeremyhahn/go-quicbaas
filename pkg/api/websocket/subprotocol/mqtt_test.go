@@ -28,8 +28,6 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/mochi-mqtt/server/v2/packets"
-
-	ws "github.com/jeremyhahn/go-quicbaas/pkg/api/websocket"
 )
 
 func TestNewMQTTHandler(t *testing.T) {
@@ -283,7 +281,7 @@ func TestMQTTHandler_HandlePacket_InvalidPacket(t *testing.T) {
 	deliveryChan := make(chan mqttDelivery, 10)
 	defer close(deliveryChan)
 
-	session := ws.NewSession("test", "mqtt", nil)
+	session := newGrantedSession("test", "mqtt", nil)
 
 	// Test empty packet
 	_, err := handler.handlePacket(context.Background(), []byte{}, session, state, deliveryChan)
@@ -306,7 +304,7 @@ func TestMQTTHandler_HandlePacket_UnsupportedType(t *testing.T) {
 	deliveryChan := make(chan mqttDelivery, 10)
 	defer close(deliveryChan)
 
-	session := ws.NewSession("test", "mqtt", nil)
+	session := newGrantedSession("test", "mqtt", nil)
 
 	// Reserved packet type (0x00)
 	_, err := handler.handlePacket(context.Background(), []byte{0x00, 0x00}, session, state, deliveryChan)
@@ -356,7 +354,7 @@ func TestMQTTHandler_HandleConnection_ConnectDisconnect(t *testing.T) {
 			return
 		}
 
-		session := ws.NewSession("test-session", "mqtt", conn)
+		session := newGrantedSession("test-session", "mqtt", conn)
 
 		err = handler.HandleConnection(session.Context(), conn, session)
 		handlerDone <- err
@@ -432,7 +430,7 @@ func TestMQTTHandler_HandleConnection_Pingreq(t *testing.T) {
 			return
 		}
 
-		session := ws.NewSession("test-session", "mqtt", conn)
+		session := newGrantedSession("test-session", "mqtt", conn)
 
 		_ = handler.HandleConnection(session.Context(), conn, session)
 	}))
@@ -492,7 +490,7 @@ func TestMQTTHandler_HandleConnection_ContextCancel(t *testing.T) {
 			return
 		}
 
-		session := ws.NewSession("test-session", "mqtt", conn)
+		session := newGrantedSession("test-session", "mqtt", conn)
 
 		go func() {
 			_ = handler.HandleConnection(session.Context(), conn, session)
@@ -538,7 +536,7 @@ func TestMQTTHandler_HandleConnection_NormalClosure(t *testing.T) {
 			return
 		}
 
-		session := ws.NewSession("test-session", "mqtt", conn)
+		session := newGrantedSession("test-session", "mqtt", conn)
 
 		err = handler.HandleConnection(session.Context(), conn, session)
 		handlerErr <- err
@@ -581,7 +579,7 @@ func TestMQTTHandler_ConcurrentClients(t *testing.T) {
 			return
 		}
 
-		session := ws.NewSession("session-"+r.RemoteAddr, "mqtt", conn)
+		session := newGrantedSession("session-"+r.RemoteAddr, "mqtt", conn)
 
 		_ = handler.HandleConnection(session.Context(), conn, session)
 	}))

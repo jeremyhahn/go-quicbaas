@@ -21,6 +21,8 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -217,6 +219,46 @@ type AMQPHandler struct {
 
 	// clients maps session IDs to AMQP client state.
 	clients map[string]*amqpClientState
+
+	// routesMu protects exchangeTypes and routes.
+	routesMu sync.RWMutex
+
+	// exchangeTypes maps declared exchange names to their type. The handler
+	// serves one tenant, so this registry is tenant-wide, as a broker's is.
+	exchangeTypes map[string]string
+
+	// routes maps exchange names to the queue bindings made on them.
+	routes map[string][]amqpRoute
+
+	// declareMu serializes creating and deleting registry queues together
+	// with the broker client's hub subscription for them, so a queue is
+	// never visible before it receives publications.
+	declareMu sync.Mutex
+
+	// queuesMu protects queues and every queue's messages, consumers and
+	// next. A connection's state.mu may be held while taking it, never the
+	// reverse; routesMu is never held with it, and the hub is never called
+	// under it.
+	queuesMu sync.Mutex
+
+	// queues is the tenant-wide queue registry. Publications reach it
+	// through the broker hub client (amqpBrokerClientID).
+	queues map[string]*amqpQueueState
+
+	// brokerRegistered is set once the broker client is registered with
+	// the hub.
+	brokerRegistered atomic.Bool
+}
+
+// amqpBrokerClientID is the hub client through which publications to a
+// declared queue reach the handler's queue registry.
+const amqpBrokerClientID = "amqp-queues"
+
+// amqpRoute is one Queue.Bind: messages published to the exchange with a
+// matching routing key go to queue.
+type amqpRoute struct {
+	queue      string
+	bindingKey string
 }
 
 // amqpClientState holds the state for an AMQP client connection.
@@ -225,7 +267,13 @@ type amqpClientState struct {
 	vhost     string
 	channels  map[uint16]*amqpChannelState
 	consumers map[string]amqpConsumer // consumerTag -> consumer
-	mu        sync.RWMutex
+	// deliveries carries the queue messages handed to this connection's
+	// consumers to its delivery goroutine; nil when there is none.
+	deliveries chan<- amqpDelivery
+	// frameMax is the negotiated frame-max; 0 until Tune-Ok, which means
+	// amqpDefaultFrameMax.
+	frameMax uint32
+	mu       sync.RWMutex
 }
 
 // amqpChannelState holds the state for an AMQP channel.
@@ -240,7 +288,36 @@ type amqpChannelState struct {
 	prefetchGlobal  bool
 	unackedMessages map[uint64]*amqpUnackedMessage
 	nextDeliveryTag uint64
+	// pending is the Basic.Publish whose content header and body frames
+	// are still arriving; nil when none is.
+	pending *amqpPendingPublish
 }
+
+// amqpPendingPublish accumulates one publication's content: Basic.Publish
+// opens it, the content header declares the body size, and body frames
+// append until that size is reached.
+type amqpPendingPublish struct {
+	exchange   string
+	routingKey string
+	headerSeen bool
+	bodySize   uint64
+	body       []byte
+}
+
+// amqpMaxBodySize bounds the body size a content header may declare. It
+// matches the WebSocket server's default message size limit.
+const amqpMaxBodySize = 1024 * 1024
+
+// amqpDefaultFrameMax is the frame-max Connection.Tune offers. A client may
+// lower it in Tune-Ok, down to amqpMinFrameMax.
+const amqpDefaultFrameMax uint32 = 131072
+
+// amqpMinFrameMax is the smallest frame-max AMQP 0-9-1 lets a peer negotiate.
+const amqpMinFrameMax uint32 = 4096
+
+// amqpFrameOverhead is the bytes a frame adds around its payload: the
+// 7-byte header and the frame-end octet.
+const amqpFrameOverhead = 8
 
 // amqpQueueState holds the state for an AMQP queue.
 type amqpQueueState struct {
@@ -250,6 +327,20 @@ type amqpQueueState struct {
 	autoDelete bool
 	messages   [][]byte
 	bindings   []amqpBinding
+	// consumers are the queue's consumers across connections; each
+	// message goes to one of them, round-robin from next.
+	consumers []amqpQueueConsumer
+	next      int
+}
+
+// amqpQueueConsumer is one consumer of a registry queue.
+type amqpQueueConsumer struct {
+	sessionID   string
+	consumerTag string
+	channel     uint16
+	// deliveries is the consumer connection's delivery channel; a consumer
+	// with a nil one is never sent to.
+	deliveries chan<- amqpDelivery
 }
 
 // amqpExchangeState holds the state for an AMQP exchange.
@@ -323,9 +414,221 @@ func NewAMQPHandler(hub PubSubHub) *AMQPHandler {
 	if hub == nil {
 		hub = NewInMemoryPubSubHub()
 	}
-	return &AMQPHandler{
-		hub:     hub,
-		clients: make(map[string]*amqpClientState),
+	h := &AMQPHandler{
+		hub:           hub,
+		clients:       make(map[string]*amqpClientState),
+		exchangeTypes: make(map[string]string),
+		routes:        make(map[string][]amqpRoute),
+		queues:        make(map[string]*amqpQueueState),
+	}
+	// A failure here is retried on the first queue declaration.
+	h.registerBroker()
+	return h
+}
+
+// registerBroker registers the broker hub client, whose callback stores or
+// dispatches publications to declared queues, unless it already is.
+func (h *AMQPHandler) registerBroker() {
+	if h.brokerRegistered.Load() {
+		return
+	}
+	err := h.hub.RegisterClient(amqpBrokerClientID, func(topic string, payload []byte, _ byte, _ bool) {
+		h.enqueue(topic, payload)
+	})
+	if err == nil {
+		h.brokerRegistered.Store(true)
+	}
+}
+
+// declareQueue returns the registry queue name, creating it and
+// subscribing the broker client to it when it does not exist.
+func (h *AMQPHandler) declareQueue(name string, durable, exclusive, autoDelete bool) (*amqpQueueState, error) {
+	h.declareMu.Lock()
+	defer h.declareMu.Unlock()
+
+	h.queuesMu.Lock()
+	queue := h.queues[name]
+	h.queuesMu.Unlock()
+	if queue != nil {
+		return queue, nil
+	}
+
+	queue = &amqpQueueState{
+		name:       name,
+		durable:    durable,
+		exclusive:  exclusive,
+		autoDelete: autoDelete,
+		messages:   make([][]byte, 0),
+		bindings:   make([]amqpBinding, 0),
+	}
+	h.queuesMu.Lock()
+	h.queues[name] = queue
+	h.queuesMu.Unlock()
+
+	h.registerBroker()
+	if err := h.hub.Subscribe(amqpBrokerClientID, name, 0); err != nil {
+		h.queuesMu.Lock()
+		delete(h.queues, name)
+		h.queuesMu.Unlock()
+		return nil, err
+	}
+	return queue, nil
+}
+
+// deleteQueue removes name from the registry and unsubscribes the broker
+// client from it. It returns the number of messages the queue held.
+func (h *AMQPHandler) deleteQueue(name string) (uint32, bool, error) {
+	h.declareMu.Lock()
+	defer h.declareMu.Unlock()
+
+	h.queuesMu.Lock()
+	queue := h.queues[name]
+	var count uint32
+	if queue != nil {
+		count = uint32(len(queue.messages))
+		delete(h.queues, name)
+	}
+	h.queuesMu.Unlock()
+	if queue == nil {
+		return 0, false, nil
+	}
+	return count, true, h.hub.Unsubscribe(amqpBrokerClientID, name)
+}
+
+// lookupQueue returns the registry queue name, or nil.
+func (h *AMQPHandler) lookupQueue(name string) *amqpQueueState {
+	h.queuesMu.Lock()
+	defer h.queuesMu.Unlock()
+	return h.queues[name]
+}
+
+// enqueue is the broker client's hub callback. It hands a publication for
+// a declared queue to the queue's next consumer that can take it without
+// blocking, or stores it. A publication for an unknown queue is dropped.
+func (h *AMQPHandler) enqueue(queueName string, payload []byte) {
+	message := append([]byte{}, payload...)
+	h.queuesMu.Lock()
+	defer h.queuesMu.Unlock()
+	queue := h.queues[queueName]
+	if queue == nil {
+		return
+	}
+	if !queue.dispatchLocked(message) {
+		queue.messages = append(queue.messages, message)
+	}
+}
+
+// dispatchLocked hands payload to the next consumer, round-robin, whose
+// delivery channel has room. It reports whether one took it. The caller
+// holds h.queuesMu.
+func (q *amqpQueueState) dispatchLocked(payload []byte) bool {
+	n := len(q.consumers)
+	for i := range n {
+		idx := (q.next + i) % n
+		c := q.consumers[idx]
+		if c.deliveries == nil {
+			continue
+		}
+		select {
+		case c.deliveries <- amqpDelivery{queue: q.name, consumerTag: c.consumerTag, payload: payload}:
+			q.next = (idx + 1) % n
+			return true
+		default:
+		}
+	}
+	return false
+}
+
+// drainQueue hands stored messages of queueName to its consumers until
+// none can take the next one without blocking.
+func (h *AMQPHandler) drainQueue(queueName string) {
+	h.queuesMu.Lock()
+	defer h.queuesMu.Unlock()
+	queue := h.queues[queueName]
+	if queue == nil {
+		return
+	}
+	for len(queue.messages) > 0 && queue.dispatchLocked(queue.messages[0]) {
+		queue.messages = queue.messages[1:]
+	}
+}
+
+// requeue puts payload back at the front of queueName and offers the
+// queue's messages to its consumers again.
+func (h *AMQPHandler) requeue(queueName string, payload []byte) {
+	h.queuesMu.Lock()
+	queue := h.queues[queueName]
+	if queue != nil {
+		queue.messages = append([][]byte{payload}, queue.messages...)
+	}
+	h.queuesMu.Unlock()
+	if queue != nil {
+		h.drainQueue(queueName)
+	}
+}
+
+// addQueueConsumer adds consumer to the registry queue queueName,
+// replacing one with the same session and tag.
+func (h *AMQPHandler) addQueueConsumer(queueName string, consumer amqpQueueConsumer) {
+	h.queuesMu.Lock()
+	defer h.queuesMu.Unlock()
+	queue := h.queues[queueName]
+	if queue == nil {
+		return
+	}
+	for i, c := range queue.consumers {
+		if c.sessionID == consumer.sessionID && c.consumerTag == consumer.consumerTag {
+			queue.consumers[i] = consumer
+			return
+		}
+	}
+	queue.consumers = append(queue.consumers, consumer)
+}
+
+// removeQueueConsumer removes the consumer sessionID/consumerTag from the
+// registry queue queueName.
+func (h *AMQPHandler) removeQueueConsumer(queueName, sessionID, consumerTag string) {
+	h.queuesMu.Lock()
+	defer h.queuesMu.Unlock()
+	if queue := h.queues[queueName]; queue != nil {
+		queue.removeConsumersLocked(func(c amqpQueueConsumer) bool {
+			return c.sessionID == sessionID && c.consumerTag == consumerTag
+		})
+	}
+}
+
+// removeSessionConsumers removes every consumer of sessionID from the
+// registry.
+func (h *AMQPHandler) removeSessionConsumers(sessionID string) {
+	h.queuesMu.Lock()
+	defer h.queuesMu.Unlock()
+	for _, queue := range h.queues {
+		queue.removeConsumersLocked(func(c amqpQueueConsumer) bool {
+			return c.sessionID == sessionID
+		})
+	}
+}
+
+// removeConsumersLocked removes the consumers match selects, keeping the
+// round-robin position on the consumer that was next. The caller holds
+// h.queuesMu.
+func (q *amqpQueueState) removeConsumersLocked(match func(amqpQueueConsumer) bool) {
+	kept := q.consumers[:0]
+	next := 0
+	for i, c := range q.consumers {
+		if match(c) {
+			continue
+		}
+		if i < q.next {
+			next++
+		}
+		kept = append(kept, c)
+	}
+	clear(q.consumers[len(kept):])
+	q.consumers = kept
+	q.next = next
+	if q.next >= len(q.consumers) {
+		q.next = 0
 	}
 }
 
@@ -341,11 +644,12 @@ func (h *AMQPHandler) HandleConnection(ctx context.Context, conn *websocket.Conn
 		consumers: make(map[string]amqpConsumer),
 	}
 
-	// Message delivery channel for this client. Hub callbacks send on it
-	// outside the hub lock, so one may still be sending after
-	// UnregisterClient returns: never close it. cancelDelivery stops the
-	// delivery goroutine, and the callbacks never block.
+	// Message delivery channel for this client. The queue registry sends
+	// on it without blocking while holding h.queuesMu, so a send may race
+	// the connection going away: never close it. cancelDelivery stops the
+	// delivery goroutine.
 	deliveryChan := make(chan amqpDelivery, 100)
+	clientState.deliveries = deliveryChan
 
 	// Register cleanup on connection close
 	defer func() {
@@ -353,29 +657,28 @@ func (h *AMQPHandler) HandleConnection(ctx context.Context, conn *websocket.Conn
 		delete(h.clients, session.ID)
 		h.clientsMu.Unlock()
 
-		// Best effort: the connection is already going away and there is
-		// nobody left to report a hub failure to.
-		_ = h.hub.UnregisterClient(session.ID)
+		// Stop dispatching to this connection, then put back the messages
+		// it was handed but never sent, in their order.
+		h.removeSessionConsumers(session.ID)
+		var undelivered []amqpDelivery
+	drain:
+		for {
+			select {
+			case d := <-deliveryChan:
+				undelivered = append(undelivered, d)
+			default:
+				break drain
+			}
+		}
+		for i := len(undelivered) - 1; i >= 0; i-- {
+			h.requeue(undelivered[i].queue, undelivered[i].payload)
+		}
 	}()
 
 	// Store client state
 	h.clientsMu.Lock()
 	h.clients[session.ID] = clientState
 	h.clientsMu.Unlock()
-
-	// Register with hub for message delivery
-	if err := h.hub.RegisterClient(session.ID, func(topic string, payload []byte, qos byte, retain bool) {
-		select {
-		case deliveryChan <- amqpDelivery{
-			queue:   topic,
-			payload: payload,
-		}:
-		default:
-			// Channel full, drop message
-		}
-	}); err != nil {
-		return err
-	}
 
 	// Start message delivery goroutine
 	deliveryCtx, cancelDelivery := context.WithCancel(ctx)
@@ -453,8 +756,9 @@ func (h *AMQPHandler) HandleConnection(ctx context.Context, conn *websocket.Conn
 
 // amqpDelivery represents a message to be delivered to a client.
 type amqpDelivery struct {
-	queue   string
-	payload []byte
+	queue       string
+	consumerTag string
+	payload     []byte
 }
 
 // deliverMessages handles outbound message delivery to the client.
@@ -468,26 +772,21 @@ func (h *AMQPHandler) deliverMessages(ctx context.Context, conn *websocket.Conn,
 		case delivery := <-deliveryChan:
 
 			state.mu.RLock()
-			// Find consumer for this queue
-			var consumer amqpConsumer
-			var found bool
-			for _, c := range state.consumers {
-				if c.queueName == delivery.queue {
-					consumer = c
-					found = true
-					break
-				}
-			}
+			consumer, found := state.consumers[delivery.consumerTag]
+			frameMax := state.frameMax
 			state.mu.RUnlock()
 
-			if !found {
+			if !found || consumer.queueName != delivery.queue {
+				// The consumer was cancelled after the registry handed
+				// it this message: give the message back to the queue.
+				h.requeue(delivery.queue, delivery.payload)
 				continue
 			}
 
 			deliveryTag++
 
 			// Build Basic.Deliver frame
-			deliverFrame := h.buildBasicDeliver(consumer.channel, consumer.consumerTag, deliveryTag, delivery.queue, delivery.payload)
+			deliverFrame := h.buildBasicDeliver(consumer.channel, consumer.consumerTag, deliveryTag, delivery.queue, delivery.payload, frameMax)
 
 			if err := conn.Write(ctx, websocket.MessageBinary, deliverFrame); err != nil {
 				return
@@ -563,22 +862,55 @@ func (h *AMQPHandler) buildFrame(frameType byte, channel uint16, payload []byte)
 	return buf.Bytes()
 }
 
-// handleFrame parses and handles an AMQP frame.
+// handleFrame parses and handles every AMQP frame in one WebSocket message,
+// in order, and returns their responses concatenated. Frames that follow a
+// Channel.Close the message produced on the same channel are discarded, as
+// AMQP requires until the client's Close-Ok.
 func (h *AMQPHandler) handleFrame(ctx context.Context, data []byte, session *ws.Session, state *amqpClientState) ([]byte, error) {
-	frame, err := h.parseFrame(data)
-	if err != nil {
-		return nil, err
+	var out []byte
+	var closed map[uint16]bool
+	for {
+		frame, n, err := h.nextFrame(data)
+		if err != nil {
+			return out, err
+		}
+		data = data[n:]
+		if !closed[frame.Channel] {
+			resp, err := h.dispatchFrame(ctx, frame, session, state)
+			out = append(out, resp...)
+			if err != nil {
+				return out, err
+			}
+			if isChannelClose(resp) {
+				if closed == nil {
+					closed = make(map[uint16]bool)
+				}
+				closed[frame.Channel] = true
+			}
+		}
+		if len(data) == 0 {
+			return out, nil
+		}
 	}
+}
 
+// isChannelClose reports whether resp starts with a Channel.Close method
+// frame.
+func isChannelClose(resp []byte) bool {
+	return len(resp) >= 11 && resp[0] == FrameMethod &&
+		binary.BigEndian.Uint16(resp[7:9]) == ClassChannel &&
+		binary.BigEndian.Uint16(resp[9:11]) == MethodChannelClose
+}
+
+// dispatchFrame handles one parsed AMQP frame according to its type.
+func (h *AMQPHandler) dispatchFrame(ctx context.Context, frame *AMQPFrame, session *ws.Session, state *amqpClientState) ([]byte, error) {
 	switch frame.Type {
 	case FrameMethod:
 		return h.handleMethodFrame(ctx, frame, session, state)
 	case FrameHeader:
-		// Content header - part of publish flow
-		return nil, nil
+		return h.handleContentHeader(frame, state)
 	case FrameBody:
-		// Content body - part of publish flow
-		return nil, nil
+		return h.handleContentBody(frame, state)
 	case FrameHeartbeat:
 		return h.handleHeartbeat(frame)
 	default:
@@ -588,21 +920,30 @@ func (h *AMQPHandler) handleFrame(ctx context.Context, data []byte, session *ws.
 
 // parseFrame parses raw data into an AMQPFrame.
 func (h *AMQPHandler) parseFrame(data []byte) (*AMQPFrame, error) {
+	frame, _, err := h.nextFrame(data)
+	return frame, err
+}
+
+// nextFrame parses the first AMQP frame in data and returns it with the
+// number of bytes it occupies.
+func (h *AMQPHandler) nextFrame(data []byte) (*AMQPFrame, int, error) {
 	if len(data) < 8 {
-		return nil, &ErrAMQPProtocolError{Message: "frame too short"}
+		return nil, 0, &ErrAMQPProtocolError{Message: "frame too short"}
 	}
 
 	frameType := data[0]
 	channel := binary.BigEndian.Uint16(data[1:3])
 	size := binary.BigEndian.Uint32(data[3:7])
 
-	if len(data) < int(7+size+1) {
-		return nil, &ErrAMQPProtocolError{Message: "frame payload incomplete"}
+	// Compare before adding: 7+size+1 in uint32 wraps for sizes near the
+	// maximum, which would let the indexing below run past the data.
+	if uint64(size) > uint64(len(data)-8) {
+		return nil, 0, &ErrAMQPProtocolError{Message: "frame payload incomplete"}
 	}
 
 	// Verify frame-end marker
 	if data[7+size] != FrameEnd {
-		return nil, &ErrAMQPProtocolError{Message: "invalid frame-end marker"}
+		return nil, 0, &ErrAMQPProtocolError{Message: "invalid frame-end marker"}
 	}
 
 	payload := data[7 : 7+size]
@@ -611,7 +952,7 @@ func (h *AMQPHandler) parseFrame(data []byte) (*AMQPFrame, error) {
 		Type:    frameType,
 		Channel: channel,
 		Payload: payload,
-	}, nil
+	}, int(8 + size), nil
 }
 
 // methodKey is used for method dispatch lookup.
@@ -686,9 +1027,9 @@ func (h *AMQPHandler) handleConnectionStartOk(ctx context.Context, frame *AMQPFr
 	// Parse client properties and authentication (simplified)
 	// Send Connection.Tune
 	tuneArgs := &bytes.Buffer{}
-	_ = binary.Write(tuneArgs, binary.BigEndian, uint16(2047))   // channel-max
-	_ = binary.Write(tuneArgs, binary.BigEndian, uint32(131072)) // frame-max
-	_ = binary.Write(tuneArgs, binary.BigEndian, uint16(60))     // heartbeat
+	_ = binary.Write(tuneArgs, binary.BigEndian, uint16(2047))        // channel-max
+	_ = binary.Write(tuneArgs, binary.BigEndian, amqpDefaultFrameMax) // frame-max
+	_ = binary.Write(tuneArgs, binary.BigEndian, uint16(60))          // heartbeat
 
 	return h.buildMethodFrame(0, ClassConnection, MethodConnectionTune, tuneArgs.Bytes()), nil
 }
@@ -698,16 +1039,30 @@ func (h *AMQPHandler) handleConnectionSecureOk(ctx context.Context, frame *AMQPF
 	// SASL authentication challenge/response
 	// For PLAIN mechanism, just proceed to Tune
 	tuneArgs := &bytes.Buffer{}
-	_ = binary.Write(tuneArgs, binary.BigEndian, uint16(2047))   // channel-max
-	_ = binary.Write(tuneArgs, binary.BigEndian, uint32(131072)) // frame-max
-	_ = binary.Write(tuneArgs, binary.BigEndian, uint16(60))     // heartbeat
+	_ = binary.Write(tuneArgs, binary.BigEndian, uint16(2047))        // channel-max
+	_ = binary.Write(tuneArgs, binary.BigEndian, amqpDefaultFrameMax) // frame-max
+	_ = binary.Write(tuneArgs, binary.BigEndian, uint16(60))          // heartbeat
 
 	return h.buildMethodFrame(0, ClassConnection, MethodConnectionTune, tuneArgs.Bytes()), nil
 }
 
 // handleConnectionTuneOk handles Connection.Tune-Ok.
 func (h *AMQPHandler) handleConnectionTuneOk(ctx context.Context, frame *AMQPFrame, args []byte, session *ws.Session, state *amqpClientState) ([]byte, error) {
-	// Client accepted tune parameters, waiting for Connection.Open
+	// Tune-Ok: channel-max (short), frame-max (long), heartbeat (short).
+	if len(args) < 6 {
+		return nil, &ErrAMQPProtocolError{Message: "invalid Connection.Tune-Ok arguments"}
+	}
+	frameMax := binary.BigEndian.Uint32(args[2:6])
+	switch {
+	case frameMax == 0 || frameMax > amqpDefaultFrameMax:
+		frameMax = amqpDefaultFrameMax
+	case frameMax < amqpMinFrameMax:
+		frameMax = amqpMinFrameMax
+	}
+	state.mu.Lock()
+	state.frameMax = frameMax
+	state.mu.Unlock()
+	// Waiting for Connection.Open.
 	return nil, nil
 }
 
@@ -857,14 +1212,32 @@ func (h *AMQPHandler) handleExchangeDeclare(ctx context.Context, frame *AMQPFram
 			state.mu.Unlock()
 			return h.buildChannelClose(frame.Channel, NotFound, "NOT_FOUND - no exchange '"+exchangeName+"'", ClassExchange, MethodExchangeDeclare), nil
 		}
+		state.mu.Unlock()
 	} else {
+		state.mu.Unlock()
+
+		// The tenant-wide registry decides first, without state.mu held, so
+		// an incompatible redeclaration leaves the channel and the live
+		// routing untouched.
+		if existing, ok := h.declareExchangeType(exchangeName, exchangeType); !ok {
+			return h.buildChannelClose(frame.Channel, PreconditionFailed,
+				"PRECONDITION_FAILED - inequivalent arg 'type' for exchange '"+exchangeName+"': received '"+exchangeType+"' but current is '"+existing+"'",
+				ClassExchange, MethodExchangeDeclare), nil
+		}
+
+		state.mu.Lock()
+		ch = state.channels[frame.Channel]
+		if ch == nil {
+			state.mu.Unlock()
+			return nil, &ErrAMQPProtocolError{Message: "channel not open"}
+		}
 		ch.exchanges[exchangeName] = &amqpExchangeState{
 			name:    exchangeName,
 			typ:     exchangeType,
 			durable: durable,
 		}
+		state.mu.Unlock()
 	}
-	state.mu.Unlock()
 
 	// Send Exchange.Declare-Ok if not no-wait
 	if noWait {
@@ -907,6 +1280,7 @@ func (h *AMQPHandler) handleExchangeDelete(ctx context.Context, frame *AMQPFrame
 	}
 	delete(ch.exchanges, exchangeName)
 	state.mu.Unlock()
+	h.removeExchange(exchangeName)
 
 	// Send Exchange.Delete-Ok if not no-wait
 	if noWait {
@@ -946,36 +1320,46 @@ func (h *AMQPHandler) handleQueueDeclare(ctx context.Context, frame *AMQPFrame, 
 	autoDelete := (flags & 0x08) != 0
 	noWait := (flags & 0x10) != 0
 
-	// Store queue state
+	state.mu.RLock()
+	channelOpen := state.channels[frame.Channel] != nil
+	state.mu.RUnlock()
+	if !channelOpen {
+		return nil, &ErrAMQPProtocolError{Message: "channel not open"}
+	}
+
+	// The queue lives in the tenant-wide registry; the channel keeps a
+	// pointer to it.
+	var queue *amqpQueueState
+	if !passive {
+		declared, err := h.declareQueue(queueName, durable, exclusive, autoDelete)
+		if err != nil {
+			return nil, err
+		}
+		queue = declared
+	}
+
 	state.mu.Lock()
 	ch := state.channels[frame.Channel]
 	if ch == nil {
 		state.mu.Unlock()
 		return nil, &ErrAMQPProtocolError{Message: "channel not open"}
 	}
-
 	if passive {
-		// Check if queue exists
-		if ch.queues[queueName] == nil {
+		queue = ch.queues[queueName]
+		if queue == nil {
+			queue = h.lookupQueue(queueName)
+		}
+		if queue == nil {
 			state.mu.Unlock()
 			return h.buildChannelClose(frame.Channel, NotFound, "NOT_FOUND - no queue '"+queueName+"'", ClassQueue, MethodQueueDeclare), nil
 		}
-	} else {
-		ch.queues[queueName] = &amqpQueueState{
-			name:       queueName,
-			durable:    durable,
-			exclusive:  exclusive,
-			autoDelete: autoDelete,
-			messages:   make([][]byte, 0),
-			bindings:   make([]amqpBinding, 0),
-		}
 	}
+	ch.queues[queueName] = queue
+	h.queuesMu.Lock()
+	messageCount := uint32(len(queue.messages))
+	consumerCount := uint32(len(queue.consumers))
+	h.queuesMu.Unlock()
 	state.mu.Unlock()
-
-	// Register queue as topic in hub
-	if err := h.hub.Subscribe(session.ID, queueName, 0); err != nil {
-		return nil, err
-	}
 
 	// Send Queue.Declare-Ok if not no-wait
 	if noWait {
@@ -985,8 +1369,8 @@ func (h *AMQPHandler) handleQueueDeclare(ctx context.Context, frame *AMQPFrame, 
 	// Queue.Declare-Ok: queue (shortstring), message-count (long), consumer-count (long)
 	declareOkArgs := &bytes.Buffer{}
 	writeShortString(declareOkArgs, queueName)
-	_ = binary.Write(declareOkArgs, binary.BigEndian, uint32(0)) // message-count
-	_ = binary.Write(declareOkArgs, binary.BigEndian, uint32(0)) // consumer-count
+	_ = binary.Write(declareOkArgs, binary.BigEndian, messageCount)
+	_ = binary.Write(declareOkArgs, binary.BigEndian, consumerCount)
 
 	return h.buildMethodFrame(frame.Channel, ClassQueue, MethodQueueDeclareOk, declareOkArgs.Bytes()), nil
 }
@@ -1053,6 +1437,7 @@ func (h *AMQPHandler) handleQueueBind(ctx context.Context, frame *AMQPFrame, arg
 		}
 	}
 	state.mu.Unlock()
+	h.addRoute(exchangeName, amqpRoute{queue: string(queueName), bindingKey: routingKey})
 
 	// Send Queue.Bind-Ok if not no-wait
 	if noWait {
@@ -1118,6 +1503,7 @@ func (h *AMQPHandler) handleQueueUnbind(ctx context.Context, frame *AMQPFrame, a
 		}
 	}
 	state.mu.Unlock()
+	h.removeRoute(exchangeName, amqpRoute{queue: string(queueName), bindingKey: routingKey})
 
 	// Send Queue.Unbind-Ok (no fields)
 	return h.buildMethodFrame(frame.Channel, ClassQueue, MethodQueueUnbindOk, nil), nil
@@ -1154,9 +1540,14 @@ func (h *AMQPHandler) handleQueuePurge(ctx context.Context, frame *AMQPFrame, ar
 	ch := state.channels[frame.Channel]
 	if ch != nil {
 		queue := ch.queues[string(queueName)]
+		if queue == nil {
+			queue = h.lookupQueue(string(queueName))
+		}
 		if queue != nil {
+			h.queuesMu.Lock()
 			messageCount = uint32(len(queue.messages))
 			queue.messages = make([][]byte, 0)
+			h.queuesMu.Unlock()
 		}
 	}
 	state.mu.Unlock()
@@ -1205,14 +1596,22 @@ func (h *AMQPHandler) handleQueueDelete(ctx context.Context, frame *AMQPFrame, a
 	if ch != nil {
 		queue := ch.queues[queueName]
 		if queue != nil {
+			h.queuesMu.Lock()
 			messageCount = uint32(len(queue.messages))
+			h.queuesMu.Unlock()
 		}
 		delete(ch.queues, queueName)
 	}
 	state.mu.Unlock()
+	h.removeQueueRoutes(queueName)
 
-	// Unsubscribe from hub
-	if err := h.hub.Unsubscribe(session.ID, queueName); err != nil {
+	// Remove the queue from the registry and stop the broker client's
+	// subscription to it.
+	registryCount, inRegistry, err := h.deleteQueue(queueName)
+	if inRegistry {
+		messageCount = registryCount
+	}
+	if err != nil {
 		return nil, err
 	}
 
@@ -1300,7 +1699,12 @@ func (h *AMQPHandler) handleBasicConsume(ctx context.Context, frame *AMQPFrame, 
 	exclusive := (flags & 0x04) != 0
 	noWait := (flags & 0x08) != 0
 
-	// Register consumer
+	// Consuming a queue that was not declared creates it.
+	if _, err := h.declareQueue(queueName, false, false, false); err != nil {
+		return nil, err
+	}
+
+	// Register consumer, on the connection and on the registry queue.
 	state.mu.Lock()
 	state.consumers[consumerTag] = amqpConsumer{
 		queueName:   queueName,
@@ -1310,12 +1714,16 @@ func (h *AMQPHandler) handleBasicConsume(ctx context.Context, frame *AMQPFrame, 
 		noAck:       noAck,
 		exclusive:   exclusive,
 	}
+	h.addQueueConsumer(queueName, amqpQueueConsumer{
+		sessionID:   session.ID,
+		consumerTag: consumerTag,
+		channel:     frame.Channel,
+		deliveries:  state.deliveries,
+	})
 	state.mu.Unlock()
 
-	// Subscribe to queue via hub
-	if err := h.hub.Subscribe(session.ID, queueName, 0); err != nil {
-		return nil, err
-	}
+	// Hand the consumers the messages stored before they attached.
+	h.drainQueue(queueName)
 
 	// Send Basic.Consume-Ok if not no-wait
 	if noWait {
@@ -1351,29 +1759,14 @@ func (h *AMQPHandler) handleBasicCancel(ctx context.Context, frame *AMQPFrame, a
 	}
 	noWait := (flags & 0x01) != 0
 
-	// Remove consumer
-	var unsubErr error
+	// Remove consumer, from the connection and from the registry queue,
+	// under state.mu so the delivery goroutine sees both or neither.
 	state.mu.Lock()
-	consumer, exists := state.consumers[consumerTag]
-	if exists {
+	if consumer, exists := state.consumers[consumerTag]; exists {
 		delete(state.consumers, consumerTag)
-		// Unsubscribe from queue if no other consumers
-		hasOtherConsumer := false
-		for _, c := range state.consumers {
-			if c.queueName == consumer.queueName {
-				hasOtherConsumer = true
-				break
-			}
-		}
-		if !hasOtherConsumer {
-			unsubErr = h.hub.Unsubscribe(session.ID, consumer.queueName)
-		}
+		h.removeQueueConsumer(consumer.queueName, session.ID, consumerTag)
 	}
 	state.mu.Unlock()
-
-	if unsubErr != nil {
-		return nil, unsubErr
-	}
 
 	// Send Basic.Cancel-Ok if not no-wait
 	if noWait {
@@ -1402,7 +1795,8 @@ func (h *AMQPHandler) handleBasicPublish(ctx context.Context, frame *AMQPFrame, 
 	if len(args) < offset+exchangeNameLen {
 		return nil, &ErrAMQPProtocolError{Message: "invalid exchange name"}
 	}
-	// Skip exchange name for now
+	// The exchange routes the message once its content is complete.
+	exchangeName := string(args[offset : offset+exchangeNameLen])
 	offset += exchangeNameLen
 
 	// Routing key (shortstring)
@@ -1418,15 +1812,227 @@ func (h *AMQPHandler) handleBasicPublish(ctx context.Context, frame *AMQPFrame, 
 
 	// Flags (1 byte): mandatory, immediate - parsed but not used in this simplified implementation
 
-	// Note: The actual content comes in Header and Body frames
-	// For now, we'll publish an empty message; a full implementation
-	// would accumulate Header+Body frames for the complete message
-	if err := h.hub.Publish(routingKey, nil, 0, false); err != nil {
-		return nil, err
+	// Publishing needs messaging:publish on top of the upgrade's
+	// messaging:subscribe.
+	if err := session.Authorize("messaging", "publish"); err != nil {
+		return h.buildChannelClose(frame.Channel, AccessRefused, "ACCESS_REFUSED messaging:publish", ClassBasic, MethodBasicPublish), nil
 	}
+
+	// The content arrives in the header and body frames that follow; the
+	// message is published once the declared body is complete.
+	state.mu.Lock()
+	ch := state.channels[frame.Channel]
+	if ch == nil {
+		state.mu.Unlock()
+		return h.buildChannelClose(frame.Channel, ChannelError, "CHANNEL_ERROR channel not open", ClassBasic, MethodBasicPublish), nil
+	}
+	ch.pending = &amqpPendingPublish{exchange: exchangeName, routingKey: routingKey}
+	state.mu.Unlock()
 
 	// Basic.Publish doesn't have a response
 	return nil, nil
+}
+
+// handleContentHeader reads the body size of the pending publication on the
+// frame's channel. A zero size publishes at once.
+func (h *AMQPHandler) handleContentHeader(frame *AMQPFrame, state *amqpClientState) ([]byte, error) {
+	// class-id (2), weight (2), body-size (8)
+	if len(frame.Payload) < 12 {
+		return nil, &ErrAMQPProtocolError{Message: "content header too short"}
+	}
+	bodySize := binary.BigEndian.Uint64(frame.Payload[4:12])
+
+	state.mu.Lock()
+	ch := state.channels[frame.Channel]
+	if ch == nil || ch.pending == nil || ch.pending.headerSeen {
+		state.mu.Unlock()
+		return h.buildChannelClose(frame.Channel, UnexpectedFrame, "UNEXPECTED_FRAME content header without Basic.Publish", ClassBasic, MethodBasicPublish), nil
+	}
+	if bodySize > amqpMaxBodySize {
+		ch.pending = nil
+		state.mu.Unlock()
+		return nil, &ErrAMQPProtocolError{Message: "content body size exceeds the maximum message size"}
+	}
+	p := ch.pending
+	p.headerSeen = true
+	p.bodySize = bodySize
+	if bodySize == 0 {
+		ch.pending = nil
+	}
+	state.mu.Unlock()
+
+	if bodySize == 0 {
+		return nil, h.publishRouted(p.exchange, p.routingKey, []byte{})
+	}
+	return nil, nil
+}
+
+// handleContentBody appends a body frame to the pending publication on the
+// frame's channel and publishes the body when it reaches the declared size.
+func (h *AMQPHandler) handleContentBody(frame *AMQPFrame, state *amqpClientState) ([]byte, error) {
+	state.mu.Lock()
+	ch := state.channels[frame.Channel]
+	if ch == nil || ch.pending == nil || !ch.pending.headerSeen {
+		state.mu.Unlock()
+		return h.buildChannelClose(frame.Channel, UnexpectedFrame, "UNEXPECTED_FRAME content body without content header", ClassBasic, MethodBasicPublish), nil
+	}
+	p := ch.pending
+	if uint64(len(p.body))+uint64(len(frame.Payload)) > p.bodySize {
+		ch.pending = nil
+		state.mu.Unlock()
+		return nil, &ErrAMQPProtocolError{Message: "content body exceeds the declared body size"}
+	}
+	p.body = append(p.body, frame.Payload...)
+	complete := uint64(len(p.body)) == p.bodySize
+	if complete {
+		ch.pending = nil
+	}
+	state.mu.Unlock()
+
+	if complete {
+		return nil, h.publishRouted(p.exchange, p.routingKey, p.body)
+	}
+	return nil, nil
+}
+
+// publishRouted publishes body to every queue a publication to exchange
+// with routingKey reaches. It tries every target and returns the first
+// error.
+func (h *AMQPHandler) publishRouted(exchange, routingKey string, body []byte) error {
+	var firstErr error
+	for _, queue := range h.routeTargets(exchange, routingKey) {
+		if err := h.hub.Publish(queue, body, 0, false); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+// declareExchangeType records a declared exchange's type in the
+// tenant-wide registry. When the exchange already exists with another
+// type it changes nothing and returns that type and false.
+func (h *AMQPHandler) declareExchangeType(name, typ string) (existing string, ok bool) {
+	h.routesMu.Lock()
+	defer h.routesMu.Unlock()
+	if h.exchangeTypes == nil {
+		h.exchangeTypes = make(map[string]string)
+	}
+	if current, found := h.exchangeTypes[name]; found && current != typ {
+		return current, false
+	}
+	h.exchangeTypes[name] = typ
+	return typ, true
+}
+
+// removeExchange drops a deleted exchange's type and its bindings.
+func (h *AMQPHandler) removeExchange(name string) {
+	h.routesMu.Lock()
+	defer h.routesMu.Unlock()
+	delete(h.exchangeTypes, name)
+	delete(h.routes, name)
+}
+
+// addRoute records a Queue.Bind unless the same binding already exists.
+func (h *AMQPHandler) addRoute(exchange string, r amqpRoute) {
+	h.routesMu.Lock()
+	defer h.routesMu.Unlock()
+	if h.routes == nil {
+		h.routes = make(map[string][]amqpRoute)
+	}
+	if slices.Contains(h.routes[exchange], r) {
+		return
+	}
+	h.routes[exchange] = append(h.routes[exchange], r)
+}
+
+// removeRoute removes the binding a Queue.Unbind names.
+func (h *AMQPHandler) removeRoute(exchange string, r amqpRoute) {
+	h.routesMu.Lock()
+	defer h.routesMu.Unlock()
+	kept := slices.DeleteFunc(h.routes[exchange], func(x amqpRoute) bool { return x == r })
+	if len(kept) == 0 {
+		delete(h.routes, exchange)
+		return
+	}
+	h.routes[exchange] = kept
+}
+
+// removeQueueRoutes removes every binding to a deleted queue.
+func (h *AMQPHandler) removeQueueRoutes(queue string) {
+	h.routesMu.Lock()
+	defer h.routesMu.Unlock()
+	for exchange, rs := range h.routes {
+		kept := slices.DeleteFunc(rs, func(x amqpRoute) bool { return x.queue == queue })
+		if len(kept) == 0 {
+			delete(h.routes, exchange)
+			continue
+		}
+		h.routes[exchange] = kept
+	}
+}
+
+// routeTargets returns the queues a publication to exchange with
+// routingKey reaches, in sorted order without duplicates. The default
+// exchange ("") routes to the queue named by the routing key. A fanout
+// exchange routes to every bound queue, a topic exchange matches binding
+// keys with amqpTopicMatch, and every other exchange matches keys exactly.
+// An unroutable publication reaches no queue and is dropped.
+func (h *AMQPHandler) routeTargets(exchange, routingKey string) []string {
+	if exchange == "" {
+		return []string{routingKey}
+	}
+	h.routesMu.RLock()
+	typ := h.exchangeTypes[exchange]
+	var targets []string
+	for _, r := range h.routes[exchange] {
+		var match bool
+		switch typ {
+		case "fanout":
+			match = true
+		case "topic":
+			match = amqpTopicMatch(r.bindingKey, routingKey)
+		default:
+			match = r.bindingKey == routingKey
+		}
+		if match {
+			targets = append(targets, r.queue)
+		}
+	}
+	h.routesMu.RUnlock()
+	slices.Sort(targets)
+	return slices.Compact(targets)
+}
+
+// amqpTopicMatch reports whether routingKey matches the AMQP topic
+// binding key pattern: words are separated by '.', '*' matches exactly
+// one word and '#' matches zero or more words.
+func amqpTopicMatch(pattern, routingKey string) bool {
+	return amqpTopicMatchWords(strings.Split(pattern, "."), strings.Split(routingKey, "."))
+}
+
+// amqpTopicMatchWords matches pattern words against routing key words with
+// a two-row dynamic program, without recursion. It costs
+// O(len(pattern) x len(key)) time and O(len(key)) memory, whatever the
+// number of '#' words in the pattern.
+func amqpTopicMatchWords(pattern, key []string) bool {
+	// cur[j] reports whether the pattern words seen so far match key[:j].
+	cur := make([]bool, len(key)+1)
+	next := make([]bool, len(key)+1)
+	cur[0] = true
+	for _, word := range pattern {
+		for j := 0; j <= len(key); j++ {
+			switch word {
+			case "#":
+				next[j] = cur[j] || (j > 0 && next[j-1])
+			case "*":
+				next[j] = j > 0 && cur[j-1]
+			default:
+				next[j] = j > 0 && cur[j-1] && key[j-1] == word
+			}
+		}
+		cur, next = next, cur
+	}
+	return cur[len(key)]
 }
 
 // handleBasicGet handles Basic.Get.
@@ -1460,11 +2066,23 @@ func (h *AMQPHandler) handleBasicGet(ctx context.Context, frame *AMQPFrame, args
 	var messageCount uint32
 	if ch != nil {
 		queue := ch.queues[queueName]
-		if queue != nil && len(queue.messages) > 0 {
-			message = queue.messages[0]
-			queue.messages = queue.messages[1:]
-			messageCount = uint32(len(queue.messages))
-
+		if queue == nil {
+			queue = h.lookupQueue(queueName)
+		}
+		var found bool
+		if queue != nil {
+			h.queuesMu.Lock()
+			if len(queue.messages) > 0 {
+				message, found = queue.messages[0], true
+				if message == nil {
+					message = []byte{}
+				}
+				queue.messages = queue.messages[1:]
+				messageCount = uint32(len(queue.messages))
+			}
+			h.queuesMu.Unlock()
+		}
+		if found {
 			if !noAck {
 				ch.nextDeliveryTag++
 				ch.unackedMessages[ch.nextDeliveryTag] = &amqpUnackedMessage{
@@ -1478,6 +2096,7 @@ func (h *AMQPHandler) handleBasicGet(ctx context.Context, frame *AMQPFrame, args
 	if ch != nil {
 		deliveryTag = ch.nextDeliveryTag
 	}
+	frameMax := state.frameMax
 	state.mu.Unlock()
 
 	if message == nil {
@@ -1496,26 +2115,7 @@ func (h *AMQPHandler) handleBasicGet(ctx context.Context, frame *AMQPFrame, args
 	_ = binary.Write(getOkArgs, binary.BigEndian, messageCount)
 
 	methodFrame := h.buildMethodFrame(frame.Channel, ClassBasic, MethodBasicGetOk, getOkArgs.Bytes())
-
-	// Build content header and body frames
-	if len(message) > 0 {
-		headerPayload := &bytes.Buffer{}
-		_ = binary.Write(headerPayload, binary.BigEndian, ClassBasic)           // class-id
-		_ = binary.Write(headerPayload, binary.BigEndian, uint16(0))            // weight (reserved)
-		_ = binary.Write(headerPayload, binary.BigEndian, uint64(len(message))) // body-size
-		_ = binary.Write(headerPayload, binary.BigEndian, uint16(0))            // property-flags (no properties)
-		headerFrame := h.buildFrame(FrameHeader, frame.Channel, headerPayload.Bytes())
-
-		bodyFrame := h.buildFrame(FrameBody, frame.Channel, message)
-
-		result := make([]byte, 0, len(methodFrame)+len(headerFrame)+len(bodyFrame))
-		result = append(result, methodFrame...)
-		result = append(result, headerFrame...)
-		result = append(result, bodyFrame...)
-		return result, nil
-	}
-
-	return methodFrame, nil
+	return append(methodFrame, h.buildContentFrames(frame.Channel, message, frameMax)...), nil
 }
 
 // handleBasicAck handles Basic.Ack.
@@ -1653,8 +2253,9 @@ func (h *AMQPHandler) buildChannelClose(channel uint16, replyCode uint16, replyT
 	return h.buildMethodFrame(channel, ClassChannel, MethodChannelClose, args.Bytes())
 }
 
-// buildBasicDeliver builds a Basic.Deliver method frame with content.
-func (h *AMQPHandler) buildBasicDeliver(channel uint16, consumerTag string, deliveryTag uint64, routingKey string, payload []byte) []byte {
+// buildBasicDeliver builds a Basic.Deliver method frame followed by its
+// content header and, for a non-empty payload, its body frame.
+func (h *AMQPHandler) buildBasicDeliver(channel uint16, consumerTag string, deliveryTag uint64, routingKey string, payload []byte, frameMax uint32) []byte {
 	// Build method frame
 	// Basic.Deliver: consumer-tag (shortstring), delivery-tag (longlong), redelivered (bit), exchange (shortstring), routing-key (shortstring)
 	methodArgs := &bytes.Buffer{}
@@ -1666,27 +2267,32 @@ func (h *AMQPHandler) buildBasicDeliver(channel uint16, consumerTag string, deli
 
 	methodFrame := h.buildMethodFrame(channel, ClassBasic, MethodBasicDeliver, methodArgs.Bytes())
 
-	if len(payload) == 0 {
-		return methodFrame
-	}
+	return append(methodFrame, h.buildContentFrames(channel, payload, frameMax)...)
+}
 
-	// Build content header frame
+// buildContentFrames builds the content header frame for payload and, when
+// payload is not empty, its body frames, each no larger than frameMax bytes
+// encoded (0 means amqpDefaultFrameMax). AMQP 0-9-1 sends the content
+// header after Basic.Deliver and Basic.Get-Ok even when the body is empty.
+func (h *AMQPHandler) buildContentFrames(channel uint16, payload []byte, frameMax uint32) []byte {
+	if frameMax == 0 {
+		frameMax = amqpDefaultFrameMax
+	}
+	if frameMax < amqpMinFrameMax {
+		frameMax = amqpMinFrameMax
+	}
 	headerPayload := &bytes.Buffer{}
 	_ = binary.Write(headerPayload, binary.BigEndian, ClassBasic)           // class-id
 	_ = binary.Write(headerPayload, binary.BigEndian, uint16(0))            // weight (reserved)
 	_ = binary.Write(headerPayload, binary.BigEndian, uint64(len(payload))) // body-size
 	_ = binary.Write(headerPayload, binary.BigEndian, uint16(0))            // property-flags (no properties)
-	headerFrame := h.buildFrame(FrameHeader, channel, headerPayload.Bytes())
-
-	// Build content body frame
-	bodyFrame := h.buildFrame(FrameBody, channel, payload)
-
-	// Concatenate all frames
-	result := make([]byte, 0, len(methodFrame)+len(headerFrame)+len(bodyFrame))
-	result = append(result, methodFrame...)
-	result = append(result, headerFrame...)
-	result = append(result, bodyFrame...)
-
+	result := h.buildFrame(FrameHeader, channel, headerPayload.Bytes())
+	chunk := int(frameMax) - amqpFrameOverhead
+	for rest := payload; len(rest) > 0; {
+		n := min(chunk, len(rest))
+		result = append(result, h.buildFrame(FrameBody, channel, rest[:n])...)
+		rest = rest[n:]
+	}
 	return result
 }
 

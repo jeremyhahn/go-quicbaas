@@ -106,6 +106,7 @@ func (h *MQTTHandler) HandleConnection(ctx context.Context, conn *websocket.Conn
 
 	go h.deliverMessages(deliveryCtx, conn, clientState, deliveryChan)
 
+	var pending []byte
 	for {
 		select {
 		case <-ctx.Done():
@@ -125,21 +126,40 @@ func (h *MQTTHandler) HandleConnection(ctx context.Context, conn *websocket.Conn
 		h.messagesReceived.Add(1)
 		session.UpdateActivity()
 
-		// Parse and handle MQTT packet
-		response, err := h.handlePacket(ctx, data, session, clientState, deliveryChan)
-		if err != nil {
-			if errors.Is(err, ErrMQTTDisconnect) {
-				return nil
-			}
-			return err
-		}
-
-		// Send response if any
-		if response != nil {
-			if err := conn.Write(ctx, websocket.MessageBinary, response); err != nil {
+		// MQTT packets are a byte stream: one WebSocket message may carry
+		// several packets, or part of one. Buffer across messages and handle
+		// each complete packet in order.
+		pending = append(pending, data...)
+		for {
+			n, ok, err := mqttPacketLength(pending)
+			if err != nil {
 				return err
 			}
-			h.messagesSent.Add(1)
+			if ok && n > mqttMaxPacketSize {
+				return &ErrMQTTProtocolError{Message: "packet too large"}
+			}
+			if !ok || len(pending) < n {
+				break
+			}
+			response, err := h.handlePacket(ctx, pending[:n], session, clientState, deliveryChan)
+			pending = pending[n:]
+			if err != nil {
+				if errors.Is(err, ErrMQTTDisconnect) {
+					return nil
+				}
+				return err
+			}
+
+			// Send response if any
+			if response != nil {
+				if err := conn.Write(ctx, websocket.MessageBinary, response); err != nil {
+					return err
+				}
+				h.messagesSent.Add(1)
+			}
+		}
+		if len(pending) == 0 {
+			pending = nil
 		}
 	}
 }
@@ -196,6 +216,33 @@ func (h *MQTTHandler) deliverMessages(ctx context.Context, conn *websocket.Conn,
 // ErrMQTTDisconnect indicates a clean MQTT disconnect.
 var ErrMQTTDisconnect = errors.New("mqtt: client disconnected")
 
+// ErrMQTTPublishNotAuthorized closes a connection whose PUBLISH the session's
+// grant refuses and that the protocol gives no other way to refuse.
+var ErrMQTTPublishNotAuthorized = errors.New("mqtt: publish not authorized (messaging:publish)")
+
+// mqttReasonNotAuthorized is the MQTT 5 reason code Not authorized.
+const mqttReasonNotAuthorized = 0x87
+
+// buildRefusedPublishAck answers an MQTT 5 QoS 1 or 2 PUBLISH with a PUBACK
+// or PUBREC carrying the Not authorized reason code.
+func (h *MQTTHandler) buildRefusedPublishAck(qos byte, packetID uint16) []byte {
+	pk := packets.Packet{
+		ProtocolVersion: 5,
+		PacketID:        packetID,
+		ReasonCode:      mqttReasonNotAuthorized,
+	}
+	buf := &bytes.Buffer{}
+	// Encoding into a bytes.Buffer cannot fail.
+	if qos == 1 {
+		pk.FixedHeader.Type = packets.Puback
+		_ = pk.PubackEncode(buf)
+	} else {
+		pk.FixedHeader.Type = packets.Pubrec
+		_ = pk.PubrecEncode(buf)
+	}
+	return buf.Bytes()
+}
+
 // ErrMQTTProtocolError indicates an MQTT protocol violation.
 type ErrMQTTProtocolError struct {
 	Message string
@@ -203,6 +250,32 @@ type ErrMQTTProtocolError struct {
 
 func (e *ErrMQTTProtocolError) Error() string {
 	return "mqtt protocol error: " + e.Message
+}
+
+// mqttMaxPacketSize bounds one MQTT control packet. It matches the
+// WebSocket server's default message size limit.
+const mqttMaxPacketSize = 1024 * 1024
+
+// mqttPacketLength returns the total length of the MQTT control packet at
+// the start of buf: the fixed header byte, the Remaining Length bytes and
+// the remaining length. ok is false when buf does not yet hold the whole
+// fixed header. A Remaining Length longer than four bytes is a protocol
+// error.
+func mqttPacketLength(buf []byte) (n int, ok bool, err error) {
+	remaining, mult := 0, 1
+	for i := 1; i <= 4; i++ {
+		if i >= len(buf) {
+			return 0, false, nil
+		}
+		b := buf[i]
+		remaining += int(b&0x7f) * mult
+		if b&0x80 == 0 {
+			return 1 + i + remaining, true, nil
+		}
+		mult *= 128
+	}
+	// All four length bytes carried the continuation bit.
+	return 0, false, &ErrMQTTProtocolError{Message: "invalid remaining length"}
 }
 
 // handlePacket parses and handles an MQTT packet.
@@ -322,6 +395,16 @@ func (h *MQTTHandler) handlePublish(ctx context.Context, payload []byte, pk *pac
 
 	if err := pk.PublishDecode(payload); err != nil {
 		return nil, &ErrMQTTProtocolError{Message: err.Error()}
+	}
+
+	// Publishing needs messaging:publish on top of the upgrade's
+	// messaging:subscribe. MQTT 5 can refuse a QoS 1 or 2 publication with
+	// the Not authorized reason; otherwise the connection is closed.
+	if err := session.Authorize("messaging", "publish"); err != nil {
+		if state.protocolVersion == 5 && pk.FixedHeader.Qos > 0 {
+			return h.buildRefusedPublishAck(pk.FixedHeader.Qos, pk.PacketID), nil
+		}
+		return nil, ErrMQTTPublishNotAuthorized
 	}
 
 	// Publish to hub

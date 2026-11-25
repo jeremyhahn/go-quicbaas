@@ -16,6 +16,7 @@ Layer 4 of the stack, one product in layers: the application-layer framework and
 - **parameter-store** — tenanted configuration parameters — release 0.1.0-alpha — done
 - **service-registry** — lease-based service registry on every transport — [#1143](../../issues/1143), release 0.14.0-alpha — done
 - **signal-bridge** — the go-signal bridge — release 0.4.0-alpha — done
+- **websocket** — the WebSocket server mounted at `GET /api/v1/ws` behind `messaging:subscribe`, dial-tested for MQTT, AMQP and STOMP — [#1691](../../issues/1691) — done
 
 ## Now
 - **iam** — one replicated OIDC signing key, so main Integration passes; `IAMService` mapped under authz, email-only login, invite self-registration, PIV attestation trust settings, a stable race pass — [#2343](../../issues/2343); DC: [#301](../../issues/301), [#377](../../issues/377), [#358](../../issues/358), [#800](../../issues/800), [#718](../../issues/718) — open
@@ -75,7 +76,6 @@ Layer 4 of the stack, one product in layers: the application-layer framework and
 
 ## Future
 - **identity-refactor** — the identity surface layered over go-qrdb's primitives; authentication on UI routes — [docs/SPEC.md](docs/SPEC.md) — open
-- **websocket** — the WebSocket server mounted on a listener — [docs/websocket/api.md](docs/websocket/api.md) — open
 - **tenant-agent** — a QuicBaaS tenant agent replaces the Company Agent — [milestone 33](../../milestone/33) — open
 - **ai-native-sdlc** — the AI-native SDLC built in: managed settings, OpenTelemetry session export, weekly security scans and a first responder, notifying over Signal (preferred) and Slack — [#2463](../../issues/2463) — open
 

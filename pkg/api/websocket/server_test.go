@@ -376,6 +376,78 @@ func TestServer_CloseClosesSessions(t *testing.T) {
 	}
 }
 
+// TestServer_UpgradeRacingCloseIsClosed: an upgrade paused before admission
+// while Close runs is closed rather than registered, and its subprotocol
+// handler never runs.
+func TestServer_UpgradeRacingCloseIsClosed(t *testing.T) {
+	server := handshakeServer(t, DefaultServerConfig(), nil, testLogger(t))
+	if server == nil {
+		return
+	}
+	handler := &mockSubprotocolHandler{name: "test"}
+	server.RegisterSubprotocol(handler)
+
+	reached := make(chan struct{})
+	release := make(chan struct{})
+	server.beforeAdmit = func() {
+		close(reached)
+		<-release
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(server.HandleHTTP))
+	defer ts.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	type dialResult struct {
+		conn *websocket.Conn
+		err  error
+	}
+	dialed := make(chan dialResult, 1)
+	go func() {
+		conn, resp, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(ts.URL, "http"),
+			&websocket.DialOptions{Subprotocols: []string{"test"}})
+		if resp != nil && resp.Body != nil {
+			resp.Body.Close()
+		}
+		dialed <- dialResult{conn, err}
+	}()
+
+	select {
+	case <-reached:
+	case <-time.After(5 * time.Second):
+		t.Fatal("upgrade did not reach admission")
+	}
+
+	// The paused upgrade does not hold the admission lock, so Close returns.
+	if err := server.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	close(release)
+
+	res := <-dialed
+	if res.err != nil {
+		t.Fatalf("WebSocket dial failed: %v", res.err)
+	}
+	defer res.conn.CloseNow()
+
+	readCtx, readCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer readCancel()
+	_, _, err := res.conn.Read(readCtx)
+	if err == nil {
+		t.Fatal("Read succeeded, want the server to close the connection")
+	}
+	if got := websocket.CloseStatus(err); got != -1 && got != websocket.StatusGoingAway {
+		t.Fatalf("close status = %d, want %d", got, websocket.StatusGoingAway)
+	}
+	if n := server.GetSessionCount(); n != 0 {
+		t.Fatalf("Session count = %d, want 0", n)
+	}
+	if handler.WasCalled() {
+		t.Fatal("subprotocol handler ran for an upgrade that lost the race with Close")
+	}
+}
+
 func TestServer_IsClosed(t *testing.T) {
 	log := testLogger(t)
 	server := newServer(DefaultServerConfig(), nil, log)
@@ -977,6 +1049,108 @@ func TestServer_SessionCleanupOnDisconnect(t *testing.T) {
 	if finalCount != 0 {
 		t.Errorf("Final session count = %d, want 0", finalCount)
 	}
+}
+
+// panickingHandler is a subprotocol handler that panics on every connection.
+type panickingHandler struct{}
+
+func (panickingHandler) Name() string { return "panicky" }
+
+func (panickingHandler) HandleConnection(context.Context, *websocket.Conn, *Session) error {
+	panic("subprotocol handler bug")
+}
+
+// TestServer_HandlerPanicEndsOnlyTheSession: a panicking subprotocol handler
+// is recovered in its session's goroutine; the process survives and the
+// session is removed.
+func TestServer_HandlerPanicEndsOnlyTheSession(t *testing.T) {
+	server := handshakeServer(t, DefaultServerConfig(), nil, testLogger(t))
+	if server == nil {
+		return
+	}
+	server.RegisterSubprotocol(panickingHandler{})
+
+	ts := httptest.NewServer(server)
+	defer ts.Close()
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for i := 0; i < 2; i++ {
+		conn, resp, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{Subprotocols: []string{"panicky"}})
+		if resp != nil && resp.Body != nil {
+			resp.Body.Close()
+		}
+		if err != nil {
+			t.Fatalf("dial %d: %v", i, err)
+		}
+		if _, _, err := conn.Read(ctx); err == nil {
+			t.Fatalf("dial %d: the session stayed open after its handler panicked", i)
+		}
+		conn.CloseNow()
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for server.GetSessionCount() != 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if n := server.GetSessionCount(); n != 0 {
+		t.Fatalf("session count = %d after the panics, want 0", n)
+	}
+}
+
+// TestHandleHTTP_CarriesGrantToSession: the grant on the upgrade request's
+// context reaches the session, and a session without one is denied.
+func TestHandleHTTP_CarriesGrantToSession(t *testing.T) {
+	server := handshakeServer(t, DefaultServerConfig(), nil, testLogger(t))
+	if server == nil {
+		return
+	}
+	got := make(chan *Session, 1)
+	server.RegisterSubprotocol(grantProbe{got: got})
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		g := Grant{TenantID: "tenant-a", Authorize: func(context.Context, string, string) error { return nil }}
+		server.ServeHTTP(w, r.WithContext(WithGrant(r.Context(), g)))
+	}))
+	defer ts.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, resp, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(ts.URL, "http"), &websocket.DialOptions{Subprotocols: []string{"probe"}})
+	if resp != nil && resp.Body != nil {
+		resp.Body.Close()
+	}
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.CloseNow()
+
+	select {
+	case s := <-got:
+		if s.Grant().TenantID != "tenant-a" {
+			t.Fatalf("session tenant = %q, want tenant-a", s.Grant().TenantID)
+		}
+		if err := s.Authorize("messaging", "publish"); err != nil {
+			t.Fatalf("Authorize with an allowing grant: %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatal("handler never ran")
+	}
+
+	if err := NewSession("x", "probe", nil).Authorize("messaging", "publish"); !stderrors.Is(err, ErrOperationNotAuthorized) {
+		t.Fatalf("Authorize without a grant = %v, want ErrOperationNotAuthorized", err)
+	}
+}
+
+type grantProbe struct{ got chan<- *Session }
+
+func (grantProbe) Name() string { return "probe" }
+
+func (p grantProbe) HandleConnection(ctx context.Context, _ *websocket.Conn, s *Session) error {
+	p.got <- s
+	<-ctx.Done()
+	return nil
 }
 
 func TestServer_RegisterSubprotocolConcurrent(t *testing.T) {

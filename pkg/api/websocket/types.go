@@ -85,6 +85,32 @@ type Session struct {
 
 	// closed indicates if the session has been closed.
 	closed atomic.Bool
+
+	// grant is the verified tenant and the per-operation authorizer the
+	// mounting route handed over with the upgrade request (zero if none).
+	grant Grant
+}
+
+// Grant returns the tenant and authorizer the upgrade request carried. A
+// session without a grant has an empty TenantID and a nil Authorize, and
+// Session.Authorize denies every operation for it.
+func (s *Session) Grant() Grant {
+	return s.grant
+}
+
+// SetGrant replaces the session's grant. HandleHTTP sets it from the
+// upgrade request; tests set it directly.
+func (s *Session) SetGrant(g Grant) {
+	s.grant = g
+}
+
+// Authorize checks resource:action through the session's grant. It fails
+// closed: a session with no grant, or a grant with no authorizer, is denied.
+func (s *Session) Authorize(resource, action string) error {
+	if s == nil || s.grant.Authorize == nil {
+		return ErrOperationNotAuthorized
+	}
+	return s.grant.Authorize(s.ctx, resource, action)
 }
 
 // NewSession creates a new session with the given parameters.

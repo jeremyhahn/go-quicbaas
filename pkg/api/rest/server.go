@@ -19,6 +19,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -299,6 +300,12 @@ type Server struct {
 	// node with the module disabled answers 503 rather than 404. See
 	// HandleSDLCWebhook for why that distinction matters to a forge.
 	sdlcWebhookHandler http.HandlerFunc
+
+	// webSocketHandler serves the WebSocket upgrade (GET /api/v1/ws). Nil
+	// until the node builds the WebSocket server and injects it; the route is
+	// registered either way and answers 503 while it is nil. Shutdown closes
+	// it when it is an io.Closer.
+	webSocketHandler http.Handler
 
 	// tenantWebAuthnWarned is the one-per-episode flag behind the tenant
 	// WebAuthn ceremony's unavailability warning. It lives on the server
@@ -837,6 +844,15 @@ func (s *Server) SetClusterSecretHandler(h http.HandlerFunc) {
 	s.clusterSecretHandler = h
 }
 
+// SetWebSocketHandler registers the WebSocket upgrade handler served at
+// GET /api/v1/ws. Until it is set the route answers 503. Shutdown closes the
+// handler when it implements io.Closer.
+func (s *Server) SetWebSocketHandler(h http.Handler) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.webSocketHandler = h
+}
+
 // SetSDLCWebhookHandler registers the forge webhook ingress handler.
 //
 // Injected by the SDLC module at boot rather than constructed here, because the
@@ -1128,6 +1144,11 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	s.logger.Info("Shutting down REST API server")
 
 	s.closed = true
+
+	// Close the WebSocket server and its sessions with the listener.
+	if c, ok := s.webSocketHandler.(io.Closer); ok {
+		_ = c.Close()
+	}
 
 	// Commit any deferred operator departures before the listener goes away,
 	// so an operator who was attached at shutdown is recorded as having left

@@ -161,7 +161,8 @@ import (
 // and POST .../{id}/answer) under placement:read and placement:consent.
 // PLUS 1 for the capabilities report (GET /api/v1/server/capabilities,
 // handlers_capabilities.go), authenticated with no RBAC permission.
-const baseRouteTableSize = 680
+// PLUS 1 for the WebSocket upgrade (GET /api/v1/ws, issue #1691) under messaging:subscribe.
+const baseRouteTableSize = 681
 
 // TestRoutes_SurfaceGuard asserts the table's structural invariants: exact
 // size, absolute patterns, no duplicate method+pattern, and a handler binder
