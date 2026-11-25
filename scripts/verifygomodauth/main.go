@@ -75,7 +75,7 @@ var gateOriginEnv = []string{"GITEA_HTTP_ORIGIN=" + gateOrigin}
 var strippedEnv = []string{
 	"GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0",
 	"FORGE_READ_TOKEN", "GITEA_HTTP_ORIGIN", "GOMODAUTH_ENV",
-	"GOMODAUTH_TOKENS_FILE", "GOMODAUTH_TOKEN_KEY", "GOMODAUTH_OWNER", "HOME",
+	"GOMODAUTH_TOKENS_FILE", "GOMODAUTH_TOKEN_KEY", "GOMODAUTH_OWNER", decoyPathEnv, "HOME",
 	"GOMOD_BACKUP", "SDK_GOMOD_BACKUP",
 }
 
@@ -94,11 +94,34 @@ func (e *WorkspaceError) Error() string { return "cannot prepare the gate worksp
 
 func (e *WorkspaceError) Unwrap() error { return e.Err }
 
+// decoyPathEnv names the decoy tokens file the gate plants in each case's
+// throwaway HOME, as a path relative to that HOME. It has no default.
+const decoyPathEnv = "GOMODAUTH_TOKEN_FILE"
+
+// decoyTokenFile reads decoyPathEnv through lookup. It refuses an unset or
+// blank value, and a path that is absolute or climbs out with "..": the gate
+// never writes outside its throwaway HOME.
+func decoyTokenFile(lookup func(string) (string, bool)) (string, error) {
+	v, ok := lookup(decoyPathEnv)
+	if !ok || strings.TrimSpace(v) == "" {
+		return "", fmt.Errorf("%s is not set: name the decoy token file, relative to the throwaway HOME", decoyPathEnv)
+	}
+	if !filepath.IsLocal(v) {
+		return "", fmt.Errorf("%s=%q must be a relative path inside the throwaway HOME", decoyPathEnv, v)
+	}
+	return filepath.Clean(v), nil
+}
+
 func run(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("verifygomodauth", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	root := fs.String("root", ".", "repository root whose stage-gomodauth contract is verified")
 	if err := fs.Parse(args); err != nil {
+		return gate.ExitToolError
+	}
+	tokenFile, err := decoyTokenFile(os.LookupEnv)
+	if err != nil {
+		fmt.Fprintln(stderr, "verify-gomodauth:", err)
 		return gate.ExitToolError
 	}
 
@@ -118,7 +141,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return gate.ExitToolError
 	}
 
-	failures, err := check(*root, work, stdout, stderr)
+	failures, err := check(*root, work, tokenFile, stdout, stderr)
 	if err != nil {
 		fmt.Fprintln(stderr, "verify-gomodauth:", err)
 		return gate.ExitToolError
@@ -208,8 +231,8 @@ func makeCommand(root, dir, work, staged string, inv invocation) *exec.Cmd {
 }
 
 // invoke runs one case in its own directory under work.
-func invoke(root, work, name string, inv invocation) (outcome, error) {
-	dir, staged, err := prepareCase(work, name, inv)
+func invoke(root, work, tokenFile, name string, inv invocation) (outcome, error) {
+	dir, staged, err := prepareCase(work, tokenFile, name, inv)
 	if err != nil {
 		return outcome{}, err
 	}
@@ -227,18 +250,19 @@ func invoke(root, work, name string, inv invocation) (outcome, error) {
 // prepareCase makes one case's directory: its HOME and tokens file, the fake's
 // control files, and any pre-existing staged file. It returns the directory and
 // the staged file's path.
-func prepareCase(work, name string, inv invocation) (string, string, error) {
+func prepareCase(work, tokenFile, name string, inv invocation) (string, string, error) {
 	dir, err := caseDir(work, name)
 	if err != nil {
 		return "", "", err
 	}
 	home := filepath.Join(dir, "home")
 	staged := filepath.Join(dir, "gomodauth.env")
-	if err := os.MkdirAll(filepath.Join(home, ".agent-identity"), 0o700); err != nil {
+	p := filepath.Join(home, tokenFile)
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		return "", "", &WorkspaceError{Err: err}
 	}
 	if inv.tokensFile != "" {
-		if err := os.WriteFile(filepath.Join(home, ".agent-identity", "tokens.env"), []byte(inv.tokensFile), 0o600); err != nil {
+		if err := os.WriteFile(p, []byte(inv.tokensFile), 0o600); err != nil {
 			return "", "", &WorkspaceError{Err: err}
 		}
 	}
@@ -360,7 +384,7 @@ var targetCases = []targetCase{
 
 // check runs every case and returns how many assertions failed, or an error
 // when the gate itself could not run.
-func check(root, work string, stdout, stderr io.Writer) (int, error) {
+func check(root, work, tokenFile string, stdout, stderr io.Writer) (int, error) {
 	failures := 0
 	fail := func(format string, args ...any) {
 		fmt.Fprintf(stderr, "  ✗ "+format+"\n", args...)
@@ -399,7 +423,7 @@ func check(root, work string, stdout, stderr io.Writer) (int, error) {
 	for _, sc := range stagingCases {
 		fmt.Fprintf(stdout, "case: with %s, stage-gomodauth stages an empty 0600 file\n", sc.what)
 		sc.inv.targets = []string{"stage-gomodauth"}
-		out, err := invoke(root, work, sc.slug, sc.inv)
+		out, err := invoke(root, work, tokenFile, sc.slug, sc.inv)
 		if err != nil {
 			return 0, err
 		}
@@ -419,7 +443,7 @@ func check(root, work string, stdout, stderr io.Writer) (int, error) {
 	}
 
 	fmt.Fprintln(stdout, "case: clear-gomodauth then stage-gomodauth under umask 022 stages 0600")
-	out, err := invoke(root, work, "clear-then-stage", invocation{
+	out, err := invoke(root, work, tokenFile, "clear-then-stage", invocation{
 		targets:         []string{"clear-gomodauth", "stage-gomodauth"},
 		tokensFile:      tokensFile,
 		permissiveUmask: true,
@@ -435,7 +459,7 @@ func check(root, work string, stdout, stderr io.Writer) (int, error) {
 	}
 
 	fmt.Fprintln(stdout, "case: clear-gomodauth under umask 022 creates the file 0600")
-	out, err = invoke(root, work, "clear-creates", invocation{
+	out, err = invoke(root, work, tokenFile, "clear-creates", invocation{
 		targets:         []string{"clear-gomodauth"},
 		permissiveUmask: true,
 	})
@@ -451,7 +475,7 @@ func check(root, work string, stdout, stderr io.Writer) (int, error) {
 
 	for _, tc := range targetCases {
 		fmt.Fprintf(stdout, "case: %s stages an empty secret file for its image build\n", tc.target)
-		out, err := invoke(root, work, tc.target, invocation{
+		out, err := invoke(root, work, tokenFile, tc.target, invocation{
 			targets:    []string{tc.target},
 			makeVars:   tc.makeVars,
 			tokensFile: tokensFile,
@@ -467,7 +491,7 @@ func check(root, work string, stdout, stderr io.Writer) (int, error) {
 
 	for _, ic := range interruptCases {
 		fmt.Fprintf(stdout, "case: interrupting %s during its build leaves the secret file empty\n", ic.target)
-		out, reached, err := interrupt(root, work, ic, tokensFile)
+		out, reached, err := interrupt(root, work, tokenFile, ic, tokensFile)
 		if err != nil {
 			return 0, err
 		}

@@ -495,14 +495,14 @@ describe('CostView', () => {
       electricity_entries: 3,
       measured_energy_entries: 2,
       hosts: [
-        { host: 'gpu-host:9091', total_tokens: 150, energy_mwh: 9_000, electricity_entries: 3, measured_energy_entries: 2 },
+        { host: 'gpu-01:9091', total_tokens: 150, energy_mwh: 9_000, electricity_entries: 3, measured_energy_entries: 2 },
         { unattributed: true, total_tokens: 50 },
       ],
     });
     render(CostView);
     const hosts = await screen.findAllByTestId('spend-host');
     expect(hosts).toHaveLength(2);
-    expect(hosts[0]!.textContent).toContain('gpu-host:9091');
+    expect(hosts[0]!.textContent).toContain('gpu-01:9091');
     expect(screen.getByTestId('spend-host-energy').textContent).toContain('2 of 3 measured');
     expect(hosts[1]!.textContent).toContain('No host recorded');
     expect(screen.getByText('3 local turns costed from electricity · 2 of 3 measured')).toBeTruthy();
@@ -513,18 +513,18 @@ describe('CostView', () => {
       Promise.resolve({
         ...(req.project_id ? projectReport : tenantReport),
         host: req.host,
-        hosts: [{ host: 'gpu-host:9091', total_tokens: 150 }],
+        hosts: [{ host: 'gpu-01:9091', total_tokens: 150 }],
       }),
     );
     render(CostView);
-    await fireEvent.click(await screen.findByRole('button', { name: 'Show only gpu-host:9091' }));
-    await waitFor(() => expect(getSpendReport.mock.calls.at(-1)![0]).toMatchObject({ host: 'gpu-host:9091' }));
-    expect((await screen.findByTestId('spend-host-filter')).textContent).toContain('gpu-host:9091');
+    await fireEvent.click(await screen.findByRole('button', { name: 'Show only gpu-01:9091' }));
+    await waitFor(() => expect(getSpendReport.mock.calls.at(-1)![0]).toMatchObject({ host: 'gpu-01:9091' }));
+    expect((await screen.findByTestId('spend-host-filter')).textContent).toContain('gpu-01:9091');
 
     // Drilling into a project keeps the host: it is a filter, not a level.
     await fireEvent.click(await screen.findByText('proj-1'));
     await waitFor(() =>
-      expect(getSpendReport.mock.calls.at(-1)![0]).toMatchObject({ project_id: 'proj-1', host: 'gpu-host:9091' }),
+      expect(getSpendReport.mock.calls.at(-1)![0]).toMatchObject({ project_id: 'proj-1', host: 'gpu-01:9091' }),
     );
 
     await fireEvent.click(await screen.findByRole('button', { name: 'Show every host' }));

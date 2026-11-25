@@ -31,8 +31,8 @@ const (
 	// pollInterval is how often pollUntil and holdSteady sample cluster state.
 	pollInterval = 500 * time.Millisecond
 
-	// pollRequestTimeout bounds one sample so a hung node cannot stall a poll
-	// past its deadline.
+	// pollRequestTimeout bounds one request of a sample so a hung node cannot
+	// stall a poll past its deadline.
 	pollRequestTimeout = 10 * time.Second
 
 	// replicationTimeout bounds how long a committed write may take to become
@@ -126,28 +126,26 @@ func waitForQuorumReady(t *testing.T, nodes []string) {
 }
 
 // waitForEntitiesOnAllNodes polls every client of cluster until each entity
-// is found there, failing the test once replicationTimeout elapses. Callers
-// assert the data afterwards.
+// is found there, failing the test once replicationTimeout elapses. An entity
+// already found on a node is not read from it again, and the nodes are read
+// in parallel, each read bounded by pollRequestTimeout. Callers assert the
+// data afterwards.
 func waitForEntitiesOnAllNodes(t *testing.T, cluster *helpers.TestCluster, entities []helpers.TestEntity) {
 	t.Helper()
-	pollUntil(t, replicationTimeout, fmt.Sprintf("%d entities on all %d nodes", len(entities), len(cluster.Clients)),
-		func(ctx context.Context) (bool, error) {
-			for _, client := range cluster.Clients {
-				for _, entity := range entities {
-					resp, err := client.KV().Get(ctx, &service.GetRequest{
-						EntityType: entity.EntityType,
-						ID:         id.HashString(entity.Key),
-					})
-					if err != nil {
-						return false, err
-					}
-					if !resp.Found {
-						return false, nil
-					}
-				}
+	wait := helpers.NewReplicationWait(len(cluster.Clients), entities,
+		func(ctx context.Context, node int, entity helpers.TestEntity) (bool, error) {
+			resp, err := cluster.Clients[node].KV().Get(ctx, &service.GetRequest{
+				EntityType: entity.EntityType,
+				ID:         id.HashString(entity.Key),
+			})
+			if err != nil {
+				return false, err
 			}
-			return true, nil
-		})
+			return resp.Found, nil
+		}, pollRequestTimeout)
+	if err := helpers.Poll(t.Context(), pollInterval, replicationTimeout, wait.Check); err != nil {
+		t.Fatalf("%d entities on all %d nodes: %d reads still pending: %v", len(entities), len(cluster.Clients), wait.Pending(), err)
+	}
 }
 
 // clusterHasLeader returns a holdSteady check that fails while cluster has no

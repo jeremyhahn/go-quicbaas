@@ -44,7 +44,7 @@ func agentApp(tenantID, clientID string) *Application {
 	return &Application{
 		ClientID:     clientID,
 		ClientSecret: "hashed-secret",
-		Name:         FleetNodeAppName(tenantID, "agent-gpu-host"),
+		Name:         FleetNodeAppName(tenantID, "agent-gpu-01"),
 		TenantID:     tenantID,
 		GrantTypes:   []string{GrantTypeClientCredentials},
 	}
@@ -84,7 +84,7 @@ func TestCreateApp_LandsInTheAppsOwnTenantNamespace(t *testing.T) {
 			name:       "client id that encodes no tenant (mTLS app)",
 			tenantID:   "automatethethings",
 			barrier:    true,
-			clientID:   "agent-automatethethings-agent-gpu-host-mtls",
+			clientID:   "agent-automatethethings-agent-gpu-01-mtls",
 			createCtx:  context.Background,
 			readTenant: "automatethethings",
 		},

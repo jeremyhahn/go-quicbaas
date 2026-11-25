@@ -69,7 +69,7 @@ func (s *recordingSpendServer) GetSpendReport(
 			MeasuredEnergyEntries: 2,
 		},
 		Host:   req.GetHost(),
-		Hosts:  []*pb.SpendHost{{Host: "gpu-host:9091", Totals: &pb.SpendTotals{TotalTokens: 200}}, {Unattributed: true}},
+		Hosts:  []*pb.SpendHost{{Host: "gpu-01:9091", Totals: &pb.SpendTotals{TotalTokens: 200}}, {Unattributed: true}},
 		Agent:  req.GetAgent(),
 		Agents: []*pb.SpendAgent{{AgentId: "claude-coder", Name: "Claude coder", Totals: &pb.SpendTotals{TotalTokens: 200}}, {Unattributed: true}},
 
@@ -148,12 +148,12 @@ func TestOrchestratorGetSpendReport_MapsEveryField(t *testing.T) {
 	resp, err := h.handleRequest(ctx, "quicbaas.Orchestrator", "GetSpendReport",
 		&orchestrator.GetSpendReportRequest{
 			ProjectID: "p1", TaskID: "w1", JobID: "j1", SessionID: "s1", Round: 0, RoundSet: true,
-			From: &from, Host: "gpu-host:9091", Agent: "claude-coder",
+			From: &from, Host: "gpu-01:9091", Agent: "claude-coder",
 		})
 	require.NoError(t, err)
 
 	got := fake.request()
-	assert.Equal(t, "gpu-host:9091", got.GetHost(), "the host drill-down must cross the wire")
+	assert.Equal(t, "gpu-01:9091", got.GetHost(), "the host drill-down must cross the wire")
 	assert.Equal(t, "claude-coder", got.GetAgent(), "the Agent drill-down must cross the wire")
 	require.NotNil(t, got)
 	assert.Equal(t, "tenant-a", got.GetTenantId(), "the context tenant must cross the wire")
@@ -174,7 +174,7 @@ func TestOrchestratorGetSpendReport_MapsEveryField(t *testing.T) {
 	// account that pays. go-quicbaas#1058.
 	assert.Equal(t, int64(1_250_000), report.EquivalentMicros)
 	assert.Equal(t, 2, report.MeasuredEnergyEntries)
-	assert.Equal(t, "gpu-host:9091", report.Host)
+	assert.Equal(t, "gpu-01:9091", report.Host)
 	require.Len(t, report.Hosts, 2)
 	assert.Equal(t, int64(200), report.Hosts[0].TotalTokens)
 	assert.True(t, report.Hosts[1].Unattributed)

@@ -72,6 +72,46 @@ func TestHandleCreateUser_CarriesTheInvite(t *testing.T) {
 	assert.True(t, inviteExpiry.Equal(*user.InviteExpiresAt))
 }
 
+// TestHandleCreateUser_DerivesHandleFromEmail pins that a create over gRPC
+// stores the same handle as the REST SDK's mapUserCreateRequest: the CLI
+// sends the email as the handle, and the server refuses an email-shaped one.
+func TestHandleCreateUser_DerivesHandleFromEmail(t *testing.T) {
+	cases := []struct {
+		name     string
+		username string
+		want     string
+	}{
+		{name: "email with dot", username: "pat.x@acme.test", want: "pat_x"},
+		{name: "email with dash", username: "user-grpc-1@test.local", want: "user-grpc-1"},
+		{name: "plain handle", username: "alice", want: "alice"},
+		{name: "empty", username: "", want: ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			backend := &inviteIAMServer{}
+			srv := newHandlerServer(t, func(s *grpc.Server) {
+				iampb.RegisterIAMServiceServer(s, backend)
+			})
+			h := newIAMHandler(srv.dial(t))
+
+			_, err := h.handleRequest(context.Background(), "quicbaas.IAM.User", "Create", map[string]interface{}{
+				"tenant_id": "acme",
+				"request": map[string]interface{}{
+					"email":    "pat@acme.test",
+					"username": tc.username,
+				},
+			})
+			require.NoError(t, err)
+
+			require.NotNil(t, backend.got)
+			assert.Equal(t, tc.want, backend.got.Username)
+			// With no display_name, Name falls back to the normalized handle.
+			assert.Equal(t, tc.want, backend.got.Name)
+			assert.Equal(t, "acme", backend.got.TenantId)
+		})
+	}
+}
+
 // TestConvertProtoUserToSDK_NoInvite proves a user with no invite carries
 // none, rather than a zero expiry that reads as already expired.
 func TestConvertProtoUserToSDK_NoInvite(t *testing.T) {
