@@ -26,7 +26,7 @@ import (
 func seedHostFixture(t *testing.T) ConsumptionLedger {
 	t.Helper()
 	ledger := NewInMemoryConsumptionLedger()
-	hosts := map[string]string{"h1": "gpu-host:9091", "h2": "gpu-host:9091", "h3": "vm-host:9091", "h4": ""}
+	hosts := map[string]string{"h1": "gpu-01:9091", "h2": "gpu-01:9091", "h3": "vm-host:9091", "h4": ""}
 	tokens := map[string]int64{"h1": 10, "h2": 20, "h3": 5, "h4": 1}
 	i := 0
 	for _, id := range []string{"h1", "h2", "h3", "h4"} {
@@ -45,7 +45,7 @@ func TestReadSpendReport_BreaksSpendDownByHost(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Len(t, report.Hosts, 3)
-	assert.Equal(t, "gpu-host:9091", report.Hosts[0].Host)
+	assert.Equal(t, "gpu-01:9091", report.Hosts[0].Host)
 	assert.Equal(t, int64(60), report.Hosts[0].TotalTokens)
 	assert.Equal(t, "vm-host:9091", report.Hosts[1].Host)
 	assert.True(t, report.Hosts[2].Unattributed, "an entry naming no host is labelled, and sorts last")
@@ -68,7 +68,7 @@ func TestReadSpendReport_DrillsIntoOneHost(t *testing.T) {
 		entries int
 		tokens  int64
 	}{
-		"a named host":          {"gpu-host:9091", 2, 60},
+		"a named host":          {"gpu-01:9091", 2, 60},
 		"the unattributed host": {SpendUnattributed, 1, 2},
 		"a host with no turns":  {"nowhere:1", 0, 0},
 	}

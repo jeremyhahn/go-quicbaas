@@ -138,7 +138,7 @@ func TestBuildAgentRuntime_OpenVINOBackendReceivesTheContainerRuntime(t *testing
 	t.Setenv("PATH", engineDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	ov := orchestration.NewOpenVINOBackend(orchestration.OpenVINOBackendConfig{
-		BaseURL:      "http://gpu-host.invalid:9000",
+		BaseURL:      "http://gpu-01.invalid:9000",
 		DefaultModel: "qwen3-8b",
 	})
 	backends := map[string]orchestration.AgentBackend{"openvino": ov}
@@ -161,7 +161,7 @@ func TestBuildAgentRuntime_OpenVINOContextDeclarationReachesTheBackend(t *testin
 	t.Parallel()
 
 	ov := orchestration.NewOpenVINOBackend(orchestration.OpenVINOBackendConfig{
-		BaseURL:       "http://gpu-host.invalid:9000",
+		BaseURL:       "http://gpu-01.invalid:9000",
 		DefaultModel:  "qwen3-8b",
 		ContextTokens: 8192,
 	})
@@ -170,7 +170,7 @@ func TestBuildAgentRuntime_OpenVINOContextDeclarationReachesTheBackend(t *testin
 	}
 	// And an undeclared backend stays unbounded until something refuses it.
 	bare := orchestration.NewOpenVINOBackend(orchestration.OpenVINOBackendConfig{
-		BaseURL: "http://gpu-host.invalid:9000", DefaultModel: "qwen3-8b",
+		BaseURL: "http://gpu-01.invalid:9000", DefaultModel: "qwen3-8b",
 	})
 	if got := bare.ContextBound(); got != 0 {
 		t.Fatalf("ContextBound() = %d, want 0 when nothing is declared or learned", got)
@@ -188,9 +188,9 @@ func TestBuildAgentBackends_EveryNamedAgentEndpointIsRegistered(t *testing.T) {
 		Backends:          []fleet.BackendKind{fleet.BackendACP},
 		OpenVINOBaseURL:   "http://npu-host.invalid:9000",
 		OpenVINOModel:     "qwen3-8b",
-		OllamaBaseURL:     "http://gpu-host.invalid:11434",
+		OllamaBaseURL:     "http://gpu-01.invalid:11434",
 		OllamaAgentModel:  "qwen3.8:27b-q4_K_M",
-		VLLMBaseURL:       "http://gpu-host.invalid:11435",
+		VLLMBaseURL:       "http://gpu-01.invalid:11435",
 		VLLMModel:         "review",
 		VLLMContextTokens: 65536,
 	}

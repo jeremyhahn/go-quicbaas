@@ -272,6 +272,40 @@ func (p *OIDCProvider) RevokeSessionToken(ctx context.Context, token string) err
 	return p.tokenService.RevokeToken(ctx, token)
 }
 
+// RevokeSubjectBearers revokes the subject's unrevoked access and refresh
+// tokens in tenantID, except those minted for keepSessionID (none kept when
+// it is empty), and returns how many it revoked. The first revoke error is
+// returned.
+func (p *OIDCProvider) RevokeSubjectBearers(ctx context.Context, tenantID, subject, keepSessionID string) (int, error) {
+	if tenantID == "" || subject == "" {
+		return 0, errors.New("iam.OIDCProvider.RevokeSubjectBearers: tenant and subject are required")
+	}
+	ctx = withTokenTenant(ctx, tenantID)
+	storage := p.tokenService.storage
+	tokens, err := storage.ListTokensByUser(ctx, subject)
+	if err != nil {
+		return 0, err
+	}
+	revoked := 0
+	for _, token := range tokens {
+		if token == nil || token.Revoked || token.TenantID != tenantID || token.Subject != subject {
+			continue
+		}
+		sid := token.SessionID
+		if sid == "" && token.Session != nil {
+			sid = token.Session.SessionID
+		}
+		if keepSessionID != "" && sid == keepSessionID {
+			continue
+		}
+		if err := storage.RevokeToken(ctx, token.JTI); err != nil {
+			return revoked, err
+		}
+		revoked++
+	}
+	return revoked, nil
+}
+
 // bindSessionDPoP verifies a DPoP proof presented with a factor login and
 // returns the cnf claim binding the session bearer to the proof key. It returns
 // (nil, nil) when no proof was presented.

@@ -233,6 +233,7 @@ func (s *TokenService) GenerateAccessToken(ctx context.Context, claims *Claims) 
 		JTI:       claims.JTI,
 		Subject:   claims.Subject,
 		TenantID:  claims.TenantID,
+		SessionID: claims.SessionID,
 		Scopes:    parseScopes(claims.Scope),
 		Expires:   claims.ExpiresAt.Time,
 		Issued:    claims.IssuedAt.Time,

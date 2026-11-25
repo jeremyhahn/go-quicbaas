@@ -2206,7 +2206,7 @@ func TestRemaining91_ParseCryptoDecryptResponse_InvalidInput(t *testing.T) {
 
 func TestRemaining91_ParseCryptoDecryptResponse_ValidInput(t *testing.T) {
 	data := map[string]interface{}{
-		"key_id": "decrypt-key", "plaintext": "hello world",
+		"key_id": "decrypt-key", "plaintext": base64.StdEncoding.EncodeToString([]byte("hello world")),
 	}
 	resp, err := parseCryptoDecryptResponse(data)
 	require.NoError(t, err)

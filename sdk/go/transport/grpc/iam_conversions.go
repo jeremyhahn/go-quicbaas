@@ -27,6 +27,18 @@ import (
 )
 
 // handleCreateUser handles CreateUser requests.
+// createUserHandle turns the handle a caller sent into the one the server
+// accepts, mirroring mapUserCreateRequest in the REST SDK so a create over
+// gRPC stores the same handle as over REST. The CLI sends the email as the
+// handle: keep the part before "@" when there is one, then replace "." with
+// "_". An empty handle stays empty, so the server derives it from the email.
+func createUserHandle(username string) string {
+	if idx := strings.Index(username, "@"); idx > 0 {
+		username = username[:idx]
+	}
+	return strings.ReplaceAll(username, ".", "_")
+}
+
 func (h *iamHandler) handleCreateUser(ctx context.Context, client iampb.IAMServiceClient, req interface{}) (interface{}, error) {
 	reqMap, ok := toMap(req)
 	if !ok {
@@ -38,6 +50,7 @@ func (h *iamHandler) handleCreateUser(ctx context.Context, client iampb.IAMServi
 
 	email, _ := getString(requestData, "email")
 	username, _ := getString(requestData, "username")
+	username = createUserHandle(username)
 	displayName, _ := getString(requestData, "display_name")
 	roles, _ := getStringSlice(requestData, "roles")
 	metadata, _ := getStringMap(requestData, "metadata")
