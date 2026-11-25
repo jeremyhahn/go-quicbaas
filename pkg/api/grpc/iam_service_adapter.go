@@ -411,6 +411,13 @@ func (a *IAMServiceAdapter) UpdateUser(ctx context.Context, user *iam.User) (*ia
 				}
 			}
 		}
+		// updated was captured before the role sync, so it carries the old
+		// role set; reload so the response reports the persisted roles.
+		reloaded, err := a.identityStore.GetUser(ctx, user.TenantID, user.ID)
+		if err != nil {
+			return nil, err
+		}
+		return reloaded, nil
 	}
 
 	return updated, nil
