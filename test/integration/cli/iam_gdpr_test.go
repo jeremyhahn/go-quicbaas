@@ -48,6 +48,10 @@ func TestIAMGDPRConsentLifecycle(t *testing.T) {
 
 		// Step 1: Grant marketing consent
 		grantCmd := IAMGDPRConsentGrantCommand(tenantID, userID, "marketing", "1.0")
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, grantCmd) {
+			return
+		}
 		runner.RunAndAssert(grantCmd)
 
 		// Step 2: Get consent and verify it is active
@@ -100,6 +104,10 @@ func TestIAMGDPRConsentGrant(t *testing.T) {
 		userID := createTenantUserID(t, runner, tenantID, "gdpr-grant-user")
 
 		grantCmd := IAMGDPRConsentGrantCommand(tenantID, userID, "marketing", "1.0")
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, grantCmd) {
+			return
+		}
 		runner.RunAndAssert(grantCmd)
 	})
 }
@@ -121,6 +129,10 @@ func TestIAMGDPRConsentGrantJSON(t *testing.T) {
 
 		// Grant consent
 		grantCmd := IAMGDPRConsentGrantCommand(tenantID, userID, "analytics", "2.0")
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, grantCmd) {
+			return
+		}
 		runner.RunAndAssert(grantCmd)
 
 		// Get consent with JSON output
@@ -166,6 +178,10 @@ func TestIAMGDPRConsentGet(t *testing.T) {
 
 		// Grant consent for personalization
 		grantCmd := IAMGDPRConsentGrantCommand(tenantID, userID, "personalization", "1.0")
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, grantCmd) {
+			return
+		}
 		runner.RunAndAssert(grantCmd)
 
 		// Get consent and verify purpose and active status
@@ -201,6 +217,10 @@ func TestIAMGDPRConsentWithdraw(t *testing.T) {
 
 		// Grant consent
 		grantCmd := IAMGDPRConsentGrantCommand(tenantID, userID, "data_processing", "1.0")
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, grantCmd) {
+			return
+		}
 		runner.RunAndAssert(grantCmd)
 
 		// Withdraw consent
@@ -237,6 +257,10 @@ func TestIAMGDPRConsentList(t *testing.T) {
 		userID := createTenantUserID(t, runner, tenantID, "gdpr-list-user")
 
 		// Grant multiple purposes
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, IAMGDPRConsentGrantCommand(tenantID, userID, "marketing", "1.0")) {
+			return
+		}
 		purposes := []string{"marketing", "analytics", "functional"}
 		for _, purpose := range purposes {
 			grantCmd := IAMGDPRConsentGrantCommand(tenantID, userID, purpose, "1.0")
@@ -309,6 +333,10 @@ func TestIAMGDPRConsentMultiplePurposes(t *testing.T) {
 
 		// Grant marketing consent
 		marketingCmd := IAMGDPRConsentGrantCommand(tenantID, userID, "marketing", "1.0")
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, marketingCmd) {
+			return
+		}
 		runner.RunAndAssert(marketingCmd)
 
 		// Grant analytics consent
@@ -361,6 +389,10 @@ func TestIAMGDPRExportRequest(t *testing.T) {
 
 		// Request JSON export
 		exportCmd := IAMGDPRExportRequestCommand(tenantID, userID, "json")
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, exportCmd) {
+			return
+		}
 		stdout, _, err := runner.Run(exportCmd)
 		if !runner.IsSkipped(exportCmd) {
 			require.NoError(t, err, "export request should succeed")
@@ -390,6 +422,10 @@ func TestIAMGDPRExportRequestCSV(t *testing.T) {
 
 		// Request CSV export
 		exportCmd := IAMGDPRExportRequestCommand(tenantID, userID, "csv")
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, exportCmd) {
+			return
+		}
 		stdout, _, err := runner.Run(exportCmd)
 		if !runner.IsSkipped(exportCmd) {
 			require.NoError(t, err, "CSV export request should succeed")
@@ -418,6 +454,10 @@ func TestIAMGDPRExportStatus(t *testing.T) {
 
 		// Request export to get an export ID
 		exportCmd := IAMGDPRExportRequestCommand(tenantID, userID, "json")
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, exportCmd) {
+			return
+		}
 		stdout, _, err := runner.Run(exportCmd)
 		if runner.IsSkipped(exportCmd) {
 			return
@@ -499,6 +539,10 @@ func TestIAMGDPRDeletionRequest(t *testing.T) {
 
 		// Request deletion
 		deleteCmd := IAMGDPRDeletionRequestCommand(tenantID, userID, "user-requested-erasure")
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, deleteCmd) {
+			return
+		}
 		stdout, _, err := runner.Run(deleteCmd)
 		if !runner.IsSkipped(deleteCmd) {
 			require.NoError(t, err, "deletion request should succeed")
@@ -542,6 +586,10 @@ func TestIAMGDPRDeletionRequestCustomGracePeriod(t *testing.T) {
 			Timeout:        10 * time.Second,
 			SkipTransports: iamTransportsToSkip,
 		}
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, graceCmd) {
+			return
+		}
 		stdout, _, err := runner.Run(graceCmd)
 		if !runner.IsSkipped(graceCmd) {
 			require.NoError(t, err, "deletion request with grace period should succeed")
@@ -569,6 +617,10 @@ func TestIAMGDPRDeletionCancel(t *testing.T) {
 
 		// Request deletion
 		deleteCmd := IAMGDPRDeletionRequestCommand(tenantID, userID, "testing-cancellation")
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, deleteCmd) {
+			return
+		}
 		stdout, _, err := runner.Run(deleteCmd)
 		if runner.IsSkipped(deleteCmd) {
 			return
@@ -609,6 +661,10 @@ func TestIAMGDPRDeletionStatus(t *testing.T) {
 
 		// Request deletion
 		deleteCmd := IAMGDPRDeletionRequestCommand(tenantID, userID, "status-check-test")
+		// Tenants are isolated: the system admin may not act for this test tenant.
+		if expectCrossTenantRefusal(t, runner, deleteCmd) {
+			return
+		}
 		stdout, _, err := runner.Run(deleteCmd)
 		if runner.IsSkipped(deleteCmd) {
 			return
