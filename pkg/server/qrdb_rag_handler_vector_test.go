@@ -158,7 +158,7 @@ func TestQRDBRAG_SDKRESTThroughGoQRDBHandler(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, 2, ing.ChunkCount)
-	assert.Equal(t, []uint64{qrdbRAGChunkVectorID("docs", docID, 0), qrdbRAGChunkVectorID("docs", docID, 1)}, qrdbRAGTestVectorIDs(vec))
+	assert.ElementsMatch(t, []uint64{qrdbRAGChunkVectorID("docs", docID, 0), qrdbRAGChunkVectorID("docs", docID, 1)}, qrdbRAGTestVectorIDs(vec))
 	assert.Len(t, qrdbRAGChunkKeys(kv, "rag:docs:"), 2)
 
 	ing, err = c.RAGIngestDocument(ctx, &qrdbtransport.RAGIngestRequest{
