@@ -305,6 +305,10 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.iam.v1.IAMService/ListWebAuthnCredentials":   {"users", "read"},
 	"/quicbaas.iam.v1.IAMService/DeleteWebAuthnCredential":  {"users", "delete"},
 	"/quicbaas.iam.v1.IAMService/DeleteWebAuthnCredentials": {"users", "delete"},
+	// Mirror QRDBService ListUsers (users:list).
+	"/quicbaas.iam.v1.IAMService/ListUsers": {"users", "list"},
+	// Mirror QRDBService DeleteUser (users:delete).
+	"/quicbaas.iam.v1.IAMService/DeleteUser": {"users", "delete"},
 
 	// ---- quicbaas.iam.v1.IAMService: built-in role reconciliation ----
 	//
