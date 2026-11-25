@@ -890,7 +890,7 @@ func TestOrchestratorHealth(t *testing.T) {
 
 // TestOrchestratorBackends tests listing available agent backends across all transports.
 func TestOrchestratorBackends(t *testing.T) {
-	RunForAllTransports(t, "OrchestratorBackends", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "OrchestratorBackends", "orch-tenant", func(t *testing.T, runner *TestRunner) {
 		cmd := OrchestratorBackendsCommand()
 		if runner.IsSkipped(cmd) {
 			return
@@ -898,7 +898,7 @@ func TestOrchestratorBackends(t *testing.T) {
 		runner.RunAndAssert(cmd)
 	})
 
-	RunForAllTransports(t, "OrchestratorBackendsJSON", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "OrchestratorBackendsJSON", "orch-tenant", func(t *testing.T, runner *TestRunner) {
 		cmd := OrchestratorBackendsJSONCommand()
 		if runner.IsSkipped(cmd) {
 			return
@@ -914,7 +914,7 @@ func TestOrchestratorBackends(t *testing.T) {
 		assert.Contains(t, result, "count", "JSON output should contain count field")
 	})
 
-	RunForAllTransports(t, "OrchestratorBackendsYAML", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "OrchestratorBackendsYAML", "orch-tenant", func(t *testing.T, runner *TestRunner) {
 		cmd := OrchestratorBackendsYAMLCommand()
 		if runner.IsSkipped(cmd) {
 			return
@@ -925,7 +925,7 @@ func TestOrchestratorBackends(t *testing.T) {
 
 // TestOrchestratorSessions tests listing active agent sessions across all transports.
 func TestOrchestratorSessions(t *testing.T) {
-	RunForAllTransports(t, "OrchestratorSessions", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "OrchestratorSessions", "orch-tenant", func(t *testing.T, runner *TestRunner) {
 		cmd := OrchestratorSessionsCommand()
 		if runner.IsSkipped(cmd) {
 			return
@@ -933,7 +933,7 @@ func TestOrchestratorSessions(t *testing.T) {
 		runner.RunAndAssert(cmd)
 	})
 
-	RunForAllTransports(t, "OrchestratorSessionsJSON", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "OrchestratorSessionsJSON", "orch-tenant", func(t *testing.T, runner *TestRunner) {
 		cmd := OrchestratorSessionsJSONCommand()
 		if runner.IsSkipped(cmd) {
 			return
@@ -949,7 +949,7 @@ func TestOrchestratorSessions(t *testing.T) {
 		assert.Contains(t, result, "count", "JSON output should contain count field")
 	})
 
-	RunForAllTransports(t, "OrchestratorSessionsYAML", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "OrchestratorSessionsYAML", "orch-tenant", func(t *testing.T, runner *TestRunner) {
 		cmd := OrchestratorSessionsYAMLCommand()
 		if runner.IsSkipped(cmd) {
 			return
@@ -961,7 +961,7 @@ func TestOrchestratorSessions(t *testing.T) {
 // TestOrchestratorTaskLifecycle tests the complete task lifecycle via CLI:
 // create task -> get task -> list tasks -> claim task -> complete task.
 func TestOrchestratorTaskLifecycle(t *testing.T) {
-	RunForAllTransports(t, "TaskLifecycle", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "TaskLifecycle", "orch-tenant", func(t *testing.T, runner *TestRunner) {
 		subject := fmt.Sprintf("lifecycle-test-%d", time.Now().UnixNano())
 		agentID := fmt.Sprintf("agent-%d", time.Now().UnixNano())
 
@@ -1012,7 +1012,7 @@ func TestOrchestratorTaskLifecycle(t *testing.T) {
 
 // TestOrchestratorTaskCreate tests task creation with various options across all transports.
 func TestOrchestratorTaskCreate(t *testing.T) {
-	RunForAllTransports(t, "CreateBasicTask", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "CreateBasicTask", "orch-tenant", func(t *testing.T, runner *TestRunner) {
 		subject := fmt.Sprintf("basic-task-%d", time.Now().UnixNano())
 		cmd := OrchestratorTaskCreateCommand(subject)
 		if runner.IsSkipped(cmd) {
@@ -1021,7 +1021,7 @@ func TestOrchestratorTaskCreate(t *testing.T) {
 		runner.RunAndAssert(cmd)
 	})
 
-	RunForAllTransports(t, "CreateTaskWithTeam", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "CreateTaskWithTeam", "orch-tenant", func(t *testing.T, runner *TestRunner) {
 		subject := fmt.Sprintf("team-task-%d", time.Now().UnixNano())
 		cmd := OrchestratorTaskCreateWithTeamCommand(subject, "backend")
 		if runner.IsSkipped(cmd) {
@@ -1030,9 +1030,9 @@ func TestOrchestratorTaskCreate(t *testing.T) {
 		runner.RunAndAssert(cmd)
 	})
 
-	RunForAllTransports(t, "CreateTaskWithTenant", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "CreateTaskWithTenant", "orch-tenant", func(t *testing.T, runner *TestRunner) {
 		subject := fmt.Sprintf("tenant-task-%d", time.Now().UnixNano())
-		tenantID := UniqueKey("tenant")
+		tenantID := runner.TenantAdminID()
 		cmd := OrchestratorTaskCreateWithTenantCommand(subject, tenantID)
 		if runner.IsSkipped(cmd) {
 			return
@@ -1043,7 +1043,7 @@ func TestOrchestratorTaskCreate(t *testing.T) {
 
 // TestOrchestratorTaskList tests task listing with various filters across all transports.
 func TestOrchestratorTaskList(t *testing.T) {
-	RunForAllTransports(t, "ListTasks", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "ListTasks", "orch-tenant", func(t *testing.T, runner *TestRunner) {
 		cmd := OrchestratorTaskListCommand()
 		if runner.IsSkipped(cmd) {
 			return
@@ -1051,7 +1051,7 @@ func TestOrchestratorTaskList(t *testing.T) {
 		runner.RunAndAssert(cmd)
 	})
 
-	RunForAllTransports(t, "ListTasksJSON", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "ListTasksJSON", "orch-tenant", func(t *testing.T, runner *TestRunner) {
 		cmd := OrchestratorTaskListJSONCommand()
 		if runner.IsSkipped(cmd) {
 			return
@@ -1064,7 +1064,7 @@ func TestOrchestratorTaskList(t *testing.T) {
 		require.NoError(t, err, "Output should be valid JSON")
 	})
 
-	RunForAllTransports(t, "ListTasksByStatus", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "ListTasksByStatus", "orch-tenant", func(t *testing.T, runner *TestRunner) {
 		statuses := []string{"pending", "claimed", "in_progress", "completed", "failed", "cancelled"}
 		for _, status := range statuses {
 			t.Run(status, func(t *testing.T) {
@@ -1077,7 +1077,7 @@ func TestOrchestratorTaskList(t *testing.T) {
 		}
 	})
 
-	RunForAllTransports(t, "ListTasksByTeam", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "ListTasksByTeam", "orch-tenant", func(t *testing.T, runner *TestRunner) {
 		cmd := OrchestratorTaskListWithTeamCommand("backend")
 		if runner.IsSkipped(cmd) {
 			return
@@ -1085,7 +1085,7 @@ func TestOrchestratorTaskList(t *testing.T) {
 		runner.RunAndAssert(cmd)
 	})
 
-	RunForAllTransports(t, "ListTasksByAssignedTo", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "ListTasksByAssignedTo", "orch-tenant", func(t *testing.T, runner *TestRunner) {
 		cmd := OrchestratorTaskListWithAssignedToCommand("test-agent")
 		if runner.IsSkipped(cmd) {
 			return
@@ -1093,8 +1093,8 @@ func TestOrchestratorTaskList(t *testing.T) {
 		runner.RunAndAssert(cmd)
 	})
 
-	RunForAllTransports(t, "ListTasksWithTenant", func(t *testing.T, runner *TestRunner) {
-		cmd := OrchestratorTaskListWithTenantCommand("test-tenant")
+	RunForAllTransportsAsTenantAdmin(t, "ListTasksWithTenant", "orch-tenant", func(t *testing.T, runner *TestRunner) {
+		cmd := OrchestratorTaskListWithTenantCommand(runner.TenantAdminID())
 		if runner.IsSkipped(cmd) {
 			return
 		}
@@ -1104,11 +1104,11 @@ func TestOrchestratorTaskList(t *testing.T) {
 
 // TestOrchestratorTaskErrors tests error handling for task commands.
 func TestOrchestratorTaskErrors(t *testing.T) {
-	RunForAllTransports(t, "CreateMissingSubject", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "CreateMissingSubject", "orch-tenant", func(t *testing.T, runner *TestRunner) {
 		runner.RunAndAssert(OrchestratorTaskCreateMissingSubjectCommand())
 	})
 
-	RunForAllTransports(t, "GetNonexistentTask", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "GetNonexistentTask", "orch-tenant", func(t *testing.T, runner *TestRunner) {
 		cmd := OrchestratorTaskGetNonexistentCommand()
 		if runner.IsSkipped(cmd) {
 			return
@@ -1116,11 +1116,11 @@ func TestOrchestratorTaskErrors(t *testing.T) {
 		runner.RunAndAssert(cmd)
 	})
 
-	RunForAllTransports(t, "ClaimMissingAgent", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "ClaimMissingAgent", "orch-tenant", func(t *testing.T, runner *TestRunner) {
 		runner.RunAndAssert(OrchestratorTaskClaimMissingAgentCommand())
 	})
 
-	RunForAllTransports(t, "SpawnMissingBackend", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "SpawnMissingBackend", "orch-tenant", func(t *testing.T, runner *TestRunner) {
 		runner.RunAndAssert(OrchestratorSpawnMissingBackendCommand())
 	})
 }
@@ -1131,7 +1131,7 @@ func TestOrchestratorOutputFormats(t *testing.T) {
 
 	for _, format := range formats {
 		t.Run(fmt.Sprintf("Health_%s", format), func(t *testing.T) {
-			RunForAllTransports(t, fmt.Sprintf("Health_%s", format), func(t *testing.T, runner *TestRunner) {
+			RunForAllTransportsAsTenantAdmin(t, fmt.Sprintf("Health_%s", format), "orch-tenant", func(t *testing.T, runner *TestRunner) {
 				cmd := CommandDef{
 					Name:           fmt.Sprintf("orchestrator health %s", format),
 					Args:           []string{"orchestrator", "health", "--output", format},
@@ -1147,7 +1147,7 @@ func TestOrchestratorOutputFormats(t *testing.T) {
 		})
 
 		t.Run(fmt.Sprintf("Backends_%s", format), func(t *testing.T) {
-			RunForAllTransports(t, fmt.Sprintf("Backends_%s", format), func(t *testing.T, runner *TestRunner) {
+			RunForAllTransportsAsTenantAdmin(t, fmt.Sprintf("Backends_%s", format), "orch-tenant", func(t *testing.T, runner *TestRunner) {
 				cmd := CommandDef{
 					Name:           fmt.Sprintf("orchestrator backends %s", format),
 					Args:           []string{"orchestrator", "backends", "--output", format},
@@ -1163,7 +1163,7 @@ func TestOrchestratorOutputFormats(t *testing.T) {
 		})
 
 		t.Run(fmt.Sprintf("Sessions_%s", format), func(t *testing.T) {
-			RunForAllTransports(t, fmt.Sprintf("Sessions_%s", format), func(t *testing.T, runner *TestRunner) {
+			RunForAllTransportsAsTenantAdmin(t, fmt.Sprintf("Sessions_%s", format), "orch-tenant", func(t *testing.T, runner *TestRunner) {
 				cmd := CommandDef{
 					Name:           fmt.Sprintf("orchestrator sessions %s", format),
 					Args:           []string{"orchestrator", "sessions", "--output", format},
@@ -1179,7 +1179,7 @@ func TestOrchestratorOutputFormats(t *testing.T) {
 		})
 
 		t.Run(fmt.Sprintf("TaskList_%s", format), func(t *testing.T) {
-			RunForAllTransports(t, fmt.Sprintf("TaskList_%s", format), func(t *testing.T, runner *TestRunner) {
+			RunForAllTransportsAsTenantAdmin(t, fmt.Sprintf("TaskList_%s", format), "orch-tenant", func(t *testing.T, runner *TestRunner) {
 				cmd := CommandDef{
 					Name:           fmt.Sprintf("orchestrator task list %s", format),
 					Args:           []string{"orchestrator", "task", "list", "--output", format},
@@ -1198,7 +1198,7 @@ func TestOrchestratorOutputFormats(t *testing.T) {
 
 // TestOrchestratorTaskClaimComplete tests the claim and complete workflow.
 func TestOrchestratorTaskClaimComplete(t *testing.T) {
-	RunForAllTransports(t, "ClaimAndComplete", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "ClaimAndComplete", "orch-tenant", func(t *testing.T, runner *TestRunner) {
 		subject := fmt.Sprintf("claim-complete-%d", time.Now().UnixNano())
 		agentID := fmt.Sprintf("agent-%d", time.Now().UnixNano())
 
@@ -1236,7 +1236,7 @@ func TestOrchestratorTaskClaimComplete(t *testing.T) {
 		require.NoError(t, err)
 	})
 
-	RunForAllTransports(t, "CompleteWithResult", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "CompleteWithResult", "orch-tenant", func(t *testing.T, runner *TestRunner) {
 		subject := fmt.Sprintf("complete-result-%d", time.Now().UnixNano())
 		agentID := fmt.Sprintf("agent-%d", time.Now().UnixNano())
 
@@ -1276,7 +1276,7 @@ func TestOrchestratorTaskClaimComplete(t *testing.T) {
 
 // TestOrchestratorTaskGet tests getting a specific task by ID across all transports.
 func TestOrchestratorTaskGet(t *testing.T) {
-	RunForAllTransports(t, "GetTask", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "GetTask", "orch-tenant", func(t *testing.T, runner *TestRunner) {
 		subject := fmt.Sprintf("get-task-%d", time.Now().UnixNano())
 
 		// Create a task first
@@ -1318,7 +1318,7 @@ func TestOrchestratorTaskGet(t *testing.T) {
 
 // TestOrchestratorTaskClaim tests claiming a task for an agent across all transports.
 func TestOrchestratorTaskClaim(t *testing.T) {
-	RunForAllTransports(t, "ClaimTask", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "ClaimTask", "orch-tenant", func(t *testing.T, runner *TestRunner) {
 		subject := fmt.Sprintf("claim-task-%d", time.Now().UnixNano())
 		agentID := fmt.Sprintf("claim-agent-%d", time.Now().UnixNano())
 
@@ -1356,7 +1356,7 @@ func TestOrchestratorTaskClaim(t *testing.T) {
 
 // TestOrchestratorTaskComplete tests completing a task across all transports.
 func TestOrchestratorTaskComplete(t *testing.T) {
-	RunForAllTransports(t, "CompleteTask", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "CompleteTask", "orch-tenant", func(t *testing.T, runner *TestRunner) {
 		subject := fmt.Sprintf("complete-task-%d", time.Now().UnixNano())
 		agentID := fmt.Sprintf("complete-agent-%d", time.Now().UnixNano())
 
@@ -1391,7 +1391,7 @@ func TestOrchestratorTaskComplete(t *testing.T) {
 		t.Logf("Task after completion: %v", taskResp)
 	})
 
-	RunForAllTransports(t, "CompleteTaskWithoutResult", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "CompleteTaskWithoutResult", "orch-tenant", func(t *testing.T, runner *TestRunner) {
 		subject := fmt.Sprintf("complete-noresult-%d", time.Now().UnixNano())
 		agentID := fmt.Sprintf("complete-noresult-agent-%d", time.Now().UnixNano())
 
@@ -1443,7 +1443,7 @@ func TestOrchestratorDecomposeMissingTask(t *testing.T) {
 
 // TestOrchestratorDecomposeInvalidBackend tests decompose with a non-existent backend returns an error.
 func TestOrchestratorDecomposeInvalidBackend(t *testing.T) {
-	RunForAllTransports(t, "DecomposeInvalidBackend", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "DecomposeInvalidBackend", "orch-tenant", func(t *testing.T, runner *TestRunner) {
 		cmd := CommandDef{
 			Name:          "DecomposeInvalidBackend",
 			Args:          []string{"orchestrator", "decompose", "some task", "--backend", "nonexistent-backend-xyz"},
@@ -1458,7 +1458,7 @@ func TestOrchestratorDecomposeInvalidBackend(t *testing.T) {
 
 // TestOrchestratorTaskCreateWithAllOptions tests creating a task with all available flags.
 func TestOrchestratorTaskCreateWithAllOptions(t *testing.T) {
-	RunForAllTransports(t, "CreateTaskWithDescription", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "CreateTaskWithDescription", "orch-tenant", func(t *testing.T, runner *TestRunner) {
 		subject := fmt.Sprintf("desc-task-%d", time.Now().UnixNano())
 		cmd := OrchestratorTaskCreateWithDescriptionCommand(subject, "This is a detailed description of the task")
 		if runner.IsSkipped(cmd) {
@@ -1467,7 +1467,7 @@ func TestOrchestratorTaskCreateWithAllOptions(t *testing.T) {
 		runner.RunAndAssert(cmd)
 	})
 
-	RunForAllTransports(t, "CreateTaskWithAllOptions", func(t *testing.T, runner *TestRunner) {
+	RunForAllTransportsAsTenantAdmin(t, "CreateTaskWithAllOptions", "orch-tenant", func(t *testing.T, runner *TestRunner) {
 		subject := fmt.Sprintf("allopts-task-%d", time.Now().UnixNano())
 		agentID := fmt.Sprintf("allopts-agent-%d", time.Now().UnixNano())
 		cmd := OrchestratorTaskCreateWithAllOptionsCommand(
@@ -1573,7 +1573,7 @@ func TestOrchestratorWorkflowListJSON(t *testing.T) {
 
 // TestOrchestratorJobList tests listing orchestration jobs across transports.
 func TestOrchestratorJobList(t *testing.T) {
-	RunForTransports(t, "JobList", orchestratorUnsupportedTransports, func(t *testing.T, runner *TestRunner) {
+	RunForTransportsAsTenantAdmin(t, "JobList", "orch-tenant", orchestratorUnsupportedTransports, func(t *testing.T, runner *TestRunner) {
 		cmd := OrchestratorJobListCommand()
 		runner.RunAndAssert(cmd)
 	})
@@ -1581,7 +1581,7 @@ func TestOrchestratorJobList(t *testing.T) {
 
 // TestOrchestratorJobListJSON tests listing jobs in JSON format.
 func TestOrchestratorJobListJSON(t *testing.T) {
-	RunForTransports(t, "JobListJSON", orchestratorUnsupportedTransports, func(t *testing.T, runner *TestRunner) {
+	RunForTransportsAsTenantAdmin(t, "JobListJSON", "orch-tenant", orchestratorUnsupportedTransports, func(t *testing.T, runner *TestRunner) {
 		cmd := OrchestratorJobListJSONCommand()
 		runner.RunAndAssert(cmd)
 	})
@@ -1590,7 +1590,7 @@ func TestOrchestratorJobListJSON(t *testing.T) {
 // TestOrchestratorJobStatusNonexistent tests that querying a non-existent job
 // returns an appropriate error instead of crashing.
 func TestOrchestratorJobStatusNonexistent(t *testing.T) {
-	RunForTransports(t, "JobStatusNonexistent", orchestratorUnsupportedTransports, func(t *testing.T, runner *TestRunner) {
+	RunForTransportsAsTenantAdmin(t, "JobStatusNonexistent", "orch-tenant", orchestratorUnsupportedTransports, func(t *testing.T, runner *TestRunner) {
 		cmd := OrchestratorJobStatusCommand("nonexistent-job-id")
 		cmd.ExpectSuccess = false
 		stdout, stderr, err := runner.Run(cmd)
@@ -1603,7 +1603,7 @@ func TestOrchestratorJobStatusNonexistent(t *testing.T) {
 // TestOrchestratorJobCancelNonexistent tests that cancelling a non-existent job
 // returns an appropriate error.
 func TestOrchestratorJobCancelNonexistent(t *testing.T) {
-	RunForTransports(t, "JobCancelNonexistent", orchestratorUnsupportedTransports, func(t *testing.T, runner *TestRunner) {
+	RunForTransportsAsTenantAdmin(t, "JobCancelNonexistent", "orch-tenant", orchestratorUnsupportedTransports, func(t *testing.T, runner *TestRunner) {
 		cmd := OrchestratorJobCancelCommand("nonexistent-job-id")
 		cmd.ExpectSuccess = false
 		stdout, stderr, err := runner.Run(cmd)
