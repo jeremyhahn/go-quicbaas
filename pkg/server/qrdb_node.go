@@ -789,6 +789,9 @@ func (s *Server) unifiedModuleServerOptions(serverOpts []qrdbsdk.ServerOption, s
 // go-qrdb's outer REST sealed-window gate with its default allowlist, which
 // admits /v1/barrier/* but not the composed /api/v1/barrier/* routes, so the
 // composed list is merged into that default before the options are returned.
+// With the seal disabled the node also has no credential servicer, so the
+// credential proxy serves the bootstrap credential service startService
+// publishes.
 func (s *Server) nodeBarrierServerOptions(sealEnabled bool) []qrdbsdk.ServerOption {
 	if sealEnabled {
 		return nil
@@ -805,6 +808,7 @@ func (s *Server) nodeBarrierServerOptions(sealEnabled bool) []qrdbsdk.ServerOpti
 	return []qrdbsdk.ServerOption{
 		qrdbserver.WithBarrierService(newQRDBBarrierServicerProxy(s)),
 		qrdbserver.WithSealedWindowProbe(s.SealedWindowProbe()),
+		qrdbserver.WithCredentialService(newQRDBCredentialServicerProxy(s)),
 	}
 }
 

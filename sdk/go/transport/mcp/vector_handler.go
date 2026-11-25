@@ -145,15 +145,24 @@ func (h *vectorHandler) transformCreateNamespace(req interface{}) (map[string]in
 
 	args := map[string]interface{}{
 		"namespace":       sdkReq.Config.Namespace,
-		"dimensions":      sdkReq.Config.Dimensions,
+		"dimension":       sdkReq.Config.Dimensions,
 		"distance_metric": "cosine",
 	}
 
-	if sdkReq.Config.IndexType != "" {
-		args["index_type"] = string(sdkReq.Config.IndexType)
+	// The server's MCP tool requires a lower-case index_type; gRPC
+	// defaults an unset index type to HNSW, so MCP does the same.
+	indexType := strings.ToLower(string(sdkReq.Config.IndexType))
+	if indexType == "" {
+		indexType = "hnsw"
 	}
+	args["index_type"] = indexType
 	if len(sdkReq.Config.IndexParams) > 0 {
-		args["index_params"] = stringMapToInterface(sdkReq.Config.IndexParams)
+		cfg, err := json.Marshal(sdkReq.Config.IndexParams)
+		if err != nil {
+			return nil, errors.NewInvalidInput("vectorHandler.transformCreateNamespace",
+				"index params could not be encoded")
+		}
+		args["index_config"] = string(cfg)
 	}
 	if len(sdkReq.Config.Metadata) > 0 {
 		args["metadata"] = stringMapToInterface(sdkReq.Config.Metadata)
