@@ -15,12 +15,15 @@ package embedded
 
 import (
 	"context"
+	stderrors "errors"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	pkgsecrets "github.com/jeremyhahn/go-quicbaas/pkg/secrets"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	secrets "github.com/jeremyhahn/go-quicbaas/sdk/go/client/secrets"
 )
@@ -195,6 +198,29 @@ func TestHandleSecretsStore_Success(t *testing.T) {
 	storeResp, ok := resp.(*secrets.StoreSecretResponse)
 	require.True(t, ok)
 	assert.Equal(t, 1, storeResp.Version)
+}
+
+// The embedded transport hands the service's at-rest refusal to the SDK
+// caller unchanged, so its sentinel and precondition code survive.
+func TestEmbedded_StoreSecret_AtRestRefusalPassesThrough(t *testing.T) {
+	secretsMock := &mockSecretsService{
+		storeFunc: func(context.Context, *service.StoreSecretRequest) (*service.StoreSecretResponse, error) {
+			return nil, &qberrors.QBError{Code: qberrors.ErrPreconditionFailed, Op: "secrets.StoreSecret", Err: pkgsecrets.ErrAtRestEncryptionRequired}
+		},
+	}
+	tr, err := New(&mockQuicBaaS{secretsService: secretsMock})
+	require.NoError(t, err)
+
+	_, err = tr.Request(context.Background(), "quicbaas.Secrets", "Store", &secrets.StoreSecretRequest{
+		Path: "app/database/password",
+		Data: map[string]interface{}{"password": "s3cret"},
+	})
+	require.Error(t, err)
+	assert.True(t, stderrors.Is(err, pkgsecrets.ErrAtRestEncryptionRequired), "got %v", err)
+	var qe *qberrors.QBError
+	require.True(t, stderrors.As(err, &qe))
+	assert.Equal(t, qberrors.ErrPreconditionFailed, qe.Code)
+	assert.Contains(t, err.Error(), "seal.enabled")
 }
 
 func TestHandleSecretsStore_ServiceNotConfigured(t *testing.T) {

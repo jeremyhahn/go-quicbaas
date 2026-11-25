@@ -26,6 +26,7 @@ import (
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
+	"github.com/jeremyhahn/go-quicbaas/pkg/secrets"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
@@ -222,6 +223,36 @@ func TestSecretsServer_ServiceErrors(t *testing.T) {
 		require.Error(t, err)
 		assert.Equal(t, codes.Internal, status.Code(err))
 	})
+}
+
+// The at-rest refusal maps to FailedPrecondition and keeps its remedy in the
+// status message.
+func TestSecretsServer_AtRestRefusalIsFailedPrecondition(t *testing.T) {
+	ctx := context.Background()
+	refusal := func(op string) error {
+		return &errors.QBError{Code: errors.ErrPreconditionFailed, Op: op, Err: secrets.ErrAtRestEncryptionRequired}
+	}
+	mock := &mockSecretsService{
+		storeSecretFunc: func(context.Context, *service.StoreSecretRequest) (*service.StoreSecretResponse, error) {
+			return nil, refusal("secrets.StoreSecret")
+		},
+		getSecretFunc: func(context.Context, *service.GetSecretRequest) (*service.GetSecretResponse, error) {
+			return nil, refusal("secrets.GetSecret")
+		},
+	}
+	srv := newTestSecretsServerForErrors(t, mock)
+
+	_, err := srv.StoreSecret(ctx, &pb.StoreSecretRequest{Name: "test-secret", Data: []byte("data")})
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.FailedPrecondition, st.Code())
+	assert.Contains(t, st.Message(), "seal.enabled")
+
+	_, err = srv.GetSecret(ctx, &pb.GetSecretRequest{SecretId: "test-secret"})
+	st, ok = status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.FailedPrecondition, st.Code())
+	assert.Contains(t, st.Message(), "seal.enabled")
 }
 
 // stubWatchSecretsStream implements pb.SecretsManagement_WatchSecretsByPrefixServer.

@@ -27,6 +27,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
+	"github.com/jeremyhahn/go-quicbaas/pkg/secrets"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	mcptransport "github.com/jeremyhahn/go-quicbaas/sdk/go/transport/mcp"
 )
@@ -217,4 +218,31 @@ func TestDomainErrorClass_LeavesOtherErrorsUnclassed(t *testing.T) {
 	require.False(t, ok)
 	_, ok = domainErrorClass(qberrors.New(qberrors.ErrNotFound, "op", "already coded"))
 	require.False(t, ok, "a coded error is classed by its own code, not here")
+}
+
+// The at-rest refusal is a server-wide precondition whose message names the
+// operator's remedy, so it is echoed rather than sanitized.
+func TestToolErrorResult_AtRestRefusalEchoesRemedy(t *testing.T) {
+	err := &qberrors.QBError{Code: qberrors.ErrPreconditionFailed, Op: "secrets.StoreSecret", Err: secrets.ErrAtRestEncryptionRequired}
+
+	result := ToolErrorResult(nil, "quicbaas_secrets_store", err)
+
+	require.True(t, result.IsError)
+	require.Equal(t, mcptransport.ToolError{Code: mcptransport.MCPPreconditionFailed}, result.StructuredContent)
+	text, ok := mcpgo.AsTextContent(result.Content[0])
+	require.True(t, ok)
+	require.Contains(t, text.Text, "seal.enabled")
+	require.NotEqual(t, qberrors.ServerFailureMessage, text.Text)
+}
+
+// A precondition failure whose cause is not caller-safe is still sanitized.
+func TestToolErrorResult_PreconditionStillSanitized(t *testing.T) {
+	err := &qberrors.QBError{Code: qberrors.ErrPreconditionFailed, Op: "secrets.StoreSecret", Err: stderrors.New("internal shard 7 detail")}
+
+	result := ToolErrorResult(nil, "quicbaas_secrets_store", err)
+
+	require.True(t, result.IsError)
+	text, ok := mcpgo.AsTextContent(result.Content[0])
+	require.True(t, ok)
+	require.Equal(t, qberrors.ServerFailureMessage, text.Text)
 }

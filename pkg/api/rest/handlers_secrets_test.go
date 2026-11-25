@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	stderrors "errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -30,6 +31,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/secrets"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil"
 )
@@ -2027,4 +2029,67 @@ func TestHandleListVersions(t *testing.T) {
 			mockService.AssertExpectations(t)
 		})
 	}
+}
+
+// atRestRefusal is the error the secrets service returns when the node has no
+// at-rest barrier.
+func atRestRefusal(op string) error {
+	return &errors.QBError{Code: errors.ErrPreconditionFailed, Op: op, Err: secrets.ErrAtRestEncryptionRequired}
+}
+
+func secretRequest(method, path, body string) *http.Request {
+	req := httptest.NewRequest(method, "/api/v1/secrets/"+path, bytes.NewReader([]byte(body)))
+	req.Header.Set("Content-Type", "application/json")
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("*", path)
+	return req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+}
+
+// The at-rest refusal is a server-wide precondition whose message names the
+// operator's remedy: REST returns 412 with that message, not the generic
+// server-failure text.
+func TestHandleStoreSecret_AtRestRefusalIs412WithRemedy(t *testing.T) {
+	server, mockService, cleanup := setupMockServer(t)
+	defer cleanup()
+
+	mockService.On("StoreSecret", mock.Anything, mock.Anything).
+		Return(nil, atRestRefusal("secrets.StoreSecret")).Once()
+
+	w := httptest.NewRecorder()
+	server.HandleStoreSecret(w, secretRequest(http.MethodPost, "test/secret", `{"data": "dGVzdA=="}`))
+
+	assert.Equal(t, http.StatusPreconditionFailed, w.Code)
+	assert.Contains(t, w.Body.String(), "seal.enabled")
+	assert.NotContains(t, w.Body.String(), errors.ServerFailureMessage)
+}
+
+func TestHandleGetSecret_AtRestRefusalIs412WithRemedy(t *testing.T) {
+	server, mockService, cleanup := setupMockServer(t)
+	defer cleanup()
+
+	mockService.On("GetSecret", mock.Anything, mock.Anything).
+		Return(nil, atRestRefusal("secrets.GetSecret")).Once()
+
+	w := httptest.NewRecorder()
+	server.HandleGetSecret(w, secretRequest(http.MethodGet, "test/secret", ""))
+
+	assert.Equal(t, http.StatusPreconditionFailed, w.Code)
+	assert.Contains(t, w.Body.String(), "seal.enabled")
+}
+
+// A precondition failure whose cause is not caller-safe is still answered
+// with the generic server-failure text.
+func TestHandleStoreSecret_PreconditionStillSanitized(t *testing.T) {
+	server, mockService, cleanup := setupMockServer(t)
+	defer cleanup()
+
+	mockService.On("StoreSecret", mock.Anything, mock.Anything).
+		Return(nil, &errors.QBError{Code: errors.ErrPreconditionFailed, Op: "secrets.StoreSecret", Err: stderrors.New("internal shard 7 detail")}).Once()
+
+	w := httptest.NewRecorder()
+	server.HandleStoreSecret(w, secretRequest(http.MethodPost, "test/secret", `{"data": "dGVzdA=="}`))
+
+	assert.Equal(t, http.StatusPreconditionFailed, w.Code)
+	assert.NotContains(t, w.Body.String(), "shard 7")
+	assert.Contains(t, w.Body.String(), errors.ServerFailureMessage)
 }

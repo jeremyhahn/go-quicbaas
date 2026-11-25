@@ -89,6 +89,11 @@ func ToolErrorResult(log *logger.Logger, tool string, err error) *mcpgo.CallTool
 // classification REST applies (qberrors.DescribesRequest). An error with no
 // class answers internal error, so it is sanitized like any server failure.
 func toolErrorMessage(log *logger.Logger, tool string, err error) string {
+	// A CallerSafe cause (the secrets at-rest refusal) names a server-wide
+	// precondition and its remedy, so it is echoed whatever the class.
+	if qberrors.IsCallerSafe(err) {
+		return err.Error()
+	}
 	var qbErr *qberrors.QBError
 	if qberrors.As(err, &qbErr) {
 		if qberrors.DescribesRequest(qbErr.Code) {

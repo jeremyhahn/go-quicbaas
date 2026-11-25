@@ -1346,7 +1346,10 @@ func (s *Server) handleServiceError(w http.ResponseWriter, r *http.Request, err 
 			errMsg = qbErr.Code.String()
 		}
 
-		if !errors.DescribesRequest(qbErr.Code) {
+		// A CallerSafe cause (the secrets at-rest refusal) names a
+		// server-wide precondition and its remedy, so it is echoed whatever
+		// the class.
+		if !errors.DescribesRequest(qbErr.Code) && !errors.IsCallerSafe(err) {
 			// THE CLASS DESCRIBES THE SERVER, NOT THE REQUEST, so the caller
 			// gets a stable sentence and the operator gets the cause
 			// (go-quicbaas#427). errors.DescribesRequest is the one
