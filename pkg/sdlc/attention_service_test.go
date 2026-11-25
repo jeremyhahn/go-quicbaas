@@ -625,7 +625,7 @@ func TestAttentionService_List_ReportsAgentOfflineAlert(t *testing.T) {
 	f := newAttentionFixture(t)
 	f.service.fleet = &fakeAttentionFleet{agents: []*orchestration.FleetNode{
 		{ID: "agent-1", Name: "agent-04", Host: "agent-04.local", Status: orchestration.FleetNodeStatusOffline},
-		{ID: "agent-2", Name: "gpu-host", Host: "gpu-host.local", Status: orchestration.FleetNodeStatusIdle},
+		{ID: "agent-2", Name: "gpu-01", Host: "gpu-01.local", Status: orchestration.FleetNodeStatusIdle},
 	}}
 
 	page, err := f.service.List(context.Background(), testTenant, AttentionFilter{}, &orchestration.Page{})

@@ -199,7 +199,7 @@ The scope is a path, so each flag needs every one above it (`:85-96`):
 
 ```bash
 quicbaas --tenant acme orchestrator cost
-quicbaas --tenant acme orchestrator cost --host gpu-host.internal
+quicbaas --tenant acme orchestrator cost --host gpu-01.internal
 quicbaas --tenant acme orchestrator cost --agent claude-coder
 quicbaas --tenant acme orchestrator cost --project p1 --task t1 \
   --from 2026-01-01T00:00:00Z --output json

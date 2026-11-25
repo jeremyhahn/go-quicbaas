@@ -208,7 +208,7 @@ func TestRecordTurnUsageRecordsKindHostAgentAndDuration(t *testing.T) {
 	ctx = WithTurnAttribution(ctx, TurnAttribution{JobID: "job-1", TaskID: "task-1", Kind: "review", AgentID: "agent-1"})
 	pooledSession(svc, "sess-1", "t1", "proj-1", "a1")
 	record, _ := svc.liveSessionRecord("sess-1")
-	record.HostAffinity = "gpu-host"
+	record.HostAffinity = "gpu-01"
 
 	svc.recordTurnUsage(ctx, completedTurn{
 		turnID: "turn-1", sessionID: "sess-1", projectID: "proj-1", engine: "codex", model: "gpt-5",
@@ -216,8 +216,8 @@ func TestRecordTurnUsageRecordsKindHostAgentAndDuration(t *testing.T) {
 	}, &TokenUsage{InputTokens: 10, OutputTokens: 1})
 
 	entry := onlyLedgerEntry(t, ledger, "t1")
-	if entry.Kind != "review" || entry.Host != "gpu-host" || entry.AgentID != "agent-1" || entry.DurationMillis != 1500 {
-		t.Fatalf("entry = %+v, want kind=review host=gpu-host agent=agent-1 duration=1500ms", entry)
+	if entry.Kind != "review" || entry.Host != "gpu-01" || entry.AgentID != "agent-1" || entry.DurationMillis != 1500 {
+		t.Fatalf("entry = %+v, want kind=review host=gpu-01 agent=agent-1 duration=1500ms", entry)
 	}
 }
 

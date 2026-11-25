@@ -12,7 +12,7 @@ transport for the `quicbaasd` binary per
 | Barrier strategy  | `none`, `software`, `shamir`                 | `cmd/quicbaasd/init.go`, `canonical.go`  |
 | Transport         | `rest`, `grpc`, `quic`, `mcp`, `unix`        | `pkg/config/defaults.go` listener table  |
 
-Total = **3 × 5 = 15** software-only combinations. Hardware strategies
+Total = **13** software-only combinations: 3 × 5, less shamir over `mcp` and `quic` (a sealed shamir node serves those only after its officers' ceremony, which this matrix does not drive). Hardware strategies
 (`pkcs11`, `tpm2`, `awskms`, `gcpkms`, `azurekv`, `vault`) are
 deliberately out of scope here — they belong in dedicated env-gated
 suites that require operator-supplied hardware. They are exercised at
