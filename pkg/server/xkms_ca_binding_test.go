@@ -33,7 +33,6 @@ func newNodeCA(t *testing.T, x *xkmslib.XKMSService) xkmssdk.TrustedCA {
 	srv := withTempServer(t)
 	srv.config.Security.TLSEnabled = true
 	srv.config.CA.KeysDir = filepath.Join(t.TempDir(), "ca-keys")
-	srv.config.Security.TLSCAFile = filepath.Join(t.TempDir(), "ca-chain.crt")
 	require.NoError(t, srv.initializeCA(), "initializeCA must succeed")
 	require.NotNil(t, srv.xkmsCA, "initializeCA must adopt a CA")
 	x.SetCA(prev)
