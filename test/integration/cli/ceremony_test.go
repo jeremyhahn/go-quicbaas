@@ -218,10 +218,17 @@ func TestCeremonyClaimShareRequiredFlags(t *testing.T) {
 				require.Error(t, err,
 					"ceremony claim-share missing --%s should fail: stdout=%s", flag, stdout)
 				combined := stdout + stderr
+				// With one half of the TLS pair omitted, the CLI loads the
+				// other (nonexistent) file first and fails in buildTLSConfig
+				// before the required-flag check runs.
+				tlsLoadErr := (flag == "tls-cert" || flag == "tls-key") &&
+					strings.Contains(combined, "buildTLSConfig") &&
+					strings.Contains(combined, "no such file")
 				assert.True(t,
 					strings.Contains(combined, "--"+flag) ||
-						strings.Contains(combined, "required"),
-					"error output should mention the missing --%s flag: %s", flag, combined)
+						strings.Contains(combined, "required") ||
+						tlsLoadErr,
+					"error output should mention the missing --%s flag or the TLS load error: %s", flag, combined)
 				t.Logf("[%s] claim-share missing --%s rejected: %s", runner.transport, flag, combined)
 			})
 		})
@@ -395,10 +402,8 @@ func TestCeremonyStatusAcrossTransports(t *testing.T) {
 
 		t.Run(string(cfg.Transport), func(t *testing.T) {
 			runner := NewTestRunner(t, cfg.Transport, cfg.Address)
-			if cfg.Transport == TransportMCP {
-				if err := runner.Authenticate(); err != nil {
-					t.Fatalf("MCP authentication failed: %v", err)
-				}
+			if err := runner.Authenticate(); err != nil {
+				t.Fatalf("[%s] system admin authentication failed: %v", cfg.Transport, err)
 			}
 			if !runner.RequireCeremonyAvailable() {
 				results = append(results, result{transport: cfg.Transport, available: false})

@@ -503,7 +503,7 @@ func (k *kmsServiceImpl) GenerateKey(ctx context.Context, req *GenerateKeyReques
 		if k.metrics != nil {
 			k.metrics.errorsByType.With("kms_error", "generate_key").Inc()
 		}
-		return nil, WrapError(err, errors.ErrInternal, "kms.GenerateKey", "failed to generate key")
+		return nil, WrapError(err, managerErrorCode(err, errors.ErrInternal), "kms.GenerateKey", "failed to generate key")
 	}
 
 	// Convert manager response to service response
@@ -742,6 +742,17 @@ func importKeyErrorCode(err error) errors.ErrorCode {
 		}
 	}
 	return errors.ErrInternal
+}
+
+// managerErrorCode keeps the manager's invalid-input class, such as an
+// overlong key ID, so a client validation failure is not reported as an
+// internal error. Any other class gets fallback.
+func managerErrorCode(err error, fallback errors.ErrorCode) errors.ErrorCode {
+	var qbErr *errors.QBError
+	if stderrors.As(err, &qbErr) && qbErr.Code == errors.ErrInvalidInput {
+		return errors.ErrInvalidInput
+	}
+	return fallback
 }
 
 // kmsLookupErrorCode returns the code a failed key lookup reports: not-found
@@ -1185,7 +1196,7 @@ func (k *kmsServiceImpl) RotateKey(ctx context.Context, req *RotateKeyRequest) (
 		if stderrors.Is(err, kms.ErrKeyNotFound) {
 			return nil, WrapError(err, errors.ErrNotFound, "kms.RotateKey", "key not found")
 		}
-		return nil, WrapError(err, errors.ErrInternal, "kms.RotateKey", "failed to rotate key")
+		return nil, WrapError(err, managerErrorCode(err, errors.ErrInternal), "kms.RotateKey", "failed to rotate key")
 	}
 
 	newMetadata, ok := newResult.(*kms.KeyMetadata)
@@ -1213,17 +1224,27 @@ func (k *kmsServiceImpl) RotateKey(ctx context.Context, req *RotateKeyRequest) (
 		// same ID GetKey, UpdateKeyStatus and ListKeyVersions read it under.
 		payload := fmt.Sprintf(`{"key_id":%q,"version":%d}`, scopedKeyID, resp.OldVersion)
 
+		// A tenant's grace job is that tenant's own job, filed in its
+		// namespace, so the tenant that rotated the key can read and cancel
+		// the job ID it is handed. The system tenant's stays delegated.
+		ownerType, ownerID := SchedulerOwnerTypeDelegated, ""
+		if engineTenant := schedulerEngineTenant(tenantID); engineTenant != "" {
+			ownerType, ownerID = SchedulerOwnerTypeTenant, engineTenant
+		}
+
 		job := &SchedulerJob{
-			Name:        fmt.Sprintf("kms-grace-%s-v%d", scopedKeyID, resp.OldVersion),
-			Description: fmt.Sprintf("Disable key %s version %d after grace period", req.KeyID, resp.OldVersion),
-			OwnerType:   SchedulerOwnerTypeDelegated,
-			Type:        SchedulerJobTypeOneShot,
-			ExecuteAt:   gracePeriodDisableAt,
-			Handler:     "kms.grace_period",
-			Payload:     []byte(payload),
-			Status:      SchedulerJobStatusPending,
-			CreatedAt:   time.Now(),
-			UpdatedAt:   time.Now(),
+			Name:           fmt.Sprintf("kms-grace-%s-v%d", scopedKeyID, resp.OldVersion),
+			Description:    fmt.Sprintf("Disable key %s version %d after grace period", req.KeyID, resp.OldVersion),
+			OwnerType:      ownerType,
+			OwnerID:        ownerID,
+			TargetTenantID: ownerID,
+			Type:           SchedulerJobTypeOneShot,
+			ExecuteAt:      gracePeriodDisableAt,
+			Handler:        "kms.grace_period",
+			Payload:        []byte(payload),
+			Status:         SchedulerJobStatusPending,
+			CreatedAt:      time.Now(),
+			UpdatedAt:      time.Now(),
 		}
 
 		if err := k.scheduler.ScheduleJob(ctx, job); err != nil {

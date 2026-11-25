@@ -17,9 +17,12 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	stderrors "errors"
+	"strings"
 	"time"
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+	"github.com/mark3labs/mcp-go/mcp"
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
@@ -38,6 +41,32 @@ import (
 
 // Compile-time interface assertion.
 var _ qrdbtransport.CeremonyClient = (*Transport)(nil)
+
+// callCeremony calls a qrdb_ceremony_* tool through callBarrier and reports
+// an unserved tool as a missing ceremony service. On a node without a
+// ceremony service no MCP surface serves the qrdb_ceremony_* tools: go-qrdb
+// registers them only when it has a ceremony service, and quicbaas's MCP
+// module leaves them out as native duplicates. The server's unknown-tool
+// refusal for exactly this tool is therefore returned as go-qrdb's
+// CapabilityUnsupportedError with CodeUnimplemented, the unsupported
+// capability the gRPC transport reports. Any other error, including an auth
+// refusal or a tool-level error, passes through unchanged.
+func (t *Transport) callCeremony(ctx context.Context, name string, args map[string]interface{}) (interface{}, error) {
+	raw, err := t.callBarrier(ctx, name, args)
+	if err != nil && isUnknownToolError(err, name) {
+		return nil, errors.Wrap(
+			&qrdbtransport.CapabilityUnsupportedError{Message: "mcp: ceremony service is not configured"},
+			errors.CodeUnimplemented, "mcp."+name, "ceremony service is not configured")
+	}
+	return raw, err
+}
+
+// isUnknownToolError reports whether err is the MCP server's refusal of a
+// call to the tool name because it does not serve that tool (mcp-go answers
+// with ErrInvalidParams and "tool '<name>' not found").
+func isUnknownToolError(err error, name string) bool {
+	return stderrors.Is(err, mcp.ErrInvalidParams) && strings.Contains(err.Error(), "tool '"+name+"' not found")
+}
 
 // CeremonyInitialize starts the initialization ceremony by calling the
 // qrdb_ceremony_initialize MCP tool. The officer list and SANs travel as
@@ -81,7 +110,7 @@ func (t *Transport) CeremonyInitialize(ctx context.Context, req *qrdbtransport.C
 		args["sans"] = string(b)
 	}
 
-	raw, err := t.callBarrier(ctx, "qrdb_ceremony_initialize", args)
+	raw, err := t.callCeremony(ctx, "qrdb_ceremony_initialize", args)
 	if err != nil {
 		return nil, err
 	}
@@ -95,7 +124,7 @@ func (t *Transport) CeremonyInitialize(ctx context.Context, req *qrdbtransport.C
 // CeremonyStatus returns the current ceremony state by calling the
 // qrdb_ceremony_status MCP tool.
 func (t *Transport) CeremonyStatus(ctx context.Context) (*qrdbtransport.CeremonyStatusResponse, error) {
-	raw, err := t.callBarrier(ctx, "qrdb_ceremony_status", nil)
+	raw, err := t.callCeremony(ctx, "qrdb_ceremony_status", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +141,7 @@ func (t *Transport) CeremonyClaimCertBegin(ctx context.Context, req *qrdbtranspo
 	if req == nil {
 		return nil, errors.NewInvalidInput("mcp.CeremonyClaimCertBegin", "request is required")
 	}
-	raw, err := t.callBarrier(ctx, "qrdb_ceremony_claim_cert_begin", map[string]interface{}{
+	raw, err := t.callCeremony(ctx, "qrdb_ceremony_claim_cert_begin", map[string]interface{}{
 		"username": req.Username,
 	})
 	if err != nil {
@@ -131,7 +160,7 @@ func (t *Transport) CeremonyClaimCertComplete(ctx context.Context, req *qrdbtran
 	if req == nil {
 		return nil, errors.NewInvalidInput("mcp.CeremonyClaimCertComplete", "request is required")
 	}
-	raw, err := t.callBarrier(ctx, "qrdb_ceremony_claim_cert_complete", map[string]interface{}{
+	raw, err := t.callCeremony(ctx, "qrdb_ceremony_claim_cert_complete", map[string]interface{}{
 		"username":  req.Username,
 		"nonce_hex": req.NonceHex,
 		"signature": req.Signature,
@@ -154,7 +183,7 @@ func (t *Transport) CeremonyBeginClaimShare(ctx context.Context, req *qrdbtransp
 	if req == nil {
 		return nil, errors.NewInvalidInput("mcp.CeremonyBeginClaimShare", "request is required")
 	}
-	raw, err := t.callBarrier(ctx, "qrdb_ceremony_begin_claim_share", map[string]interface{}{
+	raw, err := t.callCeremony(ctx, "qrdb_ceremony_begin_claim_share", map[string]interface{}{
 		"username": req.Username,
 	})
 	if err != nil {
@@ -181,7 +210,7 @@ func (t *Transport) CeremonyCompleteClaimShare(ctx context.Context, req *qrdbtra
 	if req == nil {
 		return nil, errors.NewInvalidInput("mcp.CeremonyCompleteClaimShare", "request is required")
 	}
-	raw, err := t.callBarrier(ctx, "qrdb_ceremony_complete_claim_share", map[string]interface{}{
+	raw, err := t.callCeremony(ctx, "qrdb_ceremony_complete_claim_share", map[string]interface{}{
 		"username":  req.Username,
 		"nonce_hex": req.NonceHex,
 		"signature": base64.StdEncoding.EncodeToString(req.Signature),
@@ -212,7 +241,7 @@ func (t *Transport) CeremonySignCSR(ctx context.Context, req *qrdbtransport.Sign
 	if req == nil {
 		return nil, errors.NewInvalidInput("mcp.CeremonySignCSR", "request is required")
 	}
-	raw, err := t.callBarrier(ctx, "qrdb_ceremony_sign_csr", map[string]interface{}{
+	raw, err := t.callCeremony(ctx, "qrdb_ceremony_sign_csr", map[string]interface{}{
 		"username": req.Username,
 		"so_pin":   req.SOPin,
 		"csr_pem":  req.CSRPEM,
@@ -236,7 +265,7 @@ func (t *Transport) CeremonyClaimShareBegin(ctx context.Context, req *qrdbtransp
 	if req == nil {
 		return nil, errors.NewInvalidInput("mcp.CeremonyClaimShareBegin", "request is required")
 	}
-	raw, err := t.callBarrier(ctx, "qrdb_ceremony_claim_share_begin", map[string]interface{}{
+	raw, err := t.callCeremony(ctx, "qrdb_ceremony_claim_share_begin", map[string]interface{}{
 		"custodian_id": req.CustodianID,
 	})
 	if err != nil {
@@ -283,7 +312,7 @@ func (t *Transport) CeremonyClaimShareComplete(ctx context.Context, req *qrdbtra
 	if len(req.FactorResponse) > 0 {
 		args["factor_response"] = base64.StdEncoding.EncodeToString(req.FactorResponse)
 	}
-	raw, err := t.callBarrier(ctx, "qrdb_ceremony_claim_share_complete", args)
+	raw, err := t.callCeremony(ctx, "qrdb_ceremony_claim_share_complete", args)
 	if err != nil {
 		return nil, err
 	}
@@ -310,7 +339,7 @@ func (t *Transport) CeremonySubmitUnsealShare(ctx context.Context, req *qrdbtran
 	if len(req.FactorResponse) > 0 {
 		args["factor_response"] = base64.StdEncoding.EncodeToString(req.FactorResponse)
 	}
-	raw, err := t.callBarrier(ctx, "qrdb_ceremony_submit_unseal_share", args)
+	raw, err := t.callCeremony(ctx, "qrdb_ceremony_submit_unseal_share", args)
 	if err != nil {
 		return nil, err
 	}
@@ -346,7 +375,7 @@ func (t *Transport) CeremonyEnrollExternalOfficer(ctx context.Context, req *qrdb
 		args["share_bytes"] = base64.StdEncoding.EncodeToString(req.ShareBytes)
 	}
 
-	raw, err := t.callBarrier(ctx, "qrdb_ceremony_enroll_external_officer", args)
+	raw, err := t.callCeremony(ctx, "qrdb_ceremony_enroll_external_officer", args)
 	if err != nil {
 		return nil, err
 	}

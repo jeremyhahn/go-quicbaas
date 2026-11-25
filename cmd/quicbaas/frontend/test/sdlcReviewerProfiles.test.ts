@@ -33,7 +33,7 @@ function profiledBinding(): ProjectBinding {
     reviewers: [
       {
         name: 'qwen', agent_id: 'qwen-reviewer', login: 'qwen-reviewer', token_secret_ref: 'qwen-tok',
-        endpoint: 'http://gpu-host.internal:11434', host_affinity: 'gpu-host',
+        endpoint: 'http://gpu-01.internal:11434', host_affinity: 'gpu-01',
       },
     ],
   };
@@ -59,12 +59,12 @@ describe('reviewer profiles on the binding form', () => {
 
   it('carries the endpoint and the host pin through a save', () => {
     const form = bindingFormFrom(profiledBinding());
-    expect(form.reviewerProfiles[1]?.endpoint).toBe('http://gpu-host.internal:11434');
-    expect(form.reviewerProfiles[1]?.hostAffinity).toBe('gpu-host');
+    expect(form.reviewerProfiles[1]?.endpoint).toBe('http://gpu-01.internal:11434');
+    expect(form.reviewerProfiles[1]?.hostAffinity).toBe('gpu-01');
     form.reviewerProfiles[1]!.endpoint = '  ';
     const wire = bindingFrom('go-quicbaas', form);
     expect(wire.reviewers?.[0]?.endpoint).toBeUndefined();
-    expect(wire.reviewers?.[0]?.host_affinity).toBe('gpu-host');
+    expect(wire.reviewers?.[0]?.host_affinity).toBe('gpu-01');
   });
 
   it('keeps an advisory profile advisory when it becomes the default', () => {

@@ -40,6 +40,18 @@ func setupTenantForTests(t *testing.T, cluster *testCluster) string {
 	return tenantID
 }
 
+// sharedTenantForTests is setupTenantForTests on the package's shared tenant
+// named name (shared_tenant_test.go): the first test that asks creates it
+// with setupTenantForTests, the rest reuse it. A test takes it only when
+// every assertion it makes is about objects it names uniquely or a delta
+// from a baseline it reads first.
+func sharedTenantForTests(t *testing.T, cluster *testCluster, name string) string {
+	t.Helper()
+	return sharedTenantFor(t, cluster.httpEndpoint, name, func(t *testing.T) string {
+		return setupTenantForTests(t, cluster)
+	}).id
+}
+
 // TestUserCRUD tests complete user lifecycle.
 func TestUserCRUD(t *testing.T) {
 	base := setupTestCluster(t)
@@ -50,8 +62,8 @@ func TestUserCRUD(t *testing.T) {
 	// through the tenant lift (pkg/api/rest/tenant_target.go).
 	cluster := base.asSystemAdmin()
 
-	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	tenantID := sharedTenantForTests(t, cluster, "identity")
+	defer deleteTenantUnlessShared(cluster, tenantID)
 
 	email := generateUniqueEmail()
 
@@ -149,8 +161,8 @@ func TestUserEmailUniqueness(t *testing.T) {
 	// through the tenant lift (pkg/api/rest/tenant_target.go).
 	cluster := base.asSystemAdmin()
 
-	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	tenantID := sharedTenantForTests(t, cluster, "identity")
+	defer deleteTenantUnlessShared(cluster, tenantID)
 
 	email := generateUniqueEmail()
 
@@ -185,8 +197,8 @@ func TestUserRoleAssignment(t *testing.T) {
 	// through the tenant lift (pkg/api/rest/tenant_target.go).
 	cluster := base.asSystemAdmin()
 
-	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	tenantID := sharedTenantForTests(t, cluster, "identity")
+	defer deleteTenantUnlessShared(cluster, tenantID)
 
 	// Create user
 	userReq := map[string]interface{}{
@@ -241,8 +253,8 @@ func TestRoleCRUD(t *testing.T) {
 	// through the tenant lift (pkg/api/rest/tenant_target.go).
 	cluster := base.asSystemAdmin()
 
-	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	tenantID := sharedTenantForTests(t, cluster, "identity")
+	defer deleteTenantUnlessShared(cluster, tenantID)
 
 	roleID := "test-role"
 
@@ -313,8 +325,8 @@ func TestRoleAssignmentRevocation(t *testing.T) {
 	// through the tenant lift (pkg/api/rest/tenant_target.go).
 	cluster := base.asSystemAdmin()
 
-	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	tenantID := sharedTenantForTests(t, cluster, "identity")
+	defer deleteTenantUnlessShared(cluster, tenantID)
 
 	// Create user
 	userReq := map[string]interface{}{
