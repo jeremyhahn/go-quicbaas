@@ -82,6 +82,22 @@ func deleteAssignment(t *testing.T, runner *TestRunner, assignmentID string) {
 	_, _, _ = runner.Run(cmd)
 }
 
+// impersonationStartCommand returns the command that starts an impersonation
+// session of targetUserID in tenantID with --output json.
+func impersonationStartCommand(targetUserID, tenantID, reason string) CommandDef {
+	return CommandDef{
+		Name: fmt.Sprintf("iam admin impersonate start as %s json", targetUserID),
+		Args: []string{
+			"iam", "admin", "impersonate", "start",
+			"--target-user-id", targetUserID,
+			"--tenant-id", tenantID, "--reason", reason, "--output", "json",
+		},
+		ExpectSuccess:  true,
+		Timeout:        10 * time.Second,
+		SkipTransports: iamTransportsToSkip,
+	}
+}
+
 // startImpersonationJSON starts an impersonation session with --output json and
 // returns the parsed JSON map. The caller is responsible for cleanup.
 //
@@ -93,17 +109,7 @@ func deleteAssignment(t *testing.T, runner *TestRunner, assignmentID string) {
 // could name a different actor if it tried.
 func startImpersonationJSON(t *testing.T, runner *TestRunner, targetUserID, tenantID, reason string) map[string]interface{} {
 	t.Helper()
-	cmd := CommandDef{
-		Name: fmt.Sprintf("iam admin impersonate start as %s json", targetUserID),
-		Args: []string{
-			"iam", "admin", "impersonate", "start",
-			"--target-user-id", targetUserID,
-			"--tenant-id", tenantID, "--reason", reason, "--output", "json",
-		},
-		ExpectSuccess:  true,
-		Timeout:        10 * time.Second,
-		SkipTransports: iamTransportsToSkip,
-	}
+	cmd := impersonationStartCommand(targetUserID, tenantID, reason)
 	stdout, stderr, err := runner.Run(cmd)
 	require.NoError(t, err, "failed to start impersonation: stdout=%s stderr=%s", stdout, stderr)
 
@@ -692,12 +698,20 @@ func TestIAMAdminImpersonateStart(t *testing.T) {
 		}
 
 		tenantID, targetUserID := createImpersonationTarget(t, runner, "impersonate")
+		// The target's tenant refused the system admin (tenant isolation).
+		if targetUserID == "" {
+			return
+		}
 		reason := "integration test impersonation"
 
 		// No test-created admin assignment: the authenticated caller (the
 		// runner's firstboot super_admin credential) already holds
 		// user:impersonate, and the actor can no longer be named by the
 		// request (go-quicbaas#383).
+		// REST refuses impersonation of a user in another tenant.
+		if expectCrossTenantRefusal(t, runner, impersonationStartCommand(targetUserID, tenantID, reason), TransportREST) {
+			return
+		}
 		result := startImpersonationJSON(t, runner, targetUserID, tenantID, reason)
 		sessionID := extractSessionID(t, result)
 		defer endImpersonation(t, runner, sessionID)
@@ -725,9 +739,17 @@ func TestIAMAdminImpersonateEnd(t *testing.T) {
 		}
 
 		tenantID, targetUserID := createImpersonationTarget(t, runner, "end-impersonate")
+		// The target's tenant refused the system admin (tenant isolation).
+		if targetUserID == "" {
+			return
+		}
 		reason := "integration test end impersonation"
 
 		// The authenticated caller is already privileged (#383).
+		// REST refuses impersonation of a user in another tenant.
+		if expectCrossTenantRefusal(t, runner, impersonationStartCommand(targetUserID, tenantID, reason), TransportREST) {
+			return
+		}
 		result := startImpersonationJSON(t, runner, targetUserID, tenantID, reason)
 		sessionID := extractSessionID(t, result)
 
@@ -748,11 +770,19 @@ func TestIAMAdminImpersonateList(t *testing.T) {
 		}
 
 		tenantID, targetUserID := createImpersonationTarget(t, runner, "list-impersonate")
+		// The target's tenant refused the system admin (tenant isolation).
+		if targetUserID == "" {
+			return
+		}
 		reason := "integration test list impersonations"
 
 		// Start a session so the list has something to return. The actor
 		// is the authenticated caller (#383), so list by the id the
 		// session actually recorded rather than a client-chosen one.
+		// REST refuses impersonation of a user in another tenant.
+		if expectCrossTenantRefusal(t, runner, impersonationStartCommand(targetUserID, tenantID, reason), TransportREST) {
+			return
+		}
 		result := startImpersonationJSON(t, runner, targetUserID, tenantID, reason)
 		sessionID := extractSessionID(t, result)
 		defer endImpersonation(t, runner, sessionID)

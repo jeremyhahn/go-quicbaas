@@ -71,6 +71,10 @@ func createImpersonationTarget(t *testing.T, runner *TestRunner, prefix string) 
 	t.Cleanup(func() {
 		runner.Run(IAMTenantDeleteCommand(tenantID))
 	})
+	// Tenants are isolated: the system admin may not act for this test tenant.
+	if expectCrossTenantRefusal(t, runner, IAMUserCreateCommand(tenantID, UniqueKey(prefix+"-target")+"@example.com", prefix+"-target")) {
+		return tenantID, ""
+	}
 	return tenantID, createTenantUserID(t, runner, tenantID, prefix+"-target")
 }
 
