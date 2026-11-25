@@ -132,7 +132,7 @@ func TestFleetNodeViews_RendersEveryNode(t *testing.T) {
 
 	views := FleetNodeViews([]*FleetNode{
 		{ID: "agent-04", Backend: "claude", Capabilities: []string{"claude", "codex"}},
-		{ID: "gpu-host", Backend: "ollama", Capabilities: []string{"ollama", "gpu"}},
+		{ID: "gpu-01", Backend: "ollama", Capabilities: []string{"ollama", "gpu"}},
 	})
 	if len(views) != 2 {
 		t.Fatalf("len = %d, want 2", len(views))

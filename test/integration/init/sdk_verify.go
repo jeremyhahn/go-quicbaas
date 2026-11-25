@@ -74,6 +74,8 @@ const sdkLivenessTimeout = 10 * time.Second
 func verifySDKLivenessOverTransport(t *testing.T, transport string, ports PortBundle, dataDir, adminToken string) {
 	t.Helper()
 
+	// MCP: main's anonymous-session refusal first, then the admin session's
+	// liveness check below.
 	if transport == "mcp" {
 		// MCP has no anonymous session: an initialize without a bearer is
 		// refused with 401 before the authenticated liveness call below.

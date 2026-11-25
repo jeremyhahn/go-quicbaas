@@ -262,19 +262,6 @@ func TestNewClusteredStorage_RequiresAnArbiter(t *testing.T) {
 	}
 }
 
-// TestNewClusteredStorage_BoundsTheTenantIndexSweep pins that the clustered
-// constructor rate-limits the tenant-index sweep as NewStorage does: a zero
-// interval would rescan the whole t: namespace on every scheduler tick.
-func TestNewClusteredStorage_BoundsTheTenantIndexSweep(t *testing.T) {
-	storage := newClusteredFixture(t)
-	if storage.sweepEvery != tenantJobIndexSweepInterval {
-		t.Fatalf("sweepEvery = %v, want %v", storage.sweepEvery, tenantJobIndexSweepInterval)
-	}
-	if got := NewStorage(newMockKVStore()).sweepEvery; got != storage.sweepEvery {
-		t.Fatalf("NewStorage sweepEvery = %v, clustered = %v: the constructors must agree", got, storage.sweepEvery)
-	}
-}
-
 // TestStorage_DoesNotSatisfyFiringClaimer is the compile-time half of the
 // fail-closed guard, asserted at runtime so the intent is visible.
 //

@@ -18,8 +18,6 @@ import (
 	"crypto"
 	"errors"
 	"net"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -157,13 +155,13 @@ func TestModule_LifecycleNoOps(t *testing.T) {
 // all seven broker capability services, the five quicbaas-native broker
 // data-plane services (ParameterStore, DynamicSecretsService,
 // ObjectStorageService, ObjectStorageAdmin, OllamaService), PromptService,
-// SecretsManagement, KeyManagement, DEKManagement and Crypto (quicbaas-native
-// because the pinned go-xkms serves no DEK surface and no quicbaas.kms.v1
-// name), and AttestationService (quicbaas-native because the pinned go-xkms
-// serves no endorsement or reference-values RPC), plus
-// CertificateService/TrustService/PIVService served to Unix-socket peers only
-// (see module.go's package doc and
-// TestModule_RegisterGRPC_LegacyXKMSWrappersAreUnixOnly), each with a method
+// SecretsManagement, KeyManagement, DEKManagement and Crypto
+// (quicbaas-native because the pinned go-xkms serves no DEK surface and no
+// quicbaas.kms.v1 name), and AttestationService (quicbaas-native because the
+// pinned go-xkms serves no Verifier RPCs), plus CertificateService/
+// TrustService/PIVService served to Unix-socket peers only (see module.go's
+// package doc and TestModule_RegisterGRPC_LegacyXKMSWrappersAreUnixOnly),
+// each with a method
 // set identical to its generated service descriptor — the same wire surface
 // pkg/server/lifecycle.go registers on the legacy transport (minus the
 // qrdb-proxy planes that qrdb's own unified server already owns natively,
@@ -196,22 +194,24 @@ func TestModule_RegisterGRPC_RegistersFullGRPCSurface(t *testing.T) {
 		&pb.KeyManagement_ServiceDesc,
 		&pb.DEKManagement_ServiceDesc,
 		&pb.Crypto_ServiceDesc,
+		&pb.AttestationService_ServiceDesc,
 		&pb.VectorDB_ServiceDesc,
 		&pb.VectorAdmin_ServiceDesc,
 		&pb.PromptService_ServiceDesc,
 		&pb.AgentCatalogService_ServiceDesc,
 		&pb.SDLCService_ServiceDesc,
 		&pb.RegistryService_ServiceDesc,
-		&pb.AttestationService_ServiceDesc,
 		&iampb.FederationService_ServiceDesc,
 		&iampb.SessionService_ServiceDesc,
 		&iampb.IAMService_ServiceDesc,
+		&iampb.AuditService_ServiceDesc,
+		&iampb.PEPService_ServiceDesc,
 		&pb.CertificateService_ServiceDesc,
 		&pb.TrustService_ServiceDesc,
 		&pb.PIVService_ServiceDesc,
 	}
 	info := server.GetServiceInfo()
-	require.Len(t, info, len(generated), "exactly the twenty-nine quicbaas-native and broker services and the three Unix-only legacy xkms wrappers must be registered")
+	require.Len(t, info, len(generated), "exactly the thirty-one quicbaas-native and broker services and the three Unix-only legacy xkms wrappers must be registered")
 
 	for _, desc := range generated {
 		svcInfo, ok := info[desc.ServiceName]
@@ -265,7 +265,8 @@ func TestModule_RegisterGRPC_ExcludesProxyPlanes(t *testing.T) {
 // CertificateService, TrustService, and PIVService are registered for the
 // Unix SDK's legacy wire names and are unixOnly: unixPeerOnly refuses any
 // non-Unix peer with Unimplemented, so TCP callers keep using go-xkms's
-// canonical xkms.v1 surface (see module.go's package doc).
+// canonical xkms.v1 surface (see module.go's package doc). Crypto is a plain
+// registration served to every peer: go-xkms serves no quicbaas.kms.v1 name.
 func TestModule_RegisterGRPC_LegacyXKMSWrappersAreUnixOnly(t *testing.T) {
 	m, err := NewModule(func() service.QuicBaaS { return nil }, testLogger(t))
 	require.NoError(t, err)
@@ -288,73 +289,7 @@ func TestModule_RegisterGRPC_LegacyXKMSWrappersAreUnixOnly(t *testing.T) {
 		assert.True(t, ok, "service %s must be registered for the Unix SDK's legacy wire name", name)
 		assert.True(t, unixOnly[name], "service %s must be unixOnly: TCP callers use go-xkms's canonical surface", name)
 	}
-	assert.True(t, unixOnly[pb.Crypto_ServiceDesc.ServiceName],
-		"Crypto must be unixOnly: network gRPC and QUIC peers use go-xkms's canonical KMS surface")
-}
-
-// TestModule_Crypto_RefusesNetworkPeers proves a non-Unix peer (bufconn
-// stands in for TCP) gets Unimplemented from quicbaas.kms.v1.Crypto even when
-// the facade composes a CryptoService, and that QUIC never projects it.
-func TestModule_Crypto_RefusesNetworkPeers(t *testing.T) {
-	m, err := NewModule(func() service.QuicBaaS {
-		return &mocks.MockQuicBaaS{
-			CryptoServiceFunc: func() service.CryptoService {
-				return &mocks.MockCryptoService{
-					EncryptFunc: func(context.Context, *service.EncryptRequest) (*service.EncryptResponse, error) {
-						t.Error("a network peer reached CryptoService.Encrypt")
-						return nil, nil
-					},
-				}
-			},
-		}
-	}, testLogger(t))
-	require.NoError(t, err)
-
-	client := pb.NewCryptoClient(startBufconnModule(t, m))
-	_, err = client.Encrypt(context.Background(), &pb.CryptoEncryptRequest{KeyId: "app-key", Plaintext: []byte("x")})
-	assert.Equal(t, codes.Unimplemented, status.Code(err), "Crypto/Encrypt from a network peer: %v", err)
-}
-
-// startUnixModule serves m's gRPC registrations on a Unix socket and returns
-// a client connection to it, so unixOnly services see a Unix peer.
-func startUnixModule(t *testing.T, m *Module) *grpc.ClientConn {
-	t.Helper()
-
-	// A short socket directory: t.TempDir() embeds the test name and can
-	// exceed the 107-byte sun_path limit.
-	sockDir, err := os.MkdirTemp("", "am")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
-	sockPath := filepath.Join(sockDir, "m.sock")
-	listener, err := net.Listen("unix", sockPath)
-	require.NoError(t, err)
-
-	server := grpc.NewServer()
-	m.RegisterGRPC(server)
-	go func() {
-		_ = server.Serve(listener)
-	}()
-	t.Cleanup(server.Stop)
-
-	conn, err := grpc.NewClient("unix://"+sockPath, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = conn.Close() })
-	return conn
-}
-
-// TestModule_RegisterGRPC_ServesAttestationVerifier proves the node's network
-// gRPC port serves quicbaas.attestation.v1: the pinned go-xkms ServiceModule
-// has no endorsement or reference-values RPC, so without this registration
-// the SDK's attestation client gets Unimplemented.
-func TestModule_RegisterGRPC_ServesAttestationVerifier(t *testing.T) {
-	m, err := NewModule(func() service.QuicBaaS { return nil }, testLogger(t))
-	require.NoError(t, err)
-
-	server := grpc.NewServer()
-	m.RegisterGRPC(server)
-	info, ok := server.GetServiceInfo()[pb.AttestationService_ServiceDesc.ServiceName]
-	require.True(t, ok, "AttestationService must be registered on the quicbaas module")
-	assert.Len(t, info.Methods, len(pb.AttestationService_ServiceDesc.Methods))
+	assert.False(t, unixOnly[pb.Crypto_ServiceDesc.ServiceName], "Crypto is served to every peer: go-xkms serves no quicbaas.kms.v1 name")
 }
 
 // startBufconnModule registers the module on a bufconn-backed gRPC server and
@@ -778,7 +713,7 @@ func TestModule_Crypto_LateBinding(t *testing.T) {
 	}, testLogger(t))
 	require.NoError(t, err)
 
-	client := pb.NewCryptoClient(startUnixModule(t, m))
+	client := pb.NewCryptoClient(startBufconnModule(t, m))
 	ctx := context.Background()
 	req := &pb.CryptoEncryptRequest{KeyId: "app-key", Plaintext: []byte("hello")}
 
@@ -809,7 +744,7 @@ func TestModule_Crypto_DisabledAnswersUnavailable(t *testing.T) {
 	m, err := NewModule(func() service.QuicBaaS { return &mocks.MockQuicBaaS{} }, testLogger(t))
 	require.NoError(t, err)
 
-	client := pb.NewCryptoClient(startUnixModule(t, m))
+	client := pb.NewCryptoClient(startBufconnModule(t, m))
 	_, err = client.Encrypt(context.Background(), &pb.CryptoEncryptRequest{KeyId: "app-key", Plaintext: []byte("x")})
 	requireUnavailable(t, err, "the node's gRPC service")
 }

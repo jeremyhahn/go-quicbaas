@@ -85,15 +85,13 @@
 // client_crypto.go) calls that proto name, which go-xkms does not register,
 // so the node answered Unimplemented. Every RPC carries a
 // (qrdb.v1.permission) option in kms.proto, already in this module's
-// derived set, and passes the same authz chain. Like the legacy wrappers
-// below it is unixOnly: network gRPC peers and the QUIC projection keep
-// using go-xkms's canonical KMS surface.
+// derived set, and passes the same authz chain.
 //
-// CertificateService, TrustService, and PIVService (the quicbaas.v1 wrappers
-// over the SAME composed go-xkms library, xkms.Get(), that go-xkms's OWN
-// ServiceModule registers on this unified server as its canonical xkms.v1
-// KeystoreService surface) are registered here for Unix-socket peers ONLY:
-// the quicbaas Unix SDK still calls these legacy wire names, and the
+// CertificateService, TrustService, and PIVService (the quicbaas.v1
+// wrappers over the SAME composed go-xkms library, xkms.Get(), that go-xkms's
+// OWN ServiceModule registers on this unified server as its canonical
+// xkms.v1 KeystoreService surface) are registered here for Unix-socket peers
+// ONLY: the quicbaas Unix SDK still calls these legacy wire names, and the
 // node serves the Unix socket when network serving is on. They are built
 // with the legacy listener's constructors and nil-gating
 // (pkg/server/lifecycle.go, lifecycle_certificate_register.go,
@@ -102,11 +100,6 @@
 // go-xkms's canonical surface instead. They never reach QUIC, no method of
 // theirs is public, and no permission or role grant is derived from them
 // (module_grants.go).
-//
-// AttestationService IS registered here: the pinned go-xkms ServiceModule
-// serves no endorsement or reference-values RPC, and the SDK's gRPC
-// attestation client dials quicbaas.attestation.v1, so the Verifier's
-// quicbaas handlers are the only gRPC surface for it.
 //
 // FIDO2Service is the other xkms-backed surface registered here: quicbaas's
 // own tenant-scoped LOGIN ceremony (the WebAuthn analogue of the Login
@@ -139,10 +132,13 @@
 // the SAME instances it registers on the Unix listener (WithHostGRPCServers).
 // IAMService is mounted: its six annotated RPCs carry their permissions, its
 // four invite RPCs are public (PublicGRPCMethods), and the rest are
-// default-denied, as on the legacy server. The other iam.v1 services
-// (PEPService, MFAService, AuditService) stay off: most of their RPCs carry
-// no (qrdb.v1.permission) option, and an unannotated RPC is default-denied
-// here.
+// default-denied, as on the legacy server. AuditService is mounted too:
+// QueryAuditEvents and GetAuditEvent carry their REST twins' grants
+// (audit:query, audit:read), and RecordAuditEvent stays default-denied.
+// PEPService is mounted too: Check and CheckBatch carry their REST twins'
+// grant (permissions:resolve), and Subscribe stays default-denied. Only
+// MFAService stays off: most of its RPCs carry no (qrdb.v1.permission)
+// option, and an unannotated RPC is default-denied here.
 //
 // ObjectTransferService is deliberately NOT registered here. Unlike the five
 // above, it has no facade-backed gRPC implementation to reuse: the only
@@ -317,8 +313,9 @@ func WithSPIFFETrustDomain(trustDomain string) Option {
 	}
 }
 
-// WithHostGRPCServers mounts the host-built FederationService and
-// SessionService servers (see HostGRPCServers) on the node's gRPC server.
+// WithHostGRPCServers mounts the host-built FederationService,
+// SessionService, IAMService, AuditService and PEPService servers (see
+// HostGRPCServers) on the node's gRPC server. MFAService stays off.
 // Without it those services answer Unavailable.
 func WithHostGRPCServers(resolve HostGRPCResolver) Option {
 	return func(m *Module) {
@@ -407,6 +404,7 @@ type grpcServers struct {
 	keyManagement      pb.KeyManagementServer
 	dekManagement      pb.DEKManagementServer
 	crypto             pb.CryptoServer
+	attestation        pb.AttestationServiceServer
 	vectorDB           pb.VectorDBServer
 	vectorAdmin        pb.VectorAdminServer
 	prompt             pb.PromptServiceServer
@@ -416,18 +414,20 @@ type grpcServers struct {
 	certificate        pb.CertificateServiceServer
 	trust              pb.TrustServiceServer
 	piv                pb.PIVServiceServer
-	attestation        pb.AttestationServiceServer
 }
 
 // HostGRPCServers carries the gRPC servers the host builds from IAM state
 // the service facade does not expose: the federation manager, the session
-// storage and the IAM components behind IAMService. The host builds them once
-// and registers the SAME instances on its Unix-socket gRPC server, so both
-// listeners serve one session store. A nil field answers Unavailable.
+// storage, the IAM components behind IAMService, the audit logger behind
+// AuditService and the policy engine behind PEPService. The host builds them
+// once and registers the SAME instances on its Unix-socket gRPC server, so
+// both listeners serve one session store. A nil field answers Unavailable.
 type HostGRPCServers struct {
 	Federation iampb.FederationServiceServer
 	Session    iampb.SessionServiceServer
 	IAM        iampb.IAMServiceServer
+	Audit      iampb.AuditServiceServer
+	PEP        iampb.PEPServiceServer
 }
 
 // HostGRPCResolver returns the host's gRPC servers. The module calls it on
@@ -503,17 +503,19 @@ var grpcRegistrations = []grpcRegistration{
 	{desc: &pb.SecretsManagement_ServiceDesc, capability: "secrets-management", pick: func(s *grpcServers) any { return s.secretsManagement }},
 	{desc: &pb.KeyManagement_ServiceDesc, capability: "key-management", pick: func(s *grpcServers) any { return s.keyManagement }},
 	{desc: &pb.DEKManagement_ServiceDesc, capability: "dek-management", pick: func(s *grpcServers) any { return s.dekManagement }},
-	{desc: &pb.Crypto_ServiceDesc, capability: "crypto", pick: func(s *grpcServers) any { return s.crypto }, unixOnly: true},
+	{desc: &pb.Crypto_ServiceDesc, capability: "crypto", pick: func(s *grpcServers) any { return s.crypto }},
+	{desc: &pb.AttestationService_ServiceDesc, capability: "attestation", pick: func(s *grpcServers) any { return s.attestation }},
 	{desc: &pb.VectorDB_ServiceDesc, capability: "vector", pick: func(s *grpcServers) any { return s.vectorDB }},
 	{desc: &pb.VectorAdmin_ServiceDesc, capability: "vector-admin", pick: func(s *grpcServers) any { return s.vectorAdmin }},
 	{desc: &pb.PromptService_ServiceDesc, capability: "prompt", pick: func(s *grpcServers) any { return s.prompt }},
 	{desc: &pb.AgentCatalogService_ServiceDesc, capability: "agent-catalog", pick: func(s *grpcServers) any { return s.agentCatalog }},
 	{desc: &pb.SDLCService_ServiceDesc, capability: "sdlc", pick: func(s *grpcServers) any { return s.sdlc }},
 	{desc: &pb.RegistryService_ServiceDesc, capability: "registry", pick: func(s *grpcServers) any { return s.registry }},
-	{desc: &pb.AttestationService_ServiceDesc, capability: "attestation", pick: func(s *grpcServers) any { return s.attestation }},
 	{desc: &iampb.FederationService_ServiceDesc, capability: "federation", hostPick: func(h HostGRPCServers) any { return h.Federation }},
 	{desc: &iampb.SessionService_ServiceDesc, capability: "session", hostPick: func(h HostGRPCServers) any { return h.Session }},
 	{desc: &iampb.IAMService_ServiceDesc, capability: "iam", hostPick: func(h HostGRPCServers) any { return h.IAM }, grpcOnly: true},
+	{desc: &iampb.AuditService_ServiceDesc, capability: "audit", hostPick: func(h HostGRPCServers) any { return h.Audit }, grpcOnly: true},
+	{desc: &iampb.PEPService_ServiceDesc, capability: "pep", hostPick: func(h HostGRPCServers) any { return h.PEP }, grpcOnly: true},
 	{desc: &pb.CertificateService_ServiceDesc, capability: "certificate", pick: func(s *grpcServers) any { return s.certificate }, unixOnly: true},
 	{desc: &pb.TrustService_ServiceDesc, capability: "trust", pick: func(s *grpcServers) any { return s.trust }, unixOnly: true},
 	{desc: &pb.PIVService_ServiceDesc, capability: "piv", pick: func(s *grpcServers) any { return s.piv }, unixOnly: true},
@@ -738,12 +740,6 @@ func (m *Module) bind() (*grpcServers, error) {
 		// The prompt server resolves Prompts() per call and answers
 		// Unavailable while no store is mounted, as on the Unix listener.
 		prompt: grpcapi.NewPromptServer(svc, m.log),
-		// The attestation Verifier's handlers live on the facade, as on the
-		// legacy transport (lifecycle_certificate_register.go); the pinned
-		// go-xkms ServiceModule serves no endorsement or reference-values
-		// RPC, so without this the SDK's quicbaas.attestation.v1 client
-		// gets Unimplemented on the node's network gRPC port.
-		attestation: facade,
 	}
 	if schedulerSvc, placementSvc := svc.Scheduler(), svc.Placement(); schedulerSvc != nil || placementSvc != nil {
 		built.scheduler = grpcapi.NewSchedulerServer(schedulerSvc, placementSvc, m.log)
@@ -798,12 +794,12 @@ func (m *Module) bind() (*grpcServers, error) {
 	// pkg/server/lifecycle.go applies on the legacy transport.
 	//
 	// CertificateService, TrustService, and PIVService are bound for
-	// Unix-socket peers only (unixOnly in grpcRegistrations; see the package
-	// doc): the Unix SDK still calls these legacy wire names. They use the
-	// legacy constructors and lifecycle.go's nil-gating; TCP callers use
-	// go-xkms's canonical surface, and QUIC never projects them.
-	// AttestationService is bound above and Crypto below: go-xkms serves no
-	// quicbaas.kms.v1 name, and the CLI calls it.
+	// Unix-socket peers only (unixOnly in grpcRegistrations; see the
+	// package doc): the Unix SDK still calls these legacy wire names. They
+	// use the legacy constructors and lifecycle.go's nil-gating; TCP callers
+	// use go-xkms's canonical surface, and QUIC never projects them.
+	// Crypto and AttestationService are bound below: go-xkms serves no
+	// quicbaas.kms.v1 name and no Verifier RPCs.
 	if secretsSvc := svc.Secrets(); secretsSvc != nil {
 		built.secretsManagement = grpcapi.NewSecretsServer(secretsSvc, m.log)
 	}
@@ -834,6 +830,13 @@ func (m *Module) bind() (*grpcServers, error) {
 	// Crypto().
 	if cryptoSvc := svc.Crypto(); cryptoSvc != nil {
 		built.crypto = grpcapi.NewCryptoServer(cryptoSvc, m.log)
+	}
+
+	// AttestationService is quicbaas-native for the same reason (package doc):
+	// the pinned go-xkms serves no Verifier RPCs, and *grpcapi.Server carries
+	// the handlers (pkg/api/grpc/server_attestation.go).
+	if svc.Attestation() != nil {
+		built.attestation = facade
 	}
 
 	// VectorDB and VectorAdmin are quicbaas-native here: go-qrdb registers no

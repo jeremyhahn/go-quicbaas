@@ -218,23 +218,23 @@ func TestOrchestratorGetSpendReport_SendsTheHost(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		queries <- r.URL.RawQuery
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"level":"tenant","tenant_id":"t1","host":"gpu-host:9091","measured_energy_entries":3,
-			"hosts":[{"host":"gpu-host:9091","total_tokens":42,"measured_energy_entries":3}]}`))
+		_, _ = w.Write([]byte(`{"level":"tenant","tenant_id":"t1","host":"gpu-01:9091","measured_energy_entries":3,
+			"hosts":[{"host":"gpu-01:9091","total_tokens":42,"measured_energy_entries":3}]}`))
 	}))
 	defer server.Close()
 
 	tr := newTestTransport(t, server)
 	ctx := context.Background()
 	resp, err := tr.Request(ctx, "Orchestrator", "GetSpendReport",
-		&orchestrator.GetSpendReportRequest{TenantID: "t1", Host: "gpu-host:9091"})
+		&orchestrator.GetSpendReportRequest{TenantID: "t1", Host: "gpu-01:9091"})
 	if err != nil {
 		t.Fatalf("GetSpendReport(host): %v", err)
 	}
-	if got := <-queries; !containsQuery(got, "host=gpu-host%3A9091") {
+	if got := <-queries; !containsQuery(got, "host=gpu-01%3A9091") {
 		t.Errorf("query %q dropped the host", got)
 	}
 	report := resp.(*orchestrator.GetSpendReportResponse)
-	if report.Host != "gpu-host:9091" || len(report.Hosts) != 1 || report.Hosts[0].TotalTokens != 42 {
+	if report.Host != "gpu-01:9091" || len(report.Hosts) != 1 || report.Hosts[0].TotalTokens != 42 {
 		t.Errorf("host breakdown not decoded: %+v", report.Hosts)
 	}
 	if report.MeasuredEnergyEntries != 3 || report.Hosts[0].MeasuredEnergyEntries != 3 {

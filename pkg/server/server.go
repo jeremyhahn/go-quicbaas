@@ -308,6 +308,10 @@ type Server struct {
 	// never wired serves no certificate operation, so swapping its CA would
 	// report a success that changes nothing.
 	caWired atomic.Bool
+	// caSettled is set once initializeCA has returned. Until then the go-xkms
+	// module's resolver yields no XKMS service, so the module cannot build
+	// and cache its KeystoreService before the node's CA is bound.
+	caSettled atomic.Bool
 
 	// xkmsKeyStorage is the file-backed XKMS key store created by
 	// initializeCA. startKMS reuses this same storage root so that the CA
@@ -328,10 +332,6 @@ type Server struct {
 	// which it sends to the replicated shard KV once that key's backend is
 	// registered (useReplicatedOIDCSigningStore).
 	xkmsKeyVersionRouter *keyVersionRouter
-	// kmsKeyNames holds the KMS backends' go-xkms key-name ownership
-	// records: node-local until the service has its datastore, replicated
-	// after (useReplicatedKMSKeyNames).
-	kmsKeyNames *kmsKeyNameRouter
 
 	// Fleet registry - shared between IAM enrollment (publisher on
 	// redeem) and orchestration (publisher on heartbeat + consumer for

@@ -20,6 +20,7 @@ import (
 	"encoding/base64"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"log/slog"
 	"maps"
 	"net"
@@ -33,6 +34,7 @@ import (
 	ggrpc "google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
 
+	xkmscaprovider "github.com/jeremyhahn/go-xkms/pkg/ca/provider"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -264,6 +266,8 @@ func (s *Server) resolveCAStoreType() (xkmssdk.StoreType, error) {
 }
 
 func (s *Server) initializeCA() error {
+	// Release the go-xkms module's resolver on every return (xkmsServiceForModule).
+	defer s.caSettled.Store(true)
 	// Build the unified secret resolver registry FIRST, before any of the
 	// CA-specific early returns below. The secrets manager is a core,
 	// always-on service: kms:// / credential:// URIs must resolve in EVERY
@@ -808,12 +812,43 @@ func (s *Server) initializeCA() error {
 // adoptCA makes ca the node's certificate authority. The CA adapter built
 // by NewServer takes it under its lock, so certificate logins already being
 // served (the unified listeners start before initializeCA) see either no CA
-// and fail closed, or this one.
+// and fail closed, or this one. It also hands the CA to the composed XKMS
+// service through bindCAToXKMSService.
 func (s *Server) adoptCA(ca xkmssdk.TrustedCA) {
 	s.xkmsCA = ca
 	if s.caAdapter != nil {
 		s.caAdapter.SetCA(ca)
 	}
+	s.bindCAToXKMSService()
+}
+
+// bindCAToXKMSService hands the node's adopted CA to the composed XKMS
+// service, so the canonical KeystoreService CA RPCs the go-xkms module serves
+// on the node (SignCSR, which PIV enrollment over gRPC uses) sign with the
+// same CA as the quicbaas CA adapter. It is a no-op until both the CA is
+// adopted and the XKMS service resolves, and it is called from both places,
+// whichever comes last. The CA is wrapped so a CSR signed or a certificate
+// issued with no tenant is recorded for the authenticated caller's tenant.
+func (s *Server) bindCAToXKMSService() {
+	if s.xkmsCA == nil {
+		return
+	}
+	pc, ok := s.xkmsCA.(xkmscaprovider.CA)
+	if !ok {
+		if s.logger != nil {
+			s.logger.Warn("adopted CA does not implement the XKMS CA provider; canonical KeystoreService CA RPCs stay unconfigured")
+		}
+		return
+	}
+	x, err := xkmssdk.Get()
+	if err != nil || x == nil {
+		return
+	}
+	trustDomain := ""
+	if s.config != nil {
+		trustDomain = s.config.IAM.SPIFFETrustDomain
+	}
+	x.SetCA(newTenantBoundXKMSCA(pc, trustDomain))
 }
 
 // issueTLSCertFromExternalCA configures TLS using the externally injected CA.
@@ -1196,20 +1231,14 @@ func (s *Server) startKMS() error {
 		s.ownsXKMS = true
 	}
 
-	// The ownership records of encoded go-xkms key names persist, and are
-	// replicated once the service has its datastore: a tenant key whose
-	// record is lost fails closed.
-	keyNames, err := s.kmsKeyNameStore()
-	if err != nil {
-		return api.NewOperationFailedError("create KMS key name store", err)
-	}
-
 	// Create BackendFactory to manage multiple backends via registry
 	factory, err := newKMSBackendFactory(&kms.BackendFactoryConfig{
 		Logger:              logAdapter,
 		EnabledBackends:     s.config.KMS.EnabledBackends,
 		HealthCheckInterval: 30,
-		KeyNames:            keyNames,
+		KeyNameStoreFor: kmsKeyOwnerStores(keyStorage, func() (xkmssdk.StorageBackend, error) {
+			return s.kmsReplicatedKeyOwnerStore(keyStorage)
+		}),
 	})
 	if err != nil {
 		return api.NewOperationFailedError("create backend factory", err)
@@ -1245,6 +1274,57 @@ func (s *Server) startKMS() error {
 	}).Info("KMS manager initialized with backend registry")
 
 	return nil
+}
+
+// kmsKeyOwnerStores returns the chooser that picks each registered KMS
+// backend's XKMS ownership proofs and key-name markers store from where that
+// backend's key material lives: the node-local store for backends whose key
+// material is on this node, the replicated store for backends every node
+// shares. So the node-local CA software backend never writes to the
+// replicated store when the primary backend is shared. The replicated store
+// is opened on first use and reused after that; a failed open is returned and
+// not cached, so the next call opens again. The backend factory calls the
+// chooser under its own lock.
+func kmsKeyOwnerStores(local xkmssdk.StorageBackend, replicated func() (xkmssdk.StorageBackend, error)) func(backendName string) (xkmssdk.StorageBackend, error) {
+	var shared xkmssdk.StorageBackend
+	return func(backendName string) (xkmssdk.StorageBackend, error) {
+		switch backendName {
+		case "software", "tpm2", "quantum":
+			return local, nil
+		}
+		if shared != nil {
+			return shared, nil
+		}
+		store, err := replicated()
+		if err != nil {
+			return nil, err
+		}
+		if store == nil {
+			return nil, fmt.Errorf("replicated KMS key owner store for backend %q is nil", backendName)
+		}
+		shared = store
+		return shared, nil
+	}
+}
+
+// kmsReplicatedKeyOwnerStore opens the key owner store on the replicated
+// cluster shard. startKMS runs before the sharded client exists, so it builds
+// one from the running qrdb node; with neither it returns local.
+func (s *Server) kmsReplicatedKeyOwnerStore(local xkmssdk.StorageBackend) (xkmssdk.StorageBackend, error) {
+	client := s.qrdbClient
+	if client == nil {
+		node := s.getQRDBNode()
+		if node == nil {
+			s.logger.Warn("No qrdb node: KMS key ownership proofs stay on this node")
+			return local, nil
+		}
+		client = newNodeBackedShardedClient(node)
+	}
+	shardClient, err := client.ForShard(clusterCAShardID)
+	if err != nil {
+		return nil, err
+	}
+	return xkmssdk.NewStoragePrefixBackend(xkmssdk.NewQRDBStorageBackend(shardClient.KV()), "kms-key-owners/")
 }
 
 // startSecrets initializes the secrets manager unconditionally when the
@@ -1936,9 +2016,6 @@ func (s *Server) startService() error {
 		// embedded transport — no duplicate construction needed here.
 		s.qrdbClient = newNodeBackedShardedClient(node)
 		s.logger.Info("qrdb ShardedClient backed by real qrdb engine node")
-		if err := s.useReplicatedKMSKeyNames(); err != nil {
-			return api.NewOperationFailedError("replicate KMS key name records", err)
-		}
 
 		// Populate s.ceremonyServices from the node's services so that the
 		// gRPC barrier/ceremony adapters and REST /api/v1/init/* routes can
@@ -2233,6 +2310,8 @@ func (s *Server) startService() error {
 	// dbxkms.Initialize has run, which happens independently of node
 	// construction ordering.
 	if xkmsService, getErr := xkmssdk.Get(); getErr == nil {
+		// The CA may have been adopted before the XKMS service resolved.
+		s.bindCAToXKMSService()
 		if client := s.GetQRDBNodeClient(); client != nil {
 			xkmsService.SetUserClients(client.Users(), client.Roles())
 			// UserAuthFactors returns nil when the transport predates the
@@ -2906,29 +2985,4 @@ func (s *Server) keyVersionStore() (*xkmssdk.KeyVersionStore, error) {
 	s.xkmsKeyVersionRouter = router
 	s.xkmsKeyVersions = store
 	return store, nil
-}
-
-// kmsKeyNameStore opens the store of go-xkms key-name ownership records the
-// KMS backends share. KMS starts before the embedded datastore, so the store
-// begins node-local (on disk under the data directory, or in memory when there
-// is none, where the keys themselves are in memory too) and moves to the
-// platform shard's replicated keyspace when the service starts
-// (useReplicatedKMSKeyNames), so every node sharing a KMS backend resolves
-// the same tenant keys.
-func (s *Server) kmsKeyNameStore() (xkmssdk.StorageBackend, error) {
-	if s.kmsKeyNames != nil {
-		return s.kmsKeyNames, nil
-	}
-	var local xkmssdk.StorageBackend
-	var err error
-	if dataDir := s.config.Storage.DataDir; dataDir != "" {
-		local, err = xkmssdk.NewFileStorageBackend(filepath.Join(dataDir, "kms-key-names"))
-	} else {
-		local, err = xkmssdk.NewMemoryBackend()
-	}
-	if err != nil {
-		return nil, err
-	}
-	s.kmsKeyNames = newKMSKeyNameRouter(local)
-	return s.kmsKeyNames, nil
 }

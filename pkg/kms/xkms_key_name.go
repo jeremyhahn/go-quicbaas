@@ -14,360 +14,170 @@
 package kms
 
 import (
-	"context"
-	"crypto/rand"
 	"encoding/base64"
-	"encoding/hex"
-	stderrors "errors"
-	"strconv"
+	"errors"
+	"fmt"
 	"strings"
-	"sync"
-	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/validation"
 	kctypes "github.com/jeremyhahn/go-xkms/sdk/go"
+
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
-// ErrKeyNameTaken is returned when a key would be created under a go-xkms
-// name another service key ID already holds.
-var ErrKeyNameTaken = stderrors.New("go-xkms key name is held by another key ID")
-
-// errNoKeyNameStore fails every lookup of a backend with no ownership store.
-var errNoKeyNameStore = stderrors.New("no go-xkms key name store")
-
-// ErrKeyNameBusy is the sentinel KeyNameBusyError unwraps to. It is
-// retryable: another request holds the name only while it creates or deletes.
-var ErrKeyNameBusy = stderrors.New("go-xkms key name is being created or deleted by another request; retry")
-
-// KeyNameBusyError reports a go-xkms key name whose lease another request,
-// on this node or another, holds. The call never waits for it.
-type KeyNameBusyError struct {
-	Name string
-}
-
-func (e *KeyNameBusyError) Error() string {
-	return "go-xkms key name " + e.Name + " is being created or deleted by another request; retry"
-}
-
-// Unwrap returns ErrKeyNameBusy.
-func (e *KeyNameBusyError) Unwrap() error { return ErrKeyNameBusy }
-
-// ErrKeyNameStoreUnguarded is the sentinel KeyNameStoreUnguardedError
-// unwraps to.
-var ErrKeyNameStoreUnguarded = stderrors.New("go-xkms key name store has no guarded delete")
-
-// KeyNameStoreUnguardedError reports a key-name store without
-// CompareAndDelete. Such a store cannot arbitrate a name across nodes, so
-// every claim and release on it fails closed.
-type KeyNameStoreUnguardedError struct {
-	Backend string
-}
-
-func (e *KeyNameStoreUnguardedError) Error() string {
-	return "go-xkms key name store of backend " + e.Backend +
-		" has no guarded delete (CompareAndDelete), so key names cannot be arbitrated across nodes"
-}
-
-// Unwrap returns ErrKeyNameStoreUnguarded.
-func (e *KeyNameStoreUnguardedError) Unwrap() error { return ErrKeyNameStoreUnguarded }
-
-// keyNameCompareAndDeleter is the guarded delete the shared key-name store
-// must offer; a store without it cannot arbitrate across nodes.
-type keyNameCompareAndDeleter interface {
-	CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error)
-}
-
-// xkmsNameLeaseTTL bounds how long a name's lease outlives a holder that
-// stopped without releasing it; a later request takes an expired lease over.
-const xkmsNameLeaseTTL = 2 * time.Minute
-
 // xkmsEncodedKeyNamePrefix starts every go-xkms key name that carries an
-// encoded service key ID.
+// encoded service key ID. The names it reserves are exactly the encoded
+// outputs (see xkmsNeedsEncoding): this backend refuses to write a valid
+// literal name that is exactly the canonical encoding of a rejected ID
+// (refuseReservedKeyName). Any other name that starts with it (an existing
+// "qbx.production") is used unchanged.
 const xkmsEncodedKeyNamePrefix = "qbx."
 
 // xkmsEncoding is strict so that each encoded payload has exactly one
-// spelling.
+// spelling: a name with non-canonical trailing bits is never an encoded
+// output and reads back literally.
 var xkmsEncoding = base64.RawURLEncoding.Strict()
 
-// xkmsNameOwnerPrefix namespaces the ownership records in their store.
-const xkmsNameOwnerPrefix = "owners/"
-
-// xkmsKeyName maps a service key ID to the key name go-xkms stores it under.
-// A name go-xkms accepts is used unchanged: that is the convention every key
-// created before encoding existed was stored under, so an existing key keeps
-// its name. Any other ID (a tenant's key is "tenant/<tenantID>/<name>",
-// which go-xkms refuses) is encoded as the prefix plus its canonical
-// unpadded base64url form; go-xkms's own validation is not loosened.
+// xkmsKeyName maps a service key ID to the key name go-xkms stores and
+// resolves it under. Service IDs may hold characters go-xkms refuses in a key
+// reference (a tenant's key is "tenant/<tenantID>/<name>"); go-xkms's own
+// validation is not loosened, the name is encoded instead.
 //
-// An encoded name is also a name go-xkms accepts, so an existing key may
-// already be stored under it literally. The name alone is therefore never
-// trusted: xkmsNameOwners records, persistently, which service key ID owns
-// each encoded name, and the backend resolves an encoded name only through
-// that record.
+// The mapping is injective over every ID. An ID is encoded, as the prefix
+// plus its canonical unpadded base64url form, when go-xkms rejects it or
+// when it is itself spelled as an encoded output; every other ID is its own
+// go-xkms name. An encoded output therefore always needs encoding as an ID,
+// so no literal ID can land on the name of an encoded one: a system key
+// named "qbx.<base64url of tenant/acme/k>" is stored under a further encoding
+// and is never tenant acme's key "k".
+//
+// Migration: before this mapping, every go-xkms name was the literal service
+// ID. A stored literal keeps working unless it is spelled as an encoded
+// output (its payload is the canonical base64url of an ID that needs
+// encoding); such a name would now read as the ID it encodes.
+// BackendFactory.InitializeFromXKMS therefore refuses to open a key store
+// that holds such a name and carries no mapping marker
+// (LegacyXKMSKeyNamesError lists the names); the operator re-imports each
+// listed key under a name outside that shape. The first clean open writes the
+// marker, and later opens skip the scan.
+//
+// Ownership: a key under an encoded name resolves, or lists, only when
+// XKMSBackend holds the ownership record of its full go-xkms key identity
+// (backend, type, algorithm, name; xkms_key_owner.go), not of the name alone.
+// The node's native go-xkms service writes the same key store under any valid
+// literal name, including one spelled as an encoded output, and go-xkms keeps
+// distinct keys under one name, so the marker alone cannot keep such a key
+// from reading as the ID it encodes; the record proves this backend wrote it.
+// TestXKMSKeyName_EncodedOutputsAreReserved pins the shape.
+//
+// Writes: the backend refuses a literal spelled as an encoded output at
+// every entry point (refuseReservedKeyName), so a name this backend writes
+// under that shape only ever means the encoded ID.
 func xkmsKeyName(keyID string) string {
-	// An empty ID is refused before any go-xkms call (ErrKeyCNEmpty).
-	if keyID == "" || validation.ValidateKeyID(keyID) == nil {
+	if !xkmsNeedsEncoding(keyID) {
 		return keyID
 	}
 	return xkmsEncodedKeyNamePrefix + xkmsEncoding.EncodeToString([]byte(keyID))
 }
 
-// xkmsNameOwners is the persisted mapping from each encoded go-xkms key name
-// to the service key ID that owns it. Only encoded names have a record; a
-// name without one is a literal key ID, whatever it looks like, so a key
-// stored before the mapping existed needs no migration: it has no record and
-// stays its own ID.
-//
-// Records are per go-xkms backend: each backend has its own key namespace, so
-// a name one backend's tenant key owns may be an existing literal key in
-// another.
-//
-// The store is shared by every node that shares the KMS backend (production
-// keeps it in the platform shard's replicated keyspace), so the per-instance
-// lock alone cannot serialize a name: claim and release also hold a lease on
-// the name in the store, and every record write and delete is guarded
-// (PutIfAbsent, CompareAndDelete). A store without a guarded delete fails
-// closed.
-type xkmsNameOwners struct {
-	mu      sync.Mutex
-	backend string
-	store   kctypes.StorageBackend
-}
+// ErrXKMSKeyIDTooLong reports a key ID whose go-xkms name go-xkms would
+// refuse, in practice because base64 expansion took it past go-xkms's
+// 255-character key-name limit, or because the file name the key store writes
+// for it would be longer than a filesystem allows.
+var ErrXKMSKeyIDTooLong = errors.New("kms: key ID too long for a go-xkms key name")
 
-// recordKey is the store key of name's ownership record.
-func (o *xkmsNameOwners) recordKey(name string) string {
-	return xkmsNameOwnerPrefix + o.backend + "/" + name
-}
-
-// owner returns the service key ID recorded for name.
-func (o *xkmsNameOwners) owner(ctx context.Context, name string) (string, bool, error) {
-	if o.store == nil {
-		return "", false, errNoKeyNameStore
-	}
-	b, err := o.store.Get(ctx, o.recordKey(name))
-	if stderrors.Is(err, storage.ErrNotFound) {
-		return "", false, nil
-	}
-	if err != nil {
-		return "", false, err
-	}
-	return string(b), true, nil
-}
-
-// resolve returns the go-xkms name of an existing key ID. It fails with
-// ErrKeyNotFound when the name belongs to another ID: an encoded name with no
-// record for keyID (it may be an existing literal key), or a literal ID
-// spelled like an encoded name that a tenant key owns.
-func (o *xkmsNameOwners) resolve(ctx context.Context, keyID string) (string, error) {
-	name := xkmsKeyName(keyID)
-	owner, found, err := o.owner(ctx, name)
-	if err != nil {
-		return "", err
-	}
-	if name == keyID {
-		if found {
-			return "", ErrKeyNotFound
-		}
-		return name, nil
-	}
-	if !found || owner != keyID {
-		return "", ErrKeyNotFound
-	}
-	return name, nil
-}
-
-// claim reserves the go-xkms name of keyID and creates its key under it, as
-// one step. Two layers serialize it: the per-instance lock, and a lease on
-// the name in the shared store that every node sharing the KMS backend takes
-// before it reads the record. Reservation, creation and the rollback of a
-// failed creation all run under both, so a failed request on one node can
-// never drop a record another node's successful creation relies on. A name
-// another request holds the lease of fails fast with *KeyNameBusyError.
-//
-// exists reports, authoritatively, whether go-xkms already holds a key under
-// a name; its error fails the claim, as an inconclusive lookup is never taken
-// for absence. An encoded name go-xkms holds without a record is an existing
-// literal key, and claiming it would make keyID an alias of that key, so
-// claim refuses it with ErrKeyNameTaken. The record is written with
-// PutIfAbsent before create runs, and is dropped again, by a delete guarded
-// on keyID, only when this call wrote it and create failed.
-func (o *xkmsNameOwners) claim(ctx context.Context, keyID string, exists func(name string) (bool, error), create func(name string) error) error {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-
-	name := xkmsKeyName(keyID)
-	unlock, err := o.lease(ctx, name)
-	if err != nil {
-		return err
-	}
-	defer unlock()
-
-	owner, found, err := o.owner(ctx, name)
-	if err != nil {
-		return err
-	}
-	if name == keyID {
-		if found {
-			return ErrKeyNameTaken
-		}
-		return create(name)
-	}
-	if found {
-		if owner != keyID {
-			return ErrKeyNameTaken
-		}
-		return create(name)
-	}
-	held, err := exists(name)
-	if err != nil {
-		return err
-	}
-	if held {
-		return ErrKeyNameTaken
-	}
-	stored, err := o.store.PutIfAbsent(ctx, o.recordKey(name), []byte(keyID))
-	if err != nil {
-		return err
-	}
-	if !stored {
-		// The lease is held, so a record that appeared since the read above was
-		// written outside the protocol; it is never overwritten.
-		return ErrKeyNameTaken
-	}
-	if err := create(name); err != nil {
-		_ = o.dropLocked(ctx, keyID, name)
-		return err
+// checkXKMSKeyName refuses keyID when its go-xkms name fails go-xkms's own
+// key ID validation, which Encrypt and Decrypt apply to every key reference.
+// Callers check before any key material exists, so no key is stored that
+// later crypto operations would reject.
+func checkXKMSKeyName(keyID string) error {
+	if err := validation.ValidateKeyID(xkmsKeyName(keyID)); err != nil {
+		return fmt.Errorf("%w: %w", ErrXKMSKeyIDTooLong, err)
 	}
 	return nil
 }
 
-// release deletes keyID's key with del and then drops the ownership record of
-// its encoded name. Both run under the same lock and shared lease claim
-// takes, so a create of the same key ID on any node either finishes before
-// the delete starts or starts after the record is gone: the delete never
-// drops the record a recreated key relies on.
-func (o *xkmsNameOwners) release(ctx context.Context, keyID string, del func() error) error {
-	o.mu.Lock()
-	defer o.mu.Unlock()
+// xkmsMaxStoredNameComponent is the longest file-name component a
+// filesystem accepts. go-xkms file storage names a key's files
+// keys/<ID>.key and meta/<ID>.json, and the ownership record's last
+// component is the key identity, so each must fit.
+const xkmsMaxStoredNameComponent = 255
 
-	name := xkmsKeyName(keyID)
-	unlock, err := o.lease(ctx, name)
+// xkmsLongestStoredNameSuffix is the longest suffix go-xkms file storage
+// adds to KeyAttributes.ID() (".json", meta/<ID>.json).
+const xkmsLongestStoredNameSuffix = len(".json")
+
+// checkXKMSKeyStorage refuses the key xattrs describe (CN already the
+// go-xkms name, StoreType set) when a file the production file store
+// writes for it would have a name component longer than the filesystem
+// allows. Callers check before any key material exists.
+func (kb *XKMSBackend) checkXKMSKeyStorage(xattrs *kctypes.KeyAttributes) error {
+	if n := len(xattrs.ID()) + xkmsLongestStoredNameSuffix; n > xkmsMaxStoredNameComponent {
+		return fmt.Errorf("%w: stored key file name is %d bytes, over the %d-byte limit", ErrXKMSKeyIDTooLong, n, xkmsMaxStoredNameComponent)
+	}
+	if n := len(kb.xkmsKeyIdentity(xattrs)); n > xkmsMaxStoredNameComponent {
+		return fmt.Errorf("%w: key ownership record name is %d bytes, over the %d-byte limit", ErrXKMSKeyIDTooLong, n, xkmsMaxStoredNameComponent)
+	}
+	return nil
+}
+
+// xkmsNeedsEncoding reports whether keyID is stored under an encoded name:
+// go-xkms rejects it, or it is spelled as an encoded output. An empty ID is
+// refused before any go-xkms call (ErrKeyCNEmpty) and is not encoded.
+func xkmsNeedsEncoding(keyID string) bool {
+	if keyID == "" {
+		return false
+	}
+	if validation.ValidateKeyID(keyID) != nil {
+		return true
+	}
+	_, encoded := decodeXKMSKeyName(keyID)
+	return encoded
+}
+
+// decodeXKMSKeyName returns the ID name encodes and true when name is exactly
+// what xkmsKeyName makes of an ID that needs encoding. The recursion ends:
+// each decoded payload is shorter than the name it came from.
+func decodeXKMSKeyName(name string) (string, bool) {
+	payload, ok := strings.CutPrefix(name, xkmsEncodedKeyNamePrefix)
+	if !ok {
+		return "", false
+	}
+	decoded, err := xkmsEncoding.DecodeString(payload)
 	if err != nil {
-		return err
+		return "", false
 	}
-	defer unlock()
+	keyID := string(decoded)
+	if !xkmsNeedsEncoding(keyID) {
+		// An ID that needs no encoding is never encoded, so this name is a
+		// literal.
+		return "", false
+	}
+	return keyID, true
+}
 
-	if err := del(); err != nil {
-		return err
+// keyIDFromXKMSName returns the service key ID behind a go-xkms key name. It
+// decodes a name only when the name is exactly what xkmsKeyName makes of an
+// ID that needs encoding; every other name is the key ID itself.
+func keyIDFromXKMSName(name string) string {
+	if keyID, ok := decodeXKMSKeyName(name); ok {
+		return keyID
 	}
-	if name == keyID {
+	return name
+}
+
+// refuseReservedKeyName refuses a key ID that go-xkms accepts literally but
+// that keyIDFromXKMSName would read as a different, encoded ID: such a
+// literal names the same go-xkms key as that encoded ID (a tenant's key), so
+// accepting it would cross the tenant boundary. It returns an invalid-input
+// error wrapping ErrReservedKeyName, and nil for every other ID.
+func refuseReservedKeyName(op, keyID string) error {
+	if keyID == "" || validation.ValidateKeyID(keyID) != nil || keyIDFromXKMSName(keyID) == keyID {
 		return nil
 	}
-	return o.dropLocked(ctx, keyID, name)
-}
-
-// dropLocked deletes name's record only while it still names keyID: the
-// delete is guarded on the stored value, so it never removes a record that
-// names another owner. o.mu and name's lease are held.
-func (o *xkmsNameOwners) dropLocked(ctx context.Context, keyID, name string) error {
-	guarded, ok := o.store.(keyNameCompareAndDeleter)
-	if !ok {
-		return &KeyNameStoreUnguardedError{Backend: o.backend}
+	return &qberrors.QBError{
+		Code: qberrors.ErrInvalidInput,
+		Op:   op,
+		Err:  fmt.Errorf("%w: %q", ErrReservedKeyName, keyID),
 	}
-	_, err := guarded.CompareAndDelete(ctx, o.recordKey(name), []byte(keyID))
-	return err
-}
-
-// leaseKey is the store key of name's cross-node lease.
-func (o *xkmsNameOwners) leaseKey(name string) string {
-	return xkmsNameOwnerPrefix + "lease/" + o.backend + "/" + name
-}
-
-// lease takes name's lease in the shared store and returns the function that
-// releases it. The lease is written with PutIfAbsent as "<token>|<deadline>"
-// and released by a delete guarded on that exact value, so a holder never
-// frees a lease it no longer holds. A live lease held by another request
-// fails with *KeyNameBusyError at once; an expired one is taken over by a
-// guarded delete of the observed value and one more PutIfAbsent, and losing
-// either step is busy too.
-func (o *xkmsNameOwners) lease(ctx context.Context, name string) (func(), error) {
-	if o.store == nil {
-		return nil, errNoKeyNameStore
-	}
-	guarded, ok := o.store.(keyNameCompareAndDeleter)
-	if !ok {
-		return nil, &KeyNameStoreUnguardedError{Backend: o.backend}
-	}
-	token := make([]byte, 16)
-	if _, err := rand.Read(token); err != nil {
-		return nil, err
-	}
-	key := o.leaseKey(name)
-	value := []byte(hex.EncodeToString(token) + "|" +
-		strconv.FormatInt(time.Now().Add(xkmsNameLeaseTTL).UnixNano(), 10))
-
-	taken, err := o.store.PutIfAbsent(ctx, key, value)
-	if err != nil {
-		return nil, err
-	}
-	if !taken {
-		held, err := o.store.Get(ctx, key)
-		switch {
-		case stderrors.Is(err, storage.ErrNotFound):
-			// Released between the two calls: one more attempt below.
-		case err != nil:
-			return nil, err
-		case !xkmsNameLeaseExpired(held, time.Now()):
-			return nil, &KeyNameBusyError{Name: name}
-		default:
-			removed, err := guarded.CompareAndDelete(ctx, key, held)
-			if err != nil {
-				return nil, err
-			}
-			if !removed {
-				return nil, &KeyNameBusyError{Name: name}
-			}
-		}
-		taken, err = o.store.PutIfAbsent(ctx, key, value)
-		if err != nil {
-			return nil, err
-		}
-		if !taken {
-			return nil, &KeyNameBusyError{Name: name}
-		}
-	}
-	return func() {
-		// Best effort: a lease this fails to free expires after
-		// xkmsNameLeaseTTL. A cancelled request still frees its lease.
-		_, _ = guarded.CompareAndDelete(context.WithoutCancel(ctx), key, value)
-	}, nil
-}
-
-// xkmsNameLeaseExpired reports whether a stored lease's deadline has passed.
-// A value this protocol did not write has no deadline it can honour, and is
-// treated as expired so it cannot block the name forever.
-func xkmsNameLeaseExpired(value []byte, now time.Time) bool {
-	_, deadline, ok := strings.Cut(string(value), "|")
-	if !ok {
-		return true
-	}
-	nanos, err := strconv.ParseInt(deadline, 10, 64)
-	if err != nil {
-		return true
-	}
-	return !now.Before(time.Unix(0, nanos))
-}
-
-// keyID returns the service key ID behind a go-xkms key name: the recorded
-// owner of an encoded name, and the name itself for every other name.
-func (o *xkmsNameOwners) keyID(ctx context.Context, name string) (string, error) {
-	owner, found, err := o.owner(ctx, name)
-	if err != nil {
-		return "", err
-	}
-	if found {
-		return owner, nil
-	}
-	return name, nil
 }

@@ -17,18 +17,14 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
-	stderrors "errors"
-	"strconv"
-	"sync"
+	"errors"
+	"strings"
 	"testing"
-	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/validation"
-	goxkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/config"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/xkms"
 )
 
@@ -72,58 +68,94 @@ func TestXKMSBackend_TenantScopedKeyID_EncryptsAndDecrypts(t *testing.T) {
 	require.NoError(t, backend.DeleteKey(ctx, keyID))
 }
 
-func TestXKMSKeyName_ValidNamesAreLiteral(t *testing.T) {
-	tenantName := xkmsKeyName("tenant/acme/k")
-	for _, id := range []string{"plain-key_1.v2", "qbx.production", tenantName} {
-		require.NoError(t, validation.ValidateKeyID(id))
-		require.Equal(t, id, xkmsKeyName(id), "a name go-xkms accepts is its own name, as before the mapping")
-	}
+func TestXKMSKeyName_IsInjectiveAndKeepsValidNames(t *testing.T) {
+	require.Equal(t, "plain-key_1.v2", xkmsKeyName("plain-key_1.v2"), "a valid name is unchanged")
 
+	ids := []string{"tenant/acme/k", "tenant/acme/k_v2", "tenant.acme.k", "a/b", "a.b"}
 	seen := map[string]string{}
-	for _, id := range []string{"tenant/acme/k", "tenant/acme/k2", "a/b", "a:b"} {
+	for _, id := range ids {
 		name := xkmsKeyName(id)
-		require.NoError(t, validation.ValidateKeyID(name), "the encoded name of %q is a valid go-xkms name", id)
-		require.Equal(t, xkmsEncodedKeyNamePrefix+base64.RawURLEncoding.EncodeToString([]byte(id)), name)
-		_, dup := seen[name]
-		require.False(t, dup, "two IDs share the encoded name %q", name)
+		require.Regexp(t, `^[A-Za-z0-9._-]+$`, name)
+		require.NotContains(t, name, "..")
+		if prev, ok := seen[name]; ok {
+			t.Fatalf("%q and %q map to the same go-xkms name %q", prev, id, name)
+		}
 		seen[name] = id
+		require.Equal(t, id, keyIDFromXKMSName(name), "the mapping round-trips")
 	}
 }
 
-// TestXKMSBackend_LegacyKeySpelledLikeATenantEncoding_StaysASystemKey seeds a
-// key the way the code before the mapping stored it (its go-xkms name is its
-// service ID) under a name that spells the encoding of a tenant ID. Its owner
-// keeps it, and the tenant ID never reaches it.
-func TestXKMSBackend_LegacyKeySpelledLikeATenantEncoding_StaysASystemKey(t *testing.T) {
+// TestXKMSKeyName_EveryValidNameMapsToItself pins the upgrade contract: a
+// name go-xkms accepts is the go-xkms name, always, including one that
+// starts with the encoding's prefix, and ListKeys reads it back unchanged.
+// The one exception is a literal that is the canonical encoding of a
+// rejected ID: the backend refuses it (refuseReservedKeyName).
+func TestXKMSKeyName_EveryValidNameMapsToItself(t *testing.T) {
+	for _, id := range []string{
+		"qbx.production", "qbx.", "qbx.cHJvZA", "qbx.production.sign", "qbx-x", "QBX.prod",
+	} {
+		require.NoError(t, validation.ValidateKeyID(id), "fixture %q must be a valid go-xkms name", id)
+		require.Equal(t, id, xkmsKeyName(id), "a valid name maps to itself")
+		if id == "qbx.YS9i" {
+			// The one shape that is ambiguous by construction: the
+			// canonical encoding of the rejected ID "a/b". The backend
+			// refuses it as a literal.
+			require.ErrorIs(t, refuseReservedKeyName("t", id), ErrReservedKeyName)
+			continue
+		}
+		require.NoError(t, refuseReservedKeyName("t", id))
+		require.Equal(t, id, keyIDFromXKMSName(id), "ListKeys reads a literal name unchanged")
+	}
+}
+
+// TestXKMSKeyName_EncodedOutputsAreReserved: an ID spelled as an encoded
+// output is itself encoded, so a literal ID never shares a go-xkms name with
+// a tenant-scoped one.
+func TestXKMSKeyName_EncodedOutputsAreReserved(t *testing.T) {
+	tenantName := xkmsKeyName("tenant/acme/k")
+	require.NoError(t, validation.ValidateKeyID(tenantName))
+	require.NotEqual(t, tenantName, xkmsKeyName(tenantName),
+		"the literal ID %q must not resolve to tenant acme's key", tenantName)
+	require.Equal(t, tenantName, keyIDFromXKMSName(xkmsKeyName(tenantName)), "the escaped literal round-trips")
+	require.Equal(t, "tenant/acme/k", keyIDFromXKMSName(tenantName))
+
+	// Every level of nesting stays distinct and round-trips.
+	seen := map[string]string{}
+	id := "a/b"
+	for i := 0; i < 4; i++ {
+		name := xkmsKeyName(id)
+		require.NoError(t, validation.ValidateKeyID(name))
+		if prev, ok := seen[name]; ok {
+			t.Fatalf("%q and %q map to the same go-xkms name %q", prev, id, name)
+		}
+		seen[name] = id
+		require.Equal(t, id, keyIDFromXKMSName(name))
+		id = name
+	}
+}
+
+// TestXKMSBackend_LiteralEncodedNameIsNotTheTenantKey is the isolation
+// regression: a system key whose literal ID is the encoding of a tenant's
+// key ID is a different go-xkms key, so the tenant cannot address it.
+func TestXKMSBackend_LiteralEncodedNameIsNotTheTenantKey(t *testing.T) {
 	cleanup := initXKMSForTest(t)
 	defer cleanup()
 
 	backend := newRealXKMSBackendForTest(t)
 	ctx := context.Background()
 
+	// The literal spelled as tenant acme's encoded key name is refused
+	// (refuseReservedKeyName), so it can never be written and later read
+	// back as the tenant's key.
 	const tenantKeyID = "tenant/acme/k"
-	systemKeyID := xkmsEncodedKeyNamePrefix + base64.RawURLEncoding.EncodeToString([]byte(tenantKeyID))
-	_, err := xkms.GenerateSymmetricKey(ctx, string(backend.backendType),
-		backend.algorithmToKeyAttributes(systemKeyID, AlgAES256GCM))
-	require.NoError(t, err)
-
-	ciphertext, err := backend.Encrypt(ctx, systemKeyID, []byte("system"), nil)
-	require.NoError(t, err, "the existing key's owner keeps access")
-	plaintext, err := backend.Decrypt(ctx, systemKeyID, ciphertext, nil)
-	require.NoError(t, err)
-	require.Equal(t, []byte("system"), plaintext)
+	literal := xkmsKeyName(tenantKeyID)
+	_, err := backend.CreateKey(ctx, backend.algorithmToKeyAttributes(literal, AlgAES256GCM))
+	require.ErrorIs(t, err, ErrReservedKeyName, "the encoded-shaped literal must be refused")
 
 	_, err = backend.GetKeyMetadata(ctx, tenantKeyID)
-	require.ErrorIs(t, err, ErrKeyNotFound, "the tenant ID must not resolve to the system key")
-	_, err = backend.Encrypt(ctx, tenantKeyID, []byte("tenant"), nil)
-	require.Error(t, err, "the tenant ID must not encrypt under the system key")
-	_, err = backend.Decrypt(ctx, tenantKeyID, ciphertext, nil)
-	require.Error(t, err, "the tenant ID must not decrypt under the system key")
-
-	_, err = backend.CreateKey(ctx, backend.algorithmToKeyAttributes(tenantKeyID, AlgAES256GCM))
-	require.ErrorIs(t, err, ErrKeyNameTaken, "a tenant key must not take over the system key's name")
-	_, err = backend.GetKeyMetadata(ctx, tenantKeyID)
-	require.ErrorIs(t, err, ErrKeyNotFound, "a refused create leaves no ownership record")
+	require.ErrorIs(t, err, ErrKeyNotFound, "the tenant ID must not resolve to a refused literal")
+	_, err = backend.Encrypt(ctx, tenantKeyID, []byte("secret"), nil)
+	require.Error(t, err, "the tenant ID must not encrypt under a refused literal")
 
 	keys, _, err := backend.ListKeys(ctx, "", 0)
 	require.NoError(t, err)
@@ -131,245 +163,30 @@ func TestXKMSBackend_LegacyKeySpelledLikeATenantEncoding_StaysASystemKey(t *test
 	for _, k := range keys {
 		listed = append(listed, k.KeyID)
 	}
-	require.Contains(t, listed, systemKeyID, "the system key lists under its own ID")
-	require.NotContains(t, listed, tenantKeyID, "the system key is never relabelled a tenant key")
-
-	require.NoError(t, backend.DeleteKey(ctx, systemKeyID))
-}
-
-// TestXKMSBackend_VersionedDecrypt_RefusesALegacyVersionName seeds a system
-// key, the pre-change way, under the literal name a tenant key's version 2
-// would encode to. The tenant owns its base key but no version 2, so a
-// ciphertext whose metadata claims version 2 must not decrypt under the
-// system key.
-func TestXKMSBackend_VersionedDecrypt_RefusesALegacyVersionName(t *testing.T) {
-	cleanup := initXKMSForTest(t)
-	defer cleanup()
-
-	backend := newRealXKMSBackendForTest(t)
-	ctx := context.Background()
-
-	const tenantKeyID = "tenant/acme/k"
-	_, err := backend.CreateKey(ctx, backend.algorithmToKeyAttributes(tenantKeyID, AlgAES256GCM))
-	require.NoError(t, err)
-
-	systemKeyID := xkmsKeyName(backend.buildVersionedKeyID(tenantKeyID, 2))
-	_, err = xkms.GenerateSymmetricKey(ctx, string(backend.backendType),
-		backend.algorithmToKeyAttributes(systemKeyID, AlgAES256GCM))
-	require.NoError(t, err)
-
-	ciphertext, err := backend.Encrypt(ctx, systemKeyID, []byte("system secret"), nil)
-	require.NoError(t, err)
-	encrypted, err := backend.deserializeEncryptedData(ciphertext)
-	require.NoError(t, err)
-	if encrypted.Metadata == nil {
-		encrypted.Metadata = map[string][]byte{}
-	}
-	encrypted.Metadata[keyVersionMetadataKey] = []byte("2")
-	forged, err := backend.serializeEncryptedData(encrypted)
-	require.NoError(t, err)
-
-	plaintext, err := backend.Decrypt(ctx, tenantKeyID, forged, nil)
-	require.Error(t, err, "a version the tenant never rotated to must not resolve to the system key")
-	require.Nil(t, plaintext)
-
-	plaintext, err = backend.Decrypt(ctx, systemKeyID, ciphertext, nil)
-	require.NoError(t, err, "the system key's owner keeps access")
-	require.Equal(t, []byte("system secret"), plaintext)
-}
-
-// TestXKMSBackend_LegacyAES192KeyName_IsNotTakenOver seeds an AES-192 system
-// key, an algorithm the metadata probe used to miss, under the encoding of a
-// tenant key ID. Creating the tenant key must be refused rather than record
-// tenant ownership of the system key's name.
-func TestXKMSBackend_LegacyAES192KeyName_IsNotTakenOver(t *testing.T) {
-	cleanup := initXKMSForTest(t)
-	defer cleanup()
-
-	backend := newRealXKMSBackendForTest(t)
-	ctx := context.Background()
-
-	const tenantKeyID = "tenant/acme/k"
-	systemKeyID := xkmsKeyName(tenantKeyID)
-	_, err := xkms.GenerateSymmetricKey(ctx, string(backend.backendType),
-		backend.algorithmToKeyAttributes(systemKeyID, "AES-192-GCM"))
-	require.NoError(t, err)
-
-	_, err = backend.CreateKey(ctx, backend.algorithmToKeyAttributes(tenantKeyID, AlgAES256GCM))
-	require.ErrorIs(t, err, ErrKeyNameTaken)
-
-	keys, _, err := backend.ListKeys(ctx, "", 0)
-	require.NoError(t, err)
-	var listed []string
-	for _, k := range keys {
-		listed = append(listed, k.KeyID)
-	}
-	require.Contains(t, listed, systemKeyID, "the system key lists under its own ID")
+	require.NotContains(t, listed, literal)
 	require.NotContains(t, listed, tenantKeyID)
 }
 
-// TestXKMSNameOwners_FailedConcurrentCreate_KeepsTheWinnersRecord drives the
-// interleaving where request A writes the record, request B creates the key,
-// and A's own creation then fails. A's rollback must not drop the record B's
-// key relies on.
-func TestXKMSNameOwners_FailedConcurrentCreate_KeepsTheWinnersRecord(t *testing.T) {
-	ctx := context.Background()
-	store, err := goxkmssdk.NewMemoryBackend()
-	require.NoError(t, err)
-	names := &xkmsNameOwners{backend: "software", store: store}
-	const keyID = "tenant/acme/k"
-	absent := func(string) (bool, error) { return false, nil }
-
-	bDone := make(chan struct{})
-	aInCreate := make(chan struct{})
-	var bRanDuringA bool
-	var name string
-	aErr := make(chan error, 1)
-	go func() {
-		aErr <- names.claim(ctx, keyID, absent, func(string) error {
-			close(aInCreate)
-			// Give B every chance to create its key while A's create runs.
-			select {
-			case <-bDone:
-				bRanDuringA = true
-			case <-time.After(200 * time.Millisecond):
-			}
-			return stderrors.New("key already exists")
-		})
-	}()
-	<-aInCreate
-	bErr := names.claim(ctx, keyID, absent, func(string) error { return nil })
-	close(bDone)
-
-	require.Error(t, <-aErr)
-	require.NoError(t, bErr)
-	require.False(t, bRanDuringA, "a create must not run while another holds the name's reservation")
-	name, err = names.resolve(ctx, keyID)
-	require.NoError(t, err, "the successful create's ownership record must survive A's rollback")
-	require.Equal(t, xkmsKeyName(keyID), name)
-
-	// A failed create over an existing record never drops it either.
-	err = names.claim(ctx, keyID, absent, func(string) error { return stderrors.New("exists") })
-	require.Error(t, err)
-	_, err = names.resolve(ctx, keyID)
-	require.NoError(t, err)
-
-	// An inconclusive existence lookup fails the claim and writes nothing.
-	const other = "tenant/acme/other"
-	lookupErr := stderrors.New("backend unavailable")
-	err = names.claim(ctx, other, func(string) (bool, error) { return false, lookupErr },
-		func(string) error { t.Fatal("create must not run"); return nil })
-	require.ErrorIs(t, err, lookupErr)
-	_, err = names.resolve(ctx, other)
-	require.ErrorIs(t, err, ErrKeyNotFound)
-}
-
-// TestXKMSNameOwners_DeleteThenConcurrentImport_KeepsTheImportsRecord drives
-// a delete and an import of the same tenant key ID: the import starts while
-// the delete's backend deletion runs. Release holds the ownership lock across
-// the backend deletion and the record removal, so the import waits, then
-// claims a fresh record, and the key it created still resolves.
-func TestXKMSNameOwners_DeleteThenConcurrentImport_KeepsTheImportsRecord(t *testing.T) {
-	ctx := context.Background()
-	store, err := goxkmssdk.NewMemoryBackend()
-	require.NoError(t, err)
-	names := &xkmsNameOwners{backend: "software", store: store}
-	const keyID = "tenant/acme/k"
-	var held bool
-	exists := func(string) (bool, error) { return held, nil }
-	require.NoError(t, names.claim(ctx, keyID, exists, func(string) error { held = true; return nil }))
-
-	inDelete := make(chan struct{})
-	importDone := make(chan struct{})
-	var importRanDuringDelete bool
-	delErr := make(chan error, 1)
-	go func() {
-		delErr <- names.release(ctx, keyID, func() error {
-			close(inDelete)
-			select {
-			case <-importDone:
-				importRanDuringDelete = true
-			case <-time.After(200 * time.Millisecond):
-			}
-			held = false
-			return nil
-		})
-	}()
-	<-inDelete
-	importErr := names.claim(ctx, keyID, exists, func(string) error { held = true; return nil })
-	close(importDone)
-
-	require.NoError(t, <-delErr)
-	require.NoError(t, importErr)
-	require.False(t, importRanDuringDelete, "an import must not run while a delete of the same key holds its record")
-	name, err := names.resolve(ctx, keyID)
-	require.NoError(t, err, "the recreated key's ownership record must survive the delete")
-	require.Equal(t, xkmsKeyName(keyID), name)
-
-	// A failed backend deletion keeps the record: the key is still there.
-	boom := stderrors.New("backend unavailable")
-	require.ErrorIs(t, names.release(ctx, keyID, func() error { return boom }), boom)
-	_, err = names.resolve(ctx, keyID)
-	require.NoError(t, err)
-}
-
-// TestXKMSBackend_TenantKeyName_IsOwnedPersistently checks that a tenant
-// key's encoded name is held by its ownership record: across a restart that
-// keeps the record store, against a literal ID spelled like the encoding, and
-// failing closed when the record is gone.
-func TestXKMSBackend_TenantKeyName_IsOwnedPersistently(t *testing.T) {
-	cleanup := initXKMSForTest(t)
-	defer cleanup()
-
-	ctx := context.Background()
-	store, err := goxkmssdk.NewMemoryBackend()
-	require.NoError(t, err)
-	newBackend := func(names goxkmssdk.StorageBackend) *XKMSBackend {
-		b, err := NewXKMSBackend(&XKMSBackendConfig{
-			BackendType: config.BackendTypeSoftware,
-			Logger:      &mockLogger{},
-			KeyNames:    names,
-		})
-		require.NoError(t, err)
-		return b
+// TestXKMSKeyName_DecodesOnlyEncodedOutputs: keyIDFromXKMSName decodes a name
+// only when it is exactly what xkmsKeyName makes of an ID go-xkms rejects.
+func TestXKMSKeyName_DecodesOnlyEncodedOutputs(t *testing.T) {
+	for _, id := range []string{"tenant/acme/k", "a/b", "has space", "colon:id", "tenant/é/k"} {
+		require.Error(t, validation.ValidateKeyID(id), "fixture %q must be rejected by go-xkms", id)
+		name := xkmsKeyName(id)
+		require.NoError(t, validation.ValidateKeyID(name), "the encoded name must be a valid go-xkms name")
+		require.Equal(t, id, keyIDFromXKMSName(name))
 	}
-
-	const tenantKeyID = "tenant/acme/owned"
-	literalID := xkmsKeyName(tenantKeyID)
-	backend := newBackend(store)
-	_, err = backend.CreateKey(ctx, backend.algorithmToKeyAttributes(tenantKeyID, AlgAES256GCM))
-	require.NoError(t, err)
-	ciphertext, err := backend.Encrypt(ctx, tenantKeyID, []byte("tenant"), nil)
-	require.NoError(t, err)
-
-	_, err = backend.CreateKey(ctx, backend.algorithmToKeyAttributes(literalID, AlgAES256GCM))
-	require.ErrorIs(t, err, ErrKeyNameTaken, "a literal ID must not take over a tenant key's name")
-
-	restarted := newBackend(store)
-	_, err = restarted.GetKeyMetadata(ctx, literalID)
-	require.ErrorIs(t, err, ErrKeyNotFound, "the literal ID must not resolve to the tenant key")
-	plaintext, err := restarted.Decrypt(ctx, tenantKeyID, ciphertext, nil)
-	require.NoError(t, err, "the tenant key resolves through its persisted record after a restart")
-	require.Equal(t, []byte("tenant"), plaintext)
-	keys, _, err := restarted.ListKeys(ctx, "tenant/acme/", 0)
-	require.NoError(t, err)
-	var listed []string
-	for _, k := range keys {
-		listed = append(listed, k.KeyID)
-	}
-	require.Contains(t, listed, tenantKeyID)
-
-	emptyStore, err := goxkmssdk.NewMemoryBackend()
-	require.NoError(t, err)
-	_, err = newBackend(emptyStore).GetKeyMetadata(ctx, tenantKeyID)
-	require.ErrorIs(t, err, ErrKeyNotFound, "without its record the encoded name fails closed")
-
-	require.NoError(t, restarted.DeleteKey(ctx, tenantKeyID))
-	owner, found, err := restarted.keyNames().owner(ctx, literalID)
-	require.NoError(t, err)
-	require.False(t, found, "deleting the key releases its name, owner %q", owner)
+	// A prefixed name whose payload decodes to a VALID ID is never an
+	// encoded output (a valid ID is not encoded), so it reads literally.
+	literal := xkmsEncodedKeyNamePrefix + base64.RawURLEncoding.EncodeToString([]byte("plain"))
+	require.Equal(t, literal, keyIDFromXKMSName(literal))
+	// A non-canonical payload is not an encoded output either.
+	require.Equal(t, "qbx.production", keyIDFromXKMSName("qbx.production"))
 }
 
+// TestXKMSBackend_LegacyQBXKeyName_StillWorks is the upgrade fixture: keys
+// stored in go-xkms under literal "qbx." names before the mapping existed
+// still encrypt, decrypt, sign, verify, list and delete by those names.
 func TestXKMSBackend_LegacyQBXKeyName_StillWorks(t *testing.T) {
 	cleanup := initXKMSForTest(t)
 	defer cleanup()
@@ -414,202 +231,119 @@ func TestXKMSBackend_LegacyQBXKeyName_StillWorks(t *testing.T) {
 	require.NoError(t, backend.DeleteKey(ctx, signKeyID), "the legacy key must still delete")
 }
 
-// twoNodeKeys is the go-xkms key set two nodes share: one backend behind both.
-type twoNodeKeys struct {
-	mu   sync.Mutex
-	keys map[string]bool
+// TestXKMSKeyName_RefusesAmbiguousLiteral: the literal go-xkms name of an
+// encoded tenant key ID is refused as invalid input; every other name passes.
+func TestXKMSKeyName_RefusesAmbiguousLiteral(t *testing.T) {
+	const literal = "qbx.dGVuYW50L2FjbWUvaw"
+	require.Equal(t, literal, xkmsKeyName("tenant/acme/k"), "the literal is the tenant key's go-xkms name")
+
+	err := refuseReservedKeyName("t", literal)
+	require.ErrorIs(t, err, ErrReservedKeyName)
+	var qbErr *qberrors.QBError
+	require.True(t, errors.As(err, &qbErr), "the refusal is a QBError")
+	require.Equal(t, qberrors.ErrInvalidInput, qbErr.Code)
+
+	for _, id := range []string{
+		"tenant/acme/k", "plain-key", "qbx.production", "",
+		xkmsEncodedKeyNamePrefix + base64.RawURLEncoding.EncodeToString([]byte("plain")),
+	} {
+		require.NoError(t, refuseReservedKeyName("t", id), "%q is not ambiguous", id)
+	}
 }
 
-func newTwoNodeKeys() *twoNodeKeys { return &twoNodeKeys{keys: map[string]bool{}} }
+// TestXKMSBackend_ReservedLiteralAndTenantKey_StayIsolated holds both
+// identities: a tenant key and the literal name that shares its go-xkms name.
+// The literal is refused everywhere, and the tenant key is untouched.
+func TestXKMSBackend_ReservedLiteralAndTenantKey_StayIsolated(t *testing.T) {
+	cleanup := initXKMSForTest(t)
+	defer cleanup()
 
-func (k *twoNodeKeys) exists(name string) (bool, error) {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	return k.keys[name], nil
-}
-
-func (k *twoNodeKeys) create(name string) error {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	k.keys[name] = true
-	return nil
-}
-
-func (k *twoNodeKeys) del(name string) {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	delete(k.keys, name)
-}
-
-// twoNodes returns two xkmsNameOwners sharing one store, as two nodes share
-// the replicated key-name keyspace.
-func twoNodes(t *testing.T) (a, b *xkmsNameOwners, store goxkmssdk.StorageBackend) {
-	t.Helper()
-	mem, err := goxkmssdk.NewMemoryBackend()
-	require.NoError(t, err)
-	// The memory backend must offer the guarded delete the protocol needs.
-	_, guarded := mem.(keyNameCompareAndDeleter)
-	require.True(t, guarded, "go-xkms's memory backend must implement CompareAndDelete")
-	return &xkmsNameOwners{backend: "software", store: mem},
-		&xkmsNameOwners{backend: "software", store: mem}, mem
-}
-
-func requireNoNameLeases(t *testing.T, store goxkmssdk.StorageBackend) {
-	t.Helper()
-	keys, err := store.List(context.Background(), xkmsNameOwnerPrefix+"lease/")
-	require.NoError(t, err)
-	require.Empty(t, keys, "every name lease must be released")
-}
-
-func TestXKMSNameOwners_TwoNodes_FailedCreateKeepsTheWinnersRecord(t *testing.T) {
+	backend := newRealXKMSBackendForTest(t)
 	ctx := context.Background()
-	a, b, store := twoNodes(t)
-	keys := newTwoNodeKeys()
-	const keyID = "tenant/acme/k"
 
-	inCreate := make(chan struct{})
-	finish := make(chan struct{})
-	aErr := make(chan error, 1)
-	go func() {
-		aErr <- a.claim(ctx, keyID, keys.exists, func(name string) error {
-			close(inCreate)
-			<-finish
-			return keys.create(name)
-		})
-	}()
-	<-inCreate
-	err := b.claim(ctx, keyID, keys.exists, func(string) error {
-		t.Error("node B's create must not run while node A holds the name")
-		return nil
-	})
-	require.ErrorIs(t, err, ErrKeyNameBusy)
-	var busy *KeyNameBusyError
-	require.ErrorAs(t, err, &busy)
-	assert.Equal(t, xkmsKeyName(keyID), busy.Name)
-	close(finish)
-	require.NoError(t, <-aErr)
-	requireNoNameLeases(t, store)
+	const (
+		tenantKey = "tenant/acme/k"
+		literal   = "qbx.dGVuYW50L2FjbWUvaw"
+		systemKey = "sys-k"
+		signKey   = "tenant/acme/s"
+	)
 
-	for _, node := range []*xkmsNameOwners{a, b} {
-		name, err := node.resolve(ctx, keyID)
+	// a. Both identities' neighbours exist.
+	for _, id := range []string{tenantKey, systemKey} {
+		_, err := backend.CreateKey(ctx, backend.algorithmToKeyAttributes(id, AlgAES256GCM))
 		require.NoError(t, err)
-		assert.Equal(t, xkmsKeyName(keyID), name)
 	}
-
-	// Node B's later create fails; its rollback keeps node A's record.
-	require.Error(t, b.claim(ctx, keyID, keys.exists, func(string) error { return stderrors.New("exists") }))
-	_, err = a.resolve(ctx, keyID)
-	require.NoError(t, err)
-	requireNoNameLeases(t, store)
-}
-
-func TestXKMSNameOwners_TwoNodes_RollbackNeverDropsAnotherOwnersRecord(t *testing.T) {
-	ctx := context.Background()
-	a, b, store := twoNodes(t)
-	const x, y = "tenant/acme/x", "tenant/acme/y"
-	name := xkmsKeyName(x)
-	require.NoError(t, store.Put(ctx, a.recordKey(name), []byte(x)))
-
-	require.NoError(t, b.dropLocked(ctx, y, name), "a guarded miss is not an error")
-	owner, found, err := a.owner(ctx, name)
-	require.NoError(t, err)
-	require.True(t, found)
-	assert.Equal(t, x, owner, "a rollback for Y must not delete the record naming X")
-
-	require.NoError(t, b.dropLocked(ctx, x, name))
-	_, found, err = a.owner(ctx, name)
-	require.NoError(t, err)
-	assert.False(t, found)
-}
-
-func TestXKMSNameOwners_TwoNodes_DeleteAndRecreateSerialize(t *testing.T) {
-	ctx := context.Background()
-	a, b, store := twoNodes(t)
-	keys := newTwoNodeKeys()
-	const keyID = "tenant/acme/k"
-	require.NoError(t, a.claim(ctx, keyID, keys.exists, keys.create))
-
-	inDel := make(chan struct{})
-	finish := make(chan struct{})
-	aErr := make(chan error, 1)
-	go func() {
-		aErr <- a.release(ctx, keyID, func() error {
-			close(inDel)
-			<-finish
-			keys.del(xkmsKeyName(keyID))
-			return nil
-		})
-	}()
-	<-inDel
-	err := b.claim(ctx, keyID, keys.exists, func(string) error {
-		t.Error("node B's create must not run while node A deletes the key")
-		return nil
-	})
-	require.ErrorIs(t, err, ErrKeyNameBusy)
-	close(finish)
-	require.NoError(t, <-aErr)
-
-	require.NoError(t, b.claim(ctx, keyID, keys.exists, keys.create))
-	name, err := a.resolve(ctx, keyID)
-	require.NoError(t, err, "the recreated key's record must survive the delete")
-	assert.Equal(t, xkmsKeyName(keyID), name)
-	requireNoNameLeases(t, store)
-
-	// Releasing a key whose del fails keeps the record and frees the lease.
-	require.Error(t, b.release(ctx, keyID, func() error { return stderrors.New("unavailable") }))
-	_, err = a.resolve(ctx, keyID)
-	require.NoError(t, err)
-	requireNoNameLeases(t, store)
-}
-
-func TestXKMSNameOwners_ExpiredLeaseIsTakenOver(t *testing.T) {
-	ctx := context.Background()
-	a, _, store := twoNodes(t)
-	keys := newTwoNodeKeys()
-	const keyID = "tenant/acme/k"
-	name := xkmsKeyName(keyID)
-	past := strconv.FormatInt(time.Now().Add(-time.Second).UnixNano(), 10)
-	require.NoError(t, store.Put(ctx, a.leaseKey(name), []byte("abandoned|"+past)))
-
-	require.NoError(t, a.claim(ctx, keyID, keys.exists, keys.create))
-	requireNoNameLeases(t, store)
-	_, err := a.resolve(ctx, keyID)
+	ciphertext, err := backend.Encrypt(ctx, tenantKey, []byte("secret"), nil)
 	require.NoError(t, err)
 
-	// A literal name takes the lease too, and a live one makes it busy.
-	const literal = "plain-key"
-	future := strconv.FormatInt(time.Now().Add(time.Minute).UnixNano(), 10)
-	require.NoError(t, store.Put(ctx, a.leaseKey(literal), []byte("other|"+future)))
-	err = a.claim(ctx, literal, keys.exists, func(string) error {
-		t.Error("create must not run under another request's live lease")
-		return nil
-	})
-	require.ErrorIs(t, err, ErrKeyNameBusy)
-}
+	// b. Every entry point refuses the literal.
+	_, err = backend.CreateKey(ctx, backend.algorithmToKeyAttributes(literal, AlgAES256GCM))
+	require.ErrorIs(t, err, ErrReservedKeyName, "CreateKey")
+	_, err = backend.ImportKey(ctx, literal, make([]byte, 32), AlgAES256GCM, nil)
+	require.ErrorIs(t, err, ErrReservedKeyName, "ImportKey")
+	_, err = backend.GetKeyMetadata(ctx, literal)
+	require.ErrorIs(t, err, ErrReservedKeyName, "GetKeyMetadata")
+	_, err = backend.Encrypt(ctx, literal, []byte("x"), nil)
+	require.ErrorIs(t, err, ErrReservedKeyName, "Encrypt")
+	_, err = backend.Decrypt(ctx, literal, ciphertext, nil)
+	require.ErrorIs(t, err, ErrReservedKeyName, "Decrypt")
+	_, _, err = backend.GenerateDataKey(ctx, literal, 32)
+	require.ErrorIs(t, err, ErrReservedKeyName, "GenerateDataKey")
+	_, err = backend.RotateKey(ctx, literal)
+	require.ErrorIs(t, err, ErrReservedKeyName, "RotateKey")
+	require.ErrorIs(t, backend.DisableKey(ctx, literal), ErrReservedKeyName, "DisableKey")
+	require.ErrorIs(t, backend.EnableKey(ctx, literal), ErrReservedKeyName, "EnableKey")
+	require.ErrorIs(t, backend.DeleteKey(ctx, literal), ErrReservedKeyName, "DeleteKey")
 
-// unguardedKeyNameStore hides the guarded delete of the store it wraps.
-type unguardedKeyNameStore struct {
-	goxkmssdk.StorageBackend
-}
-
-func TestXKMSNameOwners_StoreWithoutGuardedDeleteFailsClosed(t *testing.T) {
-	ctx := context.Background()
-	mem, err := goxkmssdk.NewMemoryBackend()
+	_, err = backend.CreateKey(ctx, backend.algorithmToKeyAttributes(signKey, AlgECDSAP256))
 	require.NoError(t, err)
-	names := &xkmsNameOwners{backend: "software", store: unguardedKeyNameStore{mem}}
-	create := func(string) error {
-		t.Error("create must not run on a store that cannot arbitrate")
-		return nil
+	signLiteral := xkmsEncodedKeyNamePrefix + base64.RawURLEncoding.EncodeToString([]byte(signKey))
+	digest := sha256.Sum256([]byte("msg"))
+	_, err = backend.Sign(ctx, signLiteral, digest[:], "SHA-256")
+	require.ErrorIs(t, err, ErrReservedKeyName, "Sign")
+	_, err = backend.Verify(ctx, signLiteral, digest[:], []byte("sig"), "SHA-256")
+	require.ErrorIs(t, err, ErrReservedKeyName, "Verify")
+	_, err = backend.ExportPublicKey(ctx, signLiteral)
+	require.ErrorIs(t, err, ErrReservedKeyName, "ExportPublicKey")
+
+	// c. The tenant key survives the refused delete.
+	plaintext, err := backend.Decrypt(ctx, tenantKey, ciphertext, nil)
+	require.NoError(t, err)
+	require.Equal(t, []byte("secret"), plaintext)
+	meta, err := backend.GetKeyMetadata(ctx, tenantKey)
+	require.NoError(t, err)
+	require.Equal(t, tenantKey, meta.KeyID)
+
+	// d. Listings keep the namespaces apart.
+	listIDs := func(prefix string) []string {
+		keys, _, err := backend.ListKeys(ctx, prefix, 0)
+		require.NoError(t, err)
+		ids := make([]string, 0, len(keys))
+		for _, k := range keys {
+			ids = append(ids, k.KeyID)
+		}
+		return ids
 	}
-	err = names.claim(ctx, "tenant/acme/k", func(string) (bool, error) { return false, nil }, create)
-	require.ErrorIs(t, err, ErrKeyNameStoreUnguarded)
-	var unguarded *KeyNameStoreUnguardedError
-	require.ErrorAs(t, err, &unguarded)
-	assert.Equal(t, "software", unguarded.Backend)
+	all := listIDs("")
+	require.Contains(t, all, tenantKey)
+	require.Contains(t, all, systemKey)
+	require.NotContains(t, all, literal)
+	var system []string
+	for _, id := range all {
+		if !strings.HasPrefix(id, "tenant/") {
+			system = append(system, id)
+		}
+	}
+	require.Contains(t, system, systemKey)
+	require.NotContains(t, system, tenantKey)
+	require.NotContains(t, system, literal)
+	tenant := listIDs("tenant/acme/")
+	require.Contains(t, tenant, tenantKey)
+	require.NotContains(t, tenant, systemKey)
+	require.NotContains(t, tenant, literal)
 
-	err = names.release(ctx, "tenant/acme/k", func() error {
-		t.Error("del must not run on a store that cannot arbitrate")
-		return nil
-	})
-	require.ErrorIs(t, err, ErrKeyNameStoreUnguarded)
+	// e. Clean up.
+	for _, id := range []string{tenantKey, signKey, systemKey} {
+		require.NoError(t, backend.DeleteKey(ctx, id))
+	}
 }
