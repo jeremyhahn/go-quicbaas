@@ -18,6 +18,7 @@ package rest
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -28,6 +29,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // seedPendingUser inserts a user into the IAM memory storage so the
@@ -59,6 +61,7 @@ func TestApproveUser_Success(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost,
 		"/api/v1/iam/users/"+userID+"/approve?tenant_id="+tenantID, nil)
+	req = req.WithContext(tenantctx.WithTenant(req.Context(), tenantID))
 	req = withChiParams(req, map[string]string{"user_id": userID})
 	w := httptest.NewRecorder()
 
@@ -87,6 +90,7 @@ func TestRejectUser_Success(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost,
 		"/api/v1/iam/users/"+userID+"/reject?tenant_id="+tenantID, body)
 	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(tenantctx.WithTenant(req.Context(), tenantID))
 	req = withChiParams(req, map[string]string{"user_id": userID})
 	w := httptest.NewRecorder()
 
@@ -98,4 +102,46 @@ func TestRejectUser_Success(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, "rejected", resp["status"])
 	assert.Equal(t, userID, resp["user_id"])
+}
+
+// TestApproveAndReject_AnotherTenantsUserIsRefused pins that approval and
+// rejection act only in the caller's own tenant: a query naming another
+// tenant is refused and the user stays pending.
+func TestApproveAndReject_AnotherTenantsUserIsRefused(t *testing.T) {
+	const userID = "77"
+	callers := map[string]func(target string, body io.Reader) *http.Request{
+		"tenant caller": func(target string, body io.Reader) *http.Request {
+			return tenantRequest("tenant-a", http.MethodPost, target, body)
+		},
+		"system caller": func(target string, body io.Reader) *http.Request {
+			r := httptest.NewRequest(http.MethodPost, target, body)
+			return r.WithContext(tenantctx.WithSystem(r.Context()))
+		},
+	}
+	actions := map[string]func(h *IAMHandler) http.HandlerFunc{
+		"approve": func(h *IAMHandler) http.HandlerFunc { return h.ApproveUser },
+		"reject":  func(h *IAMHandler) http.HandlerFunc { return h.RejectUser },
+	}
+	for callerName, newRequest := range callers {
+		for action, handlerFor := range actions {
+			t.Run(callerName+" "+action, func(t *testing.T) {
+				_, _, memStorage, handler, cleanup := setupIAMTestServer(t)
+				defer cleanup()
+				seedPendingUser(t, memStorage, "tenant-b", userID, "other-tenant@example.com")
+
+				req := newRequest("/api/v1/iam/users/"+userID+"/"+action+"?tenant_id=tenant-b",
+					strings.NewReader(`{"reason":"cross tenant"}`))
+				req.Header.Set("Content-Type", "application/json")
+				req = withChiParams(req, map[string]string{"user_id": userID})
+				w := httptest.NewRecorder()
+
+				handlerFor(handler)(w, req)
+
+				assert.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
+				stored, err := memStorage.GetUser(context.Background(), "tenant-b", 77)
+				require.NoError(t, err)
+				assert.Equal(t, iam.LifecyclePending, stored.Lifecycle, "another tenant's user must stay pending")
+			})
+		}
+	}
 }

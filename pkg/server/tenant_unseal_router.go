@@ -103,7 +103,7 @@ func classTenantBarrierError(err error) error {
 // tenant servicer on every one of them, so a native tenant unseal or
 // unseal-share runs quicbaas's per-tenant barrier facade (tenant binding and
 // unseal observers) with the caller's verified qrdb identity projected onto
-// the quicbaas Subject (go-quicbaas 2212). Every other call
+// the quicbaas Subject. Every other call
 // reaches the node's own servicer unchanged. While the node, or the facade, is
 // not running the router fails closed with errTenantServiceUnavailable; an
 // unseal never falls back to the node's servicer. That error, and the

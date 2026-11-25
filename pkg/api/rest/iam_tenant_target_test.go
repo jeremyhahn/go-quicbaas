@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -28,16 +29,15 @@ func callerRouteContext(ctx context.Context, rctx *chi.Context) context.Context 
 }
 
 // tenantTargetRefusals are the callers that must not reach another tenant's
-// IAM data by naming it in the URL (go-quicbaas#1150): a tenant naming a
-// different tenant, the system tenant (which gets no cross-tenant lift), and a
-// request with no tenant bound at all.
-// The system tenant is not among them: the system admin acts in the tenant
-// the URL names (go-quicbaas#2212).
+// IAM data by naming it in the URL: a tenant naming a different tenant, the
+// system tenant (which names only itself, like every caller), and a request
+// with no tenant bound at all.
 var tenantTargetRefusals = []struct {
 	name   string
 	caller func(context.Context) context.Context
 }{
 	{"other tenant", func(ctx context.Context) context.Context { return tenantctx.WithTenant(ctx, "tenant-a") }},
+	{"system tenant", tenantctx.WithSystem},
 	{"no tenant", func(ctx context.Context) context.Context { return ctx }},
 }
 
@@ -128,34 +128,48 @@ func TestIAMHandlers_CallerNamingItsOwnTenantSucceeds(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 }
 
-func TestURLTenant_SystemCallerActsInTheNamedTenant(t *testing.T) {
+func TestURLTenant_SystemCallerCannotActInAnotherTenant(t *testing.T) {
 	server, _, memStorage, handler, cleanup := setupIAMTestServer(t)
 	defer cleanup()
 	server.SetBarrierScopeAuthorizer(&scopeAuthorizerStub{})
 	require.NoError(t, memStorage.CreateTenant(context.Background(), &iam.Tenant{ID: "acme", Name: "Acme"}))
+	systemCaller := func(r *http.Request) *http.Request {
+		return r.WithContext(qrdbsdk.WithIdentity(tenantctx.WithSystem(r.Context()),
+			&qrdbsdk.Identity{Subject: "admin", TenantID: tenantctx.SystemTenantID}))
+	}
+
+	// Through the production route, with the permission its table carries.
+	const pattern = "/api/v1/tenants/{tenant_id}/roles/"
+	router := chi.NewRouter()
+	mounted := false
+	for _, spec := range Routes() {
+		if spec.Method == http.MethodGet && spec.Pattern == pattern {
+			router.Method(spec.Method, spec.Pattern, server.BindRoute(spec))
+			mounted = true
+		}
+	}
+	require.True(t, mounted, "expected the role list route in the production table")
+	routed := httptest.NewRecorder()
+	router.ServeHTTP(routed, systemCaller(httptest.NewRequest(http.MethodGet, "/api/v1/tenants/acme/roles/", nil)))
+	assert.Equal(t, http.StatusForbidden, routed.Code, "body: %s", routed.Body.String())
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "acme")
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/acme/roles", nil)
-	req = req.WithContext(context.WithValue(tenantctx.WithSystem(req.Context()), chi.RouteCtxKey, rctx))
-	req = systemAdminLiftRequest(t, req, "tenants", "read")
+	req = systemCaller(req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
 	w := httptest.NewRecorder()
 
 	handler.ListRoles(w, req)
 
-	assert.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+	assert.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
 
 	var s Server
 	s.SetBarrierScopeAuthorizer(&scopeAuthorizerStub{})
-	ctx, tenantID, ok := s.urlTenant(w, req, "rest.IAM", "tenant_id")
-	require.True(t, ok)
-	assert.Equal(t, "acme", tenantID)
-	resolved, err := tenantctx.FromContext(ctx, "rest.IAM")
-	require.NoError(t, err)
-	assert.Equal(t, "acme", resolved, "urlTenant did not return the URL's tenant in its context")
+	_, _, ok := s.urlTenant(httptest.NewRecorder(), req, "rest.IAM", "tenant_id")
+	assert.False(t, ok, "the system tenant must not act in a tenant named in the URL")
 	bound, err := tenantctx.FromContext(req.Context(), "rest.IAM")
 	require.NoError(t, err)
-	assert.Equal(t, "acme", bound, "urlTenant did not bind the URL's tenant into the request")
+	assert.Equal(t, tenantctx.SystemTenantID, bound, "a refused request must keep the caller's own tenant")
 }
 
 func TestURLTenant_RefusesAnUnboundRequest(t *testing.T) {
@@ -230,10 +244,10 @@ func (s *ownerFollowingRoleStorage) UpdateRole(ctx context.Context, role *iam.Ro
 }
 
 // TestUpdateRole_SystemAdminCannotReachAnotherTenantsRole pins the handler
-// passing urlTenant's resolved context to the store: a system-admin PUT to
+// passing urlTenant's resolved context to the store: a PUT to
 // /tenants/acme/roles/<id> reaches storage bound to acme, so a role Globex
-// owns is refused and left unchanged, while an Acme role updates
-// (go-quicbaas#2212).
+// owns is refused and left unchanged, and a system-tenant caller naming acme
+// is refused before the store, leaving Acme's role unchanged.
 func TestUpdateRole_SystemAdminCannotReachAnotherTenantsRole(t *testing.T) {
 	server, mockService, memStorage, handler, cleanup := setupIAMTestServer(t)
 	defer cleanup()
@@ -255,22 +269,22 @@ func TestUpdateRole_SystemAdminCannotReachAnotherTenantsRole(t *testing.T) {
 		Tenants:     mockService.tenantManager,
 	})
 
-	update := func(roleID string) *httptest.ResponseRecorder {
+	update := func(bind func(context.Context) context.Context, roleID string) *httptest.ResponseRecorder {
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "acme")
 		rctx.URLParams.Add("role_id", roleID)
 		req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/acme/roles/"+roleID,
 			strings.NewReader(`{"name":"renamed"}`))
-		req = req.WithContext(context.WithValue(tenantctx.WithSystem(req.Context()), chi.RouteCtxKey, rctx))
-		req = systemAdminLiftRequest(t, req, "tenants", "create")
+		req = req.WithContext(context.WithValue(bind(req.Context()), chi.RouteCtxKey, rctx))
 		w := httptest.NewRecorder()
 		handler.UpdateRole(w, req)
 		return w
 	}
+	acmeCaller := func(ctx context.Context) context.Context { return tenantctx.WithTenant(ctx, "acme") }
 
 	t.Run("another tenant's role is refused", func(t *testing.T) {
 		roles.seen = nil
-		w := update("role-globex")
+		w := update(acmeCaller, "role-globex")
 
 		assert.False(t, w.Code >= 200 && w.Code < 300, "status %d, body: %s", w.Code, w.Body.String())
 		require.NotEmpty(t, roles.seen, "the store was never called")
@@ -282,18 +296,15 @@ func TestUpdateRole_SystemAdminCannotReachAnotherTenantsRole(t *testing.T) {
 		assert.Equal(t, "globex-ops", role.Name, "Globex's role was modified")
 	})
 
-	t.Run("the named tenant's role updates", func(t *testing.T) {
+	t.Run("the system admin cannot update the named tenant's role either", func(t *testing.T) {
 		roles.seen = nil
-		w := update("role-acme")
+		w := update(tenantctx.WithSystem, "role-acme")
 
-		assert.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
-		require.NotEmpty(t, roles.seen, "the store was never called")
-		for _, tenantID := range roles.seen {
-			assert.Equal(t, "acme", tenantID, "the store received a context not bound to the URL's tenant")
-		}
+		assert.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
+		assert.Empty(t, roles.seen, "a refused request must not reach the store")
 		role, err := memStorage.GetRole(ctx, "acme", "role-acme")
 		require.NoError(t, err)
-		assert.Equal(t, "renamed", role.Name)
+		assert.Equal(t, "acme-ops", role.Name, "Acme's role was modified by the system tenant")
 	})
 }
 
@@ -328,22 +339,16 @@ func TestIAMHandlers_TenantCatalogReadsUseTheSystemNamespace(t *testing.T) {
 		method string
 		path   string
 		serve  http.HandlerFunc
-		// action is the route's registration-site action on tenants.
-		action string
 	}{
-		{"ListRoles", http.MethodGet, "/api/v1/tenants/acme/roles", handler.ListRoles, "read"},
-		{"ListUsers", http.MethodGet, "/api/v1/tenants/acme/users", handler.ListUsers, "read"},
-		{"ReconcileRoles", http.MethodPost, "/api/v1/tenants/acme/roles/reconcile", handler.ReconcileRoles, "create"},
+		{"ListRoles", http.MethodGet, "/api/v1/tenants/acme/roles", handler.ListRoles},
+		{"ListUsers", http.MethodGet, "/api/v1/tenants/acme/users", handler.ListUsers},
+		{"ReconcileRoles", http.MethodPost, "/api/v1/tenants/acme/roles/reconcile", handler.ReconcileRoles},
 	}
 	callers := []struct {
 		name string
 		bind func(context.Context) context.Context
-		// system marks the caller that names another tenant: its request
-		// carries what the unified server gives it (systemAdminLiftRequest).
-		system bool
 	}{
-		{"system caller", tenantctx.WithSystem, true},
-		{"acme caller", func(ctx context.Context) context.Context { return tenantctx.WithTenant(ctx, "acme") }, false},
+		{"acme caller", func(ctx context.Context) context.Context { return tenantctx.WithTenant(ctx, "acme") }},
 	}
 	for _, h := range handlers {
 		for _, c := range callers {
@@ -352,9 +357,6 @@ func TestIAMHandlers_TenantCatalogReadsUseTheSystemNamespace(t *testing.T) {
 				rctx.URLParams.Add("tenant_id", "acme")
 				req := httptest.NewRequest(h.method, h.path, nil)
 				req = req.WithContext(context.WithValue(c.bind(req.Context()), chi.RouteCtxKey, rctx))
-				if c.system {
-					req = systemAdminLiftRequest(t, req, "tenants", h.action)
-				}
 				w := httptest.NewRecorder()
 				h.serve(w, req)
 

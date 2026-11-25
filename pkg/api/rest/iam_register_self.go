@@ -32,6 +32,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // --------------------------------------------------------------------------
@@ -723,6 +724,13 @@ func (h *IAMHandler) ApproveUser(w http.ResponseWriter, r *http.Request) {
 			NewIAMAPIError(ErrBadRequest, "tenant_id query parameter is required"))
 		return
 	}
+	// The query names the tenant; every caller, the system tenant included,
+	// may name only its own.
+	ctx, tenantID, err := tenantctx.ContextForTarget(ctx, "rest.IAM", tenantID)
+	if err != nil {
+		h.server.handleServiceError(w, r, err)
+		return
+	}
 
 	identityStore, err := h.getIdentityStore(ctx)
 	if err != nil || identityStore == nil {
@@ -759,6 +767,13 @@ func (h *IAMHandler) RejectUser(w http.ResponseWriter, r *http.Request) {
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant_id query parameter is required"))
+		return
+	}
+	// The query names the tenant; every caller, the system tenant included,
+	// may name only its own.
+	ctx, tenantID, err := tenantctx.ContextForTarget(ctx, "rest.IAM", tenantID)
+	if err != nil {
+		h.server.handleServiceError(w, r, err)
 		return
 	}
 

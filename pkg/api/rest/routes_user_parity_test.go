@@ -34,8 +34,8 @@ import "testing"
 // TestUserCreatePermissionMatchesGRPC pins POST .../users/ to users:create,
 // the permission /quicbaas.iam.v1.IAMService/CreateUser enforces on gRPC
 // (mirroring /qrdb.v1.QRDBService/CreateUser). Tenant isolation stays with
-// urlTenant: a tenant caller acts only in its own tenant, and a system caller
-// naming another tenant is re-authorized there by authorizeTenantLift.
+// urlTenant: every caller, the system tenant included, acts only in its own
+// tenant.
 func TestUserCreatePermissionMatchesGRPC(t *testing.T) {
 	const key = "POST /api/v1/tenants/{tenant_id}/users/"
 	want := frozenPermission{auth: RouteAuthPermission, resource: "users", action: "create"}
