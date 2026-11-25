@@ -286,3 +286,13 @@ backup:
     local:
       enabled: true
       path: /data/backups/local
+
+
+# Seal/barrier: enabled with passphrase strategy for at-rest encryption.
+# The passphrase is injected via QUICBAAS_SEAL_PASSPHRASE env var so the node
+# auto-initialises and unseals on startup without operator intervention.
+# QUICBAAS_SEAL_ENABLED / QUICBAAS_SEAL_STRATEGY env vars override these
+# values via viper bindings; they are provided here as documentation of intent.
+seal:
+  enabled: true
+  strategy: passphrase

@@ -417,6 +417,10 @@ services:
       - NET_RAW
     environment:
       - CGO_ENABLED=0
+      # At-rest encryption: passphrase strategy, auto-unsealed on startup.
+      - QUICBAAS_SEAL_ENABLED=true
+      - QUICBAAS_SEAL_STRATEGY=passphrase
+      - QUICBAAS_SEAL_PASSPHRASE=integration-test-passphrase
       - QUICBAAS_RAFT_NODE_ID=1
       - QUICBAAS_RAFT_DEPLOYMENT_ID=1
       - GOCOVERDIR=${QUICBAAS_NODE_GOCOVERDIR:-}
@@ -546,6 +550,10 @@ services:
       - NET_RAW
     environment:
       - CGO_ENABLED=0
+      # At-rest encryption: passphrase strategy, auto-unsealed on startup.
+      - QUICBAAS_SEAL_ENABLED=true
+      - QUICBAAS_SEAL_STRATEGY=passphrase
+      - QUICBAAS_SEAL_PASSPHRASE=integration-test-passphrase
       - QUICBAAS_RAFT_NODE_ID=2
       - QUICBAAS_RAFT_DEPLOYMENT_ID=1
       - GOCOVERDIR=${QUICBAAS_NODE_GOCOVERDIR:-}
@@ -677,6 +685,10 @@ services:
       - NET_RAW
     environment:
       - CGO_ENABLED=0
+      # At-rest encryption: passphrase strategy, auto-unsealed on startup.
+      - QUICBAAS_SEAL_ENABLED=true
+      - QUICBAAS_SEAL_STRATEGY=passphrase
+      - QUICBAAS_SEAL_PASSPHRASE=integration-test-passphrase
       - QUICBAAS_RAFT_NODE_ID=3
       - QUICBAAS_RAFT_DEPLOYMENT_ID=1
       - GOCOVERDIR=${QUICBAAS_NODE_GOCOVERDIR:-}
@@ -809,6 +821,10 @@ services:
     hostname: test-selfreg
     environment:
       - CGO_ENABLED=0
+      # At-rest encryption: passphrase strategy, auto-unsealed on startup.
+      - QUICBAAS_SEAL_ENABLED=true
+      - QUICBAAS_SEAL_STRATEGY=passphrase
+      - QUICBAAS_SEAL_PASSPHRASE=integration-test-passphrase
       - QUICBAAS_RAFT_NODE_ID=1
       - QUICBAAS_RAFT_DEPLOYMENT_ID=358
       - QUICBAAS_RAFT_RAFT_ADDRESS=test-selfreg:63001
@@ -914,6 +930,10 @@ services:
       - NET_RAW
     environment:
       - CGO_ENABLED=0
+      # At-rest encryption: passphrase strategy, auto-unsealed on startup.
+      - QUICBAAS_SEAL_ENABLED=true
+      - QUICBAAS_SEAL_STRATEGY=passphrase
+      - QUICBAAS_SEAL_PASSPHRASE=integration-test-passphrase
       - QUICBAAS_RAFT_NODE_ID=4
       - GOCOVERDIR=${QUICBAAS_NODE_GOCOVERDIR:-}
       - QUICBAAS_RAFT_RAFT_ADDRESS=test-node4:63004
@@ -1033,6 +1053,10 @@ services:
       - NET_RAW
     environment:
       - CGO_ENABLED=0
+      # At-rest encryption: passphrase strategy, auto-unsealed on startup.
+      - QUICBAAS_SEAL_ENABLED=true
+      - QUICBAAS_SEAL_STRATEGY=passphrase
+      - QUICBAAS_SEAL_PASSPHRASE=integration-test-passphrase
       - QUICBAAS_RAFT_NODE_ID=5
       - GOCOVERDIR=${QUICBAAS_NODE_GOCOVERDIR:-}
       - QUICBAAS_RAFT_RAFT_ADDRESS=test-node5:63005
