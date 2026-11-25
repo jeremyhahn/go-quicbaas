@@ -1918,6 +1918,18 @@ func (s *IAMServer) RequestDeletion(ctx context.Context, req *iampb.RequestDelet
 	if err != nil {
 		return nil, err
 	}
+	// A grace period of zero makes the manager erase the user's data at once,
+	// which is ProcessDeletion's work and not this verb's. proto3 cannot tell
+	// an omitted grace_period_days from an explicit 0, so both take the
+	// default grace period, as an omitted field does over MCP; a negative
+	// value is refused.
+	if req.GracePeriodDays < 0 {
+		return nil, status.Error(codes.InvalidArgument, "grace_period_days must not be negative")
+	}
+	gracePeriodDays := int(req.GracePeriodDays)
+	if gracePeriodDays == 0 {
+		gracePeriodDays = iam.DefaultGracePeriodDays
+	}
 	deletionReq, err := s.iamService.RequestDeletion(
 		ctx,
 		req.TenantId,
@@ -1926,7 +1938,7 @@ func (s *IAMServer) RequestDeletion(ctx context.Context, req *iampb.RequestDelet
 		req.Reason,
 		req.DeleteCategories,
 		req.PreserveCategories,
-		int(req.GracePeriodDays),
+		gracePeriodDays,
 	)
 	if err != nil {
 		return nil, convertIAMError(err)
