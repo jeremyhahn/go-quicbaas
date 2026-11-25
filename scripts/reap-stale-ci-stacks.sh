@@ -58,6 +58,10 @@
 # `{{.Metadata.LastTagTime.Unix}}` is a template error, the inspect line came
 # back without an id, and v3 and v4 then removed the tag whatever its age or
 # lease. An image the inspect gives no id for is now kept.
+# v6 (go-quicbaas): a compose volume whose project has no container left goes
+# once it was created at least <min-age-seconds> ago. A cancelled run whose
+# teardown named the wrong compose file left such volumes, and the project
+# loop, which finds projects through their containers, never saw them.
 #
 # Stale: exited or dead and finished at least <min-age-seconds> ago, or
 # created and never started at least that long ago. A project with any
@@ -165,6 +169,24 @@ for project in $(docker ps -a --filter label=com.docker.compose.project \
   done
   reaped=$((reaped + 1))
 done
+
+# v6: volumes of a compose project that has no container left. A teardown
+# that removed the containers but named the wrong compose file left the
+# project's named volumes behind, and the loop above, which finds projects
+# through their containers, never saw them again. A volume goes once it was
+# created at least <min-age-seconds> ago, so a run that is still starting
+# keeps its own.
+docker volume ls --filter label=com.docker.compose.project \
+    --format '{{.Name}} {{.Label "com.docker.compose.project"}}' |
+  while read -r vol project; do
+    case $project in "$prefix"*) ;; *) continue ;; esac
+    [ -z "$(docker ps -aq --filter "label=com.docker.compose.project=$project")" ] || continue
+    created=$(docker volume inspect -f '{{.CreatedAt}}' "$vol" 2>/dev/null) || continue
+    t=$(date -d "$created" +%s 2>/dev/null) || continue
+    [ $((now - t)) -ge "$min_age" ] || continue
+    echo "reap  volume $vol (project $project has no container)"
+    run docker volume rm "$vol" || echo "warn  volume $vol not removed"
+  done
 
 # Containers outside compose.
 docker ps -a --filter "name=^$prefix" \
