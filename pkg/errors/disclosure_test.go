@@ -14,6 +14,8 @@
 package errors
 
 import (
+	stderrors "errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -41,4 +43,18 @@ func TestDescribesRequest_ServerClasses(t *testing.T) {
 	} {
 		assert.False(t, DescribesRequest(code), "code %s", code)
 	}
+}
+
+type callerSafeTestError struct{}
+
+func (callerSafeTestError) Error() string { return "enable the widget" }
+func (callerSafeTestError) CallerSafe()   {}
+
+func TestIsCallerSafe(t *testing.T) {
+	wrapped := &QBError{Code: ErrPreconditionFailed, Op: "test.Op", Err: callerSafeTestError{}}
+	assert.True(t, IsCallerSafe(wrapped), "a QBError wrapping a CallerSafe error")
+	assert.True(t, IsCallerSafe(fmt.Errorf("outer: %w", wrapped)), "through fmt wrapping")
+	assert.False(t, IsCallerSafe(stderrors.New("plain")), "a plain error")
+	assert.False(t, IsCallerSafe(&QBError{Code: ErrPreconditionFailed, Op: "test.Op", Err: stderrors.New("x")}))
+	assert.False(t, IsCallerSafe(nil))
 }

@@ -156,6 +156,11 @@ var (
 	// ErrSecretNotFound: the path is present, the field is not.
 	ErrSecretKeyAbsent = errors.New("secrets: key absent or empty in secret record")
 
+	// ErrAtRestEncryptionRequired is returned when a secret would be
+	// written or its value read while no at-rest barrier protects the
+	// platform store: the value would sit on disk in clear.
+	ErrAtRestEncryptionRequired error = atRestError{}
+
 	// ErrInvalidPath indicates the path is malformed or empty.
 	ErrInvalidPath = errors.New("secrets: invalid path")
 
@@ -202,7 +207,24 @@ var (
 	ErrCloseBackendFailed = errors.New("secrets: failed to close backend")
 )
 
+// atRestError is the type of ErrAtRestEncryptionRequired. It is a value type
+// with no fields, so errors.Is matches the sentinel by identity, and its
+// message names the operator's remedy, so it is safe to return to a caller.
+type atRestError struct{}
+
+// Error returns the refusal and its remedy.
+func (atRestError) Error() string {
+	return "secrets: refused: no at-rest barrier is enabled for the platform store; " +
+		"enable the seal (seal.enabled: true) and unseal the node, " +
+		"or initialise a new data directory with quicbaasd init and a barrier strategy"
+}
+
+// CallerSafe marks the refusal as safe to return to a caller: its fixed
+// message names a server-wide precondition and its remedy, nothing else.
+func (atRestError) CallerSafe() {}
+
 // SecretsSentinelCauseError wraps a sentinel error with a cause using multi-unwrap.
+
 type SecretsSentinelCauseError struct {
 	Sentinel error
 	Cause    error

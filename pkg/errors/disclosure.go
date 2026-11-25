@@ -13,6 +13,8 @@
 
 package errors
 
+import stderrors "errors"
+
 // ServerFailureMessage is the text a transport returns in place of an error
 // that describes the SERVER rather than the caller's request.
 //
@@ -48,4 +50,18 @@ var requestClassCodes = map[ErrorCode]struct{}{
 func DescribesRequest(code ErrorCode) bool {
 	_, ok := requestClassCodes[code]
 	return ok
+}
+
+// CallerSafe marks an error whose fixed message describes neither the
+// caller's request nor the server's internals, but a server-wide
+// precondition and its remedy. Such a message may be returned to the caller
+// whatever the class of the QBError that wraps it.
+type CallerSafe interface {
+	CallerSafe()
+}
+
+// IsCallerSafe reports whether err, or any error in its chain, is CallerSafe.
+func IsCallerSafe(err error) bool {
+	var cs CallerSafe
+	return err != nil && stderrors.As(err, &cs)
 }

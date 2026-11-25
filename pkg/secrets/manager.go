@@ -53,6 +53,24 @@ type Manager struct {
 	// ensureMu protects the process-local fallback path inside
 	// EnsureSecret. Keyed by secret path. Only used when locker == nil.
 	ensureMu sync.Map
+
+	// atRestBarrier reports whether the platform store has an at-rest
+	// barrier; see ManagerOptions.AtRestBarrier. nil means unchecked.
+	atRestBarrier func() bool
+}
+
+// requireAtRest refuses with ErrAtRestEncryptionRequired when the Manager
+// was told the platform store has no at-rest barrier. Values are kept in
+// clear in that store, so only the barrier protects them on disk.
+func (m *Manager) requireAtRest(op string) error {
+	if m.atRestBarrier == nil || m.atRestBarrier() {
+		return nil
+	}
+	return &errors.QBError{
+		Code: errors.ErrPreconditionFailed,
+		Op:   op,
+		Err:  ErrAtRestEncryptionRequired,
+	}
 }
 
 // ManagerOptions configures the secrets Manager.
@@ -69,6 +87,13 @@ type ManagerOptions struct {
 	// in single-process embedded deployments (e.g. unit tests); see the
 	// Manager.locker field docs for the consequences.
 	Locker qrdbsdk.Locker
+
+	// AtRestBarrier reports whether the platform store the Backend writes
+	// to sits behind an at-rest barrier (the node seal). When it reports
+	// false, the Manager refuses to write a secret or read its value with
+	// ErrAtRestEncryptionRequired. nil means unchecked, for unit tests that
+	// build a Manager directly; the server always sets it.
+	AtRestBarrier func() bool
 }
 
 // NewManager creates a new secrets Manager with the specified options.
@@ -90,9 +115,10 @@ func NewManager(opts *ManagerOptions) (*Manager, error) {
 	}
 
 	m := &Manager{
-		backend: opts.Backend,
-		logger:  opts.Logger,
-		locker:  opts.Locker,
+		backend:       opts.Backend,
+		logger:        opts.Logger,
+		locker:        opts.Locker,
+		atRestBarrier: opts.AtRestBarrier,
 	}
 
 	if m.logger != nil {
@@ -110,6 +136,9 @@ const ensureLockTTL = 10 * time.Second
 
 // Store saves a secret at the specified path.
 func (m *Manager) Store(ctx context.Context, path string, data map[string][]byte, metadata map[string]string) error {
+	if err := m.requireAtRest("Manager.Store"); err != nil {
+		return err
+	}
 	if err := validateStoreArgs(ctx, "Manager.Store", path, data); err != nil {
 		return err
 	}
@@ -137,6 +166,9 @@ type BackendWithOptions interface {
 // StoreWithOptions saves a secret with custom encryption options.
 // If opts.TenantID is empty, it will be auto-populated from the context.
 func (m *Manager) StoreWithOptions(ctx context.Context, path string, data map[string][]byte, metadata map[string]string, opts *interfaces.StoreOptions) error {
+	if err := m.requireAtRest("Manager.StoreWithOptions"); err != nil {
+		return err
+	}
 	if err := validateStoreArgs(ctx, "Manager.StoreWithOptions", path, data); err != nil {
 		return err
 	}
@@ -202,6 +234,9 @@ func (m *Manager) StoreWithOptions(ctx context.Context, path string, data map[st
 // fails with ErrVersionNotReported: the version a writer is told must come
 // from its own write (go-quicbaas#179).
 func (m *Manager) StoreVersion(ctx context.Context, path string, data map[string][]byte, metadata map[string]string) (int, error) {
+	if err := m.requireAtRest("Manager.StoreVersion"); err != nil {
+		return 0, err
+	}
 	if err := validateStoreArgs(ctx, "Manager.StoreVersion", path, data); err != nil {
 		return 0, err
 	}
@@ -240,6 +275,9 @@ func (m *Manager) StoreVersion(ctx context.Context, path string, data map[string
 // name; every other backend ignores the options, as StoreWithOptions'
 // fallback does.
 func (m *Manager) StoreVersionWithOptions(ctx context.Context, path string, data map[string][]byte, metadata map[string]string, _ *interfaces.StoreOptions) (int, error) {
+	if err := m.requireAtRest("Manager.StoreVersionWithOptions"); err != nil {
+		return 0, err
+	}
 	if _, ok := m.backend.(BackendWithOptions); ok {
 		return 0, &errors.QBError{
 			Code: errors.ErrInternal,
@@ -281,6 +319,9 @@ func validateStoreArgs(ctx context.Context, op, path string, data map[string][]b
 
 // Get retrieves a secret from the specified path.
 func (m *Manager) Get(ctx context.Context, path string) (map[string][]byte, map[string]string, error) {
+	if err := m.requireAtRest("Manager.Get"); err != nil {
+		return nil, nil, err
+	}
 	if path == "" {
 		return nil, nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
@@ -341,6 +382,9 @@ func (m *Manager) Get(ctx context.Context, path string) (map[string][]byte, map[
 // copies: custody of secret material across the rest of its lifetime (mint
 // responses, transport headers) is the go-quicbaas#97 secure-buffer work.
 func (m *Manager) UseSecret(ctx context.Context, path, key string, fn func(value []byte) error) error {
+	if err := m.requireAtRest("Manager.UseSecret"); err != nil {
+		return err
+	}
 	// VALIDATED BEFORE THE BACKEND IS TOUCHED (review 982): a nil callback
 	// is malformed input on a credential-handling surface — a typed
 	// refusal, never a fetch-wipe-panic.
@@ -375,6 +419,9 @@ func (m *Manager) UseSecret(ctx context.Context, path, key string, fn func(value
 
 // GetVersion retrieves a specific version of a secret.
 func (m *Manager) GetVersion(ctx context.Context, path string, version int) (map[string][]byte, map[string]string, error) {
+	if err := m.requireAtRest("Manager.GetVersion"); err != nil {
+		return nil, nil, err
+	}
 	if path == "" {
 		return nil, nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
@@ -571,6 +618,9 @@ func (m *Manager) ListVersions(ctx context.Context, path string) ([]*interfaces.
 
 // Rollback restores a previous version as the current version.
 func (m *Manager) Rollback(ctx context.Context, path string, version int) error {
+	if err := m.requireAtRest("Manager.Rollback"); err != nil {
+		return err
+	}
 	if path == "" {
 		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
@@ -733,6 +783,9 @@ func (m *Manager) TenantIDFromContext(ctx context.Context) string {
 // it (for base64/hex/numeric encodings these are printable ASCII; for
 // raw encoding these are binary bytes).
 func (m *Manager) EnsureSecret(ctx context.Context, path string, spec *SecretSpec) (data []byte, generated bool, err error) {
+	if refusal := m.requireAtRest("Manager.EnsureSecret"); refusal != nil {
+		return nil, false, refusal
+	}
 	if path == "" {
 		return nil, false, &errors.QBError{
 			Code: errors.ErrInvalidInput,

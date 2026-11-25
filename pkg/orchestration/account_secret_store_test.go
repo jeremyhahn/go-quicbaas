@@ -179,3 +179,24 @@ func TestAccountSecretStore_Get_SeparatesAMissFromAnOutage(t *testing.T) {
 		})
 	}
 }
+
+// An account credential is a secret: on a node with no at-rest barrier the
+// store refuses to write it, with the Manager's typed refusal.
+func TestAccountSecretStore_PutRefusedWithoutAtRestBarrier(t *testing.T) {
+	mgr, err := secrets.NewManager(&secrets.ManagerOptions{
+		Backend:       secrets.NewMemoryBackend(),
+		AtRestBarrier: func() bool { return false },
+	})
+	if err != nil {
+		t.Fatalf("secrets.NewManager() error = %v", err)
+	}
+	store := NewAccountSecretStore(mgr)
+
+	err = store.Put(context.Background(), "tenant-a", "acct-1", &AccountCredential{
+		AccessToken:       "at-1",
+		AccessTokenEnvKey: "CLAUDE_CODE_OAUTH_TOKEN",
+	})
+	if !errors.Is(err, secrets.ErrAtRestEncryptionRequired) {
+		t.Fatalf("Put() error = %v, want ErrAtRestEncryptionRequired", err)
+	}
+}
